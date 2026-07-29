@@ -1,0 +1,7 @@
+finance-datareader
+pykrx
+yfinance
+pandas
+numpy
+lxml
+requests
