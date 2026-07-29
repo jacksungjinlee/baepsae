@@ -1,0 +1,16 @@
+{
+  "name": "뱁새 Baepsae — 포트폴리오 도구",
+  "short_name": "뱁새",
+  "description": "내 그릇에 맞는 포트폴리오를 만들어보는 교육용 도구",
+  "start_url": "./baepsae.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#EFF5FA",
+  "theme_color": "#1E6FE0",
+  "lang": "ko",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
