@@ -16,7 +16,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +31,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: 데이터 수집
+        env:
+          # OpenDART 키를 저장소 Secret 으로 넣어두면 한국 기업 재무지표까지 받아옵니다.
+          # 없어도 나머지는 정상 동작합니다.
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
         run: python fetch_data.py
 
       - name: 결과 확인
