@@ -282,7 +282,7 @@ def parse_dart_list(rows):
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
     rev = op = ni = None
-    eq = li = None
+    eq = li = nio = eqo = None
     for row in rows:
         nm = (row.get("account_nm") or "").replace(" ", "")
         if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None:
@@ -291,8 +291,12 @@ def parse_dart_list(rows):
             op = tri(row)
         elif nm in ("당기순이익", "당기순이익(손실)", "연결당기순이익") and ni is None:
             ni = tri(row)
+        elif "지배기업" in nm and "당기순이익" in nm and "비지배" not in nm and nio is None:
+            nio = _num(row.get("thstrm_amount"))
         elif nm == "자본총계" and eq is None:
             eq = _num(row.get("thstrm_amount"))
+        elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None:
+            eqo = _num(row.get("thstrm_amount"))
         elif nm == "부채총계" and li is None:
             li = _num(row.get("thstrm_amount"))
     rev = rev or [None, None, None]; op = op or [None, None, None]; ni = ni or [None, None, None]
@@ -312,10 +316,47 @@ def parse_dart_list(rows):
     # v12: 기업분석용 원값(억원 단위, 과거→현재가 아닌 [당기, 전기, 전전기] 순서 유지)
     ek = lambda v: round(v / 1e8, 1) if v is not None else None
     fin = {"rev": [ek(x) for x in rev], "op": [ek(x) for x in op], "ni": [ek(x) for x in ni],
-           "eq": ek(eq), "li": ek(li)}
+           "eq": ek(eq), "li": ek(li), "nio": ek(nio), "eqo": ek(eqo)}
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
     return out
+
+
+def parse_dart_dividend(rows):
+    """alotMatter(배당에 관한 사항) 응답에서 보통주 배당 지표를 뽑습니다. (순수 함수)"""
+    dy = dps = None
+    for row in rows:
+        knd = (row.get("stock_knd") or "")
+        if knd and "보통" not in knd:
+            continue
+        se = (row.get("se") or "").replace(" ", "")
+        v = _num(row.get("thstrm"))
+        if v is None:
+            continue
+        if "주당현금배당금" in se and dps is None:
+            dps = v
+        elif "현금배당수익률" in se and dy is None:
+            dy = v
+    out = {}
+    if dps and dps > 0:
+        out["dps"] = round(dps, 0)
+    if dy and dy > 0:
+        out["dy"] = round(dy, 2)
+    return out
+
+
+def dart_dividend(corp_code, year):
+    try:
+        r = requests.get("https://opendart.fss.or.kr/api/alotMatter.json",
+                         params={"crtfc_key": DART_KEY, "corp_code": corp_code,
+                                 "bsns_year": str(year), "reprt_code": "11011"},
+                         timeout=25)
+        j = r.json()
+        if j.get("status") != "000":
+            return {}
+        return parse_dart_dividend(j.get("list", []))
+    except Exception:
+        return {}
 
 
 def dart_financials(corp_code, year):
@@ -351,7 +392,16 @@ def enrich_with_dart(kr_stocks):
     done = [0]
 
     def one(s):
-        f = dart_financials(cmap[s["t"]], year) or dart_financials(cmap[s["t"]], year - 1)
+        yr = year
+        f = dart_financials(cmap[s["t"]], yr)
+        if not f:
+            yr = year - 1
+            f = dart_financials(cmap[s["t"]], yr)
+        div = dart_dividend(cmap[s["t"]], yr)
+        if div.get("dps"):
+            s["dps"] = div["dps"]
+        if div.get("dy"):
+            s["dy"] = div["dy"]
         if f:
             fin = f.pop("_fin", None)
             if fin:
@@ -403,9 +453,10 @@ def build_corp(kr_stocks, fin_map, as_of):
             "roe": s.get("roe"), "opm": s.get("opm"), "g3": s.get("g3"), "debt": s.get("debt"),
             "beta": s.get("beta"), "vol": s.get("vol"), "lo": s.get("lo"), "hi": s.get("hi"),
             "rev": rev, "op": fin.get("op") or [None, None, None], "ni": ni, "eq": fin.get("eq"),
+            "shm": round(s["shr"] / 1e6, 2) if s.get("shr") else None,
         }
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
-        row["dcfReady"] = bool(ni[0] is not None and s.get("cap"))
+        row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
         comps.append(row)
 
     sectors = {}
@@ -498,7 +549,7 @@ def fetch_korea(start, end, rf):
             fundamentals = pd.concat(frames).to_dict("index")
         else:  # 마지막 수단: 예전 방식
             fundamentals = pk.get_market_fundamental(day, market="ALL").to_dict("index")
-        log(f"· PER/PBR/EPS/BPS/배당 {len(fundamentals):,}건")
+        log(f"· pykrx 펀더멘털 {len(fundamentals):,}건 (0이어도 정상 — DART 기반 계산으로 대체됩니다)")
         try:
             fr = pk.get_exhaustion_rates_of_foreign_investment(day, market="ALL")
             col = next((c for c in fr.columns if "지분" in str(c)), None)
@@ -535,6 +586,7 @@ def fetch_korea(start, end, rf):
             eps, bps, dps = _num(f.get("EPS")), _num(f.get("BPS")), _num(f.get("DPS"))
             sec_txt, prod_txt = desc.get(code, ("", ""))
             cap = float(row["Marcap"] or 0) / 1e12
+            shr = _num(row.get("Stocks"))
             rec = {
                 "t": code, "nk": str(row["Name"]), "ne": str(row["Name"]), "cls": "kr",
                 "s": map_sector_kr(sec_txt, prod_txt),
@@ -550,6 +602,8 @@ def fetch_korea(start, end, rf):
                 "val": round(float(row["Amount"] or 0) / 1e8, 1),
                 "lo": float(px.tail(252).min()), "hi": float(px.tail(252).max()),
             }
+            if shr and shr > 0:
+                rec["shr"] = int(shr)
             fv = _num(foreign.get(code))
             if fv is not None and 0 <= fv <= 100:
                 rec["frn"] = round(fv, 1)
@@ -584,7 +638,38 @@ def fetch_korea(start, end, rf):
 
     log(f"· 한국 시세 완료: {len(out):,}개")
     out, fin_map = enrich_with_dart(out)
+    fill_multiples(out, fin_map)
     return out, fin_map, bench
+
+
+def fill_multiples(kr_stocks, fin_map):
+    """DART 재무(순이익·자본) + 상장주식수로 EPS/BPS/PER/PBR을 직접 계산합니다.
+    pykrx는 KRX 로그인이 필요해져 CI에서 동작하지 않으므로, 있으면 쓰고 없으면 이 값으로 채웁니다.
+    순이익·자본은 지배주주 귀속분을 우선 사용합니다."""
+    n = 0
+    for s in kr_stocks:
+        fin = fin_map.get(s["t"])
+        shr = s.get("shr")
+        price = s.get("price")
+        if not fin or not shr or not price:
+            continue
+        ni = fin.get("nio") if fin.get("nio") is not None else (fin.get("ni") or [None])[0]
+        eq = fin.get("eqo") if fin.get("eqo") is not None else fin.get("eq")
+        if ni is not None:
+            eps = ni * 1e8 / shr
+            if s.get("eps") is None:
+                s["eps"] = round(eps, 0)
+            if s.get("per") is None and eps > 0:
+                s["per"] = round(price / eps, 1)
+        if eq and eq > 0:
+            bps = eq * 1e8 / shr
+            if s.get("bps") is None:
+                s["bps"] = round(bps, 0)
+            if s.get("pbr") is None:
+                s["pbr"] = round(price / bps, 2)
+        if s.get("per") is not None or s.get("pbr") is not None:
+            n += 1
+    log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 상장주식수 기반)")
 
 
 # ────────────────────────────────────────────────────────────
