@@ -1,0 +1,8 @@
+{
+  "name": "baepsae",
+  "version": "11.0.0",
+  "private": true,
+  "description": "뱁새 — 내 그릇에 맞는 포트폴리오를 만들어보는 교육용 도구",
+  "scripts": { "build": "bash build.sh" },
+  "devDependencies": { "esbuild": "^0.24.0", "react": "^18.3.1", "react-dom": "^18.3.1" }
+}
