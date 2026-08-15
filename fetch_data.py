@@ -282,9 +282,13 @@ def parse_dart_list(rows):
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
     rev = op = ni = None
-    eq = li = nio = eqo = None
+    eq = li = nio = eqo = cash = ocf = None
+    bor, has_bor = 0.0, False
+    dep, has_dep = 0.0, False
+    BORROW = {"단기차입금", "장기차입금", "사채", "유동성장기부채", "유동성장기차입금", "단기사채", "전환사채", "리스부채"}
     for row in rows:
         nm = (row.get("account_nm") or "").replace(" ", "")
+        sj = (row.get("sj_div") or "").strip()
         if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None:
             rev = tri(row)
         elif nm in ("영업이익", "영업이익(손실)") and op is None:
@@ -297,6 +301,20 @@ def parse_dart_list(rows):
             eq = _num(row.get("thstrm_amount"))
         elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None:
             eqo = _num(row.get("thstrm_amount"))
+        elif nm in BORROW and sj in ("BS", ""):
+            v = _num(row.get("thstrm_amount"))
+            if v and v > 0:
+                bor += v
+                has_bor = True
+        elif nm in ("현금및현금성자산", "현금및현금성자산등", "기말현금및현금성자산") and cash is None:
+            cash = _num(row.get("thstrm_amount"))
+        elif sj == "CF" and nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
+            ocf = _num(row.get("thstrm_amount"))
+        elif sj == "CF" and nm in ("감가상각비", "유형자산감가상각비", "무형자산상각비", "사용권자산상각비", "투자부동산감가상각비"):
+            v = _num(row.get("thstrm_amount"))
+            if v and v > 0:
+                dep += v
+                has_dep = True
         elif nm == "부채총계" and li is None:
             li = _num(row.get("thstrm_amount"))
     rev = rev or [None, None, None]; op = op or [None, None, None]; ni = ni or [None, None, None]
@@ -316,7 +334,9 @@ def parse_dart_list(rows):
     # v12: 기업분석용 원값(억원 단위, 과거→현재가 아닌 [당기, 전기, 전전기] 순서 유지)
     ek = lambda v: round(v / 1e8, 1) if v is not None else None
     fin = {"rev": [ek(x) for x in rev], "op": [ek(x) for x in op], "ni": [ek(x) for x in ni],
-           "eq": ek(eq), "li": ek(li), "nio": ek(nio), "eqo": ek(eqo)}
+           "eq": ek(eq), "li": ek(li), "nio": ek(nio), "eqo": ek(eqo),
+           "bor": ek(bor) if has_bor else None, "cash": ek(cash), "ocf": ek(ocf),
+           "dep": ek(dep) if has_dep else None}
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
     return out
@@ -325,6 +345,7 @@ def parse_dart_list(rows):
 def parse_dart_dividend(rows):
     """alotMatter(배당에 관한 사항) 응답에서 보통주 배당 지표를 뽑습니다. (순수 함수)"""
     dy = dps = None
+    dps3 = [None, None, None]
     for row in rows:
         knd = (row.get("stock_knd") or "")
         if knd and "보통" not in knd:
@@ -335,11 +356,13 @@ def parse_dart_dividend(rows):
             continue
         if "주당현금배당금" in se and dps is None:
             dps = v
+            dps3 = [_num(row.get("thstrm")), _num(row.get("frmtrm")), _num(row.get("lwfr"))]
         elif "현금배당수익률" in se and dy is None:
             dy = v
     out = {}
     if dps and dps > 0:
         out["dps"] = round(dps, 0)
+        out["dps3"] = [round(x, 0) if x is not None else None for x in dps3]
     if dy and dy > 0:
         out["dy"] = round(dy, 2)
     return out
@@ -400,6 +423,8 @@ def enrich_with_dart(kr_stocks):
         div = dart_dividend(cmap[s["t"]], yr)
         if div.get("dps"):
             s["dps"] = div["dps"]
+        if div.get("dps3"):
+            s["dps3"] = div["dps3"]
         if div.get("dy"):
             s["dy"] = div["dy"]
         if f:
@@ -435,7 +460,10 @@ def _median(vals):
     return round(float(np.median(vals)), 1) if len(vals) >= 5 else None
 
 
-def build_corp(kr_stocks, fin_map, as_of):
+FIN_SECS = {"bank", "insure", "broker", "holding"}
+
+
+def build_corp(kr_stocks, fin_map, as_of, market=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)"""
     comps = []
     for s in kr_stocks:
@@ -454,7 +482,27 @@ def build_corp(kr_stocks, fin_map, as_of):
             "beta": s.get("beta"), "vol": s.get("vol"), "lo": s.get("lo"), "hi": s.get("hi"),
             "rev": rev, "op": fin.get("op") or [None, None, None], "ni": ni, "eq": fin.get("eq"),
             "shm": round(s["shr"] / 1e6, 2) if s.get("shr") else None,
+            "r1": s.get("r1"), "r3": s.get("r3"), "dps3": s.get("dps3"),
         }
+        # EV 계열·현금흐름 멀티플 (금융업은 EV 지표가 무의미하므로 제외)
+        op0 = (fin.get("op") or [None])[0]
+        ebitda = (op0 + fin["dep"]) if (op0 is not None and fin.get("dep") is not None) else None
+        if s.get("cap") and fin:
+            ev = s["cap"] * 1e4 + (fin.get("bor") or 0) - (fin.get("cash") or 0)
+            if row["s"] not in FIN_SECS and ev > 0:
+                if ebitda and ebitda > 0:
+                    v = ev / ebitda
+                    if 0 < v < 200:
+                        row["evE"] = round(v, 1)
+                if rev[0] and rev[0] > 0:
+                    v = ev / rev[0]
+                    if 0 < v < 100:
+                        row["evR"] = round(v, 2)
+            ocf = fin.get("ocf")
+            if ocf and ocf > 0:
+                v = s["cap"] * 1e4 / ocf
+                if 0 < v < 200:
+                    row["pcf"] = round(v, 1)
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
         row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
         comps.append(row)
@@ -478,9 +526,12 @@ def build_corp(kr_stocks, fin_map, as_of):
             "roe": _median([c["roe"] for c in arr]),
             "perQ": _quart([c["per"] for c in arr if c["per"] and 0 < c["per"] < 200]),
             "pbrQ": _quart([c["pbr"] for c in arr if c["pbr"] and 0 < c["pbr"] < 20]),
+            "evEQ": _quart([c.get("evE") for c in arr if c.get("evE") and 0 < c["evE"] < 60]),
+            "evRQ": _quart([c.get("evR") for c in arr if c.get("evR") and 0 < c["evR"] < 30]),
+            "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
-    return {"asOf": as_of, "sectors": sectors, "companies": comps}
+    return {"asOf": as_of, "market": market or {}, "sectors": sectors, "companies": comps}
 
 
 # ────────────────────────────────────────────────────────────
@@ -531,6 +582,13 @@ def fetch_korea(start, end, rf):
     kospi = fdr.DataReader(KR_INDEX, start, end)["Close"]
     bench = kospi.pct_change().dropna()
     bench.name = "bench"
+    mkt = {}
+    try:
+        mkt = {"kospi": round(float(kospi.iloc[-1]), 2),
+               "k1": round(float(kospi.iloc[-1] / kospi.iloc[-22] - 1) * 100, 1),
+               "k3": round(float(kospi.iloc[-1] / kospi.iloc[-64] - 1) * 100, 1)}
+    except Exception:
+        pass
 
     fundamentals, foreign = {}, {}
     try:
@@ -604,6 +662,9 @@ def fetch_korea(start, end, rf):
             }
             if shr and shr > 0:
                 rec["shr"] = int(shr)
+            if len(px) > 66:
+                rec["r1"] = round(float(px.iloc[-1] / px.iloc[-22] - 1) * 100, 1)
+                rec["r3"] = round(float(px.iloc[-1] / px.iloc[-64] - 1) * 100, 1)
             fv = _num(foreign.get(code))
             if fv is not None and 0 <= fv <= 100:
                 rec["frn"] = round(fv, 1)
@@ -639,7 +700,7 @@ def fetch_korea(start, end, rf):
     log(f"· 한국 시세 완료: {len(out):,}개")
     out, fin_map = enrich_with_dart(out)
     fill_multiples(out, fin_map)
-    return out, fin_map, bench
+    return out, fin_map, bench, mkt
 
 
 def fill_multiples(kr_stocks, fin_map):
@@ -795,7 +856,7 @@ def main():
     log(f"뱁새 데이터 수집 v12 · {start} ~ {end} · DART {'ON' if DART_KEY else 'OFF'}")
 
     rf = fetch_rf()
-    kr, fin_map, kr_bench = fetch_korea(start, end, rf)
+    kr, fin_map, kr_bench, kr_mkt = fetch_korea(start, end, rf)
     us, us_bench, fx, fx_last, us_vol_krw = fetch_us(start, end, rf)
 
     if len(kr) < 300 or len(us) < 100:
@@ -837,7 +898,8 @@ def main():
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB, 환율 {fx_last:,.1f}")
 
-    corp = build_corp(kr, fin_map, end.isoformat())
+    kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
+    corp = build_corp(kr, fin_map, end.isoformat(), kr_mkt)
     with open(OUT_CORP, "w", encoding="utf-8") as f:
         json.dump(corp, f, ensure_ascii=False, separators=(",", ":"))
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
