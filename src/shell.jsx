@@ -6,13 +6,14 @@ import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import DetailApp, { Bird, store } from "./detail.jsx";
 import SimpleApp from "./simple.jsx";
+import CorpApp from "./corp.jsx";
 
 const CREDIT_KO = "이성진, INSEAD MBA 26J";
 const CREDIT_EN = "Jack (Sung Jin) Lee, INSEAD MBA 26J";
 
 const TABS = [
   { id: "pf", ko: "포트폴리오", icon: "compass" },
-  { id: "corp", ko: "기업분석", icon: "chart", soon: true },
+  { id: "corp", ko: "기업분석", icon: "chart" },
   { id: "disc", ko: "공시·수급", icon: "doc", soon: true },
 ];
 
@@ -155,7 +156,7 @@ export default function Shell() {
       {tab === "pf" && mode === null && <ModeGate onPick={setMode} hasSimpleSave={hasSimpleSave} />}
       {tab === "pf" && mode === "simple" && <SimpleApp onGraduate={graduate} onExit={() => setMode(null)} />}
       {tab === "pf" && mode === "detail" && <DetailApp seed={seed} />}
-      {tab === "corp" && <Stub kind="corp" />}
+      {tab === "corp" && <CorpApp />}
       {tab === "disc" && <Stub kind="disc" />}
     </div>
   );
