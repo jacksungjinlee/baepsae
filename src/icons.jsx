@@ -34,3 +34,14 @@ export function Ic({ name, size = 18, color = "currentColor", stroke = 1.5, styl
 }
 
 export const ICON_NAMES = Object.keys(P);
+
+// 뱁 도장 — 에디토리얼 아이덴티티의 서명. 살짝 기울여 실제 도장의 질감을 냅니다.
+export const Seal = ({ size = 28 }) => (
+  <svg width={size} height={size} viewBox="0 0 40 40" style={{ display: "block", flexShrink: 0 }}>
+    <g transform="rotate(-7 20 20)">
+      <circle cx="20" cy="20" r="17.2" fill="none" stroke={C.apricotDeep} strokeWidth="2.4" opacity="0.92" />
+      <circle cx="20" cy="20" r="14.6" fill="none" stroke={C.apricotDeep} strokeWidth="0.7" opacity="0.55" />
+      <text x="20" y="26.2" textAnchor="middle" fontFamily="'Noto Serif KR', serif" fontSize="16.5" fontWeight="900" fill={C.apricotDeep} opacity="0.95">뱁</text>
+    </g>
+  </svg>
+);

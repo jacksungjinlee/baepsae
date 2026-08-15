@@ -3,11 +3,12 @@
 // 포트폴리오 탭은 간단/상세 모드 게이트에서 시작합니다.
 import React, { useState, useEffect } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
-import { Ic } from "./icons.jsx";
+import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store } from "./detail.jsx";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 
+const MAST_CSS = `@media (max-width: 560px) { .mastSub { display: none } }`;
 const CREDIT_KO = "이성진, INSEAD MBA 26J";
 const CREDIT_EN = "Jack (Sung Jin) Lee, INSEAD MBA 26J";
 
@@ -19,11 +20,12 @@ const TABS = [
 
 function TopNav({ tab, setTab, showBack, onBack }) {
   return (
-    <div style={{ position: "sticky", top: 0, zIndex: 60, background: "rgba(250,248,245,0.92)", backdropFilter: "blur(8px)", borderBottom: HAIR }}>
+    <div style={{ position: "sticky", top: 0, zIndex: 60, background: "rgba(250,248,245,0.95)", backdropFilter: "blur(8px)", borderTop: "3px solid " + C.ink, borderBottom: "1px solid " + C.ink + "33", boxShadow: "0 1px 0 rgba(27,43,75,0.06)" }}>
       <div style={{ maxWidth: 1140, margin: "0 auto", padding: "0 16px", height: 48, display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-          <Bird mood="happy" size={26} />
-          <span style={{ fontFamily: SERIF, fontSize: 16.5, fontWeight: 700, color: C.ink, letterSpacing: "-0.01em" }}>뱁새</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <Seal size={25} />
+          <span style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 900, color: C.ink, letterSpacing: "0.01em" }}>뱁새</span>
+          <span className="mastSub" style={{ fontFamily: SERIF, fontSize: 10, color: C.faint, borderLeft: "1px solid " + C.line, paddingLeft: 8, letterSpacing: "0.04em" }}>황새 말고, 내 걸음으로</span>
         </div>
         <div style={{ display: "flex", gap: 2, overflowX: "auto", flex: 1 }}>
           {TABS.map((tb) => {
@@ -32,8 +34,8 @@ function TopNav({ tab, setTab, showBack, onBack }) {
               <button key={tb.id} onClick={() => setTab(tb.id)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer",
                   fontFamily: FONT, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? C.ink : C.faint,
-                  padding: "0 10px", height: 48, borderBottom: on ? "2px solid " + C.blue : "2px solid transparent", whiteSpace: "nowrap" }}>
-                <Ic name={tb.icon} size={15} color={on ? C.blue : C.faint} />
+                  padding: "0 10px", height: 48, borderBottom: on ? "3px solid " + C.ink : "3px solid transparent", whiteSpace: "nowrap" }}>
+                <Ic name={tb.icon} size={15} color={on ? C.ink : C.faint} />
                 {tb.ko}
                 {tb.soon && <span style={{ fontSize: 9, fontWeight: 800, color: C.apricotDeep, background: C.apricotSoft, borderRadius: 999, padding: "2px 6px" }}>준비 중</span>}
               </button>
@@ -152,6 +154,7 @@ export default function Shell() {
   return (
     <div style={{ minHeight: "100vh", background: C.bg }}>
       <style>{GATE_CSS}</style>
+      <style>{MAST_CSS}</style>
       <TopNav tab={tab} setTab={setTab} showBack={tab === "pf" && mode !== null} onBack={() => { setMode(null); setSeed(null); }} />
       {tab === "pf" && mode === null && <ModeGate onPick={setMode} hasSimpleSave={hasSimpleSave} />}
       {tab === "pf" && mode === "simple" && <SimpleApp onGraduate={graduate} onExit={() => setMode(null)} />}

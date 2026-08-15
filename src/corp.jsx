@@ -21,29 +21,37 @@ const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 const Card = ({ children, style = {} }) => (
   <div style={{ background: "#FFFFFF", border: HAIR, borderRadius: RAD.card, padding: 18, ...style }}>{children}</div>
 );
-const H = ({ children, onWhy }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-    <span style={{ fontSize: 14.5, fontWeight: 800, color: C.ink }}>{children}</span>
-    {onWhy && <button onClick={onWhy} style={{ fontSize: 10, color: C.faint, background: C.bg, border: "none", borderRadius: 999, width: 16, height: 16, cursor: "pointer", fontWeight: 800, fontFamily: FONT }}>?</button>}
+const H = ({ num, main, sub, onWhy, children }) => (
+  <div>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      {num && <span style={{ fontFamily: SERIF, fontSize: 11, fontWeight: 700, color: C.apricotDeep, letterSpacing: "0.1em" }}>{num}</span>}
+      <span style={{ fontFamily: SERIF, fontSize: 16.5, fontWeight: 700, color: C.ink, letterSpacing: "-0.005em" }}>{main || children}</span>
+      {onWhy && <button onClick={onWhy} style={{ fontSize: 10, color: C.faint, background: C.bg, border: "none", borderRadius: 999, width: 16, height: 16, cursor: "pointer", fontWeight: 800, fontFamily: FONT, alignSelf: "center" }}>?</button>}
+    </div>
+    {sub && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 3, letterSpacing: "0.02em" }}>{sub}</div>}
   </div>
 );
 const Sub = ({ children, style = {} }) => <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.6, ...style }}>{children}</div>;
 const ChipBtn = ({ on, onClick, children }) => (
-  <button onClick={onClick} style={{ border: on ? "1.5px solid " + C.blue : "1.5px solid " + C.line, background: on ? C.blueSoft : "#fff", color: on ? C.blue : C.sub, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
+  <button onClick={onClick} style={{ border: on ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
 );
 
 // ---------------- 설명 시트 ----------------
 const EXPL = {
   quad: { t: "업종 성장 사분면", b: "가로축은 업종의 3년 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 3년 매출 성장률이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
   secrank: { t: "업종 성장률 순위", b: "각 업종의 3년 연평균 매출 성장률(상장사 합산 기준)을 큰 순서대로 늘어놓았어요. 막대 옆의 매출 규모와 수익성을 함께 보면 '커지는 판인가, 돈이 되는 판인가'를 같이 판단할 수 있어요. 표본이 5개 미만인 업종은 성장률을 표시하지 않아요." },
-  scatter: { t: "PBR × ROE", b: "가로축은 자기자본이익률(ROE), 세로축은 주가순자산비율(PBR)이에요. 보통 자본을 잘 굴리는 회사일수록(ROE 높음) 장부가치 대비 높은 값(PBR 높음)에 거래돼요. 이 관계에서 크게 벗어난 위치는 '왜?'라고 물어볼 출발점이지, 그 자체로 싸다/비싸다의 답은 아니에요." },
-  box: { t: "업종별 분포", b: "상자는 업종 내 25~75% 구간, 가운데 선은 중간값이에요. 같은 PER 10배라도 업종에 따라 비싼 값일 수도, 싼 값일 수도 있어요 — 멀티플은 항상 같은 업종의 분포 안에서 읽는 것이 기본이에요." },
+  scatter: { t: "수익성과 주가 수준 (ROE × PBR)", b: "가로축은 자기자본이익률(ROE), 세로축은 주가순자산비율(PBR)이에요. 보통 자본을 잘 굴리는 회사일수록 장부가치 대비 높은 값에 거래되고, 점선 추세선이 그 평균적 관계예요. 추세선보다 한참 위면 수익성에 비해 높은 평가, 한참 아래면 낮은 평가를 받고 있다는 뜻인데 — 거기엔 대개 이유가 있어요. 그 이유를 찾는 것이 분석이에요." },
+  box: { t: "업종별 시장 눈높이", b: "업종마다 시장이 쳐주는 값의 눈높이가 달라요. 굵은 점이 그 업종의 중간값, 옅은 막대가 가운데 절반(25~75%)이 모여 있는 구간이에요. 같은 PER 10배라도 어떤 업종에선 비싼 값, 어떤 업종에선 싼 값이에요 — 그래서 멀티플은 늘 같은 업종 안에서 읽어요. 점선은 시장 전체의 중간값이라, 어떤 업종이 시장 평균보다 후하게 또는 박하게 평가받는지도 보여요." },
   per: { t: "PER (주가수익비율)", b: "시장이 이 회사의 이익 1원에 몇 원을 내고 있는지예요. 높다는 건 시장이 앞으로의 성장을 크게 기대한다는 뜻이고, 그 기대가 실현되지 않으면 주가가 조정될 수 있다는 뜻이기도 해요. 적자 기업은 PER을 계산할 수 없어요." },
   pbr: { t: "PBR (주가순자산비율)", b: "회사 장부상 순자산 1원을 시장이 몇 원으로 평가하는지예요. 1배 미만은 장부가치보다 싸게 거래된다는 뜻인데, 그 자체로 저평가라기보다 '시장이 이 자산의 수익성을 의심한다'는 신호일 때가 많아요. ROE와 함께 읽어야 해요." },
   roe: { t: "ROE (자기자본이익률)", b: "주주 돈 100원으로 1년에 몇 원을 벌었는지예요. 꾸준히 높은 ROE는 좋은 사업의 흔적이지만, 부채를 늘려도 ROE는 올라가요 — 부채비율과 함께 보세요." },
   payout: { t: "배당성향", b: "번 이익 중 얼마를 배당으로 돌려주는지예요. 이익보다 배당이 큰 상태(100% 초과)가 이어지면 지속되기 어려워요." },
-  ff: { t: "밸류에이션 풋볼필드", b: "잣대 하나로는 회사를 판단할 수 없어요. PER·PBR·PSR·배당수익률 같은 여러 잣대에서 이 회사가 같은 업종 회사들 중 낮은 쪽에 있는지 높은 쪽에 있는지를 나란히 놓은 그림이에요. 파란 상자는 업종의 25~75% 구간, 주황 점이 이 회사의 위치예요. 낮다고 곧 싸다는 뜻은 아니에요 — 시장이 왜 이 위치에 두었는지 물어보는 출발점이에요." },
-  dcf: { t: "DCF 분석", b: "미래 이익을 가정하고 현재 가치로 할인해 더하는 계산이에요. 여기서는 순이익을 현금흐름으로 근사하는 큰 단순화를 써요(실제로는 투자·운전자본 등으로 달라요). 그래서 이 도구의 목적은 '적정주가 찾기'가 아니라, 가정을 바꿀 때 값이 얼마나 민감하게 움직이는지, 그리고 지금 주가에는 어떤 성장 기대가 담겨 있는지를 보는 거예요." },
+  ff: { t: "업종 내 위치", b: "잣대 하나로는 회사를 판단할 수 없어요. PER·PBR·PSR·EV/EBITDA 같은 여러 잣대에서 같은 업종 회사들 가운데 낮은 쪽인지 높은 쪽인지를 나란히 놓은 그림이에요. 파란 상자는 업종의 25~75% 구간, 주황 점이 이 회사의 위치예요. 낮다고 곧 싸다는 뜻은 아니에요 — 시장이 왜 이 위치에 두었는지 물어보는 출발점이에요." },
+  dcf: { t: "DCF (현금흐름할인)", b: "미래 이익을 가정하고 현재 가치로 할인해 더하는 계산이에요. 여기서는 순이익을 현금흐름으로 근사하는 큰 단순화를 써요(실제로는 투자·운전자본 등으로 달라요). 그래서 이 도구의 목적은 '적정주가 찾기'가 아니라, 가정을 바꿀 때 값이 얼마나 민감하게 움직이는지, 그리고 지금 주가에는 어떤 성장 기대가 담겨 있는지를 보는 거예요." },
+  tree: { t: "수익률 지도", b: "칸의 크기는 시가총액, 색은 최근 3개월 수익률이에요(붉은색 상승·푸른색 하락, 국내 시장 관례를 따랐어요). 시장의 돈이 최근 어디로 흘렀는지 한 화면에서 보는 용도이고, 색이 진하다고 좋거나 나쁜 종목이라는 뜻은 아니에요. 과거 수익률은 미래를 보장하지 않아요." },
+  evebitda: { t: "EV/EBITDA", b: "시가총액에 순차입금을 더한 '기업 전체 가치(EV)'를 상각 전 영업이익(EBITDA)으로 나눈 값이에요. 부채까지 포함해 회사를 통째로 산다고 볼 때의 배수라서, 부채 구조가 다른 회사끼리 비교할 때 PER보다 공정할 때가 많아요. 상각비는 현금흐름표 기준 근사값이에요. 은행·보험·증권·지주는 사업 구조상 이 지표를 쓰지 않아요." },
+  pocf: { t: "P/영업현금흐름", b: "시가총액을 영업활동으로 실제 들어온 현금으로 나눈 값이에요. 회계상 이익은 조정 여지가 있지만 현금은 비교적 정직해서, 이익과 현금흐름이 크게 다른 회사를 걸러내는 데 유용해요." },
+  cmp: { t: "기업 비교", b: "같은 업종 회사들을 지표별로 나란히 놓은 표예요. 오른쪽 끝의 업종 중간값이 기준점 역할을 해요. 숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요 — 차이가 나는 항목에서 '왜?'를 묻는 것이 이 표의 사용법이에요." },
   rev: { t: "리버스 DCF", b: "계산 방향을 뒤집어서, '지금 주가가 정당화되려면 앞으로 몇 %씩 성장해야 하나'를 풉니다. 그 성장률이 회사의 과거와 업종 현실에 비추어 그럴듯한지 스스로 판단해보는 것 — 그게 이 도구의 핵심 질문이에요." },
 };
 function ExplainSheet({ id, onClose }) {
@@ -69,7 +77,7 @@ const QUADS = [
 ];
 
 // ---------------- SVG 산점도 (사분면 / PBR×ROE 공용) ----------------
-function Scatter({ pts, xDomain, yDomain, xLabel, yLabel, quads, onPick, height = 420, zoomable }) {
+function Scatter({ pts, xDomain, yDomain, xLabel, yLabel, quads, trend, onPick, height = 420, zoomable }) {
   const W = 720, Hh = height, m = { l: 46, r: 14, t: 26, b: 40 };
   const [z, setZ] = useState({ k: 1, cx: (xDomain[0] + xDomain[1]) / 2, cy: (yDomain[0] + yDomain[1]) / 2 });
   const svgRef = useRef(null);
@@ -157,6 +165,25 @@ function Scatter({ pts, xDomain, yDomain, xLabel, yLabel, quads, onPick, height 
         {ticksY.map((t, i) => <text key={"y" + i} x={m.l - 8} y={sy(t) + 3} textAnchor="end" fontSize="10" fill={C.faint} fontFamily={FONT}>{Math.round(t * 10) / 10}</text>)}
         <text x={(m.l + W - m.r) / 2} y={Hh - 6} textAnchor="middle" fontSize="10.5" fill={C.sub} fontFamily={FONT}>{xLabel}</text>
         <text x={12} y={(m.t + Hh - m.b) / 2} textAnchor="middle" fontSize="10.5" fill={C.sub} fontFamily={FONT} transform={`rotate(-90 12 ${(m.t + Hh - m.b) / 2})`}>{yLabel}</text>
+        {trend && (() => {
+          const yA = trend.a + trend.b * xd[0], yB = trend.a + trend.b * xd[1];
+          const inPlot = (yv) => yv >= yd[0] && yv <= yd[1];
+          if (!isFinite(yA) || !isFinite(yB)) return null;
+          const lx = xd[0] + (xd[1] - xd[0]) * 0.72;
+          const ly = trend.a + trend.b * lx;
+          return (
+            <g>
+              <line x1={sx(xd[0])} y1={sy(clamp(yA, yd[0], yd[1]))} x2={sx(xd[1])} y2={sy(clamp(yB, yd[0], yd[1]))}
+                stroke={C.ink} strokeWidth="1.5" strokeDasharray="5 4" opacity="0.55" />
+              {inPlot(ly) && (
+                <g>
+                  <text x={sx(lx)} y={clamp(sy(ly) - 12, m.t + 12, Hh - m.b - 20)} textAnchor="middle" fontSize="10" fontWeight="800" fill={C.ink} fontFamily={FONT} opacity="0.8">{trend.up}</text>
+                  <text x={sx(lx)} y={clamp(sy(ly) + 20, m.t + 24, Hh - m.b - 6)} textAnchor="middle" fontSize="10" fontWeight="800" fill={C.faint} fontFamily={FONT}>{trend.down}</text>
+                </g>
+              )}
+            </g>
+          );
+        })()}
         {pts.map((p) => (
           <circle key={p.id} cx={sx(p.x)} cy={sy(p.y)} r={p.r} fill={p.color} opacity={p.held ? 0.95 : 0.55}
             stroke={p.held ? C.apricotDeep : "#fff"} strokeWidth={p.held ? 2 : 0.5}
@@ -175,6 +202,96 @@ function Scatter({ pts, xDomain, yDomain, xLabel, yLabel, quads, onPick, height 
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------- 트리맵 (수익률 지도) ----------------
+export function squarify(items, x, y, w, h) {
+  // items: [{v>0, ...}] 내림차순. 최악 종횡비를 최소화하며 행 단위로 배치.
+  const out = [];
+  let rest = items.filter((i) => i.v > 0);
+  let total = rest.reduce((s, i) => s + i.v, 0);
+  let rx = x, ry = y, rw = w, rh = h;
+  while (rest.length && total > 0 && rw > 0.5 && rh > 0.5) {
+    const horiz = rw >= rh;
+    const side = horiz ? rh : rw;
+    const scale = (rw * rh) / total;
+    const worst = (arr, sum) => {
+      const thick = (sum * scale) / side;
+      let mx = 0;
+      for (const it of arr) {
+        const l = (it.v * scale) / thick;
+        mx = Math.max(mx, Math.max(l / thick, thick / l));
+      }
+      return mx;
+    };
+    let row = [rest[0]], rowSum = rest[0].v, cur = worst(row, rowSum), i = 1;
+    while (i < rest.length) {
+      const trial = worst(row.concat(rest[i]), rowSum + rest[i].v);
+      if (trial <= cur) { row.push(rest[i]); rowSum += rest[i].v; cur = trial; i++; } else break;
+    }
+    const thick = (rowSum * scale) / side;
+    let off = 0;
+    for (const it of row) {
+      const l = (it.v * scale) / thick;
+      out.push(horiz ? { x: rx, y: ry + off, w: thick, h: l, item: it } : { x: rx + off, y: ry, w: l, h: thick, item: it });
+      off += l;
+    }
+    if (horiz) { rx += thick; rw -= thick; } else { ry += thick; rh -= thick; }
+    rest = rest.slice(row.length);
+    total -= rowSum;
+  }
+  return out;
+}
+
+function Treemap({ comps, heldMap, onOpen }) {
+  const W = 720, Hh = 430;
+  const rects = useMemo(() => {
+    const ok = comps.filter((c) => c.r3 != null && (c.cap || 0) >= 0.3);
+    if (ok.length < 10) return null;
+    const bySec = {};
+    ok.forEach((c) => (bySec[c.s] = bySec[c.s] || []).push(c));
+    const secs = Object.entries(bySec)
+      .map(([k, arr]) => ({ v: arr.reduce((s, c) => s + c.cap, 0), k, arr: arr.sort((a, b) => b.cap - a.cap).slice(0, 14) }))
+      .sort((a, b) => b.v - a.v).slice(0, 16);
+    const out = [];
+    for (const sr of squarify(secs, 0, 0, W, Hh)) {
+      const pad = 2, head = sr.h > 34 && sr.w > 46 ? 15 : 0;
+      out.push({ type: "sec", ...sr, head });
+      const inner = squarify(sr.item.arr.map((c) => ({ v: c.cap, c })), sr.x + pad, sr.y + pad + head, Math.max(sr.w - pad * 2, 1), Math.max(sr.h - pad * 2 - head, 1));
+      inner.forEach((r) => out.push({ type: "co", ...r }));
+    }
+    return out;
+  }, [comps]);
+  if (!rects) return <Sub style={{ padding: "26px 0", textAlign: "center" }}>수익률 데이터가 아직 없어요. 데이터 갱신 후 표시돼요.</Sub>;
+  const col = (r3) => {
+    const t = clamp(Math.abs(r3) / 15, 0.08, 1);
+    return { fill: r3 >= 0 ? C.up : C.down, opacity: 0.14 + t * 0.62 };
+  };
+  return (
+    <div className="chartbox">
+      <svg viewBox={`0 0 ${W} ${Hh}`} style={{ width: "100%", height: "auto", display: "block", borderRadius: 8 }}>
+        <rect x="0" y="0" width={W} height={Hh} fill={C.bg} />
+        {rects.map((r, i) => r.type === "co" ? (
+          <g key={i} onClick={() => onOpen(r.item.c.t)} style={{ cursor: "pointer" }}>
+            <rect x={r.x} y={r.y} width={Math.max(r.w - 1, 0.5)} height={Math.max(r.h - 1, 0.5)} {...col(r.item.c.r3)}
+              stroke={heldMap[r.item.c.t] ? C.apricotDeep : "#FFFFFF"} strokeWidth={heldMap[r.item.c.t] ? 2 : 0.8} />
+            <title>{`${r.item.c.nk} · ${SEC(r.item.c.s).ko}\n3개월 ${r.item.c.r3 >= 0 ? "+" : ""}${r.item.c.r3}% · ${r.item.c.cap.toFixed(1)}조`}</title>
+            {r.w > 56 && r.h > 30 && (
+              <>
+                <text x={r.x + 5} y={r.y + 13} fontSize="9.5" fontWeight="800" fill={C.ink} fontFamily={FONT} pointerEvents="none">{r.item.c.nk.slice(0, Math.floor(r.w / 9))}</text>
+                <text x={r.x + 5} y={r.y + 24} fontSize="9" fontWeight="700" fill={r.item.c.r3 >= 0 ? C.up : C.down} fontFamily={FONT} pointerEvents="none">{r.item.c.r3 >= 0 ? "+" : ""}{r.item.c.r3}%</text>
+              </>
+            )}
+          </g>
+        ) : (
+          <g key={i} pointerEvents="none">
+            <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="none" stroke={C.ink} strokeWidth="1.1" opacity="0.35" />
+            {r.head > 0 && <text x={r.x + 4} y={r.y + 11.5} fontSize="9" fontWeight="800" fill={C.sub} fontFamily={SERIF} letterSpacing="0.03em">{SEC(r.item.k).ko}</text>}
+          </g>
+        ))}
+      </svg>
     </div>
   );
 }
@@ -304,17 +421,45 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
     .map((c) => ({ id: c.t, nm: c.nk, x: c.roe, y: c.pbr, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
       color: SEC(c.s).color, held: !!heldMap[c.t], label: `${c.nk}\nROE ${pc(c.roe)} · PBR ${c.pbr}배` })), [comps, capMin, secFilter, heldMap, heldOnly]);
   const hasMult = useMemo(() => comps.some((c) => c.per != null || c.pbr != null), [comps]);
+  const roeTrend = useMemo(() => {
+    const ps = pbrRoePts;
+    if (ps.length < 10) return null;
+    const n = ps.length;
+    const mx = ps.reduce((s, p) => s + p.x, 0) / n, my = ps.reduce((s, p) => s + p.y, 0) / n;
+    let sxy = 0, sxx = 0;
+    ps.forEach((p) => { sxy += (p.x - mx) * (p.y - my); sxx += (p.x - mx) * (p.x - mx); });
+    if (sxx === 0) return null;
+    const b = sxy / sxx, a = my - b * mx;
+    return { a, b, up: "추세보다 위 — 수익성 대비 높은 평가", down: "추세보다 아래 — 수익성 대비 낮은 평가" };
+  }, [pbrRoePts]);
 
   const boxRows = useMemo(() => Object.entries(secs)
     .map(([k, s]) => ({ k, ko: SEC(k).ko, n: s.n, q: boxKey === "per" ? s.perQ : s.pbrQ, color: SEC(k).color }))
     .filter((r) => r.q).sort((a, b) => a.q[1] - b.q[1]), [secs, boxKey]);
   const boxMax = boxKey === "per" ? 60 : 8;
+  const mktMed = useMemo(() => {
+    const vals = comps.map((c) => boxKey === "per" ? c.per : c.pbr).filter((v) => v != null && v > 0 && v < (boxKey === "per" ? 200 : 20)).sort((a, b) => a - b);
+    return vals.length >= 20 ? vals[Math.floor(vals.length / 2)] : null;
+  }, [comps, boxKey]);
 
   const secKeys = useMemo(() => [...new Set(comps.map((c) => c.s))].sort((a, b) => (secs[b]?.mc || 0) - (secs[a]?.mc || 0)), [comps, secs]);
   const heldN = quadPts.filter((p) => p.held).length;
 
+  const mkt = data.market || {};
+  const Ret = ({ ko, v }) => v == null ? null : (
+    <span style={{ fontSize: 11.5, color: C.sub }}>{ko} <b style={{ color: v >= 0 ? C.up : C.down, fontVariantNumeric: "tabular-nums" }}>{v >= 0 ? "+" : ""}{v}%</b></span>
+  );
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {mkt.kospi != null && (
+        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", background: "#fff", border: HAIR, borderRadius: RAD.card, padding: "10px 16px" }}>
+          <span style={{ fontFamily: SERIF, fontSize: 12, fontWeight: 700, color: C.ink }}>KOSPI <b style={{ fontSize: 14, fontVariantNumeric: "tabular-nums" }}>{mkt.kospi.toLocaleString()}</b></span>
+          <Ret ko="1개월" v={mkt.k1} /><Ret ko="3개월" v={mkt.k3} />
+          {mkt.fx != null && <span style={{ fontSize: 11.5, color: C.sub, borderLeft: "1px solid " + C.line, paddingLeft: 14 }}>원달러 <b style={{ color: C.ink }}>{mkt.fx.toLocaleString()}원</b></span>}
+          {mkt.rf != null && <span style={{ fontSize: 11.5, color: C.sub }}>국고채 10년 <b style={{ color: C.ink }}>{mkt.rf}%</b></span>}
+          <span style={{ fontSize: 10, color: C.faint, marginLeft: "auto" }}>기준 {data.asOf}</span>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         {[[0, "전체"], [1, "1조 이상"], [10, "10조 이상"]].map(([v, ko]) => (
           <ChipBtn key={v} on={capMin === v && !heldOnly} onClick={() => { setHeldOnly(false); setCapMin(v); }}>{ko}</ChipBtn>
@@ -329,11 +474,8 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
       {heldNote && <Sub style={{ color: C.coral }}>저장된 포트폴리오가 없어요. 포트폴리오 탭에서 하나 저장하면 이 필터를 쓸 수 있어요.</Sub>}
 
       <Card>
-        <H onWhy={() => setExplain("quad")}>업종 성장 사분면 — 어느 판에서 누가 크고 있나</H>
-        <Sub style={{ marginTop: 3 }}>
-          가로: 업종 매출 성장률(3년 연평균, 상장사 합산) · 세로: 기업 매출 성장률 · 원 크기: 시가총액
-          {heldN > 0 && <> · <span style={{ color: C.apricotDeep, fontWeight: 800 }}>주황 테두리 {heldN}개는 내 포트폴리오 보유 종목</span></>}
-        </Sub>
+        <H num="01" main="성장 지도" sub="업종 × 기업 매출 성장률 사분면 · 3년 연평균 · 원 크기는 시가총액" onWhy={() => setExplain("quad")} />
+        {heldN > 0 && <Sub style={{ marginTop: 5 }}><span style={{ color: C.apricotDeep, fontWeight: 800 }}>주황 테두리 {heldN}개는 내 포트폴리오 보유 종목이에요</span></Sub>}
         <div className="cgrid4" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, margin: "10px 0" }}>
           {[
             { t: "성장 산업 · 성장 기업", s: "산업과 기업이 함께 성장 — 가장 탄탄한 조합", bg: C.tealSoft, dot: C.teal },
@@ -355,10 +497,17 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
         <Sub style={{ marginTop: 8, fontSize: 11, color: C.faint }}>휠이나 + 버튼으로 확대, 드래그로 이동할 수 있어요 · 확대하면 회사 이름이 나타나요 · 원을 누르면 기업 페이지로 이동해요</Sub>
       </Card>
 
+      <Card>
+        <H num="02" main="최근 3개월 수익률 지도" sub="시가총액 가중 트리맵 · 붉은색 상승 · 푸른색 하락" onWhy={() => setExplain("tree")} />
+        <div style={{ marginTop: 10 }}>
+          <Treemap comps={comps.filter((c) => secFilter === "all" || c.s === secFilter)} heldMap={heldMap} onOpen={onOpen} />
+        </div>
+        <Sub style={{ marginTop: 8, fontSize: 10.5, color: C.faint }}>칸을 누르면 기업 페이지로 이동해요 · 색과 크기는 사실의 표시일 뿐, 추천이 아니에요</Sub>
+      </Card>
+
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card>
-          <H onWhy={() => setExplain("secrank")}>업종 성장률 순위 — 어느 판이 커지고 있나</H>
-          <Sub style={{ marginTop: 3 }}>3년 연평균 매출 성장률(상장사 합산 기준)이에요. 규모·수익성을 함께 보세요.</Sub>
+          <H num="03" main="업종별 성장률 순위" sub="3년 연평균 · 상장사 매출 합산 기준" onWhy={() => setExplain("secrank")} />
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
             {secRank.map((r) => (
               <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -377,33 +526,47 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
           {secExcluded.length > 0 && <Sub style={{ marginTop: 8, fontSize: 10.5, color: C.faint }}>표본 부족으로 표시하지 않음: {secExcluded.join(", ")}</Sub>}
         </Card>
         <Card>
-          <H onWhy={() => setExplain("scatter")}>PBR × ROE — 수익성과 평가의 관계</H>
-          <Sub style={{ marginTop: 3 }}>자본을 잘 굴리는 회사가 비싸게 거래되는 게 보통이에요. 그 관계에서 벗어난 위치가 질문의 출발점이에요.</Sub>
+          <H num="04" main="수익성과 주가 수준" sub="ROE × PBR · 원 크기는 시가총액" onWhy={() => setExplain("scatter")} />
+          <Sub style={{ marginTop: 5 }}>잘 버는 회사일수록 장부가치보다 비싸게 거래되는 경향이 있어요. 추세선에서 크게 벗어난 회사가 살펴볼 후보예요.</Sub>
           <div style={{ marginTop: 8 }}>
-            {!hasMult ? <Sub style={{ padding: "30px 0", textAlign: "center" }}>PER·PBR 데이터가 아직 없어요.<br />v12.5 코드 업로드 후 Actions에서 데이터 갱신을 한 번 실행하면 채워져요.</Sub>
-              : <Scatter pts={pbrRoePts} xDomain={[-10, 40]} yDomain={[0, 8]} height={340} zoomable
-                  xLabel="ROE (%)" yLabel="PBR (배)" onPick={onOpen} />}
+            {!hasMult ? <Sub style={{ padding: "30px 0", textAlign: "center" }}>PER·PBR 데이터가 아직 없어요.<br />데이터 갱신을 한 번 실행하면 채워져요.</Sub>
+              : <Scatter pts={pbrRoePts} xDomain={[-10, 40]} yDomain={[0, 8]} height={340} zoomable trend={roeTrend}
+                  xLabel="ROE (%) — 오른쪽일수록 자본을 잘 굴리는 회사" yLabel="PBR (배) — 위일수록 장부가치 대비 비싼 회사" onPick={onOpen} />}
           </div>
         </Card>
       </div>
 
       <Card>
-        <H onWhy={() => setExplain("box")}>업종별 멀티플 분포 — 같은 숫자도 판에 따라 다르게 읽혀요</H>
+        <H num="05" main="업종별 시장 눈높이" sub="PER·PBR 사분위 분포 · 업종 중간값 기준 정렬" onWhy={() => setExplain("box")} />
         <div style={{ display: "flex", gap: 6, margin: "8px 0" }}>
           <ChipBtn on={boxKey === "per"} onClick={() => setBoxKey("per")}>PER</ChipBtn>
           <ChipBtn on={boxKey === "pbr"} onClick={() => setBoxKey("pbr")}>PBR</ChipBtn>
         </div>
         {boxRows.length === 0 && <Sub style={{ padding: "22px 0", textAlign: "center" }}>PER·PBR 데이터가 아직 없어요. 데이터 갱신을 한 번 실행하면 채워져요.</Sub>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 6 }}>
-          {boxRows.map((r) => (
-            <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ width: 110, fontSize: 11.5, fontWeight: 700, color: C.ink, flexShrink: 0, textAlign: "right" }}>{r.ko} <span style={{ color: C.faint, fontWeight: 400 }}>({r.n})</span></span>
-              <div style={{ flex: 1 }}><QuartBand q={r.q} v={null} max={boxMax} /></div>
-              <span style={{ width: 92, fontSize: 10.5, color: C.sub, flexShrink: 0 }}>{r.q[0]}–{r.q[2]} <b style={{ color: C.blue }}>중간 {r.q[1]}</b></span>
+        {boxRows.length > 0 && (
+          <>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+              <span style={{ width: "min(58%, 330px)", display: "flex", justifyContent: "space-between", fontSize: 9.5, color: C.faint }}>
+                <span>시장이 낮게 평가</span><span>시장이 높게 평가</span>
+              </span>
             </div>
-          ))}
-        </div>
-        <Sub style={{ marginTop: 8, fontSize: 10.5, color: C.faint }}>{boxKey === "per" ? "PER은 0~200배 구간만 집계 (적자 기업 제외)" : "PBR은 0~20배 구간만 집계"} · 상자: 25~75% · 선: 중간값</Sub>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+              {boxRows.map((r) => (
+                <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ width: 110, fontSize: 11.5, fontWeight: 700, color: C.ink, flexShrink: 0, textAlign: "right" }}>{r.ko} <span style={{ color: C.faint, fontWeight: 400 }}>({r.n})</span></span>
+                  <svg viewBox="0 0 240 18" style={{ flex: 1, height: 18, minWidth: 120, maxWidth: 330 }}>
+                    <line x1="3" y1="9" x2="237" y2="9" stroke={C.line} strokeWidth="1.5" />
+                    <rect x={3 + clamp(r.q[0] / boxMax, 0, 1) * 234} y="6.5" width={Math.max(2, (clamp(r.q[2] / boxMax, 0, 1) - clamp(r.q[0] / boxMax, 0, 1)) * 234)} height="5" rx="2.5" fill={C.blueSoft} />
+                    {mktMed != null && <line x1={3 + clamp(mktMed / boxMax, 0, 1) * 234} y1="2" x2={3 + clamp(mktMed / boxMax, 0, 1) * 234} y2="16" stroke={C.faint} strokeWidth="1.3" strokeDasharray="2.5 2" />}
+                    <circle cx={3 + clamp(r.q[1] / boxMax, 0, 1) * 234} cy="9" r="5" fill={C.ink} />
+                  </svg>
+                  <span style={{ width: 96, fontSize: 10.5, color: C.sub, flexShrink: 0 }}><b style={{ color: C.ink, fontSize: 12 }}>{r.q[1]}배</b> <span style={{ color: C.faint }}>({r.q[0]}–{r.q[2]})</span></span>
+                </div>
+              ))}
+            </div>
+            <Sub style={{ marginTop: 9, fontSize: 10.5, color: C.faint }}>굵은 점: 업종 중간값 · 옅은 막대: 업종의 25~75% 구간 · 점선: 시장 전체 중간값{boxKey === "per" ? " · 적자 기업 제외" : ""}</Sub>
+          </>
+        )}
       </Card>
     </div>
   );
@@ -482,7 +645,7 @@ function MultRow({ label, valTxt, band, sentence, onWhy }) {
   );
 }
 
-export function CompanyView({ data, t, heldInfo, onBack, onOpen, setExplain }) {
+export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain }) {
   const c = data.companies.find((x) => x.t === t);
   const sec = c ? data.sectors[c.s] : null;
   if (!c) return <Card><Sub>이 종목의 데이터를 찾지 못했어요.</Sub></Card>;
@@ -492,6 +655,22 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, setExplain }) {
   const payout = c.dps && c.eps && c.eps > 0 ? c.dps / c.eps * 100 : null;
 
   // 멀티플 문장
+  const FIN_SECS = { bank: 1, insure: 1, broker: 1, holding: 1 };
+  const evSent = c.evE != null
+    ? (sec?.evEQ ? `부채까지 포함한 기업 전체 가치가 상각 전 영업이익의 ${c.evE}배 — 업종 중간값은 ${sec.evEQ[1]}배예요.` : `기업 전체 가치가 상각 전 영업이익의 ${c.evE}배예요.`)
+    : FIN_SECS[c.s] ? "은행·보험·증권·지주는 사업 구조상 EV 지표를 쓰지 않아요." : "차입금·상각비 데이터가 부족해 계산하지 못했어요.";
+  const pcfSent = c.pcf != null
+    ? (sec?.pcfQ ? `영업에서 실제 들어온 현금의 ${c.pcf}배 가격 — 업종 중간값은 ${sec.pcfQ[1]}배예요. 이익과 현금이 크게 다르면 이쪽이 더 정직할 때가 많아요.` : `영업현금흐름의 ${c.pcf}배 가격이에요.`)
+    : "영업현금흐름 데이터가 없어요.";
+  const dpsTrend = (() => {
+    const d3 = c.dps3;
+    if (!d3 || d3[0] == null) return null;
+    const [cur, prv, lwf] = d3;
+    if (prv == null) return null;
+    if (cur > prv * 1.03) return { w: "증가", col: C.teal };
+    if (cur < prv * 0.97) return { w: "감소", col: C.coral };
+    return { w: "유지", col: C.sub };
+  })();
   const perSent = c.per == null ? "적자이거나 데이터가 없어 PER을 계산할 수 없어요."
     : sec?.perQ ? `이익 1원에 ${c.per}원 — 업종 중간값 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요. 시장의 기대가 큰 만큼, 그 기대의 근거를 물어볼 자리예요." : "낮아요. 싸다는 뜻일 수도, 시장이 성장을 의심한다는 뜻일 수도 있어요."}`
     : `이익 1원에 시장이 ${c.per}원을 내고 있어요.`;
@@ -527,6 +706,9 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, setExplain }) {
     mkPos("PER", peers.map((x) => (x.per > 0 && x.per < 200 ? x.per : null)), c.per > 0 && c.per < 200 ? c.per : null, (x) => x.toFixed(1) + "배"),
     mkPos("PBR", peers.map((x) => (x.pbr > 0 && x.pbr < 20 ? x.pbr : null)), c.pbr > 0 && c.pbr < 20 ? c.pbr : null, (x) => x.toFixed(2) + "배"),
     mkPos("PSR (매출 대비)", peers.map((x) => { const ps = psrOf(x); return ps > 0 && ps < 50 ? ps : null; }), (() => { const ps = psrOf(c); return ps > 0 && ps < 50 ? ps : null; })(), (x) => x.toFixed(1) + "배"),
+    mkPos("EV/EBITDA", peers.map((x) => (x.evE > 0 && x.evE < 60 ? x.evE : null)), c.evE > 0 && c.evE < 60 ? c.evE : null, (x) => x.toFixed(1) + "배"),
+    mkPos("EV/매출", peers.map((x) => (x.evR > 0 && x.evR < 30 ? x.evR : null)), c.evR > 0 && c.evR < 30 ? c.evR : null, (x) => x.toFixed(2) + "배"),
+    mkPos("P/현금흐름", peers.map((x) => (x.pcf > 0 && x.pcf < 60 ? x.pcf : null)), c.pcf > 0 && c.pcf < 60 ? c.pcf : null, (x) => x.toFixed(1) + "배"),
     c.dy > 0 ? mkPos("배당수익률", peers.map((x) => (x.dy > 0 ? x.dy : null)), c.dy, (x) => x.toFixed(1) + "%", "high") : null,
   ].filter(Boolean);
 
@@ -556,31 +738,46 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, setExplain }) {
             )}
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 21, fontWeight: 800, color: C.ink }}>{fmtWon(c.price)}</div>
-            <div style={{ fontSize: 11, color: C.sub }}>시가총액 {c.cap ? c.cap.toFixed(1) + "조원" : "—"}</div>
+            <div style={{ fontSize: 21, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{fmtWon(c.price)}</div>
+            <div style={{ fontSize: 11, color: C.sub }}>시가총액 {c.cap ? c.cap.toFixed(1) + "조원" : "—"}{c.r3 != null && <> · 3개월 <b style={{ color: c.r3 >= 0 ? C.up : C.down }}>{c.r3 >= 0 ? "+" : ""}{c.r3}%</b></>}</div>
+            {onCompare && <button onClick={onCompare} style={{ marginTop: 7, border: "1.5px solid " + C.ink, background: "#fff", color: C.ink, borderRadius: 999, padding: "5px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>같은 업종과 비교</button>}
           </div>
         </div>
       </Card>
 
       <Card>
-        <H onWhy={() => setExplain("box")}>멀티플 — 업종 분포 속의 위치</H>
-        <Sub style={{ marginTop: 3 }}>주황 점이 이 회사, 파란 상자가 업종의 25~75% 구간이에요.</Sub>
+        <H num="01" main="투자지표" sub="밸류에이션 멀티플 · 업종 사분위 대비" onWhy={() => setExplain("box")} />
+        <Sub style={{ marginTop: 5 }}>주황 점이 이 회사, 파란 상자가 업종의 25~75% 구간이에요.</Sub>
         <div style={{ marginTop: 4 }}>
           <MultRow label="PER" valTxt={c.per != null ? c.per + "배" : "—"} onWhy={() => setExplain("per")}
             band={<QuartBand q={sec?.perQ} v={c.per} max={60} />} sentence={perSent} />
           <MultRow label="PBR" valTxt={c.pbr != null ? c.pbr + "배" : "—"} onWhy={() => setExplain("pbr")}
             band={<QuartBand q={sec?.pbrQ} v={c.pbr} max={8} />} sentence={pbrSent} />
+          <MultRow label="EV/EBITDA" valTxt={c.evE != null ? c.evE + "배" : "—"} onWhy={() => setExplain("evebitda")}
+            band={<QuartBand q={sec?.evEQ} v={c.evE} max={40} />} sentence={evSent} />
+          <MultRow label="P/영업현금흐름" valTxt={c.pcf != null ? c.pcf + "배" : "—"} onWhy={() => setExplain("pocf")}
+            band={<QuartBand q={sec?.pcfQ} v={c.pcf} max={40} />} sentence={pcfSent} />
           <MultRow label="ROE" valTxt={pc(c.roe)} onWhy={() => setExplain("roe")}
             band={<div style={{ width: 190, fontSize: 10.5, color: C.faint }}>업종 중간값 {pc(sec?.roe)}</div>} sentence={roeSent} />
           <MultRow label="배당수익률" valTxt={pc(c.dy)} onWhy={() => setExplain("payout")}
-            band={<div style={{ width: 190, fontSize: 10.5, color: C.faint }}>배당성향 {payout != null ? payout.toFixed(0) + "%" : "—"}</div>}
+            band={c.dps3 && c.dps3[0] != null ? (
+              <div style={{ width: 190, display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="52" height="20" style={{ flexShrink: 0 }}>
+                  {[c.dps3[2], c.dps3[1], c.dps3[0]].map((v, i) => {
+                    const mx = Math.max(...c.dps3.filter((x) => x != null), 1);
+                    return v == null ? null : <rect key={i} x={i * 18} y={18 - (v / mx) * 15} width="13" height={Math.max((v / mx) * 15, 1)} rx="2" fill={i === 2 ? C.ink : "#C7CEDB"} />;
+                  })}
+                </svg>
+                <span style={{ fontSize: 10, color: C.faint }}>3년 주당배당{dpsTrend && <b style={{ color: dpsTrend.col }}> {dpsTrend.w}</b>} · 성향 {payout != null ? payout.toFixed(0) + "%" : "—"}</span>
+              </div>
+            ) : <div style={{ width: 190, fontSize: 10.5, color: C.faint }}>배당성향 {payout != null ? payout.toFixed(0) + "%" : "—"}</div>}
             sentence={payout == null ? "배당이 없거나 이익 데이터가 없어요." : payout > 100 ? "이익보다 많은 배당을 주고 있어요 — 이 수준은 계속되기 어려워요." : payout > 60 ? "이익의 상당 부분을 배당으로 돌려주는 편이에요." : "이익 대비 무리 없는 배당 수준이에요."} />
         </div>
       </Card>
 
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card>
-          <H>3개년 흐름 — 매출이 이익으로 이어지고 있나</H>
+          <H num="02" main="3개년 실적 흐름" sub="매출·영업이익·순이익 · 사업보고서 기준" />
           {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)</Sub> : (
             <>
               <div style={{ display: "flex", justifyContent: "space-around", marginTop: 12, gap: 6 }}>
@@ -597,7 +794,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, setExplain }) {
           )}
         </Card>
         <Card>
-          <H onWhy={() => setExplain("ff")}>밸류에이션 풋볼필드 — 여러 잣대로 본 높낮이</H>
+          <H num="03" main="업종 내 위치" sub="상대가치 지표 비교 · PER·PBR·PSR·EV/EBITDA" onWhy={() => setExplain("ff")} />
           {ffRows.length === 0 ? <Sub style={{ marginTop: 8 }}>표시할 잣대가 없어요. 데이터 갱신 후 채워져요.</Sub> : (
             <div style={{ marginTop: 6 }}>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, fontSize: 9, color: C.faint, paddingRight: 2 }}>
@@ -631,6 +828,76 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, setExplain }) {
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
         교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
       </div>
+    </div>
+  );
+}
+
+// ---------------- 기업 비교 ----------------
+export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
+  const base = data.companies.find((x) => x.t === baseT);
+  const peers = useMemo(() => data.companies.filter((x) => x.s === base?.s && x.t !== baseT).sort((a, b) => (b.cap || 0) - (a.cap || 0)), [data, base, baseT]);
+  const [sel, setSel] = useState(() => peers.slice(0, 2).map((x) => x.t));
+  if (!base) return <Card><Sub>데이터를 찾지 못했어요.</Sub></Card>;
+  const cols = [base, ...sel.map((t) => data.companies.find((x) => x.t === t)).filter(Boolean)];
+  const sec = data.sectors[base.s] || {};
+  const toggle = (t) => setSel(sel.includes(t) ? sel.filter((x) => x !== t) : sel.length < 3 ? [...sel, t] : sel);
+  const F = {
+    num: (v, d = 1, u = "") => v == null ? "—" : v.toFixed(d) + u,
+    won: (v) => v == null ? "—" : fmtEok(v),
+  };
+  const ROWS = [
+    ["시가총액", (c) => c.cap != null ? c.cap.toFixed(1) + "조" : "—", null],
+    ["최근 매출", (c) => F.won(c.rev && c.rev[0]), null],
+    ["매출 성장률 (3년 연평균)", (c) => c.g3 != null ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null],
+    ["영업이익률", (c) => F.num(c.opm, 1, "%"), sec.opm != null ? sec.opm + "%" : "—"],
+    ["ROE", (c) => F.num(c.roe, 1, "%"), sec.roe != null ? sec.roe + "%" : "—"],
+    ["PER", (c) => F.num(c.per, 1, "배"), sec.perQ ? sec.perQ[1] + "배" : "—"],
+    ["PBR", (c) => F.num(c.pbr, 2, "배"), sec.pbrQ ? sec.pbrQ[1] + "배" : "—"],
+    ["EV/EBITDA", (c) => F.num(c.evE, 1, "배"), sec.evEQ ? sec.evEQ[1] + "배" : "—"],
+    ["P/영업현금흐름", (c) => F.num(c.pcf, 1, "배"), sec.pcfQ ? sec.pcfQ[1] + "배" : "—"],
+    ["배당수익률", (c) => F.num(c.dy, 1, "%"), null],
+    ["베타 (시장 대비 출렁임)", (c) => F.num(c.beta, 2), null],
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <button onClick={onBack} style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 5, border: HAIR, background: "#fff", borderRadius: 999, padding: "6px 12px", fontSize: 11.5, fontWeight: 700, color: C.sub, cursor: "pointer", fontFamily: FONT }}>
+        <Ic name="back" size={12} color={C.sub} />{base.nk}로 돌아가기
+      </button>
+      <Card>
+        <H main="기업 비교" sub={`${SEC(base.s).ko} · 지표별 나란히 보기 · 최대 4개사`} onWhy={() => setExplain("cmp")} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          {peers.slice(0, 12).map((x) => (
+            <ChipBtn key={x.t} on={sel.includes(x.t)} onClick={() => toggle(x.t)}>{x.nk}</ChipBtn>
+          ))}
+        </div>
+        <div style={{ overflowX: "auto", marginTop: 14 }}>
+          <table style={{ borderCollapse: "collapse", fontFamily: FONT, minWidth: 480, width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "7px 10px", fontSize: 10.5, color: C.faint, fontWeight: 700, borderBottom: "2px solid " + C.ink }}>지표</th>
+                {cols.map((c, i) => (
+                  <th key={c.t} style={{ padding: "7px 10px", borderBottom: "2px solid " + C.ink, background: i === 0 ? C.apricotSoft : "transparent" }}>
+                    <button onClick={() => onOpen(c.t)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: SERIF, fontSize: 12.5, fontWeight: 800, color: C.ink, padding: 0 }}>{c.nk}</button>
+                  </th>
+                ))}
+                <th style={{ padding: "7px 10px", fontSize: 10.5, color: C.faint, fontWeight: 700, borderBottom: "2px solid " + C.ink }}>업종 중간값</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ROWS.map(([ko, fn, med]) => (
+                <tr key={ko}>
+                  <td style={{ padding: "8px 10px", fontSize: 11.5, fontWeight: 700, color: C.sub, borderBottom: "1px solid " + C.line }}>{ko}</td>
+                  {cols.map((c, i) => (
+                    <td key={c.t} style={{ padding: "8px 10px", fontSize: 12.5, fontWeight: 800, color: C.ink, textAlign: "center", borderBottom: "1px solid " + C.line, background: i === 0 ? C.apricotSoft : "transparent", fontVariantNumeric: "tabular-nums" }}>{fn(c)}</td>
+                  ))}
+                  <td style={{ padding: "8px 10px", fontSize: 11.5, color: C.faint, textAlign: "center", borderBottom: "1px solid " + C.line, fontVariantNumeric: "tabular-nums" }}>{med || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
+      </Card>
     </div>
   );
 }
@@ -685,7 +952,7 @@ export function DcfCard({ c, sharesM, setExplain }) {
 
   return (
     <Card>
-      <H onWhy={() => setExplain("dcf")}>DCF 분석 — 가정에 따라 가치가 어떻게 달라지나</H>
+      <H num="04" main="가정으로 계산하는 가치" sub="DCF(현금흐름할인) 모형 · 민감도 분석" onWhy={() => setExplain("dcf")} />
       <Sub style={{ marginTop: 3 }}>
         순이익을 현금흐름으로 근사한 <b style={{ color: C.ink }}>단순화 모형</b>입니다. 특정 가격을 제시하기 위한 것이 아니라, 가정이 바뀔 때 가치 추정이 얼마나 달라지는지 확인하는 도구예요.
         {!auto && " 이 종목은 자동 채움 데이터가 없어 직접 입력이 필요해요."}
@@ -781,6 +1048,8 @@ export function DcfCard({ c, sharesM, setExplain }) {
 // ---------------- 루트 ----------------
 const CORP_CSS = `
   @media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } .cgrid4 { grid-template-columns: 1fr 1fr !important } }
+  .cwrap svg, .cwrap svg text { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
+  .cwrap .chartbox { user-select: none; -webkit-user-select: none; }
 `;
 
 export default function CorpApp() {
@@ -830,7 +1099,7 @@ export default function CorpApp() {
 
   const d = state.data;
   return (
-    <div style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
+    <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
       <style>{CORP_CSS}</style>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6 }}>
@@ -841,7 +1110,8 @@ export default function CorpApp() {
       </div>
       {view.kind === "market" && <MarketView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
       {view.kind === "search" && <SearchView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} />}
-      {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
+      {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} onCompare={() => setView({ kind: "cmp", t: view.t })} setExplain={setExplain} />}
+      {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
       {view.kind === "market" && (
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 20, lineHeight: 1.7 }}>
           교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
