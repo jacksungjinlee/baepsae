@@ -42,12 +42,13 @@ jobs:
           test -s data.json || (echo "data.json 이 비어 있습니다" && exit 1)
           python -c "import json;d=json.load(open('data.json'));print('종목 수:',len(d['stocks']),'· 기준일:',d['asOf'])"
           test -s corp.json || (echo "corp.json 이 비어 있습니다" && exit 1)
+          test -s disc.json || (echo "disc.json 이 비어 있습니다" && exit 1)
           python -c "import json;d=json.load(open('corp.json'));print('기업분석:',len(d['companies']),'개사 ·',len(d['sectors']),'개 업종')"
 
       - name: 커밋 & 푸시
         run: |
           git config user.name  "baepsae-bot"
           git config user.email "actions@github.com"
-          git add data.json corp.json
+          git add data.json corp.json disc.json
           git diff --staged --quiet && echo "변경 없음" || git commit -m "데이터 갱신 $(date -u +%Y-%m-%d)"
           git push
