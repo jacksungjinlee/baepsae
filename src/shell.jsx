@@ -7,6 +7,7 @@ import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store } from "./detail.jsx";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
+import DiscApp from "./disc.jsx";
 
 const MAST_CSS = `@media (max-width: 560px) { .mastSub { display: none } }`;
 const CREDIT_KO = "이성진, INSEAD MBA 26J";
@@ -15,7 +16,7 @@ const CREDIT_EN = "Jack (Sung Jin) Lee, INSEAD MBA 26J";
 const TABS = [
   { id: "pf", ko: "포트폴리오", icon: "compass" },
   { id: "corp", ko: "기업분석", icon: "chart" },
-  { id: "disc", ko: "공시·수급", icon: "doc", soon: true },
+  { id: "disc", ko: "공시·수급", icon: "doc" },
 ];
 
 function TopNav({ tab, setTab, showBack, onBack }) {
@@ -141,6 +142,7 @@ const GATE_CSS = `
 
 export default function Shell() {
   const [tab, setTab] = useState("pf");
+  const [corpJump, setCorpJump] = useState(null);
   const [mode, setMode] = useState(null); // null=게이트, "simple", "detail"
   const [seed, setSeed] = useState(null);
   const [hasSimpleSave, setHasSimpleSave] = useState(false);
@@ -159,8 +161,8 @@ export default function Shell() {
       {tab === "pf" && mode === null && <ModeGate onPick={setMode} hasSimpleSave={hasSimpleSave} />}
       {tab === "pf" && mode === "simple" && <SimpleApp onGraduate={graduate} onExit={() => setMode(null)} />}
       {tab === "pf" && mode === "detail" && <DetailApp seed={seed} />}
-      {tab === "corp" && <CorpApp />}
-      {tab === "disc" && <Stub kind="disc" />}
+      {tab === "corp" && <CorpApp jump={corpJump} onJumpDone={() => setCorpJump(null)} />}
+      {tab === "disc" && <DiscApp onOpenCompany={(t) => { setCorpJump(t); setTab("corp"); }} />}
     </div>
   );
 }

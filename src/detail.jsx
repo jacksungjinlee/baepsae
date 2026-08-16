@@ -13,6 +13,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 // ================= Palette: tokens.js (v11 디자인 시스템) =================
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
+import { downloadPortfolioCard } from "./sharecard.js";
 const DATA_AS_OF = "2026-01";
 
 // ================= Storage adapter (artifact / browser / memory) =================
@@ -2994,6 +2995,31 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
           {profile.ready && !metrics.empty && <Dashboard lang={lang} t={t} metrics={metrics} profile={profile} setExplain={setExplain} />}
           {profile.ready && !metrics.empty && <AlertsBox lang={lang} t={t} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} stocks={stocks} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} />}
           {!metrics.empty && <Btn onClick={goDiagnose} style={{ width: "100%" }}>{t("goDiagnose")}</Btn>}
+          {!metrics.empty && profile.ready && (
+            <Btn kind="ghost" style={{ width: "100%" }} onClick={() => {
+              try {
+                const sums = { kr: 0, us: 0, mt: 0 };
+                let inv = 0;
+                holdings.forEach((h) => {
+                  const st = stocksById[h.t]; const mw = h.mw || 0; inv += mw;
+                  if (st && st.cls === "us") sums.us += mw;
+                  else if (st && st.cls === "metal") sums.mt += mw;
+                  else sums.kr += mw;
+                });
+                const cash = Math.max((budgetMw || 0) - inv, 0);
+                const tot = inv + cash || 1;
+                const buckets = [
+                  { ko: lang === "ko" ? "국내 주식" : "KR stocks", pct: sums.kr / tot * 100, color: "#5B7DB1" },
+                  { ko: lang === "ko" ? "미국 주식" : "US stocks", pct: sums.us / tot * 100, color: "#8A6FB8" },
+                  { ko: lang === "ko" ? "금·은" : "Gold/Silver", pct: sums.mt / tot * 100, color: "#C9A227" },
+                  { ko: lang === "ko" ? "현금" : "Cash", pct: cash / tot * 100, color: "#8B95A8" },
+                ].filter((b) => b.pct >= 0.5);
+                const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
+                  .map((h) => ({ nk: (stocksById[h.t] && stocksById[h.t].nk) || h.t, pct: (h.mw || 0) / tot * 100 }));
+                downloadPortfolioCard({ score, buckets, top, dateStr: new Date().toISOString().slice(0, 10) });
+              } catch (e) {}
+            }}>{lang === "ko" ? "포트폴리오 카드 저장 (이미지)" : "Save portfolio card"}</Btn>
+          )}
         </div>
       </div>
     </div>

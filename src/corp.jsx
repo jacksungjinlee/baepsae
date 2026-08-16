@@ -784,7 +784,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             ) : <div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>3년 추이 데이터 없음</div>}
             cap={payout == null ? "배당이 없거나 이익 데이터가 없어요" : payout > 100 ? `배당성향 ${payout.toFixed(0)}% — 이익보다 커요` : `배당성향 ${payout.toFixed(0)}% · 3년 주당배당 기준`} />
         </div>
-        <button onClick={() => setExplain("trap")} style={{ marginTop: 12, background: "none", border: "none", padding: 0, fontSize: 11, fontWeight: 700, color: C.apricotDeep, cursor: "pointer", fontFamily: FONT }}>싼 값이 오래 싼 값으로 남는 이유 →</button>
+        <button onClick={() => setExplain("trap")} style={{ marginTop: 14, background: C.apricotSoft, border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 12, fontWeight: 800, color: C.apricotDeep, cursor: "pointer", fontFamily: FONT }}>싼 값이 오래 싼 값으로 남는 이유 →</button>
       </Card>
 
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -865,10 +865,72 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} />
 
+      <DiscSignals c={c} />
+
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
         뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
       </div>
     </div>
+  );
+}
+
+// ---------------- 공시·재무 신호 (기업 페이지) ----------------
+function DiscSignals({ c }) {
+  const [mine, setMine] = useState(null);
+  useEffect(() => { let ok = true; (async () => {
+    const d = await loadDisc();
+    if (!ok) return;
+    setMine({
+      ins: (d.insider || []).filter((x) => x.t === c.t).slice(0, 5),
+      nps: (d.nps || []).find((x) => x.t === c.t) || null,
+    });
+  })(); return () => { ok = false; }; }, [c.t]);
+
+  const fl = c.fl || {};
+  const flags = [
+    fl.cr != null && `유동비율 ${fl.cr}% — 1년 안에 갚아야 할 돈이 유동자산보다 많아요`,
+    fl.icr != null && `이자보상배율 ${fl.icr}배 — 영업이익으로 이자를 다 감당하지 못하는 수준이에요`,
+    fl.l3 && "3년 연속 순손실이 이어지고 있어요",
+    fl.imp && "자본총계가 자본금보다 작아요 — 자본잠식 신호예요",
+  ].filter(Boolean);
+  const hasAny = flags.length > 0 || (mine && (mine.ins.length > 0 || mine.nps));
+  if (!hasAny) return null;
+
+  return (
+    <Card>
+      <H num="05" main="짚고 갈 것" sub="공시·재무 신호 · 판단이 아니라 확인 목록" />
+      {flags.length > 0 && (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          {flags.map((f, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: C.ink, lineHeight: 1.55 }}>
+              <Ic name="alert" size={14} color={C.coral} />
+              <span>{f}</span>
+            </div>
+          ))}
+          <Sub style={{ fontSize: 10.5, color: C.faint }}>직전 사업보고서 기준이에요. 신호는 위험의 단정이 아니라 확인해볼 항목이에요.</Sub>
+        </div>
+      )}
+      {mine && mine.nps && (
+        <Sub style={{ marginTop: 10, fontSize: 12, color: C.ink }}>
+          국민연금 보유 <b>{mine.nps.rt != null ? mine.nps.rt + "%" : "—"}</b>
+          {mine.nps.chg != null && mine.nps.chg !== 0 && <span style={{ color: mine.nps.chg > 0 ? C.up : C.down }}> ({mine.nps.chg > 0 ? "+" : ""}{mine.nps.chg}%p)</span>}
+          <span style={{ color: C.faint }}> · 5% 대량보유 보고 기준</span>
+        </Sub>
+      )}
+      {mine && mine.ins.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.sub }}>최근 내부자 보고</div>
+          {mine.ins.map((x) => (
+            <div key={x.rc} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid " + C.line, fontSize: 11.5 }}>
+              <span style={{ width: 40, color: C.faint, fontVariantNumeric: "tabular-nums" }}>{x.d && x.d.length === 8 ? x.d.slice(4, 6) + "." + x.d.slice(6, 8) : x.d}</span>
+              <span style={{ flex: 1, color: C.ink }}>{x.nm}{x.pos ? ` · ${x.pos}` : ""}</span>
+              <span style={{ fontWeight: 800, color: x.q > 0 ? C.up : C.down, fontVariantNumeric: "tabular-nums" }}>{(x.q > 0 ? "+" : "−") + Math.abs(x.q).toLocaleString()}주</span>
+            </div>
+          ))}
+          <Sub style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>전체 피드는 공시·수급 탭에서 볼 수 있어요 · 내부자 매매는 신호가 아니라 사실이에요</Sub>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -1099,12 +1161,25 @@ const CORP_CSS = `
   .cwrap .chartbox { user-select: none; -webkit-user-select: none; }
 `;
 
-export default function CorpApp() {
+let DISC_CACHE = null;
+async function loadDisc() {
+  if (DISC_CACHE) return DISC_CACHE;
+  try {
+    const r = await fetch("./disc.json", { cache: "no-store" });
+    DISC_CACHE = r.ok ? await r.json() : { insider: [], nps: [] };
+  } catch (e) { DISC_CACHE = { insider: [], nps: [] }; }
+  return DISC_CACHE;
+}
+
+export default function CorpApp({ jump, onJumpDone }) {
   const [state, setState] = useState({ st: "loading" });
   const [view, setView] = useState({ kind: "market" });
   const [heldMap, setHeldMap] = useState({});
   const [explain, setExplain] = useState(null);
   const [tries, setTries] = useState(0);
+  useEffect(() => {
+    if (jump) { setView({ kind: "co", t: jump }); onJumpDone && onJumpDone(); }
+  }, [jump]);
 
   useEffect(() => { (async () => {
     setState({ st: "loading" });
