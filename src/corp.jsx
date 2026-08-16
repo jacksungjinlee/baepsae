@@ -378,7 +378,7 @@ export function reverseDcf({ price, ni0, sharesM, fade, disc, term }) {
 function MissingData({ onRetry }) {
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <Bird mood="think" size={72} />
+      <Bird mood="search" size={80} />
       <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 800, marginTop: 14 }}>기업분석 데이터가 아직 없어요</div>
       <Card style={{ marginTop: 16, textAlign: "left" }}>
         <Sub>
@@ -1214,7 +1214,7 @@ export default function CorpApp({ jump, onJumpDone }) {
 
   if (state.st === "loading") return (
     <div style={{ minHeight: "50vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
-      <div style={{ textAlign: "center" }}><Bird mood="cheer" size={56} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>기업 데이터를 불러오는 중…</div></div>
+      <div style={{ textAlign: "center" }}><Bird mood="data" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>기업 데이터를 불러오는 중…</div></div>
     </div>
   );
   if (state.st === "missing") return <MissingData onRetry={() => setTries(tries + 1)} />;

@@ -30,7 +30,7 @@ const ChipBtn = ({ on, onClick, children }) => (
 function MissingData({ onRetry }) {
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <Bird mood="think" size={72} />
+      <Bird mood="search" size={80} />
       <div style={{ fontSize: 19, fontWeight: 800, marginTop: 14 }}>공시 데이터가 아직 없어요</div>
       <Card style={{ marginTop: 16, textAlign: "left" }}>
         <Sub>GitHub 저장소 → <b style={{ color: C.ink }}>Actions</b> → <b style={{ color: C.ink }}>시세 데이터 갱신</b> → <b style={{ color: C.ink }}>Run workflow</b> 실행 후 새로고침하면 disc.json이 만들어져요. 첫 실행은 90일치 공시를 채우느라 평소보다 오래 걸려요.</Sub>
@@ -231,7 +231,7 @@ export default function DiscApp({ onOpenCompany }) {
 
   if (state.st === "loading") return (
     <div style={{ minHeight: "50vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
-      <div style={{ textAlign: "center" }}><Bird mood="cheer" size={56} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>공시 데이터를 불러오는 중…</div></div>
+      <div style={{ textAlign: "center" }}><Bird mood="search" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>공시 데이터를 불러오는 중…</div></div>
     </div>
   );
   if (state.st === "missing") return <MissingData onRetry={() => setTries(tries + 1)} />;

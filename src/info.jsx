@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Seal } from "./icons.jsx";
+import { Bird } from "./detail.jsx";
 
 // 탤리(tally.so)에서 폼을 만든 뒤 이 주소를 교체하세요. 비어 있으면 이메일 안내가 대신 나와요.
 const TALLY_URL = "https://tally.so/embed/GxEGKL?alignLeft=1&hideTitle=0&transparentBackground=1";
@@ -43,7 +44,7 @@ export default function InfoApp() {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
         <Card style={{ textAlign: "center", padding: "28px 18px" }}>
-          <div style={{ display: "flex", justifyContent: "center" }}><Seal size={52} /></div>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 14 }}><Bird mood="care" size={84} /><Seal size={44} /></div>
           <div style={{ fontSize: 21, fontWeight: 900, marginTop: 12 }}>뱁새</div>
           <div style={{ fontFamily: SERIF, fontSize: 13.5, color: C.apricotDeep, marginTop: 5 }}>황새 말고, 내 걸음으로</div>
           <Sub style={{ marginTop: 14, textAlign: "left" }}>

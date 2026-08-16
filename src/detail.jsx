@@ -886,64 +886,14 @@ const T = {
 };
 
 // ================= Baebi mascot — long-tailed tit (SVG) =================
+// 뱁이 1.0 — 사용자 제작 아트워크 (9종 포즈, mood 이름 → 포즈 번호)
+const BAEPI_POSES = { happy: 1, search: 2, worried: 2, data: 3, think: 4, cheer: 5, grow: 6, work: 7, care: 8, sleep: 9 };
 function Bird({ mood = "happy", pose = "stand", size = 64 }) {
-  const worried = mood === "worried";
-  const closed = mood === "cheer";
-  const think = mood === "think";
-  const fly = pose === "fly";
+  const n = BAEPI_POSES[mood] || 1;
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" aria-label="뱁이">
-      {/* long tail — the signature */}
-      <path d={fly ? "M62 56 L94 72" : "M60 66 L88 88"} stroke="#4A4038" strokeWidth="7" strokeLinecap="round" />
-      <path d={fly ? "M63 58 L91 72" : "M61 68 L85 87"} stroke="#8B7B6B" strokeWidth="2" strokeLinecap="round" />
-      {/* legs */}
-      {!fly && <path d="M40 81 L38 90 M50 81 L50 90" stroke="#8B7355" strokeWidth="2.5" strokeLinecap="round" fill="none" />}
-      {/* round fluffy body */}
-      <circle cx="46" cy="52" r="30" fill="#FFFFFF" stroke="#E7DFD5" strokeWidth="2" />
-      {/* shoulder patch (pinkish brown) */}
-      <ellipse cx="61" cy="57" rx="10" ry="8" fill="#D9B8AE" opacity="0.6" />
-      {/* wing */}
-      {fly ? (
-        <path d="M56 42 Q76 22 85 32 Q78 48 58 50 Z" fill="#5A4F45" />
-      ) : (
-        <path d="M56 48 Q73 52 66 68 Q52 68 50 56 Z" fill="#5A4F45" />
-      )}
-      {/* blue scarf */}
-      <path d="M27 63 Q46 74 65 63 L63 71 Q46 80 29 71 Z" fill="#2C4C7C" />
-      <path d="M58 70 L64 83 L53 78 Z" fill="#1B2B4B" />
-      {/* eyes */}
-      {closed ? (
-        <>
-          <path d="M32 44 Q36 40 40 44" stroke="#1C2B45" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-          <path d="M50 44 Q54 40 58 44" stroke="#1C2B45" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-        </>
-      ) : (
-        <>
-          <circle cx="36" cy="43" r="3.5" fill="#1C2B45" />
-          <circle cx="54" cy="43" r="3.5" fill="#1C2B45" />
-          <circle cx="37.2" cy="41.8" r="1.1" fill="#fff" />
-          <circle cx="55.2" cy="41.8" r="1.1" fill="#fff" />
-        </>
-      )}
-      {worried && (
-        <>
-          <path d="M31 37 L40 40" stroke="#1C2B45" strokeWidth="2" strokeLinecap="round" />
-          <path d="M59 37 L50 40" stroke="#1C2B45" strokeWidth="2" strokeLinecap="round" />
-          <path d="M70 44 q3 5 0 8 q-4 -3 0 -8" fill="#8EC9F5" />
-        </>
-      )}
-      {/* tiny beak */}
-      <path d="M41 49 L49 49 L45 55 Z" fill="#3A3A3A" />
-      {/* rosy cheeks */}
-      <circle cx="30" cy="50" r="3" fill="#F6C6C0" opacity="0.7" />
-      <circle cx="60" cy="50" r="3" fill="#F6C6C0" opacity="0.7" />
-      {think && (
-        <>
-          <circle cx="76" cy="30" r="2.5" fill="#C3D3E2" />
-          <circle cx="84" cy="21" r="3.5" fill="#C3D3E2" />
-        </>
-      )}
-    </svg>
+    <img src={"./baepi-" + n + ".png"} alt="뱁이" width={size} height={size}
+      style={{ display: "inline-block", objectFit: "contain", verticalAlign: "middle" }}
+      onError={(e) => { try { e.currentTarget.onerror = null; e.currentTarget.src = "./icon-192.png"; } catch (err) {} }} />
   );
 }
 
