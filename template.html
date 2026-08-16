@@ -18,6 +18,19 @@
 <meta name="twitter:description" content="자신만의 포트폴리오를 만들어보세요. 황새 말고, 내 걸음으로.">
 <meta name="twitter:image" content="https://pewpewmfer.github.io/baepsae/og.png">
 <link rel="manifest" href="./manifest.webmanifest">
+<script>
+(function(){try{
+  var q=new URLSearchParams(location.search);
+  if(q.get("dev")==="1"){localStorage.setItem("baepsae_dev","1");}
+  if(q.get("dev")==="0"){localStorage.removeItem("baepsae_dev");}
+  if(localStorage.getItem("baepsae_dev")==="1")return;
+  var code="GOATCOUNTER_CODE_HERE";
+  if(code.indexOf("HERE")>-1)return;
+  var s=document.createElement("script");s.async=true;
+  s.dataset.goatcounter="https://"+code+".goatcounter.com/count";
+  s.src="https://gc.zgo.at/count.js";document.head.appendChild(s);
+}catch(e){}})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">

@@ -49,6 +49,8 @@ RF_FALLBACK = 0.03        # 국고채 수익률을 못 받아왔을 때 쓸 값
 OUT = "data.json"
 OUT_CORP = "corp.json"       # v12: 기업분석용 재무 데이터
 OUT_DISC = "disc.json"       # v13: 공시·수급 (내부자 거래 + 국민연금)
+OUT_MACRO = "macro.json"     # v14: 금리·원자재
+ECOS_KEY = os.environ.get("ECOS_API_KEY", "").strip()
 DART_KEY = os.environ.get("DART_API_KEY", "").strip()
 
 EXTRA_US = [
@@ -452,6 +454,167 @@ def enrich_with_dart(kr_stocks):
     got = sum(1 for s in targets if s.get("debt") is not None)
     log(f"· DART 완료: {got:,}건 재무지표 · {len(fin_map):,}건 3개년 원값")
     return kr_stocks, fin_map
+
+
+# ────────────────────────────────────────────────────────────
+# v14: 채권 ETF 블록 — 엄선 목록 + 이름·변동성 검증 (잘못된 티커 방어)
+# ────────────────────────────────────────────────────────────
+BOND_ETFS = [
+    # (티커, 이름에 반드시 포함될 키워드, 표기명, 듀레이션(년), 환헤지, 그룹)
+    ("153130", ["단기채"], "KODEX 단기채권", 0.6, True, "단기"),
+    ("114260", ["국고채", "3"], "KODEX 국고채3년", 2.6, True, "국고채"),
+    ("148070", ["국고채", "10"], "KOSEF 국고채10년", 8.5, True, "국고채"),
+    ("439870", ["국고채", "30"], "KODEX 국고채30년액티브", 19.0, True, "국고채"),
+    ("273130", ["종합채권"], "KODEX 종합채권(AA-이상)액티브", 5.5, True, "종합"),
+    ("305080", ["미국채", "10"], "TIGER 미국채10년선물", 8.5, False, "미국채"),
+    ("453850", ["미국", "30", "국채"], "ACE 미국30년국채액티브(H)", 18.0, True, "미국채"),
+    ("304660", ["미국채", "30"], "KODEX 미국채울트라30년선물(H)", 20.0, True, "미국채"),
+]
+
+
+def fetch_bonds(start, end, kr_bench):
+    """상장 채권 ETF를 받아 채권 블록 레코드와 블록 대표 수익률(10년 국고 기준)을 만듭니다."""
+    import FinanceDataReader as fdr
+    names = {}
+    try:
+        lst = fdr.StockListing("ETF/KR")
+        for _, row in lst.iterrows():
+            names[str(row.get("Symbol") or row.get("Code") or "")] = str(row.get("Name") or "")
+    except Exception as e:
+        log(f"  (ETF 목록 확인 생략: {e} — 이름 검증 없이 진행)")
+
+    recs, proxy = [], None
+    for t, kws, label, dur, hedged, grp in BOND_ETFS:
+        nm = names.get(t, "")
+        if nm and not all(k in nm.replace(" ", "") for k in kws):
+            log(f"  !! 채권 ETF {t} 이름 불일치(기대 {kws} ↔ 실제 {nm}) — 제외")
+            continue
+        try:
+            px = fdr.DataReader(t, start, end)["Close"].dropna()
+            if len(px) < 60:
+                log(f"  (채권 ETF {t} 데이터 부족 — 제외)")
+                continue
+            ret = px.pct_change().dropna()
+            vol = float(np.nanstd(ret.values, ddof=1)) * math.sqrt(252) * 100
+            if vol > 30:
+                log(f"  !! 채권 ETF {t} 변동성 {vol:.0f}% — 채권답지 않아 제외")
+                continue
+            jb = pd.concat([ret.rename("b"), kr_bench.rename("m")], axis=1).dropna()
+            beta = 0.0
+            if len(jb) > 60 and jb["m"].var() > 0:
+                beta = round(float(jb["b"].cov(jb["m"]) / jb["m"].var()), 2)
+            dd = float((px / px.cummax() - 1).min()) * 100
+            hj = "환헤지형이라 환율 변동은 막혀 있어요." if hedged else "환노출형이라 달러가 오르면 추가 수익, 내리면 손실이 더해져요."
+            dk = (f"{grp} 채권 ETF · 듀레이션 약 {dur:g}년. 금리가 1%p 오르면 대략 {dur:g}% 안팎 하락하는 민감도예요. "
+                  + (hj if grp == "미국채" else "") + "채권 ETF 매매차익에는 배당소득세 15.4%가 붙어요.")
+            recs.append({
+                "t": t, "nk": nm or label, "ne": nm or label, "cls": "bond", "s": "bond",
+                "price": round(float(px.iloc[-1]), 0), "vol": round(vol, 1), "beta": beta,
+                "lo": round(float(px.tail(252).min()), 0), "hi": round(float(px.tail(252).max()), 0),
+                "mdd": round(dd, 1), "dy": None, "per": None, "pbr": None, "al": 0,
+                "dur": dur, "hedged": hedged, "grp": grp, "dk": dk,
+                "x": {"dk": dk, "de": ""},
+            })
+            if t == "148070":
+                proxy = ret
+        except Exception as e:
+            log(f"  (채권 ETF {t} 실패: {e})")
+    log(f"· 채권 ETF {len(recs)}종 수집" + ("" if proxy is not None else " · 대표 시계열 없음(블록 상관 생략)"))
+    return recs, proxy
+
+
+def _monthly(series, months=36):
+    try:
+        m = series.dropna().resample("ME").last().tail(months)
+        return {"m": [d.strftime("%y.%m") for d in m.index], "v": [round(float(v), 2) for v in m.values]}
+    except Exception:
+        return None
+
+
+def parse_ecos_items(rows):
+    """817Y002 품목 목록에서 국고채 만기별 코드 매핑. (순수 함수)"""
+    import re
+    out = {}
+    for r in rows:
+        nm = (r.get("ITEM_NAME") or "").replace(" ", "")
+        if "물가연동" in nm:
+            continue
+        m = re.search(r"국고채.*?(1|2|3|5|10|20|30)년", nm)
+        if m:
+            out.setdefault(int(m.group(1)), r.get("ITEM_CODE"))
+    return out
+
+
+def fetch_macro(start, end, gold_krw_px=None, fx=None):
+    """금리·원자재 데이터: 국고채 커브(ECOS)·장단기 금리차·금은유가."""
+    import FinanceDataReader as fdr
+    out = {"asOf": end.isoformat(), "curve": None, "sprKr": None, "sprUs": None,
+           "gold": None, "silver": None, "wti": None}
+    s3 = end - dt.timedelta(days=365 * 3 + 30)
+
+    # 미국 장단기 (FRED, 키 불필요)
+    try:
+        d10 = fdr.DataReader("FRED:DGS10", s3, end).iloc[:, 0]
+        d2 = fdr.DataReader("FRED:DGS2", s3, end).iloc[:, 0]
+        spr = (d10 - d2).dropna()
+        out["sprUs"] = _monthly(spr)
+    except Exception as e:
+        log(f"  (미국 금리차 생략: {e})")
+
+    # 원자재
+    try:
+        import yfinance as yf
+        def yfc(tk):
+            v = yf.download(tk, start=s3, end=end, progress=False, auto_adjust=True)["Close"]
+            return v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v
+        if fx is not None:
+            fxa = fx.reindex(pd.date_range(s3, end)).ffill()
+            g = yfc("GC=F"); out["gold"] = _monthly((g * fxa.reindex(g.index).ffill()).dropna())
+            sv = yfc("SI=F"); out["silver"] = _monthly((sv * fxa.reindex(sv.index).ffill()).dropna())
+    except Exception as e:
+        log(f"  (금·은 생략: {e})")
+    try:
+        w = fdr.DataReader("FRED:DCOILWTICO", s3, end).iloc[:, 0]
+        out["wti"] = _monthly(w)
+    except Exception as e:
+        log(f"  (WTI 생략: {e})")
+
+    # 국고채 커브 + 한국 장단기 (ECOS)
+    if not ECOS_KEY:
+        log("· ECOS_API_KEY 없음 → 국고채 커브 생략 (설정 방법은 가이드 참고)")
+        return out
+    try:
+        r = requests.get(f"https://ecos.bok.or.kr/api/StatisticItemList/{ECOS_KEY}/json/kr/1/200/817Y002", timeout=25)
+        rows = (r.json().get("StatisticItemList") or {}).get("row") or []
+        items = parse_ecos_items(rows)
+        log(f"· ECOS 국고채 만기 확인: {sorted(items.keys())}")
+        series = {}
+        for yr, code in sorted(items.items()):
+            u = (f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_KEY}/json/kr/1/1200/817Y002/D/"
+                 f"{s3.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{code}")
+            rr = requests.get(u, timeout=30)
+            rw = (rr.json().get("StatisticSearch") or {}).get("row") or []
+            if not rw:
+                continue
+            idx = pd.to_datetime([x["TIME"] for x in rw], format="%Y%m%d")
+            series[yr] = pd.Series([float(x["DATA_VALUE"]) for x in rw], index=idx).dropna()
+        if series:
+            tenors = sorted(series.keys())
+            now, ago = [], []
+            ago_target = pd.Timestamp(end - dt.timedelta(days=365))
+            for yr in tenors:
+                s = series[yr]
+                now.append(round(float(s.iloc[-1]), 2))
+                i = s.index.get_indexer([ago_target], method="nearest")[0]
+                ago.append(round(float(s.iloc[i]), 2))
+            out["curve"] = {"tenors": tenors, "now": now, "ago": ago,
+                            "date": series[tenors[0]].index[-1].strftime("%Y-%m-%d")}
+            if 3 in series and 10 in series:
+                out["sprKr"] = _monthly((series[10] - series[3]).dropna())
+            log(f"· 국고채 커브 {len(tenors)}개 만기 · 기준 {out['curve']['date']}")
+    except Exception as e:
+        log(f"  !! ECOS 조회 실패: {e}")
+    return out
 
 
 # ────────────────────────────────────────────────────────────
@@ -1037,11 +1200,12 @@ def fetch_rf():
 def main():
     end = dt.date.today()
     start = end - dt.timedelta(days=int(365.25 * YEARS) + 40)
-    log(f"뱁새 데이터 수집 v12 · {start} ~ {end} · DART {'ON' if DART_KEY else 'OFF'}")
+    log(f"뱁새 데이터 수집 v14 · {start} ~ {end} · DART {'ON' if DART_KEY else 'OFF'}")
 
     rf = fetch_rf()
     kr, fin_map, kr_bench, kr_mkt = fetch_korea(start, end, rf)
     us, us_bench, fx, fx_last, us_vol_krw = fetch_us(start, end, rf)
+    bonds, bd_ret = fetch_bonds(start, end, kr_bench)
 
     if len(kr) < 300 or len(us) < 100:
         log("!! 받아온 종목이 너무 적습니다. 기존 data.json 을 지키기 위해 중단합니다.")
@@ -1056,7 +1220,10 @@ def main():
         fxr = fx.pct_change()
         us_krw = us_bench + fxr.reindex(us_bench.index).fillna(0)
         gold_krw = (gold.pct_change() + fxr.reindex(gold.index).fillna(0)).dropna()
-        j = pd.concat([kr_bench.rename("kr"), us_krw.rename("us"), gold_krw.rename("mt")], axis=1).dropna()
+        cols = [kr_bench.rename("kr"), us_krw.rename("us"), gold_krw.rename("mt")]
+        if bd_ret is not None:
+            cols.append(bd_ret.rename("bd"))
+        j = pd.concat(cols, axis=1).dropna()
         if len(j) > MIN_DAYS:
             c = j.corr()
             settings.update({
@@ -1067,16 +1234,23 @@ def main():
                 "rhoKrMt": round(float(c.loc["kr", "mt"]), 2),
                 "rhoUsMt": round(float(c.loc["us", "mt"]), 2),
             })
+            if "bd" in j.columns:
+                settings.update({
+                    "bdVol": ann_vol(j["bd"].values),
+                    "rhoKrBd": round(float(c.loc["kr", "bd"]), 2),
+                    "rhoUsBd": round(float(c.loc["us", "bd"]), 2),
+                    "rhoMtBd": round(float(c.loc["mt", "bd"]), 2),
+                })
             log(f"· 시장 가정 계산 완료: {settings}")
     except Exception as e:
         log(f"  (상관계수 생략: {e})")
 
-    stocks = add_percentiles(kr + us)
+    stocks = add_percentiles(kr + us) + bonds
     popular = [s["t"] for s in sorted(stocks, key=lambda x: -(x.get("val") or 0))[:120]]
 
     payload = {
         "asOf": end.isoformat(), "fx": round(fx_last, 1), "settings": settings,
-        "popular": popular, "count": {"kr": len(kr), "us": len(us)}, "stocks": stocks,
+        "popular": popular, "count": {"kr": len(kr), "us": len(us), "bond": len(bonds)}, "stocks": stocks,
     }
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
@@ -1088,6 +1262,11 @@ def main():
         json.dump(corp, f, ensure_ascii=False, separators=(",", ":"))
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")
+
+    macro = fetch_macro(start, end, fx=fx)
+    with open(OUT_MACRO, "w", encoding="utf-8") as f:
+        json.dump(macro, f, ensure_ascii=False, separators=(",", ":"))
+    log(f"✓ {OUT_MACRO} 저장 — 커브 {'O' if macro.get('curve') else 'X'} · 원자재 {'O' if macro.get('gold') else 'X'}")
 
     disc = fetch_disclosures(kr, dart_corp_map() if DART_KEY else {}, end)
     with open(OUT_DISC, "w", encoding="utf-8") as f:
