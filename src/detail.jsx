@@ -13,7 +13,48 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 // ================= Palette: tokens.js (v11 디자인 시스템) =================
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
-import { downloadPortfolioCard } from "./sharecard.js";
+import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
+
+function makeCardData(holdings, stocksById, cashMw, score, lang) {
+  const sums = { kr: 0, us: 0, mt: 0 };
+  let inv = 0;
+  holdings.forEach((h) => {
+    const st = stocksById[h.t]; const mw = h.mw || 0; inv += mw;
+    if (st && st.cls === "us") sums.us += mw;
+    else if (st && st.cls === "metal") sums.mt += mw;
+    else sums.kr += mw;
+  });
+  const cash = Math.max(cashMw || 0, 0);
+  const tot = inv + cash || 1;
+  const buckets = [
+    { ko: lang === "ko" ? "국내 주식" : "KR stocks", pct: sums.kr / tot * 100, color: "#5B7DB1" },
+    { ko: lang === "ko" ? "미국 주식" : "US stocks", pct: sums.us / tot * 100, color: "#8A6FB8" },
+    { ko: lang === "ko" ? "금·은" : "Gold/Silver", pct: sums.mt / tot * 100, color: "#C9A227" },
+    { ko: lang === "ko" ? "현금" : "Cash", pct: cash / tot * 100, color: "#8B95A8" },
+  ].filter((b) => b.pct >= 0.5);
+  const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
+    .map((h) => ({ nk: (stocksById[h.t] && stocksById[h.t].nk) || h.t, pct: (h.mw || 0) / tot * 100 }));
+  return { score, buckets, top, dateStr: new Date().toISOString().slice(0, 10) };
+}
+
+function ShareCardModal({ card, onClose, lang }) {
+  const [shared, setShared] = useState(false);
+  if (!card) return null;
+  const canShare = typeof navigator !== "undefined" && !!navigator.share;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,43,69,0.5)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 16, maxWidth: 380, width: "100%", fontFamily: FONT, maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{lang === "ko" ? "이렇게 저장돼요" : "Card preview"}</div>
+        <img src={card.url} alt="portfolio card" style={{ width: "100%", borderRadius: 10, marginTop: 10, border: "1px solid " + C.line, display: "block" }} />
+        <div style={{ display: "grid", gridTemplateColumns: canShare ? "1fr 1fr" : "1fr", gap: 8, marginTop: 12 }}>
+          <Btn kind="dark" onClick={() => saveCard(card.cv, card.dateStr)}>{lang === "ko" ? "이미지 저장" : "Save image"}</Btn>
+          {canShare && <Btn onClick={async () => { const ok = await shareCard(card.cv, card.dateStr); if (ok) { setShared(true); setTimeout(() => setShared(false), 1500); } }}>{shared ? (lang === "ko" ? "공유됨!" : "Shared!") : (lang === "ko" ? "공유하기" : "Share")}</Btn>}
+        </div>
+        <Btn kind="ghost" onClick={onClose} style={{ width: "100%", marginTop: 8 }}>{lang === "ko" ? "닫기" : "Close"}</Btn>
+      </div>
+    </div>
+  );
+}
 const DATA_AS_OF = "2026-01";
 
 // ================= Storage adapter (artifact / browser / memory) =================
@@ -2966,6 +3007,7 @@ function TimeMachine({ lang, t, metrics, settings }) {
 
 // ================= Stage views =================
 function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, setBudgetMw, metrics, stocksById, stocks, addStock, addCustom, updateStock, expanded, setExpanded, setExplain, score, okCount, goDiagnose, settings, onDemo }) {
+  const [cardM, setCardM] = useState(null);
   return (
     <div className="grid3">
       <div>
@@ -2995,30 +3037,17 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
           {profile.ready && !metrics.empty && <Dashboard lang={lang} t={t} metrics={metrics} profile={profile} setExplain={setExplain} />}
           {profile.ready && !metrics.empty && <AlertsBox lang={lang} t={t} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} stocks={stocks} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} />}
           {!metrics.empty && <Btn onClick={goDiagnose} style={{ width: "100%" }}>{t("goDiagnose")}</Btn>}
+          <ShareCardModal card={cardM} onClose={() => setCardM(null)} lang={lang} />
           {!metrics.empty && profile.ready && (
             <Btn kind="ghost" style={{ width: "100%" }} onClick={() => {
               try {
-                const sums = { kr: 0, us: 0, mt: 0 };
                 let inv = 0;
-                holdings.forEach((h) => {
-                  const st = stocksById[h.t]; const mw = h.mw || 0; inv += mw;
-                  if (st && st.cls === "us") sums.us += mw;
-                  else if (st && st.cls === "metal") sums.mt += mw;
-                  else sums.kr += mw;
-                });
-                const cash = Math.max((budgetMw || 0) - inv, 0);
-                const tot = inv + cash || 1;
-                const buckets = [
-                  { ko: lang === "ko" ? "국내 주식" : "KR stocks", pct: sums.kr / tot * 100, color: "#5B7DB1" },
-                  { ko: lang === "ko" ? "미국 주식" : "US stocks", pct: sums.us / tot * 100, color: "#8A6FB8" },
-                  { ko: lang === "ko" ? "금·은" : "Gold/Silver", pct: sums.mt / tot * 100, color: "#C9A227" },
-                  { ko: lang === "ko" ? "현금" : "Cash", pct: cash / tot * 100, color: "#8B95A8" },
-                ].filter((b) => b.pct >= 0.5);
-                const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
-                  .map((h) => ({ nk: (stocksById[h.t] && stocksById[h.t].nk) || h.t, pct: (h.mw || 0) / tot * 100 }));
-                downloadPortfolioCard({ score, buckets, top, dateStr: new Date().toISOString().slice(0, 10) });
+                holdings.forEach((h) => { inv += h.mw || 0; });
+                const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), score, lang);
+                const cv = renderPortfolioCard(data);
+                setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
               } catch (e) {}
-            }}>{lang === "ko" ? "포트폴리오 카드 저장 (이미지)" : "Save portfolio card"}</Btn>
+            }}>{lang === "ko" ? "포트폴리오 카드 만들기" : "Make portfolio card"}</Btn>
           )}
         </div>
       </div>
@@ -3833,8 +3862,16 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
 }
 
 // ================= Export (ship's log) =================
-function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName }) {
+function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score }) {
   const [checks, setChecks] = useState([false, false, false, false, false]);
+  const [cardM, setCardM] = useState(null);
+  const openCard = () => {
+    try {
+      const data = makeCardData(holdings, stocksById, (metrics.cash || 0) / 1e4, score || 0, lang);
+      const cv = renderPortfolioCard(data);
+      setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
+    } catch (e) {}
+  };
   const [copied, setCopied] = useState(false);
   if (metrics.empty) {
     return (
@@ -3952,6 +3989,8 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
         <Btn kind="dark" onClick={() => downloadFile("baepsae-portfolio-" + stamp + ".json", buildJson(), "application/json")}>{t("dlJson")}</Btn>
         <Btn kind="dark" onClick={() => downloadFile("baepsae-orders-" + stamp + ".csv", buildCsv(), "text/csv")}>{t("dlCsv")}</Btn>
       </div>
+      <Btn onClick={openCard} style={{ width: "100%" }}>{lang === "ko" ? "포트폴리오 카드 만들기 (이미지 공유)" : "Make portfolio card (share image)"}</Btn>
+      <ShareCardModal card={cardM} onClose={() => setCardM(null)} lang={lang} />
       <Btn kind="ghost" onClick={copyMemo} style={{ width: "100%" }}>{copied ? "" + t("copied") : t("copyText")}</Btn>
     </div>
   );
@@ -4439,7 +4478,7 @@ function AppInner({ seed }) {
         )}
         {slotId && stage === 3 && (
           <div className="narrow" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-            <ExportView lang={lang} t={t} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} />
+            <ExportView lang={lang} t={t} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
             <Btn kind="ghost" onClick={exitSlot} style={{ width: "100%" }}>{t("slotExit")}</Btn>
           </div>
         )}

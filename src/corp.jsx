@@ -335,12 +335,12 @@ function Spark3({ label, arr }) {
           const x = 6 + i * (bw + 7);
           const y = v >= 0 ? base - h : base;
           return <rect key={i} x={x} y={y} width={bw} height={Math.max(h, 1.5)} rx="2.5"
-            fill={i === 2 ? C.blue : "#C7CEDB"} opacity={v >= 0 ? 1 : 0.75} />;
+            fill={v < 0 ? (i === 2 ? C.coral : "#E9B8B3") : (i === 2 ? C.blue : "#C7CEDB")} />;
         })}
-        <line x1="4" y1={base} x2={W - 4} y2={base} stroke={C.line} strokeWidth="1" />
+        <line x1="4" y1={base} x2={W - 4} y2={base} stroke={C.faint} strokeWidth="1.5" />
       </svg>
       <div style={{ fontSize: 11, fontWeight: 800, color: C.ink, marginTop: 4 }}>{label}</div>
-      <div style={{ fontSize: 10, color: C.sub }}>{fmtEok(arr[0])}</div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: arr[0] != null && arr[0] < 0 ? C.coral : C.sub }}>{fmtEok(arr[0])}</div>
       <div style={{ fontSize: 10, fontWeight: 800, color: typeof yoy === "number" ? (yoy >= 0 ? C.teal : C.coral) : C.coral }}>
         {typeof yoy === "number" ? (yoy >= 0 ? "+" : "") + yoy.toFixed(1) + "%" : yoy || ""}
       </div>
@@ -787,6 +787,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         <button onClick={() => setExplain("trap")} style={{ marginTop: 14, background: C.apricotSoft, border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 12, fontWeight: 800, color: C.apricotDeep, cursor: "pointer", fontFamily: FONT }}>싼 값이 오래 싼 값으로 남는 이유 →</button>
       </Card>
 
+      <DiscSignals c={c} />
+
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card>
           <H num="02" main="3개년 실적 흐름" sub="매출·영업이익·순이익 · 사업보고서 기준" />
@@ -810,7 +812,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
                     <tr key={ko}>
                       <td style={{ padding: "6px", fontSize: 10.5, fontWeight: 700, color: C.sub }}>{ko}</td>
                       {[c.rev[i], c.op[i], c.ni[i]].map((v, j) => (
-                        <td key={j} style={{ padding: "6px", fontSize: 11, fontWeight: 700, color: C.ink, textAlign: "right", borderBottom: "1px solid " + C.line, fontVariantNumeric: "tabular-nums" }}>
+                        <td key={j} style={{ padding: "6px", fontSize: 11, fontWeight: 700, color: v != null && v < 0 ? C.coral : C.ink, textAlign: "right", borderBottom: "1px solid " + C.line, fontVariantNumeric: "tabular-nums" }}>
                           {fmtEok(v)}
                           {j > 0 && v != null && c.rev[i] > 0 && <span style={{ display: "block", fontSize: 9, color: C.faint, fontWeight: 400 }}>{(v / c.rev[i] * 100).toFixed(1)}%</span>}
                         </td>
@@ -865,8 +867,6 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} />
 
-      <DiscSignals c={c} />
-
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
         뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
       </div>
@@ -897,8 +897,8 @@ function DiscSignals({ c }) {
   if (!hasAny) return null;
 
   return (
-    <Card>
-      <H num="05" main="짚고 갈 것" sub="공시·재무 신호 · 판단이 아니라 확인 목록" />
+    <Card style={{ borderLeft: "3px solid " + C.coral }}>
+      <H main="짚고 갈 것" sub="공시·재무 신호 · 판단이 아니라 확인 목록" />
       {flags.length > 0 && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           {flags.map((f, i) => (

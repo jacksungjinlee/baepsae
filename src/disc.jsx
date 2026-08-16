@@ -47,17 +47,25 @@ export function DiscBody({ data, heldMap, onOpenCompany }) {
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState(40);
 
+  const [secF, setSecF] = useState("all");
+  const secKeys = useMemo(() => {
+    const cnt = {};
+    (data.insider || []).forEach((x) => { const k = x.s || "etc"; cnt[k] = (cnt[k] || 0) + 1; });
+    return Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  }, [data]);
   const rows = useMemo(() => {
     let r = data.insider || [];
+    if (secF !== "all") r = r.filter((x) => (x.s || "etc") === secF);
     if (dir === "buy") r = r.filter((x) => x.q > 0);
     if (dir === "sell") r = r.filter((x) => x.q < 0);
     if (heldOnly) r = r.filter((x) => heldMap[x.t]);
     if (bigOnly) r = r.filter((x) => (x.cap || 0) >= 1);
     if (q.trim()) { const s = q.trim().toLowerCase(); r = r.filter((x) => x.nk.toLowerCase().includes(s) || x.t.includes(s)); }
     return r;
-  }, [data, dir, heldOnly, bigOnly, q]);
+  }, [data, dir, heldOnly, bigOnly, q, secF]);
 
   // 업종별 매수·매도 건수 (필터와 무관한 90일 전체 집계)
+  const [openSec, setOpenSec] = useState(null);
   const secAgg = useMemo(() => {
     const m = {};
     (data.insider || []).forEach((x) => {
@@ -82,6 +90,11 @@ export function DiscBody({ data, heldMap, onOpenCompany }) {
             <ChipBtn key={v} on={dir === v} onClick={() => setDir(v)}>{ko}</ChipBtn>
           ))}
           <ChipBtn on={bigOnly} onClick={() => setBigOnly(!bigOnly)}>1조 이상</ChipBtn>
+          <select value={secF} onChange={(e) => setSecF(e.target.value)}
+            style={{ border: "1.5px solid " + (secF !== "all" ? C.ink : C.line), borderRadius: 999, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, color: secF !== "all" ? C.ink : C.sub, fontFamily: FONT, background: "#fff" }}>
+            <option value="all">전체 업종</option>
+            {secKeys.map((k) => <option key={k} value={k}>{SEC(k).ko}</option>)}
+          </select>
           <ChipBtn on={heldOnly} onClick={() => setHeldOnly(!heldOnly)}>보유만</ChipBtn>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="회사 검색"
             style={{ border: "1.5px solid " + C.line, borderRadius: 999, padding: "6px 12px", fontSize: 11.5, fontFamily: FONT, color: C.ink, outline: "none", width: 120 }} />
@@ -114,18 +127,43 @@ export function DiscBody({ data, heldMap, onOpenCompany }) {
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card>
           <H num="02" main="업종별 보고 건수" sub="최근 90일 · 매수·매도 보고 수" />
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
+          <Sub style={{ marginTop: 5, fontSize: 10.5 }}>업종을 누르면 그 업종에서 활발했던 회사가 펼쳐져요.</Sub>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
             {secAgg.map((r) => (
-              <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div key={r.k}>
+              <button onClick={() => setOpenSec(openSec === r.k ? null : r.k)}
+                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: openSec === r.k ? C.bg : "none", border: "none", borderRadius: 7, padding: "3px 4px", cursor: "pointer", fontFamily: FONT }}>
                 <span style={{ width: 88, fontSize: 11, fontWeight: 700, color: C.ink, flexShrink: 0, textAlign: "right" }}>{r.ko}</span>
                 <svg viewBox="0 0 200 14" style={{ flex: 1, height: 14 }}>
                   <line x1="100" y1="0" x2="100" y2="14" stroke={C.line} strokeWidth="1" />
                   <rect x={100 - (r.sell / aggMax) * 94} y="2.5" width={Math.max((r.sell / aggMax) * 94, r.sell ? 1.5 : 0)} height="9" rx="2.5" fill={C.down} opacity="0.8" />
                   <rect x="100" y="2.5" width={Math.max((r.buy / aggMax) * 94, r.buy ? 1.5 : 0)} height="9" rx="2.5" fill={C.up} opacity="0.8" />
                 </svg>
-                <span style={{ width: 76, fontSize: 10, color: C.faint, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ flexShrink: 0, whiteSpace: "nowrap", fontSize: 10, color: C.faint, fontVariantNumeric: "tabular-nums", textAlign: "right", minWidth: 86 }}>
                   <b style={{ color: C.down }}>{r.sell}</b> 매도 · <b style={{ color: C.up }}>{r.buy}</b> 매수
                 </span>
+              </button>
+              {openSec === r.k && (
+                <div style={{ margin: "4px 0 6px 20px", borderLeft: "2px solid " + C.line, paddingLeft: 12 }}>
+                  {(() => {
+                    const by = {};
+                    (data.insider || []).filter((x) => (x.s || "etc") === r.k).forEach((x) => {
+                      const b = by[x.t] = by[x.t] || { t: x.t, nk: x.nk, buy: 0, sell: 0, amtB: 0, amtS: 0 };
+                      if (x.q > 0) { b.buy++; b.amtB += x.amt || 0; } else { b.sell++; b.amtS += x.amt || 0; }
+                    });
+                    return Object.values(by).sort((a, b) => (b.buy + b.sell) - (a.buy + a.sell)).slice(0, 10).map((co) => (
+                      <div key={co.t} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid " + C.line }}>
+                        <button onClick={() => onOpenCompany && onOpenCompany(co.t)} style={{ flex: 1, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, fontSize: 11.5, fontWeight: 800, color: C.ink, textAlign: "left" }}>{co.nk}</button>
+                        <span style={{ whiteSpace: "nowrap", fontSize: 10, color: C.faint, fontVariantNumeric: "tabular-nums" }}>
+                          {co.buy > 0 && <span style={{ color: C.up }}>매수 {co.buy}건 {co.amtB >= 1 ? Math.round(co.amtB).toLocaleString() + "억" : ""}</span>}
+                          {co.buy > 0 && co.sell > 0 && " · "}
+                          {co.sell > 0 && <span style={{ color: C.down }}>매도 {co.sell}건 {co.amtS >= 1 ? Math.round(co.amtS).toLocaleString() + "억" : ""}</span>}
+                        </span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              )}
               </div>
             ))}
           </div>

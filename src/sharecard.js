@@ -5,7 +5,7 @@ import { C } from "./tokens.js";
 const SERIF_CV = "'Noto Serif KR', serif";
 const FONT_CV = "'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', sans-serif";
 
-export function downloadPortfolioCard({ score, buckets, top, dateStr }) {
+export function renderPortfolioCard({ score, buckets, top, dateStr }) {
   const W = 1080, H = 1350;
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = H;
@@ -97,6 +97,10 @@ export function downloadPortfolioCard({ score, buckets, top, dateStr }) {
   g.fillText("이성진 · Jack (Sung Jin) Lee, INSEAD MBA 26J", 100, H - 68);
   g.globalAlpha = 1;
 
+  return cv;
+}
+
+export function saveCard(cv, dateStr) {
   cv.toBlob((b) => {
     if (!b) return;
     const a = document.createElement("a");
@@ -105,4 +109,21 @@ export function downloadPortfolioCard({ score, buckets, top, dateStr }) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }, "image/png");
+}
+
+export function shareCard(cv, dateStr) {
+  return new Promise((res) => {
+    cv.toBlob(async (b) => {
+      if (!b) return res(false);
+      const file = new File([b], `baepsae-portfolio-${dateStr}.png`, { type: "image/png" });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: "뱁새 포트폴리오" }); return res(true); } catch (e) { return res(false); }
+      }
+      res(false);
+    }, "image/png");
+  });
+}
+
+export function downloadPortfolioCard(opts) {
+  saveCard(renderPortfolioCard(opts), opts.dateStr);
 }
