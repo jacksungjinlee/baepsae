@@ -14,6 +14,8 @@ const P = {
   arrow: <><path d="M4 12h16" /><path d="M13 5l7 7-7 7" /></>,
   back: <><path d="M20 12H4" /><path d="M11 5l-7 7 7 7" /></>,
   close: <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>,
+  rates: <><path d="M3 18c4-1 5-8 9-8s5 5 9 3" /><path d="M4 4v17h17" /></>,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 10.5V17" /><path d="M12 7v.5" /></>,
   pen: <><path d="M4 20l4.5-1L19 8.5l-3.5-3.5L5 15.5z" /><path d="M13.5 7l3.5 3.5" /></>,
   check: <path d="M4 12.5l5 5L20 6.5" />,
   alert: <><path d="M12 3l10 17H2z" /><path d="M12 10v4" /><path d="M12 17.5v.5" /></>,

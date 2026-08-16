@@ -22,6 +22,7 @@ function makeCardData(holdings, stocksById, cashMw, score, lang) {
     const st = stocksById[h.t]; const mw = h.mw || 0; inv += mw;
     if (st && st.cls === "us") sums.us += mw;
     else if (st && st.cls === "metal") sums.mt += mw;
+    else if (st && st.cls === "bond") sums.bd = (sums.bd || 0) + mw;
     else sums.kr += mw;
   });
   const cash = Math.max(cashMw || 0, 0);
@@ -30,6 +31,7 @@ function makeCardData(holdings, stocksById, cashMw, score, lang) {
     { ko: lang === "ko" ? "국내 주식" : "KR stocks", pct: sums.kr / tot * 100, color: "#5B7DB1" },
     { ko: lang === "ko" ? "미국 주식" : "US stocks", pct: sums.us / tot * 100, color: "#8A6FB8" },
     { ko: lang === "ko" ? "금·은" : "Gold/Silver", pct: sums.mt / tot * 100, color: "#C9A227" },
+    { ko: lang === "ko" ? "채권" : "Bonds", pct: (sums.bd || 0) / tot * 100, color: "#4E8577" },
     { ko: lang === "ko" ? "현금" : "Cash", pct: cash / tot * 100, color: "#8B95A8" },
   ].filter((b) => b.pct >= 0.5);
   const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
@@ -147,6 +149,7 @@ function mergeStocks(base, live) {
 // ================= Sectors =================
 // ================= Sectors (KRX 업종분류 기반) =================
 const SECTORS = {
+  bond: { ko: "채권", en: "Bonds", color: "#4E8577" },
   semi:       { ko: "반도체", en: "Semiconductors", color: "#2C4C7C" },
   elec:       { ko: "전자·전기장비", en: "Electronics", color: "#2E86DE" },
   battery:    { ko: "2차전지", en: "Battery", color: "#11A9A0" },
@@ -188,6 +191,7 @@ const CLASSES = {
   kr:    { ko: "한국 주식", en: "KR stocks", color: "#2C4C7C", flag: "KR", bench: "코스피" },
   us:    { ko: "미국 주식", en: "US stocks", color: "#5E6AD2", flag: "US", bench: "S&P 500" },
   metal: { ko: "금·은", en: "Gold/Silver", color: "#E8B54A", flag: "AU", bench: "금 가격" },
+  bond:  { ko: "채권", en: "Bonds", color: "#4E8577", flag: "BD", bench: "국고채" },
 };
 
 const SEC = (k) => SECTORS[k] || { ko: "기타", en: "Other", color: "#94A3B8" };
@@ -388,6 +392,7 @@ const DEFAULT_SETTINGS = {
   usMrp: 5.0, usVol: 16,
   mtMrp: 0.5, mtVol: 15,
   rhoKrUs: 0.50, rhoKrMt: 0.00, rhoUsMt: 0.05,
+  bdMrp: 1.0, bdVol: 7.0, rhoKrBd: 0.05, rhoUsBd: 0.05, rhoMtBd: 0.10,
   fx: 1380, fxFee: 0.5, infl: 2.0,
 };
 
@@ -849,7 +854,7 @@ const T = {
   taxDivKr: { ko:"국내 배당소득세", en:"KR dividend tax" },
   taxDivUs: { ko:"해외 배당 원천징수", en:"US dividend withholding" },
   taxGainUs: { ko:"해외주식 양도소득세", en:"Foreign capital gains" },
-  taxNote: { ko:"2026-01 기준 추정이며 세무 자문이 아니에요. 국내주식 매매차익은 소액주주라면 비과세, 해외주식은 연 250만원 공제 후 22%예요. 금융소득이 연 2,000만원을 넘으면 종합과세 대상이 될 수 있어요. 실제 세액은 개인 상황에 따라 달라지니 확정 신고 전엔 전문가와 확인하세요.", en:"Estimates as of 2026-01, not tax advice. Domestic stock gains are untaxed for most retail investors; foreign gains are taxed at 22% above a ₩2.5m annual deduction. Financial income above ₩20m/yr may trigger comprehensive taxation. Confirm with a professional." },
+  taxNote: { ko:"2026-01 기준 추정이며 세무 자문이 아니에요. 국내주식 매매차익은 소액주주라면 비과세, 해외주식은 연 250만원 공제 후 22%예요. 국내 상장 채권 ETF의 매매차익은 배당소득세 15.4% 대상이라 아래 계산과 달라요. 금융소득이 연 2,000만원을 넘으면 종합과세 대상이 될 수 있어요. 실제 세액은 개인 상황에 따라 달라지니 확정 신고 전엔 전문가와 확인하세요.", en:"Estimates as of 2026-01, not tax advice. Domestic stock gains are untaxed for most retail investors; foreign gains are taxed at 22% above a ₩2.5m annual deduction. Financial income above ₩20m/yr may trigger comprehensive taxation. Confirm with a professional." },
   fxTitle: { ko:"환전 안내", en:"Currency exchange" },
   fxNeed: { ko:"필요한 달러", en:"USD needed" },
   fxFee: { ko:"환전 수수료", en:"FX fee" },
@@ -958,16 +963,19 @@ const num = (v, d = 2) => (v == null || isNaN(v) ? "–" : v.toFixed(d));
 
 // Block correlation model: several class factors, linked by a correlation matrix.
 // σp² = ΣΣ (Wc1·σc1)(Wc2·σc2)·ρ(c1,c2) + Σ wᵢ²·idioᵢ,  where Wc = Σ_{i∈c} wᵢβᵢ
-const CLS_LIST = ["kr", "us", "metal"];
-const clsOf = (s) => { const c = s && s.cls; return c === "us" || c === "metal" ? c : "kr"; };
-const clsVol = (c, st) => (c === "us" ? st.usVol : c === "metal" ? st.mtVol : st.mktVol) / 100;
-const clsMrp = (c, st) => (c === "us" ? st.usMrp : c === "metal" ? st.mtMrp : st.mrp) / 100;
+const CLS_LIST = ["kr", "us", "metal", "bond"];
+const clsOf = (s) => { const c = s && s.cls; return c === "us" || c === "metal" || c === "bond" ? c : "kr"; };
+const clsVol = (c, st) => (c === "us" ? st.usVol : c === "metal" ? st.mtVol : c === "bond" ? (st.bdVol ?? 7) : st.mktVol) / 100;
+const clsMrp = (c, st) => (c === "us" ? st.usMrp : c === "metal" ? st.mtMrp : c === "bond" ? (st.bdMrp ?? 1) : st.mrp) / 100;
 function rhoOf(a, b, st) {
   if (a === b) return 1;
   const k = [a, b].sort().join("|");
   if (k === "kr|us") return st.rhoKrUs;
   if (k === "kr|metal") return st.rhoKrMt;
   if (k === "metal|us") return st.rhoUsMt;
+  if (k === "bond|kr") return st.rhoKrBd ?? 0.05;
+  if (k === "bond|us") return st.rhoUsBd ?? 0.05;
+  if (k === "bond|metal") return st.rhoMtBd ?? 0.1;
   return 0;
 }
 const priceKrw = (s, st) => s.price * (s.ccy === "USD" ? st.fx : 1);
@@ -1697,7 +1705,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
   }, [byMarket, q, tab, sector, interested, sort]);
 
   const grouped = useMemo(() => {
-    const g = { kr: [], us: [], metal: [] };
+    const g = { kr: [], us: [], metal: [], bond: [] };
     results.forEach((s) => g[clsOf(s)].push(s));
     return CLS_LIST.filter((c) => g[c].length).map((c) => [c, g[c]]);
   }, [results]);
@@ -1718,7 +1726,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchPh")}
         style={{ width: "100%", boxSizing: "border-box", borderRadius: 12, border: "1.5px solid " + C.line, padding: "11px 12px", fontSize: 14, fontFamily: FONT, outline: "none", background: "#FBFDFF" }} />
       <div style={{ display: "flex", gap: 5, marginTop: 9 }}>
-        {[["all", t("mktAll"), C.ink], ["kr", CLASSES.kr.flag, CLASSES.kr.color], ["us", CLASSES.us.flag, CLASSES.us.color], ["metal", CLASSES.metal.flag, CLASSES.metal.color]].map(([k, label, col]) => (
+        {[["all", t("mktAll"), C.ink], ["kr", CLASSES.kr.flag, CLASSES.kr.color], ["us", CLASSES.us.flag, CLASSES.us.color], ["metal", CLASSES.metal.flag, CLASSES.metal.color], ["bond", CLASSES.bond.flag, CLASSES.bond.color]].map(([k, label, col]) => (
           <button key={k} onClick={() => setMarket(k)} style={{ flex: 1, fontSize: 11.5, fontWeight: 800, padding: "7px 4px", borderRadius: 10, border: "1.5px solid " + (market === k ? col : C.line), background: market === k ? col : "#fff", color: market === k ? "#fff" : C.sub, cursor: "pointer", fontFamily: FONT }}>{label}</button>
         ))}
       </div>
@@ -4054,6 +4062,10 @@ function SettingsPanel({ lang, t, settings, setSettings, tax, setTax, autoKeys, 
           {F({ k: "mtMrp", label: t("mrp"), tip: t("setMtMrpTip") })}
           {F({ k: "mtVol", label: t("setMtVol"), step: 0.5 })}
         </Grp>
+        <Grp title={lang === "ko" ? "채권" : "Bonds"}>
+          {F({ k: "bdMrp", label: t("mrp"), tip: lang === "ko" ? "채권이 현금 대비 기대할 초과수익. 보통 주식보다 훨씬 작아요." : "Expected excess return of bonds over cash — much smaller than equities." })}
+          {F({ k: "bdVol", label: lang === "ko" ? "채권 블록 변동성" : "Bond block volatility", step: 0.5 })}
+        </Grp>
         <Grp title={t("setInfl")}>
           {F({ k: "infl", label: t("inflL"), tip: t("inflTip"), step: 0.1 })}
         </Grp>
@@ -4072,6 +4084,9 @@ function SettingsPanel({ lang, t, settings, setSettings, tax, setTax, autoKeys, 
         </Grp>
         <Grp title={t("setRho")}>
           {F({ k: "rhoKrUs", label: t("rhoKrUs"), step: 0.05, unit: "" })}
+          {F({ k: "rhoKrBd", label: lang === "ko" ? "한국 ↔ 채권" : "KR ↔ Bonds", step: 0.05, unit: "" })}
+          {F({ k: "rhoUsBd", label: lang === "ko" ? "미국 ↔ 채권" : "US ↔ Bonds", step: 0.05, unit: "" })}
+          {F({ k: "rhoMtBd", label: lang === "ko" ? "금·은 ↔ 채권" : "Gold ↔ Bonds", step: 0.05, unit: "" })}
           {F({ k: "rhoKrMt", label: t("rhoKrMt"), step: 0.05, unit: "" })}
           {F({ k: "rhoUsMt", label: t("rhoUsMt"), step: 0.05, unit: "" })}
           <div style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.55 }}>{t("rhoTip")}</div>
@@ -4277,7 +4292,7 @@ function AppInner({ seed }) {
         universe.current = mergeStocks(BASE_STOCKS, L.stocks);
         setStocks(universe.current.map((s) => ({ ...s })));
         // 파이프라인이 계산한 시장 가정을 기본값으로 반영합니다(설정에서 언제든 수정 가능)
-        const AUTO = ["rf", "mktVol", "usVol", "mtVol", "rhoKrUs", "rhoKrMt", "rhoUsMt"];
+        const AUTO = ["rf", "mktVol", "usVol", "mtVol", "rhoKrUs", "rhoKrMt", "rhoUsMt", "bdVol", "rhoKrBd", "rhoUsBd", "rhoMtBd"];
         setSettings((s) => {
           const nx = { ...s };
           if (L.fx) nx.fx = L.fx;

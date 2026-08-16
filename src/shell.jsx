@@ -8,6 +8,8 @@ import DetailApp, { Bird, store } from "./detail.jsx";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
+import MacroApp from "./macro.jsx";
+import InfoApp from "./info.jsx";
 
 const MAST_CSS = `@media (max-width: 560px) { .mastSub { display: none } }`;
 const CREDIT_KO = "이성진, INSEAD MBA 26J";
@@ -17,6 +19,8 @@ const TABS = [
   { id: "pf", ko: "포트폴리오", icon: "compass" },
   { id: "corp", ko: "기업분석", icon: "chart" },
   { id: "disc", ko: "공시·수급", icon: "doc" },
+  { id: "macro", ko: "금리·원자재", icon: "rates" },
+  { id: "info", ko: "정보", icon: "info" },
 ];
 
 function TopNav({ tab, setTab, showBack, onBack }) {
@@ -163,6 +167,8 @@ export default function Shell() {
       {tab === "pf" && mode === "detail" && <DetailApp seed={seed} />}
       {tab === "corp" && <CorpApp jump={corpJump} onJumpDone={() => setCorpJump(null)} />}
       {tab === "disc" && <DiscApp onOpenCompany={(t) => { setCorpJump(t); setTab("corp"); }} />}
+      {tab === "macro" && <MacroApp />}
+      {tab === "info" && <InfoApp />}
     </div>
   );
 }
