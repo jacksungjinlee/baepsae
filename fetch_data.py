@@ -462,24 +462,42 @@ DISC_CALL_CAP = 1200   # 1회 실행당 상세조회 상한 (백필은 다음 �
 
 
 def parse_elestock_rows(rows):
-    """임원·주요주주 소유보고 응답에서 대표 행(증감 최대)을 뽑습니다. (순수 함수)"""
+    """행 묶음(같은 보고서)에서 대표 행(증감 최대)을 뽑습니다. (순수 함수)"""
     best = None
     for r in rows:
-        q = _num((r.get("sp_stock_lmp_irds_cnt") or "").replace(",", "")) if isinstance(r.get("sp_stock_lmp_irds_cnt"), str) else _num(r.get("sp_stock_lmp_irds_cnt"))
+        q = _num(r.get("sp_stock_lmp_irds_cnt"))
         if q is None or q == 0:
             continue
         if best is None or abs(q) > abs(best["q"]):
             best = {"q": int(q),
                     "nm": (r.get("repror") or "").strip(),
                     "pos": (r.get("isu_exctv_ofcps") or r.get("isu_main_shrholdr") or "").strip(),
-                    "r": _num(r.get("sp_stock_lmp_rate"))}
+                    "r": _num(r.get("sp_stock_lmp_rate")),
+                    "d": (r.get("rcept_dt") or "").replace("-", "")}
     return best
 
 
+def parse_elestock_corp(rows, bgn):
+    """한 회사의 elestock 응답(여러 보고서의 행들)을 보고서 단위 항목으로 묶습니다."""
+    groups = {}
+    for r in rows:
+        key = r.get("rcept_no") or ((r.get("rcept_dt") or "") + "|" + (r.get("repror") or ""))
+        groups.setdefault(key, []).append(r)
+    out = []
+    for key, grp in groups.items():
+        b = parse_elestock_rows(grp)
+        if not b or (b["d"] and b["d"] < bgn):
+            continue
+        out.append({"rc": key, "d": b["d"], "nm": b["nm"], "pos": b["pos"], "q": b["q"], "r": b["r"]})
+    return out
+
+
 def fetch_disclosures(kr_stocks, cmap, end):
-    """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합."""
+    """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
+    실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다."""
     empty = {"asOf": end.isoformat(), "insider": [], "nps": []}
     if not DART_KEY:
+        log("· DART_API_KEY 없음 → 공시 수집 생략")
         return empty
     corp2t = {v: k for k, v in cmap.items()}
     info = {s["t"]: s for s in kr_stocks if s.get("cls") == "kr"}
@@ -493,56 +511,67 @@ def fetch_disclosures(kr_stocks, cmap, end):
         pass
 
     import datetime as _dt
-    bgn = (end - _dt.timedelta(days=DISC_DAYS)).strftime("%Y%m%d")
-    fins, nps_corps = [], {}
-    page = 1
+    bgn = (end - _dt.timedelta(days=89)).strftime("%Y%m%d")  # 조회기간 3개월 제한 안전 마진
+    fins_by_corp, nps_corps = {}, {}
+    page, stat_note = 1, None
     while page <= 30:
         try:
             r = requests.get("https://opendart.fss.or.kr/api/list.json",
                              params={"crtfc_key": DART_KEY, "bgn_de": bgn, "end_de": end.strftime("%Y%m%d"),
-                                     "pblntf_ty": "D", "page_no": page, "page_count": 100}, timeout=25)
+                                     "pblntf_ty": "D", "page_no": str(page), "page_count": "100"}, timeout=25)
             j = r.json()
             if j.get("status") != "000":
+                stat_note = f"status={j.get('status')} msg={j.get('message')}"
                 break
             for it in j.get("list", []):
                 nm = it.get("report_nm") or ""
                 if "임원" in nm and "주요주주" in nm:
-                    fins.append(it)
+                    fins_by_corp.setdefault(it["corp_code"], 0)
+                    fins_by_corp[it["corp_code"]] += 1
                 if "국민연금" in (it.get("flr_nm") or ""):
                     nps_corps[it["corp_code"]] = it
             if page * 100 >= int(j.get("total_count", 0)):
                 break
             page += 1
-        except Exception:
+        except Exception as e:
+            stat_note = f"예외 {e}"
             break
-    log(f"· 공시 목록: 임원·주요주주 {len(fins):,}건, 국민연금 관련 기업 {len(nps_corps):,}곳")
+    log(f"· 공시 목록(list.json): 임원·주요주주 보고 기업 {len(fins_by_corp):,}곳 · 국민연금 관련 {len(nps_corps):,}곳"
+        + (f"  !! 목록 조회 중단: {stat_note}" if stat_note else ""))
 
-    new = [it for it in fins if it["rcept_no"] not in known][:DISC_CALL_CAP]
+    targets = [c for c in fins_by_corp if c in corp2t][:DISC_CALL_CAP]
     rows = list(prev.get("insider", []))
-    def one(it):
+    stat_cnt = {}
+    def one(code):
         try:
             r = requests.get("https://opendart.fss.or.kr/api/elestock.json",
-                             params={"crtfc_key": DART_KEY, "rcept_no": it["rcept_no"]}, timeout=25)
+                             params={"crtfc_key": DART_KEY, "corp_code": code}, timeout=25)
             j = r.json()
-            if j.get("status") != "000":
-                return None
-            b = parse_elestock_rows(j.get("list", []))
-            if not b:
-                return None
-            t = corp2t.get(it["corp_code"])
+            st = j.get("status")
+            stat_cnt[st] = stat_cnt.get(st, 0) + 1
+            if st != "000":
+                return []
+            t = corp2t.get(code)
             s = info.get(t)
             if not t or not s:
-                return None
-            amt = round(abs(b["q"]) * (s.get("price") or 0) / 1e8, 1)  # 억원, 현재가 기준 추정
-            return {"rc": it["rcept_no"], "d": it["rcept_dt"], "t": t, "nk": s["nk"], "s": s.get("s") or "etc",
-                    "cap": s.get("cap"), "nm": b["nm"], "pos": b["pos"], "q": b["q"], "r": b["r"], "amt": amt}
+                return []
+            out = []
+            for e in parse_elestock_corp(j.get("list", []), bgn):
+                if e["rc"] in known:
+                    continue
+                amt = round(abs(e["q"]) * (s.get("price") or 0) / 1e8, 1)
+                out.append({"rc": e["rc"], "d": e["d"], "t": t, "nk": s["nk"], "s": s.get("s") or "etc",
+                            "cap": s.get("cap"), "nm": e["nm"], "pos": e["pos"], "q": e["q"], "r": e["r"], "amt": amt})
+            return out
         except Exception:
-            return None
-    if new:
+            stat_cnt["예외"] = stat_cnt.get("예외", 0) + 1
+            return []
+    if targets:
         with ThreadPoolExecutor(max_workers=5) as ex:
-            for res in ex.map(one, new):
-                if res:
-                    rows.append(res)
+            for res in ex.map(one, targets):
+                rows.extend(res)
+    log(f"· 내부자 상세(elestock): 기업 {len(targets):,}곳 조회 · 상태 {stat_cnt}")
+
     rows = [r for r in rows if r.get("d", "") >= bgn]
     rows.sort(key=lambda r: r.get("d", ""), reverse=True)
     seen, dedup = set(), []
@@ -551,28 +580,33 @@ def fetch_disclosures(kr_stocks, cmap, end):
             continue
         seen.add(r["rc"]); dedup.append(r)
 
-    nps = []
+    nps, nps_stat = [], {}
     for code, it in list(nps_corps.items())[:200]:
         try:
             r = requests.get("https://opendart.fss.or.kr/api/majorstock.json",
                              params={"crtfc_key": DART_KEY, "corp_code": code}, timeout=25)
             j = r.json()
-            if j.get("status") != "000":
+            st = j.get("status")
+            nps_stat[st] = nps_stat.get(st, 0) + 1
+            if st != "000":
                 continue
             cand = [x for x in j.get("list", []) if "국민연금" in (x.get("repror") or "")]
             if not cand:
                 continue
-            cand.sort(key=lambda x: x.get("rcept_dt", ""), reverse=True)
+            cand.sort(key=lambda x: (x.get("rcept_dt") or "").replace("-", ""), reverse=True)
             x = cand[0]
             t = corp2t.get(code); s = info.get(t)
-            if not t or not s or (x.get("rcept_dt") or "") < bgn:
+            d = (x.get("rcept_dt") or "").replace("-", "")
+            if not t or not s or d < bgn:
                 continue
-            nps.append({"d": x.get("rcept_dt"), "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
+            nps.append({"d": d, "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
                         "rt": _num(x.get("stkrt")), "chg": _num(x.get("stkrt_irds"))})
         except Exception:
+            nps_stat["예외"] = nps_stat.get("예외", 0) + 1
             continue
     nps.sort(key=lambda r: r.get("d", ""), reverse=True)
-    log(f"· 내부자 상세 신규 {len(new):,}건 (누적 {len(dedup):,}) · 국민연금 {len(nps):,}건" + (" · 상한 도달, 다음 실행이 이어받음" if len(new) >= DISC_CALL_CAP else ""))
+    log(f"· 국민연금(majorstock): 상태 {nps_stat} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
+        + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     return {"asOf": end.isoformat(), "insider": dedup, "nps": nps}
 
 
