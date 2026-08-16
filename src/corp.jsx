@@ -24,8 +24,8 @@ const Card = ({ children, style = {} }) => (
 const H = ({ num, main, sub, onWhy, children }) => (
   <div>
     <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-      {num && <span style={{ fontFamily: SERIF, fontSize: 11, fontWeight: 700, color: C.apricotDeep, letterSpacing: "0.1em" }}>{num}</span>}
-      <span style={{ fontFamily: SERIF, fontSize: 16.5, fontWeight: 700, color: C.ink, letterSpacing: "-0.005em" }}>{main || children}</span>
+      {num && <span style={{ fontFamily: FONT, fontSize: 11, fontWeight: 800, color: C.apricotDeep, letterSpacing: "0.1em" }}>{num}</span>}
+      <span style={{ fontFamily: FONT, fontSize: 15.5, fontWeight: 800, color: C.ink, letterSpacing: "-0.01em" }}>{main || children}</span>
       {onWhy && <button onClick={onWhy} style={{ fontSize: 10, color: C.faint, background: C.bg, border: "none", borderRadius: 999, width: 16, height: 16, cursor: "pointer", fontWeight: 800, fontFamily: FONT, alignSelf: "center" }}>?</button>}
     </div>
     {sub && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 3, letterSpacing: "0.02em" }}>{sub}</div>}
@@ -52,6 +52,7 @@ const EXPL = {
   evebitda: { t: "EV/EBITDA", b: "시가총액에 순차입금을 더한 '기업 전체 가치(EV)'를 상각 전 영업이익(EBITDA)으로 나눈 값이에요. 부채까지 포함해 회사를 통째로 산다고 볼 때의 배수라서, 부채 구조가 다른 회사끼리 비교할 때 PER보다 공정할 때가 많아요. 상각비는 현금흐름표 기준 근사값이에요. 은행·보험·증권·지주는 사업 구조상 이 지표를 쓰지 않아요." },
   pocf: { t: "P/영업현금흐름", b: "시가총액을 영업활동으로 실제 들어온 현금으로 나눈 값이에요. 회계상 이익은 조정 여지가 있지만 현금은 비교적 정직해서, 이익과 현금흐름이 크게 다른 회사를 걸러내는 데 유용해요." },
   cmp: { t: "기업 비교", b: "같은 업종 회사들을 지표별로 나란히 놓은 표예요. 오른쪽 끝의 업종 중간값이 기준점 역할을 해요. 숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요 — 차이가 나는 항목에서 '왜?'를 묻는 것이 이 표의 사용법이에요." },
+  trap: { t: "싼 값이 오래 싼 값으로 남는 이유", b: "한국 시장에서는 멀티플이 낮은 회사가 오래 낮은 채로 머무는 일이 흔해요. 격차가 좁혀지려면 계기가 필요한데 — 배당·자사주 같은 주주환원 확대, 지배구조 개선, 실적의 방향 전환 — 그 계기가 없으면 '싸다'는 상태가 몇 년씩 이어질 수 있어요. 그래서 낮은 PER·PBR은 결론이 아니라 질문이에요: 이 값이 제자리를 찾게 만들 계기가 있는가, 아니면 낮은 값에 그만한 이유가 있는가. 아울러 단기 주가는 실적보다 테마와 수급이 이끄는 날이 많다는 것도 한국 시장의 현실이에요 — 뱁새의 숫자들은 '오를 종목'이 아니라 '지금 가격에 담긴 가정'을 읽기 위한 것이에요." },
   rev: { t: "리버스 DCF", b: "계산 방향을 뒤집어서, '지금 주가가 정당화되려면 앞으로 몇 %씩 성장해야 하나'를 풉니다. 그 성장률이 회사의 과거와 업종 현실에 비추어 그럴듯한지 스스로 판단해보는 것 — 그게 이 도구의 핵심 질문이에요." },
 };
 function ExplainSheet({ id, onClose }) {
@@ -288,7 +289,7 @@ function Treemap({ comps, heldMap, onOpen }) {
         ) : (
           <g key={i} pointerEvents="none">
             <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="none" stroke={C.ink} strokeWidth="1.1" opacity="0.35" />
-            {r.head > 0 && <text x={r.x + 4} y={r.y + 11.5} fontSize="9" fontWeight="800" fill={C.sub} fontFamily={SERIF} letterSpacing="0.03em">{SEC(r.item.k).ko}</text>}
+            {r.head > 0 && <text x={r.x + 4} y={r.y + 11.5} fontSize="9" fontWeight="800" fill={C.sub} fontFamily={FONT} letterSpacing="0.02em">{SEC(r.item.k).ko}</text>}
           </g>
         ))}
       </svg>
@@ -302,7 +303,7 @@ function QuartBand({ q, v, max }) {
   const W = 190, Hh = 16;
   const s = (x) => clamp(x / max, 0, 1) * W;
   return (
-    <svg width={W} height={Hh} style={{ display: "block" }}>
+    <svg viewBox={`0 0 ${W} ${Hh}`} style={{ display: "block", width: "100%", height: Hh }}>
       <line x1="0" y1={Hh / 2} x2={W} y2={Hh / 2} stroke={C.line} strokeWidth="2" />
       <rect x={s(q[0])} y={3} width={Math.max(2, s(q[2]) - s(q[0]))} height={Hh - 6} fill={C.blueSoft} rx="3" />
       <line x1={s(q[1])} y1={2} x2={s(q[1])} y2={Hh - 2} stroke={C.blue} strokeWidth="2" />
@@ -378,7 +379,7 @@ function MissingData({ onRetry }) {
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
       <Bird mood="think" size={72} />
-      <div style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 700, marginTop: 14 }}>기업분석 데이터가 아직 없어요</div>
+      <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 800, marginTop: 14 }}>기업분석 데이터가 아직 없어요</div>
       <Card style={{ marginTop: 16, textAlign: "left" }}>
         <Sub>
           데이터 파이프라인이 한 번 돌아야 corp.json 이 만들어져요.<br /><br />
@@ -453,7 +454,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {mkt.kospi != null && (
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", background: "#fff", border: HAIR, borderRadius: RAD.card, padding: "10px 16px" }}>
-          <span style={{ fontFamily: SERIF, fontSize: 12, fontWeight: 700, color: C.ink }}>KOSPI <b style={{ fontSize: 14, fontVariantNumeric: "tabular-nums" }}>{mkt.kospi.toLocaleString()}</b></span>
+          <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 800, color: C.ink }}>KOSPI <b style={{ fontSize: 14, fontVariantNumeric: "tabular-nums" }}>{mkt.kospi.toLocaleString()}</b></span>
           <Ret ko="1개월" v={mkt.k1} /><Ret ko="3개월" v={mkt.k3} />
           {mkt.fx != null && <span style={{ fontSize: 11.5, color: C.sub, borderLeft: "1px solid " + C.line, paddingLeft: 14 }}>원달러 <b style={{ color: C.ink }}>{mkt.fx.toLocaleString()}원</b></span>}
           {mkt.rf != null && <span style={{ fontSize: 11.5, color: C.sub }}>국고채 10년 <b style={{ color: C.ink }}>{mkt.rf}%</b></span>}
@@ -545,16 +546,12 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
         {boxRows.length === 0 && <Sub style={{ padding: "22px 0", textAlign: "center" }}>PER·PBR 데이터가 아직 없어요. 데이터 갱신을 한 번 실행하면 채워져요.</Sub>}
         {boxRows.length > 0 && (
           <>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-              <span style={{ width: "min(58%, 330px)", display: "flex", justifyContent: "space-between", fontSize: 9.5, color: C.faint }}>
-                <span>시장이 낮게 평가</span><span>시장이 높게 평가</span>
-              </span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+            <Sub style={{ marginTop: 6, fontSize: 11 }}>막대의 <b style={{ color: C.ink }}>왼쪽일수록 시장이 낮게</b>, <b style={{ color: C.ink }}>오른쪽일수록 높게</b> 평가하는 업종이에요.</Sub>
+            <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 26, rowGap: 8, marginTop: 10 }}>
               {boxRows.map((r) => (
                 <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ width: 110, fontSize: 11.5, fontWeight: 700, color: C.ink, flexShrink: 0, textAlign: "right" }}>{r.ko} <span style={{ color: C.faint, fontWeight: 400 }}>({r.n})</span></span>
-                  <svg viewBox="0 0 240 18" style={{ flex: 1, height: 18, minWidth: 120, maxWidth: 330 }}>
+                  <span style={{ width: 104, fontSize: 11.5, fontWeight: 700, color: C.ink, flexShrink: 0, textAlign: "right" }}>{r.ko} <span style={{ color: C.faint, fontWeight: 400 }}>({r.n})</span></span>
+                  <svg viewBox="0 0 240 18" style={{ flex: 1, height: 18, minWidth: 100 }}>
                     <line x1="3" y1="9" x2="237" y2="9" stroke={C.line} strokeWidth="1.5" />
                     <rect x={3 + clamp(r.q[0] / boxMax, 0, 1) * 234} y="6.5" width={Math.max(2, (clamp(r.q[2] / boxMax, 0, 1) - clamp(r.q[0] / boxMax, 0, 1)) * 234)} height="5" rx="2.5" fill={C.blueSoft} />
                     {mktMed != null && <line x1={3 + clamp(mktMed / boxMax, 0, 1) * 234} y1="2" x2={3 + clamp(mktMed / boxMax, 0, 1) * 234} y2="16" stroke={C.faint} strokeWidth="1.3" strokeDasharray="2.5 2" />}
@@ -631,6 +628,20 @@ export function SearchView({ data, heldMap, onOpen }) {
 }
 
 // ---------------- 기업 상세 ----------------
+function MTile({ label, val, band, cap, onWhy }) {
+  return (
+    <div style={{ border: HAIR, borderRadius: 8, padding: "12px 13px", background: "#fff", display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: C.sub, letterSpacing: "0.01em" }}>{label}</span>
+        {onWhy && <button onClick={onWhy} style={{ fontSize: 9.5, color: C.faint, background: C.bg, border: "none", borderRadius: 999, width: 15, height: 15, cursor: "pointer", fontWeight: 800, fontFamily: FONT, flexShrink: 0 }}>?</button>}
+      </div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{val}</div>
+      {band}
+      <div style={{ fontSize: 10.5, color: C.sub, lineHeight: 1.5 }}>{cap}</div>
+    </div>
+  );
+}
+
 function MultRow({ label, valTxt, band, sentence, onWhy }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: "1px solid " + C.line, flexWrap: "wrap" }}>
@@ -656,12 +667,6 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
   // 멀티플 문장
   const FIN_SECS = { bank: 1, insure: 1, broker: 1, holding: 1 };
-  const evSent = c.evE != null
-    ? (sec?.evEQ ? `부채까지 포함한 기업 전체 가치가 상각 전 영업이익의 ${c.evE}배 — 업종 중간값은 ${sec.evEQ[1]}배예요.` : `기업 전체 가치가 상각 전 영업이익의 ${c.evE}배예요.`)
-    : FIN_SECS[c.s] ? "은행·보험·증권·지주는 사업 구조상 EV 지표를 쓰지 않아요." : "차입금·상각비 데이터가 부족해 계산하지 못했어요.";
-  const pcfSent = c.pcf != null
-    ? (sec?.pcfQ ? `영업에서 실제 들어온 현금의 ${c.pcf}배 가격 — 업종 중간값은 ${sec.pcfQ[1]}배예요. 이익과 현금이 크게 다르면 이쪽이 더 정직할 때가 많아요.` : `영업현금흐름의 ${c.pcf}배 가격이에요.`)
-    : "영업현금흐름 데이터가 없어요.";
   const dpsTrend = (() => {
     const d3 = c.dps3;
     if (!d3 || d3[0] == null) return null;
@@ -671,19 +676,22 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
     if (cur < prv * 0.97) return { w: "감소", col: C.coral };
     return { w: "유지", col: C.sub };
   })();
-  const perSent = c.per == null ? "적자이거나 데이터가 없어 PER을 계산할 수 없어요."
-    : sec?.perQ ? `이익 1원에 ${c.per}원 — 업종 중간값 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요. 시장의 기대가 큰 만큼, 그 기대의 근거를 물어볼 자리예요." : "낮아요. 싸다는 뜻일 수도, 시장이 성장을 의심한다는 뜻일 수도 있어요."}`
-    : `이익 1원에 시장이 ${c.per}원을 내고 있어요.`;
-  const pbrSent = c.pbr == null ? "데이터가 없어요."
-    : sec?.pbrQ ? `순자산 1원을 ${c.pbr}원으로 평가 — 업종 중간값은 ${sec.pbrQ[1]}배예요. ROE와 함께 읽어야 정확해요.`
-    : `순자산 1원을 시장이 ${c.pbr}원으로 평가해요.`;
-  const roeSent = c.roe == null ? "데이터가 없어요."
-    : sec?.roe != null ? `주주 돈 100원으로 연 ${c.roe}원 — 업종 중간값(${sec.roe}%)보다 ${c.roe > sec.roe ? "높은" : "낮은"} 수준이에요.${c.debt != null && c.debt > 200 ? " 다만 부채비율이 " + c.debt + "%로 높은 편이라, 레버리지 효과를 감안해야 해요." : ""}`
-    : `주주 돈 100원으로 연 ${c.roe}원을 벌었어요.`;
+
 
   // 매출↑ 이익 정체 플래그
   const revUp = c.rev[0] && c.rev[2] && c.rev[0] > c.rev[2] * 1.1;
   const niFlat = c.ni[0] != null && c.ni[2] != null && c.ni[0] <= c.ni[2] * 1.02;
+
+  // 가격·실적 간극 — 최근 3개월 주가와 연간 실적 추세가 크게 어긋날 때만
+  const gapNote = (() => {
+    if (c.r3 == null) return null;
+    const niYoY = c.ni[0] != null && c.ni[1] > 0 ? (c.ni[0] / c.ni[1] - 1) * 100 : null;
+    if (c.r3 >= 15 && niYoY != null && niYoY <= 5)
+      return `최근 3개월 주가는 +${c.r3}% 올랐지만 연간 실적 추세는 뚜렷이 개선되지 않았어요. 가격을 움직인 것이 실적보다 기대나 수급일 가능성을 염두에 둘 대목이에요.`;
+    if (c.r3 <= -15 && niYoY != null && niYoY >= 10)
+      return `연간 실적은 개선됐는데 최근 3개월 주가는 ${c.r3}% 내렸어요. 시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요.`;
+    return null;
+  })();
 
   // 밸류에이션 풋볼필드 — 여러 잣대에서 업종 내 위치 (p5~p95 스케일, 25~75% 상자)
   const peers = data.companies.filter((x) => x.s === c.s);
@@ -747,32 +755,36 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
       <Card>
         <H num="01" main="투자지표" sub="밸류에이션 멀티플 · 업종 사분위 대비" onWhy={() => setExplain("box")} />
-        <Sub style={{ marginTop: 5 }}>주황 점이 이 회사, 파란 상자가 업종의 25~75% 구간이에요.</Sub>
-        <div style={{ marginTop: 4 }}>
-          <MultRow label="PER" valTxt={c.per != null ? c.per + "배" : "—"} onWhy={() => setExplain("per")}
-            band={<QuartBand q={sec?.perQ} v={c.per} max={60} />} sentence={perSent} />
-          <MultRow label="PBR" valTxt={c.pbr != null ? c.pbr + "배" : "—"} onWhy={() => setExplain("pbr")}
-            band={<QuartBand q={sec?.pbrQ} v={c.pbr} max={8} />} sentence={pbrSent} />
-          <MultRow label="EV/EBITDA" valTxt={c.evE != null ? c.evE + "배" : "—"} onWhy={() => setExplain("evebitda")}
-            band={<QuartBand q={sec?.evEQ} v={c.evE} max={40} />} sentence={evSent} />
-          <MultRow label="P/영업현금흐름" valTxt={c.pcf != null ? c.pcf + "배" : "—"} onWhy={() => setExplain("pocf")}
-            band={<QuartBand q={sec?.pcfQ} v={c.pcf} max={40} />} sentence={pcfSent} />
-          <MultRow label="ROE" valTxt={pc(c.roe)} onWhy={() => setExplain("roe")}
-            band={<div style={{ width: 190, fontSize: 10.5, color: C.faint }}>업종 중간값 {pc(sec?.roe)}</div>} sentence={roeSent} />
-          <MultRow label="배당수익률" valTxt={pc(c.dy)} onWhy={() => setExplain("payout")}
+        <Sub style={{ marginTop: 5 }}>주황 점이 이 회사, 파란 상자가 업종의 가운데 절반(25~75%)이에요.</Sub>
+        <div className="mgrid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
+          <MTile label="PER" val={c.per != null ? c.per + "배" : "—"} onWhy={() => setExplain("per")}
+            band={<QuartBand q={sec?.perQ} v={c.per} max={60} />}
+            cap={c.per == null ? "적자이거나 데이터가 없어요" : sec?.perQ ? `업종 중간 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요" : "낮아요"}` : "업종 표본 부족"} />
+          <MTile label="PBR" val={c.pbr != null ? c.pbr + "배" : "—"} onWhy={() => setExplain("pbr")}
+            band={<QuartBand q={sec?.pbrQ} v={c.pbr} max={8} />}
+            cap={c.pbr == null ? "데이터가 없어요" : sec?.pbrQ ? `업종 중간 ${sec.pbrQ[1]}배 · ROE와 함께 읽기` : "업종 표본 부족"} />
+          <MTile label="EV/EBITDA" val={c.evE != null ? c.evE + "배" : "—"} onWhy={() => setExplain("evebitda")}
+            band={<QuartBand q={sec?.evEQ} v={c.evE} max={40} />}
+            cap={c.evE != null ? (sec?.evEQ ? `업종 중간 ${sec.evEQ[1]}배 · 부채 포함 기준` : "부채 포함 기업가치 기준") : FIN_SECS[c.s] ? "금융업은 미적용 지표예요" : "차입금·상각비 데이터 부족"} />
+          <MTile label="P/영업현금흐름" val={c.pcf != null ? c.pcf + "배" : "—"} onWhy={() => setExplain("pocf")}
+            band={<QuartBand q={sec?.pcfQ} v={c.pcf} max={40} />}
+            cap={c.pcf != null ? (sec?.pcfQ ? `업종 중간 ${sec.pcfQ[1]}배 · 현금 기준 가격` : "실제 들어온 현금 기준") : "현금흐름 데이터가 없어요"} />
+          <MTile label="ROE" val={pc(c.roe)} onWhy={() => setExplain("roe")}
+            band={<div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>업종 중간 {pc(sec?.roe)}</div>}
+            cap={c.roe == null ? "데이터가 없어요" : `주주 돈 100원으로 연 ${c.roe}원${c.debt != null && c.debt > 200 ? " · 부채비율 " + c.debt + "% 감안" : ""}`} />
+          <MTile label="배당수익률" val={pc(c.dy)} onWhy={() => setExplain("payout")}
             band={c.dps3 && c.dps3[0] != null ? (
-              <div style={{ width: 190, display: "flex", alignItems: "center", gap: 8 }}>
-                <svg width="52" height="20" style={{ flexShrink: 0 }}>
-                  {[c.dps3[2], c.dps3[1], c.dps3[0]].map((v, i) => {
-                    const mx = Math.max(...c.dps3.filter((x) => x != null), 1);
-                    return v == null ? null : <rect key={i} x={i * 18} y={18 - (v / mx) * 15} width="13" height={Math.max((v / mx) * 15, 1)} rx="2" fill={i === 2 ? C.ink : "#C7CEDB"} />;
-                  })}
-                </svg>
-                <span style={{ fontSize: 10, color: C.faint }}>3년 주당배당{dpsTrend && <b style={{ color: dpsTrend.col }}> {dpsTrend.w}</b>} · 성향 {payout != null ? payout.toFixed(0) + "%" : "—"}</span>
+              <div style={{ height: 20, display: "flex", alignItems: "flex-end", gap: 3 }}>
+                {[c.dps3[2], c.dps3[1], c.dps3[0]].map((v, i) => {
+                  const mx = Math.max(...c.dps3.filter((x) => x != null), 1);
+                  return v == null ? null : <div key={i} style={{ width: 14, height: Math.max((v / mx) * 18, 2), borderRadius: 2, background: i === 2 ? C.ink : "#C7CEDB" }} />;
+                })}
+                {dpsTrend && <span style={{ fontSize: 10, fontWeight: 800, color: dpsTrend.col, marginLeft: 5 }}>{dpsTrend.w}</span>}
               </div>
-            ) : <div style={{ width: 190, fontSize: 10.5, color: C.faint }}>배당성향 {payout != null ? payout.toFixed(0) + "%" : "—"}</div>}
-            sentence={payout == null ? "배당이 없거나 이익 데이터가 없어요." : payout > 100 ? "이익보다 많은 배당을 주고 있어요 — 이 수준은 계속되기 어려워요." : payout > 60 ? "이익의 상당 부분을 배당으로 돌려주는 편이에요." : "이익 대비 무리 없는 배당 수준이에요."} />
+            ) : <div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>3년 추이 데이터 없음</div>}
+            cap={payout == null ? "배당이 없거나 이익 데이터가 없어요" : payout > 100 ? `배당성향 ${payout.toFixed(0)}% — 이익보다 커요` : `배당성향 ${payout.toFixed(0)}% · 3년 주당배당 기준`} />
         </div>
+        <button onClick={() => setExplain("trap")} style={{ marginTop: 12, background: "none", border: "none", padding: 0, fontSize: 11, fontWeight: 700, color: C.apricotDeep, cursor: "pointer", fontFamily: FONT }}>싼 값이 오래 싼 값으로 남는 이유 →</button>
       </Card>
 
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -785,9 +797,37 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
                 <Spark3 label="영업이익" arr={c.op} />
                 <Spark3 label="순이익" arr={c.ni} />
               </div>
+              <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 14, fontFamily: FONT }}>
+                <thead>
+                  <tr>
+                    {["", "매출", "영업이익", "순이익"].map((h, i) => (
+                      <th key={i} style={{ padding: "5px 6px", fontSize: 10, color: C.faint, fontWeight: 700, textAlign: i === 0 ? "left" : "right", borderBottom: "1.5px solid " + C.line }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[["당기", 0], ["전기", 1], ["전전기", 2]].map(([ko, i]) => (
+                    <tr key={ko}>
+                      <td style={{ padding: "6px", fontSize: 10.5, fontWeight: 700, color: C.sub }}>{ko}</td>
+                      {[c.rev[i], c.op[i], c.ni[i]].map((v, j) => (
+                        <td key={j} style={{ padding: "6px", fontSize: 11, fontWeight: 700, color: C.ink, textAlign: "right", borderBottom: "1px solid " + C.line, fontVariantNumeric: "tabular-nums" }}>
+                          {fmtEok(v)}
+                          {j > 0 && v != null && c.rev[i] > 0 && <span style={{ display: "block", fontSize: 9, color: C.faint, fontWeight: 400 }}>{(v / c.rev[i] * 100).toFixed(1)}%</span>}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Sub style={{ fontSize: 9.5, color: C.faint, marginTop: 4 }}>이익 칸의 작은 숫자는 그해 매출 대비 이익률이에요.</Sub>
               {revUp && niFlat && (
-                <div style={{ marginTop: 12, fontSize: 11.5, color: C.apricotDeep, background: C.apricotSoft, borderRadius: 6, padding: "9px 11px", lineHeight: 1.6 }}>
+                <div style={{ marginTop: 10, fontSize: 11.5, color: C.apricotDeep, background: C.apricotSoft, borderRadius: 6, padding: "9px 11px", lineHeight: 1.6 }}>
                   매출은 성장했지만 이익이 따라오지 못했어요. 원가·비용 구조나 일회성 요인을 확인해볼 대목이에요.
+                </div>
+              )}
+              {gapNote && (
+                <div style={{ marginTop: 10, fontSize: 11.5, color: C.ink, background: C.bg, border: HAIR, borderRadius: 6, padding: "9px 11px", lineHeight: 1.6 }}>
+                  {gapNote}
                 </div>
               )}
             </>
@@ -826,7 +866,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
-        교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
+        뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
       </div>
     </div>
   );
@@ -877,7 +917,7 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
                 <th style={{ textAlign: "left", padding: "7px 10px", fontSize: 10.5, color: C.faint, fontWeight: 700, borderBottom: "2px solid " + C.ink }}>지표</th>
                 {cols.map((c, i) => (
                   <th key={c.t} style={{ padding: "7px 10px", borderBottom: "2px solid " + C.ink, background: i === 0 ? C.apricotSoft : "transparent" }}>
-                    <button onClick={() => onOpen(c.t)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: SERIF, fontSize: 12.5, fontWeight: 800, color: C.ink, padding: 0 }}>{c.nk}</button>
+                    <button onClick={() => onOpen(c.t)} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 800, color: C.ink, padding: 0 }}>{c.nk}</button>
                   </th>
                 ))}
                 <th style={{ padding: "7px 10px", fontSize: 10.5, color: C.faint, fontWeight: 700, borderBottom: "2px solid " + C.ink }}>업종 중간값</th>
@@ -1025,17 +1065,22 @@ export function DcfCard({ c, sharesM, setExplain }) {
                     <td style={{ padding: "5px 8px", color: C.sub, fontWeight: 800 }}>{d}%</td>
                     {terms.map((tg, j) => {
                       const v = grid[i][j];
-                      const ratio = v && c.price ? v / c.price : null;
-                      const bgc = v == null ? "#fff" : ratio > 1.15 ? C.blueSoft : ratio < 0.85 ? C.sandSoft : "#fff";
+                      let bgc = "#fff";
+                      if (v != null && sensHi > sensLo) {
+                        const tt = (v - sensLo) / (sensHi - sensLo);
+                        const base = tt >= 0.5 ? C.up : C.down;
+                        const a = Math.round((0.06 + Math.abs(tt - 0.5) * 2 * 0.34) * 255).toString(16).padStart(2, "0");
+                        bgc = base + a;
+                      }
                       const on = d === disc && tg === term;
-                      return <td key={tg} style={{ padding: "5px 8px", textAlign: "right", background: bgc, border: on ? "1.5px solid " + C.blue : "1px solid " + C.line, fontWeight: on ? 800 : 500, color: C.ink }}>{v ? fmtShort(v) : "—"}</td>;
+                      return <td key={tg} style={{ padding: "5px 8px", textAlign: "right", background: bgc, border: on ? "1.5px solid " + C.ink : "1px solid " + C.line, fontWeight: on ? 800 : 500, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{v ? fmtShort(v) : "—"}</td>;
                     })}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <Sub style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>파란 배경: 모형값이 현재가보다 15% 이상 높음 · 모래색: 15% 이상 낮음. 색은 판단이 아니라 위치 표시예요.</Sub>
+          <Sub style={{ fontSize: 10.5, color: C.faint, marginTop: 5 }}>붉은색일수록 모형값이 크고(우상단 방향), 푸른색일수록 작아요(좌하단 방향). 색은 크기의 표시일 뿐, 판단이 아니에요.</Sub>
           <button onClick={save} style={{ marginTop: 10, background: saved ? C.teal : C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "10px 16px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
             {saved ? "저장됐어요" : "이 가정 저장하기 (다음에 이 종목을 열 때 불러와요)"}
           </button>
@@ -1049,6 +1094,8 @@ export function DcfCard({ c, sharesM, setExplain }) {
 const CORP_CSS = `
   @media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } .cgrid4 { grid-template-columns: 1fr 1fr !important } }
   .cwrap svg, .cwrap svg text { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
+  @media (max-width: 880px) { .mgrid { grid-template-columns: 1fr 1fr !important } }
+  @media (max-width: 480px) { .mgrid { grid-template-columns: 1fr !important } }
   .cwrap .chartbox { user-select: none; -webkit-user-select: none; }
 `;
 
@@ -1114,7 +1161,7 @@ export default function CorpApp() {
       {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
       {view.kind === "market" && (
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 20, lineHeight: 1.7 }}>
-          교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
+          뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
         </div>
       )}
       <ExplainSheet id={explain} onClose={() => setExplain(null)} />

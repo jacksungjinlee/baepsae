@@ -2990,9 +2990,11 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
             <Sub>{metrics.empty ? t("emptyCart") : t("needProfile")}</Sub>
           </Card>
         )}
-        {profile.ready && !metrics.empty && <Dashboard lang={lang} t={t} metrics={metrics} profile={profile} setExplain={setExplain} />}
-        {profile.ready && !metrics.empty && <AlertsBox lang={lang} t={t} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} stocks={stocks} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} />}
-        {!metrics.empty && <Btn onClick={goDiagnose} style={{ width: "100%" }}>{t("goDiagnose")}</Btn>}
+        <div className="stickyScroll">
+          {profile.ready && !metrics.empty && <Dashboard lang={lang} t={t} metrics={metrics} profile={profile} setExplain={setExplain} />}
+          {profile.ready && !metrics.empty && <AlertsBox lang={lang} t={t} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} stocks={stocks} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} />}
+          {!metrics.empty && <Btn onClick={goDiagnose} style={{ width: "100%" }}>{t("goDiagnose")}</Btn>}
+        </div>
       </div>
     </div>
   );
@@ -4112,10 +4114,11 @@ const APP_CSS = `
   .grid3 { display: grid; grid-template-columns: 330px minmax(0,1fr) 340px; gap: 16px; align-items: start }
   .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; align-items: start }
   .qgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
-  .stickyR { position: sticky; top: 122px; max-height: calc(100vh - 138px); overflow-y: auto; padding-bottom: 4px }
+  .stickyR { position: sticky; top: 122px; max-height: calc(100vh - 138px); padding-bottom: 4px }
+  .stickyScroll { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 12px }
   .narrow { max-width: 780px; margin: 0 auto }
   .mobilebar { display: none }
-  @media (max-width: 1080px) { .grid3 { grid-template-columns: 1fr } .stickyR { position: static; max-height: none } }
+  @media (max-width: 1080px) { .grid3 { grid-template-columns: 1fr } .stickyR { position: static; max-height: none } .stickyScroll { overflow-y: visible } }
   @media (max-width: 880px) { .grid2 { grid-template-columns: 1fr } .qgrid { grid-template-columns: 1fr } }
   @media (max-width: 700px) {
     .wrap { padding: 12px 12px 84px }

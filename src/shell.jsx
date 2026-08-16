@@ -24,8 +24,8 @@ function TopNav({ tab, setTab, showBack, onBack }) {
       <div style={{ maxWidth: 1140, margin: "0 auto", padding: "0 16px", height: 48, display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <Seal size={25} />
-          <span style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 900, color: C.ink, letterSpacing: "0.01em" }}>뱁새</span>
-          <span className="mastSub" style={{ fontFamily: SERIF, fontSize: 10, color: C.faint, borderLeft: "1px solid " + C.line, paddingLeft: 8, letterSpacing: "0.04em" }}>황새 말고, 내 걸음으로</span>
+          <span style={{ fontFamily: FONT, fontSize: 16.5, fontWeight: 900, color: C.ink, letterSpacing: "-0.01em" }}>뱁새</span>
+          <span className="mastSub" style={{ fontFamily: FONT, fontSize: 10, color: C.faint, borderLeft: "1px solid " + C.line, paddingLeft: 8, letterSpacing: "0.03em" }}>황새 말고, 내 걸음으로</span>
         </div>
         <div style={{ display: "flex", gap: 2, overflowX: "auto", flex: 1 }}>
           {TABS.map((tb) => {
