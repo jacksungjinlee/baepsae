@@ -4079,7 +4079,7 @@ function Onboarding({ lang, onDone }) {
   );
 }
 
-function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onImport, dataInfo }) {
+function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImport, dataInfo }) {
   const fileRef = useRef(null);
   return (
     <div style={{ maxWidth: 620, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -4103,7 +4103,12 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onImport, dataI
                     {s.updated}{s.p ? ` · ${s.p.n}${lang === "ko" ? "종목" : " holdings"} · β ${num(s.p.beta)} · ${fmtMw(s.p.inv, lang)}` : ""}
                   </div>
                 </button>
-                <button onClick={() => onDelete(s.id)} style={{ background: "none", border: "none", color: C.faint, cursor: "pointer", fontSize: 13, padding: 4, flexShrink: 0, fontFamily: FONT }}></button>
+                <button title={lang === "ko" ? "이름 바꾸기" : "Rename"} onClick={() => onRename(s.id, s.name)} style={{ background: "none", border: "none", cursor: "pointer", padding: 5, flexShrink: 0, lineHeight: 0 }}>
+                  <Ic name="pen" size={14} color={C.faint} />
+                </button>
+                <button title={lang === "ko" ? "삭제" : "Delete"} onClick={() => onDelete(s.id, s.name)} style={{ background: "none", border: "none", cursor: "pointer", padding: 5, flexShrink: 0, lineHeight: 0 }}>
+                  <Ic name="close" size={14} color={C.faint} />
+                </button>
               </div>
             ))}
           </div>
@@ -4324,10 +4329,19 @@ function AppInner({ seed }) {
     setCheckins([]); setStocks(baseUniverse().map((s) => ({ ...s }))); setStage(0);
     setSlotId(id); setSlotName(name);
   };
-  const deleteSlot = async (id) => {
-    if (!window.confirm(lang === "ko" ? "이 저장본을 지울까요? 되돌릴 수 없어요." : "Delete this save? This can't be undone.")) return;
+  const deleteSlot = async (id, name) => {
+    const q = lang === "ko" ? `"${name || "이 저장본"}"을(를) 지울까요? 되돌릴 수 없어요.` : `Delete "${name || "this save"}"? This can't be undone.`;
+    if (!window.confirm(q)) return;
     await store.del(KEY_SLOT(id));
     const next = (await readSlots()).filter((s) => s.id !== id);
+    await writeSlots(next); setSlots(next);
+  };
+  const renameSlot = async (id, cur) => {
+    const name = window.prompt(lang === "ko" ? "포트폴리오 이름을 입력하세요" : "Enter a new name", cur || "");
+    if (name == null) return;
+    const nm = name.trim().slice(0, 40);
+    if (!nm) return;
+    const next = (await readSlots()).map((s) => (s.id === id ? { ...s, name: nm } : s));
     await writeSlots(next); setSlots(next);
   };
   const importJson = (txt) => {
@@ -4406,7 +4420,7 @@ function AppInner({ seed }) {
       </div>
 
       <div className="wrap" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onImport={importJson} dataInfo={live} />}
+        {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onRename={renameSlot} onImport={importJson} dataInfo={live} />}
         {slotId && live.stale && (
           <Card style={{ background: C.sandSoft, border: "1px solid #F3DCB2", padding: "11px 14px" }}>
             <Sub style={{ color: "#8A5A16", fontWeight: 700 }}>{lang === "ko" ? `시세 데이터가 ${live.asOf} 이후 갱신되지 않았어요. 주문 전엔 증권사 시세를 꼭 확인하세요.` : `Prices haven't refreshed since ${live.asOf}. Check live quotes before ordering.`}</Sub>

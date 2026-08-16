@@ -13,6 +13,8 @@ const P = {
   coins: <><ellipse cx="12" cy="6.5" rx="7" ry="3" /><path d="M5 6.5V12c0 1.7 3.1 3 7 3s7-1.3 7-3V6.5" /><path d="M5 12v5.5c0 1.7 3.1 3 7 3s7-1.3 7-3V12" /></>,
   arrow: <><path d="M4 12h16" /><path d="M13 5l7 7-7 7" /></>,
   back: <><path d="M20 12H4" /><path d="M11 5l-7 7 7 7" /></>,
+  close: <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>,
+  pen: <><path d="M4 20l4.5-1L19 8.5l-3.5-3.5L5 15.5z" /><path d="M13.5 7l3.5 3.5" /></>,
   check: <path d="M4 12.5l5 5L20 6.5" />,
   alert: <><path d="M12 3l10 17H2z" /><path d="M12 10v4" /><path d="M12 17.5v.5" /></>,
   gear: <><circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1" /></>,
