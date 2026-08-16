@@ -117,7 +117,7 @@ export function shareCard(cv, dateStr) {
       if (!b) return res(false);
       const file = new File([b], `baepsae-portfolio-${dateStr}.png`, { type: "image/png" });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: "뱁새 포트폴리오" }); return res(true); } catch (e) { return res(false); }
+        try { await navigator.share({ files: [file], url: "https://pewpewmfer.github.io/baepsae/" }); return res(true); } catch (e) { return res(false); }
       }
       res(false);
     }, "image/png");
