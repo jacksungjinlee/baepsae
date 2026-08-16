@@ -5,7 +5,7 @@ import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Seal } from "./icons.jsx";
 
 // 탤리(tally.so)에서 폼을 만든 뒤 이 주소를 교체하세요. 비어 있으면 이메일 안내가 대신 나와요.
-const TALLY_URL = "TALLY_FORM_URL_HERE";
+const TALLY_URL = "https://tally.so/embed/GxEGKL?alignLeft=1&hideTitle=0&transparentBackground=1";
 // 지원 이메일. 비워두면 "준비 중"으로 표시돼요.
 const SUPPORT_EMAIL = "SUPPORT_EMAIL_HERE";
 
