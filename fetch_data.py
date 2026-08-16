@@ -48,6 +48,7 @@ MAX_KR = 2000             # 한국 종목 수 상한(시가총액 순). 늘리�
 RF_FALLBACK = 0.03        # 국고채 수익률을 못 받아왔을 때 쓸 값
 OUT = "data.json"
 OUT_CORP = "corp.json"       # v12: 기업분석용 재무 데이터
+OUT_DISC = "disc.json"       # v13: 공시·수급 (내부자 거래 + 국민연금)
 DART_KEY = os.environ.get("DART_API_KEY", "").strip()
 
 EXTRA_US = [
@@ -282,7 +283,7 @@ def parse_dart_list(rows):
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
     rev = op = ni = None
-    eq = li = nio = eqo = cash = ocf = None
+    eq = li = nio = eqo = cash = ocf = ca = cl = cs = ie = None
     bor, has_bor = 0.0, False
     dep, has_dep = 0.0, False
     BORROW = {"단기차입금", "장기차입금", "사채", "유동성장기부채", "유동성장기차입금", "단기사채", "전환사채", "리스부채"}
@@ -308,6 +309,14 @@ def parse_dart_list(rows):
                 has_bor = True
         elif nm in ("현금및현금성자산", "현금및현금성자산등", "기말현금및현금성자산") and cash is None:
             cash = _num(row.get("thstrm_amount"))
+        elif nm == "유동자산" and sj in ("BS", "") and ca is None:
+            ca = _num(row.get("thstrm_amount"))
+        elif nm == "유동부채" and sj in ("BS", "") and cl is None:
+            cl = _num(row.get("thstrm_amount"))
+        elif nm == "자본금" and sj in ("BS", "") and cs is None:
+            cs = _num(row.get("thstrm_amount"))
+        elif nm in ("이자비용", "금융비용") and sj in ("IS", "CIS", "") and ie is None:
+            ie = _num(row.get("thstrm_amount"))
         elif sj == "CF" and nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
             ocf = _num(row.get("thstrm_amount"))
         elif sj == "CF" and nm in ("감가상각비", "유형자산감가상각비", "무형자산상각비", "사용권자산상각비", "투자부동산감가상각비"):
@@ -336,7 +345,8 @@ def parse_dart_list(rows):
     fin = {"rev": [ek(x) for x in rev], "op": [ek(x) for x in op], "ni": [ek(x) for x in ni],
            "eq": ek(eq), "li": ek(li), "nio": ek(nio), "eqo": ek(eqo),
            "bor": ek(bor) if has_bor else None, "cash": ek(cash), "ocf": ek(ocf),
-           "dep": ek(dep) if has_dep else None}
+           "dep": ek(dep) if has_dep else None,
+           "ca": ek(ca), "cl": ek(cl), "cs": ek(cs), "ie": ek(ie)}
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
     return out
@@ -445,6 +455,128 @@ def enrich_with_dart(kr_stocks):
 
 
 # ────────────────────────────────────────────────────────────
+# v13: disc.json — 공시·수급 (내부자 거래 + 국민연금), 증분 갱신
+# ────────────────────────────────────────────────────────────
+DISC_DAYS = 90
+DISC_CALL_CAP = 1200   # 1회 실행당 상세조회 상한 (백필은 다음 실행이 이어받음)
+
+
+def parse_elestock_rows(rows):
+    """임원·주요주주 소유보고 응답에서 대표 행(증감 최대)을 뽑습니다. (순수 함수)"""
+    best = None
+    for r in rows:
+        q = _num((r.get("sp_stock_lmp_irds_cnt") or "").replace(",", "")) if isinstance(r.get("sp_stock_lmp_irds_cnt"), str) else _num(r.get("sp_stock_lmp_irds_cnt"))
+        if q is None or q == 0:
+            continue
+        if best is None or abs(q) > abs(best["q"]):
+            best = {"q": int(q),
+                    "nm": (r.get("repror") or "").strip(),
+                    "pos": (r.get("isu_exctv_ofcps") or r.get("isu_main_shrholdr") or "").strip(),
+                    "r": _num(r.get("sp_stock_lmp_rate"))}
+    return best
+
+
+def fetch_disclosures(kr_stocks, cmap, end):
+    """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합."""
+    empty = {"asOf": end.isoformat(), "insider": [], "nps": []}
+    if not DART_KEY:
+        return empty
+    corp2t = {v: k for k, v in cmap.items()}
+    info = {s["t"]: s for s in kr_stocks if s.get("cls") == "kr"}
+
+    prev, known = empty, set()
+    try:
+        with open(OUT_DISC, encoding="utf-8") as f:
+            prev = json.load(f)
+        known = {r.get("rc") for r in prev.get("insider", []) if r.get("rc")}
+    except Exception:
+        pass
+
+    import datetime as _dt
+    bgn = (end - _dt.timedelta(days=DISC_DAYS)).strftime("%Y%m%d")
+    fins, nps_corps = [], {}
+    page = 1
+    while page <= 30:
+        try:
+            r = requests.get("https://opendart.fss.or.kr/api/list.json",
+                             params={"crtfc_key": DART_KEY, "bgn_de": bgn, "end_de": end.strftime("%Y%m%d"),
+                                     "pblntf_ty": "D", "page_no": page, "page_count": 100}, timeout=25)
+            j = r.json()
+            if j.get("status") != "000":
+                break
+            for it in j.get("list", []):
+                nm = it.get("report_nm") or ""
+                if "임원" in nm and "주요주주" in nm:
+                    fins.append(it)
+                if "국민연금" in (it.get("flr_nm") or ""):
+                    nps_corps[it["corp_code"]] = it
+            if page * 100 >= int(j.get("total_count", 0)):
+                break
+            page += 1
+        except Exception:
+            break
+    log(f"· 공시 목록: 임원·주요주주 {len(fins):,}건, 국민연금 관련 기업 {len(nps_corps):,}곳")
+
+    new = [it for it in fins if it["rcept_no"] not in known][:DISC_CALL_CAP]
+    rows = list(prev.get("insider", []))
+    def one(it):
+        try:
+            r = requests.get("https://opendart.fss.or.kr/api/elestock.json",
+                             params={"crtfc_key": DART_KEY, "rcept_no": it["rcept_no"]}, timeout=25)
+            j = r.json()
+            if j.get("status") != "000":
+                return None
+            b = parse_elestock_rows(j.get("list", []))
+            if not b:
+                return None
+            t = corp2t.get(it["corp_code"])
+            s = info.get(t)
+            if not t or not s:
+                return None
+            amt = round(abs(b["q"]) * (s.get("price") or 0) / 1e8, 1)  # 억원, 현재가 기준 추정
+            return {"rc": it["rcept_no"], "d": it["rcept_dt"], "t": t, "nk": s["nk"], "s": s.get("s") or "etc",
+                    "cap": s.get("cap"), "nm": b["nm"], "pos": b["pos"], "q": b["q"], "r": b["r"], "amt": amt}
+        except Exception:
+            return None
+    if new:
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            for res in ex.map(one, new):
+                if res:
+                    rows.append(res)
+    rows = [r for r in rows if r.get("d", "") >= bgn]
+    rows.sort(key=lambda r: r.get("d", ""), reverse=True)
+    seen, dedup = set(), []
+    for r in rows:
+        if r["rc"] in seen:
+            continue
+        seen.add(r["rc"]); dedup.append(r)
+
+    nps = []
+    for code, it in list(nps_corps.items())[:200]:
+        try:
+            r = requests.get("https://opendart.fss.or.kr/api/majorstock.json",
+                             params={"crtfc_key": DART_KEY, "corp_code": code}, timeout=25)
+            j = r.json()
+            if j.get("status") != "000":
+                continue
+            cand = [x for x in j.get("list", []) if "국민연금" in (x.get("repror") or "")]
+            if not cand:
+                continue
+            cand.sort(key=lambda x: x.get("rcept_dt", ""), reverse=True)
+            x = cand[0]
+            t = corp2t.get(code); s = info.get(t)
+            if not t or not s or (x.get("rcept_dt") or "") < bgn:
+                continue
+            nps.append({"d": x.get("rcept_dt"), "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
+                        "rt": _num(x.get("stkrt")), "chg": _num(x.get("stkrt_irds"))})
+        except Exception:
+            continue
+    nps.sort(key=lambda r: r.get("d", ""), reverse=True)
+    log(f"· 내부자 상세 신규 {len(new):,}건 (누적 {len(dedup):,}) · 국민연금 {len(nps):,}건" + (" · 상한 도달, 다음 실행이 이어받음" if len(new) >= DISC_CALL_CAP else ""))
+    return {"asOf": end.isoformat(), "insider": dedup, "nps": nps}
+
+
+# ────────────────────────────────────────────────────────────
 # v12: corp.json — 기업분석 데이터 (멀티플 분포·업종 성장·3개년 재무)
 # ────────────────────────────────────────────────────────────
 def _quart(vals):
@@ -484,6 +616,24 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
             "shm": round(s["shr"] / 1e6, 2) if s.get("shr") else None,
             "r1": s.get("r1"), "r3": s.get("r3"), "dps3": s.get("dps3"),
         }
+        # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
+        fl = {}
+        if fin.get("ca") and fin.get("cl") and fin["cl"] > 0 and row["s"] not in FIN_SECS:
+            cr = fin["ca"] / fin["cl"] * 100
+            if cr < 100:
+                fl["cr"] = round(cr, 0)
+        op0f = (fin.get("op") or [None])[0]
+        if op0f is not None and fin.get("ie") and fin["ie"] > 0 and row["s"] not in FIN_SECS:
+            icr = op0f / fin["ie"]
+            if icr < 1:
+                fl["icr"] = round(icr, 2)
+        if all(v is not None and v < 0 for v in ni):
+            fl["l3"] = 1
+        if fin.get("cs") and fin.get("eq") is not None and fin["eq"] < fin["cs"]:
+            fl["imp"] = 1
+        if fl:
+            row["fl"] = fl
+
         # EV 계열·현금흐름 멀티플 (금융업은 EV 지표가 무의미하므로 제외)
         op0 = (fin.get("op") or [None])[0]
         ebitda = (op0 + fin["dep"]) if (op0 is not None and fin.get("dep") is not None) else None
@@ -904,6 +1054,11 @@ def main():
         json.dump(corp, f, ensure_ascii=False, separators=(",", ":"))
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")
+
+    disc = fetch_disclosures(kr, dart_corp_map() if DART_KEY else {}, end)
+    with open(OUT_DISC, "w", encoding="utf-8") as f:
+        json.dump(disc, f, ensure_ascii=False, separators=(",", ":"))
+    log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc['insider']):,}건 · 국민연금 {len(disc['nps']):,}건")
 
 
 if __name__ == "__main__":
