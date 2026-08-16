@@ -35,6 +35,7 @@ jobs:
           # OpenDART 키를 저장소 Secret 으로 넣어두면 한국 기업 재무지표까지 받아옵니다.
           # 없어도 나머지는 정상 동작합니다.
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
         run: python fetch_data.py
 
       - name: 결과 확인
@@ -43,12 +44,13 @@ jobs:
           python -c "import json;d=json.load(open('data.json'));print('종목 수:',len(d['stocks']),'· 기준일:',d['asOf'])"
           test -s corp.json || (echo "corp.json 이 비어 있습니다" && exit 1)
           test -s disc.json || (echo "disc.json 이 비어 있습니다" && exit 1)
+          test -s macro.json || (echo "macro.json 이 비어 있습니다" && exit 1)
           python -c "import json;d=json.load(open('corp.json'));print('기업분석:',len(d['companies']),'개사 ·',len(d['sectors']),'개 업종')"
 
       - name: 커밋 & 푸시
         run: |
           git config user.name  "baepsae-bot"
           git config user.email "actions@github.com"
-          git add data.json corp.json disc.json
+          git add data.json corp.json disc.json macro.json
           git diff --staged --quiet && echo "변경 없음" || git commit -m "데이터 갱신 $(date -u +%Y-%m-%d)"
           git push
