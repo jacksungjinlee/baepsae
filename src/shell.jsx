@@ -165,6 +165,48 @@ function GateSearch({ onOpenCorp, onQuickDiag }) {
   );
 }
 
+
+function InstallHint() {
+  const [st, setSt] = useState(null);
+  const evRef = useRef(null);
+  useEffect(() => {
+    try {
+      if (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) return;
+      if (window.navigator.standalone) return;
+      if (localStorage.getItem("baepsae_pwa_hint") === "off") return;
+      const ua = navigator.userAgent || "";
+      if (!/iphone|ipad|ipod|android/i.test(ua)) return;
+      if (/iphone|ipad|ipod/i.test(ua)) { setSt("ios"); return; }
+      const h = (e) => { e.preventDefault(); evRef.current = e; setSt("prompt"); };
+      window.addEventListener("beforeinstallprompt", h);
+      const t = setTimeout(() => setSt((v) => v || "manual"), 2200);
+      return () => { window.removeEventListener("beforeinstallprompt", h); clearTimeout(t); };
+    } catch (e) {}
+  }, []);
+  if (!st) return null;
+  const off = () => { try { localStorage.setItem("baepsae_pwa_hint", "off"); } catch (e) {} setSt(null); };
+  return (
+    <div style={{ maxWidth: 460, margin: "14px auto 0", background: "#fff", border: HAIR, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, textAlign: "left" }}>
+      <img src="./icon-192.png" alt="" width="34" height="34" style={{ borderRadius: 8, flexShrink: 0 }} />
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.ink }}>홈 화면에 추가하면 앱처럼 쓸 수 있어요</div>
+        <div style={{ fontSize: 10.5, color: C.sub, marginTop: 3, lineHeight: 1.5 }}>
+          {st === "ios" && "Safari 하단 가운데 공유 버튼(네모에 화살표) → 아래로 내려 '홈 화면에 추가'"}
+          {st === "manual" && "Chrome 오른쪽 위 점 세 개 메뉴 → '홈 화면에 추가'"}
+          {st === "prompt" && "아래 버튼 한 번이면 끝나요"}
+        </div>
+        {st === "prompt" && (
+          <button onClick={() => { try { gcEvent("pwa-install"); evRef.current && evRef.current.prompt(); } catch (e) {} }}
+            style={{ marginTop: 7, background: C.ink, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>홈 화면에 설치</button>
+        )}
+      </div>
+      <button onClick={off} title="닫기" style={{ background: "none", border: "none", cursor: "pointer", padding: 5, lineHeight: 0, flexShrink: 0 }}>
+        <Ic name="close" size={13} color={C.faint} />
+      </button>
+    </div>
+  );
+}
+
 function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag }) {
   return (
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "30px 16px 60px", fontFamily: FONT, color: C.ink }}>
@@ -174,6 +216,7 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag }) {
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>종목 하나로 5초 성적표부터 — 황새 말고, 내 걸음으로</div>
         <div style={{ marginTop: 16 }}>
           <GateSearch onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} />
+          <InstallHint />
         </div>
       </div>
 
