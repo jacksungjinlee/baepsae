@@ -4485,7 +4485,7 @@ function AppInner({ seed, lang: langProp }) {
   );
 }
 
-export default function App({ seed }) {
+export default function App({ seed, lang }) {
   return (
     <ErrorBoundary>
       <AppInner seed={seed} lang={lang} />
