@@ -1,7 +1,7 @@
 {
-  "name": "뱁새 Baepsae — 포트폴리오 도구",
+  "name": "뱁새 — 개인 투자 연구소",
   "short_name": "뱁새",
-  "description": "내 그릇에 맞는 포트폴리오를 만들어보는 교육용 도구",
+  "description": "자신만의 포트폴리오를 만들어보세요. 황새 말고, 내 걸음으로.",
   "start_url": "./baepsae.html",
   "scope": "./",
   "display": "standalone",
