@@ -24,7 +24,7 @@ const H = ({ num, main, sub }) => (
 );
 const Sub = ({ children, style = {} }) => <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.6, ...style }}>{children}</div>;
 const ChipBtn = ({ on, onClick, children }) => (
-  <button onClick={onClick} style={{ border: on ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
+  <button className="bchip" onClick={onClick} style={{ border: on ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "7px 13px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
 );
 
 function MissingData({ onRetry }) {
@@ -238,7 +238,7 @@ export default function DiscApp({ onOpenCompany }) {
 
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
-      <style>{`@media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } }`}</style>
+      <style>{`@media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } .bchip { padding: 8px 14px !important; font-size: 12.5px !important } }`}</style>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
         <span style={{ fontSize: 10.5, color: C.faint }}>기준 {state.data.asOf} · 매일 자동 갱신</span>
       </div>

@@ -33,7 +33,7 @@ const H = ({ num, main, sub, onWhy, children }) => (
 );
 const Sub = ({ children, style = {} }) => <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.6, ...style }}>{children}</div>;
 const ChipBtn = ({ on, onClick, children }) => (
-  <button onClick={onClick} style={{ border: on ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "5px 11px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
+  <button className="bchip" onClick={onClick} style={{ border: on ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "7px 13px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
 );
 
 // ---------------- 설명 시트 ----------------
@@ -972,7 +972,22 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
             <ChipBtn key={x.t} on={sel.includes(x.t)} onClick={() => toggle(x.t)}>{x.nk}</ChipBtn>
           ))}
         </div>
-        <div style={{ overflowX: "auto", marginTop: 14 }}>
+        <div className="mobOnly" style={{ display: "none", flexDirection: "column", gap: 10, marginTop: 14 }}>
+          {cols.map((c, i) => (
+            <div key={c.t} style={{ border: i === 0 ? "1.5px solid " + C.apricotDeep : HAIR, borderRadius: 10, padding: "12px 14px", background: "#fff" }}>
+              <button onClick={() => onOpen(c.t)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 800, color: C.ink }}>{c.nk}{i === 0 && <span style={{ marginLeft: 6, fontSize: 9.5, color: C.apricotDeep, fontWeight: 800 }}>기준</span>}</button>
+              <div style={{ marginTop: 8 }}>
+                {ROWS.map(([ko, fn, med]) => (
+                  <div key={ko} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "5px 0", borderBottom: "1px solid " + C.line, fontSize: 11.5 }}>
+                    <span style={{ color: C.sub }}>{ko}</span>
+                    <span style={{ fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fn(c)}{med && <span style={{ marginLeft: 7, fontWeight: 400, color: C.faint }}>중간 {med}</span>}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="deskOnly" style={{ overflowX: "auto", marginTop: 14 }}>
           <table style={{ borderCollapse: "collapse", fontFamily: FONT, minWidth: 480, width: "100%" }}>
             <thead>
               <tr>
@@ -1158,6 +1173,8 @@ const CORP_CSS = `
   .cwrap svg, .cwrap svg text { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
   @media (max-width: 880px) { .mgrid { grid-template-columns: 1fr 1fr !important } }
   @media (max-width: 480px) { .mgrid { grid-template-columns: 1fr !important } }
+  @media (max-width: 880px) { .bchip { padding: 8px 14px !important; font-size: 12.5px !important } input[type="range"] { height: 30px } }
+  @media (max-width: 880px) { .deskOnly { display: none !important } .mobOnly { display: flex !important } }
   .cwrap .chartbox { user-select: none; -webkit-user-select: none; }
 `;
 

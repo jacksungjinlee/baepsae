@@ -113,7 +113,7 @@ function DurationPlay({ baseY }) {
     <div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {[1, 3, 5, 10, 20, 30].map((mv) => (
-          <button key={mv} onClick={() => setMat(mv)}
+          <button className="bchip" key={mv} onClick={() => setMat(mv)}
             style={{ border: mat === mv ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: mat === mv ? C.ink : "#fff", color: mat === mv ? "#fff" : C.sub, borderRadius: 999, padding: "5px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{mv}년물</button>
         ))}
       </div>
@@ -280,7 +280,8 @@ export default function MacroApp() {
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
       <style>{`@media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } .cgrid3m { grid-template-columns: 1fr !important } }
-        .cwrap svg, .cwrap svg text { user-select: none; -webkit-user-select: none; }`}</style>
+        .cwrap svg, .cwrap svg text { user-select: none; -webkit-user-select: none; }
+        @media (max-width: 880px) { .bchip { padding: 8px 14px !important; font-size: 12.5px !important } input[type="range"] { height: 30px } }`}</style>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
         <span style={{ fontSize: 10.5, color: C.faint }}>기준 {state.data.asOf} · 매일 자동 갱신</span>
       </div>

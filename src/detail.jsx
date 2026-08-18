@@ -4160,7 +4160,7 @@ const APP_CSS = `
     .hdr { gap: 7px }
     .stages { width: 100%; order: 3; padding-bottom: 2px }
     .stages::-webkit-scrollbar { display: none }
-    .mobilebar { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; background: #fff; box-shadow: 0 -2px 12px rgba(11,34,57,0.12); border-radius: 12px 12px 0 0 }
+    .mobilebar { display: block; position: fixed; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); z-index: 45; background: #fff; box-shadow: 0 -2px 12px rgba(11,34,57,0.12); border-radius: 12px 12px 0 0 }
     input[type=range] { height: 26px }
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
@@ -4265,6 +4265,17 @@ function AppInner({ seed }) {
     if (!booted || !seed || seededRef.current) return;
     seededRef.current = true;
     const id = "s" + Date.now().toString(36);
+    if (seed.quick) {
+      // v15: 30초 진단 — 균형 기본 성향으로 바로 담기 화면에
+      setProfile({ ...DEFAULT_PROFILE, targetBetaMin: 0.7, targetBetaMax: 1.15, targetVolMaxPct: 24,
+        ready: true, source: "preset", title: lang === "ko" ? "빠른 진단 · 균형 기본값" : "Quick check · balanced default",
+        summary: lang === "ko" ? "기본 성향으로 계산했어요. 성향 테스트를 하면 기준이 내게 맞춰져요." : "Using a balanced default profile.",
+        flags: [], tips: [], checkFreq: "", interestedSectors: [] });
+      setAnswers({}); setHoldings(seed.holdings || []); setBudgetMw(1000); setCheckins([]);
+      setStocks(baseUniverse().map((s) => ({ ...s }))); setStage(1);
+      setSlotId(id); setSlotName(lang === "ko" ? "빠른 진단" : "Quick check");
+      return;
+    }
     setProfile({ ...DEFAULT_PROFILE }); setAnswers(seed.answers || {}); setHoldings([]);
     setBudgetMw(seed.budgetMw || 1000); setCheckins([]);
     setStocks(baseUniverse().map((s) => ({ ...s }))); setStage(0);
