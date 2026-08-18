@@ -515,10 +515,14 @@ def enrich_with_dart(kr_stocks):
     q_code, q_ko = None, None
     probe = cmap.get("005930")
     if probe:
-        for code, ko in Q_ORDER:
-            if dart_quarter(probe, cur_year, code):
-                q_code, q_ko = code, ko
-                break
+        try:
+            for code, ko in Q_ORDER:
+                if dart_quarter(probe, cur_year, code):
+                    q_code, q_ko = code, ko
+                    break
+        except Exception as e:
+            log(f"  !! 분기 판별 실패({e}) → 연간 기준으로 진행")
+            q_code = None
     log(f"· DART 재무지표 조회 {len(targets):,}건 ({year}년 사업보고서"
         + (f" + {cur_year}.{q_ko} TTM 합성" if q_code else " · 분기 미확인 → 연간 기준") + ")…")
     done = [0]
@@ -541,13 +545,16 @@ def enrich_with_dart(kr_stocks):
             if fin:
                 # TTM 합성: 올해 누적 + 전년 동기 누적
                 if q_code:
-                    ytd = dart_quarter(cmap[s["t"]], cur_year, q_code)
-                    ytd_prev = dart_quarter(cmap[s["t"]], cur_year - 1, q_code) if ytd else None
-                    t2 = compute_ttm(fin, ytd, ytd_prev)
-                    if t2:
-                        fin["ttm"] = t2["ttm"]
-                        fin["bs2"] = t2["bs"]
-                        fin["bq"] = f"{cur_year}.{q_ko}"
+                    try:
+                        ytd = dart_quarter(cmap[s["t"]], cur_year, q_code)
+                        ytd_prev = dart_quarter(cmap[s["t"]], cur_year - 1, q_code) if ytd else None
+                        t2 = compute_ttm(fin, ytd, ytd_prev)
+                        if t2:
+                            fin["ttm"] = t2["ttm"]
+                            fin["bs2"] = t2["bs"]
+                            fin["bq"] = f"{cur_year}.{q_ko}"
+                    except Exception:
+                        pass  # TTM 실패는 연간 기준으로 조용히 계속 (아래 합계 로그로 파악)
                 fin_map[s["t"]] = fin
             s.update(f)
         done[0] += 1
@@ -559,6 +566,8 @@ def enrich_with_dart(kr_stocks):
         list(ex.map(one, targets))
     got = sum(1 for s in targets if s.get("debt") is not None)
     log(f"· DART 완료: {got:,}건 재무지표 · {len(fin_map):,}건 3개년 원값")
+    _ttm_n = sum(1 for v in fin_map.values() if v.get("ttm"))
+    log(f"· TTM 합성 성공: {_ttm_n:,} / {len(fin_map):,} 기업")
     return kr_stocks, fin_map
 
 
@@ -1014,7 +1023,32 @@ def fetch_korea(start, end, rf):
     import FinanceDataReader as fdr
 
     log("· KRX 종목 목록…")
-    listing = fdr.StockListing("KRX")
+    listing = None
+    for attempt in range(3):
+        try:
+            listing = fdr.StockListing("KRX")
+            break
+        except Exception as e:
+            log(f"  (KRX 목록 {attempt + 1}차 실패: {e})")
+            if attempt < 2:
+                time.sleep(20)
+    if listing is None:
+        # 폴백: 지난 갱신의 data.json에서 종목 스켈레톤 복원
+        # (KRX가 러너 IP를 막거나 점검 중일 때 — 시세는 네이버 경로라 영향 없음.
+        #  신규 상장만 하루 늦게 반영되는 대가로 파이프라인이 죽지 않아요.)
+        try:
+            with open(OUT_DATA, encoding="utf-8") as f:
+                prev = json.load(f)
+            rows = [{"Code": x["t"], "Name": x.get("nk") or x["t"],
+                     "Market": x.get("mkt") or "", "Marcap": (x.get("cap") or 0) * 1e12,
+                     "Stocks": x.get("shr"), "Amount": None, "_prev_s": x.get("s")}
+                    for x in prev.get("stocks", []) if x.get("cls") == "kr" and x.get("t")]
+            if not rows:
+                raise RuntimeError("이전 data.json에 국내 종목이 없습니다")
+            listing = pd.DataFrame(rows)
+            log(f"  → KRX 접속 불가: 지난 data.json의 {len(rows):,}개 종목으로 대체 진행")
+        except Exception as e2:
+            raise RuntimeError(f"KRX 목록 실패 + 캐시 폴백도 실패({e2}) — 다음 실행에서 재시도하세요") from None
     code_col = next((c for c in ("Code", "Symbol", "ShortCode", "종목코드") if c in listing.columns), None)
     if code_col is None:
         raise RuntimeError(f"종목코드 열을 못 찾음: {list(listing.columns)}")
@@ -1042,7 +1076,9 @@ def fetch_korea(start, end, rf):
                 break
         except Exception:
             continue
-    if not desc:
+    if not desc and "_prev_s" in listing.columns:
+        log("  (업종은 지난 data.json 값을 그대로 사용)")
+    elif not desc:
         log("  (업종 정보를 못 받아왔습니다 — 업종이 '기타'로 들어갑니다)")
 
     if listing["Marcap"].notna().any():
@@ -1120,7 +1156,7 @@ def fetch_korea(start, end, rf):
             shr = _num(row.get("Stocks"))
             rec = {
                 "t": code, "nk": str(row["Name"]), "ne": str(row["Name"]), "cls": "kr",
-                "s": map_sector_kr(sec_txt, prod_txt),
+                "s": (row.get("_prev_s") if isinstance(row.get("_prev_s"), str) and row.get("_prev_s") and not sec_txt else map_sector_kr(sec_txt, prod_txt)),
                 "price": float(px.iloc[-1]),
                 "vol": ann_vol(ret.values), "beta": b, "al": a,
                 "per": round(per, 1) if per and per > 0 else None,
