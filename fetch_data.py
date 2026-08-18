@@ -394,6 +394,92 @@ def dart_dividend(corp_code, year):
         return {}
 
 
+def _ytd(row):
+    """분기 보고서의 누적값: 누적 컬럼(thstrm_add_amount)이 있으면 그것, 없으면 당기값."""
+    v = _num(row.get("thstrm_add_amount"))
+    return v if v is not None else _num(row.get("thstrm_amount"))
+
+
+def parse_dart_quarter(rows):
+    """분기·반기 보고서에서 손익/현금흐름 누적값과 시점 재무상태를 뽑습니다."""
+    ek = lambda w: round(w / 1e8, 1) if w is not None else None
+    rev = op = ni = nio = ocf = ie = None
+    eq = eqo = cash = ca = cl = cs = None
+    bor, has_bor = 0.0, False
+    dep, has_dep = 0.0, False
+    BORROW = {"단기차입금", "장기차입금", "사채", "유동성장기부채", "유동성장기차입금", "단기사채", "전환사채", "리스부채"}
+    for row in rows:
+        nm = (row.get("account_nm") or "").replace(" ", "")
+        sj = (row.get("sj_div") or "").strip()
+        if sj in ("IS", "CIS"):
+            if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None: rev = _ytd(row)
+            elif nm == "영업이익" and op is None: op = _ytd(row)
+            elif nm in ("당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익") and ni is None: ni = _ytd(row)
+            elif "지배기업" in nm and ("순이익" in nm or "당기순이익" in nm) and "비지배" not in nm and nio is None: nio = _ytd(row)
+            elif nm in ("이자비용", "금융비용") and ie is None: ie = _ytd(row)
+        elif sj == "CF":
+            if nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
+                ocf = _ytd(row)
+            elif nm in ("감가상각비", "유형자산감가상각비", "무형자산상각비", "사용권자산상각비", "투자부동산감가상각비"):
+                v = _ytd(row)
+                if v and v > 0: dep += v; has_dep = True
+        elif sj in ("BS", ""):
+            v = _num(row.get("thstrm_amount"))
+            if nm == "자본총계" and eq is None: eq = v
+            elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None: eqo = v
+            elif nm in BORROW:
+                if v and v > 0: bor += v; has_bor = True
+            elif nm in ("현금및현금성자산", "현금및현금성자산등", "기말현금및현금성자산") and cash is None: cash = v
+            elif nm == "유동자산" and ca is None: ca = v
+            elif nm == "유동부채" and cl is None: cl = v
+            elif nm == "자본금" and cs is None: cs = v
+    if rev is None and ni is None:
+        return None
+    return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie),
+            "dep": ek(dep) if has_dep else None,
+            "eq": ek(eq), "eqo": ek(eqo), "bor": ek(bor) if has_bor else None, "cash": ek(cash),
+            "ca": ek(ca), "cl": ek(cl), "cs": ek(cs)}
+
+
+def compute_ttm(fin, ytd, ytd_prev):
+    """TTM = 직전 연간 + 올해 누적 − 전년 동기 누적. 손익·현금흐름만, 재무상태는 최신 분기 시점값."""
+    if not (fin and ytd and ytd_prev):
+        return None
+    def flow(annual, y, yp):
+        if annual is None or y is None or yp is None:
+            return None
+        return round(annual + y - yp, 1)
+    ttm = {"rev": flow((fin.get("rev") or [None])[0], ytd.get("rev"), ytd_prev.get("rev")),
+           "op": flow((fin.get("op") or [None])[0], ytd.get("op"), ytd_prev.get("op")),
+           "ni": flow((fin.get("ni") or [None])[0], ytd.get("ni"), ytd_prev.get("ni")),
+           "nio": flow(fin.get("nio"), ytd.get("nio"), ytd_prev.get("nio")),
+           "ocf": flow(fin.get("ocf"), ytd.get("ocf"), ytd_prev.get("ocf")),
+           "dep": flow(fin.get("dep"), ytd.get("dep"), ytd_prev.get("dep")),
+           "ie": flow(fin.get("ie"), ytd.get("ie"), ytd_prev.get("ie"))}
+    if ttm["rev"] is None and ttm["ni"] is None:
+        return None
+    bs = {k: ytd.get(k) for k in ("eq", "eqo", "bor", "cash", "ca", "cl", "cs") if ytd.get(k) is not None}
+    return {"ttm": ttm, "bs": bs}
+
+
+def dart_quarter(corp_code, year, reprt):
+    for fs in ("CFS", "OFS"):
+        try:
+            r = requests.get("https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json",
+                             params={"crtfc_key": DART_KEY, "corp_code": corp_code,
+                                     "bsns_year": str(year), "reprt_code": reprt, "fs_div": fs},
+                             timeout=25)
+            j = r.json()
+            if j.get("status") != "000":
+                continue
+            out = parse_dart_quarter(j.get("list", []))
+            if out:
+                return out
+        except Exception:
+            continue
+    return None
+
+
 def dart_financials(corp_code, year):
     """연결(없으면 별도) 재무제표에서 주요 지표 + 3개년 원값을 뽑습니다."""
     for fs in ("CFS", "OFS"):
@@ -423,7 +509,18 @@ def enrich_with_dart(kr_stocks):
         return kr_stocks, fin_map
     year = dt.date.today().year - 1
     targets = [s for s in kr_stocks if s["t"] in cmap]
-    log(f"· DART 재무지표 조회 {len(targets):,}건 ({year}년 사업보고서)…")
+    # 올해 어느 분기 보고서까지 나왔는지 삼성전자로 1회 판별 (3Q → 반기 → 1Q)
+    cur_year = dt.date.today().year
+    Q_ORDER = [("11014", "3Q"), ("11012", "2Q"), ("11013", "1Q")]
+    q_code, q_ko = None, None
+    probe = cmap.get("005930")
+    if probe:
+        for code, ko in Q_ORDER:
+            if dart_quarter(probe, cur_year, code):
+                q_code, q_ko = code, ko
+                break
+    log(f"· DART 재무지표 조회 {len(targets):,}건 ({year}년 사업보고서"
+        + (f" + {cur_year}.{q_ko} TTM 합성" if q_code else " · 분기 미확인 → 연간 기준") + ")…")
     done = [0]
 
     def one(s):
@@ -442,6 +539,15 @@ def enrich_with_dart(kr_stocks):
         if f:
             fin = f.pop("_fin", None)
             if fin:
+                # TTM 합성: 올해 누적 + 전년 동기 누적
+                if q_code:
+                    ytd = dart_quarter(cmap[s["t"]], cur_year, q_code)
+                    ytd_prev = dart_quarter(cmap[s["t"]], cur_year - 1, q_code) if ytd else None
+                    t2 = compute_ttm(fin, ytd, ytd_prev)
+                    if t2:
+                        fin["ttm"] = t2["ttm"]
+                        fin["bs2"] = t2["bs"]
+                        fin["bq"] = f"{cur_year}.{q_ko}"
                 fin_map[s["t"]] = fin
             s.update(f)
         done[0] += 1
@@ -811,41 +917,61 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
             "beta": s.get("beta"), "vol": s.get("vol"), "lo": s.get("lo"), "hi": s.get("hi"),
             "rev": rev, "op": fin.get("op") or [None, None, None], "ni": ni, "eq": fin.get("eq"),
             "shm": round(s["shr"] / 1e6, 2) if s.get("shr") else None,
-            "r1": s.get("r1"), "r3": s.get("r3"), "dps3": s.get("dps3"),
+            "r1": s.get("r1"), "r3": s.get("r3"), "r36": s.get("r36"), "dps3": s.get("dps3"),
         }
+        # TTM·최신 분기 재무상태 우선 (없으면 연간)
+        _t = fin.get("ttm") or {}
+        _b = fin.get("bs2") or {}
+        eff = {
+            "rev0": _t.get("rev") if _t.get("rev") is not None else rev[0],
+            "op0": _t.get("op") if _t.get("op") is not None else (fin.get("op") or [None])[0],
+            "ni0": _t.get("ni") if _t.get("ni") is not None else ni[0],
+            "ocf": _t.get("ocf") if _t.get("ocf") is not None else fin.get("ocf"),
+            "dep": _t.get("dep") if _t.get("dep") is not None else fin.get("dep"),
+            "ie": _t.get("ie") if _t.get("ie") is not None else fin.get("ie"),
+            "eq": _b.get("eq") if _b.get("eq") is not None else fin.get("eq"),
+            "cs": _b.get("cs") if _b.get("cs") is not None else fin.get("cs"),
+            "ca": _b.get("ca") if _b.get("ca") is not None else fin.get("ca"),
+            "cl": _b.get("cl") if _b.get("cl") is not None else fin.get("cl"),
+            "bor": _b.get("bor") if _b.get("bor") is not None else fin.get("bor"),
+            "cash": _b.get("cash") if _b.get("cash") is not None else fin.get("cash"),
+        }
+        if fin.get("bq"):
+            row["bq"] = fin["bq"]
+
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
         fl = {}
-        if fin.get("ca") and fin.get("cl") and fin["cl"] > 0 and row["s"] not in FIN_SECS:
-            cr = fin["ca"] / fin["cl"] * 100
+        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and row["s"] not in FIN_SECS:
+            cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
-        op0f = (fin.get("op") or [None])[0]
-        if op0f is not None and fin.get("ie") and fin["ie"] > 0 and row["s"] not in FIN_SECS:
-            icr = op0f / fin["ie"]
+        op0f = eff["op0"]
+        if op0f is not None and eff["ie"] and eff["ie"] > 0 and row["s"] not in FIN_SECS:
+            icr = op0f / eff["ie"]
             if icr < 1:
                 fl["icr"] = round(icr, 2)
         if all(v is not None and v < 0 for v in ni):
             fl["l3"] = 1
-        if fin.get("cs") and fin.get("eq") is not None and fin["eq"] < fin["cs"]:
+        if eff["cs"] and eff["eq"] is not None and eff["eq"] < eff["cs"]:
             fl["imp"] = 1
         if fl:
             row["fl"] = fl
 
         # EV 계열·현금흐름 멀티플 (금융업은 EV 지표가 무의미하므로 제외)
-        op0 = (fin.get("op") or [None])[0]
-        ebitda = (op0 + fin["dep"]) if (op0 is not None and fin.get("dep") is not None) else None
+        op0 = eff["op0"]
+        ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
         if s.get("cap") and fin:
-            ev = s["cap"] * 1e4 + (fin.get("bor") or 0) - (fin.get("cash") or 0)
+            ev = s["cap"] * 1e4 + (eff["bor"] or 0) - (eff["cash"] or 0)
             if row["s"] not in FIN_SECS and ev > 0:
                 if ebitda and ebitda > 0:
                     v = ev / ebitda
                     if 0 < v < 200:
                         row["evE"] = round(v, 1)
-                if rev[0] and rev[0] > 0:
-                    v = ev / rev[0]
+                if eff["rev0"] and eff["rev0"] > 0:
+                    v = ev / eff["rev0"]
                     if 0 < v < 100:
                         row["evR"] = round(v, 2)
-            ocf = fin.get("ocf")
+            ocf = eff["ocf"]
             if ocf and ocf > 0:
                 v = s["cap"] * 1e4 / ocf
                 if 0 < v < 200:
@@ -1012,6 +1138,8 @@ def fetch_korea(start, end, rf):
             if len(px) > 66:
                 rec["r1"] = round(float(px.iloc[-1] / px.iloc[-22] - 1) * 100, 1)
                 rec["r3"] = round(float(px.iloc[-1] / px.iloc[-64] - 1) * 100, 1)
+            if len(px) > 500:
+                rec["r36"] = round(float(px.iloc[-1] / px.iloc[0] - 1) * 100, 1)
             fv = _num(foreign.get(code))
             if fv is not None and 0 <= fv <= 100:
                 rec["frn"] = round(fv, 1)
@@ -1061,8 +1189,14 @@ def fill_multiples(kr_stocks, fin_map):
         price = s.get("price")
         if not fin or not shr or not price:
             continue
-        ni = fin.get("nio") if fin.get("nio") is not None else (fin.get("ni") or [None])[0]
-        eq = fin.get("eqo") if fin.get("eqo") is not None else fin.get("eq")
+        _t = fin.get("ttm") or {}
+        _b = fin.get("bs2") or {}
+        ni = (_t.get("nio") if _t.get("nio") is not None else
+              (_t.get("ni") if _t.get("ni") is not None else
+               (fin.get("nio") if fin.get("nio") is not None else (fin.get("ni") or [None])[0])))
+        eq = (_b.get("eqo") if _b.get("eqo") is not None else
+              (_b.get("eq") if _b.get("eq") is not None else
+               (fin.get("eqo") if fin.get("eqo") is not None else fin.get("eq"))))
         if ni is not None:
             eps = ni * 1e8 / shr
             if s.get("eps") is None:
@@ -1200,7 +1334,7 @@ def fetch_rf():
 def main():
     end = dt.date.today()
     start = end - dt.timedelta(days=int(365.25 * YEARS) + 40)
-    log(f"뱁새 데이터 수집 v14 · {start} ~ {end} · DART {'ON' if DART_KEY else 'OFF'}")
+    log(f"뱁새 데이터 수집 v16 (TTM) · {start} ~ {end} · DART {'ON' if DART_KEY else 'OFF'}")
 
     rf = fetch_rf()
     kr, fin_map, kr_bench, kr_mkt = fetch_korea(start, end, rf)
