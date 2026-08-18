@@ -198,7 +198,7 @@ export function DiscBody({ data, heldMap, onOpenCompany }) {
   );
 }
 
-export default function DiscApp({ onOpenCompany }) {
+export default function DiscApp({ onOpenCompany, lang }) {
   const [state, setState] = useState({ st: "loading" });
   const [heldMap, setHeldMap] = useState({});
   const [tries, setTries] = useState(0);
@@ -239,6 +239,11 @@ export default function DiscApp({ onOpenCompany }) {
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
       <style>{`@media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } .bchip { padding: 8px 14px !important; font-size: 12.5px !important } }`}</style>
+      {lang === "en" && (
+        <div style={{ background: "#fff", border: HAIR, borderRadius: 10, padding: "10px 14px", marginBottom: 10, fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
+          This section is <b style={{ color: C.ink }}>Korean-only for now</b> — it reads Korean corporate filings and market data. The <b style={{ color: C.ink }}>Portfolio</b> tab is fully bilingual.
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
         <span style={{ fontSize: 10.5, color: C.faint }}>기준 {state.data.asOf} · 매일 자동 갱신</span>
       </div>

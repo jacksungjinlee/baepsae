@@ -36,7 +36,8 @@ function Fold({ title, children }) {
   );
 }
 
-export default function InfoApp() {
+export default function InfoApp({ lang }) {
+  const en = lang === "en";
   const hasTally = TALLY_URL.startsWith("http");
   const hasMail = SUPPORT_EMAIL.includes("@");
   return (
@@ -47,6 +48,11 @@ export default function InfoApp() {
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 14 }}><Bird mood="care" size={84} /><Seal size={44} /></div>
           <div style={{ fontSize: 21, fontWeight: 900, marginTop: 12 }}>뱁새</div>
           <div style={{ fontFamily: SERIF, fontSize: 13.5, color: C.apricotDeep, marginTop: 5 }}>황새 말고, 내 걸음으로</div>
+          {en && (
+            <Sub style={{ marginTop: 14, textAlign: "left" }}>
+              <b style={{ color: C.ink }}>Baepsae</b> ("crow-tit", from a Korean proverb about keeping your own pace) is an <b style={{ color: C.ink }}>educational research studio for Korean retail investors</b> — risk-fit portfolio construction with a block-correlation engine, company analysis grounded in industry distributions, insider-filing and pension-fund tracking, and rates·bond education. It deliberately does <b style={{ color: C.ink }}>not</b> recommend stocks, publish target prices, or promise returns: every number is framed as "the assumption embedded in today's price," not a forecast. Built solo — data pipeline (DART·KRX·ECOS·FRED), analytics engine and design — by Jack (Sung Jin) Lee, INSEAD MBA 26J. The interface below is in Korean; the Portfolio tab is fully bilingual.
+            </Sub>
+          )}
           <Sub style={{ marginTop: 14, textAlign: "left" }}>
             뱁새는 한국 개인 투자자를 위한 <b style={{ color: C.ink }}>교육용 투자 연구 도구</b>예요.
             내 위험 그릇에 맞는 포트폴리오를 설계하고, 기업의 숫자를 업종의 분포 속에서 읽고, 공시와 금리의 맥락을 이해하도록 돕습니다.

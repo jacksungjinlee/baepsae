@@ -4208,8 +4208,9 @@ class ErrorBoundary extends React.Component {
 }
 
 // ================= App =================
-function AppInner({ seed }) {
-  const [lang, setLang] = useState("ko");
+function AppInner({ seed, lang: langProp }) {
+  const [lang, setLang] = useState(langProp || "ko");
+  useEffect(() => { if (langProp) setLang(langProp); }, [langProp]);
   const [mode] = useState("detail"); // v11: 간단 모드는 별도 앱(SimpleApp)으로 분리
   const [stage, setStage] = useState(0);
   const [settings, setSettings] = useState({ ...DEFAULT_SETTINGS });
@@ -4487,7 +4488,7 @@ function AppInner({ seed }) {
 export default function App({ seed }) {
   return (
     <ErrorBoundary>
-      <AppInner seed={seed} />
+      <AppInner seed={seed} lang={lang} />
     </ErrorBoundary>
   );
 }

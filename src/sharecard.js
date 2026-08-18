@@ -93,7 +93,7 @@ export function renderPortfolioCard({ score, buckets, top, dateStr }) {
   g.fillStyle = C.apricot; g.font = "700 34px " + SERIF_CV;
   g.fillText("황새 말고, 내 걸음으로", 100, H - 150);
   g.fillStyle = "#fff"; g.globalAlpha = 0.55; g.font = "500 22px " + FONT_CV;
-  g.fillText("pewpewmfer.github.io/baepsae · 교육용 도구 · 투자 자문 아님", 100, H - 104);
+  g.fillText("jacksungjinlee.github.io/baepsae · 교육용 도구 · 투자 자문 아님", 100, H - 104);
   g.fillText("이성진 · Jack (Sung Jin) Lee, INSEAD MBA 26J", 100, H - 68);
   g.globalAlpha = 1;
 
@@ -117,7 +117,7 @@ export function shareCard(cv, dateStr) {
       if (!b) return res(false);
       const file = new File([b], `baepsae-portfolio-${dateStr}.png`, { type: "image/png" });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], url: "https://pewpewmfer.github.io/baepsae/?ref=card" }); return res(true); } catch (e) { return res(false); }
+        try { await navigator.share({ files: [file], url: "https://jacksungjinlee.github.io/baepsae/?ref=card" }); return res(true); } catch (e) { return res(false); }
       }
       res(false);
     }, "image/png");

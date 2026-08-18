@@ -1188,7 +1188,7 @@ async function loadDisc() {
   return DISC_CACHE;
 }
 
-export default function CorpApp({ jump, onJumpDone }) {
+export default function CorpApp({ jump, onJumpDone, lang }) {
   const [state, setState] = useState({ st: "loading" });
   const [view, setView] = useState({ kind: "market" });
   const [heldMap, setHeldMap] = useState({});
@@ -1240,6 +1240,11 @@ export default function CorpApp({ jump, onJumpDone }) {
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
       <style>{CORP_CSS}</style>
+      {lang === "en" && (
+        <div style={{ background: "#fff", border: HAIR, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
+          This section is <b style={{ color: C.ink }}>Korean-only for now</b> — it reads Korean corporate filings and market data. The <b style={{ color: C.ink }}>Portfolio</b> tab is fully bilingual.
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6 }}>
           <ChipBtn on={view.kind === "market"} onClick={() => setView({ kind: "market" })}>시장 지도</ChipBtn>

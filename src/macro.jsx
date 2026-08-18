@@ -248,7 +248,7 @@ export function MacroBody({ data }) {
   );
 }
 
-export default function MacroApp() {
+export default function MacroApp({ lang }) {
   const [state, setState] = useState({ st: "loading" });
   const [tries, setTries] = useState(0);
   useEffect(() => { (async () => {
@@ -282,6 +282,11 @@ export default function MacroApp() {
       <style>{`@media (max-width: 880px) { .cgrid2 { grid-template-columns: 1fr !important } .cgrid3m { grid-template-columns: 1fr !important } }
         .cwrap svg, .cwrap svg text { user-select: none; -webkit-user-select: none; }
         @media (max-width: 880px) { .bchip { padding: 8px 14px !important; font-size: 12.5px !important } input[type="range"] { height: 30px } }`}</style>
+      {lang === "en" && (
+        <div style={{ background: "#fff", border: HAIR, borderRadius: 10, padding: "10px 14px", marginBottom: 10, fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
+          This section is <b style={{ color: C.ink }}>Korean-only for now</b> — it reads Korean corporate filings and market data. The <b style={{ color: C.ink }}>Portfolio</b> tab is fully bilingual.
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
         <span style={{ fontSize: 10.5, color: C.faint }}>기준 {state.data.asOf} · 매일 자동 갱신</span>
       </div>
