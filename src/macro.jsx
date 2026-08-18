@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { C, FONT, RAD, HAIR } from "./tokens.js";
 import { Bird } from "./detail.jsx";
+import { Verdict } from "./corp.jsx";
 
 const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
@@ -190,6 +191,16 @@ export function MacroBody({ data }) {
           <H num="01" main="국고채 수익률 곡선" sub={data.curve ? `한국은행 ECOS · 기준 ${data.curve.date}` : "한국은행 ECOS 연동"} />
           {data.curve ? (
             <>
+              {(() => {
+                const d = data.curve.now.map((v, i) => v - data.curve.ago[i]);
+                const avg = d.reduce((a, b) => a + b, 0) / d.length;
+                const shortD = d[0], longD = d[d.length - 1];
+                let v;
+                if (Math.abs(avg) < 0.1) v = '1년 전과 큰 틀에서 비슷한 금리예요 — 통화정책이 관망 구간이라는 뜻일 때가 많아요.';
+                else if (avg < 0) v = '1년 전보다 곡선 전체가 내려왔어요' + (shortD < longD - 0.15 ? ' — 특히 짧은 쪽이 많이 내려, 시장은 완화 쪽을 반영하고 있어요.' : ' — 돈의 값이 전반적으로 싸지고 있어요.');
+                else v = '1년 전보다 곡선 전체가 올라왔어요 — 돈의 값이 비싸지는 국면이에요.';
+                return <Verdict>{v}</Verdict>;
+              })()}
               <div style={{ marginTop: 10 }}><CurveChart curve={data.curve} /></div>
               <Sub style={{ marginTop: 8, fontSize: 11 }}>
                 만기별 금리를 이은 선이에요. 곡선 전체가 오르내리면 통화정책·물가 기대의 변화, 짧은 쪽과 긴 쪽의 기울기가 바뀌면 경기 전망의 변화를 뜻할 때가 많아요. 1년 전(점선)과 비교해 어디가 움직였는지 보세요.
@@ -205,6 +216,15 @@ export function MacroBody({ data }) {
           <H num="02" main="장단기 금리차" sub="장기금리 − 단기금리 · 월별 · 최근 3년" />
           {sprSeries.length ? (
             <>
+              {(() => {
+                const last = (x) => x && x.v && x.v.length ? x.v[x.v.length - 1] : null;
+                const kr = last(data.sprKr), us = last(data.sprUs);
+                if (kr == null && us == null) return null;
+                const seg = [];
+                if (kr != null) seg.push('한국 ' + (kr >= 0 ? '+' : '') + kr.toFixed(2) + '%p ' + (kr < 0 ? '역전' : '정상'));
+                if (us != null) seg.push('미국 ' + (us >= 0 ? '+' : '') + us.toFixed(2) + '%p ' + (us < 0 ? '역전' : '정상'));
+                return <Verdict>{'지금 장단기 금리차: ' + seg.join(' · ') + (((kr != null && kr < 0) || (us != null && us < 0)) ? ' — 역전은 경계 신호이지만, 타이머가 아니에요.' : ' — 곡선은 정상 기울기예요.')}</Verdict>;
+              })()}
               <div style={{ marginTop: 10 }}><LineChart series={sprSeries} unit="%p" zero /></div>
               <Sub style={{ marginTop: 8, fontSize: 11 }}>
                 보통은 오래 빌려줄수록 금리가 높아 양(+)이에요. 0 아래로 뒤집히는 역전은 역사적으로 경기 둔화에 앞서는 일이 많았지만 — <b style={{ color: C.ink }}>신호이지 타이머가 아니에요</b>. 역전 후 실제 둔화까지 시차도, 예외도 있었어요.
