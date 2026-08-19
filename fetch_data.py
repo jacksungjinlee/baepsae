@@ -240,13 +240,15 @@ def add_percentiles(stocks):
         "pbr": [s.get("pbr") for s in stocks],
         "mom": [s.get("mom") for s in stocks],
         "roe": [s.get("roe") for s in stocks],
+        "vol": [s.get("vol") for s in stocks],
     })
 
     def pr(col):
         return df[col].rank(pct=True) * 100
 
     # 규모는 작을수록, 가치는 PBR 낮을수록 높은 점수 (SMB·HML 방향과 일치)
-    series = {"pz": 100 - pr("cap"), "vz": 100 - pr("pbr"), "mz": pr("mom"), "qz": pr("roe")}
+    # 저변동(lz)은 변동성이 낮을수록 높은 점수
+    series = {"pz": 100 - pr("cap"), "vz": 100 - pr("pbr"), "mz": pr("mom"), "qz": pr("roe"), "lz": 100 - pr("vol")}
     for i, s in enumerate(stocks):
         for k, ser in series.items():
             v = ser.iloc[i]
@@ -927,6 +929,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
             "rev": rev, "op": fin.get("op") or [None, None, None], "ni": ni, "eq": fin.get("eq"),
             "shm": round(s["shr"] / 1e6, 2) if s.get("shr") else None,
             "r1": s.get("r1"), "r3": s.get("r3"), "r36": s.get("r36"), "dps3": s.get("dps3"),
+            "pz": s.get("pz"), "vz": s.get("vz"), "mz": s.get("mz"), "qz": s.get("qz"), "lz": s.get("lz"),
+            "beta": s.get("beta"), "vol": s.get("vol"), "sh": s.get("sh"), "mdd": s.get("mdd"),
         }
         # TTM·최신 분기 재무상태 우선 (없으면 연간)
         _t = fin.get("ttm") or {}
