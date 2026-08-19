@@ -4,6 +4,7 @@
 // 원칙: 값 하나를 단정하지 않고, 분포와 범위와 가정을 보여줍니다.
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
+import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT } from "./detail.jsx";
 
@@ -53,6 +54,8 @@ const EXPL = {
   pocf: { t: "P/영업현금흐름", b: "시가총액을 영업활동으로 실제 들어온 현금으로 나눈 값이에요. 회계상 이익은 조정 여지가 있지만 현금은 비교적 정직해서, 이익과 현금흐름이 크게 다른 회사를 걸러내는 데 유용해요." },
   cmp: { t: "기업 비교", b: "같은 업종 회사들을 지표별로 나란히 놓은 표예요. 오른쪽 끝의 업종 중간값이 기준점 역할을 해요. 숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요 — 차이가 나는 항목에서 '왜?'를 묻는 것이 이 표의 사용법이에요." },
   trap: { t: "싼 값이 오래 싼 값으로 남는 이유", b: "한국 시장에서는 멀티플이 낮은 회사가 오래 낮은 채로 머무는 일이 흔해요. 격차가 좁혀지려면 계기가 필요한데 — 배당·자사주 같은 주주환원 확대, 지배구조 개선, 실적의 방향 전환 — 그 계기가 없으면 '싸다'는 상태가 몇 년씩 이어질 수 있어요. 그래서 낮은 PER·PBR은 결론이 아니라 질문이에요: 이 값이 제자리를 찾게 만들 계기가 있는가, 아니면 낮은 값에 그만한 이유가 있는가. 아울러 단기 주가는 실적보다 테마와 수급이 이끄는 날이 많다는 것도 한국 시장의 현실이에요 — 뱁새의 숫자들은 '오를 종목'이 아니라 '지금 가격에 담긴 가정'을 읽기 위한 것이에요." },
+  screen: { t: "조건 검색", b: "지표와 성향으로 회사를 걸러내는 도구예요. 조건은 전부 내가 정해요. 뱁새는 걸러진 사실을 보여줄 뿐, 어떤 조합이 좋다고 말하지 않아요. 자주 쓰는 조건은 저장해두고 다시 돌릴 수 있어요." },
+  factor: { t: "성향(팩터)", b: "주식을 성격으로 나눠 보는 방법이에요. 가치(싼 주식) · 퀄리티(잘 버는 회사, ROE 기준) · 모멘텀(최근 12개월 오르던 주식) · 소형주(시가총액이 작은 회사) · 저변동(덜 흔들리는 주식). 숫자는 시장 안에서의 백분위예요. 가치 80이면 시장에서 싼 쪽 상위 20%라는 뜻이에요. 이 성향들은 역사적으로 남다른 수익 패턴을 보였지만, 10년 넘게 안 통한 시기도 있었어요. 내가 어떤 성향에 몰려 있는지 아는 게 이 숫자의 쓸모예요." },
   decomp: { t: "주가 분해", b: "주가는 주당이익(EPS)에 PER을 곱한 값이에요. 그래서 주가가 움직이면, 이익이 움직인 몫과 PER이 움직인 몫으로 나눠볼 수 있어요. 이익이 만든 상승은 회사가 번 거고, PER이 만든 상승은 시장의 기대예요. 기대는 식으면 되돌아가요." },
   rev: { t: "리버스 DCF", b: "계산 방향을 뒤집어서, '지금 주가가 정당화되려면 앞으로 몇 %씩 성장해야 하나'를 풉니다. 그 성장률이 회사의 과거와 업종 현실에 비추어 그럴듯한지 스스로 판단해보는 것 — 그게 이 도구의 핵심 질문이에요." },
 };
@@ -392,6 +395,226 @@ function MissingData({ onRetry }) {
       </Card>
       <button onClick={onRetry} style={{ marginTop: 14, background: C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "12px 22px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>다시 확인</button>
     </div>
+  );
+}
+
+// ---------------- 조건 검색 (스크리너) ----------------
+export const SCREEN_COLS = [
+  { k: "cap", ko: "시총(조)", grp: "기본", fmt: (v) => v >= 10 ? v.toFixed(0) : v.toFixed(1) },
+  { k: "per", ko: "PER", grp: "가치", fmt: (v) => v.toFixed(1) },
+  { k: "pbr", ko: "PBR", grp: "가치", fmt: (v) => v.toFixed(2) },
+  { k: "psr", ko: "PSR", grp: "가치", fmt: (v) => v.toFixed(2) },
+  { k: "evE", ko: "EV/EBITDA", grp: "가치", fmt: (v) => v.toFixed(1) },
+  { k: "pcf", ko: "P/OCF", grp: "가치", fmt: (v) => v.toFixed(1) },
+  { k: "dy", ko: "배당(%)", grp: "가치", fmt: (v) => v.toFixed(1) },
+  { k: "roe", ko: "ROE(%)", grp: "수익성", fmt: (v) => v.toFixed(1) },
+  { k: "g3", ko: "매출성장(%)", grp: "수익성", fmt: (v) => v.toFixed(1) },
+  { k: "r3", ko: "3개월(%)", grp: "성과", fmt: (v) => v.toFixed(1) },
+  { k: "r36", ko: "3년(%)", grp: "성과", fmt: (v) => v.toFixed(0) },
+  { k: "beta", ko: "베타", grp: "위험", fmt: (v) => v.toFixed(2) },
+  { k: "vol", ko: "변동성(%)", grp: "위험", fmt: (v) => v.toFixed(0) },
+  { k: "sh", ko: "샤프", grp: "위험", fmt: (v) => v.toFixed(2) },
+  { k: "mdd", ko: "최대낙폭(%)", grp: "위험", fmt: (v) => v.toFixed(0) },
+  { k: "vz", ko: "가치 성향", grp: "팩터", fmt: (v) => v + "" },
+  { k: "qz", ko: "퀄리티 성향", grp: "팩터", fmt: (v) => v + "" },
+  { k: "mz", ko: "모멘텀 성향", grp: "팩터", fmt: (v) => v + "" },
+  { k: "pz", ko: "소형주 성향", grp: "팩터", fmt: (v) => v + "" },
+  { k: "lz", ko: "저변동 성향", grp: "팩터", fmt: (v) => v + "" },
+];
+const DEFAULT_COLS = ["cap", "per", "pbr", "roe", "dy", "r3"];
+const FACTORS = [["vz", "가치"], ["qz", "퀄리티"], ["mz", "모멘텀"], ["pz", "소형주"], ["lz", "저변동"]];
+const F_STEPS = [[0, "전체"], [50, "상위 50%"], [70, "상위 30%"], [90, "상위 10%"]];
+const KEY_SCREENS = "baepsae_screens";
+
+export function screenFilter(companies, f) {
+  return companies.filter((c) => {
+    if (f.sec !== "all" && c.s !== f.sec) return false;
+    if (f.capMin && (!c.cap || c.cap < f.capMin)) return false;
+    for (const [k] of FACTORS) {
+      if (f[k] > 0 && (c[k] == null || c[k] < f[k])) return false;
+    }
+    return true;
+  });
+}
+
+export function ScreenerView({ data, onOpen, setExplain }) {
+  const [f, setF] = useState({ sec: "all", capMin: 0, vz: 0, qz: 0, mz: 0, pz: 0, lz: 0 });
+  const [cols, setCols] = useState(DEFAULT_COLS);
+  const [sort, setSort] = useState({ k: "cap", dir: -1 });
+  const [colPick, setColPick] = useState(false);
+  const [saved, setSaved] = useState(() => { try { return JSON.parse(localStorage.getItem(KEY_SCREENS) || "[]"); } catch (e) { return []; } });
+
+  const secs = useMemo(() => {
+    const set = new Set(data.companies.map((c) => c.s));
+    return [...set].sort((a, b) => (SEC(a).ko || a).localeCompare(SEC(b).ko || b, "ko"));
+  }, [data]);
+  const rows = useMemo(() => {
+    const r = screenFilter(data.companies, f);
+    const { k, dir } = sort;
+    return [...r].sort((a, b) => {
+      const av = a[k], bv = b[k];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
+  }, [data, f, sort]);
+
+  const persist = (next) => { setSaved(next); try { localStorage.setItem(KEY_SCREENS, JSON.stringify(next)); } catch (e) {} };
+  const saveNow = () => {
+    const name = prompt("이 조건의 이름을 지어주세요 (예: 내 가치주 조건)");
+    if (!name) return;
+    persist([...saved.filter((x) => x.name !== name), { name, f, cols, sort }].slice(0, 12));
+  };
+  const cs = SCREEN_COLS.filter((c) => cols.includes(c.k));
+  const chip = (on, label, onClick, key) => (
+    <button key={key || label} className="bchip" onClick={onClick} style={{ border: "1.5px solid " + (on ? C.ink : C.line), background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "5px 11px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{label}</button>
+  );
+
+  return (
+    <div>
+      <Card>
+        <H main="조건 검색" sub="내 기준으로 거르고, 저장해두고, 언제든 다시 돌려요" onWhy={() => setExplain("screen")} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+          <select value={f.sec} onChange={(e) => setF({ ...f, sec: e.target.value })} style={{ border: "1.5px solid " + C.line, borderRadius: 8, padding: "6px 8px", fontSize: 11.5, fontFamily: FONT, color: C.ink, background: "#fff" }}>
+            <option value="all">모든 업종</option>
+            {secs.map((s) => <option key={s} value={s}>{SEC(s).ko || s}</option>)}
+          </select>
+          {[[0, "시총 전체"], [0.1, "1000억 이상"], [1, "1조 이상"], [10, "10조 이상"]].map(([v, label]) =>
+            chip(f.capMin === v, label, () => setF({ ...f, capMin: v }), "cap" + v))}
+        </div>
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          {FACTORS.map(([k, ko]) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ width: 64, fontSize: 11.5, fontWeight: 800, color: C.ink }}>{ko}</span>
+              {F_STEPS.map(([v, label]) => chip(f[k] === v, label, () => setF({ ...f, [k]: v }), k + v))}
+              <button onClick={() => setExplain("factor")} title="설명" style={{ background: "none", border: "1px solid " + C.line, borderRadius: 999, width: 18, height: 18, fontSize: 10, color: C.faint, cursor: "pointer", lineHeight: 1 }}>?</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+          <button className="bchip" onClick={() => setColPick(!colPick)} style={{ border: "1.5px solid " + C.line, background: "#fff", color: C.sub, borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>열 고르기 ({cols.length})</button>
+          <button className="bchip" onClick={saveNow} style={{ border: "1.5px solid " + C.teal, background: "#fff", color: C.teal, borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>이 조건 저장</button>
+          {saved.map((p) => (
+            <span key={p.name} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid " + C.line, borderRadius: 999, padding: "4px 8px", fontSize: 10.5, background: C.bg }}>
+              <button onClick={() => { setF(p.f); setCols(p.cols); setSort(p.sort); }} style={{ background: "none", border: "none", fontWeight: 800, color: C.ink, cursor: "pointer", fontSize: 10.5, fontFamily: FONT }}>{p.name}</button>
+              <button onClick={() => persist(saved.filter((x) => x.name !== p.name))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}><Ic name="close" size={9} color={C.faint} /></button>
+            </span>
+          ))}
+        </div>
+        {colPick && (
+          <div style={{ marginTop: 10, background: C.bg, border: HAIR, borderRadius: 10, padding: 12 }}>
+            {["기본", "가치", "수익성", "성과", "위험", "팩터"].map((g) => (
+              <div key={g} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", padding: "4px 0" }}>
+                <span style={{ width: 46, fontSize: 10.5, fontWeight: 800, color: C.faint }}>{g}</span>
+                {SCREEN_COLS.filter((c) => c.grp === g).map((c) =>
+                  chip(cols.includes(c.k), c.ko, () => setCols(cols.includes(c.k) ? cols.filter((x) => x !== c.k) : [...cols, c.k]), "col" + c.k))}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 11.5, color: C.sub, marginBottom: 8 }}>{rows.length.toLocaleString()}개 회사가 조건에 맞아요. 이름을 누르면 기업 페이지로 가요. 열 이름을 누르면 정렬돼요.</div>
+        {rows.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "30px 0" }}>
+            <Bird mood="work" size={64} />
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 10 }}>조건에 맞는 회사가 없어요. 조건을 조금 풀어보세요.</div>
+          </div>
+        ) : (
+          <>
+            <div className="deskOnly" style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                <thead><tr>
+                  <th style={{ textAlign: "left", padding: "7px 6px", borderBottom: "2px solid " + C.ink, fontSize: 10.5, color: C.faint }}>회사</th>
+                  {cs.map((c) => (
+                    <th key={c.k} onClick={() => setSort({ k: c.k, dir: sort.k === c.k ? -sort.dir : -1 })}
+                      style={{ textAlign: "right", padding: "7px 6px", borderBottom: "2px solid " + C.ink, fontSize: 10.5, color: sort.k === c.k ? C.ink : C.faint, cursor: "pointer", whiteSpace: "nowrap", fontWeight: sort.k === c.k ? 800 : 600 }}>
+                      {c.ko}{sort.k === c.k ? (sort.dir === -1 ? " ↓" : " ↑") : ""}
+                    </th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {rows.slice(0, 100).map((c) => (
+                    <tr key={c.t} onClick={() => onOpen(c.t)} style={{ cursor: "pointer", borderBottom: "1px solid " + C.line }}>
+                      <td style={{ padding: "7px 6px", fontWeight: 800, color: C.ink, whiteSpace: "nowrap" }}>{c.nk}<span style={{ fontWeight: 500, color: C.faint, fontSize: 9.5, marginLeft: 5 }}>{SEC(c.s).ko}</span></td>
+                      {cs.map((cc) => <td key={cc.k} style={{ textAlign: "right", padding: "7px 6px", fontVariantNumeric: "tabular-nums", color: C.ink }}>{c[cc.k] == null ? "–" : cc.fmt(c[cc.k])}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mobOnly" style={{ display: "none", flexDirection: "column", gap: 8 }}>
+              {rows.slice(0, 50).map((c) => (
+                <button key={c.t} onClick={() => onOpen(c.t)} style={{ textAlign: "left", background: C.bg, border: HAIR, borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: FONT }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>{c.nk} <span style={{ fontWeight: 500, color: C.faint, fontSize: 10 }}>{SEC(c.s).ko}</span></div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 5 }}>
+                    {cs.map((cc) => <span key={cc.k} style={{ fontSize: 10.5, color: C.sub }}>{cc.ko} <b style={{ color: C.ink, fontVariantNumeric: "tabular-nums" }}>{c[cc.k] == null ? "–" : cc.fmt(c[cc.k])}</b></span>)}
+                  </div>
+                </button>
+              ))}
+            </div>
+            {rows.length > 100 && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8 }}>상위 100개까지 보여요. 조건을 좁히면 더 정확해져요.</div>}
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ---------------- 산업 읽는 법 ----------------
+export function GuideReader({ id, onClose }) {
+  const g = GUIDES[id];
+  if (!g) return null;
+  const Sec = ({ title, items }) => (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: C.apricotDeep }}>{title}</div>
+      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+        {items.map((x, i) => (
+          Array.isArray(x)
+            ? <div key={i} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65 }}><b>{x[0]}</b> — <span style={{ color: C.sub }}>{x[1]}</span></div>
+            : <div key={i} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65 }}>{x}</div>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,43,69,0.5)", zIndex: 90, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", padding: "20px 18px calc(24px + env(safe-area-inset-bottom))", width: "100%", maxWidth: 640, maxHeight: "84vh", overflowY: "auto", fontFamily: FONT }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 17, fontWeight: 900, color: C.ink }}>{g.ko} 읽는 법</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, lineHeight: 0 }}><Ic name="close" size={14} color={C.faint} /></button>
+        </div>
+        <Sec title="돈 버는 구조" items={g.money} />
+        <Sec title="사이클" items={g.cycle} />
+        <Sec title="봐야 할 지표" items={g.metrics} />
+        <Sec title="흔한 함정" items={g.traps} />
+        <div style={{ fontSize: 10, color: C.faint, marginTop: 16 }}>업종을 이해하기 위한 교육 자료예요. 특정 종목 추천이 아니에요.</div>
+      </div>
+    </div>
+  );
+}
+
+export function GuideListView({ onRead }) {
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Bird mood="grow" size={54} />
+        <div>
+          <div style={{ fontSize: 15.5, fontWeight: 800, color: C.ink }}>산업 읽는 법</div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>업종마다 돈 버는 구조가 달라요. 구조를 알면 어떤 지표를 봐야 할지 보여요.</div>
+        </div>
+      </div>
+      <div className="mgrid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 }}>
+        {GUIDE_ORDER.map((id) => (
+          <button key={id} onClick={() => onRead(id)} style={{ textAlign: "left", background: C.bg, border: HAIR, borderRadius: 10, padding: "13px 14px", cursor: "pointer", fontFamily: FONT }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>{GUIDES[id].ko}</div>
+            <div style={{ fontSize: 10.5, color: C.faint, marginTop: 3 }}>{GUIDES[id].money[0].split(".")[0]}.</div>
+          </button>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -756,6 +979,7 @@ function MultRow({ label, valTxt, band, sentence, onWhy }) {
 }
 
 export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain }) {
+  const [guideOpen, setGuideOpen] = useState(false);
   const c = data.companies.find((x) => x.t === t);
   const sec = c ? data.sectors[c.s] : null;
   if (!c) return <Card><Sub>이 종목의 데이터를 찾지 못했어요.</Sub></Card>;
@@ -854,6 +1078,20 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
       <Card>
         <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (c.bq ? " · 최근 4개분기 합산(" + c.bq + ")" : " · 직전 사업보고서")} onWhy={() => setExplain("box")} />
+          {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, padding: "9px 11px", background: C.bg, border: HAIR, borderRadius: 8, alignItems: "center" }}>
+              <button onClick={() => setExplain("factor")} style={{ background: "none", border: "none", padding: 0, fontSize: 10.5, fontWeight: 800, color: C.faint, cursor: "pointer", fontFamily: FONT }}>성향(팩터) ?</button>
+              {[["vz", "가치"], ["qz", "퀄리티"], ["mz", "모멘텀"], ["pz", "소형주"], ["lz", "저변동"]].map(([k, ko]) => c[k] == null ? null : (
+                <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 10.5, color: C.sub }}>{ko}</span>
+                  <span style={{ width: 40, height: 5, background: C.line, borderRadius: 3, position: "relative", display: "inline-block" }}>
+                    <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: c[k] * 0.4 + "px", background: c[k] >= 70 ? C.teal : c[k] >= 40 ? C.sub : C.line, borderRadius: 3 }} />
+                  </span>
+                  <b style={{ fontSize: 10.5, color: C.ink, fontVariantNumeric: "tabular-nums" }}>{c[k]}</b>
+                </span>
+              ))}
+            </div>
+          )}
         <Sub style={{ marginTop: 5 }}>주황 점이 이 회사, 파란 상자가 업종의 가운데 절반(25~75%)이에요.</Sub>
         <div className="mgrid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
           <MTile label="PER" val={c.per != null ? c.per + "배" : "—"} onWhy={() => setExplain("per")}
@@ -990,6 +1228,14 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         </Card>
       </div>
 
+      {GUIDES[c.s] && (
+        <button onClick={() => setGuideOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "#fff", border: "1.5px solid " + C.line, borderRadius: RAD.card, padding: "12px 16px", cursor: "pointer", fontFamily: FONT }}>
+          <Bird mood="grow" size={30} />
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: C.ink }}>{GUIDES[c.s].ko} 업종 읽는 법</span>
+          <span style={{ fontSize: 11, color: C.faint, marginLeft: "auto" }}>돈 버는 구조 · 사이클 · 지표 · 함정</span>
+        </button>
+      )}
+      {guideOpen && <GuideReader id={c.s} onClose={() => setGuideOpen(false)} />}
       <DecompCard c={c} setExplain={setExplain} />
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} />
 
@@ -1319,6 +1565,7 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
   const [view, setView] = useState({ kind: "market" });
   const [heldMap, setHeldMap] = useState({});
   const [explain, setExplain] = useState(null);
+  const [guideId, setGuideId] = useState(null);
   const [tries, setTries] = useState(0);
   useEffect(() => {
     if (jump) { setView({ kind: "co", t: jump }); onJumpDone && onJumpDone(); }
@@ -1372,13 +1619,17 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <ChipBtn on={view.kind === "market"} onClick={() => setView({ kind: "market" })}>시장 지도</ChipBtn>
-          <ChipBtn on={view.kind !== "market"} onClick={() => setView({ kind: "search" })}>기업 찾기</ChipBtn>
+          <ChipBtn on={view.kind === "search" || view.kind === "co" || view.kind === "cmp"} onClick={() => setView({ kind: "search" })}>기업 찾기</ChipBtn>
+          <ChipBtn on={view.kind === "screen"} onClick={() => setView({ kind: "screen" })}>조건 검색</ChipBtn>
+          <ChipBtn on={view.kind === "guide"} onClick={() => setView({ kind: "guide" })}>산업 읽는 법</ChipBtn>
         </div>
         <span style={{ fontSize: 10.5, color: C.faint }}>재무 데이터 기준일 {d.asOf} · 사업보고서는 직전 연도 기준</span>
       </div>
       {view.kind === "market" && <MarketView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
+      {view.kind === "screen" && <ScreenerView data={d} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
+      {view.kind === "guide" && <GuideListView onRead={setGuideId} />}
       {view.kind === "search" && <SearchView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} />}
       {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} onCompare={() => setView({ kind: "cmp", t: view.t })} setExplain={setExplain} />}
       {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
@@ -1388,6 +1639,7 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
         </div>
       )}
       <ExplainSheet id={explain} onClose={() => setExplain(null)} />
+      {guideId && <GuideReader id={guideId} onClose={() => setGuideId(null)} />}
     </div>
   );
 }
