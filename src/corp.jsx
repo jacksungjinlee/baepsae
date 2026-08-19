@@ -46,14 +46,14 @@ const EXPL = {
   pbr: { t: "PBR (주가순자산비율)", b: "회사 장부상 순자산 1원을 시장이 몇 원으로 평가하는지예요. 1배 미만은 장부가치보다 싸게 거래된다는 뜻인데, 그 자체로 저평가라기보다 '시장이 이 자산의 수익성을 의심한다'는 신호일 때가 많아요. ROE와 함께 읽어야 해요." },
   roe: { t: "ROE (자기자본이익률)", b: "주주 돈 100원으로 1년에 몇 원을 벌었는지예요. 꾸준히 높은 ROE는 좋은 사업의 흔적이지만, 부채를 늘려도 ROE는 올라가요 — 부채비율과 함께 보세요." },
   payout: { t: "배당성향", b: "번 이익 중 얼마를 배당으로 돌려주는지예요. 이익보다 배당이 큰 상태(100% 초과)가 이어지면 지속되기 어려워요." },
-  ff: { t: "업종 내 위치", b: "잣대 하나로는 회사를 판단할 수 없어요. PER·PBR·PSR·EV/EBITDA 같은 여러 잣대에서 같은 업종 회사들 가운데 낮은 쪽인지 높은 쪽인지를 나란히 놓은 그림이에요. 파란 상자는 업종의 25~75% 구간, 주황 점이 이 회사의 위치예요. 낮다고 곧 싸다는 뜻은 아니에요 — 시장이 왜 이 위치에 두었는지 물어보는 출발점이에요." },
+  ff: { t: "업종 내 위치", b: "지표 하나로는 회사를 판단할 수 없어요. PER·PBR·PSR·EV/EBITDA 같은 여러 지표에서 같은 업종 회사들 가운데 낮은 쪽인지 높은 쪽인지를 나란히 놓은 그림이에요. 파란 상자는 업종의 25~75% 구간, 주황 점이 이 회사의 위치예요. 낮다고 곧 싸다는 뜻은 아니에요 — 시장이 왜 이 위치에 두었는지 물어보는 출발점이에요." },
   dcf: { t: "DCF (현금흐름할인)", b: "미래 이익을 가정하고 현재 가치로 할인해 더하는 계산이에요. 여기서는 순이익을 현금흐름으로 근사하는 큰 단순화를 써요(실제로는 투자·운전자본 등으로 달라요). 그래서 이 도구의 목적은 '적정주가 찾기'가 아니라, 가정을 바꿀 때 값이 얼마나 민감하게 움직이는지, 그리고 지금 주가에는 어떤 성장 기대가 담겨 있는지를 보는 거예요." },
   tree: { t: "수익률 지도", b: "칸의 크기는 시가총액, 색은 최근 3개월 수익률이에요(붉은색 상승·푸른색 하락, 국내 시장 관례를 따랐어요). 시장의 돈이 최근 어디로 흘렀는지 한 화면에서 보는 용도이고, 색이 진하다고 좋거나 나쁜 종목이라는 뜻은 아니에요. 과거 수익률은 미래를 보장하지 않아요." },
   evebitda: { t: "EV/EBITDA", b: "시가총액에 순차입금을 더한 '기업 전체 가치(EV)'를 상각 전 영업이익(EBITDA)으로 나눈 값이에요. 부채까지 포함해 회사를 통째로 산다고 볼 때의 배수라서, 부채 구조가 다른 회사끼리 비교할 때 PER보다 공정할 때가 많아요. 상각비는 현금흐름표 기준 근사값이에요. 은행·보험·증권·지주는 사업 구조상 이 지표를 쓰지 않아요." },
   pocf: { t: "P/영업현금흐름", b: "시가총액을 영업활동으로 실제 들어온 현금으로 나눈 값이에요. 회계상 이익은 조정 여지가 있지만 현금은 비교적 정직해서, 이익과 현금흐름이 크게 다른 회사를 걸러내는 데 유용해요." },
   cmp: { t: "기업 비교", b: "같은 업종 회사들을 지표별로 나란히 놓은 표예요. 오른쪽 끝의 업종 중간값이 기준점 역할을 해요. 숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요 — 차이가 나는 항목에서 '왜?'를 묻는 것이 이 표의 사용법이에요." },
   trap: { t: "싼 값이 오래 싼 값으로 남는 이유", b: "한국 시장에서는 멀티플이 낮은 회사가 오래 낮은 채로 머무는 일이 흔해요. 격차가 좁혀지려면 계기가 필요한데 — 배당·자사주 같은 주주환원 확대, 지배구조 개선, 실적의 방향 전환 — 그 계기가 없으면 '싸다'는 상태가 몇 년씩 이어질 수 있어요. 그래서 낮은 PER·PBR은 결론이 아니라 질문이에요: 이 값이 제자리를 찾게 만들 계기가 있는가, 아니면 낮은 값에 그만한 이유가 있는가. 아울러 단기 주가는 실적보다 테마와 수급이 이끄는 날이 많다는 것도 한국 시장의 현실이에요 — 뱁새의 숫자들은 '오를 종목'이 아니라 '지금 가격에 담긴 가정'을 읽기 위한 것이에요." },
-  decomp: { t: "주가 분해", b: "주가는 정의상 주당이익(EPS)과 시장이 쳐주는 배수(PER)의 곱이에요. 그래서 어떤 기간의 주가 변화도 '이익이 변한 몫'과 '배수가 변한 몫'으로 정확히 나눌 수 있어요. 이익이 만든 상승은 회사가 번 것이고, 배수가 만든 상승은 시장이 빌려준 것 — 빌려준 것은 회수될 수 있다는 게 이 분해가 주는 한 줄 교훈이에요." },
+  decomp: { t: "주가 분해", b: "주가는 주당이익(EPS)에 PER을 곱한 값이에요. 그래서 주가가 움직이면, 이익이 움직인 몫과 PER이 움직인 몫으로 나눠볼 수 있어요. 이익이 만든 상승은 회사가 번 거고, PER이 만든 상승은 시장의 기대예요. 기대는 식으면 되돌아가요." },
   rev: { t: "리버스 DCF", b: "계산 방향을 뒤집어서, '지금 주가가 정당화되려면 앞으로 몇 %씩 성장해야 하나'를 풉니다. 그 성장률이 회사의 과거와 업종 현실에 비추어 그럴듯한지 스스로 판단해보는 것 — 그게 이 도구의 핵심 질문이에요." },
 };
 function ExplainSheet({ id, onClose }) {
@@ -512,7 +512,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
           if (secs.length < 4) return null;
           secs.sort((a, b) => b.r3 - a.r3);
           const nm = (k) => (SEC(k).ko || k);
-          return <Verdict>{`최근 3개월 돈은 ${nm(secs[0].k)}·${nm(secs[1].k)} 쪽으로 흘렀고, ${nm(secs[secs.length - 1].k)}에서 빠져나갔어요.`}</Verdict>;
+          return <Verdict>{`최근 3개월, 돈은 ${nm(secs[0].k)}·${nm(secs[1].k)}로 몰렸고 ${nm(secs[secs.length - 1].k)}에서 빠졌어요.`}</Verdict>;
         })()}
         <div style={{ marginTop: 10 }}>
           <Treemap comps={comps.filter((c) => secFilter === "all" || c.s === secFilter)} heldMap={heldMap} onOpen={onOpen} />
@@ -672,50 +672,55 @@ function DecompCard({ c, setExplain }) {
   const fx = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(2)) + "배";
   let verdict = null, body = null;
   if (d) {
+    const epsThen = c.ni[2] * 100 / c.shm;
+    const priceThen = c.price / d.priceRatio;
+    const perThen = priceThen / epsThen;
+    const perNow = c.price / c.eps;
+    const won = (v) => Math.round(v).toLocaleString() + "원";
     const up = d.priceRatio >= 1;
     const eDom = Math.abs(Math.log(d.eF)) >= Math.abs(Math.log(d.mF));
     verdict = up
-      ? (eDom ? "지난 3년 상승의 몸통은 이익이에요 — 실적이 만든 상승은 눈높이가 만든 상승보다 오래갑니다."
-              : "지난 3년 상승의 몸통은 이익이 아니라 눈높이예요 — 시장이 빌려준 열광은 언젠가 반납을 요구할 수 있어요.")
-      : (eDom ? "지난 3년 하락의 몸통은 이익 감소예요 — 가격이 아니라 실적의 문제였어요."
-              : "이익보다 눈높이가 더 크게 접혔어요 — 시장의 기대가 식은 것이 하락의 몸통이에요.");
+      ? (eDom ? "지난 3년 상승은 대부분 이익이 만들었어요. 이런 상승이 오래가요."
+              : "지난 3년 상승은 이익보다 기대가 만든 몫이 커요. 기대는 식으면 되돌아가요.")
+      : (eDom ? "주가가 내린 만큼 이익도 줄었어요. 가격보다 실적이 문제였어요."
+              : "이익보다 기대가 더 크게 꺾였어요. 시장이 이 회사를 다시 보고 있어요.");
     body = (
       <>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto 1fr", gap: 6, alignItems: "center", marginTop: 12, textAlign: "center" }}>
           <div style={{ background: C.bg, border: HAIR, borderRadius: 10, padding: "13px 6px" }}>
             <div style={{ fontSize: 10, color: C.faint }}>이익(EPS) 변화</div>
             <div style={{ fontSize: 21, fontWeight: 800, color: d.eF >= 1 ? C.up : C.down }}>{fx(d.eF)}</div>
-            <div style={{ fontSize: 9.5, color: C.faint }}>전전기 연간 → 최근 4개분기</div>
+            <div style={{ fontSize: 9.5, color: C.faint }}>{won(epsThen)} → {won(c.eps)}</div>
           </div>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.faint }}>×</div>
           <div style={{ background: C.bg, border: HAIR, borderRadius: 10, padding: "13px 6px" }}>
             <div style={{ fontSize: 10, color: C.faint }}>눈높이(PER) 변화</div>
             <div style={{ fontSize: 21, fontWeight: 800, color: d.mF >= 1 ? C.up : C.down }}>{fx(d.mF)}</div>
-            <div style={{ fontSize: 9.5, color: C.faint }}>시장이 쳐주는 배수</div>
+            <div style={{ fontSize: 9.5, color: C.faint }}>{perThen.toFixed(1)}배 → {perNow.toFixed(1)}배</div>
           </div>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.faint }}>=</div>
           <div style={{ background: C.ink, borderRadius: 10, padding: "13px 6px" }}>
             <div style={{ fontSize: 10, color: "rgba(255,255,255,0.72)" }}>주가 (3년)</div>
             <div style={{ fontSize: 21, fontWeight: 800, color: "#fff" }}>{c.r36 >= 0 ? "+" : ""}{c.r36}%</div>
-            <div style={{ fontSize: 9.5, color: "rgba(255,255,255,0.55)" }}>{fx(d.priceRatio)}</div>
+            <div style={{ fontSize: 9.5, color: "rgba(255,255,255,0.55)" }}>{won(priceThen)} → {won(c.price)}</div>
           </div>
         </div>
         <div style={{ fontSize: 10.5, color: C.faint, marginTop: 10, lineHeight: 1.6 }}>
-          예측이 아니라 지나간 3년의 분해예요. 주가 = 주당이익 × PER 이라는 항등식을 그대로 나눈 것 — 상장주식수 변화·배당은 단순화를 위해 눈높이 쪽에 뭉뚱그려져요.
+          지난 3년을 둘로 나눠본 것뿐, 예측이 아니에요. 주식수 변화와 배당은 눈높이 쪽에 함께 들어 있어요.
         </div>
       </>
     );
   } else {
     body = (
       <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
-        이 기업은 비교 구간에 적자가 있거나 데이터가 부족해 이익 × 눈높이 분해가 어려워요.
-        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" : ""}{c.r36}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"} — 이익이 뒷받침하지 않는 구간의 가격은 기대와 수급의 영역이에요.</>}
+        적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
+        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" : ""}{c.r36}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>}
       </div>
     );
   }
   return (
     <Card>
-      <H num="04" main="주가는 무엇으로 움직였나" sub="지난 3년 수익률 = 이익 변화 × 눈높이 변화 · 과거 분해" onWhy={() => setExplain("decomp")} />
+      <H num="04" main="주가는 무엇으로 움직였나" sub="지난 3년 주가 = 이익 변화 × 눈높이 변화" onWhy={() => setExplain("decomp")} />
       {verdict && <Verdict>{verdict}</Verdict>}
       {body}
     </Card>
@@ -891,10 +896,10 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             if (!r || r.length < 3 || r[2] == null || r[0] == null) return null;
             const rUp = r[0] > r[2], nUp = n && n[0] != null && n[2] != null ? n[0] > n[2] : null;
             let v;
-            if (rUp && nUp === true) v = "매출과 이익이 함께 자라는 3년이었어요 — 실적이 이야기를 끌고 있어요.";
-            else if (rUp && nUp === false) v = "매출은 늘었는데 이익은 줄었어요 — 팔수록 남는 게 적어지는 이유를 물을 자리예요.";
-            else if (!rUp && nUp === true) v = "매출은 줄었지만 이익은 늘었어요 — 몸집보다 체질을 택한 3년일 수 있어요.";
-            else if (!rUp && nUp === false) v = "매출과 이익이 함께 줄었어요 — 업황인지 회사 문제인지가 핵심 질문이에요.";
+            if (rUp && nUp === true) v = "매출과 이익이 같이 늘고 있어요. 좋은 흐름이에요.";
+            else if (rUp && nUp === false) v = "매출은 느는데 이익이 줄어요. 남는 장사인지 봐야 해요.";
+            else if (!rUp && nUp === true) v = "매출은 줄었지만 이익은 늘었어요. 몸집 대신 수익성을 챙겼어요.";
+            else if (!rUp && nUp === false) v = "매출도 이익도 줄고 있어요. 업황 탓인지 회사 탓인지가 관건이에요.";
             else return null;
             return <Verdict>{v}</Verdict>;
           })()}
@@ -951,13 +956,13 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             });
             if (hi + lo < 2) return null;
             const v = hi > lo
-              ? "여러 잣대에서 업종 중간보다 비싸게 거래돼요 — 시장이 이 회사에 프리미엄을 주는 이유가 유지될지가 질문이에요."
+              ? "여러 지표에서 업종 중간보다 비싸요. 그만한 이유가 있는지 볼 차례예요."
               : hi < lo
-              ? "여러 잣대에서 업종 중간보다 싸게 거래돼요 — 할인에는 이유가 있는지, 그 이유가 사라질 수 있는지를 보세요."
-              : "잣대에 따라 업종 대비 평가가 엇갈려요 — 어떤 지표가 이 업의 본질에 맞는지가 먼저예요.";
+              ? "여러 지표에서 업종 중간보다 싸요. 싼 데는 이유가 있는지 먼저 보세요."
+              : "지표마다 평가가 달라요. 이 업종에 맞는 지표부터 고르세요.";
             return <Verdict>{v}</Verdict>;
           })()}
-          {ffRows.length === 0 ? <Sub style={{ marginTop: 8 }}>표시할 잣대가 없어요. 데이터 갱신 후 채워져요.</Sub> : (
+          {ffRows.length === 0 ? <Sub style={{ marginTop: 8 }}>표시할 지표가 없어요. 데이터 갱신 후 채워져요.</Sub> : (
             <div style={{ marginTop: 6 }}>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, fontSize: 9, color: C.faint, paddingRight: 2 }}>
                 <span style={{ width: "52%", display: "flex", justifyContent: "space-between" }}><span>낮음</span><span>높음</span></span>
@@ -1244,7 +1249,7 @@ export function DcfCard({ c, sharesM, setExplain }) {
               </div>
             </div>
           )}
-          {N != null && N <= 0 && <Sub style={{ color: C.coral, fontSize: 11 }}>순이익이 0 이하라 이 단순 모형으로는 계산할 수 없어요. 흑자 전환 가정을 직접 입력해보거나, 이 회사엔 다른 잣대가 필요해요.</Sub>}
+          {N != null && N <= 0 && <Sub style={{ color: C.coral, fontSize: 11 }}>순이익이 0 이하라 이 단순 모형으로는 계산할 수 없어요. 흑자 전환 가정을 직접 입력해보거나, 이 회사엔 다른 지표가 필요해요.</Sub>}
         </div>
       </div>
 

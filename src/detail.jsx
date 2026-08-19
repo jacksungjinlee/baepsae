@@ -230,7 +230,7 @@ const LENS = {
   paper:    { ko: "원재료(펄프) 가격과 판가의 시차가 이익을 만들어요. 사이클 산업으로 보세요.", en: "The lag between pulp costs and prices creates the profit. Treat it as cyclical." },
   hotel:    { ko: "고정비가 커서 매출이 조금 늘면 이익이 크게 늘고, 조금 줄면 크게 줄어요(레버리지 효과).", en: "High fixed costs mean profits swing far more than revenue does." },
   index:    { ko: "ETF는 수백 개 종목을 한 바구니에 담은 상품이에요. 여기 적힌 PER·배당은 바구니 안 종목들의 평균이라 개별 기업처럼 읽으면 안 돼요. 대신 보수(수수료)와 어떤 지수를 따라가는지를 먼저 확인하세요.", en: "An ETF is a basket — its PER and yield are averages, not company figures. Check the expense ratio and which index it tracks." },
-  metal:    { ko: "금·은은 이익도 배당도 없어서 PER 같은 잣대가 아예 없어요. 값을 정하는 건 '남들이 얼마에 사주느냐'뿐이에요. 그래서 기대수익이 아니라, 주식과 따로 움직이는 성질(분산 효과)을 보고 담는 자산이에요.", en: "Metals have no earnings or dividends, so multiples don't apply. You hold them for low correlation, not expected return." },
+  metal:    { ko: "금·은은 이익도 배당도 없어서 PER 같은 지표가 아예 없어요. 값을 정하는 건 '남들이 얼마에 사주느냐'뿐이에요. 그래서 기대수익이 아니라, 주식과 따로 움직이는 성질(분산 효과)을 보고 담는 자산이에요.", en: "Metals have no earnings or dividends, so multiples don't apply. You hold them for low correlation, not expected return." },
   etc:      { ko: "업종 분류가 애매한 종목이에요. 사업 개요를 직접 읽어보고, 이 회사가 무엇으로 돈을 버는지 한 문장으로 말할 수 있는지 확인해보세요.", en: "Sector classification is unclear here. Read the business summary and check you can state in one sentence how it makes money." },
 };
 

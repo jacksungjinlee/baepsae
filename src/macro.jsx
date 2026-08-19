@@ -196,9 +196,9 @@ export function MacroBody({ data }) {
                 const avg = d.reduce((a, b) => a + b, 0) / d.length;
                 const shortD = d[0], longD = d[d.length - 1];
                 let v;
-                if (Math.abs(avg) < 0.1) v = '1년 전과 큰 틀에서 비슷한 금리예요 — 통화정책이 관망 구간이라는 뜻일 때가 많아요.';
-                else if (avg < 0) v = '1년 전보다 곡선 전체가 내려왔어요' + (shortD < longD - 0.15 ? ' — 특히 짧은 쪽이 많이 내려, 시장은 완화 쪽을 반영하고 있어요.' : ' — 돈의 값이 전반적으로 싸지고 있어요.');
-                else v = '1년 전보다 곡선 전체가 올라왔어요 — 돈의 값이 비싸지는 국면이에요.';
+                if (Math.abs(avg) < 0.1) v = '금리는 1년 전과 비슷한 수준이에요.';
+                else if (avg < 0) v = '1년 전보다 금리가 전반적으로 내렸어요.' + (shortD < longD - 0.15 ? ' 특히 단기가 많이 내렸어요. 시장은 금리 인하를 기대하는 거예요.' : '');
+                else v = '1년 전보다 금리가 전반적으로 올랐어요.';
                 return <Verdict>{v}</Verdict>;
               })()}
               <div style={{ marginTop: 10 }}><CurveChart curve={data.curve} /></div>
@@ -223,7 +223,7 @@ export function MacroBody({ data }) {
                 const seg = [];
                 if (kr != null) seg.push('한국 ' + (kr >= 0 ? '+' : '') + kr.toFixed(2) + '%p ' + (kr < 0 ? '역전' : '정상'));
                 if (us != null) seg.push('미국 ' + (us >= 0 ? '+' : '') + us.toFixed(2) + '%p ' + (us < 0 ? '역전' : '정상'));
-                return <Verdict>{'지금 장단기 금리차: ' + seg.join(' · ') + (((kr != null && kr < 0) || (us != null && us < 0)) ? ' — 역전은 경계 신호이지만, 타이머가 아니에요.' : ' — 곡선은 정상 기울기예요.')}</Verdict>;
+                return <Verdict>{'지금 금리차: ' + seg.join(' · ') + (((kr != null && kr < 0) || (us != null && us < 0)) ? '. 역전은 경고등이지, 타이머는 아니에요.' : '. 정상 범위예요.')}</Verdict>;
               })()}
               <div style={{ marginTop: 10 }}><LineChart series={sprSeries} unit="%p" zero /></div>
               <Sub style={{ marginTop: 8, fontSize: 11 }}>
