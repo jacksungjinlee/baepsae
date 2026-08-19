@@ -43,3 +43,23 @@ export const RAD = { card: 8, btn: 8, chip: 999, input: 6 };
 
 // 헤어라인 카드: 그림자 대신 선으로 위계를 만듭니다
 export const HAIR = "1px solid " + C.line;
+
+
+// ---- 내비게이션 히스토리 (뒤로가기 지원) ----
+export const NAV = { stack: [], installed: false };
+export function navPush(undo) {
+  try {
+    NAV.stack.push(undo);
+    history.pushState({ baepsae: NAV.stack.length }, "");
+  } catch (e) {}
+}
+export function navInstall() {
+  if (NAV.installed) return;
+  NAV.installed = true;
+  try {
+    window.addEventListener("popstate", () => {
+      const undo = NAV.stack.pop();
+      if (undo) { try { undo(); } catch (e) {} }
+    });
+  } catch (e) {}
+}

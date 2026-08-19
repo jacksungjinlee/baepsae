@@ -2,7 +2,7 @@
 // 상단 탭: 포트폴리오(현재) · 기업분석(준비 중) · 공시·수급(준비 중)
 // 포트폴리오 탭은 간단/상세 모드 게이트에서 시작합니다.
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
+import { C, FONT, SERIF, RAD, HAIR, NAV, navPush, navInstall } from "./tokens.js";
 import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store } from "./detail.jsx";
 import SimpleApp from "./simple.jsx";
@@ -11,7 +11,8 @@ import DiscApp from "./disc.jsx";
 import MacroApp from "./macro.jsx";
 import InfoApp from "./info.jsx";
 
-const MAST_CSS = `@media (max-width: 560px) { .mastSub { display: none } }
+const MAST_CSS = `@media (display-mode: standalone) { .pwaBack { display: inline-flex !important } }
+@media (max-width: 560px) { .mastSub { display: none } }
 @media (max-width: 880px) {
   .topTabs { display: none !important }
   .botNav { display: block !important }
@@ -60,6 +61,10 @@ function TopNav({ tab, setTab, showBack, onBack, lang, onLang }) {
             <Ic name="back" size={12} color={C.sub} />{lang === "en" ? "Back" : "모드 선택"}
           </button>
         )}
+        <button className="pwaBack" onClick={() => { try { if (NAV.stack.length) history.back(); } catch (e) {} }}
+          style={{ display: "none", background: "none", border: "1px solid " + C.line, borderRadius: 999, padding: "4px 9px", fontSize: 11, color: C.sub, cursor: "pointer", fontFamily: FONT, alignItems: "center", gap: 4, flexShrink: 0 }}>
+          <Ic name="back" size={11} color={C.sub} />뒤로
+        </button>
         <button onClick={onLang} style={{ marginLeft: showBack ? 0 : "auto", flexShrink: 0, background: C.bg, border: "none", borderRadius: 999, padding: "5px 10px", fontSize: 11, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT }}>{lang === "ko" ? "EN" : "한국어"}</button>
       </div>
     </div>
@@ -341,11 +346,14 @@ function BottomNav({ tab, setTab, lang }) {
 }
 
 export default function Shell() {
-  const [tab, setTab] = useState("pf");
+  const [tab, setTabRaw] = useState("pf");
+  const setTab = (t) => { setTabRaw((prev) => { if (t !== prev) navPush(() => setTabRaw(prev)); return t; }); };
   const [corpJump, setCorpJump] = useState(null);
+  useEffect(() => { navInstall(); }, []);
   const [lang, setLang] = useState(() => { try { return localStorage.getItem("baepsae_lang") || "ko"; } catch (e) { return "ko"; } });
   const toggleLang = () => { const n = lang === "ko" ? "en" : "ko"; setLang(n); try { localStorage.setItem("baepsae_lang", n); } catch (e) {} gcEvent("lang-" + n); };
-  const [mode, setMode] = useState(null); // null=게이트, "simple", "detail"
+  const [mode, setModeRaw] = useState(null);
+  const setMode = (m) => { setModeRaw((prev) => { if (m !== prev) navPush(() => setModeRaw(prev)); return m; }); }; // null=게이트, "simple", "detail"
   const [seed, setSeed] = useState(null);
   const [hasSimpleSave, setHasSimpleSave] = useState(false);
 
