@@ -926,7 +926,7 @@ export function SearchView({ data, heldMap, onOpen }) {
         {rows.length > limit && (
           <button onClick={() => setLimit(limit + 30)} style={{ display: "block", width: "100%", background: "none", border: "none", color: C.blue, fontSize: 12.5, fontWeight: 800, padding: "12px", cursor: "pointer", fontFamily: FONT }}>더 보기 ({rows.length - limit}개 남음)</button>
         )}
-        {rows.length === 0 && <Sub style={{ padding: "14px 2px" }}>검색 결과가 없어요.</Sub>}
+        {rows.length === 0 && <Sub style={{ padding: "14px 2px" }}>{/[a-zA-Z]{2,}/.test(q) ? '미국 종목은 포트폴리오 탭에서 담을 수 있어요. 기업분석은 한국 공시(DART) 기반이라 국내 상장사만 다뤄요.' : '검색 결과가 없어요. 회사 이름이나 6자리 코드로 찾아보세요.'}</Sub>}
       </Card>
     </div>
   );

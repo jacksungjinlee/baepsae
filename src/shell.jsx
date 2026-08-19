@@ -163,7 +163,7 @@ function GateSearch({ onOpenCorp, onQuickDiag, lang }) {
         </div>
       )}
       {sel && <ScoreCard c={sel} sectors={d.sectors} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} />}
-      {q.trim() && d && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : "찾지 못했어요 — 상장사 이름이나 6자리 코드로 검색해요. (데이터 갱신 전이면 비어 있을 수 있어요)"}</div>}
+      {q.trim() && d && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : (/[a-zA-Z]{2,}/.test(q) ? "성적표는 국내 상장사만 다뤄요. 미국 종목은 포트폴리오 탭에서 담을 수 있어요." : "찾지 못했어요 — 상장사 이름이나 6자리 코드로 검색해요. (데이터 갱신 전이면 비어 있을 수 있어요)")}</div>}
     </div>
   );
 }
