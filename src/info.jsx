@@ -36,6 +36,28 @@ function Fold({ title, children }) {
   );
 }
 
+
+const GLOSSARY = [["PER", "주가를 주당순이익으로 나눈 값. 이익 1원에 시장이 몇 원을 쳐주는지예요. 업종끼리 비교해야 뜻이 있어요."], ["PBR", "주가를 주당순자산으로 나눈 값. 1배면 장부상 자산 가치만큼 거래된다는 뜻이에요."], ["PSR", "시가총액을 매출로 나눈 값. 아직 이익이 없는 성장 기업을 비교할 때 써요."], ["EV/EBITDA", "빚까지 포함한 기업의 몸값(EV)을 감가상각 전 영업이익으로 나눈 값. 빚이 다른 회사끼리 비교할 때 공정해요."], ["P/OCF", "주가를 주당 영업현금흐름으로 나눈 값. 회계 이익보다 속이기 어려운 잣대예요."], ["EPS", "주당순이익. 회사가 1주당 벌어들인 이익이에요."], ["ROE", "자본 대비 순이익. 주주 돈 100원으로 1년에 몇 원을 벌었는지예요."], ["배당수익률", "1주당 배당금을 주가로 나눈 값. 예금 이자처럼 읽히지만, 배당은 약속이 아니에요."], ["TTM", "최근 4개 분기 합산. 연간 보고서보다 최신 상태를 보여줘요. 뱁새 투자지표의 기본이에요."], ["베타", "시장이 1% 움직일 때 이 주식이 평균 몇 % 움직였는지. 1보다 크면 시장보다 크게 출렁여요."], ["변동성", "수익률이 얼마나 넓게 출렁이는지의 통계값(연간 표준편차). 클수록 오르내림이 커요."], ["샤프지수", "감수한 변동성 1단위당 얼마의 초과수익을 얻었는지. 과거 성적의 효율이에요."], ["최대낙폭(MDD)", "고점에서 저점까지 가장 크게 빠졌던 폭. 버틸 수 있는 크기인지가 질문이에요."], ["상관관계", "두 자산이 같이 움직이는 정도(−1~+1). 낮을수록 섞었을 때 분산 효과가 커요."], ["팩터", "주식을 성향으로 나눠 보는 틀. 가치·퀄리티·모멘텀·규모·저변동. 자세한 건 조건 검색의 ? 를 보세요."], ["멀티플", "PER·PBR처럼 이익이나 자산에 곱해지는 배수. '시장의 눈높이'라고도 불러요."], ["DCF", "미래 현금흐름을 현재 가치로 할인해 더하는 가치평가법. 가정에 따라 값이 크게 변해요."], ["리버스 DCF", "지금 주가가 성립하려면 어떤 성장이 필요한지 거꾸로 푸는 방법. 뱁새가 쓰는 방식이에요."], ["듀레이션", "금리가 1%p 움직일 때 채권값이 대략 몇 % 움직이는지. 만기가 길수록 커요."], ["수익률 곡선", "만기별 국채 금리를 이은 선. 기울기가 경기 전망을 담을 때가 많아요."], ["장단기 금리차", "장기금리 − 단기금리. 마이너스로 뒤집히는 역전은 역사적으로 둔화에 앞선 일이 많았어요."], ["신용 스프레드", "회사채와 국고채의 금리 차이. 시장이 매기는 부도 걱정의 가격이에요."], ["환헤지", "환율 변동을 계약으로 막는 것. 공짜가 아니라 두 나라 금리 차이만큼 비용이 들어요."], ["유동비율", "유동자산 ÷ 유동부채. 1년 안에 갚을 돈을 감당할 수 있는지예요."], ["이자보상배율", "영업이익 ÷ 이자비용. 1 아래면 번 돈으로 이자도 못 갚는다는 뜻이에요."], ["자본잠식", "자본총계가 자본금보다 작아진 상태. 누적 손실이 밑천을 갉아먹은 거예요."], ["수주잔고", "받아놓고 아직 못 만든 일감. 조선·방산처럼 만드는 데 오래 걸리는 업의 미래 매출이에요."], ["NIM", "은행의 순이자마진. 대출금리와 조달금리의 차이로, 은행 수익성의 몸이에요."], ["시가총액", "주가 × 상장주식수. 시장이 매기는 회사 전체의 값이에요."], ["알파", "시장 대비 초과수익. 뱁새에선 과거 기록으로만 보여드리고, 미래를 약속하지 않아요."]];
+function GlossaryList() {
+  const [q, setQ] = useState("");
+  const rows = GLOSSARY.filter(([k, v]) => !q || k.toLowerCase().includes(q.toLowerCase()) || v.includes(q));
+  return (
+    <div style={{ marginTop: 10 }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="찾는 말이 있나요?"
+        style={{ width: "100%", boxSizing: "border-box", border: "1.5px solid " + C.line, borderRadius: 10, padding: "10px 12px", fontSize: 13, fontFamily: FONT, color: C.ink, background: "#fff" }} />
+      <div style={{ marginTop: 8, maxHeight: 340, overflowY: "auto" }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ padding: "9px 2px", borderBottom: "1px solid " + C.line }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: C.ink }}>{k}</span>
+            <span style={{ fontSize: 12, color: C.sub, lineHeight: 1.65, marginLeft: 8 }}>{v}</span>
+          </div>
+        ))}
+        {rows.length === 0 && <div style={{ fontSize: 12, color: C.faint, padding: "14px 2px" }}>아직 없는 말이에요. 피드백으로 알려주시면 더해둘게요.</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function InfoApp({ lang }) {
   const en = lang === "en";
   const hasTally = TALLY_URL.startsWith("http");
@@ -96,6 +118,11 @@ export default function InfoApp({ lang }) {
               </Sub>
             )}
           </div>
+        </Card>
+
+        <Card>
+          <H main="용어 사전" sub="뱁새에 나오는 말들, 한 줄씩" />
+          <GlossaryList />
         </Card>
 
         <Card>

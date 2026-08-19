@@ -55,7 +55,7 @@ const EXPL = {
   cmp: { t: "기업 비교", b: "같은 업종 회사들을 지표별로 나란히 놓은 표예요. 오른쪽 끝의 업종 중간값이 기준점 역할을 해요. 숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요 — 차이가 나는 항목에서 '왜?'를 묻는 것이 이 표의 사용법이에요." },
   trap: { t: "싼 값이 오래 싼 값으로 남는 이유", b: "한국 시장에서는 멀티플이 낮은 회사가 오래 낮은 채로 머무는 일이 흔해요. 격차가 좁혀지려면 계기가 필요한데 — 배당·자사주 같은 주주환원 확대, 지배구조 개선, 실적의 방향 전환 — 그 계기가 없으면 '싸다'는 상태가 몇 년씩 이어질 수 있어요. 그래서 낮은 PER·PBR은 결론이 아니라 질문이에요: 이 값이 제자리를 찾게 만들 계기가 있는가, 아니면 낮은 값에 그만한 이유가 있는가. 아울러 단기 주가는 실적보다 테마와 수급이 이끄는 날이 많다는 것도 한국 시장의 현실이에요 — 뱁새의 숫자들은 '오를 종목'이 아니라 '지금 가격에 담긴 가정'을 읽기 위한 것이에요." },
   screen: { t: "조건 검색", b: "지표와 성향으로 회사를 걸러내는 도구예요. 조건은 전부 내가 정해요. 뱁새는 걸러진 사실을 보여줄 뿐, 어떤 조합이 좋다고 말하지 않아요. 자주 쓰는 조건은 저장해두고 다시 돌릴 수 있어요." },
-  factor: { t: "성향(팩터)", b: "숫자는 0~100이고, 그 성격이 셀수록 100에 가까워요. 싸다 78이면 시장에서 싼 쪽으로 상위 22%라는 뜻이에요. 다섯 가지 성격: 싸다(PBR 기준) · 잘 번다(ROE 기준) · 올랐다(최근 12개월 수익률) · 작다(시가총액) · 덜 흔들린다(변동성). 투자 연구에서는 가치·퀄리티·모멘텀·소형주·저변동이라고 불러요. 역사적으로 남다른 수익 패턴을 보였지만, 10년 넘게 안 통한 시기도 있었어요. 내가 어느 성격에 몰려 있는지 아는 게 이 숫자의 쓸모예요." },
+  factor: { t: "성향(팩터)", b: "숫자는 0~100 백분위예요. 가치 78이면 PBR 낮은 순으로 시장 상위 22%라는 뜻이에요. 다섯 성향의 기준: 가치(PBR 낮은 순) · 퀄리티(ROE 높은 순) · 모멘텀(최근 12개월 수익률 순) · 규모(시가총액 작은 순) · 저변동(변동성 낮은 순). 역사적으로 남다른 수익 패턴이 관찰됐지만, 10년 넘게 안 통한 시기도 있었어요. 내가 어느 성향에 몰려 있는지 아는 것이 이 숫자의 쓸모예요." },
   decomp: { t: "주가 분해", b: "주가는 주당이익(EPS)에 PER을 곱한 값이에요. 그래서 주가가 움직이면, 이익이 움직인 몫과 PER이 움직인 몫으로 나눠볼 수 있어요. 이익이 만든 상승은 회사가 번 거고, PER이 만든 상승은 시장의 기대예요. 기대는 식으면 되돌아가요." },
   rev: { t: "리버스 DCF", b: "계산 방향을 뒤집어서, '지금 주가가 정당화되려면 앞으로 몇 %씩 성장해야 하나'를 풉니다. 그 성장률이 회사의 과거와 업종 현실에 비추어 그럴듯한지 스스로 판단해보는 것 — 그게 이 도구의 핵심 질문이에요." },
 };
@@ -415,15 +415,15 @@ export const SCREEN_COLS = [
   { k: "vol", ko: "변동성(%)", grp: "위험", fmt: (v) => v.toFixed(0) },
   { k: "sh", ko: "샤프", grp: "위험", fmt: (v) => v.toFixed(2) },
   { k: "mdd", ko: "최대낙폭(%)", grp: "위험", fmt: (v) => v.toFixed(0) },
-  { k: "vz", ko: "싸다", grp: "팩터", fmt: (v) => v + "" },
-  { k: "qz", ko: "잘 번다", grp: "팩터", fmt: (v) => v + "" },
-  { k: "mz", ko: "올랐다", grp: "팩터", fmt: (v) => v + "" },
-  { k: "pz", ko: "작다", grp: "팩터", fmt: (v) => v + "" },
-  { k: "lz", ko: "덜 흔들린다", grp: "팩터", fmt: (v) => v + "" },
+  { k: "vz", ko: "가치", grp: "팩터", fmt: (v) => v + "" },
+  { k: "qz", ko: "퀄리티", grp: "팩터", fmt: (v) => v + "" },
+  { k: "mz", ko: "모멘텀", grp: "팩터", fmt: (v) => v + "" },
+  { k: "pz", ko: "규모", grp: "팩터", fmt: (v) => v + "" },
+  { k: "lz", ko: "저변동", grp: "팩터", fmt: (v) => v + "" },
 ];
 const DEFAULT_COLS = ["cap", "per", "pbr", "roe", "dy", "r3"];
-const FACTORS = [["vz", "싸다", "가치"], ["qz", "잘 번다", "퀄리티"], ["mz", "올랐다", "모멘텀"], ["pz", "작다", "소형주"], ["lz", "덜 흔들린다", "저변동"]];
-const F_STEPS = [[0, "전체"], [50, "50%"], [70, "30%"], [90, "10%"]];
+const FACTORS = [["vz", "가치", "PBR 낮은 순"], ["qz", "퀄리티", "ROE 높은 순"], ["mz", "모멘텀", "12개월 수익률 순"], ["pz", "규모", "시가총액 작은 순"], ["lz", "저변동", "변동성 낮은 순"]];
+const F_STEPS = [[0, "전체"], [50, "상위 50%"], [70, "상위 30%"], [90, "상위 10%"]];
 const KEY_SCREENS = "baepsae_screens";
 
 export function screenFilter(companies, f) {
@@ -483,11 +483,11 @@ export function ScreenerView({ data, onOpen, setExplain }) {
           {[[0, "시총 전체"], [0.1, "1000억 이상"], [1, "1조 이상"], [10, "10조 이상"]].map(([v, label]) =>
             chip(f.capMin === v, label, () => setF({ ...f, capMin: v }), "cap" + v))}
         </div>
-        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 12 }}>숫자는 남기는 비율이에요. "싸다 30%"를 고르면, 싼 순서대로 30%만 남아요.</div>
+        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 12 }}>각 성향의 정렬 기준을 따라 상위만 남겨요. "가치 상위 30%" = PBR 낮은 순으로 30%.</div>
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
           {FACTORS.map(([k, ko, formal]) => (
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 94, flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: C.ink }}>{ko}<span style={{ fontWeight: 500, color: C.faint, fontSize: 9 }}> {formal}</span></span>
+              <span style={{ width: 104, flexShrink: 0 }}><span style={{ display: "block", fontSize: 11.5, fontWeight: 800, color: C.ink }}>{ko}</span><span style={{ display: "block", fontSize: 9, color: C.faint, marginTop: 1 }}>{formal}</span></span>
               {F_STEPS.map(([v, label]) => chip(f[k] === v, label, () => setF({ ...f, [k]: v }), k + v))}
               <span style={{ flex: 1 }} />
               <button onClick={() => setExplain("factor")} title="설명" style={{ background: "none", border: "1px solid " + C.line, borderRadius: 999, width: 18, height: 18, fontSize: 10, color: C.faint, cursor: "pointer", lineHeight: 1 }}>?</button>
@@ -597,11 +597,67 @@ export function GuideReader({ id, onClose }) {
           <div style={{ fontSize: 17, fontWeight: 900, color: C.ink }}>{g.ko} 읽는 법</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, lineHeight: 0 }}><Ic name="close" size={14} color={C.faint} /></button>
         </div>
+        {g.tldr && (
+          <div style={{ marginTop: 12, background: C.bg, border: HAIR, borderRadius: 10, padding: "12px 14px" }}>
+            {g.tldr.map((x, i) => <div key={i} style={{ fontSize: 12.5, fontWeight: 800, color: C.ink, lineHeight: 1.7 }}>· {x}</div>)}
+            {g.tags && <div style={{ display: "flex", gap: 6, marginTop: 8 }}>{g.tags.map((tg) => <span key={tg} style={{ border: "1px solid " + C.line, borderRadius: 999, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: C.sub }}>{tg}</span>)}</div>}
+          </div>
+        )}
+        {g.eq && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.apricotDeep }}>수익 방정식</div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 7, marginTop: 8 }}>
+              {g.eq.map(([txt, kind], i) => kind === "" 
+                ? <span key={i} style={{ fontSize: 15, fontWeight: 800, color: C.faint }}>{txt}</span>
+                : <span key={i} style={{ border: "1.6px solid " + (kind === "+" ? C.teal : kind === "-" ? C.coral : C.ink), color: kind === "+" ? C.teal : kind === "-" ? C.coral : C.ink, borderRadius: 9, padding: "6px 11px", fontSize: 12.5, fontWeight: 800 }}>{txt}</span>)}
+            </div>
+            {g.eqnote && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 7, lineHeight: 1.6 }}>{g.eqnote}</div>}
+            {g.lev && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.65, background: C.bg, borderRadius: 8, padding: "9px 11px" }}>{g.lev}</div>}
+          </div>
+        )}
         <Sec title="돈 버는 구조" items={g.money} />
         {g.chain && <Sec title="판의 구조 — 누가 누구에게 파나" items={g.chain} />}
+        {g.switches && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.apricotDeep }}>이 업종을 움직이는 스위치</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              {g.switches.map(([a, b, dir], i) => (
+                <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8, border: HAIR, borderRadius: 9, padding: "9px 12px" }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.ink, flexShrink: 0 }}>{a}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: dir === "+" ? C.teal : C.coral }}>→ {b}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <Sec title="사이클" items={g.cycle} />
+        {g.phases && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              {g.phases.map((p, i) => (
+                <React.Fragment key={p}>
+                  <span style={{ border: "1.4px solid " + C.line, borderRadius: 8, padding: "5px 9px", fontSize: 10.5, fontWeight: 800, color: C.ink }}>{p}</span>
+                  {i < g.phases.length - 1 && <span style={{ color: C.faint, fontSize: 11 }}>→</span>}
+                </React.Fragment>
+              ))}
+              <span style={{ color: C.faint, fontSize: 11 }}>↻</span>
+            </div>
+            {g.marker && <div style={{ fontSize: 11, fontWeight: 800, color: C.apricotDeep, marginTop: 7 }}>{g.marker}</div>}
+          </div>
+        )}
         <Sec title="봐야 할 지표" items={g.metrics} />
         <Sec title="흔한 함정" items={g.traps} />
+        {g.ask && (
+          <div style={{ marginTop: 16, border: "1.6px solid " + C.ink, borderRadius: 11, padding: "13px 15px" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: C.ink }}>사기 전에 물을 세 가지</div>
+            {g.ask.map((q, i) => (
+              <div key={i} style={{ display: "flex", gap: 9, marginTop: 8, alignItems: "flex-start" }}>
+                <span style={{ width: 18, height: 18, borderRadius: 999, background: C.ink, color: "#fff", fontSize: 10.5, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
+                <span style={{ fontSize: 12, color: C.ink, lineHeight: 1.6 }}>{q}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ fontSize: 10, color: C.faint, marginTop: 16 }}>업종을 이해하기 위한 교육 자료예요. 특정 종목 추천이 아니에요.</div>
       </div>
     </div>
@@ -1093,7 +1149,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, padding: "9px 11px", background: C.bg, border: HAIR, borderRadius: 8, alignItems: "center" }}>
               <button onClick={() => setExplain("factor")} style={{ background: "none", border: "none", padding: 0, fontSize: 10.5, fontWeight: 800, color: C.faint, cursor: "pointer", fontFamily: FONT }}>성향(팩터) ?</button>
-              {[["vz", "싸다"], ["qz", "잘 번다"], ["mz", "올랐다"], ["pz", "작다"], ["lz", "덜 흔들린다"]].map(([k, ko]) => c[k] == null ? null : (
+              {[["vz", "가치"], ["qz", "퀄리티"], ["mz", "모멘텀"], ["pz", "규모"], ["lz", "저변동"]].map(([k, ko]) => c[k] == null ? null : (
                 <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                   <span style={{ fontSize: 10.5, color: C.sub }}>{ko}</span>
                   <span style={{ width: 40, height: 5, background: C.line, borderRadius: 3, position: "relative", display: "inline-block" }}>
