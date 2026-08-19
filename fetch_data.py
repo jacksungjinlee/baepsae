@@ -44,7 +44,7 @@ import requests
 # ────────────────────────────────────────────────────────────
 YEARS = 3                 # 베타·변동성·알파·샤프 계산 기간
 MIN_DAYS = 250            # 이보다 데이터가 적으면 통계값 생략
-MAX_KR = 2000             # 한국 종목 수 상한(시가총액 순). 늘리면 오래 걸립니다
+MAX_KR = 2500             # 한국 종목 수 상한(시가총액 순). 늘리면 오래 걸립니다
 RF_FALLBACK = 0.03        # 국고채 수익률을 못 받아왔을 때 쓸 값
 OUT = "data.json"
 OUT_CORP = "corp.json"       # v12: 기업분석용 재무 데이터
@@ -649,12 +649,15 @@ def _monthly(series, months=36):
 
 
 def parse_ecos_items(rows):
-    """817Y002 품목 목록에서 국고채 만기별 코드 매핑. (순수 함수)"""
+    """817Y002 품목 목록에서 국고채 만기별 + 회사채(AA-) 코드 매핑. (순수 함수)"""
     import re
     out = {}
     for r in rows:
         nm = (r.get("ITEM_NAME") or "").replace(" ", "")
         if "물가연동" in nm:
+            continue
+        if "회사채" in nm and "AA-" in nm and "corp" not in out:
+            out["corp"] = r.get("ITEM_CODE")
             continue
         m = re.search(r"국고채.*?(1|2|3|5|10|20|30)년", nm)
         if m:
@@ -666,17 +669,32 @@ def fetch_macro(start, end, gold_krw_px=None, fx=None):
     """금리·원자재 데이터: 국고채 커브(ECOS)·장단기 금리차·금은유가."""
     import FinanceDataReader as fdr
     out = {"asOf": end.isoformat(), "curve": None, "sprKr": None, "sprUs": None,
-           "gold": None, "silver": None, "wti": None}
+           "gold": None, "silver": None, "wti": None,
+           "g10": None, "tenor": None, "credit": None}
     s3 = end - dt.timedelta(days=365 * 3 + 30)
 
-    # 미국 장단기 (FRED, 키 불필요)
+    # 미국 장단기 + 만기별 (FRED, 키 불필요)
+    us_t = {}
     try:
-        d10 = fdr.DataReader("FRED:DGS10", s3, end).iloc[:, 0]
-        d2 = fdr.DataReader("FRED:DGS2", s3, end).iloc[:, 0]
-        spr = (d10 - d2).dropna()
-        out["sprUs"] = _monthly(spr)
+        for code, key in (("DGS1", 1), ("DGS3", 3), ("DGS5", 5), ("DGS10", 10), ("DGS2", 2)):
+            try:
+                us_t[key] = fdr.DataReader("FRED:" + code, s3, end).iloc[:, 0].dropna()
+            except Exception:
+                pass
+        if 10 in us_t and 2 in us_t:
+            out["sprUs"] = _monthly((us_t[10] - us_t[2]).dropna())
     except Exception as e:
-        log(f"  (미국 금리차 생략: {e})")
+        log(f"  (미국 금리 생략: {e})")
+
+    # 주요국 10년물 (일본·독일: OECD 월간, FRED 경유)
+    g10 = {}
+    if 10 in us_t:
+        g10["us"] = _monthly(us_t[10])
+    for code, key in (("IRLTLT01JPM156N", "jp"), ("IRLTLT01DEM156N", "de")):
+        try:
+            g10[key] = _monthly(fdr.DataReader("FRED:" + code, s3, end).iloc[:, 0].dropna())
+        except Exception as e:
+            log(f"  ({key} 10년물 생략: {e})")
 
     # 원자재
     try:
@@ -728,9 +746,41 @@ def fetch_macro(start, end, gold_krw_px=None, fx=None):
                             "date": series[tenors[0]].index[-1].strftime("%Y-%m-%d")}
             if 3 in series and 10 in series:
                 out["sprKr"] = _monthly((series[10] - series[3]).dropna())
-            log(f"· 국고채 커브 {len(tenors)}개 만기 · 기준 {out['curve']['date']}")
+            if 10 in series:
+                g10["kr"] = _monthly(series[10])
+            # 만기별 한·미 금리 (지금 값): [만기, 한국, 미국]
+            tn = []
+            for yr in (1, 3, 5, 10):
+                k = round(float(series[yr].iloc[-1]), 2) if yr in series else None
+                u = round(float(us_t[yr].iloc[-1]), 2) if yr in us_t else None
+                if k is not None or u is not None:
+                    tn.append([yr, k, u])
+            if tn:
+                out["tenor"] = tn
+            # 신용 스프레드: 회사채 AA- − 국고 3년
+            try:
+                if items.get("corp") and 3 in series:
+                    u2 = (f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_KEY}/json/kr/1/1200/817Y002/D/"
+                          f"{s3.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{items['corp']}")
+                    rr2 = requests.get(u2, timeout=30)
+                    rw2 = (rr2.json().get("StatisticSearch") or {}).get("row") or []
+                    if rw2:
+                        idx2 = pd.to_datetime([x["TIME"] for x in rw2], format="%Y%m%d")
+                        corp = pd.Series([float(x["DATA_VALUE"]) for x in rw2], index=idx2).dropna()
+                        cs = (corp - series[3]).dropna()
+                        if len(cs) > 60:
+                            now = float(cs.iloc[-1])
+                            pct = int(round(float((cs < now).mean()) * 100))
+                            out["credit"] = dict(_monthly(cs), now=round(now, 2),
+                                                 lo=round(float(cs.min()), 2), hi=round(float(cs.max()), 2), pct=pct)
+            except Exception as e:
+                log(f"  (신용 스프레드 생략: {e})")
+            log(f"· 국고채 커브 {len(tenors)}개 만기 · 기준 {out['curve']['date']}"
+                + (f" · 신용 스프레드 {out['credit']['now']}%p" if out.get('credit') else ""))
     except Exception as e:
         log(f"  !! ECOS 조회 실패: {e}")
+    if g10:
+        out["g10"] = g10
     return out
 
 
@@ -1273,6 +1323,23 @@ def us_tickers():
     return sorted({s.replace(".", "-").strip().upper() for s in tk if s and len(s) <= 6 and s.isascii()})
 
 
+US_SEC_KO = {"semi": "반도체", "elec": "전자·하드웨어", "battery": "배터리·에너지저장", "auto": "자동차",
+    "machine": "산업·기계", "steel": "소재·금속", "chem": "화학", "energy": "에너지", "utility": "유틸리티",
+    "bio": "제약·바이오", "health": "의료·헬스케어", "platform": "인터넷·소프트웨어", "game": "게임",
+    "media": "미디어·엔터테인먼트", "telecom": "통신", "bank": "은행·금융", "insure": "보험",
+    "broker": "금융서비스", "build": "건설·인프라", "retail": "유통·소비재", "food": "식음료",
+    "cosmetic": "생활용품", "transport": "운송·물류", "hotel": "호텔·레저", "realestate": "부동산", "etc": ""}
+
+
+def us_desc(sec_key, industry):
+    ko = US_SEC_KO.get(sec_key, "")
+    base = f"미국 상장 {ko} 기업이에요." if ko else "미국 상장 기업이에요."
+    ind = (industry or "").strip()
+    if ind and len(ind) < 40:
+        base += f" ({ind})"
+    return base
+
+
 def fetch_us(start, end, rf):
     import yfinance as yf
 
@@ -1297,6 +1364,7 @@ def fetch_us(start, end, rf):
                        auto_adjust=True, group_by="ticker", threads=True)
 
     out = []
+    dropped = []
     for s in syms:
         try:
             px = (data[s]["Close"] if isinstance(data.columns, pd.MultiIndex) else data["Close"]).dropna()
@@ -1313,7 +1381,11 @@ def fetch_us(start, end, rf):
             rec.update(perf_stats(px, rf))
             out.append({k: v for k, v in rec.items() if v is not None})
         except Exception:
+            dropped.append(s)
             continue
+
+    if dropped:
+        log(f"  (시세 확보 실패로 제외된 미국 종목 {len(dropped)}개: {', '.join(dropped[:8])}{'…' if len(dropped) > 8 else ''})")
 
     def enrich(rec):
         try:
@@ -1322,6 +1394,8 @@ def fetch_us(start, end, rf):
             if nm:
                 rec["nk"] = rec["ne"] = str(nm)
             rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
+            if not rec.get("dk"):
+                rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
             spec = (("per", "trailingPE", 0, 500, False), ("pbr", "priceToBook", 0, 100, False),
                     ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
                     ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
