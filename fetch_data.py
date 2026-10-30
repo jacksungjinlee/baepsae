@@ -34,6 +34,7 @@ import zipfile
 import datetime as dt
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -169,6 +170,199 @@ def _num(x):
         return v if np.isfinite(v) else None
     except Exception:
         return None
+
+
+# ────────────────────────────────────────────────────────────
+# v17.4.1: 한국 시간 · 안전한 숫자 · 안전한 JSON
+# ────────────────────────────────────────────────────────────
+KST = ZoneInfo("Asia/Seoul")
+
+
+def today_kst(now=None):
+    """GitHub 러너의 시계는 UTC예요. 날짜는 언제나 한국 시간으로 셉니다."""
+    return (now or dt.datetime.now(dt.timezone.utc)).astimezone(KST).date()
+
+
+def _fin(x):
+    """유한한 숫자면 float, 아니면 None (None·NaN·±inf·숫자가 아닌 값 모두).
+    `float("nan") or 0` 은 여전히 NaN 이라서, 숫자에는 `x or 0` 대신 이 함수를 씁니다."""
+    if x is None or isinstance(x, (bool, np.bool_)):
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _json_safe(o, bad):
+    if isinstance(o, dict):
+        return {k: _json_safe(v, bad) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v, bad) for v in o]
+    if isinstance(o, (bool, np.bool_)):
+        return bool(o)
+    if isinstance(o, (int, np.integer)):
+        return int(o)
+    if isinstance(o, (float, np.floating)):
+        v = float(o)
+        if math.isfinite(v):
+            return v
+        bad[0] += 1
+        return None
+    return o
+
+
+def write_json(path, obj):
+    """data/corp/macro/disc.json 을 쓰는 유일한 길입니다.
+    브라우저는 NaN 하나만 있어도 파일 전체를 거부해요. 그래서 NaN·Infinity 는 null 로 바꾸고
+    (바꾼 개수는 로그로 남김), allow_nan=False 로 한 번 더 막습니다."""
+    bad = [0]
+    clean = _json_safe(obj, bad)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(clean, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    os.replace(tmp, path)
+    if bad[0]:
+        log(f"  !! {path}: 숫자가 아닌 값(NaN·Infinity) {bad[0]:,}개를 빈 값(null)으로 바꿔 저장했어요")
+    return bad[0]
+
+
+# ────────────────────────────────────────────────────────────
+# v17.4.1: KRX 종목 목록 — '최종본' 파일만 씁니다
+# ────────────────────────────────────────────────────────────
+# FinanceData/fdr_krx_data_cache 는 같은 날짜 파일을 하루에 여러 번 덮어써요.
+#   ~05시 장 시작 전: 시가총액이 전부 비어 있음
+#   ~13시 장중: 값은 차 있지만 장중 가격
+#   ~18시 이후 장 마감 후: 최종본
+# 그래서 오늘(KST) 이전 날짜 중, 시가총액이 90% 이상 차 있고 마지막 커밋이 그 날짜
+# 18:00 KST 이후인 가장 최근 파일을 고릅니다. 주말 파일은 시가총액이 비어 있어 걸러져요.
+LISTING_URL = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx/{d}.csv"
+LISTING_COMMITS_API = "https://api.github.com/repos/FinanceData/fdr_krx_data_cache/commits"
+LISTING_PATH = "data/listing/krx/{d}.csv"
+LISTING_MIN_CAP_SHARE = 0.90
+LISTING_FINAL_HOUR = 18
+LISTING_LOOKBACK_DAYS = 10
+MUST_KR = ("005930", "000660", "005380", "015760", "105560")
+
+
+def listing_cap_share(df):
+    """시가총액이 숫자이고 0보다 큰 행의 비율 (0~1)."""
+    if df is None or not len(df) or "Marcap" not in df.columns:
+        return 0.0
+    m = pd.to_numeric(df["Marcap"], errors="coerce")
+    return float((m > 0).sum()) / len(df)
+
+
+def parse_listing_csv(text):
+    df = pd.read_csv(io.StringIO(text), dtype={"Code": str})
+    return df.drop(columns=[c for c in df.columns if str(c).startswith("Unnamed")])
+
+
+def _fetch_listing_csv(d):
+    """그 날짜 파일. 없으면(404) None, 세 번 시도해도 못 받으면 예외."""
+    last = None
+    for attempt in range(3):
+        try:
+            r = requests.get(LISTING_URL.format(d=d.isoformat()), timeout=30)
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return parse_listing_csv(r.content.decode("utf-8-sig"))
+        except Exception as e:
+            last = e
+            time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"{d} 파일 다운로드 실패: {last}")
+
+
+def _listing_commit_kst(d):
+    """그 날짜 파일의 마지막 커밋 시각(KST). 확인할 수 없으면 None."""
+    headers = {"Accept": "application/vnd.github+json"}
+    tok = os.environ.get("GITHUB_TOKEN", "").strip()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    try:
+        r = requests.get(LISTING_COMMITS_API, params={"path": LISTING_PATH.format(d=d.isoformat()), "per_page": 1},
+                         headers=headers, timeout=20)
+        if r.status_code != 200:
+            log(f"  !! 커밋 시각 확인 실패: {d} · HTTP {r.status_code} (다음 거래일 파일로 판단해요)")
+            return None
+        js = r.json()
+        if not js:
+            return None
+        ts = js[0]["commit"]["committer"]["date"]
+        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
+    except Exception as e:
+        log(f"  !! 커밋 시각 확인 실패: {d} · {e} (다음 거래일 파일로 판단해요)")
+        return None
+
+
+def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS):
+    """오늘(KST) 이전의 가장 최근 최종본을 고릅니다. (순수 함수 — 받아오는 방법은 인자로)
+    반환: (날짜, DataFrame, 설명, 건너뛴 날짜 메모) · 못 찾으면 날짜·DataFrame 이 None."""
+    cache, notes = {}, []
+
+    def get(d):
+        if d not in cache:
+            try:
+                cache[d] = fetch_csv(d)
+            except Exception as e:
+                cache[d] = None
+                notes.append(f"!! {d} 받기 실패({e})")
+        return cache[d]
+
+    for back in range(1, lookback + 1):
+        d = today - dt.timedelta(days=back)
+        df = get(d)
+        if df is None:
+            continue
+        share = listing_cap_share(df)
+        if share < LISTING_MIN_CAP_SHARE:
+            notes.append(f"{d} 시가총액 {share:.0%} (장 전 파일 또는 휴장일) → 건너뜀")
+            continue
+        ct = commit_kst(d)
+        if ct is not None:
+            if ct >= dt.datetime.combine(d, dt.time(LISTING_FINAL_HOUR), KST):
+                return d, df, f"{d} 최종본 ({ct:%H:%M} KST 커밋, {len(df):,}종목, 시총 {share:.0%})", notes
+            notes.append(f"{d} 마지막 커밋 {ct:%m-%d %H:%M} KST — {LISTING_FINAL_HOUR}시 전이라 최종본이 아님 → 건너뜀")
+            continue
+        # 커밋 시각을 못 봤으면: 그 뒤 날짜(오늘 포함)에 시가총액이 찬 파일이 있을 때만 '끝난 날'로 봐요
+        later = [today - dt.timedelta(days=b) for b in range(0, back)]
+        if any(listing_cap_share(get(e)) >= LISTING_MIN_CAP_SHARE for e in later):
+            return d, df, (f"{d} 최종본으로 판단 (!! 커밋 시각 확인 불가 · 다음 거래일 파일 있음, "
+                           f"{len(df):,}종목, 시총 {share:.0%})"), notes
+        notes.append(f"{d} 커밋 시각 확인 불가 · 다음 거래일 파일도 아직 없음 → 건너뜀")
+    return None, None, f"최근 {lookback}일 안에 최종본이 없어요", notes
+
+
+def select_kr_universe(listing, max_n):
+    """시가총액 큰 순으로 max_n 개. 꼭 있어야 할 종목이 빠지면 예외. (순수 함수)
+    시가총액이 비면 정렬이 안 돼 가나다순이 남아요(2026-10 사고). 그래서 결과를 꼭 확인합니다."""
+    listing = listing.copy()
+    for c in ("Marcap", "Amount"):
+        listing[c] = pd.to_numeric(listing[c], errors="coerce")
+    listing = listing.sort_values("Marcap", ascending=False, na_position="last").head(max_n)
+    missing = [c for c in MUST_KR if c not in set(listing["Code"])]
+    if missing:
+        raise RuntimeError(f"!! 꼭 있어야 할 종목이 목록에 없어요: {', '.join(missing)} — 발행하지 않고 중단합니다")
+    return listing
+
+
+def load_kr_listing(today):
+    """(목록 날짜, DataFrame). 못 찾으면 (None, None) — 부르는 쪽이 실행을 멈춥니다."""
+    d, df, note, notes = pick_final_listing(today, _fetch_listing_csv, _listing_commit_kst)
+    for n in notes:
+        log(f"  (종목 목록 {n})")
+    if d is None:
+        log(f"  !! 종목 목록: {note}")
+        return None, None
+    loud = any(n.startswith("!!") for n in notes) or "!!" in note
+    log(f"{'  !! ' if loud else '· '}종목 목록: {note}"
+        + (" — 더 최근 날짜 파일을 받지 못해 이전 날짜를 썼어요" if any(n.startswith("!!") for n in notes) else ""))
+    age = (today - d).days
+    if age > 4:
+        log(f"  !! 종목 목록이 {age}일 전 것이에요 (연휴가 아니라면 원본 저장소가 멈췄을 수 있어요)")
+    return d, df
 
 
 # ────────────────────────────────────────────────────────────
@@ -509,10 +703,10 @@ def enrich_with_dart(kr_stocks):
     cmap = dart_corp_map()
     if not cmap:
         return kr_stocks, fin_map
-    year = dt.date.today().year - 1
+    year = today_kst().year - 1
     targets = [s for s in kr_stocks if s["t"] in cmap]
     # 올해 어느 분기 보고서까지 나왔는지 삼성전자로 1회 판별 (3Q → 반기 → 1Q)
-    cur_year = dt.date.today().year
+    cur_year = today_kst().year
     Q_ORDER = [("11014", "3Q"), ("11012", "2Q"), ("11013", "1Q")]
     q_code, q_ko = None, None
     probe = cmap.get("005930")
@@ -1077,32 +1271,12 @@ def fetch_korea(start, end, rf):
     import FinanceDataReader as fdr
 
     log("· KRX 종목 목록…")
-    listing = None
-    for attempt in range(3):
-        try:
-            listing = fdr.StockListing("KRX")
-            break
-        except Exception as e:
-            log(f"  (KRX 목록 {attempt + 1}차 실패: {e})")
-            if attempt < 2:
-                time.sleep(20)
+    # v17.4.1: fdr.StockListing("KRX") 는 아침 실행 때 장 시작 전 파일(시가총액이 전부 빈 값)을 읽었어요.
+    # 이제 최종본 파일만 씁니다. 못 찾으면 장 전·장중 파일로 발행하지 않고 실행을 멈춰요
+    # (그러면 지난번 데이터가 그대로 남아요).
+    _list_date, listing = load_kr_listing(end)
     if listing is None:
-        # 폴백: 지난 갱신의 data.json에서 종목 스켈레톤 복원
-        # (KRX가 러너 IP를 막거나 점검 중일 때 — 시세는 네이버 경로라 영향 없음.
-        #  신규 상장만 하루 늦게 반영되는 대가로 파이프라인이 죽지 않아요.)
-        try:
-            with open(OUT_DATA, encoding="utf-8") as f:
-                prev = json.load(f)
-            rows = [{"Code": x["t"], "Name": x.get("nk") or x["t"],
-                     "Market": x.get("mkt") or "", "Marcap": (x.get("cap") or 0) * 1e12,
-                     "Stocks": x.get("shr"), "Amount": None, "_prev_s": x.get("s")}
-                    for x in prev.get("stocks", []) if x.get("cls") == "kr" and x.get("t")]
-            if not rows:
-                raise RuntimeError("이전 data.json에 국내 종목이 없습니다")
-            listing = pd.DataFrame(rows)
-            log(f"  → KRX 접속 불가: 지난 data.json의 {len(rows):,}개 종목으로 대체 진행")
-        except Exception as e2:
-            raise RuntimeError(f"KRX 목록 실패 + 캐시 폴백도 실패({e2}) — 다음 실행에서 재시도하세요") from None
+        raise RuntimeError("최종본 종목 목록이 없어요 — 장 전·장중 파일로는 발행하지 않고 중단합니다")
     code_col = next((c for c in ("Code", "Symbol", "ShortCode", "종목코드") if c in listing.columns), None)
     if code_col is None:
         raise RuntimeError(f"종목코드 열을 못 찾음: {list(listing.columns)}")
@@ -1135,12 +1309,11 @@ def fetch_korea(start, end, rf):
     elif not desc:
         log("  (업종 정보를 못 받아왔습니다 — 업종이 '기타'로 들어갑니다)")
 
-    if listing["Marcap"].notna().any():
-        listing = listing.sort_values("Marcap", ascending=False)
-    if len(listing) > MAX_KR:
-        log(f"  → 전체 {len(listing):,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
-        listing = listing.head(MAX_KR)
-    log(f"  → {len(listing):,}개 종목")
+    n_all = len(listing)
+    listing = select_kr_universe(listing, MAX_KR)
+    if n_all > MAX_KR:
+        log(f"  → 전체 {n_all:,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
+    log(f"  → {len(listing):,}개 종목 (필수 종목 {len(MUST_KR)}개 확인)")
 
     kospi = fdr.DataReader(KR_INDEX, start, end)["Close"]
     bench = kospi.pct_change().dropna()
@@ -1159,13 +1332,13 @@ def fetch_korea(start, end, rf):
         day = pk.get_nearest_business_day_in_a_week()
         # 시장별 조회 → 합치기. "ALL" 단일 호출이 pykrx/KRX 사정으로 실패해도 살아남도록
         frames = []
-        for mkt in ("KOSPI", "KOSDAQ"):
+        for mkt_name in ("KOSPI", "KOSDAQ"):   # 'mkt' 는 위의 시장 요약 dict 라서 다른 이름을 써요
             try:
-                df = pk.get_market_fundamental_by_ticker(day, market=mkt)
+                df = pk.get_market_fundamental_by_ticker(day, market=mkt_name)
                 if df is not None and len(df):
                     frames.append(df)
             except Exception as e:
-                log(f"  (펀더멘털 {mkt} 실패: {e})")
+                log(f"  (펀더멘털 {mkt_name} 실패: {e})")
         if frames:
             fundamentals = pd.concat(frames).to_dict("index")
         else:  # 마지막 수단: 예전 방식
@@ -1206,7 +1379,9 @@ def fetch_korea(start, end, rf):
             per, pbr = _num(f.get("PER")), _num(f.get("PBR"))
             eps, bps, dps = _num(f.get("EPS")), _num(f.get("BPS")), _num(f.get("DPS"))
             sec_txt, prod_txt = desc.get(code, ("", ""))
-            cap = float(row["Marcap"] or 0) / 1e12
+            mc = _fin(row.get("Marcap"))
+            cap = mc / 1e12 if mc and mc > 0 else None
+            amt = _fin(row.get("Amount"))
             shr = _num(row.get("Stocks"))
             rec = {
                 "t": code, "nk": str(row["Name"]), "ne": str(row["Name"]), "cls": "kr",
@@ -1220,7 +1395,7 @@ def fetch_korea(start, end, rf):
                 "bps": round(bps, 0) if bps else None,
                 "dps": round(dps, 0) if dps else None,
                 "cap": round(cap, 3) if cap else None,
-                "val": round(float(row["Amount"] or 0) / 1e8, 1),
+                "val": round(amt / 1e8, 1) if amt is not None else None,
                 "lo": float(px.tail(252).min()), "hi": float(px.tail(252).max()),
             }
             if shr and shr > 0:
@@ -1446,9 +1621,9 @@ def fetch_rf():
 
 
 def main():
-    end = dt.date.today()
+    end = today_kst()
     start = end - dt.timedelta(days=int(365.25 * YEARS) + 40)
-    log(f"뱁새 데이터 수집 v16 (TTM) · {start} ~ {end} · DART {'ON' if DART_KEY else 'OFF'}")
+    log(f"뱁새 데이터 수집 v17.4.1 · {start} ~ {end} (한국 시간 기준) · DART {'ON' if DART_KEY else 'OFF'}")
 
     rf = fetch_rf()
     kr, fin_map, kr_bench, kr_mkt = fetch_korea(start, end, rf)
@@ -1500,25 +1675,21 @@ def main():
         "asOf": end.isoformat(), "fx": round(fx_last, 1), "settings": settings,
         "popular": popular, "count": {"kr": len(kr), "us": len(us), "bond": len(bonds)}, "stocks": stocks,
     }
-    with open(OUT, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    write_json(OUT, payload)
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB, 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
     corp = build_corp(kr, fin_map, end.isoformat(), kr_mkt)
-    with open(OUT_CORP, "w", encoding="utf-8") as f:
-        json.dump(corp, f, ensure_ascii=False, separators=(",", ":"))
+    write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")
 
     macro = fetch_macro(start, end, fx=fx)
-    with open(OUT_MACRO, "w", encoding="utf-8") as f:
-        json.dump(macro, f, ensure_ascii=False, separators=(",", ":"))
+    write_json(OUT_MACRO, macro)
     log(f"✓ {OUT_MACRO} 저장 — 커브 {'O' if macro.get('curve') else 'X'} · 원자재 {'O' if macro.get('gold') else 'X'}")
 
     disc = fetch_disclosures(kr, dart_corp_map() if DART_KEY else {}, end)
-    with open(OUT_DISC, "w", encoding="utf-8") as f:
-        json.dump(disc, f, ensure_ascii=False, separators=(",", ":"))
+    write_json(OUT_DISC, disc)
     log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc['insider']):,}건 · 국민연금 {len(disc['nps']):,}건")
 
 
