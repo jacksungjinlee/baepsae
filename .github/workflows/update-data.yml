@@ -5,6 +5,15 @@ on:
     # UTC 21:30 = 한국시간 06:30 (한국 장 마감 다음 날 아침, 미국 장 마감 후)
     - cron: "30 21 * * 1-5"
   workflow_dispatch:        # 버튼으로 직접 실행할 수도 있습니다
+    inputs:
+      dry_run:
+        description: "시험 실행: 데이터를 만들고 확인만 해요. 커밋하지 않아요"
+        type: boolean
+        default: false
+      no_dart:
+        description: "시험용: DART 호출 없이 실행 (시험 실행일 때만 쓸 수 있어요)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,22 +45,79 @@ jobs:
           # 없어도 나머지는 정상 동작합니다.
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
-        run: python fetch_data.py
+          # 종목 목록 파일의 커밋 시각(최종본 여부)을 GitHub API로 확인할 때 씁니다
+          GITHUB_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          NO_DART: ${{ inputs.no_dart }}
+        run: |
+          if [ "$NO_DART" = "true" ]; then
+            if [ "$DRY_RUN" != "true" ]; then
+              echo "!! DART 없이 실행은 시험 실행(dry_run)일 때만 쓸 수 있어요"
+              exit 1
+            fi
+            echo "· 시험 실행: DART 호출 없이 진행"
+            unset DART_API_KEY
+          fi
+          python fetch_data.py
+
+      - name: 시험 실행 결과 파일 보관
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-data
+          path: |
+            data.json
+            corp.json
+            disc.json
+            macro.json
+          retention-days: 7
 
       - name: 결과 확인
         run: |
-          test -s data.json || (echo "data.json 이 비어 있습니다" && exit 1)
-          python -c "import json;d=json.load(open('data.json'));print('종목 수:',len(d['stocks']),'· 기준일:',d['asOf'])"
-          test -s corp.json || (echo "corp.json 이 비어 있습니다" && exit 1)
-          test -s disc.json || (echo "disc.json 이 비어 있습니다" && exit 1)
-          test -s macro.json || (echo "macro.json 이 비어 있습니다" && exit 1)
-          python -c "import json;d=json.load(open('corp.json'));print('기업분석:',len(d['companies']),'개사 ·',len(d['sectors']),'개 업종')"
+          python - <<'PY'
+          import json, sys
+
+          def strict(path):
+              # NaN·Infinity 가 하나라도 있으면 브라우저가 파일 전체를 거부해요. 여기서 막습니다.
+              def bad(tok):
+                  raise ValueError(f"{path} 안에 {tok} 값이 있어요")
+              with open(path, encoding="utf-8") as f:
+                  return json.load(f, parse_constant=bad)
+
+          fails = []
+          try:
+              d, c = strict("data.json"), strict("corp.json")
+              strict("disc.json"); strict("macro.json")
+          except Exception as e:
+              print(f"!! {e}"); sys.exit(1)
+
+          kr = {s["t"]: s for s in d["stocks"] if s.get("cls") == "kr"}
+          comps = {x["t"] for x in c["companies"]}
+          for t in ("005930", "000660", "005380", "015760", "105560"):
+              s = kr.get(t)
+              if not s or not (s.get("price") or 0) > 0 or not (s.get("cap") or 0) > 0:
+                  fails.append(f"data.json 에 {t} 가 없거나 가격·시가총액이 비어 있어요")
+              if t not in comps:
+                  fails.append(f"corp.json 에 {t} 가 없어요")
+          if len(kr) < 2300:
+              fails.append(f"국내 종목이 {len(kr):,}개뿐이에요 (2,300개 이상이어야 해요)")
+          print("종목 수:", len(d["stocks"]), "· 국내", len(kr), "· 기준일:", d["asOf"])
+          print("기업분석:", len(c["companies"]), "개사 ·", len(c["sectors"]), "개 업종")
+          for f in fails:
+              print("!!", f)
+          sys.exit(1 if fails else 0)
+          PY
 
       - name: 커밋 & 푸시
+        if: ${{ !inputs.dry_run }}
         run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "!! 데이터 커밋은 main 에서만 해요 (지금: $GITHUB_REF_NAME)"
+            exit 1
+          fi
           git config user.name  "baepsae-bot"
           git config user.email "actions@github.com"
           git add data.json corp.json disc.json macro.json
-          git diff --staged --quiet && echo "변경 없음" || git commit -m "데이터 갱신 $(date -u +%Y-%m-%d)"
+          git diff --staged --quiet && echo "변경 없음" || git commit -m "데이터 갱신 $(TZ=Asia/Seoul date +%Y-%m-%d)"
           git pull --rebase origin main
           git push

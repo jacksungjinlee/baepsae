@@ -1,0 +1,5 @@
+# 테스트 도구 (pytest tests/ · python tests/smoke_app.py). 데이터 수집 라이브러리는 requirements.txt
+-r requirements.txt
+pytest==9.2.0
+PyYAML==6.0.3
+playwright==1.63.0
