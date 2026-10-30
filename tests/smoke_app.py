@@ -26,6 +26,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 
 from playwright.sync_api import sync_playwright
 
@@ -162,6 +163,39 @@ def badge_text(page):
     return page.locator(".dateBadge").first.inner_text(timeout=WAIT)
 
 
+def poll(page, js, ok, what, timeout=WAIT / 1000, every=None):
+    """브라우저 값이 ok 가 될 때까지 파이썬에서 직접 기다려요 (wait_for_function 은 Promise 를 '참'으로 봐서 못 믿어요)."""
+    deadline = time.time() + timeout
+    v = None
+    while time.time() < deadline:
+        if every:
+            every()
+        v = page.evaluate(js)
+        if ok(v):
+            return v
+        time.sleep(0.3)
+    raise AssertionError(f"{what} — 마지막 값: {v!r}")
+
+
+FUNDS = [("069500", "KODEX 200", "kr", "index"), ("379800", "KODEX 미국S&P500", "us", "index"),
+         ("132030", "KODEX 골드선물(H)", "metal", "metal"), ("144600", "KODEX 은선물(H)", "metal", "metal"),
+         ("04020000", "KRX 금현물 (99.99K)", "metal", "metal")]
+
+
+def upgrade(files):
+    """예전 형식(10/17 등) 데이터를 v17.5 모양으로: pxDate 와 ETF·금현물 5종을 넣어요 (내장 종목이 모두 실시간이 되게)."""
+    d = files["data.json"]
+    for name in ("data.json", "corp.json"):
+        if not files[name].get("pxDate"):
+            files[name]["pxDate"] = files[name].get("asOf")
+    have = {x.get("t") for x in d["stocks"]}
+    for t, nk, cls, sec in FUNDS:
+        if t not in have:
+            d["stocks"].append({"t": t, "nk": nk, "ne": nk, "cls": cls, "s": sec, "fund": True,
+                                "price": 10000.0, "vol": 20.0, "beta": 0.5, "lo": 9000.0, "hi": 11000.0})
+    return files
+
+
 # ── 장면 ────────────────────────────────────────────────────
 def scene_normal(R, files, full):
     site = build_site(files)
@@ -190,7 +224,7 @@ def scene_normal(R, files, full):
     R.check(page, S, "기업분석: '○월 ○일 기준' (멈춤 경고 없음)", corp_date)
     R.check(page, S, "탭: 공시·수급 (disc.json)", open_tab("공시·수급", "내부자 거래"))
     R.check(page, S, "탭: 금리·원자재 (macro.json)", open_tab("금리·원자재", "심화 — 채권·환율 연구실"))
-    if full:
+    if full:   # 국고채 커브가 들어 있는 데이터일 때만
         R.check(page, S, "금리·원자재: 국고채 커브가 보임", lambda: see(page, "만기별 금리를 이은 선이에요"))
     R.check(page, S, "탭: 정보", open_tab("정보", "피드백"))
     R.check(page, S, "탭: 포트폴리오", open_tab("포트폴리오", "내 종목, 괜찮은 걸까요?"))
@@ -205,8 +239,8 @@ def scene_normal(R, files, full):
         home(page)
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.locator(".dateBadge", has_text="기준").first.wait_for(state="visible", timeout=WAIT)  # data.json 을 읽었을 때만
-        if full:
-            assert page.locator(".nonLiveBanner").count() == 0, "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요"
+        page.wait_for_timeout(300)
+        assert page.locator(".nonLiveBanner").count() == 0, "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요"
     R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 (KO)", detail_ko)
 
     def to_en():
@@ -323,12 +357,18 @@ def scene_gold_estimate(R, files):
         g = {"t": "04020000", "nk": "KRX 금현물 (99.99K)", "cls": "metal", "s": "metal", "price": 171000, "vol": 20, "beta": 0.1}
         f["data.json"]["stocks"].append(g)
     g.update({"est": True, "src": "국제 금값 환산"})
-    srv, ctx, page, _ = R.open(build_site(f), local={"baepsae_v9_seen": "1"})
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "04020000", "mw": 300}]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sest", "name": "금 추정 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_sest": json.dumps(slot, ensure_ascii=False)}
+    srv, ctx, page, _ = R.open(build_site(f), local=local)
 
     def run():
         page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("금 추정 시험", exact=False).first.click()
         see(page, NONLIVE)
-    R.check(page, "금 추정", "국제 금값 환산 추정 → '최신 시세가 아니에요' 배너", run)
+        assert page.get_by_text("국제 금값 환산").count() > 0, "금현물 이름에 '국제 금값 환산'이 없어요"
+        assert page.get_by_text("KRX 금현물").count() == 0, "추정치인데 KRX 금현물로 보여요"
+    R.check(page, "금 추정", "국제 금값 환산 → 이름에 표시 + 배너, KRX 이름 안 보임", run)
     ctx.close(); srv.shutdown()
 
 
@@ -342,10 +382,10 @@ def scene_service_worker(R, files):
     keys = "caches.keys()"
 
     def old_worker():
-        # 페이지가 ./sw.js 를 등록해야 해요 (template.html). 끝없이 기다리지 않게 시간 제한을 둡니다.
-        page.wait_for_function("navigator.serviceWorker.getRegistration().then(r => !!(r && r.active))", timeout=WAIT)
+        # 페이지가 ./sw.js 를 등록해야 해요 (template.html)
+        poll(page, "navigator.serviceWorker.getRegistration().then(r => !!(r && r.active))", bool, "서비스워커가 등록되지 않았어요")
         page.reload(wait_until="domcontentloaded")
-        page.wait_for_function("navigator.serviceWorker.controller !== null", timeout=WAIT)
+        poll(page, "navigator.serviceWorker.controller !== null", bool, "페이지가 서비스워커의 관리를 받지 않아요")
         assert page.evaluate(get_v) == "A"
         f["corp.json"]["__v"] = "B"
         with open(os.path.join(site, "corp.json"), "w", encoding="utf-8") as fh:
@@ -356,8 +396,13 @@ def scene_service_worker(R, files):
 
     def new_worker():
         shutil.copy(os.path.join(ROOT, "sw.js"), os.path.join(site, "sw.js"))
-        page.evaluate("navigator.serviceWorker.getRegistration().then(r => r && r.update())")
-        page.wait_for_function("caches.keys().then(k => !k.includes('baepsae-v10'))", timeout=WAIT)
+        last = [0.0]
+
+        def nudge():   # 업데이트 확인이 이미 진행 중이면 합쳐지므로, 새 워커가 잡힐 때까지 몇 번 다시 요청해요
+            if time.time() - last[0] > 2:
+                last[0] = time.time()
+                page.evaluate("navigator.serviceWorker.getRegistration().then(r => r && r.update()).then(() => 1, () => 0)")
+        poll(page, "caches.keys()", lambda k: "baepsae-v10" not in k, "baepsae-v10 캐시가 지워지지 않았어요", every=nudge)
         page.reload(wait_until="domcontentloaded")
         assert page.evaluate(get_v) == "B", "새 워커인데도 예전 corp.json 이에요"
         k = page.evaluate(keys)
@@ -374,10 +419,10 @@ def main():
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
-    fresh = json.loads(json.dumps(files, allow_nan=True))
+    fresh = upgrade(json.loads(json.dumps(files, allow_nan=True)))
     for name in DATA_FILES:
         fresh[name]["publishedAt"] = now_kst()
-    full = bool(fresh["data.json"].get("pxDate"))   # v17.5 형식 데이터면 배너·커브까지 확인
+    full = bool((fresh["macro.json"].get("curve") or {}).get("date"))   # 국고채 커브가 있는 데이터면 커브까지 확인
 
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path())
@@ -399,7 +444,7 @@ def main():
         browser.close()
 
     w = max(len(n) for n, _, _ in R.results)
-    print(f"\n뱁새 스모크 테스트 결과 · 데이터: {os.path.abspath(args.data)}" + ("" if full else " (예전 형식 데이터)"))
+    print(f"\n뱁새 스모크 테스트 결과 · 데이터: {os.path.abspath(args.data)}" + ("" if full else " (국고채 커브 없는 데이터)"))
     for name, ok, msg in R.results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name.ljust(w)}  {msg}")
     bad = [r for r in R.results if not r[1]]

@@ -329,7 +329,14 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
 
     # 가격 움직임
     if pdata and ppx and px and count_between is not None:
-        n = max(1, count_between(ppx, px))
+        try:
+            n = max(1, count_between(ppx, px))
+        except Exception as e:
+            rep.add("큰 가격 변동 비율", False, f"거래일 수 계산 실패: {str(e)[:60]}", "계산할 수 있어야 함")
+            n = None
+    else:
+        n = None
+    if n is not None:
         lim = (1.3 ** n - 1) * 100
         pp = {s["t"]: num(s.get("price")) for s in kr_stocks(pdata)}
         both = [s for s in kr if pp.get(s["t"]) and num(s.get("price"))]
@@ -348,6 +355,9 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     comps = corp.get("companies") or []
     rep.add("기업분석 기업 수", len(comps) >= CORP_MIN, f"{len(comps):,}", f"≥ {CORP_MIN:,}")
     rep.add("기업분석 업종 수", len(corp.get("sectors") or {}) >= SECTOR_MIN, len(corp.get("sectors") or {}), f"≥ {SECTOR_MIN}")
+    cset = {c.get("t") for c in comps}
+    missc = [t for t in MUST if t not in cset]
+    rep.add("기업분석 필수 종목", not missc, "모두 있음" if not missc else "없음: " + ",".join(missc), ",".join(MUST))
     sam = next((c for c in comps if c.get("t") == "005930"), {})
     rep.add("005930 PER 또는 PBR", num(sam.get("per")) is not None or num(sam.get("pbr")) is not None,
             f"PER {sam.get('per')} · PBR {sam.get('pbr')}", "하나는 있어야 함")
@@ -393,7 +403,8 @@ def main(argv=None):
     ap.add_argument("--live", action="store_true", help="사이트 점검: 절대 기준만")
     ap.add_argument("--today", default=None, help="오늘 날짜(KST) 바꾸기 — 시험용")
     a = ap.parse_args(argv)
-    today = day(a.today) if a.today else dt.datetime.now(KST).date()
+    now = dt.datetime.now(KST)
+    today = day(a.today) if a.today else now.date()
     mode = "live" if a.live else ("bootstrap" if a.bootstrap else "publish")
     print(f"뱁새 발행 관문 · 오늘(KST) {today} · 모드 {mode}")
     if mode == "bootstrap":
@@ -404,6 +415,14 @@ def main(argv=None):
     except Exception as e:
         print(f"!! FAIL  파일 읽기: {e}")
         return 1
+    # 자정을 넘긴 실행: 수집을 시작한 날(publishedAt, 12시간 이내일 때만)을 '오늘'로 봐요
+    try:
+        pub = dt.datetime.fromisoformat(str(cur["data"].get("publishedAt"))).astimezone(KST)
+        if not a.today and dt.timedelta(0) <= now - pub <= dt.timedelta(hours=12) and pub.date() != today:
+            print(f"· 수집이 {pub:%m-%d %H:%M} KST 에 시작돼 그날({pub.date()})을 오늘로 봐요")
+            today = pub.date()
+    except (TypeError, ValueError):
+        pass
     prev, notes = None, []
     if mode == "publish":
         try:

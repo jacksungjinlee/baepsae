@@ -217,7 +217,7 @@ export default function DiscApp({ onOpenCompany, lang }) {
       <div style={{ textAlign: "center" }}><Bird mood="search" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>공시 데이터를 불러오는 중…</div></div>
     </div>
   );
-  if (state.st === "missing") return <LoadFail onRetry={() => setTries(tries + 1)} />;
+  if (state.st === "missing") return <LoadFail lang={lang} onRetry={() => setTries(tries + 1)} />;
 
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
@@ -228,7 +228,7 @@ export default function DiscApp({ onOpenCompany, lang }) {
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-        <DateBadge date={state.data.newest || state.data.asOf} publishedAt={state.data.publishedAt || state.data.asOf} />
+        <DateBadge date={state.data.newest || (state.data.publishedAt ? null : state.data.asOf)} publishedAt={state.data.publishedAt || state.data.asOf} />
       </div>
       <DiscBody data={state.data} heldMap={heldMap} onOpenCompany={onOpenCompany} />
     </div>

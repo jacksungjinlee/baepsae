@@ -1655,7 +1655,7 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
       <div style={{ textAlign: "center" }}><Bird mood="data" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>기업 데이터를 불러오는 중…</div></div>
     </div>
   );
-  if (state.st === "missing") return <LoadFail onRetry={() => setTries(tries + 1)} />;
+  if (state.st === "missing") return <LoadFail lang={lang} onRetry={() => setTries(tries + 1)} />;
 
   const d = state.data;
   return (

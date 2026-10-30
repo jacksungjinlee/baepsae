@@ -259,3 +259,18 @@ def test_previous_is_judged_by_its_data_json_only(tmp_path):
     (tmp_path / "data.json").write_text('{"stocks":[{"price":NaN}]}', encoding="utf-8")
     with pytest.raises(ValueError, match="NaN"):
         V.load_prev(str(tmp_path), None)
+
+
+def test_must_have_stocks_missing_from_corp_fails():
+    # v17.4.1 의 워크플로 검사(corp.json 에 필수 종목)를 그대로 이어받아요
+    cur, prev, final = good_pair()
+    cur["corp"]["companies"] = [c for c in cur["corp"]["companies"] if c["t"] != "005380"]
+    assert "기업분석 필수 종목" in failed_names(check(cur, prev, final))
+
+
+def test_trading_day_count_failure_is_a_red_check_not_a_crash():
+    cur, prev, final = good_pair()
+
+    def boom(a, b):
+        raise RuntimeError("network")
+    assert "큰 가격 변동 비율" in failed_names(check(cur, prev, final, between=boom))

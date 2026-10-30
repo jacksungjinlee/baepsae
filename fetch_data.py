@@ -476,7 +476,7 @@ def add_percentiles(stocks):
 #   아직 없음(013)은 7일마다 다시 확인. 제출 마감 7일 전부터 마감 2일 뒤까지는 매일.
 #   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
 DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v1.json.gz")
-DART_CACHE_VERSION = 1
+DART_CACHE_VERSION = 1   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
 DART_REVALIDATE_DAYS = 90
 DART_REVALIDATE_PER_RUN = 300
 DART_RETRY_DAYS = 7
@@ -522,9 +522,13 @@ class DartClient:
         self.key, self.mode, self.path = key, mode, path
         self.today = today or today_kst()
         self.lock = threading.Lock()
+        self.save_lock = threading.Lock()     # 중간 저장이 겹치지 않게
         self.status = collections.Counter()
         self.fatal = None
         self.cache_hits = 0
+        self.parse_errors = collections.Counter()
+        self.revalidate_left = DART_REVALIDATE_PER_RUN
+        self.revalidated = 0
         self.entries, self.meta = {}, {}
         self._load()
         if mode == "full":
@@ -532,7 +536,12 @@ class DartClient:
                 raise RuntimeError("!! 오늘(KST) 이미 dart=full 로 한 번 실행했어요. 하루 한 번만 쓸 수 있어요 (DART 일일 한도)")
             self.meta["lastFull"] = self.today.isoformat()
             log("· DART 모드: full — 캐시를 무시하고 전부 다시 조회해요")
-        self.revalidate = self._plan_revalidation()
+        old = sum(1 for e in self.entries.values() if e["st"] == "000" and self._stale(e))
+        if old:
+            log(f"· DART 재확인 대상: 90일 지난 {old:,}건 — 이번 실행에서 쓰는 것 중 최대 {DART_REVALIDATE_PER_RUN}건 (정정공시 대비)")
+
+    def _stale(self, e):
+        return (self.today - dt.date.fromisoformat(e["at"])).days > DART_REVALIDATE_DAYS
 
     def _load(self):
         try:
@@ -548,25 +557,18 @@ class DartClient:
         except Exception as e:
             log(f"  !! DART 캐시를 읽지 못해 처음부터 조회해요: {e}")
 
-    def _plan_revalidation(self):
-        old = [(e["at"], k) for k, e in self.entries.items()
-               if e["st"] == "000" and (self.today - dt.date.fromisoformat(e["at"])).days > DART_REVALIDATE_DAYS]
-        pick = {k for _, k in sorted(old)[:DART_REVALIDATE_PER_RUN]}
-        if old:
-            log(f"· DART 재확인: 90일 지난 {len(old):,}건 중 {len(pick):,}건 (정정공시 대비)")
-        return pick
-
     def save(self):
         if not self.path:
             return
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        with self.lock:
-            self.meta["savedAt"] = dt.datetime.now(KST).isoformat(timespec="seconds")
-            js = {"v": DART_CACHE_VERSION, "meta": dict(self.meta), "entries": dict(self.entries)}
-        tmp = self.path + ".tmp"
-        with gzip.open(tmp, "wt", encoding="utf-8") as f:
-            json.dump(js, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        os.replace(tmp, self.path)
+        with self.save_lock:                  # 두 저장이 같은 임시 파일에 섞여 쓰이지 않게
+            with self.lock:
+                self.meta["savedAt"] = dt.datetime.now(KST).isoformat(timespec="seconds")
+                js = {"v": DART_CACHE_VERSION, "meta": dict(self.meta), "entries": dict(self.entries)}
+            tmp = self.path + ".tmp"
+            with gzip.open(tmp, "wt", encoding="utf-8") as f:
+                json.dump(js, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            os.replace(tmp, self.path)
 
     def get(self, endpoint, params, timeout=25):
         """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요."""
@@ -591,8 +593,12 @@ class DartClient:
         key = f"{corp}|{year}|{reprt}|{tag}"
         with self.lock:
             e = self.entries.get(key)
-        due = dart_entry_due(None if self.mode == "full" else e, year, reprt, self.today,
-                             revalidate=key in self.revalidate)
+            # 찾은 보고서도 90일이 지나면 다시 확인 (정정공시). 실행당 300건까지, 실제로 쓰는 항목만.
+            reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0)
+            if reval:
+                self.revalidate_left -= 1
+                self.revalidated += 1
+        due = dart_entry_due(None if self.mode == "full" else e, year, reprt, self.today, revalidate=reval)
         if not due:
             with self.lock:
                 self.cache_hits += 1
@@ -602,7 +608,12 @@ class DartClient:
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         st = str(j.get("status"))
         if st == "000":
-            d = parse(j.get("list", []))
+            try:
+                d = parse(j.get("list", []))
+            except Exception as ex:          # 이상한 응답 하나가 실행 전체를 멈추지 않게 (개수는 로그로)
+                with self.lock:
+                    self.parse_errors[type(ex).__name__] += 1
+                return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         elif st == "013":
             d = None
         else:                  # 그 밖의 상태(점검 등)는 저장하지 않아요
@@ -613,7 +624,10 @@ class DartClient:
 
     def summary(self):
         st = ", ".join(f"{k} {v:,}" for k, v in sorted(self.status.items()))
-        return f"호출 {sum(self.status.values()):,}회 (상태 {st or '없음'}) · 캐시 사용 {self.cache_hits:,}건"
+        extra = f" · 재확인 {self.revalidated:,}건" if self.revalidated else ""
+        if self.parse_errors:
+            extra += " · !! 해석 오류 " + ", ".join(f"{k} {v}" for k, v in self.parse_errors.items())
+        return f"호출 {sum(self.status.values()):,}회 (상태 {st or '없음'}) · 캐시 사용 {self.cache_hits:,}건{extra}"
 
     def raise_if_fatal(self):
         if self.fatal:
@@ -718,7 +732,7 @@ def parse_dart_list(rows):
         out["roe"] = round(ni[0] / eq * 100, 1)
     if op[0] and rev[0]:
         out["opm"] = round(op[0] / rev[0] * 100, 1)
-    if rev[0] and rev[2] and rev[2] > 0:
+    if rev[0] and rev[0] > 0 and rev[2] and rev[2] > 0:      # 음수 매출이면 제곱근이 복소수가 돼요
         out["g3"] = round(((rev[0] / rev[2]) ** 0.5 - 1) * 100, 1)
     elif rev[0] and rev[1] and rev[1] > 0:
         out["g3"] = round((rev[0] / rev[1] - 1) * 100, 1)
@@ -880,17 +894,29 @@ def enrich_with_dart(kr_stocks, client):
         log(f"· 분기 판단: {qy}.{REPRT_KO[r]} — 시가총액 상위 {len(top)}곳 중 {sum(got)}곳 제출 ({share:.0%})")
         if share >= QUARTER_CURRENT_SHARE:
             break
-    client.raise_if_fatal()
+    if client.fatal:
+        client.save()                      # 그때까지 받은 결과는 남겨요
+        client.raise_if_fatal()
     q_cur = pick_current_quarter(shares)
     order = cands[cands.index(q_cur):] if q_cur else []
-    log(f"· DART 재무지표 조회 {len(targets):,}곳 ({year}년 사업보고서"
-        + (f" + {qy}.{REPRT_KO[q_cur]} 기준 TTM, 없으면 기업마다 이전 분기" if q_cur else " · 70% 넘게 낸 분기가 아직 없어 연간 기준")
+    log(f"· DART 재무지표 조회 {len(targets):,}곳 ({year}년 사업보고서, 없으면 {year - 1}년"
+        + (f" + {qy}.{REPRT_KO[q_cur]} 기준 TTM, 없으면 기업마다 이전 분기" if q_cur
+           else f" · 70% 넘게 낸 {qy}년 분기가 아직 없어 {year}년 사업보고서가 최근 4개 분기예요")
         + ")…")
     done = [0]
+    errors = collections.Counter()
 
     def one(s):
         if client.fatal:
             return s
+        try:
+            return one_inner(s)
+        except Exception as e:             # 한 기업의 이상한 데이터가 실행 전체를 멈추지 않게 — 개수를 남기고, 채움 비율은 검증이 봐요
+            with client.lock:
+                errors[f"{type(e).__name__}"] += 1
+            return s
+
+    def one_inner(s):
         corp = cmap[s["t"]]
         yr = year
         f = dart_financials(client, corp, yr)
@@ -914,6 +940,9 @@ def enrich_with_dart(kr_stocks, client):
                     if t2:
                         fin["ttm"], fin["bs2"], fin["bq"] = t2["ttm"], t2["bs"], f"{qy_c}.{REPRT_KO[r]}"
                         break
+                if not fin.get("bq") and yr == year and not order:
+                    # 봄(사업보고서 제출 뒤 ~ 1분기 보고서 70% 전)과 연초에는 사업보고서 자체가 '최근 4개 분기'예요
+                    fin["bq"] = f"{yr}.4Q"
                 fin_map[s["t"]] = fin
             s.update(f)
         with client.lock:
@@ -931,6 +960,8 @@ def enrich_with_dart(kr_stocks, client):
         list(ex.map(one, targets))
     client.save()
     log(f"· DART: {client.summary()}")
+    if errors:
+        log(f"  !! DART 처리 오류 {sum(errors.values()):,}곳 ({dict(errors)}) — 그 기업은 재무지표 없이 진행해요")
     client.raise_if_fatal()
     got = sum(1 for s in targets if s.get("debt") is not None)
     log(f"· DART 완료: {got:,}곳 재무지표 · {len(fin_map):,}곳 3개년 원값")
@@ -1556,7 +1587,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
         g = None
         if len(pairs) >= 5:
             r0 = sum(p[0] for p in pairs); r2 = sum(p[1] for p in pairs)
-            if r2 > 0:
+            if r2 > 0 and r0 > 0:      # 합산 매출이 음수면 제곱근이 복소수가 돼요
                 g = round(((r0 / r2) ** 0.5 - 1) * 100, 1)
         sectors[sec] = {
             "n": len(arr), "nG": len(pairs), "g": g,
@@ -1826,7 +1857,10 @@ def fetch_korea(start, today, rf, prev=None):
     log(f"· 한국 시세 완료: {len(out):,} / {len(listing):,}개"
         + (f" · 빠짐 {dict(dropped)}" if dropped else ""))
     if pin:
-        log(f"· 네이버 시계열의 {px_date} 값: 공식 종가와 같음 {pin['same']:,} · 공식 종가로 교체 {pin['fixed']:,} · 없어서 추가 {pin['added']:,}")
+        loud = pin["added"] > 0.02 * max(sum(pin.values()), 1)   # 시계열이 하루 늦으면 베타·변동성에 가짜 하루 움직임이 끼어요
+        log(f"{'  !! ' if loud else '· '}네이버 시계열의 {px_date} 값: 공식 종가와 같음 {pin['same']:,} · "
+            f"공식 종가로 교체 {pin['fixed']:,} · 없어서 추가 {pin['added']:,}"
+            + (" (네이버 시계열이 기준일보다 늦은 종목이 많아요)" if loud else ""))
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src}
     return out, bench, mkt, meta

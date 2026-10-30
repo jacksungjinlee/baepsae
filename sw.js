@@ -34,6 +34,7 @@ self.addEventListener("fetch", (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(req).then((hit) => hit || (req.mode === "navigate" ? caches.match("./baepsae.html") : Response.error())))
+      .catch(() => caches.match(req, { ignoreSearch: req.mode === "navigate" })
+        .then((hit) => hit || (req.mode === "navigate" ? caches.match("./baepsae.html", { ignoreSearch: true }) : Response.error())))
   );
 });

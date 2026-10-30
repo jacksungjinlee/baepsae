@@ -78,13 +78,19 @@ const gcEvent = (n) => { try { window.goatcounter && window.goatcounter.count({ 
 
 // ---- 성적표 데이터 (corp.json 지연 로드, 캐시) ----
 // v17.5: 못 읽으면 { failed:true } — 검색창에 '찾지 못했어요' 대신 '불러오지 못했어요'를 보여줘요. 실패는 캐시하지 않아요.
-let GATE_CORP = null;
+let GATE_CORP = null, GATE_PENDING = null;
 async function loadGateCorp() {
   if (GATE_CORP) return GATE_CORP;
-  const r = await loadJson("./corp.json", (d) => d && Array.isArray(d.companies) && d.companies.length > 0);
-  if (!r.ok) return { failed: true, companies: [], sectors: {} };
-  GATE_CORP = r.data;
-  return GATE_CORP;
+  // 한 글자 칠 때마다 1MB 파일을 또 받지 않게, 받는 중인 요청 하나를 같이 기다려요
+  if (!GATE_PENDING) {
+    GATE_PENDING = loadJson("./corp.json", (d) => d && Array.isArray(d.companies) && d.companies.length > 0).then((r) => {
+      GATE_PENDING = null;
+      if (!r.ok) return { failed: true, companies: [], sectors: {} };
+      GATE_CORP = r.data;
+      return GATE_CORP;
+    });
+  }
+  return GATE_PENDING;
 }
 const fmtWonG = (v) => v == null ? "—" : Math.round(v).toLocaleString() + "원";
 
@@ -166,9 +172,9 @@ function GateSearch({ onOpenCorp, onQuickDiag, lang }) {
           ))}
         </div>
       )}
-      {sel && <ScoreCard c={sel} sectors={d.sectors} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} asOf={{ date: d.pxDate || d.asOf, publishedAt: d.publishedAt || d.asOf }} />}
+      {sel && <ScoreCard c={sel} sectors={d.sectors} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} asOf={{ date: d.pxDate || (d.publishedAt ? null : d.asOf), publishedAt: d.publishedAt || d.asOf }} />}
       {q.trim() && d && d.failed && <div className="gateLoadFail" style={{ fontSize: 11.5, color: "#8A5A16", fontWeight: 700, marginTop: 8 }}>{T_LOAD_FAIL[en ? "en" : "ko"]}</div>}
-      {q.trim() && d && !d.failed && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : (/[a-zA-Z]{2,}/.test(q) ? "성적표는 국내 상장사만 다뤄요. 미국 종목은 포트폴리오 탭에서 담을 수 있어요." : "찾지 못했어요. 상장사 이름이나 6자리 코드로 검색해요.")}</div>}
+      {q.trim() && d && !d.failed && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : (/[a-zA-Z]{2,}/.test(q) ? "성적표는 국내 상장사만 다뤄요. 미국 종목은 포트폴리오 탭에서 담을 수 있어요." : "찾지 못했어요. 상장사 이름이나 6자리 코드로 검색해 보세요.")}</div>}
     </div>
   );
 }

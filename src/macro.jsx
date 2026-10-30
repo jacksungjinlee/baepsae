@@ -335,7 +335,7 @@ export default function MacroApp({ lang }) {
       <div style={{ textAlign: "center" }}><Bird mood="data" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>금리 데이터를 불러오는 중…</div></div>
     </div>
   );
-  if (state.st === "missing") return <LoadFail onRetry={() => setTries(tries + 1)} />;
+  if (state.st === "missing") return <LoadFail lang={lang} onRetry={() => setTries(tries + 1)} />;
 
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
@@ -352,7 +352,7 @@ export default function MacroApp({ lang }) {
           <button key={k} className="bchip" onClick={() => setSub(k)}
             style={{ border: "1.5px solid " + (sub === k ? C.ink : C.line), background: sub === k ? C.ink : "#fff", color: sub === k ? "#fff" : C.sub, borderRadius: 999, padding: "6px 13px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{ko}</button>
         ))}
-        <DateBadge date={(state.data.curve && state.data.curve.date) || state.data.asOf} publishedAt={state.data.publishedAt || state.data.asOf} style={{ marginLeft: "auto" }} />
+        <DateBadge date={(state.data.curve && state.data.curve.date) || (state.data.publishedAt ? null : state.data.asOf)} publishedAt={state.data.publishedAt || state.data.asOf} style={{ marginLeft: "auto" }} />
       </div>
       {sub === "basic" ? <MacroBody data={state.data} /> : <DeepBody data={state.data} />}
     </div>

@@ -7,6 +7,7 @@ listing 픽스처는 FinanceData/fdr_krx_data_cache 실제 파일의 일부(37�
   2026-10-29_1319  장중 — 값은 차 있지만 장중 가격
   2026-10-29_1958  장 마감 후 — 최종본
 """
+import collections
 import datetime as dt
 import json
 import math
@@ -430,3 +431,111 @@ def test_current_quarter_needs_seventy_percent():
     assert F.pick_current_quarter([("11014", 0.64), ("11012", 0.98)]) == "11012"
     assert F.pick_current_quarter([("11014", 0.70)]) == "11014"
     assert F.pick_current_quarter([("11013", 0.2)]) is None
+
+
+# ── v17.5 리뷰 반영: 계절별 TTM · 오류 내성 · 캐시 저장 · 재확인 ────
+def fake_calendar_dart(n=300, filers=0.8):
+    """사업보고서는 모두 3/25 에, 분기보고서는 상위 80% 기업이 마감 5일 전에 내는 가짜 DART."""
+    def rows(amount):
+        return [{"account_nm": "매출액", "sj_div": "IS", "thstrm_amount": str(amount), "frmtrm_amount": str(amount * 0.9),
+                 "bfefrmtrm_amount": str(amount * 0.8), "thstrm_add_amount": str(amount)},
+                {"account_nm": "당기순이익", "sj_div": "IS", "thstrm_amount": str(amount / 10), "frmtrm_amount": "1",
+                 "bfefrmtrm_amount": "1", "thstrm_add_amount": str(amount / 10)},
+                {"account_nm": "자본총계", "sj_div": "BS", "thstrm_amount": str(amount * 5)},
+                {"account_nm": "부채총계", "sj_div": "BS", "thstrm_amount": str(amount * 2)}]
+
+    def get(self, endpoint, params, timeout=25):
+        i = int(params["corp_code"][1:])
+        y, r, fs = int(params["bsns_year"]), params["reprt_code"], params.get("fs_div")
+        filed = False
+        if endpoint.startswith("fnltt") and fs == "CFS":
+            if r == "11011":
+                filed = self.today >= dt.date(y + 1, 3, 25)
+            else:
+                filed = i < n * filers and self.today >= F.report_deadline(y, r) - dt.timedelta(days=5)
+        st = "000" if filed else "013"
+        with self.lock:
+            self.status[st] += 1
+        return {"status": st, "list": rows(1e11) if filed else []}
+    return get
+
+
+def run_enrich(monkeypatch, tmp_path, today, n=300):
+    monkeypatch.setattr(F.DartClient, "get", fake_calendar_dart(n))
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {f"{i:06d}": f"C{i}" for i in range(n)})
+    stocks = [{"t": f"{i:06d}", "cls": "kr", "cap": float(n - i), "shr": 1_000_000, "price": 10000.0} for i in range(n)]
+    c = F.DartClient("k", today=today, path=str(tmp_path / f"{today}.json.gz"))
+    _, fin = F.enrich_with_dart(stocks, c)
+    return collections.Counter(v.get("bq") for v in fin.values())
+
+
+@pytest.mark.parametrize("today,want", [
+    (dt.date(2026, 10, 30), {"2026.2Q": 240}),      # 2Q 가 현재 분기, 안 낸 20% 는 표시 없음
+    (dt.date(2027, 2, 1), {"2026.3Q": 240}),        # 사업보고서 전: 2025 연간 + 2026 3Q 누적
+    (dt.date(2027, 4, 10), {"2026.4Q": 300}),       # 봄: 2026 사업보고서가 곧 최근 4개 분기 (예전엔 0곳 → 검증 실패)
+    (dt.date(2027, 5, 13), {"2027.1Q": 240}),       # 1Q 70% 넘음 → 1Q 기준
+])
+def test_ttm_basis_through_the_year(monkeypatch, tmp_path, today, want):
+    got = run_enrich(monkeypatch, tmp_path, today)
+    got.pop(None, None)
+    assert dict(got) == want
+
+
+def test_one_bad_company_does_not_stop_the_run(monkeypatch, tmp_path):
+    base = fake_calendar_dart()
+
+    def get(self, endpoint, params, timeout=25):
+        j = base(self, endpoint, params, timeout)
+        if params["corp_code"] == "C7" and j["list"]:
+            j["list"][0]["thstrm_amount"] = "-5"        # 음수 매출 → 예전엔 복소수 TypeError
+        return j
+    monkeypatch.setattr(F.DartClient, "get", get)
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {f"{i:06d}": f"C{i}" for i in range(20)})
+    stocks = [{"t": f"{i:06d}", "cls": "kr", "cap": float(20 - i), "shr": 1000, "price": 1.0} for i in range(20)]
+    c = F.DartClient("k", today=dt.date(2026, 10, 30), path=str(tmp_path / "c.json.gz"))
+    _, fin = F.enrich_with_dart(stocks, c)
+    assert len(fin) >= 19
+
+
+def test_parse_error_is_counted_not_cached(tmp_path, monkeypatch):
+    monkeypatch.setattr(F.DartClient, "get", lambda self, e, p, timeout=25: {"status": "000", "list": [{}]})
+    c = F.DartClient("k", today=dt.date(2026, 10, 30), path=str(tmp_path / "c.json.gz"))
+
+    def boom(rows):
+        raise ValueError("이상한 응답")
+    assert c.report("x", "C1", 2026, "11012", "CFS", boom) is None
+    assert c.parse_errors["ValueError"] == 1 and "해석 오류" in c.summary()
+    assert "C1|2026|11012|CFS" not in c.entries
+
+
+def test_parallel_cache_saves_never_corrupt_the_file(tmp_path):
+    import gzip
+    import threading as th
+    c = F.DartClient("k", today=dt.date(2026, 10, 30), path=str(tmp_path / "c.json.gz"))
+    c.entries = {f"K{i}": {"st": "000", "at": "2026-10-30", "d": {"rev": [float(i)] * 50}} for i in range(3000)}
+    ts = [th.Thread(target=c.save) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    with gzip.open(str(tmp_path / "c.json.gz"), "rt", encoding="utf-8") as f:
+        assert len(json.load(f)["entries"]) == 3000
+
+
+def test_revalidation_only_for_used_entries_within_budget(tmp_path, monkeypatch):
+    calls = []
+
+    def get(self, endpoint, params, timeout=25):
+        calls.append(params["corp_code"])
+        with self.lock:
+            self.status["000"] += 1
+        return {"status": "000", "list": [{"account_nm": "매출액", "sj_div": "IS", "thstrm_amount": "1"}]}
+    monkeypatch.setattr(F.DartClient, "get", get)
+    monkeypatch.setattr(F, "DART_REVALIDATE_PER_RUN", 2)
+    c = F.DartClient("k", today=dt.date(2026, 10, 30), path=str(tmp_path / "c.json.gz"))
+    old = {"st": "000", "at": "2026-06-01", "d": {"rev": 9.0}}
+    c.entries = {f"C{i}|2026|11012|CFS": dict(old) for i in range(5)}
+    c.entries["GONE|2020|11012|CFS"] = dict(old)                 # 더는 쓰지 않는 항목은 재확인하지 않아요
+    for i in range(5):
+        c.report("x", f"C{i}", 2026, "11012", "CFS", F.parse_dart_quarter)
+    c.report("x", "C0", 2026, "11012", "CFS", F.parse_dart_quarter)   # 같은 실행에서 두 번째는 다시 안 물어요
+    assert calls == ["C0", "C1"]
+    assert c.revalidated == 2 and c.entries["GONE|2020|11012|CFS"]["at"] == "2026-06-01"

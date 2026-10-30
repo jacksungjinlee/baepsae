@@ -122,17 +122,18 @@ function mergeStocks(base, live) {
   live.forEach((L) => {
     const b = byT[L.t] || byNorm[norm(L.t)];
     if (b) {
+      // v17.5: 오늘 데이터의 값만 써요. 빈 칸(적자라 PER 없음 등)은 '–'로 두고, 2025 내장 값을 섞지 않아요.
+      // 베타·변동성은 계산에 꼭 필요해서 비었으면 내장 값을 쓰되, 그 종목은 '실시간 아님'으로 표시해요.
+      const partial = L.price == null || L.beta == null || L.vol == null;
+      const v = (k) => (L[k] != null ? L[k] : null);
       out.push({ ...b, price: L.price != null ? L.price : b.price, beta: L.beta != null ? L.beta : b.beta,
-        vol: L.vol != null ? L.vol : b.vol, per: L.per != null ? L.per : b.per, pbr: L.pbr != null ? L.pbr : b.pbr,
-        dy: L.dy != null ? L.dy : b.dy, al: L.al != null ? L.al : b.al,
+        vol: L.vol != null ? L.vol : b.vol, per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
-        x: { ...(b.x || {}), roe: L.roe != null ? L.roe : (b.x || {}).roe, debt: L.debt != null ? L.debt : (b.x || {}).debt,
-             opm: L.opm != null ? L.opm : (b.x || {}).opm, g3: L.g3 != null ? L.g3 : (b.x || {}).g3,
-             frn: L.frn != null ? L.frn : (b.x || {}).frn, mcap: L.cap != null ? L.cap : (b.x || {}).mcap,
-             lo: L.lo != null ? L.lo : (b.x || {}).lo, hi: L.hi != null ? L.hi : (b.x || {}).hi },
+        x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
+             mcap: v("cap"), lo: v("lo"), hi: v("hi") },
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
-        live: !L.est });
+        live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
     } else {
       out.push({ t: L.t, nk: L.nk || L.t, ne: L.ne || L.t, s: L.s || "index", cls: L.cls || "kr",
@@ -982,7 +983,7 @@ function computeMetrics(holdings, budgetWon, settings) {
   const rf = settings.rf / 100, sigKr = settings.mktVol / 100;
   const Wc = { kr: 0, us: 0, metal: 0 };
   const clsW = { kr: 0, us: 0, metal: 0 };
-  let idioVar = 0, per = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0;
+  let idioVar = 0, perSum = 0, perW = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0;
   const sectorW = {};
   const rows = holdings.map((h) => {
     const w = h.won / total;
@@ -993,7 +994,8 @@ function computeMetrics(holdings, budgetWon, settings) {
     const idio = Math.max(volTot * volTot - sysV, 0);
     Wc[c] += w * b; clsW[c] += w; idioVar += w * w * idio;
     if (h.stock.fxu) fxW += w;
-    per += w * (h.stock.per || 0); dy += w * (h.stock.dy || 0);
+    if (h.stock.per > 0) { perSum += w * h.stock.per; perW += w; }
+    dy += w * (h.stock.dy || 0);
     divWon += h.won * ((h.stock.dy || 0) / 100);
     hhi += w * w;
     sectorW[h.stock.s] = (sectorW[h.stock.s] || 0) + w;
@@ -1030,7 +1032,7 @@ function computeMetrics(holdings, budgetWon, settings) {
   return {
     empty: false, invested, cash, total, overBudget, wAvgVol, top3, pastAl, te: te * 100,
     beta, volP: volP * 100, expRet: expRet * 100, sharpe, cagr: cagr * 100, r2: r2 * 100,
-    effN, per, dy, divWon, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
+    effN, per: perW > 0 ? perSum / perW : null, dy, divWon, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
     clsW: clsWInv, fxExp: investedW > 0 ? (fxW / investedW) * 100 : 0,
     investedW: investedW * 100, rows: rows2,
   };
@@ -2445,12 +2447,13 @@ function MiniCheck({ s, peers, lang, t }) {
   const med = (arr) => { const a = [...arr].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
   const roeMed = med(others.map((p) => p.x.roe || 0));
   const debtMed = med(others.map((p) => p.x.debt || 0));
-  const perMed = med(others.map((p) => p.per || 0));
+  const perPeers = others.filter((p) => p.per > 0).map((p) => p.per);
+  const perMed = perPeers.length >= 3 ? med(perPeers) : null;
   const isFin = s.s === "finance";
   const lvl = (good, mid) => (good ? 0 : mid ? 1 : 2);
   const roeL = lvl((s.x?.roe || 0) >= roeMed, (s.x?.roe || 0) >= roeMed * 0.7);
   const debtL = isFin ? -1 : lvl((s.x?.debt || 0) <= debtMed, (s.x?.debt || 0) <= debtMed * 1.5);
-  const perL = lvl(s.per <= perMed, s.per <= perMed * 1.3);
+  const perL = s.per > 0 && perMed != null ? lvl(s.per <= perMed, s.per <= perMed * 1.3) : -1;
   const W = {
     p: lang === "ko" ? ["좋은 편", "보통", "아쉬운 편"] : ["Good", "OK", "Weak"],
     v: lang === "ko" ? ["낮은 편", "보통", "높은 편"] : ["Low", "Mid", "High"],
@@ -3862,7 +3865,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
 }
 
 // ================= Export (ship's log) =================
-function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score }) {
+function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo }) {
   const [checks, setChecks] = useState([false, false, false, false, false]);
   const [cardM, setCardM] = useState(null);
   const openCard = () => {
@@ -3887,7 +3890,8 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     return { ...r, s, shares: pk > 0 ? Math.floor(r.won / pk) : 0 };
   });
   const stamp = new Date().toISOString().slice(0, 10);
-  const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", author: T.credit.en, slot: slotName, date: stamp, dataAsOf: DATA_AS_OF, settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+  const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", author: T.credit.en, slot: slotName, date: stamp,
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
@@ -4174,7 +4178,7 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
                 : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
             </div>
             <div style={{ fontSize: 11, color: warn ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
-              {dataInfo.failed ? T_NONLIVE[lang]
+              {dataInfo.failed ? null
                 : (lang === "ko" ? "모든 수치는 추정치예요. 주문 전엔 증권사 앱에서 실제 시세를 확인하세요." : "All figures are estimates. Check real quotes in your brokerage app before ordering.")}
             </div>
           </Card>
@@ -4493,7 +4497,7 @@ function AppInner({ seed, lang: langProp }) {
 
       <div className="wrap" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onRename={renameSlot} onImport={importJson} dataInfo={live} />}
-        {booted && nonLive && <NonLiveBanner lang={lang} failed={live.failed} />}
+        {booted && nonLive && <NonLiveBanner lang={lang} failed={live.failed && !!slotId} />}
         {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang).stale && (
           <Card style={{ background: C.sandSoft, border: "1px solid #F3DCB2", padding: "11px 14px" }}>
             <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} lang={lang} style={{ fontSize: 12 }} />
@@ -4512,7 +4516,7 @@ function AppInner({ seed, lang: langProp }) {
         )}
         {slotId && stage === 3 && (
           <div className="narrow" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-            <ExportView lang={lang} t={t} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
+            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
             <Btn kind="ghost" onClick={exitSlot} style={{ width: "100%" }}>{t("slotExit")}</Btn>
           </div>
         )}
