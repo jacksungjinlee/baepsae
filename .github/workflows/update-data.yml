@@ -40,7 +40,8 @@ concurrency:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    # 고정: ubuntu-latest 는 GitHub 사정으로 바뀌어요(2026-10 에 이미 26.04). 바꿀 때는 dry_run 으로 확인한 뒤에.
+    runs-on: ubuntu-24.04
     timeout-minutes: 300   # 안전망. 평소 목표는 45분 이하 (DART 캐시 덕분)
     env:
       DRY_RUN: ${{ inputs.dry_run }}
@@ -49,7 +50,7 @@ jobs:
       PREV_REF: ${{ inputs.prev_ref }}
       SELFTEST: ${{ inputs.selftest || 'none' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 입력 확인
         run: |
@@ -64,7 +65,7 @@ jobs:
             echo "!! bootstrap: 직전 발행본과의 비교를 건너뛰어요. 첫 실행 한 번만 써야 해요."
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -75,7 +76,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: DART 캐시 불러오기
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .dart-cache
           key: dart-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -95,14 +96,14 @@ jobs:
       # always() 는 캐시 저장에만 씁니다 (발행·커밋에는 절대 쓰지 않아요).
       - name: DART 캐시 저장
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .dart-cache
           key: dart-cache-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: 시험 실행 결과 파일 보관
         if: ${{ inputs.dry_run }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dry-run-data
           path: |

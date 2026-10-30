@@ -960,6 +960,10 @@ def enrich_with_dart(kr_stocks, client):
         list(ex.map(one, targets))
     client.save()
     log(f"· DART: {client.summary()}")
+    try:
+        log(f"· DART 캐시 저장: {len(client.entries):,}건 · {os.path.getsize(client.path) / 1e6:.1f}MB ({client.path})")
+    except OSError as e:
+        log(f"  !! DART 캐시 파일을 확인하지 못했어요: {e}")
     if errors:
         log(f"  !! DART 처리 오류 {sum(errors.values()):,}곳 ({dict(errors)}) — 그 기업은 재무지표 없이 진행해요")
     client.raise_if_fatal()

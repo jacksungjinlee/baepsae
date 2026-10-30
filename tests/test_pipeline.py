@@ -582,3 +582,11 @@ def test_ecos_outage_keeps_last_published_curve(tmp_path):
     out2 = {"curve": None}
     F.keep_prev_ecos(out2, {}, path=str(tmp_path / "없음.json"))
     assert out2["curve"] is None
+
+
+def test_workflow_pins_runner_and_current_action_majors():
+    text, wf = load_workflow()
+    assert wf["jobs"]["update"]["runs-on"] == "ubuntu-24.04"      # ubuntu-latest 가 몰래 바뀌지 않게
+    uses = [s["uses"] for s in wf["jobs"]["update"]["steps"] if "uses" in s]
+    assert sorted(uses) == sorted(["actions/checkout@v7", "actions/setup-python@v7", "actions/cache/restore@v6",
+                                   "actions/cache/save@v6", "actions/upload-artifact@v7"])

@@ -14,8 +14,18 @@ how their holdings move together, and what today's prices assume — without tel
 know basic terms, and get burned by concentration, hype and not knowing what they hold.
 
 **How Jack works.** Design and decisions in claude.ai chat (the Claude desktop app). Engineering in Claude Code
-Cloud sessions from the desktop app's Code tab. He reviews and merges pull requests on GitHub's web pages. No local
-dev setup on his PC.
+Cloud sessions from the desktop app's Code tab. No local dev setup on his PC, and **he does not open GitHub**.
+
+**Who runs GitHub (standing rule since 2026-10-31).** Claude Code owns the whole GitHub process: branches, pull
+requests, merging, starting and watching workflow runs, and rollbacks. It merges on its own only when build, `pytest`,
+the phone-size smoke test (and, after v17.6, the `ci` check) pass, the fresh-eyes review is done and fixed, pipeline
+changes have a green `dry_run` with the validation summary in the PR, and no safety rule is loosened. It asks Jack
+first, with a short yes/no question in the chat, for new or changed Korean UI text (showing the 「새 문구」 table),
+changes to what users see beyond an approved spec, anything that costs money or needs a sign-up or setting change, and
+— until v17.6 is done — before merging v17.5 and v17.6 (his claude.ai chat reviews those PRs). After every merge it
+watches the next run, checks the live site, reverts at once if something is wrong, and sends Jack a 3–6 line summary.
+`docs/CHANGELOG.md` has one line per merge. The full rule, including what is never allowed, is in `CLAUDE.md`
+§ GitHub process.
 
 **Status.** Not launched. Shared with a handful of friends. The link is on Jack's CV, and an English demo mode exists
 for job interviews outside Korea. Real usage numbers are too small to drive decisions yet.
