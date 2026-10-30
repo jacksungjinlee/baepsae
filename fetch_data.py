@@ -178,9 +178,9 @@ def _num(x):
 KST = ZoneInfo("Asia/Seoul")
 
 
-def today_kst():
+def today_kst(now=None):
     """GitHub 러너의 시계는 UTC예요. 날짜는 언제나 한국 시간으로 셉니다."""
-    return dt.datetime.now(KST).date()
+    return (now or dt.datetime.now(dt.timezone.utc)).astimezone(KST).date()
 
 
 def _fin(x):
@@ -356,7 +356,12 @@ def load_kr_listing(today):
     if d is None:
         log(f"  !! 종목 목록: {note}")
         return None, None
-    log(f"· 종목 목록: {note}")
+    loud = any(n.startswith("!!") for n in notes) or "!!" in note
+    log(f"{'  !! ' if loud else '· '}종목 목록: {note}"
+        + (" — 더 최근 날짜 파일을 받지 못해 이전 날짜를 썼어요" if any(n.startswith("!!") for n in notes) else ""))
+    age = (today - d).days
+    if age > 4:
+        log(f"  !! 종목 목록이 {age}일 전 것이에요 (연휴가 아니라면 원본 저장소가 멈췄을 수 있어요)")
     return d, df
 
 
@@ -1327,13 +1332,13 @@ def fetch_korea(start, end, rf):
         day = pk.get_nearest_business_day_in_a_week()
         # 시장별 조회 → 합치기. "ALL" 단일 호출이 pykrx/KRX 사정으로 실패해도 살아남도록
         frames = []
-        for mkt in ("KOSPI", "KOSDAQ"):
+        for mkt_name in ("KOSPI", "KOSDAQ"):   # 'mkt' 는 위의 시장 요약 dict 라서 다른 이름을 써요
             try:
-                df = pk.get_market_fundamental_by_ticker(day, market=mkt)
+                df = pk.get_market_fundamental_by_ticker(day, market=mkt_name)
                 if df is not None and len(df):
                     frames.append(df)
             except Exception as e:
-                log(f"  (펀더멘털 {mkt} 실패: {e})")
+                log(f"  (펀더멘털 {mkt_name} 실패: {e})")
         if frames:
             fundamentals = pd.concat(frames).to_dict("index")
         else:  # 마지막 수단: 예전 방식

@@ -194,8 +194,12 @@ def test_alphabetical_universe_fails_loudly():
 
 
 # ── 날짜는 한국 시간 ────────────────────────────────────────
-def test_today_kst_is_korean_date():
-    assert F.today_kst() == dt.datetime.now(KST).date()
+def test_today_kst_uses_korean_date_not_utc():
+    utc = dt.timezone.utc
+    # 예약 실행 시각(UTC 21:30)은 한국으로는 이미 다음 날 06:30 이에요
+    assert F.today_kst(dt.datetime(2026, 10, 29, 21, 30, tzinfo=utc)) == dt.date(2026, 10, 30)
+    assert F.today_kst(dt.datetime(2026, 10, 29, 14, 59, tzinfo=utc)) == dt.date(2026, 10, 29)
+    assert F.today_kst(dt.datetime(2026, 10, 29, 15, 0, tzinfo=utc)) == dt.date(2026, 10, 30)
 
 
 def test_no_utc_today_left_in_pipeline():
@@ -213,9 +217,49 @@ def test_workflow_never_hides_failures():
     wf = yaml.safe_load(text)
     assert "|| true" not in text
     assert "continue-on-error" not in text
+    assert "always()" not in text
     steps = wf["jobs"]["update"]["steps"]
     names = [s.get("name") for s in steps]
-    check, commit = names.index("결과 확인"), names.index("커밋 & 푸시")
-    assert check < commit
-    assert "always()" not in str(steps[commit].get("if", ""))
-    assert "refs/heads/main" in steps[commit]["run"]
+    fetch, check, commit = names.index("데이터 수집"), names.index("결과 확인"), names.index("커밋 & 푸시")
+    assert fetch < check < commit
+    # 결과 확인은 조건 없이 항상 돌고, 커밋은 시험 실행이 아닐 때만 · main 에서만
+    assert "if" not in steps[check]
+    assert steps[commit]["if"].replace(" ", "") == "${{!inputs.dry_run}}"
+    assert 'if [ "$GITHUB_REF" != "refs/heads/main" ]' in steps[commit]["run"]
+    # DART 끄기는 시험 실행일 때만
+    run = steps[fetch]["run"]
+    assert 'if [ "$DRY_RUN" != "true" ]' in run and "exit 1" in run.split("unset DART_API_KEY")[0]
+    # 결과 확인이 NaN 을 거부하는지 (parse_constant)
+    assert "parse_constant" in steps[check]["run"]
+    # 시험 실행과 매일 실행은 서로 다른 동시 실행 그룹 (시험 실행이 대기 중인 매일 실행을 취소하지 않게)
+    assert "inputs.dry_run" in wf["concurrency"]["group"]
+
+
+def test_workflow_check_step_rejects_nan_and_missing_stock(tmp_path):
+    """워크플로의 '결과 확인' 스크립트를 실제로 돌려봐요."""
+    import subprocess
+    path = os.path.join(ROOT, ".github", "workflows", "update-data.yml")
+    with open(path, encoding="utf-8") as f:
+        wf = yaml.safe_load(f)
+    script = [s for s in wf["jobs"]["update"]["steps"] if s.get("name") == "결과 확인"][0]["run"]
+
+    must = ["005930", "000660", "005380", "015760", "105560"]
+    kr = [{"t": t, "cls": "kr", "price": 1000.0, "cap": 1.0} for t in must]
+    kr += [{"t": f"9{i:05d}", "cls": "kr", "price": 1000.0, "cap": 0.1} for i in range(2300)]
+    good = {"data.json": {"asOf": "2026-10-31", "stocks": kr},
+            "corp.json": {"companies": [{"t": t} for t in must], "sectors": {"semi": {}}},
+            "disc.json": {"insider": [], "nps": []}, "macro.json": {"curve": None}}
+
+    def run_with(files):
+        for name, obj in files.items():
+            F.write_json(str(tmp_path / name), obj)
+        return subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+
+    assert run_with(good).returncode == 0
+    with open(tmp_path / "disc.json", "w", encoding="utf-8") as f:
+        f.write('{"insider":[{"cap":NaN}],"nps":[]}')
+    r = subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 1 and "NaN" in r.stdout
+    no_hyundai = dict(good, **{"data.json": {"asOf": "x", "stocks": [s for s in kr if s["t"] != "005380"]}})
+    r = run_with(no_hyundai)
+    assert r.returncode == 1 and "005380" in r.stdout
