@@ -368,12 +368,20 @@ def load_dir(path):
     return out
 
 
-def load_git(ref):
+def load_git(ref, files=FILES):
     out = {}
-    for f in FILES:
+    for f in files:
         text = subprocess.run(["git", "show", f"{ref}:{f}"], capture_output=True, text=True, check=True).stdout
         out[f[:-5]] = strict_loads(text, f"{ref}:{f}")
     return out
+
+
+def load_prev(prev_dir, prev_ref):
+    """직전 발행본은 비교에 쓰는 data.json 만 엄격하게 읽어요 (corp·disc·macro 는 비교에 안 써요)."""
+    if prev_dir:
+        with open(os.path.join(prev_dir, "data.json"), encoding="utf-8") as fh:
+            return {"data": strict_loads(fh.read(), "data.json")}
+    return load_git(prev_ref, files=("data.json",))
 
 
 def main(argv=None):
@@ -399,7 +407,7 @@ def main(argv=None):
     prev, notes = None, []
     if mode == "publish":
         try:
-            prev = load_dir(a.prev_dir) if a.prev_dir else load_git(a.prev_ref)
+            prev = load_prev(a.prev_dir, a.prev_ref)
             print(f"· 직전 발행본: {a.prev_dir or a.prev_ref} (pxDate {prev['data'].get('pxDate')} · asOf {prev['data'].get('asOf')})")
         except Exception as e:
             print(f"!! 직전 발행본을 읽을 수 없어요 ({a.prev_dir or a.prev_ref}): {str(e)[:200]}")

@@ -247,3 +247,15 @@ def test_count_final_between_counts_trading_days_only():
     days = {dt.date(2026, 10, 24): text_of("2026-10-24_0444"), dt.date(2026, 10, 25): text_of("2026-10-24_0444"),
             dt.date(2026, 10, 26): text_of("2026-10-28_1921"), dt.date(2026, 10, 27): text_of("2026-10-28_1921")}
     assert V.count_final_between(dt.date(2026, 10, 23), dt.date(2026, 10, 27), days.get) == 2
+
+
+def test_previous_is_judged_by_its_data_json_only(tmp_path):
+    # 10/17 발행본은 data.json 은 멀쩡하고 disc.json 에만 NaN 이 있어요. 비교는 data.json 만 쓰니 읽혀야 해요.
+    _, prev, _ = good_pair()
+    (tmp_path / "data.json").write_text(json.dumps(prev["data"], ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "disc.json").write_text('{"insider":[{"cap":NaN}]}', encoding="utf-8")
+    got = V.load_prev(str(tmp_path), None)
+    assert set(got) == {"data"} and got["data"]["pxDate"] == "2026-10-29"
+    (tmp_path / "data.json").write_text('{"stocks":[{"price":NaN}]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="NaN"):
+        V.load_prev(str(tmp_path), None)

@@ -92,10 +92,12 @@ JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avo
 
 `main()` order:
 1. `fetch_rf` — risk-free rate.
-2. `fetch_korea` — KRX listing via `fdr.StockListing("KRX")` (see § 5: this is the broken part) → sector descriptions
-   (`KRX-DESC`) → KOSPI index → pykrx fundamentals and foreign ownership → per-stock prices
-   `fdr.DataReader(code)` (8 threads) → `enrich_with_dart` (annual financials, dividends, quarterly → TTM; 5 threads)
-   → `fill_multiples`. `MAX_KR = 2500` stocks, **intended** to be the top 2,500 by market cap.
+2. `fetch_korea` — since v17.4.1/v17.5: the latest **final** listing file before today (KST) from `fdr_krx_data_cache`
+   (≥ 90% market caps filled, last commit at or after **16:00 KST**) → top 2,500 by market cap (`MAX_KR`) → sector
+   descriptions (`KRX-DESC`) → KOSPI index → per-stock prices `fdr.DataReader(code)` (8 threads), every series cut at
+   `pxDate` with the `pxDate` bar set to the **official close = `Marcap ÷ Stocks`** → `enrich_with_dart` (annual,
+   dividends, quarterly → TTM; cached in `.dart-cache`; 5 threads) → `fill_multiples`. (Before v17.4.1 it used
+   `fdr.StockListing("KRX")`, which read the pre-market file — see § 5.)
 3. `fetch_us` — S&P 500 (Wikipedia) + NASDAQ (Naver listing, first 400) + `EXTRA_US`; yfinance prices (10 threads);
    auto Korean descriptions via `us_desc()`.
 4. `fetch_bonds` — 8 bond ETFs configured (`153130 114260 148070 439870 273130 305080 453850 304660`), verified by
@@ -110,9 +112,14 @@ TTM method: TTM = last annual + this year's YTD − last year's same-period YTD 
 quarter. The current quarter is probed once via 삼성전자 (11014 → 11012 → 11013). The log line
 `· TTM 합성 성공: N / M 기업` reports coverage.
 
-Units in JSON (target after v17.5): `cap` in 조원 for **both** markets (US converted at the run's `fx`), `val` in 억원,
-`price` in 원 (KR) or USD (US), percentages as numbers. Top-level `pxDate` (KR price date = official close date),
-`usPxDate`, `publishedAt` (KST run timestamp).
+Units in JSON (from v17.5): `cap` in 조원 for **both** markets (US converted at the run's `fx`), `val` in 억원,
+`price` in 원 (KR, = `Marcap ÷ Stocks`, the official KRX close) or USD (US), percentages as numbers. Top-level `pxDate`
+(KR price date = official close date), `ksDate`, `usPxDate`, `publishedAt` (KST run timestamp), `units`.
+
+**The listing file's `Close` column is not the official close** in the evening versions: after ~16:00 it is replaced by
+an after-hours (Nextrade) price, while `Marcap` stays at the official close × listed shares. Verified on 2026-10-27~30:
+the next day's file (and Naver) measure the day's change from `Marcap ÷ Stocks`, not from `Close`. In the 19:58 version
+of 10/29 only 27.5% of `Close` values match `Marcap ÷ Stocks` within 0.1%.
 
 ## 4. Frontend build
 
@@ -134,6 +141,9 @@ Data is fetched with `fetch("./x.json", {cache: "no-store"})` in `shell.jsx` (ga
    file three times: ~05:00 KST (**pre-market, all `Marcap`/`Amount`/`Close` blank**), ~13:00 (intraday), ~19:00
    (final). Our job runs ~06:30 KST, after KRX already reports "today", so it reads the blank pre-market file. Verified
    on `2026-10-29.csv`: 05:44 version has 0 / 2,872 market caps; the 13:19 and 19:58 versions have all 2,872.
+   (Correction 2026-10-31: in the evening versions `Close` is an after-hours price; the official close is
+   `Marcap ÷ Stocks` — see § 3. The final commit also lands before 18:00 on about 1 trading day in 5 — 29 of 138 since
+   April, between 16:13 and 17:59 — so v17.5 treats a file as final from 16:00 KST.)
 2. **Consequences:**
    - `cap = float(row["Marcap"] or 0)` stays NaN (NaN is truthy), and the same happens to `val` → NaN written to
      JSON → browsers' `JSON.parse` rejects the entire file → the gate and 기업분석 show nothing.
@@ -147,6 +157,8 @@ Data is fetched with `fetch("./x.json", {cache: "no-store"})` in `shell.jsx` (ga
    The gate shows "찾지 못했어요" instead of "couldn't load".
 4. **Time-outs.** Runs take ~43 min or ~2h20m (bimodal); `timeout-minutes: 150` cancelled 5 of the last ~19 runs
    (10/15, 10/21, 10/22, 10/23, 10/29). Likely the DART calls (≈2,500 companies × several calls daily).
+   (Confirmed 2026-10-31: over 40 runs since 9/5, 15 were cancelled at 150 min. The long runs are slow DART: on 10/28
+   the DART phase alone took 2h03m, against 33 min on 10/30. Real start times were 08:09–11:39 KST.)
 5. **Stale service worker on old devices.** The v10 `sw.js` (still in the repo, no longer registered by the page)
    serves non-`data.json` JSON **cache-first forever** (`corp.json`, `macro.json`, `disc.json`). Devices that visited in
    July–August keep a frozen copy until a changed `sw.js` replaces it.
@@ -156,13 +168,18 @@ Found in the second-pass review (each one checked against git history and the so
 
 7. **Korean prices are not closing prices.** Runs start during market hours, and the Naver price series includes the
    forming day and after-hours trades. The 10/28 run published 삼성전자 at 234,000원, while the official closes were
-   222,500원 (10/27) and 244,000원 (10/28). Only ~10% of KR prices equal any official close. Beta, vol and returns are
-   computed on the same mixed-day series.
+   **222,000원 (10/27) and 242,000원 (10/28)**. Only **15.8%** of KR prices published that day equal an official close of
+   either day. Beta, vol and returns are computed on the same mixed-day series.
+   (Correction 2026-10-31: an earlier version of this report gave the official closes as 222,500원 and 244,000원 and
+   the match rate as ~10%. Those two prices are the listing file's evening `Close` column, which is an after-hours
+   price; the official close is `Marcap ÷ Stocks` (§ 3). Naver's daily close is also the after-hours price: on 10/30
+   it differed from the official close for 2,131 of 2,500 stocks.)
 8. **US prices often one session stale.** yfinance's `end` is exclusive and the code passes `date.today()` (UTC).
 9. **Risk-free rate stuck.** `settings.rf` = 3.0 = `RF_FALLBACK` in every snapshot since August. It feeds Sharpe,
-   alpha and the user's default.
+   alpha and the user's default. (Cause: Yahoo returns 404 for `KR10YT=RR`. v17.5 reads 국고채 10년 from ECOS.)
 10. **Rates tab never worked.** `macro.json` curve/tenor/credit = null in every snapshot since August, despite the ECOS
-    key. The tab tells users to go to GitHub Settings.
+    key. The tab tells users to go to GitHub Settings. (Cause: a code bug, not the key — `sorted()` over a list mixing
+    the "corp" key with maturity numbers crashed every run: `'<' not supported between instances of 'str' and 'int'`.)
 11. **Unit and market mixing.** US `cap` is USD/1e12 vs KR 조원; factors are ranked over KR + US together.
 12. **Embedded prices leak.** `mergeStocks` appends unmatched `BASE_STOCKS` entries. 금현물 (04020000), 069500, 379800,
     132030 and 144600 are never in `data.json`, so they always show 2025-era prices, unlabeled.

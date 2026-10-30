@@ -14,6 +14,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
+import { loadJson, freshness } from "./data.js";
 
 function makeCardData(holdings, stocksById, cashMw, score, lang) {
   const sums = { kr: 0, us: 0, mt: 0 };
@@ -98,19 +99,20 @@ async function readSlots() {
 async function writeSlots(list) { try { await store.set(KEY_SLOTS, JSON.stringify(list.slice(0, MAX_SLOTS))); } catch (e) {} }
 
 // ================= Live data loader =================
-// The daily GitHub Action writes data.json next to this file. Absent (local double-click),
-// the tool falls back to the snapshot embedded below.
+// The daily GitHub Action writes data.json next to this file. If it can't be read, the studio still opens
+// with the embedded snapshot, but every item is marked live:false and the screen says so (v17.5).
 async function loadLiveData() {
-  try {
-    const res = await fetch("./data.json", { cache: "no-store" });
-    if (!res.ok) throw new Error("no data.json");
-    const j = await res.json();
-    if (!j || !Array.isArray(j.stocks)) throw new Error("bad shape");
-    return { asOf: j.asOf || null, fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null, stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
-  } catch (e) { return null; }
+  const r = await loadJson("./data.json", (j) => j && Array.isArray(j.stocks) && j.stocks.length > 0);
+  if (!r.ok) { console.warn("[뱁새] data.json: " + r.error); return null; }
+  const j = r.data;
+  return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null,
+    fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null,
+    stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
 }
+// 금현물을 KRX 에서 못 받아 국제 금값으로 환산했을 때: KRX 가격처럼 보이지 않게 이름부터 바꿔요
+const EST_NAME = { ko: "금현물 · 국제 금값 환산", en: "Gold · converted from world price" };
 function mergeStocks(base, live) {
-  if (!live) return base;
+  if (!live) return base.map((b) => ({ ...b, live: false }));
   // 미국 티커는 표기가 갈려요(BRK.B / BRK-B). 점·하이픈을 무시하고 맞춰봅니다.
   const norm = (x) => String(x || "").toUpperCase().replace(/[.\-]/g, "");
   const byT = Object.fromEntries(base.map((s) => [s.t, s]));
@@ -129,19 +131,20 @@ function mergeStocks(base, live) {
              opm: L.opm != null ? L.opm : (b.x || {}).opm, g3: L.g3 != null ? L.g3 : (b.x || {}).g3,
              frn: L.frn != null ? L.frn : (b.x || {}).frn, mcap: L.cap != null ? L.cap : (b.x || {}).mcap,
              lo: L.lo != null ? L.lo : (b.x || {}).lo, hi: L.hi != null ? L.hi : (b.x || {}).hi },
-        live: true });
+        ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
+        live: !L.est });
       delete byT[b.t]; delete byNorm[norm(b.t)];
     } else {
       out.push({ t: L.t, nk: L.nk || L.t, ne: L.ne || L.t, s: L.s || "index", cls: L.cls || "kr",
         ccy: L.ccy, fxu: !!L.fxu, price: L.price || 0, beta: L.beta != null ? L.beta : 1,
         vol: L.vol != null ? L.vol : 30, per: L.per || 0, pbr: L.pbr || 0, dy: L.dy || 0, al: L.al || 0,
         cap: L.cap || 0, val: L.val || 0, sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
-        pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: true, auto: true,
+        pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
              mcap: L.cap, lo: L.lo, hi: L.hi } });
     }
   });
-  Object.values(byT).forEach((b) => out.push(b));
+  Object.values(byT).forEach((b) => out.push({ ...b, live: false }));   // 오늘 데이터에 없는 내장 종목 = 예시 가격
   return out;
 }
 
@@ -560,7 +563,7 @@ const T = {
   tab1: { ko:"① 프로필", en:"① Profile" },
   tab2: { ko:"② 포트폴리오", en:"② Build" },
   tab3: { ko:"③ 내보내기", en:"③ Export" },
-  disclaimer: { ko:"교육용 도구입니다. 투자 자문이 아니며 모든 판단과 책임은 본인에게 있습니다. 종목 데이터는 " + DATA_AS_OF + " 기준 추정치로 실시간이 아니며, 직접 수정해 쓰세요.", en:"Educational tool, not investment advice; decisions are your own. Stock data are rough estimates as of " + DATA_AS_OF + " — not live. Edit them yourself." },
+  disclaimer: { ko:"교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", en:"An educational tool — not investment advice. All decisions and responsibility are your own." },
   skipPreset: { ko:"질문 건너뛰고 프리셋으로 시작하기", en:"Skip questions, pick a profile" },
   presetTitle: { ko:"프로필 고르기", en:"Pick a profile" },
   presetSub: { ko:"대충 이 정도다 싶은 걸 고르세요. 세부 수치는 나중에 언제든 바꿀 수 있어요.", en:"Start from a preset; fine-tune anytime." },
@@ -894,6 +897,45 @@ function Bird({ mood = "happy", pose = "stand", size = 64 }) {
     <img src={"./baepi-" + n + ".png"} alt="뱁이" width={size} height={size}
       style={{ display: "inline-block", objectFit: "contain", verticalAlign: "middle" }}
       onError={(e) => { try { e.currentTarget.onerror = null; e.currentTarget.src = "./icon-192.png"; } catch (err) {} }} />
+  );
+}
+
+// ================= 데이터 상태 표시 (v17.5 — 앱은 숫자를 꾸며 보이지 않아요) =================
+const T_LOAD_FAIL = { ko: "데이터를 불러오지 못했어요. 잠시 뒤 다시 열어주세요.", en: "We couldn't load the data. Please try again in a moment." };
+const T_NONLIVE = { ko: "일부 종목은 최신 시세가 아니에요. 예시 가격으로 보여드려요.", en: "Some items aren't live prices. They're shown at sample prices." };
+const WARN_INK = "#8A5A16";
+
+// 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
+function LoadFail({ onRetry, lang = "ko" }) {
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+      <Bird mood="search" size={80} />
+      <div style={{ fontSize: 15, fontWeight: 800, marginTop: 14, lineHeight: 1.6 }}>{T_LOAD_FAIL[lang]}</div>
+      {onRetry && <button onClick={onRetry} style={{ marginTop: 14, background: C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "12px 22px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{lang === "en" ? "Try again" : "다시 확인"}</button>}
+    </div>
+  );
+}
+
+// '10월 30일 기준' — 내용의 날짜. 발행이 4일 넘게 멈추면 '· N일째 갱신이 멈췄어요' (경고색)
+function DateBadge({ date, publishedAt, lang = "ko", suffix = "", style = {} }) {
+  const f = freshness(date, publishedAt, lang);
+  if (!f.md && !f.stale) return null;
+  const base = f.md ? (lang === "en" ? "As of " + f.md : f.md + " 기준") : "";
+  const stale = f.stale ? (lang === "en" ? "updates stopped " + f.days + " days ago" : f.days + "일째 갱신이 멈췄어요") : "";
+  return (
+    <span className="dateBadge" data-stale={f.stale ? "1" : "0"} style={{ fontSize: 10.5, color: f.stale ? WARN_INK : C.faint, fontWeight: f.stale ? 800 : 400, ...style }}>
+      {[base, stale].filter(Boolean).join(" · ")}{suffix}
+    </span>
+  );
+}
+
+// 실시간이 아닌 종목이 화면이나 보유 목록에 있을 때
+function NonLiveBanner({ lang = "ko", failed = false }) {
+  return (
+    <div className="nonLiveBanner" style={{ background: C.sandSoft, border: "1px solid #F3DCB2", borderRadius: RAD.card, padding: "11px 14px", fontSize: 12, fontWeight: 700, color: WARN_INK, lineHeight: 1.55, fontFamily: FONT }}>
+      {failed && <div>{T_LOAD_FAIL[lang]}</div>}
+      <div>{T_NONLIVE[lang]}</div>
+    </div>
   );
 }
 
@@ -3860,7 +3902,8 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     rows.forEach((r) => L.push(`${r.s.nk} (${r.t}) — ${fmtMw(r.won, lang)} (${(r.wInv * 100).toFixed(1)}%) ≈ ${r.shares}${lang === "ko" ? "주" : "sh"} @${fmtPx(r.s.price, r.s)}`));
     L.push((lang === "ko" ? "현금 " : "Cash ") + fmtMw(metrics.cash, lang));
     L.push("");
-    L.push(lang === "ko" ? "※ 가격은 " + DATA_AS_OF + " 추정치. 주문 시 실제 시세로 수량을 조정하세요." : "※ Prices are estimates as of " + DATA_AS_OF + ". Adjust share counts at live prices.");
+    if (rows.some((r) => r.s.live === false)) L.push("※ " + T_NONLIVE[lang]);
+    L.push(lang === "ko" ? "※ 주문 시 실제 시세로 수량을 조정하세요." : "※ Adjust share counts at live prices.");
     return L.join("\n");
   };
   const copyMemo = async () => {
@@ -4121,16 +4164,22 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
       <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.readAsText(f); } e.target.value = ""; }} />
       <Btn kind="ghost" onClick={() => fileRef.current && fileRef.current.click()} style={{ width: "100%" }}>{lang === "ko" ? "저장한 파일에서 불러오기 (JSON)" : "Load from a saved file (JSON)"}</Btn>
-      <Card style={{ padding: 14, background: dataInfo.stale ? C.sandSoft : C.bg, border: "1px solid " + (dataInfo.stale ? "#F3DCB2" : C.line) }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: dataInfo.stale ? "#8A5A16" : C.sub }}>
-          {dataInfo.live ? (lang === "ko" ? "시세 데이터 기준일: " : "Data as of: ") + dataInfo.asOf : (lang === "ko" ? "내장 데이터 사용 중 (" : "Using built-in snapshot (") + DATA_AS_OF + ")"}
-        </div>
-        <div style={{ fontSize: 11, color: dataInfo.stale ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
-          {dataInfo.stale
-            ? (lang === "ko" ? "데이터가 일주일 넘게 갱신되지 않았어요. 숫자는 참고용으로만 보시고, 주문 전엔 증권사 시세를 꼭 확인하세요." : "Data hasn't refreshed in over a week. Treat the numbers as reference only and check live quotes before ordering.")
-            : (lang === "ko" ? "모든 수치는 추정치예요. 주문 전엔 증권사 앱에서 실제 시세를 확인하세요." : "All figures are estimates. Check real quotes in your brokerage app before ordering.")}
-        </div>
-      </Card>
+      {(() => {
+        const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang).stale;
+        const warn = stale || dataInfo.failed;
+        return (
+          <Card style={{ padding: 14, background: warn ? C.sandSoft : C.bg, border: "1px solid " + (warn ? "#F3DCB2" : C.line) }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: warn ? "#8A5A16" : C.sub }}>
+              {dataInfo.failed ? T_LOAD_FAIL[lang]
+                : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
+            </div>
+            <div style={{ fontSize: 11, color: warn ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
+              {dataInfo.failed ? T_NONLIVE[lang]
+                : (lang === "ko" ? "모든 수치는 추정치예요. 주문 전엔 증권사 앱에서 실제 시세를 확인하세요." : "All figures are estimates. Check real quotes in your brokerage app before ordering.")}
+            </div>
+          </Card>
+        );
+      })()}
       <Sub style={{ textAlign: "center", fontSize: 10.5, padding: "0 10px" }}>{t("disclaimer")}</Sub>
     </div>
   );
@@ -4229,7 +4278,7 @@ function AppInner({ seed, lang: langProp }) {
   const [slotName, setSlotName] = useState("");
   const [booted, setBooted] = useState(false);
   const [onb, setOnb] = useState(false);
-  const [live, setLive] = useState({ live: false, asOf: null, stale: false });
+  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null });
   const universe = useRef(null);
   const [autoKeys, setAutoKeys] = useState([]);
 
@@ -4251,8 +4300,12 @@ function AppInner({ seed, lang: langProp }) {
           return nx;
         });
         setAutoKeys(L.settings ? ["fx", ...AUTO.filter((k) => typeof L.settings[k] === "number")] : ["fx"]);
-        const days = L.asOf ? Math.floor((Date.now() - new Date(L.asOf).getTime()) / 86400000) : 999;
-        setLive({ live: true, asOf: L.asOf, stale: days > 7 });
+        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt });
+      } else {
+        // 못 읽었어요: 내장 예시 가격으로 열되, 모든 종목을 '실시간 아님'으로 표시하고 화면에서 알려요
+        universe.current = mergeStocks(BASE_STOCKS, null);
+        setStocks(universe.current.map((s) => ({ ...s })));
+        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null });
       }
       setBooted(true);
     })();
@@ -4372,6 +4425,9 @@ function AppInner({ seed, lang: langProp }) {
 
   const t = (k) => (T[k] ? T[k][lang] : k);
   const stocksById = useMemo(() => Object.fromEntries(stocks.map((s) => [s.t, s])), [stocks]);
+  // 실시간이 아닌 종목(내장 예시 가격 · 금 환산 추정)이 목록이나 보유에 하나라도 있으면 배너
+  const nonLive = useMemo(() => stocks.some((s) => s.live === false && !s.custom)
+    || holdings.some((h) => stocksById[h.t] && stocksById[h.t].live === false), [stocks, holdings, stocksById]);
   const holdingsFull = useMemo(() => holdings.map((h) => ({ ...h, won: h.mw * 10000, stock: stocksById[h.t] })).filter((h) => h.stock), [holdings, stocksById]);
   const metrics = useMemo(() => computeMetrics(holdingsFull, budgetMw * 10000, settings), [holdingsFull, budgetMw, settings]);
   metricsRef.current = metrics;
@@ -4437,9 +4493,10 @@ function AppInner({ seed, lang: langProp }) {
 
       <div className="wrap" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onRename={renameSlot} onImport={importJson} dataInfo={live} />}
-        {slotId && live.stale && (
+        {booted && nonLive && <NonLiveBanner lang={lang} failed={live.failed} />}
+        {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang).stale && (
           <Card style={{ background: C.sandSoft, border: "1px solid #F3DCB2", padding: "11px 14px" }}>
-            <Sub style={{ color: "#8A5A16", fontWeight: 700 }}>{lang === "ko" ? `시세 데이터가 ${live.asOf} 이후 갱신되지 않았어요. 주문 전엔 증권사 시세를 꼭 확인하세요.` : `Prices haven't refreshed since ${live.asOf}. Check live quotes before ordering.`}</Sub>
+            <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} lang={lang} style={{ fontSize: 12 }} />
           </Card>
         )}
         {slotId && stage === 0 && (
@@ -4493,4 +4550,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE };

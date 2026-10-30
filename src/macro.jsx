@@ -3,7 +3,8 @@
 // 원칙: 예측이 아니라 이해. 금리와 자산의 관계를 스스로 만져보게 합니다.
 import React, { useState, useEffect, useMemo } from "react";
 import { C, FONT, RAD, HAIR } from "./tokens.js";
-import { Bird } from "./detail.jsx";
+import { Bird, LoadFail, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
+import { loadJson } from "./data.js";
 import { Verdict } from "./corp.jsx";
 
 const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
@@ -205,7 +206,7 @@ function DeepBody({ data }) {
               달러 자산을 환헤지하면 이 금리 차이만큼 비용을 내요. 1년짜리 헤지 비용은 두 나라 1년 금리의 차이 — 위 표의 1년 행이 바로 그 값이에요. 차이가 클수록 헤지는 비싸지고, 환노출을 택하면 이 비용 대신 환율 변동을 안는 거예요.
             </MyBox>
           </>
-        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>ECOS 연동 후 표시돼요.</Sub>}
+        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_LOAD_FAIL.ko}</Sub>}
       </Card>
       <Card>
         <H num="03" main="신용 스프레드" sub="회사채(AA−) − 국고채 3년 · 시장의 긴장 게이지" />
@@ -225,7 +226,7 @@ function DeepBody({ data }) {
               스프레드가 갑자기 벌어지면, 빚 많은 회사의 주가가 먼저 아파요. 내 종목의 재무 신호에 차입 관련 깃발이 있다면 이 게이지를 가끔 봐두세요. 신호이지 타이머는 아니에요.
             </MyBox>
           </>
-        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>ECOS 연동 후 표시돼요.</Sub>}
+        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_LOAD_FAIL.ko}</Sub>}
       </Card>
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
         {CREDIT}
@@ -263,9 +264,7 @@ export function MacroBody({ data }) {
               </Sub>
             </>
           ) : (
-            <Sub style={{ padding: "26px 0", textAlign: "center" }}>
-              ECOS 키가 아직 연결되지 않았어요.<br />ecos.bok.or.kr에서 무료 키 발급 → GitHub 저장소 → Settings → Secrets → <b style={{ color: C.ink }}>ECOS_API_KEY</b> 등록 → 데이터 갱신 실행.
-            </Sub>
+            <Sub style={{ padding: "26px 0", textAlign: "center" }}>{T_LOAD_FAIL.ko}</Sub>
           )}
         </Card>
         <Card>
@@ -327,12 +326,8 @@ export default function MacroApp({ lang }) {
   const [sub, setSub] = useState("basic");
   useEffect(() => { (async () => {
     setState({ st: "loading" });
-    try {
-      const r = await fetch("./macro.json", { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const d = await r.json();
-      setState({ st: "ready", data: d });
-    } catch (e) { setState({ st: "missing" }); }
+    const r = await loadJson("./macro.json", (d) => d && typeof d === "object" && !Array.isArray(d));
+    setState(r.ok ? { st: "ready", data: r.data } : { st: "missing" });
   })(); }, [tries]);
 
   if (state.st === "loading") return (
@@ -340,16 +335,7 @@ export default function MacroApp({ lang }) {
       <div style={{ textAlign: "center" }}><Bird mood="data" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>금리 데이터를 불러오는 중…</div></div>
     </div>
   );
-  if (state.st === "missing") return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <Bird mood="search" size={80} />
-      <div style={{ fontSize: 19, fontWeight: 800, marginTop: 14 }}>금리·원자재 데이터가 아직 없어요</div>
-      <Card style={{ marginTop: 16, textAlign: "left" }}>
-        <Sub>GitHub 저장소 → <b style={{ color: C.ink }}>Actions</b> → <b style={{ color: C.ink }}>시세 데이터 갱신</b> → <b style={{ color: C.ink }}>Run workflow</b> 실행 후 새로고침하면 macro.json이 만들어져요.</Sub>
-      </Card>
-      <button onClick={() => setTries(tries + 1)} style={{ marginTop: 14, background: C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "12px 22px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>다시 확인</button>
-    </div>
-  );
+  if (state.st === "missing") return <LoadFail onRetry={() => setTries(tries + 1)} />;
 
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
@@ -366,7 +352,7 @@ export default function MacroApp({ lang }) {
           <button key={k} className="bchip" onClick={() => setSub(k)}
             style={{ border: "1.5px solid " + (sub === k ? C.ink : C.line), background: sub === k ? C.ink : "#fff", color: sub === k ? "#fff" : C.sub, borderRadius: 999, padding: "6px 13px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{ko}</button>
         ))}
-        <span style={{ fontSize: 10.5, color: C.faint, marginLeft: "auto" }}>기준 {state.data.asOf} · 매일 자동 갱신</span>
+        <DateBadge date={(state.data.curve && state.data.curve.date) || state.data.asOf} publishedAt={state.data.publishedAt || state.data.asOf} style={{ marginLeft: "auto" }} />
       </div>
       {sub === "basic" ? <MacroBody data={state.data} /> : <DeepBody data={state.data} />}
     </div>

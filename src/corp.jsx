@@ -6,7 +6,8 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
-import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT } from "./detail.jsx";
+import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
+import { loadJson } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
@@ -378,25 +379,6 @@ export function reverseDcf({ price, ni0, sharesM, fade, disc, term }) {
   return { g: (lo + hi) / 2 };
 }
 
-// ---------------- 데이터 없음 안내 ----------------
-function MissingData({ onRetry }) {
-  return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <Bird mood="search" size={80} />
-      <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 800, marginTop: 14 }}>기업분석 데이터가 아직 없어요</div>
-      <Card style={{ marginTop: 16, textAlign: "left" }}>
-        <Sub>
-          데이터 파이프라인이 한 번 돌아야 corp.json 이 만들어져요.<br /><br />
-          1. GitHub 저장소 → <b style={{ color: C.ink }}>Actions</b> 탭<br />
-          2. <b style={{ color: C.ink }}>시세 데이터 갱신</b> 워크플로 선택<br />
-          3. <b style={{ color: C.ink }}>Run workflow</b> 버튼 클릭<br />
-          4. 완료(10~30분) 후 이 페이지 새로고침
-        </Sub>
-      </Card>
-      <button onClick={onRetry} style={{ marginTop: 14, background: C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "12px 22px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>다시 확인</button>
-    </div>
-  );
-}
 
 // ---------------- 조건 검색 (스크리너) ----------------
 export const SCREEN_COLS = [
@@ -750,7 +732,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
           <Ret ko="1개월" v={mkt.k1} /><Ret ko="3개월" v={mkt.k3} />
           {mkt.fx != null && <span style={{ fontSize: 11.5, color: C.sub, borderLeft: "1px solid " + C.line, paddingLeft: 14 }}>원달러 <b style={{ color: C.ink }}>{mkt.fx.toLocaleString()}원</b></span>}
           {mkt.rf != null && <span style={{ fontSize: 11.5, color: C.sub }}>국고채 10년 <b style={{ color: C.ink }}>{mkt.rf}%</b></span>}
-          <span style={{ fontSize: 10, color: C.faint, marginLeft: "auto" }}>기준 {data.asOf}</span>
+          <DateBadge date={data.pxDate || data.asOf} publishedAt={data.publishedAt || data.asOf} style={{ fontSize: 10, marginLeft: "auto" }} />
         </div>
       )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -1321,6 +1303,7 @@ function DiscSignals({ c }) {
     const d = await loadDisc();
     if (!ok) return;
     setMine({
+      failed: !!d.failed,
       ins: (d.insider || []).filter((x) => x.t === c.t).slice(0, 5),
       nps: (d.nps || []).find((x) => x.t === c.t) || null,
     });
@@ -1333,12 +1316,13 @@ function DiscSignals({ c }) {
     fl.l3 && "3년 연속 순손실이 이어지고 있어요",
     fl.imp && "자본총계가 자본금보다 작아요 — 자본잠식 신호예요",
   ].filter(Boolean);
-  const hasAny = flags.length > 0 || (mine && (mine.ins.length > 0 || mine.nps));
+  const hasAny = flags.length > 0 || (mine && (mine.ins.length > 0 || mine.nps || mine.failed));
   if (!hasAny) return null;
 
   return (
     <Card style={{ borderLeft: "3px solid " + C.coral }}>
       <H main="짚고 갈 것" sub="공시·재무 신호 · 판단이 아니라 확인 목록" />
+      {mine && mine.failed && <Sub style={{ marginTop: 8, color: "#8A5A16", fontWeight: 700 }}>{T_LOAD_FAIL.ko}</Sub>}
       {flags.length > 0 && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           {flags.map((f, i) => (
@@ -1621,10 +1605,9 @@ const CORP_CSS = `
 let DISC_CACHE = null;
 async function loadDisc() {
   if (DISC_CACHE) return DISC_CACHE;
-  try {
-    const r = await fetch("./disc.json", { cache: "no-store" });
-    DISC_CACHE = r.ok ? await r.json() : { insider: [], nps: [] };
-  } catch (e) { DISC_CACHE = { insider: [], nps: [] }; }
+  const r = await loadJson("./disc.json", (d) => d && Array.isArray(d.insider));
+  if (!r.ok) return { failed: true, insider: [], nps: [] };   // 실패는 캐시하지 않아요
+  DISC_CACHE = r.data;
   return DISC_CACHE;
 }
 
@@ -1643,13 +1626,8 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
 
   useEffect(() => { (async () => {
     setState({ st: "loading" });
-    try {
-      const r = await fetch("./corp.json", { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const d = await r.json();
-      if (!d || !Array.isArray(d.companies) || !d.companies.length) throw new Error("empty");
-      setState({ st: "ready", data: d });
-    } catch (e) { setState({ st: "missing" }); }
+    const r = await loadJson("./corp.json", (d) => d && Array.isArray(d.companies) && d.companies.length > 0);
+    setState(r.ok ? { st: "ready", data: r.data } : { st: "missing" });
   })(); }, [tries]);
 
   // 포트폴리오 보유 종목 맵 (읽기 전용)
@@ -1677,7 +1655,7 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
       <div style={{ textAlign: "center" }}><Bird mood="data" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>기업 데이터를 불러오는 중…</div></div>
     </div>
   );
-  if (state.st === "missing") return <MissingData onRetry={() => setTries(tries + 1)} />;
+  if (state.st === "missing") return <LoadFail onRetry={() => setTries(tries + 1)} />;
 
   const d = state.data;
   return (
@@ -1695,7 +1673,7 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
           <ChipBtn on={view.kind === "screen"} onClick={() => setView({ kind: "screen" })}>조건 검색</ChipBtn>
           <ChipBtn on={view.kind === "guide"} onClick={() => setView({ kind: "guide" })}>산업 읽는 법</ChipBtn>
         </div>
-        <span style={{ fontSize: 10.5, color: C.faint }}>재무 데이터 기준일 {d.asOf} · 사업보고서는 직전 연도 기준</span>
+        <DateBadge date={d.pxDate || d.asOf} publishedAt={d.publishedAt || d.asOf} suffix=" · 사업보고서는 직전 연도 기준" />
       </div>
       {view.kind === "market" && <MarketView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
       {view.kind === "screen" && <ScreenerView data={d} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}

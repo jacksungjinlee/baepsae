@@ -2010,11 +2010,14 @@ def fetch_us(start, today, rf):
         ok = list(ex.map(enrich, out))
     failed = [r for r, k in zip(out, ok) if not k]
     first_fail = len(failed)
-    if failed:
-        time.sleep(20)   # 야후가 잠깐 막을 때가 많아서, 쉬었다가 천천히 다시
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            ok2 = list(ex.map(enrich, failed))
-        failed = [r for r, k in zip(failed, ok2) if not k]
+    # 야후가 잠깐 막을 때가 많아서, 쉬었다가 더 천천히 다시 (20초 뒤 3개씩 → 60초 뒤 하나씩)
+    for pause, workers in ((20, 3), (60, 1)):
+        if not failed:
+            break
+        time.sleep(pause)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            okr = list(ex.map(enrich, failed))
+        failed = [r for r, k in zip(failed, okr) if not k]
     n_ok = len(out) - len(failed)
     log(f"{'  !! ' if failed else '· '}미국 상세 정보(이름·업종·설명): {n_ok:,} / {len(out):,}"
         + (f" (처음 {first_fail:,}곳 실패 → 다시 시도 후 {len(failed):,}곳 실패: {', '.join(r['t'] for r in failed[:8])}…)" if first_fail else ""))
@@ -2075,7 +2078,7 @@ def main():
     dart_mode = (os.environ.get("DART_MODE") or "cache").strip()
     selftest = (os.environ.get("BAEPSAE_SELFTEST") or "").strip()
     log(f"뱁새 데이터 수집 v17.5 · {start} ~ {today} (한국 시간) · 발행 시각 {published_at} · "
-        f"DART {'ON (' + dart_mode + ')' if DART_KEY else 'OFF'}")
+        f"DART {('꺼짐 (시험 실행)' if dart_mode == 'off' else 'ON · ' + dart_mode) if DART_KEY else '키 없음'}")
     on_main = os.environ.get("GITHUB_REF") == "refs/heads/main"
     if selftest and on_main:
         raise RuntimeError("!! 시험용 입력(selftest)은 main 에서 쓸 수 없어요")
