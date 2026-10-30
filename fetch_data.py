@@ -1168,9 +1168,22 @@ ECOS_BASE = "https://ecos.bok.or.kr/api"
 ECOS_STAT = "817Y002"   # 시장금리(일별)
 
 
+def ecos_get(url, tries=3):
+    """ECOS 는 새벽 점검 등으로 잠깐 응답이 없을 때가 있어요. 쉬었다가 다시 (5초 → 15초)."""
+    last = None
+    for i in range(tries):
+        try:
+            return requests.get(url, timeout=30).json()
+        except Exception as e:
+            last = e
+            if i < tries - 1:
+                time.sleep(5 if i == 0 else 15)
+    raise RuntimeError(f"ECOS 응답 없음 ({tries}번 시도): {type(last).__name__}")
+
+
 def ecos_items():
     """817Y002 품목: {만기(년): 코드, "corp": 회사채 AA- 코드}."""
-    j = requests.get(f"{ECOS_BASE}/StatisticItemList/{ECOS_KEY}/json/kr/1/200/{ECOS_STAT}", timeout=25).json()
+    j = ecos_get(f"{ECOS_BASE}/StatisticItemList/{ECOS_KEY}/json/kr/1/200/{ECOS_STAT}")
     if "RESULT" in j:
         raise RuntimeError(f"ECOS 품목 조회 실패: {j['RESULT']}")
     return parse_ecos_items((j.get("StatisticItemList") or {}).get("row") or [])
@@ -1179,7 +1192,7 @@ def ecos_items():
 def ecos_series(code, start, end):
     """일별 시계열 (날짜 → %). 값이 빈 날은 버려요."""
     u = f"{ECOS_BASE}/StatisticSearch/{ECOS_KEY}/json/kr/1/2000/{ECOS_STAT}/D/{start:%Y%m%d}/{end:%Y%m%d}/{code}"
-    j = requests.get(u, timeout=30).json()
+    j = ecos_get(u)
     if "RESULT" in j:
         raise RuntimeError(f"ECOS {code}: {j['RESULT']}")
     rows = (j.get("StatisticSearch") or {}).get("row") or []
@@ -1322,9 +1335,31 @@ def fetch_macro(start, end, fx=None):
                 log("  !! ECOS 국고채 시계열을 하나도 받지 못했어요")
         except Exception as e:
             log(f"  !! ECOS 조회 실패: {e}")
+    if out["curve"] is None:
+        keep_prev_ecos(out, g10)
     if g10:
         out["g10"] = g10
     return out
+
+
+def keep_prev_ecos(out, g10, path=OUT_MACRO):
+    """ECOS 를 못 받았으면 지난 발행본의 국고채 커브를 그대로 둬요. 날짜(curve.date)도 그대로라
+    화면에는 '○월 ○일 기준'으로 옛 날짜가 보이고, 7일이 넘으면 검증에서 실패해요."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            prev = json.load(f)
+    except Exception:
+        return
+    pc = prev.get("curve") or {}
+    if not pc.get("date"):
+        return
+    for k in ("curve", "sprKr", "tenor", "credit"):
+        if prev.get(k) is not None:
+            out[k] = prev[k]
+    if (prev.get("g10") or {}).get("kr"):
+        g10["kr"] = prev["g10"]["kr"]
+    out["ecosKept"] = True
+    log(f"  !! ECOS 를 받지 못해 지난 발행본의 국고채 커브(기준 {pc['date']})를 그대로 둬요")
 
 
 # ────────────────────────────────────────────────────────────
@@ -1960,6 +1995,79 @@ def us_cap_val(market_cap_usd, avg_volume, price_usd, fx):
     return cap, val
 
 
+US_INFO_PATH = os.environ.get("US_INFO_CACHE", ".dart-cache/us-info-v1.json.gz")   # DART 캐시와 같은 폴더 (같이 보관돼요)
+US_INFO_FRESH_DAYS = 3
+US_INFO_MAX_AGE_DAYS = 14
+US_INFO_KEYS = ("shortName", "longName", "sector", "industry", "longBusinessSummary", "trailingPE", "priceToBook",
+                "returnOnEquity", "operatingMargins", "revenueGrowth", "debtToEquity", "dividendYield",
+                "marketCap", "averageVolume")
+
+
+def load_us_info(path=None):
+    path = path or US_INFO_PATH
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            d = json.load(f)
+        log(f"· 미국 상세 정보 보관본 {len(d):,}곳")
+        return d
+    except FileNotFoundError:
+        log("· 미국 상세 정보 보관본 없음 → 모두 새로 받아요")
+    except Exception as e:
+        log(f"  !! 미국 상세 정보 보관본을 읽지 못했어요({e}) → 모두 새로 받아요")
+    return {}
+
+
+def save_us_info(d, path=None):
+    path = path or US_INFO_PATH
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            json.dump(_json_safe(d, [0]), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        log(f"  !! 미국 상세 정보 보관본 저장 실패: {e}")
+
+
+def apply_us_info(rec, info, px_then, fx):
+    """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)"""
+    nm = info.get("shortName") or info.get("longName")
+    if not nm:
+        return False
+    rec["nk"] = rec["ne"] = str(nm)
+    rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
+    rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
+    p0, p1 = _fin(px_then), _fin(rec.get("price"))
+    k = p1 / p0 if p0 and p1 and p0 > 0 else 1.0
+    spec = (("per", "trailingPE", 0, 500, False), ("pbr", "priceToBook", 0, 100, False),
+            ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
+            ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
+    for key, src, lo, hi, scale in spec:
+        v = _fin(info.get(src))
+        if v is None:
+            continue
+        if key in ("per", "pbr"):
+            v *= k
+        if not (lo < v < hi):
+            continue
+        rec[key] = round(v * 100 if scale else v, 2 if key == "pbr" else 1)
+    # yfinance 1.x 의 dividendYield 는 이미 % 예요 (0.41 = 0.41%). 예전처럼 1 미만에 100을 곱하면
+    # 애플 0.31% 가 31% 가 돼요 (2026-10 발행본에서 확인). 30% 넘는 값은 믿지 않아요.
+    dyv = _fin(info.get("dividendYield"))
+    if dyv is not None and 0 <= dyv / k < 30:
+        rec["dy"] = round(dyv / k, 2)
+    mc = _fin(info.get("marketCap"))
+    cap, val = us_cap_val(mc * k if mc else None, info.get("averageVolume"), rec.get("price"), fx)
+    if cap is not None:
+        rec["cap"] = cap
+    if val is not None:
+        rec["val"] = val
+    summ = info.get("longBusinessSummary")
+    if summ:
+        rec["de"] = str(summ)[:400]
+    return True
+
+
 def fetch_us(start, today, rf):
     """미국 주식 (yfinance). v17.5:
     · end 는 그날을 빼므로 오늘(KST)+1일까지 요청하고, 장이 안 끝난 봉은 버려요 (예전엔 하루 늦었어요).
@@ -2007,54 +2115,53 @@ def fetch_us(start, today, rf):
     if dropped:
         log(f"  !! 시세를 받지 못해 빠진 미국 종목 {len(dropped)}개: {', '.join(dropped[:8])}{'…' if len(dropped) > 8 else ''}")
 
-    def enrich(rec):
-        """True = 상세 정보를 받음."""
+    # 상세 정보(이름·업종·설명·기초 지표)는 자주 바뀌지 않아요. 3일 안에 받은 것은 다시 쓰고,
+    # 오늘 못 받으면 14일 안의 보관본을 (크게 알리고) 써요. 그보다 오래되면 비워 두고 검증이 잡아요.
+    cache = load_us_info()
+    tday = today.isoformat()
+
+    def age(t):
+        e = cache.get(t)
+        return (today - dt.date.fromisoformat(e["at"])).days if e else None
+
+    def fetch_info(rec):
         try:
             info = yf.Ticker(rec["t"]).get_info()
         except Exception:
             return False
-        nm = info.get("shortName") or info.get("longName")
-        if not nm:
+        if not (info.get("shortName") or info.get("longName")):
             return False
-        rec["nk"] = rec["ne"] = str(nm)
-        rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
-        rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
-        spec = (("per", "trailingPE", 0, 500, False), ("pbr", "priceToBook", 0, 100, False),
-                ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
-                ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
-        for key, src, lo, hi, scale in spec:
-            v = _fin(info.get(src))
-            if v is None or not (lo < v < hi):
-                continue
-            rec[key] = round(v * 100 if scale else v, 2 if key == "pbr" else 1)
-        dyv = _fin(info.get("dividendYield"))
-        if dyv is not None:
-            rec["dy"] = round(dyv * (100 if dyv < 1 else 1), 2)
-        cap, val = us_cap_val(info.get("marketCap"), info.get("averageVolume"), rec.get("price"), fx_last)
-        if cap is not None:
-            rec["cap"] = cap
-        if val is not None:
-            rec["val"] = val
-        summ = info.get("longBusinessSummary")
-        if summ:
-            rec["de"] = str(summ)[:400]
+        cache[rec["t"]] = {"at": tday, "px": rec.get("price"),
+                           "info": {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}}
         return True
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        ok = list(ex.map(enrich, out))
-    failed = [r for r, k in zip(out, ok) if not k]
-    first_fail = len(failed)
-    # 야후가 잠깐 막을 때가 많아서, 쉬었다가 더 천천히 다시 (20초 뒤 3개씩 → 60초 뒤 하나씩)
-    for pause, workers in ((20, 3), (60, 1)):
+    need = [r for r in out if age(r["t"]) is None or age(r["t"]) >= US_INFO_FRESH_DAYS]
+    failed = need
+    for pause, workers in ((0, 10), (20, 3), (60, 1)):   # 야후가 잠깐 막을 때가 많아서, 쉬었다가 더 천천히 다시
         if not failed:
             break
         time.sleep(pause)
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            okr = list(ex.map(enrich, failed))
+            okr = list(ex.map(fetch_info, failed))
         failed = [r for r, k in zip(failed, okr) if not k]
-    n_ok = len(out) - len(failed)
-    log(f"{'  !! ' if failed else '· '}미국 상세 정보(이름·업종·설명): {n_ok:,} / {len(out):,}"
-        + (f" (처음 {first_fail:,}곳 실패 → 다시 시도 후 {len(failed):,}곳 실패: {', '.join(r['t'] for r in failed[:8])}…)" if first_fail else ""))
+    failed_t = {r["t"] for r in failed}
+    reused, fallback, missing, oldest = 0, 0, [], 0
+    for rec in out:
+        a = age(rec["t"])
+        if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last):
+            missing.append(rec["t"])
+            continue
+        if rec["t"] in failed_t:
+            fallback += 1
+            oldest = max(oldest, a)
+        elif a > 0:
+            reused += 1
+    save_us_info(cache)
+    got = len(need) - len(failed)
+    n_ok = len(out) - len(missing)
+    log(f"{'  !! ' if failed else '· '}미국 상세 정보(이름·업종·설명): {n_ok:,} / {len(out):,} · 오늘 받음 {got:,} · 3일 안에 받은 것 {reused:,}"
+        + (f" · 못 받음 {len(failed):,}곳 → 보관본 {fallback:,}곳(최대 {oldest}일 전) · 없음 {len(missing):,}곳"
+           + (f" ({', '.join(missing[:8])}…)" if missing else "") if failed or missing else ""))
     log(f"· 미국 완료: {len(out):,}개")
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)]}
     return out, bench, fx, fx_last, us_vol_krw, meta

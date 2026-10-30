@@ -229,7 +229,7 @@ def test_only_write_json_writes_published_files():
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Call) and getattr(sub.func, "attr", "") == "dump":
                     owners.append(node.name)
-    assert sorted(owners) == ["save", "write_json"]
+    assert sorted(owners) == ["save", "save_us_info", "write_json"]   # 캐시 파일 둘 + 발행 파일
 
 
 # ── 워크플로 안전장치 ───────────────────────────────────────
@@ -539,3 +539,46 @@ def test_revalidation_only_for_used_entries_within_budget(tmp_path, monkeypatch)
     c.report("x", "C0", 2026, "11012", "CFS", F.parse_dart_quarter)   # 같은 실행에서 두 번째는 다시 안 물어요
     assert calls == ["C0", "C1"]
     assert c.revalidated == 2 and c.entries["GONE|2020|11012|CFS"]["at"] == "2026-06-01"
+
+
+# ── v17.5: 미국 상세 정보 보관 · ECOS 장애 때 지난 커브 ─────────────
+def test_us_info_rescaled_to_todays_price():
+    info = {"shortName": "Apple Inc.", "sector": "Technology", "industry": "Consumer Electronics",
+            "trailingPE": 30.0, "priceToBook": 40.0, "marketCap": 4.0e12, "dividendYield": 0.5,
+            "averageVolume": 5e7, "longBusinessSummary": "Makes phones.", "returnOnEquity": float("nan")}
+    rec = {"t": "AAPL", "nk": "AAPL", "price": 220.0}
+    assert F.apply_us_info(rec, info, px_then=200.0, fx=1333.3) is True
+    assert rec["nk"] == "Apple Inc." and rec["de"] == "Makes phones."
+    assert rec["per"] == 33.0 and rec["pbr"] == 44.0                  # 가격 10% 오름 → 10% 높게
+    assert rec["cap"] == round(4.0e12 * 1.1 * 1333.3 / 1e12, 3)
+    assert rec["dy"] == round(0.5 / 1.1, 2)                          # 0.5% → 가격이 오르면 낮아져요 (100배 아님)
+    r2 = {"t": "X", "price": 10.0}
+    F.apply_us_info(r2, {"shortName": "X", "dividendYield": 0.31}, 10.0, 1333.3)
+    assert r2["dy"] == 0.31                                          # 애플이 31% 로 나오던 버그
+    r3 = {"t": "Y", "price": 10.0}
+    F.apply_us_info(r3, {"shortName": "Y", "dividendYield": 45.0}, 10.0, 1333.3)
+    assert "dy" not in r3
+    assert "roe" not in rec                                          # NaN 은 버려요
+    assert F.apply_us_info({"t": "X", "price": 1.0}, {}, None, 1333.3) is False
+
+
+def test_us_info_cache_refresh_and_max_age(tmp_path, monkeypatch):
+    path = str(tmp_path / "us.json.gz")
+    F.save_us_info({"AAPL": {"at": "2026-10-29", "px": 1.0, "info": {"shortName": "Apple", "trailingPE": float("nan")}}}, path)
+    back = F.load_us_info(path)                                       # NaN 이 있어도 저장·읽기가 돼요
+    assert back["AAPL"]["info"]["shortName"] == "Apple" and back["AAPL"]["info"]["trailingPE"] is None
+    assert F.US_INFO_FRESH_DAYS == 3 and F.US_INFO_MAX_AGE_DAYS == 14
+
+
+def test_ecos_outage_keeps_last_published_curve(tmp_path):
+    prev = {"curve": {"tenors": [3, 10], "now": [3.1, 4.0], "ago": [3.0, 3.5], "date": "2026-10-29"},
+            "sprKr": {"m": ["26.10"], "v": [0.9]}, "credit": {"now": 0.7}, "g10": {"kr": {"m": ["26.10"], "v": [4.0]}}}
+    p = tmp_path / "macro.json"
+    p.write_text(json.dumps(prev), encoding="utf-8")
+    out, g10 = {"curve": None, "sprKr": None, "tenor": None, "credit": None}, {}
+    F.keep_prev_ecos(out, g10, path=str(p))
+    assert out["curve"]["date"] == "2026-10-29" and out["ecosKept"] is True   # 날짜는 옛 날짜 그대로
+    assert g10["kr"]["v"] == [4.0]
+    out2 = {"curve": None}
+    F.keep_prev_ecos(out2, {}, path=str(tmp_path / "없음.json"))
+    assert out2["curve"] is None
