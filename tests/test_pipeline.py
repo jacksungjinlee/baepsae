@@ -120,7 +120,16 @@ def test_skips_intraday_1319_version():
     fetch, commit = sources({D29: "2026-10-29_1319", D28: "2026-10-28_1921"}, {D29: "1319", D28: "1921"})
     d, _, _, notes = F.pick_final_listing(D30, fetch, commit)
     assert d == D28
-    assert any("18시 전" in n for n in notes)
+    assert any("16시 전" in n for n in notes)
+
+
+def test_1749_commit_counts_as_final_from_v17_5():
+    # 4월 이후 거래일 5일에 하루꼴로 마지막 커밋이 16~18시 사이였어요. 16:00 부터 최종본으로 인정.
+    fetch, commit = sources({D29: "2026-10-29_1958", D28: "2026-10-28_1921"}, {D29: "1749", D28: "1921"})
+    d, _, note, _ = F.pick_final_listing(D30, fetch, commit)
+    assert d == D29 and "17:49" in note
+    fetch, commit = sources({D29: "2026-10-29_1958", D28: "2026-10-28_1921"}, {D29: "1559", D28: "1921"})
+    assert F.pick_final_listing(D30, fetch, commit)[0] == D28
 
 
 def test_skips_premarket_0544_version():
@@ -206,60 +215,218 @@ def test_no_utc_today_left_in_pipeline():
     with open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8") as f:
         src = f.read()
     assert "date.today()" not in src
-    assert "json.dump(" in src and src.count("json.dump(") == 1  # write_json 안의 한 곳뿐
+
+
+def test_only_write_json_writes_published_files():
+    """data/corp/macro/disc.json 은 write_json 만 써요. json.dump 는 write_json 과 DART 캐시 저장 두 곳뿐."""
+    import ast
+    with open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    owners = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef,)):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call) and getattr(sub.func, "attr", "") == "dump":
+                    owners.append(node.name)
+    assert sorted(owners) == ["save", "write_json"]
 
 
 # ── 워크플로 안전장치 ───────────────────────────────────────
-def test_workflow_never_hides_failures():
+def load_workflow():
     path = os.path.join(ROOT, ".github", "workflows", "update-data.yml")
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    wf = yaml.safe_load(text)
+    return text, yaml.safe_load(text)
+
+
+def test_workflow_never_hides_failures():
+    text, wf = load_workflow()
     assert "|| true" not in text
     assert "continue-on-error" not in text
-    assert "always()" not in text
     steps = wf["jobs"]["update"]["steps"]
-    names = [s.get("name") for s in steps]
-    fetch, check, commit = names.index("데이터 수집"), names.index("결과 확인"), names.index("커밋 & 푸시")
-    assert fetch < check < commit
-    # 결과 확인은 조건 없이 항상 돌고, 커밋은 시험 실행이 아닐 때만 · main 에서만
-    assert "if" not in steps[check]
-    assert steps[commit]["if"].replace(" ", "") == "${{!inputs.dry_run}}"
-    assert 'if [ "$GITHUB_REF" != "refs/heads/main" ]' in steps[commit]["run"]
-    # DART 끄기는 시험 실행일 때만
-    run = steps[fetch]["run"]
-    assert 'if [ "$DRY_RUN" != "true" ]' in run and "exit 1" in run.split("unset DART_API_KEY")[0]
-    # 결과 확인이 NaN 을 거부하는지 (parse_constant)
-    assert "parse_constant" in steps[check]["run"]
-    # 시험 실행과 매일 실행은 서로 다른 동시 실행 그룹 (시험 실행이 대기 중인 매일 실행을 취소하지 않게)
+    names = [s.get("name") or s.get("uses") for s in steps]
+    order = ["라이브러리 설치", "DART 캐시 불러오기", "데이터 수집", "DART 캐시 저장", "발행 관문 (validate_data.py)", "커밋 & 푸시"]
+    idx = [names.index(n) for n in order]
+    assert idx == sorted(idx), names                     # 스펙 H 순서
+    by = dict(zip(names, steps))
+    # always() 는 캐시 저장에만
+    for n, st in by.items():
+        if "always()" in str(st.get("if", "")):
+            assert n == "DART 캐시 저장", n
+    assert "if" not in by["발행 관문 (validate_data.py)"]          # 관문은 조건 없이 늘 실행
+    assert by["커밋 & 푸시"]["if"].replace(" ", "") == "${{!inputs.dry_run}}"
+    assert 'if [ "$GITHUB_REF" != "refs/heads/main" ]' in by["커밋 & 푸시"]["run"]
+    assert "validate_data.py" in by["발행 관문 (validate_data.py)"]["run"]
+    # 시험용 입력은 main 에서 거부
+    guard = by["입력 확인"]["run"]
+    assert 'refs/heads/main' in guard and 'DART_MODE" = "off"' in guard and "PREV_REF" in guard and "SELFTEST" in guard
+    assert "exit 1" in guard
+    # 입력: dry_run · dart(cache/full/off) · bootstrap 은 기본값이 꺼짐/cache
+    inp = wf[True]["workflow_dispatch"]["inputs"]
+    assert inp["dry_run"]["default"] is False and inp["bootstrap"]["default"] is False
+    assert inp["dart"]["default"] == "cache" and inp["dart"]["options"] == ["cache", "full", "off"]
+    assert inp["selftest"]["default"] == "none"
+    # DART 캐시 키 (스펙 C)
+    assert by["DART 캐시 불러오기"]["with"]["restore-keys"] == "dart-cache-v1-"
+    assert by["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v1-${{ github.run_id }}")
+    assert wf["jobs"]["update"]["timeout-minutes"] == 300
     assert "inputs.dry_run" in wf["concurrency"]["group"]
+    assert wf["concurrency"]["cancel-in-progress"] is False
 
 
-def test_workflow_check_step_rejects_nan_and_missing_stock(tmp_path):
-    """워크플로의 '결과 확인' 스크립트를 실제로 돌려봐요."""
-    import subprocess
-    path = os.path.join(ROOT, ".github", "workflows", "update-data.yml")
-    with open(path, encoding="utf-8") as f:
-        wf = yaml.safe_load(f)
-    script = [s for s in wf["jobs"]["update"]["steps"] if s.get("name") == "결과 확인"][0]["run"]
+def test_pipeline_refuses_test_inputs_on_main(monkeypatch):
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("BAEPSAE_SELFTEST", "corrupt-price")
+    with pytest.raises(RuntimeError, match="main"):
+        F.main()
+    monkeypatch.delenv("BAEPSAE_SELFTEST")
+    monkeypatch.setenv("DART_MODE", "off")
+    with pytest.raises(RuntimeError, match="main"):
+        F.main()
 
-    must = ["005930", "000660", "005380", "015760", "105560"]
-    kr = [{"t": t, "cls": "kr", "price": 1000.0, "cap": 1.0} for t in must]
-    kr += [{"t": f"9{i:05d}", "cls": "kr", "price": 1000.0, "cap": 0.1} for i in range(2300)]
-    good = {"data.json": {"asOf": "2026-10-31", "stocks": kr},
-            "corp.json": {"companies": [{"t": t} for t in must], "sectors": {"semi": {}}},
-            "disc.json": {"insider": [], "nps": []}, "macro.json": {"curve": None}}
 
-    def run_with(files):
-        for name, obj in files.items():
-            F.write_json(str(tmp_path / name), obj)
-        return subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+# ── v17.5: 공식 종가 · 시계열 자르기 ───────────────────────
+def test_official_close_is_marcap_over_stocks_not_close_column():
+    df = fixture("2026-10-29_1958").set_index("Code")
+    row = df.loc["005930"]
+    assert float(row["Close"]) == 230500                 # 저녁 파일의 Close = 시간외 가격
+    assert F.kr_official_close(row) == 232000.0          # 시가총액 ÷ 상장주식수 = 공식 종가
+    # 다음 날(10/30) 네이버의 '전일 대비' 기준가도 232,000 (220,500 + 11,500)
+    assert F.kr_official_close({"Marcap": None, "Stocks": 10}) is None
+    assert F.kr_official_close({"Marcap": float("nan"), "Stocks": 10}) is None
 
-    assert run_with(good).returncode == 0
-    with open(tmp_path / "disc.json", "w", encoding="utf-8") as f:
-        f.write('{"insider":[{"cap":NaN}],"nps":[]}')
-    r = subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
-    assert r.returncode == 1 and "NaN" in r.stdout
-    no_hyundai = dict(good, **{"data.json": {"asOf": "x", "stocks": [s for s in kr if s["t"] != "005380"]}})
-    r = run_with(no_hyundai)
-    assert r.returncode == 1 and "005380" in r.stdout
+
+def series(pairs):
+    return pd.Series([v for _, v in pairs], index=pd.to_datetime([d for d, _ in pairs]))
+
+
+def test_cut_at_drops_bars_after_pxdate():
+    px = series([("2026-10-28", 1), ("2026-10-29", 2), ("2026-10-30", 3)])
+    assert list(F.cut_at(px, D29)) == [1, 2]
+
+
+def test_pin_close_sets_pxdate_bar_to_official_close():
+    px = series([("2026-10-28", 100.0), ("2026-10-29", 230500.0), ("2026-10-30", 220500.0)])
+    out, how = F.pin_close(px, D29, 232000.0)
+    assert how == "fixed" and out.index[-1] == pd.Timestamp(D29) and out.iloc[-1] == 232000.0 and len(out) == 2
+    out, how = F.pin_close(px.iloc[:1], D29, 232000.0)
+    assert how == "added" and out.iloc[-1] == 232000.0
+    out, how = F.pin_close(series([("2026-10-29", 5.0)]), D29, 5.0)
+    assert how == "same"
+
+
+# ── v17.5: 시장별 팩터 · 단위 · 인기 목록 ─────────────────
+def test_factors_are_ranked_within_one_market():
+    kr = [{"t": f"K{i}", "cls": "kr", "cap": float(i + 1), "pbr": 1.0 + i, "mom": i, "roe": i, "vol": 10 + i} for i in range(10)]
+    us = [{"t": f"U{i}", "cls": "us", "cap": 1000.0 * (i + 1), "pbr": 0.1, "mom": 99, "roe": 99, "vol": 1} for i in range(10)]
+    with pytest.raises(ValueError, match="섞였어요"):
+        F.add_percentiles(kr + us)
+    F.add_percentiles(kr)
+    assert kr[0]["pz"] == 90 and kr[-1]["pz"] == 0      # 한국 안에서 가장 작은 회사가 규모 점수 최고
+    assert kr[0]["vz"] == 90                             # PBR 가장 낮음
+    blank = [{"t": "A", "cls": "kr", "cap": None, "pbr": float("nan")}, {"t": "B", "cls": "kr", "cap": None, "pbr": None}]
+    F.add_percentiles(blank)                             # 빈 열이 있어도 죽지 않아요
+    assert "pz" not in blank[0] and "vz" not in blank[0]
+
+
+def test_us_cap_and_val_are_in_won():
+    cap, val = F.us_cap_val(4.0e12, 50_000_000, 230.0, 1333.3)   # 시총 4조 달러, 하루 5천만 주
+    assert cap == round(4.0e12 * 1333.3 / 1e12, 3)               # 5,333.2 조원
+    assert 5000 < cap < 5500
+    assert val == round(50_000_000 * 230 * 1333.3 / 1e8, 1)      # 억원
+    assert F.us_cap_val(None, None, 230.0, 1333.3) == (None, None)
+    assert F.us_cap_val(float("nan"), 1, 1, 1333.3)[0] is None
+
+
+def test_popular_is_ranked_per_market():
+    kr = [{"t": "005930", "val": 20000.0}, {"t": "000660", "val": 15000.0}, {"t": "X", "val": None}]
+    us = [{"t": "AAPL", "val": 160000.0}]
+    assert F.popular_list(kr, us) == ["005930", "000660", "AAPL"]   # 미국 거래대금이 커도 한국이 앞
+
+
+def test_us_bar_counts_only_after_new_york_close():
+    utc = dt.timezone.utc
+    # 한국 10:00 = 뉴욕 전날 21:00 → 그날 장은 끝남
+    assert F.us_last_complete_day(dt.datetime(2026, 10, 30, 1, 0, tzinfo=utc)) == dt.date(2026, 10, 29)
+    # 뉴욕 14:00 (장중) → 전날까지만
+    assert F.us_last_complete_day(dt.datetime(2026, 10, 30, 18, 0, tzinfo=utc)) == dt.date(2026, 10, 29)
+    # 뉴욕 17:00 → 오늘 봉도 완성
+    assert F.us_last_complete_day(dt.datetime(2026, 10, 30, 21, 0, tzinfo=utc)) == dt.date(2026, 10, 30)
+
+
+# ── v17.5: DART 캐시 ───────────────────────────────────────
+def test_report_dates():
+    assert F.report_deadline(2026, "11014") == dt.date(2026, 11, 14)
+    assert F.report_deadline(2025, "11011") == dt.date(2026, 3, 31)
+    assert F.report_period_end(2026, "11012") == dt.date(2026, 6, 30)
+
+
+def test_dart_entry_due_rules():
+    due = F.dart_entry_due
+    today = dt.date(2026, 10, 27)
+    assert due(None, 2026, "11014", today) is True                    # 처음
+    assert due(None, 2026, "11014", dt.date(2026, 9, 30)) is False    # 분기가 안 끝남
+    assert due({"st": "000", "at": "2026-01-01", "d": {}}, 2026, "11012", today) is False   # 찾은 건 확정
+    assert due({"st": "000", "at": "2026-01-01", "d": {}}, 2026, "11012", today, revalidate=True) is True
+    assert due({"st": "013", "at": "2026-10-25"}, 2026, "11014", today) is False   # 7일 안
+    assert due({"st": "013", "at": "2026-10-20"}, 2026, "11014", today) is True    # 7일 지남
+    assert due({"st": "013", "at": "2026-11-08"}, 2026, "11014", dt.date(2026, 11, 9)) is True   # 마감 주간엔 매일
+    assert due({"st": "013", "at": "2026-11-16"}, 2026, "11014", dt.date(2026, 11, 17)) is False  # 마감+3일부턴 다시 7일
+
+
+def fake_dart(statuses):
+    """statuses: {(year, reprt, fs): status} — 없으면 013."""
+    calls = []
+
+    def get(self, endpoint, params, timeout=25):
+        calls.append(params)
+        st = statuses.get((int(params.get("bsns_year", 0)), params.get("reprt_code"), params.get("fs_div")), "013")
+        with self.lock:
+            self.status[st] += 1
+            if st in F.DART_FATAL and not self.fatal:
+                self.fatal = (st, "test")
+        if st in F.DART_FATAL:
+            return None
+        return {"status": st, "list": [{"account_nm": "매출액", "sj_div": "IS", "thstrm_amount": "1e10"}]}
+    return get, calls
+
+
+def test_dart_cache_reuses_found_reports(tmp_path, monkeypatch):
+    get, calls = fake_dart({(2026, "11012", "CFS"): "000"})
+    monkeypatch.setattr(F.DartClient, "get", get)
+    path = str(tmp_path / "c.json.gz")
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=path)
+    assert F.dart_quarter(c, "C1", 2026, "11012")["rev"] == 100.0
+    assert F.dart_quarter(c, "C1", 2026, "11014") is None             # 아직 안 냄 (CFS·OFS 둘 다 013)
+    n = len(calls)
+    c.save()
+    c2 = F.DartClient("k", today=dt.date(2026, 11, 1), path=path)
+    assert F.dart_quarter(c2, "C1", 2026, "11012")["rev"] == 100.0
+    assert F.dart_quarter(c2, "C1", 2026, "11014") is None
+    assert len(calls) == n                                            # 다음 날엔 호출 0번
+    assert c2.cache_hits >= 2
+
+
+def test_dart_quota_exceeded_fails_loudly(tmp_path, monkeypatch):
+    get, _ = fake_dart({(2026, "11012", "CFS"): "020"})
+    monkeypatch.setattr(F.DartClient, "get", get)
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    assert F.dart_quarter(c, "C1", 2026, "11012") is None
+    with pytest.raises(RuntimeError, match="일일 한도 초과"):
+        c.raise_if_fatal()
+    assert "020" in c.summary()
+
+
+def test_dart_full_only_once_per_kst_day(tmp_path, monkeypatch):
+    path = str(tmp_path / "c.json.gz")
+    c = F.DartClient("k", mode="full", today=dt.date(2026, 10, 31), path=path)
+    c.save()
+    with pytest.raises(RuntimeError, match="하루 한 번"):
+        F.DartClient("k", mode="full", today=dt.date(2026, 10, 31), path=path)
+    F.DartClient("k", mode="full", today=dt.date(2026, 11, 1), path=path)   # 다음 날은 괜찮아요
+
+
+def test_current_quarter_needs_seventy_percent():
+    assert F.pick_current_quarter([("11014", 0.64), ("11012", 0.98)]) == "11012"
+    assert F.pick_current_quarter([("11014", 0.70)]) == "11014"
+    assert F.pick_current_quarter([("11013", 0.2)]) is None
