@@ -41,12 +41,16 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 ## 3. Screens (bottom tabs: 오늘 · 내 덱 · 덱 짜기 · 찾기)
 
 ### 오늘 (daily, opens first)
-- **Hero band = the rule verdict.** Three states:
+- **Hero band = the rule verdict.** States:
   - 할 일 없음 (green band): "매도 조건에 걸린 종목이 없어요". If a holding moved ±5%+, a white inset row: "크게 움직인 종목 1개 ·
     뉴스 확인 완료 · 솔담정밀 −6.2% · 같은 업종이 다 같이 빠졌어요" → 왜 움직였나.
   - Quiet: same green band, "새 공시도 크게 움직인 종목도 없어요".
   - 규칙 깨짐 (apricot band, "오늘 확인할 일 1개", "마루식품이 매도 조건에 걸렸어요"): names the stock, the broken rule, the number and the filing date
     ("배당 삭감 · 주당 4,000원 → 3,200원 · 10월 30일 공시"), then the three buttons above.
+  - 확인 필요 (same apricot band, "오늘 확인할 일 1개"): a sell condition that needs the user's reading (v18.2: an
+    unrelated acquisition, a number with only one reading, a weakened promise). Names the stock, shows the quote and a
+    link to the document, and asks the user to confirm. Its wording is written in v18.4.
+  - The green band's "매도 조건에 걸린 종목이 없어요" shows only when there is no 규칙 깨짐 and no 확인 필요 item.
 - **Deck strip:** 평가 금액 (value), 수익률 (return since purchase). Today's % is a small grey line under them, not a headline.
 - **My stocks list:** name + today's %. A chip only on exceptions (큰 움직임, 지켜봐요, 규칙 깨짐). No chip = fine.
 - **다음 일정:** next 2 dated events (earnings, dividend record dates), with 예상 where estimated.
@@ -75,7 +79,7 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 
 ### 덱 짜기 (5 steps, live count of candidates in a bottom bar)
 0. **시작:** blank deck, or one of 13 starting decks that pre-fill the cards (꾸준한 고배당, 저평가 가치주, 적정가 성장주,
-   장기 우량주, 이익 대비 싼 우량주, 깐깐하게 고르기, 저변동 방어주, 추세 추종, 주주환원 확대, 테마 집중, 한미 반반,
+   장기 우량주, 이익 대비 싼 우량주, 깐깐한 기준, 저변동 방어주, 추세 추종, 주주환원 확대, 테마 집중, 한미 반반,
    배당 생활비, 배당 성장주). The deck is named "<starting deck> 덱".
 1. **기준:** 10 cards, formal name + sorting basis (CLAUDE.md rule): 가치 (PER·PBR 낮은 순), 배당 (배당수익률 높은 순),
    배당 성장 (배당 연속 인상 기간 긴 순), 성장 (매출·이익 증가율), 수익성 (ROE), 재무 안정 (부채비율 낮은 순), 낮은 변동성
@@ -135,8 +139,9 @@ Three layers, each rule with a number, a source field and a freshness limit:
    controlling shareholder actions), growth names (free cash flow sign, share issuance).
 3. **From the deck's own cards:** e.g. a dividend deck adds "배당 동결 → 지켜봐요"; a 재무 안정 card adds a debt ceiling.
 
-Rules that need reading (guidance wording, "structural" decline, sanctions) are **warnings that put the stock in 지켜봐요
-until the user confirms** — never automatic 규칙 깨짐. Vague words must become numbers or be marked "사람이 확인".
+Rules that need reading (guidance wording, "structural" decline, sanctions, whether an acquisition is unrelated) are
+**warnings that put the stock in 지켜봐요 until the user confirms** — never automatic 규칙 깨짐. Numbers read from report
+text (CET1, K-ICS, occupancy and the like) are different: they follow v18.2's two-key rule. Vague words must become numbers or be marked "사람이 확인".
 
 ### 4.3 Sizing
 Order: groups first, then stocks inside each group, then limits. Every target weight is stored with a one-line reason
