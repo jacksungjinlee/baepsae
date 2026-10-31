@@ -872,12 +872,16 @@ const T_GOLD_EST = { ko: "금현물은 국제 금값으로 환산한 추정치�
 const T_PX_OFFICIAL = { ko: "가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.", en: "Prices are official closes from {md}. Other figures are estimates." };
 const T_RATES_FAIL = { ko: "금리 데이터를 불러오지 못했어요.", en: "We couldn't load the interest-rate data." };
 // v17.5 리뷰 뒤 새 문구 (Jack 승인 대기): 베타·변동성을 모르는 종목 · 배당 정보가 없는 종목
-const T_NORISK = { ko: "일부 종목(비중 {pct}%)은 베타·변동성 자료가 없어요. 위험 숫자는 나머지 종목으로 계산했어요.",
+const T_NORISK = { ko: "일부 종목(비중 {pct}%)은 베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요.",
   en: "Some holdings ({pct}% of your money) have no beta or volatility data. The risk numbers use the rest." };
-const T_RISK_BLIND = { ko: "담은 종목 모두 베타·변동성 자료가 없어 위험 숫자를 계산할 수 없어요.",
+const T_RISK_BLIND = { ko: "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요.",
   en: "None of your holdings has beta or volatility data, so the risk numbers can't be calculated." };
+// 자료 없는 종목이 절반을 넘을 때 (모두는 아님) — "모두"라고 하면 틀린 말이라 따로 (Jack 승인 대기)
+const T_RISK_HALF = { ko: "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요.",
+  en: "Holdings without beta or volatility data are more than half of your money, so the risk numbers can't be calculated." };
+const riskBlindTxt = (lang, m) => (m.allNoRisk ? T_RISK_BLIND : T_RISK_HALF)[lang];
 const T_DY_UNKNOWN = { ko: "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.", en: "Holdings without dividend data ({n}) are counted as 0." };
-const noRiskLine = (lang, m) => T_NORISK[lang].replace("{pct}", m.noRiskPct >= 1 ? Math.round(m.noRiskPct) : m.noRiskPct.toFixed(1));
+const noRiskLine = (lang, m) => T_NORISK[lang].replace("{pct}", m.noRiskPct >= 1 ? Math.round(m.noRiskPct) : Math.max(m.noRiskPct, 0.1).toFixed(1));
 const WARN_INK = "#8A5A16";
 
 // 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
@@ -923,7 +927,7 @@ function nonLiveLines(lang, failed, list, m) {
   const out = failed ? [T_NOLIVE_ALL[lang]] : [];
   if (!failed && list.some((s) => s && s.live === false && !s.est)) out.push(T_NONLIVE[lang]);
   if (!failed && list.some((s) => s && s.est)) out.push(T_GOLD_EST[lang]);
-  if (m && m.riskBlind) out.push(T_RISK_BLIND[lang]);
+  if (m && m.riskBlind) out.push(riskBlindTxt(lang, m));
   else if (m && m.noRiskN > 0) out.push(noRiskLine(lang, m));
   return out;
 }
@@ -933,6 +937,7 @@ function nonLiveLines(lang, failed, list, m) {
 const fBeta = (v) => (typeof v === "number" ? v.toFixed(2) : "–");
 // 위험 계산에 필요한 베타·변동성이 없는 종목 (사용자가 직접 넣으면 그때부터 계산에 들어가요)
 const lacksRisk = (s) => !s || typeof s.beta !== "number" || typeof s.vol !== "number";
+const NO_RISK_MAX_PCT = 50;   // 자료 없는 종목이 투자금의 이 비율을 넘으면 위험 수치를 보여 주지 않아요 (Jack, 2026-11-01)
 const fVol = (v) => (typeof v === "number" ? v + "%" : "–");
 const fmtWon = (v) => "₩" + Math.round(v).toLocaleString("ko-KR");
 const fmtMw = (v, lang) => {
@@ -980,23 +985,37 @@ function computeMetrics(holdings, budgetWon, settings) {
   const clsW = Object.fromEntries(CLS_LIST.map((c) => [c, 0]));
   let idioVar = 0, perSum = 0, perW = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0, noRiskN = 0, dyUnknownN = 0;
   const sectorW = {};
-  // 베타·변동성이 없는 종목은 위험 계산에서 빼고, 위험 숫자는 '자료가 있는 종목'으로 계산해요.
-  // 빠진 돈을 현금(위험 0)으로 치면 위험이 작아 보이니까, 자료가 있는 종목의 비중을 투자금 전체만큼 키워서 써요 (k).
-  // 담은 종목 모두 자료가 없으면 위험 숫자를 만들지 않아요 (riskBlind) — 0 이나 지어낸 값을 보여 주지 않게.
+  // 베타·변동성이 없는 종목은 위험 계산에서 빼고, 위험 수치는 '자료가 있는 종목'으로 계산해요.
+  // 빠진 돈을 현금(위험 0)으로 치면 위험이 작아 보이니까, 같은 자산군(한국·미국·채권·금)의 자료 있는 종목이
+  // 그 몫까지 움직인다고 보고 비중을 키워요 (kc). 그 자산군에 자료 있는 종목이 하나도 없으면 전체 비율로 나눠요.
+  // 자료 없는 종목이 투자금의 절반을 넘으면 위험 수치를 만들지 않아요 (riskBlind, Jack 결정 2026-11-01).
   const invW = holdings.reduce((a, h) => a + h.won / total, 0);
-  const riskW0 = holdings.reduce((a, h) => a + (lacksRisk(h.stock) ? 0 : h.won / total), 0);
-  if (invW > 0 && riskW0 <= 0) {
-    return { empty: true, riskBlind: true, invested, cash, total, overBudget, rows: [],
-      noRiskN: holdings.filter((h) => h.won > 0).length, noRiskPct: 100 };
+  const invC = {}, riskC = {};
+  holdings.forEach((h) => {
+    const c = clsOf(h.stock), w = h.won / total;
+    invC[c] = (invC[c] || 0) + w;
+    if (!lacksRisk(h.stock)) riskC[c] = (riskC[c] || 0) + w;
+  });
+  const riskW0 = Object.values(riskC).reduce((a, x) => a + x, 0);
+  const noRiskPct = invW > 0 ? (1 - riskW0 / invW) * 100 : 0;
+  if (invW > 0 && noRiskPct > NO_RISK_MAX_PCT) {
+    // 위험 수치 없이 돈 비중만: 담은 종목 목록(비중)은 그대로 보여야 해요
+    const rowsB = holdings.map((h) => { const w = h.won / total;
+      return { ...h, w, wr: 0, b: 0, idio: 0, c: clsOf(h.stock), nr: lacksRisk(h.stock), rc: null, sysShare: null, wInv: w / invW }; });
+    return { empty: true, riskBlind: true, allNoRisk: riskW0 <= 0, invested, cash, total, overBudget, rows: rowsB,
+      noRiskN: holdings.filter((h) => h.won > 0 && lacksRisk(h.stock)).length, noRiskPct };
   }
-  const k = riskW0 > 0 ? invW / riskW0 : 0;
+  const kc = {};
+  Object.keys(invC).forEach((c) => { kc[c] = riskC[c] > 0 ? invC[c] / riskC[c] : 0; });
+  const orphan = Object.keys(invC).reduce((a, c) => a + (riskC[c] > 0 ? 0 : invC[c]), 0);   // 자료가 하나도 없는 자산군의 몫
+  const kAll = invW - orphan > 0 ? invW / (invW - orphan) : 1;
   const rows = holdings.map((h) => {
     const w = h.won / total;
     const c = clsOf(h.stock);
     const sc = clsVol(c, settings);
     const nr = lacksRisk(h.stock);
     if (nr && h.won > 0) noRiskN += 1;
-    const wr = nr ? 0 : w * k;                       // 위험 계산용 비중
+    const wr = nr ? 0 : w * kc[c] * kAll;            // 위험 계산용 비중
     const b = nr ? 0 : h.stock.beta, volTot = nr ? 0 : h.stock.vol / 100;
     const sysV = Math.pow(b * sc, 2);
     const idio = Math.max(volTot * volTot - sysV, 0);
@@ -1029,12 +1048,9 @@ function computeMetrics(holdings, budgetWon, settings) {
     const wi = investedW > 0 ? w / investedW : 0;
     if (wi > maxSectorW) { maxSectorW = wi; maxSectorKey = k; }
   });
-  const riskInv = rows.reduce((a, r) => a + (r.nr ? 0 : r.w), 0);
   const rows2 = rows.map((r) => {
     const cov = r.b * r.sc * CLS_LIST.reduce((a, c) => a + Wc[c] * clsVol(c, settings) * rhoOf(r.c, c, settings), 0) + r.wr * r.idio;
-    return { ...r, wInv: investedW > 0 ? r.w / investedW : 0,
-      wRisk: r.nr || riskInv <= 0 ? null : r.w / riskInv,          // 자료가 있는 종목 사이의 돈 비중
-      rc: r.nr ? null : varP > 0 ? (r.wr * cov) / varP : 0 };
+    return { ...r, wInv: investedW > 0 ? r.w / investedW : 0, rc: r.nr ? null : varP > 0 ? (r.wr * cov) / varP : 0 };
   });
   // 평균은 값이 있는 종목끼리만 (빈 값을 0 으로 섞지 않아요)
   const avgOf = (ok, val) => { const rs = rows2.filter(ok); const ws = rs.reduce((a, r) => a + r.wInv, 0);
@@ -1048,7 +1064,7 @@ function computeMetrics(holdings, budgetWon, settings) {
     empty: false, invested, cash, total, overBudget, wAvgVol, top3, pastAl, te: te * 100,
     beta, volP: volP * 100, expRet: expRet * 100, sharpe, cagr: cagr * 100, r2: r2 * 100,
     effN, per: perW > 0 ? perSum / perW : null, dy, divWon, dyUnknownN, noRiskN,
-    noRiskPct: invW > 0 ? (1 - riskW0 / invW) * 100 : 0, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
+    noRiskPct, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
     clsW: clsWInv, fxExp: investedW > 0 ? (fxW / investedW) * 100 : 0,
     investedW: investedW * 100, rows: rows2,
   };
@@ -2139,7 +2155,7 @@ const RC_COLORS = ["#1B2B4B", "#E8987A", "#2E9E8F", "#566BB8", "#C98F2B", "#8C5B
 function RiskContribCard({ lang, t, metrics, stocksById }) {
   const withRisk = metrics.empty ? [] : metrics.rows.filter((r) => !r.nr);     // 베타·변동성 자료가 있는 종목끼리
   if (metrics.empty || withRisk.length < 2) return null;
-  const rows = [...withRisk].map((r) => ({ ...r, wInv: r.wRisk })).sort((a, b) => b.rc - a.rc).slice(0, 10);
+  const rows = [...withRisk].sort((a, b) => b.rc - a.rc).slice(0, 10);     // 돈 비중은 실제 비중 그대로 (장바구니와 같게)
   const topName = stocksById[rows[0].t] ? (lang === "ko" ? stocksById[rows[0].t].nk : stocksById[rows[0].t].ne) : "";
   return (
     <Card style={{ padding: 16 }}>
@@ -3051,7 +3067,7 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
         ) : (
           <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: 22, textAlign: "center" }}>
             <Bird mood="think" size={56} />
-            <Sub>{metrics.riskBlind ? T_RISK_BLIND[lang] : metrics.empty ? t("emptyCart") : t("needProfile")}</Sub>
+            <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : metrics.empty ? t("emptyCart") : t("needProfile")}</Sub>
           </Card>
         )}
         <div className="stickyScroll">
@@ -3093,11 +3109,14 @@ function taxEstimate(metrics, profile, settings, tax) {
   if (metrics.empty) return null;
   const acc = profile.account || "normal";
   let divKr = 0, divUs = 0, gainUsBase = 0, gainMetalEtf = 0;
+  const usRows = metrics.rows.filter((r) => r.c === "us" && !r.nr && r.w > 0);
+  const usW = usRows.reduce((a, r) => a + r.w, 0);
+  const usBeta = usW > 0 ? usRows.reduce((a, r) => a + r.w * r.b, 0) / usW : 1;   // 미국 자료가 하나도 없으면 시장 평균(1)
   metrics.rows.forEach((r) => {
     const d = r.won * ((r.stock.dy || 0) / 100);
     if (r.c === "us") {
       divUs += d;
-      gainUsBase += r.won * Math.max((settings.rf + (r.nr ? metrics.beta : r.b) * settings.usMrp) / 100 - (r.stock.dy || 0) / 100, 0);   // 자료 없는 종목은 나머지와 같다고 봐요
+      gainUsBase += r.won * Math.max((settings.rf + (r.nr ? usBeta : r.b) * settings.usMrp) / 100 - (r.stock.dy || 0) / 100, 0);   // 자료 없는 미국 종목은 자료 있는 미국 종목의 평균 베타
     } else if (r.c === "metal") {
       if (r.stock.t !== "04020000") gainMetalEtf += r.won * (settings.mtMrp / 100);
     } else divKr += d;
@@ -3822,7 +3841,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
     return (
       <Card style={{ textAlign: "center", padding: 34, display: "flex", flexDirection: "column", alignItems: "center", gap: 10, maxWidth: 560, margin: "0 auto" }}>
         <Bird mood="think" size={66} />
-        <Sub>{metrics.riskBlind ? T_RISK_BLIND[lang] : t("diagEmpty")}</Sub>
+        <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : t("diagEmpty")}</Sub>
       </Card>
     );
   }
@@ -3900,7 +3919,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     return (
       <Card style={{ textAlign: "center", padding: 30, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <Bird mood="think" size={64} />
-        <Sub>{metrics.riskBlind ? T_RISK_BLIND[lang] : (lang === "ko" ? "아직 담은 종목이 없어요. ② 포트폴리오 탭에서 먼저 만들어주세요." : "Nothing here yet. Build your portfolio in tab ② first.")}</Sub>
+        <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : (lang === "ko" ? "아직 담은 종목이 없어요. ② 포트폴리오 탭에서 먼저 만들어주세요." : "Nothing here yet. Build your portfolio in tab ② first.")}</Sub>
       </Card>
     );
   }
@@ -4508,7 +4527,7 @@ function AppInner({ seed, lang: langProp }) {
             </div>
           </div>
           {slotId && <div className="stages" style={{ display: "flex", alignItems: "center", gap: 6, overflowX: "auto" }}>
-            <StageBtn i={0} done={profile.ready} /><StageBtn i={1} done={!metrics.empty} /><StageBtn i={2} done={false} /><StageBtn i={3} done={false} />
+            <StageBtn i={0} done={profile.ready} /><StageBtn i={1} done={!metrics.empty || !!metrics.riskBlind} /><StageBtn i={2} done={false} /><StageBtn i={3} done={false} />
           </div>}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={() => setLang(lang === "ko" ? "en" : "ko")} style={{ background: C.bg, border: "none", borderRadius: 999, padding: "6px 10px", fontSize: 11.5, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT }}>{lang === "ko" ? "EN" : "한국어"}</button>
@@ -4578,4 +4597,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics };

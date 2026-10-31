@@ -42,8 +42,14 @@ NOLIVE_ALL = "최신 시세를 불러오지 못해 예시 가격으로 보여 �
 GOLD_EST = "금현물은 국제 금값으로 환산한 추정치예요"
 RATES_FAIL = "금리 데이터를 불러오지 못했어요"
 OFFICIAL = "공식 종가예요. 다른 수치는 추정치예요"
-NORISK = "베타·변동성 자료가 없어요. 위험 숫자는 나머지 종목으로 계산했어요"
-RISK_BLIND = "담은 종목 모두 베타·변동성 자료가 없어 위험 숫자를 계산할 수 없어요"
+NORISK = "베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요"
+RISK_BLIND = "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요"
+RISK_HALF = "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요"
+# 가장 작은 요소의 글: 그 줄만 정확히 보려고 (부모 상자의 글이 섞이지 않게)
+SMALLEST = """(args) => { const [need, also] = args; let best = null;
+  for (const e of document.querySelectorAll('body *')) { const t = e.innerText || '';
+    if (t.includes(need) && (!also || also.every((x) => t.includes(x))) && (!best || t.length < best.length)) best = t; }
+  return best; }"""
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -391,22 +397,41 @@ def scene_no_risk_holding(R, files):
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
             "holdings": [{"t": "999990", "mw": 200}, {"t": "005930", "mw": 300}]}
     blind = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "999990", "mw": 300}]}
+    half = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "999990", "mw": 200}, {"t": "005930", "mw": 100}]}
+    ref = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 500}]}
     local = {"baepsae_v9_seen": "1",
-             "baepsae_v10_slots": json.dumps([{"id": "snr", "name": "위험값 없음 시험"}, {"id": "sbl", "name": "위험값 전부 없음"}], ensure_ascii=False),
-             "baepsae_v10_slot_snr": json.dumps(slot, ensure_ascii=False), "baepsae_v10_slot_sbl": json.dumps(blind, ensure_ascii=False)}
+             "baepsae_v10_slots": json.dumps([{"id": "snr", "name": "위험값 없음 시험"}, {"id": "sbl", "name": "위험값 전부 없음"},
+                                              {"id": "shf", "name": "위험값 절반 넘게 없음"}, {"id": "srf", "name": "삼성전자만 비교"}],
+                                             ensure_ascii=False),
+             "baepsae_v10_slot_snr": json.dumps(slot, ensure_ascii=False), "baepsae_v10_slot_sbl": json.dumps(blind, ensure_ascii=False),
+             "baepsae_v10_slot_shf": json.dumps(half, ensure_ascii=False), "baepsae_v10_slot_srf": json.dumps(ref, ensure_ascii=False)}
     srv, ctx, page, _ = R.open(build_site(f), local=local)
+
+    risk_line = {}
 
     def run():
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("위험값 없음 시험", exact=False).first.click()
         see(page, NORISK)
         see(page, "(비중 40%)")                    # 200 / 500 만원 = 40%
-        see(page, "시험새종목")                    # 담은 종목이 사라지지 않아요
-        see(page, "보통 해")
-        see(page, "β –")                          # 베타는 '–' (지어낸 숫자 없음)
+        see(page, "보통 해 ±")
+        row = page.evaluate(SMALLEST, ["시험새종목", ["비중 ", "β "]])
+        assert row and "β –" in row and "비중 40.0%" in row, f"장바구니 줄: {row!r}"     # 그 종목 줄에서 직접
+        risk_line["partial"] = page.evaluate(SMALLEST, ["보통 해 ±", None])
         body = page.locator("body").inner_text()
-        assert "NaN" not in body and "null" not in body, "위험 숫자에 NaN/null 이 보여요"
-    R.check(page, "위험값 없음", "베타·변동성 없는 종목을 담음 → 그대로 보이고 'β –', 비중 40% 배너, NaN 없음", run)
+        assert "NaN" not in body and "null" not in body, "위험 수치에 NaN/null 이 보여요"
+    R.check(page, "위험값 없음", "베타·변동성 없는 종목을 담음 → 그 줄에 'β –'·비중 40%, 배너, NaN 없음", run)
+    ctx.close(); srv.shutdown()
+
+    srv, ctx, page, _ = R.open(build_site(f), local=local)
+
+    def same_as_reference():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("삼성전자만 비교", exact=False).first.click()
+        see(page, "보통 해 ±")
+        ref_line = page.evaluate(SMALLEST, ["보통 해 ±", None])
+        assert risk_line.get("partial") and ref_line == risk_line["partial"], f"{risk_line.get('partial')!r} ≠ {ref_line!r}"
+    R.check(page, "위험값 없음", "자료 없는 200만원 + 삼성전자 300만원 = 삼성전자 500만원과 같은 위험 수치", same_as_reference)
     ctx.close(); srv.shutdown()
 
     srv, ctx, page, _ = R.open(build_site(f), local=local)
@@ -418,10 +443,24 @@ def scene_no_risk_holding(R, files):
         see(page, "시험새종목")                    # 담은 종목은 그대로 보여요
         page.wait_for_timeout(500)
         body = page.locator("body").inner_text()
-        for bad in ("보통 해", "β 0.00", "변동성 0.0%", "NaN", "null"):
-            assert bad not in body, f"위험 숫자를 못 만드는데 '{bad}' 가 보여요"
+        for bad in ("보통 해", "β 0.00", "변동성 0.0%", "비중 0.0%", "NaN", "null"):
+            assert bad not in body, f"위험 수치를 못 만드는데 '{bad}' 가 보여요"
+        row = page.evaluate(SMALLEST, ["시험새종목", ["비중 ", "β "]])
+        assert row and "비중 100.0%" in row, f"장바구니 줄: {row!r}"
         assert page.get_by_text(NORISK).count() == 0, "전부 빠졌는데 '일부 종목' 문구"
-    R.check(page, "위험값 없음", "담은 종목 모두 베타·변동성 없음 → 위험 숫자 대신 안내, 0·NaN 없음", run_blind)
+    R.check(page, "위험값 없음", "담은 종목 모두 베타·변동성 없음 → 위험 수치 대신 안내, 비중은 그대로, 0·NaN 없음", run_blind)
+    ctx.close(); srv.shutdown()
+
+    srv, ctx, page, _ = R.open(build_site(f), local=local)
+
+    def run_half():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("위험값 절반 넘게 없음", exact=False).first.click()
+        see(page, RISK_HALF)                       # 200 / 300 = 67% > 50% → 계산 안 함 ('모두' 문구 아님)
+        page.wait_for_timeout(500)
+        body = page.locator("body").inner_text()
+        assert "보통 해" not in body and RISK_BLIND not in body and "NaN" not in body, "절반 넘게 빠졌는데 위험 수치/잘못된 문구"
+    R.check(page, "위험값 없음", "자료 없는 종목이 투자금의 절반 넘음 → 위험 수치 대신 안내", run_half)
     ctx.close(); srv.shutdown()
 
     # 모든 자산군(한국·미국·채권·금)을 담은 보통 포트폴리오: 위험 숫자에 NaN 이 없어야 해요
