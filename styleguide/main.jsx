@@ -26,7 +26,7 @@ function Block({ id, name, note, children }) {
 }
 const State = ({ label, children }) => (
   <div data-state-label={label}>
-    <div style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text2, { marginBottom: SPACE(1.5) })}>{label}</div>
+    <div style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text2, { marginBottom: SPACE(1) })}>{label}</div>
     {children}
   </div>
 );
@@ -64,8 +64,8 @@ function Tokens() {
           {CONTRAST_PAIRS.map(([fg, bg]) => {
             const r = contrast(COLOR[fg], COLOR[bg]);
             return (
-              <div key={fg + bg} data-pair={`${fg}/${bg}`} data-ratio={r.toFixed(2)} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(1.5)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
-                <span style={{ background: COLOR[bg], color: COLOR[fg], borderRadius: 8, padding: "6px 10px", border: `1px solid ${COLOR.border}`, ...txt(SIZE.sm, WEIGHT.bold, COLOR[fg], NUM) }}>{EX.typeNumber}</span>
+              <div key={fg + bg} data-pair={`${fg}/${bg}`} data-ratio={r.toFixed(2)} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
+                <span style={{ background: COLOR[bg], color: COLOR[fg], borderRadius: SPACE(2), padding: `${SPACE(1)}px ${SPACE(3)}px`, border: `1px solid ${COLOR.border}`, ...txt(SIZE.sm, WEIGHT.bold, COLOR[fg], NUM) }}>{EX.typeNumber}</span>
                 <span style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2, { flex: 1 })}>{fg} on {bg}</span>
                 <span style={txt(SIZE.xs, WEIGHT.heavy, r >= 4.5 ? COLOR.ok : COLOR.ink, NUM)}>{r.toFixed(2)} : 1</span>
               </div>
@@ -85,7 +85,7 @@ function Tokens() {
           {Object.entries(SIZE).map(([k, px]) => (
             <div key={k} style={{ display: "flex", alignItems: "baseline", gap: SPACE(3), padding: `${SPACE(1)}px 0` }}>
               <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3, { width: 64, flexShrink: 0, ...NUM })}>{k} {px}</code>
-              <span style={txt(px, px >= 18 ? WEIGHT.heavy : WEIGHT.regular, COLOR.ink, { lineHeight: 1.35 })}>{px >= 18 ? EX.typeTitle.replace("\n", " ") : EX.typeBody}</span>
+              <span style={txt(px, px >= 18 ? WEIGHT.heavy : WEIGHT.regular, COLOR.ink, { lineHeight: 1.35, whiteSpace: "pre-line" })}>{px >= 18 ? EX.typeTitle : EX.typeBody}</span>
             </div>
           ))}
           <div style={{ display: "flex", gap: SPACE(4), marginTop: SPACE(3), flexWrap: "wrap" }}>
@@ -183,8 +183,19 @@ function Stats() {
         <Card>
           <div style={txt(SIZE.h1, WEIGHT.heavy, COLOR.ink, NUM)}>{s.deckValue}</div>
           <div style={txt(SIZE.xs, WEIGHT.semi, COLOR.up, { ...NUM, marginBottom: SPACE(3) })}>{s.deckSub}</div>
-          <StatStrip items={[{ label: s.deckMine.split(" +")[0], value: "+8.0%", tone: "up" }, { label: s.kospi.split(" +")[0], value: "+5.1%", tone: "up" }]} />
+          <div style={{ display: "flex", gap: SPACE(4), flexWrap: "wrap" }}>
+            {[[s.deckMine, COLOR.ink], [s.kospi, COLOR.text3]].map(([t, c]) => (
+              <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: SPACE(2), ...txt(SIZE.xs, WEIGHT.bold, COLOR.ink, NUM) }}>
+                <span style={{ width: SPACE(3), height: SPACE(1), borderRadius: 2, background: c }} />{t}
+              </span>
+            ))}
+          </div>
         </Card>
+      </State>
+      <State label="On the page background (darker up-red, upOnPage)">
+        <div style={{ padding: `${SPACE(2)}px 0` }}>
+          <StatStrip onPage items={[{ label: s.now, value: s.nowValue }, { label: s.sinceBuy, value: "+8.0%", tone: "up" }, { label: s.today, value: "−0.4%", tone: "down" }]} note={EX.closeDate} />
+        </div>
       </State>
     </Block>
   );
@@ -353,7 +364,7 @@ function Collapsibles() {
         </Collapsible>
         <Collapsible title={c.receipts.title} defaultOpen>
           {c.receipts.items.map(([k, v]) => (
-            <div key={k} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(1.5)}px 0` }}>
+            <div key={k} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(1)}px 0` }}>
               <span style={txt(SIZE.xs, WEIGHT.bold, COLOR.text3, { width: 72, flexShrink: 0 })}>{k}</span>
               <span style={txt(SIZE.xs, WEIGHT.regular, COLOR.ink, NUM)}>{v}</span>
             </div>
@@ -408,7 +419,7 @@ function Weights() {
       <Card>
         {w.rows.map((r) => (
           <div key={r.title} style={{ padding: `${SPACE(2)}px 0` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: SPACE(1.5) }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: SPACE(2) }}>
               <span style={txt(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{r.title}</span>
               <span style={txt(SIZE.xs, WEIGHT.bold, COLOR.text2, NUM)}>{r.current}%</span>
             </div>

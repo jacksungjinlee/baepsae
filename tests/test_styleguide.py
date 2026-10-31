@@ -114,11 +114,21 @@ def test_status_colours_are_not_red_or_blue():
 
 
 def test_type_scale_spacing_touch():
-    v = node_value("src/ui/tokens.js", "{ size: M.SIZE, weight: M.WEIGHT, radius: M.RADIUS, touch: M.TOUCH, s3: M.SPACE(3) }")
+    v = node_value("src/ui/tokens.js", "{ size: M.SIZE, weight: M.WEIGHT, radius: M.RADIUS, touch: M.TOUCH, sp: [1,2,3,5,19].map(M.SPACE) }")
     assert sorted(v["size"].values(), reverse=True) == [28, 22, 18, 16, 15, 13, 12]
     assert sorted(v["weight"].values(), reverse=True) == [800, 700, 600, 400]
     assert sorted(v["radius"].values()) == [12, 14, 20]
-    assert v["touch"] >= 44 and v["s3"] == 12
+    assert v["touch"] >= 44 and v["sp"] == [4, 8, 12, 20, 76]
+
+
+def test_spacing_stays_on_the_4px_grid_in_source():
+    """SPACE(2.5) 같은 소수 간격, 숫자로 바로 쓴 padding·margin·gap 이 없어요 (화면 쪽 검사는 smoke_styleguide.py)."""
+    for f in UI_FILES + ["styleguide/main.jsx"]:
+        src = read(f)
+        assert not re.findall(r"SPACE\(\s*\d+\.\d+", src), f"{f}: 4px 격자 밖 SPACE()"
+        raw = re.findall(r"\b(?:padding|margin|gap|rowGap|columnGap)\w*:\s*(\d+)\b", src)
+        assert all(int(n) % 4 == 0 for n in raw), f"{f}: 격자 밖 숫자 {raw}"
+    assert "RADIUS.md" in read("src/ui/components.jsx"), "스펙의 반경 14 를 쓰는 곳이 없어요"
 
 
 def test_pretendard_licence_and_files():
@@ -181,26 +191,29 @@ def test_all_components_exported_and_tagged():
         assert re.search(rf"export function {name}\b", src), name
 
 
-def test_fmt_pct_never_shows_minus_zero():
-    v = node_value("src/ui/components.jsx", "[M.fmtPct(-0.04), M.fmtPct(0.04), M.fmtPct(-6.2), M.fmtPct(1.25), M.fill('{count}개', {count: 6})]")
-    assert v == ["0.0%", "0.0%", "−6.2%", "+1.3%", "6개"] or v == ["0.0%", "0.0%", "−6.2%", "+1.2%", "6개"], v
+def test_fmt_pct_never_shows_minus_zero_or_nan():
+    v = node_value("src/ui/components.jsx", "[M.fmtPct(-0.04), M.fmtPct(0.04), M.fmtPct(-6.2), M.fmtPct(2.25), M.fmtPct(NaN), M.fmtPct(null), M.fill('{count}개', {count: 6})]")
+    assert v[:3] == ["0.0%", "0.0%", "−6.2%"] and v[3] in ("+2.3%", "+2.2%") and v[4:] == ["–", "–", "6개"], v
 
 
 # ── Part 4 게이트: 라이브 화면은 그대로 ──
 def test_app_does_not_use_the_new_ui_yet():
-    for dirpath, _, files in os.walk(path("src")):
-        if os.path.abspath(dirpath).startswith(path("src", "ui")):
-            continue
-        for f in files:
-            if f.endswith((".js", ".jsx")):
-                s = read(os.path.relpath(os.path.join(dirpath, f), ROOT))
-                assert not re.search(r"""from\s+["'][./]*ui/""", s), f"{f} 가 src/ui 를 가져와요"
+    """앱 번들(build.sh 와 같은 입구)에 실제로 들어가는 파일 목록에 src/ui · fonts · styleguide 가 없어요."""
+    tmp = tempfile.mkdtemp()
+    meta = os.path.join(tmp, "meta.json")
+    esbuild("src/main.jsx", "--bundle", "--loader:.jsx=jsx", "--jsx=automatic", "--charset=utf8",
+            f"--metafile={meta}", f"--outfile={os.path.join(tmp, 'app.js')}")
+    with open(meta, encoding="utf-8") as f:
+        inputs = list(json.load(f)["inputs"])
+    assert any(i.startswith("src/") for i in inputs), inputs[:5]
+    bad = [i for i in inputs if i.startswith(("src/ui/", "styleguide/", "fonts/"))]
+    assert not bad, f"앱이 새 디자인 파일을 가져와요: {bad}"
 
 
 def test_style_page_not_linked_from_app():
     for f in ["baepsae.html", "template.html", "index.html", "manifest.webmanifest", "sw.js"]:
-        if os.path.exists(path(f)):
-            assert "styleguide" not in read(f), f
+        assert os.path.exists(path(f)), f"{f} 가 없어요"
+        assert "styleguide" not in read(f), f
     head = read("styleguide/template.html")
     assert 'name="robots" content="noindex' in head
 
