@@ -75,6 +75,8 @@ setting to change (where it is and what to click), never just "go to GitHub".
 - adds or changes user-facing Korean text — show him the 「새 문구」 table in the chat;
 - changes what users see or how a feature works, beyond what an approved spec already says;
 - needs him to pay for, sign up for, or change a setting in anything;
+- changes `CLAUDE.md`, any threshold in `validate_data.py`, or anything in `tests/` — even when nothing is loosened
+  (Jack, 2026-11-01). Say in one line what changed and why;
 - is v17.5 or v17.6 — open the PR, tell him its number, and wait for his "merge" (his claude.ai chat reviews it first).
   This rule ends after v17.6.
 

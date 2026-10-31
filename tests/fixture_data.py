@@ -37,9 +37,10 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
             "stocks": kr + us + bonds + funds}
     comps = [{"t": s["t"], "nk": s["nk"], "s": s["s"], "price": s["price"], "cap": s["cap"],
               "per": s["per"], "pbr": s["pbr"], "bq": "2026.2Q" if i % 10 else None} for i, s in enumerate(kr[:2100])]
-    corp = {"asOf": "2026-10-31", "pxDate": px_date, "sectors": {k: {"n": 1} for k in SECTORS}, "companies": comps}
-    macro = {"asOf": "2026-10-31", "curve": {"tenors": [3, 10], "now": [3.1, 4.0], "ago": [3.0, 3.5], "date": px_date}}
-    disc = {"asOf": "2026-10-31", "newest": "2026-10-30", "listOk": True, "insider": [], "nps": []}
+    pub = data["publishedAt"]          # 네 파일 모두 같은 발행 시각 (fetch_data.main 이 한 번 정해서 씀)
+    corp = {"asOf": "2026-10-31", "pxDate": px_date, "publishedAt": pub, "sectors": {k: {"n": 1} for k in SECTORS}, "companies": comps}
+    macro = {"asOf": "2026-10-31", "publishedAt": pub, "curve": {"tenors": [3, 10], "now": [3.1, 4.0], "ago": [3.0, 3.5], "date": px_date}}
+    disc = {"asOf": "2026-10-31", "publishedAt": pub, "newest": "2026-10-30", "listOk": True, "insider": [], "nps": []}
     closes = {s["t"]: round(s["price"]) for s in kr}
     return {"data": data, "corp": corp, "disc": disc, "macro": macro}, closes
 

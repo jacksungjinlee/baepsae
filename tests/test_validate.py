@@ -14,11 +14,15 @@ import validate_data as V  # noqa: E402
 from fixture_data import good_pair, stock, clone  # noqa: E402
 
 TODAY = dt.date(2026, 10, 31)
+NOW = dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST)       # 관문 실행 시각 (fixture 의 publishedAt 09:30 + 1.5시간)
 FIX = os.path.join(ROOT, "tests", "fixtures", "listing")
+# 2026-10 의 실제 KOSPI 거래일 (네이버 일봉): 10/24·25 주말, 10/31(토) 없음
+OCT = [dt.date(2026, 10, d) for d in (13, 14, 15, 16, 17, 20, 21, 22, 23, 26, 27, 28, 29, 30)]
+SESSIONS = {"dates": OCT, "src": "시험"}
 
 
-def check(cur, prev, final, mode="publish", between=lambda a, b: 1):
-    return V.run_checks(cur, prev, final, TODAY, mode=mode, count_between=between)
+def check(cur, prev, final, mode="publish", between=lambda a, b: 1, sessions=SESSIONS, today=TODAY, now=NOW):
+    return V.run_checks(cur, prev, final, today, mode=mode, count_between=between, sessions=sessions, now=now)
 
 
 def failed_names(rep):
@@ -196,7 +200,7 @@ def test_old_format_previous_uses_asof_minus_one():
         prev["data"].pop(k)
     prev["data"]["asOf"] = "2026-10-16"      # 10/17 발행본 형식
     notes = []
-    rep = V.run_checks(cur, prev, final, TODAY, count_between=lambda a, b: 10, notes=notes)
+    rep = V.run_checks(cur, prev, final, TODAY, count_between=lambda a, b: 10, notes=notes, sessions=SESSIONS, now=NOW)
     assert not rep.failed, rep.table()
     assert any("예전 형식" in n for n in notes)
 
@@ -274,3 +278,144 @@ def test_trading_day_count_failure_is_a_red_check_not_a_crash():
     def boom(a, b):
         raise RuntimeError("network")
     assert "큰 가격 변동 비율" in failed_names(check(cur, prev, final, between=boom))
+
+
+# ── 마지막 거래일이 빠진 채 하루 물러난 발행 (PR #4 리뷰 1번, 막는 문제) ──────────
+def stale_by_one_day():
+    """10/30(금) 목록 파일이 없거나 최종본이 아니어서 latest_final 이 10/29 로 물러난 상황.
+    최종본·KOSPI·가격이 모두 10/29 끼리는 맞아서, 새 검사 전에는 그대로 통과했어요."""
+    cur, closes = __import__("fixture_data").build(px_date="2026-10-29", us_date="2026-10-29")
+    prev, _ = __import__("fixture_data").build(px_date="2026-10-28", us_date="2026-10-28", price_shift=-0.01)
+    for s_, p_ in zip(cur["data"]["stocks"], prev["data"]["stocks"]):
+        if s_.get("cls") == "kr":
+            p_["price"] = round(s_["price"] * 0.99)
+    final = {"date": dt.date(2026, 10, 29), "closes": closes, "how": "10/30 파일 없음"}
+    return cur, prev, final
+
+
+def test_missing_last_trading_day_fails_only_on_the_session_check():
+    cur, prev, final = stale_by_one_day()
+    rep = check(cur, prev, final)
+    assert failed_names(rep) == {"pxDate 뒤 끝난 거래일 없음"}, rep.table()
+    row = next(r for r in rep.rows if r[0] == "pxDate 뒤 끝난 거래일 없음")
+    assert "2026-10-30" in str(row[1])
+
+
+def test_same_data_passes_when_no_session_was_missed():
+    # 같은 데이터라도 10/30 이 거래일이 아니었다면(예: 휴장) 통과해야 해요
+    cur, prev, final = stale_by_one_day()
+    holiday = {"dates": [d for d in OCT if d != dt.date(2026, 10, 30)], "src": "시험"}
+    assert not check(cur, prev, final, sessions=holiday).failed
+
+
+def test_todays_session_is_not_counted():
+    # 금요일(10/30) 저녁 실행: 오늘 거래일은 아직 최종본이 없을 수 있어 세지 않아요. 목요일 가격이면 통과.
+    cur, prev, final = stale_by_one_day()
+    for f in cur.values():
+        if "publishedAt" in f:
+            f["publishedAt"] = "2026-10-30T20:00:00+09:00"
+    rep = check(cur, prev, final, today=dt.date(2026, 10, 30), now=dt.datetime(2026, 10, 30, 21, 0, tzinfo=V.KST))
+    assert "pxDate 뒤 끝난 거래일 없음" not in failed_names(rep), rep.table()
+
+
+def test_kospi_bars_unavailable_fails():
+    cur, prev, final = good_pair()
+    assert "pxDate 뒤 끝난 거래일 없음" in failed_names(check(cur, prev, final, sessions=None))
+
+
+def test_pxdate_that_is_not_a_trading_day_fails():
+    cur, prev, final = good_pair()
+    no_30 = {"dates": [d for d in OCT if d != dt.date(2026, 10, 30)], "src": "시험"}
+    assert "pxDate 가 KOSPI 거래일" in failed_names(check(cur, prev, final, sessions=no_30))
+
+
+def test_completed_sessions_after():
+    d = dt.date
+    assert V.completed_sessions_after(d(2026, 10, 29), d(2026, 10, 31), OCT) == [d(2026, 10, 30)]
+    assert V.completed_sessions_after(d(2026, 10, 30), d(2026, 10, 31), OCT) == []
+    assert V.completed_sessions_after(d(2026, 10, 29), d(2026, 10, 30), OCT) == []          # 오늘은 빼요
+    assert V.completed_sessions_after(d(2026, 10, 23), d(2026, 10, 27), OCT) == [d(2026, 10, 26)]   # 주말은 거래일 아님
+
+
+class _Resp:
+    def __init__(self, text=None, js=None, status=200):
+        self.text, self._js, self.status_code = text, js, status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise V.requests.HTTPError(str(self.status_code))
+
+    def json(self):
+        return self._js
+
+
+NAVER_XML = ('<?xml version="1.0" encoding="EUC-KR" ?><protocol><chartdata symbol="KOSPI">'
+             + "".join(f'<item data="202610{d:02d}|1|2|0|1|9" />' for d in (13, 14, 15, 16, 17, 20, 21, 22, 23, 26, 27, 28, 29, 30))
+             + "</chartdata></protocol>")
+
+
+def test_kospi_sessions_from_naver(monkeypatch):
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(text=NAVER_XML))
+    got = V.http_kospi_sessions()
+    assert got["src"].startswith("네이버") and got["dates"] == OCT
+
+
+def test_kospi_sessions_fall_back_to_yahoo(monkeypatch):
+    ts = [int(dt.datetime.combine(d, dt.time(9), V.KST).timestamp()) for d in OCT]
+    yahoo = {"chart": {"result": [{"timestamp": ts, "indicators": {"quote": [{"close": [1.0] * len(ts)}]}}]}}
+
+    def get(url, **k):
+        if "naver" in url:
+            return _Resp(status=503)
+        return _Resp(js=yahoo)
+    monkeypatch.setattr(V.requests, "get", get)
+    got = V.http_kospi_sessions()
+    assert got["src"].startswith("야후") and got["dates"] == OCT
+
+
+def test_kospi_sessions_both_down_raises(monkeypatch):
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(status=503))
+    with pytest.raises(RuntimeError):
+        V.http_kospi_sessions()
+
+
+# ── publishedAt (PR #4 리뷰 3번) ─────────────────────────
+def test_published_at_missing_in_one_file_fails():
+    cur, prev, final = good_pair()
+    del cur["macro"]["publishedAt"]
+    assert "publishedAt 네 파일 모두" in failed_names(check(cur, prev, final))
+
+
+def test_published_at_not_kst_fails():
+    cur, prev, final = good_pair()
+    for f in cur.values():
+        f["publishedAt"] = "2026-10-31T00:30:00+00:00"
+    assert "publishedAt 한국 시간(+09:00)" in failed_names(check(cur, prev, final))
+
+
+def test_published_at_differs_across_files_fails():
+    cur, prev, final = good_pair()
+    cur["disc"]["publishedAt"] = "2026-10-31T09:31:00+09:00"
+    assert "publishedAt 네 파일이 같음" in failed_names(check(cur, prev, final))
+
+
+def test_published_at_older_than_12_hours_fails():
+    cur, prev, final = good_pair()
+    late = dt.datetime(2026, 10, 31, 22, 0, tzinfo=V.KST)       # 09:30 발행 → 12.5시간 뒤 관문
+    assert "publishedAt 12시간 이내" in failed_names(check(cur, prev, final, now=late))
+    assert "publishedAt 12시간 이내" not in failed_names(check(cur, prev, final, now=NOW))
+
+
+def test_published_at_in_the_future_fails():
+    cur, prev, final = good_pair()
+    early = dt.datetime(2026, 10, 31, 8, 0, tzinfo=V.KST)
+    assert "publishedAt 12시간 이내" in failed_names(check(cur, prev, final, now=early))
+
+
+def test_live_mode_skips_only_the_12_hour_rule():
+    cur, _, final = good_pair()
+    late = dt.datetime(2026, 11, 2, 9, 0, tzinfo=V.KST)
+    rep = check(cur, None, final, mode="live", now=late)
+    assert "publishedAt 12시간 이내" not in failed_names(rep)
+    del cur["corp"]["publishedAt"]
+    assert "publishedAt 네 파일 모두" in failed_names(check(cur, None, final, mode="live", now=late))

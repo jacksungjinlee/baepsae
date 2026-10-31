@@ -47,3 +47,38 @@ def test_freshness_counts_from_published_at():
     assert out[1] == {"md": "10월 30일", "days": 3, "stale": False}    # 긴 연휴: 가격 날짜는 오래돼도 발행은 3일 전
     assert out[2]["md"] == "Oct 30"
     assert out[3]["stale"] is False and out[3]["days"] is None
+
+
+# ── mergeStocks: 내장 목록에 없는 종목에 숫자를 지어내지 않아요 (PR #4 리뷰 3번) ──
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_auto_stocks_keep_blanks_and_skip_missing_risk_inputs():
+    base = [{"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "price": 78000, "beta": 1.1, "vol": 30,
+             "per": 14, "pbr": 1.4, "dy": 1.8, "al": -6}]
+    live = [
+        {"t": "005930", "price": 225000, "beta": 1.2, "vol": 33, "per": None, "pbr": 2.1, "dy": None},
+        {"t": "111111", "nk": "새종목", "cls": "kr", "price": 5000, "beta": 0.9, "vol": 40, "per": None, "pbr": None, "dy": None},
+        {"t": "222222", "nk": "베타없음", "cls": "kr", "price": 7000, "beta": None, "vol": 35},
+        {"t": "333333", "nk": "변동성없음", "cls": "kr", "price": 7000, "beta": 1.0, "vol": None},
+        {"t": "444444", "nk": "가격없음", "cls": "kr", "price": None, "beta": 1.0, "vol": 30},
+    ]
+    code = (f"const warn = []; console.warn = (m) => warn.push(m);"
+            f"const out = D.mergeStocks({json.dumps(base, ensure_ascii=False)}, {json.dumps(live, ensure_ascii=False)});"
+            "console.log(JSON.stringify({out, warn}));")
+    got = run_js(code)
+    by = {s["t"]: s for s in got["out"]}
+    assert set(by) == {"005930", "111111"}, by.keys()             # 위험 계산에 필요한 값이 빈 종목은 빼요
+    n = by["111111"]
+    assert n["live"] is True and n["beta"] == 0.9 and n["vol"] == 40
+    assert n["per"] is None and n["pbr"] is None and n["dy"] is None   # 0 이 아니라 빈 칸 → 화면에 '–'
+    s = by["005930"]
+    assert s["price"] == 225000 and s["per"] is None and s["dy"] is None and s["live"] is True
+    assert len(got["warn"]) == 1 and "3개" in got["warn"][0]       # 뺀 종목은 크게 남겨요
+    for t in ("222222", "333333", "444444"):
+        assert t in got["warn"][0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_merge_without_live_data_marks_everything_not_live():
+    base = [{"t": "005930", "nk": "삼성전자", "price": 78000, "beta": 1.1, "vol": 30}]
+    got = run_js(f"console.log(JSON.stringify(D.mergeStocks({json.dumps(base, ensure_ascii=False)}, null)));")
+    assert got[0]["live"] is False

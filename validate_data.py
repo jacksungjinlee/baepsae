@@ -14,6 +14,9 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
 '최종본 날짜'는 fetch_data.py 를 쓰지 않고 이 파일의 코드로 따로 계산해요 (같은 실수를 같이 하지 않게).
 규칙: 오늘(KST) 이전, 시가총액 90% 이상, 마지막 커밋이 그 날짜 16:00 KST 이후.
 한국 공식 종가 = 시가총액 ÷ 상장주식수 (목록 파일의 Close 열은 저녁엔 시간외 가격이에요).
+그 위에 한 겹 더: KOSPI 일봉(네이버 → 야후, 이 파일의 코드로 따로 받음)을 보고, pxDate 와 오늘(KST) 사이에
+끝난 거래일이 하나라도 있으면 FAIL 이에요. 마지막 거래일의 목록 파일이 없거나 최종본이 아니어서 하루 전으로
+물러난 경우를 잡아요 (publishedAt 은 새것이라 앱에는 경고가 안 뜨니까요).
 
 임계값은 2026-10-17 발행본(DART 정상 마지막 날)에 맞춰 정했어요. 안전 규칙이라 함부로 낮추지 않습니다.
 """
@@ -24,6 +27,7 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from zoneinfo import ZoneInfo
@@ -34,6 +38,9 @@ KST = ZoneInfo("Asia/Seoul")
 FILES = ("data.json", "corp.json", "disc.json", "macro.json")
 LIST_URL = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx/{d}.csv"
 COMMITS_API = "https://api.github.com/repos/FinanceData/fdr_krx_data_cache/commits"
+NAVER_KOSPI = "https://fchart.stock.naver.com/sise.nhn?symbol=KOSPI&timeframe=day&count=60&requestType=0"
+YAHOO_KOSPI = "https://query1.finance.yahoo.com/v8/finance/chart/%5EKS11?range=3mo&interval=1d"
+PUBLISHED_MAX_HOURS = 12  # 발행 시각(publishedAt)은 관문 실행 12시간 이내여야 해요
 FINAL_HOUR = 16
 MIN_CAP_SHARE = 0.90
 LOOKBACK_DAYS = 10
@@ -200,6 +207,44 @@ def count_final_between(after, upto, get_text=http_listing):
     return n
 
 
+# ── KOSPI 거래일 (fetch_data.py 와 별개 구현: fetch 는 FinanceDataReader, 여기는 직접 HTTP) ──
+def _naver_kospi_dates():
+    r = requests.get(NAVER_KOSPI, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    return sorted({dt.date(int(m[:4]), int(m[4:6]), int(m[6:8])) for m in re.findall(r'data="(\d{8})\|', r.text)})
+
+
+def _yahoo_kospi_dates():
+    r = requests.get(YAHOO_KOSPI, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    res = r.json()["chart"]["result"][0]
+    closes = res["indicators"]["quote"][0]["close"]
+    return sorted({dt.datetime.fromtimestamp(t, KST).date() for t, c in zip(res["timestamp"], closes) if c is not None})
+
+
+def http_kospi_sessions():
+    """최근 KOSPI 거래일 목록: {"dates": [...], "src": 출처}. 네이버 → 야후 순서로, 각각 3번까지 시도해요.
+    둘 다 실패하면 예외 → 관문은 FAIL (확인하지 못한 채 통과시키지 않아요)."""
+    errs = []
+    for name, fn in (("네이버 KOSPI 일봉", _naver_kospi_dates), ("야후 ^KS11 일봉", _yahoo_kospi_dates)):
+        for _ in range(3):
+            try:
+                ds = fn()
+                if len(ds) >= 10:
+                    return {"dates": ds, "src": name}
+                errs.append(f"{name}: {len(ds)}일뿐")
+                break
+            except Exception as e:
+                errs.append(f"{name}: {str(e)[:80]}")
+    raise RuntimeError(" · ".join(errs))
+
+
+def completed_sessions_after(px, today, sessions):
+    """pxDate < d < 오늘(KST) 인 KOSPI 거래일 = 이미 끝났는데 반영되지 않은 거래일. 오늘 거래일은 아직 최종본이
+    없을 수 있어서 넣지 않아요 (다음 날 아침 실행이 잡아요)."""
+    return [d for d in sessions if px < d < today]
+
+
 # ── 검사 ────────────────────────────────────────────────────
 def prev_px_date(prev, notes):
     """직전 발행본의 가격 날짜. 예전 형식(pxDate 없음)이면 asOf − 1일 (실행일 아침 기준이라 하루 전 가격)."""
@@ -232,9 +277,11 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
-def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None):
+def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
     final: {"date", "closes", "how"} — 비교할 최종본 (None 이면 날짜·가격 검사 실패).
+    sessions: {"dates": [KOSPI 거래일…], "src": 출처} — None 이면 받지 못한 것 → FAIL.
+    now: 관문 실행 시각(KST) — publishedAt 12시간 검사용 (없으면 today 정오).
     mode: publish · bootstrap · live.  반환: Report."""
     rep, notes = Report(), (notes if notes is not None else [])
     data, corp, disc, macro = cur["data"], cur["corp"], cur["disc"], cur["macro"]
@@ -255,6 +302,43 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     if pdata:
         rep.add("pxDate 가 뒤로 가지 않음", px is not None and ppx is not None and px >= ppx, px, f"≥ {ppx}")
     rep.add("KOSPI 마지막 날 = pxDate", day(data.get("ksDate")) == px and px is not None, data.get("ksDate"), px)
+    # pxDate 와 오늘 사이에 끝난 거래일이 있으면 낡은 가격 (최종본 목록이 하루 물러난 경우)
+    if sessions is None:
+        rep.add("pxDate 뒤 끝난 거래일 없음", False, "KOSPI 일봉을 받지 못했어요", "네이버 또는 야후 KOSPI 일봉으로 확인")
+    elif px is None:
+        rep.add("pxDate 뒤 끝난 거래일 없음", False, "pxDate 없음", "있어야 함")
+    else:
+        later = completed_sessions_after(px, today, sessions["dates"])
+        rep.add("pxDate 뒤 끝난 거래일 없음", not later,
+                "없음" if not later else f"{len(later)}일: " + ", ".join(d.isoformat() for d in later[:5]),
+                f"{px} < 거래일 < {today} 이 0일 ({sessions['src']})")
+        if sessions["dates"] and px >= sessions["dates"][0]:
+            rep.add("pxDate 가 KOSPI 거래일", px in sessions["dates"], px, sessions["src"])
+
+    # 발행 시각: 네 파일 모두 같은 값, 한국 시간(+09:00), 관문 실행 12시간 이내
+    pubs = {k: (cur.get(k) or {}).get("publishedAt") for k in ("data", "corp", "disc", "macro")}
+    missing = [k for k, v in pubs.items() if not v]
+    rep.add("publishedAt 네 파일 모두", not missing, "모두 있음" if not missing else "없음: " + ",".join(missing), "data·corp·disc·macro")
+    parsed = {}
+    for k, v in pubs.items():
+        try:
+            parsed[k] = dt.datetime.fromisoformat(str(v)) if v else None
+        except ValueError:
+            parsed[k] = None
+    off = [k for k, v in parsed.items() if v is None or v.utcoffset() != dt.timedelta(hours=9)]
+    rep.add("publishedAt 한국 시간(+09:00)", not off, "모두 +09:00" if not off else "아님: " + ",".join(off), "+09:00")
+    vals = {str(v) for v in pubs.values() if v}
+    rep.add("publishedAt 네 파일이 같음", len(vals) == 1 and not missing, " · ".join(sorted(vals))[:80] or "없음", "한 값")
+    pub = parsed.get("data")
+    if mode == "live":
+        rep.skip("publishedAt 12시간 이내", "사이트 점검은 발행 뒤 시간이 지나 있어요 (신선도는 v17.6 감시가 따로 봐요)")
+    else:
+        ref = now or dt.datetime.combine(today, dt.time(12), KST)
+        age = (ref - pub) if pub else None
+        ok = age is not None and dt.timedelta(0) <= age <= dt.timedelta(hours=PUBLISHED_MAX_HOURS)
+        rep.add("publishedAt 12시간 이내", ok,
+                f"{age.total_seconds() / 3600:.1f}시간 전" if age is not None else "읽을 수 없음",
+                f"0 ~ {PUBLISHED_MAX_HOURS}시간 전 (관문 {ref:%m-%d %H:%M} KST)")
 
     # 가격 = 공식 종가
     kr = kr_stocks(data)
@@ -446,7 +530,14 @@ def main(argv=None):
         print(f"!! 최종본 목록을 확인하지 못했어요: {e}")
         final = None
 
-    rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes)
+    try:
+        sessions = http_kospi_sessions()
+        print(f"· KOSPI 거래일 {len(sessions['dates'])}일 ({sessions['src']}, 마지막 {sessions['dates'][-1]})")
+    except Exception as e:
+        print(f"!! KOSPI 일봉을 받지 못했어요: {e}")
+        sessions = None
+    rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes,
+                     sessions=sessions, now=now)
     for n in notes:
         print(f"· {n}")
     print()

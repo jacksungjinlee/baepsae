@@ -3,7 +3,7 @@
 // 원칙: 예측이 아니라 이해. 금리와 자산의 관계를 스스로 만져보게 합니다.
 import React, { useState, useEffect, useMemo } from "react";
 import { C, FONT, RAD, HAIR } from "./tokens.js";
-import { Bird, LoadFail, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
+import { Bird, LoadFail, DateBadge, T_RATES_FAIL } from "./detail.jsx";
 import { loadJson } from "./data.js";
 import { Verdict } from "./corp.jsx";
 
@@ -147,7 +147,7 @@ function DurationPlay({ baseY }) {
 
 // ---------------- 브라질 국채 사례 ----------------
 // ---------------- 루트 ----------------
-function DeepBody({ data }) {
+function DeepBody({ data, lang }) {
   const g10 = data.g10 || {};
   const g10Series = [
     g10.kr ? { ...g10.kr, ko: "한국", color: C.ink } : null,
@@ -206,7 +206,7 @@ function DeepBody({ data }) {
               달러 자산을 환헤지하면 이 금리 차이만큼 비용을 내요. 1년짜리 헤지 비용은 두 나라 1년 금리의 차이 — 위 표의 1년 행이 바로 그 값이에요. 차이가 클수록 헤지는 비싸지고, 환노출을 택하면 이 비용 대신 환율 변동을 안는 거예요.
             </MyBox>
           </>
-        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_LOAD_FAIL.ko}</Sub>}
+        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_RATES_FAIL[lang === "en" ? "en" : "ko"]}</Sub>}
       </Card>
       <Card>
         <H num="03" main="신용 스프레드" sub="회사채(AA−) − 국고채 3년 · 시장의 긴장 게이지" />
@@ -226,7 +226,7 @@ function DeepBody({ data }) {
               스프레드가 갑자기 벌어지면, 빚 많은 회사의 주가가 먼저 아파요. 내 종목의 재무 신호에 차입 관련 깃발이 있다면 이 게이지를 가끔 봐두세요. 신호이지 타이머는 아니에요.
             </MyBox>
           </>
-        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_LOAD_FAIL.ko}</Sub>}
+        ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_RATES_FAIL[lang === "en" ? "en" : "ko"]}</Sub>}
       </Card>
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
         {CREDIT}
@@ -235,7 +235,7 @@ function DeepBody({ data }) {
   );
 }
 
-export function MacroBody({ data }) {
+export function MacroBody({ data, lang }) {
   const baseY = data.curve && data.curve.tenors.includes(10) ? data.curve.now[data.curve.tenors.indexOf(10)] : null;
   const sprSeries = [
     data.sprKr ? { ...data.sprKr, ko: "한국 10년−3년", color: C.ink } : null,
@@ -264,7 +264,7 @@ export function MacroBody({ data }) {
               </Sub>
             </>
           ) : (
-            <Sub style={{ padding: "26px 0", textAlign: "center" }}>{T_LOAD_FAIL.ko}</Sub>
+            <Sub style={{ padding: "26px 0", textAlign: "center" }}>{T_RATES_FAIL[lang === "en" ? "en" : "ko"]}</Sub>
           )}
         </Card>
         <Card>
@@ -354,7 +354,7 @@ export default function MacroApp({ lang }) {
         ))}
         <DateBadge date={(state.data.curve && state.data.curve.date) || (state.data.publishedAt ? null : state.data.asOf)} publishedAt={state.data.publishedAt || state.data.asOf} style={{ marginLeft: "auto" }} />
       </div>
-      {sub === "basic" ? <MacroBody data={state.data} /> : <DeepBody data={state.data} />}
+      {sub === "basic" ? <MacroBody data={state.data} lang={lang} /> : <DeepBody data={state.data} lang={lang} />}
     </div>
   );
 }

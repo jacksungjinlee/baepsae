@@ -10,9 +10,10 @@
   멈춤        발행이 6일 전이면 'N일째 갱신이 멈췄어요'
   NaN         따옴표 밖 NaN 을 고쳐 읽고 계속 동작 (console 경고)
   깨짐·404    corp.json 을 못 읽으면 '데이터를 불러오지 못했어요' (검색·기업분석)
-  data 없음   포트폴리오: 불러오기 실패 + '일부 종목은 최신 시세가 아니에요'
+  data 없음   포트폴리오: '최신 시세를 불러오지 못해 예시 가격으로 보여 드려요' ('일부 종목' 문구는 안 나옴)
   금 보유     오늘 데이터에 없는 금현물을 담은 포트폴리오 → 배너
-  금 추정     국제 금값 환산 추정 → 이름에 '국제 금값 환산' + 배너
+  금 추정     국제 금값 환산 추정 → 이름에 '국제 금값 환산' + '금현물은 국제 금값으로 환산한 추정치예요'
+  금리        macro.json 의 금리 부분만 빈 날 → 금리 칸에 '금리 데이터를 불러오지 못했어요' (EN 은 영어)
   서비스워커  예전 v10 워커의 얼어붙은 corp.json 이 새 워커로 바뀌고 baepsae-v10 캐시가 지워짐
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
@@ -36,7 +37,11 @@ SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "o
 DATA_FILES = ["data.json", "corp.json", "disc.json", "macro.json"]
 WAIT = 20000  # ms
 LOAD_FAIL = "데이터를 불러오지 못했어요"
-NONLIVE = "일부 종목은 최신 시세가 아니에요"
+NONLIVE = "일부 종목은 최신 시세가 아니라 예시 가격이에요"          # 일부만 내장 예시 가격
+NOLIVE_ALL = "최신 시세를 불러오지 못해 예시 가격으로 보여 드려요"    # data.json 을 못 읽어 전부 예시
+GOLD_EST = "금현물은 국제 금값으로 환산한 추정치예요"
+RATES_FAIL = "금리 데이터를 불러오지 못했어요"
+OFFICIAL = "공식 종가예요. 다른 수치는 추정치예요"
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -241,7 +246,8 @@ def scene_normal(R, files, full):
         page.locator(".dateBadge", has_text="기준").first.wait_for(state="visible", timeout=WAIT)  # data.json 을 읽었을 때만
         page.wait_for_timeout(300)
         assert page.locator(".nonLiveBanner").count() == 0, "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요"
-    R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 (KO)", detail_ko)
+        see(page, OFFICIAL)          # "가격은 {M월 D일} 공식 종가예요. 다른 수치는 추정치예요."
+    R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 + 공식 종가 안내 (KO)", detail_ko)
 
     def to_en():
         home(page)
@@ -252,6 +258,7 @@ def scene_normal(R, files, full):
     def detail_en():
         page.get_by_text("Build step by step", exact=True).click()
         page.locator(".dateBadge", has_text="As of").first.wait_for(state="visible", timeout=WAIT)
+        see(page, "Prices are official closes from")
     R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 (EN)", detail_en)
 
     def quick_en():
@@ -328,9 +335,10 @@ def scene_no_data(R, files):
 
     def run():
         page.get_by_text("차근차근 만들기", exact=True).click()
-        see(page, LOAD_FAIL)
-        see(page, NONLIVE)
-    R.check(page, "data 없음", "포트폴리오 → 불러오기 실패 + '최신 시세가 아니에요'", run)
+        see(page, NOLIVE_ALL)
+        page.wait_for_timeout(300)
+        assert page.get_by_text(NONLIVE).count() == 0, "전부 예시인데 '일부 종목은…' 이 보여요"
+    R.check(page, "data 없음", "포트폴리오 → '최신 시세를 불러오지 못해 예시 가격으로…' ('일부 종목' 아님)", run)
     ctx.close(); srv.shutdown()
 
 
@@ -365,10 +373,34 @@ def scene_gold_estimate(R, files):
     def run():
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("금 추정 시험", exact=False).first.click()
-        see(page, NONLIVE)
+        see(page, GOLD_EST)
         assert page.get_by_text("국제 금값 환산").count() > 0, "금현물 이름에 '국제 금값 환산'이 없어요"
         assert page.get_by_text("KRX 금현물").count() == 0, "추정치인데 KRX 금현물로 보여요"
-    R.check(page, "금 추정", "국제 금값 환산 → 이름에 표시 + 배너, KRX 이름 안 보임", run)
+    R.check(page, "금 추정", "국제 금값 환산 → 이름에 표시 + '금현물은 … 추정치예요', KRX 이름 안 보임", run)
+    ctx.close(); srv.shutdown()
+
+
+def scene_rates_fail(R, files):
+    """macro.json 은 읽히는데 금리(ECOS) 부분만 빈 날: 금리 칸에만 '금리 데이터를 불러오지 못했어요' (영어 모드는 영어)."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    for k in ("curve", "sprKr", "tenor", "credit"):
+        if k in f["macro.json"]:
+            f["macro.json"][k] = None
+    srv, ctx, page, _ = R.open(build_site(f), local={"baepsae_v9_seen": "1"})
+
+    def ko():
+        tab(page, "금리·원자재")
+        see(page, RATES_FAIL)
+        whole = "데이터를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요."      # 탭 전체 실패 문구 (정확히 이 문장)
+        assert page.get_by_text(whole, exact=True).count() == 0, "금리만 빈 날인데 탭 전체가 '불러오지 못했어요'"
+    R.check(page, "금리 일부 실패", "금리 칸만 '금리 데이터를 불러오지 못했어요' (KO)", ko)
+    ctx.close(); srv.shutdown()
+    srv, ctx, page, _ = R.open(build_site(f), local={"baepsae_v9_seen": "1", "baepsae_lang": "en"})
+
+    def en():
+        tab(page, "Rates")
+        see(page, "We couldn't load the interest-rate data.")
+    R.check(page, "금리 일부 실패", "금리 칸 실패 문구 (EN)", en)
     ctx.close(); srv.shutdown()
 
 
@@ -415,7 +447,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·서비스워커)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·서비스워커)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -431,7 +463,8 @@ def main():
                   ("NaN", lambda: scene_nan(R, fresh)),
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("서비스워커", lambda: scene_service_worker(R, fresh))]
+                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)),
+                  ("서비스워커", lambda: scene_service_worker(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

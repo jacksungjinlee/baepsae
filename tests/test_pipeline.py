@@ -590,3 +590,22 @@ def test_workflow_pins_runner_and_current_action_majors():
     uses = [s["uses"] for s in wf["jobs"]["update"]["steps"] if "uses" in s]
     assert sorted(uses) == sorted(["actions/checkout@v7", "actions/setup-python@v7", "actions/cache/restore@v6",
                                    "actions/cache/save@v6", "actions/upload-artifact@v7"])
+
+
+# ── 배당수익률: 모르면 빈 칸, DART 가 0 이라고 하면 0 (PR #4 리뷰 3번) ──────────
+def test_dart_dividend_zero_is_kept_and_dash_is_unknown():
+    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "0", "frmtrm": "0", "lwfr": "0"},
+            {"stock_knd": "보통주", "se": "주당 현금배당금(원)", "thstrm": "-", "frmtrm": "-", "lwfr": "-"}]
+    assert F.parse_dart_dividend(rows) == {"dy": 0.0}
+    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "-"}]
+    assert "dy" not in F.parse_dart_dividend(rows)
+    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "2.35"},
+            {"stock_knd": "보통주", "se": "주당 현금배당금(원)", "thstrm": "1,444", "frmtrm": "1,444", "lwfr": "1,444"}]
+    got = F.parse_dart_dividend(rows)
+    assert got["dy"] == 2.35 and got["dps"] == 1444
+
+
+def test_unknown_korean_dividend_yield_is_not_written_as_zero():
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert '"dy": round(dyv, 2) if dyv is not None else None' in src
+    assert "else 0.0" not in src.split("def fetch_korea", 1)[1].split("def ", 1)[0]

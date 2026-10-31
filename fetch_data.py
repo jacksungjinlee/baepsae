@@ -770,7 +770,7 @@ def parse_dart_dividend(rows):
     if dps and dps > 0:
         out["dps"] = round(dps, 0)
         out["dps3"] = [round(x, 0) if x is not None else None for x in dps3]
-    if dy and dy > 0:
+    if dy is not None and dy >= 0:      # DART 가 숫자로 알려 준 값만 (0% 도 '배당 없음'이라는 사실이라 그대로 둬요)
         out["dy"] = round(dy, 2)
     return out
 
@@ -925,7 +925,7 @@ def enrich_with_dart(kr_stocks, client):
             f = dart_financials(client, corp, yr)
         div = dart_dividend(client, corp, yr)
         for k in ("dps", "dps3", "dy"):
-            if div.get(k):
+            if div.get(k) is not None:
                 s[k] = div[k]
         if f:
             fin = f.pop("_fin", None)
@@ -1751,7 +1751,17 @@ def fetch_korea(start, today, rf, prev=None):
         log(f"· 공식 종가 = 시가총액 ÷ 상장주식수 (기준일 {px_date}) · 파일의 Close 가 1% 넘게 다른 종목 {int(diff):,}개 (시간외 가격)")
 
     last = px_date or (today - dt.timedelta(days=1))
-    kospi = cut_at(fdr.DataReader(KR_INDEX, start, last)["Close"].dropna(), last)
+    ks_all = fdr.DataReader(KR_INDEX, start, today)["Close"].dropna()
+    # 기준일과 오늘 사이에 끝난 거래일이 있으면 가격이 하루 이상 낡았어요 (그날 최종 목록 파일이 없거나 아직 최종본 아님).
+    # 관문(validate_data.py)도 KOSPI 일봉을 따로 받아 같은 검사를 하고 실패시켜요. 여기서는 크게 남겨요.
+    if px_date is not None:
+        missed = sorted({d.date() for d in ks_all.index if px_date < d.date() < today})
+        if missed:
+            log(f"  !! 기준일 {px_date} 뒤에 이미 끝난 거래일 {len(missed)}일: {', '.join(d.isoformat() for d in missed[:5])} "
+                f"— 그날 최종 목록 파일이 없거나 아직 최종본이 아니에요. 가격이 낡아서 관문에서 실패 처리돼요")
+        else:
+            log(f"· 기준일 {px_date} 뒤에 끝난 거래일 없음 (KOSPI 일봉 {len(ks_all):,}일, 오늘 {today} 은 빼고 봐요)")
+    kospi = cut_at(ks_all, last)
     ks_date = kospi.index[-1].date() if len(kospi) else None
     if px_date is not None and ks_date != px_date:
         log(f"  !! KOSPI 마지막 날짜 {ks_date} ≠ 기준일 {px_date} (검증에서 실패 처리돼요)")
@@ -1844,7 +1854,7 @@ def fetch_korea(start, today, rf, prev=None):
                 "vol": ann_vol(ret.values), "beta": b, "al": a,
                 "per": round(per, 1) if per and per > 0 else None,
                 "pbr": round(pbr, 2) if pbr and pbr > 0 else None,
-                "dy": round(dyv, 2) if dyv is not None else 0.0,
+                "dy": round(dyv, 2) if dyv is not None else None,   # 모르면 빈 칸 (0% 로 보이지 않게). DART 가 나중에 채워요
                 "eps": round(eps, 0) if eps else None,
                 "bps": round(bps, 0) if bps else None,
                 "dps": round(dps, 0) if dps else None,
@@ -2247,6 +2257,8 @@ def main():
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
     fill_multiples(kr, fin_map)
+    n_dy = sum(1 for s in kr if s.get("dy") is not None)
+    log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
 
     us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf)
     names = etf_names()

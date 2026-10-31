@@ -21,7 +21,8 @@ requests, merging, starting and watching workflow runs, and rollbacks. It merges
 the phone-size smoke test (and, after v17.6, the `ci` check) pass, the fresh-eyes review is done and fixed, pipeline
 changes have a green `dry_run` with the validation summary in the PR, and no safety rule is loosened. It asks Jack
 first, with a short yes/no question in the chat, for new or changed Korean UI text (showing the 「새 문구」 table),
-changes to what users see beyond an approved spec, anything that costs money or needs a sign-up or setting change, and
+changes to what users see beyond an approved spec, anything that costs money or needs a sign-up or setting change, any
+change to `CLAUDE.md`, a `validate_data.py` threshold or `tests/` (even when nothing is loosened; added 2026-11-01), and
 — until v17.6 is done — before merging v17.5 and v17.6 (his claude.ai chat reviews those PRs). After every merge it
 watches the next run, checks the live site, reverts at once if something is wrong, and sends Jack a 3–6 line summary.
 `docs/CHANGELOG.md` has one line per merge. The full rule, including what is never allowed, is in `CLAUDE.md`
