@@ -42,10 +42,10 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 
 ### 오늘 (daily, opens first)
 - **Hero band = the rule verdict.** Three states:
-  - 할 일 없음 (green band): "규칙에 걸린 종목이 없어요". If a holding moved ±5%+, a white inset row: "크게 움직인 종목 1개 ·
+  - 할 일 없음 (green band): "매도 조건에 걸린 종목이 없어요". If a holding moved ±5%+, a white inset row: "크게 움직인 종목 1개 ·
     뉴스 확인 완료 · 솔담정밀 −6.2% · 같은 업종이 다 같이 빠졌어요" → 왜 움직였나.
   - Quiet: same green band, "새 공시도 크게 움직인 종목도 없어요".
-  - 규칙 깨짐 (apricot band, "오늘 확인할 일 1개", "마루식품이 규칙에 걸렸어요"): names the stock, the broken rule, the number and the filing date
+  - 규칙 깨짐 (apricot band, "오늘 확인할 일 1개", "마루식품이 매도 조건에 걸렸어요"): names the stock, the broken rule, the number and the filing date
     ("배당 삭감 · 주당 4,000원 → 3,200원 · 10월 30일 공시"), then the three buttons above.
 - **Deck strip:** 평가 금액 (value), 수익률 (return since purchase). Today's % is a small grey line under them, not a headline.
 - **My stocks list:** name + today's %. A chip only on exceptions (큰 움직임, 지켜봐요, 규칙 깨짐). No chip = fine.
@@ -100,7 +100,7 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 - Max 2 per industry group.
 
 ### 매수 계획 · 샀어요
-- Typed amount; whole US shares; 남는 돈; 1-year dividend (past year, pre-tax); "2022년처럼 빠지면 약 −X만원".
+- Typed amount; whole US shares; 남는 돈; 1-year dividend (past year, pre-tax); "2022년처럼 떨어지면 약 −X만원".
 - Each stock: shares, amount, weight with target marker, **one-line reason for its weight**.
 - 내 투자 규칙 per stock (§4.2) and **이 덱의 주의점** for the deck (auto-suggested from its shape; the user can add).
 - 샀어요: date, quantity, price per stock (blank = planned quantity at the last close). Stored in the browser only.
@@ -113,7 +113,7 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 | < 0.75 | 먼저 살 차례 | New money goes here first |
 | 0.75–1.25 | normal | none |
 | > 1.25 | 그만 살 차례 | New money goes elsewhere |
-| > 1.4 | 줄일 차례 | KR: trim back to target. US: propose a trim with a tax note ("해외 주식은 1년 양도차익 중 250만원을 넘는 부분에 22% 세금이 붙어요") |
+| > 1.4 | 줄일 차례 | KR: trim back to target. US: propose a trim with a tax note ("해외 주식은 연간 양도차익 중 250만원을 넘는 부분에 22% 세금이 붙어요") |
 
 The US tax note must show its source and the year it was checked (Korean overseas-stock capital gains: 250만원 annual
 deduction, 22% including local tax, as of 2026). Re-check yearly.
@@ -124,8 +124,9 @@ Dividends: pooled by currency, suggested into the most underweight names of the 
 ### 4.2 Rule book per holding (generated, user-editable)
 Three layers, each rule with a number, a source field and a freshness limit:
 1. **Common to every stock → 규칙 깨짐:** dividend cut (regular DPS below the prior comparable period — mind frequency
-   changes and special dividends), audit opinion other than 적정 / going-concern doubt, 횡령·배임 filing, a large
-   acquisition unrelated to the core business.
+   changes and special dividends), audit opinion other than 적정 / going-concern doubt, 횡령·배임 filing. A large
+   acquisition unrelated to the core business is also a sell condition, but "unrelated" needs reading, so it puts the
+   stock in 지켜봐요 with "확인 필요" until the user confirms (v18.2 Part D), never 규칙 깨짐 on its own.
 2. **Industry module defaults** (sell or keep conditions): banks (CET1, DPS raised yearly, government dividend
    intervention), insurers (K-ICS vs regulator level, DPS promise), REITs (occupancy, dividend streak, investment-grade
    tenant share, top-tenant rent coverage), tobacco (guidance wording vs the previous statement, sanctions), pharma
@@ -194,7 +195,7 @@ manual fix. Tasks marked **BLOCKED** are not started, even when they are the low
 | 0 Safety | v17.5, v17.6 | now | 5 consecutive clean runs after v17.6 merges |
 | 1 Data foundation | `v18.0-data-foundation.md` | phase-0 gate + Jack's "start" | New data passes the gate; thresholds approved |
 | 2 Design system + copy file | `v18.1-design-system-and-copy.md` | phase-0 gate + Jack's "start" (may run beside phase 1) | Jack approves the look and the reviewed text |
-| 1b Report-text data + theme tags | v18.2 (to be written) | after v18.0 | Extraction accuracy check passes |
+| 1b Report-text data + theme tags | `v18.2-report-text-and-themes.md` | after v18.0 + Jack's "start" | Extraction accuracy check passes |
 | 3 Deck builder | v18.3 (to be written) | phases 1, 1b, 2 done | 3–5 of Jack's people finish a portfolio alone |
 | 4 오늘 screen, news headlines, evening run | v18.4 (to be written) | phase 3 done | 2 weeks of use, 0 wrong facts |
 | 5 AI news summaries | only after the Haiku/Sonnet blind test | Jack's decision | — |
