@@ -5,6 +5,9 @@
 **Mockup:** Jack's clickable mockup "뱁새 2.0 목업" (claude.ai Design artifact, private to Jack). Everything a builder
 needs from it is written below; where this file and the mockup disagree, this file wins.
 All companies, news and numbers in the mockup are fictional.
+**Korean wording:** the final user-facing text is the 수정안 column of `docs/design/mockup-copy.csv` (approved by Jack
+2026-11-01; blank 수정안 = keep 지금 문구). Korean quoted in this file shows intent only; where it differs from that
+column, the CSV wins.
 
 ## 1. What changes
 
@@ -21,7 +24,7 @@ Jack's art; disclaimer footer on every screen.
 Taken from how Jack actually runs his own portfolio. These are not optional.
 
 1. **Daily decision order** (the whole daily check is this, in this order):
-   1. Did a **sell condition** fire? → status **규칙 깨짐** (팔 차례).
+   1. Did a **sell condition** fire? → status **규칙 깨짐** (팔 때).
    2. Is a **keep condition** failing? → status **지켜봐요**. No new money goes to it until the next filing or results.
    3. Is the **weight outside its band**? → 먼저 살 차례 / 그만 살 차례 / 줄일 차례.
    4. None of these → **할 일 없음**.
@@ -30,7 +33,7 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
    only adds a "크게 움직인 종목" note with the news check and a link to 왜 움직였나.
    The one way prices matter: they change **weights**, and the weight bands (§4.1) act on weights. That is portfolio
    arithmetic, not a price rule.
-3. **뱁새 never trades.** When a rule fires it says "내 규칙대로라면 팔 차례예요. 판단은 내가 해요." and offers
+3. **뱁새 never trades.** When a rule fires it says "규칙대로면 팔 때예요. 결정은 직접 해 주세요." and offers
    팔았어요 / 더 지켜볼게요 / 규칙 고치기. The user records what they did.
 4. **Every number shown carries its source and date.** Estimates are labelled 예상 (for example a Korean earnings date
    taken from last year's date). Stale inputs block the computation instead of producing a number.
@@ -39,12 +42,12 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 
 ### 오늘 (daily, opens first)
 - **Hero band = the rule verdict.** Three states:
-  - 할 일 없음 (green band): "규칙이 깨진 종목은 없어요". If a holding moved ±5%+, a white inset row: "크게 움직인 종목 1개 ·
-    뉴스 확인함 · 솔담정밀 −6.2% · 업종 전체가 빠졌어요. 규칙은 그대로예요." → 왜 움직였나.
-  - Quiet: same green band, "새 공시도, 큰 움직임도 없어요."
-  - 규칙 깨짐 (apricot band, "오늘 확인할 것 1개"): names the stock, the broken rule, the number and the filing date
+  - 할 일 없음 (green band): "규칙에 걸린 종목이 없어요". If a holding moved ±5%+, a white inset row: "크게 움직인 종목 1개 ·
+    뉴스 확인 완료 · 솔담정밀 −6.2% · 같은 업종이 다 같이 빠졌어요" → 왜 움직였나.
+  - Quiet: same green band, "새 공시도 크게 움직인 종목도 없어요".
+  - 규칙 깨짐 (apricot band, "오늘 확인할 일 1개", "마루식품이 규칙에 걸렸어요"): names the stock, the broken rule, the number and the filing date
     ("배당 삭감 · 주당 4,000원 → 3,200원 · 10월 30일 공시"), then the three buttons above.
-- **Deck strip:** 지금 (value), 산 뒤로 (return since purchase). Today's % is a small grey line under them, not a headline.
+- **Deck strip:** 평가 금액 (value), 수익률 (return since purchase). Today's % is a small grey line under them, not a headline.
 - **My stocks list:** name + today's %. A chip only on exceptions (큰 움직임, 지켜봐요, 규칙 깨짐). No chip = fine.
 - **다음 일정:** next 2 dated events (earnings, dividend record dates), with 예상 where estimated.
 - Content dates: "10월 30일(금) 종가". Each market shows its own close date. After the Korean evening run (phase 4),
@@ -53,53 +56,53 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 ### 내 덱 (the tracking sheet)
 - Value, money put in, return vs KOSPI since start (line chart, KOSPI dashed).
 - Per stock: shares, average cost, return, current weight vs target (bar with target marker), status note only when not
-  normal ("지켜봐요 · 부채비율 88%, 기준 100%").
-- **돈을 더 넣는다면:** typed amount (만원) with +10만 / +100만 / +1,000만 / 지우기. Fills the most underweight names first,
+  normal ("지켜봐요 · 부채비율 88% (기준 100%)").
+- **추가로 넣을 돈:** typed amount (만원) with +10만 / +100만 / +1,000만 / 지우기. Fills the most underweight names first,
   **skipping 규칙 깨짐, 지켜봐요 and anything above 1.25× target**. Whole shares; shows 남는 돈.
 
 ### 왜 움직였나 (one stock, one day)
 - Header: name, industry, official close, change, date.
-- Verdict band: "할 일 없음 / 업종 전체가 빠진 날이에요 / 내 규칙 4개는 모두 괜찮아요."
+- Verdict band: "할 일 없음 / 업종이 다 같이 빠진 날이에요 / 규칙 4개가 모두 지켜지고 있어요."
 - Three numbered checks, each one sentence + one picture:
-  1. 나만 빠진 게 아니에요 — dot strip of every stock in the same industry group today, mine highlighted, group average
+  1. 이 종목만 빠진 게 아니에요 — dot strip of every stock in the same industry group today, mine highlighted, group average
      marked.
-  2. Why — rules-only version: "이유는 뉴스 제목으로 확인해요 · 공시 0건 · 업종 뉴스 3건" (headlines listed). AI version
-     (phase 5, only if the blind test passes): a two-sentence summary labelled "AI가 뉴스 3건을 읽고 정리했어요".
+  2. Why — rules-only version: "이유는 뉴스 제목에서 확인해 보세요 · 공시 없음 · 업종 뉴스 3건" (headlines listed). AI
+     version (phase 5, only if the blind test passes): a two-sentence summary labelled "AI가 뉴스 3건을 요약했어요".
   3. 내 규칙 — each rule as a check icon + "지금 22% · 30% 넘으면 지켜봐요". An explainer: 괜찮아요 → 지켜봐요 → 규칙 깨짐
      and the three choices.
-- 다음에 볼 것 (dated, 예상 if estimated). Folded: past days in the last 3 years with a move of ±5% or more (same
+- 다음에 확인할 일 (dated, 예상 if estimated). Folded: past days in the last 3 years with a move of ±5% or more (same
   threshold as the big-move note; the mockup's "6%" text is outdated), split into same-industry vs alone; sources.
 
 ### 덱 짜기 (5 steps, live count of candidates in a bottom bar)
-0. **시작:** blank deck, or one of 13 starting decks that pre-fill the cards (배당 꾸준형, 깊은 가치형, 합리적 성장형,
-   우량주 장기형, 이익 대비 싼 우량주, 깐깐한 기준선형, 덜 흔들리는 방어형, 추세 따라가기형, 주주환원 기대형, 테마 집중형,
-   한미 반반 균형형, 은퇴 현금 흐름형, 배당 성장형).
+0. **시작:** blank deck, or one of 13 starting decks that pre-fill the cards (꾸준한 고배당, 저평가 가치주, 적정가 성장주,
+   장기 우량주, 이익 대비 싼 우량주, 깐깐하게 고르기, 저변동 방어주, 추세 추종, 주주환원 확대, 테마 집중, 한미 반반,
+   배당 생활비, 배당 성장주). The deck is named "<starting deck> 덱".
 1. **기준:** 10 cards, formal name + sorting basis (CLAUDE.md rule): 가치 (PER·PBR 낮은 순), 배당 (배당수익률 높은 순),
-   배당 성장 (배당 늘린 햇수 긴 순), 성장 (매출·이익 증가율), 수익성 (ROE), 재무 안정 (부채비율 낮은 순), 낮은 변동성
-   (주가 흔들림 작은 순), 추세 (최근 1년 수익률), 주주환원 (배당+자사주 비율), 대형주 (시가총액 큰 순).
+   배당 성장 (배당 연속 인상 기간 긴 순), 성장 (매출·이익 증가율), 수익성 (ROE), 재무 안정 (부채비율 낮은 순), 낮은 변동성
+   (주가 변동 작은 순), 추세 (최근 1년 수익률), 주주환원 (주주환원율 높은 순), 대형주 (시가총액 큰 순).
    - **10 points** spread across cards (max 5 per card) decide the ranking.
    - **"얼마나 깐깐하게 고를까요?"** one setting: 넉넉하게 (no cut-off) / 보통 (default: top 50%) / 깐깐하게 (top 30%) /
-     아주 깐깐 (top 10%). The cut-off applies to every card that has points; each such card shows "상위 30%".
-   - Live preview: "지금 기준 1~3등" with the reason ("배당 95점").
+     아주 깐깐하게 (top 10%). The cut-off applies to every card that has points; each such card shows "상위 30%".
+   - Live preview: "지금 기준 상위 3종목" with the reason ("배당 95점").
    - Warn when survivors < 2× stock count; block at zero.
 2. **테마:** 45 themes in 9 groups, searchable by synonyms ("비만" → 비만 치료제), up to 5, plus the share of the deck
-   that goes to theme stocks (20 / 40 / 60%). **꼭 넣을 종목** (up to 3): bypass screening, labelled "검증 안 함",
+   that goes to theme stocks (20 / 40 / 60%). **꼭 담을 종목** (up to 3): bypass screening, labelled "검증 안 함",
    still capped.
 3. **빼기:** switches with the count each removes: 투자주의·관리종목 (on by default), 적자, 상장 2년 미만, 부채비율 200%+,
    무배당, 중국 매출 30%+, 담배·술·도박, 지주회사. A liquidity floor (daily trading value under 5억원) always applies.
-4. **조건:** 넣을 돈 (typed, 만원, quick-add buttons, warnings under 50만원 and over 10억), 한국:미국 (한국만 / 7:3 /
-   5:5 / 3:7 / 미국만), 종목 수 (5–30 stepper, warning when the amount is too small for that many), **나눠 담는 방식**
-   (see §4.3), 한 종목 최대 비중 (10/15/20/25%), 채권·금 쿠션 (없음/10/20/30%).
+4. **조건:** 투자 금액 (typed, 만원, quick-add buttons, warnings under 50만원 and over 10억), 한국:미국 (한국만 / 7:3 /
+   5:5 / 3:7 / 미국만), 종목 수 (5–30 stepper, warning when the amount is too small for that many), **비중 정하는 방식**
+   (see §4.3), 한 종목 최대 비중 (10/15/20/25%), 안전자산 (채권·금) (없음/10/20/30%).
 
 ### 후보 고르기
-- Top 2× N candidates pre-selected N. Each row: score, industry, **life stage** (§4.4), one-line reason, **걱정되는 점**
-  (the skeptic's case — always shown, never hidden), 근거 숫자 (expand: key ratios + cash-flow signs).
+- Top 2× N candidates pre-selected N. Each row: score, industry, **life stage** (§4.4), one-line reason, **주의할 점**
+  (the skeptic's case — always shown, never hidden), 근거 수치 (expand: key ratios + cash-flow signs).
 - Max 2 per industry group.
 
-### 살 목록 · 샀어요
+### 매수 계획 · 샀어요
 - Typed amount; whole US shares; 남는 돈; 1-year dividend (past year, pre-tax); "2022년처럼 빠지면 약 −X만원".
 - Each stock: shares, amount, weight with target marker, **one-line reason for its weight**.
-- 내 규칙서 per stock (§4.2) and **알고 시작하는 약점** for the deck (auto-suggested from its shape; the user can add).
+- 내 투자 규칙 per stock (§4.2) and **이 덱의 주의점** for the deck (auto-suggested from its shape; the user can add).
 - 샀어요: date, quantity, price per stock (blank = planned quantity at the last close). Stored in the browser only.
 
 ## 4. Engine rules
@@ -110,7 +113,7 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 | < 0.75 | 먼저 살 차례 | New money goes here first |
 | 0.75–1.25 | normal | none |
 | > 1.25 | 그만 살 차례 | New money goes elsewhere |
-| > 1.4 | 줄일 차례 | KR: trim back to target. US: propose a trim with a tax note ("해외 주식은 한 해 판 이익 중 250만원을 넘는 부분에 22% 세금이 붙어요") |
+| > 1.4 | 줄일 차례 | KR: trim back to target. US: propose a trim with a tax note ("해외 주식은 1년 양도차익 중 250만원을 넘는 부분에 22% 세금이 붙어요") |
 
 The US tax note must show its source and the year it was checked (Korean overseas-stock capital gains: 250만원 annual
 deduction, 22% including local tax, as of 2026). Re-check yearly.
@@ -137,9 +140,9 @@ until the user confirms** — never automatic 규칙 깨짐. Vague words must be
 ### 4.3 Sizing
 Order: groups first, then stocks inside each group, then limits. Every target weight is stored with a one-line reason
 and the date it was set.
-1. **Groups from the user's own choices:** theme share (split across chosen themes), pinned stocks, cushion %, and the
+1. **Groups from the user's own choices:** theme share (split across chosen themes), pinned stocks, cushion % (안전자산), and the
    core (everything else). The Korea:US mix is applied across the core.
-2. **Inside a group — 나눠 담는 방식 (user setting):**
+2. **Inside a group — 비중 정하는 방식 (user setting):**
    - 차분하게: more money to steadier stocks (inverse 3-year monthly volatility, extremes pulled to the average).
    - 고르게 (default): half fit (deck score), half steadiness.
    - 확신대로: by fit only; volatility ignored.
@@ -158,11 +161,11 @@ Signs of last year's operating / investing / financing cash flow (Dickinson 2011
 
 | Stage | Operating | Investing | Financing | Plain second line |
 |---|---|---|---|---|
-| 시작 | − | − | + | 아직 본업으로 돈을 못 벌어요 |
-| 확장 | + | − | + | 벌면서 더 빌려 크게 투자해요 |
-| 안정 | + | − | − | 번 돈으로 빚을 갚거나 돌려줘요 |
+| 시작 | − | − | + | 아직 본업에서 돈을 못 벌어요 |
+| 확장 | + | − | + | 본업으로 번 돈과 빌린 돈을 합쳐 크게 투자해요 |
+| 안정 | + | − | − | 남는 돈으로 빚을 갚거나 주주에게 돌려줘요 |
 | 전환 | the other mixes | | | 방향을 다시 잡는 중일 때가 많아요 |
-| 축소 | − | + | ± | 자산을 팔아 메우고 있어요 |
+| 축소 | − | + | ± | 본업에서 돈이 나가고 있어서 자산을 팔아 메우고 있어요 |
 
 Banks, insurers and brokers show "단계 없음" (their cash flows don't fit this test).
 
