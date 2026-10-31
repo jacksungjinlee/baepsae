@@ -89,6 +89,7 @@ export function mergeStocks(base, live) {
   const byNorm = {};
   base.forEach((s) => { byNorm[norm(s.t)] = s; });
   const out = [], skipped = [];
+  let noRiskN = 0;
   const keep = (x) => (x != null ? x : null);   // 빈 칸은 빈 칸으로 (0 으로 바꾸지 않음)
   live.forEach((L) => {
     const b = byT[L.t] || byNorm[norm(L.t)];
@@ -107,12 +108,17 @@ export function mergeStocks(base, live) {
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
     } else {
-      // 내장 목록에 없는 종목 (v17.5 리뷰): 가격·베타·변동성이 모두 있어야 포트폴리오에 담을 수 있어요.
-      // 위험 계산에 꼭 필요한 값이라, 지어낸 기본값(베타 1 · 변동성 30)을 넣지 않고 목록에서 뺍니다 (기업분석에는 그대로 있어요).
-      // PER·PBR·배당·알파·시총 같은 빈 칸은 0 이 아니라 비워 두고 화면에 '–'로 보여요.
-      if (!(L.price > 0) || L.beta == null || L.vol == null) { skipped.push(L.t); return; }
+      // 내장 목록에 없는 종목 (v17.5 리뷰): 지어낸 기본값(베타 1 · 변동성 30 · PER 0 …)을 넣지 않아요.
+      // · 가격이 없으면 담을 수 없어 목록에서 빼요 (크게 기록).
+      // · 베타·변동성이 없으면 목록에는 두되(이미 담은 종목이 사라지지 않게) noRisk 로 표시해요.
+      //   화면에는 β·σ 를 '–'로, 위험 계산에서는 빼요(그 비중은 위험 계산에서 현금처럼). 담고 있으면 배너로 알려요.
+      // · PER·PBR·배당·알파·시총 같은 빈 칸은 0 이 아니라 비워 두고 화면에 '–'로 보여요.
+      if (!(L.price > 0)) { skipped.push(L.t); return; }
+      const noRisk = L.beta == null || L.vol == null;
+      if (noRisk) noRiskN += 1;
       out.push({ t: L.t, nk: L.nk || L.t, ne: L.ne || L.t, s: L.s || "index", cls: L.cls || "kr",
-        ccy: L.ccy, fxu: !!L.fxu, price: L.price, beta: L.beta, vol: L.vol,
+        ccy: L.ccy, fxu: !!L.fxu, price: L.price, beta: noRisk ? null : L.beta, vol: noRisk ? null : L.vol,
+        ...(noRisk ? { noRisk: true } : {}),
         per: keep(L.per), pbr: keep(L.pbr), dy: keep(L.dy), al: keep(L.al),
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
@@ -121,9 +127,10 @@ export function mergeStocks(base, live) {
     }
   });
   if (skipped.length) {
-    console.warn("[뱁새] 가격·베타·변동성 중 빈 값이 있어 포트폴리오 목록에서 뺀 종목 " + skipped.length + "개: "
+    console.warn("[뱁새] 가격이 없어 포트폴리오 목록에서 뺀 종목 " + skipped.length + "개: "
       + skipped.slice(0, 20).join(", ") + (skipped.length > 20 ? " …" : ""));
   }
+  if (noRiskN) console.warn("[뱁새] 베타·변동성이 없어 위험 계산에서 빼는 종목 " + noRiskN + "개 (목록에는 있어요)");
   Object.values(byT).forEach((b) => out.push({ ...b, live: false }));   // 오늘 데이터에 없는 내장 종목 = 예시 가격
   return out;
 }

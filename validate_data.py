@@ -30,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from zoneinfo import ZoneInfo
 
 import requests
@@ -222,21 +223,29 @@ def _yahoo_kospi_dates():
     return sorted({dt.datetime.fromtimestamp(t, KST).date() for t, c in zip(res["timestamp"], closes) if c is not None})
 
 
-def http_kospi_sessions():
-    """최근 KOSPI 거래일 목록: {"dates": [...], "src": 출처}. 네이버 → 야후 순서로, 각각 3번까지 시도해요.
+def http_kospi_sessions(sleep=time.sleep):
+    """최근 KOSPI 거래일 목록: {"dates": [...], "src": 출처}. 네이버와 야후를 둘 다 받아 합쳐요
+    (한쪽이 하루 늦게 갱신돼도 다른 쪽이 잡도록). 각각 3번까지, 사이에 1·2초 쉬며 시도해요.
     둘 다 실패하면 예외 → 관문은 FAIL (확인하지 못한 채 통과시키지 않아요)."""
-    errs = []
+    errs, got = [], {}
     for name, fn in (("네이버 KOSPI 일봉", _naver_kospi_dates), ("야후 ^KS11 일봉", _yahoo_kospi_dates)):
-        for _ in range(3):
+        for i in range(3):
             try:
                 ds = fn()
                 if len(ds) >= 10:
-                    return {"dates": ds, "src": name}
-                errs.append(f"{name}: {len(ds)}일뿐")
+                    got[name] = ds
+                else:
+                    errs.append(f"{name}: {len(ds)}일뿐")
                 break
             except Exception as e:
                 errs.append(f"{name}: {str(e)[:80]}")
-    raise RuntimeError(" · ".join(errs))
+                if i < 2:
+                    sleep(i + 1)
+    if not got:
+        raise RuntimeError(" · ".join(errs))
+    dates = sorted(set().union(*got.values()))
+    src = " + ".join(got) + (f" (실패: {' · '.join(errs)})" if errs else "")
+    return {"dates": dates, "src": src}
 
 
 def completed_sessions_after(px, today, sessions):
@@ -302,8 +311,11 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     if pdata:
         rep.add("pxDate 가 뒤로 가지 않음", px is not None and ppx is not None and px >= ppx, px, f"≥ {ppx}")
     rep.add("KOSPI 마지막 날 = pxDate", day(data.get("ksDate")) == px and px is not None, data.get("ksDate"), px)
-    # pxDate 와 오늘 사이에 끝난 거래일이 있으면 낡은 가격 (최종본 목록이 하루 물러난 경우)
-    if sessions is None:
+    # pxDate 와 오늘 사이에 끝난 거래일이 있으면 낡은 가격 (최종본 목록이 하루 물러난 경우).
+    # 사이트 점검(live)은 매일 아침 발행 전까지 어제 거래일이 늘 '아직 없음'이라 여기서 보지 않아요 (v17.6 감시가 따로 봐요).
+    if mode == "live":
+        rep.skip("pxDate 뒤 끝난 거래일 없음", "사이트 점검은 발행 전 시간대가 있어 v17.6 감시가 따로 봐요")
+    elif sessions is None:
         rep.add("pxDate 뒤 끝난 거래일 없음", False, "KOSPI 일봉을 받지 못했어요", "네이버 또는 야후 KOSPI 일봉으로 확인")
     elif px is None:
         rep.add("pxDate 뒤 끝난 거래일 없음", False, "pxDate 없음", "있어야 함")
@@ -334,7 +346,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         rep.skip("publishedAt 12시간 이내", "사이트 점검은 발행 뒤 시간이 지나 있어요 (신선도는 v17.6 감시가 따로 봐요)")
     else:
         ref = now or dt.datetime.combine(today, dt.time(12), KST)
-        age = (ref - pub) if pub else None
+        age = (ref - pub) if pub is not None and pub.utcoffset() is not None else None   # 시간대 없는 값은 비교 불가 → 실패
         ok = age is not None and dt.timedelta(0) <= age <= dt.timedelta(hours=PUBLISHED_MAX_HOURS)
         rep.add("publishedAt 12시간 이내", ok,
                 f"{age.total_seconds() / 3600:.1f}시간 전" if age is not None else "읽을 수 없음",

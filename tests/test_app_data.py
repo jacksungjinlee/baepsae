@@ -51,7 +51,7 @@ def test_freshness_counts_from_published_at():
 
 # ── mergeStocks: 내장 목록에 없는 종목에 숫자를 지어내지 않아요 (PR #4 리뷰 3번) ──
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
-def test_auto_stocks_keep_blanks_and_skip_missing_risk_inputs():
+def test_auto_stocks_keep_blanks_and_flag_missing_risk_inputs():
     base = [{"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "price": 78000, "beta": 1.1, "vol": 30,
              "per": 14, "pbr": 1.4, "dy": 1.8, "al": -6}]
     live = [
@@ -66,15 +66,17 @@ def test_auto_stocks_keep_blanks_and_skip_missing_risk_inputs():
             "console.log(JSON.stringify({out, warn}));")
     got = run_js(code)
     by = {s["t"]: s for s in got["out"]}
-    assert set(by) == {"005930", "111111"}, by.keys()             # 위험 계산에 필요한 값이 빈 종목은 빼요
+    assert set(by) == {"005930", "111111", "222222", "333333"}, by.keys()   # 가격이 없는 종목만 빼요
     n = by["111111"]
-    assert n["live"] is True and n["beta"] == 0.9 and n["vol"] == 40
-    assert n["per"] is None and n["pbr"] is None and n["dy"] is None   # 0 이 아니라 빈 칸 → 화면에 '–'
+    assert n["live"] is True and n["beta"] == 0.9 and n["vol"] == 40 and not n.get("noRisk")
+    assert n["per"] is None and n["pbr"] is None and n["dy"] is None        # 0 이 아니라 빈 칸 → 화면에 '–'
+    for t in ("222222", "333333"):                                          # 이미 담은 종목이 사라지지 않게 목록에 둬요
+        x = by[t]
+        assert x["noRisk"] is True and x["beta"] is None and x["vol"] is None and x["live"] is True and x["price"] == 7000
     s = by["005930"]
     assert s["price"] == 225000 and s["per"] is None and s["dy"] is None and s["live"] is True
-    assert len(got["warn"]) == 1 and "3개" in got["warn"][0]       # 뺀 종목은 크게 남겨요
-    for t in ("222222", "333333", "444444"):
-        assert t in got["warn"][0]
+    assert any("가격이 없어" in w and "444444" in w for w in got["warn"]), got["warn"]
+    assert any("위험 계산에서 빼는 종목 2개" in w for w in got["warn"]), got["warn"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")

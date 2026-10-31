@@ -354,29 +354,47 @@ NAVER_XML = ('<?xml version="1.0" encoding="EUC-KR" ?><protocol><chartdata symbo
              + "</chartdata></protocol>")
 
 
-def test_kospi_sessions_from_naver(monkeypatch):
-    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(text=NAVER_XML))
-    got = V.http_kospi_sessions()
-    assert got["src"].startswith("네이버") and got["dates"] == OCT
+def yahoo_js(days):
+    ts = [int(dt.datetime.combine(d, dt.time(9), V.KST).timestamp()) for d in days]
+    return {"chart": {"result": [{"timestamp": ts, "indicators": {"quote": [{"close": [1.0] * len(ts)}]}}]}}
+
+
+NO_SLEEP = {"sleep": lambda s: None}
+
+
+def test_kospi_sessions_from_naver_when_yahoo_is_down(monkeypatch):
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(text=NAVER_XML) if "naver" in url else _Resp(status=503))
+    got = V.http_kospi_sessions(**NO_SLEEP)
+    assert got["src"].startswith("네이버") and got["dates"] == OCT and "실패" in got["src"]
 
 
 def test_kospi_sessions_fall_back_to_yahoo(monkeypatch):
-    ts = [int(dt.datetime.combine(d, dt.time(9), V.KST).timestamp()) for d in OCT]
-    yahoo = {"chart": {"result": [{"timestamp": ts, "indicators": {"quote": [{"close": [1.0] * len(ts)}]}}]}}
-
-    def get(url, **k):
-        if "naver" in url:
-            return _Resp(status=503)
-        return _Resp(js=yahoo)
-    monkeypatch.setattr(V.requests, "get", get)
-    got = V.http_kospi_sessions()
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(status=503) if "naver" in url else _Resp(js=yahoo_js(OCT)))
+    got = V.http_kospi_sessions(**NO_SLEEP)
     assert got["src"].startswith("야후") and got["dates"] == OCT
 
 
-def test_kospi_sessions_both_down_raises(monkeypatch):
-    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(status=503))
+def test_kospi_sessions_union_catches_a_lagging_source(monkeypatch):
+    # 네이버가 10/29 에서 멈춰 있어도 야후에 10/30 이 있으면 10/30 은 거래일이에요
+    lag = NAVER_XML.replace('<item data="20261030|1|2|0|1|9" />', "")
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(text=lag) if "naver" in url else _Resp(js=yahoo_js(OCT)))
+    got = V.http_kospi_sessions(**NO_SLEEP)
+    assert dt.date(2026, 10, 30) in got["dates"] and "+" in got["src"]
+
+
+def test_kospi_sessions_too_short_counts_as_failure(monkeypatch):
+    short = yahoo_js(OCT[-3:])
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: _Resp(status=503) if "naver" in url else _Resp(js=short))
+    with pytest.raises(RuntimeError, match="3일뿐"):
+        V.http_kospi_sessions(**NO_SLEEP)
+
+
+def test_kospi_sessions_both_down_raises_after_retries(monkeypatch):
+    calls, waits = [], []
+    monkeypatch.setattr(V.requests, "get", lambda url, **k: calls.append(url) or _Resp(status=503))
     with pytest.raises(RuntimeError):
-        V.http_kospi_sessions()
+        V.http_kospi_sessions(sleep=waits.append)
+    assert len(calls) == 6 and waits == [1, 2, 1, 2]       # 각 출처 3번, 사이에 1·2초
 
 
 # ── publishedAt (PR #4 리뷰 3번) ─────────────────────────
@@ -410,6 +428,20 @@ def test_published_at_in_the_future_fails():
     cur, prev, final = good_pair()
     early = dt.datetime(2026, 10, 31, 8, 0, tzinfo=V.KST)
     assert "publishedAt 12시간 이내" in failed_names(check(cur, prev, final, now=early))
+
+
+def test_published_at_without_timezone_is_a_fail_row_not_a_crash():
+    cur, prev, final = good_pair()
+    for f in cur.values():
+        f["publishedAt"] = "2026-10-31T09:30:00"
+    rep = check(cur, prev, final)
+    assert {"publishedAt 한국 시간(+09:00)", "publishedAt 12시간 이내"} <= failed_names(rep)
+
+
+def test_live_mode_does_not_check_missed_sessions():
+    # 사이트 점검은 아침 발행 전에 어제 거래일이 늘 비어 있어요 → v17.6 감시가 따로 봐요
+    cur, _, final = stale_by_one_day()
+    assert "pxDate 뒤 끝난 거래일 없음" not in failed_names(check(cur, None, final, mode="live", sessions=None))
 
 
 def test_live_mode_skips_only_the_12_hour_rule():

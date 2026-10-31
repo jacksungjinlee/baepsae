@@ -42,6 +42,7 @@ NOLIVE_ALL = "최신 시세를 불러오지 못해 예시 가격으로 보여 �
 GOLD_EST = "금현물은 국제 금값으로 환산한 추정치예요"
 RATES_FAIL = "금리 데이터를 불러오지 못했어요"
 OFFICIAL = "공식 종가예요. 다른 수치는 추정치예요"
+NORISK = "일부 종목은 베타·변동성 자료가 없어 위험 계산에서 뺐어요"
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -380,12 +381,68 @@ def scene_gold_estimate(R, files):
     ctx.close(); srv.shutdown()
 
 
+def scene_no_risk_holding(R, files):
+    """내장 목록에 없고 베타·변동성이 빈 종목을 담은 포트폴리오: 사라지지 않고, β 는 '–', 위험 숫자에 NaN 없음, 배너 안내."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    f["data.json"]["stocks"].append({"t": "999990", "nk": "시험새종목", "ne": "Test New Co", "cls": "kr", "s": "fin",
+                                     "price": 12000, "beta": None, "vol": None, "per": None, "pbr": None, "dy": None,
+                                     "cap": 3.1, "val": 120.0})
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
+            "holdings": [{"t": "999990", "mw": 200}, {"t": "005930", "mw": 300}]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "snr", "name": "위험값 없음 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_snr": json.dumps(slot, ensure_ascii=False)}
+    srv, ctx, page, _ = R.open(build_site(f), local=local)
+
+    def run():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("위험값 없음 시험", exact=False).first.click()
+        see(page, NORISK)
+        see(page, "시험새종목")                    # 담은 종목이 사라지지 않아요
+        body = page.locator("body").inner_text()
+        assert "NaN" not in body, "위험 숫자에 NaN 이 보여요"
+    R.check(page, "위험값 없음", "베타·변동성 없는 종목을 담음 → 그대로 보이고 배너, NaN 없음", run)
+    ctx.close(); srv.shutdown()
+
+    # 모든 자산군(한국·미국·채권·금)을 담은 보통 포트폴리오: 위험 숫자에 NaN 이 없어야 해요
+    # (v15.3 부터 채권 칸이 빠져 모든 포트폴리오가 '±NaN만원'으로 보였어요 — v17.5 에서 발견)
+    have = {s.get("t") for s in files["data.json"]["stocks"]}
+    pick = [t for t in ("005930", "AAPL", "153130", "114260", "132030") if t in have]
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": t, "mw": 150} for t in pick]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sall", "name": "자산군 모두 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_sall": json.dumps(slot, ensure_ascii=False)}
+    srv, ctx, page, _ = R.open(build_site(files), local=local)
+
+    def all_classes():
+        assert len(pick) >= 3, f"시험할 종목이 부족해요: {pick}"
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("자산군 모두 시험", exact=False).first.click()
+        see(page, "보통 해")
+        page.wait_for_timeout(500)
+        body = page.locator("body").inner_text()
+        assert "NaN" not in body, "포트폴리오 숫자에 NaN: " + next((ln for ln in body.splitlines() if "NaN" in ln), "")
+    R.check(page, "위험값 없음", f"자산군 모두 담은 포트폴리오 ({', '.join(pick)}) → NaN 없음", all_classes)
+    ctx.close(); srv.shutdown()
+
+
 def scene_rates_fail(R, files):
     """macro.json 은 읽히는데 금리(ECOS) 부분만 빈 날: 금리 칸에만 '금리 데이터를 불러오지 못했어요' (영어 모드는 영어)."""
+    # 비교 기준: 커브가 있으면 그 칸에 실패 문구가 없어야 해요 (같은 장면이 언제나 실패 문구만 보여 주는 건 아닌지)
+    g = json.loads(json.dumps(files, allow_nan=True))
+    g["macro.json"]["curve"] = {"tenors": [1, 3, 5, 10, 30], "now": [2.9, 3.0, 3.2, 3.5, 3.6], "ago": [2.7, 2.8, 3.0, 3.1, 3.3],
+                                "date": "2026-10-30"}
+    srv, ctx, page, _ = R.open(build_site(g), local={"baepsae_v9_seen": "1"})
+
+    def control():
+        tab(page, "금리·원자재")
+        see(page, "한국은행 ECOS · 기준 2026-10-30")
+        page.wait_for_timeout(300)
+        assert page.get_by_text(RATES_FAIL).count() == 0, "커브가 있는데 '금리 데이터를 불러오지 못했어요'"
+    R.check(page, "금리 일부 실패", "비교: 커브가 있으면 실패 문구 없음", control)
+    ctx.close(); srv.shutdown()
+
     f = json.loads(json.dumps(files, allow_nan=True))
     for k in ("curve", "sprKr", "tenor", "credit"):
-        if k in f["macro.json"]:
-            f["macro.json"][k] = None
+        f["macro.json"][k] = None
     srv, ctx, page, _ = R.open(build_site(f), local={"baepsae_v9_seen": "1"})
 
     def ko():
@@ -447,7 +504,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·서비스워커)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·서비스워커)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -463,7 +520,7 @@ def main():
                   ("NaN", lambda: scene_nan(R, fresh)),
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)),
+                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:

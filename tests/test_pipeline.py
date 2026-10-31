@@ -606,6 +606,7 @@ def test_dart_dividend_zero_is_kept_and_dash_is_unknown():
 
 
 def test_unknown_korean_dividend_yield_is_not_written_as_zero():
+    # fetch_korea 는 네트워크가 필요해서, 레코드를 만드는 그 한 줄을 직접 확인해요 (예전: "else 0.0")
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
-    assert '"dy": round(dyv, 2) if dyv is not None else None' in src
-    assert "else 0.0" not in src.split("def fetch_korea", 1)[1].split("def ", 1)[0]
+    lines = [ln for ln in src.splitlines() if '"dy": round(dyv' in ln]
+    assert len(lines) == 1 and "else None" in lines[0] and "else 0" not in lines[0], lines
