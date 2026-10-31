@@ -138,3 +138,11 @@ def test_more_than_half_without_data_shows_no_risk_numbers():
     # 소수점 오차가 나는 딱 절반 (300 + 100 + 200, 예산 1000): 비중을 더하면 50.000000000000014 가 돼요
     assert "beta" in got["exactFloat"] and got["exactFloat"]["pct"] == 50.0, got["exactFloat"]
     assert got["all"]["blind"] and got["all"]["all"] and got["all"]["w"] == [1.0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_checkin_ignores_old_snapshots_saved_with_nan():
+    # v17.5 전 점검은 위험 수치가 NaN 이라 null 로 저장됐어요. 그것과 비교하면 안 돼요 (소스에서 확인)
+    src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    body = src.split("function CheckinCard", 1)[1].split("\nfunction ", 1)[0]
+    assert "find(valid)" in body and "checkins[checkins.length - 1]" not in body

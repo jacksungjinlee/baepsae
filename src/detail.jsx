@@ -3782,7 +3782,10 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
     exp: metrics.expRet, unpaid: 100 - metrics.r2, sec: metrics.maxSectorW,
     secKey: metrics.maxSectorKey, top3: metrics.top3, n: metrics.rows.filter((r) => r.mw > 0).length,
   };
-  const last = checkins && checkins.length ? checkins[checkins.length - 1] : null;
+  // 비교는 숫자가 제대로 저장된 마지막 점검과만 해요. v17.5 전에는 위험 수치가 NaN 이라 점검이 빈 값(null)으로
+  // 저장됐어요 — 그것과 비교하면 '위험이 크게 늘었어요' 같은 틀린 말이 나와요.
+  const valid = (c) => c && typeof c.vol === "number" && isFinite(c.vol) && typeof c.exp === "number" && isFinite(c.exp);
+  const last = Array.isArray(checkins) ? [...checkins].reverse().find(valid) || null : null;
   const rows = last ? [
     [t("ciAmount"), fmtMw(last.inv, lang), fmtMw(snap.inv, lang), snap.inv - last.inv, 0],
     [t("mVol"), pct(last.vol), pct(snap.vol), snap.vol - last.vol, 1],
