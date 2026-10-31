@@ -443,10 +443,11 @@ def scene_no_risk_holding(R, files):
         see(page, "시험새종목")                    # 담은 종목은 그대로 보여요
         page.wait_for_timeout(500)
         body = page.locator("body").inner_text()
-        for bad in ("보통 해", "β 0.00", "변동성 0.0%", "비중 0.0%", "NaN", "null"):
+        # 화면 전체가 아니라 포트폴리오 쪽만 봐요: 실제 종목 목록에는 베타가 정말 0.00 인 종목(거래정지 등)이 있어요
+        for bad in ("보통 해", "변동성 0.0%", "비중 0.0%", "NaN", "null"):
             assert bad not in body, f"위험 수치를 못 만드는데 '{bad}' 가 보여요"
         row = page.evaluate(SMALLEST, ["시험새종목", ["비중 ", "β "]])
-        assert row and "비중 100.0%" in row, f"장바구니 줄: {row!r}"
+        assert row and "비중 100.0%" in row and "β –" in row, f"장바구니 줄: {row!r}"
         assert page.get_by_text(NORISK).count() == 0, "전부 빠졌는데 '일부 종목' 문구"
     R.check(page, "위험값 없음", "담은 종목 모두 베타·변동성 없음 → 위험 수치 대신 안내, 비중은 그대로, 0·NaN 없음", run_blind)
     ctx.close(); srv.shutdown()
