@@ -451,3 +451,18 @@ def test_live_mode_skips_only_the_12_hour_rule():
     assert "publishedAt 12시간 이내" not in failed_names(rep)
     del cur["corp"]["publishedAt"]
     assert "publishedAt 네 파일 모두" in failed_names(check(cur, None, final, mode="live", now=late))
+
+
+def test_kospi_sessions_report_disagreement_and_only_final_failures(monkeypatch):
+    lag = NAVER_XML.replace('<item data="20261030|1|2|0|1|9" />', "")
+    tries = {"n": 0}
+
+    def get(url, **k):
+        if "naver" in url:
+            return _Resp(text=lag)
+        tries["n"] += 1                       # 야후는 첫 시도 실패, 두 번째 성공
+        return _Resp(status=503) if tries["n"] == 1 else _Resp(js=yahoo_js(OCT))
+    monkeypatch.setattr(V.requests, "get", get)
+    got = V.http_kospi_sessions(**NO_SLEEP)
+    assert got["disagree"] == [dt.date(2026, 10, 30)]
+    assert "실패" not in got["src"]           # 다시 시도해서 받았으면 실패로 적지 않아요

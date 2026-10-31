@@ -42,7 +42,8 @@ NOLIVE_ALL = "최신 시세를 불러오지 못해 예시 가격으로 보여 �
 GOLD_EST = "금현물은 국제 금값으로 환산한 추정치예요"
 RATES_FAIL = "금리 데이터를 불러오지 못했어요"
 OFFICIAL = "공식 종가예요. 다른 수치는 추정치예요"
-NORISK = "일부 종목은 베타·변동성 자료가 없어 위험 계산에서 뺐어요"
+NORISK = "베타·변동성 자료가 없어요. 위험 숫자는 나머지 종목으로 계산했어요"
+RISK_BLIND = "담은 종목 모두 베타·변동성 자료가 없어 위험 숫자를 계산할 수 없어요"
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -384,23 +385,43 @@ def scene_gold_estimate(R, files):
 def scene_no_risk_holding(R, files):
     """내장 목록에 없고 베타·변동성이 빈 종목을 담은 포트폴리오: 사라지지 않고, β 는 '–', 위험 숫자에 NaN 없음, 배너 안내."""
     f = json.loads(json.dumps(files, allow_nan=True))
-    f["data.json"]["stocks"].append({"t": "999990", "nk": "시험새종목", "ne": "Test New Co", "cls": "kr", "s": "fin",
+    f["data.json"]["stocks"].append({"t": "999990", "nk": "시험새종목", "ne": "Test New Co", "cls": "kr", "s": "bank",
                                      "price": 12000, "beta": None, "vol": None, "per": None, "pbr": None, "dy": None,
                                      "cap": 3.1, "val": 120.0})
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
             "holdings": [{"t": "999990", "mw": 200}, {"t": "005930", "mw": 300}]}
-    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "snr", "name": "위험값 없음 시험"}], ensure_ascii=False),
-             "baepsae_v10_slot_snr": json.dumps(slot, ensure_ascii=False)}
+    blind = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "999990", "mw": 300}]}
+    local = {"baepsae_v9_seen": "1",
+             "baepsae_v10_slots": json.dumps([{"id": "snr", "name": "위험값 없음 시험"}, {"id": "sbl", "name": "위험값 전부 없음"}], ensure_ascii=False),
+             "baepsae_v10_slot_snr": json.dumps(slot, ensure_ascii=False), "baepsae_v10_slot_sbl": json.dumps(blind, ensure_ascii=False)}
     srv, ctx, page, _ = R.open(build_site(f), local=local)
 
     def run():
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("위험값 없음 시험", exact=False).first.click()
         see(page, NORISK)
+        see(page, "(비중 40%)")                    # 200 / 500 만원 = 40%
         see(page, "시험새종목")                    # 담은 종목이 사라지지 않아요
+        see(page, "보통 해")
+        see(page, "β –")                          # 베타는 '–' (지어낸 숫자 없음)
         body = page.locator("body").inner_text()
-        assert "NaN" not in body, "위험 숫자에 NaN 이 보여요"
-    R.check(page, "위험값 없음", "베타·변동성 없는 종목을 담음 → 그대로 보이고 배너, NaN 없음", run)
+        assert "NaN" not in body and "null" not in body, "위험 숫자에 NaN/null 이 보여요"
+    R.check(page, "위험값 없음", "베타·변동성 없는 종목을 담음 → 그대로 보이고 'β –', 비중 40% 배너, NaN 없음", run)
+    ctx.close(); srv.shutdown()
+
+    srv, ctx, page, _ = R.open(build_site(f), local=local)
+
+    def run_blind():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("위험값 전부 없음", exact=False).first.click()
+        see(page, RISK_BLIND)
+        see(page, "시험새종목")                    # 담은 종목은 그대로 보여요
+        page.wait_for_timeout(500)
+        body = page.locator("body").inner_text()
+        for bad in ("보통 해", "β 0.00", "변동성 0.0%", "NaN", "null"):
+            assert bad not in body, f"위험 숫자를 못 만드는데 '{bad}' 가 보여요"
+        assert page.get_by_text(NORISK).count() == 0, "전부 빠졌는데 '일부 종목' 문구"
+    R.check(page, "위험값 없음", "담은 종목 모두 베타·변동성 없음 → 위험 숫자 대신 안내, 0·NaN 없음", run_blind)
     ctx.close(); srv.shutdown()
 
     # 모든 자산군(한국·미국·채권·금)을 담은 보통 포트폴리오: 위험 숫자에 NaN 이 없어야 해요

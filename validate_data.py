@@ -229,23 +229,33 @@ def http_kospi_sessions(sleep=time.sleep):
     둘 다 실패하면 예외 → 관문은 FAIL (확인하지 못한 채 통과시키지 않아요)."""
     errs, got = [], {}
     for name, fn in (("네이버 KOSPI 일봉", _naver_kospi_dates), ("야후 ^KS11 일봉", _yahoo_kospi_dates)):
+        last = None
         for i in range(3):
             try:
                 ds = fn()
                 if len(ds) >= 10:
-                    got[name] = ds
+                    got[name], last = ds, None
                 else:
-                    errs.append(f"{name}: {len(ds)}일뿐")
+                    last = f"{name}: {len(ds)}일뿐"
                 break
             except Exception as e:
-                errs.append(f"{name}: {str(e)[:80]}")
+                last = f"{name}: {str(e)[:80]}"
                 if i < 2:
                     sleep(i + 1)
+        if last:
+            errs.append(last)          # 마지막 시도까지 실패한 출처만 적어요
     if not got:
         raise RuntimeError(" · ".join(errs))
     dates = sorted(set().union(*got.values()))
     src = " + ".join(got) + (f" (실패: {' · '.join(errs)})" if errs else "")
-    return {"dates": dates, "src": src}
+    out = {"dates": dates, "src": src}
+    if len(got) == 2:               # 두 출처가 다르게 말하는 날짜 (겹치는 기간만) — 로그로 남겨요
+        a, b = (set(v) for v in got.values())
+        lo = max(min(a), min(b))
+        diff = sorted(d for d in a ^ b if d >= lo)
+        if diff:
+            out["disagree"] = diff
+    return out
 
 
 def completed_sessions_after(px, today, sessions):
@@ -542,12 +552,15 @@ def main(argv=None):
         print(f"!! 최종본 목록을 확인하지 못했어요: {e}")
         final = None
 
-    try:
-        sessions = http_kospi_sessions()
-        print(f"· KOSPI 거래일 {len(sessions['dates'])}일 ({sessions['src']}, 마지막 {sessions['dates'][-1]})")
-    except Exception as e:
-        print(f"!! KOSPI 일봉을 받지 못했어요: {e}")
-        sessions = None
+    sessions = None
+    if mode != "live":              # 사이트 점검은 이 검사를 하지 않아요 (run_checks 참고)
+        try:
+            sessions = http_kospi_sessions()
+            print(f"· KOSPI 거래일 {len(sessions['dates'])}일 ({sessions['src']}, 마지막 {sessions['dates'][-1]})")
+            if sessions.get("disagree"):
+                print(f"!! 네이버·야후 KOSPI 거래일이 다른 날: {', '.join(d.isoformat() for d in sessions['disagree'][:5])} (합쳐서 써요)")
+        except Exception as e:
+            print(f"!! KOSPI 일봉을 받지 못했어요: {e}")
     rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes,
                      sessions=sessions, now=now)
     for n in notes:
