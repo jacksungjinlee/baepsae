@@ -997,12 +997,14 @@ function computeMetrics(holdings, budgetWon, settings) {
     if (!lacksRisk(h.stock)) riskC[c] = (riskC[c] || 0) + w;
   });
   const riskW0 = Object.values(riskC).reduce((a, x) => a + x, 0);
-  const noRiskPct = invW > 0 ? (1 - riskW0 / invW) * 100 : 0;
-  if (invW > 0 && noRiskPct > NO_RISK_MAX_PCT) {
+  // 절반 규칙은 원 단위로 비교해요 (비중을 나눠 더하면 50.000000000000014 처럼 소수점 오차가 생겨 '딱 절반'이 빠질 수 있어요)
+  const noRiskWon = holdings.reduce((a, h) => a + (h.won > 0 && lacksRisk(h.stock) ? h.won : 0), 0);
+  const noRiskPct = invested > 0 ? (noRiskWon / invested) * 100 : 0;
+  if (invested > 0 && noRiskWon * 100 > invested * NO_RISK_MAX_PCT) {
     // 위험 수치 없이 돈 비중만: 담은 종목 목록(비중)은 그대로 보여야 해요
     const rowsB = holdings.map((h) => { const w = h.won / total;
       return { ...h, w, wr: 0, b: 0, idio: 0, c: clsOf(h.stock), nr: lacksRisk(h.stock), rc: null, sysShare: null, wInv: w / invW }; });
-    return { empty: true, riskBlind: true, allNoRisk: riskW0 <= 0, invested, cash, total, overBudget, rows: rowsB,
+    return { empty: true, riskBlind: true, allNoRisk: noRiskWon >= invested, invested, cash, total, overBudget, rows: rowsB,
       noRiskN: holdings.filter((h) => h.won > 0 && lacksRisk(h.stock)).length, noRiskPct };
   }
   const kc = {};
@@ -2153,9 +2155,9 @@ function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
 
 const RC_COLORS = ["#1B2B4B", "#E8987A", "#2E9E8F", "#566BB8", "#C98F2B", "#8C5B74", "#4E7A5A", "#7A8699", "#3B6FD4", "#A3703F"];
 function RiskContribCard({ lang, t, metrics, stocksById }) {
-  const withRisk = metrics.empty ? [] : metrics.rows.filter((r) => !r.nr);     // 베타·변동성 자료가 있는 종목끼리
-  if (metrics.empty || withRisk.length < 2) return null;
-  const rows = [...withRisk].sort((a, b) => b.rc - a.rc).slice(0, 10);     // 돈 비중은 실제 비중 그대로 (장바구니와 같게)
+  // 자료 없는 종목이 있으면 돈 비중(실제)과 위험 비중(가정 포함)이 같은 것을 가리키지 않아요 → 이 카드는 보여 주지 않아요 (배너가 알려요)
+  if (metrics.empty || metrics.noRiskN > 0 || metrics.rows.length < 2) return null;
+  const rows = [...metrics.rows].sort((a, b) => b.rc - a.rc).slice(0, 10);
   const topName = stocksById[rows[0].t] ? (lang === "ko" ? stocksById[rows[0].t].nk : stocksById[rows[0].t].ne) : "";
   return (
     <Card style={{ padding: 16 }}>
@@ -3523,11 +3525,11 @@ function ReturnAnatomyCard({ lang, t, metrics, settings }) {
   const byCls = CLS_LIST.map((c) => {
     const rows = metrics.rows.filter((r) => r.c === c && r.mw > 0);
     if (!rows.length) return null;
-    const contrib = rows.reduce((a, r) => a + r.wr * r.b * clsMrp(c, settings) * 100, 0);   // 자료 없는 종목은 wr = 0 (나머지가 그 몫까지)
+    const contrib = rows.reduce((a, r) => a + r.w * r.b * clsMrp(c, settings) * 100, 0);
     return { c, contrib, w: metrics.clsW[c] || 0 };
   }).filter(Boolean);
   const top = [...metrics.rows].filter((r) => r.mw > 0)
-    .filter((r) => !r.nr).map((r) => ({ r, c: r.w * settings.rf + r.wr * r.b * clsMrp(r.c, settings) * 100 }))
+    .filter((r) => !r.nr).map((r) => ({ r, c: r.w * (settings.rf + r.b * clsMrp(r.c, settings) * 100) }))   // 그 종목 자기 돈만큼
     .sort((a, b) => b.c - a.c).slice(0, 5);
   const maxC = Math.max(...top.map((x) => x.c), 0.01);
   return (
@@ -3551,7 +3553,7 @@ function ReturnAnatomyCard({ lang, t, metrics, settings }) {
           </div>
         ))}
       </div>
-      {byCls.length > 1 && (
+      {byCls.length > 1 && !metrics.noRiskN && (      /* 자료 없는 종목이 있으면 자산군별 몫이 틀어져서 숨겨요 */
         <div style={{ marginTop: 10 }}>
           <Sub style={{ fontWeight: 700, color: C.ink, marginBottom: 5 }}>{t("raByCls")}</Sub>
           {byCls.map((b) => (
