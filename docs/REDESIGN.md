@@ -25,9 +25,11 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
    2. Is a **keep condition** failing? → status **지켜봐요**. No new money goes to it until the next filing or results.
    3. Is the **weight outside its band**? → 먼저 살 차례 / 그만 살 차례 / 줄일 차례.
    4. None of these → **할 일 없음**.
-2. **Price never triggers anything.** A price move alone means nothing happened. The rule engine must not be able to
+2. **Price never triggers a rule.** A price move alone means nothing happened. The rule engine must not be able to
    express a price-based rule (no "−25% from cost" rules, no stop-losses, no target prices). A daily move of ±5% or more
    only adds a "크게 움직인 종목" note with the news check and a link to 왜 움직였나.
+   The one way prices matter: they change **weights**, and the weight bands (§4.1) act on weights. That is portfolio
+   arithmetic, not a price rule.
 3. **뱁새 never trades.** When a rule fires it says "내 규칙대로라면 팔 차례예요. 판단은 내가 해요." and offers
    팔았어요 / 더 지켜볼게요 / 규칙 고치기. The user records what they did.
 4. **Every number shown carries its source and date.** Estimates are labelled 예상 (for example a Korean earnings date
@@ -45,14 +47,15 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 - **Deck strip:** 지금 (value), 산 뒤로 (return since purchase). Today's % is a small grey line under them, not a headline.
 - **My stocks list:** name + today's %. A chip only on exceptions (큰 움직임, 지켜봐요, 규칙 깨짐). No chip = fine.
 - **다음 일정:** next 2 dated events (earnings, dividend record dates), with 예상 where estimated.
-- Content dates: "10월 30일(금) 종가". US rows use the US close date (one day behind Korea in the morning run).
+- Content dates: "10월 30일(금) 종가". Each market shows its own close date. After the Korean evening run (phase 4),
+  US rows are a day older than Korean rows; say so on the screen.
 
 ### 내 덱 (the tracking sheet)
 - Value, money put in, return vs KOSPI since start (line chart, KOSPI dashed).
 - Per stock: shares, average cost, return, current weight vs target (bar with target marker), status note only when not
   normal ("지켜봐요 · 부채비율 88%, 기준 100%").
 - **돈을 더 넣는다면:** typed amount (만원) with +10만 / +100만 / +1,000만 / 지우기. Fills the most underweight names first,
-  **skipping 지켜봐요 and anything above 1.25× target**. Whole shares; shows 남는 돈.
+  **skipping 규칙 깨짐, 지켜봐요 and anything above 1.25× target**. Whole shares; shows 남는 돈.
 
 ### 왜 움직였나 (one stock, one day)
 - Header: name, industry, official close, change, date.
@@ -62,10 +65,10 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
      marked.
   2. Why — rules-only version: "이유는 뉴스 제목으로 확인해요 · 공시 0건 · 업종 뉴스 3건" (headlines listed). AI version
      (phase 5, only if the blind test passes): a two-sentence summary labelled "AI가 뉴스 3건을 읽고 정리했어요".
-  3. 내 규칙 — each rule as ✓ + "지금 22% · 30% 넘으면 지켜봐요". An explainer: 괜찮아요 → 지켜봐요 → 규칙 깨짐 and
-     the three choices.
-- 다음에 볼 것 (dated, 예상 if estimated). Folded: past days with a similar drop (3 years, same-industry vs alone),
-  sources.
+  3. 내 규칙 — each rule as a check icon + "지금 22% · 30% 넘으면 지켜봐요". An explainer: 괜찮아요 → 지켜봐요 → 규칙 깨짐
+     and the three choices.
+- 다음에 볼 것 (dated, 예상 if estimated). Folded: past days in the last 3 years with a move of ±5% or more (same
+  threshold as the big-move note; the mockup's "6%" text is outdated), split into same-industry vs alone; sources.
 
 ### 덱 짜기 (5 steps, live count of candidates in a bottom bar)
 0. **시작:** blank deck, or one of 13 starting decks that pre-fill the cards (배당 꾸준형, 깊은 가치형, 합리적 성장형,
@@ -107,9 +110,13 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
 | < 0.75 | 먼저 살 차례 | New money goes here first |
 | 0.75–1.25 | normal | none |
 | > 1.25 | 그만 살 차례 | New money goes elsewhere |
-| > 1.4 | 줄일 차례 | KR: trim back to target. US: propose a trim with a tax note ("미국 종목은 판 이익이 연 250만원을 넘으면 22%") |
+| > 1.4 | 줄일 차례 | KR: trim back to target. US: propose a trim with a tax note ("해외 주식은 한 해 판 이익 중 250만원을 넘는 부분에 22% 세금이 붙어요") |
 
-Dividends: pooled by currency, suggested into the most underweight names of the same currency.
+The US tax note must show its source and the year it was checked (Korean overseas-stock capital gains: 250만원 annual
+deduction, 22% including local tax, as of 2026). Re-check yearly.
+
+Dividends: pooled by currency, suggested into the most underweight names of the same currency, skipping 규칙 깨짐 and
+지켜봐요 names.
 
 ### 4.2 Rule book per holding (generated, user-editable)
 Three layers, each rule with a number, a source field and a freshness limit:
@@ -141,6 +148,10 @@ and the date it was set.
 3. **Always, whatever the setting:** max per stock (user setting), max per industry group (default 1/3), half size for
    stocks with a pending event (tender offer, merger, governance dispute, listing under 2 years), position ≤ a set share
    of 20-day average trading value, whole shares for US, no leverage.
+4. **Settings that can't all hold** (e.g. 5 stocks × 10% max = 50%; a 60% theme inside one industry with "max 2 per
+   industry" and a 1/3 industry cap): the builder never relaxes a limit silently. It blocks, names the limits that
+   clash in one sentence, and offers the fixes (more stocks, a higher max per stock, a smaller theme share). Theme
+   stocks still count toward the industry cap.
 
 ### 4.4 Life stage (shown on candidates and holdings)
 Signs of last year's operating / investing / financing cash flow (Dickinson 2011):
@@ -170,15 +181,24 @@ conditions that still hold, so the user sees why nothing happened.
 - Personal data never enters the repo. Jack's own portfolio is a private reference only.
 
 ## 6. Build order (each phase ships through Claude Code with the v17.6 checks)
-| Phase | Task file | Gate to start the next |
-|---|---|---|
-| 0 Safety | v17.5, v17.6 | 5 consecutive clean daily runs |
-| 1 Data foundation | `v18.0-data-foundation.md` | New data passes the publication gate |
-| 2 Design system + copy file | `v18.1-design-system-and-copy.md` (can run beside phase 1) | Jack approves the look and the audited text |
-| 1b Report-text data | v18.2 (to be written) | Extraction accuracy check passes |
-| 3 Deck builder | v18.3 (to be written) | 3–5 of Jack's people finish a portfolio alone |
-| 4 오늘 screen + evening run | v18.4 (to be written) | 2 weeks of use, 0 wrong facts |
-| 5 News summaries | only after the Haiku/Sonnet blind test | Jack's decision |
+
+A **clean run** = a scheduled daily run that passes the publication gate and publishes, with the watchdog green and no
+manual fix. Tasks marked **BLOCKED** are not started, even when they are the lowest version not DONE, until Jack says
+"start vXX" in a session.
+
+| Phase | Task file | Starts when | Gate to move on |
+|---|---|---|---|
+| 0 Safety | v17.5, v17.6 | now | 5 consecutive clean runs after v17.6 merges |
+| 1 Data foundation | `v18.0-data-foundation.md` | phase-0 gate + Jack's "start" | New data passes the gate; thresholds approved |
+| 2 Design system + copy file | `v18.1-design-system-and-copy.md` | phase-0 gate + Jack's "start" (may run beside phase 1) | Jack approves the look and the reviewed text |
+| 1b Report-text data + theme tags | v18.2 (to be written) | after v18.0 | Extraction accuracy check passes |
+| 3 Deck builder | v18.3 (to be written) | phases 1, 1b, 2 done | 3–5 of Jack's people finish a portfolio alone |
+| 4 오늘 screen, news headlines, evening run | v18.4 (to be written) | phase 3 done | 2 weeks of use, 0 wrong facts |
+| 5 AI news summaries | only after the Haiku/Sonnet blind test | Jack's decision | — |
+
+The evening Korean run (approved by Jack, 2026-10-31) needs a change to the frozen v17.5 gate, which today requires the
+published `pxDate` to be before today. v18.4 must propose that change under **안전 규칙 변경**: publish today's close only
+from a final listing (after ~19:00 KST; start the schedule ~19:40 and verify), otherwise keep the morning data and log.
 
 Later, not now: watchlist with re-analysis triggers, tax inputs (realized US gains, ISA/연금), account types, English,
 second character, login.
