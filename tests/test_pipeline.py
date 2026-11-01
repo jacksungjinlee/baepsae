@@ -11,6 +11,7 @@ import collections
 import datetime as dt
 import json
 import math
+import re
 import os
 import sys
 
@@ -284,6 +285,35 @@ def test_pipeline_refuses_test_inputs_on_main(monkeypatch):
     monkeypatch.setenv("DART_MODE", "off")
     with pytest.raises(RuntimeError, match="main"):
         F.main()
+
+
+def test_sample_runs_only_as_dry_runs_off_main(monkeypatch):
+    # 표본 실행은 DART 호출을 아끼는 시험용 — main 에서도, 발행하는 실행에서도 안 돼요
+    monkeypatch.setenv("SAMPLE_KR", "400")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("DRY_RUN", "true")
+    with pytest.raises(RuntimeError, match="시험 실행"):
+        F.main()
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/claude/x")
+    monkeypatch.setenv("DRY_RUN", "false")
+    with pytest.raises(RuntimeError, match="시험 실행"):
+        F.main()
+    monkeypatch.setenv("SAMPLE_KR", "abc")
+    with pytest.raises(RuntimeError, match="정수"):
+        F.sample_size()
+
+
+def test_sample_keeps_must_haves_and_top_caps():
+    codes = [f"{i:05d}0" for i in range(1, 3000)] + list(F.MUST_KR) + list(F.SAMPLE_KEEP)
+    df = pd.DataFrame({"Code": codes, "Marcap": range(len(codes), 0, -1)})
+    got = set(F.sample_universe(df, 400)["Code"])
+    assert set(F.MUST_KR) <= got and set(F.SAMPLE_KEEP) <= got and len(got) <= 400 + len(F.MUST_KR) + len(F.SAMPLE_KEEP)
+
+
+def test_workflow_refuses_sample_on_main_and_outside_dry_runs():
+    text, wf = load_workflow()
+    assert "sample" in wf[True]["workflow_dispatch"]["inputs"] if True in wf else "sample" in wf["on"]["workflow_dispatch"]["inputs"]
+    assert '[ "$SAMPLE_KR" != "0" ]' in text and '[ "$DRY_RUN" != "true" ]' in text
 
 
 # ── v17.5: 공식 종가 · 시계열 자르기 ───────────────────────
@@ -592,17 +622,41 @@ def test_workflow_pins_runner_and_current_action_majors():
                                    "actions/cache/save@v6", "actions/upload-artifact@v7"])
 
 
-# ── 배당수익률: 모르면 빈 칸, DART 가 0 이라고 하면 0 (PR #4 리뷰 3번) ──────────
-def test_dart_dividend_zero_is_kept_and_dash_is_unknown():
-    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "0", "frmtrm": "0", "lwfr": "0"},
+# ── 배당: 모르면 빈 칸, 배당이 없으면 0 (PR #4 리뷰 3번 · v17.5.1 추가 6) ──────────
+# v17.5.1 정정: DART 배당 표의 '-' 는 '배당 없음'이에요. 삼성바이오로직스(배당한 적 없음)의 2025년 사업보고서가
+# 주당 현금배당금 '-', '-', '-' 로 나와요 (2026-11-01 확인). 예전 테스트는 '-' 를 '모름'으로 봐서 배당 안 하는 회사가
+# '–' 로 보였어요. '모름'은 표에 그 줄이 아예 없을 때예요.
+def test_dart_dividend_dash_means_no_dividend_and_missing_row_is_unknown():
+    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "-", "frmtrm": "-", "lwfr": "-"},
             {"stock_knd": "보통주", "se": "주당 현금배당금(원)", "thstrm": "-", "frmtrm": "-", "lwfr": "-"}]
-    assert F.parse_dart_dividend(rows) == {"dy": 0.0}
-    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "-"}]
-    assert "dy" not in F.parse_dart_dividend(rows)
+    assert F.parse_dart_dividend(rows) == {"dy": 0.0, "dps": 0.0, "dps3": [0.0, 0.0, 0.0]}
+    rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "0", "frmtrm": "0", "lwfr": "0"}]
+    assert F.parse_dart_dividend(rows) == {"dy": 0.0}               # 주당 배당금 줄이 없으면 그건 모름
+    assert F.parse_dart_dividend([]) == {}                            # 표가 없으면 둘 다 모름
     rows = [{"stock_knd": "보통주", "se": "현금배당수익률(%)", "thstrm": "2.35"},
             {"stock_knd": "보통주", "se": "주당 현금배당금(원)", "thstrm": "1,444", "frmtrm": "1,444", "lwfr": "1,444"}]
     got = F.parse_dart_dividend(rows)
     assert got["dy"] == 2.35 and got["dps"] == 1444
+
+
+def test_dart_dividend_first_payment_keeps_earlier_zero_years():
+    # 알테오젠 2025: 처음 배당 371원, 그 전 두 해는 '-' (배당 없음)
+    rows = [{"stock_knd": "보통주", "se": "주당 현금배당금(원)", "thstrm": "371", "frmtrm": "-", "lwfr": "-"},
+            {"stock_knd": "상환전환우선주", "se": "주당 현금배당금(원)", "thstrm": "999", "frmtrm": "-", "lwfr": "-"}]
+    assert F.parse_dart_dividend(rows) == {"dps": 371.0, "dps3": [371.0, 0.0, 0.0]}
+
+
+def test_dart_dividend_table_without_share_class_is_read():
+    # HLB 2025: 종류 칸이 '-' (종류 구분 없는 표) — 예전엔 '보통주'가 아니라며 건너뛰어 '모름'이 됐어요
+    rows = [{"stock_knd": "-", "se": "주당 현금배당금(원)", "thstrm": "-", "frmtrm": "-", "lwfr": "-"},
+            {"stock_knd": "-", "se": "현금배당수익률(%)", "thstrm": "-", "frmtrm": "-", "lwfr": "-"}]
+    assert F.parse_dart_dividend(rows) == {"dps": 0.0, "dps3": [0.0, 0.0, 0.0], "dy": 0.0}
+
+
+def test_dividend_cache_tag_changed_with_the_new_reading():
+    # 해석이 바뀌면 캐시에 남은 옛 해석을 쓰면 안 돼요 — 배당 항목만 새 태그로 다시 받아요
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert '"11011", "DIV2", parse_dart_dividend' in src and '"11011", "DIV", parse_dart_dividend' not in src
 
 
 def test_unknown_korean_dividend_yield_is_not_written_as_zero():
@@ -610,3 +664,145 @@ def test_unknown_korean_dividend_yield_is_not_written_as_zero():
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
     lines = [ln for ln in src.splitlines() if '"dy": round(dyv' in ln]
     assert len(lines) == 1 and "else None" in lines[0] and "else 0" not in lines[0], lines
+
+
+# ── v17.5.1: 설명 열 · d1 · val20 · etf · fy · idxHist ────────────────────────
+def test_description_uses_industry_and_products_columns():
+    # KRX-DESC: Sector = 소속부(코스피는 빈 칸), Industry = 업종, Products = 주요제품 (2026-11-01 확인)
+    dk = F.kr_desc_text("통신 및 방송 장비 제조업", "반도체 제조(메모리) 제품 등", "KOSPI", 1300.0)
+    assert dk == "통신 및 방송 장비 제조업 · 주요제품: 반도체 제조(메모리) 제품 등 · KOSPI 상장 · 시가총액 1,300.0조원"
+
+
+@pytest.mark.parametrize("bad", [None, float("nan"), "nan", "NaN", "None", "-", "－", "  "])
+def test_description_skips_blank_and_nan_parts(bad):
+    dk = F.kr_desc_text(bad, bad, bad, 0.5)
+    assert dk == "시가총액 5,000억원" and "nan" not in dk
+
+
+def test_description_never_shows_market_section_in_industry_slot():
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert 'r.get("Sector"' not in src          # 소속부(Sector)를 업종으로 읽던 줄이 없어야 해요
+
+
+def _listing(rows):
+    return pd.DataFrame(rows, columns=["Code", "Name", "Marcap", "Stocks", "Amount"])
+
+
+def test_d1_and_val20_from_previous_final_files():
+    cur = _listing([["005930", "삼성전자", 225000 * 100, 100, 9e11], ["999990", "신규", 30000 * 10, 10, 1e9]])
+    prev = _listing([["005930", "삼성전자", 232000 * 100, 100, 8e11], ["999990", "신규", 10000 * 10, 10, 1e9]])
+    older = [(D28 - dt.timedelta(days=i), _listing([["005930", "삼성전자", 230000 * 100, 100, 7e11]])) for i in range(9)]
+    d1, v20, cnt = F.kr_d1_val20(cur, [(D29, prev)] + older, prev_final=True)
+    assert d1["005930"] == round((225000 / 232000 - 1) * 100, 2)       # −3.02%
+    assert "999990" not in d1 and cnt["d1 범위 밖 → 빈 칸"] == 1        # +200% (신규 상장·분할) → 빈 칸
+    assert v20["005930"] == round((9e11 + 8e11 + 9 * 7e11) / 11 / 1e8, 1)
+    assert "999990" not in v20 and cnt["val20 날짜 부족 → 빈 칸"] == 1  # 이틀뿐
+
+
+def test_d1_is_blank_when_previous_file_is_not_final():
+    cur = _listing([["005930", "삼성전자", 225000 * 100, 100, 9e11]])
+    prev = _listing([["005930", "삼성전자", 232000 * 100, 100, 8e11]])
+    d1, _, _ = F.kr_d1_val20(cur, [(D29, prev)], prev_final=False)
+    assert d1 == {}
+
+
+def test_previous_session_must_match_the_kospi_calendar():
+    # 리뷰 1번: 10/29 파일이 없으면 10/28 파일이 '직전'으로 잡혀요 → KOSPI 의 직전 거래일(10/29)과 달라서 d1 을 비워요
+    idx = pd.to_datetime(["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"])
+    assert F.kr_prev_session(D30, idx) == D29
+    fetch_csv, commit_kst = sources({D28: "2026-10-28_1921"}, {D28: "1921"})
+    ss, notes, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert [d for d, _ in ss] == [D28] and final is True
+    assert F.prev_session_ok(ss, final, F.kr_prev_session(D30, idx)) is False
+    fetch_csv, commit_kst = sources({D29: "2026-10-29_1958", D28: "2026-10-28_1921"}, {D29: "1958", D28: "1921"})
+    ss, _, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert F.prev_session_ok(ss, final, D29) is True
+
+
+def test_recent_naver_bars_are_pinned_to_official_closes():
+    idx = pd.to_datetime(["2026-10-27", "2026-10-28", "2026-10-29"])
+    px = pd.Series([181400.0, 100.0, 200.0], index=idx)           # 10/27 네이버 181,400 (공식 174,300)
+    off = {pd.Timestamp("2026-10-27"): {"035420": 174300.0}, pd.Timestamp("2026-10-26"): {"035420": 1.0}}
+    got, n = F.pin_recent(px, off, "035420")
+    assert n == 1 and got.loc["2026-10-27"] == 174300.0 and px.loc["2026-10-27"] == 181400.0   # 원본은 그대로, 없는 날은 안 넣어요
+
+
+def test_word_cut_never_leaves_a_fragment_like_nan():
+    text = "Leading maker of advanced nanometer chips and null-modem cables for industry."
+    cut = F.cut_words(text, 31)
+    assert cut == "Leading maker of advanced" and not re.search(r"(?<![A-Za-z])nan(?![A-Za-z])", cut)
+    assert F.cut_words("short text", 400) == "short text"
+
+
+def test_us_d1_only_when_last_bar_is_the_us_date():
+    idx = pd.to_datetime(["2026-10-29", "2026-10-30"])
+    px = pd.Series([100.0, 103.0], index=idx)
+    assert F.us_d1(px, D30) == 3.0
+    assert F.us_d1(px, dt.date(2026, 10, 31)) is None          # 거래 정지로 낡은 봉
+    assert F.us_d1(px.iloc[:1], D30) is None
+
+
+def test_yahoo_quote_type_safety_net_marks_unlisted_etfs():
+    out = [{"t": "NEWETF", "etf": False}, {"t": "AAPL", "etf": False}]
+    cache = {"NEWETF": {"info": {"quoteType": "ETF"}}, "AAPL": {"info": {"quoteType": "EQUITY"}}}
+    assert F.etf_from_quote_type(out, cache) == ["NEWETF"]
+    assert out[0]["etf"] is True and out[1]["etf"] is False
+
+
+def test_description_ignores_nan_market_cap():
+    assert F.kr_desc_text("반도체 제조업", "", "KOSPI", float("nan")) == "반도체 제조업 · KOSPI 상장"
+
+
+def test_report_year_follows_the_fallback_year(monkeypatch, tmp_path):
+    # 올해 사업보고서가 없으면 작년 것을 쓰고, 배당도 같은 해에서 — fy 는 그 해여야 해요
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {"005930": "00126380"})
+    monkeypatch.setattr(F, "dart_quarter", lambda *a, **k: None)
+    monkeypatch.setattr(F, "dart_financials", lambda client, corp, yr: {"debt": 30.0} if yr == 2024 else {})
+    seen = []
+    monkeypatch.setattr(F, "dart_dividend", lambda client, corp, yr: seen.append(yr) or {"dps": 1444.0})
+    kr = [{"t": "005930", "cap": 1300.0}]
+    F.enrich_with_dart(kr, c)
+    assert kr[0]["fy"] == 2024 and seen == [2024] and kr[0]["dps"] == 1444.0
+
+
+def test_recent_sessions_skip_holidays_and_check_previous_final():
+    files = {D29: "2026-10-29_1958", D28: "2026-10-28_1921"}
+    fetch_csv, commit_kst = sources(files, {D29: "1958", D28: "1921"})
+    ss, notes, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert [d for d, _ in ss] == [D29, D28] and final is True
+    fetch_csv, commit_kst = sources({D29: "2026-10-29_1319"}, {D29: "1319"})
+    ss, notes, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert final is False and any("최종본이 아니라" in n for n in notes)
+    fetch_csv, commit_kst = sources({D29: "2026-10-29_0544"}, {D29: "0544"})   # 장 전 파일(시총 빈 칸)은 거래일로 안 봐요
+    ss, _, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert ss == [] and final is False
+
+
+def test_every_extra_us_ticker_has_an_etf_decision():
+    assert F.US_ETFS | F.US_NOT_ETF == set(F.EXTRA_US)
+    assert {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP"} <= F.US_NOT_ETF
+    assert {"SPY", "QQQ", "SCHD", "TLT", "GLD", "JEPI"} <= F.US_ETFS
+
+
+def test_report_year_reaches_corp_json():
+    s = {"t": "005930", "nk": "삼성전자", "cls": "kr", "price": 225000, "s": "semi", "fy": 2025, "dps": 0.0}
+    corp = F.build_corp([s], {}, "2026-11-02")
+    c = corp["companies"][0]
+    assert c["fy"] == 2025 and c["dps"] == 0.0
+
+
+def test_index_history_is_three_years_ending_at_its_own_date():
+    idx = pd.date_range("2022-06-01", "2026-10-30", freq="B")
+    ser = pd.Series(range(len(idx)), index=idx, dtype=float) + 2000
+    h = F.idx_hist(ser)
+    assert h["asOf"] == "2026-10-30" and h["rows"][-1][0] == "2026-10-30"
+    assert h["rows"][0][0] > "2023-10-30" and len(h["rows"]) > 700
+    assert all(isinstance(r[1], float) for r in h["rows"][:3])
+
+
+def test_series_stats_d1_is_last_over_previous():
+    idx = pd.date_range("2026-01-01", periods=80, freq="B")
+    px = pd.Series([100.0] * 79 + [103.0], index=idx)
+    bench = px.pct_change().dropna()
+    assert F.series_stats(px, bench, 0.03)["d1"] == 3.0
