@@ -84,15 +84,24 @@ def test_main_address_only_points_to_2_0_when_the_real_fields_are_live():
     """머지 문(리뷰 제안): 메인 주소가 app.html 로 가려면 저장소의 실제 데이터가 v17.5 형식이고 v17.5.1 항목이 있어야 해요.
     없으면 첫 방문자 모두가 '데이터를 불러오지 못했어요'(옛 형식)나 '준비 중'(항목 없음)만 보게 돼요.
     매일 실행이 v17.5.1 데이터를 발행하기 전에는 이 테스트가 실패해서, 메인 주소 전환을 머지할 수 없어요."""
-    import json
     if "./app.html" not in read("index.html"):
         return
+    missing = real_data_missing()
+    assert not missing, "메인 주소를 2.0 으로 돌리기 전에 실제 데이터에 필요한 항목: " + ", ".join(missing)
+
+
+V175_FORMAT = "pxDate·publishedAt (v17.5 형식)"
+
+
+def real_data_missing():
+    """저장소의 실제 데이터(data·corp·macro.json)에 2.0 이 쓰는 v17.5 형식·v17.5.1 항목 중 빠진 것. smoke_launch.py 도 써요."""
+    import json
     data, corp = json.loads(read("data.json")), json.loads(read("corp.json"))
     macro = json.loads(read("macro.json"))
     kr = [s for s in data.get("stocks", []) if s.get("cls") == "kr"]
     missing = []
     if not (data.get("pxDate") and data.get("publishedAt") and corp.get("pxDate") and corp.get("publishedAt")):
-        missing.append("pxDate·publishedAt (v17.5 형식)")
+        missing.append(V175_FORMAT)
     if not any("ind" in s for s in kr):
         missing.append("ind")
     if not any("val20" in s for s in kr):
@@ -105,4 +114,4 @@ def test_main_address_only_points_to_2_0_when_the_real_fields_are_live():
         missing.append("fy")
     if not macro.get("idxHist"):
         missing.append("idxHist")
-    assert not missing, "메인 주소를 2.0 으로 돌리기 전에 실제 데이터에 필요한 항목: " + ", ".join(missing)
+    return missing

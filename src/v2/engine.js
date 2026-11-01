@@ -41,8 +41,12 @@ export const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : nul
 export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0 && !NOT_GROUPS.includes(s.ind);
 export const isFin = (s) => hasGroup(s) && FINANCIAL_INDS.includes(s.ind);
 export const isPreferred = (s) => s.cls === "kr" && typeof s.t === "string" && !s.t.endsWith("0");  // KRX: common shares end in 0
+// US preferred and depositary shares come in through the NASDAQ list looking like companies (STRC, a variable-rate
+// preferred filed under software with a 12% yield, and GOOGM·GOOGN on 2026-11-02). Yahoo gives every common share a
+// market cap and these none, so a US stock without a market cap is treated like a preferred share: never ranked.
+export const usWithoutCap = (s) => s.cls === "us" && !(num(s.cap) > 0);
 export const isStockLike = (s) => (s.cls === "kr" || s.cls === "us") && !s.fund && s.etf !== true;
-export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && num(s.price) > 0;
+export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && !usWithoutCap(s) && num(s.price) > 0;
 
 // ---------------- settings ----------------
 export const CARDS = [

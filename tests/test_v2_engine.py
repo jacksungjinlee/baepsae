@@ -75,6 +75,17 @@ def test_etfs_funds_bonds_metals_and_preferred_are_never_ranked():
     assert got["pref"] and got["prefK"] and not got["common"] and not got["newCommon"]
 
 
+def test_us_preferred_and_depositary_shares_without_a_market_cap_are_never_ranked():
+    # 2026-11-02 실제 데이터: STRC(변동금리 우선주, 소프트웨어 · 배당 12%)·GOOGM·GOOGN(예탁증서)은 야후에 시가총액이 없어요
+    stocks = [us("AAPL", dy=0.5), us("STRC", cap=None, dy=12.1, ind="software", indName="소프트웨어"),
+              us("GOOGM", cap=None, dy=3.0), us("ZERO", cap=0, dy=5.0), kr("000010", cap=5.0)]
+    got = run(SET + "const r = E.screen(stocks, S({ mix: 'k55', points: { div: 5 }, strict: 'loose' }));"
+              "out = { us: r.markets.us.survivors.map(x => x.t), kr: r.markets.kr.survivors.map(x => x.t),"
+              " uni: stocks.filter(E.inUniverse).map(s => s.t) };", stocks=stocks)
+    assert got["us"] == ["AAPL"] and got["kr"] == ["000010"], got
+    assert got["uni"] == ["AAPL", "000010"], got
+
+
 # ── 빈 칸은 빠지고 개수가 보여요 ──
 def test_blank_on_a_card_with_points_is_left_out_and_counted():
     stocks = [kr("000010"), kr("000020", roe=None), kr("000030", g3=None), kr("000040", val20=None)]

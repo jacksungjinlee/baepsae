@@ -8,7 +8,8 @@
 - '/' (index.html) → app.html 로 가요 (예전처럼 baepsae.html 이 아니에요)
 - 저장한 덱이 없는 방문자는 덱 짜기부터, 저장한 덱이 있는 방문자는 오늘부터 봐요
 - 머리말에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요
-- 저장소의 지금 데이터(v17.5 형식 전)에서는 2.0 이 '불러오지 못했어요'를 보여요 (예시 데이터를 실제처럼 보이지 않음)
+- 저장소의 지금 데이터로도 열어봐요. 첫 화면은 그 데이터의 단계에 맞아야 해요 (예시 데이터를 실제처럼 보이지 않음):
+  v17.5 형식 전 → '불러오지 못했어요' · v17.5 형식인데 v17.5.1 항목 없음 → 덱 짜기는 '준비 중'만 · 항목이 다 있으면 덱 짜기가 열려요
 - 페이지 오류 0건, app.html 에서 다른 사이트 요청 0건 (GoatCounter 는 시험에서 꺼요: ?dev=1 과 같은 localStorage 표시)
 """
 import argparse
@@ -26,9 +27,15 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import copy_strings  # noqa: E402
+from test_launch import V175_FORMAT, real_data_missing  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 C, _ = copy_strings()
+# 저장소의 지금 데이터가 어느 단계인지에 따라 2.0 첫 화면이 달라요 (머지 문 테스트와 같은 판단):
+#   old = v17.5 형식 전 → '불러오지 못했어요' · fields = v17.5 형식, v17.5.1 항목 없음 → '준비 중' · live = 덱 짜기가 열려요
+_REPO_MISSING = real_data_missing()
+REPO_STATE = "old" if V175_FORMAT in _REPO_MISSING else ("fields" if _REPO_MISSING else "live")
+REPO_LABEL = {"old": "v17.5 형식 전", "fields": "v17.5.1 항목 없음", "live": "v17.5.1 항목 있음"}[REPO_STATE]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
 SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og.png", "icon-192.png", "icon-512.png"] + \
@@ -101,7 +108,7 @@ def main():
             base = f"http://127.0.0.1:{srv.server_address[1]}"
             for width in (320, 390):
                 tag = f"{variant}-{width}"
-                W = f"[{'v17.5.1 데이터' if variant == 'fixtures' else '저장소 지금 데이터'} · {width}px] "
+                W = f"[{'v17.5.1 데이터' if variant == 'fixtures' else f'저장소 지금 데이터({REPO_LABEL})'} · {width}px] "
 
                 def context(saved=False):
                     ctx = browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR",
@@ -139,11 +146,20 @@ def main():
                 def no_deck_lands_on_build():
                     page.get_by_text(C["build"]["title"]).first.wait_for(state="visible")
                     assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
-                    if variant == "fixtures":
+                    state = "live" if variant == "fixtures" else REPO_STATE
+                    if state == "live":                     # v17.5 형식 + v17.5.1 항목: 덱 짜기가 그대로 열려요
                         page.get_by_text(C["build"]["s0"]["title"]).wait_for(state="visible")
                         assert page.locator("[data-deck]").count() == 9
-                    else:
-                        page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")   # v17.5 형식 전 데이터는 받지 않아요
+                        assert page.locator('[data-ui-v2="build-not-ready"]').count() == 0
+                        assert page.get_by_text(C["app"]["loadFail"]).count() == 0
+                    elif state == "fields":                 # v17.5 형식인데 v17.5.1 항목이 없음: '준비 중'만, 순위·비중 없음
+                        page.locator('[data-ui-v2="build-not-ready"]').wait_for(state="visible")
+                        page.get_by_text(C["app"]["pending"]).first.wait_for(state="visible")
+                        assert page.locator("[data-deck]").count() == 0 and page.locator("[data-cand]").count() == 0
+                        assert page.get_by_text(C["app"]["loadFail"]).count() == 0
+                    else:                                   # v17.5 형식 전 데이터는 받지 않아요
+                        page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")
+                        assert page.locator("[data-deck]").count() == 0
                     sw = page.evaluate("document.documentElement.scrollWidth")
                     assert sw <= width, f"가로 스크롤 {sw}"
                     if width == 320 and variant == "fixtures":
