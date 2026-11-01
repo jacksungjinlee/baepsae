@@ -32,30 +32,44 @@ def test_no_banned_words_in_build():
     assert not found, f"금지어가 들어 있어요: {found}"
 
 
-# ── 뱁새 2.0 미리 보기 (app.html, v18.3) ──
-# 화면에 그려지는 글은 smoke_v2.py 가 휴대폰 크기로 열어서 다시 봐요 (nan·NaN·None·null·undefined 낱말 포함).
-WHOLE_BAD = re.compile(r"\b(nan|NaN|None|null|undefined)\b")
+# ── 뱁새 2.0 (app.html · app-preview.html, v18.3) ──
+# app.html 은 아직 커밋하지 않아서 지금 소스로 임시 빌드해서 봐요 (tests/buildapp.py).
+# 화면에 그려지는 글은 smoke_v2.py · smoke_preview.py 가 휴대폰 크기로 열어서 다시 봐요.
+# \b 는 'NaN원' 같은 글을 놓쳐요: 앞뒤가 영문자가 아닐 때만 낱말로 봐요.
+WHOLE_BAD = re.compile(r"(?<![A-Za-z])(nan|NaN|None|null|undefined)(?![A-Za-z])")
+V2_PAGES = ["app.html", "app-preview.html"]
 
 
-def app_html():
-    with open(os.path.join(ROOT, "app.html"), encoding="utf-8") as f:
-        return f.read()
+def page(name):
+    from buildapp import built
+    return built(name)
+
+
+def test_null_word_pattern_catches_glued_words():
+    assert WHOLE_BAD.search("NaN원") and WHOLE_BAD.search("±NaN만원") and WHOLE_BAD.search("값 null")
+    assert not WHOLE_BAD.search("Financial Nancy annual")
 
 
 def test_no_emoji_in_app():
-    hits = EMOJI.findall(app_html())
-    assert not hits, f"app.html 이모지 {len(hits)}개: {sorted(set(hits))}"
+    for name in V2_PAGES:
+        hits = EMOJI.findall(page(name))
+        assert not hits, f"{name} 이모지 {len(hits)}개: {sorted(set(hits))}"
 
 
 def test_no_banned_words_in_app():
-    html = app_html()
-    found = {w: html.count(w) for w in banned_words() if w in html}
-    assert not found, f"app.html 에 금지어가 들어 있어요: {found}"
+    for name in V2_PAGES:
+        html = page(name)
+        found = {w: html.count(w) for w in banned_words() if w in html}
+        assert not found, f"{name} 에 금지어가 들어 있어요: {found}"
 
 
 def test_app_visible_html_has_no_null_words():
     # 스크립트 밖(제목·머리말)에 보이는 글, 그리고 화면 문구 파일의 모든 문장
-    html = re.sub(r"<script>.*?</script>", "", app_html(), flags=re.S)
+    for name in V2_PAGES:
+        html = re.sub(r"<script>.*?</script>", "", page(name), flags=re.S)
+        html = re.sub(r"<style>.*?</style>", "", html, flags=re.S)
+        assert not WHOLE_BAD.search(re.sub(r"<[^>]+>", " ", html)), name
+    html = re.sub(r"<script>.*?</script>", "", page("app.html"), flags=re.S)
     html = re.sub(r"<style>.*?</style>", "", html, flags=re.S)
     text = re.sub(r"<[^>]+>", " ", html)
     assert not WHOLE_BAD.search(text), WHOLE_BAD.findall(text)

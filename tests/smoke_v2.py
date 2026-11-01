@@ -32,14 +32,17 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
+from buildapp import built_dir  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
-SITE_FILES = ["app.html", "baepsae.html", "sw.js", "icon-192.png"] + [f"baepi-{i}.png" for i in range(1, 10)]
+SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png"] + [f"baepi-{i}.png" for i in range(1, 10)]   # app.html 은 지금 소스로 빌드해요
 DATA_FILES = ["data.json", "corp.json", "macro.json"]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
-WHOLE_BAD = re.compile(r"\b(nan|NaN|None|null|undefined)\b")
+WHOLE_BAD = re.compile(r"(?<![A-Za-z])(nan|NaN|None|null|undefined)(?![A-Za-z])")   # \b 는 'NaN원'을 놓쳐요
+SLOT_LEFT = re.compile(r"\{\w+\}")                                                        # 채우지 못한 {자리}
+PART_C = ["점검해 드릴", "매일 이 규칙으로"]                                                  # Part C 전에는 약속하지 않아요
 
 C, _ = copy_strings()
 LOAD_FAIL = C["app"]["loadFail"]
@@ -67,6 +70,7 @@ def build_site(files, raw=None, drop=()):
     site = tempfile.mkdtemp(prefix="baepsae-v2-")
     for f in SITE_FILES:
         shutil.copy(os.path.join(ROOT, f), site)
+    shutil.copy(os.path.join(built_dir(), "app.html"), site)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(site, "fonts"))
     for name, obj in files.items():
         if name in drop:
@@ -155,6 +159,10 @@ class Runner:
         body = page.locator("body").inner_text()
         bad = WHOLE_BAD.findall(body)
         assert not bad, f"화면에 nan·null 같은 낱말: {bad}"
+        left = SLOT_LEFT.findall(body + " ".join(got))
+        assert not left, f"채우지 못한 자리: {left}"
+        promise = [w for w in PART_C if w in body]
+        assert not promise, f"Part C 전인데 매일 점검을 약속해요: {promise}"
 
     def unnamed(self, t):
         for n in self.names:
@@ -289,9 +297,14 @@ def scene_normal(R, files, width):
         see(page, "종가와 환율")
         rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
         assert rules.count() == 6
-        rules.first.locator("button").first.click()
+        for i in range(rules.count()):
+            rules.nth(i).locator("button").first.click()
         page.locator("[data-rules-for] [data-check='pending']").first.wait_for(state="visible")
-        assert page.locator("[data-rules-for] [data-check='checked']").count() >= 1
+        checked = page.locator("[data-rules-for] [data-check='checked']")
+        assert checked.count() >= 1
+        assert page.locator("[data-ui-v2='rule-line'][data-icon='check']").count() == 0, "매일 점검 전인데 초록 확인 표시가 있어요"
+        for i in range(checked.count()):
+            assert re.search(r"\d", checked.nth(i).inner_text()), f"숫자 없는 확인 규칙: {checked.nth(i).inner_text()!r}"
         R.collect(page)
         no_hscroll(page, width)
     R.check(page, S, "시작 덱(배당 생활비)으로 끝까지: 기준 → 빼기 → 조건 → 후보 6개 → 매수 계획·규칙", from_starting_deck)
@@ -300,6 +313,18 @@ def scene_normal(R, files, width):
         action(page).click()
         see(page, C["plan"]["sheetTitle"])
         R.collect(page)
+        sheet = page.locator('[data-ui-v2="record-form"]')
+        date = sheet.locator('input[type="date"]')
+        date.fill("2099-01-02")                                       # 미래 날짜는 기록하지 않아요
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        assert date.get_attribute("aria-invalid") == "true" and page.get_by_text(C["plan"]["done"]).count() == 0
+        date.fill("")
+        qty = sheet.locator("[data-record] input").first
+        qty.fill("1.5")                                               # 소수 주식도 받지 않아요
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        assert qty.get_attribute("aria-invalid") == "true" and page.get_by_text(C["plan"]["done"]).count() == 0
+        assert page.evaluate("localStorage.getItem('baepsae2.v1')") is None, "틀린 입력인데 저장했어요"
+        qty.fill("")
         page.get_by_role("button", name=C["plan"]["save"]).click()
         see(page, C["plan"]["done"])
         R.collect(page)
@@ -361,11 +386,22 @@ def scene_normal(R, files, width):
         assert page.get_by_role("switch", name=C["build"]["s3"]["switches"]["holding"]["name"]).get_attribute("aria-checked") == "true"
         click_next(page)
         page.get_by_role("radio", name="한국만").click()
+        grid = page.locator('[data-ui-v2="choice-grid"] button')
+        hs = [grid.nth(i).bounding_box()["height"] for i in range(grid.count())]
+        assert grid.count() == 5 and max(hs) <= 46, f"한국 : 미국 버튼이 줄을 바꿔요: {hs}"
         page.get_by_role("button", name="+1,000만").first.click()
+        pin_box = page.locator('[data-ui-v2="pinned"] input')
+        pin_box.fill("005935")                                        # 우선주: 순위에는 없지만 꼭 담을 수 있어요
+        page.get_by_role("button", name="삼성전자우 담기").click()
+        see(page, C["build"]["s4"]["fixed"])
         R.collect(page)
         click_next(page)
         see(page, C["pick"]["title"])
         assert page.locator("section[data-market='us']").count() == 0
+        pinned = page.locator("[data-pinned='005935']")
+        pinned.wait_for(state="visible")
+        assert C["pick"]["unverified"] in pinned.inner_text() and C["build"]["s4"]["fixed"] in pinned.inner_text()
+        assert page.locator("[data-cand][data-picked='1']").count() == 5
         # 빼고 넣기: 하나 빼면 버튼이 꺼지고, 다시 넣으면 켜져요
         first = page.locator("[data-cand][data-picked='1']").first
         t = first.get_attribute("data-cand")
@@ -390,14 +426,12 @@ def scene_normal(R, files, width):
             if dec.is_enabled():
                 dec.click()
         page.locator('[data-ui="segmented"][aria-label="%s"]' % C["build"]["s4"]["maxLabel"]).get_by_role("radio", name="10%").click()
-        click_next(page)
-        click_next(page)
         page.locator('[data-ui-v2="clash"]').wait_for(state="visible")
         txt = page.locator('[data-ui-v2="clash"]').inner_text()
         assert "종목 수" in txt and "한 종목 최대 10%" in txt, txt
-        assert action(page).count() == 0, "막혔는데 샀어요 버튼이 있어요"
+        assert not action(page).is_enabled() and action(page).inner_text() == C["build"]["lowerBtn"], "막혔는데 후보 고르기로 갈 수 있어요"
         R.collect(page)
-    R.check(page, S, "지킬 수 없는 설정(5종목 × 최대 10%) → 막고 부딪히는 조건을 보여요", infeasible)
+    R.check(page, S, "지킬 수 없는 설정(5종목 × 최대 10%) → 조건 단계에서 막고 부딪히는 조건을 보여요", infeasible)
     ctx.close()
     srv.shutdown()
 
@@ -473,7 +507,7 @@ def scene_us_date(R, files, width):
     def run():
         wait_ready(page)
         tab(page, C["app"]["tabs"]["build"])
-        page.locator('[data-deck="krUs"]').click()
+        page.locator('[data-deck="quality"]').click()          # 한국 7 : 미국 3 · 미국 종목이 들어가요
         click_next(page)
         click_next(page)
         page.get_by_role("button", name="+1,000만").first.click()

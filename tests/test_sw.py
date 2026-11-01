@@ -87,5 +87,5 @@ def test_sw_keeps_one_cache_and_mentions_app_html():
     src = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
     assert 'const CACHE = "baepsae-v17-5";' in src            # 캐시 이름은 그대로 (smoke_app 의 서비스워커 장면)
     assert "styleguide" not in src
-    tpl = open(os.path.join(ROOT, "src", "v2", "template.html"), encoding="utf-8").read()
-    assert 'navigator.serviceWorker.register("./sw.js")' in tpl
+    sh = open(os.path.join(ROOT, "build-app.sh"), encoding="utf-8").read()   # app.html 만 등록해요 (미리 보기는 안 해요)
+    assert 'navigator.serviceWorker.register("./sw.js")' in sh
