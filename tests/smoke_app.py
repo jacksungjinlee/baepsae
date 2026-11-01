@@ -485,6 +485,65 @@ def scene_no_risk_holding(R, files):
     ctx.close(); srv.shutdown()
 
 
+# B안 (Jack 2026-11-01): NaN 고친 뒤 처음 켜지는 판정·조언·예측 문구는 v18 전까지 보이지 않아야 해요
+HIDDEN_B = ["기대 +", "적정 기대수익", "세후 기대수익", "기대수익(연", "기대수익률", "E(r)", "복리 수익률", "위험 대비 효율", "포트폴리오 건강 점수", "베타가 목표보다", "변동성이 상한을 넘어요",
+            "비중만 옮겨서 베타", "늘려 출렁임 낮추기", "모든 계기가 초록불이에요", "남은 예산이 맞춰야 할", "남은 예산만으론",
+            "닿을 수 있어요", "이럴 바엔 인덱스 펀드", "비중을 줄이는 효과가 가장 커요", "더 나눠 담으면", "내 그릇에 맞는 베타를 지켰어요",
+            "목표까지 갈 수 있을까요", "내 수익은 어디서 나오나요", "원금을 지킬 수 있을까", "NaN"]
+
+
+def hidden_b_shown(body):
+    """보이면 안 되는 문구와 그 앞뒤 글자 (어디서 나왔는지 바로 알 수 있게)"""
+    out = []
+    for h in HIDDEN_B:
+        i = body.find(h)
+        if i >= 0:
+            out.append(f"{h} ← …{body[max(0, i - 30):i + len(h) + 30]}…".replace("\n", " / "))
+    return out
+
+
+def scene_option_b(R, files):
+    """균형형 프로필 + KODEX 200 만 담기: 예전 계산이면 '변동성 상한 초과' 경고와 '현금 늘리기' 카드가 떠요.
+    B안에서는 위험 수치(보통 해 ±…)만 보이고, 판정·조언·기대수익·건강 점수는 어디에도 없어야 해요."""
+    have = {s.get("t") for s in files["data.json"]["stocks"]}
+    hold = [t for t in ("069500", "005930") if t in have][:1]
+    profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
+               "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile,
+            "holdings": [{"t": hold[0], "mw": 900}]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sob", "name": "B안 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_sob": json.dumps(slot, ensure_ascii=False)}
+    srv, ctx, page, _ = R.open(build_site(files), local=local)
+
+    def build():
+        assert hold, "시험할 종목이 없어요"
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("B안 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        page.wait_for_timeout(500)
+        body = page.locator("body").inner_text()
+        shown = hidden_b_shown(body)
+        assert not shown, f"② 구성에 보이면 안 되는 문구: {shown}"
+        line = page.evaluate(SMALLEST, ["보통 해 ±", None])
+        assert line and "기대" not in line and "NaN" not in line, f"위험 줄: {line!r}"
+    R.check(page, "B안", "② 구성: '보통 해 ±…' 만, 판정·조언·기대수익·건강 점수 없음", build)
+
+    def diag():
+        page.get_by_text("③ 진단", exact=False).first.click()
+        see(page, "내가 잘하고 있는 것")
+        for title in ("내가 잘하고 있는 것", "내 위험은 보상받고 있나요?", "나는 무엇을 들고 있나요?", "폭락하면 얼마나 잃나요?",
+                      "시장을 이길 수 있을까요?", "직접 실험해볼까요?"):
+            page.get_by_text(title, exact=False).first.click()     # 접힌 섹션을 모두 열어요
+        page.wait_for_timeout(500)
+        page.get_by_text("종목별로 뜯어보기", exact=False).first.click()   # 종목별 줄도 열어요 (예전엔 '적정 기대수익 x%')
+        page.wait_for_timeout(500)
+        body = page.locator("body").inner_text()
+        shown = hidden_b_shown(body)
+        assert not shown, f"③ 진단에 보이면 안 되는 문구: {shown}"
+    R.check(page, "B안", "③ 진단: 섹션을 다 열어도 판정·조언·기대수익·건강 점수 없음", diag)
+    ctx.close(); srv.shutdown()
+
+
 def scene_rates_fail(R, files):
     """macro.json 은 읽히는데 금리(ECOS) 부분만 빈 날: 금리 칸에만 '금리 데이터를 불러오지 못했어요' (영어 모드는 영어)."""
     # 비교 기준: 커브가 있으면 그 칸에 실패 문구가 없어야 해요 (같은 장면이 언제나 실패 문구만 보여 주는 건 아닌지)
@@ -565,7 +624,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·서비스워커)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·서비스워커)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -581,7 +640,7 @@ def main():
                   ("NaN", lambda: scene_nan(R, fresh)),
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)),
+                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:

@@ -938,6 +938,12 @@ const fBeta = (v) => (typeof v === "number" ? v.toFixed(2) : "–");
 // 위험 계산에 필요한 베타·변동성이 없는 종목 (사용자가 직접 넣으면 그때부터 계산에 들어가요)
 const lacksRisk = (s) => !s || typeof s.beta !== "number" || typeof s.vol !== "number";
 const NO_RISK_MAX_PCT = 50;   // 자료 없는 종목이 투자금의 이 비율을 넘으면 위험 수치를 보여 주지 않아요 (Jack, 2026-11-01)
+// v17.5 (Jack 결정 2026-11-01, B안): 위험 수치는 진짜 숫자로 보여 주되, 아래 세 가지는 v18 개편 전까지 꺼 둬요.
+// NaN 버그(v15.3~) 때문에 한 번도 제대로 켜진 적이 없는 기능들이에요 — 지금 시장 변동성(36%)에서는 서로 어긋나고,
+// 일부 문장은 조언·예측처럼 읽혀요 (docs: PR #4 의 '다시 켜지는 문구' 목록).
+const SHOW_VERDICTS = false;  // β·σ 초록/빨강 판정, β·σ 경고, 베타·현금 고치기 카드, 조언처럼 읽히는 문장
+const SHOW_SCORE = false;     // 건강 점수 (예전엔 버그로 64점이 최대)
+const SHOW_ER = false;        // 기대수익·연복리·샤프 등 예측처럼 읽히는 숫자 전부
 const fVol = (v) => (typeof v === "number" ? v + "%" : "–");
 const fmtWon = (v) => "₩" + Math.round(v).toLocaleString("ko-KR");
 const fmtMw = (v, lang) => {
@@ -1363,8 +1369,8 @@ function Rail({ emoji, label, valueLabel, value, min, max, tMin, tMax, ok, onExp
           <span style={{ fontSize: 10, color: C.faint, background: C.bg, borderRadius: 999, width: 15, height: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>?</span>
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 800, color: ok ? C.ink : C.coral }}>{valueLabel}</span>
-          <Chip color={ok ? C.teal : C.coral} soft={ok ? C.tealSoft : C.coralSoft}>{ok ? "" : ""}</Chip>
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: ok === null || ok ? C.ink : C.coral }}>{valueLabel}</span>
+          {ok !== null && <Chip color={ok ? C.teal : C.coral} soft={ok ? C.tealSoft : C.coralSoft}>{ok ? "" : ""}</Chip>}
         </div>
       </div>
       <div style={{ position: "relative", height: 20 }}>
@@ -1376,7 +1382,7 @@ function Rail({ emoji, label, valueLabel, value, min, max, tMin, tMax, ok, onExp
         {extraDot != null && (
           <div title={extraLabel} style={{ position: "absolute", top: 3, left: "calc(" + p(extraDot) + "% - 7px)", width: 14, height: 14, borderRadius: "50%", background: "#fff", border: "2.5px dashed " + (danger ? C.coral : C.sand), transition: "left .3s ease" }} />
         )}
-        <div style={{ position: "absolute", top: 1, left: "calc(" + p(value) + "% - 9px)", width: 18, height: 18, background: ok ? C.blue : C.coral, borderRadius: "50%", border: "3px solid #fff", boxShadow: "0 1px 4px rgba(11,34,57,0.25)", transition: "left .3s ease" }} />
+        <div style={{ position: "absolute", top: 1, left: "calc(" + p(value) + "% - 9px)", width: 18, height: 18, background: ok === null ? C.sub : ok ? C.blue : C.coral, borderRadius: "50%", border: "3px solid #fff", boxShadow: "0 1px 4px rgba(11,34,57,0.25)", transition: "left .3s ease" }} />
       </div>
     </div>
   );
@@ -2037,17 +2043,17 @@ function Dashboard({ lang, t, metrics, profile, setExplain }) {
         <Sub>{t("dashSub")}</Sub>
       </div>
       <Rail emoji="" label={t("railBeta")} value={metrics.beta} valueLabel={"β " + num(metrics.beta)} min={0} max={2}
-        tMin={p.targetBetaMin} tMax={p.targetBetaMax} ok={railsBase.beta} onExplain={() => setExplain("beta")}
-        extraDot={req} extraLabel={t("railRemaining")} danger={impossible} band={0.15} />
+        tMin={p.targetBetaMin} tMax={p.targetBetaMax} ok={SHOW_VERDICTS ? railsBase.beta : null} onExplain={() => setExplain("beta")}
+        extraDot={SHOW_VERDICTS ? req : null} extraLabel={t("railRemaining")} danger={impossible} band={0.15} />
       <div style={{ fontSize: 10.5, color: C.faint, padding: "5px 0 0" }}>{t("betaBand")}</div>
-      {req != null && (
+      {SHOW_VERDICTS && req != null && (
         <div style={{ fontSize: 11, color: impossible ? C.coral : C.sub, padding: "6px 0 0", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 11, height: 11, borderRadius: "50%", border: "2px dashed " + (impossible ? C.coral : C.sand), display: "inline-block", flexShrink: 0 }} />
           {impossible ? t("railImpossible") : t("railRemaining") + " ≈ " + num(req)}
         </div>
       )}
       <Rail emoji="" label={t("railVol")} value={metrics.volP} valueLabel={pct(metrics.volP)} min={0} max={50}
-        tMin={0} tMax={p.targetVolMaxPct} ok={metrics.volP <= p.targetVolMaxPct + 0.01} onExplain={() => setExplain("vol")} />
+        tMin={0} tMax={p.targetVolMaxPct} ok={SHOW_VERDICTS ? metrics.volP <= p.targetVolMaxPct + 0.01 : null} onExplain={() => setExplain("vol")} />
       <Rail emoji="" label={t("railEffn")} value={metrics.effN} valueLabel={num(metrics.effN, 1)} min={0} max={20}
         tMin={p.stocksMin} tMax={20} ok={metrics.effN >= p.stocksMin * 0.75} onExplain={() => setExplain("effn")} />
       <Rail emoji="" label={t("railSector")} value={metrics.maxSectorW} valueLabel={pct(metrics.maxSectorW, 0)} min={0} max={100}
@@ -2071,9 +2077,11 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
   if (!profile.ready || metrics.empty) return null;
   const w = [];
   if (metrics.overBudget) w.push({ sev: 2, msg: t("wOverBudget") });
-  if (metrics.beta > profile.targetBetaMax + 0.001) w.push({ sev: 2, msg: t("wBetaHigh") + ` (β ${num(metrics.beta)} > ${profile.targetBetaMax.toFixed(1)})` });
-  else if (metrics.beta < profile.targetBetaMin - 0.001 && metrics.investedW > 50) w.push({ sev: 1, msg: t("wBetaLow") + ` (β ${num(metrics.beta)})` });
-  if (metrics.volP > profile.targetVolMaxPct + 0.01) w.push({ sev: 2, msg: t("wVol") + ` (${pct(metrics.volP)} > ${profile.targetVolMaxPct}%)` });
+  if (SHOW_VERDICTS) {
+    if (metrics.beta > profile.targetBetaMax + 0.001) w.push({ sev: 2, msg: t("wBetaHigh") + ` (β ${num(metrics.beta)} > ${profile.targetBetaMax.toFixed(1)})` });
+    else if (metrics.beta < profile.targetBetaMin - 0.001 && metrics.investedW > 50) w.push({ sev: 1, msg: t("wBetaLow") + ` (β ${num(metrics.beta)})` });
+    if (metrics.volP > profile.targetVolMaxPct + 0.01) w.push({ sev: 2, msg: t("wVol") + ` (${pct(metrics.volP)} > ${profile.targetVolMaxPct}%)` });
+  }
   metrics.rows.forEach((r) => {
     if (r.wInv * 100 > profile.maxPositionPct + 0.01) {
       const s = stocksById[r.t];
@@ -2091,6 +2099,8 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
     if (cp < profile.cashFloorPct - 0.01) w.push({ sev: 1, msg: t("wCashFloor") + ` (${cp.toFixed(0)}% < ${profile.cashFloorPct}%)` });
   }
   accountIssues(metrics, profile, lang).forEach((m) => w.push({ sev: 2, msg: m }));
+  // β·σ 판정을 꺼 둔 동안 '모든 계기가 초록불이에요'는 틀린 말이라, 알릴 게 없으면 상자를 보여 주지 않아요
+  if (!SHOW_VERDICTS && w.length === 0) return null;
   const red = w.some((x) => x.sev === 2);
   return (
     <Card style={{ padding: 16, border: "1.5px solid " + (w.length === 0 ? "#BEE9E4" : red ? "#F7C6C5" : "#F3DCB2"), background: w.length === 0 ? "#F4FBFA" : red ? "#FFF9F9" : "#FFFCF4" }}>
@@ -2120,11 +2130,10 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
 function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
   if (metrics.empty) return null;
   const items = [
-    ["beta", t("mBeta"), num(metrics.beta), profile.ready && !(profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax)],
-    ["ret", t("mRet"), pct(metrics.expRet), false],
-    ["vol", t("mVol"), pct(metrics.volP), profile.ready && metrics.volP > profile.targetVolMaxPct],
-    ["sharpe", t("mSharpe"), num(metrics.sharpe), false],
-    ["cagr", t("mCagr"), pct(metrics.cagr), false],
+    ["beta", t("mBeta"), num(metrics.beta), SHOW_VERDICTS && profile.ready && !(profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax)],
+    ...(SHOW_ER ? [["ret", t("mRet"), pct(metrics.expRet), false]] : []),
+    ["vol", t("mVol"), pct(metrics.volP), SHOW_VERDICTS && profile.ready && metrics.volP > profile.targetVolMaxPct],
+    ...(SHOW_ER ? [["sharpe", t("mSharpe"), num(metrics.sharpe), false], ["cagr", t("mCagr"), pct(metrics.cagr), false]] : []),
     ["r2", t("mR2"), pct(metrics.r2, 0), false],
     ["alpha", t("mAl"), (metrics.pastAl > 0 ? "+" : "") + num(metrics.pastAl, 1) + "%p", false],
     ["effn", t("mEffN"), num(metrics.effN, 1), false],
@@ -2145,8 +2154,8 @@ function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
       </div>
       <div style={{ marginTop: 9, background: C.blueSoft, borderRadius: 12, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: C.blueDeep, lineHeight: 1.6 }}>
         {lang === "ko"
-          ? <>지금 예산 기준: 보통 해 <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> 출렁 · 기대 <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/년</b></>
-          : <>At this budget: a typical year swings <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> · expected <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/yr</b></>}
+          ? <>지금 예산 기준: 보통 해 <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> 출렁{SHOW_ER && <> · 기대 <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/년</b></>}</>
+          : <>At this budget: a typical year swings <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b>{SHOW_ER && <> · expected <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/yr</b></>}</>}
       </div>
       {mode !== "simple" && <Sub style={{ marginTop: 8, fontSize: 11 }}>{t("betaErr")}</Sub>}
     </Card>
@@ -2547,16 +2556,16 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
   const levers = [];
   if (band === 0) levers.push({ icon: "", text: t("rjGood") });
   else {
-    if (eqOwn != null && eqOwn < own - 1.5) levers.push({
+    if (SHOW_VERDICTS && eqOwn != null && eqOwn < own - 1.5) levers.push({
       icon: "", bars: [own, eqOwn],
       text: ko ? `지금 종목 그대로, 비중만 고르게 나눠도 이 비율이 ${own.toFixed(0)}% → ${eqOwn.toFixed(0)}%로 내려가요.`
                : `Same stocks, evened weights: this share drops ${own.toFixed(0)}% → ${eqOwn.toFixed(0)}%.`,
     });
-    if (bigC && idioVarTot > 0 && bigC.c / idioVarTot > 0.35) {
+    if (SHOW_VERDICTS && bigC && idioVarTot > 0 && bigC.c / idioVarTot > 0.35) {
       const nm = ko ? bigC.r.stock.nk : bigC.r.stock.ne;
       levers.push({ icon: "", text: ko ? `특히 ${nm} 비중을 줄이는 효과가 가장 커요 — 이 부분의 ${(bigC.c / idioVarTot * 100).toFixed(0)}%가 이 한 종목에서 나와요.` : `Trimming ${nm} helps most — ${(bigC.c / idioVarTot * 100).toFixed(0)}% of this comes from that one name.` });
     }
-    if (n < (profile.ready ? profile.stocksMax : 15)) {
+    if (SHOW_VERDICTS && n < (profile.ready ? profile.stocksMax : 15)) {
       const newVol = Math.sqrt(Math.pow(sysVol / 100, 2) + idioVarTot * n / (n + 3)) * 100;
       const dd = metrics.volP - newVol;
       if (dd > 0.8) levers.push({ icon: "", text: ko ? `성격이 겹치지 않는 종목 3개를 더 나눠 담으면 전체 출렁임이 약 ${dd.toFixed(1)}%p 줄어요 (√n 효과).` : `Three more non-overlapping names cut total swing by ~${dd.toFixed(1)}%p (the √n effect).` });
@@ -2669,7 +2678,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
             <div key={r.t}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
                 <span style={{ fontWeight: 700, color: C.ink }}>{ko ? r.stock.nk : r.stock.ne} <span style={{ color: C.faint, fontWeight: 400 }}>{(r.wInv * 100).toFixed(0)}%</span></span>
-                {mode !== "simple" && <span style={{ color: C.faint }}>{t("splitFair")} {r.nr ? "–" : pct(settings.rf + r.b * clsMrp(r.c, settings) * 100)}</span>}
+                {mode !== "simple" && SHOW_ER && <span style={{ color: C.faint }}>{t("splitFair")} {r.nr ? "–" : pct(settings.rf + r.b * clsMrp(r.c, settings) * 100)}</span>}
               </div>
               <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden" }}>
                 <div style={{ width: r.sysShare * 100 + "%", background: C.blue }} />
@@ -2739,7 +2748,7 @@ function AlphaCard({ lang, t, metrics, profile, settings, stocksById, setExplain
           <Sub style={{ fontWeight: 700, color: C.ink }}>{t("alSpace")}</Sub>
           <span style={{ fontSize: 15, fontWeight: 900, color: C.ink }}>{pct(te)}</span>
         </div>
-        <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginTop: 3 }}>{teLow ? t("alSpaceLow") : t("alSpaceHigh")}</div>
+        <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginTop: 3 }}>{teLow ? (SHOW_VERDICTS ? t("alSpaceLow") : null) : t("alSpaceHigh")}</div>
       </div>
       {(() => {
         const ir = te > 0.01 ? metrics.pastAl / te : 0;
@@ -2941,11 +2950,11 @@ function WhatIfLab({ lang, t, metrics, profile, settings, stocksById }) {
       {eq && !eq.empty && (
         <div style={{ marginTop: 8, background: C.blueSoft, borderRadius: 13, padding: 11 }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: C.blueDeep }}>{t("wiOneN")}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5, marginTop: 6, textAlign: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "repeat(4, 1fr)" : "repeat(3, 1fr)", gap: 5, marginTop: 6, textAlign: "center" }}>
             {[["β", metrics.beta, eq.beta, (d) => d.toFixed(2), false],
               ["σ", metrics.volP, eq.volP, (d) => d.toFixed(1) + "%p", true],
               [lang === "ko" ? "실효 종목" : "Eff. N", metrics.effN, eq.effN, (d) => d.toFixed(1), false],
-              ["Sharpe", metrics.sharpe, eq.sharpe, (d) => d.toFixed(2), false]].map(([l, a, b, f, inv]) => (
+              ...(SHOW_ER ? [["Sharpe", metrics.sharpe, eq.sharpe, (d) => d.toFixed(2), false]] : [])].map(([l, a, b, f, inv]) => (
               <div key={l} style={{ background: "#fff", borderRadius: 10, padding: "6px 3px" }}>
                 <div style={{ fontSize: 9.5, color: C.faint }}>{l}</div>
                 <div style={{ fontSize: 11.5, fontWeight: 800, color: C.ink }}>{typeof b === "number" ? (l === "σ" ? b.toFixed(1) + "%" : b.toFixed(l === "β" || l === "Sharpe" ? 2 : 1)) : b}</div>
@@ -3065,7 +3074,7 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
       </div>
       <div className="stickyR" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {profile.ready && !metrics.empty ? (
-          <HealthHero score={score} okCount={okCount} lang={lang} t={t} />
+          SHOW_SCORE ? <HealthHero score={score} okCount={okCount} lang={lang} t={t} /> : null
         ) : (
           <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: 22, textAlign: "center" }}>
             <Bird mood="think" size={56} />
@@ -3082,7 +3091,7 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
               try {
                 let inv = 0;
                 holdings.forEach((h) => { inv += h.mw || 0; });
-                const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), score, lang);
+                const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), SHOW_SCORE ? score : null, lang);
                 const cv = renderPortfolioCard(data);
                 setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
               } catch (e) {}
@@ -3246,7 +3255,7 @@ function buildFixes(ctx) {
   const midBeta = (profile.targetBetaMin + profile.targetBetaMax) / 2;
 
   // ── 베타가 목표 밖일 때: 지금 종목 그대로 비중만 조정
-  if (metrics.beta > profile.targetBetaMax + 0.001 || metrics.beta < profile.targetBetaMin - 0.001) {
+  if (SHOW_VERDICTS && (metrics.beta > profile.targetBetaMax + 0.001 || metrics.beta < profile.targetBetaMin - 0.001)) {
     const up = metrics.beta < profile.targetBetaMin;
     // 베타를 모르는 종목(noRisk)은 비중을 옮기지 않고 그대로 둬요
     const keep = live.filter((r) => r.nr).map((r) => ({ t: r.t, mw: r.mw }));
@@ -3270,7 +3279,7 @@ function buildFixes(ctx) {
   }
 
   // ── 변동성이 상한을 넘을 때: 현금 비중을 늘려 정확히 맞춤
-  if (metrics.volP > profile.targetVolMaxPct + 0.01) {
+  if (SHOW_VERDICTS && metrics.volP > profile.targetVolMaxPct + 0.01) {
     const ratio = (profile.targetVolMaxPct - 0.3) / metrics.volP;
     if (ratio > 0.2 && ratio < 0.999) {
       const w = live.map((r) => ({ t: r.t, mw: Math.round(r.mw * ratio) }));
@@ -3408,10 +3417,10 @@ function FixList({ lang, t, fixes, stocksById, holdings, setHoldings, metrics })
                 </div>
               </div>
               {f.preview && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5, marginTop: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "repeat(4, 1fr)" : "repeat(3, 1fr)", gap: 5, marginTop: 10 }}>
                   {[["β", metrics.beta, f.preview.beta, 2], ["σ", metrics.volP, f.preview.volP, 1],
                     [lang === "ko" ? "최대업종" : "Top sec", metrics.maxSectorW, f.preview.maxSectorW, 0],
-                    [lang === "ko" ? "기대수익" : "E(r)", metrics.expRet, f.preview.expRet, 1]].map(([l, a, b, d]) => (
+                    ...(SHOW_ER ? [[lang === "ko" ? "기대수익" : "E(r)", metrics.expRet, f.preview.expRet, 1]] : [])].map(([l, a, b, d]) => (
                     <div key={l} style={{ background: C.bg, borderRadius: 10, padding: "7px 4px", textAlign: "center" }}>
                       <div style={{ fontSize: 9.5, color: C.faint }}>{l}</div>
                       <div style={{ fontSize: 11.5, fontWeight: 800, color: C.ink }}>{a.toFixed(d)} → {b.toFixed(d)}</div>
@@ -3474,7 +3483,7 @@ function WellDoneCard({ lang, t, metrics, profile, settings }) {
   push(profile.ready && n >= profile.stocksMin, "", ko ? "종목 수가 권장 범위에 있어요" : "Holding count in range", ko ? `${n}개 (권장 ${profile.stocksMin}개 이상)` : `${n} (${profile.stocksMin}+ recommended)`);
   push(profile.ready && !metrics.rows.some((r) => r.wInv * 100 > profile.maxPositionPct + 0.01), "",
     ko ? "한 종목에 몰지 않았어요" : "No oversized position", ko ? `가장 큰 종목 ${Math.max(...metrics.rows.map((r) => r.wInv * 100)).toFixed(0)}% (상한 ${profile.maxPositionPct}%)` : `Largest ${Math.max(...metrics.rows.map((r) => r.wInv * 100)).toFixed(0)}%`);
-  push(profile.ready && profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax, "",
+  if (SHOW_VERDICTS) push(profile.ready && profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax, "",
     ko ? "내 그릇에 맞는 베타를 지켰어요" : "Beta matches your capacity", `β ${num(metrics.beta)} (${profile.targetBetaMin.toFixed(1)}–${profile.targetBetaMax.toFixed(1)})`);
   push(profile.cashFloorPct === 0 || cashPct >= profile.cashFloorPct - 0.01, "",
     ko ? "급할 때 쓸 현금을 남겨뒀어요" : "Kept a cash buffer", ko ? `현금 ${cashPct.toFixed(0)}% · ${fmtMw(metrics.cash, lang)}` : `${cashPct.toFixed(0)}% cash`);
@@ -3789,13 +3798,13 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
   const rows = last ? [
     [t("ciAmount"), fmtMw(last.inv, lang), fmtMw(snap.inv, lang), snap.inv - last.inv, 0],
     [t("mVol"), pct(last.vol), pct(snap.vol), snap.vol - last.vol, 1],
-    [t("mRet"), pct(last.exp), pct(snap.exp), snap.exp - last.exp, 2],
+    ...(SHOW_ER ? [[t("mRet"), pct(last.exp), pct(snap.exp), snap.exp - last.exp, 2]] : []),
     [t("splitIdio"), pct(last.unpaid, 0), pct(snap.unpaid, 0), snap.unpaid - last.unpaid, 1],
     [t("mSector"), pct(last.sec, 0), pct(snap.sec, 0), snap.sec - last.sec, 1],
     [t("ciCount"), last.n, snap.n, snap.n - last.n, 0],
   ] : [];
   const dVol = last ? snap.vol - last.vol : 0, dExp = last ? snap.exp - last.exp : 0;
-  const verdict = !last ? null
+  const verdict = !last || !SHOW_ER ? null      // 판정 문장이 기대수익을 말해서, 기대수익을 꺼 둔 동안은 보여 주지 않아요
     : dVol > 0.5 && dExp <= 0.15
       ? (lang === "ko" ? "위험은 늘었는데 기대수익은 거의 그대로예요. 보상받지 못한 변화였어요." : "Risk went up, expected return barely moved — an uncompensated change.")
       : dVol > 0.5 && dExp > 0.15
@@ -3853,7 +3862,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
   const tg = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <DiagHero lang={lang} t={t} metrics={metrics} profile={profile} score={score} />
+      {SHOW_VERDICTS && SHOW_SCORE && <DiagHero lang={lang} t={t} metrics={metrics} profile={profile} score={score} />}
       <CheckinCard lang={lang} t={t} metrics={metrics} profile={profile} checkins={checkins} onSave={onCheckin} />
       <Section title={t("sxW")} sub={t("sxWs")} open={!!open.w} onToggle={() => tg("w")}>
         <WellDoneCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} />
@@ -3867,14 +3876,17 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
           <SectorDonut lang={lang} t={t} metrics={metrics} stocksById={stocksById} />
         </div>
         <RiskContribCard lang={lang} t={t} metrics={metrics} stocksById={stocksById} />
+        {!SHOW_ER && <QuickFactsCard lang={lang} t={t} metrics={metrics} settings={settings} profile={profile} />}
       </Section>
-      <Section title={t("sxR")} sub={t("sxRs")} open={!!open.r} onToggle={() => tg("r")}>
-        <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
-      </Section>
+      {SHOW_ER && (
+        <Section title={t("sxR")} sub={t("sxRs")} open={!!open.r} onToggle={() => tg("r")}>
+          <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
+        </Section>
+      )}
       <Section title={t("sxC")} sub={t("sxCs")} open={!!open.c} onToggle={() => tg("c")}>
         <div className="grid2">
           <TailRiskCard lang={lang} t={t} metrics={metrics} />
-          <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />
+          {SHOW_ER && <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />}
         </div>
       </Section>
       <Section title={t("sxD")} sub={t("sxDs")} open={!!open.d} onToggle={() => tg("d")}>
@@ -3888,22 +3900,26 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
         <div className="grid2">
           <WhatIfLab lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} stocksById={stocksById} />
           <TimeMachine lang={lang} t={t} metrics={metrics} settings={settings} />
-          <SequenceRiskCard lang={lang} t={t} metrics={metrics} profile={profile} />
+          {SHOW_ER && <SequenceRiskCard lang={lang} t={t} metrics={metrics} profile={profile} />}
         </div>
       </Section>
+      {SHOW_ER && (  /* '목표까지 갈 수 있을까요?' — 기대수익·전망 카드라 꺼 둔 동안은 섹션째 숨겨요 (간단 사실 카드는 위로 옮김) */
       <Section title={t("sxF")} sub={t("sxFs")} open={!!open.f} onToggle={() => tg("f")}>
         <div className="grid2">
+          {SHOW_ER && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <GoalGapCard lang={lang} t={t} metrics={metrics} profile={profile} />
+              <ProjectionCard lang={lang} t={t} metrics={metrics} settings={settings} />
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <GoalGapCard lang={lang} t={t} metrics={metrics} profile={profile} />
-            <ProjectionCard lang={lang} t={t} metrics={metrics} settings={settings} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <BenchCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} />
-            <TaxCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} tax={tax} />
+            {SHOW_ER && <BenchCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} />}
+            {SHOW_ER && <TaxCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} tax={tax} />}
             <QuickFactsCard lang={lang} t={t} metrics={metrics} settings={settings} profile={profile} />
           </div>
         </div>
       </Section>
+      )}
     </div>
   );
 }
@@ -3914,7 +3930,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   const [cardM, setCardM] = useState(null);
   const openCard = () => {
     try {
-      const data = makeCardData(holdings, stocksById, (metrics.cash || 0) / 1e4, score || 0, lang);
+      const data = makeCardData(holdings, stocksById, (metrics.cash || 0) / 1e4, SHOW_SCORE ? score || 0 : null, lang);
       const cv = renderPortfolioCard(data);
       setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
     } catch (e) {}
@@ -3935,7 +3951,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   });
   const stamp = new Date().toISOString().slice(0, 10);
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", author: T.credit.en, slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
@@ -3945,7 +3961,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     const L = [];
     L.push((lang === "ko" ? "뱁새 주문 메모 " : "Baepsae Order Memo ") + stamp);
     L.push(T.credit[lang]);
-    L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(metrics.total, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + " · E(r) " + pct(metrics.expRet));
+    L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(metrics.total, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + (SHOW_ER ? " · E(r) " + pct(metrics.expRet) : ""));
     L.push("");
     rows.forEach((r) => L.push(`${r.s.nk} (${r.t}) — ${fmtMw(r.won, lang)} (${(r.wInv * 100).toFixed(1)}%) ≈ ${r.shares}${lang === "ko" ? "주" : "sh"} @${fmtPx(r.s.price, r.s)}`));
     L.push((lang === "ko" ? "현금 " : "Cash ") + fmtMw(metrics.cash, lang));
@@ -4580,11 +4596,12 @@ function AppInner({ seed, lang: langProp }) {
       {slotId && stage === 1 && profile.ready && !metrics.empty && (
         <div className="mobilebar">
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px" }}>
-            <div style={{ fontSize: 17, fontWeight: 900, color: score >= 85 ? C.teal : score >= 55 ? C.sand : C.coral }}>{score}</div>
+            {SHOW_SCORE && <div style={{ fontSize: 17, fontWeight: 900, color: score >= 85 ? C.teal : score >= 55 ? C.sand : C.coral }}>{score}</div>}
             <div style={{ display: "flex", gap: 5, flex: 1 }}>
-              {rs.states.map((ok, i) => (
-                <div key={i} style={{ flex: 1, height: 6, borderRadius: 3, background: ok ? C.teal : C.coral, opacity: ok ? 1 : 0.65 }} />
-              ))}
+              {rs.states.map((ok, i) => {
+                const neutral = !SHOW_VERDICTS && i < 2;            // β·σ 판정은 꺼 둔 동안 회색
+                return <div key={i} style={{ flex: 1, height: 6, borderRadius: 3, background: neutral ? C.line : ok ? C.teal : C.coral, opacity: neutral || ok ? 1 : 0.65 }} />;
+              })}
             </div>
             <button onClick={() => setStage(2)} style={{ background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, fontFamily: FONT, cursor: "pointer", flexShrink: 0 }}>{t("s3")}</button>
           </div>

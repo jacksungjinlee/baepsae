@@ -35,13 +35,15 @@ export function renderPortfolioCard({ score, buckets, top, dateStr }) {
   g.fillText(dateStr + " · 뱁새에서 만듦", 190, 150);
   g.globalAlpha = 1;
 
-  // 건강 점수 (우측 큰 숫자)
-  g.textAlign = "right";
-  g.font = "900 190px " + FONT_CV;
-  g.fillText(String(score), W - 100, 400);
-  g.font = "700 30px " + FONT_CV; g.globalAlpha = 0.7;
-  g.fillText("포트폴리오 건강 점수 / 100", W - 100, 448);
-  g.globalAlpha = 1;
+  // 건강 점수 (우측 큰 숫자) — v17.5: 점수를 꺼 둔 동안(score == null)은 그리지 않아요
+  if (score != null) {
+    g.textAlign = "right";
+    g.font = "900 190px " + FONT_CV;
+    g.fillText(String(score), W - 100, 400);
+    g.font = "700 30px " + FONT_CV; g.globalAlpha = 0.7;
+    g.fillText("포트폴리오 건강 점수 / 100", W - 100, 448);
+    g.globalAlpha = 1;
+  }
 
   // 배분 도넛 (좌측)
   const cx = 300, cy = 350, R = 150, LW = 62;
