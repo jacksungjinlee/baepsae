@@ -133,7 +133,7 @@ function Receipts({ s, co, c, st }) {
         <Row key={x.id} k={C.build.cards[x.id].name} v={c.scores[x.id] === NA ? C.build.s1.finNA : fill(C.build.s1.score, { score: Math.round(c.scores[x.id]) })} />
       ))}
       {pbr != null && <Row k="PBR" v={fill(R.times, { x: nf(pbr, 2) })} />}
-      {y != null && <Row k={R.yield} v={`${p1(y)}%`} />}
+      {y != null && (s.cls === "us" || fy != null) && <Row k={R.yield} v={`${p1(y)}%`} />}
       {roe != null && (s.cls === "us" || fy != null) && <Row k="ROE" v={`${p1(roe)}%`} />}
       {debt != null && (s.cls === "us" || fy != null) && <Row k={R.debt} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
       {growth != null && growthLabel && <Row k={growthLabel} v={`${p1(growth)}%`} />}

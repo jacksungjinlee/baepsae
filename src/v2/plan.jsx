@@ -4,8 +4,8 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
-import { ruleBook, bestCard, hasGroup, num, mixKr } from "./engine.js";
-import { C, fill, nf, p1, mdText, wonText, todayKst, priceText } from "./format.js";
+import { ruleBook, hasGroup } from "./engine.js";
+import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon } from "./deckcalc.js";
 import { writeStore } from "./store.js";
@@ -28,7 +28,6 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
   return (
     <Page pad={SPACE(30)}>
       <AppBar onBack={back} backLabel={C.plan.back} />
-      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(1) })}>{C.plan.title}</div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <ScreenTitle>{C.plan.title}</ScreenTitle>
       <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{deckLine}</div>
@@ -288,4 +287,3 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   );
 }
 
-export { priceText, num, bestCard, mixKr };

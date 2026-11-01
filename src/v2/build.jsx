@@ -3,15 +3,15 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
-import { Segmented, Stepper, MoneyInput, StatusChip, Button } from "../ui/components.jsx";
+import { Segmented, Stepper, MoneyInput, StatusChip } from "../ui/components.jsx";
 import {
   CARDS, DECKS, STRICT, MIX, METHODS, MAX_PCTS, CUSHIONS, EXCLUDE_LIVE, EXCLUDE_PENDING, POINTS_TOTAL, POINTS_MAX, COUNT_RANGE,
-  PINNED_MAX, MIN_PER_STOCK_MAN, applyDeck, defaultSettings, activeCards, pointsUsed, strictTop, topOverall, bestCard, mixKr,
+  PINNED_MAX, MIN_PER_STOCK_MAN, CUSHION_ASSETS, applyDeck, defaultSettings, activeCards, pointsUsed, strictTop, topOverall, bestCard,
   marketsOf,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, tx, tap } from "./ui.jsx";
-import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon } from "./deckcalc.js";
+import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
 
@@ -222,7 +222,7 @@ function StepTerms({ st, set, ds, load }) {
   const mk = marketsOf(st);
   const [q, setQ] = useState("");
   const results = pinnable(load, q, st.pinned);
-  const cushionOk = ["114260", "132030"].every((t) => load.byT.get(t));
+  const cushionOk = cushionStocks(load).length === CUSHION_ASSETS.length;
   // 2022 line per sizing choice, from the list that 후보 고르기 would pre-select
   const y2022 = useMemo(() => {
     if (!(amt > 0)) return null;
@@ -325,4 +325,3 @@ function StepTerms({ st, set, ds, load }) {
   );
 }
 
-export { mixKr, Button };

@@ -4,11 +4,9 @@
 import React, { useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { HeroBand, Button, ListRow, StatusChip } from "../ui/components.jsx";
-import { Icon } from "../ui/icons.jsx";
-import { C, fill, nf } from "./format.js";
+import { C, fill, nf, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, tx } from "./ui.jsx";
 import { parseImport, mergeStores, downloadRecords, isSafariLike } from "./store.js";
-import { todayKst } from "./format.js";
 
 export function Today({ load, pad }) {
   return (
@@ -91,4 +89,3 @@ export function MyDeck({ load, store, setStoreData, pad }) {
   );
 }
 
-export { Icon };
