@@ -2,10 +2,19 @@
 """검증용 가짜 데이터 — 모든 검사를 통과하는 '좋은' 네 파일을 만들어요.
 must-fail 테스트는 여기서 한 군데씩만 망가뜨립니다. (네트워크 없음)"""
 import copy
+import datetime as dt
 import random
 
 MUST = [("005930", "삼성전자"), ("000660", "SK하이닉스"), ("005380", "현대차"), ("015760", "한국전력"),
-        ("105560", "KB금융"), ("035420", "NAVER"), ("012450", "한화에어로스페이스")]
+        ("105560", "KB금융"), ("035420", "NAVER"), ("012450", "한화에어로스페이스"),
+        ("000270", "기아"), ("086790", "하나금융지주"), ("034730", "SK"), ("003550", "LG")]
+# v17.5.1 PR 2: 업종 그룹 (필수 종목은 정해진 그룹, 나머지는 돌아가며)
+IND = {"005930": "semi", "000660": "semi", "005380": "auto", "000270": "auto", "105560": "bank", "086790": "bank",
+       "034730": "holding", "003550": "holding"}
+IND_CYCLE = ["semi", "auto", "bank", "holding", "chem", "pharma", "bio", "machinery", "software", "food"]
+IND_NAME = {"semi": "반도체", "auto": "자동차", "bank": "은행", "holding": "지주회사", "chem": "화학", "pharma": "제약",
+            "bio": "바이오", "machinery": "기계", "software": "소프트웨어", "food": "음식료·담배", "utility": "전력·가스·환경",
+            "internet": "인터넷 플랫폼", "defense": "방산·우주"}
 FUNDS = [("069500", "kr"), ("379800", "us"), ("04020000", "metal"), ("132030", "metal"), ("144600", "metal")]
 SECTORS = ["semi", "battery", "elec", "auto", "ship", "defense", "machine", "steel", "chem", "utility", "energy", "bio",
            "health", "platform", "game", "media", "telecom", "bank", "insure", "broker", "holding", "build", "retail",
@@ -15,7 +24,8 @@ SECTORS = ["semi", "battery", "elec", "auto", "ship", "defense", "machine", "ste
 def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=600, price_shift=0.0):
     rnd = random.Random(seed)
     kr = []
-    names = [(t, nk) for t, nk in MUST] + [(f"{100000 + i:06d}", f"가상종목{rnd.randrange(10**6):06d}") for i in range(n_kr - len(MUST))]
+    # 가상 종목 코드는 0 으로 끝나게 (끝자리가 0 이 아니면 우선주로 봐요)
+    names = [(t, nk) for t, nk in MUST] + [(f"{(20000 + i) * 10:06d}", f"가상종목{rnd.randrange(10**6):06d}") for i in range(n_kr - len(MUST))]
     for i, (t, nk) in enumerate(names):
         price = float(round(rnd.uniform(1000, 300000) * (1 + price_shift)))
         cap = 1300.0 if t == "005930" else (1000.0 if t == "000660" else round(rnd.uniform(0.05, 300), 3))
@@ -23,12 +33,25 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
                    "cap": cap, "val": round(rnd.uniform(1, 9000), 1) if t != "005930" else 99999.0,
                    "beta": round(rnd.uniform(0.3, 1.8), 2), "vol": round(rnd.uniform(15, 80), 1),
                    "pbr": round(rnd.uniform(0.3, 5), 2), "roe": round(rnd.uniform(-10, 30), 1),
-                   "per": round(rnd.uniform(3, 60), 1), "vz": 50, "qz": 50, "mz": 50, "pz": 50, "lz": 50})
-    us = [{"t": f"U{i:04d}", "nk": f"US Corp {i}", "ne": f"US Corp {i}", "cls": "us", "price": round(rnd.uniform(5, 900) * (1 + price_shift), 2),
-           "cap": round(rnd.uniform(1, 5000), 3), "val": round(rnd.uniform(1, 90000), 1), "de": "A company.", "fxu": True}
-          for i in range(n_us)]
-    bonds = [{"t": f"B{i}", "nk": f"채권{i}", "cls": "bond", "s": "bond", "price": 100000.0} for i in range(8)]
-    funds = [{"t": t, "nk": t, "cls": c, "s": "index", "price": 10000.0, "fund": True} for t, c in FUNDS]
+                   "per": round(rnd.uniform(3, 60), 1), "vz": 50, "qz": 50, "mz": 50, "pz": 50, "lz": 50,
+                   # v17.5.1 새 항목
+                   "d1": round(rnd.uniform(-5, 5), 2), "val20": round(rnd.uniform(1, 9000), 1), "etf": False,
+                   "dps": 1668.0 if t == "005930" else float(rnd.choice([0, 0, 100, 500, 1500])), "fy": 2025,
+                   "hi": round(price * 1.3), "lo": round(price * 0.8),
+                   "dk": f"업종{i % 40} · 주요제품: 제품{i} · KOSPI 상장 · 시가총액 {cap:,.1f}조원",
+                   "ind": IND.get(t, IND_CYCLE[i % len(IND_CYCLE)])})
+        kr[-1]["indName"] = IND_NAME[kr[-1]["ind"]]
+    us_t = ["AAPL", "MSFT", "NVDA", "BRK-B", "SPY", "QQQ"] + [f"U{i:04d}" for i in range(n_us - 6)]
+    us = [{"t": t, "nk": f"US Corp {i}", "ne": f"US Corp {i}", "cls": "us", "price": round(rnd.uniform(5, 900) * (1 + price_shift), 2),
+           "cap": round(rnd.uniform(1, 5000), 3), "val": round(rnd.uniform(1, 90000), 1), "de": "A company.", "fxu": True,
+           "d1": round(rnd.uniform(-5, 5), 2), "etf": t in ("SPY", "QQQ")}
+          for i, t in enumerate(us_t)]
+    for i, s in enumerate(us):
+        if not s["etf"]:
+            s["ind"] = IND_CYCLE[i % 5]
+            s["indName"] = IND_NAME[s["ind"]]
+    bonds = [{"t": f"B{i}", "nk": f"채권{i}", "cls": "bond", "s": "bond", "price": 100000.0, "etf": True} for i in range(8)]
+    funds = [{"t": t, "nk": t, "cls": c, "s": "index", "price": 10000.0, "fund": True, "etf": True} for t, c in FUNDS]
     data = {"asOf": "2026-10-31", "pxDate": px_date, "ksDate": px_date, "usPxDate": us_date,
             "publishedAt": "2026-10-31T09:30:00+09:00", "listSrc": "fdr_krx_data_cache", "fx": 1333.3,
             "settings": {"rf": 4.0, "rfSrc": "ECOS 국고채10년 " + px_date},
@@ -36,13 +59,32 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
             "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds)},
             "stocks": kr + us + bonds + funds}
     comps = [{"t": s["t"], "nk": s["nk"], "s": s["s"], "price": s["price"], "cap": s["cap"],
-              "per": s["per"], "pbr": s["pbr"], "bq": "2026.2Q" if i % 10 else None} for i, s in enumerate(kr[:2100])]
+              "per": s["per"], "pbr": s["pbr"], "bq": "2026.2Q" if i % 10 else None,
+              "debt": 50.0, "op": [100.0, 90.0, 80.0], "dps": s["dps"], "fy": s["fy"]} for i, s in enumerate(kr[:2100])]
     pub = data["publishedAt"]          # 네 파일 모두 같은 발행 시각 (fetch_data.main 이 한 번 정해서 씀)
     corp = {"asOf": "2026-10-31", "pxDate": px_date, "publishedAt": pub, "sectors": {k: {"n": 1} for k in SECTORS}, "companies": comps}
-    macro = {"asOf": "2026-10-31", "publishedAt": pub, "curve": {"tenors": [3, 10], "now": [3.1, 4.0], "ago": [3.0, 3.5], "date": px_date}}
+    macro = {"asOf": "2026-10-31", "publishedAt": pub, "curve": {"tenors": [3, 10], "now": [3.1, 4.0], "ago": [3.0, 3.5], "date": px_date},
+             "idxHist": {"KOSPI": idx_rows(px_date, 2500.0), "SP500": idx_rows(us_date, 5000.0)}}
     disc = {"asOf": "2026-10-31", "publishedAt": pub, "newest": "2026-10-30", "listOk": True, "insider": [], "nps": []}
     closes = {s["t"]: round(s["price"]) for s in kr}
     return {"data": data, "corp": corp, "disc": disc, "macro": macro}, closes
+
+
+def idx_rows(end, base, years=3):
+    """평일만 3년치 지수 종가 (마지막 = end)."""
+    e = dt.date.fromisoformat(end)
+    d, rows = e - dt.timedelta(days=365 * years - 1), []
+    while d <= e:
+        if d.weekday() < 5:
+            rows.append([d.isoformat(), round(base + len(rows) * 0.5, 2)])
+        d += dt.timedelta(days=1)
+    return {"asOf": end, "rows": rows}
+
+
+def hilo_of(files, codes):
+    """야후에서 받은 것처럼: 필수 종목의 최고·최저·d1 을 그대로."""
+    by = {s["t"]: s for s in files["data"]["stocks"]}
+    return {t: {"hi": by[t]["hi"], "lo": by[t]["lo"], "d1": by[t].get("d1", 0.0)} for t in codes if t in by}
 
 
 def good_pair():

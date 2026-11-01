@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import validate_data as V  # noqa: E402
-from fixture_data import good_pair, stock, clone  # noqa: E402
+from fixture_data import good_pair, stock, clone, hilo_of  # noqa: E402
 
 TODAY = dt.date(2026, 10, 31)
 NOW = dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST)       # 관문 실행 시각 (fixture 의 publishedAt 09:30 + 1.5시간)
@@ -21,8 +21,10 @@ OCT = [dt.date(2026, 10, d) for d in (13, 14, 15, 16, 17, 20, 21, 22, 23, 26, 27
 SESSIONS = {"dates": OCT, "src": "시험"}
 
 
-def check(cur, prev, final, mode="publish", between=lambda a, b: 1, sessions=SESSIONS, today=TODAY, now=NOW):
-    return V.run_checks(cur, prev, final, today, mode=mode, count_between=between, sessions=sessions, now=now)
+def check(cur, prev, final, mode="publish", between=lambda a, b: 1, sessions=SESSIONS, today=TODAY, now=NOW, hilo="same"):
+    if hilo == "same":                 # 야후 52주 범위가 우리 값과 같은 정상 상황
+        hilo = hilo_of(cur, V.MUST)
+    return V.run_checks(cur, prev, final, today, mode=mode, count_between=between, sessions=sessions, now=now, hilo=hilo)
 
 
 def failed_names(rep):
@@ -466,3 +468,280 @@ def test_kospi_sessions_report_disagreement_and_only_final_failures(monkeypatch)
     got = V.http_kospi_sessions(**NO_SLEEP)
     assert got["disagree"] == [dt.date(2026, 10, 30)]
     assert "실패" not in got["src"]           # 다시 시도해서 받았으면 실패로 적지 않아요
+
+
+# ── v17.5.1 (v18.0 Part A + 추가 4–9): 새 규칙마다 한 군데씩 망가뜨리면 반드시 실패 ──
+def fails_on(name, mutate, hilo="same"):
+    cur, prev, final = good_pair()
+    mutate(cur)
+    rep = check(cur, prev, final, hilo=hilo)
+    assert name in failed_names(rep), rep.table()
+    return rep
+
+
+def kr_of(cur):
+    return [s for s in cur["data"]["stocks"] if s["cls"] == "kr"]
+
+
+def test_nan_word_in_description_fails():
+    # 2026-10-31 발행본: 867종목이 "nan · 주요제품: …" 로 시작했어요
+    fails_on("글자에 nan·None·null·undefined 없음", lambda c: stock(c, "000660").update(dk="nan · 주요제품: 반도체 · KOSPI 상장"))
+
+
+@pytest.mark.parametrize("word", ["None", "null", "undefined", "NaN"])
+def test_other_bad_words_fail_anywhere(word):
+    fails_on("글자에 nan·None·null·undefined 없음", lambda c: c["disc"]["insider"].append({"nm": f"홍길동 {word}"}))
+
+
+def test_bad_word_is_whole_word_only():
+    cur, prev, final = good_pair()
+    stock(cur, "U0001")["de"] = "Financial services, annual nanotech review, Nonesuch Corp."
+    rep = check(cur, prev, final)
+    assert "글자에 nan·None·null·undefined 없음" not in failed_names(rep), rep.table()
+
+
+def test_market_section_in_description_fails():
+    # 2026-10-31: 1,470종목이 "우량기업부 · …" 로 시작했어요 (소속부를 업종으로 읽음)
+    fails_on("국내 설명에 소속부 없음", lambda c: stock(c, "005930").update(dk="우량기업부 · 주요제품: 반도체 · KOSDAQ 상장"))
+
+
+def test_products_copied_from_industry_fails():
+    # 2026-10-31: 2,476종목 모두 '주요제품: <업종 이름>' (열이 하나씩 밀림)
+    def shift(c):
+        for s in kr_of(c):
+            s["dk"] = "통신 및 방송 장비 제조업 · 주요제품: 통신 및 방송 장비 제조업 · KOSPI 상장"
+    fails_on("국내 주요제품 ≠ 업종 이름", shift)
+
+
+def test_must_have_without_d1_fails():
+    fails_on("필수 종목 d1", lambda c: stock(c, "005930").pop("d1"))
+
+
+def test_d1_coverage_drop_is_a_warning_only():
+    # v18.0 추가 4: "The run fails only when must-have stocks lack d1" — 채움이 모자라면 경고
+    cur, prev, final = good_pair()
+    for s in kr_of(cur)[20::10]:
+        s.pop("d1", None)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "국내 d1 채움" and r[3] == "WARN" for r in rep.rows)
+
+
+def test_d1_beyond_price_limit_fails():
+    fails_on("국내 d1 범위 (±30%)", lambda c: kr_of(c)[50].update(d1=35.0))
+
+
+def test_us_must_have_without_d1_fails():
+    fails_on("미국 필수 종목 d1", lambda c: stock(c, "AAPL").pop("d1"))
+
+
+def test_must_have_without_val20_fails():
+    fails_on("필수 종목 val20", lambda c: stock(c, "105560").pop("val20"))
+
+
+def test_val20_coverage_drop_fails():
+    def drop(c):
+        for s in kr_of(c)[::10]:
+            s.pop("val20", None)
+    fails_on("국내 val20 채움", drop)
+
+
+def test_missing_etf_flag_fails():
+    fails_on("etf 표시 (모든 종목)", lambda c: stock(c, "U0001").pop("etf"))
+
+
+@pytest.mark.parametrize("t, wrong", [("BRK-B", True), ("SPY", False), ("069500", False), ("005930", True), ("B3", False)])
+def test_wrong_etf_flag_fails(t, wrong):
+    fails_on("etf 표시가 맞음", lambda c: stock(c, t).update(etf=wrong))
+
+
+def test_negative_dividend_fails():
+    fails_on("국내 주당 배당금 ≥ 0", lambda c: kr_of(c)[40].update(dps=-100.0))
+
+
+def test_samsung_dividend_zero_fails():
+    fails_on("005930 주당 배당금", lambda c: stock(c, "005930").update(dps=0.0))
+
+
+def test_zero_dividend_is_kept_and_passes():
+    cur, prev, final = good_pair()
+    assert sum(1 for s in kr_of(cur) if s.get("dps") == 0) > 100
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+
+
+def test_annual_numbers_without_report_year_fail():
+    fails_on("연간 수치에 사업보고서 연도(fy)", lambda c: c["corp"]["companies"][30].pop("fy"))
+
+
+def test_report_year_out_of_range_fails():
+    fails_on("사업보고서 연도 범위", lambda c: c["corp"]["companies"][30].update(fy=2021))
+
+
+def test_must_have_without_report_year_fails():
+    fails_on("필수 종목 fy", lambda c: next(x for x in c["corp"]["companies"] if x["t"] == "005380").pop("fy"))
+
+
+def test_missing_index_history_fails():
+    fails_on("지수 이력 (KOSPI·S&P500 3년)", lambda c: c["macro"].pop("idxHist"))
+
+
+def test_short_index_history_fails():
+    fails_on("지수 이력 (KOSPI·S&P500 3년)", lambda c: c["macro"]["idxHist"]["SP500"].update(rows=c["macro"]["idxHist"]["SP500"]["rows"][-300:]))
+
+
+def test_index_history_ending_before_pxdate_fails():
+    def stale(c):
+        h = c["macro"]["idxHist"]["KOSPI"]
+        h["rows"] = h["rows"][:-1]
+        h["asOf"] = h["rows"][-1][0]
+    fails_on("지수 이력 (KOSPI·S&P500 3년)", stale)
+
+
+def test_index_history_out_of_order_fails():
+    def swap(c):
+        r = c["macro"]["idxHist"]["KOSPI"]["rows"]
+        r[100], r[101] = r[101], r[100]
+    fails_on("지수 이력 (KOSPI·S&P500 3년)", swap)
+
+
+def test_52_week_high_far_off_from_yahoo_fails():
+    cur, prev, final = good_pair()
+    hl = hilo_of(cur, V.MUST)
+    hl["005380"]["hi"] *= 1.05                                  # 야후 최고가가 5% 달라요
+    rep = check(cur, prev, final, hilo=hl)
+    assert "필수 종목 52주 최고·최저 (야후)" in failed_names(rep), rep.table()
+
+
+def test_52_week_high_slightly_off_is_a_warning():
+    cur, prev, final = good_pair()
+    hl = hilo_of(cur, V.MUST)
+    hl["005380"]["lo"] *= 1.02                                  # 2%: 오래된 네이버 봉일 수 있어 경고만
+    rep = check(cur, prev, final, hilo=hl)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "필수 종목 52주 최고·최저 (야후)" and r[3] == "WARN" for r in rep.rows)
+
+
+def test_two_day_d1_is_caught_by_yahoo():
+    # 리뷰: 수요일 목록 파일이 없으면 금요일 실행이 목요일-화요일 변화를 d1 로 낼 뻔했어요
+    cur, prev, final = good_pair()
+    hl = hilo_of(cur, V.MUST)
+    hl["005930"]["d1"] = stock(cur, "005930")["d1"] + 2.5
+    rep = check(cur, prev, final, hilo=hl)
+    assert "필수 종목 d1 (야후)" in failed_names(rep), rep.table()
+
+
+@pytest.mark.parametrize("text", ["시가총액 nan억원", "None년 사업보고서 기준", "주요제품: undefined"])
+def test_bad_word_next_to_korean_fails(text):
+    fails_on("글자에 nan·None·null·undefined 없음", lambda c: stock(c, "000660").update(dk=text))
+
+
+def test_dividend_and_yield_disagreeing_fails():
+    def odd(c):
+        for s in kr_of(c)[100:160]:
+            s.update(dps=0.0, dy=2.5)
+    fails_on("주당 배당금·배당수익률 맞음", odd)
+
+
+def test_internal_field_leak_fails():
+    fails_on("임시 칸(_…) 없음", lambda c: stock(c, "U0001").update(_yind="Semiconductors"))
+
+
+def test_missing_us_must_have_fails():
+    fails_on("미국 필수 종목 d1", lambda c: c["data"]["stocks"].remove(stock(c, "NVDA")))
+
+
+def test_52_week_check_unavailable_is_a_warning_not_a_failure():
+    cur, prev, final = good_pair()
+    rep = check(cur, prev, final, hilo=None)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "필수 종목 52주 최고·최저 (야후)" and r[3] == "WARN" for r in rep.rows)
+
+
+def test_http_hilo_uses_closes_up_to_pxdate(monkeypatch):
+    days = [dt.date(2025, 1, 1) + dt.timedelta(days=i) for i in range(400)]
+    rows = [(d, 100.0 + i) for i, d in enumerate(days)]
+    monkeypatch.setattr(V, "_yahoo_closes", lambda sym: rows)
+    px = days[299]
+    got = V.http_hilo(["005930"], px, sleep=lambda s: None)["005930"]
+    assert (got["hi"], got["lo"]) == (100.0 + 299, 100.0 + 299 - 251)     # 마지막 252거래일, pxDate 뒤는 빼요
+    assert abs(got["d1"] - (399 / 398 - 1) * 100) < 1e-9
+
+
+def test_http_hilo_skips_a_lagging_yahoo(monkeypatch):
+    days = [dt.date(2025, 1, 1) + dt.timedelta(days=i) for i in range(300)]
+    monkeypatch.setattr(V, "_yahoo_closes", lambda sym: [(d, 100.0) for d in days])
+    assert V.http_hilo(["005930"], days[-1] + dt.timedelta(days=1), sleep=lambda s: None) == {}
+
+
+@pytest.mark.parametrize("t, wrong", [("088980", False), ("241520", True)])
+def test_korean_listed_fund_flags(t, wrong):
+    # 맥쿼리인프라는 펀드(etf=참), DSC인베스트먼트는 같은 업종이지만 회사(etf=거짓)
+    def add(c):
+        c["data"]["stocks"].append({"t": t, "nk": t, "ne": t, "cls": "kr", "price": 10000.0, "cap": 1.0, "etf": wrong})
+    fails_on("etf 표시가 맞음", add)
+
+
+# ── v17.5.1 PR 2: 업종 그룹 ──
+@pytest.mark.parametrize("t, g", [("005930", "telecom_eq"), ("105560", "holding"), ("034730", "finance"), ("000270", None)])
+def test_must_have_in_wrong_industry_group_fails(t, g):
+    def wrong(c):
+        s = stock(c, t)
+        if g:
+            s.update(ind=g, indName="이름")
+        else:
+            s.pop("ind")
+            s.pop("indName")
+    fails_on("업종 그룹 필수 종목", wrong)
+
+
+def test_many_liquid_stocks_without_group_fail():
+    def drop(c):
+        for s in kr_of(c)[20:80]:
+            s.pop("ind")
+            s.pop("indName")
+    fails_on("업종 그룹 없는 국내 종목 (거래 활발)", drop)
+
+
+def test_tiny_industry_group_fails():
+    fails_on("업종 그룹 인원 (시장마다)", lambda c: kr_of(c)[300].update(ind="ship", indName="조선"))
+
+
+def test_two_names_for_one_group_fails():
+    fails_on("업종 그룹 이름·형식", lambda c: kr_of(c)[301].update(indName="반도체·장비"))
+
+
+def test_etf_with_industry_group_fails():
+    fails_on("업종 그룹 이름·형식", lambda c: stock(c, "SPY").update(ind="semi", indName="반도체"))
+
+
+def test_holding_company_in_financial_group_fails():
+    def add(c):
+        c["data"]["stocks"].append({"t": "004800", "nk": "효성", "ne": "효성", "cls": "kr", "price": 1.0, "cap": 1.0,
+                                     "etf": False, "ind": "finance", "indName": "기타 금융"})
+    fails_on("지주회사가 금융 그룹이 아님", add)
+
+
+def test_us_industry_coverage_drop_fails():
+    def drop(c):
+        for s in c["data"]["stocks"]:
+            if s["cls"] == "us" and s.get("ind") and s["t"] < "U0300":
+                s.pop("ind")
+                s.pop("indName")
+    fails_on("미국 업종 그룹 채움", drop)
+
+
+def test_preferred_shares_do_not_fill_a_small_group():
+    def add(c):
+        for i in range(4):
+            c["data"]["stocks"].append({"t": f"9{i:04d}5", "nk": f"우{i}", "ne": "x", "cls": "kr", "price": 1.0, "cap": 0.1,
+                                         "etf": False, "ind": "ship", "indName": "조선"})
+        c["data"]["stocks"].append({"t": "990000", "nk": "조선", "ne": "x", "cls": "kr", "price": 1.0, "cap": 0.1,
+                                     "etf": False, "ind": "ship", "indName": "조선"})
+    fails_on("업종 그룹 인원 (시장마다)", add)
+
+
+def test_fixture_has_unique_codes():
+    cur, _, _ = good_pair()
+    codes = [s["t"] for s in cur["data"]["stocks"]]
+    assert len(codes) == len(set(codes))
