@@ -66,7 +66,7 @@ export function Pick({ load, builder, setBuilder }) {
   );
 }
 
-// One candidate. pinned = a 꼭 담을 종목: no score (it skipped screening), labelled 고정 · 직접 추가, cautions still shown,
+// One candidate. pinned = a 꼭 담을 종목: no score (it skipped screening), labelled 직접 추가 only, cautions still shown,
 // and its 근거 수치 open with the sentence that it skipped the score criteria (Jack, 2026-11-01).
 function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
   const s = c.s;
@@ -84,7 +84,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{s.nk}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2), alignItems: "center", marginTop: SPACE(1) }}>
-            {pinned ? <><StatusChip tone="neutral">{C.build.s4.fixed}</StatusChip><span data-ui-v2="manual-chip"><StatusChip tone="neutral">{C.pick.manual}</StatusChip></span></>
+            {pinned ? <span data-ui-v2="manual-chip"><StatusChip tone="neutral">{C.pick.manual}</StatusChip></span>
               : <StatusChip tone="neutral">{fill(C.build.s1.score, { score: Math.round(c.total) })}</StatusChip>}
             {indLine && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{indLine}</span>}
           </div>

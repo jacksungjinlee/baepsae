@@ -303,7 +303,7 @@ function StepTerms({ st, set, ds, load }) {
           return (
             <div key={t} style={{ display: "flex", alignItems: "center", gap: SPACE(2), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0 })}>{s.nk}</span>
-              <StatusChip tone="neutral">{s4.fixed}</StatusChip>
+              <span data-ui-v2="manual-chip"><StatusChip tone="neutral">{C.pick.manual}</StatusChip></span>
               <button type="button" aria-label={fill(s4.removeAria, { name: s.nk })} onClick={() => set({ pinned: st.pinned.filter((x) => x !== t) })}
                 style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{s4.remove}</button>
             </div>
