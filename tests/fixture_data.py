@@ -81,9 +81,9 @@ def idx_rows(end, base, years=3):
 
 
 def hilo_of(files, codes):
-    """야후에서 받은 것처럼: 필수 종목의 (최고, 최저) 를 그대로."""
+    """야후에서 받은 것처럼: 필수 종목의 최고·최저·d1 을 그대로."""
     by = {s["t"]: s for s in files["data"]["stocks"]}
-    return {t: (by[t]["hi"], by[t]["lo"]) for t in codes if t in by}
+    return {t: {"hi": by[t]["hi"], "lo": by[t]["lo"], "d1": by[t].get("d1", 0.0)} for t in codes if t in by}
 
 
 def good_pair():

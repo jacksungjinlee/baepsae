@@ -403,6 +403,29 @@ def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookbac
     return out, notes, bool(prev_final)
 
 
+def kr_prev_session(px_date, index_dates):
+    """KOSPI 일봉 날짜들에서 기준일 바로 앞 거래일. 없으면 None. (순수 함수)"""
+    ds = sorted({pd.Timestamp(d).date() for d in index_dates if pd.Timestamp(d).date() < px_date})
+    return ds[-1] if ds else None
+
+
+def prev_session_ok(sessions, prev_final, want_prev):
+    """d1 을 써도 되는지: 직전 파일이 최종본이고, 그 날짜가 KOSPI 의 직전 거래일과 같아야 해요. (순수 함수)"""
+    return bool(sessions) and bool(prev_final) and want_prev is not None and sessions[0][0] == want_prev
+
+
+def pin_recent(px, off_by_day, code):
+    """최근 거래일들의 값을 공식 종가로 맞춰요 (그 날짜 봉이 있을 때만). 반환: (시계열, 고친 개수). (순수 함수)"""
+    fixed = 0
+    px = px.copy()
+    for ts, offmap in off_by_day.items():
+        v = offmap.get(code)
+        if v and ts in px.index and float(px.loc[ts]) != v:
+            px.loc[ts] = v
+            fixed += 1
+    return px, fixed
+
+
 def _official_map(df):
     """종목코드 → 공식 종가 (시가총액 ÷ 상장주식수)."""
     out = {}
@@ -469,7 +492,8 @@ def kr_desc_text(industry, products, market, cap):
         bits.append(f"주요제품: {prod}")
     if mk:
         bits.append(f"{mk} 상장")
-    if cap:
+    cap = _fin(cap)
+    if cap and cap > 0:
         bits.append(f"시가총액 {cap:,.1f}조원" if cap >= 1 else f"시가총액 {cap * 10000:,.0f}억원")
     return " · ".join(bits) or None
 
@@ -1145,6 +1169,11 @@ def enrich_with_dart(kr_stocks, client):
     """사업보고서·배당·분기보고서(TTM)를 붙입니다. 기업마다 분기를 따로 확인해요 (3Q → 2Q → 1Q)."""
     fin_map = {}
     today = client.today
+    old = [k for k in client.entries if k.endswith("|DIV")]
+    for k in old:                       # v17.5.1: 옛 해석('-' = 모름)으로 저장된 배당 항목은 버려요 (DIV2 로 다시 받아요)
+        del client.entries[k]
+    if old:
+        log(f"· DART 캐시: 옛 배당 항목 {len(old):,}건을 지웠어요 (새 해석 DIV2 로 다시 받아요)")
     cmap = dart_corp_map(client)
     year = today.year - 1
     targets = [s for s in kr_stocks if s["t"] in cmap]
@@ -2016,17 +2045,6 @@ def fetch_korea(start, today, rf, prev=None):
     elif not desc:
         log("  !! 업종 정보를 못 받아왔어요 — 업종이 '기타'로 들어갑니다")
 
-    # v17.5.1: d1 (전 거래일 공식 종가 대비) · val20 (20거래일 평균 거래대금) — 그 전 날짜들의 최종 목록 파일에서
-    d1_map, v20_map = {}, {}
-    if px_date is not None:
-        sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst)
-        for n in snotes:
-            log(f"  ({n})" if not n.startswith("!!") else f"  {n}")
-        d1_map, v20_map, dcnt = kr_d1_val20(listing, sessions, prev_final)
-        log(f"{'  !! ' if not prev_final else '· '}d1·val20: 앞선 거래일 파일 {len(sessions)}개"
-            + (f" (직전 {sessions[0][0]})" if sessions else "") + f" · d1 {len(d1_map):,} · val20 {len(v20_map):,}"
-            + (f" · {dict(dcnt)}" if dcnt else ""))
-
     n_all = len(listing)
     listing = select_kr_universe(listing, MAX_KR)
     if n_all > MAX_KR:
@@ -2052,6 +2070,25 @@ def fetch_korea(start, today, rf, prev=None):
         else:
             log(f"· 기준일 {px_date} 뒤에 끝난 거래일 없음 (KOSPI 일봉 {len(ks_all):,}일, 오늘 {today} 은 빼고 봐요)")
     kospi = cut_at(ks_all, last)
+
+    # v17.5.1: d1 (전 거래일 공식 종가 대비) · val20 (20거래일 평균 거래대금) — 그 전 날짜들의 최종 목록 파일에서.
+    # 직전 파일이 KOSPI 의 직전 거래일과 다르면(그날 파일이 없거나 미완성이라 건너뛴 것) d1 은 이틀치 변화라 비워요.
+    d1_map, v20_map, sessions = {}, {}, []
+    if px_date is not None:
+        sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst)
+        for n in snotes:
+            log(f"  ({n})" if not n.startswith("!!") else f"  {n}")
+        want_prev = kr_prev_session(px_date, ks_all.index)
+        ok_prev = prev_session_ok(sessions, prev_final, want_prev)
+        if sessions and not ok_prev and prev_final:
+            log(f"  !! 직전 거래일은 {want_prev} (KOSPI)인데 찾은 목록 파일은 {sessions[0][0]} — 그날 파일이 없거나 최종본이 아니라 d1 을 비워요")
+        d1_map, v20_map, dcnt = kr_d1_val20(listing, sessions, ok_prev)
+        log(f"{'  !! ' if not ok_prev else '· '}d1·val20: 앞선 거래일 파일 {len(sessions)}개"
+            + (f" (직전 {sessions[0][0]})" if sessions else "") + f" · d1 {len(d1_map):,} · val20 {len(v20_map):,}"
+            + (f" · {dict(dcnt)}" if dcnt else ""))
+    # 네이버 일봉은 넥스트레이드까지 합친 '마지막 체결가'라 공식 종가와 다른 날이 있어요 (리뷰: 300일 중 30일쯤, 최대 4%).
+    # 목록 파일을 받은 최근 거래일들은 공식 종가로 고쳐요. 그보다 오래된 날은 v18.0 Part B 에서 공식 종가 이력으로 바꿔요.
+    off_by_day = {pd.Timestamp(d): _official_map(df) for d, df in sessions}
     ks_date = kospi.index[-1].date() if len(kospi) else None
     if px_date is not None and ks_date != px_date:
         log(f"  !! KOSPI 마지막 날짜 {ks_date} ≠ 기준일 {px_date} (검증에서 실패 처리돼요)")
@@ -2096,6 +2133,11 @@ def fetch_korea(start, today, rf, prev=None):
     lock = threading.Lock()
     prev_hl = {x["t"]: (_fin(x.get("hi")), _fin(x.get("lo"))) for x in (prev or {}).get("stocks", []) if x.get("cls") == "kr"}
     prod_map = {}               # 주요제품 (업종 그룹 나누기용, 파일에는 dk 로만 나가요)
+    try:
+        prev_px = pd.Timestamp((prev or {}).get("pxDate") or "")
+    except (TypeError, ValueError):
+        prev_px = None
+    prev_px = prev_px if prev_px is not None and not pd.isna(prev_px) else None
     hl_cnt, hl_other = collections.Counter(), []
 
     def hilo_note(code, px, rec):
@@ -2108,8 +2150,12 @@ def fetch_korea(start, today, rf, prev=None):
             o, n = old[i], _fin(rec.get(key))
             if not o or not n or abs(n / o - 1) <= 0.01:
                 continue
+            win = px.tail(252)
+            at = win.idxmax() if key == "hi" else win.idxmin()
             if (n > o) if key == "hi" else (n < o):
-                why = "새 고점" if key == "hi" else "새 저점"
+                # 지난 발행 뒤에 생긴 봉에서 나온 값이어야 진짜 새 고점·저점 (예전 봉이 바뀐 거면 분할·수정·잘못된 봉)
+                new_bar = prev_px is None or at > prev_px
+                why = ("새 고점" if key == "hi" else "새 저점") if new_bar else "그 밖"
             else:
                 before = px.iloc[:-252] if len(px) > 252 else px.iloc[:0]
                 why = "기간 밖으로 빠짐" if len(before) and bool(((before / o - 1).abs() <= 0.005).any()) else "그 밖"
@@ -2140,8 +2186,11 @@ def fetch_korea(start, today, rf, prev=None):
                 return None
             if close is not None:
                 px, how = pin_close(px, px_date, close)
+                px, nfix = pin_recent(px, off_by_day, code)
                 with lock:
                     pin[how] += 1
+                    pin["recent_fixed"] += nfix
+                    pin["recent_stocks"] += 1 if nfix else 0
             else:
                 px = cut_at(px, last)
             if len(px) < 60:
@@ -2170,7 +2219,7 @@ def fetch_korea(start, today, rf, prev=None):
                 "dy": round(dyv, 2) if dyv is not None else None,   # 모르면 빈 칸 (0% 로 보이지 않게). DART 가 나중에 채워요
                 "eps": round(eps, 0) if eps else None,
                 "bps": round(bps, 0) if bps else None,
-                "dps": round(dps, 0) if dps is not None and dps >= 0 else None,   # 0 = 배당 없음 (v17.5.1)
+                "dps": round(dps, 0) if dps and dps > 0 else None,   # pykrx 는 모르면 0 을 줘서 0 은 버려요 (0원은 DART 가 채워요)
                 "cap": round(cap, 3) if cap else None,
                 "val": round(amt / 1e8, 1) if amt is not None else None,
                 "lo": float(px.tail(252).min()), "hi": float(px.tail(252).max()),
@@ -2223,10 +2272,12 @@ def fetch_korea(start, today, rf, prev=None):
         log(f"{'  !! ' if hl_other else '· '}52주 최고·최저가 지난 발행본보다 1% 넘게 바뀐 종목: {dict(hl_cnt)}"
             + (f" · 그 밖(확인 필요) {len(hl_other)}건: {', '.join(sorted(hl_other)[:10])}{'…' if len(hl_other) > 10 else ''}" if hl_other else ""))
     if pin:
-        loud = pin["added"] > 0.02 * max(sum(pin.values()), 1)   # 시계열이 하루 늦으면 베타·변동성에 가짜 하루 움직임이 끼어요
+        loud = pin["added"] > 0.02 * max(pin["same"] + pin["fixed"] + pin["added"], 1)   # 시계열이 하루 늦으면 베타·변동성에 가짜 하루 움직임이 끼어요
         log(f"{'  !! ' if loud else '· '}네이버 시계열의 {px_date} 값: 공식 종가와 같음 {pin['same']:,} · "
             f"공식 종가로 교체 {pin['fixed']:,} · 없어서 추가 {pin['added']:,}"
             + (" (네이버 시계열이 기준일보다 늦은 종목이 많아요)" if loud else ""))
+        log(f"· 최근 {len(off_by_day)}거래일 네이버 일봉을 공식 종가로 고침: {pin['recent_fixed']:,}개 봉 · {pin['recent_stocks']:,}종목"
+            " (넥스트레이드 체결가가 섞인 날)")
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map}
     return out, bench, mkt, meta
@@ -2360,6 +2411,35 @@ def save_us_info(d, path=None):
         log(f"  !! 미국 상세 정보 보관본 저장 실패: {e}")
 
 
+def us_d1(px, us_px_date):
+    """미국 d1: 그 종목의 마지막 봉이 미국 기준일일 때만 마지막 ÷ 그 전 봉 (거래 정지로 낡은 봉이면 빈 칸). (순수 함수)
+    야후 수정 종가라 배당락일에는 배당만큼이 더해져 보여요 (작은 차이 — 필드 설명에 적어 둬요)."""
+    if len(px) < 2 or px.index[-1].date() != us_px_date:
+        return None
+    return round(float(px.iloc[-1] / px.iloc[-2] - 1) * 100, 2)
+
+
+def etf_from_quote_type(out, cache):
+    """ETF 목록에 없는데 야후가 ETF·펀드라고 하면 ETF 로 둬요 (순위에 섞이지 않게). 반환: 바꾼 종목들. (순수 함수)"""
+    odd = []
+    for rec in out:
+        qt = ((cache.get(rec["t"]) or {}).get("info") or {}).get("quoteType")
+        if qt in ("ETF", "MUTUALFUND") and not rec.get("etf"):
+            rec["etf"] = True
+            odd.append(rec["t"])
+    return odd
+
+
+def cut_words(text, n):
+    """n 글자 안에서 낱말 경계로 잘라요 ("nanometer" 가 잘려 "nan" 이 남지 않게). (순수 함수)"""
+    t = " ".join(str(text).split())
+    if len(t) <= n:
+        return t
+    cut = t[:n + 1]
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp > n * 0.6 else t[:n]).rstrip(" ,;:-")
+
+
 def apply_us_info(rec, info, px_then, fx):
     """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)"""
     nm = info.get("shortName") or info.get("longName")
@@ -2397,7 +2477,7 @@ def apply_us_info(rec, info, px_then, fx):
         rec["val"] = val
     summ = info.get("longBusinessSummary")
     if summ:
-        rec["de"] = str(summ)[:400]
+        rec["de"] = cut_words(str(summ), 400)
     return True
 
 
@@ -2439,8 +2519,7 @@ def fetch_us(start, today, rf):
             krw = (px * fx.reindex(px.index).ffill()).dropna()
             rec = {"t": sym, "nk": sym, "ne": sym, "cls": "us", "ccy": "USD", "fxu": True, "s": "etc",
                    "etf": sym in US_ETFS,
-                   "d1": (round(float(px.iloc[-1] / px.iloc[-2] - 1) * 100, 2)
-                          if len(px) >= 2 and px.index[-1].date() == us_px_date else None),
+                   "d1": us_d1(px, us_px_date),
                    "price": round(float(px.iloc[-1]), 2),
                    "vol": ann_vol(krw.pct_change().dropna().values), "beta": b, "al": a,
                    "lo": round(float(px.tail(252).min()), 2), "hi": round(float(px.tail(252).max()), 2)}
@@ -2499,13 +2578,7 @@ def fetch_us(start, today, rf):
         + (f" · 못 받음 {len(failed):,}곳 → 보관본 {fallback:,}곳(최대 {oldest}일 전) · 없음 {len(missing):,}곳"
            + (f" ({', '.join(missing[:8])}…)" if missing else "") if failed or missing else ""))
     log(f"· 미국 완료: {len(out):,}개")
-    # ETF 목록에 없는데 야후가 ETF 라고 하면 ETF 로 두고 크게 알려요 (순위에 섞이지 않게)
-    odd = []
-    for rec in out:
-        qt = ((cache.get(rec["t"]) or {}).get("info") or {}).get("quoteType")
-        if qt in ("ETF", "MUTUALFUND") and not rec.get("etf"):
-            rec["etf"] = True
-            odd.append(rec["t"])
+    odd = etf_from_quote_type(out, cache)
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
@@ -2557,7 +2630,7 @@ def read_prev_data(path=OUT):
 UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환산)",
          "val": "억원 (거래대금 · 한국은 기준일 하루, 미국은 야후 3개월 평균 거래량 × 가격)",
          "val20": "억원 (한국만 · 최근 20거래일 평균 거래대금, 10일 미만이면 빈 칸)",
-         "d1": "% (전 거래일 공식 종가 대비 · 미국은 자기 기준일 · 한국 ±30% 넘으면 빈 칸)",
+         "d1": "% (전 거래일 공식 종가 대비 · 미국은 자기 기준일, 야후 수정 종가라 배당락일엔 배당 포함 · 한국 ±30% 넘거나 직전 거래일 파일이 없으면 빈 칸)",
          "dps": "원 (한국 · 0 = 배당 없음, 빈 칸 = 모름)",
          "fy": "op·debt·roe·opm·g3·dps·dps3 가 나온 사업보고서 연도 (bq 는 TTM 분기)",
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
