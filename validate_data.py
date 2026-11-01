@@ -63,6 +63,25 @@ CORP_MIN, SECTOR_MIN = 2000, 20
 TTM_HARD, TTM_WARN = 50, 80
 NEAR = 2.0               # 기준선에서 2점 안쪽이면 경고
 
+# v17.5.1 (v18.0 Part A + 추가 4–9). 새 기준은 첫 실제 실행의 숫자를 보고 Jack 이 승인한 뒤 고정돼요.
+BAD_WORD = re.compile(r"\b(nan|NaN|None|null|undefined)\b")   # 낱말 단위 — "Financial" 은 통과
+KR_DEPTS = ("우량기업부", "중견기업부", "벤처기업부", "기술성장기업부", "관리종목(소속부없음)", "투자주의환기종목(소속부없음)")
+PROD_SAME_MAX = 5.0      # '주요제품'이 업종 이름과 똑같은 국내 설명 비율 상한 (%) — 열이 밀린 사고는 100%였어요
+D1_COVER = 95            # 국내 d1 채움 (%)
+D1_MAX_KR = 30.0         # 한국 하루 가격 제한폭 — 넘는 값은 파이프라인이 빈 칸으로 둬요
+VAL20_COVER = 95         # 국내 val20 채움 (%)
+IDX_MIN_ROWS = 700       # 지수 이력 3년 ≈ 740 (한국) · 752 (미국) 거래일
+IDX_MIN_DAYS = 3 * 365 - 30
+HILO_TOL = 1.0           # 필수 종목 52주 최고·최저가 야후와 1% 안
+# ETF 여부는 종목마다 직접 정해요 (fetch_data.py 와 따로 적어 같은 실수를 같이 하지 않게)
+US_ETF_SET = {"SPY", "VOO", "QQQ", "SCHD", "VTI", "VT", "IVV", "DIA", "IWM", "SOXX", "SMH", "XLK", "XLF", "XLE", "XLV",
+              "XLY", "XLP", "XLI", "TLT", "IEF", "SHY", "GLD", "IAU", "SLV", "JEPI", "JEPQ", "VYM", "ARKK", "MTUM", "QUAL",
+              "VBR", "IVE", "SPHQ"}
+US_COMPANY_SET = {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP", "AAPL", "MSFT", "NVDA"}
+KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
+KR_COMPANY_SET = {"241520", "034830", "123890"}           # 같은 업종이지만 회사 (벤처캐피털·신탁회사)
+YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=2y&interval=1d"
+
 
 # ── 결과 표 ─────────────────────────────────────────────────
 class Report:
@@ -258,6 +277,43 @@ def http_kospi_sessions(sleep=time.sleep):
     return out
 
 
+def _yahoo_closes(sym):
+    r = requests.get(YAHOO_CHART.format(sym=sym), timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    res = r.json()["chart"]["result"][0]
+    closes = res["indicators"]["quote"][0]["close"]
+    return [(dt.datetime.fromtimestamp(t, KST).date(), float(c)) for t, c in zip(res["timestamp"], closes) if c is not None]
+
+
+def http_hilo(codes, px_date, sleep=time.sleep):
+    """필수 종목의 52주(252거래일, pxDate 까지) 종가 최고·최저 — 야후 차트 (이 파일의 코드로 따로 받아요).
+    반환: {코드: (최고, 최저)} · 못 받은 종목은 빠져요."""
+    out = {}
+    for code in codes:
+        for i in range(3):
+            try:
+                rows = [c for d, c in _yahoo_closes(f"{code}.KS") if d <= px_date][-252:]
+                if len(rows) >= 200:
+                    out[code] = (max(rows), min(rows))
+                break
+            except Exception:
+                if i < 2:
+                    sleep(i + 1)
+    return out
+
+
+def text_values(obj, path=""):
+    """JSON 안의 모든 글자 값 (경로, 값)."""
+    if isinstance(obj, str):
+        yield path, obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from text_values(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from text_values(v, f"{path}[{i}]")
+
+
 def completed_sessions_after(px, today, sessions):
     """pxDate < d < 오늘(KST) 인 KOSPI 거래일 = 이미 끝났는데 반영되지 않은 거래일. 오늘 거래일은 아직 최종본이
     없을 수 있어서 넣지 않아요 (다음 날 아침 실행이 잡아요)."""
@@ -296,11 +352,12 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
-def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None):
+def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
     final: {"date", "closes", "how"} — 비교할 최종본 (None 이면 날짜·가격 검사 실패).
     sessions: {"dates": [KOSPI 거래일…], "src": 출처} — None 이면 받지 못한 것 → FAIL.
     now: 관문 실행 시각(KST) — publishedAt 12시간 검사용 (없으면 today 정오).
+    hilo: {코드: (최고, 최저)} 야후 52주 종가 범위 — None 이면 받지 못한 것 (경고).
     mode: publish · bootstrap · live.  반환: Report."""
     rep, notes = Report(), (notes if notes is not None else [])
     data, corp, disc, macro = cur["data"], cur["corp"], cur["disc"], cur["macro"]
@@ -470,9 +527,120 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     ttm = 100.0 * sum(1 for c in comps if c.get("bq")) / len(comps) if comps else 0.0
     rep.add("TTM 반영 비율", ttm >= TTM_HARD, f"{ttm:.1f}%", f"≥ {TTM_HARD}% (80% 아래면 경고)", warn=ttm < TTM_WARN)
 
+    # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
+    check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
+
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
     return rep
+
+
+def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
+    data, macro = cur["data"], cur["macro"]
+    must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr"]
+
+    # 1. 화면에 나가는 글자에 nan·None·null·undefined 가 낱말로 없어야 해요 (설명 열 밀림 사고: "nan · 주요제품: …")
+    bad = []
+    for name in ("data", "corp", "disc", "macro"):
+        for path, v in text_values(cur.get(name) or {}):
+            if BAD_WORD.search(v):
+                bad.append(f"{name}.{path}={v[:30]}")
+    rep.add("글자에 nan·None·null·undefined 없음", not bad, f"{len(bad):,}곳" + (f" (예: {bad[0]})" if bad else ""), "0곳")
+
+    # 1b. 국내 설명: 소속부(우량기업부 등)가 업종 자리에 들어가지 않고, 주요제품이 업종 이름의 복사가 아니어야 해요
+    dept = [s["t"] for s in kr if any(d in (s.get("dk") or "") for d in KR_DEPTS)]
+    rep.add("국내 설명에 소속부 없음", not dept, f"{len(dept):,}종목" + (f" (예: {dept[0]})" if dept else ""), "0종목")
+    same = 0
+    for s in kr:
+        parts = [x.strip() for x in (s.get("dk") or "").split(" · ")]
+        prod = next((x[len("주요제품: "):] for x in parts if x.startswith("주요제품: ")), None)
+        if prod is not None and parts and parts[0] == prod:
+            same += 1
+    share = 100.0 * same / len(kr) if kr else 0.0
+    rep.add("국내 주요제품 ≠ 업종 이름", share <= PROD_SAME_MAX, f"{share:.1f}% ({same:,}종목)", f"≤ {PROD_SAME_MAX}%")
+
+    # 4. d1: 전 거래일 공식 종가 대비 %
+    miss = [t for t in must_kr if num((by.get(t) or {}).get("d1")) is None]
+    rep.add("필수 종목 d1", not miss, "모두 있음" if not miss else "없음: " + ",".join(miss), ",".join(must_kr))
+    rep.pct("국내 d1 채움", coverage(kr, "d1"), D1_COVER)
+    out = [s["t"] for s in kr if num(s.get("d1")) is not None and abs(num(s["d1"])) > D1_MAX_KR]
+    rep.add("국내 d1 범위 (±30%)", not out, f"넘는 종목 {len(out)}" + (f" (예: {out[0]})" if out else ""), "0 (넘으면 빈 칸이어야 해요)")
+    miss_us = [s["t"] for s in us if s.get("t") in ("AAPL", "MSFT", "NVDA") and num(s.get("d1")) is None]
+    rep.add("미국 필수 종목 d1", not miss_us, "모두 있음" if not miss_us else "없음: " + ",".join(miss_us), "AAPL·MSFT·NVDA")
+
+    # 8. val20: 20거래일 평균 거래대금 (억원)
+    miss = [t for t in must_kr if not ((num((by.get(t) or {}).get("val20")) or 0) > 0)]
+    rep.add("필수 종목 val20", not miss, "모두 있음" if not miss else "없음: " + ",".join(miss), ",".join(must_kr))
+    rep.pct("국내 val20 채움", coverage(kr, "val20"), VAL20_COVER)
+    neg = sum(1 for s in kr if num(s.get("val20")) is not None and num(s["val20"]) < 0)
+    rep.add("국내 val20 ≥ 0", neg == 0, f"음수 {neg}", "0")
+
+    # 9. etf: 모든 종목에 참/거짓, 정해 둔 종목은 맞게
+    stocks = data.get("stocks", [])
+    nobool = [s.get("t") for s in stocks if not isinstance(s.get("etf"), bool)]
+    rep.add("etf 표시 (모든 종목)", not nobool, "모두 있음" if not nobool else f"없음 {len(nobool)} (예: {nobool[0]})", "참/거짓")
+    wrong = [t for t in US_ETF_SET if t in by and by[t].get("etf") is not True]
+    wrong += [t for t in US_COMPANY_SET | set(MUST) if t in by and by[t].get("etf") is not False]
+    wrong += [t for t in set(FUNDS) | KR_FUND_SET if t in by and by[t].get("etf") is not True]
+    wrong += [t for t in KR_COMPANY_SET if t in by and by[t].get("etf") is not False]
+    wrong += [s["t"] for s in stocks if s.get("cls") == "bond" and s.get("etf") is not True]
+    rep.add("etf 표시가 맞음", not wrong, "맞음" if not wrong else "틀림: " + ",".join(sorted(wrong)[:8]),
+            "미국 ETF·국내 ETF·채권·금현물 참, 회사 주식 거짓")
+
+    # 6. 주당 배당금: 0 = 배당 없음 (빈 칸 = 모름). 음수는 없어야 해요
+    negd = [s["t"] for s in kr if num(s.get("dps")) is not None and num(s["dps"]) < 0]
+    zero = sum(1 for s in kr if num(s.get("dps")) == 0)
+    rep.add("국내 주당 배당금 ≥ 0", not negd, f"음수 {len(negd)} · 0원(배당 없음) {zero:,}", "음수 0")
+    s5 = by.get("005930") or {}
+    rep.add("005930 주당 배당금", (num(s5.get("dps")) or 0) > 0, s5.get("dps"), "> 0")
+
+    # 7. fy: 연간 DART 수치(op·debt·roe·dps3)가 나온 사업보고서 연도
+    y = (px or today).year
+    has_annual = [c for c in comps if num(c.get("debt")) is not None or any(num(v) is not None for v in (c.get("op") or []))]
+    nofy = [c["t"] for c in has_annual if not isinstance(c.get("fy"), int)]
+    rep.add("연간 수치에 사업보고서 연도(fy)", not nofy, f"없음 {len(nofy)}" + (f" (예: {nofy[0]})" if nofy else ""),
+            f"연간 수치가 있는 {len(has_annual):,}곳 모두")
+    badfy = sorted({c.get("fy") for c in comps if isinstance(c.get("fy"), int) and not (y - 2 <= c["fy"] <= y - 1)})
+    rep.add("사업보고서 연도 범위", not badfy, "모두 범위 안" if not badfy else f"범위 밖: {badfy[:5]}", f"{y - 2}–{y - 1}")
+    cby = {c.get("t"): c for c in comps}
+    miss = [t for t in must_kr if not isinstance((cby.get(t) or {}).get("fy"), int)]
+    rep.add("필수 종목 fy", not miss, "모두 있음" if not miss else "없음: " + ",".join(miss), ",".join(must_kr))
+
+    # 5. idxHist: KOSPI·S&P500 일별 종가 3년, 각자 기준일까지
+    ih = macro.get("idxHist") or {}
+    probs = []
+    for name, want in (("KOSPI", day(data.get("ksDate"))), ("SP500", day(data.get("usPxDate")))):
+        h = ih.get(name) or {}
+        rows = h.get("rows") or []
+        ds = [day(r[0]) if isinstance(r, list) and len(r) == 2 else None for r in rows]
+        vs = [num(r[1]) if isinstance(r, list) and len(r) == 2 else None for r in rows]
+        if len(rows) < IDX_MIN_ROWS:
+            probs.append(f"{name} {len(rows)}일")
+            continue
+        if None in ds or any(v is None or v <= 0 for v in vs):
+            probs.append(f"{name} 잘못된 줄")
+            continue
+        if ds != sorted(set(ds)):
+            probs.append(f"{name} 날짜 순서·중복")
+        if day(h.get("asOf")) != ds[-1] or ds[-1] != want:
+            probs.append(f"{name} 마지막 {ds[-1]} (asOf {h.get('asOf')}, 기준일 {want})")
+        if (ds[-1] - ds[0]).days < IDX_MIN_DAYS:
+            probs.append(f"{name} {ds[0]}부터라 3년이 안 돼요")
+    rep.add("지수 이력 (KOSPI·S&P500 3년)", not probs, "정상" if not probs else " · ".join(probs)[:90],
+            f"각 {IDX_MIN_ROWS}일 이상 · 마지막 = 각자 기준일")
+
+    # 3. 52주 최고·최저: 필수 종목이 야후 종가 범위와 1% 안
+    if hilo is None or not hilo:
+        rep.add("필수 종목 52주 최고·최저 (야후)", True, "야후를 받지 못해 확인 못 함", f"{HILO_TOL}% 안 (못 받으면 경고)", warn=True)
+    else:
+        off = []
+        for t, (yh, yl) in hilo.items():
+            s = by.get(t) or {}
+            h, lo = num(s.get("hi")), num(s.get("lo"))
+            if h is None or lo is None or abs(h / yh - 1) * 100 > HILO_TOL or abs(lo / yl - 1) * 100 > HILO_TOL:
+                off.append(f"{t} {h}/{lo} vs {yh:,.0f}/{yl:,.0f}")
+        rep.add("필수 종목 52주 최고·최저 (야후)", not off, f"{len(hilo)}종목 확인" if not off else " · ".join(off)[:90],
+                f"{HILO_TOL}% 안", warn=len(hilo) < len(must_kr))
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────
@@ -561,8 +729,16 @@ def main(argv=None):
                 print(f"!! 네이버·야후 KOSPI 거래일이 다른 날: {', '.join(d.isoformat() for d in sessions['disagree'][:5])} (합쳐서 써요)")
         except Exception as e:
             print(f"!! KOSPI 일봉을 받지 못했어요: {e}")
+    hilo = None
+    try:
+        px = day(cur["data"].get("pxDate"))
+        if px:
+            hilo = http_hilo([t for t in MUST], px)
+            print(f"· 야후 52주 종가 범위: {len(hilo)}/{len(MUST)}종목")
+    except Exception as e:
+        print(f"!! 야후 52주 범위를 받지 못했어요: {e}")
     rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes,
-                     sessions=sessions, now=now)
+                     sessions=sessions, now=now, hilo=hilo)
     for n in notes:
         print(f"· {n}")
     print()
