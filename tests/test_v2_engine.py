@@ -576,3 +576,15 @@ def test_half_rule_like_the_current_app():
     assert y51 == {"ok": False, "half": True, "missing": y51["missing"]} and y51["missing"] > 0.5
     assert yx["ok"], "300 + 100 + 200 은 딱 절반이에요 (소수점 오차로 넘지 않아요)"
     assert got[2]["v"]["half"] and "vol" not in got[2]["v"] and got[1]["v"]["vol"] > 0
+
+
+def test_industry_check_counts_the_safety_asset_share():
+    # 리뷰 3차: 같은 업종 2 + 2, 안전자산 30% — 실제 sizing 은 업종당 1/3 아래로 담을 수 있는데 검사가 막았어요
+    stocks = [kr("000010", ind="semi", indName="반도체"), kr("000020", ind="semi", indName="반도체"),
+              kr("000030", ind="machinery", indName="기계"), kr("000040", ind="machinery", indName="기계")]
+    # 6종목 7:3 (한국 4 · 미국 2 빈자리): 안전자산 30% 면 종목 몫은 70% → 업종당 약 23%, 안전자산 없으면 1/3 에 걸려요
+    got = run(SET + "const st = S({ mix: 'k73', count: 6, maxPct: 25, cushion: 30, method: 'conviction' });"
+              "const st0 = S({ mix: 'k73', count: 6, maxPct: 25, cushion: 0, method: 'conviction' });"
+              "out = { with30: E.industryFits(stocks, [], { kr: 4, us: 2 }, st), with0: E.industryFits(stocks, [], { kr: 4, us: 2 }, st0) };",
+              stocks=stocks)
+    assert got == {"with30": True, "with0": False}, got

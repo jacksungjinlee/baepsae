@@ -335,7 +335,9 @@ export function industryFits(stocks, pinnedStocks, counts, settings) {
     const open = (counts[mk] || 0) - stocks.filter((s) => s.cls === mk).length;
     for (let i = 0; i < open; i++) picks.push({ t: `__open_${mk}_${i}`, s: { t: `__open_${mk}_${i}`, cls: mk }, total: 50 });
   }
-  const r = size({ picks, pinned: pinnedStocks, cushion: [], settings: { ...settings, cushion: 0 }, amountWon: 0 });
+  // 안전자산(채권·금) 비중도 실제 sizing 처럼 넣어요 — 빼면 업종 비중이 실제보다 커 보여 담을 수 있는 조합을 막았어요 (리뷰 3차)
+  const cushion = settings.cushion > 0 ? [{ s: { t: "__cushion", cls: "bond", etf: true }, share: 1 }] : [];
+  const r = size({ picks, pinned: pinnedStocks, cushion, settings, amountWon: 0 });
   return r.ok || !r.clash.some((p) => p.code === "ind" || p.code === "indCount");
 }
 
