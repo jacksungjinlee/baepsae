@@ -6,6 +6,7 @@ import { C, FONT, SERIF, RAD, HAIR, NAV, navPush, navInstall } from "./tokens.js
 import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
 import { loadJson } from "./data.js";
+import { SHOW_SCORE } from "./flags.js";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
@@ -270,7 +271,9 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag, lang }) {
             <Ic name="target" size={18} color={C.blue} />
             <span style={{ fontSize: 14.5, fontWeight: 800, color: C.ink }}>{en ? "30-second checkup" : "30초 진단"}</span>
           </div>
-          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 7, lineHeight: 1.6 }}>{en ? "Enter your current holdings — health score, concentration and correlations, instantly." : "지금 보유 종목을 넣으면 건강 점수·쏠림·상관을 바로 보여줘요. 기본 성향으로 시작해요."}</div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 7, lineHeight: 1.6 }}>{SHOW_SCORE
+            ? (en ? "Enter your current holdings — health score, concentration and correlations, instantly." : "지금 보유 종목을 넣으면 건강 점수·쏠림·상관을 바로 보여줘요. 기본 성향으로 시작해요.")
+            : (en ? "Enter your current holdings — concentration and correlations, instantly." : "지금 보유 종목을 넣으면 쏠림·상관을 바로 보여줘요. 기본 성향으로 시작해요.")}</div>
         </button>
         <button onClick={() => { gcEvent("gate-test"); onPick("simple"); }}
           style={{ textAlign: "left", background: "#fff", border: HAIR, borderRadius: RAD.card, padding: 16, cursor: "pointer", fontFamily: FONT }}>

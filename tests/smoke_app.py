@@ -486,72 +486,116 @@ def scene_no_risk_holding(R, files):
     ctx.close(); srv.shutdown()
 
 
-# B안 (Jack 2026-11-01): NaN 고친 뒤 처음 켜지는 판정·조언·예측 문구는 v18 전까지 보이지 않아야 해요
-HIDDEN_B = ["기대 +", "적정 기대수익", "세후 기대수익", "기대수익(연", "기대수익률", "E(r)", "복리 수익률", "위험 대비 효율", "포트폴리오 건강 점수", "베타가 목표보다", "변동성이 상한을 넘어요",
-            "비중만 옮겨서 베타", "늘려 출렁임 낮추기", "모든 계기가 초록불이에요", "남은 예산이 맞춰야 할", "남은 예산만으론",
-            "닿을 수 있어요", "이럴 바엔 인덱스 펀드", "비중을 줄이는 효과가 가장 커요", "더 나눠 담으면", "내 그릇에 맞는 베타를 지켰어요",
-            "목표까지 갈 수 있을까요", "내 수익은 어디서 나오나요", "원금을 지킬 수 있을까", "NaN"]
+# B안 (Jack 2026-11-01): NaN 고친 뒤 처음 켜지는 판정·조언·예측 문구는 v18 전까지 보이지 않아야 해요 (src/flags.js)
+HIDDEN_B = ["기대 +", "적정 기대수익", "세후 기대수익", "기대수익(연", "기대수익률", "E(r)", "복리 수익률", "위험 대비 효율",
+            "건강 점수", "베타가 목표보다", "변동성이 상한을 넘어요", "비중만 옮겨서 베타", "늘려 출렁임 낮추기",
+            "모든 계기가 초록불이에요", "남은 예산이 맞춰야 할", "남은 예산만으론", "닿을 수 있어요", "이럴 바엔 인덱스 펀드",
+            "비중을 줄이는 효과가 가장 커요", "더 나눠 담으면", "비중만 고르게 나눠도", "내 그릇에 맞는 베타를 지켰어요",
+            "목표까지 갈 수 있을까요", "내 수익은 어디서 나오나요", "원금을 지킬 확률", "NaN"]
+# ('초록 구간 = 내 프로필의 목표' 는 남아요: 분산·업종 계기에는 목표 구간이 그대로 있어요. β·σ 계기에서만 구간을 지워요.)
+HIDDEN_B_EN = ["expected +", "E(r)", "CAGR", "After-tax return", "Fair E(r)", "Portfolio health", "health score",
+               "Beta above target", "Beta below target", "Volatility over ceiling", "All gauges green", "remaining budget",
+               "Remaining budget", "Will I reach the goal", "Where do my returns come from", "An index fund would be cheaper",
+               "Raise cash to", "odds of keeping your principal", "NaN"]
 
 
-def hidden_b_shown(body):
-    """보이면 안 되는 문구와 그 앞뒤 글자 (어디서 나왔는지 바로 알 수 있게)"""
-    out = []
-    for h in HIDDEN_B:
-        i = body.find(h)
-        if i >= 0:
-            out.append(f"{h} ← …{body[max(0, i - 30):i + len(h) + 30]}…".replace("\n", " / "))
-    return out
+def hidden_shown(body, words):
+    """보이면 안 되는 문구 목록(먼저) + 그 앞뒤 글자 (어디서 나왔는지 바로 알 수 있게). 없으면 빈 문자열."""
+    hit = [(h, body.find(h)) for h in words if h in body]
+    if not hit:
+        return ""
+    ctx = [f"…{body[max(0, i - 25):i + len(h) + 25]}…".replace("\n", " / ") for h, i in hit]
+    return f"{[h for h, _ in hit]} · {ctx}"
 
 
 def scene_option_b(R, files):
-    """균형형 프로필 + KODEX 200 만 담기: 예전 계산이면 '변동성 상한 초과' 경고와 '현금 늘리기' 카드가 떠요.
-    B안에서는 위험 수치(보통 해 ±…)만 보이고, 판정·조언·기대수익·건강 점수는 어디에도 없어야 해요."""
+    """균형형 프로필(변동성 상한 24%) + 변동성 큰 실제 종목들: 예전 계산이면 '변동성이 상한을 넘어요' 경고, 고치기 카드,
+    기대수익, 건강 점수가 다 떠요. B안에서는 위험 수치(보통 해 ±…)만 보이고, 나머지는 ②③④ 어디에도, 한국어·영어
+    어느 쪽에도 없어야 해요. 첫 화면의 30초 진단 소개에도 '건강 점수'가 없어야 해요."""
     files = json.loads(json.dumps(files))      # 아래에서 배당만 지워요 (다른 장면에 번지지 않게 복사본에서)
-    have = {s.get("t") for s in files["data.json"]["stocks"]}
-    hold = [t for t in ("069500", "005930") if t in have][:1]
-    assert hold, "시험할 종목이 없어요"
-    for s in files["data.json"]["stocks"]:
-        if s.get("t") == hold[0]:
-            s["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
+    stocks = {s.get("t"): s for s in files["data.json"]["stocks"]}
+    hold = [t for t in ("000660", "005930", "005380") if t in stocks and isinstance(stocks[t].get("vol"), (int, float))]
+    assert len(hold) >= 2, f"시험할 종목이 모자라요: {hold}"
+    stocks[hold[0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
                "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile,
-            "holdings": [{"t": hold[0], "mw": 900}]}
+            "holdings": [{"t": t, "mw": 300} for t in hold]}
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sob", "name": "B안 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_sob": json.dumps(slot, ensure_ascii=False)}
     srv, ctx, page, _ = R.open(build_site(files), local=local)
+
+    def body():
+        page.wait_for_timeout(600)
+        return page.locator("body").inner_text()
+
+    def stage(label):
+        page.get_by_role("button", name=label, exact=False).first.click()
+
+    def gate():
+        see(page, "30초 진단")
+        shown = hidden_shown(body(), HIDDEN_B)
+        assert not shown, f"첫 화면에 보이면 안 되는 문구: {shown}"
+    R.check(page, "B안", "첫 화면: 30초 진단 소개에 '건강 점수' 없음", gate)
 
     def build():
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("B안 시험", exact=False).first.click()
         see(page, "보통 해 ±")
-        page.wait_for_timeout(500)
-        body = page.locator("body").inner_text()
-        shown = hidden_b_shown(body)
+        shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"② 구성에 보이면 안 되는 문구: {shown}"
         line = page.evaluate(SMALLEST, ["보통 해 ±", None])
         assert line and "기대" not in line and "NaN" not in line, f"위험 줄: {line!r}"
     R.check(page, "B안", "② 구성: '보통 해 ±…' 만, 판정·조언·기대수익·건강 점수 없음", build)
 
-    def diag():
-        page.get_by_text("③ 진단", exact=False).first.click()
-        see(page, "내가 잘하고 있는 것")
-        for title in ("내가 잘하고 있는 것", "내 위험은 보상받고 있나요?", "나는 무엇을 들고 있나요?", "폭락하면 얼마나 잃나요?",
-                      "시장을 이길 수 있을까요?", "직접 실험해볼까요?"):
+    def open_all(titles, detail):
+        for title in titles:
             page.get_by_text(title, exact=False).first.click()     # 접힌 섹션을 모두 열어요
-        page.wait_for_timeout(500)
-        page.get_by_text("종목별로 뜯어보기", exact=False).first.click()   # 종목별 줄도 열어요 (예전엔 '적정 기대수익 x%')
-        page.wait_for_timeout(500)
-        body = page.locator("body").inner_text()
-        shown = hidden_b_shown(body)
+        page.wait_for_timeout(400)
+        page.get_by_text(detail, exact=False).first.click()          # 종목별 줄도 열어요 (예전엔 '적정 기대수익 x%')
+
+    def diag():
+        stage("③ 진단")
+        see(page, "내가 잘하고 있는 것")
+        open_all(("내가 잘하고 있는 것", "내 위험은 보상받고 있나요?", "나는 무엇을 들고 있나요?", "폭락하면 얼마나 잃나요?",
+                  "시장을 이길 수 있을까요?", "직접 실험해볼까요?"), "종목별로 뜯어보기")
+        page.get_by_role("button", name="지금 상태 기록").first.click()   # 점검 기록 (예전엔 기대수익 줄과 판정 문장)
+        see(page, "번째 기록")
+        shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"③ 진단에 보이면 안 되는 문구: {shown}"
-    R.check(page, "B안", "③ 진단: 섹션을 다 열어도 판정·조언·기대수익·건강 점수 없음", diag)
+        # '그래서, 뭘 하면 좋을까요?' 상자는 줄이 하나라도 있을 때만 (조언 줄을 꺼서 빈 상자가 되면 안 돼요)
+        empty = page.evaluate("""() => [...document.querySelectorAll('div')].filter((d) => d.textContent.trim() === '그래서, 뭘 하면 좋을까요?')
+            .some((d) => d.parentElement.innerText.trim().length < d.textContent.trim().length + 5)""")
+        assert not empty, "빈 '그래서, 뭘 하면 좋을까요?' 상자"
+    R.check(page, "B안", "③ 진단: 섹션을 다 열고 점검 기록까지 해도 판정·조언·기대수익·건강 점수 없음", diag)
 
     def div_unknown():
         # 배당 합계가 보이는 곳(간단 사실 카드)에 '0원으로 계산' 알림도 같이 있어야 해요 (조용히 0원 X)
         see(page, DY_UNKNOWN.replace("{n}", "1"))
         assert page.get_by_text("연 배당 (예상·세전)", exact=False).count() > 0, "배당 합계 줄이 없어요"
     R.check(page, "B안", "③ 진단: 배당 정보 없는 종목 → '0원으로 계산했어요' 알림", div_unknown)
+
+    def export_ko():
+        stage("④ 내보내기")
+        see(page, "예상 세금")
+        shown = hidden_shown(body(), HIDDEN_B)
+        assert not shown, f"④ 내보내기에 보이면 안 되는 문구: {shown}"
+    R.check(page, "B안", "④ 내보내기: 세후·세전 기대수익 없음", export_ko)
+
+    def english():
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        see(page, "④ Export")
+        bad = hidden_shown(body(), HIDDEN_B_EN)
+        stage("② Build")
+        see(page, "a typical year swings")
+        bad += hidden_shown(body(), HIDDEN_B_EN)
+        stage("③ Diagnose")
+        see(page, "What I'm doing right")
+        open_all(("What I'm doing right", "Is my risk being paid for?", "What am I actually holding?", "How much would a crash cost?",
+                  "Can I beat the market?", "Want to experiment?"), "Per-stock breakdown")
+        bad += hidden_shown(body(), HIDDEN_B_EN)
+        assert not bad, f"영어 화면에 보이면 안 되는 문구: {bad}"
+    R.check(page, "B안", "영어 ②③④: 판정·조언·기대수익·건강 점수 없음", english)
     ctx.close(); srv.shutdown()
 
 

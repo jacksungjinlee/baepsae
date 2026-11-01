@@ -15,6 +15,7 @@ import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
 import { loadJson, freshness, mergeStocks, mdOf } from "./data.js";
+import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 
 function makeCardData(holdings, stocksById, cashMw, score, lang) {
   const sums = { kr: 0, us: 0, mt: 0 };
@@ -743,6 +744,8 @@ const T = {
   sxBs: { ko:"자산군·업종 구성과 위험의 출처", en:"Asset classes, sectors, and where risk comes from" },
   sxC: { ko:"폭락하면 얼마나 잃나요?", en:"How much would a crash cost?" },
   sxCs: { ko:"최악의 해, 그리고 원금을 지킬 확률", en:"Worst years and the odds of keeping your principal" },
+  sxCsNoP: { ko:"최악의 해", en:"Worst years" },   // B안: 확률 카드를 꺼 둔 동안
+
   sxD: { ko:"시장을 이길 수 있을까요?", en:"Can I beat the market?" },
   sxDs: { ko:"알파, 그리고 전설들과의 비교", en:"Alpha, and how the legends compare" },
   sxE: { ko:"직접 실험해볼까요?", en:"Want to experiment?" },
@@ -938,12 +941,7 @@ const fBeta = (v) => (typeof v === "number" ? v.toFixed(2) : "–");
 // 위험 계산에 필요한 베타·변동성이 없는 종목 (사용자가 직접 넣으면 그때부터 계산에 들어가요)
 const lacksRisk = (s) => !s || typeof s.beta !== "number" || typeof s.vol !== "number";
 const NO_RISK_MAX_PCT = 50;   // 자료 없는 종목이 투자금의 이 비율을 넘으면 위험 수치를 보여 주지 않아요 (Jack, 2026-11-01)
-// v17.5 (Jack 결정 2026-11-01, B안): 위험 수치는 진짜 숫자로 보여 주되, 아래 세 가지는 v18 개편 전까지 꺼 둬요.
-// NaN 버그(v15.3~) 때문에 한 번도 제대로 켜진 적이 없는 기능들이에요 — 지금 시장 변동성(36%)에서는 서로 어긋나고,
-// 일부 문장은 조언·예측처럼 읽혀요 (docs: PR #4 의 '다시 켜지는 문구' 목록).
-const SHOW_VERDICTS = false;  // β·σ 초록/빨강 판정, β·σ 경고, 베타·현금 고치기 카드, 조언처럼 읽히는 문장
-const SHOW_SCORE = false;     // 건강 점수 (예전엔 버그로 64점이 최대)
-const SHOW_ER = false;        // 기대수익·연복리·샤프 등 예측처럼 읽히는 숫자 전부
+// B안 스위치(SHOW_VERDICTS·SHOW_SCORE·SHOW_ER)는 src/flags.js 에 있어요 (shell.jsx 도 같이 써요).
 const fVol = (v) => (typeof v === "number" ? v + "%" : "–");
 const fmtWon = (v) => "₩" + Math.round(v).toLocaleString("ko-KR");
 const fmtMw = (v, lang) => {
@@ -1375,7 +1373,7 @@ function Rail({ emoji, label, valueLabel, value, min, max, tMin, tMax, ok, onExp
       </div>
       <div style={{ position: "relative", height: 20 }}>
         <div style={{ position: "absolute", top: 8, left: 0, right: 0, height: 5, background: C.line, borderRadius: 3 }} />
-        <div style={{ position: "absolute", top: 6, left: p(tMin) + "%", width: Math.max(p(tMax) - p(tMin), 1.5) + "%", height: 9, background: C.tealSoft, border: "1.5px solid " + C.teal, borderRadius: 6 }} />
+        {tMin != null && tMax != null && <div style={{ position: "absolute", top: 6, left: p(tMin) + "%", width: Math.max(p(tMax) - p(tMin), 1.5) + "%", height: 9, background: C.tealSoft, border: "1.5px solid " + C.teal, borderRadius: 6 }} />}
         {band != null && (
           <div style={{ position: "absolute", top: 6, left: p(value - band) + "%", width: Math.max(p(value + band) - p(value - band), 1) + "%", height: 9, background: C.blue + "26", border: "1.5px solid " + C.blue + "55", borderRadius: 6, transition: "left .3s ease" }} />
         )}
@@ -2043,7 +2041,7 @@ function Dashboard({ lang, t, metrics, profile, setExplain }) {
         <Sub>{t("dashSub")}</Sub>
       </div>
       <Rail emoji="" label={t("railBeta")} value={metrics.beta} valueLabel={"β " + num(metrics.beta)} min={0} max={2}
-        tMin={p.targetBetaMin} tMax={p.targetBetaMax} ok={SHOW_VERDICTS ? railsBase.beta : null} onExplain={() => setExplain("beta")}
+        tMin={SHOW_VERDICTS ? p.targetBetaMin : null} tMax={SHOW_VERDICTS ? p.targetBetaMax : null} ok={SHOW_VERDICTS ? railsBase.beta : null} onExplain={() => setExplain("beta")}
         extraDot={SHOW_VERDICTS ? req : null} extraLabel={t("railRemaining")} danger={impossible} band={0.15} />
       <div style={{ fontSize: 10.5, color: C.faint, padding: "5px 0 0" }}>{t("betaBand")}</div>
       {SHOW_VERDICTS && req != null && (
@@ -2053,7 +2051,7 @@ function Dashboard({ lang, t, metrics, profile, setExplain }) {
         </div>
       )}
       <Rail emoji="" label={t("railVol")} value={metrics.volP} valueLabel={pct(metrics.volP)} min={0} max={50}
-        tMin={0} tMax={p.targetVolMaxPct} ok={SHOW_VERDICTS ? metrics.volP <= p.targetVolMaxPct + 0.01 : null} onExplain={() => setExplain("vol")} />
+        tMin={SHOW_VERDICTS ? 0 : null} tMax={SHOW_VERDICTS ? p.targetVolMaxPct : null} ok={SHOW_VERDICTS ? metrics.volP <= p.targetVolMaxPct + 0.01 : null} onExplain={() => setExplain("vol")} />
       <Rail emoji="" label={t("railEffn")} value={metrics.effN} valueLabel={num(metrics.effN, 1)} min={0} max={20}
         tMin={p.stocksMin} tMax={20} ok={metrics.effN >= p.stocksMin * 0.75} onExplain={() => setExplain("effn")} />
       <Rail emoji="" label={t("railSector")} value={metrics.maxSectorW} valueLabel={pct(metrics.maxSectorW, 0)} min={0} max={100}
@@ -2480,6 +2478,7 @@ function QuickFactsCard({ lang, t, metrics, settings, profile }) {
           </div>
         ))}
       </div>
+      {/* v18 메모: SHOW_ER 를 켜면 ProjectionCard 에도 같은 알림이 있어 ③에 두 번 보여요 — 켤 때 하나로 정리 */}
       {metrics.dyUnknownN > 0 && <div className="dyUnknown" style={{ marginTop: 6, fontSize: 11, color: WARN_INK }}>{T_DY_UNKNOWN[lang].replace("{n}", metrics.dyUnknownN)}</div>}
     </Card>
   );
@@ -2643,6 +2642,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
         <span style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.55 }}>{t("rjZig")}</span>
       </div>
 
+      {levers.length > 0 && (   /* B안: 조언 줄을 꺼 두면 비는 경우가 있어서, 빈 상자는 그리지 않아요 */
       <div style={{ marginTop: 12, background: band === 0 ? C.tealSoft : "#FFF7EE", border: "1.5px solid " + (band === 0 ? "#BEE9E4" : "#F5D9B8"), borderRadius: 14, padding: 13 }}>
         <div style={{ fontSize: 13, fontWeight: 900, color: band === 0 ? "#0B6E66" : "#8A5A16" }}>{t("rjAction")}</div>
         <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2669,6 +2669,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
           ))}
         </div>
       </div>
+      )}
 
       <button onClick={() => setShowDetail(!showDetail)} style={{ marginTop: 10, background: "none", border: "none", color: C.blue, fontSize: 12, fontWeight: 800, cursor: "pointer", padding: 0, fontFamily: FONT }}>
         {showDetail ? "▲ " : "▼ "}{t("rjDetails")}
@@ -2749,7 +2750,7 @@ function AlphaCard({ lang, t, metrics, profile, settings, stocksById, setExplain
           <Sub style={{ fontWeight: 700, color: C.ink }}>{t("alSpace")}</Sub>
           <span style={{ fontSize: 15, fontWeight: 900, color: C.ink }}>{pct(te)}</span>
         </div>
-        <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginTop: 3 }}>{teLow ? (SHOW_VERDICTS ? t("alSpaceLow") : null) : t("alSpaceHigh")}</div>
+        {(!teLow || SHOW_VERDICTS) && <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginTop: 3 }}>{teLow ? t("alSpaceLow") : t("alSpaceHigh")}</div>}
       </div>
       {(() => {
         const ir = te > 0.01 ? metrics.pastAl / te : 0;
@@ -2914,10 +2915,10 @@ function WhatIfLab({ lang, t, metrics, profile, settings, stocksById }) {
     const eqH = metrics.rows.filter((r) => r.mw > 0).map((r) => ({ t: r.t, mw: 0, won: metrics.invested / n, stock: r.stock }));
     eq = computeMetrics(eqH.map((h) => ({ ...h, mw: h.won / 10000 })), metrics.total, settings);
   }
-  const D = ({ a, b, fmt, invert }) => {
+  const D = ({ a, b, fmt, invert, neutral }) => {
     const d = b - a;
     const better = invert ? d < 0 : d > 0;
-    return <span style={{ color: Math.abs(d) < 0.005 ? C.faint : better ? C.teal : C.coral, fontWeight: 800 }}>{d > 0 ? "+" : ""}{fmt(d)}</span>;
+    return <span style={{ color: Math.abs(d) < 0.005 ? C.faint : neutral ? C.ink : better ? C.teal : C.coral, fontWeight: 800 }}>{d > 0 ? "+" : ""}{fmt(d)}</span>;
   };
   return (
     <Card style={{ padding: 16 }}>
@@ -2959,7 +2960,7 @@ function WhatIfLab({ lang, t, metrics, profile, settings, stocksById }) {
               <div key={l} style={{ background: "#fff", borderRadius: 10, padding: "6px 3px" }}>
                 <div style={{ fontSize: 9.5, color: C.faint }}>{l}</div>
                 <div style={{ fontSize: 11.5, fontWeight: 800, color: C.ink }}>{typeof b === "number" ? (l === "σ" ? b.toFixed(1) + "%" : b.toFixed(l === "β" || l === "Sharpe" ? 2 : 1)) : b}</div>
-                <D a={a} b={b} fmt={f} invert={inv} />
+                <D a={a} b={b} fmt={f} invert={inv} neutral={!SHOW_VERDICTS && (l === "β" || l === "σ")} />
               </div>
             ))}
           </div>
@@ -3178,17 +3179,19 @@ function TaxCard({ lang, t, metrics, profile, settings, tax }) {
         <H3>{t("taxTitle")}</H3>
         <Chip color={C.blueDeep} soft={C.blueSoft}>{A.e} {lang === "ko" ? A.ko : A.en}</Chip>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 11 }}>
+      <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "1fr 1fr" : "1fr", gap: 8, marginTop: 11 }}>
         <div style={{ background: C.bg, borderRadius: 13, padding: 12 }}>
           <Sub>{t("taxYear")}</Sub>
           <div style={{ fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 3 }}>{fmtMw(e.mine, lang)}</div>
           <div style={{ fontSize: 10.5, color: C.faint }}>{lang === "ko" ? "연간 · 추정" : "per year, est."}</div>
         </div>
-        <div style={{ background: C.tealSoft, borderRadius: 13, padding: 12 }}>
-          <Sub style={{ color: "#0B6E66" }}>{t("taxNet")}</Sub>
-          <div style={{ fontSize: 19, fontWeight: 900, color: C.teal, marginTop: 3 }}>{pct(netRet)}</div>
-          <div style={{ fontSize: 10.5, color: C.teal }}>{lang === "ko" ? "세전 " : "pre-tax "}{pct(metrics.expRet)}</div>
-        </div>
+        {SHOW_ER && (   /* 세후·세전 기대수익: 예측처럼 읽혀서 꺼 둬요 (B안) */
+          <div style={{ background: C.tealSoft, borderRadius: 13, padding: 12 }}>
+            <Sub style={{ color: "#0B6E66" }}>{t("taxNet")}</Sub>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.teal, marginTop: 3 }}>{pct(netRet)}</div>
+            <div style={{ fontSize: 10.5, color: C.teal }}>{lang === "ko" ? "세전 " : "pre-tax "}{pct(metrics.expRet)}</div>
+          </div>
+        )}
       </div>
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 5 }}>
         {[[t("taxDivKr"), e.divKr * (tax.divKr / 100), tax.divKr + "%"],
@@ -3798,7 +3801,7 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
   const last = Array.isArray(checkins) ? [...checkins].reverse().find(valid) || null : null;
   const rows = last ? [
     [t("ciAmount"), fmtMw(last.inv, lang), fmtMw(snap.inv, lang), snap.inv - last.inv, 0],
-    [t("mVol"), pct(last.vol), pct(snap.vol), snap.vol - last.vol, 1],
+    [t("mVol"), pct(last.vol), pct(snap.vol), snap.vol - last.vol, SHOW_VERDICTS ? 1 : 3],   // 3 = 색 판정 없이 (B안)
     ...(SHOW_ER ? [[t("mRet"), pct(last.exp), pct(snap.exp), snap.exp - last.exp, 2]] : []),
     [t("splitIdio"), pct(last.unpaid, 0), pct(snap.unpaid, 0), snap.unpaid - last.unpaid, 1],
     [t("mSector"), pct(last.sec, 0), pct(snap.sec, 0), snap.sec - last.sec, 1],
@@ -3831,7 +3834,7 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
             {rows.map(([label, a, b, d, kind]) => {
               const flat = Math.abs(d) < 0.05;
               const good = kind === 0 ? d > 0 : kind === 1 ? d < 0 : d > 0;
-              const col = flat ? C.faint : good ? C.teal : C.coral;
+              const col = flat ? C.faint : kind === 3 ? C.ink : good ? C.teal : C.coral;
               return (
                 <div key={label} style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr 0.9fr", fontSize: 12, padding: "7px 4px", borderTop: "1px solid " + C.line, alignItems: "center" }}>
                   <span style={{ color: C.sub, fontWeight: 700 }}>{label}</span>
@@ -3842,7 +3845,7 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
               );
             })}
           </div>
-          <Verdict>{verdict}</Verdict>
+          {verdict && <Verdict>{verdict}</Verdict>}
         </>
       )}
     </Card>
@@ -3884,11 +3887,13 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
           <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
         </Section>
       )}
-      <Section title={t("sxC")} sub={t("sxCs")} open={!!open.c} onToggle={() => tg("c")}>
-        <div className="grid2">
-          <TailRiskCard lang={lang} t={t} metrics={metrics} />
-          {SHOW_ER && <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />}
-        </div>
+      <Section title={t("sxC")} sub={SHOW_ER ? t("sxCs") : t("sxCsNoP")} open={!!open.c} onToggle={() => tg("c")}>
+        {SHOW_ER ? (
+          <div className="grid2">
+            <TailRiskCard lang={lang} t={t} metrics={metrics} />
+            <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />
+          </div>
+        ) : <TailRiskCard lang={lang} t={t} metrics={metrics} />}
       </Section>
       <Section title={t("sxD")} sub={t("sxDs")} open={!!open.d} onToggle={() => tg("d")}>
         <div className="grid2">

@@ -45,8 +45,9 @@ export function renderPortfolioCard({ score, buckets, top, dateStr }) {
     g.globalAlpha = 1;
   }
 
-  // 배분 도넛 (좌측)
-  const cx = 300, cy = 350, R = 150, LW = 62;
+  // 배분 도넛 (좌측) — 점수가 없으면 도넛을 조금 내리고 범례를 오른쪽에 둬요 (빈 오른쪽 반이 생기지 않게)
+  const noScore = score == null;
+  const cx = 300, cy = noScore ? 480 : 350, R = 150, LW = 62;
   let a0 = -Math.PI / 2;
   const totPct = buckets.reduce((s, b) => s + b.pct, 0) || 1;
   buckets.forEach((b) => {
@@ -58,14 +59,15 @@ export function renderPortfolioCard({ score, buckets, top, dateStr }) {
 
   // 범례
   g.textAlign = "left";
-  let ly = 560;
+  const lx = noScore ? 600 : 120, lr = noScore ? W - 100 : 480;
+  let ly = noScore ? cy - ((buckets.length - 1) * 52) / 2 + 10 : 560;
   buckets.forEach((b) => {
     g.fillStyle = b.color;
-    g.beginPath(); g.arc(120, ly - 9, 11, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(lx, ly - 9, 11, 0, Math.PI * 2); g.fill();
     g.fillStyle = "#fff"; g.font = "700 28px " + FONT_CV;
-    g.fillText(b.ko, 148, ly);
+    g.fillText(b.ko, lx + 28, ly);
     g.font = "800 28px " + FONT_CV; g.textAlign = "right";
-    g.fillText(b.pct.toFixed(0) + "%", 480, ly);
+    g.fillText(b.pct.toFixed(0) + "%", lr, ly);
     g.textAlign = "left";
     ly += 52;
   });
