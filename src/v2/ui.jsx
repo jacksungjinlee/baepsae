@@ -11,6 +11,9 @@ export const tx = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize:
 const tap = { WebkitTapHighlightColor: "transparent", cursor: "pointer", fontFamily: FONT, padding: 0 };
 export const TAB_H = TOUCH + SPACE(3);
 
+// The current app. 찾기 and the header link "예전 뱁새 보기" open it (Part F: the main address shows 2.0).
+export const OLD_APP = "./baepsae.html";
+
 // Which page this is: the live app or the preview with fictional example data (app-preview.html).
 export const ModeContext = createContext({ preview: false });
 export const useMode = () => useContext(ModeContext);
@@ -42,6 +45,11 @@ export function AppBar({ onBack, backLabel, right }) {
       ) : <img src="icon-192.png" alt="" width={28} height={28} style={{ borderRadius: RADIUS.sm - SPACE(1) }} />}
       <h1 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.app.title}</h1>
       {preview && <SampleLabel />}
+      {!preview && (
+        <a data-ui-v2="old-app-link" href={OLD_APP}
+          style={{ ...tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" }), minHeight: TOUCH, display: "inline-flex", alignItems: "center",
+            padding: `0 ${SPACE(1)}px`, textDecoration: "underline", textUnderlineOffset: 3, WebkitTapHighlightColor: "transparent" }}>{C.app.oldApp}</a>
+      )}
       {right}
     </header>
   );

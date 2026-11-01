@@ -32,7 +32,6 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from buildapp import built_dir  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
@@ -70,7 +69,7 @@ def build_site(files, raw=None, drop=()):
     site = tempfile.mkdtemp(prefix="baepsae-v2-")
     for f in SITE_FILES:
         shutil.copy(os.path.join(ROOT, f), site)
-    shutil.copy(os.path.join(built_dir(), "app.html"), site)
+    shutil.copy(os.path.join(ROOT, "app.html"), site)     # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(site, "fonts"))
     for name, obj in files.items():
         if name in drop:
@@ -129,7 +128,7 @@ class Runner:
         page = ctx.new_page()
         page.set_default_timeout(WAIT)
         page.on("pageerror", lambda e: self.errors.append(str(e)))
-        page.goto(base + "/app.html", wait_until="domcontentloaded")
+        page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -177,7 +176,19 @@ def see(page, text, timeout=WAIT):
 
 
 def tab(page, label):
-    page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=label).click()
+    """아래 탭을 눌러요. 첫 화면이 덱 짜기면(저장한 덱이 없는 방문자) 아래 탭이 없어서, 먼저 오늘로 돌아가요."""
+    bar = page.locator('nav[data-ui="bottom-tab-bar"]')
+    if bar.count() == 0:
+        if label == C["app"]["tabs"]["build"]:
+            return
+        page.get_by_role("button", name=C["build"]["backToday"]).click()
+    bar.locator("button", has_text=label).click()
+
+
+def old_app_link(page):
+    link = page.locator('[data-ui-v2="old-app-link"]').first
+    link.wait_for(state="visible")
+    assert link.inner_text() == C["app"]["oldApp"] and link.get_attribute("href") == "./baepsae.html"
 
 
 def action(page):
@@ -213,13 +224,23 @@ def scene_normal(R, files, width):
     srv, ctx, page, base = R.open(build_site(files), width, accept_downloads=True)
     md = "10월 30일"
 
-    def today():
+    def landing():
         wait_ready(page)
+        see(page, C["build"]["s0"]["title"])                 # 저장한 덱이 없으면 덱 짜기부터
+        assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
+        old_app_link(page)
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "첫 화면: 저장한 덱이 없으면 덱 짜기 · 머리말에 '예전 뱁새 보기'", landing)
+
+    def today():
+        tab(page, C["app"]["tabs"]["today"])
         see(page, C["app"]["title"])
         assert md in date_line(page) and "멈췄어요" not in date_line(page)
         see(page, C["app"]["pending"])
         assert page.get_by_text("할 일").count() == 0, "오늘이 아직 점검하지 않는데 '할 일'이 보여요"
         assert page.title() == C["app"]["title"]
+        old_app_link(page)
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "오늘: 제목·내용 날짜·준비 중, 판정 없음", today)
@@ -250,7 +271,7 @@ def scene_normal(R, files, width):
         with page.expect_navigation():
             tab(page, C["app"]["tabs"]["search"])
         assert page.url.endswith("/baepsae.html"), page.url
-        page.goto(base + "/app.html", wait_until="domcontentloaded")
+        page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
         wait_ready(page)
     R.check(page, S, "탭: 찾기 → 지금 앱(baepsae.html)", search_tab)
 
@@ -334,9 +355,12 @@ def scene_normal(R, files, width):
         assert stored["v"] == 1 and len(stored["decks"]) == 1 and len(stored["decks"][0]["purchases"]) == 6, stored
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
+        see(page, C["app"]["pending"])                          # 저장한 덱이 있으면 오늘부터
+        assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 1 and page.get_by_text(C["build"]["s0"]["title"]).count() == 0
         tab(page, C["app"]["tabs"]["deck"])
         see(page, "배당 생활비 덱")
         see(page, "내 종목 6개")
+        old_app_link(page)
         assert page.get_by_text("평균 단가").count() == 6
         R.collect(page)
     R.check(page, S, "샀어요 → 기록하기 → 새로 고침해도 내 덱에 기록이 남아요", bought)
@@ -448,6 +472,7 @@ def scene_stale(R, files, width):
 
     def run():
         wait_ready(page)
+        tab(page, C["app"]["tabs"]["today"])
         see(page, "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요")
         dl = page.locator('[data-ui-v2="date-line"]').first
         assert dl.get_attribute("data-stale") == "1" and "6일째 갱신이 멈췄어요" in dl.inner_text(), dl.inner_text()

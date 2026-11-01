@@ -8,9 +8,8 @@ import { C, todayKst } from "./format.js";
 import { readStore, writeStore, askPersist } from "./store.js";
 import { Today, MyDeck } from "./home.jsx";
 import { Build, newBuilder } from "./build.jsx";
-import { TAB_H, ModeContext, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
+import { TAB_H, ModeContext, Page, AppBar, LoadFail, Footer, OLD_APP } from "./ui.jsx";
 
-const OLD_APP = "./baepsae.html";
 
 // A rendering error never leaves a blank page: the approved load-failure message is shown instead.
 export class ErrorBoundary extends React.Component {
@@ -36,9 +35,10 @@ export class ErrorBoundary extends React.Component {
 // source: { preview, storeKey, exportPrefix, load: () => Promise<load state> }
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
-  const [tab, setTab] = useState("today");
   const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
     preview: !!source.preview }));
+  // First screen: a visitor with a saved deck lands on 오늘; everyone else (first visit, recruiters) on 덱 짜기.
+  const [tab, setTab] = useState(() => (store.data.decks.length ? "today" : "build"));
   const [builder, setBuilder] = useState(newBuilder);
 
   useEffect(() => {

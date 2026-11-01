@@ -1,0 +1,65 @@
+# -*- coding: utf-8 -*-
+"""메인 주소를 뱁새 2.0 으로 (v18.3 Part F, Jack 2026-11-01 결정).
+
+- index.html 은 app.html 로 보내요 (meta refresh · canonical · 안 열릴 때 누르는 링크). 바뀐 것은 이 세 주소뿐이고 한국어는 그대로예요:
+  './app.html' 을 './baepsae.html' 로 한 번 바꾸면 예전 index.html 과 똑같아져요 (한 줄로 되돌릴 수 있어요)
+- 지금 앱(baepsae.html)은 그대로: 지금 소스로 새로 빌드해도 커밋한 파일과 한 글자도 다르지 않아요
+- 2.0 에서 지금 앱으로 갈 수 있어요: 머리말의 '예전 뱁새 보기'와 찾기 탭이 ./baepsae.html 을 열어요
+- 미리 보기(app-preview.html)로 가는 길은 메인 주소 어디에도 없어요
+"""
+import os
+import re
+import subprocess
+import tempfile
+
+from buildapp import built
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BEFORE = "ca935dd"          # Part F 전의 main (index.html 이 baepsae.html 로 보내던 때)
+
+
+def read(p):
+    with open(os.path.join(ROOT, p), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_index_redirects_to_app_and_keeps_its_text():
+    idx = read("index.html")
+    assert '<meta http-equiv="refresh" content="0; url=./app.html">' in idx
+    assert '<link rel="canonical" href="./app.html">' in idx
+    assert '<a href="./app.html" style="color:#1B2B4B">열리지 않으면 여기를 눌러주세요</a>' in idx
+    assert "뱁이가 날아오는 중…" in idx and "<title>뱁새 Baepsae</title>" in idx
+    assert idx.count("./app.html") == 3 and "baepsae.html" not in idx and "app-preview" not in idx
+
+
+def test_redirect_is_one_substitution_from_the_old_index():
+    r = subprocess.run(["git", "show", f"{BEFORE}:index.html"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    if r.returncode != 0:                     # 얕은 clone 이면 예전 판이 없을 수 있어요: 위 검사로 충분해요
+        return
+    assert read("index.html").replace("./app.html", "./baepsae.html") == r.stdout
+
+
+def test_current_app_still_builds_byte_identical():
+    """build.sh 와 같은 명령으로 임시 폴더에 빌드해서 커밋한 baepsae.html 과 비교해요."""
+    tmp = tempfile.mkdtemp()
+    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+    r = subprocess.run([exe, "src/main.jsx", "--bundle", "--minify", "--loader:.jsx=jsx", "--jsx=automatic", "--charset=utf8",
+                        f"--outfile={tmp}/bundle.js", "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    with open(f"{tmp}/bundle.js", encoding="utf-8") as f:
+        js = f.read()
+    assert read("template.html").replace("/*BUNDLE*/", js) == read("baepsae.html"), "baepsae.html 이 소스와 달라요"
+
+
+def test_current_app_is_reachable_from_2_0():
+    app = built("app.html")
+    assert os.path.exists(os.path.join(ROOT, "baepsae.html"))
+    assert '"./baepsae.html"' in app                       # 머리말 '예전 뱁새 보기' 와 찾기 탭이 쓰는 주소
+    sw = read("sw.js")
+    assert 'caches.match("./baepsae.html"' in sw           # 오프라인이면 캐시해 둔 지금 앱이라도 열려요
+
+
+def test_preview_is_not_reachable_from_the_main_address():
+    for f in ("index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest"):
+        assert "app-preview" not in read(f), f
+    assert not re.search(r"app-preview", built("app.html"))

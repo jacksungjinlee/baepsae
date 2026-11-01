@@ -13,6 +13,7 @@
 export const C = {
   app: {
     title: "뱁새 2.0 미리 보기",                                   // new
+    oldApp: "예전 뱁새 보기",                                       // new (Part F: link to the current app)
     sample: "예시 데이터",                                          // 3 · preview
     previewTitle: "{title} · {sample}",                           // 미리 보기 페이지의 <title>: 위 두 문구를 이어 붙여요
     brand: "뱁새",                                                 // 2

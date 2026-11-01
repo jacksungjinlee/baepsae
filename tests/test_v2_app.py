@@ -5,7 +5,8 @@
 - src/copy/v2.js 의 한국어는 모두 승인된 출처에서 왔어요 (목업 CSV 최종 문구 · New strings 표 · 고정 문구 · v17.5 승인 문구)
 - 승인을 기다리는 문구(null)는 모두 docs/tasks/v18.3-new-strings-pending.md 에 있어요
 - 아직 없는 기능(Part C 매일 점검)을 약속하는 문구는 빠져 있어요
-- app.html 은 커밋하지 않아요 (v17.5.1 필드가 실제 데이터에 들어온 뒤에). 테스트는 임시로 빌드해서 봐요
+- app.html 은 메인 주소가 보여 주는 페이지예요 (Part F, Jack 2026-11-01): 커밋한 파일이 지금 소스로 새로 빌드한 것과 같아요.
+  <head> 의 설명·공유 카드 태그와 GoatCounter 는 지금 앱(template.html)과 같고, noindex 가 아니에요
 - app-preview.html 은 소스와 같고(빌드를 잊지 않음), noindex, 데이터 파일을 받지 않고, 어디에서도 링크하지 않아요
 - 두 페이지 모두 시험용 데이터(tests/fixtures)를 읽지 않고, 다른 사이트에서 아무것도 받지 않아요
 - 지금 앱(baepsae.html 의 번들)은 2.0 코드를 가져오지 않아요
@@ -104,21 +105,35 @@ def test_no_promise_of_the_daily_check_before_part_c():
         assert "점검해 드릴" not in html and "매일 이 규칙으로" not in html, name
 
 
-def test_app_html_is_not_committed_yet():
-    tracked = subprocess.run(["git", "ls-files", "app.html"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    assert tracked == "", "app.html 은 v17.5.1 필드가 실제 데이터에 들어온 뒤에 커밋해요 (v18.3 머지 조건)"
-    assert "/app.html" in read(".gitignore")
+def test_app_html_is_committed_and_current():
+    """메인 주소가 여는 페이지라 커밋해요. 손으로 고치지 않았는지: 커밋한 파일 = 지금 소스로 새로 빌드한 것 (스타일 페이지 검사와 같아요)."""
+    assert "/app.html" not in read(".gitignore")
+    assert read("app.html") == built("app.html"), "app.html 이 소스와 달라요: bash build-app.sh 를 다시 하세요"
 
 
 def test_built_pages_have_title_noindex_and_the_right_service_worker():
     app, prev = built("app.html"), built("app-preview.html")
     assert "<title>뱁새 2.0 미리 보기</title>" in app
     assert "<title>뱁새 2.0 미리 보기 · 예시 데이터</title>" in prev          # 미리 보기 탭 제목에도 예시 데이터
+    assert "noindex" not in app and '<meta name="robots" content="noindex, nofollow">' in prev   # 메인은 검색에 나와요
     for h in (app, prev):
-        assert '<meta name="robots" content="noindex' in h
         assert 'href="fonts/pretendard/pretendard-variable.css"' in h
     assert 'navigator.serviceWorker.register("./sw.js")' in app
     assert "serviceWorker" not in prev                     # 미리 보기는 서비스워커를 등록하지 않아요
+
+
+def test_live_head_reuses_the_current_apps_meta_and_goatcounter():
+    """설명·og·twitter 태그는 지금 앱(template.html)의 승인 문구 그대로, og:url 은 메인 주소. GoatCounter 는 app.html 에만."""
+    old = read("template.html")
+    meta = [l for l in old.splitlines() if re.match(r'<meta (name="description"|property="og:|name="twitter:)', l)]
+    assert len(meta) >= 12
+    app, prev = built("app.html"), built("app-preview.html")
+    for l in meta:
+        assert l in app, l
+        assert l not in prev, l
+    assert '<meta property="og:url" content="https://jacksungjinlee.github.io/baepsae/">' in app
+    gc = re.findall(r"<script>\n\(function\(\)\{try\{\n  var q=new URLSearchParams.*?</script>", old, flags=re.S)
+    assert len(gc) == 1 and gc[0] in app and "goatcounter" not in prev and "gc.zgo.at" not in prev
 
 
 def test_preview_is_current_and_embeds_its_data():
@@ -146,12 +161,17 @@ def test_preview_is_linked_from_nowhere():
 
 
 def test_pages_never_load_fixtures_or_other_sites():
+    # app.html: 지금 앱과 같은 GoatCounter(gc.zgo.at)와 공유 카드 주소만. app-preview.html: 바깥 주소 없음.
+    # react.dev 오류 안내 주소와 w3.org(SVG namespace 이름)는 문자열일 뿐 요청하지 않아요.
+    allowed = {"app.html": {"https://react.dev", "http://www.w3.org", "https://gc.zgo.at", "https://jacksungjinlee.github.io"},
+               "app-preview.html": {"https://react.dev", "http://www.w3.org"}}
     for name in ("app.html", "app-preview.html"):
         html = built(name)
         assert "fixtures" not in html and "tests/" not in html, name
         urls = set(re.findall(r"https?://[\w.-]+", html))
-        assert urls <= {"https://react.dev", "http://www.w3.org"}, (name, urls)      # w3.org = SVG namespace 이름
-        assert "goatcounter.com" not in html and "googleapis" not in html, name   # data.js 의 window.goatcounter 확인은 요청이 아니에요
+        assert urls <= allowed[name], (name, urls)
+        assert "googleapis" not in html and "jsdelivr" not in html, name
+    assert "goatcounter.com" not in built("app-preview.html")
     src = read("src/v2/load.js")
     assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json"}
 
@@ -165,7 +185,7 @@ def test_old_app_bundle_does_not_include_v2():
         inputs = list(json.load(f)["inputs"])
     bad = [i for i in inputs if i.startswith(("src/v2/", "src/copy/", "src/preview/"))]
     assert not bad, bad
-    assert "app.html" not in read("baepsae.html") and "app.html" not in read("index.html")
+    assert "app.html" not in read("baepsae.html")        # 메인 주소 쪽 연결은 index.html (tests/test_launch.py)
 
 
 def test_build_script_builds_both_pages():

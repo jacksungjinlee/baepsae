@@ -92,9 +92,11 @@ function Steps({ load, builder, setBuilder, onExit }) {
   );
   return (
     <Page pad={SPACE(30)}>
-      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep}
-        right={step > 0 ? <button type="button" onClick={restart} style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.restart}</button> : null} />
-      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(1) })}>{C.build.title}</div>
+      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(1) }}>
+        <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.build.title}</div>
+        {step > 0 && <button type="button" onClick={restart} style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.restart}</button>}
+      </div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <StepDots step={step} />
       {step === 0 && <StepStart start={start} />}
