@@ -7,7 +7,7 @@ import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/c
 import { ruleBook, hasGroup } from "./engine.js";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -39,7 +39,7 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
       {r && !r.ok && <Clash parts={r.clash} />}
       {ok && <Summary r={r} />}
       {ok && plan.tooSmall && (
-        <Note tone="watch" data-ui-v2="too-small">{fill(C.plan.tooSmall, { n: plan.rows.length, price: wonText(plan.cheapest) })}</Note>
+        <Note tone="watch" data-ui-v2="too-small">{fill(C.plan.tooSmall, { n: plan.rows.length, price: fill(C.app.won, { n: nf(Math.round(plan.cheapest)) }) })}</Note>
       )}
       {ok && (
         <Card data-ui-v2="plan-rows">
@@ -77,8 +77,11 @@ function Clash({ parts }) {
   );
 }
 
+// Risk lines: the 2022 line when any holding has a figure (holdings without one move like the rest, with the approved
+// v17.5 note naming their share); else the yearly-swing line; else the approved "can't calculate" line. Never silent.
 function Summary({ r }) {
-  const { plan, div, y2022, vol, amountWon } = r;
+  const { plan, div, y2022, vol } = r;
+  const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
   const big = (v) => <div style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{v}</div>;
   return (
     <Card data-ui-v2="plan-summary">
@@ -93,17 +96,24 @@ function Summary({ r }) {
           <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.y2022}</div>
           {big(aboutWon(Math.min(0, y2022.won)))}
           <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Note}</div>
+          {partial(y2022.missing)}
         </div>
       )}
       {!y2022.ok && vol != null && (
-        <div data-ui-v2="vol-line" style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.semi, COLOR.text2) }}>{fill(C.plan.volLine, { amt: nf(Math.round((vol * amountWon) / 10000)) })}</div>
+        <div data-ui-v2="vol-line" style={{ marginTop: SPACE(3) }}>
+          <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{fill(C.plan.volLine, { amt: nf(Math.round((vol.vol * plan.spent) / 10000)) })}</div>
+          {partial(vol.missing)}
+        </div>
+      )}
+      {!y2022.ok && vol == null && plan.spent > 0 && (
+        <div data-ui-v2="risk-none" style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.semi, COLOR.text2) }}>{C.plan.riskNone}</div>
       )}
     </Card>
   );
 }
 
 function PlanRow({ x }) {
-  const line = reasonsLine(x.reasons);
+  const line = [reasonsLine(x.reasons), x.shares === 0 && x.px > 0 ? C.plan.reason.tooPricey : null].filter(Boolean).join(" · ");
   return (
     <div data-row={x.t} style={{ padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3) }}>
@@ -134,7 +144,7 @@ function RuleList({ rules }) {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
     switch (x.id) {
       case "divCut": return x.check === "pending" ? <RuleLine key={x.id} name={R.divCut} pending />
-        : <RuleLine key={x.id} name={R.dividend} now={x.streak > 0 ? fill(R.divStreak, { n: x.streak }) : null} limit={R.divLimit} source={src} />;
+        : <RuleLine key={x.id} name={R.dividend} now={fill(R.dpsChange, { a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })} limit={R.divLimit} source={src} />;
       case "audit": return <RuleLine key={x.id} name={R.audit} pending />;
       case "acquisition": return <RuleLine key={x.id} name={R.acquisition} pending />;
       case "embezzle": return R.embezzle ? <RuleLine key={x.id} name={R.embezzle} pending /> : null;
@@ -178,7 +188,7 @@ function Rules({ load, rows, st, ds }) {
   return (
     <Card data-ui-v2="rules">
       <Label>{R.title}</Label>
-      <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{R.intro}</div>
+      {R.intro && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{R.intro}</div>}
       <div style={{ marginTop: SPACE(3) }}>
         {rows.filter((x) => x.shares > 0).map((x) => {
           const cand = all.find((c) => c.t === x.t);
@@ -209,7 +219,7 @@ function DeckWarnings({ rows, st }) {
   if (held.some((x) => x.s.ind === "bank") || (st.points.div || 0) > 0) lines.push(W.rates);
   const semi = held.find((x) => x.s.ind === "semi");
   if (semi) lines.push(fill(W.semi, { name: semi.s.nk }));
-  if (held.some((x) => x.s.cls === "us")) lines.push(W.usTax);
+  if (held.some((x) => x.s.cls === "us") && W.usTaxSource) lines.push(W.usTax, W.usTaxSource);   // needs its source and year
   if (!lines.length) return null;
   lines.push(W.knew);
   return (
@@ -226,17 +236,22 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const [date, setDate] = useState("");
   const [vals, setVals] = useState({});
   const [fail, setFail] = useState(false);
+  const [tried, setTried] = useState(false);
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
+  const today = todayKst();
+  const parsed = rows.map((x) => {
+    const v = vals[x.t] || {};
+    const qs = v.qty != null ? String(v.qty).replace(/,/g, "").trim() : "";
+    const ps = v.price != null ? String(v.price).replace(/,/g, "").trim() : "";
+    const q = qs === "" ? x.shares : /^\d+$/.test(qs) ? Number(qs) : NaN;          // whole shares only
+    const p = ps === "" ? x.s.price : /^\d+(\.\d+)?$/.test(ps) ? Number(ps) : NaN;
+    return { x, q, p, badQ: !(Number.isInteger(q) && q >= 0), badP: !(Number.isFinite(p) && p > 0) };
+  });
+  const badDate = date !== "" && !(/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today);
   const save = () => {
-    const day = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayKst();
-    const purchases = [];
-    for (const x of rows) {
-      const v = vals[x.t] || {};
-      const q = v.qty != null && String(v.qty).trim() !== "" ? Math.floor(Number(String(v.qty).replace(/,/g, ""))) : x.shares;
-      const p = v.price != null && String(v.price).trim() !== "" ? Number(String(v.price).replace(/,/g, "")) : x.s.price;
-      if (!(q > 0) || !(p > 0) || !Number.isFinite(q) || !Number.isFinite(p)) continue;
-      purchases.push({ t: x.t, date: day, qty: q, price: p, ccy: x.s.cls === "us" ? "USD" : "KRW" });
-    }
+    if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
+    const day = date || today;
+    const purchases = parsed.filter((r) => r.q > 0).map((r) => ({ t: r.x.t, date: day, qty: r.q, price: r.p, ccy: r.x.s.cls === "us" ? "USD" : "KRW" }));
     const id = `d${Date.now().toString(36)}`;
     const deck = {
       id, name: deckDisplayName(st), createdAt: todayKst(), pxDate: load.data.pxDate, fyNote: "rule inputs as of purchase",
@@ -247,7 +262,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
       purchases,
     };
     const next = { ...store.data, decks: [...store.data.decks, deck] };
-    if (!store.writable || !writeStore(next)) { setFail(true); return; }
+    if (!store.writable || !writeStore(next, store.key)) { setFail(true); return; }
     setFail(false);
     setStoreData(next, true);
     onDone();
@@ -259,7 +274,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
       <BottomSheet open title={P.done} onClose={onClose} closeLabel={C.app.close}>
         <div data-ui-v2="record-done" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
           <img src="baepi-5.png" alt={P.doneAlt} width={64} height={64} style={{ objectFit: "contain" }} />
-          <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: rows.length })}</p>
+          {P.doneBody && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: rows.length })}</p>}
         </div>
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink}</Button></div>
       </BottomSheet>
@@ -269,14 +284,15 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     <BottomSheet open title={P.sheetTitle} onClose={onClose} closeLabel={C.app.close}>
       <div data-ui-v2="record-form" aria-label={P.boughtAria}>
         <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.sheetBody, { md: mdText(load.data.pxDate) })}</p>
-        <TextInput label={P.date} type="date" value={date} onChange={setDate} />
+        <TextInput label={P.date} type="date" value={date} onChange={setDate} max={today} invalid={tried && badDate} />
         {rows.map((x) => (
           <div key={x.t} data-record={x.t} style={{ marginTop: SPACE(4), paddingTop: SPACE(2), borderTop: `1px solid ${COLOR.line}` }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.s.nk}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE(2) }}>
-              <TextInput label={P.qty} inputMode="numeric" placeholder={nf(x.shares)} value={(vals[x.t] || {}).qty || ""} onChange={(v) => setV(x.t, "qty", v)} />
+              <TextInput label={P.qty} inputMode="numeric" placeholder={nf(x.shares)} value={(vals[x.t] || {}).qty || ""} onChange={(v) => setV(x.t, "qty", v)}
+                invalid={tried && parsed.find((r) => r.x.t === x.t).badQ} />
               <TextInput label={x.s.cls === "us" ? P.priceUsd : P.priceWon} inputMode="decimal" placeholder={x.s.cls === "us" ? nf(x.s.price, 2) : nf(x.s.price)}
-                value={(vals[x.t] || {}).price || ""} onChange={(v) => setV(x.t, "price", v)} />
+                value={(vals[x.t] || {}).price || ""} onChange={(v) => setV(x.t, "price", v)} invalid={tried && parsed.find((r) => r.x.t === x.t).badP} />
             </div>
           </div>
         ))}

@@ -1,39 +1,74 @@
 // Browser storage for app.html: one versioned key; every read and write inside try/catch.
 // Decks, rule books and purchase records live only on this device (no login). Export/import is a JSON file.
+// The preview page (app-preview.html) uses its own key so example records never mix with real ones.
 export const STORE_KEY = "baepsae2.v1";
+export const PREVIEW_STORE_KEY = "baepsae2.preview.v1";
 export const STORE_VERSION = 1;
 
 export const emptyStore = () => ({ v: STORE_VERSION, decks: [] });
 
-export function validStore(d) {
-  return !!(d && typeof d === "object" && d.v === STORE_VERSION && Array.isArray(d.decks)
-    && d.decks.every((x) => x && typeof x.id === "string" && Array.isArray(x.holdings) && Array.isArray(x.purchases)));
+const isStr = (x, max = 200) => typeof x === "string" && x.length > 0 && x.length <= max;
+const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+const isDate = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + "T00:00:00Z"))
+  && new Date(x + "T00:00:00Z").toISOString().slice(0, 10) === x;
+
+// Every field the app reads back is checked. One bad field rejects the whole file (nothing is stored).
+export function validStore(d, today) {
+  if (!d || typeof d !== "object" || Array.isArray(d) || d.v !== STORE_VERSION || !Array.isArray(d.decks)) return false;
+  const ids = new Set();
+  for (const x of d.decks) {
+    if (!x || typeof x !== "object" || !isStr(x.id, 60) || ids.has(x.id) || !isStr(x.name, 60)) return false;
+    ids.add(x.id);
+    if (x.createdAt != null && !isDate(x.createdAt)) return false;
+    if (!Array.isArray(x.holdings) || !Array.isArray(x.purchases)) return false;
+    for (const h of x.holdings) {
+      if (!h || typeof h !== "object" || !isStr(h.t, 20) || !isStr(h.nk, 120)) return false;
+      if (h.target != null && !(isNum(h.target) && h.target >= 0 && h.target <= 1)) return false;
+      if (h.plannedQty != null && !(Number.isInteger(h.plannedQty) && h.plannedQty >= 0)) return false;
+      if (h.rules != null && !Array.isArray(h.rules)) return false;
+    }
+    for (const p of x.purchases) {
+      if (!p || typeof p !== "object" || !isStr(p.t, 20)) return false;
+      if (!(Number.isInteger(p.qty) && p.qty > 0)) return false;
+      if (!(isNum(p.price) && p.price > 0)) return false;
+      if (!isDate(p.date) || (today && p.date > today)) return false;
+      if (p.ccy !== "KRW" && p.ccy !== "USD") return false;
+      if (!x.holdings.some((h) => h.t === p.t)) return false;
+    }
+  }
+  return true;
 }
 
-// { data, writable, locked }: locked = something unreadable is stored under the key; we never overwrite it.
-export function readStore() {
+// { data, writable, locked }: locked = something unreadable is stored under the key. It stays untouched; the first
+// write moves it to a backup key first (see writeStore), so 기록 불러오기 and 샀어요 still work.
+export function readStore(key = STORE_KEY, today) {
   let writable = false;
   try {
-    const k = STORE_KEY + ".probe";
+    const k = key + ".probe";
     localStorage.setItem(k, "1");
     localStorage.removeItem(k);
     writable = true;
   } catch (e) { writable = false; }
+  let raw = null;
+  try { raw = localStorage.getItem(key); } catch (e) { return { data: emptyStore(), writable: false, locked: false }; }
+  if (raw == null) return { data: emptyStore(), writable, locked: false };
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw == null) return { data: emptyStore(), writable, locked: false };
     const d = JSON.parse(raw);
-    if (validStore(d)) return { data: d, writable, locked: false };
-    console.warn("[v2] stored records are in an unknown format; left untouched");
-    return { data: emptyStore(), writable: false, locked: true };
-  } catch (e) {
-    return { data: emptyStore(), writable: false, locked: writable };
-  }
+    if (validStore(d, today)) return { data: d, writable, locked: false };
+  } catch (e) { /* unreadable */ }
+  console.warn("[v2] stored records are in an unknown format; kept as they are");
+  return { data: emptyStore(), writable, locked: true };
 }
 
-export function writeStore(d) {
+export function writeStore(d, key = STORE_KEY) {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(d));
+    const cur = localStorage.getItem(key);
+    if (cur != null) {
+      let ok = false;
+      try { ok = validStore(JSON.parse(cur)); } catch (e) { ok = false; }
+      if (!ok) localStorage.setItem(`${key}.unreadable.${Date.now()}`, cur);   // keep what we could not read
+    }
+    localStorage.setItem(key, JSON.stringify(d));
     return true;
   } catch (e) {
     console.warn("[v2] could not save records: " + ((e && e.message) || e));
@@ -47,10 +82,10 @@ export function askPersist() {
   } catch (e) { /* not supported */ }
 }
 
-export function parseImport(text) {
+export function parseImport(text, today) {
   try {
     const d = JSON.parse(text);
-    return validStore(d) ? { v: STORE_VERSION, decks: d.decks } : null;
+    return validStore(d, today) ? { v: STORE_VERSION, decks: d.decks } : null;
   } catch (e) {
     return null;
   }
@@ -67,13 +102,13 @@ export function exportText(d) {
   return JSON.stringify({ v: STORE_VERSION, decks: d.decks }, null, 1);
 }
 
-export function downloadRecords(d, today) {
+export function downloadRecords(d, today, prefix = "baepsae-records") {
   try {
     const blob = new Blob([exportText(d)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `baepsae-records-${today}.json`;
+    a.download = `${prefix}-${today}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();

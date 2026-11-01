@@ -44,7 +44,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
     if (!f) return;
     let text = null;
     try { text = await f.text(); } catch (err) { text = null; }
-    const inc = text != null ? parseImport(text) : null;
+    const inc = text != null ? parseImport(text, todayKst()) : null;          // any bad field rejects the whole file
     if (!inc) { console.warn("[v2] import: not a records file"); setImportBad(true); return; }
     setImportBad(false);
     setStoreData(mergeStores(store.data, inc));
@@ -72,7 +72,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       <Card data-ui-v2="records">
         {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE(2), marginTop: store.writable ? 0 : SPACE(3) }}>
-          <Button kind="secondary" onClick={() => downloadRecords(store.data, todayKst())}>{C.store.export}</Button>
+          <Button kind="secondary" onClick={() => downloadRecords(store.data, todayKst(), store.exportPrefix)}>{C.store.export}</Button>
           <Button kind="secondary" disabled={!store.writable} onClick={() => fileRef.current && fileRef.current.click()}>{C.store.import}</Button>
           <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImport} style={{ display: "none" }} data-ui-v2="import-file" />
         </div>

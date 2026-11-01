@@ -5,13 +5,15 @@
 //   new      docs/tasks/v18.3-2.0-beta.md 의 "New strings" 표 (Jack 승인)
 //   footer   CLAUDE.md 의 고정 문구
 //   v17.5    지금 앱(src/detail.jsx)에 이미 있는 승인 문구 (불러오기 실패 · 날짜 · 배당 정보 없음 · 보통 해 ±)
-//   spec     v18.3 스펙 본문이 그대로 쓰라고 한 말 (가치 카드의 "PBR 낮은 순")
+//   spec     v18.3 스펙 본문이 그대로 쓰라고 한 말 (가치 카드의 "PBR 낮은 순"), REDESIGN §3 의 "검증 안 함" (Jack 승인)
+//   preview  "예시 데이터" (CSV 3) — 미리 보기 페이지(app-preview.html)의 표시, Jack 승인 2026-11-01
 // null = Jack 의 승인을 기다리는 문구 (docs/tasks/v18.3-new-strings-pending.md). 화면은 null 이면 그 줄을 빼요.
 // {자리} 는 fill() 로 채워요. "\n" 은 CSV 의 " / " (줄바꿈) 예요.
 
 export const C = {
   app: {
     title: "뱁새 2.0 미리 보기",                                   // new
+    sample: "예시 데이터",                                          // 3 · preview
     brand: "뱁새",                                                 // 2
     footer: "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", // footer · 27
     credit: "이성진, INSEAD MBA 26J",                              // footer · 27
@@ -181,6 +183,8 @@ export const C = {
     },
 
     few: "기준선을 통과한 종목이 {n}개예요. 이대로 진행해도 되지만 종목을 고르기에는 후보가 적은 편이에요. 종목 수를 줄이거나 기준을 한 단계 낮춰 보세요.", // 413 + 414 + 415
+    short: "기준선을 통과한 종목이 {n}개예요. 후보로 쓸 {need}개보다 적어요. 종목 수를 줄이거나 기준을 한 단계 낮춰 보세요.", // 413 + 414 + 409 + 410 + 415
+    indFix: "기준을 한 단계 낮추거나 점수를 준 카드 수를 줄여 보세요.",        // 412 (두 번째 문장)
     zero: "기준선을 모두 통과한 종목이 없어요. 기준을 한 단계 낮추거나 점수를 준 카드 수를 줄여 보세요.", // 412
     lowerBtn: "기준을 낮춰 주세요",                                   // 418
     pickCardsBtn: "카드를 골라 주세요",                                // 419
@@ -201,10 +205,13 @@ export const C = {
     limitN: "{n}개까지만 담을 수 있어요. 하나를 빼고 다시 골라 주세요.",  // 511
     limitInd: "같은 업종은 2개까지만 담을 수 있어요.",                   // 512
     finCo: "금융회사",                                              // 510
+    unverified: "검증 안 함",                                        // spec (REDESIGN §3, 꼭 담을 종목)
     caution: {
       pbrHigh: "{metric} {x}배로 비싼 편이에요",                       // 497
       debtHigh: "부채비율 {pct}%로 높은 편이에요",                      // 498
       revFall: "매출이 2년째 줄고 있어요",                              // 503
+      opFall: "영업이익 (작년 대비) {pct}",                              // 459 + 숫자 (2년 연속 줄었을 때)
+      opFallFull: null,                                            // pending: 영업이익이 2년째 줄고 있어요
       divDrop: "{name} 배당이 줄었어요 · 주당 {a}원 → {b}원",            // new (확인 필요, 배당)
       divDropBody: "특별배당이나 액면분할 때문인지 확인해 주세요.",         // new (확인 필요, 본문)
       volHigh: null,                                               // pending: 주가 변동이 큰 종목
@@ -212,7 +219,8 @@ export const C = {
     },
     receipt: {
       yield: "배당수익률",                                           // 452
-      debt: "부채비율",                                             // 458
+      debt: "부채비율",                                             // 458 (한국: 부채 ÷ 자기자본)
+      debtUs: null,                                                // pending: 미국 부채비율 (차입금 ÷ 자기자본)
       times: "{x}배",                                              // 453
       growthKr: null,                                              // pending: 한국 성장 = 최근 2년 매출 증가율 (연평균)
       growthUs: null,                                              // pending: 미국 성장 = 최근 1년 매출 증가율
@@ -229,6 +237,8 @@ export const C = {
     div: "연 배당금 (지난 1년 기준)",                                 // 523
     preTax: "세전 금액이에요",                                       // 525
     divUnknown: "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.",     // v17.5 (T_DY_UNKNOWN)
+    riskPartial: "일부 종목(비중 {pct}%)은 베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요.", // v17.5 (T_NORISK)
+    riskNone: "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요.", // v17.5 (T_RISK_BLIND)
     y2022: "2022년처럼 떨어지면",                                    // 526
     y2022Note: "2022년 시장 하락 폭을 바탕으로 어림한 값이에요",         // new
     volLine: "지금 예산 기준: 보통 해 ±{amt}만원 출렁",                // v17.5 (detail.jsx)
@@ -249,13 +259,15 @@ export const C = {
       mktVolatile: "{mkt} 비중 {pct}% 중 변동이 큰 쪽",
       pinned: "꼭 담을 종목",                                        // 182
       cushion: "안전자산 {pct}%",                                     // 395
+      tooPricey: "1주 가격이 비싼 종목은 비중을 맞추기 힘들어요.",        // 417 (두 번째 문장) · 0주 줄
       liqCap: null,                                                // pending: 거래대금 한도에서 멈춤
     },
     clash: null,                                                   // pending: 지킬 수 없는 조건 문장 (지금은 조건 이름만 보여요)
-    clashParts: { count: "종목 수", max: "한 종목 최대 {pct}%", ind: "{ind} 업종은 최대 1/3", mix: "한국 : 미국", liq: null }, // 193 394 566 190
+    clashParts: { count: "종목 수", max: "한 종목 최대 {pct}%", ind: "{ind} 업종은 최대 1/3", mix: "한국 : 미국", liq: null, // 193 394 566 190
+      indCount: "같은 업종은 2개까지만 담을 수 있어요." },              // 512
     rules: {
       title: "내 투자 규칙",                                         // 533
-      intro: "종목마다 규칙을 미리 만들어 뒀어요. 업종별 규칙과 모든 종목에 쓰는 공통 규칙이 들어 있어요. 매일 이 규칙으로 점검하고, 규칙은 언제든 고칠 수 있어요.", // 534
+      intro: null,                                                 // 534 — 매일 점검·규칙 고치기는 Part C 에서 생겨요. 그때까지 빼요
       open: "{name} 규칙 보기",                                      // 550
       reason: "매수 이유",                                           // 536
       keep: "계속 지켜져야 할 조건 · 어긋나면 '지켜봐요'",                // 538
@@ -266,6 +278,7 @@ export const C = {
       dividend: "배당",                                             // 150
       divStreak: "{n}년 연속 늘렸어요",                               // 151
       divLimit: "줄이면 팔 때",                                       // 152
+      dpsChange: "주당 {a}원 → {b}원",                                 // 10 · new (확인 필요, 배당)
       divCut: "배당 삭감",                                           // 9 · 541
       audit: "감사의견 문제",                                         // 541
       acquisition: "본업과 상관없는 대규모 인수",                        // 541
@@ -284,7 +297,8 @@ export const C = {
       title: "이 덱의 주의점",                                        // 545
       rates: "금리가 크게 오르면 은행주와 배당주가 같이 떨어질 수 있어요.", // 546
       semi: "반도체 경기가 꺾이면 {name} 주가가 크게 흔들릴 수 있어요.",   // 547
-      usTax: "해외 주식은 연간 양도차익 중 250만원을 넘는 부분에 22% 세금이 붙어요.", // 548
+      usTax: "해외 주식은 연간 양도차익 중 250만원을 넘는 부분에 22% 세금이 붙어요.", // 548 — 출처·연도 줄이 승인되면 보여요
+      usTaxSource: null,                                           // pending: 2026년 세법 기준 (출처·연도)
       knew: "이런 이유로 떨어지는 건 처음부터 알고 시작한 일이에요.",       // 549
     },
     bought: "샀어요",                                               // 554
@@ -298,7 +312,7 @@ export const C = {
     save: "기록하기",                                               // 561
     doneAlt: "기뻐하는 뱁이",                                        // 562
     done: "기록했어요",                                              // 563
-    doneBody: "내일부터 오늘 화면에서 {n}종목을 규칙대로 점검해 드릴게요. 기록은 이 휴대폰에만 저장돼요.", // 564
+    doneBody: null,                                                // 564 — 매일 점검은 Part C 에서 생겨요. 그때까지 빼요
     doneLink: "오늘 화면 보기",                                       // 565
   },
 };

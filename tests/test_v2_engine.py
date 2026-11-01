@@ -237,7 +237,7 @@ def test_missing_group_is_never_treated_as_one_group():
     got = run(SIZE_JS + "out = { plain: W(sz(plain, { maxPct: 25, count: 4 })), grouped: sz(grouped, { maxPct: 25, count: 4 }),"
               " counts: [...E.indCounts(plain).entries()] };", plain=plain, grouped=grouped)
     assert got["plain"] == {"000100": 0.25, "000110": 0.25, "000120": 0.25, "000130": 0.25}, got["plain"]
-    assert got["grouped"]["ok"] is False and any(p["code"] == "ind" for p in got["grouped"]["clash"])   # 한 업종 100% 는 안 돼요
+    assert got["grouped"]["ok"] is False and any(p["code"] in ("ind", "indCount") for p in got["grouped"]["clash"])   # 한 업종 4개 · 100% 는 안 돼요
     assert got["counts"] == []
 
 
@@ -296,8 +296,12 @@ def test_2022_figures_recompute_from_closes():
     y = json.loads(r.stdout)
     src, R = y["Y2022_SOURCES"], y["R2022"]
     ret = lambda k: src[k]["to"][1] / src[k]["from"][1] - 1
-    assert abs(R["kr"] - ret("kospi")) < 1e-12 and abs(R["kr"] - (-0.2489)) < 0.0005
-    assert abs(R["usWon"] - ((1 + ret("sp500")) * (1 + ret("usdkrw")) - 1)) < 1e-12 and abs(R["usWon"] - (-0.1468)) < 0.0005
+    assert abs(R["kr"] - ret("kospi")) < 1e-12 and abs(R["usWon"] - ((1 + ret("sp500")) * (1 + ret("usdkrw")) - 1)) < 1e-12
+    # 저장된 종가가 공개된 2022년 수익률과 맞아요 (소수 둘째 자리 %)
+    expect = {"kospi": -24.89, "sp500": -19.44, "usdkrw": 5.91, "114260": -2.46, "132030": -1.65}
+    for k, v in expect.items():
+        assert round(ret(k) * 100, 2) == v, (k, ret(k))
+    assert round(R["usWon"] * 100, 2) == -14.68 and round(R["kr"] * 100, 2) == -24.89
     for t in ("114260", "132030"):
         assert abs(R["etf"][t] - ret(t)) < 1e-12
     for k, v in src.items():   # 2021년 마지막 종가 → 2022년 마지막 종가, 출처 기호가 있어요
@@ -306,15 +310,20 @@ def test_2022_figures_recompute_from_closes():
     assert all(f'"{t}"' in code for t in ("114260", "132030")), "안전자산 ETF 와 2022 수치가 같은 종목이어야 해요"
 
 
-def test_2022_estimate_is_market_times_beta_and_hides_without_beta():
+def test_2022_estimate_is_market_times_beta_and_partial_or_none_without_beta():
     rows = [{"s": kr("000010", beta=1.2), "shares": 1, "cost": 1000000}, {"s": us("AAA", beta=0.5), "shares": 1, "cost": 1000000},
             {"s": {"t": "114260", "cls": "bond", "etf": True}, "shares": 1, "cost": 500000}]
-    nob = rows + [{"s": kr("000020", beta=None), "shares": 1, "cost": 10}]
-    other = rows + [{"s": {"t": "999999", "cls": "bond", "etf": True}, "shares": 1, "cost": 10}]
+    nob = rows + [{"s": kr("000020", beta=None), "shares": 1, "cost": 500000}]
+    none = [{"s": kr("000020", beta=None), "shares": 3, "cost": 300000}, {"s": {"t": "999999", "cls": "bond", "etf": True}, "shares": 1, "cost": 10}]
     got = run("const R = { kr: -0.25, usWon: -0.15, etf: { '114260': -0.02 } };"
-              "out = [E.estimate2022(rows, R), E.estimate2022(nob, R), E.estimate2022(other, R)];", rows=rows, nob=nob, other=other)
-    assert abs(got[0]["won"] - (-300000 - 75000 - 10000)) < 1e-6 and got[0]["ok"]
-    assert got[1] == {"ok": False} and got[2] == {"ok": False}
+              "out = [E.estimate2022(rows, R), E.estimate2022(nob, R), E.estimate2022(none, R),"
+              " E.deckVol(nob.map(r => ({ ...r, s: { vol: 30, ...r.s } })), { mktVol: 30, usVol: 18, bdVol: 5, mtVol: 20, rhoKrUs: 0.3, rhoKrBd: 0.1, rhoUsBd: 0 }, 3e6),"
+              " E.deckVol(none, {}, 3e5)];", rows=rows, nob=nob, none=none)
+    assert abs(got[0]["won"] - (-300000 - 75000 - 10000)) < 1e-6 and got[0]["ok"] and got[0]["missing"] == 0
+    # 베타 없는 50만원은 나머지처럼 움직인다고 봐요 (지금 앱 v17.5 와 같은 규칙): 손실률 × 전체, 빠진 비중 표시
+    assert got[1]["ok"] and abs(got[1]["won"] - (-385000 / 2500000) * 3000000) < 1e-6 and abs(got[1]["missing"] - 0.5 / 3) < 1e-12
+    assert got[2] == {"ok": False, "none": True}
+    assert got[3]["vol"] > 0 and abs(got[3]["missing"] - 0.5 / 3) < 1e-12 and got[4] is None
 
 
 # ── 주의할 점 · 규칙 ──
@@ -322,8 +331,8 @@ def test_dividend_drop_is_a_check_never_a_broken_rule():
     s = kr("005380", dps=10000, dps3=[10000, 12000, 11400], fy=2025)
     got = run("const ctx = E.cautionContext([]); out = { c: E.cautions(s, null, ctx), rules: E.ruleBook(s, null, {}, 0.1) };", s=s)
     assert {"code": "divDrop", "a": 12000, "b": 10000} in got["c"]["items"]
-    div = [r for r in got["rules"] if r["id"] == "divCut"][0]
-    assert div["check"] == "checked" and div["kind"] == "sell" and div["streak"] == 0
+    # 이미 줄어든 배당: 규칙을 조용히 넣지 않고(이미 깨진 규칙), 주의할 점으로 먼저 보여 줘요
+    assert not [r for r in got["rules"] if r["id"] == "divCut"]
     blob = json.dumps(got, ensure_ascii=False)
     assert "broken" not in blob and "깨짐" not in blob
 
@@ -355,6 +364,7 @@ def test_rule_book_statuses_follow_the_part_c_table():
               s=s, co=co, bank=bank, ins=ins, u=u)
     st = {r["id"]: r for r in got["s"]}
     assert st["divCut"]["check"] == "checked" and st["divCut"]["streak"] == 2 and st["divCut"]["fy"] == 2025
+    assert st["divCut"]["dps"] == 500 and st["divCut"]["prev"] == 450        # 화면: 주당 450원 → 500원
     for k in ("audit", "embezzle", "acquisition"):
         assert st[k]["check"] == "pending"
     assert st["debtCeiling"]["check"] == "checked" and st["debtCeiling"]["limit"] == 100 and st["debtCeiling"]["fy"] == 2025
@@ -367,7 +377,7 @@ def test_rule_book_statuses_follow_the_part_c_table():
     i = {r["id"]: r for r in got["ins"]}
     assert "divCut" not in i and i["kics"]["check"] == "pending"                                              # 무배당 → 삭감 규칙 없음
     uu = {r["id"]: r for r in got["u"]}
-    assert uu["divCut"]["check"] == "pending" and uu["debtCeiling"]["fy"] is None
+    assert uu["divCut"]["check"] == "pending" and "debtCeiling" not in uu     # 미국 부채비율은 다른 비율이라 규칙 없음
     for book in got.values():
         assert all(r["check"] in ("checked", "pending") for r in book)
 
@@ -422,3 +432,91 @@ def test_financial_set_is_one_constant_including_the_fin_umbrella():
     assert got["ceiling"] == [False] * 5 + [True]             # 부채비율 상한 규칙도
     src = open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8").read()
     assert src.count('"securities"') == 1, "금융회사 목록은 FINANCIAL_INDS 한 곳에만 있어야 해요"
+
+
+
+# ── 리뷰(14b9cee) 뒤 추가: 꼭 실패해야 하는 경우들 ──
+def test_catch_all_group_ids_are_never_a_group():
+    stocks = [kr(f"0005{i}0", ind=g, indName="기타") for i, g in enumerate(["etc", "other", "etc", "other"])]
+    got = run(SET + "out = { has: stocks.map(E.hasGroup), counts: [...E.indCounts(stocks).entries()],"
+              " size: E.size({ picks: stocks.map((s) => ({ t: s.t, s, total: 50 })), cushion: [], settings: S({ mix: 'kr', count: 4, maxPct: 25 }), amountWon: 1e7 }).ok,"
+              " add: E.canAdd(stocks[3], stocks.slice(0, 3), [], { kr: 4 }) };", stocks=stocks)
+    assert got == {"has": [False] * 4, "counts": [], "size": True, "add": None}, got
+
+
+def test_three_pinned_stocks_in_one_group_are_refused():
+    pins = [kr(f"0006{i}0", ind="semi", indName="반도체") for i in range(3)]
+    others = [kr(f"0007{i}0", ind=f"g{i}", indName="g") for i in range(3)]
+    got = run(SET + "out = { pin3: E.canPin(pins[2], pins.slice(0, 2)), pin2: E.canPin(pins[1], pins.slice(0, 1)),"
+              " full: E.canPin(others[0], pins),"
+              " size: E.size({ picks: others.map((s) => ({ t: s.t, s, total: 50 })), pinned: pins, cushion: [], settings: S({ mix: 'kr', count: 6, maxPct: 25 }), amountWon: 1e7 }) };",
+              pins=pins, others=others)
+    assert got["pin3"] == "industry" and got["pin2"] is None and got["full"] == "full"
+    assert got["size"]["ok"] is False and got["size"]["clash"][0]["code"] == "indCount", got["size"]
+
+
+def test_fewer_survivors_than_needed_blocks():
+    stocks = [kr(f"0008{i}0", roe=10 + i, ind=f"g{i}", indName="g") for i in range(3)]
+    got = run(SET + "const st = S({ mix: 'kr', count: 5, points: { profit: 5 }, strict: 'loose' });"
+              "const r = E.screen(stocks, st); out = E.survivorCheck(r, E.splitCounts(st));", stocks=stocks)
+    assert got["block"] and got["markets"] == [{"mk": "kr", "have": 3, "need": 5, "state": "short"}], got
+
+
+def test_preselect_keeps_each_industry_under_a_third_at_the_korea_us_split():
+    # 추세 추종 기본(6종목, 한국 7 : 미국 3): 한국 4개가 각 17.5% → 같은 업종 2개면 35% > 1/3
+    stocks = [kr("000100", roe=99, ind="semi", indName="반도체"), kr("000110", roe=98, ind="semi", indName="반도체"),
+              kr("000120", roe=97, ind="machine", indName="기계"), kr("000130", roe=96, ind="machine", indName="기계")] + \
+             [kr(f"0002{i}0", roe=50 - i, ind=f"o{i}", indName="기타업종") for i in range(6)] + \
+             [us(f"U{c}", roe=80 - i, ind=f"u{i}", indName="미국업종") for i, c in enumerate("ABCDEF")]
+    got = run(SET + "const st = S({ mix: 'k73', count: 6, points: { profit: 5 }, strict: 'loose' });"
+              "const r = E.screen(stocks, st); const counts = E.splitCounts(st); const plan = E.weightPlan(st, counts);"
+              "const c = E.candidates(r, counts, [], plan); const p = E.preselect(c, counts, [], plan);"
+              "const all = Object.values(c).flat(); const items = [...p].map((t) => all.find((x) => x.t === t));"
+              "const sz = E.size({ picks: items, cushion: [], settings: st, amountWon: 1e7 });"
+              "const byInd = {}; for (const x of items) byInd[x.s.ind] = (byInd[x.s.ind] || 0) + 1;"
+              "out = { n: p.length, short: p.short, byInd, ok: sz.ok,"
+              " add: E.canAdd(stocks[1], items.map((x) => x.s), [], counts, plan) };", stocks=stocks)
+    assert got["n"] == 6 and not got["short"] and got["ok"], got
+    assert got["byInd"]["semi"] == 1 and got["byInd"]["machine"] == 1, got["byInd"]
+    assert got["add"] in ("indCap", "market"), got
+
+
+def test_preselect_that_the_industry_limits_cannot_hold_is_blocked():
+    stocks = [kr(f"0009{i}0", roe=90 - i, ind="semi", indName="반도체") for i in range(8)]
+    got = run(SET + "const st = S({ mix: 'kr', count: 5, points: { profit: 5 }, strict: 'loose' });"
+              "const r = E.screen(stocks, st); const counts = E.splitCounts(st); const plan = E.weightPlan(st, counts);"
+              "const c = E.candidates(r, counts, [], plan); const p = E.preselect(c, counts, [], plan);"
+              "out = { n: p.length, short: p.short, blocked: p.blocked };", stocks=stocks)
+    # 반도체 5종목 각 20%: 1/3 을 넘지 않게는 1개만 → 채울 수 없으니 막고, 이유(업종)를 알려요
+    assert got["n"] == 1 and got["short"] and got["blocked"] and got["blocked"][0]["ind"] == "semi", got
+
+
+def test_clash_names_every_group_held_at_a_third():
+    stocks = [kr("000300", ind="a", indName="가업종"), kr("000310", ind="a", indName="가업종"),
+              kr("000320", ind="b", indName="나업종"), kr("000330", ind="b", indName="나업종"), kr("000340", ind="c", indName="다업종")]
+    got = run(SIZE_JS + "out = sz(stocks, { maxPct: 25, count: 5 });", stocks=stocks)
+    assert got["ok"] is False
+    named = sorted(p["indName"] for p in got["clash"] if p["code"] == "ind")
+    assert named == ["가업종", "나업종"] and got["clash"][0]["code"] == "count", got
+
+
+def test_us_debt_is_a_different_ratio_so_no_debt_rules_for_us():
+    u = us("AAA", debt=400.0)
+    k = kr("000400", debt=400.0, fy=2025)
+    got = run("const ctx = E.cautionContext([]);"
+              "out = { ex: [E.exclusionsHit(u), E.exclusionsHit(k)], ca: [E.cautions(u, null, ctx).items.map((x) => x.code), E.cautions(k, null, ctx).items.map((x) => x.code)],"
+              " rule: [E.ruleBook(u, null, { stable: 3 }, 0.1).map((r) => r.id), E.ruleBook(k, null, { stable: 3 }, 0.1).map((r) => r.id)] };", u=u, k=k)
+    assert got["ex"] == [[], ["debt"]] and got["ca"] == [[], ["debtHigh"]]
+    assert "debtCeiling" not in got["rule"][0] and "debtCeiling" in got["rule"][1]
+
+
+def test_rule_already_broken_at_purchase_becomes_a_caution_not_a_rule():
+    s = kr("005380", fy=2025, dps=10000, dps3=[10000, 9000, 8000])
+    co = {"op": [115.0, 142.0, 151.0], "fy": 2025}                     # 현대차처럼 2년 연속 감소
+    ok_co = {"op": [151.0, 142.0, 115.0], "fy": 2025}
+    got = run("const ctx = E.cautionContext([]);"
+              "out = { c: E.cautions(s, co, ctx).items, rules: E.ruleBook(s, co, {}, 0.1).map((r) => r.id), okRules: E.ruleBook(s, ok_co, {}, 0.1).map((r) => r.id) };",
+              s=s, co=co, ok_co=ok_co)
+    fall = [c for c in got["c"] if c["code"] == "opFall"]
+    assert fall and round(fall[0]["pct"], 1) == -19.0
+    assert "opDecline" not in got["rules"] and "opDecline" in got["okRules"]

@@ -6,12 +6,12 @@ import { Icon } from "../ui/icons.jsx";
 import { Segmented, Stepper, MoneyInput, StatusChip } from "../ui/components.jsx";
 import {
   CARDS, DECKS, STRICT, MIX, METHODS, MAX_PCTS, CUSHIONS, EXCLUDE_LIVE, EXCLUDE_PENDING, POINTS_TOTAL, POINTS_MAX, COUNT_RANGE,
-  PINNED_MAX, MIN_PER_STOCK_MAN, CUSHION_ASSETS, applyDeck, defaultSettings, activeCards, pointsUsed, strictTop, topOverall, bestCard,
-  marketsOf,
+  MIN_PER_STOCK_MAN, applyDeck, defaultSettings, activeCards, pointsUsed, strictTop, topOverall, bestCard,
+  marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, tx, tap } from "./ui.jsx";
-import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks } from "./deckcalc.js";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, tx, tap } from "./ui.jsx";
+import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashPieces } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
 
@@ -71,15 +71,18 @@ function Steps({ load, builder, setBuilder, onExit }) {
   const ds = useMemo(() => deckState(load, st), [load, st]);
   const active = activeCards(st.points);
   const noCards = !active.length;
-  const blocked = noCards || ds.check.zero;
+  const last = step === STEPS.length - 1;
+  // Steps 기준 and 빼기 stop only when nothing passes at all, so 종목 수 and 한국 : 미국 in 조건 stay reachable.
+  // 조건 stops whenever 후보 고르기 could not be filled (a market short of survivors, or the industry limits).
+  const lower = last ? ds.blocked : ds.res.survivors === 0;
+  const blocked = noCards || lower;
   const restart = () => setBuilder(newBuilder());
   const start = (id) => { setBuilder((b) => ({ ...b, settings: applyDeck(b.settings, id), picks: null, step: 1 })); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } };
   const toPick = () => {
     setBuilder((b) => ({ ...b, stage: "pick", picks: defaultPicks(ds) }));
     try { window.scrollTo(0, 0); } catch (e) { /* ignore */ }
   };
-  const last = step === STEPS.length - 1;
-  const action = noCards ? C.build.pickCardsBtn : ds.check.zero ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
+  const action = noCards ? C.build.pickCardsBtn : lower ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
   const summary = (
     <span data-ui-v2="match-count"><span>{C.build.matchSummary}</span>{" "}
       <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(ds.res.survivors) })}</b></span>
@@ -110,9 +113,24 @@ function SurvivorNotes({ ds, two }) {
       {ds.check.markets.map((m) => (
         <Note key={m.mk} tone="watch" data-ui-v2={m.state} data-market={m.mk}>
           {two && <span>{C.pick.market[m.mk]}{" · "}</span>}
-          <span>{m.state === "zero" ? C.build.zero : fill(C.build.few, { n: nf(m.have) })}</span>
+          <span>{m.state === "zero" ? C.build.zero : m.state === "short" ? fill(C.build.short, { n: nf(m.have), need: m.need })
+            : fill(C.build.few, { n: nf(m.have) })}</span>
         </Note>
       ))}
+      {!ds.check.block && ds.pre.short && (
+        <Note tone="watch" data-ui-v2="ind-block">
+          {[...new Set(ds.pre.blocked.map((b) => (b.code === "indCap" && b.indName ? fill(C.plan.clashParts.ind, { ind: b.indName }) : C.pick.limitInd)))].map((t, i) => (
+            <span key={i}>{i ? " · " : ""}{t}</span>
+          ))}
+          {" "}<span>{C.build.indFix}</span>
+        </Note>
+      )}
+      {ds.clash && (
+        <Note tone="watch" data-ui-v2="clash">
+          {clashPieces(ds.clash).map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}
+          {C.plan.clash && <span>{" "}{C.plan.clash}</span>}
+        </Note>
+      )}
     </div>
   );
 }
@@ -188,8 +206,11 @@ function StepCards({ st, set, ds }) {
             const b = bestCard(x, st.points);
             return (
               <div key={x.t} style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
-                <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{x.s.nk}</span>
-                {b && <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { flexShrink: 0 })}><span>{C.build.cards[b.id].name}</span>{" "}<span>{fill(s1.score, { score: Math.round(b.score) })}</span></span>}
+                <span style={{ minWidth: 0 }}>
+                  <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{x.s.nk}</span>
+                  {b && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}><span>{C.build.cards[b.id].name}</span>{" "}<span>{fill(s1.score, { score: Math.round(b.score) })}</span></span>}
+                </span>
+                <span data-ui-v2="preview-score" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flexShrink: 0 })}>{fill(s1.score, { score: Math.round(x.total) })}</span>
               </div>
             );
           })}
@@ -227,7 +248,16 @@ function StepTerms({ st, set, ds, load }) {
   const mk = marketsOf(st);
   const [q, setQ] = useState("");
   const results = pinnable(load, q, st.pinned);
-  const cushionOk = cushionStocks(load).length === CUSHION_ASSETS.length;
+  const [pinMsg, setPinMsg] = useState(null);
+  const cushionOk = cushionStocks(load).length > 0;
+  const pin = (s) => {
+    const why = canPin(s, ds.pinned);
+    if (why === "industry") { setPinMsg(C.pick.limitInd); return; }
+    if (why) return;
+    setPinMsg(null);
+    set({ pinned: [...st.pinned, s.t] });
+    setQ("");
+  };
   // 2022 line per sizing choice, from the list that 후보 고르기 would pre-select
   const y2022 = useMemo(() => {
     if (!(amt > 0)) return null;
@@ -249,7 +279,7 @@ function StepTerms({ st, set, ds, load }) {
       </Card>
       <Card>
         <Label>{s4.mixLabel}</Label>
-        <Segmented label={s4.mixAria} value={st.mix} onChange={(v) => set({ mix: v })} options={MIX.map((x) => ({ value: x.id, label: s4.mix[x.id] }))} />
+        <ChoiceGrid label={s4.mixAria} value={st.mix} onChange={(v) => set({ mix: v })} options={MIX.map((x) => ({ value: x.id, label: s4.mix[x.id] }))} />
         {mk.includes("us") && <Note>{s4.usWhole}</Note>}
       </Card>
       <Card>
@@ -273,6 +303,7 @@ function StepTerms({ st, set, ds, load }) {
             </div>
           );
         })}
+        {pinMsg && <Note tone="watch" data-ui-v2="pin-limit">{pinMsg}</Note>}
         {st.pinned.length < PINNED_MAX && (
           <>
             <TextInput label={null} ariaLabel={s4.pinnedTitle} value={q} onChange={setQ} />
@@ -283,7 +314,7 @@ function StepTerms({ st, set, ds, load }) {
                   <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{s.t}</span>
                 </span>
                 <button type="button" aria-label={fill(s4.addAria, { name: s.nk })} disabled={st.count <= st.pinned.length + 1}
-                  onClick={() => { set({ pinned: [...st.pinned, s.t] }); setQ(""); }}
+                  onClick={() => pin(s)}
                   style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.sm, background: COLOR.surface, padding: `0 ${SPACE(3)}px`, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{s4.add}</button>
               </div>
             ))}

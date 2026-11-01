@@ -24,15 +24,21 @@ export const MAX_PER_IND = 2;            // at most 2 stocks per industry group
 export const TILT = [0.6, 1.4];          // tilts stay within 0.6-1.4x of an equal weight
 export const BANDS = [0.75, 1.25, 1.4];  // weight bands (REDESIGN 4.1)
 export const MIN_PER_STOCK_MAN = 20;     // step 4: warn when the amount gives less than 20만원 per stock
-export const DEBT_CAUTION = 100;         // 주의할 점: debt ratio above 100% (not financials)
-export const DEBT_EXCLUDE = 200;         // 빼기 switch: debt ratio above 200% (not financials)
+// Debt ratio rules apply to Korean company shares only: KR debt = liabilities / equity (DART), while US debt is
+// debt / equity (Yahoo), a different ratio. The US label waits for Jack's wording (pending strings).
+export const DEBT_CAUTION = 100;         // 주의할 점: debt ratio above 100% (KR, not financials)
+export const DEBT_EXCLUDE = 200;         // 빼기 switch: debt ratio above 200% (KR, not financials)
+export const hasKrDebt = (s) => s.cls === "kr" && !isFin(s) && num(s.debt) != null;
 export const CUSHION_ASSETS = [{ t: "114260", share: 0.5 }, { t: "132030", share: 0.5 }]; // KODEX KTB 3Y, KODEX gold futures (H)
 export const PINNED_MAX = 3;
 export const COUNT_RANGE = [5, 30];
 const EPS = 1e-9;
 
+// Catch-all ids are never an industry group (no peer comparison, no shared cap, no "max 2").
+export const NOT_GROUPS = ["etc", "other"];
+
 export const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0;
+export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0 && !NOT_GROUPS.includes(s.ind);
 export const isFin = (s) => hasGroup(s) && FINANCIAL_INDS.includes(s.ind);
 export const isPreferred = (s) => s.cls === "kr" && typeof s.t === "string" && !s.t.endsWith("0");  // KRX: common shares end in 0
 export const isStockLike = (s) => (s.cls === "kr" || s.cls === "us") && !s.fund && s.etf !== true;
@@ -160,7 +166,7 @@ export function exclusionsHit(s) {
   const hit = [];
   const opm = num(s.opm), debt = num(s.debt);
   if (opm != null && opm < 0) hit.push("loss");
-  if (!isFin(s) && debt != null && debt > DEBT_EXCLUDE) hit.push("debt");
+  if (hasKrDebt(s) && debt > DEBT_EXCLUDE) hit.push("debt");
   if (s.cls === "kr" && s.dps === 0) hit.push("noDiv");
   if (s.ind === HOLDING_IND) hit.push("holding");
   return hit;
@@ -248,32 +254,43 @@ export function splitCounts(settings) {
   return { kr: n, us: coreN - n };
 }
 
-// Warning (survivors < 2x the stocks needed) and block (zero) per market that needs stocks, with that market's count.
+// Per market that needs stocks, with that market's own count:
+//   zero  = nothing passed (block) · short = fewer than the stocks it must fill (block: 후보 고르기 could not be filled)
+//   few   = fewer than 2x the stocks needed (warning only)
 export function survivorCheck(res, counts) {
   const markets = [];
   for (const mk of Object.keys(res.markets)) {
     const need = counts[mk] || 0, have = res.markets[mk].survivors.length;
     if (need <= 0) continue;
     if (have === 0) markets.push({ mk, have, need, state: "zero" });
+    else if (have < need) markets.push({ mk, have, need, state: "short" });
     else if (have < 2 * need) markets.push({ mk, have, need, state: "few" });
   }
-  return { zero: markets.some((x) => x.state === "zero"), few: markets.some((x) => x.state === "few"), markets };
+  const block = markets.some((x) => x.state === "zero" || x.state === "short");
+  return { zero: markets.some((x) => x.state === "zero"), block, few: markets.some((x) => x.state === "few"), markets };
 }
 
-// 후보 고르기: top 2 x n per market (pinned excluded). If the max-2-per-industry limit would leave fewer than n
-// pickable names among them, further survivors that can be picked are added until n can be.
-export function candidates(res, counts, pinnedStocks = []) {
+// Equal-weight estimate used while picking: each pinned stock gets (1 - cushion) / N, each core pick its market's
+// share of the rest divided by that market's count. Sizing later tilts within 0.6-1.4x of these.
+export function weightPlan(settings, counts) {
+  const N = settings.count, P = (settings.pinned || []).length;
+  const stockW = 1 - settings.cushion / 100, eDeck = stockW / N, core = stockW - P * eDeck, k = mixKr(settings.mix);
+  return { eDeck, e: { kr: counts.kr ? (core * k) / counts.kr : 0, us: counts.us ? (core * (1 - k)) / counts.us : 0 } };
+}
+
+// 후보 고르기: top 2 x n per market (pinned excluded). If the industry limits (max 2 per group, group <= 1/3 at
+// equal weights) would leave fewer than n pickable names among them, further pickable survivors are added.
+export function candidates(res, counts, pinnedStocks = [], plan = null) {
   const out = {};
-  const used = indCounts(pinnedStocks);
+  const picked = [];
   for (const mk of Object.keys(res.markets)) {
     const need = counts[mk] || 0, list = [];
     let got = 0;
     for (const c of res.markets[mk].survivors) {
       if (list.length >= 2 * need && got >= need) break;
-      const g = hasGroup(c.s) ? c.s.ind : null;
-      const pickable = got < need && (!g || (used.get(g) || 0) < MAX_PER_IND);
+      const pickable = got < need && !canAdd(c.s, picked, pinnedStocks, counts, plan);
       if (list.length < 2 * need || pickable) list.push(c);
-      if (pickable) { got++; if (g) used.set(g, (used.get(g) || 0) + 1); }
+      if (pickable) { got++; picked.push(c.s); }
     }
     out[mk] = list;
   }
@@ -286,27 +303,48 @@ export function indCounts(list) {
   return m;
 }
 
-export function preselect(cands, counts, pinnedStocks) {
-  const picked = [];
-  const ind = indCounts(pinnedStocks);
+// Pre-select n per market in score order, keeping every industry limit (see canAdd). Returns the picked codes and,
+// when a market cannot be filled, which limits stopped it (blocked: [{ code: "industry" | "indCap", ind, indName }]).
+export function preselect(cands, counts, pinnedStocks, plan = null) {
+  const picked = [], stopped = [];
   for (const mk of Object.keys(cands)) {
     let n = 0;
     for (const c of cands[mk]) {
       if (n >= (counts[mk] || 0)) break;
-      if (hasGroup(c.s) && (ind.get(c.s.ind) || 0) >= MAX_PER_IND) continue;
-      picked.push(c.t);
+      const why = canAdd(c.s, picked.map((x) => x.s), pinnedStocks, counts, plan);
+      if (why === "industry" || why === "indCap") { stopped.push({ code: why, ind: c.s.ind, indName: c.s.indName }); continue; }
+      if (why) continue;
+      picked.push(c);
       n++;
-      if (hasGroup(c.s)) ind.set(c.s.ind, (ind.get(c.s.ind) || 0) + 1);
     }
   }
-  return picked;
+  const short = Object.keys(cands).some((mk) => picked.filter((x) => x.s.cls === mk).length < (counts[mk] || 0));
+  const seen = new Set();
+  const blocked = short ? stopped.filter((x) => { const k = x.code + x.ind; if (seen.has(k)) return false; seen.add(k); return true; }) : [];
+  return Object.assign(picked.map((x) => x.t), { short, blocked });
 }
 
-// Can this stock be added? -> null, "market" (that market is full) or "industry" (2 already in its group).
-export function canAdd(stock, pickedStocks, pinnedStocks, counts) {
+// Can this stock be added? -> null, "market" (that market is full), "industry" (2 already in its group, pinned
+// included) or "indCap" (its group would pass 1/3 of the deck at equal weights, pinned included).
+export function canAdd(stock, pickedStocks, pinnedStocks, counts, plan = null) {
   const inMk = pickedStocks.filter((s) => s.cls === stock.cls).length;
   if (inMk >= (counts[stock.cls] || 0)) return "market";
-  if (hasGroup(stock) && (indCounts([...pickedStocks, ...pinnedStocks]).get(stock.ind) || 0) >= MAX_PER_IND) return "industry";
+  if (!hasGroup(stock)) return null;
+  const same = [...pickedStocks, ...pinnedStocks].filter((s) => hasGroup(s) && s.ind === stock.ind);
+  if (same.length >= MAX_PER_IND) return "industry";
+  if (plan) {
+    const w = pinnedStocks.filter((s) => hasGroup(s) && s.ind === stock.ind).length * plan.eDeck
+      + pickedStocks.filter((s) => hasGroup(s) && s.ind === stock.ind).reduce((a, s) => a + (plan.e[s.cls] || 0), 0)
+      + (plan.e[stock.cls] || 0);
+    if (w > IND_CAP + 1e-9) return "indCap";
+  }
+  return null;
+}
+
+// Can this stock be pinned (꼭 담을 종목)? -> null | "full" | "industry" (a third stock in one group)
+export function canPin(stock, pinnedStocks) {
+  if (pinnedStocks.length >= PINNED_MAX) return "full";
+  if (hasGroup(stock) && pinnedStocks.filter((s) => hasGroup(s) && s.ind === stock.ind).length >= MAX_PER_IND) return "industry";
   return null;
 }
 
@@ -362,14 +400,20 @@ function rawTilts(items, method) {
   return { raw: fit.map((f, i) => 0.5 * f + 0.5 * st[i]), st };
 }
 
-// picks: [{ t, s, total }] (core picks, any market); pinned: [stock]; cushion: [stock] (resolved CUSHION_ASSETS).
+// picks: [{ t, s, total }] (core picks, any market); pinned: [stock]; cushion: [{ s, share }] (all cushion assets).
 export function size({ picks, pinned = [], cushion = [], settings, amountWon }) {
   const N = picks.length + pinned.length;
   const maxW = settings.maxPct / 100, cushW = settings.cushion / 100, stockW = 1 - cushW;
   const k = mixKr(settings.mix);
   const clashOut = (parts) => ({ ok: false, clash: dedupe(parts) });
   if (N === 0) return clashOut([{ code: "count", n: 0 }]);
-  if (cushW > 0 && cushion.length !== CUSHION_ASSETS.length) return clashOut([{ code: "cushion" }]);
+  if (cushW > 0 && !cushion.length) return clashOut([{ code: "cushion" }]);
+  const counts = indCounts([...picks.map((p) => p.s), ...pinned]);
+  const over = [...counts.entries()].filter(([, n]) => n > MAX_PER_IND);
+  if (over.length) {
+    const named = (g) => [...picks.map((p) => p.s), ...pinned].find((s) => s.ind === g);
+    return clashOut(over.map(([g]) => ({ code: "indCount", ind: g, indName: named(g).indName })));
+  }
   const liqCap = (s) => {
     if (!(amountWon > 0)) return Infinity;
     const l = liquidity(s);
@@ -432,7 +476,9 @@ export function size({ picks, pinned = [], cushion = [], settings, amountWon }) 
       const coreMem = mem.filter((x) => !x.pinned);
       const coreSum = coreMem.reduce((a, x) => a + x.w, 0);
       const room = IND_CAP - pin;
-      if (room < -1e-9 || coreSum <= EPS) return clashOut([{ code: "ind", ind, indName: mem[0].s.indName }]);
+      if (room < -1e-9 || coreSum <= EPS) {
+        return clashOut([{ code: "count", n: N }, ...cappedInds(indFrozen, all), { code: "ind", ind, indName: mem[0].s.indName }]);
+      }
       const scale = room / coreSum;
       for (const x of coreMem) { frozen.set(x.t, x.w * scale); indFrozen.add(x.t); }
     }
@@ -446,10 +492,7 @@ export function size({ picks, pinned = [], cushion = [], settings, amountWon }) 
         why: indFrozen.has(x.t) ? "ind" : w >= x.capMax - 1e-7 ? "max" : w >= x.capLiq - 1e-7 ? "liq" : null });
     }
   }
-  for (const c of CUSHION_ASSETS) {
-    const s = cushion.find((x) => x.t === c.t);
-    if (cushW > 0 && s) items.push({ t: s.t, s, kind: "cushion", w: cushW * c.share, cap: cushW * c.share, why: null });
-  }
+  if (cushW > 0) for (const c of cushion) items.push({ t: c.s.t, s: c.s, kind: "cushion", w: cushW * c.share, cap: cushW * c.share, why: null });
   const two = k > 0 && k < 1;
   const coreItems = items.filter((x) => x.kind === "core").sort((a, b) => b.total - a.total || (a.t < b.t ? -1 : 1));
   coreItems.forEach((x, i) => { x.rank = i + 1; });
@@ -462,15 +505,27 @@ function dedupe(parts) {
   return parts.filter((p) => { const key = p.code + (p.ind || ""); if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
+// Every group that was held at 1/3 (each named once)
+function cappedInds(indFrozen, members) {
+  const out = [], seen = new Set();
+  for (const x of members) {
+    if (!indFrozen.has(x.t) || seen.has(x.s.ind)) continue;
+    seen.add(x.s.ind);
+    out.push({ code: "ind", ind: x.s.ind, indName: x.s.indName });
+  }
+  return out;
+}
+
+// The limits that clash when a market's share cannot be filled: stock count, max per stock (when it binds), every
+// industry group held at 1/3, the liquidity cap, and the Korea:US split.
 function groupClash(g, free, indFrozen, N, settings) {
   const parts = [];
   const bind = free.map((x) => Math.min(x.capMax, x.capLiq, x.capTilt));
   const usedMax = free.some((x, i) => Math.abs(bind[i] - x.capMax) < 1e-9 && x.capMax <= x.capLiq);
   const usedLiq = free.some((x, i) => x.capLiq < x.capMax && Math.abs(bind[i] - x.capLiq) < 1e-9);
-  const ind = g.members.find((x) => indFrozen.has(x.t));
   parts.push({ code: "count", n: N });
   if (usedMax || !free.length) parts.push({ code: "max", pct: settings.maxPct });
-  if (ind) parts.push({ code: "ind", ind: ind.s.ind, indName: ind.s.indName });
+  parts.push(...cappedInds(indFrozen, g.members));
   if (usedLiq) parts.push({ code: "liq" });
   if (g.share < 1) parts.push({ code: "mix" });
   return parts;
@@ -552,25 +607,31 @@ export function annualDividend(rows, fx) {
 }
 
 // "2022년처럼 떨어지면": market's 2022 won return x beta per stock; cushion ETFs their own 2022 return.
+// Holdings without a figure (no beta) are assumed to move like the rest (the v17.5 rule of the current app): the rate
+// comes from the holdings with data and applies to the whole amount bought. missing = their share of the money.
+// None with data -> { ok: false, none: true }.
 export function estimate2022(rows, R = R2022) {
-  let won = 0;
+  let won = 0, known = 0, total = 0;
   for (const r of rows) {
     if (!(r.shares > 0)) continue;
     const s = r.s;
+    total += r.cost;
     let ret = null;
     if (s.cls === "kr" || s.cls === "us") {
       const b = num(s.beta);
       if (b != null && !s.etf && !s.fund) ret = (s.cls === "kr" ? R.kr : R.usWon) * b;
       else if (R.etf && R.etf[s.t] != null) ret = R.etf[s.t];
     } else if (R.etf && R.etf[s.t] != null) ret = R.etf[s.t];
-    if (ret == null || !Number.isFinite(ret)) return { ok: false };
+    if (ret == null || !Number.isFinite(ret)) continue;
     won += ret * r.cost;
+    known += r.cost;
   }
-  return { ok: true, won };
+  if (!(known > 0)) return { ok: false, none: true };
+  return { ok: true, won: (won / known) * total, missing: total > 0 ? 1 - known / total : 0 };
 }
 
-// Yearly volatility of the deck (fraction), one factor per market with correlations from data.json settings.
-// Used only when the 2022 line cannot be shown. null when any input is missing.
+// Yearly volatility of the deck (fraction of the money bought), one factor per market with correlations from
+// data.json settings. Used only when the 2022 line cannot be shown. -> { vol, missing } or null (no holding has data).
 export function deckVol(rows, st, amountWon) {
   const F = { kr: num(st && st.mktVol), us: num(st && st.usVol), bond: num(st && st.bdVol), metal: num(st && st.mtVol) };
   const rho = { "kr|us": st && st.rhoKrUs, "kr|metal": st && st.rhoKrMt, "us|metal": st && st.rhoUsMt, "kr|bond": st && st.rhoKrBd,
@@ -579,13 +640,15 @@ export function deckVol(rows, st, amountWon) {
   if (!(amountWon > 0)) return null;
   const expo = { kr: 0, us: 0, bond: 0, metal: 0 };
   let idio = 0;
+  // holdings without vol or beta are assumed to move like the rest: weights are taken within the holdings with data
+  const usable = (x) => { const s = x.s, c = s.cls; return num(s.vol) != null && c in expo && F[c] != null && ((c !== "kr" && c !== "us") || num(s.beta) != null); };
+  const known = rows.filter((x) => x.shares > 0 && usable(x)).reduce((a, x) => a + x.cost, 0);
+  if (!(known > 0)) return null;
   for (const x of rows) {
-    if (!(x.shares > 0)) continue;
-    const w = x.cost / amountWon, s = x.s, v = num(s.vol), c = s.cls in expo ? s.cls : null;
-    if (v == null || !c || F[c] == null) return null;
+    if (!(x.shares > 0) || !usable(x)) continue;
+    const w = x.cost / known, s = x.s, v = num(s.vol), c = s.cls;
     if (c === "kr" || c === "us") {
       const b = num(s.beta);
-      if (b == null) return null;
       expo[c] += (w * b * F[c]) / 100;
       idio += w * w * Math.max(0, (v / 100) ** 2 - (b * F[c] / 100) ** 2);
     } else expo[c] += (w * v) / 100;
@@ -598,7 +661,8 @@ export function deckVol(rows, st, amountWon) {
     sys += expo[a] * expo[b] * rr;
   }
   const v = Math.sqrt(Math.max(0, sys + idio));
-  return Number.isFinite(v) ? v : null;
+  const total = rows.filter((x) => x.shares > 0).reduce((a, x) => a + x.cost, 0);
+  return Number.isFinite(v) ? { vol: v, missing: total > 0 ? 1 - known / total : 0 } : null;
 }
 
 // ---------------- 주의할 점 (cautions) ----------------
@@ -627,13 +691,15 @@ export function cautions(s, co, ctx) {
   const items = [], ran = [];
   const pbr = num(s.pbr), p75 = hasGroup(s) ? ctx.pbrP75.get(`${s.cls}|${s.ind}`) : null;
   if (pbr != null && pbr > 0 && p75 != null) { ran.push("pbr"); if (pbr > p75) items.push({ code: "pbrHigh", pbr }); }
-  const debt = num(s.debt);
-  if (!isFin(s) && debt != null) { ran.push("debt"); if (debt > DEBT_CAUTION) items.push({ code: "debtHigh", debt }); }
+  if (hasKrDebt(s)) { ran.push("debt"); if (s.debt > DEBT_CAUTION) items.push({ code: "debtHigh", debt: s.debt }); }
   const rev = co && Array.isArray(co.rev) ? co.rev.map(num) : null;
   if (rev && rev.length >= 3 && rev.slice(0, 3).every((x) => x != null)) {
     ran.push("rev");
     if (rev[0] < rev[1] && rev[1] < rev[2]) items.push({ code: "revFall" });
   }
+  // operating profit down 2 years running: the keep rule would already fail at purchase, so it is a caution instead
+  if (opFell2(co)) { ran.push("op"); items.push({ code: "opFall", pct: (co.op[0] / co.op[1] - 1) * 100 }); }
+  else if (co && Array.isArray(co.op) && co.op.slice(0, 3).filter((x) => num(x) != null).length >= 3) ran.push("op");
   const vol = num(s.vol), p80 = ctx.volP80[s.cls];
   if (vol != null && p80 != null) { ran.push("vol"); if (vol > p80) items.push({ code: "volHigh", vol }); }
   const d3 = s.cls === "kr" ? (Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null) : null;
@@ -659,6 +725,11 @@ export function dividendStreak(d3) {
 }
 
 export const debtLimitFor = (debt) => Math.max(100, Math.ceil((debt * 1.25) / 10) * 10);
+// Operating profit [latest, prior, two years ago] fell twice in a row (positive base years only)
+export function opFell2(co) {
+  const op = co && Array.isArray(co.op) ? co.op.slice(0, 3).map(num) : [];
+  return op.length === 3 && op.every((x) => x != null) && op[1] > 0 && op[0] < op[1] && op[1] < op[2];
+}
 export const roeFloorFor = (roe) => Math.max(0, Math.floor(roe / 2));
 
 export function ruleBook(s, co, points, targetW) {
@@ -666,27 +737,31 @@ export function ruleBook(s, co, points, targetW) {
   const fy = fyOf(s, co);
   // Korean annual inputs (DART) must carry their report year; without it the rule is not shown as checked.
   const dated = s.cls !== "kr" || fy != null;
+  // Rules are generated only when they hold at purchase: an input that already breaks a rule shows as a caution in
+  // 후보 고르기 (주의할 점) and the rule is not added silently.
   // 1. common sell conditions
   const dps = num(s.dps);
+  const d3 = Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
+  const prev = d3 ? num(d3[1]) : null;
   if (s.cls === "kr" && dps === 0) { /* pays nothing: no dividend-cut rule */ }
-  else if (s.cls === "kr" && dps != null && dps > 0 && dated) {
-    const d3 = Array.isArray(s.dps3) ? s.dps3 : co && co.dps3;
-    rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", dps, dps3: d3 || null, streak: dividendStreak(d3), fy });
+  else if (s.cls === "kr" && dps != null && dps > 0 && dated && prev != null) {
+    if (dps >= prev) rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", dps, prev, dps3: d3, streak: dividendStreak(d3), fy });
+    /* dividend already lower than the year before: 확인 필요 caution, no rule */
   } else rules.push({ id: "divCut", kind: "sell", check: "pending" });
   rules.push({ id: "audit", kind: "sell", check: "pending" });
   rules.push({ id: "embezzle", kind: "sell", check: "pending" });
   rules.push({ id: "acquisition", kind: "sell", check: "pending" });
   // 2. keep conditions from the deck's cards and the industry
-  if ((points.stable || 0) > 0 && !isFin(s)) {
+  if ((points.stable || 0) > 0 && s.cls === "kr" && !isFin(s)) {
     const debt = num(s.debt);
-    rules.push(debt != null && dated ? { id: "debtCeiling", kind: "keep", check: "checked", input: "debt", debt, limit: debtLimitFor(debt), fy: s.cls === "kr" ? fy : null }
+    rules.push(debt != null && dated ? { id: "debtCeiling", kind: "keep", check: "checked", input: "debt", debt, limit: debtLimitFor(debt), fy }
       : { id: "debtCeiling", kind: "keep", check: "pending" });
   }
   if ((points.profit || 0) > 0) {
     const roe = num(s.roe);
     if (roe != null && roe > 0 && dated) rules.push({ id: "roeFloor", kind: "keep", check: "checked", input: "roe", roe, floor: roeFloorFor(roe), fy: s.cls === "kr" ? fy : null });
   }
-  if (s.cls === "kr" && dated && co && Array.isArray(co.op) && co.op.filter((x) => num(x) != null).length >= 2) {
+  if (s.cls === "kr" && dated && co && Array.isArray(co.op) && co.op.filter((x) => num(x) != null).length >= 2 && !opFell2(co)) {
     rules.push({ id: "opDecline", kind: "keep", check: "checked", input: "op", op: co.op.map(num), fy });
   }
   if (s.ind === "bank") rules.push({ id: "cet1", kind: "keep", check: "pending" });
