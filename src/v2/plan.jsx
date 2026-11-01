@@ -144,12 +144,15 @@ export function rulesFor(load, row, st, ds) {
   return ruleBook(s, load.coByT.get(s.t) || null, st.points, row.targetW);
 }
 
-function RuleList({ rules }) {
+function RuleList({ rules, name }) {
   const R = C.plan.rules;
   const line = (x) => {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
     switch (x.id) {
       case "divCut": return x.check === "pending" ? <RuleLine key={x.id} name={R.divCut} pending />
+        // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
+        : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
+            note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />
         : <RuleLine key={x.id} name={R.dividend} now={fill(R.dpsChange, { a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })} limit={R.divLimit} source={src} />;
       case "audit": return <RuleLine key={x.id} name={R.audit} pending />;
       case "acquisition": return <RuleLine key={x.id} name={R.acquisition} pending />;
@@ -207,7 +210,7 @@ function Rules({ load, rows, st, ds }) {
                 <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
                   {why ? why : b.map(([id, v], i) => <span key={id}>{i ? " · " : ""}<span>{C.build.cards[id].name}</span>{" "}<span>{fill(C.build.s1.score, { score: Math.round(v) })}</span></span>)}
                 </div>
-                <RuleList rules={rulesFor(load, x, st, ds)} />
+                <RuleList rules={rulesFor(load, x, st, ds)} name={x.s.nk} />
               </div>
             </Collapsible>
           );

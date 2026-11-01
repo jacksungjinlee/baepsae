@@ -83,7 +83,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{s.nk}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2), alignItems: "center", marginTop: SPACE(1) }}>
-            {pinned ? <><StatusChip tone="neutral">{C.build.s4.fixed}</StatusChip><StatusChip tone="watch">{C.pick.unverified}</StatusChip></>
+            {pinned ? <><StatusChip tone="neutral">{C.build.s4.fixed}</StatusChip>{C.pick.unverified && <StatusChip tone="watch">{C.pick.unverified}</StatusChip>}</>
               : <StatusChip tone="neutral">{fill(C.build.s1.score, { score: Math.round(c.total) })}</StatusChip>}
             {indLine && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{indLine}</span>}
           </div>

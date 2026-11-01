@@ -400,7 +400,9 @@ def scene_normal(R, files, width):
         assert page.locator("section[data-market='us']").count() == 0
         pinned = page.locator("[data-pinned='005935']")
         pinned.wait_for(state="visible")
-        assert C["pick"]["unverified"] in pinned.inner_text() and C["build"]["s4"]["fixed"] in pinned.inner_text()
+        assert C["build"]["s4"]["fixed"] in pinned.inner_text()
+        if C["pick"]["unverified"]:                       # Jack 승인 전에는 null (pending)
+            assert C["pick"]["unverified"] in pinned.inner_text()
         assert page.locator("[data-cand][data-picked='1']").count() == 5
         # 빼고 넣기: 하나 빼면 버튼이 꺼지고, 다시 넣으면 켜져요
         first = page.locator("[data-cand][data-picked='1']").first

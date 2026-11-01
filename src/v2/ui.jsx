@@ -142,7 +142,7 @@ export function ActionBar({ summary, action, onAction, disabled }) {
 
 // One rule line in 내 투자 규칙. Nothing is evaluated daily yet (Part C), so no rule gets a green check: a rule we can
 // check shows the rule icon with its number and report; a rule we cannot check yet shows a dot and 준비 중.
-export function RuleLine({ name, now, limit, source, pending }) {
+export function RuleLine({ name, now, limit, source, pending, note }) {
   const ic = pending ? { name: "dot", fg: COLOR.neutral, bg: COLOR.neutralBg } : { name: "rule", fg: COLOR.neutral, bg: COLOR.neutralBg };
   return (
     <div data-ui-v2="rule-line" data-check={pending ? "pending" : "checked"} data-icon={ic.name} style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
@@ -153,6 +153,7 @@ export function RuleLine({ name, now, limit, source, pending }) {
         <div style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{name}</div>
         {pending ? <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.app.notChecked}</div>
           : <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{[now, limit].filter(Boolean).map((x, i) => <span key={i}>{i ? " · " : ""}{x}</span>)}</div>}
+        {note && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.watch)}>{note}</div>}
         {source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
       </div>
       {pending && <PendingChip />}

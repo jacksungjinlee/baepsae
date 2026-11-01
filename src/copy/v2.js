@@ -208,7 +208,7 @@ export const C = {
     limitN: "{n}개까지만 담을 수 있어요. 하나를 빼고 다시 골라 주세요.",  // 511
     limitInd: "같은 업종은 2개까지만 담을 수 있어요.",                   // 512
     finCo: "금융회사",                                              // 510
-    unverified: "검증 안 함",                                        // spec (REDESIGN §3, 꼭 담을 종목)
+    unverified: null,                                            // pending: 검증 안 함 (REDESIGN §3 — Jack 의 문구 승인 전)
     caution: {
       pbrHigh: "{metric} {x}배로 비싼 편이에요",                       // 497
       debtHigh: "부채비율 {pct}%로 높은 편이에요",                      // 498
