@@ -198,11 +198,11 @@ manual fix. Tasks marked **BLOCKED** are not started, even when they are the low
 | Phase | Task file | Starts when | Gate to move on |
 |---|---|---|---|
 | 0 Safety | v17.5, v17.6 | now | 5 consecutive clean runs after v17.6 merges |
-| 1 Data foundation | `v18.0-data-foundation.md` | phase-0 gate + Jack's "start" | New data passes the gate; thresholds approved |
-| 2 Design system + copy file | `v18.1-design-system-and-copy.md` | phase-0 gate + Jack's "start" (may run beside phase 1) | Jack approves the look and the reviewed text |
+| 1 Data foundation | `v18.0-data-foundation.md` | work starts when v17.6 merges + Jack's "start"; merges only after the phase-0 gate (Jack, 2026-11-01) | New data passes the gate; thresholds approved |
+| 2 Design system + copy file | `v18.1-design-system-and-copy.md` | Parts 1–2 done; Part 3 after v17.6 | Look and text approved by Jack (2026-11-01). 2.0 (phase 3) uses them directly. |
 | 1b Report-text data + theme tags | `v18.2-report-text-and-themes.md` | after v18.0 + Jack's "start" | Extraction accuracy check passes |
-| 3 Deck builder | v18.3 (to be written) | phases 1, 1b, 2 done | 3–5 of Jack's people finish a portfolio alone |
-| 4 오늘 screen, news headlines, evening run | v18.4 (to be written) | phase 3 done | 2 weeks of use, 0 wrong facts |
+| 3 2.0 beta on today's data (all six screens, own address) | `v18.3-2.0-beta.md` | now (Jack, 2026-11-01), in its own session beside v17.5.1/v17.6 | Jack says switch over (Part F) |
+| 4 Fill in 2.0: news headlines, evening run, features from v18.0/v18.2 | v18.4 (to be written) | as each data piece lands | 2 weeks of use, 0 wrong facts |
 | 5 AI news summaries | only after the Haiku/Sonnet blind test | Jack's decision | — |
 
 The evening Korean run (approved by Jack, 2026-10-31) needs a change to the frozen v17.5 gate, which today requires the
