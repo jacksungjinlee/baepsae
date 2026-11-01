@@ -6,7 +6,7 @@ import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
 import { ruleBook, hasGroup } from "./engine.js";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, tx } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
@@ -80,7 +80,10 @@ function Clash({ parts }) {
 // Risk lines: the 2022 line when any holding has a figure (holdings without one move like the rest, with the approved
 // v17.5 note naming their share); else the yearly-swing line; else the approved "can't calculate" line. Never silent.
 function Summary({ r }) {
-  const { plan, div, y2022, vol } = r;
+  const { plan, div, y2022 } = r;
+  // more than half of the money without data: no 2022 number and no yearly swing (the current app's rule)
+  const half = !!(y2022.half || (r.vol && r.vol.half));
+  const vol = r.vol && !r.vol.half ? r.vol : null;
   const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
   const big = (v) => <div style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{v}</div>;
   return (
@@ -99,13 +102,16 @@ function Summary({ r }) {
           {partial(y2022.missing)}
         </div>
       )}
-      {!y2022.ok && vol != null && (
+      {!y2022.ok && !half && vol != null && (
         <div data-ui-v2="vol-line" style={{ marginTop: SPACE(3) }}>
           <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{fill(C.plan.volLine, { amt: nf(Math.round((vol.vol * plan.spent) / 10000)) })}</div>
           {partial(vol.missing)}
         </div>
       )}
-      {!y2022.ok && vol == null && plan.spent > 0 && (
+      {half && (
+        <div data-ui-v2="risk-half" style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.semi, COLOR.text2) }}>{C.plan.riskHalf}</div>
+      )}
+      {!y2022.ok && !half && vol == null && plan.spent > 0 && (
         <div data-ui-v2="risk-none" style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.semi, COLOR.text2) }}>{C.plan.riskNone}</div>
       )}
     </Card>
@@ -231,6 +237,11 @@ function DeckWarnings({ rows, st }) {
 }
 
 // ---------------- 샀어요 ----------------
+// Preview page: the sheet covers the app bar, so the "예시 데이터" label sits right under the sheet's title too.
+function SheetSample() {
+  return <div style={{ marginBottom: SPACE(2) }}><SampleLabel /></div>;
+}
+
 function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday }) {
   const rows = plan.rows.filter((x) => x.shares > 0);
   const [date, setDate] = useState("");
@@ -262,16 +273,18 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
       purchases,
     };
     const next = { ...store.data, decks: [...store.data.decks, deck] };
-    if (!store.writable || !writeStore(next, store.key)) { setFail(true); return; }
+    if (!store.writable || !writeStore(next, store.key, today)) { setFail(true); return; }
     setFail(false);
     setStoreData(next, true);
     onDone();
   };
   const P = C.plan;
+  const { preview } = useMode();
   if (!open) return null;
   if (stage === "done") {
     return (
       <BottomSheet open title={P.done} onClose={onClose} closeLabel={C.app.close}>
+        {preview && <SheetSample />}
         <div data-ui-v2="record-done" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
           <img src="baepi-5.png" alt={P.doneAlt} width={64} height={64} style={{ objectFit: "contain" }} />
           {P.doneBody && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: rows.length })}</p>}
@@ -282,6 +295,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   }
   return (
     <BottomSheet open title={P.sheetTitle} onClose={onClose} closeLabel={C.app.close}>
+      {preview && <SheetSample />}
       <div data-ui-v2="record-form" aria-label={P.boughtAria}>
         <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.sheetBody, { md: mdText(load.data.pxDate) })}</p>
         <TextInput label={P.date} type="date" value={date} onChange={setDate} max={today} invalid={tried && badDate} />

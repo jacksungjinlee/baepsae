@@ -119,7 +119,48 @@ def test_generator_reproduces_the_committed_file(tmp_path):
     if not extra:
         return    # 실제 발행본이 없으면 이름 피하기 결과가 달라질 수 있어 건너뛰어요 (위 검사가 이름·코드를 따로 확인해요)
     out = str(tmp_path / "fictional.json")
-    r = subprocess.run(["python3", src, "--real", extra, "--out", out], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run(["python3", src, "--real", extra, "--out", out, "--offline"], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     after = open(out, encoding="utf-8").read()
     assert after == before
+
+
+KNOWN_REAL = ["SAFE", "JANP", "FSNIX"]          # 첫 미리 보기에 있었던 실제 티커 (리뷰 2차): Safehold, PGIM ETF, Fidelity 펀드
+MOCKUP = {"늘봄금융", "솔담정밀", "마루식품", "Pinecrest Health"}
+
+
+def test_every_us_ticker_was_checked_unused_on_yahoo():
+    """만들 때 야후 차트 API 에 물어 404(없는 티커)였던 것만 써요. 그 결과를 커밋한 목록과 맞춰 봐요."""
+    with open(os.path.join(ROOT, "src", "preview", "ticker-check.json"), encoding="utf-8") as f:
+        chk = json.load(f)
+    assert "query1.finance.yahoo.com/v8/finance/chart" in chk["source"] and "404" in chk["rule"]
+    us_t = sorted(s["t"] for s in fic()["data"]["stocks"] if s["cls"] == "us")
+    assert us_t and sorted(chk["status"]) == us_t, "목록과 예시 데이터의 미국 티커가 달라요: 생성기를 다시 돌리세요"
+    assert all(v == 404 for v in chk["status"].values())
+    _, codes = real_sets()
+    assert not [t for t in us_t if t in codes] and not [t for t in KNOWN_REAL if t in us_t]
+
+
+def test_names_use_invented_words_not_real_brand_prefixes():
+    names, _ = real_sets()
+    first = {n.split()[0] for n in names if n.split()}
+    bad = []
+    for s in fic()["data"]["stocks"]:
+        nk = s["nk"]
+        if nk in MOCKUP or s["etf"] and s["cls"] != "us":
+            continue
+        if s["cls"] == "us":
+            w = nk.split()[0].lower()
+            if w in first or any(n.startswith(w) for n in names):
+                bad.append(nk)
+        else:
+            pre = nk[:2].lower()
+            if any(n.startswith(pre) for n in names):
+                bad.append(nk)
+    for s in fic()["data"]["stocks"]:                 # 펀드 이름의 첫 낱말(브랜드)도
+        if s["etf"] and s["cls"] != "us" and any(n.startswith(s["nk"].split()[0].lower()) for n in names):
+            bad.append(s["nk"])
+    assert not bad, f"실제 회사 이름이 이렇게 시작해요: {bad[:10]}"
+    joined = " ".join(s["nk"] for s in fic()["data"]["stocks"])
+    for word in ("가온", "Juniper", "Ironwood", "Larkfield", "누리"):
+        assert word not in joined, word

@@ -112,8 +112,9 @@ def test_app_html_is_not_committed_yet():
 
 def test_built_pages_have_title_noindex_and_the_right_service_worker():
     app, prev = built("app.html"), built("app-preview.html")
+    assert "<title>뱁새 2.0 미리 보기</title>" in app
+    assert "<title>뱁새 2.0 미리 보기 · 예시 데이터</title>" in prev          # 미리 보기 탭 제목에도 예시 데이터
     for h in (app, prev):
-        assert "<title>뱁새 2.0 미리 보기</title>" in h
         assert '<meta name="robots" content="noindex' in h
         assert 'href="fonts/pretendard/pretendard-variable.css"' in h
     assert 'navigator.serviceWorker.register("./sw.js")' in app

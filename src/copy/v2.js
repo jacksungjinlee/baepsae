@@ -14,6 +14,7 @@ export const C = {
   app: {
     title: "뱁새 2.0 미리 보기",                                   // new
     sample: "예시 데이터",                                          // 3 · preview
+    previewTitle: "{title} · {sample}",                           // 미리 보기 페이지의 <title>: 위 두 문구를 이어 붙여요
     brand: "뱁새",                                                 // 2
     footer: "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", // footer · 27
     credit: "이성진, INSEAD MBA 26J",                              // footer · 27
@@ -45,6 +46,8 @@ export const C = {
     import: "기록 불러오기",                                        // new
     safari: "사파리는 7일 넘게 열지 않으면 기록을 지울 수 있어요. 가끔 기록을 내보내 두세요.", // new
     importFail: null,                                              // pending: 기록 파일을 못 읽었을 때
+    otherKind: null,                                               // pending: 미리 보기 기록과 실제 기록을 섞어 불러올 때
+    locked: null,                                                  // pending: 저장된 기록을 읽지 못해 따로 보관했을 때
   },
 
   today: {
@@ -239,6 +242,7 @@ export const C = {
     divUnknown: "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.",     // v17.5 (T_DY_UNKNOWN)
     riskPartial: "일부 종목(비중 {pct}%)은 베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요.", // v17.5 (T_NORISK)
     riskNone: "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요.", // v17.5 (T_RISK_BLIND)
+    riskHalf: "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요.", // v17.5 (T_RISK_HALF)
     y2022: "2022년처럼 떨어지면",                                    // 526
     y2022Note: "2022년 시장 하락 폭을 바탕으로 어림한 값이에요",         // new
     volLine: "지금 예산 기준: 보통 해 ±{amt}만원 출렁",                // v17.5 (detail.jsx)

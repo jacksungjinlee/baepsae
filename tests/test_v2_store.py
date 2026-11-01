@@ -112,3 +112,23 @@ def test_blocked_storage_is_reported_and_keys_are_separate():
               "out = { writable: r.writable, live: S.readStore(S.STORE_KEY).data.decks.length, prev: S.readStore(S.PREVIEW_STORE_KEY).data.decks.length,"
               " keys: [S.STORE_KEY, S.PREVIEW_STORE_KEY] };")
     assert got == {"writable": False, "live": 0, "prev": 1, "keys": ["baepsae2.v1", "baepsae2.preview.v1"]}
+
+
+def test_preview_and_live_exports_never_cross():
+    """미리 보기에서 내보낸 기록(예시 데이터)은 실제 앱에 들어가지 않고, 실제 기록은 미리 보기에 들어가지 않아요."""
+    got = run(f"const d = {json.dumps(GOOD, ensure_ascii=False)};"
+              "const prev = S.exportText(d, true), live = S.exportText(d, false);"
+              "out = { tag: JSON.parse(prev).preview, liveTag: JSON.parse(live).preview === undefined,"
+              " liveTakesPreview: S.parseImport(prev, '2026-11-01', false), previewTakesLive: S.parseImport(live, '2026-11-01', true),"
+              " liveTakesLive: !!S.parseImport(live, '2026-11-01', false), previewTakesPreview: !!S.parseImport(prev, '2026-11-01', true) };")
+    assert got == {"tag": True, "liveTag": True, "liveTakesPreview": None, "previewTakesLive": None,
+                   "liveTakesLive": True, "previewTakesPreview": True}
+
+
+def test_write_checks_the_old_blob_with_todays_date_and_backs_it_up():
+    future = json.loads(json.dumps(GOOD))
+    future["decks"][0]["purchases"][0]["date"] = "2026-12-24"            # 오늘(11월 1일) 기준으로는 읽을 수 없는 기록
+    got = run(f"mem.set('baepsae2.v1', {json.dumps(json.dumps(future))});"
+              f"const ok = S.writeStore({json.dumps(GOOD, ensure_ascii=False)}, 'baepsae2.v1', '2026-11-01');"
+              "out = { ok, backups: [...mem.keys()].filter((k) => k.startsWith('baepsae2.v1.unreadable.')).length };")
+    assert got == {"ok": True, "backups": 1}

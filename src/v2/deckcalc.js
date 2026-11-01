@@ -1,7 +1,7 @@
 // Glue between the engine and the screens: screening, picks and the plan for the current settings,
 // plus the code -> copy mapping for reasons, clashes and cautions.
 import {
-  screen, splitCounts, survivorCheck, candidates, preselect, weightPlan, size, planShares, annualDividend, estimate2022,
+  screen, splitCounts, survivorCheck, candidates, preselect, size, planShares, annualDividend, estimate2022,
   deckVol, num, liquidity, isStockLike,
 } from "./engine.js";
 import { C, fill, nf, p1, wonText } from "./format.js";
@@ -13,9 +13,8 @@ export function deckState(load, settings) {
   const counts = splitCounts(settings);
   const check = survivorCheck(res, counts);
   const pinned = (settings.pinned || []).map((t) => load.byT.get(t)).filter(Boolean);
-  const plan = weightPlan(settings, counts);
-  const cands = candidates(res, counts, pinned, plan);
-  const pre = preselect(cands, counts, pinned, plan);
+  const cands = candidates(res, counts, pinned, settings);
+  const pre = preselect(cands, counts, pinned, settings);
   const shortN = Object.values(cands).reduce((a, x) => a + x.length, 0);
   // Settings that cannot all hold (e.g. 5 stocks x max 10%): found on the pre-selected list before 후보 고르기
   // (amount-free; the liquidity cap is checked again in 매수 계획 once the amount is known).
@@ -26,7 +25,7 @@ export function deckState(load, settings) {
     const sz = size({ picks: items, pinned, cushion: cushionStocks(load), settings, amountWon: 0 });
     if (!sz.ok) clash = sz.clash;
   }
-  return { res, counts, check, cands, shortN, pinned, plan, pre, clash, blocked: check.block || pre.short || !!clash };
+  return { res, counts, check, cands, shortN, pinned, pre, clash, settings, blocked: check.block || pre.short || !!clash };
 }
 
 export const defaultPicks = (ds) => [...ds.pre];

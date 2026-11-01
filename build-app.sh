@@ -12,15 +12,15 @@ COMMON=(--bundle --minify --loader:.jsx=jsx --loader:.js=jsx --jsx=automatic --c
 npx esbuild src/v2/main.jsx "${COMMON[@]}" --outfile=dist/app.js
 npx esbuild src/v2/main-preview.jsx "${COMMON[@]}" --outfile=dist/app-preview.js
 npx esbuild src/copy/v2.js --bundle --format=cjs --platform=node --charset=utf8 --log-level=warning --outfile=dist/copy-v2.cjs
-TITLE=$(node -e 'process.stdout.write(JSON.stringify(require("./dist/copy-v2.cjs").C.app.title))')
+TITLE=$(node -e 'const a = require("./dist/copy-v2.cjs").C.app; process.stdout.write(JSON.stringify([a.title, a.previewTitle.replace("{title}", a.title).replace("{sample}", a.sample)]))')
 TITLE="$TITLE" OUT="$OUT" python3 - << 'PY'
 import json, os
 tpl = open("src/v2/template.html", encoding="utf-8").read()
-title = json.loads(os.environ["TITLE"])
+title, preview_title = json.loads(os.environ["TITLE"])   # the preview's tab says 예시 데이터 too
 out = os.environ["OUT"]
 for m in ("/*BUNDLE*/", "/*TITLE*/", "/*SW*/"):
     assert tpl.count(m) == 1, f"template needs exactly one {m}"
-assert "<" not in title and title.strip(), title
+assert "<" not in title + preview_title and title.strip() and "{" not in preview_title, (title, preview_title)
 # Service worker (sw.js, v17.5): network first, cache only offline. Only the live page registers it.
 SW = """<script>
 (function(){try{
@@ -30,10 +30,10 @@ SW = """<script>
   window.addEventListener("load",function(){navigator.serviceWorker.register("./sw.js").catch(function(){});});
 }catch(e){}})();
 </script>"""
-for name, bundle, sw in (("app.html", "dist/app.js", SW), ("app-preview.html", "dist/app-preview.js", "")):
+for name, bundle, sw, ttl in (("app.html", "dist/app.js", SW, title), ("app-preview.html", "dist/app-preview.js", "", preview_title)):
     js = open(bundle, encoding="utf-8").read()
     assert "</script" not in js, "bundle must not contain a closing script tag"
-    html = tpl.replace("/*TITLE*/", title).replace("/*SW*/", sw).replace("/*BUNDLE*/", js)
+    html = tpl.replace("/*TITLE*/", ttl).replace("/*SW*/", sw).replace("/*BUNDLE*/", js)
     open(os.path.join(out, name), "w", encoding="utf-8").write(html)
     print(f"{name} written:", len(js), "bytes of JS inlined")
 PY

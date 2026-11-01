@@ -42,14 +42,17 @@ US_GROUPS = {
     "energy": ("정유·에너지", ["Energy", "Resources"]),
 }
 FIN = {"bank", "insurance", "securities", "finance", "fin"}
-KR_PREFIX = ["늘봄", "솔담", "마루", "다온", "가람", "미르", "해솔", "온새", "바름", "단비", "새결", "고운", "별하", "도담",
-             "시나", "여울", "이든", "한울", "다솜", "산들", "예솔", "윤슬", "은솔", "찬솔", "해든", "푸름", "가온", "슬기",
-             "보람", "새봄", "하람", "도란", "비솔", "소담", "아토", "늘솔", "단솔", "결고", "물빛", "들꽃", "볕뉘", "구름결"]
-US_PREFIX = ["Pinecrest", "Larkfield", "Northwind", "Silverbay", "Amberline", "Cedarbrook", "Foxhollow", "Glenmoor",
-             "Harborview", "Ironwood", "Juniper", "Kestrel", "Lakemont", "Meadowlark", "Oakhaven", "Quarrystone",
-             "Redfern", "Stonebridge", "Thistledown", "Willowmere", "Brightwater", "Copperleaf", "Driftwood", "Eastvale",
-             "Fernhill", "Goldmoor", "Hollowell", "Marbleton", "Nettlefield", "Orchardine", "Pebblecrest", "Rosewick"]
-MOCKUP = {"bank": "늘봄금융", "semi_eq": "솔담정밀", "food": "마루식품"}
+# Invented words only (not dictionary words or brands): odd syllable pairs in Korean, made-up words in English.
+# Besides exact names, a prefix that begins any real company name is refused (e.g. 가온, Juniper, Ironwood).
+KR_PREFIX = ["솔뉘", "담볕", "늘결", "봄뉘", "결솔", "빛담", "별뉘", "뉘솔", "볕솔", "슬담", "담슬", "울솔", "결뉘", "볕늘",
+             "뉘담", "솔슬", "늘뉘", "담결", "결볕", "슬뉘", "뉘결", "볕담", "슬볕", "뉘늘", "결슬", "울뉘", "볕결", "담뉘"]
+US_PREFIX = ["Zelvaro", "Quindral", "Morvex", "Talvenor", "Brumwick", "Corsalind", "Velmorrow", "Draxholm", "Ostrevane",
+             "Kelvanto", "Plinthwood", "Glaskett", "Frellmont", "Hustrand", "Wexmoor", "Quellbrook", "Varnholt", "Trivessa",
+             "Olvanne", "Silvanor", "Thorvane", "Zantherm", "Bravolin", "Dunmirren", "Kestrova", "Lumbrecht", "Nurvale",
+             "Prassley", "Rendovar", "Sornwell", "Ulvestra", "Yrvanne"]
+MOCKUP = {"bank": "늘봄금융", "semi_eq": "솔담정밀", "food": "마루식품"}      # Jack's mockup names, kept as they are
+TICKER_FILE = os.path.join(ROOT, "src", "preview", "ticker-check.json")
+YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/{t}?range=1d&interval=1d"
 
 
 def real_reference(extra):
@@ -94,11 +97,37 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--real", default=None, help="folder with a real published run (data.json, corp.json) to avoid")
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--offline", action="store_true", help="use the committed ticker-check.json instead of asking Yahoo")
     args = ap.parse_args()
     rnd = random.Random(SEED)
     real_names, real_codes = real_reference(args.real)
+    first_words = {n.split()[0] for n in real_names if n.split()}
+    checked = {}
+    if args.offline:
+        with open(TICKER_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+            checked = {**j.get("rejected", {}), **j["status"]}
+
+    def ticker_free(t):
+        """No such ticker: absent from the real lists AND Yahoo's chart API answers 404 (checked at generation time)."""
+        if t in real_codes:
+            return False
+        if t not in checked:
+            if args.offline:
+                raise SystemExit(f"{t} is not in ticker-check.json; run without --offline to ask Yahoo")
+            import subprocess
+            r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-A", "Mozilla/5.0", YAHOO.format(t=t)],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode != 0 or not r.stdout.strip().isdigit():
+                raise SystemExit(f"could not ask Yahoo about {t}: {r.stderr.strip()}")
+            checked[t] = int(r.stdout.strip())
+        return checked[t] == 404
 
     used = set()
+
+    def prefix_ok(pre):
+        p = pre.strip().lower()
+        return not any(n.startswith(p) for n in real_names) and p not in first_words
 
     def pick_name(prefixes, suffix, fixed=None):
         if fixed:
@@ -106,8 +135,9 @@ def main():
             used.add(fixed)
             return fixed
         for _ in range(500):
-            n = rnd.choice(prefixes) + ("" if prefixes is KR_PREFIX else " ") + suffix
-            if n not in used and n.lower() not in real_names:
+            pre = rnd.choice(prefixes)
+            n = pre + ("" if prefixes is KR_PREFIX else " ") + suffix
+            if n not in used and n.lower() not in real_names and prefix_ok(pre):
                 used.add(n)
                 return n
         raise SystemExit("ran out of fictional names")
@@ -184,7 +214,7 @@ def main():
         for _ in range(500):
             n = rnd.choice([4, 5])
             t = letters[0] + "".join(rnd.choice(letters[1:] + list("QXZ")) for _ in range(n - 1))
-            if t not in real_codes and t not in tick_used:
+            if t not in tick_used and ticker_free(t):
                 tick_used.add(t)
                 return t
         raise SystemExit("no ticker")
@@ -212,15 +242,17 @@ def main():
 
     # funds, bonds, gold (fictional; never ranked). The bond and gold funds are the preview's 안전자산.
     funds = [
-        {"t": "98B010", "nk": "누리솔 국고채3년", "cls": "bond", "s": "bond", "price": 61250.0, "vol": 2.1, "beta": 0.01, "dur": 2.6, "grp": "국고채"},
-        {"t": "98B020", "nk": "누리솔 단기채권", "cls": "bond", "s": "bond", "price": 104300.0, "vol": 0.4, "beta": 0.0, "dur": 0.5, "grp": "단기"},
-        {"t": "98G010", "nk": "누리솔 금선물(H)", "cls": "metal", "s": "metal", "price": 21800.0, "vol": 22.0, "beta": 0.2, "fund": True},
-        {"t": "98I010", "nk": "누리솔 코스피 대형주", "cls": "kr", "s": "index", "price": 18450.0, "vol": 30.0, "beta": 1.0, "fund": True},
-        {"t": "LRKBX", "nk": "Larkfield Broad Market ETF", "cls": "us", "ccy": "USD", "fxu": True, "s": "index", "price": 182.4, "vol": 17.0,
+        {"t": "98B010", "nk": "볕결 국고채3년", "cls": "bond", "s": "bond", "price": 61250.0, "vol": 2.1, "beta": 0.01, "dur": 2.6, "grp": "국고채"},
+        {"t": "98B020", "nk": "볕결 단기채권", "cls": "bond", "s": "bond", "price": 104300.0, "vol": 0.4, "beta": 0.0, "dur": 0.5, "grp": "단기"},
+        {"t": "98G010", "nk": "볕결 금선물(H)", "cls": "metal", "s": "metal", "price": 21800.0, "vol": 22.0, "beta": 0.2, "fund": True},
+        {"t": "98I010", "nk": "볕결 코스피 대형주", "cls": "kr", "s": "index", "price": 18450.0, "vol": 30.0, "beta": 1.0, "fund": True},
+        {"t": "ZVBMX", "nk": "Zelvaro Broad Market ETF", "cls": "us", "ccy": "USD", "fxu": True, "s": "index", "price": 182.4, "vol": 17.0,
          "beta": 1.0, "roe": 18.0, "pbr": 4.0, "dy": 1.3, "val": 9000.0, "cap": 400.0},
     ]
     for f in funds:
-        assert f["t"] not in real_codes and f["nk"].lower() not in real_names, f
+        assert f["t"] not in real_codes and f["nk"].lower() not in real_names and prefix_ok(f["nk"].split()[0]), f
+        if f["cls"] == "us":
+            assert ticker_free(f["t"]), f["t"]
         f.update({"ne": f["nk"], "etf": True, "d1": round(rnd.gauss(0, 0.8), 2)})
         stocks.append(f)
 
@@ -269,6 +301,15 @@ def main():
     out = {"note": "Fictional example data for app-preview.html. Not real companies, codes or prices.",
            "cushion": [{"t": "98B010", "share": 0.5, "like": "114260"}, {"t": "98G010", "share": 0.5, "like": "132030"}],
            "data": data, "corp": corp, "macro": macro}
+    us_t = sorted(x["t"] for x in stocks if x["cls"] == "us")
+    assert all(checked.get(t) == 404 for t in us_t), [t for t in us_t if checked.get(t) != 404]
+    if not args.offline:
+        with open(TICKER_FILE, "w", encoding="utf-8") as f:
+            json.dump({"note": "Every US ticker of the fictional data, checked to be unused at generation time.",
+                       "source": YAHOO, "rule": "HTTP 404 = no such ticker on Yahoo Finance", "checkedAt": "2026-11-01",
+                       "status": {t: checked[t] for t in us_t},
+                       "rejected": {t: v for t, v in sorted(checked.items()) if t not in us_t}}, f, ensure_ascii=False, indent=1)
+            f.write("\n")
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
         f.write("\n")

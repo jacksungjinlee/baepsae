@@ -270,17 +270,9 @@ export function survivorCheck(res, counts) {
   return { zero: markets.some((x) => x.state === "zero"), block, few: markets.some((x) => x.state === "few"), markets };
 }
 
-// Equal-weight estimate used while picking: each pinned stock gets (1 - cushion) / N, each core pick its market's
-// share of the rest divided by that market's count. Sizing later tilts within 0.6-1.4x of these.
-export function weightPlan(settings, counts) {
-  const N = settings.count, P = (settings.pinned || []).length;
-  const stockW = 1 - settings.cushion / 100, eDeck = stockW / N, core = stockW - P * eDeck, k = mixKr(settings.mix);
-  return { eDeck, e: { kr: counts.kr ? (core * k) / counts.kr : 0, us: counts.us ? (core * (1 - k)) / counts.us : 0 } };
-}
-
 // 후보 고르기: top 2 x n per market (pinned excluded). If the industry limits (max 2 per group, group <= 1/3 at
 // equal weights) would leave fewer than n pickable names among them, further pickable survivors are added.
-export function candidates(res, counts, pinnedStocks = [], plan = null) {
+export function candidates(res, counts, pinnedStocks = [], settings = null) {
   const out = {};
   const picked = [];
   for (const mk of Object.keys(res.markets)) {
@@ -288,7 +280,7 @@ export function candidates(res, counts, pinnedStocks = [], plan = null) {
     let got = 0;
     for (const c of res.markets[mk].survivors) {
       if (list.length >= 2 * need && got >= need) break;
-      const pickable = got < need && !canAdd(c.s, picked, pinnedStocks, counts, plan);
+      const pickable = got < need && !canAdd(c.s, picked, pinnedStocks, counts, settings);
       if (list.length < 2 * need || pickable) list.push(c);
       if (pickable) { got++; picked.push(c.s); }
     }
@@ -305,13 +297,13 @@ export function indCounts(list) {
 
 // Pre-select n per market in score order, keeping every industry limit (see canAdd). Returns the picked codes and,
 // when a market cannot be filled, which limits stopped it (blocked: [{ code: "industry" | "indCap", ind, indName }]).
-export function preselect(cands, counts, pinnedStocks, plan = null) {
+export function preselect(cands, counts, pinnedStocks, settings = null) {
   const picked = [], stopped = [];
   for (const mk of Object.keys(cands)) {
     let n = 0;
     for (const c of cands[mk]) {
       if (n >= (counts[mk] || 0)) break;
-      const why = canAdd(c.s, picked.map((x) => x.s), pinnedStocks, counts, plan);
+      const why = canAdd(c.s, picked.map((x) => x.s), pinnedStocks, counts, settings);
       if (why === "industry" || why === "indCap") { stopped.push({ code: why, ind: c.s.ind, indName: c.s.indName }); continue; }
       if (why) continue;
       picked.push(c);
@@ -325,20 +317,26 @@ export function preselect(cands, counts, pinnedStocks, plan = null) {
 }
 
 // Can this stock be added? -> null, "market" (that market is full), "industry" (2 already in its group, pinned
-// included) or "indCap" (its group would pass 1/3 of the deck at equal weights, pinned included).
-export function canAdd(stock, pickedStocks, pinnedStocks, counts, plan = null) {
+// included) or "indCap" (sizing could not keep its group at 1/3 or less: checked with size() itself, the open slots
+// of each market filled with neutral ungrouped stand-ins, so the answer matches what 매수 계획 will do).
+export function canAdd(stock, pickedStocks, pinnedStocks, counts, settings = null) {
   const inMk = pickedStocks.filter((s) => s.cls === stock.cls).length;
   if (inMk >= (counts[stock.cls] || 0)) return "market";
   if (!hasGroup(stock)) return null;
   const same = [...pickedStocks, ...pinnedStocks].filter((s) => hasGroup(s) && s.ind === stock.ind);
   if (same.length >= MAX_PER_IND) return "industry";
-  if (plan) {
-    const w = pinnedStocks.filter((s) => hasGroup(s) && s.ind === stock.ind).length * plan.eDeck
-      + pickedStocks.filter((s) => hasGroup(s) && s.ind === stock.ind).reduce((a, s) => a + (plan.e[s.cls] || 0), 0)
-      + (plan.e[stock.cls] || 0);
-    if (w > IND_CAP + 1e-9) return "indCap";
-  }
+  if (settings && !industryFits([...pickedStocks, stock], pinnedStocks, counts, settings)) return "indCap";
   return null;
+}
+
+export function industryFits(stocks, pinnedStocks, counts, settings) {
+  const picks = stocks.map((s) => ({ t: s.t, s, total: 50 }));
+  for (const mk of ["kr", "us"]) {
+    const open = (counts[mk] || 0) - stocks.filter((s) => s.cls === mk).length;
+    for (let i = 0; i < open; i++) picks.push({ t: `__open_${mk}_${i}`, s: { t: `__open_${mk}_${i}`, cls: mk }, total: 50 });
+  }
+  const r = size({ picks, pinned: pinnedStocks, cushion: [], settings: { ...settings, cushion: 0 }, amountWon: 0 });
+  return r.ok || !r.clash.some((p) => p.code === "ind" || p.code === "indCount");
 }
 
 // Can this stock be pinned (꼭 담을 종목)? -> null | "full" | "industry" (a third stock in one group)
@@ -524,7 +522,7 @@ function groupClash(g, free, indFrozen, N, settings) {
   const usedMax = free.some((x, i) => Math.abs(bind[i] - x.capMax) < 1e-9 && x.capMax <= x.capLiq);
   const usedLiq = free.some((x, i) => x.capLiq < x.capMax && Math.abs(bind[i] - x.capLiq) < 1e-9);
   parts.push({ code: "count", n: N });
-  if (usedMax || !free.length) parts.push({ code: "max", pct: settings.maxPct });
+  if (usedMax) parts.push({ code: "max", pct: settings.maxPct });         // not when only the industry cap holds them
   parts.push(...cappedInds(indFrozen, g.members));
   if (usedLiq) parts.push({ code: "liq" });
   if (g.share < 1) parts.push({ code: "mix" });
@@ -627,8 +625,14 @@ export function estimate2022(rows, R = R2022) {
     known += r.cost;
   }
   if (!(known > 0)) return { ok: false, none: true };
-  return { ok: true, won: (won / known) * total, missing: total > 0 ? 1 - known / total : 0 };
+  const missing = total > 0 ? 1 - known / total : 0;
+  if (overHalf(missing)) return { ok: false, half: true, missing };
+  return { ok: true, won: (won / known) * total, missing };
 }
+
+// The current app's rule (v17.5, computeMetrics): when holdings without data are MORE than half of the money, no risk
+// number is shown. Exactly half is still computed (the float tolerance keeps 300 + 100 + 200 at exactly half).
+export const overHalf = (missing) => missing > 0.5 + 1e-9;
 
 // Yearly volatility of the deck (fraction of the money bought), one factor per market with correlations from
 // data.json settings. Used only when the 2022 line cannot be shown. -> { vol, missing } or null (no holding has data).
@@ -662,7 +666,9 @@ export function deckVol(rows, st, amountWon) {
   }
   const v = Math.sqrt(Math.max(0, sys + idio));
   const total = rows.filter((x) => x.shares > 0).reduce((a, x) => a + x.cost, 0);
-  return Number.isFinite(v) ? { vol: v, missing: total > 0 ? 1 - known / total : 0 } : null;
+  const missing = total > 0 ? 1 - known / total : 0;
+  if (overHalf(missing)) return { half: true, missing };
+  return Number.isFinite(v) ? { vol: v, missing } : null;
 }
 
 // ---------------- 주의할 점 (cautions) ----------------
@@ -737,16 +743,18 @@ export function ruleBook(s, co, points, targetW) {
   const fy = fyOf(s, co);
   // Korean annual inputs (DART) must carry their report year; without it the rule is not shown as checked.
   const dated = s.cls !== "kr" || fy != null;
-  // Rules are generated only when they hold at purchase: an input that already breaks a rule shows as a caution in
-  // 후보 고르기 (주의할 점) and the rule is not added silently.
+  // Every rule is kept (checked or 준비 중). A checked rule stores its purchase-time baseline (value + report year
+  // `since`): the daily check (Part C) compares only reports NEWER than `since` against it, so a fall that happened
+  // before purchase never counts as broken, and the next cut is still caught. Such a fall shows at purchase as a
+  // caution in 후보 고르기 instead (주의할 점: 배당 감소 = 확인 필요, 영업이익 2년 연속 감소).
   // 1. common sell conditions
   const dps = num(s.dps);
   const d3 = Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
   const prev = d3 ? num(d3[1]) : null;
   if (s.cls === "kr" && dps === 0) { /* pays nothing: no dividend-cut rule */ }
   else if (s.cls === "kr" && dps != null && dps > 0 && dated && prev != null) {
-    if (dps >= prev) rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", dps, prev, dps3: d3, streak: dividendStreak(d3), fy });
-    /* dividend already lower than the year before: 확인 필요 caution, no rule */
+    rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", baseline: dps, since: fy, dps, prev, dps3: d3,
+      streak: dividendStreak(d3), fy, droppedBefore: dps < prev });
   } else rules.push({ id: "divCut", kind: "sell", check: "pending" });
   rules.push({ id: "audit", kind: "sell", check: "pending" });
   rules.push({ id: "embezzle", kind: "sell", check: "pending" });
@@ -754,15 +762,16 @@ export function ruleBook(s, co, points, targetW) {
   // 2. keep conditions from the deck's cards and the industry
   if ((points.stable || 0) > 0 && s.cls === "kr" && !isFin(s)) {
     const debt = num(s.debt);
-    rules.push(debt != null && dated ? { id: "debtCeiling", kind: "keep", check: "checked", input: "debt", debt, limit: debtLimitFor(debt), fy }
+    rules.push(debt != null && dated ? { id: "debtCeiling", kind: "keep", check: "checked", input: "debt", baseline: debt, since: fy, debt, limit: debtLimitFor(debt), fy }
       : { id: "debtCeiling", kind: "keep", check: "pending" });
   }
   if ((points.profit || 0) > 0) {
     const roe = num(s.roe);
-    if (roe != null && roe > 0 && dated) rules.push({ id: "roeFloor", kind: "keep", check: "checked", input: "roe", roe, floor: roeFloorFor(roe), fy: s.cls === "kr" ? fy : null });
+    if (roe != null && roe > 0 && dated) rules.push({ id: "roeFloor", kind: "keep", check: "checked", input: "roe", baseline: roe, since: s.cls === "kr" ? fy : null, roe, floor: roeFloorFor(roe), fy: s.cls === "kr" ? fy : null });
   }
-  if (s.cls === "kr" && dated && co && Array.isArray(co.op) && co.op.filter((x) => num(x) != null).length >= 2 && !opFell2(co)) {
-    rules.push({ id: "opDecline", kind: "keep", check: "checked", input: "op", op: co.op.map(num), fy });
+  if (s.cls === "kr" && dated && co && Array.isArray(co.op) && num(co.op[0]) != null) {
+    rules.push({ id: "opDecline", kind: "keep", check: "checked", input: "op", baseline: num(co.op[0]), since: fy, op: co.op.map(num), fy,
+      fellBefore: opFell2(co) });
   }
   if (s.ind === "bank") rules.push({ id: "cet1", kind: "keep", check: "pending" });
   if (s.ind === "insurance") rules.push({ id: "kics", kind: "keep", check: "pending" });

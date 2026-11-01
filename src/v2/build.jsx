@@ -82,7 +82,10 @@ function Steps({ load, builder, setBuilder, onExit }) {
     setBuilder((b) => ({ ...b, stage: "pick", picks: defaultPicks(ds) }));
     try { window.scrollTo(0, 0); } catch (e) { /* ignore */ }
   };
-  const action = noCards ? C.build.pickCardsBtn : lower ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
+  // A settings clash (e.g. 5 stocks x max 10%) is not fixed by lowering the criteria: the button stays "후보 n개 보기"
+  // (off) and the clash line above names the limits. "기준을 낮춰 주세요" is only for too few survivors.
+  const tooFew = last ? ds.check.block || ds.pre.short : ds.res.survivors === 0;
+  const action = noCards ? C.build.pickCardsBtn : tooFew ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
   const summary = (
     <span data-ui-v2="match-count"><span>{C.build.matchSummary}</span>{" "}
       <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(ds.res.survivors) })}</b></span>

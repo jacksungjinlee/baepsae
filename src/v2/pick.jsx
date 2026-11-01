@@ -23,7 +23,7 @@ export function Pick({ load, builder, setBuilder }) {
   const back = () => { setBuilder((b) => ({ ...b, stage: "steps", step: 3 })); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } };
   const toggle = (c) => {
     if (picks.includes(c.t)) { setMsg(null); setBuilder((b) => ({ ...b, picks: picks.filter((t) => t !== c.t) })); return; }
-    const why = canAdd(c.s, pickedStocks, ds.pinned, ds.counts, ds.plan);
+    const why = canAdd(c.s, pickedStocks, ds.pinned, ds.counts, ds.settings);
     if (why === "market") { setMsg(fill(C.pick.limitN, { n: ds.counts[c.s.cls] })); return; }
     if (why === "industry") { setMsg(C.pick.limitInd); return; }
     if (why === "indCap") { setMsg(fill(C.plan.clashParts.ind, { ind: c.s.indName })); return; }

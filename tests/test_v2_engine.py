@@ -330,9 +330,12 @@ def test_2022_estimate_is_market_times_beta_and_partial_or_none_without_beta():
 def test_dividend_drop_is_a_check_never_a_broken_rule():
     s = kr("005380", dps=10000, dps3=[10000, 12000, 11400], fy=2025)
     got = run("const ctx = E.cautionContext([]); out = { c: E.cautions(s, null, ctx), rules: E.ruleBook(s, null, {}, 0.1) };", s=s)
-    assert {"code": "divDrop", "a": 12000, "b": 10000} in got["c"]["items"]
-    # 이미 줄어든 배당: 규칙을 조용히 넣지 않고(이미 깨진 규칙), 주의할 점으로 먼저 보여 줘요
-    assert not [r for r in got["rules"] if r["id"] == "divCut"]
+    assert {"code": "divDrop", "a": 12000, "b": 10000} in got["c"]["items"]      # 산 날에는 주의할 점(확인 필요)으로
+    # 배당 삭감 규칙은 그대로 있어요: 기준은 산 때의 배당(주당 10,000원, 2025년 보고서). Part C 는 그보다 새 보고서만 비교해서
+    # 이미 지난 감소로 '깨짐'이 되지 않고, 다음 감소는 잡아요.
+    div = [r for r in got["rules"] if r["id"] == "divCut"]
+    assert len(div) == 1 and div[0]["check"] == "checked" and div[0]["kind"] == "sell"
+    assert div[0]["baseline"] == 10000 and div[0]["since"] == 2025 and div[0]["droppedBefore"] is True
     blob = json.dumps(got, ensure_ascii=False)
     assert "broken" not in blob and "깨짐" not in blob
 
@@ -463,29 +466,42 @@ def test_fewer_survivors_than_needed_blocks():
 
 
 def test_preselect_keeps_each_industry_under_a_third_at_the_korea_us_split():
-    # 추세 추종 기본(6종목, 한국 7 : 미국 3): 한국 4개가 각 17.5% → 같은 업종 2개면 35% > 1/3
+    # 추세 추종 기본(6종목, 한국 7 : 미국 3): 같은 업종 2개는 비중을 1/3 에 맞춰 담을 수 있지만, 두 업종이 2개씩이면
+    # 한국 70% 를 채울 수 없어요. 판단은 size() 로 해요 (매수 계획과 같은 계산).
     stocks = [kr("000100", roe=99, ind="semi", indName="반도체"), kr("000110", roe=98, ind="semi", indName="반도체"),
               kr("000120", roe=97, ind="machine", indName="기계"), kr("000130", roe=96, ind="machine", indName="기계")] + \
              [kr(f"0002{i}0", roe=50 - i, ind=f"o{i}", indName="기타업종") for i in range(6)] + \
              [us(f"U{c}", roe=80 - i, ind=f"u{i}", indName="미국업종") for i, c in enumerate("ABCDEF")]
     got = run(SET + "const st = S({ mix: 'k73', count: 6, points: { profit: 5 }, strict: 'loose' });"
-              "const r = E.screen(stocks, st); const counts = E.splitCounts(st); const plan = E.weightPlan(st, counts);"
-              "const c = E.candidates(r, counts, [], plan); const p = E.preselect(c, counts, [], plan);"
+              "const r = E.screen(stocks, st); const counts = E.splitCounts(st);"
+              "const c = E.candidates(r, counts, [], st); const p = E.preselect(c, counts, [], st);"
               "const all = Object.values(c).flat(); const items = [...p].map((t) => all.find((x) => x.t === t));"
               "const sz = E.size({ picks: items, cushion: [], settings: st, amountWon: 1e7 });"
               "const byInd = {}; for (const x of items) byInd[x.s.ind] = (byInd[x.s.ind] || 0) + 1;"
-              "out = { n: p.length, short: p.short, byInd, ok: sz.ok,"
-              " add: E.canAdd(stocks[1], items.map((x) => x.s), [], counts, plan) };", stocks=stocks)
+              "const semis = sz.ok ? sz.items.filter((x) => x.s.ind === 'semi').reduce((a, x) => a + x.w, 0) : null;"
+              "out = { n: p.length, short: p.short, byInd, ok: sz.ok, semis };", stocks=stocks)
     assert got["n"] == 6 and not got["short"] and got["ok"], got
-    assert got["byInd"]["semi"] == 1 and got["byInd"]["machine"] == 1, got["byInd"]
-    assert got["add"] in ("indCap", "market"), got
+    assert got["byInd"]["semi"] == 2 and got["byInd"]["machine"] == 1, got["byInd"]      # 반도체 2개는 담고, 기계 2번째는 안 돼요
+    assert got["semis"] <= 1 / 3 + 1e-7
+
+
+def test_second_stock_in_a_group_is_allowed_when_sizing_holds_it():
+    # 리뷰 5번: 6종목 7:3 에서 같은 업종 한국 2개는 size() 가 1/3 안으로 맞춰요 (예전 '같은 비중' 계산은 막았어요)
+    stocks = [kr("000100", ind="semi", indName="반도체"), kr("000110", ind="semi", indName="반도체"),
+              kr("000120", ind="a", indName="가"), kr("000130", ind="b", indName="나"), us("UA", ind="u1", indName="u"), us("UB", ind="u2", indName="u")]
+    got = run(SIZE_JS + "const st = S({ mix: 'k73', count: 6 }); const counts = E.splitCounts(st);"
+              "const add = E.canAdd(stocks[1], [stocks[0], stocks[4]], [], counts, st);"
+              "const r = E.size({ picks: stocks.map((s) => ({ t: s.t, s, total: 50 })), cushion: [], settings: st, amountWon: 1e7 });"
+              "out = { add, ok: r.ok, w: Object.fromEntries(r.items.map((x) => [x.t, x.w])) };", stocks=stocks)
+    assert got["add"] is None and got["ok"], got
+    assert got["w"]["000100"] + got["w"]["000110"] <= 1 / 3 + 1e-7
 
 
 def test_preselect_that_the_industry_limits_cannot_hold_is_blocked():
     stocks = [kr(f"0009{i}0", roe=90 - i, ind="semi", indName="반도체") for i in range(8)]
     got = run(SET + "const st = S({ mix: 'kr', count: 5, points: { profit: 5 }, strict: 'loose' });"
-              "const r = E.screen(stocks, st); const counts = E.splitCounts(st); const plan = E.weightPlan(st, counts);"
-              "const c = E.candidates(r, counts, [], plan); const p = E.preselect(c, counts, [], plan);"
+              "const r = E.screen(stocks, st); const counts = E.splitCounts(st);"
+              "const c = E.candidates(r, counts, [], st); const p = E.preselect(c, counts, [], st);"
               "out = { n: p.length, short: p.short, blocked: p.blocked };", stocks=stocks)
     # 반도체 5종목 각 20%: 1/3 을 넘지 않게는 1개만 → 채울 수 없으니 막고, 이유(업종)를 알려요
     assert got["n"] == 1 and got["short"] and got["blocked"] and got["blocked"][0]["ind"] == "semi", got
@@ -510,7 +526,7 @@ def test_us_debt_is_a_different_ratio_so_no_debt_rules_for_us():
     assert "debtCeiling" not in got["rule"][0] and "debtCeiling" in got["rule"][1]
 
 
-def test_rule_already_broken_at_purchase_becomes_a_caution_not_a_rule():
+def test_fall_before_purchase_is_a_caution_and_the_rule_keeps_its_baseline():
     s = kr("005380", fy=2025, dps=10000, dps3=[10000, 9000, 8000])
     co = {"op": [115.0, 142.0, 151.0], "fy": 2025}                     # 현대차처럼 2년 연속 감소
     ok_co = {"op": [151.0, 142.0, 115.0], "fy": 2025}
@@ -518,5 +534,45 @@ def test_rule_already_broken_at_purchase_becomes_a_caution_not_a_rule():
               "out = { c: E.cautions(s, co, ctx).items, rules: E.ruleBook(s, co, {}, 0.1).map((r) => r.id), okRules: E.ruleBook(s, ok_co, {}, 0.1).map((r) => r.id) };",
               s=s, co=co, ok_co=ok_co)
     fall = [c for c in got["c"] if c["code"] == "opFall"]
-    assert fall and round(fall[0]["pct"], 1) == -19.0
-    assert "opDecline" not in got["rules"] and "opDecline" in got["okRules"]
+    assert fall and round(fall[0]["pct"], 1) == -19.0                 # 산 날에 보여요 (주의할 점)
+    assert "opDecline" in got["rules"] and "opDecline" in got["okRules"]   # 규칙은 남아요 (리뷰 2차 1번)
+
+
+def test_rules_carry_their_purchase_baseline_and_are_not_broken_at_purchase():
+    s = kr("005380", fy=2025, dps=10000, dps3=[10000, 12000, 11400], debt=150, roe=8.0)
+    co = {"op": [115.0, 142.0, 151.0], "fy": 2025}
+    got = run("out = E.ruleBook(s, co, { stable: 3, profit: 2 }, 0.1);", s=s, co=co)
+    by = {r["id"]: r for r in got}
+    for k, base in (("divCut", 10000), ("opDecline", 115.0), ("debtCeiling", 150), ("roeFloor", 8.0)):
+        assert by[k]["check"] == "checked" and by[k]["baseline"] == base and by[k]["since"] == 2025, (k, by[k])
+    assert by["opDecline"]["fellBefore"] is True and by["divCut"]["droppedBefore"] is True
+    assert by["debtCeiling"]["limit"] > by["debtCeiling"]["debt"] and by["roeFloor"]["floor"] < by["roeFloor"]["roe"]
+    assert all(r["check"] in ("checked", "pending") for r in got) and "broken" not in json.dumps(got)
+
+
+def test_clash_without_max_when_only_the_industry_cap_holds_them():
+    stocks = [kr("000500", ind="a", indName="가업종"), kr("000510", ind="a", indName="가업종"),
+              kr("000520", ind="b", indName="나업종"), kr("000530", ind="b", indName="나업종")]
+    got = run(SIZE_JS + "out = sz(stocks, { maxPct: 25, count: 4 });", stocks=stocks)
+    codes = [p["code"] for p in got["clash"]]
+    assert got["ok"] is False and "max" not in codes and codes.count("ind") == 2, got
+
+
+def test_half_rule_like_the_current_app():
+    """자료 없는 종목이 투자금의 절반을 '넘으면' 위험 수치를 내지 않아요. 딱 절반은 계산해요 (지금 앱의 경계 시험과 같게)."""
+    def rows(missing_pct):
+        return [{"s": kr("000600", beta=1.0, vol=30.0), "shares": 1, "cost": float(100 - missing_pct)},
+                {"s": kr("000610", beta=None, vol=None), "shares": 1, "cost": float(missing_pct)}]
+    exact = [{"s": kr("000620", beta=1.0, vol=30.0), "shares": 1, "cost": 300.0}, {"s": kr("000630", beta=None), "shares": 1, "cost": 100.0},
+             {"s": kr("000640", beta=None), "shares": 1, "cost": 200.0}]
+    st = {"mktVol": 30, "usVol": 18}
+    got = run("const R = { kr: -0.25, usWon: -0.15, etf: {} };"
+              "out = [49, 50, 51].map((m) => { const r = rows[m]; return { y: E.estimate2022(r, R), v: E.deckVol(r, st, 100) }; });"
+              "out.push({ y: E.estimate2022(exact, R), v: E.deckVol(exact, st, 600) });",
+              rows={49: rows(49), 50: rows(50), 51: rows(51)}, exact=exact, st=st)
+    y49, y50, y51, yx = (g["y"] for g in got)
+    assert y49["ok"] and abs(y49["missing"] - 0.49) < 1e-9
+    assert y50["ok"] and abs(y50["missing"] - 0.5) < 1e-9
+    assert y51 == {"ok": False, "half": True, "missing": y51["missing"]} and y51["missing"] > 0.5
+    assert yx["ok"], "300 + 100 + 200 은 딱 절반이에요 (소수점 오차로 넘지 않아요)"
+    assert got[2]["v"]["half"] and "vol" not in got[2]["v"] and got[1]["v"]["vol"] > 0

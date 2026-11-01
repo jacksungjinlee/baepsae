@@ -429,7 +429,9 @@ def scene_normal(R, files, width):
         page.locator('[data-ui-v2="clash"]').wait_for(state="visible")
         txt = page.locator('[data-ui-v2="clash"]').inner_text()
         assert "종목 수" in txt and "한 종목 최대 10%" in txt, txt
-        assert not action(page).is_enabled() and action(page).inner_text() == C["build"]["lowerBtn"], "막혔는데 후보 고르기로 갈 수 있어요"
+        assert not action(page).is_enabled(), "막혔는데 후보 고르기로 갈 수 있어요"
+        # 설정이 부딪힌 것이라 '기준을 낮춰 주세요'는 틀린 조언이에요: 버튼은 '후보 n개 보기'(꺼짐), 조건은 위 줄에서
+        assert action(page).inner_text() != C["build"]["lowerBtn"] and action(page).inner_text().startswith("후보"), action(page).inner_text()
         R.collect(page)
     R.check(page, S, "지킬 수 없는 설정(5종목 × 최대 10%) → 조건 단계에서 막고 부딪히는 조건을 보여요", infeasible)
     ctx.close()

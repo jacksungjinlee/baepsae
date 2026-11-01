@@ -37,7 +37,8 @@ export class ErrorBoundary extends React.Component {
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
   const [tab, setTab] = useState("today");
-  const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix }));
+  const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
+    preview: !!source.preview }));
   const [builder, setBuilder] = useState(newBuilder);
 
   useEffect(() => {
@@ -53,7 +54,7 @@ export function App({ source }) {
   // saved = true when the caller already wrote it (the purchase sheet checks the write itself)
   const setStoreData = useCallback((data, saved) => {
     setStore((s) => {
-      if (!saved && !(s.writable && writeStore(data, s.key))) return { ...s, writable: false };
+      if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
       return { ...s, data, locked: false };
     });
   }, []);

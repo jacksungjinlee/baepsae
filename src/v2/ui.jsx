@@ -32,7 +32,8 @@ export function Card({ children, style, ...rest }) {
 export function AppBar({ onBack, backLabel, right }) {
   const { preview } = useMode();
   return (
-    <header data-ui-v2="app-bar" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH }}>
+    <header data-ui-v2="app-bar" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH,
+      ...(preview ? { position: "sticky", top: 0, zIndex: 40, background: COLOR.page, margin: `0 -${SPACE(4)}px`, padding: `0 ${SPACE(4)}px` } : {}) }}>
       {onBack ? (
         <button type="button" aria-label={backLabel} onClick={onBack}
           style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginLeft: -SPACE(3) }}>

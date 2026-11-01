@@ -60,12 +60,14 @@ export function readStore(key = STORE_KEY, today) {
   return { data: emptyStore(), writable, locked: true };
 }
 
-export function writeStore(d, key = STORE_KEY) {
+// Before overwriting, the stored blob is checked exactly like readStore does (with today's date); anything it would
+// reject on read is first copied to a backup key, so nothing unreadable is ever lost.
+export function writeStore(d, key = STORE_KEY, today) {
   try {
     const cur = localStorage.getItem(key);
     if (cur != null) {
       let ok = false;
-      try { ok = validStore(JSON.parse(cur)); } catch (e) { ok = false; }
+      try { ok = validStore(JSON.parse(cur), today); } catch (e) { ok = false; }
       if (!ok) localStorage.setItem(`${key}.unreadable.${Date.now()}`, cur);   // keep what we could not read
     }
     localStorage.setItem(key, JSON.stringify(d));
@@ -82,9 +84,12 @@ export function askPersist() {
   } catch (e) { /* not supported */ }
 }
 
-export function parseImport(text, today) {
+// preview: the page importing. A preview export (example data) never goes into the live app, and a live export never
+// goes into the preview: the file's own "preview" flag must match.
+export function parseImport(text, today, preview = false) {
   try {
     const d = JSON.parse(text);
+    if (!!(d && d.preview) !== !!preview) return null;
     return validStore(d, today) ? { v: STORE_VERSION, decks: d.decks } : null;
   } catch (e) {
     return null;
@@ -98,13 +103,13 @@ export function mergeStores(cur, inc) {
   return { v: STORE_VERSION, decks: [...by.values()] };
 }
 
-export function exportText(d) {
-  return JSON.stringify({ v: STORE_VERSION, decks: d.decks }, null, 1);
+export function exportText(d, preview = false) {
+  return JSON.stringify(preview ? { v: STORE_VERSION, preview: true, decks: d.decks } : { v: STORE_VERSION, decks: d.decks }, null, 1);
 }
 
-export function downloadRecords(d, today, prefix = "baepsae-records") {
+export function downloadRecords(d, today, prefix = "baepsae-records", preview = false) {
   try {
-    const blob = new Blob([exportText(d)], { type: "application/json" });
+    const blob = new Blob([exportText(d, preview)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

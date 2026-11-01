@@ -79,10 +79,10 @@ def main():
                     pass
         print(f"  {'PASS' if results[-1][1] else 'FAIL'}  {label}", flush=True)
 
-    def shot(page, width, name):
+    def shot(page, width, name, full=True):
         if args.shots:
             os.makedirs(args.shots, exist_ok=True)
-            page.screenshot(path=os.path.join(args.shots, f"preview-{width}-{name}.png"), full_page=True)
+            page.screenshot(path=os.path.join(args.shots, f"preview-{width}-{name}.png"), full_page=full)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path())
@@ -135,7 +135,7 @@ def main():
 
             def head():
                 assert page.locator('meta[name="robots"][content*="noindex"]').count() == 1
-                assert page.title() == C["app"]["title"]
+                assert page.title() == f'{C["app"]["title"]} · {C["app"]["sample"]}', page.title()   # 탭 제목에도 예시 데이터
                 assert page.evaluate("navigator.serviceWorker ? navigator.serviceWorker.getRegistration().then(r => !r) : true")
                 page.locator('[data-ui-v2="date-line"]').first.wait_for(state="visible")
                 assert "10월 30일" in page.locator('[data-ui-v2="date-line"]').first.inner_text()
@@ -189,9 +189,20 @@ def main():
                     page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]').nth(i).locator("button").first.click()
                 label_here()
                 shot(page, width, "7-plan")
+                shot(page, width, "7-plan-top", full=False)
+                # 맨 아래로 내려도 '예시 데이터' 표시는 화면 안에 있어요 (머리 줄이 붙어 있어요)
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(150)
+                box = page.locator('[data-ui-v2="sample-label"]').first.bounding_box()
+                assert box and 0 <= box["y"] < 120, f"아래로 내리면 예시 데이터 표시가 사라져요: {box}"
                 act().click()
+                sheet = page.locator('[data-ui="bottom-sheet"]')
+                sheet.locator('[data-ui-v2="sample-label"]').wait_for(state="visible")      # 시트에도 표시
+                page.wait_for_timeout(200)
+                shot(page, width, "9-sheet", full=False)       # what the phone shows with the sheet open
                 page.get_by_role("button", name=C["plan"]["save"]).click()
                 page.get_by_text(C["plan"]["done"]).wait_for(state="visible")
+                assert sheet.locator('[data-ui-v2="sample-label"]').is_visible()
                 label_here()
                 page.get_by_role("button", name=C["plan"]["doneLink"]).click()
                 stored = page.evaluate("[localStorage.getItem('baepsae2.preview.v1'), localStorage.getItem('baepsae2.v1')]")
