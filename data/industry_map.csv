@@ -1,4 +1,7 @@
 ksic,group,ksic_name
+01,food,농업
+02,food,임업
+03,food,어업
 10,food,식료품 제조업
 11,food,음료 제조업
 12,food,담배 제조업
@@ -102,7 +105,6 @@ ksic,group,ksic_name
 72,services,건축기술·엔지니어링 및 기타 과학기술 서비스업
 721,construction,건축기술·엔지니어링 및 관련 기술 서비스업
 73,services,기타 전문·과학 및 기술 서비스업
-73909,bio,그외 기타 과학기술 서비스업 (유전체 분석 등)
 74,services,사업시설 관리 및 조경 서비스업
 75,services,사업 지원 서비스업
 752,leisure,여행사 및 기타 여행보조 서비스업

@@ -521,9 +521,11 @@ def load_industry_tables(d=INDUSTRY_DIR):
     kmap = {r["ksic"]: r["group"] for r in _read_csv(os.path.join(d, "industry_map.csv"))}
     usmap = {r["yahoo_industry"]: r["group"] for r in _read_csv(os.path.join(d, "industry_us.csv"))}
     over = {r["code"]: (r["group"], r["reason"]) for r in _read_csv(os.path.join(d, "industry_overrides.csv"))}
-    refine = [(r["group"], r["keyword"], r["to"]) for r in _read_csv(os.path.join(d, "industry_refine.csv"))]
+    refine = [(r["group"], r["field"], r["keyword"], r["to"]) for r in _read_csv(os.path.join(d, "industry_refine.csv"))]
+    if any(f not in ("products", "name") for _, f, _, _ in refine):
+        raise RuntimeError("!! industry_refine.csv 의 field 는 products 또는 name 이어야 해요")
     used = (set(kmap.values()) | set(usmap.values()) | {g for g, _ in over.values()} | {g["parent"] for g in groups.values() if g["parent"]}
-            | {a for a, _, _ in refine} | {b for _, _, b in refine})
+            | {r[0] for r in refine} | {r[3] for r in refine})
     bad = sorted(used - set(groups))
     if bad:
         raise RuntimeError(f"!! 업종 표에 없는 그룹: {bad}")
@@ -542,46 +544,56 @@ def ksic_group(code, kmap):
     return None
 
 
+def is_preferred(code):
+    """한국 우선주: 보통주 코드의 끝자리를 바꾼 것 (005935, 005387, 00680K). (순수 함수)"""
+    return len(code) == 6 and code[-1] != "0"
+
+
 def assign_industries(stocks, tables, ksic, min_members=GROUP_MIN, products=None):
     """종목에 ind·indName 을 붙여요. (순수 함수)
-    순서: 고정표(overrides) → 한국 KSIC 접두어 (+ 주요제품 낱말로 다시 나누기: industry_refine.csv) / 미국 야후 업종(_yind).
-    우선주는 보통주의 그룹을 따라요. ETF·펀드는 그룹이 없어요.
-    같은 시장에서 그룹 인원이 min_members 보다 적으면 상위 그룹으로 합치고, 상위도 없으면 그룹 없음 — '기타'를
-    하나의 그룹으로 쓰지 않아요. 반환: 집계 Counter."""
+    순서: 고정표(overrides) → 한국 KSIC 접두어 (+ 주요제품·이름 낱말로 다시 나누기: industry_refine.csv) / 미국 야후 업종(_yind).
+    ETF·펀드는 그룹이 없어요. 인원은 보통주만 세고(우선주 빼고), 같은 시장에서 min_members 보다 적은 그룹은
+    이름이 그 그룹을 덮는 상위 그룹으로 합쳐요(아래 그룹부터). 상위도 없으면 그룹 없음 — '기타'를 그룹으로 쓰지 않아요.
+    우선주는 마지막에 보통주의 그룹을 그대로 따라요. 반환: 집계 Counter (못 맞춘 KSIC·야후 업종은 '없음:…' 으로)."""
     groups, cnt = tables["groups"], collections.Counter()
-    pick = {}
+    pick, prefs = {}, []
     for s in stocks:
         if s.get("cls") not in ("kr", "us") or s.get("etf") or s.get("fund"):
             continue
-        common = s["t"][:5] + "0" if s["cls"] == "kr" and s["t"][-1] != "0" else None   # 우선주 → 보통주 (005935 → 005930)
+        if s["cls"] == "kr" and is_preferred(s["t"]) and s["t"] not in tables["over"]:
+            prefs.append(s)
+            continue
         if s["t"] in tables["over"]:
             g, src = tables["over"][s["t"]][0], "고정표"
-        elif s["cls"] == "kr" and ksic.get(s["t"]):
-            g, src = ksic_group(ksic.get(s["t"]), tables["kmap"]), "KSIC"
-            prod = (products or {}).get(s["t"]) or ""
-            for base, kw, to in tables.get("refine", []):
-                if g == base and kw in prod:
-                    g, src = to, "KSIC+주요제품"
-                    break
-        elif common and (common in tables["over"] or ksic.get(common)):
-            g = tables["over"][common][0] if common in tables["over"] else ksic_group(ksic.get(common), tables["kmap"])
-            src = "우선주 → 보통주"
         elif s["cls"] == "kr":
-            g, src = None, "KSIC"
+            code = ksic.get(s["t"])
+            g, src = ksic_group(code, tables["kmap"]), "KSIC"
+            if code and not g:
+                cnt[f"kr 없음:KSIC {code}"] += 1
+            text = {"products": (products or {}).get(s["t"]) or "", "name": s.get("nk") or ""}
+            for base, field, kw, to in tables.get("refine", []):
+                if g == base and kw in text[field]:
+                    g, src = to, f"KSIC+{'주요제품' if field == 'products' else '이름'}"
+                    break
         else:
-            g, src = tables["usmap"].get((s.get("_yind") or "").strip()), "야후"
+            yi = (s.get("_yind") or "").strip()
+            g, src = tables["usmap"].get(yi), "야후"
+            if yi and not g:
+                cnt[f"us 없음:{yi}"] += 1
         if g:
             pick[s["t"]] = (s["cls"], g)
             cnt[f"{s['cls']} {src}"] += 1
         else:
             cnt[f"{s['cls']} 그룹 없음"] += 1
-    for _ in range(6):                       # 작은 그룹을 상위로 — 먼저 모두 올려 보내고 (최대 6단계)
+    for _ in range(len(groups)):              # 작은 그룹을 상위로 — 아래(작은 자식이 없는) 그룹부터 하나씩
         size = collections.Counter(pick.values())
         small = {k for k, n in size.items() if n < min_members and groups[k[1]]["parent"]}
+        waiting = {(m, groups[g]["parent"]) for (m, g) in small}
+        ready = {k for k in small if k not in waiting}     # 아직 작은 자식이 올라올 그룹은 기다려요
         if not small:
             break
         for t, (m, g) in list(pick.items()):
-            if (m, g) in small:
+            if (m, g) in (ready or small):
                 pick[t] = (m, groups[g]["parent"])
                 cnt[f"{m} {g}→{groups[g]['parent']}"] += 1
     size = collections.Counter(pick.values())  # 그래도 작은 그룹(상위 없음)은 그룹 없음
@@ -589,6 +601,13 @@ def assign_industries(stocks, tables, ksic, min_members=GROUP_MIN, products=None
         if size[(m, g)] < min_members:
             del pick[t]
             cnt[f"{m} {g} 인원 부족 → 그룹 없음"] += 1
+    for s in prefs:                            # 우선주 → 보통주 (005935 → 005930)
+        v = pick.get(s["t"][:5] + "0")
+        if v:
+            pick[s["t"]] = v
+            cnt["kr 우선주 → 보통주"] += 1
+        else:
+            cnt["kr 우선주 (보통주 그룹 없음)"] += 1
     for s in stocks:
         s.pop("_yind", None)
         v = pick.get(s["t"])
@@ -604,6 +623,10 @@ def fetch_ksic(kr_stocks, client):
     with ThreadPoolExecutor(max_workers=5) as ex:
         got = list(ex.map(lambda t: client.company(cmap[t]), targets))
     out = {t: g["induty"] for t, g in zip(targets, got) if g and g.get("induty")}
+    try:
+        client.save()                  # 새로 받은 업종 코드가 뒤 단계 실패로 사라지지 않게
+    except Exception as e:
+        log(f"  !! DART 캐시 저장 실패(업종 코드 뒤): {e}")
     log(f"{'· ' if len(out) >= 0.97 * max(len(targets), 1) else '  !! '}DART 업종 코드(KSIC): {len(out):,} / {len(targets):,}곳 "
         f"(DART 기업코드 없는 국내 종목 {sum(1 for s in kr_stocks if s['t'] not in cmap):,}곳) · {client.summary()}")
     return out
@@ -888,7 +911,7 @@ class DartClient:
         key = f"{corp}|company"
         with self.lock:
             e = self.entries.get(key)
-        if e and e["st"] == "000" and self.mode != "full":
+        if e and e["st"] == "000":     # full 모드에서도 보관본을 써요 (업종은 거의 안 바뀌고, 하루 한도를 아껴요)
             jitter = int(hashlib.md5(corp.encode()).hexdigest(), 16) % 60     # 같은 날 한꺼번에 만료되지 않게
             if (self.today - dt.date.fromisoformat(e["at"])).days < ttl_days + jitter:
                 with self.lock:
@@ -2707,7 +2730,12 @@ def main():
         g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))
         log(f"· 업종 그룹 ({m}): {len(g)}개 · 그룹 있음 {sum(g.values()):,} / {len(arr):,} · "
             + " · ".join(f"{k} {v}" for k, v in g.most_common(8)) + " …")
-    log(f"· 업종 그룹 집계: {dict(icnt)}")
+    miss = {k: v for k, v in icnt.items() if "없음:" in k}
+    log(f"· 업종 그룹 집계: {dict((k, v) for k, v in icnt.items() if '없음:' not in k)}")
+    if miss:
+        log(f"  !! 업종 표에 없는 코드·이름 {sum(miss.values())}종목: "
+            + " · ".join(f"{k.split('없음:')[1]} {v}" for k, v in sorted(miss.items(), key=lambda kv: -kv[1])[:15])
+            + " (industry_map.csv / industry_us.csv 에 넣을지 확인)")
 
     if len(kr) < 300 or len(us) < 100:
         log("!! 받아온 종목이 너무 적습니다. 기존 data.json 을 지키기 위해 중단합니다.")

@@ -24,7 +24,8 @@ SECTORS = ["semi", "battery", "elec", "auto", "ship", "defense", "machine", "ste
 def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=600, price_shift=0.0):
     rnd = random.Random(seed)
     kr = []
-    names = [(t, nk) for t, nk in MUST] + [(f"{100000 + i:06d}", f"가상종목{rnd.randrange(10**6):06d}") for i in range(n_kr - len(MUST))]
+    # 가상 종목 코드는 0 으로 끝나게 (끝자리가 0 이 아니면 우선주로 봐요)
+    names = [(t, nk) for t, nk in MUST] + [(f"{(20000 + i) * 10:06d}", f"가상종목{rnd.randrange(10**6):06d}") for i in range(n_kr - len(MUST))]
     for i, (t, nk) in enumerate(names):
         price = float(round(rnd.uniform(1000, 300000) * (1 + price_shift)))
         cap = 1300.0 if t == "005930" else (1000.0 if t == "000660" else round(rnd.uniform(0.05, 300), 3))

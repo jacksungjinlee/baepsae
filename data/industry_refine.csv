@@ -1,7 +1,9 @@
-group,keyword,to,why
-machinery,반도체,semi_eq,KSIC 특수 목적용 기계(292)에 반도체 장비·로봇·디스플레이 장비가 섞여 있어 주요제품으로 나눠요
-machinery,웨이퍼,semi_eq,〃
-machinery,로봇,robot,〃
-machinery,디스플레이,display,〃
-machinery,OLED,display,〃
-machinery,LCD,display,〃
+group,field,keyword,to,why
+machinery,products,반도체,semi_eq,KSIC 기계(29)에 반도체 장비·로봇·디스플레이 장비가 섞여 있어 주요제품으로 나눠요
+machinery,products,웨이퍼,semi_eq,〃
+machinery,products,로봇,robot,〃
+machinery,products,디스플레이,display,〃
+machinery,products,OLED,display,〃
+machinery,products,LCD,display,〃
+finance,name,홀딩스,holding,KSIC 기타 금융업(649)에 일반 지주회사(오리온홀딩스·쿠쿠홀딩스 등)가 섞여 있어 이름으로 나눠요
+finance,name,지주,holding,〃

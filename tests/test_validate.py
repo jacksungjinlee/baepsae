@@ -713,3 +713,35 @@ def test_two_names_for_one_group_fails():
 
 def test_etf_with_industry_group_fails():
     fails_on("업종 그룹 이름·형식", lambda c: stock(c, "SPY").update(ind="semi", indName="반도체"))
+
+
+def test_holding_company_in_financial_group_fails():
+    def add(c):
+        c["data"]["stocks"].append({"t": "004800", "nk": "효성", "ne": "효성", "cls": "kr", "price": 1.0, "cap": 1.0,
+                                     "etf": False, "ind": "finance", "indName": "기타 금융"})
+    fails_on("지주회사가 금융 그룹이 아님", add)
+
+
+def test_us_industry_coverage_drop_fails():
+    def drop(c):
+        for s in c["data"]["stocks"]:
+            if s["cls"] == "us" and s.get("ind") and s["t"] < "U0300":
+                s.pop("ind")
+                s.pop("indName")
+    fails_on("미국 업종 그룹 채움", drop)
+
+
+def test_preferred_shares_do_not_fill_a_small_group():
+    def add(c):
+        for i in range(4):
+            c["data"]["stocks"].append({"t": f"9{i:04d}5", "nk": f"우{i}", "ne": "x", "cls": "kr", "price": 1.0, "cap": 0.1,
+                                         "etf": False, "ind": "ship", "indName": "조선"})
+        c["data"]["stocks"].append({"t": "990000", "nk": "조선", "ne": "x", "cls": "kr", "price": 1.0, "cap": 0.1,
+                                     "etf": False, "ind": "ship", "indName": "조선"})
+    fails_on("업종 그룹 인원 (시장마다)", add)
+
+
+def test_fixture_has_unique_codes():
+    cur, _, _ = good_pair()
+    codes = [s["t"] for s in cur["data"]["stocks"]]
+    assert len(codes) == len(set(codes))

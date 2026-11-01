@@ -89,7 +89,10 @@ IND_MUST = {"005930": "semi", "000660": "semi", "005380": "auto", "000270": "aut
             "105560": "bank", "086790": "bank", "034730": "holding", "003550": "holding"}
 IND_UNGROUPED_MAX = 2.0  # 거래가 활발한(val20 ≥ 5억원) 국내 회사 주식 중 그룹 없는 비율 상한 (%)
 IND_LIQUID_VAL20 = 5.0   # 억원
-IND_GROUP_MIN = 5        # 시장마다 그룹 인원 하한 (비교에 쓰니까요)
+IND_GROUP_MIN = 5        # 시장마다 그룹 인원 하한 (비교에 쓰니까요) — 보통주만 세요
+IND_US_COVER = 90.0      # 미국 회사 주식 중 그룹이 있는 비율 하한 (%) — 야후 업종 이름이 바뀌면 잡아요
+IND_NOT_FIN = ("004800", "012630")    # 효성·HDC: 지주회사지 금융회사가 아니에요 (KSIC 649 함정)
+FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=2y&interval=1d"
 
 
@@ -667,8 +670,14 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
     for s in kr + us:
         g = s.get("ind")
         if g:
-            size[(s["cls"], g)] = size.get((s["cls"], g), 0) + 1
+            if not (s["cls"] == "kr" and len(s["t"]) == 6 and s["t"][-1] != "0"):     # 우선주는 인원에 안 세요
+                size[(s["cls"], g)] = size.get((s["cls"], g), 0) + 1
             names.setdefault(g, set()).add(s.get("indName") or "")
+    finbad = [t for t in IND_NOT_FIN if (by.get(t) or {}).get("ind") in FIN_INDS]
+    rep.add("지주회사가 금융 그룹이 아님", not finbad, "맞음" if not finbad else "금융으로 잘못: " + ",".join(finbad), "효성·HDC 는 금융 아님")
+    usco = [s for s in us if s.get("etf") is not True]
+    ucov = 100.0 * sum(1 for s in usco if s.get("ind")) / len(usco) if usco else 0.0
+    rep.pct("미국 업종 그룹 채움", ucov, IND_US_COVER)
     small = sorted(f"{m}:{g}({n})" for (m, g), n in size.items() if n < IND_GROUP_MIN)
     rep.add("업종 그룹 인원 (시장마다)", bool(size) and not small, f"{len(size)}개 그룹" if not small else "적음: " + ",".join(small[:5]),
             f"≥ {IND_GROUP_MIN}종목")
