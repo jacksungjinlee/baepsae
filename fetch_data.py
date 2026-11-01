@@ -630,6 +630,22 @@ def fetch_ksic(kr_stocks, client):
     log(f"{'· ' if len(out) >= 0.97 * max(len(targets), 1) else '  !! '}DART 업종 코드(KSIC): {len(out):,} / {len(targets):,}곳 "
         f"(DART 기업코드 없는 국내 종목 {sum(1 for s in kr_stocks if s['t'] not in cmap):,}곳) · {client.summary()}")
     return out
+SAMPLE_KEEP = ("000270", "086790", "034730", "003550", "088980", "241520")   # 표본에도 꼭: 업종·ETF 검사에 쓰는 종목
+
+
+def sample_size():
+    """시험용 표본 크기 (SAMPLE_KR). 0 이면 전체. 숫자가 아니면 예외 (조용히 전체로 돌지 않게)."""
+    v = (os.environ.get("SAMPLE_KR") or "0").strip()
+    if not v.isdigit():
+        raise RuntimeError(f"!! SAMPLE_KR 은 0 이상의 정수여야 해요 (지금: {v!r})")
+    return int(v)
+
+
+def sample_universe(listing, n):
+    """표본: 시가총액 상위 n개 + 필수 종목 + 검사용 종목. 이미 시가총액 순인 표를 받아요. (순수 함수)"""
+    keep = set(MUST_KR) | set(SAMPLE_KEEP)
+    top = set(listing["Code"].head(n))
+    return listing[listing["Code"].isin(top | keep)].copy()
 
 
 def select_kr_universe(listing, max_n):
@@ -2070,6 +2086,9 @@ def fetch_korea(start, today, rf, prev=None):
 
     n_all = len(listing)
     listing = select_kr_universe(listing, MAX_KR)
+    if sample_size():
+        listing = sample_universe(listing, sample_size())
+        log(f"  !! 표본 실행: 국내 {len(listing):,}종목만 처리해요")
     if n_all > MAX_KR:
         log(f"  → 전체 {n_all:,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
     log(f"  → {len(listing):,}개 종목 (필수 종목 {len(MUST_KR)}개 확인)")
@@ -2685,6 +2704,12 @@ def main():
         raise RuntimeError(f"!! DART_MODE 는 cache·full·off 중 하나여야 해요 (지금: {dart_mode})")
     if dart_mode == "off" and on_main:
         raise RuntimeError("!! dart=off(시험용)는 main 에서 쓸 수 없어요")
+    sample = sample_size()
+    if sample and (on_main or (os.environ.get("DRY_RUN") or "").lower() != "true"):
+        raise RuntimeError("!! 표본 실행(SAMPLE_KR)은 main 이 아닌 시험 실행(dry_run=true)에서만 써요 — 발행하면 안 돼요")
+    if sample:
+        log(f"  !! 표본 실행: 국내 종목을 필수 종목 + 시가총액 상위 {sample}개로 줄여요 (DART 호출 아끼기 · 이 결과는 발행하지 않아요 · "
+            "관문의 종목 수 검사는 실패하는 게 정상이에요)")
     ph = Phases()
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요

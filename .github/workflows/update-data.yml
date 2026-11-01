@@ -23,6 +23,10 @@ on:
         description: "시험용: 직전 발행본 대신 비교할 커밋 (main 불가)"
         type: string
         default: ""
+      sample:
+        description: "시험용: 국내 종목을 필수 종목 + 시가총액 상위 N개로 줄여요 (DART 호출 아끼기 · 시험 실행에서만, main 불가). 0 = 전체"
+        type: string
+        default: "0"
       selftest:
         description: "시험용: corrupt-price = 삼성전자 가격을 일부러 틀리게 (검사가 막는지 확인, main 불가)"
         type: choice
@@ -49,17 +53,22 @@ jobs:
       BOOTSTRAP: ${{ inputs.bootstrap }}
       PREV_REF: ${{ inputs.prev_ref }}
       SELFTEST: ${{ inputs.selftest || 'none' }}
+      SAMPLE_KR: ${{ inputs.sample || '0' }}
     steps:
       - uses: actions/checkout@v7
 
       - name: 입력 확인
         run: |
-          echo "· 브랜치 $GITHUB_REF_NAME · 시험 실행 ${DRY_RUN:-false} · DART $DART_MODE · bootstrap ${BOOTSTRAP:-false} · 비교 커밋 ${PREV_REF:-HEAD} · selftest $SELFTEST"
+          echo "· 브랜치 $GITHUB_REF_NAME · 시험 실행 ${DRY_RUN:-false} · DART $DART_MODE · bootstrap ${BOOTSTRAP:-false} · 비교 커밋 ${PREV_REF:-HEAD} · selftest $SELFTEST · 표본 $SAMPLE_KR"
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            if [ "$DART_MODE" = "off" ] || [ -n "$PREV_REF" ] || [ "$SELFTEST" != "none" ]; then
-              echo "!! 시험용 입력(dart=off · prev_ref · selftest)은 main 에서 쓸 수 없어요"
+            if [ "$DART_MODE" = "off" ] || [ -n "$PREV_REF" ] || [ "$SELFTEST" != "none" ] || [ "$SAMPLE_KR" != "0" ]; then
+              echo "!! 시험용 입력(dart=off · prev_ref · selftest · sample)은 main 에서 쓸 수 없어요"
               exit 1
             fi
+          fi
+          if [ "$SAMPLE_KR" != "0" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "!! sample(표본)은 시험 실행(dry_run=true)에서만 써요 — 표본 데이터는 발행하면 안 돼요"
+            exit 1
           fi
           if [ "$BOOTSTRAP" = "true" ]; then
             echo "!! bootstrap: 직전 발행본과의 비교를 건너뛰어요. 첫 실행 한 번만 써야 해요."

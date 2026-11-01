@@ -2,7 +2,7 @@ group,name,parent,financial,note
 food,음식료·담배,,,KSIC 10–12·56 · 미국 Packaged Foods·Beverages·Restaurants·Tobacco
 textile,섬유·의류·신발,,,KSIC 13–15
 paper,종이·목재·인쇄,,,KSIC 16–18
-furniture,가구·생활제품,,,KSIC 32–33
+furniture,가구·기타 제조,,,KSIC 32–33
 cosmetics,화장품·생활용품,,,KSIC 20422·20423 · 미국 Household & Personal Products
 energy,정유·에너지,,,KSIC 19·46712·46713·477 · 미국 Oil & Gas
 chem,화학,chems,,KSIC 201·202·205
@@ -35,7 +35,7 @@ utility,전력·가스·환경,,,KSIC 35–39 · 미국 Utilities·Waste Managem
 construction,건설·엔지니어링,,,KSIC 41–42·721 · 미국 Engineering & Construction·Building Products·Residential Construction
 trading,상사·도매,,,KSIC 46 · 미국 Distribution
 retail,유통,,,KSIC 47 · 미국 Retail·Discount Stores
-logistics,육운·물류,transport,,KSIC 49·52 · 미국 Freight & Logistics·Railroads·Trucking
+logistics,물류·운송,transport,,KSIC 49·52 · 미국 Freight & Logistics·Railroads·Trucking
 shipping,해운,transport,,KSIC 50
 airline,항공,transport,,KSIC 51 · 미국 Airlines
 leisure,호텔·레저·여행,,,KSIC 55·752·91 · 미국 Travel·Lodging·Resorts & Casinos·Gambling·Leisure
@@ -52,7 +52,7 @@ securities,증권,fin,yes,KSIC 6612 · 미국 Capital Markets
 finance,기타 금융,fin,yes,KSIC 642·649·661 (캐피탈·카드·벤처투자·결제) · 미국 Credit Services·Asset Management·Exchanges
 holding,지주회사,,,KSIC 64992·715 · 미국 Conglomerates
 realestate,부동산·리츠,,,KSIC 68 · 미국 REIT·Real Estate Services
-services,사업 서비스,,,KSIC 71–76·95–96 (광고·여행 제외) · 미국 Business·Consulting·Security·Rental Services
+services,기업 서비스,,,KSIC 71–76·95–96 (광고·여행 제외) · 미국 Business·Consulting·Security·Rental Services
 education,교육,,,KSIC 85
 chems,화학·소재,,,상위 그룹만 (화학 + 정밀화학·소재)
 metals,철강·금속,,,상위 그룹만 (철강 + 비철금속 + 금속가공)
