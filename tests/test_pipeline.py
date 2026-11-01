@@ -287,6 +287,35 @@ def test_pipeline_refuses_test_inputs_on_main(monkeypatch):
         F.main()
 
 
+def test_sample_runs_only_as_dry_runs_off_main(monkeypatch):
+    # 표본 실행은 DART 호출을 아끼는 시험용 — main 에서도, 발행하는 실행에서도 안 돼요
+    monkeypatch.setenv("SAMPLE_KR", "400")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("DRY_RUN", "true")
+    with pytest.raises(RuntimeError, match="시험 실행"):
+        F.main()
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/claude/x")
+    monkeypatch.setenv("DRY_RUN", "false")
+    with pytest.raises(RuntimeError, match="시험 실행"):
+        F.main()
+    monkeypatch.setenv("SAMPLE_KR", "abc")
+    with pytest.raises(RuntimeError, match="정수"):
+        F.sample_size()
+
+
+def test_sample_keeps_must_haves_and_top_caps():
+    codes = [f"{i:05d}0" for i in range(1, 3000)] + list(F.MUST_KR) + list(F.SAMPLE_KEEP)
+    df = pd.DataFrame({"Code": codes, "Marcap": range(len(codes), 0, -1)})
+    got = set(F.sample_universe(df, 400)["Code"])
+    assert set(F.MUST_KR) <= got and set(F.SAMPLE_KEEP) <= got and len(got) <= 400 + len(F.MUST_KR) + len(F.SAMPLE_KEEP)
+
+
+def test_workflow_refuses_sample_on_main_and_outside_dry_runs():
+    text, wf = load_workflow()
+    assert "sample" in wf[True]["workflow_dispatch"]["inputs"] if True in wf else "sample" in wf["on"]["workflow_dispatch"]["inputs"]
+    assert '[ "$SAMPLE_KR" != "0" ]' in text and '[ "$DRY_RUN" != "true" ]' in text
+
+
 # ── v17.5: 공식 종가 · 시계열 자르기 ───────────────────────
 def test_official_close_is_marcap_over_stocks_not_close_column():
     df = fixture("2026-10-29_1958").set_index("Code")
