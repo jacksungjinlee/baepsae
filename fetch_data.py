@@ -1,34 +1,49 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-뱁새(Baepsae) 데이터 수집 스크립트 v10
+뱁새(Baepsae) 데이터 수집 스크립트 v17.5
 ──────────────────────────────────────────────────────────────
-매일 한 번 GitHub Actions 가 이 파일을 실행해서 data.json 을 만듭니다.
-data.json 은 baepsae.html 과 같은 폴더에 놓이며, 도구가 자동으로 읽어갑니다.
+매일 GitHub Actions 가 실행해 data.json · corp.json · macro.json · disc.json 을 만들고,
+validate_data.py 를 통과해야만 커밋(발행)돼요. 파일은 write_json() 한 곳에서만 씁니다.
+
+날짜 (모두 한국 시간)
+  pxDate     한국 가격의 공식 종가 날짜 = 오늘 이전 '최종본' 종목 목록 파일의 날짜
+  ksDate     KOSPI 시계열의 마지막 날짜 (pxDate 와 같아야 해요)
+  usPxDate   미국 가격의 마지막 완성 봉 (S&P500)
+  publishedAt 이 실행의 시각 · asOf 는 실행 날짜(참고용)
+  macro.curve.date ECOS 마지막 관측일 · disc.newest 가장 최근 공시일
+
+가격
+  한국 price = 시가총액 ÷ 상장주식수 (KRX 공식 종가). 목록 파일의 Close 열은 저녁엔 시간외 가격이라 안 써요.
+  모든 시계열은 pxDate 까지 자르고, pxDate 값은 공식 종가로 맞춰요 (베타·변동성·수익률도 같은 날 기준).
+
+단위 (한국·미국 같은 단위)
+  cap 조원 · val 억원(거래대금) · price 한국 원 / 미국 달러 / 금현물 원/g · 퍼센트는 숫자(%)
 
 수집·계산하는 값
-  기본     price(현재가) cap(시가총액) val(거래대금) lo/hi(52주)
+  기본     price cap val lo/hi(52주)
   위험     beta(자기 시장 대비) vol(연 변동성, 원화 기준) mdd(최대 낙폭) hit(상승 월 비율)
   성과     al(3년 알파 %p) sh(3년 샤프) mom(12개월 수익률)
   가치·질  per pbr dy roe debt opm g3(매출성장) frn(외국인)
-  분류     s(업종 — KRX 업종분류에서 매핑) dk(사업 개요)
-  팩터     pz(규모) vz(가치) mz(모멘텀) qz(퀄리티) — 시장 내 백분위 0~100
+  분류     s(업종) dk(사업 개요)
+  팩터     pz(규모) vz(가치) mz(모멘텀) qz(퀄리티) lz(저변동) — 같은 시장 안에서의 백분위 0~100
 
 시장 가정(도구의 기본값으로 자동 반영)
-  rf 국고채 10년 · mktVol/usVol/mtVol 지수 변동성 · rhoKrUs/rhoKrMt/rhoUsMt 상관계수
+  rf 국고채 10년(ECOS, 출처는 settings.rfSrc) · mktVol/usVol/mtVol · rhoKrUs/rhoKrMt/rhoUsMt …
 
-DART_API_KEY 환경변수가 있으면 한국 기업의 재무지표(부채비율·매출성장률·영업이익률·ROE)를
-OpenDART 에서 가져옵니다. 없으면 그 항목만 비워두고 나머지는 정상 동작합니다.
-
-실패에 강하게 만들었습니다. 개별 종목이 실패하면 건너뛰고, 전체의 상당수를 못 받아온
-경우에만 오류로 종료합니다(그래야 기존 data.json 이 안 망가집니다).
+DART_API_KEY 로 OpenDART 재무지표·공시를, ECOS_API_KEY 로 국고채 금리를 받아요.
+DART 결과는 .dart-cache/ 에 보관해 실행 사이에 다시 씁니다 (하루 한도 보호).
 """
 
+import collections
+import copy
+import gzip
 import io
 import json
 import math
 import os
 import sys
+import threading
 import time
 import zipfile
 import datetime as dt
@@ -65,7 +80,6 @@ EXTRA_US = [
 KR_INDEX = "KS11"
 US_INDEX = "^GSPC"
 FX_TICKER = "USDKRW=X"
-KR_BOND = "KR10YT=RR"
 
 # ────────────────────────────────────────────────────────────
 # 업종 매핑 — KRX 업종분류(한글) → 뱁새 업종 키
@@ -234,14 +248,16 @@ def write_json(path, obj):
 # FinanceData/fdr_krx_data_cache 는 같은 날짜 파일을 하루에 여러 번 덮어써요.
 #   ~05시 장 시작 전: 시가총액이 전부 비어 있음
 #   ~13시 장중: 값은 차 있지만 장중 가격
-#   ~18시 이후 장 마감 후: 최종본
+#   16~23시 장 마감 후: 시가총액이 공식 종가로 확정 (Close 열은 시간외 가격이라 쓰지 않아요)
 # 그래서 오늘(KST) 이전 날짜 중, 시가총액이 90% 이상 차 있고 마지막 커밋이 그 날짜
-# 18:00 KST 이후인 가장 최근 파일을 고릅니다. 주말 파일은 시가총액이 비어 있어 걸러져요.
+# 16:00 KST 이후인 가장 최근 파일을 고릅니다. 주말 파일은 시가총액이 비어 있어 걸러져요.
+# v17.5: 18시 → 16시. 4월 이후 거래일 138일 중 29일은 마지막 커밋이 16:13~17:59 였고,
+# 그 버전의 시가총액은 밤 23시 버전과 100% 같았어요 (10/20·10/23 비교).
 LISTING_URL = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx/{d}.csv"
 LISTING_COMMITS_API = "https://api.github.com/repos/FinanceData/fdr_krx_data_cache/commits"
 LISTING_PATH = "data/listing/krx/{d}.csv"
 LISTING_MIN_CAP_SHARE = 0.90
-LISTING_FINAL_HOUR = 18
+LISTING_FINAL_HOUR = 16
 LISTING_LOOKBACK_DAYS = 10
 MUST_KR = ("005930", "000660", "005380", "015760", "105560")
 
@@ -428,14 +444,14 @@ def perf_stats(px, rf):
 
 
 def add_percentiles(stocks):
-    """규모·가치·모멘텀·퀄리티를 시장 내 백분위(0~100)로 환산"""
-    df = pd.DataFrame({
-        "cap": [s.get("cap") for s in stocks],
-        "pbr": [s.get("pbr") for s in stocks],
-        "mom": [s.get("mom") for s in stocks],
-        "roe": [s.get("roe") for s in stocks],
-        "vol": [s.get("vol") for s in stocks],
-    })
+    """규모·가치·모멘텀·퀄리티·저변동을 시장 내 백분위(0~100)로 환산.
+    v17.5: 한 시장씩만 받아요. 한국·미국을 한데 섞으면 단위도 기준도 달라 점수가 틀어져요
+    (예전엔 섞여서 한국 899종목의 가치 점수가 10점 넘게 달라졌어요)."""
+    mk = {s.get("cls") for s in stocks}
+    if len(mk) > 1:
+        raise ValueError(f"add_percentiles 에 여러 시장이 섞였어요: {sorted(map(str, mk))}")
+    df = pd.DataFrame({k: pd.to_numeric(pd.Series([_fin(s.get(k)) for s in stocks], dtype="object"), errors="coerce")
+                       for k in ("cap", "pbr", "mom", "roe", "vol")})
 
     def pr(col):
         return df[col].rank(pct=True) * 100
@@ -452,16 +468,191 @@ def add_percentiles(stocks):
 
 
 # ────────────────────────────────────────────────────────────
-# OpenDART — 한국 기업 재무지표
+# OpenDART — 호출 · 상태 집계 · 캐시 (v17.5)
 # ────────────────────────────────────────────────────────────
-def dart_corp_map():
-    if not DART_KEY:
-        return {}
+# 하루 한도(약 20,000회)에 전체 조회 한 번(약 15,000회)이 거의 닿아요. 그래서 결과를 실행 사이에 보관합니다.
+#   키: (기업, 사업연도, 보고서, 재무제표 구분)
+#   찾은 보고서(000)는 확정. 다만 90일 넘은 것은 하루 300건씩 다시 확인해요 (정정공시 대비).
+#   아직 없음(013)은 7일마다 다시 확인. 제출 마감 7일 전부터 마감 2일 뒤까지는 매일.
+#   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
+DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v1.json.gz")
+DART_CACHE_VERSION = 1   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
+DART_REVALIDATE_DAYS = 90
+DART_REVALIDATE_PER_RUN = 300
+DART_RETRY_DAYS = 7
+REPRT_KO = {"11011": "연간", "11013": "1Q", "11012": "2Q", "11014": "3Q"}
+Q_NEWEST_FIRST = ("11014", "11012", "11013")
+QUARTER_CURRENT_SHARE = 0.70   # 시가총액 상위 100곳 중 이만큼이 제출해야 그 분기를 '현재'로 봐요
+DART_FATAL = {"010": "등록되지 않은 키", "011": "사용할 수 없는 키", "012": "접근할 수 없는 IP",
+              "020": "일일 한도 초과", "901": "기간이 끝난 키"}
+
+
+def report_period_end(year, reprt):
+    m, d = {"11013": (3, 31), "11012": (6, 30), "11014": (9, 30), "11011": (12, 31)}[reprt]
+    return dt.date(year, m, d)
+
+
+def report_deadline(year, reprt):
+    """제출 마감일 (12월 결산 기준: 분기·반기 45일, 사업보고서 90일)."""
+    if reprt == "11011":
+        return dt.date(year + 1, 3, 31)
+    return {"11013": dt.date(year, 5, 15), "11012": dt.date(year, 8, 14), "11014": dt.date(year, 11, 14)}[reprt]
+
+
+def dart_entry_due(entry, year, reprt, today, revalidate=False):
+    """이 캐시 항목을 오늘 다시 조회해야 하는지. (순수 함수)"""
+    if today <= report_period_end(year, reprt):
+        return False                     # 기간이 끝나지 않은 보고서는 있을 수 없어요
+    if entry is None:
+        return True
+    if entry["st"] == "000":
+        return revalidate
+    age = (today - dt.date.fromisoformat(entry["at"])).days
+    dl = report_deadline(year, reprt)
+    if dl - dt.timedelta(days=7) <= today <= dl + dt.timedelta(days=2):
+        return age >= 1
+    return age >= DART_RETRY_DAYS
+
+
+class DartClient:
+    """OpenDART 호출을 한곳으로 모읍니다: 상태 코드 집계, 한도 초과 감지, 결과 캐시."""
+    BASE = "https://opendart.fss.or.kr/api/"
+
+    def __init__(self, key, mode="cache", today=None, path=DART_CACHE_PATH):
+        self.key, self.mode, self.path = key, mode, path
+        self.today = today or today_kst()
+        self.lock = threading.Lock()
+        self.save_lock = threading.Lock()     # 중간 저장이 겹치지 않게
+        self.status = collections.Counter()
+        self.fatal = None
+        self.cache_hits = 0
+        self.parse_errors = collections.Counter()
+        self.revalidate_left = DART_REVALIDATE_PER_RUN
+        self.revalidated = 0
+        self.entries, self.meta = {}, {}
+        self._load()
+        if mode == "full":
+            if self.meta.get("lastFull") == self.today.isoformat():
+                raise RuntimeError("!! 오늘(KST) 이미 dart=full 로 한 번 실행했어요. 하루 한 번만 쓸 수 있어요 (DART 일일 한도)")
+            self.meta["lastFull"] = self.today.isoformat()
+            log("· DART 모드: full — 캐시를 무시하고 전부 다시 조회해요")
+        old = sum(1 for e in self.entries.values() if e["st"] == "000" and self._stale(e))
+        if old:
+            log(f"· DART 재확인 대상: 90일 지난 {old:,}건 — 이번 실행에서 쓰는 것 중 최대 {DART_REVALIDATE_PER_RUN}건 (정정공시 대비)")
+
+    def _stale(self, e):
+        return (self.today - dt.date.fromisoformat(e["at"])).days > DART_REVALIDATE_DAYS
+
+    def _load(self):
+        try:
+            with gzip.open(self.path, "rt", encoding="utf-8") as f:
+                js = json.load(f)
+            if js.get("v") != DART_CACHE_VERSION:
+                log(f"  !! DART 캐시 형식이 달라요(v{js.get('v')}) → 처음부터 조회")
+                return
+            self.entries, self.meta = js.get("entries", {}), js.get("meta", {})
+            log(f"· DART 캐시 {len(self.entries):,}건 불러옴 (저장 {self.meta.get('savedAt', '?')})")
+        except FileNotFoundError:
+            log("  !! DART 캐시 없음 → 처음부터 조회해요 (약 15,000회 · 하루 한도의 대부분)")
+        except Exception as e:
+            log(f"  !! DART 캐시를 읽지 못해 처음부터 조회해요: {e}")
+
+    def save(self):
+        if not self.path:
+            return
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        with self.save_lock:                  # 두 저장이 같은 임시 파일에 섞여 쓰이지 않게
+            with self.lock:
+                self.meta["savedAt"] = dt.datetime.now(KST).isoformat(timespec="seconds")
+                js = {"v": DART_CACHE_VERSION, "meta": dict(self.meta), "entries": dict(self.entries)}
+            tmp = self.path + ".tmp"
+            with gzip.open(tmp, "wt", encoding="utf-8") as f:
+                json.dump(js, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            os.replace(tmp, self.path)
+
+    def get(self, endpoint, params, timeout=25):
+        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요."""
+        if self.fatal:
+            return None
+        try:
+            r = requests.get(self.BASE + endpoint, params={"crtfc_key": self.key, **params}, timeout=timeout)
+            j = r.json()
+        except Exception:
+            with self.lock:
+                self.status["예외"] += 1
+            return None
+        st = str(j.get("status"))
+        with self.lock:
+            self.status[st] += 1
+            if st in DART_FATAL and not self.fatal:
+                self.fatal = (st, str(j.get("message") or ""))
+        return None if st in DART_FATAL else j
+
+    def report(self, endpoint, corp, year, reprt, tag, parse, extra=None):
+        """캐시를 거쳐 보고서 하나를 조회합니다. 찾으면 parse 결과, 없으면 None."""
+        key = f"{corp}|{year}|{reprt}|{tag}"
+        with self.lock:
+            e = self.entries.get(key)
+            # 찾은 보고서도 90일이 지나면 다시 확인 (정정공시). 실행당 300건까지, 실제로 쓰는 항목만.
+            reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0)
+            if reval:
+                self.revalidate_left -= 1
+                self.revalidated += 1
+        due = dart_entry_due(None if self.mode == "full" else e, year, reprt, self.today, revalidate=reval)
+        if not due:
+            with self.lock:
+                self.cache_hits += 1
+            return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
+        j = self.get(endpoint, {"corp_code": corp, "bsns_year": str(year), "reprt_code": reprt, **(extra or {})})
+        if j is None:          # 네트워크 문제·한도 초과: 예전에 찾은 값이 있으면 그대로 (집계에 남아요)
+            return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
+        st = str(j.get("status"))
+        if st == "000":
+            try:
+                d = parse(j.get("list", []))
+            except Exception as ex:          # 이상한 응답 하나가 실행 전체를 멈추지 않게 (개수는 로그로)
+                with self.lock:
+                    self.parse_errors[type(ex).__name__] += 1
+                return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
+        elif st == "013":
+            d = None
+        else:                  # 그 밖의 상태(점검 등)는 저장하지 않아요
+            return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
+        with self.lock:
+            self.entries[key] = {"st": st, "at": self.today.isoformat(), "d": d}
+        return copy.deepcopy(d)
+
+    def summary(self):
+        st = ", ".join(f"{k} {v:,}" for k, v in sorted(self.status.items()))
+        extra = f" · 재확인 {self.revalidated:,}건" if self.revalidated else ""
+        if self.parse_errors:
+            extra += " · !! 해석 오류 " + ", ".join(f"{k} {v}" for k, v in self.parse_errors.items())
+        return f"호출 {sum(self.status.values()):,}회 (상태 {st or '없음'}) · 캐시 사용 {self.cache_hits:,}건{extra}"
+
+    def raise_if_fatal(self):
+        if self.fatal:
+            st, msg = self.fatal
+            raise RuntimeError(f"!! DART {DART_FATAL.get(st, st)} (상태 {st}: {msg}) — 재무지표가 비어 발행하지 않고 중단합니다")
+
+
+def dart_corp_map(client):
+    """종목코드 → DART 기업코드. 오늘 못 받으면 캐시에 저장해 둔 목록을 (크게 알리고) 씁니다."""
     try:
-        r = requests.get("https://opendart.fss.or.kr/api/corpCode.xml",
-                         params={"crtfc_key": DART_KEY}, timeout=90)
-        r.raise_for_status()
-        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        r = requests.get(DartClient.BASE + "corpCode.xml", params={"crtfc_key": client.key}, timeout=90)
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(r.content))
+        except zipfile.BadZipFile:
+            # zip 대신 오류 응답이 와요 (2026-10-09·10 에 이것 때문에 재무지표가 통째로 빠졌어요)
+            try:
+                j = r.json()
+                st = str(j.get("status"))
+                with client.lock:
+                    client.status[st] += 1
+                    if st in DART_FATAL:
+                        client.fatal = (st, str(j.get("message") or ""))
+                raise RuntimeError(f"zip 대신 오류 응답 (상태 {st}: {j.get('message')})")
+            except ValueError:
+                raise RuntimeError(f"zip 대신 다른 응답: HTTP {r.status_code} {r.text[:120]!r}")
         root = ET.fromstring(zf.read(zf.namelist()[0]))
         m = {}
         for el in root.iter("list"):
@@ -469,11 +660,19 @@ def dart_corp_map():
             cc = (el.findtext("corp_code") or "").strip()
             if sc and len(sc) == 6 and cc:
                 m[sc] = cc
+        if len(m) < 2000:
+            raise RuntimeError(f"기업코드가 {len(m):,}건뿐이에요")
+        with client.lock:
+            client.meta["corpMap"], client.meta["corpMapAt"] = m, client.today.isoformat()
         log(f"· DART 기업코드 {len(m):,}건 확보")
         return m
     except Exception as e:
-        log(f"  (DART 기업코드 실패: {e})")
-        return {}
+        cached = client.meta.get("corpMap")
+        client.raise_if_fatal()
+        if cached:
+            log(f"  !! DART 기업코드 목록을 받지 못했어요({e}) → 캐시({client.meta.get('corpMapAt')}) {len(cached):,}건을 씁니다")
+            return cached
+        raise RuntimeError(f"!! DART 기업코드 목록을 받지 못했어요({e}) — 재무지표 없이 발행하지 않고 중단합니다") from None
 
 
 def parse_dart_list(rows):
@@ -533,7 +732,7 @@ def parse_dart_list(rows):
         out["roe"] = round(ni[0] / eq * 100, 1)
     if op[0] and rev[0]:
         out["opm"] = round(op[0] / rev[0] * 100, 1)
-    if rev[0] and rev[2] and rev[2] > 0:
+    if rev[0] and rev[0] > 0 and rev[2] and rev[2] > 0:      # 음수 매출이면 제곱근이 복소수가 돼요
         out["g3"] = round(((rev[0] / rev[2]) ** 0.5 - 1) * 100, 1)
     elif rev[0] and rev[1] and rev[1] > 0:
         out["g3"] = round((rev[0] / rev[1] - 1) * 100, 1)
@@ -571,23 +770,9 @@ def parse_dart_dividend(rows):
     if dps and dps > 0:
         out["dps"] = round(dps, 0)
         out["dps3"] = [round(x, 0) if x is not None else None for x in dps3]
-    if dy and dy > 0:
+    if dy is not None and dy >= 0:      # DART 가 숫자로 알려 준 값만 (0% 도 '배당 없음'이라는 사실이라 그대로 둬요)
         out["dy"] = round(dy, 2)
     return out
-
-
-def dart_dividend(corp_code, year):
-    try:
-        r = requests.get("https://opendart.fss.or.kr/api/alotMatter.json",
-                         params={"crtfc_key": DART_KEY, "corp_code": corp_code,
-                                 "bsns_year": str(year), "reprt_code": "11011"},
-                         timeout=25)
-        j = r.json()
-        if j.get("status") != "000":
-            return {}
-        return parse_dart_dividend(j.get("list", []))
-    except Exception:
-        return {}
 
 
 def _ytd(row):
@@ -658,112 +843,136 @@ def compute_ttm(fin, ytd, ytd_prev):
     return {"ttm": ttm, "bs": bs}
 
 
-def dart_quarter(corp_code, year, reprt):
+def dart_financials(client, corp_code, year):
+    """연결(없으면 별도) 사업보고서에서 주요 지표 + 3개년 원값."""
     for fs in ("CFS", "OFS"):
-        try:
-            r = requests.get("https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json",
-                             params={"crtfc_key": DART_KEY, "corp_code": corp_code,
-                                     "bsns_year": str(year), "reprt_code": reprt, "fs_div": fs},
-                             timeout=25)
-            j = r.json()
-            if j.get("status") != "000":
-                continue
-            out = parse_dart_quarter(j.get("list", []))
-            if out:
-                return out
-        except Exception:
-            continue
-    return None
-
-
-def dart_financials(corp_code, year):
-    """연결(없으면 별도) 재무제표에서 주요 지표 + 3개년 원값을 뽑습니다."""
-    for fs in ("CFS", "OFS"):
-        try:
-            r = requests.get("https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json",
-                             params={"crtfc_key": DART_KEY, "corp_code": corp_code,
-                                     "bsns_year": str(year), "reprt_code": "11011", "fs_div": fs},
-                             timeout=25)
-            j = r.json()
-            if j.get("status") != "000":
-                continue
-            out = parse_dart_list(j.get("list", []))
-            if out:
-                return out
-        except Exception:
-            continue
+        d = client.report("fnlttSinglAcntAll.json", corp_code, year, "11011", fs, parse_dart_list, {"fs_div": fs})
+        if d:
+            return d
     return {}
 
 
-def enrich_with_dart(kr_stocks):
+def dart_dividend(client, corp_code, year):
+    return client.report("alotMatter.json", corp_code, year, "11011", "DIV", parse_dart_dividend) or {}
+
+
+def dart_quarter(client, corp_code, year, reprt):
+    """분기·반기 보고서의 누적값 (연결 우선, 없으면 별도)."""
+    for fs in ("CFS", "OFS"):
+        d = client.report("fnlttSinglAcntAll.json", corp_code, year, reprt, fs, parse_dart_quarter, {"fs_div": fs})
+        if d:
+            return d
+    return None
+
+
+def pick_current_quarter(shares):
+    """[(보고서, 상위 100곳 제출 비율)] 최신순 → 70% 이상인 가장 최신 분기 (없으면 None). (순수 함수)"""
+    for reprt, share in shares:
+        if share >= QUARTER_CURRENT_SHARE:
+            return reprt
+    return None
+
+
+def enrich_with_dart(kr_stocks, client):
+    """사업보고서·배당·분기보고서(TTM)를 붙입니다. 기업마다 분기를 따로 확인해요 (3Q → 2Q → 1Q)."""
     fin_map = {}
-    if not DART_KEY:
-        log("· DART_API_KEY 없음 → 재무지표(부채비율·성장률·영업이익률) 생략")
-        return kr_stocks, fin_map
-    cmap = dart_corp_map()
-    if not cmap:
-        return kr_stocks, fin_map
-    year = today_kst().year - 1
+    today = client.today
+    cmap = dart_corp_map(client)
+    year = today.year - 1
     targets = [s for s in kr_stocks if s["t"] in cmap]
-    # 올해 어느 분기 보고서까지 나왔는지 삼성전자로 1회 판별 (3Q → 반기 → 1Q)
-    cur_year = today_kst().year
-    Q_ORDER = [("11014", "3Q"), ("11012", "2Q"), ("11013", "1Q")]
-    q_code, q_ko = None, None
-    probe = cmap.get("005930")
-    if probe:
-        try:
-            for code, ko in Q_ORDER:
-                if dart_quarter(probe, cur_year, code):
-                    q_code, q_ko = code, ko
-                    break
-        except Exception as e:
-            log(f"  !! 분기 판별 실패({e}) → 연간 기준으로 진행")
-            q_code = None
-    log(f"· DART 재무지표 조회 {len(targets):,}건 ({year}년 사업보고서"
-        + (f" + {cur_year}.{q_ko} TTM 합성" if q_code else " · 분기 미확인 → 연간 기준") + ")…")
+    qy = year + 1
+    cands = [r for r in Q_NEWEST_FIRST if report_period_end(qy, r) < today]
+
+    # 1) '현재 분기': 시가총액 상위 100곳 중 70% 이상이 낸 가장 최신 분기
+    top = sorted(targets, key=lambda s: -(_fin(s.get("cap")) or 0))[:100]
+    shares = []
+    for r in cands:
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            got = list(ex.map(lambda s: dart_quarter(client, cmap[s["t"]], qy, r) is not None, top))
+        share = sum(got) / max(len(top), 1)
+        shares.append((r, share))
+        log(f"· 분기 판단: {qy}.{REPRT_KO[r]} — 시가총액 상위 {len(top)}곳 중 {sum(got)}곳 제출 ({share:.0%})")
+        if share >= QUARTER_CURRENT_SHARE:
+            break
+    if client.fatal:
+        client.save()                      # 그때까지 받은 결과는 남겨요
+        client.raise_if_fatal()
+    q_cur = pick_current_quarter(shares)
+    order = cands[cands.index(q_cur):] if q_cur else []
+    log(f"· DART 재무지표 조회 {len(targets):,}곳 ({year}년 사업보고서, 없으면 {year - 1}년"
+        + (f" + {qy}.{REPRT_KO[q_cur]} 기준 TTM, 없으면 기업마다 이전 분기" if q_cur
+           else f" · 70% 넘게 낸 {qy}년 분기가 아직 없어 {year}년 사업보고서가 최근 4개 분기예요")
+        + ")…")
     done = [0]
+    errors = collections.Counter()
 
     def one(s):
+        if client.fatal:
+            return s
+        try:
+            return one_inner(s)
+        except Exception as e:             # 한 기업의 이상한 데이터가 실행 전체를 멈추지 않게 — 개수를 남기고, 채움 비율은 검증이 봐요
+            with client.lock:
+                errors[f"{type(e).__name__}"] += 1
+            return s
+
+    def one_inner(s):
+        corp = cmap[s["t"]]
         yr = year
-        f = dart_financials(cmap[s["t"]], yr)
+        f = dart_financials(client, corp, yr)
         if not f:
             yr = year - 1
-            f = dart_financials(cmap[s["t"]], yr)
-        div = dart_dividend(cmap[s["t"]], yr)
-        if div.get("dps"):
-            s["dps"] = div["dps"]
-        if div.get("dps3"):
-            s["dps3"] = div["dps3"]
-        if div.get("dy"):
-            s["dy"] = div["dy"]
+            f = dart_financials(client, corp, yr)
+        div = dart_dividend(client, corp, yr)
+        for k in ("dps", "dps3", "dy"):
+            if div.get(k) is not None:
+                s[k] = div[k]
         if f:
             fin = f.pop("_fin", None)
             if fin:
-                # TTM 합성: 올해 누적 + 전년 동기 누적
-                if q_code:
-                    try:
-                        ytd = dart_quarter(cmap[s["t"]], cur_year, q_code)
-                        ytd_prev = dart_quarter(cmap[s["t"]], cur_year - 1, q_code) if ytd else None
-                        t2 = compute_ttm(fin, ytd, ytd_prev)
-                        if t2:
-                            fin["ttm"] = t2["ttm"]
-                            fin["bs2"] = t2["bs"]
-                            fin["bq"] = f"{cur_year}.{q_ko}"
-                    except Exception:
-                        pass  # TTM 실패는 연간 기준으로 조용히 계속 (아래 합계 로그로 파악)
+                qy_c = yr + 1
+                order_c = order if qy_c == qy else [r for r in Q_NEWEST_FIRST if report_period_end(qy_c, r) < today]
+                for r in order_c:
+                    ytd = dart_quarter(client, corp, qy_c, r)
+                    if not ytd:
+                        continue
+                    t2 = compute_ttm(fin, ytd, dart_quarter(client, corp, yr, r))
+                    if t2:
+                        fin["ttm"], fin["bs2"], fin["bq"] = t2["ttm"], t2["bs"], f"{qy_c}.{REPRT_KO[r]}"
+                        break
+                if not fin.get("bq") and yr == year and not order:
+                    # 봄(사업보고서 제출 뒤 ~ 1분기 보고서 70% 전)과 연초에는 사업보고서 자체가 '최근 4개 분기'예요
+                    fin["bq"] = f"{yr}.4Q"
                 fin_map[s["t"]] = fin
             s.update(f)
-        done[0] += 1
-        if done[0] % 250 == 0:
-            log(f"  … {done[0]:,}/{len(targets):,}")
+        with client.lock:
+            done[0] += 1
+            n = done[0]
+        if n % 250 == 0:
+            log(f"  … {n:,}/{len(targets):,} · {client.summary()}")
+            try:
+                client.save()
+            except Exception as e:
+                log(f"  !! DART 캐시 중간 저장 실패: {e}")
         return s
 
     with ThreadPoolExecutor(max_workers=5) as ex:
         list(ex.map(one, targets))
+    client.save()
+    log(f"· DART: {client.summary()}")
+    try:
+        log(f"· DART 캐시 저장: {len(client.entries):,}건 · {os.path.getsize(client.path) / 1e6:.1f}MB ({client.path})")
+    except OSError as e:
+        log(f"  !! DART 캐시 파일을 확인하지 못했어요: {e}")
+    if errors:
+        log(f"  !! DART 처리 오류 {sum(errors.values()):,}곳 ({dict(errors)}) — 그 기업은 재무지표 없이 진행해요")
+    client.raise_if_fatal()
     got = sum(1 for s in targets if s.get("debt") is not None)
-    log(f"· DART 완료: {got:,}건 재무지표 · {len(fin_map):,}건 3개년 원값")
-    _ttm_n = sum(1 for v in fin_map.values() if v.get("ttm"))
-    log(f"· TTM 합성 성공: {_ttm_n:,} / {len(fin_map):,} 기업")
+    log(f"· DART 완료: {got:,}곳 재무지표 · {len(fin_map):,}곳 3개년 원값")
+    bq = collections.Counter(v.get("bq") or "연간만" for v in fin_map.values())
+    ttm_n = sum(1 for v in fin_map.values() if v.get("ttm"))
+    log(f"· TTM 합성 성공: {ttm_n:,} / {len(fin_map):,} 기업 ("
+        + " · ".join(f"{k} {v:,}" for k, v in sorted(bq.items(), reverse=True)) + ")")
     return kr_stocks, fin_map
 
 
@@ -779,21 +988,64 @@ BOND_ETFS = [
     ("273130", ["종합채권"], "KODEX 종합채권(AA-이상)액티브", 5.5, True, "종합"),
     ("305080", ["미국채", "10"], "TIGER 미국채10년선물", 8.5, False, "미국채"),
     ("453850", ["미국", "30", "국채"], "ACE 미국30년국채액티브(H)", 18.0, True, "미국채"),
-    ("304660", ["미국채", "30"], "KODEX 미국채울트라30년선물(H)", 20.0, True, "미국채"),
+    # v17.5: 실제 이름은 'KODEX 미국30년국채울트라선물(H)' — 예전 키워드 ["미국채","30"] 에 안 맞아 늘 빠졌어요
+    ("304660", ["미국", "30", "울트라"], "KODEX 미국30년국채울트라선물(H)", 20.0, True, "미국채"),
 ]
 
+# v17.5: 앱에 2025년 내장 가격으로만 있던 종목들 (data.json 에 없어서 늘 옛 가격이 보였어요)
+KR_FUNDS = [
+    # (티커, 이름 키워드, 표기명, 영문, cls, 업종)
+    ("069500", ["200"], "KODEX 200", "KODEX 200", "kr", "index"),
+    ("379800", ["미국", "S&P500"], "KODEX 미국S&P500", "KODEX US S&P500", "us", "index"),
+    ("132030", ["골드"], "KODEX 골드선물(H)", "KODEX Gold Futures(H)", "metal", "metal"),
+    ("144600", ["은"], "KODEX 은선물(H)", "KODEX Silver Futures(H)", "metal", "metal"),
+]
+GOLD_SPOT = "04020000"     # KRX 금시장 금 99.99K (원/g)
+GOLD_SPOT_URL = "https://api.stock.naver.com/marketindex/metals/M04020000/prices"
+TROY_OZ_G = 31.1034768
 
-def fetch_bonds(start, end, kr_bench):
-    """상장 채권 ETF를 받아 채권 블록 레코드와 블록 대표 수익률(10년 국고 기준)을 만듭니다."""
+
+def etf_names():
     import FinanceDataReader as fdr
     names = {}
     try:
         lst = fdr.StockListing("ETF/KR")
         for _, row in lst.iterrows():
             names[str(row.get("Symbol") or row.get("Code") or "")] = str(row.get("Name") or "")
+        log(f"· ETF 목록 {len(names):,}개 (이름 확인용)")
     except Exception as e:
-        log(f"  (ETF 목록 확인 생략: {e} — 이름 검증 없이 진행)")
+        log(f"  !! ETF 목록 확인 실패: {e} — 이름 검증 없이 진행")
+    return names
 
+
+def series_stats(px, bench, rf):
+    """원화 시계열 하나로 변동성·베타·52주 범위·낙폭·성과."""
+    ret = px.pct_change().dropna()
+    out = {"price": round(float(px.iloc[-1]), 0), "vol": ann_vol(ret.values),
+           "lo": round(float(px.tail(252).min()), 0), "hi": round(float(px.tail(252).max()), 0)}
+    jb = pd.concat([ret.rename("b"), bench.rename("m")], axis=1).dropna()
+    if len(jb) > 60 and jb["m"].var() > 0:
+        out["beta"] = round(float(jb["b"].cov(jb["m"]) / jb["m"].var()), 2)
+    out["mdd"] = round(float((px / px.cummax() - 1).min()) * 100, 1)
+    out.update(perf_stats(px, rf))
+    return out
+
+
+def kr_fund_series(t, start, px_date):
+    """국내 ETF 시계열을 기준일까지. 마지막 값이 기준일이 아니면 None (다른 날 가격이 섞이지 않게)."""
+    import FinanceDataReader as fdr
+    px = cut_at(fdr.DataReader(t, start, px_date)["Close"].dropna(), px_date)
+    if len(px) < 60:
+        log(f"  !! {t} 시세 {len(px)}일뿐 — 제외")
+        return None
+    if px.index[-1].date() != px_date:
+        log(f"  !! {t} 마지막 시세가 {px.index[-1]:%Y-%m-%d} 라서 기준일 {px_date} 과 달라요 — 제외")
+        return None
+    return px
+
+
+def fetch_bonds(start, px_date, kr_bench, names, rf=RF_FALLBACK):
+    """상장 채권 ETF 를 받아 채권 블록 레코드와 블록 대표 수익률(10년 국고 기준)을 만듭니다."""
     recs, proxy = [], None
     for t, kws, label, dur, hedged, grp in BOND_ETFS:
         nm = names.get(t, "")
@@ -801,37 +1053,94 @@ def fetch_bonds(start, end, kr_bench):
             log(f"  !! 채권 ETF {t} 이름 불일치(기대 {kws} ↔ 실제 {nm}) — 제외")
             continue
         try:
-            px = fdr.DataReader(t, start, end)["Close"].dropna()
-            if len(px) < 60:
-                log(f"  (채권 ETF {t} 데이터 부족 — 제외)")
+            px = kr_fund_series(t, start, px_date)
+            if px is None:
                 continue
-            ret = px.pct_change().dropna()
-            vol = float(np.nanstd(ret.values, ddof=1)) * math.sqrt(252) * 100
-            if vol > 30:
-                log(f"  !! 채권 ETF {t} 변동성 {vol:.0f}% — 채권답지 않아 제외")
+            st = series_stats(px, kr_bench, rf)
+            if st["vol"] is not None and st["vol"] > 30:
+                log(f"  !! 채권 ETF {t} 변동성 {st['vol']:.0f}% — 채권답지 않아 제외")
                 continue
-            jb = pd.concat([ret.rename("b"), kr_bench.rename("m")], axis=1).dropna()
-            beta = 0.0
-            if len(jb) > 60 and jb["m"].var() > 0:
-                beta = round(float(jb["b"].cov(jb["m"]) / jb["m"].var()), 2)
-            dd = float((px / px.cummax() - 1).min()) * 100
             hj = "환헤지형이라 환율 변동은 막혀 있어요." if hedged else "환노출형이라 달러가 오르면 추가 수익, 내리면 손실이 더해져요."
             dk = (f"{grp} 채권 ETF · 듀레이션 약 {dur:g}년. 금리가 1%p 오르면 대략 {dur:g}% 안팎 하락하는 민감도예요. "
                   + (hj if grp == "미국채" else "") + "채권 ETF 매매차익에는 배당소득세 15.4%가 붙어요.")
             recs.append({
                 "t": t, "nk": nm or label, "ne": nm or label, "cls": "bond", "s": "bond",
-                "price": round(float(px.iloc[-1]), 0), "vol": round(vol, 1), "beta": beta,
-                "lo": round(float(px.tail(252).min()), 0), "hi": round(float(px.tail(252).max()), 0),
-                "mdd": round(dd, 1), "dy": None, "per": None, "pbr": None, "al": 0,
+                "price": st["price"], "vol": st["vol"], "beta": st.get("beta", 0.0),
+                "lo": st["lo"], "hi": st["hi"], "mdd": st["mdd"],
+                "dy": None, "per": None, "pbr": None, "al": 0,
                 "dur": dur, "hedged": hedged, "grp": grp, "dk": dk,
                 "x": {"dk": dk, "de": ""},
             })
             if t == "148070":
-                proxy = ret
+                proxy = px.pct_change().dropna()
         except Exception as e:
-            log(f"  (채권 ETF {t} 실패: {e})")
-    log(f"· 채권 ETF {len(recs)}종 수집" + ("" if proxy is not None else " · 대표 시계열 없음(블록 상관 생략)"))
+            log(f"  !! 채권 ETF {t} 실패: {e}")
+    log(f"· 채권 ETF {len(recs)}종 수집 (설정 {len(BOND_ETFS)}종)"
+        + ("" if proxy is not None else " · !! 대표 시계열 없음(블록 상관 생략)"))
     return recs, proxy
+
+
+def krx_gold_series(start, px_date):
+    """KRX 금시장 종가 (원/g) — 네이버 증권 '국내 금' 일별 시세. 60일씩, 최신부터."""
+    vals, page = {}, 1
+    while page <= 20:
+        r = requests.get(GOLD_SPOT_URL, params={"page": page, "pageSize": 60},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        r.raise_for_status()
+        rows = r.json()
+        if not rows:
+            break
+        for x in rows:
+            d = pd.Timestamp(str(x.get("localTradedAt", ""))[:10])
+            v = _num(x.get("closePrice"))
+            if v and v > 0:
+                vals[d] = v
+        if min(vals) <= pd.Timestamp(start):
+            break
+        page += 1
+    px = pd.Series(vals).sort_index()
+    return cut_at(px[px.index >= pd.Timestamp(start)], px_date)
+
+
+def fetch_kr_funds(start, px_date, kr_bench, names, rf, gold_usd=None, fx=None):
+    """KODEX 200·미국S&P500·골드선물·은선물 + KRX 금현물. 금현물을 못 받으면 국제 금값 환산(추정, 실시간 아님)."""
+    recs = []
+    for t, kws, label, label_en, cls, sec in KR_FUNDS:
+        nm = names.get(t, "")
+        if nm and not all(k in nm.replace(" ", "") for k in kws):
+            log(f"  !! {t} 이름 불일치(기대 {kws} ↔ 실제 {nm}) — 제외")
+            continue
+        try:
+            px = kr_fund_series(t, start, px_date)
+            if px is None:
+                continue
+            st = series_stats(px, kr_bench, rf)
+            recs.append({"t": t, "nk": nm or label, "ne": label_en, "cls": cls, "s": sec, "fund": True,
+                         **st, "src": "KRX"})
+        except Exception as e:
+            log(f"  !! {t} 실패: {e}")
+
+    gold = None
+    try:
+        px = krx_gold_series(start, px_date)
+        if len(px) >= 250 and px.index[-1].date() == px_date:
+            gold = {**series_stats(px, kr_bench, rf), "src": "KRX 금시장"}
+            log(f"· KRX 금현물 {gold['price']:,.0f}원/g ({px_date}, {len(px):,}일)")
+        else:
+            log(f"  !! KRX 금현물 시세가 부족하거나 기준일과 달라요 ({len(px)}일, 마지막 {px.index[-1]:%Y-%m-%d})")
+    except Exception as e:
+        log(f"  !! KRX 금현물 실패: {e}")
+    if gold is None and gold_usd is not None and fx is not None:
+        g = (gold_usd * fx.reindex(gold_usd.index).ffill() / TROY_OZ_G).dropna()
+        g = cut_at(g, px_date)
+        if len(g) >= 250:
+            gold = {**series_stats(g, kr_bench, rf), "src": "국제 금값 환산", "est": True}
+            log(f"  !! 금현물은 국제 금값 환산 추정치로 넣어요 ({gold['price']:,.0f}원/g) — 앱에서 '실시간 아님'으로 표시돼요")
+    if gold:
+        recs.append({"t": GOLD_SPOT, "nk": "KRX 금현물 (99.99K)", "ne": "KRX Gold Spot", "cls": "metal", "s": "metal",
+                     "fund": True, **gold})
+    log(f"· 국내 ETF·금현물 {len(recs)}종 ({', '.join(r['t'] for r in recs)})")
+    return recs
 
 
 def _monthly(series, months=36):
@@ -859,8 +1168,74 @@ def parse_ecos_items(rows):
     return out
 
 
-def fetch_macro(start, end, gold_krw_px=None, fx=None):
-    """금리·원자재 데이터: 국고채 커브(ECOS)·장단기 금리차·금은유가."""
+ECOS_BASE = "https://ecos.bok.or.kr/api"
+ECOS_STAT = "817Y002"   # 시장금리(일별)
+
+
+def ecos_get(url, tries=3):
+    """ECOS 는 새벽 점검 등으로 잠깐 응답이 없을 때가 있어요. 쉬었다가 다시 (5초 → 15초)."""
+    last = None
+    for i in range(tries):
+        try:
+            return requests.get(url, timeout=30).json()
+        except Exception as e:
+            last = e
+            if i < tries - 1:
+                time.sleep(5 if i == 0 else 15)
+    raise RuntimeError(f"ECOS 응답 없음 ({tries}번 시도): {type(last).__name__}")
+
+
+def ecos_items():
+    """817Y002 품목: {만기(년): 코드, "corp": 회사채 AA- 코드}."""
+    j = ecos_get(f"{ECOS_BASE}/StatisticItemList/{ECOS_KEY}/json/kr/1/200/{ECOS_STAT}")
+    if "RESULT" in j:
+        raise RuntimeError(f"ECOS 품목 조회 실패: {j['RESULT']}")
+    return parse_ecos_items((j.get("StatisticItemList") or {}).get("row") or [])
+
+
+def ecos_series(code, start, end):
+    """일별 시계열 (날짜 → %). 값이 빈 날은 버려요."""
+    u = f"{ECOS_BASE}/StatisticSearch/{ECOS_KEY}/json/kr/1/2000/{ECOS_STAT}/D/{start:%Y%m%d}/{end:%Y%m%d}/{code}"
+    j = ecos_get(u)
+    if "RESULT" in j:
+        raise RuntimeError(f"ECOS {code}: {j['RESULT']}")
+    rows = (j.get("StatisticSearch") or {}).get("row") or []
+    s = pd.Series([_fin(x.get("DATA_VALUE")) for x in rows],
+                  index=pd.to_datetime([x["TIME"] for x in rows], format="%Y%m%d"), dtype="float64")
+    return s.dropna()
+
+
+def fetch_rf(today):
+    """무위험수익률 = 국고채 10년 (ECOS). 안 되면 FRED 의 OECD 월간 한국 10년, 그것도 안 되면 기본값.
+    반환: (소수, 출처). 출처가 'fallback' 이면 검증에서 실패 처리돼요."""
+    if ECOS_KEY:
+        try:
+            code = ecos_items()[10]
+            s = ecos_series(code, today - dt.timedelta(days=30), today)
+            v, d = float(s.iloc[-1]), s.index[-1]
+            if 0 < v < 20:
+                log(f"· 무위험수익률: 국고채 10년 {v:.2f}% (ECOS · {d:%Y-%m-%d})")
+                return v / 100, f"ECOS 국고채10년 {d:%Y-%m-%d}"
+        except Exception as e:
+            log(f"  !! 국고채 10년(ECOS) 실패: {e}")
+    else:
+        log("  !! ECOS_API_KEY 없음")
+    try:
+        import FinanceDataReader as fdr
+        s = fdr.DataReader("FRED:IRLTLT01KRM156N", today - dt.timedelta(days=400), today).iloc[:, 0].dropna()
+        v, d = float(s.iloc[-1]), s.index[-1]
+        if 0 < v < 20:
+            log(f"  !! 무위험수익률: ECOS 대신 FRED(OECD 월간 한국 10년) {v:.2f}% · {d:%Y-%m}")
+            return v / 100, f"FRED IRLTLT01KRM156N {d:%Y-%m}"
+    except Exception as e:
+        log(f"  !! 무위험수익률 FRED 실패: {e}")
+    log(f"  !! 무위험수익률을 받지 못해 기본값 {RF_FALLBACK * 100:.1f}% 를 써요 — 검증에서 실패 처리됩니다")
+    return RF_FALLBACK, "fallback"
+
+
+def fetch_macro(start, end, fx=None):
+    """금리·원자재 데이터: 국고채 커브(ECOS)·장단기 금리차·금은유가.
+    v17.5: curve.date 는 실행일이 아니라 ECOS 의 마지막 관측일이에요."""
     import FinanceDataReader as fdr
     out = {"asOf": end.isoformat(), "curve": None, "sprKr": None, "sprUs": None,
            "gold": None, "silver": None, "wti": None,
@@ -869,16 +1244,13 @@ def fetch_macro(start, end, gold_krw_px=None, fx=None):
 
     # 미국 장단기 + 만기별 (FRED, 키 불필요)
     us_t = {}
-    try:
-        for code, key in (("DGS1", 1), ("DGS3", 3), ("DGS5", 5), ("DGS10", 10), ("DGS2", 2)):
-            try:
-                us_t[key] = fdr.DataReader("FRED:" + code, s3, end).iloc[:, 0].dropna()
-            except Exception:
-                pass
-        if 10 in us_t and 2 in us_t:
-            out["sprUs"] = _monthly((us_t[10] - us_t[2]).dropna())
-    except Exception as e:
-        log(f"  (미국 금리 생략: {e})")
+    for code, key in (("DGS1", 1), ("DGS3", 3), ("DGS5", 5), ("DGS10", 10), ("DGS2", 2)):
+        try:
+            us_t[key] = fdr.DataReader("FRED:" + code, s3, end).iloc[:, 0].dropna()
+        except Exception as e:
+            log(f"  !! FRED {code} 실패: {e}")
+    if 10 in us_t and 2 in us_t:
+        out["sprUs"] = _monthly((us_t[10] - us_t[2]).dropna())
 
     # 주요국 10년물 (일본·독일: OECD 월간, FRED 경유)
     g10 = {}
@@ -888,94 +1260,110 @@ def fetch_macro(start, end, gold_krw_px=None, fx=None):
         try:
             g10[key] = _monthly(fdr.DataReader("FRED:" + code, s3, end).iloc[:, 0].dropna())
         except Exception as e:
-            log(f"  ({key} 10년물 생략: {e})")
+            log(f"  !! {key} 10년물 실패: {e}")
 
-    # 원자재
+    # 원자재 (yfinance 의 end 는 그날을 빼므로 +1일)
     try:
         import yfinance as yf
         def yfc(tk):
-            v = yf.download(tk, start=s3, end=end, progress=False, auto_adjust=True)["Close"]
+            v = yf.download(tk, start=s3, end=end + dt.timedelta(days=1), progress=False, auto_adjust=True)["Close"]
             return v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v
         if fx is not None:
             fxa = fx.reindex(pd.date_range(s3, end)).ffill()
             g = yfc("GC=F"); out["gold"] = _monthly((g * fxa.reindex(g.index).ffill()).dropna())
             sv = yfc("SI=F"); out["silver"] = _monthly((sv * fxa.reindex(sv.index).ffill()).dropna())
     except Exception as e:
-        log(f"  (금·은 생략: {e})")
+        log(f"  !! 금·은 실패: {e}")
     try:
-        w = fdr.DataReader("FRED:DCOILWTICO", s3, end).iloc[:, 0]
-        out["wti"] = _monthly(w)
+        out["wti"] = _monthly(fdr.DataReader("FRED:DCOILWTICO", s3, end).iloc[:, 0])
     except Exception as e:
-        log(f"  (WTI 생략: {e})")
+        log(f"  !! WTI 실패: {e}")
 
     # 국고채 커브 + 한국 장단기 (ECOS)
     if not ECOS_KEY:
-        log("· ECOS_API_KEY 없음 → 국고채 커브 생략 (설정 방법은 가이드 참고)")
-        return out
-    try:
-        r = requests.get(f"https://ecos.bok.or.kr/api/StatisticItemList/{ECOS_KEY}/json/kr/1/200/817Y002", timeout=25)
-        rows = (r.json().get("StatisticItemList") or {}).get("row") or []
-        items = parse_ecos_items(rows)
-        log(f"· ECOS 국고채 만기 확인: {sorted(items.keys())}")
-        series = {}
-        for yr, code in sorted(items.items()):
-            u = (f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_KEY}/json/kr/1/1200/817Y002/D/"
-                 f"{s3.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{code}")
-            rr = requests.get(u, timeout=30)
-            rw = (rr.json().get("StatisticSearch") or {}).get("row") or []
-            if not rw:
-                continue
-            idx = pd.to_datetime([x["TIME"] for x in rw], format="%Y%m%d")
-            series[yr] = pd.Series([float(x["DATA_VALUE"]) for x in rw], index=idx).dropna()
-        if series:
-            tenors = sorted(series.keys())
-            now, ago = [], []
-            ago_target = pd.Timestamp(end - dt.timedelta(days=365))
-            for yr in tenors:
-                s = series[yr]
-                now.append(round(float(s.iloc[-1]), 2))
-                i = s.index.get_indexer([ago_target], method="nearest")[0]
-                ago.append(round(float(s.iloc[i]), 2))
-            out["curve"] = {"tenors": tenors, "now": now, "ago": ago,
-                            "date": series[tenors[0]].index[-1].strftime("%Y-%m-%d")}
-            if 3 in series and 10 in series:
-                out["sprKr"] = _monthly((series[10] - series[3]).dropna())
-            if 10 in series:
-                g10["kr"] = _monthly(series[10])
-            # 만기별 한·미 금리 (지금 값): [만기, 한국, 미국]
-            tn = []
-            for yr in (1, 3, 5, 10):
-                k = round(float(series[yr].iloc[-1]), 2) if yr in series else None
-                u = round(float(us_t[yr].iloc[-1]), 2) if yr in us_t else None
-                if k is not None or u is not None:
-                    tn.append([yr, k, u])
-            if tn:
-                out["tenor"] = tn
-            # 신용 스프레드: 회사채 AA- − 국고 3년
-            try:
+        log("  !! ECOS_API_KEY 없음 → 국고채 커브 없음 (검증에서 실패 처리돼요)")
+    else:
+        try:
+            items = ecos_items()
+            tenor_codes = {k: v for k, v in items.items() if isinstance(k, int)}
+            log(f"· ECOS 품목: 국고채 {sorted(tenor_codes)}년 · 회사채 AA- {'있음' if items.get('corp') else '없음'}")
+            series = {}
+            for yr, code in sorted(tenor_codes.items()):
+                try:
+                    srs = ecos_series(code, s3, end)
+                    if len(srs):
+                        series[yr] = srs
+                except Exception as e:
+                    log(f"  !! ECOS 국고채 {yr}년 실패: {e}")
+            if series:
+                tenors = sorted(series)
+                last = {yr: series[yr].index[-1] for yr in tenors}
+                cdate = min(last.values())
+                if len(set(last.values())) > 1:
+                    log(f"  !! 국고채 만기별 마지막 관측일이 달라요: { {k: f'{v:%m-%d}' for k, v in last.items()} } → 가장 이른 날 기준")
+                ago_target = pd.Timestamp(cdate - pd.Timedelta(days=365))
+                now, ago = [], []
+                for yr in tenors:
+                    srs = series[yr][series[yr].index <= cdate]
+                    now.append(round(float(srs.iloc[-1]), 2))
+                    i = srs.index.get_indexer([ago_target], method="nearest")[0]
+                    ago.append(round(float(srs.iloc[i]), 2))
+                out["curve"] = {"tenors": tenors, "now": now, "ago": ago, "date": cdate.strftime("%Y-%m-%d")}
+                if 3 in series and 10 in series:
+                    out["sprKr"] = _monthly((series[10] - series[3]).dropna())
+                if 10 in series:
+                    g10["kr"] = _monthly(series[10])
+                # 만기별 한·미 금리 (지금 값): [만기, 한국, 미국]
+                tn = []
+                for yr in (1, 3, 5, 10):
+                    k = round(float(series[yr].iloc[-1]), 2) if yr in series else None
+                    u = round(float(us_t[yr].iloc[-1]), 2) if yr in us_t else None
+                    if k is not None or u is not None:
+                        tn.append([yr, k, u])
+                if tn:
+                    out["tenor"] = tn
+                # 신용 스프레드: 회사채 AA- − 국고 3년
                 if items.get("corp") and 3 in series:
-                    u2 = (f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_KEY}/json/kr/1/1200/817Y002/D/"
-                          f"{s3.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{items['corp']}")
-                    rr2 = requests.get(u2, timeout=30)
-                    rw2 = (rr2.json().get("StatisticSearch") or {}).get("row") or []
-                    if rw2:
-                        idx2 = pd.to_datetime([x["TIME"] for x in rw2], format="%Y%m%d")
-                        corp = pd.Series([float(x["DATA_VALUE"]) for x in rw2], index=idx2).dropna()
-                        cs = (corp - series[3]).dropna()
+                    try:
+                        cs = (ecos_series(items["corp"], s3, end) - series[3]).dropna()
                         if len(cs) > 60:
-                            now = float(cs.iloc[-1])
-                            pct = int(round(float((cs < now).mean()) * 100))
-                            out["credit"] = dict(_monthly(cs), now=round(now, 2),
+                            now_cs = float(cs.iloc[-1])
+                            pct = int(round(float((cs < now_cs).mean()) * 100))
+                            out["credit"] = dict(_monthly(cs), now=round(now_cs, 2), date=cs.index[-1].strftime("%Y-%m-%d"),
                                                  lo=round(float(cs.min()), 2), hi=round(float(cs.max()), 2), pct=pct)
-            except Exception as e:
-                log(f"  (신용 스프레드 생략: {e})")
-            log(f"· 국고채 커브 {len(tenors)}개 만기 · 기준 {out['curve']['date']}"
-                + (f" · 신용 스프레드 {out['credit']['now']}%p" if out.get('credit') else ""))
-    except Exception as e:
-        log(f"  !! ECOS 조회 실패: {e}")
+                    except Exception as e:
+                        log(f"  !! 신용 스프레드 실패: {e}")
+                log(f"· 국고채 커브 {len(tenors)}개 만기 · 기준 {out['curve']['date']}"
+                    + (f" · 신용 스프레드 {out['credit']['now']}%p" if out.get("credit") else " · 신용 스프레드 없음"))
+            else:
+                log("  !! ECOS 국고채 시계열을 하나도 받지 못했어요")
+        except Exception as e:
+            log(f"  !! ECOS 조회 실패: {e}")
+    if out["curve"] is None:
+        keep_prev_ecos(out, g10)
     if g10:
         out["g10"] = g10
     return out
+
+
+def keep_prev_ecos(out, g10, path=OUT_MACRO):
+    """ECOS 를 못 받았으면 지난 발행본의 국고채 커브를 그대로 둬요. 날짜(curve.date)도 그대로라
+    화면에는 '○월 ○일 기준'으로 옛 날짜가 보이고, 7일이 넘으면 검증에서 실패해요."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            prev = json.load(f)
+    except Exception:
+        return
+    pc = prev.get("curve") or {}
+    if not pc.get("date"):
+        return
+    for k in ("curve", "sprKr", "tenor", "credit"):
+        if prev.get(k) is not None:
+            out[k] = prev[k]
+    if (prev.get("g10") or {}).get("kr"):
+        g10["kr"] = prev["g10"]["kr"]
+    out["ecosKept"] = True
+    log(f"  !! ECOS 를 받지 못해 지난 발행본의 국고채 커브(기준 {pc['date']})를 그대로 둬요")
 
 
 # ────────────────────────────────────────────────────────────
@@ -1016,122 +1404,113 @@ def parse_elestock_corp(rows, bgn):
     return out
 
 
-def fetch_disclosures(kr_stocks, cmap, end):
+def fetch_disclosures(kr_stocks, cmap, end, client):
     """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
-    실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다."""
-    empty = {"asOf": end.isoformat(), "insider": [], "nps": []}
-    if not DART_KEY:
-        log("· DART_API_KEY 없음 → 공시 수집 생략")
-        return empty
+    실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다.
+    v17.5: newest(가장 최근 공시일)·listOk(목록 조회 성공 여부)를 함께 씁니다. 화면은 실행일이 아니라 newest 를 보여줘요."""
     corp2t = {v: k for k, v in cmap.items()}
     info = {s["t"]: s for s in kr_stocks if s.get("cls") == "kr"}
 
-    prev, known = empty, set()
+    prev, known = {"insider": [], "nps": []}, set()
     try:
         with open(OUT_DISC, encoding="utf-8") as f:
             prev = json.load(f)
         known = {r.get("rc") for r in prev.get("insider", []) if r.get("rc")}
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"  !! 지난 disc.json 을 읽지 못했어요({e}) → 내부자 거래를 처음부터 모아요")
 
-    import datetime as _dt
-    bgn = (end - _dt.timedelta(days=89)).strftime("%Y%m%d")  # 조회기간 3개월 제한 안전 마진
+    bgn = (end - dt.timedelta(days=89)).strftime("%Y%m%d")  # 조회기간 3개월 제한 안전 마진
     fins_by_corp, nps_corps = {}, {}
     page, stat_note = 1, None
     while page <= 30:
-        try:
-            r = requests.get("https://opendart.fss.or.kr/api/list.json",
-                             params={"crtfc_key": DART_KEY, "bgn_de": bgn, "end_de": end.strftime("%Y%m%d"),
-                                     "pblntf_ty": "D", "page_no": str(page), "page_count": "100"}, timeout=25)
-            j = r.json()
-            if j.get("status") != "000":
-                stat_note = f"status={j.get('status')} msg={j.get('message')}"
-                break
-            for it in j.get("list", []):
-                nm = it.get("report_nm") or ""
-                if "임원" in nm and "주요주주" in nm:
-                    fins_by_corp.setdefault(it["corp_code"], 0)
-                    fins_by_corp[it["corp_code"]] += 1
-                if "국민연금" in (it.get("flr_nm") or ""):
-                    nps_corps[it["corp_code"]] = it
-            if page * 100 >= int(j.get("total_count", 0)):
-                break
-            page += 1
-        except Exception as e:
-            stat_note = f"예외 {e}"
+        j = client.get("list.json", {"bgn_de": bgn, "end_de": end.strftime("%Y%m%d"),
+                                     "pblntf_ty": "D", "page_no": str(page), "page_count": "100"})
+        if j is None or j.get("status") != "000":
+            stat_note = f"status={j.get('status')} msg={j.get('message')}" if j else "응답 없음"
             break
+        for it in j.get("list", []):
+            nm = it.get("report_nm") or ""
+            if "임원" in nm and "주요주주" in nm:
+                fins_by_corp[it["corp_code"]] = fins_by_corp.get(it["corp_code"], 0) + 1
+            if "국민연금" in (it.get("flr_nm") or ""):
+                nps_corps[it["corp_code"]] = it
+        if page * 100 >= int(j.get("total_count", 0)):
+            break
+        page += 1
+    list_ok = stat_note is None
     log(f"· 공시 목록(list.json): 임원·주요주주 보고 기업 {len(fins_by_corp):,}곳 · 국민연금 관련 {len(nps_corps):,}곳"
         + (f"  !! 목록 조회 중단: {stat_note}" if stat_note else ""))
 
     targets = [c for c in fins_by_corp if c in corp2t][:DISC_CALL_CAP]
     rows = list(prev.get("insider", []))
-    stat_cnt = {}
+    stat_cnt = collections.Counter()
+
     def one(code):
-        try:
-            r = requests.get("https://opendart.fss.or.kr/api/elestock.json",
-                             params={"crtfc_key": DART_KEY, "corp_code": code}, timeout=25)
-            j = r.json()
-            st = j.get("status")
-            stat_cnt[st] = stat_cnt.get(st, 0) + 1
-            if st != "000":
-                return []
-            t = corp2t.get(code)
-            s = info.get(t)
-            if not t or not s:
-                return []
-            out = []
-            for e in parse_elestock_corp(j.get("list", []), bgn):
-                if e["rc"] in known:
-                    continue
-                amt = round(abs(e["q"]) * (s.get("price") or 0) / 1e8, 1)
-                out.append({"rc": e["rc"], "d": e["d"], "t": t, "nk": s["nk"], "s": s.get("s") or "etc",
-                            "cap": s.get("cap"), "nm": e["nm"], "pos": e["pos"], "q": e["q"], "r": e["r"], "amt": amt})
-            return out
-        except Exception:
-            stat_cnt["예외"] = stat_cnt.get("예외", 0) + 1
+        j = client.get("elestock.json", {"corp_code": code})
+        st = j.get("status") if j else "실패"
+        stat_cnt[st] += 1
+        if st != "000":
             return []
+        t = corp2t.get(code)
+        s = info.get(t)
+        if not t or not s:
+            return []
+        out = []
+        for e in parse_elestock_corp(j.get("list", []), bgn):
+            if e["rc"] in known:
+                continue
+            price = _fin(s.get("price"))
+            amt = round(abs(e["q"]) * price / 1e8, 1) if price else None
+            out.append({"rc": e["rc"], "d": e["d"], "t": t, "nk": s["nk"], "s": s.get("s") or "etc",
+                        "cap": s.get("cap"), "nm": e["nm"], "pos": e["pos"], "q": e["q"], "r": e["r"], "amt": amt})
+        return out
     if targets:
         with ThreadPoolExecutor(max_workers=5) as ex:
             for res in ex.map(one, targets):
                 rows.extend(res)
-    log(f"· 내부자 상세(elestock): 기업 {len(targets):,}곳 조회 · 상태 {stat_cnt}")
+    log(f"· 내부자 상세(elestock): 기업 {len(targets):,}곳 조회 · 상태 {dict(stat_cnt)}")
 
     rows = [r for r in rows if r.get("d", "") >= bgn]
     rows.sort(key=lambda r: r.get("d", ""), reverse=True)
-    seen, dedup = set(), []
+    seen, dedup, refreshed = set(), [], 0
     for r in rows:
         if r["rc"] in seen:
             continue
-        seen.add(r["rc"]); dedup.append(r)
+        seen.add(r["rc"])
+        s = info.get(r.get("t"))
+        if s and _fin(r.get("cap")) is None and _fin(s.get("cap")) is not None:
+            r["cap"] = s["cap"]      # 예전 실행이 남긴 빈 시가총액을 오늘 값으로 채워요
+            refreshed += 1
+        dedup.append(r)
+    if refreshed:
+        log(f"· 내부자 거래 {refreshed:,}건의 비어 있던 시가총액을 오늘 값으로 채움")
 
-    nps, nps_stat = [], {}
+    nps, nps_stat = [], collections.Counter()
     for code, it in list(nps_corps.items())[:200]:
-        try:
-            r = requests.get("https://opendart.fss.or.kr/api/majorstock.json",
-                             params={"crtfc_key": DART_KEY, "corp_code": code}, timeout=25)
-            j = r.json()
-            st = j.get("status")
-            nps_stat[st] = nps_stat.get(st, 0) + 1
-            if st != "000":
-                continue
-            cand = [x for x in j.get("list", []) if "국민연금" in (x.get("repror") or "")]
-            if not cand:
-                continue
-            cand.sort(key=lambda x: (x.get("rcept_dt") or "").replace("-", ""), reverse=True)
-            x = cand[0]
-            t = corp2t.get(code); s = info.get(t)
-            d = (x.get("rcept_dt") or "").replace("-", "")
-            if not t or not s or d < bgn:
-                continue
-            nps.append({"d": d, "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
-                        "rt": _num(x.get("stkrt")), "chg": _num(x.get("stkrt_irds"))})
-        except Exception:
-            nps_stat["예외"] = nps_stat.get("예외", 0) + 1
+        j = client.get("majorstock.json", {"corp_code": code})
+        st = j.get("status") if j else "실패"
+        nps_stat[st] += 1
+        if st != "000":
             continue
+        cand = [x for x in j.get("list", []) if "국민연금" in (x.get("repror") or "")]
+        if not cand:
+            continue
+        cand.sort(key=lambda x: (x.get("rcept_dt") or "").replace("-", ""), reverse=True)
+        x = cand[0]
+        t = corp2t.get(code); s = info.get(t)
+        d = (x.get("rcept_dt") or "").replace("-", "")
+        if not t or not s or d < bgn:
+            continue
+        nps.append({"d": d, "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
+                    "rt": _num(x.get("stkrt")), "chg": _num(x.get("stkrt_irds"))})
     nps.sort(key=lambda r: r.get("d", ""), reverse=True)
-    log(f"· 국민연금(majorstock): 상태 {nps_stat} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
+    log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
-    return {"asOf": end.isoformat(), "insider": dedup, "nps": nps}
+    client.raise_if_fatal()
+    ds = [r.get("d") for r in dedup + nps if r.get("d")]
+    newest = max(ds) if ds else None
+    newest = f"{newest[:4]}-{newest[4:6]}-{newest[6:8]}" if newest else None
+    return {"asOf": end.isoformat(), "newest": newest, "listOk": list_ok, "insider": dedup, "nps": nps}
 
 
 # ────────────────────────────────────────────────────────────
@@ -1218,7 +1597,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
         op0 = eff["op0"]
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
         if s.get("cap") and fin:
-            ev = s["cap"] * 1e4 + (eff["bor"] or 0) - (eff["cash"] or 0)
+            ev = s["cap"] * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0)
             if row["s"] not in FIN_SECS and ev > 0:
                 if ebitda and ebitda > 0:
                     v = ev / ebitda
@@ -1247,7 +1626,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
         g = None
         if len(pairs) >= 5:
             r0 = sum(p[0] for p in pairs); r2 = sum(p[1] for p in pairs)
-            if r2 > 0:
+            if r2 > 0 and r0 > 0:      # 합산 매출이 음수면 제곱근이 복소수가 돼요
                 g = round(((r0 / r2) ** 0.5 - 1) * 100, 1)
         sectors[sec] = {
             "n": len(arr), "nG": len(pairs), "g": g,
@@ -1267,16 +1646,65 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
 # ────────────────────────────────────────────────────────────
 # 한국
 # ────────────────────────────────────────────────────────────
-def fetch_korea(start, end, rf):
+def kr_official_close(row):
+    """공식 종가 = 시가총액 ÷ 상장주식수 (원).
+    목록 파일의 Close 열은 저녁 버전에서 시간외(넥스트레이드) 가격으로 바뀌어요. 시가총액은 KRX 공식 종가로
+    계산돼 있어서, 다음 날 파일의 '전일 대비' 기준가와 정확히 맞아요 (2026-10-27~29 삼성전자로 확인)."""
+    mc, sh = _fin(row.get("Marcap")), _fin(row.get("Stocks"))
+    if not mc or not sh or mc <= 0 or sh <= 0:
+        return None
+    return float(round(mc / sh))
+
+
+def cut_at(px, last_date):
+    """last_date 보다 뒤(장중·다음 날) 값을 버려요."""
+    return px[px.index <= pd.Timestamp(last_date)]
+
+
+def pin_close(px, px_date, close):
+    """시계열의 px_date 값을 공식 종가로 맞춥니다. 반환: (시계열, 'same'|'fixed'|'added')."""
+    px = cut_at(px, px_date)
+    ts = pd.Timestamp(px_date)
+    if len(px) and px.index[-1] == ts:
+        if float(px.iloc[-1]) == close:
+            return px, "same"
+        px = px.copy()
+        px.iloc[-1] = close
+        return px, "fixed"
+    return pd.concat([px, pd.Series([close], index=[ts])]), "added"
+
+
+def listing_from_prev(prev):
+    """마지막 수단: 지난 data.json 으로 종목 뼈대를 만들어요. 공식 종가는 없으니 검증에서 실패 처리됩니다.
+    두 번 연속이면 바로 멈춰요."""
+    if not prev:
+        raise RuntimeError("!! 최종본 종목 목록도, 지난 data.json 도 없어요 — 발행하지 않고 중단합니다")
+    if str(prev.get("listSrc", "")).startswith("prev"):
+        raise RuntimeError("!! 지난 실행도 종목 목록 대신 지난 data.json 을 썼어요. 두 번 연속이라 중단합니다")
+    rows = []
+    for x in prev.get("stocks", []):
+        if x.get("cls") != "kr" or not x.get("t"):
+            continue
+        cap, val = _fin(x.get("cap")), _fin(x.get("val"))
+        rows.append({"Code": x["t"], "Name": x.get("nk") or x["t"], "Market": "",
+                     "Marcap": cap * 1e12 if cap else None, "Stocks": x.get("shr"),
+                     "Amount": val * 1e8 if val is not None else None, "_prev_s": x.get("s")})
+    if len(rows) < 300:
+        raise RuntimeError(f"!! 지난 data.json 의 국내 종목이 {len(rows)}개뿐이에요 — 중단합니다")
+    log(f"  !! 종목 목록 원본을 못 받아 지난 data.json 의 {len(rows):,}개로 대신해요. 공식 종가가 없어 발행되지 않아요")
+    return pd.DataFrame(rows)
+
+
+def fetch_korea(start, today, rf, prev=None):
+    """국내 주식: 최종본 목록 → 공식 종가 → pxDate 까지 자른 시계열로 위험·성과 지표.
+    반환: (종목들, KOSPI 수익률, 시장 요약, 메타{pxDate, ksDate, listSrc})."""
     import FinanceDataReader as fdr
 
     log("· KRX 종목 목록…")
-    # v17.4.1: fdr.StockListing("KRX") 는 아침 실행 때 장 시작 전 파일(시가총액이 전부 빈 값)을 읽었어요.
-    # 이제 최종본 파일만 씁니다. 못 찾으면 장 전·장중 파일로 발행하지 않고 실행을 멈춰요
-    # (그러면 지난번 데이터가 그대로 남아요).
-    _list_date, listing = load_kr_listing(end)
+    px_date, listing = load_kr_listing(today)
+    list_src = "fdr_krx_data_cache"
     if listing is None:
-        raise RuntimeError("최종본 종목 목록이 없어요 — 장 전·장중 파일로는 발행하지 않고 중단합니다")
+        listing, list_src = listing_from_prev(prev), "prev-data.json"
     code_col = next((c for c in ("Code", "Symbol", "ShortCode", "종목코드") if c in listing.columns), None)
     if code_col is None:
         raise RuntimeError(f"종목코드 열을 못 찾음: {list(listing.columns)}")
@@ -1286,7 +1714,7 @@ def fetch_korea(start, end, rf):
         listing = listing.rename(columns={"종목명": "Name"})
     listing["Code"] = listing["Code"].astype(str).str.strip()
     listing = listing[listing["Code"].str.len() == 6].copy()
-    for c in ("Name", "Market", "Marcap", "Amount"):
+    for c in ("Name", "Market", "Marcap", "Amount", "Stocks", "Close"):
         if c not in listing.columns:
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
@@ -1302,12 +1730,12 @@ def fetch_korea(start, end, rf):
                     desc[str(r[cc]).strip()] = (str(r.get("Sector", "") or ""), str(r.get("Industry", "") or ""))
                 log(f"· 업종 정보 {len(desc):,}건 ({src})")
                 break
-        except Exception:
-            continue
+        except Exception as e:
+            log(f"  !! 업종 정보 {src} 실패: {e}")
     if not desc and "_prev_s" in listing.columns:
-        log("  (업종은 지난 data.json 값을 그대로 사용)")
+        log("  !! 업종은 지난 data.json 값을 그대로 사용")
     elif not desc:
-        log("  (업종 정보를 못 받아왔습니다 — 업종이 '기타'로 들어갑니다)")
+        log("  !! 업종 정보를 못 받아왔어요 — 업종이 '기타'로 들어갑니다")
 
     n_all = len(listing)
     listing = select_kr_universe(listing, MAX_KR)
@@ -1315,7 +1743,28 @@ def fetch_korea(start, end, rf):
         log(f"  → 전체 {n_all:,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
     log(f"  → {len(listing):,}개 종목 (필수 종목 {len(MUST_KR)}개 확인)")
 
-    kospi = fdr.DataReader(KR_INDEX, start, end)["Close"]
+    # 공식 종가와 파일의 Close(저녁엔 시간외 가격) 비교 — 참고용 로그
+    if px_date is not None:
+        off = listing.apply(kr_official_close, axis=1)
+        cl = pd.to_numeric(listing["Close"], errors="coerce")
+        diff = ((cl - off).abs() / off > 0.01).sum()
+        log(f"· 공식 종가 = 시가총액 ÷ 상장주식수 (기준일 {px_date}) · 파일의 Close 가 1% 넘게 다른 종목 {int(diff):,}개 (시간외 가격)")
+
+    last = px_date or (today - dt.timedelta(days=1))
+    ks_all = fdr.DataReader(KR_INDEX, start, today)["Close"].dropna()
+    # 기준일과 오늘 사이에 끝난 거래일이 있으면 가격이 하루 이상 낡았어요 (그날 최종 목록 파일이 없거나 아직 최종본 아님).
+    # 관문(validate_data.py)도 KOSPI 일봉을 따로 받아 같은 검사를 하고 실패시켜요. 여기서는 크게 남겨요.
+    if px_date is not None:
+        missed = sorted({d.date() for d in ks_all.index if px_date < d.date() < today})
+        if missed:
+            log(f"  !! 기준일 {px_date} 뒤에 이미 끝난 거래일 {len(missed)}일: {', '.join(d.isoformat() for d in missed[:5])} "
+                f"— 그날 최종 목록 파일이 없거나 아직 최종본이 아니에요. 가격이 낡아서 관문에서 실패 처리돼요")
+        else:
+            log(f"· 기준일 {px_date} 뒤에 끝난 거래일 없음 (KOSPI 일봉 {len(ks_all):,}일, 오늘 {today} 은 빼고 봐요)")
+    kospi = cut_at(ks_all, last)
+    ks_date = kospi.index[-1].date() if len(kospi) else None
+    if px_date is not None and ks_date != px_date:
+        log(f"  !! KOSPI 마지막 날짜 {ks_date} ≠ 기준일 {px_date} (검증에서 실패 처리돼요)")
     bench = kospi.pct_change().dropna()
     bench.name = "bench"
     mkt = {}
@@ -1323,13 +1772,13 @@ def fetch_korea(start, end, rf):
         mkt = {"kospi": round(float(kospi.iloc[-1]), 2),
                "k1": round(float(kospi.iloc[-1] / kospi.iloc[-22] - 1) * 100, 1),
                "k3": round(float(kospi.iloc[-1] / kospi.iloc[-64] - 1) * 100, 1)}
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"  !! KOSPI 요약 실패: {e}")
 
     fundamentals, foreign = {}, {}
     try:
         from pykrx import stock as pk
-        day = pk.get_nearest_business_day_in_a_week()
+        day = last.strftime("%Y%m%d")
         # 시장별 조회 → 합치기. "ALL" 단일 호출이 pykrx/KRX 사정으로 실패해도 살아남도록
         frames = []
         for mkt_name in ("KOSPI", "KOSDAQ"):   # 'mkt' 는 위의 시장 요약 dict 라서 다른 이름을 써요
@@ -1341,8 +1790,6 @@ def fetch_korea(start, end, rf):
                 log(f"  (펀더멘털 {mkt_name} 실패: {e})")
         if frames:
             fundamentals = pd.concat(frames).to_dict("index")
-        else:  # 마지막 수단: 예전 방식
-            fundamentals = pk.get_market_fundamental(day, market="ALL").to_dict("index")
         log(f"· pykrx 펀더멘털 {len(fundamentals):,}건 (0이어도 정상 — DART 기반 계산으로 대체됩니다)")
         try:
             fr = pk.get_exhaustion_rates_of_foreign_investment(day, market="ALL")
@@ -1353,24 +1800,40 @@ def fetch_korea(start, end, rf):
         except Exception as e:
             log(f"  (외국인 지분율 생략: {e})")
     except Exception as e:
-        log(f"  (PER/PBR 생략: {e})")
+        log(f"  (pykrx 생략: {e})")
 
-    out = []
+    out, pin, dropped = [], collections.Counter(), collections.Counter()
+    lock = threading.Lock()
 
     def one(row):
         code = row["Code"]
         try:
+            close = kr_official_close(row) if px_date is not None else None
+            if px_date is not None and close is None:
+                with lock:
+                    dropped["공식 종가 없음"] += 1
+                return None
             px = None
             for attempt in range(2):
                 try:
-                    px = fdr.DataReader(code, start, end)["Close"].dropna()
+                    px = fdr.DataReader(code, start, last)["Close"].dropna()
                     break
                 except Exception:
                     if attempt == 0:
                         time.sleep(0.3)
                         continue
                     raise
-            if px is None or len(px) < 60:
+            if px is None:
+                return None
+            if close is not None:
+                px, how = pin_close(px, px_date, close)
+                with lock:
+                    pin[how] += 1
+            else:
+                px = cut_at(px, last)
+            if len(px) < 60:
+                with lock:
+                    dropped["시세 60일 미만"] += 1
                 return None
             ret = px.pct_change().dropna()
             ret.name = "r"
@@ -1378,6 +1841,7 @@ def fetch_korea(start, end, rf):
             f = fundamentals.get(code, {})
             per, pbr = _num(f.get("PER")), _num(f.get("PBR"))
             eps, bps, dps = _num(f.get("EPS")), _num(f.get("BPS")), _num(f.get("DPS"))
+            dyv = _num(f.get("DIV"))
             sec_txt, prod_txt = desc.get(code, ("", ""))
             mc = _fin(row.get("Marcap"))
             cap = mc / 1e12 if mc and mc > 0 else None
@@ -1386,11 +1850,11 @@ def fetch_korea(start, end, rf):
             rec = {
                 "t": code, "nk": str(row["Name"]), "ne": str(row["Name"]), "cls": "kr",
                 "s": (row.get("_prev_s") if isinstance(row.get("_prev_s"), str) and row.get("_prev_s") and not sec_txt else map_sector_kr(sec_txt, prod_txt)),
-                "price": float(px.iloc[-1]),
+                "price": close if close is not None else float(px.iloc[-1]),
                 "vol": ann_vol(ret.values), "beta": b, "al": a,
                 "per": round(per, 1) if per and per > 0 else None,
                 "pbr": round(pbr, 2) if pbr and pbr > 0 else None,
-                "dy": round(_num(f.get("DIV")) or 0, 2),
+                "dy": round(dyv, 2) if dyv is not None else None,   # 모르면 빈 칸 (0% 로 보이지 않게). DART 가 나중에 채워요
                 "eps": round(eps, 0) if eps else None,
                 "bps": round(bps, 0) if bps else None,
                 "dps": round(dps, 0) if dps else None,
@@ -1425,7 +1889,9 @@ def fetch_korea(start, end, rf):
             if bits:
                 rec["dk"] = " · ".join(bits)
             return {k: v for k, v in rec.items() if v is not None}
-        except Exception:
+        except Exception as e:
+            with lock:
+                dropped[f"오류 {type(e).__name__}"] += 1
             return None
 
     with ThreadPoolExecutor(max_workers=8) as ex:
@@ -1434,13 +1900,19 @@ def fetch_korea(start, end, rf):
             r = fu.result()
             if r:
                 out.append(r)
-            if (i + 1) % 250 == 0:
+            if (i + 1) % 500 == 0:
                 log(f"  … {i + 1:,}/{len(futs):,} 처리 (성공 {len(out):,})")
 
-    log(f"· 한국 시세 완료: {len(out):,}개")
-    out, fin_map = enrich_with_dart(out)
-    fill_multiples(out, fin_map)
-    return out, fin_map, bench, mkt
+    log(f"· 한국 시세 완료: {len(out):,} / {len(listing):,}개"
+        + (f" · 빠짐 {dict(dropped)}" if dropped else ""))
+    if pin:
+        loud = pin["added"] > 0.02 * max(sum(pin.values()), 1)   # 시계열이 하루 늦으면 베타·변동성에 가짜 하루 움직임이 끼어요
+        log(f"{'  !! ' if loud else '· '}네이버 시계열의 {px_date} 값: 공식 종가와 같음 {pin['same']:,} · "
+            f"공식 종가로 교체 {pin['fixed']:,} · 없어서 추가 {pin['added']:,}"
+            + (" (네이버 시계열이 기준일보다 늦은 종목이 많아요)" if loud else ""))
+    meta = {"pxDate": px_date.isoformat() if px_date else None,
+            "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src}
+    return out, bench, mkt, meta
 
 
 def fill_multiples(kr_stocks, fin_map):
@@ -1515,139 +1987,306 @@ def us_desc(sec_key, industry):
     return base
 
 
-def fetch_us(start, end, rf):
+NY = ZoneInfo("America/New_York")
+
+
+def us_last_complete_day(now=None):
+    """뉴욕 장이 끝난 가장 최근 날짜 (16:30 ET 이후면 오늘, 아니면 어제). 장중 봉을 '종가'로 쓰지 않게."""
+    t = (now or dt.datetime.now(dt.timezone.utc)).astimezone(NY)
+    return t.date() if t.time() >= dt.time(16, 30) else t.date() - dt.timedelta(days=1)
+
+
+def _yf_close(data, tk=None):
+    v = data[tk]["Close"] if tk is not None and isinstance(data.columns, pd.MultiIndex) else data["Close"]
+    return (v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v).dropna()
+
+
+def us_cap_val(market_cap_usd, avg_volume, price_usd, fx):
+    """미국 시가총액·거래대금을 한국과 같은 단위로: (조원, 억원). (순수 함수)"""
+    mc, av, px, fx = _fin(market_cap_usd), _fin(avg_volume), _fin(price_usd), _fin(fx)
+    cap = round(mc * fx / 1e12, 3) if mc and mc > 0 and fx else None
+    val = round(av * px * fx / 1e8, 1) if av and px and fx else None
+    return cap, val
+
+
+US_INFO_PATH = os.environ.get("US_INFO_CACHE", ".dart-cache/us-info-v1.json.gz")   # DART 캐시와 같은 폴더 (같이 보관돼요)
+US_INFO_FRESH_DAYS = 3
+US_INFO_MAX_AGE_DAYS = 14
+US_INFO_KEYS = ("shortName", "longName", "sector", "industry", "longBusinessSummary", "trailingPE", "priceToBook",
+                "returnOnEquity", "operatingMargins", "revenueGrowth", "debtToEquity", "dividendYield",
+                "marketCap", "averageVolume")
+
+
+def load_us_info(path=None):
+    path = path or US_INFO_PATH
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            d = json.load(f)
+        log(f"· 미국 상세 정보 보관본 {len(d):,}곳")
+        return d
+    except FileNotFoundError:
+        log("· 미국 상세 정보 보관본 없음 → 모두 새로 받아요")
+    except Exception as e:
+        log(f"  !! 미국 상세 정보 보관본을 읽지 못했어요({e}) → 모두 새로 받아요")
+    return {}
+
+
+def save_us_info(d, path=None):
+    path = path or US_INFO_PATH
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            json.dump(_json_safe(d, [0]), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        log(f"  !! 미국 상세 정보 보관본 저장 실패: {e}")
+
+
+def apply_us_info(rec, info, px_then, fx):
+    """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)"""
+    nm = info.get("shortName") or info.get("longName")
+    if not nm:
+        return False
+    rec["nk"] = rec["ne"] = str(nm)
+    rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
+    rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
+    p0, p1 = _fin(px_then), _fin(rec.get("price"))
+    k = p1 / p0 if p0 and p1 and p0 > 0 else 1.0
+    spec = (("per", "trailingPE", 0, 500, False), ("pbr", "priceToBook", 0, 100, False),
+            ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
+            ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
+    for key, src, lo, hi, scale in spec:
+        v = _fin(info.get(src))
+        if v is None:
+            continue
+        if key in ("per", "pbr"):
+            v *= k
+        if not (lo < v < hi):
+            continue
+        rec[key] = round(v * 100 if scale else v, 2 if key == "pbr" else 1)
+    # yfinance 1.x 의 dividendYield 는 이미 % 예요 (0.41 = 0.41%). 예전처럼 1 미만에 100을 곱하면
+    # 애플 0.31% 가 31% 가 돼요 (2026-10 발행본에서 확인). 30% 넘는 값은 믿지 않아요.
+    dyv = _fin(info.get("dividendYield"))
+    if dyv is not None and 0 <= dyv / k < 30:
+        rec["dy"] = round(dyv / k, 2)
+    mc = _fin(info.get("marketCap"))
+    cap, val = us_cap_val(mc * k if mc else None, info.get("averageVolume"), rec.get("price"), fx)
+    if cap is not None:
+        rec["cap"] = cap
+    if val is not None:
+        rec["val"] = val
+    summ = info.get("longBusinessSummary")
+    if summ:
+        rec["de"] = str(summ)[:400]
+    return True
+
+
+def fetch_us(start, today, rf):
+    """미국 주식 (yfinance). v17.5:
+    · end 는 그날을 빼므로 오늘(KST)+1일까지 요청하고, 장이 안 끝난 봉은 버려요 (예전엔 하루 늦었어요).
+    · 시가총액(cap)은 조원, 거래대금(val)은 억원 — 한국과 같은 단위 (그날 환율로 환산).
+    · 상세 정보(이름·업종·설명)를 못 받은 종목 수를 남기고, 실패분은 한 번 더 천천히 시도해요."""
     import yfinance as yf
 
     syms = us_tickers()
     log(f"· 미국 {len(syms):,}개 종목…")
+    end_x = today + dt.timedelta(days=1)
+    last_ok = us_last_complete_day()
 
-    fx = yf.download(FX_TICKER, start=start, end=end, progress=False, auto_adjust=True)["Close"]
-    if isinstance(fx, pd.DataFrame):
-        fx = fx.iloc[:, 0]
-    fx = fx.dropna()
-    fx_last = float(fx.iloc[-1])
-
-    spx = yf.download(US_INDEX, start=start, end=end, progress=False, auto_adjust=True)["Close"]
-    if isinstance(spx, pd.DataFrame):
-        spx = spx.iloc[:, 0]
+    fx = cut_at(_yf_close(yf.download(FX_TICKER, start=start, end=end_x, progress=False, auto_adjust=True)), today)
+    spx = cut_at(_yf_close(yf.download(US_INDEX, start=start, end=end_x, progress=False, auto_adjust=True)), last_ok)
+    us_px_date = spx.index[-1].date()
+    fx = cut_at(fx, max(us_px_date, last_ok))
+    fx_last, fx_date = float(fx.iloc[-1]), fx.index[-1].date()
+    log(f"· 미국 기준일(S&P500 마지막 봉) {us_px_date} · 환율 {fx_last:,.1f} ({fx_date})")
     bench = spx.pct_change().dropna()
     bench.name = "bench"
     spx_krw = (spx * fx.reindex(spx.index).ffill()).dropna()
     us_vol_krw = ann_vol(spx_krw.pct_change().dropna().values)
 
-    data = yf.download(syms, start=start, end=end, progress=False,
+    data = yf.download(syms, start=start, end=end_x, progress=False,
                        auto_adjust=True, group_by="ticker", threads=True)
 
-    out = []
-    dropped = []
-    for s in syms:
+    out, dropped = [], []
+    for sym in syms:
         try:
-            px = (data[s]["Close"] if isinstance(data.columns, pd.MultiIndex) else data["Close"]).dropna()
+            px = cut_at(_yf_close(data, sym), us_px_date)
             if len(px) < 60:
                 continue
             ret = px.pct_change().dropna()
             ret.name = "r"
             b, a = beta_alpha(ret, bench, rf)
             krw = (px * fx.reindex(px.index).ffill()).dropna()
-            rec = {"t": s, "nk": s, "ne": s, "cls": "us", "ccy": "USD", "fxu": True, "s": "etc",
+            rec = {"t": sym, "nk": sym, "ne": sym, "cls": "us", "ccy": "USD", "fxu": True, "s": "etc",
                    "price": round(float(px.iloc[-1]), 2),
                    "vol": ann_vol(krw.pct_change().dropna().values), "beta": b, "al": a,
                    "lo": round(float(px.tail(252).min()), 2), "hi": round(float(px.tail(252).max()), 2)}
             rec.update(perf_stats(px, rf))
             out.append({k: v for k, v in rec.items() if v is not None})
         except Exception:
-            dropped.append(s)
-            continue
-
+            dropped.append(sym)
     if dropped:
-        log(f"  (시세 확보 실패로 제외된 미국 종목 {len(dropped)}개: {', '.join(dropped[:8])}{'…' if len(dropped) > 8 else ''})")
+        log(f"  !! 시세를 받지 못해 빠진 미국 종목 {len(dropped)}개: {', '.join(dropped[:8])}{'…' if len(dropped) > 8 else ''}")
 
-    def enrich(rec):
+    # 상세 정보(이름·업종·설명·기초 지표)는 자주 바뀌지 않아요. 3일 안에 받은 것은 다시 쓰고,
+    # 오늘 못 받으면 14일 안의 보관본을 (크게 알리고) 써요. 그보다 오래되면 비워 두고 검증이 잡아요.
+    cache = load_us_info()
+    tday = today.isoformat()
+
+    def age(t):
+        e = cache.get(t)
+        return (today - dt.date.fromisoformat(e["at"])).days if e else None
+
+    def fetch_info(rec):
         try:
             info = yf.Ticker(rec["t"]).get_info()
-            nm = info.get("shortName") or info.get("longName")
-            if nm:
-                rec["nk"] = rec["ne"] = str(nm)
-            rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
-            if not rec.get("dk"):
-                rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
-            spec = (("per", "trailingPE", 0, 500, False), ("pbr", "priceToBook", 0, 100, False),
-                    ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
-                    ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
-            for key, src, lo, hi, scale in spec:
-                v = info.get(src)
-                if v is None:
-                    continue
-                v = float(v)
-                if not (lo < v < hi):
-                    continue
-                rec[key] = round(v * 100 if scale else v, 2 if key == "pbr" else 1)
-            dyv = info.get("dividendYield")
-            if dyv is not None:
-                dyv = float(dyv)
-                rec["dy"] = round(dyv * (100 if dyv < 1 else 1), 2)
-            mc = info.get("marketCap")
-            if mc:
-                rec["cap"] = round(float(mc) / 1e12, 3)
-            av = info.get("averageVolume")
-            if av and rec.get("price"):
-                rec["val"] = round(float(av) * rec["price"] / 1e8, 1)
-            summ = info.get("longBusinessSummary")
-            if summ:
-                rec["de"] = str(summ)[:400]
         except Exception:
-            pass
-        return rec
+            return False
+        if not (info.get("shortName") or info.get("longName")):
+            return False
+        cache[rec["t"]] = {"at": tday, "px": rec.get("price"),
+                           "info": {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}}
+        return True
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        out = list(ex.map(enrich, out))
-
+    need = [r for r in out if age(r["t"]) is None or age(r["t"]) >= US_INFO_FRESH_DAYS]
+    failed = need
+    for pause, workers in ((0, 10), (20, 3), (60, 1)):   # 야후가 잠깐 막을 때가 많아서, 쉬었다가 더 천천히 다시
+        if not failed:
+            break
+        time.sleep(pause)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            okr = list(ex.map(fetch_info, failed))
+        failed = [r for r, k in zip(failed, okr) if not k]
+    failed_t = {r["t"] for r in failed}
+    reused, fallback, missing, oldest = 0, 0, [], 0
+    for rec in out:
+        a = age(rec["t"])
+        if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last):
+            missing.append(rec["t"])
+            continue
+        if rec["t"] in failed_t:
+            fallback += 1
+            oldest = max(oldest, a)
+        elif a > 0:
+            reused += 1
+    save_us_info(cache)
+    got = len(need) - len(failed)
+    n_ok = len(out) - len(missing)
+    log(f"{'  !! ' if failed else '· '}미국 상세 정보(이름·업종·설명): {n_ok:,} / {len(out):,} · 오늘 받음 {got:,} · 3일 안에 받은 것 {reused:,}"
+        + (f" · 못 받음 {len(failed):,}곳 → 보관본 {fallback:,}곳(최대 {oldest}일 전) · 없음 {len(missing):,}곳"
+           + (f" ({', '.join(missing[:8])}…)" if missing else "") if failed or missing else ""))
     log(f"· 미국 완료: {len(out):,}개")
-    return out, bench, fx, fx_last, us_vol_krw
+    meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)]}
+    return out, bench, fx, fx_last, us_vol_krw, meta
 
 
 # ────────────────────────────────────────────────────────────
-def fetch_rf():
+class Phases:
+    """단계별 소요 시간. 로그 끝에 '⏱ 국내 시세 4m 30s · DART 6m 12s …' 로 남겨요."""
+    def __init__(self):
+        self.t = {}
+
+    @staticmethod
+    def fmt(sec):
+        m, s_ = divmod(int(round(sec)), 60)
+        return f"{m}m {s_:02d}s" if m else f"{s_}s"
+
+    def run(self, name, fn, *a, **kw):
+        t0 = time.time()
+        try:
+            return fn(*a, **kw)
+        finally:
+            self.t[name] = self.t.get(name, 0) + time.time() - t0
+            log(f"⏱ {name} {self.fmt(self.t[name])}")
+
+    def summary(self):
+        return "⏱ " + " · ".join(f"{k} {self.fmt(v)}" for k, v in self.t.items())
+
+
+def popular_list(kr, us, n_kr=100, n_us=20):
+    """거래대금 상위: 시장마다 따로 순위를 매겨요. US 거래대금이 원화라 합쳐 세우면 미국이 다 차지해요. (순수 함수)"""
+    def top(arr, n):
+        ok = [x for x in arr if _fin(x.get("val")) is not None]
+        return [x["t"] for x in sorted(ok, key=lambda x: -_fin(x["val"]))[:n]]
+    return top(kr, n_kr) + top(us, n_us)
+
+
+def read_prev_data(path=OUT):
     try:
-        import FinanceDataReader as fdr
-        y = fdr.DataReader(KR_BOND).dropna()
-        v = float(y.iloc[-1, 0])
-        if 0 < v < 20:
-            log(f"· 국고채 10년 {v:.2f}%")
-            return v / 100
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     except Exception as e:
-        log(f"  (국고채 수익률 생략: {e})")
-    return RF_FALLBACK
+        log(f"  (지난 {path} 없음/못 읽음: {e})")
+        return None
+
+
+UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환산)", "val": "억원 (거래대금)",
+         "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
+         "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜"}
 
 
 def main():
-    end = today_kst()
-    start = end - dt.timedelta(days=int(365.25 * YEARS) + 40)
-    log(f"뱁새 데이터 수집 v17.4.1 · {start} ~ {end} (한국 시간 기준) · DART {'ON' if DART_KEY else 'OFF'}")
+    published_at = dt.datetime.now(KST).isoformat(timespec="seconds")
+    today = today_kst()
+    start = today - dt.timedelta(days=int(365.25 * YEARS) + 40)
+    dart_mode = (os.environ.get("DART_MODE") or "cache").strip()
+    selftest = (os.environ.get("BAEPSAE_SELFTEST") or "").strip()
+    log(f"뱁새 데이터 수집 v17.5 · {start} ~ {today} (한국 시간) · 발행 시각 {published_at} · "
+        f"DART {('꺼짐 (시험 실행)' if dart_mode == 'off' else 'ON · ' + dart_mode) if DART_KEY else '키 없음'}")
+    on_main = os.environ.get("GITHUB_REF") == "refs/heads/main"
+    if selftest and on_main:
+        raise RuntimeError("!! 시험용 입력(selftest)은 main 에서 쓸 수 없어요")
+    if dart_mode not in ("cache", "full", "off"):
+        raise RuntimeError(f"!! DART_MODE 는 cache·full·off 중 하나여야 해요 (지금: {dart_mode})")
+    if dart_mode == "off" and on_main:
+        raise RuntimeError("!! dart=off(시험용)는 main 에서 쓸 수 없어요")
+    ph = Phases()
+    prev = read_prev_data()
 
-    rf = fetch_rf()
-    kr, fin_map, kr_bench, kr_mkt = fetch_korea(start, end, rf)
-    us, us_bench, fx, fx_last, us_vol_krw = fetch_us(start, end, rf)
-    bonds, bd_ret = fetch_bonds(start, end, kr_bench)
+    rf, rf_src = ph.run("금리", fetch_rf, today)
+    kr, kr_bench, kr_mkt, kmeta = ph.run("국내 시세", fetch_korea, start, today, rf, prev)
+    px_date = dt.date.fromisoformat(kmeta["pxDate"]) if kmeta["pxDate"] else today - dt.timedelta(days=1)
+
+    fin_map, client = {}, None
+    if dart_mode == "off":
+        log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
+    elif DART_KEY:
+        client = DartClient(DART_KEY, mode=dart_mode, today=today)
+        kr, fin_map = ph.run("DART", enrich_with_dart, kr, client)
+    else:
+        log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
+    fill_multiples(kr, fin_map)
+    n_dy = sum(1 for s in kr if s.get("dy") is not None)
+    log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
+
+    us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf)
+    names = etf_names()
+    bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
+
+    gold_usd = None
+    try:
+        import yfinance as yf
+        gold_usd = _yf_close(yf.download("GC=F", start=start, end=today + dt.timedelta(days=1), progress=False, auto_adjust=True))
+    except Exception as e:
+        log(f"  !! 국제 금값(GC=F) 실패: {e}")
+    funds = ph.run("ETF·금현물", fetch_kr_funds, start, px_date, kr_bench, names, rf, gold_usd, fx)
 
     if len(kr) < 300 or len(us) < 100:
         log("!! 받아온 종목이 너무 적습니다. 기존 data.json 을 지키기 위해 중단합니다.")
         sys.exit(1)
 
-    settings = {"rf": round(rf * 100, 2)}
+    settings = {"rf": round(rf * 100, 2), "rfSrc": rf_src}
     try:
-        import yfinance as yf
-        gold = yf.download("GC=F", start=start, end=end, progress=False, auto_adjust=True)["Close"]
-        if isinstance(gold, pd.DataFrame):
-            gold = gold.iloc[:, 0]
         fxr = fx.pct_change()
         us_krw = us_bench + fxr.reindex(us_bench.index).fillna(0)
-        gold_krw = (gold.pct_change() + fxr.reindex(gold.index).fillna(0)).dropna()
-        cols = [kr_bench.rename("kr"), us_krw.rename("us"), gold_krw.rename("mt")]
+        cols = [kr_bench.rename("kr"), us_krw.rename("us")]
+        if gold_usd is not None:
+            cols.append((gold_usd.pct_change() + fxr.reindex(gold_usd.index).fillna(0)).dropna().rename("mt"))
         if bd_ret is not None:
             cols.append(bd_ret.rename("bd"))
-        j = pd.concat(cols, axis=1).dropna()
-        if len(j) > MIN_DAYS:
+        j = cut_at(pd.concat(cols, axis=1).dropna(), px_date)
+        if len(j) > MIN_DAYS and "mt" in j.columns:
             c = j.corr()
             settings.update({
                 "mktVol": ann_vol(j["kr"].values),
@@ -1664,33 +2303,56 @@ def main():
                     "rhoUsBd": round(float(c.loc["us", "bd"]), 2),
                     "rhoMtBd": round(float(c.loc["mt", "bd"]), 2),
                 })
-            log(f"· 시장 가정 계산 완료: {settings}")
+            log(f"· 시장 가정 계산 완료 ({len(j):,}일, ~{px_date}): {settings}")
+        else:
+            log(f"  !! 시장 가정 계산에 쓸 날이 {len(j)}일뿐 — 기본값을 써요")
     except Exception as e:
-        log(f"  (상관계수 생략: {e})")
+        log(f"  !! 상관계수 실패: {e}")
 
-    stocks = add_percentiles(kr + us) + bonds
-    popular = [s["t"] for s in sorted(stocks, key=lambda x: -(x.get("val") or 0))[:120]]
+    # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리)
+    add_percentiles(kr)
+    add_percentiles(us)
+    stocks = kr + us + bonds + funds
+    if selftest == "corrupt-price":
+        for x in stocks:
+            if x["t"] == "005930":
+                x["price"] = round(x["price"] * 1.1)
+                log(f"  !! 시험용(selftest): 005930 가격을 일부러 {x['price']:,}원으로 틀리게 써요 — 검증이 막아야 합니다")
 
     payload = {
-        "asOf": end.isoformat(), "fx": round(fx_last, 1), "settings": settings,
-        "popular": popular, "count": {"kr": len(kr), "us": len(us), "bond": len(bonds)}, "stocks": stocks,
+        "asOf": today.isoformat(), "pxDate": kmeta["pxDate"], "ksDate": kmeta["ksDate"],
+        "usPxDate": umeta["usPxDate"], "fxDate": umeta["fxDate"], "publishedAt": published_at,
+        "listSrc": kmeta["listSrc"], "fx": round(fx_last, 1), "units": UNITS, "settings": settings,
+        "popular": popular_list(kr, us),
+        "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
+        "stocks": stocks,
     }
     write_json(OUT, payload)
-    log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB, 환율 {fx_last:,.1f}")
+    log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
+        f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
-    corp = build_corp(kr, fin_map, end.isoformat(), kr_mkt)
+    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt)
+    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")
 
-    macro = fetch_macro(start, end, fx=fx)
+    macro = ph.run("금리·원자재", fetch_macro, start, today, fx)
+    macro["publishedAt"] = published_at
     write_json(OUT_MACRO, macro)
-    log(f"✓ {OUT_MACRO} 저장 — 커브 {'O' if macro.get('curve') else 'X'} · 원자재 {'O' if macro.get('gold') else 'X'}")
+    log(f"✓ {OUT_MACRO} 저장 — 커브 {macro['curve']['date'] if macro.get('curve') else 'X'} · 원자재 {'O' if macro.get('gold') else 'X'}")
 
-    disc = fetch_disclosures(kr, dart_corp_map() if DART_KEY else {}, end)
+    if client:
+        disc = ph.run("공시", fetch_disclosures, kr, client.meta.get("corpMap") or {}, today, client)
+        client.save()
+        log(f"· DART 전체: {client.summary()}")
+    else:
+        disc = {"asOf": today.isoformat(), "newest": None, "listOk": False, "insider": [], "nps": []}
+    disc["publishedAt"] = published_at
     write_json(OUT_DISC, disc)
-    log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc['insider']):,}건 · 국민연금 {len(disc['nps']):,}건")
+    log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc['insider']):,}건 · 국민연금 {len(disc['nps']):,}건 · 최근 공시 {disc.get('newest')}")
+    log(ph.summary())
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
+import { loadJson, freshness, mergeStocks, mdOf } from "./data.js";
+import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 
 function makeCardData(holdings, stocksById, cashMw, score, lang) {
   const sums = { kr: 0, us: 0, mt: 0 };
@@ -98,52 +100,17 @@ async function readSlots() {
 async function writeSlots(list) { try { await store.set(KEY_SLOTS, JSON.stringify(list.slice(0, MAX_SLOTS))); } catch (e) {} }
 
 // ================= Live data loader =================
-// The daily GitHub Action writes data.json next to this file. Absent (local double-click),
-// the tool falls back to the snapshot embedded below.
+// The daily GitHub Action writes data.json next to this file. If it can't be read, the studio still opens
+// with the embedded snapshot, but every item is marked live:false and the screen says so (v17.5).
 async function loadLiveData() {
-  try {
-    const res = await fetch("./data.json", { cache: "no-store" });
-    if (!res.ok) throw new Error("no data.json");
-    const j = await res.json();
-    if (!j || !Array.isArray(j.stocks)) throw new Error("bad shape");
-    return { asOf: j.asOf || null, fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null, stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
-  } catch (e) { return null; }
+  const r = await loadJson("./data.json", (j) => j && Array.isArray(j.stocks) && j.stocks.length > 0);
+  if (!r.ok) { console.warn("[뱁새] data.json: " + r.error); return null; }
+  const j = r.data;
+  return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null,
+    fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null,
+    stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
 }
-function mergeStocks(base, live) {
-  if (!live) return base;
-  // 미국 티커는 표기가 갈려요(BRK.B / BRK-B). 점·하이픈을 무시하고 맞춰봅니다.
-  const norm = (x) => String(x || "").toUpperCase().replace(/[.\-]/g, "");
-  const byT = Object.fromEntries(base.map((s) => [s.t, s]));
-  const byNorm = {};
-  base.forEach((s) => { byNorm[norm(s.t)] = s; });
-  const out = [];
-  live.forEach((L) => {
-    const b = byT[L.t] || byNorm[norm(L.t)];
-    if (b) {
-      out.push({ ...b, price: L.price != null ? L.price : b.price, beta: L.beta != null ? L.beta : b.beta,
-        vol: L.vol != null ? L.vol : b.vol, per: L.per != null ? L.per : b.per, pbr: L.pbr != null ? L.pbr : b.pbr,
-        dy: L.dy != null ? L.dy : b.dy, al: L.al != null ? L.al : b.al,
-        sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
-        pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
-        x: { ...(b.x || {}), roe: L.roe != null ? L.roe : (b.x || {}).roe, debt: L.debt != null ? L.debt : (b.x || {}).debt,
-             opm: L.opm != null ? L.opm : (b.x || {}).opm, g3: L.g3 != null ? L.g3 : (b.x || {}).g3,
-             frn: L.frn != null ? L.frn : (b.x || {}).frn, mcap: L.cap != null ? L.cap : (b.x || {}).mcap,
-             lo: L.lo != null ? L.lo : (b.x || {}).lo, hi: L.hi != null ? L.hi : (b.x || {}).hi },
-        live: true });
-      delete byT[b.t]; delete byNorm[norm(b.t)];
-    } else {
-      out.push({ t: L.t, nk: L.nk || L.t, ne: L.ne || L.t, s: L.s || "index", cls: L.cls || "kr",
-        ccy: L.ccy, fxu: !!L.fxu, price: L.price || 0, beta: L.beta != null ? L.beta : 1,
-        vol: L.vol != null ? L.vol : 30, per: L.per || 0, pbr: L.pbr || 0, dy: L.dy || 0, al: L.al || 0,
-        cap: L.cap || 0, val: L.val || 0, sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
-        pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: true, auto: true,
-        x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
-             mcap: L.cap, lo: L.lo, hi: L.hi } });
-    }
-  });
-  Object.values(byT).forEach((b) => out.push(b));
-  return out;
-}
+// 오늘 데이터와 내장 목록 합치기(mergeStocks)는 src/data.js 로 옮겼어요 (Node 로 시험하려고)
 
 
 // ================= Sectors =================
@@ -560,7 +527,7 @@ const T = {
   tab1: { ko:"① 프로필", en:"① Profile" },
   tab2: { ko:"② 포트폴리오", en:"② Build" },
   tab3: { ko:"③ 내보내기", en:"③ Export" },
-  disclaimer: { ko:"교육용 도구입니다. 투자 자문이 아니며 모든 판단과 책임은 본인에게 있습니다. 종목 데이터는 " + DATA_AS_OF + " 기준 추정치로 실시간이 아니며, 직접 수정해 쓰세요.", en:"Educational tool, not investment advice; decisions are your own. Stock data are rough estimates as of " + DATA_AS_OF + " — not live. Edit them yourself." },
+  disclaimer: { ko:"교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", en:"An educational tool — not investment advice. All decisions and responsibility are your own." },
   skipPreset: { ko:"질문 건너뛰고 프리셋으로 시작하기", en:"Skip questions, pick a profile" },
   presetTitle: { ko:"프로필 고르기", en:"Pick a profile" },
   presetSub: { ko:"대충 이 정도다 싶은 걸 고르세요. 세부 수치는 나중에 언제든 바꿀 수 있어요.", en:"Start from a preset; fine-tune anytime." },
@@ -897,7 +864,83 @@ function Bird({ mood = "happy", pose = "stand", size = 64 }) {
   );
 }
 
+// ================= 데이터 상태 표시 (v17.5 — 앱은 숫자를 꾸며 보이지 않아요) =================
+const T_LOAD_FAIL = { ko: "데이터를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.", en: "We couldn't load the data. Please try again in a moment." };
+// 실시간이 아닌 종목 안내 (Jack 확정 문구, 2026-11-01): 일부만 예시 · 전부 예시(못 불러옴) · 금 환산 추정을 따로 말해요
+const T_NONLIVE = { ko: "일부 종목은 최신 시세가 아니라 예시 가격이에요.", en: "Some items show sample prices, not the latest quotes." };
+const T_NOLIVE_ALL = { ko: "최신 시세를 불러오지 못해 예시 가격으로 보여 드려요.", en: "We couldn't load the latest prices, so sample prices are shown." };
+const T_GOLD_EST = { ko: "금현물은 국제 금값으로 환산한 추정치예요.", en: "Gold is an estimate converted from the world gold price." };
+const T_PX_OFFICIAL = { ko: "가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.", en: "Prices are official closes from {md}. Other figures are estimates." };
+const T_RATES_FAIL = { ko: "금리 데이터를 불러오지 못했어요.", en: "We couldn't load the interest-rate data." };
+// v17.5 리뷰 뒤 새 문구 (Jack 승인 대기): 베타·변동성을 모르는 종목 · 배당 정보가 없는 종목
+const T_NORISK = { ko: "일부 종목(비중 {pct}%)은 베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요.",
+  en: "Some holdings ({pct}% of your money) have no beta or volatility data. The risk numbers use the rest." };
+const T_RISK_BLIND = { ko: "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요.",
+  en: "None of your holdings has beta or volatility data, so the risk numbers can't be calculated." };
+// 자료 없는 종목이 절반을 넘을 때 (모두는 아님) — "모두"라고 하면 틀린 말이라 따로 (Jack 승인 대기)
+const T_RISK_HALF = { ko: "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요.",
+  en: "Holdings without beta or volatility data are more than half of your money, so the risk numbers can't be calculated." };
+const riskBlindTxt = (lang, m) => (m.allNoRisk ? T_RISK_BLIND : T_RISK_HALF)[lang];
+const T_DY_UNKNOWN = { ko: "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.", en: "Holdings without dividend data ({n}) are counted as 0." };
+const noRiskLine = (lang, m) => T_NORISK[lang].replace("{pct}", m.noRiskPct >= 1 ? Math.round(m.noRiskPct) : Math.max(m.noRiskPct, 0.1).toFixed(1));
+const WARN_INK = "#8A5A16";
+
+// 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
+function LoadFail({ onRetry, lang = "ko" }) {
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
+      <Bird mood="search" size={80} />
+      <div style={{ fontSize: 15, fontWeight: 800, marginTop: 14, lineHeight: 1.6 }}>{T_LOAD_FAIL[lang]}</div>
+      {onRetry && <button onClick={onRetry} style={{ marginTop: 14, background: C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "12px 22px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{lang === "en" ? "Try again" : "다시 확인"}</button>}
+    </div>
+  );
+}
+
+// '10월 30일 기준' — 내용의 날짜. 발행이 4일 넘게 멈추면 '· N일째 갱신이 멈췄어요' (경고색)
+function DateBadge({ date, publishedAt, lang = "ko", suffix = "", style = {} }) {
+  const f = freshness(date, publishedAt, lang);
+  if (!f.md && !f.stale) return null;
+  const base = f.md ? (lang === "en" ? "As of " + f.md : f.md + " 기준") : "";
+  const stale = f.stale ? (lang === "en" ? "updates stopped " + f.days + " days ago" : f.days + "일째 갱신이 멈췄어요") : "";
+  return (
+    <span className="dateBadge" data-stale={f.stale ? "1" : "0"} style={{ fontSize: 10.5, color: f.stale ? WARN_INK : C.faint, fontWeight: f.stale ? 800 : 400, ...style }}>
+      {[base, stale].filter(Boolean).join(" · ")}{suffix}
+    </span>
+  );
+}
+
+// 실시간이 아닌 종목이 화면이나 보유 목록에 있을 때.
+// failed: data.json 을 못 읽어 전부 예시 가격 · examples: 일부가 내장 예시 가격 · goldEst: 금현물이 국제 금값 환산 추정
+function NonLiveBanner({ lang = "ko", failed = false, examples = false, goldEst = false, metrics = null }) {
+  const noRisk = !!metrics && !metrics.riskBlind && metrics.noRiskN > 0;
+  return (
+    <div className="nonLiveBanner" style={{ background: C.sandSoft, border: "1px solid #F3DCB2", borderRadius: RAD.card, padding: "11px 14px", fontSize: 12, fontWeight: 700, color: WARN_INK, lineHeight: 1.55, fontFamily: FONT }}>
+      {failed ? <div>{T_NOLIVE_ALL[lang]}</div> : <>
+        {examples && <div>{T_NONLIVE[lang]}</div>}
+        {goldEst && <div>{T_GOLD_EST[lang]}</div>}
+      </>}
+      {noRisk && <div>{noRiskLine(lang, metrics)}</div>}
+    </div>
+  );
+}
+// 메모·내보내기용 같은 문장들 (화면 배너와 똑같이)
+function nonLiveLines(lang, failed, list, m) {
+  const out = failed ? [T_NOLIVE_ALL[lang]] : [];
+  if (!failed && list.some((s) => s && s.live === false && !s.est)) out.push(T_NONLIVE[lang]);
+  if (!failed && list.some((s) => s && s.est)) out.push(T_GOLD_EST[lang]);
+  if (m && m.riskBlind) out.push(riskBlindTxt(lang, m));
+  else if (m && m.noRiskN > 0) out.push(noRiskLine(lang, m));
+  return out;
+}
+
 // ================= Helpers =================
+// 베타·변동성이 없는 종목(noRisk)은 '–' 로 보여요 (숫자를 지어내지 않아요)
+const fBeta = (v) => (typeof v === "number" ? v.toFixed(2) : "–");
+// 위험 계산에 필요한 베타·변동성이 없는 종목 (사용자가 직접 넣으면 그때부터 계산에 들어가요)
+const lacksRisk = (s) => !s || typeof s.beta !== "number" || typeof s.vol !== "number";
+const NO_RISK_MAX_PCT = 50;   // 자료 없는 종목이 투자금의 이 비율을 넘으면 위험 수치를 보여 주지 않아요 (Jack, 2026-11-01)
+// B안 스위치(SHOW_VERDICTS·SHOW_SCORE·SHOW_ER)는 src/flags.js 에 있어요 (shell.jsx 도 같이 써요).
+const fVol = (v) => (typeof v === "number" ? v + "%" : "–");
 const fmtWon = (v) => "₩" + Math.round(v).toLocaleString("ko-KR");
 const fmtMw = (v, lang) => {
   const mw = v / 10000;
@@ -938,24 +981,57 @@ function computeMetrics(holdings, budgetWon, settings) {
   if (total <= 0 || holdings.length === 0) return { empty: true, invested, cash, total: total || 0, overBudget, rows: [] };
 
   const rf = settings.rf / 100, sigKr = settings.mktVol / 100;
-  const Wc = { kr: 0, us: 0, metal: 0 };
-  const clsW = { kr: 0, us: 0, metal: 0 };
-  let idioVar = 0, per = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0;
+  // CLS_LIST 의 모든 자산군이 있어야 해요. 채권(bond)이 빠져 있어 undefined × … = NaN 이 되어,
+  // 모든 포트폴리오의 변동성·기대수익이 'NaN만원'으로 보였어요 (v15.3 부터, v17.5 에서 발견).
+  const Wc = Object.fromEntries(CLS_LIST.map((c) => [c, 0]));
+  const clsW = Object.fromEntries(CLS_LIST.map((c) => [c, 0]));
+  let idioVar = 0, perSum = 0, perW = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0, noRiskN = 0, dyUnknownN = 0;
   const sectorW = {};
+  // 베타·변동성이 없는 종목은 위험 계산에서 빼고, 위험 수치는 '자료가 있는 종목'으로 계산해요.
+  // 빠진 돈을 현금(위험 0)으로 치면 위험이 작아 보이니까, 같은 자산군(한국·미국·채권·금)의 자료 있는 종목이
+  // 그 몫까지 움직인다고 보고 비중을 키워요 (kc). 그 자산군에 자료 있는 종목이 하나도 없으면 전체 비율로 나눠요.
+  // 자료 없는 종목이 투자금의 절반을 넘으면 위험 수치를 만들지 않아요 (riskBlind, Jack 결정 2026-11-01).
+  const invW = holdings.reduce((a, h) => a + h.won / total, 0);
+  const invC = {}, riskC = {};
+  holdings.forEach((h) => {
+    const c = clsOf(h.stock), w = h.won / total;
+    invC[c] = (invC[c] || 0) + w;
+    if (!lacksRisk(h.stock)) riskC[c] = (riskC[c] || 0) + w;
+  });
+  const riskW0 = Object.values(riskC).reduce((a, x) => a + x, 0);
+  // 절반 규칙은 원 단위로 비교해요 (비중을 나눠 더하면 50.000000000000014 처럼 소수점 오차가 생겨 '딱 절반'이 빠질 수 있어요)
+  const noRiskWon = holdings.reduce((a, h) => a + (h.won > 0 && lacksRisk(h.stock) ? h.won : 0), 0);
+  const noRiskPct = invested > 0 ? (noRiskWon / invested) * 100 : 0;
+  if (invested > 0 && noRiskWon * 100 > invested * NO_RISK_MAX_PCT) {
+    // 위험 수치 없이 돈 비중만: 담은 종목 목록(비중)은 그대로 보여야 해요
+    const rowsB = holdings.map((h) => { const w = h.won / total;
+      return { ...h, w, wr: 0, b: 0, idio: 0, c: clsOf(h.stock), nr: lacksRisk(h.stock), rc: null, sysShare: null, wInv: w / invW }; });
+    return { empty: true, riskBlind: true, allNoRisk: noRiskWon >= invested, invested, cash, total, overBudget, rows: rowsB,
+      noRiskN: holdings.filter((h) => h.won > 0 && lacksRisk(h.stock)).length, noRiskPct };
+  }
+  const kc = {};
+  Object.keys(invC).forEach((c) => { kc[c] = riskC[c] > 0 ? invC[c] / riskC[c] : 0; });
+  const orphan = Object.keys(invC).reduce((a, c) => a + (riskC[c] > 0 ? 0 : invC[c]), 0);   // 자료가 하나도 없는 자산군의 몫
+  const kAll = invW - orphan > 0 ? invW / (invW - orphan) : 1;
   const rows = holdings.map((h) => {
     const w = h.won / total;
     const c = clsOf(h.stock);
     const sc = clsVol(c, settings);
-    const b = h.stock.beta, volTot = h.stock.vol / 100;
+    const nr = lacksRisk(h.stock);
+    if (nr && h.won > 0) noRiskN += 1;
+    const wr = nr ? 0 : w * kc[c] * kAll;            // 위험 계산용 비중
+    const b = nr ? 0 : h.stock.beta, volTot = nr ? 0 : h.stock.vol / 100;
     const sysV = Math.pow(b * sc, 2);
     const idio = Math.max(volTot * volTot - sysV, 0);
-    Wc[c] += w * b; clsW[c] += w; idioVar += w * w * idio;
+    Wc[c] += wr * b; clsW[c] += w; idioVar += wr * wr * idio;
     if (h.stock.fxu) fxW += w;
-    per += w * (h.stock.per || 0); dy += w * (h.stock.dy || 0);
+    if (h.stock.per > 0) { perSum += w * h.stock.per; perW += w; }
+    dy += w * (h.stock.dy || 0);
     divWon += h.won * ((h.stock.dy || 0) / 100);
+    if (typeof h.stock.dy !== "number" && h.won > 0) dyUnknownN += 1;   // 배당 정보 없음 → 합계에는 0원으로 들어가요 (화면에 알림)
     hhi += w * w;
     sectorW[h.stock.s] = (sectorW[h.stock.s] || 0) + w;
-    return { ...h, w, idio, b, c, sc, sysShare: volTot > 0 ? Math.min(sysV / (volTot * volTot), 1) : 0 };
+    return { ...h, w, wr, idio, b, c, sc, nr, sysShare: nr ? null : volTot > 0 ? Math.min(sysV / (volTot * volTot), 1) : 0 };
   });
   let sysVar = 0;
   CLS_LIST.forEach((a) => CLS_LIST.forEach((b) => {
@@ -977,18 +1053,22 @@ function computeMetrics(holdings, budgetWon, settings) {
     if (wi > maxSectorW) { maxSectorW = wi; maxSectorKey = k; }
   });
   const rows2 = rows.map((r) => {
-    const cov = r.b * r.sc * CLS_LIST.reduce((a, c) => a + Wc[c] * clsVol(c, settings) * rhoOf(r.c, c, settings), 0) + r.w * r.idio;
-    return { ...r, wInv: investedW > 0 ? r.w / investedW : 0, rc: varP > 0 ? (r.w * cov) / varP : 0 };
+    const cov = r.b * r.sc * CLS_LIST.reduce((a, c) => a + Wc[c] * clsVol(c, settings) * rhoOf(r.c, c, settings), 0) + r.wr * r.idio;
+    return { ...r, wInv: investedW > 0 ? r.w / investedW : 0, rc: r.nr ? null : varP > 0 ? (r.wr * cov) / varP : 0 };
   });
-  const wAvgVol = rows2.reduce((a, r) => a + r.wInv * r.stock.vol, 0);
-  const pastAl = rows2.reduce((a, r) => a + r.wInv * (r.stock.al || 0), 0);
+  // 평균은 값이 있는 종목끼리만 (빈 값을 0 으로 섞지 않아요)
+  const avgOf = (ok, val) => { const rs = rows2.filter(ok); const ws = rs.reduce((a, r) => a + r.wInv, 0);
+    return ws > 0 ? rs.reduce((a, r) => a + r.wInv * val(r), 0) / ws : 0; };
+  const wAvgVol = avgOf((r) => !r.nr, (r) => r.stock.vol);
+  const pastAl = avgOf((r) => typeof r.stock.al === "number", (r) => r.stock.al);
   const top3 = [...rows2].sort((a, b) => b.wInv - a.wInv).slice(0, 3).reduce((a, r) => a + r.wInv, 0) * 100;
   const clsWInv = {};
   CLS_LIST.forEach((c) => { clsWInv[c] = investedW > 0 ? (clsW[c] / investedW) * 100 : 0; });
   return {
     empty: false, invested, cash, total, overBudget, wAvgVol, top3, pastAl, te: te * 100,
     beta, volP: volP * 100, expRet: expRet * 100, sharpe, cagr: cagr * 100, r2: r2 * 100,
-    effN, per, dy, divWon, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
+    effN, per: perW > 0 ? perSum / perW : null, dy, divWon, dyUnknownN, noRiskN,
+    noRiskPct, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
     clsW: clsWInv, fxExp: investedW > 0 ? (fxW / investedW) * 100 : 0,
     investedW: investedW * 100, rows: rows2,
   };
@@ -1285,20 +1365,20 @@ function Rail({ emoji, label, valueLabel, value, min, max, tMin, tMax, ok, onExp
           <span style={{ fontSize: 10, color: C.faint, background: C.bg, borderRadius: 999, width: 15, height: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>?</span>
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 800, color: ok ? C.ink : C.coral }}>{valueLabel}</span>
-          <Chip color={ok ? C.teal : C.coral} soft={ok ? C.tealSoft : C.coralSoft}>{ok ? "" : ""}</Chip>
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: ok === null || ok ? C.ink : C.coral }}>{valueLabel}</span>
+          {ok !== null && <Chip color={ok ? C.teal : C.coral} soft={ok ? C.tealSoft : C.coralSoft}>{ok ? "" : ""}</Chip>}
         </div>
       </div>
       <div style={{ position: "relative", height: 20 }}>
         <div style={{ position: "absolute", top: 8, left: 0, right: 0, height: 5, background: C.line, borderRadius: 3 }} />
-        <div style={{ position: "absolute", top: 6, left: p(tMin) + "%", width: Math.max(p(tMax) - p(tMin), 1.5) + "%", height: 9, background: C.tealSoft, border: "1.5px solid " + C.teal, borderRadius: 6 }} />
+        {tMin != null && tMax != null && <div style={{ position: "absolute", top: 6, left: p(tMin) + "%", width: Math.max(p(tMax) - p(tMin), 1.5) + "%", height: 9, background: C.tealSoft, border: "1.5px solid " + C.teal, borderRadius: 6 }} />}
         {band != null && (
           <div style={{ position: "absolute", top: 6, left: p(value - band) + "%", width: Math.max(p(value + band) - p(value - band), 1) + "%", height: 9, background: C.blue + "26", border: "1.5px solid " + C.blue + "55", borderRadius: 6, transition: "left .3s ease" }} />
         )}
         {extraDot != null && (
           <div title={extraLabel} style={{ position: "absolute", top: 3, left: "calc(" + p(extraDot) + "% - 7px)", width: 14, height: 14, borderRadius: "50%", background: "#fff", border: "2.5px dashed " + (danger ? C.coral : C.sand), transition: "left .3s ease" }} />
         )}
-        <div style={{ position: "absolute", top: 1, left: "calc(" + p(value) + "% - 9px)", width: 18, height: 18, background: ok ? C.blue : C.coral, borderRadius: "50%", border: "3px solid #fff", boxShadow: "0 1px 4px rgba(11,34,57,0.25)", transition: "left .3s ease" }} />
+        <div style={{ position: "absolute", top: 1, left: "calc(" + p(value) + "% - 9px)", width: 18, height: 18, background: ok === null ? C.sub : ok ? C.blue : C.coral, borderRadius: "50%", border: "3px solid #fff", boxShadow: "0 1px 4px rgba(11,34,57,0.25)", transition: "left .3s ease" }} />
       </div>
     </div>
   );
@@ -1610,7 +1690,7 @@ function ManualProfile({ lang, t, profile, onSave, onCancel }) {
 const isCurated = (s) => !!(s.x && s.x.dk && !s.auto);
 const popScore = (s) => (s.val || 0) * 1e6 + (s.cap || 0) * 1e3 + (isCurated(s) ? 1 : 0);
 const SORTS = { pop: popScore, sh: (s) => (typeof s.sh === "number" ? s.sh : -99),
-  al: (s) => (typeof s.al === "number" ? s.al : -999), dy: (s) => s.dy || 0,
+  al: (s) => (typeof s.al === "number" ? s.al : -999), dy: (s) => (typeof s.dy === "number" ? s.dy : -1),
   cap: (s) => s.cap || 0, mdd: (s) => (typeof s.mdd === "number" ? s.mdd : -999) };
 
 function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddCustom, expanded, setExpanded, updateStock, settings }) {
@@ -1755,7 +1835,7 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
             {lang === "ko" ? s.nk : s.ne} <span style={{ fontSize: 10, color: C.faint, fontWeight: 400 }}>{s.t}</span>
           </div>
           <div style={{ fontSize: 11, color: C.faint }}>
-            {isCurated(s) ? "" : ""}{SECTORS[s.s] ? (lang === "ko" ? SEC(s.s).ko : SEC(s.s).en) : "–"} · β {s.beta.toFixed(2)} · σ {s.vol}%{typeof s.sh === "number" ? " · S " + s.sh.toFixed(2) : ""} · {fmtPx(s.price, s)}
+            {isCurated(s) ? "" : ""}{SECTORS[s.s] ? (lang === "ko" ? SEC(s.s).ko : SEC(s.s).en) : "–"} · β {fBeta(s.beta)} · σ {fVol(s.vol)}{typeof s.sh === "number" ? " · S " + s.sh.toFixed(2) : ""} · {fmtPx(s.price, s)}
           </div>
         </div>
         <button onClick={(e) => { e.stopPropagation(); onAdd(); }} disabled={loaded}
@@ -1770,7 +1850,7 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
           {mode !== "simple" && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 9 }}>
             {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], [t("g3"), (x.g3 > 0 ? "+" : "") + (x.g3 != null ? x.g3 + "%/y" : "–")], [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
               [t("shPast"), typeof s.sh === "number" ? s.sh.toFixed(2) : "–"],
-              [t("shCapm"), settings ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"],
+              [t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"],
               [t("mddL2"), typeof s.mdd === "number" ? s.mdd.toFixed(0) + "%" : "–"],
               [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–"]].map(([k, v]) => (
               <div key={k} style={{ background: C.bg, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
@@ -1806,7 +1886,7 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
                 {peers.map((p) => (
                   <div key={p.t} style={{ display: "grid", gridTemplateColumns: "1.6fr 0.8fr 0.8fr 0.9fr 0.9fr", fontSize: 11.5, padding: "5px 4px", borderTop: "1px solid " + C.line, color: p.t === s.t ? C.blue : C.sub, fontWeight: p.t === s.t ? 800 : 500 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lang === "ko" ? p.nk : p.ne}</span>
-                    <span>{p.beta.toFixed(2)}</span><span>{p.vol}%</span><span>{num(p.per, 0)}</span><span>{p.x ? pct(p.x.roe, 0) : "–"}</span>
+                    <span>{fBeta(p.beta)}</span><span>{fVol(p.vol)}</span><span>{num(p.per, 0)}</span><span>{p.x ? pct(p.x.roe, 0) : "–"}</span>
                   </div>
                 ))}
               </div>
@@ -1907,7 +1987,7 @@ function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{lang === "ko" ? s.nk : s.ne}</div>
                 <div style={{ fontSize: 10.5, color: over ? C.coral : C.faint, fontWeight: over ? 800 : 400 }}>
-                  {t("weight")} {wInv.toFixed(1)}% · β {s.beta.toFixed(2)} · ~{shares.toLocaleString()}{lang === "ko" ? "주" : "sh"}{over ? " · " + t("wPos") + "!" : ""}
+                  {t("weight")} {wInv.toFixed(1)}% · β {fBeta(s.beta)} · ~{shares.toLocaleString()}{lang === "ko" ? "주" : "sh"}{over ? " · " + t("wPos") + "!" : ""}
                 </div>
                 {s.ccy === "USD" && (
                   <div style={{ fontSize: 10, color: CLASSES.us.color, fontWeight: 700, marginTop: 1 }}>
@@ -1925,7 +2005,7 @@ function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, 
           </div>
         );
       })}
-      {!metrics.empty && (
+      {(!metrics.empty || metrics.riskBlind) && (
         <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 11, fontSize: 12.5 }}>
           <span style={{ color: C.sub }}>{t("cash")}</span>
           <span style={{ fontWeight: 800, color: metrics.overBudget ? C.coral : C.ink }}>
@@ -1959,17 +2039,17 @@ function Dashboard({ lang, t, metrics, profile, setExplain }) {
         <Sub>{t("dashSub")}</Sub>
       </div>
       <Rail emoji="" label={t("railBeta")} value={metrics.beta} valueLabel={"β " + num(metrics.beta)} min={0} max={2}
-        tMin={p.targetBetaMin} tMax={p.targetBetaMax} ok={railsBase.beta} onExplain={() => setExplain("beta")}
-        extraDot={req} extraLabel={t("railRemaining")} danger={impossible} band={0.15} />
+        tMin={SHOW_VERDICTS ? p.targetBetaMin : null} tMax={SHOW_VERDICTS ? p.targetBetaMax : null} ok={SHOW_VERDICTS ? railsBase.beta : null} onExplain={() => setExplain("beta")}
+        extraDot={SHOW_VERDICTS ? req : null} extraLabel={t("railRemaining")} danger={impossible} band={0.15} />
       <div style={{ fontSize: 10.5, color: C.faint, padding: "5px 0 0" }}>{t("betaBand")}</div>
-      {req != null && (
+      {SHOW_VERDICTS && req != null && (
         <div style={{ fontSize: 11, color: impossible ? C.coral : C.sub, padding: "6px 0 0", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 11, height: 11, borderRadius: "50%", border: "2px dashed " + (impossible ? C.coral : C.sand), display: "inline-block", flexShrink: 0 }} />
           {impossible ? t("railImpossible") : t("railRemaining") + " ≈ " + num(req)}
         </div>
       )}
       <Rail emoji="" label={t("railVol")} value={metrics.volP} valueLabel={pct(metrics.volP)} min={0} max={50}
-        tMin={0} tMax={p.targetVolMaxPct} ok={metrics.volP <= p.targetVolMaxPct + 0.01} onExplain={() => setExplain("vol")} />
+        tMin={SHOW_VERDICTS ? 0 : null} tMax={SHOW_VERDICTS ? p.targetVolMaxPct : null} ok={SHOW_VERDICTS ? metrics.volP <= p.targetVolMaxPct + 0.01 : null} onExplain={() => setExplain("vol")} />
       <Rail emoji="" label={t("railEffn")} value={metrics.effN} valueLabel={num(metrics.effN, 1)} min={0} max={20}
         tMin={p.stocksMin} tMax={20} ok={metrics.effN >= p.stocksMin * 0.75} onExplain={() => setExplain("effn")} />
       <Rail emoji="" label={t("railSector")} value={metrics.maxSectorW} valueLabel={pct(metrics.maxSectorW, 0)} min={0} max={100}
@@ -1993,9 +2073,11 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
   if (!profile.ready || metrics.empty) return null;
   const w = [];
   if (metrics.overBudget) w.push({ sev: 2, msg: t("wOverBudget") });
-  if (metrics.beta > profile.targetBetaMax + 0.001) w.push({ sev: 2, msg: t("wBetaHigh") + ` (β ${num(metrics.beta)} > ${profile.targetBetaMax.toFixed(1)})` });
-  else if (metrics.beta < profile.targetBetaMin - 0.001 && metrics.investedW > 50) w.push({ sev: 1, msg: t("wBetaLow") + ` (β ${num(metrics.beta)})` });
-  if (metrics.volP > profile.targetVolMaxPct + 0.01) w.push({ sev: 2, msg: t("wVol") + ` (${pct(metrics.volP)} > ${profile.targetVolMaxPct}%)` });
+  if (SHOW_VERDICTS) {
+    if (metrics.beta > profile.targetBetaMax + 0.001) w.push({ sev: 2, msg: t("wBetaHigh") + ` (β ${num(metrics.beta)} > ${profile.targetBetaMax.toFixed(1)})` });
+    else if (metrics.beta < profile.targetBetaMin - 0.001 && metrics.investedW > 50) w.push({ sev: 1, msg: t("wBetaLow") + ` (β ${num(metrics.beta)})` });
+    if (metrics.volP > profile.targetVolMaxPct + 0.01) w.push({ sev: 2, msg: t("wVol") + ` (${pct(metrics.volP)} > ${profile.targetVolMaxPct}%)` });
+  }
   metrics.rows.forEach((r) => {
     if (r.wInv * 100 > profile.maxPositionPct + 0.01) {
       const s = stocksById[r.t];
@@ -2003,7 +2085,7 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
     }
   });
   if (metrics.maxSectorW > profile.maxSectorPct + 0.01 && metrics.maxSectorKey) {
-    const sec = SECTORS[metrics.maxSectorKey];
+    const sec = SEC(metrics.maxSectorKey);          // 목록에 없는 업종이면 '기타' (예전엔 여기서 멈췄어요)
     w.push({ sev: 2, msg: t("wSector") + `: ${lang === "ko" ? sec.ko : sec.en} ${metrics.maxSectorW.toFixed(0)}% > ${profile.maxSectorPct}%` });
   }
   const n = metrics.rows.filter((r) => r.mw > 0).length;
@@ -2013,6 +2095,8 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
     if (cp < profile.cashFloorPct - 0.01) w.push({ sev: 1, msg: t("wCashFloor") + ` (${cp.toFixed(0)}% < ${profile.cashFloorPct}%)` });
   }
   accountIssues(metrics, profile, lang).forEach((m) => w.push({ sev: 2, msg: m }));
+  // β·σ 판정을 꺼 둔 동안 '모든 계기가 초록불이에요'는 틀린 말이라, 알릴 게 없으면 상자를 보여 주지 않아요
+  if (!SHOW_VERDICTS && w.length === 0) return null;
   const red = w.some((x) => x.sev === 2);
   return (
     <Card style={{ padding: 16, border: "1.5px solid " + (w.length === 0 ? "#BEE9E4" : red ? "#F7C6C5" : "#F3DCB2"), background: w.length === 0 ? "#F4FBFA" : red ? "#FFF9F9" : "#FFFCF4" }}>
@@ -2042,11 +2126,10 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
 function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
   if (metrics.empty) return null;
   const items = [
-    ["beta", t("mBeta"), num(metrics.beta), profile.ready && !(profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax)],
-    ["ret", t("mRet"), pct(metrics.expRet), false],
-    ["vol", t("mVol"), pct(metrics.volP), profile.ready && metrics.volP > profile.targetVolMaxPct],
-    ["sharpe", t("mSharpe"), num(metrics.sharpe), false],
-    ["cagr", t("mCagr"), pct(metrics.cagr), false],
+    ["beta", t("mBeta"), num(metrics.beta), SHOW_VERDICTS && profile.ready && !(profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax)],
+    ...(SHOW_ER ? [["ret", t("mRet"), pct(metrics.expRet), false]] : []),
+    ["vol", t("mVol"), pct(metrics.volP), SHOW_VERDICTS && profile.ready && metrics.volP > profile.targetVolMaxPct],
+    ...(SHOW_ER ? [["sharpe", t("mSharpe"), num(metrics.sharpe), false], ["cagr", t("mCagr"), pct(metrics.cagr), false]] : []),
     ["r2", t("mR2"), pct(metrics.r2, 0), false],
     ["alpha", t("mAl"), (metrics.pastAl > 0 ? "+" : "") + num(metrics.pastAl, 1) + "%p", false],
     ["effn", t("mEffN"), num(metrics.effN, 1), false],
@@ -2067,8 +2150,8 @@ function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
       </div>
       <div style={{ marginTop: 9, background: C.blueSoft, borderRadius: 12, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: C.blueDeep, lineHeight: 1.6 }}>
         {lang === "ko"
-          ? <>지금 예산 기준: 보통 해 <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> 출렁 · 기대 <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/년</b></>
-          : <>At this budget: a typical year swings <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> · expected <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/yr</b></>}
+          ? <>지금 예산 기준: 보통 해 <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> 출렁{SHOW_ER && <> · 기대 <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/년</b></>}</>
+          : <>At this budget: a typical year swings <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b>{SHOW_ER && <> · expected <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/yr</b></>}</>}
       </div>
       {mode !== "simple" && <Sub style={{ marginTop: 8, fontSize: 11 }}>{t("betaErr")}</Sub>}
     </Card>
@@ -2077,7 +2160,8 @@ function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
 
 const RC_COLORS = ["#1B2B4B", "#E8987A", "#2E9E8F", "#566BB8", "#C98F2B", "#8C5B74", "#4E7A5A", "#7A8699", "#3B6FD4", "#A3703F"];
 function RiskContribCard({ lang, t, metrics, stocksById }) {
-  if (metrics.empty || metrics.rows.length < 2) return null;
+  // 자료 없는 종목이 있으면 돈 비중(실제)과 위험 비중(가정 포함)이 같은 것을 가리키지 않아요 → 이 카드는 보여 주지 않아요 (배너가 알려요)
+  if (metrics.empty || metrics.noRiskN > 0 || metrics.rows.length < 2) return null;
   const rows = [...metrics.rows].sort((a, b) => b.rc - a.rc).slice(0, 10);
   const topName = stocksById[rows[0].t] ? (lang === "ko" ? stocksById[rows[0].t].nk : stocksById[rows[0].t].ne) : "";
   return (
@@ -2168,6 +2252,7 @@ function ProjectionCard({ lang, t, metrics, settings }) {
       </div>
       <Sub style={{ marginTop: 8, fontSize: 11 }}>
         {lang === "ko" ? "연간 배당 예상: " : "Est. annual dividends: "}<b style={{ color: C.ink }}>{fmtMw(metrics.divWon, lang)}</b>{lang === "ko" ? " (재투자 가정 없음 · 세전)" : " (no reinvestment, pre-tax)"}
+        {metrics.dyUnknownN > 0 && <span className="dyUnknown" style={{ display: "block", color: WARN_INK, marginTop: 2 }}>{T_DY_UNKNOWN[lang].replace("{n}", metrics.dyUnknownN)}</span>}
       </Sub>
     </Card>
   );
@@ -2391,6 +2476,8 @@ function QuickFactsCard({ lang, t, metrics, settings, profile }) {
           </div>
         ))}
       </div>
+      {/* v18 메모: SHOW_ER 를 켜면 ProjectionCard 에도 같은 알림이 있어 ③에 두 번 보여요 — 켤 때 하나로 정리 */}
+      {metrics.dyUnknownN > 0 && <div className="dyUnknown" style={{ marginTop: 6, fontSize: 11, color: WARN_INK }}>{T_DY_UNKNOWN[lang].replace("{n}", metrics.dyUnknownN)}</div>}
     </Card>
   );
 }
@@ -2403,12 +2490,13 @@ function MiniCheck({ s, peers, lang, t }) {
   const med = (arr) => { const a = [...arr].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
   const roeMed = med(others.map((p) => p.x.roe || 0));
   const debtMed = med(others.map((p) => p.x.debt || 0));
-  const perMed = med(others.map((p) => p.per || 0));
+  const perPeers = others.filter((p) => p.per > 0).map((p) => p.per);
+  const perMed = perPeers.length >= 3 ? med(perPeers) : null;
   const isFin = s.s === "finance";
   const lvl = (good, mid) => (good ? 0 : mid ? 1 : 2);
   const roeL = lvl((s.x?.roe || 0) >= roeMed, (s.x?.roe || 0) >= roeMed * 0.7);
   const debtL = isFin ? -1 : lvl((s.x?.debt || 0) <= debtMed, (s.x?.debt || 0) <= debtMed * 1.5);
-  const perL = lvl(s.per <= perMed, s.per <= perMed * 1.3);
+  const perL = s.per > 0 && perMed != null ? lvl(s.per <= perMed, s.per <= perMed * 1.3) : -1;
   const W = {
     p: lang === "ko" ? ["좋은 편", "보통", "아쉬운 편"] : ["Good", "OK", "Weak"],
     v: lang === "ko" ? ["낮은 편", "보통", "높은 편"] : ["Low", "Mid", "High"],
@@ -2444,7 +2532,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
   const sep = Math.max(metrics.wAvgVol, metrics.volP);
   const own = 100 - metrics.r2;                 // 개별 회사 때문에 흔들리는 비율
   const n = metrics.rows.filter((r) => r.mw > 0).length;
-  const idioVarTot = metrics.rows.reduce((a, r) => a + r.w * r.w * r.idio, 0);
+  const idioVarTot = metrics.rows.reduce((a, r) => a + r.wr * r.wr * r.idio, 0);   // 위험 계산용 비중 (computeMetrics 와 같게)
   let eqOwn = null;
   if (n >= 2) {
     const eqH = metrics.rows.filter((r) => r.mw > 0).map((r) => ({ t: r.t, mw: metrics.invested / n / 10000, won: metrics.invested / n, stock: r.stock }));
@@ -2452,7 +2540,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
     if (!eq.empty) eqOwn = 100 - eq.r2;
   }
   let bigC = null;
-  metrics.rows.forEach((r) => { const c = r.w * r.w * r.idio; if (!bigC || c > bigC.c) bigC = { c, r }; });
+  metrics.rows.forEach((r) => { const c = r.wr * r.wr * r.idio; if (!r.nr && (!bigC || c > bigC.c)) bigC = { c, r }; });
 
   // 어디쯤인지 알려주는 기준점 — 숫자만 보고 불안해지지 않게
   const band = own <= 25 ? 0 : own <= 40 ? 1 : 2;
@@ -2464,18 +2552,18 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
   const bandCol = [C.teal, "#9A6B00", C.coral][band];
 
   const levers = [];
-  if (band === 0) levers.push({ icon: "", text: t("rjGood") });
+  if (band === 0) { if (SHOW_VERDICTS) levers.push({ icon: "", text: t("rjGood") }); }   // '유지하는 게 할 일의 전부' — 버그 때문에 한 번도 안 보였던 조언 줄 (B안)
   else {
-    if (eqOwn != null && eqOwn < own - 1.5) levers.push({
+    if (SHOW_VERDICTS && eqOwn != null && eqOwn < own - 1.5) levers.push({
       icon: "", bars: [own, eqOwn],
       text: ko ? `지금 종목 그대로, 비중만 고르게 나눠도 이 비율이 ${own.toFixed(0)}% → ${eqOwn.toFixed(0)}%로 내려가요.`
                : `Same stocks, evened weights: this share drops ${own.toFixed(0)}% → ${eqOwn.toFixed(0)}%.`,
     });
-    if (bigC && idioVarTot > 0 && bigC.c / idioVarTot > 0.35) {
+    if (SHOW_VERDICTS && bigC && idioVarTot > 0 && bigC.c / idioVarTot > 0.35) {
       const nm = ko ? bigC.r.stock.nk : bigC.r.stock.ne;
       levers.push({ icon: "", text: ko ? `특히 ${nm} 비중을 줄이는 효과가 가장 커요 — 이 부분의 ${(bigC.c / idioVarTot * 100).toFixed(0)}%가 이 한 종목에서 나와요.` : `Trimming ${nm} helps most — ${(bigC.c / idioVarTot * 100).toFixed(0)}% of this comes from that one name.` });
     }
-    if (n < (profile.ready ? profile.stocksMax : 15)) {
+    if (SHOW_VERDICTS && n < (profile.ready ? profile.stocksMax : 15)) {
       const newVol = Math.sqrt(Math.pow(sysVol / 100, 2) + idioVarTot * n / (n + 3)) * 100;
       const dd = metrics.volP - newVol;
       if (dd > 0.8) levers.push({ icon: "", text: ko ? `성격이 겹치지 않는 종목 3개를 더 나눠 담으면 전체 출렁임이 약 ${dd.toFixed(1)}%p 줄어요 (√n 효과).` : `Three more non-overlapping names cut total swing by ~${dd.toFixed(1)}%p (the √n effect).` });
@@ -2552,6 +2640,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
         <span style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.55 }}>{t("rjZig")}</span>
       </div>
 
+      {levers.length > 0 && (   /* B안: 조언 줄을 꺼 두면 비는 경우가 있어서, 빈 상자는 그리지 않아요 */
       <div style={{ marginTop: 12, background: band === 0 ? C.tealSoft : "#FFF7EE", border: "1.5px solid " + (band === 0 ? "#BEE9E4" : "#F5D9B8"), borderRadius: 14, padding: 13 }}>
         <div style={{ fontSize: 13, fontWeight: 900, color: band === 0 ? "#0B6E66" : "#8A5A16" }}>{t("rjAction")}</div>
         <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2578,17 +2667,18 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
           ))}
         </div>
       </div>
+      )}
 
       <button onClick={() => setShowDetail(!showDetail)} style={{ marginTop: 10, background: "none", border: "none", color: C.blue, fontSize: 12, fontWeight: 800, cursor: "pointer", padding: 0, fontFamily: FONT }}>
         {showDetail ? "▲ " : "▼ "}{t("rjDetails")}
       </button>
       {showDetail && (
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 7, animation: "fadeIn .2s ease" }}>
-          {[...metrics.rows].filter((r) => r.mw > 0).sort((a, b) => b.wInv - a.wInv).slice(0, 12).map((r) => (
+          {[...metrics.rows].filter((r) => r.mw > 0 && !r.nr).sort((a, b) => b.wInv - a.wInv).slice(0, 12).map((r) => (
             <div key={r.t}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
                 <span style={{ fontWeight: 700, color: C.ink }}>{ko ? r.stock.nk : r.stock.ne} <span style={{ color: C.faint, fontWeight: 400 }}>{(r.wInv * 100).toFixed(0)}%</span></span>
-                {mode !== "simple" && <span style={{ color: C.faint }}>{t("splitFair")} {pct(settings.rf + r.stock.beta * clsMrp(r.c, settings) * 100)}</span>}
+                {mode !== "simple" && SHOW_ER && <span style={{ color: C.faint }}>{t("splitFair")} {r.nr ? "–" : pct(settings.rf + r.b * clsMrp(r.c, settings) * 100)}</span>}
               </div>
               <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden" }}>
                 <div style={{ width: r.sysShare * 100 + "%", background: C.blue }} />
@@ -2608,7 +2698,7 @@ function AlphaCard({ lang, t, metrics, profile, settings, stocksById, setExplain
   const te = metrics.te;
   const teLow = te < 4;
   const contribs = [...metrics.rows].filter((r) => r.mw > 0)
-    .map((r) => ({ r, c: r.wInv * (r.stock.al || 0) }))
+    .filter((r) => typeof r.stock.al === "number").map((r) => ({ r, c: r.wInv * r.stock.al }))
     .sort((a, b) => Math.abs(b.c) - Math.abs(a.c)).slice(0, 3);
   const at = profile.attrs || {};
   const strat = [
@@ -2658,7 +2748,7 @@ function AlphaCard({ lang, t, metrics, profile, settings, stocksById, setExplain
           <Sub style={{ fontWeight: 700, color: C.ink }}>{t("alSpace")}</Sub>
           <span style={{ fontSize: 15, fontWeight: 900, color: C.ink }}>{pct(te)}</span>
         </div>
-        <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginTop: 3 }}>{teLow ? t("alSpaceLow") : t("alSpaceHigh")}</div>
+        {(!teLow || SHOW_VERDICTS) && <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginTop: 3 }}>{teLow ? t("alSpaceLow") : t("alSpaceHigh")}</div>}
       </div>
       {(() => {
         const ir = te > 0.01 ? metrics.pastAl / te : 0;
@@ -2823,10 +2913,10 @@ function WhatIfLab({ lang, t, metrics, profile, settings, stocksById }) {
     const eqH = metrics.rows.filter((r) => r.mw > 0).map((r) => ({ t: r.t, mw: 0, won: metrics.invested / n, stock: r.stock }));
     eq = computeMetrics(eqH.map((h) => ({ ...h, mw: h.won / 10000 })), metrics.total, settings);
   }
-  const D = ({ a, b, fmt, invert }) => {
+  const D = ({ a, b, fmt, invert, neutral }) => {
     const d = b - a;
     const better = invert ? d < 0 : d > 0;
-    return <span style={{ color: Math.abs(d) < 0.005 ? C.faint : better ? C.teal : C.coral, fontWeight: 800 }}>{d > 0 ? "+" : ""}{fmt(d)}</span>;
+    return <span style={{ color: Math.abs(d) < 0.005 ? C.faint : neutral ? C.ink : better ? C.teal : C.coral, fontWeight: 800 }}>{d > 0 ? "+" : ""}{fmt(d)}</span>;
   };
   return (
     <Card style={{ padding: 16 }}>
@@ -2860,15 +2950,15 @@ function WhatIfLab({ lang, t, metrics, profile, settings, stocksById }) {
       {eq && !eq.empty && (
         <div style={{ marginTop: 8, background: C.blueSoft, borderRadius: 13, padding: 11 }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: C.blueDeep }}>{t("wiOneN")}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5, marginTop: 6, textAlign: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "repeat(4, 1fr)" : "repeat(3, 1fr)", gap: 5, marginTop: 6, textAlign: "center" }}>
             {[["β", metrics.beta, eq.beta, (d) => d.toFixed(2), false],
               ["σ", metrics.volP, eq.volP, (d) => d.toFixed(1) + "%p", true],
               [lang === "ko" ? "실효 종목" : "Eff. N", metrics.effN, eq.effN, (d) => d.toFixed(1), false],
-              ["Sharpe", metrics.sharpe, eq.sharpe, (d) => d.toFixed(2), false]].map(([l, a, b, f, inv]) => (
+              ...(SHOW_ER ? [["Sharpe", metrics.sharpe, eq.sharpe, (d) => d.toFixed(2), false]] : [])].map(([l, a, b, f, inv]) => (
               <div key={l} style={{ background: "#fff", borderRadius: 10, padding: "6px 3px" }}>
                 <div style={{ fontSize: 9.5, color: C.faint }}>{l}</div>
                 <div style={{ fontSize: 11.5, fontWeight: 800, color: C.ink }}>{typeof b === "number" ? (l === "σ" ? b.toFixed(1) + "%" : b.toFixed(l === "β" || l === "Sharpe" ? 2 : 1)) : b}</div>
-                <D a={a} b={b} fmt={f} invert={inv} />
+                <D a={a} b={b} fmt={f} invert={inv} neutral={!SHOW_VERDICTS && (l === "β" || l === "σ")} />
               </div>
             ))}
           </div>
@@ -2978,17 +3068,17 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
             <Sub style={{ color: "#7A5410", fontWeight: 700 }}>{t("needProfile")}</Sub>
           </Card>
         )}
-        {metrics.empty && <Btn kind="ghost" onClick={onDemo} style={{ width: "100%" }}>{t("demo")}</Btn>}
+        {metrics.empty && !metrics.riskBlind && <Btn kind="ghost" onClick={onDemo} style={{ width: "100%" }}>{t("demo")}</Btn>}
         <Cart lang={lang} t={t} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} setBudgetMw={setBudgetMw} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} />
         <MetricsPanel lang={lang} t={t} mode={mode} metrics={metrics} profile={profile} setExplain={setExplain} />
       </div>
       <div className="stickyR" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {profile.ready && !metrics.empty ? (
-          <HealthHero score={score} okCount={okCount} lang={lang} t={t} />
+          SHOW_SCORE ? <HealthHero score={score} okCount={okCount} lang={lang} t={t} /> : null
         ) : (
           <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: 22, textAlign: "center" }}>
             <Bird mood="think" size={56} />
-            <Sub>{metrics.empty ? t("emptyCart") : t("needProfile")}</Sub>
+            <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : metrics.empty ? t("emptyCart") : t("needProfile")}</Sub>
           </Card>
         )}
         <div className="stickyScroll">
@@ -3001,7 +3091,7 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
               try {
                 let inv = 0;
                 holdings.forEach((h) => { inv += h.mw || 0; });
-                const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), score, lang);
+                const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), SHOW_SCORE ? score : null, lang);
                 const cv = renderPortfolioCard(data);
                 setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
               } catch (e) {}
@@ -3030,11 +3120,14 @@ function taxEstimate(metrics, profile, settings, tax) {
   if (metrics.empty) return null;
   const acc = profile.account || "normal";
   let divKr = 0, divUs = 0, gainUsBase = 0, gainMetalEtf = 0;
+  const usRows = metrics.rows.filter((r) => r.c === "us" && !r.nr && r.w > 0);
+  const usW = usRows.reduce((a, r) => a + r.w, 0);
+  const usBeta = usW > 0 ? usRows.reduce((a, r) => a + r.w * r.b, 0) / usW : 1;   // 미국 자료가 하나도 없으면 시장 평균(1)
   metrics.rows.forEach((r) => {
     const d = r.won * ((r.stock.dy || 0) / 100);
     if (r.c === "us") {
       divUs += d;
-      gainUsBase += r.won * Math.max((settings.rf + r.stock.beta * settings.usMrp) / 100 - (r.stock.dy || 0) / 100, 0);
+      gainUsBase += r.won * Math.max((settings.rf + (r.nr ? usBeta : r.b) * settings.usMrp) / 100 - (r.stock.dy || 0) / 100, 0);   // 자료 없는 미국 종목은 자료 있는 미국 종목의 평균 베타
     } else if (r.c === "metal") {
       if (r.stock.t !== "04020000") gainMetalEtf += r.won * (settings.mtMrp / 100);
     } else divKr += d;
@@ -3084,17 +3177,19 @@ function TaxCard({ lang, t, metrics, profile, settings, tax }) {
         <H3>{t("taxTitle")}</H3>
         <Chip color={C.blueDeep} soft={C.blueSoft}>{A.e} {lang === "ko" ? A.ko : A.en}</Chip>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 11 }}>
+      <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "1fr 1fr" : "1fr", gap: 8, marginTop: 11 }}>
         <div style={{ background: C.bg, borderRadius: 13, padding: 12 }}>
           <Sub>{t("taxYear")}</Sub>
           <div style={{ fontSize: 19, fontWeight: 900, color: C.ink, marginTop: 3 }}>{fmtMw(e.mine, lang)}</div>
           <div style={{ fontSize: 10.5, color: C.faint }}>{lang === "ko" ? "연간 · 추정" : "per year, est."}</div>
         </div>
-        <div style={{ background: C.tealSoft, borderRadius: 13, padding: 12 }}>
-          <Sub style={{ color: "#0B6E66" }}>{t("taxNet")}</Sub>
-          <div style={{ fontSize: 19, fontWeight: 900, color: C.teal, marginTop: 3 }}>{pct(netRet)}</div>
-          <div style={{ fontSize: 10.5, color: C.teal }}>{lang === "ko" ? "세전 " : "pre-tax "}{pct(metrics.expRet)}</div>
-        </div>
+        {SHOW_ER && (   /* 세후·세전 기대수익: 예측처럼 읽혀서 꺼 둬요 (B안) */
+          <div style={{ background: C.tealSoft, borderRadius: 13, padding: 12 }}>
+            <Sub style={{ color: "#0B6E66" }}>{t("taxNet")}</Sub>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.teal, marginTop: 3 }}>{pct(netRet)}</div>
+            <div style={{ fontSize: 10.5, color: C.teal }}>{lang === "ko" ? "세전 " : "pre-tax "}{pct(metrics.expRet)}</div>
+          </div>
+        )}
       </div>
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 5 }}>
         {[[t("taxDivKr"), e.divKr * (tax.divKr / 100), tax.divKr + "%"],
@@ -3123,7 +3218,7 @@ function TaxCard({ lang, t, metrics, profile, settings, tax }) {
 // ================= Recommendation engine =================
 // 목표 범위를 벗어난 항목마다 "수학적으로 맞춰지는" 조정안을 만들어 줍니다.
 // 종목의 좋고 나쁨은 전혀 판단하지 않고, 비중 계산만 합니다.
-const effBeta = (s, st) => s.beta * (clsVol(clsOf(s), st) / (st.mktVol / 100)) * rhoOf(clsOf(s), "kr", st);
+const effBeta = (s, st) => (typeof s.beta === "number" ? s.beta : 0) * (clsVol(clsOf(s), st) / (st.mktVol / 100)) * rhoOf(clsOf(s), "kr", st);
 
 function shiftToward(items, scoreOf, target, up, maxPosPct) {
   const w = items.map((r) => ({ t: r.t, mw: r.mw, s: scoreOf(r.stock) }));
@@ -3162,11 +3257,13 @@ function buildFixes(ctx) {
   const midBeta = (profile.targetBetaMin + profile.targetBetaMax) / 2;
 
   // ── 베타가 목표 밖일 때: 지금 종목 그대로 비중만 조정
-  if (metrics.beta > profile.targetBetaMax + 0.001 || metrics.beta < profile.targetBetaMin - 0.001) {
+  if (SHOW_VERDICTS && (metrics.beta > profile.targetBetaMax + 0.001 || metrics.beta < profile.targetBetaMin - 0.001)) {
     const up = metrics.beta < profile.targetBetaMin;
-    const w = shiftToward(live, (s) => effBeta(s, settings), midBeta, up, profile.maxPositionPct);
+    // 베타를 모르는 종목(noRisk)은 비중을 옮기지 않고 그대로 둬요
+    const keep = live.filter((r) => r.nr).map((r) => ({ t: r.t, mw: r.mw }));
+    const w = shiftToward(live.filter((r) => !r.nr), (s) => effBeta(s, settings), midBeta, up, profile.maxPositionPct);
     if (w) {
-      const nh = fin(w);
+      const nh = fin(w.concat(keep));
       const m2 = sim(nh);
       if (!m2.empty && Math.abs(m2.beta - midBeta) < Math.abs(metrics.beta - midBeta) - 0.01) {
         const moves = w.map((x) => ({ t: x.t, d: x.mw - (live.find((r) => r.t === x.t) || {}).mw }))
@@ -3184,7 +3281,7 @@ function buildFixes(ctx) {
   }
 
   // ── 변동성이 상한을 넘을 때: 현금 비중을 늘려 정확히 맞춤
-  if (metrics.volP > profile.targetVolMaxPct + 0.01) {
+  if (SHOW_VERDICTS && metrics.volP > profile.targetVolMaxPct + 0.01) {
     const ratio = (profile.targetVolMaxPct - 0.3) / metrics.volP;
     if (ratio > 0.2 && ratio < 0.999) {
       const w = live.map((r) => ({ t: r.t, mw: Math.round(r.mw * ratio) }));
@@ -3322,10 +3419,10 @@ function FixList({ lang, t, fixes, stocksById, holdings, setHoldings, metrics })
                 </div>
               </div>
               {f.preview && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5, marginTop: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "repeat(4, 1fr)" : "repeat(3, 1fr)", gap: 5, marginTop: 10 }}>
                   {[["β", metrics.beta, f.preview.beta, 2], ["σ", metrics.volP, f.preview.volP, 1],
                     [lang === "ko" ? "최대업종" : "Top sec", metrics.maxSectorW, f.preview.maxSectorW, 0],
-                    [lang === "ko" ? "기대수익" : "E(r)", metrics.expRet, f.preview.expRet, 1]].map(([l, a, b, d]) => (
+                    ...(SHOW_ER ? [[lang === "ko" ? "기대수익" : "E(r)", metrics.expRet, f.preview.expRet, 1]] : [])].map(([l, a, b, d]) => (
                     <div key={l} style={{ background: C.bg, borderRadius: 10, padding: "7px 4px", textAlign: "center" }}>
                       <div style={{ fontSize: 9.5, color: C.faint }}>{l}</div>
                       <div style={{ fontSize: 11.5, fontWeight: 800, color: C.ink }}>{a.toFixed(d)} → {b.toFixed(d)}</div>
@@ -3348,7 +3445,7 @@ function FixList({ lang, t, fixes, stocksById, holdings, setHoldings, metrics })
                 <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 5 }}>
                   {f.candidates.map((s) => (
                     <div key={s.t} style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, borderRadius: 11, padding: "8px 10px" }}>
-                      <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: C.ink }}>{lang === "ko" ? s.nk : s.ne} <span style={{ color: C.faint, fontWeight: 400 }}>β {s.beta.toFixed(2)}</span></span>
+                      <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: C.ink }}>{lang === "ko" ? s.nk : s.ne} <span style={{ color: C.faint, fontWeight: 400 }}>β {fBeta(s.beta)}</span></span>
                       <button onClick={() => { setPrev(holdings); setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(metrics.invested / 10000 / 10)) }]); }}
                         style={{ background: C.blue, color: "#fff", border: "none", borderRadius: 9, padding: "5px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{t("add")}</button>
                     </div>
@@ -3388,7 +3485,7 @@ function WellDoneCard({ lang, t, metrics, profile, settings }) {
   push(profile.ready && n >= profile.stocksMin, "", ko ? "종목 수가 권장 범위에 있어요" : "Holding count in range", ko ? `${n}개 (권장 ${profile.stocksMin}개 이상)` : `${n} (${profile.stocksMin}+ recommended)`);
   push(profile.ready && !metrics.rows.some((r) => r.wInv * 100 > profile.maxPositionPct + 0.01), "",
     ko ? "한 종목에 몰지 않았어요" : "No oversized position", ko ? `가장 큰 종목 ${Math.max(...metrics.rows.map((r) => r.wInv * 100)).toFixed(0)}% (상한 ${profile.maxPositionPct}%)` : `Largest ${Math.max(...metrics.rows.map((r) => r.wInv * 100)).toFixed(0)}%`);
-  push(profile.ready && profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax, "",
+  if (SHOW_VERDICTS) push(profile.ready && profile.targetBetaMin <= metrics.beta && metrics.beta <= profile.targetBetaMax, "",
     ko ? "내 그릇에 맞는 베타를 지켰어요" : "Beta matches your capacity", `β ${num(metrics.beta)} (${profile.targetBetaMin.toFixed(1)}–${profile.targetBetaMax.toFixed(1)})`);
   push(profile.cashFloorPct === 0 || cashPct >= profile.cashFloorPct - 0.01, "",
     ko ? "급할 때 쓸 현금을 남겨뒀어요" : "Kept a cash buffer", ko ? `현금 ${cashPct.toFixed(0)}% · ${fmtMw(metrics.cash, lang)}` : `${cashPct.toFixed(0)}% cash`);
@@ -3439,11 +3536,11 @@ function ReturnAnatomyCard({ lang, t, metrics, settings }) {
   const byCls = CLS_LIST.map((c) => {
     const rows = metrics.rows.filter((r) => r.c === c && r.mw > 0);
     if (!rows.length) return null;
-    const contrib = rows.reduce((a, r) => a + r.w * r.stock.beta * clsMrp(c, settings) * 100, 0);
+    const contrib = rows.reduce((a, r) => a + r.w * r.b * clsMrp(c, settings) * 100, 0);
     return { c, contrib, w: metrics.clsW[c] || 0 };
   }).filter(Boolean);
   const top = [...metrics.rows].filter((r) => r.mw > 0)
-    .map((r) => ({ r, c: r.w * (settings.rf + r.stock.beta * clsMrp(r.c, settings) * 100) }))
+    .filter((r) => !r.nr).map((r) => ({ r, c: r.w * (settings.rf + r.b * clsMrp(r.c, settings) * 100) }))   // 그 종목 자기 돈만큼
     .sort((a, b) => b.c - a.c).slice(0, 5);
   const maxC = Math.max(...top.map((x) => x.c), 0.01);
   return (
@@ -3467,7 +3564,7 @@ function ReturnAnatomyCard({ lang, t, metrics, settings }) {
           </div>
         ))}
       </div>
-      {byCls.length > 1 && (
+      {byCls.length > 1 && !metrics.noRiskN && (      /* 자료 없는 종목이 있으면 자산군별 몫이 틀어져서 숨겨요 */
         <div style={{ marginTop: 10 }}>
           <Sub style={{ fontWeight: 700, color: C.ink, marginBottom: 5 }}>{t("raByCls")}</Sub>
           {byCls.map((b) => (
@@ -3696,17 +3793,20 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
     exp: metrics.expRet, unpaid: 100 - metrics.r2, sec: metrics.maxSectorW,
     secKey: metrics.maxSectorKey, top3: metrics.top3, n: metrics.rows.filter((r) => r.mw > 0).length,
   };
-  const last = checkins && checkins.length ? checkins[checkins.length - 1] : null;
+  // 비교는 숫자가 제대로 저장된 마지막 점검과만 해요. v17.5 전에는 위험 수치가 NaN 이라 점검이 빈 값(null)으로
+  // 저장됐어요 — 그것과 비교하면 '위험이 크게 늘었어요' 같은 틀린 말이 나와요.
+  const valid = (c) => c && typeof c.vol === "number" && isFinite(c.vol) && typeof c.exp === "number" && isFinite(c.exp);
+  const last = Array.isArray(checkins) ? [...checkins].reverse().find(valid) || null : null;
   const rows = last ? [
     [t("ciAmount"), fmtMw(last.inv, lang), fmtMw(snap.inv, lang), snap.inv - last.inv, 0],
-    [t("mVol"), pct(last.vol), pct(snap.vol), snap.vol - last.vol, 1],
-    [t("mRet"), pct(last.exp), pct(snap.exp), snap.exp - last.exp, 2],
+    [t("mVol"), pct(last.vol), pct(snap.vol), snap.vol - last.vol, SHOW_VERDICTS ? 1 : 3],   // 3 = 색 판정 없이 (B안)
+    ...(SHOW_ER ? [[t("mRet"), pct(last.exp), pct(snap.exp), snap.exp - last.exp, 2]] : []),
     [t("splitIdio"), pct(last.unpaid, 0), pct(snap.unpaid, 0), snap.unpaid - last.unpaid, 1],
     [t("mSector"), pct(last.sec, 0), pct(snap.sec, 0), snap.sec - last.sec, 1],
     [t("ciCount"), last.n, snap.n, snap.n - last.n, 0],
   ] : [];
   const dVol = last ? snap.vol - last.vol : 0, dExp = last ? snap.exp - last.exp : 0;
-  const verdict = !last ? null
+  const verdict = !last || !SHOW_ER ? null      // 판정 문장이 기대수익을 말해서, 기대수익을 꺼 둔 동안은 보여 주지 않아요
     : dVol > 0.5 && dExp <= 0.15
       ? (lang === "ko" ? "위험은 늘었는데 기대수익은 거의 그대로예요. 보상받지 못한 변화였어요." : "Risk went up, expected return barely moved — an uncompensated change.")
       : dVol > 0.5 && dExp > 0.15
@@ -3732,7 +3832,7 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
             {rows.map(([label, a, b, d, kind]) => {
               const flat = Math.abs(d) < 0.05;
               const good = kind === 0 ? d > 0 : kind === 1 ? d < 0 : d > 0;
-              const col = flat ? C.faint : good ? C.teal : C.coral;
+              const col = flat ? C.faint : kind === 3 ? C.ink : good ? C.teal : C.coral;
               return (
                 <div key={label} style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr 0.9fr", fontSize: 12, padding: "7px 4px", borderTop: "1px solid " + C.line, alignItems: "center" }}>
                   <span style={{ color: C.sub, fontWeight: 700 }}>{label}</span>
@@ -3743,7 +3843,7 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
               );
             })}
           </div>
-          <Verdict>{verdict}</Verdict>
+          {verdict && <Verdict>{verdict}</Verdict>}
         </>
       )}
     </Card>
@@ -3757,14 +3857,14 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
     return (
       <Card style={{ textAlign: "center", padding: 34, display: "flex", flexDirection: "column", alignItems: "center", gap: 10, maxWidth: 560, margin: "0 auto" }}>
         <Bird mood="think" size={66} />
-        <Sub>{t("diagEmpty")}</Sub>
+        <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : t("diagEmpty")}</Sub>
       </Card>
     );
   }
   const tg = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <DiagHero lang={lang} t={t} metrics={metrics} profile={profile} score={score} />
+      {SHOW_VERDICTS && SHOW_SCORE && <DiagHero lang={lang} t={t} metrics={metrics} profile={profile} score={score} />}
       <CheckinCard lang={lang} t={t} metrics={metrics} profile={profile} checkins={checkins} onSave={onCheckin} />
       <Section title={t("sxW")} sub={t("sxWs")} open={!!open.w} onToggle={() => tg("w")}>
         <WellDoneCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} />
@@ -3778,15 +3878,20 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
           <SectorDonut lang={lang} t={t} metrics={metrics} stocksById={stocksById} />
         </div>
         <RiskContribCard lang={lang} t={t} metrics={metrics} stocksById={stocksById} />
+        {!SHOW_ER && <QuickFactsCard lang={lang} t={t} metrics={metrics} settings={settings} profile={profile} />}
       </Section>
-      <Section title={t("sxR")} sub={t("sxRs")} open={!!open.r} onToggle={() => tg("r")}>
-        <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
-      </Section>
-      <Section title={t("sxC")} sub={t("sxCs")} open={!!open.c} onToggle={() => tg("c")}>
-        <div className="grid2">
-          <TailRiskCard lang={lang} t={t} metrics={metrics} />
-          <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />
-        </div>
+      {SHOW_ER && (
+        <Section title={t("sxR")} sub={t("sxRs")} open={!!open.r} onToggle={() => tg("r")}>
+          <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
+        </Section>
+      )}
+      <Section title={t("sxC")} sub={SHOW_ER ? t("sxCs") : null /* B안: 확률 카드를 꺼 둔 동안은 부제 없이 */} open={!!open.c} onToggle={() => tg("c")}>
+        {SHOW_ER ? (
+          <div className="grid2">
+            <TailRiskCard lang={lang} t={t} metrics={metrics} />
+            <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />
+          </div>
+        ) : <TailRiskCard lang={lang} t={t} metrics={metrics} />}
       </Section>
       <Section title={t("sxD")} sub={t("sxDs")} open={!!open.d} onToggle={() => tg("d")}>
         <div className="grid2">
@@ -3799,33 +3904,37 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
         <div className="grid2">
           <WhatIfLab lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} stocksById={stocksById} />
           <TimeMachine lang={lang} t={t} metrics={metrics} settings={settings} />
-          <SequenceRiskCard lang={lang} t={t} metrics={metrics} profile={profile} />
+          {SHOW_ER && <SequenceRiskCard lang={lang} t={t} metrics={metrics} profile={profile} />}
         </div>
       </Section>
+      {SHOW_ER && (  /* '목표까지 갈 수 있을까요?' — 기대수익·전망 카드라 꺼 둔 동안은 섹션째 숨겨요 (간단 사실 카드는 위로 옮김) */
       <Section title={t("sxF")} sub={t("sxFs")} open={!!open.f} onToggle={() => tg("f")}>
         <div className="grid2">
+          {SHOW_ER && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <GoalGapCard lang={lang} t={t} metrics={metrics} profile={profile} />
+              <ProjectionCard lang={lang} t={t} metrics={metrics} settings={settings} />
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <GoalGapCard lang={lang} t={t} metrics={metrics} profile={profile} />
-            <ProjectionCard lang={lang} t={t} metrics={metrics} settings={settings} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <BenchCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} />
-            <TaxCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} tax={tax} />
+            {SHOW_ER && <BenchCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} />}
+            {SHOW_ER && <TaxCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} tax={tax} />}
             <QuickFactsCard lang={lang} t={t} metrics={metrics} settings={settings} profile={profile} />
           </div>
         </div>
       </Section>
+      )}
     </div>
   );
 }
 
 // ================= Export (ship's log) =================
-function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score }) {
+function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo }) {
   const [checks, setChecks] = useState([false, false, false, false, false]);
   const [cardM, setCardM] = useState(null);
   const openCard = () => {
     try {
-      const data = makeCardData(holdings, stocksById, (metrics.cash || 0) / 1e4, score || 0, lang);
+      const data = makeCardData(holdings, stocksById, (metrics.cash || 0) / 1e4, SHOW_SCORE ? score || 0 : null, lang);
       const cv = renderPortfolioCard(data);
       setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
     } catch (e) {}
@@ -3835,7 +3944,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     return (
       <Card style={{ textAlign: "center", padding: 30, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <Bird mood="think" size={64} />
-        <Sub>{lang === "ko" ? "아직 담은 종목이 없어요. ② 포트폴리오 탭에서 먼저 만들어주세요." : "Nothing here yet. Build your portfolio in tab ② first."}</Sub>
+        <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : (lang === "ko" ? "아직 담은 종목이 없어요. ② 포트폴리오 탭에서 먼저 만들어주세요." : "Nothing here yet. Build your portfolio in tab ② first.")}</Sub>
       </Card>
     );
   }
@@ -3845,7 +3954,8 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     return { ...r, s, shares: pk > 0 ? Math.floor(r.won / pk) : 0 };
   });
   const stamp = new Date().toISOString().slice(0, 10);
-  const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", author: T.credit.en, slot: slotName, date: stamp, dataAsOf: DATA_AS_OF, settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+  const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", author: T.credit.en, slot: slotName, date: stamp,
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
@@ -3855,12 +3965,13 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     const L = [];
     L.push((lang === "ko" ? "뱁새 주문 메모 " : "Baepsae Order Memo ") + stamp);
     L.push(T.credit[lang]);
-    L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(metrics.total, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + " · E(r) " + pct(metrics.expRet));
+    L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(metrics.total, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + (SHOW_ER ? " · E(r) " + pct(metrics.expRet) : ""));
     L.push("");
     rows.forEach((r) => L.push(`${r.s.nk} (${r.t}) — ${fmtMw(r.won, lang)} (${(r.wInv * 100).toFixed(1)}%) ≈ ${r.shares}${lang === "ko" ? "주" : "sh"} @${fmtPx(r.s.price, r.s)}`));
     L.push((lang === "ko" ? "현금 " : "Cash ") + fmtMw(metrics.cash, lang));
     L.push("");
-    L.push(lang === "ko" ? "※ 가격은 " + DATA_AS_OF + " 추정치. 주문 시 실제 시세로 수량을 조정하세요." : "※ Prices are estimates as of " + DATA_AS_OF + ". Adjust share counts at live prices.");
+    nonLiveLines(lang, !!(dataInfo && dataInfo.failed), rows.map((r) => r.s), metrics).forEach((x) => L.push("※ " + x));
+    L.push(lang === "ko" ? "※ 주문 시 실제 시세로 수량을 조정하세요." : "※ Adjust share counts at live prices.");
     return L.join("\n");
   };
   const copyMemo = async () => {
@@ -4121,16 +4232,23 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
       <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.readAsText(f); } e.target.value = ""; }} />
       <Btn kind="ghost" onClick={() => fileRef.current && fileRef.current.click()} style={{ width: "100%" }}>{lang === "ko" ? "저장한 파일에서 불러오기 (JSON)" : "Load from a saved file (JSON)"}</Btn>
-      <Card style={{ padding: 14, background: dataInfo.stale ? C.sandSoft : C.bg, border: "1px solid " + (dataInfo.stale ? "#F3DCB2" : C.line) }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: dataInfo.stale ? "#8A5A16" : C.sub }}>
-          {dataInfo.live ? (lang === "ko" ? "시세 데이터 기준일: " : "Data as of: ") + dataInfo.asOf : (lang === "ko" ? "내장 데이터 사용 중 (" : "Using built-in snapshot (") + DATA_AS_OF + ")"}
-        </div>
-        <div style={{ fontSize: 11, color: dataInfo.stale ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
-          {dataInfo.stale
-            ? (lang === "ko" ? "데이터가 일주일 넘게 갱신되지 않았어요. 숫자는 참고용으로만 보시고, 주문 전엔 증권사 시세를 꼭 확인하세요." : "Data hasn't refreshed in over a week. Treat the numbers as reference only and check live quotes before ordering.")
-            : (lang === "ko" ? "모든 수치는 추정치예요. 주문 전엔 증권사 앱에서 실제 시세를 확인하세요." : "All figures are estimates. Check real quotes in your brokerage app before ordering.")}
-        </div>
-      </Card>
+      {(() => {
+        const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang).stale;
+        const warn = stale || dataInfo.failed;
+        return (
+          <Card style={{ padding: 14, background: warn ? C.sandSoft : C.bg, border: "1px solid " + (warn ? "#F3DCB2" : C.line) }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: warn ? "#8A5A16" : C.sub }}>
+              {dataInfo.failed ? T_NOLIVE_ALL[lang]
+                : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
+            </div>
+            <div style={{ fontSize: 11, color: warn ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
+              {dataInfo.failed ? null
+                : (dataInfo.pxDate ? T_PX_OFFICIAL[lang].replace("{md}", mdOf(dataInfo.pxDate, lang)) : (lang === "ko" ? "모든 수치는 추정치예요." : "All figures are estimates."))
+                  + (lang === "ko" ? " 주문 전엔 증권사 앱에서 실제 시세를 확인하세요." : " Check real quotes in your brokerage app before ordering.")}
+            </div>
+          </Card>
+        );
+      })()}
       <Sub style={{ textAlign: "center", fontSize: 10.5, padding: "0 10px" }}>{t("disclaimer")}</Sub>
     </div>
   );
@@ -4229,7 +4347,7 @@ function AppInner({ seed, lang: langProp }) {
   const [slotName, setSlotName] = useState("");
   const [booted, setBooted] = useState(false);
   const [onb, setOnb] = useState(false);
-  const [live, setLive] = useState({ live: false, asOf: null, stale: false });
+  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null });
   const universe = useRef(null);
   const [autoKeys, setAutoKeys] = useState([]);
 
@@ -4251,8 +4369,12 @@ function AppInner({ seed, lang: langProp }) {
           return nx;
         });
         setAutoKeys(L.settings ? ["fx", ...AUTO.filter((k) => typeof L.settings[k] === "number")] : ["fx"]);
-        const days = L.asOf ? Math.floor((Date.now() - new Date(L.asOf).getTime()) / 86400000) : 999;
-        setLive({ live: true, asOf: L.asOf, stale: days > 7 });
+        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt });
+      } else {
+        // 못 읽었어요: 내장 예시 가격으로 열되, 모든 종목을 '실시간 아님'으로 표시하고 화면에서 알려요
+        universe.current = mergeStocks(BASE_STOCKS, null);
+        setStocks(universe.current.map((s) => ({ ...s })));
+        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null });
       }
       setBooted(true);
     })();
@@ -4372,6 +4494,11 @@ function AppInner({ seed, lang: langProp }) {
 
   const t = (k) => (T[k] ? T[k][lang] : k);
   const stocksById = useMemo(() => Object.fromEntries(stocks.map((s) => [s.t, s])), [stocks]);
+  // 실시간이 아닌 종목(내장 예시 가격 · 금 환산 추정)이 목록이나 보유에 하나라도 있으면 배너
+  const nonLive = useMemo(() => {
+    const all = stocks.filter((s) => !s.custom).concat(holdings.map((h) => stocksById[h.t]).filter(Boolean));
+    return { examples: all.some((s) => s.live === false && !s.est), goldEst: all.some((s) => s.est) };
+  }, [stocks, holdings, stocksById]);
   const holdingsFull = useMemo(() => holdings.map((h) => ({ ...h, won: h.mw * 10000, stock: stocksById[h.t] })).filter((h) => h.stock), [holdings, stocksById]);
   const metrics = useMemo(() => computeMetrics(holdingsFull, budgetMw * 10000, settings), [holdingsFull, budgetMw, settings]);
   metricsRef.current = metrics;
@@ -4425,7 +4552,7 @@ function AppInner({ seed, lang: langProp }) {
             </div>
           </div>
           {slotId && <div className="stages" style={{ display: "flex", alignItems: "center", gap: 6, overflowX: "auto" }}>
-            <StageBtn i={0} done={profile.ready} /><StageBtn i={1} done={!metrics.empty} /><StageBtn i={2} done={false} /><StageBtn i={3} done={false} />
+            <StageBtn i={0} done={profile.ready} /><StageBtn i={1} done={!metrics.empty || !!metrics.riskBlind} /><StageBtn i={2} done={false} /><StageBtn i={3} done={false} />
           </div>}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={() => setLang(lang === "ko" ? "en" : "ko")} style={{ background: C.bg, border: "none", borderRadius: 999, padding: "6px 10px", fontSize: 11.5, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT }}>{lang === "ko" ? "EN" : "한국어"}</button>
@@ -4437,9 +4564,11 @@ function AppInner({ seed, lang: langProp }) {
 
       <div className="wrap" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onRename={renameSlot} onImport={importJson} dataInfo={live} />}
-        {slotId && live.stale && (
+        {booted && (live.failed ? !!slotId : (nonLive.examples || nonLive.goldEst || (!!slotId && !metrics.riskBlind && metrics.noRiskN > 0))) &&
+          <NonLiveBanner lang={lang} failed={!!live.failed} examples={nonLive.examples} goldEst={nonLive.goldEst} metrics={slotId ? metrics : null} />}
+        {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang).stale && (
           <Card style={{ background: C.sandSoft, border: "1px solid #F3DCB2", padding: "11px 14px" }}>
-            <Sub style={{ color: "#8A5A16", fontWeight: 700 }}>{lang === "ko" ? `시세 데이터가 ${live.asOf} 이후 갱신되지 않았어요. 주문 전엔 증권사 시세를 꼭 확인하세요.` : `Prices haven't refreshed since ${live.asOf}. Check live quotes before ordering.`}</Sub>
+            <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} lang={lang} style={{ fontSize: 12 }} />
           </Card>
         )}
         {slotId && stage === 0 && (
@@ -4455,7 +4584,7 @@ function AppInner({ seed, lang: langProp }) {
         )}
         {slotId && stage === 3 && (
           <div className="narrow" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-            <ExportView lang={lang} t={t} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
+            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
             <Btn kind="ghost" onClick={exitSlot} style={{ width: "100%" }}>{t("slotExit")}</Btn>
           </div>
         )}
@@ -4471,11 +4600,12 @@ function AppInner({ seed, lang: langProp }) {
       {slotId && stage === 1 && profile.ready && !metrics.empty && (
         <div className="mobilebar">
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px" }}>
-            <div style={{ fontSize: 17, fontWeight: 900, color: score >= 85 ? C.teal : score >= 55 ? C.sand : C.coral }}>{score}</div>
+            {SHOW_SCORE && <div style={{ fontSize: 17, fontWeight: 900, color: score >= 85 ? C.teal : score >= 55 ? C.sand : C.coral }}>{score}</div>}
             <div style={{ display: "flex", gap: 5, flex: 1 }}>
-              {rs.states.map((ok, i) => (
-                <div key={i} style={{ flex: 1, height: 6, borderRadius: 3, background: ok ? C.teal : C.coral, opacity: ok ? 1 : 0.65 }} />
-              ))}
+              {rs.states.map((ok, i) => {
+                const neutral = !SHOW_VERDICTS && i < 2;            // β·σ 판정은 꺼 둔 동안 회색
+                return <div key={i} style={{ flex: 1, height: 6, borderRadius: 3, background: neutral ? C.line : ok ? C.teal : C.coral, opacity: neutral || ok ? 1 : 0.65 }} />;
+              })}
             </div>
             <button onClick={() => setStage(2)} style={{ background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, fontFamily: FONT, cursor: "pointer", flexShrink: 0 }}>{t("s3")}</button>
           </div>
@@ -4493,4 +4623,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics };

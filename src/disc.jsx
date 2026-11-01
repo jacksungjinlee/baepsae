@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { C, FONT, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
-import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT } from "./detail.jsx";
+import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge } from "./detail.jsx";
+import { loadJson } from "./data.js";
 
 const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
 const fmtD = (d) => d && d.length === 8 ? `${d.slice(4, 6)}.${d.slice(6, 8)}` : d || "—";
@@ -26,19 +27,6 @@ const Sub = ({ children, style = {} }) => <div style={{ fontSize: 12, color: C.s
 const ChipBtn = ({ on, onClick, children }) => (
   <button className="bchip" onClick={onClick} style={{ border: on ? "1.5px solid " + C.ink : "1.5px solid " + C.line, background: on ? C.ink : "#fff", color: on ? "#fff" : C.sub, borderRadius: 999, padding: "7px 13px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{children}</button>
 );
-
-function MissingData({ onRetry }) {
-  return (
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 16px", textAlign: "center", fontFamily: FONT, color: C.ink }}>
-      <Bird mood="search" size={80} />
-      <div style={{ fontSize: 19, fontWeight: 800, marginTop: 14 }}>공시 데이터가 아직 없어요</div>
-      <Card style={{ marginTop: 16, textAlign: "left" }}>
-        <Sub>GitHub 저장소 → <b style={{ color: C.ink }}>Actions</b> → <b style={{ color: C.ink }}>시세 데이터 갱신</b> → <b style={{ color: C.ink }}>Run workflow</b> 실행 후 새로고침하면 disc.json이 만들어져요. 첫 실행은 90일치 공시를 채우느라 평소보다 오래 걸려요.</Sub>
-      </Card>
-      <button onClick={onRetry} style={{ marginTop: 14, background: C.blue, color: "#fff", border: "none", borderRadius: RAD.btn, padding: "12px 22px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>다시 확인</button>
-    </div>
-  );
-}
 
 export function DiscBody({ data, heldMap, onOpenCompany }) {
   const [dir, setDir] = useState("all");
@@ -205,13 +193,8 @@ export default function DiscApp({ onOpenCompany, lang }) {
 
   useEffect(() => { (async () => {
     setState({ st: "loading" });
-    try {
-      const r = await fetch("./disc.json", { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const d = await r.json();
-      if (!d || !Array.isArray(d.insider)) throw new Error("bad");
-      setState({ st: "ready", data: d });
-    } catch (e) { setState({ st: "missing" }); }
+    const r = await loadJson("./disc.json", (d) => d && Array.isArray(d.insider));
+    setState(r.ok ? { st: "ready", data: r.data } : { st: "missing" });
   })(); }, [tries]);
 
   useEffect(() => { (async () => {
@@ -234,7 +217,7 @@ export default function DiscApp({ onOpenCompany, lang }) {
       <div style={{ textAlign: "center" }}><Bird mood="search" size={64} /><div style={{ fontSize: 12.5, color: C.sub, marginTop: 8 }}>공시 데이터를 불러오는 중…</div></div>
     </div>
   );
-  if (state.st === "missing") return <MissingData onRetry={() => setTries(tries + 1)} />;
+  if (state.st === "missing") return <LoadFail lang={lang} onRetry={() => setTries(tries + 1)} />;
 
   return (
     <div className="cwrap" style={{ maxWidth: 1140, margin: "0 auto", padding: "14px 16px 40px", fontFamily: FONT, color: C.ink }}>
@@ -245,7 +228,7 @@ export default function DiscApp({ onOpenCompany, lang }) {
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-        <span style={{ fontSize: 10.5, color: C.faint }}>기준 {state.data.asOf} · 매일 자동 갱신</span>
+        <DateBadge date={state.data.newest || (state.data.publishedAt ? null : state.data.asOf)} publishedAt={state.data.publishedAt || state.data.asOf} />
       </div>
       <DiscBody data={state.data} heldMap={heldMap} onOpenCompany={onOpenCompany} />
     </div>

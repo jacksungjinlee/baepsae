@@ -4,7 +4,9 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR, NAV, navPush, navInstall } from "./tokens.js";
 import { Ic, Seal } from "./icons.jsx";
-import DetailApp, { Bird, store } from "./detail.jsx";
+import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
+import { loadJson } from "./data.js";
+import { SHOW_SCORE } from "./flags.js";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
@@ -76,18 +78,24 @@ function TopNav({ tab, setTab, showBack, onBack, lang, onLang }) {
 const gcEvent = (n) => { try { window.goatcounter && window.goatcounter.count({ path: "evt-" + n, title: n, event: true }); } catch (e) {} };
 
 // ---- 성적표 데이터 (corp.json 지연 로드, 캐시) ----
-let GATE_CORP = null;
+// v17.5: 못 읽으면 { failed:true } — 검색창에 '찾지 못했어요' 대신 '불러오지 못했어요'를 보여줘요. 실패는 캐시하지 않아요.
+let GATE_CORP = null, GATE_PENDING = null;
 async function loadGateCorp() {
   if (GATE_CORP) return GATE_CORP;
-  try {
-    const r = await fetch("./corp.json", { cache: "no-store" });
-    GATE_CORP = r.ok ? await r.json() : { companies: [], sectors: {} };
-  } catch (e) { GATE_CORP = { companies: [], sectors: {} }; }
-  return GATE_CORP;
+  // 한 글자 칠 때마다 1MB 파일을 또 받지 않게, 받는 중인 요청 하나를 같이 기다려요
+  if (!GATE_PENDING) {
+    GATE_PENDING = loadJson("./corp.json", (d) => d && Array.isArray(d.companies) && d.companies.length > 0).then((r) => {
+      GATE_PENDING = null;
+      if (!r.ok) return { failed: true, companies: [], sectors: {} };
+      GATE_CORP = r.data;
+      return GATE_CORP;
+    });
+  }
+  return GATE_PENDING;
 }
 const fmtWonG = (v) => v == null ? "—" : Math.round(v).toLocaleString() + "원";
 
-function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang }) {
+function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {
   const en = lang === "en";
   const sec = sectors[c.s] || {};
   const niYoY = c.ni && c.ni[0] != null && c.ni[1] > 0 ? (c.ni[0] / c.ni[1] - 1) * 100 : null;
@@ -129,7 +137,10 @@ function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang }) {
           style={{ background: "#fff", color: C.ink, border: "1.5px solid " + C.line, borderRadius: 10, padding: "10px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
           {en ? "Open full company analysis" : "기업분석에서 자세히 보기"}</button>
       </div>
-      <div style={{ fontSize: 10, color: C.faint, marginTop: 8 }}>{en ? "A summary of facts — not a buy or sell call." : "사실의 요약일 뿐, 매수·매도 판단이 아니에요."}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <span style={{ fontSize: 10, color: C.faint }}>{en ? "A summary of facts — not a buy or sell call." : "사실의 요약일 뿐, 매수·매도 판단이 아니에요."}</span>
+        {asOf && <DateBadge date={asOf.date} publishedAt={asOf.publishedAt} lang={lang} style={{ fontSize: 10 }} />}
+      </div>
     </div>
   );
 }
@@ -139,7 +150,7 @@ function GateSearch({ onOpenCorp, onQuickDiag, lang }) {
   const [q, setQ] = useState("");
   const [d, setD] = useState(null);
   const [sel, setSel] = useState(null);
-  const boot = async () => { if (!d) setD(await loadGateCorp()); };
+  const boot = async () => { if (!d || d.failed) setD(await loadGateCorp()); };
   const res = useMemo(() => {
     if (!d || !q.trim()) return [];
     const t = q.trim().toLowerCase();
@@ -162,8 +173,9 @@ function GateSearch({ onOpenCorp, onQuickDiag, lang }) {
           ))}
         </div>
       )}
-      {sel && <ScoreCard c={sel} sectors={d.sectors} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} />}
-      {q.trim() && d && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : (/[a-zA-Z]{2,}/.test(q) ? "성적표는 국내 상장사만 다뤄요. 미국 종목은 포트폴리오 탭에서 담을 수 있어요." : "찾지 못했어요 — 상장사 이름이나 6자리 코드로 검색해요. (데이터 갱신 전이면 비어 있을 수 있어요)")}</div>}
+      {sel && <ScoreCard c={sel} sectors={d.sectors} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} asOf={{ date: d.pxDate || (d.publishedAt ? null : d.asOf), publishedAt: d.publishedAt || d.asOf }} />}
+      {q.trim() && d && d.failed && <div className="gateLoadFail" style={{ fontSize: 11.5, color: "#8A5A16", fontWeight: 700, marginTop: 8 }}>{T_LOAD_FAIL[en ? "en" : "ko"]}</div>}
+      {q.trim() && d && !d.failed && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : (/[a-zA-Z]{2,}/.test(q) ? "성적표는 국내 상장사만 다뤄요. 미국 종목은 포트폴리오 탭에서 담을 수 있어요." : "찾지 못했어요. 상장사 이름이나 6자리 코드로 검색해 보세요.")}</div>}
     </div>
   );
 }
@@ -259,7 +271,9 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag, lang }) {
             <Ic name="target" size={18} color={C.blue} />
             <span style={{ fontSize: 14.5, fontWeight: 800, color: C.ink }}>{en ? "30-second checkup" : "30초 진단"}</span>
           </div>
-          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 7, lineHeight: 1.6 }}>{en ? "Enter your current holdings — health score, concentration and correlations, instantly." : "지금 보유 종목을 넣으면 건강 점수·쏠림·상관을 바로 보여줘요. 기본 성향으로 시작해요."}</div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 7, lineHeight: 1.6 }}>{SHOW_SCORE
+            ? (en ? "Enter your current holdings — health score, concentration and correlations, instantly." : "지금 보유 종목을 넣으면 건강 점수·쏠림·상관을 바로 보여줘요. 기본 성향으로 시작해요.")
+            : (en ? "Enter your current holdings — concentration and swings, instantly." : "지금 보유 종목을 넣으면 쏠림과 출렁임을 바로 보여 줘요. 기본 성향으로 시작해요.")}</div>
         </button>
         <button onClick={() => { gcEvent("gate-test"); onPick("simple"); }}
           style={{ textAlign: "left", background: "#fff", border: HAIR, borderRadius: RAD.card, padding: 16, cursor: "pointer", fontFamily: FONT }}>

@@ -53,5 +53,14 @@
 <script>
 /*BUNDLE*/
 </script>
+<script>
+// v17.5 서비스워커: 네트워크 우선 · 옛 캐시 삭제. 지원하지 않거나 http(로컬 제외)면 건너뛰어요.
+(function(){try{
+  if(!("serviceWorker" in navigator))return;
+  var h=location.hostname;
+  if(location.protocol!=="https:"&&h!=="localhost"&&h!=="127.0.0.1")return;
+  window.addEventListener("load",function(){navigator.serviceWorker.register("./sw.js").catch(function(){});});
+}catch(e){}})();
+</script>
 </body>
 </html>

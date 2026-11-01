@@ -12,8 +12,8 @@ Tagline: "황새 말고, 내 걸음으로".
 
 ## Who you are working with
 
-- Jack makes product and design decisions and reviews your pull requests. **He does not write or read code.** He works
-  from the Claude desktop app (Code tab, Cloud sessions) and GitHub's web pages.
+- Jack makes product and design decisions. **He does not write or read code, and he does not open GitHub.** He works
+  from the Claude desktop app (Code tab, Cloud sessions) and claude.ai chat. You own the whole GitHub process (below).
 - Explain in plain English, short and direct. Lead with problems and risks, not reassurance. No jargon without a one-line gloss.
 - Korean UI text: natural Korean a real person would say (see the voice guide). Never translation-style Korean.
 - Write KRW amounts in 만원 style even in English (e.g. "150만원").
@@ -33,18 +33,19 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
 - `validate_data.py` thresholds, the must-have stock list, freshness limits, and every test in `tests/` are safety
   rules. **Never loosen, skip, comment out, delete or special-case them to make a run or a PR pass.** This includes
   adding `|| true`, `continue-on-error`, `if: always()` on a publish/commit step, or try/except that hides a failure.
-- If you believe a safety rule is wrong, stop. Explain under **안전 규칙 변경** in the PR, with evidence, and let Jack
-  decide. Default answer: fix the data or the code, not the rule.
+- If you believe a safety rule is wrong, stop. Ask Jack in this chat with the evidence (and record it under
+  **안전 규칙 변경** in the PR), and let him decide. Default answer: fix the data or the code, not the rule.
 - Publishing is always gated: no workflow may commit or deploy data that has not passed `validate_data.py`.
 
 ## How work ships (non-negotiable)
 
-1. Never push to `main`. Work on your session branch and open a pull request. Jack merges.
+1. Never push directly to `main`. Work on your session branch, open a pull request, and merge it yourself when the
+   merge rules below allow (§ GitHub process). `main` changes only by merging a PR.
 2. `baepsae.html` is a **build output**. Change `src/` and rebuild with `bash build.sh`; never hand-edit it. Until v17.6
    moves the build into the deploy workflow, commit the rebuilt `baepsae.html` in the same PR as the `src/` change.
 3. Never commit `data.json`, `corp.json`, `disc.json` or `macro.json` from a session. Only the daily workflow writes
    them (on `main` until v17.6, then on the `data` branch).
-4. Before asking Jack to merge:
+4. Before merging (or asking Jack, when § GitHub process says to ask):
    - all tests pass (CI green once v17.6 lands);
    - a **fresh-eyes review**: spawn a subagent that did not write the change, give it the diff, the task spec and this
      file, and ask it to find bugs and rule violations. Fix what it finds and summarize it in the PR.
@@ -54,8 +55,52 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    - **안전 규칙 변경** — any change to a safety rule, with reason. Normally "없음".
    - **Test evidence** — commands run and results.
    - **Fresh-eyes review** — what it found and what you fixed.
-   - **Jack's to-do after merge** — exact steps (e.g. "run 시세 데이터 갱신 once", "search 현대차 on your phone"), or "없음".
+   - **After merge** — what you will run and check yourself, and anything Jack should look at on his phone, or "없음".
 6. One version per PR. Small and reviewable beats big.
+
+## GitHub process — you own it (Jack's standing rule, 2026-10-31)
+
+Jack does not open GitHub. You create branches, open pull requests, merge them, start and watch workflow runs, and roll
+back. If GitHub refuses a merge or a workflow start because of permissions, tell Jack in plain words exactly which
+setting to change (where it is and what to click), never just "go to GitHub".
+
+**Merge on your own only when ALL of these are true:**
+- `bash build.sh`, `pytest tests/` and the phone-size smoke test (`python tests/smoke_app.py`) pass — and, once v17.6
+  lands, the GitHub `ci` check is green;
+- the fresh-eyes subagent review is done and its findings are fixed;
+- for pipeline changes: a green `dry_run` on your branch, with the validation summary in the PR;
+- no safety rule is loosened.
+
+**Ask Jack first, in this chat, with a short yes/no question in plain words** (never send him to GitHub), when a change:
+- adds or changes user-facing Korean text — show him the 「새 문구」 table in the chat;
+- changes what users see or how a feature works, beyond what an approved spec already says;
+- needs him to pay for, sign up for, or change a setting in anything;
+- changes `CLAUDE.md`, any threshold in `validate_data.py`, or anything in `tests/` — even when nothing is loosened
+  (Jack, 2026-11-01). Say in one line what changed and why;
+- is v17.5 or v17.6 — open the PR, tell him its number, and wait for his "merge" (his claude.ai chat reviews it first).
+  This rule ends after v17.6.
+
+**Never — even if Jack asks casually; explain why first:**
+- loosen, skip or delete a safety rule or test;
+- merge with a failing check;
+- force-push or rewrite `main`'s history;
+- commit data files from a session;
+- run more than one full-DART run in a KST day (a `dart=full` run, or any DART-on run that starts with an empty or
+  missing DART cache — e.g. the first run on a new branch or the first run on `main` after a cache loss);
+- print or move secrets.
+
+**After every merge:**
+1. Watch the next relevant workflow run until it finishes. Start one yourself if the change needs it, following the
+   DART rule above.
+2. Check the live site yourself (https://jacksungjinlee.github.io/baepsae/): search 005930 and 현대차, open every tab,
+   check the dates.
+3. If anything is wrong, revert the merge right away (a revert PR that you merge), tell Jack what happened, then fix
+   forward in a new PR.
+4. Send Jack a 3–6 line plain-English summary: what changed for users, what you checked, anything he should look at
+   on his phone.
+
+**Keep `docs/CHANGELOG.md`:** one line per merge — KST date, PR number, plain-English summary — so Jack and his
+claude.ai chat can follow the history. Add the line in the same PR when you can, otherwise right after the merge.
 
 ## Testing — before every PR
 
@@ -117,13 +162,12 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
 | `.github/workflows/update-data.yml` | Daily run, weekdays 21:30 UTC (06:30 KST), plus manual "Run workflow" |
 | `sw.js`, `manifest.webmanifest` | Service worker and home-screen install metadata |
 | `tests/` | Pipeline unit tests and the app smoke test (created in v17.5) |
-| `docs/` | Handoff, voice guide, task specs, runbook |
+| `docs/` | Handoff, voice guide, task specs, runbook, `CHANGELOG.md` (one line per merge) |
 
 ## When you finish a task
 
 Tell Jack, in plain English:
 - what changed;
 - what you could not do and why;
-- the PR link;
-- exactly what he needs to do next — usually: read the 「새 문구」 and 안전 규칙 변경 sections, merge, then check one
-  specific thing on his phone.
+- the PR number and whether it is merged (and if not, the one yes/no question you need answered);
+- the after-merge summary (3–6 lines) once merged and checked, including anything to look at on his phone.
