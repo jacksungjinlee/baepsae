@@ -6,7 +6,15 @@ import datetime as dt
 import random
 
 MUST = [("005930", "삼성전자"), ("000660", "SK하이닉스"), ("005380", "현대차"), ("015760", "한국전력"),
-        ("105560", "KB금융"), ("035420", "NAVER"), ("012450", "한화에어로스페이스")]
+        ("105560", "KB금융"), ("035420", "NAVER"), ("012450", "한화에어로스페이스"),
+        ("000270", "기아"), ("086790", "하나금융지주"), ("034730", "SK"), ("003550", "LG")]
+# v17.5.1 PR 2: 업종 그룹 (필수 종목은 정해진 그룹, 나머지는 돌아가며)
+IND = {"005930": "semi", "000660": "semi", "005380": "auto", "000270": "auto", "105560": "bank", "086790": "bank",
+       "034730": "holding", "003550": "holding"}
+IND_CYCLE = ["semi", "auto", "bank", "holding", "chem", "pharma", "bio", "machinery", "software", "food"]
+IND_NAME = {"semi": "반도체", "auto": "자동차", "bank": "은행", "holding": "지주회사", "chem": "화학", "pharma": "제약",
+            "bio": "바이오", "machinery": "기계", "software": "소프트웨어", "food": "음식료·담배", "utility": "전력·가스·환경",
+            "internet": "인터넷 플랫폼", "defense": "방산·우주"}
 FUNDS = [("069500", "kr"), ("379800", "us"), ("04020000", "metal"), ("132030", "metal"), ("144600", "metal")]
 SECTORS = ["semi", "battery", "elec", "auto", "ship", "defense", "machine", "steel", "chem", "utility", "energy", "bio",
            "health", "platform", "game", "media", "telecom", "bank", "insure", "broker", "holding", "build", "retail",
@@ -16,6 +24,7 @@ SECTORS = ["semi", "battery", "elec", "auto", "ship", "defense", "machine", "ste
 def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=600, price_shift=0.0):
     rnd = random.Random(seed)
     kr = []
+    # 가상 종목 코드는 0 으로 끝나게 (끝자리가 0 이 아니면 우선주로 봐요)
     names = [(t, nk) for t, nk in MUST] + [(f"{(20000 + i) * 10:06d}", f"가상종목{rnd.randrange(10**6):06d}") for i in range(n_kr - len(MUST))]
     for i, (t, nk) in enumerate(names):
         price = float(round(rnd.uniform(1000, 300000) * (1 + price_shift)))
@@ -29,12 +38,18 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
                    "d1": round(rnd.uniform(-5, 5), 2), "val20": round(rnd.uniform(1, 9000), 1), "etf": False,
                    "dps": 1668.0 if t == "005930" else float(rnd.choice([0, 0, 100, 500, 1500])), "fy": 2025,
                    "hi": round(price * 1.3), "lo": round(price * 0.8),
-                   "dk": f"업종{i % 40} · 주요제품: 제품{i} · KOSPI 상장 · 시가총액 {cap:,.1f}조원"})
+                   "dk": f"업종{i % 40} · 주요제품: 제품{i} · KOSPI 상장 · 시가총액 {cap:,.1f}조원",
+                   "ind": IND.get(t, IND_CYCLE[i % len(IND_CYCLE)])})
+        kr[-1]["indName"] = IND_NAME[kr[-1]["ind"]]
     us_t = ["AAPL", "MSFT", "NVDA", "BRK-B", "SPY", "QQQ"] + [f"U{i:04d}" for i in range(n_us - 6)]
     us = [{"t": t, "nk": f"US Corp {i}", "ne": f"US Corp {i}", "cls": "us", "price": round(rnd.uniform(5, 900) * (1 + price_shift), 2),
            "cap": round(rnd.uniform(1, 5000), 3), "val": round(rnd.uniform(1, 90000), 1), "de": "A company.", "fxu": True,
            "d1": round(rnd.uniform(-5, 5), 2), "etf": t in ("SPY", "QQQ")}
           for i, t in enumerate(us_t)]
+    for i, s in enumerate(us):
+        if not s["etf"]:
+            s["ind"] = IND_CYCLE[i % 5]
+            s["indName"] = IND_NAME[s["ind"]]
     bonds = [{"t": f"B{i}", "nk": f"채권{i}", "cls": "bond", "s": "bond", "price": 100000.0, "etf": True} for i in range(8)]
     funds = [{"t": t, "nk": t, "cls": c, "s": "index", "price": 10000.0, "fund": True, "etf": True} for t, c in FUNDS]
     data = {"asOf": "2026-10-31", "pxDate": px_date, "ksDate": px_date, "usPxDate": us_date,

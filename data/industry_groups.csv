@@ -1,0 +1,65 @@
+group,name,parent,financial,note
+food,음식료·담배,,,KSIC 10–12·56 · 미국 Packaged Foods·Beverages·Restaurants·Tobacco
+textile,섬유·의류·신발,,,KSIC 13–15
+paper,종이·목재·인쇄,,,KSIC 16–18
+furniture,가구·기타 제조,,,KSIC 32–33
+cosmetics,화장품·생활용품,,,KSIC 20422·20423 · 미국 Household & Personal Products
+energy,정유·에너지,,,KSIC 19·46712·46713·477 · 미국 Oil & Gas
+chem,화학,chems,,KSIC 201·202·205
+spchem,정밀화학·소재,chems,,KSIC 203·204
+rubber,고무·플라스틱·포장,,,KSIC 22 (타이어는 자동차부품으로) · 미국 Packaging & Containers
+cement,시멘트·유리·건자재,,,KSIC 23 · 미국 Building Materials
+steel,철강,metals,,KSIC 241·243
+metal,비철금속,metals,,KSIC 242 · 미국 Gold·Copper·Aluminum
+metalwork,금속가공,metals,,KSIC 251·259
+semi,반도체,,,KSIC 261 + 삼성전자 · 미국 Semiconductors
+semi_eq,반도체 장비,semi,,KSIC 2927 (29272 디스플레이 장비는 제외) · 미국 Semiconductor Equipment & Materials
+display,디스플레이,hardware,,KSIC 2621·29272
+elec_parts,전자부품,hardware,,KSIC 262·263·266 · 미국 Electronic Components·Computer Hardware
+telecom_eq,통신장비,hardware,,KSIC 264 · 미국 Communication Equipment
+appliance,가전·영상기기,hardware,,KSIC 265·285 + LG전자 · 미국 Consumer Electronics
+medical,의료기기,health,,KSIC 271 · 미국 Medical Devices·Instruments·Diagnostics
+precision,정밀기기·광학,machinery,,KSIC 272·273 · 미국 Scientific & Technical Instruments
+power_eq,전력기기·전선,,,KSIC 281·283·284·289 · 미국 Electrical Equipment·Solar
+battery,2차전지,,,KSIC 282
+machinery,기계,,,KSIC 29 · 미국 Industrial Machinery·Farm & Construction Machinery·Tools
+robot,로봇,machinery,,KSIC 2928
+defense,방산·우주,,,KSIC 252·313 · 미국 Aerospace & Defense
+ship,조선,,,KSIC 311
+auto,자동차,autos,,KSIC 301·302·451 · 미국 Auto Manufacturers·Dealerships
+auto_parts,자동차부품,autos,,KSIC 303·304·452 + 타이어 · 미국 Auto Parts
+pharma,제약,health,,KSIC 212·213 · 미국 Drug Manufacturers
+bio,바이오,health,,KSIC 211·701·73909 · 미국 Biotechnology
+healthcare,의료 서비스,health,,KSIC 86 · 미국 Healthcare Plans·Medical Care Facilities·Health Information Services
+utility,전력·가스·환경,,,KSIC 35–39 · 미국 Utilities·Waste Management
+construction,건설·엔지니어링,,,KSIC 41–42·721 · 미국 Engineering & Construction·Building Products·Residential Construction
+trading,상사·도매,,,KSIC 46 · 미국 Distribution
+retail,유통,,,KSIC 47 · 미국 Retail·Discount Stores
+logistics,물류·운송,transport,,KSIC 49·52 · 미국 Freight & Logistics·Railroads·Trucking
+shipping,해운,transport,,KSIC 50
+airline,항공,transport,,KSIC 51 · 미국 Airlines
+leisure,호텔·레저·여행,,,KSIC 55·752·91 · 미국 Travel·Lodging·Resorts & Casinos·Gambling·Leisure
+media,미디어·광고,mediaent,,KSIC 581·60·713 · 미국 Advertising Agencies
+entertainment,엔터·콘텐츠,mediaent,,KSIC 59·90 · 미국 Entertainment
+software,소프트웨어,softnet,,KSIC 582 · 미국 Software
+game,게임,softnet,,KSIC 5821 + NC·넥슨게임즈 · 미국 Electronic Gaming & Multimedia
+it_service,IT 서비스,softnet,,KSIC 62·639 · 미국 Information Technology Services
+internet,인터넷 플랫폼,softnet,,KSIC 631 · 미국 Internet Content & Information
+telecom,통신 서비스,,,KSIC 61 · 미국 Telecom Services
+bank,은행,fin,yes,KSIC 641 + 은행 지주회사 · 미국 Banks
+insurance,보험,fin,yes,KSIC 65·662 · 미국 Insurance
+securities,증권,fin,yes,KSIC 6612 · 미국 Capital Markets
+finance,기타 금융,fin,yes,KSIC 642·649·661 (캐피탈·카드·벤처투자·결제) · 미국 Credit Services·Asset Management·Exchanges
+holding,지주회사,,,KSIC 64992·715 · 미국 Conglomerates
+realestate,부동산·리츠,,,KSIC 68 · 미국 REIT·Real Estate Services
+services,기업 서비스,,,KSIC 71–76·95–96 (광고·여행 제외) · 미국 Business·Consulting·Security·Rental Services
+education,교육,,,KSIC 85
+chems,화학·소재,,,상위 그룹만 (화학 + 정밀화학·소재)
+metals,철강·금속,,,상위 그룹만 (철강 + 비철금속 + 금속가공)
+hardware,전자·하드웨어,,,상위 그룹만 (전자부품 + 디스플레이 + 통신장비 + 가전)
+health,제약·바이오·헬스케어,,,상위 그룹만 (제약 + 바이오 + 의료기기 + 의료 서비스)
+autos,자동차·부품,,,상위 그룹만 (자동차 + 자동차부품)
+transport,운송,,,상위 그룹만 (육운·물류 + 해운 + 항공)
+mediaent,미디어·엔터,,,상위 그룹만 (미디어·광고 + 엔터·콘텐츠)
+softnet,소프트웨어·인터넷,,,상위 그룹만 (소프트웨어 + 게임 + IT 서비스 + 인터넷 플랫폼)
+fin,금융,,yes,상위 그룹만 (은행 + 보험 + 증권 + 기타 금융)

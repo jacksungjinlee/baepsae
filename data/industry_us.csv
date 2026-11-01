@@ -1,0 +1,119 @@
+yahoo_industry,group
+Semiconductors,semi
+Semiconductor Equipment & Materials,semi_eq
+Software - Application,software
+Software - Infrastructure,software
+Information Technology Services,it_service
+Internet Content & Information,internet
+Communication Equipment,telecom_eq
+Computer Hardware,hardware
+Electronic Components,elec_parts
+Electronics & Computer Distribution,trading
+Consumer Electronics,hardware
+Electronic Gaming & Multimedia,game
+Scientific & Technical Instruments,precision
+Solar,power_eq
+Electrical Equipment & Parts,power_eq
+Biotechnology,bio
+Drug Manufacturers - General,pharma
+Drug Manufacturers - Specialty & Generic,pharma
+Medical Devices,medical
+Medical Instruments & Supplies,medical
+Diagnostics & Research,medical
+Healthcare Plans,healthcare
+Medical Care Facilities,healthcare
+Health Information Services,healthcare
+Medical Distribution,trading
+Banks - Regional,bank
+Banks - Diversified,bank
+Insurance - Property & Casualty,insurance
+Insurance - Life,insurance
+Insurance - Diversified,insurance
+Insurance - Specialty,insurance
+Insurance - Reinsurance,insurance
+Insurance Brokers,insurance
+Capital Markets,securities
+Asset Management,finance
+Credit Services,finance
+Financial Data & Stock Exchanges,finance
+Financial Conglomerates,finance
+Conglomerates,machinery
+Utilities - Regulated Electric,utility
+Utilities - Regulated Gas,utility
+Utilities - Regulated Water,utility
+Utilities - Diversified,utility
+Utilities - Independent Power Producers,utility
+Utilities - Renewable,utility
+Waste Management,utility
+Pollution & Treatment Controls,utility
+Oil & Gas E&P,energy
+Oil & Gas Midstream,energy
+Oil & Gas Integrated,energy
+Oil & Gas Refining & Marketing,energy
+Oil & Gas Equipment & Services,energy
+Aerospace & Defense,defense
+Specialty Industrial Machinery,machinery
+Farm & Heavy Construction Machinery,machinery
+Tools & Accessories,machinery
+Industrial Distribution,trading
+Engineering & Construction,construction
+Building Products & Equipment,construction
+Residential Construction,construction
+Building Materials,cement
+Specialty Chemicals,spchem
+Chemicals,chem
+Agricultural Inputs,spchem
+Gold,metal
+Copper,metal
+Aluminum,metal
+Steel,steel
+Packaging & Containers,rubber
+Auto Manufacturers,auto
+Auto & Truck Dealerships,auto
+Auto Parts,auto_parts
+Airlines,airline
+Integrated Freight & Logistics,logistics
+Railroads,logistics
+Trucking,logistics
+Packaged Foods,food
+Beverages - Non-Alcoholic,food
+Beverages - Brewers,food
+Beverages - Wineries & Distilleries,food
+Confectioners,food
+Farm Products,food
+Food Distribution,food
+Tobacco,food
+Restaurants,food
+Household & Personal Products,cosmetics
+Discount Stores,retail
+Internet Retail,retail
+Specialty Retail,retail
+Home Improvement Retail,retail
+Apparel Retail,retail
+Grocery Stores,retail
+Apparel Manufacturing,textile
+Footwear & Accessories,textile
+Luxury Goods,textile
+Travel Services,leisure
+Lodging,leisure
+Resorts & Casinos,leisure
+Gambling,leisure
+Leisure,leisure
+Entertainment,entertainment
+Advertising Agencies,media
+Telecom Services,telecom
+REIT - Specialty,realestate
+REIT - Residential,realestate
+REIT - Retail,realestate
+REIT - Industrial,realestate
+REIT - Healthcare Facilities,realestate
+REIT - Office,realestate
+REIT - Mortgage,realestate
+REIT - Hotel & Motel,realestate
+REIT - Diversified,realestate
+Real Estate Services,realestate
+Specialty Business Services,services
+Consulting Services,services
+Security & Protection Services,services
+Rental & Leasing Services,services
+Personal Services,services

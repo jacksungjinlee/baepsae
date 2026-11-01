@@ -806,3 +806,174 @@ def test_series_stats_d1_is_last_over_previous():
     px = pd.Series([100.0] * 79 + [103.0], index=idx)
     bench = px.pct_change().dropna()
     assert F.series_stats(px, bench, 0.03)["d1"] == 3.0
+
+
+# ── v17.5.1 PR 2: 업종 그룹 (ind · indName) ─────────────────────────────────
+TABLES = F.load_industry_tables()
+
+
+def test_industry_tables_are_consistent():
+    g = TABLES["groups"]
+    assert 50 <= len(g) <= 70                                      # v18.0: 투자자가 쓰는 50~70개 그룹
+    assert all(re.fullmatch(r"[a-z_]+", k) for k in g)            # 그룹 id 는 영문 (bond 의 grp 와 다른 필드 ind)
+    assert all(v["name"] and not re.search(r"[A-Za-z]{3}", v["name"]) for v in g.values())   # 한국어 이름
+    assert {k for k, v in g.items() if v["financial"] == "yes"} == {"bank", "insurance", "securities", "finance", "fin"}
+    # 상위 그룹(합칠 때 쓰는 우산)은 이름이 자식을 덮어야 해요 — 리뷰: 애플이 '전자부품', 금광이 '철강'으로 보였어요
+    umbrellas = {"chems": "화학·소재", "metals": "철강·금속", "hardware": "전자·하드웨어", "health": "제약·바이오·헬스케어",
+                 "autos": "자동차·부품", "transport": "운송", "mediaent": "미디어·엔터", "softnet": "소프트웨어·인터넷", "fin": "금융"}
+    assert {k: g[k]["name"] for k in umbrellas} == umbrellas
+    assert g["metal"]["parent"] == "metals" and g["appliance"]["parent"] == "hardware" and g["auto"]["parent"] == "autos"
+    assert "etc" not in g and "other" not in g                    # '기타'를 하나의 그룹으로 쓰지 않아요
+    for k, v in g.items():                                        # 상위 그룹을 따라가면 끝나요 (순환 없음)
+        seen, cur = set(), k
+        while g[cur]["parent"]:
+            assert cur not in seen, k
+            seen.add(cur)
+            cur = g[cur]["parent"]
+
+
+def test_broken_industry_table_stops_the_run(tmp_path):
+    for name in ("industry_groups.csv", "industry_map.csv", "industry_us.csv", "industry_overrides.csv", "industry_refine.csv"):
+        (tmp_path / name).write_text(open(os.path.join(ROOT, "data", name), encoding="utf-8").read(), encoding="utf-8")
+    with open(tmp_path / "industry_map.csv", "a", encoding="utf-8") as f:
+        f.write("999,nosuchgroup,없는 그룹\n")
+    with pytest.raises(RuntimeError, match="없는 그룹"):
+        F.load_industry_tables(str(tmp_path))
+
+
+@pytest.mark.parametrize("code, want", [("29271", "semi_eq"), ("2927", "semi_eq"), ("29272", "display"), ("292", "machinery"),
+                                        ("64992", "holding"), ("649", "finance"), ("66121", "securities"), ("661", "finance"),
+                                        ("20423", "cosmetics"), ("204", "spchem"), ("264", "telecom_eq"), ("2612", "semi"),
+                                        ("30121", "auto"), ("99999", None), ("", None), (None, None)])
+def test_ksic_longest_prefix_wins(code, want):
+    assert F.ksic_group(code, TABLES["kmap"]) == want
+
+
+def _kr(t, n=None):
+    return {"t": t, "nk": n or t, "cls": "kr", "etf": False}
+
+
+def test_assign_industries_overrides_preferred_refine_and_merge():
+    stocks = [_kr("005930"), _kr("005935", "삼성전자우"), _kr("105560"), _kr("034730"), _kr("240810"), _kr("088980")]
+    stocks[-1]["etf"] = True                                         # 상장 펀드는 그룹 없음
+    stocks += [_kr(f"9{i:04d}0") for i in range(12)]                 # 반도체 장비 5 · 반도체 7 (코드 끝자리 0 = 보통주)
+    ksic = {"005930": "264", "105560": "64992", "034730": "64992", "240810": "292", "088980": "64201"}
+    ksic.update({f"9{i:04d}0": ("29271" if i < 5 else "2612") for i in range(12)})
+    prod = {"240810": "반도체 제조용 기계"}
+    cnt = F.assign_industries(stocks, TABLES, ksic, min_members=5, products=prod)
+    by = {s["t"]: s for s in stocks}
+    assert by["005930"]["ind"] == "semi" and by["005930"]["indName"] == "반도체"        # 고정표 (KSIC 264 → 반도체)
+    assert by["005935"]["ind"] == "semi"                                                # 우선주는 보통주를 따라요
+    assert by["240810"]["ind"] == "semi_eq"                                             # 292 + '반도체' → 반도체 장비
+    assert "ind" not in by["088980"]                                                    # ETF·펀드는 그룹 없음
+    # 은행 1명·지주 1명은 5명이 안 돼요: 은행 → 상위 '금융'(1명, 상위 없음) → 그룹 없음 · 지주회사 → 그룹 없음
+    assert "ind" not in by["105560"] and "ind" not in by["034730"]
+    assert cnt["kr bank→fin"] == 1
+    assert cnt["kr 우선주 → 보통주"] == 1 and cnt["kr KSIC+주요제품"] == 1
+
+
+def test_small_group_merges_into_parent_before_being_dropped():
+    # 미국 비철금속 3 + 철강 2 = 5 → 이름이 둘 다 덮는 '철강·금속'으로 살아남아요 (금광이 '철강'으로 보이지 않게)
+    us = [{"t": f"M{i}", "cls": "us", "etf": False, "_yind": "Gold"} for i in range(3)]
+    us += [{"t": f"S{i}", "cls": "us", "etf": False, "_yind": "Steel"} for i in range(2)]
+    F.assign_industries(us, TABLES, {}, min_members=5)
+    assert {(s.get("ind"), s.get("indName")) for s in us} == {("metals", "철강·금속")} and all("_yind" not in s for s in us)
+
+
+def test_consumer_electronics_maker_is_not_called_electronic_parts():
+    # 리뷰: 애플(가전 1명)이 '전자부품'이 됐어요 → 미국 Consumer Electronics·Computer Hardware 는 '전자·하드웨어'
+    us = [{"t": "AAPL", "cls": "us", "etf": False, "_yind": "Consumer Electronics"}]
+    us += [{"t": f"H{i}", "cls": "us", "etf": False, "_yind": "Computer Hardware"} for i in range(5)]
+    us += [{"t": f"E{i}", "cls": "us", "etf": False, "_yind": "Electronic Components"} for i in range(6)]
+    F.assign_industries(us, TABLES, {}, min_members=5)
+    by = {s["t"]: s for s in us}
+    assert by["AAPL"]["indName"] == "전자·하드웨어" and by["E0"]["indName"] == "전자부품"
+
+
+def test_lone_member_of_an_umbrella_gets_no_group_rather_than_a_wrong_one():
+    us = [{"t": "AAPL", "cls": "us", "etf": False, "_yind": "Consumer Electronics"}]
+    us += [{"t": f"E{i}", "cls": "us", "etf": False, "_yind": "Electronic Components"} for i in range(6)]
+    F.assign_industries(us, TABLES, {}, min_members=5)
+    assert "ind" not in us[0] and us[1]["ind"] == "elec_parts"
+
+
+def test_holding_companies_under_financial_code_become_holding():
+    # 리뷰: KSIC 649(기타 금융업)에 오리온홀딩스·쿠쿠홀딩스 같은 일반 지주회사가 있어요 → 이름 규칙 · 효성은 고정표
+    stocks = [_kr("001800", "오리온홀딩스"), _kr("004800", "효성"), _kr("100790", "미래에셋벤처투자")]
+    stocks += [_kr(f"8{i:04d}0", f"지주{i}홀딩스") for i in range(5)] + [_kr(f"7{i:04d}0", f"벤처{i}") for i in range(5)]
+    ksic = {s["t"]: "649" for s in stocks}
+    F.assign_industries(stocks, TABLES, ksic, min_members=5)
+    by = {s["t"]: s for s in stocks}
+    assert by["001800"]["ind"] == "holding" and by["004800"]["ind"] == "holding"
+    assert by["100790"]["ind"] == "finance"
+
+
+def test_preferred_shares_follow_common_and_do_not_count_as_members():
+    stocks = [_kr(f"0{i:04d}0") for i in range(4)] + [_kr(f"0{i:04d}5") for i in range(4)] + [_kr("00680K")]
+    ksic = {s["t"]: "2612" for s in stocks if s["t"].endswith("0")}
+    F.assign_industries(stocks, TABLES, ksic, min_members=5)
+    assert all("ind" not in s for s in stocks)     # 보통주 4명뿐 → 반도체 그룹이 안 돼요 (우선주로 채우지 않아요)
+    ksic["000040"] = "2612"
+    stocks.append(_kr("000040"))
+    F.assign_industries(stocks, TABLES, ksic, min_members=5)
+    by = {s["t"]: s for s in stocks}
+    assert by["000005"]["ind"] == "semi" and "ind" not in by["00680K"]   # 우선주는 보통주를 따라요 (006800 은 없음)
+
+
+def test_unmapped_codes_are_counted_by_name():
+    us = [{"t": "X", "cls": "us", "etf": False, "_yind": "Software—Application"}]
+    cnt = F.assign_industries(us, TABLES, {"005930": "99999"}, min_members=1)
+    assert cnt["us 없음:Software—Application"] == 1
+
+
+def test_us_industry_from_yahoo_and_unknown_stays_ungrouped():
+    us = [{"t": f"B{i}", "cls": "us", "etf": False, "_yind": "Biotechnology"} for i in range(5)]
+    us += [{"t": "X", "cls": "us", "etf": False, "_yind": "Something New"}, {"t": "SPY", "cls": "us", "etf": True, "_yind": "x"}]
+    F.assign_industries(us, TABLES, {}, min_members=5)
+    assert [s.get("ind") for s in us] == ["bio"] * 5 + [None, None]
+    assert all("_yind" not in s for s in us)                         # 임시 필드는 파일에 나가지 않아요
+
+
+def test_overrides_have_reasons_and_cover_the_must_have_checks():
+    over = TABLES["over"]
+    assert all(r for _, r in over.values())
+    assert over["005930"][0] == "semi"
+    assert {over[t][0] for t in ("105560", "086790", "055550", "316140")} == {"bank"}
+
+
+def test_dart_company_cache_is_used_even_in_full_mode(tmp_path, monkeypatch):
+    # 리뷰: full 실행에서 업종 코드까지 다시 받으면 하루 한도(약 2만 건)에 닿을 수 있어요
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    calls = []
+    monkeypatch.setattr(c, "get", lambda ep, p, timeout=25: calls.append(1) or {"status": "000", "induty_code": "264"})
+    c.company("00126380")
+    c.mode = "full"
+    c.company("00126380")
+    assert len(calls) == 1
+
+
+def test_dart_company_is_cached_for_months(tmp_path, monkeypatch):
+    calls = []
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    monkeypatch.setattr(c, "get", lambda ep, p, timeout=25: calls.append(p["corp_code"]) or {"status": "000", "induty_code": "264"})
+    assert c.company("00126380") == {"induty": "264"}
+    assert c.company("00126380") == {"induty": "264"} and calls == ["00126380"]          # 두 번째는 캐시
+    c.today = dt.date(2027, 9, 1)                                                            # 300일 뒤 → 다시 받아요
+    c.company("00126380")
+    assert calls == ["00126380", "00126380"]
+
+
+def test_industry_csv_with_a_stray_comma_stops_loudly(tmp_path):
+    p = tmp_path / "x.csv"
+    p.write_text("code,group,reason\n005930,semi,이유, 쉼표\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="칸 수"):
+        F._read_csv(str(p))
+
+
+def test_jacks_group_decisions_2026_11_01():
+    # 미국 Conglomerates 는 지주회사가 아니라 기계 · 에코프로는 SK스퀘어처럼 지주회사 · 이름 셋 바꿈
+    assert TABLES["usmap"]["Conglomerates"] == "machinery"
+    assert "086520" not in TABLES["over"]
+    assert F.ksic_group("64992", TABLES["kmap"]) == "holding"
+    names = {k: v["name"] for k, v in TABLES["groups"].items()}
+    assert (names["furniture"], names["logistics"], names["services"]) == ("가구·기타 제조", "물류·운송", "기업 서비스")
