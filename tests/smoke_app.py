@@ -45,6 +45,7 @@ OFFICIAL = "공식 종가예요. 다른 수치는 추정치예요"
 NORISK = "베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요"
 RISK_BLIND = "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요"
 RISK_HALF = "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요"
+DY_UNKNOWN = "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요."
 # 가장 작은 요소의 글: 그 줄만 정확히 보려고 (부모 상자의 글이 섞이지 않게)
 SMALLEST = """(args) => { const [need, also] = args; let best = null;
   for (const e of document.querySelectorAll('body *')) { const t = e.innerText || '';
@@ -505,8 +506,13 @@ def hidden_b_shown(body):
 def scene_option_b(R, files):
     """균형형 프로필 + KODEX 200 만 담기: 예전 계산이면 '변동성 상한 초과' 경고와 '현금 늘리기' 카드가 떠요.
     B안에서는 위험 수치(보통 해 ±…)만 보이고, 판정·조언·기대수익·건강 점수는 어디에도 없어야 해요."""
+    files = json.loads(json.dumps(files))      # 아래에서 배당만 지워요 (다른 장면에 번지지 않게 복사본에서)
     have = {s.get("t") for s in files["data.json"]["stocks"]}
     hold = [t for t in ("069500", "005930") if t in have][:1]
+    assert hold, "시험할 종목이 없어요"
+    for s in files["data.json"]["stocks"]:
+        if s.get("t") == hold[0]:
+            s["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
                "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile,
@@ -516,7 +522,6 @@ def scene_option_b(R, files):
     srv, ctx, page, _ = R.open(build_site(files), local=local)
 
     def build():
-        assert hold, "시험할 종목이 없어요"
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("B안 시험", exact=False).first.click()
         see(page, "보통 해 ±")
@@ -541,6 +546,12 @@ def scene_option_b(R, files):
         shown = hidden_b_shown(body)
         assert not shown, f"③ 진단에 보이면 안 되는 문구: {shown}"
     R.check(page, "B안", "③ 진단: 섹션을 다 열어도 판정·조언·기대수익·건강 점수 없음", diag)
+
+    def div_unknown():
+        # 배당 합계가 보이는 곳(간단 사실 카드)에 '0원으로 계산' 알림도 같이 있어야 해요 (조용히 0원 X)
+        see(page, DY_UNKNOWN.replace("{n}", "1"))
+        assert page.get_by_text("연 배당 (예상·세전)", exact=False).count() > 0, "배당 합계 줄이 없어요"
+    R.check(page, "B안", "③ 진단: 배당 정보 없는 종목 → '0원으로 계산했어요' 알림", div_unknown)
     ctx.close(); srv.shutdown()
 
 

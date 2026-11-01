@@ -2480,6 +2480,7 @@ function QuickFactsCard({ lang, t, metrics, settings, profile }) {
           </div>
         ))}
       </div>
+      {metrics.dyUnknownN > 0 && <div className="dyUnknown" style={{ marginTop: 6, fontSize: 11, color: WARN_INK }}>{T_DY_UNKNOWN[lang].replace("{n}", metrics.dyUnknownN)}</div>}
     </Card>
   );
 }
