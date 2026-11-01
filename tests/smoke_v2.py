@@ -430,8 +430,12 @@ def scene_normal(R, files, width):
         assert pinned.locator('[data-ui-v2="manual-note"]').count() == 0   # 근거 수치를 열기 전에는 안 보여요
         pinned.get_by_role("button", name=C["pick"]["receipts"]).click()
         assert pinned.locator('[data-ui-v2="manual-note"]').inner_text() == C["pick"]["manualNote"]
-        assert page.locator('[data-cand] [data-ui-v2="manual-note"], [data-cand] [data-ui-v2="manual-chip"]').count() == 0, \
-            "점수로 고른 후보에 '직접 추가'가 붙었어요"
+        scored = page.locator("[data-cand]").first                   # 점수로 고른 후보: 근거 수치를 열어도 그 문장이 없어요
+        scored.get_by_role("button", name=C["pick"]["receipts"]).click()
+        scored.locator('[data-ui-v2="receipts"]').wait_for(state="visible")
+        assert scored.locator('[data-ui-v2="manual-note"]').count() == 0, "점수로 고른 후보에 '직접 담은 종목' 문장이 붙었어요"
+        scored.get_by_role("button", name=C["pick"]["receipts"]).click()
+        assert page.locator('[data-cand] [data-ui-v2="manual-chip"]').count() == 0, "점수로 고른 후보에 '직접 추가'가 붙었어요"
         assert page.locator("[data-cand][data-picked='1']").count() == 5
         # 빼고 넣기: 하나 빼면 버튼이 꺼지고, 다시 넣으면 켜져요
         first = page.locator("[data-cand][data-picked='1']").first
@@ -566,13 +570,16 @@ def scene_old_app(R, files, width, slots, expect):
         see(page, C["build"]["s0"]["title"])
         note = page.locator('[data-ui-v2="old-app-note"]')
         if not expect:
-            assert note.count() == 0, f"안내가 보이면 안 돼요: {slots!r}"
+            assert note.count() == 0, f"덱 짜기에 안내가 보이면 안 돼요: {slots!r}"
         else:
             assert note.inner_text() == C["app"]["oldAppNote"]
             old_app_link(page)                                       # 안내가 가리키는 머리말 링크
-            tab(page, C["app"]["tabs"]["deck"])
-            see(page, C["store"]["export"])
-            assert page.locator('[data-ui-v2="old-app-note"]').inner_text() == C["app"]["oldAppNote"]
+        tab(page, C["app"]["tabs"]["deck"])
+        see(page, C["store"]["export"])
+        if not expect:
+            assert note.count() == 0, f"내 덱에 안내가 보이면 안 돼요: {slots!r}"
+        else:
+            assert note.inner_text() == C["app"]["oldAppNote"]
         assert page.evaluate("localStorage.getItem('baepsae_v10_slots')") == slots, "예전 기록을 바꿨어요"
         no_hscroll(page, width)
         R.collect(page)

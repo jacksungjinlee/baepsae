@@ -77,6 +77,8 @@ def test_chat_approved_strings_are_used_word_for_word():
     vals = dict(flat)
     for key, text in chat_approved().items():
         assert vals.get(key) == text, (key, vals.get(key), text)
+    # 안내 문구가 가리키는 머리말 링크 이름이 실제 링크 문구와 같아요 (링크 이름이 바뀌면 여기서 걸려요)
+    assert f"'{vals['app.oldApp']}'" in vals["app.oldAppNote"]
 
 
 def test_copy_has_no_emoji_banned_words_or_null_words():

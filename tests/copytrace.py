@@ -64,7 +64,11 @@ def chat_approved():
     for line in read("docs/tasks/v18.3-approved-in-chat.md").splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) == 3 and cells[0].startswith("`") and HANGUL.search(cells[1]):
-            out[cells[0].strip("`")] = cells[1]
+            key = cells[0].strip("`")
+            # 세 번째 칸이 "Jack, 날짜" 로 시작하지 않으면 승인된 문구가 아니에요 (빈칸 · pending 행이 지나가지 않게)
+            assert re.match(r"^Jack, \d{4}-\d{2}-\d{2}\b", cells[2]), f"승인 기록이 없는 행: {line}"
+            assert key not in out, f"같은 키가 두 번 있어요: {key}"
+            out[key] = cells[1]
     assert len(out) >= 3, out
     return out
 

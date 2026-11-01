@@ -104,6 +104,8 @@ def main():
                     outside.append(u)
                 r.abort()
             ctx.route("**/*", route)
+            # 지금 앱에 포트폴리오가 있는 브라우저라도 미리 보기에는 '예전 뱁새 보기' 안내가 없어요 (그 링크가 없는 페이지예요)
+            ctx.add_init_script("""(() => { try { localStorage.setItem('baepsae_v10_slots', '[{"id":"s1","name":"x"}]'); } catch (e) {} })();""")
             page = ctx.new_page()
             page.set_default_timeout(WAIT)
             page.on("pageerror", lambda e: errors.append(str(e)))
@@ -148,6 +150,8 @@ def main():
                 label_here()
                 # 미리 보기는 Jack 이 혼자 보는 페이지라 머리말에 '예전 뱁새 보기' 링크를 두지 않아요 (예시 데이터 표시 자리)
                 assert page.locator('[data-ui-v2="old-app-link"]').count() == 0
+                assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기에 '예전 뱁새' 안내가 떠요"
+                assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
                 shot(page, width, "0-landing")
                 tab(C["app"]["tabs"]["today"])
                 page.get_by_text(C["app"]["pending"]).first.wait_for(state="visible")
@@ -158,6 +162,7 @@ def main():
             def deck_tab():
                 tab(C["app"]["tabs"]["deck"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
+                assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기 내 덱에 '예전 뱁새' 안내가 떠요"
                 label_here()
                 shot(page, width, "2-mydeck")
             check(W + "탭: 내 덱", deck_tab, page, width)
