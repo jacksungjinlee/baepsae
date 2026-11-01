@@ -5,7 +5,8 @@
 //   new      docs/tasks/v18.3-2.0-beta.md 의 "New strings" 표 (Jack 승인)
 //   footer   CLAUDE.md 의 고정 문구
 //   v17.5    지금 앱(src/detail.jsx)에 이미 있는 승인 문구 (불러오기 실패 · 날짜 · 배당 정보 없음 · 보통 해 ±)
-//   spec     v18.3 스펙 본문이 그대로 쓰라고 한 말 (가치 카드의 "PBR 낮은 순"), REDESIGN §3 의 "검증 안 함" (Jack 승인)
+//   spec     v18.3 스펙 본문이 그대로 쓰라고 한 말 (가치 카드의 "PBR 낮은 순")
+//   chat     Jack 이 채팅에서 승인한 문구 (docs/tasks/v18.3-approved-in-chat.md 에 날짜와 함께 적어 둬요)
 //   preview  "예시 데이터" (CSV 3) — 미리 보기 페이지(app-preview.html)의 표시, Jack 승인 2026-11-01
 // null = Jack 의 승인을 기다리는 문구 (docs/tasks/v18.3-new-strings-pending.md). 화면은 null 이면 그 줄을 빼요.
 // {자리} 는 fill() 로 채워요. "\n" 은 CSV 의 " / " (줄바꿈) 예요.
@@ -14,6 +15,7 @@ export const C = {
   app: {
     title: "뱁새 2.0 미리 보기",                                   // new
     oldApp: "예전 뱁새 보기",                                       // new (Part F: link to the current app)
+    oldAppNote: "예전 뱁새에서 만든 포트폴리오는 '예전 뱁새 보기'를 누르면 그대로 볼 수 있어요.", // chat (2026-11-01: 예전 앱에 포트폴리오가 있는 방문자)
     sample: "예시 데이터",                                          // 3 · preview
     previewTitle: "{title} · {sample}",                           // 미리 보기 페이지의 <title>: 위 두 문구를 이어 붙여요
     brand: "뱁새",                                                 // 2
@@ -209,7 +211,8 @@ export const C = {
     limitN: "{n}개까지만 담을 수 있어요. 하나를 빼고 다시 골라 주세요.",  // 511
     limitInd: "같은 업종은 2개까지만 담을 수 있어요.",                   // 512
     finCo: "금융회사",                                              // 510
-    unverified: null,                                            // pending: 검증 안 함 (REDESIGN §3 — Jack 의 문구 승인 전)
+    manual: "직접 추가",                                            // chat (2026-11-01: 꼭 담을 종목 표시, "검증 안 함" 대신)
+    manualNote: "점수 기준을 거치지 않고 직접 담은 종목이에요.",           // chat (2026-11-01: 꼭 담을 종목의 근거 수치)
     caution: {
       pbrHigh: "{metric} {x}배로 비싼 편이에요",                       // 497
       debtHigh: "부채비율 {pct}%로 높은 편이에요",                      // 498

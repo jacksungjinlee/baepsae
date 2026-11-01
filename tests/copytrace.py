@@ -2,7 +2,7 @@
 """뱁새 2.0 문구 추적 도우미 (tests/test_v2_app.py, tests/smoke_v2.py 가 같이 써요).
 
 승인된 출처(목업 CSV 의 최종 문구 · v18.3 New strings 표 · CLAUDE.md 고정 문구 · 지금 앱의 v17.5 승인 문구 ·
-스펙이 그대로 쓰라고 한 말)에서 '조각'을 만들고, 문구 하나가 그 조각들로 설명되는지 봐요.
+스펙이 그대로 쓰라고 한 말 · Jack 이 채팅에서 승인한 문구 표)에서 '조각'을 만들고, 문구 하나가 그 조각들로 설명되는지 봐요.
 숫자와 {자리}는 같은 것으로 봐요 (목업의 숫자는 예시라서요).
 """
 import csv
@@ -31,8 +31,7 @@ V175 = {
         ["베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요."],
 }
 # 스펙 본문이 그대로 쓰라고 한 말: 문구 → (파일, 그 안에 있어야 하는 글자)
-SPEC_QUOTES = {"PBR 낮은 순": [("docs/tasks/v18.3-2.0-beta.md", '"PBR 낮은 순"'), ("CLAUDE.md", "가치 / PBR 낮은 순")],
-               "검증 안 함": [("docs/REDESIGN.md", '"검증 안 함"')]}     # 꼭 담을 종목 표시 (코디네이터가 Jack 승인으로 전달, 2026-11-01)
+SPEC_QUOTES = {"PBR 낮은 순": [("docs/tasks/v18.3-2.0-beta.md", '"PBR 낮은 순"'), ("CLAUDE.md", "가치 / PBR 낮은 순")]}
 # CSV 문장 안의 한 부분을 그대로 쓴 것: 문구 → (CSV 번호, 그 줄에 있어야 하는 글자)
 DERIVED = {"{m}월 {d}일": (4, "10월 30일")}
 
@@ -59,6 +58,17 @@ def new_strings():
     return out
 
 
+def chat_approved():
+    """docs/tasks/v18.3-approved-in-chat.md: 키 → Jack 이 채팅에서 그대로 승인한 문구."""
+    out = {}
+    for line in read("docs/tasks/v18.3-approved-in-chat.md").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 3 and cells[0].startswith("`") and HANGUL.search(cells[1]):
+            out[cells[0].strip("`")] = cells[1]
+    assert len(out) >= 3, out
+    return out
+
+
 def footer():
     t = read("CLAUDE.md")
     f = "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다."
@@ -67,7 +77,7 @@ def footer():
 
 
 def sources():
-    src = list(csv_final().values()) + new_strings() + footer() + list(V175) + list(SPEC_QUOTES)
+    src = list(csv_final().values()) + new_strings() + footer() + list(V175) + list(SPEC_QUOTES) + list(chat_approved().values())
     return [s for s in src if s and HANGUL.search(s)]
 
 

@@ -17,7 +17,7 @@ import re
 import subprocess
 import tempfile
 
-from copytrace import ROOT, HANGUL, Matcher, sources, copy_strings, read, V175, SPEC_QUOTES, DERIVED, csv_final
+from copytrace import ROOT, HANGUL, Matcher, sources, copy_strings, read, V175, SPEC_QUOTES, DERIVED, csv_final, chat_approved
 from buildapp import built
 
 EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF️‍]")
@@ -69,6 +69,14 @@ def test_named_sources_really_exist():
     rows = csv_final()
     for s, (row, sub) in DERIVED.items():
         assert sub in rows[row], (s, row)
+
+
+def test_chat_approved_strings_are_used_word_for_word():
+    """Jack 이 채팅에서 승인한 문구는 그 키에 한 글자도 다르지 않게 들어가요 (비슷하게 고친 문구가 '승인'으로 지나가지 않게)."""
+    _, flat = copy_strings()
+    vals = dict(flat)
+    for key, text in chat_approved().items():
+        assert vals.get(key) == text, (key, vals.get(key), text)
 
 
 def test_copy_has_no_emoji_banned_words_or_null_words():

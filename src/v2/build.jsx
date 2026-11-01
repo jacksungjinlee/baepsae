@@ -10,7 +10,7 @@ import {
   marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, tx, tap } from "./ui.jsx";
 import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashPieces } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
@@ -148,6 +148,7 @@ function StepStart({ start }) {
         <div style={{ flex: 1 }}><ScreenTitle sub={s0.body}>{s0.title}</ScreenTitle></div>
         <img src="baepi-4.png" alt={s0.imgAlt} width={72} height={72} style={{ objectFit: "contain", marginTop: SPACE(2) }} />
       </div>
+      <OldAppNote />
       <div style={{ marginTop: SPACE(3) }}>
         <Option id="blank" title={s0.blank} sub={s0.blankSub} onClick={() => start(null)} />
         {DECKS.filter((d) => !d.hidden).map((d) => (

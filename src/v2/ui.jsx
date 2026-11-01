@@ -1,10 +1,11 @@
 // Shared pieces for the 2.0 screens, built on the v18.1 tokens and components. No Korean here: text comes in props
 // or from src/copy/v2.js.
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useState } from "react";
 import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
+import { hasOldAppRecords } from "./store.js";
 
 export const tx = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize: size, fontWeight: weight, color, lineHeight: 1.5,
   letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", margin: 0, ...extra });
@@ -106,6 +107,14 @@ export function Note({ children, tone, style, ...rest }) {
     <div {...rest} role={tone ? "status" : undefined} style={tx(SIZE.xs, t ? WEIGHT.semi : WEIGHT.regular, t ? t.color : COLOR.text2, {
       marginTop: SPACE(2), ...(t ? { background: t.bg, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px` } : {}), ...style })}>{children}</div>
   );
+}
+
+// For visitors who made portfolios in the current app: they are still there, behind the header link "예전 뱁새 보기".
+// Live page only (the preview has no such link). Shown on 덱 짜기's first screen and on 내 덱.
+export function OldAppNote() {
+  const { preview } = useMode();
+  const [has] = useState(() => !preview && hasOldAppRecords());
+  return has ? <Note data-ui-v2="old-app-note">{C.app.oldAppNote}</Note> : null;
 }
 
 export function Label({ children, style }) {
