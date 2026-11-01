@@ -319,7 +319,7 @@ def test_2022_estimate_is_market_times_beta_and_hides_without_beta():
 
 # ── 주의할 점 · 규칙 ──
 def test_dividend_drop_is_a_check_never_a_broken_rule():
-    s = kr("005380", dps=10000, dps3=[10000, 12000, 11400])
+    s = kr("005380", dps=10000, dps3=[10000, 12000, 11400], fy=2025)
     got = run("const ctx = E.cautionContext([]); out = { c: E.cautions(s, null, ctx), rules: E.ruleBook(s, null, {}, 0.1) };", s=s)
     assert {"code": "divDrop", "a": 12000, "b": 10000} in got["c"]["items"]
     div = [r for r in got["rules"] if r["id"] == "divCut"][0]
@@ -345,7 +345,7 @@ def test_cautions_debt_not_for_financials_and_pbr_needs_a_real_group():
 
 
 def test_rule_book_statuses_follow_the_part_c_table():
-    s = kr("000010", debt=48, roe=12, dps=500, dps3=[500, 450, 400])
+    s = kr("000010", debt=48, roe=12, dps=500, dps3=[500, 450, 400], fy=2025)
     co = {"op": [120.0, 100.0, 90.0], "fy": 2025}
     bank = kr("000020", ind="bank", indName="은행", debt=1100, roe=9, dps=None)
     ins = kr("000030", ind="insurance", indName="보험", dps=0)
@@ -370,3 +370,55 @@ def test_rule_book_statuses_follow_the_part_c_table():
     assert uu["divCut"]["check"] == "pending" and uu["debtCeiling"]["fy"] is None
     for book in got.values():
         assert all(r["check"] in ("checked", "pending") for r in book)
+
+
+def test_korean_annual_rules_need_the_report_year():
+    s = kr("000010", debt=48, roe=12, dps=500, dps3=[500, 450, 400])     # fy 없음
+    got = run("out = E.ruleBook(s, { op: [1, 2, 3] }, { stable: 3, profit: 2 }, 0.1);", s=s)
+    by = {r["id"]: r for r in got}
+    assert by["divCut"]["check"] == "pending" and by["debtCeiling"]["check"] == "pending"
+    assert "roeFloor" not in by and "opDecline" not in by and by["band"]["check"] == "checked"
+
+
+def test_survivor_warning_and_block_are_per_market_with_that_markets_count():
+    stocks = [kr(f"0001{i}0", roe=10 + i) for i in range(9)] + [us("AAA"), us("BBB")]
+    got = run(SET + "const st = S({ mix: 'k73', count: 6, points: { profit: 5 }, strict: 'loose' });"
+              "const r = E.screen(stocks, st); const counts = E.splitCounts(st);"
+              "const none = E.screen(stocks.slice(0, 9), st);"
+              "out = { c: E.survivorCheck(r, counts), z: E.survivorCheck(none, counts), counts };", stocks=stocks)
+    assert got["counts"] == {"kr": 4, "us": 2}
+    assert got["c"]["markets"] == [{"mk": "us", "have": 2, "need": 2, "state": "few"}] and not got["c"]["zero"]   # 한국 9개는 넉넉해요
+    assert got["z"]["zero"] and got["z"]["markets"][-1] == {"mk": "us", "have": 0, "need": 2, "state": "zero"}
+
+
+def test_candidates_extend_when_one_industry_fills_the_top():
+    stocks = [kr(f"0001{i}0", roe=90 - i, ind="semi", indName="반도체") for i in range(8)] + \
+             [kr(f"0002{i}0", roe=50 - i, ind=f"o{i}", indName="기타") for i in range(4)]
+    got = run(SET + "const st = S({ mix: 'kr', count: 5, points: { profit: 5 }, strict: 'loose' });"
+              "const r = E.screen(stocks, st); const counts = E.splitCounts(st); const c = E.candidates(r, counts);"
+              "out = { n: c.kr.length, picks: E.preselect(c, counts, []) };", stocks=stocks)
+    # 위 10개 중 반도체가 8개라 2개만 고를 수 있어요 → 다른 업종이 더 붙어 5개를 고를 수 있어요
+    assert got["n"] == 11 and len(got["picks"]) == 5, got
+
+
+def test_financial_set_is_one_constant_including_the_fin_umbrella():
+    """금융회사 = ind 가 정확히 {bank, insurance, securities, finance, fin} (fin = 묶음 그룹 '금융', 데이터 계약 v17.5.1)."""
+    ids = ["bank", "insurance", "securities", "finance", "fin"]
+    fins = [kr(f"0003{i}0", ind=g, indName="금융", debt=900, roe=10) for i, g in enumerate(ids)]
+    plain = kr("000400", ind="holding", indName="지주회사", debt=900, roe=10)
+    got = run(SET + "const r = E.screen([...fins, plain], S({ mix: 'kr', points: { stable: 3, profit: 2 }, strict: 'loose' }));"
+              "const ctx = E.cautionContext([]);"
+              "out = { set: E.FINANCIAL_INDS, isFin: [...fins, plain].map(E.isFin),"
+              " na: r.markets.kr.survivors.filter(x => x.scores.stable === 'na').map(x => x.t).sort(),"
+              " debtHit: [...fins, plain].map(s => E.exclusionsHit(s).includes('debt')),"
+              " caution: [...fins, plain].map(s => E.cautions(s, null, ctx).ran.includes('debt')),"
+              " ceiling: [...fins, plain].map(s => E.ruleBook({ ...s, fy: 2025 }, null, { stable: 3 }, 0.1).some(x => x.id === 'debtCeiling')) };",
+              fins=fins, plain=plain)
+    assert sorted(got["set"]) == sorted(ids)
+    assert got["isFin"] == [True] * 5 + [False]
+    assert got["na"] == sorted(s["t"] for s in fins)          # 재무 안정 카드는 '해당 없음' (빈 칸 아님)
+    assert got["debtHit"] == [False] * 5 + [True]             # 부채비율 200%+ 빼기는 금융회사에 쓰지 않아요
+    assert got["caution"] == [False] * 5 + [True]             # 주의할 점의 부채비율도
+    assert got["ceiling"] == [False] * 5 + [True]             # 부채비율 상한 규칙도
+    src = open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8").read()
+    assert src.count('"securities"') == 1, "금융회사 목록은 FINANCIAL_INDS 한 곳에만 있어야 해요"

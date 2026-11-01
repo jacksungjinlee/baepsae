@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { StatusChip, Collapsible } from "../ui/components.jsx";
 import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS } from "./engine.js";
-import { C, fill, nf, p1 } from "./format.js";
+import { C, fill, nf, p1, mdText } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, tx, tap } from "./ui.jsx";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
 
@@ -36,6 +36,9 @@ export function Pick({ load, builder, setBuilder }) {
       <AppBar onBack={back} backLabel={C.pick.back} />
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(1) })}>{C.pick.title}</div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
+      {ds.cands.us && ds.cands.us.length > 0 && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate && (
+        <Note style={{ marginTop: 0 }}>{fill(C.app.usClose, { md: mdText(load.data.usPxDate) })}</Note>
+      )}
       <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{deckLine}</div>
       <ScreenTitle sub={C.pick.body}>{fill(C.pick.heading, { n: N })}</ScreenTitle>
       {msg && <Note tone="watch" data-ui-v2="pick-limit">{msg}</Note>}
@@ -74,6 +77,8 @@ function Candidate({ c, picked, onToggle, load, st, ctx }) {
   const co = load.coByT.get(s.t) || null;
   const cau = cautions(s, co, ctx);
   const lines = cau.items.flatMap((x) => cautionTexts(x, s).map((t, i) => ({ t, body: i > 0 })));
+  // debt, revenue and dividends come from the annual report: say which year (KR, DART)
+  const annualFy = s.cls === "kr" && cau.items.some((x) => ["debtHigh", "revFall", "divDrop"].includes(x.code)) ? fyOf(s, co) : null;
   const ranked = Object.entries(c.scores).filter(([, v]) => v !== NA).sort((a, b) => (st.points[b[0]] || 0) * b[1] - (st.points[a[0]] || 0) * a[1]).slice(0, 2);
   const indLine = s.cls === "us" ? (s.indName ? fill(C.pick.usInd, { ind: s.indName }) : null) : s.indName || null;
   return (
@@ -100,6 +105,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx }) {
           {lines.map((l, i) => (
             <div key={i} style={tx(SIZE.xs, l.body ? WEIGHT.regular : WEIGHT.semi, COLOR.watch)}>{l.body ? l.t : fill(C.pick.worry, { worry: l.t })}</div>
           ))}
+          {annualFy != null && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.watch)}>{fill(C.app.reportYear, { year: annualFy })}</div>}
         </div>
       )}
       {!lines.length && C.pick.caution.checksRun && <Note data-ui-v2="caution-none">{fill(C.pick.caution.checksRun, { checks: cau.ran.join(" · ") })}</Note>}

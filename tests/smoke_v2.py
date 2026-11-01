@@ -465,6 +465,28 @@ def scene_missing_fields(R, files, width, fields):
     srv.shutdown()
 
 
+def scene_us_date(R, files, width):
+    f = clone(files)
+    f["data.json"]["usPxDate"] = "2026-10-29"
+    srv, ctx, page, _ = R.open(build_site(f), width)
+
+    def run():
+        wait_ready(page)
+        tab(page, C["app"]["tabs"]["build"])
+        page.locator('[data-deck="krUs"]').click()
+        click_next(page)
+        click_next(page)
+        page.get_by_role("button", name="+1,000만").first.click()
+        click_next(page)
+        see(page, C["pick"]["title"])
+        see(page, "미국 종목은 현지 기준 10월 29일 종가예요.")
+        assert "10월 30일" in date_line(page)
+        R.collect(page)
+    R.check(page, f"미국 날짜 {width}", "미국 종가 날짜가 다르면 후보 고르기에 '미국 종목은 현지 기준 10월 29일 종가예요.'", run)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_no_storage(R, files, width):
     init = "(() => { const s = Storage.prototype.setItem; Storage.prototype.setItem = function () { throw new Error('blocked'); }; })();"
     srv, ctx, page, _ = R.open(build_site(files), width, init=init)
@@ -495,7 +517,8 @@ def main():
             scenes = [lambda: scene_normal(R, files, width), lambda: scene_stale(R, files, width),
                       lambda: scene_refused(R, files, width, "옛 형식"), lambda: scene_refused(R, files, width, "404"),
                       lambda: scene_refused(R, files, width, "깨짐"), lambda: scene_missing_fields(R, files, width, ["ind", "indName"]),
-                      lambda: scene_missing_fields(R, files, width, ["val20"]), lambda: scene_no_storage(R, files, width)]
+                      lambda: scene_missing_fields(R, files, width, ["val20"]), lambda: scene_no_storage(R, files, width),
+                      lambda: scene_us_date(R, files, width)]
             for fn in scenes:
                 try:
                     fn()

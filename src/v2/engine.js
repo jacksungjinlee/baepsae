@@ -13,7 +13,9 @@
 import { R2022 } from "./y2022.js";
 
 export const NA = "na";                                        // card does not apply to this stock (not a blank)
-export const FIN_INDS = ["bank", "insurance", "securities", "finance"];
+// Financial companies (stability card "해당 없음", no debt-ratio rules). The data contract (v17.5.1) fixes this set;
+// "fin" is the umbrella group 금융 that small financial groups merge into. Change it here only.
+export const FINANCIAL_INDS = ["bank", "insurance", "securities", "finance", "fin"];
 export const HOLDING_IND = "holding";
 export const LIQ_FLOOR_EOK = 5;          // 5억원 of 20-day average trading value (KR val20; US val is a 3-month average)
 export const LIQ_SHARE = 0.1;            // a position may be at most 10% of one day's average trading value
@@ -31,7 +33,7 @@ const EPS = 1e-9;
 
 export const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0;
-export const isFin = (s) => hasGroup(s) && FIN_INDS.includes(s.ind);
+export const isFin = (s) => hasGroup(s) && FINANCIAL_INDS.includes(s.ind);
 export const isPreferred = (s) => s.cls === "kr" && typeof s.t === "string" && !s.t.endsWith("0");  // KRX: common shares end in 0
 export const isStockLike = (s) => (s.cls === "kr" || s.cls === "us") && !s.fund && s.etf !== true;
 export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && num(s.price) > 0;
@@ -246,22 +248,35 @@ export function splitCounts(settings) {
   return { kr: n, us: coreN - n };
 }
 
-// Where the warning / block applies: per market that needs stocks.
+// Warning (survivors < 2x the stocks needed) and block (zero) per market that needs stocks, with that market's count.
 export function survivorCheck(res, counts) {
-  let zero = false, few = false, fewN = null;
+  const markets = [];
   for (const mk of Object.keys(res.markets)) {
     const need = counts[mk] || 0, have = res.markets[mk].survivors.length;
     if (need <= 0) continue;
-    if (have === 0) zero = true;
-    else if (have < 2 * need) { few = true; fewN = fewN == null ? have : Math.min(fewN, have); }
+    if (have === 0) markets.push({ mk, have, need, state: "zero" });
+    else if (have < 2 * need) markets.push({ mk, have, need, state: "few" });
   }
-  return { zero, few: !zero && few, fewN };
+  return { zero: markets.some((x) => x.state === "zero"), few: markets.some((x) => x.state === "few"), markets };
 }
 
-// 후보 고르기: top 2 x n per market (pinned excluded); pre-select n per market, max 2 per real industry group.
-export function candidates(res, counts) {
+// 후보 고르기: top 2 x n per market (pinned excluded). If the max-2-per-industry limit would leave fewer than n
+// pickable names among them, further survivors that can be picked are added until n can be.
+export function candidates(res, counts, pinnedStocks = []) {
   const out = {};
-  for (const mk of Object.keys(res.markets)) out[mk] = res.markets[mk].survivors.slice(0, 2 * (counts[mk] || 0));
+  const used = indCounts(pinnedStocks);
+  for (const mk of Object.keys(res.markets)) {
+    const need = counts[mk] || 0, list = [];
+    let got = 0;
+    for (const c of res.markets[mk].survivors) {
+      if (list.length >= 2 * need && got >= need) break;
+      const g = hasGroup(c.s) ? c.s.ind : null;
+      const pickable = got < need && (!g || (used.get(g) || 0) < MAX_PER_IND);
+      if (list.length < 2 * need || pickable) list.push(c);
+      if (pickable) { got++; if (g) used.set(g, (used.get(g) || 0) + 1); }
+    }
+    out[mk] = list;
+  }
   return out;
 }
 
@@ -649,10 +664,12 @@ export const roeFloorFor = (roe) => Math.max(0, Math.floor(roe / 2));
 export function ruleBook(s, co, points, targetW) {
   const rules = [];
   const fy = fyOf(s, co);
+  // Korean annual inputs (DART) must carry their report year; without it the rule is not shown as checked.
+  const dated = s.cls !== "kr" || fy != null;
   // 1. common sell conditions
   const dps = num(s.dps);
   if (s.cls === "kr" && dps === 0) { /* pays nothing: no dividend-cut rule */ }
-  else if (s.cls === "kr" && dps != null && dps > 0) {
+  else if (s.cls === "kr" && dps != null && dps > 0 && dated) {
     const d3 = Array.isArray(s.dps3) ? s.dps3 : co && co.dps3;
     rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", dps, dps3: d3 || null, streak: dividendStreak(d3), fy });
   } else rules.push({ id: "divCut", kind: "sell", check: "pending" });
@@ -662,14 +679,14 @@ export function ruleBook(s, co, points, targetW) {
   // 2. keep conditions from the deck's cards and the industry
   if ((points.stable || 0) > 0 && !isFin(s)) {
     const debt = num(s.debt);
-    rules.push(debt != null ? { id: "debtCeiling", kind: "keep", check: "checked", input: "debt", debt, limit: debtLimitFor(debt), fy: s.cls === "kr" ? fy : null }
+    rules.push(debt != null && dated ? { id: "debtCeiling", kind: "keep", check: "checked", input: "debt", debt, limit: debtLimitFor(debt), fy: s.cls === "kr" ? fy : null }
       : { id: "debtCeiling", kind: "keep", check: "pending" });
   }
   if ((points.profit || 0) > 0) {
     const roe = num(s.roe);
-    if (roe != null && roe > 0) rules.push({ id: "roeFloor", kind: "keep", check: "checked", input: "roe", roe, floor: roeFloorFor(roe), fy: s.cls === "kr" ? fy : null });
+    if (roe != null && roe > 0 && dated) rules.push({ id: "roeFloor", kind: "keep", check: "checked", input: "roe", roe, floor: roeFloorFor(roe), fy: s.cls === "kr" ? fy : null });
   }
-  if (s.cls === "kr" && co && Array.isArray(co.op) && co.op.filter((x) => num(x) != null).length >= 2) {
+  if (s.cls === "kr" && dated && co && Array.isArray(co.op) && co.op.filter((x) => num(x) != null).length >= 2) {
     rules.push({ id: "opDecline", kind: "keep", check: "checked", input: "op", op: co.op.map(num), fy });
   }
   if (s.ind === "bank") rules.push({ id: "cet1", kind: "keep", check: "pending" });

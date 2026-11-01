@@ -10,9 +10,9 @@ export function deckState(load, settings) {
   const res = screen(load.data.stocks, settings);
   const counts = splitCounts(settings);
   const check = survivorCheck(res, counts);
-  const cands = candidates(res, counts);
-  const shortN = Object.values(cands).reduce((a, x) => a + x.length, 0);
   const pinned = (settings.pinned || []).map((t) => load.byT.get(t)).filter(Boolean);
+  const cands = candidates(res, counts, pinned);
+  const shortN = Object.values(cands).reduce((a, x) => a + x.length, 0);
   return { res, counts, check, cands, shortN, pinned };
 }
 

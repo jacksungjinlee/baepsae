@@ -95,19 +95,24 @@ function Steps({ load, builder, setBuilder, onExit }) {
       {step === 1 && <StepCards st={st} set={set} ds={ds} load={load} />}
       {step === 2 && <StepExclude st={st} set={set} ds={ds} />}
       {step === 3 && <StepTerms st={st} set={set} ds={ds} load={load} />}
-      {step > 0 && !noCards && <SurvivorNotes ds={ds} />}
+      {step > 0 && !noCards && <SurvivorNotes ds={ds} two={marketsOf(st).length === 2} />}
       <Footer />
       {step > 0 && <ActionBar summary={summary} action={action} disabled={blocked} onAction={() => (last ? toPick() : go(step + 1))} />}
     </Page>
   );
 }
 
-function SurvivorNotes({ ds }) {
+// Per market: the market's own survivor count (a two-market deck names the market first).
+function SurvivorNotes({ ds, two }) {
   return (
     <div data-ui-v2="survivor-notes">
       {ds.res.blanks > 0 && <Note data-ui-v2="blanks">{fill(C.build.s1.blanks, { n: nf(ds.res.blanks) })}</Note>}
-      {ds.check.zero && <Note tone="watch" data-ui-v2="zero">{C.build.zero}</Note>}
-      {ds.check.few && <Note tone="watch" data-ui-v2="few">{fill(C.build.few, { n: ds.check.fewN })}</Note>}
+      {ds.check.markets.map((m) => (
+        <Note key={m.mk} tone="watch" data-ui-v2={m.state} data-market={m.mk}>
+          {two && <span>{C.pick.market[m.mk]}{" · "}</span>}
+          <span>{m.state === "zero" ? C.build.zero : fill(C.build.few, { n: nf(m.have) })}</span>
+        </Note>
+      ))}
     </div>
   );
 }
