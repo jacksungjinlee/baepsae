@@ -547,7 +547,7 @@ def scene_option_b(R, files):
             page.get_by_text(text, exact=False).first.click()
 
     def gate():
-        see(page, "30초 진단")
+        see(page, "지금 보유 종목을 넣으면 쏠림과 출렁임을 바로 보여 줘요. 기본 성향으로 시작해요.")   # Jack 승인 문구 (2026-11-01)
         shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"첫 화면에 보이면 안 되는 문구: {shown}"
     R.check(page, "B안", "첫 화면: 30초 진단 소개에 '건강 점수' 없음", gate)

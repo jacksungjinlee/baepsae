@@ -273,7 +273,7 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag, lang }) {
           </div>
           <div style={{ fontSize: 11.5, color: C.sub, marginTop: 7, lineHeight: 1.6 }}>{SHOW_SCORE
             ? (en ? "Enter your current holdings — health score, concentration and correlations, instantly." : "지금 보유 종목을 넣으면 건강 점수·쏠림·상관을 바로 보여줘요. 기본 성향으로 시작해요.")
-            : (en ? "Enter your current holdings — concentration and swings, instantly." : "지금 보유 종목을 넣으면 쏠림과 출렁임을 바로 보여줘요. 기본 성향으로 시작해요.")}</div>
+            : (en ? "Enter your current holdings — concentration and swings, instantly." : "지금 보유 종목을 넣으면 쏠림과 출렁임을 바로 보여 줘요. 기본 성향으로 시작해요.")}</div>
         </button>
         <button onClick={() => { gcEvent("gate-test"); onPick("simple"); }}
           style={{ textAlign: "left", background: "#fff", border: HAIR, borderRadius: RAD.card, padding: 16, cursor: "pointer", fontFamily: FONT }}>
