@@ -11,6 +11,7 @@ import collections
 import datetime as dt
 import json
 import math
+import re
 import os
 import sys
 
@@ -674,6 +675,66 @@ def test_d1_is_blank_when_previous_file_is_not_final():
     prev = _listing([["005930", "삼성전자", 232000 * 100, 100, 8e11]])
     d1, _, _ = F.kr_d1_val20(cur, [(D29, prev)], prev_final=False)
     assert d1 == {}
+
+
+def test_previous_session_must_match_the_kospi_calendar():
+    # 리뷰 1번: 10/29 파일이 없으면 10/28 파일이 '직전'으로 잡혀요 → KOSPI 의 직전 거래일(10/29)과 달라서 d1 을 비워요
+    idx = pd.to_datetime(["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"])
+    assert F.kr_prev_session(D30, idx) == D29
+    fetch_csv, commit_kst = sources({D28: "2026-10-28_1921"}, {D28: "1921"})
+    ss, notes, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert [d for d, _ in ss] == [D28] and final is True
+    assert F.prev_session_ok(ss, final, F.kr_prev_session(D30, idx)) is False
+    fetch_csv, commit_kst = sources({D29: "2026-10-29_1958", D28: "2026-10-28_1921"}, {D29: "1958", D28: "1921"})
+    ss, _, final = F.kr_recent_sessions(D30, fetch_csv, commit_kst, n=5)
+    assert F.prev_session_ok(ss, final, D29) is True
+
+
+def test_recent_naver_bars_are_pinned_to_official_closes():
+    idx = pd.to_datetime(["2026-10-27", "2026-10-28", "2026-10-29"])
+    px = pd.Series([181400.0, 100.0, 200.0], index=idx)           # 10/27 네이버 181,400 (공식 174,300)
+    off = {pd.Timestamp("2026-10-27"): {"035420": 174300.0}, pd.Timestamp("2026-10-26"): {"035420": 1.0}}
+    got, n = F.pin_recent(px, off, "035420")
+    assert n == 1 and got.loc["2026-10-27"] == 174300.0 and px.loc["2026-10-27"] == 181400.0   # 원본은 그대로, 없는 날은 안 넣어요
+
+
+def test_word_cut_never_leaves_a_fragment_like_nan():
+    text = "Leading maker of advanced nanometer chips and null-modem cables for industry."
+    cut = F.cut_words(text, 31)
+    assert cut == "Leading maker of advanced" and not re.search(r"(?<![A-Za-z])nan(?![A-Za-z])", cut)
+    assert F.cut_words("short text", 400) == "short text"
+
+
+def test_us_d1_only_when_last_bar_is_the_us_date():
+    idx = pd.to_datetime(["2026-10-29", "2026-10-30"])
+    px = pd.Series([100.0, 103.0], index=idx)
+    assert F.us_d1(px, D30) == 3.0
+    assert F.us_d1(px, dt.date(2026, 10, 31)) is None          # 거래 정지로 낡은 봉
+    assert F.us_d1(px.iloc[:1], D30) is None
+
+
+def test_yahoo_quote_type_safety_net_marks_unlisted_etfs():
+    out = [{"t": "NEWETF", "etf": False}, {"t": "AAPL", "etf": False}]
+    cache = {"NEWETF": {"info": {"quoteType": "ETF"}}, "AAPL": {"info": {"quoteType": "EQUITY"}}}
+    assert F.etf_from_quote_type(out, cache) == ["NEWETF"]
+    assert out[0]["etf"] is True and out[1]["etf"] is False
+
+
+def test_description_ignores_nan_market_cap():
+    assert F.kr_desc_text("반도체 제조업", "", "KOSPI", float("nan")) == "반도체 제조업 · KOSPI 상장"
+
+
+def test_report_year_follows_the_fallback_year(monkeypatch, tmp_path):
+    # 올해 사업보고서가 없으면 작년 것을 쓰고, 배당도 같은 해에서 — fy 는 그 해여야 해요
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {"005930": "00126380"})
+    monkeypatch.setattr(F, "dart_quarter", lambda *a, **k: None)
+    monkeypatch.setattr(F, "dart_financials", lambda client, corp, yr: {"debt": 30.0} if yr == 2024 else {})
+    seen = []
+    monkeypatch.setattr(F, "dart_dividend", lambda client, corp, yr: seen.append(yr) or {"dps": 1444.0})
+    kr = [{"t": "005930", "cap": 1300.0}]
+    F.enrich_with_dart(kr, c)
+    assert kr[0]["fy"] == 2024 and seen == [2024] and kr[0]["dps"] == 1444.0
 
 
 def test_recent_sessions_skip_holidays_and_check_previous_final():

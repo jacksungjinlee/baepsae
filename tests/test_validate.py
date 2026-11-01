@@ -517,11 +517,14 @@ def test_must_have_without_d1_fails():
     fails_on("필수 종목 d1", lambda c: stock(c, "005930").pop("d1"))
 
 
-def test_d1_coverage_drop_fails():
-    def drop(c):
-        for s in kr_of(c)[::10]:
-            s.pop("d1", None)
-    fails_on("국내 d1 채움", drop)
+def test_d1_coverage_drop_is_a_warning_only():
+    # v18.0 추가 4: "The run fails only when must-have stocks lack d1" — 채움이 모자라면 경고
+    cur, prev, final = good_pair()
+    for s in kr_of(cur)[20::10]:
+        s.pop("d1", None)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "국내 d1 채움" and r[3] == "WARN" for r in rep.rows)
 
 
 def test_d1_beyond_price_limit_fails():
@@ -602,12 +605,50 @@ def test_index_history_out_of_order_fails():
     fails_on("지수 이력 (KOSPI·S&P500 3년)", swap)
 
 
-def test_52_week_high_off_from_yahoo_fails():
+def test_52_week_high_far_off_from_yahoo_fails():
     cur, prev, final = good_pair()
     hl = hilo_of(cur, V.MUST)
-    hl["005380"] = (hl["005380"][0] * 1.05, hl["005380"][1])      # 야후 최고가가 5% 달라요
+    hl["005380"]["hi"] *= 1.05                                  # 야후 최고가가 5% 달라요
     rep = check(cur, prev, final, hilo=hl)
     assert "필수 종목 52주 최고·최저 (야후)" in failed_names(rep), rep.table()
+
+
+def test_52_week_high_slightly_off_is_a_warning():
+    cur, prev, final = good_pair()
+    hl = hilo_of(cur, V.MUST)
+    hl["005380"]["lo"] *= 1.02                                  # 2%: 오래된 네이버 봉일 수 있어 경고만
+    rep = check(cur, prev, final, hilo=hl)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "필수 종목 52주 최고·최저 (야후)" and r[3] == "WARN" for r in rep.rows)
+
+
+def test_two_day_d1_is_caught_by_yahoo():
+    # 리뷰: 수요일 목록 파일이 없으면 금요일 실행이 목요일-화요일 변화를 d1 로 낼 뻔했어요
+    cur, prev, final = good_pair()
+    hl = hilo_of(cur, V.MUST)
+    hl["005930"]["d1"] = stock(cur, "005930")["d1"] + 2.5
+    rep = check(cur, prev, final, hilo=hl)
+    assert "필수 종목 d1 (야후)" in failed_names(rep), rep.table()
+
+
+@pytest.mark.parametrize("text", ["시가총액 nan억원", "None년 사업보고서 기준", "주요제품: undefined"])
+def test_bad_word_next_to_korean_fails(text):
+    fails_on("글자에 nan·None·null·undefined 없음", lambda c: stock(c, "000660").update(dk=text))
+
+
+def test_dividend_and_yield_disagreeing_fails():
+    def odd(c):
+        for s in kr_of(c)[100:160]:
+            s.update(dps=0.0, dy=2.5)
+    fails_on("주당 배당금·배당수익률 맞음", odd)
+
+
+def test_internal_field_leak_fails():
+    fails_on("임시 칸(_…) 없음", lambda c: stock(c, "U0001").update(_yind="Semiconductors"))
+
+
+def test_missing_us_must_have_fails():
+    fails_on("미국 필수 종목 d1", lambda c: c["data"]["stocks"].remove(stock(c, "NVDA")))
 
 
 def test_52_week_check_unavailable_is_a_warning_not_a_failure():
@@ -622,8 +663,15 @@ def test_http_hilo_uses_closes_up_to_pxdate(monkeypatch):
     rows = [(d, 100.0 + i) for i, d in enumerate(days)]
     monkeypatch.setattr(V, "_yahoo_closes", lambda sym: rows)
     px = days[299]
-    got = V.http_hilo(["005930"], px, sleep=lambda s: None)
-    assert got["005930"] == (100.0 + 299, 100.0 + 299 - 251)     # 마지막 252거래일, pxDate 뒤는 빼요
+    got = V.http_hilo(["005930"], px, sleep=lambda s: None)["005930"]
+    assert (got["hi"], got["lo"]) == (100.0 + 299, 100.0 + 299 - 251)     # 마지막 252거래일, pxDate 뒤는 빼요
+    assert abs(got["d1"] - (399 / 398 - 1) * 100) < 1e-9
+
+
+def test_http_hilo_skips_a_lagging_yahoo(monkeypatch):
+    days = [dt.date(2025, 1, 1) + dt.timedelta(days=i) for i in range(300)]
+    monkeypatch.setattr(V, "_yahoo_closes", lambda sym: [(d, 100.0) for d in days])
+    assert V.http_hilo(["005930"], days[-1] + dt.timedelta(days=1), sleep=lambda s: None) == {}
 
 
 @pytest.mark.parametrize("t, wrong", [("088980", False), ("241520", True)])
