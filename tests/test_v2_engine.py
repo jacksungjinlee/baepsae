@@ -75,15 +75,35 @@ def test_etfs_funds_bonds_metals_and_preferred_are_never_ranked():
     assert got["pref"] and got["prefK"] and not got["common"] and not got["newCommon"]
 
 
+def _us_commons(n):
+    return [us(f"C{i:03d}", dy=1.0 + i / 100) for i in range(n)]
+
+
 def test_us_preferred_and_depositary_shares_without_a_market_cap_are_never_ranked():
-    # 2026-11-02 실제 데이터: STRC(변동금리 우선주, 소프트웨어 · 배당 12%)·GOOGM·GOOGN(예탁증서)은 야후에 시가총액이 없어요
-    stocks = [us("AAPL", dy=0.5), us("STRC", cap=None, dy=12.1, ind="software", indName="소프트웨어"),
-              us("GOOGM", cap=None, dy=3.0), us("ZERO", cap=0, dy=5.0), kr("000010", cap=5.0)]
+    # 2026-11-02 실제 데이터: STRC(변동금리 우선주, 소프트웨어 · 배당 12%)·GOOGM·GOOGN(예탁증서)은 거래대금은 있는데
+    # 야후에 시가총액이 없어요 (744종목 중 3개). 정보를 아예 못 받은 종목(NOINFO: 거래대금도 없음)은 그대로 빈 칸으로 세요.
+    stocks = _us_commons(100) + [us("STRC", cap=None, dy=12.1, ind="software", indName="소프트웨어"),
+                                 us("GOOGM", cap=None, dy=3.0), us("ZERO", cap=0, dy=5.0),
+                                 us("NOINFO", cap=None, val=None, dy=9.0), kr("000010", cap=5.0)]
     got = run(SET + "const r = E.screen(stocks, S({ mix: 'k55', points: { div: 5 }, strict: 'loose' }));"
-              "out = { us: r.markets.us.survivors.map(x => x.t), kr: r.markets.kr.survivors.map(x => x.t),"
-              " uni: stocks.filter(E.inUniverse).map(s => s.t) };", stocks=stocks)
-    assert got["us"] == ["AAPL"] and got["kr"] == ["000010"], got
-    assert got["uni"] == ["AAPL", "000010"], got
+              "const us = r.markets.us.survivors.map(x => x.t);"
+              "out = { us, kr: r.markets.kr.survivors.map(x => x.t), blanks: r.blanks,"
+              " uni: E.universe(stocks, 'us').map(s => s.t), out: [...E.usPreferredLike(stocks)].sort() };", stocks=stocks)
+    assert got["out"] == ["GOOGM", "STRC", "ZERO"], got["out"]
+    assert not {"STRC", "GOOGM", "ZERO", "NOINFO"} & set(got["us"]) and len(got["us"]) == 100, got["us"]
+    assert "NOINFO" in got["uni"] and len(got["uni"]) == 101, got["uni"]
+    assert got["blanks"] == 1 and got["kr"] == ["000010"], got
+
+
+def test_many_us_stocks_without_a_market_cap_is_a_data_problem_not_preferred_shares():
+    # 야후가 시가총액을 안 보내기 시작하면(데이터 문제) 미국 종목이 통째로 사라지면 안 돼요: 이 이유로는 아무것도 빼지 않아요
+    stocks = _us_commons(100)
+    for s in stocks[:40]:
+        s.pop("cap")
+    got = run(SET + "const r = E.screen(stocks, S({ mix: 'us', points: { div: 5 }, strict: 'loose' }));"
+              "out = { n: r.markets.us.survivors.length, out: E.usPreferredLike(stocks).size,"
+              " uni: E.universe(stocks, 'us').length };", stocks=stocks)
+    assert got == {"n": 100, "out": 0, "uni": 100}, got
 
 
 # ── 빈 칸은 빠지고 개수가 보여요 ──

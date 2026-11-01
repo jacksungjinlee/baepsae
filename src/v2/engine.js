@@ -41,12 +41,33 @@ export const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : nul
 export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0 && !NOT_GROUPS.includes(s.ind);
 export const isFin = (s) => hasGroup(s) && FINANCIAL_INDS.includes(s.ind);
 export const isPreferred = (s) => s.cls === "kr" && typeof s.t === "string" && !s.t.endsWith("0");  // KRX: common shares end in 0
-// US preferred and depositary shares come in through the NASDAQ list looking like companies (STRC, a variable-rate
-// preferred filed under software with a 12% yield, and GOOGM·GOOGN on 2026-11-02). Yahoo gives every common share a
-// market cap and these none, so a US stock without a market cap is treated like a preferred share: never ranked.
-export const usWithoutCap = (s) => s.cls === "us" && !(num(s.cap) > 0);
 export const isStockLike = (s) => (s.cls === "kr" || s.cls === "us") && !s.fund && s.etf !== true;
-export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && !usWithoutCap(s) && num(s.price) > 0;
+export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && num(s.price) > 0;
+
+// US preferred and depositary shares come in through the NASDAQ list looking like companies (STRC, a variable-rate
+// preferred filed under software with a 12% yield, and GOOGM·GOOGN on 2026-11-02: 3 of 744). Yahoo gives every common
+// share a market cap and these none, while their trading value loads. So a US row with trading value but no market cap
+// is treated like a preferred share: never ranked. Rows with no Yahoo info at all (no trading value either) are not
+// touched: they stay blanks and are counted as such.
+// Only a handful should look like this. If more than US_NO_CAP_MAX_SHARE of the US rows with trading value have no
+// market cap, Yahoo stopped sending market caps (a data problem, not preferred shares): then nothing is left out on
+// this ground, the console says so, and the screen behaves as it did before this rule.
+export const US_NO_CAP_MAX_SHARE = 0.05;
+export function usPreferredLike(stocks) {
+  const rows = stocks.filter((s) => s.cls === "us" && inUniverse(s) && num(s.val) != null);
+  const noCap = rows.filter((s) => !(num(s.cap) > 0));
+  if (noCap.length > rows.length * US_NO_CAP_MAX_SHARE) {
+    console.warn(`[v2] ${noCap.length} of ${rows.length} US stocks have trading value but no market cap: a data problem, so none are treated as preferred shares`);
+    return new Set();
+  }
+  return new Set(noCap.map((s) => s.t));
+}
+
+// The stocks of one market that can be ranked.
+export function universe(stocks, mk) {
+  const out = mk === "us" ? usPreferredLike(stocks) : null;
+  return stocks.filter((s) => s.cls === mk && inUniverse(s) && !(out && out.has(s.t)));
+}
 
 // ---------------- settings ----------------
 export const CARDS = [
@@ -189,7 +210,7 @@ export function screen(stocks, settings) {
   const pinned = new Set(settings.pinned || []);
   const res = { markets: {}, blanks: 0, survivors: 0, liqOut: 0, excludeCounts: { loss: 0, debt: 0, noDiv: 0, holding: 0 }, active: active.map((c) => c.id) };
   for (const mk of marketsOf(settings)) {
-    const uni = stocks.filter((s) => s.cls === mk && inUniverse(s));
+    const uni = universe(stocks, mk);
     const pct = Object.fromEntries(active.map((c) => [c.id, percentileScores(uni, c)]));
     const surv = [];
     let blanks = 0;
@@ -684,7 +705,7 @@ export function cautionContext(stocks) {
   const ctx = { pbrP75: new Map(), volP80: {} };
   const q = (arr, p) => { const a = [...arr].sort((x, y) => x - y); const i = (a.length - 1) * p, lo = Math.floor(i); return a[lo] + (a[Math.ceil(i)] - a[lo]) * (i - lo); };
   for (const mk of ["kr", "us"]) {
-    const uni = stocks.filter((s) => s.cls === mk && inUniverse(s));
+    const uni = universe(stocks, mk);
     const groups = new Map();
     for (const s of uni) {
       if (!hasGroup(s) || num(s.pbr) == null || s.pbr <= 0) continue;
