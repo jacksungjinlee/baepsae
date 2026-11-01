@@ -491,12 +491,18 @@ HIDDEN_B = ["기대 +", "적정 기대수익", "세후 기대수익", "기대수
             "건강 점수", "베타가 목표보다", "변동성이 상한을 넘어요", "비중만 옮겨서 베타", "늘려 출렁임 낮추기",
             "모든 계기가 초록불이에요", "남은 예산이 맞춰야 할", "남은 예산만으론", "닿을 수 있어요", "이럴 바엔 인덱스 펀드",
             "비중을 줄이는 효과가 가장 커요", "더 나눠 담으면", "비중만 고르게 나눠도", "내 그릇에 맞는 베타를 지켰어요",
-            "목표까지 갈 수 있을까요", "내 수익은 어디서 나오나요", "원금을 지킬 확률", "NaN"]
+            "할 일의 전부예요", "목표까지 갈 수 있을까요", "내 수익은 어디서 나오나요", "원금을 지킬 확률", "원금을 지킬 수 있을까",
+            "손실로 끝날 확률", "목표 달성 확률", "보상받지 못한 변화", "값을 치르고 산 위험", "위험을 줄이셨네요",
+            "유지하는 것도 훌륭한 선택", "NaN"]
 # ('초록 구간 = 내 프로필의 목표' 는 남아요: 분산·업종 계기에는 목표 구간이 그대로 있어요. β·σ 계기에서만 구간을 지워요.)
-HIDDEN_B_EN = ["expected +", "E(r)", "CAGR", "After-tax return", "Fair E(r)", "Portfolio health", "health score",
+HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax return", "Fair E(r)", "Portfolio health", "health score",
                "Beta above target", "Beta below target", "Volatility over ceiling", "All gauges green", "remaining budget",
                "Remaining budget", "Will I reach the goal", "Where do my returns come from", "An index fund would be cheaper",
-               "Raise cash to", "odds of keeping your principal", "NaN"]
+               "Raise cash to", "odds of keeping your principal", "Will the principal survive", "Chance of ending in loss",
+               "Chance of reaching the goal", "Same stocks, evened weights", "helps most", "Three more non-overlapping",
+               "Beta matches your capacity", "uncompensated change", "risk you actually got paid for", "You cut risk",
+               "holding steady is a fine choice", "NaN"]
+TEAL, TEAL_SOFT, INK = "rgb(46, 158, 143)", "rgb(228, 244, 241)", "rgb(28, 43, 69)"   # src/tokens.js (C.teal, C.tealSoft, C.ink)
 
 
 def hidden_shown(body, words):
@@ -509,18 +515,22 @@ def hidden_shown(body, words):
 
 
 def scene_option_b(R, files):
-    """균형형 프로필(변동성 상한 24%) + 변동성 큰 실제 종목들: 예전 계산이면 '변동성이 상한을 넘어요' 경고, 고치기 카드,
-    기대수익, 건강 점수가 다 떠요. B안에서는 위험 수치(보통 해 ±…)만 보이고, 나머지는 ②③④ 어디에도, 한국어·영어
-    어느 쪽에도 없어야 해요. 첫 화면의 30초 진단 소개에도 '건강 점수'가 없어야 해요."""
+    """균형형 프로필(변동성 상한 24%) + 변동성 큰 실제 종목 4개(업종 3곳, 비중 제각각) + 지난달 점검 기록:
+    예전 계산이면 '변동성이 상한을 넘어요' 경고, 고치기 카드, 기대수익, 건강 점수, β·σ 초록 구간이 다 떠요.
+    B안에서는 위험 수치(보통 해 ±…)만 보이고, 나머지는 첫 화면·②③④ 어디에도, 한국어·영어 어느 쪽에도 없어야 해요."""
     files = json.loads(json.dumps(files))      # 아래에서 배당만 지워요 (다른 장면에 번지지 않게 복사본에서)
     stocks = {s.get("t"): s for s in files["data.json"]["stocks"]}
-    hold = [t for t in ("000660", "005930", "005380") if t in stocks and isinstance(stocks[t].get("vol"), (int, float))]
-    assert len(hold) >= 2, f"시험할 종목이 모자라요: {hold}"
-    stocks[hold[0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
+    want = [("000660", 400), ("005930", 150), ("005380", 100), ("105560", 100)]
+    hold = [(t, mw) for t, mw in want if t in stocks and isinstance(stocks[t].get("vol"), (int, float))]
+    secs = {stocks[t].get("s") for t, _ in hold}
+    assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"
+    stocks[hold[0][0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
                "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
-    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile,
-            "holdings": [{"t": t, "mw": 300} for t in hold]}
+    old = {"d": "2026-10-01", "inv": 5000000, "beta": 0.9, "vol": 30.0, "exp": 8.0, "unpaid": 30.0, "sec": 50.0,
+           "secKey": "x", "top3": 80.0, "n": 3}       # 지난번 점검 (숫자가 달라서 변화 칸이 채워져요)
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile, "checkins": [old],
+            "holdings": [{"t": t, "mw": mw} for t, mw in hold]}
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sob", "name": "B안 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_sob": json.dumps(slot, ensure_ascii=False)}
     srv, ctx, page, _ = R.open(build_site(files), local=local)
@@ -532,6 +542,10 @@ def scene_option_b(R, files):
     def stage(label):
         page.get_by_role("button", name=label, exact=False).first.click()
 
+    def open_if(text):
+        if page.get_by_text(text, exact=False).count():
+            page.get_by_text(text, exact=False).first.click()
+
     def gate():
         see(page, "30초 진단")
         shown = hidden_shown(body(), HIDDEN_B)
@@ -542,11 +556,16 @@ def scene_option_b(R, files):
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("B안 시험", exact=False).first.click()
         see(page, "보통 해 ±")
+        open_if("이렇게 하면 맞춰져요")        # 접힌 고치기 카드 목록도 펼쳐서 읽어요
         shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"② 구성에 보이면 안 되는 문구: {shown}"
         line = page.evaluate(SMALLEST, ["보통 해 ±", None])
         assert line and "기대" not in line and "NaN" not in line, f"위험 줄: {line!r}"
-    R.check(page, "B안", "② 구성: '보통 해 ±…' 만, 판정·조언·기대수익·건강 점수 없음", build)
+        # 계기판의 초록 목표 구간은 분산·업종 두 개만 (β·σ 에는 없어야 해요)
+        zones = page.evaluate("""([teal, soft]) => [...document.querySelectorAll('div')].filter((d) => { const c = getComputedStyle(d);
+            return c.height === '9px' && c.borderTopColor === teal && c.backgroundColor === soft; }).length""", [TEAL, TEAL_SOFT])
+        assert zones == 2, f"초록 목표 구간 {zones}개 (분산·업종 2개여야 해요)"
+    R.check(page, "B안", "② 구성: '보통 해 ±…' 만, β·σ 초록 구간·판정·조언·기대수익·건강 점수 없음", build)
 
     def open_all(titles, detail):
         for title in titles:
@@ -554,20 +573,37 @@ def scene_option_b(R, files):
         page.wait_for_timeout(400)
         page.get_by_text(detail, exact=False).first.click()          # 종목별 줄도 열어요 (예전엔 '적정 기대수익 x%')
 
+    def colors():
+        # β·σ 변화는 좋고 나쁨 색 없이 (잉크색): 점검 기록의 변동성 줄, 1/N 상자의 β·σ
+        ci = page.evaluate("""() => { const row = [...document.querySelectorAll('div')].find((d) => d.children.length === 4
+            && d.children[0].textContent === '변동성 (연)'); return row ? [row.children[3].textContent, getComputedStyle(row.children[3]).color] : null; }""")
+        assert ci and ci[0] != "–" and ci[1] == INK, f"점검 기록 변동성 변화: {ci}"
+        one = page.evaluate("""() => { const box = [...document.querySelectorAll('div')].find((d) => d.children.length >= 2
+            && d.children[0].textContent === '같은 종목을 그냥 1/N씩 담았다면'); if (!box) return null;
+            return [...box.children[1].children].map((c) => [c.children[0].textContent, c.children[2].textContent, getComputedStyle(c.children[2]).color]); }""")
+        assert one, "1/N 상자가 없어요"
+        bs = [c for c in one if c[0] in ("β", "σ")]
+        assert len(bs) == 2 and all(c[2] == INK or c[1].strip() in ("0.00", "+0.00", "0.0%p") for c in bs), f"1/N β·σ 색: {one}"
+        assert any(c[1].strip() not in ("0.00", "+0.00", "0.0%p", "-0.00") for c in bs), f"1/N 변화가 0 이라 색을 못 봐요: {one}"
+
     def diag():
         stage("③ 진단")
         see(page, "내가 잘하고 있는 것")
         open_all(("내가 잘하고 있는 것", "내 위험은 보상받고 있나요?", "나는 무엇을 들고 있나요?", "폭락하면 얼마나 잃나요?",
                   "시장을 이길 수 있을까요?", "직접 실험해볼까요?"), "종목별로 뜯어보기")
-        page.get_by_role("button", name="지금 상태 기록").first.click()   # 점검 기록 (예전엔 기대수익 줄과 판정 문장)
-        see(page, "번째 기록")
+        see(page, "2026-10-01")                 # 심어 둔 지난 점검과 비교 중
         shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"③ 진단에 보이면 안 되는 문구: {shown}"
-        # '그래서, 뭘 하면 좋을까요?' 상자는 줄이 하나라도 있을 때만 (조언 줄을 꺼서 빈 상자가 되면 안 돼요)
+        colors()
+        # '그래서, 뭘 하면 좋을까요?' 상자는 줄이 하나라도 있을 때만 (업종 3곳 이상이면 남는 줄이 없어서 상자도 없어야 해요)
         empty = page.evaluate("""() => [...document.querySelectorAll('div')].filter((d) => d.textContent.trim() === '그래서, 뭘 하면 좋을까요?')
             .some((d) => d.parentElement.innerText.trim().length < d.textContent.trim().length + 5)""")
         assert not empty, "빈 '그래서, 뭘 하면 좋을까요?' 상자"
-    R.check(page, "B안", "③ 진단: 섹션을 다 열고 점검 기록까지 해도 판정·조언·기대수익·건강 점수 없음", diag)
+        page.get_by_role("button", name="지금 상태 기록").first.click()   # 오늘 점검도 기록해 봐요
+        see(page, "2번째 기록")
+        shown = hidden_shown(body(), HIDDEN_B)
+        assert not shown, f"③ 점검 기록 뒤 보이면 안 되는 문구: {shown}"
+    R.check(page, "B안", "③ 진단: 섹션을 다 열고 점검 기록을 비교해도 판정·조언·기대수익·건강 점수 없음, β·σ 변화는 잉크색", diag)
 
     def div_unknown():
         # 배당 합계가 보이는 곳(간단 사실 카드)에 '0원으로 계산' 알림도 같이 있어야 해요 (조용히 0원 X)
@@ -588,14 +624,18 @@ def scene_option_b(R, files):
         bad = hidden_shown(body(), HIDDEN_B_EN)
         stage("② Build")
         see(page, "a typical year swings")
+        open_if("How to bring it in line")
         bad += hidden_shown(body(), HIDDEN_B_EN)
         stage("③ Diagnose")
         see(page, "What I'm doing right")
         open_all(("What I'm doing right", "Is my risk being paid for?", "What am I actually holding?", "How much would a crash cost?",
                   "Can I beat the market?", "Want to experiment?"), "Per-stock breakdown")
         bad += hidden_shown(body(), HIDDEN_B_EN)
+        home(page)
+        see(page, "30-second checkup")
+        bad += hidden_shown(body(), HIDDEN_B_EN)
         assert not bad, f"영어 화면에 보이면 안 되는 문구: {bad}"
-    R.check(page, "B안", "영어 ②③④: 판정·조언·기대수익·건강 점수 없음", english)
+    R.check(page, "B안", "영어 첫 화면·②③④: 판정·조언·기대수익·건강 점수 없음", english)
     ctx.close(); srv.shutdown()
 
 

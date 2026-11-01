@@ -744,8 +744,6 @@ const T = {
   sxBs: { ko:"자산군·업종 구성과 위험의 출처", en:"Asset classes, sectors, and where risk comes from" },
   sxC: { ko:"폭락하면 얼마나 잃나요?", en:"How much would a crash cost?" },
   sxCs: { ko:"최악의 해, 그리고 원금을 지킬 확률", en:"Worst years and the odds of keeping your principal" },
-  sxCsNoP: { ko:"최악의 해", en:"Worst years" },   // B안: 확률 카드를 꺼 둔 동안
-
   sxD: { ko:"시장을 이길 수 있을까요?", en:"Can I beat the market?" },
   sxDs: { ko:"알파, 그리고 전설들과의 비교", en:"Alpha, and how the legends compare" },
   sxE: { ko:"직접 실험해볼까요?", en:"Want to experiment?" },
@@ -2554,7 +2552,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
   const bandCol = [C.teal, "#9A6B00", C.coral][band];
 
   const levers = [];
-  if (band === 0) levers.push({ icon: "", text: t("rjGood") });
+  if (band === 0) { if (SHOW_VERDICTS) levers.push({ icon: "", text: t("rjGood") }); }   // '유지하는 게 할 일의 전부' — 버그 때문에 한 번도 안 보였던 조언 줄 (B안)
   else {
     if (SHOW_VERDICTS && eqOwn != null && eqOwn < own - 1.5) levers.push({
       icon: "", bars: [own, eqOwn],
@@ -3887,7 +3885,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
           <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
         </Section>
       )}
-      <Section title={t("sxC")} sub={SHOW_ER ? t("sxCs") : t("sxCsNoP")} open={!!open.c} onToggle={() => tg("c")}>
+      <Section title={t("sxC")} sub={SHOW_ER ? t("sxCs") : null /* B안: 확률 카드를 꺼 둔 동안은 부제 없이 */} open={!!open.c} onToggle={() => tg("c")}>
         {SHOW_ER ? (
           <div className="grid2">
             <TailRiskCard lang={lang} t={t} metrics={metrics} />
