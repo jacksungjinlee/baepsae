@@ -137,7 +137,8 @@ class Runner:
             fn()
             self.results.append((label, True, ""))
         except Exception as e:
-            self.results.append((label, False, str(e).splitlines()[0][:200]))
+            msg = (str(e).splitlines() or [type(e).__name__])[0]     # 메시지 없는 assert 도 이름으로 남겨요
+            self.results.append((label, False, msg[:200]))
             if self.shots:
                 os.makedirs(self.shots, exist_ok=True)
                 try:
@@ -419,17 +420,19 @@ def scene_normal(R, files, width):
         pin_box.fill("005935")                                        # 우선주: 순위에는 없지만 꼭 담을 수 있어요
         page.get_by_role("button", name="삼성전자우 담기").click()
         added = page.locator('[data-ui-v2="pinned"] [data-ui-v2="manual-chip"]')
-        assert added.count() == 1 and added.inner_text() == C["pick"]["manual"]   # 조건 단계: '직접 추가'만 (Jack, 2026-11-01)
-        assert "고정" not in page.locator('[data-ui-v2="pinned"]').inner_text()
+        added.first.wait_for(state="visible")
+        assert added.count() == 1 and added.inner_text() == C["pick"]["manual"], \
+            f"조건 단계의 꼭 담을 종목에 '직접 추가' 하나만 있어야 해요: {added.all_inner_texts()}"   # Jack, 2026-11-01
+        assert "고정" not in page.locator('[data-ui-v2="pinned"]').inner_text(), "조건 단계에 '고정'이 남아 있어요"
         R.collect(page)
         click_next(page)
         see(page, C["pick"]["title"])
         assert page.locator("section[data-market='us']").count() == 0
         pinned = page.locator("[data-pinned='005935']")
         pinned.wait_for(state="visible")
-        assert pinned.locator('[data-ui-v2="manual-chip"]').inner_text() == C["pick"]["manual"]   # '직접 추가'만 (Jack, 2026-11-01)
+        assert pinned.locator('[data-ui-v2="manual-chip"]').inner_text() == C["pick"]["manual"], "후보 고르기에 '직접 추가'가 없어요"
         assert "고정" not in pinned.inner_text(), "직접 담은 종목에 '고정'이 남아 있어요"
-        assert pinned.locator('[data-ui-v2="manual-note"]').count() == 0   # 근거 수치를 열기 전에는 안 보여요
+        assert pinned.locator('[data-ui-v2="manual-note"]').count() == 0, "근거 수치를 열기 전에 문장이 보여요"
         pinned.get_by_role("button", name=C["pick"]["receipts"]).click()
         assert pinned.locator('[data-ui-v2="manual-note"]').inner_text() == C["pick"]["manualNote"]
         scored = page.locator("[data-cand]").first                   # 점수로 고른 후보: 근거 수치를 열어도 그 문장이 없어요
