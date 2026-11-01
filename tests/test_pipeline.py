@@ -11,6 +11,7 @@ import collections
 import datetime as dt
 import json
 import math
+import re
 import os
 import sys
 
@@ -716,3 +717,102 @@ def test_series_stats_d1_is_last_over_previous():
     px = pd.Series([100.0] * 79 + [103.0], index=idx)
     bench = px.pct_change().dropna()
     assert F.series_stats(px, bench, 0.03)["d1"] == 3.0
+
+
+# ── v17.5.1 PR 2: 업종 그룹 (ind · indName) ─────────────────────────────────
+TABLES = F.load_industry_tables()
+
+
+def test_industry_tables_are_consistent():
+    g = TABLES["groups"]
+    assert 50 <= len(g) <= 70                                      # v18.0: 투자자가 쓰는 50~70개 그룹
+    assert all(re.fullmatch(r"[a-z_]+", k) for k in g)            # 그룹 id 는 영문 (bond 의 grp 와 다른 필드 ind)
+    assert all(v["name"] and not re.search(r"[A-Za-z]{3}", v["name"]) for v in g.values())   # 한국어 이름
+    assert {k for k, v in g.items() if v["financial"] == "yes"} == {"bank", "insurance", "securities", "finance"}
+    assert "etc" not in g and "other" not in g                    # '기타'를 하나의 그룹으로 쓰지 않아요
+    for k, v in g.items():                                        # 상위 그룹을 따라가면 끝나요 (순환 없음)
+        seen, cur = set(), k
+        while g[cur]["parent"]:
+            assert cur not in seen, k
+            seen.add(cur)
+            cur = g[cur]["parent"]
+
+
+def test_broken_industry_table_stops_the_run(tmp_path):
+    for name in ("industry_groups.csv", "industry_map.csv", "industry_us.csv", "industry_overrides.csv", "industry_refine.csv"):
+        (tmp_path / name).write_text(open(os.path.join(ROOT, "data", name), encoding="utf-8").read(), encoding="utf-8")
+    with open(tmp_path / "industry_map.csv", "a", encoding="utf-8") as f:
+        f.write("999,nosuchgroup,없는 그룹\n")
+    with pytest.raises(RuntimeError, match="없는 그룹"):
+        F.load_industry_tables(str(tmp_path))
+
+
+@pytest.mark.parametrize("code, want", [("29271", "semi_eq"), ("2927", "semi_eq"), ("29272", "display"), ("292", "machinery"),
+                                        ("64992", "holding"), ("649", "finance"), ("66121", "securities"), ("661", "finance"),
+                                        ("20423", "cosmetics"), ("204", "spchem"), ("264", "telecom_eq"), ("2612", "semi"),
+                                        ("30121", "auto"), ("99999", None), ("", None), (None, None)])
+def test_ksic_longest_prefix_wins(code, want):
+    assert F.ksic_group(code, TABLES["kmap"]) == want
+
+
+def _kr(t, n=None):
+    return {"t": t, "nk": n or t, "cls": "kr", "etf": False}
+
+
+def test_assign_industries_overrides_preferred_refine_and_merge():
+    stocks = [_kr("005930"), _kr("005935", "삼성전자우"), _kr("105560"), _kr("034730"), _kr("240810"), _kr("088980")]
+    stocks[-1]["etf"] = True                                         # 상장 펀드는 그룹 없음
+    stocks += [_kr(f"9{i:05d}") for i in range(12)]                  # 반도체 장비 5 · 반도체 7
+    ksic = {"005930": "264", "105560": "64992", "034730": "64992", "240810": "292", "088980": "64201"}
+    ksic.update({f"9{i:05d}": ("29271" if i < 5 else "2612") for i in range(12)})
+    prod = {"240810": "반도체 제조용 기계"}
+    cnt = F.assign_industries(stocks, TABLES, ksic, min_members=5, products=prod)
+    by = {s["t"]: s for s in stocks}
+    assert by["005930"]["ind"] == "semi" and by["005930"]["indName"] == "반도체"        # 고정표 (KSIC 264 → 반도체)
+    assert by["005935"]["ind"] == "semi"                                                # 우선주는 보통주를 따라요
+    assert by["240810"]["ind"] == "semi_eq"                                             # 292 + '반도체' → 반도체 장비
+    assert "ind" not in by["088980"]                                                    # ETF·펀드는 그룹 없음
+    # 은행 1명·지주 1명은 5명이 안 돼요: 은행 → 상위 '기타 금융'(1명, 상위 없음) → 그룹 없음 · 지주회사 → 그룹 없음
+    assert "ind" not in by["105560"] and "ind" not in by["034730"]
+    assert cnt["kr 우선주 → 보통주"] == 1 and cnt["kr KSIC+주요제품"] == 1
+
+
+def test_small_group_merges_into_parent_before_being_dropped():
+    # 미국 비철금속 3 + 철강 2 = 5 → 철강 그룹으로 살아남아요 (예전 순서는 둘 다 버렸어요)
+    us = [{"t": f"M{i}", "cls": "us", "etf": False, "_yind": "Gold"} for i in range(3)]
+    us += [{"t": f"S{i}", "cls": "us", "etf": False, "_yind": "Steel"} for i in range(2)]
+    F.assign_industries(us, TABLES, {}, min_members=5)
+    assert {s.get("ind") for s in us} == {"steel"} and all("_yind" not in s for s in us)
+
+
+def test_us_industry_from_yahoo_and_unknown_stays_ungrouped():
+    us = [{"t": f"B{i}", "cls": "us", "etf": False, "_yind": "Biotechnology"} for i in range(5)]
+    us += [{"t": "X", "cls": "us", "etf": False, "_yind": "Something New"}, {"t": "SPY", "cls": "us", "etf": True, "_yind": "x"}]
+    F.assign_industries(us, TABLES, {}, min_members=5)
+    assert [s.get("ind") for s in us] == ["bio"] * 5 + [None, None]
+    assert all("_yind" not in s for s in us)                         # 임시 필드는 파일에 나가지 않아요
+
+
+def test_overrides_have_reasons_and_cover_the_must_have_checks():
+    over = TABLES["over"]
+    assert all(r for _, r in over.values())
+    assert over["005930"][0] == "semi"
+    assert {over[t][0] for t in ("105560", "086790", "055550", "316140")} == {"bank"}
+
+
+def test_dart_company_is_cached_for_months(tmp_path, monkeypatch):
+    calls = []
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    monkeypatch.setattr(c, "get", lambda ep, p, timeout=25: calls.append(p["corp_code"]) or {"status": "000", "induty_code": "264"})
+    assert c.company("00126380") == {"induty": "264"}
+    assert c.company("00126380") == {"induty": "264"} and calls == ["00126380"]          # 두 번째는 캐시
+    c.today = dt.date(2027, 9, 1)                                                            # 300일 뒤 → 다시 받아요
+    c.company("00126380")
+    assert calls == ["00126380", "00126380"]
+
+
+def test_industry_csv_with_a_stray_comma_stops_loudly(tmp_path):
+    p = tmp_path / "x.csv"
+    p.write_text("code,group,reason\n005930,semi,이유, 쉼표\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="칸 수"):
+        F._read_csv(str(p))

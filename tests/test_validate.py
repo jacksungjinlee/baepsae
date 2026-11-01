@@ -632,3 +632,36 @@ def test_korean_listed_fund_flags(t, wrong):
     def add(c):
         c["data"]["stocks"].append({"t": t, "nk": t, "ne": t, "cls": "kr", "price": 10000.0, "cap": 1.0, "etf": wrong})
     fails_on("etf 표시가 맞음", add)
+
+
+# ── v17.5.1 PR 2: 업종 그룹 ──
+@pytest.mark.parametrize("t, g", [("005930", "telecom_eq"), ("105560", "holding"), ("034730", "finance"), ("000270", None)])
+def test_must_have_in_wrong_industry_group_fails(t, g):
+    def wrong(c):
+        s = stock(c, t)
+        if g:
+            s.update(ind=g, indName="이름")
+        else:
+            s.pop("ind")
+            s.pop("indName")
+    fails_on("업종 그룹 필수 종목", wrong)
+
+
+def test_many_liquid_stocks_without_group_fail():
+    def drop(c):
+        for s in kr_of(c)[20:80]:
+            s.pop("ind")
+            s.pop("indName")
+    fails_on("업종 그룹 없는 국내 종목 (거래 활발)", drop)
+
+
+def test_tiny_industry_group_fails():
+    fails_on("업종 그룹 인원 (시장마다)", lambda c: kr_of(c)[300].update(ind="ship", indName="조선"))
+
+
+def test_two_names_for_one_group_fails():
+    fails_on("업종 그룹 이름·형식", lambda c: kr_of(c)[301].update(indName="반도체·장비"))
+
+
+def test_etf_with_industry_group_fails():
+    fails_on("업종 그룹 이름·형식", lambda c: stock(c, "SPY").update(ind="semi", indName="반도체"))

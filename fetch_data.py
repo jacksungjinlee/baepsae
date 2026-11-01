@@ -37,7 +37,9 @@ DART 결과는 .dart-cache/ 에 보관해 실행 사이에 다시 씁니다 (하
 
 import collections
 import copy
+import csv
 import gzip
+import hashlib
 import io
 import json
 import math
@@ -472,6 +474,117 @@ def kr_desc_text(industry, products, market, cap):
     return " · ".join(bits) or None
 
 
+# ────────────────────────────────────────────────────────────
+# v17.5.1 PR 2: 업종 그룹 (ind · indName) — 한국은 DART 업종 코드(KSIC), 미국은 야후 업종 이름
+# data/industry_groups.csv (그룹·이름·상위 그룹) · industry_map.csv (KSIC 접두어) · industry_us.csv · industry_overrides.csv
+# ────────────────────────────────────────────────────────────
+INDUSTRY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+GROUP_MIN = 5            # 같은 시장에서 이보다 적으면 상위 그룹으로 합쳐요 (상위가 없으면 그룹 없음)
+
+
+def _read_csv(path):
+    with open(path, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    bad = [i + 2 for i, r in enumerate(rows) if None in r or any(v is None for v in r.values())]
+    if bad:
+        raise RuntimeError(f"!! {os.path.basename(path)} {bad[:5]}번째 줄의 칸 수가 머리줄과 달라요 (쉼표가 섞였는지 확인)")
+    return [{k: v.strip() for k, v in r.items()} for r in rows]
+
+
+def load_industry_tables(d=INDUSTRY_DIR):
+    """업종 표 넷을 읽고 서로 맞는지 확인해요. 틀리면 예외 (조용히 '기타'로 넘어가지 않게)."""
+    groups = {r["group"]: r for r in _read_csv(os.path.join(d, "industry_groups.csv"))}
+    kmap = {r["ksic"]: r["group"] for r in _read_csv(os.path.join(d, "industry_map.csv"))}
+    usmap = {r["yahoo_industry"]: r["group"] for r in _read_csv(os.path.join(d, "industry_us.csv"))}
+    over = {r["code"]: (r["group"], r["reason"]) for r in _read_csv(os.path.join(d, "industry_overrides.csv"))}
+    refine = [(r["group"], r["keyword"], r["to"]) for r in _read_csv(os.path.join(d, "industry_refine.csv"))]
+    used = (set(kmap.values()) | set(usmap.values()) | {g for g, _ in over.values()} | {g["parent"] for g in groups.values() if g["parent"]}
+            | {a for a, _, _ in refine} | {b for _, _, b in refine})
+    bad = sorted(used - set(groups))
+    if bad:
+        raise RuntimeError(f"!! 업종 표에 없는 그룹: {bad}")
+    if any(not g["name"] for g in groups.values()):
+        raise RuntimeError("!! 이름 없는 업종 그룹이 있어요")
+    return {"groups": groups, "kmap": kmap, "usmap": usmap, "over": over, "refine": refine}
+
+
+def ksic_group(code, kmap):
+    """가장 긴 접두어가 이겨요 (예: 29271 반도체 장비 > 29 기계)."""
+    code = (code or "").strip()
+    for n in range(len(code), 1, -1):
+        g = kmap.get(code[:n])
+        if g:
+            return g
+    return None
+
+
+def assign_industries(stocks, tables, ksic, min_members=GROUP_MIN, products=None):
+    """종목에 ind·indName 을 붙여요. (순수 함수)
+    순서: 고정표(overrides) → 한국 KSIC 접두어 (+ 주요제품 낱말로 다시 나누기: industry_refine.csv) / 미국 야후 업종(_yind).
+    우선주는 보통주의 그룹을 따라요. ETF·펀드는 그룹이 없어요.
+    같은 시장에서 그룹 인원이 min_members 보다 적으면 상위 그룹으로 합치고, 상위도 없으면 그룹 없음 — '기타'를
+    하나의 그룹으로 쓰지 않아요. 반환: 집계 Counter."""
+    groups, cnt = tables["groups"], collections.Counter()
+    pick = {}
+    for s in stocks:
+        if s.get("cls") not in ("kr", "us") or s.get("etf") or s.get("fund"):
+            continue
+        common = s["t"][:5] + "0" if s["cls"] == "kr" and s["t"][-1] != "0" else None   # 우선주 → 보통주 (005935 → 005930)
+        if s["t"] in tables["over"]:
+            g, src = tables["over"][s["t"]][0], "고정표"
+        elif s["cls"] == "kr" and ksic.get(s["t"]):
+            g, src = ksic_group(ksic.get(s["t"]), tables["kmap"]), "KSIC"
+            prod = (products or {}).get(s["t"]) or ""
+            for base, kw, to in tables.get("refine", []):
+                if g == base and kw in prod:
+                    g, src = to, "KSIC+주요제품"
+                    break
+        elif common and (common in tables["over"] or ksic.get(common)):
+            g = tables["over"][common][0] if common in tables["over"] else ksic_group(ksic.get(common), tables["kmap"])
+            src = "우선주 → 보통주"
+        elif s["cls"] == "kr":
+            g, src = None, "KSIC"
+        else:
+            g, src = tables["usmap"].get((s.get("_yind") or "").strip()), "야후"
+        if g:
+            pick[s["t"]] = (s["cls"], g)
+            cnt[f"{s['cls']} {src}"] += 1
+        else:
+            cnt[f"{s['cls']} 그룹 없음"] += 1
+    for _ in range(6):                       # 작은 그룹을 상위로 — 먼저 모두 올려 보내고 (최대 6단계)
+        size = collections.Counter(pick.values())
+        small = {k for k, n in size.items() if n < min_members and groups[k[1]]["parent"]}
+        if not small:
+            break
+        for t, (m, g) in list(pick.items()):
+            if (m, g) in small:
+                pick[t] = (m, groups[g]["parent"])
+                cnt[f"{m} {g}→{groups[g]['parent']}"] += 1
+    size = collections.Counter(pick.values())  # 그래도 작은 그룹(상위 없음)은 그룹 없음
+    for t, (m, g) in list(pick.items()):
+        if size[(m, g)] < min_members:
+            del pick[t]
+            cnt[f"{m} {g} 인원 부족 → 그룹 없음"] += 1
+    for s in stocks:
+        s.pop("_yind", None)
+        v = pick.get(s["t"])
+        if v and v[0] == s.get("cls"):
+            s["ind"], s["indName"] = v[1], groups[v[1]]["name"]
+    return cnt
+
+
+def fetch_ksic(kr_stocks, client):
+    """국내 종목의 DART 업종 코드(KSIC). 반환: {종목코드: 코드}."""
+    cmap = dart_corp_map(client)
+    targets = [s["t"] for s in kr_stocks if s["t"] in cmap and not s.get("etf")]
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        got = list(ex.map(lambda t: client.company(cmap[t]), targets))
+    out = {t: g["induty"] for t, g in zip(targets, got) if g and g.get("induty")}
+    log(f"{'· ' if len(out) >= 0.97 * max(len(targets), 1) else '  !! '}DART 업종 코드(KSIC): {len(out):,} / {len(targets):,}곳 "
+        f"(DART 기업코드 없는 국내 종목 {sum(1 for s in kr_stocks if s['t'] not in cmap):,}곳) · {client.summary()}")
+    return out
+
+
 def select_kr_universe(listing, max_n):
     """시가총액 큰 순으로 max_n 개. 꼭 있어야 할 종목이 빠지면 예외. (순수 함수)
     시가총액이 비면 정렬이 안 돼 가나다순이 남아요(2026-10 사고). 그래서 결과를 꼭 확인합니다."""
@@ -597,6 +710,7 @@ def add_percentiles(stocks):
 #   아직 없음(013)은 7일마다 다시 확인. 제출 마감 7일 전부터 마감 2일 뒤까지는 매일.
 #   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
 DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v1.json.gz")
+COMPANY_TTL_DAYS = 180   # 기업개황(업종 코드) 보관 기간
 DART_CACHE_VERSION = 1   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
 DART_REVALIDATE_DAYS = 90
 DART_REVALIDATE_PER_RUN = 300
@@ -741,6 +855,27 @@ class DartClient:
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         with self.lock:
             self.entries[key] = {"st": st, "at": self.today.isoformat(), "d": d}
+        return copy.deepcopy(d)
+
+    def company(self, corp, ttl_days=None):
+        """DART 기업개황(company.json)의 업종 코드(KSIC). 업종은 거의 안 바뀌어서 180일(+기업마다 0~59일) 보관해요.
+        찾은 값은 {"induty": "264"} · 못 찾으면 None (네트워크 문제면 예전 값)."""
+        ttl_days = COMPANY_TTL_DAYS if ttl_days is None else ttl_days
+        key = f"{corp}|company"
+        with self.lock:
+            e = self.entries.get(key)
+        if e and e["st"] == "000" and self.mode != "full":
+            jitter = int(hashlib.md5(corp.encode()).hexdigest(), 16) % 60     # 같은 날 한꺼번에 만료되지 않게
+            if (self.today - dt.date.fromisoformat(e["at"])).days < ttl_days + jitter:
+                with self.lock:
+                    self.cache_hits += 1
+                return copy.deepcopy(e["d"])
+        j = self.get("company.json", {"corp_code": corp})
+        if j is None or str(j.get("status")) != "000":
+            return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
+        d = {"induty": str(j.get("induty_code") or "").strip()}
+        with self.lock:
+            self.entries[key] = {"st": "000", "at": self.today.isoformat(), "d": d}
         return copy.deepcopy(d)
 
     def summary(self):
@@ -1960,6 +2095,7 @@ def fetch_korea(start, today, rf, prev=None):
     out, pin, dropped = [], collections.Counter(), collections.Counter()
     lock = threading.Lock()
     prev_hl = {x["t"]: (_fin(x.get("hi")), _fin(x.get("lo"))) for x in (prev or {}).get("stocks", []) if x.get("cls") == "kr"}
+    prod_map = {}               # 주요제품 (업종 그룹 나누기용, 파일에는 dk 로만 나가요)
     hl_cnt, hl_other = collections.Counter(), []
 
     def hilo_note(code, px, rec):
@@ -2059,6 +2195,9 @@ def fetch_korea(start, today, rf, prev=None):
             dk = kr_desc_text(sec_txt, prod_txt, row.get("Market"), cap)
             if dk:
                 rec["dk"] = dk
+            if prod_txt:
+                with lock:
+                    prod_map[code] = prod_txt
             return {k: v for k, v in rec.items() if v is not None}
         except Exception as e:
             with lock:
@@ -2089,7 +2228,7 @@ def fetch_korea(start, today, rf, prev=None):
             f"공식 종가로 교체 {pin['fixed']:,} · 없어서 추가 {pin['added']:,}"
             + (" (네이버 시계열이 기준일보다 늦은 종목이 많아요)" if loud else ""))
     meta = {"pxDate": px_date.isoformat() if px_date else None,
-            "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi}
+            "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map}
     return out, bench, mkt, meta
 
 
@@ -2228,6 +2367,8 @@ def apply_us_info(rec, info, px_then, fx):
         return False
     rec["nk"] = rec["ne"] = str(nm)
     rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
+    if info.get("industry"):
+        rec["_yind"] = str(info["industry"])     # 업종 그룹용 (assign_industries 가 쓰고 지워요)
     rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
     p0, p1 = _fin(px_then), _fin(rec.get("price"))
     k = p1 / p0 if p0 and p1 and p0 > 0 else 1.0
@@ -2450,17 +2591,21 @@ def main():
         raise RuntimeError("!! dart=off(시험용)는 main 에서 쓸 수 없어요")
     ph = Phases()
     prev = read_prev_data()
+    tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
+    log(f"· 업종 표: 그룹 {len(tables['groups'])} · KSIC 접두어 {len(tables['kmap'])} · 야후 업종 {len(tables['usmap'])} · "
+        f"고정 {len(tables['over'])} · 주요제품 나누기 {len(tables['refine'])}")
 
     rf, rf_src = ph.run("금리", fetch_rf, today)
     kr, kr_bench, kr_mkt, kmeta = ph.run("국내 시세", fetch_korea, start, today, rf, prev)
     px_date = dt.date.fromisoformat(kmeta["pxDate"]) if kmeta["pxDate"] else today - dt.timedelta(days=1)
 
-    fin_map, client = {}, None
+    fin_map, client, ksic = {}, None, {}
     if dart_mode == "off":
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
         client = DartClient(DART_KEY, mode=dart_mode, today=today)
         kr, fin_map = ph.run("DART", enrich_with_dart, kr, client)
+        ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
     fill_multiples(kr, fin_map)
@@ -2482,6 +2627,14 @@ def main():
     except Exception as e:
         log(f"  !! 국제 금값(GC=F) 실패: {e}")
     funds = ph.run("ETF·금현물", fetch_kr_funds, start, px_date, kr_bench, names, rf, gold_usd, fx)
+
+    icnt = assign_industries(kr + us, tables, ksic, products=kmeta.get("_prod"))
+    for m in ("kr", "us"):
+        arr = kr if m == "kr" else us
+        g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))
+        log(f"· 업종 그룹 ({m}): {len(g)}개 · 그룹 있음 {sum(g.values()):,} / {len(arr):,} · "
+            + " · ".join(f"{k} {v}" for k, v in g.most_common(8)) + " …")
+    log(f"· 업종 그룹 집계: {dict(icnt)}")
 
     if len(kr) < 300 or len(us) < 100:
         log("!! 받아온 종목이 너무 적습니다. 기존 data.json 을 지키기 위해 중단합니다.")

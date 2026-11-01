@@ -80,6 +80,12 @@ US_ETF_SET = {"SPY", "VOO", "QQQ", "SCHD", "VTI", "VT", "IVV", "DIA", "IWM", "SO
 US_COMPANY_SET = {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP", "AAPL", "MSFT", "NVDA"}
 KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
 KR_COMPANY_SET = {"241520", "034830", "123890"}           # 같은 업종이지만 회사 (벤처캐피털·신탁회사)
+# v17.5.1 PR 2: 업종 그룹 (ind · indName)
+IND_MUST = {"005930": "semi", "000660": "semi", "005380": "auto", "000270": "auto",
+            "105560": "bank", "086790": "bank", "034730": "holding", "003550": "holding"}
+IND_UNGROUPED_MAX = 2.0  # 거래가 활발한(val20 ≥ 5억원) 국내 회사 주식 중 그룹 없는 비율 상한 (%)
+IND_LIQUID_VAL20 = 5.0   # 억원
+IND_GROUP_MIN = 5        # 시장마다 그룹 인원 하한 (비교에 쓰니까요)
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=2y&interval=1d"
 
 
@@ -628,6 +634,30 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
             probs.append(f"{name} {ds[0]}부터라 3년이 안 돼요")
     rep.add("지수 이력 (KOSPI·S&P500 3년)", not probs, "정상" if not probs else " · ".join(probs)[:90],
             f"각 {IDX_MIN_ROWS}일 이상 · 마지막 = 각자 기준일")
+
+    # PR 2. 업종 그룹: 필수 종목이 맞는 그룹, 거래 활발한 국내 종목은 거의 다 그룹, 그룹마다 5명 이상, 이름 일관
+    wrong = [f"{t}={(by.get(t) or {}).get('ind')}" for t, g in IND_MUST.items() if (by.get(t) or {}).get("ind") != g]
+    rep.add("업종 그룹 필수 종목", not wrong, "맞음" if not wrong else "틀림: " + ",".join(wrong),
+            "삼성전자·SK하이닉스 반도체 · 현대차·기아 자동차 · KB·하나 은행 · SK·LG 지주회사")
+    liq = [s for s in kr if s.get("etf") is not True and (num(s.get("val20")) or 0) >= IND_LIQUID_VAL20]
+    no = [s["t"] for s in liq if not s.get("ind")]
+    share = 100.0 * len(no) / len(liq) if liq else 100.0
+    rep.add("업종 그룹 없는 국내 종목 (거래 활발)", share <= IND_UNGROUPED_MAX, f"{share:.1f}% ({len(no)} / {len(liq):,})"
+            + (f" 예: {','.join(no[:3])}" if no else ""), f"≤ {IND_UNGROUPED_MAX}% (val20 ≥ {IND_LIQUID_VAL20:g}억원)")
+    size = {}
+    names = {}
+    for s in kr + us:
+        g = s.get("ind")
+        if g:
+            size[(s["cls"], g)] = size.get((s["cls"], g), 0) + 1
+            names.setdefault(g, set()).add(s.get("indName") or "")
+    small = sorted(f"{m}:{g}({n})" for (m, g), n in size.items() if n < IND_GROUP_MIN)
+    rep.add("업종 그룹 인원 (시장마다)", bool(size) and not small, f"{len(size)}개 그룹" if not small else "적음: " + ",".join(small[:5]),
+            f"≥ {IND_GROUP_MIN}종목")
+    badn = sorted(g for g, ns in names.items() if len(ns) != 1 or "" in ns or not re.fullmatch(r"[a-z_]+", g))
+    etfg = [s["t"] for s in data.get("stocks", []) if s.get("ind") and (s.get("etf") is True or s.get("cls") not in ("kr", "us"))]
+    rep.add("업종 그룹 이름·형식", not badn and not etfg, "정상" if not (badn or etfg) else f"이름 {badn[:3]} · ETF에 그룹 {etfg[:3]}",
+            "그룹마다 한 이름 · ETF·채권은 그룹 없음")
 
     # 3. 52주 최고·최저: 필수 종목이 야후 종가 범위와 1% 안
     if hilo is None or not hilo:
