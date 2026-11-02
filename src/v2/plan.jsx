@@ -4,10 +4,9 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
-import { hasGroup } from "./engine.js";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor, deckRecord } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -262,14 +261,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     const day = date || today;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => ({ t: r.x.t, date: day, qty: r.q, price: r.p, ccy: r.x.s.cls === "us" ? "USD" : "KRW" }));
     const id = `d${Date.now().toString(36)}`;
-    const deck = {
-      id, name: deckDisplayName(st), createdAt: todayKst(), pxDate: load.data.pxDate, fyNote: "rule inputs as of purchase",
-      settings: { deck: st.deck, points: st.points, strict: st.strict, exclude: st.exclude, mix: st.mix, count: st.count, method: st.method,
-        maxPct: st.maxPct, cushion: st.cushion, amountMan: st.amountMan, pinned: st.pinned },
-      holdings: plan.rows.map((x) => ({ t: x.t, nk: x.s.nk, cls: x.s.cls, ind: hasGroup(x.s) ? x.s.ind : null, kind: x.kind, target: x.targetW,
-        reasons: x.reasons, setAt: todayKst(), plannedQty: x.shares, rules: rulesFor(load, x, st, ds) })),
-      purchases,
-    };
+    const deck = deckRecord({ load, st, plan, purchases, id, today: todayKst() });
     const next = { ...store.data, decks: [...store.data.decks, deck] };
     if (!store.writable || !writeStore(next, store.key, today)) { setFail(true); return; }
     setFail(false);

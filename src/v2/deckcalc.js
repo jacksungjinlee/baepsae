@@ -2,7 +2,7 @@
 // plus the code -> copy mapping for reasons, clashes and cautions.
 import {
   screen, splitCounts, survivorCheck, candidates, preselect, size, planShares, annualDividend, estimate2022,
-  deckVol, num, liquidity, isStockLike, ruleBook,
+  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup,
 } from "./engine.js";
 import { C, fill, nf, p1, wonText, signed } from "./format.js";
 
@@ -127,6 +127,23 @@ export function rulesFor(load, row, st) {
   const s = row.s;
   if (row.kind === "cushion") return ruleBook({ ...s, cls: "etf" }, null, {}, row.targetW).filter((x) => x.id === "band");
   return ruleBook(s, load.coByT.get(s.t) || null, st.points, row.targetW);
+}
+
+// The deck record saved at 샀어요 (store.js validates it on read and import). Besides the rule books it keeps the plan's
+// own numbers: plannedQty and planPx per holding (the price the plan used, in the stock's own currency) and planFx (the
+// USD/KRW rate the plan used). The daily check takes the whole-share rounding gap from these only (rules.planWeights),
+// never from the quantities or prices typed in the sheet (purchases).
+export function deckRecord({ load, st, plan, purchases, id, today }) {
+  const fx = num(load.data.fx);
+  return {
+    id, name: deckDisplayName(st), createdAt: today, pxDate: load.data.pxDate, fyNote: "rule inputs as of purchase",
+    ...(fx > 0 ? { planFx: fx } : {}),
+    settings: { deck: st.deck, points: st.points, strict: st.strict, exclude: st.exclude, mix: st.mix, count: st.count, method: st.method,
+      maxPct: st.maxPct, cushion: st.cushion, amountMan: st.amountMan, pinned: st.pinned },
+    holdings: plan.rows.map((x) => ({ t: x.t, nk: x.s.nk, cls: x.s.cls, ind: hasGroup(x.s) ? x.s.ind : null, kind: x.kind, target: x.targetW,
+      reasons: x.reasons, setAt: today, plannedQty: x.shares, ...(num(x.s.price) > 0 ? { planPx: x.s.price } : {}), rules: rulesFor(load, x, st) })),
+    purchases,
+  };
 }
 
 // ---------------- 영업이익 2년 연속 감소 (후보 고르기 주의할 점 · 내 덱 매일 점검) ----------------

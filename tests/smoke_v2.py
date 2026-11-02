@@ -360,6 +360,8 @@ def scene_normal(R, files, width):
         see(page, C["today"]["title"])
         stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")
         assert stored["v"] == 1 and len(stored["decks"]) == 1 and len(stored["decks"][0]["purchases"]) == 6, stored
+        d0 = stored["decks"][0]                                    # 계획의 숫자도 저장해요 (비중 점검의 반올림 차이는 이것만 써요)
+        assert d0["planFx"] > 0 and all(h["planPx"] > 0 and isinstance(h["plannedQty"], int) for h in d0["holdings"]), d0["holdings"]
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
         see(page, C["app"]["pending"])                          # 저장한 덱이 있으면 오늘부터
@@ -644,14 +646,15 @@ def _op(since, op):
             "fy": since, "fellBefore": False}
 
 
-def _holding(t, nk, target, rules):
-    return {"t": t, "nk": nk, "cls": "kr", "ind": None, "kind": "core", "target": target, "plannedQty": 1,
+def _holding(t, nk, target, rules, planned=1):
+    return {"t": t, "nk": nk, "cls": "kr", "ind": None, "kind": "core", "target": target, "plannedQty": planned,
             "rules": rules + _pending("audit", "embezzle", "acquisition") + [_band(target)]}
 
 
 def _deck(i, name, rows):
     # rows: (t, nk, target, rules, qty[, purchase price]). qty 0 = planned but never bought (no purchase record).
-    return {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [_holding(r[0], r[1], r[2], r[3]) for r in rows],
+    # Bought as planned (plannedQty = qty). No planPx / planFx: these are launch-night style records (the legacy path).
+    return {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [_holding(r[0], r[1], r[2], r[3], r[4]) for r in rows],
             "purchases": [{"t": r[0], "date": "2026-10-01", "qty": r[4], "price": r[5] if len(r) > 5 else 1000, "ccy": "KRW"}
                           for r in rows if r[4] > 0]}
 

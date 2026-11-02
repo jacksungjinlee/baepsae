@@ -203,3 +203,27 @@ def test_with_confirm_replaces_the_same_item_and_keeps_others():
               "out = { flip: flip.decks[0].confirms.map((c) => c.answer), other: other.decks[0].confirms.map((c) => c.fy + c.answer),"
               " untouched: d.decks[0].confirms.length, valid: S.validStore(other, '2026-11-02') };")
     assert got == {"flip": ["notCut"], "other": ["2025notCut", "2026cut"], "untouched": 1, "valid": True}
+
+
+# ── 계획의 숫자 (v18.3 Part C): 덱의 planFx · 종목의 planPx ──
+@pytest.mark.parametrize("why, path, value", [
+    ("환율 0", ["decks", 0, "planFx"], 0),
+    ("환율 글자", ["decks", 0, "planFx"], "1338"),
+    ("환율 음수", ["decks", 0, "planFx"], -1),
+    ("계획 가격 0", ["decks", 0, "holdings", 0, "planPx"], 0),
+    ("계획 가격 글자", ["decks", 0, "holdings", 0, "planPx"], "225000"),
+    ("계획 가격 객체", ["decks", 0, "holdings", 1, "planPx"], {"usd": 1}),
+])
+def test_bad_plan_numbers_reject_the_whole_file(why, path, value):
+    got = run(f"out = S.parseImport({json.dumps(bad(path, value))}, '2026-11-01');")
+    assert got is None, why
+
+
+def test_plan_numbers_round_trip_and_stay_optional():
+    d = json.loads(json.dumps(GOOD))
+    d["decks"][0]["planFx"] = 1338.0
+    d["decks"][0]["holdings"][0]["planPx"] = 225000.0
+    d["decks"][0]["holdings"][1]["planPx"] = 344.63
+    text = json.dumps(d, ensure_ascii=False)
+    got = run(f"const r = S.parseImport({json.dumps(text)}, '2026-11-01'); out = r && [r.decks[0].planFx, r.decks[0].holdings.map((h) => h.planPx ?? null)];")
+    assert got == [1338.0, [225000.0, 344.63]]

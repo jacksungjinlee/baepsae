@@ -14,9 +14,10 @@
 // Weights compare like with like: the plan's targets are shares of the whole amount (which also holds the money left
 // over and any planned stock that got 0 shares), so each held stock's target (ref) is rebased over the targets of the
 // stocks actually held, and today's weight is its share of their value. Planned stocks never bought get no band.
-// Whole shares: the weight as bought (cost basis) already differs from ref by a gap g. The edges widen by that gap,
-// on its side only (low 0.75 ref + min(0, g) · high 1.25 ref + max(0, g) · trim 1.4 ref + max(0, g)), so a deck bought
-// as planned is never flagged on day 1 while later drift beyond the band is. 줄일 차례 needs selling one share to bring
+// Whole shares: the plan's own weight (plannedQty x planPx at the plan's rate) already differs from ref by a gap g.
+// The edges widen by that gap, on its side only (low 0.75 ref + min(0, g) · high 1.25 ref + max(0, g) · trim 1.4 ref +
+// max(0, g)), so a deck bought as planned is never flagged on day 1 while later drift beyond the band is. Only the
+// plan's numbers make the gap: what the user typed at 샀어요 (quantities, prices) and today's rate never do. 줄일 차례 needs selling one share to bring
 // the weight closer to ref, 먼저 살 차례 needs buying one share to; 그만 살 차례 needs no such test.
 // Principles kept here:
 // - Price never triggers a rule. A daily move of 5% or more only sets `bigMove` (the 크게 움직인 종목 note). Prices
@@ -83,25 +84,13 @@ export function bandRuleOf(h) {
   return r;
 }
 
-// What was paid per stock (cost basis: qty x purchase price over every purchase). US purchases are converted at
-// today's rate, as an approximation: purchase records do not keep the rate. null when a US purchase has no rate today.
-export function costBasis(deck, fx) {
-  const m = new Map();
-  for (const p of (deck && deck.purchases) || []) {
-    if (!p || !(p.qty > 0) || !(num(p.price) > 0)) continue;
-    const won = p.ccy === "USD" ? (num(fx) > 0 ? p.qty * p.price * fx : null) : p.qty * p.price;
-    m.set(p.t, won == null || m.get(p.t) === null ? null : (m.get(p.t) || 0) + won);
-  }
-  return m;
-}
-
 // Today's weight of each held stock among the held stocks that have a band rule, at today's official close (US in won
-// at today's rate), and its weight as bought (cost basis). targets: Map t -> the plan's target (a share of the whole
-// amount); targetSum is their sum, used to rebase each target over what is actually held. If any of them has no price
-// today, the value is unknown, so no weight is computed (every band is unchecked today). Without targets every held
-// stock counts; without costs there is no as-bought weight (no gap).
-export function deckWeights(held, ctx, targets, costs) {
-  const vals = new Map(), pxs = new Map(), paid = new Map(), missing = [];
+// at today's rate: a currency move changes weights like a price move). targets: Map t -> the plan's target (a share of
+// the whole amount); targetSum is their sum, used to rebase each target over what is actually held. If any of them has
+// no price today, the value is unknown, so no weight is computed (every band is unchecked today). Without targets
+// every held stock counts.
+export function deckWeights(held, ctx, targets) {
+  const vals = new Map(), pxs = new Map(), missing = [];
   let targetSum = 0;
   for (const [t, q] of held) {
     if (targets && !targets.has(t)) continue;
@@ -111,14 +100,48 @@ export function deckWeights(held, ctx, targets, costs) {
     if (!(px > 0)) { missing.push(t); continue; }
     vals.set(t, q * px);
     pxs.set(t, px);
-    if (costs) paid.set(t, costs.get(t));
   }
   const total = [...vals.values()].reduce((a, b) => a + b, 0);
   if (missing.length || !(total > 0)) return { ok: false, missing };
-  const paidOk = costs && [...paid.values()].every((v) => v > 0);
-  const paidTotal = paidOk ? [...paid.values()].reduce((a, b) => a + b, 0) : 0;
-  return { ok: true, total, targetSum: targets ? targetSum : null, value: vals, px: pxs, w: new Map([...vals].map(([t, v]) => [t, v / total])),
-    bought: paidOk && paidTotal > 0 ? new Map([...paid].map(([t, v]) => [t, v / paidTotal])) : null };
+  return { ok: true, total, targetSum: targets ? targetSum : null, value: vals, px: pxs, w: new Map([...vals].map(([t, v]) => [t, v / total])) };
+}
+
+// The plan's own weights among the held stocks with a band (the only source of the gap g = planW - ref):
+//   plannedQty x planPx (the price the plan used, own currency), US at the plan's rate deck.planFx, as saved at 샀어요
+//   (deckcalc.deckRecord). The quantities the user typed and today's rate never enter.
+// Legacy path (decks saved before planPx existed, the launch night until this merge): when any of these holdings has
+//   no planPx, every price is the holding's average recorded purchase price instead. plannedQty is still the plan's,
+//   so buying more than planned is still flagged; only a price typo on such a deck can widen g.
+// US and no plan rate (legacy decks never have one): g = 0 for the whole deck (null), the strict direction, because the
+//   rate at plan time is unknown. A holding without plannedQty (a hand-made file): g = 0 for that holding (planW =
+//   its ref); the others share what is left in proportion to their planned values.
+export function planWeights(deck, targets) {
+  const targetSum = [...targets.values()].reduce((a, b) => a + b, 0);
+  const hs = [];
+  for (const h of (deck && deck.holdings) || []) if (h && targets.has(h.t) && !hs.some((x) => x.t === h.t)) hs.push(h);
+  if (!hs.length || !(targetSum > 0)) return null;
+  const buys = ((deck && deck.purchases) || []).filter((p) => p && p.qty > 0 && num(p.price) > 0);
+  const usd = (h) => h.cls === "us" || buys.some((p) => p.t === h.t && p.ccy === "USD");
+  const legacy = hs.some((h) => !(num(h.planPx) > 0));
+  const fx = num(deck.planFx);
+  if (hs.some(usd) && (legacy || !(fx > 0))) return null;
+  const avgPaid = (t) => {
+    const ps = buys.filter((p) => p.t === t);
+    const q = ps.reduce((a, p) => a + p.qty, 0);
+    return q > 0 ? ps.reduce((a, p) => a + p.qty * p.price, 0) / q : null;
+  };
+  const known = new Map();
+  let unknownRef = 0;
+  for (const h of hs) {
+    const q = h.plannedQty, px = legacy ? avgPaid(h.t) : num(h.planPx);
+    if (!Number.isInteger(q) || q < 0 || !(px > 0)) { unknownRef += targets.get(h.t) / targetSum; continue; }
+    known.set(h.t, q * px * (usd(h) ? fx : 1));
+  }
+  const sumKnown = [...known.values()].reduce((a, b) => a + b, 0);
+  if (!(sumKnown > 0)) return null;
+  const out = new Map();
+  for (const h of hs) out.set(h.t, known.has(h.t) ? (known.get(h.t) / sumKnown) * (1 - unknownRef) : targets.get(h.t) / targetSum);
+  return out;
 }
 
 const pendingOf = (r) => ({ id: r && typeof r.id === "string" ? r.id : null, kind: r && r.kind, check: "pending", result: "pending" });
@@ -194,7 +217,7 @@ function evalOp(r, h, s, co) {
 // Weight band (portfolio arithmetic, not a price rule). The stored target and bands ([0.75, 1.25, 1.4] x target) are
 // shares of the plan's whole amount; they are rebased over the targets of the held stocks (ref = planTarget /
 // targetSum), so target, bands and now are all shares of the held value. bands are the edges used today: the rebased
-// edges (refBands) widened by the as-bought gap on its side.
+// edges (refBands) widened by the plan's gap on its side (gap = planW - ref; 0 without plan weights).
 function evalBand(r, h, weights) {
   const planTarget = num(r.target);
   const planBands = Array.isArray(r.bands) ? r.bands.map(num) : [];
@@ -203,8 +226,8 @@ function evalBand(r, h, weights) {
   if (!weights.ok || !weights.w.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.missing || [] };
   const k = weights.targetSum > 0 ? weights.targetSum : 1;
   const ref = planTarget / k, refBands = planBands.map((b) => b / k);
-  const bought = weights.bought ? weights.bought.get(h.t) : null;
-  const gap = bought != null ? bought - ref : 0;
+  const planW = weights.planW ? weights.planW.get(h.t) : null;
+  const gap = planW != null ? planW - ref : 0;
   const bands = [refBands[0] + Math.min(0, gap), refBands[1] + Math.max(0, gap), refBands[2] + Math.max(0, gap)];
   const v = weights.value.get(h.t), px = weights.px.get(h.t), T = weights.total, w = weights.w.get(h.t);
   // one share sold (the money leaves the stocks) or bought: is the weight then closer to ref?
@@ -212,7 +235,7 @@ function evalBand(r, h, weights) {
   const sellCloser = T - px > 0 && dist((v - px) / (T - px)) < dist(w) - EPS;
   const buyCloser = dist((v + px) / (T + px)) < dist(w) - EPS;
   const band = w > bands[2] + EPS && sellCloser ? "trim" : w > bands[1] + EPS ? "high" : w < bands[0] - EPS && buyCloser ? "low" : null;
-  return { ...out, target: ref, refBands, bands, gap, bought, scale: k, result: band ? "band" : "ok", band, now: w };
+  return { ...out, target: ref, refBands, bands, gap, planW, scale: k, result: band ? "band" : "ok", band, now: w };
 }
 
 export function evalRule(r, h, s, co, deck, weights) {
@@ -295,7 +318,8 @@ export function evaluateDeck(deck, ctx) {
     const b = h && held.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
     if (b) targets.set(h.t, num(b.target));
   }
-  const weights = deckWeights(held, ctx, targets, costBasis(deck, ctx.fx));
+  const weights = deckWeights(held, ctx, targets);
+  if (weights.ok) weights.planW = planWeights(deck, targets);
   const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h)).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
