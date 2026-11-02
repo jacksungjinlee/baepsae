@@ -1225,3 +1225,83 @@ def test_carry_prev_nps_prefers_fresh_and_keeps_dates():
     prev = [{"t": "005930", "d": "20261028"}, {"t": "000660", "d": "20261020"}, {"t": "035420", "d": "20260701"}]
     got, n = F.carry_prev_nps(fresh, prev, "20260805")
     assert got == [{"t": "005930", "d": "20261101"}, {"t": "000660", "d": "20261020"}] and n == 1
+
+
+# ── v17.5.2 항목 7 (Jack 결정 대기): 해외 기업(9…)의 원화가 아닐 수 있는 금액 ─────────
+def kr_trio():
+    """해외 기업 둘(코오롱티슈진: 배당 없음 · GRT: 배당 있음, 2026-11-03 발행본 값)과 국내 기업 하나(삼성전자) — DART·KRX 값이 다 붙은 상태."""
+    def one(t, nk, pbr, per, dps, dy, dps3):
+        return {"t": t, "nk": nk, "cls": "kr", "s": "bio", "price": 13900.0, "cap": 1.181, "shr": 84970160, "mom": -68.9,
+                "vol": 88.1, "per": per, "pbr": pbr, "eps": -2.0, "bps": 2.0, "dps": dps, "dps3": dps3, "dy": dy,
+                "roe": -303.2, "opm": -432.7, "debt": 562.0, "g3": 13.0, "fy": 2025}
+    kr = [one("950160", "코오롱티슈진", 9085.27, None, 0.0, 0.0, [0.0, 0.0, 0.0]),
+          one("900290", "GRT", 57.37, 674.9, 50.0, 1.2, [50.0, 0.0, None]),
+          one("005930", "삼성전자", 1.9, 25.0, 1668.0, 2.1, [1668.0, 1444.0, 1416.0])]
+    fin = {t: {"rev": [10000.0, 9000.0, 8000.0], "op": [5.0, 4.0, 3.0], "ni": [-1.4, -0.2, -0.1], "eq": 0.4, "ocf": 1.0,
+               "dep": 1.0, "bor": 1.0, "cash": 1.0, "ca": 1.0, "cl": 2.0, "bq": "2026.2Q"} for t in ("950160", "900290", "005930")}
+    return kr, fin
+
+
+@pytest.mark.parametrize("code, want", [("950160", True), ("900290", True), ("950250", True), ("005930", False),
+                                        ("0126Z0", False), ("095720", False), ("9", False), ("95016", False),
+                                        ("04020000", False), (None, False)])
+def test_foreign_issuer_codes(code, want):
+    assert F.is_foreign_issuer(code) is want
+
+
+def test_foreign_issuer_won_amounts_are_blanked_and_ratios_kept(capsys):
+    kr, fin = kr_trio()
+    before = json.loads(json.dumps(kr[2]))
+    assert F.blank_foreign_dart(kr) == ["950160 코오롱티슈진", "900290 GRT"]
+    F.fill_multiples(kr, fin)
+    F.add_percentiles(kr)
+    k, g, s = kr
+    for x in (k, g):
+        assert not {"per", "pbr", "eps", "bps", "vz"} & set(x)                   # 가치 점수(vz)도 매기지 않아요
+        assert (x["roe"], x["opm"], x["debt"], x["g3"], x["price"], x["cap"]) == (-303.2, -432.7, 562.0, 13.0, 13900.0, 1.181)
+        assert "qz" in x and "pz" in x                           # 통화와 상관없는 값으로 만든 점수는 남아요
+    # 배당 0 = 배당 없음은 어느 통화로도 같은 뜻이라 남겨요 (2.0 의 '무배당 빼기'가 dps === 0 을 봐요). 0 이 아닌 금액만 비워요
+    assert (k["dps"], k["dy"], k["dps3"]) == (0.0, 0.0, [0.0, 0.0, 0.0])
+    assert "dps" not in g and "dy" not in g and g["dps3"] == [None, 0.0, None]
+    assert {key: s[key] for key in before} == before and "vz" in s     # 국내 기업은 그대로
+    corp = {c["t"]: c for c in F.build_corp(kr, fin, "2026-11-02")["companies"]}
+    for t in ("950160", "900290"):
+        c = corp[t]
+        assert c["rev"] == c["op"] == c["ni"] == [None, None, None] and c["eq"] is None and c["dcfReady"] is False
+        assert not {"evE", "evR", "pcf", "bq"} & set(c) and c["pbr"] is None and c["roe"] == -303.2
+        assert c["fl"] == {"cr": 50.0, "l3": 1}                # 재무 신호(유동비율·3년 적자)는 비율·부호라 남겨요
+    assert corp["950160"]["dps"] == 0.0 and corp["900290"]["dps"] is None
+    assert corp["005930"]["rev"] == [10000.0, 9000.0, 8000.0] and corp["005930"]["dcfReady"] is True
+    assert "evR" in corp["005930"] and corp["005930"]["bq"] == "2026.2Q"        # 같은 원값이면 국내 기업엔 배수·TTM 이 붙어요
+    out = capsys.readouterr().out
+    assert "!! 해외 기업 2곳: DART 금액이 원화가 아닐 수 있어 PBR·PER·EPS·배당·금액을 비웠어요" in out and "900290 GRT" in out
+    json.dumps(corp, allow_nan=False)                        # NaN 없음
+
+
+def test_foreign_issuer_is_never_refilled_or_published_with_amounts():
+    # 순서가 바뀌거나 blank_foreign_dart 가 빠져도: fill_multiples 는 해외 기업을 건너뛰고, build_corp 는 금액을 비워요
+    kr, fin = kr_trio()
+    for x in kr:
+        for key in ("per", "pbr", "eps", "bps"):
+            x.pop(key)
+    F.fill_multiples(kr, fin)
+    assert not {"per", "pbr", "eps", "bps"} & set(kr[0]) and kr[2]["pbr"] is not None
+    c = F.build_corp(kr, fin, "2026-11-02")["companies"][0]
+    assert c["rev"] == [None, None, None] and c["dcfReady"] is False and "evR" not in c
+
+
+def test_no_foreign_issuer_leaves_everything_alone(capsys):
+    kr, fin = kr_trio()
+    kr = kr[2:]
+    snap = json.dumps(kr, sort_keys=True)
+    assert F.blank_foreign_dart(kr) == []
+    assert json.dumps(kr, sort_keys=True) == snap and "해외 기업(종목코드 9…): 없음" in capsys.readouterr().out
+
+
+def test_main_blanks_foreign_issuers_before_scores_and_corp_json():
+    # 점수(vz)는 비운 뒤의 PBR 로 매겨야 해요 — 순서가 바뀌면 낡은 PBR 로 점수가 매겨져요
+    import inspect
+    src = inspect.getsource(F.main)
+    i = src.find("blank_foreign_dart(kr)")
+    assert i > 0 and src.count("blank_foreign_dart(") == 1
+    assert i < src.find("add_percentiles(kr)") and i < src.find("build_corp(kr, fin_map")

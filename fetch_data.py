@@ -2042,6 +2042,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
                     row["pcf"] = round(v, 1)
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
         row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
+        if is_foreign_issuer(s["t"]):
+            # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어 비워요 (blank_foreign_dart 참고). 위에서 만든 fl 신호는 비율·부호라 남겨요.
+            row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
+            for k in ("evE", "evR", "pcf", "bq"):
+                row.pop(k, None)
         comps.append(row)
 
     sectors = {}
@@ -2412,6 +2417,48 @@ def fetch_korea(start, today, rf, prev=None):
     return out, bench, mkt, meta
 
 
+# v17.5.2 (Jack 결정 대기, 2026-11-02): 해외 기업(종목코드가 9로 시작: 900xxx·950xxx)은 DART 재무제표를 달러·위안·엔 등으로
+# 낼 수 있어요. 그걸 원화로 읽으면 PBR 9,085(코오롱티슈진) · PER 수천 같은 값이 나와요. 환산을 추측하지 않고 비워요:
+# 금액으로 만든 값(PER·PBR·EPS·BPS)과 0 이 아닌 배당(표의 통화도 불확실). 배당 0 은 어느 통화로도 '배당 없음'이라 남겨요
+# (2.0 의 '무배당 빼기'가 dps === 0 을 봐요). corp.json 금액(매출·이익·자본, DCF 입력·EV 배수)은 build_corp 가 비우고,
+# fill_multiples 는 이들을 건너뛰어요. 통화와 상관없는 비율(roe·opm·debt·g3)·재무 신호(fl)와 KRX 가격·시가총액(원화)은 남겨요.
+# 가치 점수(vz)는 PBR 이 비면 add_percentiles 가 안 매겨요.
+FOREIGN_BLANK = ("per", "pbr", "eps", "bps")       # 늘 비워요
+FOREIGN_BLANK_NONZERO = ("dps", "dy")              # 0 이 아니면 비워요 (dps3 는 0 이 아닌 해만 빈 칸으로)
+
+
+def is_foreign_issuer(code):
+    """KRX 해외 기업 종목코드인지: 6자리이고 9로 시작 (900xxx 중국 등 · 950xxx 미국·일본 등). (순수 함수)"""
+    return isinstance(code, str) and len(code) == 6 and code[0] == "9"
+
+
+def blank_foreign_dart(kr_stocks):
+    """해외 기업의 원화가 아닐 수 있는 값을 비워요: FOREIGN_BLANK 칸, 0 이 아닌 배당(dps·dy·dps3 의 각 해). (순수 함수 + 로그)
+    corp.json 금액은 build_corp 가 비워요 (fl 신호는 그 전에 계산해 남아요). 반환: 해당 종목 ["코드 이름", …]."""
+    hit = []
+    for s in kr_stocks:
+        if not is_foreign_issuer(s.get("t")):
+            continue
+        for k in FOREIGN_BLANK:
+            s.pop(k, None)
+        for k in FOREIGN_BLANK_NONZERO:
+            if s.get(k) is not None and _fin(s[k]) != 0:
+                s.pop(k)
+        if isinstance(s.get("dps3"), list):
+            d3 = [0.0 if _fin(x) == 0 else None for x in s["dps3"]]
+            if any(x is not None for x in d3):
+                s["dps3"] = d3
+            else:
+                s.pop("dps3")
+        hit.append(f"{s['t']} {s.get('nk', '')}".strip())
+    if hit:
+        log(f"  !! 해외 기업 {len(hit)}곳: DART 금액이 원화가 아닐 수 있어 PBR·PER·EPS·배당·금액을 비웠어요 (배당 0원 = 배당 없음은 남겨요): "
+            f"{', '.join(sorted(hit))}")
+    else:
+        log("· 해외 기업(종목코드 9…): 없음")
+    return hit
+
+
 def fill_multiples(kr_stocks, fin_map):
     """DART 재무(순이익·자본) + 상장주식수로 EPS/BPS/PER/PBR을 직접 계산합니다.
     pykrx는 KRX 로그인이 필요해져 CI에서 동작하지 않으므로, 있으면 쓰고 없으면 이 값으로 채웁니다.
@@ -2421,7 +2468,7 @@ def fill_multiples(kr_stocks, fin_map):
         fin = fin_map.get(s["t"])
         shr = s.get("shr")
         price = s.get("price")
-        if not fin or not shr or not price:
+        if not fin or not shr or not price or is_foreign_issuer(s["t"]):     # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어요
             continue
         _t = fin.get("ttm") or {}
         _b = fin.get("bs2") or {}
@@ -2900,6 +2947,7 @@ def main():
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
+    blank_foreign_dart(kr)                # v17.5.2: 해외 기업 (점수·corp.json 보다 먼저)
     fill_multiples(kr, fin_map)
     n_dy = sum(1 for s in kr if s.get("dy") is not None)
     log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")

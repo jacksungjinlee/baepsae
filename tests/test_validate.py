@@ -817,3 +817,36 @@ def test_too_many_us_rows_dropped_as_preferred_fails(left, ok):
         cur["data"]["usLeftOut"] = left
     names = failed_names(check(cur, prev, final))
     assert ("미국 우선주·예탁증서로 뺀 종목 수" in names) is (not ok), names
+
+
+# ── v17.5.2 항목 7 (Jack 결정 대기): 해외 기업(9…) ──
+def add_foreign(c, **extra):
+    """2026-11-03 의 코오롱티슈진처럼, 단 원화가 아닐 수 있는 칸은 비운 (파이프라인이 낼) 모양."""
+    s = {"t": "950160", "nk": "코오롱티슈진", "ne": "코오롱티슈진", "cls": "kr", "price": 13900.0, "cap": 1.181, "etf": False,
+         "roe": -303.2, "opm": -432.7, "debt": 562.0, "g3": 13.0, "fy": 2025, "qz": 0, "pz": 11, "mz": 3, "lz": 6}
+    row = {"t": "950160", "nk": "코오롱티슈진", "s": "bio", "price": 13900.0, "cap": 1.181, "per": None, "pbr": None, "eps": None,
+           "bps": None, "dps": None, "dy": None, "dps3": None, "fy": 2025, "roe": -303.2, "debt": 562.0, "eq": None,
+           "rev": [None, None, None], "op": [None, None, None], "ni": [None, None, None], "dcfReady": False}
+    s.update({k: v for k, v in extra.items() if not k.startswith("c_")})
+    row.update({k[2:]: v for k, v in extra.items() if k.startswith("c_")})
+    c["data"]["stocks"].append(s)
+    c["corp"]["companies"].append(row)
+
+
+@pytest.mark.parametrize("extra", [{}, {"dps": 0.0, "dy": 0.0, "dps3": [0.0, 0.0, None], "c_dps": 0.0, "c_dy": 0.0,
+                                         "c_dps3": [0.0, None, None], "c_fl": {"l3": 1, "cr": 35.0}}])
+def test_foreign_issuer_with_blanks_passes(extra):
+    # 배당 0 (= 배당 없음)과 재무 신호(fl)는 통화와 상관없어 있어도 돼요
+    cur, prev, final = good_pair()
+    add_foreign(cur, **extra)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "해외 기업(9…) 원화 아닐 수 있는 금액 비움" and r[3] == "PASS" and r[1].startswith("1곳") for r in rep.rows)
+
+
+@pytest.mark.parametrize("extra", [{"pbr": 9085.27}, {"per": 11688.7}, {"eps": -2.0}, {"bps": 2.0}, {"dps": 50.0}, {"dy": 1.2},
+                                   {"dps3": [0.0, 50.0, None]}, {"vz": 0}, {"c_pbr": 9085.27}, {"c_rev": [0.0, 0.0, 0.0]},
+                                   {"c_ni": [-1.4, None, None]}, {"c_eq": 0.4}, {"c_evR": 3.1}, {"c_dcfReady": True},
+                                   {"c_dps": 50.0}, {"c_dy": 1.2}, {"c_dps3": [50.0, None, None]}])
+def test_foreign_issuer_with_won_amounts_fails(extra):
+    fails_on("해외 기업(9…) 원화 아닐 수 있는 금액 비움", lambda c: add_foreign(c, **extra))
