@@ -222,8 +222,16 @@ def test_home_screen_icon_opens_2_0():
     template.html 의 manifest · 아이콘 · iOS 홈 화면 태그가 그대로, 미리 보기에는 하나도 없어요. 지금 앱(baepsae.html)은 그대로예요."""
     m = json.loads(read("manifest.webmanifest"))
     assert m["start_url"] == "./app.html" and m["scope"] == "./" and m["display"] == "standalone", m
-    # Jack, 2026-11-02: id 는 예전 start_url 그대로라 안드로이드 크롬이 같은 앱으로 보고, 이미 설치한 아이콘도 2.0 으로 열어요
-    assert m["id"] == "./baepsae.html", m
+    # Jack, 2026-11-02: 이미 설치한 안드로이드 아이콘도 2.0 으로. 예전 manifest 에는 id 가 없어서 설치된 앱의 정체는
+    # 예전 start_url(./baepsae.html)을 manifest 주소 기준으로 푼 주소예요. 새 id 는 manifest 규격대로 start_url 의
+    # origin(사이트 맨 위) 기준으로 풀어요: "./baepsae.html" 은 https://…github.io/baepsae.html 이 돼서 다른 앱이 돼요.
+    from urllib.parse import urljoin, urlsplit
+    manifest_url = "https://jacksungjinlee.github.io/baepsae/manifest.webmanifest"
+    start = urljoin(manifest_url, m["start_url"])
+    assert start == "https://jacksungjinlee.github.io/baepsae/app.html", start
+    origin = "{0.scheme}://{0.netloc}/".format(urlsplit(start))
+    old_identity = urljoin(manifest_url, "./baepsae.html")          # 예전 start_url (id 없음 → start_url 이 정체)
+    assert urljoin(origin, m["id"]) == old_identity == "https://jacksungjinlee.github.io/baepsae/baepsae.html", m["id"]
     assert all(os.path.exists(os.path.join(ROOT, i["src"])) for i in m["icons"])
     old = read("template.html")
     tags = [l for l in old.splitlines() if re.match(r'<link rel="(manifest|icon|apple-touch-icon)"|<meta name="apple-mobile-web-app-', l)]
