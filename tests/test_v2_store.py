@@ -244,3 +244,15 @@ def test_purchase_rates_round_trip_and_purchases_without_one_still_read():
     d["decks"][0]["purchases"][1]["fx"] = 1338.0                 # AAPL (USD)
     got = run(f"out = [S.parseImport({json.dumps(json.dumps(d))}, '2026-11-01'), S.parseImport({json.dumps(json.dumps(GOOD))}, '2026-11-01')];")
     assert got[0] == d and got[1] == GOOD                          # 환율 없는 예전 기록도 그대로 읽어요
+
+
+def test_import_problem_names_the_direction():
+    """미리 보기 기록을 실제 앱에서 열면 'preview'(store.otherKind) · 실제 기록을 미리 보기에서 열면 'live'(그냥 칩) · 깨진 파일은 'bad'."""
+    live = json.dumps(GOOD, ensure_ascii=False)
+    prev = json.dumps({**GOOD, "preview": True}, ensure_ascii=False)
+    broken_prev = json.dumps({**json.loads(bad(["decks", 0, "purchases", 0, "qty"], "4")), "preview": True}, ensure_ascii=False)
+    got = run(f"const T = '2026-11-01'; const L = {json.dumps(live)}, P = {json.dumps(prev)}, B = {json.dumps(broken_prev)};"
+              "out = [S.importProblem(P, T, false), S.importProblem(L, T, true), S.importProblem(L, T, false), S.importProblem(P, T, true),"
+              " S.importProblem('{\"v\":1,', T, false), S.importProblem('[]', T, false), S.importProblem(B, T, true), S.importProblem(B, T, false),"
+              f" S.importProblem({json.dumps(bad(['decks', 0, 'name'], {'x': 1}))}, T, false)];")
+    assert got == ["preview", "live", None, None, "bad", "bad", "bad", "preview", "bad"], got

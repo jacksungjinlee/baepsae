@@ -707,6 +707,25 @@ export function deckVol(rows, st, amountWon) {
   return Number.isFinite(v) ? { vol: v, missing } : null;
 }
 
+// ---------------- 성장 (g3): how a Korean stock's number was made ----------------
+// fetch_data.py (parse_dart_list) makes g3 from the 사업보고서 revenue: the 2-year average growth when this year's and
+// two years ago's revenue are both positive, else the 1-year change when this year's is non-zero and last year's is
+// positive. The same rule on corp.json rev ([fy, fy-1, fy-2], 억원) picks the label ("y2" = 최근 2년 연평균, "y1" = 최근
+// 1년), and only when the value it gives matches the published g3 within 0.1 (rounding). Otherwise we cannot tell how
+// the number was made, so there is no label and the growth row stays hidden. Never a guess. Korean stocks only.
+export const GROWTH_TOL = 0.1;
+export function growthBasis(s, co) {
+  const g = num(s && s.g3);
+  if (!s || s.cls !== "kr" || g == null || !co || !Array.isArray(co.rev)) return null;
+  const [r0, r1, r2] = [0, 1, 2].map((i) => num(co.rev[i]));
+  const yes = (x) => x != null && x !== 0;                     // Python truthiness: None and 0 are false
+  let basis = null, calc = null;
+  if (yes(r0) && r0 > 0 && yes(r2) && r2 > 0) { basis = "y2"; calc = (Math.sqrt(r0 / r2) - 1) * 100; }
+  else if (yes(r0) && yes(r1) && r1 > 0) { basis = "y1"; calc = (r0 / r1 - 1) * 100; }
+  if (basis == null || !Number.isFinite(calc) || Math.abs(calc - g) > GROWTH_TOL + 1e-9) return null;
+  return basis;
+}
+
 // ---------------- 주의할 점 (cautions) ----------------
 // Context per market: each industry group's PBR 75th percentile (groups with 5+ members) and the market's 80th
 // percentile of volatility.

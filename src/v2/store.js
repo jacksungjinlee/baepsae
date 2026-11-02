@@ -141,6 +141,18 @@ export function parseImport(text, today, preview = false) {
   }
 }
 
+// Why a file cannot be imported here (null = it can):
+//   "preview" = a preview export (example data) opened in the live app -> store.otherKind;
+//   "live"    = a live export opened in the preview page -> the plain 기록 불러오기 warning chip (no sentence for it);
+//   "bad"     = not a records file, or one bad field -> store.importFail.
+export function importProblem(text, today, preview = false) {
+  let d;
+  try { d = JSON.parse(text); } catch (e) { return "bad"; }
+  if (!d || typeof d !== "object" || Array.isArray(d)) return "bad";
+  if (!!d.preview !== !!preview) return d.preview ? "preview" : "live";
+  return validStore(d, today) ? null : "bad";
+}
+
 // Imported decks replace decks with the same id; other decks are kept.
 export function mergeStores(cur, inc) {
   const by = new Map(cur.decks.map((x) => [x.id, x]));

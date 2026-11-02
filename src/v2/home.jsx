@@ -6,7 +6,7 @@ import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, tx } from "./ui.jsx";
-import { parseImport, mergeStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
+import { parseImport, importProblem, mergeStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
@@ -43,7 +43,12 @@ export function MyDeck({ load, store, setStoreData, pad }) {
     let text = null;
     try { text = await f.text(); } catch (err) { text = null; }
     const inc = text != null ? parseImport(text, todayKst(), store.preview) : null;  // any bad field, or the other page's file, rejects it
-    if (!inc) { console.warn("[v2] import: not a records file"); setImportBad(true); return; }
+    if (!inc) {
+      const why = text == null ? "bad" : importProblem(text, todayKst(), store.preview) || "bad";
+      console.warn("[v2] import refused: " + why);
+      setImportBad(why);
+      return;
+    }
     setImportBad(false);
     setStoreData(mergeStores(store.data, inc));
   };
@@ -99,9 +104,11 @@ export function MyDeck({ load, store, setStoreData, pad }) {
           <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImport} style={{ display: "none" }} data-ui-v2="import-file" />
         </div>
         {importBad && (
-          <div data-ui-v2="import-bad" style={{ marginTop: SPACE(2) }}>
-            {C.store.importFail ? <Note tone="watch">{C.store.importFail}</Note>
-              : <StatusChip tone="watch" icon="alert">{C.store.import}</StatusChip>}
+          // a preview file in the live app: otherKind · a live file in the preview: the plain chip · anything else: importFail
+          <div data-ui-v2="import-bad" data-why={importBad} style={{ marginTop: SPACE(2) }}>
+            {importBad === "preview" && !store.preview ? <Note tone="watch">{C.store.otherKind}</Note>
+              : importBad === "live" && store.preview ? <StatusChip tone="watch" icon="alert">{C.store.import}</StatusChip>
+              : <Note tone="watch">{C.store.importFail}</Note>}
           </div>
         )}
         {isSafariLike() && <Note>{C.store.safari}</Note>}

@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { StatusChip, Collapsible } from "../ui/components.jsx";
-import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS } from "./engine.js";
+import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis } from "./engine.js";
 import { C, fill, nf, p1, mdText } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, tx, tap } from "./ui.jsx";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
@@ -108,7 +108,9 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
           {annualFy != null && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.watch)}>{fill(C.app.reportYear, { year: annualFy })}</div>}
         </div>
       )}
-      {!lines.length && C.pick.caution.checksRun && <Note data-ui-v2="caution-none">{fill(C.pick.caution.checksRun, { checks: cau.ran.join(" · ") })}</Note>}
+      {!lines.length && C.pick.caution.checksRun && checkNames(cau.ran).length > 0 && (
+        <Note data-ui-v2="caution-none">{fill(C.pick.caution.checksRun, { checks: checkNames(cau.ran).join(" · ") })}</Note>
+      )}
       <div style={{ marginTop: SPACE(2) }}>
         <Collapsible title={C.pick.receipts}>
           {pinned && <div data-ui-v2="manual-note" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginBottom: SPACE(1) })}>{C.pick.manualNote}</div>}
@@ -119,10 +121,16 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
   );
 }
 
-function Row({ k, v }) {
+// The checks that ran (cautions().ran codes) by their short names, in the order they ran. A check without a name is
+// left out of the sentence rather than shown as a code.
+const CHECK_NAME = { pbr: () => "PBR", debt: () => C.pick.receipt.debt, rev: () => C.pick.checks.rev, op: () => C.plan.rules.opProfit,
+  vol: () => C.pick.checks.vol, div: () => C.plan.rules.dividend };
+export const checkNames = (ran) => ran.map((k) => (CHECK_NAME[k] ? CHECK_NAME[k]() : null)).filter(Boolean);
+
+function Row({ k, v, id, basis }) {
   return (
-    <div style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(1)}px 0` }}>
-      <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text3, { width: SPACE(24), flexShrink: 0 })}>{k}</span>
+    <div data-ui-v2={id} data-basis={basis} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(1)}px 0` }}>
+      <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text3, { width: SPACE(32), flexShrink: 0 })}>{k}</span>
       <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.ink)}>{v}</span>
     </div>
   );
@@ -133,7 +141,9 @@ function Receipts({ s, co, c, st }) {
   const pbr = num(s.pbr), roe = num(s.roe), debt = num(s.debt);
   const y = s.cls === "kr" ? (num(s.dps) != null && s.price > 0 ? (s.dps / s.price) * 100 : null) : num(s.dy);
   const fy = s.cls === "kr" ? fyOf(s, co) : null;
-  const growth = num(s.g3), growthLabel = s.cls === "us" ? R.growthUs : R.growthKr;
+  // Korean growth is labelled by how it was actually calculated (engine.growthBasis); no label = the row is hidden.
+  const gb = s.cls === "kr" ? growthBasis(s, co) : null;
+  const growth = num(s.g3), growthLabel = s.cls === "us" ? R.growthUs : gb === "y2" ? R.growthKr : gb === "y1" ? R.growthKr1y : null;
   return (
     <div data-ui-v2="receipts">
       {c.total != null && CARDS.filter((x) => !x.pending && (st.points[x.id] || 0) > 0).map((x) => (
@@ -143,8 +153,8 @@ function Receipts({ s, co, c, st }) {
       {y != null && (s.cls === "us" || fy != null) && <Row k={R.yield} v={`${p1(y)}%`} />}
       {roe != null && (s.cls === "us" || fy != null) && <Row k="ROE" v={`${p1(roe)}%`} />}
       {debt != null && s.cls === "kr" && fy != null && <Row k={R.debt} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
-      {debt != null && s.cls === "us" && R.debtUs && <Row k={R.debtUs} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
-      {growth != null && growthLabel && <Row k={growthLabel} v={`${p1(growth)}%`} />}
+      {debt != null && s.cls === "us" && R.debtUs && <Row id="debt-us" k={R.debtUs} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
+      {growth != null && growthLabel && <Row id="growth" basis={gb || undefined} k={growthLabel} v={`${p1(growth)}%`} />}
       {fy != null && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(C.app.reportYear, { year: fy })}</div>}
     </div>
   );

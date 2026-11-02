@@ -132,8 +132,8 @@ function SurvivorNotes({ ds, two }) {
       )}
       {ds.clash && (
         <Note tone="watch" data-ui-v2="clash">
-          {clashPieces(ds.clash).map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}
-          {C.plan.clash && <span>{" "}{C.plan.clash}</span>}
+          {C.plan.clash && <div data-ui-v2="clash-text">{C.plan.clash}</div>}
+          <div data-ui-v2="clash-list">{clashPieces(ds.clash).map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}</div>
         </Note>
       )}
     </div>
@@ -341,6 +341,7 @@ function StepTerms({ st, set, ds, load }) {
                 ))}
               </div>
             )}
+            {y2022 && <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{C.plan.y2022Source}</div>}
           </div>
         )}
         <div style={{ display: "flex", gap: SPACE(2), alignItems: "flex-start", marginTop: SPACE(3) }}>

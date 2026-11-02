@@ -165,6 +165,14 @@ def main():
                 tab(C["app"]["tabs"]["deck"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
                 assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기 내 덱에 '예전 뱁새' 안내가 떠요"
+                live = os.path.join(tempfile.mkdtemp(), "live.json")          # 실제 앱에서 내보낸 기록을 미리 보기에서 열면
+                with open(live, "w", encoding="utf-8") as fh:
+                    json.dump({"v": 1, "decks": []}, fh)
+                page.locator('[data-ui-v2="import-file"]').set_input_files(live)
+                box = page.locator('[data-ui-v2="import-bad"]')
+                box.wait_for(state="visible")
+                assert box.get_attribute("data-why") == "live" and box.inner_text().strip() == C["store"]["import"], box.inner_text()
+                assert C["store"]["otherKind"] not in page.locator("body").inner_text()      # 그 문장은 실제 앱 전용
                 label_here()
                 shot(page, width, "2-mydeck")
             check(W + "탭: 내 덱", deck_tab, page, width)
