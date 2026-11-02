@@ -292,6 +292,7 @@ def scene_normal(R, files, width):
         tab(page, C["app"]["tabs"]["build"])
         page.locator('[data-deck="income"]').click()
         see(page, C["build"]["s1"]["title"])
+        search_link(page, width)                           # 덱 짜기 다음 단계에서도 머리말에 '찾기'
         assert page.locator('[data-ui-v2="points-left"]').inner_text() == "0"
         assert page.locator('[data-card="divGrowth"]').get_by_text(C["app"]["pending"]).count() == 1
         assert page.locator('[data-card="div"]').get_by_text("상위 50%").count() == 1
