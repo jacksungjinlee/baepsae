@@ -11,25 +11,31 @@
 //      a keep condition fails                       -> "watch"   (지켜봐요)
 //   3. the weight is outside its band               -> "trim" (> 1.4x target) · "high" (> 1.25x) · "low" (< 0.75x)
 //   4. none of these                                -> "none"    (할 일 없음)
+// Weights compare like with like: the plan's targets are shares of the whole amount (which also holds the money left
+// over and any planned stock that got 0 shares), so each held stock's target is rebased over the targets of the
+// stocks actually held, and today's weight is its share of their value. Planned stocks never bought get no band. A
+// weight past a band edge by no more than one share's value is where whole-share rounding put it: no band status.
 // Principles kept here:
 // - Price never triggers a rule. A daily move of 5% or more only sets `bigMove` (the 크게 움직인 종목 note). Prices
 //   matter only through weights (portfolio arithmetic, REDESIGN 2.2).
 // - A dividend drop is never 규칙 깨짐 on its own: it is "check" until the user says it was a real cut (then
 //   "broken") or not a cut (cleared for that report). Answers live in the deck record (store.js), keyed by the report
-//   year and both numbers, so a later, newer cut is asked about again.
+//   year and both numbers, so a later, newer cut is asked about again. A confirmed cut stays 규칙 깨짐 whatever later
+//   reports show (the sell condition fired; only the user's own answer can change it).
 // - Only reports NEWER than the rule's `since` can fire an annual rule: a fall that happened before purchase never
 //   counts. A report OLDER than at purchase (the pipeline fell back a year) is not used: the input counts as missing.
 // - A rule input that existed at purchase and is blank today -> "check" (missing), never 괜찮아요.
 // - Stale (published more than 4 days ago, the v17.5 rule) or failed data computes no status at all: the output says
-//   why. A rule this version cannot read is treated as not checked (준비 중), never as passed.
-import { num, isFin, priceWon, fyOf } from "./engine.js";
+//   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
+//   that could be checked at all is 확인 필요, never 할 일 없음.
+import { num, isFin, priceWon, fyOf, fellTwice } from "./engine.js";
 import { STALE_DAYS, daysSince } from "../data.js";
 import { sameConfirm } from "./store.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
 const LEVEL = Object.fromEntries(STATUS_ORDER.map((s, i) => [s, i]));
-const EPS = 1e-9;                                                // a weight exactly on a band edge is inside the band
+const EPS = 1e-9;                                                // relative slack on the one-share tolerance
 // Statuses that take no new money (내 덱 · 추가로 넣을 돈 skips them, Part E). trim and high are above 1.25x target.
 export const NO_NEW_MONEY = ["broken", "check", "watch", "trim", "high"];
 // The data field each checked rule reads (the {항목} of "{항목} 자료를 받지 못해 확인이 필요해요")
@@ -67,48 +73,66 @@ export function heldQty(deck) {
   return m;
 }
 
-// Today's weight of each held stock in the deck, at today's official close (US in won at today's rate). If any held
-// stock has no price today, the deck's value is unknown, so no weight is computed (every band is unchecked today).
-export function deckWeights(held, ctx) {
-  const vals = new Map(), missing = [];
+// A holding's band rule when it can be used (a target and three edges), else null.
+export function bandRuleOf(h) {
+  const r = h && Array.isArray(h.rules) ? h.rules.find((x) => x && x.id === "band" && x.check === "checked") : null;
+  if (!r || !(num(r.target) > 0) || !Array.isArray(r.bands) || r.bands.length !== 3 || r.bands.some((x) => num(x) == null)) return null;
+  return r;
+}
+
+// Today's weight of each held stock among the held stocks that have a band rule, at today's official close (US in won
+// at today's rate). targets: Map t -> the plan's target (a share of the whole amount); targetSum is their sum, used
+// to rebase each target over what is actually held. If any of them has no price today, the value is unknown, so no
+// weight is computed (every band is unchecked today). Without targets every held stock counts.
+export function deckWeights(held, ctx, targets) {
+  const vals = new Map(), pxs = new Map(), missing = [];
+  let targetSum = 0;
   for (const [t, q] of held) {
+    if (targets && !targets.has(t)) continue;
+    if (targets) targetSum += targets.get(t);
     const s = ctx.byT.get(t);
     const px = s ? priceWon(s, ctx.fx) : null;
     if (!(px > 0)) { missing.push(t); continue; }
     vals.set(t, q * px);
+    pxs.set(t, px);
   }
   const total = [...vals.values()].reduce((a, b) => a + b, 0);
   if (missing.length || !(total > 0)) return { ok: false, missing };
-  return { ok: true, total, value: vals, w: new Map([...vals].map(([t, v]) => [t, v / total])) };
+  return { ok: true, total, targetSum: targets ? targetSum : null, value: vals, px: pxs, w: new Map([...vals].map(([t, v]) => [t, v / total])) };
 }
 
 const pendingOf = (r) => ({ id: r && typeof r.id === "string" ? r.id : null, kind: r && r.kind, check: "pending", result: "pending" });
 const isYear = (y) => Number.isInteger(y);
 
 // Dividend cut (sell). Today's report gives [fy, fy-1, fy-2]; each year after the purchase report is compared with the
-// year before it, inside the same report (a split restated by the company stays comparable).
+// year before it, inside the same report (a split restated by the company stays comparable). drops lists every drop
+// after purchase with the user's answer (null = not answered yet), newest first, including cuts the user confirmed
+// earlier that today's report no longer shows (they stay: the sell condition fired).
 function evalDiv(r, h, s, co, deck) {
   if (!isYear(r.since)) return pendingOf(r);
   const out = { id: "divCut", kind: "sell", check: "checked", input: "dps", since: r.since };
+  const confirms = ((deck && deck.confirms) || []).filter((c) => c && c.t === h.t && c.rule === "divCut" && isYear(c.fy) && c.fy > r.since);
+  const drops = confirms.filter((c) => c.answer === "cut").map((c) => ({ t: h.t, rule: "divCut", fy: c.fy, a: c.a, b: c.b, answer: "cut" }));
   const fy = s ? fyOf(s, co) : null;
   const d3 = s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
   const v = d3 ? [0, 1, 2].map((i) => num(d3[i])) : [null, null, null];
-  if (fy == null || fy < r.since || v[0] == null || v[1] == null) return { ...out, result: "missing", fy };
-  const now = { a: v[1], b: v[0] };                              // 주당 {a}원 -> {b}원 (last year -> this report)
-  const drops = [];
-  for (let i = 0; i < 2; i++) {
+  let missing = fy == null || fy < r.since || v[0] == null || v[1] == null;
+  const now = missing ? null : { a: v[1], b: v[0] };             // 주당 {a}원 -> {b}원 (last year -> this report)
+  for (let i = 0; !missing && i < 2; i++) {
     const y = fy - i;
     if (y <= r.since) break;                                     // before purchase: never counts
     const b = v[i], a = v[i + 1];
-    if (a == null || b == null) return { ...out, result: "missing", fy, now };
+    if (a == null || b == null) { missing = true; break; }
     if (b < a) {
       const item = { t: h.t, rule: "divCut", fy: y, a, b };
-      const c = ((deck && deck.confirms) || []).find((x) => sameConfirm(x, item));
+      if (drops.some((x) => sameConfirm(x, item))) continue;     // already a confirmed cut
+      const c = confirms.find((x) => sameConfirm(x, item));
       drops.push({ ...item, answer: c ? c.answer : null });
     }
   }
-  const result = drops.some((d) => d.answer === "cut") ? "broken" : drops.some((d) => !d.answer) ? "check" : "ok";
-  return { ...out, result, fy, now, newer: fy > r.since, drops };
+  drops.sort((x, y) => y.fy - x.fy);
+  const result = drops.some((d) => d.answer === "cut") ? "broken" : missing ? "missing" : drops.some((d) => !d.answer) ? "check" : "ok";
+  return { ...out, result, missing, fy, now, newer: fy != null && fy > r.since, drops };
 }
 
 // 부채비율 ceiling (keep, Korean company shares only; financial companies: not applicable).
@@ -144,19 +168,25 @@ function evalOp(r, h, s, co) {
   if (fy == null || fy < r.since || op[0] == null) return { ...out, result: "missing", fy };
   if (fy === r.since) return { ...out, result: "ok", fy, now: op, newer: false };   // the purchase report: nothing new
   if (op[1] == null || op[2] == null) return { ...out, result: "missing", fy, now: op };
-  return { ...out, result: op[0] < op[1] && op[1] < op[2] ? "fail" : "ok", fy, now: op, newer: true };
+  return { ...out, result: fellTwice(op) ? "fail" : "ok", fy, now: op, newer: true };
 }
 
-// Weight band (portfolio arithmetic, not a price rule). bands = [0.75, 1.25, 1.4] x target, as stored at purchase.
+// Weight band (portfolio arithmetic, not a price rule). The stored target and bands ([0.75, 1.25, 1.4] x target) are
+// shares of the plan's whole amount; they are rebased over the targets of the held stocks (planTarget / targetSum),
+// so target, bands and now are all shares of the held value. One share's value of slack on each side: whole shares.
 function evalBand(r, h, weights) {
-  const target = num(r.target);
-  const bands = Array.isArray(r.bands) ? r.bands.map(num) : [];
-  if (!(target > 0) || bands.length !== 3 || bands.some((x) => x == null)) return pendingOf(r);
-  const out = { id: "band", kind: "band", check: "checked", input: "price", target, bands };
-  if (!weights.ok) return { ...out, result: "missing", missingPrice: weights.missing };
-  const w = weights.w.get(h.t);
-  const band = w < bands[0] - EPS ? "low" : w > bands[2] + EPS ? "trim" : w > bands[1] + EPS ? "high" : null;
-  return { ...out, result: band ? "band" : "ok", band, now: w };
+  const planTarget = num(r.target);
+  const planBands = Array.isArray(r.bands) ? r.bands.map(num) : [];
+  if (!(planTarget > 0) || planBands.length !== 3 || planBands.some((x) => x == null)) return pendingOf(r);
+  const out = { id: "band", kind: "band", check: "checked", input: "price", planTarget, planBands };
+  if (!weights.ok || !weights.w.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.missing || [] };
+  const k = weights.targetSum > 0 ? weights.targetSum : 1;
+  const target = planTarget / k, bands = planBands.map((b) => b / k);
+  const value = weights.value.get(h.t), px = weights.px.get(h.t), total = weights.total;
+  const over = (edge) => value - edge * total > px * (1 + EPS);   // past the edge by more than one share
+  const under = (edge) => edge * total - value > px * (1 + EPS);
+  const band = over(bands[2]) ? "trim" : over(bands[1]) ? "high" : under(bands[0]) ? "low" : null;
+  return { ...out, target, bands, scale: k, result: band ? "band" : "ok", band, now: weights.w.get(h.t) };
 }
 
 export function evalRule(r, h, s, co, deck, weights) {
@@ -172,15 +202,18 @@ export function evalRule(r, h, s, co, deck, weights) {
 }
 
 // The reasons behind a holding's status, most serious first. Each one names its rule, its numbers and its report year.
+// Dividend reasons carry `confirm` (the item to answer) and the current `answer`, so the screen can change it.
 function reasonsOf(results) {
   const out = [];
   for (const x of results) {
-    if (x.result === "missing") {
+    if (x.result === "missing" || x.missing) {
       out.push({ level: "check", code: "missing", rule: x.id, input: x.input, fy: x.fy ?? null, ...(x.missingPrice ? { missingPrice: x.missingPrice } : {}) });
-    } else if (x.id === "divCut" && x.drops) {
+    }
+    if (x.id === "divCut" && x.drops) {
       for (const d of x.drops) {
-        if (d.answer === "cut") out.push({ level: "broken", code: "divCut", rule: "divCut", fy: d.fy, a: d.a, b: d.b });
-        else if (!d.answer) out.push({ level: "check", code: "divDrop", rule: "divCut", fy: d.fy, a: d.a, b: d.b, confirm: { t: d.t, rule: "divCut", fy: d.fy, a: d.a, b: d.b } });
+        const confirm = { t: d.t, rule: "divCut", fy: d.fy, a: d.a, b: d.b };
+        if (d.answer === "cut") out.push({ level: "broken", code: "divCut", rule: "divCut", fy: d.fy, a: d.a, b: d.b, confirm, answer: "cut" });
+        else if (!d.answer) out.push({ level: "check", code: "divDrop", rule: "divCut", fy: d.fy, a: d.a, b: d.b, confirm, answer: null });
       }
     } else if (x.result === "fail") {
       if (x.id === "debtCeiling") out.push({ level: "watch", code: "debtOver", rule: x.id, now: x.now, limit: x.limit, fy: x.fy });
@@ -200,16 +233,22 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   const book = Array.isArray(h.rules) ? h.rules : [];
   const rules = book.map((r) => evalRule(r, h, s, co, deck, weights));
   const reasons = reasonsOf(rules);
-  // No rule book at all (only possible in a hand-made file): nothing was checked, so never 할 일 없음.
-  if (!book.length) reasons.unshift({ level: "check", code: "noRules" });
+  // No rule that could be checked at all (an empty or malformed book, only possible in a hand-made file): nothing was
+  // checked, so never 할 일 없음.
+  if (!rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = reasons.length ? reasons[0].level : "none";
   const d1 = s ? num(s.d1) : null;
-  const band = rules.find((x) => x.id === "band");
+  const band = rules.find((x) => x.id === "band" && x.check === "checked");
+  const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
     t: h.t, nk: h.nk, cls: h.cls || (s && s.cls) || null, kind: h.kind || null, qty,
     status, reasons, rules,
-    w: weights.ok ? weights.w.get(h.t) : null, target: band && band.target != null ? band.target : num(h.target),
-    value: weights.ok ? weights.value.get(h.t) : null,
+    // every dividend drop after purchase with its answer (null / "cut" / "notCut"): the screen keeps both answers open
+    divDrops: div ? div.drops : [],
+    // w and target are both shares of the held value (target rebased); planTarget is the plan's share of the amount
+    w: weights.ok && weights.w.has(h.t) ? weights.w.get(h.t) : null, target: band && band.result !== "missing" ? band.target : null,
+    planTarget: band ? band.planTarget : num(h.target),
+    value: weights.ok && weights.value.has(h.t) ? weights.value.get(h.t) : null,
     d1, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,          // a note only: never changes the status
     noNewMoney: NO_NEW_MONEY.includes(status),
   };
@@ -224,7 +263,12 @@ const zeroCounts = () => Object.fromEntries(STATUS_ORDER.map((s) => [s, 0]));
 export function evaluateDeck(deck, ctx) {
   if (!ctx.state.ok) return { ok: false, why: ctx.state.why, days: ctx.state.days ?? null, id: deck && deck.id };
   const held = heldQty(deck);
-  const weights = deckWeights(held, ctx);
+  const targets = new Map();
+  for (const h of deck.holdings || []) {
+    const b = h && held.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
+    if (b) targets.set(h.t, num(b.target));
+  }
+  const weights = deckWeights(held, ctx, targets);
   const holdings = [], unheld = [];
   const seen = new Set();
   for (const h of deck.holdings || []) {

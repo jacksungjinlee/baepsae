@@ -1,13 +1,13 @@
 // 매일 점검 on 내 덱 (v18.3 Part C): each held stock's status from the daily rule check (rules.js), the reasons with
-// their numbers and report year, the 확인 필요 answers (실제로 줄였어요 / 줄인 게 아니에요), and the rule book with
-// today's results. The 오늘 hero, the 내 덱 tracking sheet and 왜 움직였나 are Part E: they read the same evaluation.
+// their numbers and report year, the 확인 필요 answers (실제로 줄였어요 / 줄인 게 아니에요: both stay open with the
+// chosen one marked, so a mis-tap can be changed), and the rule book with today's results. The 오늘 hero, the 내 덱 tracking sheet and 왜 움직였나 are Part E: they read the same evaluation.
 // A chip only on exceptions (REDESIGN 3): 규칙 깨짐, 지켜봐요 (also for 확인 필요), 큰 움직임. No chip = fine.
 import React from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
-import { ListRow, StatusChip, Button, Collapsible } from "../ui/components.jsx";
+import { ListRow, StatusChip, Collapsible } from "../ui/components.jsx";
 import { C, fill, nf, p1 } from "./format.js";
-import { RuleLine, tx } from "./ui.jsx";
-import { signedPct } from "./deckcalc.js";
+import { RuleLine, ChoiceGrid, tx } from "./ui.jsx";
+import { opPieces } from "./deckcalc.js";
 
 const R = () => C.plan.rules;
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
@@ -22,24 +22,22 @@ function itemOf(r, x, names) {
   return map[r.input] || null;
 }
 
-function opPieces(op) {
-  const base = op && op[1] != null && op[1] > 0 && op[0] != null ? fill(C.pick.caution.opFall, { pct: signedPct((op[0] / op[1] - 1) * 100) }) : R().opProfit;
-  return [base, R().opLimit].filter(Boolean);
+// 지켜봐요 · operating profit down 2 years running: the fact, the three amounts (when their unit is approved), the rule.
+function opLine(op) {
+  const pct = op && op[0] != null && op[1] != null && op[1] > 0 ? (op[0] / op[1] - 1) * 100 : null;
+  return [...opPieces(op, pct), R().opLimit].filter(Boolean);
 }
 
 const bandPiece = (band, bands) => (band === "low" ? fill(C.daily.bandLow, { x: p1(bands[0] * 100) })
   : band === "high" ? fill(C.daily.bandHigh, { x: p1(bands[1] * 100) }) : fill(C.daily.bandTrim, { x: p1(bands[2] * 100) }));
 
-// One reason -> { pieces, body, source, confirm }
+// One reason -> { pieces, body, source }. Dividend drops are drawn by DividendAnswers (with their answer buttons).
 function reasonView(r, x, names) {
   switch (r.code) {
-    case "divCut": return { pieces: [R().divCut, fill(R().dpsChange, { a: won(r.a), b: won(r.b) })], body: C.daily.sellNow, source: yearText(r.fy) };
-    case "divDrop": return { pieces: [fill(C.pick.caution.divDrop, { name: x.nk, a: won(r.a), b: won(r.b) })], body: C.pick.caution.divDropBody,
-      source: yearText(r.fy), confirm: r.confirm };
     case "missing": { const item = itemOf(r, x, names); return item ? { pieces: [fill(C.daily.missing, { item })] } : null; }
     case "debtOver": return { pieces: [fill(C.daily.keepLine, { item: R().debt, x: won(r.now), limit: r.limit })], source: yearText(r.fy) };
     case "roeUnder": return { pieces: [fill(C.daily.keepLine, { item: R().roe, x: p1(r.now), limit: r.limit })], source: yearText(r.fy) };
-    case "opFell2": return { pieces: opPieces(r.op), source: yearText(r.fy) };
+    case "opFell2": return { pieces: opLine(r.op), source: yearText(r.fy) };
     case "band": return { pieces: [C.daily.weight, fill(R().now, { x: p1(r.now * 100) }), bandPiece(r.band, r.bands)] };
     case "noRules": return { pieces: [C.app.notChecked] };
     default: return null;
@@ -54,26 +52,49 @@ export function statusChips(x) {
   return chips.length ? <span data-ui-v2="status-chips" style={{ display: "inline-flex", flexWrap: "wrap", gap: SPACE(1) }}>{chips}</span> : null;
 }
 
+const levelColor = (level) => (level === "broken" ? COLOR.ink : level === "check" || level === "watch" ? COLOR.watch : COLOR.text2);
+
+function Line({ code, level, pieces, body, source, children, first }) {
+  return (
+    <div data-ui-v2="status-line" data-code={code} style={{ marginTop: first ? 0 : SPACE(2) }}>
+      <div style={tx(SIZE.xs, WEIGHT.bold, levelColor(level))}>{pieces.map((p, j) => <span key={j}>{j ? " · " : ""}{p}</span>)}</div>
+      {body && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{body}</div>}
+      {source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
+      {children}
+    </div>
+  );
+}
+
+// Every dividend drop after purchase, with both answers kept open. Not answered: the 확인 필요 pair. 실제로 줄였어요:
+// 규칙 깨짐 (배당 삭감 · 주당 a원 → b원 + 규칙대로면 팔 때예요…). 줄인 게 아니에요: the fact only, cleared. Tapping the
+// other answer replaces the first (store.withConfirm).
+function DividendAnswers({ x, onConfirm }) {
+  return x.divDrops.map((d, i) => {
+    const item = { t: d.t, rule: "divCut", fy: d.fy, a: d.a, b: d.b };
+    const drop = fill(C.pick.caution.divDrop, { name: x.nk, a: won(d.a), b: won(d.b) });
+    const v = d.answer === "cut" ? { code: "divCut", level: "broken", pieces: [R().divCut, fill(R().dpsChange, { a: won(d.a), b: won(d.b) })], body: C.daily.sellNow }
+      : d.answer === "notCut" ? { code: "divCleared", level: "none", pieces: [drop] }
+      : { code: "divDrop", level: "check", pieces: [drop], body: C.pick.caution.divDropBody };
+    return (
+      <Line key={`d${d.fy}${d.a}${d.b}`} {...v} source={yearText(d.fy)} first={i === 0}>
+        {onConfirm && (
+          <div data-ui-v2="confirm" data-answer={d.answer || ""} style={{ marginTop: SPACE(2) }}>
+            <ChoiceGrid label={drop} value={d.answer} min={120} onChange={(a) => a !== d.answer && onConfirm(item, a)}
+              options={[{ value: "cut", label: C.daily.confirmCut }, { value: "notCut", label: C.daily.confirmNotCut }]} />
+          </div>
+        )}
+      </Line>
+    );
+  });
+}
+
 function StatusLines({ x, names, onConfirm }) {
-  const views = x.reasons.map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
-  if (!views.length) return null;
+  const views = x.reasons.filter((r) => r.code !== "divCut" && r.code !== "divDrop").map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
+  if (!views.length && !x.divDrops.length) return null;
   return (
     <div data-ui-v2="status-lines" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
-      {views.map(([r, v], i) => (
-        <div key={i} data-ui-v2="status-line" data-code={r.code} style={{ marginTop: i ? SPACE(2) : 0 }}>
-          <div style={tx(SIZE.xs, WEIGHT.bold, r.level === "broken" ? COLOR.ink : r.level === "check" || r.level === "watch" ? COLOR.watch : COLOR.text2)}>
-            {v.pieces.map((p, j) => <span key={j}>{j ? " · " : ""}{p}</span>)}
-          </div>
-          {v.body && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{v.body}</div>}
-          {v.source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{v.source}</div>}
-          {v.confirm && onConfirm && (
-            <div data-ui-v2="confirm" style={{ display: "flex", flexDirection: "column", gap: SPACE(2), marginTop: SPACE(2) }}>
-              <Button kind="secondary" onClick={() => onConfirm(v.confirm, "cut")}>{C.daily.confirmCut}</Button>
-              <Button kind="secondary" onClick={() => onConfirm(v.confirm, "notCut")}>{C.daily.confirmNotCut}</Button>
-            </div>
-          )}
-        </div>
-      ))}
+      <DividendAnswers x={x} onConfirm={onConfirm} />
+      {views.map(([r, v], i) => <Line key={i} code={r.code} level={r.level} {...v} first={i === 0 && !x.divDrops.length} />)}
     </div>
   );
 }

@@ -40,7 +40,8 @@ export function MyDeck({ load, store, setStoreData, pad }) {
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
   const decks = store.data.decks;
-  // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why).
+  // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why). Then the screen
+  // says so (the stale line, or the load-failure message), so a held stock without a chip never reads as "fine".
   const ev = useMemo(() => evaluateAll(decks, todayCtx(load)), [decks, load]);
   const onConfirm = (deckId, item, answer) => {
     const next = withConfirm(store.data, deckId, item, answer, todayKst());
@@ -63,6 +64,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       <AppBar />
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail />}
       <OldAppNote />
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (
         <Note tone="watch" data-ui-v2="deck-stale">{fill(C.today.stale, { n: ev.days })}</Note>

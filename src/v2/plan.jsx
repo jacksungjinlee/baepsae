@@ -4,10 +4,10 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
-import { ruleBook, hasGroup } from "./engine.js";
+import { hasGroup } from "./engine.js";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -137,12 +137,7 @@ function PlanRow({ x }) {
   );
 }
 
-// ---------------- 내 투자 규칙 ----------------
-export function rulesFor(load, row, st, ds) {
-  const s = row.s;
-  if (row.kind === "cushion") return ruleBook({ ...s, cls: "etf" }, null, {}, row.targetW).filter((x) => x.id === "band");
-  return ruleBook(s, load.coByT.get(s.t) || null, st.points, row.targetW);
-}
+// ---------------- 내 투자 규칙 ---------------- (rulesFor: deckcalc.js, shared with the daily-check tests)
 
 function RuleList({ rules, name }) {
   const R = C.plan.rules;

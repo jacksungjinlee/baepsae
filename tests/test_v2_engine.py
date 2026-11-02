@@ -569,6 +569,24 @@ def test_fall_before_purchase_is_a_caution_and_the_rule_keeps_its_baseline():
     assert "opDecline" in got["rules"] and "opDecline" in got["okRules"]   # 규칙은 남아요 (리뷰 2차 1번)
 
 
+
+def test_operating_profit_fell_twice_has_one_definition_any_sign_counts():
+    # 후보 고르기의 주의할 점 · 규칙의 fellBefore · 매일 점검(rules.js)이 모두 engine.fellTwice 하나를 써요.
+    # 이익이 적자로 바뀌거나 적자가 깊어져도 '줄었다'로 세요. 작년이 적자면 '작년 대비 %'는 뜻이 없어서 빼요(pct = null).
+    cases = {"profit falls": [80.0, 90.0, 100.0], "into a loss": [-20.0, 30.0, 100.0], "deeper loss": [-50.0, -10.0, 20.0],
+             "rises": [100.0, 90.0, 80.0], "loss shrinks": [-10.0, -50.0, -80.0], "flat": [90.0, 90.0, 100.0], "blank": [80.0, None, 100.0]}
+    s = kr("000100", fy=2025)
+    got = run("const ctx = E.cautionContext([]);"
+              "out = Object.fromEntries(Object.entries(CASES).map(([k, op]) => { const co = { op, fy: 2025 };"
+              " const c = E.cautions(s, co, ctx).items.find((x) => x.code === 'opFall');"
+              " return [k, [E.fellTwice(op), E.opFell2(co), c ? c.pct : 'none', E.ruleBook(s, co, {}, 0.1).find((r) => r.id === 'opDecline').fellBefore]]; }));",
+              CASES=cases, s=s)
+    assert got["profit falls"][:2] == [True, True] and round(got["profit falls"][2], 1) == -11.1 and got["profit falls"][3] is True
+    assert got["into a loss"][:2] == [True, True] and round(got["into a loss"][2], 1) == -166.7 and got["into a loss"][3] is True
+    assert got["deeper loss"] == [True, True, None, True], got["deeper loss"]      # 작년이 적자: 주의할 점은 뜨고, % 는 없음
+    for k in ("rises", "loss shrinks", "flat", "blank"):
+        assert got[k] == [False, False, "none", False], (k, got[k])
+
 def test_rules_carry_their_purchase_baseline_and_are_not_broken_at_purchase():
     s = kr("005380", fy=2025, dps=10000, dps3=[10000, 12000, 11400], debt=150, roe=8.0)
     co = {"op": [115.0, 142.0, 151.0], "fy": 2025}

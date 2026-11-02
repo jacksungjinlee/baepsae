@@ -34,6 +34,8 @@ export const C = {
     reportYear: "{year}년 사업보고서 기준",                         // new
     won: "{n}원",                                                  // 90
     man: "{n}만원",                                                // 45 · 64
+    eok: null,                                                     // pending: {n}억원 (영업이익 금액)
+    jo: null,                                                      // pending: {n}조원 (영업이익 금액, 1조원부터)
     manUnit: "만원",                                               // 64
     about: "약 {x}",                                               // 524 · 527
     count: "{count}개",                                            // 195
@@ -69,7 +71,6 @@ export const C = {
   daily: {
     broken: "규칙 깨짐",                                            // 33 · 118
     watch: "지켜봐요",                                              // 117
-    ok: "괜찮아요",                                                 // 115
     bigMove: "큰 움직임",                                           // 34
     sellNow: "규칙대로면 팔 때예요. 결정은 직접 해 주세요.",           // 11
     notChecked: "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요",     // new (오늘, rules not checked)

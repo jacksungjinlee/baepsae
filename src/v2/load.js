@@ -6,7 +6,10 @@ import { loadJson, freshness } from "../data.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS } from "./engine.js";
 import { R2022 } from "./y2022.js";
 
-export const isV175 = (d) => !!(d && typeof d === "object" && !Array.isArray(d) && d.pxDate && d.publishedAt);
+// publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
+// like any other format problem (the load-failure message), never treated as fresh.
+export const isV175 = (d) => !!(d && typeof d === "object" && !Array.isArray(d) && d.pxDate && d.publishedAt
+  && typeof d.publishedAt === "string" && Number.isFinite(Date.parse(d.publishedAt)));
 
 export const CHECKS = {
   data: (d) => isV175(d) && Array.isArray(d.stocks) && d.stocks.length > 0,
