@@ -212,3 +212,21 @@ def test_build_script_builds_both_pages():
     assert "set -euo pipefail" in sh and "src/v2/main.jsx" in sh and "src/v2/main-preview.jsx" in sh
     assert '"app.html"' in sh and '"app-preview.html"' in sh
     assert "build.sh" not in sh.replace("build.sh)", "").replace("build-app.sh", "")   # 지금 앱 빌드는 건드리지 않아요
+
+
+def test_home_screen_icon_opens_2_0():
+    """Jack, 2026-11-02: 홈 화면 아이콘은 Part E 와 함께 2.0 으로. manifest 의 start_url 은 ./app.html, app.html 에는
+    template.html 의 manifest · 아이콘 · iOS 홈 화면 태그가 그대로, 미리 보기에는 하나도 없어요. 지금 앱(baepsae.html)은 그대로예요."""
+    m = json.loads(read("manifest.webmanifest"))
+    assert m["start_url"] == "./app.html" and m["scope"] == "./" and m["display"] == "standalone", m
+    assert all(os.path.exists(os.path.join(ROOT, i["src"])) for i in m["icons"])
+    old = read("template.html")
+    tags = [l for l in old.splitlines() if re.match(r'<link rel="(manifest|icon|apple-touch-icon)"|<meta name="apple-mobile-web-app-', l)]
+    assert '<link rel="manifest" href="./manifest.webmanifest">' in tags and any("apple-touch-icon" in l for l in tags), tags
+    app, prev = built("app.html"), built("app-preview.html")
+    head = app.split("</head>", 1)[0]
+    for l in tags:
+        assert l in head, l
+    for needle in ('rel="manifest"', "apple-touch-icon", 'rel="icon"', "apple-mobile-web-app"):
+        assert needle not in prev, needle
+    assert '<link rel="manifest" href="./manifest.webmanifest">' in read("baepsae.html")      # 같은 manifest: 어디서 설치해도 2.0

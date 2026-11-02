@@ -34,7 +34,8 @@ function Verdict({ x, g, names, onConfirm }) {
     const together = g.ok && g.together;
     let title = together ? C.why.together : k ? fill(C.why.keptTitle, { n: k }) : null;
     const calm = x.status === "none";
-    const eyebrow = calm && title ? C.why.noTodo : undefined;
+    // 할 일 없음, or the weight band's own label (먼저 사요 · 더 안 사요 · 일부 팔아요) as on the chips
+    const eyebrow = calm ? (title ? C.why.noTodo : undefined) : (C.daily.band && C.daily.band[x.status]) || undefined;
     if (!title) title = calm ? C.why.noTodo : x.nk;
     return (
       <div style={{ marginTop: SPACE(4) }} data-ui-v2="why-verdict" data-status={x.status}>

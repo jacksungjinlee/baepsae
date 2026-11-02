@@ -759,7 +759,7 @@ def scene_daily(R, files, width):
         line = r.locator('[data-ui-v2="status-line"][data-code="divDrop"]')
         assert "현대차 배당이 줄었어요 · 주당 12,000원 → 10,000원" in line.inner_text(), line.inner_text()
         assert C["pick"]["caution"]["divDropBody"] in line.inner_text() and "2025년 사업보고서 기준" in line.inner_text()
-        assert r.locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"]]      # 확인 필요는 지켜봐요로 보여요
+        assert r.locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["check"]]      # 확인 필요 칩 (Jack, 2026-11-02)
         assert C["daily"]["broken"] not in deck("dcut").inner_text(), "확인 전인데 규칙 깨짐이 보여요"
         btns = r.locator('[data-ui-v2="confirm"] button')
         assert btns.all_inner_texts() == [C["daily"]["confirmCut"], C["daily"]["confirmNotCut"]]
@@ -793,7 +793,8 @@ def scene_daily(R, files, width):
         fold.locator("button").first.click()
         assert "목표 50.0%" in fold.inner_text() and "목표 30.0%" not in fold.inner_text(), fold.inner_text()   # 산 종목끼리 다시 나눈 목표
         fold.locator("button").first.click()
-        assert row("dband", "005930").locator('[data-ui="status-chip"]').count() == 0     # 비중은 칩 없이 비중 줄로
+        assert row("dband", "005930").locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["band"]["trim"]]   # 비중 칩 (Jack, 2026-11-02)
+        assert row("dband", "035420").locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["band"]["low"]]
         calm = deck("dcalm")
         assert calm.locator('[data-ui-v2="status-line"]').count() == 0
         assert row("dcalm", "000660").locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["bigMove"]]
@@ -940,6 +941,7 @@ def today_files(files):
     by = {x["t"]: x for x in f["data.json"]["stocks"]}
     by["105560"].update(dps=3000.0, dps3=[3000.0, 4367.0, 3174.0], fy=2025, d1=0.5)     # KB금융: 2025년 보고서에서 배당 삭감
     by["012450"]["d1"] = -8.0                                                           # 지켜봐요 종목이 크게 움직인 날
+    by["003550"].update(dps=2500.0, dps3=[2500.0, 3100.0, 3100.0], fy=2025)              # LG: 2025년 보고서에서 배당 삭감
     for x in f["data.json"]["stocks"]:                                                  # 반도체가 다 같이 빠진 날
         if x.get("cls") == "kr" and x.get("ind") == "semi" and x["t"] != "000660":
             x["d1"] = -1.5
@@ -953,6 +955,9 @@ def scene_today(R, files, width):
     cut = [{"t": "105560", "rule": "divCut", "fy": 2025, "a": 4367.0, "b": 3000.0, "answer": "cut", "at": "2026-11-01"}]
     decks = {
         "sell": _one_deck("dsell", "매도 덱", [_buy("105560", "KB금융", 0.5, [_div(2024, 4367.0, 3174.0)], 10, by), sam(7)], cut),
+        # 영문으로 끝나는 이름의 규칙 깨짐: 'LG가 매도 조건에 걸렸어요' (Jack, 2026-11-02: 이/가 는 마지막 글자의 읽기로)
+        "sellEn": _one_deck("dsellen", "지주 덱", [_buy("003550", "LG", 0.5, [_div(2024, 3100.0, 3100.0)], 20, by), sam(8)],
+                            [{"t": "003550", "rule": "divCut", "fy": 2025, "a": 3100.0, "b": 2500.0, "answer": "cut", "at": "2026-11-01"}]),
         "watch": _one_deck("dwatch", "부채 덱", [_buy("012450", "한화에어로스페이스", 0.5, [_debt(2024, 150.0, 200)], 1, by), sam(1)]),
         "check": _one_deck("dcheck", "확인 덱", [_buy("005380", "현대차", 0.5, [_div(2024, 12000.0, 11400.0)], 2, by), sam(2)]),
         # 같은 금액(200만원씩)으로 산 뒤 삼성전자만 크게 올라 비중이 벗어난 덱 (산 날의 비중 = 목표: Part C 의 간격 없음)
@@ -996,6 +1001,20 @@ def scene_today(R, files, width):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "매도 조건 → 살구 띠 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, _ = ctx_for("sellEn")
+
+    def sell_en():
+        h = hero(page)
+        assert h.get_attribute("data-state") == "todo"
+        title = h.locator("h2").inner_text()
+        assert title == "LG가\n매도 조건에 걸렸어요", repr(title)                 # 영문 이름 G(지) → 가
+        assert "배당 삭감 · 주당 3,100원 → 2,500원" in h.inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "영문으로 끝나는 이름의 매도 조건 → 'LG가 매도 조건에 걸렸어요' (이/가 를 바르게)", sell_en)
     ctx.close()
     srv.shutdown()
 
@@ -1050,6 +1069,7 @@ def scene_today(R, files, width):
         txt = h.inner_text()
         assert "현대차 배당이 줄었어요 · 주당 12,000원 → 10,000원" in txt and C["pick"]["caution"]["divDropBody"] in txt, txt
         assert C["daily"]["sellNow"] not in txt and C["daily"]["broken"] not in txt, "확인 전인데 매도처럼 보여요"
+        assert page.locator('[data-today-holding="005380"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["check"]]
         not_checked(txt)
         R.collect(page)
         h.get_by_role("radio", name=C["daily"]["confirmNotCut"]).click()
@@ -1068,6 +1088,9 @@ def scene_today(R, files, width):
         txt = h.inner_text()
         assert C["today"]["calmTitle"] in txt and C["today"]["calmEyebrow"] not in txt, txt        # 줄일 차례는 할 일이 있어요
         not_checked(txt)
+        chips = {t: page.locator(f'[data-today-holding="{t}"] [data-ui="status-chip"]').all_inner_texts() for t in ("005930", "035420")}
+        assert chips == {"005930": [C["daily"]["band"]["trim"]], "035420": [C["daily"]["band"]["low"]]}, chips   # 비중 칩
+        R.collect(page)
         tab(page, C["app"]["tabs"]["deck"])
         page.locator('[data-ui-v2="weight"]').first.wait_for(state="visible")
         bands = dict(page.locator('[data-holding]').evaluate_all("els => els.map(e => [e.dataset.holding, e.querySelector('[data-ui-v2=weight]')?.dataset.band || ''])"))
@@ -1111,7 +1134,7 @@ def scene_today(R, files, width):
         assert C["why"]["noTodo"] in vt and "업종이 다 같이\n빠진 날이에요" in vt and "규칙 2개가 모두 지켜지고 있어요." in vt, vt
         not_checked(vt)
         peers = page.locator('[data-ui-v2="why-peers"]')
-        assert C["why"]["c1Title"] in peers.inner_text() and re.search(r"반도체주 (\d+)개 중 \1개가 빠졌어요", peers.inner_text()), peers.inner_text()
+        assert C["why"]["c1Title"] in peers.inner_text() and re.search(r"반도체 종목 (\d+)개 중 \1개가 빠졌어요", peers.inner_text()), peers.inner_text()
         assert peers.locator('[data-ui="dot-strip"] [data-mine="1"]').count() == 1
         rules = page.locator('[data-ui-v2="why-rules"]').inner_text()
         assert "규칙 2개가 모두 지켜지고 있어요" in rules and C["why"]["alertLine"] in rules and C["app"]["notChecked"] in rules, rules

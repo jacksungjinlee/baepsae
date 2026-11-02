@@ -62,10 +62,10 @@ export const C = {
     todoN: "오늘 확인할 일 {n}개",                                  // 35
     calmEyebrow: "오늘은 할 일이 없어요",                            // 36
     calmTitle: "매도 조건에 걸린\n종목이 없어요",                    // 38
-    brokenTitle: "{name}이\n매도 조건에 걸렸어요",                   // 37 (이름이 받침으로 끝날 때)
-    brokenTitleGa: null,                                          // pending: 받침 없는 이름 ("{name}가 …")
+    brokenTitle: "{name}이\n매도 조건에 걸렸어요",                   // 37 (이름이 받침 · L M N R · 0 1 3 6 7 8 로 끝날 때)
+    brokenTitleGa: "{name}가\n매도 조건에 걸렸어요",                 // chat (2026-11-02: 37 의 가 꼴, 그 밖의 이름)
     bigN: "크게 움직인 종목은 {n}개 있어요",                          // 39
-    noBigMove: null,                                              // pending: 크게 움직인 종목이 없는 날 (40 은 공시 확인을 약속해서 못 써요)
+    noBigMove: "크게 움직인 종목은 없어요",                          // chat (2026-11-02: 40 은 공시 확인을 약속해서 대신)
     rest: "나머지 {n}종목은 이상 없어요",                             // 41
     sellLabel: "걸린 규칙 · 매도 조건",                              // 8
     bigInset: "크게 움직인 종목 {n}개",                              // 5 (첫째 조각: 뉴스 확인은 아직 안 해요)
@@ -91,7 +91,7 @@ export const C = {
     byStock: "종목별",                                             // 58
     ret: "수익률",                                                 // 59
     bandNote: "목표의 0.75~1.25배면 정상 범위예요.",                  // 61 (셋째 문장)
-    noFx: null,                                                   // pending: 환율 기록이 없는 미국 매수가 있어 원금을 계산하지 않았을 때
+    noFx: "환율 기록이 없는 미국 종목이 있어 원금과 수익률은 계산하지 못했어요.", // chat (2026-11-02)
     add: {
       label: "추가로 넣을 돈",                                      // 62
       body: "목표보다 적게 담긴 종목부터 사요. 규칙에 걸렸거나 이미 많이 담긴 종목은 사지 않아요.", // 63
@@ -99,7 +99,7 @@ export const C = {
       leftText: "남는 돈 {x}",                                     // 80 + 금액 (520 과 같은 꼴)
       left: "{leftText} · 살지 말지는 직접 정해 주세요",               // 65
       none: "이 금액으로는 살 수 있는 종목이 없어요. 금액을 늘려 보세요.", // 79
-      noneEligible: null,                                         // pending: 살 수 있는 종목이 하나도 없을 때 (모두 규칙에 걸렸거나 많이 담김)
+      noneEligible: "지금은 새로 살 종목이 없어요. 모두 규칙에 걸렸거나 이미 많이 담겨 있어요.", // chat (2026-11-02)
       quick: ["+10만", "+100만", "+1,000만"],                       // 82-84
       clear: "지우기",                                             // 85
     },
@@ -115,7 +115,7 @@ export const C = {
     keptTitle: "규칙 {n}개가 모두 지켜지고 있어요",                    // 113
     alt: "손을 흔드는 뱁이",                                         // 95
     c1Title: "이 종목만 빠진 게 아니에요",                             // 96
-    c1Body: "{ind}주 {n}개 중 {k}개가 빠졌어요",                       // 97
+    c1Body: "{ind} 종목 {n}개 중 {k}개가 빠졌어요",                    // chat (2026-11-02: 97 의 "{업종}주" → "{업종} 종목")
     c1Aria: "{ind} {n}개 종목의 오늘 등락. {name} {pct}, 업종 평균 {avg}", // 98
     avg: "업종 평균 {pct}",                                         // 99
     mine: "{name} {pct}",                                         // 100
@@ -125,7 +125,7 @@ export const C = {
     sources: "데이터 출처",                                         // 133
     srcPrice: "가격",                                              // 134
     srcPriceKr: "한국거래소 {md} 종가",                              // 135
-    srcPriceUs: null,                                             // pending: 미국 종목의 가격 출처
+    srcPriceUs: "야후 파이낸스 · 현지 기준 {md} 종가",                 // chat (2026-11-02)
     srcInd: "업종",                                                // 136
     srcIndN: "{ind} {n}개 종목",                                    // 137
     srcRules: "규칙 수치",                                          // 142
@@ -150,8 +150,8 @@ export const C = {
     bandLow: "{x}% 미만이면 먼저 사요",                              // 543 (첫째 조각)
     bandHigh: "{x}% 넘으면 더 사지 않아요",                           // 543 (둘째 조각)
     bandTrim: "{x}% 넘으면 일부 팔아요",                              // 543 (셋째 조각)
-    check: null,                                                    // pending: 확인 필요 칩 (승인 전에는 지켜봐요 칩)
-    band: { low: null, high: null, trim: null },                    // pending: 먼저 살 차례 · 그만 살 차례 · 줄일 차례 칩
+    check: "확인 필요",                                              // chat (2026-11-02: 확인 필요 칩)
+    band: { low: "먼저 사요", high: "더 안 사요", trim: "일부 팔아요" }, // chat (2026-11-02: 비중 칩, Jack 의 말)
   },
 
   build: {

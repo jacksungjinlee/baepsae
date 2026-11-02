@@ -22,7 +22,7 @@ import { evaluateAll, todayCtx } from "./rules.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
-import { deckMoney, deckDayChange, peerGroup, endsInBatchim, todayCounts } from "./track.js";
+import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -40,12 +40,9 @@ export function confirmer(store, setStoreData) {
   };
 }
 
-// "{name}이\n매도 조건에 걸렸어요" needs a name ending in a final consonant. Other names use the 가 form once it is
-// approved; until then the band's title is the name alone (the lines below it say 걸린 규칙 · 매도 조건).
+// "{name}이 / 가\n매도 조건에 걸렸어요": the particle from the name's last letter or digit (track.js subjectParticle).
 export function brokenTitle(name) {
-  if (endsInBatchim(name)) return fill(C.today.brokenTitle, { name });
-  if (C.today.brokenTitleGa) return fill(C.today.brokenTitleGa, { name });
-  return name;
+  return fill(subjectParticle(name) === "i" ? C.today.brokenTitle : C.today.brokenTitleGa, { name });
 }
 
 const namesOf = (deck) => new Map(((deck && deck.holdings) || []).map((h) => [h.t, h.nk]));

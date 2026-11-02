@@ -33,7 +33,7 @@ export function DeckSummary({ deck, m, load }) {
           {fill(C.deck.money, { cost: wonText(m.cost), gain: signedWon(m.gain), pct: signedPct(m.ret * 100) })}
         </div>
       )}
-      {m.cost == null && C.deck.noFx && <Note>{C.deck.noFx}</Note>}
+      {m.noFx.length > 0 && C.deck.noFx && <Note data-ui-v2="deck-no-fx">{C.deck.noFx}</Note>}
       {k.ok && (
         <div data-ui-v2="vs-kospi" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(2), marginTop: SPACE(3) }}>
           <div data-ui-v2="vs-mine" style={{ background: COLOR.page, borderRadius: 12, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>

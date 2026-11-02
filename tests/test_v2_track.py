@@ -344,9 +344,33 @@ out = { all: tog([-6, -3, -2, -1, -0.5]), four: tog([-6, -3, -2, -1, 0.4]), thre
     assert abs(got["avg"] - (-12.5 / 5)) < 1e-12 and got["items"] == 5
 
 
-def test_subject_particle_follows_the_last_syllable():
-    got = run("out = NAMES.map((n) => T.endsInBatchim(n));", NAMES=["KB금융", "현대차", "삼성전자", "LG에너지솔루션", "NAVER", "SK", "", "기아"])
-    assert got == [True, False, False, True, False, False, False, False]
+# Jack, 2026-11-02: 이/가 는 마지막 글자(받침 · 숫자 · 영문 글자 이름)로 고르고, 낱말로 읽는 이름은 예외 표로.
+# 아래 표는 2026-11-02 의 실제 데이터(1,000종목 시험 실행 + 저장소 data.json)에서 영문·숫자로 끝나는 한국 종목 이름 전부예요.
+PARTICLE_GA = ["3S", "APS", "BGF", "BYC", "CJ", "CJ CGV", "DB", "DGI", "DKME", "DMS", "DXVX", "DYP", "EDGC", "EG", "EMB", "F&F",
+               "GRT", "GS", "GST", "HDC", "HDC현대EP", "HL D&I", "HLB", "HPSP", "HRS", "INVENI", "ISC", "JTC", "JYP Ent.", "KBG",
+               "KCC", "KCTC", "KEC", "KT", "KT&G", "KTcs", "KTis", "KX", "LF", "LG", "LS", "MSDI", "NAVER", "NC", "NEW", "NHN KCP",
+               "NICE", "NPC", "OCI", "PKC", "RFHIC", "SBS", "SFA", "SG", "SG&G", "SGC E&C", "SK", "SKAI", "SKC", "SM C&C", "STX",
+               "SYTS", "TP", "YG PLUS", "YW", "iMBC", "나무AX", "나우IB", "넥센타이어1우B", "뉴엔AI", "대신증권2우B", "동국S&C",
+               "두산2우B", "두산퓨얼셀2우B", "마음AI", "무림P&P", "무림SP", "미래에셋증권2우B", "백금T&A", "비큐AI", "삼성E&A", "삼성SDI",
+               "삼성물산우B", "삼익THK", "서부T&D", "세이브존I&C", "셀바스AI", "시선AI", "신세계 I&C", "아모레퍼시픽홀딩스3우C",
+               "아시아나IDT", "엔키AX", "예스24", "원익IPS", "원익QnC", "카페24", "파수AI", "포스코DX", "폴라리스AI", "한국경제TV",
+               "한라IMS", "한전KPS", "한화3우B", "현대차2우B", "현대차3우B", "효성ITX"]
+PARTICLE_I = ["CJ ENM", "DL", "DSR", "E1", "FSN", "GKL", "HMM", "KNN", "KODEX 200", "LS ELECTRIC", "M83", "NHN", "S-Oil", "SDN",
+              "SIMPAC", "SJM", "SM Life Design", "SOOP", "THE E&M", "TYM", "WISCOM", "YTN"]
+
+
+def test_subject_particle_follows_how_the_name_is_read():
+    cases = {"SK": "ga", "LG": "ga", "KT&G": "ga", "삼성SDI": "ga", "HMM": "i", "NAVER": "ga", "삼성전자": "ga", "현대차": "ga",
+             "마루식품": "i", "KB금융": "i", "SK하이닉스": "ga", "예스24": "ga", "M83": "i", "E1": "i", "XYZ 7": "i", "XYZ 9": "ga",
+             "SOOP": "i", "SIMPAC": "i", "LS ELECTRIC": "i", "JYP Ent.": "ga", "S-Oil": "i", "Apple Inc.": "ga",
+             "Microsoft Corporation": "i", "Acme Group": "i", "LG에너지솔루션": "i", "": "ga", "KT&G  ": "ga", "(The": "ga",
+             "HMM.": "i", "ABC (L)": "i", "DSR -": "i", "엠씨넥스 ·": "ga", "SM C&C,": "ga"}   # 끝의 문장부호는 빼고 읽어요
+    names = list(cases) + PARTICLE_GA + PARTICLE_I
+    got = run("out = Object.fromEntries(NAMES.map((n) => [n, T.subjectParticle(n)]));", NAMES=names)
+    for n, want in cases.items():
+        assert got[n] == want, (n, got[n], want)
+    assert [n for n in PARTICLE_GA if got[n] != "ga"] == [] and [n for n in PARTICLE_I if got[n] != "i"] == [], got
+    assert len(PARTICLE_GA) + len(PARTICLE_I) == 128
 
 
 # ── 리뷰 수정 (Part E): 금액 조언 · 넓어진 경계 · 지켜지고 있는 규칙 수 · 오늘의 개수 ──

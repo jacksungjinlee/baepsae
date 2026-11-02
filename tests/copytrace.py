@@ -68,7 +68,7 @@ def chat_approved():
             # 세 번째 칸이 "Jack, 날짜" 로 시작하지 않으면 승인된 문구가 아니에요 (빈칸 · pending 행이 지나가지 않게)
             assert re.match(r"^Jack, \d{4}-\d{2}-\d{2}\b", cells[2]), f"승인 기록이 없는 행: {line}"
             assert key not in out, f"같은 키가 두 번 있어요: {key}"
-            out[key] = cells[1]
+            out[key] = cells[1].replace("\\n", "\n")          # 표 칸에는 줄바꿈을 못 넣어서 "\n" 으로 적어요
     assert len(out) >= 3, out
     return out
 

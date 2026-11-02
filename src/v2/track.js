@@ -264,13 +264,28 @@ export function peerGroup(s, stocks) {
   return { ok: true, n, fell, avg, together: s.d1 < 0 && fell >= TOGETHER_SHARE * n - EPS, items: items.map((x) => ({ id: x.t, pct: x.d1 })) };
 }
 
-// ---------------- Korean particle ----------------
-// True when the name ends in a Hangul syllable with a final consonant (then the subject particle is the one in the
-// approved sentence). Names ending in a vowel, Latin letters or digits return false: the screen then uses the other
-// form or leaves the particle out.
-export function endsInBatchim(name) {
-  const s = String(name || "").trim();
-  if (!s) return false;
-  const c = s.charCodeAt(s.length - 1);
-  return c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28 !== 0;
+// ---------------- Korean subject particle (이 / 가) ----------------
+// Jack, 2026-11-02: every 규칙 깨짐 title takes the right particle, never the name alone. Returns "i" (이) or "ga" (가),
+// from the last letter or digit of the name, after trailing spaces and punctuation (. , ) ] & - ·) are dropped:
+// - a Hangul syllable: a final consonant -> i, else ga;
+// - a digit, read as Sino-Korean: 0 영 1 일 3 삼 6 육 7 칠 8 팔 -> i; 2 이 4 사 5 오 9 구 -> ga;
+// - a Latin letter, read as its name: L 엘 M 엠 N 엔 R 알 -> i; every other letter -> ga;
+// - names read as a word, not letter by letter (WORD_NAMES, every such Korean stock name in the data on 2026-11-02),
+//   and an English last word read as a word (WORD_ENDINGS: Group 그룹).
+const SINO_I = "013678";
+const LETTER_I = "LMNR";
+export const WORD_NAMES = { NAVER: "ga", SOOP: "i", SIMPAC: "i", "LS ELECTRIC": "i" };   // 네이버 · 숲 · 심팩 · 일렉트릭
+export const WORD_ENDINGS = { GROUP: "i" };
+export function subjectParticle(name) {
+  const s = String(name || "").replace(/[\s.,)\]&\-\u00b7]+$/u, "");
+  const up = s.toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(WORD_NAMES, up)) return WORD_NAMES[up];
+  const last = up.split(/\s+/).pop();
+  if (Object.prototype.hasOwnProperty.call(WORD_ENDINGS, last)) return WORD_ENDINGS[last];
+  if (!s) return "ga";
+  const ch = s[s.length - 1], c = s.charCodeAt(s.length - 1);
+  if (c >= 0xac00 && c <= 0xd7a3) return (c - 0xac00) % 28 !== 0 ? "i" : "ga";
+  if (/[0-9]/.test(ch)) return SINO_I.includes(ch) ? "i" : "ga";
+  if (/[A-Za-z]/.test(ch)) return LETTER_I.includes(ch.toUpperCase()) ? "i" : "ga";
+  return "ga";
 }
