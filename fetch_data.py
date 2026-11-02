@@ -783,6 +783,10 @@ Q_NEWEST_FIRST = ("11014", "11012", "11013")
 QUARTER_CURRENT_SHARE = 0.70   # 시가총액 상위 100곳 중 이만큼이 제출해야 그 분기를 '현재'로 봐요
 DART_FATAL = {"010": "등록되지 않은 키", "011": "사용할 수 없는 키", "012": "접근할 수 없는 IP",
               "020": "일일 한도 초과", "901": "기간이 끝난 키"}
+# v17.5.2: 2026-11-02 01:44–03:40 KST 에 러너가 opendart.fss.or.kr 에 아예 닿지 못해 모든 호출이 연결 시간 초과(25초)로 끝나고
+# 실행이 2시간 동안 기어갔어요. 네트워크 예외(연결·응답 시간 초과, 연결 오류)가 이만큼 연달아 나면 이번 실행에서 DART 조회를 멈추고
+# 보관본(캐시) 값만 써요. 서버가 한 번이라도 답하면(상태 코드와 상관없이) 다시 0부터 세요. 빠진 새 값은 검증의 채움 검사가 잡아요.
+DART_DOWN_AFTER = 30
 
 
 def report_period_end(year, reprt):
@@ -827,6 +831,9 @@ class DartClient:
         self.parse_errors = collections.Counter()
         self.revalidate_left = DART_REVALIDATE_PER_RUN
         self.revalidated = 0
+        self.net_streak = 0          # 연달아 난 네트워크 예외 수 (서버가 답하면 0)
+        self.down = None             # DART 에 닿지 않아 조회를 멈췄으면 그때의 예외 이름
+        self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
         self.entries, self.meta = {}, {}
         self._load()
         if mode == "full":
@@ -869,11 +876,33 @@ class DartClient:
             os.replace(tmp, self.path)
 
     def get(self, endpoint, params, timeout=25):
-        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요."""
+        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요.
+        v17.5.2: 네트워크 예외가 DART_DOWN_AFTER 번 연달아 나면 그 뒤로는 바로 None (보관본을 써요 · 로그와 summary 에 크게 남아요)."""
         if self.fatal:
+            return None
+        if self.down:
+            with self.lock:
+                self.skipped_down += 1
             return None
         try:
             r = requests.get(self.BASE + endpoint, params={"crtfc_key": self.key, **params}, timeout=timeout)
+        except Exception as e:
+            net = isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+            tripped = False
+            with self.lock:
+                self.status["예외"] += 1
+                if net:
+                    self.net_streak += 1
+                    if self.net_streak >= DART_DOWN_AFTER and not self.down:
+                        self.down = type(e).__name__
+                        tripped = True
+            if tripped:
+                log(f"  !! DART 연결 안 됨: 연속 {DART_DOWN_AFTER}회 실패({self.down}) → 이번 실행에서 DART 조회를 멈췄어요 "
+                    "(보관본 값만 써요 · 빠진 새 값은 검증이 잡아요)")
+            return None
+        with self.lock:
+            self.net_streak = 0          # 서버가 답했어요 (상태 코드·내용과 상관없이 연결은 돼요)
+        try:
             j = r.json()
         except Exception:
             with self.lock:
@@ -946,6 +975,9 @@ class DartClient:
         extra = f" · 재확인 {self.revalidated:,}건" if self.revalidated else ""
         if self.parse_errors:
             extra += " · !! 해석 오류 " + ", ".join(f"{k} {v}" for k, v in self.parse_errors.items())
+        if self.down:
+            extra += (f" · !! DART 연결 안 됨: 연속 {DART_DOWN_AFTER}회 실패({self.down}) → 이번 실행에서 DART 조회를 멈췄어요"
+                      f" (건너뛴 조회 {self.skipped_down:,}회 · 보관본 값만 씀)")
         return f"호출 {sum(self.status.values()):,}회 (상태 {st or '없음'}) · 캐시 사용 {self.cache_hits:,}건{extra}"
 
     def raise_if_fatal(self):
@@ -1066,6 +1098,34 @@ def parse_dart_list(rows):
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
     return out
+
+
+G3_MIN_REV = 0.1     # 억원 — 매출 성장률(g3)을 낸 두 해의 매출이 발행되는 값(억원, 소수 한 자리)으로 이 이상일 때만 g3 를 내요
+
+
+def g3_usable(rev, g3):
+    """parse_dart_list 가 낸 g3 를 발행해도 되는지. (순수 함수)
+    rev 는 발행되는 매출 [당기, 전기, 전전기] (억원). g3 를 계산한 두 해의 매출이 모두 G3_MIN_REV 이상일 때만 참이에요.
+    v17.5.2: 2026-11-03 발행본의 코오롱티슈진은 매출이 [0.0, 0.0, 0.0] 인데 g3 가 13.0 이었어요 — 반올림하면 0 인 아주 작은
+    매출(외화로 낸 재무제표)로 계산된 값이에요. DART 캐시는 '해석된 값'을 담고 있어서 parse_dart_list 를 고치면 캐시를 통째로
+    버려야 해요(전체 조회 약 15,000회). 그래서 해석은 그대로 두고 캐시 뒤 여기서 걸러요."""
+    if _fin(g3) is None:
+        return False
+    r0, r1, r2 = (list(rev or []) + [None, None, None])[:3]
+    ok = lambda x: _fin(x) is not None and x >= G3_MIN_REV
+    if not ok(r0):
+        return False
+    if ok(r2):
+        return True                            # 전전기 대비 연평균 (parse_dart_list 의 첫 갈래)
+    if not ok(r1):
+        return False
+    if _fin(r2) is not None and abs(r2) < G3_MIN_REV:
+        # 전전기가 0.0 으로 보여요: 0 원이었으면 전기 대비 1년 성장이고, 아주 작은 양수였으면 그 작은 값 대비 연평균이었어요.
+        # 전기 대비 1년 성장으로 설명되는 값(발행 값의 반올림 ±0.05억원 안)일 때만 남겨요.
+        h = G3_MIN_REV / 2
+        lo, hi = ((r0 - h) / (r1 + h) - 1) * 100, ((r0 + h) / (r1 - h) - 1) * 100
+        return lo - 0.05 <= g3 <= hi + 0.05
+    return True                                # 전전기가 빈 칸·음수 → 전기 대비 1년 성장
 
 
 DASHES = {"-", "－", "—", "–", "‐"}
@@ -1241,6 +1301,7 @@ def enrich_with_dart(kr_stocks, client):
         + ")…")
     done = [0]
     errors = collections.Counter()
+    g3_cut = []                            # 쓸 만한 매출 없이 계산된 g3 를 비운 종목
 
     def one(s):
         if client.fatal:
@@ -1267,6 +1328,10 @@ def enrich_with_dart(kr_stocks, client):
             s["fy"] = yr          # v17.5.1: op·debt·roe·dps·dps3 가 나온 사업보고서의 연도 (bq 는 TTM 분기만 뜻해요)
         if f:
             fin = f.pop("_fin", None)
+            if f.get("g3") is not None and not g3_usable((fin or {}).get("rev"), f["g3"]):
+                f.pop("g3")
+                with client.lock:
+                    g3_cut.append(f"{s['t']} {s.get('nk', '')}".strip())
             if fin:
                 qy_c = yr + 1
                 order_c = order if qy_c == qy else [r for r in Q_NEWEST_FIRST if report_period_end(qy_c, r) < today]
@@ -1304,6 +1369,9 @@ def enrich_with_dart(kr_stocks, client):
         log(f"  !! DART 캐시 파일을 확인하지 못했어요: {e}")
     if errors:
         log(f"  !! DART 처리 오류 {sum(errors.values()):,}곳 ({dict(errors)}) — 그 기업은 재무지표 없이 진행해요")
+    n_g3 = sum(1 for s in targets if s.get("g3") is not None)
+    log(f"· 매출 성장률(g3): {n_g3:,}곳 · 계산에 쓴 매출이 {G3_MIN_REV:g}억원 미만이라 비운 곳 {len(g3_cut)}"
+        + (f": {', '.join(sorted(g3_cut)[:12])}{'…' if len(g3_cut) > 12 else ''}" if g3_cut else ""))
     client.raise_if_fatal()
     got = sum(1 for s in targets if s.get("debt") is not None)
     log(f"· DART 완료: {got:,}곳 재무지표 · {len(fin_map):,}곳 3개년 원값")
@@ -2472,6 +2540,82 @@ def etf_from_quote_type(out, cache):
     return odd
 
 
+# v17.5.2: 미국 목록 다듬기 — 우선주·예탁증서, 한국 종목의 미국 상장분
+US_NO_CAP_MAX_SHARE = 0.05   # 2.0 src/v2/engine.js 의 같은 이름 값과 같아요 (바꾸면 둘 다)
+US_KR_DUP_PATH = os.path.join(INDUSTRY_DIR, "us_kr_duplicates.csv")
+
+
+def us_preferred_like(us):
+    """미국 우선주·예탁증서로 보이는 티커 (2.0 engine.js 의 usPreferredLike 와 같은 규칙). (순수 함수)
+    NASDAQ 상위 400 목록에 회사처럼 섞여 들어와요: STRC(Strategy 변동금리 우선주 — 예전 앱에 배당 12% 소프트웨어 회사로 보였어요),
+    GOOGM·GOOGN(알파벳 예탁증서). 야후는 보통주에는 모두 시가총액을 주는데 이들에게는 안 주고, 거래대금은 줘요.
+    그래서 ETF 가 아니고 가격·거래대금은 있는데 시가총액이 없는 줄을 우선주로 봐요. 야후 정보가 아예 없는 줄(거래대금도 없음)은
+    건드리지 않아요 — 빈 칸으로 남고 검증이 세요.
+    그런 줄이 거래대금 있는 줄의 US_NO_CAP_MAX_SHARE 를 넘으면 우선주가 아니라 야후가 시가총액을 안 보낸 것(데이터 문제)이라
+    아무것도 빼지 않아요 (검증의 '미국 시가총액 채움'이 실패로 잡아요).
+    반환: (뺄 티커, 시가총액 없는 티커, 거래대금 있는 줄 수)."""
+    rows = [r for r in us if r.get("etf") is not True and not r.get("fund")
+            and (_fin(r.get("price")) or 0) > 0 and _fin(r.get("val")) is not None]
+    no_cap = sorted(r["t"] for r in rows if not ((_fin(r.get("cap")) or 0) > 0))
+    if len(no_cap) > len(rows) * US_NO_CAP_MAX_SHARE:
+        return [], no_cap, len(rows)
+    return no_cap, no_cap, len(rows)
+
+
+def load_us_kr_duplicates(path=None):
+    """data/us_kr_duplicates.csv → {미국 티커: (한국 종목코드, 이유)}. 사람이 확인해 적은 표예요. 틀리면 예외 (조용히 넘어가지 않게)."""
+    rows = _read_csv(path or US_KR_DUP_PATH)
+    out = {}
+    for i, r in enumerate(rows):
+        t, k, why = r.get("ticker", ""), r.get("krx", ""), r.get("reason", "")
+        if not (t and t == t.upper() and t.isascii() and len(t) <= 6) or len(k) != 6 or not why or t in out:
+            raise RuntimeError(f"!! us_kr_duplicates.csv {i + 2}번째 줄이 이상해요 (티커 대문자 · 한국 코드 6자리 · 이유 · 티커 한 번만): {r}")
+        out[t] = (k, why)
+    return out
+
+
+def drop_us_kr_duplicates(us, kr_codes, dups):
+    """미국 목록에서 한국 종목과 같은 회사인 줄을 빼요 (SKHY = SK하이닉스 000660: 덱에 같은 회사가 두 번 들어가지 않게). (순수 함수)
+    표에 있어도 그 한국 종목이 이번 국내 목록에 없으면 빼지 않아요 (그 회사가 통째로 사라지지 않게) — 대신 따로 돌려줘서 크게 알려요.
+    반환: (남은 미국 목록, 뺀 [(티커, 한국 코드)], 한국 쪽이 없어 남긴 [(티커, 한국 코드)])."""
+    keep, dropped, kept = [], [], []
+    for r in us:
+        hit = dups.get(r["t"])
+        if hit and hit[0] in kr_codes:
+            dropped.append((r["t"], hit[0]))
+            continue
+        if hit:
+            kept.append((r["t"], hit[0]))
+        keep.append(r)
+    return keep, dropped, kept
+
+
+def clean_us_list(us, kr_codes, dups):
+    """미국 목록에서 한국 종목의 미국 상장분과 우선주·예탁증서를 빼요. 뺀 것은 모두 티커와 함께 로그로 남겨요."""
+    us, dropped, kept = drop_us_kr_duplicates(us, kr_codes, dups)
+    if dropped:
+        log(f"  !! 한국 종목과 같은 회사라 미국 목록에서 뺀 종목 {len(dropped)}개: "
+            + ", ".join(f"{t}(={k})" for t, k in dropped) + " (data/us_kr_duplicates.csv)")
+    if kept:
+        log(f"  !! 미국-한국 중복 표에 있지만 그 한국 종목이 이번 국내 목록에 없어 미국 쪽을 남겼어요 {len(kept)}개: "
+            + ", ".join(f"{t}(≠{k})" for t, k in kept) + " — 국내 목록이 왜 빠졌는지 확인")
+    if not dropped and not kept:
+        log(f"· 미국-한국 중복 표 {len(dups)}개 중 이번 미국 목록에 있는 것 없음")
+    pref, no_cap, n_rows = us_preferred_like(us)
+    if pref:
+        gone = set(pref)
+        us = [r for r in us if r["t"] not in gone]
+        log(f"  !! 미국 우선주·예탁증서로 보고 뺀 종목 {len(pref)}개 (거래대금은 있는데 시가총액 없음 · "
+            f"거래대금 있는 회사 주식 {n_rows:,}개 중): {', '.join(pref)}")
+    elif no_cap:
+        log(f"  !! 거래대금은 있는데 시가총액이 없는 미국 회사 주식 {len(no_cap)}개 / {n_rows:,}개 ({len(no_cap) / max(n_rows, 1):.1%}) — "
+            f"{US_NO_CAP_MAX_SHARE:.0%} 넘게 많아 우선주가 아니라 야후 데이터 문제로 봐요. 아무것도 빼지 않아요 "
+            f"(검증의 '미국 시가총액 채움'이 잡아요): {', '.join(no_cap[:10])}{'…' if len(no_cap) > 10 else ''}")
+    else:
+        log("· 미국 우선주·예탁증서(시가총액 없는 회사 주식): 없음")
+    return us
+
+
 def cut_words(text, n):
     """n 글자 안에서 낱말 경계로 잘라요 ("nanometer" 가 잘려 "nan" 이 남지 않게). (순수 함수)"""
     t = " ".join(str(text).split())
@@ -2523,8 +2667,8 @@ def apply_us_info(rec, info, px_then, fx):
     return True
 
 
-def fetch_us(start, today, rf):
-    """미국 주식 (yfinance). v17.5:
+def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
+    """미국 주식 (yfinance). v17.5.2: 우선주·예탁증서와 한국 종목의 미국 상장분(kr_codes · dups)은 빼요 (clean_us_list). v17.5:
     · end 는 그날을 빼므로 오늘(KST)+1일까지 요청하고, 장이 안 끝난 봉은 버려요 (예전엔 하루 늦었어요).
     · 시가총액(cap)은 조원, 거래대금(val)은 억원 — 한국과 같은 단위 (그날 환율로 환산).
     · 상세 정보(이름·업종·설명)를 못 받은 종목 수를 남기고, 실패분은 한 번 더 천천히 시도해요."""
@@ -2623,6 +2767,9 @@ def fetch_us(start, today, rf):
     odd = etf_from_quote_type(out, cache)
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
+    out = clean_us_list(out, kr_codes, dups or {})          # ETF 표시가 끝난 뒤에 (ETF 는 시가총액이 없어도 우선주가 아니에요)
+    no_info = set(missing)
+    n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx}
@@ -2713,6 +2860,7 @@ def main():
     ph = Phases()
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
+    dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     log(f"· 업종 표: 그룹 {len(tables['groups'])} · KSIC 접두어 {len(tables['kmap'])} · 야후 업종 {len(tables['usmap'])} · "
         f"고정 {len(tables['over'])} · 주요제품 나누기 {len(tables['refine'])}")
 
@@ -2737,7 +2885,8 @@ def main():
     fy_c = collections.Counter(s.get("fy") for s in kr if s.get("fy"))
     log(f"· 주당 배당금 아는 종목: {n_dps:,} / {len(kr):,} (그중 0원 = 배당 없음 {n_dps0:,}) · 사업보고서 연도 {dict(sorted(fy_c.items()))}")
 
-    us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf)
+    us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
+                                                          kr_codes=frozenset(s["t"] for s in kr), dups=dups)
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
 

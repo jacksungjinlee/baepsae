@@ -95,6 +95,11 @@ IND_US_COVER = 90.0      # 미국 회사 주식 중 그룹이 있는 비율 하�
 IND_NOT_FIN = ("004800", "012630")    # 효성·HDC: 지주회사지 금융회사가 아니에요 (KSIC 649 함정)
 FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=2y&interval=1d"
+# v17.5.2 (Jack 승인 2026-11-02). 숫자는 2026-11-03 발행본 기준이에요.
+US_CAP_COVER = 95.0      # 미국 회사 주식(ETF 빼고) 중 시가총액(cap > 0)이 있는 비율 하한 (%) — 그날 99.6%, 우선주 3개를 빼면 100%.
+#                          파이프라인은 5% 넘게 비면 우선주로 보지 않고 그대로 두니, 야후가 시가총액을 안 보내면 여기서 실패해요.
+DIV_COVER_KEYS = ("dps", "dy")   # 국내 주당 배당금·배당수익률 — 그날 둘 다 96.7%
+DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄면 실패 (DART 일부 장애로 배당이 조용히 비는 것)
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -545,6 +550,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
 
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
+    check_v1752(rep, kr, us, pdata)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -711,6 +717,20 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
                 if num((by.get(t) or {}).get("d1")) is None or abs(num(by[t]["d1"]) - y["d1"]) > D1_YAHOO_TOL]
         rep.add("필수 종목 d1 (야후)", not bad1, f"{len(hilo)}종목 맞음" if not bad1 else " · ".join(bad1)[:90],
                 f"{D1_YAHOO_TOL}%p 안 (이틀치 변화를 잡아요)", warn=len(hilo) < len(must_kr))
+
+
+def check_v1752(rep, kr, us, pdata):
+    # 미국 시가총액: ETF 가 아닌 미국 종목은 거의 모두 시가총액이 있어야 해요 (우선주·예탁증서는 파이프라인이 빼요)
+    usco = [s for s in us if s.get("etf") is not True]
+    have = sum(1 for s in usco if (num(s.get("cap")) or 0) > 0)
+    share = 100.0 * have / len(usco) if usco else 0.0
+    rep.pct("미국 시가총액 채움 (ETF 빼고)", share, US_CAP_COVER)
+    # 국내 배당: 주당 배당금·배당수익률 채움이 직전 발행본보다 크게 줄면 실패 (0 = 배당 없음도 채움으로 세요)
+    if pdata:
+        pkr = kr_stocks(pdata)
+        for k in DIV_COVER_KEYS:
+            v, pv = coverage(kr, k), coverage(pkr, k)
+            rep.add(f"국내 {k} 채움 변화", v >= pv - DIV_COVER_DROP, f"{pv:.1f} → {v:.1f}", f"{DIV_COVER_DROP:g}점 넘게 줄면 실패")
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

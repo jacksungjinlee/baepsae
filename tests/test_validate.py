@@ -745,3 +745,60 @@ def test_fixture_has_unique_codes():
     cur, _, _ = good_pair()
     codes = [s["t"] for s in cur["data"]["stocks"]]
     assert len(codes) == len(set(codes))
+
+
+# ── v17.5.2: 미국 시가총액 채움 · 국내 배당 채움 변화 ──
+def us_companies(cur):
+    return [s for s in cur["data"]["stocks"] if s["cls"] == "us" and not s["etf"]]
+
+
+def test_us_market_cap_coverage_drop_fails():
+    # 야후가 시가총액을 안 보낸 날: 파이프라인은 5% 넘게 비면 우선주로 보지 않고 그대로 둬요 → 여기서 실패
+    def blank(c):
+        us = us_companies(c)
+        for s in us[: int(len(us) * 0.06)]:
+            s.pop("cap")
+    fails_on("미국 시가총액 채움 (ETF 빼고)", blank)
+
+
+def test_us_market_cap_coverage_counts_companies_only():
+    cur, prev, final = good_pair()
+    for t in ("SPY", "QQQ"):                                   # ETF 는 시가총액이 없어도 돼요
+        stock(cur, t).pop("cap")
+    cur["data"]["stocks"] += [{"t": f"E{i:03d}", "nk": f"ETF {i}", "ne": f"ETF {i}", "cls": "us", "price": 50.0,
+                               "val": 100.0, "de": "A fund.", "fxu": True, "etf": True} for i in range(40)]   # 2026-11-03: 33개
+    for s in us_companies(cur)[10:13]:                         # 회사 주식 3개 빠짐 (2026-11-03 발행본의 우선주 3개처럼)
+        s["cap"] = None
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "미국 시가총액 채움 (ETF 빼고)" and r[3] == "PASS" for r in rep.rows)
+
+
+def with_dividends(files):
+    for s in kr_of(files):
+        if not s.get("fund"):
+            s["dy"] = 0.0 if s["dps"] == 0 else 2.5
+
+
+@pytest.mark.parametrize("key", ["dps", "dy"])
+def test_korean_dividend_coverage_drop_fails(key):
+    # DART 일부 장애로 배당 표를 못 받으면 주당 배당금·배당수익률이 조용히 비어요
+    cur, prev, final = good_pair()
+    with_dividends(cur)
+    with_dividends(prev)
+    assert not check(cur, prev, final).failed
+    for s in kr_of(cur)[20::8]:                                # 12.4% 비움 (필수 종목은 건드리지 않아요)
+        s.pop(key, None)
+    assert f"국내 {key} 채움 변화" in failed_names(check(cur, prev, final))
+
+
+def test_small_korean_dividend_coverage_dip_passes():
+    cur, prev, final = good_pair()
+    with_dividends(cur)
+    with_dividends(prev)
+    for s in kr_of(cur)[20::20]:                               # 5% 비움 → 통과
+        s.pop("dps", None)
+        s.pop("dy", None)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert {r[0] for r in rep.rows} >= {"국내 dps 채움 변화", "국내 dy 채움 변화"}

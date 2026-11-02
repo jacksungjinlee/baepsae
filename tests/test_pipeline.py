@@ -977,3 +977,187 @@ def test_jacks_group_decisions_2026_11_01():
     assert F.ksic_group("64992", TABLES["kmap"]) == "holding"
     names = {k: v["name"] for k, v in TABLES["groups"].items()}
     assert (names["furniture"], names["logistics"], names["services"]) == ("가구·기타 제조", "물류·운송", "기업 서비스")
+
+
+# ── v17.5.2: 미국 우선주·예탁증서 · 한국 종목의 미국 상장분 · DART 연결 끊김 · 쓸 수 없는 매출의 g3 ─────────
+def us_rows(n_common, no_cap=(), extra=()):
+    """회사 주식 n_common 개(시가총액·거래대금 있음) + 시가총액 없는 티커들 + 그 밖의 줄."""
+    rows = [{"t": f"C{i:03d}", "price": 10.0, "cap": 5.0, "val": 100.0, "etf": False} for i in range(n_common)]
+    rows += [{"t": t, "price": 25.0, "val": 900.0, "etf": False} for t in no_cap]
+    return rows + list(extra)
+
+
+def test_us_preferred_and_depositary_shares_are_left_out():
+    # 2026-11-03 발행본: STRC(변동금리 우선주)·GOOGM·GOOGN(예탁증서)만 거래대금은 있는데 시가총액이 없었어요 (746개 중 3개)
+    extra = [{"t": "SPY", "price": 500.0, "val": 9e4, "etf": True},           # ETF 는 시가총액이 없어도 우선주가 아니에요
+             {"t": "NOINFO", "price": 3.0, "etf": False}]                      # 야후 정보가 아예 없는 줄은 그대로 (검증이 세요)
+    us = us_rows(743, ("STRC", "GOOGM", "GOOGN"), extra)
+    drop, no_cap, n = F.us_preferred_like(us)
+    assert drop == ["GOOGM", "GOOGN", "STRC"] and n == 746
+    out = F.clean_us_list(us, frozenset(), {})
+    assert {"STRC", "GOOGM", "GOOGN"}.isdisjoint(r["t"] for r in out)
+    assert {"SPY", "NOINFO", "C000"} <= {r["t"] for r in out} and len(out) == len(us) - 3
+
+
+def test_many_us_rows_without_market_cap_is_a_data_problem_not_preferred(capsys):
+    # 5% 넘게 비면 야후가 시가총액을 안 보낸 거예요: 아무것도 빼지 않고 크게 알려요 (검증의 '미국 시가총액 채움'이 잡아요)
+    us = us_rows(94, [f"N{i}" for i in range(6)])                            # 6 / 100 > 5%
+    assert F.us_preferred_like(us)[0] == []
+    out = F.clean_us_list(us, frozenset(), {})
+    assert len(out) == 100 and "데이터 문제" in capsys.readouterr().out
+    us = us_rows(95, [f"N{i}" for i in range(5)])                            # 5 / 100 = 5% → 아직 우선주로 봐요 (2.0 과 같은 경계)
+    assert len(F.us_preferred_like(us)[0]) == 5
+
+
+def test_us_no_cap_share_matches_the_2_0_engine():
+    with open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8") as f:
+        m = re.search(r"export const US_NO_CAP_MAX_SHARE = ([0-9.]+);", f.read())
+    assert m and float(m.group(1)) == F.US_NO_CAP_MAX_SHARE == 0.05
+
+
+def test_us_listing_of_a_korean_company_is_dropped(capsys):
+    dups = F.load_us_kr_duplicates()
+    us = us_rows(10, extra=[{"t": "SKHY", "nk": "SK hynix Inc.", "price": 500.0, "cap": 1400.0, "val": 9e4, "etf": False}])
+    out = F.clean_us_list(us, frozenset({"000660", "005930"}), dups)
+    assert "SKHY" not in {r["t"] for r in out} and len(out) == 10
+    assert "SKHY(=000660)" in capsys.readouterr().out
+
+
+def test_mapped_us_ticker_stays_when_the_korean_stock_is_missing(capsys):
+    # 국내 목록에서 000660 이 빠진 날 SKHY 까지 빼면 SK하이닉스가 통째로 사라져요 → 남기고 크게 알려요
+    us = us_rows(10, extra=[{"t": "SKHY", "price": 500.0, "cap": 1400.0, "val": 9e4, "etf": False}])
+    out = F.clean_us_list(us, frozenset({"005930"}), F.load_us_kr_duplicates())
+    assert "SKHY" in {r["t"] for r in out}
+    log = capsys.readouterr().out
+    assert "!!" in log and "SKHY(≠000660)" in log
+
+
+def test_us_kr_duplicate_table_is_reviewed_and_strict(tmp_path):
+    dups = F.load_us_kr_duplicates()
+    assert dups["SKHY"][0] == "000660"
+    assert all(len(k) == 6 and why for k, why in dups.values())
+    assert "CPNG" not in dups                       # 쿠팡은 미국 회사예요 (한국 상장 종목 없음) — 중복이 아니에요
+    p = tmp_path / "d.csv"
+    for bad in ("ticker,krx,reason\nskhy,000660,소문자\n", "ticker,krx,reason\nSKHY,660,코드 짧음\n",
+                "ticker,krx,reason\nSKHY,000660,\n", "ticker,krx,reason\nSKHY,000660,a\nSKHY,000660,b\n"):
+        p.write_text(bad, encoding="utf-8")
+        with pytest.raises(RuntimeError):
+            F.load_us_kr_duplicates(str(p))
+
+
+class _Answer:
+    """가짜 DART 응답 (bad=True 면 JSON 이 아닌 응답 — 서버는 답했어요)."""
+    def __init__(self, js=None, bad=False):
+        self.js, self.bad, self.status_code = js, bad, 200
+
+    def json(self):
+        if self.bad:
+            raise ValueError("JSON 아님")
+        return self.js
+
+
+def fake_requests(monkeypatch, plan):
+    """requests.get 을 가짜로: plan(n) 이 n 번째 호출의 결과 (예외면 던져요). 호출 기록을 돌려줘요."""
+    calls = []
+
+    def get(url, params=None, timeout=None):
+        calls.append(url)
+        x = plan(len(calls))
+        if isinstance(x, BaseException):
+            raise x
+        return x
+    monkeypatch.setattr(F.requests, "get", get)
+    return calls
+
+
+def test_dart_stops_calling_after_30_network_failures_in_a_row(tmp_path, monkeypatch, capsys):
+    # 2026-11-02 01:44–03:40 KST: 모든 호출이 연결 시간 초과 → 2시간을 기어갔어요
+    calls = fake_requests(monkeypatch, lambda n: F.requests.exceptions.ConnectTimeout("connect timeout"))
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    for _ in range(100):
+        assert c.get("list.json", {}) is None
+    assert len(calls) == F.DART_DOWN_AFTER == 30
+    assert c.down == "ConnectTimeout" and c.skipped_down == 70
+    assert "!! DART 연결 안 됨: 연속 30회 실패" in c.summary()
+    assert "DART 연결 안 됨" in capsys.readouterr().out
+    # 멈춘 뒤에도 예전에 찾은 값(보관본)은 그대로 써요 — 네트워크 호출 없이
+    c.entries["C1|2026|11012|CFS"] = {"st": "000", "at": "2026-01-01", "d": {"rev": 7.0}}   # 90일 지나 재확인 대상
+    assert c.report("x", "C1", 2026, "11012", "CFS", F.parse_dart_quarter) == {"rev": 7.0}
+    assert c.report("x", "C2", 2026, "11012", "CFS", F.parse_dart_quarter) is None
+    assert "C2|2026|11012|CFS" not in c.entries          # '없음'으로 저장하지 않아요 (다음 실행이 다시 물어봐요)
+    assert len(calls) == 30
+    assert c.raise_if_fatal() is None                     # 실행은 이어가고, 빠진 새 값은 검증의 채움 검사가 잡아요
+
+
+def test_dart_down_counter_resets_when_the_server_answers(tmp_path, monkeypatch):
+    def plan(n):
+        if n in (30, 60):
+            return _Answer({"status": "000", "list": []}) if n == 30 else _Answer(bad=True)   # 정상 답 · JSON 아닌 답
+        return F.requests.exceptions.ReadTimeout("read timeout") if n < 30 else F.requests.exceptions.ConnectionError("reset")
+    calls = fake_requests(monkeypatch, plan)
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    for _ in range(89):                                   # 29 실패 · 답 · 29 실패 · 답 · 29 실패
+        c.get("list.json", {})
+    assert not c.down and len(calls) == 89 and c.net_streak == 29
+    c.get("list.json", {})                                # 30번째 연속 실패
+    assert c.down == "ConnectionError"
+    c.get("list.json", {})
+    assert len(calls) == 90
+
+
+def test_dart_status_codes_never_count_as_network_failures(tmp_path, monkeypatch):
+    # '아직 없음'(013)·점검(800) 같은 상태 코드는 서버가 답한 거예요: 세지 않고 오히려 0 으로 돌려요
+    def plan(n):                                          # 29 번 시간 초과 · 상태 코드 답 · 29 번 시간 초과 · …
+        if n % 30:
+            return F.requests.exceptions.ConnectTimeout("t")
+        return _Answer({"status": "013" if n % 60 else "800"})
+    calls = fake_requests(monkeypatch, plan)
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    for _ in range(300):
+        c.get("list.json", {})
+    assert not c.down and len(calls) == 300 and (c.status["013"], c.status["800"]) == (5, 5)
+    calls2 = fake_requests(monkeypatch, lambda n: _Answer({"status": "013"}))
+    for _ in range(100):
+        c.get("list.json", {})
+    assert not c.down and len(calls2) == 100
+
+
+@pytest.mark.parametrize("rev, g3, ok", [
+    ([0.0, 0.0, 0.0], 13.0, False),              # 코오롱티슈진 (2026-11-03 발행본)
+    ([0.0, 0.0, 0.0], -46.6, False),             # 네오이뮨텍
+    ([0.1, 0.0, 0.0], 813.5, False),             # 프레스티지바이오파마: 0.0 으로 보이는 전전기 매출 대비 연평균
+    ([21.7, 275.1, 0.0], -92.1, True),           # 에이프릴바이오: 전전기 0 → 전기 대비 1년 성장
+    ([481.6, 104.7, 0.0], 359.8, True),          # 뉴온
+    ([3008709.0, 2589355.0, 2702900.0], 5.5, True),
+    ([70.6, 19.0, 0.1], 2167.6, True),           # 전전기 0.1억원: 발행되는 값으로 보이니 써요
+    ([100.0, 80.0, None], 25.0, True),           # 전전기 빈 칸 → 1년 성장
+    ([100.0, 80.0, -3.0], 25.0, True),           # 전전기 음수 → 1년 성장
+    ([100.0, 0.0, None], 999.0, False),
+    ([-5.0, 10.0, None], -150.0, False),         # 음수 매출
+    ([50.0, 40.0, 0.0], 400.0, False),           # 전전기 0.0 인데 1년 성장(25%)으로 설명 안 됨 → 아주 작은 값 대비였던 것
+    (None, 10.0, False),
+    ([100.0, 80.0, 60.0], None, False),
+    ([100.0, 80.0, 60.0], float("nan"), False),
+])
+def test_g3_needs_usable_revenue(rev, g3, ok):
+    assert F.g3_usable(rev, g3) is ok
+
+
+def test_g3_without_usable_revenue_is_not_published(monkeypatch, tmp_path, capsys):
+    import copy
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {"950160": "C1", "005930": "C2"})
+    monkeypatch.setattr(F, "dart_quarter", lambda *a, **k: None)
+    fins = {"C1": {"debt": 562.0, "opm": -432.7, "g3": 13.0,
+                   "_fin": {"rev": [0.0, 0.0, 0.0], "op": [-0.2, -0.2, -0.2], "ni": [-1.4, -0.2, -0.1], "eq": 0.4}},
+            "C2": {"debt": 27.0, "g3": 5.5,
+                   "_fin": {"rev": [3008709.0, 2589355.0, 2702900.0], "op": [1.0, 1.0, 1.0], "ni": [1.0, 1.0, 1.0]}}}
+    monkeypatch.setattr(F, "dart_financials", lambda client, corp, yr: copy.deepcopy(fins[corp]) if yr == 2025 else {})
+    monkeypatch.setattr(F, "dart_dividend", lambda client, corp, yr: {})
+    kr = [{"t": "950160", "nk": "코오롱티슈진", "cap": 1.2}, {"t": "005930", "nk": "삼성전자", "cap": 1300.0}]
+    _, fin = F.enrich_with_dart(kr, c)
+    assert "g3" not in kr[0] and kr[0]["debt"] == 562.0 and fin["950160"]["rev"] == [0.0, 0.0, 0.0]
+    assert kr[1]["g3"] == 5.5                             # 쓸 수 있는 매출이면 값은 그대로
+    corp = F.build_corp([dict(s, cls="kr", price=1.0) for s in kr], fin, "2026-11-02")
+    assert corp["companies"][0]["g3"] is None and corp["companies"][1]["g3"] == 5.5
+    assert "비운 곳 1: 950160 코오롱티슈진" in capsys.readouterr().out
