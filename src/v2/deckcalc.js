@@ -2,9 +2,9 @@
 // plus the code -> copy mapping for reasons, clashes and cautions.
 import {
   screen, splitCounts, survivorCheck, candidates, preselect, size, planShares, annualDividend, estimate2022,
-  deckVol, num, liquidity, isStockLike,
+  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup,
 } from "./engine.js";
-import { C, fill, nf, p1, wonText } from "./format.js";
+import { C, fill, nf, p1, wonText, signed } from "./format.js";
 
 // Everything the builder needs for the current settings. blocked = 후보 고르기 could not be filled: a market has
 // fewer survivors than it must fill, or the industry limits leave too few pickable names (pre.blocked says which).
@@ -115,11 +115,56 @@ export function cautionTexts(c, s) {
     case "pbrHigh": return [fill(K.pbrHigh, { metric: "PBR", x: nf(c.pbr, 2) })];
     case "debtHigh": return [fill(K.debtHigh, { pct: nf(Math.round(c.debt)) })];
     case "revFall": return [K.revFall];
-    case "opFall": return [K.opFallFull || fill(K.opFall, { pct: signedPct(c.pct) })];
+    case "opFall": return opPieces(c.op, c.pct);
     case "volHigh": return K.volHigh ? [fill(K.volHigh, { vol: p1(c.vol) })] : [];
     case "divDrop": return [fill(K.divDrop, { name: s.nk, a: nf(Math.round(c.a)), b: nf(Math.round(c.b)) }), K.divDropBody];
     default: return [];
   }
+}
+
+// The rule book saved for one plan row at 샀어요 (the same call 매수 계획 shows). Cushion funds get the band only.
+export function rulesFor(load, row, st) {
+  const s = row.s;
+  if (row.kind === "cushion") return ruleBook({ ...s, cls: "etf" }, null, {}, row.targetW).filter((x) => x.id === "band");
+  return ruleBook(s, load.coByT.get(s.t) || null, st.points, row.targetW);
+}
+
+// The deck record saved at 샀어요 (store.js validates it on read and import). Besides the rule books it keeps the plan's
+// own numbers: plannedQty and planPx per holding (the price the plan used, in the stock's own currency) and planFx (the
+// USD/KRW rate the plan used). The daily check takes the whole-share rounding gap from these only (rules.planWeights),
+// never from the quantities or prices typed in the sheet (purchases).
+export function deckRecord({ load, st, plan, purchases, id, today }) {
+  const fx = num(load.data.fx);
+  return {
+    id, name: deckDisplayName(st), createdAt: today, pxDate: load.data.pxDate, fyNote: "rule inputs as of purchase",
+    ...(fx > 0 ? { planFx: fx } : {}),
+    settings: { deck: st.deck, points: st.points, strict: st.strict, exclude: st.exclude, mix: st.mix, count: st.count, method: st.method,
+      maxPct: st.maxPct, cushion: st.cushion, amountMan: st.amountMan, pinned: st.pinned },
+    holdings: plan.rows.map((x) => ({ t: x.t, nk: x.s.nk, cls: x.s.cls, ind: hasGroup(x.s) ? x.s.ind : null, kind: x.kind, target: x.targetW,
+      reasons: x.reasons, setAt: today, plannedQty: x.shares, ...(num(x.s.price) > 0 ? { planPx: x.s.price } : {}), rules: rulesFor(load, x, st) })),
+    purchases,
+  };
+}
+
+// ---------------- 영업이익 2년 연속 감소 (후보 고르기 주의할 점 · 내 덱 매일 점검) ----------------
+// One wording for both screens. op = [this year, last year, two years ago] in 억원 (corp.json).
+// Amount in 억원 (조원 from 1조): needs the unit wording (pending app.eok / app.jo), null until then.
+export function eokText(v) {
+  if (!C.app.eok || num(v) == null) return null;
+  const a = Math.abs(v), neg = v < 0;
+  if (a >= 10000 && C.app.jo) return signed(fill(C.app.jo, { n: nf(a / 10000, 1) }), neg);
+  return signed(fill(C.app.eok, { n: nf(Math.round(a)) }), neg && Math.round(a) > 0);
+}
+// "{two years ago} → {last year} → {this year}", oldest first like "주당 {a}원 → {b}원". null while the unit waits.
+export function opAmounts(op) {
+  const xs = op ? [op[2], op[1], op[0]].map(eokText) : [];
+  return xs.length === 3 && xs.every(Boolean) ? xs.join(" → ") : null;
+}
+// The fact line: the approved sentence when Jack says yes (pick.caution.opFallFull), else "영업이익 (작년 대비) −x%" when
+// last year was a profit, else just "영업이익"; then the three amounts once their unit is approved.
+export function opPieces(op, pct) {
+  const head = C.pick.caution.opFallFull || (pct != null && Number.isFinite(pct) ? fill(C.pick.caution.opFall, { pct: signedPct(pct) }) : C.plan.rules.opProfit);
+  return [head, opAmounts(op)].filter(Boolean);
 }
 
 export const aboutWon = (won) => fill(C.app.about, { x: wonText(won) });
