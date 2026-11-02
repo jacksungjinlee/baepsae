@@ -11,7 +11,7 @@ import {
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, tx, tap } from "./ui.jsx";
-import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashPieces } from "./deckcalc.js";
+import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
 
@@ -130,12 +130,15 @@ function SurvivorNotes({ ds, two }) {
           {" "}<span>{C.build.indFix}</span>
         </Note>
       )}
-      {ds.clash && (
-        <Note tone="watch" data-ui-v2="clash">
-          {clashPieces(ds.clash).map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}
-          {C.plan.clash && <span>{" "}{C.plan.clash}</span>}
-        </Note>
-      )}
+      {ds.clash && (() => {
+        const v = clashView(ds.clash);
+        return (
+          <Note tone="watch" data-ui-v2="clash">
+            {v.sentence && <div data-ui-v2="clash-text">{v.sentence}</div>}
+            <div data-ui-v2="clash-list">{v.pieces.map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}</div>
+          </Note>
+        );
+      })()}
     </div>
   );
 }
@@ -341,6 +344,7 @@ function StepTerms({ st, set, ds, load }) {
                 ))}
               </div>
             )}
+            {y2022 && <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{C.plan.y2022Source}</div>}
           </div>
         )}
         <div style={{ display: "flex", gap: SPACE(2), alignItems: "flex-start", marginTop: SPACE(3) }}>

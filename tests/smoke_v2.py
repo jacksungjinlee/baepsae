@@ -322,6 +322,7 @@ def scene_normal(R, files, width):
         page.get_by_role("button", name="+1,000만").first.click()
         see(page, "2022년 같은 해가 오면")
         page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="y2022-methods"] [data-ui-v2="y2022-source"]').inner_text() == C["plan"]["y2022Source"]
         R.collect(page)
         no_hscroll(page, width)
         assert "후보" in action(page).inner_text()
@@ -333,6 +334,21 @@ def scene_normal(R, files, width):
         first_kr = page.locator("section[data-market='kr'] [data-cand]").first
         first_kr.get_by_role("button", name=C["pick"]["receipts"]).click()
         see(page, "2025년 사업보고서 기준")
+        krc = page.locator("section[data-market='kr'] [data-cand]")
+        for i in range(1, krc.count()):                                 # 근거 수치를 모두 열어요 (첫 후보는 이미 열림)
+            krc.nth(i).get_by_role("button", name=C["pick"]["receipts"]).click()
+        rec = page.locator("section[data-market='kr'] [data-ui-v2='receipts']")
+        assert rec.count() == krc.count(), (rec.count(), krc.count())
+        want = {"y2": C["pick"]["receipt"]["growthKr"], "y1": C["pick"]["receipt"]["growthKr1y"]}     # 계산 방식 → 라벨
+        labels = [(g.get_attribute("data-basis"), g.locator("span").first.inner_text()) for g in page.locator(
+            "section[data-market='kr'] [data-ui-v2='receipts'] [data-ui-v2='growth']").all()]
+        assert labels and all(want.get(b) == t for b, t in labels), labels
+        for i in range(1, krc.count()):
+            krc.nth(i).get_by_role("button", name=C["pick"]["receipts"]).click()
+        names = "|".join(map(re.escape, ["PBR", C["pick"]["receipt"]["debt"], C["pick"]["checks"]["rev"], C["plan"]["rules"]["opProfit"],
+                                         C["pick"]["checks"]["vol"], C["plan"]["rules"]["dividend"]]))
+        for t in page.locator('[data-ui-v2="caution-none"]').all_inner_texts():
+            assert re.fullmatch(rf"(?:{names})(?: · (?:{names}))* 모두 확인했어요\. 주의할 점은 없어요\.", t), t
         R.collect(page)
         no_hscroll(page, width)
         click_next(page)
@@ -340,6 +356,7 @@ def scene_normal(R, files, width):
         assert md in date_line(page)
         assert page.locator("[data-row]").count() == 6
         see(page, C["plan"]["y2022Note"])
+        assert page.locator('[data-ui-v2="y2022"] [data-ui-v2="y2022-source"]').inner_text() == C["plan"]["y2022Source"]
         see(page, "종가와 환율")
         rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
         assert rules.count() == 6
@@ -368,6 +385,7 @@ def scene_normal(R, files, width):
         date.fill("2099-01-02")                                       # 미래 날짜는 기록하지 않아요
         page.get_by_role("button", name=C["plan"]["save"]).click()
         assert date.get_attribute("aria-invalid") == "true" and page.get_by_text(C["plan"]["done"]).count() == 0
+        assert sheet.locator('[data-ui-v2="bad-input"]').inner_text() == C["plan"]["badInput"]
         date.fill("")
         qty = sheet.locator("[data-record] input").first
         qty.fill("1.5")                                               # 소수 주식도 받지 않아요
@@ -443,6 +461,14 @@ def scene_normal(R, files, width):
         page.locator('[data-ui-v2="import-file"]').set_input_files(bad)
         page.locator('[data-ui-v2="import-bad"]').wait_for(state="visible")
         assert page.get_by_text("내 종목 6개").count() == 1, "잘못된 파일이 기록을 지웠어요"
+        box = page.locator('[data-ui-v2="import-bad"]')
+        assert box.get_attribute("data-why") == "bad" and box.inner_text() == C["store"]["importFail"], box.inner_text()
+        prev = os.path.join(tempfile.mkdtemp(), "preview.json")
+        with open(prev, "w", encoding="utf-8") as fh:
+            json.dump({**exported, "preview": True}, fh, ensure_ascii=False)     # 미리 보기에서 내보낸 기록
+        page.locator('[data-ui-v2="import-file"]').set_input_files(prev)
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"import-bad\"]').dataset.why === 'preview'")
+        assert box.inner_text() == C["store"]["otherKind"] and page.get_by_text("내 종목 6개").count() == 1, box.inner_text()
         R.collect(page)
     R.check(page, S, "기록 내보내기 → 지우기 → 불러오기 (잘못된 파일은 기록을 건드리지 않음)", round_trip)
 
@@ -456,6 +482,9 @@ def scene_normal(R, files, width):
                 page.locator(f'[data-card="{card}"] button[aria-label*="점수 더하기"]').click()
         assert page.locator('[data-ui-v2="points-left"]').inner_text() == "0"
         assert page.locator('[data-card="growth"] button[aria-label*="점수 더하기"]').is_disabled()
+        assert page.locator('[data-card="growth"]').get_by_text(C["build"]["cards"]["growth"]["basis"], exact=True).count() == 1
+        stable = page.locator('[data-card="stable"]').inner_text()                              # 두 시장 모두: 어느 한 비율 이름도 아님
+        assert C["build"]["cards"]["stable"]["basis"] == "부채 부담 낮은 순" and "부채 부담 낮은 순" in stable and "부채비율" not in stable, stable
         see(page, C["build"]["s1"]["finNA"])
         R.collect(page)
         click_next(page)
@@ -540,6 +569,8 @@ def scene_normal(R, files, width):
         page.locator('[data-ui-v2="clash"]').wait_for(state="visible")
         txt = page.locator('[data-ui-v2="clash"]').inner_text()
         assert "종목 수" in txt and "한 종목 최대 10%" in txt, txt
+        rows = [x.strip() for x in txt.split("\n") if x.strip()]
+        assert rows[0] == C["plan"]["clash"] and "종목 수" in rows[1] and "한 종목 최대 10%" in rows[1], rows   # 문장 → 그 아래 조건 목록
         assert not action(page).is_enabled(), "막혔는데 후보 고르기로 갈 수 있어요"
         # 설정이 부딪힌 것이라 '기준을 낮춰 주세요'는 틀린 조언이에요: 버튼은 '후보 n개 보기'(꺼짐), 조건은 위 줄에서
         assert action(page).inner_text() != C["build"]["lowerBtn"] and action(page).inner_text().startswith("후보"), action(page).inner_text()
@@ -629,8 +660,25 @@ def scene_us_date(R, files, width):
         see(page, C["pick"]["title"])
         see(page, "미국 종목은 현지 기준 10월 29일 종가예요.")
         assert "10월 30일" in date_line(page)
+        us = page.locator("section[data-market='us'] [data-cand]")
+        for i in range(us.count()):
+            us.nth(i).get_by_role("button", name=C["pick"]["receipts"]).click()
+        us_rows = page.locator("section[data-market='us'] [data-ui-v2='debt-us']")
+        assert us_rows.count() >= 1 and us_rows.first.inner_text().startswith(C["pick"]["receipt"]["debtUs"]), us_rows.count()
+        assert "부채비율" not in page.locator("section[data-market='us']").inner_text(), "미국 종목에 '부채비율'"     # Jack, 2026-11-02
+        ug = page.locator("section[data-market='us'] [data-ui-v2='growth']")                      # Jack, 2026-11-02 (야후: 분기 대비)
+        assert ug.count() >= 1 and all(g.locator("span").first.inner_text() == C["pick"]["receipt"]["growthUs"] for g in ug.all()), ug.count()
         R.collect(page)
-    R.check(page, f"미국 날짜 {width}", "미국 종가 날짜가 다르면 후보 고르기에 '미국 종목은 현지 기준 10월 29일 종가예요.'", run)
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        warn = page.locator('[data-ui-v2="deck-warn"]')                 # 장기 우량주 · 미국 30% · 1,000만원: 미국 종목을 사요
+        tax = warn.locator('[data-ui-v2="us-tax"]')
+        assert tax.count() == 1, "미국 종목을 사는데 세금 줄이 없어요"
+        assert tax.inner_text().split("\n") == [C["plan"]["deckWarn"]["usTax"], C["plan"]["deckWarn"]["usTaxSource"]], tax.inner_text()
+        knew = warn.get_by_text(C["plan"]["deckWarn"]["knew"])
+        assert knew.count() == 0 or knew.bounding_box()["y"] < tax.bounding_box()["y"], "세금 줄이 '알고 시작한 일' 앞에 와요"
+        R.collect(page)
+    R.check(page, f"미국 날짜 {width}", "미국: 현지 종가 날짜 · 차입금 비율(부채비율 아님) · 세금 줄과 출처(2026년 세법 기준)", run)
     ctx.close()
     srv.shutdown()
 
@@ -660,6 +708,67 @@ def scene_old_app(R, files, width, slots, expect):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, f"예전 기록 {width}", f"예전 뱁새 기록 {slots[:24]!r} → 안내 {'보임' if expect else '없음'}", run)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_growth(R, files, width):
+    """성장 라벨은 g3 가 실제로 계산된 방식대로 (Jack, 2026-11-02): 재작년 매출을 비우면 모든 한국 종목이 '최근 1년'이 되고,
+    발표된 g3 를 다시 계산한 값과 다르게 바꾼 종목(절반)은 성장 줄이 숨어요 (추측하지 않아요)."""
+    f = clone(files)
+    co = {c["t"]: c for c in f["corp.json"]["companies"]}
+    off = set()
+    for i, s in enumerate(x for x in f["data.json"]["stocks"] if x["cls"] == "kr"):
+        c = co.get(s["t"])
+        rev = c and c.get("rev")
+        if not rev or not rev[0] or not rev[1] or rev[1] <= 0:
+            continue
+        rev[2] = None                                                  # 재작년 매출 없음 → 1년 변화
+        s["g3"] = round((rev[0] / rev[1] - 1) * 100, 1)
+        if i % 2:
+            s["g3"] = round(s["g3"] + 5, 1)                            # 다시 계산한 값과 다름 → 숨김
+            off.add(s["t"])
+    srv, ctx, page, _ = R.open(build_site(f), width)
+
+    def run():
+        wait_ready(page)
+        page.locator('[data-deck="income"]').click()
+        click_next(page)
+        click_next(page)
+        page.get_by_role("button", name="+1,000만").first.click()
+        click_next(page)
+        see(page, C["pick"]["title"])
+        krc = page.locator("section[data-market='kr'] [data-cand]")
+        for i in range(krc.count()):
+            krc.nth(i).get_by_role("button", name=C["pick"]["receipts"]).click()
+        seen = {"y1": 0, "hidden": 0}
+        for i in range(krc.count()):
+            card, t = krc.nth(i), krc.nth(i).get_attribute("data-cand")
+            g = card.locator("[data-ui-v2='growth']")
+            if t in off:
+                assert g.count() == 0, f"{t}: 계산 방식을 알 수 없는데 성장 줄이 보여요"
+                seen["hidden"] += 1
+            elif g.count():
+                assert g.get_attribute("data-basis") == "y1" and g.locator("span").first.inner_text() == C["pick"]["receipt"]["growthKr1y"], t
+                seen["y1"] += 1
+        assert seen["y1"] >= 1 and seen["hidden"] >= 1, seen
+        R.collect(page)
+    R.check(page, f"성장 라벨 {width}", "한국 성장 줄: 1년 변화면 '매출 증가율 (최근 1년)', 다시 계산이 맞지 않으면 숨김", run)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_locked(R, files, width):
+    init = "(() => { try { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('baepsae2.v1', '{\"v\":9,\"stuff\":[1]}'); sessionStorage.setItem('seeded', '1'); } } catch (e) {} })();"
+    srv, ctx, page, _ = R.open(build_site(files), width, init=init)
+
+    def run():
+        wait_ready(page)
+        tab(page, C["app"]["tabs"]["deck"])
+        assert page.locator('[data-ui-v2="store-locked"]').inner_text() == C["store"]["locked"]
+        assert page.evaluate("localStorage.getItem('baepsae2.v1')") == '{"v":9,"stuff":[1]}', "읽지 못한 기록을 바꿨어요"
+        R.collect(page)
+    R.check(page, f"읽지 못한 기록 {width}", "알 수 없는 형식으로 저장된 기록 → '이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요.'", run)
     ctx.close()
     srv.shutdown()
 
@@ -1263,6 +1372,7 @@ def main():
                       lambda: scene_refused(R, files, width, "옛 형식"), lambda: scene_refused(R, files, width, "404"),
                       lambda: scene_refused(R, files, width, "깨짐"), lambda: scene_missing_fields(R, files, width, ["ind", "indName"]),
                       lambda: scene_missing_fields(R, files, width, ["val20"]), lambda: scene_no_storage(R, files, width),
+                      lambda: scene_locked(R, files, width), lambda: scene_growth(R, files, width),
                       lambda: scene_us_date(R, files, width),
                       lambda: scene_old_app(R, files, width, '[{"id":"s1","name":"포트폴리오 1"}]', True),
                       lambda: scene_old_app(R, files, width, "[]", False),

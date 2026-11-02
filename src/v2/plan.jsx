@@ -6,7 +6,7 @@ import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -64,13 +64,15 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
 }
 
 function Clash({ parts }) {
-  const pieces = clashPieces(parts);
+  const { pieces, sentence } = clashView(parts);
   return (
     <div data-ui-v2="clash" role="alert" style={{ marginTop: SPACE(3), background: COLOR.watchBg, borderRadius: RADIUS.md, padding: SPACE(4), display: "flex", gap: SPACE(2) }}>
       <Icon name="alert" size={20} color={COLOR.watch} />
       <div style={tx(SIZE.sm, WEIGHT.bold, COLOR.watch)}>
-        {pieces.map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}
-        {C.plan.clash && <div>{C.plan.clash}</div>}
+        {sentence && <div data-ui-v2="clash-text">{sentence}</div>}
+        <div data-ui-v2="clash-list" style={sentence ? tx(SIZE.xs, WEIGHT.semi, COLOR.watch, { marginTop: SPACE(1) }) : undefined}>
+          {pieces.map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}
+        </div>
       </div>
     </div>
   );
@@ -98,6 +100,7 @@ function Summary({ r }) {
           <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.y2022}</div>
           {big(aboutWon(Math.min(0, y2022.won)))}
           <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Note}</div>
+          <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
           {partial(y2022.missing)}
         </div>
       )}
@@ -218,17 +221,25 @@ function Rules({ load, rows, st, ds }) {
 function DeckWarnings({ rows, st }) {
   const W = C.plan.deckWarn;
   const held = rows.filter((x) => x.shares > 0 && x.kind !== "cushion");
-  const lines = [];
-  if (held.some((x) => x.s.ind === "bank") || (st.points.div || 0) > 0) lines.push(W.rates);
+  // Ways the deck can fall (rates, semiconductors), closed by "이런 이유로 떨어지는 건 처음부터 알고 시작한 일이에요."; the US
+  // tax line is not a fall, so it stands apart, with its source and year under it (REDESIGN 4.1).
+  const falls = [];
+  if (held.some((x) => x.s.ind === "bank") || (st.points.div || 0) > 0) falls.push(W.rates);
   const semi = held.find((x) => x.s.ind === "semi");
-  if (semi) lines.push(fill(W.semi, { name: semi.s.nk }));
-  if (held.some((x) => x.s.cls === "us") && W.usTaxSource) lines.push(W.usTax, W.usTaxSource);   // needs its source and year
-  if (!lines.length) return null;
-  lines.push(W.knew);
+  if (semi) falls.push(fill(W.semi, { name: semi.s.nk }));
+  const tax = held.some((x) => x.s.cls === "us") && W.usTaxSource;   // needs its source and year
+  if (!falls.length && !tax) return null;
+  const line = (l, i) => <div key={i} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { padding: `${SPACE(1)}px 0` })}>{l}</div>;
   return (
     <Card data-ui-v2="deck-warn">
       <Label>{W.title}</Label>
-      {lines.map((l, i) => <div key={i} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { padding: `${SPACE(1)}px 0` })}>{l}</div>)}
+      {falls.length > 0 && [...falls, W.knew].map(line)}
+      {tax && (
+        <div data-ui-v2="us-tax" style={{ marginTop: falls.length ? SPACE(2) : 0 }}>
+          {line(W.usTax, "t")}
+          <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{W.usTaxSource}</div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -307,6 +318,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
           </div>
         ))}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
+        {tried && (badDate || parsed.some((r) => r.badQ || r.badP)) && <Note tone="watch" data-ui-v2="bad-input">{P.badInput}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={save}>{P.save}</Button></div>
       </div>
     </BottomSheet>

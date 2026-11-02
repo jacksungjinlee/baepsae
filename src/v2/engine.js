@@ -441,7 +441,7 @@ export function size({ picks, pinned = [], cushion = [], settings, amountWon }) 
   const k = mixKr(settings.mix);
   const clashOut = (parts) => ({ ok: false, clash: dedupe(parts) });
   if (N === 0) return clashOut([{ code: "count", n: 0 }]);
-  if (cushW > 0 && !cushion.length) return clashOut([{ code: "cushion" }]);
+  if (cushW > 0 && !cushion.length) return clashOut([{ code: "cushion", pct: settings.cushion }]);   // the safety funds are not in the data
   const counts = indCounts([...picks.map((p) => p.s), ...pinned]);
   const over = [...counts.entries()].filter(([, n]) => n > MAX_PER_IND);
   if (over.length) {
@@ -516,7 +516,7 @@ export function size({ picks, pinned = [], cushion = [], settings, amountWon }) 
       const scale = room / coreSum;
       for (const x of coreMem) { frozen.set(x.t, x.w * scale); indFrozen.add(x.t); }
     }
-    if (iter === 39) return clashOut([{ code: "ind" }]);
+    if (iter === 39) return clashOut(viol.map(([ind]) => ({ code: "ind", ind, indName: (all.find((x) => x.s.ind === ind) || { s: {} }).s.indName })));
   }
   for (const g of groups) {
     for (const x of g.members) {
@@ -705,6 +705,40 @@ export function deckVol(rows, st, amountWon) {
   const missing = total > 0 ? 1 - known / total : 0;
   if (overHalf(missing)) return { half: true, missing };
   return Number.isFinite(v) ? { vol: v, missing } : null;
+}
+
+// ---------------- 성장 (g3): how a Korean stock's number was made ----------------
+// fetch_data.py (parse_dart_list) makes g3 from the 사업보고서 revenue, in this order: the 2-year average growth when this
+// year's and two years ago's revenue are both positive, else the 1-year change when this year's is non-zero and last
+// year's is positive. corp.json keeps that revenue rounded to 0.1억 ([fy, fy-1, fy-2]) and g3 is rounded to 0.1, so the
+// check compares ranges, not points: each raw revenue lies within ±0.05억 of the rounded one, the published g3 within
+// ±0.05. A rule can apply only when the pipeline's branch order allows it for some raw revenue behind the rounded
+// numbers (both surely positive -> only the 2-year rule). The label is "y2" (최근 2년 연평균) when g3 fits the 2-year
+// range and not the 1-year range, "y1" (최근 1년) the reverse, and none when both or neither fit: then we cannot tell
+// how the number was made, and the growth row stays hidden. Never a guess. Korean stocks only.
+export const REV_HALF = 0.05;      // corp.json rev: rounded to 0.1억
+export const G3_HALF = 0.05;       // g3: rounded to 0.1 (%)
+export function growthBasis(s, co) {
+  const g = num(s && s.g3);
+  if (!s || s.cls !== "kr" || g == null || !co || !Array.isArray(co.rev)) return null;
+  const r = [0, 1, 2].map((i) => num(co.rev[i]));                  // null = not in the report (Python None: falsy)
+  const has = (i) => r[i] != null;
+  const lo = (i) => r[i] - REV_HALF, hi = (i) => r[i] + REV_HALF;
+  const pos = (x) => Math.max(x, 1e-9);
+  const sure2 = has(0) && has(2) && lo(0) > 0 && lo(2) > 0;         // the 2-year branch is certain
+  const may2 = has(0) && has(2) && hi(0) > 0 && hi(2) > 0;          // the 2-year branch is possible
+  const may1 = !sure2 && has(0) && has(1) && hi(1) > 0;             // this year may be non-zero, last year may be positive
+  const range2 = may2 ? [(Math.sqrt(pos(lo(0)) / hi(2)) - 1) * 100, lo(2) > 0 ? (Math.sqrt(hi(0) / lo(2)) - 1) * 100 : Infinity] : null;
+  let range1 = null;
+  if (may1) {
+    if (lo(1) > 0) {                                                // r0 / r1 - 1 is monotone in each: extremes at the corners
+      const c = [lo(0), hi(0)].flatMap((a) => [lo(1), hi(1)].map((b) => (a / b - 1) * 100));
+      range1 = [Math.min(...c), Math.max(...c)];
+    } else range1 = [-Infinity, Infinity];                          // last year may be ~0: any value
+  }
+  const fits = (rg) => !!rg && rg[0] <= g + G3_HALF + 1e-9 && rg[1] >= g - G3_HALF - 1e-9;
+  const in2 = fits(range2), in1 = fits(range1);
+  return in2 && !in1 ? "y2" : in1 && !in2 ? "y1" : null;
 }
 
 // ---------------- 주의할 점 (cautions) ----------------

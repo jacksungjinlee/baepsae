@@ -637,3 +637,41 @@ def test_industry_check_counts_the_safety_asset_share():
               "out = { with30: E.industryFits(stocks, [], { kr: 4, us: 2 }, st), with0: E.industryFits(stocks, [], { kr: 4, us: 2 }, st0) };",
               stocks=stocks)
     assert got == {"with30": True, "with0": False}, got
+
+
+# ── 성장 라벨: 한국 g3 가 실제로 어떻게 계산됐는지 (fetch_data.py 와 같은 규칙, 발표된 g3 와 0.1 안에서 맞을 때만) ──
+def test_korean_growth_is_labelled_by_how_it_was_calculated():
+    cases = {
+        "two years": (kr("000100", g3=10.0), {"rev": [121.0, 110.0, 100.0]}),        # √(121/100) − 1 = 10.0% → 2년 연평균
+        "one year": (kr("000200", g3=10.0), {"rev": [110.0, 100.0, None]}),          # 재작년 매출 없음 → 1년 변화 10.0%
+        "one year, old revenue negative": (kr("000300", g3=-50.0), {"rev": [50.0, 100.0, -5.0]}),
+        "one year, this year negative": (kr("000400", g3=-110.0), {"rev": [-10.0, 100.0, 0.0]}),   # 파이썬처럼 음수도 '있음'
+        "mismatch": (kr("000500", g3=12.0), {"rev": [121.0, 110.0, 100.0]}),          # 다시 계산하면 10.0%: 0.1 넘게 다름
+        "within rounding": (kr("000600", g3=10.08), {"rev": [121.0, 110.0, 100.0]}),
+        "just outside": (kr("000700", g3=10.11), {"rev": [121.0, 110.0, 100.0]}),
+        "no revenue": (kr("000800", g3=5.0), {"rev": [0.0, 0.0, 0.0]}),
+        "no corp row": (kr("000900", g3=5.0), None),
+        "no g3": (kr("001000", g3=None), {"rev": [121.0, 110.0, 100.0]}),
+        "us": (us("AAA", g3=10.0), {"rev": [121.0, 110.0, 100.0]}),
+        # corp.json 매출은 0.1억 단위로 반올림돼요: 그 범위 안이면 맞는 것으로 (2026-11-02 실제 데이터 458870)
+        "rounding": (kr("001100", g3=405.5), {"rev": [481.7, 81.0, 18.9]}),
+        # 재작년 매출이 0.0(반올림): 2년 규칙도 1년 규칙도 50% 를 만들 수 있어요 → 숨김
+        "both rules fit": (kr("001200", g3=50.0), {"rev": [0.1, 0.1, 0.0]}),
+        "only the 1-year rule fits": (kr("001300", g3=-50.0), {"rev": [0.1, 0.2, 0.0]}),
+        # 올해 매출이 없으면(None) 파이프라인은 g3 를 만들지 않아요: 어디서 온 g3 인지 몰라 숨김
+        "this year missing": (kr("001400", g3=-100.0), {"rev": [None, 100.0, 90.0]}),
+        "this year missing, 1 year only": (kr("001500", g3=-100.0), {"rev": [None, 100.0, None]}),
+        "this year 0.0": (kr("001600", g3=-100.0), {"rev": [0.0, 100.0, 90.0]}),       # 0 이면 둘 다 가능 → 숨김
+        "코오롱티슈진": (kr("950160", g3=13.0), {"rev": [0.0, 0.0, 0.0]}),
+        # 재작년 매출이 없으면(None) 2년 규칙은 불가능해요: 작은 매출이라도 1년 변화로. 0.0 이었다면 둘 다 가능해 숨겨요
+        "two years ago missing": (kr("001700", g3=100.0), {"rev": [0.2, 0.1, None]}),
+        "two years ago 0.0": (kr("001800", g3=100.0), {"rev": [0.2, 0.1, 0.0]}),
+        # 작년 매출이 없으면(None) 1년 규칙은 불가능해요: g3 가 있다면 2년 규칙에서 나온 것
+        "last year missing": (kr("001900", g3=100.0), {"rev": [0.2, None, 0.0]}),
+    }
+    got = run("out = Object.fromEntries(Object.entries(CASES).map(([k, [s, co]]) => [k, E.growthBasis(s, co)]));", CASES=cases)
+    assert got == {"two years": "y2", "one year": "y1", "one year, old revenue negative": "y1", "one year, this year negative": "y1",
+                   "mismatch": None, "within rounding": "y2", "just outside": None, "no revenue": None, "no corp row": None,
+                   "no g3": None, "us": None, "rounding": "y2", "both rules fit": None, "only the 1-year rule fits": "y1",
+                   "this year missing": None, "this year missing, 1 year only": None, "this year 0.0": None, "코오롱티슈진": None,
+                   "two years ago missing": "y1", "two years ago 0.0": None, "last year missing": "y2"}, got
