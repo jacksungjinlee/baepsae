@@ -10,7 +10,7 @@ import {
   marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, tx, tap } from "./ui.jsx";
 import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashPieces } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
@@ -92,9 +92,11 @@ function Steps({ load, builder, setBuilder, onExit }) {
   );
   return (
     <Page pad={SPACE(30)}>
-      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep}
-        right={step > 0 ? <button type="button" onClick={restart} style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.restart}</button> : null} />
-      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(1) })}>{C.build.title}</div>
+      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(1) }}>
+        <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.build.title}</div>
+        {step > 0 && <button type="button" onClick={restart} style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.restart}</button>}
+      </div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <StepDots step={step} />
       {step === 0 && <StepStart start={start} />}
@@ -146,6 +148,7 @@ function StepStart({ start }) {
         <div style={{ flex: 1 }}><ScreenTitle sub={s0.body}>{s0.title}</ScreenTitle></div>
         <img src="baepi-4.png" alt={s0.imgAlt} width={72} height={72} style={{ objectFit: "contain", marginTop: SPACE(2) }} />
       </div>
+      <OldAppNote />
       <div style={{ marginTop: SPACE(3) }}>
         <Option id="blank" title={s0.blank} sub={s0.blankSub} onClick={() => start(null)} />
         {DECKS.filter((d) => !d.hidden).map((d) => (
@@ -300,7 +303,7 @@ function StepTerms({ st, set, ds, load }) {
           return (
             <div key={t} style={{ display: "flex", alignItems: "center", gap: SPACE(2), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0 })}>{s.nk}</span>
-              <StatusChip tone="neutral">{s4.fixed}</StatusChip>
+              <span data-ui-v2="manual-chip"><StatusChip tone="neutral">{C.pick.manual}</StatusChip></span>
               <button type="button" aria-label={fill(s4.removeAria, { name: s.nk })} onClick={() => set({ pinned: st.pinned.filter((x) => x !== t) })}
                 style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{s4.remove}</button>
             </div>

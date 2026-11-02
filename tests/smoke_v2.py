@@ -32,7 +32,6 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from buildapp import built_dir  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
@@ -70,7 +69,7 @@ def build_site(files, raw=None, drop=()):
     site = tempfile.mkdtemp(prefix="baepsae-v2-")
     for f in SITE_FILES:
         shutil.copy(os.path.join(ROOT, f), site)
-    shutil.copy(os.path.join(built_dir(), "app.html"), site)
+    shutil.copy(os.path.join(ROOT, "app.html"), site)     # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(site, "fonts"))
     for name, obj in files.items():
         if name in drop:
@@ -129,7 +128,7 @@ class Runner:
         page = ctx.new_page()
         page.set_default_timeout(WAIT)
         page.on("pageerror", lambda e: self.errors.append(str(e)))
-        page.goto(base + "/app.html", wait_until="domcontentloaded")
+        page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -138,7 +137,8 @@ class Runner:
             fn()
             self.results.append((label, True, ""))
         except Exception as e:
-            self.results.append((label, False, str(e).splitlines()[0][:200]))
+            msg = (str(e).splitlines() or [type(e).__name__])[0]     # 메시지 없는 assert 도 이름으로 남겨요
+            self.results.append((label, False, msg[:200]))
             if self.shots:
                 os.makedirs(self.shots, exist_ok=True)
                 try:
@@ -177,7 +177,19 @@ def see(page, text, timeout=WAIT):
 
 
 def tab(page, label):
-    page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=label).click()
+    """아래 탭을 눌러요. 첫 화면이 덱 짜기면(저장한 덱이 없는 방문자) 아래 탭이 없어서, 먼저 오늘로 돌아가요."""
+    bar = page.locator('nav[data-ui="bottom-tab-bar"]')
+    if bar.count() == 0:
+        if label == C["app"]["tabs"]["build"]:
+            return
+        page.get_by_role("button", name=C["build"]["backToday"]).click()
+    bar.locator("button", has_text=label).click()
+
+
+def old_app_link(page):
+    link = page.locator('[data-ui-v2="old-app-link"]').first
+    link.wait_for(state="visible")
+    assert link.inner_text() == C["app"]["oldApp"] and link.get_attribute("href") == "./baepsae.html"
 
 
 def action(page):
@@ -213,13 +225,24 @@ def scene_normal(R, files, width):
     srv, ctx, page, base = R.open(build_site(files), width, accept_downloads=True)
     md = "10월 30일"
 
-    def today():
+    def landing():
         wait_ready(page)
+        see(page, C["build"]["s0"]["title"])                 # 저장한 덱이 없으면 덱 짜기부터
+        assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
+        old_app_link(page)
+        assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "예전 뱁새 기록이 없는데 안내가 보여요"
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "첫 화면: 저장한 덱이 없으면 덱 짜기 · 머리말에 '예전 뱁새 보기'", landing)
+
+    def today():
+        tab(page, C["app"]["tabs"]["today"])
         see(page, C["app"]["title"])
         assert md in date_line(page) and "멈췄어요" not in date_line(page)
         see(page, C["app"]["pending"])
         assert page.get_by_text("할 일").count() == 0, "오늘이 아직 점검하지 않는데 '할 일'이 보여요"
         assert page.title() == C["app"]["title"]
+        old_app_link(page)
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "오늘: 제목·내용 날짜·준비 중, 판정 없음", today)
@@ -250,7 +273,7 @@ def scene_normal(R, files, width):
         with page.expect_navigation():
             tab(page, C["app"]["tabs"]["search"])
         assert page.url.endswith("/baepsae.html"), page.url
-        page.goto(base + "/app.html", wait_until="domcontentloaded")
+        page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
         wait_ready(page)
     R.check(page, S, "탭: 찾기 → 지금 앱(baepsae.html)", search_tab)
 
@@ -334,9 +357,12 @@ def scene_normal(R, files, width):
         assert stored["v"] == 1 and len(stored["decks"]) == 1 and len(stored["decks"][0]["purchases"]) == 6, stored
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
+        see(page, C["app"]["pending"])                          # 저장한 덱이 있으면 오늘부터
+        assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 1 and page.get_by_text(C["build"]["s0"]["title"]).count() == 0
         tab(page, C["app"]["tabs"]["deck"])
         see(page, "배당 생활비 덱")
         see(page, "내 종목 6개")
+        old_app_link(page)
         assert page.get_by_text("평균 단가").count() == 6
         R.collect(page)
     R.check(page, S, "샀어요 → 기록하기 → 새로 고침해도 내 덱에 기록이 남아요", bought)
@@ -393,16 +419,28 @@ def scene_normal(R, files, width):
         pin_box = page.locator('[data-ui-v2="pinned"] input')
         pin_box.fill("005935")                                        # 우선주: 순위에는 없지만 꼭 담을 수 있어요
         page.get_by_role("button", name="삼성전자우 담기").click()
-        see(page, C["build"]["s4"]["fixed"])
+        added = page.locator('[data-ui-v2="pinned"] [data-ui-v2="manual-chip"]')
+        added.first.wait_for(state="visible")
+        assert added.count() == 1 and added.inner_text() == C["pick"]["manual"], \
+            f"조건 단계의 꼭 담을 종목에 '직접 추가' 하나만 있어야 해요: {added.all_inner_texts()}"   # Jack, 2026-11-01
+        assert "고정" not in page.locator('[data-ui-v2="pinned"]').inner_text(), "조건 단계에 '고정'이 남아 있어요"
         R.collect(page)
         click_next(page)
         see(page, C["pick"]["title"])
         assert page.locator("section[data-market='us']").count() == 0
         pinned = page.locator("[data-pinned='005935']")
         pinned.wait_for(state="visible")
-        assert C["build"]["s4"]["fixed"] in pinned.inner_text()
-        if C["pick"]["unverified"]:                       # Jack 승인 전에는 null (pending)
-            assert C["pick"]["unverified"] in pinned.inner_text()
+        assert pinned.locator('[data-ui-v2="manual-chip"]').inner_text() == C["pick"]["manual"], "후보 고르기에 '직접 추가'가 없어요"
+        assert "고정" not in pinned.inner_text(), "직접 담은 종목에 '고정'이 남아 있어요"
+        assert pinned.locator('[data-ui-v2="manual-note"]').count() == 0, "근거 수치를 열기 전에 문장이 보여요"
+        pinned.get_by_role("button", name=C["pick"]["receipts"]).click()
+        assert pinned.locator('[data-ui-v2="manual-note"]').inner_text() == C["pick"]["manualNote"]
+        scored = page.locator("[data-cand]").first                   # 점수로 고른 후보: 근거 수치를 열어도 그 문장이 없어요
+        scored.get_by_role("button", name=C["pick"]["receipts"]).click()
+        scored.locator('[data-ui-v2="receipts"]').wait_for(state="visible")
+        assert scored.locator('[data-ui-v2="manual-note"]').count() == 0, "점수로 고른 후보에 '직접 담은 종목' 문장이 붙었어요"
+        scored.get_by_role("button", name=C["pick"]["receipts"]).click()
+        assert page.locator('[data-cand] [data-ui-v2="manual-chip"]').count() == 0, "점수로 고른 후보에 '직접 추가'가 붙었어요"
         assert page.locator("[data-cand][data-picked='1']").count() == 5
         # 빼고 넣기: 하나 빼면 버튼이 꺼지고, 다시 넣으면 켜져요
         first = page.locator("[data-cand][data-picked='1']").first
@@ -448,6 +486,7 @@ def scene_stale(R, files, width):
 
     def run():
         wait_ready(page)
+        tab(page, C["app"]["tabs"]["today"])
         see(page, "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요")
         dl = page.locator('[data-ui-v2="date-line"]').first
         assert dl.get_attribute("data-stale") == "1" and "6일째 갱신이 멈췄어요" in dl.inner_text(), dl.inner_text()
@@ -525,6 +564,35 @@ def scene_us_date(R, files, width):
     srv.shutdown()
 
 
+def scene_old_app(R, files, width, slots, expect):
+    """예전 뱁새(baepsae.html)에 포트폴리오가 있는 방문자: 덱 짜기 첫 화면과 내 덱에 '예전 뱁새 보기' 안내 (Jack, 2026-11-01).
+    예전 기록은 읽기만 하고 그대로 둬요."""
+    init = f"(() => {{ try {{ localStorage.setItem('baepsae_v10_slots', {json.dumps(slots)}); }} catch (e) {{}} }})();"
+    srv, ctx, page, _ = R.open(build_site(files), width, init=init)
+
+    def run():
+        wait_ready(page)
+        see(page, C["build"]["s0"]["title"])
+        note = page.locator('[data-ui-v2="old-app-note"]')
+        if not expect:
+            assert note.count() == 0, f"덱 짜기에 안내가 보이면 안 돼요: {slots!r}"
+        else:
+            assert note.inner_text() == C["app"]["oldAppNote"]
+            old_app_link(page)                                       # 안내가 가리키는 머리말 링크
+        tab(page, C["app"]["tabs"]["deck"])
+        see(page, C["store"]["export"])
+        if not expect:
+            assert note.count() == 0, f"내 덱에 안내가 보이면 안 돼요: {slots!r}"
+        else:
+            assert note.inner_text() == C["app"]["oldAppNote"]
+        assert page.evaluate("localStorage.getItem('baepsae_v10_slots')") == slots, "예전 기록을 바꿨어요"
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, f"예전 기록 {width}", f"예전 뱁새 기록 {slots[:24]!r} → 안내 {'보임' if expect else '없음'}", run)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_no_storage(R, files, width):
     init = "(() => { const s = Storage.prototype.setItem; Storage.prototype.setItem = function () { throw new Error('blocked'); }; })();"
     srv, ctx, page, _ = R.open(build_site(files), width, init=init)
@@ -556,7 +624,10 @@ def main():
                       lambda: scene_refused(R, files, width, "옛 형식"), lambda: scene_refused(R, files, width, "404"),
                       lambda: scene_refused(R, files, width, "깨짐"), lambda: scene_missing_fields(R, files, width, ["ind", "indName"]),
                       lambda: scene_missing_fields(R, files, width, ["val20"]), lambda: scene_no_storage(R, files, width),
-                      lambda: scene_us_date(R, files, width)]
+                      lambda: scene_us_date(R, files, width),
+                      lambda: scene_old_app(R, files, width, '[{"id":"s1","name":"포트폴리오 1"}]', True),
+                      lambda: scene_old_app(R, files, width, "[]", False),
+                      lambda: scene_old_app(R, files, width, "{not json", False)]
             for fn in scenes:
                 try:
                     fn()

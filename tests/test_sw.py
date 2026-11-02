@@ -89,3 +89,36 @@ def test_sw_keeps_one_cache_and_mentions_app_html():
     assert "styleguide" not in src
     sh = open(os.path.join(ROOT, "build-app.sh"), encoding="utf-8").read()   # app.html 만 등록해요 (미리 보기는 안 해요)
     assert 'navigator.serviceWorker.register("./sw.js")' in sh
+
+
+# ── Part F (메인 주소 → app.html): 예전 워커와 캐시를 가진 재방문자 ──
+RETURNING = HARNESS.split("(async () => {", 1)[0] + r"""
+(async () => {
+  const out = {};
+  // 예전 방문 때 캐시된 것: index.html 은 baepsae.html 로 보내던 판, 지금 앱도 캐시돼 있어요
+  store.push({ url: BASE + 'index.html', body: 'OLD index -> baepsae.html' }, { url: BASE, body: 'OLD root -> baepsae.html' },
+             { url: BASE + 'baepsae.html', body: 'OLD baepsae.html' });
+  version = 'F';
+  out.root = await get('', 'navigate');                 // https://…/baepsae/ 를 다시 열면
+  out.index = await get('index.html', 'navigate');
+  out.app = await get('app.html', 'navigate');
+  online = false;
+  out.rootOff = await get('', 'navigate');              // 오프라인: 마지막으로 받은 새 index (app.html 로 보내는 판)
+  out.appOff = await get('app.html?x=1', 'navigate');
+  store = store.filter((e) => !e.url.endsWith('/app.html'));
+  out.appNoCache = await get('app.html', 'navigate');   // app.html 을 한 번도 못 받았으면 지금 앱이라도
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_returning_visitors_get_the_new_redirect_on_their_next_online_visit():
+    """sw.js 는 바꾸지 않아요: 화면 이동은 언제나 네트워크 먼저라서, 예전에 캐시된 index.html 대신 새 index.html(→ app.html)을 받아요."""
+    r = subprocess.run([NODE, "-e", RETURNING, os.path.join(ROOT, "sw.js")], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    assert got["root"] == "net F /baepsae/" and got["index"] == "net F /baepsae/index.html", got
+    assert got["app"] == "net F /baepsae/app.html"
+    assert got["rootOff"] == "net F /baepsae/" and got["appOff"] == "net F /baepsae/app.html"
+    assert got["appNoCache"] == "OLD baepsae.html"

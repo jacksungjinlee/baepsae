@@ -5,7 +5,7 @@ import React, { useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { HeroBand, Button, ListRow, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, tx } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, OldAppNote, tx } from "./ui.jsx";
 import { parseImport, mergeStores, downloadRecords, isSafariLike } from "./store.js";
 
 export function Today({ load, pad }) {
@@ -54,6 +54,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       <AppBar />
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      <OldAppNote />
       {decks.map((d) => {
         const ts = [...new Set(d.purchases.filter((p) => p.qty > 0).map((p) => p.t))];
         return (

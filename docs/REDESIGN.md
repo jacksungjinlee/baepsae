@@ -91,7 +91,7 @@ Taken from how Jack actually runs his own portfolio. These are not optional.
    - Warn when survivors < 2× stock count; block at zero.
 2. **테마:** 45 themes in 9 groups, searchable by synonyms ("비만" → 비만 치료제), up to 5, plus the share of the deck
    that goes to theme stocks (20 / 40 / 60%). **꼭 담을 종목** (up to 3): bypass screening, labelled "검증 안 함",
-   still capped.
+   still capped. (Jack, 2026-11-01: the label is "직접 추가" instead; see `docs/tasks/v18.3-approved-in-chat.md`.)
 3. **빼기:** switches with the count each removes: 투자주의·관리종목 (on by default), 적자, 상장 2년 미만, 부채비율 200%+,
    무배당, 중국 매출 30%+, 담배·술·도박, 지주회사. A liquidity floor (daily trading value under 5억원) always applies.
 4. **조건:** 투자 금액 (typed, 만원, quick-add buttons, warnings under 50만원 and over 10억), 한국:미국 (한국만 / 7:3 /

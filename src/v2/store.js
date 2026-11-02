@@ -7,6 +7,16 @@ export const STORE_VERSION = 1;
 
 export const emptyStore = () => ({ v: STORE_VERSION, decks: [] });
 
+// The current app (baepsae.html) keeps its portfolios under this key. 2.0 never reads their contents or changes them:
+// it only checks whether any exist, to tell a returning visitor where to find them (Part F, Jack 2026-11-01).
+export const OLD_APP_SLOTS_KEY = "baepsae_v10_slots";
+export function hasOldAppRecords(get = (k) => localStorage.getItem(k)) {
+  try {
+    const a = JSON.parse(get(OLD_APP_SLOTS_KEY) || "[]");
+    return Array.isArray(a) && a.length > 0;
+  } catch (e) { return false; }
+}
+
 const isStr = (x, max = 200) => typeof x === "string" && x.length > 0 && x.length <= max;
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
 const isDate = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + "T00:00:00Z"))

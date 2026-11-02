@@ -4,7 +4,3 @@ __pycache__/
 .pytest_cache/
 *.json.tmp
 .dart-cache/
-
-# 뱁새 2.0 app.html: built by build-app.sh, not committed until the v17.5.1 fields are live (v18.3 merge gate).
-# Remove this line in the PR that ships app.html.
-/app.html

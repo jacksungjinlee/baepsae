@@ -104,6 +104,8 @@ def main():
                     outside.append(u)
                 r.abort()
             ctx.route("**/*", route)
+            # 지금 앱에 포트폴리오가 있는 브라우저라도 미리 보기에는 '예전 뱁새 보기' 안내가 없어요 (그 링크가 없는 페이지예요)
+            ctx.add_init_script("""(() => { try { localStorage.setItem('baepsae_v10_slots', '[{"id":"s1","name":"x"}]'); } catch (e) {} })();""")
             page = ctx.new_page()
             page.set_default_timeout(WAIT)
             page.on("pageerror", lambda e: errors.append(str(e)))
@@ -128,7 +130,12 @@ def main():
                 assert "멈췄어요" not in body and "갱신되지 않아" not in body, "예시 데이터에 멈춤 경고가 떠요"
 
             def tab(label):
-                page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=label).click()
+                bar = page.locator('nav[data-ui="bottom-tab-bar"]')
+                if bar.count() == 0:                  # 저장한 덱이 없으면 첫 화면은 덱 짜기 (아래 탭 없음)
+                    if label == C["app"]["tabs"]["build"]:
+                        return
+                    page.get_by_role("button", name=C["build"]["backToday"]).click()
+                bar.locator("button", has_text=label).click()
 
             def act():
                 return page.locator('[data-ui-v2="action-bar"] button')
@@ -139,14 +146,23 @@ def main():
                 assert page.evaluate("navigator.serviceWorker ? navigator.serviceWorker.getRegistration().then(r => !r) : true")
                 page.locator('[data-ui-v2="date-line"]').first.wait_for(state="visible")
                 assert "10월 30일" in page.locator('[data-ui-v2="date-line"]').first.inner_text()
+                page.get_by_text(C["build"]["s0"]["title"]).wait_for(state="visible")     # 첫 방문: 덱 짜기부터
                 label_here()
+                # 미리 보기는 Jack 이 혼자 보는 페이지라 머리말에 '예전 뱁새 보기' 링크를 두지 않아요 (예시 데이터 표시 자리)
+                assert page.locator('[data-ui-v2="old-app-link"]').count() == 0
+                assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기에 '예전 뱁새' 안내가 떠요"
+                assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
+                shot(page, width, "0-landing")
+                tab(C["app"]["tabs"]["today"])
                 page.get_by_text(C["app"]["pending"]).first.wait_for(state="visible")
+                label_here()
                 shot(page, width, "1-today")
-            check(W + "오늘: 예시 데이터 표시 · noindex · 서비스워커 없음 · 날짜 · 멈춤 경고 없음", head, page, width)
+            check(W + "첫 화면 덱 짜기 → 오늘: 예시 데이터 표시 · noindex · 서비스워커 없음 · 날짜 · 멈춤 경고 없음", head, page, width)
 
             def deck_tab():
                 tab(C["app"]["tabs"]["deck"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
+                assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기 내 덱에 '예전 뱁새' 안내가 떠요"
                 label_here()
                 shot(page, width, "2-mydeck")
             check(W + "탭: 내 덱", deck_tab, page, width)

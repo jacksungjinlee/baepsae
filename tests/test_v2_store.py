@@ -132,3 +132,30 @@ def test_write_checks_the_old_blob_with_todays_date_and_backs_it_up():
               f"const ok = S.writeStore({json.dumps(GOOD, ensure_ascii=False)}, 'baepsae2.v1', '2026-11-01');"
               "out = { ok, backups: [...mem.keys()].filter((k) => k.startsWith('baepsae2.v1.unreadable.')).length };")
     assert got == {"ok": True, "backups": 1}
+
+
+def test_old_app_portfolios_are_only_detected_never_changed():
+    """예전 뱁새(baepsae.html)의 포트폴리오 목록이 있으면 안내를 보여요. 비었거나 깨졌거나 저장소가 막혀도 오류 없이 '없음'."""
+    got = run("""
+      const cases = {};
+      cases.none = S.hasOldAppRecords();
+      localStorage.setItem('baepsae_v10_slots', '[{"id":"s1","name":"포트폴리오 1"}]');
+      cases.one = S.hasOldAppRecords();
+      const kept = localStorage.getItem('baepsae_v10_slots');
+      localStorage.setItem('baepsae_v10_slots', '[]'); cases.empty = S.hasOldAppRecords();
+      localStorage.setItem('baepsae_v10_slots', '{not json'); cases.broken = S.hasOldAppRecords();
+      localStorage.setItem('baepsae_v10_slots', '{"a":1}'); cases.object = S.hasOldAppRecords();
+      cases.throws = S.hasOldAppRecords(() => { throw new Error('blocked'); });
+      out = { cases, kept, key: S.OLD_APP_SLOTS_KEY };
+    """)
+    assert got["key"] == "baepsae_v10_slots"
+    assert got["cases"] == {"none": False, "one": True, "empty": False, "broken": False, "object": False, "throws": False}
+    assert got["kept"] == '[{"id":"s1","name":"포트폴리오 1"}]'
+
+
+def test_old_app_key_matches_the_current_app():
+    """2.0 이 보는 키가 지금 앱(src/detail.jsx)이 포트폴리오를 저장하는 키와 같아요."""
+    with open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8") as f:
+        assert 'const KEY_SLOTS = "baepsae_v10_slots";' in f.read()
+    with open(os.path.join(ROOT, "src", "v2", "store.js"), encoding="utf-8") as f:
+        assert 'OLD_APP_SLOTS_KEY = "baepsae_v10_slots"' in f.read()
