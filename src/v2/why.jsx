@@ -114,7 +114,7 @@ function Sources({ s, g, x, md }) {
 }
 
 export function Why({ load, store, setStoreData, target, onBack, pad }) {
-  const ev = useDaily(load, store);
+  const { ev } = useDaily(load, store);
   const de = ev.ok && target ? ev.decks.find((d) => d.id === target.deckId) : null;
   const x = de && de.ok ? de.holdings.find((h) => h.t === target.t) || null : null;
   const s = x && load.status === "ok" ? load.byT.get(x.t) : null;

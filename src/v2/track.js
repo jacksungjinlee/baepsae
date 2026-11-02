@@ -6,7 +6,7 @@
 // Everything here reads the daily evaluation from rules.js (evaluateDeck): its weights and targets, its statuses and its
 // "ok: false" when the data is stale or failed. Nothing is computed from stale or failed data, and nothing is estimated:
 // a number whose input is missing is left out (ok: false), never filled in.
-import { num, hasGroup, universe } from "./engine.js";
+import { num, hasGroup, universe, priceWon } from "./engine.js";
 import { NO_NEW_MONEY } from "./rules.js";
 
 export const GROUP_MIN = 5;           // 같은 업종 점 띠: a real industry group with at least 5 members in the same market
@@ -27,20 +27,22 @@ export function purchaseWon(p) {
 }
 
 // Value, money put in and return of one deck.
-//   deck: the stored deck · de: evaluateDeck(deck, ctx) for it.
+//   deck: the stored deck · de: evaluateDeck(deck, ctx) for it · ctx: todayCtx (the same prices and rate).
 // -> { ok: false, why } | { ok: true, value, cost, gain, ret, start, per: { t: { qty, value, cost, ret } }, noFx: [t] }
-//   cost / gain / ret are null when any held purchase has no won cost (noFx names them). value is today's value of the
-//   held shares at today's official close (US at today's rate), exactly the value the daily check weighs.
-export function deckMoney(deck, de) {
-  if (!de || !de.ok) return { ok: false, why: "day" };
+//   cost / gain / ret are null when any held purchase has no won cost (noFx names them). value is today's value of
+//   every held share at today's official close (US at today's rate). Any held stock without a price today: no value.
+export function deckMoney(deck, de, ctx) {
+  if (!de || !de.ok || !ctx) return { ok: false, why: "day" };
   if (!de.weights || !de.weights.ok) return { ok: false, why: "price" };
   const held = new Set(de.holdings.map((x) => x.t));
   const per = {};
   let value = 0;
   for (const x of de.holdings) {
-    if (!(num(x.value) >= 0)) return { ok: false, why: "price" };
-    per[x.t] = { qty: x.qty, value: x.value, cost: 0, ret: null };
-    value += x.value;
+    const s = ctx.byT.get(x.t);
+    const px = s ? priceWon(s, ctx.fx) : null;
+    if (!(px > 0) || !(x.qty > 0)) return { ok: false, why: "price" };
+    per[x.t] = { qty: x.qty, value: x.qty * px, cost: 0, ret: null };
+    value += x.qty * px;
   }
   const noFx = [];
   let start = null;
@@ -109,8 +111,9 @@ export function indexSince(deck, idx, pxDate) {
 }
 
 // ---------------- today's move of the whole deck ----------------
-// From each held stock's d1 (change between official closes). Left out (null) when any held stock has no d1, and for
-// a deck with US stocks: their d1 is in dollars and yesterday's exchange rate is not in the data.
+// From each held stock's d1 (change between official closes) and its value in the daily check. Left out (null) when
+// any held stock has no d1 or no value there, and for a deck with US stocks: their d1 is in dollars and yesterday's
+// exchange rate is not in the data.
 export function deckDayChange(de) {
   if (!de || !de.ok || !de.weights || !de.weights.ok || !de.holdings.length) return null;
   let now = 0, prev = 0;
@@ -126,6 +129,8 @@ export function deckDayChange(de) {
 // ---------------- 추가로 넣을 돈 ----------------
 // New money for one deck, in whole shares (Korean and US alike), most underweight name first.
 //   de: evaluateDeck output · amountWon: the typed amount in won.
+// Weights, targets and statuses are the daily check's own (rules.js): w and target are shares of the held stocks
+// that have a weight band (targets rebased over what was actually bought), with its one-share rounding slack.
 // Skipped: 규칙 깨짐, 확인 필요 and 지켜봐요 (no new money until the next report), anything above 1.25x its target
 // (그만 살 차례 · 줄일 차례: the statuses rules.js gives from its own weights and targets), and stocks without a target or
 // a price. Planned stocks that were never bought (0 shares) are not in the daily check, so they get nothing here either.
@@ -137,7 +142,7 @@ export function addMoney(de, amountWon) {
   const skipped = [];
   const rows = [];
   let total = 0;
-  for (const x of de.holdings) total += num(x.value) || 0;
+  for (const x of de.holdings) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
   for (const x of de.holdings) {
     const target = num(x.target), value = num(x.value);
     const px = x.qty > 0 && value > 0 ? value / x.qty : null;

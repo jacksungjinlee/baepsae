@@ -17,14 +17,16 @@ import { C, fill, mdText, wonText, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap } from "./ui.jsx";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { withConfirm } from "./store.js";
-import { reasonView, statusChips } from "./daily.jsx";
+import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, endsInBatchim } from "./track.js";
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
   const decks = store.data.decks;
-  return useMemo(() => evaluateAll(decks, todayCtx(load)), [decks, load]);
+  const ctx = useMemo(() => todayCtx(load), [load]);
+  const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
+  return { ev, ctx };
 }
 
 export function confirmer(store, setStoreData) {
@@ -57,27 +59,20 @@ export function LinkButton({ children, onClick, ...rest }) {
 }
 
 // One stock to look at today: its name, the rule that fired (or what needs confirming), numbers, report year, and the
-// 확인 필요 answers. bodySaid: the band already says "규칙대로면 팔 때예요…", so it is not repeated here.
-function TodoItem({ x, deck, onConfirm, bodySaid, first }) {
+// 확인 필요 answers (Part C's DividendAnswers: both answers stay open, the chosen one marked). sellSaid: the band above
+// already says "규칙대로면 팔 때예요…", so a confirmed cut does not repeat it.
+function TodoItem({ x, deck, onConfirm, sellSaid, first }) {
   const names = namesOf(deck);
-  const views = x.reasons.filter((r) => r.level === "broken" || r.level === "check").map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
+  const views = x.reasons.filter((r) => (r.level === "broken" || r.level === "check") && r.code !== "divCut" && r.code !== "divDrop")
+    .map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
   return (
     <div data-ui-v2="todo-item" data-t={x.t} data-status={x.status} style={{ paddingTop: first ? 0 : SPACE(3), marginTop: first ? 0 : SPACE(3), borderTop: first ? "none" : `1px solid ${COLOR.line}` }}>
       <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.nk}</div>
       {x.status === "broken" && <div style={tx(SIZE.xxs, WEIGHT.bold, COLOR.text2)}>{C.today.sellLabel}</div>}
-      {views.map(([r, v], i) => (
-        <div key={i} data-ui-v2="todo-line" data-code={r.code} style={{ marginTop: SPACE(1) }}>
-          <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink)}>{v.pieces.map((p, j) => <span key={j}>{j ? " · " : ""}{p}</span>)}</div>
-          {v.body && !(bodySaid && r.code === "divCut") && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{v.body}</div>}
-          {v.source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{v.source}</div>}
-          {v.confirm && (
-            <div data-ui-v2="confirm" style={{ display: "flex", flexDirection: "column", gap: SPACE(2), marginTop: SPACE(2) }}>
-              <Button kind="secondary" onClick={() => onConfirm(deck.id, v.confirm, "cut")}>{C.daily.confirmCut}</Button>
-              <Button kind="secondary" onClick={() => onConfirm(deck.id, v.confirm, "notCut")}>{C.daily.confirmNotCut}</Button>
-            </div>
-          )}
-        </div>
-      ))}
+      <div style={{ marginTop: SPACE(1) }}>
+        <DividendAnswers x={x} onConfirm={(item, answer) => onConfirm(deck.id, item, answer)} sellSaid={sellSaid} />
+        {views.map(([r, v], i) => <Line key={i} code={r.code} level={r.level} {...v} first={i === 0 && !x.divDrops.length} />)}
+      </div>
     </div>
   );
 }
@@ -136,7 +131,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
           <HeroBand tone="alert" eyebrow={fill(C.today.todoN, { n: todo.length })} title={broken ? brokenTitle(first.nk) : first.nk}
             body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
             image="baepi-4.png" imageAlt={C.today.todoAlt}
-            inset={todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} bodySaid={broken} first={i === 0} />)} />
+            inset={todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)} />
         </div>
         {bigs.length > 0 && <Card><BigMoves items={bigs} load={load} onWhy={onWhy} /></Card>}
       </>
@@ -156,8 +151,8 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
 
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
 // exceptions). A big mover's row opens 왜 움직였나.
-function DeckStrip({ de, deck, onWhy, go }) {
-  const m = deckMoney(deck, de);
+function DeckStrip({ de, deck, ctx, onWhy, go }) {
+  const m = deckMoney(deck, de, ctx);
   const day = deckDayChange(de);
   const items = m.ok ? [{ label: C.today.value, value: wonText(m.value) },
     ...(m.ret != null ? [{ label: C.today.ret, value: signedPct(m.ret * 100), tone: m.ret > 0 ? "up" : m.ret < 0 ? "down" : undefined }] : [])] : [];
@@ -184,7 +179,7 @@ function DeckStrip({ de, deck, onWhy, go }) {
 
 export function Today({ load, store, setStoreData, pad, onWhy, go }) {
   const decks = store.data.decks;
-  const ev = useDaily(load, store);
+  const { ev, ctx } = useDaily(load, store);
   const onConfirm = confirmer(store, setStoreData);
   const ok = load.status === "ok";
   const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.length) : [];
@@ -197,7 +192,7 @@ export function Today({ load, store, setStoreData, pad, onWhy, go }) {
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
-      {held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} onWhy={onWhy} go={go} />)}
+      {held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />)}
       {ev.ok && !held.length && (
         <Card data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
       )}

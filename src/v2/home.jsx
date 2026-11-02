@@ -5,7 +5,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, Footer, Note, OldAppNote, tx } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, tx } from "./ui.jsx";
 import { parseImport, mergeStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
@@ -24,8 +24,10 @@ export function MyDeck({ load, store, setStoreData, pad }) {
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
   const decks = store.data.decks;
-  // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why).
-  const ev = useMemo(() => evaluateAll(decks, todayCtx(load)), [decks, load]);
+  // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why). Then the screen
+  // says so (the stale line, or the load-failure message), so a held stock without a chip never reads as "fine".
+  const ctx = useMemo(() => todayCtx(load), [load]);
+  const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
   const onConfirm = (deckId, item, answer) => {
     const next = withConfirm(store.data, deckId, item, answer, todayKst());
     if (next) setStoreData(next);
@@ -47,6 +49,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       <AppBar />
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail />}
       <OldAppNote />
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (
         <Note tone="watch" data-ui-v2="deck-stale">{fill(C.today.stale, { n: ev.days })}</Note>
@@ -55,7 +58,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
         const ts = [...new Set(d.purchases.filter((p) => p.qty > 0).map((p) => p.t))];
         const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
         const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
-        const m = de && de.ok ? deckMoney(d, de) : { ok: false };      // Part E: value · 원금 · return (fresh data only)
+        const m = de && de.ok ? deckMoney(d, de, ctx) : { ok: false };   // Part E: value · 원금 · return (fresh data only)
         const start = d.purchases.reduce((a, p) => (p.qty > 0 && (a == null || p.date < a) ? p.date : a), null);
         return (
           <Card key={d.id} data-deck-id={d.id}>

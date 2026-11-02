@@ -27,10 +27,13 @@ def bundle_dir():
         with open(entry, "w", encoding="utf-8") as f:
             f.write(f"export * from {json.dumps(os.path.join(ROOT, 'src/v2/rules.js'))};\n"
                     f"export * as E from {json.dumps(os.path.join(ROOT, 'src/v2/engine.js'))};\n"
-                    f"export * as S from {json.dumps(os.path.join(ROOT, 'src/v2/store.js'))};\n")
+                    f"export * as S from {json.dumps(os.path.join(ROOT, 'src/v2/store.js'))};\n"
+                    f"export * as D from {json.dumps(os.path.join(ROOT, 'src/v2/deckcalc.js'))};\n"
+                    f"export * as L from {json.dumps(os.path.join(ROOT, 'src/v2/load.js'))};\n"
+                    f"export * as F from {json.dumps(os.path.join(ROOT, 'src/v2/format.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/rules.mjs",
-                            "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
+                            "--log-level=warning", "--loader:.js=jsx", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
     return _B["p"]
@@ -54,7 +57,10 @@ const hold = (ev, t) => ev.holdings.find((x) => x.t === t);
 def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = "import * as R from './rules.mjs';\n" + HELPERS + decl + "let out;\n" + body + "\nconsole.log(JSON.stringify(out));"
-    r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=bundle_dir(), capture_output=True, text=True, timeout=60)
+    fd, path = tempfile.mkstemp(suffix=".mjs", dir=bundle_dir())              # a file: fixtures are too big for -e
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(code)
+    r = subprocess.run([NODE, path], cwd=bundle_dir(), capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
@@ -136,13 +142,13 @@ def test_decision_order_sell_then_check_then_keep_then_band_then_nothing():
 
 # ── 비중 경계 ──
 def test_band_edges_exactly_at_075_125_14_stay_in_the_milder_band():
-    # 두 종목 목표 50% · 50%. 값을 바꿔 첫 종목 비중을 정확히 목표 × r 로 만들어요.
+    # 두 종목 목표 50% · 50%. 값을 바꿔 첫 종목 비중을 정확히 목표 × r 로 만들어요. 1만 주씩이라 한 주의 여유는 아주 작아요.
     cases = {"0.75": 0.375, "below 0.75": 0.37, "1.25": 0.625, "above 1.25": 0.63, "1.4": 0.7, "above 1.4": 0.71, "1.0": 0.5}
     got = run("""
 const out2 = {};
 for (const [k, w] of Object.entries(CASES)) {
-  const a = { ...A, price: w * 1000 }, b = { ...B, price: (1 - w) * 1000 };
-  const d = mkDeck([{ s: A, target: 0.5, qty: 1 }, { s: B, target: 0.5, qty: 1 }]);
+  const a = { ...A, price: w * 1000 / 10000 }, b = { ...B, price: (1 - w) * 1000 / 10000 };
+  const d = mkDeck([{ s: A, target: 0.5, qty: 10000 }, { s: B, target: 0.5, qty: 10000 }]);
   const ev = one(d, [a, b], []);
   out2[k] = [hold(ev, A.t).status, hold(ev, A.t).reasons.map((r) => r.band || r.code)];
 }
@@ -151,6 +157,72 @@ out = out2;""", CASES=cases, A=kr("000100"), B=kr("000200"))
     assert got["0.75"][0] == "none" and got["below 0.75"][0] == "low", got        # 0.75 미만부터 먼저 살 차례
     assert got["1.25"][0] == "none" and got["above 1.25"][0] == "high", got       # 1.25 초과부터 그만 살 차례
     assert got["1.4"][0] == "high" and got["above 1.4"][0] == "trim", got         # 1.4 초과부터 줄일 차례
+
+
+def test_one_share_of_slack_past_a_band_edge_is_rounding_not_a_status():
+    # 목표 50% · 50%, A 는 한 주에 20만원. 1.4배 선(70%)을 한 주 값 이하로 넘으면 '그만 살 차례'까지만, 한 주 넘게 넘으면 '줄일 차례'.
+    got = run("""
+const outs = {};
+for (const [k, qa, pb] of CASES) {
+  const a = { ...A, price: 200000 }, b = { ...B, price: pb };
+  const d = mkDeck([{ s: A, target: 0.5, qty: qa }, { s: B, target: 0.5, qty: 1 }]);
+  const h = hold(one(d, [a, b], []), A.t);
+  outs[k] = [h.status, Math.round(h.w * 1000) / 10];
+}
+out = outs;""", A=kr("000100"), B=kr("000200"),
+              # A 7주 140만 + B 50만: 73.7% → 70% 선을 7만원 넘음(한 주 20만원 이하) → high · B 30만이면 82.4% → 넘침 50만원 → trim
+              CASES=[["within one share", 7, 500000.0], ["beyond one share", 7, 300000.0], ["low within one share", 1, 500000.0],
+                     ["low beyond one share", 1, 2000000.0]])
+    assert got["within one share"][0] == "high" and got["beyond one share"][0] == "trim", got
+    # A 1주 20만 + B 50만: A 28.6% < 37.5% 이지만 모자란 값 6.25만원 < 한 주 → 할 일 없음 · B 200만이면 9.1% → 모자람 55만원 → low
+    assert got["low within one share"][0] == "none" and got["low beyond one share"][0] == "low", got
+
+
+def test_targets_are_rebased_over_what_is_held():
+    # 계획 3종목(목표 20% · 20% · 60%) 중 60% 종목은 0주(1주 값이 너무 비쌈). 산 두 종목은 서로 반반이면 정상이에요.
+    got = run("""
+const d = mkDeck([{ s: A, target: 0.2, qty: 10 }, { s: B, target: 0.2, qty: 10 }, { s: C, target: 0.6, qty: 0 }]);
+const ev = one(d, [A, B, C], []);
+const moved = one(d, [{ ...A, price: A.price * 5 }, B, C], []);
+const ha = hold(ev, A.t), hm = hold(moved, A.t);
+out = { st: ev.holdings.map((x) => x.status), unheld: ev.unheld, target: ha.target, plan: ha.planTarget, w: ha.w,
+        band: ha.rules.find((r) => r.id === 'band').bands.map((x) => Math.round(x * 1000) / 1000), moved: [hm.status, hold(moved, B.t).status] };""",
+              A=kr("000100"), B=kr("000200"), C=kr("000300", price=5000000.0))
+    assert got["st"] == ["none", "none"] and got["unheld"] == ["000300"], got
+    assert abs(got["target"] - 0.5) < 1e-9 and got["plan"] == 0.2 and abs(got["w"] - 0.5) < 1e-9, got   # 20% ÷ (20% + 20%)
+    assert got["band"] == [0.375, 0.625, 0.7], got["band"]
+    assert got["moved"] == ["trim", "low"], got["moved"]          # 실제로 비중이 벌어지면 여전히 잡아요 (83% · 17%)
+
+
+def test_day_one_a_deck_bought_exactly_as_planned_has_nothing_to_do():
+    """후보 고르기 → 매수 계획(engine size · planShares) → 샀어요(계획한 수량, 그날 종가) → 같은 날 점검: 비중 때문에 무엇도 뜨지 않아요.
+    덱 7종 × 금액 3가지 × 안전자산 0·20% (시험용 실제 데이터 표본). 남는 돈 · 0주 종목 · 안전자산이 모두 들어가요."""
+    fx = {f: json.load(open(os.path.join(ROOT, "tests", "fixtures", "v2", f), encoding="utf-8")) for f in ("data.json", "corp.json", "macro.json")}
+    got = run("""
+const now = Date.parse(F['data.json'].publishedAt) + 3600e3;
+const load = R.L.resolveLoad({ data: { ok: true, data: F['data.json'] }, corp: { ok: true, data: F['corp.json'] }, macro: { ok: true, data: F['macro.json'] } }, now);
+const ctx = R.todayCtx(load, now);
+const res = [];
+for (const deckId of ['deepValue', 'garp', 'quality', 'lowVol', 'trend', 'krUs', 'income']) for (const amountMan of [150, 300, 1000, 5000]) for (const cushion of [0, 20]) {
+  const st = { ...R.E.applyDeck(R.E.defaultSettings(), deckId), amountMan, cushion };
+  const ds = R.D.deckState(load, st);
+  if (ds.blocked) { res.push({ deckId, amountMan, cushion, blocked: true }); continue; }
+  const p = R.D.computePlan(load, st, R.D.pickItems(ds, R.D.defaultPicks(ds)), ds.pinned);
+  if (!p.ok) { res.push({ deckId, amountMan, cushion, clash: true }); continue; }
+  const rows = p.plan.rows;
+  const deck = { id: 'd', name: 'x', holdings: rows.map((x) => ({ t: x.t, nk: x.s.nk, cls: x.s.cls, kind: x.kind, target: x.targetW, rules: R.D.rulesFor(load, x, st) })),
+    purchases: rows.filter((x) => x.shares > 0).map((x) => ({ t: x.t, date: '2026-10-30', qty: x.shares, price: x.s.price, ccy: x.s.cls === 'us' ? 'USD' : 'KRW' })) };
+  const ev = R.evaluateDeck(deck, ctx);
+  res.push({ deckId, amountMan, cushion, zero: rows.filter((x) => x.shares === 0).length, left: p.plan.left, cush: rows.some((x) => x.kind === 'cushion' && x.shares > 0),
+    st: ev.holdings.map((h) => h.nk + ':' + h.status + ':' + h.reasons.map((r) => r.code).join('+')), ok: ev.ok });
+}
+out = { ok: ctx.state.ok, res };""", F=fx)
+    assert got["ok"], "점검이 돌지 않았어요"
+    plans = [r for r in got["res"] if "st" in r]
+    assert len(plans) >= 40, [r for r in got["res"] if "st" not in r]
+    assert any(r["zero"] for r in plans) and any(r["cush"] for r in plans) and all(r["left"] >= 0 for r in plans), plans
+    bad = [(r["deckId"], r["amountMan"], r["cushion"], x) for r in plans for x in r["st"] if not x.endswith(":none:")]
+    assert not bad, bad
 
 
 # ── 가격은 규칙을 움직이지 않아요 ──
@@ -246,7 +318,14 @@ const flip = R.S.withConfirm(cut, 'd1', item, 'notCut', '2026-11-02');
 const nxt = { ...P.a_co_now, fy: 2026 };
 // 2027년 보고서: 2026년에 12,000원으로 되돌렸다가 2027년에 다시 10,000원 (2025년과 같은 숫자의 새 감소)
 const again = st(notCut, { ...P.a_now, fy: 2027, dps: 10000, dps3: [10000, 12000, 10000] }, { ...P.a_co_now, fy: 2027 });
+// 실제로 줄였다고 답한 2025년 삭감은 그 뒤 보고서에 더는 보이지 않아도(2028년: 2026~2028 만 보여요), 자료가 비어도 규칙 깨짐
+const y2028 = st(cut, { ...P.a_now, fy: 2028, dps: 14000, dps3: [14000, 13000, 12000] }, { ...P.a_co_now, fy: 2028 });
+const blank = st(cut, { ...P.a_now, dps3: undefined }, P.a_co_now);
+const back = R.S.withConfirm(flip, 'd1', item, 'cut', '2026-11-03');                 // 줄인 게 아니에요 → 다시 실제로 줄였어요
 out = { again: [again.status, again.reasons.filter((r) => r.code === 'divDrop').map((r) => r.fy)],
+  y2028: [y2028.status, y2028.reasons.map((r) => r.code + ':' + r.fy), y2028.divDrops.map((d) => d.fy + d.answer)],
+  blank: [blank.status, blank.reasons.map((r) => r.code)], back: [st(back, P.a_now, P.a_co_now).status, back.decks[0].confirms.map((c) => c.answer)],
+  answers: [st(store, P.a_now, P.a_co_now).divDrops.map((d) => d.answer), st(notCut, P.a_now, P.a_co_now).divDrops.map((d) => d.answer)],
   cut: st(cut, P.a_now, P.a_co_now), notCut: st(notCut, P.a_now, P.a_co_now), changed: st(changed, P.a_now, P.a_co_now).status,
   flip: [st(flip, P.a_now, P.a_co_now).status, flip.decks[0].confirms.length],
   laterAfterNotCut: st(notCut, LATER, nxt), laterAfterCut: st(cut, LATER, nxt).status,
@@ -263,6 +342,10 @@ out = { again: [again.status, again.reasons.filter((r) => r.code === 'divDrop').
     assert later["status"] == "check" and [(r["fy"], r["a"], r["b"]) for r in later["reasons"] if r["code"] == "divDrop"] == [(2026, 10000, 8000)], later
     assert got["laterAfterCut"] == "broken"
     assert got["again"] == ["check", [2027]], got["again"]          # 같은 숫자라도 새 보고서의 감소는 다시 물어봐요
+    assert got["y2028"] == ["broken", ["divCut:2025"], ["2025cut"]], got["y2028"]   # 확인한 삭감은 사라지지 않아요
+    assert got["blank"][0] == "broken" and set(got["blank"][1]) == {"divCut", "missing"}, got["blank"]
+    assert got["back"] == ["broken", ["cut"]], got["back"]                          # 답을 바꿀 수 있고, 하나만 남아요
+    assert got["answers"] == [[None], ["notCut"]], got["answers"]                   # 화면이 두 답을 계속 보여 줄 수 있게
     assert got["valid"] == [True, True] and got["bad"] == [None, None, None]
 
 
@@ -359,6 +442,21 @@ out = Object.fromEntries(CASES.map(([k, op]) => [k, hold(one(d, [A, B], [{ t: A.
     assert got == {"fell twice": "fail", "rose twice": "ok", "fell once": "ok", "deeper loss": "fail", "flat": "ok"}, got
 
 
+def test_the_operating_profit_line_shows_the_fact_and_the_amounts_once_their_unit_is_approved():
+    # 후보 고르기 주의할 점과 내 덱 지켜봐요 줄이 같은 조각을 써요. 단위(억원 · 조원)는 승인 전이라 금액은 빠지고,
+    # 승인되면(아래에서 흉내) 세 해 금액이 옛날 → 올해 순서로 붙어요. 작년이 적자면 '작년 대비 %' 없이 '영업이익'.
+    got = run("""
+const before = [R.D.opPieces([114678.5, 142395.9, 151269.0], (114678.5 / 142395.9 - 1) * 100), R.D.opPieces([-50, -10, 20], null)];
+R.F.C.app.eok = '{n}억원'; R.F.C.app.jo = '{n}조원';
+const after = [R.D.opPieces([114678.5, 142395.9, 151269.0], -19.5), R.D.opPieces([-50, -10, 20], null), R.D.opAmounts([1, null, 3])];
+R.F.C.app.eok = null; R.F.C.app.jo = null;
+out = { before, after, units: [R.F.C.app.eok, R.F.C.app.jo] };""")
+    assert got["units"] == [None, None]                                                     # 승인 전: 비어 있어요
+    assert got["before"] == [["영업이익 (작년 대비) \u221219.5%"], ["영업이익"]], got["before"]
+    assert got["after"][0] == ["영업이익 (작년 대비) \u221219.5%", "15.1조원 → 14.2조원 → 11.5조원"], got["after"]
+    assert got["after"][1] == ["영업이익", "20억원 → \u221210억원 → \u221250억원"] and got["after"][2] is None, got["after"]
+
+
 # ── 확인하지 못하는 규칙 ──
 def test_pending_and_unknown_rules_are_counted_never_passed():
     a = kr("000100")
@@ -377,11 +475,33 @@ out = { n: ev.notChecked, ids: ev.notCheckedIds.sort(), b: hold(ev, B.t).rules.m
     assert got["c"]["status"] == "check" and got["c"]["reasons"][0]["code"] == "noRules"     # 규칙 책이 없으면 할 일 없음이 아니에요
 
 
+def test_a_malformed_or_all_pending_rule_book_is_a_check_never_nothing():
+    got = run("""
+const pend = [{ id: 'audit', kind: 'sell', check: 'pending' }];
+const out2 = {};
+for (const [k, rules] of Object.entries({ empty: [], junk: [{}], nulls: [null, 3, 'x'], badBand: [{ id: 'band', check: 'checked', target: 'x' }], pending: pend })) {
+  const d = mkDeck([{ s: A, target: 0.5, qty: 10, rules }, { s: B, target: 0.5, qty: 10 }]);
+  const h = hold(one(d, [A, B], []), A.t);
+  out2[k] = [h.status, h.reasons[0] && h.reasons[0].code];
+}
+out = out2;""", A=kr("000100"), B=kr("000200"))
+    for k, v in got.items():
+        assert v == ["check", "noRules"], (k, v)
+
+
+def test_an_unreadable_publish_time_is_a_failed_load():
+    got = run("""
+const base = { pxDate: '2026-10-30', stocks: [{ t: '1' }], companies: [] };
+out = [R.L.CHECKS.data({ ...base, publishedAt: '2026-11-02T06:30:00+09:00' }), R.L.CHECKS.data({ ...base, publishedAt: 'soon' }),
+       R.L.CHECKS.corp({ ...base, publishedAt: 'soon' }), R.L.CHECKS.data({ ...base, publishedAt: 20261102 }), R.L.CHECKS.corp({ ...base })];""")
+    assert got == [True, False, False, False, False], got
+
+
 def test_planned_but_unbought_holdings_are_not_checked_and_weights_use_held_value():
     got = run("""
 const d = mkDeck([{ s: A, target: 0.5, qty: 10 }, { s: B, target: 0.4, qty: 10 }, { s: C, target: 0.1, qty: 0 }]);
 const ev = one(d, [A, B, C], []);
 out = { ts: ev.holdings.map((x) => [x.t, x.status, Math.round(x.w * 1000) / 1000]), unheld: ev.unheld };""",
               A=kr("000100"), B=kr("000200"), C=kr("000300"))
-    # 사지 않은 종목은 점검하지 않아요. 비중은 산 종목의 오늘 값으로: 50% · 50% (목표 50% · 40% → 1.25배 = 정상 끝)
+    # 사지 않은 종목은 점검하지 않아요. 비중은 산 종목의 오늘 값으로 50% · 50%, 목표도 산 종목끼리 다시 나눠 55.6% · 44.4% → 정상
     assert got["unheld"] == ["000300"] and got["ts"] == [["000100", "none", 0.5], ["000200", "none", 0.5]], got

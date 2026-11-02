@@ -221,7 +221,9 @@ const d = mkDeck([{ s: A, target: 0.5, qty: 10, price: 8000 }, { s: U, target: 0
 const de = T.R.evaluateDeck(d, ctxOf([A, U], [], 1300));
 const noFx = mkDeck([{ s: A, target: 0.5, qty: 10, price: 8000 }, { s: U, target: 0.5, qty: 1, price: 90, fx: null }]);
 const de2 = T.R.evaluateDeck(noFx, ctxOf([A, U], [], 1300));
-out = { m: T.deckMoney(d, de), noFx: T.deckMoney(noFx, de2), stale: T.deckMoney(d, { ok: false, why: 'stale' }) };""",
+const c = ctxOf([A, U], [], 1300);
+out = { m: T.deckMoney(d, de, c), noFx: T.deckMoney(noFx, de2, c), stale: T.deckMoney(d, { ok: false, why: 'stale' }, c),
+        noPrice: T.deckMoney(d, de, ctxOf([A, { ...U, price: null }], [], 1300)) };""",
               A=kr("000100", price=10000.0), U=us("AAPL", price=100.0))
     m = got["m"]
     assert m["ok"] and m["value"] == 10 * 10000 + 130000 and m["cost"] == 80000 + 90 * 1250, m
@@ -229,7 +231,7 @@ out = { m: T.deckMoney(d, de), noFx: T.deckMoney(noFx, de2), stale: T.deckMoney(
     assert abs(m["per"]["000100"]["ret"] - 0.25) < 1e-12 and abs(m["per"]["AAPL"]["ret"] - (130000 / 112500 - 1)) < 1e-12
     n = got["noFx"]                                            # 환율 없이 저장된 미국 매수: 오늘 환율로 바꾸지 않아요
     assert n["ok"] and n["cost"] is None and n["ret"] is None and n["noFx"] == ["AAPL"] and n["per"]["AAPL"]["cost"] is None
-    assert got["stale"]["ok"] is False
+    assert got["stale"]["ok"] is False and got["noPrice"]["ok"] is False     # 값을 모르는 종목이 있으면 평가 금액도 없어요
 
 
 def test_today_move_of_the_deck_needs_every_d1_and_no_us_stock():

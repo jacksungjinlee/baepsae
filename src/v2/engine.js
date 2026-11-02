@@ -739,8 +739,13 @@ export function cautions(s, co, ctx) {
     ran.push("rev");
     if (rev[0] < rev[1] && rev[1] < rev[2]) items.push({ code: "revFall" });
   }
-  // operating profit down 2 years running: the keep rule would already fail at purchase, so it is a caution instead
-  if (opFell2(co)) { ran.push("op"); items.push({ code: "opFall", pct: (co.op[0] / co.op[1] - 1) * 100 }); }
+  // operating profit down 2 years running: the keep rule would already fail at purchase, so it is a caution instead.
+  // op = [fy, fy-1, fy-2] in 억원. pct (vs last year) only when last year was a profit: a % change from a loss means nothing.
+  if (opFell2(co)) {
+    const op = co.op.slice(0, 3).map(num);
+    ran.push("op");
+    items.push({ code: "opFall", op, pct: op[1] > 0 ? (op[0] / op[1] - 1) * 100 : null });
+  }
   else if (co && Array.isArray(co.op) && co.op.slice(0, 3).filter((x) => num(x) != null).length >= 3) ran.push("op");
   const vol = num(s.vol), p80 = ctx.volP80[s.cls];
   if (vol != null && p80 != null) { ran.push("vol"); if (vol > p80) items.push({ code: "volHigh", vol }); }
@@ -767,10 +772,13 @@ export function dividendStreak(d3) {
 }
 
 export const debtLimitFor = (debt) => Math.max(100, Math.ceil((debt * 1.25) / 10) * 10);
-// Operating profit [latest, prior, two years ago] fell twice in a row (positive base years only)
+// Operating profit [this year, last year, two years ago] fell twice in a row. The one definition used everywhere (the
+// purchase-time caution, the rule's fellBefore, and the daily check in rules.js): any sign counts, so a profit that
+// turns into a loss, or a loss that gets deeper, is a fall too.
+export const fellTwice = (op) => Array.isArray(op) && op.length >= 3 && [0, 1, 2].every((i) => num(op[i]) != null)
+  && op[0] < op[1] && op[1] < op[2];
 export function opFell2(co) {
-  const op = co && Array.isArray(co.op) ? co.op.slice(0, 3).map(num) : [];
-  return op.length === 3 && op.every((x) => x != null) && op[1] > 0 && op[0] < op[1] && op[1] < op[2];
+  return !!(co && Array.isArray(co.op) && fellTwice(co.op.slice(0, 3).map(num)));
 }
 export const roeFloorFor = (roe) => Math.max(0, Math.floor(roe / 2));
 
