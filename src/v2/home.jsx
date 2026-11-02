@@ -1,12 +1,14 @@
-// 오늘 and 내 덱 for the first PR (v18.3 A+B). The daily rule check (Part C) and the tracking sheet (Part E) come later,
-// so these screens show only real states: load failure, stale data, the content date, "준비 중", and the user's own
-// purchase records. No verdict and no example data.
-import React, { useRef, useState } from "react";
+// 오늘 and 내 덱 (v18.3 A+B, plus the Part C daily check on 내 덱). The 오늘 hero and the tracking sheet are Part E, so
+// 오늘 shows only real states: load failure, stale data, the content date and "준비 중". 내 덱 shows the user's own
+// purchase records and, when today's data is fresh, each held stock's rule check (daily.jsx). No example data.
+import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
-import { HeroBand, Button, ListRow, StatusChip } from "../ui/components.jsx";
+import { HeroBand, Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, OldAppNote, tx } from "./ui.jsx";
-import { parseImport, mergeStores, downloadRecords, isSafariLike } from "./store.js";
+import { parseImport, mergeStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
+import { evaluateAll, todayCtx } from "./rules.js";
+import { HoldingRow } from "./daily.jsx";
 
 export function Today({ load, pad }) {
   return (
@@ -38,6 +40,13 @@ export function MyDeck({ load, store, setStoreData, pad }) {
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
   const decks = store.data.decks;
+  // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why).
+  const ev = useMemo(() => evaluateAll(decks, todayCtx(load)), [decks, load]);
+  const onConfirm = (deckId, item, answer) => {
+    const next = withConfirm(store.data, deckId, item, answer, todayKst());
+    if (next) setStoreData(next);
+    else console.warn("[v2] answer not recorded: " + JSON.stringify(item));
+  };
   const onImport = async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -55,8 +64,13 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       <OldAppNote />
+      {decks.length > 0 && !ev.ok && ev.why === "stale" && (
+        <Note tone="watch" data-ui-v2="deck-stale">{fill(C.today.stale, { n: ev.days })}</Note>
+      )}
       {decks.map((d) => {
         const ts = [...new Set(d.purchases.filter((p) => p.qty > 0).map((p) => p.t))];
+        const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
+        const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
         return (
           <Card key={d.id} data-deck-id={d.id}>
             <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{d.name}</h3>
@@ -64,8 +78,11 @@ export function MyDeck({ load, store, setStoreData, pad }) {
             {ts.map((t) => {
               const h = d.holdings.find((x) => x.t === t) || { nk: t };
               const a = avgCost(d.purchases, t);
-              return <ListRow key={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null} />;
+              const x = de && de.ok ? de.holdings.find((y) => y.t === t) || null : null;
+              return <HoldingRow key={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
+                x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} />;
             })}
+            {de && de.ok && de.notChecked > 0 && <Note data-ui-v2="not-checked">{fill(C.daily.notChecked, { n: de.notChecked })}</Note>}
           </Card>
         );
       })}

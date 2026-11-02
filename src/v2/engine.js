@@ -745,7 +745,7 @@ export function cautions(s, co, ctx) {
 
 // ---------------- 내 투자 규칙 (rule book) ----------------
 // Each rule: { id, kind: "sell" | "keep" | "band", check: "checked" | "pending", ...inputs at purchase }.
-// Statuses follow the v18.3 Part C table. The daily evaluation loop is Part C (not here).
+// Statuses follow the v18.3 Part C table. The daily evaluation is src/v2/rules.js (Part C).
 export const fyOf = (s, co) => num(s.fy) ?? (co ? num(co.fy) : null);
 
 export function dividendStreak(d3) {

@@ -159,3 +159,47 @@ def test_old_app_key_matches_the_current_app():
         assert 'const KEY_SLOTS = "baepsae_v10_slots";' in f.read()
     with open(os.path.join(ROOT, "src", "v2", "store.js"), encoding="utf-8") as f:
         assert 'OLD_APP_SLOTS_KEY = "baepsae_v10_slots"' in f.read()
+
+
+# ── 확인 필요 답 (v18.3 Part C): 덱 기록 안의 confirms ──
+CONFIRM = {"t": "005930", "rule": "divCut", "fy": 2025, "a": 1446.0, "b": 1200.0, "answer": "cut", "at": "2026-11-01"}
+
+
+def with_confirms(confirms):
+    d = json.loads(json.dumps(GOOD))
+    d["decks"][0]["confirms"] = confirms
+    return json.dumps(d, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("why, confirms", [
+    ("배열 아님", {"0": CONFIRM}),
+    ("모르는 답", [{**CONFIRM, "answer": "maybe"}]),
+    ("모르는 규칙", [{**CONFIRM, "rule": "debtCeiling"}]),
+    ("보고서 연도 글자", [{**CONFIRM, "fy": "2025"}]),
+    ("감소가 아님", [{**CONFIRM, "b": 1446.0}]),
+    ("음수 배당", [{**CONFIRM, "b": -1}]),
+    ("미래 날짜", [{**CONFIRM, "at": "2026-11-02"}]),
+    ("보유에 없는 종목", [{**CONFIRM, "t": "999999"}]),
+])
+def test_bad_confirm_answers_reject_the_whole_file(why, confirms):
+    got = run(f"out = S.parseImport({json.dumps(with_confirms(confirms))}, '2026-11-01');")
+    assert got is None, why
+
+
+def test_confirm_answers_round_trip_and_old_records_without_them_still_read():
+    got = run(f"const t = {json.dumps(with_confirms([CONFIRM]))};"
+              f"const old = {json.dumps(json.dumps(GOOD, ensure_ascii=False))};"
+              "const d = S.parseImport(t, '2026-11-01');"
+              "const again = S.parseImport(S.exportText(d), '2026-11-01');"
+              "out = { c: again && again.decks[0].confirms, old: !!S.parseImport(old, '2026-11-01') };")
+    assert got == {"c": [CONFIRM], "old": True}
+
+
+def test_with_confirm_replaces_the_same_item_and_keeps_others():
+    got = run(f"const d = S.parseImport({json.dumps(with_confirms([CONFIRM]))}, '2026-11-01');"
+              "const item = { t: '005930', rule: 'divCut', fy: 2025, a: 1446, b: 1200 };"
+              "const flip = S.withConfirm(d, 'd1', item, 'notCut', '2026-11-02');"
+              "const other = S.withConfirm(flip, 'd1', { ...item, fy: 2026, a: 1200, b: 1000 }, 'cut', '2026-11-02');"
+              "out = { flip: flip.decks[0].confirms.map((c) => c.answer), other: other.decks[0].confirms.map((c) => c.fy + c.answer),"
+              " untouched: d.decks[0].confirms.length, valid: S.validStore(other, '2026-11-02') };")
+    assert got == {"flip": ["notCut"], "other": ["2025notCut", "2026cut"], "untouched": 1, "valid": True}

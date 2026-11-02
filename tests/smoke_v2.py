@@ -13,6 +13,9 @@
   실패        data.json 404 · corp.json 깨짐 → 불러오기 실패 문구
   필드 없음   ind · val20 이 없는 데이터 → 덱 짜기가 '준비 중'만 보여요 (순위·비중을 만들지 않음)
   저장 불가   브라우저 저장소가 막힘 → '이 기기에서는 기록을 저장할 수 없어요…'
+  매일 점검   (Part C) 저장된 덱 + 산 뒤에 나온 2025년 보고서: 매도 조건(실제로 줄였어요 → 규칙 깨짐, 새로 고침해도 남음) ·
+              줄인 게 아니에요 → 해제 · 지켜봐요(부채비율) · 확인 필요(배당 감소 · 자료 없음) · 비중 벗어남 · 할 일 없음 ·
+              큰 움직임은 표시만 · '아직 자동으로 확인하지 못하는 규칙' 줄 · 멈춘 데이터와 불러오기 실패에서는 판정 없음
 모든 장면에서 페이지 오류 0건, 다른 사이트 요청 0건. 화면에 보이는 한국어는 모두 src/copy/v2.js(또는 데이터의 이름)에서 와요.
 """
 import argparse
@@ -608,6 +611,192 @@ def scene_no_storage(R, files, width):
     srv.shutdown()
 
 
+# ── 매일 점검 (Part C) ──
+# 산 날(2024년 보고서 기준, since 2024)에 만든 규칙 책을 저장해 두고, 오늘 데이터(2025년 보고서)로 점검해요.
+# 규칙 책은 engine.js ruleBook 이 만드는 모양 그대로예요 (같은 칸 이름).
+def _pending(*ids):
+    return [{"id": i, "kind": "sell", "check": "pending"} for i in ids]
+
+
+def _band(target):
+    return {"id": "band", "kind": "band", "check": "checked", "target": target, "bands": [0.75 * target, 1.25 * target, 1.4 * target]}
+
+
+def _div(since, dps, prev):
+    return {"id": "divCut", "kind": "sell", "check": "checked", "input": "dps", "baseline": dps, "since": since, "dps": dps,
+            "prev": prev, "fy": since, "streak": 0, "droppedBefore": dps < prev}
+
+
+def _debt(since, debt, limit):
+    return {"id": "debtCeiling", "kind": "keep", "check": "checked", "input": "debt", "baseline": debt, "since": since, "debt": debt,
+            "limit": limit, "fy": since}
+
+
+def _holding(t, nk, target, rules):
+    return {"t": t, "nk": nk, "cls": "kr", "ind": None, "kind": "core", "target": target, "plannedQty": 1,
+            "rules": rules + _pending("audit", "embezzle", "acquisition") + [_band(target)]}
+
+
+def _deck(i, name, rows):
+    return {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [_holding(t, nk, tg, r) for t, nk, tg, r, _ in rows],
+            "purchases": [{"t": t, "date": "2026-10-01", "qty": q, "price": 1000, "ccy": "KRW"} for t, _, _, _, q in rows]}
+
+
+SAMSUNG = ("005930", "삼성전자")
+DAILY_DECKS = {"v": 1, "decks": [
+    _deck("dcut", "확인 덱", [("005380", "현대차", 0.5, [_div(2024, 12000.0, 11400.0)], 1), (*SAMSUNG, 0.5, [_div(2025, 1668.0, 1446.0)], 1)]),
+    _deck("dclear", "해제 덱", [("005380", "현대차", 0.5, [_div(2024, 12000.0, 11400.0)], 1), (*SAMSUNG, 0.5, [_div(2025, 1668.0, 1446.0)], 1)]),
+    _deck("dwatch", "부채 덱", [("012450", "한화에어로스페이스", 0.5, [_debt(2024, 150.0, 200)], 1), (*SAMSUNG, 0.5, [], 3)]),
+    _deck("dmiss", "자료 덱", [("000270", "기아", 0.5, [_debt(2024, 60.0, 100)], 7), (*SAMSUNG, 0.5, [], 3)]),
+    _deck("dband", "비중 덱", [(*SAMSUNG, 0.5, [], 4), ("035420", "NAVER", 0.5, [], 1)]),
+    _deck("dcalm", "조용한 덱", [("000660", "SK하이닉스", 0.5, [], 1), (*SAMSUNG, 0.5, [_div(2025, 1668.0, 1446.0)], 6)]),
+]}
+
+
+def daily_files(files, days_ago=0):
+    f = clone(files)
+    for n in DATA_FILES:
+        f[n]["publishedAt"] = now_kst(days_ago=days_ago)
+    by = {x["t"]: x for x in f["data.json"]["stocks"]}
+    for t in ("005930", "005380", "012450", "000270", "035420", "000660"):
+        by[t]["d1"] = 0.5                                                   # 큰 움직임은 SK하이닉스 하나만
+        by[t]["fy"] = 2025
+    by["005380"].update(dps=10000.0, dps3=[10000.0, 12000.0, 11400.0])   # 2025년 보고서: 12,000 → 10,000원
+    by["012450"]["debt"] = 221.0                                          # 기준 200% 넘음
+    by["000270"].pop("debt", None)                                        # 산 때 있던 부채비율이 오늘 비었어요
+    by["000660"]["d1"] = -6.2
+    return f
+
+
+def scene_daily(R, files, width):
+    S = f"매일 점검 {width}"
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, _ = R.open(build_site(daily_files(files)), width, init=init)
+    deck = lambda i: page.locator(f'[data-deck-id="{i}"]')
+    row = lambda i, t: deck(i).locator(f'[data-holding="{t}"]')
+
+    def open_deck():
+        wait_ready(page)
+        tab(page, C["app"]["tabs"]["deck"])
+        see(page, "조용한 덱")
+        page.locator("[data-holding][data-status]").first.wait_for(state="visible")
+
+    def statuses():
+        open_deck()
+        st = {(i, t): row(i, t).get_attribute("data-status") for i, t in
+              (("dcut", "005380"), ("dclear", "005380"), ("dwatch", "012450"), ("dmiss", "000270"), ("dband", "005930"),
+               ("dband", "035420"), ("dcalm", "000660"), ("dcalm", "005930"))}
+        assert st == {("dcut", "005380"): "check", ("dclear", "005380"): "check", ("dwatch", "012450"): "watch",
+                      ("dmiss", "000270"): "check", ("dband", "005930"): "trim", ("dband", "035420"): "low",
+                      ("dcalm", "000660"): "none", ("dcalm", "005930"): "none"}, st
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "저장된 덱 6개 → 종목마다 상태 (확인 필요 · 지켜봐요 · 비중 · 할 일 없음)", statuses)
+
+    def check_needed():
+        r = row("dcut", "005380")
+        line = r.locator('[data-ui-v2="status-line"][data-code="divDrop"]')
+        assert "현대차 배당이 줄었어요 · 주당 12,000원 → 10,000원" in line.inner_text(), line.inner_text()
+        assert C["pick"]["caution"]["divDropBody"] in line.inner_text() and "2025년 사업보고서 기준" in line.inner_text()
+        assert r.locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"]]      # 확인 필요는 지켜봐요로 보여요
+        assert C["daily"]["broken"] not in deck("dcut").inner_text(), "확인 전인데 규칙 깨짐이 보여요"
+        btns = r.locator('[data-ui-v2="confirm"] button')
+        assert btns.all_inner_texts() == [C["daily"]["confirmCut"], C["daily"]["confirmNotCut"]]
+        fold = row("dclear", "005380").locator('[data-ui="collapsible"]')
+        fold.locator("button").first.click()
+        div = fold.locator('[data-rules-today] [data-ui-v2="rule-line"]').first
+        assert div.get_attribute("data-state") == "watch" and C["daily"]["broken"] not in fold.inner_text(), div.inner_text()
+        R.collect(page)
+        fold.locator("button").first.click()
+    R.check(page, S, "배당 감소 → 확인 필요: 승인 문장 · 2025년 사업보고서 기준 · 두 버튼 (규칙 깨짐 아님)", check_needed)
+
+    def keep_and_missing():
+        w = row("dwatch", "012450")
+        assert w.locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"]]
+        txt = w.locator('[data-ui-v2="status-line"][data-code="debtOver"]').inner_text()
+        assert "부채비율 221% (기준 200%)" in txt and "2025년 사업보고서 기준" in txt, txt
+        m = row("dmiss", "000270")
+        assert "부채비율 자료를 받지 못해 확인이 필요해요" in m.locator('[data-ui-v2="status-line"][data-code="missing"]').inner_text()
+        assert m.locator('[data-ui-v2="confirm"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "부채비율 기준 넘음 → 지켜봐요 '부채비율 221% (기준 200%)' · 산 때 있던 자료가 비면 확인 필요", keep_and_missing)
+
+    def bands_and_calm():
+        hi = row("dband", "005930").locator('[data-ui-v2="status-line"][data-code="band"]').inner_text()
+        lo = row("dband", "035420").locator('[data-ui-v2="status-line"][data-code="band"]').inner_text()
+        assert "70.0% 넘으면 일부 팔아요" in hi and "37.5% 미만이면 먼저 사요" in lo, (hi, lo)
+        assert row("dband", "005930").locator('[data-ui="status-chip"]').count() == 0     # 비중은 칩 없이 비중 줄로
+        calm = deck("dcalm")
+        assert calm.locator('[data-ui-v2="status-line"]').count() == 0
+        assert row("dcalm", "000660").locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["bigMove"]]
+        assert row("dcalm", "005930").locator('[data-ui="status-chip"]').count() == 0       # 칩이 없으면 괜찮은 종목
+        nc = calm.locator('[data-ui-v2="not-checked"]').inner_text()
+        assert re.fullmatch(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", nc), nc
+        assert page.locator('[data-ui-v2="not-checked"]').count() == 6
+        R.collect(page)
+    R.check(page, S, "비중 벗어남 · 할 일 없음(칩 없음) · 큰 움직임은 칩만 · '아직 자동으로 확인하지 못하는 규칙' 줄", bands_and_calm)
+
+    def confirm_cut():
+        row("dcut", "005380").get_by_role("button", name=C["daily"]["confirmCut"]).click()
+        r = row("dcut", "005380")
+        page.wait_for_function("() => document.querySelector('[data-deck-id=\"dcut\"] [data-holding=\"005380\"]').dataset.status === 'broken'")
+        assert r.locator('[data-ui="status-chip"]').all_inner_texts() == [C["daily"]["broken"]]
+        txt = r.locator('[data-ui-v2="status-line"][data-code="divCut"]').inner_text()
+        assert "배당 삭감 · 주당 12,000원 → 10,000원" in txt and C["daily"]["sellNow"] in txt and "2025년 사업보고서 기준" in txt, txt
+        assert row("dclear", "005380").get_attribute("data-status") == "check", "다른 덱의 같은 종목까지 바뀌었어요"
+        r.locator('[data-ui="collapsible"] button').first.click()
+        line = r.locator('[data-rules-today] [data-ui-v2="rule-line"][data-state="broken"]')
+        assert line.count() == 1 and C["daily"]["broken"] in line.inner_text()
+        assert r.locator('[data-rules-today] [data-check="pending"]').count() >= 2
+        R.collect(page)
+        page.reload(wait_until="domcontentloaded")
+        open_deck()
+        assert row("dcut", "005380").get_attribute("data-status") == "broken", "새로 고침하니 답이 사라졌어요"
+        stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")
+        cs = [d.get("confirms") for d in stored["decks"] if d["id"] == "dcut"][0]
+        assert len(cs) == 1 and cs[0]["answer"] == "cut" and (cs[0]["fy"], cs[0]["a"], cs[0]["b"]) == (2025, 12000, 10000), cs
+    R.check(page, S, "실제로 줄였어요 → 규칙 깨짐 '배당 삭감 · 주당 12,000원 → 10,000원' · 새로 고침해도 남아요", confirm_cut)
+
+    def confirm_clear():
+        row("dclear", "005380").get_by_role("button", name=C["daily"]["confirmNotCut"]).click()
+        page.wait_for_function("() => document.querySelector('[data-deck-id=\"dclear\"] [data-holding=\"005380\"]').dataset.status === 'none'")
+        r = row("dclear", "005380")
+        assert r.locator('[data-ui-v2="confirm"]').count() == 0 and r.locator('[data-ui="status-chip"]').count() == 0
+        assert row("dcut", "005380").get_attribute("data-status") == "broken"
+        R.collect(page)
+    R.check(page, S, "줄인 게 아니에요 → 그 보고서의 감소는 해제 (다른 덱은 그대로)", confirm_clear)
+
+    def today_unchanged():
+        tab(page, C["app"]["tabs"]["today"])
+        see(page, C["app"]["pending"])
+        assert page.get_by_text("할 일").count() == 0                     # 오늘의 큰 띠는 Part E
+        R.collect(page)
+    R.check(page, S, "오늘 화면은 그대로 '준비 중' (오늘 띠는 Part E)", today_unchanged)
+    ctx.close()
+    srv.shutdown()
+
+    for how, f, drop in (("멈춤", daily_files(files, days_ago=6), ()), ("실패", daily_files(files), ("data.json",))):
+        srv, ctx, page, _ = R.open(build_site(f, drop=drop), width, init=init)
+
+        def no_status():
+            wait_ready(page)
+            tab(page, C["app"]["tabs"]["deck"])
+            see(page, "조용한 덱")
+            if how == "멈춤":
+                assert page.locator('[data-ui-v2="deck-stale"]').inner_text() == "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요"
+            else:
+                assert page.locator('[data-ui-v2="deck-stale"]').count() == 0
+            assert page.locator("[data-holding][data-status]").count() == 0, "멈춘·실패한 데이터로 판정했어요"
+            for sel in ('[data-ui-v2="status-line"]', '[data-ui-v2="confirm"]', '[data-ui-v2="not-checked"]', '[data-holding] [data-ui="status-chip"]', "[data-rules-today]"):
+                assert page.locator(sel).count() == 0, sel
+            assert page.get_by_text("할 일").count() == 0
+            assert page.get_by_text("평균 단가").count() == 12                # 기록은 그대로 보여요
+            R.collect(page)
+        R.check(page, f"매일 점검 · {how} {width}", "판정 없음 (상태 · 버튼 · 규칙 결과 모두 없음), 기록은 그대로", no_status)
+        ctx.close()
+        srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -627,7 +816,8 @@ def main():
                       lambda: scene_us_date(R, files, width),
                       lambda: scene_old_app(R, files, width, '[{"id":"s1","name":"포트폴리오 1"}]', True),
                       lambda: scene_old_app(R, files, width, "[]", False),
-                      lambda: scene_old_app(R, files, width, "{not json", False)]
+                      lambda: scene_old_app(R, files, width, "{not json", False),
+                      lambda: scene_daily(R, files, width)]
             for fn in scenes:
                 try:
                     fn()

@@ -157,12 +157,17 @@ export function ActionBar({ summary, action, onAction, disabled }) {
   );
 }
 
-// One rule line in 내 투자 규칙. Nothing is evaluated daily yet (Part C), so no rule gets a green check: a rule we can
-// check shows the rule icon with its number and report; a rule we cannot check yet shows a dot and 준비 중.
-export function RuleLine({ name, now, limit, source, pending, note }) {
-  const ic = pending ? { name: "dot", fg: COLOR.neutral, bg: COLOR.neutralBg } : { name: "rule", fg: COLOR.neutral, bg: COLOR.neutralBg };
+// One rule line in 내 투자 규칙. 매수 계획 (before purchase) evaluates nothing, so no rule gets a green check there: a
+// rule we can check shows the rule icon with its number and report; a rule we cannot check yet shows a dot and 준비 중.
+// 내 덱 (Part C) passes today's result as state: "ok" (check icon), "watch" (alert), "broken" (cross), or nothing
+// (the rule icon: in place, nothing new since the purchase report), plus an optional chip label.
+const STATE_ICON = { ok: { name: "check", fg: COLOR.ok, bg: COLOR.okBg }, watch: { name: "alert", fg: COLOR.watch, bg: COLOR.watchBg },
+  broken: { name: "close", fg: COLOR.broken, bg: COLOR.brokenBg } };
+export function RuleLine({ name, now, limit, source, pending, note, state, stateLabel }) {
+  const ic = pending ? { name: "dot", fg: COLOR.neutral, bg: COLOR.neutralBg } : STATE_ICON[state] || { name: "rule", fg: COLOR.neutral, bg: COLOR.neutralBg };
   return (
-    <div data-ui-v2="rule-line" data-check={pending ? "pending" : "checked"} data-icon={ic.name} style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
+    <div data-ui-v2="rule-line" data-check={pending ? "pending" : "checked"} data-icon={ic.name} data-state={pending ? undefined : state || undefined}
+      style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
       <span style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: ic.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Icon name={ic.name} size={16} color={ic.fg} />
       </span>
@@ -174,6 +179,7 @@ export function RuleLine({ name, now, limit, source, pending, note }) {
         {source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
       </div>
       {pending && <PendingChip />}
+      {!pending && stateLabel && <StatusChip tone={state === "broken" ? "broken" : state === "watch" ? "watch" : "ok"}>{stateLabel}</StatusChip>}
     </div>
   );
 }

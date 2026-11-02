@@ -1,0 +1,387 @@
+# -*- coding: utf-8 -*-
+"""뱁새 2.0 매일 점검 (src/v2/rules.js, v18.3 Part C) — Node 로 직접 돌려봐요.
+
+판정 순서(규칙 깨짐 → 확인 필요·지켜봐요 → 비중 → 할 일 없음) · 비중 경계 0.75 / 1.25 / 1.4 · 가격은 규칙을 움직이지 않아요 ·
+멈춘·실패한 데이터로는 아무 판정도 하지 않아요 · 배당 감소는 확인 필요(혼자서는 규칙 깨짐 아님) · '실제로 줄였어요' → 규칙 깨짐,
+'줄인 게 아니에요' → 그 보고서만 해제 · 산 때 있던 자료가 오늘 비면 확인 필요 · 산 때 보고서(since)보다 새 보고서만 셈 ·
+금융회사는 부채비율 규칙 없음 · 영업이익은 [올해, 작년, 재작년] 순서.
+"""
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NODE = shutil.which("node")
+pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+_B = {}
+
+
+def bundle_dir():
+    if "p" not in _B:
+        tmp = tempfile.mkdtemp()
+        entry = os.path.join(tmp, "entry.js")
+        with open(entry, "w", encoding="utf-8") as f:
+            f.write(f"export * from {json.dumps(os.path.join(ROOT, 'src/v2/rules.js'))};\n"
+                    f"export * as E from {json.dumps(os.path.join(ROOT, 'src/v2/engine.js'))};\n"
+                    f"export * as S from {json.dumps(os.path.join(ROOT, 'src/v2/store.js'))};\n")
+        exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+        r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/rules.mjs",
+                            "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        _B["p"] = tmp
+    return _B["p"]
+
+
+# deck(stocks, corps, holdings, opts): a deck bought at purchase-time data `buy` (rule books from engine.ruleBook), then
+# checked against today's data `now`. Helper JS so every test builds rule books the way 샀어요 does.
+HELPERS = """
+const ctxOf = (stocks, corps, fx = 1300, state = { ok: true }) => ({ state, byT: new Map(stocks.map((s) => [s.t, s])),
+  coByT: new Map((corps || []).map((c) => [c.t, c])), fx, pxDate: '2026-10-30' });
+const book = (s, co, points, target) => R.E.ruleBook(s, co || null, points || {}, target);
+const mkDeck = (rows, extra = {}) => ({ id: 'd1', name: 'deck', createdAt: '2026-10-01',
+  holdings: rows.map((r) => ({ t: r.s.t, nk: r.s.nk, cls: r.s.cls, kind: 'core', target: r.target, rules: r.rules ?? book(r.s, r.co, r.points, r.target) })),
+  purchases: rows.filter((r) => r.qty > 0).map((r) => ({ t: r.s.t, date: '2026-10-01', qty: r.qty, price: r.s.price, ccy: r.s.cls === 'us' ? 'USD' : 'KRW' })),
+  ...extra });
+const one = (deck, stocks, corps, fx) => R.evaluateDeck(deck, ctxOf(stocks, corps, fx));
+const hold = (ev, t) => ev.holdings.find((x) => x.t === t);
+"""
+
+
+def run(body, **data):
+    decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
+    code = "import * as R from './rules.mjs';\n" + HELPERS + decl + "let out;\n" + body + "\nconsole.log(JSON.stringify(out));"
+    r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=bundle_dir(), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def kr(t, **kw):
+    s = {"t": t, "nk": "K" + t, "cls": "kr", "price": 10000.0, "roe": 10.0, "debt": 80.0, "dps": 500.0,
+         "dps3": [500.0, 450.0, 400.0], "fy": 2025, "d1": 0.5, "ind": "machine", "indName": "기계"}
+    s.update(kw)
+    return {k: v for k, v in s.items() if v is not None}
+
+
+def co(t, op=(120.0, 110.0, 100.0), fy=2025, **kw):
+    c = {"t": t, "op": list(op), "fy": fy}
+    c.update(kw)
+    return c
+
+
+def us(t, **kw):
+    s = {"t": t, "nk": "U" + t, "cls": "us", "price": 100.0, "roe": 20.0, "debt": 60.0, "d1": 0.2, "ind": "soft", "indName": "소프트웨어"}
+    s.update(kw)
+    return {k: v for k, v in s.items() if v is not None}
+
+
+def at(s, **kw):
+    """Today's row: the same stock with some fields changed (None = blank today)."""
+    x = dict(s)
+    for k, v in kw.items():
+        if v is None:
+            x.pop(k, None)
+        else:
+            x[k] = v
+    return x
+
+
+# A deck of two equal halves bought at 2024 data (since = 2024), checked on today's 2025 report.
+def pair(a_now, a_co_now, b_now=None, points=None, a_buy=None, a_co_buy=None, qa=10, qb=10):
+    a_buy = a_buy or at(a_now, fy=2024)
+    a_co_buy = a_co_buy or {**a_co_now, "fy": 2024}
+    b_now = b_now or kr("000200")
+    return {"a_buy": a_buy, "a_co_buy": a_co_buy, "a_now": a_now, "a_co_now": a_co_now, "b": b_now,
+            "points": points or {"stable": 3, "profit": 2}, "qa": qa, "qb": qb}
+
+
+PAIR_JS = """
+const d = mkDeck([{ s: P.a_buy, co: P.a_co_buy, points: P.points, target: 0.5, qty: P.qa },
+                  { s: P.b, co: null, points: P.points, target: 0.5, qty: P.qb }], typeof EXTRA === 'undefined' ? {} : EXTRA);
+const ev = one(d, [P.a_now, P.b], [P.a_co_now]);
+const h = hold(ev, P.a_now.t);
+"""
+
+
+# ── 판정 순서 ──
+def test_decision_order_sell_then_check_then_keep_then_band_then_nothing():
+    a = kr("000100", dps3=[300.0, 500.0, 450.0], dps=300.0, debt=300.0)           # 2025 보고서: 배당 500 → 300, 부채비율 300%
+    co_now = co("000100", op=(80.0, 100.0, 120.0))                              # 영업이익 2년 연속 감소
+    buy = at(a, fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0], debt=150.0)
+    base = pair(a, co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10)   # 비중 75%
+    cut = {"confirms": [{"t": "000100", "rule": "divCut", "fy": 2025, "a": 500.0, "b": 300.0, "answer": "cut", "at": "2026-11-01"}]}
+    got = run("const outs = [];\n"
+              "for (const [P, EXTRA] of CASES) { " + PAIR_JS.replace("const ", "let ") + " outs.push({ s: h.status, codes: h.reasons.map((r) => r.code) }); }\n"
+              "out = outs;",
+              CASES=[[base, cut], [base, {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0), co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10), {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
+                           a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10), {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
+                           a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}]])
+    # 1) 실제로 줄였다고 답한 배당 삭감 → 규칙 깨짐 (부채비율·영업이익·비중도 이유로 같이 남아요)
+    assert got[0]["s"] == "broken" and got[0]["codes"][0] == "divCut" and {"debtOver", "opFell2", "band"} <= set(got[0]["codes"]), got[0]
+    # 2) 답하지 않은 배당 감소 → 확인 필요 (지켜봐요보다 먼저)
+    assert got[1]["s"] == "check" and got[1]["codes"][0] == "divDrop", got[1]
+    # 3) 배당은 그대로, 부채비율·영업이익이 어긋남 → 지켜봐요
+    assert got[2]["s"] == "watch" and set(got[2]["codes"]) == {"debtOver", "opFell2", "band"}, got[2]
+    # 4) 규칙은 다 지켜지고 비중만 목표의 1.5배 → 줄일 차례
+    assert got[3]["s"] == "trim" and got[3]["codes"] == ["band"], got[3]
+    # 5) 아무것도 없으면 할 일 없음
+    assert got[4]["s"] == "none" and got[4]["codes"] == [], got[4]
+
+
+# ── 비중 경계 ──
+def test_band_edges_exactly_at_075_125_14_stay_in_the_milder_band():
+    # 두 종목 목표 50% · 50%. 값을 바꿔 첫 종목 비중을 정확히 목표 × r 로 만들어요.
+    cases = {"0.75": 0.375, "below 0.75": 0.37, "1.25": 0.625, "above 1.25": 0.63, "1.4": 0.7, "above 1.4": 0.71, "1.0": 0.5}
+    got = run("""
+const out2 = {};
+for (const [k, w] of Object.entries(CASES)) {
+  const a = { ...A, price: w * 1000 }, b = { ...B, price: (1 - w) * 1000 };
+  const d = mkDeck([{ s: A, target: 0.5, qty: 1 }, { s: B, target: 0.5, qty: 1 }]);
+  const ev = one(d, [a, b], []);
+  out2[k] = [hold(ev, A.t).status, hold(ev, A.t).reasons.map((r) => r.band || r.code)];
+}
+out = out2;""", CASES=cases, A=kr("000100"), B=kr("000200"))
+    assert got["1.0"][0] == "none"
+    assert got["0.75"][0] == "none" and got["below 0.75"][0] == "low", got        # 0.75 미만부터 먼저 살 차례
+    assert got["1.25"][0] == "none" and got["above 1.25"][0] == "high", got       # 1.25 초과부터 그만 살 차례
+    assert got["1.4"][0] == "high" and got["above 1.4"][0] == "trim", got         # 1.4 초과부터 줄일 차례
+
+
+# ── 가격은 규칙을 움직이지 않아요 ──
+def test_price_moves_never_change_a_status_only_the_big_move_note():
+    a = kr("000100", debt=300.0, dps3=[500.0, 500.0, 450.0])
+    p = pair(a, co("000100"), a_buy=at(a, fy=2024, debt=150.0))
+    got = run("""
+const outs = [];
+for (const [d1, scale] of [[0.5, 1], [-6.2, 1], [21, 1], [-29.9, 1], [-6.2, 0.4], [9, 3]]) {
+  const now = { ...P.a_now, d1, price: P.a_now.price * scale }, b = { ...P.b, d1, price: P.b.price * scale };
+  const d = mkDeck([{ s: P.a_buy, co: P.a_co_buy, points: P.points, target: 0.5, qty: 10 }, { s: P.b, points: P.points, target: 0.5, qty: 10 }]);
+  const ev = one(d, [now, b], [P.a_co_now]);
+  const h = hold(ev, P.a_now.t);
+  outs.push({ d1, s: h.status, calm: hold(ev, P.b.t).status, big: h.bigMove, rules: h.rules.filter((r) => r.id !== 'band').map((r) => r.result), all: ev.bigMoves });
+}
+out = outs;""", P=p)
+    for x in got:
+        assert x["s"] == "watch" and x["rules"] == got[0]["rules"], x            # 오르든 내리든 판정은 그대로
+        assert x["calm"] == "none", x                                             # 아무 일 없는 종목은 크게 움직여도 할 일 없음
+        assert x["big"] == (abs(x["d1"]) >= 5), x
+    assert got[0]["all"] == [] and got[1]["all"] == ["000100", "000200"]
+
+
+def test_a_crash_in_one_stock_changes_only_its_weight_band_never_a_rule():
+    p = pair(kr("000100"), co("000100"))
+    got = run("""
+const d = mkDeck([{ s: P.a_buy, co: P.a_co_buy, points: P.points, target: 0.5, qty: 10 }, { s: P.b, points: P.points, target: 0.5, qty: 10 }]);
+const crash = one(d, [{ ...P.a_now, price: P.a_now.price * 0.5, d1: -30 }, P.b], [P.a_co_now]);
+const h = hold(crash, P.a_now.t);
+out = { s: h.status, codes: h.reasons.map((r) => r.code), big: h.bigMove, w: h.w };""", P=p)
+    # 50% 떨어져 비중이 1/3 → 목표 50% 의 0.67배: 먼저 살 차례(비중 계산)일 뿐 규칙은 그대로
+    assert got["s"] == "low" and got["codes"] == ["band"] and got["big"] is True and abs(got["w"] - 1 / 3) < 1e-9, got
+
+
+# ── 멈춘·실패한 데이터 ──
+def test_stale_or_failed_data_computes_no_status_at_all():
+    got = run("""
+const fresh = { ok: true }, data = { pxDate: '2026-10-30', publishedAt: '2026-11-02T06:30:00+09:00', fx: 1300 };
+const now = Date.parse('2026-11-02T12:00:00+09:00');
+const corp = (pub) => ({ publishedAt: pub });
+const load = (o) => ({ status: 'ok', data, corp: corp('2026-11-02T06:30:00+09:00'), byT: new Map(), coByT: new Map(), fresh: { days: 0, stale: false }, ...o });
+const d = mkDeck([{ s: A, target: 1, qty: 1 }]);
+const states = {
+  fresh: R.dayState(load({}), now),
+  stale: R.dayState(load({ fresh: { days: 6, stale: true } }), now),
+  corpStale: R.dayState(load({ corp: corp('2026-10-27T06:30:00+09:00') }), now),
+  fail: R.dayState({ status: 'fail' }, now),
+  loading: R.dayState({ status: 'loading' }, now),
+  undated: R.dayState(load({ fresh: { days: null, stale: false } }), now),
+  preview: R.dayState(load({ preview: true, corp: corp('2020-01-01T00:00:00+09:00') }), now),
+};
+const evs = Object.fromEntries(Object.entries(states).map(([k, st]) => [k, R.evaluateAll([d], { ...ctxOf([A], []), state: st })]));
+const deckOnly = R.evaluateDeck(d, { ...ctxOf([A], []), state: states.stale });
+out = { states, evs, deckOnly };""", A=kr("000100"))
+    st, evs = got["states"], got["evs"]
+    assert st["fresh"] == {"ok": True} and st["preview"] == {"ok": True}
+    assert st["stale"] == {"ok": False, "why": "stale", "days": 6}
+    assert st["corpStale"]["why"] == "stale" and st["corpStale"]["days"] == 6       # corp.json 이 멈춰도 점검하지 않아요
+    assert st["fail"]["why"] == "fail" and st["loading"]["why"] == "loading" and st["undated"]["why"] == "undated"
+    for k in ("stale", "corpStale", "fail", "loading", "undated"):
+        assert evs[k]["ok"] is False and evs[k]["decks"] == [] and "counts" not in evs[k], (k, evs[k])
+        assert "none" not in json.dumps(evs[k]), k                                   # 할 일 없음이 나오지 않아요
+    assert evs["fresh"]["ok"] is True and evs["fresh"]["counts"]["none"] == 1
+    assert got["deckOnly"]["ok"] is False and "holdings" not in got["deckOnly"]
+
+
+# ── 배당 감소 ──
+def test_dividend_drop_is_a_check_never_broken_on_its_own():
+    a = kr("005380", dps=10000.0, dps3=[10000.0, 12000.0, 11400.0])           # 현대차처럼 12,000 → 10,000원
+    p = pair(a, co("005380"), a_buy=at(a, fy=2024, dps=12000.0, dps3=[12000.0, 11400.0, 10000.0]))
+    got = run(PAIR_JS + "out = { s: h.status, reasons: h.reasons, div: h.rules.find((r) => r.id === 'divCut'), todo: ev.todo, counts: ev.counts };", P=p)
+    assert got["s"] == "check" and got["div"]["result"] == "check", got
+    drop = got["reasons"][0]
+    assert drop["code"] == "divDrop" and (drop["fy"], drop["a"], drop["b"]) == (2025, 12000, 10000)
+    assert drop["confirm"] == {"t": "005380", "rule": "divCut", "fy": 2025, "a": 12000, "b": 10000}
+    assert got["counts"]["broken"] == 0 and got["todo"] == 1
+    assert "broken" not in json.dumps(got["reasons"])
+
+
+def test_confirm_real_cut_breaks_the_rule_and_not_a_cut_clears_only_that_report():
+    a = kr("005380", dps=10000.0, dps3=[10000.0, 12000.0, 11400.0])
+    p = pair(a, co("005380"), a_buy=at(a, fy=2024, dps=12000.0, dps3=[12000.0, 11400.0, 10000.0]))
+    later = at(a, fy=2026, dps=8000.0, dps3=[8000.0, 10000.0, 12000.0])                 # 다음 해 보고서: 또 줄었어요
+    got = run("""
+const base = mkDeck([{ s: P.a_buy, co: P.a_co_buy, points: P.points, target: 0.5, qty: 10 }, { s: P.b, points: P.points, target: 0.5, qty: 10 }]);
+const store = { v: 1, decks: [base] };
+const st = (data, now, co) => hold(one(data.decks[0], [now, P.b], [co]), P.a_now.t);
+const item = st(store, P.a_now, P.a_co_now).reasons[0].confirm;
+const cut = R.S.withConfirm(store, 'd1', item, 'cut', '2026-11-02');
+const notCut = R.S.withConfirm(store, 'd1', item, 'notCut', '2026-11-02');
+const changed = R.S.withConfirm(store, 'd1', { ...item, b: 9000 }, 'notCut', '2026-11-02');   // 숫자가 다르면 다른 일
+const flip = R.S.withConfirm(cut, 'd1', item, 'notCut', '2026-11-02');
+const nxt = { ...P.a_co_now, fy: 2026 };
+// 2027년 보고서: 2026년에 12,000원으로 되돌렸다가 2027년에 다시 10,000원 (2025년과 같은 숫자의 새 감소)
+const again = st(notCut, { ...P.a_now, fy: 2027, dps: 10000, dps3: [10000, 12000, 10000] }, { ...P.a_co_now, fy: 2027 });
+out = { again: [again.status, again.reasons.filter((r) => r.code === 'divDrop').map((r) => r.fy)],
+  cut: st(cut, P.a_now, P.a_co_now), notCut: st(notCut, P.a_now, P.a_co_now), changed: st(changed, P.a_now, P.a_co_now).status,
+  flip: [st(flip, P.a_now, P.a_co_now).status, flip.decks[0].confirms.length],
+  laterAfterNotCut: st(notCut, LATER, nxt), laterAfterCut: st(cut, LATER, nxt).status,
+  valid: [R.S.validStore(cut, '2026-11-02'), R.S.validStore(notCut, '2026-11-02')],
+  bad: [R.S.withConfirm(store, 'd1', item, 'maybe', '2026-11-02'), R.S.withConfirm(store, 'nope', item, 'cut', '2026-11-02'),
+        R.S.withConfirm(store, 'd1', { ...item, b: 13000 }, 'cut', '2026-11-02')],
+};""", P=p, LATER=later)
+    assert got["cut"]["status"] == "broken" and got["cut"]["reasons"][0]["code"] == "divCut", got["cut"]
+    assert got["notCut"]["status"] == "none" and got["notCut"]["reasons"] == [], got["notCut"]
+    assert got["changed"] == "check"                       # 다른 숫자에 대한 답은 이 감소를 해제하지 않아요
+    assert got["flip"] == ["none", 1]                      # 같은 일의 답은 바뀌어도 하나만 남아요
+    # 다음 해 보고서의 새 감소(10,000 → 8,000원)는 다시 확인 필요 · 실제로 줄였다고 답한 감소는 규칙 깨짐으로 남아요
+    later = got["laterAfterNotCut"]
+    assert later["status"] == "check" and [(r["fy"], r["a"], r["b"]) for r in later["reasons"] if r["code"] == "divDrop"] == [(2026, 10000, 8000)], later
+    assert got["laterAfterCut"] == "broken"
+    assert got["again"] == ["check", [2027]], got["again"]          # 같은 숫자라도 새 보고서의 감소는 다시 물어봐요
+    assert got["valid"] == [True, True] and got["bad"] == [None, None, None]
+
+
+def test_a_report_not_newer_than_since_does_not_count_and_an_older_one_is_missing():
+    a = kr("005380", fy=2025, dps=10000.0, dps3=[10000.0, 12000.0, 11400.0], debt=150.0)
+    c_now = co("005380", op=(115.0, 142.0, 151.0))                                     # 산 날 이미 2년 연속 감소
+    got = run("""
+const d = mkDeck([{ s: A, co: C0, points: { stable: 3, profit: 2 }, target: 0.5, qty: 10 }, { s: B, target: 0.5, qty: 10 }]);
+const same = hold(one(d, [A, B], [C0]), A.t);
+const older = hold(one(d, [{ ...A, fy: 2024 }, B], [{ ...C0, fy: 2024 }]), A.t);
+out = { same: { s: same.status, rules: Object.fromEntries(same.rules.map((r) => [r.id, [r.result, r.newer ?? null]])) },
+        older: { s: older.status, codes: older.reasons.map((r) => r.code + ':' + r.rule) } };""", A=a, C0=c_now, B=kr("000200"))
+    same = got["same"]
+    # 산 때와 같은 2025년 보고서: 그 전에 있었던 배당 감소·영업이익 감소는 세지 않아요
+    assert same["s"] == "none" and same["rules"]["divCut"] == ["ok", False] and same["rules"]["opDecline"] == ["ok", False], same
+    # 산 때보다 오래된 보고서(파이프라인이 한 해 전으로 돌아감)는 쓰지 않아요 → 자료를 받지 못한 것으로
+    assert got["older"]["s"] == "check" and set(got["older"]["codes"]) == {"missing:divCut", "missing:debtCeiling", "missing:roeFloor", "missing:opDecline"}, got
+
+
+# ── 산 때 있던 자료가 오늘 비면 ──
+def test_an_input_blank_today_is_a_check_never_fine():
+    a = kr("000100")
+    got = run("""
+const d = mkDeck([{ s: A, co: C0, points: { stable: 3, profit: 2 }, target: 0.5, qty: 10 }, { s: B, target: 0.5, qty: 10 }]);
+const outs = {};
+for (const [k, now, c, b] of CASES) {
+  const h = hold(one(d, [now, b || B].filter(Boolean), c ? [c] : []), A.t);
+  outs[k] = { s: h.status, miss: h.reasons.filter((r) => r.code === 'missing').map((r) => r.rule + ':' + r.input) };
+}
+out = outs;""", A=at(a, fy=2024), C0=co("000100", fy=2024), B=kr("000200"),
+              CASES=[["dps3", at(a, dps3=None), co("000100"), None], ["dps3 latest", at(a, dps3=[None, 450.0, 400.0]), co("000100"), None],
+                     ["debt", at(a, debt=None), co("000100"), None], ["roe", at(a, roe=None), co("000100"), None],
+                     ["fy", at(a, fy=None), {"t": "000100", "op": [120.0, 110.0, 100.0]}, None],
+                     ["op", a, co("000100", op=(None, 110.0, 100.0)), None], ["op 3 years", a, co("000100", op=(120.0, 110.0, None)), None],
+                     ["corp row", a, None, None], ["price", at(a, price=None), co("000100"), None],
+                     ["other price", a, co("000100"), at(kr("000200"), price=None)], ["whole row", None, None, None]])
+    exp = {"dps3": ["divCut:dps"], "dps3 latest": ["divCut:dps"], "debt": ["debtCeiling:debt"], "roe": ["roeFloor:roe"],
+           "fy": ["divCut:dps", "debtCeiling:debt", "roeFloor:roe", "opDecline:op"], "op": ["opDecline:op"], "op 3 years": ["opDecline:op"],
+           "corp row": ["opDecline:op"], "price": ["band:price"], "other price": ["band:price"]}
+    for k, want in exp.items():
+        assert got[k]["s"] == "check" and sorted(got[k]["miss"]) == sorted(want), (k, got[k])
+    assert got["whole row"]["s"] == "check" and len(got["whole row"]["miss"]) == 5, got["whole row"]   # 종목이 데이터에서 사라짐
+
+
+def test_a_missing_price_leaves_every_band_in_the_deck_unchecked():
+    got = run("""
+const d = mkDeck([{ s: A, target: 0.5, qty: 10 }, { s: B, target: 0.5, qty: 10 }]);
+const ev = one(d, [A, { ...B, price: null }], []);
+out = { w: ev.weights, a: hold(ev, A.t), us: hold(one(mkDeck([{ s: U, target: 1, qty: 3 }]), [U], [], null), U.t).reasons };""",
+              A=kr("000100"), B=kr("000200"), U=us("AAPL"))
+    assert got["w"] == {"ok": False, "missing": ["000200"]}
+    a = got["a"]
+    assert a["status"] == "check" and a["w"] is None and a["reasons"][0]["missingPrice"] == ["000200"], a
+    assert [r["input"] for r in got["us"] if r["code"] == "missing"] == ["price"]        # 환율이 없으면 미국 종목 원화 값을 몰라요
+
+
+# ── 금융회사 · 미국 · 영업이익 순서 ──
+def test_financial_companies_skip_the_debt_rule():
+    bank = kr("105560", price=155500.0, ind="bank", indName="은행", debt=1212.0, dps3=[4367.0, 3174.0, 3060.0], dps=4367.0)
+    got = run("""
+const d = mkDeck([{ s: { ...BANK, fy: 2024 }, co: { ...C0, fy: 2024 }, points: { stable: 3, profit: 2 }, target: 0.5, qty: 1 },
+                  { s: B, target: 0.5, qty: 15 }]);
+const h = hold(one(d, [BANK, B], [C0]), BANK.t);
+// 산 날 업종 자료가 없어 부채비율 규칙이 붙었는데 오늘 은행으로 분류된 경우에도 '해당 없음'
+const stored = { id: 'debtCeiling', kind: 'keep', check: 'checked', input: 'debt', baseline: 900, since: 2024, debt: 900, limit: 1130, fy: 2024 };
+const d2 = mkDeck([{ s: BANK, target: 0.5, qty: 1, rules: [stored] }, { s: B, target: 0.5, qty: 15 }]);
+const h2 = hold(one(d2, [BANK, B], [C0]), BANK.t);
+out = { ids: h.rules.map((r) => r.id), s: h.status, na: h2.rules[0].result, s2: h2.status };""",
+              BANK=bank, C0=co("105560", op=(85177.1, 80452.6, 63850.2)), B=kr("000200", price=10370.0))
+    assert "debtCeiling" not in got["ids"] and "cet1" in got["ids"], got
+    assert got["s"] == "none" and got["na"] == "na" and got["s2"] == "none", got
+
+
+def test_us_roe_floor_has_no_report_year_and_us_has_no_debt_rule():
+    u = us("AAPL", roe=148.8)
+    got = run("""
+const d = mkDeck([{ s: U, points: { stable: 3, profit: 2 }, target: 1, qty: 3 }]);
+const ok = hold(one(d, [U], [], 1300), U.t), low = hold(one(d, [{ ...U, roe: 50 }], [], 1300), U.t);
+out = { ids: ok.rules.map((r) => r.id + ':' + r.result), low: low.reasons };""", U=u)
+    assert "roeFloor:ok" in got["ids"] and not any(x.startswith("debtCeiling") for x in got["ids"]), got
+    assert "divCut:pending" in got["ids"]
+    assert got["low"][0]["code"] == "roeUnder" and got["low"][0]["limit"] == 74 and got["low"][0]["fy"] is None, got["low"]
+
+
+def test_operating_profit_order_is_this_year_last_year_two_years_ago():
+    # corp.json op = [fy, fy-1, fy-2] (fetch_data.py: thstrm, frmtrm, bfefrmtrm of the fy 사업보고서)
+    a = kr("000100")
+    got = run("""
+const d = mkDeck([{ s: { ...A, fy: 2024 }, co: { t: A.t, op: [100, 90, 80], fy: 2024 }, target: 0.5, qty: 10 }, { s: B, target: 0.5, qty: 10 }]);
+out = Object.fromEntries(CASES.map(([k, op]) => [k, hold(one(d, [A, B], [{ t: A.t, op, fy: 2025 }]), A.t).rules.find((r) => r.id === 'opDecline').result]));""",
+              A=a, B=kr("000200"),
+              CASES=[["fell twice", [80.0, 90.0, 100.0]], ["rose twice", [100.0, 90.0, 80.0]], ["fell once", [85.0, 90.0, 80.0]],
+                     ["deeper loss", [-50.0, -10.0, 20.0]], ["flat", [90.0, 90.0, 100.0]]])
+    assert got == {"fell twice": "fail", "rose twice": "ok", "fell once": "ok", "deeper loss": "fail", "flat": "ok"}, got
+
+
+# ── 확인하지 못하는 규칙 ──
+def test_pending_and_unknown_rules_are_counted_never_passed():
+    a = kr("000100")
+    got = run("""
+const weird = [{ id: 'band', kind: 'band', check: 'checked', target: 0.5, bands: [0.375, 0.625, 0.7] },
+               { id: 'futureRule', kind: 'sell', check: 'checked', x: 1 },
+               { id: 'debtCeiling', kind: 'keep', check: 'checked' }];
+const d = mkDeck([{ s: { ...A, fy: 2024 }, co: { t: A.t, op: [1, 2, 3], fy: 2024 }, points: { stable: 3 }, target: 0.5, qty: 10 },
+                  { s: B, target: 0.5, qty: 10, rules: weird }, { s: C, target: 0, qty: 5, rules: [] }]);
+const ev = one(d, [A, B, C], [{ t: A.t, op: [3, 2, 1], fy: 2025 }]);
+out = { n: ev.notChecked, ids: ev.notCheckedIds.sort(), b: hold(ev, B.t).rules.map((r) => r.id + ':' + r.result), c: hold(ev, C.t), counts: ev.counts };""",
+              A=a, B=kr("000200"), C=kr("000300"))
+    # A: 감사의견 · 횡령·배임 · 인수 (3) · B: 모르는 규칙 · 숫자 없는 부채비율 규칙 (2) = 5
+    assert got["n"] == 5 and got["ids"] == ["acquisition", "audit", "debtCeiling", "embezzle", "futureRule"], got
+    assert got["b"] == ["band:ok", "futureRule:pending", "debtCeiling:pending"], got["b"]
+    assert got["c"]["status"] == "check" and got["c"]["reasons"][0]["code"] == "noRules"     # 규칙 책이 없으면 할 일 없음이 아니에요
+
+
+def test_planned_but_unbought_holdings_are_not_checked_and_weights_use_held_value():
+    got = run("""
+const d = mkDeck([{ s: A, target: 0.5, qty: 10 }, { s: B, target: 0.4, qty: 10 }, { s: C, target: 0.1, qty: 0 }]);
+const ev = one(d, [A, B, C], []);
+out = { ts: ev.holdings.map((x) => [x.t, x.status, Math.round(x.w * 1000) / 1000]), unheld: ev.unheld };""",
+              A=kr("000100"), B=kr("000200"), C=kr("000300"))
+    # 사지 않은 종목은 점검하지 않아요. 비중은 산 종목의 오늘 값으로: 50% · 50% (목표 50% · 40% → 1.25배 = 정상 끝)
+    assert got["unheld"] == ["000300"] and got["ts"] == [["000100", "none", 0.5], ["000200", "none", 0.5]], got

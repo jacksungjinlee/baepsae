@@ -64,6 +64,27 @@ export const C = {
     holding: "{qty}주 · 평균 단가 {price}",                         // 72
   },
 
+  // 매일 점검 (Part C): 내 덱의 종목마다 규칙 확인 결과. 오늘 화면의 큰 띠·내 덱 표는 Part E 에서 생겨요.
+  // 확인 필요는 REDESIGN 4.2 대로 '지켜봐요'로 보이고, 이유 문장이 확인할 일을 말해요 ("확인 필요" 칩 문구는 아직 승인 전).
+  daily: {
+    broken: "규칙 깨짐",                                            // 33 · 118
+    watch: "지켜봐요",                                              // 117
+    ok: "괜찮아요",                                                 // 115
+    bigMove: "큰 움직임",                                           // 34
+    sellNow: "규칙대로면 팔 때예요. 결정은 직접 해 주세요.",           // 11
+    notChecked: "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요",     // new (오늘, rules not checked)
+    missing: "{item} 자료를 받지 못해 확인이 필요해요",              // new (Input gone since purchase)
+    price: "가격",                                                  // 134
+    keepLine: "{item} {x}% (기준 {limit}%)",                        // 77 ("지켜봐요 · 부채비율 88% (기준 100%)" 의 뒤)
+    confirmCut: "실제로 줄였어요",                                   // new (확인 필요, buttons)
+    confirmNotCut: "줄인 게 아니에요",                               // new (확인 필요, buttons)
+    weight: "비중",                                                 // 60
+    finNA: "금융회사는 해당 없음",                                    // new (Financial companies: 부채비율 규칙)
+    bandLow: "{x}% 미만이면 먼저 사요",                              // 543 (첫째 조각)
+    bandHigh: "{x}% 넘으면 더 사지 않아요",                           // 543 (둘째 조각)
+    bandTrim: "{x}% 넘으면 일부 팔아요",                              // 543 (셋째 조각)
+  },
+
   build: {
     title: "덱 짜기",                                              // 162
     backToday: "오늘 화면으로 돌아가기",                            // 160
