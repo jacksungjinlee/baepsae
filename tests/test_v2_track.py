@@ -46,9 +46,10 @@ const mkDeck = (rows, fx = 1300) => ({ id: 'd1', name: 'deck', createdAt: '2026-
     rules: T.E.ruleBook(r.s, r.co || null, r.points || {}, r.target) })),
   purchases: rows.filter((r) => r.qty > 0).map((r) => ({ t: r.s.t, date: r.date || '2026-10-01', qty: r.qty, price: r.price ?? r.s.price,
     ccy: r.s.cls === 'us' ? 'USD' : 'KRW', ...(r.s.cls === 'us' && r.fx !== null ? { fx: r.fx ?? fx } : {}) })) });
-// A daily evaluation written by hand: only the fields addMoney reads (t, nk, qty, value, target, status, w).
-const deOf = (rows) => ({ ok: true, weights: { ok: true }, unheld: [], holdings: rows.map(([t, value, px, target, status]) => ({
-  t, nk: 'N' + t, qty: value / px, value, target, status, w: null })) });
+// A daily evaluation written by hand: only the fields addMoney reads (t, nk, qty, value, target, status, w; no band
+// result, so the 1.25x edge is 1.25 x target).
+const deOf = (rows) => { const total = rows.reduce((a, r) => a + r[1], 0); return { ok: true, weights: { ok: true }, unheld: [],
+  holdings: rows.map(([t, value, px, target, status]) => ({ t, nk: 'N' + t, qty: value / px, value, target, status, w: value / total, rules: [] })) }; };
 """
 
 
@@ -88,25 +89,29 @@ out = { eligible: r.eligible, skipped: r.skipped, bought: r.buys.map((b) => b.t)
 
 
 def test_add_money_fills_the_most_underweight_first_in_whole_shares_and_shows_the_money_left():
-    # 600만원 덱, 목표 1/3 씩: A 100만(가장 덜 담김) · B 300만(목표 근처) · C 200만. 50만원 → A 만 7주(7만원) · 1만원 남음
+    # 600만원 덱, 목표 30% · 40% · 30%: A 100만(목표의 0.56배, 가장 덜 담김) · B 300만(정확히 1.25배: 아직 살 수 있음) · C 200만.
+    # 50만원 → A 만 7주(1주 7만원) · 1만원 남음
     got = run("""
-const de = deOf([['A', 1e6, 7e4, 1 / 3, 'low'], ['B', 3e6, 5e4, 1 / 3, 'none'], ['C', 2e6, 3e4, 1 / 3, 'none']]);
+const de = deOf([['A', 1e6, 7e4, 0.3, 'low'], ['B', 3e6, 5e4, 0.4, 'none'], ['C', 2e6, 3e4, 0.3, 'none']]);
 const small = T.addMoney(de, 5e5);
 const big = T.addMoney(de, 3e6);
 const tiny = T.addMoney(de, 2e4);
 const zero = T.addMoney(de, 0);
 out = { small, big, tiny: [tiny.buys, tiny.left, tiny.eligible.length], zero: [zero.buys, zero.left] };""")
     s = got["small"]
+    assert s["eligible"] == ["A", "B", "C"], s                   # 목표의 정확히 1.25배는 아직 살 수 있어요
     assert [(b["t"], b["shares"], b["cost"]) for b in s["buys"]] == [("A", 7, 490000)], s
     assert s["spent"] == 490000 and s["left"] == 10000
     b = got["big"]
     assert b["buys"][0]["t"] == "A", b                          # 가장 덜 담긴 종목이 먼저
     assert all(isinstance(x["shares"], int) and x["shares"] > 0 for x in b["buys"])
+    assert all(abs(x["cost"] - x["shares"] * {"A": 7e4, "B": 5e4, "C": 3e4}[x["t"]]) < 1e-6 for x in b["buys"])   # 1주 단위
     assert b["spent"] <= 3e6 and b["spent"] + b["left"] == 3e6
     costs = {x["t"]: x["cost"] for x in b["buys"]}
-    goal = (6e6 + 3e6) / 3
-    assert 1e6 + costs["A"] <= 1.25 * goal and 2e6 + costs.get("C", 0) <= 1.25 * goal
-    assert "B" not in costs                                      # 이미 목표만큼(300만 = 900만의 1/3) 담긴 종목은 사지 않아요
+    T = 6e6 + 3e6
+    for t, v0, tg in (("A", 1e6, 0.3), ("B", 3e6, 0.4), ("C", 2e6, 0.3)):
+        assert v0 + costs.get(t, 0) <= 1.25 * tg * T + 1e-6, (t, costs)
+    assert costs["A"] == max(costs.values()), costs
     assert got["tiny"] == [[], 20000, 3]                         # 1주도 못 사면 아무것도 사지 않고 그대로 남아요
     assert got["zero"] == [[], 0]
 
@@ -129,14 +134,17 @@ def test_add_money_edge_exactly_125x_is_still_bought_just_above_is_skipped():
 const res = {};
 for (const [k, w] of Object.entries(CASES)) {
   const a = { ...A, price: w * 1000 }, b = { ...B, price: (1 - w) * 1000 };
-  const d = mkDeck([{ s: a, target: 0.5, qty: 10000 }, { s: b, target: 0.5, qty: 10000 }]);
+  // bought at the same price (as-bought weights 50% · 50%: no gap), then today's prices moved
+  const d = mkDeck([{ s: a, target: 0.5, qty: 10000, price: 500 }, { s: b, target: 0.5, qty: 10000, price: 500 }]);
   const de = T.R.evaluateDeck(d, ctxOf([a, b], []));
   const r = T.addMoney(de, 1e9);
-  res[k] = { st: de.holdings.map((x) => x.status), eligible: r.eligible, skipped: r.skipped.map((s) => s.t + ':' + s.why) };
+  res[k] = { st: de.holdings.map((x) => x.status), eligible: r.eligible, skipped: r.skipped.map((s) => s.t + ':' + s.why),
+    edge: Math.round(de.holdings[0].rules.find((x) => x.id === 'band').bands[1] * 1e9) / 1e9 };
 }
 out = res;""", CASES={"1.25": 0.625, "above": 0.64}, A=kr("000100"), B=kr("000200"))
     assert got["1.25"]["st"][0] == "none" and "000100" in got["1.25"]["eligible"], got
     assert got["above"]["st"][0] == "high" and got["above"]["skipped"] == ["000100:high"], got
+    assert got["above"]["edge"] == 0.625 and got["1.25"]["edge"] == 0.625, got          # Part C 의 경계 그대로
 
 
 def test_add_money_us_shares_are_whole_and_priced_in_won():

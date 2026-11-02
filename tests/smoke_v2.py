@@ -673,8 +673,10 @@ def _holding(t, nk, target, rules):
 
 
 def _deck(i, name, rows):
-    return {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [_holding(t, nk, tg, r) for t, nk, tg, r, _ in rows],
-            "purchases": [{"t": t, "date": "2026-10-01", "qty": q, "price": 1000, "ccy": "KRW"} for t, _, _, _, q in rows]}
+    # rows: (t, nk, target, rules, qty[, purchase price]). qty 0 = planned but never bought (no purchase record).
+    return {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [_holding(r[0], r[1], r[2], r[3]) for r in rows],
+            "purchases": [{"t": r[0], "date": "2026-10-01", "qty": r[4], "price": r[5] if len(r) > 5 else 1000, "ccy": "KRW"}
+                          for r in rows if r[4] > 0]}
 
 
 SAMSUNG = ("005930", "삼성전자")
@@ -683,9 +685,12 @@ DAILY_DECKS = {"v": 1, "decks": [
     _deck("dclear", "해제 덱", [("005380", "현대차", 0.5, [_div(2024, 12000.0, 11400.0)], 1), (*SAMSUNG, 0.5, [_div(2025, 1668.0, 1446.0)], 1)]),
     _deck("dwatch", "부채 덱", [("012450", "한화에어로스페이스", 0.5, [_debt(2024, 150.0, 200)], 1), (*SAMSUNG, 0.5, [], 3)]),
     _deck("dmiss", "자료 덱", [("000270", "기아", 0.5, [_debt(2024, 60.0, 100)], 7), (*SAMSUNG, 0.5, [], 3)]),
-    _deck("dband", "비중 덱", [(*SAMSUNG, 0.5, [], 8), ("035420", "NAVER", 0.5, [], 1)]),
+    # 산 날 반반(삼성전자 4주 43,075원 · NAVER 1주 172,300원), 오늘 삼성전자 225,000원 → 83.9% : 줄일 차례 · NAVER 먼저 살 차례
+    _deck("dband", "비중 덱", [(*SAMSUNG, 0.5, [], 4, 43075), ("035420", "NAVER", 0.5, [], 1, 172300)]),
     _deck("dcalm", "조용한 덱", [("000660", "SK하이닉스", 0.5, [], 1), (*SAMSUNG, 0.5, [_div(2025, 1668.0, 1446.0)], 6)]),
     _deck("dop", "이익 덱", [("005380", "현대차", 0.5, [_op(2024, [142395.9, 151269.0, None])], 1), (*SAMSUNG, 0.5, [], 1)]),
+    # 계획 3종목(30% · 30% · 40%) 중 기아는 0주: 산 두 종목의 목표는 50% · 50% 로 다시 나눠요. 오늘 종가에 산 날 → 할 일 없음
+    _deck("dplan", "계획 덱", [(*SAMSUNG, 0.3, [], 4, 225000), ("035420", "NAVER", 0.3, [], 5, 172300), ("000270", "기아", 0.4, [], 0)]),
 ]}
 
 
@@ -721,10 +726,12 @@ def scene_daily(R, files, width):
         open_deck()
         st = {(i, t): row(i, t).get_attribute("data-status") for i, t in
               (("dcut", "005380"), ("dclear", "005380"), ("dwatch", "012450"), ("dmiss", "000270"), ("dband", "005930"),
-               ("dband", "035420"), ("dcalm", "000660"), ("dcalm", "005930"), ("dop", "005380"))}
+               ("dband", "035420"), ("dcalm", "000660"), ("dcalm", "005930"), ("dop", "005380"), ("dplan", "005930"), ("dplan", "035420"))}
         assert st == {("dcut", "005380"): "check", ("dclear", "005380"): "check", ("dwatch", "012450"): "watch",
                       ("dmiss", "000270"): "check", ("dband", "005930"): "trim", ("dband", "035420"): "low",
-                      ("dcalm", "000660"): "none", ("dcalm", "005930"): "none", ("dop", "005380"): "watch"}, st
+                      ("dcalm", "000660"): "none", ("dcalm", "005930"): "none", ("dop", "005380"): "watch",
+                      ("dplan", "005930"): "none", ("dplan", "035420"): "none"}, st
+        assert deck("dplan").locator('[data-holding="000270"]').count() == 0            # 사지 않은 종목은 점검하지 않아요
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "저장된 덱 6개 → 종목마다 상태 (확인 필요 · 지켜봐요 · 비중 · 할 일 없음)", statuses)
@@ -763,7 +770,11 @@ def scene_daily(R, files, width):
     def bands_and_calm():
         hi = row("dband", "005930").locator('[data-ui-v2="status-line"][data-code="band"]').inner_text()
         lo = row("dband", "035420").locator('[data-ui-v2="status-line"][data-code="band"]').inner_text()
-        assert "70.0% 넘으면 일부 팔아요" in hi and "37.5% 미만이면 먼저 사요" in lo, (hi, lo)
+        assert "70.0% 넘으면 일부 팔아요" in hi and "83.9%" in hi and "37.5% 미만이면 먼저 사요" in lo, (hi, lo)
+        fold = row("dplan", "005930").locator('[data-ui="collapsible"]')
+        fold.locator("button").first.click()
+        assert "목표 50.0%" in fold.inner_text() and "목표 30.0%" not in fold.inner_text(), fold.inner_text()   # 산 종목끼리 다시 나눈 목표
+        fold.locator("button").first.click()
         assert row("dband", "005930").locator('[data-ui="status-chip"]').count() == 0     # 비중은 칩 없이 비중 줄로
         calm = deck("dcalm")
         assert calm.locator('[data-ui-v2="status-line"]').count() == 0
@@ -771,7 +782,7 @@ def scene_daily(R, files, width):
         assert row("dcalm", "005930").locator('[data-ui="status-chip"]').count() == 0       # 칩이 없으면 괜찮은 종목
         nc = calm.locator('[data-ui-v2="not-checked"]').inner_text()
         assert re.fullmatch(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", nc), nc
-        assert page.locator('[data-ui-v2="not-checked"]').count() == 7
+        assert page.locator('[data-ui-v2="not-checked"]').count() == 8
         R.collect(page)
     R.check(page, S, "비중 벗어남 · 할 일 없음(칩 없음) · 큰 움직임은 칩만 · '아직 자동으로 확인하지 못하는 규칙' 줄", bands_and_calm)
 
@@ -883,7 +894,7 @@ def scene_daily(R, files, width):
             for sel in ('[data-ui-v2="status-line"]', '[data-ui-v2="confirm"]', '[data-ui-v2="not-checked"]', '[data-holding] [data-ui="status-chip"]', "[data-rules-today]"):
                 assert page.locator(sel).count() == 0, sel
             assert page.get_by_text("할 일").count() == 0
-            assert page.get_by_text("평균 단가").count() == 14                # 기록은 그대로 보여요
+            assert page.get_by_text("평균 단가").count() == 16                # 기록은 그대로 보여요
             for sel in ('[data-ui-v2="deck-summary"]', '[data-ui-v2="weight"]', '[data-ui-v2="add-money"]'):
                 assert page.locator(sel).count() == 0, sel                     # 평가 금액 · 비중 · 추가로 넣을 돈도 없어요
             R.collect(page)
@@ -926,7 +937,8 @@ def scene_today(R, files, width):
         "sell": _one_deck("dsell", "매도 덱", [_buy("105560", "KB금융", 0.5, [_div(2024, 4367.0, 3174.0)], 10, by), sam(7)], cut),
         "watch": _one_deck("dwatch", "부채 덱", [_buy("012450", "한화에어로스페이스", 0.5, [_debt(2024, 150.0, 200)], 1, by), sam(3)]),
         "check": _one_deck("dcheck", "확인 덱", [_buy("005380", "현대차", 0.5, [_div(2024, 12000.0, 11400.0)], 2, by), sam(2)]),
-        "band": _one_deck("dband", "비중 덱", [sam(20), _buy("035420", "NAVER", 0.5, [], 2, by)]),
+        # 같은 금액(200만원씩)으로 산 뒤 삼성전자만 크게 올라 비중이 벗어난 덱 (산 날의 비중 = 목표: Part C 의 간격 없음)
+        "band": _one_deck("dband", "비중 덱", [("005930", "삼성전자", 0.5, [], 20, 100000), ("035420", "NAVER", 0.5, [], 2, 1000000)]),
         "big": _one_deck("dbig", "반도체 덱", [_buy("000660", "SK하이닉스", 0.5, [_div(2025, 3000.0, 2204.0)], 1, by), sam(6)]),
     }
 

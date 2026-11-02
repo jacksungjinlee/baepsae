@@ -11,7 +11,7 @@ import { NO_NEW_MONEY } from "./rules.js";
 
 export const GROUP_MIN = 5;           // 같은 업종 점 띠: a real industry group with at least 5 members in the same market
 export const TOGETHER_SHARE = 0.8;    // "같은 업종이 다 같이 빠졌어요": the stock fell and at least 80% of its group fell
-export const ADD_CAP = 1.25;          // 추가로 넣을 돈 never takes a stock above 1.25x its target (REDESIGN 4.1)
+export const ADD_CAP = 1.25;          // 추가로 넣을 돈 never takes a stock above its 1.25x edge (REDESIGN 4.1)
 const EPS = 1e-9;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -131,11 +131,13 @@ export function deckDayChange(de) {
 //   de: evaluateDeck output · amountWon: the typed amount in won.
 // Weights, targets and statuses are the daily check's own (rules.js): w and target are shares of the held stocks
 // that have a weight band (targets rebased over what was actually bought), with its one-share rounding slack.
-// Skipped: 규칙 깨짐, 확인 필요 and 지켜봐요 (no new money until the next report), anything above 1.25x its target
-// (그만 살 차례 · 줄일 차례: the statuses rules.js gives from its own weights and targets), and stocks without a target or
-// a price. Planned stocks that were never bought (0 shares) are not in the daily check, so they get nothing here either.
+// Skipped: 규칙 깨짐, 확인 필요 and 지켜봐요 (no new money until the next report), anything above its 1.25x edge
+// (그만 살 차례 · 줄일 차례: the statuses rules.js gives, and the same edge checked here so the two screens never
+// disagree), and stocks without a target or a price. Planned stocks that were never bought (0 shares) are not in the
+// daily check (no status: their rules were not read today), so they get nothing here either; de.unheld names them.
 // A name is filled toward target x (value + new money) one share at a time while a share still closes at least half
-// its gap, and never past 1.25x its target. -> { ok, buys: [{ t, nk, shares, cost }], spent, left, eligible, skipped }
+// its gap, and never past its 1.25x edge (band `bands[1]` from rules.js: the rebased edge, widened by the as-bought
+// gap) as a share of the new total. -> { ok, buys: [{ t, nk, shares, cost }], spent, left, eligible, skipped, unheld }
 export function addMoney(de, amountWon) {
   if (!de || !de.ok || !de.weights || !de.weights.ok) return { ok: false };
   const A = Math.floor(num(amountWon) || 0);
@@ -144,12 +146,14 @@ export function addMoney(de, amountWon) {
   let total = 0;
   for (const x of de.holdings) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
   for (const x of de.holdings) {
-    const target = num(x.target), value = num(x.value);
+    const target = num(x.target), value = num(x.value), w = num(x.w);
     const px = x.qty > 0 && value > 0 ? value / x.qty : null;
+    const hi = highEdge(x, target);
     if (NO_NEW_MONEY.includes(x.status)) { skipped.push({ t: x.t, why: x.status }); continue; }
-    if (!(target > 0)) { skipped.push({ t: x.t, why: "target" }); continue; }
-    if (!(px > 0)) { skipped.push({ t: x.t, why: "price" }); continue; }
-    rows.push({ t: x.t, nk: x.nk, px, value, target, shares: 0 });
+    if (!(target > 0) || hi == null) { skipped.push({ t: x.t, why: "target" }); continue; }
+    if (!(px > 0) || w == null) { skipped.push({ t: x.t, why: "price" }); continue; }
+    if (w > hi + EPS) { skipped.push({ t: x.t, why: "high" }); continue; }
+    rows.push({ t: x.t, nk: x.nk, px, value, target, hi, shares: 0 });
   }
   const out = { ok: true, buys: [], spent: 0, left: Math.max(0, A), eligible: rows.map((r) => r.t), skipped, unheld: de.unheld || [] };
   if (!(A > 0) || !rows.length) return out;
@@ -161,7 +165,7 @@ export function addMoney(de, amountWon) {
     for (const r of rows) {
       const goal = r.target * T;
       if (r.px > left + EPS) continue;
-      if (r.value + r.px > ADD_CAP * goal + EPS) continue;
+      if (r.value + r.px > r.hi * T + EPS) continue;
       if (goal - r.value < r.px / 2 - EPS) continue;
       const ratio = r.value / goal;
       if (!best || ratio < best.ratio - EPS || (Math.abs(ratio - best.ratio) <= EPS && r.t < best.r.t)) best = { r, ratio };
@@ -176,6 +180,14 @@ export function addMoney(de, amountWon) {
   out.spent = out.buys.reduce((a, b) => a + b.cost, 0);
   out.left = A - out.spent;
   return out;
+}
+
+// The 1.25x edge rules.js used today for this holding (its band result: a share of the held value), or, for a hand-made
+// evaluation without a band result, 1.25x the target.
+function highEdge(x, target) {
+  const b = (x.rules || []).find((r) => r && r.id === "band" && r.check === "checked" && r.result !== "missing");
+  if (b && Array.isArray(b.bands) && num(b.bands[1]) > 0) return b.bands[1];
+  return target > 0 && !(x.rules || []).some((r) => r && r.id === "band") ? ADD_CAP * target : null;
 }
 
 // ---------------- 왜 움직였나: the same industry today ----------------

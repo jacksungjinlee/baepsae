@@ -114,19 +114,20 @@ const h = hold(ev, P.a_now.t);
 
 # ── 판정 순서 ──
 def test_decision_order_sell_then_check_then_keep_then_band_then_nothing():
-    a = kr("000100", dps3=[300.0, 500.0, 450.0], dps=300.0, debt=300.0)           # 2025 보고서: 배당 500 → 300, 부채비율 300%
+    # 산 날: 두 종목 10주씩 1만원 (계획대로 반반). 오늘 A 가 3만원 → 비중 75% (목표의 1.5배)
+    a = kr("000100", dps3=[300.0, 500.0, 450.0], dps=300.0, debt=300.0, price=30000.0)   # 2025 보고서: 배당 500 → 300, 부채비율 300%
     co_now = co("000100", op=(80.0, 100.0, 120.0))                              # 영업이익 2년 연속 감소
-    buy = at(a, fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0], debt=150.0)
-    base = pair(a, co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10)   # 비중 75%
+    buy = at(a, fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0], debt=150.0, price=10000.0)
+    base = pair(a, co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10)   # 비중 75%
     cut = {"confirms": [{"t": "000100", "rule": "divCut", "fy": 2025, "a": 500.0, "b": 300.0, "answer": "cut", "at": "2026-11-01"}]}
     got = run("const outs = [];\n"
               "for (const [P, EXTRA] of CASES) { " + PAIR_JS.replace("const ", "let ") + " outs.push({ s: h.status, codes: h.reasons.map((r) => r.code) }); }\n"
               "out = outs;",
               CASES=[[base, cut], [base, {}],
-                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0), co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10), {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0), co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}],
                      [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
-                           a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10), {}],
-                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
+                           a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0, price=10000.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
                            a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}]])
     # 1) 실제로 줄였다고 답한 배당 삭감 → 규칙 깨짐 (부채비율·영업이익·비중도 이유로 같이 남아요)
     assert got[0]["s"] == "broken" and got[0]["codes"][0] == "divCut" and {"debtOver", "opFell2", "band"} <= set(got[0]["codes"]), got[0]
@@ -159,23 +160,64 @@ out = out2;""", CASES=cases, A=kr("000100"), B=kr("000200"))
     assert got["1.4"][0] == "high" and got["above 1.4"][0] == "trim", got         # 1.4 초과부터 줄일 차례
 
 
-def test_one_share_of_slack_past_a_band_edge_is_rounding_not_a_status():
-    # 목표 50% · 50%, A 는 한 주에 20만원. 1.4배 선(70%)을 한 주 값 이하로 넘으면 '그만 살 차례'까지만, 한 주 넘게 넘으면 '줄일 차례'.
-    got = run("""
+BAND_JS = """
 const outs = {};
-for (const [k, qa, pb] of CASES) {
-  const a = { ...A, price: 200000 }, b = { ...B, price: pb };
-  const d = mkDeck([{ s: A, target: 0.5, qty: qa }, { s: B, target: 0.5, qty: 1 }]);
-  const h = hold(one(d, [a, b], []), A.t);
-  outs[k] = [h.status, Math.round(h.w * 1000) / 10];
+for (const [k, rows, prices] of CASES) {
+  const holdings = rows.map(([t, tg]) => ({ t, nk: t, cls: 'kr', kind: 'core', target: tg,
+    rules: [{ id: 'band', kind: 'band', check: 'checked', target: tg, bands: [0.75 * tg, 1.25 * tg, 1.4 * tg] }] }));
+  const purchases = rows.filter((r) => r[2] > 0).map(([t, , q, px]) => ({ t, date: '2026-10-01', qty: q, price: px, ccy: 'KRW' }));
+  const ev = one({ id: 'd', name: 'x', holdings, purchases }, Object.entries(prices).map(([t, price]) => ({ t, cls: 'kr', price })), []);
+  outs[k] = Object.fromEntries(ev.holdings.map((h) => [h.t, [h.status, Math.round(h.w * 1000) / 10]]));
 }
-out = outs;""", A=kr("000100"), B=kr("000200"),
-              # A 7주 140만 + B 50만: 73.7% → 70% 선을 7만원 넘음(한 주 20만원 이하) → high · B 30만이면 82.4% → 넘침 50만원 → trim
-              CASES=[["within one share", 7, 500000.0], ["beyond one share", 7, 300000.0], ["low within one share", 1, 500000.0],
-                     ["low beyond one share", 1, 2000000.0]])
-    assert got["within one share"][0] == "high" and got["beyond one share"][0] == "trim", got
-    # A 1주 20만 + B 50만: A 28.6% < 37.5% 이지만 모자란 값 6.25만원 < 한 주 → 할 일 없음 · B 200만이면 9.1% → 모자람 55만원 → low
-    assert got["low within one share"][0] == "none" and got["low beyond one share"][0] == "low", got
+out = outs;"""
+
+
+def test_one_expensive_share_is_never_hidden_and_never_told_to_sell_its_only_share():
+    # 두 종목 목표 50% · 50%, 산 날 반반: A 1주 100만원 · B 100주 1만원. 그 뒤 A 만 오르거나 내려요.
+    rows = [["A", 0.5, 1, 1000000.0], ["B", 0.5, 100, 10000.0]]
+    cases = [[f"x{m}", rows, {"A": 1000000.0 * m, "B": 10000.0}] for m in (1.5, 2, 3, 5, 10, 0.3)]
+    got = run(BAND_JS, CASES=cases)
+    assert got["x1.5"]["A"][0] == "none", got                                   # 60%: 1.25배(62.5%) 안
+    for m in ("x2", "x3", "x5", "x10"):                                         # 한 주짜리 비싼 종목도 그만 살 차례는 떠요
+        assert got[m]["A"][0] == "high" and got[m]["B"][0] == "low", (m, got[m])
+    assert got["x10"]["A"] == ["high", 90.9], got["x10"]                        # 하나뿐인 주식을 팔면 더 멀어져요: 줄일 차례 아님
+    assert got["x0.3"]["A"][0] == "low" and got["x0.3"]["B"][0] == "trim", got["x0.3"]   # B 100주는 팔수록 가까워져요
+    # 목표 10% 인 A 1주 10만원 · B 90주. A 가 7만원이 되면 7.2% (7.5% 아래) 지만, 1주 더 사면 13.5% 로 목표에서 더 멀어져요 → 먼저 살 차례 아님
+    small = [["A", 0.1, 1, 100000.0], ["B", 0.9, 90, 10000.0]]
+    got2 = run(BAND_JS, CASES=[["overshoot", small, {"A": 70000.0, "B": 10000.0}], ["far", small, {"A": 40000.0, "B": 10000.0}]])
+    assert got2["overshoot"]["A"] == ["none", 7.2], got2
+    assert got2["far"]["A"][0] == "low", got2                                    # 4.3%: 1주 사면 8.5%, 더 가까워져요
+
+
+def test_the_reviewers_cases_meritz_four_shares_and_one_share_at_91_percent():
+    # 장기 우량주 300만원 (실제 데이터): 6종목 중 3종목만 샀어요(나머지 0주). 메리츠금융지주 4주 · 한미반도체 3주 · 리노공업 9주.
+    plan = [["M", 0.2, 4, 133200.0], ["H", 0.161, 3, 182700.0], ["L", 0.171, 9, 56100.0], ["X", 0.168, 0, 0], ["Y", 0.176, 0, 0], ["Z", 0.124, 0, 0]]
+    px = {"M": 133200.0, "H": 182700.0, "L": 56100.0}
+    two = [["A", 0.5, 1, 1000000.0], ["B", 0.5, 100, 10000.0]]
+    got = run(BAND_JS, CASES=[["day1", plan, px], ["x2", plan, {**px, "M": 266400.0}], ["x3", plan, {**px, "M": 399600.0}],
+                              ["91%", two, {"A": 10000000.0, "B": 10000.0}]])
+    assert set(x[0] for x in got["day1"].values()) == {"none"}, got["day1"]     # 계획대로 산 날은 아무것도 없음
+    assert got["x2"]["M"] == ["high", 50.3] and got["x3"]["M"] == ["trim", 60.3], got   # 3배면 37.6% 목표의 1.61배 → 줄일 차례
+    assert got["91%"]["A"] == ["high", 90.9], got["91%"]                        # 1주로 91%: 그만 살 차례, 줄일 차례 아님
+
+
+def test_the_gap_as_bought_widens_only_its_own_side():
+    # 목표 50% · 50% 인데 1주 값 때문에 60% · 40% 로 샀어요 (g = +10%p · −10%p).
+    rows = [["A", 0.5, 3, 200000.0], ["B", 0.5, 4, 100000.0]]
+    got = run(BAND_JS, CASES=[["day1", rows, {"A": 200000.0, "B": 100000.0}],
+                              # A 가 올라 70%: 1.25배 선 62.5% + 10%p = 72.5% 안 → 할 일 없음 (산 날의 차이는 탓하지 않아요)
+                              ["A up a bit", rows, {"A": 311111.0, "B": 100000.0}],
+                              # A 가 더 올라 76%: 72.5% 를 넘음 → 그만 살 차례 · B 24%: 37.5% − 10%p = 27.5% 아래 → 먼저 살 차례
+                              ["A up more", rows, {"A": 422222.0, "B": 100000.0}],
+                              # A 가 내려 45%: 낮은 쪽은 넓히지 않아요(37.5% 그대로) → 할 일 없음 · B 55% 도 62.5% 안
+                              ["A down", rows, {"A": 109090.0, "B": 100000.0}],
+                              # A 가 더 내려 30%: 37.5% 아래 → 먼저 살 차례 (넓히지 않은 쪽)
+                              ["A down more", rows, {"A": 57142.0, "B": 100000.0}]])
+    assert set(x[0] for x in got["day1"].values()) == {"none"}, got["day1"]
+    assert got["A up a bit"]["A"][0] == "none" and got["A up a bit"]["B"][0] == "none", got["A up a bit"]
+    assert got["A up more"]["A"][0] == "high" and got["A up more"]["B"][0] == "low", got["A up more"]
+    assert got["A down"]["A"][0] == "none" and got["A down"]["B"][0] == "none", got["A down"]
+    assert got["A down more"]["A"][0] == "low", got["A down more"]
 
 
 def test_targets_are_rebased_over_what_is_held():

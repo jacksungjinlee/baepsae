@@ -82,6 +82,9 @@ export function MyDeck({ load, store, setStoreData, pad }) {
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
                 extra={m.ok && x ? <WeightLine x={x} /> : null} />;
             })}
+            {de && de.ok && de.rebased && C.daily.rebasedNote && (
+              <Note data-ui-v2="rebased-note">{fill(C.daily.rebasedNote, { n: de.bandPlanned, m: de.bandHeld })}</Note>
+            )}
             {de && de.ok && de.notChecked > 0 && <Note data-ui-v2="not-checked">{fill(C.daily.notChecked, { n: de.notChecked })}</Note>}
             {m.ok && <AddMoney de={de} />}
           </Card>
