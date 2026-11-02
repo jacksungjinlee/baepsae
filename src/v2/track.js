@@ -16,13 +16,14 @@ const EPS = 1e-9;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ---------------- money put in (원금) ----------------
-// One purchase in won. KRW: qty x price. USD: qty x price x the exchange rate recorded with the purchase (the rate the
-// plan used, data.json fx). A USD purchase saved without a rate (records from before Part E) has no won cost: the
-// deck's 원금 and return are then left out, never converted at today's rate.
-export function purchaseWon(p) {
+// One purchase in won, from the purchase record (qty x price). KRW as is. USD x the exchange rate recorded when it was
+// saved: the purchase's own fx (Part E), else the deck's planFx (Part C: the same data.json rate, saved at the same
+// moment). A USD purchase saved with neither (records from before them) has no won cost: the deck's 원금 and return
+// are then left out, never converted at today's rate.
+export function purchaseWon(p, planFx) {
   if (!p || !(Number.isInteger(p.qty) && p.qty > 0) || !(num(p.price) > 0)) return null;
   if (p.ccy === "KRW") return p.qty * p.price;
-  if (p.ccy === "USD") return num(p.fx) > 0 ? p.qty * p.price * p.fx : null;
+  if (p.ccy === "USD") { const fx = num(p.fx) > 0 ? p.fx : num(planFx) > 0 ? planFx : null; return fx ? p.qty * p.price * fx : null; }
   return null;
 }
 
@@ -48,7 +49,7 @@ export function deckMoney(deck, de, ctx) {
   let start = null;
   for (const p of (deck && deck.purchases) || []) {
     if (!p || !(p.qty > 0) || !held.has(p.t)) continue;
-    const c = purchaseWon(p);
+    const c = purchaseWon(p, deck.planFx);
     if (c == null) { if (!noFx.includes(p.t)) noFx.push(p.t); per[p.t].cost = null; continue; }
     if (per[p.t].cost != null) per[p.t].cost += c;
     if (typeof p.date === "string" && DATE.test(p.date) && (start == null || p.date < start)) start = p.date;
@@ -97,7 +98,7 @@ export function indexSince(deck, idx, pxDate) {
   let w = 0, grown = 0, start = null;
   for (const p of (deck && deck.purchases) || []) {
     if (!p || !(p.qty > 0)) continue;
-    const c = purchaseWon(p);
+    const c = purchaseWon(p, deck.planFx);
     if (c == null) return { ok: false, why: "cost" };
     if (typeof p.date !== "string" || !DATE.test(p.date)) return { ok: false, why: "date" };
     const s = closeBefore(rows, p.date);

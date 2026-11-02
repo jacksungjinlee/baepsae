@@ -1,6 +1,7 @@
 // Browser storage for app.html: one versioned key; every read and write inside try/catch.
 // Decks, rule books, purchase records and the answers to 확인 필요 (confirms) live only on this device (no login).
-// Export/import is a JSON file. confirms is optional, so records saved before Part C still read the same.
+// Export/import is a JSON file. confirms, planFx (deck) and planPx (holding) are optional, so records saved before
+// Part C still read the same; when present they must be valid or the whole file is refused.
 // The preview page (app-preview.html) uses its own key so example records never mix with real ones.
 export const STORE_KEY = "baepsae2.v1";
 export const PREVIEW_STORE_KEY = "baepsae2.preview.v1";
@@ -31,11 +32,13 @@ export function validStore(d, today) {
     if (!x || typeof x !== "object" || !isStr(x.id, 60) || ids.has(x.id) || !isStr(x.name, 60)) return false;
     ids.add(x.id);
     if (x.createdAt != null && !isDate(x.createdAt)) return false;
+    if (x.planFx != null && !(isNum(x.planFx) && x.planFx > 0)) return false;           // the USD/KRW rate the plan used
     if (!Array.isArray(x.holdings) || !Array.isArray(x.purchases)) return false;
     for (const h of x.holdings) {
       if (!h || typeof h !== "object" || !isStr(h.t, 20) || !isStr(h.nk, 120)) return false;
       if (h.target != null && !(isNum(h.target) && h.target >= 0 && h.target <= 1)) return false;
       if (h.plannedQty != null && !(Number.isInteger(h.plannedQty) && h.plannedQty >= 0)) return false;
+      if (h.planPx != null && !(isNum(h.planPx) && h.planPx > 0)) return false;          // the price the plan used
       if (h.rules != null && !Array.isArray(h.rules)) return false;
     }
     for (const p of x.purchases) {

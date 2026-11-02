@@ -234,7 +234,9 @@ const de = T.R.evaluateDeck(d, ctxOf([A, U], [], 1300));
 const noFx = mkDeck([{ s: A, target: 0.5, qty: 10, price: 8000 }, { s: U, target: 0.5, qty: 1, price: 90, fx: null }]);
 const de2 = T.R.evaluateDeck(noFx, ctxOf([A, U], [], 1300));
 const c = ctxOf([A, U], [], 1300);
+const planFx = { ...noFx, planFx: 1250 };                      // Part C 의 덱 planFx (같은 순간에 저장한 같은 환율)
 out = { m: T.deckMoney(d, de, c), noFx: T.deckMoney(noFx, de2, c), stale: T.deckMoney(d, { ok: false, why: 'stale' }, c),
+        planFx: T.deckMoney(planFx, T.R.evaluateDeck(planFx, c), c),
         noPrice: T.deckMoney(d, de, ctxOf([A, { ...U, price: null }], [], 1300)) };""",
               A=kr("000100", price=10000.0), U=us("AAPL", price=100.0))
     m = got["m"]
@@ -244,6 +246,7 @@ out = { m: T.deckMoney(d, de, c), noFx: T.deckMoney(noFx, de2, c), stale: T.deck
     n = got["noFx"]                                            # 환율 없이 저장된 미국 매수: 오늘 환율로 바꾸지 않아요
     assert n["ok"] and n["cost"] is None and n["ret"] is None and n["noFx"] == ["AAPL"] and n["per"]["AAPL"]["cost"] is None
     assert got["stale"]["ok"] is False and got["noPrice"]["ok"] is False     # 값을 모르는 종목이 있으면 평가 금액도 없어요
+    assert got["planFx"]["cost"] == got["m"]["cost"] and got["planFx"]["noFx"] == []   # 매수 환율이 없으면 덱의 planFx
 
 
 def test_today_move_of_the_deck_needs_every_d1_and_no_us_stock():

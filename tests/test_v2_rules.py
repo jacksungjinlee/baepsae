@@ -114,20 +114,19 @@ const h = hold(ev, P.a_now.t);
 
 # ── 판정 순서 ──
 def test_decision_order_sell_then_check_then_keep_then_band_then_nothing():
-    # 산 날: 두 종목 10주씩 1만원 (계획대로 반반). 오늘 A 가 3만원 → 비중 75% (목표의 1.5배)
-    a = kr("000100", dps3=[300.0, 500.0, 450.0], dps=300.0, debt=300.0, price=30000.0)   # 2025 보고서: 배당 500 → 300, 부채비율 300%
+    a = kr("000100", dps3=[300.0, 500.0, 450.0], dps=300.0, debt=300.0)           # 2025 보고서: 배당 500 → 300, 부채비율 300%
     co_now = co("000100", op=(80.0, 100.0, 120.0))                              # 영업이익 2년 연속 감소
-    buy = at(a, fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0], debt=150.0, price=10000.0)
-    base = pair(a, co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10)   # 비중 75%
+    buy = at(a, fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0], debt=150.0)
+    base = pair(a, co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10)   # 비중 75%
     cut = {"confirms": [{"t": "000100", "rule": "divCut", "fy": 2025, "a": 500.0, "b": 300.0, "answer": "cut", "at": "2026-11-01"}]}
     got = run("const outs = [];\n"
               "for (const [P, EXTRA] of CASES) { " + PAIR_JS.replace("const ", "let ") + " outs.push({ s: h.status, codes: h.reasons.map((r) => r.code) }); }\n"
               "out = outs;",
               CASES=[[base, cut], [base, {}],
-                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0), co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0), co_now, a_buy=buy, a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10), {}],
                      [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
-                           a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}],
-                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0, price=10000.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
+                           a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=30, qb=10), {}],
+                     [pair(at(a, dps3=[500.0, 500.0, 450.0], dps=500.0, debt=100.0), co("000100", op=(130.0, 100.0, 120.0)), a_buy=buy,
                            a_co_buy=co("000100", op=(100.0, 120.0, 90.0), fy=2024), qa=10, qb=10), {}]])
     # 1) 실제로 줄였다고 답한 배당 삭감 → 규칙 깨짐 (부채비율·영업이익·비중도 이유로 같이 남아요)
     assert got[0]["s"] == "broken" and got[0]["codes"][0] == "divCut" and {"debtOver", "opFell2", "band"} <= set(got[0]["codes"]), got[0]
@@ -160,16 +159,21 @@ out = out2;""", CASES=cases, A=kr("000100"), B=kr("000200"))
     assert got["1.4"][0] == "high" and got["above 1.4"][0] == "trim", got         # 1.4 초과부터 줄일 차례
 
 
+# rows: [t, target, qty bought, purchase price, plannedQty?, planPx?, cls?]; a case: [name, rows, today's prices, fx?, planFx?]
 BAND_JS = """
-const outs = {};
-for (const [k, rows, prices] of CASES) {
-  const holdings = rows.map(([t, tg]) => ({ t, nk: t, cls: 'kr', kind: 'core', target: tg,
+const outs = {}, gaps = {};
+for (const [k, rows, prices, fx, planFx] of CASES) {
+  const cls = (t) => (rows.find((r) => r[0] === t) || [])[6] || 'kr';
+  const holdings = rows.map(([t, tg, , , pq, ppx, c]) => ({ t, nk: t, cls: c || 'kr', kind: 'core', target: tg,
+    ...(pq != null ? { plannedQty: pq } : {}), ...(ppx != null ? { planPx: ppx } : {}),
     rules: [{ id: 'band', kind: 'band', check: 'checked', target: tg, bands: [0.75 * tg, 1.25 * tg, 1.4 * tg] }] }));
-  const purchases = rows.filter((r) => r[2] > 0).map(([t, , q, px]) => ({ t, date: '2026-10-01', qty: q, price: px, ccy: 'KRW' }));
-  const ev = one({ id: 'd', name: 'x', holdings, purchases }, Object.entries(prices).map(([t, price]) => ({ t, cls: 'kr', price })), []);
+  const purchases = rows.filter((r) => r[2] > 0).map(([t, , q, px]) => ({ t, date: '2026-10-01', qty: q, price: px, ccy: cls(t) === 'us' ? 'USD' : 'KRW' }));
+  const ev = one({ id: 'd', name: 'x', holdings, purchases, ...(planFx ? { planFx } : {}) },
+    Object.entries(prices).map(([t, price]) => ({ t, cls: cls(t), price })), [], fx || 1300);
   outs[k] = Object.fromEntries(ev.holdings.map((h) => [h.t, [h.status, Math.round(h.w * 1000) / 10]]));
+  gaps[k] = Object.fromEntries(ev.holdings.map((h) => [h.t, Math.round(h.rules.find((r) => r.id === 'band').gap * 1000) / 10]));
 }
-out = outs;"""
+out = { ...outs, gaps };"""
 
 
 def test_one_expensive_share_is_never_hidden_and_never_told_to_sell_its_only_share():
@@ -201,11 +205,11 @@ def test_the_reviewers_cases_meritz_four_shares_and_one_share_at_91_percent():
     assert got["91%"]["A"] == ["high", 90.9], got["91%"]                        # 1주로 91%: 그만 살 차례, 줄일 차례 아님
 
 
-def test_the_gap_as_bought_widens_only_its_own_side():
-    # 목표 50% · 50% 인데 1주 값 때문에 60% · 40% 로 샀어요 (g = +10%p · −10%p).
-    rows = [["A", 0.5, 3, 200000.0], ["B", 0.5, 4, 100000.0]]
+def test_the_plans_rounding_gap_widens_only_its_own_side():
+    # 목표 50% · 50% 인데 1주 값 때문에 계획이 60% · 40% (A 3주 20만원 · B 4주 10만원, g = +10%p · −10%p). 계획대로 샀어요.
+    rows = [["A", 0.5, 3, 200000.0, 3, 200000.0], ["B", 0.5, 4, 100000.0, 4, 100000.0]]
     got = run(BAND_JS, CASES=[["day1", rows, {"A": 200000.0, "B": 100000.0}],
-                              # A 가 올라 70%: 1.25배 선 62.5% + 10%p = 72.5% 안 → 할 일 없음 (산 날의 차이는 탓하지 않아요)
+                              # A 가 올라 70%: 1.25배 선 62.5% + 10%p = 72.5% 안 → 할 일 없음 (계획의 반올림은 탓하지 않아요)
                               ["A up a bit", rows, {"A": 311111.0, "B": 100000.0}],
                               # A 가 더 올라 76%: 72.5% 를 넘음 → 그만 살 차례 · B 24%: 37.5% − 10%p = 27.5% 아래 → 먼저 살 차례
                               ["A up more", rows, {"A": 422222.0, "B": 100000.0}],
@@ -213,11 +217,54 @@ def test_the_gap_as_bought_widens_only_its_own_side():
                               ["A down", rows, {"A": 109090.0, "B": 100000.0}],
                               # A 가 더 내려 30%: 37.5% 아래 → 먼저 살 차례 (넓히지 않은 쪽)
                               ["A down more", rows, {"A": 57142.0, "B": 100000.0}]])
+    assert got["gaps"]["day1"] == {"A": 10.0, "B": -10.0}, got["gaps"]
     assert set(x[0] for x in got["day1"].values()) == {"none"}, got["day1"]
     assert got["A up a bit"]["A"][0] == "none" and got["A up a bit"]["B"][0] == "none", got["A up a bit"]
     assert got["A up more"]["A"][0] == "high" and got["A up more"]["B"][0] == "low", got["A up more"]
     assert got["A down"]["A"][0] == "none" and got["A down"]["B"][0] == "none", got["A down"]
     assert got["A down more"]["A"][0] == "low", got["A down more"]
+
+
+FIVE = [[t, 0.2, 10, 10000.0, 10, 10000.0] for t in "ABCDE"]
+FIVE_PX = {t: 10000.0 for t in "ABCDE"}
+
+
+def test_buying_more_than_planned_or_a_price_typo_never_widens_the_bands():
+    # 5종목 20%씩, 계획 10주씩. 샀어요에서 A 를 60주로 적으면 A 60% (목표의 3배): 계획이 아니라 사용자가 만든 차이라 잡아요.
+    over = [["A", 0.2, 60, 10000.0, 10, 10000.0]] + FIVE[1:]
+    typo = [["A", 0.2, 10, 100000.0, 10, 10000.0]] + FIVE[1:]                 # 가격을 10배로 잘못 적음
+    got = run(BAND_JS, CASES=[["over", over, FIVE_PX], ["plain", FIVE, {**FIVE_PX, "A": 20000.0}], ["typo", typo, {**FIVE_PX, "A": 20000.0}]])
+    assert got["over"]["A"] == ["trim", 60.0] and all(got["over"][t][0] == "low" for t in "BCDE"), got["over"]
+    assert got["gaps"]["over"]["A"] == 0 and got["gaps"]["typo"]["A"] == 0, got["gaps"]    # 차이는 계획에서만
+    assert got["typo"] == got["plain"] and got["typo"]["A"] == ["trim", 33.3], (got["typo"], got["plain"])   # 오타가 숨기지 않아요
+
+
+def test_a_currency_move_changes_us_weights_and_is_flagged():
+    # 미국 U 목표 10% (13주 $100, 계획 환율 1,300원) · 한국 K 90% (1,521주 1만원). 계획대로 샀어요.
+    rows = [["U", 0.1, 13, 100.0, 13, 100.0, "us"], ["K", 0.9, 1521, 10000.0, 1521, 10000.0]]
+    got = run(BAND_JS, CASES=[["day1", rows, {"U": 100.0, "K": 10000.0}, 1300, 1300],
+                              ["dollar x2", rows, {"U": 100.0, "K": 10000.0}, 2600, 1300],
+                              ["U+20% dollar+20%", rows, {"U": 120.0, "K": 10000.0}, 1560, 1300],
+                              ["U+20% dollar same", rows, {"U": 120.0, "K": 10000.0}, 1300, 1300]])
+    assert got["day1"]["U"] == ["none", 10.0], got["day1"]
+    assert got["dollar x2"]["U"] == ["trim", 18.2], got["dollar x2"]                     # 환율만 두 배여도 잡아요
+    assert got["U+20% dollar+20%"]["U"] == ["high", 13.8], got                           # 1.38배: 1.25배 선 넘음, 1.4배 선 안
+    assert got["U+20% dollar same"]["U"] == ["none", 11.8], got
+
+
+def test_legacy_decks_without_plan_prices_use_planned_quantities_at_the_paid_price():
+    # 출시 밤 ~ 이 변경 사이에 저장된 덱: planPx · planFx 가 없어요. plannedQty x 평균 매수가로 계획 비중을 만들어요.
+    legacy = [["A", 0.5, 3, 200000.0, 3], ["B", 0.5, 4, 100000.0, 4]]                    # 계획 60% · 40% (반올림)
+    over = [["A", 0.2, 60, 10000.0, 10]] + [[t, 0.2, 10, 10000.0, 10] for t in "BCDE"]
+    us = [["U", 0.1, 13, 100.0, 13, None, "us"], ["K", 0.9, 1521, 10000.0, 1521]]
+    noqty = [["A", 0.5, 3, 200000.0, None, 200000.0], ["B", 0.3, 4, 100000.0, 4, 100000.0], ["C", 0.2, 2, 100000.0, 2, 100000.0]]
+    got = run(BAND_JS, CASES=[["legacy day1", legacy, {"A": 200000.0, "B": 100000.0}], ["legacy over", over, FIVE_PX],
+                              ["legacy us", us, {"U": 100.0, "K": 10000.0}, 1300], ["no plannedQty", noqty, {"A": 200000.0, "B": 100000.0, "C": 100000.0}]])
+    assert set(x[0] for x in got["legacy day1"].values()) == {"none"} and got["gaps"]["legacy day1"] == {"A": 10.0, "B": -10.0}, got
+    assert got["legacy over"]["A"][0] == "trim", got["legacy over"]                      # 계획보다 많이 산 건 그대로 잡아요
+    assert got["gaps"]["legacy us"] == {"U": 0, "K": 0}, got["gaps"]["legacy us"]          # 계획 때 환율을 몰라요: 덱 전체 g = 0
+    # 계획 수량이 없는 종목(A)만 g = 0. 나머지는 남는 50% 를 계획 금액 비율(4 : 2)로 나눠요: B 33.3% (목표 30%) · C 16.7% (목표 20%)
+    assert got["gaps"]["no plannedQty"] == {"A": 0, "B": 3.3, "C": -3.3}, got["gaps"]["no plannedQty"]
 
 
 def test_targets_are_rebased_over_what_is_held():
@@ -252,8 +299,9 @@ for (const deckId of ['deepValue', 'garp', 'quality', 'lowVol', 'trend', 'krUs',
   const p = R.D.computePlan(load, st, R.D.pickItems(ds, R.D.defaultPicks(ds)), ds.pinned);
   if (!p.ok) { res.push({ deckId, amountMan, cushion, clash: true }); continue; }
   const rows = p.plan.rows;
-  const deck = { id: 'd', name: 'x', holdings: rows.map((x) => ({ t: x.t, nk: x.s.nk, cls: x.s.cls, kind: x.kind, target: x.targetW, rules: R.D.rulesFor(load, x, st) })),
-    purchases: rows.filter((x) => x.shares > 0).map((x) => ({ t: x.t, date: '2026-10-30', qty: x.shares, price: x.s.price, ccy: x.s.cls === 'us' ? 'USD' : 'KRW' })) };
+  const purchases = rows.filter((x) => x.shares > 0).map((x) => ({ t: x.t, date: '2026-10-30', qty: x.shares, price: x.s.price, ccy: x.s.cls === 'us' ? 'USD' : 'KRW' }));
+  const deck = R.D.deckRecord({ load, st, plan: p.plan, purchases, id: 'd', today: '2026-10-30' });     // what 샀어요 saves
+  if (!R.S.validStore({ v: 1, decks: [deck] }, '2026-10-30')) throw new Error('deckRecord is not a valid record');
   const ev = R.evaluateDeck(deck, ctx);
   res.push({ deckId, amountMan, cushion, zero: rows.filter((x) => x.shares === 0).length, left: p.plan.left, cush: rows.some((x) => x.kind === 'cushion' && x.shares > 0),
     st: ev.holdings.map((h) => h.nk + ':' + h.status + ':' + h.reasons.map((r) => r.code).join('+')), ok: ev.ok });
