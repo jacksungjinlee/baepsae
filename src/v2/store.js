@@ -44,6 +44,9 @@ export function validStore(d, today) {
       if (!(isNum(p.price) && p.price > 0)) return false;
       if (!isDate(p.date) || (today && p.date > today)) return false;
       if (p.ccy !== "KRW" && p.ccy !== "USD") return false;
+      // Part E: a US purchase carries the won-per-dollar rate the plan used (for 원금 in won). Optional, so earlier records
+      // still read; when present it must be a positive number on a USD purchase.
+      if (p.fx != null && !(p.ccy === "USD" && isNum(p.fx) && p.fx > 0)) return false;
       if (!x.holdings.some((h) => h.t === p.t)) return false;
     }
     if (x.confirms != null) {

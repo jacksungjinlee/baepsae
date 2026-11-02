@@ -1,32 +1,16 @@
-// 오늘 and 내 덱 (v18.3 A+B, plus the Part C daily check on 내 덱). The 오늘 hero and the tracking sheet are Part E, so
-// 오늘 shows only real states: load failure, stale data, the content date and "준비 중". 내 덱 shows the user's own
-// purchase records and, when today's data is fresh, each held stock's rule check (daily.jsx). No example data.
+// 내 덱 (v18.3 A+B, the Part C daily check, and the Part E tracking sheet). It shows the user's own purchase records
+// and, when today's data is fresh, each held stock's rule check (daily.jsx), the deck's value · 원금 · return against
+// KOSPI, weight bars with target marks and 추가로 넣을 돈 (tracking.jsx). No example data. 오늘 is in today.jsx.
 import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
-import { HeroBand, Button, StatusChip } from "../ui/components.jsx";
-import { C, fill, nf, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, OldAppNote, tx } from "./ui.jsx";
+import { Button, StatusChip } from "../ui/components.jsx";
+import { C, fill, nf, mdText, todayKst } from "./format.js";
+import { Page, Card, AppBar, ScreenTitle, DateLine, Footer, Note, OldAppNote, tx } from "./ui.jsx";
 import { parseImport, mergeStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
-
-export function Today({ load, pad }) {
-  return (
-    <Page pad={pad}>
-      <AppBar />
-      <ScreenTitle>{C.today.title}</ScreenTitle>
-      {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
-      {load.status === "fail" && <LoadFail />}
-      {load.status === "ok" && load.fresh.stale && (
-        <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-stale">
-          <HeroBand tone="alert" title={fill(C.today.stale, { n: load.fresh.days })} />
-        </div>
-      )}
-      {load.status === "ok" && !load.fresh.stale && <Card><PendingChip /></Card>}
-      <Footer />
-    </Page>
-  );
-}
+import { deckMoney } from "./track.js";
+import { DeckSummary, ByStockHead, WeightLine, AddMoney } from "./tracking.jsx";
 
 function avgCost(purchases, t) {
   const ps = purchases.filter((p) => p.t === t && p.qty > 0);
@@ -71,22 +55,31 @@ export function MyDeck({ load, store, setStoreData, pad }) {
         const ts = [...new Set(d.purchases.filter((p) => p.qty > 0).map((p) => p.t))];
         const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
         const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
+        const m = de && de.ok ? deckMoney(d, de) : { ok: false };      // Part E: value · 원금 · return (fresh data only)
+        const start = d.purchases.reduce((a, p) => (p.qty > 0 && (a == null || p.date < a) ? p.date : a), null);
         return (
           <Card key={d.id} data-deck-id={d.id}>
             <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{d.name}</h3>
-            <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{fill(C.deck.mine, { n: ts.length })}</div>
+            <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>
+              <span>{fill(C.deck.mine, { n: ts.length })}</span>
+              {start && mdText(start) && <><span>{" · "}</span><span data-ui-v2="deck-start">{fill(C.deck.start, { md: mdText(start) })}</span></>}
+            </div>
+            {m.ok && <DeckSummary deck={d} m={m} load={load} />}
+            {m.ok && <ByStockHead />}
             {ts.map((t) => {
               const h = d.holdings.find((x) => x.t === t) || { nk: t };
               const a = avgCost(d.purchases, t);
               const x = de && de.ok ? de.holdings.find((y) => y.t === t) || null : null;
+              const ret = m.ok && m.per[t] && m.per[t].ret != null ? m.per[t].ret * 100 : null;
               return <HoldingRow key={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
-                x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} />;
+                x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
+                extra={m.ok && x ? <WeightLine x={x} /> : null} />;
             })}
             {de && de.ok && de.notChecked > 0 && <Note data-ui-v2="not-checked">{fill(C.daily.notChecked, { n: de.notChecked })}</Note>}
+            {m.ok && <AddMoney de={de} />}
           </Card>
         );
       })}
-      <Card><PendingChip /></Card>
       <Card data-ui-v2="records">
         {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
         {store.locked && C.store.locked && <Note tone="watch" data-ui-v2="store-locked">{C.store.locked}</Note>}

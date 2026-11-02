@@ -7,7 +7,8 @@
 
 - 모든 화면에 '예시 데이터' 표시가 보여요 (오늘 · 내 덱 · 덱 짜기 단계마다 · 후보 고르기 · 매수 계획)
 - noindex, 서비스워커 등록 없음, data.json · corp.json · macro.json 을 받지 않음 (요청 0건), 다른 사이트 요청 0건
-- 모든 탭 · 시작 덱마다 후보 고르기까지 · 한 덱은 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 남음 (미리 보기 전용 저장 키)
+- 모든 탭 · 시작 덱마다 후보 고르기까지 · 한 덱은 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 남음 (미리 보기 전용 저장 키) ·
+  산 뒤에는 오늘에 판정 띠, 내 덱에 평가 금액 (Part E)
 - 멈춤 경고 없음 (예시 데이터의 발행일은 고정이에요) · 페이지 오류 0건 · 보이는 한국어는 모두 문구 파일 또는 예시 데이터의 이름
 """
 import argparse
@@ -154,7 +155,8 @@ def main():
                 assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
                 shot(page, width, "0-landing")
                 tab(C["app"]["tabs"]["today"])
-                page.get_by_text(C["app"]["pending"]).first.wait_for(state="visible")
+                page.locator('[data-ui-v2="today-empty"]').wait_for(state="visible")    # 산 종목이 없으면 판정 없음 (Part E)
+                assert page.locator('[data-ui-v2="today-hero"]').count() == 0 and page.get_by_text("할 일").count() == 0
                 label_here()
                 shot(page, width, "1-today")
             check(W + "첫 화면 덱 짜기 → 오늘: 예시 데이터 표시 · noindex · 서비스워커 없음 · 날짜 · 멈춤 경고 없음", head, page, width)
@@ -224,8 +226,13 @@ def main():
                 stored = page.evaluate("[localStorage.getItem('baepsae2.preview.v1'), localStorage.getItem('baepsae2.v1')]")
                 assert stored[0] and stored[1] is None, "미리 보기 기록은 미리 보기 키에만 저장돼요"
                 page.reload(wait_until="domcontentloaded")
+                page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")   # 산 덱이 있으면 오늘의 판정 띠 (Part E)
+                assert "멈췄어요" not in page.locator("body").inner_text()
+                label_here()
+                shot(page, width, "8-today-after")
                 tab(C["app"]["tabs"]["deck"])
                 page.get_by_text("배당 생활비 덱").wait_for(state="visible")
+                page.locator('[data-ui-v2="deck-summary"]').wait_for(state="visible")
                 label_here()
                 shot(page, width, "8-mydeck-after")
             check(W + "배당 생활비: 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 (미리 보기 저장 키만 씀)", plan_and_buy, page, width)

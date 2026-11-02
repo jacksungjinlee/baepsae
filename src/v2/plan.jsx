@@ -265,7 +265,11 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const save = () => {
     if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
     const day = date || today;
-    const purchases = parsed.filter((r) => r.q > 0).map((r) => ({ t: r.x.t, date: day, qty: r.q, price: r.p, ccy: r.x.s.cls === "us" ? "USD" : "KRW" }));
+    // A US purchase keeps the exchange rate the plan used (data.json fx), so 내 덱 can show 원금 in won (Part E).
+    const fx = typeof load.data.fx === "number" && Number.isFinite(load.data.fx) && load.data.fx > 0 ? load.data.fx : null;
+    const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
+      ? { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
+      : { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));
     const id = `d${Date.now().toString(36)}`;
     const deck = {
       id, name: deckDisplayName(st), createdAt: todayKst(), pxDate: load.data.pxDate, fyNote: "rule inputs as of purchase",
