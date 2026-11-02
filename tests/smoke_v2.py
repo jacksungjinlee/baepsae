@@ -339,6 +339,10 @@ def scene_normal(R, files, width):
         assert page.locator("[data-ui-v2='rule-line'][data-icon='check']").count() == 0, "매일 점검 전인데 초록 확인 표시가 있어요"
         for i in range(checked.count()):
             assert re.search(r"\d", checked.nth(i).inner_text()), f"숫자 없는 확인 규칙: {checked.nth(i).inner_text()!r}"
+        book = page.locator("[data-rules-for]")
+        assert book.get_by_text(C["plan"]["rules"]["embezzle"]).count() == 6, "횡령·배임 줄이 종목마다 있어야 해요"
+        op_rows = page.locator("[data-rules-for] [data-ui-v2='rule-line']", has_text=C["plan"]["rules"]["opLimit"])
+        assert op_rows.count() >= 1 and re.search(r"[억조]원 → .+[억조]원 → .+[억조]원", op_rows.first.inner_text()), op_rows.first.inner_text()
         R.collect(page)
         no_hscroll(page, width)
     R.check(page, S, "시작 덱(배당 생활비)으로 끝까지: 기준 → 빼기 → 조건 → 후보 6개 → 매수 계획·규칙", from_starting_deck)
@@ -489,6 +493,11 @@ def scene_normal(R, files, width):
         see(page, C["plan"]["stocks"])
         assert page.locator("[data-row]").count() == 6
         assert page.locator('[data-ui-v2="clash"]').count() == 0
+        rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
+        for i in range(rules.count()):
+            rules.nth(i).locator("button").first.click()
+        roe = page.locator("[data-rules-for] [data-ui-v2='rule-line']", has_text="밑으로 떨어지면 지켜봐요")
+        assert roe.count() >= 1 and re.search(r"ROE.*지금 [\d.]+% · \d+% 밑으로 떨어지면 지켜봐요", roe.first.inner_text().replace("\n", " ")), roe.first.inner_text()
         R.collect(page)
     R.check(page, S, "빈 덱으로 끝까지: 카드 10점 → 지주회사 빼기 → 한국만 → 후보 → 매수 계획", from_blank)
 
@@ -778,7 +787,7 @@ def scene_daily(R, files, width):
         txt = w.locator('[data-ui-v2="status-line"][data-code="debtOver"]').inner_text()
         assert "부채비율 221% (기준 200%)" in txt and "2025년 사업보고서 기준" in txt, txt
         op = row("dop", "005380").locator('[data-ui-v2="status-line"][data-code="opFell2"]').inner_text()
-        assert "영업이익 (작년 대비) \u221219.5%" in op and "2025년 사업보고서 기준" in op, op     # 숫자와 보고서 연도
+        assert "영업이익이 2년째 줄고 있어요 · 15.1조원 → 14.2조원 → 11.5조원 · 2년 연속 줄면 지켜봐요" in op and "2025년 사업보고서 기준" in op, op
         m = row("dmiss", "000270")
         assert "부채비율 자료를 받지 못해 확인이 필요해요" in m.locator('[data-ui-v2="status-line"][data-code="missing"]').inner_text()
         assert m.locator('[data-ui-v2="confirm"]').count() == 0
@@ -801,6 +810,16 @@ def scene_daily(R, files, width):
         assert row("dcalm", "005930").locator('[data-ui="status-chip"]').count() == 0       # 칩이 없으면 괜찮은 종목
         nc = calm.locator('[data-ui-v2="not-checked"]').inner_text()
         assert re.fullmatch(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", nc), nc
+        folds = calm.locator('[data-ui="collapsible"]')
+        for i in range(folds.count()):
+            folds.nth(i).locator("button").first.click()
+        shown = calm.locator('[data-rules-today] [data-check="pending"]').count()
+        assert shown == int(re.search(r"\d+", nc).group()) == 6, (shown, nc)          # 세는 규칙 = 보이는 준비 중 줄
+        for i in range(folds.count()):
+            folds.nth(i).locator("button").first.click()
+        note = page.locator('[data-ui-v2="rebased-note"]')
+        assert note.count() == 1 and deck("dplan").locator('[data-ui-v2="rebased-note"]').inner_text() == \
+            "계획한 3종목 중 2종목만 샀어요. 목표 비중은 산 종목끼리 다시 나눠 계산해요.", note.all_inner_texts()
         assert page.locator('[data-ui-v2="not-checked"]').count() == 8
         R.collect(page)
     R.check(page, S, "비중 벗어남 · 할 일 없음(칩 없음) · 큰 움직임은 칩만 · '아직 자동으로 확인하지 못하는 규칙' 줄", bands_and_calm)
@@ -965,6 +984,8 @@ def scene_today(R, files, width):
         # SK하이닉스: 배당 규칙은 산 뒤 새 보고서(2025)로 확인 · 부채비율 규칙은 산 때 보고서뿐(새로 확인한 것 아님) → '규칙 2개'(배당 + 비중)
         "big": _one_deck("dbig", "반도체 덱", [_buy("000660", "SK하이닉스", 0.5, [_div(2024, 2204.0, 1200.0), _debt(2025, 46.0, 100)], 1, by), sam(6)]),
     }
+    # 반도체 덱은 계획한 기아를 사지 않았어요(0주): 목표는 산 두 종목끼리 다시 나눠요 → 내 덱 · 왜 움직였나에 같은 안내
+    decks["big"]["decks"][0]["holdings"].append({**_holding("000270", "기아", 0.2, []), "plannedQty": 1})
 
     def ctx_for(key, site=None):
         init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(decks[key], ensure_ascii=False))}); }} catch (e) {{}} }})();"
@@ -1139,6 +1160,8 @@ def scene_today(R, files, width):
         rules = page.locator('[data-ui-v2="why-rules"]').inner_text()
         assert "규칙 2개가 모두 지켜지고 있어요" in rules and C["why"]["alertLine"] in rules and C["app"]["notChecked"] in rules, rules
         assert "뉴스" not in page.locator("main").inner_text() and "다음에 확인할 일" not in page.locator("main").inner_text()
+        rebased = "계획한 3종목 중 2종목만 샀어요. 목표 비중은 산 종목끼리 다시 나눠 계산해요."
+        assert page.locator('[data-ui-v2="why-rebased"]').inner_text() == rebased
         src = page.locator('[data-ui-v2="why-sources"]')
         src.locator("button").first.click()
         st = src.inner_text()
@@ -1160,6 +1183,7 @@ def scene_today(R, files, width):
         kospi = page.locator('[data-ui-v2="vs-index"]').inner_text()
         assert re.fullmatch(r"내 덱 \+\d+\.\d%", mine) and re.fullmatch(r"코스피 [+−]?\d+\.\d%", kospi), (mine, kospi)
         assert "10월 1일 시작" in page.locator('[data-ui-v2="deck-start"]').inner_text()
+        assert page.locator('[data-ui-v2="rebased-note"]').inner_text() == "계획한 3종목 중 2종목만 샀어요. 목표 비중은 산 종목끼리 다시 나눠 계산해요."
         assert page.locator('[data-ui-v2="weight"]').count() == 2
         assert page.locator('[data-ui-v2="weight-edges"]').count() == 2               # 종목마다 오늘 쓰는 경계
         page.locator('[data-ui-v2="add-empty"]').wait_for(state="visible")

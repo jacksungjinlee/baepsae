@@ -532,19 +532,24 @@ out = Object.fromEntries(CASES.map(([k, op]) => [k, hold(one(d, [A, B], [{ t: A.
     assert got == {"fell twice": "fail", "rose twice": "ok", "fell once": "ok", "deeper loss": "fail", "flat": "ok"}, got
 
 
-def test_the_operating_profit_line_shows_the_fact_and_the_amounts_once_their_unit_is_approved():
-    # 후보 고르기 주의할 점과 내 덱 지켜봐요 줄이 같은 조각을 써요. 단위(억원 · 조원)는 승인 전이라 금액은 빠지고,
-    # 승인되면(아래에서 흉내) 세 해 금액이 옛날 → 올해 순서로 붙어요. 작년이 적자면 '작년 대비 %' 없이 '영업이익'.
+def test_the_operating_profit_line_shows_the_fact_the_amounts_and_the_rule():
+    # 후보 고르기 주의할 점과 내 덱 지켜봐요 줄이 같은 조각을 써요 (Jack 승인 2026-11-02): 사실 문장, 세 해 금액(옛날 → 올해,
+    # 1조원부터 조원), 규칙. 작년이 적자여도 금액이 보여요. 승인 전 상태(null)의 대체 문구도 그대로 동작하는지 흉내 내 봐요.
     got = run("""
-const before = [R.D.opPieces([114678.5, 142395.9, 151269.0], (114678.5 / 142395.9 - 1) * 100), R.D.opPieces([-50, -10, 20], null)];
-R.F.C.app.eok = '{n}억원'; R.F.C.app.jo = '{n}조원';
-const after = [R.D.opPieces([114678.5, 142395.9, 151269.0], -19.5), R.D.opPieces([-50, -10, 20], null), R.D.opAmounts([1, null, 3])];
-R.F.C.app.eok = null; R.F.C.app.jo = null;
-out = { before, after, units: [R.F.C.app.eok, R.F.C.app.jo] };""")
-    assert got["units"] == [None, None]                                                     # 승인 전: 비어 있어요
-    assert got["before"] == [["영업이익 (작년 대비) \u221219.5%"], ["영업이익"]], got["before"]
-    assert got["after"][0] == ["영업이익 (작년 대비) \u221219.5%", "15.1조원 → 14.2조원 → 11.5조원"], got["after"]
-    assert got["after"][1] == ["영업이익", "20억원 → \u221210억원 → \u221250억원"] and got["after"][2] is None, got["after"]
+const C = R.F.C;
+const approved = [C.pick.caution.opFallFull, C.app.eok, C.app.jo, C.plan.rules.opLimit];
+const now = [R.D.opPieces([114678.5, 142395.9, 151269.0], -19.5), R.D.opPieces([-50, -10, 20], null), R.D.opAmounts([1, null, 3]),
+             R.D.opAmounts([436010.5, 327259.6, 8765.4])];
+const keep = { f: C.pick.caution.opFallFull, e: C.app.eok, j: C.app.jo };
+C.pick.caution.opFallFull = null; C.app.eok = null; C.app.jo = null;
+const fallback = [R.D.opPieces([114678.5, 142395.9, 151269.0], (114678.5 / 142395.9 - 1) * 100), R.D.opPieces([-50, -10, 20], null)];
+C.pick.caution.opFallFull = keep.f; C.app.eok = keep.e; C.app.jo = keep.j;
+out = { approved, now, fallback };""")
+    assert got["approved"] == ["영업이익이 2년째 줄고 있어요", "{n}억원", "{n}조원", "2년 연속 줄면 지켜봐요"], got["approved"]
+    assert got["now"][0] == ["영업이익이 2년째 줄고 있어요", "15.1조원 → 14.2조원 → 11.5조원"], got["now"]
+    assert got["now"][1] == ["영업이익이 2년째 줄고 있어요", "20억원 → \u221210억원 → \u221250억원"] and got["now"][2] is None, got["now"]
+    assert got["now"][3] == "8,765억원 → 32.7조원 → 43.6조원", got["now"]                 # 1조원 아래는 억원
+    assert got["fallback"] == [["영업이익 (작년 대비) \u221219.5%"], ["영업이익"]], got["fallback"]
 
 
 # ── 확인하지 못하는 규칙 ──

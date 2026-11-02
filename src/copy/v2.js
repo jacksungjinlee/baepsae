@@ -34,8 +34,8 @@ export const C = {
     reportYear: "{year}년 사업보고서 기준",                         // new
     won: "{n}원",                                                  // 90
     man: "{n}만원",                                                // 45 · 64
-    eok: null,                                                     // pending: {n}억원 (영업이익 금액)
-    jo: null,                                                      // pending: {n}조원 (영업이익 금액, 1조원부터)
+    eok: "{n}억원",                                                // chat (2026-11-02: 영업이익 금액)
+    jo: "{n}조원",                                                 // chat (2026-11-02: 영업이익 금액, 1조원부터)
     manUnit: "만원",                                               // 64
     about: "약 {x}",                                               // 524 · 527
     count: "{count}개",                                            // 195
@@ -146,7 +146,7 @@ export const C = {
     confirmNotCut: "줄인 게 아니에요",                               // new (확인 필요, buttons)
     weight: "비중",                                                 // 60
     finNA: "금융회사는 해당 없음",                                    // new (Financial companies: 부채비율 규칙)
-    rebasedNote: null,                                             // pending: 계획한 종목 중 일부만 샀을 때 (목표 비중을 다시 나눴다는 설명)
+    rebasedNote: "계획한 {n}종목 중 {m}종목만 샀어요. 목표 비중은 산 종목끼리 다시 나눠 계산해요.", // chat (2026-11-02: 일부만 산 덱)
     bandLow: "{x}% 미만이면 먼저 사요",                              // 543 (첫째 조각)
     bandHigh: "{x}% 넘으면 더 사지 않아요",                           // 543 (둘째 조각)
     bandTrim: "{x}% 넘으면 일부 팔아요",                              // 543 (셋째 조각)
@@ -307,7 +307,7 @@ export const C = {
       debtHigh: "부채비율 {pct}%로 높은 편이에요",                      // 498
       revFall: "매출이 2년째 줄고 있어요",                              // 503
       opFall: "영업이익 (작년 대비) {pct}",                              // 459 + 숫자 (2년 연속 줄었을 때)
-      opFallFull: null,                                            // pending: 영업이익이 2년째 줄고 있어요
+      opFallFull: "영업이익이 2년째 줄고 있어요",                       // chat (2026-11-02: 주의할 점 · 내 덱 지켜봐요 줄)
       divDrop: "{name} 배당이 줄었어요 · 주당 {a}원 → {b}원",            // new (확인 필요, 배당)
       divDropBody: "특별배당이나 액면분할 때문인지 확인해 주세요.",         // new (확인 필요, 본문)
       volHigh: null,                                               // pending: 주가 변동이 큰 종목
@@ -379,14 +379,14 @@ export const C = {
       divCut: "배당 삭감",                                           // 9 · 541
       audit: "감사의견 문제",                                         // 541
       acquisition: "본업과 상관없는 대규모 인수",                        // 541
-      embezzle: null,                                              // pending: 횡령·배임 공시
+      embezzle: "횡령·배임 공시",                                     // chat (2026-11-02: 공통 매도 조건, 준비 중)
       debt: "부채비율",                                             // 153
       now: "지금 {x}%",                                             // 148 · 154
       over: "{x}% 넘으면 지켜봐요",                                    // 149 · 155
       roe: "ROE",
-      roeLimit: null,                                              // pending: ROE 하한
+      roeLimit: "{x}% 밑으로 떨어지면 지켜봐요",                        // chat (2026-11-02: ROE 하한, Jack 이 문구를 고침)
       opProfit: "영업이익",                                          // 156
-      opLimit: null,                                               // pending: 영업이익 2년 연속 감소 (연간)
+      opLimit: "2년 연속 줄면 지켜봐요",                                // chat (2026-11-02: 영업이익 2년 연속 감소, 연간)
       cet1: "CET1",
       kics: "지급여력비율",                                           // 485
     },

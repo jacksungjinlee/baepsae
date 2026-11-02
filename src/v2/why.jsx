@@ -152,6 +152,10 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
       <Check n={g.ok ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
         <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.why.alertLine}</p>
         <HoldingRules x={x} names={names} />
+        {de.rebased && C.daily.rebasedNote && (                       // the same note as under the deck on 내 덱
+          <p data-ui-v2="why-rebased" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>
+            {fill(C.daily.rebasedNote, { n: de.bandPlanned, m: de.bandHeld })}</p>
+        )}
         <Explainer />
       </Check>
       <Sources s={s} g={g} x={x} md={md} />
