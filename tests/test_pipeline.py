@@ -994,7 +994,8 @@ def test_us_preferred_and_depositary_shares_are_left_out():
     us = us_rows(743, ("STRC", "GOOGM", "GOOGN"), extra)
     drop, no_cap, n = F.us_preferred_like(us)
     assert drop == ["GOOGM", "GOOGN", "STRC"] and n == 746
-    out = F.clean_us_list(us, frozenset(), {})
+    out, left = F.clean_us_list(us, frozenset(), {})
+    assert left == {"preferred": ["GOOGM", "GOOGN", "STRC"], "krListing": []}          # data.json usLeftOut (검증이 세요)
     assert {"STRC", "GOOGM", "GOOGN"}.isdisjoint(r["t"] for r in out)
     assert {"SPY", "NOINFO", "C000"} <= {r["t"] for r in out} and len(out) == len(us) - 3
 
@@ -1003,8 +1004,8 @@ def test_many_us_rows_without_market_cap_is_a_data_problem_not_preferred(capsys)
     # 5% 넘게 비면 야후가 시가총액을 안 보낸 거예요: 아무것도 빼지 않고 크게 알려요 (검증의 '미국 시가총액 채움'이 잡아요)
     us = us_rows(94, [f"N{i}" for i in range(6)])                            # 6 / 100 > 5%
     assert F.us_preferred_like(us)[0] == []
-    out = F.clean_us_list(us, frozenset(), {})
-    assert len(out) == 100 and "데이터 문제" in capsys.readouterr().out
+    out, left = F.clean_us_list(us, frozenset(), {})
+    assert len(out) == 100 and left["preferred"] == [] and "데이터 문제" in capsys.readouterr().out
     us = us_rows(95, [f"N{i}" for i in range(5)])                            # 5 / 100 = 5% → 아직 우선주로 봐요 (2.0 과 같은 경계)
     assert len(F.us_preferred_like(us)[0]) == 5
 
@@ -1018,16 +1019,16 @@ def test_us_no_cap_share_matches_the_2_0_engine():
 def test_us_listing_of_a_korean_company_is_dropped(capsys):
     dups = F.load_us_kr_duplicates()
     us = us_rows(10, extra=[{"t": "SKHY", "nk": "SK hynix Inc.", "price": 500.0, "cap": 1400.0, "val": 9e4, "etf": False}])
-    out = F.clean_us_list(us, frozenset({"000660", "005930"}), dups)
-    assert "SKHY" not in {r["t"] for r in out} and len(out) == 10
+    out, left = F.clean_us_list(us, frozenset({"000660", "005930"}), dups)
+    assert "SKHY" not in {r["t"] for r in out} and len(out) == 10 and left == {"preferred": [], "krListing": ["SKHY"]}
     assert "SKHY(=000660)" in capsys.readouterr().out
 
 
 def test_mapped_us_ticker_stays_when_the_korean_stock_is_missing(capsys):
     # 국내 목록에서 000660 이 빠진 날 SKHY 까지 빼면 SK하이닉스가 통째로 사라져요 → 남기고 크게 알려요
     us = us_rows(10, extra=[{"t": "SKHY", "price": 500.0, "cap": 1400.0, "val": 9e4, "etf": False}])
-    out = F.clean_us_list(us, frozenset({"005930"}), F.load_us_kr_duplicates())
-    assert "SKHY" in {r["t"] for r in out}
+    out, left = F.clean_us_list(us, frozenset({"005930"}), F.load_us_kr_duplicates())
+    assert "SKHY" in {r["t"] for r in out} and left["krListing"] == []
     log = capsys.readouterr().out
     assert "!!" in log and "SKHY(≠000660)" in log
 
@@ -1161,3 +1162,66 @@ def test_g3_without_usable_revenue_is_not_published(monkeypatch, tmp_path, capsy
     corp = F.build_corp([dict(s, cls="kr", price=1.0) for s in kr], fin, "2026-11-02")
     assert corp["companies"][0]["g3"] is None and corp["companies"][1]["g3"] == 5.5
     assert "비운 곳 1: 950160 코오롱티슈진" in capsys.readouterr().out
+
+
+# ── v17.5.2: 공시 목록을 못 받으면 지난 발행본의 국민연금·내부자 항목을 자기 날짜 그대로 ─────────
+PREV_DISC = {"asOf": "2026-10-30", "newest": "2026-10-28", "listOk": True,
+             "insider": [{"rc": "R1", "d": "20261020", "t": "005930", "nk": "삼성전자", "q": -10},
+                         {"rc": "R0", "d": "20260601", "t": "005930", "nk": "삼성전자", "q": 5}],          # 90일 지난 것
+             "nps": [{"d": "20261028", "t": "005930", "nk": "삼성전자", "s": "semi", "cap": 1300.0, "rt": 7.3, "chg": 0.2},
+                     {"d": "20260701", "t": "035420", "nk": "NAVER", "s": "platform", "cap": 30.0, "rt": 9.1, "chg": 1.0}]}
+
+
+class FakeDisc:
+    """가짜 DART: list.json 은 list_ok 일 때만 답하고 000660 의 국민연금 보고 하나를 알려요."""
+    def __init__(self, list_ok=True, down=None, major_ok=True):
+        self.list_ok, self.down, self.major_ok = list_ok, down, major_ok
+
+    def get(self, endpoint, params):
+        if endpoint == "list.json":
+            return {"status": "000", "total_count": 1, "list": [{"report_nm": "주식등의대량보유상황보고서", "flr_nm": "국민연금공단",
+                                                                 "corp_code": "C2"}]} if self.list_ok else None
+        if endpoint == "majorstock.json" and self.major_ok:
+            return {"status": "000", "list": [{"repror": "국민연금공단", "rcept_dt": "2026-11-01", "stkrt": "7.10", "stkrt_irds": "0.50"}]}
+        return None
+
+    def raise_if_fatal(self):
+        pass
+
+
+def run_disc(monkeypatch, tmp_path, client):
+    p = tmp_path / "disc.json"
+    p.write_text(json.dumps(PREV_DISC, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(F, "OUT_DISC", str(p))
+    kr = [{"t": "005930", "nk": "삼성전자", "cls": "kr", "s": "semi", "cap": 1300.0, "price": 1.0},
+          {"t": "000660", "nk": "SK하이닉스", "cls": "kr", "s": "semi", "cap": 1000.0, "price": 1.0}]
+    return F.fetch_disclosures(kr, {"005930": "C1", "000660": "C2"}, dt.date(2026, 11, 2), client)
+
+
+def test_failed_disclosure_list_keeps_previous_entries_with_their_dates(monkeypatch, tmp_path, capsys):
+    out = run_disc(monkeypatch, tmp_path, FakeDisc(list_ok=False))
+    assert out["listOk"] is False
+    assert out["nps"] == PREV_DISC["nps"][:1]                     # 날짜 그대로 · 90일 지난 NAVER 는 빠져요
+    assert [r["rc"] for r in out["insider"]] == ["R1"] and out["insider"][0]["d"] == "20261020"
+    assert out["newest"] == "2026-10-28" and out["asOf"] == "2026-11-02"      # 화면 날짜는 가장 최근 공시일 (오늘 아님)
+    assert "!! 공시 목록을 받지 못해 지난 발행본의 2건을 그대로 둬요 (최근 공시 2026-10-28)" in capsys.readouterr().out
+
+
+def test_successful_disclosure_list_replaces_previous_nps(monkeypatch, tmp_path, capsys):
+    out = run_disc(monkeypatch, tmp_path, FakeDisc())
+    assert out["listOk"] is True
+    assert [(r["t"], r["d"]) for r in out["nps"]] == [("000660", "20261101")]   # 지난 삼성전자 항목은 다시 싣지 않아요
+    assert out["newest"] == "2026-11-01" and "그대로 둬요" not in capsys.readouterr().out
+
+
+def test_dart_stop_during_disclosures_keeps_previous_nps(monkeypatch, tmp_path, capsys):
+    out = run_disc(monkeypatch, tmp_path, FakeDisc(down="ConnectTimeout", major_ok=False))
+    assert [(r["t"], r["d"]) for r in out["nps"]] == [("005930", "20261028")]
+    assert "!! DART 연결이 끊겨 지난 발행본의 2건을 그대로 둬요 (최근 공시 2026-10-28)" in capsys.readouterr().out
+
+
+def test_carry_prev_nps_prefers_fresh_and_keeps_dates():
+    fresh = [{"t": "005930", "d": "20261101"}]
+    prev = [{"t": "005930", "d": "20261028"}, {"t": "000660", "d": "20261020"}, {"t": "035420", "d": "20260701"}]
+    got, n = F.carry_prev_nps(fresh, prev, "20260805")
+    assert got == [{"t": "005930", "d": "20261101"}, {"t": "000660", "d": "20261020"}] and n == 1

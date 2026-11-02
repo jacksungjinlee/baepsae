@@ -1813,6 +1813,14 @@ def parse_elestock_corp(rows, bgn):
     return out
 
 
+def carry_prev_nps(fresh, prev_nps, bgn):
+    """새로 받은 국민연금 항목 + 그 회사가 없는 지난 발행본 항목(조회 기간 bgn 이후만). 공시일은 그대로 둬요 (다시 날짜를 붙이지 않아요).
+    새로 받은 회사는 새 값이 이겨요. (순수 함수) 반환: (합친 목록 최신순, 가져온 지난 항목 수)."""
+    have = {r.get("t") for r in fresh}
+    old = [r for r in prev_nps if r.get("t") not in have and str(r.get("d") or "") >= bgn]
+    return sorted(fresh + old, key=lambda r: r.get("d", ""), reverse=True), len(old)
+
+
 def fetch_disclosures(kr_stocks, cmap, end, client):
     """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
     실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다.
@@ -1913,6 +1921,17 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         nps.append({"d": d, "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
                     "rt": _num(x.get("stkrt")), "chg": _num(x.get("stkrt_irds"))})
     nps.sort(key=lambda r: r.get("d", ""), reverse=True)
+    # v17.5.2: 공시 목록을 못 받았거나 DART 연결이 끊기면 국민연금 목록이 통째로 비어 앱에 '최근 90일 내 국민연금 보고가 없어요'
+    # (사실이 아님)가 떠요. 지난 발행본의 항목을 자기 공시일 그대로 둬요. 내부자 거래는 원래 지난 발행본에 이어 붙여요(위 rows).
+    # 화면의 날짜(newest)는 실행일이 아니라 가장 최근 공시일이라, 오래 못 받으면 앱이 '갱신이 멈췄어요'로 알려요.
+    if not list_ok or getattr(client, "down", None):
+        nps, carried = carry_prev_nps(nps, prev.get("nps", []), bgn)
+        n_ins = sum(1 for r in prev.get("insider", []) if str(r.get("d") or "") >= bgn)
+        old_ds = [str(r.get("d")) for r in prev.get("nps", []) + prev.get("insider", []) if r.get("d") and str(r["d"]) >= bgn]
+        last = max(old_ds) if old_ds else None
+        why = "공시 목록을 받지 못해" if not list_ok else "DART 연결이 끊겨"
+        log(f"  !! {why} 지난 발행본의 {carried + n_ins:,}건을 그대로 둬요 "
+            f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'}) · 국민연금 {carried:,} · 내부자 {n_ins:,}")
     log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     client.raise_if_fatal()
@@ -2591,7 +2610,9 @@ def drop_us_kr_duplicates(us, kr_codes, dups):
 
 
 def clean_us_list(us, kr_codes, dups):
-    """미국 목록에서 한국 종목의 미국 상장분과 우선주·예탁증서를 빼요. 뺀 것은 모두 티커와 함께 로그로 남겨요."""
+    """미국 목록에서 한국 종목의 미국 상장분과 우선주·예탁증서를 빼요. 뺀 것은 모두 티커와 함께 로그로 남겨요.
+    반환: (남은 미국 목록, {"preferred": [우선주로 뺀 티커], "krListing": [한국 종목이라 뺀 티커]}) — 뒤의 것은 data.json 의
+    usLeftOut 으로 나가요 (검증이 우선주로 뺀 수를 세요: 야후가 진짜 회사의 시가총액을 몇 개 안 보낸 날을 잡으려고)."""
     us, dropped, kept = drop_us_kr_duplicates(us, kr_codes, dups)
     if dropped:
         log(f"  !! 한국 종목과 같은 회사라 미국 목록에서 뺀 종목 {len(dropped)}개: "
@@ -2613,7 +2634,7 @@ def clean_us_list(us, kr_codes, dups):
             f"(검증의 '미국 시가총액 채움'이 잡아요): {', '.join(no_cap[:10])}{'…' if len(no_cap) > 10 else ''}")
     else:
         log("· 미국 우선주·예탁증서(시가총액 없는 회사 주식): 없음")
-    return us
+    return us, {"preferred": list(pref), "krListing": [t for t, _ in dropped]}
 
 
 def cut_words(text, n):
@@ -2767,12 +2788,13 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     odd = etf_from_quote_type(out, cache)
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
-    out = clean_us_list(out, kr_codes, dups or {})          # ETF 표시가 끝난 뒤에 (ETF 는 시가총액이 없어도 우선주가 아니에요)
+    out, left_out = clean_us_list(out, kr_codes, dups or {})   # ETF 표시가 끝난 뒤에 (ETF 는 시가총액이 없어도 우선주가 아니에요)
     no_info = set(missing)
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
-    meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx}
+    meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
+            "usLeftOut": left_out}
     return out, bench, fx, fx_last, us_vol_krw, meta
 
 
@@ -2824,7 +2846,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "fy": "op·debt·roe·opm·g3·dps·dps3 가 나온 사업보고서 연도 (bq 는 TTM 분기)",
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
-         "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜"}
+         "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
+         "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(거래대금은 있는데 시가총액 없음), krListing = 한국 종목의 미국 상장분"}
 IDX_YEARS = 3
 
 
@@ -2964,6 +2987,7 @@ def main():
         "listSrc": kmeta["listSrc"], "fx": round(fx_last, 1), "units": UNITS, "settings": settings,
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
+        "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "stocks": stocks,
     }
     write_json(OUT, payload)

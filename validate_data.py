@@ -100,6 +100,8 @@ US_CAP_COVER = 95.0      # 미국 회사 주식(ETF 빼고) 중 시가총액(cap
 #                          파이프라인은 5% 넘게 비면 우선주로 보지 않고 그대로 두니, 야후가 시가총액을 안 보내면 여기서 실패해요.
 DIV_COVER_KEYS = ("dps", "dy")   # 국내 주당 배당금·배당수익률 — 그날 둘 다 96.7%
 DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄면 실패 (DART 일부 장애로 배당이 조용히 비는 것)
+US_PREF_DROP_MAX = 10    # 우선주·예탁증서로 보고 미국 목록에서 뺀 종목 수 상한 (data.json usLeftOut.preferred) — 그날 3개 (STRC·GOOGM·GOOGN).
+#                          파이프라인은 5% 이하로 비면 다 빼니(약 37개까지), 야후가 진짜 회사 몇 개의 시가총액을 안 보낸 날을 여기서 잡아요.
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -550,7 +552,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
 
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
-    check_v1752(rep, kr, us, pdata)
+    check_v1752(rep, data, kr, us, pdata)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -719,12 +721,20 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
                 f"{D1_YAHOO_TOL}%p 안 (이틀치 변화를 잡아요)", warn=len(hilo) < len(must_kr))
 
 
-def check_v1752(rep, kr, us, pdata):
+def check_v1752(rep, data, kr, us, pdata):
     # 미국 시가총액: ETF 가 아닌 미국 종목은 거의 모두 시가총액이 있어야 해요 (우선주·예탁증서는 파이프라인이 빼요)
     usco = [s for s in us if s.get("etf") is not True]
     have = sum(1 for s in usco if (num(s.get("cap")) or 0) > 0)
     share = 100.0 * have / len(usco) if usco else 0.0
     rep.pct("미국 시가총액 채움 (ETF 빼고)", share, US_CAP_COVER)
+    # 우선주로 뺀 수: 진짜 우선주는 몇 개뿐이에요. 많으면 야후가 회사 주식의 시가총액을 안 보낸 거예요 (기록이 없어도 실패)
+    lo = data.get("usLeftOut")
+    pref = lo.get("preferred") if isinstance(lo, dict) else None
+    ok = isinstance(pref, list) and all(isinstance(t, str) for t in pref) and len(pref) <= US_PREF_DROP_MAX
+    rep.add("미국 우선주·예탁증서로 뺀 종목 수", ok,
+            (f"{len(pref)}개" + (f": {', '.join(map(str, pref[:6]))}{'…' if len(pref) > 6 else ''}" if pref else ""))
+            if isinstance(pref, list) else "기록 없음 (data.json usLeftOut)",
+            f"≤ {US_PREF_DROP_MAX}개 (많으면 야후가 회사 주식의 시가총액을 안 보낸 것)")
     # 국내 배당: 주당 배당금·배당수익률 채움이 직전 발행본보다 크게 줄면 실패 (0 = 배당 없음도 채움으로 세요)
     if pdata:
         pkr = kr_stocks(pdata)

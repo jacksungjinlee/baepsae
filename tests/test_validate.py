@@ -802,3 +802,18 @@ def test_small_korean_dividend_coverage_dip_passes():
     rep = check(cur, prev, final)
     assert not rep.failed, rep.table()
     assert {r[0] for r in rep.rows} >= {"국내 dps 채움 변화", "국내 dy 채움 변화"}
+
+
+@pytest.mark.parametrize("left, ok", [({"preferred": [f"P{i}" for i in range(10)], "krListing": []}, True),
+                                      ({"preferred": [f"P{i}" for i in range(11)], "krListing": []}, False),
+                                      ({"preferred": [], "krListing": ["SKHY"]}, True),
+                                      (None, False), ({"krListing": []}, False), ({"preferred": "STRC"}, False)])
+def test_too_many_us_rows_dropped_as_preferred_fails(left, ok):
+    # 야후가 진짜 회사 몇 개(5% 이하)의 시가총액을 안 보내면 파이프라인이 '우선주'로 빼고 시가총액 채움은 통과해요 → 수로 잡아요
+    cur, prev, final = good_pair()
+    if left is None:
+        cur["data"].pop("usLeftOut")
+    else:
+        cur["data"]["usLeftOut"] = left
+    names = failed_names(check(cur, prev, final))
+    assert ("미국 우선주·예탁증서로 뺀 종목 수" in names) is (not ok), names
