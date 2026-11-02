@@ -204,7 +204,10 @@ def test_old_app_bundle_does_not_include_v2():
         inputs = list(json.load(f)["inputs"])
     bad = [i for i in inputs if i.startswith(("src/v2/", "src/copy/", "src/preview/"))]
     assert not bad, bad
-    assert "app.html" not in read("baepsae.html")        # 메인 주소 쪽 연결은 index.html (tests/test_launch.py)
+    # 지금 앱이 2.0 을 가리키는 곳은 머리말의 '뱁새 2.0 보기' 링크 하나뿐이에요 (Jack, 2026-11-02). 2.0 코드는 가져오지 않아요(위).
+    old = read("baepsae.html")
+    assert old.count("app.html") == 1 and 'href:"./app.html","data-v2-link":"1"' in old, old.count("app.html")
+    assert "뱁새 2.0 보기" in read("src/shell.jsx") and "뱁새 2.0 보기" in old
 
 
 def test_build_script_builds_both_pages():
@@ -219,6 +222,8 @@ def test_home_screen_icon_opens_2_0():
     template.html 의 manifest · 아이콘 · iOS 홈 화면 태그가 그대로, 미리 보기에는 하나도 없어요. 지금 앱(baepsae.html)은 그대로예요."""
     m = json.loads(read("manifest.webmanifest"))
     assert m["start_url"] == "./app.html" and m["scope"] == "./" and m["display"] == "standalone", m
+    # Jack, 2026-11-02: id 는 예전 start_url 그대로라 안드로이드 크롬이 같은 앱으로 보고, 이미 설치한 아이콘도 2.0 으로 열어요
+    assert m["id"] == "./baepsae.html", m
     assert all(os.path.exists(os.path.join(ROOT, i["src"])) for i in m["icons"])
     old = read("template.html")
     tags = [l for l in old.splitlines() if re.match(r'<link rel="(manifest|icon|apple-touch-icon)"|<meta name="apple-mobile-web-app-', l)]
