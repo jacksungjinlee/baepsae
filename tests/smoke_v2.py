@@ -192,6 +192,15 @@ def old_app_link(page):
     assert link.inner_text() == C["app"]["oldApp"] and link.get_attribute("href") == "./baepsae.html"
 
 
+def search_link(page, width):
+    # 덱 짜기 머리말의 '찾기' (Jack, 2026-11-02): 탭 막대가 없는 첫 화면에서도 종목 찾기가 한 번에 보여요. 찾기 탭과 같은 곳(지금 앱)
+    link = page.locator('[data-ui-v2="search-link"]')
+    link.wait_for(state="visible")
+    assert link.count() == 1 and link.inner_text() == C["app"]["tabs"]["search"] and link.get_attribute("href") == "./baepsae.html"
+    box, old = link.bounding_box(), page.locator('[data-ui-v2="old-app-link"]').bounding_box()
+    assert box and box["height"] >= 44 and box["width"] >= 24 and box["x"] + box["width"] <= old["x"] <= width, (box, old)
+
+
 def action(page):
     return page.locator('[data-ui-v2="action-bar"] button')
 
@@ -230,10 +239,11 @@ def scene_normal(R, files, width):
         see(page, C["build"]["s0"]["title"])                 # 저장한 덱이 없으면 덱 짜기부터
         assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
         old_app_link(page)
+        search_link(page, width)
         assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "예전 뱁새 기록이 없는데 안내가 보여요"
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "첫 화면: 저장한 덱이 없으면 덱 짜기 · 머리말에 '예전 뱁새 보기'", landing)
+    R.check(page, S, "첫 화면: 저장한 덱이 없으면 덱 짜기 · 머리말에 '찾기'·'예전 뱁새 보기'", landing)
 
     def today():
         tab(page, C["app"]["tabs"]["today"])
@@ -243,6 +253,7 @@ def scene_normal(R, files, width):
         assert page.get_by_text("할 일").count() == 0, "오늘이 아직 점검하지 않는데 '할 일'이 보여요"
         assert page.title() == C["app"]["title"]
         old_app_link(page)
+        assert page.locator('[data-ui-v2="search-link"]').count() == 0, "오늘에는 탭 막대에 찾기가 있어서 머리말 링크가 없어요"
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "오늘: 제목·내용 날짜·준비 중, 판정 없음", today)

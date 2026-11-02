@@ -166,6 +166,21 @@ def main():
                         shot(page, "launch-320-landing-no-deck.png")
                 check(W + "저장한 덱이 없는 방문자 → 덱 짜기", no_deck_lands_on_build, page, tag)
 
+                def header_search_opens_search():
+                    # 덱 짜기 머리말의 '찾기' (Jack, 2026-11-02): 탭 막대가 없어도 종목 찾기가 한 번에 보이고, 찾기 탭처럼 지금 앱을 열어요
+                    link = page.locator('[data-ui-v2="search-link"]')
+                    link.wait_for(state="visible")
+                    assert link.inner_text() == C["app"]["tabs"]["search"]
+                    box = link.bounding_box()
+                    assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
+                    with page.expect_navigation():
+                        link.click()
+                    assert page.url.endswith("/baepsae.html"), page.url
+                    page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
+                    page.goto(base + "/", wait_until="domcontentloaded")          # 다시 메인 주소 → 덱 짜기
+                    page.wait_for_url("**/app.html", timeout=WAIT)
+                check(W + "덱 짜기 머리말 '찾기' → 지금 앱이 열려요", header_search_opens_search, page, tag)
+
                 def header_link_opens_old_app():
                     link = page.locator('[data-ui-v2="old-app-link"]')
                     link.wait_for(state="visible")

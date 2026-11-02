@@ -150,6 +150,7 @@ def main():
                 label_here()
                 # 미리 보기는 Jack 이 혼자 보는 페이지라 머리말에 '예전 뱁새 보기' 링크를 두지 않아요 (예시 데이터 표시 자리)
                 assert page.locator('[data-ui-v2="old-app-link"]').count() == 0
+                assert page.locator('[data-ui-v2="search-link"]').count() == 0      # 미리 보기는 지금 앱으로 가는 머리말 링크가 없어요
                 assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기에 '예전 뱁새' 안내가 떠요"
                 assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
                 shot(page, width, "0-landing")

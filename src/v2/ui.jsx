@@ -32,8 +32,13 @@ export function Card({ children, style, ...rest }) {
   return <section {...rest} style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(5), marginTop: SPACE(3), ...style }}>{children}</section>;
 }
 
+const headerLink = { ...tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" }), minHeight: TOUCH, display: "inline-flex", alignItems: "center",
+  padding: `0 ${SPACE(1)}px`, textDecoration: "underline", textUnderlineOffset: 3, WebkitTapHighlightColor: "transparent" };
+
 // App bar: preview name on every screen, optional back button.
-export function AppBar({ onBack, backLabel, right }) {
+// search: a 찾기 link next to 예전 뱁새 보기 (Jack, 2026-11-02: first visitors land on 덱 짜기, which has no tab bar,
+// so stock search stays one visible tap away). It opens the same place as the 찾기 tab: the current app.
+export function AppBar({ onBack, backLabel, right, search = false }) {
   const { preview } = useMode();
   return (
     <header data-ui-v2="app-bar" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH,
@@ -46,11 +51,8 @@ export function AppBar({ onBack, backLabel, right }) {
       ) : <img src="icon-192.png" alt="" width={28} height={28} style={{ borderRadius: RADIUS.sm - SPACE(1) }} />}
       <h1 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.app.title}</h1>
       {preview && <SampleLabel />}
-      {!preview && (
-        <a data-ui-v2="old-app-link" href={OLD_APP}
-          style={{ ...tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" }), minHeight: TOUCH, display: "inline-flex", alignItems: "center",
-            padding: `0 ${SPACE(1)}px`, textDecoration: "underline", textUnderlineOffset: 3, WebkitTapHighlightColor: "transparent" }}>{C.app.oldApp}</a>
-      )}
+      {!preview && search && <a data-ui-v2="search-link" href={OLD_APP} style={headerLink}>{C.app.tabs.search}</a>}
+      {!preview && <a data-ui-v2="old-app-link" href={OLD_APP} style={headerLink}>{C.app.oldApp}</a>}
       {right}
     </header>
   );
