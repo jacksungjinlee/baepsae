@@ -606,3 +606,29 @@ out = { ts: ev.holdings.map((x) => [x.t, x.status, Math.round(x.w * 1000) / 1000
               A=kr("000100"), B=kr("000200"), C=kr("000300"))
     # 사지 않은 종목은 점검하지 않아요. 비중은 산 종목의 오늘 값으로 50% · 50%, 목표도 산 종목끼리 다시 나눠 55.6% · 44.4% → 정상
     assert got["unheld"] == ["000300"] and got["ts"] == [["000100", "none", 0.5], ["000200", "none", 0.5]], got
+
+
+def test_every_clash_code_is_listed_and_the_sentence_needs_a_listed_condition():
+    # 안전자산 펀드가 데이터에 없을 때(engine: code "cushion") · 이름 없는 업종(이름 붙일 승인 문구가 없음) · 그 밖의 조건들
+    got = run("""
+const v = (parts) => { const x = R.D.clashView(parts); return [x.sentence, x.pieces.map((p) => p.join(' '))]; };
+out = {
+  cushion: v([{ code: 'cushion', pct: 20 }]), cushionNoPct: v([{ code: 'cushion' }]),
+  nameless: v([{ code: 'ind' }]), named: v([{ code: 'ind', ind: 'bank', indName: '은행' }]),
+  all: v([{ code: 'count', n: 5 }, { code: 'max', pct: 10 }, { code: 'mix' }, { code: 'liq' }, { code: 'indCount' }]),
+  none: v([]), unknown: v([{ code: 'somethingNew' }]),
+};""")
+    S = "이 조건을 모두 지키면서 나눠 담을 수는 없어요. 아래 조건 중 하나를 바꿔 보세요."
+    assert got["cushion"] == [S, ["안전자산 20%"]] and got["cushionNoPct"] == [S, ["안전자산 (채권·금)"]], got
+    assert got["named"] == [S, ["은행 업종은 최대 1/3"]], got["named"]
+    assert got["all"] == [S, ["종목 수 5개", "한 종목 최대 10%", "한국 : 미국", "하루 거래대금 한도", "같은 업종은 2개까지만 담을 수 있어요."]], got["all"]
+    for k in ("nameless", "none", "unknown"):                      # 아래에 보여 줄 조건이 없으면 '아래 조건 중 …' 문장도 없어요
+        assert got[k] == [None, []], (k, got[k])
+
+
+def test_missing_safety_funds_clash_names_the_setting():
+    got = run("""
+const st = { ...R.E.defaultSettings(), mix: 'kr', count: 2, maxPct: 50, cushion: 20, method: 'even' };
+const r = R.E.size({ picks: [{ t: A.t, s: A, total: 50 }, { t: B.t, s: B, total: 50 }], pinned: [], cushion: [], settings: st, amountWon: 0 });
+out = [r.ok, r.clash, R.D.clashView(r.clash).pieces];""", A=kr("000100"), B=kr("000200"))
+    assert got == [False, [{"code": "cushion", "pct": 20}], [["안전자산 20%"]]], got

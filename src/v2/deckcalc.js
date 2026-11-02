@@ -88,7 +88,7 @@ export function reasonText(r) {
     case "mktVolatile": return fill(R.mktVolatile, { mkt: C.pick.market[r.mk], pct: r.pct });
     case "pinned": return R.pinned;
     case "cushion": return fill(R.cushion, { pct: r.pct });
-    case "liqCap": return R.liqCap;            // pending wording: null -> left out
+    case "liqCap": return R.liqCap;
     default: return null;
   }
 }
@@ -105,8 +105,17 @@ export function clashPieces(parts) {
     else if (p.code === "ind" && p.indName) out.push([fill(P.ind, { ind: p.indName })]);
     else if (p.code === "mix") out.push([P.mix]);
     else if (p.code === "liq" && P.liq) out.push([P.liq]);
+    else if (p.code === "cushion") out.push([p.pct > 0 ? fill(C.plan.reason.cushion, { pct: p.pct }) : C.build.s4.cushionLabel]);
+    // an industry group without a name has no approved label: it is left out (never "업종은 최대 1/3" without a name)
   }
   return out;
+}
+
+// The clash block: Jack's sentence ("… 아래 조건 중 하나를 바꿔 보세요.") only when at least one condition is listed under
+// it; with none, the block keeps the alert alone and the button stays off (the caller blocks either way).
+export function clashView(parts) {
+  const pieces = clashPieces(parts || []);
+  return { pieces, sentence: pieces.length ? C.plan.clash : null };
 }
 
 export function cautionTexts(c, s) {

@@ -6,7 +6,7 @@ import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -64,13 +64,13 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
 }
 
 function Clash({ parts }) {
-  const pieces = clashPieces(parts);
+  const { pieces, sentence } = clashView(parts);
   return (
     <div data-ui-v2="clash" role="alert" style={{ marginTop: SPACE(3), background: COLOR.watchBg, borderRadius: RADIUS.md, padding: SPACE(4), display: "flex", gap: SPACE(2) }}>
       <Icon name="alert" size={20} color={COLOR.watch} />
       <div style={tx(SIZE.sm, WEIGHT.bold, COLOR.watch)}>
-        {C.plan.clash && <div data-ui-v2="clash-text">{C.plan.clash}</div>}
-        <div data-ui-v2="clash-list" style={C.plan.clash ? tx(SIZE.xs, WEIGHT.semi, COLOR.watch, { marginTop: SPACE(1) }) : undefined}>
+        {sentence && <div data-ui-v2="clash-text">{sentence}</div>}
+        <div data-ui-v2="clash-list" style={sentence ? tx(SIZE.xs, WEIGHT.semi, COLOR.watch, { marginTop: SPACE(1) }) : undefined}>
           {pieces.map((p, i) => <span key={i}>{i ? " · " : ""}{p.map((x, j) => <span key={j}>{j ? " " : ""}{x}</span>)}</span>)}
         </div>
       </div>
