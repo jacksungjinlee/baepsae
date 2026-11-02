@@ -156,7 +156,8 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 |---|---|
 | `src/*.jsx`, `src/*.js` | App source (React, bundled by esbuild). Entry `src/main.jsx` → `src/shell.jsx` |
 | `template.html` | HTML shell: meta/OG tags, GoatCounter, manifest. `build.sh` injects the bundle at `/*BUNDLE*/` |
-| `baepsae.html` | Built app (the live page). `index.html` only redirects to it |
+| `app.html` | 뱁새 2.0, the main address: `index.html` redirects to it (v18.3 Part F). Built from `src/v2/` by `bash build-app.sh` |
+| `baepsae.html` | The current app (예전 뱁새), opened from 2.0's 예전 뱁새 보기 and 찾기. Built by `bash build.sh` |
 | `fetch_data.py` | Daily data pipeline (Python 3.11) → `data.json`, `corp.json`, `macro.json`, `disc.json` |
 | `validate_data.py` | Publication gate (created in v17.5) |
 | `.github/workflows/update-data.yml` | Daily run, weekdays 21:30 UTC (06:30 KST), plus manual "Run workflow" |

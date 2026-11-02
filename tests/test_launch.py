@@ -47,8 +47,9 @@ def test_index_has_the_approved_share_card():
 
 def test_redirect_is_one_substitution_from_the_old_index():
     r = subprocess.run(["git", "show", f"{BEFORE}:index.html"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
-    if r.returncode != 0:                     # 얕은 clone 이면 예전 판이 없을 수 있어요: 위 검사로 충분해요
-        return
+    if r.returncode != 0:                     # 얕은 clone 이면 예전 판이 없을 수 있어요: 조용히 통과하지 않고 건너뛰었다고 알려요
+        import pytest
+        pytest.skip(f"예전 index.html({BEFORE})이 이 clone 에 없어요 (얕은 clone)")
     card = set(share_lines(read("index.html")))
     rest = "".join(l for l in read("index.html").splitlines(keepends=True) if l.rstrip("\n") not in card)
     assert rest.replace("./app.html", "./baepsae.html") == r.stdout
@@ -101,14 +102,18 @@ def real_data_missing(data=None, corp=None, macro=None):
     corp = corp if corp is not None else json.loads(read("corp.json"))
     macro = macro if macro is not None else json.loads(read("macro.json"))
     kr = [s for s in data.get("stocks", []) if s.get("cls") == "kr"]
+
+    def number(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
     missing = []
     if not (data.get("pxDate") and data.get("publishedAt") and corp.get("pxDate") and corp.get("publishedAt")):
         missing.append(V175_FORMAT)
-    if not any("ind" in s for s in kr):
+    # 이름만 있는 칸이 아니라 실제 값이 있어야 해요: 진짜 업종 그룹(engine.js NOT_GROUPS 의 etc·other 는 그룹이 아님) · 숫자
+    if not any(isinstance(s.get("ind"), str) and s["ind"] not in ("", "etc", "other") for s in kr):
         missing.append("ind")
-    if not any(isinstance(s.get("d1"), (int, float)) and not isinstance(s.get("d1"), bool) for s in kr):
+    if not any(number(s.get("d1")) for s in kr):
         missing.append("d1")
-    if not any("val20" in s for s in kr):
+    if not any(number(s.get("val20")) for s in kr):
         missing.append("val20")
     if not data.get("stocks") or not all(isinstance(s.get("etf"), bool) for s in data["stocks"]):
         missing.append("etf (모든 종목)")
@@ -157,9 +162,16 @@ def test_merge_gate_names_each_missing_field():
 
     def old_format(b):
         b["data"].pop("pxDate", None)
-    cases = {"ind": drop_kr("ind"), "d1": drop_kr("d1"), "val20": drop_kr("val20"), "fy": drop_fy,
-             "etf (모든 종목)": drop_one_etf, "dps = 0": no_zero_dps, "idxHist": drop_idx, V175_FORMAT: old_format}
-    for want, change in cases.items():
+    def set_kr(key, value):                          # 칸 이름은 있는데 값이 없거나 그룹이 아님
+        def f(b):
+            for s in b["data"]["stocks"]:
+                if s.get("cls") == "kr":
+                    s[key] = value
+        return f
+    cases = [("ind", drop_kr("ind")), ("ind", set_kr("ind", "other")), ("d1", drop_kr("d1")), ("d1", set_kr("d1", None)),
+             ("val20", drop_kr("val20")), ("val20", set_kr("val20", None)), ("fy", drop_fy),
+             ("etf (모든 종목)", drop_one_etf), ("dps = 0", no_zero_dps), ("idxHist", drop_idx), (V175_FORMAT, old_format)]
+    for want, change in cases:
         b = copy.deepcopy(base)
         change(b)
         assert real_data_missing(**b) == [want], (want, real_data_missing(**b))

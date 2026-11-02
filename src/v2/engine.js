@@ -52,15 +52,24 @@ export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && num(s.pric
 // Only a handful should look like this. If more than US_NO_CAP_MAX_SHARE of the US rows with trading value have no
 // market cap, Yahoo stopped sending market caps (a data problem, not preferred shares): then nothing is left out on
 // this ground, the console says so, and the screen behaves as it did before this rule.
+// Worked out once per loaded stock list (the data is loaded once), so the console line names them once, not on every
+// settings change.
 export const US_NO_CAP_MAX_SHARE = 0.05;
+const usPrefMemo = new WeakMap();
 export function usPreferredLike(stocks) {
+  if (usPrefMemo.has(stocks)) return usPrefMemo.get(stocks);
   const rows = stocks.filter((s) => s.cls === "us" && inUniverse(s) && num(s.val) != null);
   const noCap = rows.filter((s) => !(num(s.cap) > 0));
+  let out;
   if (noCap.length > rows.length * US_NO_CAP_MAX_SHARE) {
     console.warn(`[v2] ${noCap.length} of ${rows.length} US stocks have trading value but no market cap: a data problem, so none are treated as preferred shares`);
-    return new Set();
+    out = new Set();
+  } else {
+    out = new Set(noCap.map((s) => s.t));
+    if (out.size) console.warn(`[v2] left out as preferred or depositary shares (US, trading value but no market cap): ${out.size} · ${[...out].join(", ")}`);
   }
-  return new Set(noCap.map((s) => s.t));
+  usPrefMemo.set(stocks, out);
+  return out;
 }
 
 // The stocks of one market that can be ranked.
