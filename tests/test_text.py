@@ -33,7 +33,7 @@ def test_no_banned_words_in_build():
 
 
 # ── 뱁새 2.0 (app.html · app-preview.html, v18.3) ──
-# app.html 은 아직 커밋하지 않아서 지금 소스로 임시 빌드해서 봐요 (tests/buildapp.py).
+# 지금 소스로 임시 빌드한 것을 봐요 (tests/buildapp.py). 커밋한 app.html 이 그것과 같은지는 test_v2_app.py 가 봐요.
 # 화면에 그려지는 글은 smoke_v2.py · smoke_preview.py 가 휴대폰 크기로 열어서 다시 봐요.
 # \b 는 'NaN원' 같은 글을 놓쳐요: 앞뒤가 영문자가 아닐 때만 낱말로 봐요.
 WHOLE_BAD = re.compile(r"(?<![A-Za-z])(nan|NaN|None|null|undefined)(?![A-Za-z])")
