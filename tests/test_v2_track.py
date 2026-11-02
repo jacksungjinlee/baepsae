@@ -112,15 +112,15 @@ out = { small, big, tiny: [tiny.buys, tiny.left, tiny.eligible.length], zero: [z
 
 
 def test_add_money_never_takes_a_stock_above_125x_target_even_when_one_share_is_big():
-    # 목표 5% 인데 1주가 덱의 10% 값: 1주를 사면 목표의 2배가 돼요 → 사지 않아요
+    # A: 1주 100만원, 지금 1주 · 목표 5%. 400만원을 더 넣으면 덱 3,100만원 · A 목표 155만원 · 1.25배 193.75만원.
+    # 목표까지 55만원이 모자라(반 주 넘게) 보통이면 1주를 더 사지만, 그러면 200만원 = 목표의 1.29배라 사지 않아요.
     got = run("""
-const de = deOf([['A', 0, 1e6, 0.05, 'low'], ['B', 9.5e6, 1e4, 0.95, 'none']]);
-const r = T.addMoney(de, 5e5);
-const r2 = T.addMoney(de, 3e6);
-out = { a: r.buys.map((b) => [b.t, b.shares]), left: r.left, a2: r2.buys.map((b) => [b.t, b.shares]) };""")
-    assert got["a"] == [] or all(t != "A" for t, _ in got["a"]), got
-    # 300만원을 더 넣으면 덱 1,250만원 · A 목표 62.5만원 · 1.25배 78.1만원: 100만원짜리 1주는 여전히 넘어요
-    assert all(t != "A" for t, _ in got["a2"]), got
+const de = deOf([['A', 1e6, 1e6, 0.05, 'low'], ['B', 26e6, 1e4, 0.95, 'none']]);
+const r = T.addMoney(de, 4e6);
+out = { buys: r.buys.map((b) => [b.t, b.shares]), eligible: r.eligible, left: r.left, spent: r.spent };""")
+    assert got["eligible"] == ["A", "B"], got
+    assert all(t != "A" for t, _ in got["buys"]) and [t for t, _ in got["buys"]] == ["B"], got
+    assert got["spent"] + got["left"] == 4e6
 
 
 def test_add_money_edge_exactly_125x_is_still_bought_just_above_is_skipped():

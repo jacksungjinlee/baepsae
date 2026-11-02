@@ -109,7 +109,6 @@ export const C = {
   why: {
     title: "{name} 왜 움직였나",                                     // 86
     close: "{md} 종가",                                           // 89 (둘째 조각)
-    change: "{chg} ({pct})",                                      // 91
     noTodo: "할 일 없음",                                          // 92
     together: "업종이 다 같이\n빠진 날이에요",                        // 93
     keptBody: "규칙 {n}개가 모두 지켜지고 있어요.",                    // 94

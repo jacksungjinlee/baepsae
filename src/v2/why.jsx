@@ -11,7 +11,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { HeroBand, DotStrip, Collapsible, StatusChip } from "../ui/components.jsx";
 import { hasGroup } from "./engine.js";
-import { C, fill, nf, mdText, priceText } from "./format.js";
+import { C, fill, mdText, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, tx } from "./ui.jsx";
 import { StatusLines, HoldingRules } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -126,10 +126,9 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   const conf = confirmer(store, setStoreData);
   const g = peerGroup(s, load.data.stocks);
   const md = mdText(s.cls === "us" ? load.data.usPxDate || load.data.pxDate : load.data.pxDate);
+  // Today's change as the data gives it (d1, % between official closes). The won change is not shown: worked back from
+  // a rounded percentage it would look exact and be off by a few won.
   const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
-  const chg = d1 != null && d1 > -100 ? s.price - s.price / (1 + d1 / 100) : null;
-  const chgText = chg == null ? null : (chg < 0 ? "−" : chg > 0 ? "+" : "")
-    + (s.cls === "us" ? "$" + nf(Math.abs(chg), 2) : fill(C.app.won, { n: nf(Math.round(Math.abs(chg))) }));
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={C.build.backToday} />
@@ -140,8 +139,8 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(1) }}>
           <span style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink)}>{priceText(s)}</span>
-          {chgText && <span data-ui-v2="why-change" style={tx(SIZE.sm, WEIGHT.bold, d1 < 0 ? COLOR.down : d1 > 0 ? COLOR.upOnPage : COLOR.text2)}>
-            {fill(C.why.change, { chg: chgText, pct: signedPct(d1) })}</span>}
+          {d1 != null && <span data-ui-v2="why-change" style={tx(SIZE.sm, WEIGHT.bold, d1 < 0 ? COLOR.down : d1 > 0 ? COLOR.upOnPage : COLOR.text2)}>
+            {signedPct(d1)}</span>}
         </div>
       </div>
       <Verdict x={x} g={g} names={names} onConfirm={(item, answer) => conf(deck.id, item, answer)} />

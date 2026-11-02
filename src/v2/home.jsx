@@ -28,6 +28,9 @@ export function MyDeck({ load, store, setStoreData, pad }) {
   // says so (the stale line, or the load-failure message), so a held stock without a chip never reads as "fine".
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
+  // Part E: values use US prices at their own close date; say so when it differs from the Korean one.
+  const us = ev.ok && ev.decks.some((de) => de.ok && de.holdings.some((x) => x.cls === "us"));
+  const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   const onConfirm = (deckId, item, answer) => {
     const next = withConfirm(store.data, deckId, item, answer, todayKst());
     if (next) setStoreData(next);
@@ -49,6 +52,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       <AppBar />
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail />}
       <OldAppNote />
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (

@@ -910,6 +910,7 @@ def today_files(files):
     f = daily_files(files)
     by = {x["t"]: x for x in f["data.json"]["stocks"]}
     by["105560"].update(dps=3000.0, dps3=[3000.0, 4367.0, 3174.0], fy=2025, d1=0.5)     # KB금융: 2025년 보고서에서 배당 삭감
+    by["012450"]["d1"] = -8.0                                                           # 지켜봐요 종목이 크게 움직인 날
     for x in f["data.json"]["stocks"]:                                                  # 반도체가 다 같이 빠진 날
         if x.get("cls") == "kr" and x.get("ind") == "semi" and x["t"] != "000660":
             x["d1"] = -1.5
@@ -975,8 +976,21 @@ def scene_today(R, files, width):
         txt = h.inner_text()
         assert txt.startswith(C["today"]["calmEyebrow"]) and C["today"]["calmTitle"] in txt, txt     # 지켜봐요가 있어도 맞는 말
         not_checked(txt)
-        assert page.locator('[data-today-holding="012450"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"]]
+        assert page.locator('[data-today-holding="012450"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"], C["daily"]["bigMove"]]
+        assert "크게 움직인 종목은 1개 있어요" in txt
         R.collect(page)
+        # 왜 움직였나는 규칙 판정을 그대로 보여요: 지켜봐요 · 부채비율 221% (기준 200%) · '할 일 없음'이 아님
+        h.locator('[data-ui-v2="why-link"]').click()
+        v = page.locator('[data-ui-v2="why-verdict"]')
+        v.wait_for(state="visible")
+        vt = v.inner_text()
+        assert v.get_attribute("data-status") == "watch" and vt.startswith(C["daily"]["watch"]), vt
+        assert "부채비율 221% (기준 200%)" in vt and C["why"]["noTodo"] not in vt and "지켜지고 있어요" not in vt, vt
+        assert "지켜지고 있어요" not in page.locator('[data-ui-v2="why-rules"]').inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+        page.get_by_role("button", name=C["build"]["backToday"]).click()
+        hero(page)
         tab(page, C["app"]["tabs"]["deck"])
         add = page.locator('[data-ui-v2="add-money"]')
         add.get_by_role("button", name="+1,000만").click()
@@ -1045,7 +1059,7 @@ def scene_today(R, files, width):
         inset.locator('[data-ui-v2="why-link"]').click()
         see(page, "SK하이닉스 왜 움직였나")
         head = page.locator('[data-ui-v2="why-head"]').inner_text()
-        assert "반도체 · 10월 30일 종가" in head and "1,418,000원" in head and "(−6.2%)" in head, head
+        assert "반도체 · 10월 30일 종가" in head and "1,418,000원" in head and "−6.2%" in head, head
         v = page.locator('[data-ui-v2="why-verdict"]')
         assert v.get_attribute("data-status") == "none"
         vt = v.inner_text()

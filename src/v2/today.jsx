@@ -61,13 +61,13 @@ export function LinkButton({ children, onClick, ...rest }) {
 // One stock to look at today: its name, the rule that fired (or what needs confirming), numbers, report year, and the
 // 확인 필요 answers (Part C's DividendAnswers: both answers stay open, the chosen one marked). sellSaid: the band above
 // already says "규칙대로면 팔 때예요…", so a confirmed cut does not repeat it.
-function TodoItem({ x, deck, onConfirm, sellSaid, first }) {
+function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its name is already the band's title
   const names = namesOf(deck);
   const views = x.reasons.filter((r) => (r.level === "broken" || r.level === "check") && r.code !== "divCut" && r.code !== "divDrop")
     .map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
   return (
     <div data-ui-v2="todo-item" data-t={x.t} data-status={x.status} style={{ paddingTop: first ? 0 : SPACE(3), marginTop: first ? 0 : SPACE(3), borderTop: first ? "none" : `1px solid ${COLOR.line}` }}>
-      <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.nk}</div>
+      {!first && <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.nk}</div>}
       {x.status === "broken" && <div style={tx(SIZE.xxs, WEIGHT.bold, COLOR.text2)}>{C.today.sellLabel}</div>}
       <div style={{ marginTop: SPACE(1) }}>
         <DividendAnswers x={x} onConfirm={(item, answer) => onConfirm(deck.id, item, answer)} sellSaid={sellSaid} />
