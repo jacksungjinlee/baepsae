@@ -212,7 +212,7 @@ export const C = {
       divGrowth: { name: "배당 성장", basis: "배당 연속 인상 기간 긴 순" }, // 216 217
       growth: { name: "성장", basis: "매출 증가율 높은 순" },          // 218 · chat (2026-11-02: 매출만 봐요. "매출·이익" 은 사실과 달라요)
       profit: { name: "수익성", basis: "ROE 높은 순" },              // 220 221
-      stable: { name: "재무 안정", basis: "부채비율 낮은 순" },         // 222 223
+      stable: { name: "재무 안정", basis: "부채 부담 낮은 순" },        // 222 · chat (2026-11-02: CSV 223 "부채비율 낮은 순" 대신, 두 시장 모두)
       lowVol: { name: "낮은 변동성", basis: "주가 변동 작은 순" },       // 224 225
       trend: { name: "추세", basis: "최근 1년 수익률 높은 순" },        // 226 227
       payout: { name: "주주환원", basis: "주주환원율 높은 순" },        // 228 229
@@ -320,7 +320,7 @@ export const C = {
       times: "{x}배",                                              // 453
       growthKr: "매출 증가율 (최근 2년 연평균)",                         // chat (2026-11-02: 한국 g3 가 2년 연평균일 때)
       growthKr1y: "매출 증가율 (최근 1년)",                              // chat (2026-11-02: 한국 g3 가 1년 변화일 때)
-      growthUs: null,                                              // pending: 미국 성장 = 최근 분기, 1년 전 같은 분기 대비 (야후)
+      growthUs: "매출 증가율 (최근 분기 · 전년 동기 대비)",                // chat (2026-11-02: 야후 revenueGrowth = 최근 분기, 1년 전 같은 분기 대비)
     },
     // 주의할 점이 없을 때 "{checks} 모두 확인했어요" 에 들어가는 짧은 이름 (나머지는 receipt.debt · rules.opProfit · rules.dividend)
     checks: { rev: "매출", vol: "변동성" },                             // chat (2026-11-02)

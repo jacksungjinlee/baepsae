@@ -230,3 +230,13 @@ def test_home_screen_icon_opens_2_0():
     for needle in ('rel="manifest"', "apple-touch-icon", 'rel="icon"', "apple-mobile-web-app"):
         assert needle not in prev, needle
     assert '<link rel="manifest" href="./manifest.webmanifest">' in read("baepsae.html")      # 같은 manifest: 어디서 설치해도 2.0
+
+
+def test_the_stable_card_names_no_single_ratio():
+    """재무 안정 카드는 한국(부채비율)과 미국(차입금 비율)을 함께 줄 세워서 '부채 부담 낮은 순'이에요 (Jack, 2026-11-02, CSV 223 대신).
+    두 페이지 어디에도 '부채비율 낮은 순'이 없고, 미국 근거 수치는 차입금 비율이에요."""
+    c, _ = copy_strings()
+    assert c["build"]["cards"]["stable"]["basis"] == "부채 부담 낮은 순"
+    assert c["pick"]["receipt"]["debtUs"].startswith("차입금 비율") and c["pick"]["receipt"]["debt"] == "부채비율"
+    for name in ("app.html", "app-preview.html"):
+        assert "부채비율 낮은 순" not in built(name), name

@@ -471,6 +471,8 @@ def scene_normal(R, files, width):
         assert page.locator('[data-ui-v2="points-left"]').inner_text() == "0"
         assert page.locator('[data-card="growth"] button[aria-label*="점수 더하기"]').is_disabled()
         assert page.locator('[data-card="growth"]').get_by_text(C["build"]["cards"]["growth"]["basis"], exact=True).count() == 1
+        stable = page.locator('[data-card="stable"]').inner_text()                              # 두 시장 모두: 어느 한 비율 이름도 아님
+        assert C["build"]["cards"]["stable"]["basis"] == "부채 부담 낮은 순" and "부채 부담 낮은 순" in stable and "부채비율" not in stable, stable
         see(page, C["build"]["s1"]["finNA"])
         R.collect(page)
         click_next(page)
@@ -652,7 +654,8 @@ def scene_us_date(R, files, width):
         us_rows = page.locator("section[data-market='us'] [data-ui-v2='debt-us']")
         assert us_rows.count() >= 1 and us_rows.first.inner_text().startswith(C["pick"]["receipt"]["debtUs"]), us_rows.count()
         assert "부채비율" not in page.locator("section[data-market='us']").inner_text(), "미국 종목에 '부채비율'"     # Jack, 2026-11-02
-        assert page.locator("section[data-market='us'] [data-ui-v2='growth']").count() == 0      # 미국 성장 라벨은 아직 승인 전
+        ug = page.locator("section[data-market='us'] [data-ui-v2='growth']")                      # Jack, 2026-11-02 (야후: 분기 대비)
+        assert ug.count() >= 1 and all(g.locator("span").first.inner_text() == C["pick"]["receipt"]["growthUs"] for g in ug.all()), ug.count()
         R.collect(page)
         click_next(page)
         see(page, C["plan"]["stocks"])
