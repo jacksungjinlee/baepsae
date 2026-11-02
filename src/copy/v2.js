@@ -81,6 +81,7 @@ export const C = {
     confirmNotCut: "줄인 게 아니에요",                               // new (확인 필요, buttons)
     weight: "비중",                                                 // 60
     finNA: "금융회사는 해당 없음",                                    // new (Financial companies: 부채비율 규칙)
+    rebasedNote: null,                                             // pending: 계획한 종목 중 일부만 샀을 때 (목표 비중을 다시 나눴다는 설명)
     bandLow: "{x}% 미만이면 먼저 사요",                              // 543 (첫째 조각)
     bandHigh: "{x}% 넘으면 더 사지 않아요",                           // 543 (둘째 조각)
     bandTrim: "{x}% 넘으면 일부 팔아요",                              // 543 (셋째 조각)
