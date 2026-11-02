@@ -97,7 +97,10 @@ const small = T.addMoney(de, 5e5);
 const big = T.addMoney(de, 3e6);
 const tiny = T.addMoney(de, 2e4);
 const zero = T.addMoney(de, 0);
-out = { small, big, tiny: [tiny.buys, tiny.left, tiny.eligible.length], zero: [zero.buys, zero.left] };""")
+// 둘 다 목표보다 적을 때: A(목표의 0.73배)가 C(0.91배)보다 먼저. 30만원이면 A 4주(28만원)로 A가 C보다 덜 담긴 동안만 사고 2만원 남아요.
+const two = T.addMoney(deOf([['A', 1e6, 7e4, 0.25, 'low'], ['B', 3e6, 5e4, 0.45, 'none'], ['C', 1.5e6, 3e4, 0.3, 'none']]), 3e5);
+out = { small, big, tiny: [tiny.buys, tiny.left, tiny.eligible.length], zero: [zero.buys, zero.left],
+        two: [two.buys.map((b) => [b.t, b.shares, b.cost]), two.left] };""")
     s = got["small"]
     assert s["eligible"] == ["A", "B", "C"], s                   # 목표의 정확히 1.25배는 아직 살 수 있어요
     assert [(b["t"], b["shares"], b["cost"]) for b in s["buys"]] == [("A", 7, 490000)], s
@@ -114,6 +117,7 @@ out = { small, big, tiny: [tiny.buys, tiny.left, tiny.eligible.length], zero: [z
     assert costs["A"] == max(costs.values()), costs
     assert got["tiny"] == [[], 20000, 3]                         # 1주도 못 사면 아무것도 사지 않고 그대로 남아요
     assert got["zero"] == [[], 0]
+    assert got["two"] == [[["A", 4, 280000]], 20000], got["two"]
 
 
 def test_add_money_never_takes_a_stock_above_125x_target_even_when_one_share_is_big():
