@@ -4,7 +4,7 @@
 - 2.0 코드(src/v2/)에는 한국어가 없어요 (주석 제외): 화면 문구는 모두 src/copy/v2.js 에서 와요
 - src/copy/v2.js 의 한국어는 모두 승인된 출처에서 왔어요 (목업 CSV 최종 문구 · New strings 표 · 고정 문구 · v17.5 승인 문구)
 - 승인을 기다리는 문구(null)는 모두 docs/tasks/v18.3-new-strings-pending.md 에 있어요
-- 아직 없는 기능(Part C 매일 점검)을 약속하는 문구는 빠져 있어요
+- 매일 점검을 약속하는 문구는 오늘 화면이 점검할 때만(Part E), 아직 없는 규칙 고치기를 약속하는 문구는 빠져 있어요
 - app.html 은 메인 주소가 보여 주는 페이지예요 (Part F, Jack 2026-11-01): 커밋한 파일이 지금 소스로 새로 빌드한 것과 같아요.
   <head> 의 설명·공유 카드 태그와 GoatCounter 는 지금 앱(template.html)과 같고, noindex 가 아니에요
 - app-preview.html 은 소스와 같고(빌드를 잊지 않음), noindex, 데이터 파일을 받지 않고, 어디에서도 링크하지 않아요
@@ -103,16 +103,25 @@ def test_pending_strings_are_parked_for_jack():
     assert not missing, f"pending 문서에 없는 키: {missing}"
 
 
-def test_no_promise_of_the_daily_check_before_part_c():
-    """Part C(매일 점검)가 없는 동안에는 '내일부터 … 점검해 드릴게요' · '매일 이 규칙으로 점검하고' 를 보여 주지 않아요."""
+def test_the_daily_check_promise_comes_only_with_the_daily_check():
+    """Part E: 오늘 화면이 매일 점검해요. 그래서 기록했어요의 '내일부터 오늘 화면에서 {n}종목을 규칙대로 점검해 드릴게요'(CSV 564)를
+    승인 문구 그대로 보여 주고, 그 약속을 지키는 오늘 판정 띠의 문구가 모두 있어요(빈 값 아님 · 화면 동작은 tests/smoke_v2.py).
+    규칙 고치기는 아직 없으니 '매일 이 규칙으로 점검하고, 규칙은 언제든 고칠 수 있어요'(CSV 534)는 여전히 보여 주지 않아요.
+    (이전 검사 test_no_promise_of_the_daily_check_before_part_c 는 오늘 화면이 점검하기 전의 약속 금지였어요.)"""
     c, flat = copy_strings()
-    assert c["plan"]["doneBody"] is None and c["plan"]["rules"]["intro"] is None
+    assert c["plan"]["doneBody"] == csv_final()[564].replace("6종목", "{n}종목"), c["plan"]["doneBody"]
+    for k in ("todoN", "calmEyebrow", "calmTitle", "brokenTitle", "stale"):
+        assert c["today"][k], k
+    today = read("src/v2/today.jsx")
+    assert "evaluateAll" in today and "today-hero" in today
+    assert c["plan"]["rules"]["intro"] is None
     for p, v in flat:
         if isinstance(v, str):
-            assert "점검해 드릴" not in v and "매일 이 규칙으로" not in v, (p, v)
+            assert "매일 이 규칙으로" not in v and "언제든 고칠 수" not in v, (p, v)
     for name in ("app.html", "app-preview.html"):
         html = built(name)
-        assert "점검해 드릴" not in html and "매일 이 규칙으로" not in html, name
+        assert "매일 이 규칙으로" not in html and "언제든 고칠 수" not in html, name
+        assert "점검해 드릴게요" in html, name
 
 
 def test_app_html_is_committed_and_current():
@@ -195,7 +204,10 @@ def test_old_app_bundle_does_not_include_v2():
         inputs = list(json.load(f)["inputs"])
     bad = [i for i in inputs if i.startswith(("src/v2/", "src/copy/", "src/preview/"))]
     assert not bad, bad
-    assert "app.html" not in read("baepsae.html")        # 메인 주소 쪽 연결은 index.html (tests/test_launch.py)
+    # 지금 앱이 2.0 을 가리키는 곳은 머리말의 '뱁새 2.0 보기' 링크 하나뿐이에요 (Jack, 2026-11-02). 2.0 코드는 가져오지 않아요(위).
+    old = read("baepsae.html")
+    assert old.count("app.html") == 1 and 'href:"./app.html","data-v2-link":"1"' in old, old.count("app.html")
+    assert "뱁새 2.0 보기" in read("src/shell.jsx") and "뱁새 2.0 보기" in old
 
 
 def test_build_script_builds_both_pages():
@@ -203,3 +215,31 @@ def test_build_script_builds_both_pages():
     assert "set -euo pipefail" in sh and "src/v2/main.jsx" in sh and "src/v2/main-preview.jsx" in sh
     assert '"app.html"' in sh and '"app-preview.html"' in sh
     assert "build.sh" not in sh.replace("build.sh)", "").replace("build-app.sh", "")   # 지금 앱 빌드는 건드리지 않아요
+
+
+def test_home_screen_icon_opens_2_0():
+    """Jack, 2026-11-02: 홈 화면 아이콘은 Part E 와 함께 2.0 으로. manifest 의 start_url 은 ./app.html, app.html 에는
+    template.html 의 manifest · 아이콘 · iOS 홈 화면 태그가 그대로, 미리 보기에는 하나도 없어요. 지금 앱(baepsae.html)은 그대로예요."""
+    m = json.loads(read("manifest.webmanifest"))
+    assert m["start_url"] == "./app.html" and m["scope"] == "./" and m["display"] == "standalone", m
+    # Jack, 2026-11-02: 이미 설치한 안드로이드 아이콘도 2.0 으로. 예전 manifest 에는 id 가 없어서 설치된 앱의 정체는
+    # 예전 start_url(./baepsae.html)을 manifest 주소 기준으로 푼 주소예요. 새 id 는 manifest 규격대로 start_url 의
+    # origin(사이트 맨 위) 기준으로 풀어요: "./baepsae.html" 은 https://…github.io/baepsae.html 이 돼서 다른 앱이 돼요.
+    from urllib.parse import urljoin, urlsplit
+    manifest_url = "https://jacksungjinlee.github.io/baepsae/manifest.webmanifest"
+    start = urljoin(manifest_url, m["start_url"])
+    assert start == "https://jacksungjinlee.github.io/baepsae/app.html", start
+    origin = "{0.scheme}://{0.netloc}/".format(urlsplit(start))
+    old_identity = urljoin(manifest_url, "./baepsae.html")          # 예전 start_url (id 없음 → start_url 이 정체)
+    assert urljoin(origin, m["id"]) == old_identity == "https://jacksungjinlee.github.io/baepsae/baepsae.html", m["id"]
+    assert all(os.path.exists(os.path.join(ROOT, i["src"])) for i in m["icons"])
+    old = read("template.html")
+    tags = [l for l in old.splitlines() if re.match(r'<link rel="(manifest|icon|apple-touch-icon)"|<meta name="apple-mobile-web-app-', l)]
+    assert '<link rel="manifest" href="./manifest.webmanifest">' in tags and any("apple-touch-icon" in l for l in tags), tags
+    app, prev = built("app.html"), built("app-preview.html")
+    head = app.split("</head>", 1)[0]
+    for l in tags:
+        assert l in head, l
+    for needle in ('rel="manifest"', "apple-touch-icon", 'rel="icon"', "apple-mobile-web-app"):
+        assert needle not in prev, needle
+    assert '<link rel="manifest" href="./manifest.webmanifest">' in read("baepsae.html")      # 같은 manifest: 어디서 설치해도 2.0

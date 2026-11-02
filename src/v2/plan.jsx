@@ -245,6 +245,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const [vals, setVals] = useState({});
   const [fail, setFail] = useState(false);
   const [tried, setTried] = useState(false);
+  const [savedN, setSavedN] = useState(0);        // distinct stocks actually recorded (quantity > 0): 기록했어요's {n}
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
   const today = todayKst();
   const parsed = rows.map((x) => {
@@ -259,12 +260,17 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const save = () => {
     if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
     const day = date || today;
-    const purchases = parsed.filter((r) => r.q > 0).map((r) => ({ t: r.x.t, date: day, qty: r.q, price: r.p, ccy: r.x.s.cls === "us" ? "USD" : "KRW" }));
+    // A US purchase keeps the exchange rate the plan used (data.json fx), so 내 덱 can show 원금 in won (Part E).
+    const fx = typeof load.data.fx === "number" && Number.isFinite(load.data.fx) && load.data.fx > 0 ? load.data.fx : null;
+    const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
+      ? { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
+      : { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));
     const id = `d${Date.now().toString(36)}`;
     const deck = deckRecord({ load, st, plan, purchases, id, today: todayKst() });
     const next = { ...store.data, decks: [...store.data.decks, deck] };
     if (!store.writable || !writeStore(next, store.key, today)) { setFail(true); return; }
     setFail(false);
+    setSavedN(new Set(purchases.map((p) => p.t)).size);
     setStoreData(next, true);
     onDone();
   };
@@ -277,7 +283,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
         {preview && <SheetSample />}
         <div data-ui-v2="record-done" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
           <img src="baepi-5.png" alt={P.doneAlt} width={64} height={64} style={{ objectFit: "contain" }} />
-          {P.doneBody && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: rows.length })}</p>}
+          {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink}</Button></div>
       </BottomSheet>

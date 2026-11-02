@@ -227,3 +227,20 @@ def test_plan_numbers_round_trip_and_stay_optional():
     text = json.dumps(d, ensure_ascii=False)
     got = run(f"const r = S.parseImport({json.dumps(text)}, '2026-11-01'); out = r && [r.decks[0].planFx, r.decks[0].holdings.map((h) => h.planPx ?? null)];")
     assert got == [1338.0, [225000.0, 344.63]]
+
+
+# ── 미국 매수의 환율 (v18.3 Part E): 내 덱의 원금을 원화로 (산 때 계획이 쓴 환율) ──
+@pytest.mark.parametrize("why, purchase, value", [
+    ("환율 0", 1, 0), ("환율 음수", 1, -1338.0), ("환율 글자", 1, "1338"), ("환율 객체", 1, {"krw": 1338}),
+    ("원화 매수에 환율", 0, 1338.0),
+])
+def test_bad_purchase_rates_reject_the_whole_file(why, purchase, value):
+    got = run(f"out = S.parseImport({json.dumps(bad(['decks', 0, 'purchases', purchase, 'fx'], value))}, '2026-11-01');")
+    assert got is None, why
+
+
+def test_purchase_rates_round_trip_and_purchases_without_one_still_read():
+    d = json.loads(json.dumps(GOOD))
+    d["decks"][0]["purchases"][1]["fx"] = 1338.0                 # AAPL (USD)
+    got = run(f"out = [S.parseImport({json.dumps(json.dumps(d))}, '2026-11-01'), S.parseImport({json.dumps(json.dumps(GOOD))}, '2026-11-01')];")
+    assert got[0] == d and got[1] == GOOD                          # 환율 없는 예전 기록도 그대로 읽어요

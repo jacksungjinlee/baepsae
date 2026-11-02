@@ -152,7 +152,8 @@ export function deckRecord({ load, st, plan, purchases, id, today }) {
 export function eokText(v) {
   if (!C.app.eok || num(v) == null) return null;
   const a = Math.abs(v), neg = v < 0;
-  if (a >= 10000 && C.app.jo) return signed(fill(C.app.jo, { n: nf(a / 10000, 1) }), neg);
+  // the unit is chosen after rounding: 9,999.6억 is "1.0조원", never "10,000억원"
+  if (Math.round(a) >= 10000 && C.app.jo) return signed(fill(C.app.jo, { n: nf(a / 10000, 1) }), neg);
   return signed(fill(C.app.eok, { n: nf(Math.round(a)) }), neg && Math.round(a) > 0);
 }
 // "{two years ago} → {last year} → {this year}", oldest first like "주당 {a}원 → {b}원". null while the unit waits.

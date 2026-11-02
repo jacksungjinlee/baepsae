@@ -15,6 +15,8 @@
   금 추정     국제 금값 환산 추정 → 이름에 '국제 금값 환산' + '금현물은 국제 금값으로 환산한 추정치예요'
   금리        macro.json 의 금리 부분만 빈 날 → 금리 칸에 '금리 데이터를 불러오지 못했어요' (EN 은 영어)
   서비스워커  예전 v10 워커의 얼어붙은 corp.json 이 새 워커로 바뀌고 baepsae-v10 캐시가 지워짐
+  2.0 링크    머리말 '뱁새 2.0 보기' (Jack, 2026-11-02): 320 · 390 에서 보임 · 누르는 높이 44 이상 · 다른 머리말 항목과 겹치지 않음 ·
+              가로 스크롤 없음 · app.html 로 감 · 영어 화면에는 없음 · 좁은 휴대폰의 모드 안(홈 화면 '뒤로' 포함)에서도 머리말이 넘치지 않음
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -715,6 +717,65 @@ def scene_service_worker(R, files):
     ctx.close(); srv.shutdown()
 
 
+HEADER_ITEMS = """() => [...document.querySelector('.mastRow').children].filter((e) => getComputedStyle(e).display !== 'none'
+  && e.getBoundingClientRect().width).map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.v2Link ? 'v2' : e.tagName, r.left, r.right]; })"""
+
+
+def scene_v2_link(R, files):
+    site = build_site(files)
+    shutil.copy(os.path.join(ROOT, "app.html"), site)            # 링크가 여는 2.0 (커밋한 빌드 결과)
+    srv, base = serve(site)
+    for w in (320, 390):
+        ctx = R.browser.new_context(viewport={"width": w, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+        page = ctx.new_page()
+        page.on("pageerror", lambda e: R.errors.append(str(e)))
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        S = f"2.0 링크 {w}"
+        link = page.locator("a[data-v2-link]")
+
+        def shown():
+            see(page, "내 종목, 괜찮은 걸까요?")
+            link.wait_for(state="visible")
+            assert link.inner_text() == "뱁새 2.0 보기" and link.get_attribute("href") == "./app.html"
+            box = link.bounding_box()
+            assert box and box["height"] >= 44 and box["x"] >= 0 and box["x"] + box["width"] <= w, box
+            items = sorted(page.evaluate(HEADER_ITEMS), key=lambda x: x[1])
+            assert all(a[2] <= b[1] + 0.5 for a, b in zip(items, items[1:])) and items[-1][2] <= w, items   # 겹치지 않고 화면 안
+            assert page.evaluate("document.documentElement.scrollWidth") <= w
+        R.check(page, S, "첫 화면 머리말에 '뱁새 2.0 보기' (높이 44 이상 · 겹침 없음 · 가로 스크롤 없음)", shown)
+
+        def in_mode():
+            page.get_by_text("차근차근 만들기", exact=True).click()
+            close_welcome(page, "시작하기")
+            page.get_by_text("모드 선택", exact=True).first.wait_for(state="visible", timeout=WAIT)
+            page.add_style_tag(content=".pwaBack { display: inline-flex !important }")   # 홈 화면 앱의 '뒤로'까지 있는 머리말
+            page.wait_for_timeout(150)
+            items = page.evaluate(HEADER_ITEMS)
+            assert max(r for _, _, r in items) <= w, items
+            assert page.evaluate("document.documentElement.scrollWidth") <= w
+            page.get_by_text("모드 선택", exact=True).first.click()
+            link.wait_for(state="visible")                                              # 첫 화면으로 오면 다시 보여요
+        R.check(page, S, "모드 안(모드 선택 · 뒤로)에서도 머리말이 화면을 넘지 않고, 첫 화면에서 다시 보여요", in_mode)
+
+        def english():
+            page.get_by_role("button", name="EN", exact=True).first.click()
+            see(page, "Is my stock doing okay?")
+            assert link.count() == 0, "2.0 은 한국어만 있어요: 영어 화면에는 링크가 없어요"
+            page.get_by_role("button", name="한국어", exact=True).first.click()
+            link.wait_for(state="visible")
+        R.check(page, S, "영어 화면에는 없음 (2.0 은 한국어만)", english)
+
+        def opens():
+            with page.expect_navigation():
+                link.click()
+            assert page.url.endswith("/app.html"), page.url
+            page.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible", timeout=WAIT)
+        R.check(page, S, "누르면 app.html (뱁새 2.0)", opens)
+        ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
@@ -736,7 +797,7 @@ def main():
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
                   ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)),
-                  ("서비스워커", lambda: scene_service_worker(R, fresh))]
+                  ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

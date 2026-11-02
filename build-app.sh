@@ -5,8 +5,10 @@
 # 지금 앱(baepsae.html, build.sh)과는 따로 빌드해요. 두 파일 모두 빌드 결과라 손으로 고치지 않아요.
 # app.html 은 메인 주소가 보여 주는 페이지예요 (Part F, Jack 2026-11-01): index.html 이 여기로 보내요.
 #   <head> 의 설명·공유 카드(og·twitter) 태그와 GoatCounter 는 지금 앱의 template.html 에서 그대로 가져와요.
+#   홈 화면 아이콘(Part E, Jack 2026-11-02): manifest · 아이콘 · apple-mobile-web-app 태그도 template.html 에서 그대로 가져와요.
+#   manifest.webmanifest 의 start_url 은 ./app.html 이에요.
 # app-preview.html 은 지어낸 예시 데이터(src/preview/fictional.json)를 품고, 데이터 파일을 받지 않아요.
-#   noindex 이고 GoatCounter·서비스워커가 없으며, 어디에서도 링크하지 않아요.
+#   noindex 이고 GoatCounter·서비스워커·manifest·아이콘 링크가 없으며, 어디에서도 링크하지 않아요.
 set -euo pipefail
 OUT="${1:-.}"
 mkdir -p "$OUT" dist
@@ -27,10 +29,13 @@ for m in ("/*BUNDLE*/", "/*TITLE*/", "/*SW*/", "/*HEAD*/"):
 import re
 old = open("template.html", encoding="utf-8").read()
 meta = [l for l in old.splitlines() if re.match(r'<meta (name="description"|property="og:|name="twitter:)', l)]
+# Home-screen install (Part E, Jack 2026-11-02): the manifest link, the icons and the iOS home-screen tags, as they are.
+home = [l for l in old.splitlines() if re.match(r'<link rel="(manifest|icon|apple-touch-icon)"|<meta name="apple-mobile-web-app-', l)]
+assert sum('rel="manifest"' in l for l in home) == 1 and any('apple-touch-icon' in l for l in home), home
 gc = re.findall(r"<script>\n\(function\(\)\{try\{\n  var q=new URLSearchParams.*?</script>", old, flags=re.S)
 assert len(meta) >= 12 and any('property="og:url"' in l for l in meta), meta
 assert len(gc) == 1 and "goatcounter" in gc[0], "GoatCounter snippet not found in template.html"
-LIVE_HEAD = "\n".join(meta) + "\n" + gc[0]
+LIVE_HEAD = "\n".join(meta + home) + "\n" + gc[0]
 PREVIEW_HEAD = '<meta name="robots" content="noindex, nofollow">'
 assert "<" not in title + preview_title and title.strip() and "{" not in preview_title, (title, preview_title)
 # Service worker (sw.js, v17.5): network first, cache only offline. Only the live page registers it.
