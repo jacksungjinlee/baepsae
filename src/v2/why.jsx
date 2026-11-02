@@ -15,20 +15,14 @@ import { C, fill, mdText, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, tx } from "./ui.jsx";
 import { StatusLines, HoldingRules } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
-import { peerGroup } from "./track.js";
+import { peerGroup, keptCount } from "./track.js";
 import { useDaily, confirmer, brokenTitle } from "./today.jsx";
 
 const R = () => C.plan.rules;
 const BAND = ["low", "high", "trim"];
 
-// Rules shown in the rule book that were checked today and all hold (the band is not counted: it is arithmetic, not
-// a rule about the company). 0 when any of them does not hold, or the stock's status is not calm.
-export function keptCount(x) {
-  if (["broken", "check", "watch"].includes(x.status)) return 0;
-  const shown = (x.rules || []).filter((r) => r.check === "checked" && r.kind !== "band" && r.result !== "na"
-    && (r.id === "divCut" || r.id === "debtCeiling" || (r.id === "roeFloor" && R().roeLimit) || (r.id === "opDecline" && R().opLimit)));
-  return shown.length && shown.every((r) => r.result === "ok") ? shown.length : 0;
-}
+// Rules with approved wording that the rule book shows (keptCount counts only those).
+const kept = (x) => keptCount(x, { roe: !!R().roeLimit, op: !!R().opLimit });
 
 const pendingCount = (x) => (x.rules || []).filter((r) => r.result === "pending").length;
 
@@ -36,16 +30,16 @@ function Verdict({ x, g, names, onConfirm }) {
   const nc = pendingCount(x);
   const ncLine = nc > 0 ? <span style={{ display: "block" }} data-ui-v2="why-not-checked">{fill(C.daily.notChecked, { n: nc })}</span> : null;
   if (x.status === "none" || BAND.includes(x.status)) {
-    const kept = keptCount(x);
+    const k = kept(x);
     const together = g.ok && g.together;
-    let title = together ? C.why.together : kept ? fill(C.why.keptTitle, { n: kept }) : null;
+    let title = together ? C.why.together : k ? fill(C.why.keptTitle, { n: k }) : null;
     const calm = x.status === "none";
     const eyebrow = calm && title ? C.why.noTodo : undefined;
     if (!title) title = calm ? C.why.noTodo : x.nk;
     return (
       <div style={{ marginTop: SPACE(4) }} data-ui-v2="why-verdict" data-status={x.status}>
         <HeroBand tone={x.status === "trim" ? "alert" : "calm"} eyebrow={eyebrow} title={title}
-          body={together && kept ? <><span style={{ display: "block" }}>{fill(C.why.keptBody, { n: kept })}</span>{ncLine}</> : ncLine}
+          body={together && k ? <><span style={{ display: "block" }}>{fill(C.why.keptBody, { n: k })}</span>{ncLine}</> : ncLine}
           image={calm ? "baepi-1.png" : undefined} imageAlt={calm ? C.why.alt : undefined}
           inset={calm ? null : <StatusLines x={x} names={names} />} />
       </div>
@@ -154,7 +148,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
           </div>
         </Check>
       )}
-      <Check n={g.ok ? 2 : 1} title={keptCount(x) ? fill(C.why.keptTitle, { n: keptCount(x) }) : R().title} data-ui-v2="why-rules">
+      <Check n={g.ok ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
         <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.why.alertLine}</p>
         <HoldingRules x={x} names={names} />
         <Explainer />

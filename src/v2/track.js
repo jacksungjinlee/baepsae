@@ -136,9 +136,16 @@ export function deckDayChange(de) {
 // (그만 살 차례 · 줄일 차례: the statuses rules.js gives, and the same edge checked here so the two screens never
 // disagree), and stocks without a target or a price. Planned stocks that were never bought (0 shares) are not in the
 // daily check (no status: their rules were not read today), so they get nothing here either; de.unheld names them.
-// A name is filled toward target x (value + new money) one share at a time while a share still closes at least half
-// its gap, and never past its 1.25x edge (band `bands[1]` from rules.js: the rebased edge, widened by the as-bought
-// gap) as a share of the new total. -> { ok, buys: [{ t, nk, shares, cost }], spent, left, eligible, skipped, unheld }
+// Money left unspent never enters the deck, so it must not make a name look smaller than it will be:
+// - the goal of each name is its target x the deck's value after the money that CAN go in. With skipped names, the
+//   eligible ones can only grow until together they reach their combined target share (S below); the rest stays.
+// - the 1.25x edge (band `bands[1]` from rules.js, the same edge 내 덱 shows) is checked against the running held
+//   total (today's value + the money spent so far + the share being considered). Buying one name only lowers the
+//   others' weights, so no bought name ends above its edge.
+// A name is filled one share at a time, most underweight first, while that share still closes at least half its gap.
+// -> { ok, buys: [{ t, nk, shares, cost }], spent, left, eligible, skipped, unheld, cheapest }
+//   cheapest: the lowest share price among the eligible names (the screen says "금액을 늘려 보세요" only when even that
+//   one share costs more than the amount; when the edges stop every buy, more money would not help).
 export function addMoney(de, amountWon) {
   if (!de || !de.ok || !de.weights || !de.weights.ok) return { ok: false };
   const A = Math.floor(num(amountWon) || 0);
@@ -156,31 +163,82 @@ export function addMoney(de, amountWon) {
     if (w > hi + EPS) { skipped.push({ t: x.t, why: "high" }); continue; }
     rows.push({ t: x.t, nk: x.nk, px, value, target, hi, shares: 0 });
   }
-  const out = { ok: true, buys: [], spent: 0, left: Math.max(0, A), eligible: rows.map((r) => r.t), skipped, unheld: de.unheld || [] };
-  if (!(A > 0) || !rows.length) return out;
-  const T = total + A;
-  const order = new Map(rows.map((r) => [r.t, r.value / (r.target * T)]));
-  let left = A;
+  const out = { ok: true, buys: [], spent: 0, left: Math.max(0, A), eligible: rows.map((r) => r.t), skipped, unheld: de.unheld || [],
+    cheapest: rows.length ? Math.min(...rows.map((r) => r.px)) : null };
+  if (!(A > 0) || !rows.length || !(total > 0)) return out;
+  const order = new Map(rows.map((r) => [r.t, r.value / (r.target * total)]));
+  // S: what the eligible names can take before they hold their combined target share (tE = their targets' sum, vE
+  // their value): vE + S = tE x (total + S). With nothing skipped (tE = 1) all of the amount can go in.
+  const tE = rows.reduce((a, r) => a + r.target, 0), vE = rows.reduce((a, r) => a + r.value, 0);
+  const S = tE >= 1 - 1e-9 ? A : Math.max(0, Math.min(A, (tE * total - vE) / (1 - tE)));
+  const goalTotal = total + S;
+  let left = A, held = total;                                    // held: today's value + what was bought so far
   for (let guard = 0; guard < 100000; guard++) {
     let best = null;
     for (const r of rows) {
-      const goal = r.target * T;
       if (r.px > left + EPS) continue;
-      if (r.value + r.px > r.hi * T + EPS) continue;
-      if (goal - r.value < r.px / 2 - EPS) continue;
-      const ratio = r.value / goal;
+      if (r.value + r.px > r.hi * (held + r.px) + EPS) continue;          // never past the edge, at the running total
+      if (r.target * goalTotal - r.value < r.px / 2 - EPS) continue;      // the share must close at least half its gap
+      const ratio = r.value / (r.target * held);                 // most underweight first (weight now / target)
       if (!best || ratio < best.ratio - EPS || (Math.abs(ratio - best.ratio) <= EPS && r.t < best.r.t)) best = { r, ratio };
     }
     if (!best) break;
     best.r.shares += 1;
     best.r.value += best.r.px;
     left -= best.r.px;
+    held += best.r.px;
   }
   out.buys = rows.filter((r) => r.shares > 0).sort((a, b) => order.get(a.t) - order.get(b.t) || (a.t < b.t ? -1 : 1))
     .map((r) => ({ t: r.t, nk: r.nk, shares: r.shares, cost: r.shares * r.px }));
   out.spent = out.buys.reduce((a, b) => a + b.cost, 0);
   out.left = A - out.spent;
   return out;
+}
+
+// What 추가로 넣을 돈 says when nothing can be bought: "none" = CSV 79 ("이 금액으로는 … 금액을 늘려 보세요"), only when
+// even the cheapest eligible share costs more than the amount; "noneEligible" = every name is skipped, or the edges
+// stop every buy (more money would not help). null when something is bought or no amount is typed.
+export function addMessage(r, amountWon) {
+  if (!r || !r.ok || !(amountWon > 0) || r.buys.length) return null;
+  return r.eligible.length && r.cheapest > amountWon ? "none" : "noneEligible";
+}
+
+// ---------------- weight bands as 내 덱 shows them ----------------
+// The band rule result of a held stock today (rules.js), when its edges were computed.
+export const bandOf = (x) => ((x && x.rules) || []).find((r) => r && r.id === "band" && r.check === "checked" && r.result !== "missing"
+  && Array.isArray(r.bands) && r.bands.length === 3) || null;
+// Part C widens a stock's edges by the gap whole-share rounding left in the plan. Then "목표의 0.75~1.25배" is not the
+// rule for that stock any more, so 내 덱 shows that general caption only when every held stock uses the plain edges.
+export const plainEdges = (de) => ((de && de.holdings) || []).every((x) => {
+  const b = bandOf(x);
+  return !b || !Array.isArray(b.refBands) || b.bands.every((v, i) => Math.abs(v - b.refBands[i]) < 1e-9);
+});
+
+// ---------------- 오늘's counts ----------------
+// held: the evaluated decks with holdings. Counts are of distinct stocks (a stock held in two decks is one stock).
+// -> { todoTs: Set, rest, restCalm, allNone }   restCalm: every other stock is 할 일 없음 ("나머지 n종목은 이상 없어요")
+//    allNone: every holding is 할 일 없음 (the eyebrow "오늘은 할 일이 없어요", REDESIGN 2.1 steps 1-3 all clear)
+export function todayCounts(held) {
+  const all = (held || []).flatMap((de) => de.holdings || []);
+  const todoTs = new Set(all.filter((x) => x.status === "broken" || x.status === "check").map((x) => x.t));
+  const rest = new Set(all.map((x) => x.t).filter((t) => !todoTs.has(t))).size;
+  return { todoTs, rest, restCalm: rest > 0 && all.every((x) => todoTs.has(x.t) || x.status === "none"),
+    allNone: all.length > 0 && all.every((x) => x.status === "none") };
+}
+
+// ---------------- 왜 움직였나: 규칙 n개가 모두 지켜지고 있어요 ----------------
+// Counts only what was really checked today: rules shown in the rule book (shown: which optional rules have approved
+// wording, { roe, op }) checked against a report newer than the purchase one (a rule whose only report is the purchase
+// report has nothing new to compare), plus the weight band (checked every day). 0, so the line is left out, when the
+// stock is not 할 일 없음, when any shown rule does not hold, or when nothing newer was checked at all.
+export function keptCount(x, shown = {}) {
+  if (!x || x.status !== "none") return 0;
+  const rules = (x.rules || []).filter((r) => r && r.check === "checked" && r.kind !== "band" && r.result !== "na"
+    && (r.id === "divCut" || r.id === "debtCeiling" || (r.id === "roeFloor" && shown.roe) || (r.id === "opDecline" && shown.op)));
+  if (!rules.every((r) => r.result === "ok")) return 0;
+  const band = (x.rules || []).find((r) => r && r.id === "band" && r.check === "checked");
+  if (band && band.result !== "ok") return 0;
+  return rules.filter((r) => r.newer === true).length + (band ? 1 : 0);
 }
 
 // The 1.25x edge rules.js used today for this holding (its band result: a share of the held value), or, for a hand-made

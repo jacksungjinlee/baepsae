@@ -6,7 +6,10 @@
 //   no held stock      no verdict (nothing was checked), only the way to 덱 짜기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (apricot band): each one named, with its rule, numbers and report year
 //   할 일 없음          green band "매도 조건에 걸린 종목이 없어요": only when nothing is 규칙 깨짐 or 확인 필요. The
-//                      eyebrow "오늘은 할 일이 없어요" also needs no 줄일 차례 (a trim is something to do).
+//                      eyebrow "오늘은 할 일이 없어요" only when every holding is 할 일 없음 (REDESIGN 2.1: steps 1-3 all
+//                      clear, so no 지켜봐요 and no weight outside its band).
+// Counts are of distinct stocks: a stock held in two decks is one stock to look at (its lines still show per deck,
+// since each deck keeps its own answers).
 // Every verdict band carries "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" whenever any rule is not checked, so a
 // calm band never hides a sell condition we could not check. A big move (|d1| >= 5%) is a note with a link to 왜 움직였나,
 // never a status. 다음 일정 is hidden until the v18.0 calendar.
@@ -19,7 +22,7 @@ import { evaluateAll, todayCtx } from "./rules.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
-import { deckMoney, deckDayChange, peerGroup, endsInBatchim } from "./track.js";
+import { deckMoney, deckDayChange, peerGroup, endsInBatchim, todayCounts } from "./track.js";
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -123,12 +126,11 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
   if (todo.length) {
     const first = todo[0].x;
     const broken = first.status === "broken";
-    const rest = all.length - todo.length;
-    const restCalm = rest > 0 && all.every(({ x }) => isTodo(x) || x.status === "none");
+    const { todoTs, rest, restCalm } = todayCounts(held);
     return (
       <>
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo">
-          <HeroBand tone="alert" eyebrow={fill(C.today.todoN, { n: todo.length })} title={broken ? brokenTitle(first.nk) : first.nk}
+          <HeroBand tone="alert" eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
             body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
             image="baepi-4.png" imageAlt={C.today.todoAlt}
             inset={todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)} />
@@ -137,11 +139,11 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
       </>
     );
   }
-  const trim = all.some(({ x }) => x.status === "trim");
+  const { allNone } = todayCounts(held);
   const allD1 = all.every(({ x }) => x.d1 != null);
   return (
     <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
-      <HeroBand tone="calm" eyebrow={trim ? undefined : C.today.calmEyebrow} title={C.today.calmTitle}
+      <HeroBand tone="calm" eyebrow={allNone ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
         body={lines([bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
         image={bigs.length ? "baepi-2.png" : "baepi-9.png"} imageAlt={bigs.length ? C.today.bigAlt : C.today.calmAlt}
         inset={bigs.length ? <BigMoves items={bigs} load={load} onWhy={onWhy} /> : null} />

@@ -121,15 +121,67 @@ out = { small, big, tiny: [tiny.buys, tiny.left, tiny.eligible.length], zero: [z
 
 
 def test_add_money_never_takes_a_stock_above_125x_target_even_when_one_share_is_big():
-    # A: 1주 100만원, 지금 1주 · 목표 5%. 400만원을 더 넣으면 덱 3,100만원 · A 목표 155만원 · 1.25배 193.75만원.
-    # 목표까지 55만원이 모자라(반 주 넘게) 보통이면 1주를 더 사지만, 그러면 200만원 = 목표의 1.29배라 사지 않아요.
+    # A: 1주 100만원, 지금 1주 · 목표 4.5%. B 2,900만원 · 목표 95.5%. 400만원을 넣으면 덱 3,400만원 · A 목표 153만원:
+    # 53만원이 모자라(반 주 넘게) 보통이면 1주를 더 사지만, 그러면 200만원 = 목표의 1.31배라 사지 않아요. B 는 목표까지 사요.
     got = run("""
-const de = deOf([['A', 1e6, 1e6, 0.05, 'low'], ['B', 26e6, 1e4, 0.95, 'none']]);
+const de = deOf([['A', 1e6, 1e6, 0.045, 'low'], ['B', 29e6, 1e4, 0.955, 'none']]);
 const r = T.addMoney(de, 4e6);
 out = { buys: r.buys.map((b) => [b.t, b.shares]), eligible: r.eligible, left: r.left, spent: r.spent };""")
     assert got["eligible"] == ["A", "B"], got
-    assert all(t != "A" for t, _ in got["buys"]) and [t for t, _ in got["buys"]] == ["B"], got
+    assert [t for t, _ in got["buys"]] == ["B"], got
     assert got["spent"] + got["left"] == 4e6
+    # 1주가 큰 두 종목(300만원씩, 목표 50%씩)에 500만원: A 1주를 사면 600 : 300 = 67%. B 는 남은 200만원으로 1주도 못 사니
+    # 그대로 끝나요 → A 도 사지 않아요 (경계는 그때그때의 덱 값으로 재요)
+    chunky = run("""
+const r = T.addMoney(deOf([['A', 3e6, 3e6, 0.5, 'none'], ['B', 3e6, 3e6, 0.5, 'none']]), 5e6);
+out = { buys: r.buys.map((b) => [b.t, b.shares]), left: r.left, msg: T.addMessage(r, 5e6) };""")
+    assert chunky == {"buys": [], "left": 5e6, "msg": "noneEligible"}, chunky
+
+
+def test_a_balanced_deck_takes_all_the_new_money_in_proportion():
+    # 건너뛰는 종목이 없으면 넣은 돈이 모두 들어가요(1주 단위로 남는 돈만 빼고). 목표만큼 담긴 덱도 그대로 커져요.
+    got = run("""
+const de = deOf([['A', 2e6, 1e4, 1 / 3, 'none'], ['B', 2e6, 1e4, 1 / 3, 'none'], ['C', 2e6, 1e4, 1 / 3, 'none']]);
+const r = T.addMoney(de, 6e6);
+out = { buys: r.buys.map((b) => [b.t, b.shares]), left: r.left };""")
+    assert sorted(got["buys"]) == [["A", 200], ["B", 200], ["C", 200]] and got["left"] == 0, got
+
+
+def test_buying_what_add_money_suggests_never_makes_a_new_high_or_trim_status():
+    # 제안대로 산 뒤 Part C 의 evaluateDeck 를 다시 돌려요. 건너뛴 종목이 있고 넣는 돈이 덱보다 커도 새 '그만 살 차례'·'줄일 차례'는 없어요.
+    # (예전 계산은 남는 돈까지 덱에 들어간다고 보고 사서, 산 종목이 목표의 1.33배 · 1.83배가 됐어요.)
+    drop_buy = kr("000100", fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0])
+    drop_now = kr("000100", fy=2025, dps=400.0, dps3=[400.0, 500.0, 450.0])           # 배당 감소 → 확인 필요
+    debt_buy = kr("000400", fy=2024, debt=80.0)
+    debt_now = kr("000400", fy=2025, debt=150.0)                                      # 부채비율 기준(100%) 넘음 → 지켜봐요
+    got = run("""
+const cases = {
+  check: { rows: [{ s: DB, target: 1 / 3, qty: 50 }, { s: B, target: 1 / 3, qty: 20 }, { s: C, target: 1 / 3, qty: 29 }], now: [DN, B, C], amount: 3e6 },
+  watch: { rows: [{ s: WB, target: 0.5, qty: 50, points: { stable: 3 } }, { s: B, target: 0.5, qty: 30 }], now: [WN, B], amount: 1e7 },
+  big: { rows: [{ s: B, target: 0.5, qty: 10 }, { s: C, target: 0.3, qty: 20 }, { s: D, target: 0.2, qty: 3 }], now: [B, C, D], amount: 5e6 },
+};
+const res = {};
+for (const [k, c] of Object.entries(cases)) {
+  const d = mkDeck(c.rows);
+  const ctx = ctxOf(c.now, []);
+  const before = T.R.evaluateDeck(d, ctx);
+  const r = T.addMoney(before, c.amount);
+  const by = new Map(c.now.map((s) => [s.t, s]));
+  const d2 = { ...d, purchases: [...d.purchases, ...r.buys.map((b) => ({ t: b.t, date: '2026-10-30', qty: b.shares, price: by.get(b.t).price, ccy: 'KRW' }))] };
+  const after = T.R.evaluateDeck(d2, ctx);
+  res[k] = { before: before.holdings.map((x) => [x.t, x.status]), after: after.holdings.map((x) => [x.t, x.status, Math.round(x.w * 1000) / 1000]),
+    buys: r.buys.map((b) => [b.t, b.shares]), skipped: r.skipped.map((x) => x.t + ':' + x.why), left: r.left, spent: r.spent };
+}
+out = res;""", DB=drop_buy, DN=drop_now, WB=debt_buy, WN=debt_now, B=kr("000200"), C=kr("000300"), D=kr("000500", price=50000.0))
+    for k, g in got.items():
+        before = dict((t, s) for t, s in g["before"])
+        assert g["buys"], (k, g)                                               # 실제로 사는 경우예요
+        for t, st, w in g["after"]:
+            assert st not in ("high", "trim") or before[t] in ("high", "trim"), (k, t, st, w, g)
+        assert g["spent"] + g["left"] == {"check": 3e6, "watch": 1e7, "big": 5e6}[k]
+    assert got["check"]["skipped"] == ["000100:check"] and got["check"]["left"] > 2e6, got["check"]   # 남는 돈이 덱에 들어가지 않아요
+    assert got["watch"]["skipped"] == ["000400:watch"] and got["watch"]["buys"] == [["000200", 20]], got["watch"]   # 목표(50%)까지만 (50 : 50)
+    assert got["check"]["buys"] == [["000200", 30], ["000300", 21]] and got["check"]["left"] == 3e6 - 510000, got["check"]   # 50 : 50 : 50
 
 
 def test_add_money_edge_exactly_125x_is_still_bought_just_above_is_skipped():
@@ -295,3 +347,69 @@ out = { all: tog([-6, -3, -2, -1, -0.5]), four: tog([-6, -3, -2, -1, 0.4]), thre
 def test_subject_particle_follows_the_last_syllable():
     got = run("out = NAMES.map((n) => T.endsInBatchim(n));", NAMES=["KB금융", "현대차", "삼성전자", "LG에너지솔루션", "NAVER", "SK", "", "기아"])
     assert got == [True, False, False, True, False, False, False, False]
+
+
+# ── 리뷰 수정 (Part E): 금액 조언 · 넓어진 경계 · 지켜지고 있는 규칙 수 · 오늘의 개수 ──
+def test_more_money_is_advised_only_when_one_share_costs_more_than_the_amount():
+    got = run("""
+const de = deOf([['A', 1e6, 7e4, 0.3, 'low'], ['B', 3e6, 5e4, 0.4, 'none'], ['C', 2e6, 3e4, 0.3, 'none']]);
+const allSkipped = deOf([['A', 1e6, 7e4, 0.5, 'watch'], ['B', 1e6, 5e4, 0.5, 'check']]);
+// 금액이 아니라 목표·경계가 막아요: A 1주(100만원)는 살 수 있는 돈이지만 B 를 건너뛰면 A 가 받을 몫이 반 주도 안 돼요
+const edges = deOf([['A', 1e6, 1e6, 0.045, 'low'], ['B', 29e6, 1e4, 0.955, 'watch']]);
+const m = (d, a) => T.addMessage(T.addMoney(d, a), a);
+out = { cheap: m(de, 2e4), buys: m(de, 5e5), zero: m(de, 0), skipped: m(allSkipped, 1e7), edges: m(edges, 4e6) };""")
+    assert got == {"cheap": "none", "buys": None, "zero": None, "skipped": "noneEligible", "edges": "noneEligible"}, got
+
+
+def test_the_plain_band_caption_only_when_no_holding_uses_widened_edges():
+    got = run("""
+const band = (bands, refBands) => ({ id: 'band', kind: 'band', check: 'checked', result: 'ok', bands, refBands });
+const h = (rules) => ({ t: 'X', status: 'none', rules });
+out = {
+  plain: T.plainEdges({ holdings: [h([band([0.375, 0.625, 0.7], [0.375, 0.625, 0.7])]), h([])] }),
+  widened: T.plainEdges({ holdings: [h([band([0.375, 0.625, 0.7], [0.375, 0.625, 0.7])]), h([band([0.15, 0.31, 0.35], [0.15, 0.25, 0.28])])] }),
+  missing: T.plainEdges({ holdings: [h([{ id: 'band', check: 'checked', result: 'missing', bands: [1, 2, 3] }])] }),
+};""")
+    assert got == {"plain": True, "widened": False, "missing": True}, got
+
+
+def test_rules_kept_count_only_what_a_newer_report_or_todays_weight_checked():
+    got = run("""
+const div = (o) => ({ id: 'divCut', kind: 'sell', check: 'checked', result: 'ok', newer: true, ...o });
+const debt = (o) => ({ id: 'debtCeiling', kind: 'keep', check: 'checked', result: 'ok', newer: true, ...o });
+const roe = { id: 'roeFloor', kind: 'keep', check: 'checked', result: 'ok', newer: true };
+const band = (o) => ({ id: 'band', kind: 'band', check: 'checked', result: 'ok', ...o });
+const pend = { id: 'audit', kind: 'sell', check: 'pending', result: 'pending' };
+const k = (rules, status = 'none', shown) => T.keptCount({ status, rules }, shown);
+out = {
+  newer: k([div(), debt(), band(), pend]),                                   // 2 newer + band = 3 (준비 중은 세지 않아요)
+  purchaseReport: k([div({ newer: false }), debt({ newer: false }), band()]), // 산 때 보고서뿐: 비중만 1
+  onlyOld: k([div({ newer: false })]),                                       // 새로 확인한 것이 없으면 0 (줄을 빼요)
+  failing: k([div(), debt({ result: 'fail' }), band()]),
+  bandOut: k([div(), band({ result: 'band' })], 'low'),
+  watch: k([div(), band()], 'watch'),
+  na: k([div(), debt({ result: 'na' }), band()]),                            // 금융회사 해당 없음은 세지 않아요
+  hiddenRoe: k([div(), roe, band()]), shownRoe: k([div(), roe, band()], 'none', { roe: true }),
+  bandResult: k([div(), band({ result: 'band' })]),                          // 비중이 벗어났으면 상태와 상관없이 0
+};""")
+    assert got == {"newer": 3, "purchaseReport": 1, "onlyOld": 0, "failing": 0, "bandOut": 0, "watch": 0, "na": 2,
+                   "hiddenRoe": 2, "shownRoe": 3, "bandResult": 0}, got
+
+
+def test_today_counts_distinct_stocks_and_the_calm_eyebrow_needs_every_holding_clear():
+    got = run("""
+const d = (id, rows) => ({ id, holdings: rows.map(([t, status]) => ({ t, status })) });
+const c = (decks) => { const r = T.todayCounts(decks); return { todo: r.todoTs.size, rest: r.rest, restCalm: r.restCalm, allNone: r.allNone }; };
+out = {
+  twoDecks: c([d('a', [['X', 'check'], ['Y', 'none']]), d('b', [['X', 'check'], ['Y', 'none'], ['Z', 'none']])]),
+  mixed: c([d('a', [['X', 'broken'], ['Y', 'watch']])]),
+  calm: c([d('a', [['X', 'none'], ['Y', 'none']]), d('b', [['X', 'none']])]),
+  watch: c([d('a', [['X', 'none'], ['Y', 'watch']])]),
+  low: c([d('a', [['X', 'none'], ['Y', 'low']])]),
+  high: c([d('a', [['X', 'high']])]),
+};""")
+    assert got["twoDecks"] == {"todo": 1, "rest": 2, "restCalm": True, "allNone": False}, got   # 두 덱의 같은 종목은 하나
+    assert got["mixed"] == {"todo": 1, "rest": 1, "restCalm": False, "allNone": False}, got
+    assert got["calm"]["allNone"] is True and got["calm"]["todo"] == 0
+    for k in ("watch", "low", "high"):
+        assert got[k]["allNone"] is False, k                     # 지켜봐요 · 비중 벗어남이 있으면 '오늘은 할 일이 없어요' 아님

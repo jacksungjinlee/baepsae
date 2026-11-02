@@ -10,7 +10,7 @@ import { parseImport, mergeStores, downloadRecords, isSafariLike, withConfirm } 
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
-import { DeckSummary, ByStockHead, WeightLine, AddMoney } from "./tracking.jsx";
+import { DeckSummary, ByStockHead, WeightLine, AddMoney, plainEdges } from "./tracking.jsx";
 
 function avgCost(purchases, t) {
   const ps = purchases.filter((p) => p.t === t && p.qty > 0);
@@ -72,7 +72,7 @@ export function MyDeck({ load, store, setStoreData, pad }) {
               {start && mdText(start) && <><span>{" · "}</span><span data-ui-v2="deck-start">{fill(C.deck.start, { md: mdText(start) })}</span></>}
             </div>
             {m.ok && <DeckSummary deck={d} m={m} load={load} />}
-            {m.ok && <ByStockHead />}
+            {m.ok && <ByStockHead plain={plainEdges(de)} />}
             {ts.map((t) => {
               const h = d.holdings.find((x) => x.t === t) || { nk: t };
               const a = avgCost(d.purchases, t);

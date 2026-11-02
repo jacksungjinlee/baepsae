@@ -4,11 +4,11 @@
 // data, and a number whose input is missing is left out, never estimated.
 import React, { useEffect, useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
-import { WeightBar, MoneyInput } from "../ui/components.jsx";
+import { MoneyInput } from "../ui/components.jsx";
 import { C, fill, p1, wonText } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { signedPct } from "./deckcalc.js";
-import { deckMoney, indexSince, addMoney } from "./track.js";
+import { deckMoney, indexSince, addMoney, addMessage, bandOf, plainEdges } from "./track.js";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 // Each left-out number is logged once per page view (loudly, with the reason), not on every render.
@@ -48,8 +48,8 @@ export function DeckSummary({ deck, m, load }) {
   );
 }
 
-// "종목별 · 수익률" header and the legend of the weight bars.
-export function ByStockHead() {
+// "종목별 · 수익률" header and the legend of the weight bars. plain: see plainEdges.
+export function ByStockHead({ plain }) {
   return (
     <div style={{ marginTop: SPACE(4) }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -58,25 +58,50 @@ export function ByStockHead() {
       </div>
       <div data-ui-v2="weight-legend" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>
         <span style={{ display: "block" }}>{C.plan.targetNote}</span>
-        <span style={{ display: "block" }}>{C.deck.bandNote}</span>
+        {plain && <span style={{ display: "block" }} data-ui-v2="band-note">{C.deck.bandNote}</span>}
       </div>
     </div>
   );
 }
 
-// Today's weight against the target (both from the daily check). Outside the band (the status from rules.js) the bar
-// turns amber; the number is today's weight.
+// The weight bar: today's weight (filled), the target (apricot mark) and the three edges used today (thin marks), on a
+// scale wide enough for all of them. The v18.1 WeightBar draws only the target, so this one is drawn here.
+function BandBar({ w, target, bands, out }) {
+  const top = Math.max(w * 1.1, target * 1.6, (bands ? bands[2] : 0) * 1.1, 0.01);
+  const at = (v) => `${Math.min(100, Math.max(0, (v / top) * 100))}%`;
+  return (
+    <div data-ui-v2="band-bar" data-top={top} role="meter" aria-label={C.daily.weight} aria-valuemin={0} aria-valuemax={Math.round(top * 1000) / 10}
+      aria-valuenow={Math.round(w * 1000) / 10} aria-valuetext={`${p1(w * 100)}%`}
+      style={{ position: "relative", height: SPACE(2) + 2, background: COLOR.page, borderRadius: 999 }}>
+      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: at(w), background: out ? COLOR.watch : COLOR.ink, borderRadius: 999 }} />
+      {(bands || []).map((b, i) => (
+        <div key={i} data-edge={i} style={{ position: "absolute", top: -2, bottom: -2, width: 1, left: at(b), background: COLOR.text3 }} />
+      ))}
+      <div data-target="1" style={{ position: "absolute", top: -SPACE(1), bottom: -SPACE(1), width: 3, borderRadius: 2, background: COLOR.apricot, left: at(target), transform: "translateX(-1.5px)" }} />
+    </div>
+  );
+}
+
+// Today's weight against the target (both from the daily check), and under it the edges actually used today (CSV 543
+// pieces, as the rule book shows them). Outside the band (the status from rules.js) the bar turns amber.
 export function WeightLine({ x }) {
   if (x.w == null || !(x.target > 0)) return null;
   const out = BAND.includes(x.status);
+  const b = bandOf(x);
+  const edges = b ? [fill(C.daily.bandLow, { x: p1(b.bands[0] * 100) }), fill(C.daily.bandHigh, { x: p1(b.bands[1] * 100) }),
+    fill(C.daily.bandTrim, { x: p1(b.bands[2] * 100) })] : [];
   return (
-    <div data-ui-v2="weight" data-band={out ? x.status : undefined} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
-      <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text3, { width: SPACE(8) })}>{C.daily.weight}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <WeightBar current={Math.round(x.w * 1000) / 10} target={Math.round(x.target * 1000) / 10} max={Math.max(30, x.target * 160)}
-          label={C.daily.weight} status={out ? "watch" : "ok"} />
+    <div data-ui-v2="weight" data-band={out ? x.status : undefined} style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
+        <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text3, { width: SPACE(8) })}>{C.daily.weight}</span>
+        <div style={{ flex: 1, minWidth: 0 }}><BandBar w={x.w} target={x.target} bands={b ? b.bands : null} out={out} /></div>
+        <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { width: SPACE(12), textAlign: "right" })}>{`${p1(x.w * 100)}%`}</span>
       </div>
-      <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { width: SPACE(12), textAlign: "right" })}>{`${p1(x.w * 100)}%`}</span>
+      {edges.length > 0 && (
+        <div data-ui-v2="weight-edges" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
+          {edges.map((e, i) => <span key={i}>{i ? " · " : ""}{e}</span>)}
+        </div>
+      )}
     </div>
   );
 }
@@ -88,14 +113,18 @@ export function AddMoney({ de }) {
   const r = useMemo(() => addMoney(de, man * 10000), [de, man]);
   if (!r.ok) return null;
   const A = C.deck.add;
+  const msg = addMessage(r, man * 10000);
   return (
     <div data-ui-v2="add-money" style={{ marginTop: SPACE(5), paddingTop: SPACE(4), borderTop: `1px solid ${COLOR.line}` }}>
       <MoneyInput label={A.label} unit={C.app.manUnit} value={man} onChange={setMan} clearLabel={A.clear}
         quick={[{ label: A.quick[0], add: 10 }, { label: A.quick[1], add: 100 }, { label: A.quick[2], add: 1000 }]} />
       <Note>{A.body}</Note>
       {!man && <Note data-ui-v2="add-empty">{A.empty}</Note>}
-      {man > 0 && !r.eligible.length && A.noneEligible && <Note tone="watch" data-ui-v2="add-none-eligible">{A.noneEligible}</Note>}
-      {man > 0 && r.eligible.length > 0 && !r.buys.length && <Note tone="watch" data-ui-v2="add-none">{A.none}</Note>}
+      {/* "금액을 늘려 보세요" (CSV 79) only when even the cheapest eligible share costs more than the amount. When every name
+          is skipped, or the edges stop every buy, more money would not help: the pending line (omitted until approved). */}
+      {msg === "none" && <Note tone="watch" data-ui-v2="add-none">{A.none}</Note>}
+      {msg === "noneEligible" && (A.noneEligible ? <Note tone="watch" data-ui-v2="add-none-eligible">{A.noneEligible}</Note>
+        : <span data-ui-v2="add-none-eligible" hidden />)}
       {r.buys.length > 0 && (
         <div data-ui-v2="add-buys" style={{ marginTop: SPACE(3) }}>
           {r.buys.map((b) => (
@@ -115,4 +144,4 @@ export function AddMoney({ de }) {
   );
 }
 
-export { deckMoney };
+export { deckMoney, plainEdges };

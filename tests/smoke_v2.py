@@ -492,6 +492,21 @@ def scene_normal(R, files, width):
         R.collect(page)
     R.check(page, S, "빈 덱으로 끝까지: 카드 10점 → 지주회사 빼기 → 한국만 → 후보 → 매수 계획", from_blank)
 
+    def partial_buy():
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        recs = page.locator('[data-ui-v2="record-form"] [data-record]')
+        n = recs.count()
+        recs.first.locator("input").first.fill("0")                  # 계획한 종목 하나는 사지 않았어요
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        body = page.locator('[data-ui-v2="done-body"]')
+        body.wait_for(state="visible")
+        assert body.inner_text() == f"내일부터 오늘 화면에서 {n - 1}종목을 규칙대로 점검해 드릴게요. 기록은 이 휴대폰에만 저장돼요.", body.inner_text()
+        R.collect(page)
+        page.get_by_role("button", name=C["app"]["close"]).click()
+        see(page, C["plan"]["stocks"])
+    R.check(page, S, "샀어요에서 한 종목을 0주로 → 기록했어요는 실제로 산 종목 수만 점검한다고 말해요", partial_buy)
+
     def infeasible():
         page.get_by_role("button", name=C["plan"]["back"]).click()
         page.get_by_role("button", name=C["pick"]["back"]).click()
@@ -913,7 +928,7 @@ def _buy(t, nk, target, rules, qty, by):
 
 
 def _one_deck(i, name, rows, confirms=None):
-    d = {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [_holding(t, nk, tg, r) for t, nk, tg, r, _, _ in rows],
+    d = {"id": i, "name": name, "createdAt": "2026-10-01", "holdings": [{**_holding(t, nk, tg, r), "plannedQty": q} for t, nk, tg, r, q, _ in rows],
          "purchases": [{"t": t, "date": "2026-10-01", "qty": q, "price": px, "ccy": "KRW"} for t, _, _, _, q, px in rows]}
     if confirms:
         d["confirms"] = confirms
@@ -938,11 +953,12 @@ def scene_today(R, files, width):
     cut = [{"t": "105560", "rule": "divCut", "fy": 2025, "a": 4367.0, "b": 3000.0, "answer": "cut", "at": "2026-11-01"}]
     decks = {
         "sell": _one_deck("dsell", "매도 덱", [_buy("105560", "KB금융", 0.5, [_div(2024, 4367.0, 3174.0)], 10, by), sam(7)], cut),
-        "watch": _one_deck("dwatch", "부채 덱", [_buy("012450", "한화에어로스페이스", 0.5, [_debt(2024, 150.0, 200)], 1, by), sam(3)]),
+        "watch": _one_deck("dwatch", "부채 덱", [_buy("012450", "한화에어로스페이스", 0.5, [_debt(2024, 150.0, 200)], 1, by), sam(1)]),
         "check": _one_deck("dcheck", "확인 덱", [_buy("005380", "현대차", 0.5, [_div(2024, 12000.0, 11400.0)], 2, by), sam(2)]),
         # 같은 금액(200만원씩)으로 산 뒤 삼성전자만 크게 올라 비중이 벗어난 덱 (산 날의 비중 = 목표: Part C 의 간격 없음)
         "band": _one_deck("dband", "비중 덱", [("005930", "삼성전자", 0.5, [], 20, 100000), ("035420", "NAVER", 0.5, [], 2, 1000000)]),
-        "big": _one_deck("dbig", "반도체 덱", [_buy("000660", "SK하이닉스", 0.5, [_div(2025, 3000.0, 2204.0)], 1, by), sam(6)]),
+        # SK하이닉스: 배당 규칙은 산 뒤 새 보고서(2025)로 확인 · 부채비율 규칙은 산 때 보고서뿐(새로 확인한 것 아님) → '규칙 2개'(배당 + 비중)
+        "big": _one_deck("dbig", "반도체 덱", [_buy("000660", "SK하이닉스", 0.5, [_div(2024, 2204.0, 1200.0), _debt(2025, 46.0, 100)], 1, by), sam(6)]),
     }
 
     def ctx_for(key, site=None):
@@ -989,7 +1005,8 @@ def scene_today(R, files, width):
         h = hero(page)
         assert h.get_attribute("data-state") == "calm"
         txt = h.inner_text()
-        assert txt.startswith(C["today"]["calmEyebrow"]) and C["today"]["calmTitle"] in txt, txt     # 지켜봐요가 있어도 맞는 말
+        assert C["today"]["calmTitle"] in txt, txt                     # 지켜봐요가 있어도 맞는 말 (매도 조건에 걸린 종목은 없어요)
+        assert C["today"]["calmEyebrow"] not in txt, txt               # 하지만 '오늘은 할 일이 없어요'는 모든 종목이 할 일 없음일 때만
         not_checked(txt)
         assert page.locator('[data-today-holding="012450"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"], C["daily"]["bigMove"]]
         assert "크게 움직인 종목은 1개 있어요" in txt
@@ -1015,6 +1032,10 @@ def scene_today(R, files, width):
         assert got == ["005930"], got                                                  # 지켜봐요 종목은 사지 않아요
         left = page.locator('[data-ui-v2="add-left"]').inner_text()
         assert re.fullmatch(r"남는 돈 [\d,]+(만원|원) · 살지 말지는 직접 정해 주세요", left), left
+        # 산 날의 비중이 반올림으로 목표와 달라 경계가 넓어진 덱: '0.75~1.25배' 안내 대신 종목마다 오늘 쓰는 경계
+        assert page.locator('[data-ui-v2="band-note"]').count() == 0
+        edges = page.locator('[data-holding="012450"] [data-ui-v2="weight-edges"]').inner_text()
+        assert re.fullmatch(r"[\d.]+% 미만이면 먼저 사요 · [\d.]+% 넘으면 더 사지 않아요 · [\d.]+% 넘으면 일부 팔아요", edges) and "62.5% 넘으면 더 사지" not in edges, edges
         R.collect(page)
     R.check(page, S, "지켜봐요 → 초록 띠 '매도 조건에 걸린 종목이 없어요' · 추가로 넣을 돈은 지켜봐요 종목을 건너뛰고 남는 돈", watch)
     ctx.close()
@@ -1051,6 +1072,15 @@ def scene_today(R, files, width):
         page.locator('[data-ui-v2="weight"]').first.wait_for(state="visible")
         bands = dict(page.locator('[data-holding]').evaluate_all("els => els.map(e => [e.dataset.holding, e.querySelector('[data-ui-v2=weight]')?.dataset.band || ''])"))
         assert bands == {"005930": "trim", "035420": "low"}, bands
+        assert page.locator('[data-ui-v2="band-note"]').count() == 1, "같은 금액으로 산 덱인데 '0.75~1.25배' 안내가 없어요"
+        # 같은 금액으로 산 덱이라 경계가 넓어지지 않았어요: '0.75~1.25배' 안내와 종목마다 같은 경계
+        assert page.locator('[data-ui-v2="band-note"]').inner_text() == C["deck"]["bandNote"]
+        edges = page.locator('[data-holding="005930"] [data-ui-v2="weight-edges"]').inner_text()
+        assert edges == "37.5% 미만이면 먼저 사요 · 62.5% 넘으면 더 사지 않아요 · 70.0% 넘으면 일부 팔아요", edges
+        bar = page.locator('[data-holding="005930"] [data-ui-v2="band-bar"]')          # 막대는 비중(약 93%)보다 넓은 눈금
+        top, now = float(bar.get_attribute("data-top")), float(bar.get_attribute("aria-valuenow")) / 100
+        assert top >= 1.1 * now - 0.002, (top, now)
+        assert bar.locator("[data-edge]").count() == 3
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "줄일 차례 → 초록 띠, '오늘은 할 일이 없어요'는 없음 · 내 덱 비중 막대가 벗어남을 표시", band)
@@ -1078,13 +1108,13 @@ def scene_today(R, files, width):
         v = page.locator('[data-ui-v2="why-verdict"]')
         assert v.get_attribute("data-status") == "none"
         vt = v.inner_text()
-        assert C["why"]["noTodo"] in vt and "업종이 다 같이\n빠진 날이에요" in vt and "규칙 1개가 모두 지켜지고 있어요." in vt, vt
+        assert C["why"]["noTodo"] in vt and "업종이 다 같이\n빠진 날이에요" in vt and "규칙 2개가 모두 지켜지고 있어요." in vt, vt
         not_checked(vt)
         peers = page.locator('[data-ui-v2="why-peers"]')
         assert C["why"]["c1Title"] in peers.inner_text() and re.search(r"반도체주 (\d+)개 중 \1개가 빠졌어요", peers.inner_text()), peers.inner_text()
         assert peers.locator('[data-ui="dot-strip"] [data-mine="1"]').count() == 1
         rules = page.locator('[data-ui-v2="why-rules"]').inner_text()
-        assert "규칙 1개가 모두 지켜지고 있어요" in rules and C["why"]["alertLine"] in rules and C["app"]["notChecked"] in rules, rules
+        assert "규칙 2개가 모두 지켜지고 있어요" in rules and C["why"]["alertLine"] in rules and C["app"]["notChecked"] in rules, rules
         assert "뉴스" not in page.locator("main").inner_text() and "다음에 확인할 일" not in page.locator("main").inner_text()
         src = page.locator('[data-ui-v2="why-sources"]')
         src.locator("button").first.click()
@@ -1108,7 +1138,7 @@ def scene_today(R, files, width):
         assert re.fullmatch(r"내 덱 \+\d+\.\d%", mine) and re.fullmatch(r"코스피 [+−]?\d+\.\d%", kospi), (mine, kospi)
         assert "10월 1일 시작" in page.locator('[data-ui-v2="deck-start"]').inner_text()
         assert page.locator('[data-ui-v2="weight"]').count() == 2
-        assert C["deck"]["bandNote"] in page.locator('[data-ui-v2="weight-legend"]').inner_text()
+        assert page.locator('[data-ui-v2="weight-edges"]').count() == 2               # 종목마다 오늘 쓰는 경계
         page.locator('[data-ui-v2="add-empty"]').wait_for(state="visible")
         no_hscroll(page, width)
         R.collect(page)
