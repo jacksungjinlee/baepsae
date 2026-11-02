@@ -93,17 +93,21 @@ def test_main_address_only_points_to_2_0_when_the_real_fields_are_live():
 V175_FORMAT = "pxDate·publishedAt (v17.5 형식)"
 
 
-def real_data_missing():
-    """저장소의 실제 데이터(data·corp·macro.json)에 2.0 이 쓰는 v17.5 형식·v17.5.1 항목 중 빠진 것. smoke_launch.py 도 써요."""
+def real_data_missing(data=None, corp=None, macro=None):
+    """저장소의 실제 데이터(data·corp·macro.json)에 2.0 이 쓰는 v17.5 형식·v17.5.1 항목 중 빠진 것. smoke_launch.py 도 써요.
+    Jack(2026-11-02): ind · d1 · val20 · fy · etf 가 사이트에 올라오기 전에는 메인 주소를 2.0 으로 돌리지 않아요."""
     import json
-    data, corp = json.loads(read("data.json")), json.loads(read("corp.json"))
-    macro = json.loads(read("macro.json"))
+    data = data if data is not None else json.loads(read("data.json"))
+    corp = corp if corp is not None else json.loads(read("corp.json"))
+    macro = macro if macro is not None else json.loads(read("macro.json"))
     kr = [s for s in data.get("stocks", []) if s.get("cls") == "kr"]
     missing = []
     if not (data.get("pxDate") and data.get("publishedAt") and corp.get("pxDate") and corp.get("publishedAt")):
         missing.append(V175_FORMAT)
     if not any("ind" in s for s in kr):
         missing.append("ind")
+    if not any(isinstance(s.get("d1"), (int, float)) and not isinstance(s.get("d1"), bool) for s in kr):
+        missing.append("d1")
     if not any("val20" in s for s in kr):
         missing.append("val20")
     if not data.get("stocks") or not all(isinstance(s.get("etf"), bool) for s in data["stocks"]):
@@ -115,3 +119,67 @@ def real_data_missing():
     if not macro.get("idxHist"):
         missing.append("idxHist")
     return missing
+
+
+def test_merge_gate_names_each_missing_field():
+    """머지 문이 정말 막는지: v17.5.1 데이터(tests/fixtures/v2)는 통과하고, 항목 하나만 빠져도 그 이름을 대며 막아요."""
+    import copy
+    import json
+
+    def fx(name):
+        with open(os.path.join(ROOT, "tests", "fixtures", "v2", name), encoding="utf-8") as f:
+            return json.load(f)
+    base = {"data": fx("data.json"), "corp": fx("corp.json"), "macro": fx("macro.json")}
+    assert real_data_missing(**copy.deepcopy(base)) == []
+    assert "./app.html" in read("index.html")          # 이 브랜치에서는 머지 문이 실제로 검사해요 (건너뛰지 않아요)
+
+    def drop_kr(key):
+        def f(b):
+            for s in b["data"]["stocks"]:
+                if s.get("cls") == "kr":
+                    s.pop(key, None)
+        return f
+
+    def drop_fy(b):
+        for c in b["corp"]["companies"]:
+            c.pop("fy", None)
+
+    def drop_one_etf(b):
+        b["data"]["stocks"][0].pop("etf", None)
+
+    def no_zero_dps(b):
+        for s in b["data"]["stocks"]:
+            if s.get("dps") == 0:
+                s.pop("dps")
+
+    def drop_idx(b):
+        b["macro"].pop("idxHist", None)
+
+    def old_format(b):
+        b["data"].pop("pxDate", None)
+    cases = {"ind": drop_kr("ind"), "d1": drop_kr("d1"), "val20": drop_kr("val20"), "fy": drop_fy,
+             "etf (모든 종목)": drop_one_etf, "dps = 0": no_zero_dps, "idxHist": drop_idx, V175_FORMAT: old_format}
+    for want, change in cases.items():
+        b = copy.deepcopy(base)
+        change(b)
+        assert real_data_missing(**b) == [want], (want, real_data_missing(**b))
+
+
+def test_merge_gate_is_wired_to_the_repo_files(monkeypatch):
+    """머지 문 테스트 자체가 저장소 파일을 읽고 막는지: d1 만 빠진 데이터면 실패, v17.5.1 데이터면 통과."""
+    import json
+    import pytest
+    real = read
+    files = {}
+    for n in ("data.json", "corp.json", "macro.json"):
+        with open(os.path.join(ROOT, "tests", "fixtures", "v2", n), encoding="utf-8") as f:
+            files[n] = f.read()
+    monkeypatch.setitem(globals(), "read", lambda p: files.get(p) or real(p))
+    test_main_address_only_points_to_2_0_when_the_real_fields_are_live()          # 항목이 다 있으면 통과
+    d = json.loads(files["data.json"])
+    for s in d["stocks"]:
+        if s.get("cls") == "kr":
+            s.pop("d1", None)
+    files["data.json"] = json.dumps(d, ensure_ascii=False)
+    with pytest.raises(AssertionError, match="d1"):
+        test_main_address_only_points_to_2_0_when_the_real_fields_are_live()
