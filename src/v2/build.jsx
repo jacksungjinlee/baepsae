@@ -22,7 +22,7 @@ export function Build({ load, builder, setBuilder, onExit, store, setStoreData, 
   if (load.status !== "ok" || load.missing.length) {
     return (
       <Page>
-        <AppBar onBack={onExit} backLabel={C.build.backToday} />
+        <AppBar onBack={onExit} backLabel={C.build.backToday} search />
         <ScreenTitle>{C.build.title}</ScreenTitle>
         {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
         {load.status === "fail" && <LoadFail />}
@@ -92,7 +92,7 @@ function Steps({ load, builder, setBuilder, onExit }) {
   );
   return (
     <Page pad={SPACE(30)}>
-      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep} />
+      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep} search />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(1) }}>
         <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.build.title}</div>
         {step > 0 && <button type="button" onClick={restart} style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.restart}</button>}
