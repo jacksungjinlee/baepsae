@@ -15,6 +15,8 @@ import InfoApp from "./info.jsx";
 
 const MAST_CSS = `@media (display-mode: standalone) { .pwaBack { display: inline-flex !important } }
 @media (max-width: 560px) { .mastSub { display: none } }
+@media (max-width: 380px) { .mastRow { gap: 8px !important } }
+@media (max-width: 420px) { .mastRow[data-mode="1"] .v2Link { display: none !important } }
 @media (max-width: 880px) {
   .topTabs { display: none !important }
   .botNav { display: block !important }
@@ -36,12 +38,20 @@ function TopNav({ tab, setTab, showBack, onBack, lang, onLang }) {
   return (
     <>
     <div style={{ position: "sticky", top: 0, zIndex: 60, background: "rgba(250,248,245,0.95)", backdropFilter: "blur(8px)", borderTop: "3px solid " + C.ink, borderBottom: "1px solid " + C.ink + "33", boxShadow: "0 1px 0 rgba(27,43,75,0.06)" }}>
-      <div style={{ maxWidth: 1140, margin: "0 auto", padding: "0 16px", height: 48, display: "flex", alignItems: "center", gap: 14 }}>
+      <div className="mastRow" data-mode={showBack ? "1" : undefined} style={{ maxWidth: 1140, margin: "0 auto", padding: "0 16px", height: 48, display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <Seal size={25} />
           <span style={{ fontFamily: FONT, fontSize: 16.5, fontWeight: 900, color: C.ink, letterSpacing: "-0.01em" }}>뱁새</span>
           <span className="mastSub" style={{ fontFamily: FONT, fontSize: 10, color: C.faint, borderLeft: "1px solid " + C.line, paddingLeft: 8, letterSpacing: "0.03em" }}>{lang === "en" ? "At my own pace" : "황새 말고, 내 걸음으로"}</span>
         </div>
+        {/* 뱁새 2.0 (app.html) 으로 가는 머리말 링크 (Jack, 2026-11-02). 2.0 은 한국어만 있어서 한국어 화면에서만 보여요.
+            좁은 휴대폰(420px 이하)에서 모드 안에 있을 때는 '모드 선택'·'뒤로'(홈 화면 앱)와 자리가 겹치지 않게 숨기고,
+            첫 화면과 다른 탭에서는 늘 보여요. */}
+        {lang !== "en" && (
+          <a href="./app.html" data-v2-link="1" className="v2Link"
+            style={{ fontFamily: FONT, fontSize: 11.5, fontWeight: 600, color: C.sub, textDecoration: "underline", textUnderlineOffset: 3,
+              whiteSpace: "nowrap", flexShrink: 0, minHeight: 44, display: "inline-flex", alignItems: "center", padding: "0 2px", WebkitTapHighlightColor: "transparent" }}>뱁새 2.0 보기</a>
+        )}
         <div className="topTabs" style={{ display: "flex", gap: 2, overflowX: "auto", flex: 1 }}>
           {TABS.map((tb) => {
             const on = tab === tb.id;

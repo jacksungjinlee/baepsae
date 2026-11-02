@@ -176,7 +176,14 @@ def main():
                         link.click()
                     assert page.url.endswith("/baepsae.html"), page.url
                     page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
-                check(W + "머리말 '예전 뱁새 보기' → 지금 앱이 열려요", header_link_opens_old_app, page, tag)
+                    back = page.locator("a[data-v2-link]")                  # 지금 앱 머리말의 '뱁새 2.0 보기' (Jack, 2026-11-02)
+                    back.wait_for(state="visible")
+                    assert back.inner_text() == "뱁새 2.0 보기"
+                    with page.expect_navigation():
+                        back.click()
+                    assert page.url.endswith("/app.html"), page.url
+                    page.locator('[data-ui-v2="old-app-link"]').wait_for(state="visible")
+                check(W + "머리말 '예전 뱁새 보기' → 지금 앱 → '뱁새 2.0 보기' → 다시 2.0", header_link_opens_old_app, page, tag)
                 ctx.close()
 
                 ctx, page = context(saved=True)

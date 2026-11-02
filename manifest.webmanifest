@@ -2,6 +2,7 @@
   "name": "뱁새 — 개인 투자 연구소",
   "short_name": "뱁새",
   "description": "자신만의 포트폴리오를 만들어보세요. 황새 말고, 내 걸음으로.",
+  "id": "/baepsae/baepsae.html",
   "start_url": "./app.html",
   "scope": "./",
   "display": "standalone",
