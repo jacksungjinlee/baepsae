@@ -552,6 +552,12 @@ out = { approved, now, fallback };""")
     assert got["fallback"] == [["영업이익 (작년 대비) \u221219.5%"], ["영업이익"]], got["fallback"]
 
 
+def test_operating_profit_amounts_pick_the_unit_after_rounding():
+    # 9,999.6억원은 반올림하면 1만억원이라 '10,000억원'이 아니라 '1.0조원' (Part E 리뷰)
+    got = run("out = VALUES.map((v) => R.D.eokText(v));", VALUES=[9999.4, 9999.5, 9999.6, 10000.0, -9999.6, 99999.96, 0.4])
+    assert got == ["9,999억원", "1.0조원", "1.0조원", "1.0조원", "\u22121.0조원", "10.0조원", "0억원"], got
+
+
 # ── 확인하지 못하는 규칙 ──
 def test_pending_and_unknown_rules_are_counted_never_passed():
     a = kr("000100")

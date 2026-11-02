@@ -961,6 +961,7 @@ def today_files(files):
     by["105560"].update(dps=3000.0, dps3=[3000.0, 4367.0, 3174.0], fy=2025, d1=0.5)     # KB금융: 2025년 보고서에서 배당 삭감
     by["012450"]["d1"] = -8.0                                                           # 지켜봐요 종목이 크게 움직인 날
     by["003550"].update(dps=2500.0, dps3=[2500.0, 3100.0, 3100.0], fy=2025)              # LG: 2025년 보고서에서 배당 삭감
+    by["132030"]["d1"] = -6.0                                                           # 금 안전자산(국내 상장 ETF)이 크게 움직인 날
     for x in f["data.json"]["stocks"]:                                                  # 반도체가 다 같이 빠진 날
         if x.get("cls") == "kr" and x.get("ind") == "semi" and x["t"] != "000660":
             x["d1"] = -1.5
@@ -984,6 +985,8 @@ def scene_today(R, files, width):
         # SK하이닉스: 배당 규칙은 산 뒤 새 보고서(2025)로 확인 · 부채비율 규칙은 산 때 보고서뿐(새로 확인한 것 아님) → '규칙 2개'(배당 + 비중)
         "big": _one_deck("dbig", "반도체 덱", [_buy("000660", "SK하이닉스", 0.5, [_div(2024, 2204.0, 1200.0), _debt(2025, 46.0, 100)], 1, by), sam(6)]),
     }
+    # 안전자산(채권·금) 종목: 국내 상장 ETF 라 가격 출처는 한국거래소 (cls 가 bond · metal 이어도 미국이 아니에요)
+    decks["cushion"] = _one_deck("dcushion", "안전자산 덱", [("132030", "KODEX 골드선물(H)", 0.5, [], 40, round(by["132030"]["price"])), sam(4)])
     # 반도체 덱은 계획한 기아를 사지 않았어요(0주): 목표는 산 두 종목끼리 다시 나눠요 → 내 덱 · 왜 움직였나에 같은 안내
     decks["big"]["decks"][0]["holdings"].append({**_holding("000270", "기아", 0.2, []), "plannedQty": 1})
 
@@ -1190,6 +1193,23 @@ def scene_today(R, files, width):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "내 덱: 평가 금액 · 원금 · 수익 · 내 덱 vs 코스피 숫자 두 개 · 시작일 · 비중 막대 · 추가로 넣을 돈", deck_sheet)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, _ = ctx_for("cushion")
+
+    def cushion_source():
+        hero(page)
+        page.locator('[data-big-move="132030"] [data-ui-v2="why-link"]').click()
+        see(page, "KODEX 골드선물(H) 왜 움직였나")
+        src = page.locator('[data-ui-v2="why-sources"]')
+        src.locator("button").first.click()
+        st = src.inner_text()
+        assert "한국거래소 10월 30일 종가" in st and "야후 파이낸스" not in st, st
+        assert page.locator('[data-ui-v2="why-peers"]').count() == 0               # 업종 그룹이 없으니 점 띠도 없어요
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "국내 상장 안전자산(금 ETF)의 왜 움직였나 → 가격 출처는 한국거래소", cushion_source)
     ctx.close()
     srv.shutdown()
 

@@ -89,7 +89,8 @@ function Explainer() {
 function Sources({ s, g, x, md }) {
   const fy = (x.rules || []).reduce((a, r) => (Number.isInteger(r.fy) && (a == null || r.fy > a) ? r.fy : a), null);
   const rows = [
-    s.cls === "kr" ? [C.why.srcPrice, fill(C.why.srcPriceKr, { md })] : C.why.srcPriceUs ? [C.why.srcPrice, fill(C.why.srcPriceUs, { md })] : null,
+    // Every non-US row is a Korean-market close (stocks, and the bond and gold cushion ETFs, cls bond / metal)
+    s.cls === "us" ? (C.why.srcPriceUs ? [C.why.srcPrice, fill(C.why.srcPriceUs, { md })] : null) : [C.why.srcPrice, fill(C.why.srcPriceKr, { md })],
     g.ok ? [C.why.srcInd, fill(C.why.srcIndN, { ind: s.indName, n: g.n })] : null,
     fy ? [C.why.srcRules, fill(C.app.reportYear, { year: fy })] : null,
   ].filter(Boolean);
