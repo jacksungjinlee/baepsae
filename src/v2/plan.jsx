@@ -6,7 +6,7 @@ import { Icon } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor, deckRecord } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashPieces, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -154,7 +154,7 @@ function RuleList({ rules, name }) {
       case "debtCeiling": return x.check === "pending" ? <RuleLine key={x.id} name={R.debt} pending />
         : <RuleLine key={x.id} name={R.debt} now={fill(R.now, { x: nf(Math.round(x.debt)) })} limit={fill(R.over, { x: x.limit })} source={src} />;
       case "roeFloor": return R.roeLimit ? <RuleLine key={x.id} name={R.roe} now={fill(R.now, { x: p1(x.roe) })} limit={fill(R.roeLimit, { x: x.floor })} source={src} /> : null;
-      case "opDecline": return R.opLimit ? <RuleLine key={x.id} name={R.opProfit} limit={R.opLimit} source={src} /> : null;
+      case "opDecline": return R.opLimit ? <RuleLine key={x.id} name={R.opProfit} now={opAmounts(x.op)} limit={R.opLimit} source={src} /> : null;
       case "cet1": return <RuleLine key={x.id} name={R.cet1} pending />;
       case "kics": return <RuleLine key={x.id} name={R.kics} pending />;
       default: return null;

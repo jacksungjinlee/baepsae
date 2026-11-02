@@ -7,7 +7,7 @@ import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { ListRow, StatusChip, Collapsible } from "../ui/components.jsx";
 import { C, fill, nf, p1 } from "./format.js";
 import { RuleLine, ChoiceGrid, tx } from "./ui.jsx";
-import { opPieces } from "./deckcalc.js";
+import { opPieces, opAmounts } from "./deckcalc.js";
 
 const R = () => C.plan.rules;
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
@@ -133,7 +133,7 @@ function HoldingRules({ x, names }) {
         ? <RuleLine key={r.id} name={R().roe} now={r.now != null ? fill(R().now, { x: p1(r.now) }) : null} limit={fill(R().roeLimit, { x: r.limit })} source={src} state={st} note={miss} />
         : null;
       case "opDecline": return R().opLimit && r.check !== "pending"
-        ? <RuleLine key={r.id} name={R().opProfit} limit={R().opLimit} source={src} state={st} note={miss} /> : null;
+        ? <RuleLine key={r.id} name={R().opProfit} now={r.now ? opAmounts(r.now) : null} limit={R().opLimit} source={src} state={st} note={miss} /> : null;
       default: return null;
     }
   };
