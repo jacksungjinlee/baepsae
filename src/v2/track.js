@@ -289,3 +289,7 @@ export function subjectParticle(name) {
   if (/[A-Za-z]/.test(ch)) return LETTER_I.includes(ch.toUpperCase()) ? "i" : "ga";
   return "ga";
 }
+
+// Object particle (을 / 를) for "{check}을 확인했어요" (Jack, 2026-11-03: one check ran, option (b), the particle matched
+// to the word in front of it). 을 follows a final consonant and 를 does not: the same reading as 이 / 가.
+export const objectParticle = (name) => (subjectParticle(name) === "i" ? "eul" : "reul");

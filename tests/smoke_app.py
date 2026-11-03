@@ -495,7 +495,10 @@ HIDDEN_B = ["기대 +", "적정 기대수익", "세후 기대수익", "기대수
             "비중을 줄이는 효과가 가장 커요", "더 나눠 담으면", "비중만 고르게 나눠도", "내 그릇에 맞는 베타를 지켰어요",
             "할 일의 전부예요", "목표까지 갈 수 있을까요", "내 수익은 어디서 나오나요", "원금을 지킬 확률", "원금을 지킬 수 있을까",
             "손실로 끝날 확률", "목표 달성 확률", "보상받지 못한 변화", "값을 치르고 산 위험", "위험을 줄이셨네요",
-            "유지하는 것도 훌륭한 선택", "NaN"]
+            "유지하는 것도 훌륭한 선택",
+            # v18.4 (Jack 2026-11-03): 기대수익으로 만든 나머지 예측 — VaR·CVaR·2008년급 줄과 그 설명, 미국 매매차익 세금
+            "나쁜 해 (하위 5% 경계", "그보다 나쁠 때 평균", "2008년급 (시장", "꼬리가 두꺼워요", "이 금액들을 보고도", "해외주식 양도소득세",
+            "NaN"]
 # ('초록 구간 = 내 프로필의 목표' 는 남아요: 분산·업종 계기에는 목표 구간이 그대로 있어요. β·σ 계기에서만 구간을 지워요.)
 HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax return", "Fair E(r)", "Portfolio health", "health score",
                "Beta above target", "Beta below target", "Volatility over ceiling", "All gauges green", "remaining budget",
@@ -503,7 +506,9 @@ HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax retur
                "Raise cash to", "odds of keeping your principal", "Will the principal survive", "Chance of ending in loss",
                "Chance of reaching the goal", "Same stocks, evened weights", "helps most", "Three more non-overlapping",
                "Beta matches your capacity", "uncompensated change", "risk you actually got paid for", "You cut risk",
-               "holding steady is a fine choice", "NaN"]
+               "holding steady is a fine choice",
+               "Bad year (5% VaR)", "Average beyond it (CVaR)", "2008-scale (market", "fatter tails", "stay the course — which",
+               "Foreign capital gains", "NaN"]
 TEAL, TEAL_SOFT, INK = "rgb(46, 158, 143)", "rgb(228, 244, 241)", "rgb(28, 43, 69)"   # src/tokens.js (C.teal, C.tealSoft, C.ink)
 
 
@@ -594,6 +599,7 @@ def scene_option_b(R, files):
         open_all(("내가 잘하고 있는 것", "내 위험은 보상받고 있나요?", "나는 무엇을 들고 있나요?", "폭락하면 얼마나 잃나요?",
                   "시장을 이길 수 있을까요?", "직접 실험해볼까요?"), "종목별로 뜯어보기")
         see(page, "2026-10-01")                 # 심어 둔 지난 점검과 비교 중
+        see(page, "내 종목들의 3년 최대낙폭")      # 폭락 섹션: 지난 3년 실제 값은 남아요 (v18.4)
         shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"③ 진단에 보이면 안 되는 문구: {shown}"
         colors()
@@ -616,6 +622,7 @@ def scene_option_b(R, files):
     def export_ko():
         stage("④ 내보내기")
         see(page, "예상 세금")
+        see(page, "해외 배당 원천징수")             # 배당 세금 줄은 남아요 (v18.4: 미국 매매차익 추정 줄만 빠져요)
         shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"④ 내보내기에 보이면 안 되는 문구: {shown}"
     R.check(page, "B안", "④ 내보내기: 세후·세전 기대수익 없음", export_ko)
@@ -638,6 +645,49 @@ def scene_option_b(R, files):
         bad += hidden_shown(body(), HIDDEN_B_EN)
         assert not bad, f"영어 화면에 보이면 안 되는 문구: {bad}"
     R.check(page, "B안", "영어 첫 화면·②③④: 판정·조언·기대수익·건강 점수 없음", english)
+    ctx.close(); srv.shutdown()
+
+
+def scene_simple_no_forecast(R, files):
+    """성향 테스트(간단 모드, src/simple.jsx)의 '뱁이의 진단'(저장해 둔 마지막 단계)에서 기대수익으로 만든 '아주 나쁜 해' 줄과 '10년 뒤 전망' 카드가 없어요
+    (B안, v18.4 · Jack 2026-11-03). 위험 수준 카드와 다른 카드는 그대로예요."""
+    saved = {"step": 6, "ans": {"goal": "grow", "horizon": 10, "crash": "hold", "emergency": "enough"}, "eq": 60, "krShare": 0.5,
+             "goldOn": True, "amountMw": 1000}
+    srv, ctx, page, _ = R.open(build_site(files), local={"baepsae_v9_seen": "1", "baepsae_v11_simple": json.dumps(saved, ensure_ascii=False)})
+
+    def run():
+        close_welcome(page, "시작하기")
+        page.get_by_text("성향 테스트로 시작", exact=True).click()
+        see(page, "뱁이의 진단")
+        see(page, "지금 위험 수준")
+        see(page, "잘하고 있는 점")
+        see(page, "더 깊이 보고 싶다면")
+        shown = hidden_shown(page.locator("body").inner_text(),
+                             ["10년 뒤 전망", "아주 나쁜 해에는", "아쉬운 경우", "가운데쯤", "10년 두었을 때", "NaN"])
+        assert not shown, f"성향 테스트 결과에 보이면 안 되는 문구: {shown}"
+    R.check(page, "B안", "성향 테스트 '뱁이의 진단': 아주 나쁜 해 줄 · 10년 뒤 전망 없음, 다른 카드는 그대로", run)
+    ctx.close(); srv.shutdown()
+
+
+def scene_foreign_issuer(R, files):
+    """해외 기업(종목코드 9…): 파이프라인이 외화일 수 있는 DART 금액을 비우면(v17.5.2), 기업분석의 재무 흐름 자리에
+    Jack 이 정한 줄 "외화로 작성된 재무제표라 아직 보여 드리지 않아요." 가 보여요 (2026-11-03). 국내 기업의 빈 칸 문구는 그대로예요."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
+    cos = [c for c in f["corp.json"]["companies"] if str(c.get("t", "")).startswith("9") and len(str(c["t"])) == 6 and names.get(c["t"])]
+    assert cos, "시험할 해외 기업(9…)이 데이터에 없어요"
+    co = cos[0]
+    co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
+    srv, ctx, page, _ = R.open(build_site(f))
+
+    def run():
+        search(page, co["t"], co["t"])
+        page.locator("button", has_text=co["t"]).first.click()
+        page.get_by_text("기업분석에서 자세히 보기", exact=True).first.click()
+        see(page, "외화로 작성된 재무제표라 아직 보여 드리지 않아요.")
+        body = page.locator("body").inner_text()
+        assert "파이프라인이 사업보고서를 못 찾은 종목이에요" not in body and "NaN" not in body, "해외 기업에 국내용 빈 칸 문구 또는 NaN"
+    R.check(page, "해외 기업", f"{co['t']} {names[co['t']]}: 재무 흐름 자리에 '외화로 작성된 재무제표라…'", run)
     ctx.close(); srv.shutdown()
 
 
@@ -796,7 +846,7 @@ def main():
                   ("NaN", lambda: scene_nan(R, fresh)),
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)),
+                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:

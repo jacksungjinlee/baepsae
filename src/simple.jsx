@@ -5,6 +5,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { Bird, DEFAULT_SETTINGS, store, normCdf } from "./detail.jsx";
+import { SHOW_ER } from "./flags.js";
 
 const KEY_SIMPLE = "baepsae_v11_simple";
 const fmtMw = (mw) => {
@@ -354,10 +355,12 @@ export default function SimpleApp({ onGraduate, onExit }) {
           <Ic name="alert" size={17} color={C.sand} /><span style={{ fontSize: 14.5, fontWeight: 800 }}>지금 위험 수준</span>
         </div>
         <RiskScale volP={M.volP} />
-        <div style={{ fontSize: 13.5, color: C.sub, lineHeight: 1.7, marginTop: 12 }}>
-          아주 나쁜 해에는 {fmtMw(amountMw)}이 <b style={{ color: C.ink }}>{fmtMw(Math.max(badWon, 0))}</b> 근처까지 내려갈 수 있어요.
-          그 화면을 보고도 계획대로 갈 수 있는지가 기준이에요.
-        </div>
+        {SHOW_ER && (   /* '아주 나쁜 해' = 기대수익 − 2σ: 기대수익으로 만든 예측이라 꺼 둬요 (B안, v18.4) */
+          <div style={{ fontSize: 13.5, color: C.sub, lineHeight: 1.7, marginTop: 12 }}>
+            아주 나쁜 해에는 {fmtMw(amountMw)}이 <b style={{ color: C.ink }}>{fmtMw(Math.max(badWon, 0))}</b> 근처까지 내려갈 수 있어요.
+            그 화면을 보고도 계획대로 갈 수 있는지가 기준이에요.
+          </div>
+        )}
         <div style={{ fontSize: 12, color: C.faint, marginTop: 8, lineHeight: 1.6 }}>
           참고로, 위험 0이 목표가 아니에요. 위험을 전혀 안 지면 돈이 자라지도 않아요. 내가 견딜 수 있는 만큼만 지는 게 목표예요.
         </div>
@@ -366,22 +369,24 @@ export default function SimpleApp({ onGraduate, onExit }) {
         ))}
       </SCard>
 
-      <SCard style={{ marginTop: 10 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-          <Ic name="trend" size={17} color={C.blue} /><span style={{ fontSize: 14.5, fontWeight: 800 }}>10년 뒤 전망 (딱 떨어지는 답은 없어요)</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
-          {[{ ko: "아쉬운 경우", v: M.p10, col: C.sub }, { ko: "가운데쯤", v: M.p50, col: C.blue }, { ko: "좋은 경우", v: M.p90, col: C.teal }].map((b) => (
-            <div key={b.ko} style={{ border: HAIR, borderRadius: RAD.card, padding: "12px 6px" }}>
-              <div style={{ fontSize: 11, color: C.faint }}>{b.ko}</div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: b.col, marginTop: 4 }}>{fmtMw(amountMw * b.v)}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize: 12, color: C.faint, marginTop: 10, lineHeight: 1.6 }}>
-          {fmtMw(amountMw)}을 10년 두었을 때의 대략적인 범위예요. 미래는 넓은 범위로만 말할 수 있고, 그게 정직한 답이에요.
-        </div>
-      </SCard>
+      {SHOW_ER && (   /* 10년 뒤 전망: 기대수익으로 만든 예측이라 꺼 둬요 (B안, v18.4) */
+        <SCard style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <Ic name="trend" size={17} color={C.blue} /><span style={{ fontSize: 14.5, fontWeight: 800 }}>10년 뒤 전망 (딱 떨어지는 답은 없어요)</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+            {[{ ko: "아쉬운 경우", v: M.p10, col: C.sub }, { ko: "가운데쯤", v: M.p50, col: C.blue }, { ko: "좋은 경우", v: M.p90, col: C.teal }].map((b) => (
+              <div key={b.ko} style={{ border: HAIR, borderRadius: RAD.card, padding: "12px 6px" }}>
+                <div style={{ fontSize: 11, color: C.faint }}>{b.ko}</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: b.col, marginTop: 4 }}>{fmtMw(amountMw * b.v)}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: C.faint, marginTop: 10, lineHeight: 1.6 }}>
+            {fmtMw(amountMw)}을 10년 두었을 때의 대략적인 범위예요. 미래는 넓은 범위로만 말할 수 있고, 그게 정직한 답이에요.
+          </div>
+        </SCard>
+      )}
 
       <SCard style={{ marginTop: 14, background: C.blueSoft, borderColor: C.blue + "33" }}>
         <div style={{ fontSize: 14.5, fontWeight: 800 }}>더 깊이 보고 싶다면</div>

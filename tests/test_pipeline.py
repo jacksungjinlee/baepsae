@@ -977,3 +977,395 @@ def test_jacks_group_decisions_2026_11_01():
     assert F.ksic_group("64992", TABLES["kmap"]) == "holding"
     names = {k: v["name"] for k, v in TABLES["groups"].items()}
     assert (names["furniture"], names["logistics"], names["services"]) == ("가구·기타 제조", "물류·운송", "기업 서비스")
+
+
+# ── v17.5.2: 미국 우선주·예탁증서 · 한국 종목의 미국 상장분 · DART 연결 끊김 · 쓸 수 없는 매출의 g3 ─────────
+def us_rows(n_common, no_cap=(), extra=()):
+    """회사 주식 n_common 개(시가총액·거래대금 있음) + 시가총액 없는 티커들 + 그 밖의 줄."""
+    rows = [{"t": f"C{i:03d}", "price": 10.0, "cap": 5.0, "val": 100.0, "etf": False} for i in range(n_common)]
+    rows += [{"t": t, "price": 25.0, "val": 900.0, "etf": False} for t in no_cap]
+    return rows + list(extra)
+
+
+# 2026-11-03 야후가 실제로 준 이름 (짧은 이름은 31자에서 잘려요). STRC 의 긴 이름은 'Strategy Inc' 뿐이고 종류는 모두 EQUITY 예요.
+YAHOO_2026_11_03 = {
+    "STRC": {"shortName": "Strategy Inc - Variable Rate Se", "longName": "Strategy Inc", "quoteType": "EQUITY"},
+    "STRF": {"shortName": "Strategy Inc - 10.00% Series A ", "longName": "Strategy Inc", "quoteType": "EQUITY"},
+    "STRK": {"shortName": "Strategy Inc - 8.00% Series A P", "longName": "Strategy Inc", "quoteType": "EQUITY"},
+    "GOOGM": {"shortName": "Alphabet Inc. - Depositary Shar", "quoteType": "EQUITY", "longName":
+              "Alphabet Inc. Depositary Shares representing a 1/20th Interest in a Share of Series A Mandatory Convertible Preferred Stock"},
+    # 리뷰(2026-11-03)가 찾은 두 우선주: HBANL 은 야후 이름이 회사 이름뿐이라 목록의 이름(listName)으로만, AGNCL 은 31자에서 잘린 '- Deposit'
+    "HBANL": {"shortName": "Huntington Bancshares Incorpora", "longName": "Huntington Bancshares Incorporated", "quoteType": "EQUITY",
+              "listName": "Huntington Bancshares Incorporated - Depositary Shares Each Representing a 1/40th Interest in a Share of "
+                          "6.875% Series J Non-Cumulative Perpetual Preferred Stock"},
+    "AGNCL": {"shortName": "AGNC Investment Corp. - Deposit", "longName": "AGNC Investment Corp.", "quoteType": "EQUITY"},
+    # 남아야 하는 진짜 회사 주식: ADR · 트래킹 주식(' - Ser…') · 이름에 Preferred 가 든 은행 · 다섯 글자 티커 · 클래스 주식
+    "TSM": {"shortName": "Taiwan Semiconductor Manufactur", "quoteType": "EQUITY",
+            "longName": "Taiwan Semiconductor Manufacturing Company Limited American Depositary Shares"},
+    "FWONK": {"shortName": "Liberty Media Corporation - Ser", "longName": "Liberty Media Corporation - Series C Liberty Formula One",
+              "quoteType": "EQUITY"},
+    "PFBC": {"shortName": "Preferred Bank", "longName": "Preferred Bank", "quoteType": "EQUITY"},
+    "RYAAY": {"shortName": "Ryanair Holdings plc", "quoteType": "EQUITY",
+              "listName": "Ryanair Holdings plc - American Depositary Shares, each representing two Ordinary Shares"},
+    "BIDU": {"shortName": "Baidu, Inc. - American Deposit", "quoteType": "EQUITY", "listName": "Baidu, Inc. ADS"},   # 잘린 ADR 이름
+    "AAPL": {"shortName": "Apple Inc.", "longName": "Apple Inc.", "quoteType": "EQUITY", "listName": "Apple Inc. Common Stock"},
+    "GOOGL": {"shortName": "Alphabet Inc.", "quoteType": "EQUITY"},
+    "BRK-B": {"shortName": "Berkshire Hathaway Inc. New", "quoteType": "EQUITY"},
+}
+
+
+def test_us_preferred_reason_by_name_ticker_and_quote_type():
+    def why(t, info=None):
+        info = info if info is not None else YAHOO_2026_11_03.get(t, {})
+        return F.us_preferred_reason(t, (info.get("shortName"), info.get("longName"), info.get("listName")), info.get("quoteType"))
+    assert why("STRC") == "이름 'Variable Rate'"
+    assert why("STRF") == "이름 '10.00% Series'" and why("STRK") == "이름 '8.00% Series'"
+    assert why("GOOGM") == "이름 'Depositary Shares'"
+    assert why("GOOGM", {"longName": YAHOO_2026_11_03["GOOGM"]["longName"]}) == "이름 'Preferred Stock'"
+    assert why("HBANL") == "이름 '6.875% Series'" and why("AGNCL") == "이름 'Depositary Shares'"
+    assert why("HBANL", {k: v for k, v in YAHOO_2026_11_03["HBANL"].items() if k != "listName"}) is None   # 목록 이름이 없으면 못 잡아요
+    assert why("XPFD", {"shortName": "X Corp 6.5% Pfd"}) == "이름 'Pfd'"
+    assert why("XNOTE", {"shortName": "X Corp 7.75% Notes due 2029"}) == "이름 'Notes due'"
+    assert why("BAC-PL", {"shortName": "Bank of America Corporation"}) == "티커"           # 야후 우선주 티커 꼴
+    assert why("ABCDP", {"shortName": "ABCD Inc"}) == "티커" and why("GOOGN", {}) == "티커"   # 나스닥 다섯째 글자 P·N
+    assert why("XIDX", {"shortName": "X", "quoteType": "INDEX"}) == "야후 종류 INDEX"
+    for t in ("TSM", "FWONK", "PFBC", "RYAAY", "BIDU", "AAPL", "GOOGL", "BRK-B"):
+        assert why(t) is None, t
+    for qt in ("EQUITY", "ETF", "MUTUALFUND", None):
+        assert why("AAPL", {"shortName": "Apple Inc.", "quoteType": qt}) is None, qt
+
+
+def test_us_preferred_and_depositary_shares_are_left_out(capsys):
+    # 티커·이름·야후 종류로만 봐요 (Jack, 2026-11-03). 시가총액이 없다는 것만으로는 빼지 않아요.
+    infos = dict(YAHOO_2026_11_03)
+    extra = [{"t": t, "nk": i["shortName"], "ne": i["shortName"], "price": 25.0, "val": 900.0, "etf": False}
+             for t, i in YAHOO_2026_11_03.items()]
+    extra += [{"t": "XCAP", "nk": "Real Company Inc.", "price": 30.0, "val": 500.0, "etf": False},   # 진짜 회사, 시가총액만 빠짐
+              {"t": "SPY", "nk": "SPDR S&P 500 ETF Trust", "price": 500.0, "val": 9e4, "etf": True},
+              {"t": "PFFX", "nk": "X Preferred Stock ETF", "price": 20.0, "val": 50.0, "etf": True},  # ETF 는 보지 않아요
+              {"t": "NOINFO", "price": 3.0, "etf": False}]
+    us = us_rows(740, extra=extra)
+    found = F.us_preferred_like(us, infos)
+    pref = ["AGNCL", "GOOGM", "HBANL", "STRC", "STRF", "STRK"]
+    assert [t for t, _ in found] == pref, found
+    out, left = F.clean_us_list(us, frozenset(), {}, infos)
+    assert left == {"preferred": pref, "krListing": []}                                     # data.json usLeftOut (검증이 세요)
+    kept = {r["t"] for r in out}
+    assert set(pref).isdisjoint(kept) and len(out) == len(us) - len(pref)
+    assert {"XCAP", "SPY", "PFFX", "NOINFO", "TSM", "FWONK", "PFBC", "RYAAY", "BIDU", "AAPL", "GOOGL", "BRK-B", "C000"} <= kept
+    log = capsys.readouterr().out
+    assert "STRC(이름 'Variable Rate')" in log and "GOOGM(이름 'Depositary Shares')" in log      # 뺀 목록을 이유와 함께 남겨요
+    assert "시가총액이 없는 미국 회사 주식" in log and "XCAP" in log                                # 빼지 않은 빈 칸도 크게 알려요
+
+
+def test_us_rows_without_market_cap_are_never_left_out_as_preferred():
+    # 야후가 시가총액을 하나도 안 보낸 날에도 회사 주식은 그대로 남아요 (검증의 '미국 시가총액 채움'이 실패로 잡아요)
+    us = us_rows(0, [f"N{i:02d}" for i in range(50)])
+    assert F.us_preferred_like(us) == []
+    out, left = F.clean_us_list(us, frozenset(), {})
+    assert len(out) == 50 and left["preferred"] == []
+
+
+def test_us_preferred_patterns_match_the_2_0_engine():
+    with open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8") as f:
+        js = f.read()
+    for name in ("US_PREF_NAME", "US_DEPOSITARY", "US_ADR", "US_PREF_TICKER"):
+        m = re.search(rf"export const {name} = /(.+)/(i?);\n", js)
+        py = getattr(F, name)
+        assert m and m.group(1) == py.pattern, (name, m and m.group(1), py.pattern)
+        assert bool(m.group(2)) == bool(py.flags & re.I), name
+    assert "?<" not in js, "앞쪽 보기(lookbehind)는 예전 아이폰에서 앱 전체를 멈춰요"
+    assert "US_NO_CAP_MAX_SHARE" not in js and not hasattr(F, "US_NO_CAP_MAX_SHARE")
+
+
+def test_us_listing_of_a_korean_company_is_dropped(capsys):
+    dups = F.load_us_kr_duplicates()
+    us = us_rows(10, extra=[{"t": "SKHY", "nk": "SK hynix Inc.", "price": 500.0, "cap": 1400.0, "val": 9e4, "etf": False}])
+    out, left = F.clean_us_list(us, frozenset({"000660", "005930"}), dups)
+    assert "SKHY" not in {r["t"] for r in out} and len(out) == 10 and left == {"preferred": [], "krListing": ["SKHY"]}
+    assert "SKHY(=000660)" in capsys.readouterr().out
+
+
+def test_mapped_us_ticker_stays_when_the_korean_stock_is_missing(capsys):
+    # 국내 목록에서 000660 이 빠진 날 SKHY 까지 빼면 SK하이닉스가 통째로 사라져요 → 남기고 크게 알려요
+    us = us_rows(10, extra=[{"t": "SKHY", "price": 500.0, "cap": 1400.0, "val": 9e4, "etf": False}])
+    out, left = F.clean_us_list(us, frozenset({"005930"}), F.load_us_kr_duplicates())
+    assert "SKHY" in {r["t"] for r in out} and left["krListing"] == []
+    log = capsys.readouterr().out
+    assert "!!" in log and "SKHY(≠000660)" in log
+
+
+def test_us_kr_duplicate_table_is_reviewed_and_strict(tmp_path):
+    dups = F.load_us_kr_duplicates()
+    assert dups["SKHY"][0] == "000660"
+    assert all(len(k) == 6 and why for k, why in dups.values())
+    assert "CPNG" not in dups                       # 쿠팡은 미국 회사예요 (한국 상장 종목 없음) — 중복이 아니에요
+    p = tmp_path / "d.csv"
+    for bad in ("ticker,krx,reason\nskhy,000660,소문자\n", "ticker,krx,reason\nSKHY,660,코드 짧음\n",
+                "ticker,krx,reason\nSKHY,000660,\n", "ticker,krx,reason\nSKHY,000660,a\nSKHY,000660,b\n"):
+        p.write_text(bad, encoding="utf-8")
+        with pytest.raises(RuntimeError):
+            F.load_us_kr_duplicates(str(p))
+
+
+class _Answer:
+    """가짜 DART 응답 (bad=True 면 JSON 이 아닌 응답 — 서버는 답했어요)."""
+    def __init__(self, js=None, bad=False):
+        self.js, self.bad, self.status_code = js, bad, 200
+
+    def json(self):
+        if self.bad:
+            raise ValueError("JSON 아님")
+        return self.js
+
+
+def fake_requests(monkeypatch, plan):
+    """requests.get 을 가짜로: plan(n) 이 n 번째 호출의 결과 (예외면 던져요). 호출 기록을 돌려줘요."""
+    calls = []
+
+    def get(url, params=None, timeout=None):
+        calls.append(url)
+        x = plan(len(calls))
+        if isinstance(x, BaseException):
+            raise x
+        return x
+    monkeypatch.setattr(F.requests, "get", get)
+    return calls
+
+
+def test_dart_stops_calling_after_30_network_failures_in_a_row(tmp_path, monkeypatch, capsys):
+    # 2026-11-02 01:44–03:40 KST: 모든 호출이 연결 시간 초과 → 2시간을 기어갔어요
+    calls = fake_requests(monkeypatch, lambda n: F.requests.exceptions.ConnectTimeout("connect timeout"))
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    for _ in range(100):
+        assert c.get("list.json", {}) is None
+    assert len(calls) == F.DART_DOWN_AFTER == 30
+    assert c.down == "ConnectTimeout" and c.skipped_down == 70
+    assert "!! DART 연결 안 됨: 연속 30회 실패" in c.summary()
+    assert "DART 연결 안 됨" in capsys.readouterr().out
+    # 멈춘 뒤에도 예전에 찾은 값(보관본)은 그대로 써요 — 네트워크 호출 없이
+    c.entries["C1|2026|11012|CFS"] = {"st": "000", "at": "2026-01-01", "d": {"rev": 7.0}}   # 90일 지나 재확인 대상
+    left = c.revalidate_left
+    assert c.report("x", "C1", 2026, "11012", "CFS", F.parse_dart_quarter) == {"rev": 7.0}
+    assert c.revalidated == 0 and c.revalidate_left == left and "재확인" not in c.summary()   # 멈춘 동안은 재확인으로 세지 않아요
+    assert c.report("x", "C2", 2026, "11012", "CFS", F.parse_dart_quarter) is None
+    assert "C2|2026|11012|CFS" not in c.entries          # '없음'으로 저장하지 않아요 (다음 실행이 다시 물어봐요)
+    assert len(calls) == 30
+    assert c.raise_if_fatal() is None                     # 실행은 이어가고, 빠진 새 값은 검증의 채움 검사가 잡아요
+
+
+def test_dart_down_counter_resets_when_the_server_answers(tmp_path, monkeypatch):
+    def plan(n):
+        if n in (30, 60):
+            return _Answer({"status": "000", "list": []}) if n == 30 else _Answer(bad=True)   # 정상 답 · JSON 아닌 답
+        return F.requests.exceptions.ReadTimeout("read timeout") if n < 30 else F.requests.exceptions.ConnectionError("reset")
+    calls = fake_requests(monkeypatch, plan)
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    for _ in range(89):                                   # 29 실패 · 답 · 29 실패 · 답 · 29 실패
+        c.get("list.json", {})
+    assert not c.down and len(calls) == 89 and c.net_streak == 29
+    c.get("list.json", {})                                # 30번째 연속 실패
+    assert c.down == "ConnectionError"
+    c.get("list.json", {})
+    assert len(calls) == 90
+
+
+def test_dart_status_codes_never_count_as_network_failures(tmp_path, monkeypatch):
+    # '아직 없음'(013)·점검(800) 같은 상태 코드는 서버가 답한 거예요: 세지 않고 오히려 0 으로 돌려요
+    def plan(n):                                          # 29 번 시간 초과 · 상태 코드 답 · 29 번 시간 초과 · …
+        if n % 30:
+            return F.requests.exceptions.ConnectTimeout("t")
+        return _Answer({"status": "013" if n % 60 else "800"})
+    calls = fake_requests(monkeypatch, plan)
+    c = F.DartClient("k", today=dt.date(2026, 10, 31), path=str(tmp_path / "c.json.gz"))
+    for _ in range(300):
+        c.get("list.json", {})
+    assert not c.down and len(calls) == 300 and (c.status["013"], c.status["800"]) == (5, 5)
+    calls2 = fake_requests(monkeypatch, lambda n: _Answer({"status": "013"}))
+    for _ in range(100):
+        c.get("list.json", {})
+    assert not c.down and len(calls2) == 100
+
+
+@pytest.mark.parametrize("rev, g3, ok", [
+    ([0.0, 0.0, 0.0], 13.0, False),              # 코오롱티슈진 (2026-11-03 발행본)
+    ([0.0, 0.0, 0.0], -46.6, False),             # 네오이뮨텍
+    ([0.1, 0.0, 0.0], 813.5, False),             # 프레스티지바이오파마: 0.0 으로 보이는 전전기 매출 대비 연평균
+    ([21.7, 275.1, 0.0], -92.1, True),           # 에이프릴바이오: 전전기 0 → 전기 대비 1년 성장
+    ([481.6, 104.7, 0.0], 359.8, True),          # 뉴온
+    ([3008709.0, 2589355.0, 2702900.0], 5.5, True),
+    ([70.6, 19.0, 0.1], 2167.6, True),           # 전전기 0.1억원: 발행되는 값으로 보이니 써요
+    ([100.0, 80.0, None], 25.0, True),           # 전전기 빈 칸 → 1년 성장
+    ([100.0, 80.0, -3.0], 25.0, True),           # 전전기 음수 → 1년 성장
+    ([100.0, 0.0, None], 999.0, False),
+    ([-5.0, 10.0, None], -150.0, False),         # 음수 매출
+    ([50.0, 40.0, 0.0], 400.0, False),           # 전전기 0.0 인데 1년 성장(25%)으로 설명 안 됨 → 아주 작은 값 대비였던 것
+    (None, 10.0, False),
+    ([100.0, 80.0, 60.0], None, False),
+    ([100.0, 80.0, 60.0], float("nan"), False),
+])
+def test_g3_needs_usable_revenue(rev, g3, ok):
+    assert F.g3_usable(rev, g3) is ok
+
+
+def test_g3_without_usable_revenue_is_not_published(monkeypatch, tmp_path, capsys):
+    import copy
+    c = F.DartClient("k", mode="cache", today=dt.date(2026, 11, 2), path=str(tmp_path / "c.json.gz"))
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {"950160": "C1", "005930": "C2"})
+    monkeypatch.setattr(F, "dart_quarter", lambda *a, **k: None)
+    fins = {"C1": {"debt": 562.0, "opm": -432.7, "g3": 13.0,
+                   "_fin": {"rev": [0.0, 0.0, 0.0], "op": [-0.2, -0.2, -0.2], "ni": [-1.4, -0.2, -0.1], "eq": 0.4}},
+            "C2": {"debt": 27.0, "g3": 5.5,
+                   "_fin": {"rev": [3008709.0, 2589355.0, 2702900.0], "op": [1.0, 1.0, 1.0], "ni": [1.0, 1.0, 1.0]}}}
+    monkeypatch.setattr(F, "dart_financials", lambda client, corp, yr: copy.deepcopy(fins[corp]) if yr == 2025 else {})
+    monkeypatch.setattr(F, "dart_dividend", lambda client, corp, yr: {})
+    kr = [{"t": "950160", "nk": "코오롱티슈진", "cap": 1.2}, {"t": "005930", "nk": "삼성전자", "cap": 1300.0}]
+    _, fin = F.enrich_with_dart(kr, c)
+    assert "g3" not in kr[0] and kr[0]["debt"] == 562.0 and fin["950160"]["rev"] == [0.0, 0.0, 0.0]
+    assert kr[1]["g3"] == 5.5                             # 쓸 수 있는 매출이면 값은 그대로
+    corp = F.build_corp([dict(s, cls="kr", price=1.0) for s in kr], fin, "2026-11-02")
+    assert corp["companies"][0]["g3"] is None and corp["companies"][1]["g3"] == 5.5
+    assert "비운 곳 1: 950160 코오롱티슈진" in capsys.readouterr().out
+
+
+# ── v17.5.2: 공시 목록을 못 받으면 지난 발행본의 국민연금·내부자 항목을 자기 날짜 그대로 ─────────
+PREV_DISC = {"asOf": "2026-10-30", "newest": "2026-10-28", "listOk": True,
+             "insider": [{"rc": "R1", "d": "20261020", "t": "005930", "nk": "삼성전자", "q": -10},
+                         {"rc": "R0", "d": "20260601", "t": "005930", "nk": "삼성전자", "q": 5}],          # 90일 지난 것
+             "nps": [{"d": "20261028", "t": "005930", "nk": "삼성전자", "s": "semi", "cap": 1300.0, "rt": 7.3, "chg": 0.2},
+                     {"d": "20260701", "t": "035420", "nk": "NAVER", "s": "platform", "cap": 30.0, "rt": 9.1, "chg": 1.0}]}
+
+
+class FakeDisc:
+    """가짜 DART: list.json 은 list_ok 일 때만 답하고 000660 의 국민연금 보고 하나를 알려요."""
+    def __init__(self, list_ok=True, down=None, major_ok=True):
+        self.list_ok, self.down, self.major_ok = list_ok, down, major_ok
+
+    def get(self, endpoint, params):
+        if endpoint == "list.json":
+            return {"status": "000", "total_count": 1, "list": [{"report_nm": "주식등의대량보유상황보고서", "flr_nm": "국민연금공단",
+                                                                 "corp_code": "C2"}]} if self.list_ok else None
+        if endpoint == "majorstock.json" and self.major_ok:
+            return {"status": "000", "list": [{"repror": "국민연금공단", "rcept_dt": "2026-11-01", "stkrt": "7.10", "stkrt_irds": "0.50"}]}
+        return None
+
+    def raise_if_fatal(self):
+        pass
+
+
+def run_disc(monkeypatch, tmp_path, client):
+    p = tmp_path / "disc.json"
+    p.write_text(json.dumps(PREV_DISC, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(F, "OUT_DISC", str(p))
+    kr = [{"t": "005930", "nk": "삼성전자", "cls": "kr", "s": "semi", "cap": 1300.0, "price": 1.0},
+          {"t": "000660", "nk": "SK하이닉스", "cls": "kr", "s": "semi", "cap": 1000.0, "price": 1.0}]
+    return F.fetch_disclosures(kr, {"005930": "C1", "000660": "C2"}, dt.date(2026, 11, 2), client)
+
+
+def test_failed_disclosure_list_keeps_previous_entries_with_their_dates(monkeypatch, tmp_path, capsys):
+    out = run_disc(monkeypatch, tmp_path, FakeDisc(list_ok=False))
+    assert out["listOk"] is False
+    assert out["nps"] == PREV_DISC["nps"][:1]                     # 날짜 그대로 · 90일 지난 NAVER 는 빠져요
+    assert [r["rc"] for r in out["insider"]] == ["R1"] and out["insider"][0]["d"] == "20261020"
+    assert out["newest"] == "2026-10-28" and out["asOf"] == "2026-11-02"      # 화면 날짜는 가장 최근 공시일 (오늘 아님)
+    assert "!! 공시 목록을 받지 못해 지난 발행본의 2건을 그대로 둬요 (최근 공시 2026-10-28)" in capsys.readouterr().out
+
+
+def test_successful_disclosure_list_replaces_previous_nps(monkeypatch, tmp_path, capsys):
+    out = run_disc(monkeypatch, tmp_path, FakeDisc())
+    assert out["listOk"] is True
+    assert [(r["t"], r["d"]) for r in out["nps"]] == [("000660", "20261101")]   # 지난 삼성전자 항목은 다시 싣지 않아요
+    assert out["newest"] == "2026-11-01" and "그대로 둬요" not in capsys.readouterr().out
+
+
+def test_dart_stop_during_disclosures_keeps_previous_nps(monkeypatch, tmp_path, capsys):
+    out = run_disc(monkeypatch, tmp_path, FakeDisc(down="ConnectTimeout", major_ok=False))
+    assert [(r["t"], r["d"]) for r in out["nps"]] == [("005930", "20261028")]
+    assert "!! DART 연결이 끊겨 지난 발행본의 2건을 그대로 둬요 (최근 공시 2026-10-28)" in capsys.readouterr().out
+
+
+def test_carry_prev_nps_prefers_fresh_and_keeps_dates():
+    fresh = [{"t": "005930", "d": "20261101"}]
+    prev = [{"t": "005930", "d": "20261028"}, {"t": "000660", "d": "20261020"}, {"t": "035420", "d": "20260701"}]
+    got, n = F.carry_prev_nps(fresh, prev, "20260805")
+    assert got == [{"t": "005930", "d": "20261101"}, {"t": "000660", "d": "20261020"}] and n == 1
+
+
+# ── v17.5.2 항목 7 (Jack 승인 2026-11-03): 해외 기업(9…)의 원화가 아닐 수 있는 금액 ─────────
+def kr_trio():
+    """해외 기업 둘(코오롱티슈진: 배당 없음 · GRT: 배당 있음, 2026-11-03 발행본 값)과 국내 기업 하나(삼성전자) — DART·KRX 값이 다 붙은 상태."""
+    def one(t, nk, pbr, per, dps, dy, dps3):
+        return {"t": t, "nk": nk, "cls": "kr", "s": "bio", "price": 13900.0, "cap": 1.181, "shr": 84970160, "mom": -68.9,
+                "vol": 88.1, "per": per, "pbr": pbr, "eps": -2.0, "bps": 2.0, "dps": dps, "dps3": dps3, "dy": dy,
+                "roe": -303.2, "opm": -432.7, "debt": 562.0, "g3": 13.0, "fy": 2025}
+    kr = [one("950160", "코오롱티슈진", 9085.27, None, 0.0, 0.0, [0.0, 0.0, 0.0]),
+          one("900290", "GRT", 57.37, 674.9, 50.0, 1.2, [50.0, 0.0, None]),
+          one("005930", "삼성전자", 1.9, 25.0, 1668.0, 2.1, [1668.0, 1444.0, 1416.0])]
+    fin = {t: {"rev": [10000.0, 9000.0, 8000.0], "op": [5.0, 4.0, 3.0], "ni": [-1.4, -0.2, -0.1], "eq": 0.4, "ocf": 1.0,
+               "dep": 1.0, "bor": 1.0, "cash": 1.0, "ca": 1.0, "cl": 2.0, "bq": "2026.2Q"} for t in ("950160", "900290", "005930")}
+    return kr, fin
+
+
+@pytest.mark.parametrize("code, want", [("950160", True), ("900290", True), ("950250", True), ("005930", False),
+                                        ("0126Z0", False), ("095720", False), ("9", False), ("95016", False),
+                                        ("04020000", False), (None, False)])
+def test_foreign_issuer_codes(code, want):
+    assert F.is_foreign_issuer(code) is want
+
+
+def test_foreign_issuer_won_amounts_are_blanked_and_ratios_kept(capsys):
+    kr, fin = kr_trio()
+    before = json.loads(json.dumps(kr[2]))
+    assert F.blank_foreign_dart(kr) == ["950160 코오롱티슈진", "900290 GRT"]
+    F.fill_multiples(kr, fin)
+    F.add_percentiles(kr)
+    k, g, s = kr
+    for x in (k, g):
+        assert not {"per", "pbr", "eps", "bps", "vz"} & set(x)                   # 가치 점수(vz)도 매기지 않아요
+        assert (x["roe"], x["opm"], x["debt"], x["g3"], x["price"], x["cap"]) == (-303.2, -432.7, 562.0, 13.0, 13900.0, 1.181)
+        assert "qz" in x and "pz" in x                           # 통화와 상관없는 값으로 만든 점수는 남아요
+    # 배당 0 = 배당 없음은 어느 통화로도 같은 뜻이라 남겨요 (2.0 의 '무배당 빼기'가 dps === 0 을 봐요). 0 이 아닌 금액만 비워요
+    assert (k["dps"], k["dy"], k["dps3"]) == (0.0, 0.0, [0.0, 0.0, 0.0])
+    assert "dps" not in g and "dy" not in g and g["dps3"] == [None, 0.0, None]
+    assert {key: s[key] for key in before} == before and "vz" in s     # 국내 기업은 그대로
+    corp = {c["t"]: c for c in F.build_corp(kr, fin, "2026-11-02")["companies"]}
+    for t in ("950160", "900290"):
+        c = corp[t]
+        assert c["rev"] == c["op"] == c["ni"] == [None, None, None] and c["eq"] is None and c["dcfReady"] is False
+        assert not {"evE", "evR", "pcf", "bq"} & set(c) and c["pbr"] is None and c["roe"] == -303.2
+        assert c["fl"] == {"cr": 50.0, "l3": 1}                # 재무 신호(유동비율·3년 적자)는 비율·부호라 남겨요
+    assert corp["950160"]["dps"] == 0.0 and corp["900290"]["dps"] is None
+    assert corp["005930"]["rev"] == [10000.0, 9000.0, 8000.0] and corp["005930"]["dcfReady"] is True
+    assert "evR" in corp["005930"] and corp["005930"]["bq"] == "2026.2Q"        # 같은 원값이면 국내 기업엔 배수·TTM 이 붙어요
+    out = capsys.readouterr().out
+    assert "!! 해외 기업 2곳: DART 금액이 원화가 아닐 수 있어 PBR·PER·EPS·배당·금액을 비웠어요" in out and "900290 GRT" in out
+    json.dumps(corp, allow_nan=False)                        # NaN 없음
+
+
+def test_foreign_issuer_is_never_refilled_or_published_with_amounts():
+    # 순서가 바뀌거나 blank_foreign_dart 가 빠져도: fill_multiples 는 해외 기업을 건너뛰고, build_corp 는 금액을 비워요
+    kr, fin = kr_trio()
+    for x in kr:
+        for key in ("per", "pbr", "eps", "bps"):
+            x.pop(key)
+    F.fill_multiples(kr, fin)
+    assert not {"per", "pbr", "eps", "bps"} & set(kr[0]) and kr[2]["pbr"] is not None
+    c = F.build_corp(kr, fin, "2026-11-02")["companies"][0]
+    assert c["rev"] == [None, None, None] and c["dcfReady"] is False and "evR" not in c
+
+
+def test_no_foreign_issuer_leaves_everything_alone(capsys):
+    kr, fin = kr_trio()
+    kr = kr[2:]
+    snap = json.dumps(kr, sort_keys=True)
+    assert F.blank_foreign_dart(kr) == []
+    assert json.dumps(kr, sort_keys=True) == snap and "해외 기업(종목코드 9…): 없음" in capsys.readouterr().out
+
+
+def test_main_blanks_foreign_issuers_before_scores_and_corp_json():
+    # 점수(vz)는 비운 뒤의 PBR 로 매겨야 해요 — 순서가 바뀌면 낡은 PBR 로 점수가 매겨져요
+    import inspect
+    src = inspect.getsource(F.main)
+    i = src.find("blank_foreign_dart(kr)")
+    assert i > 0 and src.count("blank_foreign_dart(") == 1
+    assert i < src.find("add_percentiles(kr)") and i < src.find("build_corp(kr, fin_map")

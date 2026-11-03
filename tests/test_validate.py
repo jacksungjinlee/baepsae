@@ -745,3 +745,108 @@ def test_fixture_has_unique_codes():
     cur, _, _ = good_pair()
     codes = [s["t"] for s in cur["data"]["stocks"]]
     assert len(codes) == len(set(codes))
+
+
+# ── v17.5.2: 미국 시가총액 채움 · 국내 배당 채움 변화 ──
+def us_companies(cur):
+    return [s for s in cur["data"]["stocks"] if s["cls"] == "us" and not s["etf"]]
+
+
+def test_us_market_cap_coverage_drop_fails():
+    # 야후가 시가총액을 안 보낸 날: 파이프라인은 시가총액이 없다는 이유로는 아무것도 빼지 않아요 (Jack, 2026-11-03) → 여기서 실패
+    def blank(c):
+        us = us_companies(c)
+        for s in us[: int(len(us) * 0.06)]:
+            s.pop("cap")
+    fails_on("미국 시가총액 채움 (ETF 빼고)", blank)
+
+
+def test_us_market_cap_coverage_counts_companies_only():
+    cur, prev, final = good_pair()
+    for t in ("SPY", "QQQ"):                                   # ETF 는 시가총액이 없어도 돼요
+        stock(cur, t).pop("cap")
+    cur["data"]["stocks"] += [{"t": f"E{i:03d}", "nk": f"ETF {i}", "ne": f"ETF {i}", "cls": "us", "price": 50.0,
+                               "val": 100.0, "de": "A fund.", "fxu": True, "etf": True} for i in range(40)]   # 2026-11-03: 33개
+    for s in us_companies(cur)[10:13]:                         # 회사 주식 3개 빠짐 (2026-11-03 발행본의 우선주 3개처럼)
+        s["cap"] = None
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "미국 시가총액 채움 (ETF 빼고)" and r[3] == "PASS" for r in rep.rows)
+
+
+def with_dividends(files):
+    for s in kr_of(files):
+        if not s.get("fund"):
+            s["dy"] = 0.0 if s["dps"] == 0 else 2.5
+
+
+@pytest.mark.parametrize("key", ["dps", "dy"])
+def test_korean_dividend_coverage_drop_fails(key):
+    # DART 일부 장애로 배당 표를 못 받으면 주당 배당금·배당수익률이 조용히 비어요
+    cur, prev, final = good_pair()
+    with_dividends(cur)
+    with_dividends(prev)
+    assert not check(cur, prev, final).failed
+    for s in kr_of(cur)[20::8]:                                # 12.4% 비움 (필수 종목은 건드리지 않아요)
+        s.pop(key, None)
+    assert f"국내 {key} 채움 변화" in failed_names(check(cur, prev, final))
+
+
+def test_small_korean_dividend_coverage_dip_passes():
+    cur, prev, final = good_pair()
+    with_dividends(cur)
+    with_dividends(prev)
+    for s in kr_of(cur)[20::20]:                               # 5% 비움 → 통과
+        s.pop("dps", None)
+        s.pop("dy", None)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert {r[0] for r in rep.rows} >= {"국내 dps 채움 변화", "국내 dy 채움 변화"}
+
+
+@pytest.mark.parametrize("left, ok", [({"preferred": [f"P{i}" for i in range(10)], "krListing": []}, True),
+                                      ({"preferred": [f"P{i}" for i in range(11)], "krListing": []}, False),
+                                      ({"preferred": [], "krListing": ["SKHY"]}, True),
+                                      (None, False), ({"krListing": []}, False), ({"preferred": "STRC"}, False)])
+def test_too_many_us_rows_dropped_as_preferred_fails(left, ok):
+    # 이름·티커·야후 종류 규칙이 진짜 회사를 잡기 시작하거나 목록에 우선주가 몰려 들어온 날: 시가총액 채움은 통과해요 → 수로 잡아요
+    cur, prev, final = good_pair()
+    if left is None:
+        cur["data"].pop("usLeftOut")
+    else:
+        cur["data"]["usLeftOut"] = left
+    names = failed_names(check(cur, prev, final))
+    assert ("미국 우선주·예탁증서로 뺀 종목 수" in names) is (not ok), names
+
+
+# ── v17.5.2 항목 7 (Jack 승인 2026-11-03): 해외 기업(9…) ──
+def add_foreign(c, **extra):
+    """2026-11-03 의 코오롱티슈진처럼, 단 원화가 아닐 수 있는 칸은 비운 (파이프라인이 낼) 모양."""
+    s = {"t": "950160", "nk": "코오롱티슈진", "ne": "코오롱티슈진", "cls": "kr", "price": 13900.0, "cap": 1.181, "etf": False,
+         "roe": -303.2, "opm": -432.7, "debt": 562.0, "g3": 13.0, "fy": 2025, "qz": 0, "pz": 11, "mz": 3, "lz": 6}
+    row = {"t": "950160", "nk": "코오롱티슈진", "s": "bio", "price": 13900.0, "cap": 1.181, "per": None, "pbr": None, "eps": None,
+           "bps": None, "dps": None, "dy": None, "dps3": None, "fy": 2025, "roe": -303.2, "debt": 562.0, "eq": None,
+           "rev": [None, None, None], "op": [None, None, None], "ni": [None, None, None], "dcfReady": False}
+    s.update({k: v for k, v in extra.items() if not k.startswith("c_")})
+    row.update({k[2:]: v for k, v in extra.items() if k.startswith("c_")})
+    c["data"]["stocks"].append(s)
+    c["corp"]["companies"].append(row)
+
+
+@pytest.mark.parametrize("extra", [{}, {"dps": 0.0, "dy": 0.0, "dps3": [0.0, 0.0, None], "c_dps": 0.0, "c_dy": 0.0,
+                                         "c_dps3": [0.0, None, None], "c_fl": {"l3": 1, "cr": 35.0}}])
+def test_foreign_issuer_with_blanks_passes(extra):
+    # 배당 0 (= 배당 없음)과 재무 신호(fl)는 통화와 상관없어 있어도 돼요
+    cur, prev, final = good_pair()
+    add_foreign(cur, **extra)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert any(r[0] == "해외 기업(9…) 원화 아닐 수 있는 금액 비움" and r[3] == "PASS" and r[1].startswith("1곳") for r in rep.rows)
+
+
+@pytest.mark.parametrize("extra", [{"pbr": 9085.27}, {"per": 11688.7}, {"eps": -2.0}, {"bps": 2.0}, {"dps": 50.0}, {"dy": 1.2},
+                                   {"dps3": [0.0, 50.0, None]}, {"vz": 0}, {"c_pbr": 9085.27}, {"c_rev": [0.0, 0.0, 0.0]},
+                                   {"c_ni": [-1.4, None, None]}, {"c_eq": 0.4}, {"c_evR": 3.1}, {"c_dcfReady": True},
+                                   {"c_dps": 50.0}, {"c_dy": 1.2}, {"c_dps3": [50.0, None, None]}])
+def test_foreign_issuer_with_won_amounts_fails(extra):
+    fails_on("해외 기업(9…) 원화 아닐 수 있는 금액 비움", lambda c: add_foreign(c, **extra))

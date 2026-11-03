@@ -57,6 +57,7 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
             "settings": {"rf": 4.0, "rfSrc": "ECOS 국고채10년 " + px_date},
             "popular": ["005930", "000660"] + [s["t"] for s in kr[7:30]],
             "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds)},
+            "usLeftOut": {"preferred": ["GOOGM", "GOOGN", "STRC"], "krListing": ["SKHY"]},      # v17.5.2 (2026-11-03 그대로)
             "stocks": kr + us + bonds + funds}
     comps = [{"t": s["t"], "nk": s["nk"], "s": s["s"], "price": s["price"], "cap": s["cap"],
               "per": s["per"], "pbr": s["pbr"], "bq": "2026.2Q" if i % 10 else None,
