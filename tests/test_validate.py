@@ -819,7 +819,7 @@ def test_too_many_us_rows_dropped_as_preferred_fails(left, ok):
     assert ("미국 우선주·예탁증서로 뺀 종목 수" in names) is (not ok), names
 
 
-# ── v17.5.2 항목 7 (Jack 결정 대기): 해외 기업(9…) ──
+# ── v17.5.2 항목 7 (Jack 승인 2026-11-03): 해외 기업(9…) ──
 def add_foreign(c, **extra):
     """2026-11-03 의 코오롱티슈진처럼, 단 원화가 아닐 수 있는 칸은 비운 (파이프라인이 낼) 모양."""
     s = {"t": "950160", "nk": "코오롱티슈진", "ne": "코오롱티슈진", "cls": "kr", "price": 13900.0, "cap": 1.181, "etf": False,

@@ -987,33 +987,84 @@ def us_rows(n_common, no_cap=(), extra=()):
     return rows + list(extra)
 
 
-def test_us_preferred_and_depositary_shares_are_left_out():
-    # 2026-11-03 발행본: STRC(변동금리 우선주)·GOOGM·GOOGN(예탁증서)만 거래대금은 있는데 시가총액이 없었어요 (746개 중 3개)
-    extra = [{"t": "SPY", "price": 500.0, "val": 9e4, "etf": True},           # ETF 는 시가총액이 없어도 우선주가 아니에요
-             {"t": "NOINFO", "price": 3.0, "etf": False}]                      # 야후 정보가 아예 없는 줄은 그대로 (검증이 세요)
-    us = us_rows(743, ("STRC", "GOOGM", "GOOGN"), extra)
-    drop, no_cap, n = F.us_preferred_like(us)
-    assert drop == ["GOOGM", "GOOGN", "STRC"] and n == 746
+# 2026-11-03 야후가 실제로 준 이름 (짧은 이름은 31자에서 잘려요). STRC 의 긴 이름은 'Strategy Inc' 뿐이고 종류는 모두 EQUITY 예요.
+YAHOO_2026_11_03 = {
+    "STRC": {"shortName": "Strategy Inc - Variable Rate Se", "longName": "Strategy Inc", "quoteType": "EQUITY"},
+    "STRF": {"shortName": "Strategy Inc - 10.00% Series A ", "longName": "Strategy Inc", "quoteType": "EQUITY"},
+    "STRK": {"shortName": "Strategy Inc - 8.00% Series A P", "longName": "Strategy Inc", "quoteType": "EQUITY"},
+    "GOOGM": {"shortName": "Alphabet Inc. - Depositary Shar", "quoteType": "EQUITY", "longName":
+              "Alphabet Inc. Depositary Shares representing a 1/20th Interest in a Share of Series A Mandatory Convertible Preferred Stock"},
+    # 남아야 하는 진짜 회사 주식: ADR · 트래킹 주식(' - Ser…') · 이름에 Preferred 가 든 은행 · 다섯 글자 티커 · 클래스 주식
+    "TSM": {"shortName": "Taiwan Semiconductor Manufactur", "quoteType": "EQUITY",
+            "longName": "Taiwan Semiconductor Manufacturing Company Limited American Depositary Shares"},
+    "FWONK": {"shortName": "Liberty Media Corporation - Ser", "longName": "Liberty Media Corporation - Series C Liberty Formula One",
+              "quoteType": "EQUITY"},
+    "PFBC": {"shortName": "Preferred Bank", "longName": "Preferred Bank", "quoteType": "EQUITY"},
+    "RYAAY": {"shortName": "Ryanair Holdings plc", "quoteType": "EQUITY"},
+    "GOOGL": {"shortName": "Alphabet Inc.", "quoteType": "EQUITY"},
+    "BRK-B": {"shortName": "Berkshire Hathaway Inc. New", "quoteType": "EQUITY"},
+}
+
+
+def test_us_preferred_reason_by_name_ticker_and_quote_type():
+    def why(t, info=None):
+        info = info if info is not None else YAHOO_2026_11_03.get(t, {})
+        return F.us_preferred_reason(t, (info.get("shortName"), info.get("longName")), info.get("quoteType"))
+    assert why("STRC") == "이름 'Variable Rate'"
+    assert why("STRF") == "이름 '10.00% Series'" and why("STRK") == "이름 '8.00% Series'"
+    assert why("GOOGM") == "이름 'Depositary Shares'"
+    assert why("GOOGM", {"longName": YAHOO_2026_11_03["GOOGM"]["longName"]}) == "이름 'Preferred Stock'"
+    assert why("XPFD", {"shortName": "X Corp 6.5% Pfd"}) == "이름 'Pfd'"
+    assert why("XNOTE", {"shortName": "X Corp 7.75% Notes due 2029"}) == "이름 'Notes due'"
+    assert why("BAC-PL", {"shortName": "Bank of America Corporation"}) == "티커"           # 야후 우선주 티커 꼴
+    assert why("ABCDP", {"shortName": "ABCD Inc"}) == "티커" and why("GOOGN", {}) == "티커"   # 나스닥 다섯째 글자 P·N
+    assert why("XIDX", {"shortName": "X", "quoteType": "INDEX"}) == "야후 종류 INDEX"
+    for t in ("TSM", "FWONK", "PFBC", "RYAAY", "GOOGL", "BRK-B"):
+        assert why(t) is None, t
+    for qt in ("EQUITY", "ETF", "MUTUALFUND", None):
+        assert why("AAPL", {"shortName": "Apple Inc.", "quoteType": qt}) is None, qt
+
+
+def test_us_preferred_and_depositary_shares_are_left_out(capsys):
+    # 티커·이름·야후 종류로만 봐요 (Jack, 2026-11-03). 시가총액이 없다는 것만으로는 빼지 않아요.
+    infos = dict(YAHOO_2026_11_03)
+    extra = [{"t": t, "nk": i["shortName"], "ne": i["shortName"], "price": 25.0, "val": 900.0, "etf": False}
+             for t, i in YAHOO_2026_11_03.items()]
+    extra += [{"t": "XCAP", "nk": "Real Company Inc.", "price": 30.0, "val": 500.0, "etf": False},   # 진짜 회사, 시가총액만 빠짐
+              {"t": "SPY", "nk": "SPDR S&P 500 ETF Trust", "price": 500.0, "val": 9e4, "etf": True},
+              {"t": "PFFX", "nk": "X Preferred Stock ETF", "price": 20.0, "val": 50.0, "etf": True},  # ETF 는 보지 않아요
+              {"t": "NOINFO", "price": 3.0, "etf": False}]
+    us = us_rows(740, extra=extra)
+    found = F.us_preferred_like(us, infos)
+    assert [t for t, _ in found] == ["GOOGM", "STRC", "STRF", "STRK"], found
+    out, left = F.clean_us_list(us, frozenset(), {}, infos)
+    assert left == {"preferred": ["GOOGM", "STRC", "STRF", "STRK"], "krListing": []}       # data.json usLeftOut (검증이 세요)
+    kept = {r["t"] for r in out}
+    assert {"STRC", "STRF", "STRK", "GOOGM"}.isdisjoint(kept) and len(out) == len(us) - 4
+    assert {"XCAP", "SPY", "PFFX", "NOINFO", "TSM", "FWONK", "PFBC", "RYAAY", "GOOGL", "BRK-B", "C000"} <= kept
+    log = capsys.readouterr().out
+    assert "STRC(이름 'Variable Rate')" in log and "GOOGM(이름 'Depositary Shares')" in log      # 뺀 목록을 이유와 함께 남겨요
+    assert "시가총액이 없는 미국 회사 주식" in log and "XCAP" in log                                # 빼지 않은 빈 칸도 크게 알려요
+
+
+def test_us_rows_without_market_cap_are_never_left_out_as_preferred():
+    # 야후가 시가총액을 하나도 안 보낸 날에도 회사 주식은 그대로 남아요 (검증의 '미국 시가총액 채움'이 실패로 잡아요)
+    us = us_rows(0, [f"N{i:02d}" for i in range(50)])
+    assert F.us_preferred_like(us) == []
     out, left = F.clean_us_list(us, frozenset(), {})
-    assert left == {"preferred": ["GOOGM", "GOOGN", "STRC"], "krListing": []}          # data.json usLeftOut (검증이 세요)
-    assert {"STRC", "GOOGM", "GOOGN"}.isdisjoint(r["t"] for r in out)
-    assert {"SPY", "NOINFO", "C000"} <= {r["t"] for r in out} and len(out) == len(us) - 3
+    assert len(out) == 50 and left["preferred"] == []
 
 
-def test_many_us_rows_without_market_cap_is_a_data_problem_not_preferred(capsys):
-    # 5% 넘게 비면 야후가 시가총액을 안 보낸 거예요: 아무것도 빼지 않고 크게 알려요 (검증의 '미국 시가총액 채움'이 잡아요)
-    us = us_rows(94, [f"N{i}" for i in range(6)])                            # 6 / 100 > 5%
-    assert F.us_preferred_like(us)[0] == []
-    out, left = F.clean_us_list(us, frozenset(), {})
-    assert len(out) == 100 and left["preferred"] == [] and "데이터 문제" in capsys.readouterr().out
-    us = us_rows(95, [f"N{i}" for i in range(5)])                            # 5 / 100 = 5% → 아직 우선주로 봐요 (2.0 과 같은 경계)
-    assert len(F.us_preferred_like(us)[0]) == 5
-
-
-def test_us_no_cap_share_matches_the_2_0_engine():
+def test_us_preferred_patterns_match_the_2_0_engine():
     with open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8") as f:
-        m = re.search(r"export const US_NO_CAP_MAX_SHARE = ([0-9.]+);", f.read())
-    assert m and float(m.group(1)) == F.US_NO_CAP_MAX_SHARE == 0.05
+        js = f.read()
+    for name in ("US_PREF_NAME", "US_DEPOSITARY", "US_ADR", "US_PREF_TICKER"):
+        m = re.search(rf"export const {name} = /(.+)/(i?);\n", js)
+        py = getattr(F, name)
+        assert m and m.group(1) == py.pattern, (name, m and m.group(1), py.pattern)
+        assert bool(m.group(2)) == bool(py.flags & re.I), name
+    assert "?<" not in js, "앞쪽 보기(lookbehind)는 예전 아이폰에서 앱 전체를 멈춰요"
+    assert "US_NO_CAP_MAX_SHARE" not in js and not hasattr(F, "US_NO_CAP_MAX_SHARE")
 
 
 def test_us_listing_of_a_korean_company_is_dropped(capsys):
@@ -1227,7 +1278,7 @@ def test_carry_prev_nps_prefers_fresh_and_keeps_dates():
     assert got == [{"t": "005930", "d": "20261101"}, {"t": "000660", "d": "20261020"}] and n == 1
 
 
-# ── v17.5.2 항목 7 (Jack 결정 대기): 해외 기업(9…)의 원화가 아닐 수 있는 금액 ─────────
+# ── v17.5.2 항목 7 (Jack 승인 2026-11-03): 해외 기업(9…)의 원화가 아닐 수 있는 금액 ─────────
 def kr_trio():
     """해외 기업 둘(코오롱티슈진: 배당 없음 · GRT: 배당 있음, 2026-11-03 발행본 값)과 국내 기업 하나(삼성전자) — DART·KRX 값이 다 붙은 상태."""
     def one(t, nk, pbr, per, dps, dy, dps3):

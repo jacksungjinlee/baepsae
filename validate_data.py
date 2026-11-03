@@ -97,12 +97,12 @@ FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=2y&interval=1d"
 # v17.5.2 (Jack 승인 2026-11-02). 숫자는 2026-11-03 발행본 기준이에요.
 US_CAP_COVER = 95.0      # 미국 회사 주식(ETF 빼고) 중 시가총액(cap > 0)이 있는 비율 하한 (%) — 그날 99.6%, 우선주 3개를 빼면 100%.
-#                          파이프라인은 5% 넘게 비면 우선주로 보지 않고 그대로 두니, 야후가 시가총액을 안 보내면 여기서 실패해요.
+#                          파이프라인은 시가총액이 없다는 이유로는 아무것도 빼지 않으니, 야후가 시가총액을 안 보내면 여기서 실패해요.
 DIV_COVER_KEYS = ("dps", "dy")   # 국내 주당 배당금·배당수익률 — 그날 둘 다 96.7%
 DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄면 실패 (DART 일부 장애로 배당이 조용히 비는 것)
 US_PREF_DROP_MAX = 10    # 우선주·예탁증서로 보고 미국 목록에서 뺀 종목 수 상한 (data.json usLeftOut.preferred) — 그날 3개 (STRC·GOOGM·GOOGN).
-#                          파이프라인은 5% 이하로 비면 다 빼니(약 37개까지), 야후가 진짜 회사 몇 개의 시가총액을 안 보낸 날을 여기서 잡아요.
-# v17.5.2 (Jack 결정 대기): 해외 기업(종목코드 9…)은 DART 금액이 원화가 아닐 수 있어 비워야 해요 (2026-11-03 발행본 20곳, 코오롱티슈진 PBR 9,085)
+#                          파이프라인은 티커·이름·야후 종류로만 판단해요 (Jack, 2026-11-03). 많으면 그 규칙이 진짜 회사를 잡은 날이에요.
+# v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드 9…)은 DART 금액이 원화가 아닐 수 있어 비워야 해요 (2026-11-03 발행본 20곳, 코오롱티슈진 PBR 9,085)
 FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json 모두 빈 칸 (vz 는 PBR 로 매긴 점수)
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
@@ -733,14 +733,14 @@ def check_v1752(rep, data, kr, us, pdata):
     have = sum(1 for s in usco if (num(s.get("cap")) or 0) > 0)
     share = 100.0 * have / len(usco) if usco else 0.0
     rep.pct("미국 시가총액 채움 (ETF 빼고)", share, US_CAP_COVER)
-    # 우선주로 뺀 수: 진짜 우선주는 몇 개뿐이에요. 많으면 야후가 회사 주식의 시가총액을 안 보낸 거예요 (기록이 없어도 실패)
+    # 우선주로 뺀 수: 진짜 우선주는 몇 개뿐이에요. 많으면 이름·티커 규칙이 진짜 회사를 잡은 거예요 (기록이 없어도 실패)
     lo = data.get("usLeftOut")
     pref = lo.get("preferred") if isinstance(lo, dict) else None
     ok = isinstance(pref, list) and all(isinstance(t, str) for t in pref) and len(pref) <= US_PREF_DROP_MAX
     rep.add("미국 우선주·예탁증서로 뺀 종목 수", ok,
             (f"{len(pref)}개" + (f": {', '.join(map(str, pref[:6]))}{'…' if len(pref) > 6 else ''}" if pref else ""))
             if isinstance(pref, list) else "기록 없음 (data.json usLeftOut)",
-            f"≤ {US_PREF_DROP_MAX}개 (많으면 야후가 회사 주식의 시가총액을 안 보낸 것)")
+            f"≤ {US_PREF_DROP_MAX}개 (많으면 이름·티커 규칙이 진짜 회사를 잡은 것)")
     # 국내 배당: 주당 배당금·배당수익률 채움이 직전 발행본보다 크게 줄면 실패 (0 = 배당 없음도 채움으로 세요)
     if pdata:
         pkr = kr_stocks(pdata)

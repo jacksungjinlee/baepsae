@@ -18,6 +18,8 @@ const fmtWon = (v) => v == null ? "—" : Math.round(v).toLocaleString() + "원"
 const fmtShort = (v) => v == null ? "—" : Math.abs(v) >= 1e8 ? (v / 1e8).toFixed(1) + "억" : Math.abs(v) >= 1e4 ? (v / 1e4).toFixed(1) + "만" : Math.round(v).toLocaleString();
 const pc = (v, d = 1) => v == null ? "—" : v.toFixed(d) + "%";
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
+// KRX 해외 기업 (900xxx·950xxx): DART 재무제표가 외화라 파이프라인이 금액을 비워요 (fetch_data.py is_foreign_issuer 와 같아요)
+const isForeignIssuer = (code) => typeof code === "string" && code.length === 6 && code[0] === "9";
 
 // ---------------- 공용 아톰 ----------------
 const Card = ({ children, style = {} }) => (
@@ -1191,7 +1193,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             else return null;
             return <Verdict>{v}</Verdict>;
           })()}
-          {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)</Sub> : (
+          {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>{isForeignIssuer(c.t) ? "외화로 작성된 재무제표라 아직 보여 드리지 않아요." : "재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)"}</Sub> : (
             <>
               <div style={{ display: "flex", justifyContent: "space-around", marginTop: 12, gap: 6 }}>
                 <Spark3 label="매출" arr={c.rev} />

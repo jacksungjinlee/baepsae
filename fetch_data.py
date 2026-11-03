@@ -44,6 +44,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -2417,7 +2418,7 @@ def fetch_korea(start, today, rf, prev=None):
     return out, bench, mkt, meta
 
 
-# v17.5.2 (Jack 결정 대기, 2026-11-02): 해외 기업(종목코드가 9로 시작: 900xxx·950xxx)은 DART 재무제표를 달러·위안·엔 등으로
+# v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드가 9로 시작: 900xxx·950xxx)은 DART 재무제표를 달러·위안·엔 등으로
 # 낼 수 있어요. 그걸 원화로 읽으면 PBR 9,085(코오롱티슈진) · PER 수천 같은 값이 나와요. 환산을 추측하지 않고 비워요:
 # 금액으로 만든 값(PER·PBR·EPS·BPS)과 0 이 아닌 배당(표의 통화도 불확실). 배당 0 은 어느 통화로도 '배당 없음'이라 남겨요
 # (2.0 의 '무배당 빼기'가 dps === 0 을 봐요). corp.json 금액(매출·이익·자본, DCF 입력·EV 배수)은 build_corp 가 비우고,
@@ -2607,25 +2608,51 @@ def etf_from_quote_type(out, cache):
 
 
 # v17.5.2: 미국 목록 다듬기 — 우선주·예탁증서, 한국 종목의 미국 상장분
-US_NO_CAP_MAX_SHARE = 0.05   # 2.0 src/v2/engine.js 의 같은 이름 값과 같아요 (바꾸면 둘 다)
 US_KR_DUP_PATH = os.path.join(INDUSTRY_DIR, "us_kr_duplicates.csv")
+# 우선주·예탁증서는 티커·이름·야후 종류로만 알아봐요. '시가총액이 없다'로는 판단하지 않아요 (Jack, 2026-11-03):
+# 진짜 회사의 시가총액이 하루 빠진 것이면 빈 칸으로 남고 검증의 '미국 시가총액 채움'이 세요.
+# 2.0 src/v2/engine.js 의 같은 이름 값과 글자 하나까지 같아요 (바꾸면 둘 다 — 테스트가 봐요).
+# 2026-11-03 야후: STRC 'Strategy Inc - Variable Rate Se' · STRF·STRD 'Strategy Inc - 10.00% Series A ' (긴 이름은 'Strategy Inc'
+# 뿐이고 종류는 EQUITY) · GOOGM·GOOGN 'Alphabet Inc. Depositary Shares representing … Convertible Preferred Stock'.
+US_PREF_NAME = re.compile(r"preferred (stock|share|securit)|\bpfd\b|variable rate|fixed[- ]to[- ]floating|[\d.]+%\s*series\b|\bnotes? due\b", re.I)
+US_DEPOSITARY = re.compile(r"depositary shar", re.I)   # 우선주 예탁증서 (GOOGM) …
+US_ADR = re.compile(r"american depositary", re.I)      # … 단, ADR(진짜 외국 회사의 보통주 예탁증서)은 남겨요
+US_PREF_TICKER = re.compile(r"-P[A-Z]?$|^[A-Z]{4}[MNOP]$")   # BAC-PL 꼴 · 나스닥 다섯째 글자 M·N·O·P (우선주 표시)
+US_STOCK_TYPES = ("EQUITY", "ETF", "MUTUALFUND")       # 야후 종류가 이 밖이면 회사 주식이 아니에요
 
 
-def us_preferred_like(us):
-    """미국 우선주·예탁증서로 보이는 티커 (2.0 engine.js 의 usPreferredLike 와 같은 규칙). (순수 함수)
-    NASDAQ 상위 400 목록에 회사처럼 섞여 들어와요: STRC(Strategy 변동금리 우선주 — 예전 앱에 배당 12% 소프트웨어 회사로 보였어요),
-    GOOGM·GOOGN(알파벳 예탁증서). 야후는 보통주에는 모두 시가총액을 주는데 이들에게는 안 주고, 거래대금은 줘요.
-    그래서 ETF 가 아니고 가격·거래대금은 있는데 시가총액이 없는 줄을 우선주로 봐요. 야후 정보가 아예 없는 줄(거래대금도 없음)은
-    건드리지 않아요 — 빈 칸으로 남고 검증이 세요.
-    그런 줄이 거래대금 있는 줄의 US_NO_CAP_MAX_SHARE 를 넘으면 우선주가 아니라 야후가 시가총액을 안 보낸 것(데이터 문제)이라
-    아무것도 빼지 않아요 (검증의 '미국 시가총액 채움'이 실패로 잡아요).
-    반환: (뺄 티커, 시가총액 없는 티커, 거래대금 있는 줄 수)."""
-    rows = [r for r in us if r.get("etf") is not True and not r.get("fund")
-            and (_fin(r.get("price")) or 0) > 0 and _fin(r.get("val")) is not None]
-    no_cap = sorted(r["t"] for r in rows if not ((_fin(r.get("cap")) or 0) > 0))
-    if len(no_cap) > len(rows) * US_NO_CAP_MAX_SHARE:
-        return [], no_cap, len(rows)
-    return no_cap, no_cap, len(rows)
+def us_preferred_reason(t, names, quote_type=None):
+    """우선주·예탁증서(회사 보통주가 아님)로 보는 이유 한 줄, 아니면 None. 이름 → 티커 → 야후 종류 순으로 봐요. (순수 함수)"""
+    for n in names:
+        if not isinstance(n, str) or not n:
+            continue
+        m = US_PREF_NAME.search(n)
+        if m:
+            return f"이름 '{m.group(0)}'"
+        if US_DEPOSITARY.search(n) and not US_ADR.search(n):
+            return "이름 'Depositary Shares'"
+    if US_PREF_TICKER.search(t):
+        return "티커"
+    if quote_type and quote_type not in US_STOCK_TYPES:
+        return f"야후 종류 {quote_type}"
+    return None
+
+
+def us_preferred_like(us, infos=None):
+    """미국 목록에 회사처럼 섞여 들어온 우선주·예탁증서 (NASDAQ 상위 400: STRC 는 예전 앱에 배당 12% 소프트웨어 회사로 보였어요).
+    ETF·펀드는 보지 않아요. infos = {티커: 야후 정보} (shortName · longName · quoteType). (순수 함수)
+    반환: [(티커, 이유)] 티커 순."""
+    infos = infos or {}
+    out = []
+    for r in us:
+        if r.get("etf") is True or r.get("fund"):
+            continue
+        info = infos.get(r["t"]) or {}
+        why = us_preferred_reason(r["t"], (r.get("nk"), r.get("ne"), info.get("shortName"), info.get("longName")),
+                                  info.get("quoteType"))
+        if why:
+            out.append((r["t"], why))
+    return sorted(out)
 
 
 def load_us_kr_duplicates(path=None):
@@ -2656,10 +2683,10 @@ def drop_us_kr_duplicates(us, kr_codes, dups):
     return keep, dropped, kept
 
 
-def clean_us_list(us, kr_codes, dups):
+def clean_us_list(us, kr_codes, dups, infos=None):
     """미국 목록에서 한국 종목의 미국 상장분과 우선주·예탁증서를 빼요. 뺀 것은 모두 티커와 함께 로그로 남겨요.
     반환: (남은 미국 목록, {"preferred": [우선주로 뺀 티커], "krListing": [한국 종목이라 뺀 티커]}) — 뒤의 것은 data.json 의
-    usLeftOut 으로 나가요 (검증이 우선주로 뺀 수를 세요: 야후가 진짜 회사의 시가총액을 몇 개 안 보낸 날을 잡으려고)."""
+    usLeftOut 으로 나가요 (검증이 우선주로 뺀 수를 세요: 규칙이 진짜 회사를 잡기 시작한 날을 잡으려고)."""
     us, dropped, kept = drop_us_kr_duplicates(us, kr_codes, dups)
     if dropped:
         log(f"  !! 한국 종목과 같은 회사라 미국 목록에서 뺀 종목 {len(dropped)}개: "
@@ -2669,18 +2696,20 @@ def clean_us_list(us, kr_codes, dups):
             + ", ".join(f"{t}(≠{k})" for t, k in kept) + " — 국내 목록이 왜 빠졌는지 확인")
     if not dropped and not kept:
         log(f"· 미국-한국 중복 표 {len(dups)}개 중 이번 미국 목록에 있는 것 없음")
-    pref, no_cap, n_rows = us_preferred_like(us)
-    if pref:
+    found = us_preferred_like(us, infos)
+    pref = [t for t, _ in found]
+    if found:
         gone = set(pref)
         us = [r for r in us if r["t"] not in gone]
-        log(f"  !! 미국 우선주·예탁증서로 보고 뺀 종목 {len(pref)}개 (거래대금은 있는데 시가총액 없음 · "
-            f"거래대금 있는 회사 주식 {n_rows:,}개 중): {', '.join(pref)}")
-    elif no_cap:
-        log(f"  !! 거래대금은 있는데 시가총액이 없는 미국 회사 주식 {len(no_cap)}개 / {n_rows:,}개 ({len(no_cap) / max(n_rows, 1):.1%}) — "
-            f"{US_NO_CAP_MAX_SHARE:.0%} 넘게 많아 우선주가 아니라 야후 데이터 문제로 봐요. 아무것도 빼지 않아요 "
-            f"(검증의 '미국 시가총액 채움'이 잡아요): {', '.join(no_cap[:10])}{'…' if len(no_cap) > 10 else ''}")
+        log(f"  !! 미국 우선주·예탁증서로 보고 뺀 종목 {len(found)}개 (티커·이름·야후 종류로 판단): "
+            + ", ".join(f"{t}({why})" for t, why in found))
     else:
-        log("· 미국 우선주·예탁증서(시가총액 없는 회사 주식): 없음")
+        log("· 미국 우선주·예탁증서(티커·이름·야후 종류로 판단): 없음")
+    no_cap = sorted(r["t"] for r in us if r.get("etf") is not True and not r.get("fund") and (_fin(r.get("price")) or 0) > 0
+                    and _fin(r.get("val")) is not None and not ((_fin(r.get("cap")) or 0) > 0))
+    if no_cap:
+        log(f"  !! 거래대금은 있는데 시가총액이 없는 미국 회사 주식 {len(no_cap)}개 — 빼지 않고 빈 칸으로 둬요 "
+            f"(검증의 '미국 시가총액 채움'이 세요): {', '.join(no_cap[:10])}{'…' if len(no_cap) > 10 else ''}")
     return us, {"preferred": list(pref), "krListing": [t for t, _ in dropped]}
 
 
@@ -2835,7 +2864,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     odd = etf_from_quote_type(out, cache)
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
-    out, left_out = clean_us_list(out, kr_codes, dups or {})   # ETF 표시가 끝난 뒤에 (ETF 는 시가총액이 없어도 우선주가 아니에요)
+    infos = {r["t"]: (cache.get(r["t"]) or {}).get("info") or {} for r in out}
+    out, left_out = clean_us_list(out, kr_codes, dups or {}, infos)   # ETF 표시가 끝난 뒤에 (ETF·펀드는 우선주로 보지 않아요)
     no_info = set(missing)
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
@@ -2894,7 +2924,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
-         "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(거래대금은 있는데 시가총액 없음), krListing = 한국 종목의 미국 상장분"}
+         "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분"}
 IDX_YEARS = 3
 
 
