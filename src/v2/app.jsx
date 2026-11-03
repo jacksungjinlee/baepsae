@@ -49,7 +49,6 @@ export function App({ source }) {
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 홈 (Part E)
   const router = useRouter();
   const { loc } = router;
-  const lastFocus = useRef(null);                        // what had focus before 소개 opened (the footer's 소개 link), restored on close
   const wasAbout = useRef(loc.about);
 
   useEffect(() => {
@@ -67,12 +66,12 @@ export function App({ source }) {
     if (loc.tab === "home" && loc.sub === "why" && !why) router.replaceRoute("home");
   }, [loc.tab, loc.sub, why]);
 
-  // Closing 소개: focus goes back to what opened it (the footer's 소개 link), when it is still on the page.
+  // Closing 소개: focus goes back to what opened it (the footer's 소개 link, noted by the router when 소개 opened), when it
+  // is still on the page.
   useEffect(() => {
-    if (loc.about && !wasAbout.current) lastFocus.current = document.activeElement;
     if (!loc.about && wasAbout.current) {
-      const el = lastFocus.current;
-      lastFocus.current = null;
+      const el = router.focusBefore.current;
+      router.focusBefore.current = null;
       if (el && el.isConnected && typeof el.focus === "function") {
         try { el.focus(); } catch (e) { /* ignore */ }
       }

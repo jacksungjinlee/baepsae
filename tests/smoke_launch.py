@@ -6,8 +6,9 @@
   python tests/smoke_launch.py --shots DIR     # 화면 스크린샷
 
 - '/' (index.html) → app.html 로 가요 (예전처럼 baepsae.html 이 아니에요)
-- 저장한 덱이 없는 방문자는 덱 짜기부터, 저장한 덱이 있는 방문자는 오늘부터 봐요
-- 머리말에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요
+- 저장한 포트폴리오가 없는 방문자는 첫 방문 홈(포트폴리오 만들기)부터, 있는 방문자는 홈(오늘의 판정)부터 봐요 (v19.0c: #home)
+- ☰ 메뉴에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요. 종목 탭의 한국 회사는 지금 앱의 기업분석(#corp=코드)으로
+- v19.0c 전에 저장한 기본 이름('배당 생활비 덱')은 화면에서만 새 이름('배당 생활비 포트폴리오'), 저장본은 그대로
 - 지금 앱 푸터의 '소개'(v19.0)를 누르면 2.0 의 소개 페이지(app.html#about)가 열리고, 소개의 뒤로(닫기)는 지금 앱으로 돌아가요
 - 저장소의 지금 데이터로도 열어봐요. 첫 화면은 그 데이터의 단계에 맞아야 해요 (예시 데이터를 실제처럼 보이지 않음):
   v17.5 형식 전 → '불러오지 못했어요' · v17.5 형식인데 v17.5.1 항목 없음 → 덱 짜기는 '준비 중'만 · 항목이 다 있으면 덱 짜기가 열려요
@@ -19,6 +20,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -33,6 +35,9 @@ from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 C, _ = copy_strings()
+TABS = C["app"]["tabs"]
+APP_URL = re.compile(r"/app\.html#home$")                      # v19.0c: 주소 없이 열면 그 자리에서 #home
+DECK_WORD = re.compile(r"(?<!인)덱")
 # 저장소의 지금 데이터가 어느 단계인지에 따라 2.0 첫 화면이 달라요 (머지 문 테스트와 같은 판단):
 #   old = v17.5 형식 전 → '불러오지 못했어요' · fields = v17.5 형식, v17.5.1 항목 없음 → '준비 중' · live = 덱 짜기가 열려요
 _REPO_MISSING = real_data_missing()
@@ -142,15 +147,29 @@ def main():
 
                 def root_goes_to_app():
                     page.goto(base + "/", wait_until="domcontentloaded")
-                    page.wait_for_url("**/app.html", timeout=WAIT)
+                    page.wait_for_url(APP_URL, timeout=WAIT)
                     assert page.title() == C["app"]["title"]
                 check(W + "'/' (index.html) → app.html", root_goes_to_app, page, tag)
 
-                def no_deck_lands_on_build():
-                    page.get_by_text(C["build"]["title"]).first.wait_for(state="visible")
-                    assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
+                def no_deck_lands_on_home():
+                    page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")       # 첫 방문 홈: 머리글 + 포트폴리오 만들기
+                    assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 1
+                    assert page.locator('[data-ui-v2="home-start"]').inner_text().strip() == C["build"]["title"]
                     state = "live" if variant == "fixtures" else REPO_STATE
-                    if state == "live":                     # v17.5 형식 + v17.5.1 항목: 덱 짜기가 그대로 열려요
+                    if state == "old":                      # v17.5 형식 전 데이터는 받지 않아요
+                        page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")
+                    else:
+                        page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
+                    sw = page.evaluate("document.documentElement.scrollWidth")
+                    assert sw <= width, f"가로 스크롤 {sw}"
+                    assert not DECK_WORD.search(page.locator("body").inner_text())
+                    visual_ok(page)                         # v19.0b: 그림이 모두 열려요 · 뱁이 규칙(숫자 없는 화면) · 아이콘
+                    if width == 320 and variant == "fixtures":
+                        shot(page, "launch-320-landing-no-deck.png")
+                    page.locator('[data-ui-v2="home-start"] button').click()
+                    page.wait_for_url(re.compile(r"#portfolio/build$"))
+                    assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
+                    if state == "live":                     # v17.5 형식 + v17.5.1 항목: 포트폴리오 만들기가 그대로 열려요
                         page.get_by_text(C["build"]["s0"]["title"]).wait_for(state="visible")
                         assert page.locator("[data-deck]").count() == 9
                         assert page.locator('[data-ui-v2="build-not-ready"]').count() == 0
@@ -160,35 +179,40 @@ def main():
                         page.get_by_text(C["app"]["pending"]).first.wait_for(state="visible")
                         assert page.locator("[data-deck]").count() == 0 and page.locator("[data-cand]").count() == 0
                         assert page.get_by_text(C["app"]["loadFail"]).count() == 0
-                    else:                                   # v17.5 형식 전 데이터는 받지 않아요
+                    else:
                         page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")
                         assert page.locator("[data-deck]").count() == 0
-                    sw = page.evaluate("document.documentElement.scrollWidth")
-                    assert sw <= width, f"가로 스크롤 {sw}"
-                    visual_ok(page)                         # v19.0b: 그림이 모두 열려요 (덱 짜기 · 준비 중 · 실패의 뱁이, 로고) · 뱁이 규칙 · 아이콘
-                    if width == 320 and variant == "fixtures":
-                        shot(page, "launch-320-landing-no-deck.png")
-                check(W + "저장한 덱이 없는 방문자 → 덱 짜기", no_deck_lands_on_build, page, tag)
+                    visual_ok(page)
+                    page.go_back()                          # 휴대폰 뒤로 → 홈
+                    page.wait_for_url(APP_URL)
+                    page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+                check(W + "저장한 포트폴리오가 없는 방문자 → 첫 방문 홈 → 포트폴리오 만들기 → 뒤로 → 홈", no_deck_lands_on_home, page, tag)
 
-                def header_search_opens_search():
-                    # 덱 짜기 머리말의 '찾기' (Jack, 2026-11-02): 탭 막대가 없어도 종목 찾기가 한 번에 보이고, 찾기 탭처럼 지금 앱을 열어요
-                    link = page.locator('[data-ui-v2="search-link"]')
-                    link.wait_for(state="visible")
-                    assert link.inner_text() == C["app"]["tabs"]["search"]
-                    box = link.bounding_box()
-                    assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
+                def stocks_open_old_corp():
+                    # v19.0c: 찾기 탭 · 머리말 '찾기' 대신 종목 탭. 한국 회사는 지금 앱의 기업분석으로 (#corp=코드: 지금 앱이 읽고 지워요)
+                    page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=TABS["stocks"]).click()
+                    page.wait_for_url(re.compile(r"/app\.html#stocks$"))
+                    if (REPO_STATE if variant != "fixtures" else "live") == "old":
+                        page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")
+                        return
+                    row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+                    row.wait_for(state="visible")
+                    nk = [x for x in row.inner_text().split("\n") if x.strip()][1]          # 첫 글자 표시 다음 줄이 이름
                     with page.expect_navigation():
-                        link.click()
-                    assert page.url.endswith("/baepsae.html"), page.url
-                    page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
-                    page.goto(base + "/", wait_until="domcontentloaded")          # 다시 메인 주소 → 덱 짜기
-                    page.wait_for_url("**/app.html", timeout=WAIT)
-                check(W + "덱 짜기 머리말 '찾기' → 지금 앱이 열려요", header_search_opens_search, page, tag)
+                        row.locator("a").click()
+                    page.wait_for_url(re.compile(r"/baepsae\.html$"))                      # 지금 앱이 #corp=코드 를 읽고 지워요
+                    page.get_by_text(nk, exact=True).first.wait_for(state="visible")       # 기업분석의 그 회사 화면
+                    assert page.get_by_text("이 종목의 데이터를 찾지 못했어요.").count() == 0
+                    page.go_back()
+                    page.wait_for_url(re.compile(r"/app\.html#stocks$"))
+                    page.locator('[data-ui-v2="recent"] [data-ui-v2="stock-row"]').first.wait_for(state="visible")
+                check(W + "종목 탭 → 한국 회사 → 지금 앱 기업분석 → 뒤로 → 종목 (최근 본 종목에 남아요)", stocks_open_old_corp, page, tag)
 
-                def header_link_opens_old_app():
-                    link = page.locator('[data-ui-v2="old-app-link"]')
+                def menu_opens_old_app():
+                    page.locator('[data-ui-v2="menu-button"]').click()
+                    link = page.locator('[data-ui-v2="menu"] [data-ui-v2="menu-item"][data-item="old-app"]')
                     link.wait_for(state="visible")
-                    assert link.inner_text() == C["app"]["oldApp"]
+                    assert link.inner_text().strip() == C["app"]["oldApp"] and link.get_attribute("href") == "./baepsae.html"
                     box = link.bounding_box()
                     assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
                     with page.expect_navigation():
@@ -200,9 +224,9 @@ def main():
                     assert back.inner_text() == "뱁새 2.0 보기"
                     with page.expect_navigation():
                         back.click()
-                    assert page.url.endswith("/app.html"), page.url
-                    page.locator('[data-ui-v2="old-app-link"]').wait_for(state="visible")
-                check(W + "머리말 '예전 뱁새 보기' → 지금 앱 → '뱁새 2.0 보기' → 다시 2.0", header_link_opens_old_app, page, tag)
+                    page.wait_for_url(APP_URL)
+                    page.locator('[data-ui-v2="menu-button"]').wait_for(state="visible")
+                check(W + "☰ 메뉴 '예전 뱁새 보기' → 지금 앱 → '뱁새 2.0 보기' → 다시 2.0 (#home)", menu_opens_old_app, page, tag)
 
                 def old_footer_opens_about():
                     page.goto(base + "/baepsae.html", wait_until="domcontentloaded")
@@ -226,20 +250,24 @@ def main():
 
                 ctx, page = context(saved=True)
 
-                def saved_deck_lands_on_today():
+                def saved_deck_lands_on_home():
                     page.goto(base + "/", wait_until="domcontentloaded")
-                    page.wait_for_url("**/app.html", timeout=WAIT)
+                    page.wait_for_url(APP_URL, timeout=WAIT)
                     page.locator('nav[data-ui="bottom-tab-bar"]').wait_for(state="visible")
-                    on = page.locator('nav[data-ui="bottom-tab-bar"] button[aria-current="page"]').inner_text()
-                    assert on == C["app"]["tabs"]["today"], on
-                    page.locator('[data-ui-v2="old-app-link"]').wait_for(state="visible")
+                    on = page.locator('nav[data-ui="bottom-tab-bar"] button[aria-current="page"]').inner_text().strip()
+                    assert on == TABS["home"], on
+                    assert page.locator('[data-ui-v2="home-hero"]').count() == 0            # 다시 온 방문자: 첫 방문 머리글 없음
+                    page.locator('[data-ui-v2="menu-button"]').wait_for(state="visible")
                     if width == 320 and variant == "fixtures":
-                        shot(page, "launch-320-header-old-app-link.png")
-                    page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=C["app"]["tabs"]["deck"]).click()
-                    page.get_by_text("배당 생활비 덱").wait_for(state="visible")
-                    page.locator('[data-ui-v2="old-app-link"]').wait_for(state="visible")
+                        shot(page, "launch-320-home-saved.png")
+                    page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=TABS["portfolio"]).click()
+                    shown = C["app"]["deckName"].replace("{name}", C["build"]["decks"]["income"]["name"])
+                    page.get_by_text(shown).wait_for(state="visible")                       # 예전 기본 이름은 화면에서만 새 이름
+                    stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")
+                    assert stored["decks"][0]["name"] == SAVED["decks"][0]["name"], "저장본의 이름을 바꿨어요"
+                    assert not DECK_WORD.search(page.locator("body").inner_text())
                     visual_ok(page)
-                check(W + "저장한 덱이 있는 방문자 → 오늘 (내 덱에 기록이 보여요)", saved_deck_lands_on_today, page, tag)
+                check(W + "저장한 포트폴리오가 있는 방문자 → 홈 · 포트폴리오에 기록 (예전 이름은 화면에서만 새 이름)", saved_deck_lands_on_home, page, tag)
                 ctx.close()
             srv.shutdown()
         browser.close()

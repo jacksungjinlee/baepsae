@@ -78,11 +78,14 @@ function startLocation() {
 export function useRouter() {
   const [loc, setLoc] = useState(startLocation);
   const locRef = useRef(loc);
+  const moves = useRef(0);                               // every history event this page saw (for back's "did it move?")
+  const focusBefore = useRef(null);                      // what had focus when 소개 opened (the footer's 소개 link)
   locRef.current = loc;
   const lastTab = useRef(loc.tab || "home");
   if (loc.tab) lastTab.current = loc.tab;
 
   const sync = useCallback(() => {
+    moves.current += 1;
     const s = stateNow();
     if (depthOf(s) == null) replace({ v2: (locRef.current.depth || 0) + 1 });   // a link inside the page made this entry
     let next = readLocation();
@@ -93,6 +96,7 @@ export function useRouter() {
     }
     const cur = locRef.current;
     const moved = next.tab !== cur.tab || next.sub !== cur.sub || next.about !== cur.about;
+    if (next.about && !cur.about) { try { focusBefore.current = document.activeElement; } catch (e) { focusBefore.current = null; } }
     locRef.current = next;
     setLoc(next);
     if (moved) toTop();
@@ -131,15 +135,17 @@ export function useRouter() {
     const cur = locRef.current;
     const viaSite = cur.about && cur.depth === 0 && cameFromThisSite();
     if (cur.depth > 0 || viaSite) {
+      // If the step back did not happen at all (no history event, the page did not leave), the fallback replaces this
+      // entry after a moment. Any move in between (the step back itself, or a later tap) cancels it.
       let left = false;
+      const seen = moves.current;
       const onHide = () => { left = true; };
       try {
         window.addEventListener("pagehide", onHide, { once: true });
         window.history.back();
         window.setTimeout(() => {
           window.removeEventListener("pagehide", onHide);
-          const now = locRef.current;
-          if (!left && now.tab === cur.tab && now.sub === cur.sub && now.about === cur.about) replaceRoute(fallbackTab);
+          if (!left && moves.current === seen) replaceRoute(fallbackTab);
         }, 600);
         return;
       } catch (e) { /* fall through */ }
@@ -160,7 +166,7 @@ export function useRouter() {
       sync();
     }
   }, [sync]);
-  return { loc, lastTab: lastTab.current, go, openAbout, replaceRoute, back, openMenu, closeMenu };
+  return { loc, lastTab: lastTab.current, focusBefore, go, openAbout, replaceRoute, back, openMenu, closeMenu };
 }
 
 // The bottom tab bar: icon + label for the four tabs (board NavC).

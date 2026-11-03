@@ -190,9 +190,11 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
 }
 
 // 홈's first visit (no saved portfolio): no numbers on this screen (it shows a 뱁이).
+// The date line stays (a date is not a number here, and it carries the "N일째 갱신이 멈췄어요" warning).
 function FirstVisit({ load, go }) {
   return (
     <>
+      {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       <Card data-ui-v2="home-hero" style={{ display: "flex", alignItems: "center", gap: SPACE(4), marginTop: SPACE(4) }}>
         <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={92} />
         <div style={{ flex: 1, minWidth: 0 }}>

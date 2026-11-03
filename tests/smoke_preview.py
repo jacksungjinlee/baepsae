@@ -5,7 +5,9 @@
   python tests/smoke_preview.py                 # 저장소의 app-preview.html 로
   python tests/smoke_preview.py --shots DIR     # 화면마다 스크린샷을 DIR 에 저장
 
-- 모든 화면에 '예시 데이터' 표시가 보여요 (오늘 · 내 덱 · 덱 짜기 단계마다 · 후보 고르기 · 매수 계획)
+- 모든 화면에 '예시 데이터' 표시가 보여요 (홈 · 포트폴리오 · 종목 · 시장 · 포트폴리오 만들기 단계마다 · 후보 고르기 · 매수 계획 · 메뉴)
+- v19.0c: 미리 보기는 예전 뱁새(실제 데이터)로 가는 길이 하나도 없어요: 메뉴는 소개와 날짜만, 시장에 예전 뱁새 버튼 없음,
+  종목의 한국 회사는 링크가 아니에요 (미국 종목은 '기업분석은 한국 상장 기업만 볼 수 있어요.'). 화면 어디에도 '덱'이 없어요
 - noindex, 서비스워커 등록 없음, data.json · corp.json · macro.json 을 받지 않음 (요청 0건), 다른 사이트 요청 0건
 - 모든 탭 · 시작 덱마다 후보 고르기까지 · 한 덱은 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 남음 (미리 보기 전용 저장 키) ·
   산 뒤에는 오늘에 판정 띠, 내 덱에 평가 금액 (Part E)
@@ -35,6 +37,12 @@ WHOLE_BAD = re.compile(r"(?<![A-Za-z])(nan|NaN|None|null|undefined)(?![A-Za-z])"
 SLOT_LEFT = re.compile(r"\{\w+\}")
 C, FLAT = copy_strings()
 DECKS = ["deepValue", "garp", "quality", "strict", "lowVol", "trend", "krUs", "income"]
+TABS = C["app"]["tabs"]
+BACK_BUILD = C["build"]["backToday"] or TABS["home"]        # v19.0c: 승인 대기 이름은 승인된 이름으로 (src/copy/v2.js "승인 전:")
+DONE_LINK = C["plan"]["doneLink"] or TABS["home"]
+PICK_BACK = C["pick"]["back"] or C["build"]["title"]
+DECK_WORD = re.compile(r"(?<!인)덱")
+SAVED_NAME = C["app"]["deckName"].replace("{name}", C["build"]["decks"]["income"]["name"])   # 배당 생활비 포트폴리오
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -133,15 +141,30 @@ def main():
                 assert not WHOLE_BAD.search(body), WHOLE_BAD.findall(body)
                 assert not SLOT_LEFT.findall(body), SLOT_LEFT.findall(body)
                 assert "멈췄어요" not in body and "갱신되지 않아" not in body, "예시 데이터에 멈춤 경고가 떠요"
+                assert not [t for t in got + [body] if DECK_WORD.search(t)], "v19.0c: 화면에 '덱'이 있어요"
+                assert page.locator('a[href*="baepsae.html"]').count() == 0, "미리 보기에 예전 뱁새(실제 데이터)로 가는 링크가 있어요"
                 visual_ok(page)              # v19.0b: 그림이 모두 열리고, 뱁이 규칙 · 아이콘 두 층 · 살구색 없음 (tests/visualcheck.py)
 
             def tab(label):
                 bar = page.locator('nav[data-ui="bottom-tab-bar"]')
-                if bar.count() == 0:                  # 저장한 덱이 없으면 첫 화면은 덱 짜기 (아래 탭 없음)
-                    if label == C["app"]["tabs"]["build"]:
-                        return
-                    page.get_by_role("button", name=C["build"]["backToday"]).click()
+                if bar.count() == 0:                  # 포트폴리오 만들기 첫 단계 안 (아래 탭 없음): 먼저 뒤로
+                    page.get_by_role("button", name=BACK_BUILD).click()
+                    bar.wait_for(state="visible")
                 bar.locator("button", has_text=label).click()
+
+            def at(r):
+                page.wait_for_function("(r) => { const e = document.querySelector('[data-ui-v2=\"screen\"]'); return !!e && e.dataset.route === r; }", arg=r)
+
+            def start_build():
+                tab(TABS["home"])
+                at("home")
+                first = page.locator('[data-ui-v2="home-start"] button')
+                if first.count():
+                    first.click()
+                else:
+                    tab(TABS["portfolio"])
+                    page.locator('[data-ui-v2="deck-empty"] button, [data-ui-v2="build-more"] button').first.click()
+                at("portfolio/build")
 
             def act():
                 return page.locator('[data-ui-v2="action-bar"] button')
@@ -152,23 +175,51 @@ def main():
                 assert page.evaluate("navigator.serviceWorker ? navigator.serviceWorker.getRegistration().then(r => !r) : true")
                 page.locator('[data-ui-v2="date-line"]').first.wait_for(state="visible")
                 assert "10월 30일" in page.locator('[data-ui-v2="date-line"]').first.inner_text()
-                page.get_by_text(C["build"]["s0"]["title"]).wait_for(state="visible")     # 첫 방문: 덱 짜기부터
+                at("home")                                                         # 첫 방문: 첫 방문 홈
+                page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+                page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
                 label_here()
                 # 미리 보기는 Jack 이 혼자 보는 페이지라 머리말에 '예전 뱁새 보기' 링크를 두지 않아요 (예시 데이터 표시 자리)
                 assert page.locator('[data-ui-v2="old-app-link"]').count() == 0
                 assert page.locator('[data-ui-v2="search-link"]').count() == 0, "미리 보기에 지금 앱으로 가는 '찾기' 링크가 보여요"
                 assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기에 '예전 뱁새' 안내가 떠요"
                 assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
-                shot(page, width, "0-landing")
-                tab(C["app"]["tabs"]["today"])
-                page.locator('[data-ui-v2="today-empty"]').wait_for(state="visible")    # 산 종목이 없으면 판정 없음 (Part E)
                 assert page.locator('[data-ui-v2="today-hero"]').count() == 0 and page.get_by_text("할 일").count() == 0
+                shot(page, width, "0-landing")
+                page.locator('[data-ui-v2="menu-button"]').click()                   # 메뉴: 소개와 날짜만 (예전 뱁새로 가는 줄 없음)
+                menu = page.locator('[data-ui-v2="menu"]')
+                menu.wait_for(state="visible")
+                items = menu.locator('[data-ui-v2="menu-item"]').evaluate_all("(els) => els.map((e) => e.dataset.item)")
+                assert items == ["about"], items
+                assert "10월 30일 기준" in menu.locator('[data-ui-v2="menu-date"]').inner_text()
                 label_here()
-                shot(page, width, "1-today")
-            check(W + "첫 화면 덱 짜기 → 오늘: 예시 데이터 표시 · noindex · 서비스워커 없음 · 날짜 · 멈춤 경고 없음", head, page, width)
+                shot(page, width, "1-menu", full=False)
+                menu.locator('[data-ui-v2="menu-close"]').click()
+                menu.wait_for(state="detached")
+            check(W + "첫 방문 홈 · 메뉴(소개 · 날짜만): 예시 데이터 표시 · noindex · 서비스워커 없음 · 날짜 · 멈춤 경고 없음", head, page, width)
+
+            def stocks_and_market():
+                tab(TABS["stocks"])
+                at("stocks")
+                page.locator('[data-ui-v2="popular-list"][data-market="kr"]').wait_for(state="visible")
+                assert page.locator('[data-ui-v2="popular-list"][data-market="us"]').count() == 1
+                kr = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+                assert kr.locator("a, button").count() == 0, "미리 보기의 한국 회사가 눌러져요 (예전 뱁새로 가는 길)"
+                us = page.locator('[data-ui-v2="popular-list"][data-market="us"] [data-ui-v2="stock-row"]').first
+                us.locator("button").click()
+                assert us.locator('[data-ui-v2="kr-only"]').inner_text().strip() == C["stocks"]["krOnly"]
+                label_here()
+                shot(page, width, "1-stocks")
+                tab(TABS["market"])
+                at("market")
+                page.locator('[data-ui-v2="market-tile"]').first.wait_for(state="visible")
+                assert page.locator('[data-ui-v2="market-tile"]').count() == 4 and page.locator('[data-ui-v2="old-screen"]').count() == 0
+                label_here()
+                shot(page, width, "1-market")
+            check(W + "탭: 종목(한국 회사는 링크 아님 · 미국 종목 줄) · 시장(네 칸, 예전 뱁새 버튼 없음)", stocks_and_market, page, width)
 
             def deck_tab():
-                tab(C["app"]["tabs"]["deck"])
+                tab(TABS["portfolio"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
                 assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기 내 덱에 '예전 뱁새' 안내가 떠요"
                 live = os.path.join(tempfile.mkdtemp(), "live.json")          # 실제 앱에서 내보낸 기록을 미리 보기에서 열면
@@ -181,10 +232,10 @@ def main():
                 assert C["store"]["otherKind"] not in page.locator("body").inner_text()      # 그 문장은 실제 앱 전용
                 label_here()
                 shot(page, width, "2-mydeck")
-            check(W + "탭: 내 덱", deck_tab, page, width)
+            check(W + "탭: 포트폴리오", deck_tab, page, width)
 
             def every_deck():
-                tab(C["app"]["tabs"]["build"])
+                start_build()
                 for d in DECKS:
                     page.locator(f'[data-deck="{d}"]').click()
                     label_here()
@@ -199,10 +250,10 @@ def main():
                     page.get_by_text(C["pick"]["title"]).first.wait_for(state="visible")
                     label_here()
                     assert act().is_enabled() and act().inner_text() == C["pick"]["makePlan"], f"{d}: 후보 {act().inner_text()}"
-                    page.get_by_role("button", name=C["pick"]["back"]).click()
+                    page.get_by_role("button", name=PICK_BACK).click()
                     page.get_by_role("button", name=C["build"]["restart"]).click()
                 shot(page, width, "3-start")
-            check(W + "시작 덱 8개 모두 예시 데이터로 후보 고르기까지 (막힘 없음)", every_deck, page, width)
+            check(W + "시작 유형 8개 모두 예시 데이터로 후보 고르기까지 (막힘 없음)", every_deck, page, width)
 
             def plan_and_buy():
                 page.locator('[data-deck="income"]').click()
@@ -236,7 +287,7 @@ def main():
                 page.get_by_text(C["plan"]["done"]).wait_for(state="visible")
                 assert sheet.locator('[data-ui-v2="sample-label"]').is_visible()
                 label_here()
-                page.get_by_role("button", name=C["plan"]["doneLink"]).click()
+                page.get_by_role("button", name=DONE_LINK).click()
                 stored = page.evaluate("[localStorage.getItem('baepsae2.preview.v1'), localStorage.getItem('baepsae2.v1')]")
                 assert stored[0] and stored[1] is None, "미리 보기 기록은 미리 보기 키에만 저장돼요"
                 page.reload(wait_until="domcontentloaded")
@@ -244,12 +295,12 @@ def main():
                 assert "멈췄어요" not in page.locator("body").inner_text()
                 label_here()
                 shot(page, width, "8-today-after")
-                tab(C["app"]["tabs"]["deck"])
-                page.get_by_text("배당 생활비 덱").wait_for(state="visible")
+                tab(TABS["portfolio"])
+                page.get_by_text(SAVED_NAME).wait_for(state="visible")
                 page.locator('[data-ui-v2="deck-summary"]').wait_for(state="visible")
                 label_here()
                 shot(page, width, "8-mydeck-after")
-            check(W + "배당 생활비: 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 (미리 보기 저장 키만 씀)", plan_and_buy, page, width)
+            check(W + "배당 생활비: 매수 계획 → 샀어요 → 새로 고침해도 포트폴리오에 (미리 보기 저장 키만 씀)", plan_and_buy, page, width)
 
             def about():
                 foot = page.locator('[data-ui-v2="footer"]:visible').first
@@ -268,15 +319,10 @@ def main():
                 label_here()
                 shot(page, width, "9-about")
                 page.get_by_role("button", name=C["app"]["close"]).click()
-                page.get_by_text("배당 생활비 덱").first.wait_for(state="visible")           # 전 화면(내 덱)으로
-                assert page.locator('[data-ui-v2="about"]').count() == 0 and not page.url.endswith("#about"), page.url
-            check(W + "푸터 '소개' → 소개 (예시 데이터 표시 · 숫자 줄과 숫자 문단 없음) → 뒤로 → 내 덱", about, page, width)
-
-            def search():
-                with page.expect_navigation():
-                    tab(C["app"]["tabs"]["search"])
-                assert page.url.endswith("/baepsae.html")
-            check(W + "탭: 찾기 → 지금 앱", search, page, width)
+                page.get_by_text(SAVED_NAME).first.wait_for(state="visible")           # 전 화면(포트폴리오)으로
+                page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+                assert page.url.endswith("/app-preview.html#portfolio"), page.url
+            check(W + "푸터 '소개' → 소개 (예시 데이터 표시 · 숫자 줄과 숫자 문단 없음) → 뒤로 → 포트폴리오", about, page, width)
             ctx.close()
         browser.close()
     srv.shutdown()

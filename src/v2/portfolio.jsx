@@ -151,7 +151,8 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
               : <Note tone="watch">{C.store.importFail}</Note>}
           </div>
         )}
-        {isSafariLike() && <Note>{C.store.safari}</Note>}
+        {/* v19.0c: only with records to lose (an empty 포트폴리오 shows the 뱁이, and "7일" there would be the only number) */}
+        {isSafariLike() && decks.length > 0 && <Note>{C.store.safari}</Note>}
         {decks.length > 0 && <IosHint kind="move" />}
       </Card>
       <Footer />

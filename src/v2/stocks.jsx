@@ -23,8 +23,9 @@ export function StockRow({ s, name, t, cls, plain = false, note, onTap, href }) 
   const sub = cls === "us" ? t : plain ? null : t;
   const body = (
     <>
-      <span aria-hidden="true" style={{ width: SPACE(9), height: SPACE(9), borderRadius: RADIUS.sm, background: COLOR.select, display: "flex",
-        alignItems: "center", justifyContent: "center", flexShrink: 0, ...tx(SIZE.xs, WEIGHT.heavy, COLOR.ink) }}>{String(nk).trim().slice(0, 1)}</span>
+      {/* the first letter of the name, drawn by CSS from data-initial (src/v2/template.html): a decoration, not text */}
+      <span aria-hidden="true" data-initial={String(nk).trim().slice(0, 1)} style={{ width: SPACE(9), height: SPACE(9), borderRadius: RADIUS.sm, background: COLOR.select, display: "flex",
+        alignItems: "center", justifyContent: "center", flexShrink: 0, ...tx(SIZE.xs, WEIGHT.heavy, COLOR.ink) }} />
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{nk}</span>
         {sub && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}

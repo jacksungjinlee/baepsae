@@ -211,7 +211,7 @@ const NOT_SAFARI = /CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|GSA\/|KAKAOTALK|NAVER|Line\/|
 export function iphoneSafari(nav, standalone = null) {
   const n = nav || (typeof navigator !== "undefined" ? navigator : {});
   const ua = n.userAgent || "";
-  if (!/\(iP(hone|od);/.test(ua) || !/Version\/[\d.]+ .*Safari\//.test(ua) || NOT_SAFARI.test(ua)) return false;
+  if (!/\((iPhone|iPod)[;\s]/.test(ua) || !/Version\/[\d.]+ .*Safari\//.test(ua) || NOT_SAFARI.test(ua)) return false;
   if (n.standalone === true) return false;
   let sa = standalone;
   if (sa == null) {
