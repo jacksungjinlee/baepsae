@@ -34,7 +34,7 @@ import time
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og.png", "icon-192.png", "icon-512.png"]
+SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og-v19.png", "icon-192.png", "icon-512.png"]
               + [f"baepi-{i}.png" for i in range(1, 10)])
 DATA_FILES = ["data.json", "corp.json", "disc.json", "macro.json"]
 WAIT = 20000  # ms
@@ -212,12 +212,35 @@ def upgrade(files):
     return files
 
 
+# v19.0 (Jack, 2026-11-03): 푸터에는 만든 사람 줄 대신 2.0 의 소개 페이지로 가는 '소개' 링크 (src/links.js)
+ABOUT_HREF = "./app.html#about"
+GONE = ["INSEAD", "이성진", "황새 말고, 내 걸음으로", "개인 투자 연구소", "Not the stork's pace", "At my own pace"]
+
+
+def about_footer(page, label="소개"):
+    """이 화면의 푸터: '소개'(영어 화면은 'About') 링크가 ./app.html#about 으로, 만든 사람 줄 · 예전 캐치프레이즈 없음."""
+    links = page.locator("a[data-about-link]")
+    links.first.wait_for(state="attached", timeout=WAIT)
+    for i in range(links.count()):
+        assert links.nth(i).inner_text() == label and links.nth(i).get_attribute("href") == ABOUT_HREF, (label, links.nth(i).inner_text())
+    body = page.locator("body").inner_text()
+    found = [w for w in GONE if w in body]
+    assert not found, found
+
+
 # ── 장면 ────────────────────────────────────────────────────
 def scene_normal(R, files, full):
     site = build_site(files)
     srv, ctx, page, _ = R.open(site)
     S = "정상"
     R.check(page, S, "첫 화면이 열림", lambda: see(page, "내 종목, 괜찮은 걸까요?"))
+
+    def gate_footer():
+        about_footer(page)
+        body = page.locator("body").inner_text()
+        assert "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다. · 소개" in body
+        assert "종목 하나로 5초 성적표부터 — 철새처럼 옮겨 다니지 않는 투자" in body
+    R.check(page, S, "첫 화면 푸터: 고지문 · '소개'(./app.html#about), 만든 사람 줄 없음 · 새 캐치프레이즈", gate_footer)
 
     def gate_samsung():
         search(page, "삼성전자", "005930")
@@ -231,6 +254,7 @@ def scene_normal(R, files, full):
         def run():
             tab(page, label)
             see(page, marker)
+            about_footer(page)                                     # 탭마다 푸터: 소개 링크, 만든 사람 줄 없음 (v19.0)
         return run
     R.check(page, S, "탭: 기업분석 (corp.json)", open_tab("기업분석", "시장 지도"))
 
@@ -258,18 +282,23 @@ def scene_normal(R, files, full):
         page.wait_for_timeout(300)
         assert page.locator(".nonLiveBanner").count() == 0, "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요"
         see(page, OFFICIAL)          # "가격은 {M월 D일} 공식 종가예요. 다른 수치는 추정치예요."
+        about_footer(page)           # 차근차근 만들기 푸터: 캐치프레이즈 · 고지문 · 소개 (만든 사람 줄 없음)
+        assert "철새처럼 옮겨 다니지 않는 투자" in page.locator("body").inner_text()
     R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 + 공식 종가 안내 (KO)", detail_ko)
 
     def to_en():
         home(page)
         page.get_by_role("button", name="EN", exact=True).first.click()
         see(page, "Is my stock doing okay?")
+        about_footer(page, "About")                                # 영어 화면의 푸터 링크는 About
     R.check(page, S, "영어 모드 전환", to_en)
 
     def detail_en():
         page.get_by_text("Build step by step", exact=True).click()
         page.locator(".dateBadge", has_text="As of").first.wait_for(state="visible", timeout=WAIT)
         see(page, "Prices are official closes from")
+        about_footer(page, "About")
+        assert "Don't hop from trend to trend" in page.locator("body").inner_text()
     R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 (EN)", detail_en)
 
     def quick_en():

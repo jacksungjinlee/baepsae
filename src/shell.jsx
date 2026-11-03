@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR, NAV, navPush, navInstall } from "./tokens.js";
 import { Ic, Seal } from "./icons.jsx";
-import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
+import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
 import { loadJson } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
 import SimpleApp from "./simple.jsx";
@@ -23,8 +23,6 @@ const MAST_CSS = `@media (display-mode: standalone) { .pwaBack { display: inline
   .shellbody { padding-bottom: calc(64px + env(safe-area-inset-bottom)) }
   .gatecols { grid-template-columns: 1fr !important }
 }`;
-const CREDIT_KO = "이성진, INSEAD MBA 26J";
-const CREDIT_EN = "Jack (Sung Jin) Lee, INSEAD MBA 26J";
 
 const TABS = [
   { id: "pf", ko: "포트폴리오", en: "Portfolio", icon: "compass" },
@@ -42,7 +40,7 @@ function TopNav({ tab, setTab, showBack, onBack, lang, onLang }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <Seal size={25} />
           <span style={{ fontFamily: FONT, fontSize: 16.5, fontWeight: 900, color: C.ink, letterSpacing: "-0.01em" }}>뱁새</span>
-          <span className="mastSub" style={{ fontFamily: FONT, fontSize: 10, color: C.faint, borderLeft: "1px solid " + C.line, paddingLeft: 8, letterSpacing: "0.03em" }}>{lang === "en" ? "At my own pace" : "황새 말고, 내 걸음으로"}</span>
+          <span className="mastSub" style={{ fontFamily: FONT, fontSize: 10, color: C.faint, borderLeft: "1px solid " + C.line, paddingLeft: 8, letterSpacing: "0.03em" }}>{lang === "en" ? "Don't hop from trend to trend" : "철새처럼 옮겨 다니지 않는 투자"}</span>
         </div>
         {/* 뱁새 2.0 (app.html) 으로 가는 머리말 링크 (Jack, 2026-11-02). 2.0 은 한국어만 있어서 한국어 화면에서만 보여요.
             좁은 휴대폰(420px 이하)에서 모드 안에 있을 때는 '모드 선택'·'뒤로'(홈 화면 앱)와 자리가 겹치지 않게 숨기고,
@@ -267,7 +265,7 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag, lang }) {
       <div style={{ textAlign: "center" }}>
         <Bird mood="happy" size={84} />
         <div style={{ fontSize: 23, fontWeight: 900, marginTop: 12, letterSpacing: "-0.01em" }}>{en ? "Is my stock doing okay?" : "내 종목, 괜찮은 걸까요?"}</div>
-        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>{en ? "Start with a 5-second report card — one Korean stock is enough." : "종목 하나로 5초 성적표부터 — 황새 말고, 내 걸음으로"}</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>{en ? "Start with a 5-second report card — one Korean stock is enough." : "종목 하나로 5초 성적표부터 — 철새처럼 옮겨 다니지 않는 투자"}</div>
         <div style={{ marginTop: 16 }}>
           <GateSearch onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} />
           <InstallHint lang={lang} />
@@ -304,8 +302,8 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag, lang }) {
         </button>
       </div>
       <div style={{ textAlign: "center", marginTop: 34, fontSize: 11, color: C.faint, lineHeight: 1.8 }}>
-        {en ? "An educational tool — not investment advice. All decisions and responsibility are your own." : "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다."}<br />
-        {CREDIT_KO} · {CREDIT_EN}
+        {en ? "An educational tool — not investment advice. All decisions and responsibility are your own." : "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다."}
+        {" · "}<AboutLink lang={lang} />
       </div>
     </div>
   );
@@ -341,7 +339,6 @@ function Stub({ kind }) {
           </div>
         ))}
       </div>
-      <div style={{ fontSize: 11, color: C.faint, marginTop: 16 }}>{CREDIT_KO} · {CREDIT_EN}</div>
     </div>
   );
 }
