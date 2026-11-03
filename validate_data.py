@@ -48,7 +48,9 @@ FINAL_AFTER = dt.timedelta(minutes=30)    # 마감 30분 뒤 커밋부터 최종
 SPECIAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "krx_special_sessions.csv")
 SPECIAL_COLS = ["date", "open", "close", "kind", "reason", "source"]
 SPECIAL_KINDS = {"수능", "연초 개장", "기타"}
-CSAT_CHECK_FROM = (9, 1)                  # 이날(KST)부터 올해 수능일 줄이 표에 없으면 경고 (실패 아님 — 평소 발행을 막지 않아요)
+CSAT_CHECK_FROM = (9, 1)                  # 이날(KST)부터 올해 수능일 줄이 표에 없으면 경고
+CSAT_BLOCK_FROM = (11, 1)                 # 이날(KST)부터는 실패 — 발행을 막아요 (Jack, 2026-11-04: 9월 1일 경고 · 11월 1일 실패)
+ANNOTATE_MAX = 10                         # GitHub 은 한 단계에 경고·오류 알림을 종류마다 10개까지만 보여 줘요
 MIN_CAP_SHARE = 0.90
 LOOKBACK_DAYS = 10
 
@@ -220,10 +222,32 @@ def final_cut(d, special):
 
 
 def csat_missing(today, special):
-    """9월 1일(KST)부터 올해 수능일 줄이 표에 없으면 True — 표가 소리 없이 끝나지 않게 (경고만)."""
+    """9월 1일(KST)부터 올해 수능일 줄이 표에 없으면 True — 표가 소리 없이 끝나지 않게."""
     if (today.month, today.day) < CSAT_CHECK_FROM:
         return False
     return not any(d.year == today.year and v[2] == "수능" for d, v in special.items())
+
+
+def csat_blocks(today, special):
+    """11월 1일(KST)부터도 올해 수능일 줄이 없으면 True → 관문 실패 (그 전 9월 1일부터는 경고만)."""
+    return csat_missing(today, special) and (today.month, today.day) >= CSAT_BLOCK_FROM
+
+
+def _gh_escape(text):
+    """GitHub Actions 알림(::warning::) 메시지에 넣을 수 있게 % · 줄바꿈을 바꿔요."""
+    return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def annotations(rep):
+    """실패·경고 줄 → GitHub Actions 알림 줄들. 실행 화면과 check-run 알림 API 에 남아서, 매일 아침 점검이 로그인 없이 읽어요
+    (Jack, 2026-11-04: 관문 경고가 매일 점검으로 나에게 와야 해요). 종류마다 10개까지만 보이니 넘치면 마지막 줄에 남은 개수를 적어요."""
+    out = []
+    for kind, title, rows in (("error", "발행 관문 실패", rep.failed), ("warning", "발행 관문 경고", rep.warned)):
+        shown = rows if len(rows) <= ANNOTATE_MAX else rows[:ANNOTATE_MAX - 1]
+        out += [f"::{kind} title={title}::" + _gh_escape(f"{r[0]}: {r[1]} (기준 {r[2]})") for r in shown]
+        if len(rows) > len(shown):
+            out.append(f"::{kind} title={title}::" + _gh_escape(f"외 {len(rows) - len(shown)}개 더 — 실행 요약의 표를 보세요"))
+    return out
 
 
 # ── 최종본 목록 (fetch_data.py 와 별개 구현) ─────────────────
@@ -469,19 +493,20 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         rep.add("pxDate 최종본 여부", px == final["date"], px, f"{final['date']} ({final['how']})")
     else:
         rep.add("pxDate = 최종본 날짜", px == final["date"], px, f"{final['date']} ({final['how']})")
-    # KRX 특별 거래시간 표 (v17.5.4): 최종본 기준에 써요. 읽을 수 있어야 하고, 9월 1일부터는 올해 수능일 줄이 있어야 해요 (없으면 경고만)
+    # KRX 특별 거래시간 표 (v17.5.4): 최종본 기준에 써요. 읽을 수 있어야 하고, 올해 수능일 줄이 있어야 해요
+    # (없으면 9월 1일부터 경고, 11월 1일부터 실패 — Jack, 2026-11-04)
     try:
         sp = load_special_sessions() if special is None else special
     except Exception as e:
         sp = None
         rep.add("KRX 특별 거래시간 표", False, str(e)[:90], "읽을 수 있어야 함 (data/krx_special_sessions.csv)")
     if sp is not None:
-        miss = csat_missing(today, sp)
+        miss, block = csat_missing(today, sp), csat_blocks(today, sp)
         have = sorted(d for d, v in sp.items() if d.year == today.year and v[2] == "수능")
-        rep.add("올해 수능일 특별 거래시간 (표)", True,
+        rep.add("올해 수능일 특별 거래시간 (표)", not block,
                 "올해 수능일 특별 거래시간이 표에 없어요" if miss
                 else (" · ".join(f"{d} {sp[d][0]:%H:%M}~{sp[d][1]:%H:%M}" for d in have) or "9월 1일 전이라 아직 안 봐요"),
-                "9월 1일(KST)부터 올해 수능일 줄 (없으면 경고)", warn=miss)
+                "올해 수능일 줄 (9월 1일부터 없으면 경고 · 11월 1일부터 없으면 실패)", warn=miss)
     ppx = prev_px_date(pdata, notes) if pdata else None
     if pdata:
         rep.add("pxDate 가 뒤로 가지 않음", px is not None and ppx is not None and px >= ppx, px, f"≥ {ppx}")
@@ -972,6 +997,11 @@ def main(argv=None):
     print(f"결과: {'FAIL' if bad else 'PASS'} · 실패 {len(bad)} · 경고 {len(warn)} · 전체 {len(rep.rows)}")
     for r in bad:
         print(f"!! FAIL  {r[0]}: {r[1]} (기준 {r[2]})")
+    for r in warn:
+        print(f"!! 경고  {r[0]}: {r[1]} (기준 {r[2]})")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for line in annotations(rep):
+            print(line)
     summ = os.environ.get("GITHUB_STEP_SUMMARY")
     if summ:
         with open(summ, "a", encoding="utf-8") as f:

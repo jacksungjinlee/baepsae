@@ -360,6 +360,60 @@ def test_csat_missing_from_the_table_is_a_warning_from_september_first():
     assert not rep.failed, rep.table()                                    # 경고만 — 평소 발행을 막지 않아요
 
 
+def test_csat_missing_from_the_table_fails_from_november_first():
+    """Jack, 2026-11-04: 9월 1일부터 경고, 11월 1일부터도 없으면 발행을 막아요."""
+    sp = V.load_special_sessions()
+    no_csat = {d: v for d, v in sp.items() if v[2] != "수능"}
+    assert not V.csat_blocks(dt.date(2027, 10, 31), no_csat) and V.csat_missing(dt.date(2027, 10, 31), no_csat)
+    assert V.csat_blocks(dt.date(2027, 11, 1), no_csat) and V.csat_blocks(dt.date(2027, 12, 31), no_csat)
+    assert not V.csat_blocks(dt.date(2027, 11, 1), {**no_csat, dt.date(2027, 11, 18): (dt.time(10), dt.time(16, 30), "수능")})
+    assert not V.csat_blocks(dt.date(2026, 11, 4), sp)                    # 올해 줄(2026-11-19)이 있어요
+    cur, prev, final = good_pair()
+    for today, want in ((dt.date(2026, 10, 31), "WARN"), (dt.date(2026, 11, 1), "FAIL")):
+        rep = V.run_checks(cur, prev, final, today, count_between=lambda a, b: 1, sessions=SESSIONS, now=NOW,
+                           hilo=hilo_of(cur, V.MUST), special=no_csat)
+        row = next(r for r in rep.rows if r[0] == "올해 수능일 특별 거래시간 (표)")
+        assert row[3] == want and row[1] == "올해 수능일 특별 거래시간이 표에 없어요", (today, row)
+
+
+def test_gate_warnings_and_failures_become_github_annotations():
+    """관문 경고·실패는 GitHub 알림(::warning:: · ::error::)으로도 남아서 매일 아침 점검이 읽어요 (Jack, 2026-11-04)."""
+    rep = V.Report()
+    rep.add("좋은 줄", True, "1", "1")
+    rep.add("경고 줄", True, "93.0%", "≥ 92% (2점 안쪽이면 경고)", warn=True)
+    rep.add("실패 줄", False, "50%\n둘째 줄", "≥ 99%")
+    lines = V.annotations(rep)
+    assert lines == ["::error title=발행 관문 실패::실패 줄: 50%25%0A둘째 줄 (기준 ≥ 99%25)",
+                     "::warning title=발행 관문 경고::경고 줄: 93.0%25 (기준 ≥ 92%25 (2점 안쪽이면 경고))"], lines
+    assert V.annotations(V.Report()) == []
+    many = V.Report()
+    for i in range(13):
+        many.add(f"경고 {i}", True, "x", "y", warn=True)
+    w = V.annotations(many)
+    assert len(w) == V.ANNOTATE_MAX and w[-1].endswith("외 4개 더 — 실행 요약의 표를 보세요"), w[-2:]
+
+
+def test_gate_prints_annotations_only_inside_github_actions(monkeypatch, capsys):
+    rep = V.Report()
+    rep.add("경고 줄", True, "x", "y", warn=True)
+    cur, _, _ = good_pair()
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)                    # 네트워크 없이: 파일·최종본·달력·야후는 가짜
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+    monkeypatch.setattr(V, "run_checks", lambda *a, **k: rep)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    for env, seen in (("true", True), (None, False)):
+        if env:
+            monkeypatch.setenv("GITHUB_ACTIONS", env)
+        else:
+            monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        assert V.main(["--dir", "unused", "--bootstrap", "--today", "2026-10-31"]) == 0   # 경고만이면 통과
+        out = capsys.readouterr().out
+        assert ("::warning title=발행 관문 경고::경고 줄: x (기준 y)" in out) is seen, out[-400:]
+        assert "!! 경고  경고 줄: x (기준 y)" in out
+
+
 def test_count_final_between_counts_trading_days_only():
     days = {dt.date(2026, 10, 24): text_of("2026-10-24_0444"), dt.date(2026, 10, 25): text_of("2026-10-24_0444"),
             dt.date(2026, 10, 26): text_of("2026-10-28_1921"), dt.date(2026, 10, 27): text_of("2026-10-28_1921")}
