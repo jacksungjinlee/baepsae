@@ -104,7 +104,9 @@ JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avo
 `main()` order:
 1. `fetch_rf` — risk-free rate.
 2. `fetch_korea` — since v17.4.1/v17.5: the latest **final** listing file before today (KST) from `fdr_krx_data_cache`
-   (≥ 90% market caps filled, last commit at or after **16:00 KST**) → top 2,500 by market cap (`MAX_KR`) → sector
+   (≥ 90% market caps filled, last commit at or after **that day's KRX close + 30 min** — 16:00 KST on a normal day;
+   later on special sessions listed in `data/krx_special_sessions.csv`, e.g. 17:00 on CSAT day (v17.5.4))
+   → top 2,500 by market cap (`MAX_KR`) → sector
    descriptions (`KRX-DESC`) → KOSPI index → per-stock prices `fdr.DataReader(code)` (8 threads), every series cut at
    `pxDate` with the `pxDate` bar set to the **official close = `Marcap ÷ Stocks`** → `enrich_with_dart` (annual,
    dividends, quarterly → TTM; cached in `.dart-cache`; 5 threads) → `fill_multiples`. (Before v17.4.1 it used
@@ -154,7 +156,8 @@ Data is fetched with `fetch("./x.json", {cache: "no-store"})` in `shell.jsx` (ga
    on `2026-10-29.csv`: 05:44 version has 0 / 2,872 market caps; the 13:19 and 19:58 versions have all 2,872.
    (Correction 2026-10-31: in the evening versions `Close` is an after-hours price; the official close is
    `Marcap ÷ Stocks` — see § 3. The final commit also lands before 18:00 on about 1 trading day in 5 — 29 of 138 since
-   April, between 16:13 and 17:59 — so v17.5 treats a file as final from 16:00 KST.)
+   April, between 16:13 and 17:59 — so v17.5 treats a file as final from 16:00 KST. v17.5.4: from the day's close + 30 min,
+   read from `data/krx_special_sessions.csv` — the CSAT day closes at 16:30, so it needs 17:00.)
 2. **Consequences:**
    - `cap = float(row["Marcap"] or 0)` stays NaN (NaN is truthy), and the same happens to `val` → NaN written to
      JSON → browsers' `JSON.parse` rejects the entire file → the gate and 기업분석 show nothing.

@@ -266,16 +266,24 @@ def write_json(path, obj):
 #   ~05시 장 시작 전: 시가총액이 전부 비어 있음
 #   ~13시 장중: 값은 차 있지만 장중 가격
 #   16~23시 장 마감 후: 시가총액이 공식 종가로 확정 (Close 열은 시간외 가격이라 쓰지 않아요)
-# 그래서 오늘(KST) 이전 날짜 중, 시가총액이 90% 이상 차 있고 마지막 커밋이 그 날짜
-# 16:00 KST 이후인 가장 최근 파일을 고릅니다. 주말 파일은 시가총액이 비어 있어 걸러져요.
+# 그래서 오늘(KST) 이전 날짜 중, 시가총액이 90% 이상 차 있고 마지막 커밋이 그날 KRX 정규장 마감 + 30분
+# (보통 날 15:30 → 16:00 KST) 이후인 가장 최근 파일을 고릅니다. 주말 파일은 시가총액이 비어 있어 걸러져요.
 # v17.5: 18시 → 16시. 4월 이후 거래일 138일 중 29일은 마지막 커밋이 16:13~17:59 였고,
 # 그 버전의 시가총액은 밤 23시 버전과 100% 같았어요 (10/20·10/23 비교).
+# v17.5.4: 마감이 늦는 날(수능일 10:00~16:30 등)은 data/krx_special_sessions.csv 의 마감 + 30분 (수능일 17:00).
+# 고정 16:00 이면 수능일 16:10 커밋(아직 장중)을 종가로 발행했을 거예요. 이 표는 마감을 늦출 수만 있어요 (15:30 보다 이른 마감을 적으면 멈춰요).
+# 야후 ^KS11 분봉으로 마감 시각을 맞춰 보려 했지만 쓸 수 없었어요 (2026-11-03 확인): 야후의 정규장은 매일 09:00~15:00 로 고정이고
+# 분봉도 15:00 에서 끝나요 — 2025-11-13 수능일(실제 16:30 마감)에도 똑같이 15:00 이었어요.
 LISTING_URL = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx/{d}.csv"
 LISTING_COMMITS_API = "https://api.github.com/repos/FinanceData/fdr_krx_data_cache/commits"
 LISTING_PATH = "data/listing/krx/{d}.csv"
 LISTING_MIN_CAP_SHARE = 0.90
-LISTING_FINAL_HOUR = 16
+KRX_CLOSE = dt.time(15, 30)                       # 보통 날 KRX 정규장 마감
+LISTING_FINAL_AFTER = dt.timedelta(minutes=30)    # 마감 30분 뒤 커밋부터 최종본 (보통 날 16:00 — v17.5 와 같아요)
 LISTING_LOOKBACK_DAYS = 10
+KRX_SPECIAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "krx_special_sessions.csv")
+KRX_SPECIAL_HEAD = ["date", "open", "close", "kind", "reason", "source"]
+KRX_SPECIAL_KINDS = ("수능", "연초 개장", "기타")
 MUST_KR = ("005930", "000660", "005380", "015760", "105560")
 
 
@@ -330,9 +338,81 @@ def _listing_commit_kst(d):
         return None
 
 
-def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS):
+def load_krx_special_sessions(path=None):
+    """data/krx_special_sessions.csv → {날짜: {"open", "close", "kind", "reason", "source"}} (시각은 dt.time).
+    사람이 출처를 확인해 적은 표예요. 이상한 줄이 하나라도 있으면 그 줄 번호와 함께 예외 (조용히 15:30 으로 넘어가지 않게)."""
+    path = path or KRX_SPECIAL_PATH
+    name = os.path.basename(path)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows or [c.strip() for c in rows[0]] != KRX_SPECIAL_HEAD:
+        raise RuntimeError(f"!! {name} 머리줄이 {','.join(KRX_SPECIAL_HEAD)} 이 아니에요: {rows[0] if rows else '빈 파일'}")
+    out = {}
+    for n, row in enumerate(rows[1:], start=2):
+        if not any(c.strip() for c in row):
+            continue
+
+        def bad(why, n=n, row=row):
+            return RuntimeError(f"!! {name} {n}번째 줄이 이상해요 ({why}): {','.join(row)[:120]}")
+        if len(row) != len(KRX_SPECIAL_HEAD):
+            raise bad(f"칸 {len(row)}개 — {len(KRX_SPECIAL_HEAD)}개여야 해요 (쉼표가 섞였는지 확인)")
+        r = dict(zip(KRX_SPECIAL_HEAD, (c.strip() for c in row)))
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", r["date"]):
+                raise ValueError(r["date"])
+            d = dt.date.fromisoformat(r["date"])
+        except ValueError:
+            raise bad("날짜는 YYYY-MM-DD") from None
+        try:
+            if not all(re.fullmatch(r"\d{2}:\d{2}", r[k]) for k in ("open", "close")):
+                raise ValueError
+            op, cl = (dt.time.fromisoformat(r[k]) for k in ("open", "close"))
+        except ValueError:
+            raise bad("시각은 HH:MM") from None
+        if d in out:
+            raise bad(f"{d} 가 두 번 있어요")
+        if d.weekday() >= 5:
+            raise bad(f"{d} 는 주말이에요")
+        if not op < cl:
+            raise bad("개장이 마감보다 앞이어야 해요")
+        if cl < KRX_CLOSE:
+            raise bad(f"마감 {cl:%H:%M} 이 보통 마감 {KRX_CLOSE:%H:%M} 보다 일러요 — 최종본 규칙을 느슨하게 만들어서 이 표에는 못 적어요 (Jack 결정이 필요해요)")
+        if r["kind"] not in KRX_SPECIAL_KINDS:
+            raise bad(f"kind 는 {' · '.join(KRX_SPECIAL_KINDS)} 중 하나")
+        if not r["reason"] or not r["source"]:
+            raise bad("reason·source 는 비울 수 없어요")
+        out[d] = {"open": op, "close": cl, "kind": r["kind"], "reason": r["reason"], "source": r["source"]}
+    return out
+
+
+def krx_close(d, special):
+    """그날 KRX 정규장 마감 시각: 특별 거래시간 표에 있으면 그 마감, 없으면 15:30. (순수 함수)"""
+    s = special.get(d)
+    return s["close"] if s else KRX_CLOSE
+
+
+def listing_final_cut(d, special):
+    """이 시각(KST) 이후의 커밋이어야 그날 목록 파일을 최종본으로 봐요 = 마감 + 30분 (보통 16:00 · 수능일 17:00). (순수 함수)"""
+    return dt.datetime.combine(d, krx_close(d, special), KST) + LISTING_FINAL_AFTER
+
+
+def special_note(d, special):
+    """마감이 보통(15:30)과 다른 날이면 로그 한 줄, 아니면 None. (순수 함수)"""
+    s = special.get(d)
+    if not s or s["close"] == KRX_CLOSE:
+        return None
+    return f"{d} 특별 거래시간({s['kind']}): 마감 {s['close']:%H:%M} → 최종본은 {listing_final_cut(d, special):%H:%M} 이후 커밋만"
+
+
+def _hm_ko(t):
+    return f"{t.hour}시" + (f" {t.minute}분" if t.minute else "")
+
+
+def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS, special=None):
     """오늘(KST) 이전의 가장 최근 최종본을 고릅니다. (순수 함수 — 받아오는 방법은 인자로)
+    special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요).
     반환: (날짜, DataFrame, 설명, 건너뛴 날짜 메모) · 못 찾으면 날짜·DataFrame 이 None."""
+    special = load_krx_special_sessions() if special is None else special
     cache, notes = {}, []
 
     def get(d):
@@ -353,11 +433,15 @@ def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_D
         if share < LISTING_MIN_CAP_SHARE:
             notes.append(f"{d} 시가총액 {share:.0%} (장 전 파일 또는 휴장일) → 건너뜀")
             continue
+        sp = special_note(d, special)
+        if sp:
+            notes.append(sp)
         ct = commit_kst(d)
         if ct is not None:
-            if ct >= dt.datetime.combine(d, dt.time(LISTING_FINAL_HOUR), KST):
+            cut = listing_final_cut(d, special)
+            if ct >= cut:
                 return d, df, f"{d} 최종본 ({ct:%H:%M} KST 커밋, {len(df):,}종목, 시총 {share:.0%})", notes
-            notes.append(f"{d} 마지막 커밋 {ct:%m-%d %H:%M} KST — {LISTING_FINAL_HOUR}시 전이라 최종본이 아님 → 건너뜀")
+            notes.append(f"{d} 마지막 커밋 {ct:%m-%d %H:%M} KST — {_hm_ko(cut.time())} 전이라 최종본이 아님 → 건너뜀")
             continue
         # 커밋 시각을 못 봤으면: 그 뒤 날짜(오늘 포함)에 시가총액이 찬 파일이 있을 때만 '끝난 날'로 봐요
         later = [today - dt.timedelta(days=b) for b in range(0, back)]
@@ -373,10 +457,12 @@ VAL20_DAYS = 20           # 평균 거래대금 기간 (거래일)
 VAL20_MIN_DAYS = 10       # 이보다 적은 날만 있으면 (신규 상장 등) 비워 둬요
 
 
-def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookback=45):
+def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookback=45, special=None):
     """기준일 앞의 끝난 거래일 목록 파일들 (최신 → 과거, 최대 n개). (순수 함수 — 받아오는 방법은 인자로)
     반환: (세션 [(날짜, DataFrame)], 메모들, 직전 거래일 파일이 최종본인지).
-    직전 거래일 파일은 커밋 시각이 16시 전이면 최종본이 아니라 그날 종가를 믿지 않아요 (d1 을 비워요)."""
+    직전 거래일 파일은 커밋 시각이 그날 마감 + 30분(보통 16시 · 수능일 17시) 전이면 최종본이 아니라 그날 종가를 믿지 않아요 (d1 을 비워요).
+    special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요)."""
+    special = load_krx_special_sessions() if special is None else special
     out, notes, prev_final = [], [], None
     for back in range(1, lookback + 1):
         if len(out) >= n:
@@ -392,8 +478,11 @@ def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookbac
         if listing_cap_share(df) < LISTING_MIN_CAP_SHARE:
             continue
         if not out:
+            sp = special_note(d, special)
+            if sp:
+                notes.append(f"직전 거래일 {sp}")
             ct = commit_kst(d)
-            if ct is not None and ct < dt.datetime.combine(d, dt.time(LISTING_FINAL_HOUR), KST):
+            if ct is not None and ct < listing_final_cut(d, special):
                 prev_final = False
                 notes.append(f"!! 직전 거래일 {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 최종본이 아니라 d1 을 비워요")
             else:
@@ -666,7 +755,7 @@ def load_kr_listing(today):
     """(목록 날짜, DataFrame). 못 찾으면 (None, None) — 부르는 쪽이 실행을 멈춥니다."""
     d, df, note, notes = pick_final_listing(today, _fetch_listing_csv, _listing_commit_kst)
     for n in notes:
-        log(f"  (종목 목록 {n})")
+        log(f"· {n}" if "특별 거래시간" in n else f"  (종목 목록 {n})")
     if d is None:
         log(f"  !! 종목 목록: {note}")
         return None, None
@@ -2979,6 +3068,10 @@ def main():
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
     dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
+    special = load_krx_special_sessions() # KRX 특별 거래시간 표도 (v17.5.4) — 최종본 판단에 써요
+    soon = [f"{d} {v['kind']} {v['open']:%H:%M}~{v['close']:%H:%M}" for d, v in sorted(special.items())
+            if today - dt.timedelta(days=LISTING_LOOKBACK_DAYS) <= d <= today + dt.timedelta(days=60)]
+    log(f"· KRX 특별 거래시간 표: {len(special)}줄" + (f" · 최근·다가오는 날: {' · '.join(soon)}" if soon else ""))
     log(f"· 업종 표: 그룹 {len(tables['groups'])} · KSIC 접두어 {len(tables['kmap'])} · 야후 업종 {len(tables['usmap'])} · "
         f"고정 {len(tables['over'])} · 주요제품 나누기 {len(tables['refine'])}")
 

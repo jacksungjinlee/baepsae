@@ -184,6 +184,104 @@ def test_download_failure_is_logged_not_hidden():
     assert any(n.startswith("!!") and "받기 실패" in n for n in notes)
 
 
+# ── v17.5.4: 최종본 = 그날 KRX 마감 + 30분 (특별 거래시간 표 data/krx_special_sessions.csv) ──
+CSAT, CSAT_PREV, CSAT_NEXT = dt.date(2026, 11, 19), dt.date(2026, 11, 18), dt.date(2026, 11, 20)
+CSAT_NOTE = "2026-11-19 특별 거래시간(수능): 마감 16:30 → 최종본은 17:00 이후 커밋만"
+SPECIAL_HEAD = "date,open,close,kind,reason,source\n"
+
+
+def csat_sources(hm):
+    """수능일(11/19 목, 10:00~16:30) 파일의 마지막 커밋이 hm, 전날(11/18)은 19:21 최종본."""
+    return sources({CSAT: "2026-10-29_1958", CSAT_PREV: "2026-10-28_1921"}, {CSAT: hm, CSAT_PREV: "1921"})
+
+
+def test_normal_day_cut_is_still_1600():
+    # 표에 없는 보통 날은 v17.5 그대로: 15:59 는 아니고 16:00 부터 최종본
+    sp = F.load_krx_special_sessions()
+    assert D29 not in sp and F.listing_final_cut(D29, sp) == at(D29, "1600")
+    files = {D29: "2026-10-29_1958", D28: "2026-10-28_1921"}
+    d, _, _, notes = F.pick_final_listing(D30, *sources(files, {D29: "1559", D28: "1921"}))
+    assert d == D28 and any("16시 전이라 최종본이 아님" in n for n in notes)
+    assert not any("특별 거래시간" in n for n in notes)
+    d, _, note, _ = F.pick_final_listing(D30, *sources(files, {D29: "1600", D28: "1921"}))
+    assert d == D29 and "16:00 KST 커밋" in note
+
+
+@pytest.mark.parametrize("hm", ["1610", "1659"])
+def test_csat_day_commit_before_1700_is_not_final(hm):
+    # 수능일은 16:30 마감이라 16:10 커밋은 아직 장중이에요. 고정 16:00 이면 장중 가격을 종가로 발행했을 거예요.
+    d, _, _, notes = F.pick_final_listing(CSAT_NEXT, *csat_sources(hm))
+    assert d == CSAT_PREV                      # 전날 최종본으로 물러나요 (관문의 '끝난 거래일 빠짐'이 발행을 막아요)
+    assert CSAT_NOTE in notes
+    assert any(n.startswith("2026-11-19 마지막 커밋") and "17시 전이라 최종본이 아님" in n for n in notes)
+
+
+def test_csat_day_commit_at_1700_is_final():
+    d, _, note, notes = F.pick_final_listing(CSAT_NEXT, *csat_sources("1700"))
+    assert d == CSAT and "17:00 KST 커밋" in note and CSAT_NOTE in notes
+
+
+def test_csat_rule_is_logged_with_its_close_time(monkeypatch, capsys):
+    fetch, commit = csat_sources("1610")
+    monkeypatch.setattr(F, "_fetch_listing_csv", fetch)
+    monkeypatch.setattr(F, "_listing_commit_kst", commit)
+    d, _ = F.load_kr_listing(CSAT_NEXT)
+    out = capsys.readouterr().out
+    assert d == CSAT_PREV and f"· {CSAT_NOTE}" in out and "17시 전이라 최종본이 아님" in out
+
+
+def test_csat_day_as_previous_session_needs_1700_for_d1():
+    files = {CSAT: "2026-10-29_1958", CSAT_PREV: "2026-10-28_1921"}
+    for hm, want in (("1610", False), ("1659", False), ("1700", True)):
+        ss, notes, final = F.kr_recent_sessions(CSAT_NEXT, *sources(files, {CSAT: hm, CSAT_PREV: "1921"}), n=5)
+        assert [d for d, _ in ss] == [CSAT, CSAT_PREV] and final is want, hm
+        assert f"직전 거래일 {CSAT_NOTE}" in notes, hm
+
+
+def test_explicit_table_drives_the_cut():
+    # 표에 없는 날이 특별 거래시간이 되면 그 마감 + 30분 (16:15 마감 → 16:45)
+    sp = {D29: {"open": dt.time(10), "close": dt.time(16, 15), "kind": "기타", "reason": "시험", "source": "시험"}}
+    files = {D29: "2026-10-29_1958", D28: "2026-10-28_1921"}
+    d, _, _, notes = F.pick_final_listing(D30, *sources(files, {D29: "1644", D28: "1921"}), special=sp)
+    assert d == D28 and any("16시 45분 전" in n for n in notes)
+    assert F.pick_final_listing(D30, *sources(files, {D29: "1645", D28: "1921"}), special=sp)[0] == D29
+
+
+def test_special_session_table_is_reviewed_and_has_csat_2026():
+    sp = F.load_krx_special_sessions()
+    assert sp[CSAT]["open"] == dt.time(10) and sp[CSAT]["close"] == dt.time(16, 30) and sp[CSAT]["kind"] == "수능"
+    assert sp[dt.date(2026, 1, 2)]["close"] == dt.time(15, 30)       # 연초 개장일: 늦게 열지만 마감은 같아요
+    assert all(v["reason"] and v["source"] and v["close"] >= F.KRX_CLOSE for v in sp.values())
+
+
+@pytest.mark.parametrize("row,why", [
+    ("2026-11-19,10:00,16:30,수능,이유", "칸 5개"),
+    ("2026-11-19,10:00,16:30,수능,이유,출처,더", "칸 7개"),
+    ("2026/11/19,10:00,16:30,수능,이유,출처", "날짜는 YYYY-MM-DD"),
+    ("2026-02-30,10:00,16:30,수능,이유,출처", "날짜는 YYYY-MM-DD"),
+    ("2026-11-19,10시,16:30,수능,이유,출처", "시각은 HH:MM"),
+    ("2026-11-19,10:00,25:00,수능,이유,출처", "시각은 HH:MM"),
+    ("2026-11-19,16:30,10:00,수능,이유,출처", "개장이 마감보다 앞"),
+    ("2026-11-19,10:00,14:30,수능,이유,출처", "보통 마감 15:30 보다 일러요"),     # 마감을 앞당기면 규칙이 느슨해져요
+    ("2026-11-21,10:00,16:30,수능,이유,출처", "주말"),
+    ("2026-01-02,10:00,15:30,연초 개장,이유,출처", "두 번"),
+    ("2026-11-19,10:00,16:30,시험,이유,출처", "kind"),
+    ("2026-11-19,10:00,16:30,수능,이유,", "reason·source"),
+])
+def test_broken_special_session_row_stops_loudly(tmp_path, row, why):
+    p = tmp_path / "s.csv"
+    p.write_text(SPECIAL_HEAD + "2026-01-02,10:00,15:30,연초 개장,이유,출처\n" + row + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=f"s.csv 3번째 줄이 이상해요 \\(.*{why}"):
+        F.load_krx_special_sessions(str(p))
+
+
+def test_special_session_table_header_must_match(tmp_path):
+    p = tmp_path / "s.csv"
+    p.write_text("date,open,close,reason,source\n2026-11-19,10:00,16:30,이유,출처\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="머리줄"):
+        F.load_krx_special_sessions(str(p))
+
+
 # ── 종목 선정 ───────────────────────────────────────────────
 def test_universe_is_top_by_market_cap():
     # 픽스처 37종목 중 한국전력(015760)이 시총 31위 → 상위 31개면 필수 종목이 다 들어와요
