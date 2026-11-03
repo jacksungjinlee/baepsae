@@ -8,7 +8,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 ## 0. Current state and next steps (updated 2026-11-04 01:25 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
-pipeline or safety-rule changes); small review points go into the PR as follow-ups, not extra fix rounds. Decide
+pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
+nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04). Decide
 engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions, in one
 short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
 
@@ -31,8 +32,8 @@ pass. All checked on the live site.
    data, typed ones stay — on import *and* when reopening a saved portfolio. The old app has no typed-vs-auto record
    (`autoKeys` = keys today's data supplies; `openSlot` restores a slot's old fx while the chip says 자동). Add a
    "typed keys" record.
-4. **v19.0d** right after v19.0c: PC layout (≥ 1024 px left menu 240 px, search on top, "/" focuses search, two
-   columns). **Then v17.6.**
+4. **v19.0d** right after v19.0c (Jack, 2026-11-04): PC layout (≥ 1024 px left menu 240 px, search on top, "/"
+   focuses search, two columns). It was split out of v19.0c, so **v17.6 comes after v19.0d**.
 
 **Open product point for Jack:** the 타임머신 chart line (old app) still runs to the end of the period; no number is
 shown. Ask whether the drawing should stop at the low point.
@@ -44,6 +45,8 @@ hours and fix the 11-19 row before 11/18 (`trig_01JyjjakbFVQ4GPSanbsqESX`).
 **Later:** the 08:30 "latest close isn't in yet" line (holiday-aware; propose wording); old-app follow-ups:
 기업분석 "X% 보유" counts missing holdings; page ② is 445 px wide on a 390 px phone; CSV order sheet doesn't quote
 names with commas; stock edits don't travel in the backup.
+
+---
 
 ## 1. Product
 
@@ -300,7 +303,7 @@ Fix plan: `docs/tasks/v17.5-pipeline-safety.md` (correctness and gate), then `do
 
 1. **v17.5 stop the damage** (now) — `docs/tasks/v17.5-pipeline-safety.md`. Correct listing, publication gate, loud app
    failures, service-worker eviction.
-2. **v17.6 never again** (after v19.0c, Jack 2026-11-04) — `docs/tasks/v17.6-never-again.md`. Independent watchdog on the live site, CI on
+2. **v17.6 never again** (after v19.0c and its PC part v19.0d, Jack 2026-11-04) — `docs/tasks/v17.6-never-again.md`. Independent watchdog on the live site, CI on
    every PR, data/code split with a protected `main`, DART cache, runbook.
 3. **Jack's redesign ideas** from building his own "Anti-AI" portfolio. Background: user feedback said 뱁새 is hard
    and complex, and that adding every stock by hand is tedious. The direction under discussion is to keep it
