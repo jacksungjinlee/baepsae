@@ -5,6 +5,49 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
+## 0. Current state and next steps (updated 2026-11-04 01:25 KST — read this first)
+
+Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
+pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
+nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04). Decide
+engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions, in one
+short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
+
+**Merged 2026-11-04:** #22 docs, #24 v18.4.1 JSON import, #25 v18.5 missing holdings (old app), #23 v19.0b visual
+pass. All checked on the live site.
+
+**Open:**
+1. **PR #21 `claude/v17.5.4-krx-close`** (CSAT close time + gate annotations) — fully tested (final dry run
+   41666939971 on 3e732ed green; annotation proof run 41662266107). Jack: **merge after the morning data run** (not
+   between 03:40 and ~08:30 KST). After merge: update the read-only 09:13 scheduled check
+   (`trig_01BGc9nmRuJcg6dsL1wNZX5E`) to read the publishing run's annotations
+   (`GET /repos/jacksungjinlee/baepsae/check-runs/<update job id>/annotations`, public, no login) and report every
+   gate warning to Jack, also after 11/11.
+2. **v19.0c `claude/v19.0c-tabs`** (in progress, phone only): four tabs 홈 · 포트폴리오 · 종목 · 시장, ☰ menu,
+   덱 → 포트폴리오, 시장 tiles (each with its own date) + old-app deep links, 거래대금 상위 종목 (KR/US separate),
+   US tap line, the 2.0 missing-stock redesign, the iPhone home-screen hint. Spec `docs/tasks/v19.0-layout-c.md`; build plan and
+   proposed 「새 문구」 `docs/tasks/v19.0-plan.md`. New strings are stored as "제안 (Jack 승인 대기)" in `src/copy/v2.js`; Jack
+   approves them and the test changes in one message before merge.
+3. **Next PR for the old app (Jack 2026-11-04):** settings left on 자동 (fx and market inputs) must come from today's
+   data, typed ones stay — on import *and* when reopening a saved portfolio. The old app has no typed-vs-auto record
+   (`autoKeys` = keys today's data supplies; `openSlot` restores a slot's old fx while the chip says 자동). Add a
+   "typed keys" record.
+4. **v19.0d** right after v19.0c (Jack, 2026-11-04): PC layout (≥ 1024 px left menu 240 px, search on top, "/"
+   focuses search, two columns). It was split out of v19.0c, so **v17.6 comes after v19.0d**.
+
+**Open product point for Jack:** the 타임머신 chart line (old app) still runs to the end of the period; no number is
+shown. Ask whether the drawing should stop at the low point.
+
+**Scheduled tasks:** 09:13 KST Tue–Sat read-only data check (`trig_01BGc9nmRuJcg6dsL1wNZX5E`; until 11/11 it also
+reports the publish time — if mornings miss 08:00, propose the next step). 2026-11-13 10:17 KST: check KRX's CSAT-day
+hours and fix the 11-19 row before 11/18 (`trig_01JyjjakbFVQ4GPSanbsqESX`).
+
+**Later:** the 08:30 "latest close isn't in yet" line (holiday-aware; propose wording); old-app follow-ups:
+기업분석 "X% 보유" counts missing holdings; page ② is 445 px wide on a 390 px phone; CSV order sheet doesn't quote
+names with commas; stock edits don't travel in the backup.
+
+---
+
 ## 1. Product
 
 **Purpose.** An honest, non-speculative investing tool for Korean retail investors. It helps them see what they own,
@@ -260,7 +303,7 @@ Fix plan: `docs/tasks/v17.5-pipeline-safety.md` (correctness and gate), then `do
 
 1. **v17.5 stop the damage** (now) — `docs/tasks/v17.5-pipeline-safety.md`. Correct listing, publication gate, loud app
    failures, service-worker eviction.
-2. **v17.6 never again** (after v19.0c, Jack 2026-11-04) — `docs/tasks/v17.6-never-again.md`. Independent watchdog on the live site, CI on
+2. **v17.6 never again** (after v19.0c and its PC part v19.0d, Jack 2026-11-04) — `docs/tasks/v17.6-never-again.md`. Independent watchdog on the live site, CI on
    every PR, data/code split with a protected `main`, DART cache, runbook.
 3. **Jack's redesign ideas** from building his own "Anti-AI" portfolio. Background: user feedback said 뱁새 is hard
    and complex, and that adding every stock by hand is tedious. The direction under discussion is to keep it
