@@ -19,3 +19,11 @@ def _one_temp_dir_per_run():
     finally:
         tempfile.tempdir = before
         shutil.rmtree(run, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _not_a_scheduled_run(monkeypatch):
+    """시험은 정해진 시각 실행이 아니에요: GitHub 의 정해진 시각 실행 안에서 pytest 를 돌려도 fetch_data 의 '빈 DART 캐시 멈춤'
+    (v17.5.3, GITHUB_EVENT_NAME=schedule)이 빈 캐시로 만드는 시험들을 멈추지 않게 지워요. 그 멈춤 자체는 test_schedule.py 가
+    값을 직접 넣어서 시험해요. 어떤 검사도 느슨해지지 않아요."""
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
