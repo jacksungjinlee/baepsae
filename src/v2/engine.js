@@ -54,8 +54,8 @@ export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && num(s.pric
 // Worked out once per loaded stock list (the data is loaded once), so the console line names them once, not on every
 // settings change.
 export const US_PREF_NAME = /preferred (stock|share|securit)|\bpfd\b|variable rate|fixed[- ]to[- ]floating|[\d.]+%\s*series\b|\bnotes? due\b/i;
-export const US_DEPOSITARY = /depositary shar/i;
-export const US_ADR = /american depositary/i;
+export const US_DEPOSITARY = /depositary shar| - deposit/i;
+export const US_ADR = /american deposit/i;
 export const US_PREF_TICKER = /-P[A-Z]?$|^[A-Z]{4}[MNOP]$/;
 export function usPreferredReason(s) {
   for (const n of [s.nk, s.ne]) {

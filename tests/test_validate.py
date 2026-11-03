@@ -753,7 +753,7 @@ def us_companies(cur):
 
 
 def test_us_market_cap_coverage_drop_fails():
-    # 야후가 시가총액을 안 보낸 날: 파이프라인은 5% 넘게 비면 우선주로 보지 않고 그대로 둬요 → 여기서 실패
+    # 야후가 시가총액을 안 보낸 날: 파이프라인은 시가총액이 없다는 이유로는 아무것도 빼지 않아요 (Jack, 2026-11-03) → 여기서 실패
     def blank(c):
         us = us_companies(c)
         for s in us[: int(len(us) * 0.06)]:
@@ -809,7 +809,7 @@ def test_small_korean_dividend_coverage_dip_passes():
                                       ({"preferred": [], "krListing": ["SKHY"]}, True),
                                       (None, False), ({"krListing": []}, False), ({"preferred": "STRC"}, False)])
 def test_too_many_us_rows_dropped_as_preferred_fails(left, ok):
-    # 야후가 진짜 회사 몇 개(5% 이하)의 시가총액을 안 보내면 파이프라인이 '우선주'로 빼고 시가총액 채움은 통과해요 → 수로 잡아요
+    # 이름·티커·야후 종류 규칙이 진짜 회사를 잡기 시작하거나 목록에 우선주가 몰려 들어온 날: 시가총액 채움은 통과해요 → 수로 잡아요
     cur, prev, final = good_pair()
     if left is None:
         cur["data"].pop("usLeftOut")

@@ -922,7 +922,9 @@ class DartClient:
         with self.lock:
             e = self.entries.get(key)
             # 찾은 보고서도 90일이 지나면 다시 확인 (정정공시). 실행당 300건까지, 실제로 쓰는 항목만.
-            reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0)
+            # DART 가 멈췄으면(self.down) 재확인하지 않아요: 칸만 쓰고 '재확인 N건'으로 잘못 세지 않게
+            reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0
+                         and not self.down and not self.fatal)
             if reval:
                 self.revalidate_left -= 1
                 self.revalidated += 1
@@ -2499,19 +2501,28 @@ def fill_multiples(kr_stocks, fin_map):
 # ────────────────────────────────────────────────────────────
 # 미국
 # ────────────────────────────────────────────────────────────
-def us_tickers():
+def us_tickers(names_out=None):
+    """S&P500 + NASDAQ 상위 400 + EXTRA_US. names_out(dict)을 주면 목록에 적힌 이름도 담아요 (티커 → 이름):
+    야후의 짧은 이름은 31자에서 잘리고 긴 이름은 'Strategy Inc' 처럼 회사 이름뿐일 때가 있어서, 우선주·예탁증서를 알아보는 데
+    목록의 이름("… Depositary Shares Each Representing … Preferred Stock")도 써요 (us_preferred_like)."""
     import FinanceDataReader as fdr
     tk = set(EXTRA_US)
     for name in ("S&P500", "NASDAQ"):
         try:
             df = fdr.StockListing(name)
             col = "Symbol" if "Symbol" in df.columns else df.columns[0]
-            syms = [str(s) for s in df[col].dropna().tolist()]
             if name == "NASDAQ":
-                syms = syms[:400]
+                df = df.head(400)
+            syms = [str(s) for s in df[col].dropna().tolist()]
             tk.update(syms)
+            if names_out is not None and "Name" in df.columns:
+                for sym, nm in zip(df[col].tolist(), df["Name"].tolist()):
+                    if isinstance(sym, str) and isinstance(nm, str) and nm.strip():
+                        names_out.setdefault(sym.replace(".", "-").strip().upper(), nm.strip())
         except Exception as e:
             log(f"  ({name} 목록 실패: {e})")
+    if names_out is not None:
+        log(f"· 미국 목록 이름 {len(names_out):,}개 (우선주·예탁증서 알아보기용)")
     return sorted({s.replace(".", "-").strip().upper() for s in tk if s and len(s) <= 6 and s.isascii()})
 
 
@@ -2615,8 +2626,8 @@ US_KR_DUP_PATH = os.path.join(INDUSTRY_DIR, "us_kr_duplicates.csv")
 # 2026-11-03 야후: STRC 'Strategy Inc - Variable Rate Se' · STRF·STRD 'Strategy Inc - 10.00% Series A ' (긴 이름은 'Strategy Inc'
 # 뿐이고 종류는 EQUITY) · GOOGM·GOOGN 'Alphabet Inc. Depositary Shares representing … Convertible Preferred Stock'.
 US_PREF_NAME = re.compile(r"preferred (stock|share|securit)|\bpfd\b|variable rate|fixed[- ]to[- ]floating|[\d.]+%\s*series\b|\bnotes? due\b", re.I)
-US_DEPOSITARY = re.compile(r"depositary shar", re.I)   # 우선주 예탁증서 (GOOGM) …
-US_ADR = re.compile(r"american depositary", re.I)      # … 단, ADR(진짜 외국 회사의 보통주 예탁증서)은 남겨요
+US_DEPOSITARY = re.compile(r"depositary shar| - deposit", re.I)   # 우선주 예탁증서 (GOOGM, 31자에서 잘린 'AGNC Investment Corp. - Deposit') …
+US_ADR = re.compile(r"american deposit", re.I)         # … 단, ADR(진짜 외국 회사의 보통주 예탁증서, 잘린 이름도)은 남겨요
 US_PREF_TICKER = re.compile(r"-P[A-Z]?$|^[A-Z]{4}[MNOP]$")   # BAC-PL 꼴 · 나스닥 다섯째 글자 M·N·O·P (우선주 표시)
 US_STOCK_TYPES = ("EQUITY", "ETF", "MUTUALFUND")       # 야후 종류가 이 밖이면 회사 주식이 아니에요
 
@@ -2640,7 +2651,8 @@ def us_preferred_reason(t, names, quote_type=None):
 
 def us_preferred_like(us, infos=None):
     """미국 목록에 회사처럼 섞여 들어온 우선주·예탁증서 (NASDAQ 상위 400: STRC 는 예전 앱에 배당 12% 소프트웨어 회사로 보였어요).
-    ETF·펀드는 보지 않아요. infos = {티커: 야후 정보} (shortName · longName · quoteType). (순수 함수)
+    ETF·펀드는 보지 않아요. infos = {티커: 야후 정보} (shortName · longName · quoteType, 그리고 목록의 이름 listName). (순수 함수)
+    2026-11-03 리뷰: HBANL 은 야후 이름이 'Huntington Bancshares Incorporated' 뿐이라 목록의 이름으로만 알아봐요.
     반환: [(티커, 이유)] 티커 순."""
     infos = infos or {}
     out = []
@@ -2648,8 +2660,8 @@ def us_preferred_like(us, infos=None):
         if r.get("etf") is True or r.get("fund"):
             continue
         info = infos.get(r["t"]) or {}
-        why = us_preferred_reason(r["t"], (r.get("nk"), r.get("ne"), info.get("shortName"), info.get("longName")),
-                                  info.get("quoteType"))
+        why = us_preferred_reason(r["t"], (r.get("nk"), r.get("ne"), info.get("shortName"), info.get("longName"),
+                                           info.get("listName")), info.get("quoteType"))
         if why:
             out.append((r["t"], why))
     return sorted(out)
@@ -2771,7 +2783,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     · 상세 정보(이름·업종·설명)를 못 받은 종목 수를 남기고, 실패분은 한 번 더 천천히 시도해요."""
     import yfinance as yf
 
-    syms = us_tickers()
+    list_names = {}
+    syms = us_tickers(list_names)
     log(f"· 미국 {len(syms):,}개 종목…")
     end_x = today + dt.timedelta(days=1)
     last_ok = us_last_complete_day()
@@ -2864,7 +2877,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     odd = etf_from_quote_type(out, cache)
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
-    infos = {r["t"]: (cache.get(r["t"]) or {}).get("info") or {} for r in out}
+    infos = {r["t"]: {**((cache.get(r["t"]) or {}).get("info") or {}), "listName": list_names.get(r["t"])} for r in out}
     out, left_out = clean_us_list(out, kr_codes, dups or {}, infos)   # ETF 표시가 끝난 뒤에 (ETF·펀드는 우선주로 보지 않아요)
     no_info = set(missing)
     n_ok = sum(1 for r in out if r["t"] not in no_info)

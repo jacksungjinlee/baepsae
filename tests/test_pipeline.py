@@ -994,13 +994,21 @@ YAHOO_2026_11_03 = {
     "STRK": {"shortName": "Strategy Inc - 8.00% Series A P", "longName": "Strategy Inc", "quoteType": "EQUITY"},
     "GOOGM": {"shortName": "Alphabet Inc. - Depositary Shar", "quoteType": "EQUITY", "longName":
               "Alphabet Inc. Depositary Shares representing a 1/20th Interest in a Share of Series A Mandatory Convertible Preferred Stock"},
+    # 리뷰(2026-11-03)가 찾은 두 우선주: HBANL 은 야후 이름이 회사 이름뿐이라 목록의 이름(listName)으로만, AGNCL 은 31자에서 잘린 '- Deposit'
+    "HBANL": {"shortName": "Huntington Bancshares Incorpora", "longName": "Huntington Bancshares Incorporated", "quoteType": "EQUITY",
+              "listName": "Huntington Bancshares Incorporated - Depositary Shares Each Representing a 1/40th Interest in a Share of "
+                          "6.875% Series J Non-Cumulative Perpetual Preferred Stock"},
+    "AGNCL": {"shortName": "AGNC Investment Corp. - Deposit", "longName": "AGNC Investment Corp.", "quoteType": "EQUITY"},
     # 남아야 하는 진짜 회사 주식: ADR · 트래킹 주식(' - Ser…') · 이름에 Preferred 가 든 은행 · 다섯 글자 티커 · 클래스 주식
     "TSM": {"shortName": "Taiwan Semiconductor Manufactur", "quoteType": "EQUITY",
             "longName": "Taiwan Semiconductor Manufacturing Company Limited American Depositary Shares"},
     "FWONK": {"shortName": "Liberty Media Corporation - Ser", "longName": "Liberty Media Corporation - Series C Liberty Formula One",
               "quoteType": "EQUITY"},
     "PFBC": {"shortName": "Preferred Bank", "longName": "Preferred Bank", "quoteType": "EQUITY"},
-    "RYAAY": {"shortName": "Ryanair Holdings plc", "quoteType": "EQUITY"},
+    "RYAAY": {"shortName": "Ryanair Holdings plc", "quoteType": "EQUITY",
+              "listName": "Ryanair Holdings plc - American Depositary Shares, each representing two Ordinary Shares"},
+    "BIDU": {"shortName": "Baidu, Inc. - American Deposit", "quoteType": "EQUITY", "listName": "Baidu, Inc. ADS"},   # 잘린 ADR 이름
+    "AAPL": {"shortName": "Apple Inc.", "longName": "Apple Inc.", "quoteType": "EQUITY", "listName": "Apple Inc. Common Stock"},
     "GOOGL": {"shortName": "Alphabet Inc.", "quoteType": "EQUITY"},
     "BRK-B": {"shortName": "Berkshire Hathaway Inc. New", "quoteType": "EQUITY"},
 }
@@ -1009,17 +1017,19 @@ YAHOO_2026_11_03 = {
 def test_us_preferred_reason_by_name_ticker_and_quote_type():
     def why(t, info=None):
         info = info if info is not None else YAHOO_2026_11_03.get(t, {})
-        return F.us_preferred_reason(t, (info.get("shortName"), info.get("longName")), info.get("quoteType"))
+        return F.us_preferred_reason(t, (info.get("shortName"), info.get("longName"), info.get("listName")), info.get("quoteType"))
     assert why("STRC") == "이름 'Variable Rate'"
     assert why("STRF") == "이름 '10.00% Series'" and why("STRK") == "이름 '8.00% Series'"
     assert why("GOOGM") == "이름 'Depositary Shares'"
     assert why("GOOGM", {"longName": YAHOO_2026_11_03["GOOGM"]["longName"]}) == "이름 'Preferred Stock'"
+    assert why("HBANL") == "이름 '6.875% Series'" and why("AGNCL") == "이름 'Depositary Shares'"
+    assert why("HBANL", {k: v for k, v in YAHOO_2026_11_03["HBANL"].items() if k != "listName"}) is None   # 목록 이름이 없으면 못 잡아요
     assert why("XPFD", {"shortName": "X Corp 6.5% Pfd"}) == "이름 'Pfd'"
     assert why("XNOTE", {"shortName": "X Corp 7.75% Notes due 2029"}) == "이름 'Notes due'"
     assert why("BAC-PL", {"shortName": "Bank of America Corporation"}) == "티커"           # 야후 우선주 티커 꼴
     assert why("ABCDP", {"shortName": "ABCD Inc"}) == "티커" and why("GOOGN", {}) == "티커"   # 나스닥 다섯째 글자 P·N
     assert why("XIDX", {"shortName": "X", "quoteType": "INDEX"}) == "야후 종류 INDEX"
-    for t in ("TSM", "FWONK", "PFBC", "RYAAY", "GOOGL", "BRK-B"):
+    for t in ("TSM", "FWONK", "PFBC", "RYAAY", "BIDU", "AAPL", "GOOGL", "BRK-B"):
         assert why(t) is None, t
     for qt in ("EQUITY", "ETF", "MUTUALFUND", None):
         assert why("AAPL", {"shortName": "Apple Inc.", "quoteType": qt}) is None, qt
@@ -1036,12 +1046,13 @@ def test_us_preferred_and_depositary_shares_are_left_out(capsys):
               {"t": "NOINFO", "price": 3.0, "etf": False}]
     us = us_rows(740, extra=extra)
     found = F.us_preferred_like(us, infos)
-    assert [t for t, _ in found] == ["GOOGM", "STRC", "STRF", "STRK"], found
+    pref = ["AGNCL", "GOOGM", "HBANL", "STRC", "STRF", "STRK"]
+    assert [t for t, _ in found] == pref, found
     out, left = F.clean_us_list(us, frozenset(), {}, infos)
-    assert left == {"preferred": ["GOOGM", "STRC", "STRF", "STRK"], "krListing": []}       # data.json usLeftOut (검증이 세요)
+    assert left == {"preferred": pref, "krListing": []}                                     # data.json usLeftOut (검증이 세요)
     kept = {r["t"] for r in out}
-    assert {"STRC", "STRF", "STRK", "GOOGM"}.isdisjoint(kept) and len(out) == len(us) - 4
-    assert {"XCAP", "SPY", "PFFX", "NOINFO", "TSM", "FWONK", "PFBC", "RYAAY", "GOOGL", "BRK-B", "C000"} <= kept
+    assert set(pref).isdisjoint(kept) and len(out) == len(us) - len(pref)
+    assert {"XCAP", "SPY", "PFFX", "NOINFO", "TSM", "FWONK", "PFBC", "RYAAY", "BIDU", "AAPL", "GOOGL", "BRK-B", "C000"} <= kept
     log = capsys.readouterr().out
     assert "STRC(이름 'Variable Rate')" in log and "GOOGM(이름 'Depositary Shares')" in log      # 뺀 목록을 이유와 함께 남겨요
     assert "시가총액이 없는 미국 회사 주식" in log and "XCAP" in log                                # 빼지 않은 빈 칸도 크게 알려요
@@ -1134,7 +1145,9 @@ def test_dart_stops_calling_after_30_network_failures_in_a_row(tmp_path, monkeyp
     assert "DART 연결 안 됨" in capsys.readouterr().out
     # 멈춘 뒤에도 예전에 찾은 값(보관본)은 그대로 써요 — 네트워크 호출 없이
     c.entries["C1|2026|11012|CFS"] = {"st": "000", "at": "2026-01-01", "d": {"rev": 7.0}}   # 90일 지나 재확인 대상
+    left = c.revalidate_left
     assert c.report("x", "C1", 2026, "11012", "CFS", F.parse_dart_quarter) == {"rev": 7.0}
+    assert c.revalidated == 0 and c.revalidate_left == left and "재확인" not in c.summary()   # 멈춘 동안은 재확인으로 세지 않아요
     assert c.report("x", "C2", 2026, "11012", "CFS", F.parse_dart_quarter) is None
     assert "C2|2026|11012|CFS" not in c.entries          # '없음'으로 저장하지 않아요 (다음 실행이 다시 물어봐요)
     assert len(calls) == 30
