@@ -7,7 +7,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 1. Product
 
-**Purpose.** An honest, non-speculative research studio for Korean retail investors. It helps them see what they own,
+**Purpose.** An honest, non-speculative investing tool for Korean retail investors. It helps them see what they own,
 how their holdings move together, and what today's prices assume — without telling them what to buy.
 
 **Target user (single persona, decided):** 1–3년차 실전 투자자 — people who already invest real money,
@@ -31,9 +31,14 @@ watches the next run, checks the live site, reverts at once if something is wron
 **Status.** Not launched. Shared with a handful of friends. The link is on Jack's CV, and an English demo mode exists
 for job interviews outside Korea. Real usage numbers are too small to drive decisions yet.
 
-**Brand.** Name 뱁새 (long-tailed tit, from the proverb 뱁새가 황새 따라가다 가랑이 찢어진다). Tagline 황새 말고,
-내 걸음으로. Mascot 뱁이 (Jack's own art). Palette ink `#1C2B45`, apricot verdict bar `#C97757`, cream background
-`#FAF8F5`. Icons are custom stroke icons in `src/icons.jsx`. **Zero emoji anywhere**, always.
+**Brand** (Jack, 2026-11-03; live since v19.0a, PR #18). Name 뱁새 (the vinous-throated parrotbill, from the proverb
+뱁새가 황새 따라가다 가랑이 찢어진다). Descriptor "내 기준으로 만드는 포트폴리오"; catchphrase "철새처럼 옮겨 다니지 않는
+투자", which replaced "황새 말고, 내 걸음으로" everywhere. The maker's credit lives on the 소개 page; footers show only the
+disclaimer and a 소개 link. Mascot 뱁이 (Jack's own art; where it may appear: CLAUDE.md — the old app keeps its existing
+뱁이 pictures until each tool moves to 2.0). Palette ink `#1C2B45`, cream background `#FAF8F5`; apricot `#C97757` marks
+data only (target-weight line, rank numbers, factor dots, "my portfolio" in charts) — not alerts, buttons, icons or
+selection; alerts use the watch (amber) and broken (red) colours. Icons: Phosphor duotone in navy from v19.0b
+(vendored, MIT); before that, and in the old app, the custom stroke icons in `src/icons.jsx`. **Zero emoji anywhere**, always.
 
 **Repo/URL history.** GitHub username was renamed `pewpewmfer` → `jacksungjinlee` in v15.2. All URLs in code were
 migrated. The old Pages URL is dead.
@@ -96,8 +101,17 @@ allow web pages to install themselves. KakaoTalk's in-app browser is told to ope
 
 ## 3. Data pipeline (`fetch_data.py`)
 
-Scheduled for weekdays at 21:30 UTC (06:30 KST, after the US close). **In practice GitHub starts it ~09:00–10:00 KST**,
-during Korean trading hours — see § 5. Python 3.11. Secrets
+Scheduled runs (v17.5.3, PR #19, 2026-11-04): GitHub started the old single 06:30 KST run 2¼–5½ hours late all October
+(never before 08:44 KST; see § 5 for what that once caused). Now the run is triggered six times — 03:47, 05:13, 06:43,
+08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat) — and a first job (`already_published.py`) decides: a run that starts
+before the US close is final (New York 16:30 = 06:30 KST in winter, 05:30 in summer) waits for it (only on US trading
+days, at most 170 min) and then runs; a run that finds the live data already holds the last KRX trading day and the last
+final US trading day (Naver/Yahoo trading calendars, the gate's own sources) ends before any download or DART call. If
+the calendars can't be read it falls back to weekdays, loudly. Runs share one queue (`concurrency`), so two never publish
+at once. A scheduled run never starts DART from an empty, unreadable or old-format cache (it stops loudly; the day's one
+full-DART run is started by hand). Don't start manual live runs or merge pipeline PRs between ~03:40 and 08:30 KST (a
+newer trigger cancels a queued manual run). A daily scheduled check at 09:13 KST (Tue–Sat, read-only) confirms the live
+site has the last trading day and tells Jack if not. Python 3.11. Secrets
 `DART_API_KEY` (OpenDART, ~20,000 calls/day quota) and `ECOS_API_KEY` (한국은행 ECOS). The workflow commits the four
 JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avoids a race with manual uploads).
 
