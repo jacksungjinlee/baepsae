@@ -167,7 +167,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 | `baepsae.html` | The current app (예전 뱁새), opened from 2.0's 예전 뱁새 보기 and 찾기. Built by `bash build.sh` |
 | `fetch_data.py` | Daily data pipeline (Python 3.11) → `data.json`, `corp.json`, `macro.json`, `disc.json` |
 | `validate_data.py` | Publication gate (created in v17.5) |
-| `.github/workflows/update-data.yml` | Daily run, weekdays 21:30 UTC (06:30 KST), plus manual "Run workflow" |
+| `.github/workflows/update-data.yml` | Daily data run, started six times a day: 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat). An early start waits for the US close; a start that finds today's data already published stops before any download (`already_published.py`). Plus manual "Run workflow" |
 | `sw.js`, `manifest.webmanifest` | Service worker and home-screen install metadata |
 | `tests/` | Pipeline unit tests and the app smoke test (created in v17.5) |
 | `docs/` | Handoff, voice guide, task specs, runbook, `CHANGELOG.md` (one line per merge) |
