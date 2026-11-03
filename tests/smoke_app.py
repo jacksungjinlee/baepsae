@@ -649,23 +649,23 @@ def scene_option_b(R, files):
 
 
 def scene_simple_no_forecast(R, files):
-    """30초 진단의 '뱁이의 진단'(저장해 둔 마지막 단계)에서 기대수익으로 만든 '아주 나쁜 해' 줄과 '10년 뒤 전망' 카드가 없어요
+    """성향 테스트(간단 모드, src/simple.jsx)의 '뱁이의 진단'(저장해 둔 마지막 단계)에서 기대수익으로 만든 '아주 나쁜 해' 줄과 '10년 뒤 전망' 카드가 없어요
     (B안, v18.4 · Jack 2026-11-03). 위험 수준 카드와 다른 카드는 그대로예요."""
     saved = {"step": 6, "ans": {"goal": "grow", "horizon": 10, "crash": "hold", "emergency": "enough"}, "eq": 60, "krShare": 0.5,
              "goldOn": True, "amountMw": 1000}
-    srv, ctx, page, _ = R.open(files, local={"baepsae_v9_seen": "1", "baepsae_v11_simple": json.dumps(saved, ensure_ascii=False)})
+    srv, ctx, page, _ = R.open(build_site(files), local={"baepsae_v9_seen": "1", "baepsae_v11_simple": json.dumps(saved, ensure_ascii=False)})
 
     def run():
-        page.get_by_text("30초 진단", exact=True).click()
         close_welcome(page, "시작하기")
+        page.get_by_text("성향 테스트로 시작", exact=True).click()
         see(page, "뱁이의 진단")
         see(page, "지금 위험 수준")
         see(page, "잘하고 있는 점")
         see(page, "더 깊이 보고 싶다면")
         shown = hidden_shown(page.locator("body").inner_text(),
                              ["10년 뒤 전망", "아주 나쁜 해에는", "아쉬운 경우", "가운데쯤", "10년 두었을 때", "NaN"])
-        assert not shown, f"30초 진단에 보이면 안 되는 문구: {shown}"
-    R.check(page, "B안", "30초 진단 '뱁이의 진단': 아주 나쁜 해 줄 · 10년 뒤 전망 없음, 다른 카드는 그대로", run)
+        assert not shown, f"성향 테스트 결과에 보이면 안 되는 문구: {shown}"
+    R.check(page, "B안", "성향 테스트 '뱁이의 진단': 아주 나쁜 해 줄 · 10년 뒤 전망 없음, 다른 카드는 그대로", run)
     ctx.close(); srv.shutdown()
 
 
