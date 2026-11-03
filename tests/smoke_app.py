@@ -669,6 +669,28 @@ def scene_simple_no_forecast(R, files):
     ctx.close(); srv.shutdown()
 
 
+def scene_foreign_issuer(R, files):
+    """해외 기업(종목코드 9…): 파이프라인이 외화일 수 있는 DART 금액을 비우면(v17.5.2), 기업분석의 재무 흐름 자리에
+    Jack 이 정한 줄 "외화로 작성된 재무제표라 아직 보여 드리지 않아요." 가 보여요 (2026-11-03). 국내 기업의 빈 칸 문구는 그대로예요."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
+    cos = [c for c in f["corp.json"]["companies"] if str(c.get("t", "")).startswith("9") and len(str(c["t"])) == 6 and names.get(c["t"])]
+    assert cos, "시험할 해외 기업(9…)이 데이터에 없어요"
+    co = cos[0]
+    co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
+    srv, ctx, page, _ = R.open(build_site(f))
+
+    def run():
+        search(page, co["t"], co["t"])
+        page.locator("button", has_text=co["t"]).first.click()
+        page.get_by_text("기업분석에서 자세히 보기", exact=True).first.click()
+        see(page, "외화로 작성된 재무제표라 아직 보여 드리지 않아요.")
+        body = page.locator("body").inner_text()
+        assert "파이프라인이 사업보고서를 못 찾은 종목이에요" not in body and "NaN" not in body, "해외 기업에 국내용 빈 칸 문구 또는 NaN"
+    R.check(page, "해외 기업", f"{co['t']} {names[co['t']]}: 재무 흐름 자리에 '외화로 작성된 재무제표라…'", run)
+    ctx.close(); srv.shutdown()
+
+
 def scene_rates_fail(R, files):
     """macro.json 은 읽히는데 금리(ECOS) 부분만 빈 날: 금리 칸에만 '금리 데이터를 불러오지 못했어요' (영어 모드는 영어)."""
     # 비교 기준: 커브가 있으면 그 칸에 실패 문구가 없어야 해요 (같은 장면이 언제나 실패 문구만 보여 주는 건 아닌지)
@@ -824,7 +846,7 @@ def main():
                   ("NaN", lambda: scene_nan(R, fresh)),
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)),
+                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
