@@ -7,7 +7,8 @@
 - 뱁이 그림이 보이는 '화면'(열린 시트 · 대화 상자 안의 그림이면 그 시트, 아니면 시트를 뺀 페이지 전체)에 '숫자'가 없어요 —
   CLAUDE.md: "never on a screen that shows numbers. Numbers means money, prices, returns, weights and scores. A date label
   or a count of stocks is not one." (Jack, 2026-11-04). 판단은 아래 표 셋으로 해요 (mascot_digit_problems):
-    1) NUMBERS: 돈(원 · 만원 · 억 · 조 · $ · ₩) · %(수익률 · 비중) · 점수 · 순위 — 화면 어디에 있든(예외 칸 안이라도) 실패
+    1) NUMBERS: 돈(원 · 천 · 만 · 억 · 조 · 달러 · $ · ₩ · USD · KRW) · %(% · ％ · 퍼센트: 수익률 · 비중) · 점수 · 순위 —
+       화면 어디에 있든(예외 칸 안이라도) 실패. 전각 숫자(０-９)도 숫자예요
     2) MASCOT_DIGITS_EXEMPT: 이 칸 안의 숫자는 숫자가 아니에요 (날짜 줄, 소개 페이지의 몇 곳)
     3) NOT_NUMBERS: 칸 밖에서도 숫자가 아닌 꼴 (날짜 · 종목 수). 이 셋으로 설명되지 않는 숫자가 하나라도 남으면 실패
 - 아이콘은 Phosphor 256 격자의 두 층(바탕 · 선, stroke 없음)이고, 색은 아이콘 표(on · off · ok · 남색 위)의 짝뿐이에요
@@ -18,14 +19,15 @@ import re
 
 
 # 1) 언제나 '숫자' (CLAUDE.md: money, prices, returns, weights and scores) — 뱁이 화면에 있으면 예외 칸 안이라도 실패
+#    \d 는 전각 숫자(０-９)도 잡아요. 뒤에 한글이 붙어도("82점이에요" · "1위로" · "5만이" · "12달러를") 걸려요.
 NUMBERS = [
-    ("돈 · 가격", re.compile(r"\d\s*(?:[만억조]\s?원|원|억|조)|\d\s*만(?![가-힣])|[$₩]\s*\d|\d\s*(?:달러|USD|KRW)\b")),
-    ("% (수익률 · 비중)", re.compile(r"\d\s*%")),
-    ("점수 · 순위", re.compile(r"\d\s*(?:점|위)(?![가-힣])")),
+    ("돈 · 가격", re.compile(r"\d\s*(?:[천만억조]\s?원|원|천|만|억|조|달러)|[$₩＄￦]\s*\d|\d\s*(?:USD|KRW)|(?:USD|KRW)\s*\d", re.I)),
+    ("% (수익률 · 비중)", re.compile(r"\d\s*(?:%|％|퍼센트)")),
+    ("점수 · 순위", re.compile(r"\d\s*(?:점|위)")),
 ]
 # 3) 칸 밖에서도 숫자가 아닌 꼴 — 날짜 이름표와 종목 수 (Jack, 2026-11-04). 이 꼴을 지우고도 숫자가 남으면 실패
 NOT_NUMBERS = [
-    ("날짜", re.compile(r"\d{4}년|\d{1,2}월\s?\d{1,2}일(?:\s?\([월화수목금토일]\))?|\d{4}-\d{2}-\d{2}")),
+    ("날짜", re.compile(r"\d{4}년|\d{1,2}월\s?\d{1,2}일(?:\s?\([월화수목금토일]\))?|\d{4}-\d{2}-\d{2}|\d+일째")),
     ("종목 수", re.compile(r"내 종목\s?\d[\d,]*개|\d[\d,]*\s?종목")),
 ]
 # 2) 뱁이가 있는 화면에서도 숫자가 있어도 되는 칸 — 한 곳에 모아 둬요. Jack 이 빼라고 하면 그 줄만 지우면 돼요.
@@ -77,7 +79,7 @@ VISUAL = r"""(exempt) => {
     const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     while (w.nextNode()) {
       const n = w.currentNode, e = n.parentElement, t = n.textContent;
-      if (!e || !/\d/.test(t) || e.closest('script, style')) continue;
+      if (!e || !/[\d０-９]/.test(t) || e.closest('script, style')) continue;      // 전각 숫자도
       if (skipDialogs && e.closest('[role="dialog"]')) continue;
       if (!shown(e)) continue;
       items.push([t.trim(), exempt.find((sel) => e.closest(sel)) || '']);

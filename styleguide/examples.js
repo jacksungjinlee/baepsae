@@ -15,10 +15,12 @@ export const EX = {
   typeNumber: "1,073만원",                                // 45
   close: "닫기",                                          // 558
   // v19.0b: 뱁이 그림 (Jack 의 그림을 2배 크기로 줄인 것, tools/resize_assets.py). 판정 띠에는 그림 대신 상태 아이콘이에요.
-  // alt 문구는 Jack 의 승인을 기다려서 이 페이지에서도 alt="" 예요 (docs/tasks/v18.3-new-strings-pending.md).
+  // alt 문구는 Jack 이 승인했어요 (2026-11-04). 목업 CSV 문구가 아니라서 여기 두지 않고, 스타일 페이지가 앱의 문구 파일
+  // (src/copy/v2.js) 에서 그대로 가져와요: 셋째 칸이 그 키예요. 로고 마크는 옆의 '뱁새' 글자가 이름을 말해서 alt="" 예요.
   mascot: {
     mark: "baepi-mark.webp",
-    places: [["baepi-16-build.webp", 92], ["baepi-15-portfolio.webp", 112], ["baepi-20-error.webp", 120], ["baepi-21-wip.webp", 64]],
+    places: [["baepi-16-build.webp", 92, "build"], ["baepi-15-portfolio.webp", 112, "empty"], ["baepi-20-error.webp", 120, "error"],
+      ["baepi-21-wip.webp", 64, "wip"]],
   },
 
   hero: {

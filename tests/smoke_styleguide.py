@@ -24,6 +24,11 @@ import threading
 
 from playwright.sync_api import sync_playwright
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from copytrace import chat_approved  # noqa: E402
+
+# 목업 CSV 밖에서 스타일 페이지에 나오는 한국어는 이 넷뿐이에요: 뱁이 그림의 alt (앱의 문구 파일 그대로, Jack 승인 2026-11-04)
+MASCOT_ALT_KEYS = ("build.s0.imgAlt", "deck.emptyAlt", "app.loadFailAlt", "app.pendingAlt")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COMPONENTS = ["hero-band", "button", "stat-strip", "list-row", "status-chip", "segmented", "stepper", "money-input",
               "bottom-action-bar", "bottom-sheet", "collapsible", "bottom-tab-bar", "dot-strip", "weight-bar", "rule-row"]
@@ -55,7 +60,7 @@ def numless(s):
 
 
 def make_matcher(rows):
-    exact = set(rows) | FAKE_NAMES
+    exact = set(rows) | FAKE_NAMES | {chat_approved()[k] for k in MASCOT_ALT_KEYS}
     loose = {numless(r) for r in rows}
     templates = [re.compile("^" + re.sub(r"\\\{[\w.]+\\\}", ".+?", re.escape(r)) + "$") for r in rows if "{" in r]
 

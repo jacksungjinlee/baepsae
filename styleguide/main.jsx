@@ -10,6 +10,10 @@ import {
   BottomSheet, Collapsible, BottomTabBar, DotStrip, WeightBar, RuleRow, Amount, fill,
 } from "../src/ui/components.jsx";
 import { EX } from "./examples.js";
+import { C } from "../src/copy/v2.js";
+
+// 뱁이 그림의 alt: 앱과 같은 문구 (Jack 승인 2026-11-04, docs/tasks/v18.3-approved-in-chat.md)
+const MASCOT_ALT = { build: C.build.s0.imgAlt, empty: C.deck.emptyAlt, error: C.app.loadFailAlt, wip: C.app.pendingAlt };
 
 const txt = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize: size, fontWeight: weight, color, lineHeight: 1.5, ...extra });
 const Card = ({ children, style }) => <div style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(5), ...style }}>{children}</div>;
@@ -142,15 +146,15 @@ function Tokens() {
         </Card>
       </Block>
 
-      <Block id="mascot" name="Mascot (Baepi)" note="Jack's own art, scaled 2x (tools/resize_assets.py). Only on the first visit, empty states, the load-failure screen, whole blocks that are pending, learning cards, the share card, the About page and the link preview. Never on a card that shows numbers, never beside a verdict: verdicts carry a state icon. Alt texts wait for Jack.">
+      <Block id="mascot" name="Mascot (Baepi)" note="Jack's own art, scaled 2x (tools/resize_assets.py). Only on the first visit, empty states, the load-failure screen, whole blocks that are pending, learning cards, the share card, the About page, the link preview and the logo mark beside the wordmark. Never on a screen that shows numbers (money, prices, returns, weights and scores; a date label or a count of stocks is not one), never beside a verdict: verdicts carry a state icon. Alt texts approved by Jack (2026-11-04); the logo mark's alt is empty because the wordmark says the name.">
         <Card style={{ display: "flex", flexWrap: "wrap", gap: SPACE(4), alignItems: "flex-end" }}>
           <div data-logo style={{ display: "flex", alignItems: "center", gap: SPACE(1) }}>
             <img src={EX.mascot.mark} alt="" width={28} height={28} />
             <span style={txt(SIZE.h2, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.04em", lineHeight: 1.2 })}>{EX.brand}</span>
           </div>
-          {EX.mascot.places.map(([src, px]) => (
+          {EX.mascot.places.map(([src, px, altKey]) => (
             <div key={src} style={{ textAlign: "center" }}>
-              <img src={src} alt="" width={px} height={px} style={{ objectFit: "contain", display: "block" }} />
+              <img src={src} alt={MASCOT_ALT[altKey] || ""} width={px} height={px} style={{ objectFit: "contain", display: "block" }} />
               <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3, NUM)}>{px} px</code>
             </div>
           ))}
@@ -495,7 +499,7 @@ function Page() {
         <span data-sample-label><StatusChip tone="neutral">{EX.sample}</StatusChip></span>
       </header>
       <p style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3) })}>
-        Every Korean line here is copied from the approved mockup (docs/design/mockup-copy.csv). Companies and numbers are made up.
+        Every Korean line here is copied from the approved mockup (docs/design/mockup-copy.csv), except the mascot pictures' alt texts, which are the app's own (src/copy/v2.js, approved by Jack in chat). Companies and numbers are made up.
       </p>
       <Tokens />
       <Heroes /><Stats /><Rows /><Chips /><Segments /><Steppers /><Money /><ActionBars />
