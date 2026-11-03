@@ -24,8 +24,8 @@ pass. All checked on the live site.
    gate warning to Jack, also after 11/11.
 2. **v19.0c `claude/v19.0c-tabs`** (in progress, phone only): four tabs 홈 · 포트폴리오 · 종목 · 시장, ☰ menu,
    덱 → 포트폴리오, 시장 tiles (each with its own date) + old-app deep links, 거래대금 상위 종목 (KR/US separate),
-   US tap line, the 2.0 missing-stock redesign, the iPhone home-screen hint. Plan and proposed 「새 문구」:
-   `docs/tasks/v19.0-layout-c.md`. New strings are stored as "제안 (Jack 승인 대기)" in `src/copy/v2.js`; Jack
+   US tap line, the 2.0 missing-stock redesign, the iPhone home-screen hint. Spec `docs/tasks/v19.0-layout-c.md`; build plan and
+   proposed 「새 문구」 `docs/tasks/v19.0-plan.md`. New strings are stored as "제안 (Jack 승인 대기)" in `src/copy/v2.js`; Jack
    approves them and the test changes in one message before merge.
 3. **Next PR for the old app (Jack 2026-11-04):** settings left on 자동 (fx and market inputs) must come from today's
    data, typed ones stay — on import *and* when reopening a saved portfolio. The old app has no typed-vs-auto record
