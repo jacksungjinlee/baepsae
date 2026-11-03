@@ -1,0 +1,324 @@
+{
+ "v": 3,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-10-31T18:20:00+09:00"
+ },
+ "title": "뱁새 2.0 목업",
+ "launch": {
+  "view": "canvas"
+ },
+ "pages": [],
+ "boards": {
+  "Main.dc.html": {
+   "x": 0,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "1 오늘 판정 · 크게 움직인 날 (C에서는 홈 맨 위 카드)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "MainQuiet.dc.html": {
+   "x": 470,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "1b 오늘 · 조용한 날",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "MainAlert.dc.html": {
+   "x": 940,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "1c 오늘 · 규칙에 걸린 날",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Deck.dc.html": {
+   "x": 1410,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "1d 포트폴리오 탭",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Why.dc.html": {
+   "x": 1880,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "2 왜 움직였나 · 뉴스 요약 켬",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "WhyNoAI.dc.html": {
+   "x": 2350,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "2b 왜 움직였나 · 뉴스 요약 없이",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Build.dc.html": {
+   "x": 0,
+   "y": 1244,
+   "w": 390,
+   "h": 844,
+   "title": "3 포트폴리오 만들기",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Shortlist.dc.html": {
+   "x": 470,
+   "y": 1244,
+   "w": 390,
+   "h": 844,
+   "title": "4 후보 고르기",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Final.dc.html": {
+   "x": 940,
+   "y": 1244,
+   "w": 390,
+   "h": 844,
+   "title": "5 매수 계획 · 샀어요 기록",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "NavC.dc.html": {
+   "x": 0,
+   "y": 2488,
+   "w": 390,
+   "h": 844,
+   "title": "C1 홈 · 포트폴리오가 있을 때 (선택안)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "NavCNew.dc.html": {
+   "x": 470,
+   "y": 2488,
+   "w": 390,
+   "h": 844,
+   "title": "C2 홈 · 처음 온 사람",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CStock.dc.html": {
+   "x": 940,
+   "y": 2488,
+   "w": 390,
+   "h": 844,
+   "title": "C3 종목 탭",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CMarket.dc.html": {
+   "x": 1410,
+   "y": 2488,
+   "w": 390,
+   "h": 844,
+   "title": "C4 시장 탭 · 위 버튼을 눌러 보세요",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "NavA.dc.html": {
+   "x": 0,
+   "y": 6232,
+   "w": 390,
+   "h": 844,
+   "title": "A1 포트폴리오 탭 안에 2.0 · 있을 때",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "NavANew.dc.html": {
+   "x": 470,
+   "y": 6232,
+   "w": 390,
+   "h": 844,
+   "title": "A2 포트폴리오 탭 안에 2.0 · 처음",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "NavB.dc.html": {
+   "x": 940,
+   "y": 6232,
+   "w": 390,
+   "h": 844,
+   "title": "B1 2.0 먼저 · 오늘",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "NavBNew.dc.html": {
+   "x": 1410,
+   "y": 6232,
+   "w": 390,
+   "h": 844,
+   "title": "B2 2.0 먼저 · 처음",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PcHome.dc.html": {
+   "x": 0,
+   "y": 3732,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 홈 · 포트폴리오가 있을 때",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "PcHomeNew.dc.html": {
+   "x": 1400,
+   "y": 3732,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 홈 · 처음 온 사람",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "PcPortfolio.dc.html": {
+   "x": 0,
+   "y": 4832,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 포트폴리오 · 종목을 누르면 오른쪽에 규칙과 근거 수치가 보여요",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "PcBuild.dc.html": {
+   "x": 1400,
+   "y": 4832,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 포트폴리오 만들기 · 점수를 바꾸면 오른쪽 결과가 바로 바뀌어요",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "PcMarket.dc.html": {
+   "x": 2800,
+   "y": 4832,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 시장 · 금리·원자재와 공시·수급을 한 화면에",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "PcStock.dc.html": {
+   "x": 2800,
+   "y": 3732,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 종목 · 왼쪽 목록, 오른쪽 회사 화면",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "Menu.dc.html": {
+   "x": 1880,
+   "y": 2488,
+   "w": 390,
+   "h": 844,
+   "title": "C5 메뉴 (☰) · 소개로 가는 길",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "About.dc.html": {
+   "x": 2350,
+   "y": 2488,
+   "w": 390,
+   "h": 844,
+   "title": "C6 소개 · 맨 위 한국어 / English를 눌러 보세요",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PcAbout.dc.html": {
+   "x": 4200,
+   "y": 3732,
+   "w": 1280,
+   "h": 800,
+   "title": "PC 소개 · 한국어 / English 전환",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "OgPreview.dc.html": {
+   "x": 4200,
+   "y": 4832,
+   "w": 1200,
+   "h": 630,
+   "title": "링크 미리 보기 이미지 (카카오톡·LinkedIn·메일에 보이는 그림)",
+   "is_interactive": true,
+   "radius": 16
+  }
+ },
+ "order": [
+  "Main.dc.html",
+  "MainQuiet.dc.html",
+  "MainAlert.dc.html",
+  "Deck.dc.html",
+  "Why.dc.html",
+  "WhyNoAI.dc.html",
+  "Build.dc.html",
+  "Shortlist.dc.html",
+  "Final.dc.html",
+  "NavC.dc.html",
+  "NavCNew.dc.html",
+  "CStock.dc.html",
+  "CMarket.dc.html",
+  "Menu.dc.html",
+  "About.dc.html",
+  "PcHome.dc.html",
+  "PcHomeNew.dc.html",
+  "PcStock.dc.html",
+  "PcAbout.dc.html",
+  "PcPortfolio.dc.html",
+  "PcBuild.dc.html",
+  "PcMarket.dc.html",
+  "OgPreview.dc.html",
+  "NavA.dc.html",
+  "NavANew.dc.html",
+  "NavB.dc.html",
+  "NavBNew.dc.html"
+ ],
+ "notes": {
+  "rowDaily": {
+   "x": 0,
+   "y": -300,
+   "text": "매일 보는 화면",
+   "kind": "title1",
+   "maxW": 2740
+  },
+  "rowBuild": {
+   "x": 0,
+   "y": 944,
+   "text": "포트폴리오 만들기",
+   "kind": "title1",
+   "maxW": 1330
+  },
+  "rowNavC": {
+   "x": 0,
+   "y": 2188,
+   "text": "C 선택안 · 휴대폰: 홈 · 포트폴리오 · 종목 · 시장 (아이콘 Phosphor, 숫자 화면에는 뱁이를 두지 않아요)",
+   "kind": "title1",
+   "maxW": 2740
+  },
+  "rowNavAB": {
+   "x": 0,
+   "y": 5932,
+   "text": "참고: A 포트폴리오 탭 안에 2.0 (왼쪽 둘) · B 2.0 먼저 (오른쪽 둘)",
+   "kind": "title1",
+   "maxW": 1800
+  },
+  "rowPC": {
+   "x": 0,
+   "y": 3432,
+   "text": "C 선택안 · PC: 왼쪽 메뉴(아이콘 + 이름), 목록과 자세히 보기를 나란히 · 뱁이는 처음 화면에만",
+   "kind": "title1",
+   "maxW": 5500
+  }
+ },
+ "designSystems": []
+}

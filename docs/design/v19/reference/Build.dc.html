@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>뱁새 포트폴리오 만들기</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@font-face{font-family:'Pretendard';src:url(/_blob/61947ccbd94ccbe1efb143237a83363c) format('woff2');font-weight:45 920;font-style:normal;font-display:swap}
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #F5F3EF; color: #1C2B45; font-family: 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -0.01em">
+
+<div style="position: absolute; top: 0; left: 0; right: 0; height: 104px; background: #FFFFFF; border-bottom: 1px solid #E8E4DE; z-index: 2">
+<div style="height: 52px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between">
+<sc-if value="{{ atStart }}" hint-placeholder-val="{{ true }}">
+<a href="Main.dc.html" aria-label="오늘 화면으로 돌아가기" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: #1C2B45; text-decoration: none"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg></a>
+</sc-if>
+<sc-if value="{{ notStart }}" hint-placeholder-val="{{ false }}">
+<button type="button" onClick="{{ back }}" aria-label="이전 단계" style="width: 44px; height: 44px; border: 0; background: none; display: flex; align-items: center; justify-content: center; color: #1C2B45; cursor: pointer"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg></button>
+</sc-if>
+<p style="margin: 0; font-size: 16px; font-weight: 700">포트폴리오 만들기</p>
+<button type="button" onClick="{{ reset }}" style="height: 44px; padding: 0 12px; border: 0; background: none; font-family: inherit; font-size: 14px; color: #5B6576; cursor: pointer">다시 시작</button>
+</div>
+<div role="tablist" aria-label="단계" style="padding: 0 16px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px">
+<sc-for list="{{ steps }}" as="st" hint-placeholder-count="5">
+<button type="button" role="tab" aria-selected="{{ st.on }}" onClick="{{ st.go }}" style="border: 0; background: none; padding: 4px 0 8px; font-family: inherit; display: flex; flex-direction: column; gap: 6px; cursor: pointer">
+<span style="height: 4px; border-radius: 2px; background: {{ st.bar }}"></span>
+<span style="font-size: 12px; font-weight: {{ st.weight }}; color: {{ st.fg }}">{{ st.label }}</span>
+</button>
+</sc-for>
+</div>
+</div>
+
+<div style="position: absolute; top: 104px; left: 0; right: 0; bottom: 92px; overflow-y: auto">
+
+<sc-if value="{{ s0 }}" hint-placeholder-val="{{ true }}">
+<section style="background: #FFFFFF; padding: 20px 20px 16px; display: flex; gap: 10px; align-items: center">
+<div style="flex: 1; min-width: 0">
+<h1 style="margin: 0; font-size: 22px; line-height: 1.35; font-weight: 800; letter-spacing: -0.02em">어떻게 시작할까요?</h1>
+<p style="margin: 6px 0 0; font-size: 14px; line-height: 1.55; color: #5B6576">시작 유형을 고르면 카드가 미리 선택돼요. 다음 단계에서 언제든 바꿀 수 있어요.</p>
+</div>
+<img src="/_blob/bec0caa9f3df9547d5809bd03d9c08bc" alt="나뭇가지를 나르는 뱁이" style="width: 76px; height: 76px; flex: none; object-fit: contain">
+</section>
+<section style="margin-top: 10px; background: #FFFFFF; padding: 6px 0">
+<button type="button" onClick="{{ blank }}" style="width: 100%; min-height: 64px; padding: 12px 20px; border: 0; border-bottom: 1px solid #F0EDE8; background: #FFFFFF; font-family: inherit; color: #1C2B45; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer">
+<span style="width: 36px; height: 36px; border-radius: 10px; border: 1.5px dashed #9AA1AD; display: flex; align-items: center; justify-content: center; flex: none"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6576" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span>
+<span style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; font-weight: 700">처음부터 직접 만들기</span><span style="font-size: 13px; color: #5B6576">카드를 하나씩 직접 골라요</span></span>
+</button>
+<sc-for list="{{ templates }}" as="t" hint-placeholder-count="13">
+<button type="button" onClick="{{ t.pick }}" style="width: 100%; min-height: 64px; padding: 12px 20px; border: 0; border-bottom: 1px solid #F0EDE8; background: {{ t.bg }}; font-family: inherit; color: #1C2B45; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer">
+<span style="width: 36px; height: 36px; border-radius: 10px; background: #F5F3EF; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #A9542F; flex: none">{{ t.n }}</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; font-weight: 700">{{ t.name }}</span><span style="font-size: 13px; line-height: 1.45; color: #5B6576">{{ t.desc }}</span></span>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9AA1AD" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="m9 6 6 6-6 6"></path></svg>
+</button>
+</sc-for>
+</section>
+</sc-if>
+
+<sc-if value="{{ s1 }}" hint-placeholder-val="{{ false }}">
+<section style="background: #FFFFFF; padding: 16px 20px 18px">
+<sc-if value="{{ vPoints }}" hint-placeholder-val="{{ true }}">
+<div style="margin-top: 4px; display: flex; justify-content: space-between; align-items: flex-end; gap: 12px">
+<div>
+<h1 style="margin: 0; font-size: 21px; line-height: 1.35; font-weight: 800">어떤 기준을 더 중요하게 볼까요?</h1>
+<p style="margin: 6px 0 0; font-size: 14px; line-height: 1.5; color: #5B6576">점수 10점을 카드에 나눠 주세요. 점수를 많이 준 카드일수록 순위에 더 크게 반영돼요.</p>
+</div>
+<div style="flex: none; text-align: right"><span style="font-size: 12px; color: #5B6576">남은 점수</span><p style="margin: 0; font-size: 26px; font-weight: 800; color: {{ leftColor }}">{{ pointsLeft }}</p></div>
+</div>
+</sc-if>
+<div style="margin-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{ factors }}" as="f" hint-placeholder-count="10">
+<div style="position: relative">
+<button type="button" onClick="{{ f.tap }}" aria-label="{{ f.aria }}" style="width: 100%; min-height: 96px; padding: 12px; border-radius: 14px; border: 2px solid {{ f.border }}; background: {{ f.bg }}; color: #1C2B45; font-family: inherit; text-align: left; display: flex; flex-direction: column; gap: 3px; cursor: pointer">
+<span style="font-size: 15px; font-weight: 800">{{ f.name }}</span>
+<span style="font-size: 12px; color: #5B6576">{{ f.basis }}</span>
+<span style="margin-top: 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap">
+<span style="display: flex; gap: 3px">
+<sc-for list="{{ f.dots }}" as="d" hint-placeholder-count="5"><span style="width: 12px; height: 6px; border-radius: 3px; background: {{ d.c }}"></span></sc-for>
+</span>
+<sc-if value="{{ f.hasCut }}" hint-placeholder-val="{{ false }}"><span style="font-size: 11px; font-weight: 700; color: #FFFFFF; background: #1C2B45; border-radius: 5px; padding: 2px 6px">{{ f.cutLabel }}</span></sc-if>
+</span>
+</button>
+<sc-if value="{{ f.showMinus }}" hint-placeholder-val="{{ false }}">
+<button type="button" onClick="{{ f.minus }}" aria-label="{{ f.ariaMinus }}" style="position: absolute; top: 4px; right: 4px; width: 36px; height: 36px; border: 0; border-radius: 18px; background: none; color: #5B6576; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"></path></svg></button>
+</sc-if>
+</div>
+</sc-for>
+</div>
+<div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid #F0EDE8; display: flex; flex-direction: column; gap: 8px">
+<p style="margin: 0; font-size: 16px; font-weight: 800">얼마나 깐깐하게 고를까요?</p>
+<div role="group" aria-label="얼마나 깐깐하게 고를까요" style="display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #F0EDE8">
+<sc-for list="{{ strictOpts }}" as="o" hint-placeholder-count="4">
+<button type="button" onClick="{{ o.pick }}" aria-pressed="{{ o.on }}" style="flex: 1; height: 40px; border: 0; border-radius: 9px; background: {{ o.bg }}; color: {{ o.fg }}; font-family: inherit; font-size: 13px; font-weight: {{ o.weight }}; cursor: pointer">{{ o.label }}</button>
+</sc-for>
+</div>
+<p style="margin: 0; font-size: 13px; line-height: 1.5; color: #5B6576">{{ strictNote }}</p>
+</div>
+<sc-if value="{{ cutWarn }}" hint-placeholder-val="{{ false }}">
+<div role="status" style="margin-top: 12px; background: #FFF3D6; border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.55; color: #6B4600">{{ cutWarnText }}</div>
+</sc-if>
+</section>
+</sc-if>
+
+<sc-if value="{{ s2 }}" hint-placeholder-val="{{ false }}">
+<section style="background: #FFFFFF; padding: 20px 20px 16px">
+<h1 style="margin: 0; font-size: 21px; line-height: 1.35; font-weight: 800">관심 있는 테마가 있나요?</h1>
+<p style="margin: 6px 0 0; font-size: 14px; color: #5B6576">없으면 넘어가도 돼요. 최대 5개까지 고를 수 있어요.</p>
+<label style="margin-top: 14px; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px; border-radius: 12px; background: #F5F3EF">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5B6576" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+<input type="search" aria-label="테마 찾기" placeholder="예: 원전, 비만, 로봇, 수출" onChange="{{ onSearch }}" style="flex: 1; min-width: 0; height: 40px; border: 0; background: transparent; font-family: inherit; font-size: 15px; color: #1C2B45; outline: none">
+</label>
+<div style="margin-top: 10px; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px">
+<sc-for list="{{ groups }}" as="g" hint-placeholder-count="10">
+<button type="button" onClick="{{ g.pick }}" aria-pressed="{{ g.on }}" style="flex: none; height: 34px; padding: 0 12px; border-radius: 17px; border: 1.5px solid {{ g.border }}; background: {{ g.bg }}; color: {{ g.fg }}; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer">{{ g.name }}</button>
+</sc-for>
+</div>
+</section>
+<sc-if value="{{ hasPicked }}" hint-placeholder-val="{{ false }}">
+<section style="background: #FBF1EA; padding: 14px 20px">
+<p style="margin: 0 0 8px; font-size: 13px; font-weight: 700; color: #A9542F">선택한 테마 {{ pickedCount }}개</p>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ picked }}" as="p" hint-placeholder-count="2">
+<button type="button" onClick="{{ p.remove }}" aria-label="{{ p.aria }}" style="height: 34px; padding: 0 10px 0 12px; border-radius: 17px; border: 0; background: #1C2B45; color: #FFFFFF; font-family: inherit; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer">{{ p.name }}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg></button>
+</sc-for>
+</div>
+<p style="margin: 12px 0 6px; font-size: 13px; font-weight: 600">테마 종목에 쓸 비중</p>
+<div role="group" aria-label="테마 종목 비중" style="display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #FFFFFF">
+<sc-for list="{{ shareOpts }}" as="o" hint-placeholder-count="3">
+<button type="button" onClick="{{ o.pick }}" aria-pressed="{{ o.on }}" style="flex: 1; height: 36px; border: 0; border-radius: 9px; background: {{ o.bg }}; color: {{ o.fg }}; font-family: inherit; font-size: 14px; font-weight: {{ o.weight }}; cursor: pointer">{{ o.label }}</button>
+</sc-for>
+</div>
+</section>
+</sc-if>
+<section style="background: #FFFFFF; padding: 4px 0">
+<sc-for list="{{ themes }}" as="t" hint-placeholder-count="8">
+<button type="button" onClick="{{ t.toggle }}" aria-pressed="{{ t.on }}" style="width: 100%; min-height: 56px; padding: 8px 20px; border: 0; border-bottom: 1px solid #F0EDE8; background: #FFFFFF; font-family: inherit; color: #1C2B45; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer">
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 600">{{ t.name }}</span><span style="font-size: 12px; color: #6B7280">{{ t.meta }}</span></span>
+<span style="width: 28px; height: 28px; border-radius: 14px; border: 2px solid {{ t.ring }}; background: {{ t.fill }}; display: flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box">
+<sc-if value="{{ t.on }}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg></sc-if>
+<sc-if value="{{ t.off }}" hint-placeholder-val="{{ true }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6576" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 6v12M6 12h12"></path></svg></sc-if>
+</span>
+</button>
+</sc-for>
+<sc-if value="{{ noTheme }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; padding: 18px 20px; font-size: 14px; color: #5B6576">찾는 테마가 없어요. 다른 단어로 검색해 보세요.</p>
+</sc-if>
+</section>
+<section style="margin-top: 10px; background: #FFFFFF; padding: 18px 20px">
+<h2 style="margin: 0; font-size: 17px; font-weight: 700">꼭 담을 종목</h2>
+<p style="margin: 4px 0 0; font-size: 13px; line-height: 1.5; color: #5B6576">꼭 담고 싶은 종목이 있다면 직접 추가할 수 있어요. 최대 3개까지예요.</p>
+<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ musts }}" as="m" hint-placeholder-count="4">
+<button type="button" onClick="{{ m.toggle }}" aria-pressed="{{ m.on }}" style="height: 36px; padding: 0 12px; border-radius: 18px; border: 1.5px solid {{ m.border }}; background: {{ m.bg }}; color: {{ m.fg }}; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer">{{ m.label }}</button>
+</sc-for>
+</div>
+</section>
+</sc-if>
+
+<sc-if value="{{ s3 }}" hint-placeholder-val="{{ false }}">
+<section style="background: #FFFFFF; padding: 20px 20px 12px">
+<h1 style="margin: 0; font-size: 21px; line-height: 1.35; font-weight: 800">빼고 싶은 종목이 있나요?</h1>
+<p style="margin: 6px 0 0; font-size: 14px; color: #5B6576">켜면 해당 종목은 후보에서 빠져요</p>
+</section>
+<section style="background: #FFFFFF; padding: 0 0 4px">
+<sc-for list="{{ excls }}" as="x" hint-placeholder-count="8">
+<button type="button" role="switch" aria-checked="{{ x.on }}" onClick="{{ x.toggle }}" style="width: 100%; min-height: 60px; padding: 10px 20px; border: 0; border-top: 1px solid #F0EDE8; background: #FFFFFF; font-family: inherit; color: #1C2B45; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer">
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 600">{{ x.name }}</span><span style="font-size: 12px; color: #6B7280">{{ x.basis }}</span></span>
+<span style="font-size: 13px; font-weight: 700; color: #5B6576; flex: none">{{ x.cut }}</span>
+<span style="width: 44px; height: 26px; border-radius: 13px; background: {{ x.track }}; position: relative; flex: none"><span style="position: absolute; top: 3px; width: 20px; height: 20px; border-radius: 10px; background: #FFFFFF; left: {{ x.knob }}px"></span></span>
+</button>
+</sc-for>
+</section>
+<p style="margin: 0; padding: 14px 20px; font-size: 12px; line-height: 1.55; color: #5B6576">하루 평균 거래대금이 5억원보다 적은 종목은 항상 제외해요. 원하는 만큼 사고팔기 어렵기 때문이에요.</p>
+</sc-if>
+
+<sc-if value="{{ s4 }}" hint-placeholder-val="{{ false }}">
+<section style="background: #FFFFFF; padding: 20px 20px 20px">
+<h1 style="margin: 0; font-size: 21px; line-height: 1.35; font-weight: 800">마지막으로 조건을 정해 주세요</h1>
+<div style="margin-top: 18px; display: flex; flex-direction: column; gap: 22px">
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<label for="budgetInput" style="font-size: 15px; font-weight: 700">투자 금액</label>
+<div style="display: flex; align-items: center; gap: 6px; height: 58px; padding: 0 16px; border: 2px solid #1C2B45; border-radius: 14px; background: #FFFFFF">
+<input id="budgetInput" type="text" inputmode="numeric" autocomplete="off" placeholder="0" value="{{ budgetShown }}" onChange="{{ onBudget }}" style="flex: 1; min-width: 0; height: 50px; border: 0; background: transparent; font-family: inherit; font-size: 26px; font-weight: 800; color: #1C2B45; text-align: right; outline: none; font-variant-numeric: tabular-nums">
+<span style="font-size: 18px; font-weight: 700">만원</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{ budgetAdds }}" as="b" hint-placeholder-count="4">
+<button type="button" onClick="{{ b.pick }}" style="height: 38px; border: 1.5px solid #E8E4DE; border-radius: 10px; background: #FFFFFF; color: #1C2B45; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer">{{ b.label }}</button>
+</sc-for>
+</div>
+<span style="font-size: 13px; line-height: 1.5; color: {{ budgetNoteColor }}">{{ budgetNote }}</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><span style="font-size: 15px; font-weight: 700">한국 : 미국</span><span style="font-size: 12px; color: #6B7280">미국 주식은 1주 단위로 사요</span></div>
+<div role="group" aria-label="한국과 미국 비율" style="display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #F0EDE8">
+<sc-for list="{{ mixOpts }}" as="o" hint-placeholder-count="5">
+<button type="button" onClick="{{ o.pick }}" aria-pressed="{{ o.on }}" style="flex: 1; height: 38px; border: 0; border-radius: 9px; background: {{ o.bg }}; color: {{ o.fg }}; font-family: inherit; font-size: 13px; font-weight: {{ o.weight }}; cursor: pointer">{{ o.label }}</button>
+</sc-for>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 15px; font-weight: 700">종목 수</span>
+<div style="display: flex; align-items: center; gap: 12px">
+<button type="button" onClick="{{ countDown }}" aria-label="종목 수 줄이기" style="width: 48px; height: 48px; border-radius: 12px; border: 1.5px solid #E8E4DE; background: #FFFFFF; color: #1C2B45; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"></path></svg></button>
+<span style="flex: 1; text-align: center; font-size: 28px; font-weight: 800" aria-live="polite">{{ count }}개</span>
+<button type="button" onClick="{{ countUp }}" aria-label="종목 수 늘리기" style="width: 48px; height: 48px; border-radius: 12px; border: 1.5px solid #E8E4DE; background: #FFFFFF; color: #1C2B45; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 6v12M6 12h12"></path></svg></button>
+</div>
+<span style="font-size: 12px; color: #6B7280; text-align: center">5~30개 · 종목이 적을수록 한 종목의 영향이 커져요</span>
+<sc-if value="{{ tooMany }}" hint-placeholder-val="{{ false }}">
+<div role="status" style="background: #FFF3D6; border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; color: #6B4600">{{ tooManyText }}</div>
+</sc-if>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 15px; font-weight: 700">비중 정하는 방식</span>
+<div role="group" aria-label="비중 정하는 방식" style="display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #F0EDE8">
+<sc-for list="{{ sizingOpts }}" as="o" hint-placeholder-count="3">
+<button type="button" onClick="{{ o.pick }}" aria-pressed="{{ o.on }}" style="flex: 1; height: 38px; border: 0; border-radius: 9px; background: {{ o.bg }}; color: {{ o.fg }}; font-family: inherit; font-size: 13px; font-weight: {{ o.weight }}; cursor: pointer">{{ o.label }}</button>
+</sc-for>
+</div>
+<span style="font-size: 13px; line-height: 1.5; color: #5B6576">{{ sizingNote }}</span>
+<div style="background: #F5F3EF; border-radius: 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px">
+<span style="font-size: 13px; color: #5B6576">2022년 같은 해가 오면</span>
+<span style="font-size: 16px; font-weight: 800; color: #2563EB">{{ badYear }}</span>
+</div>
+<span style="font-size: 12px; line-height: 1.5; color: #6B7280">공개매수·합병 같은 일이 걸린 종목은 어떤 방식을 골라도 적게 담아요.</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 15px; font-weight: 700">한 종목 최대 비중</span>
+<div role="group" aria-label="한 종목 최대 비중" style="display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #F0EDE8">
+<sc-for list="{{ maxOpts }}" as="o" hint-placeholder-count="4">
+<button type="button" onClick="{{ o.pick }}" aria-pressed="{{ o.on }}" style="flex: 1; height: 38px; border: 0; border-radius: 9px; background: {{ o.bg }}; color: {{ o.fg }}; font-family: inherit; font-size: 13px; font-weight: {{ o.weight }}; cursor: pointer">{{ o.label }}</button>
+</sc-for>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><span style="font-size: 15px; font-weight: 700">안전자산 (채권·금)</span><span style="font-size: 12px; color: #6B7280">주식과 다르게 움직일 때가 많아요</span></div>
+<div role="group" aria-label="채권과 금 비중" style="display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #F0EDE8">
+<sc-for list="{{ cushionOpts }}" as="o" hint-placeholder-count="4">
+<button type="button" onClick="{{ o.pick }}" aria-pressed="{{ o.on }}" style="flex: 1; height: 38px; border: 0; border-radius: 9px; background: {{ o.bg }}; color: {{ o.fg }}; font-family: inherit; font-size: 13px; font-weight: {{ o.weight }}; cursor: pointer">{{ o.label }}</button>
+</sc-for>
+</div>
+</div>
+</div>
+</section>
+<section style="margin-top: 10px; background: #FFFFFF; padding: 18px 20px">
+<p style="margin: 0; font-size: 13px; color: #5B6576">포트폴리오 이름</p>
+<p style="margin: 2px 0 0; font-size: 18px; font-weight: 800">{{ deckName }}</p>
+<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ summary }}" as="sm" hint-placeholder-count="4">
+<span style="font-size: 12px; font-weight: 600; color: #3D4B63; background: #F5F3EF; border-radius: 6px; padding: 4px 8px">{{ sm.t }}</span>
+</sc-for>
+</div>
+</section>
+</sc-if>
+
+<sc-if value="{{ showPreview }}" hint-placeholder-val="{{ false }}">
+<section style="margin-top: 10px; background: #FFFFFF; padding: 18px 20px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<h2 style="margin: 0; font-size: 16px; font-weight: 800">지금 기준 상위 3종목</h2>
+<span style="font-size: 12px; color: #6B7280">예시 종목</span>
+</div>
+<div style="margin-top: 8px; display: flex; flex-direction: column">
+<sc-for list="{{ top }}" as="tp" hint-placeholder-count="3">
+<div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #F0EDE8">
+<span style="width: 24px; font-size: 16px; font-weight: 800; color: #A9542F">{{ tp.rank }}</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 700">{{ tp.name }}</span><span style="font-size: 12px; color: #5B6576">{{ tp.why }}</span></span>
+<span style="font-size: 15px; font-weight: 800">{{ tp.score }}</span>
+</div>
+</sc-for>
+<sc-if value="{{ noTop }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; padding: 12px 0 2px; border-top: 1px solid #F0EDE8; font-size: 14px; line-height: 1.5; color: #5B6576">기준선을 모두 통과한 예시 종목이 없어요.</p>
+</sc-if>
+</div>
+</section>
+</sc-if>
+<div style="height: 16px"></div>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; bottom: 0; height: 92px; background: #FFFFFF; border-top: 1px solid #E8E4DE; padding: 12px 16px 16px; box-sizing: border-box; display: flex; align-items: center; gap: 12px">
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px" aria-live="polite">
+<span style="font-size: 12px; color: #5B6576">조건에 맞는 종목</span>
+<span style="font-size: 24px; font-weight: 800; letter-spacing: -0.02em">{{ poolText }}</span>
+<span style="font-size: 12px; font-weight: {{ poolSubWeight }}; color: {{ poolSubColor }}">{{ poolSub }}</span>
+</div>
+<sc-if value="{{ canNext }}" hint-placeholder-val="{{ false }}">
+<button type="button" onClick="{{ next }}" style="height: 52px; padding: 0 26px; border: 0; border-radius: 14px; background: #1C2B45; color: #FFFFFF; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer">다음</button>
+</sc-if>
+<sc-if value="{{ blocked }}" hint-placeholder-val="{{ false }}">
+<button type="button" disabled style="height: 52px; padding: 0 14px; border: 0; border-radius: 14px; background: #E8E4DE; color: #5B6576; font-family: inherit; font-size: 14px; font-weight: 600">{{ blockedText }}</button>
+</sc-if>
+<sc-if value="{{ last }}" hint-placeholder-val="{{ false }}">
+<a href="Shortlist.dc.html" style="height: 52px; padding: 0 18px; border-radius: 14px; background: #1C2B45; color: #FFFFFF; font-size: 16px; font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 4px">후보 {{ shortN }}개 보기<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg></a>
+</sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = this.fresh();
+  }
+  fresh() {
+    return { step: 0, tpl: '', pts: {}, strict: 50, sizing: 'even', themes: [], share: 40, q: '', group: 'all', must: [], excl: ['warn'], mix: 'half', count: 10, maxW: 20, cushion: 0, budget: '1000' };
+  }
+  renderVals() {
+    const s = this.state;
+    const fmt = (n) => n.toLocaleString('ko-KR');
+    const money = (man) => {
+      if (man >= 10000) { const e = Math.floor(man / 10000), r = man % 10000; return e + '억' + (r ? ' ' + fmt(r) + '만원' : '원'); }
+      return fmt(man) + '만원';
+    };
+    const seg = (key, opts) => opts.map((o) => {
+      const on = s[key] === o.v;
+      return { label: o.label, on: on, bg: on ? '#FFFFFF' : 'transparent', fg: on ? '#1C2B45' : '#5B6576', weight: on ? '700' : '500', pick: () => { const u = {}; u[key] = o.v; this.setState(u); } };
+    });
+
+    const F = [
+      { id: 'value', name: '가치', basis: 'PER·PBR 낮은 순' },
+      { id: 'div', name: '배당', basis: '배당수익률 높은 순' },
+      { id: 'divg', name: '배당 성장', basis: '배당 연속 인상 기간 긴 순' },
+      { id: 'growth', name: '성장', basis: '매출·이익 증가율 높은 순' },
+      { id: 'quality', name: '수익성', basis: 'ROE 높은 순' },
+      { id: 'safe', name: '재무 안정', basis: '부채비율 낮은 순' },
+      { id: 'lowvol', name: '낮은 변동성', basis: '주가 변동 작은 순' },
+      { id: 'mom', name: '추세', basis: '최근 1년 수익률 높은 순' },
+      { id: 'payout', name: '주주환원', basis: '주주환원율 높은 순' },
+      { id: 'big', name: '대형주', basis: '시가총액 큰 순' }
+    ];
+    const pts = s.pts;
+    const cuts = {};
+    if (s.strict) F.forEach((f) => { if (pts[f.id]) cuts[f.id] = s.strict; });
+    const used = F.reduce((a, f) => a + (pts[f.id] || 0), 0);
+    const left = 10 - used;
+    const cutIds = F.filter((f) => cuts[f.id]).map((f) => f.id);
+    const isCuts = false;
+    const factors = F.map((f) => {
+      const v = pts[f.id] || 0;
+      const c = cuts[f.id] || 0;
+      const active = isCuts ? c > 0 : v > 0;
+      return {
+        name: f.name, basis: f.basis,
+        aria: isCuts ? (f.name + ' 기준선 바꾸기, 지금 ' + (c ? '상위 ' + c + '%' : '없음')) : (f.name + ' 점수 더하기, 지금 ' + v + '점'),
+        ariaMinus: isCuts ? f.name + ' 기준선 없애기' : f.name + ' 점수 빼기',
+        border: active ? '#1C2B45' : '#E8E4DE',
+        bg: active ? (isCuts ? '#EEF0F4' : '#FBF1EA') : '#FFFFFF',
+        dots: [1, 2, 3, 4, 5].map((i) => ({ c: i <= v ? '#C97757' : '#E8E4DE' })),
+        hasCut: c > 0, cutLabel: '상위 ' + c + '%',
+        showMinus: active,
+        tap: () => {
+          if (isCuts) {
+            const order = { 0: 50, 50: 30, 30: 10, 10: 0 };
+            const u = Object.assign({}, cuts); u[f.id] = order[c]; if (!u[f.id]) delete u[f.id];
+            this.setState({ cuts: u, tpl: '' });
+          } else {
+            if (left <= 0 || v >= 5) return;
+            const p = Object.assign({}, pts); p[f.id] = v + 1; this.setState({ pts: p, tpl: '' });
+          }
+        },
+        minus: () => {
+          if (isCuts) { const u = Object.assign({}, cuts); delete u[f.id]; this.setState({ cuts: u, tpl: '' }); }
+          else { const p = Object.assign({}, pts); p[f.id] = Math.max(0, v - 1); this.setState({ pts: p, tpl: '' }); }
+        }
+      };
+    });
+    const strictOpts = seg('strict', [{ v: 0, label: '넉넉하게' }, { v: 50, label: '보통' }, { v: 30, label: '깐깐하게' }, { v: 10, label: '아주 깐깐하게' }]);
+    const strictNote = s.strict ? '점수를 준 카드마다 상위 ' + s.strict + '% 안에 들어야 후보에 올라요. 카드를 많이 고를수록 후보가 빠르게 줄어요.' : '기준선 없이 점수 순서대로만 정렬해요.';
+
+    const G = [
+      { id: 'chip', name: '반도체·AI', t: [['mem', '메모리 반도체', 14, 4, ''], ['semieq', '반도체 장비', 31, 6, ''], ['aidc', 'AI 데이터센터', 9, 12, 'AI'], ['aisw', 'AI 소프트웨어', 11, 18, 'AI'], ['cloud', '클라우드', 6, 15, '']] },
+      { id: 'energy', name: '에너지·전력', t: [['grid', '전력망·변압기', 12, 7, '전기'], ['nuclear', '원자력', 15, 5, '원전 SMR'], ['renew', '태양광·풍력', 18, 9, '신재생'], ['lng', 'LNG·가스', 8, 10, ''], ['h2', '수소', 16, 3, '']] },
+      { id: 'mob', name: '모빌리티', t: [['ev', '전기차', 10, 6, ''], ['battery', '2차전지', 34, 4, '배터리'], ['auto', '자율주행', 9, 7, ''], ['ship', '조선', 11, 0, '배'], ['travel', '항공·여행', 14, 11, '']] },
+      { id: 'cons', name: '소비·문화', t: [['kbeauty', 'K-뷰티', 28, 2, '화장품'], ['kfood', 'K-푸드', 19, 0, '라면 음식'], ['ent', '엔터·K팝', 12, 3, '아이돌'], ['game', '게임', 24, 6, ''], ['pet', '반려동물', 6, 4, '']] },
+      { id: 'health', name: '헬스케어', t: [['obesity', '비만 치료제', 7, 5, '위고비 GLP'], ['biosim', '바이오시밀러', 9, 2, '바이오'], ['meddev', '의료기기', 26, 14, ''], ['aging', '고령화·요양', 8, 9, '노인'], ['aesth', '미용 의료', 11, 3, '보톡스']] },
+      { id: 'fin', name: '금융', t: [['bank', '은행', 10, 14, ''], ['ins', '보험', 9, 10, ''], ['sec', '증권', 14, 6, ''], ['valueup', '밸류업·주주환원', 58, 0, '자사주'], ['holdco', '지주회사', 37, 0, '']] },
+      { id: 'ind', name: '산업', t: [['def', '방산', 13, 8, '무기'], ['constr', '건설·인프라', 22, 9, ''], ['robot', '로봇·자동화', 17, 9, ''], ['space', '우주항공', 9, 6, '위성'], ['steel', '철강·소재', 15, 6, '']] },
+      { id: 'life', name: '생활 변화', t: [['single', '1인 가구', 10, 4, ''], ['subs', '구독 경제', 5, 12, ''], ['cyber', '사이버 보안', 8, 11, '해킹'], ['fintech', '핀테크', 7, 9, '결제'], ['edu', '교육', 9, 3, '']] },
+      { id: 'macro', name: '경제 흐름', t: [['ratecut', '금리 인하 수혜주', 25, 30, '금리'], ['export', '원화 약세 수혜 수출주', 60, 0, '환율 수출'], ['commod', '원자재 강세', 12, 14, ''], ['inflation', '인플레이션 방어주', 15, 20, '인플레이션'], ['usdom', '미국 내수', 0, 45, '']] }
+    ];
+    const allT = [];
+    G.forEach((g) => g.t.forEach((t) => allT.push({ id: t[0], name: t[1], kr: t[2], us: t[3], kw: t[4], group: g.id })));
+    const useKr = s.mix !== 'us', useUs = s.mix !== 'kr';
+    const meta = (t) => {
+      const parts = [];
+      if (useKr && t.kr) parts.push('한국 ' + t.kr);
+      if (useUs && t.us) parts.push('미국 ' + t.us);
+      return parts.length ? parts.join(' · ') + '개' : '지금 고른 나라에는 없어요';
+    };
+    const q = (s.q || '').trim();
+    const shown = allT.filter((t) => (s.group === 'all' || t.group === s.group) && (!q || (t.name + ' ' + t.kw).indexOf(q) >= 0));
+    const themes = shown.map((t) => {
+      const on = s.themes.indexOf(t.id) >= 0;
+      return {
+        name: t.name, meta: meta(t), on: on, off: !on,
+        ring: on ? '#1C2B45' : '#D9D4CC', fill: on ? '#1C2B45' : '#FFFFFF',
+        toggle: () => {
+          if (on) { this.setState({ themes: s.themes.filter((x) => x !== t.id), tpl: '' }); return; }
+          if (s.themes.length >= 5) return;
+          this.setState({ themes: s.themes.concat([t.id]), tpl: '' });
+        }
+      };
+    });
+    const groups = [{ id: 'all', name: '전체 45' }].concat(G.map((g) => ({ id: g.id, name: g.name }))).map((g) => {
+      const on = s.group === g.id;
+      return { name: g.name, on: on, border: on ? '#1C2B45' : '#E8E4DE', bg: on ? '#1C2B45' : '#FFFFFF', fg: on ? '#FFFFFF' : '#1C2B45', pick: () => this.setState({ group: g.id }) };
+    });
+    const picked = allT.filter((t) => s.themes.indexOf(t.id) >= 0).map((t) => ({ name: t.name, aria: t.name + ' 빼기', remove: () => this.setState({ themes: s.themes.filter((x) => x !== t.id) }) }));
+
+    const MUST = ['솔담정밀', '마루식품', 'Larkfield Software', '단비뷰티'];
+    const musts = MUST.map((m) => {
+      const on = s.must.indexOf(m) >= 0;
+      return {
+        label: (on ? '추가됨 · ' : '+ ') + m, on: on,
+        border: on ? '#1C2B45' : '#E8E4DE', bg: on ? '#1C2B45' : '#FFFFFF', fg: on ? '#FFFFFF' : '#1C2B45',
+        toggle: () => {
+          if (on) { this.setState({ must: s.must.filter((x) => x !== m) }); return; }
+          if (s.must.length >= 3) return;
+          this.setState({ must: s.must.concat([m]) });
+        }
+      };
+    });
+
+    const X = [
+      { id: 'warn', name: '투자주의·관리종목 빼기', basis: '거래소가 주의·경고한 종목', k: 0.96 },
+      { id: 'loss', name: '적자 회사 빼기', basis: '최근 1년 영업손실', k: 0.72 },
+      { id: 'newipo', name: '상장 2년 미만 회사 빼기', basis: '실적 이력이 짧아요', k: 0.93 },
+      { id: 'debt', name: '부채가 많은 회사 빼기', basis: '부채비율 200% 초과', k: 0.91 },
+      { id: 'nodiv', name: '무배당 회사 빼기', basis: '최근 1년 배당 0원', k: 0.55 },
+      { id: 'china', name: '중국 매출 비중이 큰 회사 빼기', basis: '중국 매출 비중 30% 초과', k: 0.92 },
+      { id: 'sin', name: '담배·술·도박 회사 빼기', basis: '업종 분류 기준', k: 0.985 },
+      { id: 'holdco', name: '지주회사 빼기', basis: '자회사를 거느린 회사', k: 0.96 }
+    ];
+    const total = s.mix === 'kr' ? 2476 : (s.mix === 'us' ? 503 : 2979);
+    const liquid = Math.round(total * 0.55);
+    let pool = liquid;
+    const excls = X.map((x) => {
+      const on = s.excl.indexOf(x.id) >= 0;
+      const cut = Math.round(liquid * (1 - x.k));
+      if (on) pool = Math.round(pool * x.k);
+      return {
+        name: x.name, basis: x.basis, on: on, cut: '-' + fmt(cut) + '개',
+        track: on ? '#1C2B45' : '#D9D4CC', knob: on ? 21 : 3,
+        toggle: () => this.setState({ excl: on ? s.excl.filter((y) => y !== x.id) : s.excl.concat([x.id]) })
+      };
+    });
+    let keep = 1;
+    cutIds.forEach((id) => { keep = keep * (cuts[id] / 100); });
+    const cutPool = cutIds.length ? Math.floor(pool * Math.pow(keep, 0.75)) : pool;
+    const need = s.count * 2;
+
+    const STOCKS = [
+      { name: '늘봄금융', v: [92, 95, 70, 30, 45, 40, 70, 60, 85, 80], th: ['bank', 'valueup'] },
+      { name: '다온전력', v: [50, 45, 50, 85, 70, 65, 40, 90, 40, 60], th: ['grid'] },
+      { name: '마루식품', v: [65, 70, 90, 35, 60, 70, 85, 40, 60, 45], th: ['kfood'] },
+      { name: '솔담정밀', v: [72, 40, 60, 70, 75, 80, 30, 55, 45, 35], th: ['semieq'], china: true },
+      { name: 'Pinecrest Health', v: [55, 50, 95, 40, 65, 45, 80, 50, 70, 85], th: ['aging', 'meddev'], us: true },
+      { name: 'Larkfield Software', v: [25, 25, 55, 80, 90, 85, 50, 75, 65, 90], th: ['cloud', 'aisw'], us: true },
+      { name: '가람통신', v: [80, 97, 40, 20, 40, 30, 90, 35, 75, 70], th: [] },
+      { name: '세움반도체', v: [40, 15, 30, 95, 75, 75, 25, 85, 20, 40], th: ['mem'], china: true },
+      { name: '한결화학', v: [90, 75, 20, 10, 25, 55, 45, 15, 50, 55], th: ['commod'] },
+      { name: 'Northgate Robotics', v: [15, 5, 10, 92, 55, 60, 15, 95, 10, 50], th: ['robot', 'aidc'], us: true, nodiv: true },
+      { name: '해솔에너지', v: [45, 30, 20, 75, 60, 50, 30, 88, 25, 65], th: ['nuclear', 'grid'] },
+      { name: '단비뷰티', v: [55, 35, 30, 80, 70, 75, 35, 70, 30, 30], th: ['kbeauty'] }
+    ];
+    const ids = F.map((f) => f.id);
+    const scored = STOCKS.filter((st) => {
+      if (s.mix === 'kr' && st.us) return false;
+      if (s.mix === 'us' && !st.us) return false;
+      if (s.excl.indexOf('china') >= 0 && st.china) return false;
+      if (s.excl.indexOf('nodiv') >= 0 && st.nodiv) return false;
+      const must = s.must.indexOf(st.name) >= 0;
+      if (!must && cutIds.some((id) => st.v[ids.indexOf(id)] < 100 - cuts[id])) return false;
+      return true;
+    }).map((st) => {
+      let sum = 0, best = -1, bestV = -1;
+      ids.forEach((id, i) => { const w = pts[id] || 0; sum += w * st.v[i]; if (w > 0 && w * st.v[i] > bestV) { bestV = w * st.v[i]; best = i; } });
+      let score = used > 0 ? sum / used : 0;
+      const themeHit = st.th.some((t) => s.themes.indexOf(t) >= 0);
+      if (themeHit) score += s.share / 4;
+      const must = s.must.indexOf(st.name) >= 0;
+      let why = must ? '꼭 담을 종목' : (best >= 0 ? F[best].name + ' ' + st.v[best] + '점' : '기준선 모두 통과');
+      if (!must && themeHit) why += ' · 테마 가산점';
+      return { name: st.name, score: score, must: must, why: why };
+    }).sort((a, b) => (b.must - a.must) || (b.score - a.score));
+    const top = scored.slice(0, 3).map((t, i) => ({ rank: String(i + 1), name: t.name, why: t.why, score: t.must ? '고정' : (used > 0 ? Math.round(t.score) + '점' : '통과') }));
+
+    const TPL = [
+      { id: 't1', name: '꾸준한 고배당', desc: '배당을 많이, 오래 주는 회사', v: { pts: { div: 4, divg: 3, safe: 2, lowvol: 1 }, excl: ['warn', 'loss'], mix: 'kr7', count: 10, cushion: 10 } },
+      { id: 't2', name: '저평가 가치주', desc: '이익과 자산에 비해 싼 회사', v: { pts: { value: 5, safe: 3, quality: 2 }, excl: ['warn', 'loss'], mix: 'kr', count: 15 } },
+      { id: 't3', name: '적정가 성장주', desc: '성장하는데 가격은 적당한 회사', v: { pts: { growth: 4, value: 3, quality: 3 }, mix: 'half', count: 12 } },
+      { id: 't4', name: '장기 우량주', desc: '잘 벌고 부채가 적은 대형주', v: { pts: { quality: 4, safe: 3, big: 3 }, excl: ['warn', 'loss'], mix: 'half', count: 10 } },
+      { id: 't5', name: '이익 대비 싼 우량주', desc: '수익성과 가격을 함께 보는 방식', v: { pts: { quality: 5, value: 5 }, excl: ['warn', 'loss', 'holdco'], mix: 'kr', count: 20 } },
+      { id: 't6', name: '깐깐한 기준', desc: '여러 기준을 모두 통과한 회사만 골라요', v: { pts: { quality: 4, value: 3, safe: 3 }, strict: 30, excl: ['warn', 'loss', 'debt'], mix: 'kr', count: 8 } },
+      { id: 't7', name: '저변동 방어주', desc: '덜 떨어지는 회사 위주', v: { pts: { lowvol: 4, safe: 3, div: 3 }, excl: ['warn', 'loss', 'debt'], mix: 'kr7', count: 12, cushion: 20 } },
+      { id: 't8', name: '추세 추종', desc: '최근 꾸준히 오른 회사', v: { pts: { mom: 5, growth: 3, quality: 2 }, mix: 'half', count: 10 } },
+      { id: 't9', name: '주주환원 확대', desc: '배당과 자사주 매입을 늘리는 회사', v: { pts: { payout: 4, value: 3, div: 3 }, themes: ['valueup'], mix: 'kr', count: 12 } },
+      { id: 't10', name: '테마 집중', desc: '관심 테마에 크게 거는 포트폴리오', v: { pts: { growth: 3, mom: 3, quality: 2, safe: 2 }, themes: ['aidc', 'grid', 'nuclear'], share: 60, mix: 'half', count: 8 } },
+      { id: 't11', name: '한미 반반', desc: '한국과 미국에 반씩 나눠 담기', v: { pts: { quality: 3, value: 2, div: 2, safe: 2, lowvol: 1 }, mix: 'half', count: 12, cushion: 10 } },
+      { id: 't12', name: '배당 생활비', desc: '배당으로 생활비를 보태는 포트폴리오', v: { pts: { div: 5, safe: 3, lowvol: 2 }, excl: ['warn', 'loss', 'nodiv'], mix: 'kr7', count: 15, cushion: 30 } },
+      { id: 't13', name: '배당 성장주', desc: '배당을 해마다 늘리는 회사', v: { pts: { divg: 5, quality: 3, safe: 2 }, mix: 'half', count: 12 } }
+    ];
+    const templates = TPL.map((t, i) => ({
+      n: String(i + 1), name: t.name, desc: t.desc, bg: s.tpl === t.id ? '#FBF1EA' : '#FFFFFF',
+      pick: () => this.setState(Object.assign(this.fresh(), { budget: s.budget }, t.v, { tpl: t.id, step: 1 }))
+    }));
+
+    const budgetMan = parseInt(String(s.budget || '0').replace(/[^0-9]/g, ''), 10) || 0;
+    const add = (n) => () => this.setState({ budget: String(Math.min(999990, budgetMan + n)) });
+    const budgetAdds = [
+      { label: '+10만', pick: add(10) },
+      { label: '+100만', pick: add(100) },
+      { label: '+1,000만', pick: add(1000) },
+      { label: '지우기', pick: () => this.setState({ budget: '' }) }
+    ];
+    let budgetNote = '', budgetNoteColor = '#5B6576';
+    if (budgetMan <= 0) { budgetNote = '투자할 금액을 입력해 주세요. 만원 단위예요.'; budgetNoteColor = '#8A5A00'; }
+    else if (budgetMan < 50) { budgetNote = money(budgetMan) + ' · 50만원보다 적으면 여러 종목에 고르게 나눠 담기 어려워요.'; budgetNoteColor = '#8A5A00'; }
+    else if (budgetMan > 100000) { budgetNote = money(budgetMan) + ' · 10억원이 넘으면 거래대금이 적은 종목은 원하는 만큼 사기 어려울 수 있어요.'; budgetNoteColor = '#8A5A00'; }
+    else { budgetNote = money(budgetMan) + ' · 한 종목에 약 ' + money(Math.round(budgetMan / s.count)); }
+
+    const usShare = s.mix === 'kr' ? 0 : (s.mix === 'kr7' ? 0.3 : (s.mix === 'half' ? 0.5 : (s.mix === 'us7' ? 0.7 : 1)));
+    const perStockMan = 10 + usShare * 25;
+    const maxCount = Math.max(1, Math.min(30, Math.floor(budgetMan / perStockMan)));
+    const tooMany = budgetMan > 0 && s.count > maxCount;
+    const sizingOpts = seg('sizing', [{ v: 'calm', label: '차분하게' }, { v: 'even', label: '고르게' }, { v: 'bold', label: '확신대로' }]);
+    const sizingNote = { calm: '변동이 작은 종목에 더 담아요. 시장이 나쁠 때 덜 떨어지는 경우가 많아요.', even: '기준에 맞는 정도와 변동성을 반반씩 반영해요.', bold: '기준에 잘 맞는 종목에 더 담아요. 변동성은 보지 않아요.' }[s.sizing];
+    const badPct = { calm: 0.19, even: 0.23, bold: 0.28 }[s.sizing] * (1 - s.cushion / 100 * 0.8);
+    const badYear = budgetMan > 0 ? '약 -' + money(Math.round(budgetMan * badPct)) : '금액을 입력하면 보여요';
+
+    const tplName = (TPL.find((t) => t.id === s.tpl) || {}).name;
+    let topF = null;
+    F.forEach((f) => { if ((pts[f.id] || 0) > 0 && (!topF || pts[f.id] > pts[topF.id])) topF = f; });
+    const firstTheme = allT.find((t) => s.themes.indexOf(t.id) >= 0);
+    const deckName = tplName ? tplName + ' 포트폴리오' : ((topF ? topF.name : '내') + (firstTheme ? ' + ' + firstTheme.name : '') + ' 포트폴리오');
+    const mixLabel = { kr: '한국만', kr7: '한국 7 : 미국 3', half: '한국 5 : 미국 5', us7: '한국 3 : 미국 7', us: '미국만' }[s.mix];
+    const summary = [{ t: money(budgetMan) }, { t: s.count + '종목' }, { t: mixLabel }, { t: { calm: '차분하게', even: '고르게', bold: '확신대로' }[s.sizing] + ' 나눠 담기' }, { t: '한 종목 최대 ' + s.maxW + '%' }, { t: s.cushion ? '안전자산 ' + s.cushion + '%' : '안전자산 없음' }]
+      .concat([{ t: s.strict ? '점수 준 카드마다 상위 ' + s.strict + '%' : '기준선 없음' }])
+      .concat(F.filter((f) => (pts[f.id] || 0) > 0).map((f) => ({ t: f.name + ' ' + pts[f.id] + '점' })))
+      .concat(allT.filter((t) => s.themes.indexOf(t.id) >= 0).map((t) => ({ t: '테마 ' + t.name })));
+
+    const hasCriteria = used > 0 || cutIds.length > 0;
+    const labels = ['시작', '기준', '테마', '빼기', '조건'];
+    const steps = labels.map((l, i) => ({
+      label: l, on: s.step === i,
+      bar: i <= s.step ? '#1C2B45' : '#E8E4DE', fg: s.step === i ? '#1C2B45' : '#6B7280', weight: s.step === i ? '700' : '500',
+      go: () => { if (i <= 1 || hasCriteria || i <= s.step) this.setState({ step: i }); }
+    }));
+    const needCriteria = s.step === 1 && !hasCriteria;
+    const empty = cutPool === 0;
+    const short = !empty && cutIds.length > 0 && cutPool < need;
+    let poolSub = '전체 ' + fmt(total) + '개 중 거래대금이 충분한 종목';
+    if (s.step >= 1 && hasCriteria) poolSub = '점수순 상위 ' + need + '개를 후보로';
+    if (short) poolSub = '후보로 쓸 ' + need + '개보다 적어요';
+    if (empty) poolSub = '기준선을 모두 통과한 종목이 없어요';
+    const warnOn = s.step === 1 && cutIds.length > 0 && (short || empty);
+    const warnText = empty
+      ? '기준선을 모두 통과한 종목이 없어요. 기준을 한 단계 낮추거나 점수를 준 카드 수를 줄여 보세요.'
+      : '기준선을 통과한 종목이 ' + fmt(cutPool) + '개예요. 이대로 진행해도 되지만 ' + s.count + '종목을 고르기에는 후보가 적은 편이에요. 종목 수를 줄이거나 기준을 한 단계 낮춰 보세요.';
+    const shortN = Math.min(cutPool, need);
+    return {
+      steps: steps,
+      atStart: s.step === 0, notStart: s.step !== 0,
+      s0: s.step === 0, s1: s.step === 1, s2: s.step === 2, s3: s.step === 3, s4: s.step === 4,
+      templates: templates,
+      blank: () => this.setState(Object.assign(this.fresh(), { budget: s.budget, step: 1 })),
+      strictOpts: strictOpts, strictNote: strictNote, vPoints: true,
+      factors: factors, pointsLeft: String(left), leftColor: left === 0 ? '#1F7A4D' : '#1C2B45',
+      cutCount: String(cutIds.length),
+      cutWarn: warnOn, cutWarnText: warnText,
+      groups: groups, themes: themes, noTheme: themes.length === 0,
+      onSearch: (e) => this.setState({ q: e.target.value }),
+      picked: picked, hasPicked: picked.length > 0, pickedCount: String(picked.length),
+      shareOpts: seg('share', [{ v: 20, label: '20%' }, { v: 40, label: '40%' }, { v: 60, label: '60%' }]),
+      musts: musts,
+      excls: excls,
+      budgetShown: budgetMan > 0 ? fmt(budgetMan) : '',
+      onBudget: (e) => { const d = String(e.target.value || '').replace(/[^0-9]/g, '').slice(0, 6); this.setState({ budget: d }); },
+      budgetAdds: budgetAdds, budgetNote: budgetNote, budgetNoteColor: budgetNoteColor,
+      mixOpts: seg('mix', [{ v: 'kr', label: '한국만' }, { v: 'kr7', label: '7:3' }, { v: 'half', label: '5:5' }, { v: 'us7', label: '3:7' }, { v: 'us', label: '미국만' }]),
+      maxOpts: seg('maxW', [{ v: 10, label: '10%' }, { v: 15, label: '15%' }, { v: 20, label: '20%' }, { v: 25, label: '25%' }]),
+      cushionOpts: seg('cushion', [{ v: 0, label: '없음' }, { v: 10, label: '10%' }, { v: 20, label: '20%' }, { v: 30, label: '30%' }]),
+      count: String(s.count),
+      countDown: () => this.setState({ count: Math.max(5, s.count - 1) }),
+      countUp: () => this.setState({ count: Math.min(30, s.count + 1) }),
+      tooMany: tooMany,
+      sizingOpts: sizingOpts, sizingNote: sizingNote, badYear: badYear,
+      tooManyText: money(budgetMan) + '이면 ' + maxCount + '개 넘게 담기 어려워요. 1주 가격이 비싼 종목은 비중을 맞추기 힘들어요.',
+      deckName: deckName, summary: summary,
+      showPreview: (s.step === 1 || s.step === 2) && hasCriteria,
+      top: top, noTop: top.length === 0,
+      poolText: fmt(hasCriteria ? cutPool : pool) + '개',
+      poolSub: poolSub,
+      poolSubColor: short || empty ? '#8A5A00' : '#5B6576',
+      poolSubWeight: short || empty ? '700' : '400',
+      canNext: s.step < 4 && !needCriteria, blocked: needCriteria || (s.step === 4 && empty), last: s.step === 4 && !empty,
+      blockedText: empty ? '기준을 낮춰 주세요' : '카드를 골라 주세요',
+      shortN: String(shortN),
+      next: () => this.setState({ step: Math.min(4, s.step + 1) }),
+      back: () => this.setState({ step: Math.max(0, s.step - 1) }),
+      reset: () => this.setState(this.fresh())
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -6,9 +6,10 @@ and the current task in `docs/tasks/`: the lowest version number whose Status li
 
 ## What this is
 
-뱁새 is a free, educational investment-research web app for Korean retail investors in their 1st–3rd year of real
-investing. Live at https://jacksungjinlee.github.io/baepsae/. Owner: Jack (Sung Jin) Lee — 이성진, INSEAD MBA 26J.
-Tagline: "황새 말고, 내 걸음으로".
+뱁새 is a free investment-research web app for Korean individual investors: build a portfolio on your own criteria and
+check it against your own rules every day. Live at https://jacksungjinlee.github.io/baepsae/. Owner: Jack (Sung Jin)
+Lee — 이성진, INSEAD MBA. Descriptor: "내 기준으로 만드는 포트폴리오". Catchphrase: "철새처럼 옮겨 다니지 않는 투자"
+(replaced "황새 말고, 내 걸음으로" on 2026-11-03).
 
 ## Who you are working with
 
@@ -145,10 +146,15 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 - Cards lead with the conclusion (Verdict line), then evidence. Computed ratios show their inputs ("receipts").
 - Won-first framing. Beta shown with its estimation-error band; alpha shown as past-only.
 - 기업분석 is Korean-listed companies only (built on DART filings). US stocks live in the portfolio tool.
-- Mascot 뱁이: only Jack's own artwork (`baepi-1.png` … `baepi-9.png`, `icon-*.png`). Never redraw, generate or
-  "improve" it.
+- Mascot 뱁이: only Jack's own artwork (`baepi-1.png` … `baepi-9.png`, the `baepi-*` files from
+  `docs/design/v19/assets/`, `icon-*.png`). Never redraw, generate or "improve" it. Serious first, warm second
+  (Jack, 2026-11-03): 뱁이 appears only on the first visit, empty states, the load-failure screen, 준비 중 blocks,
+  learning cards, the share card, the 소개 page and the link preview — never on a screen that shows numbers and never
+  beside a verdict.
+- Icons: Phosphor duotone in navy with a slate fill; no apricot in icons or selection states. Apricot marks data only.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
-- Credit line: `이성진, INSEAD MBA 26J` (KO) · `Jack (Sung Jin) Lee, INSEAD MBA 26J` (EN).
+- Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
+  credit line (Jack, 2026-11-03). The 소개 page does not lead with "교육용"; the footer disclaimer stays on every page.
 
 ## Repo map
 
