@@ -7,7 +7,8 @@ on:
     #   - 미국 종가 확정(뉴욕 16:30 = 겨울 06:30 · 여름 05:30 KST) 전에 시작한 실행은 확정 + 3분까지 기다렸다가 실행하고,
     #   - 이미 발행된 뒤에 시작한 실행은 DART·캐시·데이터 수집 전에 끝내요.
     # 정각·30분은 GitHub 이 가장 붐벼서 피해요. UTC 15:00 뒤는 한국 날짜가 하루 넘어가서 요일 칸이 달라요.
-    # 한국 시각: 03:47 · 05:13 · 06:43 · 08:17 (화~토) · 10:53 · 13:37 (월~토, 월요일은 토요일 실행이 실패했을 때만 일해요)
+    # 한국 시각: 03:47 · 05:13 · 06:43 · 08:17 (화~토) · 10:53 · 13:37 (월~토). 휴장일은 거래일 달력으로 판단해요:
+    # 데이터가 이미 마지막 거래일까지 들어와 있으면 그날 실행은 모두 데이터 수집 전에 끝나요 (월요일은 보통 그래요).
     - cron: "47 18 * * 1-5"
     - cron: "13 20 * * 1-5"
     - cron: "43 21 * * 1-5"
@@ -58,6 +59,8 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 180     # 미국 종가 확정까지 최대 170분 기다려요 (already_published.MAX_WAIT)
+    permissions:
+      contents: read         # 확인만 해요 (커밋·푸시 없음)
     outputs:
       skip: ${{ steps.already.outputs.skip }}
     steps:
@@ -88,7 +91,11 @@ jobs:
       SELFTEST: ${{ inputs.selftest || 'none' }}
       SAMPLE_KR: ${{ inputs.sample || '0' }}
     steps:
+      # 정해진 시각 실행은 만들어질 때의 커밋에 묶여 있어요. 기다리는 동안 다른 실행이 발행했을 수 있어서 지금의 main 을 받아요
+      # (관문의 '직전 발행본' 비교와 커밋 단계가 최신 main 위에서 돌게). 수동 실행은 기본값(그 실행의 커밋) 그대로예요.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'main' || '' }}
 
       - name: 입력 확인
         run: |
@@ -130,8 +137,9 @@ jobs:
       - name: DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)
         if: github.event_name == 'schedule'
         run: |
-          if [ -z "${{ steps.dart_cache.outputs.cache-matched-key }}" ]; then
+          if [ -z "${{ steps.dart_cache.outputs.cache-matched-key }}" ] || [ ! -s .dart-cache/dart-v1.json.gz ]; then
             echo "!! DART 캐시가 없어요. 빈 캐시로 시작하면 전체 DART 실행이에요 (한국 날짜로 하루 한 번만, 수동으로)."
+            echo "!! 위 '캐시 불러오기' 로그에 'Failed to restore' 가 있으면 GitHub 캐시 쪽 장애예요: 전체 실행 말고 잠시 뒤 다시 실행해 주세요."
             echo "!! 정해진 시각 실행은 여기서 멈춰요: 오늘 전체 DART 실행이 아직 없었으면 수동 실행을 한 번 해 주세요."
             exit 1
           fi
