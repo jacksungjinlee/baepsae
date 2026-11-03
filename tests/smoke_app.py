@@ -1089,7 +1089,7 @@ def scene_ghost_holding(R, files):
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sgh", "name": "없는 종목 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_sgh": json.dumps(slot, ensure_ascii=False)}
     site = build_site(files)
-    srv, ctx, page, _ = R.open(site, local=local)
+    srv, ctx, page, base = R.open(site, local=local)
     S = "없는 종목"
 
     def card():
@@ -1120,8 +1120,73 @@ def scene_ghost_holding(R, files):
         slot_now = json.loads(page.evaluate("localStorage.getItem('baepsae_v10_slot_sgh')"))
         assert {"t": gone, "mw": 200, "nk": "없어진 회사"} in slot_now["holdings"], slot_now["holdings"]   # 저장본에는 그대로 남아요
     R.check(page, S, "첫 화면 저장 목록: '1종목' (없는 종목은 세지 않음), 저장본에는 그대로", launch_count)
+
+    tmp = tempfile.mkdtemp(prefix="baepsae-ghost-")
+    got = {}
+    ghost_row = {"ticker": gone, "name": "없어진 회사", "sector": None, "priceAssumed": None, "amountWon": 2000000, "weightPct": None,
+                 "approxShares": None, "beta": None, "volPct": None, "notInData": True}
+
+    def backup():
+        page.get_by_text("없는 종목 시험", exact=False).first.click()
+        page.get_by_role("button", name="④ 내보내기", exact=False).first.click()
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        got["json"] = os.path.join(tmp, "ghost.json")
+        dl.value.save_as(got["json"])
+        text = open(got["json"], encoding="utf-8").read()
+        j = json.loads(text)
+        assert "NaN" not in text and "Infinity" not in text, "백업 파일에 NaN"
+        assert [h["ticker"] for h in j["holdings"]] == ["005930", gone] and j["holdings"][1] == ghost_row, j["holdings"]
+        assert j["holdings"][0]["weightPct"] == 100.0, j["holdings"][0]              # 비중 · 위험 수치는 목록에 있는 종목만으로
+        assert all(isinstance(v, (int, float)) for v in j["metrics"].values()), j["metrics"]
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="CSV 저장 (주문표)").click()
+        csv = os.path.join(tmp, "ghost.csv")
+        dl.value.save_as(csv)
+        lines = open(csv, encoding="utf-8-sig").read().splitlines()
+        assert lines[2] == f"{gone},없어진 회사,,,2000000,,,," and lines[1].startswith("005930,"), lines   # 금액만, 나머지 칸은 비워요
+    R.check(page, S, "JSON 저장: 없는 종목도 백업에 (종목코드 · 이름 · 금액 · notInData, 나머지 null) · CSV 에도 금액만 · NaN 없음", backup)
+    ctx.close()
+
+    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+    ctx.add_init_script("(() => { try { localStorage.setItem('baepsae_v9_seen', '1'); } catch (e) {} })();")
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    page.on("console", lambda m: R.console.append((m.type, m.text)))
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+
+    def restore():
+        assert "json" in got, "앞 단계에서 파일을 받지 못했어요"
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        see(page, "어떻게 시작할까요?")
+        page.locator('input[type=file][accept="application/json,.json"]').set_input_files(got["json"])
+        page.get_by_role("button", name="② 구성", exact=False).first.click()
+        poll(page, CART_ROWS, lambda v: v == [["삼성전자", "300"]], "불러온 뒤 담기 화면에 삼성전자만 보여야 해요")
+        assert not dialogs, dialogs
+        st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+            return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
+                  lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
+        assert st["holdings"] == [{"t": "005930", "mw": 300}, {"t": gone, "mw": 200, "nk": "없어진 회사"}], st["holdings"]   # 둘 다 남아요
+        assert "NaN" not in page.locator("body").inner_text()
+        page.evaluate("""() => { window.__drawn = []; const f = CanvasRenderingContext2D.prototype.fillText;
+            CanvasRenderingContext2D.prototype.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
+        page.get_by_role("button", name="포트폴리오 카드 만들기", exact=True).click()
+        see(page, "이렇게 저장돼요")
+        drawn = page.evaluate("window.__drawn")
+        assert "담은 종목 TOP 1" in drawn and "70%" in drawn and "없어진 회사" not in drawn and gone not in drawn, drawn
+        page.get_by_role("button", name="닫기", exact=True).first.click()
+        page.wait_for_timeout(1200)
+        page.get_by_role("button", name="저장하고 나가기").first.click()
+        see(page, "어떻게 시작할까요?")
+        line = page.evaluate(SMALLEST, ["불러온 포트폴리오", ["β "]])
+        assert line and "· 1종목 ·" in line, line
+    R.check(page, S, "그 백업을 새 브라우저에서 불러오기 → 저장본에 두 종목 그대로(없는 종목은 숨김) · 카드 TOP 1 · '1종목' · NaN 없음", restore)
     ctx.close(); srv.shutdown()
     shutil.rmtree(site, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def scene_import_while_loading(R, files):

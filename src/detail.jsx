@@ -20,6 +20,13 @@ import { ABOUT_URL } from "./links.js";
 
 // 오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록에서 빼요 — 담기 화면과 같아요 (v18.4.1).
 const listedHoldings = (holdings, stocksById) => holdings.filter((h) => !!stocksById[h.t]);
+// 그래도 「JSON 저장」 백업에서는 빼지 않아요 (저장본에서 지우지 않는다는 규칙, Jack): 저장본이 아는 것만 쓰고, 가격 · 베타 · 비중은
+// 지어내지 않고 null, notInData: true. 위험 수치(metrics)에는 들어가지 않아요. 불러오면 목록에 없는 종목으로 이름과 함께 남아요.
+function unlistedExportRows(holdings, stocksById) {
+  return holdings.filter((h) => !stocksById[h.t] && typeof h.mw === "number" && Number.isFinite(h.mw) && h.mw > 0)
+    .map((h) => ({ ticker: h.t, name: typeof h.nk === "string" && h.nk ? h.nk : null, sector: null, priceAssumed: null,
+      amountWon: Math.round(h.mw * 10000), weightPct: null, approxShares: null, beta: null, volPct: null, notInData: true }));
+}
 
 function makeCardData(allHoldings, stocksById, cashMw, score, lang) {
   const holdings = listedHoldings(allHoldings, stocksById);
@@ -4119,10 +4126,11 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   });
   const stamp = new Date().toISOString().slice(0, 10);
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
-    const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
+    const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","))
+      .concat(unlistedExportRows(holdings, stocksById).map((u) => [u.ticker, u.name || "", "", "", u.amountWon, "", "", "", ""].join(",")));   // 목록에 없는 종목: 금액만
     return "\uFEFF" + h + "\n" + lines.join("\n") + "\nCASH,현금,-," + "-," + Math.round(metrics.cash) + "," + (metrics.cash / metrics.total * 100).toFixed(2) + ",-,0,0";
   };
   const buildMemo = () => {
@@ -4795,4 +4803,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData, unlistedExportRows };

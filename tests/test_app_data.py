@@ -375,3 +375,21 @@ def test_share_card_skips_holdings_missing_from_todays_list():
     assert got["top"] == [{"nk": "삼성전자", "pct": 30}, {"nk": "Apple", "pct": 10}], got["top"]   # 없는 종목(900만원)은 1등이 아니라 아예 빠져요
     assert got["buckets"] == [["국내 주식", 30], ["미국 주식", 10], ["현금", 60]], got["buckets"]
     assert got["warn"] == ["[뱁새] 공유 카드: 오늘 종목 목록에 없는 종목 1개는 빼고 만들었어요"], got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_json_backup_keeps_holdings_missing_from_todays_list():
+    """「JSON 저장」은 오늘 목록에 없는 종목도 빼지 않아요 (저장본에서 지우지 않는다는 규칙, Jack): 저장본이 아는 것(종목코드 · 이름 · 금액)만
+    쓰고 가격 · 베타 · 비중은 null, notInData: true. 그 파일을 다시 불러오면 목록에 없는 종목으로 이름과 함께 남아요."""
+    got = run_metrics(KNOWN_JS + "const by = { '005930': { t: '005930', nk: '삼성전자', cls: 'kr' } };"
+                      "const hs = [{ t: '005930', mw: 300 }, { t: 'GONE1', mw: 200, nk: '없어진 회사' }, { t: 'GONE2', mw: 50.5 },"
+                      " { t: 'GONE3', mw: 0 }, { t: 'GONE4', mw: null }];"
+                      "const rows = D.unlistedExportRows(hs, by);"
+                      "const back = D.readPortfolioFile(JSON.parse(JSON.stringify({ budgetWon: 10000000,"
+                      " holdings: [{ ticker: '005930', name: '삼성전자', amountWon: 3000000 }, ...rows] })), K);"
+                      "console.log(JSON.stringify({ rows, back: back.holdings, warn }));")
+    nul = {"sector": None, "priceAssumed": None, "weightPct": None, "approxShares": None, "beta": None, "volPct": None, "notInData": True}
+    assert got["rows"] == [{"ticker": "GONE1", "name": "없어진 회사", "amountWon": 2000000, **nul},
+                           {"ticker": "GONE2", "name": None, "amountWon": 505000, **nul}], got["rows"]   # 금액 0 · 숫자 아님은 저장본에도 담기지 않아요
+    assert got["back"] == [{"t": "005930", "mw": 300}, {"t": "GONE1", "mw": 200, "nk": "없어진 회사"}, {"t": "GONE2", "mw": 50.5}], got["back"]
+    assert got["warn"] == ["[뱁새] 불러온 파일의 종목 3개: 뺀 줄 0개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 2개 (저장본에는 남겨 둬요)"], got["warn"]
