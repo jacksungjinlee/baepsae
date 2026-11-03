@@ -164,7 +164,7 @@ export function App({ source }) {
             onWhy={(deckId, t) => { setWhy({ deckId, t }); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }} />}
           {tab === "today" && why && <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why}
             onBack={() => { setWhy(null); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }} />}
-          {tab === "deck" && <MyDeck load={load} store={store} setStoreData={setStoreData} pad={pad} />}
+          {tab === "deck" && <MyDeck load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} />}
           {tab === "build" && <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => go("today")} goToday={() => go("today")}
             store={store} setStoreData={setStoreData} />}
           {tab !== "build" && <BottomTabBar fixed tabs={tabs} value={tab} onChange={go} label={C.app.tabsLabel} />}

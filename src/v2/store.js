@@ -174,7 +174,7 @@ export function downloadRecords(d, today, prefix = "baepsae-records", preview = 
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);   // early revoke can fail the download on iOS Safari ("WebKitBlobResource error 1")
     return true;
   } catch (e) {
     console.warn("[v2] export failed: " + ((e && e.message) || e));

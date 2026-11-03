@@ -1,8 +1,10 @@
 // 덱 짜기: 시작 · 기준 · 빼기 · 조건 (테마 is hidden in the beta; 꼭 담을 종목 lives in 조건), then 후보 고르기 and
 // 매수 계획 · 샀어요. A live count of candidates sits in the bottom bar.
+// v19.0b: the start card shows the 뱁이 carrying twigs (baepi-16-build) next to the title and question only: no numbers on
+// that screen besides the data-date line. The whole-block 준비 중 (data fields missing) shows the hard-hat 뱁이.
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
-import { Icon } from "../ui/icons.jsx";
+import { Icon, IconChip } from "../ui/icons.jsx";
 import { Segmented, Stepper, MoneyInput, StatusChip } from "../ui/components.jsx";
 import {
   CARDS, DECKS, STRICT, MIX, METHODS, MAX_PCTS, CUSHIONS, EXCLUDE_LIVE, EXCLUDE_PENDING, POINTS_TOTAL, POINTS_MAX, COUNT_RANGE,
@@ -10,7 +12,7 @@ import {
   marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, tx, tap } from "./ui.jsx";
 import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
@@ -26,7 +28,7 @@ export function Build({ load, builder, setBuilder, onExit, store, setStoreData, 
         <ScreenTitle>{C.build.title}</ScreenTitle>
         {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
         {load.status === "fail" && <LoadFail />}
-        {load.status === "ok" && <Card data-ui-v2="build-not-ready"><PendingChip /></Card>}
+        {load.status === "ok" && <PendingBlock data-ui-v2="build-not-ready" />}
         <Footer />
       </Page>
     );
@@ -58,7 +60,7 @@ function Option({ title, sub, onClick, id }) {
         <span style={tx(SIZE.body, WEIGHT.bold, COLOR.ink, { display: "block" })}>{title}</span>
         <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{sub}</span>
       </span>
-      <Icon name="chevronRight" size={20} color={COLOR.text2} />
+      <Icon name="chevronRight" size={20} tone="off" />
     </button>
   );
 }
@@ -147,10 +149,10 @@ function StepStart({ start }) {
   const s0 = C.build.s0;
   return (
     <div>
-      <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
-        <div style={{ flex: 1 }}><ScreenTitle sub={s0.body}>{s0.title}</ScreenTitle></div>
-        <img src="baepi-4.png" alt={s0.imgAlt} width={72} height={72} style={{ objectFit: "contain", marginTop: SPACE(2) }} />
-      </div>
+      <section data-ui-v2="build-start" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
+        <div style={{ flex: 1, minWidth: 0 }}><ScreenTitle sub={s0.body}>{s0.title}</ScreenTitle></div>
+        <Mascot src={IMG.build} alt={s0.imgAlt} size={92} style={{ marginTop: SPACE(2) }} />
+      </section>
       <OldAppNote />
       <div style={{ marginTop: SPACE(3) }}>
         <Option id="blank" title={s0.blank} sub={s0.blankSub} onClick={() => start(null)} />
@@ -358,7 +360,7 @@ function StepTerms({ st, set, ds, load }) {
       </Card>
       {cushionOk && (
         <Card>
-          <Label>{s4.cushionLabel}</Label>
+          <Label style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}><IconChip name="umbrella" size={32} /><span>{s4.cushionLabel}</span></Label>
           <Segmented label={s4.cushionAria} value={st.cushion} onChange={(v) => set({ cushion: v })}
             options={CUSHIONS.map((p) => ({ value: p, label: p === 0 ? C.app.none : `${p}%` }))} />
           <Note>{s4.cushionNote}</Note>
