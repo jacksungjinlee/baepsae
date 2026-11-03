@@ -381,9 +381,9 @@ def test_gate_warnings_and_failures_become_github_annotations():
     rep = V.Report()
     rep.add("좋은 줄", True, "1", "1")
     rep.add("경고 줄", True, "93.0%", "≥ 92% (2점 안쪽이면 경고)", warn=True)
-    rep.add("실패 줄", False, "50%\n둘째 줄", "≥ 99%")
+    rep.add("실패 줄", False, "50%\r\n둘째 줄", "≥ 99%")
     lines = V.annotations(rep)
-    assert lines == ["::error title=발행 관문 실패::실패 줄: 50%25%0A둘째 줄 (기준 ≥ 99%25)",
+    assert lines == ["::error title=발행 관문 실패::실패 줄: 50%25%0D%0A둘째 줄 (기준 ≥ 99%25)",
                      "::warning title=발행 관문 경고::경고 줄: 93.0%25 (기준 ≥ 92%25 (2점 안쪽이면 경고))"], lines
     assert V.annotations(V.Report()) == []
     many = V.Report()
@@ -391,6 +391,33 @@ def test_gate_warnings_and_failures_become_github_annotations():
         many.add(f"경고 {i}", True, "x", "y", warn=True)
     w = V.annotations(many)
     assert len(w) == V.ANNOTATE_MAX and w[-1].endswith("외 4개 더 — 실행 요약의 표를 보세요"), w[-2:]
+    assert "경고 0:" in w[0] and "경고 8:" in w[8], w[:2]                 # 앞에서부터 9개를 보여 줘요
+
+
+def test_gate_stopping_before_the_table_still_leaves_an_error_annotation(monkeypatch, capsys, tmp_path):
+    """파일을 못 읽거나 관문이 오류로 멈춰도 이유가 알림으로 남아요 (리뷰 2026-11-04). 오류는 삼키지 않아요."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert V.main(["--dir", str(tmp_path), "--bootstrap", "--today", "2026-10-31"]) == 1      # 빈 폴더: data.json 없음
+    out = capsys.readouterr().out
+    assert "!! FAIL  파일 읽기:" in out and "::error title=발행 관문 실패::파일 읽기: " in out, out[-300:]
+    cur, _, _ = good_pair()
+    real_load_dir = V.load_dir
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+
+    def crash(*a, **k):
+        raise KeyError("stocks")
+    monkeypatch.setattr(V, "run_checks", crash)
+    with pytest.raises(KeyError):
+        V.main(["--dir", "unused", "--bootstrap", "--today", "2026-10-31"])
+    assert "::error title=발행 관문 실패::관문이 오류로 멈췄어요: KeyError: 'stocks'" in capsys.readouterr().out
+    monkeypatch.delenv("GITHUB_ACTIONS")
+    monkeypatch.setattr(V, "load_dir", real_load_dir)
+    assert V.main(["--dir", str(tmp_path), "--bootstrap", "--today", "2026-10-31"]) == 1
+    assert "::error" not in capsys.readouterr().out                      # GitHub 밖에서는 알림 줄을 쓰지 않아요
 
 
 def test_gate_prints_annotations_only_inside_github_actions(monkeypatch, capsys):

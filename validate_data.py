@@ -906,7 +906,22 @@ def load_prev(prev_dir, prev_ref):
     return load_git(prev_ref, files=("data.json",))
 
 
+def _annotate_error(text):
+    """GitHub Actions 안에서만: 관문이 표를 만들기 전에 멈춘 이유도 알림(::error::)으로 남겨요 (매일 아침 점검이 읽어요)."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print("::error title=발행 관문 실패::" + _gh_escape(text), flush=True)
+
+
 def main(argv=None):
+    """관문 실행. 예상하지 못한 오류로 멈추면 알림을 하나 남기고 그 오류를 그대로 다시 던져요 (삼키지 않아요)."""
+    try:
+        return _main(argv)
+    except Exception as e:
+        _annotate_error(f"관문이 오류로 멈췄어요: {type(e).__name__}: {str(e)[:300]}")
+        raise
+
+
+def _main(argv=None):
     ap = argparse.ArgumentParser(description="뱁새 발행 관문")
     ap.add_argument("--dir", default=".", help="검사할 네 파일이 있는 폴더")
     ap.add_argument("--prev-ref", default="HEAD", help="직전 발행본의 git ref (기본 HEAD)")
@@ -926,6 +941,7 @@ def main(argv=None):
         cur = load_dir(a.dir)
     except Exception as e:
         print(f"!! FAIL  파일 읽기: {e}")
+        _annotate_error(f"파일 읽기: {str(e)[:300]}")
         return 1
     # 자정을 넘긴 실행: 수집을 시작한 날(publishedAt, 12시간 이내일 때만)을 '오늘'로 봐요
     try:

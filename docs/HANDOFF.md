@@ -136,6 +136,10 @@ JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avo
    `pxDate` with the `pxDate` bar set to the **official close = `Marcap ÷ Stocks`** → `enrich_with_dart` (annual,
    dividends, quarterly → TTM; cached in `.dart-cache`; 5 threads) → `fill_multiples`. (Before v17.4.1 it used
    `fdr.StockListing("KRX")`, which read the pre-market file — see § 5.)
+   - **Yearly chore:** add next year's CSAT row (date and hours from KRX's notice, with the source) to
+     `data/krx_special_sessions.csv` before 1 September. The gate warns from 1 September and **blocks every publish
+     from 1 November** while it is missing (Jack, 2026-11-04). Its `--live` mode runs the same row, so v17.6's live
+     check will fail too. Gate warnings and failures are also GitHub annotations, which the 09:13 KST daily check reads.
 3. `fetch_us` — S&P 500 (Wikipedia) + NASDAQ (Naver listing, first 400) + `EXTRA_US`; yfinance prices (10 threads);
    auto Korean descriptions via `us_desc()`.
 4. `fetch_bonds` — 8 bond ETFs configured (`153130 114260 148070 439870 273130 305080 453850 304660`), verified by
