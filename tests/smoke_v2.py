@@ -22,7 +22,7 @@
               살구 띠의 두 버튼 → 답하면 초록 띠 · 줄일 차례 → 초록 띠, '오늘은 할 일이 없어요' 없음 · 큰 움직임(업종이 다 같이
               빠짐) → 자세히 보기 → 왜 움직였나(점 띠 · 규칙 · 데이터 출처) → 오늘 · 내 덱의 평가 금액 · 원금 · 코스피와 비교 ·
               비중 막대 · 추가로 넣을 돈(지켜봐요는 건너뜀) · 옛 형식·불러오기 실패·멈춤이면 할 일 띠 없음 · '못 하는 규칙' 줄
-  아이폰      (v18.4.1) 아이폰 사파리 UA 로 샀어요 → 기록 내보내기 → 새 문맥(홈 화면 앱 흉내)에서 기록 불러오기 → 같은 덱 · 산 기록 ·
+  아이폰      (v18.4.1) 아이폰 사파리 UA 로 샀어요 → 기록 내보내기 → 저장소가 따로인 새 문맥에서 기록 불러오기 → 같은 덱 · 산 기록 ·
               규칙 · 내 덱 · 오늘 화면, 두 번 불러도 덱이 늘지 않음, 미리 보기 기록 파일은 막힘 (scene_iphone_records 설명 참고)
   소개        (v19.0 Part D) 푸터: 고지문 · 소개 링크, 만든 사람 줄 없음 · #about 으로 열면 한국어 · English 로 바꾸면 영어 머리글 ·
               새로 고침해도 그 선택 · 저장소가 막혀도 동작 · 숫자 줄 = 시험 데이터로 센 값(분석 종목 · 업종 그룹) · 멈춘 데이터면
@@ -1556,7 +1556,8 @@ def scene_about(R, files, width):
 
 
 # ── 아이폰: 사파리에서 기록 내보내기 → 홈 화면 앱에서 기록 불러오기 (v18.4.1, Jack 2026-11-04) ──
-# 홈 화면 앱처럼 열기: navigator.standalone(iOS 사파리만 있는 값)과 display-mode: standalone 을 참으로 흉내 내요.
+# 홈 화면 앱처럼 열기: navigator.standalone(iOS 사파리만 있는 값)과 display-mode: standalone 을 참으로 흉내 내요
+# (src/v2 는 이 둘을 읽지 않아요: 앞으로 읽게 되면 이 시험이 그 길로도 지나가요).
 STANDALONE_INIT = """(() => {
   try { Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true, configurable: true }); } catch (e) {}
   const mm = window.matchMedia ? window.matchMedia.bind(window) : null;
@@ -1568,6 +1569,9 @@ STANDALONE_INIT = """(() => {
 OTHER_KEYS = """() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
   if (k !== 'baepsae2.v1') o[k] = localStorage.getItem(k); } return o; }"""
 STORED = "JSON.parse(localStorage.getItem('baepsae2.v1') || 'null')"
+# 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로(1초 안에) 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤)
+REVOKE_SPY = """() => { window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
+  URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
 
 
 def standalone_ua(ua):
@@ -1584,17 +1588,29 @@ def scene_iphone_records(R, files, device):
       문맥 1 (사파리)    덱 짜기(배당 생활비) → 샀어요(날짜 · 한국 종목 하나와 미국 종목 하나의 수량 · 가격을 바꿔서) → 내 덱 →
                          기록 내보내기 → 받은 파일. 앱(store.js downloadRecords)은 사파리 같은 브라우저에서도 다른 길이 없어요:
                          똑같이 Blob 을 만들어 <a download> 를 눌러요. 다른 점은 '사파리는 7일…' 안내 한 줄뿐이라, 그 줄이 보이는지
-                         (= 앱이 사파리로 알아봤는지) 확인하고, 받은 파일이 저장된 기록과 똑같은지 봐요.
-      문맥 2 (홈 화면 앱) 저장소가 빈 새 문맥 · navigator.standalone 과 display-mode: standalone 흉내 · 'Safari/…' 없는 사용자 에이전트.
+                         (= 앱이 사파리로 알아봤는지) 확인하고, 받은 파일이 저장된 기록과 똑같은지, 파일 주소를 1.5초 안에 지우지
+                         않는지(일찍 지우면 iOS 사파리가 받다가 실패할 수 있어요) 봐요.
+      문맥 2 (새 저장소) 저장소가 빈 새 문맥 = 홈 화면 앱처럼 사파리와 저장소가 따로인 곳. 사용자 에이전트는 홈 화면 앱처럼 'Safari/…'
+                         없는 것으로, navigator.standalone 과 display-mode: standalone 도 참으로 흉내 내요. 다만 src/v2 는 이 둘을 읽지
+                         않아서, 이 시험이 보여 주는 것은 '따로인 저장소로 파일을 불러오는 길'이지 홈 화면 모드 자체의 동작은 아니에요.
                          기록 불러오기 → 같은 덱 · 종목 · 산 기록(수량 · 가격 · 날짜 · 미국 종목의 환율) · 규칙이 저장되고, 내 덱과
                          오늘 화면의 글이 문맥 1 과 똑같아요 · 다른 저장 값은 그대로 · 새로 고침해도 남아요 · 같은 파일을 두 번 불러도
                          덱이 늘지 않아요 · 미리 보기에서 만든 기록 파일은 '미리 보기에서 만든 기록은…' 으로 막혀요.
     이 시험이 보여 주지 못하는 것 (실제 아이폰에서만 볼 수 있어요): iOS 사파리가 <a download> 로 받은 파일을 '파일' 앱에 저장하는지,
-    홈 화면 앱의 파일 고르기 창에서 그 파일을 고를 수 있는지, WebKit 의 File.text() · 저장소 동작."""
+    홈 화면 앱의 파일 고르기 창에서 그 파일을 고를 수 있는지, 홈 화면 모드에서의 동작, WebKit 의 File.text() · 저장소 동작."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-records-")       # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    try:
+        _iphone_records(R, files, device, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _iphone_records(R, files, device, tmp):
     S = "아이폰 기록 옮기기"
     dev = {k: v for k, v in device.items() if k != "default_browser_type"}
     width = dev["viewport"]["width"]
-    site = build_site(files)
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(files), site)
     by = {x["t"]: x for x in files["data.json"]["stocks"]}
     day = (dt.date.fromisoformat(files["data.json"]["pxDate"]) - dt.timedelta(days=2)).isoformat()   # 오늘이 아닌 산 날
     keep = {}
@@ -1659,18 +1675,21 @@ def scene_iphone_records(R, files, device):
         page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
         see(page, C["store"]["safari"])                               # 앱이 사파리 같은 브라우저로 알아봤어요
         keep["deck"] = main_text(page)
+        page.evaluate(REVOKE_SPY)
         with page.expect_download() as dl:
             page.get_by_role("button", name=C["store"]["export"]).click()
         name = dl.value.suggested_filename
-        keep["path"] = os.path.join(tempfile.mkdtemp(), name)          # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
+        keep["path"] = os.path.join(tmp, name)                        # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
         dl.value.save_as(keep["path"])
+        page.wait_for_timeout(1500)
+        assert page.evaluate("window.__revoked") == [], "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
         with open(keep["path"], encoding="utf-8") as fh:
             exported = json.load(fh)
         assert re.fullmatch(r"baepsae-records-\d{4}-\d{2}-\d{2}\.json", name), name
         assert exported == {"v": 1, "decks": stored["decks"]}, "받은 파일이 저장된 기록과 달라요"
         keep["file"] = exported
         R.collect(page)
-    R.check(page, S, "사파리(아이폰 UA): 샀어요(날짜 · 수량 · 가격 · 미국 종목 환율) → 내 덱 → 기록 내보내기 → 파일 = 저장된 기록", safari)
+    R.check(page, S, "사파리(아이폰 UA): 샀어요(날짜 · 수량 · 가격 · 미국 종목 환율) → 내 덱 → 기록 내보내기 → 파일 = 저장된 기록 (주소는 늦게 지움)", safari)
     ctx.close()
     srv.shutdown()
 
@@ -1704,7 +1723,7 @@ def scene_iphone_records(R, files, device):
         page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
         assert main_text(page) == keep["today"] and page.evaluate(STORED) == keep["file"], "새로 고침 뒤에 기록이 달라요"
         R.collect(page)
-    R.check(page, S, "홈 화면 앱(새 저장소 · standalone): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
+    R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
 
     def twice():
         open_deck_tab(page)
@@ -1715,7 +1734,7 @@ def scene_iphone_records(R, files, device):
     R.check(page, S, "같은 파일을 한 번 더 불러와도 덱이 늘지 않아요", twice)
 
     def preview_file():
-        prev = os.path.join(tempfile.mkdtemp(), "baepsae-preview-records.json")
+        prev = os.path.join(tmp, "baepsae-preview-records.json")
         with open(prev, "w", encoding="utf-8") as fh:
             json.dump({"v": 1, "preview": True, "decks": keep["file"]["decks"]}, fh, ensure_ascii=False)   # store.js exportText(…, true) 모양
         imp.set_input_files(prev)

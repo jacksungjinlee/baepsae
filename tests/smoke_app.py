@@ -805,28 +805,60 @@ CART_ROWS = """() => [...document.querySelectorAll('input[type=number][step="10"
 BUDGET_BOX = 'input[type=number][step="100"]'
 
 
+# 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤에 지워요)
+REVOKE_SPY = """() => { window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
+  URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
+
+
 def scene_json_import(R, files):
     """④ 내보내기의 'JSON 저장 (백업·공유)' 파일을 첫 화면의 '저장한 파일에서 불러오기'로 다시 읽어요 (v18.4.1, Jack 2026-11-04).
     전에는 이 앱이 저장한 파일({ holdings: [{ ticker, amountWon }], budgetWon })이 아무 말 없이 빈 포트폴리오로 열렸어요.
-      · 저장: 저장해 둔 포트폴리오(실제 종목 3개)를 열고 화면에서 예산 · 금액을 바꾼 뒤 'JSON 저장'으로 파일을 받아요;
-      · 새 브라우저(저장소가 빈 새 문맥)에서 그 파일을 불러오면 같은 종목 · 같은 금액 · 같은 예산 (알림 없음);
+      · 저장: 저장해 둔 포트폴리오(실제 종목 3개)를 열고 화면에서 예산 · 금액을 바꾼 뒤 'JSON 저장'으로 파일을 받아요
+        (예산 2,500만원 · 예산 초과(500만원) · 예산 0 세 가지). 받은 파일의 주소는 1.5초 안에 지우지 않아요;
+      · 새 브라우저(저장소가 빈 새 문맥)에서 그 파일을 불러오면 같은 종목 · 같은 금액 · 같은 예산 (알림 없음), 예산 초과는 '예산 초과!'까지;
       · 종목이 없는 파일 · 깨진 파일 · 줄이 모두 틀린 파일 → '파일을 읽을 수 없어요.' 알림, 있던 포트폴리오는 그대로;
-      · 예전 저장 상태 모양({ state: … }) 파일도 그대로 열려요."""
+      · 예전 저장 상태 모양({ state: … }) 파일도 그대로 열려요;
+      · 지금 목록에 없는 종목이 섞인 파일: 있는 종목은 보이고, 없는 종목은 저장본에 남아요 (새로 고침 뒤에도)."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-json-")          # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    try:
+        _json_import(R, files, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _json_import(R, files, tmp):
     S = "파일 불러오기"
     have = {s.get("t") for s in files["data.json"]["stocks"]}
     pick = [t for t in ("005930", "000660", "AAPL") if t in have]
+    gone = next(t for t in ("999999", "999998", "999997") if t not in have)      # 지금 목록에 없는 종목코드
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
             "profile": {"ready": True, "source": "preset", "targetBetaMin": 0.6, "targetBetaMax": 1.0, "targetVolMaxPct": 22,
                         "stocksMin": 3, "stocksMax": 10, "maxPositionPct": 60, "maxSectorPct": 60, "cashFloorPct": 5},
             "holdings": [{"t": t, "mw": mw} for t, mw in zip(pick, (300, 200, 150))]}
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sjx", "name": "파일 저장 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_sjx": json.dumps(slot, ensure_ascii=False)}
-    site = build_site(files)
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(files), site)
     srv, ctx, page, base = R.open(site, local=local)
     saved = {}
 
     def stage(label):
         page.get_by_role("button", name=label, exact=False).first.click()
+
+    def download(key):
+        """④ 내보내기의 'JSON 저장' → tmp 에 옮겨 둔 파일의 내용. 주소를 1.5초 안에 지우지 않는지도 봐요."""
+        stage("④ 내보내기")
+        page.evaluate(REVOKE_SPY)
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        name = dl.value.suggested_filename
+        assert name.startswith("baepsae-portfolio-") and name.endswith(".json"), name
+        saved[key] = os.path.join(tmp, key + "-" + name)                    # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
+        dl.value.save_as(saved[key])
+        page.wait_for_timeout(1500)
+        assert page.evaluate("window.__revoked") == [], "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
+        with open(saved[key], encoding="utf-8") as fh:
+            return json.load(fh)
 
     def export():
         assert len(pick) == 3, f"시험할 종목이 모자라요: {pick}"
@@ -837,19 +869,22 @@ def scene_json_import(R, files):
         page.locator('input[type=number][step="10"]').first.fill("450")   # 첫 종목 300 → 450만원
         poll(page, CART_ROWS, lambda v: len(v) == 3 and v[0][1] == "450", "장바구니에 바꾼 금액이 보이지 않아요")
         saved["rows"] = page.evaluate(CART_ROWS)
-        stage("④ 내보내기")
-        with page.expect_download() as dl:
-            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
-        saved["path"] = os.path.join(tempfile.mkdtemp(), dl.value.suggested_filename)   # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
-        dl.value.save_as(saved["path"])
-        assert dl.value.suggested_filename.startswith("baepsae-portfolio-") and saved["path"].endswith(".json"), dl.value.suggested_filename
-        with open(saved["path"], encoding="utf-8") as fh:
-            j = json.load(fh)
+        j = download("main")
         got = [(h["ticker"], h["amountWon"]) for h in j["holdings"]]
-        assert got == list(zip(pick, (4500000, 2000000, 1500000))), got        # 내보내기 모양은 그대로예요 (ticker · amountWon)
+        assert got == list(zip(pick, (4500000, 2000000, 1500000))), got        # 내보내기 칸 이름은 그대로예요 (ticker · amountWon)
         assert j["budgetWon"] == 25000000 and j["profile"]["targetBetaMax"] == 1.0, (j["budgetWon"], j["profile"])
         saved["fx"] = j["settings"]["fx"]
-    R.check(page, S, f"저장한 포트폴리오({', '.join(pick)}) · 예산 2,500만원 → 'JSON 저장 (백업·공유)' 파일 받기", export)
+    R.check(page, S, f"저장한 포트폴리오({', '.join(pick)}) · 예산 2,500만원 → 'JSON 저장 (백업·공유)' 파일 받기 (주소는 늦게 지움)", export)
+
+    def export_budgets():
+        for budget, key in (("500", "over"), ("0", "zero")):
+            stage("② 구성")
+            page.locator(BUDGET_BOX).first.fill(budget)
+            if key == "over":
+                see(page, "예산 초과!")                                     # 450 + 200 + 150 = 800만원 > 500만원
+            j = download(key)
+            assert j["budgetWon"] == int(budget) * 10000, (key, j["budgetWon"])   # 투자한 돈(800만원)이 아니라 내가 정한 예산
+    R.check(page, S, "예산 초과(500만원) · 예산 0 → 파일의 budgetWon 은 내가 정한 예산 그대로 (투자한 돈 아님)", export_budgets)
     ctx.close()
 
     # 새 브라우저 문맥: 저장소가 비어 있어요 (다른 기기 · 다른 브라우저에서 여는 것과 같아요)
@@ -860,49 +895,58 @@ def scene_json_import(R, files):
     dialogs = []
     page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
     page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
-    file_box = page.locator('input[type=file][accept="application/json"]')
+    file_box = page.locator('input[type=file][accept="application/json,.json"]')
 
     def slots_now():
         return page.evaluate("""() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
             if (k.startsWith('baepsae_v10_')) o[k] = localStorage.getItem(k); } return o; }""")
 
+    newest = """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+        return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }"""
+
+    def newest_slot():
+        """가장 최근에 저장된 포트폴리오 (자동 저장은 0.8초 뒤에 돌아요)."""
+        return page.evaluate(newest)
+
     def launch_screen():
         see(page, "어떻게 시작할까요?")
         assert page.get_by_role("button", name="② 구성").count() == 0, "첫 화면이 아니라 포트폴리오가 열려 있어요"
 
+    def go_home():
+        leave = page.get_by_role("button", name="저장하고 나가기")
+        if leave.count():
+            leave.first.click()
+        launch_screen()
+
     def round_trip():
-        assert "path" in saved, "앞 단계에서 파일을 받지 못했어요"
+        assert "main" in saved, "앞 단계에서 파일을 받지 못했어요"
         assert slots_now() == {}, f"새 문맥인데 포트폴리오가 저장돼 있어요: {list(slots_now())}"
         page.get_by_text("차근차근 만들기", exact=True).click()
         close_welcome(page, "시작하기")
         launch_screen()
-        file_box.set_input_files(saved["path"])
+        file_box.set_input_files(saved["main"])
         stage("② 구성")
         page.locator(BUDGET_BOX).first.wait_for(state="visible", timeout=WAIT)
         rows = poll(page, CART_ROWS, lambda v: len(v) >= 3, "불러온 포트폴리오에 종목이 없어요")
         assert rows == saved["rows"], f"불러온 종목·금액 {rows} ≠ 저장한 {saved['rows']}"
         assert page.locator(BUDGET_BOX).first.input_value() == "2500", page.locator(BUDGET_BOX).first.input_value()
+        assert page.get_by_text("예산 초과!").count() == 0
         assert not dialogs, f"제대로 된 파일인데 알림: {dialogs}"
         # 자동 저장(0.8초 뒤)된 새 포트폴리오: 같은 종목코드 · 금액 · 예산, 프로필과 설정도 파일 그대로
-        st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
-            return l.length === 1 ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
-                  lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
+        st = poll(page, newest, lambda v: bool(v) and len(v["holdings"]) == 3, "불러온 포트폴리오가 저장되지 않았어요")
         assert [(h["t"], h["mw"]) for h in st["holdings"]] == list(zip(pick, (450, 200, 150))), st["holdings"]
         assert st["budgetMw"] == 2500 and st["profile"]["ready"] is True and st["profile"]["targetBetaMax"] == 1.0, st["profile"]
         assert st["settings"]["fx"] == saved["fx"], st["settings"]
     R.check(page, S, "새 브라우저(빈 저장소)에서 그 파일 불러오기 → 같은 종목 · 같은 금액 · 같은 예산, 알림 없음", round_trip)
 
     def write(name, text):
-        p = os.path.join(tempfile.mkdtemp(), name)
+        p = os.path.join(tmp, name)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
         return p
 
     def refused(path, what):
-        leave = page.get_by_role("button", name="저장하고 나가기")
-        if leave.count():
-            leave.first.click()
-        launch_screen()
+        go_home()
         page.wait_for_timeout(1000)                                    # 자동 저장이 끝난 뒤의 저장소
         before, n = slots_now(), len(dialogs)
         assert before.get("baepsae_v10_slots"), "비교할 포트폴리오가 없어요"
@@ -922,8 +966,10 @@ def scene_json_import(R, files):
         ("모양이 다른 파일", "other.json", '{"hello": 1}'),
         ("줄이 모두 틀린 파일 (JSON 저장 모양)", "all-bad.json", json.dumps({**export_head, "holdings": [
             {"ticker": "", "amountWon": 1000000}, {"ticker": pick[0] if pick else "005930", "amountWon": 0},
-            {"ticker": pick[1] if len(pick) > 1 else "000660", "amountWon": "300만"}, {"ticker": "999999", "amountWon": 1000000}]},
+            {"ticker": pick[1] if len(pick) > 1 else "000660", "amountWon": "300만"}, {"ticker": gone, "amountWon": 0}]},
             ensure_ascii=False)),
+        ("지금 목록에 있는 종목이 하나도 없는 파일", "none-listed.json", json.dumps({**export_head, "holdings": [
+            {"ticker": gone, "name": "없는 회사", "amountWon": 1000000}]}, ensure_ascii=False)),
     ]
     for what, name, text in bad_files:
         R.check(page, S, f"{what} → '{IMPORT_FAIL}' 알림, 있던 포트폴리오 그대로",
@@ -938,8 +984,7 @@ def scene_json_import(R, files):
     R.check(page, S, "잘못된 파일들을 불러온 뒤에도 불러온 포트폴리오는 그대로 (종목 · 금액 · 예산)", still_same)
 
     def old_state_file():
-        page.get_by_role("button", name="저장하고 나가기").first.click()
-        launch_screen()
+        go_home()
         old = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1500,
                "holdings": [{"t": pick[0], "mw": 500}, {"t": pick[1], "mw": 300}]}
         n = len(dialogs)
@@ -949,6 +994,49 @@ def scene_json_import(R, files):
         assert [v for _, v in rows] == ["500", "300"] and page.locator(BUDGET_BOX).first.input_value() == "1500", rows
         assert len(dialogs) == n, f"예전 모양 파일인데 알림: {dialogs[n:]}"
     R.check(page, S, "예전 저장 상태 모양({ state: … }) 파일도 그대로 열림", old_state_file)
+
+    def budgets_back():
+        for key, want, over in (("over", "500", True), ("zero", "0", False)):
+            go_home()
+            n = len(dialogs)
+            file_box.set_input_files(saved[key])
+            stage("② 구성")
+            page.locator(BUDGET_BOX).first.wait_for(state="visible", timeout=WAIT)
+            rows = poll(page, CART_ROWS, lambda v: len(v) >= 3, f"{key}: 불러온 포트폴리오에 종목이 없어요")
+            assert rows == saved["rows"] and page.locator(BUDGET_BOX).first.input_value() == want, (key, rows)
+            if over:
+                see(page, "예산 초과!")                                     # 예산 초과 경고가 그대로 돌아와요
+            else:
+                page.wait_for_timeout(300)
+                assert page.get_by_text("예산 초과!").count() == 0, "예산 0 인데 '예산 초과!'"
+            assert len(dialogs) == n, f"{key}: 알림 {dialogs[n:]}"
+    R.check(page, S, "예산 초과 파일 → 예산 500만원 + '예산 초과!' 그대로 · 예산 0 파일 → 예산 0", budgets_back)
+
+    def unlisted_kept():
+        go_home()
+        page.wait_for_timeout(1000)
+        f = write("with-gone.json", json.dumps({**export_head, "holdings": [
+            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": gone, "name": "없는 회사", "amountWon": 2000000}]},
+            ensure_ascii=False))
+        n = len(dialogs)
+        file_box.set_input_files(f)
+        stage("② 구성")
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 1, "목록에 있는 종목이 보이지 않아요")
+        assert [v for _, v in rows] == ["300"] and len(dialogs) == n, (rows, dialogs[n:])     # 있는 종목만 보여요
+        st = poll(page, newest, lambda v: bool(v) and len(v["holdings"]) == 2 and v["budgetMw"] == 1000,
+                  "불러온 포트폴리오가 저장되지 않았어요")
+        assert st["holdings"] == [{"t": pick[0], "mw": 300}, {"t": gone, "mw": 200, "nk": "없는 회사"}], st["holdings"]
+        page.reload(wait_until="domcontentloaded")                     # 새로 고침 뒤: 저장본에 그대로, 열어도 그대로
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        launch_screen()
+        assert newest_slot()["holdings"] == st["holdings"], newest_slot()
+        page.get_by_text("불러온 포트폴리오", exact=False).first.click()
+        stage("② 구성")
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 1, "다시 연 포트폴리오에 종목이 없어요")
+        assert [v for _, v in rows] == ["300"], rows
+        page.wait_for_timeout(1200)                                    # 열면 자동 저장이 다시 돌아도 없는 종목은 남아요
+        assert newest_slot()["holdings"] == st["holdings"], newest_slot()
+    R.check(page, S, "지금 목록에 없는 종목이 섞인 파일 → 있는 종목은 보이고, 없는 종목은 저장본에 남음 (새로 고침 뒤에도)", unlisted_kept)
     ctx.close(); srv.shutdown()
 
 
