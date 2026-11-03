@@ -160,8 +160,10 @@ def render_icons():
                 f"import {{ Icon, IconChip, ICON_NAMES, ICON_TONES, ALIAS }} from {json.dumps(path('src/ui/icons.jsx'))};\n"
                 f"import {{ ICON_TONE, COLOR }} from {json.dumps(path('src/ui/tokens.js'))};\n"
                 f"import {{ PH, PHOSPHOR_VERSION }} from {json.dumps(path('src/ui/phosphor.js'))};\n"
+                "const WARNS = []; console.warn = (...a) => { WARNS.push(a.join(' ')); };\n"
                 "export const OUT = { names: ICON_NAMES, tones: ICON_TONES, alias: ALIAS, tone: ICON_TONE, ph: PH, version: PHOSPHOR_VERSION,\n"
                 "  select: COLOR.select, unknown: renderToStaticMarkup(<Icon name='no-such-icon' />),\n"
+                "  unknownAgain: renderToStaticMarkup(<Icon name='no-such-icon' tone='off' />), warns: WARNS,\n"
                 "  chip: renderToStaticMarkup(<IconChip name='umbrella' size={40} />),\n"
                 "  svg: Object.fromEntries(ICON_NAMES.flatMap((n) => ICON_TONES.map((t) => [n + '|' + t, renderToStaticMarkup(<Icon name={n} tone={t} />)]))) };\n")
     try:
@@ -215,7 +217,9 @@ def test_icons_are_phosphor_duotone_with_two_layers_and_table_colours():
     assert all(a in v["ph"] for a in v["alias"].values()), v["alias"]
     for k, d in v["ph"].items():
         assert isinstance(d, list) and len(d) == 2 and all(PH_D.match(x) for x in d), k
-    assert v["unknown"] == ""
+    assert v["unknown"] == "" and v["unknownAgain"] == ""
+    # 없는 이름은 조용히 지나가지 않아요: 이름마다 한 번 console.warn (같은 이름을 두 번 그려도 한 번)
+    assert v["warns"] == ["[icons] unknown icon name, nothing drawn: no-such-icon"], v["warns"]
     bad = {}
     for key, markup in v["svg"].items():
         n, tone = key.split("|")
@@ -314,6 +318,26 @@ def test_all_components_exported_and_tagged():
     for name in ["HeroBand", "StatStrip", "ListRow", "StatusChip", "Segmented", "Stepper", "MoneyInput", "BottomActionBar",
                  "BottomSheet", "Collapsible", "BottomTabBar", "DotStrip", "WeightBar", "RuleRow"]:
         assert re.search(rf"export function {name}\b", src), name
+
+
+def test_amount_shrinks_only_the_unit_right_after_the_number():
+    """v19.0b 큰 숫자: 숫자 바로 뒤의 단위(만원 · 원 · %)만 작게. 숫자 앞뒤 낱말("약" · "남는 돈")은 그대로 (리뷰 2026-11-04)."""
+    cases = ["약 −84만원", "남는 돈 3만원", "1,418,000원", "+5.3%", "$12.34", "약 46만원", "12만원 남았어요", "5종목 중 3종목"]
+    got = node_value("src/ui/components.jsx", "Object.fromEntries(" + json.dumps(cases, ensure_ascii=False) + ".map((t) => [t, M.amountParts(t)]))")
+    want = {
+        "약 −84만원": [["약 −84", False], ["만원", True]],
+        "남는 돈 3만원": [["남는 돈 3", False], ["만원", True]],
+        "1,418,000원": [["1,418,000", False], ["원", True]],
+        "+5.3%": [["+5.3", False], ["%", True]],
+        "$12.34": [["$12.34", False]],
+        "약 46만원": [["약 46", False], ["만원", True]],
+        "12만원 남았어요": [["12", False], ["만원", True], [" 남았어요", False]],
+        "5종목 중 3종목": [["5", False], ["종목", True], [" 중 3", False], ["종목", True]],
+    }
+    assert got == want, got
+    for t, parts in got.items():
+        assert "".join(p for p, _ in parts) == t                      # 글자는 그대로 (읽는 순서 · 복사)
+        assert not any(small and re.search(r"\d", p) for p, small in parts), parts
 
 
 def test_fmt_pct_never_shows_minus_zero_or_nan():

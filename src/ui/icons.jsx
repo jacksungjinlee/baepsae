@@ -18,11 +18,19 @@ export const ALIAS = {
 export const ICON_NAMES = [...new Set([...Object.keys(ALIAS), ...Object.keys(PH)])];
 export const ICON_TONES = Object.keys(ICON_TONE);
 
+// 없는 이름은 그리지 않고, 이름마다 한 번 크게 알려요 (조용한 실패 금지)
+const warned = new Set();
+function warnUnknown(name) {
+  if (warned.has(name)) return;
+  warned.add(name);
+  console.warn("[icons] unknown icon name, nothing drawn: " + String(name));
+}
+
 // tone: on(남색 · 기본) · off(회색) · ok(초록) · onNavy(남색 바탕 위 흰색)
 export function Icon({ name, size = 24, tone = "on", title, style }) {
   const key = ALIAS[name] || name;
   const d = PH[key];
-  if (!d) return null;
+  if (!d) { warnUnknown(name); return null; }
   const t = ICON_TONE[tone] || ICON_TONE.on;
   return (
     <svg data-icon={name} data-ph={key} data-tone={ICON_TONE[tone] ? tone : "on"} width={size} height={size} viewBox="0 0 256 256"

@@ -139,7 +139,7 @@ export function About({ load, onBack }) {
           <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {a.principles.items.map((it, i) => (
               <li key={it.title} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(3)}px 0`, ...(i ? rowLine : {}) }}>
-                <span aria-hidden="true" style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: COLOR.ink, flexShrink: 0,
+                <span data-ui-v2="about-principle-n" aria-hidden="true" style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: COLOR.ink, flexShrink: 0,
                   display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, WEIGHT.heavy, COLOR.surface) }}>{i + 1}</span>
                 <div style={{ minWidth: 0 }}>
                   <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{it.title}</p>
@@ -176,7 +176,7 @@ export function About({ load, onBack }) {
           </div>
           <p style={label}>{m.edu.label}</p>
           <p style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{m.edu.value}</p>
-          <p style={label}>{m.career.label}</p>
+          <p data-ui-v2="about-years" style={label}>{m.career.label}</p>
           {m.career.items.map((it) => (
             <div key={it.org} style={{ ...rowLine, padding: `${SPACE(2)}px 0` }}>
               <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>

@@ -201,6 +201,10 @@ def interact(page, check, w):
 
     row = page.locator('[data-ui="list-row"]').first
     check(w + "목록 줄은 키보드로 갈 수 있어요", row.get_attribute("tabindex") == "0" and row.get_attribute("role") == "button")
+    sel = page.locator('[data-ui="list-row"][data-selected="1"]')                 # v19.0b 고른 줄: 회색 바탕 + 왼쪽 3px 남색, 살구색 없음
+    look = sel.evaluate("(e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e).boxShadow]") if sel.count() == 1 else None
+    check(w + "고른 줄: 회색(#F2F0EB) 바탕 + 왼쪽 3px 남색 선", look is not None and look[0] == "rgb(242, 240, 235)"
+          and "rgb(28, 43, 69)" in look[1] and "3px 0px 0px 0px inset" in look[1], str(look))
 
     opener = page.locator("[data-open-sheet]")
     sheet = page.locator('[data-ui="bottom-sheet"]:not([data-inline])')

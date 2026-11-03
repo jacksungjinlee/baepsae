@@ -15,8 +15,13 @@ import re
 from copytrace import ROOT, read
 
 APRICOT = ("#C97757", "#A9542F", "#FBF1EA")
-# 살구색을 써도 되는 곳 (데이터 표시): 파일 → 함수 이름
+# 살구색을 써도 되는 곳 (데이터 표시): 파일 → 맨 위 선언 이름. tokens.js 는 색을 정의하는 곳이라 통째로 괜찮아요.
 APRICOT_OK = {"src/ui/components.jsx": {"DotStrip", "WeightBar"}, "src/v2/tracking.jsx": {"BandBar"}}
+# 살구색을 가리키는 것이면 무엇이든: 이름(COLOR.apricot · COLOR["apricot"] · "apricotText" 같은 문자열 키 · heroAlert), 색 값(#C97757 …, rgb 꼴)
+APRICOT_REF = re.compile(r"apricot\w*|heroAlert|#?(?:C97757|A9542F|FBF1EA)\b|rgba?\(\s*(?:201\s*,\s*119\s*,\s*87|169\s*,\s*84\s*,\s*47|251\s*,\s*241\s*,\s*234)", re.I)
+# 맨 위(들여쓰기 없는) 선언: export · default · async 를 앞에 둘 수 있어요
+TOP_DECL = re.compile(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?\s+(\w+)|class\s+(\w+)|(?:const|let|var)\s+(\w+))")
+TOP_LEVEL = "(맨 위 문장)"
 
 
 def code_files():
@@ -29,43 +34,78 @@ def code_files():
 
 
 def strip_comments(src):
-    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)       # 줄 수는 그대로
     return "\n".join(re.sub(r"(^|\s)//.*$", "", line) for line in src.splitlines())
 
 
+def line_owners(src):
+    """줄마다 그 줄을 담은 맨 위 선언의 이름. 맨 위 선언 밖(닫는 괄호 뒤의 맨 위 문장, import · export { } 등)은 TOP_LEVEL."""
+    owners, cur = [], TOP_LEVEL
+    for line in src.splitlines():
+        if line[:1] and not line[0].isspace():
+            m = TOP_DECL.match(line)
+            if m:
+                cur = next(g for g in m.groups() if g)
+            elif line.lstrip()[:1] in "})]":
+                owners.append(cur)                # 닫는 줄은 아직 그 선언 안이에요
+                cur = TOP_LEVEL
+                continue
+            else:
+                cur = TOP_LEVEL
+        owners.append(cur)
+    return owners
+
+
 def enclosing_function(src, pos):
-    names = [(m.start(), m.group(1)) for m in re.finditer(r"function (\w+)", src) if m.start() < pos]
-    return names[-1][1] if names else None
+    """pos 를 담은 맨 위 선언의 이름 (함수 · 상수 · 클래스). 들여쓰기 없는 다른 문장이면 TOP_LEVEL."""
+    return line_owners(src)[src.count("\n", 0, pos)]
 
 
-def apricot_uses():
-    """(파일, 함수, 쓴 것) 목록: COLOR.apricot · COLOR.apricotText · COLOR.heroAlert 와 살구색 값 그대로."""
-    out = []
-    for f in code_files():
-        src = strip_comments(read(f))
-        for m in re.finditer(r"COLOR\.(apricot|apricotText|heroAlert)\b|#(?:C97757|A9542F|FBF1EA)", src, flags=re.I):
-            out.append((f, enclosing_function(src, m.start()), m.group(0)))
-    return out
+def apricot_violations(sources):
+    """{파일: 소스} 에서 살구색을 가리키는 곳 중 데이터 표시 컴포넌트 밖에 있는 것: [(파일, 선언, 쓴 것)]. 와 함께 전체 쓰임 수."""
+    bad, uses = [], 0
+    for f, raw in sources.items():
+        if f.endswith("tokens.js"):
+            continue
+        src = strip_comments(raw)
+        owners = line_owners(src)
+        for m in APRICOT_REF.finditer(src):
+            uses += 1
+            who = owners[src.count("\n", 0, m.start())]
+            if who not in APRICOT_OK.get(f, set()):
+                bad.append((f, who, m.group(0)))
+    return bad, uses
 
 
 def test_apricot_only_marks_data():
-    uses = apricot_uses()
-    assert uses, "살구색 데이터 표시(목표 선 · 내 종목 점)가 하나도 없어요"
-    bad = [u for u in uses if u[1] not in APRICOT_OK.get(u[0], set()) and not u[0].endswith("tokens.js")]
+    bad, uses = apricot_violations({f: read(f) for f in code_files()})
+    assert uses >= 4, "살구색 데이터 표시(목표 선 · 내 종목 점)가 없어요"
     assert not bad, f"살구색이 데이터 표시 밖에 있어요: {bad}"
     tok = strip_comments(read("src/ui/tokens.js"))
     for name in ("ICON_TONE", "ICON_CHIP", "SELECTED", "SELECTED_ROW"):
         block = tok.split(f"export const {name} =", 1)[1].split(";", 1)[0]
-        assert not any(a.lower() in block.lower() for a in APRICOT) and "apricot" not in block, name
+        assert not APRICOT_REF.search(block), name
 
 
 def test_apricot_check_catches_a_stray_use():
-    """위 검사가 정말 걸러내는지: 고른 탭 · 알림 띠 같은 곳에 살구색을 넣으면 걸려요."""
-    src = strip_comments(read("src/ui/components.jsx"))
-    fake = src.replace("background: on ? SELECTED.background", "background: on ? COLOR.apricot", 1)
-    assert fake != src
-    hits = [(enclosing_function(fake, m.start()), m.group(0)) for m in re.finditer(r"COLOR\.(apricot|apricotText|heroAlert)\b", fake)]
-    assert ("BottomTabBar", "COLOR.apricot") in hits, hits
+    """위 검사가 정말 걸러내는지 (리뷰가 찾은 두 우회로 포함): 고른 탭에 COLOR.apricot · COLOR["apricot"], RuleRow 앞 맨 위 상수,
+    문자열 키, 닫는 괄호 뒤의 맨 위 문장, 색 값을 그대로."""
+    real = {f: read(f) for f in code_files()}
+    comp, today = real["src/ui/components.jsx"], real["src/v2/today.jsx"]
+    tab = "background: on ? SELECTED.background"
+    assert tab in comp and "export function RuleRow" in comp and "export function Today" in today
+    cases = [
+        ("src/ui/components.jsx", comp.replace(tab, "background: on ? COLOR.apricot", 1), ("BottomTabBar", "apricot")),
+        ("src/ui/components.jsx", comp.replace(tab, 'background: on ? COLOR["apricot"]', 1), ("BottomTabBar", "apricot")),
+        ("src/ui/components.jsx", comp.replace("export function RuleRow", "export const strayPill = { background: COLOR.apricot };\nexport function RuleRow", 1),
+         ("strayPill", "apricot")),
+        ("src/ui/components.jsx", comp.replace("export function RuleRow", "const KEY = 'apricotText';\nexport function RuleRow", 1), ("KEY", "apricotText")),
+        ("src/ui/components.jsx", comp.replace("export function RuleRow", "COLOR.apricot;\nexport function RuleRow", 1), (TOP_LEVEL, "apricot")),
+        ("src/v2/today.jsx", today.replace("export function Today", "const PILL_BG = \"#c97757\";\nexport function Today", 1), ("PILL_BG", "#c97757")),
+    ]
+    for f, mutated, (who, what) in cases:
+        bad, _ = apricot_violations({**real, f: mutated})
+        assert (f, who, what) in bad, (f, who, what, bad)
 
 
 def hero_source():

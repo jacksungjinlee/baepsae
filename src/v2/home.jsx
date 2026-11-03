@@ -1,8 +1,9 @@
 // 내 덱 (v18.3 A+B, the Part C daily check, and the Part E tracking sheet). It shows the user's own purchase records
 // and, when today's data is fresh, each held stock's rule check (daily.jsx), the deck's value · 원금 · return against
 // KOSPI, weight bars with target marks and 추가로 넣을 돈 (tracking.jsx). No example data. 오늘 is in today.jsx.
-// v19.0b: with no saved deck (and data that did not fail), an empty-state card shows the 뱁이 in its nest
-// (baepi-15-portfolio) and the way to 덱 짜기 — the same button as 오늘's empty card. That card has no numbers.
+// v19.0b: with no saved deck (and data that did not fail, and records that could be read), an empty-state card shows the
+// 뱁이 in its nest (baepi-15-portfolio) and the way to 덱 짜기 — the same button as 오늘's empty card. No numbers on it.
+// With saved decks the screen shows their figures, so a load failure here shows its message without the 뱁이 picture.
 import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
@@ -60,9 +61,9 @@ export function MyDeck({ load, store, setStoreData, pad, go }) {
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
-      {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail />}
+      {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail picture={decks.length === 0} />}
       <OldAppNote />
-      {decks.length === 0 && ev.why !== "fail" && ev.why !== "undated" && (
+      {decks.length === 0 && !store.locked && ev.why !== "fail" && ev.why !== "undated" && (
         <Card data-ui-v2="deck-empty" style={{ textAlign: "center" }}>
           <Mascot src={IMG.empty} alt={C.deck.emptyAlt} size={112} style={{ display: "inline-block" }} />
           {go && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></div>}

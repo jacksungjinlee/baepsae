@@ -48,7 +48,7 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok  # noqa: E402
+from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
@@ -317,20 +317,17 @@ def scene_normal(R, files, width):
         word = bar.locator('h1[data-ui-v2="wordmark"]')
         assert word.inner_text() == C["app"]["brand"] and word.evaluate("(e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight]") == ["22px", "800"]
         tab(page, C["app"]["tabs"]["build"])
-        page.locator('[data-deck="income"]').click()                         # 고른 시작 덱 → 다음 단계 → 뒤로: 고른 줄로 보여요
+        page.locator('[data-deck="income"]').click()                         # 시작 덱 → 다음 단계 → 뒤로: 표시 없이 그대로 (main 과 같아요)
         see(page, C["build"]["s1"]["title"])
         page.get_by_role("button", name=C["build"]["prevStep"]).click()
-        row = page.locator('[data-deck="income"]')
-        row.wait_for(state="visible")
-        assert row.get_attribute("data-selected") == "1" and page.locator('[data-deck][data-selected="1"]').count() == 1
-        bg, edge = row.evaluate("(e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e).boxShadow]")
-        assert bg == SELECT_RGB and NAVY_RGB in edge and "3px 0px 0px 0px inset" in edge, (bg, edge)
+        page.locator('[data-deck="income"]').wait_for(state="visible")
+        assert page.locator("[data-deck][data-selected], [data-deck][aria-current]").count() == 0, "다시 누르면 1단계 변경이 사라지는 고른 표시가 있어요"
         page.locator("body").click(position={"x": 2, "y": 2})                # 키보드 초점 테두리는 남색 (살구색 아님)
         page.keyboard.press("Tab")
         ring = page.evaluate("() => { const s = getComputedStyle(document.activeElement); return [document.activeElement.tagName, s.outlineColor, s.outlineStyle, s.outlineWidth]; }")
         assert ring[1:] == [NAVY_RGB, "solid", "2px"], ring
         R.collect(page)
-    R.check(page, S, "덱 짜기 첫 카드의 뱁이(숫자 없음) · 로고 마크 + 워드마크 · 고른 시작 덱은 고른 줄(회색 바탕 + 3px 남색) · 초점 테두리 남색", visual_start)
+    R.check(page, S, "덱 짜기 첫 화면의 뱁이(날짜 줄 말고 숫자 없음) · 로고 마크 + 워드마크 · 돌아와도 시작 덱 표시 없음 · 초점 테두리 남색", visual_start)
 
     def today():
         tab(page, C["app"]["tabs"]["today"])
@@ -863,6 +860,7 @@ def scene_locked(R, files, width):
         wait_ready(page)
         tab(page, C["app"]["tabs"]["deck"])
         assert page.locator('[data-ui-v2="store-locked"]').inner_text() == C["store"]["locked"]
+        assert page.locator('[data-ui-v2="deck-empty"]').count() == 0, "읽지 못한 기록이 있는데 빈 내 덱 카드(뱁이 + 덱 짜기)가 보여요"
         assert page.evaluate("localStorage.getItem('baepsae2.v1')") == '{"v":9,"stuff":[1]}', "읽지 못한 기록을 바꿨어요"
         R.collect(page)
     R.check(page, f"읽지 못한 기록 {width}", "알 수 없는 형식으로 저장된 기록 → '이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요.'", run)
@@ -1146,6 +1144,8 @@ def scene_daily(R, files, width):
             else:                                                       # 칩 없는 종목이 '괜찮음'으로 읽히지 않게
                 assert page.locator('[data-ui-v2="deck-stale"]').count() == 0
                 assert page.locator('[data-ui-v2="load-fail"]').inner_text().strip() == LOAD_FAIL
+                fail = page.locator('[data-ui-v2="load-fail"]')            # 기록(숫자)이 보이는 화면이라 뱁이 그림 없이 문구만 (v19.0b)
+                assert fail.get_attribute("data-picture") == "0" and fail.locator("img").count() == 0
             assert page.locator("[data-holding][data-status]").count() == 0, "멈춘·실패한 데이터로 판정했어요"
             for sel in ('[data-ui-v2="status-line"]', '[data-ui-v2="confirm"]', '[data-ui-v2="not-checked"]', '[data-holding] [data-ui="status-chip"]', "[data-rules-today]"):
                 assert page.locator(sel).count() == 0, sel
@@ -1689,6 +1689,8 @@ def main():
     R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
     R.results.append(("다른 사이트 요청 0건 (글꼴·통계·CDN 없음)", not R.outside, ", ".join(sorted(set(R.outside)))[:300]))
     w = max(len(n) for n, _, _ in R.results)
+    print("\n뱁이가 나온 화면 (그림 | 화면 | 예외 밖 숫자 | 쓴 예외):")
+    print("\n".join(placements_table()))
     print("\n뱁새 2.0 미리 보기 스모크 테스트 결과 · 데이터: tests/fixtures/v2")
     for name, good, msg in R.results:
         print(f"  {'PASS' if good else 'FAIL'}  {name.ljust(w)}  {msg}")

@@ -1,10 +1,9 @@
 // 덱 짜기: 시작 · 기준 · 빼기 · 조건 (테마 is hidden in the beta; 꼭 담을 종목 lives in 조건), then 후보 고르기 and
 // 매수 계획 · 샀어요. A live count of candidates sits in the bottom bar.
-// v19.0b: the start card shows the 뱁이 carrying twigs (baepi-16-build) next to the title and question only: that card has no
-// numbers (the date line sits above it). Coming back to the start, the starting deck already chosen is marked as the
-// selected row (warm grey, 3 px navy edge). The whole-block 준비 중 (data fields missing) shows the hard-hat 뱁이.
+// v19.0b: the start card shows the 뱁이 carrying twigs (baepi-16-build) next to the title and question only: no numbers on
+// that screen besides the data-date line. The whole-block 준비 중 (data fields missing) shows the hard-hat 뱁이.
 import React, { useMemo, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED_ROW } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Segmented, Stepper, MoneyInput, StatusChip } from "../ui/components.jsx";
 import {
@@ -52,12 +51,11 @@ function StepDots({ step }) {
   );
 }
 
-function Option({ title, sub, onClick, id, selected }) {
+function Option({ title, sub, onClick, id }) {
   return (
-    <button type="button" data-deck={id} onClick={onClick} aria-current={selected ? "true" : undefined} data-selected={selected ? "1" : undefined}
+    <button type="button" data-deck={id} onClick={onClick}
       style={{ ...tap, width: "100%", textAlign: "left", border: `1px solid ${COLOR.border}`, background: COLOR.surface, borderRadius: RADIUS.md,
-        padding: `${SPACE(3)}px ${SPACE(4)}px`, marginTop: SPACE(2), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(4),
-        ...(selected ? SELECTED_ROW : {}) }}>
+        padding: `${SPACE(3)}px ${SPACE(4)}px`, marginTop: SPACE(2), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(4) }}>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.body, WEIGHT.bold, COLOR.ink, { display: "block" })}>{title}</span>
         <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{sub}</span>
@@ -103,7 +101,7 @@ function Steps({ load, builder, setBuilder, onExit }) {
       </div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <StepDots step={step} />
-      {step === 0 && <StepStart start={start} chosen={st.deck} />}
+      {step === 0 && <StepStart start={start} />}
       {step === 1 && <StepCards st={st} set={set} ds={ds} load={load} />}
       {step === 2 && <StepExclude st={st} set={set} ds={ds} />}
       {step === 3 && <StepTerms st={st} set={set} ds={ds} load={load} />}
@@ -147,7 +145,7 @@ function SurvivorNotes({ ds, two }) {
   );
 }
 
-function StepStart({ start, chosen }) {
+function StepStart({ start }) {
   const s0 = C.build.s0;
   return (
     <div>
@@ -159,7 +157,7 @@ function StepStart({ start, chosen }) {
       <div style={{ marginTop: SPACE(3) }}>
         <Option id="blank" title={s0.blank} sub={s0.blankSub} onClick={() => start(null)} />
         {DECKS.filter((d) => !d.hidden).map((d) => (
-          <Option key={d.id} id={d.id} title={C.build.decks[d.id].name} sub={C.build.decks[d.id].sub} onClick={() => start(d.id)} selected={chosen === d.id} />
+          <Option key={d.id} id={d.id} title={C.build.decks[d.id].name} sub={C.build.decks[d.id].sub} onClick={() => start(d.id)} />
         ))}
       </div>
     </div>

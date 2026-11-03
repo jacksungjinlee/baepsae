@@ -26,13 +26,28 @@ export const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (
 const priceColor = (v, onPage) => (v > 0 ? (onPage ? COLOR.upOnPage : COLOR.up) : v < 0 ? COLOR.down : COLOR.text2);
 const toneColor = (tone, onPage) => (tone === "up" ? (onPage ? COLOR.upOnPage : COLOR.up) : tone === "down" ? COLOR.down : COLOR.ink);
 
-// 큰 숫자의 단위(만원 · 원 · 약 …): 숫자보다 작고(0.6em) 가볍게(700). 글자 내용은 그대로라 읽는 순서·복사는 같아요.
-// 한국어 글자 덩어리만 작게 해요 ("+8.0%" · "$12.34" 는 그대로).
+// 큰 숫자의 단위: 숫자 바로 뒤의 단위(만원 · 원 · 주 · % …)만 숫자보다 작고(0.6em) 가볍게(700) 그려요.
+// 숫자 앞뒤의 낱말("약" · "남는 돈")은 그대로예요. 글자 내용은 바뀌지 않아서 읽는 순서·복사는 같아요.
+// 단위 = 숫자 바로 뒤에 붙은 한글 음절 덩어리 또는 % (코드에 한국어를 두지 않으려고 유니코드 범위로 써요).
+export function amountParts(text) {
+  const s = String(text);
+  const unit = /[\uAC00-\uD7A3]+|%/g;
+  const out = [];
+  let last = 0;
+  let m;
+  while ((m = unit.exec(s))) {
+    if (m.index === 0 || !/\d/.test(s[m.index - 1])) continue;
+    if (m.index > last) out.push([s.slice(last, m.index), false]);
+    out.push([m[0], true]);
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out.push([s.slice(last), false]);
+  return out;
+}
 export function Amount({ text }) {
-  const parts = String(text).split(/([\uAC00-\uD7A3]+)/);          // 한글 음절 덩어리 (코드에 한국어를 두지 않아요)
   return (
     <span data-ui="amount">
-      {parts.map((p, i) => (i % 2 ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}
+      {amountParts(text).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}
     </span>
   );
 }

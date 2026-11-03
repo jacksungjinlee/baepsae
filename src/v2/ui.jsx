@@ -102,11 +102,13 @@ export function Mascot({ src, alt, size, style }) {
   return <img data-ui-v2="mascot" src={src} alt={alt || ""} width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, ...style }} />;
 }
 
-export function LoadFail() {
+// picture = false: the screen also shows figures (내 덱 with saved records), so the 뱁이 stays off (CLAUDE.md: never on
+// a screen that shows numbers). The message is the same either way.
+export function LoadFail({ picture = true }) {
   return (
-    <div data-ui-v2="load-fail" role="alert" style={{ textAlign: "center", padding: `${SPACE(10)}px ${SPACE(4)}px` }}>
-      <Mascot src={IMG.error} alt={C.app.loadFailAlt} size={120} style={{ display: "inline-block" }} />
-      <p style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{C.app.loadFail}</p>
+    <div data-ui-v2="load-fail" data-picture={picture ? "1" : "0"} role="alert" style={{ textAlign: "center", padding: `${picture ? SPACE(10) : SPACE(6)}px ${SPACE(4)}px` }}>
+      {picture && <Mascot src={IMG.error} alt={C.app.loadFailAlt} size={120} style={{ display: "inline-block" }} />}
+      <p style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: picture ? SPACE(3) : 0 })}>{C.app.loadFail}</p>
     </div>
   );
 }
