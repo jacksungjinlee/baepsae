@@ -14,6 +14,9 @@
   금 보유     오늘 데이터에 없는 금현물을 담은 포트폴리오 → 배너
   금 추정     국제 금값 환산 추정 → 이름에 '국제 금값 환산' + '금현물은 국제 금값으로 환산한 추정치예요'
   금리        macro.json 의 금리 부분만 빈 날 → 금리 칸에 '금리 데이터를 불러오지 못했어요' (EN 은 영어)
+  빠진 종목   저장한 보유 종목(STRC)이 오늘 데이터에 없음 → ②③④·메모·CSV·JSON·카드에 '빼고 계산했어요', 합계에서 빠짐,
+              저장본(localStorage)에는 남고, 데이터에 다시 들어오면 저절로 돌아옴 (v18.5)
+  베타→수익률 펼친 종목 줄의 '이론 샤프'와 프로필의 '목표 → 베타' 문장이 없음, 과거 값(샤프 3y·α)은 보임 (v18.5, KO·EN)
   서비스워커  예전 v10 워커의 얼어붙은 corp.json 이 새 워커로 바뀌고 baepsae-v10 캐시가 지워짐
   2.0 링크    머리말 '뱁새 2.0 보기' (Jack, 2026-11-02): 320 · 390 에서 보임 · 누르는 높이 44 이상 · 다른 머리말 항목과 겹치지 않음 ·
               가로 스크롤 없음 · app.html 로 감 · 영어 화면에는 없음 · 좁은 휴대폰의 모드 안(홈 화면 '뒤로' 포함)에서도 머리말이 넘치지 않음
@@ -48,6 +51,8 @@ NORISK = "베타·변동성 자료가 없어요. 위험 수치는 나머지 종�
 RISK_BLIND = "담은 종목 모두 베타·변동성 자료가 없어 위험 수치를 계산할 수 없어요"
 RISK_HALF = "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요"
 DY_UNKNOWN = "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요."
+MISSING = "오늘 데이터에 없는 종목 {n}개({names})는 빼고 계산했어요."      # v18.5 (Jack 제안 문구, 2026-11-03)
+MISSING_EN = "Left out {n} stock(s) not in today's data ({names})."      # v18.5 영어 (PENDING JACK)
 # 가장 작은 요소의 글: 그 줄만 정확히 보려고 (부모 상자의 글이 섞이지 않게)
 SMALLEST = """(args) => { const [need, also] = args; let best = null;
   for (const e of document.querySelectorAll('body *')) { const t = e.innerText || '';
@@ -110,7 +115,7 @@ class Runner:
         self.browser, self.shots = browser, shots
         self.results, self.errors, self.console = [], [], []
 
-    def open(self, site, sw=False, local=None):
+    def open(self, site, sw=False, local=None, once=False):
         srv, base = serve(site)
         # is_mobile 을 켜면 기업분석 화면이 폭 390px 보다 넓어(약 530px) 크롬이 화면을 축소하고,
         # 그러면 탭 클릭 좌표가 어긋나요. 그래서 크기만 휴대폰(390×844)으로 맞춥니다.
@@ -118,8 +123,9 @@ class Runner:
                                        service_workers="allow" if sw else "block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
         if local:
-            ctx.add_init_script("(() => { try { const kv = %s; for (const k in kv) localStorage.setItem(k, kv[k]); } catch (e) {} })();"
-                                % json.dumps(local, ensure_ascii=False))
+            # once=True: 처음 열 때만 심어요 (다시 불러와도 앱이 저장한 값을 덮어쓰지 않게 — 저장본이 남는지 볼 때)
+            ctx.add_init_script("(() => { try { const kv = %s; for (const k in kv) %slocalStorage.setItem(k, kv[k]); } catch (e) {} })();"
+                                % (json.dumps(local, ensure_ascii=False), "if (localStorage.getItem(k) === null) " if once else ""))
         page = ctx.new_page()
         page.on("pageerror", lambda e: self.errors.append(str(e)))
         page.on("console", lambda m: self.console.append((m.type, m.text)))
@@ -498,6 +504,9 @@ HIDDEN_B = ["기대 +", "적정 기대수익", "세후 기대수익", "기대수
             "유지하는 것도 훌륭한 선택",
             # v18.4 (Jack 2026-11-03): 기대수익으로 만든 나머지 예측 — VaR·CVaR·2008년급 줄과 그 설명, 미국 매매차익 세금
             "나쁜 해 (하위 5% 경계", "그보다 나쁠 때 평균", "2008년급 (시장", "꼬리가 두꺼워요", "이 금액들을 보고도", "해외주식 양도소득세",
+            # v18.5 (Jack 2026-11-03): 베타를 수익률로 바꾸는 줄 — 펼친 종목 줄의 이론 샤프(β × 프리미엄 ÷ σ),
+            # 프로필의 '목표는 연 X%라서, 베타 …' · '… 기대하기 어려운 수치예요' · '베타 Y 정도면 충분해요'
+            "이론 샤프", "%라서, 베타", "기대하기 어려운 수치", "정도면 충분해요",
             "NaN"]
 # ('초록 구간 = 내 프로필의 목표' 는 남아요: 분산·업종 계기에는 목표 구간이 그대로 있어요. β·σ 계기에서만 구간을 지워요.)
 HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax return", "Fair E(r)", "Portfolio health", "health score",
@@ -508,7 +517,9 @@ HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax retur
                "Beta matches your capacity", "uncompensated change", "risk you actually got paid for", "You cut risk",
                "holding steady is a fine choice",
                "Bad year (5% VaR)", "Average beyond it (CVaR)", "2008-scale (market", "fatter tails", "stay the course — which",
-               "Foreign capital gains", "NaN"]
+               "Foreign capital gains",
+               "CAPM Sharpe", "goal, aim for beta", "is hard to expect from the risk you can carry", "goal only needs about beta",   # v18.5
+               "NaN"]
 TEAL, TEAL_SOFT, INK = "rgb(46, 158, 143)", "rgb(228, 244, 241)", "rgb(28, 43, 69)"   # src/tokens.js (C.teal, C.tealSoft, C.ink)
 
 
@@ -600,6 +611,7 @@ def scene_option_b(R, files):
                   "시장을 이길 수 있을까요?", "직접 실험해볼까요?"), "종목별로 뜯어보기")
         see(page, "2026-10-01")                 # 심어 둔 지난 점검과 비교 중
         see(page, "내 종목들의 3년 최대낙폭")      # 폭락 섹션: 지난 3년 실제 값은 남아요 (v18.4)
+        see(page, "과거 3년 알파 (추정)")          # 알파는 과거 값으로만 남아요 (v18.5: 베타→수익률만 가려요)
         shown = hidden_shown(body(), HIDDEN_B)
         assert not shown, f"③ 진단에 보이면 안 되는 문구: {shown}"
         colors()
@@ -666,6 +678,260 @@ def scene_simple_no_forecast(R, files):
                              ["10년 뒤 전망", "아주 나쁜 해에는", "아쉬운 경우", "가운데쯤", "10년 두었을 때", "NaN"])
         assert not shown, f"성향 테스트 결과에 보이면 안 되는 문구: {shown}"
     R.check(page, "B안", "성향 테스트 '뱁이의 진단': 아주 나쁜 해 줄 · 10년 뒤 전망 없음, 다른 카드는 그대로", run)
+    ctx.close(); srv.shutdown()
+
+
+# 안내 줄이 아닌 곳(목록 줄)에 need 와 also 가 같이 있는지: 안내를 품은 큰 상자는 skip 글자로 빼요
+ROW_WITH = """([need, also, skip]) => [...document.querySelectorAll('body *')].some((e) => { const t = e.innerText || '';
+  return t.includes(need) && t.includes(also) && !t.includes(skip); })"""
+
+
+def slot_local(slots):
+    """slots: [(id, 이름, 저장 내용)] → localStorage 에 심을 값."""
+    local = {"baepsae_v9_seen": "1",
+             "baepsae_v10_slots": json.dumps([{"id": i, "name": n} for i, n, _ in slots], ensure_ascii=False)}
+    for i, _, body in slots:
+        local["baepsae_v10_slot_" + i] = json.dumps(body, ensure_ascii=False)
+    return local
+
+
+def read_slot(page, sid):
+    raw = page.evaluate("(k) => localStorage.getItem(k)", "baepsae_v10_slot_" + sid)
+    return json.loads(raw) if raw else None
+
+
+def scene_missing_holding(R, files):
+    """v18.5 (Jack 2026-11-03): 저장한 보유 종목이 오늘 데이터에 없으면(다음 갱신 뒤 STRC·SKHY·GOOGM·GOOGN 처럼)
+    합계·목록에서 빼고 ②③④·메모·CSV·JSON·공유 카드에 '오늘 데이터에 없는 종목 1개(STRC)는 빼고 계산했어요.' 를 보여요.
+    저장본에서는 지우지 않아요: 앱이 다시 저장해도 localStorage 에 STRC 가 남고, 데이터에 돌아오면 저절로 다시 계산돼요.
+    내장 예시 목록에만 있는 금현물(예시 가격 배너)은 '빠진 종목'으로 세지 않아요 (두 안내가 같은 종목을 두 번 세지 않게)."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    stocks = f["data.json"]["stocks"]
+    strc = next((s for s in stocks if s.get("t") == "STRC"), None) or {
+        "t": "STRC", "nk": "Strategy Inc 시험", "ne": "Strategy Inc test", "cls": "us", "s": "platform", "ccy": "USD",
+        "price": 99.0, "beta": 0.5, "vol": 20.0}
+    have = {s.get("t") for s in stocks}
+    assert {"005930", "000660"} <= have, "시험할 종목(삼성전자·SK하이닉스)이 데이터에 없어요"
+    f["data.json"]["stocks"] = [s for s in stocks if s.get("t") not in ("STRC", "04020000")]   # STRC 는 빠지고, 금현물은 내장 예시로
+    hold = [{"t": "STRC", "mw": 200}, {"t": "005930", "mw": 300}, {"t": "000660", "mw": 100}, {"t": "04020000", "mw": 100}]
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold}
+    # 비교: STRC 없이 같은 종목, 예산은 STRC 200만원을 뺀 800만원 → 위험 줄·현금이 똑같아야 해요 (빠진 돈은 현금이 아니에요)
+    ref = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 800, "holdings": hold[1:]}
+    local = slot_local([("smiss", "빠진 종목 시험", slot), ("sref", "빠진 종목 비교", ref)])
+    site = build_site(f)
+    srv, ctx, page, _ = R.open(site, local=local, once=True)    # 다시 불러와도 앱이 저장한 값을 덮어쓰지 않게
+    S = "빠진 종목"
+    note = MISSING.format(n=1, names="STRC")
+    line = {}
+
+    def stage(label):
+        page.get_by_role("button", name=label, exact=False).first.click()
+
+    def build():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("빠진 종목 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        see(page, note)
+        see(page, NONLIVE)                                    # 금현물: 예시 가격 배너는 그대로 (빠진 종목 안내와 따로)
+        head = page.evaluate(SMALLEST, [" / 1,000 ", ["만원"]])
+        assert head and head.startswith("500 / 1,000"), f"담은 금액에 STRC 200만원이 들어갔어요: {head!r}"   # 300 + 100 + 100
+        cash = page.evaluate(SMALLEST, ["남는 현금 (무위험)", ["만원"]])
+        assert cash and "300만원" in cash, f"빠진 종목의 돈이 현금으로 잡혔어요: {cash!r}"                  # 800 − 500
+        assert not page.evaluate(ROW_WITH, ["STRC", "비중 ", "빼고 계산했어요"]), "빠진 STRC 가 목록 줄로 보여요"
+        assert page.get_by_text("예시 포트폴리오로 둘러보기").count() == 0
+        body = page.locator("body").inner_text()
+        assert body.count("빼고 계산했어요") == 1 and "2개(" not in body, "안내가 두 번 또는 금현물까지 세었어요"
+        line["miss"] = page.evaluate(SMALLEST, ["보통 해 ±", None])
+    R.check(page, S, "② 구성: 안내 1개(STRC) · 합계 500/1,000 · 현금 300만원 · STRC 줄 없음 · 금현물 배너는 따로", build)
+
+    def diag():
+        stage("③ 진단")
+        see(page, "내가 잘하고 있는 것")
+        see(page, note)
+    R.check(page, S, "③ 진단: 같은 안내", diag)
+
+    def export():
+        stage("④ 내보내기")
+        see(page, "예상 세금")
+        see(page, note)
+        assert not page.evaluate(ROW_WITH, ["STRC", "%", "빼고 계산했어요"]), "요약 표에 STRC 줄이 있어요"
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        with open(dl.value.path(), encoding="utf-8") as fh:
+            j = json.load(fh)
+        assert "STRC" not in [x["ticker"] for x in j["holdings"]] and len(j["holdings"]) == 3, j["holdings"]
+        assert j.get("notInData") == [{"ticker": "STRC", "name": "STRC", "amountWon": 2000000}], j.get("notInData")
+        assert j.get("notInDataNote") == note, j.get("notInDataNote")
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="CSV 저장 (주문표)").click()
+        with open(dl.value.path(), encoding="utf-8-sig") as fh:
+            rows = fh.read().splitlines()
+        assert not any(r.startswith("STRC,") for r in rows) and rows[-1] == '"※ ' + note + '"', rows[-3:]
+        page.evaluate("""() => { window.__memo = null; const w = (x) => { window.__memo = x; return Promise.resolve(); };
+            try { navigator.clipboard.writeText = w; } catch (e) {}
+            if (!navigator.clipboard || navigator.clipboard.writeText !== w) Object.defineProperty(navigator, 'clipboard', { value: { writeText: w }, configurable: true }); }""")
+        page.get_by_role("button", name="텍스트 복사 (주문 메모)").click()
+        memo = poll(page, "window.__memo", bool, "주문 메모가 복사되지 않았어요")
+        assert "※ " + note in memo and "STRC" not in memo.split("※")[0], memo
+        page.evaluate("""() => { window.__drawn = []; const P = CanvasRenderingContext2D.prototype, f = P.fillText;
+            P.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
+        page.get_by_role("button", name="포트폴리오 카드 만들기 (이미지 공유)").click()
+        drawn = poll(page, "window.__drawn", lambda d: d and any("뱁새에서 만듦" in x for x in d), "공유 카드를 그리지 않았어요")
+        assert any(x.startswith("※ 오늘 데이터에 없는 종목 1개(STRC)") for x in drawn), drawn
+        assert not any("STRC" in x and not x.startswith("※") for x in drawn), f"공유 카드 TOP 에 STRC 가 있어요: {drawn}"
+        page.get_by_role("button", name="닫기", exact=True).first.click()
+    R.check(page, S, "④ 내보내기: 화면·JSON(notInData)·CSV 마지막 줄·주문 메모·공유 카드에 같은 안내, STRC 주문 줄 없음", export)
+
+    def english():
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        stage("② Build")
+        see(page, MISSING_EN.format(n=1, names="STRC"))
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+        see(page, note)
+    R.check(page, S, "영어: 'Left out 1 stock(s) not in today's data (STRC).' (PENDING JACK)", english)
+
+    def saved():
+        # 앱이 자동 저장(0.8초 뒤)한 저장본: 심어 둔 값에는 없던 settings 가 있어야 '앱이 다시 썼다'는 뜻이에요
+        st = poll(page, "localStorage.getItem('baepsae_v10_slot_smiss')", lambda v: v and '"settings"' in v, "앱이 저장하지 않았어요")
+        st = json.loads(st)
+        assert {"t": "STRC", "mw": 200} in st["holdings"] and len(st["holdings"]) == 4, st["holdings"]
+        page.reload(wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        see(page, "빠진 종목 시험")
+        row = poll(page, "(" + SMALLEST + ")(['빠진 종목 시험', ['β ']])", bool, "저장 목록에 그 포트폴리오 줄이 없어요")
+        assert "3종목" in row, f"저장 목록의 종목 수에 빠진 종목이 들어갔어요: {row!r}"
+        page.get_by_text("빠진 종목 시험", exact=False).first.click()
+        see(page, note)
+        page.wait_for_timeout(1500)
+        st = read_slot(page, "smiss")
+        assert {"t": "STRC", "mw": 200} in st["holdings"], f"다시 연 뒤 저장본에서 STRC 가 사라졌어요: {st['holdings']}"
+    R.check(page, S, "다시 불러와도 저장본(localStorage)에 STRC 가 남아 있음, 저장 목록은 '3종목'", saved)
+
+    def same_as_reference():
+        srv2, ctx2, p2, _ = R.open(site, local=local)              # 같은 데이터(STRC 없음)를 새 브라우저로
+        p2.get_by_text("차근차근 만들기", exact=True).click()
+        p2.get_by_text("빠진 종목 비교", exact=False).first.click()
+        see(p2, "보통 해 ±")
+        ref_line = p2.evaluate(SMALLEST, ["보통 해 ±", None])
+        cash = p2.evaluate(SMALLEST, ["남는 현금 (무위험)", ["만원"]])
+        ctx2.close(); srv2.shutdown()
+        assert line.get("miss") and ref_line == line["miss"], f"{line.get('miss')!r} ≠ {ref_line!r}"
+        assert cash and "300만원" in cash, cash
+    R.check(page, S, "STRC 200만원 + 나머지(예산 1,000) = STRC 없이 예산 800 과 같은 위험 줄 · 현금", same_as_reference)
+
+    def comes_back():
+        f["data.json"]["stocks"].append(strc)
+        with open(os.path.join(site, "data.json"), "w", encoding="utf-8") as fh:
+            json.dump(f["data.json"], fh, ensure_ascii=False, allow_nan=True)
+        page.reload(wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("빠진 종목 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        page.wait_for_timeout(500)
+        assert page.get_by_text("빼고 계산했어요").count() == 0, "STRC 가 돌아왔는데 안내가 남아 있어요"
+        head = page.evaluate(SMALLEST, [" / 1,000 ", ["만원"]])
+        assert head and head.startswith("700 / 1,000"), f"돌아온 STRC 가 합계에 없어요: {head!r}"
+        row = page.evaluate(SMALLEST, [strc["nk"], ["비중 "]])
+        assert row and "비중 " in row, f"돌아온 STRC 줄이 없어요: {row!r}"
+    R.check(page, S, "STRC 가 데이터에 돌아오면 저절로 다시 계산 (안내 없음 · 합계 700 · 목록에 STRC)", comes_back)
+    ctx.close(); srv.shutdown()
+
+
+# 프로필 문장을 만드는 답 (src/detail.jsx scoreProfile): A = 낮은 목표·넉넉한 형편 → '베타 0.45 정도면 충분해요' 팁,
+# B = 높은 목표·빠듯한 형편 → '(β 최대 0.7)으로 기대하기 어려운 수치예요' 경고. 둘 다 요약에 '목표는 연 X%라서, 베타 …'.
+ANS_A = {"goal": "retire", "horizon": 20, "share": 10, "emergency": 12, "target": 4, "style": ["long"], "crash": ["hold"],
+         "exp": ["krstock"], "checking": "monthly", "fear": ["none"], "account": "normal", "interest": ["index"]}
+ANS_B = {"goal": "grow", "horizon": 1, "share": 100, "emergency": 0, "target": 15, "style": ["ret"], "crash": ["sellall"],
+         "exp": ["newbie"], "checking": "daily", "fear": ["loss"], "account": "normal", "interest": ["semi"]}
+# 예전 앱이 저장한 프로필 (v15.3~v18.4 의 문장 틀 그대로): 화면과 JSON 내보내기에서 같이 걸러야 해요
+LEGACY_PROFILE = {"ready": True, "source": "rules", "title": "차분한 균형형", "riskCapacity": 6, "riskTolerance": 6, "riskNeedPct": 9,
+                  "targetBetaMin": 0.5, "targetBetaMax": 0.9, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
+                  "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "interestedSectors": [], "checkFreq": "월 1회",
+                  "summary": "10년 뒤를 보고 계시고, 전 재산의 40%를 이 투자에 담을 계획이에요. 비상금은 3개월치이고요. 감수 능력 6점, "
+                             "감수 의지 6점 중 더 낮은 쪽인 형편(감수 능력)이 기준이 돼요. 목표는 연 9%라서, 베타 0.5~0.9 범위에서 8~15종목쯤으로 나눠 담는 걸 권해요.",
+                  "tips": ["목표가 연 9%라면 베타 0.90 정도면 충분해요. 형편상 더 감수할 수 있어도, 필요 없는 위험까지 질 이유는 없어요 — 안 써도 되는 위험은 그냥 떠안은 위험이 되니까요.",
+                           "처음이라면 지수 ETF 한두 개로 뼈대를 세우고, 잘 아는 종목을 조금씩 얹어가는 순서가 편해요."],
+                  "flags": ["목표 연 9%는 지금 감당 가능한 위험(β 최대 0.9)으로 기대하기 어려운 수치예요. 목표·기간·저축액 셋 중 하나는 조정이 필요해요 — 위험을 억지로 키우는 건 답이 아니고요."]}
+
+
+def scene_beta_return(R, files):
+    """B안 (v18.5, Jack 2026-11-03): 베타를 수익률로 바꾸는 줄은 SHOW_ER 를 켤 때만.
+    ② 종목 줄을 펼쳐 '이론 샤프'(β × 프리미엄 ÷ σ)가 없고 과거 값 '샤프(3y)'·'3y α'·'최대낙폭'은 보이는지,
+    ① 프로필(새로 만든 것 KO·EN, 예전에 저장된 것)에 '목표 → 베타'·'β → 기대 수익' 문장이 없고 나머지 문장은 남는지 봐요."""
+    hold = [{"t": "005930", "mw": 300}, {"t": "000660", "mw": 200}]
+    slots = [("srow", "종목 줄 시험", {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold})]
+    srv, ctx, page, _ = R.open(build_site(files), local=slot_local(slots))
+    S = "베타→수익률"
+
+    def row(ph, code):
+        box = page.get_by_placeholder(ph)
+        box.fill(code)
+        page.get_by_text(code, exact=True).first.click()        # 종목 줄을 눌러 펼쳐요 (예전엔 여기에 '이론 샤프')
+
+    def rows_ko():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("종목 줄 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        row("종목명·코드 검색", "005930")
+        for keep in ("샤프(3y)", "3y α", "최대낙폭", "12개월"):     # 과거 가격으로만 만든 값은 그대로
+            see(page, keep)
+        shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B)
+        assert not shown, f"펼친 종목 줄에 보이면 안 되는 문구: {shown}"
+    R.check(page, S, "② 펼친 종목 줄: '이론 샤프' 없음, 샤프(3y)·3y α·최대낙폭 보임 (KO)", rows_ko)
+
+    def rows_en():
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        see(page, "Sharpe 3y")
+        see(page, "3y α")
+        shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B_EN)
+        assert not shown, f"펼친 종목 줄(EN)에 보이면 안 되는 문구: {shown}"
+    R.check(page, S, "② 펼친 종목 줄: 'CAPM Sharpe' 없음, Sharpe 3y 보임 (EN)", rows_en)
+    ctx.close(); srv.shutdown()
+
+    def fresh(sid, name, lang, ans):
+        # profile 을 비워 둬요: 저장본에 profile 이 없으면 앞서 연 포트폴리오의 프로필이 그대로 남아요 (applyState)
+        return (sid, name, {"schema": 10, "lang": lang, "stage": 0, "budgetMw": 1000, "holdings": hold, "answers": ans, "profile": {"ready": False}})
+    pslots = [fresh("pka", "프로필 A", "ko", ANS_A), fresh("pkb", "프로필 B", "ko", ANS_B),
+              fresh("pea", "Profile A", "en", ANS_A), fresh("peb", "Profile B", "en", ANS_B),
+              ("plg", "예전 프로필", {"schema": 10, "lang": "ko", "stage": 0, "budgetMw": 1000, "holdings": hold, "profile": LEGACY_PROFILE})]
+    srv, ctx, page, _ = R.open(build_site(files), local=slot_local(pslots))
+
+    def profile(name, en, make, keep, first=False):
+        def run():
+            if first:
+                page.get_by_text("차근차근 만들기", exact=True).click()
+            else:                                                   # 앞 포트폴리오에서 나와 목록으로
+                page.locator('button[title="저장하고 나가기"], button[title="Save and exit"]').first.click()
+            page.get_by_text(name, exact=True).first.click()
+            if make:
+                page.get_by_role("button", name="See my profile" if en else "내 프로필 보기").first.click()
+            see(page, "My Investor Profile" if en else "나의 투자 프로필")
+            for k in keep:
+                see(page, k)
+            shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B_EN if en else HIDDEN_B)
+            assert not shown, f"{name}: 보이면 안 되는 문구: {shown}"
+        return run
+    R.check(page, S, "① 새 프로필 A (KO): '…%라서, 베타' · '베타 … 정도면 충분해요' 없음, 감수 능력 문장·목표 베타·필요 수익률은 남음",
+            profile("프로필 A", False, True, ("감수 능력 10점", "기준이 돼요.", "목표 베타", "필요 수익률"), first=True))
+    R.check(page, S, "① 새 프로필 B (KO): '… 기대하기 어려운 수치예요' 없음, 목표만 말하는 '전설들의 영역' 팁은 남음",
+            profile("프로필 B", False, True, ("기준이 돼요.", "전설들의 영역", "목표 베타")))
+    R.check(page, S, "① 새 프로필 A (EN): 'goal, aim for beta' · 'goal only needs about beta' 없음",
+            profile("Profile A", True, True, ("Between capacity", "binds.", "Target beta", "Required return")))
+    R.check(page, S, "① 새 프로필 B (EN): 'is hard to expect from the risk you can carry' 없음",
+            profile("Profile B", True, True, ("binds.", "legend territory", "Target beta")))
+    R.check(page, S, "① 예전에 저장된 프로필 (KO): 저장된 세 문장도 가려지고 나머지는 보임",
+            profile("예전 프로필", False, False, ("감수 능력 6점", "기준이 돼요.", "처음이라면 지수 ETF")))
+
+    def export_json():
+        page.get_by_role("button", name="④ 내보내기", exact=False).first.click()
+        see(page, "예상 세금")
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        with open(dl.value.path(), encoding="utf-8") as fh:
+            prof = json.load(fh)["profile"]
+        text = json.dumps(prof, ensure_ascii=False)
+        assert not hidden_shown(text, HIDDEN_B) and "감수 능력 6점" in text and "처음이라면 지수 ETF" in text, prof
+    R.check(page, S, "④ JSON 내보내기의 프로필에도 그 세 문장이 없음", export_json)
     ctx.close(); srv.shutdown()
 
 
@@ -830,7 +1096,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·서비스워커)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -846,7 +1112,7 @@ def main():
                   ("NaN", lambda: scene_nan(R, fresh)),
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)),
+                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:

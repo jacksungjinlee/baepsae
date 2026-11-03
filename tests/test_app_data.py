@@ -146,3 +146,59 @@ def test_checkin_ignores_old_snapshots_saved_with_nan():
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
     body = src.split("function CheckinCard", 1)[1].split("\nfunction ", 1)[0]
     assert "find(valid)" in body and "checkins[checkins.length - 1]" not in body
+
+
+# ── v18.5 (Jack 2026-11-03): 오늘 데이터에 없는 보유 종목 ─────────────────
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_missing_holdings_are_named_and_left_out_of_the_share_card():
+    got = run_metrics(STOCKS_JS + "const by = { '005930': S, U: U };"
+                      "const hs = [{ t: 'STRC', mw: 200 }, { t: '005930', mw: 300 }, { t: 'U', mw: 100 }, { t: '000660', mw: 50 },"
+                      " { t: 'GOOGM', mw: 10, nk: '저장된 이름' }, { mw: 5 }, null];"
+                      "const miss = D.missingHoldings(hs, by); const card = D.makeCardData(hs, by, 100, null, 'ko');"
+                      "console.log(JSON.stringify({ miss: miss.map((h) => h.t), ko: D.missingLine('ko', miss), en: D.missingLine('en', miss),"
+                      " none: D.missingLine('ko', D.missingHoldings([{ t: '005930', mw: 1 }], by)),"
+                      " top: card.top.map((x) => x.nk), buckets: card.buckets.map((b) => [b.ko, +b.pct.toFixed(1)]), note: card.note, alts: card.noteAlts,"
+                      " cleanNote: D.makeCardData([{ t: '005930', mw: 300 }], by, 700, null, 'ko').note }));")
+    # 코드가 없는 줄({ mw: 5 })과 null 은 종목이 아니라서 세지 않아요. 이름: 저장된 이름 → 내장 목록(SK하이닉스) → 코드 그대로
+    assert got["miss"] == ["STRC", "000660", "GOOGM"]
+    assert got["ko"] == "오늘 데이터에 없는 종목 3개(STRC, SK하이닉스, 저장된 이름)는 빼고 계산했어요."
+    assert got["en"] == "Left out 3 stock(s) not in today's data (STRC, SK Hynix, 저장된 이름)."
+    assert got["none"] is None and got["cleanNote"] is None
+    # 공유 카드: 빠진 종목은 국내 주식으로도 TOP 으로도 세지 않아요 (300 + 100 + 현금 100 = 500)
+    assert got["top"] == ["005930", "U"] and got["buckets"] == [["국내 주식", 60.0], ["미국 주식", 20.0], ["현금", 20.0]], got
+    assert got["note"] == got["ko"]                                       # 카드에도 같은 안내 한 줄
+    # 카드에 두 줄로 안 들어갈 때 쓸 문장: 이름만 줄이고 개수·문장은 그대로
+    assert got["alts"] == ["오늘 데이터에 없는 종목 3개(STRC, SK하이닉스, …)는 빼고 계산했어요.",
+                           "오늘 데이터에 없는 종목 3개(STRC, …)는 빼고 계산했어요."], got["alts"]
+
+
+# ── v18.5 B안: 베타를 수익률로 바꾸는 프로필 문장 (Jack 2026-11-03) ─────────────────
+ANS_A = {"goal": "retire", "horizon": 20, "share": 10, "emergency": 12, "target": 4, "style": ["long"], "crash": ["hold"],
+         "exp": ["krstock"], "checking": "monthly", "fear": ["none"], "account": "normal", "interest": ["index"]}
+ANS_B = {"goal": "grow", "horizon": 1, "share": 100, "emergency": 0, "target": 15, "style": ["ret"], "crash": ["sellall"],
+         "exp": ["newbie"], "checking": "daily", "fear": ["loss"], "account": "normal", "interest": ["semi"]}
+BETA_RET = {"ko": ["%라서, 베타", "기대하기 어려운 수치", "정도면 충분해요"],
+            "en": ["goal, aim for beta", "is hard to expect from the risk you can carry", "goal only needs about beta"]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_profile_lines_that_turn_beta_into_returns_are_hidden_but_the_rest_stays():
+    got = run_metrics(f"const A = {json.dumps(ANS_A)}, B = {json.dumps(ANS_B)}; const out = {{}};"
+                      "for (const lang of ['ko', 'en']) for (const [k, a] of [['A', A], ['B', B]]) {"
+                      " const p = D.scoreProfile(a, lang), q = D.shownProfile(p);"
+                      " out[lang + k] = { raw: [p.summary, ...p.tips, ...p.flags], shown: [q.summary, ...q.tips, ...q.flags],"
+                      " nTips: [p.tips.length, q.tips.length], nFlags: [p.flags.length, q.flags.length],"
+                      " sameBeta: p.targetBetaMin === q.targetBetaMin && p.targetBetaMax === q.targetBetaMax && q.ready === true }; }"
+                      "console.log(JSON.stringify(out));")
+    for lang in ("ko", "en"):
+        a, b = got[lang + "A"], got[lang + "B"]
+        words = BETA_RET[lang]
+        # 생성기가 만드는 문장 틀과 거르는 틀이 맞는지: 원래는 있고(A: 요약·팁, B: 요약·경고), 거른 뒤엔 없어요
+        assert words[0] in a["raw"][0] and any(words[2] in x for x in a["raw"]), a["raw"]
+        assert words[0] in b["raw"][0] and any(words[1] in x for x in b["raw"]), b["raw"]
+        for x in (a, b):
+            assert not [w for w in words for line in x["shown"] if w in line], x["shown"]
+            end = "기준이 돼요." if lang == "ko" else "binds."
+            assert x["shown"][0].endswith(end), x["shown"][0]          # 요약의 앞 문장들은 그대로
+        assert a["nTips"][1] == a["nTips"][0] - 1 and b["nFlags"][1] == b["nFlags"][0] - 1
+        assert a["sameBeta"] and b["sameBeta"]                           # 목표 베타 범위(숫자)·나머지 값은 그대로
