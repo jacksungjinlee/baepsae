@@ -10,6 +10,7 @@
 - 모든 탭 · 시작 덱마다 후보 고르기까지 · 한 덱은 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 남음 (미리 보기 전용 저장 키) ·
   산 뒤에는 오늘에 판정 띠, 내 덱에 평가 금액 (Part E)
 - 멈춤 경고 없음 (예시 데이터의 발행일은 고정이에요) · 페이지 오류 0건 · 보이는 한국어는 모두 문구 파일 또는 예시 데이터의 이름
+- 소개(v19.0, #about): 푸터의 '소개'로 열려요. 지어낸 데이터라 숫자 줄도 숫자 문단('{n}개가 넘는')도 없어요. 뒤로 → 전 화면
 """
 import argparse
 import functools
@@ -42,7 +43,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 def site():
     d = tempfile.mkdtemp(prefix="baepsae-preview-")
-    for f in ["app-preview.html", "baepsae.html", "icon-192.png"] + [f"baepi-{i}.png" for i in range(1, 10)]:
+    for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.png", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
     return d
@@ -245,6 +246,27 @@ def main():
                 label_here()
                 shot(page, width, "8-mydeck-after")
             check(W + "배당 생활비: 매수 계획 → 샀어요 → 새로 고침해도 내 덱에 (미리 보기 저장 키만 씀)", plan_and_buy, page, width)
+
+            def about():
+                foot = page.locator('[data-ui-v2="footer"]:visible').first
+                foot.wait_for(state="visible")
+                assert "INSEAD" not in foot.inner_text() and "이성진" not in foot.inner_text(), foot.inner_text()
+                link = foot.locator('[data-ui-v2="about-link"]')
+                assert link.inner_text() == C["app"]["aboutLink"] and link.get_attribute("href") == "#about"
+                link.click()
+                page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+                assert page.url.endswith("/app-preview.html#about"), page.url            # 미리 보기 안에서 열려요 (실제 앱으로 가지 않음)
+                page.get_by_text(C["about"]["ko"]["maker"]["title"]).wait_for(state="visible")
+                page.wait_for_timeout(300)
+                # 지어낸 데이터의 숫자는 실제 분석 종목 수가 아니라서: 숫자 줄도, 숫자 문단도 없어요
+                assert page.locator('[data-ui-v2="about-figures"]').count() == 0 and page.locator('[data-ui-v2="about-data"]').count() == 0
+                assert page.get_by_text(C["about"]["ko"]["what"]["intro"]).is_visible()
+                label_here()
+                shot(page, width, "9-about")
+                page.get_by_role("button", name=C["app"]["close"]).click()
+                page.get_by_text("배당 생활비 덱").first.wait_for(state="visible")           # 전 화면(내 덱)으로
+                assert page.locator('[data-ui-v2="about"]').count() == 0 and not page.url.endswith("#about"), page.url
+            check(W + "푸터 '소개' → 소개 (예시 데이터 표시 · 숫자 줄과 숫자 문단 없음) → 뒤로 → 내 덱", about, page, width)
 
             def search():
                 with page.expect_navigation():

@@ -2,7 +2,8 @@
 """뱁새 2.0 문구 추적 도우미 (tests/test_v2_app.py, tests/smoke_v2.py 가 같이 써요).
 
 승인된 출처(목업 CSV 의 최종 문구 · v18.3 New strings 표 · CLAUDE.md 고정 문구 · 지금 앱의 v17.5 승인 문구 ·
-스펙이 그대로 쓰라고 한 말 · Jack 이 채팅에서 승인한 문구 표)에서 '조각'을 만들고, 문구 하나가 그 조각들로 설명되는지 봐요.
+스펙이 그대로 쓰라고 한 말 · Jack 이 채팅에서 승인한 문구 표 · 소개 페이지 문구 docs/design/v19/copy/about.md)에서 '조각'을 만들고,
+문구 하나가 그 조각들로 설명되는지 봐요.
 숫자와 {자리}는 같은 것으로 봐요 (목업의 숫자는 예시라서요).
 """
 import csv
@@ -81,8 +82,65 @@ def footer():
     return [f]
 
 
+ABOUT_MD = "docs/design/v19/copy/about.md"
+ABOUT_MAKER = ("뱁새를 만든 사람", "The person behind Baepsae")
+
+
+def about_md(lang="ko"):
+    """소개 페이지 문구(about.md, Jack 승인 2026-11-03)를 화면에 나오는 순서대로 한 조각씩: 머리글 · 숫자 줄 이름 · 소제목 ·
+    문단 · 목록(굵은 제목과 본문은 따로) · 만든 사람(이름 · 하는 일 · 사진 alt · '이름: 값' 줄 · 경력의 '회사 — 한 일').
+    머리말의 안내 문단 · '←' 뒤의 메모 · '(사진: 파일, alt …)' 같은 설명은 빼요. 숫자 줄의 숫자(3,256 · 57)는 예시라서 빼요.
+    lang: "ko"(## 한국어) 또는 "en"(## English). 영어 쪽에도 '뱁새' · '뱁이' 가 들어 있어서 둘 다 출처로 써요."""
+    text = read(ABOUT_MD)
+    head = "\n## 한국어\n" if lang == "ko" else "\n## English\n"
+    assert text.count(head) == 1, (lang, "about.md 에 언어 제목이 하나여야 해요")
+    sec = text.split(head, 1)[1]
+    if lang == "ko":
+        sec = sec.split("\n## English\n", 1)[0]
+    out, maker = [], False
+    for raw in sec.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("### "):
+            out.append(line[4:].strip())
+            maker = out[-1] in ABOUT_MAKER
+            continue
+        if line.startswith("- 머리글 (hero): "):
+            out += [p.strip().strip("*") for p in line.split(": ", 1)[1].split(" / ")]
+            continue
+        if line.startswith("- 숫자 줄 (live figures): "):
+            body = line.split(": ", 1)[1].split("←", 1)[0].strip()
+            out += [re.sub(r"^[\d,]+\s+", "", p.strip()) for p in body.split(" · ")]
+            continue
+        m = re.match(r'^\*\*(.+?)\*\* · (.+?) \(사진: [^,]+, alt "(.+)"\)$', line)
+        if m:
+            out += [m.group(1), m.group(2), m.group(3)]
+            continue
+        m = re.match(r"^(?:- |\d+\. )\*\*(.+?)\*\* (.+)$", line)
+        if m:
+            out += [m.group(1), m.group(2)]
+            continue
+        if raw.startswith("    - "):
+            out += [x for x in line[2:].split(" — ", 1)]
+            continue
+        if line.startswith("- "):
+            item = line[2:]
+            if maker and item.endswith(":"):
+                out.append(item[:-1])
+            elif maker:
+                out += item.split(": ", 1)
+            else:
+                out.append(item)
+            continue
+        out.append(line)
+    assert len(out) >= 50 and "**" not in "".join(out) and "←" not in "".join(out), out
+    return out
+
+
 def sources():
-    src = list(csv_final().values()) + new_strings() + footer() + list(V175) + list(SPEC_QUOTES) + list(chat_approved().values())
+    src = (list(csv_final().values()) + new_strings() + footer() + list(V175) + list(SPEC_QUOTES) + list(chat_approved().values())
+           + about_md("ko") + about_md("en"))
     return [s for s in src if s and HANGUL.search(s)]
 
 

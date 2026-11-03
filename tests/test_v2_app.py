@@ -132,8 +132,10 @@ def test_app_html_is_committed_and_current():
 
 def test_built_pages_have_title_noindex_and_the_right_service_worker():
     app, prev = built("app.html"), built("app-preview.html")
-    assert "<title>뱁새 2.0 미리 보기</title>" in app
-    assert "<title>뱁새 2.0 미리 보기 · 예시 데이터</title>" in prev          # 미리 보기 탭 제목에도 예시 데이터
+    # v19.0 Part E (Jack, 2026-11-03): 제목은 '뱁새 — 내 기준으로 만드는 포트폴리오' (예전 '뱁새 2.0 미리 보기')
+    assert "<title>뱁새 — 내 기준으로 만드는 포트폴리오</title>" in app and app.count("<title>") == 1
+    assert "<title>뱁새 — 내 기준으로 만드는 포트폴리오 · 예시 데이터</title>" in prev and prev.count("<title>") == 1   # 미리 보기 탭 제목에도 예시 데이터
+    assert "미리 보기</title>" not in app + prev
     assert "noindex" not in app and '<meta name="robots" content="noindex, nofollow">' in prev   # 메인은 검색에 나와요
     for h in (app, prev):
         assert 'href="fonts/pretendard/pretendard-variable.css"' in h
@@ -182,13 +184,24 @@ def test_preview_is_linked_from_nowhere():
 def test_pages_never_load_fixtures_or_other_sites():
     # app.html: 지금 앱과 같은 GoatCounter(gc.zgo.at)와 공유 카드 주소만. app-preview.html: 바깥 주소 없음.
     # react.dev 오류 안내 주소와 w3.org(SVG namespace 이름)는 문자열일 뿐 요청하지 않아요.
-    allowed = {"app.html": {"https://react.dev", "http://www.w3.org", "https://gc.zgo.at", "https://jacksungjinlee.github.io"},
-               "app-preview.html": {"https://react.dev", "http://www.w3.org"}}
+    # LinkedIn(v19.0 소개 페이지, about.md): Jack 의 프로필 주소 하나만, 누르면 새 탭으로 여는 링크(href)로만 써요 — 아래에서 확인.
+    linkedin = "https://www.linkedin.com/in/jacksungjinlee/"
+    allowed = {"app.html": {"https://react.dev", "http://www.w3.org", "https://gc.zgo.at", "https://jacksungjinlee.github.io",
+                            "https://www.linkedin.com"},
+               "app-preview.html": {"https://react.dev", "http://www.w3.org", "https://www.linkedin.com"}}
     for name in ("app.html", "app-preview.html"):
         html = built(name)
         assert "fixtures" not in html and "tests/" not in html, name
         urls = set(re.findall(r"https?://[\w.-]+", html))
         assert urls <= allowed[name], (name, urls)
+        assert re.findall(r"https?://(?:www\.)?linkedin\.com[^\s\"'`]*", html) == [linkedin], name   # 그 주소 하나, 한 번만
+    # 그 주소는 문구 파일(C.about.linkedInUrl)에만 있고, 화면 코드는 그 값을 <a href> 로만 써요 (새 탭 · noopener)
+    c, _ = copy_strings()
+    assert c["about"]["linkedInUrl"] == linkedin
+    about = read("src/v2/about.jsx")
+    assert about.count("C.about.linkedInUrl") == 1 and 'href={C.about.linkedInUrl} target="_blank" rel="noopener"' in about
+    for f in v2_files():
+        assert "linkedin.com" not in read(f), f
         assert "googleapis" not in html and "jsdelivr" not in html, name
     assert "goatcounter.com" not in built("app-preview.html")
     src = read("src/v2/load.js")

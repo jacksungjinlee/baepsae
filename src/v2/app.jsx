@@ -1,7 +1,9 @@
 // ================= 뱁새 2.0 app shell (v18.3 Parts A + B, Part E: 오늘 · 왜 움직였나) =================
 // Shared by app.html (main.jsx: live data) and app-preview.html (main-preview.jsx: embedded fictional data).
 // Tabs: 오늘 · 내 덱 · 덱 짜기 · 찾기 (찾기 opens the current app until 2.0 has its own search).
-import React, { useEffect, useState, useCallback } from "react";
+// 소개 (v19.0 Part D): the hash #about opens the 소개 page over the current screen, on load and on every hash change (the
+// footer's 소개 link, the old app's footers). Its back button returns to the screen before and clears the hash.
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { COLOR } from "../ui/tokens.js";
 import { BottomTabBar } from "../ui/components.jsx";
 import { C, todayKst } from "./format.js";
@@ -10,8 +12,17 @@ import { MyDeck } from "./home.jsx";
 import { Today } from "./today.jsx";
 import { Why } from "./why.jsx";
 import { Build, newBuilder } from "./build.jsx";
+import { About } from "./about.jsx";
+import { ABOUT_HASH } from "../links.js";
 import { TAB_H, ModeContext, Page, AppBar, LoadFail, Footer, OLD_APP } from "./ui.jsx";
 
+
+const atAbout = () => {
+  try { return window.location.hash === ABOUT_HASH; } catch (e) { return false; }
+};
+const toTop = () => {
+  try { window.scrollTo(0, 0); } catch (e) { /* ignore */ }
+};
 
 // A rendering error never leaves a blank page: the approved load-failure message is shown instead.
 export class ErrorBoundary extends React.Component {
@@ -43,6 +54,35 @@ export function App({ source }) {
   const [tab, setTab] = useState(() => (store.data.decks.length ? "today" : "build"));
   const [builder, setBuilder] = useState(newBuilder);
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 오늘 (Part E)
+  const [about, setAbout] = useState(atAbout);           // 소개 (#about), over whatever screen was open
+  const aboutRef = useRef(about);
+  const aboutPushed = useRef(false);                     // opened by a link inside this page: the screen before is one step back
+
+  useEffect(() => {
+    const onHash = () => {
+      const a = atAbout();
+      if (a === aboutRef.current) return;
+      aboutPushed.current = a;
+      aboutRef.current = a;
+      setAbout(a);
+      toTop();
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  // Back from 소개: one step back in the browser when a link here opened it (the hash change closes it), otherwise
+  // (opened straight at app.html#about) clear the hash in place and show the first screen.
+  const closeAbout = () => {
+    if (aboutPushed.current) {
+      aboutPushed.current = false;
+      try { window.history.back(); return; } catch (e) { /* fall through */ }
+    }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) { /* ignore */ }
+    aboutRef.current = false;
+    setAbout(false);
+    toTop();
+  };
 
   useEffect(() => {
     let live = true;
@@ -78,7 +118,8 @@ export function App({ source }) {
   return (
     <ModeContext.Provider value={{ preview: !!source.preview }}>
       <ErrorBoundary>
-        <div style={{ minHeight: "100vh", background: COLOR.page }}>
+        {about && <div style={{ minHeight: "100vh", background: COLOR.page }}><About load={load} onBack={closeAbout} /></div>}
+        <div style={{ minHeight: "100vh", background: COLOR.page, ...(about ? { display: "none" } : {}) }} aria-hidden={about ? true : undefined}>
           {tab === "today" && !why && <Today load={load} store={store} setStoreData={setStoreData} pad={pad} go={go}
             onWhy={(deckId, t) => { setWhy({ deckId, t }); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }} />}
           {tab === "today" && why && <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why}

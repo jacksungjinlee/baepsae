@@ -3,7 +3,8 @@
 // 출처는 네 가지뿐이에요. 뒤의 주석이 출처예요.
 //   숫자     docs/design/mockup-copy.csv 의 번호 (수정안, 비어 있으면 지금 문구). "바뀌는 글"은 {자리} 로 바꿨어요.
 //   new      docs/tasks/v18.3-2.0-beta.md 의 "New strings" 표 (Jack 승인)
-//   footer   CLAUDE.md 의 고정 문구
+//   footer   CLAUDE.md 의 고정 문구 (CSV 552)
+//   about.md docs/design/v19/copy/about.md — 소개 페이지 문구 (Jack 승인 2026-11-03, 한국어 · 영어 그대로)
 //   v17.5    지금 앱(src/detail.jsx)에 이미 있는 승인 문구 (불러오기 실패 · 날짜 · 배당 정보 없음 · 보통 해 ±)
 //   spec     v18.3 스펙 본문이 그대로 쓰라고 한 말 (가치 카드의 "PBR 낮은 순")
 //   chat     Jack 이 채팅에서 승인한 문구 (docs/tasks/v18.3-approved-in-chat.md 에 날짜와 함께 적어 둬요)
@@ -13,14 +14,14 @@
 
 export const C = {
   app: {
-    title: "뱁새 2.0 미리 보기",                                   // new
+    title: "뱁새 — 내 기준으로 만드는 포트폴리오",                    // chat (2026-11-03: v19.0 Part E 제목 · og · manifest 이름)
     oldApp: "예전 뱁새 보기",                                       // new (Part F: link to the current app)
     oldAppNote: "예전 뱁새에서 만든 포트폴리오는 '예전 뱁새 보기'를 누르면 그대로 볼 수 있어요.", // chat (2026-11-01: 예전 앱에 포트폴리오가 있는 방문자)
     sample: "예시 데이터",                                          // 3 · preview
     previewTitle: "{title} · {sample}",                           // 미리 보기 페이지의 <title>: 위 두 문구를 이어 붙여요
-    brand: "뱁새",                                                 // 2
-    footer: "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", // footer · 27
-    credit: "이성진, INSEAD MBA 26J",                              // footer · 27
+    brand: "뱁새",                                                 // 2 (v19.0: 머리말에는 긴 제목 대신 이 이름만)
+    footer: "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", // footer · 552
+    aboutLink: "소개",                                             // chat (2026-11-03: v19.0 Part E 푸터 "… · 소개", #about 으로 가요)
     tabsLabel: "주요 메뉴",                                        // 28
     tabs: { today: "오늘", deck: "내 덱", build: "덱 짜기", search: "찾기" }, // 68 29 30 32
     loadFail: "데이터를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.", // v17.5 (T_LOAD_FAIL)
@@ -419,6 +420,176 @@ export const C = {
     done: "기록했어요",                                              // 563
     doneBody: "내일부터 오늘 화면에서 {n}종목을 규칙대로 점검해 드릴게요. 기록은 이 휴대폰에만 저장돼요.", // 564 (Part E: 오늘 화면이 점검해요)
     doneLink: "오늘 화면 보기",                                       // 565
+  },
+
+  // 소개 (v19.0 Part D, #about): docs/design/v19/copy/about.md 를 한 글자도 바꾸지 않고 옮겼어요 (tests/test_about.py 가 맞춰 봐요).
+  // 바뀐 곳은 하나: 본문의 "3,000개가 넘는"(영어 "more than 3,000")은 "{n}" 틀이에요. n 은 data.json 의 분석 종목 수를 백 단위로
+  // 내린 값이고(src/v2/aboutstats.js), 실제 데이터를 읽지 못했으면 그 문단을 빼요. 숫자 줄은 데이터가 새것일 때만 보여요.
+  about: {
+    langLabel: "언어",                                              // about.md (언어) — 한국어 / English 버튼 묶음의 이름 (읽기 도우미용)
+    langs: { ko: "한국어", en: "English" },                          // about.md (첫머리: 한국어 / English 버튼)
+    heroAlt: null,                                                 // 승인 대기: 머리글 뱁이 그림의 alt (v18.3-new-strings-pending.md)
+    linkedInUrl: "https://www.linkedin.com/in/jacksungjinlee/",     // about.md (LinkedIn)
+    ko: {
+      hero: { name: "뱁새", descriptor: "내 기준으로 만드는 포트폴리오", catch: "철새처럼 옮겨 다니지 않는 투자" },   // about.md
+      figures: { stocks: "분석 종목", groups: "업종 그룹", refresh: "매 거래일 데이터 갱신" },   // about.md (숫자 줄)
+      what: {
+        title: "뱁새는 이런 도구예요",   // about.md
+        intro: "뱁새는 내 기준에 맞는 종목을 찾아 포트폴리오를 만들고, 정한 규칙대로 매일 점검하는 투자 도구예요.",   // about.md
+        data: "거래일마다 {n}개가 넘는 한국·미국 종목의 데이터를 새로 받고, 정교하게 설계한 규칙 기반 알고리즘이 내 기준에 맞는 종목과 비중을 찾아 줘요. 종목마다 근거 수치를 함께 보여 줘서, 왜 이 종목이 뽑혔는지 직접 확인할 수 있어요.",   // about.md ("3,000개가 넘는" → "{n}개가 넘는")
+        items: [
+          { title: "기준으로 고르기", body: "가치, 배당, 성장, 수익성 같은 기준 카드에 점수를 나눠 주면, 한국과 미국 종목을 시장별로 비교해 순위를 매겨요." },   // about.md
+          { title: "비중까지 정하기", body: "한 업종에 몰리지 않도록 비중을 나누고, 살 주식 수까지 계산해요." },   // about.md
+          { title: "규칙으로 점검하기", body: "종목마다 매도 조건과 계속 지켜져야 할 조건을 정해 두고, 매일 종가와 새로 나온 실적으로 확인해요." },   // about.md
+          { title: "움직인 이유 보기", body: "주가가 크게 움직인 날에는 같은 업종 종목과 비교해, 업종 전체가 함께 움직였는지 보여 줘요." },   // about.md
+        ],
+      },
+      who: {
+        title: "누구를 위한 도구인가요",   // about.md
+        intro: "주식에 직접 투자하는 모든 개인 투자자를 위해 만들었어요.",   // about.md
+        items: [
+          "뉴스나 주변 추천으로 샀다가, 언제 팔지 몰라 고민해 본 분",   // about.md
+          "수익률은 매일 보지만, 왜 샀는지는 따로 적어 두지 않은 분",   // about.md
+          "보유 종목을 감이 아니라 숫자와 규칙으로 관리하고 싶은 분",   // about.md
+          "단기 수익보다 오래 지킬 수 있는 투자 원칙을 세우고 싶은 분",   // about.md
+        ],
+      },
+      why: {
+        title: "왜 만들었나요",   // about.md
+        body: [
+          "뱁새는 제가 직접 투자할 때 쓰던 방법에서 시작했어요. 사기 전에 기준을 정하고, 산 뒤에는 미리 정한 규칙으로 판단하는 방법이에요.",   // about.md
+          "가족과 친구들도 이 방법을 쓰고 싶어 했어요. 하지만 일반 증권사 앱에는 이런 기능이 없었고, 샤프 지수나 베타 같은 용어는 어렵게 느껴졌어요.",   // about.md
+          "그래서 복잡한 계산은 뱁새가 맡고, 사용자는 기준과 결과에만 집중할 수 있는 도구로 만들었어요.",   // about.md
+        ],
+      },
+      principles: {
+        title: "투자 원칙",   // about.md
+        items: [
+          { title: "위험에는 그만한 보상이 따라야 해요.", body: "같은 수익이라면 덜 흔들린 투자가 더 좋은 투자예요. 그래서 감수한 위험 한 단위당 얼마를 벌었는지 보여 주는 샤프 지수를 중요하게 봐요." },   // about.md
+          { title: "기준이 먼저, 종목은 그다음이에요.", body: "사기 전에 기준을 정하고, 산 뒤에는 기분이 아니라 규칙으로 판단해요." },   // about.md
+          { title: "레버리지와 공매도는 다루지 않아요.", body: "둘 다 정당한 투자 수단이지만, 원금보다 큰 손실이 날 수 있어요. 일반 개인 투자자에게는 감수하는 위험에 비해 보상이 충분하지 않다고 봐서, 뱁새는 사서 보유하는 투자만 다뤄요." },   // about.md
+        ],
+      },
+      run: {
+        title: "이렇게 운영해요",   // about.md
+        items: [
+          "거래일마다 종가와 공시 자료로 모든 숫자를 새로 계산하고, 숫자마다 기준일과 출처를 함께 적어요.",   // about.md
+          "종목을 추천하거나 목표 주가를 제시하지 않아요. 판단에 필요한 숫자와 근거를 보여 드리고, 결정은 직접 내리실 수 있게 도와요.",   // about.md
+          "광고, 유료 서비스, 회원 가입이 없어요. 내 포트폴리오 기록은 지금 쓰는 기기에만 저장돼요.",   // about.md
+        ],
+      },
+      name: {
+        title: "이름 이야기",   // about.md
+        body: [
+          "뱁새라는 이름은 ‘뱁새가 황새 따라가다 가랑이 찢어진다’는 속담에서 왔어요. 속담 때문에 욕심 많은 작은 새로 알려졌지만, 실제 뱁새는 일 년 내내 우리나라에 머무는 텃새예요. 계절마다 옮겨 다니는 철새와 달리, 덤불 속에 튼튼한 둥지를 짓고 살아요. 유행을 따라 종목을 옮겨 다니지 않고, 내 기준으로 고른 종목을 오래 지키자는 뜻을 담았어요. 마스코트 뱁이도 이 뱁새에서 이름을 따왔어요.",   // about.md
+        ],
+      },
+      maker: {
+        title: "뱁새를 만든 사람",   // about.md
+        name: "이성진",   // about.md
+        role: "사업 개발 · 전략 · 투자 검토",   // about.md
+        photoAlt: "이성진 사진",   // about.md (사진 alt)
+        edu: { label: "학력", value: "INSEAD MBA" },   // about.md
+        career: {
+          label: "경력 · 게임·엔터테인먼트 업계 6~7년",   // about.md
+          items: [
+            { org: "Navi Games Agency", what: "게임 사업 개발 컨설팅" },   // about.md
+            { org: "넵튠", note: "카카오게임즈 자회사", what: "사업 개발, 전략, 투자 검토" },   // about.md
+            { org: "TimeTree", note: "도쿄", what: "글로벌 서비스 운영, 해외 시장 진출" },   // about.md
+          ],
+        },
+        built: {
+          label: "서비스를 만들며",   // about.md
+          items: [
+            "다양한 개인 투자자들의 의견을 듣고 서비스 방향을 정했어요.",   // about.md
+            "INSEAD에서 배운 자산운용, 기업가치 평가, 헤지펀드, 통계 수업을 바탕으로 기준 카드, 비중 계산, 매일 점검 규칙까지 투자 로직을 직접 설계했어요.",   // about.md
+            "공시와 종가를 매일 자동으로 모으고, 잘못된 숫자가 보이지 않게 검증하는 데이터 체계를 만들었어요.",   // about.md
+          ],
+        },
+        langs: { label: "언어", value: "한국어 · 영어 · 일본어" },   // about.md
+        linkedIn: "LinkedIn",   // about.md (링크 주소는 아래 about.linkedInUrl)
+      },
+    },
+    en: {
+      hero: { name: "뱁새", descriptor: "Build a portfolio on your own criteria", catch: "Don't hop from trend to trend" },   // about.md
+      figures: { stocks: "stocks covered", groups: "industry groups", refresh: "Every trading day data refresh" },   // about.md (숫자 줄)
+      what: {
+        title: "What Baepsae is",   // about.md
+        intro: "Baepsae is an investing tool that finds stocks matching your own criteria, builds a portfolio from them, and checks it against your rules every day.",   // about.md
+        data: "Every trading day, fresh data for more than {n} Korean and US stocks comes in, and a carefully designed rule-based algorithm finds the stocks and weights that fit your criteria. Each stock shows its supporting figures, so you can see exactly why it was picked.",   // about.md ("more than 3,000" → "more than {n}")
+        items: [
+          { title: "Pick by criteria", body: "Spread points across criteria cards such as value, dividends, growth and profitability, and Baepsae ranks Korean and US stocks within each market." },   // about.md
+          { title: "Set the weights", body: "Weights are spread so that no single industry dominates, down to the number of shares to buy." },   // about.md
+          { title: "Check by rules", body: "Each holding gets sell conditions and conditions that must keep holding true, checked every day against closing prices and newly reported results." },   // about.md
+          { title: "See why it moved", body: "On a big move, the stock is compared with its industry peers to show whether the whole industry moved with it." },   // about.md
+        ],
+      },
+      who: {
+        title: "Who it is for",   // about.md
+        intro: "Every individual investor who buys stocks directly.",   // about.md
+        items: [
+          "People who bought on a tip and never knew when to sell",   // about.md
+          "People who check returns daily but never wrote down why they bought",   // about.md
+          "People who want to manage holdings by numbers and rules, not gut feeling",   // about.md
+          "People who want principles they can keep for decades rather than quick gains",   // about.md
+        ],
+      },
+      why: {
+        title: "Why I built it",   // about.md
+        body: [
+          "Baepsae started as the method I use for my own investing: set the criteria before buying, and judge only by pre-set rules afterwards.",   // about.md
+          "Family and friends wanted to use it too, but ordinary brokerage apps offer nothing like it, and terms such as the Sharpe ratio and beta put most people off.",   // about.md
+          "So Baepsae does the heavy calculation, and users can focus on their criteria and the results.",   // about.md
+        ],
+      },
+      principles: {
+        title: "What I believe about investing",   // about.md
+        items: [
+          { title: "Risk should be paid for.", body: "For the same return, the steadier investment is the better one. That is why I put weight on the Sharpe ratio, which shows how much return each unit of risk earned." },   // about.md
+          { title: "Criteria first, stocks second.", body: "Set the criteria before buying; afterwards, judge by rules, not mood." },   // about.md
+          { title: "No leverage or short selling.", body: "Both are legitimate tools, but losses can exceed what you put in. For most individual investors the reward does not justify that risk, so Baepsae covers buying and holding only." },   // about.md
+        ],
+      },
+      run: {
+        title: "How it is run",   // about.md
+        items: [
+          "Every trading day, all numbers are recalculated from closing prices and filings, and each one shows its date and source.",   // about.md
+          "No stock tips or target prices. Baepsae shows the numbers and the reasoning; the decision is yours.",   // about.md
+          "No ads, no paid tier, no sign-up. Your portfolio records stay on your own device.",   // about.md
+        ],
+      },
+      name: {
+        title: "The name",   // about.md
+        body: [
+          "The 뱁새 (vinous-throated parrotbill) is the small bird in a Korean proverb about overreaching. The real 뱁새, though, stays in Korea all year and builds sturdy nests, unlike migratory birds that move with the seasons. The name stands for that: don't hop from trend to trend; pick by your own criteria and hold. The mascot, 뱁이, is named after it.",   // about.md
+        ],
+      },
+      maker: {
+        title: "The person behind Baepsae",   // about.md
+        name: "Jack (Sung Jin) Lee",   // about.md
+        role: "Business development · Strategy · Investment screening",   // about.md
+        photoAlt: "Photo of Jack (Sung Jin) Lee",   // about.md (사진 alt)
+        edu: { label: "Education", value: "INSEAD MBA" },   // about.md
+        career: {
+          label: "Experience · 6–7 years in games and entertainment",   // about.md
+          items: [
+            { org: "Navi Games Agency", what: "Business development consulting for games" },   // about.md
+            { org: "Neptune", note: "a Kakao Games subsidiary", what: "Business development, strategy, investment screening" },   // about.md
+            { org: "TimeTree", note: "Tokyo", what: "Global service and go-to-market" },   // about.md
+          ],
+        },
+        built: {
+          label: "Building the service",   // about.md
+          items: [
+            "Shaped the service around feedback from a wide range of individual investors.",   // about.md
+            "Designed the investing logic, from criteria cards and position sizing to daily rule checks, drawing on INSEAD courses in asset management, valuation, hedge funds and statistics.",   // about.md
+            "Built a data system that collects filings and closing prices every day and checks them before anything is published.",   // about.md
+          ],
+        },
+        langs: { label: "Languages", value: "Korean · English · Japanese" },   // about.md
+        linkedIn: "LinkedIn",   // about.md (링크 주소는 아래 about.linkedInUrl)
+      },
+    },
   },
 };
 
