@@ -150,13 +150,12 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   `docs/design/v19/assets/`, `icon-*.png`). Never redraw, generate or "improve" it. Serious first, warm second
   (Jack, 2026-11-03): 뱁이 appears only on the first visit, empty states, the load-failure screen, 준비 중 blocks,
   learning cards, the share card, the 소개 page and the link preview — never on a screen that shows numbers and never
-  beside a verdict.
+  beside a verdict. The old app (예전 뱁새, `baepsae.html`) is exempt until each of its tools moves to 2.0: its existing
+  뱁이 pictures and icons stay as they are, so don't remove, replace or flag them (Jack, 2026-11-03).
 - Icons: Phosphor duotone in navy with a slate fill; no apricot in icons or selection states. Apricot marks data only.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
   credit line (Jack, 2026-11-03). The 소개 page does not lead with "교육용"; the footer disclaimer stays on every page.
-  Until v19.0 ships, the existing footers still show the old credit line `이성진, INSEAD MBA 26J` (KO) ·
-  `Jack (Sung Jin) Lee, INSEAD MBA 26J` (EN); v19.0 removes them and this sentence (Jack, 2026-11-03).
 
 ## Repo map
 
@@ -168,7 +167,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 | `baepsae.html` | The current app (예전 뱁새), opened from 2.0's 예전 뱁새 보기 and 찾기. Built by `bash build.sh` |
 | `fetch_data.py` | Daily data pipeline (Python 3.11) → `data.json`, `corp.json`, `macro.json`, `disc.json` |
 | `validate_data.py` | Publication gate (created in v17.5) |
-| `.github/workflows/update-data.yml` | Daily run, weekdays 21:30 UTC (06:30 KST), plus manual "Run workflow" |
+| `.github/workflows/update-data.yml` | Daily data run, started six times a day: 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat). An early start waits for the US close; a start that finds today's data already published stops before any download (`already_published.py`). Plus manual "Run workflow" |
 | `sw.js`, `manifest.webmanifest` | Service worker and home-screen install metadata |
 | `tests/` | Pipeline unit tests and the app smoke test (created in v17.5) |
 | `docs/` | Handoff, voice guide, task specs, runbook, `CHANGELOG.md` (one line per merge) |

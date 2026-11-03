@@ -8,6 +8,7 @@
 - '/' (index.html) → app.html 로 가요 (예전처럼 baepsae.html 이 아니에요)
 - 저장한 덱이 없는 방문자는 덱 짜기부터, 저장한 덱이 있는 방문자는 오늘부터 봐요
 - 머리말에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요
+- 지금 앱 푸터의 '소개'(v19.0)를 누르면 2.0 의 소개 페이지(app.html#about)가 열리고, 소개의 뒤로(닫기)는 지금 앱으로 돌아가요
 - 저장소의 지금 데이터로도 열어봐요. 첫 화면은 그 데이터의 단계에 맞아야 해요 (예시 데이터를 실제처럼 보이지 않음):
   v17.5 형식 전 → '불러오지 못했어요' · v17.5 형식인데 v17.5.1 항목 없음 → 덱 짜기는 '준비 중'만 · 항목이 다 있으면 덱 짜기가 열려요
 - 페이지 오류 0건, app.html 에서 다른 사이트 요청 0건 (GoatCounter 는 시험에서 꺼요: ?dev=1 과 같은 localStorage 표시)
@@ -38,7 +39,8 @@ REPO_STATE = "old" if V175_FORMAT in _REPO_MISSING else ("fields" if _REPO_MISSI
 REPO_LABEL = {"old": "v17.5 형식 전", "fields": "v17.5.1 항목 없음", "live": "v17.5.1 항목 있음"}[REPO_STATE]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
-SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og.png", "icon-192.png", "icon-512.png"] + \
+SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og-v19.png", "icon-192.png", "icon-512.png",
+        "baepi-og.webp", "jack-photo.jpg"] + \
        [f"baepi-{i}.png" for i in range(1, 10)]
 DATA = ["data.json", "corp.json", "macro.json", "disc.json"]
 SAVED = {"v": 1, "decks": [{"id": "dlaunch", "name": "배당 생활비 덱", "createdAt": "2026-10-31",
@@ -199,6 +201,24 @@ def main():
                     assert page.url.endswith("/app.html"), page.url
                     page.locator('[data-ui-v2="old-app-link"]').wait_for(state="visible")
                 check(W + "머리말 '예전 뱁새 보기' → 지금 앱 → '뱁새 2.0 보기' → 다시 2.0", header_link_opens_old_app, page, tag)
+
+                def old_footer_opens_about():
+                    page.goto(base + "/baepsae.html", wait_until="domcontentloaded")
+                    page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
+                    link = page.locator("a[data-about-link]").first
+                    link.wait_for(state="visible")
+                    assert link.inner_text() == "소개" and link.get_attribute("href") == "./app.html#about"
+                    with page.expect_navigation():
+                        link.click()
+                    assert page.url.endswith("/app.html#about"), page.url
+                    page.locator('[data-ui-v2="about"][data-lang="ko"]').wait_for(state="visible")
+                    page.get_by_text(C["about"]["ko"]["maker"]["title"]).wait_for(state="visible")
+                    assert page.evaluate("document.activeElement && document.activeElement.dataset.uiV2") == "about-heading"
+                    with page.expect_navigation():                                       # 뒤로(닫기) → 온 곳(지금 앱)으로 한 걸음
+                        page.get_by_role("button", name=C["app"]["close"]).click()
+                    assert page.url.endswith("/baepsae.html"), page.url
+                    page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
+                check(W + "지금 앱 푸터 '소개' → app.html#about (소개 페이지) → 뒤로 → 다시 지금 앱", old_footer_opens_about, page, tag)
                 ctx.close()
 
                 ctx, page = context(saved=True)

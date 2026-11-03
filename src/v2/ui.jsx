@@ -6,6 +6,7 @@ import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
 import { hasOldAppRecords } from "./store.js";
+import { ABOUT_HASH } from "../links.js";
 
 export const tx = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize: size, fontWeight: weight, color, lineHeight: 1.5,
   letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", margin: 0, ...extra });
@@ -35,7 +36,8 @@ export function Card({ children, style, ...rest }) {
 const headerLink = { ...tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" }), minHeight: TOUCH, display: "inline-flex", alignItems: "center",
   padding: `0 ${SPACE(1)}px`, textDecoration: "underline", textUnderlineOffset: 3, WebkitTapHighlightColor: "transparent" };
 
-// App bar: preview name on every screen, optional back button.
+// App bar: the name 뱁새 on every screen (v19.0: the page title is now the long "뱁새 — 내 기준으로 …", so the header shows
+// only C.app.brand), the preview label, optional back button.
 // search: a 찾기 link next to 예전 뱁새 보기 (Jack, 2026-11-02: first visitors land on 덱 짜기, which has no tab bar,
 // so stock search stays one visible tap away). It opens the same place as the 찾기 tab: the current app.
 export function AppBar({ onBack, backLabel, right, search = false }) {
@@ -49,7 +51,7 @@ export function AppBar({ onBack, backLabel, right, search = false }) {
           <Icon name="back" color={COLOR.ink} />
         </button>
       ) : <img src="icon-192.png" alt="" width={28} height={28} style={{ borderRadius: RADIUS.sm - SPACE(1) }} />}
-      <h1 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.app.title}</h1>
+      <h1 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.app.brand}</h1>
       {preview && <SampleLabel />}
       {!preview && search && <a data-ui-v2="search-link" href={OLD_APP} style={headerLink}>{C.app.tabs.search}</a>}
       {!preview && <a data-ui-v2="old-app-link" href={OLD_APP} style={headerLink}>{C.app.oldApp}</a>}
@@ -94,11 +96,16 @@ export function PendingChip() {
   return <span data-ui-v2="pending"><StatusChip tone="neutral">{C.app.pending}</StatusChip></span>;
 }
 
+// The disclaimer and a 소개 link (v19.0 Part D, Jack 2026-11-03): the maker's credit moved to the 소개 page (#about).
+// The link's tap area is padded out to the 44px touch size without moving the text around it.
 export function Footer() {
   return (
     <footer data-ui-v2="footer" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(8) })}>
-      <div>{C.app.footer}</div>
-      <div style={{ marginTop: SPACE(1) }}>{C.app.credit}</div>
+      <div>
+        {C.app.footer}{" · "}
+        <a data-ui-v2="about-link" href={ABOUT_HASH} style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3,
+          display: "inline-block", padding: `${SPACE(4)}px ${SPACE(2)}px`, margin: `-${SPACE(4)}px -${SPACE(2)}px`, WebkitTapHighlightColor: "transparent" }}>{C.app.aboutLink}</a>
+      </div>
     </footer>
   );
 }

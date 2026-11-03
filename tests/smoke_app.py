@@ -22,6 +22,8 @@
   서비스워커  예전 v10 워커의 얼어붙은 corp.json 이 새 워커로 바뀌고 baepsae-v10 캐시가 지워짐
   2.0 링크    머리말 '뱁새 2.0 보기' (Jack, 2026-11-02): 320 · 390 에서 보임 · 누르는 높이 44 이상 · 다른 머리말 항목과 겹치지 않음 ·
               가로 스크롤 없음 · app.html 로 감 · 영어 화면에는 없음 · 좁은 휴대폰의 모드 안(홈 화면 '뒤로' 포함)에서도 머리말이 넘치지 않음
+  파일        (v18.4.1) 'JSON 저장 (백업·공유)' 파일 → 새 브라우저에서 '저장한 파일에서 불러오기' → 같은 종목·금액·예산 ·
+              종목 없는 파일 · 깨진 파일 · 줄이 모두 틀린 파일은 '파일을 읽을 수 없어요.' 알림만 (있던 포트폴리오 그대로) · 예전 모양 파일도 열림
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -39,7 +41,7 @@ import time
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og.png", "icon-192.png", "icon-512.png"]
+SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og-v19.png", "icon-192.png", "icon-512.png"]
               + [f"baepi-{i}.png" for i in range(1, 10)])
 DATA_FILES = ["data.json", "corp.json", "disc.json", "macro.json"]
 WAIT = 20000  # ms
@@ -229,12 +231,35 @@ def upgrade(files):
     return files
 
 
+# v19.0 (Jack, 2026-11-03): 푸터에는 만든 사람 줄 대신 2.0 의 소개 페이지로 가는 '소개' 링크 (src/links.js)
+ABOUT_HREF = "./app.html#about"
+GONE = ["INSEAD", "이성진", "황새 말고, 내 걸음으로", "개인 투자 연구소", "Not the stork's pace", "At my own pace"]
+
+
+def about_footer(page, label="소개"):
+    """이 화면의 푸터: '소개'(영어 화면은 'About') 링크가 ./app.html#about 으로, 만든 사람 줄 · 예전 캐치프레이즈 없음."""
+    links = page.locator("a[data-about-link]")
+    links.first.wait_for(state="attached", timeout=WAIT)
+    for i in range(links.count()):
+        assert links.nth(i).inner_text() == label and links.nth(i).get_attribute("href") == ABOUT_HREF, (label, links.nth(i).inner_text())
+    body = page.locator("body").inner_text()
+    found = [w for w in GONE if w in body]
+    assert not found, found
+
+
 # ── 장면 ────────────────────────────────────────────────────
 def scene_normal(R, files, full):
     site = build_site(files)
     srv, ctx, page, _ = R.open(site)
     S = "정상"
     R.check(page, S, "첫 화면이 열림", lambda: see(page, "내 종목, 괜찮은 걸까요?"))
+
+    def gate_footer():
+        about_footer(page)
+        body = page.locator("body").inner_text()
+        assert "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다. · 소개" in body
+        assert "종목 하나로 5초 성적표부터 — 철새처럼 옮겨 다니지 않는 투자" in body
+    R.check(page, S, "첫 화면 푸터: 고지문 · '소개'(./app.html#about), 만든 사람 줄 없음 · 새 캐치프레이즈", gate_footer)
 
     def gate_samsung():
         search(page, "삼성전자", "005930")
@@ -248,6 +273,7 @@ def scene_normal(R, files, full):
         def run():
             tab(page, label)
             see(page, marker)
+            about_footer(page)                                     # 탭마다 푸터: 소개 링크, 만든 사람 줄 없음 (v19.0)
         return run
     R.check(page, S, "탭: 기업분석 (corp.json)", open_tab("기업분석", "시장 지도"))
 
@@ -275,18 +301,23 @@ def scene_normal(R, files, full):
         page.wait_for_timeout(300)
         assert page.locator(".nonLiveBanner").count() == 0, "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요"
         see(page, OFFICIAL)          # "가격은 {M월 D일} 공식 종가예요. 다른 수치는 추정치예요."
+        about_footer(page)           # 차근차근 만들기 푸터: 캐치프레이즈 · 고지문 · 소개 (만든 사람 줄 없음)
+        assert "철새처럼 옮겨 다니지 않는 투자" in page.locator("body").inner_text()
     R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 + 공식 종가 안내 (KO)", detail_ko)
 
     def to_en():
         home(page)
         page.get_by_role("button", name="EN", exact=True).first.click()
         see(page, "Is my stock doing okay?")
+        about_footer(page, "About")                                # 영어 화면의 푸터 링크는 About
     R.check(page, S, "영어 모드 전환", to_en)
 
     def detail_en():
         page.get_by_text("Build step by step", exact=True).click()
         page.locator(".dateBadge", has_text="As of").first.wait_for(state="visible", timeout=WAIT)
         see(page, "Prices are official closes from")
+        about_footer(page, "About")
+        assert "Don't hop from trend to trend" in page.locator("body").inner_text()
     R.check(page, S, "차근차근 만들기: 실제 시세 + 기준 날짜 (EN)", detail_en)
 
     def quick_en():
@@ -786,8 +817,11 @@ def scene_missing_holding(R, files):
             page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
         with open(dl.value.path(), encoding="utf-8") as fh:
             j = json.load(fh)
-        assert "STRC" not in [x["ticker"] for x in j["holdings"]] and len(j["holdings"]) == 3, j["holdings"]
-        assert j.get("notInData") == [{"ticker": "STRC", "name": "STRC", "amountWon": 2000000}], j.get("notInData")
+        # 백업(v18.4.1 모양): 목록에 있는 줄 3개 + 빠진 STRC 는 notInData 줄로 (금액만, 가격·비중은 null) — 불러오면 그대로 돌아와요
+        listed = [x for x in j["holdings"] if not x.get("notInData")]
+        gone = [x for x in j["holdings"] if x.get("notInData")]
+        assert "STRC" not in [x["ticker"] for x in listed] and len(listed) == 3, j["holdings"]
+        assert [(x["ticker"], x["amountWon"], x["weightPct"]) for x in gone] == [("STRC", 2000000, None)], gone
         assert j.get("notInDataNote") == note, j.get("notInDataNote")
         assert j.get("budgetWon") == 10000000 and j["metrics"]["cashWon"] == 3000000, (j.get("budgetWon"), j["metrics"]["cashWon"])
         with page.expect_download() as dl:
@@ -1215,6 +1249,521 @@ def scene_service_worker(R, files):
     ctx.close(); srv.shutdown()
 
 
+IMPORT_FAIL = "파일을 읽을 수 없어요."      # 「저장한 파일에서 불러오기」가 못 읽을 때 (이미 있던 알림 문구)
+T_LOAD_FAIL_KO = "데이터를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요."   # src/detail.jsx T_LOAD_FAIL.ko (이미 있던 문구)
+# 직접 추가 종목 (CustomStockForm 이 만드는 모양 그대로)
+MINE = {"t": "MYCO1", "nk": "내 회사", "ne": "내 회사", "s": "semi", "price": 10000, "beta": 1.0, "vol": 35, "per": 10, "pbr": 1, "dy": 0,
+        "al": 0, "custom": True, "x": {}}
+CART_ROWS = """() => [...document.querySelectorAll('input[type=number][step="10"]')].map((i) => {
+  const box = i.parentElement; const name = box.children[1] && box.children[1].children[0];
+  return [name ? name.textContent : '?', i.value]; })"""
+BUDGET_BOX = 'input[type=number][step="100"]'
+
+
+# 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤에 지워요)
+# 한 번만 심어요. 받을 때마다 그 파일의 주소가 아직 지워지지 않았는지 봐요 (앞서 받은 파일의 60초 타이머와 섞이지 않게).
+REVOKE_SPY = """() => { if (window.__revoked) return; window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
+  URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
+
+
+def scene_json_import(R, files):
+    """④ 내보내기의 'JSON 저장 (백업·공유)' 파일을 첫 화면의 '저장한 파일에서 불러오기'로 다시 읽어요 (v18.4.1, Jack 2026-11-04).
+    전에는 이 앱이 저장한 파일({ holdings: [{ ticker, amountWon }], budgetWon })이 아무 말 없이 빈 포트폴리오로 열렸어요.
+      · 저장: 저장해 둔 포트폴리오(실제 종목 3개)를 열고 화면에서 예산 · 금액을 바꾼 뒤 'JSON 저장'으로 파일을 받아요
+        (예산 2,500만원 · 예산 초과(500만원) · 예산 0 세 가지). 받은 파일의 주소는 1.5초 안에 지우지 않아요;
+      · 새 브라우저(저장소가 빈 새 문맥)에서 그 파일을 불러오면 같은 종목 · 같은 금액 · 같은 예산 (알림 없음), 예산 초과는 '예산 초과!'까지;
+      · 종목이 없는 파일 · 깨진 파일 · 줄이 모두 틀린 파일 → '파일을 읽을 수 없어요.' 알림, 있던 포트폴리오는 그대로;
+      · 예전 저장 상태 모양({ state: … }) 파일도 그대로 열려요;
+      · 지금 목록에 없는 종목이 섞인 파일: 있는 종목은 보이고, 없는 종목은 저장본에 남아요 (새로 고침 뒤에도)."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-json-")          # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    try:
+        _json_import(R, files, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _json_import(R, files, tmp):
+    S = "파일 불러오기"
+    have = {s.get("t") for s in files["data.json"]["stocks"]}
+    pick = [t for t in ("005930", "000660", "AAPL") if t in have]
+    gone = next(t for t in ("999999", "999998", "999997") if t not in have)      # 지금 목록에 없는 종목코드
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
+            "profile": {"ready": True, "source": "preset", "targetBetaMin": 0.6, "targetBetaMax": 1.0, "targetVolMaxPct": 22,
+                        "stocksMin": 3, "stocksMax": 10, "maxPositionPct": 60, "maxSectorPct": 60, "cashFloorPct": 5},
+            "holdings": [{"t": t, "mw": mw} for t, mw in zip(pick, (300, 200, 150))] + [{"t": MINE["t"], "mw": 100}],
+            "customStocks": [MINE]}                                       # 직접 추가 종목도 하나 (정의가 파일에 같이 가야 돌아와요)
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sjx", "name": "파일 저장 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_sjx": json.dumps(slot, ensure_ascii=False)}
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(files), site)
+    srv, ctx, page, base = R.open(site, local=local)
+    saved = {}
+
+    def stage(label):
+        page.get_by_role("button", name=label, exact=False).first.click()
+
+    def download(key):
+        """④ 내보내기의 'JSON 저장' → tmp 에 옮겨 둔 파일의 내용. 주소를 1.5초 안에 지우지 않는지도 봐요."""
+        stage("④ 내보내기")
+        page.evaluate(REVOKE_SPY)
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        name, url = dl.value.suggested_filename, dl.value.url
+        assert name.startswith("baepsae-portfolio-") and name.endswith(".json") and url.startswith("blob:"), (name, url)
+        saved[key] = os.path.join(tmp, key + "-" + name)                    # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
+        dl.value.save_as(saved[key])
+        page.wait_for_timeout(1500)
+        assert url not in page.evaluate("window.__revoked"), "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
+        with open(saved[key], encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def export():
+        assert len(pick) == 3, f"시험할 종목이 모자라요: {pick}"
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("파일 저장 시험", exact=False).first.click()
+        page.locator(BUDGET_BOX).first.wait_for(state="visible", timeout=WAIT)
+        page.locator(BUDGET_BOX).first.fill("2500")                       # 기본값(1,000만원)이 아닌 예산
+        page.locator('input[type=number][step="10"]').first.fill("450")   # 첫 종목 300 → 450만원
+        poll(page, CART_ROWS, lambda v: len(v) == 4 and v[0][1] == "450", "장바구니에 바꾼 금액이 보이지 않아요")
+        saved["rows"] = page.evaluate(CART_ROWS)
+        assert saved["rows"][3] == [MINE["nk"], "100"], saved["rows"]
+        j = download("main")
+        got = [(h["ticker"], h["amountWon"]) for h in j["holdings"]]
+        assert got == list(zip(pick + [MINE["t"]], (4500000, 2000000, 1500000, 1000000))), got   # 칸 이름은 그대로 (ticker · amountWon)
+        assert j["customStocks"] == [MINE], j.get("customStocks")             # 직접 추가 종목의 정의도 같이 (v18.4.1)
+        assert j["budgetWon"] == 25000000 and j["profile"]["targetBetaMax"] == 1.0, (j["budgetWon"], j["profile"])
+        saved["fx"] = j["settings"]["fx"]
+    R.check(page, S, f"저장한 포트폴리오({', '.join(pick)}) · 예산 2,500만원 → 'JSON 저장 (백업·공유)' 파일 받기 (주소는 늦게 지움)", export)
+
+    def export_budgets():
+        for budget, key in (("500", "over"), ("0", "zero")):
+            stage("② 구성")
+            page.locator(BUDGET_BOX).first.fill(budget)
+            if key == "over":
+                see(page, "예산 초과!")                                     # 450 + 200 + 150 = 800만원 > 500만원
+            j = download(key)
+            assert j["budgetWon"] == int(budget) * 10000, (key, j["budgetWon"])   # 투자한 돈(800만원)이 아니라 내가 정한 예산
+    R.check(page, S, "예산 초과(500만원) · 예산 0 → 파일의 budgetWon 은 내가 정한 예산 그대로 (투자한 돈 아님)", export_budgets)
+    ctx.close()
+
+    # 새 브라우저 문맥: 저장소가 비어 있어요 (다른 기기 · 다른 브라우저에서 여는 것과 같아요)
+    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+    file_box = page.locator('input[type=file][accept="application/json,.json"]')
+
+    def slots_now():
+        return page.evaluate("""() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+            if (k.startsWith('baepsae_v10_')) o[k] = localStorage.getItem(k); } return o; }""")
+
+    newest = """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+        return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }"""
+
+    def newest_slot():
+        """가장 최근에 저장된 포트폴리오 (자동 저장은 0.8초 뒤에 돌아요)."""
+        return page.evaluate(newest)
+
+    def launch_screen():
+        see(page, "어떻게 시작할까요?")
+        assert page.get_by_role("button", name="② 구성").count() == 0, "첫 화면이 아니라 포트폴리오가 열려 있어요"
+
+    def go_home():
+        leave = page.get_by_role("button", name="저장하고 나가기")
+        if leave.count():
+            leave.first.click()
+        launch_screen()
+
+    def round_trip():
+        assert "main" in saved, "앞 단계에서 파일을 받지 못했어요"
+        assert slots_now() == {}, f"새 문맥인데 포트폴리오가 저장돼 있어요: {list(slots_now())}"
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        close_welcome(page, "시작하기")
+        launch_screen()
+        file_box.set_input_files(saved["main"])
+        stage("② 구성")
+        page.locator(BUDGET_BOX).first.wait_for(state="visible", timeout=WAIT)
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 4, "불러온 포트폴리오에 종목이 없어요")
+        assert rows == saved["rows"], f"불러온 종목·금액 {rows} ≠ 저장한 {saved['rows']}"   # 직접 추가 종목도 금액과 함께 보여요
+        assert page.locator(BUDGET_BOX).first.input_value() == "2500", page.locator(BUDGET_BOX).first.input_value()
+        assert page.get_by_text("예산 초과!").count() == 0
+        assert not dialogs, f"제대로 된 파일인데 알림: {dialogs}"
+        # 자동 저장(0.8초 뒤)된 새 포트폴리오: 같은 종목코드 · 금액 · 예산, 프로필과 설정도 파일 그대로
+        st = poll(page, newest, lambda v: bool(v) and len(v["holdings"]) == 4, "불러온 포트폴리오가 저장되지 않았어요")
+        assert [(h["t"], h["mw"]) for h in st["holdings"]] == list(zip(pick + [MINE["t"]], (450, 200, 150, 100))), st["holdings"]
+        assert st["customStocks"] == [MINE], st.get("customStocks")
+        assert st["budgetMw"] == 2500 and st["profile"]["ready"] is True and st["profile"]["targetBetaMax"] == 1.0, st["profile"]
+        assert st["settings"]["fx"] == saved["fx"], st["settings"]
+    R.check(page, S, "새 브라우저(빈 저장소)에서 그 파일 불러오기 → 같은 종목 · 같은 금액 · 같은 예산, 알림 없음", round_trip)
+
+    def write(name, text):
+        p = os.path.join(tmp, name)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return p
+
+    def refused(path, what):
+        go_home()
+        page.wait_for_timeout(1000)                                    # 자동 저장이 끝난 뒤의 저장소
+        before, n = slots_now(), len(dialogs)
+        assert before.get("baepsae_v10_slots"), "비교할 포트폴리오가 없어요"
+        file_box.set_input_files(path)
+        poll(page, "1", lambda _: len(dialogs) > n, f"{what}: 알림이 뜨지 않았어요")
+        assert dialogs[n:] == [IMPORT_FAIL], f"{what}: 알림 {dialogs[n:]}"
+        page.wait_for_timeout(1200)                                    # 빈 포트폴리오가 열렸다면 자동 저장까지 기다려서 봐요
+        launch_screen()
+        after = slots_now()
+        assert after == before, f"{what}: 저장된 포트폴리오가 바뀌었어요 ({len(before)} → {len(after)})"
+
+    export_head = {"app": "Baepsae 뱁새 v12", "slot": "빈 파일", "date": "2026-11-03", "budgetWon": 10000000}
+    bad_files = [
+        ("종목이 없는 파일 (JSON 저장 모양)", "empty.json", json.dumps({**export_head, "holdings": []}, ensure_ascii=False)),
+        ("종목이 없는 파일 (예전 저장 모양)", "empty-state.json", json.dumps({"state": {"schema": 10, "budgetMw": 1000, "holdings": []}})),
+        ("깨진 파일", "garbage.json", '{"app": "Baepsae", "holdings": [{"ticker": "005930", "amou'),
+        ("모양이 다른 파일", "other.json", '{"hello": 1}'),
+        ("줄이 모두 틀린 파일 (JSON 저장 모양)", "all-bad.json", json.dumps({**export_head, "holdings": [
+            {"ticker": "", "amountWon": 1000000}, {"ticker": pick[0] if pick else "005930", "amountWon": 0},
+            {"ticker": pick[1] if len(pick) > 1 else "000660", "amountWon": "300만"}, {"ticker": gone, "amountWon": 0}]},
+            ensure_ascii=False)),
+        ("지금 목록에 있는 종목이 하나도 없는 파일", "none-listed.json", json.dumps({**export_head, "holdings": [
+            {"ticker": gone, "name": "없는 회사", "amountWon": 1000000}]}, ensure_ascii=False)),
+    ]
+    for what, name, text in bad_files:
+        R.check(page, S, f"{what} → '{IMPORT_FAIL}' 알림, 있던 포트폴리오 그대로",
+                lambda name=name, text=text, what=what: refused(write(name, text), what))
+
+    def still_same():
+        launch_screen()
+        page.get_by_text("불러온 포트폴리오", exact=False).first.click()
+        stage("② 구성")
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 4, "다시 연 포트폴리오에 종목이 없어요")
+        assert rows == saved.get("rows") and page.locator(BUDGET_BOX).first.input_value() == "2500", rows
+    R.check(page, S, "잘못된 파일들을 불러온 뒤에도 불러온 포트폴리오는 그대로 (종목 · 금액 · 예산)", still_same)
+
+    def old_state_file():
+        go_home()
+        old = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1500,
+               "holdings": [{"t": pick[0], "mw": 500}, {"t": pick[1], "mw": 300}]}
+        n = len(dialogs)
+        file_box.set_input_files(write("old-state.json", json.dumps({"state": old})))
+        page.locator(BUDGET_BOX).first.wait_for(state="visible", timeout=WAIT)       # 파일의 stage 1 (② 구성)로 열려요
+        rows = poll(page, CART_ROWS, lambda v: len(v) == 2, "예전 모양 파일의 종목이 보이지 않아요")
+        assert [v for _, v in rows] == ["500", "300"] and page.locator(BUDGET_BOX).first.input_value() == "1500", rows
+        assert len(dialogs) == n, f"예전 모양 파일인데 알림: {dialogs[n:]}"
+    R.check(page, S, "예전 저장 상태 모양({ state: … }) 파일도 그대로 열림", old_state_file)
+
+    def budgets_back():
+        for key, want, over in (("over", "500", True), ("zero", "0", False)):
+            go_home()
+            n = len(dialogs)
+            file_box.set_input_files(saved[key])
+            stage("② 구성")
+            page.locator(BUDGET_BOX).first.wait_for(state="visible", timeout=WAIT)
+            rows = poll(page, CART_ROWS, lambda v: len(v) >= 4, f"{key}: 불러온 포트폴리오에 종목이 없어요")
+            assert rows == saved["rows"] and page.locator(BUDGET_BOX).first.input_value() == want, (key, rows)
+            if over:
+                see(page, "예산 초과!")                                     # 예산 초과 경고가 그대로 돌아와요
+            else:
+                page.wait_for_timeout(300)
+                assert page.get_by_text("예산 초과!").count() == 0, "예산 0 인데 '예산 초과!'"
+            assert len(dialogs) == n, f"{key}: 알림 {dialogs[n:]}"
+    R.check(page, S, "예산 초과 파일 → 예산 500만원 + '예산 초과!' 그대로 · 예산 0 파일 → 예산 0", budgets_back)
+
+    # v18.5: 저장할 때 목록에 있는 (미국 아닌) 종목에는 이름(nk·ne)이 붙어요 — 그 이름은 빼고 견줘요. 없는 종목의 nk 는 그대로 봐요.
+    def unnamed(hs):
+        return [{k: v for k, v in h.items() if not (k in ("nk", "ne") and h["t"] == pick[0])} for h in hs]
+
+    def unlisted_kept():
+        go_home()
+        page.wait_for_timeout(1000)
+        f = write("with-gone.json", json.dumps({**export_head, "holdings": [
+            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": gone, "name": "없는 회사", "amountWon": 2000000}]},
+            ensure_ascii=False))
+        n = len(dialogs)
+        file_box.set_input_files(f)
+        stage("② 구성")
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 1, "목록에 있는 종목이 보이지 않아요")
+        assert [v for _, v in rows] == ["300"] and len(dialogs) == n, (rows, dialogs[n:])     # 있는 종목만 보여요
+        st = poll(page, newest, lambda v: bool(v) and len(v["holdings"]) == 2 and v["budgetMw"] == 1000,
+                  "불러온 포트폴리오가 저장되지 않았어요")
+        assert unnamed(st["holdings"]) == [{"t": pick[0], "mw": 300}, {"t": gone, "mw": 200, "nk": "없는 회사"}], st["holdings"]
+        page.reload(wait_until="domcontentloaded")                     # 새로 고침 뒤: 저장본에 그대로, 열어도 그대로
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        launch_screen()
+        assert newest_slot()["holdings"] == st["holdings"], newest_slot()
+        page.get_by_text("불러온 포트폴리오", exact=False).first.click()
+        stage("② 구성")
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 1, "다시 연 포트폴리오에 종목이 없어요")
+        assert [v for _, v in rows] == ["300"], rows
+        page.wait_for_timeout(1200)                                    # 열면 자동 저장이 다시 돌아도 없는 종목은 남아요
+        assert newest_slot()["holdings"] == st["holdings"], newest_slot()
+    R.check(page, S, "지금 목록에 없는 종목이 섞인 파일 → 있는 종목은 보이고, 없는 종목은 저장본에 남음 (새로 고침 뒤에도)", unlisted_kept)
+
+    nameless = {"t": "NONK1", "price": 1000}                            # 이름(nk) 없는 직접 추가 종목: 검색이 nk 를 읽다가 멈췄어요
+
+    def custom_without_name():
+        go_home()
+        page.wait_for_timeout(1000)
+        f = write("nameless.json", json.dumps({**export_head, "customStocks": [nameless], "holdings": [
+            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": "NONK1", "name": "이름 없는 회사", "amountWon": 1000000}]},
+            ensure_ascii=False))
+        n, errs = len(dialogs), len(R.errors)
+        file_box.set_input_files(f)
+        stage("② 구성")
+        rows = poll(page, CART_ROWS, lambda v: len(v) >= 1, "목록에 있는 종목이 보이지 않아요")
+        assert [v for _, v in rows] == ["300"] and len(dialogs) == n, (rows, dialogs[n:])     # 이름 없는 정의는 빠지고 그 종목은 저장본에만
+        other = next(x.get("nk") for x in files["data.json"]["stocks"] if x.get("t") == pick[1])
+        box = page.get_by_placeholder("종목명·코드 검색")
+        box.fill(other)                                                 # 검색: 모든 종목의 nk 를 읽어요
+        see(page, other)                                                # 담지 않은 종목이 검색 결과에 보여요
+        box.fill("NONK")
+        page.wait_for_timeout(500)
+        assert len(R.errors) == errs, f"검색하다 페이지 오류: {R.errors[errs:]}"
+        st = poll(page, newest, lambda v: bool(v) and any(h["t"] == "NONK1" for h in v["holdings"]), "불러온 포트폴리오가 저장되지 않았어요")
+        assert st.get("customStocks") == [] and unnamed(st["holdings"]) == [{"t": pick[0], "mw": 300}, {"t": "NONK1", "mw": 100, "nk": "이름 없는 회사"}], \
+            (st.get("customStocks"), st["holdings"])
+    R.check(page, S, "이름 없는 직접 추가 종목이 든 파일 → 그 정의만 빼고 열림, 검색해도 오류 없음", custom_without_name)
+    R.check(page, S, f"이름 없는 직접 추가 종목뿐인 파일 → '{IMPORT_FAIL}' 알림, 있던 포트폴리오 그대로",
+            lambda: refused(write("nameless-only.json", json.dumps({**export_head, "customStocks": [nameless], "holdings": [
+                {"ticker": "NONK1", "name": "이름 없는 회사", "amountWon": 1000000}]}, ensure_ascii=False)), "이름 없는 직접 추가 종목뿐"))
+    ctx.close(); srv.shutdown()
+
+
+def scene_ghost_holding(R, files):
+    """오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록 어디에서나 빠져요 (Jack 의 규칙, v18.4.1):
+    담기 화면 · 공유 카드(종목 TOP · 현금 비율) · 첫 화면의 저장 목록('n종목'). 공유 카드를 만들 때는 console 에 뺐다고 남겨요."""
+    have = {s.get("t") for s in files["data.json"]["stocks"]}
+    gone = next(t for t in ("999999", "999998", "999997") if t not in have)
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
+            "profile": {"ready": True, "source": "preset", "targetBetaMin": 0.6, "targetBetaMax": 1.2, "targetVolMaxPct": 40,
+                        "stocksMin": 1, "stocksMax": 10, "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0},
+            "holdings": [{"t": "005930", "mw": 300}, {"t": gone, "mw": 200, "nk": "없어진 회사"}]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sgh", "name": "없는 종목 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_sgh": json.dumps(slot, ensure_ascii=False)}
+    site = build_site(files)
+    srv, ctx, page, base = R.open(site, local=local)
+    S = "없는 종목"
+
+    def card():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("없는 종목 시험", exact=False).first.click()
+        poll(page, CART_ROWS, lambda v: v == [["삼성전자", "300"]], "담기 화면에 삼성전자만 보여야 해요")
+        page.evaluate("""() => { window.__drawn = []; const f = CanvasRenderingContext2D.prototype.fillText;
+            CanvasRenderingContext2D.prototype.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
+        n = len(R.console)
+        page.get_by_role("button", name="포트폴리오 카드 만들기", exact=True).click()
+        see(page, "이렇게 저장돼요")
+        drawn = page.evaluate("window.__drawn")
+        assert "담은 종목 TOP 1" in drawn and "삼성전자" in drawn, drawn                   # 없는 종목은 TOP 에 없어요
+        assert gone not in drawn and "없어진 회사" not in drawn, drawn
+        # v18.5 (Jack 2026-11-04): 없는 종목의 돈은 현금도 아니에요 → 국내 300 · 현금 500 (= 1,000 − 200 − 300) 으로 38% · 63%, 아래에 안내 줄
+        assert "38%" in drawn and "63%" in drawn and "70%" not in drawn and "20%" not in drawn, drawn
+        assert any(x.startswith("※ 오늘 데이터에 없는 종목 1개(없어진 회사 200만원)") for x in drawn), drawn
+        assert any("공유 카드: 오늘 종목 목록에 없는 종목 1개는 빼고 만들었어요" in t for _, t in R.console[n:]), R.console[n:]
+        page.get_by_role("button", name="닫기", exact=True).first.click()
+    R.check(page, S, "삼성전자 300만원 + 없는 종목 200만원 → 공유 카드는 TOP 1 · 국내 38% · 현금 63% · 안내 줄, console 에 뺐다고 남김", card)
+
+    def launch_count():
+        page.wait_for_timeout(1200)                                    # 자동 저장(0.8초 뒤)이 목록의 'n종목'을 써요
+        page.get_by_role("button", name="저장하고 나가기").first.click()
+        see(page, "어떻게 시작할까요?")
+        p = page.evaluate("JSON.parse(localStorage.getItem('baepsae_v10_slots'))[0].p")
+        assert p["n"] == 1 and p["inv"] == 3000000, p
+        line = page.evaluate(SMALLEST, ["없는 종목 시험", ["β "]])               # 이름 + '날짜 · n종목 · β … · 금액' 줄
+        assert line and "· 1종목 ·" in line and "2종목" not in line, line
+        slot_now = json.loads(page.evaluate("localStorage.getItem('baepsae_v10_slot_sgh')"))
+        assert {"t": gone, "mw": 200, "nk": "없어진 회사"} in slot_now["holdings"], slot_now["holdings"]   # 저장본에는 그대로 남아요
+    R.check(page, S, "첫 화면 저장 목록: '1종목' (없는 종목은 세지 않음), 저장본에는 그대로", launch_count)
+
+    tmp = tempfile.mkdtemp(prefix="baepsae-ghost-")
+    got = {}
+    ghost_row = {"ticker": gone, "name": "없어진 회사", "sector": None, "priceAssumed": None, "amountWon": 2000000, "weightPct": None,
+                 "approxShares": None, "beta": None, "volPct": None, "notInData": True}
+
+    def backup():
+        page.get_by_text("없는 종목 시험", exact=False).first.click()
+        page.get_by_role("button", name="④ 내보내기", exact=False).first.click()
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        got["json"] = os.path.join(tmp, "ghost.json")
+        dl.value.save_as(got["json"])
+        text = open(got["json"], encoding="utf-8").read()
+        j = json.loads(text)
+        assert "NaN" not in text and "Infinity" not in text, "백업 파일에 NaN"
+        assert [h["ticker"] for h in j["holdings"]] == ["005930", gone] and j["holdings"][1] == ghost_row, j["holdings"]
+        assert j["holdings"][0]["weightPct"] == 100.0, j["holdings"][0]              # 비중 · 위험 수치는 목록에 있는 종목만으로
+        assert all(isinstance(v, (int, float)) for v in j["metrics"].values()), j["metrics"]
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="CSV 저장 (주문표)").click()
+        csv = os.path.join(tmp, "ghost.csv")
+        dl.value.save_as(csv)
+        lines = open(csv, encoding="utf-8-sig").read().splitlines()
+        assert lines[1].startswith("005930,") and lines[2].startswith("CASH,") and not any(gone in ln for ln in lines), lines   # 주문표는 목록에 있는 종목만
+    R.check(page, S, "JSON 저장: 없는 종목도 백업에 (종목코드 · 이름 · 금액 · notInData, 나머지 null) · CSV 주문표에는 없음 · NaN 없음", backup)
+    ctx.close()
+
+    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+    ctx.add_init_script("(() => { try { localStorage.setItem('baepsae_v9_seen', '1'); } catch (e) {} })();")
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    page.on("console", lambda m: R.console.append((m.type, m.text)))
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+
+    def restore():
+        assert "json" in got, "앞 단계에서 파일을 받지 못했어요"
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        see(page, "어떻게 시작할까요?")
+        page.locator('input[type=file][accept="application/json,.json"]').set_input_files(got["json"])
+        page.get_by_role("button", name="② 구성", exact=False).first.click()
+        poll(page, CART_ROWS, lambda v: v == [["삼성전자", "300"]], "불러온 뒤 담기 화면에 삼성전자만 보여야 해요")
+        assert not dialogs, dialogs
+        st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+            return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
+                  lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
+        # 둘 다 남아요 (v18.5: 저장할 때 목록에 있는 국내 종목에는 이름이 붙어요)
+        assert [(h["t"], h["mw"], h.get("nk")) for h in st["holdings"]] == [("005930", 300, "삼성전자"), (gone, 200, "없어진 회사")], st["holdings"]
+        assert "NaN" not in page.locator("body").inner_text()
+        page.evaluate("""() => { window.__drawn = []; const f = CanvasRenderingContext2D.prototype.fillText;
+            CanvasRenderingContext2D.prototype.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
+        page.get_by_role("button", name="포트폴리오 카드 만들기", exact=True).click()
+        see(page, "이렇게 저장돼요")
+        drawn = page.evaluate("window.__drawn")
+        assert "담은 종목 TOP 1" in drawn and "63%" in drawn and "없어진 회사" not in drawn and gone not in drawn, drawn
+        page.get_by_role("button", name="닫기", exact=True).first.click()
+        page.wait_for_timeout(1200)
+        page.get_by_role("button", name="저장하고 나가기").first.click()
+        see(page, "어떻게 시작할까요?")
+        line = page.evaluate(SMALLEST, ["불러온 포트폴리오", ["β "]])
+        assert line and "· 1종목 ·" in line, line
+    R.check(page, S, "그 백업을 새 브라우저에서 불러오기 → 저장본에 두 종목 그대로(없는 종목은 숨김) · 카드 TOP 1 · '1종목' · NaN 없음", restore)
+
+    def restored_notice():
+        # v18.5: 불러온 백업의 notInData 줄도 '빠진 종목' 안내에 이름·금액으로 나오고, '포트폴리오에서 빼기'로만 저장본에서 지워져요
+        page.get_by_text("불러온 포트폴리오", exact=False).first.click()
+        page.get_by_role("button", name="② 구성", exact=False).first.click()
+        see(page, MISSING.format(n=1, names="없어진 회사 200만원"))
+        assert page.locator(".cartHead").inner_text().startswith("300 + 200 / 1,000"), page.locator(".cartHead").inner_text()
+        page.locator(".missingRemove", has_text=MISSING_REMOVE).first.click()
+        st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+            const s = l.find((x) => x.name === '불러온 포트폴리오'); return s ? localStorage.getItem('baepsae_v10_slot_' + s.id) : null; }""",
+                  lambda v: v and gone not in v, "'포트폴리오에서 빼기' 뒤에도 저장본에 없는 종목이 남아 있어요")
+        assert [h["t"] for h in json.loads(st)["holdings"]] == ["005930"], st
+        assert page.get_by_text("빼고 계산했어요").count() == 0, "뺐는데 안내가 남아 있어요"
+    R.check(page, S, "불러온 백업의 없는 종목: 안내 '없어진 회사 200만원' · 머리말 300 + 200 / 1,000 → '포트폴리오에서 빼기' → 저장본에서 빠짐", restored_notice)
+    ctx.close(); srv.shutdown()
+    shutil.rmtree(site, ignore_errors=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def scene_import_while_loading(R, files):
+    """'저장한 파일에서 불러오기'와 오늘 데이터 읽기 (v18.4.1, Jack 2026-11-04).
+      · data.json 이 늦게 오는 동안에는 파일 고르기가 화면에 없어요(부팅 화면). 다 읽은 바로 뒤에 고른 파일은 종목 · 직접 추가 종목 ·
+        환율까지 파일 그대로 열려요 (부팅이 파일 내용을 덮지 않아요).
+      · data.json 을 못 읽은 날: 파일을 불러오지 않고 '데이터를 불러오지 못했어요…' 알림('파일을 읽을 수 없어요.' 아님), 저장본은 그대로."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-boot-")
+    try:
+        _import_while_loading(R, files, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class SlowData(QuietHandler):
+    """data.json 만 DELAY 초 늦게 줘요 (다른 파일은 바로)."""
+    DELAY = 4
+
+    def do_GET(self):
+        if self.path.split("?")[0].endswith("/data.json"):
+            time.sleep(self.DELAY)
+        return super().do_GET()
+
+
+def _import_while_loading(R, files, tmp):
+    S = "불러오기 · 데이터 읽기"
+    have = {s.get("t") for s in files["data.json"]["stocks"]}
+    pick = [t for t in ("005930", "000660") if t in have]
+    fx = 1234.5                                                         # 오늘 환율과 다른 값: 부팅이 덮으면 바뀌어요
+    assert files["data.json"].get("fx") != fx
+    backup = {"app": "Baepsae 뱁새 v12", "budgetWon": 20000000, "settings": {"fx": fx}, "customStocks": [MINE],
+              "holdings": [{"ticker": pick[0], "amountWon": 3000000}, {"ticker": pick[1], "amountWon": 2000000},
+                           {"ticker": MINE["t"], "amountWon": 1000000}]}
+    path = os.path.join(tmp, "backup.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(backup, fh, ensure_ascii=False)
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(files), site)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(SlowData, directory=site))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+    ctx.add_init_script("(() => { try { localStorage.setItem('baepsae_v9_seen', '1'); } catch (e) {} })();")
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    box = page.locator('input[type=file][accept="application/json,.json"]')
+
+    def slow():
+        t0 = time.time()
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.wait_for_timeout(1000)
+        assert time.time() - t0 < SlowData.DELAY - 1, "data.json 이 늦게 오는 동안을 보지 못했어요"
+        assert box.count() == 0 and page.get_by_text("저장한 파일에서 불러오기").count() == 0, "데이터를 읽기 전에 파일 고르기가 보여요"
+        box.wait_for(state="attached", timeout=WAIT)                    # 다 읽은 뒤에 나와요
+        box.set_input_files(path)                                       # 나오자마자 골라요
+        page.get_by_role("button", name="② 구성", exact=False).first.click()
+        rows = poll(page, CART_ROWS, lambda v: len(v) == 3, "불러온 종목이 다 보이지 않아요")
+        assert [v for _, v in rows] == ["300", "200", "100"] and rows[2][0] == MINE["nk"], rows
+        assert not dialogs, dialogs
+        st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+            return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
+                  lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
+        assert st["customStocks"] == [MINE] and len(st["holdings"]) == 3, st     # 부팅이 직접 추가 종목을 덮지 않았어요
+        assert st["settings"]["fx"] == fx, st["settings"]["fx"]                 # 환율도 파일 그대로 (지금 규칙)
+    R.check(page, S, "data.json 이 4초 늦음 → 그동안 파일 고르기 없음, 다 읽은 뒤 고른 파일은 종목 · 직접 추가 종목 · 환율 그대로", slow)
+    ctx.close(); srv.shutdown()
+
+    # data.json 을 못 읽은 날 (404)
+    os.remove(os.path.join(site, "data.json"))
+    srv, base = serve(site)
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "skeep", "name": "그대로 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_skeep": json.dumps(slot, ensure_ascii=False)}
+    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+    ctx.add_init_script("(() => { try { if (!sessionStorage.getItem('seeded')) { const kv = %s; for (const k in kv) localStorage.setItem(k, kv[k]);"
+                        " sessionStorage.setItem('seeded', '1'); } } catch (e) {} })();" % json.dumps(local, ensure_ascii=False))
+    page = ctx.new_page()
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    dialogs.clear()
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    box = page.locator('input[type=file][accept="application/json,.json"]')
+    stored = """() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+        if (k.startsWith('baepsae_v10_')) o[k] = localStorage.getItem(k); } return o; }"""
+
+    def failed():
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        see(page, NOLIVE_ALL)                                            # 오늘 데이터를 못 읽었다는 안내 (이미 있던 것)
+        box.wait_for(state="attached", timeout=WAIT)
+        before = page.evaluate(stored)
+        box.set_input_files(path)
+        poll(page, "1", lambda _: len(dialogs) > 0, "알림이 뜨지 않았어요")
+        assert dialogs == [T_LOAD_FAIL_KO], dialogs                      # '파일을 읽을 수 없어요.'가 아니에요
+        page.wait_for_timeout(1200)
+        see(page, "어떻게 시작할까요?")
+        assert page.evaluate(stored) == before, "데이터를 못 읽은 날 저장본이 바뀌었어요"
+    R.check(page, S, "data.json 을 못 읽은 날 → 불러오지 않고 '데이터를 불러오지 못했어요…' 알림, 저장본 그대로", failed)
+    ctx.close(); srv.shutdown()
+
+
 HEADER_ITEMS = """() => [...document.querySelector('.mastRow').children].filter((e) => getComputedStyle(e).display !== 'none'
   && e.getBoundingClientRect().width).map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.v2Link ? 'v2' : e.tagName, r.left, r.right]; })"""
 
@@ -1278,7 +1827,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·파일)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -1295,7 +1844,9 @@ def main():
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
                   ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("빠진", lambda: scene_missing_all(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
-                  ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh))]
+                  ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)),
+                  ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
+                  ("파일", lambda: scene_import_while_loading(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

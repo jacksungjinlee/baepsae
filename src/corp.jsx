@@ -6,11 +6,10 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
-import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL } from "./detail.jsx";
+import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
 import { loadJson } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
-const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
 
 // ---------------- 포맷 ----------------
 const fmtEok = (v) => v == null ? "—" : Math.abs(v) >= 10000 ? (v / 10000).toFixed(1) + "조원" : Math.round(v).toLocaleString() + "억원";
@@ -1292,7 +1291,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
-        뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
+        뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.{" · "}<AboutLink />
       </div>
     </div>
   );
@@ -1685,7 +1684,7 @@ export default function CorpApp({ jump, onJumpDone, lang }) {
       {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
       {view.kind === "market" && (
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 20, lineHeight: 1.7 }}>
-          뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
+          뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.{" · "}<AboutLink />
         </div>
       )}
       <ExplainSheet id={explain} onClose={() => setExplain(null)} />

@@ -22,6 +22,11 @@
               살구 띠의 두 버튼 → 답하면 초록 띠 · 줄일 차례 → 초록 띠, '오늘은 할 일이 없어요' 없음 · 큰 움직임(업종이 다 같이
               빠짐) → 자세히 보기 → 왜 움직였나(점 띠 · 규칙 · 데이터 출처) → 오늘 · 내 덱의 평가 금액 · 원금 · 코스피와 비교 ·
               비중 막대 · 추가로 넣을 돈(지켜봐요는 건너뜀) · 옛 형식·불러오기 실패·멈춤이면 할 일 띠 없음 · '못 하는 규칙' 줄
+  아이폰      (v18.4.1) 아이폰 사파리 UA 로 샀어요 → 기록 내보내기 → 저장소가 따로인 새 문맥에서 기록 불러오기 → 같은 덱 · 산 기록 ·
+              규칙 · 내 덱 · 오늘 화면, 두 번 불러도 덱이 늘지 않음, 미리 보기 기록 파일은 막힘 (scene_iphone_records 설명 참고)
+  소개        (v19.0 Part D) 푸터: 고지문 · 소개 링크, 만든 사람 줄 없음 · #about 으로 열면 한국어 · English 로 바꾸면 영어 머리글 ·
+              새로 고침해도 그 선택 · 저장소가 막혀도 동작 · 숫자 줄 = 시험 데이터로 센 값(분석 종목 · 업종 그룹) · 멈춘 데이터면
+              숫자 줄 없음(문단은 그대로) · data.json 이 없으면 숫자 줄과 숫자 문단 없이 나머지는 그대로 · 뒤로 → 전 화면, # 없음
 모든 장면에서 페이지 오류 0건, 다른 사이트 요청 0건. 화면에 보이는 한국어는 모두 src/copy/v2.js(또는 데이터의 이름)에서 와요.
 """
 import argparse
@@ -44,7 +49,7 @@ from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
-SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png"] + [f"baepi-{i}.png" for i in range(1, 10)]   # app.html 은 지금 소스로 빌드해요
+SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]
 DATA_FILES = ["data.json", "corp.json", "macro.json"]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -116,10 +121,11 @@ class Runner:
         self.texts = set()
         self.names = sorted({n for n in names if n and HANGUL.search(n)}, key=len, reverse=True)
 
-    def open(self, site, width, init=None, accept_downloads=False):
+    def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1", device=None):
         srv, base = serve(site)
-        ctx = self.browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR",
-                                       service_workers="block", accept_downloads=accept_downloads)
+        # device: Playwright 의 기기 설명(사용자 에이전트 · 화면 · 터치)을 그대로 입혀요. 없으면 휴대폰 폭 width × 780.
+        screen = dict(device) if device else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+        ctx = self.browser.new_context(**screen, locale="ko-KR", service_workers="block", accept_downloads=accept_downloads)
 
         def route(r):
             if r.request.url.startswith(base):
@@ -138,7 +144,7 @@ class Runner:
         page = ctx.new_page()
         page.set_default_timeout(WAIT)
         page.on("pageerror", lambda e: self.errors.append(str(e)))
-        page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + path, wait_until="domcontentloaded")
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -265,7 +271,9 @@ def scene_normal(R, files, width):
 
     def today():
         tab(page, C["app"]["tabs"]["today"])
-        see(page, C["app"]["title"])
+        bar = page.locator('[data-ui-v2="app-bar"] h1').first           # v19.0: 머리말은 '뱁새', 긴 제목은 탭 제목에만
+        bar.wait_for(state="visible")
+        assert bar.inner_text() == C["app"]["brand"] == "뱁새", bar.inner_text()
         assert md in date_line(page) and "멈췄어요" not in date_line(page)
         page.locator('[data-ui-v2="today-empty"]').wait_for(state="visible")       # 산 종목이 없으면 판정 없이 덱 짜기로 가는 길만
         assert page.locator('[data-ui-v2="today-hero"]').count() == 0
@@ -1369,6 +1377,378 @@ def scene_today(R, files, width):
         srv.shutdown()
 
 
+# ── 소개 (v19.0 Part D) ──
+ABOUT_KEY = "baepsae_v2_about_lang"
+NOT_GROUPS = ("", "etc", "other")                       # src/v2/engine.js NOT_GROUPS + 빈 값
+
+
+def about_counts(data):
+    """about.md 의 숫자 줄 규칙을 파이썬으로 따로 세요: cls kr·us 종목 수, 그 종목들의 업종 그룹 수, 백 단위 내림."""
+    covered = [s for s in data["stocks"] if s.get("cls") in ("kr", "us")]
+    groups = {s["ind"] for s in covered if isinstance(s.get("ind"), str) and s["ind"] not in NOT_GROUPS}
+    return len(covered), len(groups), len(covered) // 100 * 100
+
+
+def about_page(page):
+    box = page.locator('[data-ui-v2="about"]')
+    box.wait_for(state="visible")
+    return box
+
+
+def footer_ok(page):
+    """보이는 푸터: 고지문 · 소개(#about), 만든 사람 줄 없음."""
+    f = page.locator('[data-ui-v2="footer"]:visible').first
+    f.wait_for(state="visible")
+    text = f.inner_text()
+    assert text.replace("\n", " ").strip() == f'{C["app"]["footer"]} · {C["app"]["aboutLink"]}', text
+    assert "INSEAD" not in text and "이성진" not in text, text
+    link = f.locator('[data-ui-v2="about-link"]')
+    assert link.inner_text() == C["app"]["aboutLink"] == "소개" and link.get_attribute("href") == "#about"
+    box = link.bounding_box()
+    assert box and box["height"] >= 44, box
+    return link
+
+
+def images_loaded(page):
+    imgs = page.evaluate("""() => [...document.querySelectorAll('[data-ui-v2="about"] img')].map((i) => [i.getAttribute('src'), i.complete && i.naturalWidth > 0])""")
+    assert sorted(i for i, _ in imgs) == ["baepi-og.webp", "jack-photo.jpg"] and all(ok for _, ok in imgs), imgs
+
+
+def scene_about(R, files, width):
+    S = f"소개 {width}"
+    count, groups, n = about_counts(files["data.json"])
+    assert count > 100 and groups > 5, (count, groups)
+    ko, en = C["about"]["ko"], C["about"]["en"]
+    srv, ctx, page, base = R.open(build_site(files), width)
+
+    def footer_and_open():
+        wait_ready(page)
+        see(page, C["build"]["s0"]["title"])                              # 첫 화면 (저장한 덱 없음: 덱 짜기)
+        link = footer_ok(page)
+        link.focus()
+        link.click()
+        about_page(page)
+        assert page.url.endswith("#about"), page.url
+        assert page.evaluate("document.activeElement && document.activeElement.dataset.uiV2") == "about-heading", "소개 제목으로 초점이 가지 않았어요"
+        assert page.locator('[data-ui-v2="about"]').get_attribute("data-lang") == "ko"
+        assert page.get_by_text(C["build"]["s0"]["title"]).first.is_visible() is False, "소개 뒤에 전 화면이 보여요"
+        assert page.locator('nav[data-ui="bottom-tab-bar"]:visible').count() == 0
+        page.get_by_role("button", name=C["app"]["close"]).click()        # 뒤로 → 전 화면, # 없음
+        see(page, C["build"]["s0"]["title"])
+        assert page.locator('[data-ui-v2="about"]').count() == 0 and "#" not in page.url, page.url
+        assert page.evaluate("document.activeElement && document.activeElement.dataset.uiV2") == "about-link", "초점이 소개 링크로 돌아오지 않았어요"
+    R.check(page, S, "푸터: 고지문 · '소개'(#about), 만든 사람 줄 없음 → 소개(초점은 제목) → 뒤로 → 전 화면 (#about 지워짐, 초점은 링크)", footer_and_open)
+
+    def about_ko():
+        page.goto(base + "/app.html?dev=1#about", wait_until="domcontentloaded")
+        box = about_page(page)
+        assert box.get_attribute("data-lang") == "ko"
+        assert page.locator('[data-ui-v2="about-descriptor"]').inner_text() == ko["hero"]["descriptor"]
+        for t in (ko["hero"]["catch"], ko["what"]["title"], ko["principles"]["title"], ko["name"]["title"], ko["maker"]["title"]):
+            see(page, t)
+        assert page.locator('[data-ui-v2="app-bar"] h1:visible').inner_text() == C["app"]["brand"]
+        figs = page.locator('[data-ui-v2="about-figures"]')
+        figs.wait_for(state="visible")
+        st = page.locator('[data-ui-v2="about-stocks"]').inner_text().split("\n")
+        gr = page.locator('[data-ui-v2="about-groups"]').inner_text().split("\n")
+        assert st == [f"{count:,}", ko["figures"]["stocks"]], (st, count)
+        assert gr == [f"{groups:,}", ko["figures"]["groups"]], (gr, groups)
+        assert page.locator('[data-ui-v2="about-refresh"]').inner_text() == ko["figures"]["refresh"]
+        data = page.locator('[data-ui-v2="about-data"]').inner_text()
+        assert data == ko["what"]["data"].replace("{n}", f"{n:,}") and f"{n:,}개가 넘는" in data, data
+        photo = page.locator('[data-ui-v2="about-photo"]')
+        assert photo.get_attribute("alt") == ko["maker"]["photoAlt"] == "이성진 사진"
+        pb = photo.bounding_box()
+        assert pb and abs(pb["width"] - 88) < 1 and abs(pb["height"] - 88) < 1, pb
+        assert photo.evaluate("(e) => getComputedStyle(e).borderRadius") in ("999px", "50%"), "사진이 동그랗지 않아요"
+        li = page.locator('[data-ui-v2="about-linkedin"]')
+        assert li.get_attribute("href") == C["about"]["linkedInUrl"] and li.get_attribute("target") == "_blank" and li.get_attribute("rel") == "noopener"
+        images_loaded(page)
+        footer_ok(page)
+        assert "INSEAD MBA 26J" not in page.locator("body").inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, f"#about 로 열면 한국어 · 숫자 줄 = 데이터로 센 값({count:,} 종목 · {groups} 그룹) · '{n:,}개가 넘는' · 사진 88px · LinkedIn 새 탭", about_ko)
+
+    def to_english():
+        page.get_by_role("radio", name=C["about"]["langs"]["en"]).click()
+        page.locator('[data-ui-v2="about"][data-lang="en"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="about-descriptor"]').inner_text() == en["hero"]["descriptor"]
+        see(page, en["hero"]["catch"])
+        see(page, en["maker"]["name"])
+        data = page.locator('[data-ui-v2="about-data"]').inner_text()
+        assert data == en["what"]["data"].replace("{n}", f"{n:,}") and f"more than {n:,} " in data, data
+        assert page.locator('[data-ui-v2="about-stocks"]').inner_text().split("\n") == [f"{count:,}", en["figures"]["stocks"]]
+        assert page.locator('[data-ui-v2="about-photo"]').get_attribute("alt") == en["maker"]["photoAlt"]
+        assert page.evaluate(f"localStorage.getItem('{ABOUT_KEY}')") == "en"
+        no_hscroll(page, width)
+        R.collect(page)
+        page.reload(wait_until="domcontentloaded")                         # 새로 고침해도 영어
+        page.locator('[data-ui-v2="about"][data-lang="en"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="about-descriptor"]').inner_text() == en["hero"]["descriptor"]
+        page.get_by_role("radio", name=C["about"]["langs"]["ko"]).click()
+        page.locator('[data-ui-v2="about"][data-lang="ko"]').wait_for(state="visible")
+        assert page.evaluate(f"localStorage.getItem('{ABOUT_KEY}')") == "ko"
+    R.check(page, S, "English → 영어 머리글 · 'more than N' · 새로 고침해도 영어 → 한국어로 돌아옴", to_english)
+
+    def back_from_direct():
+        page.get_by_role("button", name=C["app"]["close"]).click()        # #about 으로 바로 열었으면: # 를 지우고 첫 화면
+        see(page, C["build"]["s0"]["title"])
+        assert page.locator('[data-ui-v2="about"]').count() == 0 and "#" not in page.url, page.url
+        page.evaluate("location.hash = 'about'")                         # 주소의 # 만 바뀌어도 열려요 (예전 뱁새의 링크와 같은 길)
+        about_page(page)
+        page.go_back()                                                    # 휴대폰의 뒤로 버튼
+        see(page, C["build"]["s0"]["title"])
+        assert page.locator('[data-ui-v2="about"]').count() == 0
+    R.check(page, S, "주소로 바로 연 소개 → 뒤로 → 첫 화면 (# 없음) · # 바뀜으로 열기 · 브라우저 뒤로로 닫기", back_from_direct)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장소가 막힌 브라우저: 읽기도 쓰기도 안 돼요. 소개는 한국어로 열리고, 영어로 바꾸면 그 화면에서는 영어예요.
+    blocked = ("(() => { Object.defineProperty(window, 'localStorage', { configurable: true, "
+               "get() { throw new DOMException('blocked', 'SecurityError'); } }); })();")
+    srv, ctx, page, base = R.open(build_site(files), width, init=blocked, path="/app.html?dev=1#about")
+
+    def no_storage():
+        assert page.evaluate("(() => { try { localStorage.getItem('x'); return 'open'; } catch (e) { return 'blocked'; } })()") == "blocked"
+        box = about_page(page)
+        assert box.get_attribute("data-lang") == "ko"
+        page.get_by_role("radio", name=C["about"]["langs"]["en"]).click()
+        page.locator('[data-ui-v2="about"][data-lang="en"]').wait_for(state="visible")
+        see(page, en["hero"]["catch"])
+        page.locator('[data-ui-v2="about-figures"]').wait_for(state="visible")
+        R.collect(page)
+    R.check(page, S, "저장소가 막혀도 소개가 열리고 English 로 바뀌어요 (페이지 오류 없음)", no_storage)
+    ctx.close()
+    srv.shutdown()
+
+    f = clone(files)                                                      # 멈춘 데이터 (발행 6일 전)
+    for name in DATA_FILES:
+        f[name]["publishedAt"] = now_kst(days_ago=6)
+    srv, ctx, page, base = R.open(build_site(f), width, path="/app.html?dev=1#about")
+
+    def stale():
+        about_page(page)
+        page.locator('[data-ui-v2="about-data"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="about-data"]').inner_text() == ko["what"]["data"].replace("{n}", f"{n:,}")
+        assert page.locator('[data-ui-v2="about-figures"]').count() == 0, "멈춘 데이터인데 '매 거래일 데이터 갱신' 줄이 보여요"
+        R.collect(page)
+    R.check(page, S, "멈춘 데이터(6일 전): 숫자 줄 없음, 숫자 문단은 그대로", stale)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), width, path="/app.html?dev=1#about")
+
+    def failed():
+        about_page(page)
+        see(page, ko["maker"]["title"])
+        page.wait_for_timeout(600)                                        # 불러오기가 끝날 시간
+        assert page.locator('[data-ui-v2="about-figures"]').count() == 0 and page.locator('[data-ui-v2="about-data"]').count() == 0
+        assert page.get_by_text(ko["what"]["intro"]).is_visible() and page.get_by_text(ko["run"]["title"]).is_visible()
+        images_loaded(page)
+        footer_ok(page)
+        page.get_by_role("button", name=C["app"]["close"]).click()        # 뒤의 화면은 불러오기 실패 문구
+        see(page, LOAD_FAIL)
+        R.collect(page)
+    R.check(page, S, "data.json 없음: 숫자 줄 · 숫자 문단 없이 나머지는 그대로, 뒤로 가면 불러오기 실패 문구", failed)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── 아이폰: 사파리에서 기록 내보내기 → 홈 화면 앱에서 기록 불러오기 (v18.4.1, Jack 2026-11-04) ──
+# 홈 화면 앱처럼 열기: navigator.standalone(iOS 사파리만 있는 값)과 display-mode: standalone 을 참으로 흉내 내요
+# (src/v2 는 이 둘을 읽지 않아요: 앞으로 읽게 되면 이 시험이 그 길로도 지나가요).
+STANDALONE_INIT = """(() => {
+  try { Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true, configurable: true }); } catch (e) {}
+  const mm = window.matchMedia ? window.matchMedia.bind(window) : null;
+  window.matchMedia = (q) => (/display-mode:\\s*standalone/.test(String(q))
+    ? { matches: true, media: String(q), onchange: null, addListener() {}, removeListener() {}, addEventListener() {},
+        removeEventListener() {}, dispatchEvent() { return false; } }
+    : mm(q));
+})();"""
+OTHER_KEYS = """() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+  if (k !== 'baepsae2.v1') o[k] = localStorage.getItem(k); } return o; }"""
+STORED = "JSON.parse(localStorage.getItem('baepsae2.v1') || 'null')"
+# 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로(1초 안에) 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤)
+REVOKE_SPY = """() => { if (window.__revoked) return; window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
+  URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
+
+
+def standalone_ua(ua):
+    """홈 화면에 추가한 앱의 사용자 에이전트: 사파리와 같은데 끝의 'Version/…' · 'Safari/…' 가 없어요."""
+    return re.sub(r" Safari/\S+$", "", re.sub(r" Version/\S+", "", ua))
+
+
+def scene_iphone_records(R, files, device):
+    """아이폰: 사파리에서 쓴 기록을 홈 화면 앱으로 옮기는 길 (Jack 2026-11-04: 아이폰 계획이 이 길에 기대요).
+    iOS 에서 홈 화면에 추가한 앱은 사파리와 저장소를 같이 쓰지 않고 따로 써요. 그래서 옮기는 길은 '기록 내보내기 → 파일 → 기록 불러오기' 하나예요.
+
+    여기에는 진짜 사파리(WebKit)가 설치돼 있지 않아요. 그래서 크롬(Chromium)에 Playwright 의 'iPhone 13' 설명(사용자 에이전트 ·
+    390×664 화면 · 터치)을 입혀서 봐요.
+      문맥 1 (사파리)    덱 짜기(배당 생활비) → 샀어요(날짜 · 한국 종목 하나와 미국 종목 하나의 수량 · 가격을 바꿔서) → 내 덱 →
+                         기록 내보내기 → 받은 파일. 앱(store.js downloadRecords)은 사파리 같은 브라우저에서도 다른 길이 없어요:
+                         똑같이 Blob 을 만들어 <a download> 를 눌러요. 다른 점은 '사파리는 7일…' 안내 한 줄뿐이라, 그 줄이 보이는지
+                         (= 앱이 사파리로 알아봤는지) 확인하고, 받은 파일이 저장된 기록과 똑같은지, 파일 주소를 1.5초 안에 지우지
+                         않는지(일찍 지우면 iOS 사파리가 받다가 실패할 수 있어요) 봐요.
+      문맥 2 (새 저장소) 저장소가 빈 새 문맥 = 홈 화면 앱처럼 사파리와 저장소가 따로인 곳. 사용자 에이전트는 홈 화면 앱처럼 'Safari/…'
+                         없는 것으로, navigator.standalone 과 display-mode: standalone 도 참으로 흉내 내요. 다만 src/v2 는 이 둘을 읽지
+                         않아서, 이 시험이 보여 주는 것은 '따로인 저장소로 파일을 불러오는 길'이지 홈 화면 모드 자체의 동작은 아니에요.
+                         기록 불러오기 → 같은 덱 · 종목 · 산 기록(수량 · 가격 · 날짜 · 미국 종목의 환율) · 규칙이 저장되고, 내 덱과
+                         오늘 화면의 글이 문맥 1 과 똑같아요 · 다른 저장 값은 그대로 · 새로 고침해도 남아요 · 같은 파일을 두 번 불러도
+                         덱이 늘지 않아요 · 미리 보기에서 만든 기록 파일은 '미리 보기에서 만든 기록은…' 으로 막혀요.
+    이 시험이 보여 주지 못하는 것 (실제 아이폰에서만 볼 수 있어요): iOS 사파리가 <a download> 로 받은 파일을 '파일' 앱에 저장하는지,
+    홈 화면 앱의 파일 고르기 창에서 그 파일을 고를 수 있는지, 홈 화면 모드에서의 동작, WebKit 의 File.text() · 저장소 동작."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-records-")       # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    try:
+        _iphone_records(R, files, device, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _iphone_records(R, files, device, tmp):
+    S = "아이폰 기록 옮기기"
+    dev = {k: v for k, v in device.items() if k != "default_browser_type"}
+    width = dev["viewport"]["width"]
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(files), site)
+    by = {x["t"]: x for x in files["data.json"]["stocks"]}
+    day = (dt.date.fromisoformat(files["data.json"]["pxDate"]) - dt.timedelta(days=2)).isoformat()   # 오늘이 아닌 산 날
+    keep = {}
+
+    def main_text(page):
+        return page.locator("main").first.inner_text()
+
+    def open_deck_tab(page):
+        tab(page, C["app"]["tabs"]["deck"])
+        see(page, C["store"]["export"])
+
+    def open_today_tab(page):
+        tab(page, C["app"]["tabs"]["today"])
+        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+
+    srv, ctx, page, _ = R.open(site, width, accept_downloads=True, device=dev)
+
+    def safari():
+        assert "iPhone" in page.evaluate("navigator.userAgent") and page.evaluate("navigator.standalone") is None
+        wait_ready(page)
+        see(page, C["build"]["s0"]["title"])                          # 저장한 덱이 없으면 덱 짜기부터
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        click_next(page)
+        see(page, C["pick"]["title"])
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        sheet = page.locator('[data-ui-v2="record-form"]')
+        sheet.locator('input[type="date"]').fill(day)
+        tickers = [r.get_attribute("data-record") for r in sheet.locator("[data-record]").all()]
+        kr = next(t for t in tickers if by[t].get("cls") != "us")
+        us = next((t for t in tickers if by[t].get("cls") == "us"), None)
+        assert us, f"미국 종목이 계획에 없어요: {tickers}"
+        want = {}
+        for t, price in ((kr, str(int(by[kr]["price"] * 0.98))), (us, f"{by[us]['price'] * 0.97:.2f}")):
+            box = sheet.locator(f'[data-record="{t}"] input')
+            planned = int(box.nth(0).get_attribute("placeholder").replace(",", ""))
+            box.nth(0).fill(str(planned + 1))                         # 계획보다 한 주 더
+            box.nth(1).fill(price)                                    # 계획과 다른 가격
+            want[t] = (planned + 1, float(price))
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        see(page, C["plan"]["done"])
+        page.get_by_role("button", name=C["plan"]["doneLink"]).click()
+        see(page, C["today"]["title"])
+        stored = page.evaluate(STORED)
+        ps = {p["t"]: p for p in stored["decks"][0]["purchases"]}
+        assert len(stored["decks"]) == 1 and len(ps) == len(tickers) and all(p["date"] == day for p in ps.values()), stored
+        assert all((ps[t]["qty"], ps[t]["price"]) == q for t, q in want.items()), (want, ps)
+        assert ps[us]["ccy"] == "USD" and ps[us]["fx"] == files["data.json"]["fx"] and ps[kr]["ccy"] == "KRW", (ps[us], ps[kr])
+        assert all(h.get("rules") for h in stored["decks"][0]["holdings"]), "규칙이 저장되지 않았어요"
+        open_today_tab(page)
+        keep["today"] = main_text(page)
+        open_deck_tab(page)
+        page.locator("[data-holding][data-status]").first.wait_for(state="visible")
+        page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
+        see(page, C["store"]["safari"])                               # 앱이 사파리 같은 브라우저로 알아봤어요
+        keep["deck"] = main_text(page)
+        page.evaluate(REVOKE_SPY)
+        with page.expect_download() as dl:
+            page.get_by_role("button", name=C["store"]["export"]).click()
+        name, url = dl.value.suggested_filename, dl.value.url
+        assert url.startswith("blob:"), url
+        keep["path"] = os.path.join(tmp, name)                        # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
+        dl.value.save_as(keep["path"])
+        page.wait_for_timeout(1500)
+        assert url not in page.evaluate("window.__revoked"), "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
+        with open(keep["path"], encoding="utf-8") as fh:
+            exported = json.load(fh)
+        assert re.fullmatch(r"baepsae-records-\d{4}-\d{2}-\d{2}\.json", name), name
+        assert exported == {"v": 1, "decks": stored["decks"]}, "받은 파일이 저장된 기록과 달라요"
+        keep["file"] = exported
+        R.collect(page)
+    R.check(page, S, "사파리(아이폰 UA): 샀어요(날짜 · 수량 · 가격 · 미국 종목 환율) → 내 덱 → 기록 내보내기 → 파일 = 저장된 기록 (주소는 늦게 지움)", safari)
+    ctx.close()
+    srv.shutdown()
+
+    home = {**dev, "user_agent": standalone_ua(dev["user_agent"])}
+    srv, ctx, page, _ = R.open(site, width, init=STANDALONE_INIT, device=home)
+    imp = page.locator('[data-ui-v2="import-file"]')
+
+    def home_screen():
+        assert "path" in keep, "앞 단계에서 파일을 받지 못했어요"
+        ua = page.evaluate("navigator.userAgent")
+        assert "iPhone" in ua and "Safari/" not in ua, ua
+        assert page.evaluate("navigator.standalone === true && matchMedia('(display-mode: standalone)').matches"), "홈 화면 앱 흉내가 안 돼요"
+        wait_ready(page)
+        assert page.evaluate(STORED) is None, "새 문맥인데 기록이 있어요"
+        see(page, C["build"]["s0"]["title"])                          # 빈 저장소: 덱 짜기부터
+        open_deck_tab(page)
+        assert page.locator("[data-deck-id]").count() == 0
+        others = page.evaluate(OTHER_KEYS)
+        imp.set_input_files(keep["path"])
+        page.locator("[data-deck-id]").first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="import-bad"]').count() == 0
+        assert page.evaluate(STORED) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
+        assert page.evaluate(OTHER_KEYS) == others, "기록 말고 다른 저장 값이 바뀌었어요"
+        page.locator("[data-holding][data-status]").first.wait_for(state="visible")
+        page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
+        assert main_text(page) == keep["deck"], "내 덱 화면이 사파리에서 본 것과 달라요"
+        open_today_tab(page)
+        assert main_text(page) == keep["today"], "오늘 화면이 사파리에서 본 것과 달라요"
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
+        assert main_text(page) == keep["today"] and page.evaluate(STORED) == keep["file"], "새로 고침 뒤에 기록이 달라요"
+        R.collect(page)
+    R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
+
+    def twice():
+        open_deck_tab(page)
+        imp.set_input_files(keep["path"])
+        page.wait_for_timeout(1000)                                   # 불러오기는 바로 끝나요 (바뀌는 게 없어야 해서 기다려서 봐요)
+        assert page.locator("[data-deck-id]").count() == 1 and page.evaluate(STORED) == keep["file"], "같은 파일을 두 번 불러 덱이 늘었어요"
+        assert page.locator('[data-ui-v2="import-bad"]').count() == 0
+    R.check(page, S, "같은 파일을 한 번 더 불러와도 덱이 늘지 않아요", twice)
+
+    def preview_file():
+        prev = os.path.join(tmp, "baepsae-preview-records.json")
+        with open(prev, "w", encoding="utf-8") as fh:
+            json.dump({"v": 1, "preview": True, "decks": keep["file"]["decks"]}, fh, ensure_ascii=False)   # store.js exportText(…, true) 모양
+        imp.set_input_files(prev)
+        box = page.locator('[data-ui-v2="import-bad"]')
+        box.wait_for(state="visible")
+        assert box.get_attribute("data-why") == "preview" and box.inner_text() == C["store"]["otherKind"], box.inner_text()
+        assert page.locator("[data-deck-id]").count() == 1 and page.evaluate(STORED) == keep["file"], "막힌 파일이 기록을 바꿨어요"
+        R.collect(page)
+    R.check(page, S, f"미리 보기에서 만든 기록 파일 → '{C['store']['otherKind']}' (기록은 그대로)", preview_file)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -1390,13 +1770,19 @@ def main():
                       lambda: scene_old_app(R, files, width, '[{"id":"s1","name":"포트폴리오 1"}]', True),
                       lambda: scene_old_app(R, files, width, "[]", False),
                       lambda: scene_old_app(R, files, width, "{not json", False),
-                      lambda: scene_daily(R, files, width), lambda: scene_today(R, files, width)]
+                      lambda: scene_daily(R, files, width), lambda: scene_today(R, files, width),
+                      lambda: scene_about(R, files, width)]
             for fn in scenes:
                 try:
                     fn()
                 except Exception as e:
                     R.results.append((f"[{width}] 장면 실행", False, str(e).splitlines()[0][:200]))
                     print(f"  FAIL  [{width}] 장면 실행: {e}", flush=True)
+        try:                                                     # 아이폰 13 화면(390×664) 하나로만
+            scene_iphone_records(R, files, p.devices["iPhone 13"])
+        except Exception as e:
+            R.results.append(("[아이폰] 장면 실행", False, str(e).splitlines()[0][:200]))
+            print(f"  FAIL  [아이폰] 장면 실행: {e}", flush=True)
         browser.close()
 
     ok = Matcher([v for _, v in copy_strings()[1] if isinstance(v, str)], loose_slots=True)

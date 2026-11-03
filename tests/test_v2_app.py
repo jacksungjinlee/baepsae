@@ -132,8 +132,10 @@ def test_app_html_is_committed_and_current():
 
 def test_built_pages_have_title_noindex_and_the_right_service_worker():
     app, prev = built("app.html"), built("app-preview.html")
-    assert "<title>뱁새 2.0 미리 보기</title>" in app
-    assert "<title>뱁새 2.0 미리 보기 · 예시 데이터</title>" in prev          # 미리 보기 탭 제목에도 예시 데이터
+    # v19.0 Part E (Jack, 2026-11-03): 제목은 '뱁새 — 내 기준으로 만드는 포트폴리오' (예전 '뱁새 2.0 미리 보기')
+    assert "<title>뱁새 — 내 기준으로 만드는 포트폴리오</title>" in app and app.count("<title>") == 1
+    assert "<title>뱁새 — 내 기준으로 만드는 포트폴리오 · 예시 데이터</title>" in prev and prev.count("<title>") == 1   # 미리 보기 탭 제목에도 예시 데이터
+    assert "미리 보기</title>" not in app + prev
     assert "noindex" not in app and '<meta name="robots" content="noindex, nofollow">' in prev   # 메인은 검색에 나와요
     for h in (app, prev):
         assert 'href="fonts/pretendard/pretendard-variable.css"' in h
@@ -179,20 +181,59 @@ def test_preview_is_linked_from_nowhere():
     assert "app-preview" not in built("app.html")
 
 
+# app.html: 지금 앱과 같은 GoatCounter(gc.zgo.at)와 공유 카드 주소만. app-preview.html: 바깥 주소 없음.
+# react.dev 오류 안내 주소와 w3.org(SVG namespace 이름)는 문자열일 뿐 요청하지 않아요.
+# LinkedIn(v19.0 소개 페이지, about.md): Jack 의 프로필 주소 하나만, 누르면 새 탭으로 여는 링크(href)로만 써요 — 아래에서 확인.
+LINKEDIN = "https://www.linkedin.com/in/jacksungjinlee/"
+OUTSIDE_ALLOWED = {"app.html": {"https://react.dev", "http://www.w3.org", "https://gc.zgo.at", "https://jacksungjinlee.github.io",
+                                "https://www.linkedin.com"},
+                   "app-preview.html": {"https://react.dev", "http://www.w3.org", "https://www.linkedin.com"}}
+
+
+def outside_problems(name, html):
+    """한 페이지에서 걸리는 것들의 목록 (빈 목록이면 통과): 시험용 데이터 · 허용 밖 주소 · LinkedIn 주소 · 글꼴 CDN."""
+    bad = []
+    if "fixtures" in html or "tests/" in html:
+        bad.append("fixtures")
+    extra = set(re.findall(r"https?://[\w.-]+", html)) - OUTSIDE_ALLOWED[name]
+    if extra:
+        bad.append(("urls", sorted(extra)))
+    if re.findall(r"https?://(?:www\.)?linkedin\.com[^\s\"'`]*", html) != [LINKEDIN]:          # 그 주소 하나, 한 번만
+        bad.append("linkedin")
+    if "googleapis" in html or "jsdelivr" in html:
+        bad.append("cdn")
+    return bad
+
+
 def test_pages_never_load_fixtures_or_other_sites():
-    # app.html: 지금 앱과 같은 GoatCounter(gc.zgo.at)와 공유 카드 주소만. app-preview.html: 바깥 주소 없음.
-    # react.dev 오류 안내 주소와 w3.org(SVG namespace 이름)는 문자열일 뿐 요청하지 않아요.
-    allowed = {"app.html": {"https://react.dev", "http://www.w3.org", "https://gc.zgo.at", "https://jacksungjinlee.github.io"},
-               "app-preview.html": {"https://react.dev", "http://www.w3.org"}}
     for name in ("app.html", "app-preview.html"):
-        html = built(name)
-        assert "fixtures" not in html and "tests/" not in html, name
-        urls = set(re.findall(r"https?://[\w.-]+", html))
-        assert urls <= allowed[name], (name, urls)
-        assert "googleapis" not in html and "jsdelivr" not in html, name
+        bad = outside_problems(name, built(name))
+        assert not bad, (name, bad)
+    # 그 주소는 문구 파일(C.about.linkedInUrl)에만 있고, 화면 코드는 그 값을 <a href> 로만 써요 (새 탭 · noopener)
+    c, _ = copy_strings()
+    assert c["about"]["linkedInUrl"] == LINKEDIN
+    about = read("src/v2/about.jsx")
+    assert about.count("C.about.linkedInUrl") == 1 and 'href={C.about.linkedInUrl} target="_blank" rel="noopener"' in about
+    for f in v2_files():
+        assert "linkedin.com" not in read(f), f
     assert "goatcounter.com" not in built("app-preview.html")
     src = read("src/v2/load.js")
     assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json"}
+
+
+def test_outside_check_catches_each_problem():
+    """위 검사가 두 페이지 모두에서 정말 걸러내는지: 글꼴 CDN(주소 앞 https: 없이도) · 다른 사이트 · 시험용 데이터 · LinkedIn 두 번."""
+    for name in ("app.html", "app-preview.html"):
+        html = built(name)
+        assert outside_problems(name, html) == []
+        cases = [(html + '<link href="//fonts.googleapis.com/css2">', "cdn"), (html + '<script src="//cdn.jsdelivr.net/x.js">', "cdn"),
+                 (html + '<img src="https://example.com/x.png">', "urls"), (html + "fetch('./tests/fixtures/v2/data.json')", "fixtures"),
+                 (html + f'<a href="{LINKEDIN}">', "linkedin")]
+        if name == "app-preview.html":
+            cases.append((html + '<script src="https://gc.zgo.at/count.js">', "urls"))       # 미리 보기에는 통계도 없어요
+        for mutated, want in cases:
+            got = [b if isinstance(b, str) else b[0] for b in outside_problems(name, mutated)]
+            assert want in got, (name, want, got)
 
 
 def test_old_app_bundle_does_not_include_v2():
@@ -204,10 +245,16 @@ def test_old_app_bundle_does_not_include_v2():
         inputs = list(json.load(f)["inputs"])
     bad = [i for i in inputs if i.startswith(("src/v2/", "src/copy/", "src/preview/"))]
     assert not bad, bad
-    # 지금 앱이 2.0 을 가리키는 곳은 머리말의 '뱁새 2.0 보기' 링크 하나뿐이에요 (Jack, 2026-11-02). 2.0 코드는 가져오지 않아요(위).
+    # 지금 앱이 2.0 을 가리키는 곳은 두 가지예요. 2.0 코드는 가져오지 않아요(위).
+    #   머리말의 '뱁새 2.0 보기' 링크 (Jack, 2026-11-02) — ./app.html
+    #   푸터의 '소개' 링크 (v19.0, Jack 2026-11-03) — ./app.html#about, src/links.js 의 상수 하나 (번들에 한 번)
     old = read("baepsae.html")
-    assert old.count("app.html") == 1 and 'href:"./app.html","data-v2-link":"1"' in old, old.count("app.html")
+    assert old.count("app.html") == 2, old.count("app.html")
+    assert old.count('href:"./app.html","data-v2-link":"1"') == 1 and old.count('"./app.html#about"') == 1, "app.html 링크 모양이 달라요"
     assert "뱁새 2.0 보기" in read("src/shell.jsx") and "뱁새 2.0 보기" in old
+    assert read("src/links.js").count('"./app.html#about"') == 1
+    srcs = [f for f in os.listdir(os.path.join(ROOT, "src")) if f.endswith((".js", ".jsx"))]
+    assert [f for f in srcs if "app.html#about" in read(os.path.join("src", f))] == ["links.js"], "소개 주소는 src/links.js 에만"
 
 
 def test_build_script_builds_both_pages():
