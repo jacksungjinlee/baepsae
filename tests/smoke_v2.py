@@ -1290,6 +1290,9 @@ def scene_today(R, files, width):
         src.locator("button").first.click()
         st = src.inner_text()
         assert "한국거래소 10월 30일 종가" in st and re.search(r"반도체 \d+개 종목", st) and "2025년 사업보고서 기준" in st, st
+        page.get_by_role("button", name=C["why"]["explainTitle"]).click()        # v18.4: 첫 칩이 비어 있었어요 (daily.ok 없음)
+        chips = page.locator('[data-ui-v2="why-explain"] [data-ui="status-chip"]').all_inner_texts()
+        assert chips == [C["daily"]["ok"], C["daily"]["watch"], C["daily"]["broken"]] == ["괜찮아요", "지켜봐요", "규칙 깨짐"], chips
         no_hscroll(page, width)
         R.collect(page)
         page.get_by_role("button", name=C["build"]["backToday"]).click()
