@@ -321,8 +321,10 @@ def test_all_components_exported_and_tagged():
 
 
 def test_amount_shrinks_only_the_unit_right_after_the_number():
-    """v19.0b 큰 숫자: 숫자 바로 뒤의 단위(만원 · 원 · %)만 작게. 숫자 앞뒤 낱말("약" · "남는 돈")은 그대로 (리뷰 2026-11-04)."""
-    cases = ["약 −84만원", "남는 돈 3만원", "1,418,000원", "+5.3%", "$12.34", "약 46만원", "12만원 남았어요", "5종목 중 3종목"]
+    """v19.0b 큰 숫자: 숫자 바로 뒤의 정해진 단위(원 · 만원 · 만 원 · 억 · 조 · 만 · % · %p)만 작게. 숫자 앞뒤 낱말("약" · "남는 돈" ·
+    "2022년처럼")과 목록에 없는 한글(종목 · 년)은 그대로 (리뷰 2026-11-03)."""
+    cases = ["약 −84만원", "남는 돈 3만원", "1,418,000원", "+5.3%", "$12.34", "약 46만원", "12만원 남았어요", "5종목 중 3종목",
+             "2022년처럼", "+8.0%p", "3억 2,000만원", "1,500만 원", "2조원", "100원이에요"]
     got = node_value("src/ui/components.jsx", "Object.fromEntries(" + json.dumps(cases, ensure_ascii=False) + ".map((t) => [t, M.amountParts(t)]))")
     want = {
         "약 −84만원": [["약 −84", False], ["만원", True]],
@@ -332,7 +334,13 @@ def test_amount_shrinks_only_the_unit_right_after_the_number():
         "$12.34": [["$12.34", False]],
         "약 46만원": [["약 46", False], ["만원", True]],
         "12만원 남았어요": [["12", False], ["만원", True], [" 남았어요", False]],
-        "5종목 중 3종목": [["5", False], ["종목", True], [" 중 3", False], ["종목", True]],
+        "5종목 중 3종목": [["5종목 중 3종목", False]],
+        "2022년처럼": [["2022년처럼", False]],
+        "+8.0%p": [["+8.0", False], ["%p", True]],
+        "3억 2,000만원": [["3", False], ["억", True], [" 2,000", False], ["만원", True]],
+        "1,500만 원": [["1,500", False], ["만 원", True]],
+        "2조원": [["2", False], ["조원", True]],
+        "100원이에요": [["100원이에요", False]],
     }
     assert got == want, got
     for t, parts in got.items():

@@ -26,12 +26,14 @@ export const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (
 const priceColor = (v, onPage) => (v > 0 ? (onPage ? COLOR.upOnPage : COLOR.up) : v < 0 ? COLOR.down : COLOR.text2);
 const toneColor = (tone, onPage) => (tone === "up" ? (onPage ? COLOR.upOnPage : COLOR.up) : tone === "down" ? COLOR.down : COLOR.ink);
 
-// 큰 숫자의 단위: 숫자 바로 뒤의 단위(만원 · 원 · 주 · % …)만 숫자보다 작고(0.6em) 가볍게(700) 그려요.
-// 숫자 앞뒤의 낱말("약" · "남는 돈")은 그대로예요. 글자 내용은 바뀌지 않아서 읽는 순서·복사는 같아요.
-// 단위 = 숫자 바로 뒤에 붙은 한글 음절 덩어리 또는 % (코드에 한국어를 두지 않으려고 유니코드 범위로 써요).
+// 큰 숫자의 단위: 숫자 바로 뒤의 정해진 단위만 숫자보다 작고(0.6em) 가볍게(700) 그려요.
+// 단위 목록: 원 · 만원 · 만 원 · 억 · 억원 · 조 · 조원 · 만 · % · %p ("3억 2,000만원" 은 억과 만원 두 조각).
+// 숫자 앞뒤의 낱말("약" · "남는 돈" · "2022년처럼")은 그대로예요. 글자 내용은 바뀌지 않아서 읽는 순서·복사는 같아요.
+// 단위 뒤에 한글이 바로 이어지면(낱말의 일부) 줄이지 않아요. 코드에 한국어를 두지 않으려고 유니코드로 써요
+// (\uC6D0 원 · \uB9CC 만 · \uC5B5 억 · \uC870 조).
 export function amountParts(text) {
   const s = String(text);
-  const unit = /[\uAC00-\uD7A3]+|%/g;
+  const unit = /(?:[\uB9CC\uC5B5\uC870]\s?\uC6D0|\uC6D0|\uB9CC|\uC5B5|\uC870)(?![\uAC00-\uD7A3])|%p|%/g;
   const out = [];
   let last = 0;
   let m;

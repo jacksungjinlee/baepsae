@@ -17,8 +17,10 @@ from copytrace import ROOT, read
 APRICOT = ("#C97757", "#A9542F", "#FBF1EA")
 # 살구색을 써도 되는 곳 (데이터 표시): 파일 → 맨 위 선언 이름. tokens.js 는 색을 정의하는 곳이라 통째로 괜찮아요.
 APRICOT_OK = {"src/ui/components.jsx": {"DotStrip", "WeightBar"}, "src/v2/tracking.jsx": {"BandBar"}}
-# 살구색을 가리키는 것이면 무엇이든: 이름(COLOR.apricot · COLOR["apricot"] · "apricotText" 같은 문자열 키 · heroAlert), 색 값(#C97757 …, rgb 꼴)
-APRICOT_REF = re.compile(r"apricot\w*|heroAlert|#?(?:C97757|A9542F|FBF1EA)\b|rgba?\(\s*(?:201\s*,\s*119\s*,\s*87|169\s*,\s*84\s*,\s*47|251\s*,\s*241\s*,\s*234)", re.I)
+# 살구색을 가리키는 것이면 무엇이든: 이름(COLOR.apricot · COLOR["apricot"] · "apricotText" 같은 문자열 키 · heroAlert),
+# 색 값(#C97757 · 투명도까지 붙은 #C97757CC, rgb(201, 119, 87) · rgb(201 119 87) · rgba(201, 119, 87, 0.8))
+APRICOT_REF = re.compile(r"apricot\w*|heroAlert|#?(?:C97757|A9542F|FBF1EA)(?:[0-9a-f]{2})?\b"
+                         r"|rgba?\(\s*(?:201[\s,]+119[\s,]+87|169[\s,]+84[\s,]+47|251[\s,]+241[\s,]+234)", re.I)
 # 맨 위(들여쓰기 없는) 선언: export · default · async 를 앞에 둘 수 있어요
 TOP_DECL = re.compile(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?\s+(\w+)|class\s+(\w+)|(?:const|let|var)\s+(\w+))")
 TOP_LEVEL = "(맨 위 문장)"
@@ -102,6 +104,9 @@ def test_apricot_check_catches_a_stray_use():
         ("src/ui/components.jsx", comp.replace("export function RuleRow", "const KEY = 'apricotText';\nexport function RuleRow", 1), ("KEY", "apricotText")),
         ("src/ui/components.jsx", comp.replace("export function RuleRow", "COLOR.apricot;\nexport function RuleRow", 1), (TOP_LEVEL, "apricot")),
         ("src/v2/today.jsx", today.replace("export function Today", "const PILL_BG = \"#c97757\";\nexport function Today", 1), ("PILL_BG", "#c97757")),
+        ("src/v2/today.jsx", today.replace("export function Today", "const SEE = \"#C97757CC\";\nexport function Today", 1), ("SEE", "#C97757CC")),
+        ("src/v2/today.jsx", today.replace("export function Today", "const SPACED = \"rgb(201 119 87)\";\nexport function Today", 1), ("SPACED", "rgb(201 119 87")),
+        ("src/ui/components.jsx", comp.replace(tab, 'background: on ? "rgba(169, 84, 47, 0.8)"', 1), ("BottomTabBar", "rgba(169, 84, 47")),
     ]
     for f, mutated, (who, what) in cases:
         bad, _ = apricot_violations({**real, f: mutated})

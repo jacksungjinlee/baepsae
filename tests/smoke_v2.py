@@ -709,11 +709,17 @@ def scene_refused(R, files, width, how):
         assert page.locator('[data-ui-v2="date-line"]').count() == 0
         mascot_img(page.locator('[data-ui-v2="load-fail"]').first, "baepi-20-error.webp", 120)    # 불러오기 실패: 뽑힌 전선을 든 뱁이
         assert page.locator("img[src^='baepi-2.png']").count() == 0
+        tab(page, C["app"]["tabs"]["deck"])                             # 내 덱, 저장한 덱 없음: 숫자 없는 화면이라 뱁이 그림 그대로 (v19.0b)
+        see(page, LOAD_FAIL)
+        fail = page.locator('[data-ui-v2="load-fail"]').first
+        assert fail.get_attribute("data-picture") == "1" and page.locator('[data-ui-v2="deck-empty"]').count() == 0
+        mascot_img(fail, "baepi-20-error.webp", 120)
+        R.collect(page)                                                   # 화면 단위 뱁이 규칙(visual_ok)도 통과
         tab(page, C["app"]["tabs"]["build"])
         see(page, LOAD_FAIL)
         assert page.locator("[data-deck]").count() == 0, "불러오지 못했는데 덱 짜기가 열려요"
         R.collect(page)
-    R.check(page, f"{how} {width}", "불러오기 실패 문구 (오늘 · 덱 짜기), 예시 데이터 없음", run)
+    R.check(page, f"{how} {width}", "불러오기 실패 문구 (오늘 · 내 덱(저장한 덱 없음, 뱁이 그대로) · 덱 짜기), 예시 데이터 없음", run)
     ctx.close()
     srv.shutdown()
 

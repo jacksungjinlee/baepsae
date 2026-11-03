@@ -10,6 +10,8 @@
 - 고른 것(고른 탭 · 알약 · 줄 · 칩 · 라디오), 아이콘, 상태 아이콘, 판정 띠와 알약의 계산된 색에 살구색이 없어요
 뱁이가 나온 화면은 PLACEMENTS 에 모여요 (그림 · 화면 · 예외 밖 숫자 · 쓴 예외) — 스모크 결과 끝에 표로 찍어요.
 """
+import re
+
 
 # 뱁이가 있는 화면에서도 숫자가 있어도 되는 곳 — 한 곳에 모아 둬요. Jack 이 빼라고 하면 그 줄만 지우면 돼요.
 MASCOT_DIGITS_EXEMPT = [
@@ -23,7 +25,8 @@ PLACEMENTS = set()
 
 
 # 살구색(src/ui/tokens.js 의 apricot · apricotText · heroAlert): 데이터 표시에만, 고른 것 · 아이콘 · 알림 띠 · 초점 테두리에는 없어요
-APRICOT_RGB = ["rgb(201, 119, 87)", "rgb(169, 84, 47)", "rgb(251, 241, 234)"]
+# 계산된 색에서 살구색 세 값을 찾아요: rgb(…) 이든 투명도가 붙은 rgba(…, 0.8) 이든
+APRICOT_RGB = re.compile(r"\(\s*(?:201,\s*119,\s*87|169,\s*84,\s*47|251,\s*241,\s*234)\s*[,)]")
 NAVY_RGB = "rgb(28, 43, 69)"
 SELECT_RGB = "rgb(242, 240, 235)"
 # 아이콘 색 표 (docs/tasks/v19.0-layout-c.md Part B): (바탕 층, 선 층) — on · off · ok · 남색 위
@@ -96,7 +99,7 @@ def visual_problems(v):
     icons = [i for i in v["icons"] if not i[1] or (i[2], i[3]) not in ICON_PAIRS]
     if icons:
         bad.append(("Phosphor 두 층 · 표의 색이 아닌 아이콘", icons[:4]))
-    apricot = [x for x in v["styles"] if any(a in x[1] for a in APRICOT_RGB)]
+    apricot = [x for x in v["styles"] if APRICOT_RGB.search(x[1])]
     if apricot:
         bad.append(("살구색", apricot[:4]))
     return bad
