@@ -5,56 +5,45 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-04 01:00 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-04 01:25 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes); small review points go into the PR as follow-ups, not extra fix rounds. Decide
 engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions, in one
 short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
 
-**Open PRs and branches, in merge order** (every branch is pushed):
-1. **PR #21 `claude/v17.5.4-krx-close`** — KRX file final only after that day's close + 30 min (CSAT 11/19 → 17:00),
-   `data/krx_special_sessions.csv`; CSAT row missing → warning from 1 Sep, publish blocked from 1 Nov; every gate
-   WARN/FAIL row is also a GitHub annotation. Jack said **merge after the morning data run** (not between 03:40 and
-   ~08:30 KST). Needs one green `dry_run=true dart=cache` on its final head (3e732ed or later) first. After merge:
-   update the 09:13 scheduled check (`trig_01BGc9nmRuJcg6dsL1wNZX5E`, read-only) to read the publishing run's
-   annotations (`GET /repos/jacksungjinlee/baepsae/check-runs/<update job id>/annotations`, public, no login) and
-   report every gate warning to Jack, also after 11/11.
-2. **`claude/v18.4.1-json-import`** (no PR yet) — old app's 불러오기 reads its own JSON 저장 file; unlisted holdings
-   kept (skipped in totals, card, count); custom stocks and unlisted holdings travel in the backup; real budget;
-   iPhone blob revoke after 60 s (both apps); failed data → load-failure alert. Reviews done; open PR, merge.
-   PR draft: the session scratchpad is gone in a new session — write the body from the commits.
-   **Next PR right after (Jack 2026-11-04):** settings left on 자동 (fx etc.) come from today's data, typed ones stay —
-   the old app has no typed-vs-auto record (`autoKeys` = keys today's data supplies), and `openSlot` already restores
-   a slot's old fx while the chip says 자동. Add a "typed keys" record, used by openSlot and import.
-3. **`claude/v18.5-old-app`** (no PR yet) — missing-holdings notice with amounts ("…1개(STRC 200만원)는…", EN
-   `fmtMw` "₩2,000,000"), grey budget-bar part + legend "데이터에 없는 종목" / "Not in today's data",
-   "포트폴리오에서 빼기" / "Remove from portfolio", 목표 베타 capacity-only, hidden beta→return lines incl. the
-   타임머신 final value (drawdown kept). All approved by Jack. Merge main (after the JSON fix) — conflicts in
-   `src/detail.jsx`, `tests/smoke_app.py`, `tests/test_app_data.py`, `baepsae.html` (rebuild) — then review, PR, merge.
-   Open product point for the PR message: the 타임머신 chart line still runs to the end of the period (no number).
-4. **`claude/v19.0b-visual`** (no PR yet) — 2.0 visual pass (Phosphor icons, state icons, grey/navy selection,
-   apricot only on data markers, unit-only shrink, 뱁이 per CLAUDE.md screen rule incl. Jack's number definition,
-   approved alt texts, baepi-5 back on 기록했어요). Three reviews done. Open PR, merge.
+**Merged 2026-11-04:** #22 docs, #24 v18.4.1 JSON import, #25 v18.5 missing holdings (old app), #23 v19.0b visual
+pass. All checked on the live site.
 
-**Then v19.0c (phone first):** four tabs 홈 · 포트폴리오 · 종목 · 시장 with hash routes, ☰ menu, 덱 → 포트폴리오
-everywhere users see it, 시장 summary tiles (each with its own date) + links to the old app, 거래대금 상위 종목 (KR and
-US separate, content date, chart-bar icon), US tap line "기업분석은 한국 상장 기업만 볼 수 있어요.", the 2.0
-missing-stock redesign (row keeps its line + chip + "포트폴리오에서 빼기"; totals without it plus the old-app line;
-weight bars, bands and 추가로 넣을 돈 pause with "빠진 종목이 다시 들어오거나 직접 뺄 때까지 비중은 점검하지
-않아요."), the iPhone home-screen hint (iPhone Safari only, not in the home-screen app; first visit before a portfolio
-exists; on 포트폴리오 for people with one, pointing to 내보내기 → 가져오기; reuse the old app's wording). Plan:
-`docs/tasks/v19.0-layout-c.md` and the proposed 「새 문구」 table in its plan (new strings go to Jack).
-**v19.0d right after:** PC layout (≥ 1024 px left menu 240 px, search on top, "/" focuses search, two columns).
-**Then v17.6** (`docs/tasks/v17.6-never-again.md`).
+**Open:**
+1. **PR #21 `claude/v17.5.4-krx-close`** (CSAT close time + gate annotations) — fully tested (final dry run
+   41666939971 on 3e732ed green; annotation proof run 41662266107). Jack: **merge after the morning data run** (not
+   between 03:40 and ~08:30 KST). After merge: update the read-only 09:13 scheduled check
+   (`trig_01BGc9nmRuJcg6dsL1wNZX5E`) to read the publishing run's annotations
+   (`GET /repos/jacksungjinlee/baepsae/check-runs/<update job id>/annotations`, public, no login) and report every
+   gate warning to Jack, also after 11/11.
+2. **v19.0c `claude/v19.0c-tabs`** (in progress, phone only): four tabs 홈 · 포트폴리오 · 종목 · 시장, ☰ menu,
+   덱 → 포트폴리오, 시장 tiles (each with its own date) + old-app deep links, 거래대금 상위 종목 (KR/US separate),
+   US tap line, the 2.0 missing-stock redesign, the iPhone home-screen hint. Plan and proposed 「새 문구」:
+   `docs/tasks/v19.0-layout-c.md`. New strings are stored as "제안 (Jack 승인 대기)" in `src/copy/v2.js`; Jack
+   approves them and the test changes in one message before merge.
+3. **Next PR for the old app (Jack 2026-11-04):** settings left on 자동 (fx and market inputs) must come from today's
+   data, typed ones stay — on import *and* when reopening a saved portfolio. The old app has no typed-vs-auto record
+   (`autoKeys` = keys today's data supplies; `openSlot` restores a slot's old fx while the chip says 자동). Add a
+   "typed keys" record.
+4. **v19.0d** right after v19.0c: PC layout (≥ 1024 px left menu 240 px, search on top, "/" focuses search, two
+   columns). **Then v17.6.**
+
+**Open product point for Jack:** the 타임머신 chart line (old app) still runs to the end of the period; no number is
+shown. Ask whether the drawing should stop at the low point.
 
 **Scheduled tasks:** 09:13 KST Tue–Sat read-only data check (`trig_01BGc9nmRuJcg6dsL1wNZX5E`; until 11/11 it also
-reports the publish time — Jack wants the publish time each morning for a week; if mornings miss 08:00, propose the
-next step). 2026-11-13 10:17 KST: check KRX's CSAT-day hours notice and fix the 11-19 row before 11/18
-(`trig_01JyjjakbFVQ4GPSanbsqESX`).
+reports the publish time — if mornings miss 08:00, propose the next step). 2026-11-13 10:17 KST: check KRX's CSAT-day
+hours and fix the 11-19 row before 11/18 (`trig_01JyjjakbFVQ4GPSanbsqESX`).
 
-**Later, not started:** the 08:30 "latest close isn't in yet" line (holiday-aware; propose wording); old-app
-follow-ups: 기업분석 "X% 보유" counts missing holdings, page ② is 445 px wide on a 390 px phone.
+**Later:** the 08:30 "latest close isn't in yet" line (holiday-aware; propose wording); old-app follow-ups:
+기업분석 "X% 보유" counts missing holdings; page ② is 445 px wide on a 390 px phone; CSV order sheet doesn't quote
+names with commas; stock edits don't travel in the backup.
 
 ## 1. Product
 
