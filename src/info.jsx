@@ -3,14 +3,13 @@
 import React, { useState } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Seal } from "./icons.jsx";
-import { Bird } from "./detail.jsx";
+import { Bird, SiteFooterLine } from "./detail.jsx";
 
 // 탤리(tally.so)에서 폼을 만든 뒤 이 주소를 교체하세요. 비어 있으면 이메일 안내가 대신 나와요.
 const TALLY_URL = "https://tally.so/embed/GxEGKL?alignLeft=1&hideTitle=0&transparentBackground=1";
 // 지원 이메일. 비워두면 "준비 중"으로 표시돼요.
 const SUPPORT_EMAIL = "SUPPORT_EMAIL_HERE";
 
-const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
 
 const Card = ({ children, style = {} }) => (
   <div style={{ background: "#fff", border: HAIR, borderRadius: RAD.card, padding: 18, ...style }}>{children}</div>
@@ -69,10 +68,10 @@ export default function InfoApp({ lang }) {
         <Card style={{ textAlign: "center", padding: "28px 18px" }}>
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 14 }}><Bird mood="care" size={84} /><Seal size={44} /></div>
           <div style={{ fontSize: 21, fontWeight: 900, marginTop: 12 }}>뱁새</div>
-          <div style={{ fontFamily: SERIF, fontSize: 13.5, color: C.apricotDeep, marginTop: 5 }}>황새 말고, 내 걸음으로</div>
+          <div style={{ fontFamily: SERIF, fontSize: 13.5, color: C.apricotDeep, marginTop: 5 }}>철새처럼 옮겨 다니지 않는 투자</div>
           {en && (
             <Sub style={{ marginTop: 14, textAlign: "left" }}>
-              <b style={{ color: C.ink }}>Baepsae</b> ("crow-tit", from a Korean proverb about keeping your own pace) is an <b style={{ color: C.ink }}>educational research studio for Korean retail investors</b> — risk-fit portfolio construction with a block-correlation engine, company analysis grounded in industry distributions, insider-filing and pension-fund tracking, and rates·bond education. It deliberately does <b style={{ color: C.ink }}>not</b> recommend stocks, publish target prices, or promise returns: every number is framed as "the assumption embedded in today's price," not a forecast. Built solo — data pipeline (DART·KRX·ECOS·FRED), analytics engine and design — by Jack (Sung Jin) Lee, INSEAD MBA 26J. The interface below is in Korean; the Portfolio tab is fully bilingual.
+              <b style={{ color: C.ink }}>Baepsae</b> ("crow-tit", from a Korean proverb about keeping your own pace) is an <b style={{ color: C.ink }}>investing tool for Korean retail investors</b> — risk-fit portfolio construction with a block-correlation engine, company analysis grounded in industry distributions, insider-filing and pension-fund tracking, and rates·bond education. It deliberately does <b style={{ color: C.ink }}>not</b> recommend stocks, publish target prices, or promise returns: every number is framed as "the assumption embedded in today's price," not a forecast. The interface below is in Korean; the Portfolio tab is fully bilingual.
             </Sub>
           )}
           <Sub style={{ marginTop: 14, textAlign: "left" }}>
@@ -155,7 +154,7 @@ export default function InfoApp({ lang }) {
         </Card>
 
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
-          만든 사람 — {CREDIT}
+          <SiteFooterLine lang={lang} />
         </div>
       </div>
     </div>
