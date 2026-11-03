@@ -2361,8 +2361,23 @@ function ProbCard({ lang, t, metrics, profile }) {
   );
 }
 
+// 지난 3년 실제 값 (최대낙폭 · 오른 달 비율, 가중평균): 예측이 아니라 B안에서도 보여요. 투자 비중의 30% 넘게 값이 있을 때만.
+function tailPast(metrics) {
+  if (metrics.empty) return null;
+  let wm = 0, wh = 0, sm = 0, sh2 = 0;
+  metrics.rows.forEach((r) => {
+    if (typeof r.stock.mdd === "number") { sm += r.wInv * r.stock.mdd; wm += r.wInv; }
+    if (typeof r.stock.hit === "number") { sh2 += r.wInv * r.stock.hit; wh += r.wInv; }
+  });
+  return wm < 0.3 && wh < 0.3 ? null : { wm, wh, sm, sh2 };
+}
+
+// B안 (v18.4): VaR · CVaR (기대수익 − kσ)와 2008년급 줄, 그 숫자를 설명하는 주석·판정은 SHOW_ER 를 켤 때만.
+// 끈 동안은 지난 3년 실제 값만 남고, 그것도 없으면 카드를 그리지 않아요 (섹션째 숨김: tailPast 참고).
 function TailRiskCard({ lang, t, metrics }) {
   if (metrics.empty) return null;
+  const past = tailPast(metrics);
+  if (!SHOW_ER && !past) return null;
   const mu = metrics.expRet / 100, sd = metrics.volP / 100, total = metrics.total;
   const varRet = mu - 1.645 * sd;
   const cvarRet = mu - 2.063 * sd;
@@ -2370,45 +2385,41 @@ function TailRiskCard({ lang, t, metrics }) {
   return (
     <Card style={{ padding: 16 }}>
       <H3>{t("varTitle")}</H3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-        {[[t("varBad"), varRet], [t("varWorse"), cvarRet]].map(([l, r]) => (
-          <div key={l} style={{ background: C.bg, borderRadius: 14, padding: 12 }}>
-            <Sub>{l}</Sub>
-            <div style={{ fontSize: 19, fontWeight: 900, color: r < 0 ? C.coral : C.teal, marginTop: 3 }}>{r < 0 ? "−" : "+"}{fmtMw(Math.abs(total * r), lang)}</div>
-            <div style={{ fontSize: 10.5, color: C.faint }}>{pct(r * 100)}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", background: C.coralSoft, borderRadius: 12, padding: "9px 12px", marginTop: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#8E2A28" }}>{lang === "ko" ? "2008년급 (시장 −40%)" : "2008-scale (market −40%)"}</span>
-        <span style={{ fontSize: 12.5, fontWeight: 900, color: C.coral }}>≈ −{fmtMw(total * beta * 0.4, lang)}</span>
-      </div>
-      {(() => {
-        let wm = 0, wh = 0, sm = 0, sh2 = 0;
-        metrics.rows.forEach((r) => {
-          if (typeof r.stock.mdd === "number") { sm += r.wInv * r.stock.mdd; wm += r.wInv; }
-          if (typeof r.stock.hit === "number") { sh2 += r.wInv * r.stock.hit; wh += r.wInv; }
-        });
-        if (wm < 0.3 && wh < 0.3) return null;
-        return (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-            {wm >= 0.3 && (
-              <div style={{ background: C.bg, borderRadius: 12, padding: 11 }}>
-                <div style={{ fontSize: 10.5, color: C.faint }}>{t("mddL")}</div>
-                <div style={{ fontSize: 17, fontWeight: 900, color: C.coral, marginTop: 2 }}>{pct(sm / wm, 0)}</div>
+      {SHOW_ER && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+            {[[t("varBad"), varRet], [t("varWorse"), cvarRet]].map(([l, r]) => (
+              <div key={l} style={{ background: C.bg, borderRadius: 14, padding: 12 }}>
+                <Sub>{l}</Sub>
+                <div style={{ fontSize: 19, fontWeight: 900, color: r < 0 ? C.coral : C.teal, marginTop: 3 }}>{r < 0 ? "−" : "+"}{fmtMw(Math.abs(total * r), lang)}</div>
+                <div style={{ fontSize: 10.5, color: C.faint }}>{pct(r * 100)}</div>
               </div>
-            )}
-            {wh >= 0.3 && (
-              <div style={{ background: C.bg, borderRadius: 12, padding: 11 }}>
-                <div style={{ fontSize: 10.5, color: C.faint }}>{t("hitL")}</div>
-                <div style={{ fontSize: 17, fontWeight: 900, color: C.ink, marginTop: 2 }}>{pct(sh2 / wh, 0)}</div>
-              </div>
-            )}
+            ))}
           </div>
-        );
-      })()}
-      <Sub style={{ marginTop: 8, fontSize: 11 }}>{t("varNote")}</Sub>
-      <Verdict>{lang === "ko" ? "이 금액들을 보고도 잠이 온다면, 이 구성으로 오래 갈 수 있어요. 그게 수익률보다 중요해요." : "If you can sleep seeing these numbers, you can stay the course — which matters more than returns."}</Verdict>
+          <div style={{ display: "flex", justifyContent: "space-between", background: C.coralSoft, borderRadius: 12, padding: "9px 12px", marginTop: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#8E2A28" }}>{lang === "ko" ? "2008년급 (시장 −40%)" : "2008-scale (market −40%)"}</span>
+            <span style={{ fontSize: 12.5, fontWeight: 900, color: C.coral }}>≈ −{fmtMw(total * beta * 0.4, lang)}</span>
+          </div>
+        </>
+      )}
+      {past && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: SHOW_ER ? 8 : 10 }}>
+          {past.wm >= 0.3 && (
+            <div style={{ background: C.bg, borderRadius: 12, padding: 11 }}>
+              <div style={{ fontSize: 10.5, color: C.faint }}>{t("mddL")}</div>
+              <div style={{ fontSize: 17, fontWeight: 900, color: C.coral, marginTop: 2 }}>{pct(past.sm / past.wm, 0)}</div>
+            </div>
+          )}
+          {past.wh >= 0.3 && (
+            <div style={{ background: C.bg, borderRadius: 12, padding: 11 }}>
+              <div style={{ fontSize: 10.5, color: C.faint }}>{t("hitL")}</div>
+              <div style={{ fontSize: 17, fontWeight: 900, color: C.ink, marginTop: 2 }}>{pct(past.sh2 / past.wh, 0)}</div>
+            </div>
+          )}
+        </div>
+      )}
+      {SHOW_ER && <Sub style={{ marginTop: 8, fontSize: 11 }}>{t("varNote")}</Sub>}
+      {SHOW_ER && <Verdict>{lang === "ko" ? "이 금액들을 보고도 잠이 온다면, 이 구성으로 오래 갈 수 있어요. 그게 수익률보다 중요해요." : "If you can sleep seeing these numbers, you can stay the course — which matters more than returns."}</Verdict>}
     </Card>
   );
 }
@@ -3127,9 +3138,11 @@ function taxEstimate(metrics, profile, settings, tax) {
     const d = r.won * ((r.stock.dy || 0) / 100);
     if (r.c === "us") {
       divUs += d;
-      gainUsBase += r.won * Math.max((settings.rf + (r.nr ? usBeta : r.b) * settings.usMrp) / 100 - (r.stock.dy || 0) / 100, 0);   // 자료 없는 미국 종목은 자료 있는 미국 종목의 평균 베타
+      // 미국 매매차익 = (무위험 + 베타 × 미국 시장 프리미엄 − 배당) 추정, 금속 ETF 매매차익 = 금속 프리미엄 추정: 둘 다 기대수익으로 만든
+      // 예측이라 SHOW_ER 를 켤 때만 세금에 넣어요 (B안, v18.4). 끈 동안 예상 세금은 지금 배당으로 계산한 배당 세금뿐이에요.
+      if (SHOW_ER) gainUsBase += r.won * Math.max((settings.rf + (r.nr ? usBeta : r.b) * settings.usMrp) / 100 - (r.stock.dy || 0) / 100, 0);   // 자료 없는 미국 종목은 자료 있는 미국 종목의 평균 베타
     } else if (r.c === "metal") {
-      if (r.stock.t !== "04020000") gainMetalEtf += r.won * (settings.mtMrp / 100);
+      if (SHOW_ER && r.stock.t !== "04020000") gainMetalEtf += r.won * (settings.mtMrp / 100);
     } else divKr += d;
   });
   const W = 10000;
@@ -3194,7 +3207,7 @@ function TaxCard({ lang, t, metrics, profile, settings, tax }) {
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 5 }}>
         {[[t("taxDivKr"), e.divKr * (tax.divKr / 100), tax.divKr + "%"],
           [t("taxDivUs"), e.divUs * (tax.divUs / 100), tax.divUs + "%"],
-          [t("taxGainUs"), Math.max(e.gainUsBase - tax.gainUsFree * 10000, 0) * (tax.gainUs / 100), tax.gainUs + "%"]].map(([l, v, r]) => (
+          ...(SHOW_ER ? [[t("taxGainUs"), Math.max(e.gainUsBase - tax.gainUsFree * 10000, 0) * (tax.gainUs / 100), tax.gainUs + "%"]] : [])].map(([l, v, r]) => (
           <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 2px", borderTop: "1px solid " + C.line }}>
             <span style={{ color: C.sub, fontWeight: 700 }}>{l} <span style={{ color: C.faint, fontWeight: 500 }}>{r}</span></span>
             <span style={{ color: C.ink, fontWeight: 800 }}>{fmtMw(v, lang)}</span>
@@ -3885,14 +3898,16 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
           <ReturnAnatomyCard lang={lang} t={t} metrics={metrics} settings={settings} />
         </Section>
       )}
-      <Section title={t("sxC")} sub={SHOW_ER ? t("sxCs") : null /* B안: 확률 카드를 꺼 둔 동안은 부제 없이 */} open={!!open.c} onToggle={() => tg("c")}>
-        {SHOW_ER ? (
-          <div className="grid2">
-            <TailRiskCard lang={lang} t={t} metrics={metrics} />
-            <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />
-          </div>
-        ) : <TailRiskCard lang={lang} t={t} metrics={metrics} />}
-      </Section>
+      {(SHOW_ER || tailPast(metrics)) && (   /* B안: 지난 3년 실제 값도 없으면 빈 섹션 대신 섹션째 숨겨요 */
+        <Section title={t("sxC")} sub={SHOW_ER ? t("sxCs") : null /* B안: 확률 카드를 꺼 둔 동안은 부제 없이 */} open={!!open.c} onToggle={() => tg("c")}>
+          {SHOW_ER ? (
+            <div className="grid2">
+              <TailRiskCard lang={lang} t={t} metrics={metrics} />
+              <ProbCard lang={lang} t={t} metrics={metrics} profile={profile} />
+            </div>
+          ) : <TailRiskCard lang={lang} t={t} metrics={metrics} />}
+        </Section>
+      )}
       <Section title={t("sxD")} sub={t("sxDs")} open={!!open.d} onToggle={() => tg("d")}>
         <div className="grid2">
           <AlphaCard lang={lang} t={t} metrics={metrics} profile={profile} settings={settings} stocksById={stocksById} setExplain={setExplain} />
