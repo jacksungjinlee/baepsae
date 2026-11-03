@@ -5,7 +5,7 @@
 // - Korean first. The switch is remembered on this device (localStorage "baepsae_v2_about_lang"); when the browser
 //   blocks storage the page still works and the choice lasts until the page closes.
 // - The figures row and the sentence with "{n}" come from the loaded data (aboutstats.js aboutView): never typed in.
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Segmented } from "../ui/components.jsx";
@@ -55,6 +55,11 @@ function Figure({ value, name, testId }) {
 // load: the app's load state (figures); onBack: back to the screen before (src/v2/app.jsx clears the hash).
 export function About({ load, onBack }) {
   const [lang, setLang] = useState(readLang);
+  const head = useRef(null);
+  // Opening 소개 moves focus to its heading, so a screen reader starts here (the screen behind is hidden).
+  useEffect(() => {
+    try { if (head.current) head.current.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+  }, []);
   const a = C.about[lang];
   const view = aboutView(load);
   const pick = (v) => {
@@ -76,7 +81,7 @@ export function About({ load, onBack }) {
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: SPACE(3), marginTop: SPACE(1) }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <h2 style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.2, letterSpacing: "-0.03em" })}>{a.hero.name}</h2>
+              <h2 ref={head} tabIndex={-1} data-ui-v2="about-heading" style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.2, letterSpacing: "-0.03em", outline: "none" })}>{a.hero.name}</h2>
               <p data-ui-v2="about-descriptor" style={tx(SIZE.h3, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2), lineHeight: 1.4 })}>{a.hero.descriptor}</p>
               <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(2) })}>{a.hero.catch}</p>
             </div>

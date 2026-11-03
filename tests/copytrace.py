@@ -207,15 +207,15 @@ class Matcher:
 
 def copy_strings():
     """src/copy/v2.js 의 C 를 [(경로, 값)] 으로 (값이 null 이면 None)."""
-    tmp = tempfile.mkdtemp()
-    out = os.path.join(tmp, "copy.cjs")
-    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
-    r = subprocess.run([exe, "src/copy/v2.js", "--bundle", "--format=cjs", "--platform=node", "--charset=utf8", f"--outfile={out}",
-                        "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
-    r = subprocess.run(["node", "-e", f"process.stdout.write(JSON.stringify(require({json.dumps(out)}).C))"],
-                       capture_output=True, text=True, encoding="utf-8")
-    assert r.returncode == 0, r.stderr
+    with tempfile.TemporaryDirectory() as tmp:                       # 묶음 파일은 읽고 나면 지워요
+        out = os.path.join(tmp, "copy.cjs")
+        exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+        r = subprocess.run([exe, "src/copy/v2.js", "--bundle", "--format=cjs", "--platform=node", "--charset=utf8", f"--outfile={out}",
+                            "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        r = subprocess.run(["node", "-e", f"process.stdout.write(JSON.stringify(require({json.dumps(out)}).C))"],
+                           capture_output=True, text=True, encoding="utf-8")
+        assert r.returncode == 0, r.stderr
     c = json.loads(r.stdout)
     flat = []
 

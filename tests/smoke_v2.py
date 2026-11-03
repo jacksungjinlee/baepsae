@@ -1422,16 +1422,19 @@ def scene_about(R, files, width):
         wait_ready(page)
         see(page, C["build"]["s0"]["title"])                              # 첫 화면 (저장한 덱 없음: 덱 짜기)
         link = footer_ok(page)
+        link.focus()
         link.click()
         about_page(page)
         assert page.url.endswith("#about"), page.url
+        assert page.evaluate("document.activeElement && document.activeElement.dataset.uiV2") == "about-heading", "소개 제목으로 초점이 가지 않았어요"
         assert page.locator('[data-ui-v2="about"]').get_attribute("data-lang") == "ko"
         assert page.get_by_text(C["build"]["s0"]["title"]).first.is_visible() is False, "소개 뒤에 전 화면이 보여요"
         assert page.locator('nav[data-ui="bottom-tab-bar"]:visible').count() == 0
         page.get_by_role("button", name=C["app"]["close"]).click()        # 뒤로 → 전 화면, # 없음
         see(page, C["build"]["s0"]["title"])
         assert page.locator('[data-ui-v2="about"]').count() == 0 and "#" not in page.url, page.url
-    R.check(page, S, "푸터: 고지문 · '소개'(#about), 만든 사람 줄 없음 → 소개 → 뒤로 → 전 화면 (#about 지워짐)", footer_and_open)
+        assert page.evaluate("document.activeElement && document.activeElement.dataset.uiV2") == "about-link", "초점이 소개 링크로 돌아오지 않았어요"
+    R.check(page, S, "푸터: 고지문 · '소개'(#about), 만든 사람 줄 없음 → 소개(초점은 제목) → 뒤로 → 전 화면 (#about 지워짐, 초점은 링크)", footer_and_open)
 
     def about_ko():
         page.goto(base + "/app.html?dev=1#about", wait_until="domcontentloaded")

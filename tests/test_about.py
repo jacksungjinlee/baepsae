@@ -70,10 +70,31 @@ def test_switch_labels_and_link_come_from_about_md():
     ab = c["about"]
     assert ab["langs"] == {"ko": "한국어", "en": "English"}
     assert ab["linkedInUrl"] == "https://www.linkedin.com/in/jacksungjinlee/"
-    assert ab["langLabel"] == "언어" and ab["langLabel"] in about_md("ko")
-    assert ab["heroAlt"] is None                                       # 승인 대기 (docs/tasks/v18.3-new-strings-pending.md)
     md = read("docs/design/v19/copy/about.md")
     assert "한국어 / English" in md and ab["linkedInUrl"] in md
+
+
+def test_pending_about_strings_are_listed_for_jack():
+    """승인 대기 (Jack, 2026-11-03): 머리글 그림의 alt 는 null 로 두고(화면은 alt 없이), 언어 버튼 묶음의 이름 '언어'는 보여 주되
+    둘 다 승인 대기 목록에 있어요."""
+    c, _ = copy_strings()
+    ab = c["about"]
+    pending = read("docs/tasks/v18.3-new-strings-pending.md")
+    assert ab["heroAlt"] is None and "`about.heroAlt`" in pending
+    assert ab["langLabel"] == "언어" and "`about.langLabel` · **언어**" in pending
+    assert "about.langLabel" not in read("docs/tasks/v18.3-approved-in-chat.md")
+
+
+def test_about_copy_has_exactly_these_strings():
+    """소개 문구에 about.md 밖의 글이 끼어들 수 없어요: 언어마다 정확히 62개(about.md 의 조각 60개 + 경력의 '회사 · 설명'을 나눈 2개),
+    두 언어의 키가 같고, 그 밖의 about 키는 아래 다섯 개뿐이에요."""
+    _, flat = copy_strings()
+    keys = {lang: sorted(p[len(f"about.{lang}."):] for p, _ in flat if p.startswith(f"about.{lang}.")) for lang in ("ko", "en")}
+    assert len(keys["ko"]) == 62 and len(keys["en"]) == 62, (len(keys["ko"]), len(keys["en"]))
+    assert keys["ko"] == keys["en"]
+    assert all(isinstance(v, str) and v for p, v in flat if p.startswith(("about.ko.", "about.en.")))
+    rest = sorted(p for p, _ in flat if p.startswith("about.") and not p.startswith(("about.ko.", "about.en.")))
+    assert rest == ["about.heroAlt", "about.langLabel", "about.langs.en", "about.langs.ko", "about.linkedInUrl"], rest
 
 
 def test_page_has_no_hard_coded_counts():
@@ -95,6 +116,15 @@ def test_page_has_no_hard_coded_counts():
 
 # ── 숫자 줄 계산 (src/v2/aboutstats.js) ──
 _B = {}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _remove_bundle_dir():
+    """Node 로 돌린 묶음 파일과 임시 스크립트는 이 파일의 검사가 끝나면 지워요 (디스크가 쌓이지 않게)."""
+    yield
+    d = _B.pop("p", None)
+    if d:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def bundle_dir():

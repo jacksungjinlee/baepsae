@@ -2,7 +2,8 @@
 """v19.0 이름 · 캐치프레이즈 · 만든 사람 줄 (Jack, 2026-11-03; docs/tasks/v19.0-layout-c.md 수용 조건 5).
 
 예전 이름("개인 투자 연구소"), 예전 캐치프레이즈("황새 말고, 내 걸음으로"와 그 영어), 만든 사람 줄("INSEAD MBA 26J")은
-사용자가 여는 페이지(baepsae.html · app.html · app-preview.html · index.html · manifest)와 src/ 의 어떤 파일(주석 포함)에도 없어요.
+사용자가 여는 페이지(baepsae.html · app.html · app-preview.html · index.html · manifest)와 src/ · styleguide/ · tools/
+(링크 미리 보기 그림을 그리는 render_og.py) 의 어떤 파일(주석 포함)에도 없어요.
 만든 사람은 소개 페이지(#about)에만 있어요. 커밋한 페이지와, 지금 소스로 새로 빌드한 2.0 페이지를 모두 봐요
 (baepsae.html 이 소스와 같은지는 test_launch.py, app.html · app-preview.html 은 test_v2_app.py 가 확인해요).
 """
@@ -19,18 +20,21 @@ PAGES = ["baepsae.html", "app.html", "app-preview.html", "index.html", "manifest
 
 def src_files():
     out = []
-    for d in ("src", "styleguide"):
-        for base, _, files in os.walk(os.path.join(ROOT, d)):
+    for d in ("src", "styleguide", "tools"):
+        for base, dirs, files in os.walk(os.path.join(ROOT, d)):
+            dirs[:] = [x for x in dirs if x != "__pycache__"]            # 파이썬이 만든 캐시는 소스가 아니에요
             out += [os.path.relpath(os.path.join(base, f), ROOT) for f in files]
     return sorted(out)
 
 
 def test_old_names_and_credit_are_gone_from_pages_and_sources():
     files = src_files()
-    assert len(files) >= 40 and "src/links.js" in files and "src/v2/about.jsx" in files, files[:5]
+    assert len(files) >= 40 and "src/links.js" in files and "src/v2/about.jsx" in files and "tools/render_og.py" in files, files[:5]
     found = []
     for f in PAGES + files:
-        text = read(f) if not f.endswith((".png", ".jpg", ".woff2")) else ""
+        if f.endswith((".png", ".jpg", ".woff2")):                      # 그림·글꼴 파일에는 글이 없어요
+            continue
+        text = read(f)
         found += [(f, w) for w in GONE if w in text]
     for name in ("app.html", "app-preview.html"):                      # 지금 소스로 새로 빌드한 것도
         found += [("built " + name, w) for w in GONE if w in built(name)]
