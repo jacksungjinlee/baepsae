@@ -373,6 +373,34 @@ def test_subject_particle_follows_how_the_name_is_read():
     assert len(PARTICLE_GA) + len(PARTICLE_I) == 128
 
 
+def test_object_particle_for_the_one_check_line():
+    # Jack, 2026-11-03: 확인한 항목이 하나면 "{check}을 / 를 확인했어요" — 받침이 있으면 을, 없으면 를 (이 / 가 와 같은 읽기)
+    real = ["PBR", "부채비율", "매출", "영업이익", "변동성", "배당"]          # 지금 이 줄에 들어가는 이름은 모두 받침이 있어요
+    other = {"주가": "reul", "ABC": "reul", "LG": "reul", "KT&G": "reul", "HMM": "eul", "배당수익률": "eul", "PER": "eul"}
+    got = run("out = Object.fromEntries(NAMES.map((n) => [n, T.objectParticle(n)]));", NAMES=real + list(other))
+    assert all(got[n] == "eul" for n in real), got
+    assert all(got[n] == want for n, want in other.items()), got
+
+
+def test_checks_run_line_uses_the_matched_particle_for_one_check():
+    tmp = tempfile.mkdtemp()
+    entry = os.path.join(tmp, "entry.js")
+    with open(entry, "w", encoding="utf-8") as f:
+        f.write(f"export {{ checksRunLine }} from {json.dumps(os.path.join(ROOT, 'src/v2/pick.jsx'))};\n")
+    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+    r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", "--loader:.jsx=jsx", "--jsx=automatic",
+                        f"--outfile={tmp}/pick.mjs", "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    code = ("import { checksRunLine } from './pick.mjs';\n"
+            "console.log(JSON.stringify([['매출'], ['주가'], ['PBR'], ['LG'], ['매출', '변동성'], ['PBR', '부채비율', '배당']].map(checksRunLine)));")
+    r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=tmp, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == ["매출을 확인했어요. 주의할 점은 없어요.", "주가를 확인했어요. 주의할 점은 없어요.",
+                                    "PBR을 확인했어요. 주의할 점은 없어요.", "LG를 확인했어요. 주의할 점은 없어요.",
+                                    "매출 · 변동성 모두 확인했어요. 주의할 점은 없어요.",
+                                    "PBR · 부채비율 · 배당 모두 확인했어요. 주의할 점은 없어요."]
+
+
 # ── 리뷰 수정 (Part E): 금액 조언 · 넓어진 경계 · 지켜지고 있는 규칙 수 · 오늘의 개수 ──
 def test_more_money_is_advised_only_when_one_share_costs_more_than_the_amount():
     got = run("""

@@ -95,6 +95,18 @@ IND_US_COVER = 90.0      # 미국 회사 주식 중 그룹이 있는 비율 하�
 IND_NOT_FIN = ("004800", "012630")    # 효성·HDC: 지주회사지 금융회사가 아니에요 (KSIC 649 함정)
 FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=2y&interval=1d"
+# v17.5.2 (Jack 승인 2026-11-02). 숫자는 2026-11-03 발행본 기준이에요.
+US_CAP_COVER = 95.0      # 미국 회사 주식(ETF 빼고) 중 시가총액(cap > 0)이 있는 비율 하한 (%) — 그날 99.6%, 우선주 3개를 빼면 100%.
+#                          파이프라인은 시가총액이 없다는 이유로는 아무것도 빼지 않으니, 야후가 시가총액을 안 보내면 여기서 실패해요.
+DIV_COVER_KEYS = ("dps", "dy")   # 국내 주당 배당금·배당수익률 — 그날 둘 다 96.7%
+DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄면 실패 (DART 일부 장애로 배당이 조용히 비는 것)
+US_PREF_DROP_MAX = 10    # 우선주·예탁증서로 보고 미국 목록에서 뺀 종목 수 상한 (data.json usLeftOut.preferred) — 그날 3개 (STRC·GOOGM·GOOGN).
+#                          파이프라인은 티커·이름·야후 종류로만 판단해요 (Jack, 2026-11-03). 많으면 그 규칙이 진짜 회사를 잡은 날이에요.
+# v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드 9…)은 DART 금액이 원화가 아닐 수 있어 비워야 해요 (2026-11-03 발행본 20곳, 코오롱티슈진 PBR 9,085)
+FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json 모두 빈 칸 (vz 는 PBR 로 매긴 점수)
+FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
+FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
+FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp.json 3개년 금액
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -545,6 +557,8 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
 
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
+    check_v1752(rep, data, kr, us, pdata)
+    check_foreign(rep, kr, comps)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -711,6 +725,55 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
                 if num((by.get(t) or {}).get("d1")) is None or abs(num(by[t]["d1"]) - y["d1"]) > D1_YAHOO_TOL]
         rep.add("필수 종목 d1 (야후)", not bad1, f"{len(hilo)}종목 맞음" if not bad1 else " · ".join(bad1)[:90],
                 f"{D1_YAHOO_TOL}%p 안 (이틀치 변화를 잡아요)", warn=len(hilo) < len(must_kr))
+
+
+def check_v1752(rep, data, kr, us, pdata):
+    # 미국 시가총액: ETF 가 아닌 미국 종목은 거의 모두 시가총액이 있어야 해요 (우선주·예탁증서는 파이프라인이 빼요)
+    usco = [s for s in us if s.get("etf") is not True]
+    have = sum(1 for s in usco if (num(s.get("cap")) or 0) > 0)
+    share = 100.0 * have / len(usco) if usco else 0.0
+    rep.pct("미국 시가총액 채움 (ETF 빼고)", share, US_CAP_COVER)
+    # 우선주로 뺀 수: 진짜 우선주는 몇 개뿐이에요. 많으면 이름·티커 규칙이 진짜 회사를 잡은 거예요 (기록이 없어도 실패)
+    lo = data.get("usLeftOut")
+    pref = lo.get("preferred") if isinstance(lo, dict) else None
+    ok = isinstance(pref, list) and all(isinstance(t, str) for t in pref) and len(pref) <= US_PREF_DROP_MAX
+    rep.add("미국 우선주·예탁증서로 뺀 종목 수", ok,
+            (f"{len(pref)}개" + (f": {', '.join(map(str, pref[:6]))}{'…' if len(pref) > 6 else ''}" if pref else ""))
+            if isinstance(pref, list) else "기록 없음 (data.json usLeftOut)",
+            f"≤ {US_PREF_DROP_MAX}개 (많으면 이름·티커 규칙이 진짜 회사를 잡은 것)")
+    # 국내 배당: 주당 배당금·배당수익률 채움이 직전 발행본보다 크게 줄면 실패 (0 = 배당 없음도 채움으로 세요)
+    if pdata:
+        pkr = kr_stocks(pdata)
+        for k in DIV_COVER_KEYS:
+            v, pv = coverage(kr, k), coverage(pkr, k)
+            rep.add(f"국내 {k} 채움 변화", v >= pv - DIV_COVER_DROP, f"{pv:.1f} → {v:.1f}", f"{DIV_COVER_DROP:g}점 넘게 줄면 실패")
+
+
+def is_foreign(code):
+    return isinstance(code, str) and len(code) == 6 and code[0] == "9"
+
+
+def check_foreign(rep, kr, comps):
+    # 해외 기업: PBR·PER·EPS·BPS·배당·금액·DCF 입력이 모두 빈 칸 (통화와 상관없는 비율과 KRX 가격·시가총액은 있어도 돼요)
+    def has(v):
+        return any(num(x) is not None for x in v) if isinstance(v, list) else num(v) is not None
+
+    def nonzero(v):
+        return any(num(x) not in (None, 0) for x in v) if isinstance(v, list) else num(v) not in (None, 0)
+    bad = []
+    for s in kr:
+        if is_foreign(s.get("t")):
+            bad += [f"{s['t']}.{k}" for k in FOREIGN_BLANK if has(s.get(k))]
+            bad += [f"{s['t']}.{k}" for k in FOREIGN_ZERO_OK if nonzero(s.get(k))]
+    for c in comps:
+        if is_foreign(c.get("t")):
+            bad += [f"corp {c['t']}.{k}" for k in FOREIGN_BLANK + FOREIGN_BLANK_CORP + FOREIGN_BLANK_LISTS if has(c.get(k))]
+            bad += [f"corp {c['t']}.{k}" for k in FOREIGN_ZERO_OK if nonzero(c.get(k))]
+            if c.get("dcfReady") is not False:
+                bad.append(f"corp {c['t']}.dcfReady")
+    n = sum(1 for s in kr if is_foreign(s.get("t")))
+    rep.add("해외 기업(9…) 원화 아닐 수 있는 금액 비움", not bad, f"{n}곳 · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:3])})" if bad else ""),
+            "PBR·PER·EPS·BPS·금액·DCF 빈 칸 · 배당은 빈 칸 또는 0")
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

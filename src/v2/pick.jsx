@@ -7,6 +7,7 @@ import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARD
 import { C, fill, nf, p1, mdText } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, tx, tap } from "./ui.jsx";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
+import { objectParticle } from "./track.js";
 
 export function Pick({ load, builder, setBuilder }) {
   const st = builder.settings;
@@ -109,7 +110,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
         </div>
       )}
       {!lines.length && C.pick.caution.checksRun && checkNames(cau.ran).length > 0 && (
-        <Note data-ui-v2="caution-none">{fill(C.pick.caution.checksRun, { checks: checkNames(cau.ran).join(" · ") })}</Note>
+        <Note data-ui-v2="caution-none">{checksRunLine(checkNames(cau.ran))}</Note>
       )}
       <div style={{ marginTop: SPACE(2) }}>
         <Collapsible title={C.pick.receipts}>
@@ -126,6 +127,12 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
 const CHECK_NAME = { pbr: () => "PBR", debt: () => C.pick.receipt.debt, rev: () => C.pick.checks.rev, op: () => C.plan.rules.opProfit,
   vol: () => C.pick.checks.vol, div: () => C.plan.rules.dividend };
 export const checkNames = (ran) => ran.map((k) => (CHECK_NAME[k] ? CHECK_NAME[k]() : null)).filter(Boolean);
+// Two or more checks: "{checks} 모두 확인했어요". One: "{check}을 / 를 확인했어요", without 모두 and with the particle matched to
+// the name (Jack, 2026-11-03, option (b)).
+export function checksRunLine(names) {
+  if (names.length === 1) return fill(objectParticle(names[0]) === "eul" ? C.pick.caution.checksRunOne : C.pick.caution.checksRunOneReul, { check: names[0] });
+  return fill(C.pick.caution.checksRun, { checks: names.join(" · ") });
+}
 
 function Row({ k, v, id, basis }) {
   return (

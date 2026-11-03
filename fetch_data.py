@@ -44,6 +44,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -783,6 +784,10 @@ Q_NEWEST_FIRST = ("11014", "11012", "11013")
 QUARTER_CURRENT_SHARE = 0.70   # 시가총액 상위 100곳 중 이만큼이 제출해야 그 분기를 '현재'로 봐요
 DART_FATAL = {"010": "등록되지 않은 키", "011": "사용할 수 없는 키", "012": "접근할 수 없는 IP",
               "020": "일일 한도 초과", "901": "기간이 끝난 키"}
+# v17.5.2: 2026-11-02 01:44–03:40 KST 에 러너가 opendart.fss.or.kr 에 아예 닿지 못해 모든 호출이 연결 시간 초과(25초)로 끝나고
+# 실행이 2시간 동안 기어갔어요. 네트워크 예외(연결·응답 시간 초과, 연결 오류)가 이만큼 연달아 나면 이번 실행에서 DART 조회를 멈추고
+# 보관본(캐시) 값만 써요. 서버가 한 번이라도 답하면(상태 코드와 상관없이) 다시 0부터 세요. 빠진 새 값은 검증의 채움 검사가 잡아요.
+DART_DOWN_AFTER = 30
 
 
 def report_period_end(year, reprt):
@@ -827,6 +832,9 @@ class DartClient:
         self.parse_errors = collections.Counter()
         self.revalidate_left = DART_REVALIDATE_PER_RUN
         self.revalidated = 0
+        self.net_streak = 0          # 연달아 난 네트워크 예외 수 (서버가 답하면 0)
+        self.down = None             # DART 에 닿지 않아 조회를 멈췄으면 그때의 예외 이름
+        self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
         self.entries, self.meta = {}, {}
         self._load()
         if mode == "full":
@@ -869,11 +877,33 @@ class DartClient:
             os.replace(tmp, self.path)
 
     def get(self, endpoint, params, timeout=25):
-        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요."""
+        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요.
+        v17.5.2: 네트워크 예외가 DART_DOWN_AFTER 번 연달아 나면 그 뒤로는 바로 None (보관본을 써요 · 로그와 summary 에 크게 남아요)."""
         if self.fatal:
+            return None
+        if self.down:
+            with self.lock:
+                self.skipped_down += 1
             return None
         try:
             r = requests.get(self.BASE + endpoint, params={"crtfc_key": self.key, **params}, timeout=timeout)
+        except Exception as e:
+            net = isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+            tripped = False
+            with self.lock:
+                self.status["예외"] += 1
+                if net:
+                    self.net_streak += 1
+                    if self.net_streak >= DART_DOWN_AFTER and not self.down:
+                        self.down = type(e).__name__
+                        tripped = True
+            if tripped:
+                log(f"  !! DART 연결 안 됨: 연속 {DART_DOWN_AFTER}회 실패({self.down}) → 이번 실행에서 DART 조회를 멈췄어요 "
+                    "(보관본 값만 써요 · 빠진 새 값은 검증이 잡아요)")
+            return None
+        with self.lock:
+            self.net_streak = 0          # 서버가 답했어요 (상태 코드·내용과 상관없이 연결은 돼요)
+        try:
             j = r.json()
         except Exception:
             with self.lock:
@@ -892,7 +922,9 @@ class DartClient:
         with self.lock:
             e = self.entries.get(key)
             # 찾은 보고서도 90일이 지나면 다시 확인 (정정공시). 실행당 300건까지, 실제로 쓰는 항목만.
-            reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0)
+            # DART 가 멈췄으면(self.down) 재확인하지 않아요: 칸만 쓰고 '재확인 N건'으로 잘못 세지 않게
+            reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0
+                         and not self.down and not self.fatal)
             if reval:
                 self.revalidate_left -= 1
                 self.revalidated += 1
@@ -946,6 +978,9 @@ class DartClient:
         extra = f" · 재확인 {self.revalidated:,}건" if self.revalidated else ""
         if self.parse_errors:
             extra += " · !! 해석 오류 " + ", ".join(f"{k} {v}" for k, v in self.parse_errors.items())
+        if self.down:
+            extra += (f" · !! DART 연결 안 됨: 연속 {DART_DOWN_AFTER}회 실패({self.down}) → 이번 실행에서 DART 조회를 멈췄어요"
+                      f" (건너뛴 조회 {self.skipped_down:,}회 · 보관본 값만 씀)")
         return f"호출 {sum(self.status.values()):,}회 (상태 {st or '없음'}) · 캐시 사용 {self.cache_hits:,}건{extra}"
 
     def raise_if_fatal(self):
@@ -1066,6 +1101,34 @@ def parse_dart_list(rows):
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
     return out
+
+
+G3_MIN_REV = 0.1     # 억원 — 매출 성장률(g3)을 낸 두 해의 매출이 발행되는 값(억원, 소수 한 자리)으로 이 이상일 때만 g3 를 내요
+
+
+def g3_usable(rev, g3):
+    """parse_dart_list 가 낸 g3 를 발행해도 되는지. (순수 함수)
+    rev 는 발행되는 매출 [당기, 전기, 전전기] (억원). g3 를 계산한 두 해의 매출이 모두 G3_MIN_REV 이상일 때만 참이에요.
+    v17.5.2: 2026-11-03 발행본의 코오롱티슈진은 매출이 [0.0, 0.0, 0.0] 인데 g3 가 13.0 이었어요 — 반올림하면 0 인 아주 작은
+    매출(외화로 낸 재무제표)로 계산된 값이에요. DART 캐시는 '해석된 값'을 담고 있어서 parse_dart_list 를 고치면 캐시를 통째로
+    버려야 해요(전체 조회 약 15,000회). 그래서 해석은 그대로 두고 캐시 뒤 여기서 걸러요."""
+    if _fin(g3) is None:
+        return False
+    r0, r1, r2 = (list(rev or []) + [None, None, None])[:3]
+    ok = lambda x: _fin(x) is not None and x >= G3_MIN_REV
+    if not ok(r0):
+        return False
+    if ok(r2):
+        return True                            # 전전기 대비 연평균 (parse_dart_list 의 첫 갈래)
+    if not ok(r1):
+        return False
+    if _fin(r2) is not None and abs(r2) < G3_MIN_REV:
+        # 전전기가 0.0 으로 보여요: 0 원이었으면 전기 대비 1년 성장이고, 아주 작은 양수였으면 그 작은 값 대비 연평균이었어요.
+        # 전기 대비 1년 성장으로 설명되는 값(발행 값의 반올림 ±0.05억원 안)일 때만 남겨요.
+        h = G3_MIN_REV / 2
+        lo, hi = ((r0 - h) / (r1 + h) - 1) * 100, ((r0 + h) / (r1 - h) - 1) * 100
+        return lo - 0.05 <= g3 <= hi + 0.05
+    return True                                # 전전기가 빈 칸·음수 → 전기 대비 1년 성장
 
 
 DASHES = {"-", "－", "—", "–", "‐"}
@@ -1241,6 +1304,7 @@ def enrich_with_dart(kr_stocks, client):
         + ")…")
     done = [0]
     errors = collections.Counter()
+    g3_cut = []                            # 쓸 만한 매출 없이 계산된 g3 를 비운 종목
 
     def one(s):
         if client.fatal:
@@ -1267,6 +1331,10 @@ def enrich_with_dart(kr_stocks, client):
             s["fy"] = yr          # v17.5.1: op·debt·roe·dps·dps3 가 나온 사업보고서의 연도 (bq 는 TTM 분기만 뜻해요)
         if f:
             fin = f.pop("_fin", None)
+            if f.get("g3") is not None and not g3_usable((fin or {}).get("rev"), f["g3"]):
+                f.pop("g3")
+                with client.lock:
+                    g3_cut.append(f"{s['t']} {s.get('nk', '')}".strip())
             if fin:
                 qy_c = yr + 1
                 order_c = order if qy_c == qy else [r for r in Q_NEWEST_FIRST if report_period_end(qy_c, r) < today]
@@ -1304,6 +1372,9 @@ def enrich_with_dart(kr_stocks, client):
         log(f"  !! DART 캐시 파일을 확인하지 못했어요: {e}")
     if errors:
         log(f"  !! DART 처리 오류 {sum(errors.values()):,}곳 ({dict(errors)}) — 그 기업은 재무지표 없이 진행해요")
+    n_g3 = sum(1 for s in targets if s.get("g3") is not None)
+    log(f"· 매출 성장률(g3): {n_g3:,}곳 · 계산에 쓴 매출이 {G3_MIN_REV:g}억원 미만이라 비운 곳 {len(g3_cut)}"
+        + (f": {', '.join(sorted(g3_cut)[:12])}{'…' if len(g3_cut) > 12 else ''}" if g3_cut else ""))
     client.raise_if_fatal()
     got = sum(1 for s in targets if s.get("debt") is not None)
     log(f"· DART 완료: {got:,}곳 재무지표 · {len(fin_map):,}곳 3개년 원값")
@@ -1745,6 +1816,14 @@ def parse_elestock_corp(rows, bgn):
     return out
 
 
+def carry_prev_nps(fresh, prev_nps, bgn):
+    """새로 받은 국민연금 항목 + 그 회사가 없는 지난 발행본 항목(조회 기간 bgn 이후만). 공시일은 그대로 둬요 (다시 날짜를 붙이지 않아요).
+    새로 받은 회사는 새 값이 이겨요. (순수 함수) 반환: (합친 목록 최신순, 가져온 지난 항목 수)."""
+    have = {r.get("t") for r in fresh}
+    old = [r for r in prev_nps if r.get("t") not in have and str(r.get("d") or "") >= bgn]
+    return sorted(fresh + old, key=lambda r: r.get("d", ""), reverse=True), len(old)
+
+
 def fetch_disclosures(kr_stocks, cmap, end, client):
     """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
     실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다.
@@ -1845,6 +1924,17 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         nps.append({"d": d, "t": t, "nk": s["nk"], "s": s.get("s") or "etc", "cap": s.get("cap"),
                     "rt": _num(x.get("stkrt")), "chg": _num(x.get("stkrt_irds"))})
     nps.sort(key=lambda r: r.get("d", ""), reverse=True)
+    # v17.5.2: 공시 목록을 못 받았거나 DART 연결이 끊기면 국민연금 목록이 통째로 비어 앱에 '최근 90일 내 국민연금 보고가 없어요'
+    # (사실이 아님)가 떠요. 지난 발행본의 항목을 자기 공시일 그대로 둬요. 내부자 거래는 원래 지난 발행본에 이어 붙여요(위 rows).
+    # 화면의 날짜(newest)는 실행일이 아니라 가장 최근 공시일이라, 오래 못 받으면 앱이 '갱신이 멈췄어요'로 알려요.
+    if not list_ok or getattr(client, "down", None):
+        nps, carried = carry_prev_nps(nps, prev.get("nps", []), bgn)
+        n_ins = sum(1 for r in prev.get("insider", []) if str(r.get("d") or "") >= bgn)
+        old_ds = [str(r.get("d")) for r in prev.get("nps", []) + prev.get("insider", []) if r.get("d") and str(r["d"]) >= bgn]
+        last = max(old_ds) if old_ds else None
+        why = "공시 목록을 받지 못해" if not list_ok else "DART 연결이 끊겨"
+        log(f"  !! {why} 지난 발행본의 {carried + n_ins:,}건을 그대로 둬요 "
+            f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'}) · 국민연금 {carried:,} · 내부자 {n_ins:,}")
     log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     client.raise_if_fatal()
@@ -1955,6 +2045,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
                     row["pcf"] = round(v, 1)
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
         row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
+        if is_foreign_issuer(s["t"]):
+            # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어 비워요 (blank_foreign_dart 참고). 위에서 만든 fl 신호는 비율·부호라 남겨요.
+            row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
+            for k in ("evE", "evR", "pcf", "bq"):
+                row.pop(k, None)
         comps.append(row)
 
     sectors = {}
@@ -2325,6 +2420,48 @@ def fetch_korea(start, today, rf, prev=None):
     return out, bench, mkt, meta
 
 
+# v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드가 9로 시작: 900xxx·950xxx)은 DART 재무제표를 달러·위안·엔 등으로
+# 낼 수 있어요. 그걸 원화로 읽으면 PBR 9,085(코오롱티슈진) · PER 수천 같은 값이 나와요. 환산을 추측하지 않고 비워요:
+# 금액으로 만든 값(PER·PBR·EPS·BPS)과 0 이 아닌 배당(표의 통화도 불확실). 배당 0 은 어느 통화로도 '배당 없음'이라 남겨요
+# (2.0 의 '무배당 빼기'가 dps === 0 을 봐요). corp.json 금액(매출·이익·자본, DCF 입력·EV 배수)은 build_corp 가 비우고,
+# fill_multiples 는 이들을 건너뛰어요. 통화와 상관없는 비율(roe·opm·debt·g3)·재무 신호(fl)와 KRX 가격·시가총액(원화)은 남겨요.
+# 가치 점수(vz)는 PBR 이 비면 add_percentiles 가 안 매겨요.
+FOREIGN_BLANK = ("per", "pbr", "eps", "bps")       # 늘 비워요
+FOREIGN_BLANK_NONZERO = ("dps", "dy")              # 0 이 아니면 비워요 (dps3 는 0 이 아닌 해만 빈 칸으로)
+
+
+def is_foreign_issuer(code):
+    """KRX 해외 기업 종목코드인지: 6자리이고 9로 시작 (900xxx 중국 등 · 950xxx 미국·일본 등). (순수 함수)"""
+    return isinstance(code, str) and len(code) == 6 and code[0] == "9"
+
+
+def blank_foreign_dart(kr_stocks):
+    """해외 기업의 원화가 아닐 수 있는 값을 비워요: FOREIGN_BLANK 칸, 0 이 아닌 배당(dps·dy·dps3 의 각 해). (순수 함수 + 로그)
+    corp.json 금액은 build_corp 가 비워요 (fl 신호는 그 전에 계산해 남아요). 반환: 해당 종목 ["코드 이름", …]."""
+    hit = []
+    for s in kr_stocks:
+        if not is_foreign_issuer(s.get("t")):
+            continue
+        for k in FOREIGN_BLANK:
+            s.pop(k, None)
+        for k in FOREIGN_BLANK_NONZERO:
+            if s.get(k) is not None and _fin(s[k]) != 0:
+                s.pop(k)
+        if isinstance(s.get("dps3"), list):
+            d3 = [0.0 if _fin(x) == 0 else None for x in s["dps3"]]
+            if any(x is not None for x in d3):
+                s["dps3"] = d3
+            else:
+                s.pop("dps3")
+        hit.append(f"{s['t']} {s.get('nk', '')}".strip())
+    if hit:
+        log(f"  !! 해외 기업 {len(hit)}곳: DART 금액이 원화가 아닐 수 있어 PBR·PER·EPS·배당·금액을 비웠어요 (배당 0원 = 배당 없음은 남겨요): "
+            f"{', '.join(sorted(hit))}")
+    else:
+        log("· 해외 기업(종목코드 9…): 없음")
+    return hit
+
+
 def fill_multiples(kr_stocks, fin_map):
     """DART 재무(순이익·자본) + 상장주식수로 EPS/BPS/PER/PBR을 직접 계산합니다.
     pykrx는 KRX 로그인이 필요해져 CI에서 동작하지 않으므로, 있으면 쓰고 없으면 이 값으로 채웁니다.
@@ -2334,7 +2471,7 @@ def fill_multiples(kr_stocks, fin_map):
         fin = fin_map.get(s["t"])
         shr = s.get("shr")
         price = s.get("price")
-        if not fin or not shr or not price:
+        if not fin or not shr or not price or is_foreign_issuer(s["t"]):     # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어요
             continue
         _t = fin.get("ttm") or {}
         _b = fin.get("bs2") or {}
@@ -2364,19 +2501,28 @@ def fill_multiples(kr_stocks, fin_map):
 # ────────────────────────────────────────────────────────────
 # 미국
 # ────────────────────────────────────────────────────────────
-def us_tickers():
+def us_tickers(names_out=None):
+    """S&P500 + NASDAQ 상위 400 + EXTRA_US. names_out(dict)을 주면 목록에 적힌 이름도 담아요 (티커 → 이름):
+    야후의 짧은 이름은 31자에서 잘리고 긴 이름은 'Strategy Inc' 처럼 회사 이름뿐일 때가 있어서, 우선주·예탁증서를 알아보는 데
+    목록의 이름("… Depositary Shares Each Representing … Preferred Stock")도 써요 (us_preferred_like)."""
     import FinanceDataReader as fdr
     tk = set(EXTRA_US)
     for name in ("S&P500", "NASDAQ"):
         try:
             df = fdr.StockListing(name)
             col = "Symbol" if "Symbol" in df.columns else df.columns[0]
-            syms = [str(s) for s in df[col].dropna().tolist()]
             if name == "NASDAQ":
-                syms = syms[:400]
+                df = df.head(400)
+            syms = [str(s) for s in df[col].dropna().tolist()]
             tk.update(syms)
+            if names_out is not None and "Name" in df.columns:
+                for sym, nm in zip(df[col].tolist(), df["Name"].tolist()):
+                    if isinstance(sym, str) and isinstance(nm, str) and nm.strip():
+                        names_out.setdefault(sym.replace(".", "-").strip().upper(), nm.strip())
         except Exception as e:
             log(f"  ({name} 목록 실패: {e})")
+    if names_out is not None:
+        log(f"· 미국 목록 이름 {len(names_out):,}개 (우선주·예탁증서 알아보기용)")
     return sorted({s.replace(".", "-").strip().upper() for s in tk if s and len(s) <= 6 and s.isascii()})
 
 
@@ -2472,6 +2618,113 @@ def etf_from_quote_type(out, cache):
     return odd
 
 
+# v17.5.2: 미국 목록 다듬기 — 우선주·예탁증서, 한국 종목의 미국 상장분
+US_KR_DUP_PATH = os.path.join(INDUSTRY_DIR, "us_kr_duplicates.csv")
+# 우선주·예탁증서는 티커·이름·야후 종류로만 알아봐요. '시가총액이 없다'로는 판단하지 않아요 (Jack, 2026-11-03):
+# 진짜 회사의 시가총액이 하루 빠진 것이면 빈 칸으로 남고 검증의 '미국 시가총액 채움'이 세요.
+# 2.0 src/v2/engine.js 의 같은 이름 값과 글자 하나까지 같아요 (바꾸면 둘 다 — 테스트가 봐요).
+# 2026-11-03 야후: STRC 'Strategy Inc - Variable Rate Se' · STRF·STRD 'Strategy Inc - 10.00% Series A ' (긴 이름은 'Strategy Inc'
+# 뿐이고 종류는 EQUITY) · GOOGM·GOOGN 'Alphabet Inc. Depositary Shares representing … Convertible Preferred Stock'.
+US_PREF_NAME = re.compile(r"preferred (stock|share|securit)|\bpfd\b|variable rate|fixed[- ]to[- ]floating|[\d.]+%\s*series\b|\bnotes? due\b", re.I)
+US_DEPOSITARY = re.compile(r"depositary shar| - deposit", re.I)   # 우선주 예탁증서 (GOOGM, 31자에서 잘린 'AGNC Investment Corp. - Deposit') …
+US_ADR = re.compile(r"american deposit", re.I)         # … 단, ADR(진짜 외국 회사의 보통주 예탁증서, 잘린 이름도)은 남겨요
+US_PREF_TICKER = re.compile(r"-P[A-Z]?$|^[A-Z]{4}[MNOP]$")   # BAC-PL 꼴 · 나스닥 다섯째 글자 M·N·O·P (우선주 표시)
+US_STOCK_TYPES = ("EQUITY", "ETF", "MUTUALFUND")       # 야후 종류가 이 밖이면 회사 주식이 아니에요
+
+
+def us_preferred_reason(t, names, quote_type=None):
+    """우선주·예탁증서(회사 보통주가 아님)로 보는 이유 한 줄, 아니면 None. 이름 → 티커 → 야후 종류 순으로 봐요. (순수 함수)"""
+    for n in names:
+        if not isinstance(n, str) or not n:
+            continue
+        m = US_PREF_NAME.search(n)
+        if m:
+            return f"이름 '{m.group(0)}'"
+        if US_DEPOSITARY.search(n) and not US_ADR.search(n):
+            return "이름 'Depositary Shares'"
+    if US_PREF_TICKER.search(t):
+        return "티커"
+    if quote_type and quote_type not in US_STOCK_TYPES:
+        return f"야후 종류 {quote_type}"
+    return None
+
+
+def us_preferred_like(us, infos=None):
+    """미국 목록에 회사처럼 섞여 들어온 우선주·예탁증서 (NASDAQ 상위 400: STRC 는 예전 앱에 배당 12% 소프트웨어 회사로 보였어요).
+    ETF·펀드는 보지 않아요. infos = {티커: 야후 정보} (shortName · longName · quoteType, 그리고 목록의 이름 listName). (순수 함수)
+    2026-11-03 리뷰: HBANL 은 야후 이름이 'Huntington Bancshares Incorporated' 뿐이라 목록의 이름으로만 알아봐요.
+    반환: [(티커, 이유)] 티커 순."""
+    infos = infos or {}
+    out = []
+    for r in us:
+        if r.get("etf") is True or r.get("fund"):
+            continue
+        info = infos.get(r["t"]) or {}
+        why = us_preferred_reason(r["t"], (r.get("nk"), r.get("ne"), info.get("shortName"), info.get("longName"),
+                                           info.get("listName")), info.get("quoteType"))
+        if why:
+            out.append((r["t"], why))
+    return sorted(out)
+
+
+def load_us_kr_duplicates(path=None):
+    """data/us_kr_duplicates.csv → {미국 티커: (한국 종목코드, 이유)}. 사람이 확인해 적은 표예요. 틀리면 예외 (조용히 넘어가지 않게)."""
+    rows = _read_csv(path or US_KR_DUP_PATH)
+    out = {}
+    for i, r in enumerate(rows):
+        t, k, why = r.get("ticker", ""), r.get("krx", ""), r.get("reason", "")
+        if not (t and t == t.upper() and t.isascii() and len(t) <= 6) or len(k) != 6 or not why or t in out:
+            raise RuntimeError(f"!! us_kr_duplicates.csv {i + 2}번째 줄이 이상해요 (티커 대문자 · 한국 코드 6자리 · 이유 · 티커 한 번만): {r}")
+        out[t] = (k, why)
+    return out
+
+
+def drop_us_kr_duplicates(us, kr_codes, dups):
+    """미국 목록에서 한국 종목과 같은 회사인 줄을 빼요 (SKHY = SK하이닉스 000660: 덱에 같은 회사가 두 번 들어가지 않게). (순수 함수)
+    표에 있어도 그 한국 종목이 이번 국내 목록에 없으면 빼지 않아요 (그 회사가 통째로 사라지지 않게) — 대신 따로 돌려줘서 크게 알려요.
+    반환: (남은 미국 목록, 뺀 [(티커, 한국 코드)], 한국 쪽이 없어 남긴 [(티커, 한국 코드)])."""
+    keep, dropped, kept = [], [], []
+    for r in us:
+        hit = dups.get(r["t"])
+        if hit and hit[0] in kr_codes:
+            dropped.append((r["t"], hit[0]))
+            continue
+        if hit:
+            kept.append((r["t"], hit[0]))
+        keep.append(r)
+    return keep, dropped, kept
+
+
+def clean_us_list(us, kr_codes, dups, infos=None):
+    """미국 목록에서 한국 종목의 미국 상장분과 우선주·예탁증서를 빼요. 뺀 것은 모두 티커와 함께 로그로 남겨요.
+    반환: (남은 미국 목록, {"preferred": [우선주로 뺀 티커], "krListing": [한국 종목이라 뺀 티커]}) — 뒤의 것은 data.json 의
+    usLeftOut 으로 나가요 (검증이 우선주로 뺀 수를 세요: 규칙이 진짜 회사를 잡기 시작한 날을 잡으려고)."""
+    us, dropped, kept = drop_us_kr_duplicates(us, kr_codes, dups)
+    if dropped:
+        log(f"  !! 한국 종목과 같은 회사라 미국 목록에서 뺀 종목 {len(dropped)}개: "
+            + ", ".join(f"{t}(={k})" for t, k in dropped) + " (data/us_kr_duplicates.csv)")
+    if kept:
+        log(f"  !! 미국-한국 중복 표에 있지만 그 한국 종목이 이번 국내 목록에 없어 미국 쪽을 남겼어요 {len(kept)}개: "
+            + ", ".join(f"{t}(≠{k})" for t, k in kept) + " — 국내 목록이 왜 빠졌는지 확인")
+    if not dropped and not kept:
+        log(f"· 미국-한국 중복 표 {len(dups)}개 중 이번 미국 목록에 있는 것 없음")
+    found = us_preferred_like(us, infos)
+    pref = [t for t, _ in found]
+    if found:
+        gone = set(pref)
+        us = [r for r in us if r["t"] not in gone]
+        log(f"  !! 미국 우선주·예탁증서로 보고 뺀 종목 {len(found)}개 (티커·이름·야후 종류로 판단): "
+            + ", ".join(f"{t}({why})" for t, why in found))
+    else:
+        log("· 미국 우선주·예탁증서(티커·이름·야후 종류로 판단): 없음")
+    no_cap = sorted(r["t"] for r in us if r.get("etf") is not True and not r.get("fund") and (_fin(r.get("price")) or 0) > 0
+                    and _fin(r.get("val")) is not None and not ((_fin(r.get("cap")) or 0) > 0))
+    if no_cap:
+        log(f"  !! 거래대금은 있는데 시가총액이 없는 미국 회사 주식 {len(no_cap)}개 — 빼지 않고 빈 칸으로 둬요 "
+            f"(검증의 '미국 시가총액 채움'이 세요): {', '.join(no_cap[:10])}{'…' if len(no_cap) > 10 else ''}")
+    return us, {"preferred": list(pref), "krListing": [t for t, _ in dropped]}
+
+
 def cut_words(text, n):
     """n 글자 안에서 낱말 경계로 잘라요 ("nanometer" 가 잘려 "nan" 이 남지 않게). (순수 함수)"""
     t = " ".join(str(text).split())
@@ -2523,14 +2776,15 @@ def apply_us_info(rec, info, px_then, fx):
     return True
 
 
-def fetch_us(start, today, rf):
-    """미국 주식 (yfinance). v17.5:
+def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
+    """미국 주식 (yfinance). v17.5.2: 우선주·예탁증서와 한국 종목의 미국 상장분(kr_codes · dups)은 빼요 (clean_us_list). v17.5:
     · end 는 그날을 빼므로 오늘(KST)+1일까지 요청하고, 장이 안 끝난 봉은 버려요 (예전엔 하루 늦었어요).
     · 시가총액(cap)은 조원, 거래대금(val)은 억원 — 한국과 같은 단위 (그날 환율로 환산).
     · 상세 정보(이름·업종·설명)를 못 받은 종목 수를 남기고, 실패분은 한 번 더 천천히 시도해요."""
     import yfinance as yf
 
-    syms = us_tickers()
+    list_names = {}
+    syms = us_tickers(list_names)
     log(f"· 미국 {len(syms):,}개 종목…")
     end_x = today + dt.timedelta(days=1)
     last_ok = us_last_complete_day()
@@ -2623,9 +2877,14 @@ def fetch_us(start, today, rf):
     odd = etf_from_quote_type(out, cache)
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
+    infos = {r["t"]: {**((cache.get(r["t"]) or {}).get("info") or {}), "listName": list_names.get(r["t"])} for r in out}
+    out, left_out = clean_us_list(out, kr_codes, dups or {}, infos)   # ETF 표시가 끝난 뒤에 (ETF·펀드는 우선주로 보지 않아요)
+    no_info = set(missing)
+    n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
-    meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx}
+    meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
+            "usLeftOut": left_out}
     return out, bench, fx, fx_last, us_vol_krw, meta
 
 
@@ -2677,7 +2936,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "fy": "op·debt·roe·opm·g3·dps·dps3 가 나온 사업보고서 연도 (bq 는 TTM 분기)",
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
-         "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜"}
+         "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
+         "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분"}
 IDX_YEARS = 3
 
 
@@ -2713,6 +2973,7 @@ def main():
     ph = Phases()
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
+    dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     log(f"· 업종 표: 그룹 {len(tables['groups'])} · KSIC 접두어 {len(tables['kmap'])} · 야후 업종 {len(tables['usmap'])} · "
         f"고정 {len(tables['over'])} · 주요제품 나누기 {len(tables['refine'])}")
 
@@ -2729,6 +2990,7 @@ def main():
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
+    blank_foreign_dart(kr)                # v17.5.2: 해외 기업 (점수·corp.json 보다 먼저)
     fill_multiples(kr, fin_map)
     n_dy = sum(1 for s in kr if s.get("dy") is not None)
     log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
@@ -2737,7 +2999,8 @@ def main():
     fy_c = collections.Counter(s.get("fy") for s in kr if s.get("fy"))
     log(f"· 주당 배당금 아는 종목: {n_dps:,} / {len(kr):,} (그중 0원 = 배당 없음 {n_dps0:,}) · 사업보고서 연도 {dict(sorted(fy_c.items()))}")
 
-    us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf)
+    us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
+                                                          kr_codes=frozenset(s["t"] for s in kr), dups=dups)
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
 
@@ -2815,6 +3078,7 @@ def main():
         "listSrc": kmeta["listSrc"], "fx": round(fx_last, 1), "units": UNITS, "settings": settings,
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
+        "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "stocks": stocks,
     }
     write_json(OUT, payload)

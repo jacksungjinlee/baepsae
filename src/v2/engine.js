@@ -45,29 +45,34 @@ export const isStockLike = (s) => (s.cls === "kr" || s.cls === "us") && !s.fund 
 export const inUniverse = (s) => isStockLike(s) && !isPreferred(s) && num(s.price) > 0;
 
 // US preferred and depositary shares come in through the NASDAQ list looking like companies (STRC, a variable-rate
-// preferred filed under software with a 12% yield, and GOOGM·GOOGN on 2026-11-02: 3 of 744). Yahoo gives every common
-// share a market cap and these none, while their trading value loads. So a US row with trading value but no market cap
-// is treated like a preferred share: never ranked. Rows with no Yahoo info at all (no trading value either) are not
-// touched: they stay blanks and are counted as such.
-// Only a handful should look like this. If more than US_NO_CAP_MAX_SHARE of the US rows with trading value have no
-// market cap, Yahoo stopped sending market caps (a data problem, not preferred shares): then nothing is left out on
-// this ground, the console says so, and the screen behaves as it did before this rule.
+// preferred filed under software with a 12% yield; GOOGM·GOOGN, depositary shares of Alphabet preferred stock). The daily
+// run leaves them out (fetch_data.py us_preferred_reason); this is the same rule on the names and tickers the app has, so
+// data published before that rule behaves the same. They are recognised by name or ticker only, never by a missing
+// market cap (Jack, 2026-11-03): a real company whose market cap is missing for a day stays in, as a blank.
+// The patterns are character-for-character the same as fetch_data.py's (a test checks). No lookbehind: older iPhones
+// can't parse it, and one unparseable pattern would stop the whole app.
 // Worked out once per loaded stock list (the data is loaded once), so the console line names them once, not on every
 // settings change.
-export const US_NO_CAP_MAX_SHARE = 0.05;
+export const US_PREF_NAME = /preferred (stock|share|securit)|\bpfd\b|variable rate|fixed[- ]to[- ]floating|[\d.]+%\s*series\b|\bnotes? due\b/i;
+export const US_DEPOSITARY = /depositary shar| - deposit/i;
+export const US_ADR = /american deposit/i;
+export const US_PREF_TICKER = /-P[A-Z]?$|^[A-Z]{4}[MNOP]$/;
+export function usPreferredReason(s) {
+  for (const n of [s.nk, s.ne]) {
+    if (typeof n !== "string" || !n) continue;
+    const m = n.match(US_PREF_NAME);
+    if (m) return `name '${m[0]}'`;
+    if (US_DEPOSITARY.test(n) && !US_ADR.test(n)) return "name 'Depositary Shares'";
+  }
+  if (typeof s.t === "string" && US_PREF_TICKER.test(s.t)) return "ticker";
+  return null;
+}
 const usPrefMemo = new WeakMap();
 export function usPreferredLike(stocks) {
   if (usPrefMemo.has(stocks)) return usPrefMemo.get(stocks);
-  const rows = stocks.filter((s) => s.cls === "us" && inUniverse(s) && num(s.val) != null);
-  const noCap = rows.filter((s) => !(num(s.cap) > 0));
-  let out;
-  if (noCap.length > rows.length * US_NO_CAP_MAX_SHARE) {
-    console.warn(`[v2] ${noCap.length} of ${rows.length} US stocks have trading value but no market cap: a data problem, so none are treated as preferred shares`);
-    out = new Set();
-  } else {
-    out = new Set(noCap.map((s) => s.t));
-    if (out.size) console.warn(`[v2] left out as preferred or depositary shares (US, trading value but no market cap): ${out.size} · ${[...out].join(", ")}`);
-  }
+  const found = stocks.filter((s) => s.cls === "us" && isStockLike(s)).map((s) => [s.t, usPreferredReason(s)]).filter(([, why]) => why);
+  const out = new Set(found.map(([t]) => t));
+  if (out.size) console.warn(`[v2] left out as US preferred or depositary shares (by name or ticker): ${out.size} · ${found.map(([t, why]) => `${t} (${why})`).join(", ")}`);
   usPrefMemo.set(stocks, out);
   return out;
 }

@@ -182,6 +182,14 @@ class Runner:
 
 
 # ── 화면 조작 ──
+def has_final(name):
+    """받침으로 끝나게 읽히는지 (src/v2/track.js subjectParticle 과 같은 읽기, 이 줄에 들어가는 이름들만큼)."""
+    ch = name.rstrip()[-1]
+    if "가" <= ch <= "힣":
+        return (ord(ch) - 0xAC00) % 28 != 0
+    return ch.upper() in "LMNR013678"
+
+
 def see(page, text, timeout=WAIT):
     page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=timeout)
 
@@ -348,7 +356,9 @@ def scene_normal(R, files, width):
         names = "|".join(map(re.escape, ["PBR", C["pick"]["receipt"]["debt"], C["pick"]["checks"]["rev"], C["plan"]["rules"]["opProfit"],
                                          C["pick"]["checks"]["vol"], C["plan"]["rules"]["dividend"]]))
         for t in page.locator('[data-ui-v2="caution-none"]').all_inner_texts():
-            assert re.fullmatch(rf"(?:{names})(?: · (?:{names}))* 모두 확인했어요\. 주의할 점은 없어요\.", t), t
+            many = re.fullmatch(rf"(?:{names})(?: · (?:{names}))+ 모두 확인했어요\. 주의할 점은 없어요\.", t)
+            one = re.fullmatch(rf"({names})([을를]) 확인했어요\. 주의할 점은 없어요\.", t)     # 하나면 '모두' 없이, 을/를 맞춰서
+            assert many or (one and one.group(2) == ("을" if has_final(one.group(1)) else "를")), t
         R.collect(page)
         no_hscroll(page, width)
         click_next(page)
