@@ -267,7 +267,7 @@ Fix plan: `docs/tasks/v17.5-pipeline-safety.md` (correctness and gate), then `do
 
 1. **v17.5 stop the damage** (now) — `docs/tasks/v17.5-pipeline-safety.md`. Correct listing, publication gate, loud app
    failures, service-worker eviction.
-2. **v17.6 never again** (right after) — `docs/tasks/v17.6-never-again.md`. Independent watchdog on the live site, CI on
+2. **v17.6 never again** (after v19.0c, Jack 2026-11-04) — `docs/tasks/v17.6-never-again.md`. Independent watchdog on the live site, CI on
    every PR, data/code split with a protected `main`, DART cache, runbook.
 3. **Jack's redesign ideas** from building his own "Anti-AI" portfolio. Background: user feedback said 뱁새 is hard
    and complex, and that adding every stock by hand is tedious. The direction under discussion is to keep it
