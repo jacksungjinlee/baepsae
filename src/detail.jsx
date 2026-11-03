@@ -18,7 +18,14 @@ import { loadJson, freshness, mergeStocks, mdOf } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 
-function makeCardData(holdings, stocksById, cashMw, score, lang) {
+// 오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록에서 빼요 — 담기 화면과 같아요 (v18.4.1).
+const listedHoldings = (holdings, stocksById) => holdings.filter((h) => !!stocksById[h.t]);
+
+function makeCardData(allHoldings, stocksById, cashMw, score, lang) {
+  const holdings = listedHoldings(allHoldings, stocksById);
+  if (holdings.length < allHoldings.length) {
+    console.warn("[뱁새] 공유 카드: 오늘 종목 목록에 없는 종목 " + (allHoldings.length - holdings.length) + "개는 빼고 만들었어요");
+  }
   const sums = { kr: 0, us: 0, mt: 0 };
   let inv = 0;
   holdings.forEach((h) => {
@@ -38,7 +45,7 @@ function makeCardData(holdings, stocksById, cashMw, score, lang) {
     { ko: lang === "ko" ? "현금" : "Cash", pct: cash / tot * 100, color: "#8B95A8" },
   ].filter((b) => b.pct >= 0.5);
   const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
-    .map((h) => ({ nk: (stocksById[h.t] && stocksById[h.t].nk) || h.t, pct: (h.mw || 0) / tot * 100 }));
+    .map((h) => ({ nk: stocksById[h.t].nk, pct: (h.mw || 0) / tot * 100 }));
   return { score, buckets, top, dateStr: new Date().toISOString().slice(0, 10) };
 }
 
@@ -110,6 +117,7 @@ async function writeSlots(list) { try { await store.set(KEY_SLOTS, JSON.stringif
 //      NaN 화면을 만들지 않게 예산 · 언어 · 단계를 확인해요 (예산이 0 이상의 숫자가 아니면 1,000만원, 언어가 ko·en 이 아니면 지금 언어,
 //      단계가 0~3 이 아니면 ② 구성).
 //   두 모양 모두 프로필 · 설정 · 세금은 객체이고 칸마다 기본값과 같은 종류일 때만 되살려요 (다른 칸은 버려요).
+//   직접 추가 종목(customStocks: ①은 v18.4.1 부터 파일에 같이 써요)은 cleanCustomStocks, ②의 종목 고침은 cleanStockEdits 로 확인해요.
 // 종목코드가 비었거나, 금액이 0보다 큰 숫자가 아니거나, 같은 종목이 또 나오는 줄은 빼고 console 에 개수를 남겨요.
 // 지금 종목 목록에 없는 종목은 저장본에 그대로 남겨 둬요 (예전 저장본을 열 때와 같아요: 담기 화면에는 안 보이고, 목록에 돌아오면 다시 보여요).
 // ①의 그런 줄은 이름(nk)도 같이 남겨요. 지금 목록에 있는 종목이 하나도 없으면 null: 부르는 쪽이 '파일을 읽을 수 없어요'를 띄우고
@@ -119,6 +127,41 @@ const isPlainObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const isFinNum = (x) => typeof x === "number" && Number.isFinite(x);
 const mwOfWon = (won) => Math.round(won / 100) / 100;
 const STAGES = [0, 1, 2, 3];
+const STOCK_EDIT_KEYS = ["price", "beta", "vol", "per", "pbr", "dy", "al"];   // 종목 카드에서 고칠 수 있는 숫자 칸 (저장본의 stockEdits)
+// 직접 추가 종목 (CustomStockForm): { t, nk, ne, s, price, beta, vol, per, pbr, dy, al, custom: true, x: {} }.
+// t · nk 는 빈칸이 아닌 글자, 가격은 꼭 있는 숫자, 다른 숫자 칸은 있으면 숫자여야 해요. 아니면 그 종목은 빼요 (검색이 nk 를 읽다가 멈추지 않게).
+function cleanCustomStocks(list) {
+  const out = [];
+  let bad = 0;
+  list.forEach((c) => {
+    const str = (v) => typeof v === "string" && v.trim() !== "";
+    const ok = isPlainObj(c) && str(c.t) && str(c.nk) && isFinNum(c.price) && (c.ne === undefined || typeof c.ne === "string")
+      && (c.s === undefined || typeof c.s === "string") && STOCK_EDIT_KEYS.every((k) => c[k] === undefined || isFinNum(c[k]))
+      && !out.some((o) => o.t === c.t);
+    if (!ok) { bad++; return; }
+    const o = { t: c.t, nk: c.nk, ne: str(c.ne) ? c.ne : c.nk, custom: true, x: {} };
+    if (c.s !== undefined) o.s = c.s;
+    STOCK_EDIT_KEYS.forEach((k) => { if (c[k] !== undefined) o[k] = c[k]; });
+    out.push(o);
+  });
+  if (bad) console.warn("[뱁새] 불러온 파일의 직접 추가 종목 " + list.length + "개 중 " + bad + "개는 이름·종목코드·숫자가 맞지 않아 뺐어요");
+  return out;
+}
+// 저장본의 종목 고침 (stockEdits): 종목마다 고칠 수 있는 숫자 칸만, 숫자일 때만 남겨요 (NaN 화면이 되지 않게).
+function cleanStockEdits(e) {
+  const out = {};
+  let bad = 0;
+  if (!isPlainObj(e)) bad++;
+  else Object.keys(e).forEach((t) => {
+    const v = e[t];
+    if (t === "__proto__" || !isPlainObj(v)) { bad++; return; }
+    const d = {};
+    Object.keys(v).forEach((k) => { if (STOCK_EDIT_KEYS.includes(k) && isFinNum(v[k])) d[k] = v[k]; else bad++; });
+    if (Object.keys(d).length) out[t] = d;
+  });
+  if (bad) console.warn("[뱁새] 불러온 파일의 종목 고침 중 " + bad + "개는 숫자가 아니라서 뺐어요");
+  return out;
+}
 function sameKinds(obj, defaults) {
   const out = {};
   Object.keys(defaults).forEach((k) => {
@@ -139,7 +182,7 @@ function readPortfolioFile(j, known) {
   const src = exp ? j : (j.state || j);
   if (!isPlainObj(src)) return refuse();
   const rows = Array.isArray(src.holdings) ? src.holdings : [];
-  const custom = !exp && Array.isArray(src.customStocks) ? src.customStocks.filter((c) => isPlainObj(c) && typeof c.t === "string" && c.t.trim()) : [];
+  const custom = Array.isArray(src.customStocks) ? cleanCustomStocks(src.customStocks) : [];
   const listed = (t) => known.has(t) || custom.some((c) => c.t === t);
   const holdings = [], seen = new Set();
   let bad = 0, unknown = 0;
@@ -169,8 +212,9 @@ function readPortfolioFile(j, known) {
     ? { holdings, answers: {}, profile: kinds(j.profile, DEFAULT_PROFILE) || {},
         budgetMw: budget(isFinNum(j.budgetWon) && j.budgetWon >= 0 ? mwOfWon(j.budgetWon) : null, "budgetWon") }
     : { ...src, holdings, budgetMw: budget(src.budgetMw, "budgetMw"), stage: STAGES.includes(src.stage) ? src.stage : 1 };
+  if (Array.isArray(src.customStocks)) st.customStocks = custom;
   if (!exp) {
-    if (Array.isArray(src.customStocks)) st.customStocks = custom;
+    if (src.stockEdits !== undefined) st.stockEdits = cleanStockEdits(src.stockEdits);
     if (src.lang !== "ko" && src.lang !== "en") delete st.lang;                 // 지금 언어 그대로
     if (!isPlainObj(src.answers)) delete st.answers;                           // 객체가 아닌 답변은 버려요 (지금 답변 그대로)
     const profile = kinds(src.profile, DEFAULT_PROFILE);
@@ -3206,7 +3250,7 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
             <Btn kind="ghost" style={{ width: "100%" }} onClick={() => {
               try {
                 let inv = 0;
-                holdings.forEach((h) => { inv += h.mw || 0; });
+                listedHoldings(holdings, stocksById).forEach((h) => { inv += h.mw || 0; });   // 카드와 같은 종목으로 현금을 셈해요
                 const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), SHOW_SCORE ? score : null, lang);
                 const cv = renderPortfolioCard(data);
                 setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
@@ -4075,7 +4119,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   });
   const stamp = new Date().toISOString().slice(0, 10);
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: Math.round(budgetMw * 10000), holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
@@ -4536,7 +4580,7 @@ function AppInner({ seed, lang: langProp }) {
           const b = base[s.t];
           if (!b) return;
           const diff = {};
-          ["price", "beta", "vol", "per", "pbr", "dy", "al"].forEach((k) => { if (s[k] !== b[k]) diff[k] = s[k]; });
+          STOCK_EDIT_KEYS.forEach((k) => { if (s[k] !== b[k]) diff[k] = s[k]; });
           if (Object.keys(diff).length) d[s.t] = diff;
         });
         return d;
@@ -4550,8 +4594,9 @@ function AppInner({ seed, lang: langProp }) {
     setSlots(next);
   };
   const computeMetricsForSave = async () => {
-    const inv = holdings.reduce((a, h) => { const s = stocks.find((x) => x.t === h.t); return a + (s ? h.mw * 10000 : 0); }, 0);
-    return { n: holdings.length, inv, beta: metricsRef.current ? metricsRef.current.beta : 0 };
+    const listed = holdings.filter((h) => stocks.some((x) => x.t === h.t));      // 오늘 목록에 없는 종목은 세지 않아요 (담기 화면과 같아요)
+    const inv = listed.reduce((a, h) => a + h.mw * 10000, 0);
+    return { n: listed.length, inv, beta: metricsRef.current ? metricsRef.current.beta : 0 };
   };
   const metricsRef = useRef(null);
 
@@ -4602,7 +4647,15 @@ function AppInner({ seed, lang: langProp }) {
     await writeSlots(next); setSlots(next);
   };
   // 파일을 다 읽고 확인한 뒤에만 바꿔요: 읽을 종목이 하나도 없으면 알림만 띄우고 지금 포트폴리오·예산·프로필·설정은 그대로예요.
+  // 파일 고르기는 오늘 데이터를 다 읽은 뒤(booted)에만 화면에 나와요: 그 전에 고른 파일이 부팅에 덮이는 일은 없어요.
+  // 오늘 데이터를 못 읽은 날(live.failed)에는 불러오지 않고 '데이터를 불러오지 못했어요'를 보여요: 종목 목록이 내장 예시뿐이라
+  // 멀쩡한 백업도 '읽을 수 없는 파일'처럼 보이거나 종목이 빠져 보여요 (Jack, 2026-11-04). 지금 포트폴리오는 그대로예요.
   const importJson = (txt) => {
+    if (live.failed) {
+      console.warn("[뱁새] 오늘 데이터(data.json)를 못 읽어서 파일을 불러오지 않았어요");
+      window.alert(T_LOAD_FAIL[lang === "ko" ? "ko" : "en"]);
+      return;
+    }
     let st = null;
     try { st = readPortfolioFile(JSON.parse(txt), new Set(baseUniverse().map((x) => x.t))); }
     catch (e) { console.warn("[뱁새] 불러온 파일을 JSON 으로 읽지 못했어요: " + ((e && e.message) || e)); st = null; }
@@ -4742,4 +4795,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData };

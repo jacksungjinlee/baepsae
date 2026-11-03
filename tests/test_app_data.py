@@ -156,7 +156,7 @@ KNOWN_JS = "const K = new Set(['005930', '000660', 'AAPL']); const warn = []; co
 
 def read_file_js(cases):
     """cases: {이름: 파일 객체} → {이름: readPortfolioFile 결과}, 그리고 console 경고들."""
-    return run_metrics(KNOWN_JS + f"const cases = {json.dumps(cases, ensure_ascii=False)};"
+    return run_metrics(KNOWN_JS + f"const cases = JSON.parse({json.dumps(json.dumps(cases, ensure_ascii=False), ensure_ascii=False)});"   # 파일처럼 JSON.parse 로
                        "const out = {}; for (const k of Object.keys(cases)) out[k] = D.readPortfolioFile(cases[k], K) ?? 'NULL';"
                        "console.log(JSON.stringify({ out, warn }));")
 
@@ -246,13 +246,15 @@ def test_import_still_reads_old_state_shaped_files():
     with_custom = json.loads(json.dumps(old))
     with_custom["holdings"].append({"t": "MYCO", "mw": 100})
     got = read_file_js({"wrapped": {"state": old}, "bare": old, "custom": with_custom})
+    myco = {"t": "MYCO", "nk": "내 회사", "ne": "내 회사", "custom": True, "x": {}, "price": 1000}   # 직접 추가 모양으로 다듬어요
     for k in ("wrapped", "bare"):
         st = got["out"][k]
-        want = {**old, "customStocks": [old["customStocks"][0]]}           # 객체가 아닌 직접 추가 종목만 빼요
+        want = {**old, "customStocks": [myco]}                            # 객체가 아닌 직접 추가 종목은 빼요
         assert st == want, (k, st)                                       # 목록에 없는 999999 도 저장본에 그대로 (예전 저장본처럼)
     assert got["out"]["custom"]["holdings"][-1] == {"t": "MYCO", "mw": 100}  # 파일에 든 직접 추가 종목은 목록에 있는 종목이에요
-    assert got["warn"] == ["[뱁새] 불러온 파일의 종목 3개: 뺀 줄 0개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 1개 (저장본에는 남겨 둬요)"] * 2 \
-        + ["[뱁새] 불러온 파일의 종목 4개: 뺀 줄 0개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 1개 (저장본에는 남겨 둬요)"], got["warn"]
+    drop = "[뱁새] 불러온 파일의 직접 추가 종목 2개 중 1개는 이름·종목코드·숫자가 맞지 않아 뺐어요"
+    assert got["warn"] == [drop, "[뱁새] 불러온 파일의 종목 3개: 뺀 줄 0개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 1개 (저장본에는 남겨 둬요)"] * 2 \
+        + [drop, "[뱁새] 불러온 파일의 종목 4개: 뺀 줄 0개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 1개 (저장본에는 남겨 둬요)"], got["warn"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
@@ -298,3 +300,78 @@ def test_download_links_are_revoked_late():
     v2 = open(os.path.join(ROOT, "src", "v2", "store.js"), encoding="utf-8").read()
     body = v2.split("export function downloadRecords(", 1)[1].split("\n}\n", 1)[0]
     assert "setTimeout(() => URL.revokeObjectURL(url), 60000)" in body and body.count("revokeObjectURL") == 1, body
+
+
+# ── 직접 추가 종목 · 종목 고침 (v18.4.1 두 번째 리뷰) ──
+CUSTOM = {"t": "MYCO", "nk": "내 회사", "ne": "내 회사", "s": "semi", "price": 10000, "beta": 1.0, "vol": 35, "per": 10, "pbr": 1,
+          "dy": 0, "al": 0, "custom": True, "x": {}}                    # CustomStockForm 이 만드는 모양 그대로
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_brings_back_custom_stocks_from_the_export():
+    rows = [{"ticker": "005930", "name": "삼성전자", "amountWon": 3000000}, {"ticker": "MYCO", "name": "내 회사", "amountWon": 1000000}]
+    got = read_file_js({"export": {"budgetWon": 10000000, "holdings": rows, "customStocks": [CUSTOM]},
+                        "old_export": {"budgetWon": 10000000, "holdings": rows}})                # v18.4.1 전 파일: 정의가 없어요
+    st = got["out"]["export"]
+    assert st["holdings"] == [{"t": "005930", "mw": 300}, {"t": "MYCO", "mw": 100}] and st["customStocks"] == [CUSTOM], st
+    old = got["out"]["old_export"]                                       # 정의 없는 직접 추가 종목은 이름과 함께 저장본에만 남아요
+    assert old["holdings"][1] == {"t": "MYCO", "mw": 100, "nk": "내 회사"} and "customStocks" not in old, old
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_drops_custom_stocks_the_app_could_not_have_made():
+    bad = [{"t": "NONK", "price": 1000},                                 # 이름 없음 (검색이 nk 를 읽다가 멈춰요)
+           {"t": "BLANK", "nk": " ", "price": 1000}, {"t": "", "nk": "코드 없음", "price": 1000},
+           {"t": "NOPX", "nk": "가격 없음"}, {"t": "TXT", "nk": "글자 가격", "price": "1000"},
+           {"t": "NAN", "nk": "숫자 아님", "price": 1000, "beta": "1.2"}, {"t": "NUL", "nk": "빈 칸", "price": 1000, "vol": None},
+           {"t": "SEC", "nk": "업종 숫자", "price": 1000, "s": 5}, None, "MYCO"]
+    dup = {**CUSTOM, "nk": "같은 코드 두 번째"}                         # 같은 종목코드가 또 나오면 첫 번째만
+    extra = {**CUSTOM, "t": "MYCO2", "cls": "us", "x": {"roe": "높음"}, "zzz": 1}     # 모르는 칸은 버리고 x 는 비워요
+    rows = [{"ticker": "005930", "amountWon": 3000000}, {"ticker": "NONK", "name": "이름 없는 회사", "amountWon": 1000000}]
+    got = read_file_js({
+        "export": {"budgetWon": 10000000, "holdings": rows, "customStocks": [CUSTOM] + bad + [dup, extra]},
+        "only_bad": {"budgetWon": 10000000, "holdings": rows[1:], "customStocks": bad},          # 남는 종목이 없으면 열지 않아요
+        "state": {"holdings": [{"t": "005930", "mw": 300}, {"t": "NONK", "mw": 100}], "budgetMw": 1000, "customStocks": bad},
+    })
+    st = got["out"]["export"]
+    assert st["customStocks"] == [CUSTOM, {k: v for k, v in extra.items() if k not in ("cls", "zzz")} | {"x": {}}], st["customStocks"]
+    assert st["holdings"][1] == {"t": "NONK", "mw": 100, "nk": "이름 없는 회사"}      # 정의가 빠진 종목은 저장본에만 (화면 목록에 없음)
+    assert got["out"]["only_bad"] == "NULL"
+    assert got["out"]["state"]["customStocks"] == [] and got["out"]["state"]["holdings"][1] == {"t": "NONK", "mw": 100}
+    assert got["warn"].count("[뱁새] 불러온 파일의 직접 추가 종목 13개 중 11개는 이름·종목코드·숫자가 맞지 않아 뺐어요") == 1, got["warn"]
+    assert got["warn"].count("[뱁새] 불러온 파일의 직접 추가 종목 10개 중 10개는 이름·종목코드·숫자가 맞지 않아 뺐어요") == 2, got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_keeps_only_numeric_stock_edits():
+    h = [{"t": "005930", "mw": 300}]
+    got = read_file_js({
+        "dy_text": {"holdings": h, "budgetMw": 1000, "stockEdits": {"005930": {"dy": "x"}}},
+        "mixed": {"holdings": h, "budgetMw": 1000, "stockEdits": {"005930": {"dy": 2.5, "price": "1", "zzz": 1, "beta": None},
+                                                                     "000660": "x", "AAPL": [1], "__proto__": {"price": 1}}},
+        "not_object": {"holdings": h, "budgetMw": 1000, "stockEdits": [1, 2]},
+        "none": {"holdings": h, "budgetMw": 1000},
+    })
+    o = got["out"]
+    assert o["dy_text"]["stockEdits"] == {} and o["mixed"]["stockEdits"] == {"005930": {"dy": 2.5}}, o
+    assert o["not_object"]["stockEdits"] == {} and "stockEdits" not in o["none"], o
+    assert got["warn"] == ["[뱁새] 불러온 파일의 종목 고침 중 1개는 숫자가 아니라서 뺐어요",
+                           "[뱁새] 불러온 파일의 종목 고침 중 6개는 숫자가 아니라서 뺐어요",
+                           "[뱁새] 불러온 파일의 종목 고침 중 1개는 숫자가 아니라서 뺐어요"], got["warn"]
+    # 고침이 NaN 을 만들지 않아요: 남은 값으로 위험 수치를 셈해도 숫자예요
+    m = run_metrics("const st0 = D.readPortfolioFile({ holdings: [{ t: '005930', mw: 300 }], stockEdits: { '005930': { dy: 'x', beta: '1.2' } } },"
+                    " new Set(['005930'])); const S = { t: '005930', cls: 'kr', s: 'semi', beta: 1.2, vol: 33, price: 1, dy: 2,"
+                    " ...(st0.stockEdits['005930'] || {}) }; const r = D.computeMetrics([h(S, 300)], 1000 * 10000, st);"
+                    " console.log(JSON.stringify({ beta: r.beta, vol: r.volP, dy: S.dy }));")
+    assert m == {"beta": m["beta"], "vol": m["vol"], "dy": 2} and isinstance(m["beta"], float) and isinstance(m["vol"], float), m
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_share_card_skips_holdings_missing_from_todays_list():
+    got = run_metrics("const warn = []; console.warn = (m) => warn.push(String(m));"
+                      "const by = { '005930': { t: '005930', nk: '삼성전자', cls: 'kr' }, AAPL: { t: 'AAPL', nk: 'Apple', cls: 'us' } };"
+                      "const d = D.makeCardData([{ t: '005930', mw: 300 }, { t: 'GONE1', mw: 900, nk: '없는 회사' }, { t: 'AAPL', mw: 100 }], by, 600, null, 'ko');"
+                      "console.log(JSON.stringify({ top: d.top, buckets: d.buckets.map((b) => [b.ko, Math.round(b.pct)]), warn }));")
+    assert got["top"] == [{"nk": "삼성전자", "pct": 30}, {"nk": "Apple", "pct": 10}], got["top"]   # 없는 종목(900만원)은 1등이 아니라 아예 빠져요
+    assert got["buckets"] == [["국내 주식", 30], ["미국 주식", 10], ["현금", 60]], got["buckets"]
+    assert got["warn"] == ["[뱁새] 공유 카드: 오늘 종목 목록에 없는 종목 1개는 빼고 만들었어요"], got["warn"]
