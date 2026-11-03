@@ -5,7 +5,7 @@ import { C } from "./tokens.js";
 const SERIF_CV = "'Noto Serif KR', serif";
 const FONT_CV = "'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', sans-serif";
 
-export function renderPortfolioCard({ score, buckets, top, dateStr }) {
+export function renderPortfolioCard({ score, buckets, top, dateStr, note, noteAlts = [] }) {
   const W = 1080, H = 1350;
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = H;
@@ -92,6 +92,34 @@ export function renderPortfolioCard({ score, buckets, top, dateStr }) {
     g.textAlign = "left";
     ty += 66;
   });
+
+  // v18.5: 오늘 데이터에 없어 빼고 계산한 종목이 있으면, 카드에도 같은 안내 (두 줄까지). 길면 이름만 줄인 문장
+  // (noteAlts: 'STRC, SKHY, …')을 차례로 써 보고, 그래도 넘치면 끝을 … 로 줄여요.
+  if (note) {
+    g.font = "600 24px " + FONT_CV; g.fillStyle = "#fff"; g.globalAlpha = 0.8; g.textAlign = "left";   // 살구색은 데이터에만
+    const maxW = W - 200;
+    const wrap = (text) => {
+      const out = [];
+      let cur = "";
+      String("※ " + text).split(" ").forEach((w) => {
+        const tryLine = cur ? cur + " " + w : w;
+        if (cur && g.measureText(tryLine).width > maxW) { out.push(cur); cur = w; } else cur = tryLine;
+      });
+      if (cur) out.push(cur);
+      return out;
+    };
+    const tries = [note, ...noteAlts].map(wrap);
+    const lines = tries.find((x) => x.length <= 2) || tries[tries.length - 1];
+    const shown = lines.slice(0, 2);
+    if (lines.length > 2) {
+      let last = shown[1];
+      while (last.length > 1 && g.measureText(last + "…").width > maxW) last = last.slice(0, -1);
+      shown[1] = last + "…";
+    }
+    const y0 = shown.length > 1 ? 1124 : 1134;                          // TOP 3번째 줄(1078)과 태그라인(1200) 사이
+    shown.forEach((ln, i) => g.fillText(ln, 100, y0 + i * 32, maxW));   // maxW: 띄어쓰기 없는 긴 이름도 카드 밖으로 안 나가게
+    g.globalAlpha = 1;
+  }
 
   // 태그라인 + 푸터 (v19.0: 새 캐치프레이즈, 만든 사람 줄 대신 '뱁새' — 만든 사람은 소개 페이지에)
   g.fillStyle = C.apricot; g.font = "700 34px " + SERIF_CV;

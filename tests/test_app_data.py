@@ -148,6 +148,80 @@ def test_checkin_ignores_old_snapshots_saved_with_nan():
     assert "find(valid)" in body and "checkins[checkins.length - 1]" not in body
 
 
+# ── v18.5 (Jack 2026-11-03): 오늘 데이터에 없는 보유 종목 ─────────────────
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_missing_holdings_are_named_and_left_out_of_the_share_card():
+    got = run_metrics(STOCKS_JS + "const by = { '005930': S, U: U };"
+                      "const hs = [{ t: 'STRC', mw: 200 }, { t: '005930', mw: 300 }, { t: 'U', mw: 100 }, { t: '000660', mw: 50 },"
+                      " { t: 'GOOGM', mw: 10, nk: '저장된 이름' }, { mw: 5 }, null];"
+                      "const miss = D.missingHoldings(hs, by); const card = D.makeCardData(hs, by, 100, null, 'ko');"
+                      "console.log(JSON.stringify({ miss: miss.map((h) => h.t), ko: D.missingLine('ko', miss), en: D.missingLine('en', miss),"
+                      " none: D.missingLine('ko', D.missingHoldings([{ t: '005930', mw: 1 }], by)),"
+                      " top: card.top.map((x) => x.nk), buckets: card.buckets.map((b) => [b.ko, +b.pct.toFixed(1)]), note: card.note, alts: card.noteAlts,"
+                      " cleanNote: D.makeCardData([{ t: '005930', mw: 300 }], by, 700, null, 'ko').note }));")
+    # 코드가 없는 줄({ mw: 5 })과 null 은 종목이 아니라서 세지 않아요. 이름: 저장된 이름 → 내장 목록(SK하이닉스) → 코드 그대로,
+    # 그 뒤에 금액 (앱의 만원 표기 · 영어는 앱의 ₩ 표기 — 영어 금액 모양은 PENDING JACK)
+    assert got["miss"] == ["STRC", "000660", "GOOGM"]
+    assert got["ko"] == "오늘 데이터에 없는 종목 3개(STRC 200만원, SK하이닉스 50만원, 저장된 이름 10만원)는 빼고 계산했어요."
+    assert got["en"] == "Left out 3 stock(s) not in today's data (STRC ₩2,000,000, SK Hynix ₩500,000, 저장된 이름 ₩100,000)."
+    assert got["none"] is None and got["cleanNote"] is None
+    # 공유 카드: 빠진 종목은 국내 주식으로도 TOP 으로도 세지 않아요 (300 + 100 + 현금 100 = 500)
+    assert got["top"] == ["005930", "U"] and got["buckets"] == [["국내 주식", 60.0], ["미국 주식", 20.0], ["현금", 20.0]], got
+    assert got["note"] == got["ko"]                                       # 카드에도 같은 안내 한 줄
+    # 카드에 두 줄로 안 들어갈 때 쓸 문장: 이름만 줄이고 개수·문장은 그대로
+    assert got["alts"] == ["오늘 데이터에 없는 종목 3개(STRC 200만원, SK하이닉스 50만원, …)는 빼고 계산했어요.",
+                           "오늘 데이터에 없는 종목 3개(STRC 200만원, …)는 빼고 계산했어요."], got["alts"]
+
+
+# ── v18.5 B안: 베타를 수익률로 바꾸는 프로필 문장 (Jack 2026-11-03) ─────────────────
+ANS_A = {"goal": "retire", "horizon": 20, "share": 10, "emergency": 12, "target": 4, "style": ["long"], "crash": ["hold"],
+         "exp": ["krstock"], "checking": "monthly", "fear": ["none"], "account": "normal", "interest": ["index"]}
+ANS_B = {"goal": "grow", "horizon": 1, "share": 100, "emergency": 0, "target": 15, "style": ["ret"], "crash": ["sellall"],
+         "exp": ["newbie"], "checking": "daily", "fear": ["loss"], "account": "normal", "interest": ["semi"]}
+BETA_RET = {"ko": ["%라서, 베타", "기대하기 어려운 수치", "정도면 충분해요"],
+            "en": ["goal, aim for beta", "is hard to expect from the risk you can carry", "goal only needs about beta"]}
+
+
+ANS_R = {"goal": "house", "horizon": 20, "share": 100, "emergency": 0, "target": 8, "style": ["long"], "crash": ["sellsome"],
+         "exp": ["lev"], "checking": "daily", "fear": ["loss"], "account": "normal", "interest": ["index"]}   # 리뷰 답
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_profile_lines_that_turn_beta_into_returns_are_hidden_but_the_rest_stays():
+    # scoreProfile(a, lang) = 지금 앱 (SHOW_ER 끔), scoreProfile(a, lang, true) = 예전 앱이 만들어 저장한 프로필
+    got = run_metrics(f"const A = {json.dumps(ANS_A)}, B = {json.dumps(ANS_B)}, R = {json.dumps(ANS_R)}; const out = {{}};"
+                      "const lines = (p) => [p.summary, ...p.tips, ...p.flags];"
+                      "const tg = (p) => [p.targetBetaMin, p.targetBetaMax, p.targetVolMaxPct];"
+                      "for (const lang of ['ko', 'en']) for (const [k, a] of [['A', A], ['B', B], ['R', R]]) {"
+                      " const now = D.scoreProfile(a, lang), old = D.scoreProfile(a, lang, true), shown = D.shownProfile(old);"
+                      " out[lang + k] = { now: lines(now), old: lines(old), shown: lines(shown), nowFlags: now.flags, oldFlags: old.flags,"
+                      " nTips: [old.tips.length, shown.tips.length], nFlags: [old.flags.length, shown.flags.length],"
+                      " tNow: tg(now), tOld: tg(old), tShown: tg(shown), tShownNow: tg(D.shownProfile(now)),"
+                      " tEdited: tg(D.shownProfile({ ...old, targetBetaMax: 1.25 })) }; }"
+                      "console.log(JSON.stringify(out));")
+    for lang in ("ko", "en"):
+        a, b, r = got[lang + "A"], got[lang + "B"], got[lang + "R"]
+        words = BETA_RET[lang]
+        # 예전 앱이 만든 문장 틀과 거르는 틀이 맞는지: 예전 프로필엔 있고(A: 요약·팁, B: 요약·경고), 걸러 보이면 없어요
+        assert words[0] in a["old"][0] and any(words[2] in x for x in a["old"]), a["old"]
+        assert words[0] in b["old"][0] and any(words[1] in x for x in b["old"]), b["old"]
+        for x in (a, b, r):
+            for key in ("now", "shown"):                                   # 지금 만든 프로필에는 아예 없어요
+                assert not [w for w in words for line in x[key] if w in line], (key, x[key])
+            end = "기준이 돼요." if lang == "ko" else "binds."
+            assert x["now"][0].endswith(end) and x["shown"][0] == x["now"][0], (x["now"][0], x["shown"][0])
+        assert a["nTips"][1] == a["nTips"][0] - 1 and b["nFlags"][1] == b["nFlags"][0] - 1
+        # 목표 베타·변동성 상한: 감당 능력만으로 (A: 목표 연 4% 로 낮췄던 0.2–0.45 · ≤16% → 0.9–1.4 · ≤29%)
+        assert a["tOld"] == [0.2, 0.45, 16] and a["tNow"] == [0.9, 1.4, 29], (a["tOld"], a["tNow"])
+        assert a["tShown"] == a["tNow"] and a["tShownNow"] == a["tNow"]   # 예전에 저장된 값도 화면에선 감당 능력 기준
+        assert b["tNow"] == b["tOld"] == [0.3, 0.7, 13]                    # 감당 능력이 더 낮으면 원래도 같은 값
+        assert a["tEdited"] == [0.2, 1.25, 16]                              # 직접 고친 값은 그대로
+        # 리뷰: 경고 자리(3개)를 '기대하기 어려운 수치'가 차지해 '비상금이 먼저예요'가 밀려났었어요 → 이제는 보여요
+        cushion = "비상금이 먼저예요" if lang == "ko" else "fund the cushion first"
+        assert any(cushion in f for f in r["nowFlags"]), r["nowFlags"]
+        assert not any(cushion in f for f in r["oldFlags"]) and any(words[1] in f for f in r["oldFlags"]), r["oldFlags"]
+
+
 # ── 「저장한 파일에서 불러오기」: 이 앱의 「JSON 저장 (백업·공유)」 파일도, 예전 저장 상태 파일도 읽어요 (v18.4.1, Jack 2026-11-04) ──
 # 전에는 앱이 저장한 파일({ holdings: [{ ticker, amountWon }], budgetWon })이 아무 말 없이 빈 포트폴리오로 열렸어요.
 # 읽을 종목이 하나도 없으면 null 이에요: 앱은 '파일을 읽을 수 없어요.'만 띄우고 아무것도 바꾸지 않아요 (smoke_app.py 의 '파일 불러오기').
