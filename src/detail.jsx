@@ -100,6 +100,64 @@ async function readSlots() {
 }
 async function writeSlots(list) { try { await store.set(KEY_SLOTS, JSON.stringify(list.slice(0, MAX_SLOTS))); } catch (e) {} }
 
+// ================= 「저장한 파일에서 불러오기」 (v18.4.1, Jack 2026-11-04) =================
+// 이 앱이 쓰는 두 모양을 모두 읽어요.
+//   ① 「JSON 저장 (백업·공유)」 파일 (ExportView 의 buildJson):
+//      { app, budgetWon, holdings: [{ ticker, amountWon, … }], profile, settings, … }
+//      → t = ticker, mw = amountWon / 10000 (만원, 0.01만원 = 100원 단위로 반올림해 소수 오차만 없애요), budgetMw = budgetWon / 10000.
+//      프로필·설정은 객체이고 칸마다 기본값과 같은 종류일 때만 되살려요. 파일에 없는 것은 '새로 시작하기'처럼 기본값이에요.
+//   ② 저장 상태 모양 (예전 파일): { state: {…} } 또는 { holdings: [{ t, mw }], budgetMw, … } — 지금까지처럼 그대로 읽어요.
+// 종목코드가 비었거나, 금액이 0보다 큰 숫자가 아니거나, 같은 종목이 또 나오거나, 지금 종목 목록에 없는 줄은 빼고 console 에 개수를 남겨요.
+// 남는 종목이 하나도 없으면 null: 부르는 쪽이 '파일을 읽을 수 없어요'를 띄우고 아무것도 바꾸지 않아요 (파일로 빈 포트폴리오를 열지 않아요).
+// 그 전에는 이 앱이 저장한 ① 파일이 아무 말 없이 빈 포트폴리오로 열렸어요. 내보내기 모양은 바꾸지 않아요 (이미 받아 둔 파일이 있어요).
+const isPlainObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+const isFinNum = (x) => typeof x === "number" && Number.isFinite(x);
+const mwOfWon = (won) => Math.round(won / 100) / 100;
+function sameKinds(obj, defaults) {
+  const out = {};
+  Object.keys(defaults).forEach((k) => {
+    if (!Object.prototype.hasOwnProperty.call(obj, k)) return;
+    const d = defaults[k], v = obj[k];
+    const ok = d === null ? v !== undefined
+      : typeof d === "number" ? isFinNum(v)
+      : Array.isArray(d) ? Array.isArray(v)
+      : typeof v === typeof d && v !== null;
+    if (ok) out[k] = v;
+  });
+  return out;
+}
+function readPortfolioFile(j, known) {
+  const refuse = () => { console.warn("[뱁새] 불러올 종목이 없는 파일이에요: 지금 포트폴리오를 그대로 둬요"); return null; };
+  if (!isPlainObj(j)) return refuse();
+  const exp = !j.state && ("budgetWon" in j || (Array.isArray(j.holdings) && j.holdings.some((h) => isPlainObj(h) && ("ticker" in h || "amountWon" in h))));
+  const src = exp ? j : (j.state || j);
+  if (!isPlainObj(src)) return refuse();
+  const rows = Array.isArray(src.holdings) ? src.holdings : [];
+  const custom = !exp && Array.isArray(src.customStocks) ? src.customStocks.filter((c) => isPlainObj(c) && typeof c.t === "string" && c.t.trim()) : [];
+  const holdings = [], seen = new Set();
+  let bad = 0, unknown = 0;
+  rows.forEach((r) => {
+    const t = isPlainObj(r) ? (exp ? r.ticker : r.t) : null;
+    const mw = !isPlainObj(r) ? null : exp ? (isFinNum(r.amountWon) ? mwOfWon(r.amountWon) : null) : r.mw;
+    if (typeof t !== "string" || !t.trim() || !isFinNum(mw) || mw <= 0 || seen.has(t)) { bad++; return; }
+    if (!known.has(t) && !custom.some((c) => c.t === t)) { unknown++; return; }
+    seen.add(t);
+    holdings.push(exp ? { t, mw } : { ...r, t, mw });
+  });
+  if (bad + unknown > 0) {
+    console.warn("[뱁새] 불러온 파일의 종목 " + rows.length + "개 중 " + (bad + unknown) + "개를 뺐어요 (종목코드·금액이 맞지 않음 "
+      + bad + "개 · 지금 종목 목록에 없음 " + unknown + "개)");
+  }
+  if (!holdings.length) return refuse();
+  if (!exp) return { ...src, holdings, ...(Array.isArray(src.customStocks) ? { customStocks: custom } : {}) };
+  const st = { holdings, answers: {}, profile: isPlainObj(j.profile) ? sameKinds(j.profile, DEFAULT_PROFILE) : {}, budgetMw: 1000 };
+  if (isFinNum(j.budgetWon) && j.budgetWon >= 0) st.budgetMw = mwOfWon(j.budgetWon);
+  else console.warn("[뱁새] 불러온 파일에 예산(budgetWon)이 없거나 숫자가 아니라 1,000만원으로 시작해요");
+  const settings = isPlainObj(j.settings) ? sameKinds(j.settings, DEFAULT_SETTINGS) : {};
+  if (Object.keys(settings).length) st.settings = settings;     // 읽을 칸이 하나도 없으면 지금 설정(오늘 환율 등)을 그대로 둬요
+  return st;
+}
+
 // ================= Live data loader =================
 // The daily GitHub Action writes data.json next to this file. If it can't be read, the studio still opens
 // with the embedded snapshot, but every item is marked live:false and the screen says so (v17.5).
@@ -4513,14 +4571,15 @@ function AppInner({ seed, lang: langProp }) {
     const next = (await readSlots()).map((s) => (s.id === id ? { ...s, name: nm } : s));
     await writeSlots(next); setSlots(next);
   };
+  // 파일을 다 읽고 확인한 뒤에만 바꿔요: 읽을 종목이 하나도 없으면 알림만 띄우고 지금 포트폴리오·예산·프로필·설정은 그대로예요.
   const importJson = (txt) => {
-    try {
-      const j = JSON.parse(txt);
-      const st = j.state || j;
-      const id = "s" + Date.now().toString(36);
-      applyState(st);
-      setSlotId(id); setSlotName((lang === "ko" ? "불러온 포트폴리오" : "Imported portfolio"));
-    } catch (e) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); }
+    let st = null;
+    try { st = readPortfolioFile(JSON.parse(txt), new Set(baseUniverse().map((x) => x.t))); }
+    catch (e) { console.warn("[뱁새] 불러온 파일을 JSON 으로 읽지 못했어요: " + ((e && e.message) || e)); st = null; }
+    if (!st) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); return; }
+    const id = "s" + Date.now().toString(36);
+    applyState(st);
+    setSlotId(id); setSlotName((lang === "ko" ? "불러온 포트폴리오" : "Imported portfolio"));
   };
 
   const t = (k) => (T[k] ? T[k][lang] : k);
@@ -4653,4 +4712,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile };

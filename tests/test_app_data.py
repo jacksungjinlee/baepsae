@@ -146,3 +146,101 @@ def test_checkin_ignores_old_snapshots_saved_with_nan():
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
     body = src.split("function CheckinCard", 1)[1].split("\nfunction ", 1)[0]
     assert "find(valid)" in body and "checkins[checkins.length - 1]" not in body
+
+
+# ── 「저장한 파일에서 불러오기」: 이 앱의 「JSON 저장 (백업·공유)」 파일도, 예전 저장 상태 파일도 읽어요 (v18.4.1, Jack 2026-11-04) ──
+# 전에는 앱이 저장한 파일({ holdings: [{ ticker, amountWon }], budgetWon })이 아무 말 없이 빈 포트폴리오로 열렸어요.
+# 읽을 종목이 하나도 없으면 null 이에요: 앱은 '파일을 읽을 수 없어요.'만 띄우고 아무것도 바꾸지 않아요 (smoke_app.py 의 '파일 불러오기').
+KNOWN_JS = "const K = new Set(['005930', '000660', 'AAPL']); const warn = []; console.warn = (m) => warn.push(String(m));"
+
+
+def read_file_js(cases):
+    """cases: {이름: 파일 객체} → {이름: readPortfolioFile 결과}, 그리고 console 경고들."""
+    return run_metrics(KNOWN_JS + f"const cases = {json.dumps(cases, ensure_ascii=False)};"
+                       "const out = {}; for (const k of Object.keys(cases)) out[k] = D.readPortfolioFile(cases[k], K) ?? 'NULL';"
+                       "console.log(JSON.stringify({ out, warn }));")
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_reads_the_apps_own_export_file():
+    export = {"app": "Baepsae 뱁새 v12", "slot": "포트폴리오 1", "date": "2026-11-03", "dataAsOf": "2026-11-02", "notLive": [],
+              "budgetWon": 25000000,
+              "holdings": [{"ticker": "005930", "name": "삼성전자", "sector": "semi", "priceAssumed": 229000, "amountWon": 4500000,
+                            "weightPct": 56.25, "approxShares": 19, "beta": 1.1, "volPct": 30},
+                           {"ticker": "000660", "amountWon": 1505000},           # 150.5만원 (입력칸은 소수도 받아요)
+                           {"ticker": "AAPL", "amountWon": 123456789}],         # 0.01만원 단위로 반올림 → 12345.68
+              "profile": {"ready": True, "targetBetaMin": 0.6, "targetBetaMax": "높게", "title": "균형형", "flags": [], "zzz": 1},
+              "settings": {"fx": 1400, "rf": "3%", "mktVol": 20, "junk": 5},
+              "metrics": {"beta": 1.0}}
+    got = read_file_js({"export": export})
+    st = got["out"]["export"]
+    assert st["holdings"] == [{"t": "005930", "mw": 450}, {"t": "000660", "mw": 150.5}, {"t": "AAPL", "mw": 12345.68}]
+    assert st["budgetMw"] == 2500
+    assert st["answers"] == {}                                   # 새로 시작하기처럼: 파일에 없는 답변은 비워요
+    assert st["profile"] == {"ready": True, "targetBetaMin": 0.6, "title": "균형형", "flags": []}   # 종류가 다른 칸 · 모르는 칸은 빼요
+    assert st["settings"] == {"fx": 1400, "mktVol": 20}
+    assert got["warn"] == [], got["warn"]                        # 모두 읽었으면 경고 없음
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_keeps_valid_rows_and_says_how_many_it_dropped():
+    rows = [{"ticker": "005930", "amountWon": 3000000},
+            {"ticker": "", "amountWon": 1000000},              # 종목코드 없음
+            {"ticker": "   ", "amountWon": 1000000},           # 빈칸뿐
+            {"amountWon": 1000000},                            # 종목코드 칸이 없음
+            {"ticker": "000660", "amountWon": 0},              # 0원
+            {"ticker": "000660", "amountWon": -5},             # 음수
+            {"ticker": "000660", "amountWon": "300만"},         # 숫자가 아님
+            {"ticker": "000660", "amountWon": None},
+            {"ticker": "000660", "amountWon": 10},             # 0.001만원 → 반올림하면 0
+            None, 7, "005930",
+            {"ticker": "005930", "amountWon": 2000000},        # 같은 종목이 또 나옴
+            {"ticker": "999999", "amountWon": 2000000},        # 지금 종목 목록에 없음
+            {"ticker": "AAPL", "amountWon": 1500000}]
+    got = read_file_js({"partial": {"app": "Baepsae 뱁새 v12", "budgetWon": 10000000, "holdings": rows},
+                        "bad_settings": {"budgetWon": 10000000, "holdings": rows[:1], "settings": {"fx": "1400원"}, "profile": [1]}})
+    bs = got["out"]["bad_settings"]
+    assert "settings" not in bs and bs["profile"] == {}, bs       # 읽을 칸이 없는 설정은 건드리지 않고, 프로필은 새로 시작하기처럼
+    st = got["out"]["partial"]
+    assert st["holdings"] == [{"t": "005930", "mw": 300}, {"t": "AAPL", "mw": 150}] and st["budgetMw"] == 1000
+    assert "settings" not in st                                  # 파일에 설정이 없으면 지금 설정을 그대로 써요
+    assert got["warn"] == ["[뱁새] 불러온 파일의 종목 15개 중 13개를 뺐어요 (종목코드·금액이 맞지 않음 12개 · 지금 종목 목록에 없음 1개)"], got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_refuses_files_that_would_open_an_empty_portfolio():
+    cases = {
+        "export_empty": {"app": "Baepsae 뱁새 v12", "budgetWon": 10000000, "holdings": []},
+        "export_all_bad": {"app": "Baepsae 뱁새 v12", "budgetWon": 10000000,
+                           "holdings": [{"ticker": "", "amountWon": 100000}, {"ticker": "005930", "amountWon": 0},
+                                        {"ticker": "005930", "amountWon": "300만"}, {"ticker": "999999", "amountWon": 100000}]},
+        "export_no_rows": {"app": "Baepsae 뱁새 v12", "budgetWon": 10000000},
+        "state_empty": {"state": {"schema": 10, "budgetMw": 1000, "holdings": []}},
+        "bare_empty": {"holdings": [], "budgetMw": 500},
+        "state_bad": {"state": {"holdings": [{"t": "005930", "mw": 0}, {"t": "", "mw": 100}, {"mw": 100}]}},
+        "state_not_object": {"state": "abc"},
+        "wrong_shape": {"hello": 1},
+        "holdings_not_list": {"holdings": {"t": "005930", "mw": 100}},
+        "list": [{"t": "005930", "mw": 100}],
+        "null": None, "number": 5, "text": "005930",
+    }
+    got = read_file_js(cases)
+    assert got["out"] == {k: "NULL" for k in cases}, got["out"]
+    assert got["warn"].count("[뱁새] 불러올 종목이 없는 파일이에요: 지금 포트폴리오를 그대로 둬요") == len(cases), got["warn"]   # 말없이 거르지 않아요
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_still_reads_old_state_shaped_files():
+    old = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1500, "answers": {"q1": 2},
+           "holdings": [{"t": "005930", "mw": 500}, {"t": "000660", "mw": 300}], "checkins": [{"d": "2026-10-01"}],
+           "customStocks": [{"t": "MYCO", "nk": "내 회사", "price": 1000, "custom": True}, None],
+           "settings": {"fx": 1390}, "stockEdits": {"005930": {"beta": 1.3}}}
+    with_custom = json.loads(json.dumps(old))
+    with_custom["holdings"].append({"t": "MYCO", "mw": 100})
+    got = read_file_js({"wrapped": {"state": old}, "bare": old, "custom": with_custom})
+    for k in ("wrapped", "bare"):
+        st = got["out"][k]
+        want = {**old, "customStocks": [old["customStocks"][0]]}           # 객체가 아닌 직접 추가 종목만 빼요
+        assert st == want, (k, st)
+    assert got["out"]["custom"]["holdings"][-1] == {"t": "MYCO", "mw": 100}  # 파일에 든 직접 추가 종목은 목록에 있는 종목이에요
+    assert got["warn"] == [], got["warn"]
