@@ -1570,7 +1570,7 @@ OTHER_KEYS = """() => { const o = {}; for (let i = 0; i < localStorage.length; i
   if (k !== 'baepsae2.v1') o[k] = localStorage.getItem(k); } return o; }"""
 STORED = "JSON.parse(localStorage.getItem('baepsae2.v1') || 'null')"
 # 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로(1초 안에) 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤)
-REVOKE_SPY = """() => { window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
+REVOKE_SPY = """() => { if (window.__revoked) return; window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
   URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
 
 
@@ -1678,11 +1678,12 @@ def _iphone_records(R, files, device, tmp):
         page.evaluate(REVOKE_SPY)
         with page.expect_download() as dl:
             page.get_by_role("button", name=C["store"]["export"]).click()
-        name = dl.value.suggested_filename
+        name, url = dl.value.suggested_filename, dl.value.url
+        assert url.startswith("blob:"), url
         keep["path"] = os.path.join(tmp, name)                        # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
         dl.value.save_as(keep["path"])
         page.wait_for_timeout(1500)
-        assert page.evaluate("window.__revoked") == [], "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
+        assert url not in page.evaluate("window.__revoked"), "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
         with open(keep["path"], encoding="utf-8") as fh:
             exported = json.load(fh)
         assert re.fullmatch(r"baepsae-records-\d{4}-\d{2}-\d{2}\.json", name), name
