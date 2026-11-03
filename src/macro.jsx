@@ -3,11 +3,10 @@
 // 원칙: 예측이 아니라 이해. 금리와 자산의 관계를 스스로 만져보게 합니다.
 import React, { useState, useEffect, useMemo } from "react";
 import { C, FONT, RAD, HAIR } from "./tokens.js";
-import { Bird, LoadFail, DateBadge, T_RATES_FAIL } from "./detail.jsx";
+import { Bird, LoadFail, DateBadge, T_RATES_FAIL, AboutLink, SiteFooterLine } from "./detail.jsx";
 import { loadJson } from "./data.js";
 import { Verdict } from "./corp.jsx";
 
-const CREDIT = "이성진, INSEAD MBA 26J · Jack (Sung Jin) Lee, INSEAD MBA 26J";
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 
 export const MyBox = ({ children }) => (
@@ -229,7 +228,7 @@ function DeepBody({ data, lang }) {
         ) : <Sub style={{ padding: "22px 0", textAlign: "center" }}>{T_RATES_FAIL[lang === "en" ? "en" : "ko"]}</Sub>}
       </Card>
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
-        {CREDIT}
+        <SiteFooterLine lang={lang} />
       </div>
     </div>
   );
@@ -314,7 +313,7 @@ export function MacroBody({ data, lang }) {
       </div>
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
-        뱁새는 수익률을 약속하지 않아요. 금리와 자산의 관계를 스스로 이해하도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.<br />{CREDIT}
+        뱁새는 수익률을 약속하지 않아요. 금리와 자산의 관계를 스스로 이해하도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.{" · "}<AboutLink />
       </div>
     </div>
   );

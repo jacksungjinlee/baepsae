@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 /*
   뱁새 (Baepsae) — 포트폴리오 도구 v11 (AI 없이 동작 · 한국+미국+금은)
   Toss-like friendly fintech for Korean retail investors. Mascot: 뱁이 the long-tailed tit.
-  "황새 말고, 내 걸음으로" — invest within your own risk budget, at your own pace.
+  "철새처럼 옮겨 다니지 않는 투자" — invest within your own risk budget, by your own criteria.
   - Free-text voyage questionnaire scored by Claude API (robust, with preset fallback)
   - Long-only KRX builder: sliders, 4 risk rails, health score, rich stock cards
   - Insights: risk contribution, goal gap, projection fan, dividends, benchmark+robo
@@ -16,6 +16,7 @@ import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
 import { loadJson, freshness, mergeStocks, mdOf } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
+import { ABOUT_URL } from "./links.js";
 
 function makeCardData(holdings, stocksById, cashMw, score, lang) {
   const sums = { kr: 0, us: 0, mt: 0 };
@@ -644,7 +645,7 @@ const T = {
   lvl: { ko:["새싹 투자자","꾸준한 모으기","균형 투자자","리스크 관리자","뱁새 마스터"], en:["Sprout","Steady Saver","Balanced Investor","Risk Manager","Baepsae Master"] },
   gapShort: { ko:(need,ret,gap)=>`목표(연 ${need}%)까지 지금 구성의 기대수익(연 ${ret}%)으로는 연 ${gap}%p가 모자라요. 목표·기간·저축액 중 하나는 조정이 필요해요 — 무리하게 위험을 키우는 건 답이 아니에요.`, en:(need,ret,gap)=>`Your goal (${need}%/yr) is ${gap}%p beyond this mix's expected return (${ret}%/yr). Adjust the goal, horizon, or savings — stretching for more risk is not the answer.` },
   gapOk: { ko:(need,ret)=>`지금 구성의 기대수익(연 ${ret}%)이면 목표(연 ${need}%)에 닿을 수 있어요. 꾸준히 유지하는 게 최고의 전략이에요.`, en:(need,ret)=>`This mix's expected return (${ret}%/yr) can reach your goal (${need}%/yr). Staying the course is the best strategy.` },
-  tagline: { ko:"황새 말고, 내 걸음으로", en:"Not the stork's pace — your own" },
+  tagline: { ko:"철새처럼 옮겨 다니지 않는 투자", en:"Don't hop from trend to trend" },   // v19.0 Part E (Jack, 2026-11-03); EN from about.md
   s1: { ko:"① 프로필", en:"① Profile" },
   s2: { ko:"② 구성", en:"② Build" },
   s3: { ko:"③ 진단", en:"③ Diagnose" },
@@ -756,7 +757,7 @@ const T = {
   ciSince: { ko:"지난 기록:", en:"Last record:" },
   ciAmount: { ko:"투자 금액", en:"Invested" },
   ciCount: { ko:"종목 수", en:"Holdings" },
-  credit: { ko:"만든 사람 · 이성진, INSEAD MBA 26J", en:"Created by Jack (Sung Jin) Lee, INSEAD MBA 26J" },
+  about: { ko:"소개", en:"About" },   // v19.0 Part D/E: footer link to the 소개 page (replaces the credit line)
   autoTag: { ko:"자동", en:"live" },
   assumeTag: { ko:"가정", en:"assumption" },
   mrpScenTip: { ko:"위험 프리미엄은 관측되는 값이 아니라 '가정'이에요. 최근 수익률로 자동 계산하면, 많이 오른 뒤에 오히려 더 낙관적으로 잡히는 함정이 있어서 직접 고르게 해뒀어요.", en:"The risk premium is an assumption, not an observation. Auto-fitting it to recent returns would turn optimistic right after a run-up — so you choose it." },
@@ -884,6 +885,22 @@ const riskBlindTxt = (lang, m) => (m.allNoRisk ? T_RISK_BLIND : T_RISK_HALF)[lan
 const T_DY_UNKNOWN = { ko: "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.", en: "Holdings without dividend data ({n}) are counted as 0." };
 const noRiskLine = (lang, m) => T_NORISK[lang].replace("{pct}", m.noRiskPct >= 1 ? Math.round(m.noRiskPct) : Math.max(m.noRiskPct, 0.1).toFixed(1));
 const WARN_INK = "#8A5A16";
+
+// 푸터의 '소개' 링크 (v19.0 Part D, Jack 2026-11-03): 만든 사람 줄 대신 2.0 의 소개 페이지(ABOUT_URL)로 가요.
+// 기업분석·공시·수급·금리·원자재·정보·첫 화면·차근차근 만들기의 푸터가 모두 이것을 써요. 주소는 src/links.js 한 곳에만 있어요.
+function AboutLink({ lang = "ko", style }) {
+  return (
+    <a href={ABOUT_URL} data-about-link="1"
+      style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 2, display: "inline-block", padding: "12px 6px", margin: "-12px -6px", ...style }}>
+      {T.about[lang === "en" ? "en" : "ko"]}
+    </a>
+  );
+}
+// 고지문 + ' · 소개' 한 줄 (고지문만 있던 푸터의 모양)
+function SiteFooterLine({ lang = "ko" }) {
+  const l = lang === "en" ? "en" : "ko";
+  return <>{T.disclaimer[l]}{" · "}<AboutLink lang={l} /></>;
+}
 
 // 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
 function LoadFail({ onRetry, lang = "ko" }) {
@@ -3969,7 +3986,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     return { ...r, s, shares: pk > 0 ? Math.floor(r.won / pk) : 0 };
   });
   const stamp = new Date().toISOString().slice(0, 10);
-  const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", author: T.credit.en, slot: slotName, date: stamp,
+  const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
     dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
@@ -3979,7 +3996,6 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   const buildMemo = () => {
     const L = [];
     L.push((lang === "ko" ? "뱁새 주문 메모 " : "Baepsae Order Memo ") + stamp);
-    L.push(T.credit[lang]);
     L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(metrics.total, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + (SHOW_ER ? " · E(r) " + pct(metrics.expRet) : ""));
     L.push("");
     rows.forEach((r) => L.push(`${r.s.nk} (${r.t}) — ${fmtMw(r.won, lang)} (${(r.wInv * 100).toFixed(1)}%) ≈ ${r.shares}${lang === "ko" ? "주" : "sh"} @${fmtPx(r.s.price, r.s)}`));
@@ -4190,7 +4206,7 @@ function Onboarding({ lang, onDone }) {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
           <Bird mood="happy" size={72} />
           <div style={{ fontSize: 20, fontWeight: 900, color: C.ink }}>{lang === "ko" ? "안녕하세요, 뱁이예요" : "Hi, I'm Baebi"}</div>
-          <Sub style={{ textAlign: "center" }}>{lang === "ko" ? "황새 말고, 내 걸음으로 " : "Not the stork's pace — your own "}</Sub>
+          <Sub style={{ textAlign: "center" }}>{T.tagline[lang === "ko" ? "ko" : "en"]}</Sub>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
           {items.map(([e, h, b]) => (
@@ -4606,9 +4622,8 @@ function AppInner({ seed, lang: langProp }) {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, paddingTop: 6 }}>
           <Bird mood="cheer" size={44} />
           <Sub style={{ fontWeight: 800, color: C.faint }}>{t("tagline")} </Sub>
-          <Sub style={{ fontWeight: 700, color: C.sub, marginTop: 2 }}>{t("credit")}</Sub>
         </div>
-        <Sub style={{ textAlign: "center", padding: "2px 16px", fontSize: 10.5 }}>{t("disclaimer")}</Sub>
+        <Sub style={{ textAlign: "center", padding: "2px 16px", fontSize: 10.5 }}><SiteFooterLine lang={lang} /></Sub>
       </div>
       <ExplainSheet id={explain} lang={lang} onClose={() => setExplain(null)} />
       {showSettings && <SettingsPanel lang={lang} t={t} settings={settings} setSettings={setSettings} tax={tax} setTax={setTax} autoKeys={autoKeys} onClose={() => setShowSettings(false)} />}
@@ -4638,4 +4653,4 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine };

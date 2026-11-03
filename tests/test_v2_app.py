@@ -204,10 +204,16 @@ def test_old_app_bundle_does_not_include_v2():
         inputs = list(json.load(f)["inputs"])
     bad = [i for i in inputs if i.startswith(("src/v2/", "src/copy/", "src/preview/"))]
     assert not bad, bad
-    # 지금 앱이 2.0 을 가리키는 곳은 머리말의 '뱁새 2.0 보기' 링크 하나뿐이에요 (Jack, 2026-11-02). 2.0 코드는 가져오지 않아요(위).
+    # 지금 앱이 2.0 을 가리키는 곳은 두 가지예요. 2.0 코드는 가져오지 않아요(위).
+    #   머리말의 '뱁새 2.0 보기' 링크 (Jack, 2026-11-02) — ./app.html
+    #   푸터의 '소개' 링크 (v19.0, Jack 2026-11-03) — ./app.html#about, src/links.js 의 상수 하나 (번들에 한 번)
     old = read("baepsae.html")
-    assert old.count("app.html") == 1 and 'href:"./app.html","data-v2-link":"1"' in old, old.count("app.html")
+    assert old.count("app.html") == 2, old.count("app.html")
+    assert old.count('href:"./app.html","data-v2-link":"1"') == 1 and old.count('"./app.html#about"') == 1, "app.html 링크 모양이 달라요"
     assert "뱁새 2.0 보기" in read("src/shell.jsx") and "뱁새 2.0 보기" in old
+    assert read("src/links.js").count('"./app.html#about"') == 1
+    srcs = [f for f in os.listdir(os.path.join(ROOT, "src")) if f.endswith((".js", ".jsx"))]
+    assert [f for f in srcs if "app.html#about" in read(os.path.join("src", f))] == ["links.js"], "소개 주소는 src/links.js 에만"
 
 
 def test_build_script_builds_both_pages():

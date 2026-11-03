@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """메인 주소를 뱁새 2.0 으로 (v18.3 Part F, Jack 2026-11-01 결정).
 
-- index.html 은 app.html 로 보내요 (meta refresh · canonical · 안 열릴 때 누르는 링크). 바뀐 것은 이 세 주소와 공유 카드뿐이에요:
-  공유 카드(설명 · og · twitter 태그)를 빼고 './app.html' 을 './baepsae.html' 로 바꾸면 예전 index.html 과 똑같아져요
+- index.html 은 app.html 로 보내요 (meta refresh · canonical · 안 열릴 때 누르는 링크). 바뀐 것은 이 세 주소와 공유 카드,
+  그리고 v19.0 의 글 세 군데(제목 · 불러오는 동안의 글 · 링크 글)뿐이에요: 공유 카드(설명 · og · twitter 태그)를 빼고 그 세 군데를
+  예전 글로, './app.html' 을 './baepsae.html' 로 바꾸면 예전 index.html 과 똑같아져요
 - 공유 카드(Jack 승인, 2026-11-01): 메인 주소를 카톡·슬랙에 붙여도 카드가 떠요. 태그는 지금 앱(template.html)의 승인된 줄과 한 글자도 다르지 않아요
 - 지금 앱(baepsae.html)은 그대로: 지금 소스로 새로 빌드해도 커밋한 파일과 한 글자도 다르지 않아요
 - 2.0 에서 지금 앱으로 갈 수 있어요: 머리말의 '예전 뱁새 보기'와 찾기 탭이 ./baepsae.html 을 열어요
@@ -28,8 +29,10 @@ def test_index_redirects_to_app_and_keeps_its_text():
     idx = read("index.html")
     assert '<meta http-equiv="refresh" content="0; url=./app.html">' in idx
     assert '<link rel="canonical" href="./app.html">' in idx
-    assert '<a href="./app.html" style="color:#1B2B4B">열리지 않으면 여기를 눌러주세요</a>' in idx
-    assert "뱁이가 날아오는 중…" in idx and "<title>뱁새 Baepsae</title>" in idx
+    # v19.0 (2026-11-03): 제목은 Jack 승인(Part E), 불러오는 동안의 글과 링크 글은 Part E 의 제안 문구(Jack 의 yes 대기)
+    assert '<p>불러오는 중이에요 <a href="./app.html" style="color:#1B2B4B">열리지 않으면 여기를 눌러 주세요</a></p>' in idx
+    assert "<title>뱁새 — 내 기준으로 만드는 포트폴리오</title>" in idx and idx.count("<title>") == 1
+    assert "날아오는" not in idx and "눌러주세요" not in idx and "뱁새 Baepsae" not in idx
     assert idx.count("./app.html") == 3 and "baepsae.html" not in idx and "app-preview" not in idx
 
 
@@ -52,6 +55,13 @@ def test_redirect_is_one_substitution_from_the_old_index():
         pytest.skip(f"예전 index.html({BEFORE})이 이 clone 에 없어요 (얕은 clone)")
     card = set(share_lines(read("index.html")))
     rest = "".join(l for l in read("index.html").splitlines(keepends=True) if l.rstrip("\n") not in card)
+    # v19.0 (2026-11-03): 이 세 글만 바뀌었어요 (지금 글 → 예전 글). 다른 글자가 하나라도 바뀌면 아래 비교에서 걸려요.
+    v190 = [("<title>뱁새 — 내 기준으로 만드는 포트폴리오</title>", "<title>뱁새 Baepsae</title>"),            # 제목 (Jack 승인)
+            ("<p>불러오는 중이에요 <a ", "<p>뱁이가 날아오는 중… <a "),                                       # 제안 (Jack 의 yes 대기)
+            (">열리지 않으면 여기를 눌러 주세요</a>", ">열리지 않으면 여기를 눌러주세요</a>")]                    # 제안 (Jack 의 yes 대기)
+    for new, old in v190:
+        assert rest.count(new) == 1 and old in r.stdout, (new, old)
+        rest = rest.replace(new, old)
     assert rest.replace("./app.html", "./baepsae.html") == r.stdout
 
 
