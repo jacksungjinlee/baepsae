@@ -39,7 +39,7 @@ REPO_STATE = "old" if V175_FORMAT in _REPO_MISSING else ("fields" if _REPO_MISSI
 REPO_LABEL = {"old": "v17.5 형식 전", "fields": "v17.5.1 항목 없음", "live": "v17.5.1 항목 있음"}[REPO_STATE]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
-SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og.png", "icon-192.png", "icon-512.png",
+SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og-v19.png", "icon-192.png", "icon-512.png",
         "baepi-og.png", "jack-photo.jpg"] + \
        [f"baepi-{i}.png" for i in range(1, 10)]
 DATA = ["data.json", "corp.json", "macro.json", "disc.json"]

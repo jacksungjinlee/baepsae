@@ -426,7 +426,7 @@ export const C = {
   // 바뀐 곳은 하나: 본문의 "3,000개가 넘는"(영어 "more than 3,000")은 "{n}" 틀이에요. n 은 data.json 의 분석 종목 수를 백 단위로
   // 내린 값이고(src/v2/aboutstats.js), 실제 데이터를 읽지 못했으면 그 문단을 빼요. 숫자 줄은 데이터가 새것일 때만 보여요.
   about: {
-    langLabel: "언어",                                              // about.md (언어) — 한국어 / English 버튼 묶음의 이름 (읽기 도우미용)
+    langLabel: "언어",                                              // 승인 대기 (v18.3-new-strings-pending.md): 한국어 / English 버튼 묶음의 이름 (읽기 도우미용)
     langs: { ko: "한국어", en: "English" },                          // about.md (첫머리: 한국어 / English 버튼)
     heroAlt: null,                                                 // 승인 대기: 머리글 뱁이 그림의 alt (v18.3-new-strings-pending.md)
     linkedInUrl: "https://www.linkedin.com/in/jacksungjinlee/",     // about.md (LinkedIn)

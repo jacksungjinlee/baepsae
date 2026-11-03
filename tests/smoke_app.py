@@ -34,7 +34,7 @@ import time
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og.png", "icon-192.png", "icon-512.png"]
+SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og-v19.png", "icon-192.png", "icon-512.png"]
               + [f"baepi-{i}.png" for i in range(1, 10)])
 DATA_FILES = ["data.json", "corp.json", "disc.json", "macro.json"]
 WAIT = 20000  # ms

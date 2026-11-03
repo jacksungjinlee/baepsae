@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Link-preview image (og.png, 1200 x 630) for v19.0 Part F, rendered from plain HTML with Playwright's Chromium.
+"""Link-preview image (og-v19.png, 1200 x 630) for v19.0 Part F, rendered from plain HTML with Playwright's Chromium.
 
-  python3 tools/render_og.py            # writes og.png at the repository root
+  python3 tools/render_og.py            # writes og-v19.png at the repository root (og:image in template.html, index.html)
   python3 tools/render_og.py OUT.png    # writes somewhere else
 
 Layout follows docs/design/v19/reference/OgPreview.dc.html (Jack approved, 2026-11-03), rebuilt as plain HTML: the
@@ -26,6 +26,8 @@ FONT_CSS = ROOT / "fonts" / "pretendard" / "pretendard-variable.css"
 MARK = ROOT / "docs" / "design" / "v19" / "assets" / "baepi-mark.png"
 BIRD = ROOT / "docs" / "design" / "v19" / "assets" / "baepi-og.png"
 W, H = 1200, 630
+# A new file name (Jack, 2026-11-03), so KakaoTalk and others fetch the new picture instead of their cached og.png.
+OUT_NAME = "og-v19.png"
 
 # Approved text (docs/tasks/v19.0-layout-c.md Part E · Part F): the name, the descriptor in two lines, the catchphrase.
 NAME = "뱁새"
@@ -93,7 +95,7 @@ CHECK_JS = """async ([family, text]) => {
 
 
 def main():
-    out = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "og.png"
+    out = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / OUT_NAME
     for f in (FONT_CSS, MARK, BIRD):
         assert f.exists(), f"missing {f}"
     html = page_html()
@@ -117,7 +119,7 @@ def main():
             browser.close()
     finally:
         tmp.unlink(missing_ok=True)
-    print(f"og.png written: {out} ({W} x {H})")
+    print(f"link-preview image written: {out} ({W} x {H})")
 
 
 if __name__ == "__main__":

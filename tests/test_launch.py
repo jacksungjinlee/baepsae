@@ -11,6 +11,7 @@
 """
 import os
 import re
+import struct
 import subprocess
 import tempfile
 
@@ -29,7 +30,7 @@ def test_index_redirects_to_app_and_keeps_its_text():
     idx = read("index.html")
     assert '<meta http-equiv="refresh" content="0; url=./app.html">' in idx
     assert '<link rel="canonical" href="./app.html">' in idx
-    # v19.0 (2026-11-03): 제목은 Jack 승인(Part E), 불러오는 동안의 글과 링크 글은 Part E 의 제안 문구(Jack 의 yes 대기)
+    # v19.0 (Jack, 2026-11-03): 제목 · 불러오는 동안의 글 · 링크 글 모두 승인 (docs/tasks/v18.3-approved-in-chat.md)
     assert '<p>불러오는 중이에요 <a href="./app.html" style="color:#1B2B4B">열리지 않으면 여기를 눌러 주세요</a></p>' in idx
     assert "<title>뱁새 — 내 기준으로 만드는 포트폴리오</title>" in idx and idx.count("<title>") == 1
     assert "날아오는" not in idx and "눌러주세요" not in idx and "뱁새 Baepsae" not in idx
@@ -44,8 +45,18 @@ def test_index_has_the_approved_share_card():
     card = share_lines(read("index.html"))
     assert card == share_lines(read("template.html")), "index.html 의 공유 카드가 지금 앱(template.html)과 달라요"
     assert len(card) == 12 and '<meta property="og:url" content="https://jacksungjinlee.github.io/baepsae/">' in card
-    assert '<meta property="og:image" content="https://jacksungjinlee.github.io/baepsae/og.png">' in card
-    assert os.path.exists(os.path.join(ROOT, "og.png"))
+    # v19.0 (Jack, 2026-11-03): 새 그림은 새 파일 이름 og-v19.png (카카오톡 등이 캐시한 예전 og.png 대신 새 그림을 받아요)
+    og = "https://jacksungjinlee.github.io/baepsae/og-v19.png"
+    assert f'<meta property="og:image" content="{og}">' in card and f'<meta name="twitter:image" content="{og}">' in card
+    path = os.path.join(ROOT, "og-v19.png")
+    assert os.path.exists(path)
+    with open(path, "rb") as f:                                   # 1200 x 630 PNG (og:image:width · height 와 같아요)
+        head = f.read(24)
+    assert head[:8] == b"\x89PNG\r\n\x1a\n" and struct.unpack(">II", head[16:24]) == (1200, 630), head
+    assert '<meta property="og:image:width" content="1200">' in card and '<meta property="og:image:height" content="630">' in card
+    for f in ("index.html", "template.html", "baepsae.html"):           # 예전 이름을 가리키는 곳이 없어요 (app.html 은 test_v2_app 이 template 과 같은지 봐요)
+        assert "/og.png" not in read(f), f
+    assert "/og.png" not in built("app.html")
 
 
 def test_redirect_is_one_substitution_from_the_old_index():
@@ -57,8 +68,8 @@ def test_redirect_is_one_substitution_from_the_old_index():
     rest = "".join(l for l in read("index.html").splitlines(keepends=True) if l.rstrip("\n") not in card)
     # v19.0 (2026-11-03): 이 세 글만 바뀌었어요 (지금 글 → 예전 글). 다른 글자가 하나라도 바뀌면 아래 비교에서 걸려요.
     v190 = [("<title>뱁새 — 내 기준으로 만드는 포트폴리오</title>", "<title>뱁새 Baepsae</title>"),            # 제목 (Jack 승인)
-            ("<p>불러오는 중이에요 <a ", "<p>뱁이가 날아오는 중… <a "),                                       # 제안 (Jack 의 yes 대기)
-            (">열리지 않으면 여기를 눌러 주세요</a>", ">열리지 않으면 여기를 눌러주세요</a>")]                    # 제안 (Jack 의 yes 대기)
+            ("<p>불러오는 중이에요 <a ", "<p>뱁이가 날아오는 중… <a "),                                       # 불러오는 글 (Jack 승인)
+            (">열리지 않으면 여기를 눌러 주세요</a>", ">열리지 않으면 여기를 눌러주세요</a>")]                    # 링크 글 (Jack 승인)
     for new, old in v190:
         assert rest.count(new) == 1 and old in r.stdout, (new, old)
         rest = rest.replace(new, old)
