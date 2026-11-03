@@ -35,6 +35,8 @@ ICONS = [
     "house", "chart-pie-slice", "buildings", "chart-line-up", "list",
     # 섹션
     "percent", "coins", "bank", "identification-badge", "fire", "calendar-dots", "basket", "umbrella", "file-text",
+    # v19.0c: 거래대금 상위 종목 (거래대금 순이라 fire 대신 막대그래프)
+    "chart-bar",
     # 메뉴
     "book-open-text", "database", "clock-counter-clockwise",
     # 상태: 할 일 없음 · 확인할 일

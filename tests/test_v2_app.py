@@ -104,12 +104,21 @@ def test_pending_strings_are_parked_for_jack():
 
 
 def test_the_daily_check_promise_comes_only_with_the_daily_check():
-    """Part E: 오늘 화면이 매일 점검해요. 그래서 기록했어요의 '내일부터 오늘 화면에서 {n}종목을 규칙대로 점검해 드릴게요'(CSV 564)를
-    승인 문구 그대로 보여 주고, 그 약속을 지키는 오늘 판정 띠의 문구가 모두 있어요(빈 값 아님 · 화면 동작은 tests/smoke_v2.py).
+    """Part E: 홈(v19.0c 전에는 '오늘 화면')이 매일 점검해요. 기록했어요의 약속(CSV 564 '내일부터 오늘 화면에서 {n}종목을 …')은
+    v19.0c 에서 '오늘 화면'이 홈이 되어 바뀌어야 해서 Jack 의 승인을 기다려요: 그동안 값은 null 이고, 승인 대기 문서에 CSV 564 를
+    그대로 고친 제안('오늘 화면에서' → '홈에서', PC 에서도 맞게 '이 휴대폰에만' → '이 기기에만')이 있고, 화면에는 그 약속도 '오늘 화면'
+    이라는 말도 없어요. 승인되면 승인 표의 문구 그대로이고(test_chat_approved_strings_are_used_word_for_word), 두 페이지에 그 약속이
+    나와요. 어느 쪽이든 그 약속을 지키는 홈 판정 띠의 문구가 모두 있어요(빈 값 아님 · 화면 동작은 tests/smoke_v2.py).
     규칙 고치기는 아직 없으니 '매일 이 규칙으로 점검하고, 규칙은 언제든 고칠 수 있어요'(CSV 534)는 여전히 보여 주지 않아요.
-    (이전 검사 test_no_promise_of_the_daily_check_before_part_c 는 오늘 화면이 점검하기 전의 약속 금지였어요.)"""
+    (v19.0c 전에는 doneBody == CSV 564 를 바로 봤어요: 그 문장의 '오늘 화면'이 이제 없는 화면이라 위처럼 바꿨어요.)"""
     c, flat = copy_strings()
-    assert c["plan"]["doneBody"] == csv_final()[564].replace("6종목", "{n}종목"), c["plan"]["doneBody"]
+    proposal = csv_final()[564].replace("6종목", "{n}종목").replace("오늘 화면에서", "홈에서").replace("이 휴대폰에만", "이 기기에만")
+    assert proposal == "내일부터 홈에서 {n}종목을 규칙대로 점검해 드릴게요. 기록은 이 기기에만 저장돼요.", proposal
+    body = c["plan"]["doneBody"]
+    if body is None:
+        assert f"| `plan.doneBody` | {proposal} |" in read("docs/tasks/v18.3-new-strings-pending.md")
+    else:
+        assert body == chat_approved()["plan.doneBody"] and "홈에서" in body, body
     for k in ("todoN", "calmEyebrow", "calmTitle", "brokenTitle", "stale"):
         assert c["today"][k], k
     today = read("src/v2/today.jsx")
@@ -117,11 +126,11 @@ def test_the_daily_check_promise_comes_only_with_the_daily_check():
     assert c["plan"]["rules"]["intro"] is None
     for p, v in flat:
         if isinstance(v, str):
-            assert "매일 이 규칙으로" not in v and "언제든 고칠 수" not in v, (p, v)
+            assert "매일 이 규칙으로" not in v and "언제든 고칠 수" not in v and "오늘 화면" not in v, (p, v)
     for name in ("app.html", "app-preview.html"):
         html = built(name)
-        assert "매일 이 규칙으로" not in html and "언제든 고칠 수" not in html, name
-        assert "점검해 드릴게요" in html, name
+        assert "매일 이 규칙으로" not in html and "언제든 고칠 수" not in html and "오늘 화면" not in html, name
+        assert ("점검해 드릴게요" in html) == (body is not None), name
 
 
 def test_app_html_is_committed_and_current():

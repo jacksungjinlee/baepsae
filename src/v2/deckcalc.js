@@ -155,7 +155,7 @@ export function deckRecord({ load, st, plan, purchases, id, today }) {
   };
 }
 
-// ---------------- 영업이익 2년 연속 감소 (후보 고르기 주의할 점 · 내 덱 매일 점검) ----------------
+// ---------------- 영업이익 2년 연속 감소 (후보 고르기 주의할 점 · 포트폴리오 매일 점검) ----------------
 // One wording for both screens. op = [this year, last year, two years ago] in 억원 (corp.json).
 // Amount in 억원 (조원 from 1조): needs the unit wording (pending app.eok / app.jo), null until then.
 export function eokText(v) {

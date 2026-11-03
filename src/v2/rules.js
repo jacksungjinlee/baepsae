@@ -29,6 +29,13 @@
 // - Only reports NEWER than the rule's `since` can fire an annual rule: a fall that happened before purchase never
 //   counts. A report OLDER than at purchase (the pipeline fell back a year) is not used: the input counts as missing.
 // - A rule input that existed at purchase and is blank today -> "check" (missing), never 괜찮아요.
+// - A held stock missing from today's data altogether (not in data.json any more, v19.0c, Jack's design): its own rules
+//   read nothing (each input "missing" -> 확인 필요, as before) and its row stays; the other stocks keep their own checks.
+//   Today's weights cannot be known without its value, so every other band is "paused" (no status from it, never a
+//   guess): the screens say "빠진 종목이 다시 들어오거나 직접 뺄 때까지 비중은 점검하지 않아요", leave the weight bars and
+//   추가로 넣을 돈 out, and count the totals without it ("오늘 데이터에 없는 종목 {n}개(…)는 빼고 계산했어요"). Nothing is
+//   removed from the saved record unless the user taps 포트폴리오에서 빼기. A stock that IS in today's data but has no
+//   price is different: its value is unknown, so every band of the portfolio is "missing" (확인 필요), as before.
 // - Stale (published more than 4 days ago, the v17.5 rule) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
@@ -40,7 +47,7 @@ export const BIG_MOVE = 5;                                       // |d1| >= 5% -
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
 const LEVEL = Object.fromEntries(STATUS_ORDER.map((s, i) => [s, i]));
 const EPS = 1e-9;                                                // a weight exactly on an edge is inside the band
-// Statuses that take no new money (내 덱 · 추가로 넣을 돈 skips them, Part E). trim and high are above 1.25x target.
+// Statuses that take no new money (포트폴리오 · 추가로 넣을 돈 skips them, Part E). trim and high are above 1.25x target.
 export const NO_NEW_MONEY = ["broken", "check", "watch", "trim", "high"];
 // The data field each checked rule reads (the {항목} of "{항목} 자료를 받지 못해 확인이 필요해요")
 export const RULE_INPUT = { divCut: "dps", debtCeiling: "debt", roeFloor: "roe", opDecline: "op", band: "price" };
@@ -104,6 +111,19 @@ export function deckWeights(held, ctx, targets) {
   const total = [...vals.values()].reduce((a, b) => a + b, 0);
   if (missing.length || !(total > 0)) return { ok: false, missing };
   return { ok: true, total, targetSum: targets ? targetSum : null, value: vals, px: pxs, w: new Map([...vals].map(([t, v]) => [t, v / total])) };
+}
+
+// Held stocks missing from today's data (v19.0c): no weight is computed (paused), but the value of every held stock that
+// is in the data and has a price is kept (value), so the screens can count the totals without the missing ones.
+// missing names the absent stocks (their own band reads "missing" price); absent says the same for the screens.
+function pausedWeights(held, ctx, absent) {
+  const value = new Map(), px = new Map();
+  for (const [t, q] of held) {
+    const s = ctx.byT.get(t);
+    const p = s ? priceWon(s, ctx.fx) : null;
+    if (p > 0) { value.set(t, q * p); px.set(t, p); }
+  }
+  return { ok: false, paused: true, missing: absent, absent, value, px };
 }
 
 // The plan's own weights among the held stocks with a band (the only source of the gap g = planW - ref):
@@ -223,6 +243,8 @@ function evalBand(r, h, weights) {
   const planBands = Array.isArray(r.bands) ? r.bands.map(num) : [];
   if (!(planTarget > 0) || planBands.length !== 3 || planBands.some((x) => x == null)) return pendingOf(r);
   const out = { id: "band", kind: "band", check: "checked", input: "price", planTarget, planBands };
+  // a held stock is missing from today's data: the other bands wait (no status), the missing one's price is missing
+  if (weights.paused && !weights.absent.includes(h.t)) return { ...out, target: planTarget, bands: planBands, result: "paused" };
   if (!weights.ok || !weights.w.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.missing || [] };
   const k = weights.targetSum > 0 ? weights.targetSum : 1;
   const ref = planTarget / k, refBands = planBands.map((b) => b / k);
@@ -295,9 +317,11 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     // every dividend drop after purchase with its answer (null / "cut" / "notCut"): the screen keeps both answers open
     divDrops: div ? div.drops : [],
     // w and target are both shares of the held value (target rebased); planTarget is the plan's share of the amount
-    w: weights.ok && weights.w.has(h.t) ? weights.w.get(h.t) : null, target: band && band.result !== "missing" ? band.target : null,
+    w: weights.ok && weights.w.has(h.t) ? weights.w.get(h.t) : null,
+    target: band && band.result !== "missing" && band.result !== "paused" ? band.target : null,
     planTarget: band ? band.planTarget : num(h.target),
-    value: weights.ok && weights.value.has(h.t) ? weights.value.get(h.t) : null,
+    value: (weights.ok || weights.paused) && weights.value && weights.value.has(h.t) ? weights.value.get(h.t) : null,
+    absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     d1, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,          // a note only: never changes the status
     noNewMoney: NO_NEW_MONEY.includes(status),
   };
@@ -306,8 +330,9 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
 const zeroCounts = () => Object.fromEntries(STATUS_ORDER.map((s) => [s, 0]));
 
 // One saved deck. -> { ok: false, why, days } when the data cannot be used today (no status at all), else
-// { ok: true, id, name, holdings, counts, todo, notChecked, notCheckedIds, bigMoves, weights: { ok, missing }, unheld,
-//   bandPlanned, bandHeld, rebased }   rebased: some planned stocks were never bought, so targets were rebased
+// { ok: true, id, name, holdings, counts, todo, notChecked, notCheckedIds, bigMoves, weights: { ok, missing, paused },
+//   absent, unheld, bandPlanned, bandHeld, rebased }   rebased: some planned stocks were never bought, so targets were rebased
+//   absent: held stocks missing from today's data (v19.0c): their rows stay, the other bands are paused
 //   counts: holdings per status · todo: 규칙 깨짐 + 확인 필요 (오늘 확인할 일) · notChecked: 준비 중 rules of the held
 //   stocks (the "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" line), notCheckedIds: which kinds of rule
 export function evaluateDeck(deck, ctx) {
@@ -318,7 +343,9 @@ export function evaluateDeck(deck, ctx) {
     const b = h && held.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
     if (b) targets.set(h.t, num(b.target));
   }
-  const weights = deckWeights(held, ctx, targets);
+  const absent = [...held.keys()].filter((t) => !ctx.byT.has(t));
+  // With a held stock missing from today's data, the weights wait for all held stocks (with or without a band rule).
+  const weights = absent.length ? pausedWeights(held, ctx, absent) : deckWeights(held, ctx, targets);
   if (weights.ok) weights.planW = planWeights(deck, targets);
   const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h)).map((h) => h.t)).size;
   const holdings = [], unheld = [];
@@ -338,7 +365,7 @@ export function evaluateDeck(deck, ctx) {
   }
   return { ok: true, id: deck.id, name: deck.name, pxDate: ctx.pxDate, holdings, counts, todo: counts.broken + counts.check,
     notChecked, notCheckedIds: [...ids], bigMoves: holdings.filter((x) => x.bigMove).map((x) => x.t),
-    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing }, unheld,
+    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld,
     bandPlanned, bandHeld: targets.size, rebased: targets.size > 0 && targets.size < bandPlanned };
 }
 

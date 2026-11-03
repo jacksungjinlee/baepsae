@@ -1,4 +1,4 @@
-// 덱 짜기: 시작 · 기준 · 빼기 · 조건 (테마 is hidden in the beta; 꼭 담을 종목 lives in 조건), then 후보 고르기 and
+// 포트폴리오 만들기: 시작 · 기준 · 빼기 · 조건 (테마 is hidden in the beta; 꼭 담을 종목 lives in 조건), then 후보 고르기 and
 // 매수 계획 · 샀어요. A live count of candidates sits in the bottom bar.
 // v19.0b: the start card shows the 뱁이 carrying twigs (baepi-16-build) next to the title and question only: no numbers on
 // that screen besides the data-date line. The whole-block 준비 중 (data fields missing) shows the hard-hat 뱁이.
@@ -18,13 +18,16 @@ import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
 
 export const STEPS = ["start", "cards", "exclude", "terms"];
+// The first step's back button leaves 포트폴리오 만들기 (to the screen before it). Its name waits for Jack (build.backToday):
+// meanwhile it is the tab name 홈.
+export const backLabel = () => C.build.backToday || C.app.tabs.home;
 export const newBuilder = () => ({ step: 0, stage: "steps", settings: defaultSettings(), picks: null });
 
 export function Build({ load, builder, setBuilder, onExit, store, setStoreData, goToday }) {
   if (load.status !== "ok" || load.missing.length) {
     return (
       <Page>
-        <AppBar onBack={onExit} backLabel={C.build.backToday} search />
+        <AppBar onBack={onExit} backLabel={backLabel()} />
         <ScreenTitle>{C.build.title}</ScreenTitle>
         {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
         {load.status === "fail" && <LoadFail />}
@@ -58,7 +61,7 @@ function Option({ title, sub, onClick, id }) {
         padding: `${SPACE(3)}px ${SPACE(4)}px`, marginTop: SPACE(2), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(4) }}>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.body, WEIGHT.bold, COLOR.ink, { display: "block" })}>{title}</span>
-        <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{sub}</span>
+        {sub && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{sub}</span>}
       </span>
       <Icon name="chevronRight" size={20} tone="off" />
     </button>
@@ -94,7 +97,7 @@ function Steps({ load, builder, setBuilder, onExit }) {
   );
   return (
     <Page pad={SPACE(30)}>
-      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? C.build.backToday : C.build.prevStep} search />
+      <AppBar onBack={step === 0 ? onExit : () => go(step - 1)} backLabel={step === 0 ? backLabel() : C.build.prevStep} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(1) }}>
         <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.build.title}</div>
         {step > 0 && <button type="button" onClick={restart} style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.restart}</button>}
@@ -367,7 +370,7 @@ function StepTerms({ st, set, ds, load }) {
         </Card>
       )}
       <Card>
-        <TextInput label={s4.nameLabel} value={st.name} onChange={(v) => set({ name: v.slice(0, 30) })} />
+        <TextInput label={s4.nameLabel || C.deck.title} value={st.name} onChange={(v) => set({ name: v.slice(0, 30) })} />
       </Card>
     </div>
   );

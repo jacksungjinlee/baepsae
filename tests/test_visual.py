@@ -97,7 +97,7 @@ def test_apricot_check_catches_a_stray_use():
     real = {f: read(f) for f in code_files()}
     comp, today = real["src/ui/components.jsx"], real["src/v2/today.jsx"]
     tab = "background: on ? SELECTED.background"
-    assert tab in comp and "export function RuleRow" in comp and "export function Today" in today
+    assert tab in comp and "export function RuleRow" in comp and "export function Home" in today
     cases = [
         ("src/ui/components.jsx", comp.replace(tab, "background: on ? COLOR.apricot", 1), ("BottomTabBar", "apricot")),
         ("src/ui/components.jsx", comp.replace(tab, 'background: on ? COLOR["apricot"]', 1), ("BottomTabBar", "apricot")),
@@ -105,9 +105,9 @@ def test_apricot_check_catches_a_stray_use():
          ("strayPill", "apricot")),
         ("src/ui/components.jsx", comp.replace("export function RuleRow", "const KEY = 'apricotText';\nexport function RuleRow", 1), ("KEY", "apricotText")),
         ("src/ui/components.jsx", comp.replace("export function RuleRow", "COLOR.apricot;\nexport function RuleRow", 1), (TOP_LEVEL, "apricot")),
-        ("src/v2/today.jsx", today.replace("export function Today", "const PILL_BG = \"#c97757\";\nexport function Today", 1), ("PILL_BG", "#c97757")),
-        ("src/v2/today.jsx", today.replace("export function Today", "const SEE = \"#C97757CC\";\nexport function Today", 1), ("SEE", "#C97757CC")),
-        ("src/v2/today.jsx", today.replace("export function Today", "const SPACED = \"rgb(201 119 87)\";\nexport function Today", 1), ("SPACED", "rgb(201 119 87")),
+        ("src/v2/today.jsx", today.replace("export function Home", "const PILL_BG = \"#c97757\";\nexport function Home", 1), ("PILL_BG", "#c97757")),
+        ("src/v2/today.jsx", today.replace("export function Home", "const SEE = \"#C97757CC\";\nexport function Home", 1), ("SEE", "#C97757CC")),
+        ("src/v2/today.jsx", today.replace("export function Home", "const SPACED = \"rgb(201 119 87)\";\nexport function Home", 1), ("SPACED", "rgb(201 119 87")),
         ("src/ui/components.jsx", comp.replace(tab, 'background: on ? "rgba(169, 84, 47, 0.8)"', 1), ("BottomTabBar", "rgba(169, 84, 47")),
     ]
     for f, mutated, (who, what) in cases:

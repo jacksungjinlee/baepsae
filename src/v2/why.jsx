@@ -20,6 +20,7 @@ import { StatusLines, HoldingRules } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { peerGroup, keptCount } from "./track.js";
 import { useDaily, confirmer, brokenTitle } from "./today.jsx";
+import { backLabel } from "./build.jsx";
 
 const R = () => C.plan.rules;
 const BAND = ["low", "high", "trim"];
@@ -81,7 +82,7 @@ function Explainer() {
           <StatusChip tone="ok">{C.daily.ok}</StatusChip>{arrow}<StatusChip tone="watch">{C.daily.watch}</StatusChip>{arrow}
           <StatusChip tone="broken">{C.daily.broken}</StatusChip>
         </div>
-        <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{C.why.explainBody}</p>
+        {C.why.explainBody && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{C.why.explainBody}</p>}
       </Collapsible>
     </div>
   );
@@ -117,7 +118,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   const s = x && load.status === "ok" ? load.byT.get(x.t) : null;
   const deck = de ? store.data.decks.find((d) => d.id === de.id) : null;
   if (!x || !s || !deck) {
-    return <Page pad={pad}><AppBar onBack={onBack} backLabel={C.build.backToday} /><Footer /></Page>;
+    return <Page pad={pad}><AppBar onBack={onBack} backLabel={backLabel()} /><Footer /></Page>;
   }
   const names = new Map(deck.holdings.map((h) => [h.t, h.nk]));
   const conf = confirmer(store, setStoreData);
@@ -128,7 +129,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
   return (
     <Page pad={pad}>
-      <AppBar onBack={onBack} backLabel={C.build.backToday} />
+      <AppBar onBack={onBack} backLabel={backLabel()} />
       <ScreenTitle>{fill(C.why.title, { name: x.nk })}</ScreenTitle>
       <div data-ui-v2="why-head" style={{ marginTop: SPACE(1) }}>
         <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
@@ -152,9 +153,9 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
         </Check>
       )}
       <Check n={g.ok ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
-        <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.why.alertLine}</p>
+        {C.why.alertLine && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.why.alertLine}</p>}
         <HoldingRules x={x} names={names} />
-        {de.rebased && C.daily.rebasedNote && (                       // the same note as under the deck on 내 덱
+        {de.rebased && C.daily.rebasedNote && (                       // the same note as under the deck on 포트폴리오
           <p data-ui-v2="why-rebased" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>
             {fill(C.daily.rebasedNote, { n: de.bandPlanned, m: de.bandHeld })}</p>
         )}

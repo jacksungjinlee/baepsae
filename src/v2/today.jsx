@@ -1,16 +1,21 @@
-// 오늘 (v18.3 Part E): the hero band is the rule verdict (REDESIGN 3), then one strip per deck and my stocks.
+// 홈 (v19.0c; the 오늘 screen of v18.3 Part E). Returning visitors: the date line, the hero band with the rule verdict
+// (REDESIGN 3), one strip per portfolio (value, return, today's move, my stocks) and 시장 한눈에 (the 시장 tab's four
+// tiles, each with its own date). First visit (no saved portfolio): the hero with the 뱁이 carrying twigs (baepi-16-build),
+// the descriptor and catchphrase, 포트폴리오 만들기, the iPhone home-screen hint and 거래대금 상위 종목 as names only —
+// CLAUDE.md: 뱁이 never on a screen that shows numbers, so that screen has none (no prices, changes or tiles; dates are
+// not numbers). The 가진 종목 넣기 card waits for its feature.
 // States, from the daily check in rules.js (evaluateAll):
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
 //   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all)
-//   no held stock      no verdict (nothing was checked), only the way to 덱 짜기
+//   no held stock      no verdict (nothing was checked), only the way to 포트폴리오 만들기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
 //   할 일 없음          green band "매도 조건에 걸린 종목이 없어요": only when nothing is 규칙 깨짐 or 확인 필요. The
 //                      eyebrow "오늘은 할 일이 없어요" only when every holding is 할 일 없음 (REDESIGN 2.1: steps 1-3 all
 //                      clear, so no 지켜봐요 and no weight outside its band).
-// Counts are of distinct stocks: a stock held in two decks is one stock to look at (its lines still show per deck,
-// since each deck keeps its own answers).
+// Counts are of distinct stocks: a stock held in two portfolios is one stock to look at (its lines still show per
+// portfolio, since each one keeps its own answers).
 // Every verdict band carries "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" whenever any rule is not checked, so a
 // calm band never hides a sell condition we could not check. A big move (|d1| >= 5%) is a note with a link to 왜 움직였나,
 // never a status. 다음 일정 is hidden until the v18.0 calendar.
@@ -20,7 +25,12 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, tx, tap } from "./ui.jsx";
+import { shownName } from "./legacy.js";
+import { MissingNote } from "./tracking.jsx";
+import { MarketTiles } from "./market.jsx";
+import { PopularLists } from "./stocks.jsx";
+import { IosHint } from "./hint.jsx";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
@@ -152,43 +162,86 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
 // exceptions). A big mover's row opens 왜 움직였나.
 function DeckStrip({ de, deck, ctx, onWhy, go }) {
-  const m = deckMoney(deck, de, ctx);
+  const m = deckMoney(deck, de, ctx);                    // v19.0c: a stock missing from today's data is left out, and said
+  const gone = new Set(de.absent || []);
   const day = deckDayChange(de);
   const items = m.ok ? [{ label: C.today.value, value: wonText(m.value) },
     ...(m.ret != null ? [{ label: C.today.ret, value: signedPct(m.ret * 100), tone: m.ret > 0 ? "up" : m.ret < 0 ? "down" : undefined }] : [])] : [];
   return (
     <Card data-ui-v2="deck-strip" data-deck-id={de.id}>
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
-        <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{deck ? deck.name : de.name}</h3>
-        <LinkButton onClick={() => go("deck")}>{C.today.more}</LinkButton>
+        <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{shownName(deck ? deck.name : de.name)}</h3>
+        <LinkButton onClick={() => go("portfolio")}>{C.today.more}</LinkButton>
       </div>
       {items.length > 0 && (
         <div style={{ marginTop: SPACE(2) }}>
           <StatStrip items={items} note={day != null ? <span data-ui-v2="day-change"><span>{C.today.day}</span>{" "}<span>{signedPct(day)}</span></span> : null} />
         </div>
       )}
+      {m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={de.id} />}
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n: de.holdings.length })}</div>
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
-          <ListRow title={x.nk} change={x.d1} chip={statusChips(x)} onClick={x.bigMove ? () => onWhy(de.id, x.t) : undefined} />
+          <ListRow title={x.nk} change={gone.has(x.t) ? null : x.d1} chip={statusChips(x)} onClick={x.bigMove ? () => onWhy(de.id, x.t) : undefined} />
         </div>
       ))}
     </Card>
   );
 }
 
-export function Today({ load, store, setStoreData, pad, onWhy, go }) {
+// 홈's first visit (no saved portfolio): no numbers on this screen (it shows a 뱁이).
+function FirstVisit({ load, go }) {
+  return (
+    <>
+      <Card data-ui-v2="home-hero" style={{ display: "flex", alignItems: "center", gap: SPACE(4), marginTop: SPACE(4) }}>
+        <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={92} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{C.about.ko.hero.descriptor}</h2>
+          <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{C.about.ko.hero.catch}</p>
+        </div>
+      </Card>
+      <div data-ui-v2="home-start" style={{ marginTop: SPACE(3) }}><Button onClick={() => go("build")}>{C.build.title}</Button></div>
+      <IosHint kind="first" />
+      {load.status === "fail" && <LoadFail picture={false} />}
+      {load.status === "ok" && <PopularLists load={load} plain />}
+    </>
+  );
+}
+
+// 시장 한눈에: the 시장 tab's four tiles and the way there.
+function MarketGlance({ load, go }) {
+  return (
+    <Card data-ui-v2="market-glance">
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginBottom: SPACE(3) }}>
+        <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.home.market || C.app.tabs.market}</h3>
+        <LinkButton data-ui-v2="market-more-link" onClick={() => go("market")}>{C.home.marketMore || C.today.more}</LinkButton>
+      </div>
+      <MarketTiles load={load} />
+    </Card>
+  );
+}
+
+export function Home({ load, store, setStoreData, pad, onWhy, go }) {
   const decks = store.data.decks;
+  const first = decks.length === 0 && !store.locked;
   const { ev, ctx } = useDaily(load, store);
   const onConfirm = confirmer(store, setStoreData);
   const ok = load.status === "ok";
   const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.length) : [];
   const us = held.some((de) => de.holdings.some((x) => x.cls === "us"));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
+  if (first) {
+    return (
+      <Page pad={pad}>
+        <AppBar />
+        <FirstVisit load={load} go={go} />
+        <Footer />
+      </Page>
+    );
+  }
   return (
     <Page pad={pad}>
       <AppBar />
-      <ScreenTitle>{C.today.title}</ScreenTitle>
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
@@ -196,6 +249,7 @@ export function Today({ load, store, setStoreData, pad, onWhy, go }) {
       {ev.ok && !held.length && (
         <Card data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
       )}
+      {ok && <MarketGlance load={load} go={go} />}
       <Footer />
     </Page>
   );

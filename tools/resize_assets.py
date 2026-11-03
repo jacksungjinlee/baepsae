@@ -19,8 +19,8 @@ TARGETS = {
     "jack-photo.jpg": (224, "소개 사진: 휴대폰 88 px · PC 112 px (v19.0 Part D)"),
     # v19.0b (Part C): 2.0 화면의 뱁이 — 뱁이 규칙(CLAUDE.md)이 허락하는 자리에만
     "baepi-mark.png": (76, "로고: 휴대폰 28 px · PC 38 px"),
-    "baepi-16-build.png": (352, "덱 짜기 첫 화면 (v19.0c 의 첫 방문 홈): 휴대폰 92 px · PC 176 px"),
-    "baepi-15-portfolio.png": (256, "빈 내 덱 (v19.0c 포트폴리오 빈 화면 · 소개 이름 이야기): 128 px 까지"),
+    "baepi-16-build.png": (352, "포트폴리오 만들기 첫 화면 · 첫 방문 홈 (v19.0c): 휴대폰 92 px · PC 176 px"),
+    "baepi-15-portfolio.png": (256, "빈 포트폴리오 (v19.0c) · 소개 이름 이야기: 128 px 까지"),
     "baepi-20-error.png": (240, "불러오기 실패: 120 px"),
     "baepi-21-wip.png": (128, "통째로 준비 중인 칸: 64 px"),
 }

@@ -35,7 +35,7 @@ export function Pick({ load, builder, setBuilder }) {
   const deckLine = [deckDisplayName(st), fill(C.app.stocksN, { n: N })].join(" · ");
   return (
     <Page pad={SPACE(30)}>
-      <AppBar onBack={back} backLabel={C.pick.back} />
+      <AppBar onBack={back} backLabel={C.pick.back || C.build.title} />
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(1) })}>{C.pick.title}</div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       {ds.cands.us && ds.cands.us.length > 0 && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate && (

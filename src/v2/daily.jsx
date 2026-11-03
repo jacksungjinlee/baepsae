@@ -1,7 +1,7 @@
-// 매일 점검 on 내 덱 (v18.3 Part C): each held stock's status from the daily rule check (rules.js), the reasons with
+// 매일 점검 on 포트폴리오 (v18.3 Part C): each held stock's status from the daily rule check (rules.js), the reasons with
 // their numbers and report year, the 확인 필요 answers (실제로 줄였어요 / 줄인 게 아니에요: both stay open with the
 // chosen one marked, so a mis-tap can be changed), and the rule book with today's results. The 오늘 hero (today.jsx),
-// the 내 덱 tracking sheet (tracking.jsx) and 왜 움직였나 (why.jsx) are Part E: they read the same evaluation and reuse
+// the 포트폴리오 tracking sheet (tracking.jsx) and 왜 움직였나 (why.jsx) are Part E: they read the same evaluation and reuse
 // the pieces exported here.
 // A chip only on exceptions (REDESIGN 3): 규칙 깨짐, 지켜봐요 (also for 확인 필요), 큰 움직임. No chip = fine.
 import React from "react";
@@ -47,7 +47,7 @@ export function reasonView(r, x, names) {
 }
 
 // 확인 필요 shows the 지켜봐요 chip until its own chip label is approved (C.daily.check); a weight band gets a chip
-// only once its name is approved (C.daily.band), otherwise its line on 내 덱 says it (Part E).
+// only once its name is approved (C.daily.band), otherwise its line on 포트폴리오 says it (Part E).
 export function statusChips(x) {
   const chips = [];
   const band = C.daily.band && C.daily.band[x.status];
@@ -149,7 +149,8 @@ export function HoldingRules({ x, names }) {
     const rows = x.rules.filter((r) => r.kind === kind).map(line).filter(Boolean);
     return rows.length ? <div style={{ marginTop: SPACE(2) }}><div style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{title}</div>{rows}</div> : null;
   };
-  const band = x.rules.find((r) => r.id === "band" && r.check === "checked");
+  // v19.0c: a paused band (a held stock is missing from today's data) is not shown: the portfolio says why (PausedNote).
+  const band = x.rules.find((r) => r.id === "band" && r.check === "checked" && r.result !== "paused");
   const bandMiss = band && band.result === "missing" ? itemOf(band, x, names) : null;
   return (
     <div data-rules-today={x.t}>
@@ -167,7 +168,7 @@ export function HoldingRules({ x, names }) {
   );
 }
 
-// One held stock on 내 덱: the row, then (when the check ran today) its status lines and its rule book with results.
+// One held stock on 포트폴리오: the row, then (when the check ran today) its status lines and its rule book with results.
 // Part E: change = the return since purchase (won, %), extra = the weight bar with its target mark.
 export function HoldingRow({ title, sub, x, names, onConfirm, change, extra }) {
   return (

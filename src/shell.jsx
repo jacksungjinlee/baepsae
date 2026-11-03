@@ -12,6 +12,7 @@ import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
 import MacroApp from "./macro.jsx";
 import InfoApp from "./info.jsx";
+import { readDeepLink } from "./deeplink.js";
 
 const MAST_CSS = `@media (display-mode: standalone) { .pwaBack { display: inline-flex !important } }
 @media (max-width: 560px) { .mastSub { display: none } }
@@ -366,8 +367,20 @@ function BottomNav({ tab, setTab, lang }) {
   );
 }
 
+// 뱁새 2.0 이 여는 바로가기 (v19.0c, src/deeplink.js): 처음 열 때 한 번만 읽고 주소에서 지워요 (replaceState: 기록이 늘지
+// 않아서, 그 화면에서 뒤로 가면 2.0 으로 돌아가요). 그 뒤의 뒤로 가기는 지금처럼 NAV 가 맡아요. 모르는 # 은 그대로 둬요.
+function takeDeepLink() {
+  try {
+    const d = readDeepLink(window.location.hash);
+    if (d) window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    return d;
+  } catch (e) { return null; }
+}
+
 export default function Shell() {
-  const [tab, setTabRaw] = useState("pf");
+  const [deep, setDeep] = useState(takeDeepLink);       // 한 번만 써요: 그 탭을 다시 열면 평소 첫 화면
+  const [tab, setTabRaw] = useState(() => (deep ? deep.tab : "pf"));
+  const deepDone = () => setDeep(null);
   const setTab = (t) => { setTabRaw((prev) => { if (t !== prev) navPush(() => setTabRaw(prev)); return t; }); };
   const [corpJump, setCorpJump] = useState(null);
   useEffect(() => { navInstall(); }, []);
@@ -396,10 +409,10 @@ export default function Shell() {
       {tab === "pf" && mode === null && <ModeGate onPick={setMode} hasSimpleSave={hasSimpleSave} onOpenCorp={(t) => { setCorpJump(t); setTab("corp"); }} onQuickDiag={quickDiag} lang={lang} />}
       {tab === "pf" && mode === "simple" && <SimpleApp onGraduate={graduate} onExit={() => setMode(null)} />}
       {tab === "pf" && mode === "detail" && <DetailApp seed={seed} lang={lang} />}
-      {tab === "corp" && <CorpApp jump={corpJump} onJumpDone={() => setCorpJump(null)} lang={lang} />}
+      {tab === "corp" && <CorpApp jump={corpJump} onJumpDone={() => setCorpJump(null)} lang={lang} first={deep && deep.corp} onFirstDone={deepDone} />}
       {tab === "disc" && <DiscApp onOpenCompany={(t) => { setCorpJump(t); setTab("corp"); }} lang={lang} />}
       {tab === "macro" && <MacroApp lang={lang} />}
-      {tab === "info" && <InfoApp lang={lang} />}
+      {tab === "info" && <InfoApp lang={lang} focus={deep && deep.info} onFocusDone={deepDone} />}
       </div>
       <BottomNav tab={tab} setTab={setTab} lang={lang} />
     </div>
