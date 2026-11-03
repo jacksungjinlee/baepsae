@@ -37,8 +37,11 @@ export function purchaseWon(p, planFx) {
 //   with the "빼고 계산했어요" line. Every other stock must still have a price.
 export function deckMoney(deck, de, ctx) {
   if (!de || !de.ok || !ctx) return { ok: false, why: "day" };
-  if (!de.weights || !(de.weights.ok || de.weights.paused)) return { ok: false, why: "price" };
   const gone = new Set(de.absent || []);
+  const absentOf = () => de.holdings.filter((x) => gone.has(x.t)).map((x) => ({ t: x.t, nk: x.nk, cls: x.cls, cost: heldCost(deck, x.t) }));
+  // the missing stocks are named even when the totals cannot be made (never silent)
+  const noPrice = () => ({ ok: false, why: "price", ...(gone.size ? { absent: absentOf() } : {}) });
+  if (!de.weights || !(de.weights.ok || de.weights.paused)) return noPrice();
   const held = new Set(de.holdings.filter((x) => !gone.has(x.t)).map((x) => x.t));
   const per = {};
   let value = 0;
@@ -46,7 +49,7 @@ export function deckMoney(deck, de, ctx) {
     if (gone.has(x.t)) continue;
     const s = ctx.byT.get(x.t);
     const px = s ? priceWon(s, ctx.fx) : null;
-    if (!(px > 0) || !(x.qty > 0)) return { ok: false, why: "price" };
+    if (!(px > 0) || !(x.qty > 0)) return noPrice();
     per[x.t] = { qty: x.qty, value: x.qty * px, cost: 0, ret: null };
     value += x.qty * px;
   }
@@ -65,7 +68,7 @@ export function deckMoney(deck, de, ctx) {
   }
   const cost = noFx.length ? null : Object.values(per).reduce((a, r) => a + r.cost, 0);
   const ok = cost != null && cost > 0;
-  const absent = de.holdings.filter((x) => gone.has(x.t)).map((x) => ({ t: x.t, nk: x.nk, cls: x.cls, cost: heldCost(deck, x.t) }));
+  const absent = absentOf();
   if (!held.size) return { ok: false, why: "absent", absent };   // every held stock is missing from today's data: no totals
   return { ok: true, value, cost: ok ? cost : null, gain: ok ? value - cost : null, ret: ok ? value / cost - 1 : null, start, per, noFx, absent };
 }
@@ -150,7 +153,8 @@ export function deckDayChange(de) {
   for (const x of de.holdings) {
     if (gone.has(x.t)) continue;
     const d1 = num(x.d1);
-    if (d1 == null || x.cls === "us" || !(num(x.value) >= 0) || d1 <= -100) return null;
+    const v = num(x.value);                           // null >= 0 is true in JavaScript: test the value itself
+    if (d1 == null || x.cls === "us" || v == null || v < 0 || d1 <= -100) return null;
     now += x.value;
     prev += x.value / (1 + d1 / 100);
   }

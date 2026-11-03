@@ -210,7 +210,8 @@ function FirstVisit({ load, go }) {
   );
 }
 
-// 시장 한눈에: the 시장 tab's four tiles and the way there.
+// 시장 한눈에: the 시장 tab's four tiles and the way there. Without macro.json: the same failure line as the 시장 tab,
+// in place of the tiles (never a row of "–" without a word).
 function MarketGlance({ load, go }) {
   return (
     <Card data-ui-v2="market-glance">
@@ -218,7 +219,7 @@ function MarketGlance({ load, go }) {
         <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.home.market || C.app.tabs.market}</h3>
         <LinkButton data-ui-v2="market-more-link" onClick={() => go("market")}>{C.home.marketMore || C.today.more}</LinkButton>
       </div>
-      <MarketTiles load={load} />
+      {load.macro ? <MarketTiles load={load} /> : <LoadFail picture={false} />}
     </Card>
   );
 }

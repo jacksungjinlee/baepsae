@@ -1,5 +1,5 @@
 // 2.0 addresses (v19.0c): the four tab routes, 소개, the two sub-screens, and the old app's screens 2.0 links to.
-// Pure: no React, no Korean. src/v2/nav.jsx does the history work. Unit tests: tests/test_v2_nav.py.
+// Pure: no React, no Korean. src/v2/nav.jsx does the history work. Unit tests: tests/test_v2_lists.py.
 
 // The current app (예전 뱁새). Part F: the main address shows 2.0; the old app stays reachable from 2.0.
 export const OLD_APP = "./baepsae.html";

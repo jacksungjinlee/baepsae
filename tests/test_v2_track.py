@@ -518,5 +518,26 @@ out = { m: T.deckMoney(d, de, c), none: T.deckMoney(d, all, ctxOf([], [], 1300))
     assert got["cost"] == 650000
     assert got["none"]["ok"] is False and got["none"]["why"] == "absent" and len(got["none"]["absent"]) == 2, got["none"]
     assert got["noFx"]["absent"][0]["cost"] is None and got["noFx"]["cost"] == 90000, got["noFx"]   # 원화 원금을 모르면 이름만
-    assert got["priceGone"] == {"ok": False, "why": "price"}, got["priceGone"]   # 데이터에 있는데 가격이 없으면 예전 그대로
+    assert got["priceGone"] == {"ok": False, "why": "price", "absent": m["absent"]}, got["priceGone"]   # 가격이 없으면 합계 없음, 빠진 종목은 그래도 이름으로
     assert got["kept"] == ["000100"] and got["same"] is True, got                 # 코스피 비교도 같은 돈으로
+
+
+def test_a_stock_without_a_price_still_needs_checking_while_another_is_missing_from_the_data():
+    """빠진 종목 때문에 비중이 멈춰도, 오늘 데이터에 있는데 가격이 없는 종목은 예전처럼 확인 필요(가격 자료 없음)예요 (멈춤이 가리지 않아요).
+    합계는 만들 수 없고(가격을 몰라서), 빠진 종목은 그래도 이름과 원금으로 남아요."""
+    got = run("""
+const d = mkDeck([{ s: A, target: 0.4, qty: 10 }, { s: B, target: 0.4, qty: 10 }, { s: G, target: 0.2, qty: 5 }]);
+const c = ctxOf([A, { ...B, price: null }], []);
+const de = T.R.evaluateDeck(d, c);
+const h = (t) => de.holdings.find((x) => x.t === t);
+const view = (x) => ({ s: x.status, band: x.rules.find((r) => r.id === 'band').result, codes: x.reasons.map((r) => r.code + ':' + (r.input || '')),
+  miss: (x.reasons.find((r) => r.code === 'missing' && r.input === 'price') || {}).missingPrice });
+out = { w: de.weights, a: view(h(A.t)), b: view(h(B.t)), g: view(h(G.t)), m: T.deckMoney(d, de, c), add: T.addMoney(de, 1e6), day: T.deckDayChange(de) };""",
+              A=kr("000100"), B=kr("000200"), G=kr("000300"))
+    assert got["w"] == {"ok": False, "missing": ["000300"], "paused": True}, got["w"]
+    assert got["a"]["s"] == "none" and got["a"]["band"] == "paused" and not got["a"]["codes"], got["a"]        # 가격이 있는 종목만 멈춤
+    b = got["b"]
+    assert b["s"] == "check" and b["band"] == "missing" and "missing:price" in b["codes"] and "000200" in b["miss"], b   # 가려지지 않아요
+    assert got["g"]["s"] == "check" and "missing:price" in got["g"]["codes"], got["g"]
+    assert got["m"]["ok"] is False and got["m"]["why"] == "price" and [x["t"] for x in got["m"]["absent"]] == ["000300"], got["m"]
+    assert got["add"] == {"ok": False} and got["day"] is None

@@ -243,8 +243,10 @@ function evalBand(r, h, weights) {
   const planBands = Array.isArray(r.bands) ? r.bands.map(num) : [];
   if (!(planTarget > 0) || planBands.length !== 3 || planBands.some((x) => x == null)) return pendingOf(r);
   const out = { id: "band", kind: "band", check: "checked", input: "price", planTarget, planBands };
-  // a held stock is missing from today's data: the other bands wait (no status), the missing one's price is missing
-  if (weights.paused && !weights.absent.includes(h.t)) return { ...out, target: planTarget, bands: planBands, result: "paused" };
+  // a held stock is missing from today's data: the other bands wait (no status) — but only a stock whose own price is in
+  // today's data; one without a price is "missing" (확인 필요) as always, and so is the missing stock itself
+  if (weights.paused && !weights.absent.includes(h.t) && weights.px.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "paused" };
+  if (weights.paused) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.px.has(h.t) ? weights.missing : [...new Set([...weights.missing, h.t])] };
   if (!weights.ok || !weights.w.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.missing || [] };
   const k = weights.targetSum > 0 ? weights.targetSum : 1;
   const ref = planTarget / k, refBands = planBands.map((b) => b / k);

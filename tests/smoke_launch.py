@@ -197,7 +197,9 @@ def main():
                         return
                     row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
                     row.wait_for(state="visible")
-                    nk = [x for x in row.inner_text().split("\n") if x.strip()][1]          # 첫 글자 표시 다음 줄이 이름
+                    nk = [x for x in row.inner_text().split("\n") if x.strip()][0]          # 이름 (첫 글자 표시는 CSS 라 글이 아니에요)
+                    box = row.locator("a").bounding_box()                                    # 누르는 곳 44px 이상, 화면 안 (예전 머리말 '찾기'와 같은 기준)
+                    assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
                     with page.expect_navigation():
                         row.locator("a").click()
                     page.wait_for_url(re.compile(r"/baepsae\.html$"))                      # 지금 앱이 #corp=코드 를 읽고 지워요

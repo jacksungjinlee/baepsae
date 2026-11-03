@@ -386,6 +386,11 @@ def scene_normal(R, files, width):
         assert page.locator('[data-ui-v2="old-app-link"], [data-ui-v2="search-link"]').count() == 0     # 머리말 링크는 메뉴와 종목 탭으로
         assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "예전 뱁새 기록이 없는데 안내가 보여요"
         assert page.title() == C["app"]["title"]
+        word = page.locator('[data-ui-v2="app-bar"] h1').first                # v19.0: 머리말은 '뱁새', 긴 제목은 탭 제목에만
+        assert word.inner_text() == C["app"]["brand"] == "뱁새", word.inner_text()
+        assert md in date_line(page) and "멈췄어요" not in date_line(page)
+        assert page.locator('[data-ui-v2="today-hero"]').count() == 0
+        assert page.get_by_text("할 일").count() == 0, "점검한 종목이 없는데 '할 일'이 보여요"
         assert page.locator('[data-ui-v2="ios-hint"]').count() == 0, "아이폰 사파리가 아닌데 홈 화면 안내가 보여요"
         no_hscroll(page, width)
         R.collect(page)
@@ -895,6 +900,22 @@ def scene_us_date(R, files, width):
         assert knew.count() == 0 or knew.bounding_box()["y"] < tax.bounding_box()["y"], "세금 줄이 '알고 시작한 일' 앞에 와요"
         R.collect(page)
     R.check(page, f"미국 날짜 {width}", "미국: 현지 종가 날짜 · 차입금 비율(부채비율 아님) · 세금 줄과 출처(2026년 세법 기준)", run)
+
+    def stocks_us_close():
+        page.evaluate("location.hash = '#stocks'")                         # 매수 계획 화면에서 바로 종목으로 (주소로)
+        at(page, "stocks")
+        note = page.locator('[data-ui-v2="us-close"]')
+        box = page.locator('[data-ui-v2="stock-search"] input')
+        box.fill("Apple")                                                  # 미국 종목이 보이면: 현지 종가 날짜
+        page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-cls="us"]').first.wait_for(state="visible")
+        assert note.inner_text() == "미국 종목은 현지 기준 10월 29일 종가예요.", note.all_inner_texts()
+        box.fill("삼성")                                                   # 한국 종목만: 그 줄 없음
+        page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"]').first.wait_for(state="visible")
+        assert note.count() == 0
+        box.fill("")
+        assert note.count() == 0 and page.locator('[data-ui-v2="popular-list"][data-market="us"] [data-ui-v2="list-date"]').inner_text() == "10월 29일 기준"
+        R.collect(page)
+    R.check(page, f"미국 날짜 {width}", "종목: 미국 종목 줄이 보이면 '미국 종목은 현지 기준 10월 29일 종가예요.' (거래대금 미국 목록은 자기 날짜)", stocks_us_close)
     ctx.close()
     srv.shutdown()
 
@@ -1255,6 +1276,11 @@ def scene_daily(R, files, width):
             tab(page, C["app"]["tabs"]["home"])                          # 오늘: 멈춤 띠 또는 불러오기 실패, 할 일 띠는 없음
             if how == "멈춤":
                 see(page, "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요")
+                band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"]')     # 판정이 아니라서 상태 아이콘 없음, 지켜봐요 바탕
+                assert band.get_attribute("data-tone") == "stale" and band.locator('[data-ui="state-icon"], img').count() == 0
+                assert hero_colours(band)[0] == "rgb(255, 243, 214)"
+                dl = page.locator('[data-ui-v2="date-line"]').first
+                assert dl.get_attribute("data-stale") == "1" and "6일째 갱신이 멈췄어요" in dl.inner_text(), dl.inner_text()
             else:
                 see(page, LOAD_FAIL)
             for sel in ('[data-ui-v2="today-hero"]', '[data-ui-v2="deck-strip"]', '[data-ui-v2="big-moves"]', '[data-ui-v2="today-not-checked"]'):
@@ -2098,7 +2124,9 @@ def scene_market(R, files, width):
     ctx.close()
     srv.shutdown()
 
-    srv, ctx, page, base = R.open(build_site(files, drop=("macro.json",)), width, path="/app.html?dev=1#market")
+    saved = {"v": 1, "decks": [_deck("dm", "시장 포트폴리오", [(*SAMSUNG, 1.0, [], 1, 225000)])]}
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(saved, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, base = R.open(build_site(files, drop=("macro.json",)), width, init=init, path="/app.html?dev=1#market")
 
     def no_macro():
         wait_ready(page)
@@ -2110,10 +2138,16 @@ def scene_market(R, files, width):
             x = tile(page, i)
             assert x["value"] == "–" and x["change"] == [] and x["date"] == [], (i, x)
         assert tile(page, "usdkrw")["value"] == f"{files['data.json']['fx']:,.1f}원"                     # 원/달러는 data.json 에서
-        tab(page, TABS["home"])
-        at(page, "home")
         R.collect(page)
-    R.check(page, S, "macro.json 을 못 읽으면: 불러오기 실패 문구 · 세 칸 '–' · 원/달러는 그대로", no_macro)
+        tab(page, TABS["home"])                                           # 홈의 시장 한눈에: 같은 실패 문구, '–' 칸 없음
+        at(page, "home")
+        glance = page.locator('[data-ui-v2="market-glance"]')
+        glance.wait_for(state="visible")
+        gf = glance.locator('[data-ui-v2="load-fail"]')
+        assert gf.inner_text().strip() == LOAD_FAIL and gf.get_attribute("data-picture") == "0", glance.inner_text()
+        assert glance.locator('[data-ui-v2="market-tile"]').count() == 0 and "–" not in glance.inner_text(), glance.inner_text()
+        R.collect(page)
+    R.check(page, S, "macro.json 을 못 읽으면: 시장은 실패 문구 · 세 칸 '–' · 원/달러 그대로, 홈의 시장 한눈에는 같은 실패 문구만", no_macro)
     ctx.close()
     srv.shutdown()
 
@@ -2156,6 +2190,9 @@ def scene_stocks(R, files, width):
         rows.first.wait_for(state="visible")
         names = rows.all_inner_texts()
         assert len(names) >= 4 and all("삼성" in n for n in names), names
+        box.fill("Apple")                                                 # 한국 · 미국 종가 날짜가 같으면 미국 날짜 줄 없음
+        page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-cls="us"]').first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="us-close"]').count() == 0
         assert page.locator('[data-ui-v2="popular"]').count() == 0          # 찾는 동안은 결과만
         box.fill("zzzz없는회사")
         nr = page.locator('[data-ui-v2="no-result"]')
@@ -2291,6 +2328,27 @@ def scene_missing(R, files, width):
     srv.shutdown()
 
 
+def scene_no_holding(R, files, width):
+    """저장한 포트폴리오에 산 종목이 하나도 없으면: 홈에 판정 없이(할 일 없음도 아님) 포트폴리오 만들기로 가는 길만 (첫 방문 머리글도 아님)."""
+    store = {"v": 1, "decks": [_deck("dnone", "산 것 없는 포트폴리오", [(*SAMSUNG, 1.0, [], 0)])]}
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, _ = R.open(build_site(files), width, init=init)
+
+    def run():
+        wait_ready(page)
+        at(page, "home")
+        empty = page.locator('[data-ui-v2="today-empty"]')
+        empty.wait_for(state="visible")
+        assert empty.inner_text().strip() == C["build"]["title"]
+        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="home-hero"], [data-ui-v2="deck-strip"]').count() == 0
+        assert page.get_by_text("할 일").count() == 0, "점검한 종목이 없는데 '할 일'이 보여요"
+        page.locator('[data-ui-v2="market-glance"]').wait_for(state="visible")
+        R.collect(page)
+    R.check(page, f"산 종목 없음 {width}", "저장한 포트폴리오에 산 종목이 없으면 홈은 판정 없이 '포트폴리오 만들기'만 (첫 방문 머리글 아님)", run)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_hint(R, files, devices):
     """아이폰 홈 화면 안내는 아이폰 사파리에서만 (문구는 승인 대기: 그동안은 숨은 자리 표시). 안드로이드 · 홈 화면 앱 안에서는 없어요.
     첫 방문(포트폴리오 전)은 홈과 빈 포트폴리오, 포트폴리오가 있으면 포트폴리오의 기록 칸."""
@@ -2346,7 +2404,7 @@ def main():
                       lambda: scene_daily(R, files, width), lambda: scene_today(R, files, width),
                       lambda: scene_about(R, files, width), lambda: scene_routes(R, files, width),
                       lambda: scene_market(R, files, width), lambda: scene_stocks(R, files, width),
-                      lambda: scene_missing(R, files, width)]
+                      lambda: scene_missing(R, files, width), lambda: scene_no_holding(R, files, width)]
             for fn in scenes:
                 try:
                     fn()

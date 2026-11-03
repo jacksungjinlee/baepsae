@@ -99,11 +99,16 @@ export function Stocks({ load, store, pad }) {
   const mine = useMemo(() => myStocks(store.data.decks, load), [store.data.decks, load]);
   const recent = ok ? tp.recent.map((t) => load.byT.get(t)).filter(Boolean) : [];
   const typing = q.trim().length > 0;
+  // US prices are at their own close date: say so when it differs from the Korean one and a US row is on screen
+  // (as 홈 and 포트폴리오 do). The 거래대금 lists carry their own dates.
+  const usShown = (typing ? results : [...recent, ...mine.map((x) => x.s || x)]).some((s) => s && s.cls === "us");
+  const usDate = ok && usShown && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   return (
     <Page pad={pad}>
       <AppBar />
       <ScreenTitle>{C.app.tabs.stocks}</ScreenTitle>
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      {usDate && <Note data-ui-v2="us-close">{fill(C.app.usClose, { md: usDate })}</Note>}
       {load.status === "fail" && <LoadFail picture={false} />}
       {ok && (
         <label data-ui-v2="stock-search" style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(3), minHeight: TOUCH + SPACE(1),
