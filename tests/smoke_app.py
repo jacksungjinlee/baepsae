@@ -1144,8 +1144,8 @@ def scene_ghost_holding(R, files):
         csv = os.path.join(tmp, "ghost.csv")
         dl.value.save_as(csv)
         lines = open(csv, encoding="utf-8-sig").read().splitlines()
-        assert lines[2] == f"{gone},없어진 회사,,,2000000,,,," and lines[1].startswith("005930,"), lines   # 금액만, 나머지 칸은 비워요
-    R.check(page, S, "JSON 저장: 없는 종목도 백업에 (종목코드 · 이름 · 금액 · notInData, 나머지 null) · CSV 에도 금액만 · NaN 없음", backup)
+        assert lines[1].startswith("005930,") and lines[2].startswith("CASH,") and not any(gone in ln for ln in lines), lines   # 주문표는 목록에 있는 종목만
+    R.check(page, S, "JSON 저장: 없는 종목도 백업에 (종목코드 · 이름 · 금액 · notInData, 나머지 null) · CSV 주문표에는 없음 · NaN 없음", backup)
     ctx.close()
 
     ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")

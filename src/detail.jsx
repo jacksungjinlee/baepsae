@@ -52,7 +52,7 @@ function makeCardData(allHoldings, stocksById, cashMw, score, lang) {
     { ko: lang === "ko" ? "현금" : "Cash", pct: cash / tot * 100, color: "#8B95A8" },
   ].filter((b) => b.pct >= 0.5);
   const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
-    .map((h) => ({ nk: stocksById[h.t].nk, pct: (h.mw || 0) / tot * 100 }));
+    .map((h) => ({ nk: stocksById[h.t].nk || h.t, pct: (h.mw || 0) / tot * 100 }));
   return { score, buckets, top, dateStr: new Date().toISOString().slice(0, 10) };
 }
 
@@ -4129,8 +4129,8 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
-    const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","))
-      .concat(unlistedExportRows(holdings, stocksById).map((u) => [u.ticker, u.name || "", "", "", u.amountWon, "", "", "", ""].join(",")));   // 목록에 없는 종목: 금액만
+    // 주문표에는 목록에 있는 종목만 (합계가 예산과 맞아야 해요). 목록에 없는 종목은 JSON 백업에만 남겨요 (리뷰 2026-11-04).
+    const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
     return "\uFEFF" + h + "\n" + lines.join("\n") + "\nCASH,현금,-," + "-," + Math.round(metrics.cash) + "," + (metrics.cash / metrics.total * 100).toFixed(2) + ",-,0,0";
   };
   const buildMemo = () => {
@@ -4703,7 +4703,11 @@ function AppInner({ seed, lang: langProp }) {
     setBudgetMw(1000);
   };
   const addStock = (s) => { if (!holdings.some((h) => h.t === s.t)) setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(budgetMw / 10)) }]); };
-  const addCustom = (s) => { setStocks([...stocks, s]); setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(budgetMw / 10)) }]); };
+  // 같은 종목코드를 다시 추가하면: 정의만 바꾸고, 이미 있는 보유분(예: 백업에서 '목록에 없음'으로 돌아온 금액)은 그대로 다시 보여요 — 두 줄로 세지 않아요 (리뷰 2026-11-04)
+  const addCustom = (s) => {
+    setStocks([...stocks.filter((x) => !(x.custom && x.t === s.t)), s]);
+    if (!holdings.some((h) => h.t === s.t)) setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(budgetMw / 10)) }]);
+  };
   const updateStock = (tk, k, v) => setStocks(stocks.map((s) => (s.t === tk ? { ...s, [k]: v } : s)));
   const exitSlot = () => { setSlotId(null); setExpanded(null); };
 
