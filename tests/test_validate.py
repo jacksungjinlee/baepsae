@@ -249,6 +249,198 @@ def test_latest_final_skips_blank_premarket_file():
     assert d == d28
 
 
+# ── v17.5.4: 최종본 = 그날 KRX 마감 + 30분 (특별 거래시간 표, fetch_data.py 와 따로 읽어요) ──
+CSAT, CSAT_PREV, CSAT_NEXT = dt.date(2026, 11, 19), dt.date(2026, 11, 18), dt.date(2026, 11, 20)
+NOV = [dt.date(2026, 11, d) for d in (2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20)]
+SPECIAL_HEAD = "date,open,close,kind,reason,source\n"
+
+
+def csat_latest(hm, notes=None):
+    texts = {CSAT: text_of("2026-10-29_1958"), CSAT_PREV: text_of("2026-10-28_1921")}
+    commits = {CSAT: hm, CSAT_PREV: "1921"}
+    return V.latest_final(CSAT_NEXT, texts.get, lambda d: kst(d, commits[d]), notes=notes)
+
+
+def test_latest_final_normal_day_cut_is_still_1600():
+    d29, d28 = dt.date(2026, 10, 29), dt.date(2026, 10, 28)
+    texts = {d29: text_of("2026-10-29_1958"), d28: text_of("2026-10-28_1921")}
+    assert V.final_cut(d29, V.load_special_sessions()) == kst(d29, "1600")
+    for hm, want in (("1559", d28), ("1600", d29)):
+        commits = {d29: hm, d28: "1921"}
+        d, _, how = V.latest_final(dt.date(2026, 10, 30), texts.get, lambda d: kst(d, commits[d]))
+        assert d == want and "특별" not in how, hm
+
+
+@pytest.mark.parametrize("hm", ["1610", "1659"])
+def test_latest_final_csat_day_before_1700_is_not_final(hm):
+    notes = []
+    d, _, _ = csat_latest(hm, notes)
+    assert d == CSAT_PREV
+    assert any(n.startswith("2026-11-19 최종본 아님") and "특별 거래시간(수능): 마감 16:30 → 최종본은 17:00 이후 커밋만" in n
+               for n in notes), notes
+
+
+def test_latest_final_csat_day_at_1700_is_final():
+    d, closes, how = csat_latest("1700")
+    assert d == CSAT and closes["005930"] == 232000
+    assert how == "11-19 17:00 KST 커밋 · 2026-11-19 특별 거래시간(수능): 마감 16:30 → 최종본은 17:00 이후 커밋만"
+
+
+def test_csat_day_not_final_is_caught_as_a_missed_session():
+    # 11/19 파일이 16:10 커밋뿐이면 최종본은 11/18 → 발행본도 11/18 가격이에요. 11/19 는 끝난 거래일이라 관문이 막아요.
+    d, _, how = csat_latest("1610")
+    assert d == CSAT_PREV
+    fd = __import__("fixture_data")
+    cur, closes = fd.build(px_date="2026-11-18", us_date="2026-11-18")
+    prev, _ = fd.build(px_date="2026-11-17", us_date="2026-11-17", price_shift=-0.01)
+    for s_, p_ in zip(cur["data"]["stocks"], prev["data"]["stocks"]):
+        if s_.get("cls") == "kr":
+            p_["price"] = round(s_["price"] * 0.99)
+    for f in cur.values():
+        if "publishedAt" in f:
+            f["publishedAt"] = "2026-11-20T09:30:00+09:00"
+    final = {"date": d, "closes": closes, "how": how}
+    rep = check(cur, prev, final, sessions={"dates": NOV, "src": "시험"}, today=CSAT_NEXT,
+                now=dt.datetime(2026, 11, 20, 11, 0, tzinfo=V.KST))
+    assert failed_names(rep) == {"pxDate 뒤 끝난 거래일 없음"}, rep.table()
+    row = next(r for r in rep.rows if r[0] == "pxDate 뒤 끝난 거래일 없음")
+    assert "2026-11-19" in row[1]
+
+
+def test_special_session_table_is_read_the_same_way_as_the_pipeline():
+    sp = V.load_special_sessions()
+    assert sp[CSAT] == (dt.time(10), dt.time(16, 30), "수능")
+    assert sp[dt.date(2026, 1, 2)] == (dt.time(10), dt.time(15, 30), "연초 개장")
+    assert V.final_cut(CSAT, sp) == kst(CSAT, "1700") and V.final_cut(dt.date(2026, 1, 2), sp) == kst(dt.date(2026, 1, 2), "1600")
+
+
+@pytest.mark.parametrize("row,why", [
+    ("2026-11-19,10:00,16:30,수능,이유", "칸 수"),
+    ("2026-11-19,10:00,16:30,수능,이유,출처,더", "칸 수"),
+    ("2026/11/19,10:00,16:30,수능,이유,출처", "YYYY-MM-DD"),
+    ("2026-02-30,10:00,16:30,수능,이유,출처", "읽을 수 없어요"),
+    ("2026-11-19,10시,16:30,수능,이유,출처", "HH:MM"),
+    ("2026-11-19,10:00,25:00,수능,이유,출처", "읽을 수 없어요"),
+    ("2026-11-19,16:30,10:00,수능,이유,출처", "앞이어야"),
+    ("2026-11-19,10:00,14:30,수능,이유,출처", "보통 마감 15:30 보다 일러요"),     # 마감을 앞당기면 규칙이 느슨해져요
+    ("2026-11-21,10:00,16:30,수능,이유,출처", "주말"),
+    ("2026-01-02,10:00,15:30,연초 개장,이유,출처", "두 번"),
+    ("2026-11-19,10:00,16:30,시험,이유,출처", "kind"),
+    ("2026-11-19,10:00,16:30,수능,이유,", "출처 없는 줄"),
+])
+def test_broken_special_session_row_stops_loudly(tmp_path, row, why):
+    p = tmp_path / "s.csv"
+    p.write_text(SPECIAL_HEAD + "2026-01-02,10:00,15:30,연초 개장,이유,출처\n" + row + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=f"s.csv 3번째 줄: .*{why}"):
+        V.load_special_sessions(str(p))
+
+
+def test_unreadable_special_session_table_is_a_red_check(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("krx_special_sessions.csv 3번째 줄: 주말이에요")
+    monkeypatch.setattr(V, "load_special_sessions", boom)
+    cur, prev, final = good_pair()
+    assert "KRX 특별 거래시간 표" in failed_names(check(cur, prev, final))
+
+
+def test_csat_missing_from_the_table_is_a_warning_from_september_first():
+    sp = V.load_special_sessions()
+    assert not V.csat_missing(dt.date(2026, 10, 31), sp)                  # 2026-11-19 줄이 있어요
+    assert not V.csat_missing(dt.date(2027, 8, 31), sp)                   # 9월 전에는 안 봐요
+    assert V.csat_missing(dt.date(2027, 9, 1), sp)                        # 2027 수능일 줄이 아직 없어요
+    assert not V.csat_missing(dt.date(2027, 9, 1), {**sp, dt.date(2027, 11, 18): (dt.time(10), dt.time(16, 30), "수능")})
+    cur, prev, final = good_pair()
+    row = next(r for r in check(cur, prev, final).rows if r[0] == "올해 수능일 특별 거래시간 (표)")
+    assert row[3] == "PASS" and "2026-11-19 10:00~16:30" in row[1]
+    no_csat = {d: v for d, v in sp.items() if v[2] != "수능"}
+    rep = V.run_checks(cur, prev, final, TODAY, count_between=lambda a, b: 1, sessions=SESSIONS, now=NOW,
+                       hilo=hilo_of(cur, V.MUST), special=no_csat)
+    row = next(r for r in rep.rows if r[0] == "올해 수능일 특별 거래시간 (표)")
+    assert row[3] == "WARN" and row[1] == "올해 수능일 특별 거래시간이 표에 없어요"
+    assert not rep.failed, rep.table()                                    # 경고만 — 평소 발행을 막지 않아요
+
+
+def test_csat_missing_from_the_table_fails_from_november_first():
+    """Jack, 2026-11-04: 9월 1일부터 경고, 11월 1일부터도 없으면 발행을 막아요."""
+    sp = V.load_special_sessions()
+    no_csat = {d: v for d, v in sp.items() if v[2] != "수능"}
+    assert not V.csat_blocks(dt.date(2027, 10, 31), no_csat) and V.csat_missing(dt.date(2027, 10, 31), no_csat)
+    assert V.csat_blocks(dt.date(2027, 11, 1), no_csat) and V.csat_blocks(dt.date(2027, 12, 31), no_csat)
+    assert not V.csat_blocks(dt.date(2027, 11, 1), {**no_csat, dt.date(2027, 11, 18): (dt.time(10), dt.time(16, 30), "수능")})
+    assert not V.csat_blocks(dt.date(2026, 11, 4), sp)                    # 올해 줄(2026-11-19)이 있어요
+    cur, prev, final = good_pair()
+    for today, want in ((dt.date(2026, 10, 31), "WARN"), (dt.date(2026, 11, 1), "FAIL")):
+        rep = V.run_checks(cur, prev, final, today, count_between=lambda a, b: 1, sessions=SESSIONS, now=NOW,
+                           hilo=hilo_of(cur, V.MUST), special=no_csat)
+        row = next(r for r in rep.rows if r[0] == "올해 수능일 특별 거래시간 (표)")
+        assert row[3] == want and row[1] == "올해 수능일 특별 거래시간이 표에 없어요", (today, row)
+
+
+def test_gate_warnings_and_failures_become_github_annotations():
+    """관문 경고·실패는 GitHub 알림(::warning:: · ::error::)으로도 남아서 매일 아침 점검이 읽어요 (Jack, 2026-11-04)."""
+    rep = V.Report()
+    rep.add("좋은 줄", True, "1", "1")
+    rep.add("경고 줄", True, "93.0%", "≥ 92% (2점 안쪽이면 경고)", warn=True)
+    rep.add("실패 줄", False, "50%\r\n둘째 줄", "≥ 99%")
+    lines = V.annotations(rep)
+    assert lines == ["::error title=발행 관문 실패::실패 줄: 50%25%0D%0A둘째 줄 (기준 ≥ 99%25)",
+                     "::warning title=발행 관문 경고::경고 줄: 93.0%25 (기준 ≥ 92%25 (2점 안쪽이면 경고))"], lines
+    assert V.annotations(V.Report()) == []
+    many = V.Report()
+    for i in range(13):
+        many.add(f"경고 {i}", True, "x", "y", warn=True)
+    w = V.annotations(many)
+    assert len(w) == V.ANNOTATE_MAX and w[-1].endswith("외 4개 더 — 실행 요약의 표를 보세요"), w[-2:]
+    assert "경고 0:" in w[0] and "경고 8:" in w[8], w[:2]                 # 앞에서부터 9개를 보여 줘요
+
+
+def test_gate_stopping_before_the_table_still_leaves_an_error_annotation(monkeypatch, capsys, tmp_path):
+    """파일을 못 읽거나 관문이 오류로 멈춰도 이유가 알림으로 남아요 (리뷰 2026-11-04). 오류는 삼키지 않아요."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert V.main(["--dir", str(tmp_path), "--bootstrap", "--today", "2026-10-31"]) == 1      # 빈 폴더: data.json 없음
+    out = capsys.readouterr().out
+    assert "!! FAIL  파일 읽기:" in out and "::error title=발행 관문 실패::파일 읽기: " in out, out[-300:]
+    cur, _, _ = good_pair()
+    real_load_dir = V.load_dir
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+
+    def crash(*a, **k):
+        raise KeyError("stocks")
+    monkeypatch.setattr(V, "run_checks", crash)
+    with pytest.raises(KeyError):
+        V.main(["--dir", "unused", "--bootstrap", "--today", "2026-10-31"])
+    assert "::error title=발행 관문 실패::관문이 오류로 멈췄어요: KeyError: 'stocks'" in capsys.readouterr().out
+    monkeypatch.delenv("GITHUB_ACTIONS")
+    monkeypatch.setattr(V, "load_dir", real_load_dir)
+    assert V.main(["--dir", str(tmp_path), "--bootstrap", "--today", "2026-10-31"]) == 1
+    assert "::error" not in capsys.readouterr().out                      # GitHub 밖에서는 알림 줄을 쓰지 않아요
+
+
+def test_gate_prints_annotations_only_inside_github_actions(monkeypatch, capsys):
+    rep = V.Report()
+    rep.add("경고 줄", True, "x", "y", warn=True)
+    cur, _, _ = good_pair()
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)                    # 네트워크 없이: 파일·최종본·달력·야후는 가짜
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+    monkeypatch.setattr(V, "run_checks", lambda *a, **k: rep)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    for env, seen in (("true", True), (None, False)):
+        if env:
+            monkeypatch.setenv("GITHUB_ACTIONS", env)
+        else:
+            monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        assert V.main(["--dir", "unused", "--bootstrap", "--today", "2026-10-31"]) == 0   # 경고만이면 통과
+        out = capsys.readouterr().out
+        assert ("::warning title=발행 관문 경고::경고 줄: x (기준 y)" in out) is seen, out[-400:]
+        assert "!! 경고  경고 줄: x (기준 y)" in out
+
+
 def test_count_final_between_counts_trading_days_only():
     days = {dt.date(2026, 10, 24): text_of("2026-10-24_0444"), dt.date(2026, 10, 25): text_of("2026-10-24_0444"),
             dt.date(2026, 10, 26): text_of("2026-10-28_1921"), dt.date(2026, 10, 27): text_of("2026-10-28_1921")}
@@ -850,3 +1042,26 @@ def test_foreign_issuer_with_blanks_passes(extra):
                                    {"c_dps": 50.0}, {"c_dy": 1.2}, {"c_dps3": [50.0, None, None]}])
 def test_foreign_issuer_with_won_amounts_fails(extra):
     fails_on("해외 기업(9…) 원화 아닐 수 있는 금액 비움", lambda c: add_foreign(c, **extra))
+
+
+def test_missing_special_sessions_table_stops_loudly_in_the_gate(tmp_path):
+    with pytest.raises((FileNotFoundError, RuntimeError)):
+        V.load_special_sessions(str(tmp_path / "nope.csv"))
+
+
+def test_gate_reads_listing_commit_time_as_kst_for_that_file(monkeypatch):
+    # GitHub 의 커밋 시각은 UTC: 07:59Z = 16:59 KST (수능일엔 최종본이 아님) · 08:00Z = 17:00 KST (최종본)
+    class R:
+        def __init__(self, js):
+            self.status_code, self._js = 200, js
+
+        def json(self):
+            return self._js
+    seen = []
+    for utc, kst_hm, final in (("2026-11-19T07:59:00Z", (16, 59), False), ("2026-11-19T08:00:00Z", (17, 0), True)):
+        monkeypatch.setattr(V.requests, "get", lambda url, params=None, headers=None, timeout=None, utc=utc:
+                            seen.append(params) or R([{"commit": {"committer": {"date": utc}}}]))
+        ct = V.http_commit_kst(CSAT)
+        assert ct.utcoffset() == dt.timedelta(hours=9) and (ct.hour, ct.minute) == kst_hm, (utc, ct)
+        assert (ct >= V.final_cut(CSAT, V.load_special_sessions())) is final, utc
+    assert all(p and "2026-11-19" in p["path"] for p in seen), seen

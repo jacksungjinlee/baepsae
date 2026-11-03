@@ -12,7 +12,8 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
   python validate_data.py --live --dir DIR    # 사이트에 올라간 파일 점검 (비교 없이 절대 기준만, v17.6 감시용)
 
 '최종본 날짜'는 fetch_data.py 를 쓰지 않고 이 파일의 코드로 따로 계산해요 (같은 실수를 같이 하지 않게).
-규칙: 오늘(KST) 이전, 시가총액 90% 이상, 마지막 커밋이 그 날짜 16:00 KST 이후.
+규칙: 오늘(KST) 이전, 시가총액 90% 이상, 마지막 커밋이 그날 KRX 정규장 마감 + 30분 이후 (보통 15:30 → 16:00 KST).
+마감이 늦는 날(수능일 10:00~16:30 → 17:00 등)은 data/krx_special_sessions.csv 에서 읽어요 (fetch_data.py 와 같은 표, 읽는 코드는 따로).
 한국 공식 종가 = 시가총액 ÷ 상장주식수 (목록 파일의 Close 열은 저녁엔 시간외 가격이에요).
 그 위에 한 겹 더: KOSPI 일봉(네이버 → 야후, 이 파일의 코드로 따로 받음)을 보고, pxDate 와 오늘(KST) 사이에
 끝난 거래일이 하나라도 있으면 FAIL 이에요. 마지막 거래일의 목록 파일이 없거나 최종본이 아니어서 하루 전으로
@@ -42,7 +43,14 @@ COMMITS_API = "https://api.github.com/repos/FinanceData/fdr_krx_data_cache/commi
 NAVER_KOSPI = "https://fchart.stock.naver.com/sise.nhn?symbol=KOSPI&timeframe=day&count=60&requestType=0"
 YAHOO_KOSPI = "https://query1.finance.yahoo.com/v8/finance/chart/%5EKS11?range=3mo&interval=1d"
 PUBLISHED_MAX_HOURS = 12  # 발행 시각(publishedAt)은 관문 실행 12시간 이내여야 해요
-FINAL_HOUR = 16
+NORMAL_CLOSE = dt.time(15, 30)            # 보통 날 KRX 정규장 마감
+FINAL_AFTER = dt.timedelta(minutes=30)    # 마감 30분 뒤 커밋부터 최종본 (보통 날 16:00 — v17.5 와 같아요)
+SPECIAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "krx_special_sessions.csv")
+SPECIAL_COLS = ["date", "open", "close", "kind", "reason", "source"]
+SPECIAL_KINDS = {"수능", "연초 개장", "기타"}
+CSAT_CHECK_FROM = (9, 1)                  # 이날(KST)부터 올해 수능일 줄이 표에 없으면 경고
+CSAT_BLOCK_FROM = (11, 1)                 # 이날(KST)부터는 실패 — 발행을 막아요 (Jack, 2026-11-04: 9월 1일 경고 · 11월 1일 실패)
+ANNOTATE_MAX = 10                         # GitHub 은 한 단계에 경고·오류 알림을 종류마다 10개까지만 보여 줘요
 MIN_CAP_SHARE = 0.90
 LOOKBACK_DAYS = 10
 
@@ -169,6 +177,79 @@ def day(s):
     return dt.date.fromisoformat(str(s)[:10]) if s else None
 
 
+# ── KRX 특별 거래시간 표 (v17.5.4, fetch_data.py 와 별개 구현) ──
+def load_special_sessions(path=SPECIAL_CSV):
+    """data/krx_special_sessions.csv → {날짜: (개장, 마감, 종류)}. 마감이 늦는 날만 최종본 기준이 늦어져요.
+    이상한 줄이 하나라도 있으면 RuntimeError (줄 번호와 함께) → 관문은 최종본을 판단하지 못해 실패해요."""
+    name = os.path.basename(path)
+    out = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rd = csv.DictReader(f, restkey="_more")
+        if rd.fieldnames != SPECIAL_COLS:
+            raise RuntimeError(f"{name} 머리줄 {rd.fieldnames} — {','.join(SPECIAL_COLS)} 이어야 해요")
+        for r in rd:
+            where = f"{name} {rd.line_num}번째 줄"
+            if "_more" in r or any(v is None for v in r.values()):
+                raise RuntimeError(f"{where}: 칸 수가 머리줄과 달라요 (쉼표가 섞였는지 확인)")
+            v = {k: r[k].strip() for k in SPECIAL_COLS}
+            if not re.fullmatch(r"20\d\d-[01]\d-[0-3]\d", v["date"]) or not all(re.fullmatch(r"[0-2]\d:[0-5]\d", v[k]) for k in ("open", "close")):
+                raise RuntimeError(f"{where}: 날짜 YYYY-MM-DD · 시각 HH:MM 이어야 해요 ({v['date']} {v['open']} {v['close']})")
+            try:
+                d = dt.date.fromisoformat(v["date"])
+                op, cl = dt.time.fromisoformat(v["open"]), dt.time.fromisoformat(v["close"])
+            except ValueError as e:
+                raise RuntimeError(f"{where}: 날짜·시각을 읽을 수 없어요 ({e})") from None
+            if d in out:
+                raise RuntimeError(f"{where}: {d} 가 두 번 있어요")
+            if d.weekday() >= 5:
+                raise RuntimeError(f"{where}: {d} 는 주말이에요")
+            if op >= cl:
+                raise RuntimeError(f"{where}: 개장 {op:%H:%M} 이 마감 {cl:%H:%M} 보다 앞이어야 해요")
+            if cl < NORMAL_CLOSE:
+                raise RuntimeError(f"{where}: 마감 {cl:%H:%M} 이 보통 마감 {NORMAL_CLOSE:%H:%M} 보다 일러요 — 최종본 기준이 느슨해져서 못 받아요")
+            if v["kind"] not in SPECIAL_KINDS:
+                raise RuntimeError(f"{where}: kind '{v['kind']}' — {'·'.join(sorted(SPECIAL_KINDS))} 중 하나여야 해요")
+            if not v["reason"] or not v["source"]:
+                raise RuntimeError(f"{where}: reason·source 가 비었어요 (출처 없는 줄은 받지 않아요)")
+            out[d] = (op, cl, v["kind"])
+    return out
+
+
+def final_cut(d, special):
+    """그날 목록 파일의 마지막 커밋이 이 시각(KST) 이후여야 최종본 = 그날 마감(표에 없으면 15:30) + 30분."""
+    s = special.get(d)
+    return dt.datetime.combine(d, s[1] if s else NORMAL_CLOSE, KST) + FINAL_AFTER
+
+
+def csat_missing(today, special):
+    """9월 1일(KST)부터 올해 수능일 줄이 표에 없으면 True — 표가 소리 없이 끝나지 않게."""
+    if (today.month, today.day) < CSAT_CHECK_FROM:
+        return False
+    return not any(d.year == today.year and v[2] == "수능" for d, v in special.items())
+
+
+def csat_blocks(today, special):
+    """11월 1일(KST)부터도 올해 수능일 줄이 없으면 True → 관문 실패 (그 전 9월 1일부터는 경고만)."""
+    return csat_missing(today, special) and (today.month, today.day) >= CSAT_BLOCK_FROM
+
+
+def _gh_escape(text):
+    """GitHub Actions 알림(::warning::) 메시지에 넣을 수 있게 % · 줄바꿈을 바꿔요."""
+    return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def annotations(rep):
+    """실패·경고 줄 → GitHub Actions 알림 줄들. 실행 화면과 check-run 알림 API 에 남아서, 매일 아침 점검이 로그인 없이 읽어요
+    (Jack, 2026-11-04: 관문 경고가 매일 점검으로 나에게 와야 해요). 종류마다 10개까지만 보이니 넘치면 마지막 줄에 남은 개수를 적어요."""
+    out = []
+    for kind, title, rows in (("error", "발행 관문 실패", rep.failed), ("warning", "발행 관문 경고", rep.warned)):
+        shown = rows if len(rows) <= ANNOTATE_MAX else rows[:ANNOTATE_MAX - 1]
+        out += [f"::{kind} title={title}::" + _gh_escape(f"{r[0]}: {r[1]} (기준 {r[2]})") for r in shown]
+        if len(rows) > len(shown):
+            out.append(f"::{kind} title={title}::" + _gh_escape(f"외 {len(rows) - len(shown)}개 더 — 실행 요약의 표를 보세요"))
+    return out
+
+
 # ── 최종본 목록 (fetch_data.py 와 별개 구현) ─────────────────
 def official_closes(text):
     """목록 CSV → ({종목코드: 공식 종가}, 시가총액이 찬 비율)."""
@@ -212,15 +293,19 @@ def http_commit_kst(d):
         return None
 
 
-def is_final(d, text, get_text, get_commit, today):
-    """(최종본인가, 설명)."""
+def is_final(d, text, get_text, get_commit, today, special=None):
+    """(최종본인가, 설명). special: KRX 특별 거래시간 표 (None 이면 표 파일을 읽어요)."""
+    special = load_special_sessions() if special is None else special
     closes, share = official_closes(text)
     if share < MIN_CAP_SHARE:
         return False, f"시가총액 {share:.0%}"
     ct = get_commit(d)
     if ct is not None:
-        cut = dt.datetime.combine(d, dt.time(FINAL_HOUR), KST)
-        return ct >= cut, f"{ct:%m-%d %H:%M} KST 커밋"
+        cut = final_cut(d, special)
+        s = special.get(d)
+        tag = (f" · {d} 특별 거래시간({s[2]}): 마감 {s[1]:%H:%M} → 최종본은 {cut:%H:%M} 이후 커밋만"
+               if s and s[1] != NORMAL_CLOSE else "")
+        return ct >= cut, f"{ct:%m-%d %H:%M} KST 커밋{tag}"
     later = [d + dt.timedelta(days=i) for i in range(1, (today - d).days + 1)]
     for e in later:
         t = get_text(e)
@@ -229,16 +314,20 @@ def is_final(d, text, get_text, get_commit, today):
     return False, "커밋 시각 확인 불가 · 다음 거래일 파일 없음"
 
 
-def latest_final(today, get_text=http_listing, get_commit=http_commit_kst):
-    """오늘 이전의 가장 최근 최종본: (날짜, 공식 종가 dict, 설명) 또는 (None, None, 사유)."""
+def latest_final(today, get_text=http_listing, get_commit=http_commit_kst, special=None, notes=None):
+    """오늘 이전의 가장 최근 최종본: (날짜, 공식 종가 dict, 설명) 또는 (None, None, 사유).
+    notes(리스트)를 주면 최종본이 아니어서 건너뛴 날짜와 이유를 적어요."""
+    special = load_special_sessions() if special is None else special
     for back in range(1, LOOKBACK_DAYS + 1):
         d = today - dt.timedelta(days=back)
         text = get_text(d)
         if text is None:
             continue
-        ok, how = is_final(d, text, get_text, get_commit, today)
+        ok, how = is_final(d, text, get_text, get_commit, today, special)
         if ok:
             return d, official_closes(text)[0], how
+        if notes is not None:
+            notes.append(f"{d} 최종본 아님 ({how}) → 그 전 날짜로")
     return None, None, f"최근 {LOOKBACK_DAYS}일 안에 최종본이 없어요"
 
 
@@ -380,12 +469,14 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
-def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None):
+def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
+               special=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
     final: {"date", "closes", "how"} — 비교할 최종본 (None 이면 날짜·가격 검사 실패).
     sessions: {"dates": [KOSPI 거래일…], "src": 출처} — None 이면 받지 못한 것 → FAIL.
     now: 관문 실행 시각(KST) — publishedAt 12시간 검사용 (없으면 today 정오).
     hilo: {코드: {"hi", "lo", "d1"}} 야후 52주 종가 범위와 d1 — None 이면 받지 못한 것 (경고).
+    special: KRX 특별 거래시간 표 — None 이면 표 파일을 읽어요 (못 읽으면 FAIL).
     mode: publish · bootstrap · live.  반환: Report."""
     rep, notes = Report(), (notes if notes is not None else [])
     data, corp, disc, macro = cur["data"], cur["corp"], cur["disc"], cur["macro"]
@@ -402,6 +493,20 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         rep.add("pxDate 최종본 여부", px == final["date"], px, f"{final['date']} ({final['how']})")
     else:
         rep.add("pxDate = 최종본 날짜", px == final["date"], px, f"{final['date']} ({final['how']})")
+    # KRX 특별 거래시간 표 (v17.5.4): 최종본 기준에 써요. 읽을 수 있어야 하고, 올해 수능일 줄이 있어야 해요
+    # (없으면 9월 1일부터 경고, 11월 1일부터 실패 — Jack, 2026-11-04)
+    try:
+        sp = load_special_sessions() if special is None else special
+    except Exception as e:
+        sp = None
+        rep.add("KRX 특별 거래시간 표", False, str(e)[:90], "읽을 수 있어야 함 (data/krx_special_sessions.csv)")
+    if sp is not None:
+        miss, block = csat_missing(today, sp), csat_blocks(today, sp)
+        have = sorted(d for d, v in sp.items() if d.year == today.year and v[2] == "수능")
+        rep.add("올해 수능일 특별 거래시간 (표)", not block,
+                "올해 수능일 특별 거래시간이 표에 없어요" if miss
+                else (" · ".join(f"{d} {sp[d][0]:%H:%M}~{sp[d][1]:%H:%M}" for d in have) or "9월 1일 전이라 아직 안 봐요"),
+                "올해 수능일 줄 (9월 1일부터 없으면 경고 · 11월 1일부터 없으면 실패)", warn=miss)
     ppx = prev_px_date(pdata, notes) if pdata else None
     if pdata:
         rep.add("pxDate 가 뒤로 가지 않음", px is not None and ppx is not None and px >= ppx, px, f"≥ {ppx}")
@@ -801,7 +906,22 @@ def load_prev(prev_dir, prev_ref):
     return load_git(prev_ref, files=("data.json",))
 
 
+def _annotate_error(text):
+    """GitHub Actions 안에서만: 관문이 표를 만들기 전에 멈춘 이유도 알림(::error::)으로 남겨요 (매일 아침 점검이 읽어요)."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print("::error title=발행 관문 실패::" + _gh_escape(text), flush=True)
+
+
 def main(argv=None):
+    """관문 실행. 예상하지 못한 오류로 멈추면 알림을 하나 남기고 그 오류를 그대로 다시 던져요 (삼키지 않아요)."""
+    try:
+        return _main(argv)
+    except Exception as e:
+        _annotate_error(f"관문이 오류로 멈췄어요: {type(e).__name__}: {str(e)[:300]}")
+        raise
+
+
+def _main(argv=None):
     ap = argparse.ArgumentParser(description="뱁새 발행 관문")
     ap.add_argument("--dir", default=".", help="검사할 네 파일이 있는 폴더")
     ap.add_argument("--prev-ref", default="HEAD", help="직전 발행본의 git ref (기본 HEAD)")
@@ -821,6 +941,7 @@ def main(argv=None):
         cur = load_dir(a.dir)
     except Exception as e:
         print(f"!! FAIL  파일 읽기: {e}")
+        _annotate_error(f"파일 읽기: {str(e)[:300]}")
         return 1
     # 자정을 넘긴 실행: 수집을 시작한 날(publishedAt, 12시간 이내일 때만)을 '오늘'로 봐요
     try:
@@ -838,14 +959,25 @@ def main(argv=None):
         except Exception as e:
             print(f"!! 직전 발행본을 읽을 수 없어요 ({a.prev_dir or a.prev_ref}): {str(e)[:200]}")
 
+    special = None
     try:
+        special = load_special_sessions()
+        print(f"· KRX 특별 거래시간 표: {len(special)}줄 ({os.path.basename(SPECIAL_CSV)})")
+    except Exception as e:
+        print(f"!! KRX 특별 거래시간 표를 읽지 못했어요: {e}")
+    try:
+        if special is None:
+            raise RuntimeError("KRX 특별 거래시간 표가 없으면 그날 마감 시각을 몰라 최종본을 판단하지 않아요")
         if mode == "live":
             px = day(cur["data"].get("pxDate"))
             text = http_listing(px) if px else None
-            ok, how = is_final(px, text, http_listing, http_commit_kst, today) if text else (False, "파일 없음")
+            ok, how = is_final(px, text, http_listing, http_commit_kst, today, special) if text else (False, "파일 없음")
             final = {"date": px, "closes": official_closes(text)[0], "how": how} if ok else None
         else:
-            d, closes, how = latest_final(today)
+            fnotes = []
+            d, closes, how = latest_final(today, special=special, notes=fnotes)
+            for n in fnotes:
+                print(f"· {n}")
             final = {"date": d, "closes": closes, "how": how} if d else None
             if not d:
                 print(f"!! 최종본 날짜: {how}")
@@ -871,7 +1003,7 @@ def main(argv=None):
     except Exception as e:
         print(f"!! 야후 52주 범위를 받지 못했어요: {e}")
     rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes,
-                     sessions=sessions, now=now, hilo=hilo)
+                     sessions=sessions, now=now, hilo=hilo, special=special)
     for n in notes:
         print(f"· {n}")
     print()
@@ -881,6 +1013,11 @@ def main(argv=None):
     print(f"결과: {'FAIL' if bad else 'PASS'} · 실패 {len(bad)} · 경고 {len(warn)} · 전체 {len(rep.rows)}")
     for r in bad:
         print(f"!! FAIL  {r[0]}: {r[1]} (기준 {r[2]})")
+    for r in warn:
+        print(f"!! 경고  {r[0]}: {r[1]} (기준 {r[2]})")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for line in annotations(rep):
+            print(line)
     summ = os.environ.get("GITHUB_STEP_SUMMARY")
     if summ:
         with open(summ, "a", encoding="utf-8") as f:
