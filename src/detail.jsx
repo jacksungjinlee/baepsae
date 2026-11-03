@@ -895,12 +895,14 @@ const noRiskLine = (lang, m) => T_NORISK[lang].replace("{pct}", m.noRiskPct >= 1
 // v18.5 (Jack 2026-11-03·04): 저장한 보유 종목이 오늘 데이터에 없으면 위험 계산에서 빼되, 저장본에서는 지우지 않아요
 // (종목이 다시 들어오면 저절로 돌아와요). 내장 예시 목록에 있는 종목은 여기 해당하지 않아요 — 그건 예시 가격으로 계산하고
 // 위 T_NONLIVE 배너가 알려요. 두 안내는 서로 다른 종목을 말해요. {names} = '이름(또는 코드) 금액, …' (예: STRC 200만원).
-// 문장은 한국어·영어 모두 승인 (Jack 2026-11-04). 영어 금액 모양(₩2,000,000)과 영어 버튼 글은 PENDING JACK.
+// 문장은 한국어·영어 모두 승인 (Jack 2026-11-04). 금액은 앱이 다른 곳에서 쓰는 fmtMw 그대로 (영어 ₩2,000,000, 승인).
 const T_MISSING = { ko: "오늘 데이터에 없는 종목 {n}개({names})는 빼고 계산했어요.",
   en: "Left out {n} stock(s) not in today's data ({names})." };
-// 그 종목만 저장본에서 지우는 버튼 (사용자가 누를 때만). 한국어 승인 (2.0 과 같은 말), 영어 PENDING JACK.
+// 그 종목만 저장본에서 지우는 버튼 (사용자가 누를 때만). 한국어·영어 승인 (Jack 2026-11-04).
 const T_MISSING_REMOVE = { ko: "포트폴리오에서 빼기", en: "Remove from portfolio" };
 const MISSING_GREY = C.faint;   // 예산 막대에서 '빼고 계산한 금액' 칸과 안내 앞 표시가 같은 색
+// 예산 막대의 회색 칸 이름표 (회색 칸이 있을 때만). 한국어·영어 승인 (Jack 2026-11-04)
+const T_BAR_MISSING = { ko: "데이터에 없는 종목", en: "Not in today's data" };
 const WARN_INK = "#8A5A16";
 
 // 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
@@ -2091,6 +2093,14 @@ function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, 
         <div data-bar="counted" style={{ height: 7, width: wCounted + "%", background: metrics.overBudget ? C.coral : "linear-gradient(90deg," + C.blue + "," + C.teal + ")", transition: "width .3s ease" }} />
         {missing.length > 0 && <div data-bar="missing" style={{ height: 7, width: wMissing + "%", background: metrics.overBudget ? C.coral : MISSING_GREY, opacity: metrics.overBudget ? 0.55 : 1, transition: "width .3s ease" }} />}
       </div>
+      {wMissing > 0 && (   /* 회색 칸 바로 아래에 이름표 (칸이 오른쪽 끝에 가까우면 오른쪽 정렬) */
+        <div className="barLegend" style={{ display: "flex", justifyContent: wCounted > 60 ? "flex-end" : "flex-start", paddingLeft: wCounted > 60 ? 0 : wCounted + "%", margin: "0 0 2px", fontSize: 10.5, color: C.sub, fontFamily: FONT }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+            <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: metrics.overBudget ? C.coral : MISSING_GREY, opacity: metrics.overBudget ? 0.55 : 1 }} />
+            {T_BAR_MISSING[lang]}
+          </span>
+        </div>
+      )}
       <MissingNote lang={lang} missing={missing} onRemove={onRemoveMissing} style={{ margin: "8px 0 2px" }} />
       {holdings.length === 0 && (
         <div style={{ textAlign: "center", padding: "22px 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -3153,9 +3163,12 @@ function TimeMachine({ lang, t, metrics, settings }) {
       </div>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 8 }}>
         <span style={{ fontSize: 12, color: C.sub }}>{idx}/{n}{lang === "ko" ? "개월" : "mo"}</span>
-        <span style={{ fontSize: 17, fontWeight: 900, color: cur >= vals[0] ? C.teal : C.coral }}>{fmtMw(cur, lang)} <span style={{ fontSize: 11, fontWeight: 700 }}>({pct((cur / vals[0] - 1) * 100, 0)})</span></span>
+        {/* B안 (v18.5, Jack 2026-11-04): 지금 값·시작 대비 %는 베타로 만든 경로의 값이고, 끝나면 '끝까지 버텼다면'과 같은 숫자라
+            SHOW_ER 를 켤 때만. 꺼 둔 동안은 얼마나 빠지는지(고점 대비 · 최저점)만 보여요. */}
+        {SHOW_ER && <span style={{ fontSize: 17, fontWeight: 900, color: cur >= vals[0] ? C.teal : C.coral }}>{fmtMw(cur, lang)} <span style={{ fontSize: 11, fontWeight: 700 }}>({pct((cur / vals[0] - 1) * 100, 0)})</span></span>}
       </div>
-      {idx > 0 && dd < -1 && <div style={{ fontSize: 11, color: C.coral, fontWeight: 700, textAlign: "right" }}>{lang === "ko" ? "고점 대비" : "From peak"} {pct(dd, 0)}</div>}
+      {/* 고점 대비 낙폭: 재생 중에만 (끝난 뒤의 값은 마지막 달 값이라 SHOW_ER 를 켤 때만) — 끝나면 아래 '최저점' 칸이 남아요 */}
+      {idx > 0 && dd < -1 && (SHOW_ER || !done) && <div className="tmFromPeak" style={{ fontSize: 11, color: C.coral, fontWeight: 700, textAlign: "right" }}>{lang === "ko" ? "고점 대비" : "From peak"} {pct(dd, 0)}</div>}
       <svg width="100%" viewBox={"0 0 " + W + " " + H} style={{ marginTop: 4 }}>
         <line x1="8" x2={W - 8} y1={y(vals[0])} y2={y(vals[0])} stroke={C.line} strokeDasharray="4 4" />
         <path d={line} fill="none" stroke={C.blueDeep} strokeWidth="2.5" strokeLinejoin="round" />

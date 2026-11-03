@@ -54,8 +54,12 @@ RISK_BLIND = "담은 종목 모두 베타·변동성 자료가 없어 위험 수
 RISK_HALF = "베타·변동성 자료가 없는 종목이 투자금의 절반을 넘어 위험 수치를 계산할 수 없어요"
 DY_UNKNOWN = "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요."
 MISSING = "오늘 데이터에 없는 종목 {n}개({names})는 빼고 계산했어요."      # v18.5 (Jack 승인 2026-11-04), names = 'STRC 200만원, …'
-MISSING_EN = "Left out {n} stock(s) not in today's data ({names})."      # v18.5 영어 문장 승인 · 금액 모양(₩2,000,000)은 PENDING JACK
-MISSING_REMOVE = "포트폴리오에서 빼기"                                     # v18.5 승인 (영어 'Remove from portfolio' 는 PENDING JACK)
+MISSING_EN = "Left out {n} stock(s) not in today's data ({names})."      # v18.5 승인 · 금액은 앱의 영어 금액 모양 그대로 (₩2,000,000)
+MISSING_REMOVE = "포트폴리오에서 빼기"                                     # v18.5 승인 (영어 'Remove from portfolio' 도 승인)
+BAR_LEGEND = {"ko": "데이터에 없는 종목", "en": "Not in today's data"}    # 예산 막대 회색 칸 이름표 (v18.5 승인, 2026-11-04)
+# 이름표가 회색 칸 바로 아래에서 시작하는지 (왼쪽 끝 차이, px) — 칸이 오른쪽 끝에 가까우면 오른쪽 정렬이라 None
+LEGEND_POS = """() => { const g = document.querySelector('[data-bar="missing"]'), l = document.querySelector('.barLegend');
+  if (!g || !l) return null; const s = l.querySelector('span'); return [l.innerText.trim(), Math.round(s.getBoundingClientRect().left - g.getBoundingClientRect().left)]; }"""
 # 예산 막대의 칸 너비(%): 계산에 든 금액 · 오늘 데이터에 없어 뺀 금액(회색)
 BAR = """() => { const b = document.querySelector('.budgetBar'); if (!b) return null; const W = b.getBoundingClientRect().width;
   const w = (k) => { const e = b.querySelector('[data-bar="' + k + '"]'); return e ? Math.round(e.getBoundingClientRect().width / W * 1000) / 10 : null; };
@@ -753,6 +757,8 @@ def scene_missing_holding(R, files):
         cash = page.evaluate(SMALLEST, ["남는 현금 (무위험)", ["만원"]])
         assert cash and "300만원" in cash, f"빠진 종목의 돈이 현금으로 잡혔어요: {cash!r}"                  # 1,000 − 500 − 200
         assert page.get_by_text("예산 초과").count() == 0, "예산 안인데 '예산 초과'"
+        leg = page.evaluate(LEGEND_POS)
+        assert leg and leg[0] == BAR_LEGEND["ko"] and abs(leg[1]) <= 2, f"회색 칸 이름표: {leg}"
         assert page.locator(".missingRemove", has_text=MISSING_REMOVE).count() == 1, "'포트폴리오에서 빼기' 버튼이 없어요"
         assert any("계산에서 뺀 보유 종목 1개: STRC" in m for _, m in R.console), "빠진 종목을 console 에 크게 남기지 않았어요"
         assert not page.evaluate(ROW_WITH, ["STRC", "비중 ", "빼고 계산했어요"]), "빠진 STRC 가 목록 줄로 보여요"
@@ -760,7 +766,7 @@ def scene_missing_holding(R, files):
         body = page.locator("body").inner_text()
         assert body.count("빼고 계산했어요") == 1 and "2개(" not in body, "안내가 두 번 또는 금현물까지 세었어요"
         line["miss"] = page.evaluate(SMALLEST, ["보통 해 ±", None])
-    R.check(page, S, "② 구성: 안내 'STRC 200만원' · 머리말 500 + 200 / 1,000 · 막대 50%+회색 20% · 현금 300만원 · STRC 줄 없음 · 금현물 배너는 따로 · console 경고", build)
+    R.check(page, S, "② 구성: 안내 'STRC 200만원' · 머리말 500 + 200 / 1,000 · 막대 50%+회색 20% + 그 아래 '데이터에 없는 종목' · 현금 300만원 · STRC 줄 없음 · 금현물 배너는 따로 · console 경고", build)
 
     def diag():
         stage("③ 진단")
@@ -813,9 +819,10 @@ def scene_missing_holding(R, files):
         stage("② Build")
         see(page, MISSING_EN.format(n=1, names="STRC ₩2,000,000"))
         assert page.locator(".missingRemove", has_text="Remove from portfolio").count() == 1, "영어 'Remove from portfolio' 버튼이 없어요"
+        assert page.locator(".barLegend").inner_text().strip() == BAR_LEGEND["en"], page.locator(".barLegend").inner_text()
         page.get_by_role("button", name="한국어", exact=True).first.click()
         see(page, note)
-    R.check(page, S, "영어: 'Left out 1 stock(s) not in today's data (STRC ₩2,000,000).' + 'Remove from portfolio' (영어 금액 모양·버튼 글은 PENDING JACK)", english)
+    R.check(page, S, "영어: 'Left out 1 stock(s) not in today's data (STRC ₩2,000,000).' + 'Remove from portfolio' + 'Not in today's data'", english)
 
     def saved():
         # 앱이 자동 저장(0.8초 뒤)한 저장본: 심어 둔 값에는 없던 settings 가 있어야 '앱이 다시 썼다'는 뜻이에요
@@ -862,6 +869,7 @@ def scene_missing_holding(R, files):
         head = page.locator(".cartHead").inner_text()
         assert head.startswith("700 / 1,000"), f"돌아온 STRC 가 합계에 없어요: {head!r}"
         assert page.locator('[data-bar="missing"]').count() == 0, "돌아왔는데 회색 칸이 남아 있어요"
+        assert page.locator(".barLegend").count() == 0, "회색 칸이 없는데 이름표가 보여요"
         row = page.evaluate(SMALLEST, [strc["nk"], ["비중 "]])
         assert row and "비중 " in row, f"돌아온 STRC 줄이 없어요: {row!r}"
     R.check(page, S, "STRC 가 데이터에 돌아오면 저절로 다시 계산 (안내 없음 · 합계 700 · 목록에 STRC)", comes_back)
@@ -906,6 +914,8 @@ def scene_missing_all(R, files):
         assert page.get_by_text("예산 초과").count() == 0, "예산 안인데 '예산 초과'"
         bar = page.evaluate(BAR)
         assert bar and bar["counted"] == 0 and abs(bar["missing"] - 30) < 1, f"예산 막대: {bar}"
+        leg = page.evaluate(LEGEND_POS)
+        assert leg and leg[0] == BAR_LEGEND["ko"] and abs(leg[1]) <= 2, f"회색 칸 이름표: {leg}"
         assert page.get_by_text("예시 포트폴리오로 둘러보기").count() == 0, "담아 둔 종목이 있는데 예시 버튼(누르면 통째로 바뀜)이 보여요"
         stage("③ 진단")
         see(page, "② 구성에서 종목을 담으면 진단이 열려요.")
@@ -921,6 +931,7 @@ def scene_missing_all(R, files):
         page.get_by_text("예시 포트폴리오로 둘러보기").first.wait_for(state="visible", timeout=WAIT)   # 이제는 보여요 (위 숨김 확인이 진짜)
         assert page.get_by_text("빼고 계산했어요").count() == 0, "뺐는데 안내가 남아 있어요"
         assert page.locator(".cartHead").inner_text().startswith("0 / 1,000"), page.locator(".cartHead").inner_text()
+        assert page.locator(".barLegend").count() == 0, "뺐는데 회색 칸 이름표가 남아 있어요"
         poll(page, "localStorage.getItem('baepsae_v10_slot_sall')", lambda v: v and json.loads(v).get("holdings") == [] and '"settings"' in v,
              "'포트폴리오에서 빼기' 뒤에도 저장본에 빠진 종목이 남아 있어요")
     R.check(page, S, "'포트폴리오에서 빼기' → 안내 사라짐 · 저장본 holdings [] · 예시 버튼 다시 보임", remove_all)
@@ -1020,27 +1031,38 @@ def scene_beta_return(R, files):
         assert not shown, f"펼친 종목 줄(EN)에 보이면 안 되는 문구: {shown}"
     R.check(page, S, "② 펼친 종목 줄: 'CAPM Sharpe' 없음, Sharpe 3y 보임 (EN)", rows_en)
 
+    def tm_card(title, note):
+        return page.evaluate(SMALLEST, [title, [note]]) or ""
+
     def diag_en():
         page.get_by_role("button", name="③ Diagnose", exact=False).first.click()
         see(page, "What I'm doing right")
         page.get_by_text("Is my risk being paid for?", exact=False).first.click()
         see(page, "The orange part (specific risk) pays nothing")               # 뒤 문장은 남아요
         page.get_by_text("Want to experiment?", exact=False).first.click()
+        see(page, "Time Machine — live a crash in advance")
+        card = tm_card("Time Machine — live a crash in advance", "A simulation")
+        assert "₩" not in card and "%" not in card, f"재생 전 타임머신에 금액·% (베타로 만든 경로의 값): {card!r}"
         page.get_by_role("button", name="▶ Play").first.click()
         see(page, "If you sold at the bottom")                                   # 끝까지 재생됐어요 (바닥 칸은 남아요)
         page.wait_for_timeout(400)
+        card = tm_card("Time Machine — live a crash in advance", "A simulation")
+        # 남는 숫자: 기간 버튼 · '24/24mo' · 바닥 칸의 금액 1개와 % 1개뿐 (끝 값·고점 대비 없음)
+        assert card.count("₩") == 1 and card.count("%") == 1 and "From peak" not in card, f"타임머신(끝): {card!r}"
         shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B_EN)
         assert not shown, f"③ (EN) 보이면 안 되는 문구: {shown}"
-    R.check(page, S, "③ 타임머신 끝까지 재생: 'If you held to the end'·'What holding was worth' 없음, 바닥 칸은 보임 · 위험 나누기 앞 문장 없음 (EN)", diag_en)
+    R.check(page, S, "③ 타임머신: 재생 전 금액·% 없음 · 끝까지 재생해도 끝 값·'If you held to the end'·'What holding was worth' 없고 바닥 칸(금액 1·% 1)만 · 위험 나누기 앞 문장 없음 (EN)", diag_en)
 
     def diag_ko():
         page.get_by_role("button", name="한국어", exact=True).first.click()
         see(page, "최저점에서 팔았다면")
         see(page, "주황 부분(개별 위험)은 시장이 한 푼도 쳐주지 않는데")
         see(page, "다른 사람들과 비교하면")                                       # 카드의 나머지(과거 자료로 만든 부분)는 그대로
+        card = tm_card("타임머신 — 폭락을 미리 살아보기", "실제 코스피 월별 흐름에")
+        assert card.count("만원") == 1 and card.count("%") == 1 and "고점 대비" not in card, f"타임머신(끝): {card!r}"
         shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B)
         assert not shown, f"③ 보이면 안 되는 문구: {shown}"
-    R.check(page, S, "③ 타임머신: '끝까지 버텼다면'·'버틴 값어치' 없음, '최저점에서 팔았다면' 보임 · 위험 나누기 카드 앞 문장만 없음 (KO)", diag_ko)
+    R.check(page, S, "③ 타임머신: 끝 값·'끝까지 버텼다면'·'버틴 값어치'·'고점 대비' 없음, '최저점에서 팔았다면'(금액 1·% 1)만 · 위험 나누기 카드 앞 문장만 없음 (KO)", diag_ko)
     ctx.close(); srv.shutdown()
 
     def fresh(sid, name, lang, ans):
