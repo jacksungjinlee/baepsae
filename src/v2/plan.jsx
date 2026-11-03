@@ -1,13 +1,14 @@
 // 매수 계획 · 샀어요: whole shares, money left, past-year dividend, the 2022 line, weights with a one-line reason each,
 // 내 투자 규칙 per holding (each rule checked or 준비 중), 이 덱의 주의점, and the purchase record kept in this browser.
-// v19.0b: big numbers show their unit smaller ("12" + small "만원"). 기록했어요 says how many stocks were recorded (a
-// number), so no 뱁이 there (CLAUDE.md): a check-circle icon chip takes the picture's place. 내 투자 규칙 has its section icon.
+// v19.0b: big numbers show their unit smaller ("12" + small "만원"). 내 투자 규칙 has its section icon. 기록했어요 keeps the
+// happy 뱁이 (baepi-5): every variant of that sheet (KR or US buys, preview or live) shows only a count of stocks, never
+// money, prices, returns, weights or scores (CLAUDE.md: a count of stocks is not a number; Jack, 2026-11-04).
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
@@ -295,7 +296,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
       <BottomSheet open title={P.done} onClose={onClose} closeLabel={C.app.close}>
         {preview && <SheetSample />}
         <div data-ui-v2="record-done" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
-          <IconChip name="check-circle" size={48} tone="ok" />
+          <Mascot src={IMG.happy} alt={P.doneAlt} size={64} />
           {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink}</Button></div>

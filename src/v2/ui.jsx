@@ -87,15 +87,17 @@ export function DateLine({ date, fresh }) {
 
 // 뱁이 pictures 2.0 may show (v19.0 Part C, CLAUDE.md): only on the first visit, empty states, the load-failure screen,
 // 준비 중 blocks, learning cards, the share card, the 소개 page and the link preview, never on a card that shows numbers
-// and never beside a verdict (verdicts carry a state icon: src/ui/components.jsx StateIcon). Files are Jack's art scaled
-// to twice their largest display size by tools/resize_assets.py (originals in docs/design/v19/assets).
-// Alt texts wait for Jack (null in src/copy/v2.js: docs/tasks/v18.3-new-strings-pending.md), so meanwhile alt="".
+// and never beside a verdict (verdicts carry a state icon: src/ui/components.jsx StateIcon). Numbers means money, prices,
+// returns, weights and scores; a date label or a count of stocks is not one (Jack, 2026-11-04). The v19 files are Jack's
+// art scaled to twice their largest display size by tools/resize_assets.py (originals in docs/design/v19/assets).
+// Alt texts: src/copy/v2.js (Jack, 2026-11-04).
 export const IMG = {
   mark: "baepi-mark.webp",            // logo, 28 px
   build: "baepi-16-build.webp",       // 덱 짜기 start (no numbers on that card), 92 px
   empty: "baepi-15-portfolio.webp",   // empty 내 덱, 112 px
   error: "baepi-20-error.webp",       // load failure, 120 px
   wip: "baepi-21-wip.webp",           // a whole block that is 준비 중, 64 px
+  happy: "baepi-5.png",               // 기록했어요 sheet (a count of stocks only, no money), 64 px — Jack's original, as before
 };
 
 export function Mascot({ src, alt, size, style }) {

@@ -5,7 +5,8 @@
   비중 막대의 목표 선(WeightBar · BandBar)뿐이에요. 아이콘 · 고른 것 · 알림 띠 · 초점 테두리에는 없어요
 - 판정 띠(HeroBand)에는 그림 자리가 없고, 상태 아이콘(할 일 없음 check-circle 초록 · 확인할 일 flag 남색)만 있어요
 - 확인할 일 띠와 알약은 이미 있는 상태 색(watch · broken)을 써요
-- 2.0 이 보여 주는 그림은 Jack 의 원본을 줄인 파일뿐이고(baepi-1 … 9 PNG 는 2.0 에서 더는 쓰지 않아요), 모두 저장소에 있어요
+- 2.0 이 보여 주는 그림은 Jack 의 원본을 줄인 파일과, 기록했어요의 baepi-5 (돈 금액이 없는 시트, Jack 2026-11-04)뿐이고, 모두
+  저장소에 있어요
 - 숫자는 모두 고정폭(tabular-nums)
 화면에서 실제로 보이는 색 · 그림 · 아이콘은 tests/smoke_v2.py 가 휴대폰 크기로 다시 봐요.
 """
@@ -13,6 +14,7 @@ import os
 import re
 
 from copytrace import ROOT, read
+from visualcheck import MASCOT_DIGITS_EXEMPT, mascot_digit_problems
 
 APRICOT = ("#C97757", "#A9542F", "#FBF1EA")
 # 살구색을 써도 되는 곳 (데이터 표시): 파일 → 맨 위 선언 이름. tokens.js 는 색을 정의하는 곳이라 통째로 괜찮아요.
@@ -144,13 +146,13 @@ def test_focus_ring_is_navy():
 
 
 def test_2_0_pictures_are_scaled_copies_and_exist():
-    """2.0 코드가 부르는 그림: 줄인 뱁이(IMG) · 소개의 baepi-og · 사진뿐. 예전 baepi-1 … 9 와 icon-192 는 2.0 화면에 없어요
-    (예전 뱁새는 CLAUDE.md 의 예외라 그대로예요)."""
+    """2.0 코드가 부르는 그림: 줄인 뱁이(IMG) · 소개의 baepi-og · 사진, 그리고 기록했어요의 baepi-5 (Jack 2026-11-04). 다른 예전
+    baepi-1 … 9 와 icon-192 는 2.0 화면에 없어요 (예전 뱁새는 CLAUDE.md 의 예외라 그대로예요)."""
     found = set()
     for f in code_files():
         found |= set(re.findall(r'"([\w-]+\.(?:png|webp|jpg))"', strip_comments(read(f))))
     want = {"baepi-mark.webp", "baepi-16-build.webp", "baepi-15-portfolio.webp", "baepi-20-error.webp", "baepi-21-wip.webp",
-            "baepi-og.webp", "jack-photo.jpg"}
+            "baepi-og.webp", "jack-photo.jpg", "baepi-5.png"}
     assert found == want, (sorted(found - want), sorted(want - found))
     for f in found:
         assert os.path.exists(os.path.join(ROOT, f)), f
@@ -160,3 +162,22 @@ def test_2_0_pictures_are_scaled_copies_and_exist():
 def test_numbers_use_tabular_figures():
     assert "font-variant-numeric: tabular-nums" in read("src/v2/template.html")
     assert 'fontVariantNumeric: "tabular-nums"' in read("src/v2/ui.jsx") and 'fontVariantNumeric: "tabular-nums"' in read("src/ui/components.jsx")
+
+
+def test_mascot_screen_numbers_follow_jacks_definition():
+    """CLAUDE.md (Jack, 2026-11-04): 뱁이 화면에는 '숫자'(돈 · 가격 · 수익률 · 비중 · 점수)가 없어요. 날짜 이름표와 종목 수는 숫자가
+    아니에요. 돈 · % · 점수는 예외 칸 안에 있어도 걸리고, 날짜 · 종목 수로 설명되지 않는 숫자도 걸려요 (tests/visualcheck.py)."""
+    date, figures = MASCOT_DIGITS_EXEMPT[0][0], '[data-ui-v2="about-figures"]'
+    assert date == '[data-ui-v2="date-line"]' and figures in [s for s, _ in MASCOT_DIGITS_EXEMPT]
+    fine = [("10월 30일 기준", date), ("6일째 갱신이 멈췄어요", date), ("내일부터 오늘 화면에서 6종목을 규칙대로 점검해 드릴게요.", ""),
+            ("내 종목 2개", ""), ("10월 1일 시작", ""), ("2025년 사업보고서 기준", ""), ("3,256", figures), ("배당 생활비 덱 · 6종목", "")]
+    for item in fine:
+        assert mascot_digit_problems([item])[0] == [], item
+    caught = {("평균 단가 1,000원", ""): "돈 · 가격", ("1주 · 평균 단가 1,000원", ""): "돈 · 가격", ("19.0%", ""): "% (수익률 · 비중)",
+              ("약 46만원", ""): "돈 · 가격", ("1,500만 원", ""): "돈 · 가격", ("3억", ""): "돈 · 가격", ("$12.34", ""): "돈 · 가격",
+              ("+5.3%", ""): "% (수익률 · 비중)", ("점수 5위", ""): "점수 · 순위", ("62점", ""): "점수 · 순위",
+              ("19.0%", date): "% (수익률 · 비중)", ("1,000원", figures): "돈 · 가격",               # 예외 칸 안이라도 돈 · % 는 걸려요
+              ("1주", ""): "설명되지 않는 숫자", ("48,300", ""): "설명되지 않는 숫자"}
+    for item, why in caught.items():
+        bad, _ = mascot_digit_problems([item])
+        assert why in [b[0] for b in bad], (item, bad)

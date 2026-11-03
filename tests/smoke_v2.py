@@ -85,13 +85,13 @@ def hero_colours(loc):
         return [getComputedStyle(b).backgroundColor, p ? getComputedStyle(p).backgroundColor : null, p ? getComputedStyle(p).color : null]; }""")
 
 
-def mascot_img(loc, src, px):
+def mascot_img(loc, src, px, alt):
     img = loc.locator(f'img[src="{src}"]')
     img.wait_for(state="visible")
     assert img.evaluate("(i) => i.complete && i.naturalWidth > 0"), f"{src} 가 열리지 않았어요"
     box = img.bounding_box()
     assert box and abs(box["width"] - px) < 1, (src, box)
-    assert img.get_attribute("alt") == "", "alt 문구는 Jack 의 승인을 기다려요 (그동안 alt=\"\")"
+    assert img.get_attribute("alt") == alt and alt, (src, img.get_attribute("alt"), alt)     # Jack 이 승인한 alt (2026-11-04)
 
 
 def now_kst(days_ago=0):
@@ -305,7 +305,7 @@ def scene_normal(R, files, width):
 
     def visual_start():
         start = page.locator('[data-ui-v2="build-start"]')                 # 덱 짜기 첫 카드: 숫자 없음 → 나뭇가지를 나르는 뱁이 92px
-        mascot_img(start, "baepi-16-build.webp", 92)
+        mascot_img(start, "baepi-16-build.webp", 92, C["build"]["s0"]["imgAlt"])
         assert not re.search(r"\d", start.inner_text()), start.inner_text()
         bar = page.locator('[data-ui-v2="app-bar"]').first                   # 로고: 뱁이 마크 28px + '뱁새' 22px/800 (뒤로 버튼이 있으면 마크 대신)
         page.get_by_role("button", name=C["build"]["backToday"]).click()
@@ -350,7 +350,7 @@ def scene_normal(R, files, width):
         see(page, C["store"]["export"])
         assert md in date_line(page)
         empty = page.locator('[data-ui-v2="deck-empty"]')                    # 빈 내 덱: 둥지에 앉은 뱁이 + 덱 짜기 (숫자 없는 카드)
-        mascot_img(empty, "baepi-15-portfolio.webp", 112)
+        mascot_img(empty, "baepi-15-portfolio.webp", 112, C["deck"]["emptyAlt"])
         assert empty.inner_text().strip() == C["build"]["title"], empty.inner_text()
         tabs = page.locator('nav[data-ui="bottom-tab-bar"]')                 # 고른 탭: 아이콘 뒤 회색 알약 + 남색 아이콘
         on = tabs.locator('button[aria-current="page"] [data-ui-part="tab-pill"]')
@@ -482,8 +482,8 @@ def scene_normal(R, files, width):
         page.get_by_role("button", name=C["plan"]["save"]).click()
         see(page, C["plan"]["done"])
         see(page, "내일부터 오늘 화면에서 6종목을 규칙대로 점검해 드릴게요.")          # Part E: 오늘 화면이 정말 점검해요
-        done = page.locator('[data-ui-v2="record-done"]')                    # 숫자(6종목)가 있어서 뱁이 대신 아이콘 칩 (v19.0b)
-        assert done.locator("img").count() == 0 and done.locator('[data-ui="icon-chip"] svg[data-ph="check-circle"][data-tone="ok"]').count() == 1
+        done = page.locator('[data-ui-v2="record-done"]')                    # 종목 수만 있고 돈은 없어서 기뻐하는 뱁이 그대로 (Jack, 2026-11-04)
+        mascot_img(done, "baepi-5.png", 64, C["plan"]["doneAlt"])
         R.collect(page)
         page.get_by_role("button", name=C["plan"]["doneLink"]).click()
         see(page, C["today"]["title"])
@@ -707,13 +707,13 @@ def scene_refused(R, files, width, how):
     def run():
         see(page, LOAD_FAIL)
         assert page.locator('[data-ui-v2="date-line"]').count() == 0
-        mascot_img(page.locator('[data-ui-v2="load-fail"]').first, "baepi-20-error.webp", 120)    # 불러오기 실패: 뽑힌 전선을 든 뱁이
+        mascot_img(page.locator('[data-ui-v2="load-fail"]').first, "baepi-20-error.webp", 120, C["app"]["loadFailAlt"])    # 불러오기 실패: 빠진 플러그를 든 뱁이
         assert page.locator("img[src^='baepi-2.png']").count() == 0
         tab(page, C["app"]["tabs"]["deck"])                             # 내 덱, 저장한 덱 없음: 숫자 없는 화면이라 뱁이 그림 그대로 (v19.0b)
         see(page, LOAD_FAIL)
         fail = page.locator('[data-ui-v2="load-fail"]').first
         assert fail.get_attribute("data-picture") == "1" and page.locator('[data-ui-v2="deck-empty"]').count() == 0
-        mascot_img(fail, "baepi-20-error.webp", 120)
+        mascot_img(fail, "baepi-20-error.webp", 120, C["app"]["loadFailAlt"])
         R.collect(page)                                                   # 화면 단위 뱁이 규칙(visual_ok)도 통과
         tab(page, C["app"]["tabs"]["build"])
         see(page, LOAD_FAIL)
@@ -736,7 +736,7 @@ def scene_missing_fields(R, files, width, fields):
         tab(page, C["app"]["tabs"]["build"])
         page.locator('[data-ui-v2="build-not-ready"]').wait_for(state="visible")
         see(page, C["app"]["pending"])
-        mascot_img(page.locator('[data-ui-v2="build-not-ready"]'), "baepi-21-wip.webp", 64)     # 통째로 준비 중: 안전모 뱁이
+        mascot_img(page.locator('[data-ui-v2="build-not-ready"]'), "baepi-21-wip.webp", 64, C["app"]["pendingAlt"])     # 통째로 준비 중: 안전모 뱁이
         assert page.locator("[data-deck]").count() == 0 and page.locator("[data-cand]").count() == 0
         R.collect(page)
     R.check(page, f"필드 없음 {width}", f"{', '.join(fields)} 없음 → 덱 짜기는 '준비 중'만", run)
@@ -1695,7 +1695,7 @@ def main():
     R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
     R.results.append(("다른 사이트 요청 0건 (글꼴·통계·CDN 없음)", not R.outside, ", ".join(sorted(set(R.outside)))[:300]))
     w = max(len(n) for n, _, _ in R.results)
-    print("\n뱁이가 나온 화면 (그림 | 화면 | 예외 밖 숫자 | 쓴 예외):")
+    print("\n뱁이가 나온 화면 (그림 | 화면 | 걸린 숫자 | 숫자가 아닌 이유: 예외 칸 · 날짜 · 종목 수):")
     print("\n".join(placements_table()))
     print("\n뱁새 2.0 미리 보기 스모크 테스트 결과 · 데이터: tests/fixtures/v2")
     for name, good, msg in R.results:

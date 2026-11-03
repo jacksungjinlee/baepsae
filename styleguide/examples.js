@@ -114,6 +114,7 @@ export const EX = {
     date: "산 날짜", qty: "수량 (주)", save: "기록하기",      // 559 560 561
     doneTitle: "기록했어요",                                  // 563
     doneBody: "내일부터 오늘 화면에서 이 6종목을 규칙대로 확인해 드려요. 기록은 이 휴대폰에만 남아요.", // 564
+    doneImage: "baepi-5.png", doneImageAlt: "기뻐하는 뱁이",   // 562 (v19.0b: 종목 수만 있고 돈 금액이 없어서 그대로, Jack 2026-11-04)
     doneLink: "오늘 화면 보기",                                // 565
   },
 

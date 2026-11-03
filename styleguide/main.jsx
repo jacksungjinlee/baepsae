@@ -366,7 +366,7 @@ function Sheets() {
       <State label="Done">
         <BottomSheet inline open title={s.doneTitle} closeLabel={EX.close} onClose={() => {}}>
           <div style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
-            <IconChip name="check-circle" size={48} tone="ok" />
+            <img src={s.doneImage} alt={s.doneImageAlt} width={64} height={64} />
             <p style={txt(SIZE.sm, WEIGHT.regular, COLOR.text2, { margin: 0 })}>{s.doneBody}</p>
           </div>
           <div style={{ marginTop: SPACE(4) }}><Button kind="secondary">{s.doneLink}</Button></div>
