@@ -1,0 +1,40 @@
+Package:   @phosphor-icons/core 2.1.1 (npm), licence MIT (LICENSE in this folder, copied from the package)
+Tarball:   phosphor-icons-core-2.1.1.tgz
+shasum:    62a4cfbec9772f1a613a647da214fbb96f3ad39d
+integrity: sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ==
+Weight:    duotone (assets/duotone/<name>-duotone.svg), two layers each: background (opacity 0.2) and line
+Generated: src/ui/phosphor.js by tools/vendor_phosphor.py (path data only; colours come from src/ui/tokens.js)
+Icons (33):
+  check
+  warning
+  info
+  x
+  plus
+  minus
+  caret-right
+  caret-down
+  caret-left
+  plus-circle
+  magnifying-glass
+  newspaper
+  clipboard-text
+  circle-dashed
+  house
+  chart-pie-slice
+  buildings
+  chart-line-up
+  list
+  percent
+  coins
+  bank
+  identification-badge
+  fire
+  calendar-dots
+  basket
+  umbrella
+  file-text
+  book-open-text
+  database
+  clock-counter-clockwise
+  check-circle
+  flag

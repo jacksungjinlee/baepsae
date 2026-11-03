@@ -18,7 +18,23 @@ import { loadJson, freshness, mergeStocks, mdOf } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 
-function makeCardData(holdings, stocksById, cashMw, score, lang) {
+// 공유 카드: 오늘 데이터에 있는 종목만. 빠진 종목이 있으면 카드에도 같은 안내 줄을 넣어요 (note, v18.5).
+// cashMw 는 metrics.cash (빠진 종목의 돈은 들어 있지 않아요).
+// 오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록에서 빼요 — 담기 화면과 같아요 (v18.4.1).
+const listedHoldings = (holdings, stocksById) => holdings.filter((h) => h && !!stocksById[h.t]);
+// 그래도 「JSON 저장」 백업에서는 빼지 않아요 (저장본에서 지우지 않는다는 규칙, Jack): 저장본이 아는 것만 쓰고, 가격 · 베타 · 비중은
+// 지어내지 않고 null, notInData: true. 위험 수치(metrics)에는 들어가지 않아요. 불러오면 목록에 없는 종목으로 이름과 함께 남아요.
+function unlistedExportRows(holdings, stocksById) {
+  return holdings.filter((h) => !stocksById[h.t] && typeof h.mw === "number" && Number.isFinite(h.mw) && h.mw > 0)
+    .map((h) => ({ ticker: h.t, name: typeof h.nk === "string" && h.nk ? h.nk : null, sector: null, priceAssumed: null,
+      amountWon: Math.round(h.mw * 10000), weightPct: null, approxShares: null, beta: null, volPct: null, notInData: true }));
+}
+
+function makeCardData(allHoldings, stocksById, cashMw, score, lang) {
+  const holdings = listedHoldings(allHoldings, stocksById);
+  if (holdings.length < allHoldings.length) {
+    console.warn("[뱁새] 공유 카드: 오늘 종목 목록에 없는 종목 " + (allHoldings.length - holdings.length) + "개는 빼고 만들었어요");
+  }
   const sums = { kr: 0, us: 0, mt: 0 };
   let inv = 0;
   holdings.forEach((h) => {
@@ -39,7 +55,11 @@ function makeCardData(holdings, stocksById, cashMw, score, lang) {
   ].filter((b) => b.pct >= 0.5);
   const top = [...holdings].sort((a, b) => (b.mw || 0) - (a.mw || 0)).slice(0, 3)
     .map((h) => ({ nk: (stocksById[h.t] && stocksById[h.t].nk) || h.t, pct: (h.mw || 0) / tot * 100 }));
-  return { score, buckets, top, dateStr: new Date().toISOString().slice(0, 10) };
+  const miss = missingHoldings(allHoldings, stocksById);
+  const note = missingLine(lang, miss);
+  // 카드에 두 줄로 안 들어가면 그리는 쪽(sharecard.js)이 이름을 줄인 문장을 차례로 써 봐요
+  const noteAlts = miss.slice(1).map((_, i) => missingLine(lang, miss, miss.length - 1 - i));
+  return { score, buckets, top, note, noteAlts, dateStr: new Date().toISOString().slice(0, 10) };
 }
 
 function ShareCardModal({ card, onClose, lang }) {
@@ -99,6 +119,125 @@ async function readSlots() {
   try { const raw = await store.get(KEY_SLOTS); const a = raw ? JSON.parse(raw) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; }
 }
 async function writeSlots(list) { try { await store.set(KEY_SLOTS, JSON.stringify(list.slice(0, MAX_SLOTS))); } catch (e) {} }
+
+// ================= 「저장한 파일에서 불러오기」 (v18.4.1, Jack 2026-11-04) =================
+// 이 앱이 쓰는 두 모양을 모두 읽어요.
+//   ① 「JSON 저장 (백업·공유)」 파일 (ExportView 의 buildJson):
+//      { app, budgetWon, holdings: [{ ticker, name, amountWon, … }], profile, settings, … }
+//      → t = ticker, mw = amountWon / 10000 (만원, 0.01만원 = 100원 단위로 반올림해 소수 오차만 없애요), budgetMw = budgetWon / 10000.
+//      파일에 없는 것은 '새로 시작하기'처럼 기본값이에요 (답변 · 프로필 · 예산 1,000만원).
+//   ② 저장 상태 모양 (예전 파일): { state: {…} } 또는 { holdings: [{ t, mw }], budgetMw, … } — 지금까지처럼 읽되, 손으로 고친 파일이
+//      NaN 화면을 만들지 않게 예산 · 언어 · 단계를 확인해요 (예산이 0 이상의 숫자가 아니면 1,000만원, 언어가 ko·en 이 아니면 지금 언어,
+//      단계가 0~3 이 아니면 ② 구성).
+//   두 모양 모두 프로필 · 설정 · 세금은 객체이고 칸마다 기본값과 같은 종류일 때만 되살려요 (다른 칸은 버려요).
+//   직접 추가 종목(customStocks: ①은 v18.4.1 부터 파일에 같이 써요)은 cleanCustomStocks, ②의 종목 고침은 cleanStockEdits 로 확인해요.
+// 종목코드가 비었거나, 금액이 0보다 큰 숫자가 아니거나, 같은 종목이 또 나오는 줄은 빼고 console 에 개수를 남겨요.
+// 지금 종목 목록에 없는 종목은 저장본에 그대로 남겨 둬요 (예전 저장본을 열 때와 같아요: 담기 화면에는 안 보이고, 목록에 돌아오면 다시 보여요).
+// ①의 그런 줄은 이름(nk)도 같이 남겨요. 지금 목록에 있는 종목이 하나도 없으면 null: 부르는 쪽이 '파일을 읽을 수 없어요'를 띄우고
+// 아무것도 바꾸지 않아요 (파일로 빈 포트폴리오, 빈 것처럼 보이는 포트폴리오를 열지 않아요).
+// 그 전에는 이 앱이 저장한 ① 파일이 아무 말 없이 빈 포트폴리오로 열렸어요. 내보내기 칸 이름은 바꾸지 않아요 (이미 받아 둔 파일이 있어요).
+const isPlainObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+const isFinNum = (x) => typeof x === "number" && Number.isFinite(x);
+const mwOfWon = (won) => Math.round(won / 100) / 100;
+const STAGES = [0, 1, 2, 3];
+const STOCK_EDIT_KEYS = ["price", "beta", "vol", "per", "pbr", "dy", "al"];   // 종목 카드에서 고칠 수 있는 숫자 칸 (저장본의 stockEdits)
+// 직접 추가 종목 (CustomStockForm): { t, nk, ne, s, price, beta, vol, per, pbr, dy, al, custom: true, x: {} }.
+// t · nk 는 빈칸이 아닌 글자, 가격은 꼭 있는 숫자, 다른 숫자 칸은 있으면 숫자여야 해요. 아니면 그 종목은 빼요 (검색이 nk 를 읽다가 멈추지 않게).
+function cleanCustomStocks(list) {
+  const out = [];
+  let bad = 0;
+  list.forEach((c) => {
+    const str = (v) => typeof v === "string" && v.trim() !== "";
+    const ok = isPlainObj(c) && str(c.t) && str(c.nk) && isFinNum(c.price) && (c.ne === undefined || typeof c.ne === "string")
+      && (c.s === undefined || typeof c.s === "string") && STOCK_EDIT_KEYS.every((k) => c[k] === undefined || isFinNum(c[k]))
+      && !out.some((o) => o.t === c.t);
+    if (!ok) { bad++; return; }
+    const o = { t: c.t, nk: c.nk, ne: str(c.ne) ? c.ne : c.nk, custom: true, x: {} };
+    if (c.s !== undefined) o.s = c.s;
+    STOCK_EDIT_KEYS.forEach((k) => { if (c[k] !== undefined) o[k] = c[k]; });
+    out.push(o);
+  });
+  if (bad) console.warn("[뱁새] 불러온 파일의 직접 추가 종목 " + list.length + "개 중 " + bad + "개는 이름·종목코드·숫자가 맞지 않아 뺐어요");
+  return out;
+}
+// 저장본의 종목 고침 (stockEdits): 종목마다 고칠 수 있는 숫자 칸만, 숫자일 때만 남겨요 (NaN 화면이 되지 않게).
+function cleanStockEdits(e) {
+  const out = {};
+  let bad = 0;
+  if (!isPlainObj(e)) bad++;
+  else Object.keys(e).forEach((t) => {
+    const v = e[t];
+    if (t === "__proto__" || !isPlainObj(v)) { bad++; return; }
+    const d = {};
+    Object.keys(v).forEach((k) => { if (STOCK_EDIT_KEYS.includes(k) && isFinNum(v[k])) d[k] = v[k]; else bad++; });
+    if (Object.keys(d).length) out[t] = d;
+  });
+  if (bad) console.warn("[뱁새] 불러온 파일의 종목 고침 중 " + bad + "개는 숫자가 아니라서 뺐어요");
+  return out;
+}
+function sameKinds(obj, defaults) {
+  const out = {};
+  Object.keys(defaults).forEach((k) => {
+    if (!Object.prototype.hasOwnProperty.call(obj, k)) return;
+    const d = defaults[k], v = obj[k];
+    const ok = d === null ? v !== undefined
+      : typeof d === "number" ? isFinNum(v)
+      : Array.isArray(d) ? Array.isArray(v)
+      : typeof v === typeof d && v !== null;
+    if (ok) out[k] = v;
+  });
+  return out;
+}
+function readPortfolioFile(j, known) {
+  const refuse = () => { console.warn("[뱁새] 불러올 종목이 없는 파일이에요: 지금 포트폴리오를 그대로 둬요"); return null; };
+  if (!isPlainObj(j)) return refuse();
+  const exp = !j.state && ("budgetWon" in j || (Array.isArray(j.holdings) && j.holdings.some((h) => isPlainObj(h) && ("ticker" in h || "amountWon" in h))));
+  const src = exp ? j : (j.state || j);
+  if (!isPlainObj(src)) return refuse();
+  const rows = Array.isArray(src.holdings) ? src.holdings : [];
+  const custom = Array.isArray(src.customStocks) ? cleanCustomStocks(src.customStocks) : [];
+  const listed = (t) => known.has(t) || custom.some((c) => c.t === t);
+  const holdings = [], seen = new Set();
+  let bad = 0, unknown = 0;
+  rows.forEach((r) => {
+    const t = isPlainObj(r) ? (exp ? r.ticker : r.t) : null;
+    const mw = !isPlainObj(r) ? null : exp ? (isFinNum(r.amountWon) ? mwOfWon(r.amountWon) : null) : r.mw;
+    if (typeof t !== "string" || !t.trim() || !isFinNum(mw) || mw <= 0 || seen.has(t)) { bad++; return; }
+    seen.add(t);
+    const off = !listed(t);
+    if (off) unknown++;
+    holdings.push(!exp ? { ...r, t, mw } : off && typeof r.name === "string" && r.name.trim() ? { t, mw, nk: r.name } : { t, mw });
+  });
+  if (bad + unknown > 0) {
+    console.warn("[뱁새] 불러온 파일의 종목 " + rows.length + "개: 뺀 줄 " + bad + "개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 "
+      + unknown + "개 (저장본에는 남겨 둬요)");
+  }
+  if (!holdings.some((h) => listed(h.t))) return refuse();
+  const kinds = (o, d) => (isPlainObj(o) ? sameKinds(o, d) : null);
+  const settings = kinds(src.settings, DEFAULT_SETTINGS);
+  const tax = kinds(src.tax, DEFAULT_TAX);
+  const budget = (v, what) => {
+    if (isFinNum(v) && v >= 0) return v;
+    console.warn("[뱁새] 불러온 파일에 예산(" + what + ")이 없거나 0 이상의 숫자가 아니라 1,000만원으로 시작해요");
+    return 1000;
+  };
+  const st = exp
+    ? { holdings, answers: {}, profile: kinds(j.profile, DEFAULT_PROFILE) || {},
+        budgetMw: budget(isFinNum(j.budgetWon) && j.budgetWon >= 0 ? mwOfWon(j.budgetWon) : null, "budgetWon") }
+    : { ...src, holdings, budgetMw: budget(src.budgetMw, "budgetMw"), stage: STAGES.includes(src.stage) ? src.stage : 1 };
+  if (Array.isArray(src.customStocks)) st.customStocks = custom;
+  if (!exp) {
+    if (src.stockEdits !== undefined) st.stockEdits = cleanStockEdits(src.stockEdits);
+    if (src.lang !== "ko" && src.lang !== "en") delete st.lang;                 // 지금 언어 그대로
+    if (!isPlainObj(src.answers)) delete st.answers;                           // 객체가 아닌 답변은 버려요 (지금 답변 그대로)
+    const profile = kinds(src.profile, DEFAULT_PROFILE);
+    if (profile) st.profile = profile; else delete st.profile;                 // 객체가 아니면 지금 프로필 그대로 (예전처럼)
+  }
+  // 읽을 칸이 하나도 없는 설정 · 세금은 건드리지 않아요 (지금 설정 — 오늘 환율 등 — 그대로)
+  if (settings && Object.keys(settings).length) st.settings = settings; else delete st.settings;
+  if (tax && Object.keys(tax).length) st.tax = tax; else delete st.tax;
+  return st;
+}
 
 // ================= Live data loader =================
 // The daily GitHub Action writes data.json next to this file. If it can't be read, the studio still opens
@@ -671,7 +810,9 @@ const T = {
   divNone: { ko:"종목이 하나뿐이라 분산 효과가 아직 없어요. 두 번째 바구니부터 공짜 점심이 시작돼요.", en:"Only one stock, so no diversification effect yet. The free lunch starts with basket #2." },
   donutTitle: { ko:"무엇을 들고 있나요", en:"What you actually hold" },
   splitTitle: { ko:"수익으로 돌려받는 위험 vs 그냥 떠안은 위험", en:"Risk that pays you back vs risk you just carry" },
-  splitSub: { ko:"파란 부분(시장 위험)만 기대수익으로 돌려받아요. 주황 부분(개별 위험)은 시장이 한 푼도 쳐주지 않는데 내가 그냥 떠안고 있는 위험이에요 — 나눠 담으면 지울 수 있어요.", en:"Only the blue part (market risk) pays you back as expected return. The orange part (specific risk) pays nothing — you are simply carrying it, and splitting your money can erase it." },
+  // B안 (v18.5, Jack 2026-11-04): 앞 문장(시장 위험만 기대수익으로 돌려받는다)은 SHOW_ER 를 켤 때만. 뒤 문장은 그대로.
+  splitSubEr: { ko:"파란 부분(시장 위험)만 기대수익으로 돌려받아요.", en:"Only the blue part (market risk) pays you back as expected return." },
+  splitSub: { ko:"주황 부분(개별 위험)은 시장이 한 푼도 쳐주지 않는데 내가 그냥 떠안고 있는 위험이에요 — 나눠 담으면 지울 수 있어요.", en:"The orange part (specific risk) pays nothing — you are simply carrying it, and splitting your money can erase it." },
   splitComp: { ko:"돌려받는 위험 (시장)", en:"Paid risk (market)" },
   splitIdio: { ko:"떠안은 위험 (개별)", en:"Unpaid risk (specific)" },
   splitFair: { ko:"적정 기대수익", en:"Fair E(r)" },
@@ -884,6 +1025,17 @@ const T_RISK_HALF = { ko: "베타·변동성 자료가 없는 종목이 투자�
 const riskBlindTxt = (lang, m) => (m.allNoRisk ? T_RISK_BLIND : T_RISK_HALF)[lang];
 const T_DY_UNKNOWN = { ko: "배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.", en: "Holdings without dividend data ({n}) are counted as 0." };
 const noRiskLine = (lang, m) => T_NORISK[lang].replace("{pct}", m.noRiskPct >= 1 ? Math.round(m.noRiskPct) : Math.max(m.noRiskPct, 0.1).toFixed(1));
+// v18.5 (Jack 2026-11-03·04): 저장한 보유 종목이 오늘 데이터에 없으면 위험 계산에서 빼되, 저장본에서는 지우지 않아요
+// (종목이 다시 들어오면 저절로 돌아와요). 내장 예시 목록에 있는 종목은 여기 해당하지 않아요 — 그건 예시 가격으로 계산하고
+// 위 T_NONLIVE 배너가 알려요. 두 안내는 서로 다른 종목을 말해요. {names} = '이름(또는 코드) 금액, …' (예: STRC 200만원).
+// 문장은 한국어·영어 모두 승인 (Jack 2026-11-04). 금액은 앱이 다른 곳에서 쓰는 fmtMw 그대로 (영어 ₩2,000,000, 승인).
+const T_MISSING = { ko: "오늘 데이터에 없는 종목 {n}개({names})는 빼고 계산했어요.",
+  en: "Left out {n} stock(s) not in today's data ({names})." };
+// 그 종목만 저장본에서 지우는 버튼 (사용자가 누를 때만). 한국어·영어 승인 (Jack 2026-11-04).
+const T_MISSING_REMOVE = { ko: "포트폴리오에서 빼기", en: "Remove from portfolio" };
+const MISSING_GREY = C.faint;   // 예산 막대에서 '빼고 계산한 금액' 칸과 안내 앞 표시가 같은 색
+// 예산 막대의 회색 칸 이름표 (회색 칸이 있을 때만). 한국어·영어 승인 (Jack 2026-11-04)
+const T_BAR_MISSING = { ko: "데이터에 없는 종목", en: "Not in today's data" };
 const WARN_INK = "#8A5A16";
 
 // 푸터의 '소개' 링크 (v19.0 Part D, Jack 2026-11-03): 만든 사람 줄 대신 2.0 의 소개 페이지(ABOUT_URL)로 가요.
@@ -950,6 +1102,51 @@ function nonLiveLines(lang, failed, list, m) {
   return out;
 }
 
+// 오늘 데이터(와 내장 목록·직접 추가한 종목)에 없는 보유 종목. 코드가 없는 줄은 종목이 아니라서 세지 않아요.
+function missingHoldings(holdings, stocksById) {
+  return (Array.isArray(holdings) ? holdings : []).filter((h) => h && h.t != null && h.t !== "" && !stocksById[h.t]);
+}
+// 오늘 데이터에 없는 종목의 금액 (만원 → 원). 위험 계산의 투자금에도 '남는 현금'에도 넣지 않고, 예산 막대에는 회색 칸으로 보여요.
+const holdWon = (h) => (typeof h.mw === "number" && h.mw > 0 ? h.mw * 10000 : 0);
+const missingWonOf = (missing) => missing.reduce((a, h) => a + holdWon(h), 0);
+// 이름: 보유에 저장된 이름(저장할 때 붙여 둬요, withSavedName) → 앱 내장 목록 → 저장된 코드 그대로
+function missingName(h, lang) {
+  const own = lang === "ko" ? h.nk : h.ne || h.nk;
+  if (typeof own === "string" && own.trim()) return own.trim();
+  const b = BASE_STOCKS.find((x) => x.t === h.t);
+  return b ? (lang === "ko" ? b.nk : b.ne) : String(h.t);
+}
+// maxNames: 공유 카드처럼 자리가 좁을 때 이름만 앞의 몇 개로 줄여요 ('STRC, SKHY, …'). 개수 {n} 과 문장은 그대로예요.
+function missingLine(lang, missing, maxNames) {
+  if (!missing || !missing.length) return null;
+  const names = missing.map((h) => missingName(h, lang) + " " + fmtMw(holdWon(h), lang));
+  const shown = maxNames != null && maxNames < names.length ? [...names.slice(0, Math.max(maxNames, 1)), "…"] : names;
+  return T_MISSING[lang].replace("{n}", missing.length).replace("{names}", shown.join(", "));
+}
+// onRemove: '포트폴리오에서 빼기' — 안내에 나온 종목만 저장본에서 지워요 (누를 때만, 저절로는 절대 안 지워요)
+function MissingNote({ lang, missing, onRemove, style = {} }) {
+  const line = missingLine(lang, missing);
+  if (!line) return null;
+  return (
+    <div className="missingNote" style={{ background: C.sandSoft, border: "1px solid #F3DCB2", borderRadius: 10, padding: "8px 11px", fontSize: 11.5, fontWeight: 700, color: WARN_INK, lineHeight: 1.55, textAlign: "left", fontFamily: FONT, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", ...style }}>
+      <span style={{ flex: "1 1 180px", minWidth: 0, wordBreak: "keep-all" }}>
+        <span aria-hidden="true" style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: MISSING_GREY, marginRight: 6, verticalAlign: "0px" }} />
+        {line}
+      </span>
+      {onRemove && (
+        <button className="missingRemove" onClick={onRemove} style={{ flexShrink: 0, minHeight: 36, padding: "6px 12px", borderRadius: 9, border: "1.5px solid #E8C98F", background: "#fff", color: WARN_INK, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{T_MISSING_REMOVE[lang]}</button>
+      )}
+    </div>
+  );
+}
+// 저장할 때 보유 줄에 종목 이름을 붙여 둬요: 나중에 그 종목이 데이터에서 빠져도 안내에 코드 대신 이름이 나오게.
+// 미국 종목은 코드(티커)가 더 알아보기 쉬워서 붙이지 않아요 (데이터의 미국 이름은 31자에서 잘리고, GOOGM·GOOGN 처럼 이름이 같기도 해요).
+// 금 환산 추정 이름(est)도 붙이지 않아요. 이름이 없던 예전 저장본도 그대로 읽혀요 (다음 저장 때 붙어요).
+function withSavedName(h, s) {
+  if (!h || !s || h.nk || s.est || clsOf(s) === "us" || typeof s.nk !== "string" || !s.nk) return h;
+  return { ...h, nk: s.nk, ne: s.ne || s.nk };
+}
+
 // ================= Helpers =================
 // 베타·변동성이 없는 종목(noRisk)은 '–' 로 보여요 (숫자를 지어내지 않아요)
 const fBeta = (v) => (typeof v === "number" ? v.toFixed(2) : "–");
@@ -989,6 +1186,10 @@ function rhoOf(a, b, st) {
   return 0;
 }
 const priceKrw = (s, st) => s.price * (s.ccy === "USD" ? st.fx : 1);
+
+// 현금 비중(%): 입력한 예산 기준. 오늘 데이터에 없어 뺀 종목이 있으면 AppInner 가 metrics.budgetAll(계산 금액 + 뺀 금액)을
+// 붙여요 — 그래야 '현금 300만원'이 예산 1,000만원의 30% 로 보여요 (계산 금액 800만원의 38% 가 아니라).
+const cashPctOf = (m) => (m.cash / (m.budgetAll || m.total)) * 100;
 
 function computeMetrics(holdings, budgetWon, settings) {
   const invested = holdings.reduce((a, h) => a + h.won, 0);
@@ -1129,16 +1330,37 @@ const MKT_PATHS = {
     m: [-0.036, -0.062, -0.117, 0.11, 0.042, 0.039, 0.067, 0.034, 0.001, -0.026, 0.143, 0.109] },
 };
 
+// 링크를 페이지에 붙였다가 눌러서 받고, 파일 주소는 60초 뒤에 지워요. 바로 지우면 iOS 사파리가 받다가 실패할 수 있어요
+// ("WebKitBlobResource error 1"). 2.0 의 downloadRecords (src/v2/store.js) 와 같은 방식이에요 (v18.4.1).
+const REVOKE_AFTER_MS = 60000;
 function downloadFile(name, content, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = name; a.click();
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
 }
 
 // ================= Deterministic profile scoring (no AI, fully offline) =================
-function scoreProfile(answers, lang) {
+// 목표 베타·변동성 상한. goalBased: 목표 수익률로 베타 상한을 낮춰요 ((목표 − 무위험) ÷ 프리미엄 → 베타). 베타를 수익률과
+// 잇는 계산이라 B안(SHOW_ER 끔, Jack 2026-11-04)에서는 감당 능력(bind)만으로 정해요. 변동성 상한도 같은 베타 상한을 따라가요.
+function profileTargets(bind, riskNeedPct, goalBased) {
+  const cl = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const canBetaMax = bind <= 3 ? 0.7 : bind <= 5 ? 0.9 : bind <= 7 ? 1.1 : 1.4;
+  // Take no more risk than the goal actually requires — surplus risk is uncompensated by definition.
+  const needBeta = cl((riskNeedPct - DEFAULT_SETTINGS.rf) / DEFAULT_SETTINGS.mrp, 0.2, 1.5);
+  const targetBetaMax = Math.round((goalBased ? Math.min(canBetaMax, needBeta + 0.25) : canBetaMax) * 20) / 20;
+  const targetBetaMin = Math.round(cl(Math.min(bind <= 3 ? 0.3 : bind <= 5 ? 0.5 : bind <= 7 ? 0.7 : 0.9, targetBetaMax - 0.3), 0.2, 1.2) * 20) / 20;
+  const targetVolMaxPct = Math.round(cl(Math.min(11 + bind * 2.3, 9 + targetBetaMax * 16), 12, 34));
+  return { targetBetaMin, targetBetaMax, targetVolMaxPct, needCaps: targetBetaMax < canBetaMax - 0.02 };
+}
+
+// withEr: 베타를 수익률로 바꾸는 문장·목표 기반 베타 상한을 만들지 (SHOW_ER). 끈 동안은 그 문장들이 경고·팁 자리를 차지해
+// '비상금이 먼저예요' 같은 다른 경고를 밀어내지 않게, 아예 만들지 않아요 (예전에 저장된 프로필은 shownProfile 이 걸러요).
+function scoreProfile(answers, lang, withEr = SHOW_ER) {
   const ko = lang === "ko";
   const arr = (id) => { const v = answers[id]; return Array.isArray(v) ? v : v == null || v === "" ? [] : [v]; };
   const has = (id, k) => arr(id).includes(k);
@@ -1205,13 +1427,7 @@ function scoreProfile(answers, lang) {
   const attrs = { capacity: r10(cap), tolerance: r10(tol), horizon: r10(hz), experience: r10(expS), knowledge: r10(kn), discipline: r10(dis), ambition: r10(amb), engagement: r10(eng) };
   const bind = Math.min(attrs.capacity, attrs.tolerance);
   const riskNeedPct0 = cl(tgt, 3, 15);
-  const canBetaMax = bind <= 3 ? 0.7 : bind <= 5 ? 0.9 : bind <= 7 ? 1.1 : 1.4;
-  // Take no more risk than the goal actually requires — surplus risk is uncompensated by definition.
-  const needBeta = cl((riskNeedPct0 - DEFAULT_SETTINGS.rf) / DEFAULT_SETTINGS.mrp, 0.2, 1.5);
-  const targetBetaMax = Math.round(Math.min(canBetaMax, needBeta + 0.25) * 20) / 20;
-  const needCaps = targetBetaMax < canBetaMax - 0.02;
-  const targetBetaMin = Math.round(cl(Math.min(bind <= 3 ? 0.3 : bind <= 5 ? 0.5 : bind <= 7 ? 0.7 : 0.9, targetBetaMax - 0.3), 0.2, 1.2) * 20) / 20;
-  const targetVolMaxPct = Math.round(cl(Math.min(11 + bind * 2.3, 9 + targetBetaMax * 16), 12, 34));
+  const { targetBetaMin, targetBetaMax, targetVolMaxPct, needCaps } = profileTargets(bind, riskNeedPct0, withEr);
   const stocksMin = Math.round(cl(16 - bind - (attrs.experience >= 7 ? 1 : 0), 6, 13));
   const maxPositionPct = Math.round(cl(7 + bind * 2, 10, 25));
   const maxSectorPct = Math.round(cl(20 + bind * 2.6, 25, 45));
@@ -1225,9 +1441,14 @@ function scoreProfile(answers, lang) {
   const title = pre + base;
 
   const bindWord = attrs.capacity <= attrs.tolerance ? (ko ? "형편(감수 능력)" : "circumstances (capacity)") : (ko ? "마음(감수 의지)" : "temperament (willingness)");
-  const summary = ko
-    ? `${hzY >= 30 ? "30년 이상" : hzY + "년"} 뒤를 보고 계시고, 전 재산의 ${shareP}%를 이 투자에 담을 계획이에요. 비상금은 ${emgM >= 12 ? "1년치 이상" : emgM + "개월치"}이고요. 감수 능력 ${attrs.capacity}점, 감수 의지 ${attrs.tolerance}점 중 더 낮은 쪽인 ${bindWord}이 기준이 돼요. 목표는 연 ${tgt}%라서, 베타 ${targetBetaMin.toFixed(1)}~${targetBetaMax.toFixed(1)} 범위에서 ${stocksMin}~${stocksMin + 7}종목쯤으로 나눠 담는 걸 권해요.`
-    : `You're looking ${hzY >= 30 ? "30+ " : hzY + " "}years out, putting ${shareP}% of your wealth here, with ${emgM >= 12 ? "a year or more" : emgM + " months"} of emergency fund. Between capacity ${attrs.capacity} and willingness ${attrs.tolerance}, the lower one — ${bindWord} — binds. With a ${tgt}%/yr goal, aim for beta ${targetBetaMin.toFixed(1)}–${targetBetaMax.toFixed(1)} across roughly ${stocksMin}–${stocksMin + 7} holdings.`;
+  const summaryBase = ko
+    ? `${hzY >= 30 ? "30년 이상" : hzY + "년"} 뒤를 보고 계시고, 전 재산의 ${shareP}%를 이 투자에 담을 계획이에요. 비상금은 ${emgM >= 12 ? "1년치 이상" : emgM + "개월치"}이고요. 감수 능력 ${attrs.capacity}점, 감수 의지 ${attrs.tolerance}점 중 더 낮은 쪽인 ${bindWord}이 기준이 돼요.`
+    : `You're looking ${hzY >= 30 ? "30+ " : hzY + " "}years out, putting ${shareP}% of your wealth here, with ${emgM >= 12 ? "a year or more" : emgM + " months"} of emergency fund. Between capacity ${attrs.capacity} and willingness ${attrs.tolerance}, the lower one — ${bindWord} — binds.`;
+  // 목표 수익률 → 베타 문장: SHOW_ER 를 켤 때만 (B안, v18.5)
+  const summaryBeta = ko
+    ? `목표는 연 ${tgt}%라서, 베타 ${targetBetaMin.toFixed(1)}~${targetBetaMax.toFixed(1)} 범위에서 ${stocksMin}~${stocksMin + 7}종목쯤으로 나눠 담는 걸 권해요.`
+    : `With a ${tgt}%/yr goal, aim for beta ${targetBetaMin.toFixed(1)}–${targetBetaMax.toFixed(1)} across roughly ${stocksMin}–${stocksMin + 7} holdings.`;
+  const summary = withEr ? summaryBase + " " + summaryBeta : summaryBase;
 
   const flags = [];
   if (Math.abs(attrs.capacity - attrs.tolerance) >= 3) {
@@ -1235,7 +1456,8 @@ function scoreProfile(answers, lang) {
       ? (ko ? `형편은 더 감수해도 될 만한데(${attrs.capacity}점) 마음이 못 따라가요(${attrs.tolerance}점). 이럴 땐 마음을 기준으로 삼는 게 맞아요 — 못 버티고 파는 순간 손실이 진짜가 되니까요.` : `Your circumstances allow more risk (${attrs.capacity}) than your temperament wants (${attrs.tolerance}). Let temperament bind — a loss only becomes real when you sell.`)
       : (ko ? `마음은 더 감수하고 싶은데(${attrs.tolerance}점) 형편이 아직 못 받쳐줘요(${attrs.capacity}점). 비상금을 먼저 채우거나 기간을 늘리는 게 순서예요.` : `You want more risk (${attrs.tolerance}) than your circumstances support (${attrs.capacity}). Build the emergency fund or extend the horizon first.`));
   }
-  if (riskNeedPct > 3 + targetBetaMax * 5.5 + 0.5) {
+  // 무위험 + β × 프리미엄 으로 목표를 견주는 경고: SHOW_ER 를 켤 때만 (꺼 둔 동안은 경고 자리 3개를 차지하지 않게)
+  if (withEr && riskNeedPct > 3 + targetBetaMax * 5.5 + 0.5) {
     flags.push(ko ? `목표 연 ${tgt}%는 지금 감당 가능한 위험(β 최대 ${targetBetaMax.toFixed(1)})으로 기대하기 어려운 수치예요. 목표·기간·저축액 셋 중 하나는 조정이 필요해요 — 위험을 억지로 키우는 건 답이 아니고요.` : `A ${tgt}%/yr goal is hard to expect from the risk you can carry (β up to ${targetBetaMax.toFixed(1)}). Adjust the goal, the horizon, or how much you save — forcing more risk is not the answer.`);
   }
   if (has("exp", "lev") && flags.length < 3) {
@@ -1250,7 +1472,7 @@ function scoreProfile(answers, lang) {
 
   const tips = [];
   const push = (k) => { if (tips.length < 4) tips.push(k); };
-  if (needCaps) push(ko ? `목표가 연 ${tgt}%라면 베타 ${targetBetaMax.toFixed(2)} 정도면 충분해요. 형편상 더 감수할 수 있어도, 필요 없는 위험까지 질 이유는 없어요 — 안 써도 되는 위험은 그냥 떠안은 위험이 되니까요.` : `A ${tgt}%/yr goal only needs about beta ${targetBetaMax.toFixed(2)}. You could bear more, but risk you don't need is risk you don't get paid for.`);
+  if (withEr && needCaps) push(ko ? `목표가 연 ${tgt}%라면 베타 ${targetBetaMax.toFixed(2)} 정도면 충분해요. 형편상 더 감수할 수 있어도, 필요 없는 위험까지 질 이유는 없어요 — 안 써도 되는 위험은 그냥 떠안은 위험이 되니까요.` : `A ${tgt}%/yr goal only needs about beta ${targetBetaMax.toFixed(2)}. You could bear more, but risk you don't need is risk you don't get paid for.`);
   if (interestedSectors.length > 0) push(ko ? `관심 분야()만 담다 보면 섹터 상한 ${maxSectorPct}%를 넘기기 쉬워요. 계기판이 빨간불이 되면 그때가 멈출 때예요.` : `Loading up on your sectors easily breaches the ${maxSectorPct}% cap. When the gauge turns red, that's the stop sign.`);
   if (newbie) push(ko ? "처음이라면 지수 ETF 한두 개로 뼈대를 세우고, 잘 아는 종목을 조금씩 얹어가는 순서가 편해요." : "If you're new, build the frame with one or two index ETFs, then add individual names you actually know.");
   if (attrs.discipline <= 4) push(ko ? "사고 싶은 종목이 생기면 하루만 묵혀보세요. 하루 뒤에도 같은 이유가 남아 있으면 그때 담아도 늦지 않아요." : "When you want to buy something, sleep on it for a day. If the reason still holds tomorrow, it'll still be there.");
@@ -1575,7 +1797,37 @@ function GaugeBar({ value, label, hint, color }) {
   );
 }
 
-function ProfileCard({ profile, lang, t, onRedo, onEdit, compact }) {
+// B안 (v18.5, Jack 2026-11-03): 베타를 수익률로 바꾸는 프로필 문장은 SHOW_ER 를 켤 때만 보여요 —
+//   요약의 '목표는 연 X%라서, 베타 A~B 범위에서…' ((목표 − 무위험) ÷ 프리미엄 → 베타),
+//   경고 '목표 연 X%는 … (β 최대 B)으로 기대하기 어려운 수치예요' (무위험 + β × 프리미엄 → 기대 수익),
+//   팁 '목표가 연 X%라면 베타 B 정도면 충분해요' (목표 → 베타).
+// 이 문장들은 프로필을 만들 때 글자로 저장돼요(scoreProfile). 그래서 예전에 저장한 프로필도 가리도록, 보여 줄 때와
+// 내보낼 때 같은 틀로 걸러요. 나머지 문장(감수 능력·의지, 비상금, 종목 수 범위 칩 등)은 그대로예요.
+const BETA_RET_SUMMARY = [/\s*목표는 연 [\d.]+%라서, 베타 .*?권해요\./, /\s*With a [\d.]+%\/yr goal, aim for beta .*?holdings\./];
+const BETA_RET_LINES = [/^목표 연 [\d.]+%는 지금 감당 가능한 위험\(β 최대/, /^A [\d.]+%\/yr goal is hard to expect from the risk you can carry/,
+  /^목표가 연 [\d.]+%라면 베타 [\d.]+ 정도면 충분해요/, /^A [\d.]+%\/yr goal only needs about beta/];
+function shownProfile(p) {
+  if (SHOW_ER || !p) return p;
+  const keep = (x) => typeof x !== "string" || !BETA_RET_LINES.some((re) => re.test(x));
+  const out = { ...p,
+    summary: typeof p.summary === "string" ? BETA_RET_SUMMARY.reduce((a, re) => a.replace(re, ""), p.summary) : p.summary,
+    tips: Array.isArray(p.tips) ? p.tips.filter(keep) : p.tips,
+    flags: Array.isArray(p.flags) ? p.flags.filter(keep) : p.flags };
+  // 예전에 성향 테스트로 만든 프로필의 목표 베타·변동성 상한은 목표 수익률로 낮춘 값일 수 있어요. 만들 때 값 그대로면
+  // (직접 고친 적 없으면) 감당 능력 기준 값으로 보여요. 직접 고친 값은 그대로 둬요.
+  if (p.source === "rules" && p.attrs && typeof p.riskNeedPct === "number") {
+    const bind = Math.min(p.attrs.capacity, p.attrs.tolerance);
+    const g = profileTargets(bind, p.riskNeedPct, true);
+    if (g.targetBetaMin === p.targetBetaMin && g.targetBetaMax === p.targetBetaMax && g.targetVolMaxPct === p.targetVolMaxPct) {
+      const c = profileTargets(bind, p.riskNeedPct, false);
+      Object.assign(out, { targetBetaMin: c.targetBetaMin, targetBetaMax: c.targetBetaMax, targetVolMaxPct: c.targetVolMaxPct });
+    }
+  }
+  return out;
+}
+
+function ProfileCard({ profile: saved, lang, t, onRedo, onEdit, compact }) {
+  const profile = shownProfile(saved);
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
@@ -1670,7 +1922,9 @@ function ProfileCard({ profile, lang, t, onRedo, onEdit, compact }) {
 }
 
 function ManualProfile({ lang, t, profile, onSave, onCancel }) {
-  const [p, setP] = useState({ ...profile });
+  // 카드에 보이는 목표 베타·변동성 상한(shownProfile)에서 시작해요 — 고치면 그 값이 저장돼요. 문장(요약·팁·경고)은 저장된 그대로.
+  const [p, setP] = useState(() => { const v = shownProfile(profile);
+    return { ...profile, targetBetaMin: v.targetBetaMin, targetBetaMax: v.targetBetaMax, targetVolMaxPct: v.targetVolMaxPct }; });
   const F = ({ label, k, step = 1, min = 0, max = 100 }) => (
     <label style={{ display: "block" }}>
       <span style={{ fontSize: 11, color: C.sub }}>{label}</span>
@@ -1867,7 +2121,8 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
           {mode !== "simple" && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 9 }}>
             {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], [t("g3"), (x.g3 > 0 ? "+" : "") + (x.g3 != null ? x.g3 + "%/y" : "–")], [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
               [t("shPast"), typeof s.sh === "number" ? s.sh.toFixed(2) : "–"],
-              [t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"],
+              // '이론 샤프' = β × 시장 위험 프리미엄 ÷ σ: 베타를 수익률로 바꾼 숫자라 SHOW_ER 를 켤 때만 (B안, v18.5 · Jack 2026-11-03)
+              ...(SHOW_ER ? [[t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"]] : []),
               [t("mddL2"), typeof s.mdd === "number" ? s.mdd.toFixed(0) + "%" : "–"],
               [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–"]].map(([k, v]) => (
               <div key={k} style={{ background: C.bg, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
@@ -1963,15 +2218,24 @@ function CustomStockForm({ lang, t, onAdd }) {
 }
 
 // ================= Cargo holds (cart with sliders) =================
-function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, profile, stocksById, settings }) {
+function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, profile, stocksById, settings, missing = [], onRemoveMissing }) {
   const setMw = (tk, mw) => setHoldings(holdings.map((h) => (h.t === tk ? { ...h, mw: Math.max(mw, 0) } : h)));
   const sliderMax = Math.max(budgetMw, 100);
+  // 오늘 데이터에 없어 빼고 계산한 금액: 위험 계산에는 없지만 예산은 쓰고 있어요. 머리말·막대·현금이 입력한 예산과 맞아떨어지게
+  // '담은 금액(계산) + 빠진 금액(회색) + 남는 현금 = 예산' 으로 보여요 (Jack 2026-11-04).
+  const missWon = missingWonOf(missing);
+  const overBy = metrics.invested + missWon - budgetMw * 10000;
+  const barBase = Math.max(budgetMw * 10000, 1);
+  const wCounted = Math.min((metrics.invested / barBase) * 100, 100);
+  const wMissing = Math.min((missWon / barBase) * 100, 100 - wCounted);
   return (
     <Card style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <H3>{t("myShip")}</H3>
-        <div style={{ fontSize: 13, fontWeight: 800, color: metrics.overBudget ? C.coral : C.sub }}>
-          {Math.round(metrics.invested / 10000).toLocaleString()} / {budgetMw.toLocaleString()} {t("manwon")}
+        <div className="cartHead" style={{ fontSize: 13, fontWeight: 800, color: metrics.overBudget ? C.coral : C.sub }}>
+          {Math.round(metrics.invested / 10000).toLocaleString()}
+          {missing.length > 0 && <span style={{ color: metrics.overBudget ? C.coral : MISSING_GREY }}> + {Math.round(missWon / 10000).toLocaleString()}</span>}
+          {" "}/ {budgetMw.toLocaleString()} {t("manwon")}
         </div>
       </div>
       <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 4px" }}>
@@ -1980,9 +2244,19 @@ function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, 
           style={{ flex: 1, borderRadius: 10, border: "1.5px solid " + C.line, padding: 8, fontSize: 13.5, textAlign: "right", fontFamily: FONT, outline: "none" }} />
         <span style={{ fontSize: 11, color: C.faint, flexShrink: 0 }}>{t("manwon")} = {fmtMw(budgetMw * 10000, lang)}</span>
       </label>
-      <div style={{ height: 7, background: C.line, borderRadius: 4, margin: "8px 0 4px", overflow: "hidden" }}>
-        <div style={{ height: 7, width: Math.min((metrics.invested / Math.max(budgetMw * 10000, 1)) * 100, 100) + "%", background: metrics.overBudget ? C.coral : "linear-gradient(90deg," + C.blue + "," + C.teal + ")", transition: "width .3s ease" }} />
+      <div className="budgetBar" style={{ height: 7, background: C.line, borderRadius: 4, margin: "8px 0 4px", overflow: "hidden", display: "flex" }}>
+        <div data-bar="counted" style={{ height: 7, width: wCounted + "%", background: metrics.overBudget ? C.coral : "linear-gradient(90deg," + C.blue + "," + C.teal + ")", transition: "width .3s ease" }} />
+        {missing.length > 0 && <div data-bar="missing" style={{ height: 7, width: wMissing + "%", background: metrics.overBudget ? C.coral : MISSING_GREY, opacity: metrics.overBudget ? 0.55 : 1, transition: "width .3s ease" }} />}
       </div>
+      {wMissing > 0 && (   /* 회색 칸 바로 아래에 이름표 (칸이 오른쪽 끝에 가까우면 오른쪽 정렬) */
+        <div className="barLegend" style={{ display: "flex", justifyContent: wCounted > 60 ? "flex-end" : "flex-start", paddingLeft: wCounted > 60 ? 0 : wCounted + "%", margin: "0 0 2px", fontSize: 10.5, color: C.sub, fontFamily: FONT }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+            <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: metrics.overBudget ? C.coral : MISSING_GREY, opacity: metrics.overBudget ? 0.55 : 1 }} />
+            {T_BAR_MISSING[lang]}
+          </span>
+        </div>
+      )}
+      <MissingNote lang={lang} missing={missing} onRemove={onRemoveMissing} style={{ margin: "8px 0 2px" }} />
       {holdings.length === 0 && (
         <div style={{ textAlign: "center", padding: "22px 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <Bird mood="think" size={54} />
@@ -2026,7 +2300,7 @@ function Cart({ lang, t, holdings, setHoldings, budgetMw, setBudgetMw, metrics, 
         <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 11, fontSize: 12.5 }}>
           <span style={{ color: C.sub }}>{t("cash")}</span>
           <span style={{ fontWeight: 800, color: metrics.overBudget ? C.coral : C.ink }}>
-            {metrics.overBudget ? t("overBudget") + " −" + fmtMw(metrics.invested - budgetMw * 10000, lang) : fmtMw(metrics.cash, lang)}
+            {metrics.overBudget ? t("overBudget") + " −" + fmtMw(overBy, lang) : fmtMw(metrics.cash, lang)}
           </span>
         </div>
       )}
@@ -2108,7 +2382,7 @@ function AlertsBox({ lang, t, metrics, profile, stocksById, settings, stocks, ho
   const n = metrics.rows.filter((r) => r.mw > 0).length;
   if (n > 0 && n < profile.stocksMin) w.push({ sev: 1, msg: t("wCount") + ` (${n} < ${profile.stocksMin})` });
   if (profile.cashFloorPct > 0) {
-    const cp = (metrics.cash / metrics.total) * 100;
+    const cp = cashPctOf(metrics);
     if (cp < profile.cashFloorPct - 0.01) w.push({ sev: 1, msg: t("wCashFloor") + ` (${cp.toFixed(0)}% < ${profile.cashFloorPct}%)` });
   }
   accountIssues(metrics, profile, lang).forEach((m) => w.push({ sev: 2, msg: m }));
@@ -2487,7 +2761,7 @@ function SectorDonut({ lang, t, metrics, stocksById }) {
 function QuickFactsCard({ lang, t, metrics, settings, profile }) {
   if (metrics.empty) return null;
   const depEq = metrics.divWon / Math.max(settings.rf / 100, 0.001);
-  const cashPct = (metrics.cash / metrics.total) * 100;
+  const cashPct = cashPctOf(metrics);
   const rows = [
     [t("qTop3"), pct(metrics.top3, 0)],
     [t("qDiv"), fmtMw(metrics.divWon, lang) + (lang === "ko" ? ` (예금 ${fmtMw(depEq, lang)} 이자와 비슷)` : ` (≈ interest on ${fmtMw(depEq, lang)} deposit)`)],
@@ -2608,7 +2882,7 @@ function RiskJourneyCard({ lang, t, metrics, stocksById, settings, profile, mode
   return (
     <Card style={{ padding: 18 }}>
       <H3>{t("splitTitle")}</H3>
-      <Sub style={{ marginTop: 3 }}>{t("splitSub")}</Sub>
+      <Sub style={{ marginTop: 3 }}>{SHOW_ER ? t("splitSubEr") + " " : ""}{t("splitSub")}</Sub>
 
       <div style={{ display: "flex", height: 30, borderRadius: 9, overflow: "hidden", marginTop: 12 }}>
         <div style={{ width: metrics.r2 + "%", background: C.blue, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11.5, fontWeight: 800, minWidth: 40 }}>{metrics.r2.toFixed(0)}%</div>
@@ -3044,9 +3318,12 @@ function TimeMachine({ lang, t, metrics, settings }) {
       </div>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 8 }}>
         <span style={{ fontSize: 12, color: C.sub }}>{idx}/{n}{lang === "ko" ? "개월" : "mo"}</span>
-        <span style={{ fontSize: 17, fontWeight: 900, color: cur >= vals[0] ? C.teal : C.coral }}>{fmtMw(cur, lang)} <span style={{ fontSize: 11, fontWeight: 700 }}>({pct((cur / vals[0] - 1) * 100, 0)})</span></span>
+        {/* B안 (v18.5, Jack 2026-11-04): 지금 값·시작 대비 %는 베타로 만든 경로의 값이고, 끝나면 '끝까지 버텼다면'과 같은 숫자라
+            SHOW_ER 를 켤 때만. 꺼 둔 동안은 얼마나 빠지는지(고점 대비 · 최저점)만 보여요. */}
+        {SHOW_ER && <span style={{ fontSize: 17, fontWeight: 900, color: cur >= vals[0] ? C.teal : C.coral }}>{fmtMw(cur, lang)} <span style={{ fontSize: 11, fontWeight: 700 }}>({pct((cur / vals[0] - 1) * 100, 0)})</span></span>}
       </div>
-      {idx > 0 && dd < -1 && <div style={{ fontSize: 11, color: C.coral, fontWeight: 700, textAlign: "right" }}>{lang === "ko" ? "고점 대비" : "From peak"} {pct(dd, 0)}</div>}
+      {/* 고점 대비 낙폭: 재생 중에만 (끝난 뒤의 값은 마지막 달 값이라 SHOW_ER 를 켤 때만) — 끝나면 아래 '최저점' 칸이 남아요 */}
+      {idx > 0 && dd < -1 && (SHOW_ER || !done) && <div className="tmFromPeak" style={{ fontSize: 11, color: C.coral, fontWeight: 700, textAlign: "right" }}>{lang === "ko" ? "고점 대비" : "From peak"} {pct(dd, 0)}</div>}
       <svg width="100%" viewBox={"0 0 " + W + " " + H} style={{ marginTop: 4 }}>
         <line x1="8" x2={W - 8} y1={y(vals[0])} y2={y(vals[0])} stroke={C.line} strokeDasharray="4 4" />
         <path d={line} fill="none" stroke={C.blueDeep} strokeWidth="2.5" strokeLinejoin="round" />
@@ -3061,19 +3338,22 @@ function TimeMachine({ lang, t, metrics, settings }) {
       </div>
       {done && (
         <div style={{ marginTop: 10, animation: "fadeIn .4s ease" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {/* B안 (v18.5, Jack 2026-11-04): '끝까지 버텼다면 +Y%'와 그 차이('버틴 값어치')는 베타로 만든 수익 숫자라 SHOW_ER 를 켤 때만 */}
+          <div style={{ display: "grid", gridTemplateColumns: SHOW_ER ? "1fr 1fr" : "1fr", gap: 8 }}>
             <div style={{ background: C.coralSoft, borderRadius: 13, padding: 11, textAlign: "center" }}>
               <div style={{ fontSize: 10.5, color: "#8E2A28", fontWeight: 700 }}>{t("tmSold")}</div>
               <div style={{ fontSize: 16, fontWeight: 900, color: C.coral, marginTop: 2 }}>{fmtMw(vals[minI], lang)}</div>
               <div style={{ fontSize: 10.5, color: C.coral }}>{pct((vals[minI] / vals[0] - 1) * 100, 0)}</div>
             </div>
+            {SHOW_ER && (
             <div style={{ background: C.tealSoft, borderRadius: 13, padding: 11, textAlign: "center" }}>
               <div style={{ fontSize: 10.5, color: "#0B6E66", fontWeight: 700 }}>{t("tmHeld")}</div>
               <div style={{ fontSize: 16, fontWeight: 900, color: C.teal, marginTop: 2 }}>{fmtMw(vals[n], lang)}</div>
               <div style={{ fontSize: 10.5, color: C.teal }}>{pct((vals[n] / vals[0] - 1) * 100, 0)}</div>
             </div>
+            )}
           </div>
-          <Verdict>{lang === "ko" ? <>{t("tmDiff")}: <b>{fmtMw(vals[n] - vals[minI], lang)}</b>. 폭락의 한가운데서 '지금이라도 팔까'를 이긴 값이에요.</> : <>{t("tmDiff")}: <b>{fmtMw(vals[n] - vals[minI], lang)}</b> — the reward for beating "should I sell now" at the very bottom.</>}</Verdict>
+          {SHOW_ER && <Verdict>{lang === "ko" ? <>{t("tmDiff")}: <b>{fmtMw(vals[n] - vals[minI], lang)}</b>. 폭락의 한가운데서 '지금이라도 팔까'를 이긴 값이에요.</> : <>{t("tmDiff")}: <b>{fmtMw(vals[n] - vals[minI], lang)}</b> — the reward for beating "should I sell now" at the very bottom.</>}</Verdict>}
         </div>
       )}
       <Sub style={{ marginTop: 8, fontSize: 10.5 }}>{t("tmNote")}</Sub>
@@ -3082,7 +3362,7 @@ function TimeMachine({ lang, t, metrics, settings }) {
 }
 
 // ================= Stage views =================
-function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, setBudgetMw, metrics, stocksById, stocks, addStock, addCustom, updateStock, expanded, setExpanded, setExplain, score, okCount, goDiagnose, settings, onDemo }) {
+function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, setBudgetMw, metrics, stocksById, stocks, addStock, addCustom, updateStock, expanded, setExpanded, setExplain, score, okCount, goDiagnose, settings, onDemo, missing = [], calcBudgetMw, onRemoveMissing }) {
   const [cardM, setCardM] = useState(null);
   return (
     <div className="grid3">
@@ -3096,8 +3376,9 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
             <Sub style={{ color: "#7A5410", fontWeight: 700 }}>{t("needProfile")}</Sub>
           </Card>
         )}
-        {metrics.empty && !metrics.riskBlind && <Btn kind="ghost" onClick={onDemo} style={{ width: "100%" }}>{t("demo")}</Btn>}
-        <Cart lang={lang} t={t} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} setBudgetMw={setBudgetMw} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} />
+        {/* 예시 포트폴리오는 담은 종목을 통째로 바꿔요: 오늘 데이터에 없어 빠진 종목만 있을 때도 보이면, 저장해 둔 그 종목이 지워질 수 있어요 */}
+        {metrics.empty && !metrics.riskBlind && !missing.length && <Btn kind="ghost" onClick={onDemo} style={{ width: "100%" }}>{t("demo")}</Btn>}
+        <Cart lang={lang} t={t} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} setBudgetMw={setBudgetMw} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} missing={missing} onRemoveMissing={onRemoveMissing} />
         <MetricsPanel lang={lang} t={t} mode={mode} metrics={metrics} profile={profile} setExplain={setExplain} />
       </div>
       <div className="stickyR" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -3111,15 +3392,14 @@ function BuildView({ lang, t, mode, profile, holdings, setHoldings, budgetMw, se
         )}
         <div className="stickyScroll">
           {profile.ready && !metrics.empty && <Dashboard lang={lang} t={t} metrics={metrics} profile={profile} setExplain={setExplain} />}
-          {profile.ready && !metrics.empty && <AlertsBox lang={lang} t={t} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} stocks={stocks} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} />}
+          {profile.ready && !metrics.empty && <AlertsBox lang={lang} t={t} metrics={metrics} profile={profile} stocksById={stocksById} settings={settings} stocks={stocks} holdings={holdings} setHoldings={setHoldings} budgetMw={calcBudgetMw != null ? calcBudgetMw : budgetMw} />}
           {!metrics.empty && <Btn onClick={goDiagnose} style={{ width: "100%" }}>{t("goDiagnose")}</Btn>}
           <ShareCardModal card={cardM} onClose={() => setCardM(null)} lang={lang} />
           {!metrics.empty && profile.ready && (
             <Btn kind="ghost" style={{ width: "100%" }} onClick={() => {
               try {
-                let inv = 0;
-                holdings.forEach((h) => { inv += h.mw || 0; });
-                const data = makeCardData(holdings, stocksById, Math.max((budgetMw || 0) - inv, 0), SHOW_SCORE ? score : null, lang);
+                // 현금 = 예산 − 빠진 종목 금액 − 담은 금액 (②의 '남는 현금'과 같아요, v18.5)
+                const data = makeCardData(holdings, stocksById, (metrics.cash || 0) / 1e4, SHOW_SCORE ? score : null, lang);
                 const cv = renderPortfolioCard(data);
                 setCardM({ cv, url: cv.toDataURL("image/png"), dateStr: data.dateStr });
               } catch (e) {}
@@ -3189,7 +3469,7 @@ function accountIssues(metrics, profile, lang) {
   if ((acc === "pension" || acc === "irp") && direct.length > 0)
     out.push(lang === "ko" ? `${ACCOUNTS[acc].ko} 계좌에는 개별 주식을 담을 수 없어요. 지금 ${direct.length}종목이 해당돼요 — ETF로 대체해야 해요.` : `${ACCOUNTS[acc].en} accounts can't hold individual stocks; ${direct.length} of yours are. Use ETFs instead.`);
   if (acc === "irp") {
-    const risky = 100 - (metrics.cash / metrics.total) * 100;
+    const risky = 100 - cashPctOf(metrics);
     if (risky > 70.5) out.push(lang === "ko" ? `IRP는 위험자산을 70%까지만 담을 수 있어요. 지금 약 ${risky.toFixed(0)}%예요 — 현금이나 예금형을 ${(risky - 70).toFixed(0)}%p 더 두셔야 해요.` : `IRP caps risky assets at 70%; you're at about ${risky.toFixed(0)}%. Add ${(risky - 70).toFixed(0)}%p of cash-like holdings.`);
   }
   return out;
@@ -3389,7 +3669,7 @@ function buildFixes(ctx) {
   }
 
   // ── 현금이 권장 최소보다 적을 때
-  const cashPct = (metrics.cash / metrics.total) * 100;
+  const cashPct = cashPctOf(metrics);
   if (profile.cashFloorPct > 0 && cashPct < profile.cashFloorPct - 0.01) {
     const ratio = (100 - profile.cashFloorPct) / Math.max(metrics.investedW, 1);
     if (ratio > 0.2 && ratio < 0.999) {
@@ -3504,7 +3784,7 @@ function WellDoneCard({ lang, t, metrics, profile, settings }) {
   const nCls = CLS_LIST.filter((c) => (metrics.clsW[c] || 0) > 1).length;
   const n = metrics.rows.filter((r) => r.mw > 0).length;
   const saved = Math.max(metrics.wAvgVol - metrics.volP, 0);
-  const cashPct = (metrics.cash / metrics.total) * 100;
+  const cashPct = cashPctOf(metrics);
   const curated = metrics.rows.filter((r) => r.mw > 0 && r.stock.x && r.stock.x.dk).length;
 
   push(saved > 1, "", ko ? "나눠 담아 위험을 실제로 줄였어요" : "Splitting actually cut your risk",
@@ -3880,7 +4160,7 @@ function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
   );
 }
 
-function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksById, setExplain, score, okCount, checkins, onCheckin }) {
+function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksById, setExplain, score, okCount, checkins, onCheckin, missing = [], onRemoveMissing }) {
   const [open, setOpen] = useState({});
   // 처음에는 모두 닫아 둡니다. 자세히/간단히는 카드 안쪽 밀도만 바꿉니다.
   if (metrics.empty) {
@@ -3888,12 +4168,14 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
       <Card style={{ textAlign: "center", padding: 34, display: "flex", flexDirection: "column", alignItems: "center", gap: 10, maxWidth: 560, margin: "0 auto" }}>
         <Bird mood="think" size={66} />
         <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : t("diagEmpty")}</Sub>
+        <MissingNote lang={lang} missing={missing} onRemove={onRemoveMissing} />
       </Card>
     );
   }
   const tg = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <MissingNote lang={lang} missing={missing} onRemove={onRemoveMissing} />
       {SHOW_VERDICTS && SHOW_SCORE && <DiagHero lang={lang} t={t} metrics={metrics} profile={profile} score={score} />}
       <CheckinCard lang={lang} t={t} metrics={metrics} profile={profile} checkins={checkins} onSave={onCheckin} />
       <Section title={t("sxW")} sub={t("sxWs")} open={!!open.w} onToggle={() => tg("w")}>
@@ -3961,7 +4243,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
 }
 
 // ================= Export (ship's log) =================
-function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo }) {
+function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo, budgetMw, missing = [], onRemoveMissing }) {
   const [checks, setChecks] = useState([false, false, false, false, false]);
   const [cardM, setCardM] = useState(null);
   const openCard = () => {
@@ -3977,6 +4259,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
       <Card style={{ textAlign: "center", padding: 30, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <Bird mood="think" size={64} />
         <Sub>{metrics.riskBlind ? riskBlindTxt(lang, metrics) : (lang === "ko" ? "아직 담은 종목이 없어요. ② 포트폴리오 탭에서 먼저 만들어주세요." : "Nothing here yet. Build your portfolio in tab ② first.")}</Sub>
+        <MissingNote lang={lang} missing={missing} onRemove={onRemoveMissing} />
       </Card>
     );
   }
@@ -3986,22 +4269,28 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     return { ...r, s, shares: pk > 0 ? Math.floor(r.won / pk) : 0 };
   });
   const stamp = new Date().toISOString().slice(0, 10);
+  // 메모의 '예산' = 계산에 든 금액(종목 + 현금) + 오늘 데이터에 없어 뺀 금액 → 입력한 예산과 같아요 (예산을 넘겼으면 담은 금액 전부)
+  const budgetShown = metrics.budgetAll || metrics.total;
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile: shownProfile(profile), budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], ...(missing.length ? { notInDataNote: missingLine(lang, missing) } : {}), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
+    // 주문표에는 목록에 있는 종목만 (합계가 예산과 맞아야 해요). 목록에 없는 종목은 JSON 백업에만 남겨요 (리뷰 2026-11-04).
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
-    return "\uFEFF" + h + "\n" + lines.join("\n") + "\nCASH,현금,-," + "-," + Math.round(metrics.cash) + "," + (metrics.cash / metrics.total * 100).toFixed(2) + ",-,0,0";
+    const note = missingLine(lang, missing);   // 빠진 종목은 주문 줄에 넣지 않고, 맨 아래에 안내 한 줄 (따옴표로 한 칸)
+    return "\uFEFF" + h + "\n" + lines.join("\n") + "\nCASH,현금,-," + "-," + Math.round(metrics.cash) + "," + cashPctOf(metrics).toFixed(2) + ",-,0,0"
+      + (note ? "\n\"※ " + note.replace(/"/g, '""') + "\"" : "");
   };
   const buildMemo = () => {
     const L = [];
     L.push((lang === "ko" ? "뱁새 주문 메모 " : "Baepsae Order Memo ") + stamp);
-    L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(metrics.total, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + (SHOW_ER ? " · E(r) " + pct(metrics.expRet) : ""));
+    L.push((lang === "ko" ? "예산 " : "Budget ") + fmtMw(budgetShown, lang) + " · β " + num(metrics.beta) + " · σ " + pct(metrics.volP) + (SHOW_ER ? " · E(r) " + pct(metrics.expRet) : ""));
     L.push("");
     rows.forEach((r) => L.push(`${r.s.nk} (${r.t}) — ${fmtMw(r.won, lang)} (${(r.wInv * 100).toFixed(1)}%) ≈ ${r.shares}${lang === "ko" ? "주" : "sh"} @${fmtPx(r.s.price, r.s)}`));
     L.push((lang === "ko" ? "현금 " : "Cash ") + fmtMw(metrics.cash, lang));
     L.push("");
     nonLiveLines(lang, !!(dataInfo && dataInfo.failed), rows.map((r) => r.s), metrics).forEach((x) => L.push("※ " + x));
+    if (missing.length) L.push("※ " + missingLine(lang, missing));
     L.push(lang === "ko" ? "※ 주문 시 실제 시세로 수량을 조정하세요." : "※ Adjust share counts at live prices.");
     return L.join("\n");
   };
@@ -4031,9 +4320,10 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1.1fr 0.9fr 0.9fr", fontSize: 12.5, padding: "8px 4px", borderTop: "1.5px solid " + C.line }}>
             <span style={{ color: C.sub }}>{t("cash")}</span>
             <span style={{ textAlign: "right", fontWeight: 700 }}>{fmtMw(metrics.cash, lang)}</span>
-            <span style={{ textAlign: "right", color: C.sub }}>{(metrics.cash / metrics.total * 100).toFixed(1)}%</span><span />
+            <span style={{ textAlign: "right", color: C.sub }}>{cashPctOf(metrics).toFixed(1)}%</span><span />
           </div>
         </div>
+        <MissingNote lang={lang} missing={missing} onRemove={onRemoveMissing} style={{ marginTop: 10 }} />
       </Card>
       {(() => {
         const usd = rows.filter((r) => r.s.ccy === "USD").reduce((a, r) => a + r.shares * r.s.price, 0);
@@ -4260,8 +4550,8 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
           </div>
         </Card>
       )}
-      <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }}
-        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.readAsText(f); } e.target.value = ""; }} />
+      <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.onerror = () => onImport(""); rd.readAsText(f); } e.target.value = ""; }} />
       <Btn kind="ghost" onClick={() => fileRef.current && fileRef.current.click()} style={{ width: "100%" }}>{lang === "ko" ? "저장한 파일에서 불러오기 (JSON)" : "Load from a saved file (JSON)"}</Btn>
       {(() => {
         const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang).stale;
@@ -4439,7 +4729,8 @@ function AppInner({ seed, lang: langProp }) {
   // ---- slot persistence ----
   const saveSlot = async (id, name, extra) => {
     const payload = {
-      schema: SCHEMA, lang, mode, settings, tax, profile, answers, budgetMw, holdings, checkins, stage,
+      schema: SCHEMA, lang, mode, settings, tax, profile, answers, budgetMw, checkins, stage,
+      holdings: holdings.map((h) => withSavedName(h, h && stocksById[h.t])),   // 빠진 종목도 그대로, 이름만 붙여요
       customStocks: stocks.filter((s) => s.custom),
       stockEdits: (() => {
         const base = Object.fromEntries(baseUniverse().map((b) => [b.t, b]));
@@ -4448,7 +4739,7 @@ function AppInner({ seed, lang: langProp }) {
           const b = base[s.t];
           if (!b) return;
           const diff = {};
-          ["price", "beta", "vol", "per", "pbr", "dy", "al"].forEach((k) => { if (s[k] !== b[k]) diff[k] = s[k]; });
+          STOCK_EDIT_KEYS.forEach((k) => { if (s[k] !== b[k]) diff[k] = s[k]; });
           if (Object.keys(diff).length) d[s.t] = diff;
         });
         return d;
@@ -4462,8 +4753,9 @@ function AppInner({ seed, lang: langProp }) {
     setSlots(next);
   };
   const computeMetricsForSave = async () => {
-    const inv = holdings.reduce((a, h) => { const s = stocks.find((x) => x.t === h.t); return a + (s ? h.mw * 10000 : 0); }, 0);
-    return { n: holdings.length, inv, beta: metricsRef.current ? metricsRef.current.beta : 0 };
+    const listed = holdings.filter((h) => stocks.some((x) => x.t === h.t));      // 오늘 목록에 없는 종목은 세지 않아요 (담기 화면과 같아요)
+    const inv = listed.reduce((a, h) => a + h.mw * 10000, 0);
+    return { n: listed.length, inv, beta: metricsRef.current ? metricsRef.current.beta : 0 };
   };
   const metricsRef = useRef(null);
 
@@ -4513,14 +4805,23 @@ function AppInner({ seed, lang: langProp }) {
     const next = (await readSlots()).map((s) => (s.id === id ? { ...s, name: nm } : s));
     await writeSlots(next); setSlots(next);
   };
+  // 파일을 다 읽고 확인한 뒤에만 바꿔요: 읽을 종목이 하나도 없으면 알림만 띄우고 지금 포트폴리오·예산·프로필·설정은 그대로예요.
+  // 파일 고르기는 오늘 데이터를 다 읽은 뒤(booted)에만 화면에 나와요: 그 전에 고른 파일이 부팅에 덮이는 일은 없어요.
+  // 오늘 데이터를 못 읽은 날(live.failed)에는 불러오지 않고 '데이터를 불러오지 못했어요'를 보여요: 종목 목록이 내장 예시뿐이라
+  // 멀쩡한 백업도 '읽을 수 없는 파일'처럼 보이거나 종목이 빠져 보여요 (Jack, 2026-11-04). 지금 포트폴리오는 그대로예요.
   const importJson = (txt) => {
-    try {
-      const j = JSON.parse(txt);
-      const st = j.state || j;
-      const id = "s" + Date.now().toString(36);
-      applyState(st);
-      setSlotId(id); setSlotName((lang === "ko" ? "불러온 포트폴리오" : "Imported portfolio"));
-    } catch (e) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); }
+    if (live.failed) {
+      console.warn("[뱁새] 오늘 데이터(data.json)를 못 읽어서 파일을 불러오지 않았어요");
+      window.alert(T_LOAD_FAIL[lang === "ko" ? "ko" : "en"]);
+      return;
+    }
+    let st = null;
+    try { st = readPortfolioFile(JSON.parse(txt), new Set(baseUniverse().map((x) => x.t))); }
+    catch (e) { console.warn("[뱁새] 불러온 파일을 JSON 으로 읽지 못했어요: " + ((e && e.message) || e)); st = null; }
+    if (!st) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); return; }
+    const id = "s" + Date.now().toString(36);
+    applyState(st);
+    setSlotId(id); setSlotName((lang === "ko" ? "불러온 포트폴리오" : "Imported portfolio"));
   };
 
   const t = (k) => (T[k] ? T[k][lang] : k);
@@ -4531,7 +4832,28 @@ function AppInner({ seed, lang: langProp }) {
     return { examples: all.some((s) => s.live === false && !s.est), goldEst: all.some((s) => s.est) };
   }, [stocks, holdings, stocksById]);
   const holdingsFull = useMemo(() => holdings.map((h) => ({ ...h, won: h.mw * 10000, stock: stocksById[h.t] })).filter((h) => h.stock), [holdings, stocksById]);
-  const metrics = useMemo(() => computeMetrics(holdingsFull, budgetMw * 10000, settings), [holdingsFull, budgetMw, settings]);
+  // 오늘 데이터에 없는 보유 종목 (v18.5): 위험 계산에서 빼고 화면에 알려요. holdings(저장되는 목록)에서는 지우지 않아요.
+  // 그 금액은 계산의 투자금에도 '남는 현금 (무위험)'에도 넣지 않도록 계산용 예산에서 빼요 (화면의 예산 막대에는 회색 칸으로).
+  // 계산용 예산이 0 이 되면(빠진 종목만으로 예산을 다 씀) computeMetrics 는 '예산 없음'으로 계산하므로, 예산 초과는 여기서
+  // 입력한 예산과 직접 견줘요: 담은 금액(계산) + 빠진 금액 > 입력한 예산 일 때만.
+  const missing = useMemo(() => missingHoldings(holdings, stocksById), [holdings, stocksById]);
+  const missingWon = missingWonOf(missing);
+  const typedWon = budgetMw * 10000;
+  const calcBudgetWon = typedWon > 0 && missing.length ? Math.max(typedWon - missingWon, 0) : typedWon;
+  const metrics = useMemo(() => {
+    const m = computeMetrics(holdingsFull, calcBudgetWon, settings);
+    if (!missing.length) return m;
+    return { ...m, budgetAll: m.total + missingWon, ...(typedWon > 0 ? { overBudget: m.invested + missingWon > typedWon + 1 } : {}) };
+  }, [holdingsFull, calcBudgetWon, settings, missing.length, missingWon, typedWon]);
+  const missingKey = missing.map((h) => String(h.t)).join(", ");
+  useEffect(() => {   // 조용히 빼지 않아요: 몇 개를 뺐는지 크게 남겨요 (CLAUDE.md)
+    if (booted && slotId && missingKey) console.warn("[뱁새] 오늘 데이터에 없어 계산에서 뺀 보유 종목 " + missingKey.split(", ").length + "개: " + missingKey);
+  }, [booted, slotId, missingKey]);
+  // '포트폴리오에서 빼기': 안내에 나온 종목(오늘 데이터에 없는 것)만 저장본에서 지워요. 누를 때만.
+  const removeMissing = () => {
+    const gone = new Set(missing.map((h) => String(h.t)));
+    setHoldings((hs) => hs.filter((h) => !(h && h.t != null && gone.has(String(h.t)) && !stocksById[h.t])));
+  };
   metricsRef.current = metrics;
   const rs = railStates(metrics, profile);
   const nStocks = metrics.empty ? 0 : metrics.rows.filter((r) => r.mw > 0).length;
@@ -4553,7 +4875,11 @@ function AppInner({ seed, lang: langProp }) {
     setBudgetMw(1000);
   };
   const addStock = (s) => { if (!holdings.some((h) => h.t === s.t)) setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(budgetMw / 10)) }]); };
-  const addCustom = (s) => { setStocks([...stocks, s]); setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(budgetMw / 10)) }]); };
+  // 같은 종목코드를 다시 추가하면: 정의만 바꾸고, 이미 있는 보유분(예: 백업에서 '목록에 없음'으로 돌아온 금액)은 그대로 다시 보여요 — 두 줄로 세지 않아요 (리뷰 2026-11-04)
+  const addCustom = (s) => {
+    setStocks([...stocks.filter((x) => !(x.custom && x.t === s.t)), s]);
+    if (!holdings.some((h) => h && h.t === s.t)) setHoldings([...holdings, { t: s.t, mw: Math.max(10, Math.round(budgetMw / 10)) }]);
+  };
   const updateStock = (tk, k, v) => setStocks(stocks.map((s) => (s.t === tk ? { ...s, [k]: v } : s)));
   const exitSlot = () => { setSlotId(null); setExpanded(null); };
 
@@ -4608,14 +4934,14 @@ function AppInner({ seed, lang: langProp }) {
           </div>
         )}
         {slotId && stage === 1 && (
-          <BuildView lang={lang} t={t} mode={mode} settings={settings} profile={profile} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} setBudgetMw={setBudgetMw} metrics={metrics} stocksById={stocksById} stocks={stocks} addStock={addStock} addCustom={addCustom} updateStock={updateStock} expanded={expanded} setExpanded={setExpanded} setExplain={setExplain} score={score} okCount={rs.ok} goDiagnose={() => setStage(2)} onDemo={loadDemo} />
+          <BuildView lang={lang} t={t} mode={mode} settings={settings} profile={profile} holdings={holdings} setHoldings={setHoldings} budgetMw={budgetMw} setBudgetMw={setBudgetMw} metrics={metrics} stocksById={stocksById} stocks={stocks} addStock={addStock} addCustom={addCustom} updateStock={updateStock} expanded={expanded} setExpanded={setExpanded} setExplain={setExplain} score={score} okCount={rs.ok} goDiagnose={() => setStage(2)} onDemo={loadDemo} missing={missing} calcBudgetMw={calcBudgetWon / 10000} onRemoveMissing={removeMissing} />
         )}
         {slotId && stage === 2 && (
-          <DiagnoseView lang={lang} t={t} mode={mode} metrics={metrics} profile={profile} settings={settings} tax={tax} stocksById={stocksById} setExplain={setExplain} score={score} okCount={rs.ok} checkins={checkins} onCheckin={addCheckin} />
+          <DiagnoseView lang={lang} t={t} mode={mode} metrics={metrics} profile={profile} settings={settings} tax={tax} stocksById={stocksById} setExplain={setExplain} score={score} okCount={rs.ok} checkins={checkins} onCheckin={addCheckin} missing={missing} onRemoveMissing={removeMissing} />
         )}
         {slotId && stage === 3 && (
           <div className="narrow" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
+            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} budgetMw={budgetMw} missing={missing} onRemoveMissing={removeMissing} />
             <Btn kind="ghost" onClick={exitSlot} style={{ width: "100%" }}>{t("slotExit")}</Btn>
           </div>
         )}
@@ -4653,4 +4979,6 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine };
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData, unlistedExportRows,
+  // v18.5: Node 로 시험하려고 (tests/test_app_data.py)
+  missingHoldings, missingLine, shownProfile, scoreProfile };

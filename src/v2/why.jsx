@@ -7,9 +7,12 @@
 //   3. 내 규칙: the rule book with today's results (Part C), the explainer folded.
 // 다음에 확인할 일 and the "past big days" fold wait for v18.0. Sources are folded at the bottom.
 // A price move is never a rule: the verdict comes from the daily check only.
+// v19.0b: the verdict band carries a state icon (check-circle when calm, flag when there is something to look at), never a
+// 뱁이 picture. Pill colours: 규칙 깨짐 navy, the other alerts amber (watch), calm green. The price is a big number with a
+// smaller unit.
 import React from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
-import { HeroBand, DotStrip, Collapsible, StatusChip } from "../ui/components.jsx";
+import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/components.jsx";
 import { hasGroup } from "./engine.js";
 import { C, fill, mdText, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, tx } from "./ui.jsx";
@@ -39,9 +42,8 @@ function Verdict({ x, g, names, onConfirm }) {
     if (!title) title = calm ? C.why.noTodo : x.nk;
     return (
       <div style={{ marginTop: SPACE(4) }} data-ui-v2="why-verdict" data-status={x.status}>
-        <HeroBand tone={x.status === "trim" ? "alert" : "calm"} eyebrow={eyebrow} title={title}
+        <HeroBand tone={x.status === "trim" ? "alert" : "calm"} level="watch" eyebrow={eyebrow} title={title}
           body={together && k ? <><span style={{ display: "block" }}>{fill(C.why.keptBody, { n: k })}</span>{ncLine}</> : ncLine}
-          image={calm ? "baepi-1.png" : undefined} imageAlt={calm ? C.why.alt : undefined}
           inset={calm ? null : <StatusLines x={x} names={names} />} />
       </div>
     );
@@ -49,8 +51,7 @@ function Verdict({ x, g, names, onConfirm }) {
   const eyebrow = x.status === "broken" ? C.daily.broken : x.status === "check" && C.daily.check ? C.daily.check : C.daily.watch;
   return (
     <div style={{ marginTop: SPACE(4) }} data-ui-v2="why-verdict" data-status={x.status}>
-      <HeroBand tone="alert" eyebrow={eyebrow} title={x.status === "broken" ? brokenTitle(x.nk) : x.nk} body={ncLine}
-        image={x.status === "watch" ? undefined : "baepi-4.png"} imageAlt={x.status === "watch" ? undefined : C.today.todoAlt}
+      <HeroBand tone="alert" level={x.status === "broken" ? "broken" : "watch"} eyebrow={eyebrow} title={x.status === "broken" ? brokenTitle(x.nk) : x.nk} body={ncLine}
         inset={<StatusLines x={x} names={names} onConfirm={onConfirm} />} />
     </div>
   );
@@ -134,7 +135,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
           {hasGroup(s) && s.indName ? <><span>{s.indName}</span>{" · "}</> : null}<span>{fill(C.why.close, { md })}</span>
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(1) }}>
-          <span style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink)}>{priceText(s)}</span>
+          <span data-ui-v2="why-price" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink)}><Amount text={priceText(s)} /></span>
           {d1 != null && <span data-ui-v2="why-change" style={tx(SIZE.sm, WEIGHT.bold, d1 < 0 ? COLOR.down : d1 > 0 ? COLOR.upOnPage : COLOR.text2)}>
             {signedPct(d1)}</span>}
         </div>

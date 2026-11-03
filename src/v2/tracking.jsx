@@ -4,7 +4,7 @@
 // data, and a number whose input is missing is left out, never estimated.
 import React, { useEffect, useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
-import { MoneyInput } from "../ui/components.jsx";
+import { MoneyInput, Amount } from "../ui/components.jsx";
 import { C, fill, p1, wonText } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -27,7 +27,7 @@ export function DeckSummary({ deck, m, load }) {
   });
   return (
     <div data-ui-v2="deck-summary" style={{ marginTop: SPACE(3) }}>
-      <div data-ui-v2="deck-value" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink)}>{wonText(m.value)}</div>
+      <div data-ui-v2="deck-value" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink)}><Amount text={wonText(m.value)} /></div>
       {m.cost != null && (
         <div data-ui-v2="deck-money" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>
           {fill(C.deck.money, { cost: wonText(m.cost), gain: signedWon(m.gain), pct: signedPct(m.ret * 100) })}

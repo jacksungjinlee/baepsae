@@ -1,37 +1,52 @@
-// ================= 뱁새 2.0 아이콘 (v18.1 Part 1) =================
-// 한 벌의 선 아이콘: 24px 격자, 2px 선. 이모지는 어디에도 쓰지 않아요.
+// ================= 뱁새 2.0 아이콘 (v18.1 Part 1 → v19.0b Phosphor duotone) =================
+// Phosphor duotone (@phosphor-icons/core, MIT: vendor/phosphor/LICENSE): 256 격자, 두 층(바탕 · 선)을 인라인 SVG 로 그려요.
+// 바깥 주소에서 아무것도 받지 않아요. path 데이터는 src/ui/phosphor.js (tools/vendor_phosphor.py 가 만들어요).
+// 색은 tokens.js 의 ICON_TONE 네 가지(on · off · ok · onNavy)뿐이에요. 살구색은 아이콘에 쓰지 않아요. 이모지는 어디에도 쓰지 않아요.
+// 예전 이름(check · alert · today …)은 그대로 쓸 수 있어요: ALIAS 가 Phosphor 이름으로 바꿔 줘요.
 import React from "react";
+import { ICON_TONE, ICON_CHIP } from "./tokens.js";
+import { PH } from "./phosphor.js";
 
-const P = {
-  check: <path d="M5 12.5l4.2 4.2L19 7" />,
-  alert: <><path d="M12 4l9 16H3z" /><path d="M12 10v4.5" /><path d="M12 17.6v.1" /></>,
-  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><path d="M12 7.6v.1" /></>,
-  close: <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>,
-  plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
-  minus: <path d="M5 12h14" />,
-  chevronRight: <path d="M9 5l7 7-7 7" />,
-  chevronDown: <path d="M5 9l7 7 7-7" />,
-  back: <path d="M15 5l-7 7 7 7" />,
-  today: <><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" /></>,
-  deck: <><rect x="4" y="5" width="16" height="5" rx="1.5" /><rect x="4" y="14" width="16" height="5" rx="1.5" /></>,
-  build: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><path d="M16.5 13v7M13 16.5h7" /></>,
-  search: <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>,
-  calendar: <><rect x="4" y="5.5" width="16" height="14.5" rx="2" /><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" /></>,
-  news: <><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M8 9.5h8M8 13h8M8 16.5h5" /></>,
-  rule: <><path d="M6 4h9l3 3v13H6z" /><path d="M9 11h6M9 14.5h6" /></>,
-  dot: <circle cx="12" cy="12" r="3.5" />,
+// 예전 이름 → Phosphor 이름 (v19.0b). 탭 이름은 v19.0c 의 탭(홈 · 포트폴리오)과 같은 그림이에요.
+export const ALIAS = {
+  check: "check", alert: "warning", info: "info", close: "x", plus: "plus", minus: "minus",
+  chevronRight: "caret-right", chevronDown: "caret-down", back: "caret-left",
+  today: "house", deck: "chart-pie-slice", build: "plus-circle", search: "magnifying-glass",
+  calendar: "calendar-dots", news: "newspaper", rule: "clipboard-text", dot: "circle-dashed",
 };
 
-export const ICON_NAMES = Object.keys(P);
+export const ICON_NAMES = [...new Set([...Object.keys(ALIAS), ...Object.keys(PH)])];
+export const ICON_TONES = Object.keys(ICON_TONE);
 
-export function Icon({ name, size = 24, color = "currentColor", title, style }) {
-  const body = P[name];
-  if (!body) return null;
+// 없는 이름은 그리지 않고, 이름마다 한 번 크게 알려요 (조용한 실패 금지)
+const warned = new Set();
+function warnUnknown(name) {
+  if (warned.has(name)) return;
+  warned.add(name);
+  console.warn("[icons] unknown icon name, nothing drawn: " + String(name));
+}
+
+// tone: on(남색 · 기본) · off(회색) · ok(초록) · onNavy(남색 바탕 위 흰색)
+export function Icon({ name, size = 24, tone = "on", title, style }) {
+  const key = ALIAS[name] || name;
+  const d = PH[key];
+  if (!d) { warnUnknown(name); return null; }
+  const t = ICON_TONE[tone] || ICON_TONE.on;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2}
-      strokeLinecap="round" strokeLinejoin="round" role={title ? "img" : undefined} aria-hidden={title ? undefined : true}
-      aria-label={title} style={{ flexShrink: 0, display: "block", ...style }}>
-      {body}
+    <svg data-icon={name} data-ph={key} data-tone={ICON_TONE[tone] ? tone : "on"} width={size} height={size} viewBox="0 0 256 256"
+      role={title ? "img" : undefined} aria-hidden={title ? undefined : true} aria-label={title} style={{ flexShrink: 0, display: "block", ...style }}>
+      <path data-layer="fill" d={d[0]} fill={t.fill} />
+      <path data-layer="line" d={d[1]} fill={t.line} />
     </svg>
+  );
+}
+
+// 아이콘 칩: 따뜻한 회색 바탕(select), 크기의 30% 둥글기 (섹션 · 메뉴 · 뱁이 대신 놓는 자리)
+export function IconChip({ name, size = 36, tone = "on", style }) {
+  return (
+    <span data-ui="icon-chip" data-icon={name} style={{ width: size, height: size, borderRadius: ICON_CHIP.radius, background: ICON_CHIP.bg,
+      display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, ...style }}>
+      <Icon name={name} size={Math.round(size * 0.6)} tone={tone} />
+    </span>
   );
 }
