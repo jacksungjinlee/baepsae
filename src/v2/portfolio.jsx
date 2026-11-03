@@ -122,7 +122,7 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
               const gone = !!(x && x.absent);
               return <HoldingRow key={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
-                extra={gone ? <RemoveButton onClick={() => onRemove(d.id, t)} /> : m.ok && x ? <WeightLine x={x} /> : null} />;
+                extra={!gone && m.ok && x ? <WeightLine x={x} /> : null} action={gone ? <RemoveButton onClick={() => onRemove(d.id, t)} /> : null} />;
             })}
             {de && de.ok && de.rebased && C.daily.rebasedNote && (
               <Note data-ui-v2="rebased-note">{fill(C.daily.rebasedNote, { n: de.bandPlanned, m: de.bandHeld })}</Note>

@@ -11,9 +11,9 @@
 // Leaving a sub-screen or 소개 ("back"): one step back when the entry before is this page's own (depth > 0); 소개 opened
 // straight from another page of this site (the old app's footer) also goes one step back to that page; otherwise (a
 // shared link, a bookmark) the fallback route replaces the current entry.
-// The menu links into the old app (예전 뱁새, baepsae.html) open its screens through the deep links it reads on load
-// (src/shell.jsx: #macro · #disc · #corp=CODE · #info=glossary|sources). The preview page (fictional data) has no link
-// into the old app: its menu shows 소개 and the data date only.
+// The menu links into the old app (예전 뱁새, baepsae.html) open its screens through the deep links it reads once on load
+// and then clears (src/deeplink.js, src/shell.jsx: #macro · #disc · #corp=CODE · #info=glossary|sources; routes.js
+// OLD_LINKS). The preview page (fictional data) has no link into the old app: its menu shows 소개 and the data date only.
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -73,7 +73,7 @@ function startLocation() {
   return readLocation();
 }
 
-// The router: { loc, go, replaceRoute, back, openMenu, closeMenu, menuChoice }
+// The router: { loc, lastTab, focusBefore, go, openAbout, replaceRoute, back, openMenu, closeMenu }
 //   loc: { tab, sub, about, menu, depth } (tab is null on 소개: the screen behind it is lastTab)
 export function useRouter() {
   const [loc, setLoc] = useState(startLocation);

@@ -170,12 +170,14 @@ export function HoldingRules({ x, names }) {
 
 // One held stock on 포트폴리오: the row, then (when the check ran today) its status lines and its rule book with results.
 // Part E: change = the return since purchase (won, %), extra = the weight bar with its target mark.
-export function HoldingRow({ title, sub, x, names, onConfirm, change, extra }) {
+// v19.0c: action = a button under the status lines (포트폴리오에서 빼기 for a stock missing from today's data).
+export function HoldingRow({ title, sub, x, names, onConfirm, change, extra, action }) {
   return (
     <div data-holding={x ? x.t : undefined} data-status={x ? x.status : undefined} data-big={x && x.bigMove ? "1" : undefined}>
       <ListRow title={title} sub={sub} chip={x ? statusChips(x) : null} change={change} />
       {extra}
       {x && <StatusLines x={x} names={names} onConfirm={onConfirm} />}
+      {action}
       {x && (
         <Collapsible title={fill(R().open, { name: title })}>
           <HoldingRules x={x} names={names} />
