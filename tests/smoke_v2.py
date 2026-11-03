@@ -47,7 +47,7 @@ from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
-SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.png", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]
+SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]
 DATA_FILES = ["data.json", "corp.json", "macro.json"]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -1408,7 +1408,7 @@ def footer_ok(page):
 
 def images_loaded(page):
     imgs = page.evaluate("""() => [...document.querySelectorAll('[data-ui-v2="about"] img')].map((i) => [i.getAttribute('src'), i.complete && i.naturalWidth > 0])""")
-    assert sorted(i for i, _ in imgs) == ["baepi-og.png", "jack-photo.jpg"] and all(ok for _, ok in imgs), imgs
+    assert sorted(i for i, _ in imgs) == ["baepi-og.webp", "jack-photo.jpg"] and all(ok for _, ok in imgs), imgs
 
 
 def scene_about(R, files, width):

@@ -71,7 +71,7 @@ export default function InfoApp({ lang }) {
           <div style={{ fontFamily: SERIF, fontSize: 13.5, color: C.apricotDeep, marginTop: 5 }}>철새처럼 옮겨 다니지 않는 투자</div>
           {en && (
             <Sub style={{ marginTop: 14, textAlign: "left" }}>
-              <b style={{ color: C.ink }}>Baepsae</b> ("crow-tit", from a Korean proverb about keeping your own pace) is an <b style={{ color: C.ink }}>educational investing tool for Korean retail investors</b> — risk-fit portfolio construction with a block-correlation engine, company analysis grounded in industry distributions, insider-filing and pension-fund tracking, and rates·bond education. It deliberately does <b style={{ color: C.ink }}>not</b> recommend stocks, publish target prices, or promise returns: every number is framed as "the assumption embedded in today's price," not a forecast. The interface below is in Korean; the Portfolio tab is fully bilingual.
+              <b style={{ color: C.ink }}>Baepsae</b> ("crow-tit", from a Korean proverb about keeping your own pace) is an <b style={{ color: C.ink }}>investing tool for Korean retail investors</b> — risk-fit portfolio construction with a block-correlation engine, company analysis grounded in industry distributions, insider-filing and pension-fund tracking, and rates·bond education. It deliberately does <b style={{ color: C.ink }}>not</b> recommend stocks, publish target prices, or promise returns: every number is framed as "the assumption embedded in today's price," not a forecast. The interface below is in Korean; the Portfolio tab is fully bilingual.
             </Sub>
           )}
           <Sub style={{ marginTop: 14, textAlign: "left" }}>

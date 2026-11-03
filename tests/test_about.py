@@ -74,15 +74,15 @@ def test_switch_labels_and_link_come_from_about_md():
     assert "한국어 / English" in md and ab["linkedInUrl"] in md
 
 
-def test_pending_about_strings_are_listed_for_jack():
-    """승인 대기 (Jack, 2026-11-03): 머리글 그림의 alt 는 null 로 두고(화면은 alt 없이), 언어 버튼 묶음의 이름 '언어'는 보여 주되
-    둘 다 승인 대기 목록에 있어요."""
+def test_about_alt_and_switch_name_are_approved():
+    """Jack, 2026-11-03: 머리글 그림의 alt '나뭇가지 위에서 인사하는 뱁이' 와 언어 버튼 묶음의 이름 '언어' 는 승인됐어요 (키가 있는 행)."""
     c, _ = copy_strings()
     ab = c["about"]
+    approved = read("docs/tasks/v18.3-approved-in-chat.md")
+    assert ab["heroAlt"] == "나뭇가지 위에서 인사하는 뱁이" and "| `about.heroAlt` | 나뭇가지 위에서 인사하는 뱁이 | Jack, 2026-11-03" in approved
+    assert ab["langLabel"] == "언어" and "| `about.langLabel` | 언어 | Jack, 2026-11-03" in approved
     pending = read("docs/tasks/v18.3-new-strings-pending.md")
-    assert ab["heroAlt"] is None and "`about.heroAlt`" in pending
-    assert ab["langLabel"] == "언어" and "`about.langLabel` · **언어**" in pending
-    assert "about.langLabel" not in read("docs/tasks/v18.3-approved-in-chat.md")
+    assert "about.heroAlt" not in pending and "about.langLabel" not in pending
 
 
 def test_about_copy_has_exactly_these_strings():
@@ -192,3 +192,15 @@ def test_what_the_page_shows_in_each_state():
     assert v[1] == {"figures": None, "n": 3200}, v[1]                   # 멈춘 데이터: 숫자 줄 없음 ('매 거래일 갱신'이 거짓이 돼요), 문단은 그대로
     for x in v[2:]:
         assert x == {"figures": None, "n": None}, x                       # 실패 · 불러오는 중 · 미리 보기 · 없음: 둘 다 없음
+
+
+def test_site_images_are_scaled_copies_of_jacks_originals():
+    """Jack, 2026-11-03: 2배 크기로 줄이기만 (자르기·색 바꾸기·필터 없음). 원본은 docs/design/v19/assets 에 그대로."""
+    from PIL import Image
+    for served, original, long_side in (("baepi-og.webp", "baepi-og.png", 420), ("jack-photo.jpg", "jack-photo.jpg", 224)):
+        a = Image.open(os.path.join(ROOT, served))
+        b = Image.open(os.path.join(ROOT, "docs", "design", "v19", "assets", original))
+        assert max(a.size) == long_side, (served, a.size)
+        assert abs(a.size[0] / a.size[1] - b.size[0] / b.size[1]) < 0.01, (served, a.size, b.size)      # 비율 그대로 (자르지 않음)
+    assert os.path.getsize(os.path.join(ROOT, "baepi-og.webp")) < 60 * 1024
+    assert not os.path.exists(os.path.join(ROOT, "baepi-og.png"))                                     # 사이트는 줄인 파일만

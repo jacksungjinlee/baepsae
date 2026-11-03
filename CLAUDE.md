@@ -150,7 +150,8 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   `docs/design/v19/assets/`, `icon-*.png`). Never redraw, generate or "improve" it. Serious first, warm second
   (Jack, 2026-11-03): 뱁이 appears only on the first visit, empty states, the load-failure screen, 준비 중 blocks,
   learning cards, the share card, the 소개 page and the link preview — never on a screen that shows numbers and never
-  beside a verdict.
+  beside a verdict. The old app (예전 뱁새, `baepsae.html`) is exempt until each of its tools moves to 2.0: its existing
+  뱁이 pictures and icons stay as they are, so don't remove, replace or flag them (Jack, 2026-11-03).
 - Icons: Phosphor duotone in navy with a slate fill; no apricot in icons or selection states. Apricot marks data only.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no

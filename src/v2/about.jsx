@@ -85,7 +85,7 @@ export function About({ load, onBack }) {
               <p data-ui-v2="about-descriptor" style={tx(SIZE.h3, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2), lineHeight: 1.4 })}>{a.hero.descriptor}</p>
               <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(2) })}>{a.hero.catch}</p>
             </div>
-            <img src="baepi-og.png" alt={C.about.heroAlt || ""} width={108} height={108} style={{ objectFit: "contain", flexShrink: 0 }} />
+            <img src="baepi-og.webp" alt={C.about.heroAlt} width={108} height={108} style={{ objectFit: "contain", flexShrink: 0 }} />
           </div>
           {view.figures && (
             <div data-ui-v2="about-figures" style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2), marginTop: SPACE(4) }}>

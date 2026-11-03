@@ -43,7 +43,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 def site():
     d = tempfile.mkdtemp(prefix="baepsae-preview-")
-    for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.png", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]:
+    for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
     return d

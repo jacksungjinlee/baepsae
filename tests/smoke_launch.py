@@ -40,7 +40,7 @@ REPO_LABEL = {"old": "v17.5 형식 전", "fields": "v17.5.1 항목 없음", "liv
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
 SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og-v19.png", "icon-192.png", "icon-512.png",
-        "baepi-og.png", "jack-photo.jpg"] + \
+        "baepi-og.webp", "jack-photo.jpg"] + \
        [f"baepi-{i}.png" for i in range(1, 10)]
 DATA = ["data.json", "corp.json", "macro.json", "disc.json"]
 SAVED = {"v": 1, "decks": [{"id": "dlaunch", "name": "배당 생활비 덱", "createdAt": "2026-10-31",
