@@ -22,6 +22,8 @@
               살구 띠의 두 버튼 → 답하면 초록 띠 · 줄일 차례 → 초록 띠, '오늘은 할 일이 없어요' 없음 · 큰 움직임(업종이 다 같이
               빠짐) → 자세히 보기 → 왜 움직였나(점 띠 · 규칙 · 데이터 출처) → 오늘 · 내 덱의 평가 금액 · 원금 · 코스피와 비교 ·
               비중 막대 · 추가로 넣을 돈(지켜봐요는 건너뜀) · 옛 형식·불러오기 실패·멈춤이면 할 일 띠 없음 · '못 하는 규칙' 줄
+  아이폰      (v18.4.1) 아이폰 사파리 UA 로 샀어요 → 기록 내보내기 → 저장소가 따로인 새 문맥에서 기록 불러오기 → 같은 덱 · 산 기록 ·
+              규칙 · 내 덱 · 오늘 화면, 두 번 불러도 덱이 늘지 않음, 미리 보기 기록 파일은 막힘 (scene_iphone_records 설명 참고)
   소개        (v19.0 Part D) 푸터: 고지문 · 소개 링크, 만든 사람 줄 없음 · #about 으로 열면 한국어 · English 로 바꾸면 영어 머리글 ·
               새로 고침해도 그 선택 · 저장소가 막혀도 동작 · 숫자 줄 = 시험 데이터로 센 값(분석 종목 · 업종 그룹) · 멈춘 데이터면
               숫자 줄 없음(문단은 그대로) · data.json 이 없으면 숫자 줄과 숫자 문단 없이 나머지는 그대로 · 뒤로 → 전 화면, # 없음
@@ -119,10 +121,11 @@ class Runner:
         self.texts = set()
         self.names = sorted({n for n in names if n and HANGUL.search(n)}, key=len, reverse=True)
 
-    def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1"):
+    def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1", device=None):
         srv, base = serve(site)
-        ctx = self.browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR",
-                                       service_workers="block", accept_downloads=accept_downloads)
+        # device: Playwright 의 기기 설명(사용자 에이전트 · 화면 · 터치)을 그대로 입혀요. 없으면 휴대폰 폭 width × 780.
+        screen = dict(device) if device else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+        ctx = self.browser.new_context(**screen, locale="ko-KR", service_workers="block", accept_downloads=accept_downloads)
 
         def route(r):
             if r.request.url.startswith(base):
@@ -1552,6 +1555,200 @@ def scene_about(R, files, width):
     srv.shutdown()
 
 
+# ── 아이폰: 사파리에서 기록 내보내기 → 홈 화면 앱에서 기록 불러오기 (v18.4.1, Jack 2026-11-04) ──
+# 홈 화면 앱처럼 열기: navigator.standalone(iOS 사파리만 있는 값)과 display-mode: standalone 을 참으로 흉내 내요
+# (src/v2 는 이 둘을 읽지 않아요: 앞으로 읽게 되면 이 시험이 그 길로도 지나가요).
+STANDALONE_INIT = """(() => {
+  try { Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true, configurable: true }); } catch (e) {}
+  const mm = window.matchMedia ? window.matchMedia.bind(window) : null;
+  window.matchMedia = (q) => (/display-mode:\\s*standalone/.test(String(q))
+    ? { matches: true, media: String(q), onchange: null, addListener() {}, removeListener() {}, addEventListener() {},
+        removeEventListener() {}, dispatchEvent() { return false; } }
+    : mm(q));
+})();"""
+OTHER_KEYS = """() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+  if (k !== 'baepsae2.v1') o[k] = localStorage.getItem(k); } return o; }"""
+STORED = "JSON.parse(localStorage.getItem('baepsae2.v1') || 'null')"
+# 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로(1초 안에) 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤)
+REVOKE_SPY = """() => { if (window.__revoked) return; window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
+  URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
+
+
+def standalone_ua(ua):
+    """홈 화면에 추가한 앱의 사용자 에이전트: 사파리와 같은데 끝의 'Version/…' · 'Safari/…' 가 없어요."""
+    return re.sub(r" Safari/\S+$", "", re.sub(r" Version/\S+", "", ua))
+
+
+def scene_iphone_records(R, files, device):
+    """아이폰: 사파리에서 쓴 기록을 홈 화면 앱으로 옮기는 길 (Jack 2026-11-04: 아이폰 계획이 이 길에 기대요).
+    iOS 에서 홈 화면에 추가한 앱은 사파리와 저장소를 같이 쓰지 않고 따로 써요. 그래서 옮기는 길은 '기록 내보내기 → 파일 → 기록 불러오기' 하나예요.
+
+    여기에는 진짜 사파리(WebKit)가 설치돼 있지 않아요. 그래서 크롬(Chromium)에 Playwright 의 'iPhone 13' 설명(사용자 에이전트 ·
+    390×664 화면 · 터치)을 입혀서 봐요.
+      문맥 1 (사파리)    덱 짜기(배당 생활비) → 샀어요(날짜 · 한국 종목 하나와 미국 종목 하나의 수량 · 가격을 바꿔서) → 내 덱 →
+                         기록 내보내기 → 받은 파일. 앱(store.js downloadRecords)은 사파리 같은 브라우저에서도 다른 길이 없어요:
+                         똑같이 Blob 을 만들어 <a download> 를 눌러요. 다른 점은 '사파리는 7일…' 안내 한 줄뿐이라, 그 줄이 보이는지
+                         (= 앱이 사파리로 알아봤는지) 확인하고, 받은 파일이 저장된 기록과 똑같은지, 파일 주소를 1.5초 안에 지우지
+                         않는지(일찍 지우면 iOS 사파리가 받다가 실패할 수 있어요) 봐요.
+      문맥 2 (새 저장소) 저장소가 빈 새 문맥 = 홈 화면 앱처럼 사파리와 저장소가 따로인 곳. 사용자 에이전트는 홈 화면 앱처럼 'Safari/…'
+                         없는 것으로, navigator.standalone 과 display-mode: standalone 도 참으로 흉내 내요. 다만 src/v2 는 이 둘을 읽지
+                         않아서, 이 시험이 보여 주는 것은 '따로인 저장소로 파일을 불러오는 길'이지 홈 화면 모드 자체의 동작은 아니에요.
+                         기록 불러오기 → 같은 덱 · 종목 · 산 기록(수량 · 가격 · 날짜 · 미국 종목의 환율) · 규칙이 저장되고, 내 덱과
+                         오늘 화면의 글이 문맥 1 과 똑같아요 · 다른 저장 값은 그대로 · 새로 고침해도 남아요 · 같은 파일을 두 번 불러도
+                         덱이 늘지 않아요 · 미리 보기에서 만든 기록 파일은 '미리 보기에서 만든 기록은…' 으로 막혀요.
+    이 시험이 보여 주지 못하는 것 (실제 아이폰에서만 볼 수 있어요): iOS 사파리가 <a download> 로 받은 파일을 '파일' 앱에 저장하는지,
+    홈 화면 앱의 파일 고르기 창에서 그 파일을 고를 수 있는지, 홈 화면 모드에서의 동작, WebKit 의 File.text() · 저장소 동작."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-records-")       # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    try:
+        _iphone_records(R, files, device, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _iphone_records(R, files, device, tmp):
+    S = "아이폰 기록 옮기기"
+    dev = {k: v for k, v in device.items() if k != "default_browser_type"}
+    width = dev["viewport"]["width"]
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(files), site)
+    by = {x["t"]: x for x in files["data.json"]["stocks"]}
+    day = (dt.date.fromisoformat(files["data.json"]["pxDate"]) - dt.timedelta(days=2)).isoformat()   # 오늘이 아닌 산 날
+    keep = {}
+
+    def main_text(page):
+        return page.locator("main").first.inner_text()
+
+    def open_deck_tab(page):
+        tab(page, C["app"]["tabs"]["deck"])
+        see(page, C["store"]["export"])
+
+    def open_today_tab(page):
+        tab(page, C["app"]["tabs"]["today"])
+        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+
+    srv, ctx, page, _ = R.open(site, width, accept_downloads=True, device=dev)
+
+    def safari():
+        assert "iPhone" in page.evaluate("navigator.userAgent") and page.evaluate("navigator.standalone") is None
+        wait_ready(page)
+        see(page, C["build"]["s0"]["title"])                          # 저장한 덱이 없으면 덱 짜기부터
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        click_next(page)
+        see(page, C["pick"]["title"])
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        sheet = page.locator('[data-ui-v2="record-form"]')
+        sheet.locator('input[type="date"]').fill(day)
+        tickers = [r.get_attribute("data-record") for r in sheet.locator("[data-record]").all()]
+        kr = next(t for t in tickers if by[t].get("cls") != "us")
+        us = next((t for t in tickers if by[t].get("cls") == "us"), None)
+        assert us, f"미국 종목이 계획에 없어요: {tickers}"
+        want = {}
+        for t, price in ((kr, str(int(by[kr]["price"] * 0.98))), (us, f"{by[us]['price'] * 0.97:.2f}")):
+            box = sheet.locator(f'[data-record="{t}"] input')
+            planned = int(box.nth(0).get_attribute("placeholder").replace(",", ""))
+            box.nth(0).fill(str(planned + 1))                         # 계획보다 한 주 더
+            box.nth(1).fill(price)                                    # 계획과 다른 가격
+            want[t] = (planned + 1, float(price))
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        see(page, C["plan"]["done"])
+        page.get_by_role("button", name=C["plan"]["doneLink"]).click()
+        see(page, C["today"]["title"])
+        stored = page.evaluate(STORED)
+        ps = {p["t"]: p for p in stored["decks"][0]["purchases"]}
+        assert len(stored["decks"]) == 1 and len(ps) == len(tickers) and all(p["date"] == day for p in ps.values()), stored
+        assert all((ps[t]["qty"], ps[t]["price"]) == q for t, q in want.items()), (want, ps)
+        assert ps[us]["ccy"] == "USD" and ps[us]["fx"] == files["data.json"]["fx"] and ps[kr]["ccy"] == "KRW", (ps[us], ps[kr])
+        assert all(h.get("rules") for h in stored["decks"][0]["holdings"]), "규칙이 저장되지 않았어요"
+        open_today_tab(page)
+        keep["today"] = main_text(page)
+        open_deck_tab(page)
+        page.locator("[data-holding][data-status]").first.wait_for(state="visible")
+        page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
+        see(page, C["store"]["safari"])                               # 앱이 사파리 같은 브라우저로 알아봤어요
+        keep["deck"] = main_text(page)
+        page.evaluate(REVOKE_SPY)
+        with page.expect_download() as dl:
+            page.get_by_role("button", name=C["store"]["export"]).click()
+        name, url = dl.value.suggested_filename, dl.value.url
+        assert url.startswith("blob:"), url
+        keep["path"] = os.path.join(tmp, name)                        # 문맥을 닫으면 받은 파일이 지워져서 옮겨 둬요
+        dl.value.save_as(keep["path"])
+        page.wait_for_timeout(1500)
+        assert url not in page.evaluate("window.__revoked"), "받은 파일의 주소를 너무 일찍 지웠어요 (iOS 사파리에서 받기가 실패할 수 있어요)"
+        with open(keep["path"], encoding="utf-8") as fh:
+            exported = json.load(fh)
+        assert re.fullmatch(r"baepsae-records-\d{4}-\d{2}-\d{2}\.json", name), name
+        assert exported == {"v": 1, "decks": stored["decks"]}, "받은 파일이 저장된 기록과 달라요"
+        keep["file"] = exported
+        R.collect(page)
+    R.check(page, S, "사파리(아이폰 UA): 샀어요(날짜 · 수량 · 가격 · 미국 종목 환율) → 내 덱 → 기록 내보내기 → 파일 = 저장된 기록 (주소는 늦게 지움)", safari)
+    ctx.close()
+    srv.shutdown()
+
+    home = {**dev, "user_agent": standalone_ua(dev["user_agent"])}
+    srv, ctx, page, _ = R.open(site, width, init=STANDALONE_INIT, device=home)
+    imp = page.locator('[data-ui-v2="import-file"]')
+
+    def home_screen():
+        assert "path" in keep, "앞 단계에서 파일을 받지 못했어요"
+        ua = page.evaluate("navigator.userAgent")
+        assert "iPhone" in ua and "Safari/" not in ua, ua
+        assert page.evaluate("navigator.standalone === true && matchMedia('(display-mode: standalone)').matches"), "홈 화면 앱 흉내가 안 돼요"
+        wait_ready(page)
+        assert page.evaluate(STORED) is None, "새 문맥인데 기록이 있어요"
+        see(page, C["build"]["s0"]["title"])                          # 빈 저장소: 덱 짜기부터
+        open_deck_tab(page)
+        assert page.locator("[data-deck-id]").count() == 0
+        others = page.evaluate(OTHER_KEYS)
+        imp.set_input_files(keep["path"])
+        page.locator("[data-deck-id]").first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="import-bad"]').count() == 0
+        assert page.evaluate(STORED) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
+        assert page.evaluate(OTHER_KEYS) == others, "기록 말고 다른 저장 값이 바뀌었어요"
+        page.locator("[data-holding][data-status]").first.wait_for(state="visible")
+        page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
+        assert main_text(page) == keep["deck"], "내 덱 화면이 사파리에서 본 것과 달라요"
+        open_today_tab(page)
+        assert main_text(page) == keep["today"], "오늘 화면이 사파리에서 본 것과 달라요"
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
+        assert main_text(page) == keep["today"] and page.evaluate(STORED) == keep["file"], "새로 고침 뒤에 기록이 달라요"
+        R.collect(page)
+    R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
+
+    def twice():
+        open_deck_tab(page)
+        imp.set_input_files(keep["path"])
+        page.wait_for_timeout(1000)                                   # 불러오기는 바로 끝나요 (바뀌는 게 없어야 해서 기다려서 봐요)
+        assert page.locator("[data-deck-id]").count() == 1 and page.evaluate(STORED) == keep["file"], "같은 파일을 두 번 불러 덱이 늘었어요"
+        assert page.locator('[data-ui-v2="import-bad"]').count() == 0
+    R.check(page, S, "같은 파일을 한 번 더 불러와도 덱이 늘지 않아요", twice)
+
+    def preview_file():
+        prev = os.path.join(tmp, "baepsae-preview-records.json")
+        with open(prev, "w", encoding="utf-8") as fh:
+            json.dump({"v": 1, "preview": True, "decks": keep["file"]["decks"]}, fh, ensure_ascii=False)   # store.js exportText(…, true) 모양
+        imp.set_input_files(prev)
+        box = page.locator('[data-ui-v2="import-bad"]')
+        box.wait_for(state="visible")
+        assert box.get_attribute("data-why") == "preview" and box.inner_text() == C["store"]["otherKind"], box.inner_text()
+        assert page.locator("[data-deck-id]").count() == 1 and page.evaluate(STORED) == keep["file"], "막힌 파일이 기록을 바꿨어요"
+        R.collect(page)
+    R.check(page, S, f"미리 보기에서 만든 기록 파일 → '{C['store']['otherKind']}' (기록은 그대로)", preview_file)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -1581,6 +1778,11 @@ def main():
                 except Exception as e:
                     R.results.append((f"[{width}] 장면 실행", False, str(e).splitlines()[0][:200]))
                     print(f"  FAIL  [{width}] 장면 실행: {e}", flush=True)
+        try:                                                     # 아이폰 13 화면(390×664) 하나로만
+            scene_iphone_records(R, files, p.devices["iPhone 13"])
+        except Exception as e:
+            R.results.append(("[아이폰] 장면 실행", False, str(e).splitlines()[0][:200]))
+            print(f"  FAIL  [아이폰] 장면 실행: {e}", flush=True)
         browser.close()
 
     ok = Matcher([v for _, v in copy_strings()[1] if isinstance(v, str)], loose_slots=True)
