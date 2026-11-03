@@ -31,14 +31,18 @@ watches the next run, checks the live site, reverts at once if something is wron
 **Status.** Not launched. Shared with a handful of friends. The link is on Jack's CV, and an English demo mode exists
 for job interviews outside Korea. Real usage numbers are too small to drive decisions yet.
 
-**Brand** (Jack, 2026-11-03; live since v19.0a, PR #18). Name 뱁새 (the vinous-throated parrotbill, from the proverb
-뱁새가 황새 따라가다 가랑이 찢어진다). Descriptor "내 기준으로 만드는 포트폴리오"; catchphrase "철새처럼 옮겨 다니지 않는
-투자", which replaced "황새 말고, 내 걸음으로" everywhere. The maker's credit lives on the 소개 page; footers show only the
+**Brand** (Jack, 2026-11-03). Live since v19.0a (PR #18): name 뱁새 (the vinous-throated parrotbill, from the proverb
+뱁새가 황새 따라가다 가랑이 찢어진다); descriptor "내 기준으로 만드는 포트폴리오"; catchphrase "철새처럼 옮겨 다니지 않는
+투자", which replaced "황새 말고, 내 걸음으로" everywhere; the maker's credit lives on the 소개 page and footers show only the
 disclaimer and a 소개 link. Mascot 뱁이 (Jack's own art; where it may appear: CLAUDE.md — the old app keeps its existing
-뱁이 pictures until each tool moves to 2.0). Palette ink `#1C2B45`, cream background `#FAF8F5`; apricot `#C97757` marks
-data only (target-weight line, rank numbers, factor dots, "my portfolio" in charts) — not alerts, buttons, icons or
-selection; alerts use the watch (amber) and broken (red) colours. Icons: Phosphor duotone in navy from v19.0b
-(vendored, MIT); before that, and in the old app, the custom stroke icons in `src/icons.jsx`. **Zero emoji anywhere**, always.
+뱁이 pictures until each tool moves to 2.0). Colours: ink `#1C2B45`; page background `#F5F3EF` in 2.0 (`src/ui/tokens.js`)
+and `#FAF8F5` in the old app (`src/tokens.js`). Status colours are `watch` (amber `#8A5A00` on `#FFF3D6`) and `broken`
+(white on navy) — never red or blue, which mean price direction in Korea (v18.1). **v19.0b targets, not live yet:**
+apricot `#C97757` marks data only (target-weight line, rank numbers, factor dots, "my portfolio" in charts) — not alerts,
+buttons, icons, selection or the focus ring (today 2.0 still uses apricot on the alert hero and the focus outline);
+selection states use `#F2F0EB` with a 3 px navy edge; icons become Phosphor duotone in navy with a slate fill (vendored,
+MIT). Until then 2.0 uses the v18.1 icon set in `src/ui/icons.jsx`, and the old app keeps its own stroke icons in
+`src/icons.jsx`. **Zero emoji anywhere**, always.
 
 **Repo/URL history.** GitHub username was renamed `pewpewmfer` → `jacksungjinlee` in v15.2. All URLs in code were
 migrated. The old Pages URL is dead.
@@ -101,17 +105,24 @@ allow web pages to install themselves. KakaoTalk's in-app browser is told to ope
 
 ## 3. Data pipeline (`fetch_data.py`)
 
-Scheduled runs (v17.5.3, PR #19, 2026-11-04): GitHub started the old single 06:30 KST run 2¼–5½ hours late all October
-(never before 08:44 KST; see § 5 for what that once caused). Now the run is triggered six times — 03:47, 05:13, 06:43,
-08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat) — and a first job (`already_published.py`) decides: a run that starts
-before the US close is final (New York 16:30 = 06:30 KST in winter, 05:30 in summer) waits for it (only on US trading
-days, at most 170 min) and then runs; a run that finds the live data already holds the last KRX trading day and the last
-final US trading day (Naver/Yahoo trading calendars, the gate's own sources) ends before any download or DART call. If
-the calendars can't be read it falls back to weekdays, loudly. Runs share one queue (`concurrency`), so two never publish
-at once. A scheduled run never starts DART from an empty, unreadable or old-format cache (it stops loudly; the day's one
-full-DART run is started by hand). Don't start manual live runs or merge pipeline PRs between ~03:40 and 08:30 KST (a
-newer trigger cancels a queued manual run). A daily scheduled check at 09:13 KST (Tue–Sat, read-only) confirms the live
-site has the last trading day and tells Jack if not. Python 3.11. Secrets
+Scheduled runs (v17.5.3, PR #19, merged 2026-11-03 22:24 KST; first morning 2026-11-04): GitHub started the old single
+06:30 KST run 2¼–5½ hours late all October (never before 08:44 KST; see § 5 for what late runs once caused). Now the run
+is triggered six times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat) — and a first job
+(`already_published.py`, scheduled runs only; manual runs skip it) decides:
+- a run that starts in the hours before a US trading day's close is final (New York 12:00–16:30; the close is final at
+  16:30 New York = 06:30 KST in winter, 05:30 in summer) waits until 16:33 New York and then re-checks. If the close is
+  more than 170 minutes away it doesn't wait at all: it ends as skipped and a later trigger does the work. No waiting on
+  US holidays;
+- a run ends before any download or DART call when main's `data.json` already holds the last KRX trading day before
+  today and the last US trading day whose close is final (trading calendars from the gate's own sources: Naver KOSPI and
+  Yahoo ^KS11, Yahoo ^GSPC). If the calendars can't be read it falls back to weekdays and says so loudly; if only one
+  KOSPI source answers it never skips. (v17.6 must point this check at the `data` branch when the data moves there.)
+Runs share one queue (`concurrency`), so two never publish at once. A scheduled run never starts DART from an empty,
+unreadable or old-format cache: it stops loudly, and the day's one full-DART run is started by hand. Before starting a
+manual live run, check the run list: don't start one while a scheduled run is in progress, waiting or queued (a newer
+trigger cancels a queued manual run), and confirm it actually started. Don't merge pipeline PRs while a scheduled run is
+waiting. A daily scheduled check at 09:13 KST (Tue–Sat) confirms the live site has the last trading day and tells Jack
+if not; it has no GitHub write access, so if a run is needed it tells Jack to ask Claude. Python 3.11. Secrets
 `DART_API_KEY` (OpenDART, ~20,000 calls/day quota) and `ECOS_API_KEY` (한국은행 ECOS). The workflow commits the four
 JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avoids a race with manual uploads).
 
