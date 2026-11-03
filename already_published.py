@@ -71,7 +71,7 @@ def _naver_kospi_dates(get=_get):
 
 def calendars(get=_get, sleep=time.sleep):
     """({"kr": [한국 거래일], "us": [미국 거래일]}, 출처 설명). 한쪽이라도 못 받으면 그 시장은 None (평일 규칙으로)."""
-    out, notes = {"kr": None, "us": None, "usToday": None}, []
+    out, notes = {"kr": None, "us": None, "usToday": None, "krSources": 0}, []
     kr = set()
     for name, fn in (("네이버 KOSPI", lambda: _naver_kospi_dates(get)), ("야후 ^KS11", lambda: _yahoo_dates("%5EKS11", KST, get))):
         for i in range(3):
@@ -80,6 +80,7 @@ def calendars(get=_get, sleep=time.sleep):
                 if len(ds) >= 10:
                     kr |= set(ds)
                     notes.append(name)
+                    out["krSources"] += 1
                     break
             except Exception:
                 pass
@@ -142,6 +143,8 @@ def decide(data, now, cal):
     px, usd = data.get("pxDate"), data.get("usPxDate")
     if not (kr_want and us_want):
         return False, f"기대 날짜를 정하지 못했어요 ({basis}) → 실행해요"
+    if cal.get("kr") and cal.get("krSources", 2) < 2:
+        return False, f"한국 달력을 한 출처에서만 받았어요 (하루 늦을 수 있어요) → 건너뛰지 않고 실행해요 · 기대 한국 {kr_want} · 미국 {us_want}"
     if px == kr_want.isoformat() and usd == us_want.isoformat():
         return True, (f"이미 다 들어와 있어요: 한국 {px} · 미국 {usd} = 기대하는 마지막 거래일 ({basis}) "
                       "→ 데이터 수집 전에 끝내요")

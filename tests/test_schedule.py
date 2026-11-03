@@ -117,6 +117,13 @@ def test_unreadable_data_always_runs(d):
     assert A.decide(d, kst(2026, 11, 4, 8, 17), CAL)[0] is False
 
 
+def test_a_single_korean_calendar_source_never_allows_a_skip():
+    # 네이버·야후 중 하나만 답하면 그 출처가 하루 늦을 수 있어요 → 다 들어온 것처럼 보여도 실행해요 (안전한 쪽)
+    skip, why = A.decide(data("2026-11-03", "2026-11-03"), kst(2026, 11, 4, 8, 17), {**CAL, "krSources": 1})
+    assert skip is False and "한 출처" in why
+    assert A.decide(data("2026-11-03", "2026-11-03"), kst(2026, 11, 4, 8, 17), {**CAL, "krSources": 2})[0] is True
+
+
 def test_without_calendars_the_weekday_rule_never_skips_a_late_day():
     # 달력을 못 받으면 평일 규칙: 추수감사절 다음 날은 미국 목요일을 기대해서 다시 실행해요 (건너뛰지는 않아요)
     skip, why = A.decide(data("2026-11-26", "2026-11-25"), kst(2026, 11, 27, 8, 17), {"kr": None, "us": None})
@@ -196,8 +203,9 @@ def test_main_gives_up_when_the_wait_is_too_long(tmp_path, monkeypatch):
 
 
 def test_calendars_parse_naver_and_yahoo_and_survive_failures():
+    # 시각을 일부러 UTC 날짜가 달라지는 때로: ^KS11 08:00 KST(= 전날 23:00 UTC) · ^GSPC 21:00 뉴욕(= 다음 날 UTC)
     yahoo = lambda days, tz, reg=None: json.dumps({"chart": {"result": [{
-        "timestamp": [int(dt.datetime.combine(d, dt.time(10, 0), tzinfo=tz).timestamp()) for d in days],
+        "timestamp": [int(dt.datetime.combine(d, dt.time(8, 0) if tz is KST else dt.time(21, 0), tzinfo=tz).timestamp()) for d in days],
         "indicators": {"quote": [{"close": [1.0] * len(days)}]},
         "meta": {"currentTradingPeriod": {"regular": {"start": int(dt.datetime.combine(reg, dt.time(9, 30), tzinfo=tz).timestamp())}}}
         if reg else {}}]}})
@@ -212,13 +220,13 @@ def test_calendars_parse_naver_and_yahoo_and_survive_failures():
             return yahoo(kr[:-1], KST)                               # 야후가 하루 늦어도 네이버가 채워요
         return yahoo(us, A.NY, D(2026, 11, 3))
     cal, src = A.calendars(get, sleep=lambda s: None)
-    assert cal["kr"] == kr and cal["us"] == us and cal["usToday"] == D(2026, 11, 3)
+    assert cal["kr"] == kr and cal["us"] == us and cal["usToday"] == D(2026, 11, 3) and cal["krSources"] == 2
     assert src == "네이버 KOSPI + 야후 ^KS11 + 야후 ^GSPC"
 
     def broken(url):
         raise OSError("막힘")
     cal, src = A.calendars(broken, sleep=lambda s: None)
-    assert cal == {"kr": None, "us": None, "usToday": None} and src == "없음"
+    assert cal == {"kr": None, "us": None, "usToday": None, "krSources": 0} and src == "없음"
 
 
 def test_read_main_reads_origin_main(monkeypatch):
