@@ -234,8 +234,48 @@ def test_csat_day_as_previous_session_needs_1700_for_d1():
     files = {CSAT: "2026-10-29_1958", CSAT_PREV: "2026-10-28_1921"}
     for hm, want in (("1610", False), ("1659", False), ("1700", True)):
         ss, notes, final = F.kr_recent_sessions(CSAT_NEXT, *sources(files, {CSAT: hm, CSAT_PREV: "1921"}), n=5)
-        assert [d for d, _ in ss] == [CSAT, CSAT_PREV] and final is want, hm
+        # 최종본이 아닌 수능일 파일은 d1 만 비우는 게 아니라 가격 고정·거래대금에서도 빠져요 (장중 값이 종가 기록에 들지 않게)
+        assert [d for d, _ in ss] == ([CSAT, CSAT_PREV] if want else [CSAT_PREV]) and final is want, hm
         assert f"직전 거래일 {CSAT_NOTE}" in notes, hm
+
+
+def test_an_older_session_that_is_not_final_is_left_out_of_pinning_and_val20():
+    # 기준일 이틀 앞(수능일)의 파일이 장중 커밋으로 끝났으면 그날 값은 가격 고정·거래대금에 쓰지 않고 크게 알려요
+    nxt2 = dt.date(2026, 11, 23)                                          # 월요일 · 직전 거래일은 11-20(금)
+    d20 = dt.date(2026, 11, 20)
+    files = {d20: "2026-10-29_1958", CSAT: "2026-10-29_1958", CSAT_PREV: "2026-10-28_1921"}
+    ss, notes, final = F.kr_recent_sessions(nxt2, *sources(files, {d20: "1930", CSAT: "1610", CSAT_PREV: "1921"}), n=5)
+    assert [d for d, _ in ss] == [d20, CSAT_PREV] and final is True
+    assert any(n.startswith("!! 2026-11-19 파일의 마지막 커밋이 11-19 16:10 KST") and "가격 고정·거래대금" in n for n in notes), notes
+    ss, _, _ = F.kr_recent_sessions(nxt2, *sources(files, {d20: "1930", CSAT: "1700", CSAT_PREV: "1921"}), n=5)
+    assert [d for d, _ in ss] == [d20, CSAT, CSAT_PREV]
+
+
+def test_missing_special_sessions_table_stops_loudly(tmp_path):
+    with pytest.raises((FileNotFoundError, RuntimeError)):
+        F.load_krx_special_sessions(str(tmp_path / "nope.csv"))
+
+
+class _Resp:
+    def __init__(self, js, status=200):
+        self._js, self.status_code = js, status
+
+    def json(self):
+        return self._js
+
+
+def test_listing_commit_time_is_read_as_kst_for_that_file(monkeypatch):
+    # GitHub 의 커밋 시각은 UTC: 07:59Z = 16:59 KST (수능일엔 아직 최종본이 아님) · 08:00Z = 17:00 KST (최종본)
+    seen = []
+    for utc, kst_hm, final in (("2026-11-19T07:59:00Z", (16, 59), False), ("2026-11-19T08:00:00Z", (17, 0), True)):
+        def get(url, params=None, headers=None, timeout=None, utc=utc):
+            seen.append(params)
+            return _Resp([{"commit": {"committer": {"date": utc}}}])
+        monkeypatch.setattr(F.requests, "get", get)
+        ct = F._listing_commit_kst(CSAT)
+        assert ct.utcoffset() == dt.timedelta(hours=9) and (ct.hour, ct.minute) == kst_hm, (utc, ct)
+        assert (ct >= F.listing_final_cut(CSAT, F.load_krx_special_sessions())) is final, utc
+    assert all(p and "2026-11-19" in p["path"] for p in seen), seen        # 그 날짜 파일의 커밋 (저장소 전체의 마지막 커밋이 아니라)
 
 
 def test_explicit_table_drives_the_cut():

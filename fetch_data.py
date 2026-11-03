@@ -265,7 +265,7 @@ def write_json(path, obj):
 # FinanceData/fdr_krx_data_cache 는 같은 날짜 파일을 하루에 여러 번 덮어써요.
 #   ~05시 장 시작 전: 시가총액이 전부 비어 있음
 #   ~13시 장중: 값은 차 있지만 장중 가격
-#   16~23시 장 마감 후: 시가총액이 공식 종가로 확정 (Close 열은 시간외 가격이라 쓰지 않아요)
+#   마감 + 30분 뒤(보통 16~23시 · 수능일은 17시 뒤): 시가총액이 공식 종가로 확정 (Close 열은 시간외 가격이라 쓰지 않아요)
 # 그래서 오늘(KST) 이전 날짜 중, 시가총액이 90% 이상 차 있고 마지막 커밋이 그날 KRX 정규장 마감 + 30분
 # (보통 날 15:30 → 16:00 KST) 이후인 가장 최근 파일을 고릅니다. 주말 파일은 시가총액이 비어 있어 걸러져요.
 # v17.5: 18시 → 16시. 4월 이후 거래일 138일 중 29일은 마지막 커밋이 16:13~17:59 였고,
@@ -477,18 +477,25 @@ def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookbac
             continue
         if listing_cap_share(df) < LISTING_MIN_CAP_SHARE:
             continue
-        if not out:
+        # v17.5.4: 모든 날의 파일을 그날 마감 + 30분 기준으로 봐요 (예전에는 직전 거래일만). 최종본이 아닌 날의 값은 가격 고정
+        # (공식 종가로 맞추기)·거래대금 평균에 쓰지 않아요 — 수능일처럼 늦게 끝나는 날의 장중 값이 종가 기록에 들어가지 않게.
+        ct = commit_kst(d)
+        final = not (ct is not None and ct < listing_final_cut(d, special))
+        if prev_final is None:                      # 기준일 바로 앞의 거래일 (d1 의 전날)
             sp = special_note(d, special)
             if sp:
                 notes.append(f"직전 거래일 {sp}")
-            ct = commit_kst(d)
-            if ct is not None and ct < listing_final_cut(d, special):
-                prev_final = False
-                notes.append(f"!! 직전 거래일 {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 최종본이 아니라 d1 을 비워요")
-            else:
-                prev_final = True
-                if ct is None:
-                    notes.append(f"직전 거래일 {d}: 커밋 시각 확인 불가 · 더 뒤 날짜({px_date}) 최종본이 있어 끝난 날로 봐요")
+            prev_final = final
+            if not final:
+                notes.append(f"!! 직전 거래일 {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 최종본이 아니라 d1 을 비우고 "
+                             "그날 값은 가격 고정·거래대금에 쓰지 않아요")
+            elif ct is None:
+                notes.append(f"직전 거래일 {d}: 커밋 시각 확인 불가 · 더 뒤 날짜({px_date}) 최종본이 있어 끝난 날로 봐요")
+        elif not final:
+            notes.append(f"!! {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 그날 마감 + 30분 전이라 최종본이 아니에요 · "
+                         "그날 값은 가격 고정·거래대금에 쓰지 않아요")
+        if not final:
+            continue
         out.append((d, df))
     return out, notes, bool(prev_final)
 

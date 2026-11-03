@@ -961,3 +961,26 @@ def test_foreign_issuer_with_blanks_passes(extra):
                                    {"c_dps": 50.0}, {"c_dy": 1.2}, {"c_dps3": [50.0, None, None]}])
 def test_foreign_issuer_with_won_amounts_fails(extra):
     fails_on("해외 기업(9…) 원화 아닐 수 있는 금액 비움", lambda c: add_foreign(c, **extra))
+
+
+def test_missing_special_sessions_table_stops_loudly_in_the_gate(tmp_path):
+    with pytest.raises((FileNotFoundError, RuntimeError)):
+        V.load_special_sessions(str(tmp_path / "nope.csv"))
+
+
+def test_gate_reads_listing_commit_time_as_kst_for_that_file(monkeypatch):
+    # GitHub 의 커밋 시각은 UTC: 07:59Z = 16:59 KST (수능일엔 최종본이 아님) · 08:00Z = 17:00 KST (최종본)
+    class R:
+        def __init__(self, js):
+            self.status_code, self._js = 200, js
+
+        def json(self):
+            return self._js
+    seen = []
+    for utc, kst_hm, final in (("2026-11-19T07:59:00Z", (16, 59), False), ("2026-11-19T08:00:00Z", (17, 0), True)):
+        monkeypatch.setattr(V.requests, "get", lambda url, params=None, headers=None, timeout=None, utc=utc:
+                            seen.append(params) or R([{"commit": {"committer": {"date": utc}}}]))
+        ct = V.http_commit_kst(CSAT)
+        assert ct.utcoffset() == dt.timedelta(hours=9) and (ct.hour, ct.minute) == kst_hm, (utc, ct)
+        assert (ct >= V.final_cut(CSAT, V.load_special_sessions())) is final, utc
+    assert all(p and "2026-11-19" in p["path"] for p in seen), seen
