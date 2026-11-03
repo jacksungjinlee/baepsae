@@ -2,8 +2,14 @@ name: 시세 데이터 갱신
 
 on:
   schedule:
-    # UTC 21:30 = 한국시간 06:30. 실제로는 GitHub 사정으로 08~11시쯤 시작해요.
-    - cron: "30 21 * * 1-5"
+    # v17.5.3: GitHub 의 정해진 시각 실행은 몇 시간씩 늦거나 빠져요 (2026-10-27 ~ 11-03 시작 09:38 ~ 11:59 KST).
+    # 그래서 아침에 여러 번 걸어 두고, 먼저 발행한 실행 뒤의 것은 check 단계에서 끝나요 (already_published.py).
+    # 정각·30분은 GitHub 이 가장 붐벼서 피해요. 모두 미국 종가 확정(뉴욕 16:30 = 겨울 06:30 · 여름 05:30 KST) 뒤예요.
+    # UTC 월~금 = 한국 화~토 아침. 시각(KST): 06:41 · 07:23 · 08:07 · 08:49
+    - cron: "41 21 * * 1-5"
+    - cron: "23 22 * * 1-5"
+    - cron: "7 23 * * 1-5"
+    - cron: "49 23 * * 1-5"
   workflow_dispatch:        # 버튼으로 직접 실행할 수도 있습니다
     inputs:
       dry_run:
@@ -43,7 +49,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # v17.5.3: 정해진 시각 실행은 아침에 여러 번 걸려 있어요. 오늘 아침 데이터가 이미 발행됐으면 여기서 끝나고 update 는 건너뛰어요
+  # (DART·데이터 수집 전이라 DART 호출이 없어요). 수동 실행은 확인하지 않아요. 확인을 못 하면 '발행 안 됨'으로 보고 실행해요.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.already.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 오늘 아침 데이터가 이미 발행됐는지 (정해진 시각 실행만)
+        id: already
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "· 정해진 시각 실행이 아니에요 (${{ github.event_name }}) → 확인 없이 실행해요"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 이 실행이 기다리는 동안 다른 실행이 발행했을 수 있어서, 지금의 main 을 다시 받아요
+          git fetch --depth=1 origin main && git show origin/main:data.json > "$RUNNER_TEMP/main-data.json" \
+            || echo "!! main 의 data.json 을 받지 못했어요 → 발행 안 됨으로 보고 실행해요"
+          python3 already_published.py "$RUNNER_TEMP/main-data.json" \
+            || { echo "!! 확인 스크립트가 실패했어요 → 실행해요"; echo "skip=false" >> "$GITHUB_OUTPUT"; }
+
   update:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     # 고정: ubuntu-latest 는 GitHub 사정으로 바뀌어요(2026-10 에 이미 26.04). 바꿀 때는 dry_run 으로 확인한 뒤에.
     runs-on: ubuntu-24.04
     timeout-minutes: 300   # 안전망. 평소 목표는 45분 이하 (DART 캐시 덕분)
