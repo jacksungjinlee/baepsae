@@ -132,9 +132,11 @@ def run_width(pw, base, width, check, shots):
     if width == 390:
         rows = mockup()
         ok = make_matcher(rows)
+        # 큰 숫자(v19.0b [data-ui="amount"])는 한 덩어리 글로 모아요 (단위 span 으로 나뉘어도 "1,073만원" 그대로 목업과 비교)
         texts = page.evaluate("""() => { const out = []; const it = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            while (it.nextNode()) { const n = it.currentNode; if (n.parentElement.closest('script, style, noscript')) continue;
+            while (it.nextNode()) { const n = it.currentNode; if (n.parentElement.closest('script, style, noscript, [data-ui="amount"]')) continue;
               const t = n.textContent; if (t.trim()) out.push(t); }
+            for (const a of document.querySelectorAll('[data-ui="amount"]')) if (a.textContent.trim()) out.push(a.textContent);
             for (const e of document.querySelectorAll('[aria-label],[alt],[aria-placeholder]'))
               for (const a of ['aria-label','alt','aria-placeholder']) { const v = e.getAttribute(a); if (v) out.push(v); }
             return out; }""")

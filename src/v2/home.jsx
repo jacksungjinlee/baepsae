@@ -1,11 +1,13 @@
 // 내 덱 (v18.3 A+B, the Part C daily check, and the Part E tracking sheet). It shows the user's own purchase records
 // and, when today's data is fresh, each held stock's rule check (daily.jsx), the deck's value · 원금 · return against
 // KOSPI, weight bars with target marks and 추가로 넣을 돈 (tracking.jsx). No example data. 오늘 is in today.jsx.
+// v19.0b: with no saved deck (and data that did not fail), an empty-state card shows the 뱁이 in its nest
+// (baepi-15-portfolio) and the way to 덱 짜기 — the same button as 오늘's empty card. That card has no numbers.
 import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, tx } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, Mascot, IMG, tx } from "./ui.jsx";
 import { parseImport, importProblem, mergeStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
@@ -20,7 +22,7 @@ function avgCost(purchases, t) {
 
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 
-export function MyDeck({ load, store, setStoreData, pad }) {
+export function MyDeck({ load, store, setStoreData, pad, go }) {
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
   const decks = store.data.decks;
@@ -60,6 +62,12 @@ export function MyDeck({ load, store, setStoreData, pad }) {
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail />}
       <OldAppNote />
+      {decks.length === 0 && ev.why !== "fail" && ev.why !== "undated" && (
+        <Card data-ui-v2="deck-empty" style={{ textAlign: "center" }}>
+          <Mascot src={IMG.empty} alt={C.deck.emptyAlt} size={112} style={{ display: "inline-block" }} />
+          {go && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></div>}
+        </Card>
+      )}
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (
         <Note tone="watch" data-ui-v2="deck-stale">{fill(C.today.stale, { n: ev.days })}</Note>
       )}

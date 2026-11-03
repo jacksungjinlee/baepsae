@@ -3,7 +3,7 @@
 // 아직 기존 화면은 이 컴포넌트를 쓰지 않아요 (Part 4 게이트).
 // 간격은 4px 격자(SPACE), 누르는 곳은 44px 이상(TOUCH), 숫자는 모두 고정폭(tabular-nums).
 import React, { useState, useEffect, useRef } from "react";
-import { COLOR, STATUS, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "./tokens.js";
+import { COLOR, STATUS, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, SELECTED_ROW } from "./tokens.js";
 import { Icon } from "./icons.jsx";
 
 // 모든 글자에 고정폭 숫자를 켜요 (숫자가 없는 글에는 영향 없음)
@@ -26,6 +26,20 @@ export const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (
 const priceColor = (v, onPage) => (v > 0 ? (onPage ? COLOR.upOnPage : COLOR.up) : v < 0 ? COLOR.down : COLOR.text2);
 const toneColor = (tone, onPage) => (tone === "up" ? (onPage ? COLOR.upOnPage : COLOR.up) : tone === "down" ? COLOR.down : COLOR.ink);
 
+// 큰 숫자의 단위(만원 · 원 · 약 …): 숫자보다 작고(0.6em) 가볍게(700). 글자 내용은 그대로라 읽는 순서·복사는 같아요.
+// 한국어 글자 덩어리만 작게 해요 ("+8.0%" · "$12.34" 는 그대로).
+export function Amount({ text }) {
+  const parts = String(text).split(/([\uAC00-\uD7A3]+)/);          // 한글 음절 덩어리 (코드에 한국어를 두지 않아요)
+  return (
+    <span data-ui="amount">
+      {parts.map((p, i) => (i % 2 ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}
+    </span>
+  );
+}
+
+// 상태 칩 아이콘의 색 (ICON_TONE 네 가지 중에서): 괜찮아요 = ok, 남색 바탕(규칙 깨짐) = onNavy, 나머지 = on
+const CHIP_ICON_TONE = { ok: "ok", watch: "on", broken: "onNavy", neutral: "on" };
+
 // ── 상태 칩: 괜찮아요 · 지켜봐요 · 규칙 깨짐 · 큰 움직임/예시/태그 ──
 // 긴 칩은 좁은 화면에서 줄을 바꿔요 (옆 칸을 덮지 않게)
 export function StatusChip({ tone = "neutral", children, icon }) {
@@ -34,23 +48,45 @@ export function StatusChip({ tone = "neutral", children, icon }) {
     <span data-ui="status-chip" data-tone={tone} style={T(SIZE.xxs, WEIGHT.bold, c.fg, {
       display: "inline-flex", alignItems: "center", gap: SPACE(1), background: c.bg, borderRadius: RADIUS.sm,
       padding: `${SPACE(1)}px ${SPACE(2)}px`, maxWidth: "100%", wordBreak: "keep-all", lineHeight: 1.35 })}>
-      {icon && <Icon name={icon} size={12} color={c.fg} />}<span>{children}</span>
+      {icon && <Icon name={icon} size={12} tone={CHIP_ICON_TONE[tone] || "on"} />}<span>{children}</span>
     </span>
   );
 }
 
-// ── 히어로 띠: calm(할 일 없음) · alert(확인할 것). 뱁이 그림 자리 포함 ──
-export function HeroBand({ tone = "calm", eyebrow, title, body, image, imageAlt, inset, actions }) {
-  const bg = tone === "alert" ? COLOR.heroAlert : COLOR.heroCalm;
+// ── 상태 아이콘: 판정 띠 오른쪽의 60px 흰 동그라미 (v19.0b: 뱁이 그림 대신) ──
+// calm(할 일 없음) = check-circle 초록(ok), alert(확인할 일) = flag 남색(on). 아이콘 색은 ICON_TONE 표 안에서만 골라요.
+const STATE_ICONS = { calm: { name: "check-circle", tone: "ok", size: 34 }, alert: { name: "flag", tone: "on", size: 32 } };
+export function StateIcon({ state }) {
+  const s = STATE_ICONS[state];
+  if (!s) return null;
   return (
-    <section data-ui="hero-band" data-tone={tone} style={{ background: bg, borderRadius: RADIUS.lg, padding: SPACE(5), position: "relative" }}>
+    <span data-ui="state-icon" data-state={state} style={{ width: SPACE(15), height: SPACE(15), borderRadius: 999, background: COLOR.surface, flexShrink: 0,
+      display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Icon name={s.name} size={s.size} tone={s.tone} />
+    </span>
+  );
+}
+
+// ── 판정 띠: calm(할 일 없음) · alert(확인할 일) · stale(점검하지 않은 날: 판정이 아니라 아이콘 없음) ──
+// v19.0b (Jack, 2026-11-03): 살구색은 데이터 표시에만 써요. 확인할 일 · 멈춤 띠는 지켜봐요 바탕(watchBg), 맨 위 알약은
+// 할 일 없음 = 초록(ok) · 확인할 일 = 지켜봐요(watch) · 규칙 깨짐이 있으면(level "broken") 규칙 깨짐(broken, 남색)이에요.
+// 뱁이 그림은 판정 옆에 놓지 않아요 (CLAUDE.md): 그림 자리 대신 StateIcon.
+const HERO_BG = { calm: COLOR.heroCalm, alert: COLOR.watchBg, stale: COLOR.watchBg };
+const PILL = { calm: { bg: COLOR.ok, fg: COLOR.surface }, watch: { bg: COLOR.watch, fg: COLOR.surface }, broken: { bg: COLOR.brokenBg, fg: COLOR.broken } };
+export function HeroBand({ tone = "calm", level = "watch", eyebrow, title, body, inset, actions }) {
+  const bg = HERO_BG[tone] || HERO_BG.calm;
+  const pill = tone === "calm" ? PILL.calm : PILL[level] || PILL.watch;
+  const state = tone === "calm" || tone === "alert" ? tone : null;
+  return (
+    <section data-ui="hero-band" data-tone={tone} data-level={tone === "calm" ? undefined : level} style={{ background: bg, borderRadius: RADIUS.lg, padding: SPACE(5), position: "relative" }}>
       <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {eyebrow && <div style={T(SIZE.xs, WEIGHT.bold, tone === "alert" ? COLOR.apricotText : COLOR.ok)}>{eyebrow}</div>}
-          <h2 style={T(SIZE.h2, WEIGHT.heavy, COLOR.ink, { margin: `${SPACE(1)}px 0 0`, lineHeight: 1.35, whiteSpace: "pre-line" })}>{title}</h2>
+          {eyebrow && <span data-ui-part="pill" style={T(SIZE.xs, WEIGHT.bold, pill.fg, { display: "inline-block", background: pill.bg, borderRadius: RADIUS.sm - SPACE(1),
+            padding: `${SPACE(1)}px ${SPACE(2)}px`, lineHeight: 1.35, marginBottom: SPACE(2), wordBreak: "keep-all" })}>{eyebrow}</span>}
+          <h2 style={T(SIZE.h2, WEIGHT.heavy, COLOR.ink, { margin: 0, lineHeight: 1.35, whiteSpace: "pre-line" })}>{title}</h2>
           {body && <p style={T(SIZE.sm, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px 0 0`, whiteSpace: "pre-line" })}>{body}</p>}
         </div>
-        {image && <img src={image} alt={imageAlt || ""} width={72} height={72} style={{ objectFit: "contain", flexShrink: 0 }} />}
+        {state && <StateIcon state={state} />}
       </div>
       {inset && <div style={{ marginTop: SPACE(4), background: COLOR.surface, borderRadius: RADIUS.md, padding: SPACE(3) }}>{inset}</div>}
       {actions && <div style={{ marginTop: SPACE(4), display: "flex", flexDirection: "column", gap: SPACE(2) }}>{actions}</div>}
@@ -81,7 +117,7 @@ export function StatStrip({ items, note, onPage = false }) {
         {items.map((it) => (
           <div key={it.label}>
             <div style={T(SIZE.xxs, WEIGHT.semi, small)}>{it.label}</div>
-            <div style={T(SIZE.h3, WEIGHT.heavy, toneColor(it.tone, onPage))}>{it.value}</div>
+            <div style={T(SIZE.h3, WEIGHT.heavy, toneColor(it.tone, onPage))}><Amount text={it.value} /></div>
             {it.sub && <div style={T(SIZE.xxs, WEIGHT.regular, small)}>{it.sub}</div>}
           </div>
         ))}
@@ -92,14 +128,16 @@ export function StatStrip({ items, note, onPage = false }) {
 }
 
 // ── 목록 줄: 이름 + 오늘 % · 예외일 때만 칩 ── (흰 섹션 안에 놓아요)
-export function ListRow({ title, sub, value, change, chip, onClick }) {
+// selected: 고른 줄 (v19.0b) — 따뜻한 회색 바탕 + 왼쪽 3px 남색 선. 글자 자리는 그대로예요 (좌우로 12px 넓혀 그려요).
+export function ListRow({ title, sub, value, change, chip, onClick, selected = false }) {
   const act = onClick ? {
     role: "button", tabIndex: 0, onClick,
     onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(e); } },
   } : {};
   return (
-    <div data-ui="list-row" {...act}
-      style={{ ...(onClick ? tapReset : { fontFamily: FONT }), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
+    <div data-ui="list-row" data-selected={selected ? "1" : undefined} aria-current={selected ? "true" : undefined} {...act}
+      style={{ ...(onClick ? tapReset : { fontFamily: FONT }), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}`,
+        ...(selected ? { ...SELECTED_ROW, padding: `${SPACE(2)}px ${SPACE(3)}px`, margin: `0 -${SPACE(3)}px` } : {}) }}>
       <div data-ui-part="main" style={{ flex: 1, minWidth: 0 }}>
         <div style={T(SIZE.body, WEIGHT.bold, COLOR.ink, { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{title}</div>
         {(sub || chip) && <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), columnGap: SPACE(2), alignItems: "center", marginTop: SPACE(1) }}>
@@ -115,6 +153,7 @@ export function ListRow({ title, sub, value, change, chip, onClick }) {
 }
 
 // ── 고르기 버튼 묶음 (라디오: 화살표 키로 옮겨요) ──
+// v19.0b: 고른 칸은 따뜻한 회색(select) 바탕 + 2px 남색 테두리, 굵은 남색 글자. 살구색은 쓰지 않아요.
 export function Segmented({ options, value, onChange, label }) {
   const refs = useRef([]);
   const idx = Math.max(0, options.findIndex((o) => o.value === value));
@@ -128,14 +167,14 @@ export function Segmented({ options, value, onChange, label }) {
   };
   return (
     <div data-ui="segmented" role="radiogroup" aria-label={label} onKeyDown={move}
-      style={{ display: "grid", gridTemplateColumns: `repeat(${options.length}, 1fr)`, background: COLOR.page, borderRadius: RADIUS.sm, padding: SPACE(1), gap: SPACE(1) }}>
+      style={{ display: "grid", gridTemplateColumns: `repeat(${options.length}, 1fr)`, background: COLOR.surface, boxShadow: `inset 0 0 0 1px ${COLOR.border}`, borderRadius: RADIUS.sm, padding: SPACE(1), gap: SPACE(1) }}>
       {options.map((o, i) => {
         const on = i === idx;
         return (
           <button key={o.value} ref={(el) => { refs.current[i] = el; }} type="button" role="radio" aria-checked={on} tabIndex={on ? 0 : -1}
-            onClick={() => onChange && onChange(o.value)}
-            style={{ ...tapReset, border: "none", minHeight: TOUCH, padding: `0 ${SPACE(1)}px`, borderRadius: RADIUS.sm - SPACE(1), background: on ? COLOR.surface : "transparent",
-              boxShadow: on ? "0 1px 2px rgba(28,43,69,0.12)" : "none", ...T(SIZE.xs, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.ink : COLOR.text2, { wordBreak: "keep-all", lineHeight: 1.3 }) }}>
+            onClick={() => onChange && onChange(o.value)} data-selected={on ? "1" : undefined}
+            style={{ ...tapReset, border: "none", minHeight: TOUCH, padding: `0 ${SPACE(1)}px`, borderRadius: RADIUS.sm - SPACE(1), background: "transparent",
+              boxShadow: on ? `inset 0 0 0 2px ${COLOR.ink}` : "none", ...(on ? SELECTED : {}), ...T(SIZE.xs, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.ink : COLOR.text2, { wordBreak: "keep-all", lineHeight: 1.3 }) }}>
             {o.label}
           </button>
         );
@@ -153,9 +192,9 @@ export function Stepper({ value, min = -Infinity, max = Infinity, onChange, labe
     <div data-ui="stepper" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(3) }}>
       <span style={T(SIZE.body, WEIGHT.semi, COLOR.ink)}>{label}</span>
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
-        <button type="button" aria-label={decLabel} disabled={value <= min} onClick={() => set(Math.max(min, value - 1))} style={btn(value <= min)}><Icon name="minus" size={20} color={COLOR.ink} /></button>
+        <button type="button" aria-label={decLabel} disabled={value <= min} onClick={() => set(Math.max(min, value - 1))} style={btn(value <= min)}><Icon name="minus" size={20} tone="on" /></button>
         <span data-ui="stepper-value" aria-live="polite" style={T(SIZE.h3, WEIGHT.heavy, COLOR.ink, { minWidth: SPACE(12), textAlign: "center" })}>{fill(format, { count: value })}</span>
-        <button type="button" aria-label={incLabel} disabled={value >= max} onClick={() => set(Math.min(max, value + 1))} style={btn(value >= max)}><Icon name="plus" size={20} color={COLOR.ink} /></button>
+        <button type="button" aria-label={incLabel} disabled={value >= max} onClick={() => set(Math.min(max, value + 1))} style={btn(value >= max)}><Icon name="plus" size={20} tone="on" /></button>
       </div>
     </div>
   );
@@ -258,7 +297,7 @@ export function BottomSheet({ open, title, onClose, closeLabel, children, inline
         <div style={{ width: SPACE(10), height: SPACE(1), borderRadius: 2, background: COLOR.border, margin: "0 auto" }} />
         <div style={{ display: "flex", alignItems: "center", marginTop: SPACE(2) }}>
           <h3 style={T(SIZE.h3, WEIGHT.heavy, COLOR.ink, { margin: 0, flex: 1 })}>{title}</h3>
-          <button type="button" aria-label={closeLabel} onClick={onClose} style={{ ...tapReset, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="close" color={COLOR.text2} /></button>
+          <button type="button" aria-label={closeLabel} onClick={onClose} style={{ ...tapReset, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="close" tone="off" /></button>
         </div>
       </div>
       <div style={{ marginTop: SPACE(2) }}>{children}</div>
@@ -285,7 +324,7 @@ export function Collapsible({ title, sub, defaultOpen = false, children }) {
           <span style={T(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block" })}>{title}</span>
           {sub && <span style={T(SIZE.xxs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
         </span>
-        <Icon name="chevronDown" size={20} color={COLOR.text2} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+        <Icon name="chevronDown" size={20} tone="off" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
       </button>
       {open && <div style={{ paddingBottom: SPACE(3) }}>{children}</div>}
     </div>
@@ -293,6 +332,7 @@ export function Collapsible({ title, sub, defaultOpen = false, children }) {
 }
 
 // ── 아래 탭: 오늘 · 내 덱 · 덱 짜기 · 찾기 ──
+// v19.0b: 고른 탭은 아이콘 뒤에 따뜻한 회색 알약(select) + 남색 아이콘(on), 나머지는 회색 아이콘(off). 살구색은 쓰지 않아요.
 export function BottomTabBar({ tabs, value, onChange, label, fixed = false }) {
   return (
     <nav data-ui="bottom-tab-bar" aria-label={label} style={{ position: fixed ? "fixed" : "relative", left: 0, right: 0, bottom: 0, background: COLOR.surface,
@@ -301,8 +341,9 @@ export function BottomTabBar({ tabs, value, onChange, label, fixed = false }) {
         const on = t.id === value;
         return (
           <button key={t.id} type="button" aria-current={on ? "page" : undefined} aria-label={t.aria || t.label} disabled={t.disabled} onClick={() => onChange && onChange(t.id)}
-            style={{ ...tapReset, border: "none", background: "none", minHeight: TOUCH + SPACE(3), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: SPACE(1), opacity: t.disabled ? 0.45 : 1, cursor: t.disabled ? "default" : "pointer" }}>
-            <Icon name={t.icon} size={22} color={on ? COLOR.ink : COLOR.text3} />
+            style={{ ...tapReset, border: "none", background: "none", minHeight: TOUCH + SPACE(3), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0, opacity: t.disabled ? 0.45 : 1, cursor: t.disabled ? "default" : "pointer" }}>
+            <span data-ui-part="tab-pill" data-selected={on ? "1" : undefined} style={{ display: "flex", borderRadius: RADIUS.sm, padding: `${SPACE(1)}px ${SPACE(3)}px`,
+              background: on ? SELECTED.background : "transparent" }}><Icon name={t.icon} size={22} tone={on ? "on" : "off"} /></span>
             <span style={T(SIZE.xxs, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.ink : COLOR.text3)}>{t.label}</span>
           </button>
         );
@@ -362,11 +403,11 @@ export function WeightBar({ current, target, max, label, status }) {
 
 // ── 규칙 한 줄: 확인 아이콘 + "지금 22% · 30% 넘으면 지켜봐요" ──
 export function RuleRow({ name, now, limit, state = "ok", stateLabel }) {
-  const ic = state === "ok" ? { name: "check", fg: COLOR.ok, bg: COLOR.okBg } : state === "watch" ? { name: "alert", fg: COLOR.watch, bg: COLOR.watchBg } : { name: "close", fg: COLOR.broken, bg: COLOR.brokenBg };
+  const ic = state === "ok" ? { name: "check", tone: "ok", bg: COLOR.okBg } : state === "watch" ? { name: "alert", tone: "on", bg: COLOR.watchBg } : { name: "close", tone: "onNavy", bg: COLOR.brokenBg };
   return (
     <div data-ui="rule-row" data-state={state} style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
       <span style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: ic.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Icon name={ic.name} size={16} color={ic.fg} />
+        <Icon name={ic.name} size={16} tone={ic.tone} />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={T(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{name}</div>

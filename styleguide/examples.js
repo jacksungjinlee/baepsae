@@ -14,19 +14,23 @@ export const EX = {
   typeBody: "업종 전체가 빠졌어요. 규칙은 그대로예요.",    // 6
   typeNumber: "1,073만원",                                // 45
   close: "닫기",                                          // 558
+  // v19.0b: 뱁이 그림 (Jack 의 그림을 2배 크기로 줄인 것, tools/resize_assets.py). 판정 띠에는 그림 대신 상태 아이콘이에요.
+  // alt 문구는 Jack 의 승인을 기다려서 이 페이지에서도 alt="" 예요 (docs/tasks/v18.3-new-strings-pending.md).
+  mascot: {
+    mark: "baepi-mark.webp",
+    places: [["baepi-16-build.webp", 92], ["baepi-15-portfolio.webp", 112], ["baepi-20-error.webp", 120], ["baepi-21-wip.webp", 64]],
+  },
 
   hero: {
     quiet: {
       eyebrow: "오늘은 할 일 없어요",                        // 36
       title: "규칙이 깨진\n종목은 없어요",                   // 38
       body: "6종목 모두 내 규칙 그대로예요.\n새 공시도, 큰 움직임도 없어요.", // 40
-      image: "baepi-9.png", imageAlt: "잠든 뱁이",            // 43
     },
     bigMove: {
       eyebrow: "오늘은 할 일 없어요",                        // 36
       title: "규칙이 깨진\n종목은 없어요",                   // 38
       body: "6종목 모두 내 규칙 그대로예요.\n크게 움직인 종목이 1개 있어요.", // 39
-      image: "baepi-2.png", imageAlt: "돋보기를 든 뱁이",     // 42
       insetLine: "크게 움직인 종목 1개 · 뉴스 확인함",        // 5
       insetBody: "업종 전체가 빠졌어요. 규칙은 그대로예요.",  // 6
       insetLink: "자세히",                                   // 16
@@ -35,7 +39,6 @@ export const EX = {
       eyebrow: "오늘 확인할 것 1개",                         // 35
       title: "마루식품\n규칙이 깨졌어요",                     // 37
       body: "내 규칙대로라면 팔 차례예요. 판단은 내가 해요.", // 11
-      image: "baepi-4.png", imageAlt: "전구를 든 뱁이",       // 44
       insetLabel: "깨진 규칙 · 이러면 판다",                  // 8
       insetRule: "배당 삭감",                                // 9
       insetDetail: "주당 4,000원 → 3,200원 · 10월 30일 공시", // 10
@@ -46,7 +49,6 @@ export const EX = {
       eyebrow: "할 일 없음",                                 // 92
       title: "업종 전체가\n빠진 날이에요",                    // 93
       body: "내 규칙 4개는 모두 괜찮아요.",                   // 94
-      image: "baepi-1.png", imageAlt: "손을 흔드는 뱁이",      // 95
     },
   },
 
@@ -112,7 +114,6 @@ export const EX = {
     date: "산 날짜", qty: "수량 (주)", save: "기록하기",      // 559 560 561
     doneTitle: "기록했어요",                                  // 563
     doneBody: "내일부터 오늘 화면에서 이 6종목을 규칙대로 확인해 드려요. 기록은 이 휴대폰에만 남아요.", // 564
-    doneImage: "baepi-5.png", doneImageAlt: "기뻐하는 뱁이",   // 562
     doneLink: "오늘 화면 보기",                                // 565
   },
 

@@ -13,7 +13,7 @@ export const COLOR = {
   apricot: "#C97757",      // 강조 표시·마커만 (본문 글자에는 쓰지 않아요)
   apricotText: "#A9542F",  // 살구색 글자
   heroCalm: "#EDF4EF",     // 오늘 히어로: 할 일 없음
-  heroAlert: "#FBF1EA",    // 오늘 히어로: 확인할 것
+  heroAlert: "#FBF1EA",    // (v19.0b 부터 쓰지 않아요: 확인할 일 띠는 watchBg — 살구색은 데이터 표시에만)
   up: "#D6303F",           // 오름 (한국 관례) — 흰 바탕에서만
   down: "#2563EB",         // 내림 — 흰 바탕에서만
   upOnPage: "#B4232F",     // page 바탕 위 오름 숫자 (up 은 page 위 4.35:1 로 미달)
@@ -21,7 +21,20 @@ export const COLOR = {
   watch: "#8A5A00", watchBg: "#FFF3D6",        // 지켜봐요 · 경고
   broken: "#FFFFFF", brokenBg: "#1C2B45",      // 규칙 깨짐
   neutral: "#3D4B63", neutralBg: "#EEF0F4",    // 큰 움직임 · 예시 · 태그
+  select: "#F2F0EB",       // v19.0b: 고른 것(탭 알약 · 고른 줄 · 고른 칩) 과 아이콘 칩의 바탕. 고른 줄은 왼쪽에 3px 남색 선
 };
+
+// v19.0b (Jack, 2026-11-03): 아이콘은 Phosphor duotone 두 층(선 · 바탕)이고, 색은 이 표의 네 가지뿐이에요.
+// 살구색은 아이콘에 쓰지 않아요 (살구색은 목표 비중 선 · 순위 숫자 · 팩터 점 · 그래프 속 '내 포트폴리오' 같은 데이터 표시에만).
+export const ICON_TONE = {
+  on: { line: "#1C2B45", fill: "#CBD3DF" },       // 켜짐 · 기본
+  off: { line: "#6B7280", fill: "#E3E6EB" },      // 꺼짐 · 보조
+  ok: { line: "#1F7A4D", fill: "#CDEBD9" },       // 괜찮아요 · 할 일 없음
+  onNavy: { line: "#FFFFFF", fill: "#5A6B87" },   // 남색 바탕 위
+};
+export const ICON_CHIP = { bg: COLOR.select, radius: "30%" };   // 아이콘 칩: 크기의 30% 둥글기
+export const SELECTED = { background: COLOR.select };                 // 고른 칩 · 고른 카드 · 탭 알약
+export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 0 ${COLOR.ink}` };   // 고른 줄: 왼쪽 3px 남색 선
 
 // 상태 색은 빨강·파랑을 쓰지 않아요 (한국에서는 가격 방향을 뜻하니까요)
 export const STATUS = {
@@ -46,10 +59,12 @@ export const CONTRAST_PAIRS = [
   ["ok", "okBg"], ["watch", "watchBg"], ["broken", "brokenBg"], ["neutral", "neutralBg"],
   ["ink", "heroCalm"], ["ink", "heroAlert"], ["text2", "heroCalm"], ["text2", "heroAlert"], ["surface", "ink"],
   ["ok", "heroCalm"], ["apricotText", "heroAlert"],
+  // v19.0b: 판정 띠의 알약(할 일 없음 · 확인할 일 · 규칙 깨짐), 확인할 일 띠(watchBg) 위의 글, 고른 것(select) 위의 글
+  ["surface", "ok"], ["surface", "watch"], ["ink", "watchBg"], ["text2", "watchBg"], ["ink", "select"], ["text2", "select"],
 ];
 
 // 쓰지 않는 조합 — 4.5:1 미달이라 스타일 페이지에 "쓰지 않아요"로 보여 줘요
-export const AVOID_PAIRS = [["up", "page"], ["text3", "page"]];
+export const AVOID_PAIRS = [["up", "page"], ["text3", "page"], ["text3", "select"]];
 
 function lum(hex) {
   const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)

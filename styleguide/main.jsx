@@ -3,11 +3,11 @@
 // 페이지 안내 글은 영어로만 써요. 한국어는 모두 examples.js (= 목업 문구 CSV) 에서 와요.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, NUM, CONTRAST_PAIRS, AVOID_PAIRS, contrast } from "../src/ui/tokens.js";
-import { Icon, ICON_NAMES } from "../src/ui/icons.jsx";
+import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, NUM, CONTRAST_PAIRS, AVOID_PAIRS, ICON_TONE, contrast } from "../src/ui/tokens.js";
+import { Icon, IconChip, ICON_NAMES, ICON_TONES, ALIAS } from "../src/ui/icons.jsx";
 import {
   StatusChip, HeroBand, Button, StatStrip, ListRow, Segmented, Stepper, MoneyInput, BottomActionBar,
-  BottomSheet, Collapsible, BottomTabBar, DotStrip, WeightBar, RuleRow, fill,
+  BottomSheet, Collapsible, BottomTabBar, DotStrip, WeightBar, RuleRow, Amount, fill,
 } from "../src/ui/components.jsx";
 import { EX } from "./examples.js";
 
@@ -35,10 +35,12 @@ const State = ({ label, children }) => (
 const SWATCHES = [
   ["ink", "Main text, primary buttons"], ["text2", "Secondary text"], ["text3", "Small labels, on white only"],
   ["page", "Page background"], ["surface", "Sections"], ["line", "Hairlines"], ["border", "Control borders"],
-  ["apricot", "Highlights and marks only"], ["apricotText", "Apricot text"], ["heroCalm", "Hero: nothing to do"],
-  ["heroAlert", "Hero: something to check"], ["up", "Price up, on white only"], ["down", "Price down, on white only"],
-  ["upOnPage", "Price up on page background"], ["ok", "Status: ok (on okBg)"], ["watch", "Status: watch (on watchBg)"],
-  ["brokenBg", "Status: broken (white text)"], ["neutral", "Neutral chip (on neutralBg)"],
+  ["apricot", "Data marks only: target line, rank numbers, factor dots, my portfolio in charts"], ["apricotText", "Apricot text (data labels)"],
+  ["heroCalm", "Hero: nothing to do"], ["heroAlert", "Not used since v19.0b: alerts use watch and broken"],
+  ["up", "Price up, on white only"], ["down", "Price down, on white only"],
+  ["upOnPage", "Price up on page background"], ["ok", "Status: ok (on okBg)"], ["watch", "Status: watch (on watchBg); the alert hero band"],
+  ["watchBg", "Alert hero band background"], ["brokenBg", "Status: broken (white text)"], ["neutral", "Neutral chip (on neutralBg)"],
+  ["select", "Selected item and icon chip background"],
 ];
 
 function Tokens() {
@@ -99,7 +101,7 @@ function Tokens() {
         <Card style={{ display: "flex", gap: SPACE(3), alignItems: "flex-end", flexWrap: "wrap" }}>
           {[1, 2, 3, 4, 5, 6, 8].map((n) => (
             <div key={n} style={{ textAlign: "center" }}>
-              <div style={{ width: SPACE(n), height: SPACE(n), background: COLOR.apricot, borderRadius: 2, margin: "0 auto" }} />
+              <div style={{ width: SPACE(n), height: SPACE(n), background: COLOR.neutral, borderRadius: 2, margin: "0 auto" }} />
               <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3, NUM)}>{SPACE(n)}</code>
             </div>
           ))}
@@ -110,18 +112,46 @@ function Tokens() {
             </div>
           ))}
           <div style={{ textAlign: "center" }}>
-            <div style={{ width: TOUCH, height: TOUCH, border: `2px dashed ${COLOR.apricot}`, borderRadius: RADIUS.sm }} />
+            <div style={{ width: TOUCH, height: TOUCH, border: `2px dashed ${COLOR.neutral}`, borderRadius: RADIUS.sm }} />
             <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3, NUM)}>tap {TOUCH}</code>
           </div>
         </Card>
       </Block>
 
-      <Block id="icons" name="Icons" note="One stroke set: 24 px grid, 2 px stroke. No emoji anywhere.">
+      <Block id="icons" name="Icons" note="Phosphor duotone (MIT, vendor/phosphor): 256 grid, two layers (line and fill), drawn inline. Four tones only, never apricot. Old names are aliases (in brackets). No emoji anywhere.">
         <Card style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: SPACE(3) }}>
-          {ICON_NAMES.map((n) => (
-            <div key={n} data-icon={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: SPACE(1) }}>
-              <Icon name={n} color={COLOR.ink} />
-              <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3)}>{n}</code>
+          {ICON_NAMES.filter((n) => !ALIAS[n] || ALIAS[n] === n).map((n) => (
+            <div key={n} data-icon-cell={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: SPACE(1), minWidth: 0 }}>
+              <Icon name={n} />
+              <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3, { textAlign: "center", wordBreak: "break-all", lineHeight: 1.3 })}>
+                {n}{Object.keys(ALIAS).filter((a) => ALIAS[a] === n && a !== n).map((a) => ` (${a})`).join("")}</code>
+            </div>
+          ))}
+        </Card>
+        <Card data-icon-tones style={{ display: "flex", flexWrap: "wrap", gap: SPACE(4), alignItems: "center" }}>
+          {ICON_TONES.map((t) => (
+            <div key={t} style={{ display: "flex", alignItems: "center", gap: SPACE(2), padding: SPACE(2), borderRadius: RADIUS.sm, background: t === "onNavy" ? COLOR.ink : COLOR.surface }}>
+              <Icon name="check-circle" tone={t} />
+              <code style={txt(SIZE.xxs, WEIGHT.semi, t === "onNavy" ? COLOR.surface : COLOR.text2)}>{t} {ICON_TONE[t].line} / {ICON_TONE[t].fill}</code>
+            </div>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
+            <IconChip name="clipboard-text" size={36} />
+            <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text2)}>chip {COLOR.select}, radius 30%</code>
+          </div>
+        </Card>
+      </Block>
+
+      <Block id="mascot" name="Mascot (Baepi)" note="Jack's own art, scaled 2x (tools/resize_assets.py). Only on the first visit, empty states, the load-failure screen, whole blocks that are pending, learning cards, the share card, the About page and the link preview. Never on a card that shows numbers, never beside a verdict: verdicts carry a state icon. Alt texts wait for Jack.">
+        <Card style={{ display: "flex", flexWrap: "wrap", gap: SPACE(4), alignItems: "flex-end" }}>
+          <div data-logo style={{ display: "flex", alignItems: "center", gap: SPACE(1) }}>
+            <img src={EX.mascot.mark} alt="" width={28} height={28} />
+            <span style={txt(SIZE.h2, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.04em", lineHeight: 1.2 })}>{EX.brand}</span>
+          </div>
+          {EX.mascot.places.map(([src, px]) => (
+            <div key={src} style={{ textAlign: "center" }}>
+              <img src={src} alt="" width={px} height={px} style={{ objectFit: "contain", display: "block" }} />
+              <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text3, NUM)}>{px} px</code>
             </div>
           ))}
         </Card>
@@ -134,22 +164,22 @@ function Tokens() {
 function Heroes() {
   const h = EX.hero;
   return (
-    <Block id="hero" name="Hero band" note="Calm (nothing to do) or alert (something to check), with a mascot picture slot.">
+    <Block id="hero" name="Hero band" note="Calm (nothing to do) or alert (something to check). The verdict carries a state icon, never a mascot picture. The alert band uses the watch colours; its pill is broken (navy) when a rule broke, else watch. Apricot is for data only.">
       <State label="Calm, quiet day">
-        <HeroBand tone="calm" eyebrow={h.quiet.eyebrow} title={h.quiet.title} body={h.quiet.body} image={h.quiet.image} imageAlt={h.quiet.imageAlt} />
+        <HeroBand tone="calm" eyebrow={h.quiet.eyebrow} title={h.quiet.title} body={h.quiet.body} />
       </State>
       <State label="Calm, one big move">
-        <HeroBand tone="calm" eyebrow={h.bigMove.eyebrow} title={h.bigMove.title} body={h.bigMove.body} image={h.bigMove.image} imageAlt={h.bigMove.imageAlt}
+        <HeroBand tone="calm" eyebrow={h.bigMove.eyebrow} title={h.bigMove.title} body={h.bigMove.body}
           inset={<div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
             <div style={{ flex: 1 }}>
               <div style={txt(SIZE.xs, WEIGHT.bold, COLOR.ink)}>{h.bigMove.insetLine}</div>
               <div style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{h.bigMove.insetBody}</div>
             </div>
-            <span style={txt(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "flex", alignItems: "center", minHeight: TOUCH })}>{h.bigMove.insetLink}<Icon name="chevronRight" size={16} color={COLOR.ink} /></span>
+            <span style={txt(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "flex", alignItems: "center", minHeight: TOUCH })}>{h.bigMove.insetLink}<Icon name="chevronRight" size={16} /></span>
           </div>} />
       </State>
       <State label="Alert, a rule broke">
-        <HeroBand tone="alert" eyebrow={h.alert.eyebrow} title={h.alert.title} body={h.alert.body} image={h.alert.image} imageAlt={h.alert.imageAlt}
+        <HeroBand tone="alert" level="broken" eyebrow={h.alert.eyebrow} title={h.alert.title} body={h.alert.body}
           inset={<>
             <div style={txt(SIZE.xxs, WEIGHT.bold, COLOR.text3)}>{h.alert.insetLabel}</div>
             <div style={txt(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{h.alert.insetRule}</div>
@@ -163,7 +193,7 @@ function Heroes() {
         <div style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{h.alert.rest}</div>
       </State>
       <State label="Calm, why it moved">
-        <HeroBand tone="calm" eyebrow={h.why.eyebrow} title={h.why.title} body={h.why.body} image={h.why.image} imageAlt={h.why.imageAlt} />
+        <HeroBand tone="calm" eyebrow={h.why.eyebrow} title={h.why.title} body={h.why.body} />
       </State>
     </Block>
   );
@@ -181,7 +211,7 @@ function Stats() {
       </State>
       <State label="My deck screen">
         <Card>
-          <div style={txt(SIZE.h1, WEIGHT.heavy, COLOR.ink, NUM)}>{s.deckValue}</div>
+          <div style={txt(SIZE.h1, WEIGHT.heavy, COLOR.ink, NUM)}><Amount text={s.deckValue} /></div>
           <div style={txt(SIZE.xs, WEIGHT.semi, COLOR.up, { ...NUM, marginBottom: SPACE(3) })}>{s.deckSub}</div>
           <div style={{ display: "flex", gap: SPACE(4), flexWrap: "wrap" }}>
             {[[s.deckMine, COLOR.ink], [s.kospi, COLOR.text3]].map(([t, c]) => (
@@ -205,10 +235,10 @@ function Rows() {
   const r = EX.rows;
   const chip = (k) => (k ? <StatusChip tone={k === "big" ? "neutral" : k}>{r.chips[k]}</StatusChip> : null);
   return (
-    <Block id="list-row" name="List row" note="Name and today's move. A chip appears only when something is unusual.">
+    <Block id="list-row" name="List row" note="Name and today's move. A chip appears only when something is unusual. A selected row has the warm-grey background and a 3 px navy edge.">
       <Card style={{ paddingTop: SPACE(2), paddingBottom: SPACE(2) }}>
         <div style={txt(SIZE.sm, WEIGHT.heavy, COLOR.ink, { padding: `${SPACE(2)}px 0` })}>{r.title}</div>
-        {r.list.map((x) => <ListRow key={x.title} title={x.title} sub={x.sub} change={x.value} chip={chip(x.chip)} onClick={() => {}} />)}
+        {r.list.map((x, i) => <ListRow key={x.title} title={x.title} sub={x.sub} change={x.value} chip={chip(x.chip)} onClick={() => {}} selected={i === 1} />)}
       </Card>
     </Block>
   );
@@ -336,7 +366,7 @@ function Sheets() {
       <State label="Done">
         <BottomSheet inline open title={s.doneTitle} closeLabel={EX.close} onClose={() => {}}>
           <div style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
-            <img src={s.doneImage} alt={s.doneImageAlt} width={64} height={64} />
+            <IconChip name="check-circle" size={48} tone="ok" />
             <p style={txt(SIZE.sm, WEIGHT.regular, COLOR.text2, { margin: 0 })}>{s.doneBody}</p>
           </div>
           <div style={{ marginTop: SPACE(4) }}><Button kind="secondary">{s.doneLink}</Button></div>
@@ -457,10 +487,10 @@ function Page() {
   return (
     <div style={{ maxWidth: 520, margin: "0 auto", padding: `${SPACE(5)}px ${SPACE(4)}px ${SPACE(12)}px` }}>
       <header style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
-        <img src="icon-192.png" alt="" width={40} height={40} style={{ borderRadius: RADIUS.sm }} />
+        <img src={EX.mascot.mark} alt="" width={40} height={40} />
         <div style={{ flex: 1 }}>
           <h1 style={txt(SIZE.h2, WEIGHT.heavy, COLOR.ink, { margin: 0 })}>{EX.brand} 2.0 · Style page</h1>
-          <div style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2)}>v18.1 design system. Not linked from the app.</div>
+          <div style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2)}>v18.1 design system, v19.0b visual pass. Not linked from the app.</div>
         </div>
         <span data-sample-label><StatusChip tone="neutral">{EX.sample}</StatusChip></span>
       </header>

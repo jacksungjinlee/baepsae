@@ -121,7 +121,7 @@ export function About({ load, onBack }) {
               <li key={t} style={{ display: "flex", gap: SPACE(2), alignItems: "flex-start", padding: `${SPACE(1)}px 0` }}>
                 <span aria-hidden="true" style={{ width: SPACE(6), height: SPACE(6), borderRadius: 999, background: COLOR.okBg, flexShrink: 0,
                   display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Icon name="check" size={14} color={COLOR.ok} />
+                  <Icon name="check" size={14} tone="ok" />
                 </span>
                 <span style={tx(SIZE.sm, WEIGHT.regular, COLOR.ink, { lineHeight: 1.55 })}>{t}</span>
               </li>

@@ -29,6 +29,7 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import copy_strings  # noqa: E402
 from test_launch import V175_FORMAT, real_data_missing  # noqa: E402
+from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 C, _ = copy_strings()
@@ -40,7 +41,7 @@ REPO_LABEL = {"old": "v17.5 형식 전", "fields": "v17.5.1 항목 없음", "liv
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
 SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og-v19.png", "icon-192.png", "icon-512.png",
-        "baepi-og.webp", "jack-photo.jpg"] + \
+        "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + \
        [f"baepi-{i}.png" for i in range(1, 10)]
 DATA = ["data.json", "corp.json", "macro.json", "disc.json"]
 SAVED = {"v": 1, "decks": [{"id": "dlaunch", "name": "배당 생활비 덱", "createdAt": "2026-10-31",
@@ -164,6 +165,7 @@ def main():
                         assert page.locator("[data-deck]").count() == 0
                     sw = page.evaluate("document.documentElement.scrollWidth")
                     assert sw <= width, f"가로 스크롤 {sw}"
+                    visual_ok(page)                         # v19.0b: 그림이 모두 열려요 (덱 짜기 · 준비 중 · 실패의 뱁이, 로고) · 뱁이 규칙 · 아이콘
                     if width == 320 and variant == "fixtures":
                         shot(page, "launch-320-landing-no-deck.png")
                 check(W + "저장한 덱이 없는 방문자 → 덱 짜기", no_deck_lands_on_build, page, tag)
@@ -214,6 +216,7 @@ def main():
                     page.locator('[data-ui-v2="about"][data-lang="ko"]').wait_for(state="visible")
                     page.get_by_text(C["about"]["ko"]["maker"]["title"]).wait_for(state="visible")
                     assert page.evaluate("document.activeElement && document.activeElement.dataset.uiV2") == "about-heading"
+                    visual_ok(page)
                     with page.expect_navigation():                                       # 뒤로(닫기) → 온 곳(지금 앱)으로 한 걸음
                         page.get_by_role("button", name=C["app"]["close"]).click()
                     assert page.url.endswith("/baepsae.html"), page.url
@@ -235,6 +238,7 @@ def main():
                     page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=C["app"]["tabs"]["deck"]).click()
                     page.get_by_text("배당 생활비 덱").wait_for(state="visible")
                     page.locator('[data-ui-v2="old-app-link"]').wait_for(state="visible")
+                    visual_ok(page)
                 check(W + "저장한 덱이 있는 방문자 → 오늘 (내 덱에 기록이 보여요)", saved_deck_lands_on_today, page, tag)
                 ctx.close()
             srv.shutdown()

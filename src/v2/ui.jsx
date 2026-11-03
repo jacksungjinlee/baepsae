@@ -1,7 +1,7 @@
 // Shared pieces for the 2.0 screens, built on the v18.1 tokens and components. No Korean here: text comes in props
 // or from src/copy/v2.js.
 import React, { createContext, useContext, useState } from "react";
-import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
+import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
@@ -38,6 +38,8 @@ const headerLink = { ...tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "no
 
 // App bar: the name 뱁새 on every screen (v19.0: the page title is now the long "뱁새 — 내 기준으로 …", so the header shows
 // only C.app.brand), the preview label, optional back button.
+// Logo (v19.0b, Part B): Jack's mark (baepi-mark, 28 px on phone) + the "뱁새" wordmark at 22 px / 800. The mark is
+// decorative (alt ""): the wordmark next to it says the name. A back button takes the mark's place.
 // search: a 찾기 link next to 예전 뱁새 보기 (Jack, 2026-11-02: first visitors land on 덱 짜기, which has no tab bar,
 // so stock search stays one visible tap away). It opens the same place as the 찾기 tab: the current app.
 export function AppBar({ onBack, backLabel, right, search = false }) {
@@ -48,10 +50,10 @@ export function AppBar({ onBack, backLabel, right, search = false }) {
       {onBack ? (
         <button type="button" aria-label={backLabel} onClick={onBack}
           style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginLeft: -SPACE(3) }}>
-          <Icon name="back" color={COLOR.ink} />
+          <Icon name="back" tone="on" />
         </button>
-      ) : <img src="icon-192.png" alt="" width={28} height={28} style={{ borderRadius: RADIUS.sm - SPACE(1) }} />}
-      <h1 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.app.brand}</h1>
+      ) : <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />}
+      <h1 data-ui-v2="wordmark" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
       {preview && <SampleLabel />}
       {!preview && search && <a data-ui-v2="search-link" href={OLD_APP} style={headerLink}>{C.app.tabs.search}</a>}
       {!preview && <a data-ui-v2="old-app-link" href={OLD_APP} style={headerLink}>{C.app.oldApp}</a>}
@@ -83,10 +85,27 @@ export function DateLine({ date, fresh }) {
   );
 }
 
+// 뱁이 pictures 2.0 may show (v19.0 Part C, CLAUDE.md): only on the first visit, empty states, the load-failure screen,
+// 준비 중 blocks, learning cards, the share card, the 소개 page and the link preview, never on a card that shows numbers
+// and never beside a verdict (verdicts carry a state icon: src/ui/components.jsx StateIcon). Files are Jack's art scaled
+// to twice their largest display size by tools/resize_assets.py (originals in docs/design/v19/assets).
+// Alt texts wait for Jack (null in src/copy/v2.js: docs/tasks/v18.3-new-strings-pending.md), so meanwhile alt="".
+export const IMG = {
+  mark: "baepi-mark.webp",            // logo, 28 px
+  build: "baepi-16-build.webp",       // 덱 짜기 start (no numbers on that card), 92 px
+  empty: "baepi-15-portfolio.webp",   // empty 내 덱, 112 px
+  error: "baepi-20-error.webp",       // load failure, 120 px
+  wip: "baepi-21-wip.webp",           // a whole block that is 준비 중, 64 px
+};
+
+export function Mascot({ src, alt, size, style }) {
+  return <img data-ui-v2="mascot" src={src} alt={alt || ""} width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, ...style }} />;
+}
+
 export function LoadFail() {
   return (
     <div data-ui-v2="load-fail" role="alert" style={{ textAlign: "center", padding: `${SPACE(10)}px ${SPACE(4)}px` }}>
-      <img src="baepi-2.png" alt={C.app.loadFailAlt} width={80} height={80} style={{ objectFit: "contain" }} />
+      <Mascot src={IMG.error} alt={C.app.loadFailAlt} size={120} style={{ display: "inline-block" }} />
       <p style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{C.app.loadFail}</p>
     </div>
   );
@@ -94,6 +113,18 @@ export function LoadFail() {
 
 export function PendingChip() {
   return <span data-ui-v2="pending"><StatusChip tone="neutral">{C.app.pending}</StatusChip></span>;
+}
+
+// A whole block that is 준비 중 (not one line of it): the hard-hat 뱁이 next to the 준비 중 chip, nothing else.
+export function PendingBlock(props) {
+  return (
+    <Card {...props}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
+        <Mascot src={IMG.wip} alt={C.app.pendingAlt} size={64} />
+        <PendingChip />
+      </div>
+    </Card>
+  );
 }
 
 // The disclaimer and a 소개 link (v19.0 Part D, Jack 2026-11-03): the maker's credit moved to the 소개 page (#about).
@@ -170,15 +201,16 @@ export function ActionBar({ summary, action, onAction, disabled }) {
 // rule we can check shows the rule icon with its number and report; a rule we cannot check yet shows a dot and 준비 중.
 // 내 덱 (Part C) passes today's result as state: "ok" (check icon), "watch" (alert), "broken" (cross), or nothing
 // (the rule icon: in place, nothing new since the purchase report), plus an optional chip label.
-const STATE_ICON = { ok: { name: "check", fg: COLOR.ok, bg: COLOR.okBg }, watch: { name: "alert", fg: COLOR.watch, bg: COLOR.watchBg },
-  broken: { name: "close", fg: COLOR.broken, bg: COLOR.brokenBg } };
+// Icon colours only from the v19.0b table (ICON_TONE): the state shows in the circle behind the icon.
+const STATE_ICON = { ok: { name: "check", tone: "ok", bg: COLOR.okBg }, watch: { name: "alert", tone: "on", bg: COLOR.watchBg },
+  broken: { name: "close", tone: "onNavy", bg: COLOR.brokenBg } };
 export function RuleLine({ name, now, limit, source, pending, note, state, stateLabel }) {
-  const ic = pending ? { name: "dot", fg: COLOR.neutral, bg: COLOR.neutralBg } : STATE_ICON[state] || { name: "rule", fg: COLOR.neutral, bg: COLOR.neutralBg };
+  const ic = pending ? { name: "dot", tone: "off", bg: COLOR.neutralBg } : STATE_ICON[state] || { name: "rule", tone: "on", bg: COLOR.neutralBg };
   return (
     <div data-ui-v2="rule-line" data-check={pending ? "pending" : "checked"} data-icon={ic.name} data-state={pending ? undefined : state || undefined}
       style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
       <span style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: ic.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Icon name={ic.name} size={16} color={ic.fg} />
+        <Icon name={ic.name} size={16} tone={ic.tone} />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{name}</div>
@@ -194,6 +226,7 @@ export function RuleLine({ name, now, limit, source, pending, note, state, state
 }
 
 // Radio choices that wrap onto more rows on narrow screens (the 5 Korea:US options would wrap inside a segmented bar).
+// v19.0b: the chosen one has the warm-grey selection background and a 2 px navy border (never apricot).
 export function ChoiceGrid({ options, value, onChange, label, min = 96 }) {
   return (
     <div data-ui-v2="choice-grid" role="radiogroup" aria-label={label}
@@ -201,9 +234,9 @@ export function ChoiceGrid({ options, value, onChange, label, min = 96 }) {
       {options.map((o) => {
         const on = o.value === value;
         return (
-          <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => onChange(o.value)}
+          <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => onChange(o.value)} data-selected={on ? "1" : undefined}
             style={{ ...tap, minHeight: TOUCH, borderRadius: RADIUS.sm, padding: `0 ${SPACE(2)}px`, whiteSpace: "nowrap",
-              border: on ? `2px solid ${COLOR.ink}` : `1px solid ${COLOR.border}`, background: on ? COLOR.surface : COLOR.page,
+              border: on ? `2px solid ${COLOR.ink}` : `1px solid ${COLOR.border}`, background: on ? SELECTED.background : COLOR.surface,
               ...tx(SIZE.xs, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.ink : COLOR.text2) }}>{o.label}</button>
         );
       })}

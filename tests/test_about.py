@@ -194,13 +194,61 @@ def test_what_the_page_shows_in_each_state():
         assert x == {"figures": None, "n": None}, x                       # 실패 · 불러오는 중 · 미리 보기 · 없음: 둘 다 없음
 
 
+# 사이트에 올리는 Jack 의 그림 = 원본(docs/design/v19/assets)을 '가장 크게 보이는 크기 × 2' 로 줄이기만 한 것 (tools/resize_assets.py).
+# v19.0b: 로고 · 덱 짜기 첫 화면 · 빈 내 덱 · 불러오기 실패 · 준비 중 뱁이를 더했어요.
+SCALED = (("baepi-og.webp", "baepi-og.png", 420), ("jack-photo.jpg", "jack-photo.jpg", 224),
+          ("baepi-mark.webp", "baepi-mark.png", 76), ("baepi-16-build.webp", "baepi-16-build.png", 352),
+          ("baepi-15-portfolio.webp", "baepi-15-portfolio.png", 256), ("baepi-20-error.webp", "baepi-20-error.png", 240),
+          ("baepi-21-wip.webp", "baepi-21-wip.png", 128))
+
+
+def _flat(im):
+    """투명한 곳은 흰 바탕에 얹어 비교해요 (투명 픽셀 속 색 값은 보이지 않아서 비교에서 빼요)."""
+    from PIL import Image
+    bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+    bg.alpha_composite(im.convert("RGBA"))
+    return bg.convert("RGB")
+
+
+def scale_only_gap(served, original):
+    """사이트 파일과 '원본을 같은 크기로 줄이기만 한 것'의 색 차이 (채널별 평균 중 가장 큰 값, 0-255).
+    압축 때문에 조금은 달라요(지금 1.0~2.1). 뒤집기 · 흑백 · 색 바꾸기 · 자르기는 훨씬 커요(2.6 이상, 아래 검사)."""
+    from PIL import ImageChops, ImageStat
+    a = served.convert("RGBA")
+    b = original.convert("RGBA").resize(a.size, 1)                 # 1 = LANCZOS (resize_assets.py 와 같은 방법)
+    return max(ImageStat.Stat(ImageChops.difference(_flat(a), _flat(b))).mean)
+
+
 def test_site_images_are_scaled_copies_of_jacks_originals():
     """Jack, 2026-11-03: 2배 크기로 줄이기만 (자르기·색 바꾸기·필터 없음). 원본은 docs/design/v19/assets 에 그대로."""
     from PIL import Image
-    for served, original, long_side in (("baepi-og.webp", "baepi-og.png", 420), ("jack-photo.jpg", "jack-photo.jpg", 224)):
+    src = read("tools/resize_assets.py")
+    for served, original, long_side in SCALED:
+        assert f'"{original}": ({long_side},' in src, (original, "tools/resize_assets.py 의 TARGETS 와 달라요")
         a = Image.open(os.path.join(ROOT, served))
         b = Image.open(os.path.join(ROOT, "docs", "design", "v19", "assets", original))
         assert max(a.size) == long_side, (served, a.size)
         assert abs(a.size[0] / a.size[1] - b.size[0] / b.size[1]) < 0.01, (served, a.size, b.size)      # 비율 그대로 (자르지 않음)
-    assert os.path.getsize(os.path.join(ROOT, "baepi-og.webp")) < 60 * 1024
-    assert not os.path.exists(os.path.join(ROOT, "baepi-og.png"))                                     # 사이트는 줄인 파일만
+        gap = scale_only_gap(a, b)
+        assert gap < 2.5, (served, round(gap, 2), "줄이기만 한 그림이 아니에요")
+        if served.endswith(".webp"):
+            assert a.format == "WEBP" and a.mode == "RGBA", (served, a.format, a.mode)              # 투명 배경 그대로
+            assert os.path.getsize(os.path.join(ROOT, served)) < 60 * 1024, served
+            assert b.size == (512, 512) or original == "baepi-og.png", (original, b.size)           # 원본은 그대로 (512 x 512)
+            assert not os.path.exists(os.path.join(ROOT, original)), original                      # 사이트는 줄인 파일만
+
+
+def test_scale_only_check_catches_edits():
+    """위 검사가 정말 걸러내는지: 좌우 뒤집기 · 흑백 · 색 바꾸기 · 한쪽 잘라 늘리기."""
+    from PIL import Image, ImageOps
+    for served, original, _ in SCALED[2:]:
+        a = Image.open(os.path.join(ROOT, served)).convert("RGBA")
+        b = Image.open(os.path.join(ROOT, "docs", "design", "v19", "assets", original))
+        w, h = a.size
+        r, g, bl, al = a.split()
+        edits = {"flip": a.transpose(Image.FLIP_LEFT_RIGHT),
+                 "grey": Image.merge("RGBA", (*ImageOps.grayscale(a.convert("RGB")).convert("RGB").split(), al)),
+                 "recolour": Image.merge("RGBA", (bl, g, r, al)),
+                 "crop": a.crop((w // 8, h // 8, w, h)).resize(a.size)}
+        for name, im in edits.items():
+            assert scale_only_gap(im, b) >= 2.5, (served, name, round(scale_only_gap(im, b), 2))

@@ -7,6 +7,7 @@
 - 앱은 아직 src/ui/ 를 쓰지 않고, 스타일 페이지에 링크하지 않아요 (Part 4 게이트: 라이브 화면 그대로)
 - styleguide.html 이 소스와 같아요 (빌드를 잊지 않음), 이모지 0개, 금지어 0개
 - Pretendard 라이선스와 글꼴 파일이 모두 있어요
+- v19.0b: 아이콘은 Phosphor duotone (256 격자, 바탕 · 선 두 층, 색은 아이콘 표의 네 가지뿐), MIT 라이선스와 출처가 저장소에 있어요
 """
 import csv
 import json
@@ -20,7 +21,7 @@ HANGUL = re.compile("[가-힣ㄱ-ㆎ]")
 EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF️‍]")
 # 목업 문구 속 가짜 회사 이름 (CSV 문장 안에 나와요)
 FAKE_NAMES = ["늘봄금융", "솔담정밀", "마루식품"]
-UI_FILES = ["src/ui/tokens.js", "src/ui/icons.jsx", "src/ui/components.jsx"]
+UI_FILES = ["src/ui/tokens.js", "src/ui/icons.jsx", "src/ui/components.jsx", "src/ui/phosphor.js"]
 COMPONENTS = ["hero-band", "button", "stat-strip", "list-row", "status-chip", "segmented", "stepper", "money-input",
               "bottom-action-bar", "bottom-sheet", "collapsible", "bottom-tab-bar", "dot-strip", "weight-bar", "rule-row"]
 
@@ -144,12 +145,120 @@ def test_pretendard_licence_and_files():
     assert hangul_face, "한글 글자 범위를 가진 글꼴 조각이 없어요"
 
 
-def test_icons_are_svg_only():
-    names = node_value("src/ui/icons.jsx", "M.ICON_NAMES")
+# v19.0b (Jack, 2026-11-03): Phosphor duotone. 아이콘 표(docs/tasks/v19.0-layout-c.md Part B) 그대로의 네 가지 색.
+ICON_TONE_SPEC = {"on": {"line": "#1C2B45", "fill": "#CBD3DF"}, "off": {"line": "#6B7280", "fill": "#E3E6EB"},
+                  "ok": {"line": "#1F7A4D", "fill": "#CDEBD9"}, "onNavy": {"line": "#FFFFFF", "fill": "#5A6B87"}}
+PH_D = re.compile(r"^[MmLlHhVvCcSsQqTtAaZz0-9,.\- ]+$")
+
+
+def render_icons():
+    """아이콘을 모든 이름 × 모든 색으로 실제로 그려 봐요 (react-dom/server, 주석 없는 정적 HTML)."""
+    tmp = tempfile.mkdtemp()
+    entry = os.path.join(tmp, "icons-entry.jsx")
+    with open(entry, "w", encoding="utf-8") as f:
+        f.write("import React from 'react';\nimport { renderToStaticMarkup } from 'react-dom/server';\n"
+                f"import {{ Icon, IconChip, ICON_NAMES, ICON_TONES, ALIAS }} from {json.dumps(path('src/ui/icons.jsx'))};\n"
+                f"import {{ ICON_TONE, COLOR }} from {json.dumps(path('src/ui/tokens.js'))};\n"
+                f"import {{ PH, PHOSPHOR_VERSION }} from {json.dumps(path('src/ui/phosphor.js'))};\n"
+                "export const OUT = { names: ICON_NAMES, tones: ICON_TONES, alias: ALIAS, tone: ICON_TONE, ph: PH, version: PHOSPHOR_VERSION,\n"
+                "  select: COLOR.select, unknown: renderToStaticMarkup(<Icon name='no-such-icon' />),\n"
+                "  chip: renderToStaticMarkup(<IconChip name='umbrella' size={40} />),\n"
+                "  svg: Object.fromEntries(ICON_NAMES.flatMap((n) => ICON_TONES.map((t) => [n + '|' + t, renderToStaticMarkup(<Icon name={n} tone={t} />)]))) };\n")
+    try:
+        code = esbuild(entry, "--bundle", "--format=iife", "--global-name=M", "--jsx=automatic", "--external:react", "--external:react-dom",
+                       "--external:react/jsx-runtime", "--charset=utf8", "--platform=node")
+        r = subprocess.run(["node", "-e", code + "\nprocess.stdout.write(JSON.stringify(M.OUT));"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def icon_problems(markup, d, tone):
+    """그린 아이콘 하나에서 걸리는 것 (빈 목록이면 통과): 256 격자 · path 정확히 둘(바탕 층, 선 층) · 다른 요소 없음 · 선(stroke) 없음 ·
+    색은 표의 그 색만 · path 데이터는 Phosphor 그대로."""
+    bad = []
+    if not re.match(r'^<svg [^>]*viewBox="0 0 256 256"[^>]*>', markup) or not markup.endswith("</svg>"):
+        bad.append("grid")
+    tags = re.findall(r"<(\w+)", markup)
+    if tags != ["svg", "path", "path"]:
+        bad.append(("tags", tags))
+    if "stroke" in markup:
+        bad.append("stroke")
+    layers = re.findall(r'<path data-layer="(fill|line)" d="([^"]+)" fill="(#[0-9A-F]{6})"(?:/>|></path>)', markup)
+    if [x[0] for x in layers] != ["fill", "line"]:
+        bad.append(("layers", [x[0] for x in layers]))
+    elif [x[1] for x in layers] != d:
+        bad.append("path data")
+    elif [x[2] for x in layers] != [ICON_TONE_SPEC[tone]["fill"], ICON_TONE_SPEC[tone]["line"]]:
+        bad.append(("colours", [x[2] for x in layers]))
+    colours = set(re.findall(r"#[0-9A-Fa-f]{6}", markup))
+    allowed = {c for t in ICON_TONE_SPEC.values() for c in t.values()}
+    if colours - allowed:
+        bad.append(("colours outside the table", sorted(colours - allowed)))
+    return bad
+
+
+def test_icons_are_phosphor_duotone_with_two_layers_and_table_colours():
+    """v18.1 의 '24 격자 · 2px 선' 검사 대신 (v19.0b): 모든 아이콘이 Phosphor 256 격자에 두 층, 색은 표의 네 가지뿐이에요.
+    예전 이름(check · alert · close · plus · minus · chevronDown · today · deck · build · search …)은 그대로 쓸 수 있어요."""
+    v = render_icons()
     for n in ["check", "alert", "close", "plus", "minus", "chevronDown", "today", "deck", "build", "search"]:
-        assert n in names
-    src = read("src/ui/icons.jsx")
-    assert 'strokeWidth={2}' in src and 'viewBox="0 0 24 24"' in src
+        assert n in v["names"], n
+    for n in ["house", "chart-pie-slice", "buildings", "chart-line-up", "percent", "coins", "bank", "identification-badge", "fire",
+              "calendar-dots", "clipboard-text", "basket", "umbrella", "file-text", "info", "book-open-text", "database",
+              "clock-counter-clockwise", "check-circle", "flag"]:                    # Part B 의 아이콘 표
+        assert n in v["ph"], n
+    assert v["tone"] == ICON_TONE_SPEC and sorted(v["tones"]) == sorted(ICON_TONE_SPEC)
+    assert v["version"] == "2.1.1"
+    assert all(a in v["ph"] for a in v["alias"].values()), v["alias"]
+    for k, d in v["ph"].items():
+        assert isinstance(d, list) and len(d) == 2 and all(PH_D.match(x) for x in d), k
+    assert v["unknown"] == ""
+    bad = {}
+    for key, markup in v["svg"].items():
+        n, tone = key.split("|")
+        p = icon_problems(markup, v["ph"][v["alias"].get(n, n)], tone)
+        if p:
+            bad[key] = p
+    assert len(v["svg"]) == len(v["names"]) * 4 and not bad, list(bad.items())[:5]
+    chip = v["chip"]
+    assert v["select"] == "#F2F0EB" and "background:#F2F0EB" in chip and "border-radius:30%" in chip and "width:40px" in chip, chip
+    src = "".join(read(f) for f in ("src/ui/icons.jsx", "src/ui/phosphor.js"))
+    assert "stroke" not in src and "C97757" not in src.upper() and "A9542F" not in src.upper()
+
+
+def test_icon_check_catches_each_problem():
+    """위 검사가 정말 걸러내는지: 선(stroke) · 층 하나 · 표 밖의 색(살구색) · 24 격자 · 다른 요소."""
+    v = render_icons()
+    m = v["svg"]["check|on"]
+    d = v["ph"]["check"]
+    assert icon_problems(m, d, "on") == []
+    cases = [(m.replace("<path ", '<path stroke="#1C2B45" ', 1), "stroke"),
+             (re.sub(r'<path data-layer="fill"[^>]*>(?:</path>)?', "", m), "layers"),
+             (m.replace("#1C2B45", "#C97757"), "colours"),
+             (m.replace('viewBox="0 0 256 256"', 'viewBox="0 0 24 24"'), "grid"),
+             (m.replace("</svg>", '<circle r="3"/></svg>'), "tags")]
+    for mutated, want in cases:
+        got = [b if isinstance(b, str) else b[0] for b in icon_problems(mutated, d, "on")]
+        assert want in got, (want, got)
+
+
+def test_phosphor_licence_and_source_are_committed():
+    """MIT 라이선스 원문과 출처(버전 · npm 무결성 값 · 아이콘 목록)가 저장소에 있고, 아이콘 목록이 src/ui/phosphor.js 와 같아요."""
+    lic = read("vendor/phosphor/LICENSE")
+    assert lic.startswith("MIT License") and "Copyright (c) 2023 Phosphor Icons" in lic and "Permission is hereby granted" in lic
+    src = read("vendor/phosphor/SOURCE.txt")
+    assert "@phosphor-icons/core 2.1.1" in src and "integrity: sha512-" in src and "shasum:    62a4cfbec9772f1a613a647da214fbb96f3ad39d" in src
+    listed = [l.strip() for l in src.split("Icons (", 1)[1].splitlines()[1:] if l.strip()]
+    ph = node_value("src/ui/phosphor.js", "Object.keys(M.PH)")
+    assert listed == ph and len(ph) >= 30, (listed, ph)
+    gen = read("src/ui/phosphor.js")
+    assert "tools/vendor_phosphor.py" in gen and "vendor/phosphor/LICENSE" in gen
+    tool = read("tools/vendor_phosphor.py")
+    assert 'VERSION = "2.1.1"' in tool and "SHASUM" in tool and "INTEGRITY" in tool
+    assert not re.search(r"https?://", gen), "phosphor.js 에 바깥 주소가 있어요"
 
 
 # ── Part 2 ──
@@ -173,12 +282,28 @@ def test_every_korean_example_comes_from_the_mockup():
     assert not stray, f"목업 CSV 에 없는 문구: {stray}"
 
 
+def scaled_targets():
+    """tools/resize_assets.py 의 TARGETS 이름 (Jack 의 원본을 2배 크기로 줄인 파일의 원본 이름)."""
+    src = read("tools/resize_assets.py")
+    body = src.split("TARGETS = {", 1)[1].split("\n}", 1)[0]
+    return re.findall(r'^\s+"([\w.-]+)": \(\d+,', body, flags=re.M)
+
+
 def test_example_images_are_jacks_artwork():
+    """예시 속 그림은 Jack 의 그림뿐이에요: baepi-1 … baepi-9 (PNG), 또는 v19.0b 부터 docs/design/v19/assets 의 원본을
+    tools/resize_assets.py 로 줄이기만 한 WebP (원본이 그 폴더에 있고, TARGETS 에 있어야 해요)."""
     ex = node_value("styleguide/examples.js", "M.EX")
-    imgs = [s for s in strings(ex) if s.endswith(".png")]
+    imgs = [s for s in strings(ex) if s.endswith((".png", ".webp", ".jpg"))]
     assert imgs
+    targets = scaled_targets()
+    assert "baepi-mark.png" in targets and len(targets) >= 7, targets
     for i in imgs:
-        assert re.fullmatch(r"baepi-[1-9]\.png", i), i
+        if i.endswith(".png"):
+            assert re.fullmatch(r"baepi-[1-9]\.png", i), i
+        else:
+            assert re.fullmatch(r"baepi-[\w-]+\.webp", i), i
+            orig = i[:-5] + ".png"
+            assert orig in targets and os.path.exists(path("docs", "design", "v19", "assets", orig)), i
         assert os.path.exists(path(i)), i
 
 

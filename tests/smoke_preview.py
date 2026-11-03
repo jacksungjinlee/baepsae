@@ -27,6 +27,7 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
+from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WAIT = 15000
@@ -43,7 +44,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 def site():
     d = tempfile.mkdtemp(prefix="baepsae-preview-")
-    for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]:
+    for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
     return d
@@ -119,9 +120,11 @@ def main():
                 assert C["app"]["sample"] in page.locator('[data-ui-v2="sample-label"]').first.inner_text()
                 sw = page.evaluate("document.documentElement.scrollWidth")
                 assert sw <= width, f"가로 스크롤 {sw}"
+                # 큰 숫자(v19.0b [data-ui="amount"])는 한 덩어리 글로 모아요 (단위 span 으로 나뉘어도 "1,073만원" 그대로 출처 확인)
                 got = page.evaluate("""() => { const out = []; const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                    while (w.nextNode()) { const n = w.currentNode; const e = n.parentElement; if (!e || e.closest('script, style')) continue;
+                    while (w.nextNode()) { const n = w.currentNode; const e = n.parentElement; if (!e || e.closest('script, style, [data-ui="amount"]')) continue;
                       const r = e.getBoundingClientRect(); if (!r.width && !r.height) continue; if (n.textContent.trim()) out.push(n.textContent); }
+                    for (const a of document.querySelectorAll('[data-ui="amount"]')) { const r = a.getBoundingClientRect(); if ((r.width || r.height) && a.textContent.trim()) out.push(a.textContent); }
                     for (const e of document.querySelectorAll('[aria-label],[alt],[placeholder]'))
                       for (const a of ['aria-label', 'alt', 'placeholder']) { const v = e.getAttribute(a); if (v) out.push(v); }
                     return out; }""")
@@ -130,6 +133,7 @@ def main():
                 assert not WHOLE_BAD.search(body), WHOLE_BAD.findall(body)
                 assert not SLOT_LEFT.findall(body), SLOT_LEFT.findall(body)
                 assert "멈췄어요" not in body and "갱신되지 않아" not in body, "예시 데이터에 멈춤 경고가 떠요"
+                visual_ok(page)              # v19.0b: 그림이 모두 열리고, 뱁이 규칙 · 아이콘 두 층 · 살구색 없음 (tests/visualcheck.py)
 
             def tab(label):
                 bar = page.locator('nav[data-ui="bottom-tab-bar"]')

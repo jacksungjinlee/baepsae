@@ -803,6 +803,8 @@ HEADER_ITEMS = """() => [...document.querySelector('.mastRow').children].filter(
 def scene_v2_link(R, files):
     site = build_site(files)
     shutil.copy(os.path.join(ROOT, "app.html"), site)            # 링크가 여는 2.0 (커밋한 빌드 결과)
+    for f in ("baepi-mark.webp", "baepi-16-build.webp", "baepi-15-portfolio.webp", "baepi-20-error.webp", "baepi-21-wip.webp"):
+        shutil.copy(os.path.join(ROOT, f), site)                 # 그 2.0 이 보여 주는 그림 (v19.0b)
     srv, base = serve(site)
     for w in (320, 390):
         ctx = R.browser.new_context(viewport={"width": w, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")

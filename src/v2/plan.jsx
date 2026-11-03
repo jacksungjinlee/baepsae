@@ -1,9 +1,11 @@
 // 매수 계획 · 샀어요: whole shares, money left, past-year dividend, the 2022 line, weights with a one-line reason each,
 // 내 투자 규칙 per holding (each rule checked or 준비 중), 이 덱의 주의점, and the purchase record kept in this browser.
+// v19.0b: big numbers show their unit smaller ("12" + small "만원"). 기록했어요 says how many stocks were recorded (a
+// number), so no 뱁이 there (CLAUDE.md): a check-circle icon chip takes the picture's place. 내 투자 규칙 has its section icon.
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
-import { Icon } from "../ui/icons.jsx";
-import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button } from "../ui/components.jsx";
+import { Icon, IconChip } from "../ui/icons.jsx";
+import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, useMode, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
@@ -67,7 +69,7 @@ function Clash({ parts }) {
   const { pieces, sentence } = clashView(parts);
   return (
     <div data-ui-v2="clash" role="alert" style={{ marginTop: SPACE(3), background: COLOR.watchBg, borderRadius: RADIUS.md, padding: SPACE(4), display: "flex", gap: SPACE(2) }}>
-      <Icon name="alert" size={20} color={COLOR.watch} />
+      <Icon name="alert" size={20} tone="on" />
       <div style={tx(SIZE.sm, WEIGHT.bold, COLOR.watch)}>
         {sentence && <div data-ui-v2="clash-text">{sentence}</div>}
         <div data-ui-v2="clash-list" style={sentence ? tx(SIZE.xs, WEIGHT.semi, COLOR.watch, { marginTop: SPACE(1) }) : undefined}>
@@ -86,7 +88,7 @@ function Summary({ r }) {
   const half = !!(y2022.half || (r.vol && r.vol.half));
   const vol = r.vol && !r.vol.half ? r.vol : null;
   const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
-  const big = (v) => <div style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{v}</div>;
+  const big = (v) => <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Amount text={v} /></div>;
   return (
     <Card data-ui-v2="plan-summary">
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.plan.ifBuy}</div>
@@ -193,7 +195,7 @@ function Rules({ load, rows, st, ds }) {
   const all = Object.values(ds.cands).flat();
   return (
     <Card data-ui-v2="rules">
-      <Label>{R.title}</Label>
+      <Label style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}><IconChip name="clipboard-text" size={32} /><span>{R.title}</span></Label>
       {R.intro && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{R.intro}</div>}
       <div style={{ marginTop: SPACE(3) }}>
         {rows.filter((x) => x.shares > 0).map((x) => {
@@ -293,7 +295,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
       <BottomSheet open title={P.done} onClose={onClose} closeLabel={C.app.close}>
         {preview && <SheetSample />}
         <div data-ui-v2="record-done" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
-          <img src="baepi-5.png" alt={P.doneAlt} width={64} height={64} style={{ objectFit: "contain" }} />
+          <IconChip name="check-circle" size={48} tone="ok" />
           {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink}</Button></div>
