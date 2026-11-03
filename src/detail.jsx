@@ -103,16 +103,22 @@ async function writeSlots(list) { try { await store.set(KEY_SLOTS, JSON.stringif
 // ================= 「저장한 파일에서 불러오기」 (v18.4.1, Jack 2026-11-04) =================
 // 이 앱이 쓰는 두 모양을 모두 읽어요.
 //   ① 「JSON 저장 (백업·공유)」 파일 (ExportView 의 buildJson):
-//      { app, budgetWon, holdings: [{ ticker, amountWon, … }], profile, settings, … }
+//      { app, budgetWon, holdings: [{ ticker, name, amountWon, … }], profile, settings, … }
 //      → t = ticker, mw = amountWon / 10000 (만원, 0.01만원 = 100원 단위로 반올림해 소수 오차만 없애요), budgetMw = budgetWon / 10000.
-//      프로필·설정은 객체이고 칸마다 기본값과 같은 종류일 때만 되살려요. 파일에 없는 것은 '새로 시작하기'처럼 기본값이에요.
-//   ② 저장 상태 모양 (예전 파일): { state: {…} } 또는 { holdings: [{ t, mw }], budgetMw, … } — 지금까지처럼 그대로 읽어요.
-// 종목코드가 비었거나, 금액이 0보다 큰 숫자가 아니거나, 같은 종목이 또 나오거나, 지금 종목 목록에 없는 줄은 빼고 console 에 개수를 남겨요.
-// 남는 종목이 하나도 없으면 null: 부르는 쪽이 '파일을 읽을 수 없어요'를 띄우고 아무것도 바꾸지 않아요 (파일로 빈 포트폴리오를 열지 않아요).
-// 그 전에는 이 앱이 저장한 ① 파일이 아무 말 없이 빈 포트폴리오로 열렸어요. 내보내기 모양은 바꾸지 않아요 (이미 받아 둔 파일이 있어요).
+//      파일에 없는 것은 '새로 시작하기'처럼 기본값이에요 (답변 · 프로필 · 예산 1,000만원).
+//   ② 저장 상태 모양 (예전 파일): { state: {…} } 또는 { holdings: [{ t, mw }], budgetMw, … } — 지금까지처럼 읽되, 손으로 고친 파일이
+//      NaN 화면을 만들지 않게 예산 · 언어 · 단계를 확인해요 (예산이 0 이상의 숫자가 아니면 1,000만원, 언어가 ko·en 이 아니면 지금 언어,
+//      단계가 0~3 이 아니면 ② 구성).
+//   두 모양 모두 프로필 · 설정 · 세금은 객체이고 칸마다 기본값과 같은 종류일 때만 되살려요 (다른 칸은 버려요).
+// 종목코드가 비었거나, 금액이 0보다 큰 숫자가 아니거나, 같은 종목이 또 나오는 줄은 빼고 console 에 개수를 남겨요.
+// 지금 종목 목록에 없는 종목은 저장본에 그대로 남겨 둬요 (예전 저장본을 열 때와 같아요: 담기 화면에는 안 보이고, 목록에 돌아오면 다시 보여요).
+// ①의 그런 줄은 이름(nk)도 같이 남겨요. 지금 목록에 있는 종목이 하나도 없으면 null: 부르는 쪽이 '파일을 읽을 수 없어요'를 띄우고
+// 아무것도 바꾸지 않아요 (파일로 빈 포트폴리오, 빈 것처럼 보이는 포트폴리오를 열지 않아요).
+// 그 전에는 이 앱이 저장한 ① 파일이 아무 말 없이 빈 포트폴리오로 열렸어요. 내보내기 칸 이름은 바꾸지 않아요 (이미 받아 둔 파일이 있어요).
 const isPlainObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
 const isFinNum = (x) => typeof x === "number" && Number.isFinite(x);
 const mwOfWon = (won) => Math.round(won / 100) / 100;
+const STAGES = [0, 1, 2, 3];
 function sameKinds(obj, defaults) {
   const out = {};
   Object.keys(defaults).forEach((k) => {
@@ -134,27 +140,45 @@ function readPortfolioFile(j, known) {
   if (!isPlainObj(src)) return refuse();
   const rows = Array.isArray(src.holdings) ? src.holdings : [];
   const custom = !exp && Array.isArray(src.customStocks) ? src.customStocks.filter((c) => isPlainObj(c) && typeof c.t === "string" && c.t.trim()) : [];
+  const listed = (t) => known.has(t) || custom.some((c) => c.t === t);
   const holdings = [], seen = new Set();
   let bad = 0, unknown = 0;
   rows.forEach((r) => {
     const t = isPlainObj(r) ? (exp ? r.ticker : r.t) : null;
     const mw = !isPlainObj(r) ? null : exp ? (isFinNum(r.amountWon) ? mwOfWon(r.amountWon) : null) : r.mw;
     if (typeof t !== "string" || !t.trim() || !isFinNum(mw) || mw <= 0 || seen.has(t)) { bad++; return; }
-    if (!known.has(t) && !custom.some((c) => c.t === t)) { unknown++; return; }
     seen.add(t);
-    holdings.push(exp ? { t, mw } : { ...r, t, mw });
+    const off = !listed(t);
+    if (off) unknown++;
+    holdings.push(!exp ? { ...r, t, mw } : off && typeof r.name === "string" && r.name.trim() ? { t, mw, nk: r.name } : { t, mw });
   });
   if (bad + unknown > 0) {
-    console.warn("[뱁새] 불러온 파일의 종목 " + rows.length + "개 중 " + (bad + unknown) + "개를 뺐어요 (종목코드·금액이 맞지 않음 "
-      + bad + "개 · 지금 종목 목록에 없음 " + unknown + "개)");
+    console.warn("[뱁새] 불러온 파일의 종목 " + rows.length + "개: 뺀 줄 " + bad + "개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 "
+      + unknown + "개 (저장본에는 남겨 둬요)");
   }
-  if (!holdings.length) return refuse();
-  if (!exp) return { ...src, holdings, ...(Array.isArray(src.customStocks) ? { customStocks: custom } : {}) };
-  const st = { holdings, answers: {}, profile: isPlainObj(j.profile) ? sameKinds(j.profile, DEFAULT_PROFILE) : {}, budgetMw: 1000 };
-  if (isFinNum(j.budgetWon) && j.budgetWon >= 0) st.budgetMw = mwOfWon(j.budgetWon);
-  else console.warn("[뱁새] 불러온 파일에 예산(budgetWon)이 없거나 숫자가 아니라 1,000만원으로 시작해요");
-  const settings = isPlainObj(j.settings) ? sameKinds(j.settings, DEFAULT_SETTINGS) : {};
-  if (Object.keys(settings).length) st.settings = settings;     // 읽을 칸이 하나도 없으면 지금 설정(오늘 환율 등)을 그대로 둬요
+  if (!holdings.some((h) => listed(h.t))) return refuse();
+  const kinds = (o, d) => (isPlainObj(o) ? sameKinds(o, d) : null);
+  const settings = kinds(src.settings, DEFAULT_SETTINGS);
+  const tax = kinds(src.tax, DEFAULT_TAX);
+  const budget = (v, what) => {
+    if (isFinNum(v) && v >= 0) return v;
+    console.warn("[뱁새] 불러온 파일에 예산(" + what + ")이 없거나 0 이상의 숫자가 아니라 1,000만원으로 시작해요");
+    return 1000;
+  };
+  const st = exp
+    ? { holdings, answers: {}, profile: kinds(j.profile, DEFAULT_PROFILE) || {},
+        budgetMw: budget(isFinNum(j.budgetWon) && j.budgetWon >= 0 ? mwOfWon(j.budgetWon) : null, "budgetWon") }
+    : { ...src, holdings, budgetMw: budget(src.budgetMw, "budgetMw"), stage: STAGES.includes(src.stage) ? src.stage : 1 };
+  if (!exp) {
+    if (Array.isArray(src.customStocks)) st.customStocks = custom;
+    if (src.lang !== "ko" && src.lang !== "en") delete st.lang;                 // 지금 언어 그대로
+    if (!isPlainObj(src.answers)) delete st.answers;                           // 객체가 아닌 답변은 버려요 (지금 답변 그대로)
+    const profile = kinds(src.profile, DEFAULT_PROFILE);
+    if (profile) st.profile = profile; else delete st.profile;                 // 객체가 아니면 지금 프로필 그대로 (예전처럼)
+  }
+  // 읽을 칸이 하나도 없는 설정 · 세금은 건드리지 않아요 (지금 설정 — 오늘 환율 등 — 그대로)
+  if (settings && Object.keys(settings).length) st.settings = settings; else delete st.settings;
+  if (tax && Object.keys(tax).length) st.tax = tax; else delete st.tax;
   return st;
 }
 
@@ -1187,12 +1211,18 @@ const MKT_PATHS = {
     m: [-0.036, -0.062, -0.117, 0.11, 0.042, 0.039, 0.067, 0.034, 0.001, -0.026, 0.143, 0.109] },
 };
 
+// 링크를 페이지에 붙였다가 눌러서 받고, 파일 주소는 60초 뒤에 지워요. 바로 지우면 iOS 사파리가 받다가 실패할 수 있어요
+// ("WebKitBlobResource error 1"). 2.0 의 downloadRecords (src/v2/store.js) 와 같은 방식이에요 (v18.4.1).
+const REVOKE_AFTER_MS = 60000;
 function downloadFile(name, content, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = name; a.click();
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
 }
 
 // ================= Deterministic profile scoring (no AI, fully offline) =================
@@ -4019,7 +4049,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
 }
 
 // ================= Export (ship's log) =================
-function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo }) {
+function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo, budgetMw }) {
   const [checks, setChecks] = useState([false, false, false, false, false]);
   const [cardM, setCardM] = useState(null);
   const openCard = () => {
@@ -4045,7 +4075,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   });
   const stamp = new Date().toISOString().slice(0, 10);
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: metrics.total, holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile, budgetWon: Math.round(budgetMw * 10000), holdings: rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
@@ -4318,8 +4348,8 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
           </div>
         </Card>
       )}
-      <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }}
-        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.readAsText(f); } e.target.value = ""; }} />
+      <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.onerror = () => onImport(""); rd.readAsText(f); } e.target.value = ""; }} />
       <Btn kind="ghost" onClick={() => fileRef.current && fileRef.current.click()} style={{ width: "100%" }}>{lang === "ko" ? "저장한 파일에서 불러오기 (JSON)" : "Load from a saved file (JSON)"}</Btn>
       {(() => {
         const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang).stale;
@@ -4674,7 +4704,7 @@ function AppInner({ seed, lang: langProp }) {
         )}
         {slotId && stage === 3 && (
           <div className="narrow" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} />
+            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} budgetMw={budgetMw} />
             <Btn kind="ghost" onClick={exitSlot} style={{ width: "100%" }}>{t("slotExit")}</Btn>
           </div>
         )}
