@@ -155,6 +155,8 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
   credit line (Jack, 2026-11-03). The 소개 page does not lead with "교육용"; the footer disclaimer stays on every page.
+  Until v19.0 ships, the existing footers still show the old credit line `이성진, INSEAD MBA 26J` (KO) ·
+  `Jack (Sung Jin) Lee, INSEAD MBA 26J` (EN); v19.0 removes them and this sentence (Jack, 2026-11-03).
 
 ## Repo map
 
