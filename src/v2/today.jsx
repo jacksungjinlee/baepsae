@@ -4,7 +4,8 @@
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
 //   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all)
 //   no held stock      no verdict (nothing was checked), only the way to 덱 짜기
-//   오늘 확인할 일      규칙 깨짐 or 확인 필요 (apricot band): each one named, with its rule, numbers and report year
+//   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
+//                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
 //   할 일 없음          green band "매도 조건에 걸린 종목이 없어요": only when nothing is 규칙 깨짐 or 확인 필요. The
 //                      eyebrow "오늘은 할 일이 없어요" only when every holding is 할 일 없음 (REDESIGN 2.1: steps 1-3 all
 //                      clear, so no 지켜봐요 and no weight outside its band).
@@ -13,6 +14,8 @@
 // Every verdict band carries "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" whenever any rule is not checked, so a
 // calm band never hides a sell condition we could not check. A big move (|d1| >= 5%) is a note with a link to 왜 움직였나,
 // never a status. 다음 일정 is hidden until the v18.0 calendar.
+// v19.0b: the verdict carries a state icon (check-circle on calm days, flag on 확인할 일 days), never a 뱁이 picture
+// (CLAUDE.md: 뱁이 never beside a verdict or on a card with numbers). The stale band is not a verdict: no icon.
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
@@ -107,7 +110,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
     if (ev.why === "stale") {
       return (
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-stale">
-          <HeroBand tone="alert" title={fill(C.today.stale, { n: ev.days })} />
+          <HeroBand tone="stale" title={fill(C.today.stale, { n: ev.days })} />
         </div>
       );
     }
@@ -127,9 +130,8 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
     return (
       <>
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo">
-          <HeroBand tone="alert" eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
+          <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
             body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
-            image="baepi-4.png" imageAlt={C.today.todoAlt}
             inset={todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)} />
         </div>
         {bigs.length > 0 && <Card><BigMoves items={bigs} load={load} onWhy={onWhy} /></Card>}
@@ -142,7 +144,6 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
     <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
       <HeroBand tone="calm" eyebrow={allNone ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
         body={lines([bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
-        image={bigs.length ? "baepi-2.png" : "baepi-9.png"} imageAlt={bigs.length ? C.today.bigAlt : C.today.calmAlt}
         inset={bigs.length ? <BigMoves items={bigs} load={load} onWhy={onWhy} /> : null} />
     </div>
   );

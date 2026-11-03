@@ -24,6 +24,11 @@ import threading
 
 from playwright.sync_api import sync_playwright
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from copytrace import chat_approved  # noqa: E402
+
+# 목업 CSV 밖에서 스타일 페이지에 나오는 한국어는 이 넷뿐이에요: 뱁이 그림의 alt (앱의 문구 파일 그대로, Jack 승인 2026-11-04)
+MASCOT_ALT_KEYS = ("build.s0.imgAlt", "deck.emptyAlt", "app.loadFailAlt", "app.pendingAlt")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COMPONENTS = ["hero-band", "button", "stat-strip", "list-row", "status-chip", "segmented", "stepper", "money-input",
               "bottom-action-bar", "bottom-sheet", "collapsible", "bottom-tab-bar", "dot-strip", "weight-bar", "rule-row"]
@@ -55,7 +60,7 @@ def numless(s):
 
 
 def make_matcher(rows):
-    exact = set(rows) | FAKE_NAMES
+    exact = set(rows) | FAKE_NAMES | {chat_approved()[k] for k in MASCOT_ALT_KEYS}
     loose = {numless(r) for r in rows}
     templates = [re.compile("^" + re.sub(r"\\\{[\w.]+\\\}", ".+?", re.escape(r)) + "$") for r in rows if "{" in r]
 
@@ -132,9 +137,11 @@ def run_width(pw, base, width, check, shots):
     if width == 390:
         rows = mockup()
         ok = make_matcher(rows)
+        # 큰 숫자(v19.0b [data-ui="amount"])는 한 덩어리 글로 모아요 (단위 span 으로 나뉘어도 "1,073만원" 그대로 목업과 비교)
         texts = page.evaluate("""() => { const out = []; const it = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            while (it.nextNode()) { const n = it.currentNode; if (n.parentElement.closest('script, style, noscript')) continue;
+            while (it.nextNode()) { const n = it.currentNode; if (n.parentElement.closest('script, style, noscript, [data-ui="amount"]')) continue;
               const t = n.textContent; if (t.trim()) out.push(t); }
+            for (const a of document.querySelectorAll('[data-ui="amount"]')) if (a.textContent.trim()) out.push(a.textContent);
             for (const e of document.querySelectorAll('[aria-label],[alt],[aria-placeholder]'))
               for (const a of ['aria-label','alt','aria-placeholder']) { const v = e.getAttribute(a); if (v) out.push(v); }
             return out; }""")
@@ -199,6 +206,10 @@ def interact(page, check, w):
 
     row = page.locator('[data-ui="list-row"]').first
     check(w + "목록 줄은 키보드로 갈 수 있어요", row.get_attribute("tabindex") == "0" and row.get_attribute("role") == "button")
+    sel = page.locator('[data-ui="list-row"][data-selected="1"]')                 # v19.0b 고른 줄: 회색 바탕 + 왼쪽 3px 남색, 살구색 없음
+    look = sel.evaluate("(e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e).boxShadow]") if sel.count() == 1 else None
+    check(w + "고른 줄: 회색(#F2F0EB) 바탕 + 왼쪽 3px 남색 선", look is not None and look[0] == "rgb(242, 240, 235)"
+          and "rgb(28, 43, 69)" in look[1] and "3px 0px 0px 0px inset" in look[1], str(look))
 
     opener = page.locator("[data-open-sheet]")
     sheet = page.locator('[data-ui="bottom-sheet"]:not([data-inline])')

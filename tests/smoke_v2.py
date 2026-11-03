@@ -28,6 +28,10 @@
               새로 고침해도 그 선택 · 저장소가 막혀도 동작 · 숫자 줄 = 시험 데이터로 센 값(분석 종목 · 업종 그룹) · 멈춘 데이터면
               숫자 줄 없음(문단은 그대로) · data.json 이 없으면 숫자 줄과 숫자 문단 없이 나머지는 그대로 · 뒤로 → 전 화면, # 없음
 모든 장면에서 페이지 오류 0건, 다른 사이트 요청 0건. 화면에 보이는 한국어는 모두 src/copy/v2.js(또는 데이터의 이름)에서 와요.
+v19.0b (진지한 화면): 글을 모으는 모든 화면에서 (visual_ok) — 그림이 모두 열려요 · 뱁이 그림은 숫자가 있는 카드와 판정 띠에 없어요
+(소개 페이지는 규칙이 이름으로 허락한 곳) · 아이콘은 Phosphor 두 층에 표의 색만 · 고른 탭 · 고른 줄 · 고른 칩 · 아이콘 · 판정 띠에
+살구색이 없어요. 그리고 판정 띠의 상태 아이콘(할 일 없음 check-circle · 확인할 일 flag, 멈춤은 없음) · 알약 색 · 초점 테두리 남색 ·
+로고(뱁이 마크 + '뱁새' 22px/800) · 덱 짜기 첫 화면 · 빈 내 덱 · 불러오기 실패 · 준비 중의 뱁이 · 기록했어요는 그림 대신 아이콘 칩.
 """
 import argparse
 import datetime as dt
@@ -46,10 +50,11 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
+from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
-SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + [f"baepi-{i}.png" for i in range(1, 10)]
+SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]
 DATA_FILES = ["data.json", "corp.json", "macro.json"]
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -60,6 +65,35 @@ NO_PROMISE = ["매일 이 규칙으로", "언제든 고칠 수"]
 
 C, _ = copy_strings()
 LOAD_FAIL = C["app"]["loadFail"]
+
+def verdict_icon(loc, state):
+    """판정 띠의 상태 아이콘: 60px 흰 동그라미, 할 일 없음 = check-circle(초록 · 초록 바탕) · 확인할 일 = flag(남색 · 회청색 바탕)."""
+    ic = loc.locator('[data-ui="state-icon"]')
+    assert ic.count() == 1, f"상태 아이콘 {ic.count()}개"
+    assert ic.get_attribute("data-state") == state, ic.get_attribute("data-state")
+    box = ic.bounding_box()
+    assert box and abs(box["width"] - 60) < 1 and abs(box["height"] - 60) < 1, box
+    assert ic.evaluate("(e) => getComputedStyle(e).backgroundColor") == "rgb(255, 255, 255)"
+    svg = ic.locator("svg")
+    want = {"calm": ("check-circle", "#CDEBD9", "#1F7A4D"), "alert": ("flag", "#CBD3DF", "#1C2B45")}[state]
+    got = (svg.get_attribute("data-ph"), svg.locator('[data-layer="fill"]').get_attribute("fill"), svg.locator('[data-layer="line"]').get_attribute("fill"))
+    assert got == want, got
+    assert loc.locator("img").count() == 0, "판정 띠에 그림이 있어요"
+
+
+def hero_colours(loc):
+    """(띠 바탕, 알약 바탕, 알약 글자) — 계산된 색."""
+    return loc.evaluate("""(e) => { const b = e.querySelector('[data-ui="hero-band"]') || e; const p = b.querySelector('[data-ui-part="pill"]');
+        return [getComputedStyle(b).backgroundColor, p ? getComputedStyle(p).backgroundColor : null, p ? getComputedStyle(p).color : null]; }""")
+
+
+def mascot_img(loc, src, px, alt):
+    img = loc.locator(f'img[src="{src}"]')
+    img.wait_for(state="visible")
+    assert img.evaluate("(i) => i.complete && i.naturalWidth > 0"), f"{src} 가 열리지 않았어요"
+    box = img.bounding_box()
+    assert box and abs(box["width"] - px) < 1, (src, box)
+    assert img.get_attribute("alt") == alt and alt, (src, img.get_attribute("alt"), alt)     # Jack 이 승인한 alt (2026-11-04)
 
 
 def now_kst(days_ago=0):
@@ -165,9 +199,11 @@ class Runner:
 
     def collect(self, page):
         """지금 화면에 보이는 글(글자 · aria-label · alt · placeholder)을 모아 둬요. 끝에서 한꺼번에 출처를 확인해요."""
+        # 큰 숫자(v19.0b [data-ui="amount"]: 단위만 작게 그린 span)는 조각이 아니라 한 덩어리 글로 모아요 ("1,073만원" 그대로 출처 확인)
         got = page.evaluate("""() => { const out = []; const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            while (w.nextNode()) { const n = w.currentNode; const e = n.parentElement; if (!e || e.closest('script, style')) continue;
+            while (w.nextNode()) { const n = w.currentNode; const e = n.parentElement; if (!e || e.closest('script, style, [data-ui="amount"]')) continue;
               const r = e.getBoundingClientRect(); if (!r.width && !r.height) continue; const t = n.textContent; if (t.trim()) out.push(t); }
+            for (const a of document.querySelectorAll('[data-ui="amount"]')) { const r = a.getBoundingClientRect(); if ((r.width || r.height) && a.textContent.trim()) out.push(a.textContent); }
             for (const e of document.querySelectorAll('[aria-label],[alt],[placeholder]'))
               for (const a of ['aria-label', 'alt', 'placeholder']) { const v = e.getAttribute(a); if (v) out.push(v); }
             return out; }""")
@@ -179,6 +215,7 @@ class Runner:
         assert not left, f"채우지 못한 자리: {left}"
         promise = [w for w in NO_PROMISE if w in body]
         assert not promise, f"아직 없는 기능(규칙 고치기)을 약속해요: {promise}"
+        visual_ok(page)
 
     def unnamed(self, t):
         for n in self.names:
@@ -269,6 +306,32 @@ def scene_normal(R, files, width):
         R.collect(page)
     R.check(page, S, "첫 화면: 저장한 덱이 없으면 덱 짜기 · 머리말에 '찾기'·'예전 뱁새 보기'", landing)
 
+    def visual_start():
+        start = page.locator('[data-ui-v2="build-start"]')                 # 덱 짜기 첫 카드: 숫자 없음 → 나뭇가지를 나르는 뱁이 92px
+        mascot_img(start, "baepi-16-build.webp", 92, C["build"]["s0"]["imgAlt"])
+        assert not re.search(r"\d", start.inner_text()), start.inner_text()
+        bar = page.locator('[data-ui-v2="app-bar"]').first                   # 로고: 뱁이 마크 28px + '뱁새' 22px/800 (뒤로 버튼이 있으면 마크 대신)
+        page.get_by_role("button", name=C["build"]["backToday"]).click()
+        see(page, C["today"]["title"])
+        mark = bar.locator('img[data-ui-v2="logo-mark"]')
+        assert mark.get_attribute("src") == "baepi-mark.webp" and mark.get_attribute("alt") == "" and mark.evaluate("(i) => i.naturalWidth > 0")
+        assert abs(mark.bounding_box()["width"] - 28) < 1
+        assert bar.locator("img[src='icon-192.png']").count() == 0
+        word = bar.locator('h1[data-ui-v2="wordmark"]')
+        assert word.inner_text() == C["app"]["brand"] and word.evaluate("(e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight]") == ["22px", "800"]
+        tab(page, C["app"]["tabs"]["build"])
+        page.locator('[data-deck="income"]').click()                         # 시작 덱 → 다음 단계 → 뒤로: 표시 없이 그대로 (main 과 같아요)
+        see(page, C["build"]["s1"]["title"])
+        page.get_by_role("button", name=C["build"]["prevStep"]).click()
+        page.locator('[data-deck="income"]').wait_for(state="visible")
+        assert page.locator("[data-deck][data-selected], [data-deck][aria-current]").count() == 0, "다시 누르면 1단계 변경이 사라지는 고른 표시가 있어요"
+        page.locator("body").click(position={"x": 2, "y": 2})                # 키보드 초점 테두리는 남색 (살구색 아님)
+        page.keyboard.press("Tab")
+        ring = page.evaluate("() => { const s = getComputedStyle(document.activeElement); return [document.activeElement.tagName, s.outlineColor, s.outlineStyle, s.outlineWidth]; }")
+        assert ring[1:] == [NAVY_RGB, "solid", "2px"], ring
+        R.collect(page)
+    R.check(page, S, "덱 짜기 첫 화면의 뱁이(날짜 줄 말고 숫자 없음) · 로고 마크 + 워드마크 · 돌아와도 시작 덱 표시 없음 · 초점 테두리 남색", visual_start)
+
     def today():
         tab(page, C["app"]["tabs"]["today"])
         bar = page.locator('[data-ui-v2="app-bar"] h1').first           # v19.0: 머리말은 '뱁새', 긴 제목은 탭 제목에만
@@ -289,9 +352,17 @@ def scene_normal(R, files, width):
         tab(page, C["app"]["tabs"]["deck"])
         see(page, C["store"]["export"])
         assert md in date_line(page)
+        empty = page.locator('[data-ui-v2="deck-empty"]')                    # 빈 내 덱: 둥지에 앉은 뱁이 + 덱 짜기 (숫자 없는 카드)
+        mascot_img(empty, "baepi-15-portfolio.webp", 112, C["deck"]["emptyAlt"])
+        assert empty.inner_text().strip() == C["build"]["title"], empty.inner_text()
+        tabs = page.locator('nav[data-ui="bottom-tab-bar"]')                 # 고른 탭: 아이콘 뒤 회색 알약 + 남색 아이콘
+        on = tabs.locator('button[aria-current="page"] [data-ui-part="tab-pill"]')
+        assert on.evaluate("(e) => getComputedStyle(e).backgroundColor") == SELECT_RGB
+        assert on.locator("svg").get_attribute("data-tone") == "on"
+        assert tabs.locator('button:not([aria-current]) svg[data-tone="off"]').count() == 3
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "탭: 내 덱 (기록 내보내기·불러오기)", my_deck)
+    R.check(page, S, "탭: 내 덱 (기록 내보내기·불러오기) · 빈 내 덱 카드의 뱁이 · 고른 탭 알약", my_deck)
 
     def build_tab():
         tab(page, C["app"]["tabs"]["build"])
@@ -414,6 +485,8 @@ def scene_normal(R, files, width):
         page.get_by_role("button", name=C["plan"]["save"]).click()
         see(page, C["plan"]["done"])
         see(page, "내일부터 오늘 화면에서 6종목을 규칙대로 점검해 드릴게요.")          # Part E: 오늘 화면이 정말 점검해요
+        done = page.locator('[data-ui-v2="record-done"]')                    # 종목 수만 있고 돈은 없어서 기뻐하는 뱁이 그대로 (Jack, 2026-11-04)
+        mascot_img(done, "baepi-5.png", 64, C["plan"]["doneAlt"])
         R.collect(page)
         page.get_by_role("button", name=C["plan"]["doneLink"]).click()
         see(page, C["today"]["title"])
@@ -608,6 +681,9 @@ def scene_stale(R, files, width):
         wait_ready(page)
         tab(page, C["app"]["tabs"]["today"])
         see(page, "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요")
+        band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"]')     # 판정이 아니라서 상태 아이콘 없음, 지켜봐요 바탕
+        assert band.get_attribute("data-tone") == "stale" and band.locator('[data-ui="state-icon"], img').count() == 0
+        assert hero_colours(band)[0] == "rgb(255, 243, 214)"
         dl = page.locator('[data-ui-v2="date-line"]').first
         assert dl.get_attribute("data-stale") == "1" and "6일째 갱신이 멈췄어요" in dl.inner_text(), dl.inner_text()
         assert page.get_by_text("할 일").count() == 0
@@ -634,11 +710,19 @@ def scene_refused(R, files, width, how):
     def run():
         see(page, LOAD_FAIL)
         assert page.locator('[data-ui-v2="date-line"]').count() == 0
+        mascot_img(page.locator('[data-ui-v2="load-fail"]').first, "baepi-20-error.webp", 120, C["app"]["loadFailAlt"])    # 불러오기 실패: 빠진 플러그를 든 뱁이
+        assert page.locator("img[src^='baepi-2.png']").count() == 0
+        tab(page, C["app"]["tabs"]["deck"])                             # 내 덱, 저장한 덱 없음: 숫자 없는 화면이라 뱁이 그림 그대로 (v19.0b)
+        see(page, LOAD_FAIL)
+        fail = page.locator('[data-ui-v2="load-fail"]').first
+        assert fail.get_attribute("data-picture") == "1" and page.locator('[data-ui-v2="deck-empty"]').count() == 0
+        mascot_img(fail, "baepi-20-error.webp", 120, C["app"]["loadFailAlt"])
+        R.collect(page)                                                   # 화면 단위 뱁이 규칙(visual_ok)도 통과
         tab(page, C["app"]["tabs"]["build"])
         see(page, LOAD_FAIL)
         assert page.locator("[data-deck]").count() == 0, "불러오지 못했는데 덱 짜기가 열려요"
         R.collect(page)
-    R.check(page, f"{how} {width}", "불러오기 실패 문구 (오늘 · 덱 짜기), 예시 데이터 없음", run)
+    R.check(page, f"{how} {width}", "불러오기 실패 문구 (오늘 · 내 덱(저장한 덱 없음, 뱁이 그대로) · 덱 짜기), 예시 데이터 없음", run)
     ctx.close()
     srv.shutdown()
 
@@ -655,6 +739,7 @@ def scene_missing_fields(R, files, width, fields):
         tab(page, C["app"]["tabs"]["build"])
         page.locator('[data-ui-v2="build-not-ready"]').wait_for(state="visible")
         see(page, C["app"]["pending"])
+        mascot_img(page.locator('[data-ui-v2="build-not-ready"]'), "baepi-21-wip.webp", 64, C["app"]["pendingAlt"])     # 통째로 준비 중: 안전모 뱁이
         assert page.locator("[data-deck]").count() == 0 and page.locator("[data-cand]").count() == 0
         R.collect(page)
     R.check(page, f"필드 없음 {width}", f"{', '.join(fields)} 없음 → 덱 짜기는 '준비 중'만", run)
@@ -784,6 +869,7 @@ def scene_locked(R, files, width):
         wait_ready(page)
         tab(page, C["app"]["tabs"]["deck"])
         assert page.locator('[data-ui-v2="store-locked"]').inner_text() == C["store"]["locked"]
+        assert page.locator('[data-ui-v2="deck-empty"]').count() == 0, "읽지 못한 기록이 있는데 빈 내 덱 카드(뱁이 + 덱 짜기)가 보여요"
         assert page.evaluate("localStorage.getItem('baepsae2.v1')") == '{"v":9,"stuff":[1]}', "읽지 못한 기록을 바꿨어요"
         R.collect(page)
     R.check(page, f"읽지 못한 기록 {width}", "알 수 없는 형식으로 저장된 기록 → '이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요.'", run)
@@ -1041,7 +1127,7 @@ def scene_daily(R, files, width):
         assert page.locator('[data-ui-v2="deck-strip"]').count() == len(DAILY_DECKS["decks"])
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "오늘: 살구 띠 '오늘 확인할 일' (매도 조건 먼저 · 확인 필요) · 못 하는 규칙 줄 · 큰 움직임은 따로 · 덱마다 띠", today_hero)
+    R.check(page, S, "오늘: 확인할 일 띠 '오늘 확인할 일' (매도 조건 먼저 · 확인 필요) · 못 하는 규칙 줄 · 큰 움직임은 따로 · 덱마다 띠", today_hero)
     ctx.close()
     srv.shutdown()
 
@@ -1067,6 +1153,8 @@ def scene_daily(R, files, width):
             else:                                                       # 칩 없는 종목이 '괜찮음'으로 읽히지 않게
                 assert page.locator('[data-ui-v2="deck-stale"]').count() == 0
                 assert page.locator('[data-ui-v2="load-fail"]').inner_text().strip() == LOAD_FAIL
+                fail = page.locator('[data-ui-v2="load-fail"]')            # 기록(숫자)이 보이는 화면이라 뱁이 그림 없이 문구만 (v19.0b)
+                assert fail.get_attribute("data-picture") == "0" and fail.locator("img").count() == 0
             assert page.locator("[data-holding][data-status]").count() == 0, "멈춘·실패한 데이터로 판정했어요"
             for sel in ('[data-ui-v2="status-line"]', '[data-ui-v2="confirm"]', '[data-ui-v2="not-checked"]', '[data-holding] [data-ui="status-chip"]', "[data-rules-today]"):
                 assert page.locator(sel).count() == 0, sel
@@ -1157,13 +1245,15 @@ def scene_today(R, files, width):
         assert C["today"]["sellLabel"] in it and "배당 삭감 · 주당 4,367원 → 3,000원" in it and "2025년 사업보고서 기준" in it, it
         assert it.count(C["daily"]["sellNow"]) == 0, "띠 본문에 있는 말을 또 했어요"
         not_checked(txt)
+        verdict_icon(h, "alert")                                                     # 확인할 일: flag, 규칙 깨짐이 있으니 남색 알약
+        assert hero_colours(h) == ["rgb(255, 243, 214)", NAVY_RGB, "rgb(255, 255, 255)"], hero_colours(h)
         assert page.locator('[data-today-holding="105560"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["broken"]]
         assert page.locator('[data-today-holding="005930"] [data-ui="status-chip"]').count() == 0          # 칩 없음 = 괜찮아요
         strip = page.locator('[data-ui-v2="deck-strip"]').inner_text()
         assert "평가 금액" in strip and "수익률" in strip and re.search(r"오늘 [+−]?\d+\.\d%", strip), strip
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "매도 조건 → 살구 띠 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
+    R.check(page, S, "매도 조건 → 확인할 일 띠(지켜봐요 바탕 · 규칙 깨짐 남색 알약 · flag) 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
     ctx.close()
     srv.shutdown()
 
@@ -1190,6 +1280,7 @@ def scene_today(R, files, width):
         assert C["today"]["calmTitle"] in txt, txt                     # 지켜봐요가 있어도 맞는 말 (매도 조건에 걸린 종목은 없어요)
         assert C["today"]["calmEyebrow"] not in txt, txt               # 하지만 '오늘은 할 일이 없어요'는 모든 종목이 할 일 없음일 때만
         not_checked(txt)
+        verdict_icon(h, "calm")
         assert page.locator('[data-today-holding="012450"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"], C["daily"]["bigMove"]]
         assert "크게 움직인 종목은 1개 있어요" in txt
         R.collect(page)
@@ -1199,6 +1290,8 @@ def scene_today(R, files, width):
         v.wait_for(state="visible")
         vt = v.inner_text()
         assert v.get_attribute("data-status") == "watch" and vt.startswith(C["daily"]["watch"]), vt
+        verdict_icon(v, "alert")
+        assert hero_colours(v)[1] == "rgb(138, 90, 0)", hero_colours(v)                   # 지켜봐요 알약 (살구색 아님)
         assert "부채비율 221% (기준 200%)" in vt and C["why"]["noTodo"] not in vt and "지켜지고 있어요" not in vt, vt
         assert "지켜지고 있어요" not in page.locator('[data-ui-v2="why-rules"]').inner_text()
         no_hscroll(page, width)
@@ -1234,12 +1327,15 @@ def scene_today(R, files, width):
         assert C["daily"]["sellNow"] not in txt and C["daily"]["broken"] not in txt, "확인 전인데 매도처럼 보여요"
         assert page.locator('[data-today-holding="005380"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["check"]]
         not_checked(txt)
+        verdict_icon(h, "alert")
+        assert hero_colours(h) == ["rgb(255, 243, 214)", "rgb(138, 90, 0)", "rgb(255, 255, 255)"], hero_colours(h)   # 확인 필요만: 지켜봐요 알약
         R.collect(page)
         h.get_by_role("radio", name=C["daily"]["confirmNotCut"]).click()
         page.wait_for_function("() => document.querySelector('[data-ui-v2=\"today-hero\"]').dataset.state === 'calm'")
         assert C["today"]["calmTitle"] in hero(page).inner_text()
+        verdict_icon(hero(page), "calm")
         R.collect(page)
-    R.check(page, S, "확인 필요 → 살구 띠의 두 버튼 → '줄인 게 아니에요' → 초록 띠", check)
+    R.check(page, S, "확인 필요 → 확인할 일 띠(지켜봐요 알약 · flag)의 두 버튼 → '줄인 게 아니에요' → 초록 띠(check-circle)", check)
     ctx.close()
     srv.shutdown()
 
@@ -1280,6 +1376,8 @@ def scene_today(R, files, width):
         assert h.get_attribute("data-state") == "calm"
         txt = h.inner_text()
         assert txt.startswith(C["today"]["calmEyebrow"]) and "크게 움직인 종목은 1개 있어요" in txt, txt
+        verdict_icon(h, "calm")
+        assert hero_colours(h) == ["rgb(237, 244, 239)", "rgb(31, 122, 77)", "rgb(255, 255, 255)"], hero_colours(h)
         inset = h.locator('[data-ui-v2="big-moves"]')
         it = inset.inner_text()
         assert "크게 움직인 종목 1개" in it and "SK하이닉스 −6.2%" in it and C["today"]["together"] in it, it
@@ -1295,6 +1393,13 @@ def scene_today(R, files, width):
         assert v.get_attribute("data-status") == "none"
         vt = v.inner_text()
         assert C["why"]["noTodo"] in vt and "업종이 다 같이\n빠진 날이에요" in vt and "규칙 2개가 모두 지켜지고 있어요." in vt, vt
+        verdict_icon(v, "calm")
+        assert page.locator("main img[src^='baepi-']").count() == 0, "왜 움직였나(숫자 화면)에 뱁이가 있어요"
+        price = page.locator('[data-ui-v2="why-price"]')                          # 큰 숫자: 단위는 작고 가볍게
+        unit = price.locator("[data-unit]")
+        assert price.inner_text() == "1,418,000원" and unit.inner_text() == "원"
+        fs = price.evaluate("(e) => [parseFloat(getComputedStyle(e).fontSize), parseFloat(getComputedStyle(e.querySelector('[data-unit]')).fontSize), getComputedStyle(e).fontWeight, getComputedStyle(e.querySelector('[data-unit]')).fontWeight]")
+        assert fs[1] < fs[0] and int(fs[3]) < int(fs[2]), fs
         not_checked(vt)
         peers = page.locator('[data-ui-v2="why-peers"]')
         assert C["why"]["c1Title"] in peers.inner_text() and re.search(r"반도체 종목 (\d+)개 중 \1개가 빠졌어요", peers.inner_text()), peers.inner_text()
@@ -1792,6 +1897,8 @@ def main():
     R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
     R.results.append(("다른 사이트 요청 0건 (글꼴·통계·CDN 없음)", not R.outside, ", ".join(sorted(set(R.outside)))[:300]))
     w = max(len(n) for n, _, _ in R.results)
+    print("\n뱁이가 나온 화면 (그림 | 화면 | 걸린 숫자 | 숫자가 아닌 이유: 예외 칸 · 날짜 · 종목 수):")
+    print("\n".join(placements_table()))
     print("\n뱁새 2.0 미리 보기 스모크 테스트 결과 · 데이터: tests/fixtures/v2")
     for name, good, msg in R.results:
         print(f"  {'PASS' if good else 'FAIL'}  {name.ljust(w)}  {msg}")

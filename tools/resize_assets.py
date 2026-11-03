@@ -3,7 +3,8 @@
 
 원본은 docs/design/v19/assets/ 에 그대로 두고, 저장소 맨 위에 '가장 크게 보이는 크기의 2배'로 줄인 파일을 써요.
 가로세로 비율은 그대로예요 (긴 쪽을 목표 크기에 맞춰요). 투명 배경 그림은 WebP(품질 90, 60 KB 안 — v19.0 Part C), 사진(JPEG)은 품질 88.
-    python3 tools/resize_assets.py
+    python3 tools/resize_assets.py                 # 모든 파일
+    python3 tools/resize_assets.py baepi-mark.png  # 고른 파일만 (이미 있는 파일을 다시 쓰지 않게)
 """
 import os
 import sys
@@ -16,6 +17,12 @@ SRC = os.path.join(ROOT, "docs", "design", "v19", "assets")
 TARGETS = {
     "baepi-og.png": (420, "소개 머리글: 휴대폰 108 px · PC 210 px (v19.0 Part C)"),
     "jack-photo.jpg": (224, "소개 사진: 휴대폰 88 px · PC 112 px (v19.0 Part D)"),
+    # v19.0b (Part C): 2.0 화면의 뱁이 — 뱁이 규칙(CLAUDE.md)이 허락하는 자리에만
+    "baepi-mark.png": (76, "로고: 휴대폰 28 px · PC 38 px"),
+    "baepi-16-build.png": (352, "덱 짜기 첫 화면 (v19.0c 의 첫 방문 홈): 휴대폰 92 px · PC 176 px"),
+    "baepi-15-portfolio.png": (256, "빈 내 덱 (v19.0c 포트폴리오 빈 화면 · 소개 이름 이야기): 128 px 까지"),
+    "baepi-20-error.png": (240, "불러오기 실패: 120 px"),
+    "baepi-21-wip.png": (128, "통째로 준비 중인 칸: 64 px"),
 }
 
 
@@ -36,6 +43,10 @@ def resize(name, long_side):
 
 
 if __name__ == "__main__":
-    for n, (side, _) in TARGETS.items():
-        resize(n, side)
+    names = sys.argv[1:] or list(TARGETS)
+    unknown = [n for n in names if n not in TARGETS]
+    if unknown:
+        raise SystemExit(f"!! TARGETS 에 없는 파일: {unknown}")
+    for n in names:
+        resize(n, TARGETS[n][0])
     sys.exit(0)
