@@ -5,6 +5,7 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-05 | #37 | Docs only, nothing on the site changed. HANDOFF records the night of 11/5: the company page (#36) and v17.6 (#34) wait for Jack, the logo test and its terms problem, the price-history proposal, and the morning run that came from the outside timer. |
 | 2026-11-05 | #32 | v18.6.2 (old app): a saved portfolio whose data is missing or broken no longer opens with the previous portfolio's numbers or gets overwritten; its saved data is kept untouched. Opening a portfolio or a backup now starts from clean defaults plus today's values, with the saved fields on top, and changes nothing on screen if any part fails. |
 | 2026-11-05 | #33 | Docs only, nothing on the site changed. New task file v19.1: 뱁새 2.0 company pages for Korean and US stocks (요약 with four tiles, 실적 · 가치 · 배당 · 공시 tabs, 자세히 screens, a logo test), with Jack's design boards. |
 | 2026-11-05 | #31 | v18.6.1 (old app): 새로 시작하기 starts a new portfolio from today's values (자동), not from the previous portfolio's settings; a backup or saved portfolio with no readable settings does the same. Settings you typed in a portfolio still stay with that portfolio. HANDOFF records the outside-timer setup (token without expiry). |
