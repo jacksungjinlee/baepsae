@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 07:15 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 09:00 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -69,9 +69,10 @@ only in cron-job.org (never in a chat, the repo or a log).
 8. **Price history (1 year of daily closes, report only):** proposal sent to Jack 2026-11-05 — one file per stock
    (~2 KB, ~5 MB total), only in v17.6's deployed copy (not in git), split-adjusted only, gate checks; after v17.6.
 9. **v17.6 is PR #34** (branch `claude/v17.6-never-again`): CI on every PR, deploy from main + `data` branch, watchdog.
-   `ci` green; the `dart=off` dry run failed at the gate as it should (no company data → PER/PBR/ROE 0%). **Still
-   needed:** a `dry_run=true dart=cache` run on the branch (after 08:30 KST; cancel at once if "DART 캐시 불러오기"
-   restores no key), Jack's yes on the test changes, then Jack's "merge" (CLAUDE.md). Jack must also create the
+   `ci` green; the `dart=off` dry run failed at the gate as it should (no company data → PER/PBR/ROE 0%); the
+   `dry_run=true dart=cache` run 41935114973 (2026-11-05 08:37 KST) passed: gate PASS 95/0/0, cache hit, 816 DART
+   calls (comment "Dry run with saved DART data" on the PR). **Still needed:** Jack's yes on the test changes, then
+   Jack's "merge" (CLAUDE.md). Jack must also create the
    healthchecks.io check and the `HC_PING_URL` secret, and later switch Pages to GitHub Actions and add the
    protect-main ruleset (steps in the PR). The leftover branch `claude/v17.6-ci-proof` (test PR #35) couldn't be
    deleted from the session (git proxy); delete it when possible.
