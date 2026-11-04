@@ -46,9 +46,14 @@ first live run after the merge creates the branch), `tools/assemble_site.py`, `t
 Deploy builds). `already_published.py` reads the `data` branch (falls back to `main` only while it doesn't exist). The
 daily run still commits to `main` as before (3a). Deploy's automatic triggers act only once Pages → Source is "GitHub
 Actions" (Jack's click, after the `data` branch exists and one manual Deploy was green); a deliberate deviation from the
-spec's "manual only", explained in the PR. Still to do after the merge: the after-merge steps in PR #34 (watch the first
-live run create `data`, watchdog selftest, manual Deploy, Jack's healthchecks.io + Pages clicks), then 3b, then 3c.
-The 09:13 check needs no change until 3b (it keys on the step `커밋 & 푸시`, unchanged).
+spec's "manual only", explained in the PR. `ci` is green on the PR (run 41875398590, 6 min 42 s) and went red on the
+deliberately broken test PR #35 (closed; its branch `claude/v17.6-ci-proof` still needs deleting — the session's git proxy
+refused). Branch dry run 41872130591 (`dart=off`): only the DART rows failed, as expected. One existing test changed and
+needs Jack's OK: `tests/smoke_v2.py` waits up to 3 s for the PC search box to empty (a CI timing race). **Before asking
+Jack to merge:** one green `dry_run=true`, `dart=cache` run on the branch after 08:30 KST, and the fresh-eyes review.
+After the merge: the steps in PR #34 (first live run creates `data`, watchdog selftest, manual Deploy, Jack's
+healthchecks.io + Pages clicks), then 3b, then 3c. The 09:13 check needs no change until 3b (it keys on the step
+`커밋 & 푸시`, unchanged).
 
 **Next, in Jack's order (2026-11-04): 자동 settings fix (v18.6, with the 타임머신 line stopping at the low point) → v19.0d (PC) → v17.6:**
 1. **09:13 check reports gate warnings:** done 2026-11-04 (Jack allowed the change).
