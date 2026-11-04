@@ -9,13 +9,17 @@
 수동 실행(workflow_dispatch)은 이 단계를 쓰지 않아요 (사람이 일부러 누른 실행이에요). 바깥 타이머(cron-job.org, timer=true)
 실행은 정해진 시각 실행과 똑같이 이 단계를 거쳐요 (v17.5.5).
 
-'다 들어와 있음' = main 의 data.json 이
+'다 들어와 있음' = 발행본(data 브랜치, v17.6)의 data.json 이
   pxDate   == 한국 거래일 달력에서 오늘(KST) 전의 마지막 거래일 (그날 종가 최종본은 전날 저녁에 나와요), 그리고
   usPxDate == 미국 거래일 달력에서 종가가 확정된(뉴욕 16:30 이 지난) 마지막 거래일.
 달력은 발행 관문과 같은 출처예요: 한국 = 네이버 KOSPI 일봉 + 야후 ^KS11 일봉, 미국 = 야후 ^GSPC 일봉 (fetch_data 가 usPxDate 를
 정하는 바로 그 지수). 그래서 한국·미국 휴장일에는 그 전 거래일을 기대하고, 빠진 날을 '늦었다'로 보지 않아요.
 달력을 받지 못하면 평일 규칙으로 판단해요 (크게 남겨요): 휴장일이면 같은 데이터를 다시 발행할 수 있지만 건너뛰지는 않아요.
 어떤 경우에도 읽을 수 없거나 이상하면 '실행'이에요 — 조용히 건너뛰지 않아요. 표준 라이브러리만 써요 (설치 전에 돌아요).
+
+발행본 (v17.6 Part 3a): 매일 실행은 검사를 통과한 네 파일을 main 에 커밋한 다음 같은 파일을 data 브랜치에도 올려요. 사이트 배포
+(deploy.yml)가 data 브랜치에서 가져가니, 여기서도 data 브랜치를 봐요. data 브랜치가 아직 없을 때(이 버전의 첫 실행 전)만 main 을
+보고, 그렇다고 크게 남겨요. data 브랜치가 있는지조차 확인하지 못하면 '발행 안 됨'(= 실행)이에요.
 
 쓰는 법:  python3 already_published.py   → GITHUB_OUTPUT 에 skip=true|false, 이유는 로그와 실행 요약에
 """
@@ -136,11 +140,11 @@ def wait_until(now, us_days, us_today=None):
 
 
 def decide(data, now, cal):
-    """main 의 data.json(dict 또는 None) 과 달력으로 (건너뛸지, 이유)."""
+    """발행본 data.json(dict 또는 None) 과 달력으로 (건너뛸지, 이유)."""
     kr_want, us_want = expected_kr(now, cal.get("kr")), expected_us(now, cal.get("us"))
     basis = "거래일 달력" if cal.get("kr") and cal.get("us") else "평일 규칙(달력 일부를 받지 못함)"
     if not isinstance(data, dict):
-        return False, "main 의 data.json 을 읽지 못했어요 → 실행해요"
+        return False, "발행본 data.json 을 읽지 못했어요 → 실행해요"
     px, usd = data.get("pxDate"), data.get("usPxDate")
     if not (kr_want and us_want):
         return False, f"기대 날짜를 정하지 못했어요 ({basis}) → 실행해요"
@@ -149,7 +153,7 @@ def decide(data, now, cal):
     if px == kr_want.isoformat() and usd == us_want.isoformat():
         return True, (f"이미 다 들어와 있어요: 한국 {px} · 미국 {usd} = 기대하는 마지막 거래일 ({basis}) "
                       "→ 데이터 수집 전에 끝내요")
-    return False, (f"아직이에요: main 은 한국 {px!r} · 미국 {usd!r}, 기대는 한국 {kr_want} · 미국 {us_want} ({basis}) → 실행해요")
+    return False, (f"아직이에요: 발행본은 한국 {px!r} · 미국 {usd!r}, 기대는 한국 {kr_want} · 미국 {us_want} ({basis}) → 실행해요")
 
 
 # ── 실행 ─────────────────────────────────────────────────────
@@ -164,7 +168,36 @@ def read_main():
         return None
 
 
-def main(now_fn=None, read=read_main, cals=calendars, sleep=time.sleep):
+DATA_BRANCH = "data"
+
+
+def read_published(run=None):
+    """발행본 data.json: data 브랜치(v17.6)에서. 그 브랜치가 아직 없을 때만 main 에서 (크게 남겨요). 못 읽으면 None (= 실행)."""
+    run = run or subprocess.run
+    try:
+        r = run(["git", "ls-remote", "--exit-code", "--heads", "origin", DATA_BRANCH], capture_output=True, timeout=60)
+    except Exception as e:
+        print(f"!! data 브랜치를 확인하지 못했어요 ({type(e).__name__}) → 발행 안 됨으로 봐요", flush=True)
+        return None
+    if r.returncode == 2:                    # 원격에 그 브랜치가 없어요 (git ls-remote --exit-code 의 약속)
+        print("!! data 브랜치가 아직 없어요 (v17.6 의 첫 발행 전) → main 의 data.json 으로 판단해요", flush=True)
+        return read_main()
+    if r.returncode != 0:
+        print(f"!! data 브랜치를 확인하지 못했어요 (git ls-remote 종료 코드 {r.returncode}) → 발행 안 됨으로 봐요", flush=True)
+        return None
+    try:
+        run(["git", "fetch", "--depth=1", "origin", f"+refs/heads/{DATA_BRANCH}:refs/remotes/origin/{DATA_BRANCH}"],
+            check=True, capture_output=True, timeout=120)
+        out = run(["git", "show", f"origin/{DATA_BRANCH}:data.json"], check=True, capture_output=True, timeout=60)
+        data = json.loads(out.stdout.decode("utf-8"))
+        print(f"· 발행본: data 브랜치의 data.json (한국 {data.get('pxDate')} · 미국 {data.get('usPxDate')})", flush=True)
+        return data
+    except Exception as e:
+        print(f"!! data 브랜치의 data.json 을 받지 못했어요 ({type(e).__name__}) → 발행 안 됨으로 봐요", flush=True)
+        return None
+
+
+def main(now_fn=None, read=read_published, cals=calendars, sleep=time.sleep):
     now_fn = now_fn or (lambda: dt.datetime.now(dt.timezone.utc))
     cal, src = cals()
     if not (cal.get("kr") and cal.get("us")):
