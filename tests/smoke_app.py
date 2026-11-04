@@ -66,6 +66,8 @@ DY_UNKNOWN = "배당 정보가 없는 종목 {n}개는 0원으로 계산했어�
 MISSING = "오늘 데이터에 없는 종목 {n}개({names})는 빼고 계산했어요."      # v18.5 (Jack 승인 2026-11-04), names = 'STRC 200만원, …'
 MISSING_EN = "Left out {n} stock(s) not in today's data ({names})."      # v18.5 승인 · 금액은 앱의 영어 금액 모양 그대로 (₩2,000,000)
 MISSING_REMOVE = "포트폴리오에서 빼기"                                     # v18.5 승인 (영어 'Remove from portfolio' 도 승인)
+SLOT_FAIL = {"ko": "이 포트폴리오를 열지 못했어요. 저장된 내용은 지우지 않고 그대로 두었어요.",   # v18.6.2 (Jack 승인 2026-11-05, 그의 문구):
+             "en": "We couldn't open this portfolio. Its saved data has been left as it is."}   # 못 읽는 저장본을 눌렀을 때의 알림
 BAR_LEGEND = {"ko": "데이터에 없는 종목", "en": "Not in today's data"}    # 예산 막대 회색 칸 이름표 (v18.5 승인, 2026-11-04)
 # 이름표가 회색 칸 바로 아래에서 시작하는지 (왼쪽 끝 차이, px) — 칸이 오른쪽 끝에 가까우면 오른쪽 정렬이라 None
 LEGEND_POS = """() => { const g = document.querySelector('[data-bar="missing"]'), l = document.querySelector('.barLegend');
@@ -1984,10 +1986,11 @@ def scene_broken_slot(R, files):
     화면(설정 · 직접 입력 기록 · 종목)이 그대로 열리고, 자동 저장이 그 내용을 그 저장본 위에 덮어썼어요.
     확인마다 새로 열고 → 멀쩡한 저장본(예산 2,500 · 세금 9.9% · 환율 1,234.5 직접 입력)을 열고 나와서 → 시험할 저장본을 눌러요 (서로 기대지 않게).
       · 깨진 JSON · 내용 없음 · {} (종목 목록 없음) · 읽다가 저장소 오류 · 화면에 옮기다 오류(lang en · customStocks [null] · 세금 1%):
-        첫 화면 그대로(한국어), 2초 뒤에도 저장된 글 · 목록 줄 그대로, console 에 저장본 id 와 이유, 그 뒤 '새로 시작하기'의 세금은
+        첫 화면 그대로(한국어), 알림 '이 포트폴리오를 열지 못했어요. …' 한 번, 2초 뒤에도 저장된 글 · 목록 줄 그대로,
+        console 에 저장본 id 와 이유, 그 뒤 '새로 시작하기'의 세금은
         멀쩡한 저장본의 9.9% (못 읽은 저장본의 1% 가 아니에요);
       · 종목만 있는 저장본: 앞 포트폴리오의 예산 · 세금 · 환율을 잇지 않고 기본값(1,000만원 · 15.4% · 오늘 환율 '자동')으로 열려요;
-      · 멀쩡한 저장본은 그대로 열려요."""
+      · 영어 화면에서는 영어 알림 · 멀쩡한 저장본 · 종목만 있는 저장본은 알림 없이 그대로 열려요."""
     today = files["data.json"].get("fx")
     good = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 2500, "holdings": [{"t": "005930", "mw": 300}, {"t": "000660", "mw": 200}],
             "settings": {"fx": 1234.5}, "typedKeys": ["fx"], "tax": {"divKr": 9.9}, "answers": {"goal": "retire"}}
@@ -2001,8 +2004,9 @@ def scene_broken_slot(R, files):
     local.update({"baepsae_v10_slot_" + k: v for k, v in bad.items()})
     srv, ctx, page, base = R.open(build_site(files), local=local, once=True)
     S = "못 읽는 저장본"
-    logs = []
+    logs, dialogs = [], []
     page.on("console", lambda m: logs.append((m.type, m.text)))
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
     stored = "(k) => localStorage.getItem('baepsae_v10_slot_' + k)"
     listed = "(k) => (JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]').find((x) => x.id === k) || null)"
     want_rows = [["삼성전자", "300"], ["SK하이닉스", "200"]]
@@ -2023,12 +2027,14 @@ def scene_broken_slot(R, files):
         see(page, "어떻게 시작할까요?")
 
     def start_with_good():
+        dialogs.clear()
         page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("멀쩡한 저장본", exact=False).first.click()
         page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
         poll(page, CART_ROWS, lambda v: v == want_rows, "멀쩡한 저장본의 종목이 보이지 않아요")
         go_home()
+        assert dialogs == [], f"멀쩡한 저장본에 알림: {dialogs}"
 
     def refused(sid, name, reason, before=None, patch=None):
         def run():
@@ -2048,24 +2054,25 @@ def scene_broken_slot(R, files):
             assert page.evaluate(listed, sid) == entry, "저장본 목록의 그 줄이 바뀌었어요 (자동 저장)"
             line = [t for k, t in logs if k == "warning" and f"저장본 {sid} 을 열지 않았어요" in t]
             assert len(line) == 1 and reason in line[0], logs
+            assert dialogs == [SLOT_FAIL["ko"]], dialogs                # 알림 한 번, 승인 문구 그대로
             # 못 읽은 저장본의 것이 새어 들어오지 않았어요: '새로 시작하기'는 세금만 앞 포트폴리오(멀쩡한 저장본 9.9%)에서 이어요 (Jack)
             page.get_by_text("새로 시작하기", exact=False).first.click()
             page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
             assert page.get_by_role("button", name="EN", exact=True).count() >= 1, "언어가 바뀌었어요"
             assert panel(tax="divKr")[0] == 9.9, panel(tax="divKr")
         return run
-    R.check(page, S, "깨진 JSON → 첫 화면 그대로 · 2초 뒤에도 저장된 글 · 목록 줄 그대로 · console 경고 · 그 뒤 새로 시작하기 세금 9.9%",
+    R.check(page, S, "깨진 JSON → 알림 '이 포트폴리오를 열지 못했어요. …' · 첫 화면 그대로 · 2초 뒤에도 저장된 글 · 목록 줄 그대로 · console 경고 · 그 뒤 새로 시작하기 세금 9.9%",
             refused("sbroken", "깨진 저장본", "JSON 을 읽지 못했어요", bad["sbroken"]))
-    R.check(page, S, "내용 없는 저장본(목록에만 있음) → 첫 화면 그대로 · 2초 뒤에도 내용 없음(덮어쓰지 않음) · console 경고",
+    R.check(page, S, "내용 없는 저장본(목록에만 있음) → 알림 '이 포트폴리오를 열지 못했어요. …' · 첫 화면 그대로 · 2초 뒤에도 내용 없음(덮어쓰지 않음) · console 경고",
             refused("smissing", "내용 없는 저장본", "저장된 내용이 없어요"))
-    R.check(page, S, "{} (종목 목록 없음) → 열지 않음 · 저장된 글 그대로 · console 경고 (전에는 앞 포트폴리오의 답변 · 예산 · 세금으로 열렸어요)",
+    R.check(page, S, "{} (종목 목록 없음) → 알림 '이 포트폴리오를 열지 못했어요. …' · 열지 않음 · 저장된 글 그대로 · console 경고 (전에는 앞 포트폴리오의 답변 · 예산 · 세금으로 열렸어요)",
             refused("sempty", "빈 저장본", "종목 목록(holdings)이 없어요", bad["sempty"]))
-    R.check(page, S, "읽다가 저장소 오류 → '내용 없음'이 아니라 그 오류를 console 에 · 열지 않음 · 저장된 글 그대로",
+    R.check(page, S, "읽다가 저장소 오류 → 알림 '이 포트폴리오를 열지 못했어요. …' · '내용 없음'이 아니라 그 오류를 console 에 · 열지 않음 · 저장된 글 그대로",
             refused("sreaderr", "읽기 오류 저장본", "저장소에서 읽다가 오류가 났어요 (localStorage: 시험용 읽기 오류)", bad["sreaderr"],
                     patch="""() => { window.__getItem = Storage.prototype.getItem; const g = window.__getItem;
                         Storage.prototype.getItem = function (k) { if (k === 'baepsae_v10_slot_sreaderr') throw new Error('시험용 읽기 오류');
                         return g.call(this, k); }; }"""))
-    R.check(page, S, "화면에 옮기다 오류(lang en · customStocks [null] · 세금 1%) → 열지 않음 · 한국어 그대로 · 새로 시작하기 세금 9.9% (1% 아님)",
+    R.check(page, S, "화면에 옮기다 오류(lang en · customStocks [null] · 세금 1%) → 알림 '이 포트폴리오를 열지 못했어요. …' · 열지 않음 · 한국어 그대로 · 새로 시작하기 세금 9.9% (1% 아님)",
             refused("sthrow", "옮기기 오류 저장본", "저장된 내용을 화면에 옮기지 못했어요", bad["sthrow"]))
 
     def bare_opens_clean():
@@ -2078,6 +2085,7 @@ def scene_broken_slot(R, files):
         assert panel("fx") == (today, "자동"), panel("fx")
         st = poll(page, "() => JSON.parse(localStorage.getItem('baepsae_v10_slot_sbare'))", lambda v: v and "settings" in v, "저장되지 않았어요")
         assert st["budgetMw"] == 1000 and st["tax"]["divKr"] == 15.4 and st["answers"] == {} and st["typedKeys"] == [], st
+        assert dialogs == [], dialogs
     R.check(page, S, "종목만 있는 저장본 → 앞 포트폴리오의 예산 · 세금 · 환율 · 답변 없이 기본값(1,000 · 15.4% · 오늘 환율 '자동')으로 열림", bare_opens_clean)
 
     def good_still_opens():
@@ -2086,7 +2094,20 @@ def scene_broken_slot(R, files):
         poll(page, CART_ROWS, lambda v: v == want_rows, "멀쩡한 저장본의 종목이 보이지 않아요")
         assert page.locator(BUDGET_BOX).first.input_value() == "2500"
         assert panel("fx") == (1234.5, "가정") and panel(tax="divKr")[0] == 9.9
-    R.check(page, S, "멀쩡한 저장본은 그대로 열림 (종목 · 예산 2,500 · 환율 1,234.5 '가정' · 세금 9.9%)", good_still_opens)
+        assert dialogs == [], dialogs
+    R.check(page, S, "멀쩡한 저장본은 알림 없이 그대로 열림 (종목 · 예산 2,500 · 환율 1,234.5 '가정' · 세금 9.9%)", good_still_opens)
+
+    def english_alert():
+        start_with_good()
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        see(page, "How would you like to start?")
+        page.get_by_text("깨진 저장본", exact=False).first.click()
+        poll(page, "1", lambda _: len(dialogs) > 0, "알림이 뜨지 않았어요")
+        assert dialogs == [SLOT_FAIL["en"]], dialogs                    # 지금 언어(영어)로
+        assert page.locator("button.openSettings").count() == 0 and page.evaluate(stored, "sbroken") == bad["sbroken"]
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+        see(page, "어떻게 시작할까요?")
+    R.check(page, S, "영어 화면에서 깨진 저장본 → 영어 알림 'We couldn't open this portfolio. …' · 열지 않음 · 저장된 글 그대로", english_alert)
     ctx.close(); srv.shutdown()
 
 

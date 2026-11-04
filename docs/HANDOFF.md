@@ -47,9 +47,10 @@ only in cron-job.org (never in a chat, the repo or a log).
 4. **Old app, 자동 settings:** done in v18.6 (#29). Jack decided 2026-11-04: 새로 시작하기 (and a file with no readable
    settings) starts from defaults + today's values, not the previous portfolio's settings — v18.6.1.
 5. **Old app, saved portfolio that can't be read (v18.6.2):** it no longer opens (first screen stays, the stored text is
-   kept, console warning with the slot id and reason). **Pending Jack's wording** for an on-screen line; until then
-   tapping it shows nothing on screen. Proposed: "이 포트폴리오의 저장 기록을 읽지 못했어요. 저장된 내용은 지우지 않고 그대로
-   두었어요." / "We couldn't read this saved portfolio. Its saved data has been left as it is."
+   kept, console warning with the slot id and reason) and an alert says so in the current language — Jack approved his
+   wording 2026-11-05: "이 포트폴리오를 열지 못했어요. 저장된 내용은 지우지 않고 그대로 두었어요." / "We couldn't open this
+   portfolio. Its saved data has been left as it is." (`T_SLOT_FAIL` in `src/detail.jsx`, `SLOT_FAIL` in
+   `tests/smoke_app.py`).
 6. **Company pages (Korea and US) for 2.0** are being designed in Jack's claude.ai chat — don't start on company pages
    until that spec arrives (Jack, 2026-11-05).
 

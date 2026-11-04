@@ -1093,6 +1093,8 @@ function Bird({ mood = "happy", pose = "stand", size = 64 }) {
 
 // ================= 데이터 상태 표시 (v17.5 — 앱은 숫자를 꾸며 보이지 않아요) =================
 const T_LOAD_FAIL = { ko: "데이터를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.", en: "We couldn't load the data. Please try again in a moment." };
+// 못 읽는 저장본을 열지 않았을 때 (v18.6.2, Jack 승인 2026-11-05 · 그의 문구): 첫 화면에서 알림으로, 지금 언어로
+const T_SLOT_FAIL = { ko: "이 포트폴리오를 열지 못했어요. 저장된 내용은 지우지 않고 그대로 두었어요.", en: "We couldn't open this portfolio. Its saved data has been left as it is." };
 // 실시간이 아닌 종목 안내 (Jack 확정 문구, 2026-11-01): 일부만 예시 · 전부 예시(못 불러옴) · 금 환산 추정을 따로 말해요
 const T_NONLIVE = { ko: "일부 종목은 최신 시세가 아니라 예시 가격이에요.", en: "Some items show sample prices, not the latest quotes." };
 const T_NOLIVE_ALL = { ko: "최신 시세를 불러오지 못해 예시 가격으로 보여 드려요.", en: "We couldn't load the latest prices, so sample prices are shown." };
@@ -4855,7 +4857,7 @@ function AppInner({ seed, lang: langProp }) {
   // 못 읽는 저장본은 열지 않아요 (v18.6.2, Jack 2026-11-04): 전에는 내용이 없거나 JSON 이 깨진 저장본이 앞 포트폴리오의 화면
   // (설정 · 직접 입력 기록 · 종목) 그대로 열리고, 자동 저장이 그 내용을 이 저장본 위에 덮어썼어요 (오류는 조용히 삼켰고요).
   // 이제는 첫 화면에 그대로 있고(slotId 를 정하지 않아서 자동 저장도 없어요), 저장된 글은 지우지도 고치지도 않아요.
-  // console 에 저장본 id 와 이유를 남겨요. 화면 문구는 Jack 이 정할 때까지 없어요.
+  // console 에 저장본 id 와 이유를 남기고, 첫 화면에서 알림을 띄워요 (T_SLOT_FAIL, 파일 불러오기 알림과 같은 방식).
   const openSlot = async (id) => {
     const got = await store.read(KEY_SLOT(id));
     const r = readSavedSlot(got.value, got.error);
@@ -4866,6 +4868,7 @@ function AppInner({ seed, lang: langProp }) {
     }
     if (why) {
       console.warn("[뱁새] 저장본 " + id + " 을 열지 않았어요: " + why + " · 저장된 글은 그대로 두고 첫 화면에 있어요");
+      window.alert(T_SLOT_FAIL[lang === "ko" ? "ko" : "en"]);
       return;
     }
     putState(next);
@@ -5109,7 +5112,7 @@ export default function App({ seed, lang }) {
   );
 }
 
-export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData, unlistedExportRows,
+export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_SLOT_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData, unlistedExportRows,
   // v18.5: Node 로 시험하려고 (tests/test_app_data.py)
   missingHoldings, missingLine, shownProfile, scoreProfile,
   // v18.6: 자동 설정 (tests/test_app_data.py)
