@@ -3,11 +3,13 @@
 // the 2.0 company page ships; tapping a US stock or a fund says "기업분석은 한국 상장 기업만 볼 수 있어요." under its row.
 // The preview page (fictional data) never links into the old app: its rows only show that line for US stocks.
 // No 뱁이 here (the lists show today's changes). StockRow and PopularLists are reused on 홈.
+// PC (v19.0d): the search field is the top bar's (nav.jsx TopBar, its words come in as q), so this screen shows no field
+// of its own; the results, lists and taps are the same. PopularLists on PC puts 한국 and 미국 side by side.
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { C, fill, mdText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { signedPct } from "./deckcalc.js";
 import { isKrCompany, popularLists, searchStocks, myStocks } from "./stocklist.js";
 import { readRecent, addRecent, RECENT_KEY, PREVIEW_RECENT_KEY } from "./recent.js";
@@ -65,13 +67,15 @@ export function useStockTap() {
 }
 
 // 거래대금 상위 종목: two lists (한국 · 미국), each with its own date. plain: names only (홈's first visit).
+// PC: the two lists side by side.
 export function PopularLists({ load, plain = false, tapper }) {
   const lists = useMemo(() => popularLists(load), [load]);
   const own = useStockTap();
+  const { wide } = useLayout();
   const tp = tapper || own;
   if (!lists || (!lists.kr.length && !lists.us.length)) return null;
   const part = (key, items, date) => items.length > 0 && (
-    <div data-ui-v2="popular-list" data-market={key} style={{ marginTop: SPACE(3) }}>
+    <div data-ui-v2="popular-list" data-market={key} style={{ marginTop: SPACE(3), minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: SPACE(2) }}>
         <span style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{C.pick.market[key]}</span>
         <span data-ui-v2="list-date" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(date) })}</span>
@@ -85,14 +89,26 @@ export function PopularLists({ load, plain = false, tapper }) {
         <IconChip name="chart-bar" size={32} />
         <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{C.home.popular}</h3>
       </div>
-      {part("kr", lists.kr, lists.krDate)}
-      {part("us", lists.us, lists.usDate)}
+      {wide ? (
+        <div data-ui-v2="popular-cols" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", columnGap: SPACE(8), alignItems: "start" }}>
+          {part("kr", lists.kr, lists.krDate)}
+          {part("us", lists.us, lists.usDate)}
+        </div>
+      ) : (
+        <>
+          {part("kr", lists.kr, lists.krDate)}
+          {part("us", lists.us, lists.usDate)}
+        </>
+      )}
     </Card>
   );
 }
 
-export function Stocks({ load, store, pad }) {
-  const [q, setQ] = useState("");
+// q: the PC top bar's search words (null on the phone, where this screen has its own field).
+export function Stocks({ load, store, pad, q: topQ = null }) {
+  const [ownQ, setQ] = useState("");
+  const top = topQ != null;
+  const q = top ? topQ : ownQ;
   const tp = useStockTap();
   const ok = load.status === "ok";
   const results = useMemo(() => (ok ? searchStocks(load, q) : []), [load, q, ok]);
@@ -110,7 +126,7 @@ export function Stocks({ load, store, pad }) {
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note data-ui-v2="us-close">{fill(C.app.usClose, { md: usDate })}</Note>}
       {load.status === "fail" && <LoadFail picture={false} />}
-      {ok && (
+      {ok && !top && (
         <label data-ui-v2="stock-search" style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(3), minHeight: TOUCH + SPACE(1),
           background: COLOR.surface, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.md, padding: `0 ${SPACE(3)}px` }}>
           <Icon name="search" size={20} tone="off" />

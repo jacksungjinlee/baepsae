@@ -21,11 +21,14 @@
 // never a status. 다음 일정 is hidden until the v18.0 calendar.
 // v19.0b: the verdict carries a state icon (check-circle on calm days, flag on 확인할 일 days), never a 뱁이 picture
 // (CLAUDE.md: 뱁이 never beside a verdict or on a card with numbers). The stale band is not a verdict: no icon.
+// PC (v19.0d, boards PcHome · PcHomeNew): the date line and the verdict across the top, then two columns — my portfolios
+// on the left, 시장 한눈에 on the right (its tiles stacked). First visit: the hero across the top (the 뱁이 at 176 px on the
+// right, 포트폴리오 만들기 under the words), then 거래대금 상위 종목 with 한국 and 미국 side by side (still no numbers).
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, tx, tap } from "./ui.jsx";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -192,6 +195,25 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
 // 홈's first visit (no saved portfolio): no numbers on this screen (it shows a 뱁이).
 // The date line stays (a date is not a number here, and it carries the "N일째 갱신이 멈췄어요" warning).
 function FirstVisit({ load, go }) {
+  const { wide } = useLayout();
+  if (wide) {
+    return (
+      <>
+        {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+        <Card data-ui-v2="home-hero" style={{ display: "flex", alignItems: "center", gap: SPACE(6), marginTop: SPACE(4), padding: `${SPACE(6)}px ${SPACE(8)}px` }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{C.about.ko.hero.descriptor}</h2>
+            <p style={tx(SIZE.body, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(2) })}>{C.about.ko.hero.catch}</p>
+            <div data-ui-v2="home-start" style={{ marginTop: SPACE(5), maxWidth: SPACE(70) }}><Button onClick={() => go("build")}>{C.build.title}</Button></div>
+          </div>
+          <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={176} />
+        </Card>
+        <IosHint kind="first" />
+        {load.status === "fail" && <LoadFail picture={false} />}
+        {load.status === "ok" && <PopularLists load={load} plain />}
+      </>
+    );
+  }
   return (
     <>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
@@ -213,13 +235,14 @@ function FirstVisit({ load, go }) {
 // 시장 한눈에: the 시장 tab's four tiles and the way there. Without macro.json: the same failure line as the 시장 tab,
 // in place of the tiles (never a row of "–" without a word).
 function MarketGlance({ load, go }) {
+  const { wide } = useLayout();
   return (
     <Card data-ui-v2="market-glance">
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginBottom: SPACE(3) }}>
         <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.home.market || C.app.tabs.market}</h3>
         <LinkButton data-ui-v2="market-more-link" onClick={() => go("market")}>{C.home.marketMore || C.today.more}</LinkButton>
       </div>
-      {load.macro ? <MarketTiles load={load} /> : <LoadFail picture={false} />}
+      {load.macro ? <MarketTiles load={load} cols={wide ? 1 : 2} /> : <LoadFail picture={false} />}
     </Card>
   );
 }
@@ -235,7 +258,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go }) {
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   if (first) {
     return (
-      <Page pad={pad}>
+      <Page pad={pad} cols={2}>
         <AppBar />
         <FirstVisit load={load} go={go} />
         <Footer />
@@ -243,16 +266,17 @@ export function Home({ load, store, setStoreData, pad, onWhy, go }) {
     );
   }
   return (
-    <Page pad={pad}>
+    <Page pad={pad} cols={2}>
       <AppBar />
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
-      {held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />)}
-      {ev.ok && !held.length && (
-        <Card data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
-      )}
-      {ok && <MarketGlance load={load} go={go} />}
+      <Cols main={[
+        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />),
+        ev.ok && !held.length && (
+          <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
+        ),
+      ]} side={ok && <MarketGlance load={load} go={go} />} />
       <Footer />
     </Page>
   );

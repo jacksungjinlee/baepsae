@@ -1,6 +1,6 @@
 // Shared pieces for the 2.0 screens, built on the v18.1 tokens and components. No Korean here: text comes in props
 // or from src/copy/v2.js.
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
@@ -24,13 +24,82 @@ export const useMode = () => useContext(ModeContext);
 // The ☰ button's action (v19.0c, src/v2/app.jsx): openMenu, and whether the menu is open. Without it no ☰ is drawn.
 export const NavContext = createContext({ openMenu: null, menuOpen: false });
 
+// PC layout (v19.0d, Layout C PC step 1). From 1024 px wide: a 240 px left menu (nav.jsx SideMenu) with the four tabs,
+// the menu links and the data-date box, and a top bar with the search field (nav.jsx TopBar); no bottom tab bar, no ☰.
+// 홈 and 시장 use two columns (content up to 1000 px), every other screen one column (up to 720 px). Fixed bars (the
+// action bar, sheets) sit right of the left menu. Below 1024 px everything is the phone layout, unchanged.
+export const WIDE_MIN = 1024;
+export const SIDE_W = 240;
+export const PC_MAX = { one: 720, two: 1000 };    // content width on PC (the page's side padding comes on top)
+export const PC_PAD = SPACE(8);
+const WIDE_QUERY = `(min-width: ${WIDE_MIN}px)`;
+function wideNow() {
+  try {
+    if (window.matchMedia) return window.matchMedia(WIDE_QUERY).matches;
+    return window.innerWidth >= WIDE_MIN;
+  } catch (e) { return false; }
+}
+// true from 1024 px wide (follows the window as it is resized). Used once, by the app shell: screens read LayoutContext.
+export function useWide() {
+  const [wide, setWide] = useState(wideNow);
+  useEffect(() => {
+    const on = () => setWide(wideNow());
+    let mq = null;
+    try { mq = window.matchMedia ? window.matchMedia(WIDE_QUERY) : null; } catch (e) { mq = null; }
+    if (mq && mq.addEventListener) mq.addEventListener("change", on);
+    else if (mq && mq.addListener) mq.addListener(on);
+    else window.addEventListener("resize", on);
+    on();
+    return () => {
+      if (mq && mq.removeEventListener) mq.removeEventListener("change", on);
+      else if (mq && mq.removeListener) mq.removeListener(on);
+      else window.removeEventListener("resize", on);
+    };
+  }, []);
+  return wide;
+}
+export const LayoutContext = createContext({ wide: false });
+export const useLayout = () => useContext(LayoutContext);
+// The page width on PC: content + side padding (box-sizing is border-box). Every screen, the top bar and the action bar
+// sit in one frame as wide as the two-column page (centred right of the left menu), and a one-column page keeps to the
+// frame's left edge: the search field and the first card start at the same place on every tab.
+export const pcWidth = (cols) => (cols === 2 ? PC_MAX.two : PC_MAX.one) + 2 * PC_PAD;
+export function PcFrame({ children, style, ...rest }) {
+  return <div {...rest} style={{ maxWidth: pcWidth(2), margin: "0 auto", ...style }}>{children}</div>;
+}
+
 // "예시 데이터" label: on every screen of the preview page, right in the app bar.
 export function SampleLabel() {
   return <span data-ui-v2="sample-label"><StatusChip tone="neutral">{C.app.sample}</StatusChip></span>;
 }
 
-export function Page({ children, pad = SPACE(6) }) {
+// cols: 2 on 홈 and 시장 (two columns on PC: see Cols). On the phone every page is one column, up to 520 px.
+export function Page({ children, pad = SPACE(6), cols = 1 }) {
+  const { wide } = useLayout();
+  if (wide) {
+    return (
+      <PcFrame>
+        <main data-ui-v2="page" data-cols={cols} style={{ maxWidth: pcWidth(cols), padding: `${SPACE(2)}px ${PC_PAD}px ${pad}px` }}>{children}</main>
+      </PcFrame>
+    );
+  }
   return <main style={{ maxWidth: 520, margin: "0 auto", padding: `${SPACE(4)}px ${SPACE(4)}px ${pad}px` }}>{children}</main>;
+}
+
+// Two columns on PC (홈 and 시장: the wider main column on the left, the side column on the right, as on the boards
+// PcHome · PcMarket); on the phone the same pieces one after the other, as before. When only one of the two has
+// anything to show, it takes the whole width.
+export function Cols({ main, side }) {
+  const { wide } = useLayout();
+  const has = (x) => (Array.isArray(x) ? x.some(Boolean) : !!x);
+  if (!wide) return <>{main}{side}</>;
+  if (!has(main) || !has(side)) return <div data-ui-v2="cols" data-n="1">{main}{side}</div>;
+  return (
+    <div data-ui-v2="cols" data-n="2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", columnGap: SPACE(5), alignItems: "start" }}>
+      <div data-ui-v2="col-main" style={{ minWidth: 0 }}>{main}</div>
+      <div data-ui-v2="col-side" style={{ minWidth: 0 }}>{side}</div>
+    </div>
+  );
 }
 
 export function Card({ children, style, ...rest }) {
@@ -43,9 +112,27 @@ export function Card({ children, style, ...rest }) {
 // Logo (v19.0b, Part B): Jack's mark (baepi-mark, 28 px on phone) + the "뱁새" wordmark at 22 px / 800. The mark is
 // decorative (alt ""): the wordmark next to it says the name. A back button takes the mark's place.
 // menu = false: no ☰ (소개 is a page of its own, closed with its back button).
+// PC (v19.0d): the left menu carries the logo, the name and the menu links, and the top bar the preview label, so the app
+// bar keeps only a back button (and nothing at all on a screen without one).
 export function AppBar({ onBack, backLabel, right, menu = true }) {
   const { preview } = useMode();
   const nav = useContext(NavContext);
+  const { wide } = useLayout();
+  if (wide) {
+    if (!onBack && !right) return null;
+    return (
+      <header data-ui-v2="app-bar" data-wide="1" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH }}>
+        {onBack && (
+          <button type="button" aria-label={backLabel} onClick={onBack}
+            style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginLeft: -SPACE(3) }}>
+            <Icon name="back" tone="on" />
+          </button>
+        )}
+        <span style={{ flex: 1 }} />
+        {right}
+      </header>
+    );
+  }
   return (
     <header data-ui-v2="app-bar" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH,
       ...(preview ? { position: "sticky", top: 0, zIndex: 40, background: COLOR.page, margin: `0 -${SPACE(4)}px`, padding: `0 ${SPACE(4)}px` } : {}) }}>
@@ -79,12 +166,12 @@ export function ScreenTitle({ children, sub }) {
 }
 
 // "10월 30일 기준" — the content date. Publication stopped for more than 4 days: "· N일째 갱신이 멈췄어요" in warning colour.
-export function DateLine({ date, fresh }) {
+export function DateLine({ date, fresh, style }) {
   const md = mdText(date);
   if (!md) return null;
   const stale = !!(fresh && fresh.stale);
   return (
-    <div data-ui-v2="date-line" data-stale={stale ? "1" : "0"} style={tx(SIZE.xs, stale ? WEIGHT.bold : WEIGHT.regular, stale ? COLOR.watch : COLOR.text2, { marginTop: SPACE(1) })}>
+    <div data-ui-v2="date-line" data-stale={stale ? "1" : "0"} style={tx(SIZE.xs, stale ? WEIGHT.bold : WEIGHT.regular, stale ? COLOR.watch : COLOR.text2, { marginTop: SPACE(1), ...style })}>
       <span>{fill(C.app.asOf, { md })}</span>
       {stale && <span>{" · "}</span>}
       {stale && <span>{fill(C.app.stale, { n: fresh.days })}</span>}
@@ -193,17 +280,22 @@ export function Toggle({ on, onChange, label, sub, side, disabled, chip }) {
   );
 }
 
-// Fixed bar above the bottom edge: summary on the left, one main button.
+// Fixed bar above the bottom edge: summary on the left, one main button. PC: right of the left menu, lined up with the
+// one-column page above it.
 export function ActionBar({ summary, action, onAction, disabled }) {
-  return (
-    <div data-ui-v2="action-bar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50, background: COLOR.surface, borderTop: `1px solid ${COLOR.line}`,
-      padding: `${SPACE(3)}px ${SPACE(4)}px calc(${SPACE(3)}px + env(safe-area-inset-bottom))` }}>
-      <div style={{ maxWidth: 520, margin: "0 auto", display: "flex", alignItems: "center", gap: SPACE(3) }}>
-        <div style={{ flex: 1, minWidth: 0, ...tx(SIZE.xs, WEIGHT.semi, COLOR.text2) }}>{summary}</div>
-        <div style={{ flexShrink: 0, minWidth: SPACE(30), maxWidth: "60%" }}>
-          <Button onClick={onAction} disabled={disabled} style={{ padding: `0 ${SPACE(3)}px` }}>{action}</Button>
-        </div>
+  const { wide } = useLayout();
+  const row = (
+    <div style={{ maxWidth: wide ? PC_MAX.one : 520, margin: wide ? 0 : "0 auto", display: "flex", alignItems: "center", gap: SPACE(3) }}>
+      <div style={{ flex: 1, minWidth: 0, ...tx(SIZE.xs, WEIGHT.semi, COLOR.text2) }}>{summary}</div>
+      <div style={{ flexShrink: 0, minWidth: SPACE(30), maxWidth: "60%" }}>
+        <Button onClick={onAction} disabled={disabled} style={{ padding: `0 ${SPACE(3)}px` }}>{action}</Button>
       </div>
+    </div>
+  );
+  return (
+    <div data-ui-v2="action-bar" style={{ position: "fixed", left: wide ? SIDE_W : 0, right: 0, bottom: 0, zIndex: 50, background: COLOR.surface, borderTop: `1px solid ${COLOR.line}`,
+      padding: `${SPACE(3)}px ${wide ? 0 : SPACE(4)}px calc(${SPACE(3)}px + env(safe-area-inset-bottom))` }}>
+      {wide ? <PcFrame style={{ padding: `0 ${PC_PAD}px` }}>{row}</PcFrame> : row}
     </div>
   );
 }

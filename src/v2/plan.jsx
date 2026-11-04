@@ -8,7 +8,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, tx } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 
@@ -290,10 +290,11 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   };
   const P = C.plan;
   const { preview } = useMode();
+  const { wide } = useLayout();
   if (!open) return null;
   if (stage === "done") {
     return (
-      <BottomSheet open title={P.done} onClose={onClose} closeLabel={C.app.close}>
+      <BottomSheet open title={P.done} onClose={onClose} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
         {preview && <SheetSample />}
         <div data-ui-v2="record-done" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
           <Mascot src={IMG.happy} alt={P.doneAlt} size={64} />
@@ -304,7 +305,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     );
   }
   return (
-    <BottomSheet open title={P.sheetTitle} onClose={onClose} closeLabel={C.app.close}>
+    <BottomSheet open title={P.sheetTitle} onClose={onClose} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
       {preview && <SheetSample />}
       <div data-ui-v2="record-form" aria-label={P.boughtAria}>
         <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.sheetBody, { md: mdText(load.data.pxDate) })}</p>

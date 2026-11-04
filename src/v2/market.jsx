@@ -4,11 +4,13 @@
 // approved load-failure line is shown above the tiles (원/달러 still comes from data.json). Two buttons open the old app's
 // full screens (금리·원자재, 공시·수급: ./baepsae.html#macro · #disc, read once by src/shell.jsx); the preview page has
 // none. MarketTiles is also 홈's 시장 한눈에. No 뱁이 here: the tiles are numbers.
+// PC (v19.0d, board PcMarket): two columns, the tiles on the left and the two buttons on the right (the preview page,
+// without the buttons: the four tiles in one row). In 홈's narrow side column the tiles stack (cols 1).
 import React, { useEffect } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { C, fill, nf, mdText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, Cols, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { signedPct } from "./deckcalc.js";
 import { marketTiles } from "./stocklist.js";
 import { OLD_LINKS } from "./routes.js";
@@ -40,13 +42,14 @@ function Tile({ x }) {
   );
 }
 
-export function MarketTiles({ load }) {
+// cols: tiles per row (2 by default: the phone, and 시장's left column on PC).
+export function MarketTiles({ load, cols = 2 }) {
   const tiles = marketTiles(load);
   useEffect(() => {
     for (const x of tiles) if (x.why && load.status === "ok") warnOnce(`[v2] market tile ${x.id}: ${x.value == null ? "no value" : "no change"} (${x.why})`);
   });
   return (
-    <div data-ui-v2="market-tiles" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(2) }}>
+    <div data-ui-v2="market-tiles" data-cols={cols} style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: SPACE(2) }}>
       {tiles.map((x) => <Tile key={x.id} x={x} />)}
     </div>
   );
@@ -66,22 +69,23 @@ function OldLink({ href, icon, label, id, first }) {
 
 export function Market({ load, pad }) {
   const { preview } = useMode();
+  const { wide } = useLayout();
   const ok = load.status === "ok";
   return (
-    <Page pad={pad}>
+    <Page pad={pad} cols={2}>
       <AppBar />
       <ScreenTitle>{C.app.tabs.market}</ScreenTitle>
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {load.status === "fail" && <LoadFail />}
       {ok && !load.macro && <LoadFail picture={false} />}
-      {ok && <Card><MarketTiles load={load} /></Card>}
-      {!preview && (
-        <Card data-ui-v2="market-more" style={{ paddingTop: SPACE(2), paddingBottom: SPACE(2) }}>
-          {C.market.oldNote && <Note style={{ marginBottom: SPACE(2) }}>{C.market.oldNote}</Note>}
-          <OldLink id="macro" href={OLD_LINKS.macro} icon="percent" label={C.market.macro} first />
-          <OldLink id="disc" href={OLD_LINKS.disc} icon="file-text" label={C.market.disc} />
-        </Card>
-      )}
+      <Cols main={ok && <Card data-ui-v2="market-tiles-card"><MarketTiles load={load} cols={wide && preview ? 4 : 2} /></Card>}
+        side={!preview && (
+          <Card data-ui-v2="market-more" style={{ paddingTop: SPACE(2), paddingBottom: SPACE(2) }}>
+            {C.market.oldNote && <Note style={{ marginBottom: SPACE(2) }}>{C.market.oldNote}</Note>}
+            <OldLink id="macro" href={OLD_LINKS.macro} icon="percent" label={C.market.macro} first />
+            <OldLink id="disc" href={OLD_LINKS.disc} icon="file-text" label={C.market.disc} />
+          </Card>
+        )} />
       <Footer />
     </Page>
   );
