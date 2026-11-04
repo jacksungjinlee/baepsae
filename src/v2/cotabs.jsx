@@ -25,6 +25,8 @@ import { OLD_LINKS } from "./routes.js";
 import { usOf, priceMd, timesText, pctText, manWon, bigWon } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
+// A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
+const rateText = (g) => (g < 0 ? "\u2212" : "") + p1(Math.abs(g));
 const H = ({ children, ...rest }) => <h3 {...rest} style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.4 })}>{children}</h3>;
 const Src = ({ children, ...rest }) => (children ? <div {...rest} style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{children}</div> : null);
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
@@ -290,7 +292,7 @@ function Dcf({ load, s, co, a, onTry }) {
           <p style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
           <div style={{ marginTop: SPACE(3) }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
-              <span>{D.implied}</span><span style={{ whiteSpace: "nowrap" }}>{fill(D.perYear, { g: signedPct(g).replace("+", "") })}</span></div>
+              <span>{D.implied}</span><span style={{ whiteSpace: "nowrap" }}>{fill(D.perYear, { g: rateText(g) })}</span></div>
             {bar(g, true)}
             {glabel && g3 != null && (
               <>
@@ -387,7 +389,7 @@ function Calc({ load, s, store, setStoreData }) {
         style={{ width: "100%", minHeight: TOUCH, accentColor: COLOR.ink }} />
     </label>
   );
-  const res = r.g != null ? fill(K.result, { g: signedPct(round(r.g, 1)).replace("+", "") }) : r.edge === "low" ? D.low : r.edge === "high" ? D.high : D.loss;
+  const res = r.g != null ? fill(K.result, { g: rateText(round(r.g, 1)) }) : r.edge === "low" ? D.low : r.edge === "high" ? D.high : D.loss;
   const save = () => {
     const next = withAssume(store.data, s.t, a, todayKst());
     if (next) { setStoreData(next); setDone(true); } else console.warn("[v2] assumption not saved for " + s.t);

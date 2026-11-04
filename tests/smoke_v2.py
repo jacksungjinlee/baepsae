@@ -3031,6 +3031,7 @@ def scene_company(R, files, width):
         elif dcf.count():
             assert dcf.get_attribute("data-disc") == "10" and dcf.get_attribute("data-term") == "2"
         assert page.locator('[data-ui-v2="co-risk"] [data-ui-v2="tile-number"]').count() == 0
+        assert "%%" not in page.locator("body").inner_text()                   # '해마다 {g}%' 에 % 를 두 번 넣지 않아요
         no_mascot(page)
         no_hscroll(page, width)
         R.collect(page)

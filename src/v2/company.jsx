@@ -400,6 +400,14 @@ function Memo({ s, store, setStoreData, held }) {
 }
 
 // ---------------- the page ----------------
+// A crash inside one tab shows the load-failure message there (no picture) and never stays after moving to another tab.
+class TabBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(err) { console.warn("[v2] company tab error (" + this.props.name + "): " + ((err && err.message) || err)); }
+  render() { return this.state.failed ? <LoadFail picture={false} /> : this.props.children; }
+}
+
 function CoTabs({ labels, value, onChange, stickyTop }) {
   return (
     <div role="tablist" aria-label={C.co.tabsLabel} data-ui-v2="co-tabs"
@@ -475,6 +483,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
         <MoveLine load={load} s={s} held={held} onWhy={nav.onWhy} />
         <div ref={mark} aria-hidden="true" />
         {labels ? <CoTabs labels={labels} value={tab || "summary"} onChange={setTab} stickyTop={stickyTop} /> : <span data-ui-v2="co-tabs" data-pending="1" hidden />}
+        <TabBoundary key={tab || "summary"} name={tab || "summary"}>
         {!tab && (
           <div data-ui-v2="co-summary">
             <Tiles load={load} s={s} onTab={setTab} tabsOn={!!labels} />
@@ -488,6 +497,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
         {tab === "value" && <ValueTab load={load} s={s} store={store} onMore={() => nav.more("value-more")} />}
         {tab === "div" && <DivTab load={load} s={s} />}
         {tab === "disc" && <DiscTab load={load} s={s} disc={disc} />}
+        </TabBoundary>
       </div>
       <Footer />
     </Page>

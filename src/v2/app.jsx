@@ -22,7 +22,7 @@ import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
 import { Company } from "./company.jsx";
-import { companySub } from "./routes.js";
+import { companySub, CO_MORE } from "./routes.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
@@ -169,6 +169,9 @@ export function App({ source }) {
     return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock };
+  // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
+  // tabs keeps the page mounted; its 자세히 screens are screens of their own.
+  const screenKey = !loc.about && tab === "stocks" && loc.code ? "stocks/" + loc.code + (CO_MORE.includes(loc.ctab) ? "/" + loc.ctab : "") : tab + (loc.sub || "");
   const tall = wide ? {} : { minHeight: "100vh" };
   return (
     <ModeContext.Provider value={{ preview: !!source.preview }}>
@@ -185,7 +188,7 @@ export function App({ source }) {
             <div data-ui-v2="screen" data-route={tab + (loc.sub ? "/" + loc.sub : "")} style={{ ...tall, background: COLOR.page, ...(loc.about ? { display: "none" } : {}) }}
               aria-hidden={loc.about ? true : undefined}>
               <ErrorBoundary name="app">
-                <ErrorBoundary key={tab + (loc.sub || "")} name={tab} pad={inBuild ? undefined : pad}>{screen}</ErrorBoundary>
+                <ErrorBoundary key={screenKey} name={tab} pad={inBuild ? undefined : pad}>{screen}</ErrorBoundary>
                 {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} tabH={inBuild ? 0 : TAB_H} />}
                 {!wide && !inBuild && <TabBar value={tab} onChange={go} />}
               </ErrorBoundary>
