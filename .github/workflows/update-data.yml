@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: 아침 데이터가 이미 발행됐는지 · 미국 종가 확정 전이면 기다리기 (정해진 시각 실행만)
+      - name: 아침 데이터가 이미 발행됐는지 · 미국 종가 확정 전이면 기다리기 (정해진 시각 · 바깥 타이머 실행만)
         id: already
         run: |
           # v17.5.5: 바깥 타이머(cron-job.org, workflow_dispatch + timer=true)도 정해진 시각 실행과 똑같이 확인해요 (Jack, 2026-11-04)

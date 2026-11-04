@@ -342,3 +342,28 @@ def test_outside_timer_runs_follow_the_scheduled_rules():
     assert collect["env"]["BAEPSAE_AUTO_RUN"] == "${{ (github.event_name == 'schedule' || inputs.timer) && '1' || '' }}"
     # 바깥 타이머는 live 그룹: 정해진 시각 실행과 동시에 시작해도 하나씩 돌고, 뒤의 것은 확인 단계에서 끝나요
     assert "inputs.dry_run" in wf["concurrency"]["group"] and wf["concurrency"]["cancel-in-progress"] is False
+
+
+def _run_input_check(env):
+    """워크플로의 '입력 확인' 단계를 그대로 bash 로 돌려 종료 코드를 봐요 (리뷰 2026-11-04: 문자열만 보면 || 가 && 로 바뀌어도 통과해요)."""
+    import subprocess
+    step = next(s for s in load_workflow()["jobs"]["update"]["steps"] if s.get("name") == "입력 확인")
+    base = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_REF": "refs/heads/main", "GITHUB_REF_NAME": "main",
+            "DRY_RUN": "false", "DART_MODE": "cache", "BOOTSTRAP": "false", "PREV_REF": "", "SELFTEST": "none", "SAMPLE_KR": "0",
+            "TIMER": "false"}
+    return subprocess.run(["bash", "-e", "-c", step["run"]], env={**base, **env}, capture_output=True, text=True).returncode
+
+
+def test_outside_timer_input_check_really_refuses_everything_but_main_with_cached_dart():
+    steps = load_workflow()["jobs"]["update"]["steps"]
+    names = [s.get("name") or s.get("uses") for s in steps]
+    i_in = names.index("입력 확인")
+    assert "if" not in steps[i_in], "입력 확인은 늘 돌아야 해요"
+    assert i_in < names.index("DART 캐시 불러오기") < names.index("데이터 수집")
+    assert _run_input_check({"TIMER": "true"}) == 0                                    # 바깥 타이머: main · dart=cache
+    for bad in ({"GITHUB_REF": "refs/heads/claude/x"}, {"DART_MODE": "full"}, {"DART_MODE": "off"}, {"DRY_RUN": "true"},
+                {"BOOTSTRAP": "true"}, {"PREV_REF": "abc"}, {"SELFTEST": "corrupt-price"}, {"SAMPLE_KR": "5"}, {"SAMPLE_KR": "00"}):
+        assert _run_input_check({"TIMER": "true", **bad}) == 1, bad
+    assert _run_input_check({}) == 0                                                   # 정해진 시각 실행 · 수동 실행은 그대로
+    assert _run_input_check({"DART_MODE": "full"}) == 0                                # 수동 dart=full (하루 한 번, 사람이 정해요)
+
