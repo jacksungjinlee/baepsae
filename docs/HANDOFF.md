@@ -22,8 +22,9 @@ Claude started one `dart=cache` run on main by hand (41731600516, published 07:4
 run has published by ~07:30 KST, start one `dart=cache` run on main (never a second full-DART run in a KST day; not
 while a scheduled run is waiting or queued).
 **2026-11-05:** GitHub's scheduled starts failed again (none of 03:47, 05:13, 06:43 had started by 07:10 KST). The
-outside timer's run (41918230816, started 06:40) published at 07:07: pxDate and usPxDate 2026-11-04, gate PASS with no
-warnings.
+outside timer's run (41918230816, started 06:40) committed at 07:07 (data.json `publishedAt` shows the run start,
+06:40): pxDate and usPxDate 2026-11-04, gate PASS with no warnings. With the timer working, the by-hand run above is
+needed only when the timer's run also failed or didn't start (cron-job.org emails Jack when its call fails).
 
 **Outside timer (v17.5.5, set up by Jack 2026-11-04):** cron-job.org (Jack's account) job "뱁새 morning data run"
 sends `POST https://api.github.com/repos/jacksungjinlee/baepsae/actions/workflows/update-data.yml/dispatches` Tue–Sat
