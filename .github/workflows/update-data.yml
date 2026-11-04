@@ -43,6 +43,10 @@ on:
         type: choice
         options: ["none", "corrupt-price"]
         default: none
+      timer:
+        description: "바깥 타이머(cron-job.org)만 켜요: 정해진 시각 실행과 똑같이 — 이미 발행됐으면 끝내고, DART 는 보관된 결과만 (빈 캐시면 멈춤), main 만"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -69,7 +73,8 @@ jobs:
       - name: 아침 데이터가 이미 발행됐는지 · 미국 종가 확정 전이면 기다리기 (정해진 시각 실행만)
         id: already
         run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
+          # v17.5.5: 바깥 타이머(cron-job.org, workflow_dispatch + timer=true)도 정해진 시각 실행과 똑같이 확인해요 (Jack, 2026-11-04)
+          if [ "${{ github.event_name }}" != "schedule" ] && [ "${{ inputs.timer }}" != "true" ]; then
             echo "· 정해진 시각 실행이 아니에요 (${{ github.event_name }}) → 확인 없이 실행해요"
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -90,12 +95,13 @@ jobs:
       PREV_REF: ${{ inputs.prev_ref }}
       SELFTEST: ${{ inputs.selftest || 'none' }}
       SAMPLE_KR: ${{ inputs.sample || '0' }}
+      TIMER: ${{ inputs.timer || false }}
     steps:
       # 정해진 시각 실행은 만들어질 때의 커밋에 묶여 있어요. 기다리는 동안 다른 실행이 발행했을 수 있어서 지금의 main 을 받아요
       # (관문의 '직전 발행본' 비교와 커밋 단계가 최신 main 위에서 돌게). 수동 실행은 기본값(그 실행의 커밋) 그대로예요.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'schedule' && 'main' || '' }}
+          ref: ${{ (github.event_name == 'schedule' || inputs.timer) && 'main' || '' }}
 
       - name: 입력 확인
         run: |
@@ -105,6 +111,15 @@ jobs:
               echo "!! 시험용 입력(dart=off · prev_ref · selftest · sample)은 main 에서 쓸 수 없어요"
               exit 1
             fi
+          fi
+          # v17.5.5: 바깥 타이머 실행은 main 에서 보관된 DART 결과만 써요 — 전체 DART · 시험용 입력은 받지 않아요 (Jack, 2026-11-04)
+          if [ "$TIMER" = "true" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$DART_MODE" != "cache" ] || [ "$DRY_RUN" = "true" ] || [ "$BOOTSTRAP" = "true" ] \
+               || [ -n "$PREV_REF" ] || [ "$SELFTEST" != "none" ] || [ "$SAMPLE_KR" != "0" ]; then
+              echo "!! 바깥 타이머 실행은 main · dart=cache 만 돼요 (전체 DART · 시험 실행 · 시험용 입력 없음)"
+              exit 1
+            fi
+            echo "· 바깥 타이머 실행: 정해진 시각 실행과 같은 규칙 (이미 발행됐으면 끝 · 빈 DART 캐시면 멈춤)"
           fi
           if [ "$SAMPLE_KR" != "0" ] && [ "$DRY_RUN" != "true" ]; then
             echo "!! sample(표본)은 시험 실행(dry_run=true)에서만 써요 — 표본 데이터는 발행하면 안 돼요"
@@ -135,7 +150,7 @@ jobs:
       # v17.5.3: 정해진 시각 실행이 여러 번이라, 캐시가 없을 때 그대로 가면 하루에 전체 DART 실행이 여러 번 될 수 있어요.
       # 빈 캐시로 시작하는 DART 실행은 하루 한 번, 사람이(또는 Claude 가 규칙대로) 수동으로만 해요 (CLAUDE.md).
       - name: DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || inputs.timer
         run: |
           if [ -z "${{ steps.dart_cache.outputs.cache-matched-key }}" ] || [ ! -s .dart-cache/dart-v1.json.gz ]; then
             echo "!! DART 캐시가 없어요. 빈 캐시로 시작하면 전체 DART 실행이에요 (한국 날짜로 하루 한 번만, 수동으로)."
@@ -151,6 +166,8 @@ jobs:
           ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
           # 종목 목록 파일의 커밋 시각(최종본 여부)을 GitHub API로 확인할 때 씁니다
           GITHUB_TOKEN: ${{ github.token }}
+          # v17.5.5: 정해진 시각 · 바깥 타이머 실행 = '자동 실행' — fetch_data.py 도 빈 DART 캐시면 DART 호출 전에 멈춰요
+          BAEPSAE_AUTO_RUN: ${{ (github.event_name == 'schedule' || inputs.timer) && '1' || '' }}
         run: |
           if [ "$SELFTEST" != "none" ]; then export BAEPSAE_SELFTEST="$SELFTEST"; fi
           python fetch_data.py

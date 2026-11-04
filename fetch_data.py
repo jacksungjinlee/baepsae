@@ -935,7 +935,9 @@ class DartClient:
         self._load()
         # v17.5.3: 정해진 시각 실행은 하루 여러 번이에요. 캐시가 비었거나(없음·읽지 못함·형식이 다름) 처음부터 조회하면
         # 그게 그날의 전체 DART 실행이 돼요 — 하루 한 번, 사람이(또는 Claude 가 규칙대로) 수동으로만 해요 (CLAUDE.md).
-        if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and mode != "off" and not self.entries:
+        # v17.5.5: 바깥 타이머(cron-job.org) 실행도 같아요 — 워크플로가 BAEPSAE_AUTO_RUN=1 을 넘겨요
+        auto = os.environ.get("GITHUB_EVENT_NAME") == "schedule" or os.environ.get("BAEPSAE_AUTO_RUN") == "1"
+        if auto and mode != "off" and not self.entries:
             raise RuntimeError("!! 정해진 시각 실행인데 DART 캐시가 비어 있어요 (없음·읽지 못함·형식이 다름). 처음부터 조회하는 "
                                "전체 DART 실행은 하루 한 번 수동으로만 해요 — DART 호출 전에 멈춰요")
         if mode == "full":
