@@ -3350,15 +3350,20 @@ function TimeMachine({ lang, t, metrics, settings }) {
   }, [playing, idx, sim]);
   if (!sim) return null;
   const { vals, minI, n } = sim;
-  const maxV = Math.max(...vals) * 1.04, minV = Math.min(...vals) * 0.94;
+  // B안 (v18.6, Jack 2026-11-04): 최저점 뒤의 경로(회복)는 베타로 만든 수익 숫자라 SHOW_ER 를 켤 때만 그려요.
+  // 꺼 둔 동안은 선 · 지금 점 · 고점 대비 · 세로 눈금 모두 최저점(stopI)까지만 써요. 달 수는 끝까지 세고, 끝나면 '최저점' 칸이 나와요.
+  const stopI = SHOW_ER ? n : minI;
+  const seen = vals.slice(0, stopI + 1);
+  const maxV = Math.max(...seen) * 1.04, minV = Math.min(...seen) * 0.94;
   const W = 420, H = 150;
   const x = (i) => 8 + (i / n) * (W - 16);
   const y = (v) => H - 10 - ((v - minV) / (maxV - minV)) * (H - 24);
   const done = idx >= n;
-  const cur = vals[idx];
-  const peakSoFar = Math.max(...vals.slice(0, idx + 1));
+  const shownI = Math.min(idx, stopI);
+  const cur = vals[shownI];
+  const peakSoFar = Math.max(...vals.slice(0, shownI + 1));
   const dd = (cur / peakSoFar - 1) * 100;
-  const line = vals.slice(0, idx + 1).map((v, i) => (i === 0 ? "M" : "L") + x(i) + "," + y(v)).join(" ");
+  const line = vals.slice(0, shownI + 1).map((v, i) => (i === 0 ? "M" : "L") + x(i) + "," + y(v)).join(" ");
   return (
     <Card style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
@@ -3379,9 +3384,9 @@ function TimeMachine({ lang, t, metrics, settings }) {
       {idx > 0 && dd < -1 && (SHOW_ER || !done) && <div className="tmFromPeak" style={{ fontSize: 11, color: C.coral, fontWeight: 700, textAlign: "right" }}>{lang === "ko" ? "고점 대비" : "From peak"} {pct(dd, 0)}</div>}
       <svg width="100%" viewBox={"0 0 " + W + " " + H} style={{ marginTop: 4 }}>
         <line x1="8" x2={W - 8} y1={y(vals[0])} y2={y(vals[0])} stroke={C.line} strokeDasharray="4 4" />
-        <path d={line} fill="none" stroke={C.blueDeep} strokeWidth="2.5" strokeLinejoin="round" />
-        {idx >= minI && minI > 0 && <circle cx={x(minI)} cy={y(vals[minI])} r="4" fill={C.coral} />}
-        {idx > 0 && <circle cx={x(idx)} cy={y(cur)} r="4.5" fill={C.blue} stroke="#fff" strokeWidth="2" />}
+        <path className="tmLine" d={line} fill="none" stroke={C.blueDeep} strokeWidth="2.5" strokeLinejoin="round" />
+        {idx >= minI && minI > 0 && <circle className="tmLow" cx={x(minI)} cy={y(vals[minI])} r="4" fill={C.coral} />}
+        {idx > 0 && idx <= stopI && <circle cx={x(idx)} cy={y(cur)} r="4.5" fill={C.blue} stroke="#fff" strokeWidth="2" />}
       </svg>
       <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
         <Btn onClick={() => { if (done) { setIdx(0); setPlaying(true); } else setPlaying(!playing); }} style={{ flex: 1, padding: "10px 12px", fontSize: 13 }}>

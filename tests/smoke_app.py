@@ -1036,6 +1036,13 @@ LEGACY_PROFILE = {"ready": True, "source": "rules", "title": "차분한 균형�
                   "flags": ["목표 연 6%는 지금 감당 가능한 위험(β 최대 0.8)으로 기대하기 어려운 수치예요. 목표·기간·저축액 셋 중 하나는 조정이 필요해요 — 위험을 억지로 키우는 건 답이 아니고요."]}
 
 
+# 타임머신 그림: 선(path.tmLine)의 점들과 최저점(circle.tmLow). 가로 끝 = 8 + (W − 16) = 412 (W = 420, 마지막 달)
+TM_PATH = """() => { const p = document.querySelector('path.tmLine'), c = document.querySelector('circle.tmLow');
+  if (!p || !c) return null; const pts = p.getAttribute('d').trim().split(/[ML]/).filter(Boolean).map((x) => x.split(',').map(Number));
+  return { n: pts.length, last: pts[pts.length - 1], low: [+c.getAttribute('cx'), +c.getAttribute('cy')] }; }"""
+TM_END_X = 412
+
+
 def scene_beta_return(R, files):
     """B안 (v18.5, Jack 2026-11-03): 베타를 수익률로 바꾸는 줄은 SHOW_ER 를 켤 때만.
     ② 종목 줄을 펼쳐 '이론 샤프'(β × 프리미엄 ÷ σ)가 없고 과거 값 '샤프(3y)'·'3y α'·'최대낙폭'은 보이는지,
@@ -1090,6 +1097,14 @@ def scene_beta_return(R, files):
         shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B_EN)
         assert not shown, f"③ (EN) 보이면 안 되는 문구: {shown}"
     R.check(page, S, "③ 타임머신: 재생 전 금액·% 없음 · 끝까지 재생해도 끝 값·'If you held to the end'·'What holding was worth' 없고 바닥 칸(금액 1·% 1)만 · 위험 나누기 앞 문장 없음 (EN)", diag_en)
+
+    def tm_line_stops_at_low():
+        # v18.6 (Jack 2026-11-04): 최저점 뒤의 경로(회복)는 베타로 만든 수익이라 그리지 않아요 — 재생이 끝나도 선은 최저점에서 끝나요
+        got = page.evaluate(TM_PATH)
+        assert got, "타임머신의 선(path.tmLine)이나 최저점(circle.tmLow)이 없어요"
+        assert got["n"] >= 2 and abs(got["last"][0] - got["low"][0]) < 0.01 and abs(got["last"][1] - got["low"][1]) < 0.01, got
+        assert got["low"][0] < TM_END_X - 1, f"최저점이 마지막 달이라 이 시험이 아무것도 보지 못해요: {got}"
+    R.check(page, S, "③ 타임머신: 재생이 끝나도 선의 마지막 점 = 최저점 (그 뒤 경로는 그리지 않음)", tm_line_stops_at_low)
 
     def diag_ko():
         page.get_by_role("button", name="한국어", exact=True).first.click()
