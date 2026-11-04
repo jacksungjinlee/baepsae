@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 05:40 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 07:15 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -21,6 +21,9 @@ and v19.0c (four tabs, phone) — see CHANGELOG. All checked on the live site.
 Claude started one `dart=cache` run on main by hand (41731600516, published 07:43, gate PASS 94/0/0). If no scheduled
 run has published by ~07:30 KST, start one `dart=cache` run on main (never a second full-DART run in a KST day; not
 while a scheduled run is waiting or queued).
+**2026-11-05:** GitHub's scheduled starts failed again (none of 03:47, 05:13, 06:43 had started by 07:10 KST). The
+outside timer's run (41918230816, started 06:40) published at 07:07: pxDate and usPxDate 2026-11-04, gate PASS with no
+warnings.
 
 **Outside timer (v17.5.5, set up by Jack 2026-11-04):** cron-job.org (Jack's account) job "뱁새 morning data run"
 sends `POST https://api.github.com/repos/jacksungjinlee/baepsae/actions/workflows/update-data.yml/dispatches` Tue–Sat
