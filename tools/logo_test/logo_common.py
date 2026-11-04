@@ -43,13 +43,37 @@ def now_kst():
     return dt.datetime.now(KST)
 
 
+def inside_git_checkout(p):
+    """True when p (or the nearest existing folder above it) is inside a git work tree: the main checkout, this
+    worktree, or any other. Logo files and results must never land where they could be committed."""
+    p = pathlib.Path(p).resolve()
+    for a in [p, *p.parents]:
+        if (a / ".git").exists():
+            return True
+    return False
+
+
 def out_dir(path=None):
-    """The scratch folder (created). Refuses a folder inside the repository so logo files and results never get committed."""
+    """The scratch folder (created). Refuses a folder inside the repository or any other git checkout."""
     p = pathlib.Path(path or DEFAULT_OUT).expanduser().resolve()
-    if p == ROOT or ROOT in p.parents:
-        raise SystemExit(f"!! output folder {p} is inside the repository; use a scratch folder outside it (--out)")
+    if p == ROOT or ROOT in p.parents or inside_git_checkout(p):
+        raise SystemExit(f"!! output folder {p} is inside a git checkout; use a scratch folder outside it (--out or "
+                         f"LOGO_TEST_DIR)")
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def run_masked(main):
+    """Run main() and print any crash through the key masker (a traceback can quote a URL with a key)."""
+    import traceback
+    try:
+        return main()
+    except SystemExit:
+        raise
+    except BaseException:                                   # noqa: BLE001 — print masked, then fail
+        keys, _ = read_keys(())
+        print(Masker(keys["brandfetch"], keys["logodev"])(traceback.format_exc()), file=sys.stderr)
+        return 1
 
 
 # ── ISIN ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -277,6 +301,37 @@ def latest_results(rows):
     return out
 
 
+def current_latest(tickers, result_rows, routes=None):
+    """latest_results limited to the given tickers and routes, and to rows whose identifier is still the one in
+    tickers.csv (a rebuilt tickers.csv can change a domain or add an ISIN: the old answer does not count then)."""
+    want = {}
+    for t in tickers:
+        for p, r, _ in ROUTES:
+            if routes is not None and f"{p}:{r}" not in routes:
+                continue
+            ident = route_ident(t, p, r)
+            if ident:
+                want[(t["code"], p, r)] = ident
+    return {k: v for k, v in latest_results(result_rows).items() if want.get(k) == v.get("ident")}
+
+
+def _cap(r):
+    try:
+        v = float(r.get("cap") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return v if v == v and v not in (float("inf"), float("-inf")) else 0.0
+
+
+def top_companies(rows, n=200, side=None):
+    """The n largest companies by market cap: ETFs and funds left out, rows without a cap left out (never ranked by a
+    blank). side: None or 'all' = KR and US together, 'kr' = Korean-listed, 'us' = US-listed. Works on tickers.csv and
+    mix.csv rows."""
+    rs = [r for r in rows if str(r.get("etf")) == "0" and _cap(r) > 0
+          and (side in (None, "all") or (side == "us") == (r.get("market") == "US"))]
+    return sorted(rs, key=lambda r: -_cap(r))[:n]
+
+
 # ── coverage summary (pure) ─────────────────────────────────────────────────────────────────────────────────────────
 
 MARKETS = ["KOSPI", "KOSDAQ", "KONEX", "US"]
@@ -313,8 +368,12 @@ def _pct(n, d):
     return f"{n:,} / {d:,} ({100.0 * n / d:.1f}%)" if d else "–"
 
 
-def summarize(tickers, latest, order=DEFAULT_MIX, notes=(), probes=None, stopped=None, shared_hashes=None):
-    """Markdown coverage report: per provider × route × market, per provider (any route), and the best mix."""
+def summarize(tickers, latest, order=DEFAULT_MIX, notes=(), probes=None, stopped=None, shared_hashes=None,
+              routes=None):
+    """Markdown coverage report: per provider × route × market, per provider (any route), and the best mix.
+    routes: the routes this run covered (default: all); only those get a row."""
+    route_keys = [k for k in ROUTE_KEYS if routes is None or k in routes]
+    providers = [p for p in PROVIDERS if any(k.startswith(p + ":") for k in route_keys)]
     groups = MARKETS + ["ETF/fund"]
     by_group = {g: [t for t in tickers if group_of(t) == g] for g in groups}
     lines = [f"# Logo coverage test — {now_kst():%Y-%m-%d %H:%M} KST", ""]
@@ -335,7 +394,7 @@ def summarize(tickers, latest, order=DEFAULT_MIX, notes=(), probes=None, stopped
               "Each cell: logos found / identifiers tried (share of tried). A route is tried only where the identifier "
               "exists (no ISIN or domain → not tried).", "",
               "| route | " + " | ".join(groups) + " | not tried / errors |", "|---|" + "---|" * (len(groups) + 1)]
-    for key in ROUTE_KEYS:
+    for key in route_keys:
         p, r = key.split(":")
         cells, nt, err = [], 0, 0
         for g in groups:
@@ -355,7 +414,7 @@ def summarize(tickers, latest, order=DEFAULT_MIX, notes=(), probes=None, stopped
         lines.append(f"| {key} | " + " | ".join(cells) + f" | {nt:,} / {err:,} |")
     lines += ["", "## Coverage per provider (any of its routes) and the best mix", "",
               "Share of ALL tickers in the group.", "", "| | " + " | ".join(groups) + " |", "|---|" + "---|" * len(groups)]
-    for prov in PROVIDERS:
+    for prov in providers:
         own = [k for k in order if k.startswith(prov + ":")]
         mix = {m["code"]: m for m in choose_mix(tickers, latest, own)}
         lines.append(f"| {prov} alone | " + " | ".join(_pct(sum(1 for t in by_group[g] if mix[t['code']]['pick']),

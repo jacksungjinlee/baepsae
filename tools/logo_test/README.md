@@ -54,9 +54,16 @@ python3 tools/logo_test/contact_sheet.py
 ```
 
 Useful options of `run_test.py`: `--providers logodev` (one provider), `--routes logodev:ticker,brandfetch:isin`,
-`--markets KOSPI,US`, `--top N`, `--mix-order …`, `--bf-rate` (max 3.3), `--ld-rate`, `--concurrency`,
-`--save-images` (off by default, see the terms), `--headed` (show the browser; needs a display).
-A run that stops (refusal, Ctrl-C, lost session) resumes where it was: finished loads in `results.csv` are skipped.
+`--markets KOSPI,US`, `--top N` (the N largest companies of each side, no ETFs — the same rows as the contact sheets),
+`--mix-order …`, `--bf-rate` (max 3.3), `--ld-rate`, `--concurrency`, `--save-images` (off by default, see the terms),
+`--headed` (show the browser; needs a display).
+A run that stops (refusal, Ctrl-C, lost session) resumes where it was: finished loads in `results.csv` are skipped
+(only while the identifier is unchanged — after a rebuilt `tickers.csv` a changed domain or ISIN is loaded again).
+`summary.md` and `mix.csv` cover the tickers and routes of the run that wrote them.
+
+Exit codes: `0` all planned loads finished · `2` a provider was stopped (refusal, bad key, block, quota; the reason is
+at the top of `summary.md`) · `3` some loads never finished (errors or 202s after 5 tries; counted loudly in the log
+and in `summary.md` — rerun the same command to retry them) · `1` crash (traceback printed with keys masked).
 
 ## What it writes (scratch folder)
 

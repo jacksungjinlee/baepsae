@@ -26,8 +26,8 @@ import html
 import pathlib
 import sys
 
-from logo_common import (BF_BASE, LD_BASE, ROOT, Masker, browser_launch_args, logo_url, out_dir, read_csv, read_keys,
-                         serve)
+from logo_common import (BF_BASE, LD_BASE, ROOT, Masker, browser_launch_args, log_factory, logo_url, out_dir, read_csv,
+                         read_keys, run_masked, serve, top_companies)
 
 NOTO_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf",
@@ -148,20 +148,6 @@ def cell_html(row, src, pos):
             f'<div class="src{via}">{html.escape(label)}</div></div>')
 
 
-def pick_rows(rows, side, top):
-    def cap(r):
-        try:
-            return float(r.get("cap") or 0)
-        except ValueError:
-            return 0.0
-    rs = [r for r in rows if str(r.get("etf")) == "0" and cap(r) > 0]
-    if side == "kr":
-        rs = [r for r in rs if r.get("market") != "US"]
-    elif side == "us":
-        rs = [r for r in rs if r.get("market") == "US"]
-    return sorted(rs, key=lambda r: -cap(r))[:top]
-
-
 def make_placeholders(rows, folder):
     """Dry run: a plain coloured shape per company (no text, no logo), every third one 'no logo'."""
     from PIL import Image, ImageDraw
@@ -247,10 +233,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     out = out_dir(a.out)
     keys, _ = read_keys(())
-    masker = Masker(keys["brandfetch"], keys["logodev"])
-
-    def log(*parts):
-        print(masker(" ".join(str(p) for p in parts)), flush=True)
+    log = log_factory(Masker(keys["brandfetch"], keys["logodev"]))
 
     sides = [s.strip() for s in a.side.split(",") if s.strip()]
     if any(s not in ("kr", "us", "all") for s in sides):
@@ -260,7 +243,7 @@ def main(argv=None):
         tickers = read_csv(pathlib.Path(a.tickers) if a.tickers else out / "tickers.csv")
         rows_by_sheet = {}
         for s in sides:
-            rows = make_placeholders(pick_rows(tickers, s, a.placeholders), out / "placeholders")
+            rows = make_placeholders(top_companies(tickers, a.placeholders, s), out / "placeholders")
             rows_by_sheet[s] = (f"Placeholder dry run — {s.upper()} {len(rows)} largest", rows)
             for r in rows:
                 if r["provider"] == "placeholder":
@@ -272,8 +255,8 @@ def main(argv=None):
         if not mix_path.exists():
             raise SystemExit(f"!! {mix_path} not found — run run_test.py first (or use --placeholders N)")
         mix = read_csv(mix_path)
-        rows_by_sheet = {s: (f"{s.upper()} — {min(a.top, len(pick_rows(mix, s, a.top)))} largest companies, best mix",
-                             pick_rows(mix, s, a.top)) for s in sides}
+        rows_by_sheet = {s: (f"{s.upper()} — {len(top_companies(mix, a.top, s))} largest companies, best mix",
+                             top_companies(mix, a.top, s)) for s in sides}
         if a.images:
             folder = pathlib.Path(a.images).resolve()
             mounts["/img/"] = folder
@@ -304,18 +287,5 @@ def main(argv=None):
     return 0
 
 
-def entry():
-    """main() with any crash printed through the key masker (a traceback can quote a URL)."""
-    import traceback
-    try:
-        return main()
-    except SystemExit:
-        raise
-    except BaseException:                                       # noqa: BLE001 — print masked, then fail
-        keys, _ = read_keys(())
-        print(Masker(keys["brandfetch"], keys["logodev"])(traceback.format_exc()), file=sys.stderr)
-        return 1
-
-
 if __name__ == "__main__":
-    sys.exit(entry())
+    sys.exit(run_masked(main))

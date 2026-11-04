@@ -136,11 +136,16 @@ def test_route_identifiers():
     assert lc.route_ident(us, "brandfetch", "ticker_code") == "" and lc.route_ident(us, "logodev", "ticker") == "AAPL"
 
 
-def test_output_folder_is_never_inside_the_repository():
+def test_output_folder_is_never_inside_a_git_checkout(tmp_path):
     with pytest.raises(SystemExit):
         lc.out_dir(str(ROOT / "tools" / "logo_test" / "out"))
     with pytest.raises(SystemExit):
         lc.out_dir(str(ROOT))
+    other = tmp_path / "other-checkout"
+    (other / ".git").mkdir(parents=True)                                    # e.g. the main checkout around a worktree
+    with pytest.raises(SystemExit):
+        lc.out_dir(str(other / "logos"))
+    assert lc.out_dir(str(tmp_path / "scratch" / "logos")).is_dir()
 
 
 # ── classifying one load ──
@@ -246,9 +251,70 @@ def test_build_tickers_rows():
     assert by["AAPL"]["market"] == "US" and by["AAPL"]["ticker"] == "AAPL" and by["AAPL"]["isin"] == ""
     assert by["AAPL"]["rank"] == "" and by["333330"]["rank"] == ""          # blank or NaN cap is never ranked
     assert [by[c]["rank"] for c in ("005930", "005935", "247540", "069500", "222220", "111110")] == [1, 2, 3, 4, 5, 6]
-    top = build_tickers.top_companies(rows, 3, "kr")
-    assert [r["code"] for r in top] == ["005930", "005935", "247540"]       # the ETF is not a company
-    assert build_tickers.top_companies(rows, 5, "us") == []
+    top = lc.top_companies(rows, 4, "kr")
+    assert [r["code"] for r in top] == ["005930", "005935", "247540", "222220"]       # the ETF is not a company
+    assert lc.top_companies(rows, 5, "us") == []                             # AAPL's cap was NaN: not ranked
+    assert [r["code"] for r in lc.top_companies(rows, 2)] == ["005930", "005935"]
+
+
+def test_resume_ignores_results_for_an_identifier_that_changed():
+    t = {"code": "005930", "market": "KOSPI", "ticker": "005930.KS", "isin": "KR7005930003", "domain": "samsung.com"}
+    rows = [{"code": "005930", "provider": "logodev", "route": "domain", "ident": "old-domain.com", "verdict": "hit"},
+            {"code": "005930", "provider": "logodev", "route": "isin", "ident": "KR7005930003", "verdict": "miss"},
+            {"code": "005930", "provider": "brandfetch", "route": "isin", "ident": "KR7005930003", "verdict": "hit"},
+            {"code": "999990", "provider": "logodev", "route": "isin", "ident": "X", "verdict": "hit"}]
+    latest = lc.current_latest([t], rows, {"logodev:domain", "logodev:isin"})
+    assert set(latest) == {("005930", "logodev", "isin")}                   # old domain, other route, other ticker: out
+    items, skipped = run_test.plan_items([t], {"logodev:domain", "logodev:isin"}, latest)
+    assert skipped == 1 and [(i["route"], i["ident"]) for i in items["logodev"]] == [("domain", "samsung.com")]
+
+
+def test_unfinished_loads_are_counted():
+    t = {"code": "005930", "market": "KOSPI", "ticker": "005930.KS", "isin": "KR7005930003", "domain": ""}
+    latest = dict([_r("005930", "logodev", "ticker", "error"), _r("005930", "logodev", "isin", "hit")])
+    c = run_test.unfinished_counts([t], latest, {"logodev:ticker", "logodev:isin", "brandfetch:ticker"})
+    assert c == {"logodev": {"error": 1}, "brandfetch": {"not tried": 1}}
+
+
+def test_status_of_a_load_with_redirects():
+    assert run_test.resolve_status(None) == (None, {}, None)
+    ok = {"status": 200, "headers": {"Content-Type": "image/webp"}, "last": (200, {})}
+    assert run_test.resolve_status(ok) == (200, {"content-type": "image/webp"}, None)
+    refused = {"status": 302, "headers": {"X-BF-Error": "automated_traffic"}, "last": (200, {"content-type": "text/html"})}
+    assert run_test.resolve_status(refused)[:2] == (302, {"x-bf-error": "automated_traffic"})   # judged on the 1st hop
+    moved = {"status": 301, "headers": {"location": "/x.png"}, "last": (200, {"content-type": "image/png"})}
+    assert run_test.resolve_status(moved) == (200, {"content-type": "image/png"}, 301)          # followed
+
+
+class _FakeCdp:
+    def __init__(self):
+        self.h = {}
+
+    def on(self, name, fn):
+        self.h[name] = fn
+
+    def emit(self, name, ev):
+        self.h[name](ev)
+
+
+def test_capture_keeps_a_raw_header_event_that_arrives_first():
+    """Chromium may send responseReceivedExtraInfo before requestWillBeSent. For an ORB-blocked refusal (a JSON 401)
+    it is the only event with the status, so it must not be dropped."""
+    cdp = _FakeCdp()
+    cap = run_test.NetCapture(cdp)
+    cdp.emit("Network.responseReceivedExtraInfo", {"requestId": "1", "statusCode": 401, "headers": {"a": "b"}})
+    cdp.emit("Network.requestWillBeSent", {"requestId": "1", "request": {"url": "https://x/1", "headers": {
+        "Referer": "http://127.0.0.1:5/"}}})
+    cdp.emit("Network.loadingFailed", {"requestId": "1", "blockedReason": "orb"})
+    rec = cap.req["1"]
+    assert rec["status"] == 401 and rec["done"] and rec["failure"] == "orb" and rec["referer"] == "http://127.0.0.1:5/"
+    cdp.emit("Network.requestWillBeSent", {"requestId": "2", "request": {"url": "https://x/2", "headers": {}}})
+    cdp.emit("Network.requestWillBeSent", {"requestId": "2", "request": {"url": "https://x/guide", "headers": {}},
+                                           "redirectResponse": {"status": 302, "headers": {"x-bf-error": "hotlink_blocked"}}})
+    cdp.emit("Network.responseReceived", {"requestId": "2", "response": {"status": 200, "headers": {}, "mimeType": "text/html"}})
+    rec = cap.req["2"]
+    assert rec["status"] == 302 and rec["headers"]["x-bf-error"] == "hotlink_blocked" and rec["last"][0] == 200
+    assert cap.by_url == {"https://x/1": "1", "https://x/2": "2"}
 
 
 def test_tools_never_read_a_dart_key():

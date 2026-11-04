@@ -39,8 +39,9 @@ import time
 
 from logo_common import (BF_BASE, DEFAULT_MIX, ENV_BRANDFETCH, ENV_LOGODEV, FINAL_VERDICTS, HARNESS_HTML, LD_BASE,
                          MARKETS, PROBE_JS, PROVIDERS, RESULT_COLS, ROUTE_KEYS, ROUTES, Masker, browser_launch_args,
-                         group_of, isin_check_digit, latest_results, log_factory, logo_url, now_kst, out_dir,
-                         read_csv, read_keys, route_ident, serve, shared_image_hashes, summarize, write_csv)
+                         current_latest, group_of, isin_check_digit, log_factory, logo_url, now_kst, out_dir,
+                         read_csv, read_keys, route_ident, run_masked, serve, shared_image_hashes, summarize,
+                         top_companies, write_csv)
 
 RATE = {"brandfetch": 3.0, "logodev": 5.0}
 CONC = 4
@@ -107,6 +108,7 @@ class NetCapture:
 
     def __init__(self, cdp):
         self.cdp, self.req, self.by_url = cdp, {}, {}
+        self.early = {}                  # raw-header events that arrived before their request event (Chromium allows it)
         cdp.on("Network.requestWillBeSent", self._sent)
         cdp.on("Network.responseReceivedExtraInfo", self._extra)
         cdp.on("Network.responseReceived", self._received)
@@ -122,8 +124,12 @@ class NetCapture:
         return cap
 
     def _first(self, rec, status, headers):
-        if rec is not None and rec["status"] is None:
+        """The first hop's answer is kept (a refusal is a 302 with x-bf-error); every later answer becomes 'last'."""
+        if rec is None or status is None:
+            return
+        if rec["status"] is None:
             rec["status"], rec["headers"] = status, dict(headers or {})
+        rec["last"] = (status, dict(headers or {}))
 
     def _sent(self, ev):
         rid = ev["requestId"]
@@ -134,12 +140,18 @@ class NetCapture:
             return
         url = ev["request"]["url"]
         ref = {str(k).lower(): v for k, v in (ev["request"].get("headers") or {}).items()}.get("referer", "")
-        self.req[rid] = {"url": url, "status": None, "headers": {}, "mime": "", "redirected": False, "done": False,
-                         "failure": None, "referer": ref}
+        self.req[rid] = {"url": url, "status": None, "headers": {}, "last": None, "mime": "", "redirected": False,
+                         "done": False, "failure": None, "referer": ref}
         self.by_url[url] = rid
+        if rid in self.early:
+            self._first(self.req[rid], *self.early.pop(rid))
 
     def _extra(self, ev):
-        self._first(self.req.get(ev["requestId"]), ev.get("statusCode"), ev.get("headers"))
+        rid = ev["requestId"]
+        if rid in self.req:
+            self._first(self.req[rid], ev.get("statusCode"), ev.get("headers"))
+        else:
+            self.early.setdefault(rid, (ev.get("statusCode"), ev.get("headers")))
 
     def _received(self, ev):
         rec = self.req.get(ev["requestId"])
@@ -166,13 +178,30 @@ class NetCapture:
         self.by_url.pop(url, None)
         self.req.pop(rid, None)
         body = None
-        if rec["done"] and not rec["failure"] and not rec["redirected"]:
+        if rec["done"] and not rec["failure"]:                  # after a redirect: the final hop's body
             try:
                 r = await self.cdp.send("Network.getResponseBody", {"requestId": rid})
                 body = base64.b64decode(r["body"]) if r.get("base64Encoded") else r["body"].encode("utf-8")
             except Exception:                                   # noqa: BLE001 — e.g. no body kept for an empty 404
                 body = None
         return rec, body
+
+
+NO_REQUEST = "the page made no request (served from the browser's memory)"
+
+
+def resolve_status(rec):
+    """(status, lower-case headers, redirect status or None) for one load record. A refusal is judged on the first hop
+    (Brandfetch: a 302 carrying x-bf-error); a plain redirect without it is followed to the answer it ended with. Pure."""
+    if not rec:
+        return None, {}, None
+    first = {str(k).lower(): v for k, v in (rec.get("headers") or {}).items()}
+    status = rec.get("status")
+    if status is not None and 300 <= status < 400 and not first.get("x-bf-error") and rec.get("last"):
+        last_status, last_headers = rec["last"]
+        if not (300 <= (last_status or 0) < 400):
+            return last_status, {str(k).lower(): v for k, v in (last_headers or {}).items()}, status
+    return status, first, None
 
 
 async def measure(page, cap, lane, urls, rate, conc):
@@ -182,10 +211,10 @@ async def measure(page, cap, lane, urls, rate, conc):
     out = []
     for u, j in zip(urls, js):
         rec, body = await cap.take(u)
-        hdr = {str(k).lower(): v for k, v in ((rec or {}).get("headers") or {}).items()}
-        info = {"status": (rec or {}).get("status"), "headers": hdr, "content_type": hdr.get("content-type", ""),
+        status, hdr, redirect = resolve_status(rec)
+        info = {"status": status, "headers": hdr, "content_type": hdr.get("content-type", ""), "redirect": redirect,
                 "bytes": "", "sha256": "", "body": None, "w": (j or {}).get("w", 0), "h": (j or {}).get("h", 0),
-                "js": j, "failure": (rec or {}).get("failure") if rec else "the page made no request",
+                "js": j, "failure": (rec or {}).get("failure") if rec else NO_REQUEST,
                 "referer": (rec or {}).get("referer", "")}
         if body is not None:
             info["bytes"], info["sha256"], info["body"] = len(body), hashlib.sha256(body).hexdigest(), body
@@ -206,6 +235,7 @@ class Lane:
         self.stopped = None
         self.done = 0
         self.consecutive_errors = 0
+        self.consecutive_429 = 0
         self.bases = {"bf_base": args.bf_base, "ld_base": args.ld_base}
         self.probe_infos = {}
 
@@ -293,7 +323,10 @@ class Lane:
                 if fatal:
                     self.stopped = fatal
                 retry = verdict not in FINAL_VERDICTS and not fatal and it["tries"] < MAX_TRIES
-                self.consecutive_errors = self.consecutive_errors + 1 if verdict in ("error", "rate_limited") else 0
+                if info["failure"] == NO_REQUEST and it["tries"] >= 2:
+                    retry = False                       # the browser keeps answering from memory: give up, counted
+                self.consecutive_errors = self.consecutive_errors + 1 if verdict == "error" else 0
+                self.consecutive_429 = self.consecutive_429 + 1 if verdict == "rate_limited" else 0
                 if verdict == "rate_limited":
                     pause = max(pause, retry_after or 30.0)
                     self.rate = max(0.5, self.rate * 0.7)
@@ -310,6 +343,8 @@ class Lane:
                 self.done += 1
             if self.consecutive_errors >= 25 and not self.stopped:
                 self.stopped = f"{self.consecutive_errors} errors in a row (last status {infos[-1]['status']})"
+            if self.consecutive_429 >= 200 and not self.stopped:
+                self.stopped = f"{self.consecutive_429} HTTP 429 answers in a row, even at {self.rate:.2f}/s"
             if pause:
                 self.log(f"· {self.p}: HTTP 429 — waiting {pause:.0f}s, rate now {self.rate:.2f}/s")
                 await asyncio.sleep(pause)
@@ -338,16 +373,20 @@ class Lane:
 
 
 def select_rows(tickers, top=None, markets=None):
+    """All tickers, or with top: the N largest companies (no ETFs or funds) of each side, the same rows the contact
+    sheets show."""
     rows = tickers
     if top:
-        rows = [t for t in rows if t.get("rank_cls") and int(t["rank_cls"]) <= top]
+        keep = {t["code"] for side in ("kr", "us") for t in top_companies(tickers, top, side)}
+        rows = [t for t in rows if t["code"] in keep]
     if markets:
         rows = [t for t in rows if group_of(t) in markets]
     return rows
 
 
 def plan_items(rows, routes, latest):
-    """(provider -> items) for every applicable route not already finished in results.csv."""
+    """(provider -> items) for every applicable route not already finished in results.csv. latest must come from
+    current_latest (results for an identifier that changed since do not count)."""
     out = {p: [] for p in PROVIDERS}
     skipped = 0
     for t in rows:
@@ -414,7 +453,7 @@ async def run_live(args, keys, tickers, rows, routes, log, masker):
     (harness / "index.html").write_text(HARNESS_HTML, encoding="utf-8")
     results_path = out / "results.csv"
     prev = read_csv(results_path) if results_path.exists() else []
-    latest = latest_results(prev)
+    latest = current_latest(rows, prev, routes)
     items, skipped = plan_items(rows, routes, latest)
     if skipped:
         log(f"· resuming: {skipped:,} loads already finished in {results_path} are skipped")
@@ -459,12 +498,37 @@ async def run_live(args, keys, tickers, rows, routes, log, masker):
     return probe_rows, stopped
 
 
+def unfinished_counts(rows, latest, routes):
+    """{provider: Counter(verdict)} of loads this run should have finished but did not (error, pending, rate_limited
+    after MAX_TRIES, or never tried because the provider stopped)."""
+    out = {}
+    for t in rows:
+        for p, r, _ in ROUTES:
+            if f"{p}:{r}" not in routes or not route_ident(t, p, r):
+                continue
+            res = latest.get((t["code"], p, r))
+            v = res["verdict"] if res else "not tried"
+            if v not in FINAL_VERDICTS:
+                out.setdefault(p, collections.Counter())[v] += 1
+    return out
+
+
 def write_outputs(args, tickers, rows, probe_rows, stopped, log, notes):
+    """summary.md and mix.csv for this run's tickers and routes only (results for other routes, or for an identifier
+    that changed since, are left out). Returns (markdown, unfinished counts)."""
     results_path = args.out / "results.csv"
-    latest = latest_results(read_csv(results_path)) if results_path.exists() else {}
-    order = args.mix_order
+    latest = current_latest(rows, read_csv(results_path) if results_path.exists() else [], args.routes)
+    order = [k for k in args.mix_order if k in args.routes]
+    unfinished = unfinished_counts(rows, latest, args.routes)
+    notes = list(notes)
+    for p, c in unfinished.items():
+        line = (f"!! {p}: {sum(c.values()):,} loads unfinished (" + ", ".join(f"{k} {v:,}" for k, v in sorted(c.items()))
+                + ") — they count as no logo below; rerun the same command to retry them")
+        log(line)
+        notes.append(line)
     shared = shared_image_hashes(rows, latest)
-    md, mix_rows = summarize(rows, latest, order, notes=notes, probes=probe_rows, stopped=stopped, shared_hashes=shared)
+    md, mix_rows = summarize(rows, latest, order, notes=notes, probes=probe_rows, stopped=stopped, shared_hashes=shared,
+                             routes=args.routes)
     (args.out / "summary.md").write_text(md, encoding="utf-8")
     by_code = {t["code"]: t for t in rows}
     mix_out = []
@@ -478,7 +542,7 @@ def write_outputs(args, tickers, rows, probe_rows, stopped, log, notes):
     write_csv(args.out / "mix.csv", mix_out,
               ["code", "name", "market", "etf", "cap", "rank_cls", "provider", "route", "ident", "via_code"])
     log(f"wrote {args.out / 'summary.md'} · {args.out / 'mix.csv'} · {results_path}")
-    return md
+    return md, unfinished
 
 
 def parse_args(argv):
@@ -536,7 +600,7 @@ def main(argv=None):
     log(f"· {len(rows):,} of {len(tickers):,} tickers selected" + (f" (top {a.top} of each side)" if a.top else ""))
     if a.dry_run:
         prev = read_csv(a.out / "results.csv") if (a.out / "results.csv").exists() else []
-        items, skipped = plan_items(rows, a.routes, latest_results(prev))
+        items, skipped = plan_items(rows, a.routes, current_latest(rows, prev, a.routes))
         for line in lines:
             log(line)
         for p in a.providers:
@@ -561,23 +625,12 @@ def main(argv=None):
              f"providers {', '.join(a.providers)} · rates Brandfetch ≤ {a.bf_rate:g}/s, logo.dev ≤ {a.ld_rate:g}/s · "
              f"loaded as <img> in Chromium from http://127.0.0.1 · fallback=404"]
     probe_rows, stopped = asyncio.run(run_live(a, keys, tickers, rows, a.routes, log, masker))
-    md = write_outputs(a, tickers, rows, probe_rows, stopped, log, notes)
+    md, unfinished = write_outputs(a, tickers, rows, probe_rows, stopped, log, notes)
     print(masker(md))
-    return 0 if not stopped else 2
-
-
-def entry():
-    """main() with any crash printed through the key masker (a traceback can quote a URL)."""
-    import traceback
-    try:
-        return main()
-    except SystemExit:
-        raise
-    except BaseException:                                       # noqa: BLE001 — print masked, then fail
-        keys, _ = read_keys(())
-        print(Masker(keys["brandfetch"], keys["logodev"])(traceback.format_exc()), file=sys.stderr)
-        return 1
+    if stopped:
+        return 2                                                # a provider refused or kept failing: see summary.md
+    return 3 if unfinished else 0                               # some loads never finished: rerun to retry
 
 
 if __name__ == "__main__":
-    sys.exit(entry())
+    sys.exit(run_masked(main))

@@ -29,8 +29,11 @@ import sys
 
 import requests
 
-from logo_common import (DATA_URL, DESC_URL, LISTING_URL, TICKER_COLS, common_code, homepage_domain, is_krx_code,
-                         is_shared_host, isin_valid, kr_isin_from_code, out_dir, write_csv)
+from logo_common import (DATA_URL, DESC_URL, LISTING_URL, ROOT, TICKER_COLS, common_code, homepage_domain, is_krx_code,
+                         is_shared_host, isin_valid, kr_isin_from_code, out_dir, top_companies, write_csv)
+
+sys.path.insert(0, str(ROOT))
+from fetch_data import _fin  # noqa: E402  (the pipeline's NaN-safe number check, CLAUDE.md)
 
 LOOKBACK_DAYS = 10
 # Must be among the 200 largest companies of their side (the contact sheets are per side: the 200 largest of KR and US
@@ -72,14 +75,6 @@ def krx_csv(src, url_tpl, day, what):
     raise SystemExit(f"!! {what}: no file for {day} or the {LOOKBACK_DAYS} days before it")
 
 
-def fin(x):
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if v == v and v not in (float("inf"), float("-inf")) else None
-
-
 def build(data, listing, desc):
     """Pure: data.json dict + {code: listing row} + {code: desc row} -> (rows, log lines)."""
     log = []
@@ -112,7 +107,7 @@ def build(data, listing, desc):
         rows.append({
             "code": code, "name": s.get("nk") or s.get("ne") or code, "name_en": s.get("ne") or "",
             "cls": s.get("cls"), "market": market, "market_raw": raw, "etf": "1" if etf else "0",
-            "cap": fin(s.get("cap")), "ticker": ticker, "isin": isin, "isin_src": isin_src,
+            "cap": _fin(s.get("cap")), "ticker": ticker, "isin": isin, "isin_src": isin_src,
             "issuer_code": issuer,
             "domain": "", "domain_src": "", "homepage_raw": "",
         })
@@ -155,14 +150,6 @@ def build(data, listing, desc):
         r.setdefault("rank", "")
         r.setdefault("rank_cls", "")
     return rows, log
-
-
-def top_companies(rows, n=200, side=None):
-    """The n largest companies by cap (ETFs and funds excluded, unranked rows excluded). side: None = KR and US
-    together, 'kr' = Korean-listed, 'us' = US-listed."""
-    c = [r for r in rows if r.get("rank") and str(r["etf"]) == "0"
-         and (side is None or (side == "us") == (r["market"] == "US"))]
-    return sorted(c, key=lambda r: int(r["rank"]))[:n]
 
 
 def report(rows):
