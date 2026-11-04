@@ -13,6 +13,8 @@
   산 뒤에는 오늘에 판정 띠, 내 덱에 평가 금액 (Part E)
 - 멈춤 경고 없음 (예시 데이터의 발행일은 고정이에요) · 페이지 오류 0건 · 보이는 한국어는 모두 문구 파일 또는 예시 데이터의 이름
 - 소개(v19.0, #about): 푸터의 '소개'로 열려요. 지어낸 데이터라 숫자 줄도 숫자 문단('{n}개가 넘는')도 없어요. 뒤로 → 전 화면
+- PC(v19.0d, 1280 × 800): 왼쪽 메뉴의 링크는 소개뿐 · '예시 데이터' 표시는 위 막대에 화면마다 하나 · 네 탭 · '/' 와 검색 칸 →
+  종목 결과 · 포트폴리오 만들기 · 가로 스크롤 없음 (데이터 파일 요청 0건은 아래 결과 줄이 함께 봐요)
 """
 import argparse
 import functools
@@ -324,6 +326,45 @@ def main():
                 assert page.url.endswith("/app-preview.html#portfolio"), page.url
             check(W + "푸터 '소개' → 소개 (예시 데이터 표시 · 숫자 줄과 숫자 문단 없음) → 뒤로 → 포트폴리오", about, page, width)
             ctx.close()
+
+        # v19.0d PC (1280 × 800): the same page with the left menu and the top bar. label_here() above reads `page` and `width`
+        # from this function, so they are set to the PC page here.
+        width = 1280
+        ctx = browser.new_context(viewport={"width": width, "height": 800}, device_scale_factor=1, locale="ko-KR")
+        ctx.route("**/*", route)
+        page = ctx.new_page()
+        page.set_default_timeout(WAIT)
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(base + "/app-preview.html#home", wait_until="domcontentloaded")
+
+        def pc():
+            page.locator('[data-ui-v2="side-menu"]').wait_for(state="visible")
+            at("home")
+            assert page.locator('nav[data-ui="bottom-tab-bar"], [data-ui-v2="menu-button"]').count() == 0
+            items = page.locator('[data-ui-v2="side-link"]').evaluate_all("(els) => els.map((e) => e.dataset.item)")
+            assert items == ["about"], items                                   # 예전 뱁새(실제 데이터)로 가는 줄 없음
+            for key in ("home", "portfolio", "stocks", "market"):
+                page.locator(f'[data-ui-v2="side-tab"][data-tab="{key}"]').click()
+                at(key)
+                page.locator('[data-ui-v2="top-bar"] [data-ui-v2="sample-label"]').wait_for(state="visible")
+                assert page.locator('[data-ui-v2="sample-label"]:visible').count() == 1, "예시 데이터 표시가 둘이거나 없어요"
+                label_here()
+                shot(page, width, f"pc-{key}")
+            assert page.locator('[data-ui-v2="market-tiles"]').get_attribute("data-cols") == "4"     # 버튼 칸이 없어 네 칸을 한 줄로
+            name = fic["data"]["stocks"][0]["nk"]
+            page.evaluate("() => document.activeElement && document.activeElement.blur()")
+            page.keyboard.press("/")
+            page.keyboard.type(name)
+            at("stocks")
+            page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"]').first.wait_for(state="visible")
+            label_here()
+            page.locator('[data-ui-v2="side-build"]').click()
+            at("portfolio/build")
+            page.locator('[data-ui-v2="top-bar"] [data-ui-v2="sample-label"]').wait_for(state="visible")
+            label_here()
+            shot(page, width, "pc-build")
+        check("[1280px] PC: 왼쪽 메뉴(소개만) · 위 막대의 예시 데이터(화면마다 하나) · 네 탭 · '/' 검색 → 종목 · 포트폴리오 만들기 · 가로 스크롤 없음", pc, page, width)
+        ctx.close()
         browser.close()
     srv.shutdown()
 
