@@ -5,6 +5,7 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-05 | #32 | v18.6.2 (old app): a saved portfolio whose data is missing or broken no longer opens with the previous portfolio's numbers or gets overwritten; its saved data is kept untouched. Opening a portfolio or a backup now starts from clean defaults plus today's values, with the saved fields on top, and changes nothing on screen if any part fails. |
 | 2026-11-05 | #31 | v18.6.1 (old app): 새로 시작하기 starts a new portfolio from today's values (자동), not from the previous portfolio's settings; a backup or saved portfolio with no readable settings does the same. Settings you typed in a portfolio still stay with that portfolio. HANDOFF records the outside-timer setup (token without expiry). |
 | 2026-11-04 | #30 | v19.0d (PC): on screens 1024 px and wider, 뱁새 2.0 gets a left menu (tabs, 포트폴리오 만들기, data date, 소개 · 용어 사전 · 데이터 출처 · 예전 뱁새), a search box at the top ("/" jumps to it), and 홈 and 시장 in two columns. Phones and narrower windows look the same as before. |
 | 2026-11-04 | #29 | v18.6 (old app): settings left on 자동 (exchange rate and other market inputs) now take today's value when you reopen a saved portfolio or load a backup — before, they brought back the old value under a 자동 label. Settings you typed stay as you typed them. 타임머신's chart line stops at the low point, so it no longer hints at the hidden beta-based recovery. |
