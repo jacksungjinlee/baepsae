@@ -115,10 +115,7 @@ def test_the_daily_check_promise_comes_only_with_the_daily_check():
     proposal = csv_final()[564].replace("6종목", "{n}종목").replace("오늘 화면에서", "홈에서").replace("이 휴대폰에만", "이 기기에만")
     assert proposal == "내일부터 홈에서 {n}종목을 규칙대로 점검해 드릴게요. 기록은 이 기기에만 저장돼요.", proposal
     body = c["plan"]["doneBody"]
-    if body is None:
-        assert f"| `plan.doneBody` | {proposal} |" in read("docs/tasks/v18.3-new-strings-pending.md")
-    else:
-        assert body == chat_approved()["plan.doneBody"] and "홈에서" in body, body
+    assert body == proposal == chat_approved()["plan.doneBody"] and "홈에서" in body, body      # Jack, 2026-11-04 승인
     for k in ("todoN", "calmEyebrow", "calmTitle", "brokenTitle", "stale"):
         assert c["today"][k], k
     today = read("src/v2/today.jsx")
@@ -130,7 +127,7 @@ def test_the_daily_check_promise_comes_only_with_the_daily_check():
     for name in ("app.html", "app-preview.html"):
         html = built(name)
         assert "매일 이 규칙으로" not in html and "언제든 고칠 수" not in html and "오늘 화면" not in html, name
-        assert ("점검해 드릴게요" in html) == (body is not None), name
+        assert "점검해 드릴게요" in html, name
 
 
 def test_app_html_is_committed_and_current():

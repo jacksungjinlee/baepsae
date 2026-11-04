@@ -310,21 +310,17 @@ def done_body(page, n):
     """기록했어요의 '내일부터 홈에서 {n}종목을 …': v19.0c 문장은 Jack 의 승인 대기라 그동안은 없어요 (tests/test_v2_app.py)."""
     page.locator('[data-ui-v2="record-done"]').wait_for(state="visible")
     body = page.locator('[data-ui-v2="done-body"]')
-    if C["plan"]["doneBody"]:
-        assert body.inner_text() == fillp(C["plan"]["doneBody"], n=n), body.inner_text()
-    else:
-        assert body.count() == 0 and "오늘 화면" not in page.locator('[data-ui-v2="record-done"]').inner_text()
+    assert C["plan"]["doneBody"], "plan.doneBody 는 승인된 문구예요 (Jack, 2026-11-04)"
+    assert body.inner_text() == fillp(C["plan"]["doneBody"], n=n), body.inner_text()
+    assert "오늘 화면" not in page.locator('[data-ui-v2="record-done"]').inner_text()
 
 
 def vs_kospi(page):
     """포트폴리오 vs 코스피 두 칸: 첫 칸의 이름(deck.vsMine, v19.0c 제안)이 승인되면 두 칸이 보이고, 그 전에는 둘 다 빠져요."""
-    if C["deck"]["vsMine"]:
-        mine, kospi = page.locator('[data-ui-v2="vs-mine"]').inner_text(), page.locator('[data-ui-v2="vs-index"]').inner_text()
-        pat = re.escape(fillp(C["deck"]["vsMine"], pct="PCT")).replace("PCT", r"[+−]?\d+\.\d%")
-        assert re.fullmatch(pat, mine) and re.fullmatch(r"코스피 [+−]?\d+\.\d%", kospi), (mine, kospi)
-        return
-    assert page.locator('[data-ui-v2="vs-kospi"][data-pending="1"]').count() >= 1, "코스피 비교가 계산되지 않았어요"
-    assert page.locator('[data-ui-v2="vs-mine"], [data-ui-v2="vs-index"]').count() == 0
+    assert C["deck"]["vsMine"], "deck.vsMine 은 승인된 문구예요 (Jack, 2026-11-04)"
+    mine, kospi = page.locator('[data-ui-v2="vs-mine"]').inner_text(), page.locator('[data-ui-v2="vs-index"]').inner_text()
+    pat = re.escape(fillp(C["deck"]["vsMine"], pct="PCT")).replace("PCT", r"[+−]?\d+\.\d%")
+    assert re.fullmatch(pat, mine) and re.fullmatch(r"코스피 [+−]?\d+\.\d%", kospi), (mine, kospi)
 
 
 def action(page):
@@ -1548,7 +1544,7 @@ def scene_today(R, files, width):
         assert peers.locator('[data-ui="dot-strip"] [data-mine="1"]').count() == 1
         rules = page.locator('[data-ui-v2="why-rules"]').inner_text()
         assert "규칙 2개가 모두 지켜지고 있어요" in rules and C["app"]["notChecked"] in rules, rules
-        assert (C["why"]["alertLine"] in rules) if C["why"]["alertLine"] else ("오늘 화면" not in rules and "홈에서 알려" not in rules), rules
+        assert C["why"]["alertLine"] and C["why"]["alertLine"] in rules and "오늘 화면" not in rules, rules   # Jack, 2026-11-04 승인
         assert "뉴스" not in page.locator("main").inner_text() and "다음에 확인할 일" not in page.locator("main").inner_text()
         rebased = "계획한 3종목 중 2종목만 샀어요. 목표 비중은 산 종목끼리 다시 나눠 계산해요."
         assert page.locator('[data-ui-v2="why-rebased"]').inner_text() == rebased
@@ -1867,9 +1863,9 @@ def _iphone_records(R, files, device, tmp):
 
     def main_text(page):
         """화면의 글. 아이폰 홈 화면 안내(사파리에서만, v19.0c)는 두 문맥에서 일부러 달라서 빼고 견줘요."""
-        t = page.locator("main").first.inner_text()
-        hint = page.locator('[data-ui-v2="ios-hint"]:visible')
-        return t.replace(hint.inner_text(), "") if hint.count() else t
+        return page.evaluate("""() => { const hs = [...document.querySelectorAll('main [data-ui-v2="ios-hint"]')];
+            const old = hs.map((h) => h.style.display); hs.forEach((h) => { h.style.display = 'none'; });
+            const t = document.querySelector('main').innerText; hs.forEach((h, i) => { h.style.display = old[i]; }); return t; }""")
 
     def hint_kinds(page):
         return page.locator('[data-ui-v2="ios-hint"]').evaluate_all("(els) => els.map((e) => e.dataset.kind)")
