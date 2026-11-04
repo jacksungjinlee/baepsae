@@ -5,46 +5,52 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-04 01:25 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-04 08:30 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
-nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04). Decide
-engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions, in one
-short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
+nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04).
+Decide engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions,
+in one short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
 
-**Merged 2026-11-04:** #22 docs, #24 v18.4.1 JSON import, #25 v18.5 missing holdings (old app), #23 v19.0b visual
-pass. All checked on the live site.
+**Merged 2026-11-04:** #21 v17.5.4 (KRX close + 30 min, CSAT 11/19 → 17:00; gate WARN/FAIL rows also GitHub
+annotations), #22/#26 docs, #23 v19.0b visual pass, #24 v18.4.1 JSON import, #25 v18.5 missing holdings (old app),
+and v19.0c (four tabs, phone) — see CHANGELOG. All checked on the live site.
 
-**Open:**
-1. **PR #21 `claude/v17.5.4-krx-close`** (CSAT close time + gate annotations) — fully tested (final dry run
-   41666939971 on 3e732ed green; annotation proof run 41662266107). Jack: **merge after the morning data run** (not
-   between 03:40 and ~08:30 KST). After merge: update the read-only 09:13 scheduled check
-   (`trig_01BGc9nmRuJcg6dsL1wNZX5E`) to read the publishing run's annotations
-   (`GET /repos/jacksungjinlee/baepsae/check-runs/<update job id>/annotations`, public, no login) and report every
-   gate warning to Jack, also after 11/11.
-2. **v19.0c `claude/v19.0c-tabs`** (in progress, phone only): four tabs 홈 · 포트폴리오 · 종목 · 시장, ☰ menu,
-   덱 → 포트폴리오, 시장 tiles (each with its own date) + old-app deep links, 거래대금 상위 종목 (KR/US separate),
-   US tap line, the 2.0 missing-stock redesign, the iPhone home-screen hint. Spec `docs/tasks/v19.0-layout-c.md`; build plan and
-   proposed 「새 문구」 `docs/tasks/v19.0-plan.md`. New strings are stored as "제안 (Jack 승인 대기)" in `src/copy/v2.js`; Jack
-   approves them and the test changes in one message before merge.
-3. **Next PR for the old app (Jack 2026-11-04):** settings left on 자동 (fx and market inputs) must come from today's
-   data, typed ones stay — on import *and* when reopening a saved portfolio. The old app has no typed-vs-auto record
-   (`autoKeys` = keys today's data supplies; `openSlot` restores a slot's old fx while the chip says 자동). Add a
-   "typed keys" record.
-4. **v19.0d** right after v19.0c (Jack, 2026-11-04): PC layout (≥ 1024 px left menu 240 px, search on top, "/"
-   focuses search, two columns). It was split out of v19.0c, so **v17.6 comes after v19.0d**.
+**Morning data run — GitHub's timer failed on 2026-11-04:** none of the six scheduled starts fired by 07:30 KST.
+Claude started one `dart=cache` run on main by hand (41731600516, published 07:43, gate PASS 94/0/0). If no scheduled
+run has published by ~07:30 KST, start one `dart=cache` run on main (never a second full-DART run in a KST day; not
+while a scheduled run is waiting or queued).
 
-**Open product point for Jack:** the 타임머신 chart line (old app) still runs to the end of the period; no number is
-shown. Ask whether the drawing should stop at the low point.
+**Next, after Jack's usage limit resets (Jack, 2026-11-04) — ask him first:**
+1. **09:13 check reports gate warnings.** Update the read-only scheduled check `trig_01BGc9nmRuJcg6dsL1wNZX5E` so it
+   finds today's publishing run (head_branch main, step "커밋 & 푸시" success), reads
+   `GET /repos/jacksungjinlee/baepsae/check-runs/<update job id>/annotations` (public, no login) and reports every
+   "발행 관문 경고" / "발행 관문 실패" annotation, also after 11/11; and when nothing published, tells Jack to ask
+   Claude to start a `dart=cache` run. The edit was refused by the session's permission settings — Jack must allow it.
+2. **Outside timer:** cron-job.org (Jack signs up) calls GitHub's workflow_dispatch API at ~06:40 KST with a
+   fine-grained token limited to Actions on this repo; GitHub's own cron is hours late or silent.
+3. **v19.0d (PC layout):** ≥ 1024 px left menu 240 px, search on top, "/" focuses search (not while typing), 홈 and
+   시장 in two columns. Plan: `docs/tasks/v19.0-plan.md`. Then **v17.6**.
+4. **Old app, 자동 settings:** settings left on 자동 (fx, market inputs) must come from today's data on import and
+   when reopening a saved portfolio; typed ones stay. Needs a "typed keys" record (`autoKeys` only lists keys today's
+   data supplies; `openSlot` restores an old fx while the chip says 자동).
 
-**Scheduled tasks:** 09:13 KST Tue–Sat read-only data check (`trig_01BGc9nmRuJcg6dsL1wNZX5E`; until 11/11 it also
-reports the publish time — if mornings miss 08:00, propose the next step). 2026-11-13 10:17 KST: check KRX's CSAT-day
-hours and fix the 11-19 row before 11/18 (`trig_01JyjjakbFVQ4GPSanbsqESX`).
+**Open product point for Jack:** the old app's 타임머신 chart line still runs to the end of the period (no number
+shown) — should the drawing stop at the low point?
 
-**Later:** the 08:30 "latest close isn't in yet" line (holiday-aware; propose wording); old-app follow-ups:
-기업분석 "X% 보유" counts missing holdings; page ② is 445 px wide on a 390 px phone; CSV order sheet doesn't quote
-names with commas; stock edits don't travel in the backup.
+**v19.0c follow-ups (from its review):** dead first back press after reloading with the menu open; the screen
+behind 소개 isn't kept mounted for build / 왜 움직였나 (typed RecordSheet input would be lost); 포트폴리오에서 빼기
+has no undo; 시장 tile change uses the last two idxHist rows (a gap would show a multi-day change); the per-tab error
+boundary isn't smoke-tested; `styleguide.html` mockup examples still say 내 덱 (needs a CSV-backed test change).
+
+**Scheduled tasks:** 09:13 KST Tue–Sat read-only data check (`trig_01BGc9nmRuJcg6dsL1wNZX5E`; until 11/11 it reports
+the publish time). 2026-11-13 10:17 KST: check KRX's CSAT-day hours and fix the 11-19 row before 11/18
+(`trig_01JyjjakbFVQ4GPSanbsqESX`). Yearly: add next year's CSAT row before 1 September (gate blocks from 1 November).
+
+**Later:** the 08:30 "latest close isn't in yet" line (holiday-aware; propose wording); old-app: 기업분석 "X% 보유"
+counts missing holdings; page ② is 445 px wide on a 390 px phone; CSV order sheet doesn't quote names with commas;
+stock edits don't travel in the backup.
 
 ---
 

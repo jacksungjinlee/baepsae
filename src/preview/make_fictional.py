@@ -298,6 +298,7 @@ def main():
     corp = {"asOf": "2026-10-31", "pxDate": PX_DATE, "publishedAt": PUBLISHED, "fictional": True, "companies": comps}
     macro = {"asOf": "2026-10-31", "publishedAt": PUBLISHED, "fictional": True,
              "idxHist": {"KOSPI": hist(PX_DATE, 4100.0, 0.0004), "SP500": hist(PX_DATE, 6200.0, 0.0003)}}
+    add_v19c_fields(data, macro)
     out = {"note": "Fictional example data for app-preview.html. Not real companies, codes or prices.",
            "cushion": [{"t": "98B010", "share": 0.5, "like": "114260"}, {"t": "98G010", "share": 0.5, "like": "132030"}],
            "data": data, "corp": corp, "macro": macro}
@@ -316,6 +317,19 @@ def main():
     kr_n = sum(1 for s in stocks if s["cls"] == "kr" and not s["etf"])
     us_n = sum(1 for s in stocks if s["cls"] == "us" and not s["etf"])
     print(f"fictional.json: {kr_n} KR shares (incl. 2 preferred), {us_n} US, {len(funds)} funds; checked against {len(real_names)} real names")
+
+
+# v19.0c: the fields the 2.0 tabs read, added after every random draw (so the rest of the file is unchanged):
+#   data.popular = fetch_data.py popular_list (each market ranked on its own by trading value: KR 100, US 20);
+#   macro.curve  = a fictional 국고채 curve with the price date (the 시장 tile reads the 3-year rate).
+# The committed fictional.json got these two fields by running this function on the loaded file (same dump settings).
+def add_v19c_fields(data, macro):
+    def top(arr, n):
+        ok = [x for x in arr if isinstance(x.get("val"), (int, float))]
+        return [x["t"] for x in sorted(ok, key=lambda x: -x["val"])[:n]]
+    data["popular"] = top([s for s in data["stocks"] if s["cls"] == "kr"], 100) + top([s for s in data["stocks"] if s["cls"] == "us"], 20)
+    macro["curve"] = {"tenors": [1, 2, 3, 5, 10, 20, 30], "now": [2.61, 2.68, 2.74, 2.86, 3.02, 3.08, 3.11],
+                      "ago": [3.05, 3.02, 2.98, 3.01, 3.12, 3.15, 3.14], "date": data["pxDate"]}
 
 
 if __name__ == "__main__":

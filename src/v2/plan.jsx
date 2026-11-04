@@ -1,5 +1,5 @@
 // 매수 계획 · 샀어요: whole shares, money left, past-year dividend, the 2022 line, weights with a one-line reason each,
-// 내 투자 규칙 per holding (each rule checked or 준비 중), 이 덱의 주의점, and the purchase record kept in this browser.
+// 내 투자 규칙 per holding (each rule checked or 준비 중), 이 포트폴리오의 주의점, and the purchase record kept in this browser.
 // v19.0b: big numbers show their unit smaller ("12" + small "만원"). 내 투자 규칙 has its section icon. 기록했어요 keeps the
 // happy 뱁이 (baepi-5): every variant of that sheet (KR or US buys, preview or live) shows only a count of stocks, never
 // money, prices, returns, weights or scores (CLAUDE.md: a count of stocks is not a number; Jack, 2026-11-04).
@@ -274,7 +274,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const save = () => {
     if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
     const day = date || today;
-    // A US purchase keeps the exchange rate the plan used (data.json fx), so 내 덱 can show 원금 in won (Part E).
+    // A US purchase keeps the exchange rate the plan used (data.json fx), so 포트폴리오 can show 원금 in won (Part E).
     const fx = typeof load.data.fx === "number" && Number.isFinite(load.data.fx) && load.data.fx > 0 ? load.data.fx : null;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
       ? { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
@@ -299,7 +299,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
           <Mascot src={IMG.happy} alt={P.doneAlt} size={64} />
           {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
-        <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink}</Button></div>
+        <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink || C.app.tabs.home}</Button></div>
       </BottomSheet>
     );
   }

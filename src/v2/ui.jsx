@@ -13,12 +13,16 @@ export const tx = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize:
 const tap = { WebkitTapHighlightColor: "transparent", cursor: "pointer", fontFamily: FONT, padding: 0 };
 export const TAB_H = TOUCH + SPACE(3);
 
-// The current app. 찾기 and the header link "예전 뱁새 보기" open it (Part F: the main address shows 2.0).
-export const OLD_APP = "./baepsae.html";
+// The current app (예전 뱁새, src/v2/routes.js). The ☰ menu's 예전 뱁새 보기, 용어 사전 and 데이터 출처, 시장's two buttons
+// and a Korean company tapped in 종목 open it (v19.0c deep links: routes.js OLD_LINKS). Part F: the main address shows 2.0.
+export { OLD_APP } from "./routes.js";
 
 // Which page this is: the live app or the preview with fictional example data (app-preview.html).
 export const ModeContext = createContext({ preview: false });
 export const useMode = () => useContext(ModeContext);
+
+// The ☰ button's action (v19.0c, src/v2/app.jsx): openMenu, and whether the menu is open. Without it no ☰ is drawn.
+export const NavContext = createContext({ openMenu: null, menuOpen: false });
 
 // "예시 데이터" label: on every screen of the preview page, right in the app bar.
 export function SampleLabel() {
@@ -33,17 +37,15 @@ export function Card({ children, style, ...rest }) {
   return <section {...rest} style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(5), marginTop: SPACE(3), ...style }}>{children}</section>;
 }
 
-const headerLink = { ...tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" }), minHeight: TOUCH, display: "inline-flex", alignItems: "center",
-  padding: `0 ${SPACE(1)}px`, textDecoration: "underline", textUnderlineOffset: 3, WebkitTapHighlightColor: "transparent" };
-
 // App bar: the name 뱁새 on every screen (v19.0: the page title is now the long "뱁새 — 내 기준으로 …", so the header shows
-// only C.app.brand), the preview label, optional back button.
+// only C.app.brand), the preview label, optional back button, and the ☰ menu button on the right (v19.0c, board NavC:
+// the Phosphor "list" icon, never the ☰ character). 예전 뱁새 보기 and 찾기 moved from here into the menu and the 종목 tab.
 // Logo (v19.0b, Part B): Jack's mark (baepi-mark, 28 px on phone) + the "뱁새" wordmark at 22 px / 800. The mark is
 // decorative (alt ""): the wordmark next to it says the name. A back button takes the mark's place.
-// search: a 찾기 link next to 예전 뱁새 보기 (Jack, 2026-11-02: first visitors land on 덱 짜기, which has no tab bar,
-// so stock search stays one visible tap away). It opens the same place as the 찾기 tab: the current app.
-export function AppBar({ onBack, backLabel, right, search = false }) {
+// menu = false: no ☰ (소개 is a page of its own, closed with its back button).
+export function AppBar({ onBack, backLabel, right, menu = true }) {
   const { preview } = useMode();
+  const nav = useContext(NavContext);
   return (
     <header data-ui-v2="app-bar" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH,
       ...(preview ? { position: "sticky", top: 0, zIndex: 40, background: COLOR.page, margin: `0 -${SPACE(4)}px`, padding: `0 ${SPACE(4)}px` } : {}) }}>
@@ -55,9 +57,14 @@ export function AppBar({ onBack, backLabel, right, search = false }) {
       ) : <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />}
       <h1 data-ui-v2="wordmark" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
       {preview && <SampleLabel />}
-      {!preview && search && <a data-ui-v2="search-link" href={OLD_APP} style={headerLink}>{C.app.tabs.search}</a>}
-      {!preview && <a data-ui-v2="old-app-link" href={OLD_APP} style={headerLink}>{C.app.oldApp}</a>}
       {right}
+      {menu && nav.openMenu && (
+        <button type="button" data-ui-v2="menu-button" aria-label={C.menu.label || C.app.tabsLabel} aria-haspopup="dialog" aria-expanded={nav.menuOpen ? "true" : "false"}
+          onClick={nav.openMenu}
+          style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginRight: -SPACE(2), flexShrink: 0 }}>
+          <Icon name="list" tone="on" />
+        </button>
+      )}
     </header>
   );
 }
@@ -93,8 +100,8 @@ export function DateLine({ date, fresh }) {
 // Alt texts: src/copy/v2.js (Jack, 2026-11-04).
 export const IMG = {
   mark: "baepi-mark.webp",            // logo, 28 px
-  build: "baepi-16-build.webp",       // 덱 짜기 start (no numbers on that card), 92 px
-  empty: "baepi-15-portfolio.webp",   // empty 내 덱, 112 px
+  build: "baepi-16-build.webp",       // 포트폴리오 만들기 start and the first-visit 홈 (screens without numbers), 92 px
+  empty: "baepi-15-portfolio.webp",   // empty 포트폴리오, 112 px
   error: "baepi-20-error.webp",       // load failure, 120 px
   wip: "baepi-21-wip.webp",           // a whole block that is 준비 중, 64 px
   happy: "baepi-5.png",               // 기록했어요 sheet (a count of stocks only, no money), 64 px — Jack's original, as before
@@ -104,7 +111,7 @@ export function Mascot({ src, alt, size, style }) {
   return <img data-ui-v2="mascot" src={src} alt={alt || ""} width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, ...style }} />;
 }
 
-// picture = false: the screen also shows figures (내 덱 with saved records), so the 뱁이 stays off (CLAUDE.md: never on
+// picture = false: the screen also shows figures (포트폴리오 with saved records, 시장), so the 뱁이 stays off (CLAUDE.md: never on
 // a screen that shows numbers). The message is the same either way.
 export function LoadFail({ picture = true }) {
   return (
@@ -153,8 +160,8 @@ export function Note({ children, tone, style, ...rest }) {
   );
 }
 
-// For visitors who made portfolios in the current app: they are still there, behind the header link "예전 뱁새 보기".
-// Live page only (the preview has no such link). Shown on 덱 짜기's first screen and on 내 덱.
+// For visitors who made portfolios in the current app: they are still there, behind the menu's "예전 뱁새 보기".
+// Live page only (the preview has no such link). Shown on 포트폴리오 만들기's first screen and on 포트폴리오.
 export function OldAppNote() {
   const { preview } = useMode();
   const [has] = useState(() => !preview && hasOldAppRecords());
@@ -203,7 +210,7 @@ export function ActionBar({ summary, action, onAction, disabled }) {
 
 // One rule line in 내 투자 규칙. 매수 계획 (before purchase) evaluates nothing, so no rule gets a green check there: a
 // rule we can check shows the rule icon with its number and report; a rule we cannot check yet shows a dot and 준비 중.
-// 내 덱 (Part C) passes today's result as state: "ok" (check icon), "watch" (alert), "broken" (cross), or nothing
+// 포트폴리오 (Part C) passes today's result as state: "ok" (check icon), "watch" (alert), "broken" (cross), or nothing
 // (the rule icon: in place, nothing new since the purchase report), plus an optional chip label.
 // Icon colours only from the v19.0b table (ICON_TONE): the state shows in the circle behind the icon.
 const STATE_ICON = { ok: { name: "check", tone: "ok", bg: COLOR.okBg }, watch: { name: "alert", tone: "on", bg: COLOR.watchBg },

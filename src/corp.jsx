@@ -1612,9 +1612,11 @@ async function loadDisc() {
   return DISC_CACHE;
 }
 
-export default function CorpApp({ jump, onJumpDone, lang }) {
+// first: 2.0 의 종목 탭에서 연 회사 (shell.jsx 의 #corp=코드, v19.0c). 첫 화면이라 기록을 쌓지 않아요 — 뒤로 가면 2.0 으로 돌아가요.
+export default function CorpApp({ jump, onJumpDone, lang, first, onFirstDone }) {
   const [state, setState] = useState({ st: "loading" });
-  const [view, setViewRaw] = useState({ kind: "market" });
+  const [view, setViewRaw] = useState(() => (first ? { kind: "co", t: first } : { kind: "market" }));
+  useEffect(() => { if (first && onFirstDone) onFirstDone(); }, []);
   const setView = (v) => { setViewRaw((prev) => { navPush(() => setViewRaw(prev)); return v; }); };
   const [heldMap, setHeldMap] = useState({});
   const [explain, setExplain] = useState(null);

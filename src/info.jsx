@@ -1,6 +1,6 @@
 // ================= 뱁새 v14 — 정보 =================
 // 뱁새 소개, 데이터 출처, 피드백, 약관·개인정보처리방침 골격.
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Seal } from "./icons.jsx";
 import { Bird, SiteFooterLine } from "./detail.jsx";
@@ -11,8 +11,8 @@ const TALLY_URL = "https://tally.so/embed/GxEGKL?alignLeft=1&hideTitle=0&transpa
 const SUPPORT_EMAIL = "SUPPORT_EMAIL_HERE";
 
 
-const Card = ({ children, style = {} }) => (
-  <div style={{ background: "#fff", border: HAIR, borderRadius: RAD.card, padding: 18, ...style }}>{children}</div>
+const Card = ({ children, style = {}, id }) => (
+  <div id={id} style={{ background: "#fff", border: HAIR, borderRadius: RAD.card, padding: 18, scrollMarginTop: 60, ...style }}>{children}</div>
 );
 const H = ({ main, sub }) => (
   <div>
@@ -57,8 +57,21 @@ function GlossaryList() {
   );
 }
 
-export default function InfoApp({ lang }) {
+// focus: 2.0 의 ☰ 메뉴에서 연 카드 (shell.jsx 의 #info=glossary | sources, v19.0c) — 처음 그릴 때 그 카드로 스크롤해요.
+// 셸이 탭을 바꿀 때 맨 위로 올리는 것(useEffect)보다 뒤에 스크롤하려고 한 박자 늦춰요.
+export default function InfoApp({ lang, focus, onFocusDone }) {
   const en = lang === "en";
+  useEffect(() => {
+    if (!focus) return undefined;
+    const id = setTimeout(() => {
+      try {
+        const el = document.getElementById("info-" + focus);
+        if (el) el.scrollIntoView({ block: "start" });
+      } catch (e) { /* ignore */ }
+      if (onFocusDone) onFocusDone();
+    }, 60);
+    return () => clearTimeout(id);
+  }, []);
   const hasTally = TALLY_URL.startsWith("http");
   const hasMail = SUPPORT_EMAIL.includes("@");
   return (
@@ -84,7 +97,7 @@ export default function InfoApp({ lang }) {
           </Sub>
         </Card>
 
-        <Card>
+        <Card id="info-sources">
           <H main="데이터 출처와 갱신" sub="모든 데이터는 공개 출처에서 매일 자동 수집돼요" />
           <div style={{ marginTop: 10 }}>
             {[
@@ -119,7 +132,7 @@ export default function InfoApp({ lang }) {
           </div>
         </Card>
 
-        <Card>
+        <Card id="info-glossary">
           <H main="용어 사전" sub="뱁새에 나오는 말들, 한 줄씩" />
           <GlossaryList />
         </Card>

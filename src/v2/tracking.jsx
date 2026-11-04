@@ -1,4 +1,4 @@
-// 내 덱 tracking sheet (v18.3 Part E): value, money put in and return, the return since the start against KOSPI over
+// 포트폴리오 tracking sheet (v18.3 Part E): value, money put in and return, the return since the start against KOSPI over
 // the same dates (two numbers; the line chart comes with v18.0's per-stock history), each holding's weight bar with its
 // target mark, and 추가로 넣을 돈. Everything reads the daily check (rules.js): nothing is shown from stale or failed
 // data, and a number whose input is missing is left out, never estimated.
@@ -8,7 +8,7 @@ import { MoneyInput, Amount } from "../ui/components.jsx";
 import { C, fill, p1, wonText } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { signedPct } from "./deckcalc.js";
-import { deckMoney, indexSince, addMoney, addMessage, bandOf, plainEdges } from "./track.js";
+import { deckMoney, indexSince, addMoney, addMessage, bandOf, plainEdges, withoutAbsent } from "./track.js";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 // Each left-out number is logged once per page view (loudly, with the reason), not on every render.
@@ -16,11 +16,13 @@ const warned = new Set();
 const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.warn(msg); } };
 const BAND = ["low", "high", "trim"];
 
-// Value, 원금 · 수익, and 내 덱 vs 코스피 since the deck's first purchase. m: deckMoney(deck, de).
-export function DeckSummary({ deck, m, load }) {
+// Value, 원금 · 수익, and 포트폴리오 vs 코스피 since the deck's first purchase. m: deckMoney(deck, de).
+// v19.0c: a held stock missing from today's data is left out of the comparison too (the same money as the totals).
+// The two comparison boxes wait for the approved name of the first one (deck.vsMine).
+export function DeckSummary({ deck, de, m, load }) {
   const idx = load.macro && load.macro.idxHist ? load.macro.idxHist.KOSPI : null;
-  const k = useMemo(() => (m.cost != null && idx ? indexSince(deck, idx, load.data.pxDate) : { ok: false, why: idx ? "cost" : "noIndex" }),
-    [deck, idx, load, m.cost]);
+  const k = useMemo(() => (m.cost != null && idx ? indexSince(withoutAbsent(deck, de), idx, load.data.pxDate) : { ok: false, why: idx ? "cost" : "noIndex" }),
+    [deck, de, idx, load, m.cost]);
   useEffect(() => {
     if (m.noFx.length) warnOnce(`[v2] ${deck.id}: US purchases without an exchange rate (${m.noFx.join(", ")}): money put in and return left out`);
     if (m.cost != null && !k.ok) warnOnce(`[v2] ${deck.id}: KOSPI comparison left out (${k.why})`);
@@ -34,7 +36,8 @@ export function DeckSummary({ deck, m, load }) {
         </div>
       )}
       {m.noFx.length > 0 && C.deck.noFx && <Note data-ui-v2="deck-no-fx">{C.deck.noFx}</Note>}
-      {k.ok && (
+      {k.ok && !C.deck.vsMine && <span data-ui-v2="vs-kospi" data-pending="1" hidden />}
+      {k.ok && C.deck.vsMine && (
         <div data-ui-v2="vs-kospi" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(2), marginTop: SPACE(3) }}>
           <div data-ui-v2="vs-mine" style={{ background: COLOR.page, borderRadius: 12, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>
             {fill(C.deck.vsMine, { pct: signedPct(m.ret * 100) })}
@@ -48,18 +51,41 @@ export function DeckSummary({ deck, m, load }) {
   );
 }
 
-// "종목별 · 수익률" header and the legend of the weight bars. plain: see plainEdges.
-export function ByStockHead({ plain }) {
+// v19.0c: "오늘 데이터에 없는 종목 {n}개({names})는 빼고 계산했어요." — the old app's sentence (Jack, 2026-11-04). names:
+// "이름 금액" joined by ", " like the old app: the Korean name (or a US ticker, easier to recognise than the cut-off US
+// names), then the money put in (만원 style); a stock without a won cost shows its name only. Logged once per view.
+export function missingNames(absent) {
+  return (absent || []).map((a) => {
+    const name = a.cls === "us" ? a.t : (a.nk || a.t);
+    return a.cost != null && a.cost > 0 ? `${name} ${wonText(a.cost)}` : name;
+  }).join(", ");
+}
+export function MissingNote({ absent, deckId }) {
+  const names = missingNames(absent);
+  useEffect(() => {
+    warnOnce(`[v2] ${deckId}: ${absent.length} held stock(s) not in today's data, left out of the totals and the weights: ${absent.map((a) => a.t).join(", ")}`);
+  });
+  return <Note tone="watch" data-ui-v2="missing-line">{fill(C.missing.line, { n: absent.length, names })}</Note>;
+}
+// The weight bars, the bands and 추가로 넣을 돈 wait while a held stock is missing from today's data (rules.js paused).
+export function PausedNote() {
+  return <Note data-ui-v2="weights-paused">{C.missing.paused}</Note>;
+}
+
+// "종목별 · 수익률" header and the legend of the weight bars. plain: see plainEdges. paused: no weight bars today, so no legend.
+export function ByStockHead({ plain, paused }) {
   return (
     <div style={{ marginTop: SPACE(4) }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.deck.byStock}</span>
         <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text3)}>{C.deck.ret}</span>
       </div>
-      <div data-ui-v2="weight-legend" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>
-        <span style={{ display: "block" }}>{C.plan.targetNote}</span>
-        {plain && <span style={{ display: "block" }} data-ui-v2="band-note">{C.deck.bandNote}</span>}
-      </div>
+      {!paused && (
+        <div data-ui-v2="weight-legend" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>
+          <span style={{ display: "block" }}>{C.plan.targetNote}</span>
+          {plain && <span style={{ display: "block" }} data-ui-v2="band-note">{C.deck.bandNote}</span>}
+        </div>
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@
   *, *::before, *::after { box-sizing: border-box; }
   button { font: inherit; }
   button:focus-visible, [role="button"]:focus-visible, [role="switch"]:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #1C2B45; outline-offset: 2px; }
+  [data-initial]::before { content: attr(data-initial); }
 </style>
 </head>
 <body>

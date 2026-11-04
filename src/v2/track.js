@@ -1,6 +1,6 @@
 // ================= 2.0 tracking sheet and 왜 움직였나 (v18.3 Part E) =================
 // Pure functions, no React and no Korean text: screens turn the results into copy from src/copy/v2.js.
-// Spec: docs/tasks/v18.3-2.0-beta.md Part E; docs/REDESIGN.md section 3 (오늘 · 내 덱 · 왜 움직였나) and 4.1.
+// Spec: docs/tasks/v18.3-2.0-beta.md Part E; docs/REDESIGN.md section 3 (오늘 · 포트폴리오 · 왜 움직였나) and 4.1.
 // Unit tests: tests/test_v2_track.py (run through Node).
 //
 // Everything here reads the daily evaluation from rules.js (evaluateDeck): its weights and targets, its statuses and its
@@ -29,19 +29,27 @@ export function purchaseWon(p, planFx) {
 
 // Value, money put in and return of one deck.
 //   deck: the stored deck · de: evaluateDeck(deck, ctx) for it · ctx: todayCtx (the same prices and rate).
-// -> { ok: false, why } | { ok: true, value, cost, gain, ret, start, per: { t: { qty, value, cost, ret } }, noFx: [t] }
+// -> { ok: false, why } | { ok: true, value, cost, gain, ret, start, per: { t: { qty, value, cost, ret } }, noFx: [t], absent }
 //   cost / gain / ret are null when any held purchase has no won cost (noFx names them). value is today's value of
 //   every held share at today's official close (US at today's rate). Any held stock without a price today: no value.
+//   v19.0c: a held stock missing from today's data altogether is left out of every total (value, cost, return) and
+//   listed in absent ([{ t, nk, cls, cost }], cost = its money put in, null without a won cost); the screens say so
+//   with the "빼고 계산했어요" line. Every other stock must still have a price.
 export function deckMoney(deck, de, ctx) {
   if (!de || !de.ok || !ctx) return { ok: false, why: "day" };
-  if (!de.weights || !de.weights.ok) return { ok: false, why: "price" };
-  const held = new Set(de.holdings.map((x) => x.t));
+  const gone = new Set(de.absent || []);
+  const absentOf = () => de.holdings.filter((x) => gone.has(x.t)).map((x) => ({ t: x.t, nk: x.nk, cls: x.cls, cost: heldCost(deck, x.t) }));
+  // the missing stocks are named even when the totals cannot be made (never silent)
+  const noPrice = () => ({ ok: false, why: "price", ...(gone.size ? { absent: absentOf() } : {}) });
+  if (!de.weights || !(de.weights.ok || de.weights.paused)) return noPrice();
+  const held = new Set(de.holdings.filter((x) => !gone.has(x.t)).map((x) => x.t));
   const per = {};
   let value = 0;
   for (const x of de.holdings) {
+    if (gone.has(x.t)) continue;
     const s = ctx.byT.get(x.t);
     const px = s ? priceWon(s, ctx.fx) : null;
-    if (!(px > 0) || !(x.qty > 0)) return { ok: false, why: "price" };
+    if (!(px > 0) || !(x.qty > 0)) return noPrice();
     per[x.t] = { qty: x.qty, value: x.qty * px, cost: 0, ret: null };
     value += x.qty * px;
   }
@@ -60,7 +68,29 @@ export function deckMoney(deck, de, ctx) {
   }
   const cost = noFx.length ? null : Object.values(per).reduce((a, r) => a + r.cost, 0);
   const ok = cost != null && cost > 0;
-  return { ok: true, value, cost: ok ? cost : null, gain: ok ? value - cost : null, ret: ok ? value / cost - 1 : null, start, per, noFx };
+  const absent = absentOf();
+  if (!held.size) return { ok: false, why: "absent", absent };   // every held stock is missing from today's data: no totals
+  return { ok: true, value, cost: ok ? cost : null, gain: ok ? value - cost : null, ret: ok ? value / cost - 1 : null, start, per, noFx, absent };
+}
+
+// The money put in for one held stock (won), or null when any of its purchases has no won cost.
+export function heldCost(deck, t) {
+  let c = 0, n = 0;
+  for (const p of (deck && deck.purchases) || []) {
+    if (!p || p.t !== t || !(p.qty > 0)) continue;
+    const w = purchaseWon(p, deck.planFx);
+    if (w == null) return null;
+    c += w;
+    n++;
+  }
+  return n ? c : null;
+}
+
+// The deck without the held stocks missing from today's data (for the KOSPI comparison over the same money).
+export function withoutAbsent(deck, de) {
+  const gone = new Set((de && de.absent) || []);
+  if (!gone.size || !deck) return deck;
+  return { ...deck, purchases: (deck.purchases || []).filter((p) => !(p && gone.has(p.t))) };
 }
 
 // ---------------- KOSPI over the same dates ----------------
@@ -114,13 +144,17 @@ export function indexSince(deck, idx, pxDate) {
 // ---------------- today's move of the whole deck ----------------
 // From each held stock's d1 (change between official closes) and its value in the daily check. Left out (null) when
 // any held stock has no d1 or no value there, and for a deck with US stocks: their d1 is in dollars and yesterday's
-// exchange rate is not in the data.
+// exchange rate is not in the data. A held stock missing from today's data (v19.0c) is left out, as in deckMoney.
 export function deckDayChange(de) {
-  if (!de || !de.ok || !de.weights || !de.weights.ok || !de.holdings.length) return null;
+  if (!de || !de.ok || !de.weights || !(de.weights.ok || de.weights.paused) || !de.holdings.length) return null;
+  const gone = new Set(de.absent || []);           // v19.0c: missing from today's data, left out like every other total
+  if (gone.size >= de.holdings.length) return null;
   let now = 0, prev = 0;
   for (const x of de.holdings) {
+    if (gone.has(x.t)) continue;
     const d1 = num(x.d1);
-    if (d1 == null || x.cls === "us" || !(num(x.value) >= 0) || d1 <= -100) return null;
+    const v = num(x.value);                           // null >= 0 is true in JavaScript: test the value itself
+    if (d1 == null || x.cls === "us" || v == null || v < 0 || d1 <= -100) return null;
     now += x.value;
     prev += x.value / (1 + d1 / 100);
   }
@@ -139,7 +173,7 @@ export function deckDayChange(de) {
 // Money left unspent never enters the deck, so it must not make a name look smaller than it will be:
 // - the goal of each name is its target x the deck's value after the money that CAN go in. With skipped names, the
 //   eligible ones can only grow until together they reach their combined target share (S below); the rest stays.
-// - the 1.25x edge (band `bands[1]` from rules.js, the same edge 내 덱 shows) is checked against the running held
+// - the 1.25x edge (band `bands[1]` from rules.js, the same edge 포트폴리오 shows) is checked against the running held
 //   total (today's value + the money spent so far + the share being considered). Buying one name only lowers the
 //   others' weights, so no bought name ends above its edge.
 // A name is filled one share at a time, most underweight first, while that share still closes at least half its gap.
@@ -203,12 +237,12 @@ export function addMessage(r, amountWon) {
   return r.eligible.length && r.cheapest > amountWon ? "none" : "noneEligible";
 }
 
-// ---------------- weight bands as 내 덱 shows them ----------------
+// ---------------- weight bands as 포트폴리오 shows them ----------------
 // The band rule result of a held stock today (rules.js), when its edges were computed.
 export const bandOf = (x) => ((x && x.rules) || []).find((r) => r && r.id === "band" && r.check === "checked" && r.result !== "missing"
   && Array.isArray(r.bands) && r.bands.length === 3) || null;
 // Part C widens a stock's edges by the gap whole-share rounding left in the plan. Then "목표의 0.75~1.25배" is not the
-// rule for that stock any more, so 내 덱 shows that general caption only when every held stock uses the plain edges.
+// rule for that stock any more, so 포트폴리오 shows that general caption only when every held stock uses the plain edges.
 export const plainEdges = (de) => ((de && de.holdings) || []).every((x) => {
   const b = bandOf(x);
   return !b || !Array.isArray(b.refBands) || b.bands.every((v, i) => Math.abs(v - b.refBands[i]) < 1e-9);

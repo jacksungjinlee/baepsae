@@ -348,7 +348,7 @@ export function Collapsible({ title, sub, defaultOpen = false, children }) {
   );
 }
 
-// ── 아래 탭: 오늘 · 내 덱 · 덱 짜기 · 찾기 ──
+// ── 아래 탭: 홈 · 포트폴리오 · 종목 · 시장 (v19.0c) ──
 // v19.0b: 고른 탭은 아이콘 뒤에 따뜻한 회색 알약(select) + 남색 아이콘(on), 나머지는 회색 아이콘(off). 살구색은 쓰지 않아요.
 export function BottomTabBar({ tabs, value, onChange, label, fixed = false }) {
   return (

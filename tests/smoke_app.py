@@ -20,6 +20,8 @@
   베타→수익률 펼친 종목 줄의 '이론 샤프', 프로필의 '목표 → 베타' 문장, 타임머신의 '끝까지 버텼다면', 위험 나누기 카드의
               '…기대수익으로 돌려받아요'가 없음, 목표 베타는 감당 능력 기준, 과거 값(샤프 3y·α·바닥)은 보임 (v18.5, KO·EN)
   서비스워커  예전 v10 워커의 얼어붙은 corp.json 이 새 워커로 바뀌고 baepsae-v10 캐시가 지워짐
+  바로가기    (v19.0c) 2.0 이 여는 #macro · #disc · #corp=코드 · #info=glossary|sources → 그 탭 · 그 회사 · 그 카드, 주소의 # 은 지워지고
+              기록이 늘지 않아요(뒤로 한 번이면 온 곳) · 그 뒤 NAV 뒤로 가기는 그대로 · 모르는 # 은 아무것도 안 해요
   2.0 링크    머리말 '뱁새 2.0 보기' (Jack, 2026-11-02): 320 · 390 에서 보임 · 누르는 높이 44 이상 · 다른 머리말 항목과 겹치지 않음 ·
               가로 스크롤 없음 · app.html 로 감 · 영어 화면에는 없음 · 좁은 휴대폰의 모드 안(홈 화면 '뒤로' 포함)에서도 머리말이 넘치지 않음
   파일        (v18.4.1) 'JSON 저장 (백업·공유)' 파일 → 새 브라우저에서 '저장한 파일에서 불러오기' → 같은 종목·금액·예산 ·
@@ -1768,6 +1770,72 @@ HEADER_ITEMS = """() => [...document.querySelector('.mastRow').children].filter(
   && e.getBoundingClientRect().width).map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.v2Link ? 'v2' : e.tagName, r.left, r.right]; })"""
 
 
+# v19.0c: 뱁새 2.0 이 여는 바로가기 (src/deeplink.js): #macro · #disc · #corp=코드 · #info=glossary|sources 를 처음 열 때 한 번 읽고
+# 주소에서 지워요 (기록을 늘리지 않아서 그 화면에서 뒤로 가면 온 곳으로). 그 뒤의 뒤로 가기는 예전처럼 NAV 가 맡아요.
+ACTIVE_TAB = "() => { const b = [...document.querySelectorAll('nav.botNav button')].find((x) => getComputedStyle(x.querySelector('span')).fontWeight === '800'); return b ? b.innerText.trim() : null; }"
+
+
+def scene_deep_links(R, files):
+    site = build_site(files)
+    srv, ctx, page, base = R.open(site)
+    S = "2.0 바로가기"
+    co = next(c for c in files["corp.json"]["companies"] if c.get("t") == "005930")
+
+    def fresh(h):
+        page.goto("about:blank")                                         # 새 문서로 열어요 (주소의 # 만 바꾸면 같은 페이지 안의 이동)
+        page.goto(base + "/baepsae.html?dev=1" + h, wait_until="domcontentloaded")
+
+    def tabs():
+        for h, label, marker in (("#macro", "금리·원자재", "국고채"), ("#disc", "공시·수급", "국민연금")):
+            fresh(h)
+            page.wait_for_function("() => location.hash === ''")           # 읽고 지워요
+            poll(page, ACTIVE_TAB, lambda v: v == label, f"{h} → {label} 탭")
+            see(page, marker)
+            assert page.get_by_text("내 종목, 괜찮은 걸까요?").count() == 0, h
+            page.go_back()                                                # 뒤로 한 번 → 온 곳 (바로가기는 기록을 쌓지 않아요)
+            page.wait_for_url("about:blank")
+    R.check(page, S, "#macro → 금리·원자재 · #disc → 공시·수급 (주소의 # 은 지워지고, 뒤로 한 번이면 온 곳으로)", tabs)
+
+    def corp():
+        fresh("#corp=005930")
+        page.wait_for_function("() => location.hash === ''")
+        poll(page, ACTIVE_TAB, lambda v: v == "기업분석", "#corp → 기업분석 탭")
+        see(page, co["nk"])
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")                       # 그 회사 화면의 01 투자지표 (시장 지도가 아니라)
+        assert page.get_by_text("이 종목의 데이터를 찾지 못했어요.").count() == 0
+        tab(page, "정보")                                                 # 그 뒤로는 예전처럼: 탭을 바꾸면 뒤로가 그 탭을 되돌려요
+        poll(page, ACTIVE_TAB, lambda v: v == "정보", "정보 탭")
+        page.go_back()                                                    # (다시 연 기업분석은 예전처럼 시장 지도부터)
+        poll(page, ACTIVE_TAB, lambda v: v == "기업분석", "뒤로 → 기업분석")
+        page.go_back()                                                    # 그 회사 화면이 첫 화면이었어요: 한 번 더 뒤로 → 온 곳
+        page.wait_for_url("about:blank")
+        fresh("#corp=999999")                                             # 없는 코드: 기업분석이 '찾지 못했어요' (지어내지 않아요)
+        poll(page, ACTIVE_TAB, lambda v: v == "기업분석", "없는 코드 → 기업분석 탭")
+        see(page, "이 종목의 데이터를 찾지 못했어요.")
+    R.check(page, S, "#corp=005930 → 기업분석의 삼성전자 화면 (그 뒤 NAV 뒤로 가기는 그대로, 뒤로 두 번 → 온 곳) · 없는 코드는 '찾지 못했어요'", corp)
+
+    def info():
+        for h, card, title in (("#info=glossary", "info-glossary", "용어 사전"), ("#info=sources", "info-sources", "데이터 출처와 갱신")):
+            fresh(h)
+            page.wait_for_function("() => location.hash === ''")
+            poll(page, ACTIVE_TAB, lambda v: v == "정보", f"{h} → 정보 탭")
+            top = poll(page, f"(() => {{ const e = document.getElementById('{card}'); return e ? Math.round(e.getBoundingClientRect().top) : null; }})()",
+                       lambda v: v is not None and 0 <= v <= 120, f"{h} → {title} 카드가 맨 위로")
+            assert page.locator(f"#{card}").inner_text().startswith(title), (h, page.locator(f"#{card}").inner_text()[:20])
+            assert page.evaluate("window.scrollY") > 0 and top is not None
+    R.check(page, S, "#info=glossary → 용어 사전 카드 · #info=sources → 데이터 출처 카드 (정보 탭, 그 카드로 스크롤)", info)
+
+    def unknown():
+        for h in ("#foo", "#corp=", "#info=terms", "#about"):
+            fresh(h)
+            see(page, "내 종목, 괜찮은 걸까요?")                            # 모르는 # 은 아무것도 하지 않고 그대로 둬요
+            assert page.evaluate("location.hash") == h, (h, page.evaluate("location.hash"))
+            assert page.evaluate(ACTIVE_TAB) == "포트폴리오", h
+    R.check(page, S, "모르는 # (#foo · #corp= · #info=terms · #about) → 예전처럼 첫 화면, 주소도 그대로", unknown)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v2_link(R, files):
     site = build_site(files)
     shutil.copy(os.path.join(ROOT, "app.html"), site)            # 링크가 여는 2.0 (커밋한 빌드 결과)
@@ -1818,9 +1886,9 @@ def scene_v2_link(R, files):
         def opens():
             with page.expect_navigation():
                 link.click()
-            assert page.url.endswith("/app.html"), page.url
+            page.wait_for_function("() => location.pathname.endsWith('/app.html') && location.hash === '#home'")   # v19.0c: 2.0 이 그 자리에서 #home
             page.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible", timeout=WAIT)
-        R.check(page, S, "누르면 app.html (뱁새 2.0)", opens)
+        R.check(page, S, "누르면 app.html (뱁새 2.0, 그 자리에서 #home)", opens)
         ctx.close()
     srv.shutdown()
 
@@ -1846,7 +1914,7 @@ def main():
                   ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
                   ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
                   ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("빠진", lambda: scene_missing_all(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
-                  ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)),
+                  ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)), ("바로가기", lambda: scene_deep_links(R, fresh)),
                   ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
                   ("파일", lambda: scene_import_while_loading(R, fresh))]
         for key, fn in scenes:

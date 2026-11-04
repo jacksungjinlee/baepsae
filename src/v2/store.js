@@ -1,5 +1,6 @@
 // Browser storage for app.html: one versioned key; every read and write inside try/catch.
-// Decks, rule books, purchase records and the answers to 확인 필요 (confirms) live only on this device (no login).
+// Portfolios ("decks" in the code), rule books, purchase records and the answers to 확인 필요 (confirms) live only on
+// this device (no login).
 // Export/import is a JSON file. confirms, planFx (deck) and planPx (holding) are optional, so records saved before
 // Part C still read the same; when present they must be valid or the whole file is refused.
 // The preview page (app-preview.html) uses its own key so example records never mix with real ones.
@@ -82,6 +83,17 @@ export function withConfirm(data, deckId, item, answer, today) {
   if (!deck || !deck.holdings.some((h) => h.t === c.t)) return null;
   const confirms = [...(deck.confirms || []).filter((x) => !sameConfirm(x, c)), c];
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? { ...d, confirms } : d)) };
+}
+
+// 포트폴리오에서 빼기 (v19.0c): the store without one stock of one portfolio — its holding, its purchases and its
+// answers to 확인 필요. Pure: the caller saves it, and only when the user tapped the button (the screen offers it only
+// for a stock missing from today's data). The portfolio itself stays, even with no stock left. null = nothing to remove.
+export function withoutHolding(data, deckId, t) {
+  const deck = data && Array.isArray(data.decks) ? data.decks.find((d) => d && d.id === deckId) : null;
+  if (!deck || typeof t !== "string" || !deck.holdings.some((h) => h && h.t === t)) return null;
+  const next = { ...deck, holdings: deck.holdings.filter((h) => h.t !== t), purchases: deck.purchases.filter((p) => p.t !== t),
+    ...(Array.isArray(deck.confirms) ? { confirms: deck.confirms.filter((c) => c.t !== t) } : {}) };
+  return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
 }
 
 // { data, writable, locked }: locked = something unreadable is stored under the key. It stays untouched; the first
@@ -189,4 +201,21 @@ export function isSafariLike(nav) {
   const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && (n.maxTouchPoints || 0) > 1);
   const safari = /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|Android/.test(ua);
   return ios || safari;
+}
+
+// iPhone Safari itself (v19.0c home-screen hint), never inside the app added to the home screen: on iPhone the records
+// live in Safari's storage and the home-screen app has storage of its own, so moving them takes 기록 내보내기 → 기록
+// 불러오기. Other iPhone browsers and in-app browsers (KakaoTalk, NAVER …) lack Safari's "Version/… Safari/" pair or
+// name themselves; iPad is left out. standalone: the display-mode media query (null = ask the browser).
+const NOT_SAFARI = /CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|GSA\/|KAKAOTALK|NAVER|Line\/|FBAN|FBAV|Instagram|DaumApps|Whale|DuckDuckGo/i;
+export function iphoneSafari(nav, standalone = null) {
+  const n = nav || (typeof navigator !== "undefined" ? navigator : {});
+  const ua = n.userAgent || "";
+  if (!/\((iPhone|iPod)[;\s]/.test(ua) || !/Version\/[\d.]+ .*Safari\//.test(ua) || NOT_SAFARI.test(ua)) return false;
+  if (n.standalone === true) return false;
+  let sa = standalone;
+  if (sa == null) {
+    try { sa = typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(display-mode: standalone)").matches; } catch (e) { sa = false; }
+  }
+  return !sa;
 }
