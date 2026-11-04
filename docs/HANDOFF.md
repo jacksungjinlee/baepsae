@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 00:05 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 00:52 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -46,6 +46,13 @@ only in cron-job.org (never in a chat, the repo or a log).
    Open for Jack: a "내 포트폴리오" list in the left menu (heading not approved yet).
 4. **Old app, 자동 settings:** done in v18.6 (#29). Jack decided 2026-11-04: 새로 시작하기 (and a file with no readable
    settings) starts from defaults + today's values, not the previous portfolio's settings — v18.6.1.
+5. **Old app, saved portfolio that can't be read (v18.6.2):** it no longer opens (first screen stays, the stored text is
+   kept, console warning with the slot id and reason) and an alert says so in the current language — Jack approved his
+   wording 2026-11-05: "이 포트폴리오를 열지 못했어요. 저장된 내용은 지우지 않고 그대로 두었어요." / "We couldn't open this
+   portfolio. Its saved data has been left as it is." (`T_SLOT_FAIL` in `src/detail.jsx`, `SLOT_FAIL` in
+   `tests/smoke_app.py`).
+6. **Company pages (Korea and US) for 2.0** are being designed in Jack's claude.ai chat — don't start on company pages
+   until that spec arrives (Jack, 2026-11-05).
 
 **타임머신 (old app):** Jack decided 2026-11-04 — stop the chart line at the low point (part of v18.6).
 

@@ -541,3 +541,20 @@ def test_new_portfolio_starts_from_defaults_and_todays_values():
                            "[뱁새] 읽을 설정이 없는 파일: 앞 포트폴리오의 설정 4개 · 직접 입력 기록 1개 대신 기본값과 오늘 값으로 시작해요: "
                            "rf 2.8 → 3, mrp 7 → 5.5, mktVol 20 → 18, fx 1234.5 → 1380"], got["info"]
     assert got["warn"] == [], got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_unreadable_saved_slot_is_not_opened():
+    # v18.6.2 (Jack 2026-11-04): 내용이 없거나 JSON 이 깨진 저장본은 열지 않아요 (앞 포트폴리오 화면 그대로 열고 자동 저장이 덮어쓰던 문제).
+    # 종목 목록(holdings 배열)이 없는 내용도요: v15.3 부터 모든 저장본에 있어요. 리뷰: 전에는 {} 가 열려 앞 포트폴리오의 답변 · 예산 · 세금이 남았어요.
+    got = run_metrics("const R = (raw, err) => { const r = D.readSavedSlot(raw, err); return r.why ? 'WHY ' + r.why : r.state; };"
+                      "console.log(JSON.stringify([R(null), R(undefined), R(''), R('{not json'), R('null'), R('[1]'), R('3'),"
+                      " R('{}'), R('{\"foo\":1}'), R('{\"profile\":null}'), R('{\"holdings\":{}}'), R(null, 'localStorage: SecurityError'),"
+                      " R('{\"holdings\":[{\"t\":\"005930\",\"mw\":300}]}'), R('{\"holdings\":[]}')]));")
+    short = [g.split(" (")[0] if isinstance(g, str) else g for g in got]
+    no_list = "WHY 저장된 내용에 종목 목록(holdings)이 없어요"
+    assert short == ["WHY 저장된 내용이 없어요", "WHY 저장된 내용이 없어요", "WHY JSON 을 읽지 못했어요", "WHY JSON 을 읽지 못했어요",
+                     "WHY 저장된 내용이 포트폴리오 모양이 아니에요", "WHY 저장된 내용이 포트폴리오 모양이 아니에요",
+                     "WHY 저장된 내용이 포트폴리오 모양이 아니에요", no_list, no_list, no_list, no_list, "WHY 저장소에서 읽다가 오류가 났어요",
+                     {"holdings": [{"t": "005930", "mw": 300}]}, {"holdings": []}], got
+    assert got[11] == "WHY 저장소에서 읽다가 오류가 났어요 (localStorage: SecurityError)", got[11]   # 진짜 이유를 남겨요
