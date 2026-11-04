@@ -304,5 +304,18 @@ def main(argv=None):
     return 0
 
 
+def entry():
+    """main() with any crash printed through the key masker (a traceback can quote a URL)."""
+    import traceback
+    try:
+        return main()
+    except SystemExit:
+        raise
+    except BaseException:                                       # noqa: BLE001 — print masked, then fail
+        keys, _ = read_keys(())
+        print(Masker(keys["brandfetch"], keys["logodev"])(traceback.format_exc()), file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(entry())

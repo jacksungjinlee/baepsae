@@ -259,8 +259,17 @@ class Lane:
         return not self.stopped
 
     async def run(self, items):
-        """items: list of dicts {row, route, ident, tries}. Writes one results row per finished load."""
-        queue = collections.deque(items)
+        """items: list of dicts {row, route, ident, tries}. Writes one results row per finished load.
+        Items that need the same URL (a preferred share uses its common share's homepage) load once: the first is the
+        leader, the others follow its answer. A second load of a URL would come from the browser's memory, unmeasured."""
+        leaders, queue = {}, collections.deque()
+        for it in items:
+            base = self.url(it["route"], it["ident"])
+            if base in leaders:
+                leaders[base].setdefault("followers", []).append(it)
+            else:
+                leaders[base] = it
+                queue.append(it)
         later = []                                              # (not_before, item)
         since_reload = 0
         while (queue or later) and not self.stopped:
@@ -293,9 +302,11 @@ class Lane:
                 if retry:
                     wait = retry_after if retry_after is not None else min(60.0, 2.0 ** it["tries"]) + random.random()
                     later.append((time.monotonic() + wait, it))
-                self.writer(self.result_row(it, verdict, info, u))
-                if verdict == "hit" and self.a.save_images and info["body"]:
-                    self.save(it, info)
+                for f in [it] + it.get("followers", []):
+                    f["tries"] = it["tries"]
+                    self.writer(self.result_row(f, verdict, info, u))
+                    if verdict == "hit" and self.a.save_images and info["body"]:
+                        self.save(f, info)
                 self.done += 1
             if self.consecutive_errors >= 25 and not self.stopped:
                 self.stopped = f"{self.consecutive_errors} errors in a row (last status {infos[-1]['status']})"
@@ -555,5 +566,18 @@ def main(argv=None):
     return 0 if not stopped else 2
 
 
+def entry():
+    """main() with any crash printed through the key masker (a traceback can quote a URL)."""
+    import traceback
+    try:
+        return main()
+    except SystemExit:
+        raise
+    except BaseException:                                       # noqa: BLE001 — print masked, then fail
+        keys, _ = read_keys(())
+        print(Masker(keys["brandfetch"], keys["logodev"])(traceback.format_exc()), file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(entry())

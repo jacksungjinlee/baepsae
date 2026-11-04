@@ -52,7 +52,10 @@ EXPECT = {
     ("005930", "logodev", "ticker"): "hit", ("005930", "logodev", "isin"): "hit", ("005930", "logodev", "domain"): "hit",
     ("005935", "brandfetch", "ticker"): "miss", ("005935", "brandfetch", "ticker_code"): "miss",
     ("005935", "brandfetch", "isin"): "miss", ("005935", "logodev", "ticker"): "miss",
-    ("005935", "logodev", "isin"): "miss",
+    ("005935", "logodev", "isin"): "miss", ("005935", "brandfetch", "domain"): "hit",
+    ("005935", "logodev", "domain"): "hit",
+    ("005937", "brandfetch", "ticker"): "miss", ("005937", "brandfetch", "ticker_code"): "miss",
+    ("005937", "logodev", "ticker"): "miss",
     ("247540", "brandfetch", "ticker"): "hit", ("247540", "brandfetch", "ticker_code"): "miss",
     ("247540", "brandfetch", "isin"): "fallback", ("247540", "logodev", "ticker"): "miss",
     ("247540", "logodev", "isin"): "miss",
@@ -62,7 +65,7 @@ EXPECT = {
     ("069500", "brandfetch", "isin"): "miss", ("069500", "logodev", "ticker"): "miss",
     ("069500", "logodev", "isin"): "miss",
 }
-EXPECT_MIX = {"005930": "logodev:ticker", "005935": "logodev:ticker", "247540": "brandfetch:ticker",
+EXPECT_MIX = {"005930": "logodev:ticker", "005935": "brandfetch:domain", "005937": "logodev:ticker", "247540": "brandfetch:ticker",
               "AAPL": "brandfetch:ticker", "BRK-B": "", "069500": ""}
 
 
@@ -72,7 +75,9 @@ def tickers():
         dict(base, code="005930", name="삼성전자", cls="kr", market="KOSPI", etf="0", cap="1283.258", rank="1",
              rank_cls="1", ticker="005930.KS", isin="KR7005930003", issuer_code="005930", domain="samsung.com"),
         dict(base, code="005935", name="삼성전자우", cls="kr", market="KOSPI", etf="0", cap="100.000", rank="4",
-             rank_cls="3", ticker="005935.KS", isin="KR7005931001", issuer_code="005930"),
+             rank_cls="3", ticker="005935.KS", isin="KR7005931001", issuer_code="005930", domain="samsung.com"),
+        dict(base, code="005937", name="삼성전자3우", cls="kr", market="KOSPI", etf="0", cap="50.000", rank="5",
+             rank_cls="4", ticker="005937.KS", issuer_code="005930"),          # made up: no ISIN, no domain
         dict(base, code="247540", name="에코프로비엠", cls="kr", market="KOSDAQ", etf="0", cap="20.000", rank="5",
              rank_cls="4", ticker="247540.KQ", isin="KR7247540008", issuer_code="247540"),
         dict(base, code="AAPL", name="Apple Inc.", cls="us", market="US", etf="0", cap="5000.000", rank="2",
@@ -208,11 +213,16 @@ def run(a):
                 mix = {r["code"]: (f"{r['provider']}:{r['route']}" if r["provider"] else "", r["via_code"])
                        for r in read_csv(out / "mix.csv")}
                 assert {c: m for c, (m, _) in mix.items()} == EXPECT_MIX, mix
-                assert mix["005935"][1] == "005930", "preferred share did not take its common share's logo"
-                assert "| **best mix** | 2 / 2 (100.0%) | 1 / 1 (100.0%) | – | 1 / 2 (50.0%) | 0 / 1 (0.0%) |" in summary, \
+                assert Fake.seen.get("bf:samsung.com") == 1 and Fake.seen.get("ld:samsung.com") == 2, \
+                    f"a URL two tickers share was loaded more than once: {Fake.seen}"      # ld: 202, then the recheck
+                assert latest[("005935", "logodev", "domain")]["tries"] == "2"
+                assert mix["005937"][1] == "005930", "a preferred share with no logo did not take its common share's"
+                assert "| **best mix** | 3 / 3 (100.0%) | 1 / 1 (100.0%) | – | 1 / 2 (50.0%) | 0 / 1 (0.0%) |" in summary, \
                     summary
+                assert "| common share | 1 | 0 | 0 | 0 | 0 |" in summary, summary
                 # 'fallback' (the placeholder image) is tried but not a hit
                 assert "| brandfetch:isin | 1 / 2 (50.0%) | 0 / 1 (0.0%) | – | – | 0 / 1 (0.0%) | 0 / 0 |" in summary, summary
+                assert "| brandfetch:domain | 2 / 2 (100.0%) | – | – | – | – | 0 / 0 |" in summary, summary
                 probes = read_csv(out / "probes.csv")
                 assert len(probes) == 18 and all(p["verdict"] == "hit" for p in probes if p["fallback"] ==
                                                  "404 (known company)"), probes
@@ -223,14 +233,15 @@ def run(a):
                 with contextlib.redirect_stdout(buf2):
                     run_test.main(["--out", str(out), "--bf-base", fake + "/bf", "--ld-base", fake + "/ld", "--dry-run",
                                    "--no-browser-check"])
-                assert "· brandfetch: 15 loads planned (+9 probe loads) · 0 still to do" in buf2.getvalue(), buf2.getvalue()
+                assert "· brandfetch: 18 loads planned (+9 probe loads) · 0 still to do" in buf2.getvalue(), buf2.getvalue()
                 print(f"self-test A: {len(EXPECT)} loads with the expected verdicts · retries 429/503/202 · "
-                      f"placeholder caught · preferred share -> common share · summary and mix match · resume skips all")
+                      f"placeholder caught · shared URL loaded once · preferred share -> common share · summary and mix match · "
+                      f"resume skips all")
             else:
                 assert code == 2, (code, printed[-2000:])
                 assert "brandfetch" in summary and "client_id_invalid_signature" in summary, summary
                 assert not any(k[1] == "brandfetch" for k in latest), "Brandfetch kept loading after a refusal"
-                assert sum(1 for k in latest if k[1] == "logodev") == 11, latest.keys()
+                assert sum(1 for k in latest if k[1] == "logodev") == 13, latest.keys()
                 print("self-test B: wrong Brandfetch client ID -> Brandfetch stopped at the probe, logo.dev ran on")
         print("self-test passed (no provider was contacted; fake keys never written or printed)")
         return 0
