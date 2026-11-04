@@ -6,7 +6,8 @@
 //   rule "na" = an input is missing ("판단할 자료가 없어요"), never a guess.
 // "업종" is the `ind` group (hasGroup: never "other" / "etc" / missing) inside the same market, as 왜 움직였나 uses.
 // Units: corp.json op / ni / rev are 억원; KR prices are 원; US prices are $ (data.json units).
-import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak } from "./engine.js";
+import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy } from "./engine.js";
+import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
 import { okCode } from "./routes.js";
@@ -84,22 +85,25 @@ export function valueTile(s, group) {
 }
 
 // ---------------- 배당 tile ----------------
-// KR: the yield is the latest 사업보고서's dividend per share over today's close (as 후보 고르기's 근거 수치 and the plan's
-// 연 배당금 use it). data.json dy is the report's own yield at that year's price, so it is not used here.
-export const krYield = (s) => (num(s && s.dps) != null && num(s.price) > 0 ? (s.dps / s.price) * 100 : null);
+// KR yield: the latest 사업보고서's own 현금배당수익률 (data.json dy: DART alotMatter, at that year's price; the publication
+// gate checks it), shown with that report year. Not dps / today's close: a split after the report, or a total dividend
+// filed in the per-share row, makes that absurd (v19.1a review: 와이엔텍 28,593,458%). The per-share figures (dps, dps3)
+// are used only when dps agrees with dy (engine.dpsAgrees); otherwise the trend is na (판단할 자료가 없어요).
 const d3Of = (s, co) => (s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null);
 
 // dps 0 -> none · a cut (latest < last year) -> cut · 2+ raises in a row -> streak · a raise of more than 3% -> raised ·
-// else steady. dps missing, or last year's missing (nothing to compare), or dps3 disagreeing with dps -> na.
+// else steady. dps missing, disagreeing with dy, last year's missing (nothing to compare), or dps3 disagreeing with dps -> na.
 export function divKr(s, co) {
-  const dps = num(s && s.dps);
-  const y = krYield(s);
-  if (dps == null) return { rule: "na", dps: null, yieldPct: null };
-  if (dps === 0) return { rule: "none", dps: 0, yieldPct: 0 };
+  const dps = num(s && s.dps), dy = okDy(s);                        // dy above 30% is not believed (engine.DY_MAX)
+  const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
+  const yieldPct = dy != null && fy != null ? dy : null;
+  if (dps == null) return { rule: "na", dps: null, yieldPct, fy, dpsOk: false };
+  if (!dpsAgrees(s)) return { rule: "na", dps, yieldPct, fy, dpsOk: false };
+  if (dps === 0) return { rule: "none", dps: 0, yieldPct: fy != null ? 0 : null, fy, dpsOk: true };
   const d3 = d3Of(s, co);
   const cur = d3 ? num(d3[0]) : null, prev = d3 ? num(d3[1]) : null;
-  if (cur == null || prev == null || cur !== dps) return { rule: "na", dps, yieldPct: y };
-  const base = { dps, yieldPct: y, d3: [0, 1, 2].map((i) => num(d3[i])), fy: num(s.fy ?? (co && co.fy)) };
+  if (cur == null || prev == null || cur !== dps) return { rule: "na", dps, yieldPct, fy, dpsOk: true };
+  const base = { dps, yieldPct, fy, dpsOk: true, d3: [0, 1, 2].map((i) => num(d3[i])) };
   if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);
   if (n >= 2) return { rule: "streak", n, ...base };
@@ -109,7 +113,7 @@ export function divKr(s, co) {
 
 // US until v19.2: data.json has no US dividend per share, only Yahoo's yield. Missing is not "no dividend".
 export function divUs(s) {
-  const dy = num(s && s.dy);
+  const dy = okDy(s);
   if (dy == null) return { rule: "na", yieldPct: null };
   return { rule: dy === 0 ? "none" : "pays", yieldPct: dy };
 }
@@ -120,11 +124,26 @@ export function perMillion(yieldPct) {
   if (y == null || y < 0) return null;
   return Math.round((MILLION * y) / 100 / 1000) * 1000;
 }
+// What the 100만원 line shows: null (no yield, or no dividend) · { under: true } (a payer whose amount is below
+// 1,000원: never "약 0원") · { won } (rounded to 1,000원).
+export function perMillionView(yieldPct) {
+  const y = num(yieldPct);
+  if (y == null || !(y > 0)) return null;
+  const raw = (MILLION * y) / 100;
+  return raw < 1000 ? { under: true, raw } : { won: perMillion(y), raw };
+}
 
-// 배당성향 (KR): dividend per share over earnings per share, as the old app's 기업분석. Needs a profit.
-export function payout(s) {
-  const d = num(s && s.dps), e = num(s && s.eps);
-  return d != null && e != null && e > 0 ? (d / e) * 100 : null;
+// 배당성향 (KR), on one basis: the report's dividend per share x shares over the same report's net income (corp.json ni[0],
+// 억원), so both sides are that 사업보고서 (fy). Needs dps that agrees with dy, a profit and the share count. A result
+// outside 0-100% is not shown (out: the value, for the console).
+export function payout(s, co) {
+  if (!s || s.cls !== "kr" || !co || !dpsAgrees(s)) return null;
+  const d = num(s.dps), ni = Array.isArray(co.ni) ? num(co.ni[0]) : null;
+  const sh = num(s.shr) || (num(co.shm) ? co.shm * 1e6 : null);
+  const fy = num(co.fy) ?? num(s.fy);
+  if (d == null || !(d > 0) || !(ni > 0) || !(sh > 0) || fy == null) return null;
+  const pct = ((d * sh) / (ni * 1e8)) * 100;
+  return pct > 0 && pct <= 100 ? { pct, fy } : { out: pct, fy };
 }
 
 // ---------------- 출렁임 tile ----------------
@@ -138,21 +157,22 @@ export function riskTile(s) {
 
 // ---------------- 재무 경고 신호 (KR) ----------------
 // The old app's flags (corp.json fl, written only when one fires): 유동비율 < 100% · 이자보상배율 < 1 · 3 years of net
-// loss · 자본잠식. "No flag" is only a fact when the checks could run: the company has its last three years of net
-// income and a report year. US: none until v19.2 (Yahoo's debtToEquity is not 부채비율), so ran is false.
+// loss · 자본잠식. "No flag" is only a fact when every check really ran, and corp.json does not say which ran (financial
+// sectors skip 유동비율 and 이자보상배율; a missing balance-sheet line skips others). So allRan needs the list of checks
+// that ran (corp.json flRan, a field the pipeline does not write yet): until then the screen claims nothing when no flag
+// fired. US: none until v19.2 (Yahoo's debtToEquity is not 부채비율).
+export const WARN_CHECKS = ["cr", "icr", "l3", "imp"];
 export function warnings(s, co) {
-  if (!s || s.cls !== "kr" || !co) return { ran: false, flags: [] };
+  if (!s || s.cls !== "kr" || !co) return { allRan: false, ran: null, flags: [] };
   const fl = co.fl && typeof co.fl === "object" ? co.fl : {};
   const flags = [];
   if (num(fl.cr) != null) flags.push({ code: "cr", x: fl.cr });
   if (num(fl.icr) != null) flags.push({ code: "icr", x: fl.icr });
   if (fl.l3) flags.push({ code: "l3" });
   if (fl.imp) flags.push({ code: "imp" });
-  const ni = Array.isArray(co.ni) ? co.ni.slice(0, 3).map(num) : [];
-  const fy = num(co.fy);
-  const ran = flags.length > 0 || (ni.length === 3 && ni.every((v) => v != null) && fy != null);
+  const ran = Array.isArray(co.flRan) ? WARN_CHECKS.filter((c) => co.flRan.includes(c)) : null;
   const q = typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  return { ran, flags, fy, quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
+  return { allRan: !!ran && ran.length === WARN_CHECKS.length, ran, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
@@ -230,24 +250,29 @@ export function annualRows(co) {
 // Change of the latest year vs the year before, only from a profit (or positive revenue).
 export const yoy = (cur, prev) => (num(cur) != null && num(prev) != null && prev > 0 ? (cur / prev - 1) * 100 : null);
 
-// 주가는 무엇으로 움직였나 (the old DecompCard maths, src/corp.jsx decomposeReturn): 3-year price = earnings x 눈높이 (PER).
-// EPS then = net income two reports back / shares; the rest of the price change is the change in PER. Needs profits at
-// both ends. head: up/down x which part was bigger (in log terms).
+// 주가는 무엇으로 움직였나 (the old DecompCard maths, src/corp.jsx decomposeReturn): 3-year price = earnings x 눈높이 (PER),
+// as multipliers (3.20배 = 9.73배 x 0.33배: a true equation). EPS then = net income two reports back / shares; EPS now is
+// data.json eps (its own basis: the latest four quarters when corp.json bq is set); the rest of the price change is the
+// change in PER. why: "missing" (an input is not in the data) · "loss" (a loss at either end). head: up/down x which part
+// was bigger (in log terms).
 export function decompose(co) {
-  if (!co || num(co.r36) == null || !num(co.shm)) return null;
+  if (!co || num(co.r36) == null || !num(co.shm)) return { why: "missing" };
   const epsNow = num(co.eps);
   const niThen = Array.isArray(co.ni) && co.ni.length > 2 ? num(co.ni[2]) : null;
-  if (epsNow == null || epsNow <= 0 || niThen == null || niThen <= 0) return null;
+  if (epsNow == null || niThen == null) return { why: "missing" };
+  if (epsNow <= 0 || niThen <= 0) return { why: "loss" };              // a real loss at one end: no split into two parts
   const epsThen = (niThen * 100) / co.shm;
   const priceRatio = 1 + co.r36 / 100;
-  if (priceRatio <= 0) return null;
+  if (priceRatio <= 0) return { why: "missing" };
   const eF = epsNow / epsThen;
-  if (eF <= 0) return null;
   const mF = priceRatio / eF;
   const up = priceRatio >= 1;
   const eDom = Math.abs(Math.log(eF)) >= Math.abs(Math.log(mF));
+  const price = num(co.price);
   return { eF, mF, priceRatio, epsThen, epsNow, head: (up ? "up" : "down") + (eDom ? "E" : "M"),
-    pricePct: co.r36, epsPct: (eF - 1) * 100, perPct: (mF - 1) * 100 };
+    priceNow: price, priceThen: price != null ? price / priceRatio : null,
+    perNow: price != null ? price / epsNow : null, perThen: price != null ? price / priceRatio / epsThen : null,
+    fyThen: num(co.fy) != null ? co.fy - 2 : null };
 }
 
 // ---------------- 가치 tab ----------------
@@ -290,7 +315,9 @@ export function roePbrMap(s, group) {
   return { pts: [...peers.map((p) => ({ ...p, mine: false })), { ...me, mine: true }], a, b, pos, n: n + 1, range: [lo, hi] };
 }
 
-// KR only (US until v19.2). why: "us" · "notReady" (the old card's dcfReady, or no net income / shares) · "loss".
+// KR only (US until v19.2), with the old DcfCard's own defaults (discount 10%, 5년 뒤 성장률 2%, the growth rate fading
+// over the 5 years to it): g is the first year's growth. Start profit: the latest 사업보고서's net income (corp.json ni[0],
+// fy). why: "us" · "notReady" (the old card's dcfReady, or no net income / shares) · "loss".
 export function impliedGrowth(s, co, { disc = DCF.disc, term = DCF.term } = {}) {
   if (!s || s.cls !== "kr") return { why: "us" };
   if (!co || co.dcfReady !== true) return { why: "notReady" };
@@ -298,10 +325,11 @@ export function impliedGrowth(s, co, { disc = DCF.disc, term = DCF.term } = {}) 
   const price = num(s.price);
   const sharesM = num(co.shm) || (num(s.cap) && price ? (s.cap * 1e12) / price / 1e6 : null);
   if (ni0 == null || !(sharesM > 0) || !(price > 0)) return { why: "notReady" };
-  if (ni0 <= 0) return { why: "loss" };
-  const r = reverseDcf({ price, ni0, sharesM, disc, term });
+  const inputs = { disc, term, ni0, sharesM, fy: num(co.fy), fade: DCF.fade };
+  if (ni0 <= 0) return { why: "loss", ...inputs };
+  const r = reverseDcf({ price, ni0, sharesM, fade: DCF.fade, disc, term });
   if (!r) return { why: "notReady" };
-  return r.edge ? { edge: r.edge, disc, term } : { g: r.g, disc, term };
+  return r.edge ? { edge: r.edge, ...inputs } : { g: r.g, ...inputs };
 }
 
 // Receipts for 가치 자세히: price / BPS = PBR and price / EPS = PER, shown only when the arithmetic gives the number on
@@ -329,6 +357,21 @@ export function discFor(disc, s) {
   const n0 = (Array.isArray(disc.nps) ? disc.nps : []).find((x) => x && x.t === s.t && num(x.rt) != null && ymd(x.d)) || null;
   return { rows, buys: side(rows.filter((x) => x.q > 0)), sells: side(rows.filter((x) => x.q < 0)),
     nps: n0 ? { rt: n0.rt, chg: num(n0.chg), date: ymd(n0.d) } : null, asOf: typeof disc.asOf === "string" ? disc.asOf : null };
+}
+
+// The 공시 tab's content date and freshness, as the old app's 공시·수급 shows it: the newest filing in the file (newest),
+// not the run date (asOf); stale when the file was published more than STALE_DAYS ago. listOk false = today's filing list
+// did not come in, so the rows stop at newest: stale, counted from newest (at least a day). now: ms (tests).
+export function discDate(disc, now = Date.now()) {
+  if (!disc) return null;
+  const newest = typeof disc.newest === "string" && /^\d{4}-\d{2}-\d{2}$/.test(disc.newest) ? disc.newest : null;
+  const DAY = 86400000;
+  const pub = Date.parse(disc.publishedAt || "");
+  const sincePub = Number.isFinite(pub) ? Math.floor((now - pub) / DAY) : null;
+  const sinceNewest = newest ? Math.floor((now - Date.parse(newest + "T00:00:00+09:00")) / DAY) : null;
+  if (disc.listOk === false) return { date: newest, stale: true, days: Math.max(1, sinceNewest ?? 1), listOk: false };
+  const stale = sincePub == null || sincePub > STALE_DAYS;
+  return { date: newest, stale, days: stale ? sincePub : 0, listOk: true };
 }
 
 // ---------------- holdings ----------------

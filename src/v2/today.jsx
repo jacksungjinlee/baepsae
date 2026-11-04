@@ -30,6 +30,7 @@ import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
+import { isCompany } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -188,7 +189,7 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
           <ListRow title={x.nk} change={gone.has(x.t) ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
-            onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock ? () => openStock(x.t) : undefined} />
+            onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock && isCompany(ctx.byT.get(x.t)) ? () => openStock(x.t) : undefined} />
         </div>
       ))}
     </Card>

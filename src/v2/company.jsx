@@ -27,8 +27,9 @@ import { BIG_MOVE } from "./rules.js";
 import { shownName } from "./legacy.js";
 import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
+import { isCompany } from "./stocklist.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, closeLine, wonOfUsd, timesText, pctText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -48,7 +49,16 @@ export function tileViews(load, s) {
   const group = groupOf(load.data.stocks, s);
   const na = T().na;
   const out = [];
-  const add = (topic, label, r, phrase, number, data) => { if (all(label, phrase)) out.push({ topic, label, phrase, number, rule: r.rule, data }); };
+  // Each tile carries the date or report its number comes from (v19.1a review): 실적 · 배당 the 사업보고서 (fy), 가치 · 출렁임
+  // the price date (PBR at today's close, beta through it). US: the US close date.
+  const fy = co && Number.isInteger(co.fy) ? co.fy : Number.isInteger(s.fy) ? s.fy : null;
+  const md = priceMd(load, s);
+  const asOf = md ? fill(C.app.asOf, { md }) : null;
+  const report = !usOf(s) && fy ? fill(C.app.reportYear, { year: fy }) : null;
+  const basisOf = { earn: usOf(s) ? asOf : report, value: asOf, div: usOf(s) ? asOf : report, risk: asOf };
+  const add = (topic, label, r, phrase, number, data) => {
+    if (all(label, phrase)) out.push({ topic, label, phrase, number, rule: r.rule, data, basis: r.rule === "na" ? null : basisOf[topic] });
+  };
   if (usOf(s)) {
     const r = earnUs(s);
     add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnUs[r.rule], r.g != null && C.pick.receipt.growthUs ? `${C.pick.receipt.growthUs} ${signedPct(r.g)}` : null, { g: r.g });
@@ -65,7 +75,7 @@ export function tileViews(load, s) {
   {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
-    add("div", T().label.div, r, phrase, r.yieldPct != null ? `${C.pick.receipt.yield} ${pctText(r.yieldPct)}` : null, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct });
+    add("div", T().label.div, r, phrase, r.yieldPct != null ? `${C.pick.receipt.yield} ${pctText(r.yieldPct)}` : null, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
   }
   {
     const r = riskTile(s);
@@ -83,6 +93,7 @@ function Tile({ v, onOpen }) {
       </div>
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
+      {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );
   const data = Object.fromEntries(Object.entries(v.data || {}).map(([k, x]) => [`data-${k}`, x == null ? "" : Array.isArray(x) ? x.join(",") : String(x)]));
@@ -95,11 +106,8 @@ function Tile({ v, onOpen }) {
 function Tiles({ load, s, onTab, tabsOn }) {
   const views = useMemo(() => tileViews(load, s), [load, s]);
   if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
-  const co = load.coByT.get(s.t) || null;
-  const fy = co && Number.isInteger(co.fy) ? co.fy : null;
   const md = priceMd(load, s);
-  const src = usOf(s) ? (C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null)
-    : [fy ? fill(C.app.reportYear, { year: fy }) : null, md ? fill(C.why.close, { md }) : null].filter(Boolean).join(" · ");
+  const src = usOf(s) && C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null;     // US: the source of every tile number
   const tabOf = { earn: "earn", value: "value", div: "div", risk: "value" };
   return (
     <section data-ui-v2="co-tiles" style={{ marginTop: SPACE(4) }}>
@@ -189,8 +197,8 @@ function MoveLine({ load, s, held, onWhy }) {
 // ---------------- 재무 경고 (Part B item 4, Korea only) ----------------
 export function warnText(f) {
   const W = C.co.warn;
-  if (f.code === "cr") return W.cr ? fill(W.cr, { x: nf(f.x) }) : null;
-  if (f.code === "icr") return W.icr ? fill(W.icr, { x: nf(f.x, 2) }) : null;
+  if (f.code === "cr") return W.cr ? fill(W.cr, { x: nf(Math.abs(f.x)) }) : null;                  // a ratio of assets: never negative
+  if (f.code === "icr") return W.icr ? fill(W.icr, { x: (f.x < 0 ? "\u2212" : "") + nf(Math.abs(f.x), 2) }) : null;   // U+2212 for a negative
   return W[f.code] || null;
 }
 function warnSource(w) {
@@ -201,8 +209,8 @@ function Warnings({ load, s, wide }) {
   const [open, setOpen] = useState(false);
   const w = useMemo(() => warnings(s, load.coByT.get(s.t) || null), [load, s]);
   const W = C.co.warn;
-  if (!w.ran) return null;                     // US, or the checks could not run: nothing is claimed
   if (!w.flags.length) {
+    if (!w.allRan) return null;                // no flag, but not every check is known to have run: nothing is claimed
     if (!all(W.none, W.noneSub)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
     return (
       <Card data-ui-v2="co-warn" data-n="0" style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: SPACE(4) }}>
@@ -307,7 +315,7 @@ function Fit({ load, s, store, wide }) {
           {indOk && <Segmented label={F.sheet} value={scope} onChange={setScope} options={[{ value: "market", label: F.market }, { value: "ind", label: F.ind }]} />}
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
-          <DateLine date={load.data.pxDate} fresh={load.fresh} />
+          {priceDate(load, s) && <DateLine date={priceDate(load, s)} fresh={load.fresh} />}
         </div>
       </BottomSheet>
     </Card>
@@ -437,10 +445,13 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
   if (load.status === "loading") return <Page pad={pad}><AppBar onBack={nav.back} backLabel={backLabel} /></Page>;
   if (!ok) return <Page pad={pad}><AppBar onBack={nav.back} backLabel={backLabel} /><LoadFail picture={false} /><Footer /></Page>;
   if (!s) {
+    // A fund (an address typed by hand: nothing in 2.0 links a fund here) is not "not found": it has no company page.
+    const fund = ok && load.byT.get(code) && !isCompany(load.byT.get(code));
     return (
       <Page pad={pad}>
         <AppBar onBack={nav.back} backLabel={backLabel} />
-        <Card data-ui-v2="co-not-found"><p style={tx(SIZE.body, WEIGHT.bold, COLOR.ink)}>{C.co.notFound}</p></Card>
+        <Card data-ui-v2="co-not-found" data-fund={fund ? "1" : undefined}>
+          <p style={tx(SIZE.body, WEIGHT.bold, COLOR.ink)}>{fund ? C.co.fundNote || C.stocks.krOnly : C.co.notFound}</p></Card>
         <Footer />
       </Page>
     );
@@ -479,7 +490,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
         <Header load={load} s={s} />
-        {load.fresh && load.fresh.stale && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+        {load.fresh && load.fresh.stale && priceDate(load, s) && <DateLine date={priceDate(load, s)} fresh={load.fresh} />}
         <MoveLine load={load} s={s} held={held} onWhy={nav.onWhy} />
         <div ref={mark} aria-hidden="true" />
         {labels ? <CoTabs labels={labels} value={tab || "summary"} onChange={setTab} stickyTop={stickyTop} /> : <span data-ui-v2="co-tabs" data-pending="1" hidden />}

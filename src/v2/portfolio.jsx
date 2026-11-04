@@ -22,6 +22,7 @@ import { deckMoney } from "./track.js";
 import { DeckSummary, ByStockHead, WeightLine, AddMoney, MissingNote, PausedNote, plainEdges } from "./tracking.jsx";
 import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
+import { isCompany } from "./stocklist.js";
 
 function avgCost(purchases, t) {
   const ps = purchases.filter((p) => p.t === t && p.qty > 0);
@@ -122,7 +123,7 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
               const ret = m.ok && m.per[t] && m.per[t].ret != null ? m.per[t].ret * 100 : null;
               const gone = !!(x && x.absent);
               return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
-                onOpen={!gone && openStock && load.status === "ok" && load.byT.has(t) ? () => openStock(t) : undefined}
+                onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
                 extra={!gone && m.ok && x ? <WeightLine x={x} /> : null} action={gone ? <RemoveButton onClick={() => onRemove(d.id, t)} /> : null} />;
             })}

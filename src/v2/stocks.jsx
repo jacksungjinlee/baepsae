@@ -1,7 +1,7 @@
 // 종목 tab (v19.0c, board CStock): search, 최근 본 종목, 내 포트폴리오 종목 and 거래대금 상위 종목 (Korean and US lists).
 // v19.1a: tapping a Korean or US company opens its 2.0 company page (#stocks/<code>, company.jsx), on the live page and
-// the preview alike; tapping a fund (not a company) shows a line under its row once that line is approved (co.fundNote),
-// and nothing else. Nothing here links into the old app any more. Each row carries the company mark (logo.jsx).
+// the preview alike; tapping a fund (not a company) shows a line under its row (co.fundNote once approved; until then the
+// line it showed before, stocks.krOnly), and nothing else. Nothing here links into the old app any more. Each row carries the company mark (logo.jsx).
 // No 뱁이 here (the lists show today's changes). StockRow and PopularLists are reused on 홈.
 // PC (v19.0d): the search field is the top bar's (nav.jsx TopBar, its words come in as q), so this screen shows no field
 // of its own; the results, lists and taps are the same. PopularLists on PC puts 한국 and 미국 side by side.
@@ -61,7 +61,9 @@ export function useStockTap() {
       if (corp && openStock) openStock(row.t);
       else setNoteFor((x) => (x === row.t ? null : row.t));
     };
-    return { onTap, expands: !corp && !!C.co.fundNote, note: !corp && noteFor === row.t ? C.co.fundNote : null };
+    // a fund: the line under its row, as before v19.1a ('기업분석은 한국 상장 기업만 …') until co.fundNote is approved
+    const fundLine = C.co.fundNote || C.stocks.krOnly;
+    return { onTap, expands: !corp, note: !corp && noteFor === row.t ? fundLine : null };
   };
   return { recent, props };
 }

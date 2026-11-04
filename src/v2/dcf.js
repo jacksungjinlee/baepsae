@@ -1,8 +1,9 @@
 // ================= 2.0 지금 가격이 가정하는 것 (v19.1a Part C · D): the reverse calculation =================
-// Ported from the old app's DcfCard (src/corp.jsx dcfPerShare · reverseDcf), unchanged except that 2.0 holds the growth
-// rate constant for the 5 years (fade off, see company.js impliedGrowth). No imports: store.js validates saved
+// Ported from the old app's DcfCard (src/corp.jsx dcfPerShare · reverseDcf) unchanged, with its defaults (fade on: see
+// company.js impliedGrowth). No imports: store.js validates saved
 // assumptions with okAssume without pulling in the company page's code. No Korean text.
-export const DCF = { disc: 10, term: 2, lo: -30, hi: 60, discRange: [6, 16], termRange: [0, 4], step: 0.5 };   // the old DcfCard
+// fade: the old card's default (its checkbox starts on): the growth rate fades over the 5 years to term.
+export const DCF = { disc: 10, term: 2, fade: true, lo: -30, hi: 60, discRange: [6, 16], termRange: [0, 4], step: 0.5 };   // the old DcfCard
 const EPS = 1e-9;
 
 // Model value per share (원) for net income ni0 (억원), shares sharesM (백만주), growth g1 for 5 years, then term forever.

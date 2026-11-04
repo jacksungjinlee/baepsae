@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { StatusChip, Collapsible } from "../ui/components.jsx";
-import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis } from "./engine.js";
+import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis, krDivYield } from "./engine.js";
 import { C, fill, nf, p1, mdText } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, tx, tap } from "./ui.jsx";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
@@ -146,7 +146,7 @@ function Row({ k, v, id, basis }) {
 function Receipts({ s, co, c, st }) {
   const R = C.pick.receipt;
   const pbr = num(s.pbr), roe = num(s.roe), debt = num(s.debt);
-  const y = s.cls === "kr" ? (num(s.dps) != null && s.price > 0 ? (s.dps / s.price) * 100 : null) : num(s.dy);
+  const y = s.cls === "kr" ? krDivYield(s) : num(s.dy);         // KR: dps / close, only when it agrees with the report's yield
   const fy = s.cls === "kr" ? fyOf(s, co) : null;
   // Korean growth is labelled by how it was actually calculated (engine.growthBasis); no label = the row is hidden.
   const gb = s.cls === "kr" ? growthBasis(s, co) : null;

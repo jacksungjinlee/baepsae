@@ -17,12 +17,12 @@ import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
-  roePbrMap, impliedGrowth, receipt, discFor, perMillion, payout, DCF, round } from "./company.js";
+  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, payout, DCF, round } from "./company.js";
 import { growthBasis, num } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS } from "./routes.js";
-import { usOf, priceMd, timesText, pctText, manWon, bigWon } from "./cofmt.js";
+import { usOf, priceMd, priceDate, timesText, pctText, manWon, bigWon } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -92,28 +92,39 @@ function Decomp({ co }) {
   const D = C.co.decomp;
   if (!D.title) return null;
   const d = decompose(co);
-  const head = d ? D.head[d.head] : null;
-  const box = (label, v, dark) => (
+  const head = d.head ? D.head[d.head] : null;
+  // multipliers, as the old card: 3년 주가 = 이익 × 눈높이 (a true equation), each with its inputs (then → now)
+  const box = (label, v, from, to, dark) => (
     <div style={{ background: dark ? COLOR.ink : COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(1)}px`, textAlign: "center", minWidth: 0 }}>
       <div style={tx(SIZE.xxs, WEIGHT.semi, dark ? COLOR.surface : COLOR.text2)}>{label}</div>
-      <div style={tx(SIZE.body, WEIGHT.heavy, dark ? COLOR.surface : COLOR.ink)}>{signedPct(v)}</div>
+      <div style={tx(SIZE.body, WEIGHT.heavy, dark ? COLOR.surface : COLOR.ink)}>{timesText(v, v >= 100 ? 0 : 2)}</div>
+      {from && to && <div style={tx(10, WEIGHT.regular, dark ? COLOR.surface : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
     </div>
   );
-  const op = <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{"="}</span>;
+  const op = (ch) => <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{ch}</span>;
+  const won = (v) => (v != null ? fill(C.app.won, { n: nf(Math.round(v)) }) : null);
+  const per = (v) => (v != null && v > 0 ? timesText(v, 1) : null);
+  const q = co && typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
+  const basis = !d.head ? null : q && D.basisQ && d.fyThen ? fill(D.basisQ, { y: q[1], q: q[2], fy: d.fyThen })
+    : !q && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
+  const msg = d.why === "loss" ? D.none : d.why === "missing" ? C.co.tiles.na : null;
+  if (!d.head && !msg) return null;
   return (
-    <Card data-ui-v2="co-decomp" data-head={d ? d.head : "none"}>
+    <Card data-ui-v2="co-decomp" data-head={d.head || d.why}>
       <CardHead icon="chart-bar" tone="earn" title={D.title} />
-      {d && all(head, D.price, D.eps, D.per) ? (
+      {d.head && all(head, D.price, D.eps, D.per) ? (
         <>
           <p style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto 1fr", gap: SPACE(1), alignItems: "center", marginTop: SPACE(3) }}>
-            {box(D.price, d.pricePct, true)}{op}{box(D.eps, d.epsPct)}
-            <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{"×"}</span>{box(D.per, d.perPct)}
+          <div data-ui-v2="co-decomp-eq" data-price={d.priceRatio} data-eps={d.eF} data-per={d.mF}
+            style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto 1fr", gap: SPACE(1), alignItems: "center", marginTop: SPACE(3) }}>
+            {box(D.price, d.priceRatio, won(d.priceThen), won(d.priceNow), true)}{op("=")}{box(D.eps, d.eF, won(d.epsThen), won(d.epsNow))}
+            {op("\u00d7")}{box(D.per, d.mF, per(d.perThen), per(d.perNow))}
           </div>
           {D.note && <Note>{D.note}</Note>}
+          {basis && <Src>{basis}</Src>}
           {D.past && <Note style={{ marginTop: SPACE(1) }}>{D.past}</Note>}
         </>
-      ) : !d && D.none ? <Note>{D.none}</Note> : null}
+      ) : !d.head ? <Note>{msg}</Note> : null}
     </Card>
   );
 }
@@ -264,8 +275,15 @@ function Strip({ s, group }) {
   );
 }
 
-// 지금 가격이 가정하는 것 (KR): headline, two bars (the implied rate vs the company's revenue growth with its real basis),
-// the reading note with the discount rate and 5년 뒤 성장률 used; out of range or a loss: the message instead.
+// 지금 가격이 가정하는 것 (KR): headline, two bars (the implied first-year rate vs the company's revenue growth with its
+// real basis), the reading note, and the inputs as a receipt (start profit with its report year, discount rate, 5년 뒤
+// 성장률); out of range or a loss: the old card's message instead. The old card's defaults (fade on): parity tests.
+const pctNum = (v) => nf(v, v % 1 ? 1 : 0);
+export function dcfInputs(r) {
+  const D = C.co.dcf;
+  if (!D.inputs || r.fy == null || r.ni0 == null || !eokText(r.ni0)) return null;
+  return fill(D.inputs, { fy: r.fy, ni: eokText(r.ni0), d: pctNum(r.disc), t: pctNum(r.term) });
+}
 function Dcf({ load, s, co, a, onTry }) {
   const D = C.co.dcf;
   const r = impliedGrowth(s, co, a);
@@ -275,8 +293,9 @@ function Dcf({ load, s, co, a, onTry }) {
   const g3 = num(s.g3);
   const msg = r.edge === "low" ? D.low : r.edge === "high" ? D.high : r.why === "loss" ? D.loss : null;
   const g = r.g != null ? round(r.g, 1) : null;
-  const head = g == null ? null : g >= 0 ? (D.head ? fill(D.head, { g: nf(g, 1) }) : null) : (D.headDown ? fill(D.headDown, { g: nf(Math.abs(g), 1) }) : null);
-  if (g != null && !all(head, D.implied, D.perYear, D.note)) return null;
+  const head = g != null && D.head ? fill(D.head, { g: rateText(g) }) : null;
+  const inputs = dcfInputs(r);
+  if (g != null && !all(head, D.implied, D.perYear, D.note, inputs)) return null;
   if (g == null && !msg) return null;
   const mx = Math.max(Math.abs(g || 0), glabel && g3 != null ? Math.abs(g3) : 0, 1e-9);
   const bar = (x, dark) => (
@@ -302,12 +321,23 @@ function Dcf({ load, s, co, a, onTry }) {
               </>
             )}
           </div>
-          <Note>{fill(D.note, { d: nf(a.disc, a.disc % 1 ? 1 : 0), t: nf(a.term, a.term % 1 ? 1 : 0) })}</Note>
+          <Note>{fill(D.note, { t: pctNum(a.term) })}</Note>
+          <div data-ui-v2="co-dcf-inputs" style={{ marginTop: SPACE(2), border: `1px dashed ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`,
+            ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{inputs}</div>
         </>
       ) : <Note>{msg}</Note>}
       {D.try && onTry && C.co.valueMore.title && C.co.calc.title && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={onTry}>{D.try}</Button></div>}
     </Card>
   );
+}
+
+// PER and PBR basis (KR): fetch_data fill_multiples uses the latest four quarters' net income and that quarter's equity
+// when corp.json carries the TTM quarter (bq), else the 사업보고서 (fy).
+export function valueBasis(co) {
+  const V = C.co.value;
+  const q = co && typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
+  if (q) return V.basisQ ? fill(V.basisQ, { y: q[1], q: q[2] }) : null;
+  return co && Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
 }
 
 export function ValueTab({ load, s, store, onMore }) {
@@ -331,7 +361,8 @@ export function ValueTab({ load, s, store, onMore }) {
           {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={r.med != null && V.indMed ? fill(V.indMed, { x: nf(r.med, 2) }) : null} />}
           {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perMed && V.indMed ? fill(V.indMed, { x: nf(round(perMed.med, 1), 1) }) : null} />}
         </Stats>
-        <DateLine date={usOf(s) ? load.data.usPxDate || load.data.pxDate : load.data.pxDate} fresh={load.fresh} />
+        {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
+        <DateLine date={priceDate(load, s)} fresh={load.fresh} />
       </Card>
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {risk.rule !== "na" && C.co.risk[risk.rule] && (
@@ -392,6 +423,7 @@ function Calc({ load, s, store, setStoreData }) {
     </label>
   );
   const res = r.g != null ? fill(K.result, { g: rateText(round(r.g, 1)) }) : r.edge === "low" ? D.low : r.edge === "high" ? D.high : D.loss;
+  const inputs = r.g != null ? dcfInputs(r) : null;
   const save = () => {
     const next = withAssume(store.data, s.t, a, todayKst());
     if (next) { setStoreData(next); setDone(true); } else console.warn("[v2] assumption not saved for " + s.t);
@@ -403,6 +435,7 @@ function Calc({ load, s, store, setStoreData }) {
       {slider("disc", K.disc, DCF.discRange)}
       {slider("term", K.term, DCF.termRange)}
       {res && <div data-ui-v2="co-calc-result" style={{ marginTop: SPACE(3), background: COLOR.page, borderRadius: RADIUS.sm, padding: SPACE(3), ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>{res}</div>}
+      {inputs && <Src>{inputs}</Src>}
       {K.save && store.writable && (
         <div style={{ marginTop: SPACE(3) }}>
           <Button kind="secondary" onClick={save}>{done && K.saved ? K.saved : K.save}</Button>
@@ -466,7 +499,8 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
           <Card data-ui-v2="co-ratios">
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
-            <DateLine date={usOf(s) ? load.data.usPxDate || load.data.pxDate : load.data.pxDate} fresh={load.fresh} />
+            {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
+            <DateLine date={priceDate(load, s)} fresh={load.fresh} />
           </Card>
         )}
         <Scatter s={s} group={group} />
@@ -478,6 +512,10 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 }
 
 // ================= 배당 =================
+// KR: the yield is the report's own 현금배당수익률 (dy, that year's price) with its report year; the per-share figure and the
+// bars only when dps agrees with dy (company.js divKr dpsOk); 배당성향 only on one basis (company.js payout). US: Yahoo's
+// yield only (no per-share dividend in the data until v19.2).
+const warnedPayout = new Set();
 export function DivTab({ load, s }) {
   const Dv = C.co.div;
   const co = load.coByT.get(s.t) || null;
@@ -485,39 +523,45 @@ export function DivTab({ load, s }) {
   const r = us ? divUs(s) : divKr(s, co);
   const head = r.rule === "na" ? null : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : us && r.rule === "pays" ? Dv.head.pays : Dv.head[r.rule];
   const md = priceMd(load, s);
-  const fy = us ? null : num(s.fy ?? (co && co.fy));
-  const per1m = r.rule !== "none" ? perMillion(r.yieldPct) : null;
-  const basis = us ? Dv.basisUs : Dv.basisKr && fy && md ? fill(Dv.basisKr, { fy, md }) : null;
-  const po = us ? null : payout(s);
-  const bars = !us && r.d3 && r.d3.every((v) => v != null) && fy ? [2, 1, 0].map((i) => ({ year: fy - i, v: r.d3[i] })) : null;
+  const fy = us ? null : r.fy;
+  const pm = r.rule !== "none" ? perMillionView(r.yieldPct) : null;
+  const basis = us ? Dv.basisUs : Dv.basisKr && fy ? fill(Dv.basisKr, { fy }) : null;
+  const po = us ? null : payout(s, co);
+  if (po && po.out != null && !warnedPayout.has(s.t)) {
+    warnedPayout.add(s.t);
+    console.warn(`[v2] payout ratio not shown for ${s.t}: ${po.out.toFixed(1)}% is outside 0-100% (dividend x shares / net income, ${po.fy})`);
+  }
+  const showDps = !us && r.dpsOk && r.dps != null && r.dps > 0;
+  const bars = showDps && r.d3 && r.d3.every((v) => v != null) && fy ? [2, 1, 0].map((i) => ({ year: fy - i, v: r.d3[i] })) : null;
+  const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
       <Card>
         {head && <H>{head}</H>}
-        {!us && r.dps != null && r.dps > 0 && Dv.dps && (
+        {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>
             <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{Dv.dps}</span>
           </div>
         )}
-        {bars && r.dps > 0 && <Bars rows={bars} fmt={(v) => nf(v)} />}
+        {bars && <Bars rows={bars} fmt={(v) => nf(v)} />}
         <Src>{yearText(fy)}</Src>
         {us && Dv.usLater && <Note>{Dv.usLater}</Note>}
       </Card>
-      {per1m != null && all(Dv.million, Dv.perYear, basis) && (
-        <Card data-ui-v2="co-million" data-won={per1m} data-y={r.yieldPct}>
+      {pm && all(Dv.million, line, basis) && (
+        <Card data-ui-v2="co-million" data-won={pm.won ?? ""} data-under={pm.under ? "1" : ""} data-y={r.yieldPct}>
           <CardHead icon="coins" tone="div" title={Dv.million} />
-          <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={fill(Dv.perYear, { x: manWon(per1m) })} /></div>
+          <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
         </Card>
       )}
       <Card>
         <Stats>
-          {r.yieldPct != null && <Stat data-ui-v2="co-yield" label={C.pick.receipt.yield} value={pctText(r.yieldPct)} sub={Dv.yieldSub} />}
-          {po != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" label={Dv.payout} value={pctText(po)} sub={Dv.payoutSub} />}
+          {r.yieldPct != null && <Stat data-ui-v2="co-yield" label={C.pick.receipt.yield} value={pctText(r.yieldPct)} sub={us ? Dv.yieldSubUs : yearText(fy)} />}
+          {po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
-        <Src>{us ? (C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null) : [yearText(fy), md ? fill(C.why.close, { md }) : null].filter(Boolean).join(" · ")}</Src>
+        <Src>{us ? (C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null) : yearText(fy)}</Src>
       </Card>
     </div>
   );
@@ -531,11 +575,12 @@ export function DiscTab({ load, s, disc }) {
   if (!disc || disc.status === "loading" || disc.status === "idle") return <div data-ui-v2="co-disc" data-state="loading" />;
   if (disc.status !== "ok" || !v) return <div data-ui-v2="co-disc" data-state="fail"><LoadFail picture={false} /></div>;
   const n = v.rows.length;
+  const dd = discDate(disc.data);              // the newest filing's date, stale when the file stopped or today's list failed
   const side = (label, x, id) => (
     <Stat data-ui-v2={id} label={label} value={fill(D.count, { n: x.n })} sub={x.won != null && x.n > 0 && D.amt ? fill(D.amt, { x: bigWon(x.won) }) : null} />
   );
   return (
-    <div data-ui-v2="co-disc" data-state="ok" data-n={n}>
+    <div data-ui-v2="co-disc" data-state="ok" data-n={n} data-stale={dd && dd.stale ? "1" : "0"}>
       <Card>
         <CardHead icon="identification-badge" tone="disc" title={n ? (D.head ? fill(D.head, { n }) : null) : D.none} />
         {n > 0 && all(D.buys, D.sells, D.count) && <Stats>{side(D.buys, v.buys, "co-buys")}{side(D.sells, v.sells, "co-sells")}</Stats>}
@@ -560,12 +605,12 @@ export function DiscTab({ load, s, disc }) {
           </div>
         )}
         {D.source && <Src>{D.source}</Src>}
-        {v.asOf && <DateLine date={v.asOf} />}
+        {dd && dd.date && <DateLine date={dd.date} fresh={{ stale: dd.stale, days: dd.days }} />}
       </Card>
       {v.nps && all(D.nps, D.npsNote) && (
         <Card data-ui-v2="co-nps" data-rt={v.nps.rt}>
           <CardHead icon="bank" tone="disc" title={fill(D.nps, { rt: p1(v.nps.rt) })} />
-          {v.nps.chg != null && v.nps.chg !== 0 && <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) })}>{`${v.nps.chg > 0 ? "+" : "−"}${p1(Math.abs(v.nps.chg))}%p`}</p>}
+          {v.nps.chg != null && Math.round(v.nps.chg * 10) !== 0 && <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) })}>{`${signedPct(v.nps.chg)}p`}</p>}
           <Note>{D.npsNote}</Note>
           <DateLine date={v.nps.date} />
         </Card>

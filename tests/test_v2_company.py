@@ -115,26 +115,28 @@ def test_value_tile_median_is_the_shown_two_decimals():
 
 # ── 배당 칸 ──
 def test_dividend_tile_rules_korea():
-    base = {"t": "X", "cls": "kr", "price": 50000, "fy": 2025}
-    cases = {"none": {"dps": 0, "dps3": [0, 100, 100]}, "na": {"dps": None}, "noPrev": {"dps": 1000, "dps3": [1000, None, 900]},
+    base = {"t": "X", "cls": "kr", "price": 50000, "fy": 2025, "dy": 2.0}     # dy: 그 사업보고서의 현금배당수익률 (dps 1,000원과 맞아요)
+    cases = {"zeroMismatch": {"dps": 0, "dps3": [0, 100, 100]}, "na": {"dps": None}, "noPrev": {"dps": 1000, "dps3": [1000, None, 900]},
              "mismatch": {"dps": 1000, "dps3": [900, 800, 700]}, "cut": {"dps": 900, "dps3": [900, 1000, 1000]},
              "streak": {"dps": 1200, "dps3": [1200, 1100, 1000]}, "raised": {"dps": 1100, "dps3": [1100, 1000, 1000]},
              "steady": {"dps": 1020, "dps3": [1020, 1000, 1000]}, "same": {"dps": 1000, "dps3": [1000, 1000, 1000]},
              "cutThenRaise": {"dps": 1000, "dps3": [1000, 900, 1000]}, "tinyCut": {"dps": 999, "dps3": [999, 1000, 900]},
-             "fromZero": {"dps": 100, "dps3": [100, 0, 0]}, "coOnly": {"dps": 1200}}
+             "fromZero": {"dps": 100, "dps3": [100, 0, 0], "dy": 0.2}, "coOnly": {"dps": 1200}, "zero": {"dps": 0, "dy": 0},
+             "noFy": {"dps": 1000, "dps3": [1000, 900, 800], "fy": None}}
     got = run("""out = Object.fromEntries(Object.entries(C).map(([k, x]) => [k, K.divKr({ ...B, ...x }, k === 'coOnly' ? { dps3: [1200, 1100, 1000] } : null)]));""",
               B=base, C=cases)
-    assert got["none"]["rule"] == "none" and got["none"]["yieldPct"] == 0
-    assert got["na"]["rule"] == "na" and got["na"]["yieldPct"] is None
-    assert got["noPrev"]["rule"] == "na" and abs(got["noPrev"]["yieldPct"] - 2.0) < 1e-9    # 비교할 해가 없으면 판단 안 함 (수익률은 그대로)
+    assert got["zero"]["rule"] == "none" and got["zero"]["yieldPct"] == 0
+    assert got["zeroMismatch"]["rule"] == "na"                              # 0원인데 보고서 수익률은 2%: 서로 맞지 않아 판단하지 않아요
+    assert got["na"]["rule"] == "na" and got["na"]["yieldPct"] == 2.0
+    assert got["noPrev"]["rule"] == "na" and got["noPrev"]["yieldPct"] == 2.0   # 비교할 해가 없으면 판단 안 함 (수익률은 그대로)
     assert got["mismatch"]["rule"] == "na"
-    assert got["cut"]["rule"] == "cut" and got["tinyCut"]["rule"] == "cut"                  # 줄었으면 조금이라도 '줄였어요'
+    assert got["cut"]["rule"] == "cut" and got["tinyCut"]["rule"] == "cut"  # 줄었으면 조금이라도 '줄였어요'
     assert got["streak"]["rule"] == "streak" and got["streak"]["n"] == 2 and got["coOnly"]["rule"] == "streak"
     assert got["raised"]["rule"] == "raised" and got["cutThenRaise"]["rule"] == "raised"    # 한 번 3% 넘게: '비슷하게'가 아니에요
     assert got["fromZero"]["rule"] == "raised"
     assert got["steady"]["rule"] == "steady" and got["same"]["rule"] == "steady"
-    assert abs(got["streak"]["yieldPct"] - 1200 / 50000 * 100) < 1e-9                       # 최근 보고서의 주당 배당 ÷ 오늘 종가
-
+    assert got["streak"]["yieldPct"] == 2.0 and got["streak"]["dpsOk"]     # 수익률은 보고서의 dy 그대로 (오늘 종가로 나누지 않아요)
+    assert got["noFy"]["yieldPct"] is None                                  # 어느 보고서인지 모르면 수익률을 보이지 않아요
 
 def test_dividend_tile_rules_us_missing_is_not_no_dividend():
     got = run("out = [0, 0.32, null].map((dy) => K.divUs({ cls: 'us', dy })).concat([K.divUs({ cls: 'us' })]);")
@@ -146,9 +148,65 @@ def test_hundred_man_won_is_rounded_to_a_thousand_won():
     assert got == [24000, 8000, 3000, 0, None, None, 13000]       # 12,500 → 13,000 (반올림)
 
 
-def test_payout_needs_a_profit():
-    got = run("out = [K.payout({ dps: 1668, eps: 25780 }), K.payout({ dps: 100, eps: 0 }), K.payout({ dps: 100, eps: -5 }), K.payout({ dps: null, eps: 10 })];")
-    assert abs(got[0] - 1668 / 25780 * 100) < 1e-9 and got[1:] == [None, None, None]
+# 리뷰가 찾은 실제 종목 (2026-11-04 발행본 값): 주식 분할 · 주당 칸에 총액을 적은 공시로 dps ÷ 오늘 종가가 터무니없어요
+REAL = {
+    "067900": {"t": "067900", "nk": "와이엔텍", "cls": "kr", "price": 6330.0, "fy": 2025, "dy": 1.48, "dps": 1809965900.0,
+               "dps3": [1809965900.0, 1266976130.0, 904982950.0], "eps": 1645.0, "shr": 18199659},
+    "001130": {"t": "001130", "nk": "대한제분", "cls": "kr", "price": 10730.0, "fy": 2025, "dy": 2.6, "dps": 4000.0,
+               "dps3": [4000.0, 3500.0, 2500.0], "eps": -2395.0, "shr": 16900000},
+    "134380": {"t": "134380", "nk": "미원화학", "cls": "kr", "price": 11190.0, "fy": 2025, "dy": 4.76, "dps": 4500.0,
+               "dps3": [4500.0, 4000.0, 3500.0], "eps": 1869.0, "shr": 21992680},
+    "015360": {"t": "015360", "nk": "INVENI", "cls": "kr", "price": 13680.0, "fy": 2025, "dy": 8.1, "dps": 5400.0,
+               "dps3": [5400.0, 4000.0, 8750.0], "eps": 3116.0, "shr": 26250000},
+    "005930": {"t": "005930", "nk": "삼성전자", "cls": "kr", "price": 219500.0, "fy": 2025, "dy": 1.5, "dps": 1668.0,
+               "dps3": [1668.0, 1446.0, 1444.0], "eps": 25780.0, "shr": 5846278608, "cap": 1283.258},
+    "005380": {"t": "005380", "nk": "현대차", "cls": "kr", "price": 277500.0, "fy": 2025, "dy": 1.9, "dps": 10000.0, "eps": 50941.0,
+               "shr": 203466492, "cap": 56.462},
+}
+REAL_CO = {"067900": {"ni": [304.3, 313.1, 240.7], "shm": 18.2, "fy": 2025}, "001130": {"ni": [-251.4, 488.3, 812.4], "shm": 16.9, "fy": 2025},
+           "134380": {"ni": [247.3, 269.3, 218.1], "shm": 21.99, "fy": 2025}, "015360": {"ni": [867.2, 285.7, 340.5], "shm": 26.25, "fy": 2025},
+           "005930": {"ni": [452068.0, 344513.5, 154871.0], "shm": 5846.28, "fy": 2025, "dcfReady": True, "price": 219500.0, "r36": 220.0,
+                      "eps": 25780.0, "bq": "2026.2Q"},
+           "005380": {"ni": [103647.8, 132299.1, 122723.0], "shm": 203.47, "fy": 2025, "dcfReady": True, "price": 277500.0, "r36": 45.5,
+                      "eps": 50941.0, "bq": "2026.2Q"}}
+
+
+def test_korean_yield_is_the_reports_own_and_per_share_figures_are_cross_checked():
+    got = run("""out = Object.fromEntries(Object.entries(RS).map(([t, s]) => [t, { div: K.divKr(s, null), agrees: E.dpsAgrees(s), ky: E.krDivYield(s),
+        card: E.cardRaw(s, E.CARDS.find((c) => c.id === 'div')), pm: K.perMillionView(K.divKr(s, null).yieldPct) }]));""", RS=REAL)
+    for t in ("067900", "001130", "134380", "015360"):                     # 와이엔텍 · 대한제분 · 미원화학 · INVENI
+        g = got[t]
+        assert g["div"]["yieldPct"] == REAL[t]["dy"], (t, g["div"])         # 보이는 수익률 = 보고서의 dy (1.48 · 2.6 · 4.76 · 8.1 %)
+        assert not g["agrees"] and g["ky"] is None and g["card"] is None    # dps ÷ 종가(28,593,458% · 37.3% · 40.2% · 39.5%)는 쓰지 않아요
+        assert g["div"]["rule"] == "na" and not g["div"]["dpsOk"]            # 주당 배당 · 추세 · 배당성향도 보이지 않아요
+        assert g["pm"]["won"] == round(1e6 * REAL[t]["dy"] / 100 / 1000) * 1000, (t, g["pm"])
+    assert got["067900"]["pm"]["won"] == 15000 and got["134380"]["pm"]["won"] == 48000 and got["015360"]["pm"]["won"] == 81000
+    sam = got["005930"]
+    assert sam["agrees"] and abs(sam["ky"] - 1668 / 219500 * 100) < 1e-9 and sam["div"]["rule"] == "streak" and sam["div"]["yieldPct"] == 1.5
+    edge = run("out = [E.dpsAgrees({ dps: 100, price: 1000, dy: 10 }), E.dpsAgrees({ dps: 100, price: 1000, dy: 3.4 }), E.dpsAgrees({ dps: 100, price: 1000, dy: 3.3 }),"
+               " E.dpsAgrees({ dps: 100, price: 1000, dy: 30 }), E.dpsAgrees({ dps: 100, price: 1000, dy: 31 }), E.dpsAgrees({ dps: 100, price: 1000 }),"
+               " E.dpsAgrees({ dps: 100, price: 1000, dy: 0 }), E.dpsAgrees({ dps: 0, dy: 0 }), E.dpsAgrees({ dps: 0 }), E.dpsAgrees({ dps: 0, dy: 1 })];")
+    assert edge == [True, True, False, True, False, True, False, True, True, False], edge   # 1/3 ~ 3 배 안 · dy 가 없으면 예전처럼
+    # 보고서 수익률이 30% 를 넘으면 믿지 않아요 (리뷰 sweep: 지투파워 33.7% · 흥국 56% · 피코그램 100%): 수익률도 · 100만원 줄도 없음
+    big = run("out = [33.7, 56, 100, 30].map((dy) => [K.divKr({ t: 'X', cls: 'kr', price: 10000, fy: 2025, dps: 50, dy }, null), K.divUs({ cls: 'us', dy })]);")
+    assert all(k["yieldPct"] is None and k["rule"] == "na" and u["rule"] == "na" for k, u in big[:3]) and big[3][1]["yieldPct"] == 30, big
+
+
+def test_hundred_man_won_never_shows_zero_for_a_payer():
+    # 주성엔지니어링 0.19% · 가온전선 0.1% · 삼천당제약 0.02% · 영풍 0.01% (리뷰: 예전 계산은 '1년에 약 0원')
+    got = run("out = [0.19, 0.1, 0.02, 0.01, 0, null].map((y) => K.perMillionView(y));")
+    assert got[0]["won"] == 2000 and got[1]["won"] == 1000 and got[2]["under"] and got[3]["under"] and got[4] is None and got[5] is None
+
+
+def test_payout_is_on_one_basis_and_inside_0_to_100():
+    got = run("""out = { sam: K.payout(RS['005930'], RC['005930']), mw: K.payout(RS['134380'], RC['134380']), loss: K.payout(RS['001130'], RC['001130']),
+      over: K.payout({ ...RS['005930'], dps: 20000, dy: 9.1 }, RC['005930']), us: K.payout({ ...RS['005930'], cls: 'us' }, RC['005930']),
+      noNi: K.payout(RS['005930'], { ...RC['005930'], ni: [null, 1, 1] }) };""", RS=REAL, RC=REAL_CO)
+    assert abs(got["sam"]["pct"] - 1668 * 5846278608 / (452068.0 * 1e8) * 100) < 1e-9 and 21 < got["sam"]["pct"] < 22 and got["sam"]["fy"] == 2025
+    assert got["mw"] is None and got["loss"] is None                      # 미원화학: dps 가 dy 와 맞지 않음 · 대한제분: 적자
+    assert got["over"]["out"] > 100 and "pct" not in got["over"]          # 100% 를 넘으면 보이지 않아요 (화면이 로그를 남겨요)
+    assert got["us"] is None and got["noNi"] is None
+
 
 
 # ── 출렁임 칸 ──
@@ -164,12 +222,15 @@ def test_warning_flags_only_claim_checks_that_ran():
       flags: K.warnings(KR, { fl: { cr: 77, icr: 0.5, l3: 1, imp: 1 }, ni: [1, 2, 3], fy: 2025, bq: '2026.2Q' }),
       clean: K.warnings(KR, { ni: [1, -2, 3], fy: 2025 }),
       noNi: K.warnings(KR, { ni: [1, null, 3], fy: 2025 }), noFy: K.warnings(KR, { ni: [1, 2, 3] }), noCo: K.warnings(KR, null),
-      us: K.warnings({ t: 'AAPL', cls: 'us' }, { fl: { cr: 50 }, ni: [1, 2, 3], fy: 2025 }) };""", KR=kr)
-    assert [f["code"] for f in got["flags"]["flags"]] == ["cr", "icr", "l3", "imp"] and got["flags"]["ran"]
+      us: K.warnings({ t: 'AAPL', cls: 'us' }, { fl: { cr: 50 }, ni: [1, 2, 3], fy: 2025 }),
+      all: K.warnings(KR, { flRan: ['cr', 'icr', 'l3', 'imp'], ni: [1, 2, 3], fy: 2025 }), fin: K.warnings(KR, { flRan: ['l3', 'imp'], ni: [1, 2, 3], fy: 2025 }) };""", KR=kr)
+    assert [f["code"] for f in got["flags"]["flags"]] == ["cr", "icr", "l3", "imp"]
     assert got["flags"]["quarter"] == {"y": 2026, "q": 2} and got["flags"]["fy"] == 2025
-    assert got["clean"]["ran"] and got["clean"]["flags"] == []
-    for k in ("noNi", "noFy", "noCo", "us"):
-        assert not got[k]["ran"] and got[k]["flags"] == [], k
+    # '없어요'는 네 가지 확인을 모두 했다는 기록(flRan)이 있을 때만: corp.json 은 아직 그걸 적지 않아요 (금융업은 유동비율 · 이자보상배율을 건너뛰어요)
+    for k in ("clean", "noNi", "noFy", "noCo", "us", "fin"):
+        assert not got[k]["allRan"], k
+    assert got["us"]["flags"] == [] and got["all"]["allRan"] and got["fin"]["ran"] == ["l3", "imp"]
+
 
 
 # ── 기준 카드 순위 ──
@@ -233,19 +294,28 @@ def test_reverse_dcf_matches_the_old_card():
     assert got[-2][0] == {"edge": "low"} and got[-1][0] == {"edge": "high"}
 
 
-def test_implied_growth_uses_a_constant_rate_and_the_old_defaults():
+def test_implied_growth_uses_the_old_cards_defaults():
     corp = fixture("corp.json")
     sam = next(c for c in corp["companies"] if c["t"] == "005930")
     got = run("""const s = { t: '005930', cls: 'kr', price: CO.price, cap: CO.cap };
-      out = { dflt: K.impliedGrowth(s, CO), check: T.oldRev({ price: CO.price, ni0: CO.ni[0], sharesM: CO.shm, fade: false, disc: 10, term: 2 }),
+      out = { dflt: K.impliedGrowth(s, CO), check: T.oldRev({ price: CO.price, ni0: CO.ni[0], sharesM: CO.shm, fade: true, disc: 10, term: 2 }),
         mine: K.impliedGrowth(s, CO, { disc: 8, term: 1 }), us: K.impliedGrowth({ ...s, cls: 'us' }, CO), notReady: K.impliedGrowth(s, { ...CO, dcfReady: false }),
         loss: K.impliedGrowth(s, { ...CO, ni: [-5, 1, 1] }), noNi: K.impliedGrowth(s, { ...CO, ni: [null, 1, 1] }), D: K.DCF };""", CO=sam)
-    assert got["D"]["disc"] == 10 and got["D"]["term"] == 2 and got["D"]["lo"] == -30 and got["D"]["hi"] == 60
+    assert got["D"]["disc"] == 10 and got["D"]["term"] == 2 and got["D"]["fade"] is True and got["D"]["lo"] == -30 and got["D"]["hi"] == 60
     assert got["dflt"]["g"] == got["check"]["g"] and got["dflt"]["disc"] == 10 and got["dflt"]["term"] == 2
+    assert got["dflt"]["fy"] == sam["fy"] and got["dflt"]["ni0"] == sam["ni"][0] and got["dflt"]["fade"] is True    # 근거 수치 (시작 순이익 · 그 연도)
     assert got["mine"]["disc"] == 8 and got["mine"]["g"] != got["dflt"]["g"]
     assert got["us"] == {"why": "us"} and got["notReady"] == {"why": "notReady"} and got["noNi"] == {"why": "notReady"}
-    assert got["loss"] == {"why": "loss"}
+    assert got["loss"]["why"] == "loss"
 
+
+def test_implied_growth_matches_what_the_old_app_shows():
+    """리뷰: 예전 뱁새의 카드(기본값: 할인율 10% · 영구성장률 2% · 5년에 걸쳐 수렴)와 같은 값 — 삼성전자 41.6%, 현대차 '−30% 이하'."""
+    got = run("""const f = (t) => K.impliedGrowth(RS[t], RC[t]);
+      const o = (t) => T.oldRev({ price: RS[t].price, ni0: RC[t].ni[0], sharesM: RC[t].shm, fade: true, disc: 10, term: 2 });
+      out = { sam: f('005930'), samOld: o('005930'), hd: f('005380'), hdOld: o('005380') };""", RS=REAL, RC=REAL_CO)
+    assert got["sam"]["g"] == got["samOld"]["g"] and round(got["sam"]["g"], 1) == 41.6, got["sam"]
+    assert got["hd"]["edge"] == got["hdOld"]["edge"] == "low", got["hd"]
 
 def test_decomposition_matches_the_old_card():
     corp = fixture("corp.json")
@@ -254,12 +324,27 @@ def test_decomposition_matches_the_old_card():
     seen = set()
     for new, old in got:
         if old is None:
-            assert new is None
+            assert new.get("why") in ("missing", "loss") and "head" not in new
             continue
         assert abs(new["eF"] - old["eF"]) < 1e-12 and abs(new["mF"] - old["mF"]) < 1e-12 and new["priceRatio"] == old["priceRatio"]
-        assert abs((1 + new["pricePct"] / 100) - (1 + new["epsPct"] / 100) * (1 + new["perPct"] / 100)) < 1e-9   # 3년 주가 = 이익 × 눈높이
+        assert abs(new["priceRatio"] - new["eF"] * new["mF"]) < 1e-9                # 3년 주가 배율 = 이익 배율 × 눈높이 배율 (참인 곱셈)
         seen.add(new["head"])
     assert seen <= {"upE", "upM", "downE", "downM"} and len(seen) >= 2, seen
+    sam = run("out = K.decompose(RC['005930']);", RC=REAL_CO)
+    assert abs(sam["priceRatio"] - 3.2) < 1e-12 and round(sam["eF"], 2) == 9.73 and round(sam["mF"], 2) == 0.33 and sam["fyThen"] == 2023
+    assert abs(sam["perNow"] - 219500 / 25780) < 1e-9 and abs(sam["priceThen"] * 3.2 - 219500) < 1e-6    # 상자 밑 근거 수치
+
+
+def test_decomposition_says_missing_and_loss_apart():
+    got = run("""const b = { r36: 20, shm: 100, eps: 1000, ni: [3, 2, 1000], price: 10000, fy: 2025 };
+      out = { ok: K.decompose(b), noR36: K.decompose({ ...b, r36: null }), noEps: K.decompose({ ...b, eps: null }), short: K.decompose({ ...b, ni: [1, 2] }),
+        noThen: K.decompose({ ...b, ni: [1, 2, null] }), lossNow: K.decompose({ ...b, eps: -5 }), lossThen: K.decompose({ ...b, ni: [1, 2, -3] }),
+        noShm: K.decompose({ ...b, shm: null }), none: K.decompose(null) };""")
+    assert got["ok"]["head"] in ("upE", "upM")
+    for k in ("noR36", "noEps", "short", "noThen", "noShm", "none"):
+        assert got[k] == {"why": "missing"}, k                            # 자료가 없을 뿐: '적자인 해가 있어서'가 아니에요
+    assert got["lossNow"] == {"why": "loss"} and got["lossThen"] == {"why": "loss"}
+
 
 
 # ── 근거 수치 · 띠 · 지도 ──
@@ -304,6 +389,37 @@ def test_disclosure_rows_for_one_company():
     assert got["us"] is None and got["none"] is None
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
     assert re.search(r"^DISC_DAYS = (\d+)$", src, re.M).group(1) == str(got["days"]) == "90"       # '최근 90일' 은 파이프라인과 같아요
+
+
+def test_disclosure_date_is_the_newest_filing_and_goes_stale():
+    got = run("""const N = Date.parse('2026-11-04T12:00:00+09:00');
+      out = { ok: K.discDate({ asOf: '2026-11-04', newest: '2026-11-03', listOk: true, publishedAt: '2026-11-04T07:30:00+09:00' }, N),
+        failed: K.discDate({ asOf: '2026-11-04', newest: '2026-10-28', listOk: false, publishedAt: '2026-11-04T07:30:00+09:00' }, N),
+        failedToday: K.discDate({ asOf: '2026-11-04', newest: '2026-11-04', listOk: false, publishedAt: '2026-11-04T07:30:00+09:00' }, N),
+        old: K.discDate({ asOf: '2026-10-25', newest: '2026-10-24', listOk: true, publishedAt: '2026-10-25T07:30:00+09:00' }, N),
+        noPub: K.discDate({ asOf: '2026-11-04', newest: '2026-11-03', listOk: true }, N) };""")
+    assert got["ok"] == {"date": "2026-11-03", "stale": False, "days": 0, "listOk": True}             # 실행일(asOf) 말고 가장 최근 공시일
+    assert got["failed"] == {"date": "2026-10-28", "stale": True, "days": 7, "listOk": False}         # 오늘 목록을 못 받음 → 멈춤 표시, 오늘 날짜 아님
+    assert got["failedToday"]["stale"] and got["failedToday"]["days"] == 1
+    assert got["old"]["stale"] and got["old"]["days"] == 10 and got["old"]["date"] == "2026-10-24"      # 발행이 멈춤 (4일 넘게)
+    assert got["noPub"]["stale"]
+
+
+def test_signed_numbers_never_show_minus_zero():
+    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+    tmp = tempfile.mkdtemp()
+    entry = os.path.join(tmp, "f.js")
+    with open(entry, "w", encoding="utf-8") as f:
+        f.write(f"export {{ signedPct }} from {json.dumps(os.path.join(ROOT, 'src/v2/deckcalc.js'))};\n"
+                f"export {{ pctText }} from {json.dumps(os.path.join(ROOT, 'src/v2/cofmt.js'))};\n")
+    r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", "--loader:.js=jsx", "--charset=utf8", f"--outfile={tmp}/f.mjs",
+                        "--log-level=error"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    code = ("import { signedPct, pctText } from './f.mjs';"
+            "console.log(JSON.stringify([signedPct(-0.04), signedPct(0.04), signedPct(-3.21), signedPct(3.2), pctText(-0.04), pctText(-1), pctText(2.25)]));")
+    r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=tmp, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == ["0.0%", "0.0%", "\u22123.2%", "+3.2%", "0.0%", "\u22121.0%", "2.3%"], r.stdout
 
 
 def test_holdings_of_a_stock_across_portfolios():

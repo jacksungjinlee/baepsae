@@ -4,8 +4,9 @@ import { C, fill, nf, p1, mdText, wonText } from "./format.js";
 import { eokText } from "./deckcalc.js";
 
 export const usOf = (s) => !!s && s.cls === "us";
-// The price date of this stock's market: KR pxDate, US usPxDate.
-export const priceMd = (load, s) => mdText(usOf(s) ? load.data.usPxDate || load.data.pxDate : load.data.pxDate);
+// The price date of this stock's market: KR pxDate, US usPxDate (never the Korean date for a US price: none then).
+export const priceDate = (load, s) => (usOf(s) ? load.data.usPxDate || null : load.data.pxDate || null);
+export const priceMd = (load, s) => mdText(priceDate(load, s));
 // The date beside a price: KR "11월 3일 종가" (why.close), US "미국 11월 3일 종가" (pending; before: the approved sentence).
 export function closeLine(load, s) {
   const md = priceMd(load, s);
@@ -20,7 +21,8 @@ export function wonOfUsd(load, usd) {
   return fill(C.app.about, { x: fill(C.app.won, { n: nf(Math.round((usd * fx) / 100) * 100) }) });
 }
 export const timesText = (x, d = 1) => fill(C.pick.receipt.times, { x: nf(x, d) });
-export const pctText = (x) => `${p1(x)}%`;
+// "12.3%", "−3.2%" (U+2212, as everywhere in 2.0), "0.0%" (no sign once rounded to zero).
+export const pctText = (x) => { const r = Math.round(x * 10) / 10; return `${r < 0 ? "\u2212" : ""}${p1(Math.abs(r))}%`; };
 // "2.4만원" / "7,000원": 만원 style with one decimal when needed (so the 1,000원 rounding stays visible).
 export function manWon(won) {
   if (won >= 10000) return fill(C.app.man, { n: nf(won / 10000, won % 10000 ? 1 : 0) });
