@@ -2784,6 +2784,7 @@ def scene_hint(R, files, devices):
 
 # ── v19.1a 회사 페이지 ──
 CO = C["co"]
+MEMO_TEXT = "서비스 매출이 이어지는지 보려고요"
 CO_SEL = '[data-ui-v2="company"], [data-ui-v2="co-not-found"], [data-ui-v2="co-value-more"], [data-ui-v2="co-earn-more"]'
 
 
@@ -3156,15 +3157,16 @@ def scene_company(R, files, width):
         if not (M["title"] and M["add"]):
             assert page.locator('[data-ui-v2="co-memo"]').count() == 0      # 승인 전: 메모 칸 없음
             return
+        R.names = sorted(set(R.names) | {MEMO_TEXT}, key=len, reverse=True)      # 사용자가 쓴 글이에요 (문구 파일 밖)
         page.locator('[data-ui-v2="co-memo"] button', has_text=M["add"]).click()
-        page.locator('[data-ui-v2="co-memo-form"] textarea').fill("  서비스 매출이 이어지는지 보려고요  ")
+        page.locator('[data-ui-v2="co-memo-form"] textarea').fill(f"  {MEMO_TEXT}  ")
         page.locator('[data-ui-v2="co-memo-form"] button', has_text=C["plan"]["save"]).click()
         page.locator('[data-ui-v2="co-memo-text"]').wait_for(state="visible")
         page.reload(wait_until="domcontentloaded")
         co_wait(page)
-        assert page.locator('[data-ui-v2="co-memo-text"]').inner_text() == "서비스 매출이 이어지는지 보려고요"
+        assert page.locator('[data-ui-v2="co-memo-text"]').inner_text() == MEMO_TEXT
         stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")
-        assert stored["notes"]["AAPL"]["text"] == "서비스 매출이 이어지는지 보려고요" and len(stored["decks"]) == 1, stored
+        assert stored["notes"]["AAPL"]["text"] == MEMO_TEXT and len(stored["decks"]) == 1, stored
         R.collect(page)
     R.check(page, S, "내 메모: 남기기 → 새로 고침해도 남아요 (2.0 기록에 저장)", memo)
     ctx.close()

@@ -296,7 +296,7 @@ function Fit({ load, s, store, wide }) {
         <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{F.title}</h3>
       </div>
       <div style={{ marginTop: SPACE(2) }}>{mine.ids.map((id) => <RankRow key={id} id={id} r={m.get(id)} />)}</div>
-      {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).join(" ")}</Note>}
+      {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
           <Button kind="secondary" onClick={() => setOpen(true)}>{F.all}</Button>

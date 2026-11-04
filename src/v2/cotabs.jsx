@@ -508,7 +508,7 @@ export function DivTab({ load, s }) {
         <Card data-ui-v2="co-million" data-won={per1m} data-y={r.yieldPct}>
           <CardHead icon="coins" tone="div" title={Dv.million} />
           <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={fill(Dv.perYear, { x: manWon(per1m) })} /></div>
-          <Note>{[basis, Dv.noPromise].filter(Boolean).join(" ")}</Note>
+          <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
         </Card>
       )}
