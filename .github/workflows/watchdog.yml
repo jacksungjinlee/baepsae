@@ -3,13 +3,15 @@ name: Watchdog
 # (data-alert)를 열거나 댓글을 달고, 이 실행이 빨갛게 끝나요. 정상이면 열린 경보를 '정상화됐어요'로 닫아요.
 # 정상일 때마다 healthchecks.io 에 알려요 (비밀 값 HC_PING_URL). GitHub Actions 가 통째로 멈추면 healthchecks.io 가 Jack 에게 메일을 보내요.
 #
-# 언제: 평일 16:37 KST · 시세 데이터 갱신 / Deploy 가 main 에서 끝난 뒤 (10분 기다렸다가) · 손으로.
+# 언제: 매일 16:37 KST · 시세 데이터 갱신 / Deploy 가 main 에서 끝난 뒤 (10분 기다렸다가) · 손으로.
 # 매달 1일에는 정해진 시각 실행 두 개(시세 데이터 갱신 · Watchdog)를 GitHub API 로 다시 켜요 (60일 동안 저장소 활동이 없으면
 # GitHub 이 꺼요 — 커밋하지 않고 켜요).
 
 on:
   schedule:
-    - cron: "37 7 * * 1-5"     # 16:37 KST 평일 (그날 실행이 늦어도 끝났을 때 · 정각·30분은 GitHub 이 붐벼서 피해요)
+    # 16:37 KST 매일 (그날 실행이 늦어도 끝났을 때 · 정각·30분은 GitHub 이 붐벼서 피해요). 주말에도 돌아야 healthchecks.io 가
+    # 하루 넘게 소식이 없다고 잘못 알리지 않아요 (주말의 기대 가격 날짜는 금요일이라 통과해요).
+    - cron: "37 7 * * *"
     - cron: "19 3 1 * *"       # 매달 1일 12:19 KST: 다시 켜기만 (keepalive job)
   workflow_run:
     workflows: ["시세 데이터 갱신", "Deploy"]

@@ -127,6 +127,20 @@ def test_push_never_forces():
     assert "--force" not in text and "-f " not in text and "|| true" not in text
 
 
+def test_a_branch_merely_ending_in_data_is_not_the_data_branch(repo):
+    """원격에 claude/x/data 만 있으면 data 브랜치는 없는 거예요 → 새로 만들어요 (그 브랜치 위에 쌓지 않아요)."""
+    work, origin, rec = repo
+    git(work, "push", "-q", "origin", "main:refs/heads/claude/x/data")
+    write_data(work, 3)
+    receipt(work, rec)
+    r = push(work, rec)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "처음 만들어요" in r.stdout
+    tip = data_tip(origin)
+    assert tip and git(origin, "rev-list", "--count", tip) == "1"
+    assert git(origin, "rev-parse", "refs/heads/claude/x/data") == git(work, "rev-parse", "main")    # 그 브랜치는 그대로
+
+
 def test_a_remote_that_cannot_be_asked_stops_the_push(repo, tmp_path):
     work, origin, rec = repo
     write_data(work, 1)
@@ -209,13 +223,15 @@ class Done:
         self.returncode, self.stdout = rc, out
 
 
-def fake_git(ls_rc, show=None, fail_show=False):
+def fake_git(heads=("data",), ls_rc=0, show=None, fail_show=False):
+    """heads: 원격에 있는 브랜치 이름들 (ls-remote 는 끝부분을 맞추니 'x/data' 도 나와요)."""
     seen = []
 
     def run(cmd, **kw):
         seen.append(cmd)
         if cmd[:2] == ["git", "ls-remote"]:
-            return Done(ls_rc)
+            out = "".join(f"{'a' * 40}\trefs/heads/{h}\n" for h in heads if h == "data" or h.endswith("/data"))
+            return Done(ls_rc, out.encode())
         if cmd[:2] == ["git", "show"]:
             if fail_show:
                 raise subprocess.CalledProcessError(128, cmd)
@@ -226,9 +242,9 @@ def fake_git(ls_rc, show=None, fail_show=False):
 
 
 def test_already_published_reads_the_data_branch():
-    run = fake_git(0, {"pxDate": "2026-11-04", "usPxDate": "2026-11-04"})
+    run = fake_git(("data",), show={"pxDate": "2026-11-04", "usPxDate": "2026-11-04"})
     assert A.read_published(run) == {"pxDate": "2026-11-04", "usPxDate": "2026-11-04"}
-    assert run.seen[0] == ["git", "ls-remote", "--exit-code", "--heads", "origin", "data"]
+    assert run.seen[0] == ["git", "ls-remote", "origin", "refs/heads/data"]
     assert ["git", "fetch", "--depth=1", "origin", "+refs/heads/data:refs/remotes/origin/data"] in run.seen
     assert run.seen[-1] == ["git", "show", "origin/data:data.json"]
     assert A.main.__defaults__[1] is A.read_published                         # 정해진 시각 실행이 쓰는 기본값
@@ -236,7 +252,8 @@ def test_already_published_reads_the_data_branch():
 
 def test_already_published_falls_back_to_main_only_when_the_branch_is_missing(monkeypatch, capsys):
     monkeypatch.setattr(A, "read_main", lambda: {"pxDate": "2026-11-03"})
-    assert A.read_published(fake_git(2)) == {"pxDate": "2026-11-03"}
+    assert A.read_published(fake_git(())) == {"pxDate": "2026-11-03"}
     assert "data 브랜치가 아직 없어요" in capsys.readouterr().out
-    assert A.read_published(fake_git(128)) is None                            # 물어보지 못하면 '발행 안 됨' (= 실행)
-    assert A.read_published(fake_git(0, fail_show=True)) is None
+    assert A.read_published(fake_git(("claude/data",))) == {"pxDate": "2026-11-03"}   # 다른 브랜치의 '…/data' 는 data 가 아니에요
+    assert A.read_published(fake_git(ls_rc=128)) is None                     # 물어보지 못하면 '발행 안 됨' (= 실행)
+    assert A.read_published(fake_git(fail_show=True)) is None

@@ -49,8 +49,10 @@ Actions" (Jack's click, after the `data` branch exists and one manual Deploy was
 spec's "manual only", explained in the PR. `ci` is green on the PR (run 41875398590, 6 min 42 s) and went red on the
 deliberately broken test PR #35 (closed; its branch `claude/v17.6-ci-proof` still needs deleting — the session's git proxy
 refused). Branch dry run 41872130591 (`dart=off`): only the DART rows failed, as expected. One existing test changed and
-needs Jack's OK: `tests/smoke_v2.py` waits up to 3 s for the PC search box to empty (a CI timing race). **Before asking
-Jack to merge:** one green `dry_run=true`, `dart=cache` run on the branch after 08:30 KST, and the fresh-eyes review.
+needs Jack's OK: `tests/smoke_v2.py` waits up to 3 s for the PC search box to empty (a CI timing race). Fresh-eyes
+review done (no blocker; five fixes: daily watchdog for healthchecks.io, live `data.json` = published copy, no-op
+deploys skipped in the run check, exact `refs/heads/data`, `/fail` ping before the issue and a stripped ping URL).
+**Before asking Jack to merge:** one green `dry_run=true`, `dart=cache` run on the branch after 08:30 KST.
 After the merge: the steps in PR #34 (first live run creates `data`, watchdog selftest, manual Deploy, Jack's
 healthchecks.io + Pages clicks), then 3b, then 3c. The 09:13 check needs no change until 3b (it keys on the step
 `커밋 & 푸시`, unchanged).

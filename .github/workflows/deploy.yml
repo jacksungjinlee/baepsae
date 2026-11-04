@@ -111,7 +111,9 @@ jobs:
 
       - name: data 브랜치의 데이터 받기
         run: |
-          if ! git ls-remote --exit-code --heads origin data >/dev/null; then
+          # 정확히 refs/heads/data 만 봐요 (ls-remote 의 이름 맞추기는 끝부분이라 refs/heads/누구/data 도 걸려요)
+          tip=$(git ls-remote origin refs/heads/data | awk '$2 == "refs/heads/data" { print $1 }')
+          if [ -z "$tip" ]; then
             echo "!! data 브랜치가 없어요. 매일 실행이 처음 발행할 때 만들어요 (docs/RUNBOOK.md). 그때까지 배포하지 않아요."
             exit 1
           fi

@@ -19,6 +19,8 @@
 4. 페이지: baepsae.html · app.html · styleguide.html 이 200 이고 같은 빌드. Actions 배포면 빌드 표시
    (<meta name="baepsae-build">)가 main 의 커밋과 같아야 하고, 브랜치 배포면 페이지가 main 의 파일과 한 글자도 같아야 해요
    (main 이 바뀐 지 45분 안이거나 배포가 돌고 있으면 기다려요).
+5. 사이트의 data.json 이 발행본과 한 글자도 같아요: 브랜치 배포면 main 의 것, Actions 배포면 data 브랜치 끝의 것
+   (그 끝이 바뀐 지 45분 안이면 기다려요). 데이터만 바뀐 날 배포나 Pages 빌드가 실패해도 잡아요.
 """
 import argparse
 import datetime as dt
@@ -218,7 +220,14 @@ def never_started(net, run):
     return all(not j.get("steps") for j in (js or {}).get("jobs", []))
 
 
-def check_runs(rep, net, wf, label):
+def is_noop_deploy(net, run):
+    """Deploy 가 아무것도 올리지 않은 실행 (decide 가 go=false → build 가 건너뜀). 성공으로 끝나지만 배포가 아니에요."""
+    _, js = net.gh("GET", f"/repos/{REPO}/actions/runs/{run['id']}/jobs?per_page=50")
+    jobs = {j.get("name"): j.get("conclusion") for j in (js or {}).get("jobs", [])}
+    return run.get("conclusion") == "success" and jobs.get("build") in (None, "skipped")
+
+
+def check_runs(rep, net, wf, label, skip_noop=False):
     st, info = net.gh("GET", f"/repos/{REPO}/actions/workflows/{wf}", ok=(200, 404))
     if st == 404:
         rep.skip(f"{label} 실행", f"{wf} 가 아직 main 에 없어요")
@@ -233,18 +242,23 @@ def check_runs(rep, net, wf, label):
         when = kst(parse_time(r.get("run_started_at") or r["created_at"]))
         if c in ("cancelled", "skipped") and never_started(net, r):
             continue
+        if skip_noop and is_noop_deploy(net, r):           # 건너뛴 배포가 그 전의 실패한 배포를 가리지 않게
+            continue
         rep.add(f"{label} 마지막 실행", c == "success", f"{c} · {when} · {r.get('event')} · {r.get('html_url')}")
         return r
+    if skip_noop:
+        rep.skip(f"{label} 마지막 실행", "최근 30번 모두 건너뛴 배포예요 (Pages 가 아직 브랜치에서 배포되는 동안은 정상)")
+        return None
     rep.add(f"{label} 마지막 실행", False, "main 에서 끝난 실행을 찾지 못했어요")
     return None
 
 
 # ── 4. 페이지와 빌드 ─────────────────────────────────────────
-def main_file(path):
-    """지금 origin/main 의 파일 (브랜치 배포일 때 사이트와 비교해요)."""
-    subprocess.run(["git", "fetch", "-q", "--depth=1", "origin", "+refs/heads/main:refs/remotes/origin/main"],
+def ref_file(ref, path):
+    """지금 origin 의 그 브랜치(main · data)에 있는 파일 (사이트와 비교해요)."""
+    subprocess.run(["git", "fetch", "-q", "--depth=1", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"],
                    check=True, capture_output=True, timeout=120)
-    return subprocess.run(["git", "show", f"origin/main:{path}"], check=True, capture_output=True, timeout=60).stdout
+    return subprocess.run(["git", "show", f"origin/{ref}:{path}"], check=True, capture_output=True, timeout=60).stdout
 
 
 def deploy_busy(net):
@@ -255,7 +269,8 @@ def deploy_busy(net):
     return False
 
 
-def check_pages(rep, net, now, read_main=main_file):
+def check_pages(rep, net, now, read_ref=ref_file):
+    """페이지와 빌드. 반환: 배포 방식 "actions" · "branch" (페이지를 하나도 못 받으면 None)."""
     pages, tags = {}, {}
     for p in PAGES:
         try:
@@ -269,7 +284,7 @@ def check_pages(rep, net, now, read_main=main_file):
             m = BUILD_RE.search(r.content[:4000].decode("utf-8", "replace"))
             tags[p] = m.group(1) if m else None
     if not pages:
-        return
+        return None
     _, head = net.gh("GET", f"/repos/{REPO}/commits/main")
     head_sha, head_at = head["sha"], parse_time(head["commit"]["committer"]["date"])
     fresh = now - head_at < GRACE
@@ -282,30 +297,55 @@ def check_pages(rep, net, now, read_main=main_file):
         ok = live == head_sha
         if not ok and (fresh or deploy_busy(net)):
             rep.skip("사이트 빌드 = main", wait or f"배포가 돌고 있어요 (사이트 {live[:7]} · main {head_sha[:7]})")
-            return
+            return "actions"
         rep.add("사이트 빌드 = main", ok, f"사이트 {live[:7]} · main {head_sha[:7]} (Actions 배포)")
-        return
+        return "actions"
     diff = []
     for p, body in pages.items():
-        want = read_main(p)
+        want = read_ref("main", p)
         if hashlib.sha256(body).digest() != hashlib.sha256(want).digest():
             diff.append(p)
     if diff and fresh:
         rep.skip("사이트 페이지 = main", f"{', '.join(diff)} 다름 — {wait}")
-        return
+        return "branch"
     rep.add("사이트 페이지 = main", not diff,
             "모두 같음 (브랜치 배포)" if not diff else f"다름: {', '.join(diff)} — Pages 가 예전 빌드를 보여 줘요 (main {head_sha[:7]})")
+    return "branch"
+
+
+def check_live_data(rep, net, now, live_sha, mode, read_ref=ref_file):
+    """사이트의 data.json = 발행본 (브랜치 배포: main · Actions 배포: data 브랜치 끝). 발행본이 바뀐 지 45분 안이면 기다려요."""
+    name = "사이트 data.json = 발행본"
+    if live_sha is None or mode is None:
+        rep.skip(name, "사이트의 data.json 이나 페이지를 받지 못해 비교하지 않아요 (위 줄에서 실패로 잡아요)")
+        return
+    ref = "data" if mode == "actions" else "main"
+    st, tip = net.gh("GET", f"/repos/{REPO}/commits/{ref}", ok=(200, 404, 422))
+    if st != 200:
+        rep.add(name, False, f"{ref} 브랜치가 없어요 — 사이트가 어디의 데이터를 보여 주는지 알 수 없어요")
+        return
+    tip_sha, tip_at = tip["sha"], parse_time(tip["commit"]["committer"]["date"])
+    want = hashlib.sha256(read_ref(ref, "data.json")).hexdigest()
+    ok = live_sha == want
+    if not ok and (now - tip_at < GRACE or (mode == "actions" and deploy_busy(net))):
+        rep.skip(name, f"{ref} 가 {int((now - tip_at).total_seconds() // 60)}분 전에 바뀌어 배포를 기다려요")
+        return
+    rep.add(name, ok, f"같음 ({ref} {tip_sha[:7]})" if ok else
+            f"다름: 사이트 {live_sha[:12]} · {ref} {tip_sha[:7]} 의 것 {want[:12]} — 배포나 Pages 빌드가 실패했거나 예전 파일이에요")
 
 
 # ── 점검 전체 ───────────────────────────────────────────────
-def run_all(net, now, selftest="none", gate=run_live_gate, expect=expected_px, read_main=main_file):
+def run_all(net, now, selftest="none", gate=run_live_gate, expect=expected_px, read_ref=ref_file):
     rep, ctx = Report(), {"gate_md": "", "px": None, "files_ok": True}
+    live_sha = None
     with tempfile.TemporaryDirectory(prefix="baepsae-live-") as d:
         bad = fetch_live(net, d, now)
         if bad:
             rep.add("사이트 데이터 파일 받기", False, " · ".join(bad))
             ctx["files_ok"] = False
         else:
+            with open(os.path.join(d, "data.json"), "rb") as fh:
+                live_sha = hashlib.sha256(fh.read()).hexdigest()       # 받은 그대로 (시험으로 망가뜨리기 전)
             if selftest == "broken":
                 break_for_selftest(d)
                 print("!! 시험: 받은 data.json 에서 필수 종목을 뺐어요 (경보가 열려야 해요)", flush=True)
@@ -324,15 +364,20 @@ def run_all(net, now, selftest="none", gate=run_live_gate, expect=expected_px, r
         check_stale(rep, ctx["px"], now, expect)
     else:
         rep.add("낡은 가격 (15:30 KST 이후)", False, "사이트의 pxDate 를 읽지 못했어요")
-    for wf, label in ((DATA_WF, DATA_NAME), (DEPLOY_WF, DEPLOY_NAME)):
+    for wf, label, noop in ((DATA_WF, DATA_NAME, False), (DEPLOY_WF, DEPLOY_NAME, True)):
         try:
-            check_runs(rep, net, wf, label)
+            check_runs(rep, net, wf, label, skip_noop=noop)
         except Exception as e:
             rep.add(f"{label} 실행", False, f"확인하지 못했어요: {str(e)[:150]}")
+    mode = None
     try:
-        check_pages(rep, net, now, read_main)
+        mode = check_pages(rep, net, now, read_ref)
     except Exception as e:
         rep.add("사이트 빌드", False, f"확인하지 못했어요: {str(e)[:150]}")
+    try:
+        check_live_data(rep, net, now, live_sha, mode, read_ref)
+    except Exception as e:
+        rep.add("사이트 data.json = 발행본", False, f"확인하지 못했어요: {str(e)[:150]}")
     return rep, ctx
 
 
@@ -429,6 +474,7 @@ def clear_alerts(net, ctx, now, run_url):
 
 def ping(net, url, fail=False):
     """healthchecks.io: 정상이면 그 주소, 문제면 /fail. 주소가 없으면 경고만 (감시가 멈추면 알려 줄 곳이 없다는 뜻이에요)."""
+    url = (url or "").strip()                        # 붙여 넣을 때 따라온 줄바꿈 · 빈칸은 빼요
     if not url:
         print("::warning title=healthchecks.io 없음::HC_PING_URL 비밀 값이 없어요. 감시 자체가 멈추면 알려 줄 곳이 없어요 (docs/RUNBOOK.md).",
               flush=True)
@@ -501,11 +547,13 @@ def main(argv=None, net=None, now=None, **kw):
         print(f"::error title=뱁새 감시::{V._gh_escape(f'{n}: {d}')}", flush=True)
     if a.dry:
         return 1 if bad else 0
-    hc = os.environ.get("HC_PING_URL", "")
+    hc = os.environ.get("HC_PING_URL", "").strip()
     if bad:
-        raise_alert(net, rep, ctx, now, run_url, a.selftest)
-        if a.selftest == "none":            # 시험 경보로 Jack 에게 메일을 보내지 않아요
-            ping(net, hc, fail=True)
+        try:
+            raise_alert(net, rep, ctx, now, run_url, a.selftest)
+        finally:                            # 이슈를 못 열어도(GitHub 장애) healthchecks.io 는 알아요
+            if a.selftest == "none":        # 시험 경보로 Jack 에게 메일을 보내지 않아요
+                ping(net, hc, fail=True)
         return 1
     clear_alerts(net, ctx, now, run_url)
     ping(net, hc)

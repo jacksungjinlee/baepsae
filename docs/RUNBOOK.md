@@ -6,14 +6,14 @@ One page for Jack. Claude Code does every step below for you; this page says wha
 
 | What | When | What it tells you |
 |---|---|---|
-| **Watchdog** (GitHub Actions, `watchdog.yml`) | Weekdays 16:37 KST, and 10 minutes after every data run or deploy | Opens one GitHub issue named **뱁새 데이터 경보** (label `data-alert`) and mentions you, so GitHub emails you. It comments on the same issue while the problem lasts and closes it with **정상화됐어요** when the site is healthy again. |
+| **Watchdog** (GitHub Actions, `watchdog.yml`) | Every day at 16:37 KST (weekends too), and 10 minutes after every data run or deploy | Opens one GitHub issue named **뱁새 데이터 경보** (label `data-alert`) and mentions you, so GitHub emails you. It comments on the same issue while the problem lasts and closes it with **정상화됐어요** when the site is healthy again. |
 | **healthchecks.io** (outside GitHub) | Expects a "still alive" ping from the watchdog at least once a day (6 hours grace) | Emails you if the pings stop, which means GitHub Actions itself stopped running and nothing else could warn you. It also emails when the watchdog reports a problem. |
 | **09:13 KST check** (Claude scheduled task, Tue–Sat) | Every morning | Says whether the morning data is in and lists any warnings from the publication gate. |
 
 What the watchdog checks, on the files users actually download: the four data files pass `validate_data.py --live`; after
 15:30 KST, the Korean price date is the last finished trading day (checked against KRX's final listing and Yahoo's KOSPI,
 both separate from our pipeline); the last daily run and the last deploy succeeded; the daily run is still switched on;
-the pages users get are the current build.
+the pages users get are the current build, and the site's `data.json` is exactly the published copy.
 
 ## What an alert means
 

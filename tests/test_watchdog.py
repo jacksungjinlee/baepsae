@@ -39,21 +39,25 @@ class FakeNet:
 
     def __init__(self, px="2026-11-04", tag=HEAD, head=HEAD, head_at="2026-11-05T00:00:00Z", data_runs=None,
                  deploy_runs=None, deploy_exists=True, state="active", issues=(), files_status=200, pages_mode="workflow",
-                 jobs=None, busy=0):
+                 jobs=None, busy=0, data_tip_at="2026-11-05T00:00:00Z", data_branch=True):
         self.px, self.tag, self.head, self.head_at = px, tag, head, head_at
+        self.data_bytes = json.dumps({"pxDate": px, "stocks": [{"t": "005930"}]}).encode()
+        self.data_tip_at, self.data_branch = data_tip_at, data_branch
         self.data_runs = data_runs if data_runs is not None else [run(1, "success")]
         self.deploy_runs = deploy_runs if deploy_runs is not None else [run(2, "success")]
         self.deploy_exists, self.state, self.files_status = deploy_exists, state, files_status
         self.issues = [dict(i) for i in issues]
-        self.pages_mode, self.jobs, self.busy = pages_mode, jobs or {}, busy
+        real_deploy = [{"name": "decide", "conclusion": "success", "steps": [{"name": "x"}]},
+                       {"name": "build", "conclusion": "success", "steps": [{"name": "x"}]},
+                       {"name": "deploy", "conclusion": "success", "steps": [{"name": "x"}]}]
+        self.pages_mode, self.jobs, self.busy = pages_mode, {2: real_deploy, **(jobs or {})}, busy
         self.calls, self.urls, self.next_issue = [], [], 50
 
     def get(self, url, timeout=30):
         self.urls.append(url)
         name = url.split("?")[0].rsplit("/", 1)[-1]
         if name in W.V.FILES:
-            body = {"pxDate": self.px, "stocks": [{"t": "005930"}]} if name == "data.json" else {}
-            return Resp(self.files_status, json.dumps(body).encode())
+            return Resp(self.files_status, self.data_bytes if name == "data.json" else b"{}")
         if name in W.PAGES:
             return Resp(200, page(self.tag))
         if "hc-ping" in url:
@@ -86,6 +90,10 @@ class FakeNet:
             return 200, {"jobs": self.jobs.get(rid, [{"name": "update", "steps": [{"name": "x", "conclusion": "success"}]}])}
         if method == "GET" and p.endswith("/commits/main"):
             return 200, {"sha": self.head, "commit": {"committer": {"date": self.head_at}}}
+        if method == "GET" and p.endswith("/commits/data"):
+            if not self.data_branch:
+                return 422, None
+            return 200, {"sha": "d" * 40, "commit": {"committer": {"date": self.data_tip_at}}}
         if method == "GET" and p.endswith("/pages"):
             return 200, {"build_type": self.pages_mode}
         if method == "GET" and p.endswith("/issues"):
@@ -125,13 +133,26 @@ def expect(want):
     return lambda today: (want, "시험 달력")
 
 
-def go(net, now, argv=(), gate=ok_gate, want=D(2026, 11, 4), read_main=lambda p: page(None), env=None, monkeypatch=None):
+def published(net, data=None, html=None):
+    """발행본 읽기 흉내: data.json 은 (주지 않으면) 사이트와 같은 바이트, 페이지는 빌드 표시 없는 main 의 것. 읽은 곳을 남겨요."""
+    seen = []
+
+    def read(ref, path):
+        seen.append((ref, path))
+        if path == "data.json":
+            return net.data_bytes if data is None else data
+        return page(None) if html is None else html
+    read.seen = seen
+    return read
+
+
+def go(net, now, argv=(), gate=ok_gate, want=D(2026, 11, 4), read_ref=None, env=None, monkeypatch=None):
     for k in ("GITHUB_STEP_SUMMARY", "GITHUB_OUTPUT", "GITHUB_RUN_ID"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HC_PING_URL", "https://hc-ping.com/xyz")
     for k, v in (env or {}).items():
         monkeypatch.setenv(k, v)
-    return W.main(list(argv), net=net, now=now, gate=gate, expect=expect(want), read_main=read_main)
+    return W.main(list(argv), net=net, now=now, gate=gate, expect=expect(want), read_ref=read_ref or published(net))
 
 
 AFTER = kst(2026, 11, 5, 16, 37)
@@ -274,9 +295,9 @@ def test_actions_build_tag_must_match_main(monkeypatch):
 
 
 def test_branch_deploy_pages_must_equal_main_files(monkeypatch):
-    assert go(FakeNet(tag=None), AFTER, read_main=lambda p: page(None), monkeypatch=monkeypatch) == 0
+    assert go(FakeNet(tag=None), AFTER, monkeypatch=monkeypatch) == 0
     net = FakeNet(tag=None, head_at="2026-11-05T01:00:00Z")
-    assert go(net, AFTER, read_main=lambda p: page(None) + b"new", monkeypatch=monkeypatch) == 1
+    assert go(net, AFTER, read_ref=published(net, html=page(None) + b"new"), monkeypatch=monkeypatch) == 1
     assert "Pages 가 예전 빌드" in net.issues[-1]["body"]
 
 
@@ -287,7 +308,7 @@ def test_pages_with_different_builds_are_a_problem():
                 return Resp(200, page(OLD))
             return super().get(url, timeout)
     rep = W.Report()
-    W.check_pages(rep, Mixed(), AFTER)
+    W.check_pages(rep, Mixed(), AFTER, read_ref=lambda ref, p: page(None))
     assert any(r[0] == "페이지 빌드가 모두 같음" for r in rep.problems)
 
 
@@ -334,3 +355,67 @@ def test_watchdog_uses_the_gate_in_live_mode(tmp_path):
     ok, md, fails = W.run_live_gate(str(tmp_path), run=fake_run)
     assert seen["cmd"][1].endswith("validate_data.py") and seen["cmd"][2:] == ["--live", "--dir", str(tmp_path)]
     assert ok is False and md == "표" and fails == ["필수 종목 (가격·시총): 없음"]
+
+
+# ── 사이트의 data.json = 발행본 (리뷰 2026-11-05) ──
+def test_live_data_must_equal_the_published_copy(monkeypatch):
+    # Actions 배포: data 브랜치 끝과 비교해요
+    net = FakeNet(tag=HEAD)
+    read = published(net)
+    assert go(net, AFTER, read_ref=read, monkeypatch=monkeypatch) == 0 and ("data", "data.json") in read.seen
+    net = FakeNet(tag=HEAD, data_tip_at="2026-11-05T01:00:00Z")                    # data 가 6시간 전에 바뀌었는데 사이트는 예전 것
+    assert go(net, AFTER, read_ref=published(net, data=b'{"pxDate": "2026-11-05"}'), monkeypatch=monkeypatch) == 1
+    assert "사이트 data.json = 발행본" in net.issues[-1]["body"]
+    fresh = (AFTER - dt.timedelta(minutes=10)).astimezone(dt.timezone.utc).isoformat()
+    net = FakeNet(tag=HEAD, data_tip_at=fresh)                                      # 방금 바뀜: 배포를 기다려요
+    assert go(net, AFTER, read_ref=published(net, data=b"{}"), monkeypatch=monkeypatch) == 0
+    # 브랜치 배포: main 과 비교해요 (데이터만 바뀐 날 Pages 빌드가 실패한 것을 잡아요 — 페이지는 같아요)
+    net = FakeNet(tag=None, head_at="2026-11-05T01:00:00Z")
+    read = published(net, data=b'{"pxDate": "2026-11-05"}')
+    assert go(net, AFTER, read_ref=read, monkeypatch=monkeypatch) == 1 and ("main", "data.json") in read.seen
+    assert not [r for r in read.seen if r[0] == "data"]
+
+
+def test_actions_mode_without_a_data_branch_is_a_problem(monkeypatch):
+    net = FakeNet(tag=HEAD, data_branch=False)
+    assert go(net, AFTER, monkeypatch=monkeypatch) == 1 and "data 브랜치가 없어요" in net.issues[-1]["body"]
+
+
+def test_selftest_compares_the_file_as_downloaded(monkeypatch):
+    net = FakeNet(tag=HEAD)
+    rep, _ = W.run_all(net, AFTER, "broken", gate=bad_gate, expect=expect(D(2026, 11, 4)), read_ref=published(net))
+    assert ("사이트 data.json = 발행본", "PASS") in [(r[0], r[1]) for r in rep.rows]       # 망가뜨리기 전의 바이트로 비교
+
+
+def test_a_skipped_deploy_does_not_hide_an_earlier_failed_one(monkeypatch):
+    noop = [{"name": "decide", "conclusion": "success", "steps": [{"name": "x"}]},
+            {"name": "build", "conclusion": "skipped", "steps": []}, {"name": "deploy", "conclusion": "skipped", "steps": []}]
+    runs = [run(9, "success", "Deploy"), run(8, "failure", "Deploy")]
+    net = FakeNet(deploy_runs=runs, jobs={9: noop})
+    assert go(net, MORNING, monkeypatch=monkeypatch) == 1 and "/runs/8" in net.issues[-1]["body"]
+    # 모두 건너뛴 배포면(브랜치 배포 동안) 실패가 아니에요
+    assert go(FakeNet(tag=None, deploy_runs=[run(9, "success", "Deploy")], jobs={9: noop}), MORNING, monkeypatch=monkeypatch) == 0
+    rep = W.Report()
+    W.check_runs(rep, FakeNet(deploy_runs=[run(9, "success", "Deploy")], jobs={9: noop}), W.DEPLOY_WF, W.DEPLOY_NAME, skip_noop=True)
+    assert rep.rows[-1][1] == "SKIP"
+
+
+# ── healthchecks.io ──
+def test_ping_url_is_stripped(monkeypatch):
+    net = FakeNet()
+    assert W.ping(net, " https://hc-ping.com/xyz\n") is True and net.urls[-1] == "https://hc-ping.com/xyz"
+    net = FakeNet()
+    assert go(net, AFTER, env={"HC_PING_URL": "https://hc-ping.com/xyz\n"}, monkeypatch=monkeypatch) == 0
+    assert net.urls[-1] == "https://hc-ping.com/xyz"
+
+
+def test_fail_ping_is_sent_even_when_github_cannot_open_the_issue(monkeypatch):
+    class Down(FakeNet):
+        def _answer(self, method, path, body):
+            if method == "POST" and path.split("?")[0].endswith("/issues"):
+                return 502, None
+            return super()._answer(method, path, body)
+    net = Down()
+    with pytest.raises(RuntimeError, match="502"):
+        go(net, AFTER, gate=bad_gate, monkeypatch=monkeypatch)
+    assert net.urls[-1] == "https://hc-ping.com/xyz/fail"

@@ -149,6 +149,8 @@ def test_deploy_gates_exactly_what_it_publishes():
     i_up = next(i for i, x in enumerate(n) if x.startswith("actions/upload-pages-artifact"))
     assert i_build < i_site < i_gate < i_up and i_data < i_site and i_up == len(st) - 1
     assert st[i_site]["run"] == "python3 tools/assemble_site.py _site origin/data"
+    data_step = st[i_data]["run"]
+    assert '$2 == "refs/heads/data"' in data_step and "--heads" not in data_step              # 정확히 data 브랜치만
     assert st[i_gate]["run"].splitlines()[0] == "python validate_data.py --live --dir _site"
     assert st[i_up]["with"]["path"] == "_site"
     assert "npm ci" in st[n.index("라이브러리 설치 (package-lock.json · requirements.txt 그대로)")]["run"]
@@ -214,9 +216,10 @@ def test_watchdog_triggers_permissions_and_keepalive():
     wf = load("watchdog.yml")
     on = wf[True]
     crons = [c["cron"] for c in on["schedule"]]
-    daily = next(c for c in crons if c.endswith("* * 1-5"))
+    daily = next(c for c in crons if c.split()[2:] == ["*", "*", "*"])                    # 주말 포함 매일 (healthchecks.io 1일 주기)
     m, h = (int(x) for x in daily.split()[:2])
-    assert 15 * 60 + 30 < ((h * 60 + m + 9 * 60) % (24 * 60)) < 18 * 60 and m not in (0, 30)   # 평일 15:30 KST 뒤
+    assert 15 * 60 + 30 < ((h * 60 + m + 9 * 60) % (24 * 60)) < 18 * 60 and m not in (0, 30)   # 15:30 KST 뒤
+    assert len(crons) == 2
     monthly = next(c for c in crons if c.split()[2:] == ["1", "*", "*"])
     assert on["workflow_run"] == {"workflows": ["시세 데이터 갱신", "Deploy"], "types": ["completed"], "branches": ["main"]}
     assert on["workflow_dispatch"]["inputs"]["selftest"]["default"] == "none"

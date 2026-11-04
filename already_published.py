@@ -174,17 +174,20 @@ DATA_BRANCH = "data"
 def read_published(run=None):
     """발행본 data.json: data 브랜치(v17.6)에서. 그 브랜치가 아직 없을 때만 main 에서 (크게 남겨요). 못 읽으면 None (= 실행)."""
     run = run or subprocess.run
+    ref = f"refs/heads/{DATA_BRANCH}"
     try:
-        r = run(["git", "ls-remote", "--exit-code", "--heads", "origin", DATA_BRANCH], capture_output=True, timeout=60)
+        r = run(["git", "ls-remote", "origin", ref], capture_output=True, timeout=60)
     except Exception as e:
         print(f"!! data 브랜치를 확인하지 못했어요 ({type(e).__name__}) → 발행 안 됨으로 봐요", flush=True)
         return None
-    if r.returncode == 2:                    # 원격에 그 브랜치가 없어요 (git ls-remote --exit-code 의 약속)
-        print("!! data 브랜치가 아직 없어요 (v17.6 의 첫 발행 전) → main 의 data.json 으로 판단해요", flush=True)
-        return read_main()
     if r.returncode != 0:
         print(f"!! data 브랜치를 확인하지 못했어요 (git ls-remote 종료 코드 {r.returncode}) → 발행 안 됨으로 봐요", flush=True)
         return None
+    # 정확히 refs/heads/data 만 (ls-remote 의 이름 맞추기는 끝부분이라 refs/heads/누구/data 도 걸려요)
+    lines = (r.stdout or b"").decode("utf-8", "replace").splitlines()
+    if not any(ln.split("\t")[-1].strip() == ref for ln in lines):
+        print("!! data 브랜치가 아직 없어요 (v17.6 의 첫 발행 전) → main 의 data.json 으로 판단해요", flush=True)
+        return read_main()
     try:
         run(["git", "fetch", "--depth=1", "origin", f"+refs/heads/{DATA_BRANCH}:refs/remotes/origin/{DATA_BRANCH}"],
             check=True, capture_output=True, timeout=120)

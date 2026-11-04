@@ -30,21 +30,20 @@ if ! sha256sum --quiet --strict -c "$RECEIPT"; then
   exit 1
 fi
 
-set +e
-git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null
-rc=$?
-set -e
+# 정확히 refs/heads/data 만 봐요 (ls-remote 의 이름 맞추기는 끝부분이라 refs/heads/누구/data 도 걸려요)
+if ! refs=$(git ls-remote "$REMOTE" "refs/heads/$BRANCH"); then
+  echo "!! 원격 저장소에서 data 브랜치를 확인하지 못했어요 (git ls-remote 실패) → 올리지 않아요"
+  exit 1
+fi
+remote_tip=$(printf '%s\n' "$refs" | awk -v r="refs/heads/$BRANCH" '$2 == r { print $1 }')
 parent=""
-if [ "$rc" -eq 0 ]; then
+if [ -n "$remote_tip" ]; then
   git fetch -q --depth=1 "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH"
   parent=$(git rev-parse "refs/remotes/$REMOTE/$BRANCH^{commit}")
   echo "· data 브랜치 끝: ${parent:0:7}"
-elif [ "$rc" -eq 2 ]; then
+else
   echo "!! data 브랜치가 아직 없어요 → 이 실행이 처음 만들어요 (관문을 통과한 네 파일만 담아요)"
   echo "::notice title=data 브랜치 처음 만듦::관문을 통과한 네 파일로 data 브랜치를 처음 만들어요 (v17.6). 사이트 배포가 여기서 데이터를 가져가요."
-else
-  echo "!! 원격 저장소에서 data 브랜치를 확인하지 못했어요 (git ls-remote 종료 코드 $rc) → 올리지 않아요"
-  exit 1
 fi
 
 entries=""
