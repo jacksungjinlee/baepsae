@@ -191,7 +191,7 @@ export function EarnTab({ load, s, onMore }) {
       </Card>
       <GrowthVs load={load} s={s} co={co} />
       <Decomp co={co} />
-      {rows && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
+      {rows && E.moreTitle && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
     </div>
   );
 }
@@ -303,7 +303,7 @@ function Dcf({ load, s, co, a, onTry }) {
           <Note>{fill(D.note, { d: nf(a.disc, a.disc % 1 ? 1 : 0), t: nf(a.term, a.term % 1 ? 1 : 0) })}</Note>
         </>
       ) : <Note>{msg}</Note>}
-      {D.try && onTry && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={onTry}>{D.try}</Button></div>}
+      {D.try && onTry && C.co.valueMore.title && C.co.calc.title && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={onTry}>{D.try}</Button></div>}
     </Card>
   );
 }
@@ -338,7 +338,7 @@ export function ValueTab({ load, s, store, onMore }) {
           {C.co.risk.noBand && <Note>{C.co.risk.noBand}</Note>}
         </Card>
       )}
-      <MoreLink id="co-value-more" label={V.more} onClick={onMore} />
+      {C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
     </div>
   );
 }

@@ -104,9 +104,12 @@ export function PopularLists({ load, plain = false, tapper }) {
   );
 }
 
-// q: the PC top bar's search words (null on the phone, where this screen has its own field).
-export function Stocks({ load, store, pad, q: topQ = null }) {
-  const [ownQ, setQ] = useState("");
+// q: the PC top bar's search words (null on the phone, where this screen has its own field). ownQ / setOwnQ: the phone
+// field's words, kept by the app shell (v19.1a: a company page and back keep them); without them the field keeps its own.
+export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ }) {
+  const [localQ, setLocalQ] = useState("");
+  const ownQ = setOwnQ ? shellQ || "" : localQ;
+  const setQ = setOwnQ || setLocalQ;
   const top = topQ != null;
   const q = top ? topQ : ownQ;
   const tp = useStockTap();

@@ -45,9 +45,11 @@ import datetime as dt
 import functools
 import http.server
 import json
+import math
 import os
 import re
 import shutil
+import statistics
 import sys
 import tempfile
 import threading
@@ -61,8 +63,11 @@ from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_t
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
+with open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8") as _f:      # 회사 표시의 열 가지 색 (v19.1a Part G)
+    MARK_COLORS = re.findall(r'"(#[0-9A-F]{6})"', _f.read().split("export const MARK_COLORS = [", 1)[1].split("]", 1)[0])
+assert len(MARK_COLORS) == 10, MARK_COLORS
 SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]
-DATA_FILES = ["data.json", "corp.json", "macro.json"]
+DATA_FILES = ["data.json", "corp.json", "macro.json", "disc.json"]         # disc.json: v19.1a 공시 탭 (지어낸 시험용)
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
 WHOLE_BAD = re.compile(r"(?<![A-Za-z])(nan|NaN|None|null|undefined)(?![A-Za-z])")   # \b 는 'NaN원'을 놓쳐요
@@ -2156,8 +2161,8 @@ def scene_market(R, files, width):
 
 
 def scene_stocks(R, files, width):
-    """종목: 찾기 · 최근 본 종목 · 거래대금 상위 종목(한국 · 미국 따로, 날짜) · 한국 회사 → 예전 뱁새의 기업분석(#corp=코드) ·
-    미국 종목 → '기업분석은 한국 상장 기업만 볼 수 있어요.' (그 자리에서, 다른 곳으로 가지 않아요)."""
+    """종목: 찾기 · 최근 본 종목 · 거래대금 상위 종목(한국 · 미국 따로, 날짜) · 한국 · 미국 회사 → 2.0 회사 페이지(v19.1a, 예전에는
+    한국 회사는 예전 뱁새 기업분석, 미국 종목은 '기업분석은 한국 상장 기업만 볼 수 있어요.' 줄) → 뒤로 → 종목."""
     S = f"종목 {width}"
     srv, ctx, page, base = R.open(build_site(files), width, path="/app.html?dev=1#stocks")
 
@@ -2207,28 +2212,30 @@ def scene_stocks(R, files, width):
     R.check(page, S, "찾기: '삼성' → 이름에 삼성이 든 종목 · 없는 이름 → 결과 없음 자리", search)
 
     def us_line():
+        # v19.1a: 미국 종목도 회사 페이지가 있어요 (예전: '기업분석은 한국 상장 기업만 볼 수 있어요.' 줄)
         us = page.locator('[data-ui-v2="popular-list"][data-market="us"] [data-ui-v2="stock-row"]').first
         t = us.get_attribute("data-t")
+        assert us.locator("a").count() == 0 and us.locator("button").get_attribute("aria-expanded") is None
         us.locator("button").click()
-        note = us.locator('[data-ui-v2="kr-only"]')
-        note.wait_for(state="visible")
-        assert note.inner_text().strip() == C["stocks"]["krOnly"] == "기업분석은 한국 상장 기업만 볼 수 있어요.", note.inner_text()
-        assert page.url.endswith("#stocks") and us.locator("a").count() == 0, page.url    # 다른 곳으로 가지 않아요
-        us.locator("button").click()
-        note.wait_for(state="detached")
+        at(page, f"stocks/{t}")
+        page.locator('[data-ui-v2="company"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="company"]').get_attribute("data-cls") == "us" and "/baepsae.html" not in page.url
+        assert page.get_by_text(C["stocks"]["krOnly"]).count() == 0
+        page.go_back()
+        at(page, "stocks")
         R.collect(page)
         keep["us"] = t
     keep = {}
-    R.check(page, S, "미국 종목을 누르면 그 자리에 '기업분석은 한국 상장 기업만 볼 수 있어요.' (다시 누르면 닫혀요)", us_line)
+    R.check(page, S, "미국 종목을 누르면 2.0 회사 페이지 (#stocks/티커) → 뒤로 → 종목", us_line)
 
     def kr_corp():
         row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
         t = row.get_attribute("data-t")
-        link = row.locator("a")
-        assert link.get_attribute("href") == f"./baepsae.html#corp={t}", link.get_attribute("href")
-        with page.expect_navigation():
-            link.click()
-        page.wait_for_function("() => location.pathname.endsWith('/baepsae.html') && location.hash === ''")   # 예전 뱁새가 읽고 지워요
+        assert row.locator("a").count() == 0, "한국 회사 줄이 예전 뱁새로 가는 링크예요"
+        row.locator("button").click()
+        at(page, f"stocks/{t}")                                            # v19.1a: 2.0 회사 페이지 (예전 뱁새 기업분석 아님)
+        page.locator('[data-ui-v2="company"]').wait_for(state="visible")
+        assert "/baepsae.html" not in page.url and page.url.endswith(f"#stocks/{t}"), page.url
         page.go_back()
         at(page, "stocks")
         rec = page.locator('[data-ui-v2="recent"] [data-ui-v2="stock-row"]')
@@ -2240,7 +2247,7 @@ def scene_stocks(R, files, width):
         else:
             assert page.locator('[data-ui-v2="recent"] h3').count() == 0   # 제목은 승인 대기
         R.collect(page)
-    R.check(page, S, "한국 회사 → 예전 뱁새 기업분석(#corp=코드, 읽고 지움) → 뒤로 → 종목 · 최근 본 종목에 남아요", kr_corp)
+    R.check(page, S, "한국 회사 → 2.0 회사 페이지(#stocks/코드, 예전 뱁새 아님) → 뒤로 → 종목 · 최근 본 종목에 남아요", kr_corp)
     ctx.close()
     srv.shutdown()
 
@@ -2775,6 +2782,394 @@ def scene_hint(R, files, devices):
         srv.shutdown()
 
 
+# ── v19.1a 회사 페이지 ──
+CO = C["co"]
+CO_SEL = '[data-ui-v2="company"], [data-ui-v2="co-not-found"], [data-ui-v2="co-value-more"], [data-ui-v2="co-earn-more"]'
+
+
+def js_round(x, d):
+    k = 10 ** d
+    return math.floor(x * k + 0.5) / k
+
+
+def has_group(s):
+    return isinstance(s.get("ind"), str) and bool(s["ind"]) and s["ind"] not in ("etc", "other")
+
+
+def in_universe(s, cls):
+    p = s.get("price")
+    return (s.get("cls") == cls and not s.get("fund") and s.get("etf") is not True and isinstance(p, (int, float)) and p > 0
+            and not (cls == "kr" and not str(s["t"]).endswith("0")))
+
+
+def expect_rules(s, co, stocks):
+    """네 칸 규칙을 파이썬으로 따로 계산해요 (src/v2/company.js 를 믿지 않고, 스펙 Part B 의 표 그대로)."""
+    out = {}
+    if s["cls"] == "us":
+        g = s.get("g3")
+        out["earn"] = "na" if g is None else "up" if g >= 3 else "down" if g <= -3 else "flat"
+    else:
+        op = list((co or {}).get("op") or [])[:3]
+        if len(op) < 3 or any(v is None for v in op):
+            out["earn"] = "na"
+        else:
+            a, b, c = op
+            out["earn"] = "loss" if a < 0 else "up" if a > b > c else "down" if a < b < c else "mixed"
+    grp = [x for x in stocks if in_universe(x, s["cls"]) and has_group(x) and has_group(s) and x["ind"] == s["ind"]]
+    vals = [x["pbr"] for x in grp if isinstance(x.get("pbr"), (int, float)) and x["pbr"] > 0]
+    pbr = s.get("pbr")
+    med = js_round(statistics.median(vals), 2) if len(vals) >= 5 else None
+    if not (isinstance(pbr, (int, float)) and pbr > 0):
+        out["value"] = "na"
+    elif med is None:
+        out["value"] = "few"
+    else:
+        r = pbr / med
+        out["value"] = "cheap" if r <= 0.8 + 1e-9 else "dear" if r >= 1.25 - 1e-9 else "similar"
+    out["med"] = med
+    if s["cls"] == "us":
+        dy = s.get("dy")
+        out["div"] = "na" if dy is None else "none" if dy == 0 else "pays"
+    else:
+        dps, d3 = s.get("dps"), s.get("dps3") or (co or {}).get("dps3")
+        n = 0
+        if dps is None:
+            out["div"] = "na"
+        elif dps == 0:
+            out["div"] = "none"
+        elif not d3 or d3[0] is None or d3[1] is None or d3[0] != dps:
+            out["div"] = "na"
+        elif d3[0] < d3[1]:
+            out["div"] = "cut"
+        else:
+            for i in range(len(d3) - 1):
+                if d3[i] is not None and d3[i + 1] is not None and d3[i] > d3[i + 1]:
+                    n += 1
+                else:
+                    break
+            out["div"] = "streak" if n >= 2 else "raised" if d3[0] > d3[1] * 1.03 + 1e-9 else "steady"
+        out["streak"] = n
+    b = s.get("beta")
+    out["risk"] = "na" if b is None else "big" if b > 1.15 else "small" if b < 0.85 else "similar"
+    return out
+
+
+def tile_copy(topic, rule, us, n=0):
+    T = CO["tiles"]
+    label = T["label"][topic]
+    if rule == "na":
+        phrase = T["na"]
+    elif topic == "earn":
+        phrase = T["earnUs" if us else "earnKr"].get(rule)
+    elif topic == "div" and rule == "streak":
+        phrase = fillp(T["div"]["streak"], n=n) if T["div"]["streak"] else None
+    else:
+        phrase = T[topic].get(rule)
+    return label, phrase
+
+
+def tabs_on(cls):
+    ids = ["summary", "earn", "value", "div"] + (["disc"] if cls == "kr" else [])
+    return bool(CO["tabsLabel"]) and all(CO["tabs"][i] for i in ids)
+
+
+def co_wait(page):
+    page.locator(CO_SEL).first.wait_for(state="visible")
+
+
+def co_hash(page, h):
+    """회사 페이지 안의 탭을 주소로 열어요 (탭 이름이 승인되기 전에는 탭 막대가 없어요). 탭을 누를 때처럼 기록을 쌓지 않아요
+    (location.replace): 뒤로는 회사 페이지를 연 곳으로 가요."""
+    page.evaluate("(h) => { location.replace(h); }", h)
+    page.wait_for_function("(h) => location.hash === h", arg=h)
+    co_wait(page)
+
+
+def co_open_tab(page, code, ctab, cls):
+    if tabs_on(cls):
+        page.locator(f'[data-ui-v2="co-tabs"] [data-tab="{ctab or "summary"}"]').click()
+    else:
+        co_hash(page, f"#stocks/{code}" + (f"/{ctab}" if ctab else ""))
+    page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"company\"]'); return !!e && e.dataset.tab === t; }", arg=ctab or "summary")
+
+
+def marks_ok(page):
+    """회사 표시: 글자 표시(색은 열 가지 중 하나 · 흰 글자 · data-initial)만, 그림 없음 · 바깥 요청 없음 (Part G, 공급처는 Part L 뒤)."""
+    marks = page.locator('[data-ui-v2="co-mark"]')
+    assert marks.count() >= 1
+    assert page.locator('[data-ui-v2="co-mark"] img').count() == 0, "회사 표시에 그림이 있어요 (공급처가 아직 정해지지 않았어요)"
+    got = marks.evaluate_all("""(els) => els.map((e) => { const i = e.querySelector('[data-initial]'); const s = i ? getComputedStyle(i) : null;
+        return [e.dataset.t, i ? i.dataset.initial : '', s ? s.backgroundColor : '', s ? s.color : '', e.getAttribute('aria-hidden')]; })""")
+    allowed = {"rgb(%d, %d, %d)" % tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in MARK_COLORS}
+    for t, letter, bg, fg, hidden in got:
+        assert letter and bg in allowed and fg == "rgb(255, 255, 255)" and hidden == "true", (t, letter, bg, fg, hidden)
+
+
+def no_mascot(page):
+    assert page.locator(MASCOT_IN_MAIN).count() == 0, "회사 화면에 뱁이가 있어요 (숫자가 있는 화면)"
+
+
+def co_files(files):
+    f = clone(files)
+    by = {x["t"]: x for x in f["data.json"]["stocks"]}
+    for t in ("005930", "005380", "AAPL"):
+        by[t]["d1"] = 0.5                                                   # 오늘 큰 움직임 없음 (홈의 줄은 회사 페이지로)
+    return f
+
+
+def scene_company(R, files, width):
+    """v19.1a 회사 페이지 (docs/tasks/v19.1-company-page.md Part K): 종목 탭 · 홈 · 포트폴리오에서 누른 회사는 2.0 회사 페이지로
+    (예전 뱁새로 가지 않아요) · 삼성전자 · 현대차 · AAPL 의 요약과 모든 탭 · 네 칸의 문장 = 규칙(파이썬으로 따로 계산) · 미국은 $ 먼저
+    (원은 작게) · 칸마다 자기 날짜 · 뱁이 없음 · 주제 색은 Part H 표만(visual_ok) · 회사 표시는 글자 표시 · 다른 사이트 요청 0건 ·
+    모르는 코드 → '이 종목의 데이터를 찾지 못했어요.' · 뒤로 → 온 곳 · 펀드는 회사 페이지가 없어요."""
+    S = f"회사 {width}"
+    f = co_files(files)
+    stocks = f["data.json"]["stocks"]
+    by = {x["t"]: x for x in stocks}
+    coby = {x["t"]: x for x in f["corp.json"]["companies"]}
+    md = "10월 30일"
+    store = {"v": 1, "decks": [_deck("dco", "회사 포트폴리오", [(*SAMSUNG, 0.5, [_div(2025, 1668.0, 1446.0)], 2), ("005380", "현대차", 0.5, [], 1)])]}
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    wide = width >= 1024
+    srv, ctx, page, base = R.open(build_site(f), width, init=init, path="/app.html?dev=1#stocks", device=pc_device(width) if wide else None)
+
+    def search(q):
+        box = page.locator('[data-ui-v2="top-search"] input' if wide else '[data-ui-v2="stock-search"] input')
+        box.fill(q)
+        rows = page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"]')
+        rows.first.wait_for(state="visible")
+        return rows
+
+    def open_from_search(q, code):
+        at(page, "stocks")
+        rows = search(q)
+        row = page.locator(f'[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-t="{code}"]')
+        assert row.locator("a").count() == 0, "회사 줄이 예전 뱁새로 가는 링크예요"
+        row.locator("button").click()
+        at(page, f"stocks/{code}")
+        co_wait(page)
+        assert "/baepsae.html" not in page.url and page.url.endswith(f"#stocks/{code}"), page.url
+
+    def back_to(r):
+        page.locator('[data-ui-v2="app-bar"] button').first.click()
+        at(page, r)
+
+    def check_summary(code):
+        s, co = by[code], coby.get(code)
+        us = s["cls"] == "us"
+        head = page.locator('[data-ui-v2="co-head"]')
+        assert head.get_attribute("data-t") == code and page.locator('[data-ui-v2="co-name"]').inner_text() == s["nk"]
+        price = page.locator('[data-ui-v2="co-price"]').inner_text().replace("\n", "")
+        date = page.locator('[data-ui-v2="co-date"]').inner_text()
+        if us:                                                               # 미국: 1주 가격은 $ 먼저, 원은 작게 (Jack 결정 7)
+            assert re.fullmatch(r"\$[\d,]+\.\d\d", price), price
+            won = page.locator('[data-ui-v2="co-won"]').inner_text()
+            assert C["app"]["about"] == "약 {x}" and re.fullmatch(r"약 [\d,]+원", won), won
+            assert date == (fillp(CO["usClose"], md=md) if CO["usClose"] else fillp(C["app"]["usClose"], md=md)), date
+        else:
+            assert re.fullmatch(r"[\d,]+원", price) and page.locator('[data-ui-v2="co-won"]').count() == 0, price
+            assert date == fillp(C["why"]["close"], md=md), date
+        exp = expect_rules(s, co, stocks)
+        tiles = {t.get_attribute("data-topic"): t for t in page.locator('[data-ui-v2="co-tile"]').all()}
+        for topic in ("earn", "value", "div", "risk"):
+            label, phrase = tile_copy(topic, exp[topic], us, exp.get("streak", 0))
+            if not (label and phrase):
+                assert topic not in tiles, (code, topic, "승인 전 문구인데 칸이 보여요")
+                continue
+            t = tiles[topic]
+            assert t.get_attribute("data-rule") == exp[topic], (code, topic, t.get_attribute("data-rule"), exp[topic])
+            assert t.locator('[data-ui-v2="tile-phrase"]').inner_text() == phrase, (code, topic)
+            if topic == "value" and exp["value"] in ("cheap", "dear", "similar"):
+                assert float(t.get_attribute("data-med")) == exp["med"] and float(t.get_attribute("data-pbr")) == s["pbr"]
+            if topic == "risk":
+                assert t.locator('[data-ui-v2="tile-number"]').count() == 0, "베타 숫자가 오차 범위 없이 보여요"
+        if tiles:
+            src = page.locator('[data-ui-v2="co-tiles-source"]').inner_text()
+            if us:
+                assert src == fillp(C["why"]["srcPriceUs"], md=md), src
+            else:
+                assert src == " · ".join(x for x in [fillp(C["app"]["reportYear"], year=co["fy"]) if co and co.get("fy") else None,
+                                                    fillp(C["why"]["close"], md=md)] if x), src
+        warn = page.locator('[data-ui-v2="co-warn"]')
+        if us:
+            assert warn.count() == 0, "미국 종목에 재무 경고 줄 (v19.2 전까지 없어요)"
+        if not tabs_on(s["cls"]):
+            assert page.locator('[data-ui-v2="co-tabs"][data-pending="1"]').count() == 1 and page.locator('[role="tablist"]').count() == 0
+        marks_ok(page)
+        no_mascot(page)
+        no_hscroll(page, width)
+        R.collect(page)
+
+    def check_tabs(code):
+        s, co = by[code], coby.get(code)
+        us = s["cls"] == "us"
+        exp = expect_rules(s, co, stocks)
+        co_open_tab(page, code, "earn", s["cls"])
+        e = page.locator('[data-ui-v2="co-earn"]')
+        assert e.get_attribute("data-cls") == s["cls"] and e.get_attribute("data-rule") == exp["earn"]
+        if us:
+            assert e.locator('[data-ui-v2="bars"]').count() == 0, "미국 실적에 연도별 막대 (v19.2 전까지 없어요)"
+            g = e.locator('[data-ui-v2="co-us-g3"]')
+            assert C["pick"]["receipt"]["growthUs"] in g.inner_text(), g.inner_text()      # 야후의 '최근 분기 · 전년 동기 대비' 그대로
+        else:
+            bars = e.locator('[data-ui-v2="bars"] [data-year]')
+            if bars.count():
+                vals = [float(b.get_attribute("data-v")) for b in bars.all()]
+                assert vals == [co["op"][2], co["op"][1], co["op"][0]] and [b.get_attribute("data-year") for b in bars.all()] == [str(co["fy"] - 2), str(co["fy"] - 1), str(co["fy"])]
+            assert fillp(C["app"]["reportYear"], year=co["fy"]) in e.inner_text()
+        no_mascot(page)
+        no_hscroll(page, width)
+        R.collect(page)
+        co_open_tab(page, code, "value", s["cls"])
+        v = page.locator('[data-ui-v2="co-value"]')
+        assert v.get_attribute("data-rule") == exp["value"]
+        if s.get("pbr"):
+            assert page.locator('[data-ui-v2="co-pbr"]').inner_text().split("\n")[1] == fillp(C["pick"]["receipt"]["times"], x=f"{s['pbr']:,.2f}")
+        dcf = page.locator('[data-ui-v2="co-dcf"]')
+        if us:
+            assert dcf.count() == 0, "미국에 '지금 가격이 가정하는 것' (v19.2 전까지 없어요)"
+        elif dcf.count():
+            assert dcf.get_attribute("data-disc") == "10" and dcf.get_attribute("data-term") == "2"
+        assert page.locator('[data-ui-v2="co-risk"] [data-ui-v2="tile-number"]').count() == 0
+        no_mascot(page)
+        no_hscroll(page, width)
+        R.collect(page)
+        co_open_tab(page, code, "div", s["cls"])
+        d = page.locator('[data-ui-v2="co-div"]')
+        assert d.get_attribute("data-rule") == exp["div"]
+        m = page.locator('[data-ui-v2="co-million"]')
+        if m.count():                                                        # 100만원어치: 1,000,000 × 수익률 ÷ 100, 1,000원 단위
+            y = s["dps"] / s["price"] * 100 if not us else s["dy"]
+            assert int(m.get_attribute("data-won")) == round(1e6 * y / 100 / 1000) * 1000, (m.get_attribute("data-won"), y)
+            assert "지난 1년 기준" not in m.inner_text()                          # 실제 계산 기준으로만 말해요
+        if us:
+            assert page.locator('[data-ui-v2="co-dps"], [data-ui-v2="co-payout"]').count() == 0, "미국 주당 배당 · 배당성향 (자료가 없어요)"
+        no_mascot(page)
+        no_hscroll(page, width)
+        R.collect(page)
+        if us:
+            co_hash(page, f"#stocks/{code}/disc")                              # 미국: 공시 탭이 없어요 → 요약
+            assert page.locator('[data-ui-v2="company"]').get_attribute("data-tab") == "summary"
+            assert page.locator('[data-ui-v2="co-tabs"] [data-tab="disc"]').count() == 0
+        else:
+            co_open_tab(page, code, "disc", s["cls"]) if tabs_on("kr") else co_hash(page, f"#stocks/{code}/disc")
+            if tabs_on("kr"):
+                ds = page.locator('[data-ui-v2="co-disc"]')
+                ds.wait_for(state="attached")
+                page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.state === 'ok'; }")
+                n = sum(1 for x in f["disc.json"]["insider"] if x["t"] == code)
+                assert ds.get_attribute("data-n") == str(n), (ds.get_attribute("data-n"), n)
+                no_mascot(page)
+                no_hscroll(page, width)
+                R.collect(page)
+        co_hash(page, f"#stocks/{code}/value-more")
+        if not CO["valueMore"]["title"]:                                      # 승인 전: 자세히 화면 대신 그 탭 (빈 화면 아님)
+            assert page.locator('[data-ui-v2="company"]').get_attribute("data-tab") == "value"
+            assert page.locator('[data-ui-v2="co-value-more"], [data-ui-v2="co-value-more"]').count() == 0
+        vm = page.locator('[data-ui-v2="co-value-more"]')
+        for r in vm.locator('[data-ui-v2="co-receipt"]').all():               # 근거 수치는 위의 숫자를 다시 만들어요
+            txt = r.inner_text()
+            nums = [float(x.replace(",", "")) for x in re.findall(r"[\d,]+(?:\.\d+)?", txt)]
+            assert len(nums) == 3 and abs(round(nums[0] / nums[1], 2 if "순자산" in txt else 1) - nums[2]) < 1e-9, txt
+        no_mascot(page)
+        no_hscroll(page, width)
+        R.collect(page)
+        if not us:
+            co_hash(page, f"#stocks/{code}/earn-more")
+            if CO["earn"]["moreTitle"]:
+                page.locator('[data-ui-v2="co-earn-more"]').wait_for(state="visible")
+            else:
+                assert page.locator('[data-ui-v2="company"]').get_attribute("data-tab") == "earn"
+            no_mascot(page)
+            R.collect(page)
+        co_hash(page, f"#stocks/{code}")
+
+    def from_stocks():
+        wait_ready(page)
+        at(page, "stocks")
+        for q, code in (("삼성전자", "005930"), ("현대차", "005380"), ("AAPL", "AAPL")):
+            open_from_search(q, code)
+            check_summary(code)
+            check_tabs(code)
+            back_to("stocks")                                                 # 뒤로 → 온 곳 (종목, 찾던 결과 그대로)
+            box = page.locator('[data-ui-v2="top-search"] input' if wide else '[data-ui-v2="stock-search"] input')
+            assert box.input_value() == q, box.input_value()
+            box.fill("")
+        rec = page.locator('[data-ui-v2="recent"] [data-ui-v2="stock-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
+        assert rec[:3] == ["AAPL", "005380", "005930"], rec                   # 최근 본 종목에 남아요
+    R.check(page, S, "종목 → 삼성전자 · 현대차 · AAPL 회사 페이지(예전 뱁새 아님) · 요약 네 칸 = 규칙 · 모든 탭 · 자세히 · 날짜 · $ 먼저 · 뱁이 없음 · 뒤로 → 종목", from_stocks)
+
+    def fund_and_unknown():
+        at(page, "stocks")
+        fund = next(x for x in stocks if x.get("etf") and x["cls"] == "kr")
+        search(fund["t"])
+        row = page.locator(f'[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-t="{fund["t"]}"]')
+        row.locator("button").click()
+        page.wait_for_timeout(200)
+        at(page, "stocks")                                                    # 펀드는 회사가 아니에요: 그 자리에 머물러요
+        note = row.locator('[data-ui-v2="row-note"]')
+        assert (note.inner_text().strip() == CO["fundNote"]) if CO["fundNote"] else note.count() == 0
+        page.goto(base + "/app.html?dev=1#stocks/ZZZZ9", wait_until="domcontentloaded")
+        page.locator('[data-ui-v2="co-not-found"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-not-found"]').inner_text().strip() == CO["notFound"] == "이 종목의 데이터를 찾지 못했어요."
+        no_mascot(page)
+        R.collect(page)
+        back_to("stocks")
+    R.check(page, S, "펀드를 누르면 그 자리 (회사 페이지 없음) · 모르는 코드 → '이 종목의 데이터를 찾지 못했어요.' (빈 화면 아님)", fund_and_unknown)
+
+    def from_portfolio_and_home():
+        if wide:
+            side_tab(page, "portfolio")
+        else:
+            tab(page, TABS["portfolio"])
+        at(page, "portfolio")
+        row = page.locator('[data-deck-id="dco"] [data-holding="005930"] [data-ui="list-row"]')
+        row.wait_for(state="visible")
+        assert row.locator('[data-ui-v2="co-mark"]').count() == 1
+        row.click()
+        at(page, "stocks/005930")
+        held = page.locator('[data-ui-v2="co-held-row"][data-deck-id="dco"]')
+        held.wait_for(state="visible")                                        # 가진 종목: 포트폴리오 줄
+        if CO["memo"]["title"] and CO["memo"]["rules"]:
+            assert page.locator('[data-ui-v2="co-memo-rules"] [data-ui-v2="rule-line"]').count() >= 1       # 다시 볼 조건 (읽기만)
+        no_mascot(page)
+        R.collect(page)
+        back_to("portfolio")
+        if wide:
+            side_tab(page, "home")
+        else:
+            tab(page, TABS["home"])
+        at(page, "home")
+        hrow = page.locator('[data-today-holding="005380"] [data-ui="list-row"]').first
+        hrow.wait_for(state="visible")
+        hrow.click()
+        at(page, "stocks/005380")
+        co_wait(page)
+        back_to("home")
+    R.check(page, S, "포트폴리오 · 홈의 종목 줄(표시 있음) → 그 회사 페이지 (가진 종목 줄) → 뒤로 → 온 곳", from_portfolio_and_home)
+
+    def memo():
+        M = CO["memo"]
+        page.goto(base + "/app.html?dev=1#stocks/AAPL", wait_until="domcontentloaded")
+        co_wait(page)
+        if not (M["title"] and M["add"]):
+            assert page.locator('[data-ui-v2="co-memo"]').count() == 0      # 승인 전: 메모 칸 없음
+            return
+        page.locator('[data-ui-v2="co-memo"] button', has_text=M["add"]).click()
+        page.locator('[data-ui-v2="co-memo-form"] textarea').fill("  서비스 매출이 이어지는지 보려고요  ")
+        page.locator('[data-ui-v2="co-memo-form"] button', has_text=C["plan"]["save"]).click()
+        page.locator('[data-ui-v2="co-memo-text"]').wait_for(state="visible")
+        page.reload(wait_until="domcontentloaded")
+        co_wait(page)
+        assert page.locator('[data-ui-v2="co-memo-text"]').inner_text() == "서비스 매출이 이어지는지 보려고요"
+        stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")
+        assert stored["notes"]["AAPL"]["text"] == "서비스 매출이 이어지는지 보려고요" and len(stored["decks"]) == 1, stored
+        R.collect(page)
+    R.check(page, S, "내 메모: 남기기 → 새로 고침해도 남아요 (2.0 기록에 저장)", memo)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -2783,6 +3178,8 @@ def main():
     names = set()
     for s in files["data.json"]["stocks"]:
         names |= {s.get("nk"), s.get("ne"), s.get("indName")}
+    for x in files["disc.json"]["insider"]:                                # v19.1a 공시 탭: 보고한 사람 · 직위는 데이터의 이름이에요
+        names |= {x.get("nm"), x.get("pos")}
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path())
         R = Runner(browser, args.shots, names)
@@ -2807,7 +3204,8 @@ def main():
                     R.results.append((f"[{width}] 장면 실행", False, str(e).splitlines()[0][:200]))
                     print(f"  FAIL  [{width}] 장면 실행: {e}", flush=True)
         for fn in (lambda: scene_pc(R, files), lambda: scene_pc_back(R, files), lambda: scene_pc_stale(R, files),
-                   lambda: scene_pc_edge(R, files)):             # v19.0d PC
+                   lambda: scene_pc_edge(R, files), lambda: scene_company(R, files, 390),
+                   lambda: scene_company(R, files, 1280)):       # v19.0d PC · v19.1a 회사 페이지 (휴대폰 390 · PC 1280)
             try:
                 fn()
             except Exception as e:

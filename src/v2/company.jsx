@@ -437,16 +437,20 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
       </Page>
     );
   }
-  if (ctab === "value-more") return <ValueMore load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} onBack={nav.back} backLabel={backLabel} />;
-  if (ctab === "earn-more") return <EarnMore load={load} s={s} pad={pad} onBack={nav.back} backLabel={backLabel} />;
-  return <CompanyPage load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} ctab={ctab} disc={disc} nav={nav} held={held}
+  // 자세히 screens exist once their title is approved (before that nothing links to them, and an address shows its tab).
+  if (ctab === "value-more" && C.co.valueMore.title) return <ValueMore load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} onBack={nav.back} backLabel={backLabel} />;
+  if (ctab === "earn-more" && C.co.earn.moreTitle && !usOf(s)) return <EarnMore load={load} s={s} pad={pad} onBack={nav.back} backLabel={backLabel} />;
+  const shown = ctab === "value-more" ? "value" : ctab === "earn-more" ? "earn" : ctab;
+  return <CompanyPage load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} ctab={shown} disc={disc} nav={nav} held={held}
     preview={preview} wide={wide} backLabel={backLabel} />;
 }
 
 function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held, preview, wide, backLabel }) {
   const discShown = !usOf(s) && !preview && disc && disc.status !== "none";
   const labels = tabLabels(s, discShown);
-  const tab = labels && CO_TABS.includes(ctab) && labels.some(([id]) => id === ctab) ? ctab : null;
+  // A tab opens from its address even while its name waits for Jack (no tab bar then, so nothing links to it); 공시 only
+  // where it exists (Korea, live page).
+  const tab = CO_TABS.includes(ctab) && (ctab !== "disc" || discShown) ? ctab : null;
   const stickyTop = wide ? TOUCH + SPACE(6) : preview ? TOUCH : 0;
   const setTab = (id) => nav.setTab(id === "summary" ? null : id);
   // Switching tabs keeps the page where it is (the router does not jump to the top between a company's tabs), but when

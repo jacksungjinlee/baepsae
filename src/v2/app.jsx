@@ -62,7 +62,8 @@ export function App({ source }) {
   const wasAbout = useRef(loc.about);
   const wide = useWide();
   const layout = useMemo(() => ({ wide }), [wide]);
-  const [stockQ, setStockQ] = useState("");             // PC: the top bar's search words (the phone's 종목 keeps its own)
+  const [stockQ, setStockQ] = useState("");             // PC: the top bar's search words
+  const [phoneQ, setPhoneQ] = useState("");             // phone: 종목's own field (kept here so a company page and back keep it)
   const searchRef = useRef(null);
   useSlashFocus(searchRef, wide);
 
@@ -110,10 +111,12 @@ export function App({ source }) {
     if (wide && loc.menu) router.closeMenu();
   }, [wide, loc.menu]);
 
-  // PC search: the field shows what 종목 lists, so leaving 종목 (another tab, 소개, back) empties it.
+  // PC search: the field shows what 종목 lists, so leaving 종목 (another tab, 소개, back) empties it. A company page is part
+// of 종목 (v19.1a): the words stay, so back from a company shows the same results (the phone's field too).
   const onStocks = !loc.about && loc.tab === "stocks";
   useEffect(() => {
     if (!onStocks && stockQ) setStockQ("");
+    if (!onStocks && phoneQ) setPhoneQ("");
   }, [onStocks]);
 
   // saved = true when the caller already wrote it (the purchase sheet checks the write itself)
@@ -161,7 +164,7 @@ export function App({ source }) {
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={disc} nav={coNav} />;
     }
-    if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} />;
+    if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
     return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} />;
   })();
