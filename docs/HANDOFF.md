@@ -47,8 +47,7 @@ Actions permission; it lives only in cron-job.org (never in a chat, the repo or 
    when reopening a saved portfolio; typed ones stay. Needs a "typed keys" record (`autoKeys` only lists keys today's
    data supplies; `openSlot` restores an old fx while the chip says 자동).
 
-**Open product point for Jack:** the old app's 타임머신 chart line still runs to the end of the period (no number
-shown) — should the drawing stop at the low point?
+**타임머신 (old app):** Jack decided 2026-11-04 — stop the chart line at the low point (part of v18.6).
 
 **v19.0c follow-ups (from its review):** dead first back press after reloading with the menu open; the screen
 behind 소개 isn't kept mounted for build / 왜 움직였나 (typed RecordSheet input would be lost); 포트폴리오에서 빼기
