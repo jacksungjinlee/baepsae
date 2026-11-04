@@ -271,20 +271,23 @@ export function indMedian(group, get) {
   return vals.length >= VALUE_MIN ? { med: median(vals), n: vals.length } : null;
 }
 
-// 업종 지도 (ROE x PBR): this group's companies only, with a least-squares line PBR = a + b x ROE. pos: the company
-// above / below / near the line (within 10% of the line's value). Needs 5 points with both numbers.
+// 업종 지도 (ROE x PBR): this group's companies, with a least-squares line PBR = a + b x ROE fitted on the OTHER members
+// only (at least 5 with both numbers, |ROE| <= 100%), so the company itself never bends the line it is compared with.
+// pos: above / below / near (within 10% of the line) — only when the company's ROE lies inside the peers' ROE range;
+// outside it the line would be stretched past its data, so pos is "out" (no sentence).
 export function roePbrMap(s, group) {
-  const pts = (group || []).map((x) => ({ t: x.t, x: num(x.roe), y: num(x.pbr) })).filter((p) => p.x != null && p.y != null && p.y > 0 && Math.abs(p.x) <= 100);
-  if (!pts.some((p) => p.t === s.t) && num(s.roe) != null && num(s.pbr) > 0) pts.push({ t: s.t, x: s.roe, y: s.pbr });
-  const me = pts.find((p) => p.t === s.t);
-  if (pts.length < VALUE_MIN || !me) return null;
-  const n = pts.length, mx = pts.reduce((a, p) => a + p.x, 0) / n, my = pts.reduce((a, p) => a + p.y, 0) / n;
-  const sxx = pts.reduce((a, p) => a + (p.x - mx) * (p.x - mx), 0);
+  const ok = (p) => p.x != null && p.y != null && p.y > 0 && Math.abs(p.x) <= 100;
+  const peers = (group || []).filter((x) => x.t !== s.t).map((x) => ({ t: x.t, x: num(x.roe), y: num(x.pbr) })).filter(ok);
+  const me = { t: s.t, x: num(s.roe), y: num(s.pbr) };
+  if (peers.length < VALUE_MIN || me.x == null || !(me.y > 0)) return null;
+  const n = peers.length, mx = peers.reduce((a, p) => a + p.x, 0) / n, my = peers.reduce((a, p) => a + p.y, 0) / n;
+  const sxx = peers.reduce((a, p) => a + (p.x - mx) * (p.x - mx), 0);
   if (!(sxx > 0)) return null;
-  const b = pts.reduce((a, p) => a + (p.x - mx) * (p.y - my), 0) / sxx, a = my - b * mx;
+  const b = peers.reduce((a, p) => a + (p.x - mx) * (p.y - my), 0) / sxx, a = my - b * mx;
+  const lo = Math.min(...peers.map((p) => p.x)), hi = Math.max(...peers.map((p) => p.x));
   const fit = a + b * me.x;
-  const pos = fit > 0 && Math.abs(me.y - fit) <= 0.1 * fit ? "near" : me.y > fit ? "above" : "below";
-  return { pts: pts.map((p) => ({ ...p, mine: p.t === s.t })), a, b, pos, n };
+  const pos = me.x < lo || me.x > hi ? "out" : fit > 0 && Math.abs(me.y - fit) <= 0.1 * fit ? "near" : me.y > fit ? "above" : "below";
+  return { pts: [...peers.map((p) => ({ ...p, mine: false })), { ...me, mine: true }], a, b, pos, n: n + 1, range: [lo, hi] };
 }
 
 // KR only (US until v19.2). why: "us" · "notReady" (the old card's dcfReady, or no net income / shares) · "loss".

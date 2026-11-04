@@ -270,12 +270,20 @@ def test_receipts_only_when_they_give_the_shown_number():
 
 def test_pbr_strip_and_roe_pbr_map():
     grp = [st(f"00000{i}", pbr=p, roe=r) for i, (p, r) in enumerate([(0.5, 2), (1.0, 5), (1.5, 8), (2.0, 11), (2.5, 14), (30.0, 15)])]
+    line = [st(f"0000{i}0", pbr=1.0 + 0.1 * r, roe=r) for i, r in enumerate([2, 4, 6, 8, 10, 12])]        # PBR = 1 + 0.1 × ROE
     got = run("""out = { strip: K.pbrStrip(G[2], G), few: K.pbrStrip(G[0], G.slice(0, 4)), map: K.roePbrMap(G[2], G),
-      low: K.roePbrMap({ ...G[3], pbr: 0.2 }, G.map((x, i) => (i === 3 ? { ...x, pbr: 0.2 } : x))) };""", G=grp)
+      above: K.roePbrMap({ t: 'X', roe: 7, pbr: 2.5 }, L), below: K.roePbrMap({ t: 'X', roe: 7, pbr: 1.0 }, L), near: K.roePbrMap({ t: 'X', roe: 7, pbr: 1.72 }, L),
+      out: K.roePbrMap({ t: 'X', roe: 150, pbr: 45 }, L), self: K.roePbrMap({ ...L[2], pbr: 9 }, L.map((x, i) => (i === 2 ? { ...x, pbr: 9 } : x))),
+      fewPeers: K.roePbrMap(L[0], L.slice(0, 5)) };""", G=grp, L=line)
     s = got["strip"]
     assert s["n"] == 6 and s["med"] == 1.75 and all(0 <= d["x"] <= 1 for d in s["dots"]) and sum(d["mine"] for d in s["dots"]) == 1
     assert any(d["over"] for d in s["dots"]) and got["few"] is None                         # 아주 큰 PBR 은 오른쪽 끝에
-    assert got["map"]["n"] == 6 and got["map"]["pos"] in ("below", "near", "above") and got["low"]["pos"] == "below"
+    assert got["map"]["n"] == 6 and got["map"]["pos"] in ("below", "near", "above")       # 다른 회사 5개 + 이 회사
+    assert got["above"]["pos"] == "above" and got["below"]["pos"] == "below" and got["near"]["pos"] == "near"
+    assert abs(got["above"]["b"] - 0.1) < 1e-9 and abs(got["above"]["a"] - 1.0) < 1e-9 and got["above"]["n"] == 7
+    assert got["out"]["pos"] == "out"                                                     # 업종 ROE 범위 밖: 문장 없음 (선을 늘려 쓰지 않아요)
+    assert abs(got["self"]["b"] - 0.1) < 1e-9 and got["self"]["pos"] == "above"            # 회사 자신은 선을 바꾸지 않아요
+    assert got["fewPeers"] is None                                                        # 다른 회사 5개 미만
 
 
 # ── 공시 ──

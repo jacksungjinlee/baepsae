@@ -348,27 +348,29 @@ export function ValueTab({ load, s, store, onMore }) {
 function Scatter({ s, group }) {
   const M = C.co.map;
   const m = useMemo(() => roePbrMap(s, group), [s, group]);
-  if (!m || !all(M.title, M.x, M.y, M.line, M.aria, M[m.pos])) return null;
+  if (!m || !all(M.title, M.x, M.y, M.line, M.aria)) return null;
   const W = 320, Hh = 220, P = 24;
   const xs = m.pts.map((p) => p.x), ys = m.pts.map((p) => p.y);
   const x0 = Math.min(0, ...xs), x1 = Math.max(...xs, 1), y1 = Math.max(...ys) * 1.1;
   const sx = (x) => P + ((x - x0) / (x1 - x0 || 1)) * (W - 2 * P), sy = (y) => Hh - P - (y / (y1 || 1)) * (Hh - 2 * P);
   const lineY = (x) => Math.max(0, Math.min(y1, m.a + m.b * x));
+  const [lx0, lx1] = m.range;                                         // the line only over the peers' ROE range
   const me = m.pts.find((p) => p.mine);
   return (
     <Card data-ui-v2="co-map" data-pos={m.pos} data-n={m.n}>
       <CardHead icon="chart-scatter" tone="value" title={M.title} />
-      <svg viewBox={`0 0 ${W} ${Hh}`} width="100%" role="img" aria-label={fill(M.aria, { ind: s.indName, n: m.n, roe: p1(me.x), pbr: nf(me.y, 2) })} style={{ display: "block", marginTop: SPACE(3) }}>
+      <svg viewBox={`0 0 ${W} ${Hh}`} width="100%" role="img" aria-label={fill(M.aria, { ind: s.indName, n: m.n, roe: p1(me.x), pbr: nf(me.y, 2) })}
+        style={{ display: "block", marginTop: SPACE(3), maxWidth: 480, marginLeft: "auto", marginRight: "auto" }}>
         <line x1={P} y1={Hh - P} x2={W - P} y2={Hh - P} stroke={COLOR.border} />
         <line x1={P} y1={P} x2={P} y2={Hh - P} stroke={COLOR.border} />
-        <line x1={sx(x0)} y1={sy(lineY(x0))} x2={sx(x1)} y2={sy(lineY(x1))} stroke={COLOR.text2} strokeDasharray="4 4" />
+        <line x1={sx(lx0)} y1={sy(lineY(lx0))} x2={sx(lx1)} y2={sy(lineY(lx1))} stroke={COLOR.text2} strokeDasharray="4 4" />
         {m.pts.filter((p) => !p.mine).map((p) => <circle key={p.t} cx={sx(p.x)} cy={sy(p.y)} r={4} fill={COLOR.text3} opacity={0.45} />)}
         <circle cx={sx(me.x)} cy={sy(me.y)} r={7} fill={COLOR.ink} stroke={COLOR.surface} strokeWidth={2} />
       </svg>
       <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
         <div>{M.x}</div><div>{M.y}</div><div>{M.line}</div>
       </div>
-      <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{M[m.pos]}</p>
+      {M[m.pos] && <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{M[m.pos]}</p>}
     </Card>
   );
 }
