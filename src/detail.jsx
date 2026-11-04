@@ -233,7 +233,7 @@ function readPortfolioFile(j, known) {
     const profile = kinds(src.profile, DEFAULT_PROFILE);
     if (profile) st.profile = profile; else delete st.profile;                 // 객체가 아니면 지금 프로필 그대로 (예전처럼)
   }
-  // 읽을 칸이 하나도 없는 설정 · 세금은 건드리지 않아요 (지금 설정 — 오늘 환율 등 — 그대로)
+  // 읽을 칸이 하나도 없는 세금은 건드리지 않아요 (지금 세금 그대로). 설정은 없으면 앱이 기본값 + 오늘 값으로 시작해요 (v18.6.1, applyState)
   if (settings && Object.keys(settings).length) st.settings = settings; else delete st.settings;
   if (tax && Object.keys(tax).length) st.tax = tax; else delete st.tax;
   // 직접 입력한 설정 칸 (v18.6): 없거나 읽을 수 없으면 기록 없음 → 자동 칸은 모두 오늘 값으로 열려요 (withTodaysAuto)
@@ -286,6 +286,20 @@ function withTodaysAuto(saved, typed, live, base = DEFAULT_SETTINGS) {
     console.info("[뱁새] 자동 설정 " + changed.length + "개를 저장본의 값 대신 오늘 값으로 열어요" + what);
   }
   return { settings, typed: keep };
+}
+// 새로 시작하는 포트폴리오 (v18.6.1, Jack 2026-11-04): '새로 시작하기'와 읽을 설정이 없는 파일 · 저장본은 기본값 + 오늘 자동 값,
+// 직접 입력 기록 없음으로 시작해요. 앞 포트폴리오의 설정 · 직접 입력 기록을 이어받지 않아요 (전에는 앞에서 입력한 환율이 그대로 남았어요).
+// cur · curTyped: 지금 설정 · 직접 입력 기록. 바뀐 칸이나 지운 기록이 있으면 console 에 남겨요.
+function freshSettings(cur, curTyped, live, why) {
+  const settings = { ...DEFAULT_SETTINGS, ...(isPlainObj(live) ? live : {}) };
+  const now = isPlainObj(cur) ? cur : {};
+  const changed = Object.keys(settings).filter((k) => now[k] !== settings[k]).map((k) => k + " " + now[k] + " → " + settings[k]);
+  const typed = Array.isArray(curTyped) ? curTyped.length : 0;
+  if (changed.length || typed) {
+    console.info("[뱁새] " + why + ": 앞 포트폴리오의 설정 " + changed.length + "개 · 직접 입력 기록 " + typed + "개 대신 기본값과 오늘 값으로 시작해요"
+      + (changed.length ? ": " + changed.join(", ") : ""));
+  }
+  return { settings, typed: [] };
 }
 // 설정 화면의 '자동' 칩: 오늘 값이 있는 칸이고, 직접 입력하지 않았고, 보이는 값이 정말 오늘 값일 때만.
 function autoChip(k, settings, live, typed) {
@@ -4823,19 +4837,25 @@ function AppInner({ seed, lang: langProp }) {
   const openSlot = async (id) => {
     try {
       const raw = await store.get(KEY_SLOT(id));
-      if (raw) applyState(JSON.parse(raw));
+      if (raw) applyState(JSON.parse(raw), "설정이 없는 저장본");
     } catch (e) {}
     setSlotId(id);
     const s = (await readSlots()).find((x) => x.id === id);
     setSlotName(s ? s.name : "");
   };
-  const applyState = (s) => {
+  // 새 포트폴리오의 설정: 기본값 + 오늘 자동 값, 직접 입력 기록 없음 (v18.6.1)
+  const startFresh = (why) => {
+    const r = freshSettings(settings, typedKeys, autoVals, why);
+    setSettings(r.settings); setTypedKeys(r.typed);
+  };
+  // noSettings: 설정이 없을 때 console 에 남길 이유 ('설정이 없는 저장본' · '읽을 설정이 없는 파일')
+  const applyState = (s, noSettings) => {
     if (s.lang) setLang(s.lang);
-    // 자동 칸은 오늘 값, 직접 입력한 칸만 저장된 값 (v18.6). 설정이 없는 파일이면 지금 설정 · 직접 입력 기록 그대로예요
+    // 자동 칸은 오늘 값, 직접 입력한 칸만 저장된 값 (v18.6). 설정이 없으면 새로 시작하기처럼 기본값 + 오늘 값 (v18.6.1, 앞 포트폴리오 것을 잇지 않아요)
     if (s.settings) {
       const r = withTodaysAuto(s.settings, cleanTypedKeys(s.typedKeys, "저장본"), autoVals);
       setSettings(r.settings); setTypedKeys(r.typed);
-    }
+    } else startFresh(noSettings);
     if (s.tax) setTax({ ...DEFAULT_TAX, ...s.tax });
     if (s.profile) setProfile({ ...DEFAULT_PROFILE, ...s.profile });
     if (s.answers) setAnswers(s.answers);
@@ -4853,6 +4873,7 @@ function AppInner({ seed, lang: langProp }) {
     const name = (lang === "ko" ? "포트폴리오 " : "Portfolio ") + (slots.length + 1);
     setProfile({ ...DEFAULT_PROFILE }); setAnswers({}); setHoldings([]); setBudgetMw(1000);
     setCheckins([]); setStocks(baseUniverse().map((s) => ({ ...s }))); setStage(0);
+    startFresh("새로 시작하기");
     setSlotId(id); setSlotName(name);
   };
   const deleteSlot = async (id, name) => {
@@ -4885,7 +4906,7 @@ function AppInner({ seed, lang: langProp }) {
     catch (e) { console.warn("[뱁새] 불러온 파일을 JSON 으로 읽지 못했어요: " + ((e && e.message) || e)); st = null; }
     if (!st) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); return; }
     const id = "s" + Date.now().toString(36);
-    applyState(st);
+    applyState(st, "읽을 설정이 없는 파일");
     setSlotId(id); setSlotName((lang === "ko" ? "불러온 포트폴리오" : "Imported portfolio"));
   };
 
@@ -5048,4 +5069,4 @@ export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SL
   // v18.5: Node 로 시험하려고 (tests/test_app_data.py)
   missingHoldings, missingLine, shownProfile, scoreProfile,
   // v18.6: 자동 설정 (tests/test_app_data.py)
-  cleanTypedKeys, withTodaysAuto, autoChip };
+  cleanTypedKeys, withTodaysAuto, autoChip, freshSettings };
