@@ -28,7 +28,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, useCol, tx, tap } from "./ui.jsx";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -234,15 +234,19 @@ function FirstVisit({ load, go }) {
 
 // 시장 한눈에: the 시장 tab's four tiles and the way there. Without macro.json: the same failure line as the 시장 tab,
 // in place of the tiles (never a row of "–" without a word).
+// PC: in the narrow side column the four tiles stack; standing alone across the page (nothing in the main column, e.g.
+// stale data or no saved portfolio with stocks) they sit four in a row.
 function MarketGlance({ load, go }) {
   const { wide } = useLayout();
+  const col = useCol();
+  const tiles = !wide ? 2 : col === "side" ? 1 : 4;
   return (
     <Card data-ui-v2="market-glance">
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginBottom: SPACE(3) }}>
         <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0 })}>{C.home.market || C.app.tabs.market}</h3>
         <LinkButton data-ui-v2="market-more-link" onClick={() => go("market")}>{C.home.marketMore || C.today.more}</LinkButton>
       </div>
-      {load.macro ? <MarketTiles load={load} cols={wide ? 1 : 2} /> : <LoadFail picture={false} />}
+      {load.macro ? <MarketTiles load={load} cols={tiles} /> : <LoadFail picture={false} />}
     </Card>
   );
 }

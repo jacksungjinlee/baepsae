@@ -20,7 +20,7 @@ import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
-import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus } from "./nav.jsx";
+import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
 // A rendering error never leaves a blank page: the approved load-failure message is shown instead.
 export class ErrorBoundary extends React.Component {
@@ -74,13 +74,14 @@ export function App({ source }) {
     if (loc.tab === "home" && loc.sub === "why" && !why) router.replaceRoute("home");
   }, [loc.tab, loc.sub, why]);
 
-  // Closing 소개: focus goes back to what opened it (the footer's 소개 link, noted by the router when 소개 opened), when it
-  // is still on the page.
+  // Closing 소개 (its back button, the phone's back): focus goes back to what opened it (the footer's 소개 link, noted by
+  // the router when 소개 opened), when it is still on the page. Leaving it by a move (router.go clears the note) or while
+  // the user is typing in a field (the PC search) leaves focus alone.
   useEffect(() => {
     if (!loc.about && wasAbout.current) {
       const el = router.focusBefore.current;
       router.focusBefore.current = null;
-      if (el && el.isConnected && typeof el.focus === "function") {
+      if (el && el.isConnected && typeof el.focus === "function" && !typingIn(document.activeElement)) {
         try { el.focus(); } catch (e) { /* ignore */ }
       }
     }

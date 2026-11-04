@@ -60,6 +60,9 @@ export function useWide() {
 }
 export const LayoutContext = createContext({ wide: false });
 export const useLayout = () => useContext(LayoutContext);
+// Which column of Cols a piece sits in on PC: "main", "side" (the narrow one) or "full" (it stands alone). null elsewhere.
+const ColContext = createContext(null);
+export const useCol = () => useContext(ColContext);
 // The page width on PC: content + side padding (box-sizing is border-box). Every screen, the top bar and the action bar
 // sit in one frame as wide as the two-column page (centred right of the left menu), and a one-column page keeps to the
 // frame's left edge: the search field and the first card start at the same place on every tab.
@@ -93,11 +96,11 @@ export function Cols({ main, side }) {
   const { wide } = useLayout();
   const has = (x) => (Array.isArray(x) ? x.some(Boolean) : !!x);
   if (!wide) return <>{main}{side}</>;
-  if (!has(main) || !has(side)) return <div data-ui-v2="cols" data-n="1">{main}{side}</div>;
+  if (!has(main) || !has(side)) return <ColContext.Provider value="full"><div data-ui-v2="cols" data-n="1">{main}{side}</div></ColContext.Provider>;
   return (
     <div data-ui-v2="cols" data-n="2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", columnGap: SPACE(5), alignItems: "start" }}>
-      <div data-ui-v2="col-main" style={{ minWidth: 0 }}>{main}</div>
-      <div data-ui-v2="col-side" style={{ minWidth: 0 }}>{side}</div>
+      <ColContext.Provider value="main"><div data-ui-v2="col-main" style={{ minWidth: 0 }}>{main}</div></ColContext.Provider>
+      <ColContext.Provider value="side"><div data-ui-v2="col-side" style={{ minWidth: 0 }}>{side}</div></ColContext.Provider>
     </div>
   );
 }

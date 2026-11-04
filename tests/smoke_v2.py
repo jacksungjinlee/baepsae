@@ -30,7 +30,8 @@
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
-              결과 · 홈(첫 방문: 한국 · 미국 목록 나란히, 뱁이 176px · 다시 온 방문: 포트폴리오 | 시장 한눈에)과 시장(네 칸 | 예전 뱁새
+              결과(소개에서 써도 초점은 칸에 그대로) · 홈(첫 방문: 한국 · 미국 목록 나란히, 뱁이 176px · 다시 온 방문: 포트폴리오 | 시장
+              한눈에 · 멈춘 데이터: 시장 한눈에 홀로, 네 칸 한 줄)과 시장(네 칸 | 예전 뱁새
               버튼)은 두 칸, 나머지는 한 칸(720px 이하), 모든 화면의 왼쪽 끝이 같아요 · 아래 버튼 띠 · 시트는 왼쪽 메뉴 오른쪽 ·
               1024 · 1280 · 1440px 에서 가로 스크롤 없음 · 1023px 은 휴대폰 화면 그대로, 창을 넓히고 좁히면 따라 바뀌어요
 모든 장면에서 페이지 오류 0건, 다른 사이트 요청 0건. 화면에 보이는 한국어는 모두 src/copy/v2.js(또는 데이터의 이름)에서 와요.
@@ -2538,10 +2539,33 @@ def scene_pc(R, files):
         page.locator('[data-ui-v2="about"]').wait_for(state="detached")
     R.check(page, S, "소개(왼쪽 메뉴의 링크): 한 칸 · 뱁이 210px · 사진 112px · 뒤로 → 시장", about_one)
 
+    def about_search():
+        link = page.locator('[data-ui-v2="side-link"][data-item="about"]')
+        link.click()                                                        # 소개를 닫으면(뒤로 버튼) 초점은 연 링크로 돌아와요
+        page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["app"]["close"]).click()
+        page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+        page.wait_for_function("() => document.activeElement && document.activeElement.matches('[data-ui-v2=\"side-link\"][data-item=\"about\"]')")
+        link.click()                                                        # 소개에서 '/' 와 검색어: 칸에 다 들어가고 초점은 칸에 그대로
+        page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+        page.keyboard.press("/")
+        page.wait_for_function("() => document.activeElement && document.activeElement.matches('[data-ui-v2=\"top-search\"] input')")
+        page.keyboard.type("005930")
+        at(page, "stocks")
+        page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+        inp = page.locator(TOP_INPUT)
+        assert inp.input_value() == "005930", inp.input_value()
+        assert focused_in(page, '[data-ui-v2="top-search"]'), page.evaluate("() => document.activeElement && document.activeElement.outerHTML.slice(0, 120)")
+        assert page.url.endswith("#stocks"), page.url
+        page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-t="005930"]').wait_for(state="visible")
+        R.collect(page)
+    R.check(page, S, "소개 → '/' → 005930: 칸에 005930, 초점은 칸에 그대로, #stocks 에 결과 · 소개를 뒤로 닫으면 초점은 연 링크로", about_search)
+
     def bars():
         page.locator('[data-ui-v2="side-build"]').click()                  # 포트폴리오 만들기: 왼쪽 메뉴에서, 고른 탭은 포트폴리오
         at(page, "portfolio/build")
         tab_selected(page, "portfolio")
+        mascot_img(page.locator('[data-ui-v2="build-start"]'), "baepi-16-build.webp", 176, C["build"]["s0"]["imgAlt"])    # PC 크기 (Part C)
         x, w, cols = page_box(page)
         assert cols == "1" and w <= 720, (w, cols)
         page.locator('[data-deck="income"]').click()
@@ -2577,7 +2601,7 @@ def scene_pc(R, files):
         R.collect(page)
         page.keyboard.press("Escape")
         panel.wait_for(state="detached")
-    R.check(page, S, "포트폴리오 만들기(왼쪽 메뉴) · 아래 버튼 띠는 왼쪽 메뉴 오른쪽 · 금액 칸에서 '/' 그대로 · 샀어요 시트는 본문 가운데, 열린 동안 '/' 그대로", bars)
+    R.check(page, S, "포트폴리오 만들기(왼쪽 메뉴, 뱁이 176px) · 아래 버튼 띠는 왼쪽 메뉴 오른쪽 · 금액 칸에서 '/' 그대로 · 샀어요 시트는 본문 가운데, 열린 동안 '/' 그대로", bars)
     ctx.close()
     srv.shutdown()
 
@@ -2636,6 +2660,37 @@ def scene_pc_back(R, files):
             page.locator('[data-ui-v2="about"]').wait_for(state="detached")
         page.set_viewport_size({"width": PC_W, "height": PC_H})
     R.check(page, S, "1024 · 1280 · 1440px: 네 탭과 소개에 가로 스크롤 없음 · 왼쪽 메뉴 그대로", widths)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_pc_stale(R, files):
+    """멈춘 데이터 PC (발행 6일 전, 저장한 포트폴리오 있음): 홈에 판정 없이 멈춤 띠, 왼쪽 칸이 비어 시장 한눈에가 홀로 전체 폭 → 네 칸을 한 줄로."""
+    S = f"PC 멈춤 {PC_W}"
+    f = clone(files)
+    for n in DATA_FILES:
+        f[n]["publishedAt"] = now_kst(days_ago=6)
+    store, _ = missing_store(files)
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, base = R.open(build_site(f), PC_W, init=init, device=pc_device(PC_W))
+
+    def run():
+        wait_ready(page)
+        at(page, "home")
+        page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="deck-strip"]').count() == 0
+        assert page.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').get_attribute("data-stale") == "1"
+        cols = page.locator('[data-ui-v2="cols"]')
+        assert cols.get_attribute("data-n") == "1" and page.locator('[data-ui-v2="col-side"]').count() == 0
+        glance = page.locator('[data-ui-v2="market-glance"]')
+        assert glance.locator('[data-ui-v2="market-tiles"]').get_attribute("data-cols") == "4"
+        _, w, _ = page_box(page)
+        assert abs(glance.bounding_box()["width"] - w) < 0.5, (glance.bounding_box(), w)
+        t = glance.locator('[data-ui-v2="market-tile"]')
+        assert t.count() == 4 and len({round(t.nth(i).bounding_box()["y"]) for i in range(4)}) == 1     # 한 줄
+        no_hscroll(page, PC_W)
+        R.collect(page)
+    R.check(page, S, "멈춘 데이터 · 저장한 포트폴리오: 홈은 멈춤 띠, 시장 한눈에는 홀로 전체 폭 · 네 칸 한 줄 · 가로 스크롤 없음", run)
     ctx.close()
     srv.shutdown()
 
@@ -2751,7 +2806,8 @@ def main():
                 except Exception as e:
                     R.results.append((f"[{width}] 장면 실행", False, str(e).splitlines()[0][:200]))
                     print(f"  FAIL  [{width}] 장면 실행: {e}", flush=True)
-        for fn in (lambda: scene_pc(R, files), lambda: scene_pc_back(R, files), lambda: scene_pc_edge(R, files)):   # v19.0d PC
+        for fn in (lambda: scene_pc(R, files), lambda: scene_pc_back(R, files), lambda: scene_pc_stale(R, files),
+                   lambda: scene_pc_edge(R, files)):             # v19.0d PC
             try:
                 fn()
             except Exception as e:

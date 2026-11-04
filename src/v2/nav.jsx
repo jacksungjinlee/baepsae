@@ -112,9 +112,11 @@ export function useRouter() {
   }, [sync]);
 
   // A move inside the page. From the open menu the menu's entry is replaced (back returns to the screen under it).
+  // Leaving 소개 this way (a tab in the PC menu, typing in the PC search) is not closing it: focus stays where it is.
   const go = useCallback((tab, sub = null) => {
     const cur = locRef.current;
     if (!cur.menu && !cur.about && cur.tab === tab && cur.sub === sub) { toTop(); return; }
+    if (cur.about) focusBefore.current = null;
     const hash = hashOf(tab, sub);
     if (cur.menu) replace({ v2: cur.depth }, hash);
     else push({ v2: cur.depth + 1 }, hash);
