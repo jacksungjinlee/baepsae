@@ -1683,8 +1683,8 @@ def scene_ghost_holding(R, files):
 def scene_import_while_loading(R, files):
     """'저장한 파일에서 불러오기'와 오늘 데이터 읽기 (v18.4.1, Jack 2026-11-04).
       · data.json 이 늦게 오는 동안에는 파일 고르기가 화면에 없어요(부팅 화면). 다 읽은 바로 뒤에 고른 파일은 종목 · 직접 추가 종목이
-        파일 그대로 열려요 (부팅이 파일 내용을 덮지 않아요). 환율은 v18.6 부터 오늘 값이에요: 이 파일에는 직접 입력 기록(typedKeys)이 없어서
-        '자동' 칸으로 열려요 (Jack 2026-11-04 승인, 장면 '자동 설정').
+        파일 그대로 열려요 (부팅이 파일 내용을 덮지 않아요). 이 파일의 환율은 직접 입력한 값(typedKeys ["fx"])이라 그대로여야 해요.
+        typedKeys 가 없는 파일의 '자동' 칸은 오늘 값으로 열려요 (Jack 2026-11-04 승인, 장면 '자동 설정').
       · data.json 을 못 읽은 날: 파일을 불러오지 않고 '데이터를 불러오지 못했어요…' 알림('파일을 읽을 수 없어요.' 아님), 저장본은 그대로."""
     tmp = tempfile.mkdtemp(prefix="baepsae-boot-")
     try:
@@ -1707,10 +1707,10 @@ def _import_while_loading(R, files, tmp):
     S = "불러오기 · 데이터 읽기"
     have = {s.get("t") for s in files["data.json"]["stocks"]}
     pick = [t for t in ("005930", "000660") if t in have]
-    fx = 1234.5                                                         # 오늘 환율과 다른 값 (typedKeys 없는 파일 → 오늘 값으로 열려요)
+    fx = 1234.5                                                         # 오늘 환율과 다른, 직접 입력한 값 (typedKeys ["fx"]) — 부팅이 덮으면 오늘 값이 돼요
     today = files["data.json"].get("fx")
     assert isinstance(today, (int, float)) and today != fx, today
-    backup = {"app": "Baepsae 뱁새 v12", "budgetWon": 20000000, "settings": {"fx": fx}, "customStocks": [MINE],
+    backup = {"app": "Baepsae 뱁새 v12", "budgetWon": 20000000, "settings": {"fx": fx}, "typedKeys": ["fx"], "customStocks": [MINE],
               "holdings": [{"ticker": pick[0], "amountWon": 3000000}, {"ticker": pick[1], "amountWon": 2000000},
                            {"ticker": MINE["t"], "amountWon": 1000000}]}
     path = os.path.join(tmp, "backup.json")
@@ -1747,9 +1747,9 @@ def _import_while_loading(R, files, tmp):
             return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
                   lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
         assert st["customStocks"] == [MINE] and len(st["holdings"]) == 3, st     # 부팅이 직접 추가 종목을 덮지 않았어요
-        # v18.6 규칙 (Jack 2026-11-04 승인): 직접 입력 기록이 없는 파일의 환율은 '자동' 칸 → 오늘 환율 (전에는 파일 그대로였어요)
-        assert st["settings"]["fx"] == today and st["typedKeys"] == [], (st["settings"]["fx"], st.get("typedKeys"))
-    R.check(page, S, "data.json 이 4초 늦음 → 그동안 파일 고르기 없음, 다 읽은 뒤 고른 파일은 종목 · 직접 추가 종목 그대로 · 환율은 오늘 값 (typedKeys 없는 파일)", slow)
+        # 직접 입력한 환율은 파일 그대로: 부팅이 오늘 환율로 덮지 않았어요 (리뷰 2026-11-04). typedKeys 없는 파일 → 오늘 값은 '자동 설정' 장면이 봐요
+        assert st["settings"]["fx"] == fx and st["typedKeys"] == ["fx"], (st["settings"]["fx"], st.get("typedKeys"))
+    R.check(page, S, "data.json 이 4초 늦음 → 그동안 파일 고르기 없음, 다 읽은 뒤 고른 파일은 종목 · 직접 추가 종목 · 직접 입력한 환율 그대로", slow)
     ctx.close(); srv.shutdown()
 
     # data.json 을 못 읽은 날 (404)
