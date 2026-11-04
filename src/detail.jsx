@@ -101,6 +101,15 @@ const store = (() => {
       if (ls) { try { const v = ls.getItem(k); if (v != null) return v; } catch (e) {} }
       return mem[k] != null ? mem[k] : null;
     },
+    // get 과 같지만 못 읽은 이유도 같이 (v18.6.2): { value, error }. 값이 없고 저장소가 오류를 냈으면 error 에 그 오류 (get 은 삼켜요)
+    async read(k) {
+      const errs = [];
+      const msg = (e) => (e && e.message) || String(e);
+      if (ws) { try { const r = await ws.get(k); if (r && r.value != null) return { value: r.value, error: null }; } catch (e) { errs.push("window.storage: " + msg(e)); } }
+      if (ls) { try { const v = ls.getItem(k); if (v != null) return { value: v, error: null }; } catch (e) { errs.push("localStorage: " + msg(e)); } }
+      if (mem[k] != null) return { value: mem[k], error: null };
+      return { value: null, error: errs.length ? errs.join(" · ") : null };
+    },
     async set(k, v) {
       mem[k] = v;
       if (ws) { try { await ws.set(k, v); return true; } catch (e) {} }
@@ -229,11 +238,11 @@ function readPortfolioFile(j, known) {
   if (!exp) {
     if (src.stockEdits !== undefined) st.stockEdits = cleanStockEdits(src.stockEdits);
     if (src.lang !== "ko" && src.lang !== "en") delete st.lang;                 // 지금 언어 그대로
-    if (!isPlainObj(src.answers)) delete st.answers;                           // 객체가 아닌 답변은 버려요 (지금 답변 그대로)
+    if (!isPlainObj(src.answers)) delete st.answers;                           // 객체가 아닌 답변은 버려요 (v18.6.2 부터 빈 답변으로 열려요)
     const profile = kinds(src.profile, DEFAULT_PROFILE);
-    if (profile) st.profile = profile; else delete st.profile;                 // 객체가 아니면 지금 프로필 그대로 (예전처럼)
+    if (profile) st.profile = profile; else delete st.profile;                 // 객체가 아니면 버려요 (v18.6.2 부터 기본 프로필로 열려요)
   }
-  // 읽을 칸이 하나도 없는 세금은 건드리지 않아요 (지금 세금 그대로). 설정은 없으면 앱이 기본값 + 오늘 값으로 시작해요 (v18.6.1, applyState)
+  // 읽을 칸이 하나도 없는 설정 · 세금은 넣지 않아요: 앱이 기본값(설정은 + 오늘 값)으로 열어요 (v18.6.1 · v18.6.2, buildState)
   if (settings && Object.keys(settings).length) st.settings = settings; else delete st.settings;
   if (tax && Object.keys(tax).length) st.tax = tax; else delete st.tax;
   // 직접 입력한 설정 칸 (v18.6): 없거나 읽을 수 없으면 기록 없음 → 자동 칸은 모두 오늘 값으로 열려요 (withTodaysAuto)
@@ -301,12 +310,14 @@ function freshSettings(cur, curTyped, live, why) {
   }
   return { settings, typed: [] };
 }
-// 저장본 글(localStorage) → { state } 또는 { why }: 없음 · 깨진 JSON · 객체가 아닌 내용은 열지 않아요 (v18.6.2, AppInner 의 openSlot).
-function readSavedSlot(raw) {
-  if (raw == null) return { why: "저장된 내용이 없어요" };
+// 저장본 글(localStorage) → { state } 또는 { why } (v18.6.2, AppInner 의 openSlot): 없음 · 저장소 오류(readErr) · 깨진 JSON ·
+// 종목 목록(holdings 배열)이 없는 내용은 열지 않아요. v15.3 부터 모든 저장본에 holdings 가 있어요: 없으면 이 앱이 저장한 포트폴리오가 아니에요.
+function readSavedSlot(raw, readErr) {
+  if (raw == null) return { why: readErr ? "저장소에서 읽다가 오류가 났어요 (" + readErr + ")" : "저장된 내용이 없어요" };
   let st;
   try { st = JSON.parse(raw); } catch (e) { return { why: "JSON 을 읽지 못했어요 (" + ((e && e.message) || e) + ")" }; }
-  return isPlainObj(st) ? { state: st } : { why: "저장된 내용이 포트폴리오 모양이 아니에요" };
+  if (!isPlainObj(st)) return { why: "저장된 내용이 포트폴리오 모양이 아니에요" };
+  return Array.isArray(st.holdings) ? { state: st } : { why: "저장된 내용에 종목 목록(holdings)이 없어요" };
 }
 // 설정 화면의 '자동' 칩: 오늘 값이 있는 칸이고, 직접 입력하지 않았고, 보이는 값이 정말 오늘 값일 때만.
 function autoChip(k, settings, live, typed) {
@@ -4534,7 +4545,7 @@ function SettingsPanel({ lang, t, settings, setSettings, tax, setTax, autoVals, 
         </Grp>
         <Grp title={t("setTax")}>
           {[["divKr", t("taxDivKr")], ["divUs", t("taxDivUs")], ["gainUs", t("taxGainUs")], ["isaRate", "ISA"]].map(([k, label]) => (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 9 }}>
+            <div key={k} data-tax={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 9 }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: C.ink }}>{label}</span>
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <input type="number" step={0.1} value={tax[k]} onChange={(e) => setTax({ ...tax, [k]: parseFloat(e.target.value) || 0 })}
@@ -4846,16 +4857,18 @@ function AppInner({ seed, lang: langProp }) {
   // 이제는 첫 화면에 그대로 있고(slotId 를 정하지 않아서 자동 저장도 없어요), 저장된 글은 지우지도 고치지도 않아요.
   // console 에 저장본 id 와 이유를 남겨요. 화면 문구는 Jack 이 정할 때까지 없어요.
   const openSlot = async (id) => {
-    const r = readSavedSlot(await store.get(KEY_SLOT(id)));
-    let why = r.why;
+    const got = await store.read(KEY_SLOT(id));
+    const r = readSavedSlot(got.value, got.error);
+    let why = r.why, next = null;
     if (!why) {
-      try { applyState(r.state, "설정이 없는 저장본"); }
+      try { next = buildState(r.state, "설정이 없는 저장본"); }
       catch (e) { why = "저장된 내용을 화면에 옮기지 못했어요 (" + ((e && e.message) || e) + ")"; }
     }
     if (why) {
       console.warn("[뱁새] 저장본 " + id + " 을 열지 않았어요: " + why + " · 저장된 글은 그대로 두고 첫 화면에 있어요");
       return;
     }
+    putState(next);
     setSlotId(id);
     const s = (await readSlots()).find((x) => x.id === id);
     setSlotName(s ? s.name : "");
@@ -4865,25 +4878,35 @@ function AppInner({ seed, lang: langProp }) {
     const r = freshSettings(settings, typedKeys, autoVals, why);
     setSettings(r.settings); setTypedKeys(r.typed);
   };
-  // noSettings: 설정이 없을 때 console 에 남길 이유 ('설정이 없는 저장본' · '읽을 설정이 없는 파일')
-  const applyState = (s, noSettings) => {
-    if (s.lang) setLang(s.lang);
-    // 자동 칸은 오늘 값, 직접 입력한 칸만 저장된 값 (v18.6). 설정이 없으면 새로 시작하기처럼 기본값 + 오늘 값 (v18.6.1, 앞 포트폴리오 것을 잇지 않아요)
-    if (s.settings) {
-      const r = withTodaysAuto(s.settings, cleanTypedKeys(s.typedKeys, "저장본"), autoVals);
-      setSettings(r.settings); setTypedKeys(r.typed);
-    } else startFresh(noSettings);
-    if (s.tax) setTax({ ...DEFAULT_TAX, ...s.tax });
-    if (s.profile) setProfile({ ...DEFAULT_PROFILE, ...s.profile });
-    if (s.answers) setAnswers(s.answers);
-    if (s.budgetMw != null) setBudgetMw(s.budgetMw);
-    let base = baseUniverse().map((x) => ({ ...x }));
-    if (Array.isArray(s.customStocks)) base = [...base, ...s.customStocks.filter((c) => !base.some((p) => p.t === c.t))];
-    if (s.stockEdits) base = base.map((p) => (s.stockEdits[p.t] ? { ...p, ...s.stockEdits[p.t] } : p));
-    setStocks(base);
-    setHoldings(Array.isArray(s.holdings) ? s.holdings : []);
-    setCheckins(Array.isArray(s.checkins) ? s.checkins : []);
-    setStage(s.stage != null ? s.stage : 0);
+  // 저장본 · 불러온 파일 → 화면 상태 전체 (v18.6.2). 깨끗한 바탕(기본값 + 오늘 자동 값, 새로 시작하기와 같아요) 위에 저장본의 칸만 얹어요:
+  // 앞 포트폴리오의 답변 · 프로필 · 예산 · 세금 · 설정이 새어 들어오지 않아요 (세금을 잇는 건 '새로 시작하기'뿐이에요, Jack 2026-11-04).
+  // 다 계산한 뒤에만 화면에 넣어요(putState): 도중에 오류가 나면 아무것도 바꾸지 않아요 (언어도). 언어는 화면 설정이라 저장본에 없으면 지금 언어.
+  // noSettings: 설정이 없을 때 console 에 남길 이유 ('설정이 없는 저장본' · '읽을 설정이 없는 파일').
+  const buildState = (s, noSettings) => {
+    let stocksNext = baseUniverse().map((x) => ({ ...x }));          // 오류가 날 수 있는 부분(종목 목록)을 먼저
+    if (Array.isArray(s.customStocks)) stocksNext = [...stocksNext, ...s.customStocks.filter((c) => !stocksNext.some((p) => p.t === c.t))];
+    if (s.stockEdits) stocksNext = stocksNext.map((p) => (s.stockEdits[p.t] ? { ...p, ...s.stockEdits[p.t] } : p));
+    let budget = 1000;
+    if (isFinNum(s.budgetMw) && s.budgetMw >= 0) budget = s.budgetMw;
+    else if (s.budgetMw !== undefined) console.warn("[뱁새] 저장본의 예산(budgetMw)이 0 이상의 숫자가 아니라 1,000만원으로 열어요");
+    // 자동 칸은 오늘 값, 직접 입력한 칸만 저장된 값 (v18.6). 설정이 없으면 기본값 + 오늘 값 (v18.6.1). console 줄이 있어 맨 끝에 계산해요.
+    const set = s.settings ? withTodaysAuto(s.settings, cleanTypedKeys(s.typedKeys, "저장본"), autoVals)
+      : freshSettings(settings, typedKeys, autoVals, noSettings);
+    return {
+      lang: s.lang === "ko" || s.lang === "en" ? s.lang : lang,
+      settings: set.settings, typedKeys: set.typed,
+      tax: { ...DEFAULT_TAX, ...(isPlainObj(s.tax) ? s.tax : {}) },
+      profile: { ...DEFAULT_PROFILE, ...(isPlainObj(s.profile) ? s.profile : {}) },
+      answers: isPlainObj(s.answers) ? s.answers : {},
+      budgetMw: budget, stocks: stocksNext,
+      holdings: Array.isArray(s.holdings) ? s.holdings : [],
+      checkins: Array.isArray(s.checkins) ? s.checkins : [],
+      stage: STAGES.includes(s.stage) ? s.stage : 0,
+    };
+  };
+  const putState = (n) => {
+    setLang(n.lang); setSettings(n.settings); setTypedKeys(n.typedKeys); setTax(n.tax); setProfile(n.profile); setAnswers(n.answers);
+    setBudgetMw(n.budgetMw); setStocks(n.stocks); setHoldings(n.holdings); setCheckins(n.checkins); setStage(n.stage);
   };
   const newSlot = () => {
     const id = "s" + Date.now().toString(36);
@@ -4922,8 +4945,12 @@ function AppInner({ seed, lang: langProp }) {
     try { st = readPortfolioFile(JSON.parse(txt), new Set(baseUniverse().map((x) => x.t))); }
     catch (e) { console.warn("[뱁새] 불러온 파일을 JSON 으로 읽지 못했어요: " + ((e && e.message) || e)); st = null; }
     if (!st) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); return; }
+    let next = null;
+    try { next = buildState(st, "읽을 설정이 없는 파일"); }
+    catch (e) { console.warn("[뱁새] 불러온 파일을 화면에 옮기지 못했어요: " + ((e && e.message) || e)); }
+    if (!next) { window.alert(lang === "ko" ? "파일을 읽을 수 없어요." : "Couldn't read that file."); return; }   // 아무것도 바꾸지 않았어요
     const id = "s" + Date.now().toString(36);
-    applyState(st, "읽을 설정이 없는 파일");
+    putState(next);
     setSlotId(id); setSlotName((lang === "ko" ? "불러온 포트폴리오" : "Imported portfolio"));
   };
 

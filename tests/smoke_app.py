@@ -29,8 +29,9 @@
   자동 설정   (v18.6) 설정의 '자동' 칸(환율 · 시장 가정)은 저장본을 다시 열 때도 파일을 불러올 때도 오늘 값 · 직접 입력한 칸만 저장된 값('가정') ·
               JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수) ·
               (v18.6.1) '새로 시작하기' · 읽을 설정이 없는 파일은 기본값 + 오늘 값 (앞 포트폴리오의 설정을 잇지 않아요)
-  못 읽는 저장본 (v18.6.2) JSON 이 깨졌거나 내용이 없는 저장본은 열지 않아요: 첫 화면 그대로, 저장된 글은 그대로(자동 저장으로 덮지 않음),
-              앞 포트폴리오의 종목 · 설정이 보이지 않고 console 에 저장본 id 와 이유 · 멀쩡한 저장본은 그대로 열림
+  못 읽는 저장본 (v18.6.2) JSON 이 깨졌거나 · 내용이 없거나 · 종목 목록이 없거나 · 읽다가 · 옮기다 오류가 난 저장본은 열지 않아요:
+              첫 화면 그대로(언어 · 세금도), 저장된 글은 그대로(자동 저장으로 덮지 않음), console 에 저장본 id 와 진짜 이유 ·
+              종목만 있는 저장본은 앞 포트폴리오의 것 없이 기본값으로 열림 · 멀쩡한 저장본은 그대로 열림
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -1122,7 +1123,7 @@ def scene_beta_return(R, files):
     ctx.close(); srv.shutdown()
 
     def fresh(sid, name, lang, ans):
-        # profile 을 비워 둬요: 저장본에 profile 이 없으면 앞서 연 포트폴리오의 프로필이 그대로 남아요 (applyState)
+        # profile 을 비워 둬요 (v18.6.2 전에는 저장본에 profile 이 없으면 앞서 연 포트폴리오의 프로필이 그대로 남았어요)
         return (sid, name, {"schema": 10, "lang": lang, "stage": 0, "budgetMw": 1000, "holdings": hold, "answers": ans, "profile": {"ready": False}})
     pslots = [fresh("pka", "프로필 A", "ko", ANS_A), fresh("pkb", "프로필 B", "ko", ANS_B),
               fresh("pea", "Profile A", "en", ANS_A), fresh("peb", "Profile B", "en", ANS_B), fresh("pkr", "프로필 R", "ko", ANS_R),
@@ -1981,16 +1982,24 @@ def _auto_settings(R, files, tmp):
 def scene_broken_slot(R, files):
     """못 읽는 저장본은 열지 않아요 (v18.6.2, Jack 2026-11-04). 전에는 JSON 이 깨졌거나 내용이 없는 저장본을 누르면 앞 포트폴리오의
     화면(설정 · 직접 입력 기록 · 종목)이 그대로 열리고, 자동 저장이 그 내용을 그 저장본 위에 덮어썼어요.
-      · 멀쩡한 저장본을 먼저 열고 나와서 → 깨진 저장본 · 내용 없는 저장본을 누르면 첫 화면 그대로, 2초 뒤에도 저장된 글은 그대로(없던 것은 없는 채로),
-        앞 포트폴리오의 종목 · 설정이 보이지 않고, console 에 저장본 id 와 이유;
-      · 그 뒤에도 멀쩡한 저장본은 그대로 열려요."""
-    broken = "{not json"
-    good = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}, {"t": "000660", "mw": 200}],
-            "settings": {"fx": 1234.5}, "typedKeys": ["fx"]}
-    names = [("sgood", "멀쩡한 저장본"), ("sbroken", "깨진 저장본"), ("smissing", "내용 없는 저장본")]
+    확인마다 새로 열고 → 멀쩡한 저장본(예산 2,500 · 세금 9.9% · 환율 1,234.5 직접 입력)을 열고 나와서 → 시험할 저장본을 눌러요 (서로 기대지 않게).
+      · 깨진 JSON · 내용 없음 · {} (종목 목록 없음) · 읽다가 저장소 오류 · 화면에 옮기다 오류(lang en · customStocks [null] · 세금 1%):
+        첫 화면 그대로(한국어), 2초 뒤에도 저장된 글 · 목록 줄 그대로, console 에 저장본 id 와 이유, 그 뒤 '새로 시작하기'의 세금은
+        멀쩡한 저장본의 9.9% (못 읽은 저장본의 1% 가 아니에요);
+      · 종목만 있는 저장본: 앞 포트폴리오의 예산 · 세금 · 환율을 잇지 않고 기본값(1,000만원 · 15.4% · 오늘 환율 '자동')으로 열려요;
+      · 멀쩡한 저장본은 그대로 열려요."""
+    today = files["data.json"].get("fx")
+    good = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 2500, "holdings": [{"t": "005930", "mw": 300}, {"t": "000660", "mw": 200}],
+            "settings": {"fx": 1234.5}, "typedKeys": ["fx"], "tax": {"divKr": 9.9}, "answers": {"goal": "retire"}}
+    bad = {"sbroken": "{not json", "sempty": "{}", "sreaderr": json.dumps({"holdings": [{"t": "005930", "mw": 100}]}),
+           "sthrow": json.dumps({"lang": "en", "customStocks": [None], "tax": {"divKr": 1}, "holdings": [{"t": "005930", "mw": 100}]})}
+    bare = {"holdings": [{"t": "005930", "mw": 300}], "stage": 1}
+    names = [("sgood", "멀쩡한 저장본"), ("sbroken", "깨진 저장본"), ("smissing", "내용 없는 저장본"), ("sempty", "빈 저장본"),
+             ("sreaderr", "읽기 오류 저장본"), ("sthrow", "옮기기 오류 저장본"), ("sbare", "종목만 있는 저장본")]
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": i, "name": n} for i, n in names], ensure_ascii=False),
-             "baepsae_v10_slot_sgood": json.dumps(good, ensure_ascii=False), "baepsae_v10_slot_sbroken": broken}
-    srv, ctx, page, _ = R.open(build_site(files), local=local, once=True)
+             "baepsae_v10_slot_sgood": json.dumps(good, ensure_ascii=False), "baepsae_v10_slot_sbare": json.dumps(bare)}
+    local.update({"baepsae_v10_slot_" + k: v for k, v in bad.items()})
+    srv, ctx, page, base = R.open(build_site(files), local=local, once=True)
     S = "못 읽는 저장본"
     logs = []
     page.on("console", lambda m: logs.append((m.type, m.text)))
@@ -1998,46 +2007,86 @@ def scene_broken_slot(R, files):
     listed = "(k) => (JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]').find((x) => x.id === k) || null)"
     want_rows = [["삼성전자", "300"], ["SK하이닉스", "200"]]
 
-    def open_good():
-        page.get_by_text("멀쩡한 저장본", exact=False).first.click()
-        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
-        poll(page, CART_ROWS, lambda v: v == want_rows, "멀쩡한 저장본의 종목이 보이지 않아요")
+    def panel(k=None, tax=None):
+        """설정 화면을 열고 한 칸의 (값, 칩 또는 None) 을 읽고 닫아요."""
+        page.locator("button.openSettings").first.click()
+        row = page.locator(f'[data-set="{k}"]' if k else f'[data-tax="{tax}"]').first
+        row.wait_for(state="visible", timeout=WAIT)
+        v = float(row.locator("input").input_value())
+        chip = "자동" if row.get_by_text("자동", exact=True).count() else "가정" if row.get_by_text("가정", exact=True).count() else None
+        page.mouse.click(195, 40)                                       # 바깥을 눌러 닫아요 (아래 '닫기'는 탭 막대에 가려요)
+        page.locator('[data-set="fx"]').first.wait_for(state="detached", timeout=WAIT)
+        return v, chip
 
     def go_home():
         page.locator('button[title="저장하고 나가기"]').first.click()
         see(page, "어떻게 시작할까요?")
 
-    def refused(sid, name, before, reason):
+    def start_with_good():
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("멀쩡한 저장본", exact=False).first.click()
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        poll(page, CART_ROWS, lambda v: v == want_rows, "멀쩡한 저장본의 종목이 보이지 않아요")
+        go_home()
+
+    def refused(sid, name, reason, before=None, patch=None):
         def run():
-            if sid == "sbroken":                                        # 앞 포트폴리오(멀쩡한 저장본)를 먼저 열어 둬요
-                page.get_by_text("차근차근 만들기", exact=True).click()
-                open_good()
-                go_home()
+            start_with_good()
             logs.clear()
-            entry = page.evaluate(listed, sid)
+            text, entry = page.evaluate(stored, sid), page.evaluate(listed, sid)
+            assert text == before, (sid, text)
+            if patch:                                                   # 저장소가 이 저장본을 읽다가 오류를 내요 (누르기 직전에만)
+                page.evaluate(patch)
             page.get_by_text(name, exact=False).first.click()
             page.wait_for_timeout(2000)                                 # 자동 저장(0.8초)이 돌 시간을 넘겨요
-            see(page, "어떻게 시작할까요?")                               # 첫 화면 그대로
+            if patch:
+                page.evaluate("() => { Storage.prototype.getItem = window.__getItem; }")
+            see(page, "어떻게 시작할까요?")                               # 첫 화면 그대로 · 한국어 그대로
             assert page.locator("button.openSettings").count() == 0, "못 읽는 저장본이 열렸어요"
-            assert page.evaluate(CART_ROWS) == [], "앞 포트폴리오의 종목이 보여요"
-            assert page.evaluate(stored, sid) == before, f"저장된 글이 바뀌었어요: {page.evaluate(stored, sid)!r}"
+            assert page.evaluate(stored, sid) == text, f"저장된 글이 바뀌었어요: {page.evaluate(stored, sid)!r}"
             assert page.evaluate(listed, sid) == entry, "저장본 목록의 그 줄이 바뀌었어요 (자동 저장)"
             line = [t for k, t in logs if k == "warning" and f"저장본 {sid} 을 열지 않았어요" in t]
             assert len(line) == 1 and reason in line[0], logs
+            # 못 읽은 저장본의 것이 새어 들어오지 않았어요: '새로 시작하기'는 세금만 앞 포트폴리오(멀쩡한 저장본 9.9%)에서 이어요 (Jack)
+            page.get_by_text("새로 시작하기", exact=False).first.click()
+            page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+            assert page.get_by_role("button", name="EN", exact=True).count() >= 1, "언어가 바뀌었어요"
+            assert panel(tax="divKr")[0] == 9.9, panel(tax="divKr")
         return run
-    R.check(page, S, "멀쩡한 저장본을 열고 나와 깨진 저장본(JSON 깨짐)을 누름 → 첫 화면 그대로 · 2초 뒤에도 저장된 글 그대로 · 앞 종목 안 보임 · console 경고",
-            refused("sbroken", "깨진 저장본", broken, "JSON 을 읽지 못했어요"))
-    R.check(page, S, "내용 없는 저장본(목록에만 있음)을 누름 → 첫 화면 그대로 · 2초 뒤에도 내용 없음(덮어쓰지 않음) · console 경고",
-            refused("smissing", "내용 없는 저장본", None, "저장된 내용이 없어요"))
+    R.check(page, S, "깨진 JSON → 첫 화면 그대로 · 2초 뒤에도 저장된 글 · 목록 줄 그대로 · console 경고 · 그 뒤 새로 시작하기 세금 9.9%",
+            refused("sbroken", "깨진 저장본", "JSON 을 읽지 못했어요", bad["sbroken"]))
+    R.check(page, S, "내용 없는 저장본(목록에만 있음) → 첫 화면 그대로 · 2초 뒤에도 내용 없음(덮어쓰지 않음) · console 경고",
+            refused("smissing", "내용 없는 저장본", "저장된 내용이 없어요"))
+    R.check(page, S, "{} (종목 목록 없음) → 열지 않음 · 저장된 글 그대로 · console 경고 (전에는 앞 포트폴리오의 답변 · 예산 · 세금으로 열렸어요)",
+            refused("sempty", "빈 저장본", "종목 목록(holdings)이 없어요", bad["sempty"]))
+    R.check(page, S, "읽다가 저장소 오류 → '내용 없음'이 아니라 그 오류를 console 에 · 열지 않음 · 저장된 글 그대로",
+            refused("sreaderr", "읽기 오류 저장본", "저장소에서 읽다가 오류가 났어요 (localStorage: 시험용 읽기 오류)", bad["sreaderr"],
+                    patch="""() => { window.__getItem = Storage.prototype.getItem; const g = window.__getItem;
+                        Storage.prototype.getItem = function (k) { if (k === 'baepsae_v10_slot_sreaderr') throw new Error('시험용 읽기 오류');
+                        return g.call(this, k); }; }"""))
+    R.check(page, S, "화면에 옮기다 오류(lang en · customStocks [null] · 세금 1%) → 열지 않음 · 한국어 그대로 · 새로 시작하기 세금 9.9% (1% 아님)",
+            refused("sthrow", "옮기기 오류 저장본", "저장된 내용을 화면에 옮기지 못했어요", bad["sthrow"]))
+
+    def bare_opens_clean():
+        start_with_good()
+        page.get_by_text("종목만 있는 저장본", exact=False).first.click()
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        poll(page, CART_ROWS, lambda v: v == [["삼성전자", "300"]], "종목만 있는 저장본의 종목이 보이지 않아요")
+        assert page.locator(BUDGET_BOX).first.input_value() == "1000", page.locator(BUDGET_BOX).first.input_value()   # 2,500 이 아니에요
+        assert panel(tax="divKr")[0] == 15.4, "앞 포트폴리오의 세금이 남았어요"
+        assert panel("fx") == (today, "자동"), panel("fx")
+        st = poll(page, "() => JSON.parse(localStorage.getItem('baepsae_v10_slot_sbare'))", lambda v: v and "settings" in v, "저장되지 않았어요")
+        assert st["budgetMw"] == 1000 and st["tax"]["divKr"] == 15.4 and st["answers"] == {} and st["typedKeys"] == [], st
+    R.check(page, S, "종목만 있는 저장본 → 앞 포트폴리오의 예산 · 세금 · 환율 · 답변 없이 기본값(1,000 · 15.4% · 오늘 환율 '자동')으로 열림", bare_opens_clean)
 
     def good_still_opens():
-        open_good()
-        page.locator("button.openSettings").first.click()
-        row = page.locator('[data-set="fx"]').first
-        row.wait_for(state="visible", timeout=WAIT)
-        assert float(row.locator("input").input_value()) == 1234.5 and row.get_by_text("가정", exact=True).count() == 1
-        page.mouse.click(195, 40)
-    R.check(page, S, "그 뒤에도 멀쩡한 저장본은 그대로 열림 (삼성전자 300 · SK하이닉스 200 · 환율 1,234.5 '가정')", good_still_opens)
+        start_with_good()
+        page.get_by_text("멀쩡한 저장본", exact=False).first.click()
+        poll(page, CART_ROWS, lambda v: v == want_rows, "멀쩡한 저장본의 종목이 보이지 않아요")
+        assert page.locator(BUDGET_BOX).first.input_value() == "2500"
+        assert panel("fx") == (1234.5, "가정") and panel(tax="divKr")[0] == 9.9
+    R.check(page, S, "멀쩡한 저장본은 그대로 열림 (종목 · 예산 2,500 · 환율 1,234.5 '가정' · 세금 9.9%)", good_still_opens)
     ctx.close(); srv.shutdown()
 
 
