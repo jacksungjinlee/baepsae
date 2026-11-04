@@ -29,7 +29,7 @@ import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -75,7 +75,7 @@ export function tileViews(load, s) {
   {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
-    add("div", T().label.div, r, phrase, r.yieldPct != null ? `${C.pick.receipt.yield} ${pctText(r.yieldPct)}` : null, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
+    add("div", T().label.div, r, phrase, r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
   }
   {
     const r = riskTile(s);

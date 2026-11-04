@@ -411,15 +411,16 @@ def test_signed_numbers_never_show_minus_zero():
     entry = os.path.join(tmp, "f.js")
     with open(entry, "w", encoding="utf-8") as f:
         f.write(f"export {{ signedPct }} from {json.dumps(os.path.join(ROOT, 'src/v2/deckcalc.js'))};\n"
-                f"export {{ pctText }} from {json.dumps(os.path.join(ROOT, 'src/v2/cofmt.js'))};\n")
+                f"export {{ pctText, yieldText }} from {json.dumps(os.path.join(ROOT, 'src/v2/cofmt.js'))};\n")
     r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", "--loader:.js=jsx", "--charset=utf8", f"--outfile={tmp}/f.mjs",
                         "--log-level=error"], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    code = ("import { signedPct, pctText } from './f.mjs';"
-            "console.log(JSON.stringify([signedPct(-0.04), signedPct(0.04), signedPct(-3.21), signedPct(3.2), pctText(-0.04), pctText(-1), pctText(2.25)]));")
+    code = ("import { signedPct, pctText, yieldText } from './f.mjs';"
+            "console.log(JSON.stringify([signedPct(-0.04), signedPct(0.04), signedPct(-3.21), signedPct(3.2), pctText(-0.04), pctText(-1), pctText(2.25),"
+            " yieldText(0.02), yieldText(0.19), yieldText(1.48), yieldText(0)]));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=tmp, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == ["0.0%", "0.0%", "\u22123.2%", "+3.2%", "0.0%", "\u22121.0%", "2.3%"], r.stdout
+    assert json.loads(r.stdout) == ["0.0%", "0.0%", "\u22123.2%", "+3.2%", "0.0%", "\u22121.0%", "2.3%", "0.02%", "0.2%", "1.5%", "0.0%"], r.stdout
 
 
 def test_holdings_of_a_stock_across_portfolios():

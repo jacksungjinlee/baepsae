@@ -22,7 +22,7 @@ import { growthBasis, num } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, manWon, bigWon } from "./cofmt.js";
+import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -521,7 +521,8 @@ export function DivTab({ load, s }) {
   const co = load.coByT.get(s.t) || null;
   const us = usOf(s);
   const r = us ? divUs(s) : divKr(s, co);
-  const head = r.rule === "na" ? null : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : us && r.rule === "pays" ? Dv.head.pays : Dv.head[r.rule];
+  // na (the per-share figures disagree with the report's yield, or are missing): the tile's own phrase, never an empty card
+  const head = r.rule === "na" ? C.co.tiles.na : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : us && r.rule === "pays" ? Dv.head.pays : Dv.head[r.rule];
   const md = priceMd(load, s);
   const fy = us ? null : r.fy;
   const pm = r.rule !== "none" ? perMillionView(r.yieldPct) : null;
@@ -536,7 +537,7 @@ export function DivTab({ load, s }) {
   const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
-      <Card>
+      {(head || (showDps && Dv.dps) || us) && <Card data-ui-v2="co-div-head">
         {head && <H>{head}</H>}
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
@@ -545,9 +546,9 @@ export function DivTab({ load, s }) {
           </div>
         )}
         {bars && <Bars rows={bars} fmt={(v) => nf(v)} />}
-        <Src>{yearText(fy)}</Src>
+        {showDps && <Src>{yearText(fy)}</Src>}
         {us && Dv.usLater && <Note>{Dv.usLater}</Note>}
-      </Card>
+      </Card>}
       {pm && all(Dv.million, line, basis) && (
         <Card data-ui-v2="co-million" data-won={pm.won ?? ""} data-under={pm.under ? "1" : ""} data-y={r.yieldPct}>
           <CardHead icon="coins" tone="div" title={Dv.million} />
@@ -558,10 +559,10 @@ export function DivTab({ load, s }) {
       )}
       <Card>
         <Stats>
-          {r.yieldPct != null && <Stat data-ui-v2="co-yield" label={C.pick.receipt.yield} value={pctText(r.yieldPct)} sub={us ? Dv.yieldSubUs : yearText(fy)} />}
+          {r.yieldPct != null && <Stat data-ui-v2="co-yield" label={C.pick.receipt.yield} value={yieldText(r.yieldPct)} sub={us ? Dv.yieldSubUs : yearText(fy)} />}
           {po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
-        <Src>{us ? (C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null) : yearText(fy)}</Src>
+        {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
       </Card>
     </div>
   );

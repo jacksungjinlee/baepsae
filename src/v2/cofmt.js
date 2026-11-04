@@ -23,6 +23,8 @@ export function wonOfUsd(load, usd) {
 export const timesText = (x, d = 1) => fill(C.pick.receipt.times, { x: nf(x, d) });
 // "12.3%", "−3.2%" (U+2212, as everywhere in 2.0), "0.0%" (no sign once rounded to zero).
 export const pctText = (x) => { const r = Math.round(x * 10) / 10; return `${r < 0 ? "\u2212" : ""}${p1(Math.abs(r))}%`; };
+// A dividend yield: two decimals below 0.1% so a payer never reads "0.0%" (삼천당제약 0.02%).
+export const yieldText = (y) => (y > 0 && y < 0.1 ? `${nf(y, 2)}%` : pctText(y));
 // "2.4만원" / "7,000원": 만원 style with one decimal when needed (so the 1,000원 rounding stays visible).
 export function manWon(won) {
   if (won >= 10000) return fill(C.app.man, { n: nf(won / 10000, won % 10000 ? 1 : 0) });
