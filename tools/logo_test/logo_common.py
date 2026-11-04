@@ -109,7 +109,7 @@ def common_code(code):
 
 # ── homepage -> domain ──────────────────────────────────────────────────────────────────────────────────────────────
 
-_SCHEME = re.compile(r"^\s*(?:[a-z][a-z0-9+.-]*:)?/*\s*", re.I)
+_SCHEME = re.compile(r"^\s*(?:https?:/*|https?/{2,}|/+)\s*", re.I)       # http:// · http:/// · http// · leading /
 _DOMAIN = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$")
 # Hosts that many unrelated companies use for their "homepage". A logo looked up by such a domain is the platform's
 # logo, i.e. a wrong match, so these never become a company's domain:
