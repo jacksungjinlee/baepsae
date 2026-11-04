@@ -467,3 +467,60 @@ def test_json_backup_keeps_holdings_missing_from_todays_list():
                            {"ticker": "GONE2", "name": None, "amountWon": 505000, **nul}], got["rows"]   # 금액 0 · 숫자 아님은 저장본에도 담기지 않아요
     assert got["back"] == [{"t": "005930", "mw": 300}, {"t": "GONE1", "mw": 200, "nk": "없어진 회사"}, {"t": "GONE2", "mw": 50.5}], got["back"]
     assert got["warn"] == ["[뱁새] 불러온 파일의 종목 3개: 뺀 줄 0개 (종목코드·금액이 맞지 않거나 겹침) · 지금 종목 목록에 없음 2개 (저장본에는 남겨 둬요)"], got["warn"]
+
+
+# ── v18.6 (Jack 2026-11-04): '자동' 설정은 오늘 값으로 ─────────────────
+# 저장본 · 백업 파일을 열 때, 설정 화면에서 직접 입력한 칸(typedKeys)만 저장된 값을 쓰고 나머지 자동 칸은 오늘 data.json 값이에요.
+# 전에는 지난달 저장본이 지난달 환율을 '자동' 칩과 함께 보여 줬어요 (틀린 값이 오늘 값처럼). smoke_app.py 의 '자동 설정' 장면도 봐요.
+LOG_JS = ("const warn = [], info = []; console.warn = (m) => warn.push(String(m)); console.info = (m) => info.push(String(m));"
+          "const LIVE = { fx: 1450, rf: 2.8, mktVol: 20 };")
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_auto_settings_take_todays_values_and_typed_ones_stay():
+    got = run_metrics(LOG_JS + "const W = (s, t, l = LIVE) => { const r = D.withTodaysAuto(s, t, l);"
+                      " return { fx: r.settings.fx, rf: r.settings.rf, mrp: r.settings.mrp, typed: r.typed,"
+                      " chip: ['fx', 'rf', 'mrp'].filter((k) => D.autoChip(k, r.settings, l, r.typed)) }; };"
+                      "const out = {"
+                      " auto: W({ ...st, fx: 1300, rf: 3 }, []),"                                   # 자동으로 저장한 1,300 → 오늘 1,450
+                      " typed: W({ ...st, fx: 1234.5, rf: 3 }, ['fx']),"                            # 직접 입력한 1,234.5 는 그대로
+                      " legacy: W({ fx: 1300, mrp: 6 }, null),"                                     # 예전 저장본 (기록 없음)
+                      " noValue: W({ rf: 3 }, ['fx', 'rf']),"                                       # 저장된 값이 없는 칸은 직접 입력이 아니에요
+                      " failedDay: W({ ...st, fx: 1300 }, null, {}),"                               # 오늘 데이터를 못 읽은 날: 저장된 값, 칩 없음
+                      " same: W({ ...st, fx: 1450, rf: 2.8, mktVol: 20 }, []) };"
+                      "const s0 = { ...st, ...LIVE };"
+                      "out.chips = [D.autoChip('fx', s0, LIVE, []), D.autoChip('fx', { ...s0, fx: 1300 }, LIVE, []),"   # 보이는 값이 오늘 값일 때만
+                      " D.autoChip('fx', s0, LIVE, ['fx']), D.autoChip('mrp', s0, LIVE, []), D.autoChip('fx', s0, null, [])];"
+                      "console.log(JSON.stringify({ out, warn, info }));")
+    o = got["out"]
+    assert o["auto"] == {"fx": 1450, "rf": 2.8, "mrp": 5.5, "typed": [], "chip": ["fx", "rf"]}, o["auto"]
+    assert o["typed"] == {"fx": 1234.5, "rf": 2.8, "mrp": 5.5, "typed": ["fx"], "chip": ["rf"]}, o["typed"]
+    assert o["legacy"] == {"fx": 1450, "rf": 2.8, "mrp": 6, "typed": [], "chip": ["fx", "rf"]}, o["legacy"]   # 자동이 아닌 칸(mrp)은 저장된 값
+    assert o["noValue"] == {"fx": 1450, "rf": 3, "mrp": 5.5, "typed": ["rf"], "chip": ["fx"]}, o["noValue"]
+    assert o["failedDay"] == {"fx": 1300, "rf": 3.0, "mrp": 5.5, "typed": [], "chip": []}, o["failedDay"]
+    assert o["same"]["chip"] == ["fx", "rf"] and o["chips"] == [True, False, False, False, False], o
+    # 조용히 바꾸지 않아요: 바꾼 개수와 값을 남겨요
+    assert got["info"] == ["[뱁새] 자동 설정 3개를 저장본의 값 대신 오늘 값으로 열어요: fx 1300 → 1450, rf 3 → 2.8, mktVol 18 → 20",
+                           "[뱁새] 자동 설정 2개를 저장본의 값 대신 오늘 값으로 열어요: rf 3 → 2.8, mktVol 18 → 20",
+                           "[뱁새] 자동 설정 2개를 저장본의 값 대신 오늘 값으로 열어요: fx 1380 → 1450, mktVol 18 → 20"], got["info"]
+    assert got["warn"] == ["[뱁새] 직접 입력 기록(typedKeys)이 없는 예전 저장본이라 자동 설정 3개를 모두 오늘 값으로 열어요 · 바뀐 값 3개: "
+                           "fx 1300 → 1450, rf 3 → 2.8, mktVol 18 → 20",
+                           "[뱁새] 직접 입력 기록 2개 중 1개는 저장된 값이 없어 자동 칸으로 열어요"], got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_import_reads_typed_keys_and_drops_unknown_ones():
+    h = [{"ticker": "005930", "amountWon": 3000000}]
+    got = read_file_js({
+        "export": {"budgetWon": 10000000, "holdings": h, "settings": {"fx": 1234.5}, "typedKeys": ["fx", "zzz", 3, None, "fx", "rf"]},
+        "old": {"budgetWon": 10000000, "holdings": h, "settings": {"fx": 1300}},
+        "not_list": {"budgetWon": 10000000, "holdings": h, "settings": {"fx": 1300}, "typedKeys": "fx"},
+        "state": {"holdings": [{"t": "005930", "mw": 300}], "budgetMw": 1000, "settings": {"fx": 1234.5}, "typedKeys": ["fx", "__proto__"]},
+    })
+    o = got["out"]
+    assert o["export"]["typedKeys"] == ["fx", "rf"] and o["export"]["settings"] == {"fx": 1234.5}, o["export"]
+    assert "typedKeys" not in o["old"] and "typedKeys" not in o["not_list"], o     # 기록 없음 → 자동 칸은 모두 오늘 값
+    assert o["state"]["typedKeys"] == ["fx"], o["state"]
+    assert got["warn"] == ["[뱁새] 불러온 파일의 직접 입력 기록(typedKeys) 6개 중 3개는 모르는 설정이라 뺐어요",
+                           "[뱁새] 불러온 파일의 직접 입력 기록(typedKeys)이 목록이 아니라서 버렸어요: 자동 설정은 모두 오늘 값으로 열어요",
+                           "[뱁새] 불러온 파일의 직접 입력 기록(typedKeys) 2개 중 1개는 모르는 설정이라 뺐어요"], got["warn"]

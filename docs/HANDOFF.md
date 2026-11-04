@@ -22,22 +22,32 @@ Claude started one `dart=cache` run on main by hand (41731600516, published 07:4
 run has published by ~07:30 KST, start one `dart=cache` run on main (never a second full-DART run in a KST day; not
 while a scheduled run is waiting or queued).
 
-**Next, after Jack's usage limit resets (Jack, 2026-11-04) — ask him first:**
-1. **09:13 check reports gate warnings.** Update the read-only scheduled check `trig_01BGc9nmRuJcg6dsL1wNZX5E` so it
-   finds today's publishing run (head_branch main, step "커밋 & 푸시" success), reads
-   `GET /repos/jacksungjinlee/baepsae/check-runs/<update job id>/annotations` (public, no login) and reports every
-   "발행 관문 경고" / "발행 관문 실패" annotation, also after 11/11; and when nothing published, tells Jack to ask
-   Claude to start a `dart=cache` run. The edit was refused by the session's permission settings — Jack must allow it.
-2. **Outside timer:** cron-job.org (Jack signs up) calls GitHub's workflow_dispatch API at ~06:40 KST with a
-   fine-grained token limited to Actions on this repo; GitHub's own cron is hours late or silent.
+**Outside timer (v17.5.5, Jack 2026-11-04):** cron-job.org (Jack's account) calls
+`POST https://api.github.com/repos/jacksungjinlee/baepsae/actions/workflows/update-data.yml/dispatches` with
+`{"ref":"main","inputs":{"timer":"true"}}` at 06:40 KST Tue–Sat. A timer run follows the scheduled-run rules: it stops
+early when today's data is already published, waits for the US close, checks out the latest main, stops on an empty
+DART cache, and accepts only main + `dart=cache`. The token is a fine-grained token for this repo only with only the
+Actions permission; it lives only in cron-job.org (never in a chat, the repo or a log).
+- **Token expires 2027-02-04. Remind Jack on 2027-01-21** to make a new token (same settings) and paste it into the
+  cron-job.org job's Authorization header. To revoke at any time: GitHub → Settings → Developer settings → Personal
+  access tokens → Fine-grained tokens → the token → Delete.
+- The token can start *any* run (like Jack's Run-workflow button, e.g. a manual `dart=full`), cancel runs or delete
+  caches — the workflow can't tell the holder apart from Jack. That's why it stays only in cron-job.org with a short
+  expiry.
+- Timer runs share the live concurrency group with scheduled and manual runs (1 running + 1 pending; a newer queued
+  run cancels the older pending one). Don't queue a manual run while a scheduled **or timer** run is waiting or queued.
+
+**Next, in Jack's order (2026-11-04): 자동 settings fix (v18.6, with the 타임머신 line stopping at the low point) → v19.0d (PC) → v17.6:**
+1. **09:13 check reports gate warnings:** done 2026-11-04 (Jack allowed the change).
+2. **Outside timer:** workflow change merged (v17.5.5); Jack sets up cron-job.org with the token (steps sent
+   2026-11-04). Then check that the next morning's run came from the timer (event workflow_dispatch, ~06:40 KST).
 3. **v19.0d (PC layout):** ≥ 1024 px left menu 240 px, search on top, "/" focuses search (not while typing), 홈 and
    시장 in two columns. Plan: `docs/tasks/v19.0-plan.md`. Then **v17.6**.
 4. **Old app, 자동 settings:** settings left on 자동 (fx, market inputs) must come from today's data on import and
    when reopening a saved portfolio; typed ones stay. Needs a "typed keys" record (`autoKeys` only lists keys today's
    data supplies; `openSlot` restores an old fx while the chip says 자동).
 
-**Open product point for Jack:** the old app's 타임머신 chart line still runs to the end of the period (no number
-shown) — should the drawing stop at the low point?
+**타임머신 (old app):** Jack decided 2026-11-04 — stop the chart line at the low point (part of v18.6).
 
 **v19.0c follow-ups (from its review):** dead first back press after reloading with the menu open; the screen
 behind 소개 isn't kept mounted for build / 왜 움직였나 (typed RecordSheet input would be lost); 포트폴리오에서 빼기

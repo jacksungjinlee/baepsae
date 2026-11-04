@@ -275,7 +275,7 @@ def test_check_job_runs_first_and_gates_the_whole_update_job():
     assert check["permissions"] == {"contents": "read"}
     assert check["timeout-minutes"] >= A.MAX_WAIT.total_seconds() / 60 + 5
     run = next(s for s in check["steps"] if s.get("id") == "already")["run"]
-    assert 'github.event_name }}" != "schedule"' in run and "skip=false" in run          # 수동 실행은 늘 실행
+    assert 'github.event_name }}" != "schedule" ] && [ "${{ inputs.timer }}" != "true"' in run and "skip=false" in run   # 수동 실행은 늘 실행, 바깥 타이머는 확인
     assert "already_published.py" in run
     text = json.dumps(check, ensure_ascii=False)
     for word in ("DART", "secrets", "cache", "git push", "git commit", "fetch_data.py"):
@@ -285,7 +285,7 @@ def test_check_job_runs_first_and_gates_the_whole_update_job():
     assert wf["concurrency"]["cancel-in-progress"] is False and "live" in wf["concurrency"]["group"]
     # 정해진 시각 실행은 지금의 main 을 받아요 (오래된 커밋 위에서 관문·커밋이 돌지 않게)
     co = update["steps"][0]
-    assert co["uses"].startswith("actions/checkout") and co["with"]["ref"] == "${{ github.event_name == 'schedule' && 'main' || '' }}"
+    assert co["uses"].startswith("actions/checkout") and co["with"]["ref"] == "${{ (github.event_name == 'schedule' || inputs.timer) && 'main' || '' }}"
 
 
 def test_scheduled_runs_never_start_dart_from_an_empty_cache():
@@ -295,7 +295,7 @@ def test_scheduled_runs_never_start_dart_from_an_empty_cache():
                                      names.index("데이터 수집"))
     assert i_restore < i_guard < i_collect
     restore, guard = steps[i_restore], steps[i_guard]
-    assert restore["id"] == "dart_cache" and guard["if"] == "github.event_name == 'schedule'"
+    assert restore["id"] == "dart_cache" and guard["if"] == "github.event_name == 'schedule' || inputs.timer"
     assert '-z "${{ steps.dart_cache.outputs.cache-matched-key }}"' in guard["run"] and "! -s .dart-cache/dart-v1.json.gz" in guard["run"]
     assert "exit 1" in guard["run"]
 
@@ -318,5 +318,52 @@ def test_pipeline_refuses_an_empty_dart_cache_on_scheduled_runs(tmp_path, monkey
     with gzip.open(tmp_path / "ok.json.gz", "wt", encoding="utf-8") as f:
         json.dump({"v": F.DART_CACHE_VERSION, "entries": {"a|1|2|3": {"st": "000", "at": "2026-11-01", "d": {}}}}, f)
     assert F.DartClient("k", today=D(2026, 11, 4), path=str(tmp_path / "ok.json.gz")).entries
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")                       # 수동 실행은 사람이 정해요
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("BAEPSAE_AUTO_RUN", "1")                                         # 바깥 타이머 실행도 멈춰요 (v17.5.5)
+    with pytest.raises(RuntimeError, match="DART 캐시가 비어"):
+        F.DartClient("k", today=D(2026, 11, 4), path=str(tmp_path / "none.json.gz"))
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN")                                              # 수동 실행은 사람이 정해요
     assert F.DartClient("k", today=D(2026, 11, 4), path=str(tmp_path / "none.json.gz")).entries == {}
+
+
+def test_outside_timer_runs_follow_the_scheduled_rules():
+    """v17.5.5 (Jack, 2026-11-04): cron-job.org 가 workflow_dispatch + timer=true 로 시작한 실행은 정해진 시각 실행과 같아요:
+    이미 발행됐으면 확인 단계에서 끝나고, 지금의 main 을 받고, 빈 DART 캐시면 멈추고, main · dart=cache 만 받아요."""
+    wf = load_workflow()
+    inp = wf[True]["workflow_dispatch"]["inputs"]["timer"]
+    assert inp["type"] == "boolean" and inp["default"] is False
+    upd = wf["jobs"]["update"]
+    assert upd["env"]["TIMER"] == "${{ inputs.timer || false }}"
+    check = next(s for s in upd["steps"] if s.get("name") == "입력 확인")["run"]
+    for need in ('[ "$TIMER" = "true" ]', '[ "$GITHUB_REF" != "refs/heads/main" ]', '[ "$DART_MODE" != "cache" ]', '[ "$DRY_RUN" = "true" ]',
+                 '[ "$BOOTSTRAP" = "true" ]', '[ -n "$PREV_REF" ]', '[ "$SELFTEST" != "none" ]', '[ "$SAMPLE_KR" != "0" ]', "exit 1"):
+        assert need in check, need
+    collect = next(s for s in upd["steps"] if s.get("name") == "데이터 수집")
+    assert collect["env"]["BAEPSAE_AUTO_RUN"] == "${{ (github.event_name == 'schedule' || inputs.timer) && '1' || '' }}"
+    # 바깥 타이머는 live 그룹: 정해진 시각 실행과 동시에 시작해도 하나씩 돌고, 뒤의 것은 확인 단계에서 끝나요
+    assert "inputs.dry_run" in wf["concurrency"]["group"] and wf["concurrency"]["cancel-in-progress"] is False
+
+
+def _run_input_check(env):
+    """워크플로의 '입력 확인' 단계를 그대로 bash 로 돌려 종료 코드를 봐요 (리뷰 2026-11-04: 문자열만 보면 || 가 && 로 바뀌어도 통과해요)."""
+    import subprocess
+    step = next(s for s in load_workflow()["jobs"]["update"]["steps"] if s.get("name") == "입력 확인")
+    base = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_REF": "refs/heads/main", "GITHUB_REF_NAME": "main",
+            "DRY_RUN": "false", "DART_MODE": "cache", "BOOTSTRAP": "false", "PREV_REF": "", "SELFTEST": "none", "SAMPLE_KR": "0",
+            "TIMER": "false"}
+    return subprocess.run(["bash", "-e", "-c", step["run"]], env={**base, **env}, capture_output=True, text=True).returncode
+
+
+def test_outside_timer_input_check_really_refuses_everything_but_main_with_cached_dart():
+    steps = load_workflow()["jobs"]["update"]["steps"]
+    names = [s.get("name") or s.get("uses") for s in steps]
+    i_in = names.index("입력 확인")
+    assert "if" not in steps[i_in], "입력 확인은 늘 돌아야 해요"
+    assert i_in < names.index("DART 캐시 불러오기") < names.index("데이터 수집")
+    assert _run_input_check({"TIMER": "true"}) == 0                                    # 바깥 타이머: main · dart=cache
+    for bad in ({"GITHUB_REF": "refs/heads/claude/x"}, {"DART_MODE": "full"}, {"DART_MODE": "off"}, {"DRY_RUN": "true"},
+                {"BOOTSTRAP": "true"}, {"PREV_REF": "abc"}, {"SELFTEST": "corrupt-price"}, {"SAMPLE_KR": "5"}, {"SAMPLE_KR": "00"}):
+        assert _run_input_check({"TIMER": "true", **bad}) == 1, bad
+    assert _run_input_check({}) == 0                                                   # 정해진 시각 실행 · 수동 실행은 그대로
+    assert _run_input_check({"DART_MODE": "full"}) == 0                                # 수동 dart=full (하루 한 번, 사람이 정해요)
+
