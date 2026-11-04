@@ -7,6 +7,8 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // A Korean-listed company: 기업분석 (the old app, built on DART filings) has a page for it. Funds (etf) are not companies.
 export const isKrCompany = (s) => !!s && s.cls === "kr" && s.etf !== true;
+// v19.1a: a Korean or US company has a 2.0 company page (company.jsx). Funds (etf) are not companies.
+export const isCompany = (s) => !!s && (s.cls === "kr" || s.cls === "us") && s.etf !== true && !s.fund;
 
 // ---------------- 거래대금 상위 종목 ----------------
 // data.json popular is fetch_data.py popular_list: Korean stocks by the day's trading value, then US stocks by Yahoo's

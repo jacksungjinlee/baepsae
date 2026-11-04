@@ -224,7 +224,10 @@ def test_pages_never_load_fixtures_or_other_sites():
         assert "linkedin.com" not in read(f), f
     assert "goatcounter.com" not in built("app-preview.html")
     src = read("src/v2/load.js")
-    assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json"}
+    # v19.1a: disc.json too (the company page's 공시 tab, same site, fetched only when a company page opens: loadDisc)
+    assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json", "disc.json"}
+    assert src.count('"./disc.json"') == 1 and "export function loadDisc()" in src
+    assert "./disc.json" in built("app.html") and "./disc.json" not in built("app-preview.html")   # 미리 보기는 아무것도 받지 않아요
 
 
 def test_outside_check_catches_each_problem():

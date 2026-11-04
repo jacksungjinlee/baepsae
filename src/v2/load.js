@@ -1,4 +1,5 @@
 // Data loading for app.html. Same-origin files only, through src/data.js (loadJson: no-store fetch, NaN repair).
+// v19.1a: disc.json too, but only when a company page opens (loadDisc).
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
@@ -15,6 +16,9 @@ export const CHECKS = {
   data: (d) => isV175(d) && Array.isArray(d.stocks) && d.stocks.length > 0,
   corp: (d) => isV175(d) && Array.isArray(d.companies),
   macro: (d) => !!(d && typeof d === "object" && d.publishedAt),
+  // v19.1a: disc.json (the 공시 tab): the v17.5 file with its two lists and its content date (asOf, YYYY-MM-DD)
+  disc: (d) => !!(d && typeof d === "object" && !Array.isArray(d) && Array.isArray(d.insider) && Array.isArray(d.nps)
+    && typeof d.asOf === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.asOf) && typeof d.publishedAt === "string" && Number.isFinite(Date.parse(d.publishedAt))),
 };
 
 export async function loadAll(now) {
@@ -24,6 +28,11 @@ export async function loadAll(now) {
     loadJson("./macro.json", CHECKS.macro),
   ]);
   return resolveLoad({ data, corp, macro }, now);
+}
+
+// v19.1a: disc.json, only when a company page opens (the live page; app.jsx asks once). -> { ok, data, error }
+export function loadDisc() {
+  return loadJson("./disc.json", CHECKS.disc);
 }
 
 // opts.preview: the fictional example data of app-preview.html. It has a fixed publish date, so the stale check

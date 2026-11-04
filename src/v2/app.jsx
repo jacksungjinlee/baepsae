@@ -8,6 +8,8 @@
 // v19.0d (PC, from 1024 px wide): the left menu and the top bar with the search field (nav.jsx SideMenu · TopBar) take the
 // place of the bottom tab bar and the ☰ menu; screens read the width from LayoutContext (ui.jsx). The search field's
 // words live here: typing opens 종목 with the results, and leaving 종목 empties the field. Below 1024 px: the phone layout.
+// v19.1a: the company page (#stocks/<code>[/<tab>], company.jsx) sits under the 종목 tab; every company tapped anywhere in
+// 2.0 opens it (NavContext.openStock), never the old app's 기업분석.
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
@@ -19,6 +21,8 @@ import { Build, newBuilder } from "./build.jsx";
 import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
+import { Company } from "./company.jsx";
+import { companySub } from "./routes.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
@@ -43,13 +47,16 @@ export class ErrorBoundary extends React.Component {
   }
 }
 
-// source: { preview, storeKey, exportPrefix, load: () => Promise<load state> }
+// source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }> }
+// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab, fetched once, the first time a company page
+// opens. The preview page has none (it fetches nothing): its company pages have no 공시 tab.
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
   const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
     preview: !!source.preview }));
   const [builder, setBuilder] = useState(newBuilder);
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 홈 (Part E)
+  const [disc, setDisc] = useState(() => ({ status: source.loadDisc ? "idle" : "none" }));   // v19.1a 공시 tab (disc.json)
   const router = useRouter();
   const { loc } = router;
   const wasAbout = useRef(loc.about);
@@ -68,6 +75,16 @@ export function App({ source }) {
     if (store.writable) askPersist();
     return () => { live = false; };
   }, []);
+
+  // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
+  useEffect(() => {
+    if (!loc.code || disc.status !== "idle") return;
+    setDisc({ status: "loading" });
+    source.loadDisc().then((r) => {
+      if (r && r.ok) setDisc({ status: "ok", data: r.data });
+      else { console.warn("[v2] disc.json not loaded: " + ((r && r.error) || "unknown") + " (the disclosures tab shows the load-failure message)"); setDisc({ status: "fail" }); }
+    }).catch((e) => { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); });
+  }, [loc.code, disc.status]);
 
   // 왜 움직였나 needs its target: loaded on its own (a reload, a shared address) it shows 홈 instead.
   useEffect(() => {
@@ -119,6 +136,14 @@ export function App({ source }) {
     if (v.trim() && (cur.about || cur.tab !== "stocks" || cur.sub)) router.go("stocks");
   }, [router.go, router.loc]);
   const openWhy = useCallback((deckId, t) => { setWhy({ deckId, t }); router.go("home", "why"); }, [router.go]);
+  // v19.1a: any company tapped anywhere in 2.0 opens its company page (#stocks/<code>, one history entry).
+  const openStock = useCallback((t) => router.go("stocks", companySub(t)), [router.go]);
+  const coNav = useMemo(() => ({
+    back: () => (loc.ctab === "value-more" || loc.ctab === "earn-more" ? router.back("stocks", companySub(loc.code, loc.ctab.replace("-more", ""))) : router.back("stocks")),
+    setTab: (ctab) => router.replaceRoute("stocks", companySub(loc.code, ctab)),
+    more: (ctab) => router.go("stocks", companySub(loc.code, ctab)),
+    onWhy: openWhy,
+  }), [loc.code, loc.ctab, router.back, router.replaceRoute, router.go, openWhy]);
   // 기록했어요 -> 홈: the finished build is replaced by 홈, and the next 포트폴리오 만들기 starts fresh.
   const doneToHome = useCallback(() => { setBuilder(newBuilder()); router.replaceRoute("home"); }, [router.replaceRoute]);
 
@@ -133,11 +158,14 @@ export function App({ source }) {
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (tab === "portfolio") return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} />;
+    if (tab === "stocks" && loc.code && !loc.about) {
+      return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={disc} nav={coNav} />;
+    }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
     return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} />;
   })();
-  const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu };
+  const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock };
   const tall = wide ? {} : { minHeight: "100vh" };
   return (
     <ModeContext.Provider value={{ preview: !!source.preview }}>

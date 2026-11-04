@@ -11,7 +11,7 @@
        화면 어디에 있든(예외 칸 안이라도) 실패. 전각 숫자(０-９)도 숫자예요
     2) MASCOT_DIGITS_EXEMPT: 이 칸 안의 숫자는 숫자가 아니에요 (날짜 줄, 소개 페이지의 몇 곳)
     3) NOT_NUMBERS: 칸 밖에서도 숫자가 아닌 꼴 (날짜 · 종목 수). 이 셋으로 설명되지 않는 숫자가 하나라도 남으면 실패
-- 아이콘은 Phosphor 256 격자의 두 층(바탕 · 선, stroke 없음)이고, 색은 아이콘 표(on · off · ok · 남색 위)의 짝뿐이에요
+- 아이콘은 Phosphor 256 격자의 두 층(바탕 · 선, stroke 없음)이고, 색은 아이콘 표(on · off · ok · 남색 위 + v19.1 주제 색 다섯)의 짝뿐이에요
 - 고른 것(고른 탭 · 알약 · 줄 · 칩 · 라디오), 아이콘, 상태 아이콘, 판정 띠와 알약의 계산된 색에 살구색이 없어요
 뱁이가 나온 화면은 PLACEMENTS 에 모여요 (그림 · 화면 · 걸린 숫자 · 쓴 예외 칸과 꼴) — 스모크 결과 끝에 표로 찍어요.
 """
@@ -69,7 +69,9 @@ APRICOT_RGB = re.compile(r"\(\s*(?:201,\s*119,\s*87|169,\s*84,\s*47|251,\s*241,\
 NAVY_RGB = "rgb(28, 43, 69)"
 SELECT_RGB = "rgb(242, 240, 235)"
 # 아이콘 색 표 (docs/tasks/v19.0-layout-c.md Part B): (바탕 층, 선 층) — on · off · ok · 남색 위
-ICON_PAIRS = {("#CBD3DF", "#1C2B45"), ("#E3E6EB", "#6B7280"), ("#CDEBD9", "#1F7A4D"), ("#5A6B87", "#FFFFFF")}
+# + v19.1 Part H 주제 색 (Jack 승인 2026-11-05): 실적 · 가치 · 배당 · 출렁임·위험 · 공시 — 선은 남색, 바탕만 주제 색. 그 밖은 없어요.
+ICON_PAIRS = {("#CBD3DF", "#1C2B45"), ("#E3E6EB", "#6B7280"), ("#CDEBD9", "#1F7A4D"), ("#5A6B87", "#FFFFFF"),
+              ("#B9CDEB", "#1C2B45"), ("#BFE0CC", "#1C2B45"), ("#EBD49A", "#1C2B45"), ("#D3C8EC", "#1C2B45"), ("#B5DDDD", "#1C2B45")}
 VISUAL = r"""(exempt) => {
   const out = { verdictImg: [], badImg: [], icons: [], styles: [], imgs: 0, placements: [] };
   const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
