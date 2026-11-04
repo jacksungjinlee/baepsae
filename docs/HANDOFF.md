@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 00:52 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 03:00 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -37,6 +37,18 @@ only in cron-job.org (never in a chat, the repo or a log).
   caches — the workflow can't tell the holder apart from Jack. That's why it stays only in cron-job.org.
 - Timer runs share the live concurrency group with scheduled and manual runs (1 running + 1 pending; a newer queued
   run cancels the older pending one). Don't queue a manual run while a scheduled **or timer** run is waiting or queued.
+
+**v17.6 (started 2026-11-05 01:30 KST): PR #34, parts 1 (watchdog), 2 (CI), 3a (deploy + `data` branch), 4
+(`docs/RUNBOOK.md`). Waits for Jack's "merge".** New: `.github/workflows/ci.yml` (job `ci`), `deploy.yml` ("Deploy"),
+`watchdog.yml` ("Watchdog") + `watchdog.py`; `tools/push_data_branch.sh` (the daily run's new last step
+`data 브랜치에 올리기`: the same four files to the `data` branch, only with the gate's sha256 receipt, never forced; the
+first live run after the merge creates the branch), `tools/assemble_site.py`, `tools/build_tag.py` (build tag only when
+Deploy builds). `already_published.py` reads the `data` branch (falls back to `main` only while it doesn't exist). The
+daily run still commits to `main` as before (3a). Deploy's automatic triggers act only once Pages → Source is "GitHub
+Actions" (Jack's click, after the `data` branch exists and one manual Deploy was green); a deliberate deviation from the
+spec's "manual only", explained in the PR. Still to do after the merge: the after-merge steps in PR #34 (watch the first
+live run create `data`, watchdog selftest, manual Deploy, Jack's healthchecks.io + Pages clicks), then 3b, then 3c.
+The 09:13 check needs no change until 3b (it keys on the step `커밋 & 푸시`, unchanged).
 
 **Next, in Jack's order (2026-11-04): 자동 settings fix (v18.6, with the 타임머신 line stopping at the low point) → v19.0d (PC) → v17.6:**
 1. **09:13 check reports gate warnings:** done 2026-11-04 (Jack allowed the change).
@@ -182,7 +194,7 @@ is triggered six times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53,
 - a run ends before any download or DART call when main's `data.json` already holds the last KRX trading day before
   today and the last US trading day whose close is final (trading calendars from the gate's own sources: Naver KOSPI and
   Yahoo ^KS11, Yahoo ^GSPC). If the calendars can't be read it falls back to weekdays and says so loudly; if only one
-  KOSPI source answers it never skips. (v17.6 must point this check at the `data` branch when the data moves there.)
+  KOSPI source answers it never skips. (Since v17.6 / PR #34 it reads the `data` branch, and `main` only while that branch doesn't exist yet.)
 Runs share one queue (`concurrency`), so two never publish at once. A scheduled run never starts DART from an empty,
 unreadable or old-format cache: it stops loudly, and the day's one full-DART run is started by hand. Before starting a
 manual live run, check the run list: don't start one while a scheduled run is in progress, waiting or queued (a newer
