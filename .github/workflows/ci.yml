@@ -21,7 +21,7 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-24.04
-    timeout-minutes: 20      # 목표는 10분 안 (스모크 테스트는 동시에 돌려요)
+    timeout-minutes: 20      # 목표는 10분 안
     steps:
       - uses: actions/checkout@v7
 
@@ -58,24 +58,16 @@ jobs:
       - name: 글자 점검 (이모지 · 금지어 · JSON 의 NaN)
         run: python tests/check_text.py
 
-      # 스모크 테스트 다섯 개를 동시에 돌리고, 하나라도 실패하면 빨갛게 끝나요 (로그는 모두 보여 줘요)
+      # 스모크 테스트 다섯 개를 하나씩 돌려요 (동시에 돌리면 GitHub 의 4코어 기계에서 화면 전환을 기다리는 검사가 가끔 흔들렸어요,
+      # 2026-11-05). 하나가 실패해도 나머지를 끝까지 돌려 모든 결과를 보여 주고, 하나라도 실패면 빨갛게 끝나요.
       - name: 스모크 테스트 (헤드리스 크롬 · 휴대폰 크기)
         run: |
-          mkdir -p smoke-logs
-          pids=()
-          for t in smoke_app smoke_v2 smoke_preview smoke_styleguide smoke_launch; do
-            python "tests/$t.py" > "smoke-logs/$t.log" 2>&1 &
-            pids+=("$!:$t")
-          done
           failed=()
-          for p in "${pids[@]}"; do
-            if ! wait "${p%%:*}"; then failed+=("${p#*:}"); fi
-          done
           for t in smoke_app smoke_v2 smoke_preview smoke_styleguide smoke_launch; do
             echo "::group::$t"
-            cat "smoke-logs/$t.log"
+            if python "tests/$t.py"; then ok=통과; else ok=실패; failed+=("$t"); fi
             echo "::endgroup::"
-            echo "· $t: $(tail -n 1 "smoke-logs/$t.log")"
+            echo "· $t: $ok"
           done
           if [ "${#failed[@]}" -gt 0 ]; then
             echo "!! 스모크 테스트 실패: ${failed[*]}"

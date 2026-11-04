@@ -101,19 +101,19 @@ def test_ci_runs_build_tests_and_smoke_on_every_pr():
     smoke = next(s for s in st if s.get("name", "").startswith("스모크"))["run"]
     for t in ("smoke_app", "smoke_v2", "smoke_preview", "smoke_styleguide", "smoke_launch"):
         assert t in smoke, t
-    assert 'wait "${p%%:*}"' in smoke and "exit 1" in smoke
+    assert 'if python "tests/$t.py"; then' in smoke and "exit 1" in smoke
     assert wf["jobs"]["ci"]["timeout-minutes"] <= 20
 
 
 def test_ci_smoke_step_really_fails_when_one_smoke_test_fails(tmp_path):
-    """스모크 단계의 bash 를 그대로 돌려요: 다섯 중 하나만 실패해도 단계가 실패해야 해요 (동시에 돌려도 놓치지 않게)."""
+    """스모크 단계의 bash 를 그대로 돌려요: 다섯 중 하나만 실패해도 단계가 실패하고, 나머지도 끝까지 돌아요."""
     smoke = next(s for s in steps(load("ci.yml"), "ci") if s.get("name", "").startswith("스모크"))["run"]
     (tmp_path / "tests").mkdir()
     for t in ("smoke_app", "smoke_v2", "smoke_preview", "smoke_styleguide", "smoke_launch"):
         (tmp_path / "tests" / f"{t}.py").write_text(f"import sys\nprint('{t} 끝')\nsys.exit({1 if t == 'smoke_preview' else 0})\n")
     env = {"PATH": os.environ["PATH"]}
     r = subprocess.run(["bash", "-e", "-c", smoke], cwd=tmp_path, capture_output=True, text=True, env=env)
-    assert r.returncode == 1 and "스모크 테스트 실패: smoke_preview" in r.stdout
+    assert r.returncode == 1 and "스모크 테스트 실패: smoke_preview" in r.stdout and "smoke_launch 끝" in r.stdout
     (tmp_path / "tests" / "smoke_preview.py").write_text("print('ok')\n")
     assert subprocess.run(["bash", "-e", "-c", smoke], cwd=tmp_path, capture_output=True, text=True, env=env).returncode == 0
 
