@@ -1,0 +1,180 @@
+{
+ "v": 3,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-10-31T18:20:00+09:00"
+ },
+ "title": "뱁새 2.0 목업",
+ "launch": {
+  "view": "canvas"
+ },
+ "pages": [],
+ "boards": {
+  "CoSummary.dc.html": {
+   "x": 0,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "A 회사 · 요약 탭 (처음 보는 화면)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoEarn.dc.html": {
+   "x": 470,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "B 회사 · 실적 탭",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoValue.dc.html": {
+   "x": 940,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "C 회사 · 가치 탭 · '지금 가격이 가정하는 것'",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoValueMore.dc.html": {
+   "x": 1410,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "D 가치 자세히 (더 알고 싶은 사람만)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoDiv.dc.html": {
+   "x": 1880,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "E 회사 · 배당 탭",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoDisc.dc.html": {
+   "x": 2350,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "F 회사 · 공시 탭",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "MkRates.dc.html": {
+   "x": 2820,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "G 시장 · 금리·원자재",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "MkFlow.dc.html": {
+   "x": 3290,
+   "y": 0,
+   "w": 390,
+   "h": 844,
+   "title": "H 시장 · 공시·수급 (국민연금, 임원·주요주주)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoPage.dc.html": {
+   "x": 0,
+   "y": 1544,
+   "w": 390,
+   "h": 844,
+   "title": "① 회사 화면 · 맨 위 한국/미국 예시, 시장 전체/업종 안에서, 실적·가치 자세히를 눌러 보세요",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "StockFind.dc.html": {
+   "x": 470,
+   "y": 1544,
+   "w": 390,
+   "h": 844,
+   "title": "② 종목 탭 · 조건으로 찾기 (예전 조건 검색을 기준 카드로)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PfStart.dc.html": {
+   "x": 940,
+   "y": 1544,
+   "w": 390,
+   "h": 844,
+   "title": "③ 포트폴리오 만들기 · 세 가지 시작 방법",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PfEdit.dc.html": {
+   "x": 1410,
+   "y": 1544,
+   "w": 390,
+   "h": 844,
+   "title": "④ 가진 종목 넣기 · 수량만 넣어도 돼요",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PfReport.dc.html": {
+   "x": 1880,
+   "y": 1544,
+   "w": 390,
+   "h": 844,
+   "title": "⑤ 내 포트폴리오 점검 · 사라·팔라는 말 없이 사실만",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PcCompany.dc.html": {
+   "x": 0,
+   "y": 2888,
+   "w": 1280,
+   "h": 800,
+   "title": "⑥ PC 회사 화면 · 위의 한국/미국 예시를 눌러 보세요",
+   "is_interactive": true,
+   "radius": 16
+  }
+ },
+ "order": [
+  "CoSummary.dc.html",
+  "CoEarn.dc.html",
+  "CoValue.dc.html",
+  "CoValueMore.dc.html",
+  "CoDiv.dc.html",
+  "CoDisc.dc.html",
+  "MkRates.dc.html",
+  "MkFlow.dc.html",
+  "CoPage.dc.html",
+  "StockFind.dc.html",
+  "PfStart.dc.html",
+  "PfEdit.dc.html",
+  "PfReport.dc.html",
+  "PcCompany.dc.html"
+ ],
+ "notes": {
+  "rowR2": {
+   "x": 0,
+   "y": -300,
+   "text": "2차 시안 · 더 쉽게: 요약 → 탭 → 자세히 3단계 · 회사 로고 자리(예시 마크) · 주제별 색 · 시장 탭 두 화면",
+   "kind": "title1",
+   "maxW": 3700
+  },
+  "rowNew": {
+   "x": 0,
+   "y": 1244,
+   "text": "1차 시안 (11월 5일) · 회사 화면, 조건으로 찾기, 직접 만들기와 가진 종목 점검 · 예시 회사와 숫자는 실제가 아니에요",
+   "kind": "title1",
+   "maxW": 2740
+  },
+  "rowNewPC": {
+   "x": 0,
+   "y": 2588,
+   "text": "PC 회사 화면 · 왼쪽 열은 내 기준·실적·움직인 이유·메모, 오른쪽 열은 가치(업종 지도 포함)·배당·위험·공시",
+   "kind": "title1",
+   "maxW": 2740
+  }
+ },
+ "designSystems": []
+}
