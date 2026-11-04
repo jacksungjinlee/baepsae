@@ -541,3 +541,14 @@ def test_new_portfolio_starts_from_defaults_and_todays_values():
                            "[뱁새] 읽을 설정이 없는 파일: 앞 포트폴리오의 설정 4개 · 직접 입력 기록 1개 대신 기본값과 오늘 값으로 시작해요: "
                            "rf 2.8 → 3, mrp 7 → 5.5, mktVol 20 → 18, fx 1234.5 → 1380"], got["info"]
     assert got["warn"] == [], got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_unreadable_saved_slot_is_not_opened():
+    # v18.6.2 (Jack 2026-11-04): 내용이 없거나 JSON 이 깨진 저장본은 열지 않아요 (앞 포트폴리오 화면 그대로 열고 자동 저장이 덮어쓰던 문제)
+    got = run_metrics("const R = (raw) => { const r = D.readSavedSlot(raw); return r.why ? 'WHY ' + r.why.split(' (')[0] : r.state; };"
+                      "console.log(JSON.stringify([R(null), R(undefined), R(''), R('{not json'), R('null'), R('[1]'), R('3'),"
+                      " R('{\"holdings\":[{\"t\":\"005930\",\"mw\":300}]}'), R('{}')]));")
+    assert got == ["WHY 저장된 내용이 없어요", "WHY 저장된 내용이 없어요", "WHY JSON 을 읽지 못했어요", "WHY JSON 을 읽지 못했어요",
+                   "WHY 저장된 내용이 포트폴리오 모양이 아니에요", "WHY 저장된 내용이 포트폴리오 모양이 아니에요",
+                   "WHY 저장된 내용이 포트폴리오 모양이 아니에요", {"holdings": [{"t": "005930", "mw": 300}]}, {}], got

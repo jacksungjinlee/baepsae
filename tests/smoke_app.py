@@ -29,6 +29,8 @@
   자동 설정   (v18.6) 설정의 '자동' 칸(환율 · 시장 가정)은 저장본을 다시 열 때도 파일을 불러올 때도 오늘 값 · 직접 입력한 칸만 저장된 값('가정') ·
               JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수) ·
               (v18.6.1) '새로 시작하기' · 읽을 설정이 없는 파일은 기본값 + 오늘 값 (앞 포트폴리오의 설정을 잇지 않아요)
+  못 읽는 저장본 (v18.6.2) JSON 이 깨졌거나 내용이 없는 저장본은 열지 않아요: 첫 화면 그대로, 저장된 글은 그대로(자동 저장으로 덮지 않음),
+              앞 포트폴리오의 종목 · 설정이 보이지 않고 console 에 저장본 id 와 이유 · 멀쩡한 저장본은 그대로 열림
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -1976,6 +1978,69 @@ def _auto_settings(R, files, tmp):
     ctx.close(); srv.shutdown()
 
 
+def scene_broken_slot(R, files):
+    """못 읽는 저장본은 열지 않아요 (v18.6.2, Jack 2026-11-04). 전에는 JSON 이 깨졌거나 내용이 없는 저장본을 누르면 앞 포트폴리오의
+    화면(설정 · 직접 입력 기록 · 종목)이 그대로 열리고, 자동 저장이 그 내용을 그 저장본 위에 덮어썼어요.
+      · 멀쩡한 저장본을 먼저 열고 나와서 → 깨진 저장본 · 내용 없는 저장본을 누르면 첫 화면 그대로, 2초 뒤에도 저장된 글은 그대로(없던 것은 없는 채로),
+        앞 포트폴리오의 종목 · 설정이 보이지 않고, console 에 저장본 id 와 이유;
+      · 그 뒤에도 멀쩡한 저장본은 그대로 열려요."""
+    broken = "{not json"
+    good = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}, {"t": "000660", "mw": 200}],
+            "settings": {"fx": 1234.5}, "typedKeys": ["fx"]}
+    names = [("sgood", "멀쩡한 저장본"), ("sbroken", "깨진 저장본"), ("smissing", "내용 없는 저장본")]
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": i, "name": n} for i, n in names], ensure_ascii=False),
+             "baepsae_v10_slot_sgood": json.dumps(good, ensure_ascii=False), "baepsae_v10_slot_sbroken": broken}
+    srv, ctx, page, _ = R.open(build_site(files), local=local, once=True)
+    S = "못 읽는 저장본"
+    logs = []
+    page.on("console", lambda m: logs.append((m.type, m.text)))
+    stored = "(k) => localStorage.getItem('baepsae_v10_slot_' + k)"
+    listed = "(k) => (JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]').find((x) => x.id === k) || null)"
+    want_rows = [["삼성전자", "300"], ["SK하이닉스", "200"]]
+
+    def open_good():
+        page.get_by_text("멀쩡한 저장본", exact=False).first.click()
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        poll(page, CART_ROWS, lambda v: v == want_rows, "멀쩡한 저장본의 종목이 보이지 않아요")
+
+    def go_home():
+        page.locator('button[title="저장하고 나가기"]').first.click()
+        see(page, "어떻게 시작할까요?")
+
+    def refused(sid, name, before, reason):
+        def run():
+            if sid == "sbroken":                                        # 앞 포트폴리오(멀쩡한 저장본)를 먼저 열어 둬요
+                page.get_by_text("차근차근 만들기", exact=True).click()
+                open_good()
+                go_home()
+            logs.clear()
+            entry = page.evaluate(listed, sid)
+            page.get_by_text(name, exact=False).first.click()
+            page.wait_for_timeout(2000)                                 # 자동 저장(0.8초)이 돌 시간을 넘겨요
+            see(page, "어떻게 시작할까요?")                               # 첫 화면 그대로
+            assert page.locator("button.openSettings").count() == 0, "못 읽는 저장본이 열렸어요"
+            assert page.evaluate(CART_ROWS) == [], "앞 포트폴리오의 종목이 보여요"
+            assert page.evaluate(stored, sid) == before, f"저장된 글이 바뀌었어요: {page.evaluate(stored, sid)!r}"
+            assert page.evaluate(listed, sid) == entry, "저장본 목록의 그 줄이 바뀌었어요 (자동 저장)"
+            line = [t for k, t in logs if k == "warning" and f"저장본 {sid} 을 열지 않았어요" in t]
+            assert len(line) == 1 and reason in line[0], logs
+        return run
+    R.check(page, S, "멀쩡한 저장본을 열고 나와 깨진 저장본(JSON 깨짐)을 누름 → 첫 화면 그대로 · 2초 뒤에도 저장된 글 그대로 · 앞 종목 안 보임 · console 경고",
+            refused("sbroken", "깨진 저장본", broken, "JSON 을 읽지 못했어요"))
+    R.check(page, S, "내용 없는 저장본(목록에만 있음)을 누름 → 첫 화면 그대로 · 2초 뒤에도 내용 없음(덮어쓰지 않음) · console 경고",
+            refused("smissing", "내용 없는 저장본", None, "저장된 내용이 없어요"))
+
+    def good_still_opens():
+        open_good()
+        page.locator("button.openSettings").first.click()
+        row = page.locator('[data-set="fx"]').first
+        row.wait_for(state="visible", timeout=WAIT)
+        assert float(row.locator("input").input_value()) == 1234.5 and row.get_by_text("가정", exact=True).count() == 1
+        page.mouse.click(195, 40)
+    R.check(page, S, "그 뒤에도 멀쩡한 저장본은 그대로 열림 (삼성전자 300 · SK하이닉스 200 · 환율 1,234.5 '가정')", good_still_opens)
+    ctx.close(); srv.shutdown()
+
+
 HEADER_ITEMS = """() => [...document.querySelector('.mastRow').children].filter((e) => getComputedStyle(e).display !== 'none'
   && e.getBoundingClientRect().width).map((e) => { const r = e.getBoundingClientRect(); return [e.dataset.v2Link ? 'v2' : e.tagName, r.left, r.right]; })"""
 
@@ -2107,7 +2172,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -2126,7 +2191,7 @@ def main():
                   ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("빠진", lambda: scene_missing_all(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)), ("바로가기", lambda: scene_deep_links(R, fresh)),
                   ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
-                  ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh))]
+                  ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

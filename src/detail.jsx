@@ -301,6 +301,13 @@ function freshSettings(cur, curTyped, live, why) {
   }
   return { settings, typed: [] };
 }
+// 저장본 글(localStorage) → { state } 또는 { why }: 없음 · 깨진 JSON · 객체가 아닌 내용은 열지 않아요 (v18.6.2, AppInner 의 openSlot).
+function readSavedSlot(raw) {
+  if (raw == null) return { why: "저장된 내용이 없어요" };
+  let st;
+  try { st = JSON.parse(raw); } catch (e) { return { why: "JSON 을 읽지 못했어요 (" + ((e && e.message) || e) + ")" }; }
+  return isPlainObj(st) ? { state: st } : { why: "저장된 내용이 포트폴리오 모양이 아니에요" };
+}
 // 설정 화면의 '자동' 칩: 오늘 값이 있는 칸이고, 직접 입력하지 않았고, 보이는 값이 정말 오늘 값일 때만.
 function autoChip(k, settings, live, typed) {
   return isPlainObj(live) && Object.prototype.hasOwnProperty.call(live, k) && !(typed || []).includes(k) && !!settings && settings[k] === live[k];
@@ -4834,11 +4841,21 @@ function AppInner({ seed, lang: langProp }) {
   };
   const metricsRef = useRef(null);
 
+  // 못 읽는 저장본은 열지 않아요 (v18.6.2, Jack 2026-11-04): 전에는 내용이 없거나 JSON 이 깨진 저장본이 앞 포트폴리오의 화면
+  // (설정 · 직접 입력 기록 · 종목) 그대로 열리고, 자동 저장이 그 내용을 이 저장본 위에 덮어썼어요 (오류는 조용히 삼켰고요).
+  // 이제는 첫 화면에 그대로 있고(slotId 를 정하지 않아서 자동 저장도 없어요), 저장된 글은 지우지도 고치지도 않아요.
+  // console 에 저장본 id 와 이유를 남겨요. 화면 문구는 Jack 이 정할 때까지 없어요.
   const openSlot = async (id) => {
-    try {
-      const raw = await store.get(KEY_SLOT(id));
-      if (raw) applyState(JSON.parse(raw), "설정이 없는 저장본");
-    } catch (e) {}
+    const r = readSavedSlot(await store.get(KEY_SLOT(id)));
+    let why = r.why;
+    if (!why) {
+      try { applyState(r.state, "설정이 없는 저장본"); }
+      catch (e) { why = "저장된 내용을 화면에 옮기지 못했어요 (" + ((e && e.message) || e) + ")"; }
+    }
+    if (why) {
+      console.warn("[뱁새] 저장본 " + id + " 을 열지 않았어요: " + why + " · 저장된 글은 그대로 두고 첫 화면에 있어요");
+      return;
+    }
     setSlotId(id);
     const s = (await readSlots()).find((x) => x.id === id);
     setSlotName(s ? s.name : "");
@@ -5069,4 +5086,4 @@ export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SL
   // v18.5: Node 로 시험하려고 (tests/test_app_data.py)
   missingHoldings, missingLine, shownProfile, scoreProfile,
   // v18.6: 자동 설정 (tests/test_app_data.py)
-  cleanTypedKeys, withTodaysAuto, autoChip, freshSettings };
+  cleanTypedKeys, withTodaysAuto, autoChip, freshSettings, readSavedSlot };
