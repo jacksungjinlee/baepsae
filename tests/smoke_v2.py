@@ -27,6 +27,13 @@
   소개        (v19.0 Part D) 푸터: 고지문 · 소개 링크, 만든 사람 줄 없음 · #about 으로 열면 한국어 · English 로 바꾸면 영어 머리글 ·
               새로 고침해도 그 선택 · 저장소가 막혀도 동작 · 숫자 줄 = 시험 데이터로 센 값(분석 종목 · 업종 그룹) · 멈춘 데이터면
               숫자 줄 없음(문단은 그대로) · data.json 이 없으면 숫자 줄과 숫자 문단 없이 나머지는 그대로 · 뒤로 → 전 화면, # 없음
+  PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
+              메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
+              (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
+              결과(소개에서 써도 초점은 칸에 그대로) · 홈(첫 방문: 한국 · 미국 목록 나란히, 뱁이 176px · 다시 온 방문: 포트폴리오 | 시장
+              한눈에 · 멈춘 데이터: 시장 한눈에 홀로, 네 칸 한 줄)과 시장(네 칸 | 예전 뱁새
+              버튼)은 두 칸, 나머지는 한 칸(720px 이하), 모든 화면의 왼쪽 끝이 같아요 · 아래 버튼 띠 · 시트는 왼쪽 메뉴 오른쪽 ·
+              1024 · 1280 · 1440px 에서 가로 스크롤 없음 · 1023px 은 휴대폰 화면 그대로, 창을 넓히고 좁히면 따라 바뀌어요
 모든 장면에서 페이지 오류 0건, 다른 사이트 요청 0건. 화면에 보이는 한국어는 모두 src/copy/v2.js(또는 데이터의 이름)에서 와요.
 v19.0b (진지한 화면): 글을 모으는 모든 화면에서 (visual_ok) — 그림이 모두 열려요 · 뱁이 그림은 숫자가 있는 카드와 판정 띠에 없어요
 (소개 페이지는 규칙이 이름으로 허락한 곳) · 아이콘은 Phosphor 두 층에 표의 색만 · 고른 탭 · 고른 줄 · 고른 칩 · 아이콘 · 판정 띠에
@@ -2345,6 +2352,398 @@ def scene_no_holding(R, files, width):
     srv.shutdown()
 
 
+# ── PC (v19.0d): 1024px 부터 왼쪽 메뉴 · 위 검색 칸 · 두 칸 홈과 시장 ──
+PC_W, PC_H = 1280, 800
+TAB_KEYS = ("home", "portfolio", "stocks", "market")
+TOP_INPUT = '[data-ui-v2="top-search"] input'
+
+
+def pc_device(width, height=PC_H):
+    return {"viewport": {"width": width, "height": height}, "device_scale_factor": 1}
+
+
+def side_tab(page, key):
+    """왼쪽 메뉴의 탭을 눌러요."""
+    page.locator(f'[data-ui-v2="side-tab"][data-tab="{key}"]').click()
+    at(page, key)
+
+
+def side_by_side(a, b):
+    """a 는 왼쪽 열, b 는 오른쪽 열: 겹치지 않고 윗변이 같아요."""
+    ra, rb = a.bounding_box(), b.bounding_box()
+    assert ra and rb, (ra, rb)
+    assert ra["x"] + ra["width"] <= rb["x"] + 0.5 and abs(ra["y"] - rb["y"]) < 1.5, (ra, rb)
+    return ra, rb
+
+
+def page_box(page):
+    """지금 화면의 본문(main) 상자와 칸 수: (x, 내용 폭, 칸 수). 내용 폭은 좌우 여백 32px 씩을 뺀 폭이에요."""
+    m = page.locator('main[data-ui-v2="page"]').first
+    b = m.bounding_box()
+    return b["x"], b["width"] - 64, m.get_attribute("data-cols")
+
+
+def focused_in(page, sel):
+    return page.evaluate("(s) => { const a = document.activeElement; return !!a && !!a.closest(s); }", sel)
+
+
+def pc_shell(page, width, live=True):
+    """PC 틀: 왼쪽 메뉴 240px 고정(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 · 메뉴 링크),
+    위 검색 칸(520px 이하, 승인된 '회사 이름이나 종목코드로 찾기'), 아래 탭 막대 · ☰ · ☰ 메뉴 · 머리말 이름 없음, 가로 스크롤 없음."""
+    side = page.locator('[data-ui-v2="side-menu"]')
+    side.wait_for(state="visible")
+    box = side.bounding_box()
+    assert box["x"] == 0 and abs(box["width"] - 240) < 0.5 and abs(box["height"] - page.viewport_size["height"]) < 1, box
+    assert side.evaluate("(e) => getComputedStyle(e).position") == "fixed"
+    mark = side.locator('img[data-ui-v2="logo-mark"]')
+    assert mark.get_attribute("src") == "baepi-mark.webp" and mark.get_attribute("alt") == "" and mark.evaluate("(i) => i.naturalWidth > 0")
+    assert abs(mark.bounding_box()["width"] - 38) < 0.5
+    word = side.locator('h1[data-ui-v2="wordmark"]')
+    assert word.inner_text() == C["app"]["brand"] and word.evaluate("(e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight]") == ["24px", "800"]
+    assert side.locator('[data-ui-v2="side-catch"]').inner_text() == C["about"]["ko"]["hero"]["catch"]
+    nav = side.locator("nav")
+    assert nav.get_attribute("aria-label") == C["app"]["tabsLabel"]
+    tabs = nav.locator('[data-ui-v2="side-tab"]')
+    assert [t.strip() for t in tabs.all_inner_texts()] == [TABS[k] for k in TAB_KEYS]
+    assert tabs.locator("svg").evaluate_all("(els) => els.map((e) => e.dataset.ph)") == ["house", "chart-pie-slice", "buildings", "chart-line-up"]
+    assert side.locator('[data-ui-v2="side-build"]').inner_text().strip() == C["build"]["title"]
+    links = side.locator('[data-ui-v2="side-link"]')
+    got = [(links.nth(i).get_attribute("data-item"), links.nth(i).inner_text().strip(), links.nth(i).get_attribute("href")) for i in range(links.count())]
+    want = [("about", C["app"]["aboutLink"], None)]
+    if live:
+        want += [("glossary", C["menu"]["glossary"], "./baepsae.html#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html#info=sources"),
+                 ("old-app", C["app"]["oldApp"], "./baepsae.html")]
+    assert got == want, got
+    assert "10월 30일 기준" in side.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').inner_text()
+    for gone in ('nav[data-ui="bottom-tab-bar"]', '[data-ui-v2="menu-button"]', '[data-ui-v2="menu"]', '[data-ui-v2="app-bar"] h1'):
+        assert page.locator(gone).count() == 0, f"PC 에 {gone}"
+    search = page.locator('[data-ui-v2="top-search"]')
+    sb = search.bounding_box()
+    assert sb["width"] <= 520.5 and sb["x"] >= 240, sb
+    inp = search.locator("input")
+    assert inp.get_attribute("placeholder") == C["stocks"]["search"] and inp.get_attribute("aria-label") == C["stocks"]["search"]
+    x, _, _ = page_box(page)
+    assert abs(sb["x"] - (x + 32)) < 0.5, ("검색 칸과 본문의 왼쪽 끝", sb, x)
+    no_hscroll(page, width)
+
+
+def tab_selected(page, key):
+    """고른 탭: aria-current 와 따뜻한 회색 바탕(살구색 아님, 나머지 탭은 바탕 없음)."""
+    on = page.locator('[data-ui-v2="side-tab"][aria-current="page"]')
+    assert on.count() == 1 and on.get_attribute("data-tab") == key, on.count()
+    assert on.evaluate("(e) => getComputedStyle(e).backgroundColor") == SELECT_RGB
+    off = page.locator('[data-ui-v2="side-tab"]:not([aria-current])').evaluate_all("(els) => els.map((e) => getComputedStyle(e).backgroundColor)")
+    assert off == ["rgba(0, 0, 0, 0)"] * 3, off
+
+
+SLASH_PROBE = """(kind) => { const old = document.getElementById('pc-probe'); if (old) old.remove();
+  let e; if (kind === 'contenteditable') { e = document.createElement('div'); e.contentEditable = 'true'; e.textContent = 'x'; }
+  else if (kind === 'select') { e = document.createElement('select'); e.innerHTML = '<option>a</option><option>b</option>'; }
+  else { e = document.createElement(kind); }
+  e.id = 'pc-probe'; document.body.appendChild(e); e.focus(); return document.activeElement === e; }"""
+
+
+def scene_pc(R, files):
+    """첫 방문 PC (1280 × 800): 왼쪽 메뉴 · 첫 방문 홈 두 칸 · '/' · 검색 칸 → 종목 · 시장 두 칸 · 포트폴리오 만들기의 아래 띠와 시트."""
+    S = f"PC {PC_W}"
+    srv, ctx, page, base = R.open(build_site(files), PC_W, device=pc_device(PC_W))
+
+    def landing():
+        wait_ready(page)
+        at(page, "home")
+        pc_shell(page, PC_W)
+        tab_selected(page, "home")
+        hero = page.locator('[data-ui-v2="home-hero"]')                      # 첫 방문 홈: 나뭇가지를 나르는 뱁이 176px (PC 크기)
+        mascot_img(hero, "baepi-16-build.webp", 176, C["build"]["s0"]["imgAlt"])
+        assert C["about"]["ko"]["hero"]["descriptor"] in hero.inner_text() and C["about"]["ko"]["hero"]["catch"] in hero.inner_text()
+        assert hero.locator('[data-ui-v2="home-start"]').inner_text().strip() == C["build"]["title"]
+        assert page.locator('[data-ui-v2="market-glance"], [data-ui-v2="market-tile"]').count() == 0, "뱁이가 있는 첫 방문 홈에 시장 숫자"
+        kr = page.locator('[data-ui-v2="popular-list"][data-market="kr"]')   # 두 칸: 한국 | 미국 (이름만)
+        us = page.locator('[data-ui-v2="popular-list"][data-market="us"]')
+        side_by_side(kr, us)
+        assert not re.search(r"\d\s*%|\d{6}", page.locator('[data-ui-v2="popular"]').inner_text())
+        x, w, cols = page_box(page)
+        assert cols == "2" and w <= 1000 and x >= 240, (x, w, cols)
+        R.collect(page)
+    R.check(page, S, "왼쪽 메뉴(로고 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 · 메뉴 링크 넷) · 아래 탭 · ☰ 없음 · 위 검색 칸 · 첫 방문 홈 두 칸(뱁이 176px, 숫자 없음)", landing)
+
+    def slash():
+        inp = page.locator(TOP_INPUT)
+        page.evaluate("() => document.activeElement && document.activeElement.blur()")
+        page.keyboard.press("/")                                           # 아무 칸에도 쓰지 않을 때: 검색 칸으로, '/' 는 들어가지 않아요
+        page.wait_for_function("() => document.activeElement && document.activeElement.matches('[data-ui-v2=\"top-search\"] input')")
+        assert inp.input_value() == "", inp.input_value()
+        page.keyboard.type("삼성")                                          # 쓰면 종목 탭에 결과 (초점은 칸에 그대로)
+        at(page, "stocks")
+        assert page.url.endswith("#stocks"), page.url
+        rows = page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"]')
+        rows.first.wait_for(state="visible")
+        names = rows.all_inner_texts()
+        assert len(names) >= 4 and all("삼성" in n for n in names), names
+        assert focused_in(page, '[data-ui-v2="top-search"]') and inp.input_value() == "삼성"
+        assert page.locator('[data-ui-v2="stock-search"]').count() == 0, "PC 종목 탭에 검색 칸이 둘"
+        tab_selected(page, "stocks")
+        x, w, cols = page_box(page)
+        assert cols == "1" and w <= 720, (w, cols)
+        R.collect(page)
+        inp.fill("")                                                       # 비우면 종목 탭의 목록으로 (탭은 그대로)
+        page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
+        assert route(page) == "stocks"
+        inp.fill("Apple")
+        page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-cls="us"]').first.wait_for(state="visible")
+        side_tab(page, "home")                                             # 종목을 떠나면 칸이 비어요 (홈에 지난 검색어가 남지 않음)
+        assert inp.input_value() == "", inp.input_value()
+        for kind in ("input", "textarea", "select", "contenteditable"):    # 다른 칸에 쓰는 중이면 '/' 는 그 칸의 글자
+            assert page.evaluate(SLASH_PROBE, kind), kind
+            page.keyboard.press("/")
+            page.wait_for_timeout(50)
+            assert page.evaluate("() => document.activeElement && document.activeElement.id") == "pc-probe", kind
+            assert inp.input_value() == "" and route(page) == "home", kind
+            typed = page.evaluate("() => { const e = document.getElementById('pc-probe'); return e.value != null ? e.value : e.textContent; }")
+            assert kind == "select" or "/" in typed, (kind, typed)
+        page.evaluate("() => document.getElementById('pc-probe').remove()")
+        page.keyboard.press("Control+/")                                    # 단축키와 같이 누른 '/' 도 아니에요
+        page.wait_for_timeout(50)
+        assert not focused_in(page, '[data-ui-v2="top-search"]')
+    R.check(page, S, "'/' → 검색 칸(글자는 안 들어감) · 쓰면 종목 탭에 결과 · 종목을 떠나면 칸이 비어요 · input · textarea · select · contenteditable 에 쓰는 중이면 그 칸 그대로", slash)
+
+    def market_two():
+        side_tab(page, "market")
+        tab_selected(page, "market")
+        assert page.locator("main h2").first.inner_text() == TABS["market"]
+        tiles = page.locator('[data-ui-v2="col-main"] [data-ui-v2="market-tiles-card"]')
+        more = page.locator('[data-ui-v2="col-side"] [data-ui-v2="market-more"]')
+        side_by_side(tiles, more)
+        assert page.locator('[data-ui-v2="market-tile"]').count() == 4 and tiles.locator('[data-ui-v2="market-tiles"]').get_attribute("data-cols") == "2"
+        x, w, cols = page_box(page)
+        assert cols == "2" and w <= 1000, (w, cols)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0
+        no_hscroll(page, PC_W)
+        R.collect(page)
+    R.check(page, S, "시장 두 칸: 네 칸 | 예전 뱁새로 가는 두 버튼", market_two)
+
+    def about_one():
+        page.locator('[data-ui-v2="side-link"][data-item="about"]').click()      # 소개: 왼쪽 메뉴는 그대로, 한 칸, 뱁이 210px · 사진 112px
+        page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+        assert page.url.endswith("#about")
+        assert page.locator('[data-ui-v2="side-tab"][aria-current]').count() == 0
+        assert page.locator('[data-ui-v2="side-link"][data-item="about"]').get_attribute("aria-current") == "page"
+        assert abs(page.locator('img[src="baepi-og.webp"]').bounding_box()["width"] - 210) < 0.5
+        assert abs(page.locator('[data-ui-v2="about-photo"]').bounding_box()["width"] - 112) < 0.5
+        x, w, cols = page_box(page)
+        assert cols == "1" and w <= 720, (w, cols)
+        no_hscroll(page, PC_W)
+        R.collect(page)
+        page.go_back()
+        at(page, "market")
+        page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+    R.check(page, S, "소개(왼쪽 메뉴의 링크): 한 칸 · 뱁이 210px · 사진 112px · 뒤로 → 시장", about_one)
+
+    def about_search():
+        link = page.locator('[data-ui-v2="side-link"][data-item="about"]')
+        link.click()                                                        # 소개를 닫으면(뒤로 버튼) 초점은 연 링크로 돌아와요
+        page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["app"]["close"]).click()
+        page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+        page.wait_for_function("() => document.activeElement && document.activeElement.matches('[data-ui-v2=\"side-link\"][data-item=\"about\"]')")
+        link.click()                                                        # 소개에서 '/' 와 검색어: 칸에 다 들어가고 초점은 칸에 그대로
+        page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+        page.keyboard.press("/")
+        page.wait_for_function("() => document.activeElement && document.activeElement.matches('[data-ui-v2=\"top-search\"] input')")
+        page.keyboard.type("005930")
+        at(page, "stocks")
+        page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+        inp = page.locator(TOP_INPUT)
+        assert inp.input_value() == "005930", inp.input_value()
+        assert focused_in(page, '[data-ui-v2="top-search"]'), page.evaluate("() => document.activeElement && document.activeElement.outerHTML.slice(0, 120)")
+        assert page.url.endswith("#stocks"), page.url
+        page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-t="005930"]').wait_for(state="visible")
+        R.collect(page)
+    R.check(page, S, "소개 → '/' → 005930: 칸에 005930, 초점은 칸에 그대로, #stocks 에 결과 · 소개를 뒤로 닫으면 초점은 연 링크로", about_search)
+
+    def bars():
+        page.locator('[data-ui-v2="side-build"]').click()                  # 포트폴리오 만들기: 왼쪽 메뉴에서, 고른 탭은 포트폴리오
+        at(page, "portfolio/build")
+        tab_selected(page, "portfolio")
+        mascot_img(page.locator('[data-ui-v2="build-start"]'), "baepi-16-build.webp", 176, C["build"]["s0"]["imgAlt"])    # PC 크기 (Part C)
+        x, w, cols = page_box(page)
+        assert cols == "1" and w <= 720, (w, cols)
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        bar = page.locator('[data-ui-v2="action-bar"]')                    # 아래 버튼 띠: 왼쪽 메뉴 오른쪽 끝부터, 안의 줄은 본문과 같은 왼쪽 끝
+        bb = bar.bounding_box()
+        assert abs(bb["x"] - 240) < 0.5 and abs(bb["x"] + bb["width"] - PC_W) < 0.5, bb
+        row = bar.locator(":scope > div > div").first.bounding_box()
+        assert abs(row["x"] - (x + 32)) < 0.5 and row["width"] <= 720.5, (row, x)
+        click_next(page)
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        money = page.locator('[data-ui="money-input"] input')               # 금액 칸에 쓰는 중: '/' 는 검색 칸으로 가지 않아요
+        money.click()
+        page.keyboard.press("/")
+        page.wait_for_timeout(50)
+        assert focused_in(page, '[data-ui="money-input"]') and page.locator(TOP_INPUT).input_value() == ""
+        page.get_by_role("button", name="+1,000만").first.click()
+        click_next(page)
+        see(page, C["pick"]["title"])
+        no_hscroll(page, PC_W)
+        R.collect(page)
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        action(page).click()                                               # 샀어요 시트: 왼쪽 메뉴 폭만큼 오른쪽, 열린 동안 '/' 는 시트 안 그대로
+        see(page, C["plan"]["sheetTitle"])
+        panel = page.locator('[data-ui="bottom-sheet"] [role="dialog"]')
+        pb = panel.bounding_box()
+        assert abs(pb["x"] + pb["width"] / 2 - (240 + (PC_W - 240) / 2)) < 1, pb
+        page.keyboard.press("/")
+        page.wait_for_timeout(50)
+        assert focused_in(page, '[data-ui="bottom-sheet"]') and not focused_in(page, '[data-ui-v2="top-search"]')
+        R.collect(page)
+        page.keyboard.press("Escape")
+        panel.wait_for(state="detached")
+    R.check(page, S, "포트폴리오 만들기(왼쪽 메뉴, 뱁이 176px) · 아래 버튼 띠는 왼쪽 메뉴 오른쪽 · 금액 칸에서 '/' 그대로 · 샀어요 시트는 본문 가운데, 열린 동안 '/' 그대로", bars)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_pc_back(R, files):
+    """다시 온 방문 PC: 홈 두 칸(판정 띠는 위 전체, 포트폴리오 | 시장 한눈에) · 한 칸 화면 · 1024 · 1280 · 1440px 에서 가로 스크롤 없음."""
+    S = f"PC 다시 온 방문 {PC_W}"
+    store, _ = missing_store(files)
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, base = R.open(build_site(files), PC_W, init=init, device=pc_device(PC_W))
+
+    def home_two():
+        wait_ready(page)
+        at(page, "home")
+        pc_shell(page, PC_W)
+        strip = page.locator('[data-ui-v2="col-main"] [data-ui-v2="deck-strip"]').first
+        glance = page.locator('[data-ui-v2="col-side"] [data-ui-v2="market-glance"]')
+        side_by_side(strip, glance)
+        assert glance.locator('[data-ui-v2="market-tiles"]').get_attribute("data-cols") == "1"     # 좁은 오른쪽 칸: 네 칸을 세로로
+        assert page.locator('[data-ui-v2="deck-strip"]').count() == 2 and page.locator('[data-ui-v2="col-side"] [data-ui-v2="deck-strip"]').count() == 0
+        hero = page.locator('[data-ui-v2="today-hero"]').bounding_box()      # 판정 띠는 두 칸 위에 전체 폭으로
+        main_col = page.locator('[data-ui-v2="col-main"]').bounding_box()
+        side_col = page.locator('[data-ui-v2="col-side"]').bounding_box()
+        assert abs(hero["x"] - main_col["x"]) < 0.5 and abs(hero["x"] + hero["width"] - (side_col["x"] + side_col["width"])) < 0.5, (hero, main_col, side_col)
+        assert hero["y"] + hero["height"] <= main_col["y"] + 0.5
+        x, w, cols = page_box(page)
+        assert cols == "2" and w <= 1000, (w, cols)
+        verdict_icon(page.locator('[data-ui-v2="today-hero"]'), "alert")
+        R.collect(page)
+        keep["x"] = x
+    keep = {}
+    R.check(page, S, "홈 두 칸: 판정 띠는 위 전체 · 포트폴리오 띠 | 시장 한눈에(네 칸 세로) · 내용 폭 1000px 이하", home_two)
+
+    def one_col():
+        for key in ("portfolio", "stocks"):
+            side_tab(page, key)
+            page.locator('[data-ui-v2="date-line"]').nth(1).wait_for(state="visible")
+            x, w, cols = page_box(page)
+            assert cols == "1" and w <= 720 and abs(x - keep["x"]) < 0.5, (key, x, w, cols, keep)   # 모든 화면의 왼쪽 끝이 같아요
+            no_hscroll(page, PC_W)
+            R.collect(page)
+    R.check(page, S, "포트폴리오 · 종목은 한 칸(720px 이하), 왼쪽 끝은 홈과 같아요", one_col)
+
+    def widths():
+        for w in (1024, 1280, 1440):
+            page.set_viewport_size({"width": w, "height": PC_H})
+            for key in TAB_KEYS:
+                side_tab(page, key)
+                page.locator('[data-ui-v2="side-menu"]').wait_for(state="visible")
+                assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0, (w, key)
+                no_hscroll(page, w)
+            page.locator('[data-ui-v2="side-link"][data-item="about"]').click()
+            page.locator('[data-ui-v2="about"]').wait_for(state="visible")
+            no_hscroll(page, w)
+            page.go_back()
+            page.locator('[data-ui-v2="about"]').wait_for(state="detached")
+        page.set_viewport_size({"width": PC_W, "height": PC_H})
+    R.check(page, S, "1024 · 1280 · 1440px: 네 탭과 소개에 가로 스크롤 없음 · 왼쪽 메뉴 그대로", widths)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_pc_stale(R, files):
+    """멈춘 데이터 PC (발행 6일 전, 저장한 포트폴리오 있음): 홈에 판정 없이 멈춤 띠, 왼쪽 칸이 비어 시장 한눈에가 홀로 전체 폭 → 네 칸을 한 줄로."""
+    S = f"PC 멈춤 {PC_W}"
+    f = clone(files)
+    for n in DATA_FILES:
+        f[n]["publishedAt"] = now_kst(days_ago=6)
+    store, _ = missing_store(files)
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, base = R.open(build_site(f), PC_W, init=init, device=pc_device(PC_W))
+
+    def run():
+        wait_ready(page)
+        at(page, "home")
+        page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="deck-strip"]').count() == 0
+        assert page.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').get_attribute("data-stale") == "1"
+        cols = page.locator('[data-ui-v2="cols"]')
+        assert cols.get_attribute("data-n") == "1" and page.locator('[data-ui-v2="col-side"]').count() == 0
+        glance = page.locator('[data-ui-v2="market-glance"]')
+        assert glance.locator('[data-ui-v2="market-tiles"]').get_attribute("data-cols") == "4"
+        _, w, _ = page_box(page)
+        assert abs(glance.bounding_box()["width"] - w) < 0.5, (glance.bounding_box(), w)
+        t = glance.locator('[data-ui-v2="market-tile"]')
+        assert t.count() == 4 and len({round(t.nth(i).bounding_box()["y"]) for i in range(4)}) == 1     # 한 줄
+        no_hscroll(page, PC_W)
+        R.collect(page)
+    R.check(page, S, "멈춘 데이터 · 저장한 포트폴리오: 홈은 멈춤 띠, 시장 한눈에는 홀로 전체 폭 · 네 칸 한 줄 · 가로 스크롤 없음", run)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_pc_edge(R, files):
+    """1023px 은 휴대폰 화면 그대로 (왼쪽 메뉴 · 위 검색 칸 · '/' 없음, 아래 탭 · ☰ · 종목 탭의 검색 칸). 창을 1024px 로 넓히면 PC 화면,
+    다시 좁히면 휴대폰 화면. ☰ 메뉴를 연 채로 넓히면 메뉴가 닫혀요 (PC 에는 ☰ 이 없어요)."""
+    S = "PC 경계 1023"
+    srv, ctx, page, base = R.open(build_site(files), 1023, device=pc_device(1023))
+
+    def phone():
+        wait_ready(page)
+        at(page, "home")
+        assert page.locator('[data-ui-v2="side-menu"], [data-ui-v2="top-bar"], [data-ui-v2="top-search"]').count() == 0
+        bar = page.locator('nav[data-ui="bottom-tab-bar"]')
+        bar.wait_for(state="visible")
+        assert [b.strip() for b in bar.locator("button").all_inner_texts()] == [TABS[k] for k in TAB_KEYS]
+        assert page.locator('[data-ui-v2="app-bar"] h1').first.inner_text() == C["app"]["brand"]
+        mascot_img(page.locator('[data-ui-v2="home-hero"]'), "baepi-16-build.webp", 92, C["build"]["s0"]["imgAlt"])    # 휴대폰 크기
+        assert page.locator("main").first.bounding_box()["width"] <= 520
+        menu_links(page)
+        tab(page, TABS["stocks"])
+        at(page, "stocks")
+        page.locator('[data-ui-v2="stock-search"] input').wait_for(state="visible")
+        page.evaluate("() => document.activeElement && document.activeElement.blur()")
+        page.keyboard.press("/")                                           # 휴대폰 화면에는 '/' 단축키가 없어요
+        page.wait_for_timeout(50)
+        assert not focused_in(page, '[data-ui-v2="stock-search"]')
+        no_hscroll(page, 1023)
+        R.collect(page)
+    R.check(page, S, "1023px: 휴대폰 화면 그대로(아래 탭 · ☰ · 머리말 · 종목 탭의 검색 칸, 왼쪽 메뉴 · 위 검색 칸 · '/' 없음)", phone)
+
+    def resize():
+        open_menu(page)
+        page.set_viewport_size({"width": 1024, "height": PC_H})            # 넓히면: PC 화면, 열려 있던 ☰ 메뉴는 닫혀요
+        page.locator('[data-ui-v2="side-menu"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="menu"]').wait_for(state="detached")
+        page.wait_for_function("() => !(history.state && history.state.v2menu)")
+        at(page, "stocks")
+        assert page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
+        pc_shell(page, 1024)
+        tab_selected(page, "stocks")
+        page.set_viewport_size({"width": 1023, "height": PC_H})            # 좁히면: 휴대폰 화면
+        page.locator('[data-ui-v2="side-menu"]').wait_for(state="detached")
+        page.locator('nav[data-ui="bottom-tab-bar"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="stock-search"] input').wait_for(state="visible")
+        no_hscroll(page, 1023)
+        R.collect(page)
+    R.check(page, S, "1023 → 1024px: PC 화면(☰ 메뉴는 닫힘) → 1023px: 휴대폰 화면", resize)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_hint(R, files, devices):
     """아이폰 홈 화면 안내는 아이폰 사파리에서만 (문구는 승인 대기: 그동안은 숨은 자리 표시). 안드로이드 · 홈 화면 앱 안에서는 없어요.
     첫 방문(포트폴리오 전)은 홈과 빈 포트폴리오, 포트폴리오가 있으면 포트폴리오의 기록 칸."""
@@ -2407,6 +2806,13 @@ def main():
                 except Exception as e:
                     R.results.append((f"[{width}] 장면 실행", False, str(e).splitlines()[0][:200]))
                     print(f"  FAIL  [{width}] 장면 실행: {e}", flush=True)
+        for fn in (lambda: scene_pc(R, files), lambda: scene_pc_back(R, files), lambda: scene_pc_stale(R, files),
+                   lambda: scene_pc_edge(R, files)):             # v19.0d PC
+            try:
+                fn()
+            except Exception as e:
+                R.results.append(("[PC] 장면 실행", False, str(e).splitlines()[0][:200]))
+                print(f"  FAIL  [PC] 장면 실행: {e}", flush=True)
         try:                                                     # 아이폰 13 화면(390×664) 하나로만
             scene_iphone_records(R, files, p.devices["iPhone 13"])
         except Exception as e:

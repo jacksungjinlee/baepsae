@@ -41,11 +41,10 @@ Actions permission; it lives only in cron-job.org (never in a chat, the repo or 
 1. **09:13 check reports gate warnings:** done 2026-11-04 (Jack allowed the change).
 2. **Outside timer:** workflow change merged (v17.5.5); Jack sets up cron-job.org with the token (steps sent
    2026-11-04). Then check that the next morning's run came from the timer (event workflow_dispatch, ~06:40 KST).
-3. **v19.0d (PC layout):** ≥ 1024 px left menu 240 px, search on top, "/" focuses search (not while typing), 홈 and
-   시장 in two columns. Plan: `docs/tasks/v19.0-plan.md`. Then **v17.6**.
-4. **Old app, 자동 settings:** settings left on 자동 (fx, market inputs) must come from today's data on import and
-   when reopening a saved portfolio; typed ones stay. Needs a "typed keys" record (`autoKeys` only lists keys today's
-   data supplies; `openSlot` restores an old fx while the chip says 자동).
+3. **v19.0d (PC layout):** PR #30 (left menu, top search with "/", two columns on 홈 and 시장). After it: **v17.6**.
+   Open for Jack: a "내 포트폴리오" list in the left menu (heading not approved yet).
+4. **Old app, 자동 settings:** done in v18.6 (#29). Open for Jack: should 새로 시작하기 start from today's values instead of
+   the previous portfolio's settings?
 
 **타임머신 (old app):** Jack decided 2026-11-04 — stop the chart line at the low point (part of v18.6).
 

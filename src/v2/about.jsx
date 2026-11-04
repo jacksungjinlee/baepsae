@@ -2,6 +2,8 @@
 // Who made 뱁새 and how it works. Every word is docs/design/v19/copy/about.md, word for word, kept in src/copy/v2.js
 // (C.about.ko / C.about.en). Layout from docs/design/v19/reference/About.dc.html (phone), in today's 2.0 shell: the
 // app bar with a back button, the 뱁이 header with the 한국어 / English switch, the sections, the footer.
+// PC (v19.0d): the same page in one column (up to 720 px) right of the left menu; the 뱁이 at 210 px and the photo at
+// 112 px (Part C · D sizes).
 // - Korean first. The switch is remembered on this device (localStorage "baepsae_v2_about_lang"); when the browser
 //   blocks storage the page still works and the choice lasts until the page closes.
 // - The figures row and the sentence with "{n}" come from the loaded data (aboutstats.js aboutView): never typed in.
@@ -10,7 +12,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Segmented } from "../ui/components.jsx";
 import { C, fill, nf } from "./format.js";
-import { Page, Card, AppBar, Footer, tx } from "./ui.jsx";
+import { Page, Card, AppBar, Footer, useLayout, tx } from "./ui.jsx";
 import { aboutView } from "./aboutstats.js";
 
 export const ABOUT_LANG_KEY = "baepsae_v2_about_lang";
@@ -56,6 +58,9 @@ function Figure({ value, name, testId }) {
 export function About({ load, onBack }) {
   const [lang, setLang] = useState(readLang);
   const head = useRef(null);
+  const { wide } = useLayout();
+  const ogPx = wide ? 210 : 108;
+  const photoPx = wide ? 112 : 88;
   // Opening 소개 moves focus to its heading, so a screen reader starts here (the screen behind is hidden).
   useEffect(() => {
     try { if (head.current) head.current.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
@@ -85,7 +90,7 @@ export function About({ load, onBack }) {
               <p data-ui-v2="about-descriptor" style={tx(SIZE.h3, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2), lineHeight: 1.4 })}>{a.hero.descriptor}</p>
               <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(2) })}>{a.hero.catch}</p>
             </div>
-            <img src="baepi-og.webp" alt={C.about.heroAlt} width={108} height={108} style={{ objectFit: "contain", flexShrink: 0 }} />
+            <img src="baepi-og.webp" alt={C.about.heroAlt} width={ogPx} height={ogPx} style={{ objectFit: "contain", flexShrink: 0 }} />
           </div>
           {view.figures && (
             <div data-ui-v2="about-figures" style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2), marginTop: SPACE(4) }}>
@@ -167,7 +172,7 @@ export function About({ load, onBack }) {
         <Card data-ui-v2="about-maker">
           <SectionTitle>{m.title}</SectionTitle>
           <div style={{ display: "flex", alignItems: "center", gap: SPACE(4) }}>
-            <img data-ui-v2="about-photo" src="jack-photo.jpg" alt={m.photoAlt} width={88} height={88}
+            <img data-ui-v2="about-photo" src="jack-photo.jpg" alt={m.photoAlt} width={photoPx} height={photoPx}
               style={{ borderRadius: 999, objectFit: "cover", flexShrink: 0, background: COLOR.surface, boxShadow: `0 0 0 1px ${COLOR.border}` }} />
             <div style={{ minWidth: 0 }}>
               <p style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{m.name}</p>

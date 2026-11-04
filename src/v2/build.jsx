@@ -12,7 +12,7 @@ import {
   marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, useLayout, tx, tap } from "./ui.jsx";
 import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan } from "./plan.jsx";
@@ -150,11 +150,12 @@ function SurvivorNotes({ ds, two }) {
 
 function StepStart({ start }) {
   const s0 = C.build.s0;
+  const { wide } = useLayout();                          // the 뱁이: 92 px on the phone, 176 px on PC (Part C)
   return (
     <div>
       <section data-ui-v2="build-start" style={{ display: "flex", gap: SPACE(3), alignItems: "center" }}>
         <div style={{ flex: 1, minWidth: 0 }}><ScreenTitle sub={s0.body}>{s0.title}</ScreenTitle></div>
-        <Mascot src={IMG.build} alt={s0.imgAlt} size={92} style={{ marginTop: SPACE(2) }} />
+        <Mascot src={IMG.build} alt={s0.imgAlt} size={wide ? 176 : 92} style={{ marginTop: SPACE(2) }} />
       </section>
       <OldAppNote />
       <div style={{ marginTop: SPACE(3) }}>
