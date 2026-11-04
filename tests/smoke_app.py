@@ -26,6 +26,8 @@
               가로 스크롤 없음 · app.html 로 감 · 영어 화면에는 없음 · 좁은 휴대폰의 모드 안(홈 화면 '뒤로' 포함)에서도 머리말이 넘치지 않음
   파일        (v18.4.1) 'JSON 저장 (백업·공유)' 파일 → 새 브라우저에서 '저장한 파일에서 불러오기' → 같은 종목·금액·예산 ·
               종목 없는 파일 · 깨진 파일 · 줄이 모두 틀린 파일은 '파일을 읽을 수 없어요.' 알림만 (있던 포트폴리오 그대로) · 예전 모양 파일도 열림
+  자동 설정   (v18.6) 설정의 '자동' 칸(환율 · 시장 가정)은 저장본을 다시 열 때도 파일을 불러올 때도 오늘 값 · 직접 입력한 칸만 저장된 값('가정') ·
+              JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수)
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -1665,8 +1667,9 @@ def scene_ghost_holding(R, files):
 
 def scene_import_while_loading(R, files):
     """'저장한 파일에서 불러오기'와 오늘 데이터 읽기 (v18.4.1, Jack 2026-11-04).
-      · data.json 이 늦게 오는 동안에는 파일 고르기가 화면에 없어요(부팅 화면). 다 읽은 바로 뒤에 고른 파일은 종목 · 직접 추가 종목 ·
-        환율까지 파일 그대로 열려요 (부팅이 파일 내용을 덮지 않아요).
+      · data.json 이 늦게 오는 동안에는 파일 고르기가 화면에 없어요(부팅 화면). 다 읽은 바로 뒤에 고른 파일은 종목 · 직접 추가 종목이
+        파일 그대로 열려요 (부팅이 파일 내용을 덮지 않아요). 환율은 v18.6 부터 오늘 값이에요: 이 파일에는 직접 입력 기록(typedKeys)이 없어서
+        '자동' 칸으로 열려요 (Jack 2026-11-04 승인, 장면 '자동 설정').
       · data.json 을 못 읽은 날: 파일을 불러오지 않고 '데이터를 불러오지 못했어요…' 알림('파일을 읽을 수 없어요.' 아님), 저장본은 그대로."""
     tmp = tempfile.mkdtemp(prefix="baepsae-boot-")
     try:
@@ -1689,8 +1692,9 @@ def _import_while_loading(R, files, tmp):
     S = "불러오기 · 데이터 읽기"
     have = {s.get("t") for s in files["data.json"]["stocks"]}
     pick = [t for t in ("005930", "000660") if t in have]
-    fx = 1234.5                                                         # 오늘 환율과 다른 값: 부팅이 덮으면 바뀌어요
-    assert files["data.json"].get("fx") != fx
+    fx = 1234.5                                                         # 오늘 환율과 다른 값 (typedKeys 없는 파일 → 오늘 값으로 열려요)
+    today = files["data.json"].get("fx")
+    assert isinstance(today, (int, float)) and today != fx, today
     backup = {"app": "Baepsae 뱁새 v12", "budgetWon": 20000000, "settings": {"fx": fx}, "customStocks": [MINE],
               "holdings": [{"ticker": pick[0], "amountWon": 3000000}, {"ticker": pick[1], "amountWon": 2000000},
                            {"ticker": MINE["t"], "amountWon": 1000000}]}
@@ -1728,8 +1732,9 @@ def _import_while_loading(R, files, tmp):
             return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
                   lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
         assert st["customStocks"] == [MINE] and len(st["holdings"]) == 3, st     # 부팅이 직접 추가 종목을 덮지 않았어요
-        assert st["settings"]["fx"] == fx, st["settings"]["fx"]                 # 환율도 파일 그대로 (지금 규칙)
-    R.check(page, S, "data.json 이 4초 늦음 → 그동안 파일 고르기 없음, 다 읽은 뒤 고른 파일은 종목 · 직접 추가 종목 · 환율 그대로", slow)
+        # v18.6 규칙 (Jack 2026-11-04 승인): 직접 입력 기록이 없는 파일의 환율은 '자동' 칸 → 오늘 환율 (전에는 파일 그대로였어요)
+        assert st["settings"]["fx"] == today and st["typedKeys"] == [], (st["settings"]["fx"], st.get("typedKeys"))
+    R.check(page, S, "data.json 이 4초 늦음 → 그동안 파일 고르기 없음, 다 읽은 뒤 고른 파일은 종목 · 직접 추가 종목 그대로 · 환율은 오늘 값 (typedKeys 없는 파일)", slow)
     ctx.close(); srv.shutdown()
 
     # data.json 을 못 읽은 날 (404)
@@ -1763,6 +1768,159 @@ def _import_while_loading(R, files, tmp):
         see(page, "어떻게 시작할까요?")
         assert page.evaluate(stored) == before, "데이터를 못 읽은 날 저장본이 바뀌었어요"
     R.check(page, S, "data.json 을 못 읽은 날 → 불러오지 않고 '데이터를 불러오지 못했어요…' 알림, 저장본 그대로", failed)
+    ctx.close(); srv.shutdown()
+
+
+def scene_auto_settings(R, files):
+    """'자동' 설정은 오늘 값으로 (v18.6, Jack 2026-11-04). 전에는 지난달 저장본이 지난달 환율을 '자동' 칩과 함께 보여 줬어요.
+      · 자동으로 둔 환율 1,300 으로 저장한 포트폴리오, 오늘 환율 1,450 → 다시 열면 1,450 · '자동';
+      · 예전 저장본(직접 입력 기록 typedKeys 없음) → 오늘 값 · '자동', console 에 바꾼 개수;
+      · 설정에서 직접 입력한 1,234.5 → '가정', 새로 고침 뒤 다시 열어도 · JSON 저장 → 새 브라우저에서 불러와도 1,234.5 · '가정';
+      · typedKeys 없는 예전 파일을 불러오면 오늘 값 · '자동'."""
+    tmp = tempfile.mkdtemp(prefix="baepsae-auto-")
+    try:
+        _auto_settings(R, files, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+AUTO_TAG, ASSUME_TAG = "자동", "가정"          # 설정 화면의 칩 (이미 있는 문구)
+
+
+def _auto_settings(R, files, tmp):
+    S = "자동 설정"
+    today, old, typed = 1450.0, 1300.0, 1234.5
+    data = json.loads(json.dumps(files, allow_nan=True))
+    data["data.json"]["fx"] = today
+    rf = (data["data.json"].get("settings") or {}).get("rf")
+    hold = [{"t": "005930", "mw": 300}]
+    body = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold}
+    slots = [("sauto", "자동 환율 시험", {**body, "settings": {"fx": old, "rf": 9.9}, "typedKeys": []}),
+             ("slegacy", "예전 저장본 시험", {**body, "settings": {"fx": old, "rf": 9.9}})]
+    site = os.path.join(tmp, "site")
+    shutil.move(build_site(data), site)
+    srv, ctx, page, base = R.open(site, local=slot_local(slots), once=True)
+    logs = []
+    page.on("console", lambda m: logs.append(m.text))
+
+    def field(k):
+        """설정 화면의 한 칸: (입력값, 칩)."""
+        row = page.locator(f'[data-set="{k}"]').first
+        row.wait_for(state="visible", timeout=WAIT)
+        chip = AUTO_TAG if row.get_by_text(AUTO_TAG, exact=True).count() else ASSUME_TAG if row.get_by_text(ASSUME_TAG, exact=True).count() else None
+        return float(row.locator("input").input_value()), chip
+
+    def settings_shown(k="fx"):
+        page.locator("button.openSettings").first.click()
+        v = field(k)
+        return v
+
+    def close_settings():
+        # 바깥(위쪽 어두운 곳)을 눌러 닫아요: 휴대폰 크기에서는 맨 아래 '닫기' 버튼이 아래 탭 막대에 가려져요 (따로 고칠 일)
+        page.mouse.click(195, 40)
+        page.locator('[data-set="fx"]').first.wait_for(state="detached", timeout=WAIT)
+
+    def open_slot(name):
+        page.get_by_text(name, exact=False).first.click()
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+
+    def go_home():
+        page.locator('button[title="저장하고 나가기"]').first.click()
+        see(page, "어떻게 시작할까요?")
+
+    def saved_auto():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        open_slot("자동 환율 시험")
+        assert settings_shown() == (today, AUTO_TAG), field("fx")
+        if isinstance(rf, (int, float)):
+            assert field("rf") == (rf, AUTO_TAG), field("rf")                    # 시장 가정도 오늘 값
+        assert field("mrp")[1] == ASSUME_TAG, field("mrp")                       # 오늘 데이터가 주지 않는 칸은 '가정'
+        close_settings()
+        st = poll(page, f"() => JSON.parse(localStorage.getItem('baepsae_v10_slot_sauto'))", lambda v: v and v["settings"]["fx"] == today,
+                  "다시 연 저장본에 오늘 환율이 저장되지 않았어요")
+        assert st["typedKeys"] == [], st.get("typedKeys")
+        assert any("자동 설정" in x and "fx 1300 → 1450" in x for x in logs), logs     # 바꾼 값을 console 에 남겨요
+    R.check(page, S, "자동으로 둔 환율 1,300 으로 저장 · 오늘 1,450 → 다시 열면 1,450 '자동' (rf 도 오늘 값, mrp 는 '가정') · console 에 바꾼 값", saved_auto)
+
+    def legacy_slot():
+        go_home()
+        logs.clear()
+        open_slot("예전 저장본 시험")
+        assert settings_shown() == (today, AUTO_TAG), field("fx")
+        close_settings()
+        line = next((x for x in logs if "typedKeys" in x and "예전 저장본" in x), None)
+        assert line and "바뀐 값" in line and "fx 1300 → 1450" in line, logs
+    R.check(page, S, "예전 저장본(typedKeys 없음) → 오늘 환율 1,450 '자동' · console 에 바꾼 개수", legacy_slot)
+
+    def type_fx():
+        go_home()
+        open_slot("자동 환율 시험")
+        settings_shown()
+        page.locator('[data-set="fx"] input').first.fill(str(typed))
+        assert field("fx") == (typed, ASSUME_TAG), field("fx")                   # 직접 입력하면 '가정'
+        close_settings()
+        st = poll(page, "() => JSON.parse(localStorage.getItem('baepsae_v10_slot_sauto'))", lambda v: v and v["settings"]["fx"] == typed,
+                  "직접 입력한 환율이 저장되지 않았어요")
+        assert st["typedKeys"] == ["fx"], st.get("typedKeys")
+        page.reload(wait_until="domcontentloaded")                              # 새로 고침 뒤 다시 열어도 그대로
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        open_slot("자동 환율 시험")
+        assert settings_shown() == (typed, ASSUME_TAG), field("fx")
+        close_settings()
+    R.check(page, S, "설정에서 환율 1,234.5 직접 입력 → '가정' · typedKeys ['fx'] 저장 · 새로 고침 뒤 다시 열어도 1,234.5 '가정'", type_fx)
+
+    got = {}
+
+    def export():
+        page.get_by_role("button", name="④ 내보내기", exact=False).first.click()
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        got["json"] = os.path.join(tmp, "typed.json")
+        dl.value.save_as(got["json"])
+        with open(got["json"], encoding="utf-8") as fh:
+            j = json.load(fh)
+        assert j["settings"]["fx"] == typed and j["typedKeys"] == ["fx"], (j["settings"].get("fx"), j.get("typedKeys"))
+    R.check(page, S, "JSON 저장 파일에 환율 1,234.5 와 typedKeys ['fx']", export)
+    ctx.close(); srv.shutdown()
+
+    # 새 브라우저 (빈 저장소)
+    srv, ctx, page, base = R.open(site, local={"baepsae_v9_seen": "1"})
+    logs = []
+    page.on("console", lambda m: logs.append(m.text))
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    box = page.locator('input[type=file][accept="application/json,.json"]')
+    oldfile = os.path.join(tmp, "old.json")
+    with open(oldfile, "w", encoding="utf-8") as fh:
+        json.dump({"app": "Baepsae 뱁새 v12", "budgetWon": 10000000, "settings": {"fx": old},
+                   "holdings": [{"ticker": "005930", "amountWon": 3000000}]}, fh, ensure_ascii=False)
+
+    def import_typed():
+        assert "json" in got, "앞 단계에서 파일을 받지 못했어요"
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        see(page, "어떻게 시작할까요?")
+        box.set_input_files(got["json"])
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        assert settings_shown() == (typed, ASSUME_TAG), field("fx")
+        close_settings()
+        assert not dialogs, dialogs
+        st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+            return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
+                  lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
+        assert st["settings"]["fx"] == typed and st["typedKeys"] == ["fx"], (st["settings"]["fx"], st.get("typedKeys"))
+    R.check(page, S, "그 파일을 새 브라우저에서 불러오기 → 1,234.5 '가정' (typedKeys 도 저장본에)", import_typed)
+
+    def import_old():
+        go_home()
+        logs.clear()
+        box.set_input_files(oldfile)
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        assert settings_shown() == (today, AUTO_TAG), field("fx")
+        close_settings()
+        assert not dialogs, dialogs
+        line = next((x for x in logs if "typedKeys" in x and "예전 저장본" in x), None)
+        assert line and "fx 1300 → 1450" in line, logs
+    R.check(page, S, "typedKeys 없는 예전 파일(환율 1,300) 불러오기 → 오늘 1,450 '자동' · console 에 바꾼 개수", import_old)
     ctx.close(); srv.shutdown()
 
 
@@ -1897,7 +2055,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·파일)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -1916,7 +2074,7 @@ def main():
                   ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("빠진", lambda: scene_missing_all(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
                   ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)), ("바로가기", lambda: scene_deep_links(R, fresh)),
                   ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
-                  ("파일", lambda: scene_import_while_loading(R, fresh))]
+                  ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

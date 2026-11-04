@@ -236,7 +236,60 @@ function readPortfolioFile(j, known) {
   // 읽을 칸이 하나도 없는 설정 · 세금은 건드리지 않아요 (지금 설정 — 오늘 환율 등 — 그대로)
   if (settings && Object.keys(settings).length) st.settings = settings; else delete st.settings;
   if (tax && Object.keys(tax).length) st.tax = tax; else delete st.tax;
+  // 직접 입력한 설정 칸 (v18.6): 없거나 읽을 수 없으면 기록 없음 → 자동 칸은 모두 오늘 값으로 열려요 (withTodaysAuto)
+  const typed = cleanTypedKeys(src.typedKeys, "불러온 파일");
+  if (typed) st.typedKeys = typed; else delete st.typedKeys;
   return st;
+}
+
+// ================= 자동 설정은 오늘 값으로 (v18.6, Jack 2026-11-04) =================
+// '자동' 칸 = 오늘 data.json 이 주는 값 (환율 fx, 시장 가정 rf · mktVol · usVol …: AppInner 의 autoVals).
+// 저장본을 열 때와 파일을 불러올 때, 사용자가 설정 화면에서 직접 입력한 칸(typedKeys)만 저장된 값을 쓰고,
+// 나머지 자동 칸은 오늘 값으로 열어요. 전에는 지난달 저장본이 지난달 환율을 '자동' 칩과 함께 보여 줬어요 (틀린 값이 오늘 값처럼).
+// typedKeys 가 없는 예전 저장본 · 파일은 자동 칸을 모두 오늘 값으로 열고, 몇 개를 바꿨는지 console 에 남겨요 (조용히 바꾸지 않아요).
+const isSettingKey = (k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, k);
+// typedKeys: 설정 칸 이름의 목록일 때만. 모르는 칸 · 글자가 아닌 것은 빼고 console 에 개수를 남겨요. 없으면(undefined) null = 기록 없음.
+function cleanTypedKeys(v, where) {
+  if (v === undefined) return null;
+  if (!Array.isArray(v)) {
+    console.warn("[뱁새] " + where + "의 직접 입력 기록(typedKeys)이 목록이 아니라서 버렸어요: 자동 설정은 모두 오늘 값으로 열어요");
+    return null;
+  }
+  const out = [];
+  let bad = 0;
+  v.forEach((k) => { if (!isSettingKey(k)) bad++; else if (!out.includes(k)) out.push(k); });
+  if (bad) console.warn("[뱁새] " + where + "의 직접 입력 기록(typedKeys) " + v.length + "개 중 " + bad + "개는 모르는 설정이라 뺐어요");
+  return out;
+}
+// saved: 저장본 · 파일의 설정, typed: cleanTypedKeys 결과 (null = 기록 없음), live: 오늘 자동 값 { fx: 1450, rf: 2.8, … }.
+// → { settings, typed }: 직접 입력한 칸은 저장된 값 그대로, 나머지 자동 칸은 오늘 값. 저장된 값이 없는 칸은 직접 입력으로 치지 않아요
+// (기본값을 '가정'처럼 보이지 않게).
+function withTodaysAuto(saved, typed, live, base = DEFAULT_SETTINGS) {
+  const fs = isPlainObj(saved) ? saved : {};
+  const settings = { ...base, ...fs };
+  const keep = (typed || []).filter((k) => Object.prototype.hasOwnProperty.call(fs, k));
+  if (typed && keep.length < typed.length) {
+    console.warn("[뱁새] 직접 입력 기록 " + typed.length + "개 중 " + (typed.length - keep.length) + "개는 저장된 값이 없어 자동 칸으로 열어요");
+  }
+  const auto = Object.keys(isPlainObj(live) ? live : {});
+  const changed = [];
+  auto.forEach((k) => {
+    if (keep.includes(k)) return;
+    if (settings[k] !== live[k]) changed.push(k + " " + settings[k] + " → " + live[k]);
+    settings[k] = live[k];
+  });
+  const what = changed.length ? ": " + changed.join(", ") : "";
+  if (!typed && auto.length) {
+    console.warn("[뱁새] 직접 입력 기록(typedKeys)이 없는 예전 저장본이라 자동 설정 " + auto.length + "개를 모두 오늘 값으로 열어요 · 바뀐 값 "
+      + changed.length + "개" + what);
+  } else if (changed.length) {
+    console.info("[뱁새] 자동 설정 " + changed.length + "개를 저장본의 값 대신 오늘 값으로 열어요" + what);
+  }
+  return { settings, typed: keep };
+}
+// 설정 화면의 '자동' 칩: 오늘 값이 있는 칸이고, 직접 입력하지 않았고, 보이는 값이 정말 오늘 값일 때만.
+function autoChip(k, settings, live, typed) {
+  return isPlainObj(live) && Object.prototype.hasOwnProperty.call(live, k) && !(typed || []).includes(k) && !!settings && settings[k] === live[k];
 }
 
 // ================= Live data loader =================
@@ -4243,7 +4296,7 @@ function DiagnoseView({ lang, t, mode, metrics, profile, settings, tax, stocksBy
 }
 
 // ================= Export (ship's log) =================
-function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, tax, setExplain, slotName, score, dataInfo, budgetMw, missing = [], onRemoveMissing }) {
+function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings, typedKeys = [], tax, setExplain, slotName, score, dataInfo, budgetMw, missing = [], onRemoveMissing }) {
   const [checks, setChecks] = useState([false, false, false, false, false]);
   const [cardM, setCardM] = useState(null);
   const openCard = () => {
@@ -4272,7 +4325,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   // 메모의 '예산' = 계산에 든 금액(종목 + 현금) + 오늘 데이터에 없어 뺀 금액 → 입력한 예산과 같아요 (예산을 넘겼으면 담은 금액 전부)
   const budgetShown = metrics.budgetAll || metrics.total;
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, profile: shownProfile(profile), budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], ...(missing.length ? { notInDataNote: missingLine(lang, missing) } : {}), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, typedKeys, profile: shownProfile(profile), budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], ...(missing.length ? { notInDataNote: missingLine(lang, missing) } : {}), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     // 주문표에는 목록에 있는 종목만 (합계가 예산과 맞아야 해요). 목록에 없는 종목은 JSON 백업에만 남겨요 (리뷰 2026-11-04).
@@ -4387,17 +4440,19 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
 }
 
 // ================= Settings =================
-function SettingsPanel({ lang, t, settings, setSettings, tax, setTax, autoKeys, onClose }) {
-  const isAuto = (k) => (autoKeys || []).includes(k);
+function SettingsPanel({ lang, t, settings, setSettings, tax, setTax, autoVals, typedKeys, onTyped, onClose }) {
+  const isAuto = (k) => autoChip(k, settings, autoVals, typedKeys);
+  // 설정 화면에서 고친 칸은 '직접 입력'으로 남겨요 (v18.6): 저장본을 다시 열거나 파일을 불러와도 그 값 그대로, 나머지 자동 칸은 오늘 값
+  const edit = (patch) => { setSettings({ ...settings, ...patch }); onTyped(Object.keys(patch)); };
   const F = ({ k, label, tip, step = 0.1, unit = "%" }) => (
-    <div style={{ marginBottom: 11 }}>
+    <div data-set={k} style={{ marginBottom: 11 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: C.ink }}>
           {label} {isAuto(k) ? <Chip color={C.teal} soft={C.tealSoft} style={{ marginLeft: 3 }}>{t("autoTag")}</Chip>
                               : <Chip color={C.faint} soft={C.bg} style={{ marginLeft: 3 }}>{t("assumeTag")}</Chip>}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-          <input type="number" step={step} value={settings[k]} onChange={(e) => setSettings({ ...settings, [k]: parseFloat(e.target.value) || 0 })}
+          <input type="number" step={step} value={settings[k]} onChange={(e) => edit({ [k]: parseFloat(e.target.value) || 0 })}
             style={{ width: 78, borderRadius: 9, border: "1.5px solid " + C.line, padding: 7, fontSize: 13, textAlign: "right", fontFamily: FONT, outline: "none" }} />
           <span style={{ fontSize: 12, color: C.faint, width: 14 }}>{unit}</span>
         </div>
@@ -4425,7 +4480,7 @@ function SettingsPanel({ lang, t, settings, setSettings, tax, setTax, autoKeys, 
             <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginBottom: 6 }}>{t("mrpScenTip")}</div>
             <div style={{ display: "flex", gap: 5 }}>
               {[[3.5, t("mrpLow")], [5.5, t("mrpBase")], [7.0, t("mrpHigh")]].map(([v, label]) => (
-                <button key={v} onClick={() => setSettings({ ...settings, mrp: v, usMrp: Math.max(v - 0.5, 1) })}
+                <button key={v} onClick={() => edit({ mrp: v, usMrp: Math.max(v - 0.5, 1) })}
                   style={{ flex: 1, fontSize: 11.5, fontWeight: 800, padding: "8px 4px", borderRadius: 10, cursor: "pointer", fontFamily: FONT,
                     border: "1.5px solid " + (Math.abs(settings.mrp - v) < 0.05 ? C.blue : C.line),
                     background: Math.abs(settings.mrp - v) < 0.05 ? C.blue : "#fff",
@@ -4670,7 +4725,9 @@ function AppInner({ seed, lang: langProp }) {
   const [onb, setOnb] = useState(false);
   const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null });
   const universe = useRef(null);
-  const [autoKeys, setAutoKeys] = useState([]);
+  const [autoVals, setAutoVals] = useState({});      // 오늘 data.json 이 준 자동 값 (환율 · 시장 가정). 못 읽은 날은 비어 있어요
+  const [typedKeys, setTypedKeys] = useState([]);    // 설정 화면에서 직접 입력한 칸 (v18.6): 저장본 · 파일에 같이 저장해요
+  const markTyped = (ks) => setTypedKeys((ts) => [...ts, ...ks.filter((k) => !ts.includes(k))]);
 
   // ---- boot: onboarding flag, slots, live data ----
   useEffect(() => {
@@ -4683,13 +4740,12 @@ function AppInner({ seed, lang: langProp }) {
         setStocks(universe.current.map((s) => ({ ...s })));
         // 파이프라인이 계산한 시장 가정을 기본값으로 반영합니다(설정에서 언제든 수정 가능)
         const AUTO = ["rf", "mktVol", "usVol", "mtVol", "rhoKrUs", "rhoKrMt", "rhoUsMt", "bdVol", "rhoKrBd", "rhoUsBd", "rhoMtBd"];
-        setSettings((s) => {
-          const nx = { ...s };
-          if (L.fx) nx.fx = L.fx;
-          if (L.settings) AUTO.forEach((k) => { if (typeof L.settings[k] === "number") nx[k] = L.settings[k]; });
-          return nx;
-        });
-        setAutoKeys(L.settings ? ["fx", ...AUTO.filter((k) => typeof L.settings[k] === "number")] : ["fx"]);
+        // 자동 칸 = 오늘 값이 정말 있는 칸만 (전에는 data.json 에 환율이 없어도 환율에 '자동' 칩이 붙었어요)
+        const vals = {};
+        if (isFinNum(L.fx) && L.fx > 0) vals.fx = L.fx;
+        if (L.settings) AUTO.forEach((k) => { if (isFinNum(L.settings[k])) vals[k] = L.settings[k]; });
+        setSettings((s) => ({ ...s, ...vals }));
+        setAutoVals(vals);
         setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt });
       } else {
         // 못 읽었어요: 내장 예시 가격으로 열되, 모든 종목을 '실시간 아님'으로 표시하고 화면에서 알려요
@@ -4729,7 +4785,7 @@ function AppInner({ seed, lang: langProp }) {
   // ---- slot persistence ----
   const saveSlot = async (id, name, extra) => {
     const payload = {
-      schema: SCHEMA, lang, mode, settings, tax, profile, answers, budgetMw, checkins, stage,
+      schema: SCHEMA, lang, mode, settings, typedKeys, tax, profile, answers, budgetMw, checkins, stage,
       holdings: holdings.map((h) => withSavedName(h, h && stocksById[h.t])),   // 빠진 종목도 그대로, 이름만 붙여요
       customStocks: stocks.filter((s) => s.custom),
       stockEdits: (() => {
@@ -4770,7 +4826,11 @@ function AppInner({ seed, lang: langProp }) {
   };
   const applyState = (s) => {
     if (s.lang) setLang(s.lang);
-    if (s.settings) setSettings({ ...DEFAULT_SETTINGS, ...s.settings });
+    // 자동 칸은 오늘 값, 직접 입력한 칸만 저장된 값 (v18.6). 설정이 없는 파일이면 지금 설정 · 직접 입력 기록 그대로예요
+    if (s.settings) {
+      const r = withTodaysAuto(s.settings, cleanTypedKeys(s.typedKeys, "저장본"), autoVals);
+      setSettings(r.settings); setTypedKeys(r.typed);
+    }
     if (s.tax) setTax({ ...DEFAULT_TAX, ...s.tax });
     if (s.profile) setProfile({ ...DEFAULT_PROFILE, ...s.profile });
     if (s.answers) setAnswers(s.answers);
@@ -4866,7 +4926,7 @@ function AppInner({ seed, lang: langProp }) {
     if (!booted || !slotId) return;
     const id = setTimeout(() => { saveSlot(slotId, slotName); }, 800);
     return () => clearTimeout(id);
-  }, [booted, slotId, slotName, lang, mode, settings, tax, profile, answers, budgetMw, holdings, stocks, checkins, stage]);
+  }, [booted, slotId, slotName, lang, mode, settings, typedKeys, tax, profile, answers, budgetMw, holdings, stocks, checkins, stage]);
 
   const addCheckin = (snap) => setCheckins((c) => [...c.filter((x) => x.d !== snap.d), snap].slice(-24));
   const loadDemo = () => {
@@ -4913,7 +4973,7 @@ function AppInner({ seed, lang: langProp }) {
           </div>}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={() => setLang(lang === "ko" ? "en" : "ko")} style={{ background: C.bg, border: "none", borderRadius: 999, padding: "6px 10px", fontSize: 11.5, fontWeight: 800, color: C.sub, cursor: "pointer", fontFamily: FONT }}>{lang === "ko" ? "EN" : "한국어"}</button>
-            {slotId && <button onClick={() => setShowSettings(true)} style={{ background: C.bg, border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Ic name="gear" size={15} color={C.sub} /></button>}
+            {slotId && <button className="openSettings" onClick={() => setShowSettings(true)} style={{ background: C.bg, border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Ic name="gear" size={15} color={C.sub} /></button>}
             {slotId && <button onClick={exitSlot} title={t("slotExit")} style={{ background: C.bg, border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Ic name="home" size={15} color={C.sub} /></button>}
           </div>
         </div>
@@ -4941,7 +5001,7 @@ function AppInner({ seed, lang: langProp }) {
         )}
         {slotId && stage === 3 && (
           <div className="narrow" style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} tax={tax} setExplain={setExplain} slotName={slotName} score={score} budgetMw={budgetMw} missing={missing} onRemoveMissing={removeMissing} />
+            <ExportView lang={lang} t={t} dataInfo={live} metrics={metrics} profile={profile} holdings={holdings} stocksById={stocksById} settings={settings} typedKeys={typedKeys} tax={tax} setExplain={setExplain} slotName={slotName} score={score} budgetMw={budgetMw} missing={missing} onRemoveMissing={removeMissing} />
             <Btn kind="ghost" onClick={exitSlot} style={{ width: "100%" }}>{t("slotExit")}</Btn>
           </div>
         )}
@@ -4952,7 +5012,7 @@ function AppInner({ seed, lang: langProp }) {
         <Sub style={{ textAlign: "center", padding: "2px 16px", fontSize: 10.5 }}><SiteFooterLine lang={lang} /></Sub>
       </div>
       <ExplainSheet id={explain} lang={lang} onClose={() => setExplain(null)} />
-      {showSettings && <SettingsPanel lang={lang} t={t} settings={settings} setSettings={setSettings} tax={tax} setTax={setTax} autoKeys={autoKeys} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsPanel lang={lang} t={t} settings={settings} setSettings={setSettings} tax={tax} setTax={setTax} autoVals={autoVals} typedKeys={typedKeys} onTyped={markTyped} onClose={() => setShowSettings(false)} />}
       {slotId && stage === 1 && profile.ready && !metrics.empty && (
         <div className="mobilebar">
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px" }}>
@@ -4981,4 +5041,6 @@ export default function App({ seed, lang }) {
 
 export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, NonLiveBanner, T_LOAD_FAIL, T_NONLIVE, T_RATES_FAIL, computeMetrics, AboutLink, SiteFooterLine, readPortfolioFile, makeCardData, unlistedExportRows,
   // v18.5: Node 로 시험하려고 (tests/test_app_data.py)
-  missingHoldings, missingLine, shownProfile, scoreProfile };
+  missingHoldings, missingLine, shownProfile, scoreProfile,
+  // v18.6: 자동 설정 (tests/test_app_data.py)
+  cleanTypedKeys, withTodaysAuto, autoChip };
