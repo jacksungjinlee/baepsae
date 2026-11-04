@@ -27,7 +27,8 @@
   파일        (v18.4.1) 'JSON 저장 (백업·공유)' 파일 → 새 브라우저에서 '저장한 파일에서 불러오기' → 같은 종목·금액·예산 ·
               종목 없는 파일 · 깨진 파일 · 줄이 모두 틀린 파일은 '파일을 읽을 수 없어요.' 알림만 (있던 포트폴리오 그대로) · 예전 모양 파일도 열림
   자동 설정   (v18.6) 설정의 '자동' 칸(환율 · 시장 가정)은 저장본을 다시 열 때도 파일을 불러올 때도 오늘 값 · 직접 입력한 칸만 저장된 값('가정') ·
-              JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수)
+              JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수) ·
+              (v18.6.1) '새로 시작하기' · 읽을 설정이 없는 파일은 기본값 + 오늘 값 (앞 포트폴리오의 설정을 잇지 않아요)
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -1791,7 +1792,8 @@ def scene_auto_settings(R, files):
       · 자동으로 둔 환율 1,300 으로 저장한 포트폴리오, 오늘 환율 1,450 → 다시 열면 1,450 · '자동';
       · 예전 저장본(직접 입력 기록 typedKeys 없음) → 오늘 값 · '자동', console 에 바꾼 개수;
       · 설정에서 직접 입력한 1,234.5 → '가정', 새로 고침 뒤 다시 열어도 · JSON 저장 → 새 브라우저에서 불러와도 1,234.5 · '가정';
-      · typedKeys 없는 예전 파일을 불러오면 오늘 값 · '자동'."""
+      · typedKeys 없는 예전 파일을 불러오면 오늘 값 · '자동';
+      · (v18.6.1) '새로 시작하기'와 읽을 설정이 없는 파일은 앞 포트폴리오의 설정 · 직접 입력 기록을 잇지 않고 기본값 + 오늘 값 · '자동'."""
     tmp = tempfile.mkdtemp(prefix="baepsae-auto-")
     try:
         _auto_settings(R, files, tmp)
@@ -1800,6 +1802,8 @@ def scene_auto_settings(R, files):
 
 
 AUTO_TAG, ASSUME_TAG = "자동", "가정"          # 설정 화면의 칩 (이미 있는 문구)
+NEWEST_SLOT = """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
+  return l.length ? [l[0].name, JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null')] : null; }"""   # 맨 앞 = 방금 저장한 것
 
 
 def _auto_settings(R, files, tmp):
@@ -1896,6 +1900,20 @@ def _auto_settings(R, files, tmp):
             j = json.load(fh)
         assert j["settings"]["fx"] == typed and j["typedKeys"] == ["fx"], (j["settings"].get("fx"), j.get("typedKeys"))
     R.check(page, S, "JSON 저장 파일에 환율 1,234.5 와 typedKeys ['fx']", export)
+
+    def new_slot():
+        # v18.6.1 (Jack 2026-11-04): 새 포트폴리오는 앞 포트폴리오의 설정 · 직접 입력 기록을 잇지 않고 기본값 + 오늘 값으로 시작해요
+        go_home()
+        logs.clear()
+        page.get_by_text("새로 시작하기", exact=False).first.click()
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        assert settings_shown() == (today, AUTO_TAG), field("fx")
+        close_settings()
+        name, st = poll(page, NEWEST_SLOT, lambda v: v and v[0] not in ("자동 환율 시험", "예전 저장본 시험") and v[1],
+                        "새 포트폴리오가 저장되지 않았어요")
+        assert st["settings"]["fx"] == today and st["typedKeys"] == [], (name, st["settings"]["fx"], st.get("typedKeys"))
+        assert any("새로 시작하기" in x and "fx 1234.5 → 1450" in x for x in logs), logs     # 바꾼 것을 console 에 남겨요
+    R.check(page, S, "환율 1,234.5 를 입력한 포트폴리오에서 나와 '새로 시작하기' → 오늘 1,450 '자동' · typedKeys [] 저장 · console 에 바꾼 값", new_slot)
     ctx.close(); srv.shutdown()
 
     # 새 브라우저 (빈 저장소)
@@ -1924,6 +1942,25 @@ def _auto_settings(R, files, tmp):
                   lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
         assert st["settings"]["fx"] == typed and st["typedKeys"] == ["fx"], (st["settings"]["fx"], st.get("typedKeys"))
     R.check(page, S, "그 파일을 새 브라우저에서 불러오기 → 1,234.5 '가정' (typedKeys 도 저장본에)", import_typed)
+
+    nosettings = os.path.join(tmp, "nosettings.json")
+    with open(nosettings, "w", encoding="utf-8") as fh:                  # 설정 칸이 있지만 읽을 수 없어요 (숫자가 아님)
+        json.dump({"app": "Baepsae 뱁새 v12", "budgetWon": 10000000, "settings": {"fx": "1300"}, "typedKeys": ["fx"],
+                   "holdings": [{"ticker": "005930", "amountWon": 3000000}]}, fh, ensure_ascii=False)
+
+    def import_no_settings():
+        # v18.6.1: 읽을 설정이 없는 파일 → 앞 포트폴리오(직접 입력 1,234.5)의 설정 · 기록을 잇지 않고 기본값 + 오늘 값
+        go_home()
+        logs.clear()
+        box.set_input_files(nosettings)
+        page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
+        assert settings_shown() == (today, AUTO_TAG), field("fx")
+        close_settings()
+        assert not dialogs, dialogs
+        name, st = poll(page, NEWEST_SLOT, lambda v: v and v[1] and v[1]["settings"]["fx"] != typed, "불러온 포트폴리오가 저장되지 않았어요")
+        assert st["settings"]["fx"] == today and st["typedKeys"] == [], (name, st["settings"]["fx"], st.get("typedKeys"))
+        assert any("읽을 설정이 없는 파일" in x and "fx 1234.5 → 1450" in x for x in logs), logs
+    R.check(page, S, "읽을 설정이 없는 파일 불러오기 (앞 포트폴리오는 1,234.5 직접 입력) → 오늘 1,450 '자동' · typedKeys [] · console 에 바꾼 값", import_no_settings)
 
     def import_old():
         go_home()

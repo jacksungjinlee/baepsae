@@ -524,3 +524,20 @@ def test_import_reads_typed_keys_and_drops_unknown_ones():
     assert got["warn"] == ["[뱁새] 불러온 파일의 직접 입력 기록(typedKeys) 6개 중 3개는 모르는 설정이라 뺐어요",
                            "[뱁새] 불러온 파일의 직접 입력 기록(typedKeys)이 목록이 아니라서 버렸어요: 자동 설정은 모두 오늘 값으로 열어요",
                            "[뱁새] 불러온 파일의 직접 입력 기록(typedKeys) 2개 중 1개는 모르는 설정이라 뺐어요"], got["warn"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_new_portfolio_starts_from_defaults_and_todays_values():
+    # v18.6.1 (Jack 2026-11-04): '새로 시작하기' · 읽을 설정이 없는 파일 → 기본값 + 오늘 자동 값, 직접 입력 기록 없음 (앞 포트폴리오 것을 잇지 않아요)
+    got = run_metrics(LOG_JS + "const prev = { ...st, ...LIVE, fx: 1234.5, mrp: 7 };"
+                      "const a = D.freshSettings(prev, ['fx', 'mrp'], LIVE, '새로 시작하기');"
+                      "const b = D.freshSettings({ ...st, ...LIVE }, [], LIVE, '새로 시작하기');"     # 이미 새것: 바뀐 것 없음 → 조용히
+                      "const c = D.freshSettings(prev, ['fx'], {}, '읽을 설정이 없는 파일');"          # 오늘 데이터를 못 읽은 날: 기본값
+                      "console.log(JSON.stringify({ a: [a.settings.fx, a.settings.mrp, a.settings.rf, a.typed, D.autoChip('fx', a.settings, LIVE, a.typed)],"
+                      " b: b.typed, c: [c.settings.fx, c.settings.rf, c.typed], info, warn }));")
+    assert got["a"] == [1450, 5.5, 2.8, [], True], got["a"]
+    assert got["b"] == [] and got["c"] == [1380, 3.0, []], got
+    assert got["info"] == ["[뱁새] 새로 시작하기: 앞 포트폴리오의 설정 2개 · 직접 입력 기록 2개 대신 기본값과 오늘 값으로 시작해요: mrp 7 → 5.5, fx 1234.5 → 1450",
+                           "[뱁새] 읽을 설정이 없는 파일: 앞 포트폴리오의 설정 4개 · 직접 입력 기록 1개 대신 기본값과 오늘 값으로 시작해요: "
+                           "rf 2.8 → 3, mrp 7 → 5.5, mktVol 20 → 18, fx 1234.5 → 1380"], got["info"]
+    assert got["warn"] == [], got["warn"]

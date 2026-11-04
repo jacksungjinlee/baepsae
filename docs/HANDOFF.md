@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-04 08:30 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 00:05 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -22,29 +22,30 @@ Claude started one `dart=cache` run on main by hand (41731600516, published 07:4
 run has published by ~07:30 KST, start one `dart=cache` run on main (never a second full-DART run in a KST day; not
 while a scheduled run is waiting or queued).
 
-**Outside timer (v17.5.5, Jack 2026-11-04):** cron-job.org (Jack's account) calls
-`POST https://api.github.com/repos/jacksungjinlee/baepsae/actions/workflows/update-data.yml/dispatches` with
-`{"ref":"main","inputs":{"timer":"true"}}` at 06:40 KST Tue–Sat. A timer run follows the scheduled-run rules: it stops
-early when today's data is already published, waits for the US close, checks out the latest main, stops on an empty
-DART cache, and accepts only main + `dart=cache`. The token is a fine-grained token for this repo only with only the
-Actions permission; it lives only in cron-job.org (never in a chat, the repo or a log).
-- **Token expires 2027-02-04. Remind Jack on 2027-01-21** to make a new token (same settings) and paste it into the
-  cron-job.org job's Authorization header. To revoke at any time: GitHub → Settings → Developer settings → Personal
-  access tokens → Fine-grained tokens → the token → Delete.
+**Outside timer (v17.5.5, set up by Jack 2026-11-04):** cron-job.org (Jack's account) job "뱁새 morning data run"
+sends `POST https://api.github.com/repos/jacksungjinlee/baepsae/actions/workflows/update-data.yml/dispatches` Tue–Sat
+at 06:40, time zone Asia/Tokyo (same clock as Seoul, no summer time), body `{"ref":"main","inputs":{"timer":"true"}}`,
+headers `Accept`, `Authorization`, `X-GitHub-Api-Version` and `Content-Type: application/json`, and emails Jack when
+it fails. Test run 2026-11-04 23:54 KST: GitHub answered 204 and run 41852250682 stopped early as intended. A timer run
+follows the scheduled-run rules: it stops early when today's data is already published, waits for the US close,
+checks out the latest main, stops on an empty DART cache, and accepts only main + `dart=cache`. The token is Jack's
+fine-grained token "baepsae morning timer": only the baepsae repo, only Actions (read and write), no expiry. It lives
+only in cron-job.org (never in a chat, the repo or a log).
+- To revoke at any time: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens →
+  the token → Delete.
 - The token can start *any* run (like Jack's Run-workflow button, e.g. a manual `dart=full`), cancel runs or delete
-  caches — the workflow can't tell the holder apart from Jack. That's why it stays only in cron-job.org with a short
-  expiry.
+  caches — the workflow can't tell the holder apart from Jack. That's why it stays only in cron-job.org.
 - Timer runs share the live concurrency group with scheduled and manual runs (1 running + 1 pending; a newer queued
   run cancels the older pending one). Don't queue a manual run while a scheduled **or timer** run is waiting or queued.
 
 **Next, in Jack's order (2026-11-04): 자동 settings fix (v18.6, with the 타임머신 line stopping at the low point) → v19.0d (PC) → v17.6:**
 1. **09:13 check reports gate warnings:** done 2026-11-04 (Jack allowed the change).
-2. **Outside timer:** workflow change merged (v17.5.5); Jack sets up cron-job.org with the token (steps sent
-   2026-11-04). Then check that the next morning's run came from the timer (event workflow_dispatch, ~06:40 KST).
+2. **Outside timer:** workflow change merged (v17.5.5); Jack set up cron-job.org 2026-11-04 (above). Check that the
+   next morning's run came from the timer (event workflow_dispatch, ~06:40 KST).
 3. **v19.0d (PC layout):** PR #30 (left menu, top search with "/", two columns on 홈 and 시장). After it: **v17.6**.
    Open for Jack: a "내 포트폴리오" list in the left menu (heading not approved yet).
-4. **Old app, 자동 settings:** done in v18.6 (#29). Open for Jack: should 새로 시작하기 start from today's values instead of
-   the previous portfolio's settings?
+4. **Old app, 자동 settings:** done in v18.6 (#29). Jack decided 2026-11-04: 새로 시작하기 (and a file with no readable
+   settings) starts from defaults + today's values, not the previous portfolio's settings — v18.6.1.
 
 **타임머신 (old app):** Jack decided 2026-11-04 — stop the chart line at the low point (part of v18.6).
 
