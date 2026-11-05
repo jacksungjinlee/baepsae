@@ -1,0 +1,3 @@
+# Companies that asked us not to show the icon from their homepage (logo plan step 4, read by site_icons.py).
+# One stock code (005930) or domain (example.co.kr) per line, with the date and who asked after a #.
+# A listed company is never fetched and its icon is never written; the app then shows its letter mark.
