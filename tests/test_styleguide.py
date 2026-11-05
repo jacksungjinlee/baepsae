@@ -146,8 +146,13 @@ def test_pretendard_licence_and_files():
 
 
 # v19.0b (Jack, 2026-11-03): Phosphor duotone. 아이콘 표(docs/tasks/v19.0-layout-c.md Part B) 그대로의 네 가지 색.
+# v19.1 Part H (Jack 승인 2026-11-05): 주제 색 다섯 가지를 표 그대로 더해요 — 선은 남색, 바탕만 주제 색. 이 값들 말고는 없어요.
 ICON_TONE_SPEC = {"on": {"line": "#1C2B45", "fill": "#CBD3DF"}, "off": {"line": "#6B7280", "fill": "#E3E6EB"},
-                  "ok": {"line": "#1F7A4D", "fill": "#CDEBD9"}, "onNavy": {"line": "#FFFFFF", "fill": "#5A6B87"}}
+                  "ok": {"line": "#1F7A4D", "fill": "#CDEBD9"}, "onNavy": {"line": "#FFFFFF", "fill": "#5A6B87"},
+                  "earn": {"line": "#1C2B45", "fill": "#B9CDEB"}, "value": {"line": "#1C2B45", "fill": "#BFE0CC"},
+                  "div": {"line": "#1C2B45", "fill": "#EBD49A"}, "risk": {"line": "#1C2B45", "fill": "#D3C8EC"},
+                  "disc": {"line": "#1C2B45", "fill": "#B5DDDD"}}
+TOPIC_CHIP_SPEC = {"earn": "#EAF1FB", "value": "#E9F5EE", "div": "#FBF4E1", "risk": "#F1EDF9", "disc": "#E6F4F4"}   # Part H 칩 바탕
 PH_D = re.compile(r"^[MmLlHhVvCcSsQqTtAaZz0-9,.\- ]+$")
 
 
@@ -158,13 +163,14 @@ def render_icons():
     with open(entry, "w", encoding="utf-8") as f:
         f.write("import React from 'react';\nimport { renderToStaticMarkup } from 'react-dom/server';\n"
                 f"import {{ Icon, IconChip, ICON_NAMES, ICON_TONES, ALIAS }} from {json.dumps(path('src/ui/icons.jsx'))};\n"
-                f"import {{ ICON_TONE, COLOR }} from {json.dumps(path('src/ui/tokens.js'))};\n"
+                f"import {{ ICON_TONE, COLOR, TOPIC_CHIP }} from {json.dumps(path('src/ui/tokens.js'))};\n"
                 f"import {{ PH, PHOSPHOR_VERSION }} from {json.dumps(path('src/ui/phosphor.js'))};\n"
                 "const WARNS = []; console.warn = (...a) => { WARNS.push(a.join(' ')); };\n"
                 "export const OUT = { names: ICON_NAMES, tones: ICON_TONES, alias: ALIAS, tone: ICON_TONE, ph: PH, version: PHOSPHOR_VERSION,\n"
                 "  select: COLOR.select, unknown: renderToStaticMarkup(<Icon name='no-such-icon' />),\n"
                 "  unknownAgain: renderToStaticMarkup(<Icon name='no-such-icon' tone='off' />), warns: WARNS,\n"
-                "  chip: renderToStaticMarkup(<IconChip name='umbrella' size={40} />),\n"
+                "  chip: renderToStaticMarkup(<IconChip name='umbrella' size={40} />), topicChip: TOPIC_CHIP,\n"
+                "  topicChips: Object.fromEntries(Object.keys(TOPIC_CHIP).map((t) => [t, renderToStaticMarkup(<IconChip name='coins' size={32} tone={t} />)])),\n"
                 "  svg: Object.fromEntries(ICON_NAMES.flatMap((n) => ICON_TONES.map((t) => [n + '|' + t, renderToStaticMarkup(<Icon name={n} tone={t} />)]))) };\n")
     try:
         code = esbuild(entry, "--bundle", "--format=iife", "--global-name=M", "--jsx=automatic", "--external:react", "--external:react-dom",
@@ -226,9 +232,13 @@ def test_icons_are_phosphor_duotone_with_two_layers_and_table_colours():
         p = icon_problems(markup, v["ph"][v["alias"].get(n, n)], tone)
         if p:
             bad[key] = p
-    assert len(v["svg"]) == len(v["names"]) * 4 and not bad, list(bad.items())[:5]
+    assert len(v["svg"]) == len(v["names"]) * len(ICON_TONE_SPEC) and not bad, list(bad.items())[:5]
     chip = v["chip"]
     assert v["select"] == "#F2F0EB" and "background:#F2F0EB" in chip and "border-radius:30%" in chip and "width:40px" in chip, chip
+    # v19.1 Part H: 주제 칩 바탕은 표의 다섯 가지 그대로, 그 주제의 아이콘 색과 짝이에요 (기본 칩은 위처럼 따뜻한 회색)
+    assert v["topicChip"] == TOPIC_CHIP_SPEC and sorted(TOPIC_CHIP_SPEC) == sorted(k for k in ICON_TONE_SPEC if ICON_TONE_SPEC[k]["line"] == "#1C2B45" and k != "on")
+    for t, m in v["topicChips"].items():
+        assert f"background:{TOPIC_CHIP_SPEC[t]}" in m and f'fill="{ICON_TONE_SPEC[t]["fill"]}"' in m and 'fill="#1C2B45"' in m, (t, m)
     src = "".join(read(f) for f in ("src/ui/icons.jsx", "src/ui/phosphor.js"))
     assert "stroke" not in src and "C97757" not in src.upper() and "A9542F" not in src.upper()
 

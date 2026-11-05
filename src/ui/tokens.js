@@ -24,14 +24,23 @@ export const COLOR = {
   select: "#F2F0EB",       // v19.0b: 고른 것(탭 알약 · 고른 줄 · 고른 칩) 과 아이콘 칩의 바탕. 고른 줄은 왼쪽에 3px 남색 선
 };
 
-// v19.0b (Jack, 2026-11-03): 아이콘은 Phosphor duotone 두 층(선 · 바탕)이고, 색은 이 표의 네 가지뿐이에요.
+// v19.0b (Jack, 2026-11-03): 아이콘은 Phosphor duotone 두 층(선 · 바탕)이고, 색은 이 표의 것뿐이에요 (v19.0b 네 가지 + v19.1 주제 색 다섯).
 // 살구색은 아이콘에 쓰지 않아요 (살구색은 목표 비중 선 · 순위 숫자 · 팩터 점 · 그래프 속 '내 포트폴리오' 같은 데이터 표시에만).
+// v19.1 Part H (Jack, 2026-11-05): 주제 색 다섯 가지를 더했어요. 선은 언제나 남색(#1C2B45)이고 바탕 층만 주제 색이에요.
+// 칩 바탕도 같은 주제의 옅은 색(TOPIC_CHIP)이에요. 주제 색은 좋고 나쁨을 뜻하지 않아요. 살구색 · 가격 빨강 · 파랑은 없어요.
 export const ICON_TONE = {
   on: { line: "#1C2B45", fill: "#CBD3DF" },       // 켜짐 · 기본
   off: { line: "#6B7280", fill: "#E3E6EB" },      // 꺼짐 · 보조
   ok: { line: "#1F7A4D", fill: "#CDEBD9" },       // 괜찮아요 · 할 일 없음
   onNavy: { line: "#FFFFFF", fill: "#5A6B87" },   // 남색 바탕 위
+  earn: { line: "#1C2B45", fill: "#B9CDEB" },     // 주제: 실적
+  value: { line: "#1C2B45", fill: "#BFE0CC" },    // 주제: 가치
+  div: { line: "#1C2B45", fill: "#EBD49A" },      // 주제: 배당
+  risk: { line: "#1C2B45", fill: "#D3C8EC" },     // 주제: 출렁임 · 위험
+  disc: { line: "#1C2B45", fill: "#B5DDDD" },     // 주제: 공시 · 수급 · 금리 차트 등
 };
+export const TOPICS = ["earn", "value", "div", "risk", "disc"];
+export const TOPIC_CHIP = { earn: "#EAF1FB", value: "#E9F5EE", div: "#FBF4E1", risk: "#F1EDF9", disc: "#E6F4F4" };
 export const ICON_CHIP = { bg: COLOR.select, radius: "30%" };   // 아이콘 칩: 크기의 30% 둥글기
 export const SELECTED = { background: COLOR.select };                 // 고른 칩 · 고른 카드 · 탭 알약
 export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 0 ${COLOR.ink}` };   // 고른 줄: 왼쪽 3px 남색 선

@@ -108,6 +108,12 @@ healthchecks.io + Pages clicks), then 3b, then 3c. The 09:13 check needs no chan
    protect-main ruleset (steps in the PR). The leftover branch `claude/v17.6-ci-proof` (test PR #35) couldn't be
    deleted from the session (git proxy); delete it when possible.
 
+**v19.1a (company page, Korea + US):** branch `claude/v19.1a-company`, no PR yet. Status: built and tested (pytest,
+all smokes, proposal-filled smoke run too); waiting for Jack's 「새 문구」 (every company-page string is a proposal:
+`docs/tasks/v18.3-new-strings-pending.md` § v19.1a) and his answers on the beta band, the US dividend/growth wording and
+logos (Part L). Until the strings are approved the page shows only approved words (no tab bar, few tiles). Then: fill
+the values, open the PR (fresh-eyes review), merge.
+
 **타임머신 (old app):** Jack decided 2026-11-04 — stop the chart line at the low point (part of v18.6).
 
 **v19.0c follow-ups (from its review):** dead first back press after reloading with the menu open; the screen

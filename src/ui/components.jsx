@@ -146,7 +146,8 @@ export function StatStrip({ items, note, onPage = false }) {
 
 // ── 목록 줄: 이름 + 오늘 % · 예외일 때만 칩 ── (흰 섹션 안에 놓아요)
 // selected: 고른 줄 (v19.0b) — 따뜻한 회색 바탕 + 왼쪽 3px 남색 선. 글자 자리는 그대로예요 (좌우로 12px 넓혀 그려요).
-export function ListRow({ title, sub, value, change, chip, onClick, selected = false }) {
+// lead (v19.1a): 이름 앞에 놓는 것 (회사 표시). 없으면 예전 그대로예요.
+export function ListRow({ title, sub, value, change, chip, onClick, selected = false, lead }) {
   const act = onClick ? {
     role: "button", tabIndex: 0, onClick,
     onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(e); } },
@@ -155,6 +156,7 @@ export function ListRow({ title, sub, value, change, chip, onClick, selected = f
     <div data-ui="list-row" data-selected={selected ? "1" : undefined} aria-current={selected ? "true" : undefined} {...act}
       style={{ ...(onClick ? tapReset : { fontFamily: FONT }), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}`,
         ...(selected ? { ...SELECTED_ROW, padding: `${SPACE(2)}px ${SPACE(3)}px`, margin: `0 -${SPACE(3)}px` } : {}) }}>
+      {lead}
       <div data-ui-part="main" style={{ flex: 1, minWidth: 0 }}>
         <div style={T(SIZE.body, WEIGHT.bold, COLOR.ink, { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{title}</div>
         {(sub || chip) && <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), columnGap: SPACE(2), alignItems: "center", marginTop: SPACE(1) }}>

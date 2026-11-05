@@ -161,13 +161,34 @@ export const BUILD_NEEDS = ["ind", "dps0", "val20", "fy", "etf"];
 export const missingForBuild = (f) => BUILD_NEEDS.filter((k) => !f[k]);
 
 // ---------------- values ----------------
+// v19.1a review: a Korean dividend per share (DART 주당 현금배당금) is not always per today's share. A split after the
+// report, or a filing that put the total dividend in the per-share row, makes dps / today's close absurd (와이엔텍
+// 28,593,458%, 미원화학 40.2% with a reported 4.76%). The same report's own cash-dividend yield (dy, checked by the
+// publication gate) is the cross-check: dps / close must sit within 1/3x-3x of dy (dy is at that year's price, so price
+// moves since then are allowed), and 0 means 0 on both. With no dy to check against, dps / close is used as before.
+export const DPS_AGREE = [1 / 3, 3];
+// A yield above 30% is not believed (fetch_data.py applies the same limit to Yahoo's US yields): such a dy is unknown.
+export const DY_MAX = 30;
+export const okDy = (s) => { const y = num(s && s.dy); return y != null && y >= 0 && y <= DY_MAX ? y : null; };
+export function dpsAgrees(s) {
+  const d = num(s && s.dps), y = num(s && s.dy), p = num(s && s.price);
+  if (d == null) return false;
+  if (d === 0) return y == null || y === 0;
+  if (y == null) return true;
+  if (!(y > 0) || y > DY_MAX || !(p > 0)) return false;
+  const r = ((d / p) * 100) / y;
+  return r >= DPS_AGREE[0] && r <= DPS_AGREE[1];
+}
+// dps / today's close (%) for Korean stocks, only when dps agrees with the report's yield (dpsAgrees). null otherwise.
+export function krDivYield(s) {
+  const d = num(s && s.dps), p = num(s && s.price);
+  return d == null || !(p > 0) || !dpsAgrees(s) ? null : (d / p) * 100;
+}
+
 export function cardRaw(s, card) {
   if (card.finNA && isFin(s)) return NA;
   const f = card.field[s.cls === "us" ? "us" : "kr"];
-  if (f === "divYield") {
-    const d = num(s.dps), p = num(s.price);
-    return d == null || !(p > 0) ? null : (d / p) * 100;
-  }
+  if (f === "divYield") return krDivYield(s);
   return num(s[f]);
 }
 
@@ -628,7 +649,8 @@ export function planShares(items, amountWon, fx) {
   return { rows, spent, left: amountWon - spent, cheapest, tooSmall: amountWon > 0 && amountWon < oneEach };
 }
 
-// Past-year dividend before tax. KR: dps x shares (0 = paid nothing). US and ETFs: dy x amount. Unknown counts as 0.
+// Past-year dividend before tax. KR: dps x shares (0 = paid nothing). US and ETFs: dy x amount. Unknown counts as 0 (and a
+// Korean dps that disagrees with the report's yield counts as unknown: dpsAgrees).
 export function annualDividend(rows, fx) {
   let won = 0, unknown = 0;
   for (const r of rows) {
@@ -636,7 +658,7 @@ export function annualDividend(rows, fx) {
     const s = r.s;
     if (s.cls === "kr") {
       const d = num(s.dps);
-      if (d == null) unknown++; else won += d * r.shares;
+      if (d == null || !dpsAgrees(s)) unknown++; else won += d * r.shares;      // v19.1a: a dps that disagrees with dy is not used
     } else {
       const dy = num(s.dy);
       if (dy == null) unknown++; else won += (dy / 100) * r.cost;
