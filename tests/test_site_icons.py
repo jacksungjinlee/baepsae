@@ -349,7 +349,12 @@ def test_an_explicit_scheme_is_used_as_it_is():
 def test_a_proxy_refusal_is_counted_as_such_and_not_retried():
     rec, web = collect({"https://www.acme.co.kr/robots.txt": si.ProxyBlocked("proxy answered 403")})
     assert rec["outcome"] == "proxy_blocked" and len(web.calls) == 1
-    assert "proxy_blocked" in si.RETRYABLE and "error" in si.RETRYABLE
+    assert si.retryable(rec) and si.retryable({"outcome": "error"}) and si.retryable({"outcome": "budget"})
+    assert si.retryable({"outcome": "unreachable", "reason": "network: ConnectionError: DNS"})
+    for no in ({"outcome": "unreachable", "reason": "homepage answered HTTP 403"}, {"outcome": "tls", "reason": "TLS"},
+               {"outcome": "robots_blocked"}, {"outcome": "unreachable", "reason": "refused: logo provider"},
+               {"outcome": "icon"}, {"outcome": "no_icon"}):
+        assert not si.retryable(no), no
 
 
 def test_a_busy_proxy_is_waited_for_once_and_never_answered_with_plain_http():
@@ -593,8 +598,11 @@ def test_photo_like_pictures_are_flagged_and_logos_are_not():
     assert any("smooth" in f or "many colours" in f for f in si.photo_flags(si.photo_metrics(
         Image.merge("RGBA", (gradient.getchannel(0), gradient.getchannel(0).rotate(90),
                              gradient.getchannel(0).rotate(180), Image.new("L", (180, 180), 255))))))
-    for img in (logo(), logo(alpha_bg=True), logo(512, 512, seed=3), Image.new("RGBA", (180, 180), (0, 0, 0, 0))):
+    for img in (logo(), logo(alpha_bg=True), logo(512, 512, seed=3)):
         assert si.photo_flags(si.photo_metrics(img)) == [], si.photo_metrics(img)
+    white_on_clear = Image.new("RGBA", (180, 180), (0, 0, 0, 0))
+    ImageDraw.Draw(white_on_clear).ellipse([30, 30, 150, 150], fill=(255, 255, 255, 255))
+    assert si.photo_flags(si.photo_metrics(white_on_clear)) == ["a light mark on transparency: invisible on a white page"]
     assert si.photo_flags(si.photo_metrics(logo(400, 200))) == ["far from square (400x200)"]
     text = Image.new("RGBA", (180, 180), (255, 255, 255, 255))
     d = ImageDraw.Draw(text)
@@ -765,6 +773,8 @@ def test_a_recoloured_template_is_not_the_same_image():
     ("https://www.acme.co.kr/wp-includes/images/w-logo-blue.png", "acme.co.kr", True),
     ("https://static.parastorage.com/client/pfavico.ico", "acme.co.kr", True),
     ("https://static.wixstatic.com/media/abc~mv2.png", "acme.co.kr", False),
+    ("https://static.wixstatic.com/shapes/aa931b_8d7a.svg", "acme.co.kr", False),
+    ("https://cdn.imweb.me/thumbnail/20250228/8dd2210e42f1c.png", "acme.co.kr", False),
     ("https://vendor-cdn.imweb.me/images/favicon_default.png", "acme.co.kr", True),
     ("https://cdn.imweb.me/upload/S2019/abc/favicon.png", "acme.co.kr", False),
     ("https://img.echosting.cafe24.com/skin/favicon.ico", "acme.co.kr", True),

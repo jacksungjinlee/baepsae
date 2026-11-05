@@ -36,8 +36,9 @@ blocky or blurry, counts at its real size — nothing is ever enlarged to reach 
       (KNOWN_GENERIC), a homepage that is a parked or placeholder page, or one that moved to a blog, cafe or builder,
   (c) blank, almost one colour, or broken.
 A kept icon that looks like a picture rather than a mark (photo_flags: many colours, smooth gradients or photo noise,
-no transparency with content off every edge, far from square, a text-heavy block) is "needs_review", not kept: Jack
-looks at each one (Jack's coverage test, 2026-11-05: campaign pictures, building photos, game art, mascots, slogans).
+no transparency with content off every edge, far from square, a text-heavy block, a light mark invisible on white)
+is "needs_review", not kept: Jack looks at each one (Jack's coverage test, 2026-11-05: campaign pictures, building
+photos, game art, mascots, slogans).
 Only icons count: apple-touch-icon, manifest icons, <link rel=icon> and the fixed paths — never og:image,
 twitter:image or any other preview picture. When several candidates pass: apple-touch-icon, then the largest
 manifest icon, then the largest <link rel=icon>, then the fixed paths. Candidates are fetched in that order and the
@@ -902,6 +903,7 @@ def photo_metrics(img):
     tot = max(int(region.sum()), 1)
     m["soft"] = round(float(((mag >= 2) & (mag <= 16) & region).sum() / tot), 3)
     m["strong"] = round(float(((mag >= 60) & region).sum() / tot), 3)
+    m["invisible_on_white"] = bool(flat_over(im, (255, 255, 255)))
     return m
 
 
@@ -920,6 +922,8 @@ def photo_flags(m):
         out.append(f"far from square ({m['w']}x{m['h']})")
     if m["strong"] >= PHOTO_TEXT_STRONG and m["opaque"] >= PHOTO_TEXT_OPAQUE:
         out.append(f"text-heavy block (hard-edge share {m['strong']:.2f})")
+    if m.get("invisible_on_white"):
+        out.append("a light mark on transparency: invisible on a white page")
     return out
 
 
@@ -929,6 +933,8 @@ def photo_flags(m):
 KNOWN_GENERIC = (
     ("Next.js / Vercel default favicon (black circle, white triangle)",
      "20f9c01c8826201b050b4b25571516912d497c055a251013200b88a6c01c20f9", (55.1, 55.1, 55.1)),
+    ("Create React App default icon (the React atom, logo192.png)",
+     "0b2c38e0b692a33ab69274d1d1741b271b27d17474d1b692a33ab69238e20b2c", (119.9, 153.4, 161.6)),
 )
 
 
@@ -948,21 +954,25 @@ def _rgb_pixels(im):
 def blank_reason(img):
     """'' for an icon with real content; else why it is blank: fully transparent, or one colour (within BLANK_TOL on
     BLANK_SHARE of the pixels) both over white and over black (a white logo on transparency is not blank)."""
-    from PIL import Image
     im = img.convert("RGBA")
     if im.getextrema()[3][1] <= 8:
         return "fully transparent"
-    small = im.convert("RGBa").resize((64, 64), Image.BOX).convert("RGBA")
-    flat = []
-    for bg in ((255, 255, 255), (0, 0, 0)):
-        comp = Image.alpha_composite(Image.new("RGBA", small.size, bg + (255,)), small).convert("RGB")
-        px = _rgb_pixels(comp)
-        bucket = collections.Counter((r // 16, g // 16, b // 16) for r, g, b in px).most_common(1)[0][0]
-        inb = [p for p in px if (p[0] // 16, p[1] // 16, p[2] // 16) == bucket]
-        main = tuple(sum(c[i] for c in inb) / len(inb) for i in range(3))
-        near = sum(1 for p in px if max(abs(p[i] - main[i]) for i in range(3)) <= BLANK_TOL)
-        flat.append(near / len(px) >= BLANK_SHARE)
-    return "almost one colour (no visible logo)" if all(flat) else ""
+    if flat_over(im, (255, 255, 255)) and flat_over(im, (0, 0, 0)):
+        return "almost one colour (no visible logo)"
+    return ""
+
+
+def flat_over(img, bg):
+    """True when the icon laid over this background is one colour on BLANK_SHARE of its pixels (nothing to see)."""
+    from PIL import Image
+    small = img.convert("RGBA").convert("RGBa").resize((64, 64), Image.BOX).convert("RGBA")
+    comp = Image.alpha_composite(Image.new("RGBA", small.size, tuple(bg) + (255,)), small).convert("RGB")
+    px = _rgb_pixels(comp)
+    bucket = collections.Counter((r // 16, g // 16, b // 16) for r, g, b in px).most_common(1)[0][0]
+    inb = [p for p in px if (p[0] // 16, p[1] // 16, p[2] // 16) == bucket]
+    main = tuple(sum(c[i] for c in inb) / len(inb) for i in range(3))
+    near = sum(1 for p in px if max(abs(p[i] - main[i]) for i in range(3)) <= BLANK_TOL)
+    return near / len(px) >= BLANK_SHARE
 
 
 def dhash(img, n=DHASH_N):
@@ -1009,14 +1019,14 @@ BUILDER_PATHS = (
 )
 BUILDER_HOSTS = (                                   # (label, hosts, custom_rx or None, owners)
     ("WordPress", ("s.w.org", "wp.com", "wordpress.com", "wordpress.org"), r"/files/|/uploads/", ()),
-    ("Wix", ("wix.com", "wixstatic.com", "parastorage.com", "wixsite.com"), r"^/media/", ()),
+    ("Wix", ("wix.com", "wixstatic.com", "parastorage.com", "wixsite.com"), r"^/(media|shapes)/", ()),
     ("Squarespace", ("squarespace.com", "squarespace-cdn.com", "sqspcdn.com"), r"^/content/", ()),
     ("Blogger", ("blogger.com", "blogspot.com", "blogblog.com"), None, ()),
     ("Weebly", ("weebly.com", "editmysite.com", "weeblysite.com"), r"/uploads/", ()),
     ("GoDaddy", ("wsimg.com", "godaddysites.com", "secureserver.net"), r"^/isteam/ip/[0-9a-f]{8}-", ("godaddy.com",)),
     ("Cafe24", ("cafe24.com", "cafe24img.com", "cafe24.co.kr", "cafe24shop.com", "cafe24app.com"), r"/upload/",
      ("cafe24.com", "cafe24corp.com")),
-    ("imweb", ("imweb.me", "imweb.io"), r"/upload/", ()),
+    ("imweb", ("imweb.me", "imweb.io"), r"/(upload|thumbnail)/", ()),
     ("Godomall", ("godo.co.kr", "godomall.com", "godohosting.com"), r"/data/|/upload/", ("nhncommerce.com",)),
     ("Sixshop", ("sixshop.com", "sixshop.kr"), r"/uploadedfiles/", ()),
     ("Creatorlink or Webflow", ("creatorlink.net", "webflow.io", "website-files.com"), r"^/[0-9a-f]{24}/", ()),
@@ -1579,6 +1589,17 @@ def read_state(path):
 RETRYABLE = ("unreachable", "budget", "proxy_blocked", "error")
 
 
+def retryable(rec):
+    """--retry tries a domain again only when nothing on the site said no: a network failure, a busy or refusing
+    proxy, the request budget, a tool error. Never a host that answered with an HTTP error (no retries on 4xx), a
+    TLS failure, a robots.txt refusal or a malformed or refused URL."""
+    if rec.get("outcome") not in RETRYABLE:
+        return False
+    if rec["outcome"] == "unreachable":
+        return str(rec.get("reason", "")).startswith(("network:", "proxy busy"))
+    return True
+
+
 def default_out():
     base = os.environ.get("SITE_ICONS_DIR") or os.path.join(os.environ.get("TMPDIR") or "/tmp", "site_icons")
     return pathlib.Path(base)
@@ -1663,7 +1684,7 @@ def decide(recs, raw_dir):
             m["w"], m["h"] = int(size.group(1)), int(size.group(2))
         d["metrics"] = m
         flags = photo_flags(m)
-        d["decision"], d["reason"] = ("needs_review", "photo-like: " + "; ".join(flags)) if flags else ("kept", "")
+        d["decision"], d["reason"] = ("needs_review", "needs a look: " + "; ".join(flags)) if flags else ("kept", "")
         imgs[dom] = norm
         items.append({"key": dom, "domain": dom, "sha": d["sha256"], "pix": pixel_hash(norm), "dh": dhash(norm),
                       "colour": mean_colour(norm)})
@@ -1727,7 +1748,7 @@ def write_outputs(out, dec, imgs):
 COUNT_KEYS = ["tried", "reachable", "robots-blocked", "unreachable", "  of which TLS", "  of which proxy refused",
               "homepage on a platform (b, no icon fetched)", "icon found", ">= 96 px", "generic rejected",
               "  (a) same image as 3+ companies", "  (b) builder or hosting default, parked page",
-              "  (c) blank or one colour", "needs review (photo-like)", "kept", "too small (< 96 px)",
+              "  (c) blank or one colour", "needs review (picture-like or hard to see)", "kept", "too small (< 96 px)",
               "  of which enlarged from a small icon", "broken image seen (any candidate)", "tool error"]
 
 
@@ -1755,7 +1776,7 @@ def counts(recs, dec):
                 ("  (a) same image as 3+ companies", gen and why.startswith("(a)")),
                 ("  (b) builder or hosting default, parked page", gen and why.startswith("(b)")),
                 ("  (c) blank or one colour", gen and why.startswith("(c)")),
-                ("needs review (photo-like)", d.get("decision") == "needs_review"),
+                ("needs review (picture-like or hard to see)", d.get("decision") == "needs_review"),
                 ("kept", d.get("decision") == "kept"),
                 ("too small (< 96 px)", d.get("decision") == "too_small"),
                 ("  of which enlarged from a small icon", d.get("decision") == "too_small" and "enlarged" in why),
@@ -1851,7 +1872,7 @@ def main(argv=None):
     stop_flag = threading.Event()
     if not a.decide_only:
         want = {it["domain"] for it in items}
-        todo = [it for it in items if it["domain"] not in recs or (a.retry and recs[it["domain"]]["outcome"] in RETRYABLE)]
+        todo = [it for it in items if it["domain"] not in recs or (a.retry and retryable(recs[it["domain"]]))]
         if a.limit:
             todo = todo[:a.limit]
         log(f"· already done {sum(1 for d in recs if d in want):,} · to fetch now {len(todo):,} · workers {workers} · "

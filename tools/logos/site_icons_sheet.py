@@ -9,8 +9,9 @@ else $TMPDIR/site_icons) and the live data.json (company names and market caps; 
 repository). Writes one HTML file with every image inlined (it opens on its own, offline), in three sections:
   1. kept: every kept icon (128 px PNG on a checkerboard, so white and transparent parts show), largest company first,
      with its name, code, domain and rank;
-  2. needs review: every icon that looks like a picture rather than a mark (many colours, gradients or photo noise,
-     no transparency with content off every edge, far from square, text-heavy), with the reasons. Jack decides;
+  2. needs review: every icon that looks like a picture rather than a mark or is hard to see (many colours,
+     gradients or photo noise, no transparency with content off every edge, far from square, text-heavy, a white
+     mark invisible on a white page: shown on dark), with the reasons. Jack decides;
   3. rejected (a sample of up to 120): rule (a) groups one tile each with the other domains named, rules (b) and (c),
      then too-small icons (at least 40 places kept for them), each with the reason; the heading says how many of
      how many are shown.
@@ -118,6 +119,7 @@ th:first-child, td:first-child { text-align: left; }
 .r { color: var(--bad); font-size: 11px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4;
      -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .r.w { color: var(--warn); }
+.i.dark { background: #2b303b; }
 .page-h { color: var(--sub); margin: 0 0 10px; }
 """
 
@@ -128,7 +130,8 @@ def tile(row, img_src, native=False, reason="", warn=False):
     cls = ' class="native"' if native else ""
     img = f'<img{cls} src="{img_src}" alt="">' if img_src else ""
     r = f'<div class="r{" w" if warn else ""}">{html.escape(reason)}</div>' if reason else ""
-    return (f'<div class="t"><div class="i">{img}</div><div class="n">{html.escape(row["name"])}</div>'
+    dark = " dark" if (row.get("metrics") or {}).get("invisible_on_white") else ""     # a white mark: show it on dark
+    return (f'<div class="t"><div class="i{dark}">{img}</div><div class="n">{html.escape(row["name"])}</div>'
             f'<div class="m">{row["main"]}{extra} · {rank}</div><div class="d">{html.escape(row["domain"])}</div>{r}</div>')
 
 
@@ -206,7 +209,7 @@ def build(out_dir, data, html_path):
     review = [r for r in rows if r["decision"] == "needs_review"]
     kept_tiles = [tile(r, stored("kr", r)) for r in kept]
     review_tiles = [tile(r, stored("review", r), reason=f"{r['original_size']} {r['source_type']}: "
-                         + r["reason"].replace("photo-like: ", ""), warn=True) for r in review]
+                         + r["reason"].replace("needs a look: ", ""), warn=True) for r in review]
     rej, (g_shown, g_tiles, g_all), (s_shown, s_all) = rejected_sample(rows)
     rej_tiles = [tile(r, data_uri(raw / r["raw"]), native=True, reason=f"{r['source_type']}: {r['label']}")
                  for r in rej]
@@ -221,11 +224,11 @@ def build(out_dir, data, html_path):
               f"stored, shown at 72 px on a checkerboard (white or transparent parts show). '+1' = a preferred share "
               f"uses the same icon. Please look for wrong or odd ones.</p>")
     h_review = (f"<h2>2. Needs review: {len(review):,} companies (largest first)</h2><p class='note'>At least 96 px "
-                f"and not generic, but it looks like a picture rather than a mark. None of these is kept until you "
-                f"say so. Signs: many colours (entropy &ge; {si.PHOTO_ENTROPY} bits or &ge; {si.PHOTO_COLOURS:,} "
+                f"and not generic, but it looks like a picture rather than a mark, or would be hard to see (white "
+                f"marks are shown on dark here). None of these is kept until you say so. Signs: many colours (entropy &ge; {si.PHOTO_ENTROPY} bits or &ge; {si.PHOTO_COLOURS:,} "
                 f"colours) · smooth gradients or photo noise (soft share &ge; {si.PHOTO_SOFT} with entropy &ge; "
                 f"{si.PHOTO_SOFT_ENTROPY}) · no transparency and the picture runs off every edge · far from square "
-                f"(&ge; {si.PHOTO_ASPECT}:1) · a text-heavy block.</p>")
+                f"(&ge; {si.PHOTO_ASPECT}:1) · a text-heavy block · a light mark invisible on a white page.</p>")
     h_rej = (f"<h2>3. Rejected (sample): {g_shown:,} of {g_tiles:,} generic tiles ({g_all:,} companies; one tile per "
              f"group of the same image), {s_shown:,} of {s_all:,} too small (chosen at random)</h2><p class='note'>"
              f"Shown at their own size (up to 96 px). (a) the same image as 3+ other companies · (b) a "
