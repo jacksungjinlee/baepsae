@@ -829,7 +829,7 @@ def test_workflow_is_hand_run_read_only_and_uploads_then_judges():
     co = st[0]
     assert co["uses"].startswith("actions/checkout") and co["with"]["persist-credentials"] is False
     up = next(s for s in st if s.get("uses", "").startswith("actions/upload-artifact"))
-    assert up["with"]["name"] == "logo-dev-check" and up["with"]["retention-days"] == 7
+    assert up["with"]["name"] == "logo-dev-check" and up["with"]["retention-days"] == 1
     assert up["with"]["path"] == "${{ runner.temp }}/logo-dev-check" and up["with"]["if-no-files-found"] == "error"
     last = st[-1]["run"]
     assert st.index(with_secret[0]) < st.index(up) < len(st) - 1

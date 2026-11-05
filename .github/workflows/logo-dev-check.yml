@@ -71,7 +71,7 @@ jobs:
         with:
           name: logo-dev-check
           path: ${{ runner.temp }}/logo-dev-check
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: error
 
       - name: 요약 · 판정

@@ -58,7 +58,7 @@ def assert_no_hidden_failure(wf, allow_always=()):
             assert n in allow_always, n
 
 
-ALL = ("ci.yml", "deploy.yml", "watchdog.yml", "update-data.yml")
+ALL = ("ci.yml", "deploy.yml", "watchdog.yml", "update-data.yml", "logo-dev-check.yml")
 
 
 def test_the_four_workflows_exist_and_nothing_else():
@@ -70,7 +70,7 @@ def test_no_workflow_hides_a_failure(name):
     assert_no_hidden_failure(load(name), allow_always=("DART 캐시 저장",) if name == "update-data.yml" else ())
 
 
-@pytest.mark.parametrize("name", ["ci.yml", "deploy.yml", "watchdog.yml"])
+@pytest.mark.parametrize("name", ["ci.yml", "deploy.yml", "watchdog.yml", "logo-dev-check.yml"])
 def test_only_the_daily_run_can_write_to_the_repository(name):
     wf, raw = load(name), text(name)
     assert wf["permissions"] == {"contents": "read"}
