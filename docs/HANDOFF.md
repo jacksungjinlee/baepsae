@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 00:05 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 09:00 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -21,6 +21,10 @@ and v19.0c (four tabs, phone) — see CHANGELOG. All checked on the live site.
 Claude started one `dart=cache` run on main by hand (41731600516, published 07:43, gate PASS 94/0/0). If no scheduled
 run has published by ~07:30 KST, start one `dart=cache` run on main (never a second full-DART run in a KST day; not
 while a scheduled run is waiting or queued).
+**2026-11-05:** GitHub's scheduled starts failed again (none of 03:47, 05:13, 06:43 had started by 07:10 KST). The
+outside timer's run (41918230816, started 06:40) committed at 07:07 (data.json `publishedAt` shows the run start,
+06:40): pxDate and usPxDate 2026-11-04, gate PASS with no warnings. With the timer working, the by-hand run above is
+needed only when the timer's run also failed or didn't start (cron-job.org emails Jack when its call fails).
 
 **Outside timer (v17.5.5, set up by Jack 2026-11-04):** cron-job.org (Jack's account) job "뱁새 morning data run"
 sends `POST https://api.github.com/repos/jacksungjinlee/baepsae/actions/workflows/update-data.yml/dispatches` Tue–Sat
@@ -46,6 +50,32 @@ only in cron-job.org (never in a chat, the repo or a log).
    Open for Jack: a "내 포트폴리오" list in the left menu (heading not approved yet).
 4. **Old app, 자동 settings:** done in v18.6 (#29). Jack decided 2026-11-04: 새로 시작하기 (and a file with no readable
    settings) starts from defaults + today's values, not the previous portfolio's settings — v18.6.1.
+5. **Old app, saved portfolio that can't be read (v18.6.2):** it no longer opens (first screen stays, the stored text is
+   kept, console warning with the slot id and reason) and an alert says so in the current language — Jack approved his
+   wording 2026-11-05: "이 포트폴리오를 열지 못했어요. 저장된 내용은 지우지 않고 그대로 두었어요." / "We couldn't open this
+   portfolio. Its saved data has been left as it is." (`T_SLOT_FAIL` in `src/detail.jsx`, `SLOT_FAIL` in
+   `tests/smoke_app.py`).
+6. **Company pages (Korea and US) for 2.0:** spec merged as #33 (`docs/tasks/v19.1-company-page.md`). **v19.1a is PR
+   #36** (branch `claude/v19.1a-company`), built overnight 2026-11-05 and **not merged**: it waits for Jack's yes on
+   179 proposed lines (`docs/tasks/v18.3-new-strings-pending.md` § v19.1a on that branch; each is `null` until approved),
+   its test and CLAUDE.md changes, and the decisions listed in the PR (β band: single stocks have none, so no β number
+   until the pipeline saves the standard error or the return count; logo provider; per-stock rule toggles; ⓘ → old
+   용어 사전; the Won-first CLAUDE.md wording; `flRan` in corp.json so "재무 경고 신호는 없어요" can show).
+7. **Logo test (v19.1 Part L):** prepared on branch `claude/v19.1-logo-test` (`tools/logo_test/`, steps for Jack in
+   `KEYS.md`). Needs Jack's free publishable keys (Brandfetch client ID, logo.dev `pk_…`); never accept a secret
+   (`sk_…`) key. **Both providers' terms forbid scripted fetching of their logo images** (README § Provider terms), so
+   a full automated run is a grey area: Jack chooses between a small sample viewed in a normal browser, asking the
+   providers for a coverage check, or logo.dev alone. Don't run anything that works around a provider's block.
+8. **Price history (1 year of daily closes, report only):** proposal sent to Jack 2026-11-05 — one file per stock
+   (~2 KB, ~5 MB total), only in v17.6's deployed copy (not in git), split-adjusted only, gate checks; after v17.6.
+9. **v17.6 is PR #34** (branch `claude/v17.6-never-again`): CI on every PR, deploy from main + `data` branch, watchdog.
+   `ci` green; the `dart=off` dry run failed at the gate as it should (no company data → PER/PBR/ROE 0%); the
+   `dry_run=true dart=cache` run 41935114973 (2026-11-05 08:37 KST) passed: gate PASS 95/0/0, cache hit, 816 DART
+   calls (comment "Dry run with saved DART data" on the PR). **Still needed:** Jack's yes on the test changes, then
+   Jack's "merge" (CLAUDE.md). Jack must also create the
+   healthchecks.io check and the `HC_PING_URL` secret, and later switch Pages to GitHub Actions and add the
+   protect-main ruleset (steps in the PR). The leftover branch `claude/v17.6-ci-proof` (test PR #35) couldn't be
+   deleted from the session (git proxy); delete it when possible.
 
 **v19.1a (company page, Korea + US):** branch `claude/v19.1a-company`, no PR yet. Status: built and tested (pytest,
 all smokes, proposal-filled smoke run too); waiting for Jack's 「새 문구」 (every company-page string is a proposal:
