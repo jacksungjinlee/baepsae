@@ -75,6 +75,36 @@ def load_text(src, what):
     return t
 
 
+def load_listing(spec, px):
+    """{code: row} of the KRX listing. spec = a CSV path or URL, or 'auto': the file for data.json's pxDate, else the
+    newest of the 7 days before it (said loudly). Also used by build_review_page.py."""
+    if not px:
+        raise SystemExit("!! data.json has no pxDate")
+    if spec == "auto":
+        d0 = dt.date.fromisoformat(px)
+        text = None
+        for back in range(8):
+            d = (d0 - dt.timedelta(days=back)).isoformat()
+            try:
+                text = load_text(LISTING_URL.format(d=d), "KRX listing")
+            except Exception as e:                           # noqa: BLE001 — try the day before, loudly
+                print(f"  !! KRX listing {d}: {type(e).__name__}")
+                continue
+            if back:
+                print(f"!! no KRX listing for {px}; using {d} ({back} days older)")
+            break
+        if text is None:
+            raise SystemExit("!! no KRX listing for the last 8 days")
+    else:
+        text = load_text(spec, "KRX listing")
+    return {r["Code"]: r for r in csv.DictReader(io.StringIO(text))}
+
+
+def load_homepages(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        return {r["code"]: r for r in csv.DictReader(f)}
+
+
 def build_companies(data, listing, homepages):
     """data.json + {code: KRX listing row} + {code: kr_homepages.csv row} -> (companies, log lines). Pure.
     Every Korean common share (no ETF) and every US stock (no ETF) in data.json, with its exact identifiers."""
@@ -181,29 +211,8 @@ def main(argv=None):
     keys = read_keys(a.keys_file)
     mask = Masker(*keys)
     data = json.loads(load_text(a.data, "data.json"))
-    px = data.get("pxDate")
-    if not px:
-        raise SystemExit("!! data.json has no pxDate")
-    if a.listing == "auto":
-        d0 = dt.date.fromisoformat(px)
-        text = None
-        for back in range(8):
-            d = (d0 - dt.timedelta(days=back)).isoformat()
-            try:
-                text = load_text(LISTING_URL.format(d=d), "KRX listing")
-            except Exception as e:                           # noqa: BLE001 — try the day before, loudly
-                print(f"  !! KRX listing {d}: {type(e).__name__}")
-                continue
-            if back:
-                print(f"!! no KRX listing for {px}; using {d} ({back} days older)")
-            break
-        if text is None:
-            raise SystemExit("!! no KRX listing for the last 8 days")
-    else:
-        text = load_text(a.listing, "KRX listing")
-    listing = {r["Code"]: r for r in csv.DictReader(io.StringIO(text))}
-    with open(a.homepages, newline="", encoding="utf-8") as f:
-        homepages = {r["code"]: r for r in csv.DictReader(f)}
+    listing = load_listing(a.listing, data.get("pxDate"))
+    homepages = load_homepages(a.homepages)
     page, pdata, log = build(data, listing, homepages, keys, a.seed)
     for line in log:
         print(mask(line))

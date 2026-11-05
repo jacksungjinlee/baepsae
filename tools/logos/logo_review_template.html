@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Logo picker (temporary review tool)</title>
+<!-- Built by tools/logos/build_review_page.py from tools/logos/logo_review_template.html. Temporary: delete once the logos are chosen. -->
+<style>
+:root{--ink:#1B2B4B;--sub:#5B6576;--line:#D9DEE6;--bg:#F5F6F8;--card:#FFFFFF;--ok:#1F7A4D;--warn:#B42318;--soft:#EEF1F6;--amber:#8A5A00}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;-webkit-text-size-adjust:100%}
+.wrap{max-width:1240px;margin:0 auto;padding:12px 16px 96px}
+h1{font-size:17px;margin:2px 0}
+h2{font-size:14px;margin:0 0 6px}
+.sub{color:var(--sub);font-size:12px;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;font-size:13px;padding:6px 14px;border-radius:8px;border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer}
+button.ghost{background:#fff;color:var(--ink)}
+button:disabled{opacity:.4;cursor:default}
+select{font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--ink);background:#fff;color:var(--ink);max-width:100%;min-width:0}
+#progress{font-size:12px;color:var(--sub);flex:1 1 240px}
+#alerts p,#msg p{margin:4px 0;font-size:12px}
+.bad{color:var(--warn);font-weight:600}
+.info{color:var(--sub)}
+.good{color:var(--ok);font-weight:600}
+table.sum{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed;margin-top:6px}
+.sum th,.sum td{border-bottom:1px solid var(--line);padding:4px 2px;text-align:right;vertical-align:middle;overflow:hidden}
+.sum th:first-child,.sum td:first-child{text-align:left;width:27%}
+.sum th{font-weight:600;font-size:10.5px;color:var(--sub);line-height:1.15}
+@media (max-width:420px){.sum{font-size:11px}.sum th{font-size:9.5px}}
+.sum tr.tot td{font-weight:700;border-bottom:2px solid var(--ink)}
+.sum tr.all td{font-weight:800;background:var(--soft)}
+.meta{font-size:11px;color:var(--sub);margin:6px 0 0}
+details{font-size:12.5px}
+details summary{cursor:pointer;font-weight:600}
+details li{margin:3px 0}
+.nav{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}
+.nav select{flex:1 1 200px}
+#gridhead{font-size:13px;font-weight:700;margin:4px 0 8px}
+#gridhead small{font-weight:400;color:var(--sub)}
+.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+#review{padding:10px 8px}
+@media (min-width:700px){.grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}#review{padding:10px 12px}}
+.tile{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0;padding:6px 3px 5px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:10px;line-height:1.2;text-align:center;cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:manipulation;position:relative}
+.tile.wrong{border:2px solid var(--warn);background:#FDF1F0;padding:5px 2px 4px}
+.tile .nm{font-weight:600;font-size:10.5px;width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;min-height:2.4em}
+.tile .cd{color:var(--sub);font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .src{font-size:9px;color:var(--sub);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile.wrong .src{color:var(--warn);font-weight:700}
+.lg{width:40px;height:40px;border:1px solid var(--line);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;flex:none;margin-bottom:2px}
+.lg img{max-width:40px;max-height:40px;display:block}
+.lg.wait{border-style:dashed;border-color:var(--ink)}
+.lg.blank{background:var(--soft);color:var(--sub);font-size:13px}
+.lg.wait img,.lg.wait .lm{opacity:.45}
+.lm{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:17px;border-radius:5px}
+.badges{display:flex;flex-wrap:wrap;gap:2px;justify-content:center;min-height:11px}
+.b{font-size:8.5px;line-height:11px;padding:0 3px;border-radius:3px;font-weight:700;white-space:nowrap}
+.b.low{background:#FFF1D6;color:var(--amber)}
+.b.agr{background:#E3F4EA;color:var(--ok)}
+.b.sav{background:var(--soft);color:var(--ink)}
+.b.gap{background:#FDE7E5;color:var(--warn)}
+#peek{position:fixed;z-index:30;background:#fff;border:1px solid var(--ink);border-radius:10px;padding:8px;width:170px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:11px;text-align:center;pointer-events:none}
+#peek .big{width:96px;height:96px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+#peek .big img{max-width:96px;max-height:96px;display:block}
+#peek .big .lm{font-size:40px}
+#dock{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.97);border-top:1px solid var(--line);padding:8px 16px calc(8px + env(safe-area-inset-bottom))}
+#dock .in{max-width:1240px;margin:0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#dockmsg{flex:1 1 180px;font-size:12px;color:var(--sub);min-width:0}
+#fix{position:fixed;inset:0;z-index:40;background:rgba(27,43,75,.45);display:flex;align-items:flex-end;justify-content:center}
+#fix .sheet{background:#fff;width:100%;max-width:760px;max-height:92vh;overflow:auto;border-radius:14px 14px 0 0;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
+@media (min-width:700px){#fix{align-items:center}#fix .sheet{border-radius:14px}}
+.fixrow{border-bottom:1px solid var(--line);padding:8px 0}
+.fixrow .who{font-weight:700;font-size:13px}
+.fixrow .who small{font-weight:400;color:var(--sub)}
+.opts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.opt{display:flex;flex-direction:column;align-items:center;gap:2px;width:76px;padding:5px 3px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font-size:9.5px;line-height:1.15;cursor:pointer}
+.opt .lg{width:56px;height:56px}
+.opt .lg img{max-width:56px;max-height:56px}
+.opt .lg .lm{font-size:24px}
+.opt.on{border:2px solid var(--ok);background:#F0FAF4;padding:4px 2px}
+.hide{display:none!important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Logo picker (temporary review tool)</h1>
+<p class="sub">For Jack only: not linked from the app, not for users, deleted once the logos are chosen. Logos load from Brandfetch and logo.dev in this browser only, paced, after you tap Start. Tap only the wrong logos, then Confirm the grid. Your progress stays in this browser; use Download choices to keep it or move it to another device.</p>
+
+<section class="card" id="summary">
+  <div class="bar">
+    <button id="start" type="button">Start loading logos</button>
+    <button id="pause" type="button" class="ghost" disabled>Pause</button>
+    <span id="progress">Not started.</span>
+  </div>
+  <div id="alerts"></div>
+  <table class="sum" id="sumtable"></table>
+  <p class="meta" id="sumline"></p>
+  <div class="bar" style="margin-top:8px">
+    <button id="export" type="button" class="ghost">Download choices</button>
+    <button id="import" type="button" class="ghost">Load choices</button>
+    <input id="importfile" type="file" accept="application/json,.json" class="hide">
+  </div>
+  <div id="msg"></div>
+</section>
+
+<section class="card">
+<details id="help">
+<summary>How this works</summary>
+<ul>
+  <li><b>Pre-pick.</b> Each tile shows the logo most likely to be right, chosen in this order: (1) a logo <b>both services agree on</b> (a Brandfetch and a logo.dev image that look the same); (2) <b>Brandfetch</b> by exact ID: ISIN, then ticker; (3) <b>logo.dev</b>: ticker, then the company's own homepage as filed with DART; (4) <b>Brandfetch by that DART homepage</b> (added because it was right for Kumho Petrochemical); (5) <b>our own website icon</b>, when one has been collected and reviewed; otherwise the <b>coloured letter mark</b>.</li>
+  <li><b>Exact identifiers only, never names.</b> Ticker: KOSPI and KONEX 005930.KS, KOSDAQ 247540.KQ, US as listed. ISIN from the KRX listing (check digit verified). Domain: the homepage filed with DART, Korea only; platform hosts (blog.naver.com and the like) and a domain two companies share are not used.</li>
+  <li><b>Agreement</b> is checked only here, in this browser: both images are loaded so the page may read them (CORS), shrunk to a tiny fingerprint and compared. If a provider does not let the page read its images, the agreement rule is skipped for it and the order decides. <span id="agreestate">Not checked yet.</span></li>
+  <li><b>Review.</b> Tap a tile to mark it wrong (tap again to undo). Hover (PC) or press and hold (phone) to see it bigger. When the whole grid has loaded, tap <b>Confirm this grid</b>: every tile you did not mark keeps its pre-pick; for each tile you marked, choose among the logos that loaded or the letter mark. A grid counts as reviewed only after Confirm. Companies you have not reviewed keep the letter mark in the app.</li>
+  <li><b>Badges:</b> <span class="b agr">agree</span> both services show this logo; <span class="b low">low-res</span> the image is smaller than 64 px; <span class="b sav">saved</span> your confirmed choice; <span class="b gap">not checked</span> a provider was stopped or timed out for this company.</li>
+  <li><b>No logo = image error.</b> Every request asks for an error when there is no logo (Brandfetch fallback/404, logo.dev fallback=404), so a miss never shows a placeholder. logo.dev answers a domain it has never seen with a placeholder (HTTP 202) on the first request, so every logo.dev domain hit is loaded again after 5&frac12; minutes and only the second answer counts. That is why a grid can take a few minutes; the next grid loads while you review this one.</li>
+  <li><b>Checks:</b> before loading, each provider must show a known logo and must give no image for made-up identifiers; while loading, a known logo is checked every 100 loads and a made-up ticker every 300. If a known logo stops loading (rate limit, block, network), the provider pauses and its recent misses are tried again; after three failed checks it stops and Confirm waits until you tap Retry. A route that answers made-up identifiers with an image is switched off.</li>
+  <li><b>Pace:</b> at most 2 requests a second to Brandfetch and 4 a second to logo.dev, one at a time per route; only the grid you are on and the next unreviewed one load, never all companies at once. Keep this tab in front while it loads.</li>
+  <li><b>What is saved:</b> only your choices (the source and the exact logo address, or the letter mark), in this browser's storage for this page. Logos are never copied: the app will load them from the provider, as here. Download choices gives a JSON file of the reviewed companies; Load choices reads one back (on another device too). When the same company is in both, the later review date wins (the file wins a tie).</li>
+  <li><b>Who is here:</b> every Korean company (common shares; preferred shares use their common share's logo; ETFs and funds left out) and every US company in the data shown below, largest market cap first, in grids of 100.</li>
+</ul>
+</details>
+</section>
+
+<section class="card" id="review">
+  <div class="nav">
+    <button id="prev" type="button" class="ghost" aria-label="Previous grid">Prev</button>
+    <select id="gridsel" aria-label="Grid"></select>
+    <button id="next" type="button" class="ghost" aria-label="Next grid">Next</button>
+    <button id="nextopen" type="button" class="ghost">Next unreviewed</button>
+  </div>
+  <div id="gridhead"></div>
+  <main class="grid" id="grid"></main>
+</section>
+<p class="meta" id="meta"></p>
+<p class="meta">Temporary internal review page. Not part of the app.</p>
+</div>
+
+<div id="dock"><div class="in">
+  <span id="dockmsg">Tap Start to load logos.</span>
+  <button id="retry" type="button" class="ghost hide">Retry</button>
+  <button id="confirm" type="button" disabled>Confirm this grid</button>
+</div></div>
+
+<div id="fix" class="hide" role="dialog" aria-modal="true" aria-labelledby="fixtitle"><div class="sheet">
+  <h2 id="fixtitle">Fix</h2>
+  <p class="sub">For each logo you marked wrong, tap the right one, or the letter mark if none is right.</p>
+  <div id="fixlist"></div>
+  <div class="bar" style="margin-top:10px">
+    <button id="fixsave" type="button" disabled>Save this grid</button>
+    <button id="fixback" type="button" class="ghost">Back to the grid</button>
+  </div>
+</div></div>
+
+<div id="peek" class="hide" aria-hidden="true"></div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+(function () {
+"use strict";
+var KEYS = /*KEYS*/;
+
+// ==pure-start==  (tests/test_logo_review.py runs this block with node)
+var BF_BASE = "https://cdn.brandfetch.io", LD_BASE = "https://img.logo.dev", SIZE = 128;
+// The pre-pick order after agreement (rules 2-5) and the export's source names.
+var ROUTES = [
+  { id: "bfI", src: "bf-isin", p: "bf", r: "isin", f: "isin", label: "BF ISIN", long: "Brandfetch ISIN" },
+  { id: "bfT", src: "bf-ticker", p: "bf", r: "ticker", f: "tk", label: "BF ticker", long: "Brandfetch ticker" },
+  { id: "ldT", src: "ld-ticker", p: "ld", r: "ticker", f: "tk", label: "LD ticker", long: "logo.dev ticker" },
+  { id: "ldD", src: "ld-domain", p: "ld", r: "domain", f: "dom", label: "LD domain", long: "logo.dev domain" },
+  { id: "bfD", src: "bf-domain", p: "bf", r: "domain", f: "dom", label: "BF domain", long: "Brandfetch domain" },
+  { id: "own", src: "own-icon", p: "own", r: "icon", f: "ic", label: "Our icon", long: "Our website icon" }
+];
+var SOURCES = ROUTES.map(function (rt) { return rt.src; }).concat(["letter"]);
+var ENDED = { na: 1, hit: 1, miss: 1, off: 1, err: 1, stopped: 1 };
+var AGREE_MAX = 0.15, ASPECT_MAX = 1.35, LOW_RES = 64;
+var STORE_KEY = "baepsae-logo-review-v1";
+function q(s) {
+  return encodeURIComponent(String(s)).replace(/[!'()*]/g, function (c) {
+    return "%" + c.charCodeAt(0).toString(16).toUpperCase();
+  });
+}
+// Same URLs as tools/logos/logo_ids.logo_url (size 128). A check load uses another size so the browser cache never answers it.
+function logoUrl(p, r, ident, key, v, size) {
+  var z = size || SIZE;
+  if (p === "bf") return BF_BASE + "/" + r + "/" + q(ident) + "/w/" + z + "/h/" + z + "/fallback/404?c=" + q(key);
+  var u = LD_BASE + "/" + (r === "domain" ? q(ident) : r + "/" + q(ident)) + "?token=" + q(key) +
+    "&size=" + z + "&format=webp&fallback=404";
+  return v ? u + "&v=" + q(v) : u;
+}
+function routeBySrc(src) {
+  for (var i = 0; i < ROUTES.length; i++) if (ROUTES[i].src === src) return ROUTES[i];
+  return null;
+}
+// The exact address stored for a choice: the provider URL for this company's identifier, our icon's path, or null.
+function candidateUrl(co, src, keys) {
+  var rt = routeBySrc(src);
+  if (!rt || !co[rt.f]) return null;
+  if (rt.p === "own") return co[rt.f];
+  return logoUrl(rt.p, rt.r, co[rt.f], keys[rt.p]);
+}
+// A tiny fingerprint of a picture (RGBA pixels, W x H): "ink" = how far each pixel is from the background (white, or
+// black when the picture is all white, e.g. a white logo on transparent), scaled so the strongest ink is 1; the content
+// box = where ink > 0.25, so padding does not count; that box shrunk to GRID x GRID cells (area average), each cell's
+// ink as one hex digit (0-f). Plus the content box's aspect ratio. null for an empty picture. The page draws each
+// logo into a 64 x 64 canvas first (hashImage), so every picture is measured at the same size.
+var GRID = 16;
+function hashFromPixels(px, W, H) {
+  var n = W * H, ink = new Array(n), i, x, y, box;
+  function scan(bg) {
+    var mx = 0, b = { x0: W, y0: H, x1: -1, y1: -1 };
+    for (i = 0; i < n; i++) {
+      var a = px[4 * i + 3] / 255;
+      var lum = (0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2]) * a + bg * (1 - a);
+      ink[i] = Math.abs(lum - bg) / 255;
+      if (ink[i] > mx) mx = ink[i];
+    }
+    if (mx < 0.08) return null;
+    for (i = 0; i < n; i++) ink[i] /= mx;
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+      if (ink[y * W + x] > 0.25) {
+        if (x < b.x0) b.x0 = x; if (x > b.x1) b.x1 = x; if (y < b.y0) b.y0 = y; if (y > b.y1) b.y1 = y;
+      }
+    }
+    return b.x1 < 0 ? null : b;
+  }
+  box = scan(255) || scan(0);
+  if (!box) return null;
+  var bw = box.x1 - box.x0 + 1, bh = box.y1 - box.y0 + 1, g = "";
+  for (var cy = 0; cy < GRID; cy++) {
+    for (var cx = 0; cx < GRID; cx++) {
+      var xa = box.x0 + cx * bw / GRID, xb = box.x0 + (cx + 1) * bw / GRID, ya = box.y0 + cy * bh / GRID, yb = box.y0 + (cy + 1) * bh / GRID;
+      var sum = 0, wsum = 0;
+      for (var yy = Math.floor(ya); yy < Math.ceil(yb); yy++) {
+        var wy = Math.min(yy + 1, yb) - Math.max(yy, ya);
+        for (var xx = Math.floor(xa); xx < Math.ceil(xb); xx++) {
+          var w = wy * (Math.min(xx + 1, xb) - Math.max(xx, xa));
+          if (w > 0) { sum += w * ink[yy * W + xx]; wsum += w; }
+        }
+      }
+      g += Math.min(15, Math.round(15 * (wsum ? sum / wsum : 0))).toString(16);
+    }
+  }
+  return { g: g, ar: bw / bh };
+}
+// How different two fingerprints are: the mean difference of their cells, 0 (same) to 1.
+function distance(a, b) {
+  var s = 0;
+  for (var i = 0; i < a.length; i++) s += Math.abs(parseInt(a.charAt(i), 16) - parseInt(b.charAt(i), 16));
+  return s / (15 * a.length);
+}
+// Two pictures agree when their content boxes have about the same shape and their fingerprints differ by at most
+// AGREE_MAX (measured in Chromium on test shapes: the same shape at 128, 64, 48, 32 or 24 px, padded or on a white
+// square stays within 0.15, except fine stripes at 32 px or less; different shapes are 0.24 or more apart).
+function agrees(x, y) {
+  if (!x || !y || !x.g || !y.g || x.g.length !== y.g.length) return false;
+  if (Math.max(x.ar / y.ar, y.ar / x.ar) > ASPECT_MAX) return false;
+  return distance(x.g, y.g) <= AGREE_MAX;
+}
+// The pre-pick for one company. cands: {routeId: {s: state, hash}} (a missing route = "na").
+// 1. the first route (in ROUTES order) whose image agrees with an image from the other service; 2-5. the first hit in
+// ROUTES order; else null (the letter mark). settled = every route has ended, so nothing still loading can change it.
+function prePick(cands) {
+  function get(id) { return cands[id] || { s: "na" }; }
+  var settled = true, hits = [], i, j;
+  for (i = 0; i < ROUTES.length; i++) {
+    var s = get(ROUTES[i].id).s;
+    if (!ENDED[s]) settled = false;
+    if (s === "hit") hits.push(ROUTES[i]);
+  }
+  for (i = 0; i < hits.length; i++) {
+    if (hits[i].p === "own") continue;
+    for (j = 0; j < hits.length; j++) {
+      if (hits[j].p !== "own" && hits[j].p !== hits[i].p && agrees(get(hits[i].id).hash, get(hits[j].id).hash)) {
+        return { pick: hits[i].id, via: "agree", partner: hits[j].id, settled: settled };
+      }
+    }
+  }
+  if (hits.length) return { pick: hits[0].id, via: "order", partner: null, settled: settled };
+  return { pick: null, via: "none", partner: null, settled: settled };
+}
+function choiceFrom(co, src, keys, day) {
+  return { source: src, url: src === "letter" ? null : candidateUrl(co, src, keys), reviewed: day };
+}
+// The export: reviewed companies only (those with a choice), codes sorted, no image data.
+function exportChoices(choices, created) {
+  var out = {};
+  Object.keys(choices).sort().forEach(function (c) {
+    var e = choices[c];
+    out[c] = { source: e.source, url: e.source === "letter" ? null : e.url, reviewed: e.reviewed };
+  });
+  return { version: 1, created: created, choices: out };
+}
+function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+function checkChoice(co, e, keys) {
+  if (!co) return "not a company on this page";
+  if (!e || typeof e !== "object" || Array.isArray(e)) return "not an object";
+  if (SOURCES.indexOf(e.source) < 0) return "unknown source";
+  if (typeof e.reviewed !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.reviewed)) return "no review date (YYYY-MM-DD)";
+  if (e.source === "letter") return e.url === null ? "" : "a letter mark has no address";
+  var want = candidateUrl(co, e.source, keys);
+  if (!want) return "this company has no " + e.source + " identifier";
+  return e.url === want ? "" : "the address is not this page's address for that source (identifier or key differs)";
+}
+// Reads a choices file. Only entries for companies on this page, with a known source and exactly the address this page
+// builds for it (so: exact identifiers, our two publishable keys, no image data), are kept; the rest are listed.
+function validateImport(obj, byCode, keys) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { error: "not a choices file (expected a JSON object)" };
+  if (obj.version !== 1) return { error: "unknown version " + JSON.stringify(obj.version) + " (this page reads version 1)" };
+  var ch = obj.choices;
+  if (!ch || typeof ch !== "object" || Array.isArray(ch)) return { error: "the file has no \"choices\" object" };
+  var out = {}, rejected = [];
+  Object.keys(ch).forEach(function (code) {
+    var e = ch[code], why = checkChoice(has(byCode, code) ? byCode[code] : null, e, keys);
+    if (why) rejected.push({ code: code, why: why });
+    else out[code] = { source: e.source, url: e.url, reviewed: e.reviewed };
+  });
+  return { choices: out, rejected: rejected };
+}
+// Later review date wins; the incoming one wins a tie.
+function mergeChoices(local, incoming) {
+  var merged = {}, added = 0, replaced = 0, kept = 0, same = 0;
+  Object.keys(local).forEach(function (c) { merged[c] = local[c]; });
+  Object.keys(incoming).forEach(function (c) {
+    var a = merged[c], b = incoming[c];
+    if (!a) { merged[c] = b; added++; }
+    else if (b.reviewed >= a.reviewed) {
+      if (a.source === b.source && a.url === b.url) same++; else replaced++;
+      merged[c] = b;
+    } else kept++;
+  });
+  return { choices: merged, added: added, replaced: replaced, kept: kept, same: same };
+}
+function kstDate(ms) { return new Date(ms + 9 * 3600e3).toISOString().slice(0, 10); }
+function kstStamp(ms) { return new Date(ms + 9 * 3600e3).toISOString().slice(0, 19) + "+09:00"; }
+// Summary rows: per size group, per market and in all: companies, reviewed, logo, letter mark (coverage = logo / reviewed).
+function summarize(comps, choices, zones) {
+  var rows = [], idx = {};
+  zones.forEach(function (z) {
+    var r = { kind: "zone", side: z.side, label: z.label, n: 0, reviewed: 0, logo: 0, letter: 0 };
+    idx[z.side + z.z] = r; rows.push(r);
+  });
+  var tot = { kr: { kind: "tot", side: "kr", label: "Korea all", n: 0, reviewed: 0, logo: 0, letter: 0 },
+    us: { kind: "tot", side: "us", label: "US all", n: 0, reviewed: 0, logo: 0, letter: 0 } };
+  var all = { kind: "all", side: "", label: "All", n: 0, reviewed: 0, logo: 0, letter: 0 };
+  comps.forEach(function (co) {
+    var ch = has(choices, co.c) ? choices[co.c] : null;
+    [idx[co.s + co.z], tot[co.s], all].forEach(function (r) {
+      if (!r) return;
+      r.n++;
+      if (ch) { r.reviewed++; if (ch.source === "letter") r.letter++; else r.logo++; }
+    });
+  });
+  var out = [];
+  ["kr", "us"].forEach(function (side) {
+    rows.forEach(function (r) { if (r.side === side) out.push(r); });
+    out.push(tot[side]);
+  });
+  out.push(all);
+  return out;
+}
+function letterOf(name) {
+  var s = String(name || "").replace(/^[\s(（\[]+/, "");
+  return s ? s.charAt(0).toUpperCase() : "?";
+}
+var PALETTE = ["#1B2B4B", "#2F5D8A", "#3D7A5C", "#6B4E9C", "#9C4E4E", "#7A6420", "#2E7D7D", "#5B6576"];
+function colorOf(code) {
+  var h = 0, s = String(code);
+  for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+}
+// ==pure-end==
+
+var DATA = JSON.parse(document.getElementById("data").textContent);
+var CFG = { bfGapMs: 500, ldGapMs: 250, ownGapMs: 20, recheckMs: 330000, timeoutMs: 20000, retryMs: 60000, controls: true,
+  checkEvery: 100, badEvery: 300, canaryRetryMs: 15000, canaryPauseMs: 120000, autostart: false, longPressMs: 450,
+  auditMisses: 20, assumeCors: false };
+var over = window.__LOGO_REVIEW_CONFIG || {};            // set only by a test harness before this script runs
+for (var ck in over) if (has(over, ck)) CFG[ck] = over[ck];
+
+var META = DATA.meta, COMPS = DATA.companies, GRIDS = DATA.grids, ZONES = DATA.zones;
+var $ = function (id) { return document.getElementById(id); };
+var byCode = {}, gridIdx = {}, routeById = {};
+COMPS.forEach(function (co) { byCode[co.c] = co; });
+ROUTES.forEach(function (rt) { routeById[rt.id] = rt; });
+GRIDS.forEach(function (g, i) { gridIdx[g.id] = i; g.codes = []; });
+COMPS.forEach(function (co) { GRIDS[gridIdx[co.g]].codes.push(co.c); });
+
+// ── progress: this page's own localStorage entry only ──
+var prog = { choices: {}, flags: {}, fix: {}, grid: GRIDS[0].id };
+var storageWarned = false;
+function loadProgress() {
+  var raw = null;
+  try { raw = window.localStorage.getItem(STORE_KEY); } catch (e) {
+    alertMsg("bad", "This browser does not allow saved progress here (private mode or storage blocked). Download your choices before you leave.");
+    storageWarned = true;
+    return;
+  }
+  if (!raw) return;
+  try {
+    var o = JSON.parse(raw);
+    var v = validateImport({ version: 1, choices: o.choices || {} }, byCode, KEYS);
+    prog.choices = v.choices || {};
+    if (v.rejected && v.rejected.length) {
+      alertMsg("bad", v.rejected.length + " saved choices no longer match this page and were left out (e.g. " +
+        v.rejected[0].code + ": " + v.rejected[0].why + "). Load your downloaded file again if you need them.");
+    }
+    Object.keys(o.flags || {}).forEach(function (c) { if (has(byCode, c) && o.flags[c]) prog.flags[c] = 1; });
+    Object.keys(o.fix || {}).forEach(function (c) { if (has(byCode, c) && SOURCES.indexOf(o.fix[c]) >= 0) prog.fix[c] = o.fix[c]; });
+    if (typeof o.grid === "string" && has(gridIdx, o.grid)) prog.grid = o.grid;
+  } catch (e) {
+    alertMsg("bad", "Saved progress could not be read (" + e.message + "). It will be replaced at the next change; load your downloaded file if you have one.");
+  }
+}
+function saveProgress() {
+  try {
+    window.localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, savedAt: kstStamp(Date.now()), grid: prog.grid,
+      choices: prog.choices, flags: prog.flags, fix: prog.fix }));
+  } catch (e) {
+    if (!storageWarned) {
+      storageWarned = true;
+      alertMsg("bad", "Progress could not be saved in this browser (" + e.name + "). Download your choices before you leave.");
+    }
+  }
+}
+
+// ── per company and route: what loaded ──
+var st = {};             // "code|route" -> {s: na|idle|queued|load|recheck|hit|miss|off|err|stopped, ident, img, w, h, hash, tries, note}
+function key(code, rid) { return code + "|" + rid; }
+COMPS.forEach(function (co) {
+  ROUTES.forEach(function (rt) { st[key(co.c, rt.id)] = { s: co[rt.f] ? "idle" : "na", ident: co[rt.f] || "", tries: 0 }; });
+});
+function candsOf(co) {
+  var o = {};
+  ROUTES.forEach(function (rt) { var s = st[key(co.c, rt.id)]; o[rt.id] = { s: s.s, hash: s.hash || null }; });
+  return o;
+}
+function prePickOf(co) { return prePick(candsOf(co)); }
+function isReviewed(g) {
+  for (var i = 0; i < g.codes.length; i++) if (!has(prog.choices, g.codes[i])) return false;
+  return g.codes.length > 0;
+}
+function gridStatus(g) {
+  var settled = 0, gaps = 0, flagged = 0;
+  g.codes.forEach(function (code) {
+    var pending = false, gap = false;
+    ROUTES.forEach(function (rt) {
+      var s = st[key(code, rt.id)].s;
+      if (!ENDED[s]) pending = true;
+      if (s === "err" || s === "stopped") gap = true;
+    });
+    if (!pending) settled++;
+    if (gap) gaps++;
+    if (prog.flags[code]) flagged++;
+  });
+  return { total: g.codes.length, settled: settled, gaps: gaps, flagged: flagged,
+    ready: started && settled === g.codes.length && gaps === 0 };
+}
+
+// ── loading, paced per provider, one at a time per route ──
+var running = false, started = false, pendingTimers = 0, alerts = [];
+var counters = { loads: 0, placeholders: 0, requeued: 0, retries: 0 };
+var ldKnown = {};        // logo.dev domain -> "hit" | "miss" from a second load this session (no new 202 wait needed)
+var lanes = {};
+ROUTES.forEach(function (rt) { lanes[rt.id] = { rt: rt, q: [], busy: false, stopped: null, off: null }; });
+var P = {
+  bf: { id: "bf", name: "Brandfetch", gap: CFG.bfGapMs, lanes: ["bfI", "bfT", "bfD"], checks: true },
+  ld: { id: "ld", name: "logo.dev", gap: CFG.ldGapMs, lanes: ["ldT", "ldD"], checks: true },
+  own: { id: "own", name: "our icons", gap: CFG.ownGapMs, lanes: ["own"], checks: false }
+};
+var CANARY_SIZES = [96, 100, 104, 108, 112, 116, 120, 124, 132, 136, 140, 144, 148, 152, 156, 160];
+var SESSION = Math.floor(Math.random() * 1e6).toString(36).toUpperCase();
+function resetProvider(p) {
+  p.next = 0; p.rr = 0; p.stopped = null; p.pausedUntil = 0; p.ctl = []; p.ctlBusy = false; p.timer = null;
+  p.phase = CFG.controls && p.checks ? "init" : "run"; p.initLeft = 0; p.canaryOk = false; p.loads = p.loads || 0;
+  p.lastCheck = p.loads; p.lastBad = p.loads; p.sinceCheck = []; p.canaryFails = 0; p.rot = p.rot || 0; p.badN = p.badN || 0;
+  p.checkNotes = [];
+  if (p.auditLeft === undefined) p.auditLeft = p.checks ? CFG.auditMisses : 0;
+  if (p.cors === undefined) p.cors = p.checks && !CFG.controls ? !!CFG.assumeCors : false;   // else decided by the first check
+}
+Object.keys(P).forEach(function (id) { resetProvider(P[id]); });
+
+function alertMsg(cls, text) { alerts.push({ cls: cls, text: text }); renderAlerts(); }
+function later(ms, fn) {
+  pendingTimers++;
+  setTimeout(function () { pendingTimers--; fn(); }, ms);
+}
+function pickJob(p) {
+  if (p.ctl.length && !p.ctlBusy) { p.ctlBusy = true; return p.ctl.shift(); }
+  if (p.phase !== "run") return null;
+  for (var i = 0; i < p.lanes.length; i++) {
+    var id = p.lanes[(p.rr + i) % p.lanes.length], L = lanes[id];
+    if (!L.busy && !L.stopped && !L.off && L.q.length) { p.rr = (p.rr + i + 1) % p.lanes.length; L.busy = true; return L.q.shift(); }
+  }
+  return null;
+}
+function pump(p) {
+  if (p.timer) { clearTimeout(p.timer); p.timer = null; }
+  if (!running || p.stopped) return;
+  var now = performance.now(), at = Math.max(p.next, p.pausedUntil);
+  if (now < at) { p.timer = setTimeout(function () { pump(p); }, at - now); return; }
+  if (CFG.controls && p.checks && p.phase === "run" && !p.ctlBusy) maybeCheck(p);
+  var job = pickJob(p);
+  if (!job) return;
+  p.next = now + p.gap;
+  load(p, job);
+  p.timer = setTimeout(function () { pump(p); }, p.gap);
+}
+function pumpAll() { pump(P.bf); pump(P.ld); pump(P.own); }
+function jobUrl(p, job) {
+  if (job.ctl) return logoUrl(p.id, job.r, job.ident, KEYS[p.id], job.v, job.size);
+  if (p.id === "own") return job.ident;
+  return logoUrl(p.id, job.rt.r, job.ident, KEYS[p.id], job.v);
+}
+function load(p, job) {
+  var img = new Image(), done = false, t0 = performance.now(), timer;
+  img.alt = "";
+  img.decoding = "async";
+  var cors = p.id !== "own" && (job.ctl ? (job.ctl === "cors" || (p.cors && !job.plain)) : p.cors);
+  if (cors) img.crossOrigin = "anonymous";
+  function fin(ok, timedOut) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    if (timedOut) img.src = "";
+    (job.ctl ? ctlDone : jobDone)(p, job, ok, timedOut, img, t0, cors);
+    pump(p);
+  }
+  timer = setTimeout(function () { fin(false, true); }, CFG.timeoutMs);
+  img.onload = function () { fin(true, false); };        // decoded = a logo (an SVG can report naturalWidth 0)
+  img.onerror = function () { fin(false, false); };
+  if (!job.ctl) {
+    var s = st[key(job.co.c, job.rt.id)];
+    s.s = "load";
+    p.loads++;
+    paintTile(job.co.c);
+  }
+  counters.loads++;
+  img.src = jobUrl(p, job);
+  scheduleRender();
+}
+var HC = document.createElement("canvas");
+HC.width = HC.height = 64;
+var hctx = HC.getContext("2d", { willReadFrequently: true });
+hctx.imageSmoothingEnabled = true;
+hctx.imageSmoothingQuality = "high";
+function hashImage(img) {
+  try {
+    var w = img.naturalWidth || 64, h = img.naturalHeight || 64;
+    var sc = Math.min(64 / w, 64 / h), dw = Math.max(1, Math.round(w * sc)), dh = Math.max(1, Math.round(h * sc));
+    hctx.clearRect(0, 0, 64, 64);
+    hctx.drawImage(img, Math.floor((64 - dw) / 2), Math.floor((64 - dh) / 2), dw, dh);
+    return hashFromPixels(hctx.getImageData(0, 0, 64, 64).data, 64, 64);
+  } catch (e) {
+    return null;        // not readable (no CORS): agreement unknown for this image
+  }
+}
+function inWindow(gid) { return gid === cur || gid === ahead; }
+function jobDone(p, job, ok, timedOut, img, t0, cors) {
+  var L = lanes[job.rt.id];
+  L.busy = false;
+  var s = st[key(job.co.c, job.rt.id)];
+  if (L.off) { s.s = "off"; }
+  else if (L.stopped) { s.s = "stopped"; }
+  else if (!ok && !timedOut && cors && p.checks && !p.cors) {     // loaded readable, but the provider switched to plain loads meanwhile
+    s.s = "queued"; L.q.unshift(job);
+  }
+  else if (ok && job.rt.id === "ldD" && !job.v && CFG.recheckMs > 0) {
+    s.s = "recheck"; s.img = img; s.w = img.naturalWidth; s.h = img.naturalHeight;
+    later(CFG.recheckMs, function () {
+      if (lanes.ldD.off) { s.s = "off"; paintTile(job.co.c); return; }
+      if (lanes.ldD.stopped) { s.s = "stopped"; paintTile(job.co.c); return; }
+      lanes.ldD.q.unshift({ co: job.co, rt: job.rt, ident: job.ident, g: job.g, v: "2" });
+      pump(P.ld);
+    });
+  } else if (ok) {
+    s.s = "hit"; s.img = img; s.w = img.naturalWidth; s.h = img.naturalHeight;
+    s.hash = cors || p.id === "own" ? hashImage(img) : null;
+    if (job.rt.id === "ldD") ldKnown[job.ident] = "hit";
+  } else if (timedOut) {
+    s.tries++;
+    if (s.tries < 2) {
+      s.s = "queued"; s.note = "timed out once";
+      counters.retries++;
+      later(CFG.retryMs, function () { L.q.push(job); pump(p); });
+    } else { s.s = "err"; s.note = "timed out twice"; }
+  } else {
+    s.s = "miss"; s.img = null; s.hash = null;
+    if (job.rt.id === "ldD") {
+      if (job.v && !ldKnown[job.ident]) { s.note = "the first answer was a placeholder"; counters.placeholders++; }
+      ldKnown[job.ident] = "miss";
+    }
+    if (p.checks) p.sinceCheck.push({ job: job, t0: t0 });
+    if (cors && p.auditLeft > 0 && CFG.controls) {
+      p.auditLeft--;
+      p.ctl.push({ ctl: "audit", r: job.rt.r, ident: job.ident, v: job.v, init: false, plain: true, job: job });
+    }
+  }
+  paintTile(job.co.c);
+  scheduleRender();
+}
+
+// ── checks: a known logo must load, a made-up identifier must not ──
+function canaryJob(p, kind, r, ident, init, extra) {
+  var j = { ctl: kind, r: r, ident: ident, init: init, size: CANARY_SIZES[(p.rot++) % CANARY_SIZES.length] };
+  for (var x in extra || {}) j[x] = extra[x];
+  return j;
+}
+function nextKnown(p) { return META.rotate.length ? META.rotate[(p.rot + p.badN) % META.rotate.length] : META.good.ticker; }
+function addInit(p, job) { p.initLeft++; p.ctl.push(job); }
+function initChecks(p) {
+  p.phase = "init";
+  // First: does this provider let the page read its images (CORS)? That decides how every image loads.
+  addInit(p, canaryJob(p, "cors", "ticker", nextKnown(p), true));
+}
+function moreInitChecks(p) {
+  var g = META.good, b = META.bad, routes = p.id === "bf" ? ["isin", "domain"] : ["domain"];
+  routes.forEach(function (r) { addInit(p, canaryJob(p, "good", r, g[r], true)); });
+  ["ticker"].concat(routes).forEach(function (r) { addInit(p, { ctl: "bad", r: r, ident: b[r], init: true }); });
+}
+function maybeCheck(p) {
+  if (p.loads - p.lastCheck >= CFG.checkEvery) {
+    p.lastCheck = p.loads;
+    p.ctl.push(canaryJob(p, "canary", "ticker", nextKnown(p), false));
+  } else if (p.loads - p.lastBad >= CFG.badEvery) {
+    p.lastBad = p.loads;
+    p.ctl.push({ ctl: "bad", r: "ticker", ident: "ZZQX" + SESSION + (++p.badN).toString(36).toUpperCase() + "J", init: false });
+  }
+}
+function laneFor(p, r) { return p.id + ({ ticker: "T", isin: "I", domain: "D" }[r]); }
+function stopLane(id, why, state) {
+  var L = lanes[id];
+  if (state === "off") { if (L.off) return; L.off = why; } else { if (L.stopped) return; L.stopped = why; }
+  L.q.forEach(function (job) { st[key(job.co.c, job.rt.id)].s = state; paintTile(job.co.c); });
+  L.q = [];
+}
+// A route that answers made-up identifiers with an image: every result it gave is switched off (not a candidate).
+function routeOff(id, why) {
+  stopLane(id, why, "off");
+  COMPS.forEach(function (co) {
+    var s = st[key(co.c, id)];
+    if (s.s === "na" || s.s === "off") return;
+    if (s.s === "load") return;                      // finishes as "off" in jobDone
+    s.s = "off"; s.note = why; s.img = null; s.hash = null;
+    paintTile(co.c);
+  });
+  scheduleRender();
+}
+function stopProvider(p, why) {
+  if (p.stopped) return;
+  p.stopped = why;
+  p.ctl = []; p.ctlBusy = false;
+  p.lanes.forEach(function (id) { stopLane(id, why, "stopped"); });
+  alertMsg("bad", p.name + " stopped: " + why + " Its logos are marked 'not checked'; tap Retry to try again.");
+  scheduleRender();
+}
+// A known logo failed: the misses since the last passing check may be refusals, not "no logo". Try each once more.
+function requeueRecentMisses(p) {
+  var n = 0;
+  p.sinceCheck.forEach(function (e) {
+    var s = st[key(e.job.co.c, e.job.rt.id)], L = lanes[e.job.rt.id];
+    if (e.job.requeued || s.s !== "miss" || L.stopped || L.off) return;
+    e.job.requeued = true;
+    s.s = "queued"; s.note = "tried again after a failed check";
+    L.q.unshift(e.job);
+    paintTile(e.job.co.c);
+    n++;
+  });
+  p.sinceCheck = [];
+  counters.requeued += n;
+  return n;
+}
+function ctlDone(p, job, ok, timedOut, img, t0, cors) {
+  p.ctlBusy = false;
+  if (p.stopped) return;
+  var label = p.name + " " + job.r + " " + job.ident;
+  if (job.ctl === "audit") {
+    if (ok && p.cors) corsLosesLogos(p, job);
+  } else if (job.ctl === "cors") {
+    if (ok) {
+      p.cors = true; p.canaryOk = true; p.checkNotes.push("known logo loads");
+    } else {
+      p.cors = false;                                  // not readable: agreement is skipped for it (help text says so)
+      addInit(p, canaryJob(p, "canary", "ticker", nextKnown(p), true));
+    }
+    moreInitChecks(p);
+    renderAgree();
+  } else if (job.ctl === "canary") {
+    if (ok) {
+      p.canaryFails = 0;
+      if (job.init) { p.canaryOk = true; p.checkNotes.push("known logo loads"); }
+      p.sinceCheck = p.sinceCheck.filter(function (e) { return e.t0 >= t0; });
+    } else {
+      p.canaryFails++;
+      var n = requeueRecentMisses(p);
+      if (p.canaryFails >= (job.init ? 2 : 3)) {
+        stopProvider(p, "a known logo (" + job.ident + ") did not load " + p.canaryFails + " times in a row" +
+          (job.init ? " before loading (key, ad blocker, network or a block?)." : " while loading (rate limit or block?)."));
+      } else {
+        p.pausedUntil = performance.now() + (p.canaryFails === 1 ? CFG.canaryRetryMs : CFG.canaryPauseMs);
+        var again = canaryJob(p, "canary", "ticker", nextKnown(p), job.init);
+        if (job.init) p.initLeft++;
+        p.ctl.unshift(again);
+        alertMsg("bad", p.name + ": the known logo " + job.ident + " did not load; pausing" +
+          (n ? " and trying " + n + " recent misses again." : "."));
+      }
+    }
+  } else if (job.ctl === "good") {
+    if (!ok && p.cors && !job.plain) {
+      addInit(p, canaryJob(p, "good", job.r, job.ident, true, { plain: true }));   // CORS trouble on this route only?
+    } else if (ok && job.plain) {
+      p.cors = false;                                  // this route loads only the plain way: agreement off for this provider
+      p.checkNotes.push("known " + job.r + " loads");
+      renderAgree();
+    } else {
+      p.checkNotes.push(ok ? "known " + job.r + " loads" : "known " + job.r + " (" + job.ident + ") gave NO logo");
+      if (!ok) alertMsg("bad", label + ": a known logo did not load by this route. Its logos still show, but expect misses.");
+    }
+  } else if (job.ctl === "bad") {
+    if (p.id === "ld" && job.r === "domain" && job.v) {            // the made-up domain, loaded again
+      if (ok) {
+        routeOff("ldD", "answers a made-up domain with an image even when loaded again");
+        alertMsg("bad", "logo.dev answered a made-up domain with an image even when loaded again, so its domain logos " +
+          "cannot be trusted: logo.dev domain is switched off.");
+      } else {
+        alertMsg("info", "logo.dev: the made-up domain gave no image when loaded again, so loading domain hits again catches placeholders.");
+      }
+    } else if (!ok) {
+      if (job.init) p.checkNotes.push("made-up " + job.r + " gives no image");
+    } else if (p.id === "ld" && job.r === "domain") {
+      p.checkNotes.push("made-up domain gave an image on the first request (the 202 placeholder), so domain hits are loaded again");
+      later(CFG.recheckMs, function () {
+        if (p.stopped) return;
+        p.ctl.push({ ctl: "bad", r: "domain", ident: job.ident, init: false, v: "2" });
+        pump(p);
+      });
+    } else if (job.init) {
+      routeOff(laneFor(p, job.r), "answers a made-up identifier with an image");
+      alertMsg("bad", label + ": a made-up identifier came back as an image, so this route's logos cannot be trusted. Route switched off.");
+    } else {
+      stopProvider(p, "a made-up ticker (" + job.ident + ") came back as an image while loading, so later logos could be placeholders.");
+    }
+  }
+  if (job.init) p.initLeft--;
+  if (p.phase === "init" && p.initLeft === 0 && p.canaryOk && !p.stopped) {
+    p.phase = "run";
+    alertMsg("info", p.name + " checks: " + p.checkNotes.join(" · ") + ".");
+    renderAgree();
+  }
+  scheduleRender();
+}
+// A logo that failed when loaded readable (CORS) but loads the plain way: CORS loses logos here (a cached answer
+// without CORS headers, a redirect ...). Load everything the plain way from now on and try this provider's misses again.
+function corsLosesLogos(p, job) {
+  p.cors = false;
+  var n = 0;
+  COMPS.forEach(function (co) {
+    p.lanes.forEach(function (id) {
+      var s = st[key(co.c, id)];
+      if (s.s === "miss") { s.s = "idle"; s.note = ""; n++; paintTile(co.c); }
+    });
+  });
+  alertMsg("bad", p.name + ": " + job.ident + " gave no logo when loaded readable but loads the plain way, so reading its " +
+    "images loses logos. It now loads the plain way (agreement off for it); " + n + " misses are tried again.");
+  renderAgree();
+  plan();
+}
+function renderAgree() {
+  var parts = ["bf", "ld"].map(function (id) {
+    var p = P[id];
+    if (p.phase === "init" && p.cors !== true) return p.name + ": checking";
+    return p.name + (p.cors ? ": images readable" : ": images not readable");
+  });
+  var on = P.bf.cors && P.ld.cors;
+  $("agreestate").textContent = (started ? "Right now: " + parts.join(", ") + (on ? " (agreement on)." :
+    " (agreement off: the order decides).") : "Checked when you tap Start.");
+}
+
+// ── which grids load: the one you are on, then the next unreviewed one ──
+var cur = GRIDS[0].id, ahead = null, prevGrid = null;
+function nextUnreviewed(fromIdx) {          // after this grid, then from the top; never this grid itself
+  for (var k = 1; k < GRIDS.length; k++) {
+    var g = GRIDS[(fromIdx + k) % GRIDS.length];
+    if (!isReviewed(g)) return g.id;
+  }
+  return null;
+}
+function forget(g) {             // a reviewed grid you left: free its pictures; it loads again if you come back
+  g.codes.forEach(function (code) {
+    ROUTES.forEach(function (rt) {
+      var s = st[key(code, rt.id)];
+      if (s.s === "hit" || s.s === "miss" || s.s === "err" || s.s === "stopped") { s.s = "idle"; s.img = null; s.hash = null; s.tries = 0; }
+    });
+  });
+}
+function plan() {
+  ahead = nextUnreviewed(gridIdx[cur]);
+  GRIDS.forEach(function (g) {
+    if (g.id !== cur && g.id !== ahead && g.id !== prevGrid && isReviewed(g)) forget(g);
+  });
+  if (!started) return;
+  ROUTES.forEach(function (rt) {
+    var L = lanes[rt.id];
+    L.q = L.q.filter(function (job) {
+      if (job.v || inWindow(job.g)) return true;
+      var s = st[key(job.co.c, rt.id)];
+      if (s.s === "queued") s.s = "idle";
+      return false;
+    });
+  });
+  [cur, ahead].forEach(function (gid) {
+    if (!gid) return;
+    GRIDS[gridIdx[gid]].codes.forEach(function (code) {
+      var co = byCode[code];
+      ROUTES.forEach(function (rt) {
+        var s = st[key(code, rt.id)], L = lanes[rt.id];
+        if (s.s !== "idle") return;
+        if (L.off) { s.s = "off"; return; }
+        if (L.stopped) { s.s = "stopped"; return; }
+        s.s = "queued";
+        var job = { co: co, rt: rt, ident: s.ident, g: gid };
+        if (rt.id === "ldD" && ldKnown[s.ident]) job.v = "2";      // seen this session: load the confirmed answer
+        L.q.push(job);
+      });
+    });
+  });
+  ROUTES.forEach(function (rt) {
+    lanes[rt.id].q.sort(function (a, b) {
+      return ((a.v ? 0 : 1) - (b.v ? 0 : 1)) || ((a.g === cur ? 0 : 1) - (b.g === cur ? 0 : 1)) || (a.co.r - b.co.r);
+    });
+  });
+  if (running) pumpAll();
+}
+
+// ── start, pause, retry ──
+function start() {
+  if (running) return;
+  if (!started) {
+    started = true;
+    if (CFG.controls) { initChecks(P.bf); initChecks(P.ld); }
+    plan();
+  }
+  running = true;
+  $("start").disabled = true; $("pause").disabled = false; $("start").textContent = "Start loading logos";
+  pumpAll();
+  renderAgree();
+  scheduleRender();
+}
+function pause() {
+  running = false;
+  $("start").disabled = false; $("pause").disabled = true; $("start").textContent = "Continue";
+  scheduleRender();
+}
+function retry() {
+  ["bf", "ld"].forEach(function (id) {
+    var p = P[id];
+    if (!p.stopped) return;
+    var keepCors = p.cors;
+    resetProvider(p);
+    p.cors = keepCors;
+    p.lanes.forEach(function (lid) { lanes[lid].stopped = null; });
+    if (CFG.controls) initChecks(p);
+    alertMsg("info", p.name + ": trying again (checks first).");
+  });
+  [cur, ahead].forEach(function (gid) {
+    if (!gid) return;
+    GRIDS[gridIdx[gid]].codes.forEach(function (code) {
+      ROUTES.forEach(function (rt) {
+        var s = st[key(code, rt.id)];
+        if (s.s === "stopped" || s.s === "err") { s.s = "idle"; s.tries = 0; s.note = ""; }
+      });
+    });
+  });
+  plan();
+  if (!running) start(); else pumpAll();
+  renderGrid();
+}
+
+// ── the grid ──
+function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function letterMark(co) {
+  var m = el("div", "lm", letterOf(co.n));
+  m.style.background = colorOf(co.c);
+  return m;
+}
+function lowRes(s) { return s && s.w > 0 && s.h > 0 && Math.max(s.w, s.h) < LOW_RES; }
+// What a tile shows: your saved choice if there is one, else the pre-pick.
+function shown(co) {
+  var ch = has(prog.choices, co.c) ? prog.choices[co.c] : null;
+  if (ch) {
+    var rt = routeBySrc(ch.source), s = rt ? st[key(co.c, rt.id)] : null;
+    var img = s && s.s === "hit" && candidateUrl(co, ch.source, KEYS) === ch.url ? s.img : null;   // never a 202 placeholder
+    var gone = rt && s && (s.s === "miss" || s.s === "off");
+    return { saved: true, rid: rt ? rt.id : null, src: ch.source, img: img, s: s, wait: rt && !img && !gone && s && !ENDED[s.s], gone: gone };
+  }
+  var pp = prePickOf(co), st0 = pp.pick ? st[key(co.c, pp.pick)] : null;
+  return { saved: false, rid: pp.pick, src: pp.pick ? routeById[pp.pick].src : "letter", img: st0 ? st0.img : null, s: st0,
+    wait: !pp.settled, agree: pp.via === "agree", pp: pp };
+}
+function srcLabel(src) { var rt = routeBySrc(src); return rt ? rt.label : "Letter mark"; }
+var tiles = {};
+function renderGrid() {
+  var g = GRIDS[gridIdx[cur]], grid = $("grid");
+  tiles = {};
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  g.codes.forEach(function (code) {
+    var co = byCode[code], t = el("button", "tile");
+    t.type = "button"; t.setAttribute("data-code", code);
+    t.appendChild(el("div", "lg"));
+    t.appendChild(el("div", "nm", co.n));
+    t.appendChild(el("div", "cd", co.c));
+    t.appendChild(el("div", "src"));
+    t.appendChild(el("div", "badges"));
+    tiles[code] = t;
+    grid.appendChild(t);
+    paintTile(code);
+  });
+  var head = $("gridhead");
+  head.textContent = g.label + " ";
+  head.appendChild(el("small", null, "by market cap · " + g.codes.length + " companies" + (isReviewed(g) ? " · reviewed" : "")));
+  renderNav();
+  renderDock();
+}
+function setImg(box, img, co, blank) {
+  while (box.firstChild) box.removeChild(box.firstChild);
+  if (img) { var c = img.cloneNode(false); c.alt = ""; box.appendChild(c); }   // same address: the browser reuses the loaded picture
+  else if (!blank) box.appendChild(letterMark(co));
+  else box.textContent = "·";
+}
+// Nothing to show yet: a saved logo that has not loaded, or a pre-pick that is still open with nothing loaded so far.
+function isBlank(d) { return !d.img && (d.saved ? d.src !== "letter" : !started || d.wait); }
+function paintTile(code) {
+  var t = tiles[code];
+  if (!t) return;
+  var co = byCode[code], d = shown(co), flagged = !!prog.flags[code];
+  var box = t.children[0], srcEl = t.children[3], badges = t.children[4];
+  var blank = isBlank(d);
+  setImg(box, d.img, co, blank);
+  box.className = "lg" + (blank ? " blank" : "") + (started && d.wait ? " wait" : "");
+  t.classList.toggle("wrong", flagged);
+  srcEl.textContent = flagged ? "wrong" + (prog.fix[code] ? ": " + srcLabel(prog.fix[code]) : "") : !started && !d.saved ? "not loaded" : srcLabel(d.src);
+  while (badges.firstChild) badges.removeChild(badges.firstChild);
+  if (d.saved) badges.appendChild(el("span", "b sav", "saved"));
+  if (d.agree) badges.appendChild(el("span", "b agr", "agree"));
+  if (d.img && lowRes(d.s)) badges.appendChild(el("span", "b low", "low-res"));
+  if (d.gone) badges.appendChild(el("span", "b gap", "did not load"));
+  var gap = ROUTES.some(function (rt) { var s = st[key(code, rt.id)].s; return s === "err" || s === "stopped"; });
+  if (gap) badges.appendChild(el("span", "b gap", "not checked"));
+  t.setAttribute("aria-pressed", flagged ? "true" : "false");
+  t.setAttribute("aria-label", co.n + " " + co.c + ": " + srcLabel(d.src) + (flagged ? ", marked wrong" : ""));
+  if (peekCode === code) showPeek(code, t);
+  scheduleDock();
+}
+function toggleFlag(code) {
+  if (prog.flags[code]) { delete prog.flags[code]; delete prog.fix[code]; } else prog.flags[code] = 1;
+  saveProgress();
+  paintTile(code);
+  renderNav();
+}
+
+// ── a closer look: hover (mouse) or press and hold (touch) ──
+var peekCode = null;
+function showPeek(code, t) {
+  var co = byCode[code], d = shown(co), pk = $("peek");
+  peekCode = code;
+  while (pk.firstChild) pk.removeChild(pk.firstChild);
+  var big = el("div", "big");
+  setImg(big, d.img, co, isBlank(d));
+  pk.appendChild(big);
+  pk.appendChild(el("div", null, co.n + " · " + co.c + " · #" + co.r));
+  var rt = d.rid ? routeById[d.rid] : null;
+  pk.appendChild(el("div", null, (rt ? rt.long : "Letter mark") + (d.saved ? " (saved)" : "") + (d.agree ? " · both agree" : "")));
+  if (d.img && d.s && d.s.w) pk.appendChild(el("div", null, d.s.w + " × " + d.s.h + " px" + (lowRes(d.s) ? " (low-res)" : "")));
+  pk.classList.remove("hide");
+  var r = t.getBoundingClientRect(), pw = pk.offsetWidth, ph = pk.offsetHeight, vw = document.documentElement.clientWidth;
+  var top = r.top - ph - 8 >= 8 ? r.top - ph - 8 : Math.min(window.innerHeight - ph - 8, r.bottom + 8);
+  pk.style.left = Math.max(8, Math.min(vw - pw - 8, r.left + r.width / 2 - pw / 2)) + "px";
+  pk.style.top = Math.max(8, top) + "px";
+}
+function hidePeek() { peekCode = null; $("peek").classList.add("hide"); }
+function tileFrom(node) {
+  while (node && node !== document) { if (node.classList && node.classList.contains("tile")) return node; node = node.parentNode; }
+  return null;
+}
+var press = null, suppressUntil = 0, hoverTimer = null, hoverTile = null;
+function cancelPress() { if (press) { clearTimeout(press.timer); press = null; } }
+function wireGrid() {
+  var grid = $("grid");
+  grid.addEventListener("pointerdown", function (e) {
+    var t = tileFrom(e.target);
+    if (!t || (e.pointerType === "mouse" && e.button !== 0)) return;
+    cancelPress();
+    var code = t.getAttribute("data-code");
+    press = { code: code, x: e.clientX, y: e.clientY, long: false, type: e.pointerType };
+    press.timer = setTimeout(function () { if (press) { press.long = true; showPeek(code, t); } }, CFG.longPressMs);
+  });
+  grid.addEventListener("pointermove", function (e) {
+    if (press && !press.long && (Math.abs(e.clientX - press.x) > 10 || Math.abs(e.clientY - press.y) > 10)) cancelPress();
+  });
+  document.addEventListener("pointerup", function () {
+    if (!press) return;
+    clearTimeout(press.timer);
+    if (press.long) { suppressUntil = Date.now() + 700; if (press.type !== "mouse") hidePeek(); }
+    press = null;
+  });
+  grid.addEventListener("pointercancel", function () { if (press && press.long) hidePeek(); cancelPress(); });
+  grid.addEventListener("contextmenu", function (e) { if (tileFrom(e.target)) e.preventDefault(); });
+  grid.addEventListener("click", function (e) {
+    var t = tileFrom(e.target);
+    if (!t) return;
+    if (Date.now() < suppressUntil) { suppressUntil = 0; return; }
+    toggleFlag(t.getAttribute("data-code"));
+  });
+  grid.addEventListener("pointerover", function (e) {
+    if (e.pointerType !== "mouse") return;
+    var t = tileFrom(e.target);
+    if (!t || t === hoverTile) return;
+    hoverTile = t;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(function () { if (hoverTile === t) showPeek(t.getAttribute("data-code"), t); }, 250);
+  });
+  grid.addEventListener("pointerout", function (e) {
+    if (e.pointerType !== "mouse") return;
+    var t = tileFrom(e.target), to = tileFrom(e.relatedTarget);
+    if (t && t !== to) { clearTimeout(hoverTimer); hoverTile = null; hidePeek(); }
+  });
+  window.addEventListener("scroll", function () { if (!press) hidePeek(); }, { passive: true });
+}
+
+// ── confirm and fix ──
+function confirmGrid() {
+  var g = GRIDS[gridIdx[cur]], stt = gridStatus(g);
+  if (!stt.ready) return;
+  var flagged = g.codes.filter(function (c) { return prog.flags[c]; });
+  if (flagged.length) openFix(g, flagged); else commit(g);
+}
+function commit(g) {
+  var day = kstDate(Date.now()), logos = 0, letters = 0;
+  if (g.codes.some(function (c) { return prog.flags[c] && SOURCES.indexOf(prog.fix[c]) < 0; })) return;
+  g.codes.forEach(function (code) {
+    var co = byCode[code];
+    if (prog.flags[code]) {
+      prog.choices[code] = choiceFrom(co, prog.fix[code], KEYS, day);
+    } else if (!has(prog.choices, code)) {
+      var pp = prePickOf(co);
+      prog.choices[code] = choiceFrom(co, pp.pick ? routeById[pp.pick].src : "letter", KEYS, day);
+    }
+    delete prog.flags[code]; delete prog.fix[code];
+    if (prog.choices[code].source === "letter") letters++; else logos++;
+  });
+  closeFix();
+  var nxt = nextUnreviewed(gridIdx[g.id]);
+  msg("good", "Saved " + g.label + ": " + logos + " logos, " + letters + " letter marks." + (nxt ? " Now " + GRIDS[gridIdx[nxt]].label + "." : " Every grid is reviewed."));
+  saveProgress();
+  if (nxt) go(nxt, true); else { renderGrid(); plan(); }
+  scheduleRender();
+}
+var fixGrid = null;
+function openFix(g, flagged) {
+  fixGrid = g;
+  var list = $("fixlist");
+  while (list.firstChild) list.removeChild(list.firstChild);
+  $("fixtitle").textContent = "Fix " + flagged.length + (flagged.length === 1 ? " logo" : " logos") + " in " + g.label;
+  flagged.forEach(function (code) {
+    var co = byCode[code], row = el("div", "fixrow"), who = el("div", "who", co.n + " ");
+    row.setAttribute("data-code", code);
+    who.appendChild(el("small", null, co.c + " · " + (co.m || "") + " #" + co.r));
+    row.appendChild(who);
+    var opts = el("div", "opts"), d = shown(co), avail = ["letter"];
+    ROUTES.forEach(function (rt) { if (st[key(code, rt.id)].s === "hit") avail.push(rt.src); });
+    if (prog.fix[code] && avail.indexOf(prog.fix[code]) < 0) delete prog.fix[code];
+    ROUTES.forEach(function (rt) {
+      var s = st[key(code, rt.id)];
+      if (s.s !== "hit") return;
+      opts.appendChild(option(co, rt.src, s.img, rt.long + (lowRes(s) ? " · low-res" : "") + (d.src === rt.src ? (d.saved ? " · saved" : " · pre-pick") : "")));
+    });
+    opts.appendChild(option(co, "letter", null, "Letter mark" + (d.src === "letter" ? (d.saved ? " · saved" : " · pre-pick") : "")));
+    row.appendChild(opts);
+    list.appendChild(row);
+  });
+  $("fix").classList.remove("hide");
+  document.body.style.overflow = "hidden";
+  renderFixSave();
+}
+function option(co, src, img, text) {
+  var b = el("button", "opt" + (prog.fix[co.c] === src ? " on" : ""));
+  b.type = "button"; b.setAttribute("data-src", src); b.setAttribute("aria-pressed", prog.fix[co.c] === src ? "true" : "false");
+  var box = el("div", "lg");
+  setImg(box, img, co);
+  b.appendChild(box);
+  b.appendChild(el("span", null, text));
+  b.addEventListener("click", function () {
+    prog.fix[co.c] = src;
+    saveProgress();
+    var row = b.parentNode;
+    Array.prototype.forEach.call(row.children, function (x) {
+      var on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    paintTile(co.c);
+    renderFixSave();
+  });
+  return b;
+}
+function renderFixSave() {
+  if (!fixGrid) return;
+  var rows = $("fixlist").children, left = 0;
+  Array.prototype.forEach.call(rows, function (r) { if (!prog.fix[r.getAttribute("data-code")]) left++; });
+  $("fixsave").disabled = left > 0;
+  $("fixsave").textContent = left ? "Choose for " + left + " more" : "Save this grid";
+}
+function closeFix() { fixGrid = null; $("fix").classList.add("hide"); document.body.style.overflow = ""; }
+
+// ── navigation ──
+function go(id, toTop) {
+  if (!has(gridIdx, id)) return;
+  if (id !== cur) prevGrid = cur;
+  cur = id; prog.grid = id;
+  saveProgress();
+  hidePeek();
+  renderGrid();
+  plan();
+  if (toTop) $("review").scrollIntoView();
+}
+function renderNav() {
+  var sel = $("gridsel"), i = gridIdx[cur];
+  while (sel.firstChild) sel.removeChild(sel.firstChild);
+  GRIDS.forEach(function (g) {
+    var nf = g.codes.filter(function (c) { return prog.flags[c]; }).length;
+    var o = el("option", null, g.label + (isReviewed(g) ? " · reviewed" : "") + (nf ? " · " + nf + " wrong" : ""));
+    o.value = g.id;
+    if (g.id === cur) o.selected = true;
+    sel.appendChild(o);
+  });
+  $("prev").disabled = i === 0;
+  $("next").disabled = i === GRIDS.length - 1;
+  $("nextopen").disabled = !nextUnreviewed(i) ;
+}
+var dockQueued = false;
+function scheduleDock() { if (dockQueued) return; dockQueued = true; setTimeout(function () { dockQueued = false; renderDock(); }, 120); }
+function renderDock() {
+  var g = GRIDS[gridIdx[cur]], s = gridStatus(g), reviewed = isReviewed(g), text;
+  if (!started) text = "Tap Start to load logos" + (reviewed ? " (this grid is reviewed)." : ".");
+  else if (s.gaps) text = s.gaps + " companies could not be checked (a provider stopped or timed out). Tap Retry.";
+  else if (s.settled < s.total) text = "Loading " + g.label + ": " + s.settled + " of " + s.total + " ready" + (s.flagged ? " · " + s.flagged + " marked wrong" : "") + ".";
+  else text = (reviewed ? "Reviewed. " : "All " + s.total + " ready. ") + (s.flagged ? s.flagged + " marked wrong." : reviewed ? "Tap a tile to change it." : "Tap the wrong ones, then Confirm.");
+  $("dockmsg").textContent = text;
+  $("confirm").disabled = !s.ready || (reviewed && !s.flagged);
+  $("confirm").textContent = reviewed ? "Confirm changes" : "Confirm this grid";
+  $("retry").classList.toggle("hide", !s.gaps);
+}
+
+// ── summary, alerts, messages ──
+var renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  setTimeout(function () { renderQueued = false; render(); }, 250);
+}
+function pct(a, b) { return b ? Math.round(1000 * a / b) / 10 + "%" : "–"; }
+function fmt(n) { return n.toLocaleString("en-US"); }
+function render() {
+  var rows = summarize(COMPS, prog.choices, ZONES);
+  var html = "<thead><tr><th>Group</th><th>Total</th><th>Reviewed</th><th>Logo</th><th>Letter</th><th>Coverage</th></tr></thead><tbody>";
+  rows.forEach(function (r) {
+    html += '<tr class="' + r.kind + '"><td>' + esc(r.label) + "</td><td>" + fmt(r.n) + "</td><td>" + fmt(r.reviewed) +
+      "</td><td>" + fmt(r.logo) + "</td><td>" + fmt(r.letter) + "</td><td>" + pct(r.logo, r.reviewed) + "</td></tr>";
+  });
+  $("sumtable").innerHTML = html + "</tbody>";
+  var done = GRIDS.filter(isReviewed).length, nflags = Object.keys(prog.flags).length;
+  $("sumline").textContent = "Grids reviewed: " + done + " of " + GRIDS.length + " · choices " + fmt(Object.keys(prog.choices).length) +
+    (nflags ? " · marked wrong, not confirmed yet: " + nflags : "") + ". Coverage = real logos among reviewed companies (goal 90%).";
+  $("export").disabled = !Object.keys(prog.choices).length;
+  var line = (!started ? "Not started. " : running ? "Loading. " : "Paused. ") + "Requests " + fmt(counters.loads) +
+    (counters.placeholders ? " · placeholders caught " + counters.placeholders : "") +
+    (counters.requeued ? " · tried again " + counters.requeued : "") +
+    " · Brandfetch ≤" + (1000 / CFG.bfGapMs).toFixed(0) + "/s, logo.dev ≤" + (1000 / CFG.ldGapMs).toFixed(0) + "/s";
+  $("progress").textContent = line;
+  renderDock();
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function renderAlerts() {
+  $("alerts").innerHTML = alerts.map(function (a) { return '<p class="' + a.cls + '">' + esc(a.text) + "</p>"; }).join("");
+}
+function msg(cls, text) { $("msg").innerHTML = '<p class="' + cls + '">' + esc(text) + "</p>"; }
+
+// ── download and load choices ──
+function doExport() {
+  var n = Object.keys(prog.choices).length;
+  if (!n) return;
+  var now = Date.now(), obj = exportChoices(prog.choices, kstStamp(now));
+  var blob = new Blob([JSON.stringify(obj, null, 1) + "\n"], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "logo-choices-" + kstDate(now) + ".json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.parentNode.removeChild(a); }, 1000);
+  msg("good", "Downloaded " + fmt(n) + " choices (reviewed companies only).");
+}
+function doImport(file) {
+  if (!file) return;
+  if (file.size > 2000000) { msg("bad", "That file is too big for a choices file (" + fmt(file.size) + " bytes). Nothing changed."); return; }
+  var rd = new FileReader();
+  rd.onload = function () {
+    var obj;
+    try { obj = JSON.parse(String(rd.result)); } catch (e) { msg("bad", "Not a JSON file (" + e.message + "). Nothing changed."); return; }
+    var v = validateImport(obj, byCode, KEYS);
+    if (v.error) { msg("bad", "Could not load: " + v.error + ". Nothing changed."); return; }
+    var m = mergeChoices(prog.choices, v.choices);
+    prog.choices = m.choices;
+    Object.keys(v.choices).forEach(function (c) { delete prog.flags[c]; delete prog.fix[c]; });
+    saveProgress();
+    renderGrid();
+    plan();
+    render();
+    var skipped = v.rejected.length ? " Skipped " + v.rejected.length + ": " + v.rejected.slice(0, 3).map(function (r) {
+      return r.code + " (" + r.why + ")"; }).join(", ") + (v.rejected.length > 3 ? " …" : "") + "." : "";
+    msg(v.rejected.length ? "bad" : "good", "Loaded " + fmt(Object.keys(v.choices).length) + " choices: " + m.added + " new, " +
+      m.replaced + " changed, " + m.same + " the same, " + m.kept + " kept (newer here)." + skipped);
+  };
+  rd.onerror = function () { msg("bad", "The file could not be read. Nothing changed."); };
+  rd.readAsText(file);
+}
+
+// ── boot ──
+loadProgress();
+cur = prog.grid;
+$("meta").textContent = "Data: Korea close " + META.pxDate + ", US close " + META.usPxDate + " (data.json of " + META.asOf +
+  ") · " + fmt(META.counts.kr) + " Korean and " + fmt(META.counts.us) + " US companies in " + GRIDS.length + " grids · " +
+  (META.icons ? fmt(META.icons) + " of our own website icons" : "no website icons yet") + " · page built " + META.builtAt;
+$("start").addEventListener("click", start);
+$("pause").addEventListener("click", pause);
+$("retry").addEventListener("click", retry);
+$("confirm").addEventListener("click", confirmGrid);
+$("fixsave").addEventListener("click", function () { if (fixGrid && !$("fixsave").disabled) commit(fixGrid); });
+$("fixback").addEventListener("click", closeFix);
+$("prev").addEventListener("click", function () { var i = gridIdx[cur]; if (i > 0) go(GRIDS[i - 1].id, true); });
+$("next").addEventListener("click", function () { var i = gridIdx[cur]; if (i < GRIDS.length - 1) go(GRIDS[i + 1].id, true); });
+$("nextopen").addEventListener("click", function () { var n = nextUnreviewed(gridIdx[cur]); if (n) go(n, true); });
+$("gridsel").addEventListener("change", function () { go($("gridsel").value, false); });
+$("export").addEventListener("click", doExport);
+$("import").addEventListener("click", function () { $("importfile").click(); });
+$("importfile").addEventListener("change", function () { var f = $("importfile").files[0]; doImport(f); $("importfile").value = ""; });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") { hidePeek(); if (fixGrid) closeFix(); } });
+wireGrid();
+renderGrid();
+plan();
+renderAgree();
+render();
+window.__logoReview = { state: st, counters: counters, providers: P, lanes: lanes, cfg: CFG, comps: COMPS, grids: GRIDS,
+  prog: function () { return prog; }, current: function () { return cur; }, ahead: function () { return ahead; },
+  status: function (id) { return gridStatus(GRIDS[gridIdx[id || cur]]); }, prePickOf: function (code) { return prePickOf(byCode[code]); },
+  exportObj: function () { return exportChoices(prog.choices, "test"); }, pending: function () { return pendingTimers; } };
+if (CFG.autostart) start();
+})();
+</script>
+</body>
+</html>
