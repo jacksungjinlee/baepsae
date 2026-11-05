@@ -27,6 +27,8 @@ is aborted too and fails the test. Keys in the page are never printed.
   H  Retry and the window     both providers stop (blocked), the block lifts, Retry: checks run first, then the grid
                               loads and pre-picks as expected; a request that timed out is not tried again once Jack
                               has moved to another grid, and after the move only that grid and the next one load
+  I  icon files missing       the site has no logo-review/icons: the known-icon check fails, our icons stop as
+                              'not checked' (never counted as no logo), Confirm stays off
 Zero page errors in every scenario; screenshots go to SMOKE_OUT, else a new temporary folder.
 """
 import asyncio
@@ -269,6 +271,11 @@ class Run:
                 return
             await asyncio.sleep(0.2)
         raise AssertionError(f"timed out waiting for {what}")
+
+    async def ready_or_gaps(self, gid, timeout_s=120):
+        """Every route of the grid has ended (ready, or ended with gaps)."""
+        await self.wait(f"(s => s.settled === s.total)(window.__logoReview.status({json.dumps(gid)}))", timeout_s,
+                        f"grid {gid} settled")
 
     async def ready(self, gid, timeout_s=120):
         await self.wait(f"window.__logoReview.status({json.dumps(gid)}).ready", timeout_s, f"grid {gid} ready")
@@ -699,6 +706,28 @@ async def scenarios(html, data, keys, base, folder, out, mask):
             await run.ready("US-5", 120)
             check(not run.errors and not run.other, f"H2: page errors {run.errors} · other {run.other}", mask)
             await run.ctx.close()
+            # I: the icon files are missing from the site: our icons stop, they never count as "no logo"
+            bare = pathlib.Path(tempfile.mkdtemp(prefix="logo-review-bare-"))
+            (bare / "logo-review.html").write_text(html, encoding="utf-8")
+            base2, httpd2 = serve(bare)
+            try:
+                run = await Run("fake", Fake(data)).open(browser, base2, fast)
+                await run.wait("window.__logoReview.providers.own.stopped", 30, "our icons stopped")
+                await run.ready_or_gaps("KR-1")
+                own = collections.Counter(await run.js("Object.entries(window.__logoReview.state)"
+                                                       ".filter(([k]) => k.endsWith('|own')).map(([k, s]) => s.s)"))
+                alerts = await run.page.inner_text("#alerts")
+                status = await run.js("window.__logoReview.status('KR-1')")
+                check("Own icons stopped" in alerts and not own["miss"] and not own["hit"] and own["stopped"] > 0
+                      and status["gaps"] > 0 and not status["ready"]
+                      and await run.js("document.getElementById('confirm').disabled"),
+                      f"I: own {own}, status {status}, alerts {alerts[:200]}", mask)
+                check(not run.errors and not run.other, f"I: page errors {run.errors} · other {run.other}", mask)
+                await run.ctx.close()
+            finally:
+                httpd2.shutdown()
+            results.append(f"I icon files missing: the known-icon check failed, {own['stopped']} own icons 'not "
+                           f"checked' (none counted as no logo), Confirm off for KR-1 ({status['gaps']} gaps)")
             results.append(f"H Retry: both providers stopped, the block lifted, Retry ran the checks first, then KR-1 "
                            f"loaded with pre-picks as expected · a timed-out KR-2 logo was not tried again after the "
                            f"move to US-5 ({len(late)} later requests, all for US-5/US-6)")

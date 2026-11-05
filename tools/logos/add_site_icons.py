@@ -11,7 +11,9 @@ Writes logo-review/icons/<code>.png and the manifest logo-review/icons.json, whi
 Jack's rules (2026-11-05): the icons are site files stored once (never re-committed daily), so this is append only —
 a code already in the manifest is left exactly as it is and an existing file is never overwritten; re-run it with a
 newer collection to add the codes that are new. The same picture is stored once: a preferred share (005935 next to
-005930) or another code whose picture is pixel-for-pixel the same points to the file already there. Each new PNG is
+005930) or another code whose picture is pixel-for-pixel the same points to the file already there. When that other
+code is a different company (a group logo, or a web host's default icon), the later one is stored as "check" (never
+pre-picked) and said loudly. Each new PNG is
 re-encoded losslessly when that makes it smaller (the decoded pixels are compared, so nothing changes visually):
 Pillow, plus oxipng when it is installed (pip install pyoxipng; optional, about 20% smaller on the first collection).
 Nothing here fetches anything. Run python3 tools/logos/build_review_page.py afterwards to put them in the page.
@@ -21,6 +23,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import pathlib
 import sys
 
@@ -105,28 +108,34 @@ def entry_path(entry):
 
 
 def write_manifest(path, manifest):
+    """Written to a temporary file next to it, then swapped in: a stopped run never leaves half a manifest."""
+    path = pathlib.Path(path)
     text = json.dumps(dict(sorted(manifest.items())), ensure_ascii=False, indent=1, allow_nan=False)
-    pathlib.Path(path).write_text(text + "\n", encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def add_icons(source, out_dir=OUT_DIR, manifest_path=MANIFEST):
     """Append the collector's kept and needs-review icons. Returns (counts, log lines)."""
     source, out_dir = pathlib.Path(source), pathlib.Path(out_dir)
     with open(source / "site_icons.csv", newline="", encoding="utf-8") as f:
-        decision = {r["code"]: r["decision"] for r in csv.DictReader(f)}
+        decision = {str(r["code"]).strip().upper(): r["decision"] for r in csv.DictReader(f)}
     manifest = load_manifest(manifest_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     index = {}                                                   # pixel key -> "icons/<file>" already on disk
     for p in sorted(out_dir.glob("*.png")):
         index.setdefault(pixel_key(p.read_bytes()), f"icons/{p.name}")
     n = {"kept": 0, "check": 0, "files written": 0, "same picture as a file already there": 0,
-         "already in the manifest (left as is)": 0, "refused": 0}
+         "already in the manifest (left as is)": 0, "same picture as another company's (stored as check)": 0,
+         "refused": 0}
     log = []
-    for folder, want, check in FOLDERS:
+    for folder, want, folder_check in FOLDERS:
         files = sorted((source / folder).glob("*.png"),
-                       key=lambda p: (common_code(p.stem), p.stem != common_code(p.stem), p.stem))
+                       key=lambda p: (common_code(p.stem.upper()), p.stem.upper() != common_code(p.stem.upper()),
+                                      p.stem.upper()))
         for f in files:
-            code = f.stem.upper()
+            code, check = f.stem.upper(), folder_check
             why = ("not a KRX code" if not is_krx_code(code) else
                    f"site_icons.csv says {decision.get(code, 'nothing')!r}, not {want!r}" if decision.get(code) != want else "")
             if why:
@@ -146,6 +155,12 @@ def add_icons(source, out_dir=OUT_DIR, manifest_path=MANIFEST):
             path = index.get(key)
             if path:
                 n["same picture as a file already there"] += 1
+                owner = pathlib.Path(path).stem.upper()
+                if common_code(owner) != common_code(code) and not check:
+                    check = True                                 # another company's picture: Jack looks at it first
+                    n["same picture as another company's (stored as check)"] += 1
+                    log.append(f"  !! {code}: the same picture as {owner}'s (another company: a group logo or a web "
+                               f"host's default icon?) — stored as 'check', never pre-picked")
             else:
                 target = out_dir / f"{code}.png"
                 if target.exists():                              # a different picture under this name: never overwrite

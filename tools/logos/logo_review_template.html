@@ -478,7 +478,7 @@ ROUTES.forEach(function (rt) { lanes[rt.id] = { rt: rt, q: [], busy: false, stop
 var P = {
   bf: { id: "bf", name: "Brandfetch", gap: CFG.bfGapMs, lanes: ["bfI", "bfT", "bfD"], checks: true },
   ld: { id: "ld", name: "logo.dev", gap: CFG.ldGapMs, lanes: ["ldT", "ldD"], checks: true },
-  own: { id: "own", name: "our icons", gap: CFG.ownGapMs, lanes: ["own"], checks: false }
+  own: { id: "own", name: "Own icons", gap: CFG.ownGapMs, lanes: ["own"], checks: false }
 };
 var CANARY_SIZES = [96, 100, 104, 108, 112, 116, 120, 124, 132, 136, 140, 144, 148, 152, 156, 160];
 var SESSION = Math.floor(Math.random() * 1e6).toString(36).toUpperCase();
@@ -486,7 +486,7 @@ function resetProvider(p) {
   if (p.timer) clearTimeout(p.timer);
   p.gen = (p.gen || 0) + 1;                            // a request started before this reset is not counted
   p.next = p.next || 0; p.missN = p.missN || 0;        // the pace gap carries over a reset
-  p.rr = 0; p.stopped = null; p.pausedUntil = 0; p.ctl = []; p.ctlBusy = false; p.timer = null;
+  p.rr = 0; p.stopped = null; p.pausedUntil = 0; p.ctl = []; p.ctlBusy = !!p.ctlBusy; p.timer = null;   // busy until it ends
   p.phase = CFG.controls && p.checks ? "init" : "run"; p.initLeft = 0; p.canaryOk = false; p.loads = p.loads || 0;
   p.lastCheck = p.loads; p.lastBad = p.loads; p.sinceCheck = []; p.canaryFails = 0; p.rot = p.rot || 0; p.badN = p.badN || 0;
   p.checkNotes = [];
@@ -523,8 +523,8 @@ function pump(p) {
 }
 function pumpAll() { pump(P.bf); pump(P.ld); pump(P.own); }
 function jobUrl(p, job) {
-  if (job.ctl) return logoUrl(p.id, job.r, job.ident, KEYS[p.id], job.v, job.size);
   if (p.id === "own") return job.ident;
+  if (job.ctl) return logoUrl(p.id, job.r, job.ident, KEYS[p.id], job.v, job.size);
   return logoUrl(p.id, job.rt.r, job.ident, KEYS[p.id], job.v);
 }
 function load(p, job) {
@@ -539,6 +539,7 @@ function load(p, job) {
     clearTimeout(timer);
     if (timedOut) img.src = "";
     if (gen !== p.gen) {                                 // started before Retry: not counted; a route job loads again
+      if (job.ctl) p.ctlBusy = false;
       if (!job.ctl) {
         lanes[job.rt.id].busy = false;
         var s0 = st[key(job.co.c, job.rt.id)];
@@ -641,6 +642,12 @@ function canaryJob(p, kind, r, ident, init, extra) {
 }
 function nextKnown(p) { return META.rotate.length ? META.rotate[(p.rot + p.badN) % META.rotate.length] : META.good.ticker; }
 function addInit(p, job) { p.initLeft++; p.ctl.push(job); }
+// Our own icons are files of this site: one known icon must load first, else they all stop (a gap, not "no logo").
+function initOwn(p) {
+  if (!CFG.controls || !META.ownCheck) return;
+  p.phase = "init";
+  p.ctl.push({ ctl: "owncheck", ident: META.ownCheck, init: false });
+}
 function initChecks(p) {
   p.phase = "init";
   // First: does this provider let the page read its images (CORS)? That decides how every image loads.
@@ -708,6 +715,13 @@ function ctlDone(p, job, ok, timedOut, img, t0, cors) {
   p.ctlBusy = false;
   if (p.stopped) return;
   var label = p.name + " " + job.r + " " + job.ident;
+  if (job.ctl === "owncheck") {
+    if (ok) p.phase = "run";
+    else stopProvider(p, "a known icon of ours (" + job.ident + ") did not load: the icon files may be missing from the site.");
+    plan();
+    scheduleRender();
+    return;
+  }
   if (job.ctl === "audit") {
     if (ok && p.cors) corsLosesLogos(p, job);
   } else if (job.ctl === "cors") {
@@ -871,6 +885,7 @@ function start() {
   if (!started) {
     started = true;
     if (CFG.controls) { initChecks(P.bf); initChecks(P.ld); }
+    initOwn(P.own);
     plan();
   }
   running = true;
@@ -885,15 +900,16 @@ function pause() {
   scheduleRender();
 }
 function retry() {
-  ["bf", "ld"].forEach(function (id) {
+  ["bf", "ld", "own"].forEach(function (id) {
     var p = P[id];
     if (!p.stopped) return;
     var keepCors = p.cors;
     resetProvider(p);
     p.cors = keepCors;
-    p.auditLeft = CFG.auditMisses;
+    p.auditLeft = p.checks ? CFG.auditMisses : 0;
     p.lanes.forEach(function (lid) { lanes[lid].stopped = null; });
-    if (CFG.controls) initChecks(p);
+    if (id === "own") initOwn(p);
+    else if (CFG.controls) initChecks(p);
     alertMsg("info", p.name + ": trying again (checks first).");
   });
   [cur, ahead].forEach(function (gid) {

@@ -135,6 +135,7 @@ def test_icons_manifest_keeps_valid_entries_only(tmp_path):
     assert "icx" not in by["005930"] and "100005" not in by
     assert by["000660"]["ic"] == "" and by["005380"]["ic"] == "" and by["100020"]["ic"] == "" and by["100030"]["ic"] == ""
     assert pdata["meta"]["icons"] == 3 and pdata["meta"]["iconsCheck"] == 1
+    assert pdata["meta"]["ownCheck"] == "logo-review/icons/005930.png"          # the largest company's kept icon
     head = log[next(i for i, line in enumerate(log) if "website icons" in line)]
     assert "3 of 9" in head and "(2 kept, 1 to check)" in head and "preferred shares (same file as their issuer, not shown) 1" in head
     assert sum("left out" in line for line in log if "icon for" in line) == 5
@@ -498,9 +499,19 @@ def test_add_site_icons_append_only_one_file_per_picture(tmp_path):
     n2, log2 = ai.add_icons(src, out, man)
     m2 = json.loads(man.read_text(encoding="utf-8"))
     assert {k: v for k, v in m2.items() if k in m} == m
-    assert m2["000020"] == "icons/123450.png" and m2["000040"] == "icons/000040.png"
+    assert m2["000020"] == {"path": "icons/123450.png", "check": True}       # another company's picture: check
+    assert any("000020" in line and "123450" in line and "another company" in line for line in log2)
+    assert m2["000040"] == "icons/000040.png"
     assert all((out / k).read_bytes() == v for k, v in before.items())
     assert n2["already in the manifest (left as is)"] == 5 and n2["files written"] == 1
+
+
+def test_add_site_icons_codes_are_matched_in_capitals(tmp_path):
+    import add_site_icons as ai
+    src = collection(tmp_path, {"0126z0": png_bytes((0, 90, 200, 255))}, {}, decisions={"0126z0": "kept"})
+    n, log = ai.add_icons(src, tmp_path / "icons", tmp_path / "icons.json")
+    assert json.loads((tmp_path / "icons.json").read_text()) == {"0126Z0": "icons/0126Z0.png"} and n["refused"] == 0
+    assert not list(tmp_path.glob("*.tmp"))                                   # the manifest was swapped in whole
 
 
 def test_add_site_icons_never_overwrites_a_file(tmp_path):

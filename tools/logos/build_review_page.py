@@ -235,9 +235,11 @@ def build(data, listing, homepages, keys, icons_manifest=None, built_at=None, te
     log += ilog
     grids, zones = make_grids(rows), make_zones(rows)
     rotate = [r["ticker"] for r in rows if r["side"] == "us" and not r["nocap"]][:ROTATE]
+    # a kept icon of ours the page loads first: if it fails, the icon files are missing and our icons stop (a gap)
+    own_check = next((icons[r["code"]][0] for r in rows if r["code"] in icons and not icons[r["code"]][1]), "")
     meta = {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf"),
             "builtAt": built_at or now_kst().strftime("%Y-%m-%d %H:%M KST"), "grid": GRID,
-            "good": lsrc.GOOD, "bad": lsrc.BAD, "rotate": rotate,
+            "good": lsrc.GOOD, "bad": lsrc.BAD, "rotate": rotate, "ownCheck": own_check,
             "counts": {side: sum(1 for r in rows if r["side"] == side) for side in ("kr", "us")},
             "icons": len(icons), "iconsCheck": sum(1 for _, c in icons.values() if c)}
     pdata = page_data(rows, grids, zones, icons, meta)
