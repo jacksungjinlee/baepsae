@@ -105,24 +105,37 @@ export const KR_DIV_TREND = false;
 // report's own yield or more is hidden too. A 2:1 split after the report doubles dps ÷ close, which the 1/3x-3x check lets
 // through; the data has no report-year share count to tell a split from a price fall (fetch_data.py eps is today's).
 export const SPLIT_GUARD = 1.8;
-export function krYieldToday(s) {
-  const d = num(s && s.dps), dy = num(s && s.dy);
-  if (d != null && d > 0 && dy == null) return null;
-  const y = krDivYield(s);
-  if (y == null || y > DY_MAX) return null;
-  return d > 0 && dy > 0 && y / dy >= SPLIT_GUARD - EPS ? null : y;
+// The one predicate (yield, 100만원 line, 배당성향, the console count): a payer whose dividend per share may predate a
+// split. true when dps > 0 and the report gives no yield to check against, or today's yield / the report's >= 1.8.
+export function splitGuarded(s) {
+  const d = num(s && s.dps), dy = num(s && s.dy), y = krDivYield(s);
+  if (!(d > 0)) return false;
+  if (dy == null) return true;
+  return dy > 0 && y != null && y / dy >= SPLIT_GUARD - EPS;
 }
-// The guard's count for the console (no silent hiding): Korean payers whose dps passes the 1/3x-3x check but whose
-// today's yield is 1.8x their report's or more. -> { hidden, examples: [{ t, nk, ratio }] } (largest ratio first, 5).
-export function splitGuardCount(stocks) {
+export function krYieldToday(s) {
+  if (splitGuarded(s)) return null;
+  const y = krDivYield(s);
+  return y != null && y <= DY_MAX ? y : null;
+}
+// The guard's count for the console (no silent hiding): Korean payers with a report year whose dps passes the 1/3x-3x
+// check and the 30% cap but which the 1.8x guard hides. -> { hidden, of, examples: [{ t, ratio }] } (largest first, 5).
+// of = Korean payers with a report year that pass the 1/3x-3x check and the cap (the ones that would show a yield).
+export function splitGuardCount(stocks, coByT) {
   const hit = [];
+  let of = 0;
   for (const s of stocks || []) {
-    if (!s || s.cls !== "kr" || !dpsAgrees(s)) continue;
-    const d = num(s.dps), dy = num(s.dy), y = krDivYield(s);
-    if (d > 0 && dy > 0 && y != null && y <= DY_MAX && y / dy >= SPLIT_GUARD - EPS) hit.push({ t: s.t, nk: s.nk, ratio: Math.round((y / dy) * 100) / 100 });
+    if (!s || s.cls !== "kr" || !(num(s.dps) > 0) || !dpsAgrees(s)) continue;
+    const co = coByT ? coByT.get(s.t) : null;
+    if ((num(s.fy) ?? (co ? num(co.fy) : null)) == null) continue;
+    const y = krDivYield(s);
+    if (y == null || y > DY_MAX) continue;
+    of += 1;
+    const dy = num(s.dy);
+    if (splitGuarded(s)) hit.push({ t: s.t, ratio: dy > 0 ? Math.round((y / dy) * 100) / 100 : null });
   }
-  hit.sort((a, b) => b.ratio - a.ratio);
-  return { hidden: hit.length, examples: hit.slice(0, 5) };
+  hit.sort((a, b) => (b.ratio ?? 0) - (a.ratio ?? 0));
+  return { hidden: hit.length, of, examples: hit.slice(0, 5) };
 }
 const d3Of = (s, co) => (s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null);
 
@@ -194,8 +207,7 @@ export function perMillionKr(s) {
 // outside 0-100% is not shown (out: the value, for the console).
 export function payout(s, co) {
   if (!s || s.cls !== "kr" || !co || !dpsAgrees(s)) return null;
-  const dy0 = num(s.dy), y0 = krDivYield(s);
-  if (dy0 > 0 && y0 != null && y0 / dy0 >= SPLIT_GUARD - EPS) return null;   // split guard: today's share count may be split
+  if (splitGuarded(s)) return null;               // split guard: today's share count may be after a split
   const d = num(s.dps), ni = Array.isArray(co.ni) ? num(co.ni[0]) : null;
   const sh = num(s.shr) || (num(co.shm) ? co.shm * 1e6 : null);
   const fy = num(co.fy) ?? num(s.fy);

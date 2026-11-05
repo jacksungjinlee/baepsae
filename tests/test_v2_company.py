@@ -332,7 +332,8 @@ def test_interim_split_guard_hides_a_yield_at_1_8x_the_reports():
         r18: [K.krYieldToday(mk(1800)), K.perMillionKr(mk(1800)), K.divKr(mk(1800), null)],
         split: [K.krYieldToday(mk(1000, 25000)), K.perMillionKr(mk(1000, 25000)), K.divKr(mk(1000, 25000), null), K.payout(mk(1000, 25000), { ni: [100, 90, 80], shm: 10, fy: 2025 })],
         cut: [K.krYieldToday(mk(500)), K.divKr(mk(500), null).rule],
-        us: [K.divUs({ cls: 'us', dy: 3.6 }), K.perMillionView(3.6)],
+        us: [K.divUs({ cls: 'us', dy: 3.6 }), K.perMillionView(3.6), K.divUs({ cls: 'us', dy: 1.0, dps: 10, price: 100 })],
+        noDy: [K.splitGuarded({ ...mk(1000), dy: null }), K.payout({ ...mk(1000), dy: null }, { ni: [100, 90, 80], shm: 10, fy: 2025 })],
         guard: K.SPLIT_GUARD,
         count: K.splitGuardCount([mk(1790), mk(1800), mk(1000, 25000), mk(5000, 10000), { ...mk(1800), cls: 'us' }, mk(500)]) };""", B=B)
     assert got["guard"] == 1.8
@@ -343,9 +344,14 @@ def test_interim_split_guard_hides_a_yield_at_1_8x_the_reports():
     assert sp[0] is None and sp[1] is None and sp[2]["yieldPct"] is None and sp[3] is None   # 수익률 · 100만원 · 배당성향(오늘 주식 수) 모두 빼요
     assert abs(got["cut"][0] - 1.0) < 1e-9 and got["cut"][1] == "pays"     # 진짜 삭감(주식 수 그대로, 수익률이 낮아짐)은 그대로 보여요
     assert got["us"][0] == {"rule": "pays", "yieldPct": 3.6} and got["us"][1]["won"] == 36000                           # 미국은 그대로
-    assert got["count"]["hidden"] == 2 and [x["ratio"] for x in got["count"]["examples"]] == [2.0, 1.8]                  # 3배 넘는 건 원래 검사가 빼요
+    assert got["us"][2] == {"rule": "pays", "yieldPct": 1.0}                 # 미국 종목에 주당 배당 · 가격이 있어도 (10%, 10배) 야후 수익률 그대로
+    assert got["noDy"][0] is True and got["noDy"][1] is None                 # 보고서 수익률이 없으면 맞춰 볼 수 없어 배당성향도 빼요
+    assert got["count"]["hidden"] == 2 and got["count"]["of"] == 4 and [x["ratio"] for x in got["count"]["examples"]] == [2.0, 1.8]   # 3배 넘는 건 원래 검사가 빼요
     page = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
-    assert "logSplitGuard(load.data.stocks)" in page and "console.warn(`[v2] dividend yield and 100-man-won line hidden for ${g.hidden} Korean stocks" in page
+    assert "console.warn(`[v2] dividend split guard: yield, 100-man-won line and payout hidden for ${g.hidden} / ${g.of} Korean payers" in page
+    assert "useEffect(() => { logSplitGuard(load); }, [load]);" in open(os.path.join(ROOT, "src", "v2", "app.jsx"), encoding="utf-8").read()
+    pick = open(os.path.join(ROOT, "src", "v2", "pick.jsx"), encoding="utf-8").read()
+    assert 'const y = s.cls === "kr" ? krYieldToday(s) : num(s.dy);' in pick       # 고르기 화면의 배당수익률도 같은 안전장치
 
 
 def test_hundred_man_won_never_shows_zero_for_a_payer():

@@ -21,7 +21,7 @@ import { Build, newBuilder } from "./build.jsx";
 import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
-import { Company } from "./company.jsx";
+import { Company, logSplitGuard } from "./company.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
@@ -76,6 +76,9 @@ export function App({ source }) {
     if (store.writable) askPersist();
     return () => { live = false; };
   }, []);
+
+  // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
+  useEffect(() => { logSplitGuard(load); }, [load]);
 
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
   useEffect(() => {

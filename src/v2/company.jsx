@@ -110,17 +110,20 @@ function Tile({ v, onOpen }) {
     : <div data-ui-v2="co-tile" data-topic={v.topic} data-rule={v.rule} {...data} style={{ ...style, cursor: "default" }}>{body}</div>;
 }
 
-// The interim split guard hides some Korean yields (company.js SPLIT_GUARD): say how many, once per data load.
+// The interim split guard hides some Korean yields (company.js SPLIT_GUARD): say how many, once per data load (app.jsx
+// calls this when the data arrives, so the count is in the console whichever screen opens first).
 const guardLogged = new WeakSet();
-function logSplitGuard(stocks) {
+export function logSplitGuard(load) {
+  const stocks = load && load.status === "ok" && load.data ? load.data.stocks : null;
   if (!stocks || guardLogged.has(stocks)) return;
   guardLogged.add(stocks);
-  const g = splitGuardCount(stocks);
-  if (g.hidden) console.warn(`[v2] dividend yield and 100-man-won line hidden for ${g.hidden} Korean stocks: today's yield is ${SPLIT_GUARD}x their report's or more (possible split after the report; until split-adjusted dividends). e.g. ` + g.examples.map((x) => `${x.t} ${x.ratio}x`).join(", "));
+  const g = splitGuardCount(stocks, load.coByT);
+  if (g.hidden) console.warn(`[v2] dividend split guard: yield, 100-man-won line and payout hidden for ${g.hidden} / ${g.of} Korean payers `
+    + `(today's yield ${SPLIT_GUARD}x the report's or more, or no report yield to check; until split-adjusted dividends). Largest: `
+    + g.examples.map((x) => `${x.t} ${x.ratio == null ? "no report yield" : x.ratio + "x"}`).join(", "));
 }
 
 function Tiles({ load, s, onTab, tabsOn }) {
-  useEffect(() => { logSplitGuard(load.data.stocks); }, [load]);
   const views = useMemo(() => tileViews(load, s), [load, s]);
   if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
   const md = priceMd(load, s);
