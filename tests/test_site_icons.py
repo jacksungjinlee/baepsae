@@ -281,6 +281,17 @@ def test_a_robots_redirect_is_followed_and_kept_for_the_host_it_lands_on():
                               "https://acme.co.kr/", "https://www.acme.co.kr/"]   # no second robots.txt for www
 
 
+def test_a_default_port_is_the_same_host_for_robots_and_the_gate():
+    assert si.host_key("https://WWW.Acme.co.kr:443/x") == si.host_key("https://www.acme.co.kr/") == "www.acme.co.kr"
+    assert si.host_key("http://acme.co.kr:80/") == "acme.co.kr" and si.host_key("https://acme.co.kr:8443/") == \
+        "acme.co.kr:8443"
+    rec, web = collect({"https://www.acme.co.kr/robots.txt": OK_ROBOTS,
+                        "https://www.acme.co.kr/": (200, HTML, html_page(
+                            '<link rel="apple-touch-icon" href="https://www.acme.co.kr:443/a.png">'))})
+    assert web.urls().count("https://www.acme.co.kr/robots.txt") == 1
+    assert "https://www.acme.co.kr:443/robots.txt" not in web.urls()
+
+
 # ── politeness: budget, retries, TLS, proxy, http fallback, per-host and overall limits ─────────────────────────────
 
 def test_at_most_six_requests_per_company_with_robots_redirects_and_retries_counted():

@@ -135,6 +135,19 @@ def host_of(url):
         return ""
 
 
+def host_key(url, scheme=None):
+    """The host a URL talks to, for robots.txt and the per-host gate: lower case, no user info, no trailing dot,
+    the port only when it is not the scheme's default (https://x.kr:443/ and https://x.kr/ are one host)."""
+    p = urlsplit(url) if isinstance(url, str) else url
+    h = (p.hostname or "").lower().rstrip(".")
+    try:
+        port = p.port
+    except ValueError:
+        port = None
+    default = {"https": 443, "http": 80}.get(scheme or p.scheme)
+    return f"{h}:{port}" if port and port != default else h
+
+
 def within(host, domain):
     host, domain = str(host or "").lower(), str(domain or "").lower()
     return bool(domain) and (host == domain or host.endswith("." + domain))
@@ -294,7 +307,9 @@ class RealTransport:
 
     def __init__(self):
         import requests
+        from urllib3.util import Timeout
         self.rq = requests
+        self.timeout = Timeout(connect=TIMEOUT_S, read=TIMEOUT_S, total=TIMEOUT_S)    # 15 s for the whole answer
 
     def new_session(self):
         s = self.rq.Session()
@@ -305,8 +320,8 @@ class RealTransport:
         rq = self.rq
         t0 = time.monotonic()
         try:
-            r = session.get(url, headers=headers, timeout=(TIMEOUT_S, TIMEOUT_S), allow_redirects=False,
-                            stream=True, verify=True)
+            r = session.get(url, headers=headers, timeout=self.timeout, allow_redirects=False, stream=True,
+                            verify=True)
             body, truncated = bytearray(), False
             try:
                 for chunk in r.iter_content(16384):
@@ -411,7 +426,7 @@ class CompanyNet:
         if why:
             self.trail.append((url, f"refused: {why}"))
             raise Refused(why)
-        host = (urlsplit(url).netloc or "").lower()
+        host = host_key(url)
         headers = {"User-Agent": UA, "Accept": accept, "Accept-Language": "ko,en;q=0.8"}
         tries = 0
         while True:
@@ -437,14 +452,14 @@ class CompanyNet:
     def robots(self, scheme, hostport, retry=True):
         """Robots for a host (cached for the run, by host; one fetch per host even across workers). robots.txt
         redirects are followed (up to 5, counted); a network or TLS failure raises (the host is unreachable)."""
-        key = hostport.lower()
+        key = host_key(f"{scheme}://{hostport}/")
         with self.sh.meta:
             lock = self.sh.robots_locks[key]
         with lock:
             got = self.sh.robots.get(key)
             if got is not None:
                 return got
-            url = f"{scheme}://{hostport}/robots.txt"
+            url = f"{scheme}://{key}/robots.txt"
             for _ in range(MAX_REDIRECTS + 1):
                 r = self._send(url, ACCEPT_ROBOTS, MAX_ROBOTS, retry=retry)
                 loc = r.headers.get("location")
@@ -459,7 +474,7 @@ class CompanyNet:
             if rb.delay:
                 self.sh.gate.set_delay(key, rb.delay)
             final = urlsplit(url)
-            fkey = (final.netloc or "").lower()
+            fkey = host_key(final)
             if fkey and fkey != key and final.path == "/robots.txt" and fkey not in self.sh.robots:
                 self.sh.robots[fkey] = rb                     # it is that host's own file: no second fetch
                 if rb.delay:
@@ -474,10 +489,10 @@ class CompanyNet:
                 self.trail.append((url, f"refused: {why}"))
                 raise Refused(why)
             p = urlsplit(url)
-            rb = self.robots(p.scheme, p.netloc, retry=retry)
+            rb = self.robots(p.scheme, host_key(p), retry=retry)
             if not rb.allows(path_of(url)):
                 self.trail.append((url, "robots: disallowed"))
-                raise RobotsDenied(f"robots.txt disallows {path_of(url)[:80]} on {p.netloc}")
+                raise RobotsDenied(f"robots.txt disallows {path_of(url)[:80]} on {host_key(p)}")
             r = self._send(url, accept, max_bytes, stop_early, retry=retry)
             loc = r.headers.get("location")
             if r.status in (301, 302, 303, 307, 308) and loc:
@@ -1108,10 +1123,10 @@ def _collect(rec, item, net, svg_render, raw_dir):
             return
     rec["page_status"], rec["page_url"] = page.status, page.final_url
     ph = urlsplit(page.final_url)
-    if ph.netloc.lower() != host:                            # redirected to another host: "/" must be allowed there too
+    if host_key(ph) != host_key(f"{scheme}://{host}/"):     # redirected to another host: "/" must be allowed there too
         try:
-            if not net.robots(ph.scheme, ph.netloc).allows("/"):
-                rec["outcome"], rec["reason"] = "robots_blocked", f"robots.txt disallows / on {ph.netloc}"
+            if not net.robots(ph.scheme, host_key(ph)).allows("/"):
+                rec["outcome"], rec["reason"] = "robots_blocked", f"robots.txt disallows / on {host_key(ph)}"
                 return
         except BudgetUsed:
             raise
@@ -1396,7 +1411,11 @@ def decide(recs, raw_dir):
             d["decision"] = r["outcome"] if r["outcome"] not in ("icon", "rejected", "") else "no_icon"
             d["reason"] = r.get("reason") or _no_icon_reason(cands)
             continue
-        img = Image.open(raw_dir / d["raw"]).convert("RGBA")
+        try:
+            img = Image.open(raw_dir / d["raw"]).convert("RGBA")
+        except (OSError, ValueError) as e:                  # raw/ cleaned or damaged: say so, never guess
+            d["decision"], d["reason"] = "no_icon", f"decoded copy missing in raw/ ({type(e).__name__}); run again"
+            continue
         if min(img.size) < MIN_SIDE:
             d["decision"], d["reason"] = "too_small", best.get("note") or f"{best.get('original_size')} < {MIN_SIDE}"
             continue
