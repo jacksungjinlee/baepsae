@@ -7,7 +7,7 @@ import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
-import { loadJson, krGrowthBasis } from "./data.js";
+import { loadJson, krGrowthBasis, krGrowthDcfLine } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1480,6 +1480,8 @@ export function DcfCard({ c, sharesM, setExplain }) {
   const val = dcfPerShare({ ni0: N, sharesM: S, g1, fade, disc, term });
   const gap = val && c.price ? (val / c.price - 1) * 100 : null;
   const rev = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
+  // 리버스 DCF 옆의 매출 성장 문장 (Jack, 2026-11-05: 줄표 없이, 부호 없는 숫자로 늘었어요 · 줄었어요). 기준을 모르면 빼요.
+  const growthLine = krGrowthDcfLine(c.g3, c.rev);
 
   // 민감도: 할인율 × 영구성장률
   const discs = [disc - 2, disc - 1, disc, disc + 1, disc + 2].filter((d) => d >= 5);
@@ -1549,7 +1551,7 @@ export function DcfCard({ c, sharesM, setExplain }) {
               <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5 }}>
                 {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
                   : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
-                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요. {c.g3 != null && krGrowthBasis(c.g3, c.rev) ? <>이 회사의 {krGrowthBasis(c.g3, c.rev) === "y2" ? "매출성장(최근 2년 연평균)" : "매출성장(최근 1년)"}은 {pc(c.g3)}였어요 — 그 간극이 그럴듯한지가 핵심 질문이에요.</> : null}</>}
+                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요.{growthLine ? " " + growthLine : null}</>}
               </div>
             </div>
           )}
