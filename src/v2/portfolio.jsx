@@ -14,7 +14,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, Mascot, IMG, tx } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
 import { parseImport, importProblem, mergeStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
@@ -22,6 +22,7 @@ import { deckMoney } from "./track.js";
 import { DeckSummary, ByStockHead, WeightLine, AddMoney, MissingNote, PausedNote, plainEdges } from "./tracking.jsx";
 import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
+import { isCompany } from "./stocklist.js";
 
 function avgCost(purchases, t) {
   const ps = purchases.filter((p) => p.t === t && p.qty > 0);
@@ -41,6 +42,7 @@ function RemoveButton({ onClick }) {
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 
 export function Portfolio({ load, store, setStoreData, pad, go }) {
+  const { openStock } = useNav();
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
   const decks = store.data.decks;
@@ -120,7 +122,8 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
               const x = de && de.ok ? de.holdings.find((y) => y.t === t) || null : null;
               const ret = m.ok && m.per[t] && m.per[t].ret != null ? m.per[t].ret * 100 : null;
               const gone = !!(x && x.absent);
-              return <HoldingRow key={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
+              return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
+                onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
                 extra={!gone && m.ok && x ? <WeightLine x={x} /> : null} action={gone ? <RemoveButton onClick={() => onRemove(d.id, t)} /> : null} />;
             })}

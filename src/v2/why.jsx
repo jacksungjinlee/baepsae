@@ -16,6 +16,7 @@ import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/compo
 import { hasGroup } from "./engine.js";
 import { C, fill, mdText, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, tx } from "./ui.jsx";
+import { CoMark } from "./logo.jsx";
 import { StatusLines, HoldingRules } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { peerGroup, keptCount } from "./track.js";
@@ -130,7 +131,10 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={backLabel()} />
-      <ScreenTitle>{fill(C.why.title, { name: x.nk })}</ScreenTitle>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
+        <CoMark t={x.t} name={x.nk} size={SPACE(10)} />
+        <div style={{ flex: 1, minWidth: 0 }}><ScreenTitle>{fill(C.why.title, { name: x.nk })}</ScreenTitle></div>
+      </div>
       <div data-ui-v2="why-head" style={{ marginTop: SPACE(1) }}>
         <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
           {hasGroup(s) && s.indName ? <><span>{s.indName}</span>{" · "}</> : null}<span>{fill(C.why.close, { md })}</span>

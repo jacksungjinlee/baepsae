@@ -13,8 +13,9 @@ export const tx = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize:
 const tap = { WebkitTapHighlightColor: "transparent", cursor: "pointer", fontFamily: FONT, padding: 0 };
 export const TAB_H = TOUCH + SPACE(3);
 
-// The current app (예전 뱁새, src/v2/routes.js). The ☰ menu's 예전 뱁새 보기, 용어 사전 and 데이터 출처, 시장's two buttons
-// and a Korean company tapped in 종목 open it (v19.0c deep links: routes.js OLD_LINKS). Part F: the main address shows 2.0.
+// The current app (예전 뱁새, src/v2/routes.js). The ☰ menu's 예전 뱁새 보기, 용어 사전 and 데이터 출처 and 시장's two buttons
+// open it (v19.0c deep links: routes.js OLD_LINKS). Part F: the main address shows 2.0. v19.1a: companies open the 2.0
+// company page instead of the old app's 기업분석.
 export { OLD_APP } from "./routes.js";
 
 // Which page this is: the live app or the preview with fictional example data (app-preview.html).
@@ -22,7 +23,9 @@ export const ModeContext = createContext({ preview: false });
 export const useMode = () => useContext(ModeContext);
 
 // The ☰ button's action (v19.0c, src/v2/app.jsx): openMenu, and whether the menu is open. Without it no ☰ is drawn.
-export const NavContext = createContext({ openMenu: null, menuOpen: false });
+// openStock(t) (v19.1a): open the 2.0 company page of a stock (null outside the app shell: rows are then not tappable).
+export const NavContext = createContext({ openMenu: null, menuOpen: false, openStock: null });
+export const useNav = () => useContext(NavContext);
 
 // PC layout (v19.0d, Layout C PC step 1). From 1024 px wide: a 240 px left menu (nav.jsx SideMenu) with the four tabs,
 // the menu links and the data-date box, and a top bar with the search field (nav.jsx TopBar); no bottom tab bar, no ☰.

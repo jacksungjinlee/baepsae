@@ -191,9 +191,14 @@ def test_preview_is_linked_from_nowhere():
 # react.dev 오류 안내 주소와 w3.org(SVG namespace 이름)는 문자열일 뿐 요청하지 않아요.
 # LinkedIn(v19.0 소개 페이지, about.md): Jack 의 프로필 주소 하나만, 누르면 새 탭으로 여는 링크(href)로만 써요 — 아래에서 확인.
 LINKEDIN = "https://www.linkedin.com/in/jacksungjinlee/"
+# DART (v19.1a 공시 탭, Jack 2026-11-05 — 링크만 허용): 공시 한 줄은 그 공시의 DART 원문으로 가는 링크(<a href>, 새 탭 · noopener)일 수
+# 있어요. 주소는 src/v2/routes.js 의 DART_VIEWER 하나뿐이고, 정확한 접수번호(14자리)를 붙여서만 써요. DART 로 가는 fetch · 그림 ·
+# 스크립트는 여전히 걸려요 (아래 outside_problems · test_outside_check_catches_each_problem).
+DART_HOST = "https://dart.fss.or.kr"
+DART_VIEWER = DART_HOST + "/dsaf001/main.do?rcpNo="
 OUTSIDE_ALLOWED = {"app.html": {"https://react.dev", "http://www.w3.org", "https://gc.zgo.at", "https://jacksungjinlee.github.io",
-                                "https://www.linkedin.com"},
-                   "app-preview.html": {"https://react.dev", "http://www.w3.org", "https://www.linkedin.com"}}
+                                "https://www.linkedin.com", DART_HOST},
+                   "app-preview.html": {"https://react.dev", "http://www.w3.org", "https://www.linkedin.com", DART_HOST}}
 
 
 def outside_problems(name, html):
@@ -206,6 +211,10 @@ def outside_problems(name, html):
         bad.append(("urls", sorted(extra)))
     if re.findall(r"https?://(?:www\.)?linkedin\.com[^\s\"'`]*", html) != [LINKEDIN]:          # 그 주소 하나, 한 번만
         bad.append("linkedin")
+    # DART: 원문 보기 주소 앞부분 하나, 한 번만 (fetch · img · script · 다른 DART 주소 · //로 시작하는 주소가 하나라도 더 있으면 걸려요)
+    if (re.findall(r"(?:https?:)?//(?:[\w-]+\.)*dart\.fss\.or\.kr[^\s\"'`]*", html) != [DART_VIEWER]
+            or html.count("dart.fss.or.kr") != 1):
+        bad.append("dart")
     if "googleapis" in html or "jsdelivr" in html:
         bad.append("cdn")
     return bad
@@ -223,8 +232,31 @@ def test_pages_never_load_fixtures_or_other_sites():
     for f in v2_files():
         assert "linkedin.com" not in read(f), f
     assert "goatcounter.com" not in built("app-preview.html")
+    # DART (Jack, 2026-11-05: 링크만): 주소는 routes.js 의 DART_VIEWER 한 곳, 정확한 접수번호만 붙이는 dartFilingUrl 로만 쓰고,
+    # 그 결과는 공시 줄의 <a href> (새 탭 · noopener) 한 곳에만 들어가요. fetch · 그림 · 스크립트로는 쓰지 않아요.
+    routes = read("src/v2/routes.js")
+    assert routes.count("dart.fss.or.kr") == 1 and f'export const DART_VIEWER = "{DART_VIEWER}";' in routes
+    assert "export const RCEPT_RX = /^\\d{14}$/;" in routes
+    assert 'export const dartFilingUrl = (rc) => (typeof rc === "string" && RCEPT_RX.test(rc) ? DART_VIEWER + rc : null);' in routes
+    assert routes.count("DART_VIEWER") == 2                                          # 정의 하나 + dartFilingUrl 하나
+    cotabs = read("src/v2/cotabs.jsx")
+    assert cotabs.count("dartFilingUrl(") == 1 and "const href = dartFilingUrl(x.rc);" in cotabs
+    assert cotabs.count("href={href}") == 1 and 'href={href} target="_blank" rel="noopener"' in cotabs
+    for f in v2_files():
+        body = read(f)
+        if not f.endswith("routes.js"):
+            assert "dart.fss" not in body and "DART_VIEWER" not in body, f
+        if not f.endswith(("routes.js", "cotabs.jsx")):
+            assert "dartFilingUrl" not in body, f
+    disc_tab = cotabs.split("export function DiscTab(", 1)[1].split("\nexport function ", 1)[0]          # 공시 탭: 링크 말고는 바깥과 닿지 않아요
+    assert "dartFilingUrl(x.rc)" in disc_tab
+    for bad in ("fetch(", "src=", "<img", "<script", "<iframe", "new Image", "XMLHttpRequest", "sendBeacon", "window.open", "location"):
+        assert bad not in disc_tab, bad
     src = read("src/v2/load.js")
-    assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json"}
+    # v19.1a: disc.json too (the company page's 공시 tab, same site, fetched only when a company page opens: loadDisc)
+    assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json", "disc.json"}
+    assert src.count('"./disc.json"') == 1 and "export function loadDisc()" in src
+    assert "./disc.json" in built("app.html") and "./disc.json" not in built("app-preview.html")   # 미리 보기는 아무것도 받지 않아요
 
 
 def test_outside_check_catches_each_problem():
@@ -237,6 +269,17 @@ def test_outside_check_catches_each_problem():
                  (html + f'<a href="{LINKEDIN}">', "linkedin")]
         if name == "app-preview.html":
             cases.append((html + '<script src="https://gc.zgo.at/count.js">', "urls"))       # 미리 보기에는 통계도 없어요
+        # DART 는 링크만 (Jack, 2026-11-05): DART 에서 받아 오기 · 그림 · 스크립트 · 다른 DART 주소는 걸려요
+        cases += [(html + "fetch('https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261029000101')", "dart"),
+                  (html + '<img src="https://dart.fss.or.kr/images/logo.png">', "dart"),
+                  (html + '<img src="//dart.fss.or.kr/images/logo.png">', "dart"),
+                  (html + '<script src="https://dart.fss.or.kr/js/x.js">', "dart"),
+                  (html + '<iframe src="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261029000101">', "dart"),
+                  (html + "fetch('https://opendart.fss.or.kr/api/list.json')", "urls"),
+                  (html + '<a href="https://dart.fss.or.kr/dsab007/main.do?textCrpNm=x" target="_blank" rel="noopener">', "dart")]
+        # DART 가 아닌 다른 사이트로 가는 링크는 여전히 걸려요
+        cases += [(html + '<a href="https://example.com/filing" target="_blank" rel="noopener">', "urls"),
+                  (html + '<a href="https://finance.naver.com/item/main.naver?code=005930">', "urls")]
         for mutated, want in cases:
             got = [b if isinstance(b, str) else b[0] for b in outside_problems(name, mutated)]
             assert want in got, (name, want, got)

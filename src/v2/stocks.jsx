@@ -1,7 +1,7 @@
 // 종목 tab (v19.0c, board CStock): search, 최근 본 종목, 내 포트폴리오 종목 and 거래대금 상위 종목 (Korean and US lists).
-// Tapping a Korean company opens the old app's 기업분석 on it (./baepsae.html#corp=CODE, read once by src/shell.jsx) until
-// the 2.0 company page ships; tapping a US stock or a fund says "기업분석은 한국 상장 기업만 볼 수 있어요." under its row.
-// The preview page (fictional data) never links into the old app: its rows only show that line for US stocks.
+// v19.1a: tapping a Korean or US company opens its 2.0 company page (#stocks/<code>, company.jsx), on the live page and
+// the preview alike; tapping a fund (not a company) shows a line under its row (co.fundNote once approved; until then the
+// line it showed before, stocks.krOnly), and nothing else. Nothing here links into the old app any more. Each row carries the company mark (logo.jsx).
 // No 뱁이 here (the lists show today's changes). StockRow and PopularLists are reused on 홈.
 // PC (v19.0d): the search field is the top bar's (nav.jsx TopBar, its words come in as q), so this screen shows no field
 // of its own; the results, lists and taps are the same. PopularLists on PC puts 한국 and 미국 side by side.
@@ -9,25 +9,24 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { C, fill, mdText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode, useLayout } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode, useLayout, useNav } from "./ui.jsx";
+import { CoMark } from "./logo.jsx";
 import { signedPct } from "./deckcalc.js";
-import { isKrCompany, popularLists, searchStocks, myStocks } from "./stocklist.js";
+import { isCompany, popularLists, searchStocks, myStocks } from "./stocklist.js";
 import { readRecent, addRecent, RECENT_KEY, PREVIEW_RECENT_KEY } from "./recent.js";
-import { OLD_LINKS } from "./routes.js";
 
 const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
 
 // One stock: a first-letter badge, the name (US: the ticker under it; Korean: the code, unless plain), today's change.
-// plain: no numbers at all (홈's first visit, which shows a 뱁이). onTap / href / note: from useStockTap (see below).
-export function StockRow({ s, name, t, cls, plain = false, note, onTap, href }) {
+// plain: no numbers at all (홈's first visit, which shows a 뱁이). onTap / note / expands: from useStockTap (see below).
+export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, expands = false }) {
   const nk = name || (s && s.nk) || t;
   const d1 = s && typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
   const sub = cls === "us" ? t : plain ? null : t;
   const body = (
     <>
-      {/* the first letter of the name, drawn by CSS from data-initial (src/v2/template.html): a decoration, not text */}
-      <span aria-hidden="true" data-initial={String(nk).trim().slice(0, 1)} style={{ width: SPACE(9), height: SPACE(9), borderRadius: RADIUS.sm, background: COLOR.select, display: "flex",
-        alignItems: "center", justifyContent: "center", flexShrink: 0, ...tx(SIZE.xs, WEIGHT.heavy, COLOR.ink) }} />
+      {/* v19.1a: the company mark (logo.jsx: the letter is drawn by CSS from data-initial, a decoration, not text) */}
+      <CoMark t={t} name={nk} size={SPACE(9)} />
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{nk}</span>
         {sub && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
@@ -40,28 +39,31 @@ export function StockRow({ s, name, t, cls, plain = false, note, onTap, href }) 
   return (
     <div data-ui-v2="stock-row" data-t={t} data-cls={cls || ""}>
       {href ? <a href={href} onClick={onTap} style={style}>{body}</a>
-        : onTap ? <button type="button" onClick={onTap} aria-expanded={note ? "true" : "false"} style={style}>{body}</button>
+        : onTap ? <button type="button" onClick={onTap} aria-expanded={expands ? (note ? "true" : "false") : undefined} style={style}>{body}</button>
           : <div style={{ ...style, cursor: "default" }}>{body}</div>}
-      {note && <div data-ui-v2="kr-only" role="status" style={{ borderBottom: `1px solid ${COLOR.line}`, paddingBottom: SPACE(2) }}><Note style={{ marginTop: 0 }}>{note}</Note></div>}
+      {note && <div data-ui-v2="row-note" role="status" style={{ borderBottom: `1px solid ${COLOR.line}`, paddingBottom: SPACE(2) }}><Note style={{ marginTop: 0 }}>{note}</Note></div>}
     </div>
   );
 }
 
-// What a tap does, shared by every list: a Korean company -> the old app's 기업분석 (live page only); anything else -> the
-// line under the row. Every tap is remembered for 최근 본 종목.
+// What a tap does, shared by every list: a company (Korean or US) -> its 2.0 company page; a fund -> the line under the
+// row (when approved). Every tap is remembered for 최근 본 종목.
 export function useStockTap() {
   const { preview } = useMode();
+  const { openStock } = useNav();
   const key = preview ? PREVIEW_RECENT_KEY : RECENT_KEY;
   const [recent, setRecent] = useState(() => readRecent(key));
   const [noteFor, setNoteFor] = useState(null);
   const props = (row) => {
-    const corp = isKrCompany(row.s || { cls: row.cls, etf: false });
+    const corp = isCompany(row.s || { cls: row.cls, etf: false });
     const onTap = () => {
       setRecent(addRecent(row.t, key));
-      if (!corp) setNoteFor((x) => (x === row.t ? null : row.t));
+      if (corp && openStock) openStock(row.t);
+      else setNoteFor((x) => (x === row.t ? null : row.t));
     };
-    return { onTap: corp && preview ? undefined : onTap, href: corp && !preview ? OLD_LINKS.corp(row.t) : undefined,
-      note: !corp && noteFor === row.t ? C.stocks.krOnly : null };
+    // a fund: the line under its row, as before v19.1a ('기업분석은 한국 상장 기업만 …') until co.fundNote is approved
+    const fundLine = C.co.fundNote || C.stocks.krOnly;
+    return { onTap, expands: !corp, note: !corp && noteFor === row.t ? fundLine : null };
   };
   return { recent, props };
 }
@@ -104,9 +106,12 @@ export function PopularLists({ load, plain = false, tapper }) {
   );
 }
 
-// q: the PC top bar's search words (null on the phone, where this screen has its own field).
-export function Stocks({ load, store, pad, q: topQ = null }) {
-  const [ownQ, setQ] = useState("");
+// q: the PC top bar's search words (null on the phone, where this screen has its own field). ownQ / setOwnQ: the phone
+// field's words, kept by the app shell (v19.1a: a company page and back keep them); without them the field keeps its own.
+export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ }) {
+  const [localQ, setLocalQ] = useState("");
+  const ownQ = setOwnQ ? shellQ || "" : localQ;
+  const setQ = setOwnQ || setLocalQ;
   const top = topQ != null;
   const q = top ? topQ : ownQ;
   const tp = useStockTap();

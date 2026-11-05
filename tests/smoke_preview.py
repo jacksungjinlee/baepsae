@@ -105,7 +105,7 @@ def main():
             def route(r):
                 u = r.request.url
                 if u.startswith(base):
-                    if re.search(r"/(data|corp|macro)\.json", u):
+                    if re.search(r"/(data|corp|macro|disc)\.json", u):           # v19.1a: disc.json 도 (회사 페이지의 공시 탭)
                         json_reqs.append(u)
                     r.continue_()
                     return
@@ -205,20 +205,31 @@ def main():
                 at("stocks")
                 page.locator('[data-ui-v2="popular-list"][data-market="kr"]').wait_for(state="visible")
                 assert page.locator('[data-ui-v2="popular-list"][data-market="us"]').count() == 1
+                # v19.1a: 한국 · 미국 회사 모두 2.0 회사 페이지(예시 데이터)로 가요. 예전 뱁새로 가는 링크는 없어요 (label_here 가 봐요)
                 kr = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
-                assert kr.locator("a, button").count() == 0, "미리 보기의 한국 회사가 눌러져요 (예전 뱁새로 가는 길)"
-                us = page.locator('[data-ui-v2="popular-list"][data-market="us"] [data-ui-v2="stock-row"]').first
-                us.locator("button").click()
-                assert us.locator('[data-ui-v2="kr-only"]').inner_text().strip() == C["stocks"]["krOnly"]
+                assert kr.locator("a").count() == 0, "미리 보기의 한국 회사가 링크예요 (예전 뱁새로 가는 길)"
                 label_here()
                 shot(page, width, "1-stocks")
+                for market in ("kr", "us"):
+                    row = page.locator(f'[data-ui-v2="popular-list"][data-market="{market}"] [data-ui-v2="stock-row"]').first
+                    t = row.get_attribute("data-t")
+                    row.locator("button").click()
+                    at(f"stocks/{t}")
+                    co = page.locator('[data-ui-v2="company"]')
+                    co.wait_for(state="visible")
+                    assert co.get_attribute("data-cls") == market and page.locator('[data-ui-v2="co-tabs"] [data-tab="disc"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-mark"] img').count() == 0 and page.locator('main img[src^="baepi-"]:not([data-ui-v2="logo-mark"])').count() == 0
+                    label_here()
+                    shot(page, width, f"1-company-{market}")
+                    page.go_back()
+                    at("stocks")
                 tab(TABS["market"])
                 at("market")
                 page.locator('[data-ui-v2="market-tile"]').first.wait_for(state="visible")
                 assert page.locator('[data-ui-v2="market-tile"]').count() == 4 and page.locator('[data-ui-v2="old-screen"]').count() == 0
                 label_here()
                 shot(page, width, "1-market")
-            check(W + "탭: 종목(한국 회사는 링크 아님 · 미국 종목 줄) · 시장(네 칸, 예전 뱁새 버튼 없음)", stocks_and_market, page, width)
+            check(W + "탭: 종목(한국 · 미국 회사 → 예시 데이터 회사 페이지, 공시 탭 없음 · 예전 뱁새 링크 없음) · 시장(네 칸, 예전 뱁새 버튼 없음)", stocks_and_market, page, width)
 
             def deck_tab():
                 tab(TABS["portfolio"])
@@ -378,7 +389,7 @@ def main():
     ko = sorted({t for t in texts if HANGUL.search(t)})
     stray = [t for t in ko if not ok(unnamed(t))]
     results.append((f"보이는 한국어 {len(ko)}가지 모두 src/copy/v2.js 또는 예시 데이터 이름에서 왔어요", len(ko) > 100 and not stray, str(stray[:8])))
-    results.append(("data.json · corp.json · macro.json 요청 0건", not json_reqs, ", ".join(json_reqs)[:200]))
+    results.append(("data.json · corp.json · macro.json · disc.json 요청 0건", not json_reqs, ", ".join(json_reqs)[:200]))
     results.append(("다른 사이트 요청 0건", not outside, ", ".join(sorted(set(outside)))[:200]))
     results.append(("페이지 오류 0건", not errors, "; ".join(errors)[:300]))
     w = max(len(n) for n, _, _ in results)
