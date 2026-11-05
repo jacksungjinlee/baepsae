@@ -5,6 +5,7 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-05 | #43 | Old app: a US stock's revenue figure in the stock list now reads "매출성장(최근 분기, 1년 전 대비)" / "Rev growth (latest qtr y/y)" with %, instead of "매출성장(3y)" / "Rev growth 3y" with %/y. The number is Yahoo's latest quarter against the same quarter a year earlier, not a 3-year rate. Korean stocks are unchanged. |
 | 2026-11-05 | #34 | v17.6 (parts 1, 2, 3a, 4): every pull request runs the `ci` check (build, all tests, phone-size smoke tests). The daily run also puts its checked data on a separate `data` branch (only after the gate passed; still committed to `main` too). A new Deploy workflow builds the site from `main` plus the `data` files and checks them before publishing; it starts working once Jack switches Pages to GitHub Actions. A watchdog checks the live site every day and after every run, and opens one 뱁새 데이터 경보 issue if anything is wrong. Runbook in `docs/RUNBOOK.md`. Nothing users see changed. |
 | 2026-11-05 | #38 | Docs only, nothing on the site changed. HANDOFF records that v17.6's test run with saved company data passed (gate PASS, nothing published); v17.6 now waits only for Jack's yes on its test changes and his "merge". |
 | 2026-11-05 | #37 | Docs only, nothing on the site changed. HANDOFF records the night of 11/5: the company page (#36) and v17.6 (#34) wait for Jack, the logo test and its terms problem, the price-history proposal, and the morning run that came from the outside timer. |
