@@ -12,8 +12,9 @@ Jack's rules (2026-11-05): the icons are site files stored once (never re-commit
 a code already in the manifest is left exactly as it is and an existing file is never overwritten; re-run it with a
 newer collection to add the codes that are new. The same picture is stored once: a preferred share (005935 next to
 005930) or another code whose picture is pixel-for-pixel the same points to the file already there. When that other
-code is a different company (a group logo, or a web host's default icon), the later one is stored as "check" (never
-pre-picked) and said loudly. Each new PNG is
+code is a different company (a group logo, or a web host's default icon), every company with that picture is stored
+as "check" (never pre-picked) and said loudly — including the one added first in the same run. An entry from an
+earlier run is never changed (append only): if it is the kept one, that is said loudly too. Each new PNG is
 re-encoded losslessly when that makes it smaller (the decoded pixels are compared, so nothing changes visually):
 Pillow, plus oxipng when it is installed (pip install pyoxipng; optional, about 20% smaller on the first collection).
 Nothing here fetches anything. Run python3 tools/logos/build_review_page.py afterwards to put them in the page.
@@ -128,7 +129,8 @@ def add_icons(source, out_dir=OUT_DIR, manifest_path=MANIFEST):
         index.setdefault(pixel_key(p.read_bytes()), f"icons/{p.name}")
     n = {"kept": 0, "check": 0, "files written": 0, "same picture as a file already there": 0,
          "already in the manifest (left as is)": 0, "same picture as another company's (stored as check)": 0,
-         "refused": 0}
+         "kept from an earlier run although shared": 0, "refused": 0}
+    added = set()                                                # codes added in this run (these may still change)
     log = []
     for folder, want, folder_check in FOLDERS:
         files = sorted((source / folder).glob("*.png"),
@@ -155,12 +157,28 @@ def add_icons(source, out_dir=OUT_DIR, manifest_path=MANIFEST):
             path = index.get(key)
             if path:
                 n["same picture as a file already there"] += 1
-                owner = pathlib.Path(path).stem.upper()
-                if common_code(owner) != common_code(code) and not check:
-                    check = True                                 # another company's picture: Jack looks at it first
-                    n["same picture as another company's (stored as check)"] += 1
-                    log.append(f"  !! {code}: the same picture as {owner}'s (another company: a group logo or a web "
-                               f"host's default icon?) — stored as 'check', never pre-picked")
+                sharers = [c for c, e in manifest.items() if entry_path(e) == path]
+                others = [c for c in sharers if common_code(c) != common_code(code)]
+                if others:                                       # another company's picture: Jack looks at it first
+                    if not check:
+                        check = True
+                        n["same picture as another company's (stored as check)"] += 1
+                    log.append(f"  !! {code}: the same picture as {', '.join(others)} (another company: a group logo "
+                               f"or a web host's default icon?) — stored as 'check', never pre-picked")
+                    for c in sharers:
+                        if not isinstance(manifest[c], str):
+                            continue                             # already 'check'
+                        if c in added:                           # added earlier in this run: may still change
+                            manifest[c] = {"path": path, "check": True}
+                            n["kept"] -= 1
+                            n["check"] += 1
+                            n["same picture as another company's (stored as check)"] += 1
+                            log.append(f"  !! {c}: now 'check' too (the same picture as {code}'s)")
+                        else:
+                            n["kept from an earlier run although shared"] += 1
+                            log.append(f"  !! {c}: still 'kept' — added in an earlier run, and this tool never changes "
+                                       f"an earlier entry; change it by hand if {code}'s picture shows it is not "
+                                       f"{c}'s own")
             else:
                 target = out_dir / f"{code}.png"
                 if target.exists():                              # a different picture under this name: never overwrite
@@ -172,6 +190,7 @@ def add_icons(source, out_dir=OUT_DIR, manifest_path=MANIFEST):
                 index[key] = path
                 n["files written"] += 1
             manifest[code] = {"path": path, "check": True} if check else path
+            added.add(code)
             n["check" if check else "kept"] += 1
     write_manifest(manifest_path, manifest)
     files = sorted(out_dir.glob("*.png"))
