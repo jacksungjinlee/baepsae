@@ -91,7 +91,7 @@ def test_current_app_still_builds_byte_identical():
 def test_current_app_is_reachable_from_2_0():
     app = built("app.html")
     assert os.path.exists(os.path.join(ROOT, "baepsae.html"))
-    assert '"./baepsae.html"' in app                       # 머리말 '예전 뱁새 보기' 와 찾기 탭이 쓰는 주소
+    assert '"./baepsae.html?from=app"' in app              # ☰ '예전 뱁새 보기'가 쓰는 주소 (CV 링크 2026-11-05: 2.0 에서 온 표시)
     sw = read("sw.js")
     assert 'caches.match("./baepsae.html"' in sw           # 오프라인이면 캐시해 둔 지금 앱이라도 열려요
 

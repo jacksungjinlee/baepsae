@@ -34,7 +34,7 @@ const caches = {
     const hit = store.find((e) => { const k = new URL(e.url); return k.pathname === u.pathname && ((opts && opts.ignoreSearch) || k.search === u.search); });
     return hit ? { body: hit.body, fromCache: true } : undefined;
   },
-  keys: async () => ['baepsae-v17-5'], delete: async () => true,
+  keys: async () => ['baepsae-v19-cv'], delete: async () => true,
 };
 const fetch = async (req) => { netCalls++; if (!online) throw new Error('offline');
   return { ok: true, type: 'basic', body: 'net ' + version + ' ' + new URL(req.url).pathname, clone() { return { body: this.body }; } }; };
@@ -60,6 +60,7 @@ async function get(path, mode) {
   out.oldOff = await get('baepsae.html', 'navigate');
   out.dataOff = await get('data.json');
   out.missOff = await get('corp.json');
+  out.unknownOff = await get('nothing-here.html', 'navigate');   // 캐시에 없는 화면 → app.html 먼저 (CV 링크, 2026-11-05)
   store = store.filter((e) => !e.url.endsWith('/app.html'));
   out.appNoCache = await get('app.html', 'navigate');
   out.other = await get('https://fonts.example/x.css');
@@ -79,13 +80,15 @@ def test_app_html_is_network_first_and_offline_falls_back_to_itself():
     assert got["appOff"] == "net v2 /baepsae/app.html"            # 오프라인: 캐시해 둔 app.html (지금 앱이 아니에요)
     assert got["oldOff"] == "net v1 /baepsae/baepsae.html"        # 지금 앱은 예전 그대로
     assert got["dataOff"] == "net v2 /baepsae/data.json" and got["missOff"] == "ERROR"
+    assert got["unknownOff"] == "net v2 /baepsae/app.html"       # 캐시에 없는 화면은 2.0 먼저 (CV 링크), 그다음 지금 앱
     assert got["appNoCache"] == "net v1 /baepsae/baepsae.html"    # app.html 캐시가 없으면 지금 앱이라도
     assert got["other"] == "PASS-THROUGH"
 
 
 def test_sw_keeps_one_cache_and_mentions_app_html():
     src = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
-    assert 'const CACHE = "baepsae-v17-5";' in src            # 캐시 이름은 그대로 (smoke_app 의 서비스워커 장면)
+    # CV 링크 (2026-11-05, Jack 승인): 캐시 이름을 바꿔서 휴대폰이 새 규칙(baepsae.html → app.html)을 받아요 (smoke_app 의 서비스워커 장면)
+    assert 'const CACHE = "baepsae-v19-cv";' in src
     assert "styleguide" not in src
     sh = open(os.path.join(ROOT, "build-app.sh"), encoding="utf-8").read()   # app.html 만 등록해요 (미리 보기는 안 해요)
     assert 'navigator.serviceWorker.register("./sw.js")' in sh

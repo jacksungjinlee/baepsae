@@ -298,7 +298,11 @@ def test_old_app_bundle_does_not_include_v2():
     #   머리말의 '뱁새 2.0 보기' 링크 (Jack, 2026-11-02) — ./app.html
     #   푸터의 '소개' 링크 (v19.0, Jack 2026-11-03) — ./app.html#about, src/links.js 의 상수 하나 (번들에 한 번)
     old = read("baepsae.html")
-    assert old.count("app.html") == 2, old.count("app.html")
+    # CV 링크 (Jack, 2026-11-05): template.html 의 첫 스크립트가 표시 없는 방문을 2.0 으로 보내요 (location.replace 한 번, tests/test_cv_link.py).
+    # 번들은 그대로 두 군데예요.
+    tpl = read("template.html")
+    assert tpl.count("app.html") == 1 and tpl.count('L.replace("./app.html"') == 1, tpl.count("app.html")
+    assert old.count("app.html") == 2 + tpl.count("app.html"), old.count("app.html")
     assert old.count('href:"./app.html","data-v2-link":"1"') == 1 and old.count('"./app.html#about"') == 1, "app.html 링크 모양이 달라요"
     assert "뱁새 2.0 보기" in read("src/shell.jsx") and "뱁새 2.0 보기" in old
     assert read("src/links.js").count('"./app.html#about"') == 1

@@ -13,6 +13,11 @@
 - 저장소의 지금 데이터로도 열어봐요. 첫 화면은 그 데이터의 단계에 맞아야 해요 (예시 데이터를 실제처럼 보이지 않음):
   v17.5 형식 전 → '불러오지 못했어요' · v17.5 형식인데 v17.5.1 항목 없음 → 덱 짜기는 '준비 중'만 · 항목이 다 있으면 덱 짜기가 열려요
 - 페이지 오류 0건, app.html 에서 다른 사이트 요청 0건 (GoatCounter 는 시험에서 꺼요: ?dev=1 과 같은 localStorage 표시)
+- CV 링크 (Jack, 2026-11-05; v17.5.1 데이터 · 390px 에서 한 번): baepsae.html 을 2.0 표시(?from=app)도 # 도 없이 열면 app.html 로 가요.
+  예전 뱁새는 붙지도 그려지지도 않고(#root 없음 · paint 없음 · 데이터 요청 없음), 기록이 하나만 늘어요(뒤로 → 온 곳).
+  ?utm_source · ?trk 는 보내요 · 표시가 있으면 남아요 · # 만 있으면 남고 표시가 붙어요(새로고침해도 남아요) · 2.0 의 예전 뱁새 보기와
+  바로가기 다섯 개가 그 화면을 열고 새로고침해도 남아요 · GoatCounter 는 보낼 때 한 번(경로 /baepsae/baepsae.html→app), 로컬 주소와
+  개발 표시에서는 0번 · 저장한 예전 포트폴리오는 그대로 있고 2.0 의 링크로 열려요 · 오프라인(서비스워커)에서 두 페이지를 오가지 않아요
 """
 import argparse
 import datetime as dt
@@ -82,6 +87,341 @@ def chromium_path():
     return p if os.path.exists(p) else None
 
 
+# ── CV 링크 (Jack, 2026-11-05) ──
+LIVE = "https://jacksungjinlee.github.io/baepsae/"     # 실제 주소처럼 보이게 이 시험 안에서만 로컬 파일로 답해요 (인터넷에 나가지 않아요)
+OLD_FIRST = "내 종목, 괜찮은 걸까요?"                     # 예전 뱁새 첫 화면
+OLD_URL = re.compile(r"/baepsae\.html\?from=app$")
+# 예전 뱁새 문서(baepsae.html 주소)에 #root 가 생기거나 화면이 그려지면 알려요. 보낼 때는 둘 다 없어야 해요 (남을 때는 둘 다 있어요).
+CV_SEEN = r"""(() => {
+  if (!/\/baepsae(\.html)?$/.test(location.pathname)) return;
+  const here = location.pathname + location.search;
+  const rep = (w) => { try { window.__cvSeen(here + ' ' + w); } catch (e) {} };
+  let root = false;
+  new MutationObserver(() => { if (!root && document.getElementById('root')) { root = true; rep('root'); } })
+    .observe(document, { childList: true, subtree: true });
+  try { new PerformanceObserver((l) => l.getEntries().forEach((e) => rep(e.name))).observe({ type: 'paint', buffered: true }); } catch (e) {}
+})();"""
+ACTIVE_TAB = ("() => { const b = [...document.querySelectorAll('nav.botNav button')].find((x) => getComputedStyle(x.querySelector('span'))"
+              ".fontWeight === '800'); return b ? b.innerText.trim() : null; }")
+CART_ROWS = """() => [...document.querySelectorAll('input[type=number][step="10"]')].map((i) => {
+  const box = i.parentElement; const name = box.children[1] && box.children[1].children[0];
+  return [name ? name.textContent : '?', i.value]; })"""
+OLD_SLOT = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}]}
+OLD_LOCAL = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "scv", "name": "CV test"}]),
+             "baepsae_v10_slot_scv": json.dumps(OLD_SLOT)}
+STORAGE = "() => [Object.fromEntries(Object.keys(localStorage).map((k) => [k, localStorage.getItem(k)])), Object.keys(sessionStorage).sort()]"
+
+
+def wait_until(page, fn, what, tries=100):
+    for _ in range(tries):
+        if fn():
+            return
+        page.wait_for_timeout(100)
+    assert fn(), what
+
+
+def cv_link(browser, check, errors):
+    """CV 링크 장면들 (v17.5.1 데이터, 390px). check(이름, 함수, 페이지, 표시) 는 main 의 것이에요."""
+    root = site("fixtures")
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=root))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    W = "[CV 링크 · 390px] "
+    seen, reqs = [], []
+
+    def context(local=None, live=False):
+        # GoatCounter 의 개발 표시(baepsae_dev)를 심지 않아요: 로컬 주소에서 세지 않는 것을 그대로 보려고요 (요청은 모두 여기서 막아요)
+        ctx = browser.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx.expose_binding("__cvSeen", lambda src, w: seen.append(w))
+        ctx.add_init_script(CV_SEEN)
+        if local:                                                    # 처음 한 번만 심어요 (앱이 바꾼 것을 다시 덮지 않게)
+            ctx.add_init_script("(() => { try { if (localStorage.getItem('__cvSeeded')) return; const kv = %s;"
+                                " for (const k in kv) localStorage.setItem(k, kv[k]); localStorage.setItem('__cvSeeded', '1'); } catch (e) {} })();"
+                                % json.dumps(local, ensure_ascii=False))
+
+        def route(r):
+            u = r.request.url
+            try:
+                frame = r.request.frame.url
+            except Exception:
+                frame = ""
+            reqs.append((u, frame))
+            if live and u.startswith(LIVE):
+                f = u[len(LIVE):].split("#")[0].split("?")[0] or "index.html"
+                fp = os.path.join(root, f)
+                if os.path.isfile(fp):
+                    r.fulfill(path=fp)
+                else:
+                    r.fulfill(status=404, body="")
+            elif "goatcounter.com/count" in u:
+                r.fulfill(status=204, body="")                        # 세는 요청은 여기서 받아 두기만 해요
+            elif u.startswith(base):
+                r.continue_()
+            else:
+                r.abort()
+        ctx.route("**/*", route)
+        return ctx
+
+    def new_page(ctx):
+        page = ctx.new_page()
+        page.set_default_timeout(WAIT)
+        page.on("pageerror", lambda e: errors.append(f"cv: {e}"))
+        return page
+
+    def counted():
+        return [u for u, _ in reqs if "goatcounter.com/count" in u]
+
+    def old_doc_requests():                                          # 예전 뱁새 문서(baepsae.html 주소)가 보낸 요청
+        return [u for u, f in reqs if re.search(r"/baepsae(\.html)?$", f.split("#")[0].split("?")[0])]
+
+    ctx = context()
+    page = new_page(ctx)
+
+    def plain_visit_lands_in_2_0():
+        page.goto(base + "/icon-192.png")
+        n0 = page.evaluate("history.length")
+        seen.clear(), reqs.clear()
+        page.goto(base + "/baepsae.html", wait_until="domcontentloaded")
+        page.wait_for_url(APP_URL)
+        page.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        assert page.title() == C["app"]["title"]
+        assert page.evaluate("history.length") == n0 + 1, "기록이 하나보다 많이 늘었어요"   # baepsae.html 자리를 app.html 이 차지해요
+        assert seen == [], seen                                                          # 예전 뱁새: #root 도 paint 도 없어요
+        bad = [u for u in old_doc_requests() if re.search(r"\.json|gc\.zgo\.at|goatcounter", u)]
+        assert not bad, bad                                                              # 데이터 · 통계 요청 없음 (앱이 돌지 않았어요)
+        assert counted() == [], counted()                                                # 로컬 주소: GoatCounter 0번
+        ss = page.evaluate("Object.keys(sessionStorage)")
+        assert "baepsae_cv_sent" in ss and "baepsae_old_tab" not in ss, ss
+        page.go_back()                                                                   # 뒤로 → 온 곳 (baepsae.html 이 아니에요)
+        page.wait_for_url(re.compile(r"/icon-192\.png$"))
+        # 리뷰(2026-11-05): 온 곳(링크드인 · PDF)에서 10초 안에 다시 눌러도 2.0 이에요 (되돌이 막기에 걸리지 않아요)
+        for ref in (None, "https://www.linkedin.com/"):
+            page.goto(base + "/baepsae.html", wait_until="domcontentloaded", referer=ref)
+            page.wait_for_url(APP_URL)
+            page.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        # 되돌이 막기: 보낸 지 10초 안에 이 사이트가 이 탭을 다시 표시 없는 baepsae.html 로 보내면 남아요 (표시를 붙여요)
+        with page.expect_navigation():
+            page.evaluate("location.href = './baepsae.html'")
+        page.wait_for_url(OLD_URL)
+        page.get_by_text(OLD_FIRST).wait_for(state="visible")
+        assert page.evaluate("sessionStorage.getItem('baepsae_old_tab')") is None    # 막기만으로는 이 탭을 예전 뱁새에 두지 않아요
+    check(W + "표시 없이 열면 app.html (예전 뱁새는 붙지도 그려지지도 않음 · 기록 하나 · 뒤로 → 온 곳 · 로컬은 세지 않음 · "
+          "곧바로 다시 눌러도 2.0 · 이 사이트에서 10초 안에 되돌아오면 남음)", plain_visit_lands_in_2_0, page, "cv")
+
+    def other_params_are_redirected():
+        for q in ("?utm_source=x", "?trk=public_profile&from=linkedin", "?utm_medium=email#"):
+            p2 = new_page(ctx)
+            p2.goto(base + "/baepsae.html" + q, wait_until="domcontentloaded")
+            p2.wait_for_url(APP_URL)
+            p2.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+            p2.close()
+    check(W + "?utm_source=x · ?trk= · from=linkedin 은 표시가 아니에요 → app.html", other_params_are_redirected, page, "cv")
+
+    def marker_stays():
+        p2 = new_page(ctx)
+        seen.clear()
+        p2.goto(base + "/baepsae.html?from=app", wait_until="domcontentloaded")
+        p2.get_by_text(OLD_FIRST).wait_for(state="visible")
+        assert p2.url == base + "/baepsae.html?from=app", p2.url
+        assert p2.evaluate("sessionStorage.getItem('baepsae_old_tab')") == "1"
+        wait_until(p2, lambda: any(w.endswith(" root") for w in seen), seen)          # 감시가 실제로 #root 를 잡아요 (위 검사의 대조군)
+        p2.close()
+    check(W + "?from=app → 예전 뱁새 그대로", marker_stays, page, "cv")
+
+    def hash_stays_and_gets_the_marker():
+        p2 = new_page(ctx)
+        p2.goto("about:blank")
+        p2.goto(base + "/baepsae.html#macro", wait_until="domcontentloaded")         # 예전에 공유한 링크 (표시 없음)
+        p2.wait_for_url(base + "/baepsae.html?from=app")                             # 표시가 붙고, 예전 뱁새가 # 을 읽고 지워요
+        wait_until(p2, lambda: p2.evaluate(ACTIVE_TAB) == "금리·원자재", "#macro → 금리·원자재")
+        p2.reload(wait_until="domcontentloaded")                                     # 새로고침해도 예전 뱁새
+        p2.get_by_text(OLD_FIRST).wait_for(state="visible")
+        assert p2.url == base + "/baepsae.html?from=app", p2.url
+        p2.go_back()                                                                 # 표시를 붙여도 기록은 늘지 않아요
+        p2.wait_for_url("about:blank")
+        p2.goto(base + "/baepsae.html#foo", wait_until="domcontentloaded")           # 모르는 # 도 남고, # 은 그대로
+        p2.get_by_text(OLD_FIRST).wait_for(state="visible")
+        assert p2.url == base + "/baepsae.html?from=app#foo", p2.url
+        p2.close()
+    check(W + "# 만 있으면 남고 표시가 붙어요 (#macro → 금리·원자재, 새로고침해도 남음, 기록 그대로 · 모르는 # 도 남음)",
+          hash_stays_and_gets_the_marker, page, "cv")
+
+    def links_from_2_0_open_the_right_screen():
+        p2 = new_page(ctx)
+        p2.goto(base + "/app.html", wait_until="domcontentloaded")
+        p2.wait_for_url(APP_URL)
+
+        def menu(item):
+            p2.locator('[data-ui-v2="menu-button"]').first.click()
+            return p2.locator(f'[data-ui-v2="menu"] [data-ui-v2="menu-item"][data-item="{item}"]')
+
+        def tab_link(tab, sel):
+            p2.locator('nav[data-ui="bottom-tab-bar"] button', has_text=TABS[tab]).click()
+            p2.wait_for_url(re.compile(rf"/app\.html#{tab}$"))
+            return p2.locator(sel).first
+
+        def card(card_id, title):
+            def ok():
+                top = p2.evaluate(f"(() => {{ const e = document.getElementById('{card_id}'); return e ? Math.round(e.getBoundingClientRect().top) : null; }})()")
+                return top is not None and 0 <= top <= 120 and p2.locator(f"#{card_id}").inner_text().startswith(title)
+            return ok
+
+        def active(label):
+            return lambda: p2.evaluate(ACTIVE_TAB) == label
+
+        # v19.1a (#36): 2.0 의 한국 회사 줄은 2.0 회사 페이지를 열어요 (예전 뱁새 기업분석 링크가 없어요: 아래에서 확인)
+        cases = [("예전 뱁새 보기", lambda: menu("old-app"), "", lambda: p2.get_by_text(OLD_FIRST).is_visible()),
+                 ("용어 사전", lambda: menu("glossary"), "#info=glossary", card("info-glossary", "용어 사전")),
+                 ("데이터 출처", lambda: menu("sources"), "#info=sources", card("info-sources", "데이터 출처와 갱신")),
+                 ("금리·원자재", lambda: tab_link("market", '[data-ui-v2="old-screen"][data-id="macro"]'), "#macro", active("금리·원자재")),
+                 ("공시·수급", lambda: tab_link("market", '[data-ui-v2="old-screen"][data-id="disc"]'), "#disc", active("공시·수급"))]
+        for name, find, tail, on_screen in cases:
+            link = find()
+            link.wait_for(state="visible")
+            href = link.get_attribute("href")
+            assert href.startswith("./baepsae.html?from=app" + tail), (name, href)
+            with p2.expect_navigation():
+                link.click()
+            p2.wait_for_url(OLD_URL)                                                 # 예전 뱁새: # 은 읽고 지워도 표시는 남아요
+            wait_until(p2, on_screen, (name, "그 화면이 아니에요"))
+            p2.reload(wait_until="domcontentloaded")                                 # 새로고침해도 예전 뱁새 (2.0 으로 가지 않아요)
+            p2.get_by_text(OLD_FIRST).wait_for(state="visible")
+            assert OLD_URL.search(p2.url), (name, p2.url)
+            p2.go_back()
+            p2.wait_for_url(re.compile(r"/app\.html#"))
+            p2.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        # 2.0 의 어느 링크도 표시(?from=app) 없이 예전 뱁새로 가지 않아요 · 한국 회사 줄은 예전 뱁새로 가는 링크가 아니에요 (v19.1a)
+        tab_link("stocks", '[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').wait_for(state="visible")
+        assert p2.locator('[data-ui-v2="popular-list"] [data-ui-v2="stock-row"] a').count() == 0
+        hrefs = p2.evaluate("() => [...document.querySelectorAll('a[href*=\"baepsae.html\"]')].map((a) => a.getAttribute('href'))")
+        assert all(h.startswith("./baepsae.html?from=app") for h in hrefs), hrefs
+        p2.close()
+    check(W + "2.0 의 예전 뱁새 보기 · 용어 사전 · 데이터 출처 · 금리·원자재 · 공시·수급 → 예전 뱁새의 그 화면 "
+          "(새로고침해도 남음 · 뒤로 → 2.0) · 한국 회사 줄은 2.0 회사 페이지 (예전 뱁새 링크 아님)", links_from_2_0_open_the_right_screen, page, "cv")
+    ctx.close()
+
+    def goatcounter_once_on_the_live_address():
+        from urllib.parse import parse_qs, urlsplit
+        live = context(live=True)
+        p2 = new_page(live)
+        reqs.clear(), seen.clear()
+        p2.goto(LIVE + "baepsae.html", wait_until="domcontentloaded", referer="https://www.linkedin.com/")
+        p2.wait_for_url(LIVE + "app.html#home")
+        p2.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        p2.wait_for_timeout(500)
+        got = counted()
+        assert len(got) == 1, got                                                    # 한 번
+        q = {k: v[0] for k, v in parse_qs(urlsplit(got[0]).query).items()}
+        assert got[0].startswith("https://baepsae.goatcounter.com/count?"), got[0]
+        assert q["p"] == "/baepsae/baepsae.html→app" and q["r"] == "https://www.linkedin.com/", q
+        assert seen == [], seen
+        assert [u for u in old_doc_requests() if "gc.zgo.at" in u] == []            # 예전 뱁새의 원래 페이지뷰는 세지 않아요
+        assert [u for u, f in reqs if "gc.zgo.at/count.js" in u and "/app.html" in f], "app.html 은 예전처럼 자기 페이지뷰를 세요"
+        # 남을 때: 세지 않고, 예전 뱁새의 원래 페이지뷰(count.js)는 예전 경로 그대로
+        reqs.clear()
+        p2.goto(LIVE + "baepsae.html?from=app", wait_until="domcontentloaded")
+        p2.get_by_text(OLD_FIRST).wait_for(state="visible")
+        assert counted() == [], counted()
+        assert [u for u in old_doc_requests() if "gc.zgo.at/count.js" in u], "예전 뱁새가 GoatCounter 를 불러오지 않았어요"
+        assert p2.evaluate("window.goatcounter.path(location.pathname + location.search)") == "/baepsae/baepsae.html"
+        # ?dev=1: 세지 않고, 2.0 이 이 브라우저를 빼 줘요 (HANDOFF 의 ?dev=1 그대로)
+        p3 = new_page(live)
+        reqs.clear()
+        p3.goto(LIVE + "baepsae.html?dev=1", wait_until="domcontentloaded")
+        p3.wait_for_url(LIVE + "app.html?dev=1#home")
+        p3.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        assert counted() == [] and p3.evaluate("localStorage.getItem('baepsae_dev')") == "1"
+        p4 = new_page(live)                                                          # 이제 이 브라우저는 개발 표시: 보내도 세지 않아요
+        reqs.clear()
+        p4.goto(LIVE + "baepsae.html", wait_until="domcontentloaded")
+        p4.wait_for_url(LIVE + "app.html#home")
+        p4.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        p4.wait_for_timeout(500)
+        assert counted() == [], counted()
+        live.close()
+    check(W + "GoatCounter: 실제 주소에서 보낼 때 한 번 (/baepsae/baepsae.html→app, 링크드인에서 왔음) · 남을 때는 예전 경로 · 개발 표시는 0번",
+          goatcounter_once_on_the_live_address, None, "cv")
+
+    def saved_old_portfolio_is_kept():
+        ctl = context(local=OLD_LOCAL)                                               # 대조군: app.html 을 바로 열었을 때의 저장소
+        p1 = new_page(ctl)
+        p1.goto(base + "/app.html", wait_until="domcontentloaded")
+        p1.wait_for_url(APP_URL)
+        p1.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        p1.wait_for_timeout(500)
+        want_local, want_session = p1.evaluate(STORAGE)
+        ctl.close()
+        c2 = context(local=OLD_LOCAL)
+        p2 = new_page(c2)
+        p2.goto(base + "/baepsae.html", wait_until="domcontentloaded")
+        p2.wait_for_url(APP_URL)
+        p2.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        p2.wait_for_timeout(500)
+        got_local, got_session = p2.evaluate(STORAGE)
+        for k, v in OLD_LOCAL.items():
+            assert got_local.get(k) == v, k                                         # 예전 포트폴리오: 옮기거나 지우지 않아요
+        assert sorted(got_local) == sorted(want_local), (sorted(got_local), sorted(want_local))   # 보내기가 더한 것 없음
+        assert got_session == sorted(set(want_session) | {"baepsae_cv_sent"}), got_session          # 이 탭의 표시 하나만
+        p2.locator('[data-ui-v2="menu-button"]').first.click()
+        with p2.expect_navigation():
+            p2.locator('[data-ui-v2="menu"] [data-ui-v2="menu-item"][data-item="old-app"]').click()
+        p2.wait_for_url(OLD_URL)
+        p2.get_by_text("차근차근 만들기", exact=True).click()
+        p2.get_by_text("CV test", exact=False).first.click()
+        p2.locator("button.openSettings").first.wait_for(state="visible")
+        wait_until(p2, lambda: p2.evaluate(CART_ROWS) == [["삼성전자", "300"]], "저장한 포트폴리오의 종목이 보이지 않아요")
+        assert json.loads(p2.evaluate("localStorage.getItem('baepsae_v10_slots')"))[0]["id"] == "scv"
+        c2.close()
+    check(W + "저장한 예전 포트폴리오: 보내도 저장소 그대로 (app.html 을 바로 연 것과 같음) · 2.0 의 예전 뱁새 보기로 열려요",
+          saved_old_portfolio_is_kept, None, "cv")
+    srv.shutdown()
+    srv.server_close()
+
+    def offline_never_loops():
+        d = site("fixtures")
+        s2 = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=d))
+        threading.Thread(target=s2.serve_forever, daemon=True).start()
+        b2 = f"http://127.0.0.1:{s2.server_address[1]}"
+        c = browser.new_context(viewport={"width": 390, "height": 780}, locale="ko-KR", service_workers="allow")
+        c.route(lambda u: not u.startswith(b2), lambda r: r.abort())
+        c.add_init_script("(() => { try { localStorage.setItem('baepsae_dev', '1'); } catch (e) {} })();")
+        p1 = new_page(c)
+        p1.goto(b2 + "/app.html", wait_until="domcontentloaded")
+        wait_until(p1, lambda: p1.evaluate("navigator.serviceWorker.getRegistration().then((r) => !!(r && r.active))"), "서비스워커가 없어요")
+        p1.reload(wait_until="domcontentloaded")                                     # 이제 워커가 맡아요: app.html 이 캐시에 들어가요
+        p1.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        p1.goto(b2 + "/baepsae.html?from=app", wait_until="domcontentloaded")
+        p1.get_by_text(OLD_FIRST).wait_for(state="visible")
+        cached = "() => caches.open('baepsae-v19-cv').then((c) => c.keys()).then((k) => k.map((r) => new URL(r.url).pathname))"
+        wait_until(p1, lambda: {"/app.html", "/baepsae.html"} <= set(p1.evaluate(cached)), "캐시에 두 페이지가 없어요")
+        s2.shutdown()
+        s2.server_close()                                                            # 오프라인
+        for drop_app in (False, True):
+            if drop_app:                                                             # app.html 을 캐시에서 빼요: 워커는 예전 뱁새를 줘요
+                p1.evaluate("caches.open('baepsae-v19-cv').then((c) => c.keys().then((ks) => Promise.all("
+                            "ks.filter((r) => new URL(r.url).pathname === '/app.html').map((r) => c.delete(r)))))")
+                assert "/app.html" not in p1.evaluate(cached)
+            p = new_page(c)
+            navs = []
+            p.on("framenavigated", lambda f, p=p: navs.append(f.url) if f == p.main_frame else None)
+            p.goto(b2 + "/baepsae.html", wait_until="domcontentloaded")
+            if drop_app:                                                             # app.html 주소에 예전 뱁새: 거기서 멈춰요
+                p.wait_for_url(b2 + "/app.html")
+                p.get_by_text(OLD_FIRST).wait_for(state="visible")
+            else:
+                p.wait_for_url(APP_URL)
+                p.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+            n = len(navs)
+            p.wait_for_timeout(2500)
+            assert len(navs) == n, navs                                              # 더 움직이지 않아요
+            docs = [u.split("#")[0] for u in navs]
+            assert docs.count(b2 + "/baepsae.html") == 1 and set(docs) == {b2 + "/baepsae.html", b2 + "/app.html"}, navs
+            p.close()
+        c.close()
+    check(W + "오프라인(서비스워커): 캐시한 예전 뱁새 → app.html(캐시) · app.html 캐시가 없으면 그 주소에서 예전 뱁새로 멈춤 (오가지 않음)",
+          offline_never_loops, None, "cv")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -109,6 +449,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path())
+        cv_link(browser, check, errors)
         for variant in ("fixtures", "repo"):
             root = site(variant)
             srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=root))
@@ -216,12 +557,12 @@ def main():
                     page.locator('[data-ui-v2="menu-button"]').click()
                     link = page.locator('[data-ui-v2="menu"] [data-ui-v2="menu-item"][data-item="old-app"]')
                     link.wait_for(state="visible")
-                    assert link.inner_text().strip() == C["app"]["oldApp"] and link.get_attribute("href") == "./baepsae.html"
+                    assert link.inner_text().strip() == C["app"]["oldApp"] and link.get_attribute("href") == "./baepsae.html?from=app"
                     box = link.bounding_box()
                     assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
                     with page.expect_navigation():
                         link.click()
-                    assert page.url.endswith("/baepsae.html"), page.url
+                    assert page.url.endswith("/baepsae.html?from=app"), page.url
                     page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
                     back = page.locator("a[data-v2-link]")                  # 지금 앱 머리말의 '뱁새 2.0 보기' (Jack, 2026-11-02)
                     back.wait_for(state="visible")
@@ -233,7 +574,7 @@ def main():
                 check(W + "☰ 메뉴 '예전 뱁새 보기' → 지금 앱 → '뱁새 2.0 보기' → 다시 2.0 (#home)", menu_opens_old_app, page, tag)
 
                 def old_footer_opens_about():
-                    page.goto(base + "/baepsae.html", wait_until="domcontentloaded")
+                    page.goto(base + "/baepsae.html?from=app", wait_until="domcontentloaded")   # CV 링크 (2026-11-05): 2.0 표시
                     page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
                     link = page.locator("a[data-about-link]").first
                     link.wait_for(state="visible")
@@ -247,7 +588,7 @@ def main():
                     visual_ok(page)
                     with page.expect_navigation():                                       # 뒤로(닫기) → 온 곳(지금 앱)으로 한 걸음
                         page.get_by_role("button", name=C["app"]["close"]).click()
-                    assert page.url.endswith("/baepsae.html"), page.url
+                    assert page.url.endswith("/baepsae.html?from=app"), page.url
                     page.get_by_text("내 종목, 괜찮은 걸까요?").wait_for(state="visible")
                 check(W + "지금 앱 푸터 '소개' → app.html#about (소개 페이지) → 뒤로 → 다시 지금 앱", old_footer_opens_about, page, tag)
                 ctx.close()

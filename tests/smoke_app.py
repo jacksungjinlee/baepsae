@@ -152,7 +152,7 @@ class Runner:
         page = ctx.new_page()
         page.on("pageerror", lambda e: self.errors.append(str(e)))
         page.on("console", lambda m: self.console.append((m.type, m.text)))
-        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -1269,7 +1269,7 @@ def scene_service_worker(R, files):
         page.reload(wait_until="domcontentloaded")
         assert page.evaluate(get_v) == "B", "새 워커인데도 예전 corp.json 이에요"
         k = page.evaluate(keys)
-        assert "baepsae-v10" not in k and all(x == "baepsae-v17-5" for x in k), k
+        assert "baepsae-v10" not in k and all(x == "baepsae-v19-cv" for x in k), k
     R.check(page, "서비스워커", "새 워커: 새 corp.json + baepsae-v10 캐시 삭제", new_worker)
     ctx.close(); srv.shutdown()
 
@@ -1378,7 +1378,7 @@ def _json_import(R, files, tmp):
     page.on("pageerror", lambda e: R.errors.append(str(e)))
     dialogs = []
     page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
-    page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+    page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
     file_box = page.locator('input[type=file][accept="application/json,.json"]')
 
     def slots_now():
@@ -1641,7 +1641,7 @@ def scene_ghost_holding(R, files):
 
     def restore():
         assert "json" in got, "앞 단계에서 파일을 받지 못했어요"
-        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         see(page, "어떻게 시작할까요?")
         page.locator('input[type=file][accept="application/json,.json"]').set_input_files(got["json"])
@@ -1738,7 +1738,7 @@ def _import_while_loading(R, files, tmp):
 
     def slow():
         t0 = time.time()
-        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.wait_for_timeout(1000)
         assert time.time() - t0 < SlowData.DELAY - 1, "data.json 이 늦게 오는 동안을 보지 못했어요"
@@ -1777,7 +1777,7 @@ def _import_while_loading(R, files, tmp):
         if (k.startsWith('baepsae_v10_')) o[k] = localStorage.getItem(k); } return o; }"""
 
     def failed():
-        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         see(page, NOLIVE_ALL)                                            # 오늘 데이터를 못 읽었다는 안내 (이미 있던 것)
         box.wait_for(state="attached", timeout=WAIT)
@@ -2028,7 +2028,7 @@ def scene_broken_slot(R, files):
 
     def start_with_good():
         dialogs.clear()
-        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("멀쩡한 저장본", exact=False).first.click()
         page.locator("button.openSettings").first.wait_for(state="visible", timeout=WAIT)
@@ -2128,7 +2128,7 @@ def scene_deep_links(R, files):
 
     def fresh(h):
         page.goto("about:blank")                                         # 새 문서로 열어요 (주소의 # 만 바꾸면 같은 페이지 안의 이동)
-        page.goto(base + "/baepsae.html?dev=1" + h, wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app" + h, wait_until="domcontentloaded")
 
     def tabs():
         for h, label, marker in (("#macro", "금리·원자재", "국고채"), ("#disc", "공시·수급", "국민연금")):
@@ -2192,7 +2192,7 @@ def scene_v2_link(R, files):
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
         page = ctx.new_page()
         page.on("pageerror", lambda e: R.errors.append(str(e)))
-        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
         S = f"2.0 링크 {w}"
         link = page.locator("a[data-v2-link]")
 

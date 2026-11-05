@@ -306,8 +306,8 @@ def menu_links(page, live=True):
     items = m.locator('[data-ui-v2="menu-item"]')
     want = [("about", C["app"]["aboutLink"], None)]
     if live:
-        want += [("glossary", C["menu"]["glossary"], "./baepsae.html#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html#info=sources"),
-                 ("old-app", C["app"]["oldApp"], "./baepsae.html")]
+        want += [("glossary", C["menu"]["glossary"], "./baepsae.html?from=app#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html?from=app#info=sources"),
+                 ("old-app", C["app"]["oldApp"], "./baepsae.html?from=app")]
     got = [(items.nth(i).get_attribute("data-item"), items.nth(i).inner_text().strip(), items.nth(i).get_attribute("href")) for i in range(items.count())]
     assert got == want, got
     m.locator('[data-ui-v2="menu-close"]').click()
@@ -2098,7 +2098,7 @@ def scene_market(R, files, width):
         assert r3["date"] == ["10월 30일 기준"] and fx["date"] == ["10월 30일 기준"], (r3, fx)
         links = page.locator('[data-ui-v2="old-screen"]')
         got = [(links.nth(i).inner_text().strip(), links.nth(i).get_attribute("href")) for i in range(links.count())]
-        assert got == [(C["market"]["macro"], "./baepsae.html#macro"), (C["market"]["disc"], "./baepsae.html#disc")], got
+        assert got == [(C["market"]["macro"], "./baepsae.html?from=app#macro"), (C["market"]["disc"], "./baepsae.html?from=app#disc")], got
         assert page.locator(MASCOT_IN_MAIN).count() == 0
         no_hscroll(page, width)
         R.collect(page)
@@ -2418,8 +2418,8 @@ def pc_shell(page, width, live=True):
     got = [(links.nth(i).get_attribute("data-item"), links.nth(i).inner_text().strip(), links.nth(i).get_attribute("href")) for i in range(links.count())]
     want = [("about", C["app"]["aboutLink"], None)]
     if live:
-        want += [("glossary", C["menu"]["glossary"], "./baepsae.html#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html#info=sources"),
-                 ("old-app", C["app"]["oldApp"], "./baepsae.html")]
+        want += [("glossary", C["menu"]["glossary"], "./baepsae.html?from=app#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html?from=app#info=sources"),
+                 ("old-app", C["app"]["oldApp"], "./baepsae.html?from=app")]
     assert got == want, got
     assert "10월 30일 기준" in side.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').inner_text()
     for gone in ('nav[data-ui="bottom-tab-bar"]', '[data-ui-v2="menu-button"]', '[data-ui-v2="menu"]', '[data-ui-v2="app-bar"] h1'):
