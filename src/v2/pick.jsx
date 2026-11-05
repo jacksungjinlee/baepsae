@@ -3,8 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { StatusChip, Collapsible } from "../ui/components.jsx";
-import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis, krDivYield } from "./engine.js";
-import { krYieldToday } from "./company.js";
+import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis, krDivYield, krYieldToday } from "./engine.js";
 import { C, fill, nf, p1, mdText } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, tx, tap } from "./ui.jsx";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
@@ -147,7 +146,7 @@ function Row({ k, v, id, basis }) {
 function Receipts({ s, co, c, st }) {
   const R = C.pick.receipt;
   const pbr = num(s.pbr), roe = num(s.roe), debt = num(s.debt);
-  // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (company.js krYieldToday)
+  // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (engine.js krYieldToday)
   const y = s.cls === "kr" ? krYieldToday(s) : num(s.dy);
   const fy = s.cls === "kr" ? fyOf(s, co) : null;
   // Korean growth is labelled by how it was actually calculated (engine.growthBasis); no label = the row is hidden.

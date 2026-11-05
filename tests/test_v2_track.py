@@ -37,9 +37,12 @@ def bundle_dir():
     return _B["p"]
 
 
+# TREND: the Korean dividend-trend switch (engine.js KR_DIV_TREND). A test that needs a dividend drop to fire passes
+# trend=True (the switch on, behaviour as before). Every other test runs twice (the autouse fixture below): with the switch
+# as coded (지금은 꺼짐) and with it on.
 HELPERS = """
 const ctxOf = (stocks, corps, fx = 1300) => ({ state: { ok: true }, byT: new Map(stocks.map((s) => [s.t, s])),
-  coByT: new Map((corps || []).map((c) => [c.t, c])), fx, pxDate: '2026-10-30' });
+  coByT: new Map((corps || []).map((c) => [c.t, c])), fx, pxDate: '2026-10-30', ...(TREND === undefined ? {} : { krDivTrend: TREND }) });
 // A deck as 샀어요 stores it: rule books from engine.ruleBook, purchases at the given price (US with the plan's fx).
 const mkDeck = (rows, fx = 1300) => ({ id: 'd1', name: 'deck', createdAt: '2026-10-01',
   holdings: rows.map((r) => ({ t: r.s.t, nk: r.s.nk, cls: r.s.cls, kind: 'core', target: r.target, plannedQty: r.qty,
@@ -53,8 +56,21 @@ const deOf = (rows) => { const total = rows.reduce((a, r) => a + r[1], 0); retur
 """
 
 
-def run(body, **data):
+_STATE = {"on": False}
+
+
+@pytest.fixture(autouse=True, params=["coded", "on"], ids=["switch-as-coded", "switch-on"])
+def trend_state(request):
+    _STATE["on"] = request.param == "on"
+    yield request.param
+    _STATE["on"] = False
+
+
+def run(body, trend=None, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
+    if trend is None and _STATE["on"]:
+        trend = True
+    decl += f"const TREND = {'undefined' if trend is None else json.dumps(trend)};\n"
     code = "import * as T from './track.mjs';\n" + HELPERS + decl + "let out;\n" + body + "\nconsole.log(JSON.stringify(out));"
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=bundle_dir(), capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -151,7 +167,7 @@ def test_buying_what_add_money_suggests_never_makes_a_new_high_or_trim_status():
     # 제안대로 산 뒤 Part C 의 evaluateDeck 를 다시 돌려요. 건너뛴 종목이 있고 넣는 돈이 덱보다 커도 새 '그만 살 차례'·'줄일 차례'는 없어요.
     # (예전 계산은 남는 돈까지 덱에 들어간다고 보고 사서, 산 종목이 목표의 1.33배 · 1.83배가 됐어요.)
     drop_buy = kr("000100", fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0])
-    drop_now = kr("000100", fy=2025, dps=400.0, dps3=[400.0, 500.0, 450.0])           # 배당 감소 → 확인 필요
+    drop_now = kr("000100", fy=2025, dps=400.0, dps3=[400.0, 500.0, 450.0])           # 배당 감소 → 확인 필요 (추세 스위치 켜짐)
     debt_buy = kr("000400", fy=2024, debt=80.0)
     debt_now = kr("000400", fy=2025, debt=150.0)                                      # 부채비율 기준(100%) 넘음 → 지켜봐요
     got = run("""
@@ -172,7 +188,7 @@ for (const [k, c] of Object.entries(cases)) {
   res[k] = { before: before.holdings.map((x) => [x.t, x.status]), after: after.holdings.map((x) => [x.t, x.status, Math.round(x.w * 1000) / 1000]),
     buys: r.buys.map((b) => [b.t, b.shares]), skipped: r.skipped.map((x) => x.t + ':' + x.why), left: r.left, spent: r.spent };
 }
-out = res;""", DB=drop_buy, DN=drop_now, WB=debt_buy, WN=debt_now, B=kr("000200"), C=kr("000300"), D=kr("000500", price=50000.0))
+out = res;""", trend=True, DB=drop_buy, DN=drop_now, WB=debt_buy, WN=debt_now, B=kr("000200"), C=kr("000300"), D=kr("000500", price=50000.0))
     for k, g in got.items():
         before = dict((t, s) for t, s in g["before"])
         assert g["buys"], (k, g)                                               # 실제로 사는 경우예요
@@ -446,6 +462,24 @@ out = {
 };""")
     assert got == {"newer": 3, "purchaseReport": 1, "onlyOld": 0, "failing": 0, "bandOut": 0, "watch": 0, "na": 2,
                    "hiddenRoe": 2, "shownRoe": 3, "bandResult": 0}, got
+
+
+def test_rules_kept_never_counts_a_korean_dividend_rule_the_trend_switch_left_unchecked():
+    # '규칙 n개가 모두 지켜지고 있어요'는 배당이 줄지 않았다는 말도 돼요: 한국 배당 추세 스위치(engine.js KR_DIV_TREND)가 꺼져 있으면
+    # 배당 삭감 규칙은 준비 중이라 세지 않아요 (이 변경 전에 저장한 덱도). 켜짐: 예전처럼 새 보고서로 확인한 배당 규칙을 세요.
+    buy = kr("000100", fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0])
+    now = kr("000100", fy=2025, dps=550.0, dps3=[550.0, 500.0, 450.0])               # 새 보고서: 배당은 늘었어요
+    got = run("""
+const ev = (trend) => {
+  const d = mkDeck([{ s: BUY, target: 1, qty: 10 }]);
+  const c = ctxOf([NOW], []); delete c.krDivTrend;                 // trend undefined: the code's switch
+  const x = T.R.evaluateDeck(d, trend === undefined ? c : { ...c, krDivTrend: trend }).holdings[0];
+  return { kept: T.keptCount(x), s: x.status, div: x.rules.find((r) => r.id === 'divCut').result };
+};
+out = { sw: T.E.KR_DIV_TREND, on: ev(true), off: ev(false), dflt: ev() };""", BUY=buy, NOW=now)
+    assert got["on"] == {"kept": 2, "s": "none", "div": "ok"}, got                 # 배당(새 보고서) + 비중
+    assert got["off"] == {"kept": 1, "s": "none", "div": "pending"}, got          # 비중만
+    assert got["dflt"] == (got["on"] if got["sw"] else got["off"]), got
 
 
 def test_today_counts_distinct_stocks_and_the_calm_eyebrow_needs_every_holding_clear():
