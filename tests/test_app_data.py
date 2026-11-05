@@ -558,3 +558,38 @@ def test_unreadable_saved_slot_is_not_opened():
                      "WHY 저장된 내용이 포트폴리오 모양이 아니에요", no_list, no_list, no_list, no_list, "WHY 저장소에서 읽다가 오류가 났어요",
                      {"holdings": [{"t": "005930", "mw": 300}]}, {"holdings": []}], got
     assert got[11] == "WHY 저장소에서 읽다가 오류가 났어요 (localStorage: SecurityError)", got[11]   # 진짜 이유를 남겨요
+
+
+# ── 미국 종목의 매출성장 이름표 (Jack 승인 2026-11-05) ───────────────────────
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_us_revenue_growth_is_labelled_as_the_latest_quarter_year_on_year():
+    """오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth (최근 분기 매출 ÷ 1년 전 같은 분기). 그래서 '매출성장(3y)' · '%/y' 가 아니라
+    '매출성장(최근 분기, 1년 전 대비)' / 'Rev growth (latest qtr y/y)' 에 % 로 보여요. 한국 종목과 오늘 데이터에 없는 내장 예시 값은
+    예전 그대로예요."""
+    base = [{"t": "AAPL", "nk": "애플", "ne": "Apple", "s": "elec", "cls": "us", "ccy": "USD", "price": 232, "beta": 1.1, "vol": 26,
+             "x": {"g3": 6}},
+            {"t": "MSFT", "nk": "마이크로소프트", "ne": "Microsoft", "s": "it", "cls": "us", "ccy": "USD", "price": 420, "beta": 1.0,
+             "vol": 24, "x": {"g3": 14}},
+            {"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "cls": "kr", "price": 78000, "beta": 1.1, "vol": 30}]
+    live = [{"t": "AAPL", "cls": "us", "price": 349.5, "beta": 1.2, "vol": 25, "g3": 11.7},
+            {"t": "NVDA", "nk": "NVIDIA", "cls": "us", "ccy": "USD", "price": 190, "beta": 1.8, "vol": 50, "g3": -3.2},
+            {"t": "005930", "cls": "kr", "price": 218000, "beta": 1.26, "vol": 51, "g3": 13.5}]
+    got = run_js(f"const out = D.mergeStocks({json.dumps(base, ensure_ascii=False)}, {json.dumps(live, ensure_ascii=False)});"
+                 "console.log(JSON.stringify(Object.fromEntries(out.map((s) => [s.t, s.x]))));")
+    assert got["AAPL"]["g3Q"] is True and got["AAPL"]["g3"] == 11.7 and got["NVDA"]["g3Q"] is True
+    assert got["005930"]["g3Q"] is False and not got["MSFT"].get("g3Q")                # 한국 · 오늘 데이터에 없는 내장 예시 값
+    T = {"g3": {"ko": "매출성장(3y)", "en": "Rev growth 3y"}, "g3Us": {"ko": "매출성장(최근 분기, 1년 전 대비)", "en": "Rev growth (latest qtr y/y)"}}
+    cells = run_metrics("const T = " + json.dumps(T, ensure_ascii=False) + ";"
+                        "const out = {};"
+                        "for (const lang of ['ko', 'en']) { const t = (k) => T[k][lang];"
+                        " out[lang] = [D.growthCell({ g3: 11.7, g3Q: true }, t), D.growthCell({ g3: -3.2, g3Q: true }, t),"
+                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: 13.5, g3Q: false }, t), D.growthCell({ g3: 6 }, t)]; }"
+                        "console.log(JSON.stringify(out));")
+    assert cells["ko"] == [["매출성장(최근 분기, 1년 전 대비)", "+11.7%"], ["매출성장(최근 분기, 1년 전 대비)", "-3.2%"],
+                           ["매출성장(최근 분기, 1년 전 대비)", "–"], ["매출성장(3y)", "+13.5%/y"], ["매출성장(3y)", "+6%/y"]], cells["ko"]
+    assert [c[0] for c in cells["en"]] == ["Rev growth (latest qtr y/y)"] * 3 + ["Rev growth 3y"] * 2
+    src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    assert 'g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }' in src
+    assert src.count("growthCell(x, t)") == 2 and '[t("g3"), (x.g3 > 0' not in src.split("export function growthCell")[0]  # 정의 + 칸 하나
+    built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
+    assert "매출성장(최근 분기, 1년 전 대비)" in built and "Rev growth (latest qtr y/y)" in built

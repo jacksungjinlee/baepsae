@@ -863,7 +863,10 @@ const T = {
   peers: { ko:"같은 섹터 비교", en:"Sector peers" },
   editData: { ko:"데이터 수정", en:"Edit data" },
   mcap: { ko:"시가총액", en:"Mkt cap" }, roe: { ko:"ROE", en:"ROE" }, opm: { ko:"영업이익률", en:"Op margin" },
-  g3: { ko:"매출성장(3y)", en:"Rev growth 3y" }, debt: { ko:"부채비율", en:"Debt ratio" }, frn: { ko:"외국인", en:"Foreign" },
+  g3: { ko:"매출성장(3y)", en:"Rev growth 3y" },
+  // 오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth: 최근 분기 매출을 1년 전 같은 분기와 비교한 값이에요 (3년 · 연율이 아니에요).
+  // 이름표는 Jack 승인 (2026-11-05). 한국 종목과 내장 예시 값은 예전 이름표 그대로예요.
+  g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }, debt: { ko:"부채비율", en:"Debt ratio" }, frn: { ko:"외국인", en:"Foreign" },
   w52: { ko:"52주 범위", en:"52w range" },
   jo: { ko:"조", en:"T KRW" },
   lvl: { ko:["새싹 투자자","꾸준한 모으기","균형 투자자","리스크 관리자","뱁새 마스터"], en:["Sprout","Steady Saver","Balanced Investor","Risk Manager","Baepsae Master"] },
@@ -2206,7 +2209,7 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
         <div style={{ paddingBottom: 14, animation: "fadeIn .2s ease" }}>
           {x.dk && <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.65, background: C.bg, borderRadius: 13, padding: 11 }}>{lang === "ko" ? x.dk : x.de || x.dk}</div>}
           {mode !== "simple" && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 9 }}>
-            {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], [t("g3"), (x.g3 > 0 ? "+" : "") + (x.g3 != null ? x.g3 + "%/y" : "–")], [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
+            {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], growthCell(x, t), [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
               [t("shPast"), typeof s.sh === "number" ? s.sh.toFixed(2) : "–"],
               // '이론 샤프' = β × 시장 위험 프리미엄 ÷ σ: 베타를 수익률로 바꾼 숫자라 SHOW_ER 를 켤 때만 (B안, v18.5 · Jack 2026-11-03)
               ...(SHOW_ER ? [[t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"]] : []),
@@ -5102,6 +5105,13 @@ function AppInner({ seed, lang: langProp }) {
       )}
     </div>
   );
+}
+
+// 매출성장 칸: 오늘 데이터의 미국 종목(x.g3Q, src/data.js)은 '최근 분기, 1년 전 대비' 이름표에 % (연율 '/y' 없이),
+// 그 밖(한국 · 내장 예시 값)은 예전 그대로. [이름표, 값] 을 돌려줘요.
+export function growthCell(x, t) {
+  if (x && x.g3Q) return [t("g3Us"), x.g3 != null ? (x.g3 > 0 ? "+" : "") + x.g3 + "%" : "\u2013"];
+  return [t("g3"), (x.g3 > 0 ? "+" : "") + (x.g3 != null ? x.g3 + "%/y" : "\u2013")];
 }
 
 export default function App({ seed, lang }) {

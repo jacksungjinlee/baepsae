@@ -103,7 +103,7 @@ export function mergeStocks(base, live) {
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
-             mcap: v("cap"), lo: v("lo"), hi: v("hi") },
+             mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: L.cls === "us" },
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
@@ -123,7 +123,7 @@ export function mergeStocks(base, live) {
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
-             mcap: L.cap, lo: L.lo, hi: L.hi } });
+             mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us" } });
     }
   });
   if (skipped.length) {
