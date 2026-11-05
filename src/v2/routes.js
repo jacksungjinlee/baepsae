@@ -2,7 +2,9 @@
 // Pure: no React, no Korean. src/v2/nav.jsx does the history work. Unit tests: tests/test_v2_lists.py.
 
 // The current app (예전 뱁새). Part F: the main address shows 2.0; the old app stays reachable from 2.0.
-export const OLD_APP = "./baepsae.html";
+// The address carries the 2.0 marker (?from=app, src/links.js): baepsae.html without it (and without a #) goes to 2.0.
+import { OLD_APP } from "../links.js";
+export { OLD_APP };
 
 export const TABS = ["home", "portfolio", "stocks", "market"];
 const SUBS = { home: ["why"], portfolio: ["build"] };

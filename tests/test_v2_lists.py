@@ -70,9 +70,10 @@ def test_routes_know_the_four_tabs_about_and_the_two_sub_screens():
     for h in ("#home/build", "#stocks/x", "#portfolio/build/2", "#today", "#deck", "#search", "#ABOUT", "#about/x"):
         assert got[h] == {"tab": "home", "sub": None, "about": False, "known": False}, h                  # 모르는 주소 → #home
     links = run("""out = { ...R.OLD_LINKS, corp: R.OLD_LINKS.corp('005930'), hash: R.hashOf('portfolio', 'build'), old: R.OLD_APP };""")
-    assert links == {"macro": "./baepsae.html#macro", "disc": "./baepsae.html#disc", "glossary": "./baepsae.html#info=glossary",
-                     "sources": "./baepsae.html#info=sources", "corp": "./baepsae.html#corp=005930", "hash": "#portfolio/build",
-                     "old": "./baepsae.html"}
+    # CV link (2026-11-05): every link into the old app carries the 2.0 marker ?from=app before its # (src/links.js OLD_APP)
+    assert links == {"macro": "./baepsae.html?from=app#macro", "disc": "./baepsae.html?from=app#disc",
+                     "glossary": "./baepsae.html?from=app#info=glossary", "sources": "./baepsae.html?from=app#info=sources",
+                     "corp": "./baepsae.html?from=app#corp=005930", "hash": "#portfolio/build", "old": "./baepsae.html?from=app"}
 
 
 def test_the_old_app_reads_only_its_own_deep_links():
