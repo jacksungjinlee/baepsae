@@ -38,10 +38,16 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   issue, not a rights issue). Live check 2026-11-05 (31 DART calls): all must-haves `same`; 대한제분 10:1 after the
   report → [400, 350, 250]; 리노공업 5:1 in 2025 → [800, 600, 600]; 엠앤씨솔루션 bonus ×3 → adjusted; 하이비젼시스템's
   real cut stays a cut; 한화에어로스페이스 `nc` (2024 spin-off + 2025 rights issue) but its yield ranks.
-- **Two-day plan (DART rule: one full-DART run per KST day; never start one 03:40–08:30 KST):** day 1 = the branch dry
+- **Jack's yes (2026-11-05):** cache-name test lines; "재무 경고 신호는 없어요"; the 12 gate rows with three changes —
+  row 4 (dyt coverage) FAIL below the dry run's observed share − 10 points, WARN up to the observed share (both numbers
+  in `DYT_COVER_BANDS`, placeholders 95 / 85 until Friday); row 6 FAIL only when two or more must-haves miss the
+  dividend rank, one = WARN naming stock and reason; row 8's betaN floor = the pipeline's real beta minimum
+  (`MIN_DAYS` 250), so new listings publish without a beta. Thresholds are confirmed against Friday's dry run before
+  Saturday's merge.
+- **Two-day plan (DART rule: one full-DART run per KST day; never start one 03:40–08:30 KST):** Friday = the branch dry
   run (`dry_run=true`, `dart=cache` on an empty v2 cache = that day's full-DART run, ~15,500 calls estimated, logged at
-  the start; the workflow restores the v1 folder only to keep the US Yahoo-info cache). Show Jack the new gate rows with
-  that run's numbers; he approves rows/thresholds and test changes. Day 2:
+  the start; the workflow restores the v1 folder only to keep the US Yahoo-info cache). Set `DYT_COVER_BANDS` from that
+  run's row 4 share and confirm every threshold with its numbers. Saturday:
   merge only after that morning's timer run has published (it still uses the v1 cache), then start one manual
   `dart=full` run on `main` the same day (not 03:40–08:30, not while a scheduled or timer run is waiting). It publishes
   the new fields and saves the first v2 cache on `main`; the next morning's timer run uses it. Until that run publishes,
