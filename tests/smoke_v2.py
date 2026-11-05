@@ -3111,13 +3111,27 @@ def scene_company(R, files, width):
         d = page.locator('[data-ui-v2="co-div"]')
         assert d.get_attribute("data-rule") == exp["div"]
         m = page.locator('[data-ui-v2="co-million"]')
-        if m.count():                                                        # 100만원어치: 1,000,000 × 보고서(미국: 야후) 수익률 ÷ 100, 1,000원 단위
-            y = s["dy"]                                                      # dps ÷ 오늘 종가가 아니에요 (리뷰: 분할 · 총액 공시)
-            assert float(m.get_attribute("data-y")) == y
+        # 100만원어치, 1,000원 단위 (세전). 한국 (Jack, 2026-11-05): 1,000,000 ÷ 오늘 종가 × 최근 사업보고서 주당 배당 — 그 주당 배당이
+        # 보고서 수익률과 맞을 때만 (분할 · 총액 공시는 줄 없음). 미국: 1,000,000 × 야후 수익률 ÷ 100 (v19.2 까지)
+        dps, px, dy = s.get("dps"), s.get("price"), s.get("dy")
+        if us:
+            raw = 1e6 * dy / 100 if isinstance(dy, (int, float)) and 0 < dy <= 30 else None
+        else:
+            agrees = isinstance(dps, (int, float)) and dps > 0 and isinstance(px, (int, float)) and px > 0 and (
+                dy is None or (0 < dy <= 30 and 1 / 3 <= dps / px * 100 / dy <= 3))
+            raw = 1e6 / px * dps if agrees and dps / px * 100 <= 30 else None
+        fy = s.get("fy") or (co or {}).get("fy")
+        if raw is None or not (CO["div"]["million"] and CO["div"]["perYear"]) or (not us and not fy):
+            assert m.count() == 0, (code, raw)
+        else:
+            assert m.count() == 1, (code, raw)
+            assert abs(float(m.get_attribute("data-raw")) - raw) < 1e-6, (m.get_attribute("data-raw"), raw)
             if m.get_attribute("data-under") == "1":
-                assert 1e6 * y / 100 < 1000
+                assert raw < 1000
             else:
-                assert int(m.get_attribute("data-won")) == round(1e6 * y / 100 / 1000) * 1000 >= 1000, (m.get_attribute("data-won"), y)
+                assert int(m.get_attribute("data-won")) == round(raw / 1000) * 1000 >= 1000, (m.get_attribute("data-won"), raw)
+            want = CO["div"]["basisUs"] if us else fillp(CO["div"]["basisKr"], fy=fy)
+            assert want in m.inner_text(), (want, m.inner_text())
             assert "지난 1년 기준" not in m.inner_text() and "약 0원" not in m.inner_text()
         if page.locator('[data-ui-v2="co-dps"]').count():                   # 주당 배당은 보고서 수익률과 맞을 때만 (1/3 ~ 3 배)
             r = s["dps"] / s["price"] * 100 / s["dy"]

@@ -27,6 +27,14 @@ export function usGrowthText(g) {
   const L = C.co.tiles.usGrowth;
   return L && typeof g === "number" && Number.isFinite(g) ? fill(L, { pct: signedPct(g) }) : null;
 }
+// 지금 가격이 가정하는 것, first sentence (Jack, 2026-11-05): g >= 0 (0 included) -> headUp "… {g}% 는다는 …", g < 0 ->
+// headDown "… {g}% 준다는 …" with g shown without its minus sign. g: the first-year rate already rounded to one decimal
+// (cotabs Dcf); -0 reads as 0 (는다). Not a finite number, or the sentence not there -> null.
+export function dcfHeadText(g) {
+  if (typeof g !== "number" || !Number.isFinite(g)) return null;
+  const L = g < 0 ? C.co.dcf.headDown : C.co.dcf.headUp;
+  return L ? fill(L, { g: p1(Math.abs(g)) }) : null;
+}
 export const timesText = (x, d = 1) => fill(C.pick.receipt.times, { x: nf(x, d) });
 // "12.3%", "−3.2%" (U+2212, as everywhere in 2.0), "0.0%" (no sign once rounded to zero).
 export const pctText = (x) => { const r = Math.round(x * 10) / 10; return `${r < 0 ? "\u2212" : ""}${p1(Math.abs(r))}%`; };

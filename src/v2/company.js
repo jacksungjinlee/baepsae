@@ -6,7 +6,8 @@
 //   rule "na" = an input is missing ("판단할 자료가 없어요"), never a guess.
 // "업종" is the `ind` group (hasGroup: never "other" / "etc" / missing) inside the same market, as 왜 움직였나 uses.
 // Units: corp.json op / ni / rev are 억원; KR prices are 원; US prices are $ (data.json units).
-import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy } from "./engine.js";
+import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy,
+  krDivYield, DY_MAX } from "./engine.js";
 import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
@@ -132,6 +133,20 @@ export function perMillionView(yieldPct) {
   if (y == null || !(y > 0)) return null;
   const raw = (MILLION * y) / 100;
   return raw < 1000 ? { under: true, raw } : { won: perMillion(y), raw };
+}
+
+// 100만원어치 for a Korean stock (Jack, 2026-11-05): 1,000,000 ÷ today's close (data.json price, the pxDate close) × the
+// latest 사업보고서's dividend per share (dps), rounded to 1,000원, before tax. null (the line is hidden) when dps or the
+// price is missing, the price is not above 0, or dps is 0 (that is 배당이 없어요: divKr "none"). The dps must be the one the
+// card trusts: it agrees with the same report's yield (engine.krDivYield / dpsAgrees), so a split after the report or a
+// total filed in the per-share row (와이엔텍) never turns into an absurd amount; above 30% a year is not believed (DY_MAX).
+export function perMillionKr(s) {
+  const d = num(s && s.dps), p = num(s && s.price);
+  if (d == null || !(d > 0) || !(p > 0)) return null;
+  const y = krDivYield(s);
+  if (y == null || y > DY_MAX) return null;
+  const raw = (MILLION * d) / p;
+  return raw < 1000 ? { under: true, raw } : { won: Math.round(raw / 1000) * 1000, raw };
 }
 
 // 배당성향 (KR), on one basis: the report's dividend per share x shares over the same report's net income (corp.json ni[0],

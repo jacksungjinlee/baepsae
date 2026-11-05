@@ -218,6 +218,51 @@ def test_korean_yield_is_the_reports_own_and_per_share_figures_are_cross_checked
     assert all(k["yieldPct"] is None and k["rule"] == "na" and u["rule"] == "na" for k, u in big[:3]) and big[3][1]["yieldPct"] == 30, big
 
 
+def test_hundred_man_won_for_korea_is_dps_over_todays_close():
+    """100만원어치 (한국, Jack 2026-11-05): 1,000,000 ÷ 오늘 종가 × 최근 사업보고서 주당 배당, 1,000원 단위 (세전).
+    주당 배당이나 가격이 없거나 가격이 0 이하면 줄을 빼요. 0원이면 '배당이 없어요' 그대로(줄 없음). 주당 배당이 그 보고서의
+    수익률과 맞지 않으면(주식 분할 · 총액 공시) 터무니없는 금액 대신 줄을 빼요. 미국은 v19.2 까지 야후 수익률 그대로."""
+    sam = REAL["005930"]                                                    # dps 1,668원 · 종가 219,500원 · 보고서 수익률 1.5%
+    cases = {"sam": sam, "samToday": {**sam, "price": 218000.0}, "hyundai": REAL["005380"],
+             "zero": {**sam, "dps": 0, "dy": 0}, "noDps": {**sam, "dps": None}, "noDps2": {k: v for k, v in sam.items() if k != "dps"},
+             "noPrice": {**sam, "price": None}, "zeroPrice": {**sam, "price": 0}, "negPrice": {**sam, "price": -5},
+             "split": REAL["067900"], "total": REAL["134380"], "noDyHuge": {**sam, "dy": None, "dps": 80000.0},
+             "noDyOk": {**sam, "dy": None}, "tiny": {"t": "X", "cls": "kr", "price": 100000.0, "fy": 2025, "dy": 0.05, "dps": 50.0}}
+    got = run("""out = Object.fromEntries(Object.entries(C).map(([k, s]) => [k, { pm: K.perMillionKr(s), rule: K.divKr(s, null).rule }]));""", C=cases)
+    raw = 1e6 / 219500 * 1668                                               # 7,599원 → 약 8,000원
+    assert abs(got["sam"]["pm"]["raw"] - raw) < 1e-6 and got["sam"]["pm"]["won"] == 8000
+    assert got["samToday"]["pm"]["won"] == round(1e6 / 218000 * 1668 / 1000) * 1000 == 8000
+    assert got["hyundai"]["pm"]["won"] == round(1e6 / 277500 * 10000 / 1000) * 1000 == 36000
+    assert got["zero"]["pm"] is None and got["zero"]["rule"] == "none"     # 0원: 배당이 없어요 (줄 없음)
+    for k in ("noDps", "noDps2", "noPrice", "zeroPrice", "negPrice"):
+        assert got[k]["pm"] is None, k                                      # 주당 배당 · 가격이 없거나 가격이 0 이하: 줄을 빼요
+    assert got["split"]["pm"] is None and got["total"]["pm"] is None        # 와이엔텍(분할) · 미원화학(총액): 터무니없는 금액 없음
+    assert got["noDyHuge"]["pm"] is None                                    # 보고서 수익률이 없어도 연 30% 넘으면 믿지 않아요 (DY_MAX)
+    assert got["noDyOk"]["pm"]["won"] == 8000                               # 맞춰 볼 수익률이 없으면 주당 배당 ÷ 종가 그대로 (engine.dpsAgrees)
+    assert got["tiny"]["pm"] == {"under": True, "raw": 500.0}               # 1,000원이 안 되면 '1년에 1,000원이 안 돼요' (약 0원 없음)
+    # 화면: 한국은 perMillionKr, 미국은 야후 수익률 (perMillionView) 그대로 · 근거 문장은 Jack 의 문장
+    tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    assert 'const pm = r.rule === "none" ? null : us ? perMillionView(r.yieldPct) : perMillionKr(s);' in tabs
+    copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
+    assert 'basisKr: "{fy}년 사업보고서 주당 배당과 오늘 주가로 계산했어요.",' in copy
+
+
+def test_dcf_headline_says_grows_or_shrinks_without_a_minus_sign():
+    """지금 가격이 가정하는 것 첫 문장 (Jack, 2026-11-05): 0 이상이면 '… {g}% 는다는 …', 0보다 작으면 '… {g}% 준다는 …' 에 빼기 없이."""
+    got = run("""const { F } = T; out = [22.1, 0, -0, 0.04, -3.2, -30, 60, NaN, null].map((g) => F.dcfHeadText(g));""")
+    up = lambda g: f"지금 주가에는 이익이 첫해 {g}% 는다는 가정이 담겨 있어요"
+    down = lambda g: f"지금 주가에는 이익이 첫해 {g}% 준다는 가정이 담겨 있어요"
+    assert got == [up("22.1"), up("0.0"), up("0.0"), up("0.0"), down("3.2"), down("30.0"), up("60.0"), None, None], got
+    assert all("−" not in x and "-" not in x for x in got if x)
+
+
+def test_sample_cards_line_names_the_first_two_cards():
+    """'고른 기준 카드가 없어서 가치·배당 카드를 먼저 보여 드려요.' (Jack, 2026-11-05): 고른 카드가 없을 때 보이는 두 장이 정말 가치 · 배당이에요."""
+    got = run("out = [K.myCards([]).ids, T.CP.C.co.fit.sample, T.CP.C.build.cards.value.name, T.CP.C.build.cards.div.name];")
+    assert got[0] == ["value", "div"] and got[1] == "고른 기준 카드가 없어서 가치·배당 카드를 먼저 보여 드려요.", got
+    assert got[2] == "가치" and got[3] == "배당", got
+
+
 def test_hundred_man_won_never_shows_zero_for_a_payer():
     # 주성엔지니어링 0.19% · 가온전선 0.1% · 삼천당제약 0.02% · 영풍 0.01% (리뷰: 예전 계산은 '1년에 약 0원')
     got = run("out = [0.19, 0.1, 0.02, 0.01, 0, null].map((y) => K.perMillionView(y));")

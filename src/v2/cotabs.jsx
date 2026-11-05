@@ -7,7 +7,7 @@
 // 가치: PBR against the industry (strip), PBR · PER with industry medians, 지금 가격이 가정하는 것 (KR: the old DcfCard
 //   reverse calculation; out of range -> its two messages), the 출렁임 line (phrase only: no beta band in the data yet).
 // 배당: KR dividend per share (report year) and three years; 100만원어치 = 1,000,000 x yield, rounded to 1,000원, before
-//   tax, with the basis it was really computed on (KR: the report's dividend over today's close; US: Yahoo's yield).
+//   tax, with the basis it was really computed on (KR: the report's dividend per share over today's close; US: Yahoo's yield).
 // 공시: KR only, disc.json (임원·주요주주 reports for 90 days, 국민연금 5% filings). A row with an exact receipt number is a
 //   plain link to that filing on DART (new tab, Jack 2026-11-05: routes.dartFilingUrl); nothing is fetched from DART.
 // 자세히: 가치 (every ratio with receipts that reproduce it, 업종 지도, the calculator) and 실적 (margins, 3-year table).
@@ -19,12 +19,12 @@ import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
-  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, payout, DCF, round } from "./company.js";
+  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round } from "./company.js";
 import { growthBasis, num } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -297,7 +297,7 @@ function Dcf({ load, s, co, a, onTry }) {
   const g3 = num(s.g3);
   const msg = r.edge === "low" ? D.low : r.edge === "high" ? D.high : r.why === "loss" ? D.loss : null;
   const g = r.g != null ? round(r.g, 1) : null;
-  const head = g != null && D.head ? fill(D.head, { g: rateText(g) }) : null;
+  const head = dcfHeadText(g);                 // 는다 (g >= 0) / 준다 (g < 0, no minus sign): Jack, 2026-11-05
   const inputs = dcfInputs(r);
   if (g != null && !all(head, D.implied, D.perYear, D.note, inputs)) return null;
   if (g == null && !msg) return null;
@@ -517,7 +517,8 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 
 // ================= 배당 =================
 // KR: the yield is the report's own 현금배당수익률 (dy, that year's price) with its report year; the per-share figure and the
-// bars only when dps agrees with dy (company.js divKr dpsOk); 배당성향 only on one basis (company.js payout). US: Yahoo's
+// bars only when dps agrees with dy (company.js divKr dpsOk); 배당성향 only on one basis (company.js payout). 100만원어치
+// (Jack, 2026-11-05): 1,000,000 ÷ today's close × that report's dividend per share (the same trusted dps). US: Yahoo's
 // yield only (no per-share dividend in the data until v19.2).
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
@@ -529,7 +530,8 @@ export function DivTab({ load, s }) {
   const head = r.rule === "na" ? C.co.tiles.na : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : us && r.rule === "pays" ? Dv.head.pays : Dv.head[r.rule];
   const md = priceMd(load, s);
   const fy = us ? null : r.fy;
-  const pm = r.rule !== "none" ? perMillionView(r.yieldPct) : null;
+  // KR (Jack, 2026-11-05): 1,000,000 ÷ today's close × the report's dividend per share (company.js perMillionKr); US: Yahoo's yield
+  const pm = r.rule === "none" ? null : us ? perMillionView(r.yieldPct) : perMillionKr(s);
   const basis = us ? Dv.basisUs : Dv.basisKr && fy ? fill(Dv.basisKr, { fy }) : null;
   const po = us ? null : payout(s, co);
   if (po && po.out != null && !warnedPayout.has(s.t)) {
@@ -554,7 +556,7 @@ export function DivTab({ load, s }) {
         {us && Dv.usLater && <Note>{Dv.usLater}</Note>}
       </Card>}
       {pm && all(Dv.million, line, basis) && (
-        <Card data-ui-v2="co-million" data-won={pm.won ?? ""} data-under={pm.under ? "1" : ""} data-y={r.yieldPct}>
+        <Card data-ui-v2="co-million" data-won={pm.won ?? ""} data-under={pm.under ? "1" : ""} data-raw={pm.raw}>
           <CardHead icon="coins" tone="div" title={Dv.million} />
           <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
