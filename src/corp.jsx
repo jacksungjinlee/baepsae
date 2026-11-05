@@ -7,7 +7,7 @@ import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
-import { loadJson } from "./data.js";
+import { loadJson, krGrowthBasis, krGrowthDcfLine } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -41,8 +41,8 @@ const ChipBtn = ({ on, onClick, children }) => (
 
 // ---------------- 설명 시트 ----------------
 const EXPL = {
-  quad: { t: "업종 성장 사분면", b: "가로축은 업종의 3년 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 3년 매출 성장률이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
-  secrank: { t: "업종 성장률 순위", b: "각 업종의 3년 연평균 매출 성장률(상장사 합산 기준)을 큰 순서대로 늘어놓았어요. 막대 옆의 매출 규모와 수익성을 함께 보면 '커지는 판인가, 돈이 되는 판인가'를 같이 판단할 수 있어요. 표본이 5개 미만인 업종은 성장률을 표시하지 않아요." },
+  quad: { t: "업종 성장 사분면", b: "가로축은 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 최근 2년 연평균 매출 성장률이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
+  secrank: { t: "업종 성장률 순위", b: "각 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준)을 큰 순서대로 늘어놓았어요. 막대 옆의 매출 규모와 수익성을 함께 보면 '커지는 판인가, 돈이 되는 판인가'를 같이 판단할 수 있어요. 표본이 5개 미만인 업종은 성장률을 표시하지 않아요." },
   scatter: { t: "수익성과 주가 수준 (ROE × PBR)", b: "가로축은 자기자본이익률(ROE), 세로축은 주가순자산비율(PBR)이에요. 보통 자본을 잘 굴리는 회사일수록 장부가치 대비 높은 값에 거래되고, 점선 추세선이 그 평균적 관계예요. 추세선보다 한참 위면 수익성에 비해 높은 평가, 한참 아래면 낮은 평가를 받고 있다는 뜻인데 — 거기엔 대개 이유가 있어요. 그 이유를 찾는 것이 분석이에요." },
   box: { t: "업종별 시장 눈높이", b: "업종마다 시장이 쳐주는 값의 눈높이가 달라요. 굵은 점이 그 업종의 중간값, 옅은 막대가 가운데 절반(25~75%)이 모여 있는 구간이에요. 같은 PER 10배라도 어떤 업종에선 비싼 값, 어떤 업종에선 싼 값이에요 — 그래서 멀티플은 늘 같은 업종 안에서 읽어요. 점선은 시장 전체의 중간값이라, 어떤 업종이 시장 평균보다 후하게 또는 박하게 평가받는지도 보여요." },
   per: { t: "PER (주가수익비율)", b: "시장이 이 회사의 이익 1원에 몇 원을 내고 있는지예요. 높다는 건 시장이 앞으로의 성장을 크게 기대한다는 뜻이고, 그 기대가 실현되지 않으면 주가가 조정될 수 있다는 뜻이기도 해요. 적자 기업은 PER을 계산할 수 없어요." },
@@ -680,10 +680,15 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
   const heldCount = Object.keys(heldMap).length;
   const passBase = (c) => (heldOnly ? !!heldMap[c.t] : (c.cap || 0) >= capMin) && (secFilter === "all" || c.s === secFilter);
 
-  const quadPts = useMemo(() => comps
-    .filter((c) => c.g3 != null && secs[c.s]?.g != null && passBase(c))
-    .map((c) => ({ id: c.t, nm: c.nk, x: secs[c.s].g, y: c.g3, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
-      color: SEC(c.s).color, held: !!heldMap[c.t], label: `${c.nk} · ${SEC(c.s).ko}\n업종 ${pc(secs[c.s].g)} · 기업 ${pc(c.g3)} · ${c.cap ? c.cap.toFixed(1) + "조" : ""}` })), [comps, secs, capMin, secFilter, heldMap, heldOnly]);
+  const quadPts = useMemo(() => {
+    // 세로축은 최근 2년 연평균인 회사만 (업종 축과 같은 기준, 부제와 같은 말 · Jack 2026-11-05: 1년짜리 · 기준을 모르는 값은 빼요).
+    // 뺀 회사 수는 console 에 남겨요.
+    const all = comps.filter((c) => c.g3 != null && secs[c.s]?.g != null && passBase(c));
+    const two = all.filter((c) => krGrowthBasis(c.g3, c.rev) === "y2");
+    if (two.length < all.length) console.warn(`[뱁새] 성장 지도: 매출성장이 최근 2년 연평균이 아닌 회사 ${all.length - two.length}개(최근 1년 · 기준을 모름)는 빼고 ${two.length}개를 그렸어요`);
+    return two.map((c) => ({ id: c.t, nm: c.nk, x: secs[c.s].g, y: c.g3, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
+      color: SEC(c.s).color, held: !!heldMap[c.t], label: `${c.nk} · ${SEC(c.s).ko}\n업종 ${pc(secs[c.s].g)} · 기업 ${pc(c.g3)} · ${c.cap ? c.cap.toFixed(1) + "조" : ""}` }));
+  }, [comps, secs, capMin, secFilter, heldMap, heldOnly]);
 
   const secRank = useMemo(() => Object.entries(secs)
     .filter(([k, s]) => s.g != null)
@@ -750,7 +755,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
       {heldNote && <Sub style={{ color: C.coral }}>저장된 포트폴리오가 없어요. 포트폴리오 탭에서 하나 저장하면 이 필터를 쓸 수 있어요.</Sub>}
 
       <Card>
-        <H num="01" main="성장 지도" sub="업종 × 기업 매출 성장률 사분면 · 3년 연평균 · 원 크기는 시가총액" onWhy={() => setExplain("quad")} />
+        <H num="01" main="성장 지도" sub="업종 × 기업 매출 성장률 사분면 · 최근 2년 연평균 · 원 크기는 시가총액" onWhy={() => setExplain("quad")} />
         {heldN > 0 && <Sub style={{ marginTop: 5 }}><span style={{ color: C.apricotDeep, fontWeight: 800 }}>주황 테두리 {heldN}개는 내 포트폴리오 보유 종목이에요</span></Sub>}
         <div className="cgrid4" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, margin: "10px 0" }}>
           {[
@@ -796,7 +801,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
 
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card>
-          <H num="03" main="업종별 성장률 순위" sub="3년 연평균 · 상장사 매출 합산 기준" onWhy={() => setExplain("secrank")} />
+          <H num="03" main="업종별 성장률 순위" sub="최근 2년 연평균 · 상장사 매출 합산 기준" onWhy={() => setExplain("secrank")} />
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
             {secRank.map((r) => (
               <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -988,7 +993,7 @@ function DecompCard({ c, setExplain }) {
     body = (
       <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
-        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" : ""}{c.r36}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>}
+        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>}
       </div>
     );
   }
@@ -1063,7 +1068,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
     if (c.r3 >= 15 && niYoY != null && niYoY <= 5)
       return `최근 3개월 주가는 +${c.r3}% 올랐지만 연간 실적 추세는 뚜렷이 개선되지 않았어요. 가격을 움직인 것이 실적보다 기대나 수급일 가능성을 염두에 둘 대목이에요.`;
     if (c.r3 <= -15 && niYoY != null && niYoY >= 10)
-      return `연간 실적은 개선됐는데 최근 3개월 주가는 ${c.r3}% 내렸어요. 시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요.`;
+      return `연간 실적은 개선됐는데 최근 3개월 주가는 ${Math.abs(c.r3)}% 내렸어요. 시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요.`;
     return null;
   })();
 
@@ -1366,6 +1371,7 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
   const [sel, setSel] = useState(() => peers.slice(0, 2).map((x) => x.t));
   if (!base) return <Card><Sub>데이터를 찾지 못했어요.</Sub></Card>;
   const cols = [base, ...sel.map((t) => data.companies.find((x) => x.t === t)).filter(Boolean)];
+  const gb = new Map(cols.map((c) => [c.t, krGrowthBasis(c.g3, c.rev)]));      // 회사마다 매출 성장 계산 기준 (null: 모름)
   const sec = data.sectors[base.s] || {};
   const toggle = (t) => setSel(sel.includes(t) ? sel.filter((x) => x !== t) : sel.length < 3 ? [...sel, t] : sel);
   const F = {
@@ -1375,7 +1381,11 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
   const ROWS = [
     ["시가총액", (c) => c.cap != null ? c.cap.toFixed(1) + "조" : "—", null],
     ["최근 매출", (c) => F.won(c.rev && c.rev[0]), null],
-    ["매출 성장률 (3년 연평균)", (c) => c.g3 != null ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null],
+    // 매출 성장: 회사마다 계산 기준대로 (Jack, 2026-11-05: 최근 2년 연평균 · 최근 1년, '3년' 아님). 기준을 모르면 '—'.
+    // 그 기준을 쓰는 회사가 있을 때만 그 줄이 생겨요. 0 은 부호 없이.
+    ...[["y2", "매출성장(최근 2년 연평균)"], ["y1", "매출성장(최근 1년)"]]
+      .filter(([b]) => cols.some((c) => gb.get(c.t) === b))
+      .map(([b, label]) => [label, (c) => gb.get(c.t) === b ? (c.g3 > 0 ? "+" : "") + c.g3 + "%" : "—", null]),
     ["영업이익률", (c) => F.num(c.opm, 1, "%"), sec.opm != null ? sec.opm + "%" : "—"],
     ["ROE", (c) => F.num(c.roe, 1, "%"), sec.roe != null ? sec.roe + "%" : "—"],
     ["PER", (c) => F.num(c.per, 1, "배"), sec.perQ ? sec.perQ[1] + "배" : "—"],
@@ -1475,6 +1485,8 @@ export function DcfCard({ c, sharesM, setExplain }) {
   const val = dcfPerShare({ ni0: N, sharesM: S, g1, fade, disc, term });
   const gap = val && c.price ? (val / c.price - 1) * 100 : null;
   const rev = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
+  // 리버스 DCF 옆의 매출 성장 문장 (Jack, 2026-11-05: 줄표 없이, 부호 없는 숫자로 늘었어요 · 줄었어요, 0.0% 면 거의 변하지 않았어요). 기준을 모르면 빼요.
+  const growthLine = krGrowthDcfLine(c.g3, c.rev);
 
   // 민감도: 할인율 × 영구성장률
   const discs = [disc - 2, disc - 1, disc, disc + 1, disc + 2].filter((d) => d >= 5);
@@ -1544,7 +1556,7 @@ export function DcfCard({ c, sharesM, setExplain }) {
               <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5 }}>
                 {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
                   : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
-                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요. 이 회사의 최근 3년 성장률은 {pc(c.g3)}였어요 — 그 간극이 그럴듯한지가 핵심 질문이에요.</>}
+                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요.{growthLine ? " " + growthLine : null}</>}
               </div>
             </div>
           )}

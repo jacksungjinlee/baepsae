@@ -14,7 +14,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
-import { loadJson, freshness, mergeStocks, mdOf } from "./data.js";
+import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 
@@ -865,10 +865,11 @@ const T = {
   peers: { ko:"같은 섹터 비교", en:"Sector peers" },
   editData: { ko:"데이터 수정", en:"Edit data" },
   mcap: { ko:"시가총액", en:"Mkt cap" }, roe: { ko:"ROE", en:"ROE" }, opm: { ko:"영업이익률", en:"Op margin" },
-  g3: { ko:"매출성장(3y)", en:"Rev growth 3y" },
   // 오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth: 최근 분기 매출을 1년 전 같은 분기와 비교한 값이에요 (3년 · 연율이 아니에요).
-  // 이름표는 Jack 승인 (2026-11-05). 한국 종목과 내장 예시 값은 예전 이름표 그대로예요.
-  g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }, debt: { ko:"부채비율", en:"Debt ratio" }, frn: { ko:"외국인", en:"Foreign" },
+  // 이름표는 Jack 승인 (2026-11-05). 한국 종목은 아래 g3Kr2 · g3Kr1, 오늘 데이터에 없는 내장 예시 값은 칸을 빼요 (growthCell).
+  g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" },
+  // 한국 종목 g3 는 최근 2년 연평균, 전전기 매출이 없으면 최근 1년이에요 (Jack 승인 2026-11-05). 어느 쪽인지 모르면 칸을 빼요.
+  g3Kr2: { ko:"매출성장(최근 2년 연평균)", en:"Rev growth (2-yr avg/yr)" }, g3Kr1: { ko:"매출성장(최근 1년)", en:"Rev growth (1 yr)" }, debt: { ko:"부채비율", en:"Debt ratio" }, frn: { ko:"외국인", en:"Foreign" },
   w52: { ko:"52주 범위", en:"52w range" },
   jo: { ko:"조", en:"T KRW" },
   lvl: { ko:["새싹 투자자","꾸준한 모으기","균형 투자자","리스크 관리자","뱁새 마스터"], en:["Sprout","Steady Saver","Balanced Investor","Risk Manager","Baepsae Master"] },
@@ -2189,6 +2190,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
 function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, peers, updateStock }) {
   const [editing, setEditing] = useState(false);
   const x = s.x || {};
+  const g3Basis = useKrGrowthBasis(s, open && mode !== "simple");     // the grid (and its growth cell) is not drawn in simple mode
   return (
     <div style={{ borderBottom: "1px solid " + C.line }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", cursor: "pointer" }} onClick={onToggle}>
@@ -2211,12 +2213,12 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
         <div style={{ paddingBottom: 14, animation: "fadeIn .2s ease" }}>
           {x.dk && <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.65, background: C.bg, borderRadius: 13, padding: 11 }}>{lang === "ko" ? x.dk : x.de || x.dk}</div>}
           {mode !== "simple" && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 9 }}>
-            {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], growthCell(x, t), [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
+            {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], growthCell(x, t, g3Basis), [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
               [t("shPast"), typeof s.sh === "number" ? s.sh.toFixed(2) : "–"],
               // '이론 샤프' = β × 시장 위험 프리미엄 ÷ σ: 베타를 수익률로 바꾼 숫자라 SHOW_ER 를 켤 때만 (B안, v18.5 · Jack 2026-11-03)
               ...(SHOW_ER ? [[t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"]] : []),
               [t("mddL2"), typeof s.mdd === "number" ? s.mdd.toFixed(0) + "%" : "–"],
-              [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–"]].map(([k, v]) => (
+              [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–"]].filter(Boolean).map(([k, v]) => (
               <div key={k} style={{ background: C.bg, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
                 <div style={{ fontSize: 9.5, color: C.faint }}>{k}</div>
                 <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginTop: 1 }}>{v}</div>
@@ -5109,12 +5111,38 @@ function AppInner({ seed, lang: langProp }) {
   );
 }
 
-// 매출성장 칸: 오늘 데이터의 미국 종목(x.g3Q, src/data.js)은 '최근 분기, 1년 전 대비' 이름표에 % (연율 '/y' 없이),
-// 그 밖(한국 · 내장 예시 값)은 예전 그대로. [이름표, 값] 을 돌려줘요.
-export function growthCell(x, t) {
+// 매출성장 칸: 오늘 데이터의 미국 종목(x.g3Q, src/data.js)은 '최근 분기, 1년 전 대비' 이름표에 % (연율 '/y' 없이).
+// 오늘 데이터의 한국 종목은 계산 기준(basis: corp.json 매출로 맞춘 data.js krGrowthBasis)대로 '최근 2년 연평균' · '최근 1년'
+// (Jack, 2026-11-05: '3년'이 아니에요). 기준을 아직 모르거나 알 수 없으면 null: 칸을 빼요. 오늘 데이터에 없는 내장 예시 값은
+// 어떻게 계산했는지 알 수 없어서 빼요 (예전 '매출성장(3y)' 이름표는 없어요).
+// [이름표, 값] 또는 null 을 돌려줘요.
+export function growthCell(x, t, basis) {
   x = x || {};
-  if (x.g3Q) return [t("g3Us"), x.g3 != null ? (x.g3 > 0 ? "+" : "") + x.g3 + "%" : "\u2013"];
-  return [t("g3"), (x.g3 > 0 ? "+" : "") + (x.g3 != null ? x.g3 + "%/y" : "\u2013")];
+  const v = x.g3 != null ? (x.g3 > 0 ? "+" : "") + x.g3 + "%" : "\u2013";
+  if (x.g3Q) return [t("g3Us"), v];
+  if (x.g3Kr) return x.g3 == null ? null : basis === "y2" ? [t("g3Kr2"), v] : basis === "y1" ? [t("g3Kr1"), v] : null;
+  return null;
+}
+// 한국 종목의 매출성장 계산 기준: 그 줄을 펼칠 때 corp.json 을 한 번 받아 맞춰 봐요 (data.js loadCorpOnce · krGrowthBasis).
+function useKrGrowthBasis(s, open) {
+  const [basis, setBasis] = useState(null);
+  const x = (s && s.x) || {};
+  useEffect(() => {
+    setBasis(null);                                    // a new stock or figure: no label until its own basis is known
+    if (!open || !x.g3Kr || x.g3 == null) return;
+    let live = true;
+    loadCorpOnce().then((d) => {
+      if (!live) return;
+      const co = d && !d.failed ? d.companies.find((c) => c.t === s.t) : null;
+      const same = !!co && co.g3 === x.g3;                // data.json 과 corp.json 이 다른 날 것이면 매출로 맞춰 볼 수 없어요
+      const b = same ? krGrowthBasis(x.g3, co.rev) : null;
+      if (!b) console.warn("[뱁새] 매출성장 계산 기준을 알 수 없어 칸을 뺐어요: " + s.t + (d && d.failed ? " (corp.json 을 받지 못했어요)"
+        : !co ? " (corp.json 에 없어요)" : !same ? ` (data.json ${x.g3} · corp.json ${co.g3} 이 달라요)` : ""));
+      setBasis(b);
+    });
+    return () => { live = false; };
+  }, [open, s && s.t, x.g3, x.g3Kr]);                  // g3Kr: 오늘 데이터가 늦게 들어와 내장 예시 값을 바꿔도 다시 맞춰 봐요
+  return basis;
 }
 
 export default function App({ seed, lang }) {

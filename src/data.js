@@ -103,7 +103,7 @@ export function mergeStocks(base, live) {
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
-             mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us" },   // 미국 g3 = 최근 분기 · 1년 전 대비
+             mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us", g3Kr: (L.cls || b.cls) === "kr" },   // 미국 g3 = 최근 분기 · 1년 전 대비
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
@@ -123,7 +123,7 @@ export function mergeStocks(base, live) {
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
-             mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us" } });
+             mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us", g3Kr: L.cls === "kr" } });
     }
   });
   if (skipped.length) {
@@ -133,4 +133,76 @@ export function mergeStocks(base, live) {
   if (noRiskN) console.warn("[뱁새] 베타·변동성이 없어 위험 계산에서 빼는 종목 " + noRiskN + "개 (목록에는 있어요)");
   Object.values(byT).forEach((b) => out.push({ ...b, live: false }));   // 오늘 데이터에 없는 내장 종목 = 예시 가격
   return out;
+}
+
+// ---- 한국 매출 성장(g3)이 어떻게 계산됐는지 (Jack, 2026-11-05: '3년'이라고 부르지 않아요) ----
+// 파이프라인(fetch_data.py parse_dart_list): 당기 · 전전기 매출이 둘 다 0 보다 크면 최근 2년 연평균 ((당기 ÷ 전전기)^0.5 − 1),
+// 아니면 (전전기 매출이 없거나 0 이하, 또는 당기 매출이 0 이하) 당기가 0 이 아니고 전기가 0 보다 클 때 최근 1년 (당기 ÷ 전기 − 1).
+// corp.json 의 매출(rev, [당기, 전기, 전전기], 억원, 0.1 단위로 반올림)과 g3(0.1 단위)로 거꾸로 맞춰 봐요.
+// 2.0 의 src/v2/engine.js growthBasis 와 같은 규칙이에요. 예전 뱁새는 2.0 코드를 가져오지 않아서 여기 따로 두고 (2.0 이 이걸
+// 가져다 쓰도록 합치는 건 이 PR 밖이에요), tests/test_app_data.py 가 둘이 같은지 봐요.
+// "y2" (최근 2년 연평균) · "y1" (최근 1년) · null (알 수 없음: 이름표 없이 숨겨요).
+const REV_HALF = 0.05, G3_HALF = 0.05;
+export function krGrowthBasis(g3, rev) {
+  const g = typeof g3 === "number" && Number.isFinite(g3) ? g3 : null;
+  if (g == null || !Array.isArray(rev)) return null;
+  const r = [0, 1, 2].map((i) => (typeof rev[i] === "number" && Number.isFinite(rev[i]) ? rev[i] : null));
+  const has = (i) => r[i] != null;
+  const lo = (i) => r[i] - REV_HALF, hi = (i) => r[i] + REV_HALF;
+  const pos = (x) => Math.max(x, 1e-9);
+  const sure2 = has(0) && has(2) && lo(0) > 0 && lo(2) > 0;
+  const may2 = has(0) && has(2) && hi(0) > 0 && hi(2) > 0;
+  const may1 = !sure2 && has(0) && has(1) && hi(1) > 0;
+  const range2 = may2 ? [(Math.sqrt(pos(lo(0)) / hi(2)) - 1) * 100, lo(2) > 0 ? (Math.sqrt(hi(0) / lo(2)) - 1) * 100 : Infinity] : null;
+  let range1 = null;
+  if (may1) {
+    if (lo(1) > 0) {
+      const c = [lo(0), hi(0)].flatMap((a) => [lo(1), hi(1)].map((b) => (a / b - 1) * 100));
+      range1 = [Math.min(...c), Math.max(...c)];
+    } else range1 = [-Infinity, Infinity];
+  }
+  const fits = (rg) => !!rg && rg[0] <= g + G3_HALF + 1e-9 && rg[1] >= g - G3_HALF - 1e-9;
+  const in2 = fits(range2), in1 = fits(range1);
+  return in2 && !in1 ? "y2" : in1 && !in2 ? "y1" : null;
+}
+
+// ---- 한국 매출 성장 문장 (Jack, 2026-11-05) ----
+// 줄어든 경우 '감소했어요' · '줄었어요' · 'shrank' 옆에 마이너스 부호를 붙이지 않아요: 숫자는 절댓값이에요.
+// 보이는 숫자(소수 한 자리로 반올림, 부호 없이)가 0.0 이면 늘었다고도 줄었다고도 하지 않고 '거의 변하지 않았어요' ·
+// 'was flat' 이라고 써요 (Jack, 2026-11-05). 0.04 → 0.0 → 그대로, 0.05 → 0.1 → 늘었어요 (자바스크립트 toFixed 반올림).
+// 계산 기준을 모르면 null: 문장을 빼요.
+const g3Shown = (g3) => Math.abs(g3).toFixed(1);
+// 성적표(검색 결과 카드)의 한 줄. 숫자는 소수 한 자리까지 (g3 는 원래 0.1 단위라 보이는 숫자는 예전 그대로예요: 13.5, 3), 늘었으면 '+'.
+export function krGrowthScoreLine(g3, rev, en) {
+  const basis = krGrowthBasis(g3, rev);
+  if (!basis) return null;
+  const two = basis === "y2", n = Number(g3Shown(g3));
+  if (n === 0) return en ? `Revenue was flat over the last ${two ? "2 years" : "year"}.` : `매출은 최근 ${two ? "2년" : "1년"} 동안 거의 변하지 않았어요.`;
+  const up = g3 > 0, x = (up ? "+" : "") + n;
+  if (en) return two ? `Revenue ${up ? "grew" : "shrank"} ${x}% a year over the last 2 years.` : `Revenue ${up ? "grew" : "shrank"} ${x}% over the last year.`;
+  return two ? `매출은 최근 2년간 연평균 ${x}% ${up ? "성장했어요" : "감소했어요"}.` : `매출은 최근 1년간 ${x}% ${up ? "성장했어요" : "감소했어요"}.`;
+}
+// 기업분석 리버스 DCF 의 문장 (줄표 없이 두 문장, 부호 없는 숫자, 소수 한 자리). 1년짜리에는 '연평균'이 없어요.
+export function krGrowthDcfLine(g3, rev) {
+  const basis = krGrowthBasis(g3, rev);
+  if (!basis) return null;
+  const x = g3Shown(g3);
+  const what = Number(x) === 0 ? "거의 변하지 않았어요" : `${basis === "y2" ? "연평균 " : ""}${x}% ${g3 < 0 ? "줄었어요" : "늘었어요"}`;
+  return `이 회사 매출은 최근 ${basis === "y2" ? "2년" : "1년"} 동안 ${what}. 지금 주가가 가정하는 성장률과 비교해 보세요.`;
+}
+
+// corp.json 을 한 번만 받아요 (검색 칸의 성적표와 포트폴리오의 한국 매출성장 이름표가 같이 써요. 기업분석 탭은 따로 받아요). 받는 중이면 그 요청을 같이 기다리고,
+// 못 받으면 { failed: true } (실패는 기억하지 않아요: 다음에 다시 받아요).
+let CORP_DATA = null, CORP_PENDING = null;
+export async function loadCorpOnce() {
+  if (CORP_DATA) return CORP_DATA;
+  if (!CORP_PENDING) {
+    CORP_PENDING = loadJson("./corp.json", (d) => d && Array.isArray(d.companies) && d.companies.length > 0).then((r) => {
+      CORP_PENDING = null;
+      if (!r.ok) return { failed: true, companies: [], sectors: {} };
+      CORP_DATA = r.data;
+      return CORP_DATA;
+    });
+  }
+  return CORP_PENDING;
 }

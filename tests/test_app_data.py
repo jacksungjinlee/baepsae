@@ -560,41 +560,163 @@ def test_unreadable_saved_slot_is_not_opened():
     assert got[11] == "WHY 저장소에서 읽다가 오류가 났어요 (localStorage: SecurityError)", got[11]   # 진짜 이유를 남겨요
 
 
-# ── 미국 종목의 매출성장 이름표 (Jack 승인 2026-11-05) ───────────────────────
+# ── 매출성장 이름표: 미국 최근 분기 · 한국 최근 2년 연평균 / 최근 1년 (Jack 승인 2026-11-05) ─────────────
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
-def test_us_revenue_growth_is_labelled_as_the_latest_quarter_year_on_year():
-    """오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth (최근 분기 매출 ÷ 1년 전 같은 분기). 그래서 '매출성장(3y)' · '%/y' 가 아니라
-    '매출성장(최근 분기, 1년 전 대비)' / 'Rev growth (latest qtr y/y)' 에 % 로 보여요. 한국 종목과 오늘 데이터에 없는 내장 예시 값은
-    예전 그대로예요."""
+def test_revenue_growth_is_labelled_by_how_it_was_calculated():
+    """오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth (최근 분기 매출 ÷ 1년 전 같은 분기), 한국 종목 g3 는 최근 2년 연평균
+    (전전기 매출이 없으면 최근 1년). 그래서 '매출성장(3y)' · '%/y' 는 어디에도 없어요. 한국은 계산 기준을 corp.json 매출로 맞춰 본
+    뒤에만 이름표를 붙이고(모르면 칸을 빼요), 오늘 데이터에 없는 내장 예시 값도 빼요."""
     base = [{"t": "AAPL", "nk": "애플", "ne": "Apple", "s": "elec", "cls": "us", "ccy": "USD", "price": 232, "beta": 1.1, "vol": 26,
              "x": {"g3": 6}},
             {"t": "MSFT", "nk": "마이크로소프트", "ne": "Microsoft", "s": "it", "cls": "us", "ccy": "USD", "price": 420, "beta": 1.0,
              "vol": 24, "x": {"g3": 14}},
-            {"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "cls": "kr", "price": 78000, "beta": 1.1, "vol": 30}]
-    base.append({"t": "AAPL2", "nk": "애플2", "ne": "Apple2", "s": "elec", "cls": "us", "ccy": "USD", "price": 1, "beta": 1, "vol": 20})
+            {"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "cls": "kr", "price": 78000, "beta": 1.1, "vol": 30},
+            {"t": "AAPL2", "nk": "애플2", "ne": "Apple2", "s": "elec", "cls": "us", "ccy": "USD", "price": 1, "beta": 1, "vol": 20}]
     live = [{"t": "AAPL", "cls": "us", "price": 349.5, "beta": 1.2, "vol": 25, "g3": 11.7},
             {"t": "AAPL2", "price": 2, "beta": 1, "vol": 20, "g3": 5.0},                 # 오늘 데이터에 cls 가 없어도 내장 목록이 미국이면 미국
             {"t": "NVDA", "nk": "NVIDIA", "cls": "us", "ccy": "USD", "price": 190, "beta": 1.8, "vol": 50, "g3": -3.2},
-            {"t": "005930", "cls": "kr", "price": 218000, "beta": 1.26, "vol": 51, "g3": 13.5}]
+            {"t": "005930", "cls": "kr", "price": 218000, "beta": 1.26, "vol": 51, "g3": 13.5},
+            {"t": "000660", "nk": "SK하이닉스", "cls": "kr", "price": 1, "beta": 1, "vol": 30, "g3": 40.0}]
     got = run_js(f"const out = D.mergeStocks({json.dumps(base, ensure_ascii=False)}, {json.dumps(live, ensure_ascii=False)});"
                  "console.log(JSON.stringify(Object.fromEntries(out.map((s) => [s.t, s.x]))));")
     assert got["AAPL"]["g3Q"] is True and got["AAPL"]["g3"] == 11.7 and got["NVDA"]["g3Q"] is True and got["AAPL2"]["g3Q"] is True
-    assert got["005930"]["g3Q"] is False and not got["MSFT"].get("g3Q")                # 한국 · 오늘 데이터에 없는 내장 예시 값
-    T = {"g3": {"ko": "매출성장(3y)", "en": "Rev growth 3y"}, "g3Us": {"ko": "매출성장(최근 분기, 1년 전 대비)", "en": "Rev growth (latest qtr y/y)"}}
+    assert got["005930"]["g3Kr"] is True and got["000660"]["g3Kr"] is True and got["005930"]["g3Q"] is False
+    assert not got["MSFT"].get("g3Q") and not got["MSFT"].get("g3Kr")                  # 오늘 데이터에 없는 내장 예시 값
+    T = {"g3Us": {"ko": "매출성장(최근 분기, 1년 전 대비)", "en": "Rev growth (latest qtr y/y)"},
+         "g3Kr2": {"ko": "매출성장(최근 2년 연평균)", "en": "Rev growth (2-yr avg/yr)"}, "g3Kr1": {"ko": "매출성장(최근 1년)", "en": "Rev growth (1 yr)"}}
     cells = run_metrics("const T = " + json.dumps(T, ensure_ascii=False) + ";"
                         "const out = {};"
                         "for (const lang of ['ko', 'en']) { const t = (k) => T[k][lang];"
                         " out[lang] = [D.growthCell({ g3: 11.7, g3Q: true }, t), D.growthCell({ g3: -3.2, g3Q: true }, t),"
-                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: 13.5, g3Q: false }, t), D.growthCell({ g3: 6 }, t),"
-                        " D.growthCell(undefined, t)]; }"
+                        " D.growthCell({ g3: 13.5, g3Kr: true }, t, 'y2'), D.growthCell({ g3: 40, g3Kr: true }, t, 'y1'),"
+                        " D.growthCell({ g3: 13.5, g3Kr: true }, t, null), D.growthCell({ g3: 6 }, t), D.growthCell(undefined, t),"
+                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: null, g3Kr: true }, t, null)]; }"
                         "console.log(JSON.stringify(out));")
     assert cells["ko"] == [["매출성장(최근 분기, 1년 전 대비)", "+11.7%"], ["매출성장(최근 분기, 1년 전 대비)", "-3.2%"],
-                           ["매출성장(최근 분기, 1년 전 대비)", "–"], ["매출성장(3y)", "+13.5%/y"], ["매출성장(3y)", "+6%/y"],
-                           ["매출성장(3y)", "–"]], cells["ko"]
-    assert [c[0] for c in cells["en"]] == ["Rev growth (latest qtr y/y)"] * 3 + ["Rev growth 3y"] * 3
+                           ["매출성장(최근 2년 연평균)", "+13.5%"], ["매출성장(최근 1년)", "+40%"], None, None, None,
+                           ["매출성장(최근 분기, 1년 전 대비)", "–"], None], cells["ko"]          # 한국 · 숫자 없음: 기준을 짐작하지 않고 빼요
+    assert cells["en"] == [["Rev growth (latest qtr y/y)", "+11.7%"], ["Rev growth (latest qtr y/y)", "-3.2%"],
+                           ["Rev growth (2-yr avg/yr)", "+13.5%"], ["Rev growth (1 yr)", "+40%"], None, None, None,
+                           ["Rev growth (latest qtr y/y)", "–"], None], cells["en"]   # 영어도 똑같이: 기준을 모르거나 숫자가 없으면 칸이 빠져요
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    assert 'g3Kr2: { ko:"매출성장(최근 2년 연평균)", en:"Rev growth (2-yr avg/yr)" }, g3Kr1: { ko:"매출성장(최근 1년)", en:"Rev growth (1 yr)" }' in src
+    assert 'growthCell(x, t, g3Basis), [t("debt")' in src and ".filter(Boolean).map(([k, v]) =>" in src   # 기준을 모르면 칸이 빠져요
     assert 'g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }' in src
-    assert 'growthCell(x, t), [t("debt")' in src                                       # 화면의 매출성장 칸은 growthCell 로만
-    assert src.count('[t("g3"), (x.g3 > 0') == 1 and src.count('t("g3Us")') == 1           # 예전 이름표 칸은 growthCell 안에만
+    assert src.count('t("g3Us")') == 1 and src.count('t("g3Kr2")') == 1 and src.count('t("g3Kr1")') == 1   # 이름표 칸은 growthCell 안에만
+    assert "const same = !!co && co.g3 === x.g3;" in src                            # data.json 과 corp.json 의 숫자가 다르면 칸을 빼요
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
-    assert "매출성장(최근 분기, 1년 전 대비)" in built and "Rev growth (latest qtr y/y)" in built
+    for label in ("매출성장(최근 분기, 1년 전 대비)", "Rev growth (latest qtr y/y)", "매출성장(최근 2년 연평균)", "Rev growth (2-yr avg/yr)",
+                  "매출성장(최근 1년)", "Rev growth (1 yr)"):
+        assert label in built, label
+    # 매출 성장을 '3년'이라고 부르는 곳이 예전 앱 어디에도 없어요 (이름표 · 설명 · 문장, 한국어 · 영어)
+    for bad in ("매출성장(3y)", "Rev growth 3y", "3년 매출 성장률", "매출 성장률 (3년", "최근 3년 성장률", "3년간 연평균", "a year over 3 years",
+                "사분면 · 3년 연평균", "3년 연평균 · 상장사", "업종의 3년"):
+        assert bad not in built, bad
+    corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+    # 성장 지도: 최근 2년 연평균인 회사만 (부제와 같은 기준), 뺀 회사 수는 console 에
+    assert 'const two = all.filter((c) => krGrowthBasis(c.g3, c.rev) === "y2");' in corp and "return two.map((c) => ({" in corp
+    assert "console.warn(`[뱁새] 성장 지도: 매출성장이 최근 2년 연평균이 아닌 회사 ${all.length - two.length}개" in corp
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_korean_growth_basis_matches_2_0_on_todays_data():
+    """예전 뱁새의 data.js krGrowthBasis 는 2.0 의 engine.growthBasis 와 같은 규칙이에요. 저장소에 고정된 2.0 시험 데이터
+    (tests/fixtures/v2: 실제 발행본의 한국 종목 331개)로 언제나 보고, main 에 오늘 data.json · corp.json 이 있는 동안
+    (v17.6 3b 가 main 에서 빼기 전까지)은 그 모든 한국 종목으로도 봐요."""
+    def compare(d_path, c_path):
+        code = ("import * as D from './src/data.js'; import * as E from './src/v2/engine.js'; import fs from 'fs';"
+                f"const d = JSON.parse(fs.readFileSync({json.dumps(d_path)}, 'utf8')); const c = JSON.parse(fs.readFileSync({json.dumps(c_path)}, 'utf8'));"
+                "const co = new Map(c.companies.map((x) => [x.t, x])); const out = { n: 0, diff: [], y2: 0, y1: 0, none: 0 };"
+                "for (const s of d.stocks) { if (s.cls !== 'kr' || s.g3 == null) continue; const k = co.get(s.t); out.n++;"
+                " const a = D.krGrowthBasis(s.g3, k ? k.rev : null), b = E.growthBasis(s, k || null); if (a !== b) out.diff.push(s.t);"
+                " out[a || 'none']++; }"
+                "console.log(JSON.stringify(out));")
+        r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+    got = compare("./tests/fixtures/v2/data.json", "./tests/fixtures/v2/corp.json")
+    assert got["n"] >= 300 and got["diff"] == [] and got["y2"] > got["y1"] >= 0, got
+    if os.path.exists(os.path.join(ROOT, "data.json")) and os.path.exists(os.path.join(ROOT, "corp.json")):
+        got = compare("./data.json", "./corp.json")
+        assert got["n"] > 1000 and got["diff"] == [], got
+        assert got["y2"] > got["y1"] >= 0, got
+    else:
+        print("main 에 data.json · corp.json 이 없어요 (v17.6 3b 뒤): 고정된 시험 데이터로만 봤어요")
+    edge = run_js("console.log(JSON.stringify([D.krGrowthBasis(41.4, [200, 150, 100]), D.krGrowthBasis(33.3, [200, 150, null]),"
+                  " D.krGrowthBasis(10, [200, 150, 100]), D.krGrowthBasis(null, [1, 1, 1]), D.krGrowthBasis(5, null)]));")
+    assert edge == ["y2", "y1", None, None, None], edge
+
+
+# ── 한국 매출 성장 문장: 줄어든 경우에도 마이너스 부호 없이 · 리버스 DCF 는 줄표 없이 (Jack 2026-11-05) ─────────
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_dash():
+    """성적표: '매출은 최근 2년간 연평균 3% 감소했어요.' (1년이면 '매출은 최근 1년간 3% 감소했어요.'), 늘었으면 '+x% 성장했어요.' 그대로.
+    리버스 DCF: '이 회사 매출은 최근 2년 동안 연평균 x% 늘었어요(줄었어요). 지금 주가가 가정하는 성장률과 비교해 보세요.'
+    (1년이면 '최근 1년 동안', 연평균 없이). 숫자는 부호 없이, 줄표 없이. 계산 기준을 모르면 문장을 빼요.
+    보이는 숫자(소수 한 자리, 부호 없이)가 0.0 이면 '거의 변하지 않았어요' / 'was flat' (Jack 2026-11-05):
+    0.04 → 0.0 → 그대로, 0.05 → 0.1 → 늘었어요 (자바스크립트 toFixed 반올림), −0.04 → 그대로, −0.05 → 0.1 → 줄었어요."""
+    # [g3, rev]: y2 늘었어요 · y2 줄었어요 · y1 늘었어요 · y1 줄었어요 · 0 (y2) · 기준을 모름 · 숫자 없음 · 매출 없음 · 정수 · 0 (y1) ·
+    #            0.04 · 0.05 · −0.04 · −0.05 (y2) · 0.04 · 0.05 · −0.04 · −0.05 (y1)
+    flat, flat1y = [100, 100, 100], [100, 100, None]
+    cases = [[41.4, [200, 150, 100]], [-29.3, [100, 150, 200]], [33.3, [200, 150, None]], [-33.3, [100, 150, None]],
+             [0, flat], [10, [200, 150, 100]], [None, [1, 1, 1]], [5, None], [-3, [94.1, 97, 100]], [0, [100, 100, None]],
+             [0.04, flat], [0.05, flat], [-0.04, flat], [-0.05, flat],
+             [0.04, flat1y], [0.05, flat1y], [-0.04, flat1y], [-0.05, flat1y]]
+    got = run_js(f"const cases = {json.dumps(cases)};"
+                 "console.log(JSON.stringify(cases.map(([g, r]) => [D.krGrowthBasis(g, r), D.krGrowthScoreLine(g, r, false),"
+                 " D.krGrowthScoreLine(g, r, true), D.krGrowthDcfLine(g, r)])));")
+    assert [g[0] for g in got] == ["y2", "y2", "y1", "y1", "y2", None, None, None, "y2", "y1", "y2", "y2", "y2", "y2", "y1", "y1", "y1", "y1"], got
+    ko = [g[1] for g in got]
+    flat2, flat1 = "매출은 최근 2년 동안 거의 변하지 않았어요.", "매출은 최근 1년 동안 거의 변하지 않았어요."
+    assert ko == ["매출은 최근 2년간 연평균 +41.4% 성장했어요.", "매출은 최근 2년간 연평균 29.3% 감소했어요.",
+                  "매출은 최근 1년간 +33.3% 성장했어요.", "매출은 최근 1년간 33.3% 감소했어요.",
+                  flat2, None, None, None, "매출은 최근 2년간 연평균 3% 감소했어요.", flat1,
+                  flat2, "매출은 최근 2년간 연평균 +0.1% 성장했어요.", flat2, "매출은 최근 2년간 연평균 0.1% 감소했어요.",
+                  flat1, "매출은 최근 1년간 +0.1% 성장했어요.", flat1, "매출은 최근 1년간 0.1% 감소했어요."], ko
+    en = [g[2] for g in got]
+    en2, en1 = "Revenue was flat over the last 2 years.", "Revenue was flat over the last year."
+    assert en == ["Revenue grew +41.4% a year over the last 2 years.", "Revenue shrank 29.3% a year over the last 2 years.",
+                  "Revenue grew +33.3% over the last year.", "Revenue shrank 33.3% over the last year.",
+                  en2, None, None, None, "Revenue shrank 3% a year over the last 2 years.", en1,
+                  en2, "Revenue grew +0.1% a year over the last 2 years.", en2, "Revenue shrank 0.1% a year over the last 2 years.",
+                  en1, "Revenue grew +0.1% over the last year.", en1, "Revenue shrank 0.1% over the last year."], en
+    dcf = [g[3] for g in got]
+    tail = " 지금 주가가 가정하는 성장률과 비교해 보세요."
+    d2, d1 = "이 회사 매출은 최근 2년 동안 거의 변하지 않았어요." + tail, "이 회사 매출은 최근 1년 동안 거의 변하지 않았어요." + tail
+    assert dcf == ["이 회사 매출은 최근 2년 동안 연평균 41.4% 늘었어요." + tail, "이 회사 매출은 최근 2년 동안 연평균 29.3% 줄었어요." + tail,
+                   "이 회사 매출은 최근 1년 동안 33.3% 늘었어요." + tail, "이 회사 매출은 최근 1년 동안 33.3% 줄었어요." + tail,
+                   d2, None, None, None, "이 회사 매출은 최근 2년 동안 연평균 3.0% 줄었어요." + tail, d1,
+                   d2, "이 회사 매출은 최근 2년 동안 연평균 0.1% 늘었어요." + tail, d2,
+                   "이 회사 매출은 최근 2년 동안 연평균 0.1% 줄었어요." + tail,
+                   d1, "이 회사 매출은 최근 1년 동안 0.1% 늘었어요." + tail, d1, "이 회사 매출은 최근 1년 동안 0.1% 줄었어요." + tail], dcf
+    for line in [x for x in ko + en + dcf if x]:
+        for sign in ("-", "\u2212", "\u2013", "\u2014"):                  # 마이너스 부호도 줄표도 없어요
+            assert sign not in line, (sign, line)
+        head = line.replace(tail, "")                                   # 리버스 DCF 의 둘째 문장(성장률과 비교해 보세요)은 빼고
+        if "거의 변하지 않았어요" in head or "was flat" in head:              # 그대로면 숫자 · 늘었다 · 줄었다 없이
+            assert "%" not in head and not any(w in head for w in ("늘었어요", "줄었어요", "성장", "감소", "grew", "shrank")), line
+    for i in (2, 3, 9, 14, 15, 16, 17):                                  # 1년짜리엔 연평균 · 'a year' 가 없어요
+        for one in (ko[i], dcf[i]):
+            assert "연평균" not in one and "1년" in one, one
+        assert "a year" not in en[i] and "over the last year" in en[i], en[i]
+    # 화면이 이 문장들을 써요 (예전 문장을 직접 만드는 곳이 없어요)
+    shell = open(os.path.join(ROOT, "src", "shell.jsx"), encoding="utf-8").read()
+    corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+    assert "const growthLine = krGrowthScoreLine(c.g3, c.rev, en);" in shell and "else if (growthLine) lines.push(growthLine);" in shell
+    assert "the stock fell ${Math.abs(c.r3)}% in 3 months" in shell                 # 영어 성적표: 'fell' 옆에도 부호 없이
+    # 3개월 주가가 내린 문장도 같은 규칙 ('내렸어요' 옆에 부호 없이): 성적표와 기업분석
+    assert "실적은 좋아졌는데 3개월간 ${Math.abs(c.r3)}% 내렸어요" in shell and "최근 3개월 주가는 ${Math.abs(c.r3)}% 내렸어요" in corp
+    assert "${c.r3}% 내렸어요" not in shell + corp
+    assert '지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}.' in corp
+    detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    assert "}, [open, s && s.t, x.g3, x.g3Kr]);" in detail                          # 오늘 데이터가 늦게 들어와도 다시 맞춰 봐요
+    assert "const growthLine = krGrowthDcfLine(c.g3, c.rev);" in corp and '이 담겨 있어요.{growthLine ? " " + growthLine : null}' in corp
+    built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
+    assert "지금 주가가 가정하는 성장률과 비교해 보세요." in built and "거의 변하지 않았어요" in built and "최근 2년간 연평균" in built
+    assert "이 회사 매출은 최근 " in built and "연평균 " in built and " 동안 거의 변하지 않았어요." in built   # 리버스 DCF 문장 조각
+    assert "was flat over the last" in built
+    # 영어 성적표의 3개월 줄은 줄표 없이 두 문장 (Jack 2026-11-05)
+    assert "the stock fell ${Math.abs(c.r3)}% in 3 months. It may be worth asking what the market is worried about.`" in shell
+    assert "in 3 months. It may be worth asking what the market is worried about." in built and "in 3 months \u2014 worth asking" not in built
+    for bad in ("그 간극이 그럴듯한지가 핵심 질문이에요", "였어요 — 그 간극"):
+        assert bad not in built, bad
