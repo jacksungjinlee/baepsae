@@ -6,8 +6,9 @@
 //   same quarter a year before and always carries that label (cofmt.usGrowthText; no label approved -> no number).
 // 가치: PBR against the industry (strip), PBR · PER with industry medians, 지금 가격이 가정하는 것 (KR: the old DcfCard
 //   reverse calculation; out of range -> its two messages), the 출렁임 line (phrase only: no beta band in the data yet).
-// 배당: KR dividend per share (report year) and three years; 100만원어치 = 1,000,000 x yield, rounded to 1,000원, before
-//   tax, with the basis it was really computed on (KR: the report's dividend per share over today's close; US: Yahoo's yield).
+// 배당: KR dividend per share (report year) and three years; 100만원어치 rounded to 1,000원, before tax, with the basis it
+//   was really computed on and the price date: KR 1,000,000 ÷ the close × the report's dividend per share (Jack,
+//   2026-11-05); US 1,000,000 x Yahoo's yield until v19.2.
 // 공시: KR only, disc.json (임원·주요주주 reports for 90 days, 국민연금 5% filings). A row with an exact receipt number is a
 //   plain link to that filing on DART (new tab, Jack 2026-11-05: routes.dartFilingUrl); nothing is fetched from DART.
 // 자세히: 가치 (every ratio with receipts that reproduce it, 업종 지도, the calculator) and 실적 (margins, 3-year table).
@@ -312,7 +313,7 @@ function Dcf({ load, s, co, a, onTry }) {
       <CardHead icon="scales" tone="value" title={D.title} />
       {g != null ? (
         <>
-          <p style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
+          <p data-ui-v2="co-dcf-head" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
           <div style={{ marginTop: SPACE(3) }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
               <span>{D.implied}</span><span style={{ whiteSpace: "nowrap" }}>{fill(D.perYear, { g: rateText(g) })}</span></div>
@@ -561,6 +562,7 @@ export function DivTab({ load, s }) {
           <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
+          <DateLine date={priceDate(load, s)} fresh={load.fresh} />
         </Card>
       )}
       <Card>

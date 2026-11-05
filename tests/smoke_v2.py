@@ -3102,6 +3102,11 @@ def scene_company(R, files, width):
             assert dcf.count() == 0, "미국에 '지금 가격이 가정하는 것' (v19.2 전까지 없어요)"
         elif dcf.count():
             assert dcf.get_attribute("data-disc") == "10" and dcf.get_attribute("data-term") == "2"
+            if dcf.get_attribute("data-g"):                                  # 첫 문장 (Jack, 2026-11-05): 0 이상 '는다', 0보다 작으면 '준다' (빼기 없이)
+                g = float(dcf.get_attribute("data-g"))
+                want = fillp(CO["dcf"]["headUp" if g >= 0 else "headDown"], g=f"{abs(g):,.1f}")
+                head = dcf.locator('[data-ui-v2="co-dcf-head"]').inner_text()
+                assert head == want and "\u2212" not in head and "-" not in head, (head, want)
         assert page.locator('[data-ui-v2="co-risk"] [data-ui-v2="tile-number"]').count() == 0
         assert "%%" not in page.locator("body").inner_text()                   # '해마다 {g}%' 에 % 를 두 번 넣지 않아요
         no_mascot(page)
@@ -3129,10 +3134,11 @@ def scene_company(R, files, width):
             if m.get_attribute("data-under") == "1":
                 assert raw < 1000
             else:
-                assert int(m.get_attribute("data-won")) == round(raw / 1000) * 1000 >= 1000, (m.get_attribute("data-won"), raw)
+                assert int(m.get_attribute("data-won")) == math.floor(raw / 1000 + 0.5) * 1000 >= 1000, (m.get_attribute("data-won"), raw)  # JS Math.round
             want = CO["div"]["basisUs"] if us else fillp(CO["div"]["basisKr"], fy=fy)
             assert want in m.inner_text(), (want, m.inner_text())
             assert "지난 1년 기준" not in m.inner_text() and "약 0원" not in m.inner_text()
+            assert m.locator('[data-ui-v2="date-line"]').first.inner_text().startswith(fillp(C["app"]["asOf"], md=md))   # 어느 날 종가인지
         if page.locator('[data-ui-v2="co-dps"]').count():                   # 주당 배당은 보고서 수익률과 맞을 때만 (1/3 ~ 3 배)
             r = s["dps"] / s["price"] * 100 / s["dy"]
             assert 1 / 3 <= r <= 3, r

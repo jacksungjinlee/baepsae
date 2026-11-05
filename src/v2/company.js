@@ -120,7 +120,8 @@ export function divUs(s) {
   return { rule: dy === 0 ? "none" : "pays", yieldPct: dy };
 }
 
-// 100만원어치 가지고 있으면: 1,000,000 x yield / 100, rounded to the nearest 1,000원 (before tax). null = no yield.
+// 100만원어치 가지고 있으면 (US until v19.2): 1,000,000 x yield / 100, rounded to the nearest 1,000원 (before tax).
+// null = no yield.
 export function perMillion(yieldPct) {
   const y = num(yieldPct);
   if (y == null || y < 0) return null;
@@ -131,9 +132,9 @@ export function perMillion(yieldPct) {
 export function perMillionView(yieldPct) {
   const y = num(yieldPct);
   if (y == null || !(y > 0)) return null;
-  const raw = (MILLION * y) / 100;
-  return raw < 1000 ? { under: true, raw } : { won: perMillion(y), raw };
+  return millionView((MILLION * y) / 100);
 }
+const millionView = (raw) => (raw < 1000 ? { under: true, raw } : { won: Math.round(raw / 1000) * 1000, raw });
 
 // 100만원어치 for a Korean stock (Jack, 2026-11-05): 1,000,000 ÷ today's close (data.json price, the pxDate close) × the
 // latest 사업보고서's dividend per share (dps), rounded to 1,000원, before tax. null (the line is hidden) when dps or the
@@ -141,12 +142,9 @@ export function perMillionView(yieldPct) {
 // card trusts: it agrees with the same report's yield (engine.krDivYield / dpsAgrees), so a split after the report or a
 // total filed in the per-share row (와이엔텍) never turns into an absurd amount; above 30% a year is not believed (DY_MAX).
 export function perMillionKr(s) {
-  const d = num(s && s.dps), p = num(s && s.price);
-  if (d == null || !(d > 0) || !(p > 0)) return null;
-  const y = krDivYield(s);
-  if (y == null || y > DY_MAX) return null;
-  const raw = (MILLION * d) / p;
-  return raw < 1000 ? { under: true, raw } : { won: Math.round(raw / 1000) * 1000, raw };
+  const y = krDivYield(s);                        // null without dps, a price above 0, or agreement with the report's yield
+  if (y == null || !(y > 0) || y > DY_MAX) return null;
+  return millionView((MILLION * s.dps) / s.price);
 }
 
 // 배당성향 (KR), on one basis: the report's dividend per share x shares over the same report's net income (corp.json ni[0],
