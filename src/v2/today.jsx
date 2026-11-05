@@ -28,7 +28,9 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, useCol, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
+import { CoMark } from "./logo.jsx";
+import { isCompany } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -163,8 +165,9 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
 }
 
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
-// exceptions). A big mover's row opens 왜 움직였나.
+// exceptions). A big mover's row opens 왜 움직였나; any other row opens the 2.0 company page (v19.1a), each with its mark.
 function DeckStrip({ de, deck, ctx, onWhy, go }) {
+  const { openStock } = useNav();
   const m = deckMoney(deck, de, ctx);                    // v19.0c: a stock missing from today's data is left out, and said
   const gone = new Set(de.absent || []);
   const day = deckDayChange(de);
@@ -185,7 +188,8 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n: de.holdings.length })}</div>
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
-          <ListRow title={x.nk} change={gone.has(x.t) ? null : x.d1} chip={statusChips(x)} onClick={x.bigMove ? () => onWhy(de.id, x.t) : undefined} />
+          <ListRow title={x.nk} change={gone.has(x.t) ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
+            onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock && isCompany(ctx.byT.get(x.t)) ? () => openStock(x.t) : undefined} />
         </div>
       ))}
     </Card>

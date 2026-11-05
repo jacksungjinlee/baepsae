@@ -41,6 +41,10 @@ ICONS = [
     "book-open-text", "database", "clock-counter-clockwise",
     # 상태: 할 일 없음 · 확인할 일
     "check-circle", "flag",
+    # v19.1a 회사 페이지: 실적 · 가치 · 재무 경고 없음 · 내 메모 · 지금 가격이 가정하는 것 · 업종 지도 · 직접 계산해 보기
+    "trend-up", "tag", "shield-check", "note-pencil", "scales", "chart-scatter", "calculator",
+    # v19.1a 공시 줄: 그 공시의 DART 원문이 새 탭으로 열려요 (Jack 2026-11-05: 링크만) — 앱 안 이동(caret-right)과 구별해요
+    "arrow-square-out",
 ]
 
 PATH = re.compile(r'<path d="([^"]+)"( opacity="0\.2")?/>')

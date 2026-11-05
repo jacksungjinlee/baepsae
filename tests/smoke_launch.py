@@ -7,7 +7,7 @@
 
 - '/' (index.html) → app.html 로 가요 (예전처럼 baepsae.html 이 아니에요)
 - 저장한 포트폴리오가 없는 방문자는 첫 방문 홈(포트폴리오 만들기)부터, 있는 방문자는 홈(오늘의 판정)부터 봐요 (v19.0c: #home)
-- ☰ 메뉴에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요. 종목 탭의 한국 회사는 지금 앱의 기업분석(#corp=코드)으로
+- ☰ 메뉴에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요. 종목 탭의 한국 회사는 (v19.1a) 2.0 회사 페이지(#stocks/코드)로
 - v19.0c 전에 저장한 기본 이름('배당 생활비 덱')은 화면에서만 새 이름('배당 생활비 포트폴리오'), 저장본은 그대로
 - 지금 앱 푸터의 '소개'(v19.0)를 누르면 2.0 의 소개 페이지(app.html#about)가 열리고, 소개의 뒤로(닫기)는 지금 앱으로 돌아가요
 - 저장소의 지금 데이터로도 열어봐요. 첫 화면은 그 데이터의 단계에 맞아야 해요 (예시 데이터를 실제처럼 보이지 않음):
@@ -269,13 +269,12 @@ def cv_link(browser, check, errors):
         def active(label):
             return lambda: p2.evaluate(ACTIVE_TAB) == label
 
-        kr_row = '[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"] a'
+        # v19.1a (#36): 2.0 의 한국 회사 줄은 2.0 회사 페이지를 열어요 (예전 뱁새 기업분석 링크가 없어요: 아래에서 확인)
         cases = [("예전 뱁새 보기", lambda: menu("old-app"), "", lambda: p2.get_by_text(OLD_FIRST).is_visible()),
                  ("용어 사전", lambda: menu("glossary"), "#info=glossary", card("info-glossary", "용어 사전")),
                  ("데이터 출처", lambda: menu("sources"), "#info=sources", card("info-sources", "데이터 출처와 갱신")),
                  ("금리·원자재", lambda: tab_link("market", '[data-ui-v2="old-screen"][data-id="macro"]'), "#macro", active("금리·원자재")),
-                 ("공시·수급", lambda: tab_link("market", '[data-ui-v2="old-screen"][data-id="disc"]'), "#disc", active("공시·수급")),
-                 ("기업분석", lambda: tab_link("stocks", kr_row), "#corp=", active("기업분석"))]
+                 ("공시·수급", lambda: tab_link("market", '[data-ui-v2="old-screen"][data-id="disc"]'), "#disc", active("공시·수급"))]
         for name, find, tail, on_screen in cases:
             link = find()
             link.wait_for(state="visible")
@@ -285,17 +284,20 @@ def cv_link(browser, check, errors):
                 link.click()
             p2.wait_for_url(OLD_URL)                                                 # 예전 뱁새: # 은 읽고 지워도 표시는 남아요
             wait_until(p2, on_screen, (name, "그 화면이 아니에요"))
-            if name == "기업분석":
-                assert p2.get_by_text("이 종목의 데이터를 찾지 못했어요.").count() == 0
             p2.reload(wait_until="domcontentloaded")                                 # 새로고침해도 예전 뱁새 (2.0 으로 가지 않아요)
             p2.get_by_text(OLD_FIRST).wait_for(state="visible")
             assert OLD_URL.search(p2.url), (name, p2.url)
             p2.go_back()
             p2.wait_for_url(re.compile(r"/app\.html#"))
             p2.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        # 2.0 의 어느 링크도 표시(?from=app) 없이 예전 뱁새로 가지 않아요 · 한국 회사 줄은 예전 뱁새로 가는 링크가 아니에요 (v19.1a)
+        tab_link("stocks", '[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').wait_for(state="visible")
+        assert p2.locator('[data-ui-v2="popular-list"] [data-ui-v2="stock-row"] a').count() == 0
+        hrefs = p2.evaluate("() => [...document.querySelectorAll('a[href*=\"baepsae.html\"]')].map((a) => a.getAttribute('href'))")
+        assert all(h.startswith("./baepsae.html?from=app") for h in hrefs), hrefs
         p2.close()
-    check(W + "2.0 의 예전 뱁새 보기 · 용어 사전 · 데이터 출처 · 금리·원자재 · 공시·수급 · 한국 회사 → 예전 뱁새의 그 화면 "
-          "(새로고침해도 남음 · 뒤로 → 2.0)", links_from_2_0_open_the_right_screen, page, "cv")
+    check(W + "2.0 의 예전 뱁새 보기 · 용어 사전 · 데이터 출처 · 금리·원자재 · 공시·수급 → 예전 뱁새의 그 화면 "
+          "(새로고침해도 남음 · 뒤로 → 2.0) · 한국 회사 줄은 2.0 회사 페이지 (예전 뱁새 링크 아님)", links_from_2_0_open_the_right_screen, page, "cv")
     ctx.close()
 
     def goatcounter_once_on_the_live_address():
@@ -527,8 +529,8 @@ def main():
                     page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
                 check(W + "저장한 포트폴리오가 없는 방문자 → 첫 방문 홈 → 포트폴리오 만들기 → 뒤로 → 홈", no_deck_lands_on_home, page, tag)
 
-                def stocks_open_old_corp():
-                    # v19.0c: 찾기 탭 · 머리말 '찾기' 대신 종목 탭. 한국 회사는 지금 앱의 기업분석으로 (#corp=코드: 지금 앱이 읽고 지워요)
+                def stocks_open_company():
+                    # v19.1a: 종목 탭의 한국 회사는 2.0 회사 페이지로 (#stocks/코드). 예전 뱁새의 기업분석으로 가지 않아요
                     page.locator('nav[data-ui="bottom-tab-bar"] button', has_text=TABS["stocks"]).click()
                     page.wait_for_url(re.compile(r"/app\.html#stocks$"))
                     if (REPO_STATE if variant != "fixtures" else "live") == "old":
@@ -536,18 +538,20 @@ def main():
                         return
                     row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
                     row.wait_for(state="visible")
+                    t = row.get_attribute("data-t")
                     nk = [x for x in row.inner_text().split("\n") if x.strip()][0]          # 이름 (첫 글자 표시는 CSS 라 글이 아니에요)
-                    box = row.locator("a").bounding_box()                                    # 누르는 곳 44px 이상, 화면 안 (예전 머리말 '찾기'와 같은 기준)
+                    assert row.locator("a").count() == 0, "한국 회사 줄이 예전 뱁새로 가는 링크예요"
+                    box = row.locator("button").bounding_box()                               # 누르는 곳 44px 이상, 화면 안
                     assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
-                    with page.expect_navigation():
-                        row.locator("a").click()
-                    page.wait_for_url(re.compile(r"/baepsae\.html\?from=app$"))           # 지금 앱이 #corp=코드 를 읽고 지워요 (2.0 표시는 남아요)
-                    page.get_by_text(nk, exact=True).first.wait_for(state="visible")       # 기업분석의 그 회사 화면
+                    row.locator("button").click()
+                    page.wait_for_url(re.compile(r"/app\.html#stocks/" + re.escape(t) + "$"))
+                    page.locator('[data-ui-v2="co-name"]').wait_for(state="visible")
+                    assert page.locator('[data-ui-v2="co-name"]').inner_text() == nk          # 2.0 회사 페이지의 그 회사
                     assert page.get_by_text("이 종목의 데이터를 찾지 못했어요.").count() == 0
                     page.go_back()
                     page.wait_for_url(re.compile(r"/app\.html#stocks$"))
                     page.locator('[data-ui-v2="recent"] [data-ui-v2="stock-row"]').first.wait_for(state="visible")
-                check(W + "종목 탭 → 한국 회사 → 지금 앱 기업분석 → 뒤로 → 종목 (최근 본 종목에 남아요)", stocks_open_old_corp, page, tag)
+                check(W + "종목 탭 → 한국 회사 → 2.0 회사 페이지 → 뒤로 → 종목 (최근 본 종목에 남아요)", stocks_open_company, page, tag)
 
                 def menu_opens_old_app():
                     page.locator('[data-ui-v2="menu-button"]').click()

@@ -7,6 +7,8 @@ which are NOT live yet:
   d1, val20, etf, ind/indName, dps = 0 kept, fy, macro.idxHist.
 Everything added here is synthetic (made up for tests). The live page never loads these files.
 Committed output: tests/fixtures/v2/{data,corp,macro}.json (the run used: 2026-11-01 publish, pxDate 2026-10-30).
+tests/fixtures/v2/disc.json (v19.1a, the company page's 공시 tab) is not made here: it is a short hand-made file with
+made-up names and numbers for 005930, 005380 and 000660 in the disc.json format.
 """
 import argparse
 import datetime as dt

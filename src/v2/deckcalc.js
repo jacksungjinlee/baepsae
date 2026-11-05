@@ -178,4 +178,5 @@ export function opPieces(op, pct) {
 }
 
 export const aboutWon = (won) => fill(C.app.about, { x: wonText(won) });
-export const signedPct = (v) => `${v < 0 ? "\u2212" : v > 0 ? "+" : ""}${p1(Math.abs(v))}%`;
+// The sign follows the rounded value: −0.04 is "0.0%", never "−0.0%" (v19.1a review).
+export const signedPct = (v) => { const r = Math.round(v * 10) / 10; return `${r < 0 ? "\u2212" : r > 0 ? "+" : ""}${p1(Math.abs(r))}%`; };

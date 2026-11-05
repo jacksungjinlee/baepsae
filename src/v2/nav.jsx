@@ -12,15 +12,17 @@
 // straight from another page of this site (the old app's footer) also goes one step back to that page; otherwise (a
 // shared link, a bookmark) the fallback route replaces the current entry.
 // The menu links into the old app (예전 뱁새, baepsae.html) open its screens through the deep links it reads once on load
-// and then clears (src/deeplink.js, src/shell.jsx: #macro · #disc · #corp=CODE · #info=glossary|sources; routes.js
-// OLD_LINKS). The preview page (fictional data) has no link into the old app: its menu shows 소개 and the data date only.
+// and then clears (src/deeplink.js, src/shell.jsx: #macro · #disc · #info=glossary|sources; routes.js OLD_LINKS).
+// v19.1a: companies open the 2.0 company page (#stocks/<code>[/<tab>]); 2.0 no longer links to the old #corp= page. The preview page (fictional data) has no link into the old app: its menu shows 소개 and the data date only.
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { BottomTabBar } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
 import { DateLine, Note, IMG, SampleLabel, SIDE_W, PC_PAD, PcFrame, tx, tap, useMode } from "./ui.jsx";
-import { TABS, OLD_APP, OLD_LINKS, ABOUT_ROUTE, parseHash, hashOf } from "./routes.js";
+import { TABS, OLD_APP, OLD_LINKS, ABOUT_ROUTE, CO_MORE, parseHash, hashOf } from "./routes.js";
+
+const isMore = (ctab) => CO_MORE.includes(ctab);
 
 export { TABS, OLD_LINKS, parseHash, hashOf };
 export const TAB_ICON = { home: "house", portfolio: "chart-pie-slice", stocks: "buildings", market: "chart-line-up" };
@@ -74,7 +76,8 @@ function startLocation() {
 }
 
 // The router: { loc, lastTab, focusBefore, go, openAbout, replaceRoute, back, openMenu, closeMenu }
-//   loc: { tab, sub, about, menu, depth } (tab is null on 소개: the screen behind it is lastTab)
+//   loc: { tab, sub, about, menu, depth } (tab is null on 소개: the screen behind it is lastTab), plus { code, ctab } on a
+//   company page (#stocks/<code>[/<tab>], v19.1a)
 export function useRouter() {
   const [loc, setLoc] = useState(startLocation);
   const locRef = useRef(loc);
@@ -95,7 +98,10 @@ export function useRouter() {
       next = readLocation();
     }
     const cur = locRef.current;
-    const moved = next.tab !== cur.tab || next.sub !== cur.sub || next.about !== cur.about;
+    // A company page's tabs share one screen (v19.1a): switching between 요약 · 실적 · 가치 · 배당 · 공시 keeps the place on
+    // the page (the tab bar stays where it is); every other move starts at the top.
+    const sameCo = next.code && cur.code && next.code === cur.code && !isMore(next.ctab) && !isMore(cur.ctab);
+    const moved = !sameCo && (next.tab !== cur.tab || next.sub !== cur.sub || next.about !== cur.about);
     if (next.about && !cur.about) { try { focusBefore.current = document.activeElement; } catch (e) { focusBefore.current = null; } }
     locRef.current = next;
     setLoc(next);
@@ -132,8 +138,9 @@ export function useRouter() {
     replace({ v2: locRef.current.depth }, hashOf(tab, sub));
     sync();
   }, [sync]);
-  // Leave a sub-screen or 소개 (see the top of this file). fallback: the route that replaces it when there is no step back.
-  const back = useCallback((fallbackTab = "home") => {
+  // Leave a sub-screen or 소개 (see the top of this file). fallback: the route that replaces it when there is no step back
+  // (fallbackSub: a company page's 자세히 falls back to its tab, v19.1a).
+  const back = useCallback((fallbackTab = "home", fallbackSub = null) => {
     const cur = locRef.current;
     const viaSite = cur.about && cur.depth === 0 && cameFromThisSite();
     if (cur.depth > 0 || viaSite) {
@@ -147,12 +154,12 @@ export function useRouter() {
         window.history.back();
         window.setTimeout(() => {
           window.removeEventListener("pagehide", onHide);
-          if (!left && moves.current === seen) replaceRoute(fallbackTab);
+          if (!left && moves.current === seen) replaceRoute(fallbackTab, fallbackSub);
         }, 600);
         return;
       } catch (e) { /* fall through */ }
     }
-    replaceRoute(fallbackTab);
+    replaceRoute(fallbackTab, fallbackSub);
   }, [replaceRoute]);
   const openMenu = useCallback(() => {
     const cur = locRef.current;

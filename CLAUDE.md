@@ -148,8 +148,10 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   assumes", never as forecasts. Footer: 교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.
 - Long-only. No leverage, short-selling or speculation features.
 - Cards lead with the conclusion (Verdict line), then evidence. Computed ratios show their inputs ("receipts").
-- Won-first framing. Beta shown with its estimation-error band; alpha shown as past-only.
-- 기업분석 is Korean-listed companies only (built on DART filings). US stocks live in the portfolio tool.
+- Won-first framing for the user's own money; per-share US figures show $ first with 원 small. Beta shown with its
+  estimation-error band; alpha shown as past-only.
+- Company pages cover Korean and US stocks. Korean figures come from DART filings; US financial statements come from SEC
+  filings (v19.2). Per-share US figures show $ first; the user's own money shows 원 first.
 - Mascot 뱁이: only Jack's own artwork (`baepi-1.png` … `baepi-9.png`, the `baepi-*` files from
   `docs/design/v19/assets/`, `icon-*.png`). Never redraw, generate or "improve" it. Serious first, warm second
   (Jack, 2026-11-03): 뱁이 appears only on the first visit, empty states, the load-failure screen, 준비 중 blocks,
@@ -158,7 +160,11 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   weights and scores. A date label or a count of stocks is not one. The old app (예전 뱁새, `baepsae.html`) is exempt
   until each of its tools moves to 2.0: its existing 뱁이 pictures and icons stay as they are, so don't remove, replace
   or flag them (Jack, 2026-11-03).
-- Icons: Phosphor duotone in navy with a slate fill; no apricot in icons or selection states. Apricot marks data only.
+- Icons: Phosphor duotone, navy line `#1C2B45`; the fill is slate `#CBD3DF` by default or one topic tint, with a matching
+  light chip background (Jack, 2026-11-05): 실적 `#B9CDEB` / `#EAF1FB` · 가치 `#BFE0CC` / `#E9F5EE` · 배당 `#EBD49A` /
+  `#FBF4E1` · 출렁임·위험 `#D3C8EC` / `#F1EDF9` · 공시·수급·금리 차트 등 `#B5DDDD` / `#E6F4F4`. Tints carry no good/bad
+  meaning. No apricot and no price red/blue in icons or selection states. Apricot marks data only.
+- Company logos come from the provider(s) named on the 데이터 출처 page, with a coloured letter mark as fallback.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
   credit line (Jack, 2026-11-03). The 소개 page does not lead with "교육용"; the footer disclaimer stays on every page.

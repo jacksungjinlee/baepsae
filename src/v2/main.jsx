@@ -4,9 +4,9 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.jsx";
-import { loadAll } from "./load.js";
+import { loadAll, loadDisc } from "./load.js";
 import { STORE_KEY } from "./store.js";
 
-const LIVE = { preview: false, storeKey: STORE_KEY, exportPrefix: "baepsae-records", load: () => loadAll() };
+const LIVE = { preview: false, storeKey: STORE_KEY, exportPrefix: "baepsae-records", load: () => loadAll(), loadDisc: () => loadDisc() };
 
 createRoot(document.getElementById("root")).render(<App source={LIVE} />);

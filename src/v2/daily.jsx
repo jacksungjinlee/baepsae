@@ -10,6 +10,7 @@ import { ListRow, StatusChip, Collapsible } from "../ui/components.jsx";
 import { C, fill, nf, p1 } from "./format.js";
 import { RuleLine, ChoiceGrid, tx } from "./ui.jsx";
 import { opPieces, opAmounts } from "./deckcalc.js";
+import { CoMark } from "./logo.jsx";
 
 const R = () => C.plan.rules;
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
@@ -171,10 +172,14 @@ export function HoldingRules({ x, names }) {
 // One held stock on 포트폴리오: the row, then (when the check ran today) its status lines and its rule book with results.
 // Part E: change = the return since purchase (won, %), extra = the weight bar with its target mark.
 // v19.0c: action = a button under the status lines (포트폴리오에서 빼기 for a stock missing from today's data).
-export function HoldingRow({ title, sub, x, names, onConfirm, change, extra, action }) {
+// v19.1a: the company mark in front of the name; tapping the row opens the 2.0 company page (onOpen), when the stock is
+// still in today's data.
+export function HoldingRow({ title, sub, x, names, onConfirm, change, extra, action, t, onOpen }) {
+  const code = t || (x && x.t);
   return (
     <div data-holding={x ? x.t : undefined} data-status={x ? x.status : undefined} data-big={x && x.bigMove ? "1" : undefined}>
-      <ListRow title={title} sub={sub} chip={x ? statusChips(x) : null} change={change} />
+      <ListRow title={title} sub={sub} chip={x ? statusChips(x) : null} change={change} onClick={onOpen}
+        lead={code ? <CoMark t={code} name={title} size={SPACE(9)} /> : null} />
       {extra}
       {x && <StatusLines x={x} names={names} onConfirm={onConfirm} />}
       {action}
