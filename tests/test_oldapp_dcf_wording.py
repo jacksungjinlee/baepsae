@@ -190,22 +190,27 @@ def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
         const c = { ...SAM, r36, ni: LOSS };
         const data = { ...CORP, companies: CORP.companies.map((x) => (x.t === c.t ? c : x)) };
         const ls = lines(renderToStaticMarkup(h(OLD.CompanyView, { data, t: c.t, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} })));
-        out[k] = ls.filter((l) => l.includes('지난 3년 주가는'));
+        // 그 줄, 그리고 화면 전체에서 뒤 문장이 몇 번 나오는지 (다른 칸으로 옮겨 가도 잡히게)
+        out[k] = { line: ls.filter((l) => l.includes('지난 3년 주가는')), tails: ls.join(' ').split('이익 없이 움직인 가격은').length - 1 };
       }""", SAM=sam, LOSS=loss)
     lead = "적자 구간이 있어서 이익과 눈높이로 나누기 어려워요. "
     tail = " 이익 없이 움직인 가격은 기대와 수급이 만든 거예요."
     same = lead + "지난 3년 주가는 거의 변하지 않았어요."                      # 뒤 문장 없이
-    assert got["zero"] == [same] and got["negZero"] == [same], got
-    assert "움직인 가격" not in got["zero"][0] and "기대와 수급" not in got["negZero"][0], got
-    assert got["up"] == [lead + "지난 3년 주가는 +12.3% 올랐어요." + tail], got
-    assert got["down"] == [lead + "지난 3년 주가는 7% 내렸어요." + tail], got
-    assert got["tiny"] == [lead + "지난 3년 주가는 +0.1% 올랐어요." + tail], got     # 보이는 숫자가 0 이 아니면 그대로
-    assert got["tinyDown"] == [lead + "지난 3년 주가는 0.1% 내렸어요." + tail], got
-    for k in ("up", "down", "tiny", "tinyDown"):                                 # 0 이 아니면 뒤 문장이 그대로 남아요
-        assert got[k][0].endswith(tail) and got[k][0].count("이익 없이 움직인 가격은") == 1, (k, got[k])
+    assert got["zero"]["line"] == [same] and got["negZero"]["line"] == [same], got
+    assert got["zero"]["tails"] == 0 and got["negZero"]["tails"] == 0, got        # 화면 어디에도 뒤 문장이 없어요
+    assert got["up"]["line"] == [lead + "지난 3년 주가는 +12.3% 올랐어요." + tail], got
+    assert got["down"]["line"] == [lead + "지난 3년 주가는 7% 내렸어요." + tail], got
+    assert got["tiny"]["line"] == [lead + "지난 3년 주가는 +0.1% 올랐어요." + tail], got     # 보이는 숫자가 0 이 아니면 그대로
+    assert got["tinyDown"]["line"] == [lead + "지난 3년 주가는 0.1% 내렸어요." + tail], got
+    for k in ("up", "down", "tiny", "tinyDown"):                                 # 0 이 아니면 뒤 문장이 한 번 그대로 남아요
+        assert got[k]["tails"] == 1, (k, got[k])
     no_dash(same)
     for bad in ("+0%", " 0% "):
-        assert bad not in got["zero"][0] and bad not in got["negZero"][0], bad
+        assert bad not in same, bad
+    # 이 두 칸은 2.0 처럼 낱말 사이에서만 줄을 바꿔요 ('주가는' · '있어요' 가 두 줄로 갈라지지 않게, 390 px)
+    corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+    assert 'lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>\n        적자 구간이 있어서' in corp
+    assert 'marginTop: 5, wordBreak: "keep-all", overflowWrap: "break-word" }}>\n                  {rev.edge ? revText' in corp
 
 
 # 수렴 칸을 끈 경우(5년 내내 같은 증가율)의 예전 문장: 그 계산에는 '첫해' 문장이 맞지 않아서 글자 하나 바꾸지 않고 남겨요
