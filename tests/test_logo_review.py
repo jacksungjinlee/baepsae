@@ -297,6 +297,26 @@ def test_page_addresses_are_logo_ids_urls():
             assert us == (li.logo_url(prov[p], "ticker", "AAPL", keys[p]) if route == "ticker" else None)
 
 
+def test_page_urls_match_logo_ids_on_the_edge_cases():
+    """The picker builds provider URLs in JavaScript (logoUrl); they must equal tools/logos/logo_ids.logo_url
+    character for character: a US class share (BRK-B), letters in a KRX code (0126Z0.KS), logo.dev ISIN and domain
+    routes, characters that must be escaped ('A B/C?'), keys with - _ ~, the second load (&v=2) and a check size."""
+    cases = [("bf", "isin", "KR7005930003"), ("bf", "ticker", "005930.KS"), ("bf", "ticker", "BRK-B"),
+             ("bf", "domain", "samsung.com"), ("ld", "ticker", "247540.KQ"), ("ld", "ticker", "0126Z0.KS"),
+             ("ld", "domain", "ks-industry.co.kr"), ("ld", "isin", "KR7005930003"), ("bf", "ticker", "A B/C?"),
+             ("ld", "ticker", "BRK-B"), ("ld", "domain", "xn--bj0bj06e.kr")]
+    keys = {"bf": "bf_Client-01~x", "ld": "pk_abc_DEF-9"}
+    js = (f"var K = {json.dumps(keys)}; console.log(JSON.stringify({json.dumps(cases)}.map(c => logoUrl(c[0], c[1], c[2], "
+          "K[c[0]])).concat([logoUrl('ld', 'domain', 'x.co.kr', 'pk_k', '2'), logoUrl('bf', 'ticker', 'AAPL', 'cid', null, 100),"
+          " logoUrl('ld', 'ticker', 'AAPL', 'pk_k', null, 156)])));")
+    got = node(js)
+    prov = {"bf": "brandfetch", "ld": "logodev"}
+    want = [li.logo_url(prov[p], r, i, keys[p]) for p, r, i in cases]
+    want += [li.logo_url("logodev", "domain", "x.co.kr", "pk_k") + "&v=2", li.logo_url("brandfetch", "ticker", "AAPL", "cid", size=100),
+             li.logo_url("logodev", "ticker", "AAPL", "pk_k", size=156)]
+    assert got == want
+
+
 def test_export_has_reviewed_companies_only_and_no_image_data():
     ch = {"AAPL": {"source": "own-icon", "url": "logo-review/icons/AAPL.png", "reviewed": "2026-11-05"},
           "005930": {"source": "letter", "url": "x", "reviewed": "2026-11-05", "img": "data:image/png;base64,AA"}}
@@ -501,9 +521,30 @@ def test_add_site_icons_append_only_one_file_per_picture(tmp_path):
     assert {k: v for k, v in m2.items() if k in m} == m
     assert m2["000020"] == {"path": "icons/123450.png", "check": True}       # another company's picture: check
     assert any("000020" in line and "123450" in line and "another company" in line for line in log2)
+    assert m2["123450"] == "icons/123450.png" and n2["kept from an earlier run although shared"] == 1   # append only
+    assert any("123450: still 'kept'" in line and "earlier run" in line for line in log2)
     assert m2["000040"] == "icons/000040.png"
     assert all((out / k).read_bytes() == v for k, v in before.items())
     assert n2["already in the manifest (left as is)"] == 5 and n2["files written"] == 1
+
+
+def test_add_site_icons_the_same_picture_for_two_companies_is_check_for_both(tmp_path):
+    """A group logo or a web host's default icon: every company with it is 'check' when they arrive in the same run
+    (the first one too); its preferred share follows; a third company joining later is 'check' as well."""
+    import add_site_icons as ai
+    host = png_bytes((120, 120, 120, 255), shape="disc")
+    src = collection(tmp_path, {"003090": host, "003095": host, "069620": host, "000100": png_bytes((5, 5, 5, 255))}, {})
+    out, man = tmp_path / "icons", tmp_path / "icons.json"
+    n, log = ai.add_icons(src, out, man)
+    m = json.loads(man.read_text())
+    assert m["003090"] == m["003095"] == m["069620"] == {"path": "icons/003090.png", "check": True}
+    assert m["000100"] == "icons/000100.png" and (n["kept"], n["check"]) == (1, 3)
+    assert sorted(p.name for p in out.glob("*.png")) == ["000100.png", "003090.png"]
+    (src / "kr" / "111110.png").write_bytes(host)
+    (src / "site_icons.csv").write_text((src / "site_icons.csv").read_text() + "111110,kept\n", encoding="utf-8")
+    n2, log2 = ai.add_icons(src, out, man)
+    assert json.loads(man.read_text())["111110"] == {"path": "icons/003090.png", "check": True}
+    assert n2["kept from an earlier run although shared"] == 0                 # the earlier ones were 'check' already
 
 
 def test_add_site_icons_codes_are_matched_in_capitals(tmp_path):
