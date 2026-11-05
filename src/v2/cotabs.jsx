@@ -2,12 +2,14 @@
 // Each tab: one headline (a fixed variant of its tile's rule), one chart, two or three numbers, a link to 자세히.
 // 실적: KR annual figures (corp.json, 억원) with the report year; revenue growth vs the industry only between peers whose
 //   growth has the same basis (engine.growthBasis); 주가는 무엇으로 움직였나 (the old DecompCard maths, facts only).
-//   US until v19.2: Yahoo's revenue growth (latest quarter vs a year before, labelled so), operating margin and ROE.
+//   US until v19.2: Yahoo's revenue growth, operating margin and ROE. The growth figure is the latest quarter against the
+//   same quarter a year before and always carries that label (cofmt.usGrowthText; no label approved -> no number).
 // 가치: PBR against the industry (strip), PBR · PER with industry medians, 지금 가격이 가정하는 것 (KR: the old DcfCard
 //   reverse calculation; out of range -> its two messages), the 출렁임 line (phrase only: no beta band in the data yet).
 // 배당: KR dividend per share (report year) and three years; 100만원어치 = 1,000,000 x yield, rounded to 1,000원, before
 //   tax, with the basis it was really computed on (KR: the report's dividend over today's close; US: Yahoo's yield).
-// 공시: KR only, disc.json (임원·주요주주 reports for 90 days, 국민연금 5% filings). No DART link (outside address).
+// 공시: KR only, disc.json (임원·주요주주 reports for 90 days, 국민연금 5% filings). A row with an exact receipt number is a
+//   plain link to that filing on DART (new tab, Jack 2026-11-05: routes.dartFilingUrl); nothing is fetched from DART.
 // 자세히: 가치 (every ratio with receipts that reproduce it, 업종 지도, the calculator) and 실적 (margins, 3-year table).
 // Charts draw this company in navy and its peers in grey (apricot stays for the deck screens' data marks).
 import React, { useMemo, useState } from "react";
@@ -21,8 +23,8 @@ import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd
 import { growthBasis, num } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
-import { OLD_LINKS } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon } from "./cofmt.js";
+import { OLD_LINKS, dartFilingUrl } from "./routes.js";
+import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -162,13 +164,14 @@ export function EarnTab({ load, s, onMore }) {
   if (usOf(s)) {
     const r = earnUs(s);
     const head = r.rule === "na" ? null : C.co.tiles.earnUs[r.rule];
+    const growth = usGrowthText(r.g);            // "최근 분기 매출, 1년 전보다 +16.4%": the number only with what it is
     const md = priceMd(load, s);
     return (
       <div data-ui-v2="co-earn" data-cls="us" data-rule={r.rule}>
         <Card>
           {head && <H>{head}</H>}
+          {growth && <p data-ui-v2="co-us-g3" data-g={r.g} style={tx(SIZE.body, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) })}>{growth}</p>}
           <Stats>
-            {num(s.g3) != null && C.pick.receipt.growthUs && <Stat data-ui-v2="co-us-g3" label={C.pick.receipt.growthUs} value={signedPct(s.g3)} />}
             {num(s.opm) != null && E.opm && <Stat label={E.opm} value={pctText(s.opm)} />}
             {num(s.roe) != null && <Stat label="ROE" value={pctText(s.roe)} />}
           </Stats>
@@ -590,19 +593,29 @@ export function DiscTab({ load, s, disc }) {
         {n > 0 && D.note && <Note style={{ marginTop: SPACE(1) }}>{D.note}</Note>}
         {n > 0 && all(D.buy, D.sell) && (
           <div data-ui-v2="co-disc-rows" style={{ marginTop: SPACE(3) }}>
-            {v.rows.slice(0, DISC_ROWS).map((x) => (
-              <div key={x.rc || x.date + x.nm + x.q} data-ui-v2="co-disc-row" data-q={x.q}
-                style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
-                <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>
-                    {x.nm}{x.pos ? <span style={{ color: COLOR.text2, fontWeight: WEIGHT.regular }}>{" · "}{x.pos}</span> : null}</span>
-                  <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
-                    {fill(C.plan.shares, { n: nf(Math.abs(x.q)) })}{x.won != null ? <>{" · "}{fill(C.app.about, { x: bigWon(x.won) })}</> : null}</span>
-                </span>
-                <StatusChip tone="neutral">{x.q > 0 ? D.buy : D.sell}</StatusChip>
-              </div>
-            ))}
+            {v.rows.slice(0, DISC_ROWS).map((x) => {
+              // The row itself is the link to that filing on DART (exact receipt number only; none -> a plain row).
+              const href = dartFilingUrl(x.rc);
+              const st = { display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` };
+              const body = (
+                <>
+                  <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>
+                      {x.nm}{x.pos ? <span style={{ color: COLOR.text2, fontWeight: WEIGHT.regular }}>{" · "}{x.pos}</span> : null}</span>
+                    <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
+                      {fill(C.plan.shares, { n: nf(Math.abs(x.q)) })}{x.won != null ? <>{" · "}{fill(C.app.about, { x: bigWon(x.won) })}</> : null}</span>
+                  </span>
+                  <StatusChip tone="neutral">{x.q > 0 ? D.buy : D.sell}</StatusChip>
+                  {href && <Icon name="chevronRight" size={16} tone="on" />}
+                </>
+              );
+              const key = x.rc || x.date + x.nm + x.q;
+              return href
+                ? <a key={key} data-ui-v2="co-disc-row" data-q={x.q} data-rc={x.rc} href={href} target="_blank" rel="noopener"
+                    style={{ ...st, ...tap, minHeight: TOUCH, padding: st.padding, textDecoration: "none", color: "inherit" }}>{body}</a>
+                : <div key={key} data-ui-v2="co-disc-row" data-q={x.q} style={st}>{body}</div>;
+            })}
           </div>
         )}
         {D.source && <Src>{D.source}</Src>}

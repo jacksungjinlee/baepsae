@@ -29,7 +29,7 @@ import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -61,7 +61,7 @@ export function tileViews(load, s) {
   };
   if (usOf(s)) {
     const r = earnUs(s);
-    add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnUs[r.rule], r.g != null && C.pick.receipt.growthUs ? `${C.pick.receipt.growthUs} ${signedPct(r.g)}` : null, { g: r.g });
+    add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnUs[r.rule], usGrowthText(r.g), { g: r.g });
   } else {
     const r = earnKr(co);
     const number = r.pct != null && T().opChange ? fill(T().opChange, { pct: signedPct(r.pct) }) : r.amount != null && T().opAmount && eokText(r.amount) ? fill(T().opAmount, { x: eokText(r.amount) }) : null;

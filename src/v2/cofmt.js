@@ -1,7 +1,7 @@
 // Small formatting helpers shared by the company page (company.jsx) and its tabs (cotabs.jsx). No Korean here: words
 // come from src/copy/v2.js. US per-share figures are $ first with 원 small (Jack's decision 7, v19.1).
 import { C, fill, nf, p1, mdText, wonText } from "./format.js";
-import { eokText } from "./deckcalc.js";
+import { eokText, signedPct } from "./deckcalc.js";
 
 export const usOf = (s) => !!s && s.cls === "us";
 // The price date of this stock's market: KR pxDate, US usPxDate (never the Korean date for a US price: none then).
@@ -19,6 +19,13 @@ export function wonOfUsd(load, usd) {
   const fx = load.data.fx;
   if (!(typeof fx === "number" && fx > 0) || !(typeof usd === "number" && Number.isFinite(usd))) return null;
   return fill(C.app.about, { x: fill(C.app.won, { n: nf(Math.round((usd * fx) / 100) * 100) }) });
+}
+// The US 실적 figure says what it is (Jack, 2026-11-05): Yahoo's revenueGrowth is the latest quarter's revenue against the
+// same quarter a year before, never a yearly or 3-year rate. "최근 분기 매출, 1년 전보다 +16.4%" (pending: null until then, and
+// the number is left out with it, so it never shows without this label). g: a finite number, else null.
+export function usGrowthText(g) {
+  const L = C.co.tiles.usGrowth;
+  return L && typeof g === "number" && Number.isFinite(g) ? fill(L, { pct: signedPct(g) }) : null;
 }
 export const timesText = (x, d = 1) => fill(C.pick.receipt.times, { x: nf(x, d) });
 // "12.3%", "−3.2%" (U+2212, as everywhere in 2.0), "0.0%" (no sign once rounded to zero).

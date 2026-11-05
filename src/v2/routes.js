@@ -27,6 +27,14 @@ export const OLD_LINKS = {
   corp: (t) => OLD_APP + "#corp=" + encodeURIComponent(String(t)),
 };
 
+// v19.1a 공시 tab (Jack, 2026-11-05): each row links to that one filing in DART's own viewer by its exact receipt number
+// (disc.json "rc", rcept_no: 14 digits). A row without an exact number (the pipeline's fallback key "date|name", or
+// anything else) gets no link: never a search or a name-based link. This is the only DART address in 2.0, and it is used
+// only as <a href target="_blank" rel="noopener"> (tests/test_v2_app.py: no fetch, image or script ever goes there).
+export const DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=";
+export const RCEPT_RX = /^\d{14}$/;
+export const dartFilingUrl = (rc) => (typeof rc === "string" && RCEPT_RX.test(rc) ? DART_VIEWER + rc : null);
+
 // "#portfolio/build" -> { tab: "portfolio", sub: "build", about: false, known: true }. No hash: empty (shown as #home).
 // v19.1a: a company page lives under 종목: "#stocks/005930" (요약) and "#stocks/005930/value" (a tab, or a 자세히 screen):
 // { tab: "stocks", sub: "005930/value", about: false, known: true, code: "005930", ctab: "value" }. The code must look

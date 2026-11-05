@@ -27,7 +27,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 _B = {}
 MODS = {"K": "src/v2/company.js", "S": "src/v2/store.js", "R": "src/v2/routes.js", "E": "src/v2/engine.js", "OLD": "src/corp.jsx",
-        "TOK": "src/ui/tokens.js"}
+        "TOK": "src/ui/tokens.js", "F": "src/v2/cofmt.js", "CP": "src/copy/v2.js"}
 
 
 def bundle_dir():
@@ -90,6 +90,28 @@ def test_earnings_tile_rules_korea():
 def test_earnings_tile_rules_us_use_yahoo_quarterly_growth():
     got = run("""out = [3, 2.9, -3, -2.9, 16.4, null].map((g) => K.earnUs({ cls: 'us', g3: g }).rule).concat([K.earnUs({ cls: 'us' }).rule]);""")
     assert got == ["up", "flat", "down", "flat", "up", "na", "na"]
+
+
+def test_us_growth_number_always_says_what_it_is():
+    """미국 실적 숫자 (Jack, 2026-11-05): 야후의 매출 증가는 최근 분기를 1년 전 같은 분기와 비교한 값이라, 그렇게 말하는 이름
+    (co.tiles.usGrowth) 과 함께만 보여요. 그 이름이 승인 전(null)이면 숫자도 빼요. 연 · 3년 같은 말은 붙이지 않아요."""
+    copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
+    m = re.search(r'usGrowth: null, // 제안 \(Jack 승인 대기\): "([^"]*)"', copy)
+    assert m and m.group(1) == "최근 분기 매출, 1년 전보다 {pct}", "제안 문구(Jack 의 예시)가 바뀌었어요"
+    cofmt = open(os.path.join(ROOT, "src", "v2", "cofmt.js"), encoding="utf-8").read()
+    assert "export function usGrowthText(g)" in cofmt and "C.co.tiles.usGrowth" in cofmt
+    # 미국 실적 숫자를 보여 주는 곳(요약 칸 · 실적 탭)은 모두 usGrowthText 를 거쳐요: 예전 이름표를 붙인 맨 숫자는 없어요
+    for f in ("company.jsx", "cotabs.jsx"):
+        body = open(os.path.join(ROOT, "src", "v2", f), encoding="utf-8").read()
+        assert "usGrowthText(r.g)" in body, f
+        assert "growthUs" not in body and "signedPct(s.g3)" not in body and "signedPct(r.g)" not in body, f
+    got = run("""const { F, CP } = T; const xs = [16.4, -3.24, 0.04, null, NaN, undefined, '5'];
+      out = { pending: xs.map((g) => F.usGrowthText(g)) };
+      CP.C.co.tiles.usGrowth = M;
+      out.filled = xs.map((g) => F.usGrowthText(g));""", M=m.group(1))
+    assert got["pending"] == [None] * 7                                                # 이름이 승인 전이면 숫자도 없어요
+    assert got["filled"] == ["최근 분기 매출, 1년 전보다 +16.4%", "최근 분기 매출, 1년 전보다 \u22123.2%", "최근 분기 매출, 1년 전보다 0.0%",
+                             None, None, None, None]
 
 
 # ── 가치 칸 ──
@@ -389,6 +411,25 @@ def test_disclosure_rows_for_one_company():
     assert got["us"] is None and got["none"] is None
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
     assert re.search(r"^DISC_DAYS = (\d+)$", src, re.M).group(1) == str(got["days"]) == "90"       # '최근 90일' 은 파이프라인과 같아요
+
+
+def test_dart_link_only_for_an_exact_receipt_number():
+    """공시 줄의 DART 링크 (Jack, 2026-11-05: 링크만): disc.json 의 접수번호(rcept_no, 숫자 14자리)가 정확할 때만 그 공시의 원문 주소.
+    파이프라인의 대신 열쇠('날짜|이름')나 다른 모양이면 링크가 없어요 (검색 · 이름으로 찾는 링크는 만들지 않아요)."""
+    cases = ["20261029000101", "20261029|가나다", "2026102900010", "202610290001011", " 20261029000101", "20261029000101\n",
+             "2026102900010a", "", None, 20261029000101]
+    got = run("out = C.map((rc) => R.dartFilingUrl(rc)).concat([R.dartFilingUrl(undefined), R.DART_VIEWER]);", C=cases)
+    assert got[0] == "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20261029000101"
+    assert got[1:-1] == [None] * len(cases)
+    assert got[-1] == "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="
+    # 파이프라인이 접수번호를 받지 못한 보고서에 쓰는 대신 열쇠는 결코 14자리 숫자가 아니에요 (그래서 그 줄에는 링크가 없어요)
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert 'key = r.get("rcept_no") or ((r.get("rcept_dt") or "") + "|" + (r.get("repror") or ""))' in src
+    # 화면의 줄은 disc.json 의 rc 를 그대로 가지고 있어요 (링크는 그 값으로만)
+    rows = run("out = K.discFor(D, { t: '005930', cls: 'kr', price: 1000 }).rows.map((r) => [r.rc, R.dartFilingUrl(r.rc)]);",
+               D=fixture("disc.json"))
+    want = sorted((x for x in fixture("disc.json")["insider"] if x["t"] == "005930"), key=lambda x: x["d"], reverse=True)
+    assert rows == [[x["rc"], "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=" + x["rc"]] for x in want] and len(rows) >= 1
 
 
 def test_disclosure_date_is_the_newest_filing_and_goes_stale():

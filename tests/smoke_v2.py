@@ -2793,6 +2793,36 @@ def js_round(x, d):
     return math.floor(x * k + 0.5) / k
 
 
+def signed_pct(v):
+    """deckcalc.signedPct: 한 자리로 반올림, 0 이면 부호 없음, 빼기는 U+2212."""
+    r = js_round(v, 1)
+    return ("\u2212" if r < 0 else "+" if r > 0 else "") + f"{abs(r):.1f}%"
+
+
+DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="
+
+
+def disc_links_ok(page, rows_data):
+    """공시 줄의 DART 링크 (Jack, 2026-11-05: 링크만): 정확한 접수번호(14자리)가 있는 줄만 그 공시 원문으로 가는 <a> (새 탭 · noopener),
+    없는 줄은 링크 없는 줄. DART 를 가리키는 다른 것(그림 · 스크립트 · 다른 링크)은 없어요. rows_data: 보이는 순서의 disc.json 줄."""
+    rows = page.locator('[data-ui-v2="co-disc-row"]')
+    assert rows.count() == len(rows_data), (rows.count(), len(rows_data))
+    n_links = 0
+    for el, x in zip(rows.all(), rows_data):
+        tag = el.evaluate("(e) => e.tagName")
+        rc = x.get("rc")
+        if isinstance(rc, str) and re.fullmatch(r"\d{14}", rc):
+            n_links += 1
+            assert tag == "A" and el.get_attribute("href") == DART_VIEWER + rc, (tag, el.get_attribute("href"), rc)
+            assert el.get_attribute("target") == "_blank" and el.get_attribute("rel") == "noopener"
+            assert el.get_attribute("data-rc") == rc
+        else:
+            assert tag == "DIV" and el.get_attribute("href") is None and el.locator("a").count() == 0, (tag, rc)
+    assert page.locator('a[href*="dart.fss.or.kr"]').count() == n_links
+    assert page.locator('[src*="dart"], iframe, object, embed').count() == 0
+    return n_links
+
+
 def has_group(s):
     return isinstance(s.get("ind"), str) and bool(s["ind"]) and s["ind"] not in ("etc", "other")
 
@@ -2985,6 +3015,12 @@ def scene_company(R, files, width):
                 assert float(t.get_attribute("data-med")) == exp["med"] and float(t.get_attribute("data-pbr")) == s["pbr"]
             if topic == "risk":
                 assert t.locator('[data-ui-v2="tile-number"]').count() == 0, "베타 숫자가 오차 범위 없이 보여요"
+            if topic == "earn" and us:                                       # 미국 매출 숫자는 무엇인지 말하는 이름과만 (Jack, 2026-11-05)
+                num = t.locator('[data-ui-v2="tile-number"]')
+                if CO["tiles"]["usGrowth"] and s.get("g3") is not None:
+                    assert num.inner_text() == fillp(CO["tiles"]["usGrowth"], pct=signed_pct(s["g3"])), num.inner_text()
+                else:
+                    assert num.count() == 0, "미국 매출 숫자가 이름 없이 보여요"
         if tiles:
             if us:                                                            # 미국: 모든 칸의 숫자 출처 한 줄
                 assert page.locator('[data-ui-v2="co-tiles-source"]').inner_text() == fillp(C["why"]["srcPriceUs"], md=md)
@@ -3019,7 +3055,14 @@ def scene_company(R, files, width):
         if us:
             assert e.locator('[data-ui-v2="bars"]').count() == 0, "미국 실적에 연도별 막대 (v19.2 전까지 없어요)"
             g = e.locator('[data-ui-v2="co-us-g3"]')
-            assert C["pick"]["receipt"]["growthUs"] in g.inner_text(), g.inner_text()      # 야후의 '최근 분기 · 전년 동기 대비' 그대로
+            # 야후 매출 증가는 최근 분기를 1년 전 같은 분기와 비교한 숫자: 그 이름과 함께만 (Jack, 2026-11-05). 이름이 승인 전이면 숫자도 없어요
+            if CO["tiles"]["usGrowth"] and s.get("g3") is not None:
+                assert g.inner_text() == fillp(CO["tiles"]["usGrowth"], pct=signed_pct(s["g3"])), g.inner_text()
+            else:
+                assert g.count() == 0, "미국 매출 숫자가 이름 없이 보여요"
+            if s.get("g3") is not None:                                         # 그 숫자는 이름이 붙은 그 줄에만 있어요
+                bare = signed_pct(s["g3"])
+                assert e.inner_text().count(bare) == (1 if CO["tiles"]["usGrowth"] else 0), (bare, e.inner_text())
         else:
             bars = e.locator('[data-ui-v2="bars"] [data-year]')
             if bars.count():
@@ -3086,6 +3129,11 @@ def scene_company(R, files, width):
                 # 내용 날짜는 가장 최근 공시일(newest), 실행일(asOf) 아님 · 새로 받은 파일이라 멈춤 표시 없음
                 assert ds.get_attribute("data-stale") == "0"
                 assert ds.locator('[data-ui-v2="date-line"]').first.inner_text() == fillp(C["app"]["asOf"], md="10월 29일")
+                shown = sorted((x for x in f["disc.json"]["insider"] if x["t"] == code), key=lambda x: x["d"], reverse=True)[:10]
+                if CO["disc"]["buy"] and CO["disc"]["sell"]:                     # 줄마다 그 공시의 DART 원문 링크 (정확한 접수번호만)
+                    assert disc_links_ok(page, shown) == len(shown) >= 1
+                else:
+                    assert page.locator('a[href*="dart.fss.or.kr"]').count() == 0
                 no_mascot(page)
                 no_hscroll(page, width)
                 R.collect(page)
@@ -3206,6 +3254,9 @@ def scene_company(R, files, width):
         # 리뷰: 오늘 공시 목록을 못 받은 파일(listOk false, 가장 최근 공시 10월 20일) → 멈춤 표시, 오늘 날짜를 내용 날짜로 쓰지 않아요
         g = clone(f)
         g["disc.json"].update(listOk=False, newest="2026-10-20", asOf=dt.datetime.now(KST).date().isoformat())
+        # 접수번호가 없는 줄(파이프라인의 대신 열쇠 '날짜|이름')은 링크가 없어요 (이름으로 찾는 링크도 없어요)
+        kr_rows = [x for x in g["disc.json"]["insider"] if x["t"] == "005930"]
+        kr_rows[0]["rc"] = kr_rows[0]["d"] + "|" + kr_rows[0]["nm"]
         srv2, ctx2, page2, _ = R.open(build_site(g), width, path="/app.html?dev=1#stocks/005930/disc", device=pc_device(width) if wide else None)
         try:
             page2.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.state === 'ok'; }")
@@ -3216,6 +3267,11 @@ def scene_company(R, files, width):
             assert fillp(C["app"]["stale"], n="").strip() in line.inner_text() or "갱신이 멈췄어요" in line.inner_text()
             today = dt.datetime.now(KST)
             assert f"{today.month}월 {today.day}일 기준" not in ds.inner_text()
+            if CO["disc"]["buy"] and CO["disc"]["sell"]:
+                shown = sorted(kr_rows, key=lambda x: x["d"], reverse=True)[:10]
+                assert disc_links_ok(page2, shown) == len(shown) - 1
+            else:
+                assert page2.locator('a[href*="dart.fss.or.kr"]').count() == 0
             R.collect(page2)
         finally:
             ctx2.close()

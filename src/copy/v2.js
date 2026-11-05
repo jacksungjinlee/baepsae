@@ -141,6 +141,7 @@ export const C = {
       opChange: null, // 제안 (Jack 승인 대기): "영업이익 2년 새 {pct}" — 실적 칸 숫자 (2년 전이 흑자일 때)
       opAmount: null, // 제안 (Jack 승인 대기): "영업이익 {x}" — 실적 칸 숫자 (2년 전이 0 이하이거나 적자일 때, 금액)
       pbr: null,      // 제안 (Jack 승인 대기): "PBR {x}배 · 업종 {y}배" — 가치 칸 숫자
+      usGrowth: null, // 제안 (Jack 승인 대기): "최근 분기 매출, 1년 전보다 {pct}" — 미국 실적 칸 · 미국 실적 탭의 숫자 (야후: 최근 분기 매출을 1년 전 같은 분기와 비교). Jack 의 예시 문구 (2026-11-05). 승인 전: 그 숫자를 빼요 (이름 없는 숫자는 없어요)
     },
     // 왜 움직였나 줄: why.together · daily.bigMove · why.c1Body · today.more 를 그대로 써요 (새 문구 없음)
     warn: {

@@ -64,7 +64,8 @@ export function earnKr(co) {
 }
 
 // US until v19.2: g3 is Yahoo revenueGrowth (the latest quarter vs the same quarter a year ago, fetch_data.py
-// apply_us_info), labelled with the approved pick.receipt.growthUs. Never compared with a Korean figure.
+// apply_us_info). Shown only with the label that says so (co.tiles.usGrowth, Jack 2026-11-05; cofmt.usGrowthText).
+// Never compared with a Korean figure.
 export function earnUs(s) {
   const g = num(s && s.g3);
   if (g == null) return { rule: "na" };
