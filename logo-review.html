@@ -27,6 +27,7 @@ select{font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;border:1px 
 .bad{color:var(--warn);font-weight:600}
 .info{color:var(--sub)}
 .good{color:var(--ok);font-weight:600}
+.warn{color:var(--amber);font-weight:600}
 table.sum{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed;margin-top:6px}
 .sum th,.sum td{border-bottom:1px solid var(--line);padding:4px 2px;text-align:right;vertical-align:middle;overflow:hidden}
 .sum th:first-child,.sum td:first-child{text-align:left;width:27%}
@@ -82,6 +83,21 @@ details li{margin:3px 0}
 .opt .lg img{max-width:56px;max-height:56px}
 .opt .lg .lm{font-size:24px}
 .opt.on{border:2px solid var(--ok);background:#F0FAF4;padding:4px 2px}
+.opt .lg.blank{font-size:22px;font-weight:700}
+.paste{margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+.paste label{display:block;font-size:12px;font-weight:600;margin-bottom:4px}
+.paste input{display:block;width:100%;font:inherit;font-size:16px;padding:6px 8px;border:1px solid var(--ink);border-radius:8px;background:#fff;color:var(--ink);min-width:0}
+.paste .bar{margin-top:6px}
+.paste .pv{display:flex;gap:10px;align-items:center;margin-top:8px}
+.paste .pv .lg{width:96px;height:96px}
+.paste .pv .lg img{max-width:96px;max-height:96px}
+.paste .pmsg{flex:1 1 auto;min-width:0;margin:0;font-size:12px;overflow-wrap:anywhere}
+.paste .sub{margin:8px 0 0}
+.b.need{background:#FFF1D6;color:var(--amber)}
+.tile.spot{outline:3px solid var(--ok);outline-offset:1px}
+.grid .empty{grid-column:1/-1;margin:8px 0;color:var(--sub);font-size:12.5px}
+#resumed{flex:1 1 100%;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--ok);font-weight:600}
+button.mini{padding:2px 10px;font-size:12px}
 .hide{display:none!important}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 </style>
@@ -89,7 +105,7 @@ details li{margin:3px 0}
 <body>
 <div class="wrap">
 <h1>Logo picker (temporary review tool)</h1>
-<p class="sub">For Jack only: not linked from the app, not for users, deleted once the logos are chosen. Logos load from Brandfetch and logo.dev in this browser only, paced, after you tap Start. Tap only the wrong logos, then Confirm the grid. Your progress stays in this browser; use Download choices to keep it or move it to another device.</p>
+<p class="sub">For Jack only: not linked from the app, not for users, deleted once the logos are chosen. Logos load from Brandfetch and logo.dev in this browser only, paced, after you tap Start (once you have, a reload carries on by itself). Tap only the wrong logos, then Confirm the grid. Your progress stays in this browser; use Download choices to keep it or move it to another device.</p>
 
 <section class="card" id="summary">
   <div class="bar">
@@ -103,6 +119,7 @@ details li{margin:3px 0}
   <div class="bar" style="margin-top:8px">
     <button id="export" type="button" class="ghost">Download choices</button>
     <button id="import" type="button" class="ghost">Load choices</button>
+    <button id="needbtn" type="button" class="ghost">Needs a logo</button>
     <input id="importfile" type="file" accept="application/json,.json" class="hide">
   </div>
   <div id="msg"></div>
@@ -115,12 +132,16 @@ details li{margin:3px 0}
   <li><b>Pre-pick.</b> Each tile shows the logo most likely to be right, chosen in this order: (1) a logo <b>both services agree on</b> (a Brandfetch and a logo.dev image that look the same); (2) <b>Brandfetch</b> by exact ID: ISIN, then ticker; (3) <b>logo.dev</b>: ticker, then the company's own homepage as filed with DART; (4) <b>Brandfetch by that DART homepage</b> (added because it was right for Kumho Petrochemical); (5) <b>our own website icon</b> (collected from the company's homepage); otherwise the <b>coloured letter mark</b>. An own icon that looked photo-like or hard to see when collected is never pre-picked: it only appears among the alternatives in the Fix panel, as <b>Own icon (check)</b>.</li>
   <li><b>Exact identifiers only, never names.</b> Ticker: KOSPI and KONEX 005930.KS, KOSDAQ 247540.KQ, US as listed. ISIN from the KRX listing (check digit verified). Domain: the homepage filed with DART, Korea only; platform hosts (blog.naver.com and the like) and a domain two companies share are not used.</li>
   <li><b>Agreement</b> is checked only here, in this browser: both images are loaded so the page may read them (CORS), shrunk to a tiny fingerprint and compared. If a provider does not let the page read its images, the agreement rule is skipped for it and the order decides. <span id="agreestate">Not checked yet.</span></li>
-  <li><b>Review.</b> Tap a tile to mark it wrong (tap again to undo). Hover (PC) or press and hold (phone) to see it bigger. Judge a grid once the bar at the bottom says it is ready: until then a tile with a dashed border can still change. Then tap <b>Confirm this grid</b>: every tile you did not mark keeps its pre-pick; for each tile you marked, choose among the logos that loaded or the letter mark. A grid counts as reviewed only after Confirm. Companies you have not reviewed keep the letter mark in the app.</li>
+  <li><b>Review.</b> Tap a tile to mark it wrong (tap again to undo). Hover (PC) or press and hold (phone) to see it bigger. Judge a grid once the bar at the bottom says it is ready: until then a tile with a dashed border can still change. Then tap <b>Confirm this grid</b>: every tile you did not mark keeps its pre-pick; for each tile you marked, choose among the logos that loaded, the letter mark, a pasted image address or <b>None of these &mdash; find more</b>. A grid counts as reviewed only after Confirm. Companies you have not reviewed keep the letter mark in the app.</li>
+  <li><b>Paste an image address</b> (in the Fix panel, when every alternative is wrong): copy the address of the right logo, usually from the company's own website (right-click or press and hold the picture, then Copy image address), and paste it. The page checks the address (https only: http is changed to https; no data: or javascript: addresses; at most 2,000 characters; not a Brandfetch or logo.dev address, which you choose among the alternatives instead) and shows a preview, loaded in this browser like any picture. Nothing is sent anywhere else. The picture must be at least 64 px on its shorter side; under 96 px you get a warning. Tap <b>Use this picture</b> to choose it; only its address is kept. <b>Later step, not done yet:</b> each pasted address will be downloaded once and stored as a file of this site, so the app never loads it from the company's website.</li>
+  <li><b>None of these &mdash; find more</b> (in the Fix panel): the company keeps the letter mark for now and counts as <b>needs a logo</b>: a separate count in the summary, and the <b>Needs a logo</b> view (button above, or the last entry in the grid list) lists only those companies, so a later round can show them new candidates. Tap a company there to open its grid; tap it again there and Confirm changes to choose differently.</li>
   <li><b>Badges:</b> <span class="b agr">agree</span> both services show this logo; <span class="b low">low-res</span> the picture the provider sent is smaller than 64 px (a provider may also enlarge a small logo, which this cannot see); <span class="b sav">saved</span> your confirmed choice; <span class="b gap">not checked</span> a provider was stopped or timed out for this company.</li>
   <li><b>No logo = image error.</b> Every request asks for an error when there is no logo (Brandfetch fallback/404, logo.dev fallback=404), so a miss never shows a placeholder. logo.dev answers a domain it has never seen with a placeholder (HTTP 202) on the first request, so every logo.dev domain hit is loaded again after 5&frac12; minutes and only the second answer counts. That is why a grid can take a few minutes; the next grid loads while you review this one.</li>
   <li><b>Checks:</b> before loading, each provider must show a known logo and must give no image for made-up identifiers; while loading, a known logo is checked every 100 loads and a made-up ticker every 300. If a known logo stops loading (rate limit, block, network), the provider pauses and its recent misses are tried again; after three failed checks it stops and Confirm waits until you tap Retry. A route that answers made-up identifiers with an image is switched off.</li>
   <li><b>Pace:</b> at most 2 requests a second to Brandfetch and 4 a second to logo.dev, one at a time per route; only the grid you are on and the next unreviewed one load, never all companies at once. Keep this tab in front while it loads.</li>
-  <li><b>What is saved:</b> only your choices (the source and the exact logo address, or the letter mark), in this browser's storage for this page. Logos are never copied: the app will load them from the provider, as here. Download choices gives a JSON file of the reviewed companies; Load choices reads one back (on another device too). When the same company is in both, the later review date wins (the file wins a tie).</li>
+  <li><b>What is saved:</b> only your choices (the source and the exact logo address, a pasted address, the letter mark or needs a logo), in this browser's storage for this page. Logos are never copied: the app will load them from the provider, as here. Download choices gives a JSON file of the reviewed companies; Load choices reads one back (on another device too). When the same company is in both, the later review date wins (the file wins a tie).</li>
+  <li><b>Remembered for 7 days:</b> for each company and source, whether a logo was found (hit) or not (miss) and on which day, never a picture or an address. After a reload, a source known to have no logo is not asked again, and only the found logos load again, paced, after the same checks as always (a remembered result is used only once that service has passed its checks in this visit). A miss is remembered only after a later check showed the service was answering. If a remembered logo no longer loads, every source of that company is checked again. A new build of this page starts over.</li>
+  <li><b>Reload:</b> once you have tapped Start in this browser, a reload starts loading again by itself, on the first grid you have not reviewed, and says so at the bottom with a Pause button. On a first visit nothing loads until you tap Start.</li>
   <li><b>Who is here:</b> every Korean company (common shares; preferred shares use their common share's logo; ETFs and funds left out) and every US company in the data shown below, largest market cap first, in grids of 100.</li>
 </ul>
 </details>
@@ -141,6 +162,7 @@ details li{margin:3px 0}
 </div>
 
 <div id="dock"><div class="in">
+  <div id="resumed" class="hide" role="status"><span>Loading resumed.</span><button id="resumepause" type="button" class="ghost mini">Pause</button></div>
   <span id="dockmsg">Tap Start to load logos.</span>
   <button id="retry" type="button" class="ghost hide">Retry</button>
   <button id="confirm" type="button" disabled>Confirm this grid</button>
@@ -148,7 +170,7 @@ details li{margin:3px 0}
 
 <div id="fix" class="hide" role="dialog" aria-modal="true" aria-labelledby="fixtitle"><div class="sheet">
   <h2 id="fixtitle">Fix</h2>
-  <p class="sub">For each logo you marked wrong, tap the right one, or the letter mark if none is right.</p>
+  <p class="sub">For each logo you marked wrong, tap the right one. If none is right: Paste an image address (the right logo, e.g. from the company's website), None of these &mdash; find more (letter mark for now, listed under Needs a logo), or the letter mark.</p>
   <div id="fixlist"></div>
   <div class="bar" style="margin-top:10px">
     <button id="fixsave" type="button" disabled>Save this grid</button>
@@ -176,9 +198,59 @@ var ROUTES = [
   { id: "own", src: "own-icon", p: "own", r: "icon", f: "ic", label: "Own icon", long: "Own website icon" }
 ];
 var SOURCES = ROUTES.map(function (rt) { return rt.src; }).concat(["letter"]);
+// Added 2026-11-05 (the format is otherwise unchanged, so exports stay version 1): "manual" = an image address Jack
+// pasted (url = that address, checked by checkManualUrl); "need" = none of these, find more (url null, letter mark for now).
+var EXTRA_SOURCES = ["manual", "need"];
+var ALL_SOURCES = SOURCES.concat(EXTRA_SOURCES);
 var ENDED = { na: 1, hit: 1, miss: 1, off: 1, err: 1, stopped: 1 };
 var AGREE_MAX = 0.15, ASPECT_MAX = 1.35, LOW_RES = 64;
 var STORE_KEY = "baepsae-logo-review-v1";
+// Which sources found a logo for which company (hit / miss and the KST day, never a picture or an address), kept apart
+// from the choices so that a full or broken entry here can never cost a confirmed choice.
+var PROBE_KEY = "baepsae-logo-review-probes-v1", PROBE_DAYS = 7;
+var MANUAL_MAX = 2000, MANUAL_MIN_PX = 64, MANUAL_SOFT_PX = 96;
+// Pasted addresses are later downloaded and stored as our own files; provider images may not be copied, so their
+// addresses are refused here (they are chosen among the alternatives instead).
+var PROVIDER_DOMAINS = ["brandfetch.io", "brandfetch.com", "logo.dev"];
+// A pasted image address -> {url (https, in the browser's own normal form), note} or {error}. Nothing is requested.
+function checkManualUrl(raw) {
+  if (typeof raw !== "string") return { error: "No address." };
+  var s = raw.replace(/^[\s\u0000-\u001f\u007f]+|[\s\u0000-\u001f\u007f]+$/g, "");
+  if (!s) return { error: "Paste an image address first." };
+  if (s.length > MANUAL_MAX) return { error: "That address is " + s.length + " characters long; at most " + MANUAL_MAX + " are allowed." };
+  var bare = s.replace(/[\s\u0000-\u001f\u007f]/g, "").toLowerCase();
+  if (/^data:/.test(bare)) return { error: "A data: address (a picture packed into the address) is not allowed. Paste the address of a picture on a website." };
+  if (/^(javascript|vbscript):/.test(bare)) return { error: "That is a script, not an image address." };
+  if (/[\s\u0000-\u001f\u007f]/.test(s)) return { error: "The address has a space or a line break in it. Paste one address only." };
+  var u;
+  try { u = new URL(s); } catch (e) { return { error: "Not a full web address. It should start with https://" }; }
+  var note = "";
+  if (u.protocol === "http:") { u.protocol = "https:"; note = "Changed http to https: this page uses secure addresses only."; }
+  else if (u.protocol !== "https:") return { error: "Only https addresses are allowed (not " + u.protocol + ")." };
+  if (u.username || u.password) return { error: "The address has a user name or password in it." };
+  var host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (!host) return { error: "The address has no website in it." };
+  for (var i = 0; i < PROVIDER_DOMAINS.length; i++) {
+    var d = PROVIDER_DOMAINS[i];
+    if (host === d || host.slice(-d.length - 1) === "." + d) {
+      return { error: "That is a " + (d === "logo.dev" ? "logo.dev" : "Brandfetch") + " address: their pictures may not be copied. Choose it among the alternatives instead." };
+    }
+  }
+  if (u.href.length > MANUAL_MAX) return { error: "That address is " + u.href.length + " characters long once written out; at most " + MANUAL_MAX + " are allowed." };
+  return { url: u.href, note: note };
+}
+// What a loaded preview measured (naturalWidth x naturalHeight) allows: {ok, warn, text}.
+function judgeSize(w, h) {
+  if (!(w > 0) || !(h > 0)) return { ok: false, text: "The browser could not measure this picture (an SVG without a set size?). Find a PNG or a larger picture." };
+  var lo = Math.min(w, h), dims = w + " × " + h + " px";
+  if (lo < MANUAL_MIN_PX) return { ok: false, text: "Too small: " + dims + ". It must be at least " + MANUAL_MIN_PX + " px on its shorter side." };
+  if (lo < MANUAL_SOFT_PX) return { ok: true, warn: true, text: "Small: " + dims + " (under " + MANUAL_SOFT_PX + " px on its shorter side): it may look soft. Usable." };
+  return { ok: true, warn: false, text: dims + "." };
+}
+function isDay(d) {
+  return typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d + "T00:00:00Z")) &&
+    new Date(d + "T00:00:00Z").toISOString().slice(0, 10) === d;
+}
 function q(s) {
   return encodeURIComponent(String(s)).replace(/[!'()*]/g, function (c) {
     return "%" + c.charCodeAt(0).toString(16).toUpperCase();
@@ -285,15 +357,17 @@ function prePick(cands) {
   if (hits.length) return { pick: hits[0].id, via: "order", partner: null, settled: settled };
   return { pick: null, via: "none", partner: null, settled: settled };
 }
-function choiceFrom(co, src, keys, day) {
-  return { source: src, url: src === "letter" ? null : candidateUrl(co, src, keys), reviewed: day };
+// manualUrl: the checked pasted address, for source "manual" only.
+function choiceFrom(co, src, keys, day, manualUrl) {
+  if (src === "manual") return { source: src, url: manualUrl, reviewed: day };
+  return { source: src, url: src === "letter" || src === "need" ? null : candidateUrl(co, src, keys), reviewed: day };
 }
 // The export: reviewed companies only (those with a choice), codes sorted, no image data.
 function exportChoices(choices, created) {
   var out = {};
   Object.keys(choices).sort().forEach(function (c) {
     var e = choices[c];
-    out[c] = { source: e.source, url: e.source === "letter" ? null : e.url, reviewed: e.reviewed };
+    out[c] = { source: e.source, url: e.source === "letter" || e.source === "need" ? null : e.url, reviewed: e.reviewed };
   });
   return { version: 1, created: created, choices: out };
 }
@@ -301,18 +375,22 @@ function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
 function checkChoice(co, e, keys) {
   if (!co) return "not a company on this page";
   if (!e || typeof e !== "object" || Array.isArray(e)) return "not an object";
-  if (SOURCES.indexOf(e.source) < 0) return "unknown source";
-  if (typeof e.reviewed !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.reviewed) ||
-      isNaN(Date.parse(e.reviewed + "T00:00:00Z")) || new Date(e.reviewed + "T00:00:00Z").toISOString().slice(0, 10) !== e.reviewed) {
-    return "no review date (YYYY-MM-DD)";
-  }
+  if (ALL_SOURCES.indexOf(e.source) < 0) return "unknown source";
+  if (!isDay(e.reviewed)) return "no review date (YYYY-MM-DD)";
   if (e.source === "letter") return e.url === null ? "" : "a letter mark has no address";
+  if (e.source === "need") return e.url === null ? "" : "needs a logo has no address";
+  if (e.source === "manual") {
+    var m = checkManualUrl(e.url);
+    if (m.error) return "pasted address: " + m.error;
+    return m.url === e.url ? "" : "the pasted address is not in its checked https form";
+  }
   var want = candidateUrl(co, e.source, keys);
   if (!want) return "this company has no " + e.source + " identifier";
   return e.url === want ? "" : "the address is not this page's address for that source (identifier or key differs)";
 }
 // Reads a choices file. Only entries for companies on this page, with a known source and exactly the address this page
-// builds for it (so: exact identifiers, our two publishable keys, no image data), are kept; the rest are listed.
+// builds for it (so: exact identifiers, our two publishable keys, no image data), or a pasted address that passes
+// checkManualUrl unchanged, are kept; the rest are listed. Files from before "manual" and "need" read the same as before.
 function validateImport(obj, byCode, keys) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { error: "not a choices file (expected a JSON object)" };
   if (obj.version !== 1) return { error: "unknown version " + JSON.stringify(obj.version) + " (this page reads version 1)" };
@@ -342,22 +420,93 @@ function mergeChoices(local, incoming) {
 }
 function kstDate(ms) { return new Date(ms + 9 * 3600e3).toISOString().slice(0, 10); }
 function kstStamp(ms) { return new Date(ms + 9 * 3600e3).toISOString().slice(0, 19) + "+09:00"; }
-// Summary rows: per size group, per market and in all: companies, reviewed, logo, letter mark (coverage = logo / reviewed).
+// Saved progress (this page's STORE_KEY entry, JSON-parsed) -> what the page keeps. The format of 2026-11-05 ({v: 1,
+// savedAt, grid, choices, flags, fix}) reads exactly as before; added since, all optional: fixUrl (a pasted address
+// being chosen in the Fix panel) and started (Start was tapped in this browser). Choices follow the Load choices rules.
+// resume: loading starts by itself after a reload: Start was tapped before (started), or, in a file from before
+// "started" existed, there are confirmed choices or marks (only possible after Start).
+function parseProgress(o, byCode, keys, gridIds) {
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("not an object");
+  var out = { choices: {}, flags: {}, fix: {}, fixUrl: {}, grid: null, rejected: [], error: "", resume: false };
+  var v = validateImport({ version: 1, choices: o.choices || {} }, byCode, keys);
+  if (v.error) out.error = v.error;
+  else { out.choices = v.choices; out.rejected = v.rejected; }
+  var flags = o.flags && typeof o.flags === "object" ? o.flags : {};
+  var fix = o.fix && typeof o.fix === "object" ? o.fix : {};
+  var fixUrl = o.fixUrl && typeof o.fixUrl === "object" ? o.fixUrl : {};
+  Object.keys(flags).forEach(function (c) { if (has(byCode, c) && flags[c]) out.flags[c] = 1; });
+  Object.keys(fix).forEach(function (c) {
+    if (!has(byCode, c) || ALL_SOURCES.indexOf(fix[c]) < 0) return;
+    if (fix[c] === "manual") {
+      var m = checkManualUrl(fixUrl[c]);
+      if (m.error || m.url !== fixUrl[c]) return;
+      out.fixUrl[c] = m.url;
+    }
+    out.fix[c] = fix[c];
+  });
+  if (typeof o.grid === "string" && gridIds.indexOf(o.grid) >= 0) out.grid = o.grid;
+  var nChoices = o.choices && typeof o.choices === "object" ? Object.keys(o.choices).length : 0;
+  out.resume = o.started === true || (!has(o, "started") && (nChoices > 0 || Object.keys(out.flags).length > 0));
+  return out;
+}
+// A remembered result {source: [status, day]} is used while it is younger than PROBE_DAYS days (KST days).
+function probeFresh(day, today) {
+  if (!isDay(day) || !isDay(today)) return false;
+  var age = (Date.parse(today + "T00:00:00Z") - Date.parse(day + "T00:00:00Z")) / 864e5;
+  return age >= 0 && age < PROBE_DAYS;
+}
+// The PROBE_KEY entry, JSON-parsed -> {probes: {code: {source: [hit|miss, day]}}, n, dropped, other}. Only for this
+// build of the page (page = META.builtAt: another build may have other identifiers), companies on it, provider sources
+// the company has an identifier for, and fresh days. other = the entry was written by another build.
+function readProbes(o, page, today, byCode) {
+  var out = { probes: {}, n: 0, dropped: 0, other: false };
+  if (!o || typeof o !== "object" || Array.isArray(o) || o.v !== 1) return out;
+  if (o.page !== page) { out.other = true; return out; }
+  var pr = o.probes && typeof o.probes === "object" && !Array.isArray(o.probes) ? o.probes : {};
+  Object.keys(pr).forEach(function (code) {
+    var e = pr[code], co = has(byCode, code) ? byCode[code] : null;
+    if (!co || !e || typeof e !== "object" || Array.isArray(e)) { out.dropped++; return; }
+    Object.keys(e).forEach(function (src) {
+      var x = e[src], rt = routeBySrc(src);
+      if (!rt || rt.p === "own" || !co[rt.f] || !Array.isArray(x) || x.length !== 2 || (x[0] !== "hit" && x[0] !== "miss") ||
+          !probeFresh(x[1], today)) { out.dropped++; return; }
+      if (!out.probes[code]) out.probes[code] = {};
+      out.probes[code][src] = [x[0], x[1]];
+      out.n++;
+    });
+  });
+  return out;
+}
+// What is written to PROBE_KEY: fresh entries only.
+function packProbes(probes, page, today, savedAt) {
+  var keep = {};
+  Object.keys(probes).forEach(function (code) {
+    Object.keys(probes[code]).forEach(function (src) {
+      var x = probes[code][src];
+      if (!probeFresh(x[1], today)) return;
+      if (!keep[code]) keep[code] = {};
+      keep[code][src] = [x[0], x[1]];
+    });
+  });
+  return { v: 1, page: page, savedAt: savedAt, probes: keep };
+}
+// Summary rows: per size group, per market and in all: companies, reviewed, logo (a provider logo, our icon or a pasted
+// address), letter mark, needs a logo (letter mark for now, counted apart) (coverage = logo / reviewed).
 function summarize(comps, choices, zones) {
   var rows = [], idx = {};
   zones.forEach(function (z) {
-    var r = { kind: "zone", side: z.side, label: z.label, n: 0, reviewed: 0, logo: 0, letter: 0 };
+    var r = { kind: "zone", side: z.side, label: z.label, n: 0, reviewed: 0, logo: 0, letter: 0, need: 0 };
     idx[z.side + z.z] = r; rows.push(r);
   });
-  var tot = { kr: { kind: "tot", side: "kr", label: "Korea all", n: 0, reviewed: 0, logo: 0, letter: 0 },
-    us: { kind: "tot", side: "us", label: "US all", n: 0, reviewed: 0, logo: 0, letter: 0 } };
-  var all = { kind: "all", side: "", label: "All", n: 0, reviewed: 0, logo: 0, letter: 0 };
+  var tot = { kr: { kind: "tot", side: "kr", label: "Korea all", n: 0, reviewed: 0, logo: 0, letter: 0, need: 0 },
+    us: { kind: "tot", side: "us", label: "US all", n: 0, reviewed: 0, logo: 0, letter: 0, need: 0 } };
+  var all = { kind: "all", side: "", label: "All", n: 0, reviewed: 0, logo: 0, letter: 0, need: 0 };
   comps.forEach(function (co) {
     var ch = has(choices, co.c) ? choices[co.c] : null;
     [idx[co.s + co.z], tot[co.s], all].forEach(function (r) {
       if (!r) return;
       r.n++;
-      if (ch) { r.reviewed++; if (ch.source === "letter") r.letter++; else r.logo++; }
+      if (ch) { r.reviewed++; if (ch.source === "letter") r.letter++; else if (ch.source === "need") r.need++; else r.logo++; }
     });
   });
   var out = [];
@@ -383,7 +532,7 @@ function colorOf(code) {
 var DATA = JSON.parse(document.getElementById("data").textContent);
 var CFG = { bfGapMs: 500, ldGapMs: 250, ownGapMs: 20, recheckMs: 330000, timeoutMs: 20000, retryMs: 60000, controls: true,
   checkEvery: 100, badEvery: 300, canaryRetryMs: 15000, canaryPauseMs: 120000, autostart: false, longPressMs: 450,
-  auditMisses: 20, auditEvery: 10, assumeCors: false };
+  auditMisses: 20, auditEvery: 10, assumeCors: false, probeSaveMs: 3000, resumeNoteMs: 30000 };
 var over = window.__LOGO_REVIEW_CONFIG || {};            // set only by a test harness before this script runs
 for (var ck in over) if (has(over, ck)) CFG[ck] = over[ck];
 
@@ -395,9 +544,9 @@ ROUTES.forEach(function (rt) { routeById[rt.id] = rt; });
 GRIDS.forEach(function (g, i) { gridIdx[g.id] = i; g.codes = []; });
 COMPS.forEach(function (co) { GRIDS[gridIdx[co.g]].codes.push(co.c); });
 
-// ── progress: this page's own localStorage entry only ──
-var prog = { choices: {}, flags: {}, fix: {}, grid: GRIDS[0].id };
-var storageWarned = false;
+// ── progress: this page's own localStorage entries only (STORE_KEY here, PROBE_KEY below), every access in try ──
+var prog = { choices: {}, flags: {}, fix: {}, fixUrl: {}, grid: GRIDS[0].id };
+var storageWarned = false, resumeAsked = false;
 function loadProgress() {
   var raw = null;
   try { raw = window.localStorage.getItem(STORE_KEY); } catch (e) {
@@ -407,28 +556,86 @@ function loadProgress() {
   }
   if (!raw) return;
   try {
-    var o = JSON.parse(raw);
-    var v = validateImport({ version: 1, choices: o.choices || {} }, byCode, KEYS);
-    prog.choices = v.choices || {};
-    if (v.rejected && v.rejected.length) {
-      alertMsg("bad", v.rejected.length + " saved choices no longer match this page and were left out (e.g. " +
-        v.rejected[0].code + ": " + v.rejected[0].why + "). Load your downloaded file again if you need them.");
+    var r = parseProgress(JSON.parse(raw), byCode, KEYS, GRIDS.map(function (g) { return g.id; }));
+    prog.choices = r.choices; prog.flags = r.flags; prog.fix = r.fix; prog.fixUrl = r.fixUrl;
+    if (r.grid) prog.grid = r.grid;
+    resumeAsked = r.resume;
+    if (r.error) alertMsg("bad", "Saved choices could not be read (" + r.error + "). Load your downloaded file if you have one.");
+    if (r.rejected.length) {
+      alertMsg("bad", r.rejected.length + " saved choices no longer match this page and were left out (e.g. " +
+        r.rejected[0].code + ": " + r.rejected[0].why + "). Load your downloaded file again if you need them.");
     }
-    Object.keys(o.flags || {}).forEach(function (c) { if (has(byCode, c) && o.flags[c]) prog.flags[c] = 1; });
-    Object.keys(o.fix || {}).forEach(function (c) { if (has(byCode, c) && SOURCES.indexOf(o.fix[c]) >= 0) prog.fix[c] = o.fix[c]; });
-    if (typeof o.grid === "string" && has(gridIdx, o.grid)) prog.grid = o.grid;
   } catch (e) {
     alertMsg("bad", "Saved progress could not be read (" + e.message + "). It will be replaced at the next change; load your downloaded file if you have one.");
   }
 }
 function saveProgress() {
+  var fixUrl = {};
+  Object.keys(prog.fix).forEach(function (c) { if (prog.fix[c] === "manual" && prog.fixUrl[c]) fixUrl[c] = prog.fixUrl[c]; });
   try {
     window.localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, savedAt: kstStamp(Date.now()), grid: prog.grid,
-      choices: prog.choices, flags: prog.flags, fix: prog.fix }));
+      choices: prog.choices, flags: prog.flags, fix: prog.fix, fixUrl: fixUrl, started: started || resumeAsked }));
   } catch (e) {
     if (!storageWarned) {
       storageWarned = true;
       alertMsg("bad", "Progress could not be saved in this browser (" + e.name + "). Download your choices before you leave.");
+    }
+  }
+}
+
+// ── what was found, remembered for PROBE_DAYS days (PROBE_KEY): {code: {source: [hit|miss, KST day]}} ──
+// Used only once that provider has passed its checks in this visit (remembered misses wait in the route's queue).
+var mem = {}, memDirty = false, memTimer = null, memWarned = false, memInfo = { n: 0, dropped: 0, other: false };
+function today() { return kstDate(Date.now()); }
+function memLoad() {
+  var raw = null;
+  try { raw = window.localStorage.getItem(PROBE_KEY); } catch (e) { return; }
+  if (!raw) return;
+  try { memInfo = readProbes(JSON.parse(raw), META.builtAt, today(), byCode); mem = memInfo.probes; } catch (e) {
+    mem = {};
+    alertMsg("info", "What was found on earlier visits could not be read (" + e.message + "), so every logo is checked again.");
+  }
+}
+function memGet(code, rt) {
+  var e = rt.p !== "own" && has(mem, code) && has(mem[code], rt.src) ? mem[code][rt.src] : null;
+  return e && probeFresh(e[1], today()) ? e : null;
+}
+function memSet(code, rt, status) {
+  if (rt.p === "own") return;
+  if (!has(mem, code)) mem[code] = {};
+  mem[code][rt.src] = [status, today()];
+  memSave();
+}
+// Forget remembered results, by company (code), route (rid) and/or provider (pid), optionally of one status only.
+function memForget(f) {
+  var n = 0;
+  Object.keys(mem).forEach(function (code) {
+    if (f.code && code !== f.code) return;
+    ROUTES.forEach(function (rt) {
+      var e = has(mem[code], rt.src) ? mem[code][rt.src] : null;
+      if (!e || (f.rid && rt.id !== f.rid) || (f.pid && rt.p !== f.pid) || (f.status && e[0] !== f.status)) return;
+      delete mem[code][rt.src];
+      n++;
+    });
+    if (!Object.keys(mem[code]).length) delete mem[code];
+  });
+  if (n) memSave();
+  return n;
+}
+function memSave() {
+  memDirty = true;
+  if (!memTimer) memTimer = setTimeout(memFlush, CFG.probeSaveMs);
+}
+function memFlush() {
+  if (memTimer) { clearTimeout(memTimer); memTimer = null; }
+  if (!memDirty) return;
+  memDirty = false;
+  try {
+    window.localStorage.setItem(PROBE_KEY, JSON.stringify(packProbes(mem, META.builtAt, today(), kstStamp(Date.now()))));
+  } catch (e) {
+    if (!memWarned) {
+      memWarned = true;
+      alertMsg("info", "What was found could not be remembered in this browser (" + e.name + "), so the next visit checks every logo again. Your choices are not affected.");
     }
   }
 }
@@ -471,7 +678,7 @@ function gridStatus(g) {
 
 // ── loading, paced per provider, one at a time per route ──
 var running = false, started = false, pendingTimers = 0, alerts = [];
-var counters = { loads: 0, placeholders: 0, requeued: 0, retries: 0 };
+var counters = { loads: 0, placeholders: 0, requeued: 0, retries: 0, remembered: 0, reprobed: 0, manual: 0 };
 var ldKnown = {};        // logo.dev domain -> "hit" | "miss" from a second load this session (no new 202 wait needed)
 var lanes = {};
 ROUTES.forEach(function (rt) { lanes[rt.id] = { rt: rt, q: [], busy: false, stopped: null, off: null }; });
@@ -503,6 +710,11 @@ function later(ms, fn) {
 function pickJob(p) {
   if (p.ctl.length && !p.ctlBusy) { p.ctlBusy = true; return p.ctl.shift(); }
   if (p.phase !== "run") return null;
+  p.lanes.forEach(function (id) {                    // checks passed in this visit: remembered misses apply, no request
+    var L = lanes[id];
+    if (L.stopped || L.off || !L.q.some(function (j) { return j.memo; })) return;
+    L.q = L.q.filter(function (j) { if (j.memo) { memoDone(j); return false; } return true; });
+  });
   for (var i = 0; i < p.lanes.length; i++) {
     var id = p.lanes[(p.rr + i) % p.lanes.length], L = lanes[id];
     if (!L.busy && !L.stopped && !L.off && L.q.length) { p.rr = (p.rr + i + 1) % p.lanes.length; L.busy = true; return L.q.shift(); }
@@ -557,7 +769,7 @@ function load(p, job) {
   img.onerror = function () { fin(false, false); };
   if (!job.ctl) {
     var s = st[key(job.co.c, job.rt.id)];
-    s.s = "load";
+    s.s = "load"; s.mem = null;
     p.loads++;
     paintTile(job.co.c);
   }
@@ -606,6 +818,7 @@ function jobDone(p, job, ok, timedOut, img, t0, cors) {
     s.s = "hit"; s.img = img; s.w = img.naturalWidth; s.h = img.naturalHeight;
     s.hash = cors || p.id === "own" ? hashImage(img) : null;
     if (job.rt.id === "ldD") ldKnown[job.ident] = "hit";
+    if (p.checks) memSet(job.co.c, job.rt, "hit");
   } else if (timedOut) {
     s.tries++;
     if (s.tries < 2) {
@@ -629,9 +842,30 @@ function jobDone(p, job, ok, timedOut, img, t0, cors) {
       if (p.auditLeft > 0) p.auditLeft--;
       p.ctl.push({ ctl: "audit", r: job.rt.r, ident: job.ident, v: job.v, init: false, plain: true, job: job });
     }
+    if (job.mem) reprobe(job.co);                      // a remembered logo no longer loads: check every source again
   }
   paintTile(job.co.c);
   scheduleRender();
+}
+// A remembered miss, applied once its provider has passed its checks in this visit: no request.
+function memoDone(job) {
+  var s = st[key(job.co.c, job.rt.id)];
+  if (s.s !== "queued") return;
+  s.s = "miss"; s.img = null; s.hash = null; s.mem = job.memo; s.note = "no logo when checked on " + job.memo;
+  counters.remembered++;
+  paintTile(job.co.c);
+  scheduleRender();
+}
+// Forget what was remembered for a company and ask again every source whose miss came from memory.
+function reprobe(co) {
+  memForget({ code: co.c });
+  counters.reprobed++;
+  ROUTES.forEach(function (rt) {
+    lanes[rt.id].q.forEach(function (j) { if (j.co === co && j.memo) delete j.memo; });   // not applied yet: a real load
+    var s = st[key(co.c, rt.id)];
+    if (s.mem && s.s === "miss") { s.s = "idle"; s.mem = null; s.note = "checked again: a remembered logo did not load"; }
+  });
+  plan();
 }
 
 // ── checks: a known logo must load, a made-up identifier must not ──
@@ -665,6 +899,10 @@ function maybeCheck(p) {
   } else if (p.loads - p.lastBad >= CFG.badEvery) {
     p.lastBad = p.loads;
     p.ctl.push({ ctl: "bad", r: "ticker", ident: "ZZQX" + SESSION + (++p.badN).toString(36).toUpperCase() + "J", init: false });
+  } else if (p.sinceCheck.length && !p.ctl.length && p.lanes.every(function (id) { return !lanes[id].busy && !lanes[id].q.length; })) {
+    // nothing left to load: one more known-logo check, so the misses since the last one count as real (remembered)
+    p.lastCheck = p.loads;
+    p.ctl.push(canaryJob(p, "canary", "ticker", nextKnown(p), false));
   }
 }
 function laneFor(p, r) { return p.id + ({ ticker: "T", isin: "I", domain: "D" }[r]); }
@@ -677,6 +915,7 @@ function stopLane(id, why, state) {
 // A route that answers made-up identifiers with an image: every result it gave is switched off (not a candidate).
 function routeOff(id, why) {
   stopLane(id, why, "off");
+  memForget({ rid: id });
   COMPS.forEach(function (co) {
     var s = st[key(co.c, id)];
     if (s.s === "na" || s.s === "off") return;
@@ -737,7 +976,12 @@ function ctlDone(p, job, ok, timedOut, img, t0, cors) {
     if (ok) {
       p.canaryFails = 0;
       if (job.init) { p.canaryOk = true; p.checkNotes.push("known logo loads"); }
-      p.sinceCheck = p.sinceCheck.filter(function (e) { return e.t0 >= t0; });
+      p.sinceCheck = p.sinceCheck.filter(function (e) {
+        if (e.t0 >= t0) return true;
+        // a miss before a passing check is a real "no logo": remember it (not one tried again meanwhile)
+        if (!e.job.requeued && st[key(e.job.co.c, e.job.rt.id)].s === "miss") memSet(e.job.co.c, e.job.rt, "miss");
+        return false;
+      });
     } else {
       p.canaryFails++;
       var n = requeueRecentMisses(p);
@@ -786,6 +1030,7 @@ function ctlDone(p, job, ok, timedOut, img, t0, cors) {
       routeOff(laneFor(p, job.r), "answers a made-up identifier with an image");
       alertMsg("bad", label + ": a made-up identifier came back as an image, so this route's logos cannot be trusted. Route switched off.");
     } else {
+      memForget({ pid: p.id });                      // what it answered may have been placeholders: not remembered
       stopProvider(p, "a made-up ticker (" + job.ident + ") came back as an image while loading, so later logos could be placeholders.");
     }
   }
@@ -801,11 +1046,12 @@ function ctlDone(p, job, ok, timedOut, img, t0, cors) {
 // without CORS headers, a redirect ...). Load everything the plain way from now on and try this provider's misses again.
 function corsLosesLogos(p, job) {
   p.cors = false;
+  memForget({ pid: p.id, status: "miss" });          // its misses may have been lost readable loads, remembered ones too
   var n = 0;
   COMPS.forEach(function (co) {
     p.lanes.forEach(function (id) {
       var s = st[key(co.c, id)];
-      if (s.s === "miss") { s.s = "idle"; s.note = ""; n++; paintTile(co.c); }
+      if (s.s === "miss") { s.s = "idle"; s.note = ""; s.mem = null; n++; paintTile(co.c); }
     });
   });
   alertMsg("bad", p.name + ": " + job.ident + " gave no logo when loaded readable but loads the plain way, so reading its " +
@@ -837,7 +1083,7 @@ function forget(g) {             // a reviewed grid you left: free its pictures;
   g.codes.forEach(function (code) {
     ROUTES.forEach(function (rt) {
       var s = st[key(code, rt.id)];
-      if (s.s === "hit" || s.s === "miss" || s.s === "err" || s.s === "stopped") { s.s = "idle"; s.img = null; s.hash = null; s.tries = 0; }
+      if (s.s === "hit" || s.s === "miss" || s.s === "err" || s.s === "stopped") { s.s = "idle"; s.img = null; s.hash = null; s.tries = 0; s.mem = null; }
     });
   });
 }
@@ -865,7 +1111,9 @@ function plan() {
         if (s.s !== "idle") return;
         if (L.off || L.stopped) { s.s = L.off ? "off" : "stopped"; paintTile(code); return; }
         s.s = "queued";
-        var job = { co: co, rt: rt, ident: s.ident, g: gid };
+        var job = { co: co, rt: rt, ident: s.ident, g: gid }, m = memGet(code, rt);
+        if (m && m[0] === "miss") job.memo = m[1];       // known to have no logo: applied without a request, after the checks
+        else if (m) { job.mem = m[1]; if (rt.id === "ldD") job.v = "2"; }   // known logo: loads again (its confirmed answer)
         if (rt.id === "ldD" && ldKnown[s.ident]) job.v = "2";      // seen this session: load the confirmed answer
         L.q.push(job);
       });
@@ -884,9 +1132,11 @@ function start() {
   if (running) return;
   if (!started) {
     started = true;
+    saveProgress();                                  // remembered: a reload in this browser carries on by itself
     if (CFG.controls) { initChecks(P.bf); initChecks(P.ld); }
     initOwn(P.own);
     plan();
+    Object.keys(tiles).forEach(paintTile);           // pasted addresses of saved choices load now
   }
   running = true;
   $("start").disabled = true; $("pause").disabled = false; $("start").textContent = "Start loading logos";
@@ -897,7 +1147,21 @@ function start() {
 function pause() {
   running = false;
   $("start").disabled = false; $("pause").disabled = true; $("start").textContent = "Continue";
+  $("resumed").classList.add("hide");
   scheduleRender();
+}
+// After a reload in a browser where Start was tapped before: start by itself on the first grid not reviewed yet.
+function resume() {
+  var first = firstUnreviewed();
+  if (first && first !== cur) go(first, false);
+  start();
+  render();
+  $("resumed").classList.remove("hide");
+  setTimeout(function () { $("resumed").classList.add("hide"); }, CFG.resumeNoteMs);
+}
+function firstUnreviewed() {
+  for (var i = 0; i < GRIDS.length; i++) if (!isReviewed(GRIDS[i])) return GRIDS[i].id;
+  return null;
 }
 function retry() {
   ["bf", "ld", "own"].forEach(function (id) {
@@ -934,9 +1198,46 @@ function letterMark(co) {
   return m;
 }
 function lowRes(s) { return s && s.w > 0 && s.h > 0 && Math.max(s.w, s.h) < LOW_RES; }
+// Pasted addresses load in this browser like any picture: no CORS, no referrer (the company's site need not know this
+// page), once per address and only after Start or for a preview in the Fix panel. Nothing is read from the picture.
+var manualImgs = {};     // url -> {s: load|hit|miss, img, w, h, cbs}
+function manualImg(url, cb) {
+  var m = has(manualImgs, url) ? manualImgs[url] : null;
+  if (m && m.s !== "miss") {
+    if (cb) { if (m.s === "hit") cb(m); else m.cbs.push(cb); }
+    return m;
+  }
+  m = manualImgs[url] = { s: "load", img: null, w: 0, h: 0, cbs: cb ? [cb] : [] };
+  var img = new Image(), done = false, timer;
+  img.alt = "";
+  img.decoding = "async";
+  img.referrerPolicy = "no-referrer";
+  function fin(ok, timedOut) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    if (timedOut) img.src = "";
+    m.s = ok ? "hit" : "miss"; m.img = ok ? img : null; m.w = ok ? img.naturalWidth : 0; m.h = ok ? img.naturalHeight : 0;
+    counters.manual++;
+    var cbs = m.cbs; m.cbs = [];
+    cbs.forEach(function (f) { f(m); });
+  }
+  timer = setTimeout(function () { fin(false, true); }, CFG.timeoutMs);
+  img.onload = function () { fin(true, false); };
+  img.onerror = function () { fin(false, false); };
+  img.src = url;
+  return m;
+}
+function hostOf(url) { try { return new URL(url).hostname; } catch (e) { return ""; } }
 // What a tile shows: your saved choice if there is one, else the pre-pick.
 function shown(co) {
   var ch = has(prog.choices, co.c) ? prog.choices[co.c] : null;
+  if (ch && ch.source === "manual") {
+    var mm = has(manualImgs, ch.url) ? manualImgs[ch.url] : null, ok = !!(mm && mm.s === "hit");
+    return { saved: true, rid: null, src: "manual", url: ch.url, img: ok ? mm.img : null, s: ok ? mm : null,
+      wait: !!(mm && mm.s === "load"), gone: !!(mm && mm.s === "miss") };
+  }
+  if (ch && ch.source === "need") return { saved: true, rid: null, src: "need", img: null, s: null, wait: false, gone: false };
   if (ch) {
     var rt = routeBySrc(ch.source), s = rt ? st[key(co.c, rt.id)] : null;
     var img = s && s.s === "hit" && candidateUrl(co, ch.source, KEYS) === ch.url ? s.img : null;   // never a 202 placeholder
@@ -947,29 +1248,62 @@ function shown(co) {
   return { saved: false, rid: pp.pick, src: pp.pick ? routeById[pp.pick].src : "letter", img: st0 ? st0.img : null, s: st0,
     wait: !pp.settled, agree: pp.via === "agree", pp: pp };
 }
-function srcLabel(src) { var rt = routeBySrc(src); return rt ? rt.label : "Letter mark"; }
+var LABEL = { letter: "Letter mark", manual: "Pasted", need: "Needs a logo" };
+var LONG = { letter: "Letter mark", manual: "Pasted image address", need: "Needs a logo (letter mark for now)" };
+function srcLabel(src) { var rt = routeBySrc(src); return rt ? rt.label : LABEL[src] || "Letter mark"; }
+function srcLong(src) { var rt = routeBySrc(src); return rt ? rt.long : LONG[src] || "Letter mark"; }
 var tiles = {};
+// view: "grid" (the grid you are on, cur) or NEED_VIEW (every company marked None of these - find more).
+var NEED_VIEW = "need", view = "grid";
+function needCodes() {
+  return COMPS.filter(function (co) { return has(prog.choices, co.c) && prog.choices[co.c].source === "need"; })
+    .map(function (co) { return co.c; });
+}
+function addTile(grid, code) {
+  var co = byCode[code], t = el("button", "tile");
+  t.type = "button"; t.setAttribute("data-code", code);
+  t.appendChild(el("div", "lg"));
+  t.appendChild(el("div", "nm", co.n));
+  t.appendChild(el("div", "cd", co.c));
+  t.appendChild(el("div", "src"));
+  t.appendChild(el("div", "badges"));
+  tiles[code] = t;
+  grid.appendChild(t);
+  paintTile(code);
+}
 function renderGrid() {
-  var g = GRIDS[gridIdx[cur]], grid = $("grid");
+  var grid = $("grid"), head = $("gridhead");
   tiles = {};
   while (grid.firstChild) grid.removeChild(grid.firstChild);
-  g.codes.forEach(function (code) {
-    var co = byCode[code], t = el("button", "tile");
-    t.type = "button"; t.setAttribute("data-code", code);
-    t.appendChild(el("div", "lg"));
-    t.appendChild(el("div", "nm", co.n));
-    t.appendChild(el("div", "cd", co.c));
-    t.appendChild(el("div", "src"));
-    t.appendChild(el("div", "badges"));
-    tiles[code] = t;
-    grid.appendChild(t);
-    paintTile(code);
-  });
-  var head = $("gridhead");
-  head.textContent = g.label + " ";
-  head.appendChild(el("small", null, "by market cap · " + g.codes.length + " companies" + (isReviewed(g) ? " · reviewed" : "")));
+  if (view === NEED_VIEW) {
+    var codes = needCodes();
+    codes.forEach(function (code) { addTile(grid, code); });
+    if (!codes.length) grid.appendChild(el("p", "empty", "No company needs a logo yet. In the Fix panel, None of these \u2014 find more puts a company here."));
+    head.textContent = "Needs a logo ";
+    head.appendChild(el("small", null, (codes.length === 1 ? "1 company" : codes.length + " companies") + " · letter mark for now · tap one to open its grid"));
+  } else {
+    var g = GRIDS[gridIdx[cur]];
+    g.codes.forEach(function (code) { addTile(grid, code); });
+    head.textContent = g.label + " ";
+    head.appendChild(el("small", null, "by market cap · " + g.codes.length + " companies" + (isReviewed(g) ? " · reviewed" : "")));
+  }
   renderNav();
   renderDock();
+}
+function showNeed() {
+  view = NEED_VIEW;
+  hidePeek();
+  renderGrid();
+  $("review").scrollIntoView();
+}
+// From the Needs a logo view: open the company's grid and point at its tile.
+function openCompany(code) {
+  go(byCode[code].g, false);
+  var t = tiles[code];
+  if (!t) return;
+  t.scrollIntoView({ block: "center" });
+  t.classList.add("spot");
+  setTimeout(function () { t.classList.remove("spot"); }, 2500);
 }
 function setImg(box, img, co, blank) {
   while (box.firstChild) box.removeChild(box.firstChild);
@@ -978,20 +1312,24 @@ function setImg(box, img, co, blank) {
   else box.textContent = "·";
 }
 // Nothing to show yet: a saved logo that has not loaded, or a pre-pick that is still open with nothing loaded so far.
-function isBlank(d) { return !d.img && (d.saved ? d.src !== "letter" : !started || d.wait); }
+function isBlank(d) { return !d.img && (d.saved ? d.src !== "letter" && d.src !== "need" : !started || d.wait); }
 function paintTile(code) {
   var t = tiles[code];
   if (!t) return;
+  var ch = has(prog.choices, code) ? prog.choices[code] : null;
+  if (started && ch && ch.source === "manual" && !has(manualImgs, ch.url)) manualImg(ch.url, function () { paintTile(code); });
   var co = byCode[code], d = shown(co), flagged = !!prog.flags[code];
   var box = t.children[0], srcEl = t.children[3], badges = t.children[4];
   var blank = isBlank(d);
   setImg(box, d.img, co, blank);
   box.className = "lg" + (blank ? " blank" : "") + (started && d.wait ? " wait" : "");
   t.classList.toggle("wrong", flagged);
-  srcEl.textContent = flagged ? "wrong" + (prog.fix[code] ? ": " + srcLabel(prog.fix[code]) : "") :
+  srcEl.textContent = view === NEED_VIEW ? GRIDS[gridIdx[co.g]].label :
+    flagged ? "wrong" + (prog.fix[code] ? ": " + srcLabel(prog.fix[code]) : "") :
     d.saved ? srcLabel(d.src) : !started ? "not loaded" : blank ? "loading" : srcLabel(d.src);
   while (badges.firstChild) badges.removeChild(badges.firstChild);
   if (d.saved) badges.appendChild(el("span", "b sav", "saved"));
+  if (d.src === "need") badges.appendChild(el("span", "b need", "needs logo"));
   if (d.agree) badges.appendChild(el("span", "b agr", "agree"));
   if (d.img && lowRes(d.s)) badges.appendChild(el("span", "b low", "low-res"));
   if (d.gone) badges.appendChild(el("span", "b gap", "did not load"));
@@ -1003,7 +1341,7 @@ function paintTile(code) {
   scheduleDock();
 }
 function toggleFlag(code) {
-  if (prog.flags[code]) { delete prog.flags[code]; delete prog.fix[code]; } else prog.flags[code] = 1;
+  if (prog.flags[code]) { delete prog.flags[code]; delete prog.fix[code]; delete prog.fixUrl[code]; } else prog.flags[code] = 1;
   saveProgress();
   paintTile(code);
   renderNav();
@@ -1019,8 +1357,8 @@ function showPeek(code, t) {
   setImg(big, d.img, co, isBlank(d));
   pk.appendChild(big);
   pk.appendChild(el("div", null, co.n + " · " + co.c + " · #" + co.r));
-  var rt = d.rid ? routeById[d.rid] : null;
-  pk.appendChild(el("div", null, (rt ? rt.long : "Letter mark") + (d.saved ? " (saved)" : "") + (d.agree ? " · both agree" : "")));
+  pk.appendChild(el("div", null, srcLong(d.src) + (d.src === "manual" ? " (" + hostOf(d.url) + ")" : "") +
+    (d.saved ? " (saved)" : "") + (d.agree ? " · both agree" : "")));
   if (d.img && d.s && d.s.w) pk.appendChild(el("div", null, d.s.w + " × " + d.s.h + " px" + (lowRes(d.s) ? " (low-res)" : "")));
   pk.classList.remove("hide");
   var r = t.getBoundingClientRect(), pw = pk.offsetWidth, ph = pk.offsetHeight, vw = document.documentElement.clientWidth;
@@ -1061,7 +1399,8 @@ function wireGrid() {
     var t = tileFrom(e.target);
     if (!t) return;
     if (Date.now() < suppressUntil) { suppressUntil = 0; return; }
-    toggleFlag(t.getAttribute("data-code"));
+    if (view === NEED_VIEW) openCompany(t.getAttribute("data-code"));
+    else toggleFlag(t.getAttribute("data-code"));
   });
   grid.addEventListener("pointerover", function (e) {
     if (e.pointerType !== "mouse") return;
@@ -1086,23 +1425,33 @@ function confirmGrid() {
   var flagged = g.codes.filter(function (c) { return prog.flags[c]; });
   if (flagged.length) openFix(g, flagged); else commit(g);
 }
+// A choice made in the Fix panel that can be saved: a known source; a pasted address only in its checked form.
+function fixReady(code) {
+  var f = prog.fix[code];
+  if (ALL_SOURCES.indexOf(f) < 0) return false;
+  if (f !== "manual") return true;
+  var m = checkManualUrl(prog.fixUrl[code]);
+  return !m.error && m.url === prog.fixUrl[code];
+}
 function commit(g) {
-  var day = kstDate(Date.now()), logos = 0, letters = 0;
-  if (g.codes.some(function (c) { return prog.flags[c] && SOURCES.indexOf(prog.fix[c]) < 0; })) return;
+  var day = kstDate(Date.now()), logos = 0, letters = 0, needs = 0;
+  if (g.codes.some(function (c) { return prog.flags[c] && !fixReady(c); })) return;
   g.codes.forEach(function (code) {
     var co = byCode[code];
     if (prog.flags[code]) {
-      prog.choices[code] = choiceFrom(co, prog.fix[code], KEYS, day);
+      prog.choices[code] = choiceFrom(co, prog.fix[code], KEYS, day, prog.fixUrl[code]);
     } else if (!has(prog.choices, code)) {
       var pp = prePickOf(co);
       prog.choices[code] = choiceFrom(co, pp.pick ? routeById[pp.pick].src : "letter", KEYS, day);
     }
-    delete prog.flags[code]; delete prog.fix[code];
-    if (prog.choices[code].source === "letter") letters++; else logos++;
+    delete prog.flags[code]; delete prog.fix[code]; delete prog.fixUrl[code];
+    var src = prog.choices[code].source;
+    if (src === "letter") letters++; else if (src === "need") needs++; else logos++;
   });
   closeFix();
   var nxt = nextUnreviewed(gridIdx[g.id]);
-  msg("good", "Saved " + g.label + ": " + logos + " logos, " + letters + " letter marks." + (nxt ? " Now " + GRIDS[gridIdx[nxt]].label + "." : " Every grid is reviewed."));
+  msg("good", "Saved " + g.label + ": " + logos + " logos, " + letters + " letter marks" + (needs ? ", " + needs + " need a logo" : "") +
+    "." + (nxt ? " Now " + GRIDS[gridIdx[nxt]].label + "." : " Every grid is reviewed."));
   saveProgress();
   if (nxt) go(nxt, true); else { renderGrid(); plan(); }
   scheduleRender();
@@ -1118,41 +1467,125 @@ function openFix(g, flagged) {
     row.setAttribute("data-code", code);
     who.appendChild(el("small", null, co.c + " · " + (co.m || "") + " #" + co.r));
     row.appendChild(who);
-    var opts = el("div", "opts"), d = shown(co), avail = ["letter"];
+    var opts = el("div", "opts"), d = shown(co), avail = ["letter", "need"];
     ROUTES.forEach(function (rt) { if (st[key(code, rt.id)].s === "hit") avail.push(rt.src); });
-    if (prog.fix[code] && avail.indexOf(prog.fix[code]) < 0) delete prog.fix[code];
+    if (fixReady(code) && prog.fix[code] === "manual") avail.push("manual");
+    if (prog.fix[code] && avail.indexOf(prog.fix[code]) < 0) { delete prog.fix[code]; delete prog.fixUrl[code]; }
+    var mark = function (src) { return d.src === src ? (d.saved ? " · saved" : " · pre-pick") : ""; };
     ROUTES.forEach(function (rt) {
       var s = st[key(code, rt.id)];
       if (s.s !== "hit") return;
       var name = rt.p === "own" && co.icx ? "Own icon (check)" : rt.long;
-      opts.appendChild(option(co, rt.src, s.img, name + (lowRes(s) ? " · low-res" : "") + (d.src === rt.src ? (d.saved ? " · saved" : " · pre-pick") : "")));
+      opts.appendChild(option(co, rt.src, s.img, name + (lowRes(s) ? " · low-res" : "") + mark(rt.src)));
     });
-    opts.appendChild(option(co, "letter", null, "Letter mark" + (d.src === "letter" ? (d.saved ? " · saved" : " · pre-pick") : "")));
+    opts.appendChild(option(co, "letter", null, "Letter mark" + mark("letter")));
+    var paste = option(co, "manual", null, "Paste an image address" + mark("manual"), "+");
+    opts.appendChild(paste);
+    opts.appendChild(option(co, "need", null, "None of these \u2014 find more" + mark("need"), "?"));
     row.appendChild(opts);
+    var chosenUrl = prog.fix[code] === "manual" ? prog.fixUrl[code] : "";
+    row.appendChild(pastePanel(co, paste, chosenUrl || (d.src === "manual" ? d.url : "")));
+    if (chosenUrl) manualImg(chosenUrl, function (m) { if (m.s === "hit") showOptImg(paste, m.img, co); });
     list.appendChild(row);
   });
   $("fix").classList.remove("hide");
   document.body.style.overflow = "hidden";
   renderFixSave();
 }
-function option(co, src, img, text) {
+// One option in a Fix row. glyph: shown instead of a picture (Paste an image address, None of these - find more).
+function option(co, src, img, text, glyph) {
   var b = el("button", "opt" + (prog.fix[co.c] === src ? " on" : ""));
   b.type = "button"; b.setAttribute("data-src", src); b.setAttribute("aria-pressed", prog.fix[co.c] === src ? "true" : "false");
   var box = el("div", "lg");
-  setImg(box, img, co);
+  if (glyph) { box.className = "lg blank"; box.textContent = glyph; } else setImg(box, img, co);
   b.appendChild(box);
   b.appendChild(el("span", null, text));
   b.addEventListener("click", function () {
-    prog.fix[co.c] = src;
-    saveProgress();
-    var row = b.parentNode;
-    Array.prototype.forEach.call(row.children, function (x) {
-      var on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
-    });
-    paintTile(co.c);
-    renderFixSave();
+    if (src === "manual") { togglePaste(b); return; }             // chosen only with Use this picture, after a preview
+    choose(co, b, src, null);
   });
   return b;
+}
+function showOptImg(b, img, co) {
+  var box = b.querySelector(".lg");
+  box.className = "lg";
+  setImg(box, img, co);
+}
+function choose(co, b, src, url) {
+  prog.fix[co.c] = src;
+  if (src === "manual") prog.fixUrl[co.c] = url; else delete prog.fixUrl[co.c];
+  saveProgress();
+  Array.prototype.forEach.call(b.parentNode.children, function (x) {
+    var on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  paintTile(co.c);
+  renderFixSave();
+}
+function togglePaste(b) {
+  var pane = b.parentNode.parentNode.querySelector(".paste"), open = pane.classList.contains("hide");
+  pane.classList.toggle("hide", !open);
+  b.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) pane.querySelector("input").focus();
+}
+// Paste an image address: check it (checkManualUrl), load a preview in this browser, check its size (judgeSize), and only
+// then offer Use this picture. Nothing is sent anywhere but the picture's own address.
+function pastePanel(co, optBtn, url0) {
+  var pane = el("div", "paste hide"), id = "paste-" + co.c;
+  var lab = el("label", null, "Image address of the right logo for " + co.n);
+  lab.setAttribute("for", id);
+  var inp = el("input");
+  inp.type = "url"; inp.id = id; inp.autocomplete = "off"; inp.spellcheck = false; inp.placeholder = "https://";
+  inp.setAttribute("inputmode", "url"); inp.setAttribute("autocapitalize", "off"); inp.setAttribute("autocorrect", "off");
+  inp.value = url0 || "";
+  var bar = el("div", "bar"), pv = el("button", "ghost", "Preview"), use = el("button", null, "Use this picture");
+  pv.type = "button"; use.type = "button"; use.disabled = true;
+  pv.setAttribute("data-act", "preview"); use.setAttribute("data-act", "use");
+  bar.appendChild(pv); bar.appendChild(use);
+  var view = el("div", "pv"), box = el("div", "lg blank", "\u00b7"), say = el("p", "pmsg info", "");
+  view.appendChild(box); view.appendChild(say);
+  [lab, inp, bar, view, el("p", "sub", "Copy the address of the right logo, usually from the company's own website (right-click or " +
+    "press and hold the picture, then Copy image address), and paste it here. The preview loads in this browser like any " +
+    "picture; nothing is sent anywhere else. Later step, not done yet: each pasted picture will be downloaded once and " +
+    "kept as a file of this site, so the app never loads it from the company's website.")].forEach(function (x) { pane.appendChild(x); });
+  var ready = null, seq = 0;
+  function tell(cls, text) { say.className = "pmsg " + cls; say.textContent = text; }
+  function blank() { box.className = "lg blank"; while (box.firstChild) box.removeChild(box.firstChild); box.textContent = "\u00b7"; }
+  function preview() {
+    ready = null; use.disabled = true;
+    var c = checkManualUrl(inp.value), my = ++seq;
+    blank();
+    if (c.error) { tell("bad", c.error); return; }
+    if (inp.value !== c.url) inp.value = c.url;                   // shows the address that will be kept
+    var pre = c.note ? c.note + " " : "";
+    tell("info", pre + "Loading the preview\u2026");
+    box.className = "lg blank wait";
+    manualImg(c.url, function (m) {
+      if (my !== seq) return;                                     // the address changed meanwhile
+      if (m.s !== "hit") {
+        blank();
+        tell("bad", pre + "The picture did not load: a wrong address, not a picture, or the website does not let other " +
+          "pages show it. Try Copy image address on the picture itself.");
+        return;
+      }
+      box.className = "lg";
+      setImg(box, m.img, co);
+      var j = judgeSize(m.w, m.h);
+      if (!j.ok) { tell("bad", pre + j.text); return; }
+      ready = { url: c.url, m: m };
+      use.disabled = false;
+      tell(j.warn ? "warn" : "good", pre + j.text + " Tap Use this picture if it is the right logo.");
+    });
+  }
+  inp.addEventListener("input", function () { seq++; ready = null; use.disabled = true; blank(); tell("info", ""); });
+  inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); preview(); } });
+  pv.addEventListener("click", preview);
+  use.addEventListener("click", function () {
+    if (!ready || checkManualUrl(inp.value).url !== ready.url) return;
+    choose(co, optBtn, "manual", ready.url);
+    showOptImg(optBtn, ready.m.img, co);
+    tell("good", "Chosen: " + hostOf(ready.url) + ". Save this grid to keep it.");
+  });
+  return pane;
 }
 function renderFixSave() {
   if (!fixGrid) return;
@@ -1167,7 +1600,7 @@ function closeFix() { fixGrid = null; $("fix").classList.add("hide"); document.b
 function go(id, toTop) {
   if (!has(gridIdx, id)) return;
   if (id !== cur) prevGrid = cur;
-  cur = id; prog.grid = id;
+  cur = id; prog.grid = id; view = "grid";
   saveProgress();
   hidePeek();
   renderGrid();
@@ -1181,9 +1614,13 @@ function renderNav() {
     var nf = g.codes.filter(function (c) { return prog.flags[c]; }).length;
     var o = el("option", null, g.label + (isReviewed(g) ? " · reviewed" : "") + (nf ? " · " + nf + " wrong" : ""));
     o.value = g.id;
-    if (g.id === cur) o.selected = true;
+    if (g.id === cur && view !== NEED_VIEW) o.selected = true;
     sel.appendChild(o);
   });
+  var nv = el("option", null, "Needs a logo (" + needCodes().length + ")");
+  nv.value = NEED_VIEW;
+  if (view === NEED_VIEW) nv.selected = true;
+  sel.appendChild(nv);
   $("prev").disabled = i === 0;
   $("next").disabled = i === GRIDS.length - 1;
   $("nextopen").disabled = !nextUnreviewed(i) ;
@@ -1191,6 +1628,14 @@ function renderNav() {
 var dockQueued = false;
 function scheduleDock() { if (dockQueued) return; dockQueued = true; setTimeout(function () { dockQueued = false; renderDock(); }, 120); }
 function renderDock() {
+  if (view === NEED_VIEW) {
+    var nn = needCodes().length;
+    $("dockmsg").textContent = !nn ? "No company needs a logo yet." : (nn === 1 ? "1 company needs" : nn + " companies need") +
+      " a logo (letter mark for now). Tap one to open its grid.";
+    $("confirm").disabled = true; $("confirm").textContent = "Confirm this grid";
+    $("retry").classList.add("hide");
+    return;
+  }
   var g = GRIDS[gridIdx[cur]], s = gridStatus(g), reviewed = isReviewed(g), text;
   if (!started) text = "Tap Start to load logos" + (reviewed ? " (this grid is reviewed)." : ".");
   else if (s.gaps) text = s.gaps + " companies could not be checked (a provider stopped or timed out). Tap Retry.";
@@ -1213,17 +1658,21 @@ function pct(a, b) { return b ? Math.round(1000 * a / b) / 10 + "%" : "–"; }
 function fmt(n) { return n.toLocaleString("en-US"); }
 function render() {
   var rows = summarize(COMPS, prog.choices, ZONES);
-  var html = "<thead><tr><th>Group</th><th>Total</th><th>Reviewed</th><th>Logo</th><th>Letter</th><th>Coverage</th></tr></thead><tbody>";
+  var html = "<thead><tr><th>Group</th><th>Total</th><th>Re&shy;viewed</th><th>Logo</th><th>Letter</th><th>Needs logo</th><th>Cov&shy;er&shy;age</th></tr></thead><tbody>";
   rows.forEach(function (r) {
     html += '<tr class="' + r.kind + '"><td>' + esc(r.label) + "</td><td>" + fmt(r.n) + "</td><td>" + fmt(r.reviewed) +
-      "</td><td>" + fmt(r.logo) + "</td><td>" + fmt(r.letter) + "</td><td>" + pct(r.logo, r.reviewed) + "</td></tr>";
+      "</td><td>" + fmt(r.logo) + "</td><td>" + fmt(r.letter) + "</td><td>" + fmt(r.need) + "</td><td>" + pct(r.logo, r.reviewed) + "</td></tr>";
   });
   $("sumtable").innerHTML = html + "</tbody>";
-  var done = GRIDS.filter(isReviewed).length, nflags = Object.keys(prog.flags).length;
+  var done = GRIDS.filter(isReviewed).length, nflags = Object.keys(prog.flags).length, nneed = needCodes().length;
   $("sumline").textContent = "Grids reviewed: " + done + " of " + GRIDS.length + " · choices " + fmt(Object.keys(prog.choices).length) +
+    " · needs a logo: " + fmt(nneed) +
     (nflags ? " · marked wrong, not confirmed yet: " + nflags : "") + ". Coverage = real logos among reviewed companies (goal 90%).";
+  $("needbtn").textContent = "Needs a logo (" + fmt(nneed) + ")";
   $("export").disabled = !Object.keys(prog.choices).length;
   var line = (!started ? "Not started. " : running ? "Loading. " : "Paused. ") + "Requests " + fmt(counters.loads) +
+    (counters.remembered ? " · known misses not asked again " + fmt(counters.remembered) : "") +
+    (counters.reprobed ? " · companies checked again " + counters.reprobed : "") +
     (counters.placeholders ? " · placeholders caught " + counters.placeholders : "") +
     (counters.requeued ? " · tried again " + counters.requeued : "") +
     " · Brandfetch ≤" + (1000 / CFG.bfGapMs).toFixed(0) + "/s, logo.dev ≤" + (1000 / CFG.ldGapMs).toFixed(0) + "/s";
@@ -1261,7 +1710,7 @@ function doImport(file) {
     if (v.error) { msg("bad", "Could not load: " + v.error + ". Nothing changed."); return; }
     var m = mergeChoices(prog.choices, v.choices);
     prog.choices = m.choices;
-    m.used.forEach(function (c) { delete prog.flags[c]; delete prog.fix[c]; });   // a newer choice here keeps its marks
+    m.used.forEach(function (c) { delete prog.flags[c]; delete prog.fix[c]; delete prog.fixUrl[c]; });   // a newer choice here keeps its marks
     saveProgress();
     renderGrid();
     plan();
@@ -1277,6 +1726,7 @@ function doImport(file) {
 
 // ── boot ──
 loadProgress();
+memLoad();
 cur = prog.grid;
 $("meta").textContent = "Data: Korea close " + META.pxDate + ", US close " + META.usPxDate + " (data.json of " + META.asOf +
   ") · " + fmt(META.counts.kr) + " Korean and " + fmt(META.counts.us) + " US companies in " + GRIDS.length + " grids · " +
@@ -1291,7 +1741,14 @@ $("fixback").addEventListener("click", closeFix);
 $("prev").addEventListener("click", function () { var i = gridIdx[cur]; if (i > 0) go(GRIDS[i - 1].id, true); });
 $("next").addEventListener("click", function () { var i = gridIdx[cur]; if (i < GRIDS.length - 1) go(GRIDS[i + 1].id, true); });
 $("nextopen").addEventListener("click", function () { var n = nextUnreviewed(gridIdx[cur]); if (n) go(n, true); });
-$("gridsel").addEventListener("change", function () { go($("gridsel").value, false); });
+$("gridsel").addEventListener("change", function () {
+  var v = $("gridsel").value;
+  if (v === NEED_VIEW) showNeed(); else go(v, false);
+});
+$("needbtn").addEventListener("click", showNeed);
+$("resumepause").addEventListener("click", pause);
+window.addEventListener("pagehide", memFlush);
+document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") memFlush(); });
 $("export").addEventListener("click", doExport);
 $("import").addEventListener("click", function () { $("importfile").click(); });
 $("importfile").addEventListener("change", function () { var f = $("importfile").files[0]; doImport(f); $("importfile").value = ""; });
@@ -1301,11 +1758,20 @@ renderGrid();
 plan();
 renderAgree();
 render();
+if (memInfo.n) {
+  alertMsg("info", "Remembered from the last " + PROBE_DAYS + " days in this browser: " + fmt(memInfo.n) + " results (logo found or " +
+    "not). Sources known to have no logo are not asked again; found logos load again, after the usual checks.");
+} else if (memInfo.other) {
+  alertMsg("info", "What was found on earlier visits belongs to another build of this page, so every logo is checked again.");
+}
 window.__logoReview = { state: st, counters: counters, providers: P, lanes: lanes, cfg: CFG, comps: COMPS, grids: GRIDS,
   prog: function () { return prog; }, current: function () { return cur; }, ahead: function () { return ahead; },
   status: function (id) { return gridStatus(GRIDS[gridIdx[id || cur]]); }, prePickOf: function (code) { return prePickOf(byCode[code]); },
-  exportObj: function () { return exportChoices(prog.choices, "test"); }, pending: function () { return pendingTimers; } };
+  exportObj: function () { return exportChoices(prog.choices, "test"); }, pending: function () { return pendingTimers; },
+  view: function () { return view; }, mem: function () { return mem; }, flushMem: memFlush, manual: manualImgs,
+  running: function () { return running; } };
 if (CFG.autostart) start();
+else if (resumeAsked) resume();
 })();
 </script>
 </body>
