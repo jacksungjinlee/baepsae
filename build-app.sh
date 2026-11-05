@@ -55,3 +55,5 @@ for name, bundle, sw, ttl, head in (("app.html", "dist/app.js", SW, title, LIVE_
     open(os.path.join(out, name), "w", encoding="utf-8").write(html)
     print(f"{name} written:", len(js), "bytes of JS inlined")
 PY
+# v17.6: 배포(deploy.yml)할 때만 BAEPSAE_BUILD=커밋 을 넣어 <head> 에 빌드 표시를 달아요. 없으면 아무것도 바꾸지 않아요.
+python3 tools/build_tag.py "$OUT/app.html" "$OUT/app-preview.html"

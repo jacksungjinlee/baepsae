@@ -1,0 +1,67 @@
+# 뱁새 runbook — when something goes wrong
+
+One page for Jack. Claude Code does every step below for you; this page says what each alarm means and what to ask for.
+
+## What watches the site
+
+| What | When | What it tells you |
+|---|---|---|
+| **Watchdog** (GitHub Actions, `watchdog.yml`) | Every day at 16:37 KST (weekends too), and 10 minutes after every data run or deploy | Opens one GitHub issue named **뱁새 데이터 경보** (label `data-alert`) and mentions you, so GitHub emails you. It comments on the same issue while the problem lasts and closes it with **정상화됐어요** when the site is healthy again. |
+| **healthchecks.io** (outside GitHub) | Expects a "still alive" ping from the watchdog at least once a day (6 hours grace) | Emails you if the pings stop, which means GitHub Actions itself stopped running and nothing else could warn you. It also emails when the watchdog reports a problem. |
+| **09:13 KST check** (Claude scheduled task, Tue–Sat) | Every morning | Says whether the morning data is in and lists any warnings from the publication gate. |
+
+What the watchdog checks, on the files users actually download: the four data files pass `validate_data.py --live`; after
+15:30 KST, the Korean price date is the last finished trading day (checked against KRX's final listing and Yahoo's KOSPI,
+both separate from our pipeline); the last daily run and the last deploy succeeded; the daily run is still switched on;
+the pages users get are the current build, and the site's `data.json` is exactly the published copy.
+
+## What an alert means
+
+- **Users still see the last good data, with its date.** The publication gate refuses to publish anything that fails
+  its checks, so a failed run leaves yesterday's numbers in place, labelled with yesterday's date. The app itself shows a
+  warning ("N일째 갱신이 멈췄어요") once publishing has stopped for more than 4 days.
+- The issue's first line says which case it is. If it says the files **on the site** failed the checks
+  ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
+- An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
+
+## What to do
+
+Open a new Claude Code Cloud session and paste (replace N with the issue number, which is also written in the issue):
+
+> 뱁새 데이터 경보 이슈 #N 이 떴어. 로그를 보고 원인을 찾아서 CLAUDE.md 규칙대로 고치고 PR 열어줘.
+
+Claude reads the run logs, fixes the cause by the CLAUDE.md rules (fix the data or the code, never loosen a check), and
+tells you what happened in plain words.
+
+## Roll back
+
+- **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
+  **Revert**, and merges the revert pull request. The deploy runs by itself after the merge. Ask: "뱁새 마지막 머지를
+  되돌려 줘."
+- **Bad data** (the numbers are wrong and the gate missed it): Claude reverts the last commit on the `data` branch
+  (and, until v17.6 part 3b, the same data commit on `main`), then starts **Actions → Deploy → Run workflow**. Users get
+  the previous day's data back within about 10 minutes. Ask: "뱁새 어제 데이터로 되돌려 줘."
+
+## Where to look
+
+- The issue list on GitHub, label `data-alert` (there is only ever one open).
+- Your email: GitHub notifications (the issue mentions you) and healthchecks.io.
+- The site's 기준 date, on your phone.
+- GitHub → Actions: runs of 시세 데이터 갱신 (daily data), Deploy (puts code and data on the site), Watchdog, ci (tests on
+  every pull request).
+
+## How the pieces fit (since v17.6)
+
+- **`main`** holds the code. Every pull request must pass the `ci` check (build, all tests, phone-size smoke tests).
+- **`data`** is a branch that holds only the four data files (`data.json`, `corp.json`, `disc.json`, `macro.json`). Only
+  the daily run writes to it, and only after the publication gate passed: the gate leaves a fingerprint (sha256) of the
+  four files it checked, and the upload refuses any file that doesn't match. It never force-pushes.
+  The first daily run after v17.6 creates the branch by itself.
+- **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
+  folder it is about to publish, and only then publishes. It runs after every merge to `main` and after every daily run
+  that published new data, once Settings → Pages → Source is **GitHub Actions**. Until then GitHub keeps serving `main`
+  directly, as before.
+- Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
+  data commits count as activity; on the 1st of every month the watchdog also switches both scheduled workflows back on
+  through GitHub's API. If GitHub Actions stops completely, healthchecks.io is the alarm.

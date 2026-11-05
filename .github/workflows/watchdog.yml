@@ -1,0 +1,101 @@
+name: Watchdog
+# v17.6 Part 1: 사용자가 실제로 받는 사이트를 밖에서 따로 확인해요 (watchdog.py). 문제가 있으면 '뱁새 데이터 경보' 이슈 하나
+# (data-alert)를 열거나 댓글을 달고, 이 실행이 빨갛게 끝나요. 정상이면 열린 경보를 '정상화됐어요'로 닫아요.
+# 정상일 때마다 healthchecks.io 에 알려요 (비밀 값 HC_PING_URL). GitHub Actions 가 통째로 멈추면 healthchecks.io 가 Jack 에게 메일을 보내요.
+#
+# 언제: 매일 16:37 KST · 시세 데이터 갱신 / Deploy 가 main 에서 끝난 뒤 (10분 기다렸다가) · 손으로.
+# 매달 1일에는 정해진 시각 실행 두 개(시세 데이터 갱신 · Watchdog)를 GitHub API 로 다시 켜요 (60일 동안 저장소 활동이 없으면
+# GitHub 이 꺼요 — 커밋하지 않고 켜요).
+
+on:
+  schedule:
+    # 16:37 KST 매일 (그날 실행이 늦어도 끝났을 때 · 정각·30분은 GitHub 이 붐벼서 피해요). 주말에도 돌아야 healthchecks.io 가
+    # 하루 넘게 소식이 없다고 잘못 알리지 않아요 (주말의 기대 가격 날짜는 금요일이라 통과해요).
+    - cron: "37 7 * * *"
+    - cron: "19 3 1 * *"       # 매달 1일 12:19 KST: 다시 켜기만 (keepalive job)
+  workflow_run:
+    workflows: ["시세 데이터 갱신", "Deploy"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      selftest:
+        description: "시험: broken = 받은 사이트 파일을 일부러 망가뜨려 경보 이슈가 열리는지 봐요 (이슈에 [시험] 표시, 다음 정상 점검이 닫아요)"
+        type: choice
+        options: ["none", "broken"]
+        default: none
+
+permissions:
+  contents: read
+
+concurrency:
+  # 하나씩 (경보 이슈가 두 개 열리지 않게). 기다리는 점검은 하나만 남아요.
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    if: github.event_name != 'schedule' || github.event.schedule != '19 3 1 * *'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write          # 경보 이슈 열기 · 댓글 · 닫기
+      actions: read          # 실행 결과 읽기
+      pages: read            # Pages 배포 방식 (브랜치 · GitHub Actions)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 지금 점검할지 (데이터 실행 · 배포 뒤)
+        id: when
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGER_NAME: ${{ github.event.workflow_run.name }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 watchdog.py --decide
+
+      - name: Pages 캐시 기다리기 (10분, max-age=600)
+        if: github.event_name == 'workflow_run' && steps.when.outputs.go == 'true'
+        run: sleep 600
+
+      - name: 사이트 점검
+        if: steps.when.outputs.go == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HC_PING_URL: ${{ secrets.HC_PING_URL }}
+          WATCHDOG_SELFTEST: ${{ inputs.selftest || 'none' }}
+        run: python3 watchdog.py
+
+  keepalive:
+    if: github.event_name == 'schedule' && github.event.schedule == '19 3 1 * *'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write         # 'workflow 켜기' API 만 써요
+    steps:
+      - name: 정해진 시각 실행 다시 켜기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in update-data.yml watchdog.yml; do
+            before=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$wf" --jq .state)
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$wf/enable"
+            after=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$wf" --jq .state)
+            echo "· $wf: $before → $after"
+            if [ "$after" != "active" ]; then
+              echo "!! $wf 를 켜지 못했어요 ($after)"
+              exit 1
+            fi
+          done
