@@ -156,9 +156,14 @@ def is_shared_host(domain):
     return any(d.endswith("." + h) for h in PLATFORM_SUBDOMAINS)          # blog.naver.com yes, naver.com no
 
 
+_NO_HOMEPAGE = {"n/a", "na", "none", "null", "nil", "no", "x", "tbd"}
+
+
 def has_homepage(raw):
-    """False for an empty value and for DART's placeholders with no letter or digit in them ('-', '.', '--')."""
-    return bool(re.search(r"[0-9A-Za-zㄱ-ㆎ가-힣]", str(raw or "")))
+    """False for an empty value and for DART's placeholders: '-', '.', a Korean word for "none" (no Latin letter or
+    digit at all — every web address has one, even a Korean-script domain ends in .kr or .com) and n/a, none …"""
+    s = str(raw or "").strip()
+    return bool(re.search(r"[0-9A-Za-z]", s)) and s.lower() not in _NO_HOMEPAGE
 
 
 def judge_homepage(raw):

@@ -106,6 +106,8 @@ def test_platform_hosts_are_not_company_domains():
     ("http://www,cuckoo.co.kr", ("", False, "not a host name")),
     ("", ("", False, "no homepage")), (None, ("", False, "no homepage")),
     ("-", ("", False, "no homepage")), (" -- ", ("", False, "no homepage")), (".", ("", False, "no homepage")),
+    ("없음", ("", False, "no homepage")), ("N/A", ("", False, "no homepage")), ("none", ("", False, "no homepage")),
+    ("www.한글.kr", ("xn--bj0bj06e.kr", True, "")),                          # a Korean-script domain still works
 ])
 def test_judge_homepage(raw, want):
     assert li.judge_homepage(raw) == want
