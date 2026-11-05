@@ -164,7 +164,7 @@ export function krGrowthBasis(g3, rev) {
   return in2 && !in1 ? "y2" : in1 && !in2 ? "y1" : null;
 }
 
-// corp.json 을 한 번만 받아요 (기업분석 · 성적표 · 포트폴리오의 한국 매출성장 이름표가 같이 써요). 받는 중이면 그 요청을 같이 기다리고,
+// corp.json 을 한 번만 받아요 (검색 칸의 성적표와 포트폴리오의 한국 매출성장 이름표가 같이 써요. 기업분석 탭은 따로 받아요). 받는 중이면 그 요청을 같이 기다리고,
 // 못 받으면 { failed: true } (실패는 기억하지 않아요: 다음에 다시 받아요).
 let CORP_DATA = null, CORP_PENDING = null;
 export async function loadCorpOnce() {

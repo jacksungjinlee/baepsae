@@ -590,11 +590,11 @@ def test_revenue_growth_is_labelled_by_how_it_was_calculated():
                         " out[lang] = [D.growthCell({ g3: 11.7, g3Q: true }, t), D.growthCell({ g3: -3.2, g3Q: true }, t),"
                         " D.growthCell({ g3: 13.5, g3Kr: true }, t, 'y2'), D.growthCell({ g3: 40, g3Kr: true }, t, 'y1'),"
                         " D.growthCell({ g3: 13.5, g3Kr: true }, t, null), D.growthCell({ g3: 6 }, t), D.growthCell(undefined, t),"
-                        " D.growthCell({ g3: null, g3Q: true }, t)]; }"
+                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: null, g3Kr: true }, t, null)]; }"
                         "console.log(JSON.stringify(out));")
     assert cells["ko"] == [["매출성장(최근 분기, 1년 전 대비)", "+11.7%"], ["매출성장(최근 분기, 1년 전 대비)", "-3.2%"],
                            ["매출성장(최근 2년 연평균)", "+13.5%"], ["매출성장(최근 1년)", "+40%"], None, None, None,
-                           ["매출성장(최근 분기, 1년 전 대비)", "–"]], cells["ko"]
+                           ["매출성장(최근 분기, 1년 전 대비)", "–"], None], cells["ko"]          # 한국 · 숫자 없음: 기준을 짐작하지 않고 빼요
     assert cells["en"][2][0] == "Rev growth (2-yr avg/yr)" and cells["en"][3][0] == "Rev growth (1 yr)" and cells["en"][0][0] == "Rev growth (latest qtr y/y)"
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
     assert 'g3Kr2: { ko:"매출성장(최근 2년 연평균)", en:"Rev growth (2-yr avg/yr)" }, g3Kr1: { ko:"매출성장(최근 1년)", en:"Rev growth (1 yr)" }' in src
@@ -607,6 +607,8 @@ def test_revenue_growth_is_labelled_by_how_it_was_calculated():
     for bad in ("매출성장(3y)", "Rev growth 3y", "3년 매출 성장률", "매출 성장률 (3년", "최근 3년 성장률", "3년간 연평균", "a year over 3 years",
                 "사분면 · 3년 연평균", 'sub="3년 연평균', "업종의 3년"):
         assert bad not in built, bad
+    corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+    assert 'passBase(c) && krGrowthBasis(c.g3, c.rev) === "y2")' in corp            # 성장 지도: 최근 2년 연평균인 회사만 (부제와 같은 기준)
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")

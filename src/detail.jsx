@@ -2190,7 +2190,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
 function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, peers, updateStock }) {
   const [editing, setEditing] = useState(false);
   const x = s.x || {};
-  const g3Basis = useKrGrowthBasis(s, open);
+  const g3Basis = useKrGrowthBasis(s, open && mode !== "simple");     // the grid (and its growth cell) is not drawn in simple mode
   return (
     <div style={{ borderBottom: "1px solid " + C.line }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", cursor: "pointer" }} onClick={onToggle}>
@@ -5120,10 +5120,7 @@ export function growthCell(x, t, basis) {
   x = x || {};
   const v = x.g3 != null ? (x.g3 > 0 ? "+" : "") + x.g3 + "%" : "\u2013";
   if (x.g3Q) return [t("g3Us"), v];
-  if (x.g3Kr) {
-    if (x.g3 == null) return [t("g3Kr2"), v];
-    return basis === "y2" ? [t("g3Kr2"), v] : basis === "y1" ? [t("g3Kr1"), v] : null;
-  }
+  if (x.g3Kr) return x.g3 == null ? null : basis === "y2" ? [t("g3Kr2"), v] : basis === "y1" ? [t("g3Kr1"), v] : null;
   return null;
 }
 // 한국 종목의 매출성장 계산 기준: 그 줄을 펼칠 때 corp.json 을 한 번 받아 맞춰 봐요 (data.js loadCorpOnce · krGrowthBasis).
@@ -5131,6 +5128,7 @@ function useKrGrowthBasis(s, open) {
   const [basis, setBasis] = useState(null);
   const x = (s && s.x) || {};
   useEffect(() => {
+    setBasis(null);                                    // a new stock or figure: no label until its own basis is known
     if (!open || !x.g3Kr || x.g3 == null) return;
     let live = true;
     loadCorpOnce().then((d) => {

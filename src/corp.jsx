@@ -41,7 +41,7 @@ const ChipBtn = ({ on, onClick, children }) => (
 
 // ---------------- 설명 시트 ----------------
 const EXPL = {
-  quad: { t: "업종 성장 사분면", b: "가로축은 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 최근 2년 연평균 매출 성장률(전전기 매출이 없으면 최근 1년)이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
+  quad: { t: "업종 성장 사분면", b: "가로축은 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 최근 2년 연평균 매출 성장률이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
   secrank: { t: "업종 성장률 순위", b: "각 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준)을 큰 순서대로 늘어놓았어요. 막대 옆의 매출 규모와 수익성을 함께 보면 '커지는 판인가, 돈이 되는 판인가'를 같이 판단할 수 있어요. 표본이 5개 미만인 업종은 성장률을 표시하지 않아요." },
   scatter: { t: "수익성과 주가 수준 (ROE × PBR)", b: "가로축은 자기자본이익률(ROE), 세로축은 주가순자산비율(PBR)이에요. 보통 자본을 잘 굴리는 회사일수록 장부가치 대비 높은 값에 거래되고, 점선 추세선이 그 평균적 관계예요. 추세선보다 한참 위면 수익성에 비해 높은 평가, 한참 아래면 낮은 평가를 받고 있다는 뜻인데 — 거기엔 대개 이유가 있어요. 그 이유를 찾는 것이 분석이에요." },
   box: { t: "업종별 시장 눈높이", b: "업종마다 시장이 쳐주는 값의 눈높이가 달라요. 굵은 점이 그 업종의 중간값, 옅은 막대가 가운데 절반(25~75%)이 모여 있는 구간이에요. 같은 PER 10배라도 어떤 업종에선 비싼 값, 어떤 업종에선 싼 값이에요 — 그래서 멀티플은 늘 같은 업종 안에서 읽어요. 점선은 시장 전체의 중간값이라, 어떤 업종이 시장 평균보다 후하게 또는 박하게 평가받는지도 보여요." },
@@ -681,7 +681,8 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
   const passBase = (c) => (heldOnly ? !!heldMap[c.t] : (c.cap || 0) >= capMin) && (secFilter === "all" || c.s === secFilter);
 
   const quadPts = useMemo(() => comps
-    .filter((c) => c.g3 != null && secs[c.s]?.g != null && passBase(c))
+    // 세로축은 최근 2년 연평균인 회사만 (업종 축과 같은 기준, 부제와 같은 말 · Jack 2026-11-05: 1년짜리 · 기준을 모르는 값은 빼요)
+    .filter((c) => c.g3 != null && secs[c.s]?.g != null && passBase(c) && krGrowthBasis(c.g3, c.rev) === "y2")
     .map((c) => ({ id: c.t, nm: c.nk, x: secs[c.s].g, y: c.g3, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
       color: SEC(c.s).color, held: !!heldMap[c.t], label: `${c.nk} · ${SEC(c.s).ko}\n업종 ${pc(secs[c.s].g)} · 기업 ${pc(c.g3)} · ${c.cap ? c.cap.toFixed(1) + "조" : ""}` })), [comps, secs, capMin, secFilter, heldMap, heldOnly]);
 
@@ -1376,7 +1377,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
     ["시가총액", (c) => c.cap != null ? c.cap.toFixed(1) + "조" : "—", null],
     ["최근 매출", (c) => F.won(c.rev && c.rev[0]), null],
     // 매출 성장: 회사마다 계산 기준대로 (Jack, 2026-11-05: 최근 2년 연평균 · 최근 1년, '3년' 아님). 기준을 모르면 '—'.
-    ["매출성장(최근 2년 연평균)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y2" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null],
+    ...(cols.some((c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y2")
+      ? [["매출성장(최근 2년 연평균)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y2" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null]] : []),
     ...(cols.some((c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y1")
       ? [["매출성장(최근 1년)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y1" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null]] : []),
     ["영업이익률", (c) => F.num(c.opm, 1, "%"), sec.opm != null ? sec.opm + "%" : "—"],
