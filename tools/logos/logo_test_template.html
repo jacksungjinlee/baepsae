@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Logo coverage test (temporary)</title>
+<!-- Built by tools/logos/build_test_page.py from tools/logos/logo_test_template.html. Temporary: delete after Jack's test. -->
+<style>
+:root{--ink:#1B2B4B;--sub:#5B6576;--line:#D9DEE6;--bg:#F5F6F8;--card:#FFFFFF;--hit:#1F7A4D;--miss:#8A93A0;--warn:#B42318;--soft:#EEF1F6}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;-webkit-text-size-adjust:100%}
+.wrap{max-width:1240px;margin:0 auto;padding:12px 16px 48px}
+h1{font-size:17px;margin:2px 0}
+h2{font-size:14px;margin:16px 0 6px}
+.sub{color:var(--sub);font-size:12px;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+#summary{max-width:760px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
+button{font:inherit;font-size:13px;padding:6px 14px;border-radius:8px;border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer}
+button.ghost{background:#fff;color:var(--ink)}
+button.on{background:var(--ink);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+#progress{font-size:12px;color:var(--sub);flex:1 1 260px}
+#alerts p{margin:4px 0;font-size:12px}
+#alerts .bad{color:var(--warn);font-weight:600}
+#alerts .info{color:var(--sub)}
+table.sum{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed;margin-top:4px}
+.sum th,.sum td{border-bottom:1px solid var(--line);padding:3px 2px;text-align:center;vertical-align:middle;overflow:hidden}
+.sum th:first-child,.sum td:first-child{text-align:left;width:24%;padding-left:2px}
+.sum th{font-weight:600;font-size:10.5px;color:var(--sub);line-height:1.15}
+.sum td b{display:block;font-size:13px;font-weight:600}
+.sum td small{display:block;color:var(--sub);font-size:10px;line-height:1.1}
+.sum td.lab b{font-size:12px}
+.sum tr.est td{background:var(--soft)}
+.sum td.mix b{font-weight:800}
+.sum tr.sep td{border-bottom:2px solid var(--ink)}
+.first{font-size:11.5px;color:var(--sub);margin:6px 0 0}
+.meta{font-size:11px;color:var(--sub);margin:6px 0 0}
+details{font-size:12.5px}
+details summary{cursor:pointer;font-weight:600}
+details li{margin:2px 0}
+.filters{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.filters button{padding:4px 10px;font-size:12px}
+.grp{grid-column:1/-1;font-size:13px;font-weight:700;margin:10px 0 0}
+.grp small{font-weight:400;color:var(--sub)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:8px}
+.co{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 8px;min-width:0}
+.co .nm{font-weight:600;font-size:13.5px}
+.co .cd{font-size:11px;color:var(--sub)}
+.co .ids{font-size:10.5px;color:var(--sub);word-break:break-all;line-height:1.3;margin-top:1px}
+.th{display:flex;gap:4px;margin-top:6px}
+.th figure{margin:0;flex:1 1 0;min-width:0;text-align:center}
+.box{width:50px;height:50px;margin:0 auto;border:1px solid var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden;font-size:15px;color:var(--miss);position:relative}
+.box img{max-width:46px;max-height:46px;display:block}
+.box.load{border-style:dashed;border-color:var(--ink)}
+.box.load img,.box.recheck img{opacity:.45}
+.box.recheck::after{content:"re";position:absolute;right:1px;bottom:0;font-size:9px;color:var(--ink);font-weight:700}
+.box.miss,.box.na,.box.stopped{background:var(--soft)}
+.box.err{color:var(--warn)}
+.box.pick{border:2px solid var(--ink)}
+figcaption{font-size:9px;color:var(--sub);line-height:1.1;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hide{display:none!important}
+@media (max-width:420px){.sum td b{font-size:12px}.sum th{font-size:9.5px}.box{width:46px;height:46px}.box img{max-width:42px;max-height:42px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Logo coverage test (temporary)</h1>
+<p class="sub">For Jack only: not linked from the app, not for users, deleted after the test. Logos load from Brandfetch and logo.dev in this browser only, paced, after you tap Start. Keep this tab in front until it finishes (browsers slow down background tabs). Reloading starts over.</p>
+
+<section id="summary" class="card">
+  <div class="bar">
+    <button id="start" type="button">Start</button>
+    <button id="pause" type="button" class="ghost" disabled>Pause</button>
+    <span id="progress">Not started.</span>
+  </div>
+  <div id="alerts"></div>
+  <table class="sum" id="sumtable"></table>
+  <p class="first" id="firsthit"></p>
+  <p class="meta" id="meta"></p>
+</section>
+
+<section class="card">
+<details>
+<summary>How this test works</summary>
+<ul>
+  <li><b>Exact identifiers only, never names.</b> Routes, in the order the best mix takes its first hit: Brandfetch ISIN, Brandfetch ticker, logo.dev ticker, Brandfetch domain, logo.dev domain. A company with no hit would get a coloured letter mark in the app.</li>
+  <li><b>Ticker:</b> KOSPI 005930.KS, KOSDAQ 247540.KQ, KONEX .KS (logo.dev has no KONEX suffix); US as listed (BRK-B). A bare 6-digit code is never tried: Chinese exchanges use 6-digit codes too, so it is not exact. <b>ISIN:</b> from the KRX listing (check digit verified), else the exact common-share rule; none for US. <b>Domain:</b> the company's own homepage as filed with DART, Korea only; platform hosts (blog.naver.com, facebook.com and the like) and a domain that two companies share are not used.</li>
+  <li><b>No logo = image error.</b> Every request asks for HTTP 404 when there is no logo (Brandfetch fallback/404, logo.dev fallback=404), so a miss never shows a placeholder. A browser cannot read the status of another site's image, so: logo.dev answers a domain it has never seen with a placeholder image (HTTP 202) on the first request; every logo.dev domain hit is therefore loaded again after 5&frac12; minutes ("re" badge) and only the second answer counts.</li>
+  <li><b>Checks:</b> before the test, each provider must show a known logo (Apple) and must give no image for made-up identifiers; during the test a known logo is checked again every 100 loads and a made-up ticker every 300. If a known logo stops loading (rate limit, block, ad blocker, network), the provider pauses and its recent misses are tried again; after three failed checks that provider stops and is marked stopped, not counted as misses.</li>
+  <li><b>Pace:</b> at most 2 requests a second to Brandfetch and 4 a second to logo.dev, one at a time per route. <span id="plan"></span></li>
+  <li><b>Sample</b> (fixed seed, listed below, all from the data date shown): KR-A = the 200 largest Korean companies by market cap (all of them); KR-B to KR-E = 300 more Korean companies at random, 75 from each quarter of the rest by market cap; US-A to US-D = 100 US companies at random, 25 from each quarter. ETFs, funds and preferred shares are left out (a preferred share uses its common share's logo). "All (est.)" rows weight each group by its share of all companies; &plusmn; is a 95% range.</li>
+  <li><b>Reading the table:</b> the big number is the share of the group's companies with a logo by that route (a company without that identifier counts as no logo); the small one is logos / loads tested so far ("&hellip;" while loading). Best mix = any route found a logo.</li>
+  <li>Thumbnails: look for wrong or generic logos (a group logo, a placeholder). The bordered one is the best mix's pick.</li>
+</ul>
+</details>
+</section>
+
+<h2>Companies in the sample</h2>
+<div class="filters" id="filters"></div>
+<main class="grid" id="grid"></main>
+<p class="meta">Temporary internal test page. Not part of the app.</p>
+</div>
+
+<script id="data" type="application/json">/*DATA*/</script>
+<script>
+(function () {
+"use strict";
+var KEYS = /*KEYS*/;
+
+// ==pure-start==  (tests/test_logos.py runs this block with node and compares the URLs with tools/logos/logo_ids.py)
+var BF_BASE = "https://cdn.brandfetch.io", LD_BASE = "https://img.logo.dev", SIZE = 128;
+var ROUTES = [
+  { id: "bfI", p: "bf", r: "isin", f: "isin", label: "BF ISIN" },
+  { id: "bfT", p: "bf", r: "ticker", f: "tk", label: "BF ticker" },
+  { id: "ldT", p: "ld", r: "ticker", f: "tk", label: "LD ticker" },
+  { id: "bfD", p: "bf", r: "domain", f: "dom", label: "BF domain" },
+  { id: "ldD", p: "ld", r: "domain", f: "dom", label: "LD domain" }
+];
+function q(s) {
+  return encodeURIComponent(String(s)).replace(/[!'()*]/g, function (c) {
+    return "%" + c.charCodeAt(0).toString(16).toUpperCase();
+  });
+}
+function logoUrl(p, r, ident, key, v) {
+  if (p === "bf") return BF_BASE + "/" + r + "/" + q(ident) + "/w/" + SIZE + "/h/" + SIZE + "/fallback/404?c=" + q(key);
+  var u = LD_BASE + "/" + (r === "domain" ? q(ident) : r + "/" + q(ident)) + "?token=" + q(key) +
+    "&size=" + SIZE + "&format=webp&fallback=404";
+  return v ? u + "&v=" + q(v) : u;
+}
+function isFinal(s) { return s === "hit" || s === "miss" || s === "na"; }
+// states in ROUTES order -> {done, hit, first}: first = index of the first hit when every earlier route is final,
+// -1 while that is not known yet, null when the company has no hit at all.
+function mixOf(states) {
+  var open = false, first = -1, anyHit = false, allFinal = true;
+  for (var i = 0; i < states.length; i++) {
+    var s = states[i];
+    if (!isFinal(s)) allFinal = false;
+    if (s === "hit") { anyHit = true; if (!open && first === -1) first = i; }
+    if (!isFinal(s)) open = true;
+  }
+  return { done: anyHit || allFinal, hit: anyHit, first: anyHit ? first : (allFinal ? null : -1) };
+}
+// Share of a group with a logo by one route: hits among the tested, times the share that has an identifier at all
+// (no identifier = no logo by that route). null until something was tested.
+function share(h, t, e, size) { return t > 0 && size > 0 ? (h / t) * (e / size) : null; }
+// Stratified estimate: rows [{N population, n tested, h hits, f share with an identifier (default 1)}]
+// -> {p, moe (95%), cover} over the groups with n > 0.
+// A group where no company has the identifier (f = 0) is known: 0%, nothing to test.
+function estimate(rows) {
+  var W = 0, est = 0, v = 0, i, g, tested = 0;
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].n > 0 || rows[i].f === 0) W += rows[i].N;
+    if (rows[i].n > 0) tested++;
+  }
+  if (!W || !tested) return null;
+  for (i = 0; i < rows.length; i++) {
+    g = rows[i];
+    if (!(g.n > 0)) continue;
+    var f = g.f == null ? 1 : g.f, Ne = g.N * f, w = g.N / W, p = g.h / g.n;
+    var fpc = Ne > 1 ? Math.max(0, (Ne - g.n) / (Ne - 1)) : 0;
+    est += w * f * p;
+    v += w * w * f * f * p * (1 - p) / g.n * fpc;
+  }
+  return { p: est, moe: 1.96 * Math.sqrt(v), cover: W };
+}
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// ==pure-end==
+
+var DATA = JSON.parse(document.getElementById("data").textContent);
+var CFG = { bfGapMs: 500, ldGapMs: 250, recheckMs: 330000, timeoutMs: 20000, retryMs: 60000, controls: true,
+  checkEvery: 100, badEvery: 300, canaryRetryMs: 15000, canaryPauseMs: 120000, maxCompanies: 0, autostart: false };
+var over = window.__LOGO_TEST_CONFIG || {};            // set only by a test harness before this script runs
+for (var k in over) if (Object.prototype.hasOwnProperty.call(over, k)) CFG[k] = over[k];
+
+var META = DATA.meta, GROUPS = DATA.groups;
+var COMPS = CFG.maxCompanies ? DATA.companies.slice(0, CFG.maxCompanies) : DATA.companies;
+var $ = function (id) { return document.getElementById(id); };
+var st = {};           // "code|route" -> {s: na|wait|load|recheck|hit|miss|err|stopped, box, tries, note}
+var running = false, started = 0, finished = false, pausedAt = 0, pausedTotal = 0;
+var counters = { loads: 0, placeholders: 0, requeued: 0, retries: 0 };
+var pendingTimers = 0;
+var alerts = [];
+var lanes = {};
+ROUTES.forEach(function (rt) { lanes[rt.id] = { rt: rt, q: [], busy: false, stopped: null }; });
+var P = {
+  bf: { id: "bf", name: "Brandfetch", gap: CFG.bfGapMs, lanes: ["bfI", "bfT", "bfD"] },
+  ld: { id: "ld", name: "logo.dev", gap: CFG.ldGapMs, lanes: ["ldT", "ldD"] }
+};
+Object.keys(P).forEach(function (id) {
+  var p = P[id];
+  p.next = 0; p.rr = 0; p.stopped = null; p.pausedUntil = 0; p.ctl = []; p.ctlBusy = false; p.timer = null;
+  p.phase = CFG.controls ? "init" : "run"; p.initLeft = 0; p.canaryOk = false; p.loads = 0; p.lastCheck = 0; p.lastBad = 0;
+  p.sinceCheck = []; p.canaryFails = 0; p.rot = 0; p.badN = 0; p.checks = [];
+});
+
+function key(co, rt) { return co.c + "|" + rt.id; }
+function alertMsg(cls, text) { alerts.push({ cls: cls, text: text }); renderAlerts(); }
+
+// ── the grid ──
+function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function groupLabel(g) {
+  var side = g.side === "kr" ? "Korea" : "US";
+  var range = g.rank_hi === g.rank_lo ? "#" + g.rank_hi : "rank " + g.rank_hi.toLocaleString("en-US") + "–" + g.rank_lo.toLocaleString("en-US");
+  return g.id + " · " + side + " " + range + (g.census ? " (all " + g.population + ")" : " (" + g.sampled + " of " + g.population.toLocaleString("en-US") + " at random)");
+}
+function buildGrid() {
+  var grid = $("grid"), byG = {};
+  COMPS.forEach(function (co) { (byG[co.g] = byG[co.g] || []).push(co); });
+  GROUPS.forEach(function (g) {
+    if (!byG[g.id]) return;
+    var h = el("div", "grp", g.id + " ");
+    h.setAttribute("data-g", g.id);
+    h.appendChild(el("small", null, groupLabel(g).slice(g.id.length + 3)));
+    grid.appendChild(h);
+    byG[g.id].forEach(function (co) {
+      var card = el("div", "co");
+      card.setAttribute("data-g", co.g); card.setAttribute("data-s", co.s); card.id = "co-" + co.c;
+      var top = el("div");
+      top.appendChild(el("span", "nm", co.n + " "));
+      top.appendChild(el("span", "cd", co.c + " · " + (co.m || "market unknown") + " · " + co.g + " #" + co.r));
+      card.appendChild(top);
+      var ids = [];
+      if (co.s === "kr") {
+        ids.push(co.tk ? "ticker " + co.tk : "no ticker (market unknown)");
+        ids.push(co.isin ? "ISIN " + co.isin + " (" + co.isrc + ")" : "no ISIN");
+        if (co.dom) ids.push("domain " + co.dom);
+        else ids.push("no domain: " + (co.dn || "no homepage") + (co.hm ? " (" + co.hm + ")" : ""));
+      } else {
+        ids.push("ticker " + co.tk + " · no ISIN or domain source for US");
+      }
+      card.appendChild(el("div", "ids", ids.join(" · ")));
+      var th = el("div", "th");
+      ROUTES.forEach(function (rt) {
+        var fig = el("figure"), box = el("div", "box"), cap = el("figcaption", null, rt.label);
+        var ident = co[rt.f] || "";
+        var s = { s: ident ? "wait" : "na", box: box, tries: 0, ident: ident, note: "" };
+        st[key(co, rt)] = s;
+        paint(co, rt, s);
+        fig.appendChild(box); fig.appendChild(cap); th.appendChild(fig);
+      });
+      card.appendChild(th);
+      grid.appendChild(card);
+    });
+  });
+}
+var SYMBOL = { na: "–", wait: "·", load: "", recheck: "", hit: "", miss: "×", err: "!", stopped: "off" };
+function paint(co, rt, s) {
+  var b = s.box;
+  b.className = "box " + s.s;
+  if (s.s !== "hit" && s.s !== "load" && s.s !== "recheck") {
+    while (b.firstChild) b.removeChild(b.firstChild);
+    b.textContent = SYMBOL[s.s];
+  }
+  var what = { na: "no identifier", wait: "waiting", load: "loading", recheck: "first image shown; loads again to confirm",
+    hit: "logo", miss: "no logo", err: "error (timeout)", stopped: "not tested (provider stopped)" }[s.s];
+  b.title = rt.label + (s.ident ? " " + s.ident : "") + ": " + what + (s.note ? " (" + s.note + ")" : "");
+}
+function updatePick(co) {
+  var states = ROUTES.map(function (rt) { return st[key(co, rt)].s; });
+  var m = mixOf(states);
+  ROUTES.forEach(function (rt, i) { st[key(co, rt)].box.classList.toggle("pick", m.first === i); });
+}
+
+// ── loading, paced per provider, one at a time per route ──
+function pickJob(p) {
+  if (p.ctl.length && !p.ctlBusy) { p.ctlBusy = true; return p.ctl.shift(); }
+  if (p.phase !== "run") return null;
+  for (var i = 0; i < p.lanes.length; i++) {
+    var id = p.lanes[(p.rr + i) % p.lanes.length], L = lanes[id];
+    if (!L.busy && !L.stopped && L.q.length) { p.rr = (p.rr + i + 1) % p.lanes.length; L.busy = true; return L.q.shift(); }
+  }
+  return null;
+}
+function pump(p) {
+  if (p.timer) { clearTimeout(p.timer); p.timer = null; }
+  if (!running || p.stopped) { checkFinished(); return; }
+  var now = performance.now(), at = Math.max(p.next, p.pausedUntil);
+  if (now < at) { p.timer = setTimeout(function () { pump(p); }, at - now); return; }
+  if (CFG.controls && p.phase === "run" && !p.ctlBusy) maybeCheck(p);
+  var job = pickJob(p);
+  if (!job) { checkFinished(); return; }
+  p.next = now + p.gap;
+  load(p, job);
+  p.timer = setTimeout(function () { pump(p); }, p.gap);
+}
+function load(p, job) {
+  var img = new Image(), done = false, t0 = performance.now(), timer;
+  img.alt = "";
+  img.decoding = "async";
+  var url = logoUrl(p.id, job.rt.r, job.ident, KEYS[p.id], job.v);
+  function fin(ok, timedOut) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    if (timedOut) img.src = "";
+    (job.ctl ? ctlDone : jobDone)(p, job, ok, timedOut, img, t0);
+    pump(p);
+  }
+  timer = setTimeout(function () { fin(false, true); }, CFG.timeoutMs);
+  img.onload = function () { fin(true, false); };       // decoded = a logo (an SVG can report naturalWidth 0)
+  img.onerror = function () { fin(false, false); };
+  if (!job.ctl) {
+    var s = st[key(job.co, job.rt)];
+    s.s = "load";
+    while (s.box.firstChild) s.box.removeChild(s.box.firstChild);
+    s.box.appendChild(img);
+    paint(job.co, job.rt, s);
+    p.loads++;
+  }
+  counters.loads++;
+  img.src = url;
+  scheduleRender();
+}
+function releaseLane(job) { lanes[job.rt.id].busy = false; }
+function later(ms, fn) {
+  pendingTimers++;
+  setTimeout(function () { pendingTimers--; fn(); checkFinished(); }, ms);
+}
+function jobDone(p, job, ok, timedOut, img, t0) {
+  releaseLane(job);
+  var s = st[key(job.co, job.rt)];
+  if (lanes[job.rt.id].stopped) { s.s = "stopped"; }
+  else if (ok && job.rt.id === "ldD" && !job.v && CFG.recheckMs > 0) {
+    s.s = "recheck";
+    later(CFG.recheckMs, function () {
+      if (lanes.ldD.stopped) { s.s = "stopped"; paint(job.co, job.rt, s); scheduleRender(); return; }
+      lanes.ldD.q.unshift({ co: job.co, rt: job.rt, ident: job.ident, v: "2" });
+      pump(P.ld);
+    });
+  } else if (ok) {
+    s.s = "hit";
+  } else if (timedOut) {
+    s.tries++;
+    if (s.tries < 2) {
+      s.s = "wait"; s.note = "timed out once";
+      counters.retries++;
+      later(CFG.retryMs, function () { lanes[job.rt.id].q.push(job); pump(p); });
+    } else { s.s = "err"; s.note = "timed out twice"; }
+  } else {
+    s.s = "miss";
+    if (job.v) { s.note = "the first answer was a placeholder"; counters.placeholders++; }
+    p.sinceCheck.push({ job: job, t0: t0 });
+  }
+  paint(job.co, job.rt, s);
+  updatePick(job.co);
+  scheduleRender();
+}
+
+// ── checks: a known logo must load, a made-up identifier must not ──
+var BAD_TICKER = function (n) { return "ZZQX" + n.toString(36).toUpperCase() + "J"; };
+function ctl(p, kind, route, ident, purpose, extra) {
+  var j = { ctl: kind, rt: { r: route }, ident: ident, purpose: purpose };
+  for (var x in extra || {}) j[x] = extra[x];
+  return j;
+}
+function initChecks(p) {
+  var g = META.good, b = META.bad, list = [ctl(p, "canary", "ticker", g.ticker, "init")];
+  var routes = p.id === "bf" ? ["isin", "domain"] : ["domain"];
+  routes.forEach(function (r) { list.push(ctl(p, "good", r, g[r], "init")); });
+  ["ticker"].concat(routes).forEach(function (r) { list.push(ctl(p, "bad", r, b[r], "init")); });
+  p.initLeft = list.length;
+  p.ctl = p.ctl.concat(list);
+}
+function maybeCheck(p) {
+  if (p.loads - p.lastCheck >= CFG.checkEvery) {
+    p.lastCheck = p.loads;
+    p.ctl.push(ctl(p, "canary", "ticker", nextKnown(p), "periodic"));
+  } else if (p.loads - p.lastBad >= CFG.badEvery) {
+    p.lastBad = p.loads;
+    p.ctl.push(ctl(p, "bad", "ticker", BAD_TICKER(++p.badN), "periodic"));
+  }
+}
+function routeLaneFor(p, r) { return p.id + ({ ticker: "T", isin: "I", domain: "D" }[r]); }
+function stopLane(id, why) {
+  var L = lanes[id];
+  if (L.stopped) return;
+  L.stopped = why;
+  L.q.forEach(function (job) { var s = st[key(job.co, job.rt)]; s.s = "stopped"; paint(job.co, job.rt, s); });
+  L.q = [];
+}
+function stopProvider(p, why) {
+  if (p.stopped) return;
+  p.stopped = why;
+  p.lanes.forEach(function (id) { stopLane(id, why); });
+  alertMsg("bad", p.name + " stopped: " + why + " Its routes are marked 'off' (not counted).");
+  checkFinished();
+}
+// A known logo failed: the misses since the last passing check may be refusals, not "no logo". Try each once more.
+function requeueRecentMisses(p) {
+  var n = 0;
+  p.sinceCheck.forEach(function (e) {
+    var s = st[key(e.job.co, e.job.rt)];
+    if (e.job.requeued || s.s !== "miss" || lanes[e.job.rt.id].stopped) return;
+    e.job.requeued = true;
+    s.s = "wait"; s.note = "tried again after a failed check";
+    paint(e.job.co, e.job.rt, s);
+    lanes[e.job.rt.id].q.unshift(e.job);
+    n++;
+  });
+  p.sinceCheck = [];
+  counters.requeued += n;
+  return n;
+}
+function nextKnown(p) { return META.rotate.length ? META.rotate[p.rot++ % META.rotate.length] : META.good.ticker; }
+function ctlDone(p, job, ok, timedOut, img, t0) {
+  p.ctlBusy = false;
+  var label = p.name + " " + job.rt.r + " " + job.ident;
+  var init = job.purpose === "init";
+  if (job.ctl === "canary") {
+    if (ok) {
+      p.canaryFails = 0;
+      if (init) { p.canaryOk = true; p.checks.push("known logo loads"); }
+      p.sinceCheck = p.sinceCheck.filter(function (e) { return e.t0 >= t0; });
+    } else {
+      p.canaryFails++;
+      var n = requeueRecentMisses(p);
+      if (p.canaryFails >= (init ? 2 : 3)) {
+        stopProvider(p, "a known logo (" + job.ident + ") did not load " + p.canaryFails + " times in a row" +
+          (init ? " before the test (key, ad blocker, network or a block?)." : " during the test (rate limit or block?)."));
+      } else {
+        p.pausedUntil = performance.now() + (p.canaryFails === 1 ? CFG.canaryRetryMs : CFG.canaryPauseMs);
+        p.ctl.unshift(ctl(p, "canary", "ticker", nextKnown(p), job.purpose, { retry: true }));
+        alertMsg("bad", p.name + ": the known logo " + job.ident + " did not load; pausing" +
+          (n ? " and trying " + n + " recent misses again." : "."));
+      }
+    }
+  } else if (job.ctl === "good") {
+    p.checks.push(ok ? "known " + job.rt.r + " loads" : "known " + job.rt.r + " (" + job.ident + ") gave NO logo");
+  } else if (job.ctl === "bad") {
+    if (p.id === "ld" && job.rt.r === "domain" && job.v) {          // the made-up domain, loaded again
+      alertMsg(ok ? "bad" : "info", ok
+        ? "logo.dev answered a made-up domain with an image even when loaded again: its domain hits cannot be trusted."
+        : "logo.dev: the made-up domain gave no image when loaded again, so loading domain hits again catches placeholders.");
+    } else if (!ok) {
+      if (init) p.checks.push("made-up " + job.rt.r + " gives no image");
+    } else if (p.id === "ld" && job.rt.r === "domain") {
+      p.checks.push("made-up domain gave an image on the first request (the 202 placeholder), so domain hits are loaded again");
+      later(CFG.recheckMs, function () {
+        if (p.stopped) return;
+        p.ctl.push(ctl(p, "bad", "domain", job.ident, "recheck", { v: "2" }));
+        pump(p);
+      });
+    } else if (init) {
+      stopLane(routeLaneFor(p, job.rt.r), "answers a made-up identifier with an image");
+      alertMsg("bad", label + ": a made-up identifier came back as an image, so this route's hits cannot be trusted. Route not tested.");
+    } else {
+      stopProvider(p, "a made-up ticker (" + job.ident + ") came back as an image during the test, so later hits could be placeholders.");
+    }
+  }
+  if (init && !job.retry) p.initLeft--;
+  if (p.phase === "init" && p.initLeft === 0 && p.canaryOk && !p.stopped) {
+    p.phase = "run";
+    alertMsg("info", p.name + " checks: " + p.checks.join(" · ") + ".");
+  }
+  scheduleRender();
+}
+
+// ── start, pause, finish ──
+function queueAll() {
+  var order = COMPS.slice(), rnd = mulberry32(META.seed);
+  for (var i = order.length - 1; i > 0; i--) { var j = Math.floor(rnd() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; }
+  order.forEach(function (co) {
+    ROUTES.forEach(function (rt) {
+      var s = st[key(co, rt)];
+      if (s.s === "wait") lanes[rt.id].q.push({ co: co, rt: rt, ident: s.ident });
+    });
+  });
+}
+function start() {
+  if (running) return;
+  if (!started) {
+    started = performance.now();
+    queueAll();
+    if (CFG.controls) { initChecks(P.bf); initChecks(P.ld); }
+  }
+  if (pausedAt) { pausedTotal += performance.now() - pausedAt; pausedAt = 0; }
+  running = true;
+  $("start").disabled = true; $("pause").disabled = false; $("start").textContent = "Start";
+  pump(P.bf); pump(P.ld);
+  if (!ticking) { ticking = true; tick(); }
+}
+var ticking = false;
+function pause() {
+  running = false; pausedAt = performance.now();
+  $("start").disabled = false; $("pause").disabled = true; $("start").textContent = "Continue";
+  scheduleRender();
+}
+function busy() {
+  for (var id in lanes) if (lanes[id].busy || (lanes[id].q.length && !lanes[id].stopped)) return true;
+  for (var pid in P) if (!P[pid].stopped && (P[pid].ctl.length || P[pid].ctlBusy || P[pid].phase !== "run")) return true;
+  return pendingTimers > 0;
+}
+function checkFinished() {
+  if (finished || !started || busy()) return;
+  finished = true; running = false;
+  $("start").disabled = true; $("pause").disabled = true;
+  scheduleRender();
+}
+function tick() { scheduleRender(); if (!finished) setTimeout(tick, 1000); }
+function elapsed() {
+  if (!started) return 0;
+  var end = pausedAt || performance.now();
+  return Math.max(0, end - started - pausedTotal);
+}
+
+// ── summary ──
+var renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  setTimeout(function () { renderQueued = false; render(); }, 250);
+}
+// Per route: h hits, t tested (hit or miss), e with an identifier, size. Best mix: n companies decided, h with a logo.
+function tally(comps) {
+  var out = ROUTES.map(function () { return { h: 0, t: 0, e: 0, size: comps.length }; });
+  var mix = { n: 0, h: 0, size: comps.length, first: ROUTES.map(function () { return 0; }), none: 0, open: 0 };
+  comps.forEach(function (co) {
+    var states = ROUTES.map(function (rt, i) {
+      var s = st[key(co, rt)].s;
+      if (s !== "na") out[i].e++;
+      if (s === "hit" || s === "miss") out[i].t++;
+      if (s === "hit") out[i].h++;
+      return s;
+    });
+    var m = mixOf(states);
+    if (m.done) { mix.n++; if (m.hit) mix.h++; }
+    if (m.first === null) mix.none++; else if (m.first === -1) mix.open++; else mix.first[m.first]++;
+  });
+  return { routes: out, mix: mix };
+}
+function td(cls, big, small, title) {
+  return "<td" + (cls ? ' class="' + cls + '"' : "") + (title ? ' title="' + esc(title) + '"' : "") + "><b>" + big +
+    "</b><small>" + small + "</small></td>";
+}
+function cell(t, cls) {
+  if (t.size && t.e === 0) return td(cls, "–", "no id", "no company in this group has this identifier");
+  var p = share(t.h, t.t, t.e, t.size);
+  var title = t.h + " logos of " + t.t + " tested; " + t.e + " of " + t.size + " companies have this identifier";
+  if (p === null) return td(cls, "…", "0/" + t.e, title);
+  return td(cls, Math.round(100 * p) + "%", t.h + "/" + t.t + (t.t < t.e ? "…" : ""), title);
+}
+function estCell(rows, total, cls, allNa) {
+  if (allNa) return td(cls, "–", "no id", "");
+  var e = estimate(rows);
+  if (!e) return td(cls, "…", "&nbsp;", "");
+  return td(cls, Math.round(100 * e.p) + "%", "±" + Math.round(100 * e.moe) + (e.cover < total ? " partial" : ""),
+    "weighted by each group's share of all companies; ± = 95% range");
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function render() {
+  var byG = {}, rowsHtml = [], estHtml = [];
+  COMPS.forEach(function (co) { (byG[co.g] = byG[co.g] || []).push(co); });
+  var gt = {};
+  GROUPS.forEach(function (g) { if (byG[g.id]) gt[g.id] = tally(byG[g.id]); });
+  ["kr", "us"].forEach(function (side) {
+    var gs = GROUPS.filter(function (g) { return g.side === side && gt[g.id]; });
+    if (!gs.length) return;
+    var total = gs.reduce(function (a, g) { return a + g.population; }, 0);
+    var tds = ROUTES.map(function (rt, i) {
+      var allNa = gs.every(function (g) { return gt[g.id].routes[i].e === 0; });
+      return estCell(gs.map(function (g) {
+        var t = gt[g.id].routes[i];
+        return { N: g.population, n: t.t, h: t.h, f: t.size ? t.e / t.size : 0 };
+      }), total, "", allNa);
+    }).join("");
+    tds += estCell(gs.map(function (g) { var m = gt[g.id].mix; return { N: g.population, n: m.n, h: m.h }; }), total, "mix", false);
+    estHtml.push('<tr class="est"><td class="lab"><b>' + (side === "kr" ? "KR" : "US") + " all (est.)</b><small>" +
+      total.toLocaleString("en-US") + " companies</small></td>" + tds + "</tr>");
+  });
+  GROUPS.forEach(function (g, gi) {
+    if (!gt[g.id]) return;
+    var t = gt[g.id], sep = GROUPS[gi + 1] && GROUPS[gi + 1].side !== g.side ? ' class="sep"' : "";
+    var range = g.census ? "top " + g.population : "#" + g.rank_hi.toLocaleString("en-US") + "–" + g.rank_lo.toLocaleString("en-US");
+    rowsHtml.push("<tr" + sep + '><td class="lab"><b>' + g.id + "</b><small>" + range + "</small></td>" +
+      t.routes.map(function (r) { return cell(r, ""); }).join("") +
+      cell({ h: t.mix.h, t: t.mix.n, e: t.mix.size, size: t.mix.size }, "mix") + "</tr>");
+  });
+  $("sumtable").innerHTML = "<thead><tr><th>Group</th>" + ROUTES.map(function (rt) {
+    return "<th>" + rt.label.replace(" ", "<br>") + "</th>";
+  }).join("") + "<th>Best<br>mix</th></tr></thead><tbody>" + estHtml.join("") + rowsHtml.join("") + "</tbody>";
+
+  var fh = [];
+  ["kr", "us"].forEach(function (side) {
+    var cs = COMPS.filter(function (co) { return co.s === side; });
+    if (!cs.length) return;
+    var m = tally(cs).mix;
+    fh.push("<b>" + side.toUpperCase() + " first hit</b> (" + cs.length + "): " + ROUTES.map(function (rt, i) {
+      return rt.label + " " + m.first[i];
+    }).join(" · ") + " · none " + m.none + (m.open ? " · open " + m.open : ""));
+  });
+  $("firsthit").innerHTML = fh.join("<br>");
+
+  var all = 0, fin = 0, rech = 0, err = 0, off = 0;
+  for (var k in st) {
+    var s = st[k].s;
+    if (s === "na") continue;
+    all++;
+    if (s === "hit" || s === "miss") fin++;
+    if (s === "recheck") rech++;
+    if (s === "err") err++;
+    if (s === "stopped") off++;
+  }
+  var t = Math.round(elapsed() / 1000), mm = Math.floor(t / 60), ss = ("0" + (t % 60)).slice(-2);
+  var line = (finished ? "Finished. " : !started ? "Not started. " : running ? "Running. " : "Paused. ") +
+    "Loads done " + fin.toLocaleString("en-US") + " / " + all.toLocaleString("en-US") +
+    (rech ? " · " + rech + " waiting to load again" : "") + (err ? " · errors " + err : "") +
+    (off ? " · not tested " + off : "") + (counters.placeholders ? " · placeholders caught " + counters.placeholders : "") +
+    (counters.requeued ? " · tried again " + counters.requeued : "") +
+    " · requests " + counters.loads.toLocaleString("en-US") + " · " + mm + ":" + ss +
+    " · Brandfetch ≤" + (1000 / CFG.bfGapMs).toFixed(0) + "/s, logo.dev ≤" + (1000 / CFG.ldGapMs).toFixed(0) + "/s";
+  $("progress").textContent = line;
+  if (finished) applyFilter();
+}
+function renderAlerts() {
+  $("alerts").innerHTML = alerts.map(function (a) { return '<p class="' + a.cls + '">' + esc(a.text) + "</p>"; }).join("");
+}
+
+// ── filters ──
+var filter = "all";
+var FILTERS = [["all", "All"], ["none", "No logo"], ["kr", "Korea"], ["us", "US"]].concat(
+  GROUPS.map(function (g) { return [g.id, g.id]; }));
+function applyFilter() {
+  var cards = document.querySelectorAll(".co"), heads = document.querySelectorAll(".grp");
+  var byCode = {};
+  COMPS.forEach(function (co) { byCode[co.c] = co; });
+  Array.prototype.forEach.call(cards, function (c) {
+    var co = byCode[c.id.slice(3)], show = true;
+    if (filter === "kr" || filter === "us") show = co.s === filter;
+    else if (filter === "none") {
+      var m = mixOf(ROUTES.map(function (rt) { return st[key(co, rt)].s; }));
+      show = m.done && !m.hit;
+    } else if (filter !== "all") show = co.g === filter;
+    c.classList.toggle("hide", !show);
+  });
+  Array.prototype.forEach.call(heads, function (h) {
+    var g = h.getAttribute("data-g"), show = filter === "all" || filter === "none" || filter === g ||
+      (filter === "kr" && g.indexOf("KR") === 0) || (filter === "us" && g.indexOf("US") === 0);
+    h.classList.toggle("hide", !show);
+  });
+}
+function buildFilters() {
+  var box = $("filters");
+  FILTERS.forEach(function (f) {
+    var b = el("button", "ghost" + (f[0] === filter ? " on" : ""), f[1]);
+    b.type = "button";
+    b.addEventListener("click", function () {
+      filter = f[0];
+      Array.prototype.forEach.call(box.children, function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      applyFilter();
+    });
+    box.appendChild(b);
+  });
+}
+
+// ── boot ──
+buildGrid();
+buildFilters();
+$("meta").textContent = "Data: Korea close " + META.pxDate + ", US close " + META.usPxDate + " (data.json of " + META.asOf +
+  ") · sample seed " + META.seed + " · " + COMPS.length + " companies drawn from " +
+  META.population.kr.toLocaleString("en-US") + " Korean and " + META.population.us.toLocaleString("en-US") +
+  " US companies with a market cap" + (DATA.leftOut.length ? " (" + DATA.leftOut.length + " without one left out)" : "") +
+  " · page built " + META.builtAt;
+(function plan() {
+  var n = {};
+  ROUTES.forEach(function (rt) { n[rt.id] = COMPS.filter(function (co) { return co[rt.f]; }).length; });
+  var bf = n.bfI + n.bfT + n.bfD, ld = n.ldT + n.ldD;
+  var minutes = Math.ceil(Math.max(bf * CFG.bfGapMs, (ld + n.ldD) * CFG.ldGapMs + CFG.recheckMs) / 60000) + 1;
+  $("plan").textContent = "This sample: " + bf.toLocaleString("en-US") + " Brandfetch loads and " + ld.toLocaleString("en-US") +
+    " logo.dev loads (plus up to " + n.ldD + " second loads of domain hits and a few checks), about " + minutes + " minutes.";
+})();
+$("start").addEventListener("click", start);
+$("pause").addEventListener("click", pause);
+render();
+window.__logoTest = { state: st, counters: counters, providers: P, lanes: lanes, cfg: CFG,
+  finished: function () { return finished; }, tally: tally, comps: COMPS };
+if (CFG.autostart) start();
+})();
+</script>
+</body>
+</html>
