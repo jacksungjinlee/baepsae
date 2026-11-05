@@ -7,7 +7,7 @@ import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
-import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText } from "./data.js";
+import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1487,7 +1487,13 @@ export function DcfCard({ c, sharesM, setExplain }) {
   const N = +ni0 || null, S = +shm || null;
   const val = dcfPerShare({ ni0: N, sharesM: S, g1, fade, disc, term });
   const gap = val && c.price ? (val / c.price - 1) * 100 : null;
-  const rev = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
+  const rev0 = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
+  // 수렴 칸이 켜져 있을 때(기본)의 문장 (data.js). 만들 수 없으면 리버스 DCF 칸을 빼고 console 에 남겨요 (빈 칸을 보여 주지 않게)
+  const revText = rev0 && fade ? krRevDcfText(rev0) : null;
+  const revNote = rev0 && fade && !rev0.edge ? krRevDcfNote(term) : null;
+  const revBad = !!rev0 && fade && !revText;
+  const rev = revBad ? null : rev0;
+  useEffect(() => { if (revBad) console.warn(`[뱁새] 리버스 DCF 문장을 만들지 못해 칸을 뺐어요 (${c.t}): ${JSON.stringify(rev0)}`); }, [revBad, c.t, rev0]);
   // 리버스 DCF 옆의 매출 성장 문장 (Jack, 2026-11-05: 줄표 없이, 부호 없는 숫자로 늘었어요 · 줄었어요, 0.0% 면 거의 변하지 않았어요). 기준을 모르면 빼요.
   const growthLine = krGrowthDcfLine(c.g3, c.rev);
 
@@ -1556,12 +1562,22 @@ export function DcfCard({ c, sharesM, setExplain }) {
                 <span style={{ fontSize: 12, fontWeight: 800, color: C.apricotDeep }}>리버스 DCF</span>
                 <button onClick={() => setExplain("rev")} style={{ fontSize: 9, color: C.apricotDeep, background: "#fff", border: "none", borderRadius: 999, width: 15, height: 15, cursor: "pointer", fontWeight: 800, fontFamily: FONT }}>?</button>
               </div>
-              {/* 2.0 '지금 가격이 가정하는 것'과 같은 문장 (Jack, 2026-11-05, data.js krRevDcfText). 첫 문장은 마침표 없이 한 줄, 매출 문장은 그 아래.
-                  줄은 2.0 처럼 낱말 사이에서만 바꿔요 (keep-all: '있어요'의 '요'만 다음 줄로 넘어가지 않게) */}
-              <div data-rev-dcf={rev.edge || "g"} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5, wordBreak: "keep-all", overflowWrap: "break-word" }}>
-                {rev.edge ? krRevDcfText(rev)
-                  : <><b style={{ display: "block" }}>{krRevDcfText(rev)}</b>{growthLine && <span style={{ display: "block", marginTop: 4 }}>{growthLine}</span>}</>}
-              </div>
+              {fade ? (
+                /* 수렴 칸이 켜져 있으면(기본) 2.0 '지금 가격이 가정하는 것'과 같은 계산이라 그 문장 그대로 (Jack, 2026-11-05, data.js krRevDcfText):
+                   첫 문장은 마침표 없이 한 줄, 매출 문장(PR #47), 2.0 의 설명 줄(영구성장률). 줄은 2.0 처럼 낱말 사이에서만 바꿔요 (keep-all) */
+                <div data-rev-dcf={rev.edge || "g"} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5, wordBreak: "keep-all", overflowWrap: "break-word" }}>
+                  {rev.edge ? revText
+                    : <><b style={{ display: "block" }}>{revText}</b>{growthLine && <span style={{ display: "block", marginTop: 4 }}>{growthLine}</span>}
+                      {revNote && <span data-rev-dcf-note="" style={{ display: "block", marginTop: 6, fontSize: 11, color: C.sub, lineHeight: 1.6 }}>{revNote}</span>}</>}
+                </div>
+              ) : (
+                /* 수렴 칸을 끄면 5년 내내 같은 증가율이라 '첫해' 문장이 맞지 않아요: 예전 문장 그대로 */
+                <div data-rev-dcf-flat={rev.edge || "g"} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5 }}>
+                  {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
+                    : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
+                    : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요.{growthLine ? " " + growthLine : null}</>}
+                </div>
+              )}
             </div>
           )}
           {N != null && N <= 0 && <Sub style={{ color: C.coral, fontSize: 11 }}>순이익이 0 이하라 이 단순 모형으로는 계산할 수 없어요. 흑자 전환 가정을 직접 입력해보거나, 이 회사엔 다른 지표가 필요해요.</Sub>}

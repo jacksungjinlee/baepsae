@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """예전 뱁새 문구 (Jack 승인 2026-11-05): 기업분석 리버스 DCF · 3개월 주가 줄 · 주가가 그대로일 때.
 
-- 리버스 DCF 는 2.0 '지금 가격이 가정하는 것'과 같은 계산이에요 (첫해 증가율이 5년에 걸쳐 영구성장률로 바뀌고, 첫해 범위
-  −30% ~ +60%). 그래서 2.0 의 승인된 문장(src/copy/v2.js co.dcf.headUp · headDown · high · low)을 반올림 · 0 · 문장부호까지
-  그대로 써요. 같은 입력이면 두 앱의 문장이 글자 하나까지 같아요. 예전 첫 문장의 '(이후 2%)' 는 빠지고, 매출 문장(PR #47)은 남아요.
+- 리버스 DCF 는 '성장률이 5년에 걸쳐 영구성장률로 수렴' 칸이 켜져 있으면(기본) 2.0 '지금 가격이 가정하는 것'과 같은 계산이에요
+  (첫해 증가율이 5년에 걸쳐 영구성장률로 바뀌고, 첫해 범위 −30% ~ +60%). 그래서 2.0 의 승인된 문장(src/copy/v2.js co.dcf.headUp ·
+  headDown · high · low · note)을 반올림 · 0 · 문장부호까지 그대로 써요. 같은 입력이면 두 앱의 문장이 글자 하나까지 같아요 (예전 카드는
+  주식 수를 0.1 백만주로 반올림해서 받아서, 실제 화면에서는 종목에 따라 소수 첫째 자리가 다를 수 있어요: 이 PR 밖). 예전 첫 문장의
+  '(이후 2%)' 대신 2.0 처럼 설명 줄이 영구성장률을 보여요. 매출 문장(PR #47)은 남아요. 칸을 끄면(5년 내내 같은 증가율) 예전 문장 그대로.
 - 성적표(첫 화면 검색)와 기업분석의 3개월 줄 (실적은 좋아졌는데 주가가 15% 넘게 내렸을 때):
   '실적은 좋아졌는데 3개월간 x% 내렸어요. 시장이 무엇을 걱정하는지 살펴볼 만해요.' x 는 부호 없이, 줄표 없이.
 - 보이는 주가 변화가 0 이면 '+0% 올랐어요' 대신 '지난 3년 주가는 거의 변하지 않았어요.'
@@ -11,7 +13,6 @@
 """
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -22,7 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"OLD": "src/corp.jsx", "SH": "src/shell.jsx", "D": "src/data.js", "K": "src/v2/company.js", "F": "src/v2/cofmt.js",
-        "CP": "src/copy/v2.js"}
+        "CP": "src/copy/v2.js", "FM": "src/v2/format.js"}
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v2", "corp.json")
 DASHES = ("-", "−", "–", "—")                    # 빼기 · 마이너스 · 줄표 어느 것도 없어요
 
@@ -31,6 +32,7 @@ DOWN = "지금 주가에는 이익이 첫해 {g}% 준다는 가정이 담겨 있
 HIGH = "지금 주가가 맞으려면 이익이 첫해 60% 넘게 늘어야 해요."
 LOW = "지금 주가는 이익이 첫해 30% 넘게 준다고 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)가 있을 수 있어요."
 GROWTH = "이 회사 매출은 최근 2년 동안 연평균 13.5% 늘었어요. 지금 주가가 가정하는 성장률과 비교해 보세요."   # 삼성전자 g3 13.5 (PR #47)
+NOTE = "예측이 아니라 지금 가격을 거꾸로 읽은 숫자예요. 증가율은 5년에 걸쳐 {t}%까지 바뀐다고 놓고 계산했어요."
 FELL = "실적은 좋아졌는데 3개월간 {x}% 내렸어요. 시장이 무엇을 걱정하는지 살펴볼 만해요."
 FELL_EN = "Earnings improved but the stock fell {x}% in 3 months. It may be worth asking what the market is worried about."
 
@@ -55,7 +57,7 @@ def bundle():
 def run(tmp, body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react'; import fs from 'fs';\n"
-            "const { OLD, SH, D, K, F, CP } = B; const C2 = CP.C;\n"
+            "const { OLD, SH, D, K, F, CP, FM } = B; const C2 = CP.C;\n"
             # 2.0 시험 데이터의 corp.json (실제 발행본의 한국 종목 331개): 명령줄에 넣기엔 커서 파일에서 읽어요
             f"const CORP = JSON.parse(fs.readFileSync({json.dumps(FIXTURE)}, 'utf8'));\n"
             # 그린 화면의 글자: 주석(<!-- -->)은 지우고, 태그마다 줄을 나눠요
@@ -98,9 +100,24 @@ def test_reverse_dcf_sentence_rounds_like_2_0_for_every_rate(bundle):
     assert not any(s.endswith(".") for s in want[:19])                           # 첫 문장은 2.0 처럼 마침표 없이 (카드에서 한 줄)
 
 
+def test_reverse_dcf_note_is_2_0s_note_with_the_same_rate_format(bundle):
+    """첫 문장 아래 설명 줄은 2.0 의 co.dcf.note 그대로, {t} 는 2.0 cotabs 의 pctNum 그대로 (2 → 2, 2.5 → 2.5, 0 → 0)."""
+    ts = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]
+    got = run(bundle, "out = T.map((t) => [D.krRevDcfNote(t), FM.fill(C2.co.dcf.note, { t: FM.nf(t, t % 1 ? 1 : 0) })])"
+                      ".concat([[D.krRevDcfNote(NaN), null], [D.krRevDcfNote(null), null], [D.krRevDcfNote(undefined), null]]);", T=ts)
+    for old, new in got:
+        assert old == new, (old, new)
+    assert [o for o, _ in got] == [NOTE.format(t=t) for t in ("0", "0.5", "1", "1.5", "2", "2.5", "3", "3.5", "4")] + [None] * 3
+    for o, _ in got[:-3]:
+        no_dash(o)
+    tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    assert "const pctNum = (v) => nf(v, v % 1 ? 1 : 0);" in tabs and "<Note>{fill(D.note, { t: pctNum(a.term) })}</Note>" in tabs   # 2.0 이 바뀌면 여기서 알아요
+
+
 def test_reverse_dcf_card_says_what_2_0_says_for_the_same_stock(bundle):
-    """같은 회사 · 같은 주가 · 같은 가정(할인율 10%, 영구성장률 2%, 증가율이 5년에 걸쳐 바뀜)이면 예전 카드와 2.0 카드가 같은 문장을
-    보여요: 첫해 증가율 > 0 · < 0 · 0 · 범위 위(60% 넘게) · 범위 아래(30% 넘게 줄어도). 예전 카드는 첫 문장 아래에 매출 문장(PR #47)."""
+    """같은 입력(순이익 · 주식 수 · 주가 · 할인율 10% · 영구성장률 2% · 증가율이 5년에 걸쳐 바뀜)이면 예전 카드와 2.0 카드가 같은 문장을
+    보여요: 첫해 증가율 > 0 · < 0 · 0 · 범위 위(60% 넘게) · 범위 아래(30% 넘게 줄어도). 예전 카드는 첫 문장 아래에 매출 문장(PR #47)과
+    2.0 의 설명 줄. 실제 화면의 예전 카드는 주식 수를 0.1 백만주로 반올림해 받아서 같은 입력이 되도록 주식 수를 100.0 으로 둬요."""
     sam = samsung()
     co = {**sam, "shm": 100.0}                                                   # 예전 카드는 주식 수를 0.1 백만주로 반올림해서 받아요: 같은 입력이 되게
     got = run(bundle, """
@@ -122,7 +139,7 @@ def test_reverse_dcf_card_says_what_2_0_says_for_the_same_stock(bundle):
         if k in ("high", "low"):
             assert g["edge"] == k and g["box"] == {"kind": k, "lines": [w]}, (k, g)    # 범위 밖: 그 문장 하나만
         else:
-            assert g["box"] == {"kind": "g", "lines": [w, GROWTH]}, (k, g)         # 첫 문장 한 줄, 매출 문장은 그 아래
+            assert g["box"] == {"kind": "g", "lines": [w, GROWTH, NOTE.format(t="2")]}, (k, g)   # 첫 문장 한 줄, 매출 문장, 2.0 의 설명 줄
         for line in g["box"]["lines"]:
             no_dash(line)
         for old in ("향후 5년 연", "(이후", "역성장", "정당화하려면", "근거가 있는지가 질문이에요", "를 봐야 해요."):
@@ -187,14 +204,27 @@ def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
         assert bad not in got["zero"][0] and bad not in got["negZero"][0], bad
 
 
-def test_built_old_app_carries_the_new_sentences_and_none_of_the_old_ones():
+# 수렴 칸을 끈 경우(5년 내내 같은 증가율)의 예전 문장: 그 계산에는 '첫해' 문장이 맞지 않아서 글자 하나 바꾸지 않고 남겨요
+FLAT_BRANCH = """                  {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
+                    : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
+                    : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요.{growthLine ? " " + growthLine : null}</>}"""
+
+
+def test_built_old_app_carries_the_new_sentences_and_the_old_ones_only_where_fade_is_off():
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
-    for s in ("는다는 가정이 담겨 있어요", "준다는 가정이 담겨 있어요", HIGH, LOW, "지금 주가에는 이익이 첫해 ",
+    for s in ("는다는 가정이 담겨 있어요", "준다는 가정이 담겨 있어요", HIGH, LOW, "지금 주가에는 이익이 첫해 ", NOTE.split("{t}")[0],
               "% 내렸어요. 시장이 무엇을 걱정하는지 살펴볼 만해요.", "실적은 좋아졌는데 3개월간 ", "지난 3년 주가는 거의 변하지 않았어요."):
         assert s in built, s
-    for old in ("향후 5년 연 ", "역성장을 가정해도", "정당화하려면 5년간", "그만한 근거가 있는지가 질문이에요", "(이후 ",
-                "시장이 무엇을 걱정하는지 볼 대목이에요", "시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요", "연간 실적은 개선됐는데 최근 3개월 주가는"):
+    for old in ("시장이 무엇을 걱정하는지 볼 대목이에요", "시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요", "연간 실적은 개선됐는데 최근 3개월 주가는"):
         assert old not in built, old
+    for old in ("향후 5년 연 ", "역성장을 가정해도", "정당화하려면 5년간", "그만한 근거가 있는지가 질문이에요", "(이후 "):
+        assert built.count(old) == 1, old                                       # 수렴 칸을 끈 경우의 예전 문장 한 곳에만
     corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
-    assert corp.count("krRevDcfText(rev)") == 2                                 # 범위 밖 · 첫 문장 모두 data.js 에서
-    assert re.search(r"rev\.g\.toFixed|rev\.g\b", corp) is None                 # 카드가 숫자를 따로 만들지 않아요
+    assert corp.count(FLAT_BRANCH) == 1                                          # 예전 문장은 글자 그대로
+    on, off = corp.index("{fade ? ("), corp.index("data-rev-dcf-flat=")
+    assert on < off < corp.index(FLAT_BRANCH)                                    # 그 문장은 수렴 칸을 끈 쪽에만
+    fade_on = corp[on:off]
+    assert "rev.g" not in fade_on and "revText" in fade_on and "revNote" in fade_on   # 켜진 쪽은 data.js 의 문장만
+    assert "const revText = rev0 && fade ? krRevDcfText(rev0) : null;" in corp
+    assert "const revNote = rev0 && fade && !rev0.edge ? krRevDcfNote(term) : null;" in corp
+    assert "const rev = revBad ? null : rev0;" in corp and "console.warn(`[뱁새] 리버스 DCF 문장을 만들지 못해 칸을 뺐어요" in corp   # 빈 칸 대신 빼고 남겨요

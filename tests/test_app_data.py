@@ -710,7 +710,7 @@ def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_das
     assert '지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}.' in corp
     detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
     assert "}, [open, s && s.t, x.g3, x.g3Kr]);" in detail                          # 오늘 데이터가 늦게 들어와도 다시 맞춰 봐요
-    assert "const growthLine = krGrowthDcfLine(c.g3, c.rev);" in corp and '{growthLine && <span style={{ display: "block", marginTop: 4 }}>{growthLine}</span>}' in corp
+    assert "const growthLine = krGrowthDcfLine(c.g3, c.rev);" in corp and '이 담겨 있어요.{growthLine ? " " + growthLine : null}' in corp
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
     assert "지금 주가가 가정하는 성장률과 비교해 보세요." in built and "거의 변하지 않았어요" in built and "최근 2년간 연평균" in built
     assert "이 회사 매출은 최근 " in built and "연평균 " in built and " 동안 거의 변하지 않았어요." in built   # 리버스 DCF 문장 조각
