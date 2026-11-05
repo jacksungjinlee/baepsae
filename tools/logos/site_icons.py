@@ -1660,13 +1660,13 @@ def decide(recs, raw_dir):
         if min(img.size) < MIN_SIDE:
             d["decision"], d["reason"] = "too_small", best.get("note") or f"{best.get('original_size')} < {MIN_SIDE}"
             continue
-        b = builder_reason(d["final_url"], dom) or title_reason(r.get("title", ""))
-        if b or best.get("result") == "builder":
-            d["decision"], d["reason"] = "generic", "(b) " + (b or best.get("note", ""))
+        b = builder_reason(d["final_url"], dom) or title_reason(r.get("title", ""))    # today's rules decide,
+        if b:                                                                           # not the collection's notes
+            d["decision"], d["reason"] = "generic", "(b) " + b
             continue
         blank = blank_reason(img)
-        if blank or best.get("result") == "blank":
-            d["decision"], d["reason"] = "generic", "(c) " + (blank or best.get("note", ""))
+        if blank:
+            d["decision"], d["reason"] = "generic", "(c) " + blank
             continue
         up = upscaled_from(img)
         if up:

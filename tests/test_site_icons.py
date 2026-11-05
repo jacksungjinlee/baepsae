@@ -868,6 +868,21 @@ def test_decisions_and_written_files(tmp_path):
     assert c[("domains", ">= 96 px")] == c[("domains", "generic rejected")] + c[("domains", "kept")] == 6
 
 
+def test_decide_uses_todays_rules_not_the_verdict_noted_while_collecting(tmp_path, monkeypatch):
+    raw = tmp_path / "raw"
+    url = "https://static.wixstatic.com/shapes/abc.png"
+    routes = {"https://www.own.co.kr/robots.txt": OK_ROBOTS,
+              "https://www.own.co.kr/": (200, HTML, html_page(f'<link rel="apple-touch-icon" href="{url}">')),
+              "https://static.wixstatic.com/robots.txt": OK_ROBOTS, url: (200, PNGH, png(logo()))}
+    today = si.BUILDER_HOSTS
+    monkeypatch.setattr(si, "BUILDER_HOSTS", (("Wix", ("wixstatic.com",), r"^/media/", ()),))   # an older, stricter rule
+    rec, _ = collect(routes, domain="own.co.kr", hm="www.own.co.kr", tmp=raw)
+    assert rec["candidates"][0]["result"] == "builder"
+    monkeypatch.setattr(si, "BUILDER_HOSTS", today)          # today's rule: /shapes/ is the site's own upload
+    dec, imgs = si.decide({"own.co.kr": rec}, raw)
+    assert dec["own.co.kr"]["decision"] == "kept" and "own.co.kr" in imgs
+
+
 def test_load_items_one_per_domain_preferred_shares_follow_and_opt_outs_are_left_out(tmp_path):
     csvp = tmp_path / "hp.csv"
     csvp.write_text("code,corp_code,via,name_en,corp_cls,hm_url,domain,domain_ok,domain_note,fetched_at,status\n"
