@@ -560,41 +560,70 @@ def test_unreadable_saved_slot_is_not_opened():
     assert got[11] == "WHY 저장소에서 읽다가 오류가 났어요 (localStorage: SecurityError)", got[11]   # 진짜 이유를 남겨요
 
 
-# ── 미국 종목의 매출성장 이름표 (Jack 승인 2026-11-05) ───────────────────────
+# ── 매출성장 이름표: 미국 최근 분기 · 한국 최근 2년 연평균 / 최근 1년 (Jack 승인 2026-11-05) ─────────────
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
-def test_us_revenue_growth_is_labelled_as_the_latest_quarter_year_on_year():
-    """오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth (최근 분기 매출 ÷ 1년 전 같은 분기). 그래서 '매출성장(3y)' · '%/y' 가 아니라
-    '매출성장(최근 분기, 1년 전 대비)' / 'Rev growth (latest qtr y/y)' 에 % 로 보여요. 한국 종목과 오늘 데이터에 없는 내장 예시 값은
-    예전 그대로예요."""
+def test_revenue_growth_is_labelled_by_how_it_was_calculated():
+    """오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth (최근 분기 매출 ÷ 1년 전 같은 분기), 한국 종목 g3 는 최근 2년 연평균
+    (전전기 매출이 없으면 최근 1년). 그래서 '매출성장(3y)' · '%/y' 는 어디에도 없어요. 한국은 계산 기준을 corp.json 매출로 맞춰 본
+    뒤에만 이름표를 붙이고(모르면 칸을 빼요), 오늘 데이터에 없는 내장 예시 값도 빼요."""
     base = [{"t": "AAPL", "nk": "애플", "ne": "Apple", "s": "elec", "cls": "us", "ccy": "USD", "price": 232, "beta": 1.1, "vol": 26,
              "x": {"g3": 6}},
             {"t": "MSFT", "nk": "마이크로소프트", "ne": "Microsoft", "s": "it", "cls": "us", "ccy": "USD", "price": 420, "beta": 1.0,
              "vol": 24, "x": {"g3": 14}},
-            {"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "cls": "kr", "price": 78000, "beta": 1.1, "vol": 30}]
-    base.append({"t": "AAPL2", "nk": "애플2", "ne": "Apple2", "s": "elec", "cls": "us", "ccy": "USD", "price": 1, "beta": 1, "vol": 20})
+            {"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "cls": "kr", "price": 78000, "beta": 1.1, "vol": 30},
+            {"t": "AAPL2", "nk": "애플2", "ne": "Apple2", "s": "elec", "cls": "us", "ccy": "USD", "price": 1, "beta": 1, "vol": 20}]
     live = [{"t": "AAPL", "cls": "us", "price": 349.5, "beta": 1.2, "vol": 25, "g3": 11.7},
             {"t": "AAPL2", "price": 2, "beta": 1, "vol": 20, "g3": 5.0},                 # 오늘 데이터에 cls 가 없어도 내장 목록이 미국이면 미국
             {"t": "NVDA", "nk": "NVIDIA", "cls": "us", "ccy": "USD", "price": 190, "beta": 1.8, "vol": 50, "g3": -3.2},
-            {"t": "005930", "cls": "kr", "price": 218000, "beta": 1.26, "vol": 51, "g3": 13.5}]
+            {"t": "005930", "cls": "kr", "price": 218000, "beta": 1.26, "vol": 51, "g3": 13.5},
+            {"t": "000660", "nk": "SK하이닉스", "cls": "kr", "price": 1, "beta": 1, "vol": 30, "g3": 40.0}]
     got = run_js(f"const out = D.mergeStocks({json.dumps(base, ensure_ascii=False)}, {json.dumps(live, ensure_ascii=False)});"
                  "console.log(JSON.stringify(Object.fromEntries(out.map((s) => [s.t, s.x]))));")
     assert got["AAPL"]["g3Q"] is True and got["AAPL"]["g3"] == 11.7 and got["NVDA"]["g3Q"] is True and got["AAPL2"]["g3Q"] is True
-    assert got["005930"]["g3Q"] is False and not got["MSFT"].get("g3Q")                # 한국 · 오늘 데이터에 없는 내장 예시 값
-    T = {"g3": {"ko": "매출성장(3y)", "en": "Rev growth 3y"}, "g3Us": {"ko": "매출성장(최근 분기, 1년 전 대비)", "en": "Rev growth (latest qtr y/y)"}}
+    assert got["005930"]["g3Kr"] is True and got["000660"]["g3Kr"] is True and got["005930"]["g3Q"] is False
+    assert not got["MSFT"].get("g3Q") and not got["MSFT"].get("g3Kr")                  # 오늘 데이터에 없는 내장 예시 값
+    T = {"g3Us": {"ko": "매출성장(최근 분기, 1년 전 대비)", "en": "Rev growth (latest qtr y/y)"},
+         "g3Kr2": {"ko": "매출성장(최근 2년 연평균)", "en": "Rev growth (2-yr avg/yr)"}, "g3Kr1": {"ko": "매출성장(최근 1년)", "en": "Rev growth (1 yr)"}}
     cells = run_metrics("const T = " + json.dumps(T, ensure_ascii=False) + ";"
                         "const out = {};"
                         "for (const lang of ['ko', 'en']) { const t = (k) => T[k][lang];"
                         " out[lang] = [D.growthCell({ g3: 11.7, g3Q: true }, t), D.growthCell({ g3: -3.2, g3Q: true }, t),"
-                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: 13.5, g3Q: false }, t), D.growthCell({ g3: 6 }, t),"
-                        " D.growthCell(undefined, t)]; }"
+                        " D.growthCell({ g3: 13.5, g3Kr: true }, t, 'y2'), D.growthCell({ g3: 40, g3Kr: true }, t, 'y1'),"
+                        " D.growthCell({ g3: 13.5, g3Kr: true }, t, null), D.growthCell({ g3: 6 }, t), D.growthCell(undefined, t),"
+                        " D.growthCell({ g3: null, g3Q: true }, t)]; }"
                         "console.log(JSON.stringify(out));")
     assert cells["ko"] == [["매출성장(최근 분기, 1년 전 대비)", "+11.7%"], ["매출성장(최근 분기, 1년 전 대비)", "-3.2%"],
-                           ["매출성장(최근 분기, 1년 전 대비)", "–"], ["매출성장(3y)", "+13.5%/y"], ["매출성장(3y)", "+6%/y"],
-                           ["매출성장(3y)", "–"]], cells["ko"]
-    assert [c[0] for c in cells["en"]] == ["Rev growth (latest qtr y/y)"] * 3 + ["Rev growth 3y"] * 3
+                           ["매출성장(최근 2년 연평균)", "+13.5%"], ["매출성장(최근 1년)", "+40%"], None, None, None,
+                           ["매출성장(최근 분기, 1년 전 대비)", "–"]], cells["ko"]
+    assert cells["en"][2][0] == "Rev growth (2-yr avg/yr)" and cells["en"][3][0] == "Rev growth (1 yr)" and cells["en"][0][0] == "Rev growth (latest qtr y/y)"
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
-    assert 'g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }' in src
-    assert 'growthCell(x, t), [t("debt")' in src                                       # 화면의 매출성장 칸은 growthCell 로만
-    assert src.count('[t("g3"), (x.g3 > 0') == 1 and src.count('t("g3Us")') == 1           # 예전 이름표 칸은 growthCell 안에만
+    assert 'g3Kr2: { ko:"매출성장(최근 2년 연평균)", en:"Rev growth (2-yr avg/yr)" }, g3Kr1: { ko:"매출성장(최근 1년)", en:"Rev growth (1 yr)" }' in src
+    assert 'growthCell(x, t, g3Basis), [t("debt")' in src and ".filter(Boolean).map(([k, v]) =>" in src   # 기준을 모르면 칸이 빠져요
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
-    assert "매출성장(최근 분기, 1년 전 대비)" in built and "Rev growth (latest qtr y/y)" in built
+    for label in ("매출성장(최근 분기, 1년 전 대비)", "Rev growth (latest qtr y/y)", "매출성장(최근 2년 연평균)", "Rev growth (2-yr avg/yr)",
+                  "매출성장(최근 1년)", "Rev growth (1 yr)"):
+        assert label in built, label
+    # 매출 성장을 '3년'이라고 부르는 곳이 예전 앱 어디에도 없어요 (이름표 · 설명 · 문장, 한국어 · 영어)
+    for bad in ("매출성장(3y)", "Rev growth 3y", "3년 매출 성장률", "매출 성장률 (3년", "최근 3년 성장률", "3년간 연평균", "a year over 3 years",
+                "사분면 · 3년 연평균", 'sub="3년 연평균', "업종의 3년"):
+        assert bad not in built, bad
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_korean_growth_basis_matches_2_0_on_todays_data():
+    """예전 뱁새의 data.js krGrowthBasis 는 2.0 의 engine.growthBasis 와 같은 규칙이에요 (오늘 data.json · corp.json 의 모든 한국 종목)."""
+    code = ("import * as D from './src/data.js'; import * as E from './src/v2/engine.js'; import fs from 'fs';"
+            "const d = JSON.parse(fs.readFileSync('./data.json', 'utf8')); const c = JSON.parse(fs.readFileSync('./corp.json', 'utf8'));"
+            "const co = new Map(c.companies.map((x) => [x.t, x])); const out = { n: 0, diff: [], y2: 0, y1: 0, none: 0 };"
+            "for (const s of d.stocks) { if (s.cls !== 'kr' || s.g3 == null) continue; const k = co.get(s.t); out.n++;"
+            " const a = D.krGrowthBasis(s.g3, k ? k.rev : null), b = E.growthBasis(s, k || null); if (a !== b) out.diff.push(s.t);"
+            " out[a || 'none']++; }"
+            "console.log(JSON.stringify(out));")
+    r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    assert got["n"] > 1000 and got["diff"] == [], got
+    assert got["y2"] > got["y1"] >= 0, got
+    edge = run_js("console.log(JSON.stringify([D.krGrowthBasis(41.4, [200, 150, 100]), D.krGrowthBasis(33.3, [200, 150, null]),"
+                  " D.krGrowthBasis(10, [200, 150, 100]), D.krGrowthBasis(null, [1, 1, 1]), D.krGrowthBasis(5, null)]));")
+    assert edge == ["y2", "y1", None, None, None], edge

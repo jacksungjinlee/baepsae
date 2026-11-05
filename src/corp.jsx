@@ -7,7 +7,7 @@ import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
-import { loadJson } from "./data.js";
+import { loadJson, krGrowthBasis } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -41,8 +41,8 @@ const ChipBtn = ({ on, onClick, children }) => (
 
 // ---------------- 설명 시트 ----------------
 const EXPL = {
-  quad: { t: "업종 성장 사분면", b: "가로축은 업종의 3년 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 3년 매출 성장률이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
-  secrank: { t: "업종 성장률 순위", b: "각 업종의 3년 연평균 매출 성장률(상장사 합산 기준)을 큰 순서대로 늘어놓았어요. 막대 옆의 매출 규모와 수익성을 함께 보면 '커지는 판인가, 돈이 되는 판인가'를 같이 판단할 수 있어요. 표본이 5개 미만인 업종은 성장률을 표시하지 않아요." },
+  quad: { t: "업종 성장 사분면", b: "가로축은 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준), 세로축은 각 기업의 최근 2년 연평균 매출 성장률(전전기 매출이 없으면 최근 1년)이에요. 오른쪽 위는 성장하는 산업 안에서 함께 성장하는 기업이고, 왼쪽 위는 산업이 역성장하는데 홀로 성장하는 기업 — 점유율 확대인지 일회성 효과인지 확인이 필요한 구간이에요. 주의: '업종 성장'은 상장사 매출 합산 기준이라, 비상장사와 해외 매출 구성에 따라 실제 시장 성장과 차이가 날 수 있어요." },
+  secrank: { t: "업종 성장률 순위", b: "각 업종의 최근 2년 연평균 매출 성장률(상장사 합산 기준)을 큰 순서대로 늘어놓았어요. 막대 옆의 매출 규모와 수익성을 함께 보면 '커지는 판인가, 돈이 되는 판인가'를 같이 판단할 수 있어요. 표본이 5개 미만인 업종은 성장률을 표시하지 않아요." },
   scatter: { t: "수익성과 주가 수준 (ROE × PBR)", b: "가로축은 자기자본이익률(ROE), 세로축은 주가순자산비율(PBR)이에요. 보통 자본을 잘 굴리는 회사일수록 장부가치 대비 높은 값에 거래되고, 점선 추세선이 그 평균적 관계예요. 추세선보다 한참 위면 수익성에 비해 높은 평가, 한참 아래면 낮은 평가를 받고 있다는 뜻인데 — 거기엔 대개 이유가 있어요. 그 이유를 찾는 것이 분석이에요." },
   box: { t: "업종별 시장 눈높이", b: "업종마다 시장이 쳐주는 값의 눈높이가 달라요. 굵은 점이 그 업종의 중간값, 옅은 막대가 가운데 절반(25~75%)이 모여 있는 구간이에요. 같은 PER 10배라도 어떤 업종에선 비싼 값, 어떤 업종에선 싼 값이에요 — 그래서 멀티플은 늘 같은 업종 안에서 읽어요. 점선은 시장 전체의 중간값이라, 어떤 업종이 시장 평균보다 후하게 또는 박하게 평가받는지도 보여요." },
   per: { t: "PER (주가수익비율)", b: "시장이 이 회사의 이익 1원에 몇 원을 내고 있는지예요. 높다는 건 시장이 앞으로의 성장을 크게 기대한다는 뜻이고, 그 기대가 실현되지 않으면 주가가 조정될 수 있다는 뜻이기도 해요. 적자 기업은 PER을 계산할 수 없어요." },
@@ -750,7 +750,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
       {heldNote && <Sub style={{ color: C.coral }}>저장된 포트폴리오가 없어요. 포트폴리오 탭에서 하나 저장하면 이 필터를 쓸 수 있어요.</Sub>}
 
       <Card>
-        <H num="01" main="성장 지도" sub="업종 × 기업 매출 성장률 사분면 · 3년 연평균 · 원 크기는 시가총액" onWhy={() => setExplain("quad")} />
+        <H num="01" main="성장 지도" sub="업종 × 기업 매출 성장률 사분면 · 최근 2년 연평균 · 원 크기는 시가총액" onWhy={() => setExplain("quad")} />
         {heldN > 0 && <Sub style={{ marginTop: 5 }}><span style={{ color: C.apricotDeep, fontWeight: 800 }}>주황 테두리 {heldN}개는 내 포트폴리오 보유 종목이에요</span></Sub>}
         <div className="cgrid4" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, margin: "10px 0" }}>
           {[
@@ -796,7 +796,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
 
       <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Card>
-          <H num="03" main="업종별 성장률 순위" sub="3년 연평균 · 상장사 매출 합산 기준" onWhy={() => setExplain("secrank")} />
+          <H num="03" main="업종별 성장률 순위" sub="최근 2년 연평균 · 상장사 매출 합산 기준" onWhy={() => setExplain("secrank")} />
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
             {secRank.map((r) => (
               <div key={r.k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1375,7 +1375,10 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
   const ROWS = [
     ["시가총액", (c) => c.cap != null ? c.cap.toFixed(1) + "조" : "—", null],
     ["최근 매출", (c) => F.won(c.rev && c.rev[0]), null],
-    ["매출 성장률 (3년 연평균)", (c) => c.g3 != null ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null],
+    // 매출 성장: 회사마다 계산 기준대로 (Jack, 2026-11-05: 최근 2년 연평균 · 최근 1년, '3년' 아님). 기준을 모르면 '—'.
+    ["매출성장(최근 2년 연평균)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y2" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null],
+    ...(cols.some((c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y1")
+      ? [["매출성장(최근 1년)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y1" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null]] : []),
     ["영업이익률", (c) => F.num(c.opm, 1, "%"), sec.opm != null ? sec.opm + "%" : "—"],
     ["ROE", (c) => F.num(c.roe, 1, "%"), sec.roe != null ? sec.roe + "%" : "—"],
     ["PER", (c) => F.num(c.per, 1, "배"), sec.perQ ? sec.perQ[1] + "배" : "—"],
@@ -1544,7 +1547,7 @@ export function DcfCard({ c, sharesM, setExplain }) {
               <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5 }}>
                 {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
                   : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
-                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요. 이 회사의 최근 3년 성장률은 {pc(c.g3)}였어요 — 그 간극이 그럴듯한지가 핵심 질문이에요.</>}
+                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요. {c.g3 != null && krGrowthBasis(c.g3, c.rev) ? <>이 회사의 {krGrowthBasis(c.g3, c.rev) === "y2" ? "매출성장(최근 2년 연평균)" : "매출성장(최근 1년)"}은 {pc(c.g3)}였어요 — 그 간극이 그럴듯한지가 핵심 질문이에요.</> : null}</>}
               </div>
             </div>
           )}
