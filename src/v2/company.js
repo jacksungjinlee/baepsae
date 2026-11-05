@@ -98,21 +98,25 @@ export const KR_DIV_TREND = false;
 // KR yield on today's price (Jack, 2026-11-05): the latest 사업보고서's dividend per share ÷ today's close (data.json price,
 // the pxDate close), the same inputs as the 100만원 line, so the two always agree. Only a dps the card trusts: it agrees
 // with that report's own yield (engine.dpsAgrees, 1/3x-3x: a split after the report or a total filed in the per-share row
-// fails it) and gives at most 30% a year (DY_MAX). Otherwise null: the yield is hidden, never the report-year yield instead.
+// fails it) and gives at most 30% a year (DY_MAX). A payer whose report gives no yield can't be cross-checked, so no yield
+// either (review: a split after such a report would go unseen). Otherwise null: the yield is hidden, never the report-year
+// yield instead. dps 0 with a price -> 0.
 export function krYieldToday(s) {
+  const d = num(s && s.dps);
+  if (d != null && d > 0 && num(s.dy) == null) return null;
   const y = krDivYield(s);
   return y != null && y <= DY_MAX ? y : null;
 }
 const d3Of = (s, co) => (s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null);
 
 // trend on: dps 0 -> none · a cut (latest < last year) -> cut · 2+ raises in a row -> streak · a raise of more than 3% ->
-// raised · else steady. dps missing or disagreeing with dy -> na; no usable earlier year (or dps3 not matching dps) ->
-// noPrev when a yield is shown, else na.
+// raised · else steady. dps missing or disagreeing with dy -> na; no earlier year on record -> noPrev when a yield is
+// shown, else na; a record that disagrees with dps (dps3[0] !== dps) -> na with no yield (자료가 없어요 never beside a number).
 export function divKr(s, co, trend = KR_DIV_TREND) {
   const dps = num(s && s.dps), dy = num(s && s.dy);
   const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
   const ok = dpsAgrees(s);
-  const yieldPct = ok && fy != null ? krYieldToday(s) : null;
+  const yieldPct = ok && fy != null ? krYieldToday(s) : null;      // dps 0 with no price -> null (nothing was computed)
   if (dps == null) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
   if (!ok) {
     // the per-share figure and the report's yield disagree: no yield, no per-share figure. With the trend off a payer
@@ -120,11 +124,12 @@ export function divKr(s, co, trend = KR_DIV_TREND) {
     const pays = !trend && dps > 0 && (dy == null || dy > 0);
     return { rule: pays ? "pays" : "na", dps, yieldPct: null, fy, dpsOk: false };
   }
-  if (dps === 0) return { rule: "none", dps: 0, yieldPct: fy != null ? 0 : null, fy, dpsOk: true };
+  if (dps === 0) return { rule: "none", dps: 0, yieldPct, fy, dpsOk: true };
   if (!trend) return { rule: "pays", dps, yieldPct, fy, dpsOk: true };
   const d3 = d3Of(s, co);
   const cur = d3 ? num(d3[0]) : null, prev = d3 ? num(d3[1]) : null;
-  if (cur == null || prev == null || cur !== dps) return { rule: yieldPct != null ? "noPrev" : "na", dps, yieldPct, fy, dpsOk: true };
+  if (cur != null && cur !== dps) return { rule: "na", dps, yieldPct: null, fy, dpsOk: true };
+  if (cur == null || prev == null) return { rule: yieldPct != null ? "noPrev" : "na", dps, yieldPct, fy, dpsOk: true };
   const base = { dps, yieldPct, fy, dpsOk: true, d3: [0, 1, 2].map((i) => num(d3[i])) };
   if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);

@@ -529,8 +529,10 @@ export function DivTab({ load, s }) {
   const us = usOf(s);
   const r = us ? divUs(s) : divKr(s, co);
   // na (the per-share figures disagree with the report's yield, or are missing): the tile's own phrase, never an empty card
+  // KR payer (trend off): the tile's own phrase 배당을 줘요 (Jack, 2026-11-05); US keeps 배당을 주는 회사예요
   const head = r.rule === "na" ? C.co.tiles.na : r.rule === "noPrev" ? C.co.tiles.div.noPrev
-    : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : Dv.head[r.rule];
+    : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null)
+    : r.rule === "pays" ? (us ? Dv.head.pays : C.co.tiles.div.pays) : Dv.head[r.rule];
   const md = priceMd(load, s);
   const fy = us ? null : r.fy;
   // KR (Jack, 2026-11-05): 1,000,000 ÷ today's close × the report's dividend per share (company.js perMillionKr); US: Yahoo's yield
@@ -567,14 +569,14 @@ export function DivTab({ load, s }) {
           <DateLine date={priceDate(load, s)} fresh={load.fresh} />
         </Card>
       )}
-      <Card>
+      {(r.yieldPct != null || (po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
         <Stats>
           {r.yieldPct != null && <Stat data-ui-v2="co-yield" data-y={r.yieldPct} label={C.pick.receipt.yield} value={yieldText(r.yieldPct)}
             sub={us ? Dv.yieldSubUs : fy ? fill(Dv.basisKr, { fy }) : null} />}
           {po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
-      </Card>
+      </Card>}
     </div>
   );
 }

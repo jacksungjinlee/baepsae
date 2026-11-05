@@ -98,7 +98,7 @@ def test_revenue_growth_labels_say_each_markets_period_and_never_three_years():
     copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
     for line in copy.splitlines():
         code = line.split("//", 1)[0]
-        if ("매출" in code or "성장" in code) and re.search(r"3\\s*년|3y|3\\s*yr", code, re.I):
+        if ("매출" in code or "성장" in code) and re.search(r"3\s*년|3\s*y(?:r)?\b", code, re.I):
             assert "3년 연속 순손실" in code or "3년 주가" in code, line          # 매출 · 성장 이름표에 3년은 없어요
     rx = {k: re.search(k + r': "([^"]*)"', copy).group(1) for k in ("growthKr", "growthKr1y", "growthUs", "usGrowth")}
     assert "최근 2년 연평균" in rx["growthKr"] and "최근 1년" in rx["growthKr1y"]
@@ -187,6 +187,10 @@ def test_dividend_tile_rules_korea():
         assert off[k]["rule"] == "pays", (k, off[k])
         assert "d3" not in off[k], k                                         # 3년 막대도 없어요
     assert off["zero"]["rule"] == "none" and off["zero"]["yieldPct"] == 0
+    zp = run("out = [K.divKr({ t: 'X', cls: 'kr', fy: 2025, dps: 0, dy: 0 }, null), K.divKr({ t: 'X', cls: 'kr', fy: 2025, price: 0, dps: 0 }, null),"
+             " K.divKr({ t: 'X', cls: 'kr', fy: 2025, price: 50000, dps: 1000 }, null)];")
+    assert zp[0]["rule"] == "none" and zp[0]["yieldPct"] is None and zp[1]["yieldPct"] is None   # 가격이 없으면 0% 도 계산한 게 아니에요
+    assert zp[2]["rule"] == "pays" and zp[2]["yieldPct"] is None              # 보고서 수익률이 없으면 맞춰 볼 수 없어 수익률을 보이지 않아요
     for k in ("zeroMismatch", "na", "payerZeroDy"):
         assert off[k]["rule"] == "na" and off[k]["yieldPct"] is None, (k, off[k])
     # 수익률: 최근 사업보고서 주당 배당 ÷ 오늘 종가 (두 상태 같아요) · 보고서 수익률과 어긋나면 · 30% 넘으면 · 어느 보고서인지 모르면 없음
@@ -199,7 +203,8 @@ def test_dividend_tile_rules_korea():
     assert on["zero"]["rule"] == "none" and on["zero"]["yieldPct"] == 0
     assert on["zeroMismatch"]["rule"] == "na"                                # 0원인데 보고서 수익률은 2%: 서로 맞지 않아 판단하지 않아요
     assert on["na"]["rule"] == "na" and on["na"]["yieldPct"] is None
-    assert on["noPrev"]["rule"] == "noPrev" and on["mismatch"]["rule"] == "noPrev" and on["noD3"]["rule"] == "noPrev"
+    assert on["noPrev"]["rule"] == "noPrev" and on["noD3"]["rule"] == "noPrev"
+    assert on["mismatch"]["rule"] == "na" and on["mismatch"]["yieldPct"] is None    # 기록은 있는데 dps 와 어긋나요: '기록이 없어요'가 아니라 na, 숫자 없음
     assert on["noFy"]["rule"] == "streak" and on["noFy"]["yieldPct"] is None  # 추세는 기록으로, 수익률은 어느 보고서인지 알 때만
     nofy_gap = run("out = K.divKr({ t: 'X', cls: 'kr', price: 50000, dy: 2.0, dps: 1000 }, null, true);")
     assert nofy_gap["rule"] == "na" and nofy_gap["yieldPct"] is None         # 수익률도 비교할 기록도 없으면 noPrev 가 아니라 na (숫자 없음)
@@ -267,8 +272,9 @@ def test_korean_yield_is_todays_and_per_share_figures_are_cross_checked():
     big = run("out = [33.7, 56, 100, 30].map((dy) => [K.divKr({ t: 'X', cls: 'kr', price: 10000, fy: 2025, dps: 50, dy }, null), K.divUs({ cls: 'us', dy })]);")
     assert all(k["yieldPct"] is None and k["rule"] == "pays" and u["rule"] == "na" for k, u in big[:3]) and big[3][1]["yieldPct"] == 30, big
     # 오늘 주가 기준이라도 연 30% 를 넘으면 믿지 않아요 (보고서 수익률이 없어 맞춰 볼 수 없을 때)
-    huge = run("out = [K.krYieldToday({ dps: 4000, price: 10000 }), K.krYieldToday({ dps: 2000, price: 10000 }), K.perMillionKr({ dps: 4000, price: 10000 })];")
-    assert huge[0] is None and abs(huge[1] - 20) < 1e-9 and huge[2] is None
+    huge = run("out = [K.krYieldToday({ dps: 4000, price: 10000, dy: 35 }), K.krYieldToday({ dps: 2000, price: 10000, dy: 20 }),"
+               " K.perMillionKr({ dps: 4000, price: 10000, dy: 35 }), K.krYieldToday({ dps: 2000, price: 10000 })];")
+    assert huge[0] is None and abs(huge[1] - 20) < 1e-9 and huge[2] is None and huge[3] is None
 
 
 def test_hundred_man_won_for_korea_is_dps_over_todays_close():
@@ -290,8 +296,8 @@ def test_hundred_man_won_for_korea_is_dps_over_todays_close():
     for k in ("noDps", "noDps2", "noPrice", "zeroPrice", "negPrice"):
         assert got[k]["pm"] is None, k                                      # 주당 배당 · 가격이 없거나 가격이 0 이하: 줄을 빼요
     assert got["split"]["pm"] is None and got["total"]["pm"] is None        # 와이엔텍(분할) · 미원화학(총액): 터무니없는 금액 없음
-    assert got["noDyHuge"]["pm"] is None                                    # 보고서 수익률이 없어도 연 30% 넘으면 믿지 않아요 (DY_MAX)
-    assert got["noDyOk"]["pm"]["won"] == 8000                               # 맞춰 볼 수익률이 없으면 주당 배당 ÷ 종가 그대로 (engine.dpsAgrees)
+    assert got["noDyHuge"]["pm"] is None                                    # 보고서 수익률이 없으면 맞춰 볼 수 없어 줄을 빼요
+    assert got["noDyOk"]["pm"] is None                                      # (리뷰: 그 뒤 분할이 있었어도 모르니까요)
     assert got["tiny"]["pm"] == {"under": True, "raw": 500.0}               # 1,000원이 안 되면 '1년에 1,000원이 안 돼요' (약 0원 없음)
     # 화면: 한국은 perMillionKr, 미국은 야후 수익률 (perMillionView) 그대로 · 근거 문장은 Jack 의 문장
     tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()

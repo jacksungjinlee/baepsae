@@ -2806,9 +2806,12 @@ def kr_dps_agrees(s):
 
 
 def kr_yield_today(s, co):
-    """company.js krYieldToday (보고서 연도를 알 때만): 최근 사업보고서 주당 배당 ÷ 오늘 종가, 맞춰 본 값만 · 연 30% 이하만."""
+    """company.js krYieldToday (보고서 연도를 알 때만): 최근 사업보고서 주당 배당 ÷ 오늘 종가, 그 보고서 수익률과 맞춰 본 값만
+    (보고서 수익률이 없으면 맞춰 볼 수 없어 없음) · 연 30% 이하만. 0원은 가격이 있을 때 0."""
     fy = s.get("fy") or (co or {}).get("fy")
     if not fy or not kr_dps_agrees(s) or not (s.get("price") or 0) > 0:
+        return None
+    if s["dps"] > 0 and s.get("dy") is None:
         return None
     y = s["dps"] / s["price"] * 100
     return y if y <= 30 else None
@@ -3196,14 +3199,18 @@ def scene_company(R, files, width):
                 assert abs(float(ys.get_attribute("data-y")) - ky) < 1e-9 and fillp(CO["div"]["basisKr"], fy=fy) in ys.inner_text()
             if not KR_DIV_TREND:                                             # 추세가 꺼져 있으면 3년 막대도, 늘렸어요 · 줄였어요도 없어요
                 assert d.locator('[data-ui-v2="bars"]').count() == 0
-                for k in ("cut", "streak", "raised", "steady"):
-                    head = CO["div"]["head"][k]
-                    if head and "{" not in head:
-                        assert head not in d.inner_text(), head
-                assert CO["tiles"]["div"]["noPrev"] not in d.inner_text()
+                assert d.get_attribute("data-rule") in ("pays", "none", "na"), d.get_attribute("data-rule")
+                txt = d.inner_text()
+                words = [CO["div"]["head"][k] for k in ("cut", "streak", "raised", "steady")]
+                words += [CO["tiles"]["div"][k] for k in ("cut", "streak", "raised", "steady", "noPrev")]
+                for w in words:
+                    if w:
+                        assert w.split("}")[-1] not in txt, w                  # '{n}년 연속 …' 은 {n} 뒤 글자로 찾아요
         if page.locator('[data-ui-v2="co-dps"]').count():                   # 주당 배당은 보고서 수익률과 맞을 때만 (1/3 ~ 3 배)
-            r = s["dps"] / s["price"] * 100 / s["dy"]
-            assert 1 / 3 <= r <= 3, r
+            assert kr_dps_agrees(s), code
+            if s.get("dy"):
+                r = s["dps"] / s["price"] * 100 / s["dy"]
+                assert 1 / 3 <= r <= 3, r
         pay = page.locator('[data-ui-v2="co-payout"]')
         if pay.count():
             assert 0 < float(pay.get_attribute("data-pct")) <= 100

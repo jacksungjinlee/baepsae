@@ -18,7 +18,7 @@ import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/compon
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS, KR_DIV_TREND } from "./company.js";
+import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS } from "./company.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -55,11 +55,12 @@ export function tileViews(load, s) {
   const md = priceMd(load, s);
   const asOf = md ? fill(C.app.asOf, { md }) : null;
   const report = !usOf(s) && fy ? fill(C.app.reportYear, { year: fy }) : null;
-  // KR 배당: the yield is the report's dividend per share over today's close (Jack, 2026-11-05), so its basis says both
-  const divBasis = !usOf(s) && fy ? fill(C.co.div.basisKr, { fy }) : null;
-  const basisOf = { earn: usOf(s) ? asOf : report, value: asOf, div: usOf(s) ? asOf : divBasis, risk: asOf };
+  // KR 배당: the yield is that report's dividend per share over today's close (Jack, 2026-11-05), so its basis names both;
+  // the year is the dps's own (divKr r.fy). A 배당 basis line only under a number (a payer with no trusted yield: phrase only).
+  const basisOf = { earn: usOf(s) ? asOf : report, value: asOf, div: (r) => (usOf(s) ? asOf : r.fy != null ? fill(C.co.div.basisKr, { fy: r.fy }) : null), risk: asOf };
   const add = (topic, label, r, phrase, number, data) => {
-    if (all(label, phrase)) out.push({ topic, label, phrase, number, rule: r.rule, data, basis: r.rule === "na" ? null : basisOf[topic] });
+    const b = typeof basisOf[topic] === "function" ? basisOf[topic](r) : basisOf[topic];
+    if (all(label, phrase)) out.push({ topic, label, phrase, number, rule: r.rule, data, basis: r.rule === "na" || (topic === "div" && !number) ? null : b });
   };
   if (usOf(s)) {
     const r = earnUs(s);
@@ -80,10 +81,7 @@ export function tileViews(load, s) {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
-    add("div", T().label.div, r, phrase, number,
-      { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "", trend: !usOf(s) && KR_DIV_TREND ? "1" : "" });
-    const last = out[out.length - 1];
-    if (last && last.topic === "div" && !number) last.basis = null;      // a basis line only under a number
+    add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
   }
   {
     const r = riskTile(s);
