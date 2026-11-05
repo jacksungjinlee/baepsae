@@ -2814,7 +2814,11 @@ def kr_yield_today(s, co):
     if s["dps"] > 0 and s.get("dy") is None:
         return None
     y = s["dps"] / s["price"] * 100
-    return y if y <= 30 else None
+    if y > 30:
+        return None
+    if s["dps"] > 0 and s["dy"] > 0 and y / s["dy"] >= 1.8 - 1e-9:          # 임시 분할 안전장치 (Jack, 2026-11-05): 보고서 수익률의 1.8배 이상
+        return None
+    return y
 MEMO_TEXT = "서비스 매출이 이어지는지 보려고요"
 CO_SEL = '[data-ui-v2="company"], [data-ui-v2="co-not-found"], [data-ui-v2="co-value-more"], [data-ui-v2="co-earn-more"]'
 
@@ -3173,9 +3177,9 @@ def scene_company(R, files, width):
         if us:
             raw = 1e6 * dy / 100 if isinstance(dy, (int, float)) and 0 < dy <= 30 else None
         else:
-            agrees = isinstance(dps, (int, float)) and dps > 0 and isinstance(px, (int, float)) and px > 0 and (
-                dy is None or (0 < dy <= 30 and 1 / 3 <= dps / px * 100 / dy <= 3))
-            raw = 1e6 / px * dps if agrees and dps / px * 100 <= 30 else None
+            # 오늘 수익률과 같은 입력: 보고서 수익률과 맞춰 본 주당 배당 · 연 30% 이하 · 임시 분할 안전장치(1.8배) 통과 (kr_yield_today)
+            ky = kr_yield_today(s, co)
+            raw = 1e6 / px * dps if ky is not None and ky > 0 else None
         fy = s.get("fy") or (co or {}).get("fy")
         if raw is None or not (CO["div"]["million"] and CO["div"]["perYear"]) or (not us and not fy):
             assert m.count() == 0, (code, raw)
@@ -3214,6 +3218,8 @@ def scene_company(R, files, width):
         pay = page.locator('[data-ui-v2="co-payout"]')
         if pay.count():
             assert 0 < float(pay.get_attribute("data-pct")) <= 100
+        if not us and s.get("dps") and s.get("dy") and kr_dps_agrees(s) and s["dps"] / s["price"] * 100 / s["dy"] >= 1.8 - 1e-9:
+            assert pay.count() == 0, "분할 안전장치에 걸린 종목의 배당성향 (오늘 주식 수 기준)"
         if us:
             assert page.locator('[data-ui-v2="co-dps"], [data-ui-v2="co-payout"]').count() == 0, "미국 주당 배당 · 배당성향 (자료가 없어요)"
         no_mascot(page)

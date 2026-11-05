@@ -291,7 +291,8 @@ def test_hundred_man_won_for_korea_is_dps_over_todays_close():
     raw = 1e6 / 219500 * 1668                                               # 7,599원 → 약 8,000원
     assert abs(got["sam"]["pm"]["raw"] - raw) < 1e-6 and got["sam"]["pm"]["won"] == 8000
     assert got["samToday"]["pm"]["won"] == round(1e6 / 218000 * 1668 / 1000) * 1000 == 8000
-    assert got["hyundai"]["pm"]["won"] == round(1e6 / 277500 * 10000 / 1000) * 1000 == 36000
+    # 현대차: 10,000원 ÷ 277,500원 = 3.6% 로 보고서 수익률 1.9% 의 1.89배 → 임시 분할 안전장치(1.8배)가 줄을 빼요 (Jack, 2026-11-05)
+    assert got["hyundai"]["pm"] is None
     assert got["zero"]["pm"] is None and got["zero"]["rule"] == "none"     # 0원: 배당이 없어요 (줄 없음)
     for k in ("noDps", "noDps2", "noPrice", "zeroPrice", "negPrice"):
         assert got[k]["pm"] is None, k                                      # 주당 배당 · 가격이 없거나 가격이 0 이하: 줄을 빼요
@@ -320,6 +321,31 @@ def test_sample_cards_line_names_the_first_two_cards():
     got = run("out = [K.myCards([]).ids, T.CP.C.co.fit.sample, T.CP.C.build.cards.value.name, T.CP.C.build.cards.div.name];")
     assert got[0] == ["value", "div"] and got[1] == "고른 기준 카드가 없어서 가치·배당 카드를 먼저 보여 드려요.", got
     assert got[2] == "가치" and got[3] == "배당", got
+
+
+def test_interim_split_guard_hides_a_yield_at_1_8x_the_reports():
+    """임시 분할 안전장치 (Jack, 2026-11-05): 회사가 밝힌 그해 EPS(그해 주식 수)가 데이터에 없어서, 오늘 수익률(주당 배당 ÷ 오늘 종가)이
+    그 보고서 수익률의 1.8배 이상이면 수익률과 100만원 줄을 빼요 (2:1 분할이면 2배가 돼요). 1/3 ~ 3 배 검사는 그대로예요. 미국은 그대로."""
+    B = {"t": "X", "cls": "kr", "fy": 2025, "price": 50000, "dy": 2.0}
+    got = run("""const mk = (dps, price = 50000) => ({ ...B, dps, price });
+      out = { r179: [K.krYieldToday(mk(1790)), K.perMillionKr(mk(1790)), K.divKr(mk(1790), null).yieldPct],
+        r18: [K.krYieldToday(mk(1800)), K.perMillionKr(mk(1800)), K.divKr(mk(1800), null)],
+        split: [K.krYieldToday(mk(1000, 25000)), K.perMillionKr(mk(1000, 25000)), K.divKr(mk(1000, 25000), null), K.payout(mk(1000, 25000), { ni: [100, 90, 80], shm: 10, fy: 2025 })],
+        cut: [K.krYieldToday(mk(500)), K.divKr(mk(500), null).rule],
+        us: [K.divUs({ cls: 'us', dy: 3.6 }), K.perMillionView(3.6)],
+        guard: K.SPLIT_GUARD,
+        count: K.splitGuardCount([mk(1790), mk(1800), mk(1000, 25000), mk(5000, 10000), { ...mk(1800), cls: 'us' }, mk(500)]) };""", B=B)
+    assert got["guard"] == 1.8
+    assert abs(got["r179"][0] - 3.58) < 1e-9 and got["r179"][1]["won"] == 36000 and abs(got["r179"][2] - 3.58) < 1e-9   # 1.79배: 보여요
+    assert got["r18"][0] is None and got["r18"][1] is None and got["r18"][2]["yieldPct"] is None                        # 1.8배: 빼요
+    assert got["r18"][2]["rule"] == "pays" and got["r18"][2]["dpsOk"]                                                   # 배당은 줘요 (주당 배당은 보고서 그대로)
+    sp = got["split"]                                                       # 2:1 분할 뒤: 주당 배당 1,000원(분할 전 주식) · 종가 절반 → 4.0% = 2배
+    assert sp[0] is None and sp[1] is None and sp[2]["yieldPct"] is None and sp[3] is None   # 수익률 · 100만원 · 배당성향(오늘 주식 수) 모두 빼요
+    assert abs(got["cut"][0] - 1.0) < 1e-9 and got["cut"][1] == "pays"     # 진짜 삭감(주식 수 그대로, 수익률이 낮아짐)은 그대로 보여요
+    assert got["us"][0] == {"rule": "pays", "yieldPct": 3.6} and got["us"][1]["won"] == 36000                           # 미국은 그대로
+    assert got["count"]["hidden"] == 2 and [x["ratio"] for x in got["count"]["examples"]] == [2.0, 1.8]                  # 3배 넘는 건 원래 검사가 빼요
+    page = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
+    assert "logSplitGuard(load.data.stocks)" in page and "console.warn(`[v2] dividend yield and 100-man-won line hidden for ${g.hidden} Korean stocks" in page
 
 
 def test_hundred_man_won_never_shows_zero_for_a_payer():

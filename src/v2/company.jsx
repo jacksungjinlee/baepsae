@@ -18,7 +18,8 @@ import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/compon
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS } from "./company.js";
+import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
+  splitGuardCount, SPLIT_GUARD } from "./company.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -109,7 +110,17 @@ function Tile({ v, onOpen }) {
     : <div data-ui-v2="co-tile" data-topic={v.topic} data-rule={v.rule} {...data} style={{ ...style, cursor: "default" }}>{body}</div>;
 }
 
+// The interim split guard hides some Korean yields (company.js SPLIT_GUARD): say how many, once per data load.
+const guardLogged = new WeakSet();
+function logSplitGuard(stocks) {
+  if (!stocks || guardLogged.has(stocks)) return;
+  guardLogged.add(stocks);
+  const g = splitGuardCount(stocks);
+  if (g.hidden) console.warn(`[v2] dividend yield and 100-man-won line hidden for ${g.hidden} Korean stocks: today's yield is ${SPLIT_GUARD}x their report's or more (possible split after the report; until split-adjusted dividends). e.g. ` + g.examples.map((x) => `${x.t} ${x.ratio}x`).join(", "));
+}
+
 function Tiles({ load, s, onTab, tabsOn }) {
+  useEffect(() => { logSplitGuard(load.data.stocks); }, [load]);
   const views = useMemo(() => tileViews(load, s), [load, s]);
   if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
   const md = priceMd(load, s);
