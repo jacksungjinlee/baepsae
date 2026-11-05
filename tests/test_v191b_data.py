@@ -76,7 +76,8 @@ def test_dividend_table_keeps_totals_eps_and_par_for_each_year():
     b = got["bas"]
     assert b["cash3"] == [11107906e6, 9810767e6, 9809438e6]           # 백만원 → 원
     assert b["ni3"] == [44260956e6, 33621363e6, 14473401e6] and b["eps3"] == [6605, 4950, 2131] and b["epsB"] == "연결"
-    assert b["par3"] == [100, 100, 100] and b["pdps3"] == [1669, 1447, 1445] and b["stlm"] == "2025-12-31"
+    assert b["par3"] == [100, 100, 100] and b["pdps3"] == [1669, 1447, 1445]
+    assert set(b) == {"cash3", "ni3", "eps3", "epsB", "par3", "pdps3"}            # 캐시에 쓰지 않는 칸은 담지 않아요
 
 
 def test_dividend_table_reads_separate_basis_class_shares_and_dashes():
@@ -270,20 +271,35 @@ def test_apply_writes_todays_yield_only_from_a_verified_dividend(capsys):
     json.dumps(kr, allow_nan=False)
 
 
-def test_main_ranks_dividends_after_the_split_check_and_stops_on_a_missing_must_have():
+def test_main_ranks_dividends_after_the_split_check_and_logs_a_missing_must_have():
+    # 필수 종목이 배당 순위에서 빠지면 이유와 함께 크게 남기고 관문(필수 종목 배당 순위)이 발행을 막아요. 파이프라인은 멈추지 않아요:
+    # 파일과 관문 표가 남아야 시험 실행에서 원인을 볼 수 있어서예요 (리뷰 1)
     import inspect
     src = inspect.getsource(F.main)
     i_basis, i_rank = src.find("apply_div_basis(kr"), src.find("add_percentiles(kr)")
     assert src.find("blank_foreign_dart(kr)") < i_basis < i_rank < src.find("dividend_rank_missing(kr)")
     assert i_basis < src.find("build_corp(kr, fin_map") and '"divCheck": div_counts' in src
-    assert "raise RuntimeError" in src[src.find("dividend_rank_missing(kr)"):src.find("payload = {")]
+    tail = src[src.find("dividend_rank_missing(kr)"):src.find("payload = {")]
+    assert "관문에서 실패해 발행하지 않아요" in tail and "raise" not in tail
 
 
-def test_foreign_issuer_keeps_only_zero_dividends_and_no_amounts():
+def test_unknown_years_are_never_called_no_dividend():
+    # 해외 기업은 0 이 아닌 배당을 비워요 → [빈 칸, 0, 빈 칸] 은 '3년 배당 없음'이 아니라 알 수 없음 (리뷰 1)
     kr = [{"t": "900290", "nk": "GRT", "cls": "kr", "price": 1000.0, "shr": 1_000_000, "dps3": [None, 0.0, None],
            "_bas": F.parse_dart_dividend(alot([50, 0, 30], cash=[50, 0, 30], par=[500] * 3, eps=[10, 5, 3], ni=[10, 5, 3]))["bas"]}]
     counts, extra = F.apply_div_basis(kr, {}, {})
-    assert kr[0]["dps3a"] == [None, 0.0, None] and kr[0]["divSt"] == "zero" and "dyt" not in kr[0] and extra == {}
+    assert kr[0]["dps3a"] == [None, 0.0, None] and kr[0]["divSt"] == "nd" and "dyt" not in kr[0] and extra == {}
+    assert F.div_basis([0.0, 0.0, None], None, None, 1_000_000)["divSt"] == "nd"
+    assert F.div_basis([0.0, 0.0, 0.0], None, None, 1_000_000)["divSt"] == "zero"
+    assert F.div_basis([0.0, None, None], None, None, 1_000_000)["dps3a"] == [0.0, None, None]   # 올해 0 은 알아요 (수익률 0)
+
+
+def test_reverse_split_by_three_matches_the_gate_to_the_cent():
+    # 3:1 병합 뒤: 배율 1/3 은 소수 여섯째 자리(0.333333)로 발행돼요. dps3a 를 그 발행값으로 나눠야 관문의 다시 계산과 맞아요 (리뷰 1)
+    div, r = basis_of(alot([12000] * 3, cash=[12000] * 3, par=[5000] * 3), CS50, 333_334)
+    assert r["dpsF"] == [0.333333] * 3 and r["dps3a"] == [round(12000 / 0.333333, 2)] * 3 and r["divSt"] == "adj"
+    s = {"t": "000100", "dps3": [12000.0] * 3, "dps3a": r["dps3a"], "dpsF": r["dpsF"], "divSt": r["divSt"]}
+    assert V.div_row_problem(s) is None
 
 
 # ── 3. 베타 표준오차 ──────────────────────────────────────
@@ -298,6 +314,8 @@ def test_beta_standard_error_matches_least_squares():
     want = math.sqrt(rss[0] / (740 - 2) * np.linalg.inv(X.T @ X)[1, 1])
     assert n == 740 and b == round(coef[1], 2) and se == round(want, 4) and 0.05 < se < 0.09
     assert F.beta_fit(y.iloc[:200], x.iloc[:200], 0.03) == (None, None, None, None)     # 250일 미만은 베타도 없어요
+    flat = pd.Series(0.0, index=idx)                                                    # 1년 넘게 거래정지: 수익률이 모두 0
+    assert F.beta_fit(flat, x, 0.03) == (None, None, None, None)                        # 표준오차 없는 베타는 쓰지 않아요 (리뷰 1)
 
 
 def test_every_beta_written_by_the_pipeline_carries_its_error_and_count():
@@ -320,6 +338,14 @@ def test_flran_lists_the_checks_that_actually_ran():
     ok = F.build_corp([dict(s, t="000300")], {"000300": {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0,
                                                           "op": [9.0, 0, 0], "ie": 1.0}}, "2026-11-05")["companies"][0]
     assert ok["flRan"] == ["cr", "icr", "l3", "imp"] and "fl" not in ok            # 모두 돌았고 경고 없음
+    assert "dz" not in ok                                                           # 배당 점수가 없는 종목은 corp.json 에도 없어요
+    free = F.build_corp([dict(s, t="000400", dz=55)], {"000400": {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0,
+                                                                  "eq": 5.0, "op": [9.0, 0, 0], "ie": 0.0}}, "2026-11-05")["companies"][0]
+    assert free["flRan"] == ["cr", "icr", "l3", "imp"] and "fl" not in free       # 이자비용 0: 검사는 돌았고 경고는 날 수 없어요 (리뷰 1)
+    assert free["dz"] == 55                                                         # 배당 점수도 corp.json 에 (다른 팩터 점수처럼)
+    nie = F.build_corp([dict(s, t="000500")], {"000500": {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0,
+                                                          "op": [9.0, 0, 0]}}, "2026-11-05")["companies"][0]
+    assert nie["flRan"] == ["cr", "l3", "imp"]                                      # 이자비용 줄이 없으면(모름) 돌지 않은 거예요
 
 
 # ── 5. DART 캐시 v2 · 호출 수 어림 ────────────────────────
@@ -335,10 +361,19 @@ def test_dart_cache_is_version_two_in_the_pipeline_and_the_workflow():
 
 
 def test_full_refresh_call_estimate_stays_under_the_target():
+    # 공시 최대 = 목록 30쪽 + 내부자 상세 1,200 (DISC_CALL_CAP) + 국민연금 200 (리뷰 1)
+    assert F.DART_DISC_MAX == 30 + F.DISC_CALL_CAP + 200 == 1430
     total, why = F.dart_full_estimate(2418)
-    assert total == math.ceil(2418 * 4.8) + 2418 + 1 + 1300 == 15326 and "공시 최대 1,300" in why
-    assert F.dart_full_estimate(F.MAX_KR)[0] < F.DART_FULL_TARGET < F.DART_DAY_LIMIT        # 상한 2,500곳이어도 16,000 아래
-    assert F.dart_full_estimate(2418, ksic=False)[0] == 15326 - 2418
+    assert total == math.ceil(2418 * 4.8) + 2418 + 1 + 1430 == 15456 and "공시 최대 1,430" in why
+    assert F.dart_full_estimate(F.MAX_KR)[0] == 15931 < F.DART_FULL_TARGET < F.DART_DAY_LIMIT  # 상한 2,500곳이어도 16,000 아래
+    assert F.dart_full_estimate(2418, ksic=False)[0] == 15456 - 2418
+
+
+def test_gate_and_pipeline_share_the_same_dividend_rules():
+    # 관문은 일부러 따로 적어요 (같은 실수를 같이 하지 않게). 그래도 값은 같아야 해요 — 한쪽만 바꾸면 여기서 걸려요 (리뷰 1)
+    assert V.SPLIT_FACTORS == F.SPLIT_FACTORS and V.DYT_MAX == F.DYT_MAX and V.DIV_STATUS == F.DIV_STATUS
+    assert all(V._factor_ok(c) for c in F.DIV_FACTORS) and V._factor_ok(10 * 5) and V._factor_ok(3 * 0.5)   # 당기 × 이전 해
+    assert not V._factor_ok(1.3) and not V._factor_ok(1.1) and not V._factor_ok(0.0)
 
 
 def test_client_knows_it_started_from_an_empty_cache(tmp_path):
@@ -438,6 +473,11 @@ def test_data_before_v191b_is_only_a_warning_until_the_new_fields_were_published
     assert not rep.failed and rows_of(rep)["배당 분할 확인 기록 (divCheck)"][3] == "WARN"
     rep = check(old, {"data": cur["data"]})                             # 한 번 발행된 뒤 빠지면 실패
     assert "배당 분할 확인 기록 (divCheck)" in {r[0] for r in rep.failed}
+    late = V.run_checks(old, None, None, V.DIVCHECK_REQUIRED_FROM, mode="live", sessions=SESSIONS, now=NOW, hilo=hilo_of(old, V.MUST))
+    assert "배당 분할 확인 기록 (divCheck)" in {r[0] for r in late.failed}   # 12월 1일부터는 옛 형식도 실패 (기한 없는 예외 없음, 리뷰 1)
+    early = V.run_checks(old, None, None, V.DIVCHECK_REQUIRED_FROM - dt.timedelta(days=1), mode="live", sessions=SESSIONS,
+                         now=NOW, hilo=hilo_of(old, V.MUST))
+    assert next(r for r in early.rows if r[0] == "배당 분할 확인 기록 (divCheck)")[3] == "WARN"
 
 
 def _fails(cur, prev, name):

@@ -129,6 +129,7 @@ BETA_SE_MED = (0.02, 0.2)   # 회사 주식(ETF 빼고) 베타 표준오차 중�
 BETA_N = (250, 800)      # 베타에 쓴 일별 수익률 수 (3년 ≈ 740 · 250 미만이면 파이프라인이 베타를 비워요)
 FL_KEYS = ("cr", "icr", "l3", "imp")                    # 재무 경고 검사 (corp.json fl · flRan · flNa)
 CORP_NEW_MUST = ("flRan", "dps3a", "divSt", "cash3", "eps3r")   # 필수 종목 corp.json 에 있어야 할 새 칸
+DIVCHECK_REQUIRED_FROM = dt.date(2026, 12, 1)   # 이날(KST)부터는 divCheck 가 없는 데이터도 실패 (그 전엔 v19.1b 전 데이터라 경고만)
 DATA_NEW_MUST = ("divSt", "dps3a", "dpsF", "dyt", "dz", "betaSE", "betaN")   # 필수 종목 data.json 에 있어야 할 새 칸
 
 
@@ -679,7 +680,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
-    check_v191b(rep, data, kr, us, by, comps, pdata)
+    check_v191b(rep, data, kr, us, by, comps, pdata, today)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -901,10 +902,13 @@ def is_pref(code):
     return isinstance(code, str) and len(code) == 6 and code[-1] != "0"
 
 
+_BASE_FACTORS = [1.0] + [float(k) for k in SPLIT_FACTORS] + [1.0 / k for k in SPLIT_FACTORS]
+_OK_FACTORS = sorted({a * b for a in _BASE_FACTORS for b in _BASE_FACTORS})   # 당기 배율 × 이전 해 배율
+
+
 def _factor_ok(f):
-    """배율이 1 · 깨끗한 분할 배율 · 그 역수, 또는 그 둘의 곱(당기 배율 × 이전 해 배율)인지."""
-    base = [1.0] + [float(k) for k in SPLIT_FACTORS] + [1.0 / k for k in SPLIT_FACTORS]
-    return f > 0 and any(abs(f / (a * b) - 1) < 1e-4 for a in base for b in base)
+    """배율이 1 · 깨끗한 분할 배율 · 그 역수, 또는 그 둘의 곱인지 (발행값은 소수 여섯째 자리 반올림)."""
+    return f > 0 and any(abs(f / g - 1) < 1e-4 for g in _OK_FACTORS)
 
 
 def _isnum(x):
@@ -943,20 +947,27 @@ def div_row_problem(s):
                 return f"깨끗하지 않은 배율 {f:g}"
             if a is None or a < 0 or abs(a - d / f) > DIV_TOL:
                 return f"dps3a {a} ≠ {d:g} ÷ {f:g}"
-    want = ("zero" if not paying else ("nc/nd" if None in paying else ("same" if all(f == 1 for f in paying) else "adj")))
+    if not paying:          # 3년 모두 0 이면 배당 없음, 모르는 해가 섞이면 알 수 없음
+        want = "zero" if all(d == 0 for d in d3) else "nd"
+    else:
+        want = "nc/nd" if None in paying else ("same" if all(f == 1 for f in paying) else "adj")
     if (want == "nc/nd" and st not in ("nc", "nd")) or (want != "nc/nd" and st != want):
         return f"divSt {st} (값으로는 {want})"
     return None
 
 
-def check_v191b(rep, data, kr, us, by, comps, pdata):
+def check_v191b(rep, data, kr, us, by, comps, pdata, today):
     """v19.1b 새 줄 (Jack 승인 필요): 분할에 안전한 국내 배당 · 배당 순위 · 베타 표준오차 · 재무 경고 검사 기록."""
     dc = data.get("divCheck")
     if not isinstance(dc, dict):
+        # v19.1b 전 데이터: 머지 직후 첫 발행 전까지 사이트(--live)와 관문에 경고 한 줄만. 직전 발행본에 있었는데 빠졌거나,
+        # 12월 1일(KST)이 지났으면 실패 — 옛 형식 데이터가 기한 없이 통과하지 않게
         had = isinstance((pdata or {}).get("divCheck"), dict)
-        rep.add("배당 분할 확인 기록 (divCheck)", not had,
-                "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1b 전 형식이라 새 검사를 건너뛰어요)",
-                "있어야 함 (v19.1b 전 데이터만 경고)", warn=not had)
+        late = today >= DIVCHECK_REQUIRED_FROM
+        why = "직전 발행본에는 있었어요" if had else (f"{DIVCHECK_REQUIRED_FROM} 부터는 있어야 해요" if late
+                                                 else "v19.1b 전 형식이라 새 검사를 건너뛰어요")
+        rep.add("배당 분할 확인 기록 (divCheck)", not (had or late), f"없음 — {why}",
+                f"있어야 함 ({DIVCHECK_REQUIRED_FROM} 전의 v19.1b 전 데이터만 경고)", warn=not (had or late))
         return
     rep.add("배당 분할 확인 기록 (divCheck)", dc.get("v") == 1, f"v{dc.get('v')}", "v1")
     must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr"]

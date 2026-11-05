@@ -809,8 +809,9 @@ def beta_fit(stock_ret, bench_ret, rf):
     resid = (y - y.mean()) - b * (x - x.mean())
     sxx = float(np.sum((x - x.mean()) ** 2))
     se = math.sqrt(float(np.sum(resid ** 2)) / (n - 2) / sxx) if sxx > 0 else None
-    se = round(se, 4) if se is not None and math.isfinite(se) and se >= 0.00005 else None   # 지수 ETF(SPY 등)는 0.001 안팎이라 넷째 자리까지
-    return round(b, 2), (round(a, 1) if a is not None else None), se, n
+    if se is None or not math.isfinite(se) or se < 0.00005:
+        return None, None, None, None     # 잔차가 없는 회귀 (예: 1년 넘게 거래정지라 수익률이 모두 0) — 베타도 비워요
+    return round(b, 2), (round(a, 1) if a is not None else None), round(se, 4), n   # 지수 ETF(SPY 등)는 0.001 안팎이라 넷째 자리까지
 
 
 def perf_stats(px, rf):
@@ -889,9 +890,9 @@ COMPANY_TTL_DAYS = 180   # 기업개황(업종 코드) 보관 기간
 DART_CACHE_VERSION = 2   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
 # v19.1b: 캐시 없이 처음부터 받는 '전체 DART 실행'의 호출 수 어림 (하루 한도 약 20,000회 · 목표 16,000회 아래).
 # 2026-11-01 전체 실행(41319552163): 재무·배당·분기 11,588회 / 2,418곳 = 기업당 4.8회. 업종 코드(company.json)는 그 뒤에 생겨
-# 빈 캐시면 기업당 1회 더. 공시는 목록 + 상세 최대 1,200회 (DISC_CALL_CAP) — 넉넉히 1,300회로 잡아요.
+# 빈 캐시면 기업당 1회 더. 공시는 최대 목록 30쪽 + 내부자 상세 1,200회(DISC_CALL_CAP) + 국민연금 200회 = 1,430회.
 DART_PER_COMPANY = 4.8
-DART_DISC_MAX = 1300
+DART_DISC_MAX = 30 + 1200 + 200
 DART_DAY_LIMIT = 20000
 DART_FULL_TARGET = 16000
 DART_REVALIDATE_DAYS = 90
@@ -1287,14 +1288,13 @@ def _tri3(row, conv, mult=1.0):
 def parse_dart_basis(rows):
     """v19.1b: 같은 배당 표에서 해마다의 '주식 수'를 거꾸로 셀 수 있는 값들 (당기·전기·전전기). (순수 함수)
     cash3 현금배당금총액(원) · pdps3 우선주·종류주 주당 현금배당금(원) · par3 주당액면가액(원) · eps3 회사가 낸 주당순이익(원) ·
-    ni3 그 주당순이익과 같은 기준(연결/별도)의 당기순이익(원) · epsB 그 기준 · stlm 결산기준일.
+    ni3 그 주당순이익과 같은 기준(연결/별도)의 당기순이익(원) · epsB 그 기준.
     총액의 '-' 는 0(배당 없음), 순이익·주당순이익·액면가의 '-' 는 모름. 하나도 없으면 None."""
-    out, eps_by, ni_by, stlm = {}, {}, {}, None
+    out, eps_by, ni_by = {}, {}, {}
     for row in rows:
         se = (row.get("se") or "").replace(" ", "")
         knd = (row.get("stock_knd") or "").strip()
         unit = _amount_unit(se)
-        stlm = stlm or (str(row.get("stlm_dt") or "").strip() or None)
         basis = "연결" if "(연결)" in se else ("별도" if "(별도)" in se else "")
         if se.startswith("주당액면가액") and "par3" not in out:
             out["par3"] = _tri3(row, _num)
@@ -1314,8 +1314,6 @@ def parse_dart_basis(rows):
             break
     if not any(k in out for k in ("cash3", "par3", "eps3")):
         return None
-    if stlm:
-        out["stlm"] = stlm
     return out
 
 
@@ -1451,7 +1449,8 @@ def pick_current_quarter(shares):
 
 def dart_full_estimate(n_companies, ksic=True):
     """v19.1b: 처음부터 받는 전체 DART 실행의 호출 수 어림 → (합계, 설명). (순수 함수)
-    재무·배당·분기 기업당 4.8회 + 업종 코드 기업당 1회(캐시가 비었을 때) + 기업코드 목록 1회 + 공시 최대 1,300회."""
+    재무·배당·분기 기업당 4.8회(지난 전체 실행의 평균) + 업종 코드 기업당 1회(캐시가 비었을 때) + 기업코드 목록 1회 + 공시 최대 1,430회.
+    상한이 아니라 어림이에요 — 실제 호출 수는 실행 끝에 남기고, 목표(16,000)를 넘으면 크게 알려요."""
     main_ = math.ceil(n_companies * DART_PER_COMPANY)
     ks = n_companies if ksic else 0
     total = main_ + ks + 1 + DART_DISC_MAX
@@ -2162,15 +2161,14 @@ def _median(vals):
 FIN_SECS = {"bank", "insure", "broker", "holding"}
 
 
-FL_KEYS = ("cr", "icr", "l3", "imp")      # 재무 경고 검사: 유동비율 · 이자보상배율 · 3년 연속 적자 · 자본잠식
-CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
+CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
 
 
 def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
-    flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 FL_KEYS 가 모두
-    flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
+    flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 네 검사(cr 유동비율 ·
+    icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
     extra = extra or {}
     comps = []
     for s in kr_stocks:
@@ -2221,8 +2219,9 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             if cr < 100:
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
+        if op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and row["s"] not in FIN_SECS:
+            ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
         if op0f is not None and eff["ie"] and eff["ie"] > 0 and row["s"] not in FIN_SECS:
-            ran.append("icr")
             icr = op0f / eff["ie"]
             if icr < 1:
                 fl["icr"] = round(icr, 2)
@@ -2375,6 +2374,10 @@ def fetch_korea(start, today, rf, prev=None):
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
     pref_shares = kr_pref_shares(listing)     # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
+    n_pref = sum(1 for c in listing["Code"] if is_preferred(str(c)))
+    n_pref_ok = sum(len(v) for v in pref_shares.values())
+    log(f"{'  !! ' if n_pref_ok < n_pref else '· '}우선주 상장 주식 수 (배당 분할 확인용): {n_pref_ok:,} / {n_pref:,}종목 · "
+        f"{len(pref_shares):,}개 회사" + (" — 주식 수가 빈 우선주는 그 회사의 배당을 확인하지 못할 수 있어요" if n_pref_ok < n_pref else ""))
 
     # 업종·주요제품 (KRX 상장법인 상세). v17.5.1: 열을 바로잡아요 — Sector 는 소속부(우량기업부 등, 코스피는 빈 칸),
     # Industry 가 업종, Products 가 주요제품이에요. 예전엔 Sector→업종, Industry→주요제품으로 읽어서 "nan · 주요제품: <업종>"이 됐어요.
@@ -2868,11 +2871,12 @@ def div_basis(dps3, bas, cs3, shr, prefs=()):
             st3[i] = st if st in ("nc", "nd") else "nd"
             continue
         dpsF[i] = round(f, 6)
-        dps3a[i] = round(d[i] / f, 2)
+        dps3a[i] = round(d[i] / dpsF[i], 2)     # 발행되는 배율로 나눠요 (관문이 같은 값으로 다시 계산해요 — 1/3 배율도 맞게)
         st3[i] = "same" if f == 1.0 else "adj"
     paid = [x for x in st3 if x in ("same", "adj", "nc", "nd")]
     if not paid:
-        div_st = "zero" if "zero" in st3 else None
+        # 3년 모두 0 일 때만 '배당 없음'. 모르는 해(빈 칸)가 섞이면 배당했는지도 모르니 '알 수 없음'
+        div_st = "zero" if st3.count("zero") == 3 else ("nd" if "zero" in st3 else None)
     else:
         div_st = next(x for x in ("nc", "nd", "adj", "same") if x in paid)
     return {"dps3a": dps3a, "dpsF": dpsF, "st3": st3, "divSt": div_st, "f0": f0, "lo": lo, "hi": hi}
@@ -2924,7 +2928,7 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
         elif r["st3"][0] == "zero":
             s["dyt"] = 0.0
         elif r["dpsF"][0] is not None:
-            y = _fin(s["dps3"][0]) / r["dpsF"][0] / price * 100
+            y = r["dps3a"][0] / price * 100        # 발행되는 dps3a 로 (관문과 같은 계산 · 30% 경계도 같게)
             if y <= DYT_MAX:
                 s["dyt"] = round(y, 2)
             else:
@@ -3559,15 +3563,13 @@ def main():
     add_percentiles(kr)
     add_percentiles(us)
     # v19.1b: 배당 순위(dz)는 확인한 배당으로만 매겨요. 필수 종목은 꼭 들어 있어야 해요 (CLAUDE.md: 빈 칸일 수 있는 값으로
-    # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). DART 가 정상이었는데 빠졌으면 계산이 틀린 거라 멈춰요.
-    # DART 가 꺼졌거나 닿지 않은 실행은 크게 남기고 관문(필수 종목 배당 순위)이 막아요.
+    # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). 빠지면 여기서 이유와 함께 크게 남기고, 관문의 '필수 종목 배당 순위'
+    # 줄이 발행을 막아요. 여기서 멈추지 않는 건 파일과 관문 표가 남아야 시험 실행에서 원인을 볼 수 있어서예요.
     n_dz = sum(1 for s in kr if _fin(s.get("dz")) is not None)
     miss_dz = dividend_rank_missing(kr)
     log(f"{'  !! ' if miss_dz else '· '}배당 순위(dz): {n_dz:,}종목 · 필수 종목 "
-        + ("모두 있음" if not miss_dz else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_dz)))
-    if miss_dz and client is not None and not client.down and not client.fatal:
-        raise RuntimeError("!! 배당 순위에 필수 종목이 빠졌어요: " + ", ".join(f"{t}({why})" for t, why in miss_dz)
-                           + " — DART 는 정상이었으니 분할 확인 계산을 고쳐야 해요. 발행하지 않고 중단합니다")
+        + ("모두 있음" if not miss_dz else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_dz)
+           + " — 관문에서 실패해 발행하지 않아요"))
     stocks = kr + us + bonds + funds
     if selftest == "corrupt-price":
         for x in stocks:
