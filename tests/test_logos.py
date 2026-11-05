@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Logo plan steps 2 and 3 (tools/logos/): exact identifiers, the DART homepage tool, the coverage test page sample.
+"""Logo plan (tools/logos/): exact identifiers, the DART homepage tool, and what the logo picker builds on.
 
 No network and no logo provider: ISIN check digit and the exact short-code rule, homepage -> domain on the messy values
 DART and KRX hold, platform hosts that are never a company's domain, the DART quiet window (03:40-08:30 KST), the
 DART loop's pacing, batches, call budget and stops (status 020, key errors, network errors) against a fake DART, the
-seeded sample (same seed -> same sample), and the provider URL formats in Python and in the page's JavaScript.
+seeded sample (same seed -> same sample), the provider URL formats, key checks, and every company's exact identifiers
+from data.json + the KRX listing + the DART homepages (logo_sources.py). The coverage test page that used to be tested
+here was removed on 2026-11-05 (Jack); the logo picker's own tests are in tests/test_logo_review.py.
 """
 import datetime as dt
-import json
 import pathlib
-import re
-import subprocess
 import sys
 from zoneinfo import ZoneInfo
 
@@ -19,9 +18,9 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools" / "logos"))
 
-import build_test_page as bp  # noqa: E402
 import dart_homepages as dh  # noqa: E402
 import logo_ids as li  # noqa: E402
+import logo_sources as lsrc  # noqa: E402
 
 KST = ZoneInfo("Asia/Seoul")
 UTC = dt.timezone.utc
@@ -423,16 +422,14 @@ def test_only_publishable_keys_go_into_a_page():
         assert all(v not in str(e.value) for v in (bf, ld) if len(v) > 3), e.value      # never echoes a key
 
 
-# ── the coverage test page (tools/logos/build_test_page.py -> logo-test.html) ──
+# ── every company's exact identifiers, keys (tools/logos/logo_sources.py, used by the logo picker) ──
 
-TEMPLATE = (ROOT / "tools" / "logos" / "logo_test_template.html").read_text(encoding="utf-8")
-PAGE = ROOT / "logo-test.html"
-KEYS = ("bfClientTEST1234", "pk_TEST123456")
+MUST_KR_TOP = ("005930", "000660", "005380")
 
 
 def fake_inputs():
     """A made-up data.json, KRX listing and homepage CSV in the shapes the builder reads (no network)."""
-    stocks = [{"t": c, "nk": f"KR{i}", "cls": "kr", "cap": 900.0 - i} for i, c in enumerate(bp.MUST_KR_TOP)]
+    stocks = [{"t": c, "nk": f"KR{i}", "cls": "kr", "cap": 900.0 - i} for i, c in enumerate(MUST_KR_TOP)]
     stocks += [{"t": f"1{i:04d}0", "nk": f"KR co {i}", "cls": "kr", "cap": 100.0 / (i + 1)} for i in range(2400)]
     stocks += [{"t": "100005", "nk": "KR co 0 pref", "cls": "kr", "cap": 50.0},          # preferred share of 100000
                {"t": "069500", "nk": "ETF", "cls": "kr", "cap": 30.0, "etf": True},
@@ -458,7 +455,7 @@ def fake_inputs():
 
 def test_builder_uses_exact_identifiers_only():
     data, listing, homepages = fake_inputs()
-    comps, log = bp.build_companies(data, listing, homepages)
+    comps, log = lsrc.build_companies(data, listing, homepages)
     by = {c["code"]: c for c in comps}
     assert "100005" not in by and "069500" not in by and "SPY" not in by          # preferred share, ETFs left out
     assert by["005930"]["ticker"] == "005930.KS" and by["005930"]["isin"] == "KR7005930003"
@@ -476,125 +473,11 @@ def test_builder_uses_exact_identifiers_only():
     assert not any(c["ticker"] and "." not in c["ticker"] and c["side"] == "kr" for c in comps)   # never a bare code
 
 
-def test_built_page_is_deterministic_and_lists_the_sample():
-    data, listing, homepages = fake_inputs()
-    a, da, _ = bp.build(data, listing, homepages, KEYS, seed=11, built_at="T", template=TEMPLATE)
-    b, db, _ = bp.build(data, listing, homepages, KEYS, seed=11, built_at="T", template=TEMPLATE)
-    c, dc, _ = bp.build(data, listing, homepages, KEYS, seed=12, built_at="T", template=TEMPLATE)
-    assert a == b and a != c
-    assert [x["c"] for x in da["companies"]] != [x["c"] for x in dc["companies"]]
-    assert {x["c"] for x in da["companies"] if x["g"] == "KR-A"} >= set(bp.MUST_KR_TOP)
-    assert len(da["companies"]) == 600 and da["meta"]["seed"] == 11
-    assert not set(da["meta"]["rotate"]) & {x["c"] for x in da["companies"]}     # check logos are not in the sample
-    assert '<meta name="robots" content="noindex,nofollow">' in a and KEYS[1] in a and "/*DATA*/" not in a
-
-
 def test_the_builder_refuses_secret_keys(tmp_path):
     f = tmp_path / "k.env"
     f.write_text("BRANDFETCH_CLIENT_ID=abcdef123456\nLOGODEV_TOKEN=sk_secretvalue\n", encoding="utf-8")
     with pytest.raises(SystemExit) as e:
-        bp.read_keys(str(f))
+        lsrc.read_keys(str(f))
     assert "sk_secretvalue" not in str(e.value)
     f.write_text("BRANDFETCH_CLIENT_ID=abcdef123456\nLOGODEV_TOKEN=pk_ok123456\n", encoding="utf-8")
-    assert bp.read_keys(str(f)) == ("abcdef123456", "pk_ok123456")
-
-
-def pure_js():
-    m = re.search(r"// ==pure-start==.*?\n(.*?)// ==pure-end==", TEMPLATE, re.S)
-    assert m, "pure block markers"
-    return m.group(1)
-
-
-def node(js):
-    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stderr
-    return json.loads(r.stdout)
-
-
-def test_page_javascript_builds_the_same_urls_as_python():
-    cases = [("bf", "isin", "KR7005930003"), ("bf", "ticker", "005930.KS"), ("bf", "ticker", "BRK-B"),
-             ("bf", "domain", "samsung.com"), ("ld", "ticker", "247540.KQ"), ("ld", "ticker", "0126Z0.KS"),
-             ("ld", "domain", "ks-industry.co.kr"), ("ld", "isin", "KR7005930003"), ("bf", "ticker", "A B/C?")]
-    keys = {"bf": "bf_Client-01~x", "ld": "pk_abc_DEF-9"}
-    js = pure_js() + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(c => logoUrl(c[0], c[1], c[2], " \
-        f"{json.dumps(keys)}[c[0]])).concat([logoUrl('ld', 'domain', 'x.co.kr', 'pk_k', '2')])));"
-    got = node(js)
-    want = [li.logo_url({"bf": "brandfetch", "ld": "logodev"}[p], r, i, keys[p]) for p, r, i in cases]
-    want.append(li.logo_url("logodev", "domain", "x.co.kr", "pk_k") + "&v=2")
-    assert got == want
-
-
-def test_page_javascript_mix_and_estimate():
-    js = pure_js() + """
-console.log(JSON.stringify([
-  mixOf(["miss", "hit", "hit", "na", "na"]), mixOf(["wait", "hit", "miss", "na", "na"]),
-  mixOf(["miss", "miss", "miss", "miss", "miss"]), mixOf(["miss", "wait", "miss", "na", "na"]),
-  mixOf(["na", "na", "miss", "na", "recheck"]), mixOf(["stopped", "miss", "err", "na", "na"]),
-  mixOf(["stopped", "stopped", "err", "na", "na"]), mixOf(["na", "na", "na", "na", "na"]),
-  mixOf(["stopped", "miss", "hit", "na", "na"]),
-  estimate([{N: 200, n: 200, h: 180}, {N: 800, n: 100, h: 50}]), estimate([{N: 10, n: 0, h: 0}]),
-  estimate([{N: 200, n: 100, h: 50, f: 0.5, m: 200}]), share(30, 60, 50, 100), share(0, 0, 40, 100),
-  estimate([{N: 100, n: 100, h: 50, f: 1, m: 100}, {N: 300, n: 0, h: 0, f: 0, m: 75}]),
-  estimate([{N: 300, n: 0, h: 0, f: 0, m: 75}]), estimate([{N: 800, n: 50, h: 25, f: 0.5, m: 100}])]));"""
-    m1, m2, m3, m4, m5, m6, m7, m8, m9, e1, e2, e3, s1, s2, e4, e5, e6 = node(js)
-    no = {"partial": False, "untested": False}
-    assert m1 == dict(no, done=True, hit=True, first=1)
-    assert m2 == dict(no, done=False, hit=False, first=-1)          # not counted until every route has ended
-    assert m3 == dict(no, done=True, hit=False, first=None)
-    assert m4 == m5 == dict(no, done=False, hit=False, first=-1)
-    assert m6 == dict(no, done=True, hit=False, first=None, partial=True)     # no logo, but two routes did not run
-    assert m7 == dict(no, done=False, hit=False, first=-1, untested=True)     # nothing tested: left out, not "no logo"
-    assert m8 == dict(no, done=True, hit=False, first=None)                   # no identifier at all: no logo
-    assert m9 == dict(no, done=True, hit=True, first=2)
-    assert abs(e1["p"] - (0.2 * 0.9 + 0.8 * 0.5)) < 1e-9 and e1["cover"] == 1000
-    want_moe = 1.96 * (0.8 ** 2 * 0.25 / 100 * (700 / 799)) ** 0.5                 # the census group adds nothing
-    assert abs(e1["moe"] - want_moe) < 1e-9 and e2 is None
-    assert abs(e3["p"] - 0.25) < 1e-9 and e3["moe"] == 0              # every company of the group is in the sample
-    assert s1 == 0.25 and s2 is None                                  # 30 of 60 tested x 50 of 100 have the id
-    assert abs(e4["p"] - 0.125) < 1e-9 and e4["cover"] == 400      # a group with no identifiers counts as 0%, in full
-    assert e5 is None                                                 # nothing tested anywhere yet
-    p = 0.5 * 25 / 50                                                 # the range counts the 100 sampled as yes / no
-    assert abs(e6["p"] - p) < 1e-9 and abs(e6["moe"] - 1.96 * (p * (1 - p) / 100 * (700 / 799)) ** 0.5) < 1e-9
-
-
-SITE_PAGES = ["index.html", "app.html", "app-preview.html", "baepsae.html", "styleguide.html", "template.html",
-              "sw.js", "manifest.webmanifest", "src/v2/template.html"]
-
-
-def test_the_page_is_not_linked_from_the_site():
-    files = list(SITE_PAGES)
-    for d in ("src", "styleguide"):
-        files += [str(p.relative_to(ROOT)) for p in (ROOT / d).rglob("*")
-                  if p.is_file() and p.suffix in (".js", ".jsx", ".html", ".json", ".css")]
-    found = [f for f in files if (ROOT / f).exists() and "logo-test" in (ROOT / f).read_text(encoding="utf-8")]
-    assert not found, found
-
-
-@pytest.mark.skipif(not PAGE.exists(), reason="logo-test.html not built")
-def test_the_committed_page_is_the_template_plus_its_data_and_is_safe():
-    html = PAGE.read_text(encoding="utf-8")
-    data = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', html, re.S).group(1))
-    keys = json.loads(re.search(r"var KEYS = (\{.*?\});", html).group(1))
-    li.check_publishable_keys(keys["bf"], keys["ld"])                              # publishable only, never sk_
-    assert bp.render(TEMPLATE, data, (keys["bf"], keys["ld"])) == html, "logo-test.html was edited by hand"
-    assert '<meta name="robots" content="noindex,nofollow">' in html
-    assert "<title>Logo coverage test (temporary)</title>" in html
-    outside = html.replace(re.search(r'<script id="data".*?</script>', html, re.S).group(0), "")
-    assert not re.search("[ㄱ-ㆎ가-힣]", outside), "Korean text outside the company data"
-    from test_text import EMOJI, banned_words
-    assert not EMOJI.findall(html)
-    assert not [w for w in banned_words() if w in html]
-    groups = {g["id"]: g for g in data["groups"]}
-    comps = data["companies"]
-    assert [groups[g]["sampled"] for g in ("KR-A", "KR-B", "KR-C", "KR-D", "KR-E", "US-A", "US-B", "US-C", "US-D")] \
-        == [200, 75, 75, 75, 75, 25, 25, 25, 25]
-    assert len({c["c"] for c in comps}) == len(comps) == 600
-    assert {"005930", "000660", "005380"} <= {c["c"] for c in comps if c["g"] == "KR-A"}
-    for c in comps:
-        if c["s"] == "kr":
-            assert li.is_common_share(c["c"]), c["c"]
-            assert c["tk"] in ("", c["c"] + ".KS", c["c"] + ".KQ"), c
-            assert not c["isin"] or li.isin_valid(c["isin"]), c
-            assert not c["dom"] or (li.homepage_domain(c["dom"]) == c["dom"] and not li.is_shared_host(c["dom"])), c
-        else:
-            assert c["tk"] == c["c"] and not c["isin"] and not c["dom"], c
+    assert lsrc.read_keys(str(f)) == ("abcdef123456", "pk_ok123456")

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""What both logo pages build on (the coverage test page, build_test_page.py, and Jack's logo picker,
-build_review_page.py): reading the two publishable keys, the live data.json, the KRX listing and the DART homepages,
-every company with its exact identifiers, the known-logo / made-up-identifier checks, and writing a page from its
-template. Moved here from build_test_page.py (2026-11-05) so the picker keeps working when the test page is removed.
+"""What Jack's logo picker (build_review_page.py) builds on: reading the two publishable keys, the live data.json,
+the KRX listing and the DART homepages, every company with its exact identifiers, the known-logo / made-up-identifier
+checks, and writing a page from its template. Moved here from the coverage test page's builder, which was removed on
+2026-11-05 with that page.
 
 Identifiers (exact only, never names):
   ticker  KOSPI and KONEX 005930.KS · KOSDAQ 247540.KQ (market from the KRX listing for data.json's pxDate, else
