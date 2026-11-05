@@ -369,6 +369,7 @@ function BottomNav({ tab, setTab, lang }) {
 
 // 뱁새 2.0 이 여는 바로가기 (v19.0c, src/deeplink.js): 처음 열 때 한 번만 읽고 주소에서 지워요 (replaceState: 기록이 늘지
 // 않아서, 그 화면에서 뒤로 가면 2.0 으로 돌아가요). 그 뒤의 뒤로 가기는 지금처럼 NAV 가 맡아요. 모르는 # 은 그대로 둬요.
+// 주소의 2.0 표시(?from=app, template.html 의 첫 스크립트)는 지우지 않아요: 새로고침해도 예전 뱁새에 남아요 (CV 링크, 2026-11-05).
 function takeDeepLink() {
   try {
     const d = readDeepLink(window.location.hash);
