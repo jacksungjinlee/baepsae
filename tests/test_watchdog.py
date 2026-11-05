@@ -233,6 +233,17 @@ def test_selftest_leaves_a_real_problem_open_and_down(monkeypatch):
     comments = posts(net, f"/issues/{n}/comments")
     assert comments and not comments[-1][2]["body"].startswith("**[시험]**")       # 진짜 경보의 반복 댓글 ([시험] 아님)
     assert net.issues[-1].get("state", "open") == "open"
+    body = net.issues[-1]["body"]                       # 이슈 첫 줄이 '[시험] … 실제 사이트는 문제가 없어요'로 남으면 안 돼요
+    assert not body.startswith("**[시험]**") and "뱁새 감시가 문제를 찾았어요" in body and f"이슈 #{n} 이 떴어" in body
+
+
+def test_selftest_never_rewrites_a_real_alert_that_was_already_open(monkeypatch):
+    """시험 전부터 열린 진짜 경보는 본문을 바꾸지 않아요 (언제부터 · 첫 줄이 그대로)."""
+    real = {"number": 9, "created_at": "2026-11-04T07:37:00Z", "state": "open", "body": "@jacksungjinlee 진짜 경보 (처음 본문)"}
+    net = FakeNet(issues=[real])
+    assert go(net, AFTER, argv=["--selftest", "broken"], gate=bad_gate, monkeypatch=monkeypatch) == 1
+    assert net.issues[0]["body"] == real["body"] and net.issues[0].get("state", "open") == "open"
+    assert not any(c[0] == "PATCH" and c[1].endswith("/issues/9") for c in net.calls)
 
 
 def test_selftest_really_breaks_the_downloaded_data(tmp_path):

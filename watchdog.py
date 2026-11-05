@@ -571,10 +571,20 @@ def finish_selftest(net, now, run_url, hc, kw):
         print(f"  {s:4}  {n}: {d}")
     bad = rep.problems
     print(f"\n다시 점검: {'문제 ' + str(len(bad)) + '개' if bad else '정상'} · 점검 {len(rep.rows)}개", flush=True)
+    summ = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summ:
+        with open(summ, "a", encoding="utf-8") as f:
+            f.write(f"### 시험 뒤 다시 점검 (망가뜨리지 않은 파일) — {'문제 ' + str(len(bad)) + '개' if bad else '정상'}\n\n"
+                    f"{rep.markdown()}\n\n")
     if bad:
         for n, _, d in bad:
             print(f"::error title=뱁새 감시::{V._gh_escape(f'{n}: {d}')}", flush=True)
-        raise_alert(net, rep, ctx, now, run_url, "none")
+        num = raise_alert(net, rep, ctx, now, run_url, "none")
+        # 방금 연 [시험] 이슈 안에 진짜 문제가 남지 않게: 첫 줄이 [시험]이면 진짜 경보 본문으로 바꿔요 (그 전부터 열린 진짜 이슈는 그대로)
+        for i in open_alerts(net):
+            if i.get("number") == num and str(i.get("body") or "").startswith("**[시험]**"):
+                net.gh("PATCH", f"/repos/{REPO}/issues/{num}", {"body": issue_body(rep, ctx, now, run_url, num, "none")})
+                print(f"!! 경보 이슈 #{num}: 시험이 아니라 진짜 문제예요 — 본문을 진짜 경보로 바꿨어요", flush=True)
         return
     clear_alerts(net, ctx, now, run_url)
     ping(net, hc)
