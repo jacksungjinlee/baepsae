@@ -21,8 +21,10 @@ What it does
 Limits (Jack, 2026-11-05) — DART's key is shared with the daily data run:
   - refuses to start, and stops between batches, inside 03:40-08:30 KST (the daily run uses DART then);
   - at most 1 call per second, in batches of 300 with a 30-second pause between;
-  - at most 3,000 calls per KST day for this tool, counted across runs in a ledger outside the repository
-    (~/.cache/baepsae-logos/dart_calls.json);
+  - at most 3,000 calls per KST day for this tool (checked before every call, corpCode.xml included; each call is
+    booked to the KST day it is made), counted across runs in a ledger outside the repository
+    (~/.cache/baepsae-logos/dart_calls.json) and, since a cloud container starts empty, never below what the
+    committed CSV shows was fetched today;
   - stops at once on DART status 020 (daily limit) or a key error (010 · 011 · 012 · 901), and after 5 network errors
     in a row. Progress is saved after every batch and on any stop; a rerun continues.
 The key comes only from DART_API_KEY and never appears in output (every printed line goes through a masker).
@@ -41,7 +43,7 @@ import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from logo_ids import (Masker, common_code, has_homepage, in_quiet_window, is_krx_code,  # noqa: E402
+from logo_ids import (KST, Masker, common_code, has_homepage, in_quiet_window, is_krx_code,  # noqa: E402
                       judge_homepage, now_kst, refuse_in_quiet_window)
 
 DATA_URL = "https://jacksungjinlee.github.io/baepsae/data.json"
@@ -162,7 +164,8 @@ def apply_domains(rows):
 # ── DART calls ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 class Ledger:
-    """DART calls this tool made per KST day (all runs), in a file outside the repository."""
+    """DART calls this tool made per KST day (all runs), in a file outside the repository. A cloud container is thrown
+    away after its session, so main() also raises today's count to what the committed CSV shows (calls_in_csv)."""
 
     def __init__(self, path):
         self.path = pathlib.Path(path)
@@ -174,12 +177,32 @@ class Ledger:
     def used(self, day):
         return int(self.days.get(day, 0))
 
-    def add(self, day, n=1):
-        self.days[day] = self.used(day) + n
+    def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.days, sort_keys=True), encoding="utf-8")
         os.replace(tmp, self.path)
+
+    def add(self, day, n=1):
+        self.days[day] = self.used(day) + n
+        self._save()
+
+    def at_least(self, day, n):
+        if n > self.used(day):
+            self.days[day] = n
+            self._save()
+
+
+def calls_in_csv(rows, day):
+    """DART calls the CSV proves were made on `day` (KST): one company.json per distinct corp_code fetched that day,
+    plus the corpCode.xml call. An undercount (network errors leave no row), but it survives a new container."""
+    corps = {r.get("corp_code") for r in rows.values() if str(r.get("fetched_at") or "").startswith(day)
+             and r.get("corp_code")}
+    return len(corps) + 1 if corps else 0
+
+
+def kst_day(when):
+    return when.astimezone(KST).date().isoformat()
 
 
 def classify_company(want, j):
@@ -198,16 +221,17 @@ def classify_company(want, j):
             "_message": str(j.get("message") or "")}
 
 
-def fetch_all(todo, call, ledger, day, budget, mask, clock=time.monotonic, sleep=time.sleep, wall=now_kst,
+def fetch_all(todo, call, ledger, budget, mask, clock=time.monotonic, sleep=time.sleep, wall=now_kst,
               batch=BATCH, pause=PAUSE_S, interval=MIN_INTERVAL_S, on_batch=None):
     """Call company.json once per corp_code in todo [(corp_code, want_stock_code)], paced. call(corp_code) returns the
-    parsed JSON, or raises on a network error. Returns (results {corp_code: fields}, counts, stop_reason or None)."""
+    parsed JSON, or raises on a network error. Every call is booked to the KST day it is made (a run may cross
+    midnight). Returns (results {corp_code: fields incl. 'at' = fetch time}, counts, stop_reason or None)."""
     results, counts = {}, collections.Counter()
     stop, net_streak, last = None, 0, None
     made = 0
     for i, (corp, want) in enumerate(todo):
         if made >= budget:
-            stop = f"call budget reached ({made:,} this run · {ledger.used(day):,} today, cap {DAILY_CAP:,})"
+            stop = f"call budget reached ({made:,} this run · {ledger.used(kst_day(wall())):,} today, cap {DAILY_CAP:,})"
             break
         if i and i % batch == 0:
             if on_batch:
@@ -221,9 +245,14 @@ def fetch_all(todo, call, ledger, day, budget, mask, clock=time.monotonic, sleep
             wait = interval - (clock() - last)
             if wait > 0:
                 sleep(wait)
+        day = kst_day(wall())
+        if ledger.used(day) >= DAILY_CAP:
+            stop = f"today's cap of {DAILY_CAP:,} DART calls is used ({day} KST)"
+            break
         last = clock()
         made += 1
         ledger.add(day)
+        at = wall().astimezone(KST).isoformat(timespec="seconds")
         try:
             j = call(corp)
         except Exception as e:                               # noqa: BLE001 — network: counted, masked, maybe stop
@@ -245,6 +274,7 @@ def fetch_all(todo, call, ledger, day, budget, mask, clock=time.monotonic, sleep
             log(f"  !! {corp}: DART status {st} {res.get('_message')!r}", mask=mask)
         if res["status"] == "mismatch":
             log(f"  !! {corp}: DART answered for stock code {j.get('stock_code')!r}, expected {want!r}")
+        res["at"] = at
         results[corp] = res
     return results, counts, stop
 
@@ -267,6 +297,8 @@ def load_corp_map(get, ledger, day, mask):
         m = json.loads(cache.read_text(encoding="utf-8"))
         log(f"· DART corp codes: {len(m):,} (kept from earlier today, {cache})")
         return m
+    if ledger.used(day) >= DAILY_CAP:
+        raise SystemExit(f"!! today's cap of {DAILY_CAP:,} DART calls is used ({day} KST); run again tomorrow")
     ledger.add(day)
     r = get("corpCode.xml", {}, timeout=90)
     try:
@@ -340,9 +372,10 @@ def main(argv=None):
     companies = kr_companies(data)
     log(f"· data.json asOf {data.get('asOf')} · pxDate {data.get('pxDate')} · Korean companies (no ETFs) {len(companies):,}")
 
-    ledger = Ledger(CACHE_DIR / "dart_calls.json")
-    log(f"· DART calls by this tool today ({day} KST) before this run: {ledger.used(day):,} / {DAILY_CAP:,}")
     rows = read_rows(a.out)
+    ledger = Ledger(CACHE_DIR / "dart_calls.json")
+    ledger.at_least(day, calls_in_csv(rows, day))           # a fresh container has no ledger; the CSV is committed
+    log(f"· DART calls by this tool today ({day} KST) before this run: {ledger.used(day):,} / {DAILY_CAP:,}")
     if a.dry_run:
         cache = CACHE_DIR / f"corpcode-{day}.json"
         corp_map = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else None
@@ -381,34 +414,33 @@ def main(argv=None):
         log(f"!! {len(todo):,} to fetch but only {budget:,} calls left today: fetching the first {budget:,}, rerun tomorrow")
 
     def merge(results):
-        stamp = now_kst().isoformat(timespec="seconds")
         for corp, res in results.items():
             for code in codes_of[corp]:
                 rows[code] = {"code": code, "corp_code": corp, "via": mapping[code][1], "name_en": res["name_en"],
-                              "corp_cls": res["corp_cls"], "hm_url": res["hm_url"], "fetched_at": stamp,
+                              "corp_cls": res["corp_cls"], "hm_url": res["hm_url"], "fetched_at": res["at"],
                               "status": res["status"]}
         apply_domains(rows)
         write_rows(a.out, rows)
 
     def on_batch(results, counts, i):
         merge(results)
-        log(f"· saved {a.out} · calls today {ledger.used(day):,} / {DAILY_CAP:,} · "
+        today = now_kst().date().isoformat()
+        log(f"· saved {a.out} · calls today {ledger.used(today):,} / {DAILY_CAP:,} · "
             + ", ".join(f"{k} {v:,}" for k, v in sorted(counts.items())))
 
     t0 = time.monotonic()
-    calls_before = ledger.used(day)
     results, counts, stop = fetch_all(
-        todo, lambda corp: get("company.json", {"corp_code": corp}).json(), ledger, day, budget, mask,
-        on_batch=on_batch)
+        todo, lambda corp: get("company.json", {"corp_code": corp}).json(), ledger, budget, mask, on_batch=on_batch)
     merge(results)
-    calls = ledger.used(day) - calls_before
+    calls = sum(counts.values())                              # company.json calls made by this run
     if stop:
         log(f"!! stopped: {stop}")
     lines, st, usable, fetched = report(rows, companies)
     for line in lines:
         log(line)
+    today = now_kst().date().isoformat()
     log(f"· 홈페이지 수집: {st['ok'] + st['mismatch']:,} / {len(companies):,} · 호출 {calls:,}회 "
-        f"(오늘 이 도구 {ledger.used(day):,}회) · {(time.monotonic() - t0) / 60:.1f}분 · "
+        f"(오늘 이 도구 {ledger.used(today):,}회) · {(time.monotonic() - t0) / 60:.1f}분 · "
         + ", ".join(f"{k} {v:,}" for k, v in sorted(counts.items())))
     log(f"wrote {a.out}")
     return 2 if stop else 0

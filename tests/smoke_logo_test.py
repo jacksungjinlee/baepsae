@@ -83,15 +83,16 @@ class Fake:
     """The fake provider: known logos load, made-up identifiers give 404, the rest by a fixed hash. logo.dev answers a
     domain's first request with a 202 placeholder image; the second load (v=2) is the real answer."""
 
-    def __init__(self, meta):
+    def __init__(self, meta, ld_domain_always=False):
         self.good = set(meta["good"].values()) | set(meta["rotate"])
         self.bad = set(meta["bad"].values())
+        self.ld_domain_always = ld_domain_always          # E: logo.dev answers every domain with an image
 
     def control(self, ident):
         return ident in self.good or ident in self.bad or ident.startswith("ZZQX")
 
     def image(self, p, r, ident, v):
-        if p == "ld" and r == "domain" and not v:
+        if p == "ld" and r == "domain" and (not v or self.ld_domain_always):
             return True
         if ident in self.good:
             return True
@@ -109,7 +110,8 @@ class Run:
         self.inflight, self.max_inflight = collections.Counter(), collections.Counter()
 
     async def open(self, browser, base, cfg, viewport=(390, 844)):
-        self.ctx = await browser.new_context(viewport={"width": viewport[0], "height": viewport[1]})
+        self.ctx = await browser.new_context(viewport={"width": viewport[0], "height": viewport[1]},
+                                             service_workers="block")    # no worker can fetch past ctx.route
         await self.ctx.route("**/*", self.on_route)
         self.page = await self.ctx.new_page()
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
@@ -281,6 +283,25 @@ async def scenarios(data, keys, base, out, mask):
             results.append(f"D fake answers (phone and PC): {len(comps)} companies, every route state as expected, best "
                            f"mix {exp_mix}/{len(comps)}, first hits as expected, {placeholders} first-request "
                            "placeholders caught by the second load, at most 1 request in flight per route")
+
+            # E: logo.dev answers even the made-up domain with an image when it is loaded again -> LD domain is void
+            run = await Run("fake", Fake(data["meta"], ld_domain_always=True)).open(browser, base, cfg)
+            check(await run.wait_finished(600), "E: page did not finish", mask)
+            s = await run.states()
+            ld_dom = [v for k, v in s.items() if k.endswith("|ldD") and v != "na"]
+            others = {k: v for k, v in s.items() if not k.endswith("|ldD")}
+            check(ld_dom and set(ld_dom) == {"stopped"}, f"E: LD domain states {collections.Counter(ld_dom)}", mask)
+            check(all(others[k] == exp[k] for k in others), "E: another route changed", mask)
+            alerts = await run.page.inner_text("#alerts")
+            check("LD domain route is marked 'off'" in alerts, "E: no alert: " + alerts, mask)
+            t = await run.tally()
+            exp_mix_e = sum(1 for c in comps if any(exp[f"{c['c']}|{rid}"] == "hit" for rid, *_ in ROUTES if rid != "ldD"))
+            check(t["mix"]["h"] == exp_mix_e and t["routes"][4]["t"] == 0, f"E: mix {t['mix']} · ldD {t['routes'][4]}",
+                  mask)
+            check(not run.errors and not run.other, f"E: page errors {run.errors} · other {run.other}", mask)
+            await run.ctx.close()
+            results.append(f"E made-up domain still an image on the second load: LD domain switched off for all "
+                           f"{len(ld_dom)} companies, not counted; best mix without it {exp_mix_e}/{len(comps)}")
         finally:
             await browser.close()
     return results

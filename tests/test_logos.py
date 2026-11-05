@@ -207,9 +207,45 @@ def run_fake(tmp_path, n=10, answers=None, budget=3000, batch=4, start=None, use
     todo = [(f"C{i:03d}", f"SC{i:03d}") for i in range(n)]
     for corp, want in todo:
         fake.answers.setdefault(corp, {"status": "000", "stock_code": want, "hm_url": f"www.{corp}.co.kr"})
-    res, counts, stop = dh.fetch_all(todo, fake, ledger, "2026-11-05", budget, li.Masker("SECRETKEY"),
+    res, counts, stop = dh.fetch_all(todo, fake, ledger, budget, li.Masker("SECRETKEY"),
                                      clock=clock.mono, sleep=clock.sleep, wall=clock.wall, batch=batch, pause=30)
     return fake, ledger, res, counts, stop
+
+
+def test_dart_loop_stops_at_the_daily_cap_counted_across_runs(tmp_path):
+    fake, ledger, res, counts, stop = run_fake(tmp_path, n=10, used=dh.DAILY_CAP - 3)
+    assert len(fake.calls) == 3 and "cap" in stop and ledger.used("2026-11-05") == dh.DAILY_CAP
+
+
+def test_dart_calls_are_booked_to_the_kst_day_they_are_made_and_stamped_when_fetched(tmp_path):
+    start = dt.datetime(2026, 11, 5, 23, 59, 57, tzinfo=KST)
+    fake, ledger, res, counts, stop = run_fake(tmp_path, n=6, start=start)
+    assert stop is None and ledger.used("2026-11-05") == 3 and ledger.used("2026-11-06") == 3
+    stamps = [res[f"C{i:03d}"]["at"] for i in range(6)]
+    assert stamps[0] == "2026-11-05T23:59:57+09:00" and stamps[-1].startswith("2026-11-06T00:00:")   # after a pause
+
+
+def test_a_fresh_container_counts_todays_calls_from_the_committed_csv(tmp_path):
+    rows = {"005930": {"corp_code": "A", "fetched_at": "2026-11-05T11:00:00+09:00"},
+            "005935": {"corp_code": "A", "fetched_at": "2026-11-05T11:00:00+09:00"},      # same company, one call
+            "000660": {"corp_code": "B", "fetched_at": "2026-11-05T11:00:01+09:00"},
+            "005380": {"corp_code": "C", "fetched_at": "2026-11-04T11:00:00+09:00"},
+            "123450": {"corp_code": "", "fetched_at": ""}}
+    assert dh.calls_in_csv(rows, "2026-11-05") == 3 and dh.calls_in_csv(rows, "2026-11-07") == 0   # + corpCode.xml
+    led = dh.Ledger(tmp_path / "c.json")
+    led.at_least("2026-11-05", 3)
+    led.at_least("2026-11-05", 1)
+    assert dh.Ledger(tmp_path / "c.json").used("2026-11-05") == 3
+
+
+def test_corp_code_list_is_not_fetched_when_the_cap_is_used(tmp_path, monkeypatch):
+    monkeypatch.setattr(dh, "CACHE_DIR", tmp_path)
+    led = dh.Ledger(tmp_path / "c.json")
+    led.add("2026-11-05", dh.DAILY_CAP)
+    called = []
+    with pytest.raises(SystemExit):
+        dh.load_corp_map(lambda *a, **k: called.append(a), led, "2026-11-05", li.Masker("K" * 8))
+    assert not called and led.used("2026-11-05") == dh.DAILY_CAP
 
 
 def test_dart_loop_paces_one_call_per_second_and_pauses_between_batches(tmp_path):
@@ -407,6 +443,7 @@ def fake_inputs():
     data = {"pxDate": "2026-11-04", "usPxDate": "2026-11-04", "asOf": "2026-11-05", "stocks": stocks}
     listing = {"005930": {"Code": "005930", "ISU_CD": "KR7005930003", "Market": "KOSPI"},
                "000660": {"Code": "000660", "ISU_CD": "KR7000660001", "Market": "KOSPI"},
+               "100040": {"Code": "100040", "ISU_CD": "KR7005930003", "Market": "KOSPI"},     # another code's ISIN
                "005380": {"Code": "005380", "ISU_CD": "KR7005380009", "Market": "KOSPI"},     # bad check digit
                "100000": {"Code": "100000", "ISU_CD": "KR7100000004", "Market": "KOSDAQ GLOBAL"},
                "100010": {"Code": "100010", "ISU_CD": "", "Market": "KONEX"}}
@@ -434,6 +471,8 @@ def test_builder_uses_exact_identifiers_only():
     assert by["100030"]["ticker"] == "" and by["100030"]["isin"] == li.kr_isin_from_code("100030")  # no market: no ticker
     assert by["BRK-B"]["ticker"] == "BRK-B" and by["BRK-B"]["isin"] == "" and by["BRK-B"]["domain"] == ""
     assert by["0126Z0"]["isin"] == "KR70126Z0002"
+    assert by["100040"]["isin"] == li.kr_isin_from_code("100040") != "KR7005930003"   # listing ISIN of another code
+    assert any("100040" in line and "another code" in line for line in log)
     assert not any(c["ticker"] and "." not in c["ticker"] and c["side"] == "kr" for c in comps)   # never a bare code
 
 
@@ -490,22 +529,32 @@ def test_page_javascript_mix_and_estimate():
 console.log(JSON.stringify([
   mixOf(["miss", "hit", "hit", "na", "na"]), mixOf(["wait", "hit", "miss", "na", "na"]),
   mixOf(["miss", "miss", "miss", "miss", "miss"]), mixOf(["miss", "wait", "miss", "na", "na"]),
-  mixOf(["na", "na", "miss", "na", "recheck"]),
+  mixOf(["na", "na", "miss", "na", "recheck"]), mixOf(["stopped", "miss", "err", "na", "na"]),
+  mixOf(["stopped", "stopped", "err", "na", "na"]), mixOf(["na", "na", "na", "na", "na"]),
+  mixOf(["stopped", "miss", "hit", "na", "na"]),
   estimate([{N: 200, n: 200, h: 180}, {N: 800, n: 100, h: 50}]), estimate([{N: 10, n: 0, h: 0}]),
-  estimate([{N: 200, n: 100, h: 50, f: 0.5}]), share(30, 60, 50, 100), share(0, 0, 40, 100),
-  estimate([{N: 100, n: 100, h: 50, f: 1}, {N: 300, n: 0, h: 0, f: 0}]), estimate([{N: 300, n: 0, h: 0, f: 0}])]));"""
-    m1, m2, m3, m4, m5, e1, e2, e3, s1, s2, e4, e5 = node(js)
-    assert abs(e4["p"] - 0.125) < 1e-9 and e4["cover"] == 400      # a group with no identifiers counts as 0%, in full
-    assert e5 is None                                                 # nothing tested anywhere yet
-    assert m1 == {"done": True, "hit": True, "first": 1}
-    assert m2 == {"done": True, "hit": True, "first": -1}            # a hit, but an earlier route is still open
-    assert m3 == {"done": True, "hit": False, "first": None}
-    assert m4 == {"done": False, "hit": False, "first": -1} and m5 == {"done": False, "hit": False, "first": -1}
+  estimate([{N: 200, n: 100, h: 50, f: 0.5, m: 200}]), share(30, 60, 50, 100), share(0, 0, 40, 100),
+  estimate([{N: 100, n: 100, h: 50, f: 1, m: 100}, {N: 300, n: 0, h: 0, f: 0, m: 75}]),
+  estimate([{N: 300, n: 0, h: 0, f: 0, m: 75}]), estimate([{N: 800, n: 50, h: 25, f: 0.5, m: 100}])]));"""
+    m1, m2, m3, m4, m5, m6, m7, m8, m9, e1, e2, e3, s1, s2, e4, e5, e6 = node(js)
+    no = {"partial": False, "untested": False}
+    assert m1 == dict(no, done=True, hit=True, first=1)
+    assert m2 == dict(no, done=False, hit=False, first=-1)          # not counted until every route has ended
+    assert m3 == dict(no, done=True, hit=False, first=None)
+    assert m4 == m5 == dict(no, done=False, hit=False, first=-1)
+    assert m6 == dict(no, done=True, hit=False, first=None, partial=True)     # no logo, but two routes did not run
+    assert m7 == dict(no, done=False, hit=False, first=-1, untested=True)     # nothing tested: left out, not "no logo"
+    assert m8 == dict(no, done=True, hit=False, first=None)                   # no identifier at all: no logo
+    assert m9 == dict(no, done=True, hit=True, first=2)
     assert abs(e1["p"] - (0.2 * 0.9 + 0.8 * 0.5)) < 1e-9 and e1["cover"] == 1000
     want_moe = 1.96 * (0.8 ** 2 * 0.25 / 100 * (700 / 799)) ** 0.5                 # the census group adds nothing
     assert abs(e1["moe"] - want_moe) < 1e-9 and e2 is None
-    assert abs(e3["p"] - 0.25) < 1e-9 and e3["moe"] == 0              # half have the id, all 100 of them tested
+    assert abs(e3["p"] - 0.25) < 1e-9 and e3["moe"] == 0              # every company of the group is in the sample
     assert s1 == 0.25 and s2 is None                                  # 30 of 60 tested x 50 of 100 have the id
+    assert abs(e4["p"] - 0.125) < 1e-9 and e4["cover"] == 400      # a group with no identifiers counts as 0%, in full
+    assert e5 is None                                                 # nothing tested anywhere yet
+    p = 0.5 * 25 / 50                                                 # the range counts the 100 sampled as yes / no
+    assert abs(e6["p"] - p) < 1e-9 and abs(e6["moe"] - 1.96 * (p * (1 - p) / 100 * (700 / 799)) ** 0.5) < 1e-9
 
 
 SITE_PAGES = ["index.html", "app.html", "app-preview.html", "baepsae.html", "styleguide.html", "template.html",

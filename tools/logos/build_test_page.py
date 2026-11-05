@@ -108,10 +108,13 @@ def build_companies(data, listing, homepages):
             log.append(f"· {code}: market unknown (not in the KRX listing, no DART corp_cls) — no ticker route")
         isin, src = "", ""
         if L.get("ISU_CD"):
-            if isin_valid(L["ISU_CD"]):
-                isin, src = L["ISU_CD"].strip().upper(), "KRX listing"
+            cand = L["ISU_CD"].strip().upper()
+            if not isin_valid(cand):
+                log.append(f"!! {code}: listing ISIN {cand!r} fails the check digit — not used")
+            elif cand.startswith("KR7") and cand[3:9] != code.upper():     # a Korean ISIN carries its short code
+                log.append(f"!! {code}: listing ISIN {cand!r} is for another code — not used")
             else:
-                log.append(f"!! {code}: listing ISIN {L['ISU_CD']!r} fails the check digit — not used")
+                isin, src = cand, "KRX listing"
         if not isin and kr_isin_from_code(code):
             isin, src = kr_isin_from_code(code), "common-share rule"
         dom = H.get("domain", "") if H.get("domain_ok") == "1" else ""
