@@ -50,6 +50,7 @@ import os
 import re
 import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -66,6 +67,44 @@ FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 with open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8") as _f:      # 회사 표시의 열 가지 색 (v19.1a Part G)
     MARK_COLORS = re.findall(r'"(#[0-9A-F]{6})"', _f.read().split("export const MARK_COLORS = [", 1)[1].split("]", 1)[0])
 assert len(MARK_COLORS) == 10, MARK_COLORS
+# 한국 배당 추세 스위치 (src/v2/engine.js KR_DIV_TREND, company.js 가 다시 내보내요; Jack 2026-11-05: 주식 분할을 배당 삭감으로 말하지
+# 않게, 분할을 고친 기록이 생길 때까지 꺼짐). 매일 점검 · 오늘 장면은 두 상태를 모두 화면에서 시험해요: 커밋한 app.html(코드의 값)과,
+# 스위치만 반대로 놓고 임시 폴더에 빌드한 app.html (other_trend_app). 회사 페이지 장면은 코드의 값을 따라요.
+with open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8") as _f:
+    _SWITCH = re.findall(r"^export const KR_DIV_TREND = (true|false);$", _f.read(), flags=re.M)
+assert len(_SWITCH) == 1, _SWITCH
+KR_DIV_TREND = _SWITCH[0] == "true"
+_OTHER = {}
+
+
+def other_trend_app():
+    """app.html 을 한국 배당 추세 스위치만 반대로 놓고 임시 폴더에 빌드해요 (커밋하지 않아요). 배당 삭감 화면(확인 필요의 두 버튼 ·
+    실제로 줄였어요 → 규칙 깨짐 · 매도 조건 띠)은 스위치가 켜져 있어야 나와서, 꺼져 있는 동안에도 그 화면을 시험하려고요."""
+    if "p" not in _OTHER:
+        tmp = tempfile.mkdtemp(prefix="baepsae-v2-trend-")
+        shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+        os.makedirs(os.path.join(tmp, "tools"))
+        for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+            shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+        os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+        eng = os.path.join(tmp, "src", "v2", "engine.js")
+        with open(eng, encoding="utf-8") as fh:
+            src = fh.read()
+        old = f"export const KR_DIV_TREND = {'true' if KR_DIV_TREND else 'false'};"
+        assert src.count(old) == 1, old
+        with open(eng, "w", encoding="utf-8") as fh:
+            fh.write(src.replace(old, f"export const KR_DIV_TREND = {'false' if KR_DIV_TREND else 'true'};"))
+        out = os.path.join(tmp, "out")
+        r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+        assert r.returncode == 0, r.stdout + r.stderr
+        with open(os.path.join(out, "app.html"), encoding="utf-8") as a, open(os.path.join(ROOT, "app.html"), encoding="utf-8") as b:
+            assert a.read() != b.read(), "스위치를 바꿔 빌드했는데 app.html 이 같아요"
+        _OTHER["p"] = os.path.join(out, "app.html")
+    return _OTHER["p"]
+
+
+def trend_label(trend):
+    return "배당 추세 " + ("켜짐" if trend else "꺼짐")
 SITE_FILES = ["baepsae.html", "sw.js", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]
 DATA_FILES = ["data.json", "corp.json", "macro.json", "disc.json"]         # disc.json: v19.1a 공시 탭 (지어낸 시험용)
 WAIT = 15000
@@ -134,11 +173,12 @@ def clone(x):
     return json.loads(json.dumps(x))
 
 
-def build_site(files, raw=None, drop=()):
+def build_site(files, raw=None, drop=(), app=None):
     site = tempfile.mkdtemp(prefix="baepsae-v2-")
     for f in SITE_FILES:
         shutil.copy(os.path.join(ROOT, f), site)
-    shutil.copy(os.path.join(ROOT, "app.html"), site)     # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요)
+    # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요). app: 배당 추세 스위치를 반대로 놓은 빌드 (other_trend_app)
+    shutil.copy(app or os.path.join(ROOT, "app.html"), os.path.join(site, "app.html"))
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(site, "fonts"))
     for name, obj in files.items():
         if name in drop:
@@ -1036,6 +1076,118 @@ def scene_no_storage(R, files, width):
     srv.shutdown()
 
 
+# ── 매수 계획 · 연 배당금 (Jack, 2026-11-05) ──
+# 회사 페이지가 배당수익률을 숨기는 한국 종목(보고서 수익률과 1/3~3배 · 연 30% · 임시 분할 안전장치 1.8배: engine.krYieldToday)은
+# 연 배당금에서 빼고, 그 밑에 "배당을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요." 줄로 이름을 밝혀요 (조용히 빼지 않아요).
+def plan_files(files, guard=()):
+    """한국 배당 종목마다 보고서 수익률(dy)을 오늘 수익률(주당 배당 ÷ 종가)과 같게 놓아요: 빼는 종목이 없어요. guard 의 종목
+    (또는 "all" 이면 모두)은 보고서 수익률을 그 절반으로: 오늘 수익률이 2배라 분할 안전장치(1.8배)에 걸리지만 1/3~3배 검사는
+    통과해서, 배당 카드 순위(주당 배당 ÷ 종가)와 담는 종목은 그대로예요."""
+    f = clone(files)
+    for s in f["data.json"]["stocks"]:
+        if s.get("cls") == "kr" and (s.get("dps") or 0) > 0 and (s.get("price") or 0) > 0:
+            y = s["dps"] / s["price"] * 100
+            s["dy"] = round(y / 2 if (guard == "all" or s["t"] in guard) else y, 6)
+    return f
+
+
+def won_value(text):
+    """'약 32만원' · '약 5,000원' → 원."""
+    m = re.search(r"([\d,]+)만원", text)
+    if m:
+        return int(m.group(1).replace(",", "")) * 10000
+    m = re.search(r"([\d,]+)원", text)
+    assert m, text
+    return int(m.group(1).replace(",", ""))
+
+
+def to_plan(page):
+    """배당 생활비 → 다음 → 다음 → 1,000만원 → 후보 고르기(미리 고른 6종목) → 매수 계획. → [(종목, 주식 수)] 화면 순서대로"""
+    wait_ready(page)
+    start_build(page)
+    page.locator('[data-deck="income"]').click()
+    see(page, C["build"]["s1"]["title"])
+    click_next(page)
+    see(page, C["build"]["s3"]["title"])
+    click_next(page)
+    see(page, C["build"]["s4"]["title"])
+    page.get_by_role("button", name="+1,000만").first.click()
+    page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
+    click_next(page)
+    see(page, C["pick"]["title"])
+    click_next(page)
+    see(page, C["plan"]["stocks"])
+    rows = page.locator('[data-ui-v2="screen"] [data-row]')
+    rows.first.wait_for(state="visible")
+    out = []
+    for i in range(rows.count()):
+        r = rows.nth(i)
+        out.append((r.get_attribute("data-row"), int(re.search(r"([\d,]+)주", r.inner_text()).group(1).replace(",", ""))))
+    return out
+
+
+def scene_plan_dividend(R, files, width):
+    S = f"매수 계획 · 연 배당금 {width}"
+    by = {s["t"]: s for s in files["data.json"]["stocks"]}
+    line = lambda page: page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="div-unchecked"]')
+    total = lambda page: won_value(page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="big-number"]').nth(1).inner_text())
+    got = {}
+
+    def kr_payers(rows):
+        return [t for t, n in rows if n > 0 and by.get(t, {}).get("cls") == "kr" and (by[t].get("dps") or 0) > 0]
+
+    srv, ctx, page, _ = R.open(build_site(plan_files(files)), width)
+
+    def none():
+        rows = to_plan(page)
+        got.update(rows=rows, krs=kr_payers(rows), total=total(page))
+        assert len(got["krs"]) >= 2 and any(by[t]["cls"] == "us" for t, n in rows if n > 0), rows   # 한국 배당 종목 둘 이상 + 미국
+        assert line(page).count() == 0, line(page).inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "한국 종목의 배당을 모두 확인할 수 있으면 '배당을 확인하지 못한 종목' 줄이 없어요", none)
+    ctx.close()
+    srv.shutdown()
+    if not got.get("krs"):
+        return
+
+    one = got["krs"][0]
+    srv, ctx, page, _ = R.open(build_site(plan_files(files, guard={one})), width)
+
+    def one_guarded():
+        rows = to_plan(page)
+        assert rows == got["rows"], (rows, got["rows"])                 # 담은 종목 · 주식 수는 그대로
+        txt = line(page).inner_text()
+        assert txt == fillp(C["plan"]["divUnchecked"], n=1, names=by[one]["nk"]), txt
+        shares = dict(rows)[one]
+        want = got["total"] - by[one]["dps"] * shares                    # 그 종목의 배당만 빠져요 (한국 다른 종목 · 미국은 그대로)
+        assert abs(total(page) - want) <= 10000, (total(page), got["total"], by[one]["dps"], shares)
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "분할 안전장치에 걸린 한국 종목 1개 → 연 배당금에서 빼고 '배당을 확인하지 못한 종목 1개(이름)는 빼고 계산했어요'", one_guarded)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, _ = R.open(build_site(plan_files(files, guard="all")), width)
+
+    def all_guarded():
+        rows = to_plan(page)
+        assert rows == got["rows"], (rows, got["rows"])
+        el = line(page)
+        names = ", ".join(by[t]["nk"] for t in got["krs"])
+        assert el.inner_text() == fillp(C["plan"]["divUnchecked"], n=len(got["krs"]), names=names), el.inner_text()
+        for t in (t for t, n in rows if n > 0 and by[t]["cls"] != "kr"):
+            assert by[t]["nk"] not in el.inner_text() and t not in el.inner_text(), t           # 미국 종목은 빼지 않아요
+        box, card = el.bounding_box(), page.locator('[data-ui-v2="plan-summary"]').bounding_box()
+        assert box["x"] >= card["x"] - 0.5 and box["x"] + box["width"] <= card["x"] + card["width"] + 0.5, (box, card)   # 카드 안에서 줄을 바꿔요
+        assert el.evaluate("(e) => e.scrollWidth <= e.clientWidth"), "이름이 칸 밖으로 나가요"
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "한국 배당 종목 모두 → 이름이 모두 나오고 카드 안에서 줄을 바꿔요 (가로 스크롤 없음) · 미국 종목은 그대로", all_guarded)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── 매일 점검 (Part C) ──
 # 산 날(2024년 보고서 기준, since 2024)에 만든 규칙 책을 저장해 두고, 오늘 데이터(2025년 보고서)로 점검해요.
 # 규칙 책은 engine.js ruleBook 이 만드는 모양 그대로예요 (같은 칸 이름).
@@ -1105,10 +1257,12 @@ def daily_files(files, days_ago=0):
     return f
 
 
-def scene_daily(R, files, width):
-    S = f"매일 점검 {width}"
+def scene_daily(R, files, width, trend=KR_DIV_TREND):
+    # trend: 한국 배당 추세 스위치의 상태. 코드의 값이면 커밋한 app.html, 아니면 스위치만 반대로 놓은 빌드
+    app = None if trend == KR_DIV_TREND else other_trend_app()
+    S = f"매일 점검 {width} · {trend_label(trend)}"
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
-    srv, ctx, page, _ = R.open(build_site(daily_files(files)), width, init=init)
+    srv, ctx, page, _ = R.open(build_site(daily_files(files), app=app), width, init=init)
     deck = lambda i: page.locator(f'[data-deck-id="{i}"]')
     row = lambda i, t: deck(i).locator(f'[data-holding="{t}"]')
 
@@ -1123,7 +1277,9 @@ def scene_daily(R, files, width):
         st = {(i, t): row(i, t).get_attribute("data-status") for i, t in
               (("dcut", "005380"), ("dclear", "005380"), ("dwatch", "012450"), ("dmiss", "000270"), ("dband", "005930"),
                ("dband", "035420"), ("dcalm", "000660"), ("dcalm", "005930"), ("dop", "005380"), ("dplan", "005930"), ("dplan", "035420"))}
-        assert st == {("dcut", "005380"): "check", ("dclear", "005380"): "check", ("dwatch", "012450"): "watch",
+        # 스위치가 꺼져 있으면 현대차의 배당 감소(12,000 → 10,000원)는 판정하지 않아요 (확인 필요 아님, 할 일 없음)
+        drop = "check" if trend else "none"
+        assert st == {("dcut", "005380"): drop, ("dclear", "005380"): drop, ("dwatch", "012450"): "watch",
                       ("dmiss", "000270"): "check", ("dband", "005930"): "trim", ("dband", "035420"): "low",
                       ("dcalm", "000660"): "none", ("dcalm", "005930"): "none", ("dop", "005380"): "watch",
                       ("dplan", "005930"): "none", ("dplan", "035420"): "none"}, st
@@ -1148,7 +1304,26 @@ def scene_daily(R, files, width):
         assert div.get_attribute("data-state") == "watch" and C["daily"]["broken"] not in fold.inner_text(), div.inner_text()
         R.collect(page)
         fold.locator("button").first.click()
-    R.check(page, S, "배당 감소 → 확인 필요: 승인 문장 · 2025년 사업보고서 기준 · 두 버튼 (규칙 깨짐 아님)", check_needed)
+    def no_cut_check():
+        # 스위치 꺼짐: 주당 배당 기록이 분할을 고치지 않은 값이라 배당 감소를 말하지 않아요. 배당 삭감 규칙은 준비 중 줄로 보여요.
+        for i in ("dcut", "dclear"):
+            r = row(i, "005380")
+            for sel in ('[data-ui-v2="status-line"]', '[data-ui-v2="confirm"]', '[data-ui="status-chip"]'):
+                assert r.locator(sel).count() == 0, (i, sel)
+            txt = r.inner_text()
+            for bad in ("배당이 줄었어요", "주당 12,000원", C["pick"]["caution"]["divDropBody"], C["daily"]["broken"], C["daily"]["confirmCut"]):
+                assert bad not in txt, (i, bad, txt)
+            fold = r.locator('[data-ui="collapsible"]')
+            fold.locator("button").first.click()
+            pend = fold.locator('[data-rules-today] [data-ui-v2="rule-line"][data-check="pending"]', has_text=C["plan"]["rules"]["divCut"])
+            assert pend.count() == 1, fold.inner_text()
+            assert "주당" not in fold.locator("[data-rules-today]").inner_text(), fold.inner_text()
+            R.collect(page)
+            fold.locator("button").first.click()
+    if trend:
+        R.check(page, S, "배당 감소 → 확인 필요: 승인 문장 · 2025년 사업보고서 기준 · 두 버튼 (규칙 깨짐 아님)", check_needed)
+    else:
+        R.check(page, S, "배당 감소(분할일 수도) → 판정 없음: 확인 필요 · 두 버튼 · 감소 문장 없이 '배당 삭감' 준비 중 줄", no_cut_check)
 
     def keep_and_missing():
         w = row("dwatch", "012450")
@@ -1183,7 +1358,8 @@ def scene_daily(R, files, width):
         for i in range(folds.count()):
             folds.nth(i).locator("button").first.click()
         shown = calm.locator('[data-rules-today] [data-check="pending"]').count()
-        assert shown == int(re.search(r"\d+", nc).group()) == 6, (shown, nc)          # 세는 규칙 = 보이는 준비 중 줄
+        # 세는 규칙 = 보이는 준비 중 줄. 스위치가 꺼져 있으면 삼성전자의 배당 삭감 규칙도 준비 중이에요 (하나 더)
+        assert shown == int(re.search(r"\d+", nc).group()) == (6 if trend else 7), (shown, nc)
         for i in range(folds.count()):
             folds.nth(i).locator("button").first.click()
         note = page.locator('[data-ui-v2="rebased-note"]')
@@ -1222,7 +1398,8 @@ def scene_daily(R, files, width):
         stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")
         cs = [d.get("confirms") for d in stored["decks"] if d["id"] == "dcut"][0]
         assert len(cs) == 1 and cs[0]["answer"] == "cut" and (cs[0]["fy"], cs[0]["a"], cs[0]["b"]) == (2025, 12000, 10000), cs
-    R.check(page, S, "실제로 줄였어요 → 규칙 깨짐 '배당 삭감 · 주당 12,000원 → 10,000원' · 새로 고침해도 남아요", confirm_cut)
+    if trend:                                                           # 꺼져 있으면 답할 감소가 없어요 (반대 상태 빌드에서 시험해요)
+        R.check(page, S, "실제로 줄였어요 → 규칙 깨짐 '배당 삭감 · 주당 12,000원 → 10,000원' · 새로 고침해도 남아요", confirm_cut)
 
     def confirm_clear():
         answer("dclear", "confirmNotCut")
@@ -1232,7 +1409,8 @@ def scene_daily(R, files, width):
         assert "현대차 배당이 줄었어요 · 주당 12,000원 → 10,000원" in r.locator('[data-ui-v2="status-line"][data-code="divCleared"]').inner_text()
         assert row("dcut", "005380").get_attribute("data-status") == "broken"
         R.collect(page)
-    R.check(page, S, "줄인 게 아니에요 → 그 보고서의 감소는 해제, 두 답은 그대로 보여요 (다른 덱은 그대로)", confirm_clear)
+    if trend:
+        R.check(page, S, "줄인 게 아니에요 → 그 보고서의 감소는 해제, 두 답은 그대로 보여요 (다른 덱은 그대로)", confirm_clear)
 
     def switch_answer():
         answer("dclear", "confirmCut")                                 # 잘못 누른 답을 바꿔요
@@ -1250,7 +1428,8 @@ def scene_daily(R, files, width):
         assert [c["answer"] for c in cs] == ["notCut"], cs                 # 같은 일의 답은 하나만 남아요
         assert row("dcut", "005380").get_attribute("data-status") == "broken"
         R.collect(page)
-    R.check(page, S, "답 바꾸기: 줄인 게 아니에요 → 실제로 줄였어요 → 줄인 게 아니에요, 새로 고침해도 바꾼 답이 남아요", switch_answer)
+    if trend:
+        R.check(page, S, "답 바꾸기: 줄인 게 아니에요 → 실제로 줄였어요 → 줄인 게 아니에요, 새로 고침해도 바꾼 답이 남아요", switch_answer)
 
     def today_hero():
         tab(page, C["app"]["tabs"]["home"])
@@ -1272,12 +1451,31 @@ def scene_daily(R, files, width):
         assert page.locator('[data-ui-v2="deck-strip"]').count() == len(DAILY_DECKS["decks"])
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "오늘: 확인할 일 띠 '오늘 확인할 일' (매도 조건 먼저 · 확인 필요) · 못 하는 규칙 줄 · 큰 움직임은 따로 · 덱마다 띠", today_hero)
+    def today_hero_no_cut():
+        # 스위치 꺼짐: 오늘 확인할 일은 기아(부채비율 자료 없음)뿐, 배당 삭감 · 매도 조건은 없어요
+        tab(page, C["app"]["tabs"]["home"])
+        hero = page.locator('[data-ui-v2="today-hero"]')
+        hero.wait_for(state="visible")
+        assert hero.get_attribute("data-state") == "todo", hero.inner_text()
+        items = hero.locator('[data-ui-v2="todo-item"]').evaluate_all("els => els.map(e => e.dataset.t + ':' + e.dataset.status)")
+        assert items == ["000270:check"], items
+        txt = hero.inner_text()
+        assert txt.startswith("오늘 확인할 일 1개") and "부채비율 자료를 받지 못해 확인이 필요해요" in txt, txt
+        for bad in (C["daily"]["sellNow"], C["today"]["sellLabel"], "배당 삭감", "배당이 줄었어요", C["pick"]["caution"]["divDropBody"]):
+            assert bad not in txt, (bad, txt)
+        assert re.search(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", txt)
+        assert page.locator('[data-ui-v2="deck-strip"]').count() == len(DAILY_DECKS["decks"])
+        no_hscroll(page, width)
+        R.collect(page)
+    if trend:
+        R.check(page, S, "오늘: 확인할 일 띠 '오늘 확인할 일' (매도 조건 먼저 · 확인 필요) · 못 하는 규칙 줄 · 큰 움직임은 따로 · 덱마다 띠", today_hero)
+    else:
+        R.check(page, S, "오늘: 확인할 일은 자료 없는 기아뿐 · 배당 삭감 · 매도 조건 없음 · 못 하는 규칙 줄", today_hero_no_cut)
     ctx.close()
     srv.shutdown()
 
     for how, f, drop in (("멈춤", daily_files(files, days_ago=6), ()), ("실패", daily_files(files), ("data.json",))):
-        srv, ctx, page, _ = R.open(build_site(f, drop=drop), width, init=init)
+        srv, ctx, page, _ = R.open(build_site(f, drop=drop, app=app), width, init=init)
 
         def no_status():
             wait_ready(page)
@@ -1313,7 +1511,7 @@ def scene_daily(R, files, width):
             for sel in ('[data-ui-v2="deck-summary"]', '[data-ui-v2="weight"]', '[data-ui-v2="add-money"]'):
                 assert page.locator(sel).count() == 0, sel                     # 평가 금액 · 비중 · 추가로 넣을 돈도 없어요
             R.collect(page)
-        R.check(page, f"매일 점검 · {how} {width}", "판정 없음 (상태 · 버튼 · 규칙 결과 모두 없음) + 이유 문장, 기록은 그대로", no_status)
+        R.check(page, f"매일 점검 · {how} {width} · {trend_label(trend)}", "판정 없음 (상태 · 버튼 · 규칙 결과 모두 없음) + 이유 문장, 기록은 그대로", no_status)
         ctx.close()
         srv.shutdown()
 
@@ -1345,7 +1543,9 @@ def today_files(files):
     return f
 
 
-def scene_today(R, files, width):
+def scene_today(R, files, width, trend=KR_DIV_TREND):
+    # trend: 한국 배당 추세 스위치의 상태. 코드의 값이면 커밋한 app.html, 아니면 스위치만 반대로 놓은 빌드
+    app = None if trend == KR_DIV_TREND else other_trend_app()
     f = today_files(files)
     by = {x["t"]: x for x in f["data.json"]["stocks"]}
     sam = lambda q: _buy("005930", "삼성전자", 0.5, [], q, by)
@@ -1369,7 +1569,7 @@ def scene_today(R, files, width):
 
     def ctx_for(key, site=None):
         init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(decks[key], ensure_ascii=False))}); }} catch (e) {{}} }})();"
-        return R.open(site or build_site(f), width, init=init)
+        return R.open(site or build_site(f, app=app), width, init=init)
 
     def hero(page):
         h = page.locator('[data-ui-v2="today-hero"]')
@@ -1379,7 +1579,23 @@ def scene_today(R, files, width):
     def not_checked(text):
         assert re.search(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", text), text
 
-    S = f"오늘·내 덱 {width}"
+    def no_cut(t):
+        # 스위치 꺼짐: 기록의 배당 감소도, 사용자가 '실제로 줄였어요'라고 답한 삭감도 판정하지 않아요 (주식 분할일 수 있어요).
+        # 답은 기록에 그대로 있고(스위치를 켜면 다시 세요), 배당 삭감 규칙은 준비 중으로 '못 하는 규칙' 줄에 들어가요.
+        h = hero(page)
+        txt = h.inner_text()
+        assert h.get_attribute("data-state") == "calm" and C["today"]["calmTitle"] in txt, txt
+        for bad in ("매도 조건에 걸렸어요", C["daily"]["sellNow"], C["today"]["sellLabel"], "배당 삭감", "배당이 줄었어요",
+                    C["pick"]["caution"]["divDropBody"], C["daily"]["confirmCut"], C["daily"]["confirmNotCut"]):
+            assert bad not in txt, (bad, txt)
+        assert h.locator('[data-ui-v2="todo-item"]').count() == 0 and h.get_by_role("radio").count() == 0
+        assert page.locator(f'[data-today-holding="{t}"] [data-ui="status-chip"]').count() == 0
+        not_checked(txt)
+        verdict_icon(h, "calm")
+        no_hscroll(page, width)
+        R.collect(page)
+
+    S = f"오늘·내 덱 {width} · {trend_label(trend)}"
     srv, ctx, page, _ = ctx_for("sell")
 
     def sell():
@@ -1403,7 +1619,10 @@ def scene_today(R, files, width):
         assert "평가 금액" in strip and "수익률" in strip and re.search(r"오늘 [+−]?\d+\.\d%", strip), strip
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "매도 조건 → 확인할 일 띠(지켜봐요 바탕 · 규칙 깨짐 남색 알약 · flag) 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
+    if trend:
+        R.check(page, S, "매도 조건 → 확인할 일 띠(지켜봐요 바탕 · 규칙 깨짐 남색 알약 · flag) 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
+    else:
+        R.check(page, S, "'실제로 줄였어요'라고 답한 배당 삭감(KB금융) → 판정 없음: 초록 띠 · 매도 조건 · 배당 삭감 문장 없음", lambda: no_cut("105560"))
     ctx.close()
     srv.shutdown()
 
@@ -1417,7 +1636,10 @@ def scene_today(R, files, width):
         assert "배당 삭감 · 주당 3,100원 → 2,500원" in h.inner_text()
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "영문으로 끝나는 이름의 매도 조건 → 'LG가 매도 조건에 걸렸어요' (이/가 를 바르게)", sell_en)
+    if trend:
+        R.check(page, S, "영문으로 끝나는 이름의 매도 조건 → 'LG가 매도 조건에 걸렸어요' (이/가 를 바르게)", sell_en)
+    else:
+        R.check(page, S, "'실제로 줄였어요'라고 답한 배당 삭감(LG) → 판정 없음: 초록 띠 · 매도 조건 문장 없음", lambda: no_cut("003550"))
     ctx.close()
     srv.shutdown()
 
@@ -1485,7 +1707,10 @@ def scene_today(R, files, width):
         assert C["today"]["calmTitle"] in hero(page).inner_text()
         verdict_icon(hero(page), "calm")
         R.collect(page)
-    R.check(page, S, "확인 필요 → 확인할 일 띠(지켜봐요 알약 · flag)의 두 버튼 → '줄인 게 아니에요' → 초록 띠(check-circle)", check)
+    if trend:
+        R.check(page, S, "확인 필요 → 확인할 일 띠(지켜봐요 알약 · flag)의 두 버튼 → '줄인 게 아니에요' → 초록 띠(check-circle)", check)
+    else:
+        R.check(page, S, "배당 감소(현대차 12,000 → 10,000원) → 판정 없음: 초록 띠 · 두 버튼 · 감소 문장 없음", lambda: no_cut("005380"))
     ctx.close()
     srv.shutdown()
 
@@ -1520,6 +1745,7 @@ def scene_today(R, files, width):
     srv.shutdown()
 
     srv, ctx, page, _ = ctx_for("big")
+    kept = 2 if trend else 1         # 배당(산 뒤 새 보고서) + 비중 · 스위치가 꺼져 있으면 배당 규칙은 준비 중이라 세지 않아요
 
     def big_and_why():
         h = hero(page)
@@ -1542,7 +1768,7 @@ def scene_today(R, files, width):
         v = page.locator('[data-ui-v2="why-verdict"]')
         assert v.get_attribute("data-status") == "none"
         vt = v.inner_text()
-        assert C["why"]["noTodo"] in vt and "업종이 다 같이\n빠진 날이에요" in vt and "규칙 2개가 모두 지켜지고 있어요." in vt, vt
+        assert C["why"]["noTodo"] in vt and "업종이 다 같이\n빠진 날이에요" in vt and f"규칙 {kept}개가 모두 지켜지고 있어요." in vt, vt
         verdict_icon(v, "calm")
         assert page.locator("main img[src^='baepi-']").count() == 0, "왜 움직였나(숫자 화면)에 뱁이가 있어요"
         price = page.locator('[data-ui-v2="why-price"]')                          # 큰 숫자: 단위는 작고 가볍게
@@ -1555,7 +1781,7 @@ def scene_today(R, files, width):
         assert C["why"]["c1Title"] in peers.inner_text() and re.search(r"반도체 종목 (\d+)개 중 \1개가 빠졌어요", peers.inner_text()), peers.inner_text()
         assert peers.locator('[data-ui="dot-strip"] [data-mine="1"]').count() == 1
         rules = page.locator('[data-ui-v2="why-rules"]').inner_text()
-        assert "규칙 2개가 모두 지켜지고 있어요" in rules and C["app"]["notChecked"] in rules, rules
+        assert f"규칙 {kept}개가 모두 지켜지고 있어요" in rules and C["app"]["notChecked"] in rules, rules
         assert C["why"]["alertLine"] and C["why"]["alertLine"] in rules and "오늘 화면" not in rules, rules   # Jack, 2026-11-04 승인
         assert "뉴스" not in page.locator("main").inner_text() and "다음에 확인할 일" not in page.locator("main").inner_text()
         rebased = "계획한 3종목 중 2종목만 샀어요. 목표 비중은 산 종목끼리 다시 나눠 계산해요."
@@ -1618,7 +1844,7 @@ def scene_today(R, files, width):
                 g[n].pop("publishedAt", None)
         else:
             drop = ("data.json",)
-        srv, ctx, page, _ = ctx_for("sell", site=build_site(g, drop=drop))
+        srv, ctx, page, _ = ctx_for("sell", site=build_site(g, drop=drop, app=app))
 
         def refused():
             see(page, LOAD_FAIL)
@@ -1626,7 +1852,7 @@ def scene_today(R, files, width):
                 assert page.locator(sel).count() == 0, sel
             assert page.get_by_text("할 일").count() == 0 and page.get_by_text(C["daily"]["sellNow"]).count() == 0
             R.collect(page)
-        R.check(page, f"오늘 · {how} {width}", "저장한 덱이 있어도 불러오기 실패 문구만, 할 일 띠 없음", refused)
+        R.check(page, f"오늘 · {how} {width} · {trend_label(trend)}", "저장한 덱이 있어도 불러오기 실패 문구만, 할 일 띠 없음", refused)
         ctx.close()
         srv.shutdown()
 
@@ -2787,8 +3013,7 @@ def scene_hint(R, files, devices):
 
 # ── v19.1a 회사 페이지 ──
 CO = C["co"]
-# 한국 배당 추세 스위치 (src/v2/company.js KR_DIV_TREND, Jack 2026-11-05: 분할을 고친 기록이 생길 때까지 꺼짐). 화면 시험은 코드의 값을 따라요
-KR_DIV_TREND = re.search(r"export const KR_DIV_TREND = (true|false);", open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8").read()).group(1) == "true"
+# 한국 배당 추세 스위치: 위의 KR_DIV_TREND (src/v2/engine.js). 회사 페이지 화면 시험은 코드의 값을 따라요
 
 
 def kr_dps_agrees(s):
@@ -3414,6 +3639,9 @@ def main():
                       lambda: scene_old_app(R, files, width, "[]", False),
                       lambda: scene_old_app(R, files, width, "{not json", False),
                       lambda: scene_daily(R, files, width), lambda: scene_today(R, files, width),
+                      lambda: scene_plan_dividend(R, files, width),
+                      # 한국 배당 추세 스위치의 반대 상태 (커밋하지 않는 임시 빌드): 두 상태를 모두 화면에서 시험해요
+                      lambda: scene_daily(R, files, width, trend=not KR_DIV_TREND), lambda: scene_today(R, files, width, trend=not KR_DIV_TREND),
                       lambda: scene_about(R, files, width), lambda: scene_routes(R, files, width),
                       lambda: scene_market(R, files, width), lambda: scene_stocks(R, files, width),
                       lambda: scene_missing(R, files, width), lambda: scene_no_holding(R, files, width)]

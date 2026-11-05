@@ -98,6 +98,13 @@ function Summary({ r }) {
       {big(aboutWon(div.won))}
       <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
       {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
+      {/* Korean holdings whose dividend the company page does not trust (engine.annualDividend unchecked): left out of the
+          total and named, never silently (Jack, 2026-11-05). Long lists wrap; a name is never cut. */}
+      {div.unchecked.length > 0 && (
+        <div data-ui-v2="div-unchecked" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { overflowWrap: "anywhere" })}>
+          {fill(C.plan.divUnchecked, { n: div.unchecked.length, names: div.unchecked.map((x) => x.nk || x.t).join(", ") })}
+        </div>
+      )}
       {y2022.ok && (
         <div data-ui-v2="y2022">
           <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.y2022}</div>
