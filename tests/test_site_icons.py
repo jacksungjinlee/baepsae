@@ -497,6 +497,17 @@ def test_the_96_px_rule_is_on_the_shorter_side(tmp_path, w, h, ok):
     assert c["result"] == ("ok" if ok else "too_small")
 
 
+def test_a_small_icon_enlarged_with_hard_pixels_counts_as_too_small(tmp_path):
+    blocky = logo(16, 16).resize((256, 256), Image.NEAREST)
+    assert si.upscaled_from(blocky) == 16
+    assert si.upscaled_from(logo(48, 48).resize((192, 192), Image.NEAREST)) == 48
+    assert si.upscaled_from(logo(256, 256)) is None and si.upscaled_from(logo(180, 180)) is None
+    assert si.upscaled_from(logo(32, 32).resize((128, 128), Image.LANCZOS)) is None     # smooth: not this rule
+    c = {"kind": "icon", "url": "https://www.acme.co.kr/favicon.ico"}
+    assert not si.judge_candidate(c, png(blocky), "acme.co.kr", None, tmp_path)
+    assert c["result"] == "too_small" and "enlarged from a 16 px" in c["note"]
+
+
 def test_broken_bytes_and_an_svg_without_a_renderer_are_broken(tmp_path):
     c = {"kind": "icon", "url": "https://www.acme.co.kr/x.png"}
     assert not si.judge_candidate(c, b"\x89PNG\r\n\x1a\n broken", "acme.co.kr", None, tmp_path)

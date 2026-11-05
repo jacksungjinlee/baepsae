@@ -746,6 +746,24 @@ def normalise(img, side=OUT_SIDE):
     return out
 
 
+def upscaled_from(img, sizes=(8, 16, 24, 32, 48, 64)):
+    """A small icon blown up with hard pixel edges (a 16 px favicon saved as a 256 px frame): the size it was enlarged
+    from, else None. Checks whole-number enlargements only: shrinking to that size and enlarging back again (nearest
+    pixel) must give the same picture on almost every pixel. A real large icon has smooth edges and fails this."""
+    from PIL import Image, ImageChops
+    im = img.convert("RGBA")
+    w, h = im.size
+    for s in sizes:
+        if s >= MIN_SIDE or w % s or h % s or w // s != h // s or w // s < 2:
+            continue
+        back = im.resize((s, s), Image.NEAREST).resize((w, h), Image.NEAREST)   # samples each block's middle
+        r, g, b, a = ImageChops.difference(im, back).split()
+        worst = ImageChops.lighter(ImageChops.lighter(r, g), ImageChops.lighter(b, a))
+        if worst.point(lambda v: 255 if v > 6 else 0).histogram()[255] <= 0.005 * w * h:
+            return s
+    return None
+
+
 def _rgb_pixels(im):
     b = im.convert("RGB").tobytes()
     return list(zip(b[0::3], b[1::3], b[2::3]))
@@ -1007,6 +1025,10 @@ def judge_candidate(c, body, domain, svg_render, raw_dir):
     blank = blank_reason(img)
     if blank:
         c["result"], c["note"] = "blank", blank
+        return False
+    up = upscaled_from(img)
+    if up:
+        c["result"], c["note"] = "too_small", f"{img.width}x{img.height} enlarged from a {up} px icon"
         return False
     c["result"] = "ok"
     return True
@@ -1376,7 +1398,7 @@ def decide(recs, raw_dir):
             continue
         img = Image.open(raw_dir / d["raw"]).convert("RGBA")
         if min(img.size) < MIN_SIDE:
-            d["decision"], d["reason"] = "too_small", f"{best.get('original_size') or '?'} < {MIN_SIDE} px"
+            d["decision"], d["reason"] = "too_small", best.get("note") or f"{best.get('original_size')} < {MIN_SIDE}"
             continue
         b = builder_reason(d["final_url"], dom) or title_reason(r.get("title", ""))
         if b or best.get("result") == "builder":
@@ -1385,6 +1407,10 @@ def decide(recs, raw_dir):
         blank = blank_reason(img)
         if blank or best.get("result") == "blank":
             d["decision"], d["reason"] = "generic", "(c) " + (blank or best.get("note", ""))
+            continue
+        up = upscaled_from(img)
+        if up:
+            d["decision"], d["reason"] = "too_small", f"{best.get('original_size')} enlarged from a {up} px icon"
             continue
         d["decision"] = "kept"
         norm = normalise(img)
