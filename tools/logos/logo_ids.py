@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Exact identifiers for company logos (shared by dart_homepages.py and build_test_page.py). Pure functions only.
+"""Exact identifiers for company logos (shared by dart_homepages.py, logo_sources.py and the logo picker,
+build_review_page.py). Pure functions only.
 
 Jack's rule (2026-11-05): a logo is looked up by an exact identifier only — ticker, ISIN or the company's own homepage
 from DART — never by matching names. Anything without a hit gets a coloured letter mark in the app.
 
 Taken from the v19.1 Part L logo test (branch claude/v19.1-logo-test, tools/logo_test/logo_common.py): the ISIN check
 digit, the exact short-code -> ISIN rule, homepage -> domain, the provider URL formats and key masking. Added here: the
-DART quiet window (no DART calls while the daily data run uses DART) and the seeded sample for the coverage test page.
+DART quiet window (no DART calls while the daily data run uses DART) and the seeded sample of the coverage test page
+(that page was removed on 2026-11-05; draw_sample stays, with its tests in tests/test_logos.py).
 Unit tests: tests/test_logos.py (no network).
 """
 import datetime as dt
