@@ -11,6 +11,7 @@ import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
+import { KR_DIV_TREND } from "./engine.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
   const st = builder.settings;
@@ -156,7 +157,9 @@ function RuleList({ rules, name }) {
   const line = (x) => {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
     switch (x.id) {
-      case "divCut": return x.check === "pending" ? <RuleLine key={x.id} name={R.divCut} pending />
+      // a checked dividend-cut rule is always Korean; with the trend switch off it is not checked (준비 중): its history may
+      // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on.
+      case "divCut": return x.check === "pending" || !KR_DIV_TREND ? <RuleLine key={x.id} name={R.divCut} pending />
         // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
         : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
             note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />

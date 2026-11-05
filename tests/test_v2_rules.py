@@ -41,8 +41,9 @@ def bundle_dir():
 
 # deck(stocks, corps, holdings, opts): a deck bought at purchase-time data `buy` (rule books from engine.ruleBook), then
 # checked against today's data `now`. Helper JS so every test builds rule books the way 샀어요 does.
-# TREND: the Korean dividend-trend switch (engine.js KR_DIV_TREND, Jack 2026-11-05). run(..., trend=None) leaves it to the
-# code's value (지금은 꺼짐); the dividend-cut tests pass trend=True (the switch on, behaviour as before) or False.
+# TREND: the Korean dividend-trend switch (engine.js KR_DIV_TREND, Jack 2026-11-05). The dividend-cut tests pass
+# trend=True (the switch on, behaviour as before) or False. Every other test runs twice (the autouse fixture below): once
+# with the switch as coded (지금은 꺼짐) and once with it on, so the switch-on coverage of the whole file stays.
 HELPERS = """
 const ctxOf = (stocks, corps, fx = 1300, state = { ok: true }) => ({ state, byT: new Map(stocks.map((s) => [s.t, s])),
   coByT: new Map((corps || []).map((c) => [c.t, c])), fx, pxDate: '2026-10-30', ...(TREND === undefined ? {} : { krDivTrend: TREND }) });
@@ -56,8 +57,20 @@ const hold = (ev, t) => ev.holdings.find((x) => x.t === t);
 """
 
 
+_STATE = {"on": False}
+
+
+@pytest.fixture(autouse=True, params=["coded", "on"], ids=["switch-as-coded", "switch-on"])
+def trend_state(request):
+    _STATE["on"] = request.param == "on"
+    yield request.param
+    _STATE["on"] = False
+
+
 def run(body, trend=None, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
+    if trend is None and _STATE["on"]:
+        trend = True
     decl += f"const TREND = {'undefined' if trend is None else json.dumps(trend)};\n"
     code = "import * as R from './rules.mjs';\n" + HELPERS + decl + "let out;\n" + body + "\nconsole.log(JSON.stringify(out));"
     fd, path = tempfile.mkstemp(suffix=".mjs", dir=bundle_dir())              # a file: fixtures are too big for -e
@@ -445,10 +458,9 @@ out = { again: [again.status, again.reasons.filter((r) => r.code === 'divDrop').
 # ── 한국 배당 추세 스위치 (engine.js KR_DIV_TREND, Jack 2026-11-05) ──
 def test_korean_dividend_trend_off_never_fires_a_cut_and_lists_the_rule_as_not_checked():
     """주식 분할을 '배당을 줄였어요'로 말하지 않아요: 한국 주당 배당 기록은 분할을 고치지 않은 값이라, 스위치가 꺼져 있으면(지금)
-    한국 종목의 배당 삭감 규칙은 확인 필요도 규칙 깨짐도 아니고 '준비 중'이에요 — 통과로 치지 않고 '아직 자동으로 확인하지 못하는
-    규칙'에 세요. 이 변경 전에 저장한 덱(확인하는 규칙)도, 꺼진 뒤 저장한 덱(준비 중으로 쓴 규칙)도 같아요. 사용자가 '실제로
-    줄였어요'라고 답한 감소도 꺼져 있는 동안은 규칙 깨짐으로 보이지 않아요 (답은 기록에 그대로 남고, 켜면 다시 셉니다).
-    켜짐: 예전 그대로. 미국 종목은 두 상태가 같아요."""
+    오늘 기록의 감소로는 확인 필요도 규칙 깨짐도 되지 않고 배당 삭감 규칙은 '준비 중'이에요 — 통과로 치지 않고 '아직 자동으로
+    확인하지 못하는 규칙'에 세요. 사용자가 이미 '실제로 줄였어요'라고 답한 삭감(분할이 아니라고 본인이 확인)은 그대로 규칙 깨짐이고
+    두 답 버튼도 남아요. 규칙 책은 스위치와 상관없이 같아서 켜면 다시 점검해요. 켜짐: 예전 그대로. 미국 종목은 두 상태가 같아요."""
     a = kr("000100", dps=1000.0, dps3=[1000.0, 5000.0, 5000.0])                # 2025 보고서: 주당 5,000 → 1,000원 (분할일 수도)
     buy = at(a, fy=2024, dps=5000.0, dps3=[5000.0, 5000.0, 4800.0])
     u = us("AAPL")
@@ -457,36 +469,46 @@ def test_korean_dividend_trend_off_never_fires_a_cut_and_lists_the_rule_as_not_c
 const P = { stable: 3, profit: 2 };
 // A 39주 × 10,000원 = 39만원 · AAPL 3주 × $100 × 1,300원 = 39만원: 비중은 목표 그대로
 const deckOf = (rules, extra) => mkDeck([{ s: BUY, target: 0.5, qty: 39, rules }, { s: U, target: 0.5, qty: 3, rules: R.E.ruleBook(U, null, P, 0.5) }], extra);
-const books = { savedOn: R.E.ruleBook(BUY, C0, P, 0.5, true), savedOff: R.E.ruleBook(BUY, C0, P, 0.5, false) };
-const ev = (deck, trend) => R.evaluateDeck(deck, { ...ctxOf([A, U], [C1]), ...(trend === undefined ? {} : { krDivTrend: trend }) });
+const bk = R.E.ruleBook(BUY, C0, P, 0.5);
+// trend undefined: the code's switch (the ctx carries no krDivTrend)
+const ev = (deck, trend) => { const c = ctxOf([A, U], [C1]); delete c.krDivTrend;
+  return R.evaluateDeck(deck, trend === undefined ? c : { ...c, krDivTrend: trend }); };
 const view = (e) => { const h = hold(e, A.t), us = hold(e, U.t);
   return { s: h.status, codes: h.reasons.map((r) => r.code + ':' + r.rule), div: h.rules.find((r) => r.id === 'divCut'), drops: h.divDrops,
     nc: e.notChecked, ids: e.notCheckedIds, todo: e.todo, us: { s: us.status, rules: us.rules, reasons: us.reasons } }; };
 const res = {};
-for (const [k, rules, extra] of [['savedOn', books.savedOn, {}], ['savedOff', books.savedOff, {}], ['confirmed', books.savedOn, { confirms: CUT }]]) {
-  const d = deckOf(rules, extra);
+for (const [k, extra] of [['drop', {}], ['confirmed', { confirms: CUT }], ['notCut', { confirms: NOTCUT }]]) {
+  const d = deckOf(bk, extra);
   res[k] = { on: view(ev(d, true)), off: view(ev(d, false)), dflt: view(ev(d)) };
 }
-out = { sw: R.E.KR_DIV_TREND, books, res };""", A=a, BUY=buy, C0=co("000100", fy=2024), C1=co("000100"), U=u, CUT=cut)
+out = { sw: R.E.KR_DIV_TREND, book: bk, res };""", A=a, BUY=buy, C0=co("000100", fy=2024), C1=co("000100"), U=u, CUT=cut,
+              NOTCUT=[{**cut[0], "answer": "notCut"}])
     assert got["sw"] is False                                                  # 지금은 꺼져 있어요
-    assert got["books"]["savedOn"][0]["check"] == "checked" and got["books"]["savedOff"][0] == {"id": "divCut", "kind": "sell", "check": "pending"}
-    for k, r in got["res"].items():
+    assert got["book"][0]["check"] == "checked" and got["book"][0]["since"] == 2024      # 산 때의 기준이 남아요 (켜면 다시 점검)
+    res = got["res"]
+    for k, r in res.items():
         assert r["dflt"] == (r["on"] if got["sw"] else r["off"]), k             # 기본값 = 스위치
-        off = r["off"]
-        # 꺼짐: 배당 감소 · 삭감 판정 없음, 배당 삭감 규칙은 준비 중 ('아직 자동으로 확인하지 못하는 규칙'에 들어가요), 할 일 없음
+        assert r["off"]["us"] == r["on"]["us"], k                               # 미국 종목은 두 상태가 같아요
+    # 꺼짐 · 답하지 않은 감소(5,000 → 1,000원): 판정 없음, 배당 삭감 규칙은 준비 중 ('아직 자동으로 확인하지 못하는 규칙'), 할 일 없음
+    for k in ("drop", "notCut"):
+        off = res[k]["off"]
         assert off["s"] == "none" and off["codes"] == [] and off["drops"] == [] and off["todo"] == 0, (k, off)
         assert off["div"] == {"id": "divCut", "kind": "sell", "check": "pending", "result": "pending"}, (k, off["div"])
         assert "divCut" in off["ids"], (k, off["ids"])
-        assert "broken" not in json.dumps(off) and "divDrop" not in json.dumps(off)
-        assert off["us"] == r["on"]["us"], k                                    # 미국 종목은 두 상태가 같아요
-    on = {k: r["on"] for k, r in got["res"].items()}
-    # 켜짐 (예전 그대로): 답하지 않은 감소 → 확인 필요 · '실제로 줄였어요' → 규칙 깨짐 · 준비 중으로 저장된 규칙은 그대로 준비 중
-    assert on["savedOn"]["s"] == "check" and on["savedOn"]["codes"] == ["divDrop:divCut"], on["savedOn"]
-    assert [(d["fy"], d["a"], d["b"], d["answer"]) for d in on["savedOn"]["drops"]] == [(2025, 5000, 1000, None)]
+        assert "broken" not in json.dumps(off) and "divDrop" not in json.dumps(off) and "주당" not in json.dumps(off, ensure_ascii=False)
+    assert res["drop"]["off"]["nc"] == res["drop"]["on"]["nc"] + 1, res["drop"]  # 확인하지 못한 규칙이 하나 더 — 조용히 통과시키지 않아요
+    # 꺼짐 · 사용자가 이미 '실제로 줄였어요'라고 답한 삭감: 그대로 규칙 깨짐 (두 답은 계속 열려 있어요), 오늘 기록은 읽지 않아요
+    c = res["confirmed"]["off"]
+    assert c["s"] == "broken" and c["codes"] == ["divCut:divCut"] and c["todo"] == 1, c
+    assert [(d["fy"], d["a"], d["b"], d["answer"]) for d in c["drops"]] == [(2025, 5000, 1000, "cut")], c["drops"]
+    assert c["div"]["result"] == "broken" and c["div"]["now"] is None, c["div"]
+    assert c["nc"] == res["confirmed"]["on"]["nc"], c                         # 규칙 깨짐은 '확인하지 못한 규칙'으로 세지 않아요
+    # 켜짐 (예전 그대로): 답하지 않은 감소 → 확인 필요 · '실제로 줄였어요' → 규칙 깨짐 · '줄인 게 아니에요' → 할 일 없음
+    on = {k: r["on"] for k, r in res.items()}
+    assert on["drop"]["s"] == "check" and on["drop"]["codes"] == ["divDrop:divCut"], on["drop"]
+    assert [(d["fy"], d["a"], d["b"], d["answer"]) for d in on["drop"]["drops"]] == [(2025, 5000, 1000, None)]
     assert on["confirmed"]["s"] == "broken" and on["confirmed"]["codes"] == ["divCut:divCut"], on["confirmed"]
-    assert on["savedOff"]["s"] == "none" and on["savedOff"]["div"]["result"] == "pending" and "divCut" in on["savedOff"]["ids"]
-    # 꺼짐은 확인하지 못한 규칙이 하나 더 (한국 종목의 배당 삭감) — 조용히 통과시키지 않아요
-    assert got["res"]["savedOn"]["off"]["nc"] == on["savedOn"]["nc"] + 1, got["res"]["savedOn"]
+    assert on["notCut"]["s"] == "none" and on["notCut"]["div"]["result"] == "ok", on["notCut"]
 
 
 def test_a_report_not_newer_than_since_does_not_count_and_an_older_one_is_missing():

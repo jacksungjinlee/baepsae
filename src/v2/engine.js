@@ -183,10 +183,12 @@ export function dpsAgrees(s) {
 // per-share history (dps3, from the latest 사업보고서) is not split-adjusted and the data has no per-report share count,
 // so a split reads exactly like a cut. While this is false, nothing turns that history into a trend, a cut or a raise:
 // the company page's 배당 tile (company.js divKr, which re-exports this), the 후보 고르기 caution (cautions: no 배당 감소,
-// and 배당 is not named among the checks that ran), the dividend-cut rule written at 샀어요 (ruleBook: 준비 중) and the
-// daily check of rules saved earlier (rules.js evalDiv: 준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"). US is not
-// affected (it has no per-share history). Defined here, the module every other one imports, so there is one switch and
-// no import cycle. Turn it on only when the pipeline gives a split-adjusted history; both states are tested.
+// and 배당 is not named among the checks that ran), the dividend-cut rule on 매수 계획 (plan.jsx shows it as 준비 중) and
+// the daily check (rules.js evalDiv: 준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"; a cut the user already
+// confirmed stays 규칙 깨짐). The rule book saved at 샀어요 (ruleBook) is the same in both states, with its purchase-time
+// baseline, so a deck bought while this is off is checked once it is on. US is not affected (it has no per-share history).
+// Defined here, the module every other one imports, so there is one switch and no import cycle. Turn it on only when the
+// pipeline gives a split-adjusted history; both states are tested.
 export const KR_DIV_TREND = false;
 
 // dps / today's close (%) for Korean stocks, only when dps agrees with the report's yield (dpsAgrees). null otherwise.
@@ -684,11 +686,12 @@ export function planShares(items, amountWon, fx) {
 }
 
 // Past-year dividend before tax. KR: dps x shares (0 = paid nothing). US and ETFs: dy x amount. Unknown counts as 0.
-// KR (Jack, 2026-11-05): only a dividend per share the company page trusts (krYieldToday: it agrees with the report's own
-// yield 1/3x-3x, gives at most 30% a year and is not caught by the interim split guard). Any other Korean holding that has
-// a dps is left out and named (unchecked: [{ t, nk }]), never silently: the plan says "배당을 확인하지 못한 종목 {n}개({names})는
-// 빼고 계산했어요." under the total. No dps at all -> unknown (the v17.5 line). US and ETFs are not affected.
-export function annualDividend(rows, fx) {
+// KR (Jack, 2026-11-05): only a dividend per share the company page trusts, i.e. one it shows a yield for (company.js
+// divKr: a known report year and krYieldToday: it agrees with the report's own yield 1/3x-3x, gives at most 30% a year and
+// is not caught by the interim split guard). Any other Korean holding that has a dps is left out and named (unchecked:
+// [{ t, nk }]), never silently: the plan says "배당을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요." under the total.
+// No dps at all -> unknown (the v17.5 line). US and ETFs are not affected. coByT: corp.json rows (the report year).
+export function annualDividend(rows, fx, coByT = null) {
   let won = 0, unknown = 0;
   const unchecked = [];
   for (const r of rows) {
@@ -696,8 +699,10 @@ export function annualDividend(rows, fx) {
     const s = r.s;
     if (s.cls === "kr") {
       const d = num(s.dps);
+      const fy = fyOf(s, coByT ? coByT.get(s.t) || null : null);
       if (d == null) unknown++;
-      else if (krYieldToday(s) == null) unchecked.push({ t: s.t, nk: s.nk });   // the company page hides its yield too
+      else if (d === 0 && dpsAgrees(s)) { /* pays nothing (배당이 없어요 on the company page): 0원, whatever the report year */ }
+      else if (fy == null || krYieldToday(s) == null) unchecked.push({ t: s.t, nk: s.nk });   // the company page hides its yield too
       else won += d * r.shares;
     } else {
       const dy = num(s.dy);
@@ -885,9 +890,9 @@ export function opFell2(co) {
 }
 export const roeFloorFor = (roe) => Math.max(0, Math.floor(roe / 2));
 
-// trend: the Korean dividend-trend switch (KR_DIV_TREND; tests pass both states). Off: a Korean payer's dividend-cut rule
-// is written as not checked (준비 중), as when the history is missing: its history cannot tell a split from a cut.
-export function ruleBook(s, co, points, targetW, trend = KR_DIV_TREND) {
+// The Korean dividend-cut rule is written the same whatever KR_DIV_TREND says (the record outlives the switch): with the
+// switch off, 매수 계획 shows it as 준비 중 and the daily check does not run it (rules.js evalDiv).
+export function ruleBook(s, co, points, targetW) {
   const rules = [];
   const fy = fyOf(s, co);
   // Korean annual inputs (DART) must carry their report year; without it the rule is not shown as checked.
@@ -901,7 +906,7 @@ export function ruleBook(s, co, points, targetW, trend = KR_DIV_TREND) {
   const d3 = Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
   const prev = d3 ? num(d3[1]) : null;
   if (s.cls === "kr" && dps === 0) { /* pays nothing: no dividend-cut rule */ }
-  else if (s.cls === "kr" && trend && dps != null && dps > 0 && dated && prev != null) {
+  else if (s.cls === "kr" && dps != null && dps > 0 && dated && prev != null) {
     rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", baseline: dps, since: fy, dps, prev, dps3: d3,
       streak: dividendStreak(d3), fy, droppedBefore: dps < prev });
   } else rules.push({ id: "divCut", kind: "sell", check: "pending" });

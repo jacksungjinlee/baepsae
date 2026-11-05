@@ -41,6 +41,7 @@ v19.0b (진지한 화면): 글을 모으는 모든 화면에서 (visual_ok) — 
 로고(뱁이 마크 + '뱁새' 22px/800) · 덱 짜기 첫 화면 · 빈 내 덱 · 불러오기 실패 · 준비 중의 뱁이 · 기록했어요는 그림 대신 아이콘 칩.
 """
 import argparse
+import atexit
 import datetime as dt
 import functools
 import http.server
@@ -82,6 +83,7 @@ def other_trend_app():
     실제로 줄였어요 → 규칙 깨짐 · 매도 조건 띠)은 스위치가 켜져 있어야 나와서, 꺼져 있는 동안에도 그 화면을 시험하려고요."""
     if "p" not in _OTHER:
         tmp = tempfile.mkdtemp(prefix="baepsae-v2-trend-")
+        atexit.register(shutil.rmtree, tmp, True)
         shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
         os.makedirs(os.path.join(tmp, "tools"))
         for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
@@ -1082,13 +1084,28 @@ def scene_no_storage(R, files, width):
 def plan_files(files, guard=()):
     """한국 배당 종목마다 보고서 수익률(dy)을 오늘 수익률(주당 배당 ÷ 종가)과 같게 놓아요: 빼는 종목이 없어요. guard 의 종목
     (또는 "all" 이면 모두)은 보고서 수익률을 그 절반으로: 오늘 수익률이 2배라 분할 안전장치(1.8배)에 걸리지만 1/3~3배 검사는
-    통과해서, 배당 카드 순위(주당 배당 ÷ 종가)와 담는 종목은 그대로예요."""
+    통과해서, 배당 카드 순위(주당 배당 ÷ 종가)와 담는 종목은 그대로예요. 보고서 수익률은 연 30% 까지만 놓아요 (넘으면 1/3~3배
+    검사가 어긋나 순위가 달라져요): 오늘 수익률이 30% 를 넘는 종목은 어느 쪽이든 믿지 않는 배당이에요 (연 30% 상한)."""
     f = clone(files)
     for s in f["data.json"]["stocks"]:
         if s.get("cls") == "kr" and (s.get("dps") or 0) > 0 and (s.get("price") or 0) > 0:
             y = s["dps"] / s["price"] * 100
-            s["dy"] = round(y / 2 if (guard == "all" or s["t"] in guard) else y, 6)
+            s["dy"] = round(min(y / 2 if (guard == "all" or s["t"] in guard) else y, 30), 6)
     return f
+
+
+def unchecked_names(f, rows):
+    """engine.annualDividend 를 파이썬으로 따로: 산 한국 종목 중 주당 배당이 있고(0원은 그대로 0원) 회사 페이지가 수익률을 숨기는
+    종목(kr_yield_today: 보고서 연도 · 1/3~3배 · 연 30% · 1.8배)의 이름, 화면 순서대로."""
+    by = {s["t"]: s for s in f["data.json"]["stocks"]}
+    co = {c["t"]: c for c in f["corp.json"]["companies"]}
+    out = []
+    for t, n in rows:
+        s = by.get(t, {})
+        if n > 0 and s.get("cls") == "kr" and s.get("dps") is not None and not (s["dps"] == 0 and kr_dps_agrees(s)) \
+                and kr_yield_today(s, co.get(t)) is None:
+            out.append(s["nk"])
+    return out
 
 
 def won_value(text):
@@ -1136,27 +1153,46 @@ def scene_plan_dividend(R, files, width):
     def kr_payers(rows):
         return [t for t, n in rows if n > 0 and by.get(t, {}).get("cls") == "kr" and (by[t].get("dps") or 0) > 0]
 
-    srv, ctx, page, _ = R.open(build_site(plan_files(files)), width)
+    f0 = plan_files(files)
+    srv, ctx, page, _ = R.open(build_site(f0), width)
 
     def none():
         rows = to_plan(page)
         got.update(rows=rows, krs=kr_payers(rows), total=total(page))
         assert len(got["krs"]) >= 2 and any(by[t]["cls"] == "us" for t, n in rows if n > 0), rows   # 한국 배당 종목 둘 이상 + 미국
+        assert unchecked_names(f0, rows) == [], "이 장면은 빼는 종목이 없는 계획이어야 해요 (시험 데이터를 확인해 주세요)"
         assert line(page).count() == 0, line(page).inner_text()
+        # 내 투자 규칙: 배당 삭감은 한국 배당 추세 스위치가 꺼져 있으면 준비 중 (주당 배당 기록이 분할을 고치지 않은 값이에요)
+        rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
+        for i in range(rules.count()):
+            rules.nth(i).locator("button").first.click()
+        book = page.locator("[data-rules-for]")
+        book.first.wait_for(state="visible")
+        all_text = "\n".join(book.all_inner_texts())
+        divs = book.locator('[data-ui-v2="rule-line"]', has_text=C["plan"]["rules"]["divCut"])
+        div_checked = book.locator('[data-ui-v2="rule-line"][data-check="checked"]', has_text=C["plan"]["rules"]["divLimit"])
+        if KR_DIV_TREND:
+            assert div_checked.count() >= 1, all_text
+        else:
+            assert div_checked.count() == 0 and divs.count() >= len(got["krs"]), all_text
+            assert all(divs.nth(i).get_attribute("data-check") == "pending" for i in range(divs.count()))
+            assert "주당" not in all_text and "배당이 줄었어요" not in all_text, all_text
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "한국 종목의 배당을 모두 확인할 수 있으면 '배당을 확인하지 못한 종목' 줄이 없어요", none)
+    R.check(page, S, "한국 종목의 배당을 모두 확인할 수 있으면 '배당을 확인하지 못한 종목' 줄이 없어요 · 배당 삭감 규칙은 스위치를 따라요", none)
     ctx.close()
     srv.shutdown()
     if not got.get("krs"):
         return
 
     one = got["krs"][0]
-    srv, ctx, page, _ = R.open(build_site(plan_files(files, guard={one})), width)
+    f1 = plan_files(files, guard={one})
+    srv, ctx, page, _ = R.open(build_site(f1), width)
 
     def one_guarded():
         rows = to_plan(page)
         assert rows == got["rows"], (rows, got["rows"])                 # 담은 종목 · 주식 수는 그대로
+        assert unchecked_names(f1, rows) == [by[one]["nk"]]
         txt = line(page).inner_text()
         assert txt == fillp(C["plan"]["divUnchecked"], n=1, names=by[one]["nk"]), txt
         shares = dict(rows)[one]
@@ -1168,13 +1204,15 @@ def scene_plan_dividend(R, files, width):
     ctx.close()
     srv.shutdown()
 
-    srv, ctx, page, _ = R.open(build_site(plan_files(files, guard="all")), width)
+    f2 = plan_files(files, guard="all")
+    srv, ctx, page, _ = R.open(build_site(f2), width)
 
     def all_guarded():
         rows = to_plan(page)
         assert rows == got["rows"], (rows, got["rows"])
         el = line(page)
         names = ", ".join(by[t]["nk"] for t in got["krs"])
+        assert unchecked_names(f2, rows) == [by[t]["nk"] for t in got["krs"]]
         assert el.inner_text() == fillp(C["plan"]["divUnchecked"], n=len(got["krs"]), names=names), el.inner_text()
         for t in (t for t, n in rows if n > 0 and by[t]["cls"] != "kr"):
             assert by[t]["nk"] not in el.inner_text() and t not in el.inner_text(), t           # 미국 종목은 빼지 않아요
@@ -1580,8 +1618,8 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         assert re.search(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", text), text
 
     def no_cut(t):
-        # 스위치 꺼짐: 기록의 배당 감소도, 사용자가 '실제로 줄였어요'라고 답한 삭감도 판정하지 않아요 (주식 분할일 수 있어요).
-        # 답은 기록에 그대로 있고(스위치를 켜면 다시 세요), 배당 삭감 규칙은 준비 중으로 '못 하는 규칙' 줄에 들어가요.
+        # 스위치 꺼짐: 기록의 배당 감소(답하지 않은 것)는 판정하지 않아요 (주식 분할일 수 있어요). 배당 삭감 규칙은 준비 중으로
+        # '못 하는 규칙' 줄에 들어가요.
         h = hero(page)
         txt = h.inner_text()
         assert h.get_attribute("data-state") == "calm" and C["today"]["calmTitle"] in txt, txt
@@ -1619,10 +1657,8 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         assert "평가 금액" in strip and "수익률" in strip and re.search(r"오늘 [+−]?\d+\.\d%", strip), strip
         no_hscroll(page, width)
         R.collect(page)
-    if trend:
-        R.check(page, S, "매도 조건 → 확인할 일 띠(지켜봐요 바탕 · 규칙 깨짐 남색 알약 · flag) 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
-    else:
-        R.check(page, S, "'실제로 줄였어요'라고 답한 배당 삭감(KB금융) → 판정 없음: 초록 띠 · 매도 조건 · 배당 삭감 문장 없음", lambda: no_cut("105560"))
+    # '실제로 줄였어요'라고 답한 삭감은 사용자가 분할이 아니라고 확인한 것이라, 스위치가 꺼져 있어도 그대로 매도 조건이에요
+    R.check(page, S, "매도 조건 → 확인할 일 띠(지켜봐요 바탕 · 규칙 깨짐 남색 알약 · flag) 'KB금융이 매도 조건에 걸렸어요' · 배당 삭감 숫자 · 보고서 연도 · 나머지 이상 없음", sell)
     ctx.close()
     srv.shutdown()
 
@@ -1636,10 +1672,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         assert "배당 삭감 · 주당 3,100원 → 2,500원" in h.inner_text()
         no_hscroll(page, width)
         R.collect(page)
-    if trend:
-        R.check(page, S, "영문으로 끝나는 이름의 매도 조건 → 'LG가 매도 조건에 걸렸어요' (이/가 를 바르게)", sell_en)
-    else:
-        R.check(page, S, "'실제로 줄였어요'라고 답한 배당 삭감(LG) → 판정 없음: 초록 띠 · 매도 조건 문장 없음", lambda: no_cut("003550"))
+    R.check(page, S, "영문으로 끝나는 이름의 매도 조건 → 'LG가 매도 조건에 걸렸어요' (이/가 를 바르게)", sell_en)
     ctx.close()
     srv.shutdown()
 
@@ -3031,7 +3064,7 @@ def kr_dps_agrees(s):
 
 
 def kr_yield_today(s, co):
-    """company.js krYieldToday (보고서 연도를 알 때만): 최근 사업보고서 주당 배당 ÷ 오늘 종가, 그 보고서 수익률과 맞춰 본 값만
+    """engine.js krYieldToday (회사 페이지는 보고서 연도를 알 때만): 최근 사업보고서 주당 배당 ÷ 오늘 종가, 그 보고서 수익률과 맞춰 본 값만
     (보고서 수익률이 없으면 맞춰 볼 수 없어 없음) · 연 30% 이하만. 0원은 가격이 있을 때 0."""
     fy = s.get("fy") or (co or {}).get("fy")
     if not fy or not kr_dps_agrees(s) or not (s.get("price") or 0) > 0:

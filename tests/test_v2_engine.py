@@ -315,8 +315,8 @@ def test_pinned_stocks_bypass_screening_but_stay_capped():
 
 # ── 배당 · 2022 ──
 def test_dividends_unknown_counts_as_zero_with_a_count():
-    # 000010: 보고서 수익률 5% = 주당 500원 ÷ 종가 10,000원 (회사 페이지가 믿는 배당, 2026-11-05 부터 필요해요)
-    rows = [{"s": kr("000010", dps=500, dy=5.0), "shares": 10, "cost": 100000}, {"s": kr("000020", dps=0), "shares": 3, "cost": 30000},
+    # 000010: 보고서 수익률 5% = 주당 500원 ÷ 종가 10,000원 · 2025년 보고서 (회사 페이지가 믿는 배당, 2026-11-05 부터 필요해요)
+    rows = [{"s": kr("000010", dps=500, dy=5.0, fy=2025), "shares": 10, "cost": 100000}, {"s": kr("000020", dps=0), "shares": 3, "cost": 30000},
             {"s": kr("000030", dps=None), "shares": 2, "cost": 20000}, {"s": us("AAA", dy=2.0), "shares": 1, "cost": 133800},
             {"s": us("BBB", dy=None), "shares": 1, "cost": 100000}, {"s": kr("000040", dps=None), "shares": 0, "cost": 0}]
     got = run("out = E.annualDividend(rows, 1338);", rows=rows)
@@ -326,27 +326,32 @@ def test_dividends_unknown_counts_as_zero_with_a_count():
 def test_expected_dividend_leaves_out_and_names_the_korean_dividends_the_company_page_does_not_trust():
     """Jack, 2026-11-05: 회사 페이지가 배당수익률을 숨기는 한국 종목(engine.krYieldToday — 보고서 수익률과 1/3~3배 · 연 30% 이하 ·
     임시 분할 안전장치: 오늘 수익률이 보고서의 1.8배 이상이거나 맞춰 볼 보고서 수익률이 없음)은 연 배당금에서 빼고 이름을 남겨요
-    (화면: "배당을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요."). 주당 배당이 아예 없으면 예전처럼 '배당 정보가 없는 종목'.
-    미국 종목은 그대로 (배당수익률 × 금액)."""
-    ok = kr("000010", nk="믿는회사", dps=500, dy=5.0)                       # 오늘 5% = 보고서 5%
-    split = kr("000020", nk="분할회사", dps=1000, dy=2.0, price=25000)       # 오늘 4% = 보고서의 2배 (1/3~3배는 통과, 1.8배 안전장치)
-    edge = kr("000025", nk="경계회사", dps=1790, dy=1.0, price=100000)      # 오늘 1.79% = 1.79배: 안전장치 아래라 믿어요
-    no_dy = kr("000030", nk="수익률없음", dps=300)                          # 맞춰 볼 보고서 수익률이 없어요
-    far = kr("000040", nk="어긋남", dps=4000, dy=1.0)                       # 오늘 40% vs 보고서 1%: 1/3~3배 밖
-    cap = kr("000050", nk="삼십넘음", dps=3500, dy=20.0)                    # 오늘 35% (1.75배, 1/3~3배 안): 연 30% 넘으면 믿지 않아요
-    zero = kr("000060", nk="무배당", dps=0, dy=0.0)
+    (화면: "배당을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요."). 회사 페이지처럼 어느 보고서인지(보고서 연도: 시세 줄
+    fy, 없으면 corp.json fy) 알아야 해요. 주당 배당이 아예 없으면 예전처럼 '배당 정보가 없는 종목'. 미국 종목은 그대로."""
+    K = lambda t, **kw: kr(t, fy=2025, **kw)
+    ok = K("000010", nk="믿는회사", dps=500, dy=5.0)                        # 오늘 5% = 보고서 5%
+    split = K("000020", nk="분할회사", dps=1000, dy=2.0, price=25000)        # 오늘 4% = 보고서의 2배 (1/3~3배는 통과, 1.8배 안전장치)
+    edge = K("000025", nk="경계회사", dps=1790, dy=1.0, price=100000)       # 오늘 1.79% = 1.79배: 안전장치 아래라 믿어요
+    no_dy = K("000030", nk="수익률없음", dps=300)                           # 맞춰 볼 보고서 수익률이 없어요
+    far = K("000040", nk="어긋남", dps=4000, dy=1.0)                        # 오늘 40% vs 보고서 1%: 1/3~3배 밖
+    cap = K("000050", nk="삼십넘음", dps=3500, dy=20.0)                     # 오늘 35% (1.75배, 1/3~3배 안): 연 30% 넘으면 믿지 않아요
+    zero = K("000060", nk="무배당", dps=0, dy=0.0)
     u = us("AAA", dy=2.0, dps=1000, dps3=[1, 5, 5])                        # 미국 줄의 주당 배당 칸은 쓰지 않아요
+    no_fy = kr("000070", nk="연도모름", dps=500, dy=5.0)                     # 보고서 연도를 몰라요: corp.json 에 있으면 믿어요
     rows = [{"s": s, "shares": n, "cost": n * s["price"]} for s, n in
-            ((ok, 10), (split, 3), (edge, 2), (no_dy, 4), (far, 1), (cap, 2), (zero, 5), (u, 1))]
-    rows[-1]["cost"] = 133800
+            ((ok, 10), (split, 3), (edge, 2), (no_dy, 4), (far, 1), (cap, 2), (zero, 5), (u, 1), (no_fy, 2))]
+    rows[7]["cost"] = 133800
     got = run("""
-const r = (rs) => E.annualDividend(rs, 1338);
-out = { all: r(ROWS), one: r([ROWS[0], ROWS[1], ROWS[7]]), none: r([ROWS[0], ROWS[2], ROWS[6], ROWS[7]]), us: r([ROWS[7]]),
-        unbought: r([{ ...ROWS[1], shares: 0 }]), guard: [ROWS[1].s, ROWS[2].s].map((s) => E.splitGuarded(s)) };""", ROWS=rows)
+const r = (rs, co) => E.annualDividend(rs, 1338, co);
+out = { all: r(ROWS.slice(0, 8)), one: r([ROWS[0], ROWS[1], ROWS[7]]), none: r([ROWS[0], ROWS[2], ROWS[6], ROWS[7]]), us: r([ROWS[7]]),
+        unbought: r([{ ...ROWS[1], shares: 0 }]), guard: [ROWS[1].s, ROWS[2].s].map((s) => E.splitGuarded(s)),
+        noFy: r([ROWS[8]]), noFyCo: r([ROWS[8]], new Map([['000070', { t: '000070', fy: 2025 }]])) };""", ROWS=rows)
     assert got["guard"] == [True, False]
     assert got["all"]["won"] == 5000 + 1790 * 2 + 2676 and got["all"]["unknown"] == 0, got["all"]
     assert got["all"]["unchecked"] == [{"t": "000020", "nk": "분할회사"}, {"t": "000030", "nk": "수익률없음"},
                                        {"t": "000040", "nk": "어긋남"}, {"t": "000050", "nk": "삼십넘음"}], got["all"]
+    assert got["noFy"] == {"won": 0, "unknown": 0, "unchecked": [{"t": "000070", "nk": "연도모름"}]}, got["noFy"]
+    assert got["noFyCo"] == {"won": 1000, "unknown": 0, "unchecked": []}, got["noFyCo"]
     # 분할 안전장치에 걸린 한국 종목 하나: 그 배당만 빠지고(5,000 + 미국 2,676원), 이름이 남아요
     assert got["one"] == {"won": 5000 + 2676, "unknown": 0, "unchecked": [{"t": "000020", "nk": "분할회사"}]}, got["one"]
     assert got["none"] == {"won": 5000 + 3580 + 2676, "unknown": 0, "unchecked": []}, got["none"]      # 걸린 종목이 없으면 줄도 없어요
@@ -399,7 +404,7 @@ def test_2022_estimate_is_market_times_beta_and_partial_or_none_without_beta():
 # ── 주의할 점 · 규칙 ──
 def test_dividend_drop_is_a_check_never_a_broken_rule():
     s = kr("005380", dps=10000, dps3=[10000, 12000, 11400], fy=2025)
-    got = run("const ctx = E.cautionContext([]); out = { c: E.cautions(s, null, ctx, true), rules: E.ruleBook(s, null, {}, 0.1, true) };", s=s)
+    got = run("const ctx = E.cautionContext([]); out = { c: E.cautions(s, null, ctx, true), rules: E.ruleBook(s, null, {}, 0.1) };", s=s)
     assert {"code": "divDrop", "a": 12000, "b": 10000} in got["c"]["items"]      # 산 날에는 주의할 점(확인 필요)으로
     # 배당 삭감 규칙은 그대로 있어요: 기준은 산 때의 배당(주당 10,000원, 2025년 보고서). Part C 는 그보다 새 보고서만 비교해서
     # 이미 지난 감소로 '깨짐'이 되지 않고, 다음 감소는 잡아요.
@@ -412,8 +417,9 @@ def test_dividend_drop_is_a_check_never_a_broken_rule():
 
 def test_korean_dividend_trend_switch_off_no_cut_caution_and_the_cut_rule_is_not_checked():
     """한국 배당 추세 스위치 (engine.js KR_DIV_TREND, Jack 2026-11-05: 주식 분할을 '배당을 줄였어요'로 말하지 않아요). 지금은 꺼져 있어요.
-    꺼짐: 주당 5,000 → 1,000원이어도 '배당이 줄었어요' 주의할 점이 없고, '배당'을 확인한 항목으로 말하지 않고, 배당 삭감 규칙은
-    준비 중(확인하지 않음 — 기록이 없을 때와 같은 방식)으로 써요. 켜짐: 예전 그대로. 다른 주의할 점 · 규칙은 두 상태가 같아요.
+    꺼짐: 주당 5,000 → 1,000원이어도 '배당이 줄었어요' 주의할 점이 없고, '배당'을 확인한 항목으로 말하지 않아요. 켜짐: 예전 그대로.
+    다른 주의할 점은 두 상태가 같아요. 샀어요 때 저장하는 규칙 책(ruleBook)은 스위치와 상관없이 같아요 (산 때의 기준을 남겨서,
+    스위치를 켜면 그 덱도 점검해요): 꺼져 있는 동안은 매수 계획이 준비 중으로 보이고(plan.jsx) 매일 점검이 하지 않아요(rules.js).
     미국은 두 상태가 같아요 (주당 배당 기록이 없어 배당 삭감은 원래 준비 중이고, 주의할 점도 없어요)."""
     split = kr("000010", dps=1000, dps3=[1000, 5000, 5000], fy=2025, debt=150)          # 2025 보고서: 5,000 → 1,000원 (분할일 수도)
     co_only = kr("000011", dps=1000, fy=2025)                                            # 기록이 corp.json 에만 있어요
@@ -422,7 +428,7 @@ def test_korean_dividend_trend_switch_off_no_cut_caution_and_the_cut_rule_is_not
     got = run("""
 const ctx = E.cautionContext([]);
 const p = { stable: 3, profit: 2 };
-const one = (x, co, trend) => ({ c: E.cautions(x, co, ctx, trend), r: E.ruleBook(x, co, p, 0.1, trend) });
+const one = (x, co, trend) => ({ c: E.cautions(x, co, ctx, trend), r: E.ruleBook(x, co, p, 0.1) });
 const both = (x, co = null) => ({ on: one(x, co, true), off: one(x, co, false), dflt: { c: E.cautions(x, co, ctx), r: E.ruleBook(x, co, p, 0.1) } });
 out = { sw: E.KR_DIV_TREND, split: both(S), coOnly: both(K, { dps3: [1000, 5000, 5000], fy: 2025 }), stopped: both(Z), us: both(U) };""",
               S=split, K=co_only, Z=stopped, U=u)
@@ -439,13 +445,11 @@ out = { sw: E.KR_DIV_TREND, split: both(S), coOnly: both(K, { dps3: [1000, 5000,
         # 다른 주의할 점과 확인한 항목은 그대로
         assert [x for x in on["c"]["items"] if x["code"] != "divDrop"] == off["c"]["items"], k
         assert [x for x in on["c"]["ran"] if x != "div"] == off["c"]["ran"], k
-        assert [r for r in on["r"] if r["id"] != "divCut"] == [r for r in off["r"] if r["id"] != "divCut"], k
+        assert on["r"] == off["r"], k                                        # 저장하는 규칙 책은 스위치와 상관없어요
     assert got["split"]["on"]["c"]["items"][-1] == {"code": "divDrop", "a": 5000, "b": 1000}
     for k in ("split", "coOnly"):
-        on_div = [r for r in got[k]["on"]["r"] if r["id"] == "divCut"]
-        off_div = [r for r in got[k]["off"]["r"] if r["id"] == "divCut"]
-        assert len(on_div) == 1 and on_div[0]["check"] == "checked" and on_div[0]["droppedBefore"] is True and on_div[0]["prev"] == 5000, k
-        assert off_div == [{"id": "divCut", "kind": "sell", "check": "pending"}], (k, off_div)    # 준비 중: 숫자도 감소 표시도 없음
+        div = [r for r in got[k]["off"]["r"] if r["id"] == "divCut"]          # 산 때의 기준(주당 1,000원 · 2025년 보고서)을 남겨요
+        assert len(div) == 1 and div[0]["check"] == "checked" and div[0]["baseline"] == 1000 and div[0]["since"] == 2025, (k, div)
     for g in got["stopped"].values():
         assert not any(r["id"] == "divCut" for r in g["r"])                  # 배당이 0원이면 두 상태 모두 삭감 규칙 없음
     us_ = got["us"]
@@ -477,7 +481,7 @@ def test_rule_book_statuses_follow_the_part_c_table():
     ins = kr("000030", ind="insurance", indName="보험", dps=0)
     u = us("AAA", debt=60, roe=30)
     got = run("const p = { stable: 3, profit: 2 };"
-              "out = { s: E.ruleBook(s, co, p, 0.12, true), bank: E.ruleBook(bank, null, p, 0.1), ins: E.ruleBook(ins, null, p, 0.1), u: E.ruleBook(u, null, p, 0.1) };",
+              "out = { s: E.ruleBook(s, co, p, 0.12), bank: E.ruleBook(bank, null, p, 0.1), ins: E.ruleBook(ins, null, p, 0.1), u: E.ruleBook(u, null, p, 0.1) };",
               s=s, co=co, bank=bank, ins=ins, u=u)
     st = {r["id"]: r for r in got["s"]}
     assert st["divCut"]["check"] == "checked" and st["divCut"]["streak"] == 2 and st["divCut"]["fy"] == 2025
@@ -673,7 +677,7 @@ def test_operating_profit_fell_twice_has_one_definition_any_sign_counts():
 def test_rules_carry_their_purchase_baseline_and_are_not_broken_at_purchase():
     s = kr("005380", fy=2025, dps=10000, dps3=[10000, 12000, 11400], debt=150, roe=8.0)
     co = {"op": [115.0, 142.0, 151.0], "fy": 2025}
-    got = run("out = E.ruleBook(s, co, { stable: 3, profit: 2 }, 0.1, true);", s=s, co=co)
+    got = run("out = E.ruleBook(s, co, { stable: 3, profit: 2 }, 0.1);", s=s, co=co)
     by = {r["id"]: r for r in got}
     for k, base in (("divCut", 10000), ("opDecline", 115.0), ("debtCeiling", 150), ("roeFloor", 8.0)):
         assert by[k]["check"] == "checked" and by[k]["baseline"] == base and by[k]["since"] == 2025, (k, by[k])

@@ -37,15 +37,16 @@ def bundle_dir():
     return _B["p"]
 
 
-# TREND: the Korean dividend-trend switch (engine.js KR_DIV_TREND). run(..., trend=None) leaves it to the code's value;
-# a test that needs a dividend drop to fire passes trend=True (the switch on, behaviour as before).
+# TREND: the Korean dividend-trend switch (engine.js KR_DIV_TREND). A test that needs a dividend drop to fire passes
+# trend=True (the switch on, behaviour as before). Every other test runs twice (the autouse fixture below): with the switch
+# as coded (지금은 꺼짐) and with it on.
 HELPERS = """
 const ctxOf = (stocks, corps, fx = 1300) => ({ state: { ok: true }, byT: new Map(stocks.map((s) => [s.t, s])),
   coByT: new Map((corps || []).map((c) => [c.t, c])), fx, pxDate: '2026-10-30', ...(TREND === undefined ? {} : { krDivTrend: TREND }) });
 // A deck as 샀어요 stores it: rule books from engine.ruleBook, purchases at the given price (US with the plan's fx).
 const mkDeck = (rows, fx = 1300) => ({ id: 'd1', name: 'deck', createdAt: '2026-10-01',
   holdings: rows.map((r) => ({ t: r.s.t, nk: r.s.nk, cls: r.s.cls, kind: 'core', target: r.target, plannedQty: r.qty,
-    rules: T.E.ruleBook(r.s, r.co || null, r.points || {}, r.target, TREND) })),
+    rules: T.E.ruleBook(r.s, r.co || null, r.points || {}, r.target) })),
   purchases: rows.filter((r) => r.qty > 0).map((r) => ({ t: r.s.t, date: r.date || '2026-10-01', qty: r.qty, price: r.price ?? r.s.price,
     ccy: r.s.cls === 'us' ? 'USD' : 'KRW', ...(r.s.cls === 'us' && r.fx !== null ? { fx: r.fx ?? fx } : {}) })) });
 // A daily evaluation written by hand: only the fields addMoney reads (t, nk, qty, value, target, status, w; no band
@@ -55,8 +56,20 @@ const deOf = (rows) => { const total = rows.reduce((a, r) => a + r[1], 0); retur
 """
 
 
+_STATE = {"on": False}
+
+
+@pytest.fixture(autouse=True, params=["coded", "on"], ids=["switch-as-coded", "switch-on"])
+def trend_state(request):
+    _STATE["on"] = request.param == "on"
+    yield request.param
+    _STATE["on"] = False
+
+
 def run(body, trend=None, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
+    if trend is None and _STATE["on"]:
+        trend = True
     decl += f"const TREND = {'undefined' if trend is None else json.dumps(trend)};\n"
     code = "import * as T from './track.mjs';\n" + HELPERS + decl + "let out;\n" + body + "\nconsole.log(JSON.stringify(out));"
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=bundle_dir(), capture_output=True, text=True, timeout=60)
@@ -457,17 +470,15 @@ def test_rules_kept_never_counts_a_korean_dividend_rule_the_trend_switch_left_un
     buy = kr("000100", fy=2024, dps=500.0, dps3=[500.0, 450.0, 400.0])
     now = kr("000100", fy=2025, dps=550.0, dps3=[550.0, 500.0, 450.0])               # 새 보고서: 배당은 늘었어요
     got = run("""
-const ev = (rules, trend) => {
+const ev = (trend) => {
   const d = mkDeck([{ s: BUY, target: 1, qty: 10 }]);
-  d.holdings[0].rules = rules;
-  const x = T.R.evaluateDeck(d, { ...ctxOf([NOW], []), ...(trend === undefined ? {} : { krDivTrend: trend }) }).holdings[0];
+  const c = ctxOf([NOW], []); delete c.krDivTrend;                 // trend undefined: the code's switch
+  const x = T.R.evaluateDeck(d, trend === undefined ? c : { ...c, krDivTrend: trend }).holdings[0];
   return { kept: T.keptCount(x), s: x.status, div: x.rules.find((r) => r.id === 'divCut').result };
 };
-const savedOn = T.E.ruleBook(BUY, null, {}, 1, true), savedOff = T.E.ruleBook(BUY, null, {}, 1, false);
-out = { sw: T.E.KR_DIV_TREND, on: ev(savedOn, true), off: ev(savedOn, false), offSavedOff: ev(savedOff, false), dflt: ev(savedOn) };""",
-              BUY=buy, NOW=now)
+out = { sw: T.E.KR_DIV_TREND, on: ev(true), off: ev(false), dflt: ev() };""", BUY=buy, NOW=now)
     assert got["on"] == {"kept": 2, "s": "none", "div": "ok"}, got                 # 배당(새 보고서) + 비중
-    assert got["off"] == got["offSavedOff"] == {"kept": 1, "s": "none", "div": "pending"}, got   # 비중만
+    assert got["off"] == {"kept": 1, "s": "none", "div": "pending"}, got          # 비중만
     assert got["dflt"] == (got["on"] if got["sw"] else got["off"]), got
 
 

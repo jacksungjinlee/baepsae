@@ -27,9 +27,9 @@
 //   year and both numbers, so a later, newer cut is asked about again. A confirmed cut stays 규칙 깨짐 whatever later
 //   reports show (the sell condition fired; only the user's own answer can change it).
 // - Korean dividend-trend switch off (engine.js KR_DIV_TREND, Jack 2026-11-05): a Korean dividend-cut rule is not checked
-//   (준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"), never passed and never fired: the per-share history cannot
-//   tell a stock split from a cut. That includes drops the user answered earlier; their answers stay in the record and
-//   count again once the switch is back on. US rules are not affected.
+//   (준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"), never passed, and today's history never fires it (no 확인 필요
+//   for a drop): the per-share history cannot tell a stock split from a cut. A cut the user already confirmed
+//   (실제로 줄였어요: they ruled out a split themselves) stays 규칙 깨짐, with both answers still open. US is not affected.
 // - Only reports NEWER than the rule's `since` can fire an annual rule: a fall that happened before purchase never
 //   counts. A report OLDER than at purchase (the pipeline fell back a year) is not used: the input counts as missing.
 // - A rule input that existed at purchase and is blank today -> "check" (missing), never 괜찮아요.
@@ -175,14 +175,20 @@ const isYear = (y) => Number.isInteger(y);
 // year before it, inside the same report (a split restated by the company stays comparable). drops lists every drop
 // after purchase with the user's answer (null = not answered yet), newest first, including cuts the user confirmed
 // earlier that today's report no longer shows (they stay: the sell condition fired).
-// trend off (KR_DIV_TREND): every dividend-cut rule not on a US holding is not checked (준비 중): only Korean holdings ever
-// get a checked one, and their history may hide a split.
+// trend off (KR_DIV_TREND): a dividend-cut rule not on a US holding (only Korean holdings ever get a checked one) reads
+// nothing from today's history, which may hide a split: not checked (준비 중), unless the user already confirmed a cut
+// after purchase (then 규칙 깨짐 as always: the sell condition fired on their own answer).
 function evalDiv(r, h, s, co, deck, trend) {
   if (!isYear(r.since)) return pendingOf(r);
-  if (!trend && (h.cls || (s && s.cls)) !== "us") return pendingOf(r);
   const out = { id: "divCut", kind: "sell", check: "checked", input: "dps", since: r.since };
   const confirms = ((deck && deck.confirms) || []).filter((c) => c && c.t === h.t && c.rule === "divCut" && isYear(c.fy) && c.fy > r.since);
   const drops = confirms.filter((c) => c.answer === "cut").map((c) => ({ t: h.t, rule: "divCut", fy: c.fy, a: c.a, b: c.b, answer: "cut" }));
+  if (!trend && (h.cls || (s && s.cls)) !== "us") {
+    if (!drops.length) return pendingOf(r);
+    drops.sort((x, y) => y.fy - x.fy);
+    const fy = s ? fyOf(s, co) : null;
+    return { ...out, result: "broken", missing: false, fy, now: null, newer: fy != null && fy > r.since, drops };
+  }
   const fy = s ? fyOf(s, co) : null;
   const d3 = s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
   const v = d3 ? [0, 1, 2].map((i) => num(d3[i])) : [null, null, null];
