@@ -680,11 +680,15 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
   const heldCount = Object.keys(heldMap).length;
   const passBase = (c) => (heldOnly ? !!heldMap[c.t] : (c.cap || 0) >= capMin) && (secFilter === "all" || c.s === secFilter);
 
-  const quadPts = useMemo(() => comps
-    // 세로축은 최근 2년 연평균인 회사만 (업종 축과 같은 기준, 부제와 같은 말 · Jack 2026-11-05: 1년짜리 · 기준을 모르는 값은 빼요)
-    .filter((c) => c.g3 != null && secs[c.s]?.g != null && passBase(c) && krGrowthBasis(c.g3, c.rev) === "y2")
-    .map((c) => ({ id: c.t, nm: c.nk, x: secs[c.s].g, y: c.g3, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
-      color: SEC(c.s).color, held: !!heldMap[c.t], label: `${c.nk} · ${SEC(c.s).ko}\n업종 ${pc(secs[c.s].g)} · 기업 ${pc(c.g3)} · ${c.cap ? c.cap.toFixed(1) + "조" : ""}` })), [comps, secs, capMin, secFilter, heldMap, heldOnly]);
+  const quadPts = useMemo(() => {
+    // 세로축은 최근 2년 연평균인 회사만 (업종 축과 같은 기준, 부제와 같은 말 · Jack 2026-11-05: 1년짜리 · 기준을 모르는 값은 빼요).
+    // 뺀 회사 수는 console 에 남겨요.
+    const all = comps.filter((c) => c.g3 != null && secs[c.s]?.g != null && passBase(c));
+    const two = all.filter((c) => krGrowthBasis(c.g3, c.rev) === "y2");
+    if (two.length < all.length) console.warn(`[뱁새] 성장 지도: 매출성장이 최근 2년 연평균이 아닌 회사 ${all.length - two.length}개(최근 1년 · 기준을 모름)는 빼고 ${two.length}개를 그렸어요`);
+    return two.map((c) => ({ id: c.t, nm: c.nk, x: secs[c.s].g, y: c.g3, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
+      color: SEC(c.s).color, held: !!heldMap[c.t], label: `${c.nk} · ${SEC(c.s).ko}\n업종 ${pc(secs[c.s].g)} · 기업 ${pc(c.g3)} · ${c.cap ? c.cap.toFixed(1) + "조" : ""}` }));
+  }, [comps, secs, capMin, secFilter, heldMap, heldOnly]);
 
   const secRank = useMemo(() => Object.entries(secs)
     .filter(([k, s]) => s.g != null)
@@ -1367,6 +1371,7 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
   const [sel, setSel] = useState(() => peers.slice(0, 2).map((x) => x.t));
   if (!base) return <Card><Sub>데이터를 찾지 못했어요.</Sub></Card>;
   const cols = [base, ...sel.map((t) => data.companies.find((x) => x.t === t)).filter(Boolean)];
+  const gb = new Map(cols.map((c) => [c.t, krGrowthBasis(c.g3, c.rev)]));      // 회사마다 매출 성장 계산 기준 (null: 모름)
   const sec = data.sectors[base.s] || {};
   const toggle = (t) => setSel(sel.includes(t) ? sel.filter((x) => x !== t) : sel.length < 3 ? [...sel, t] : sel);
   const F = {
@@ -1377,10 +1382,10 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
     ["시가총액", (c) => c.cap != null ? c.cap.toFixed(1) + "조" : "—", null],
     ["최근 매출", (c) => F.won(c.rev && c.rev[0]), null],
     // 매출 성장: 회사마다 계산 기준대로 (Jack, 2026-11-05: 최근 2년 연평균 · 최근 1년, '3년' 아님). 기준을 모르면 '—'.
-    ...(cols.some((c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y2")
-      ? [["매출성장(최근 2년 연평균)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y2" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null]] : []),
-    ...(cols.some((c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y1")
-      ? [["매출성장(최근 1년)", (c) => c.g3 != null && krGrowthBasis(c.g3, c.rev) === "y1" ? (c.g3 >= 0 ? "+" : "") + c.g3 + "%" : "—", null]] : []),
+    // 그 기준을 쓰는 회사가 있을 때만 그 줄이 생겨요. 0 은 부호 없이.
+    ...[["y2", "매출성장(최근 2년 연평균)"], ["y1", "매출성장(최근 1년)"]]
+      .filter(([b]) => cols.some((c) => gb.get(c.t) === b))
+      .map(([b, label]) => [label, (c) => gb.get(c.t) === b ? (c.g3 > 0 ? "+" : "") + c.g3 + "%" : "—", null]),
     ["영업이익률", (c) => F.num(c.opm, 1, "%"), sec.opm != null ? sec.opm + "%" : "—"],
     ["ROE", (c) => F.num(c.roe, 1, "%"), sec.roe != null ? sec.roe + "%" : "—"],
     ["PER", (c) => F.num(c.per, 1, "배"), sec.perQ ? sec.perQ[1] + "배" : "—"],

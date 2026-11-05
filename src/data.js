@@ -136,10 +136,12 @@ export function mergeStocks(base, live) {
 }
 
 // ---- 한국 매출 성장(g3)이 어떻게 계산됐는지 (Jack, 2026-11-05: '3년'이라고 부르지 않아요) ----
-// 파이프라인(fetch_data.py parse_dart_list): 전전기 매출이 있으면 최근 2년 연평균 ((당기 ÷ 전전기)^0.5 − 1), 없으면 최근 1년
-// (당기 ÷ 전기 − 1). corp.json 의 매출(rev, [당기, 전기, 전전기], 억원, 0.1 단위로 반올림)과 g3(0.1 단위)로 거꾸로 맞춰 봐요.
-// 2.0 의 src/v2/engine.js growthBasis 와 같은 규칙이에요 (예전 뱁새는 2.0 코드를 가져오지 않아서 여기 따로 둬요,
-// tests/test_app_data.py 가 둘이 같은지 봐요). "y2" (최근 2년 연평균) · "y1" (최근 1년) · null (알 수 없음: 이름표 없이 숨겨요).
+// 파이프라인(fetch_data.py parse_dart_list): 당기 · 전전기 매출이 둘 다 0 보다 크면 최근 2년 연평균 ((당기 ÷ 전전기)^0.5 − 1),
+// 아니면 (전전기 매출이 없거나 0 이하, 또는 당기 매출이 0 이하) 당기가 0 이 아니고 전기가 0 보다 클 때 최근 1년 (당기 ÷ 전기 − 1).
+// corp.json 의 매출(rev, [당기, 전기, 전전기], 억원, 0.1 단위로 반올림)과 g3(0.1 단위)로 거꾸로 맞춰 봐요.
+// 2.0 의 src/v2/engine.js growthBasis 와 같은 규칙이에요. 예전 뱁새는 2.0 코드를 가져오지 않아서 여기 따로 두고 (2.0 이 이걸
+// 가져다 쓰도록 합치는 건 이 PR 밖이에요), tests/test_app_data.py 가 둘이 같은지 봐요.
+// "y2" (최근 2년 연평균) · "y1" (최근 1년) · null (알 수 없음: 이름표 없이 숨겨요).
 const REV_HALF = 0.05, G3_HALF = 0.05;
 export function krGrowthBasis(g3, rev) {
   const g = typeof g3 === "number" && Number.isFinite(g3) ? g3 : null;
@@ -166,12 +168,12 @@ export function krGrowthBasis(g3, rev) {
 
 // ---- 한국 매출 성장 문장 (Jack, 2026-11-05) ----
 // 줄어든 경우 '감소했어요' · '줄었어요' · 'shrank' 옆에 마이너스 부호를 붙이지 않아요: 숫자는 절댓값이에요.
-// 0% 는 늘어난 쪽으로 읽어요 (성적표 '+0% 성장했어요', 리버스 DCF '0.0% 늘었어요'). 계산 기준을 모르면 null: 문장을 빼요.
+// 0% 는 늘어난 쪽 말로, 부호 없이 읽어요 (성적표 '0% 성장했어요', 리버스 DCF '0.0% 늘었어요'). 계산 기준을 모르면 null: 문장을 빼요.
 // 성적표(검색 결과 카드)의 한 줄. 숫자는 g3 그대로 (0.1 단위), 늘었으면 '+'.
 export function krGrowthScoreLine(g3, rev, en) {
   const basis = krGrowthBasis(g3, rev);
   if (!basis) return null;
-  const up = g3 >= 0, two = basis === "y2", x = up ? "+" + Math.abs(g3) : String(Math.abs(g3));
+  const up = g3 >= 0, two = basis === "y2", x = (g3 > 0 ? "+" : "") + Math.abs(g3);
   if (en) return two ? `Revenue ${up ? "grew" : "shrank"} ${x}% a year over the last 2 years.` : `Revenue ${up ? "grew" : "shrank"} ${x}% over the last year.`;
   return two ? `매출은 최근 2년간 연평균 ${x}% ${up ? "성장했어요" : "감소했어요"}.` : `매출은 최근 1년간 ${x}% ${up ? "성장했어요" : "감소했어요"}.`;
 }

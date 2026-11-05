@@ -595,37 +595,53 @@ def test_revenue_growth_is_labelled_by_how_it_was_calculated():
     assert cells["ko"] == [["매출성장(최근 분기, 1년 전 대비)", "+11.7%"], ["매출성장(최근 분기, 1년 전 대비)", "-3.2%"],
                            ["매출성장(최근 2년 연평균)", "+13.5%"], ["매출성장(최근 1년)", "+40%"], None, None, None,
                            ["매출성장(최근 분기, 1년 전 대비)", "–"], None], cells["ko"]          # 한국 · 숫자 없음: 기준을 짐작하지 않고 빼요
-    assert cells["en"][2][0] == "Rev growth (2-yr avg/yr)" and cells["en"][3][0] == "Rev growth (1 yr)" and cells["en"][0][0] == "Rev growth (latest qtr y/y)"
+    assert cells["en"] == [["Rev growth (latest qtr y/y)", "+11.7%"], ["Rev growth (latest qtr y/y)", "-3.2%"],
+                           ["Rev growth (2-yr avg/yr)", "+13.5%"], ["Rev growth (1 yr)", "+40%"], None, None, None,
+                           ["Rev growth (latest qtr y/y)", "–"], None], cells["en"]   # 영어도 똑같이: 기준을 모르거나 숫자가 없으면 칸이 빠져요
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
     assert 'g3Kr2: { ko:"매출성장(최근 2년 연평균)", en:"Rev growth (2-yr avg/yr)" }, g3Kr1: { ko:"매출성장(최근 1년)", en:"Rev growth (1 yr)" }' in src
     assert 'growthCell(x, t, g3Basis), [t("debt")' in src and ".filter(Boolean).map(([k, v]) =>" in src   # 기준을 모르면 칸이 빠져요
+    assert 'g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }' in src
+    assert src.count('t("g3Us")') == 1 and src.count('t("g3Kr2")') == 1 and src.count('t("g3Kr1")') == 1   # 이름표 칸은 growthCell 안에만
+    assert "const same = !!co && co.g3 === x.g3;" in src                            # data.json 과 corp.json 의 숫자가 다르면 칸을 빼요
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
     for label in ("매출성장(최근 분기, 1년 전 대비)", "Rev growth (latest qtr y/y)", "매출성장(최근 2년 연평균)", "Rev growth (2-yr avg/yr)",
                   "매출성장(최근 1년)", "Rev growth (1 yr)"):
         assert label in built, label
     # 매출 성장을 '3년'이라고 부르는 곳이 예전 앱 어디에도 없어요 (이름표 · 설명 · 문장, 한국어 · 영어)
     for bad in ("매출성장(3y)", "Rev growth 3y", "3년 매출 성장률", "매출 성장률 (3년", "최근 3년 성장률", "3년간 연평균", "a year over 3 years",
-                "사분면 · 3년 연평균", 'sub="3년 연평균', "업종의 3년"):
+                "사분면 · 3년 연평균", "3년 연평균 · 상장사", "업종의 3년"):
         assert bad not in built, bad
     corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
-    assert 'passBase(c) && krGrowthBasis(c.g3, c.rev) === "y2")' in corp            # 성장 지도: 최근 2년 연평균인 회사만 (부제와 같은 기준)
+    # 성장 지도: 최근 2년 연평균인 회사만 (부제와 같은 기준), 뺀 회사 수는 console 에
+    assert 'const two = all.filter((c) => krGrowthBasis(c.g3, c.rev) === "y2");' in corp and "return two.map((c) => ({" in corp
+    assert "console.warn(`[뱁새] 성장 지도: 매출성장이 최근 2년 연평균이 아닌 회사 ${all.length - two.length}개" in corp
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 def test_korean_growth_basis_matches_2_0_on_todays_data():
-    """예전 뱁새의 data.js krGrowthBasis 는 2.0 의 engine.growthBasis 와 같은 규칙이에요 (오늘 data.json · corp.json 의 모든 한국 종목)."""
-    code = ("import * as D from './src/data.js'; import * as E from './src/v2/engine.js'; import fs from 'fs';"
-            "const d = JSON.parse(fs.readFileSync('./data.json', 'utf8')); const c = JSON.parse(fs.readFileSync('./corp.json', 'utf8'));"
-            "const co = new Map(c.companies.map((x) => [x.t, x])); const out = { n: 0, diff: [], y2: 0, y1: 0, none: 0 };"
-            "for (const s of d.stocks) { if (s.cls !== 'kr' || s.g3 == null) continue; const k = co.get(s.t); out.n++;"
-            " const a = D.krGrowthBasis(s.g3, k ? k.rev : null), b = E.growthBasis(s, k || null); if (a !== b) out.diff.push(s.t);"
-            " out[a || 'none']++; }"
-            "console.log(JSON.stringify(out));")
-    r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stderr
-    got = json.loads(r.stdout)
-    assert got["n"] > 1000 and got["diff"] == [], got
-    assert got["y2"] > got["y1"] >= 0, got
+    """예전 뱁새의 data.js krGrowthBasis 는 2.0 의 engine.growthBasis 와 같은 규칙이에요. 저장소에 고정된 2.0 시험 데이터
+    (tests/fixtures/v2: 실제 발행본의 한국 종목 331개)로 언제나 보고, main 에 오늘 data.json · corp.json 이 있는 동안
+    (v17.6 3b 가 main 에서 빼기 전까지)은 그 모든 한국 종목으로도 봐요."""
+    def compare(d_path, c_path):
+        code = ("import * as D from './src/data.js'; import * as E from './src/v2/engine.js'; import fs from 'fs';"
+                f"const d = JSON.parse(fs.readFileSync({json.dumps(d_path)}, 'utf8')); const c = JSON.parse(fs.readFileSync({json.dumps(c_path)}, 'utf8'));"
+                "const co = new Map(c.companies.map((x) => [x.t, x])); const out = { n: 0, diff: [], y2: 0, y1: 0, none: 0 };"
+                "for (const s of d.stocks) { if (s.cls !== 'kr' || s.g3 == null) continue; const k = co.get(s.t); out.n++;"
+                " const a = D.krGrowthBasis(s.g3, k ? k.rev : null), b = E.growthBasis(s, k || null); if (a !== b) out.diff.push(s.t);"
+                " out[a || 'none']++; }"
+                "console.log(JSON.stringify(out));")
+        r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+    got = compare("./tests/fixtures/v2/data.json", "./tests/fixtures/v2/corp.json")
+    assert got["n"] >= 300 and got["diff"] == [] and got["y2"] > got["y1"] >= 0, got
+    if os.path.exists(os.path.join(ROOT, "data.json")) and os.path.exists(os.path.join(ROOT, "corp.json")):
+        got = compare("./data.json", "./corp.json")
+        assert got["n"] > 1000 and got["diff"] == [], got
+        assert got["y2"] > got["y1"] >= 0, got
+    else:
+        print("main 에 data.json · corp.json 이 없어요 (v17.6 3b 뒤): 고정된 시험 데이터로만 봤어요")
     edge = run_js("console.log(JSON.stringify([D.krGrowthBasis(41.4, [200, 150, 100]), D.krGrowthBasis(33.3, [200, 150, null]),"
                   " D.krGrowthBasis(10, [200, 150, 100]), D.krGrowthBasis(null, [1, 1, 1]), D.krGrowthBasis(5, null)]));")
     assert edge == ["y2", "y1", None, None, None], edge
@@ -636,7 +652,7 @@ def test_korean_growth_basis_matches_2_0_on_todays_data():
 def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_dash():
     """성적표: '매출은 최근 2년간 연평균 3% 감소했어요.' (1년이면 '매출은 최근 1년간 3% 감소했어요.'), 늘었으면 '+x% 성장했어요.' 그대로.
     리버스 DCF: '이 회사 매출은 최근 2년 동안 연평균 x% 늘었어요(줄었어요). 지금 주가가 가정하는 성장률과 비교해 보세요.'
-    (1년이면 '최근 1년 동안', 연평균 없이). 숫자는 부호 없이, 줄표 없이. 계산 기준을 모르면 문장을 빼요. 0% 는 늘어난 쪽."""
+    (1년이면 '최근 1년 동안', 연평균 없이). 숫자는 부호 없이, 줄표 없이. 계산 기준을 모르면 문장을 빼요. 0% 는 늘어난 쪽 말로, 부호 없이."""
     # [g3, rev]: y2 늘었어요 · y2 줄었어요 · y1 늘었어요 · y1 줄었어요 · 0% (y2) · 기준을 모름 · 숫자 없음 · 매출 없음 · 소수 둘째 자리
     cases = [[41.4, [200, 150, 100]], [-29.3, [100, 150, 200]], [33.3, [200, 150, None]], [-33.3, [100, 150, None]],
              [0, [100, 100, 100]], [10, [200, 150, 100]], [None, [1, 1, 1]], [5, None], [-3, [94.1, 97, 100]]]
@@ -647,11 +663,11 @@ def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_das
     ko = [g[1] for g in got]
     assert ko == ["매출은 최근 2년간 연평균 +41.4% 성장했어요.", "매출은 최근 2년간 연평균 29.3% 감소했어요.",
                   "매출은 최근 1년간 +33.3% 성장했어요.", "매출은 최근 1년간 33.3% 감소했어요.",
-                  "매출은 최근 2년간 연평균 +0% 성장했어요.", None, None, None, "매출은 최근 2년간 연평균 3% 감소했어요."], ko
+                  "매출은 최근 2년간 연평균 0% 성장했어요.", None, None, None, "매출은 최근 2년간 연평균 3% 감소했어요."], ko
     en = [g[2] for g in got]
     assert en == ["Revenue grew +41.4% a year over the last 2 years.", "Revenue shrank 29.3% a year over the last 2 years.",
                   "Revenue grew +33.3% over the last year.", "Revenue shrank 33.3% over the last year.",
-                  "Revenue grew +0% a year over the last 2 years.", None, None, None, "Revenue shrank 3% a year over the last 2 years."], en
+                  "Revenue grew 0% a year over the last 2 years.", None, None, None, "Revenue shrank 3% a year over the last 2 years."], en
     dcf = [g[3] for g in got]
     tail = " 지금 주가가 가정하는 성장률과 비교해 보세요."
     assert dcf == ["이 회사 매출은 최근 2년 동안 연평균 41.4% 늘었어요." + tail, "이 회사 매출은 최근 2년 동안 연평균 29.3% 줄었어요." + tail,

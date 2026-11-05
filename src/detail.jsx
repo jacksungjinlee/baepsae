@@ -5134,8 +5134,10 @@ function useKrGrowthBasis(s, open) {
     loadCorpOnce().then((d) => {
       if (!live) return;
       const co = d && !d.failed ? d.companies.find((c) => c.t === s.t) : null;
-      const b = co ? krGrowthBasis(x.g3, co.rev) : null;
-      if (!b) console.warn("[뱁새] 매출성장 계산 기준을 알 수 없어 칸을 뺐어요: " + s.t + (d && d.failed ? " (corp.json 을 받지 못했어요)" : ""));
+      const same = !!co && co.g3 === x.g3;                // data.json 과 corp.json 이 다른 날 것이면 매출로 맞춰 볼 수 없어요
+      const b = same ? krGrowthBasis(x.g3, co.rev) : null;
+      if (!b) console.warn("[뱁새] 매출성장 계산 기준을 알 수 없어 칸을 뺐어요: " + s.t + (d && d.failed ? " (corp.json 을 받지 못했어요)"
+        : !co ? " (corp.json 에 없어요)" : !same ? ` (data.json ${x.g3} · corp.json ${co.g3} 이 달라요)` : ""));
       setBasis(b);
     });
     return () => { live = false; };
