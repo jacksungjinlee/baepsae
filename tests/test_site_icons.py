@@ -396,6 +396,19 @@ def test_a_host_answering_fixed_paths_with_a_web_page_is_not_asked_for_the_other
     assert [c["result"] for c in rec["candidates"]] == ["not_image", "skipped", "skipped"]
 
 
+def test_a_fixed_path_redirecting_to_an_error_page_is_not_followed(tmp_path):
+    rec, web = collect({"https://www.acme.co.kr/robots.txt": OK_ROBOTS,
+                        "https://www.acme.co.kr/": (200, HTML, html_page("")),
+                        "https://www.acme.co.kr/apple-touch-icon.png": (302, {"location": "http://errdoc.host.io/404.html"},
+                                                                        b"")}, tmp=tmp_path)
+    assert not any("errdoc" in u for u in web.urls())
+    assert [c["result"] for c in rec["candidates"]] == ["not_image", "skipped", "skipped"]
+    assert si.fallback_follow("http://a.kr/favicon.ico", "https://www.a.kr/favicon.ico")
+    assert si.fallback_follow("https://a.kr/apple-touch-icon.png", "https://cdn.a.kr/img/touch-180.png")
+    assert not si.fallback_follow("https://a.kr/favicon.ico", "https://a.kr/error/404.html")
+    assert not si.fallback_follow("https://a.kr/favicon.ico", "https://a.kr/")
+
+
 def test_favicon_ico_is_skipped_when_the_declared_icon_was_read(tmp_path):
     rec, web = collect({"https://www.acme.co.kr/robots.txt": OK_ROBOTS,
                         "https://www.acme.co.kr/": (200, HTML, html_page('<link rel="icon" href="/i/f.png">')),

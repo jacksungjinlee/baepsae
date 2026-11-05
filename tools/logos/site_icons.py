@@ -481,8 +481,10 @@ class CompanyNet:
                     self.sh.gate.set_delay(fkey, rb.delay)
             return rb
 
-    def get(self, url, accept, max_bytes, stop_early=None, retry=True):
-        """GET following redirects; robots.txt checked for every URL (its host's file fetched first if needed)."""
+    def get(self, url, accept, max_bytes, stop_early=None, retry=True, follow=None):
+        """GET following redirects; robots.txt checked for every URL (its host's file fetched first if needed).
+        follow(from_url, to_url) -> False stops at that redirect: the 3xx answer is returned (final_url = the
+        target, not requested)."""
         for _ in range(MAX_REDIRECTS + 1):
             why = never_fetch(url)
             if why:
@@ -496,7 +498,11 @@ class CompanyNet:
             r = self._send(url, accept, max_bytes, stop_early, retry=retry)
             loc = r.headers.get("location")
             if r.status in (301, 302, 303, 307, 308) and loc:
-                url = urljoin(url, loc.strip())
+                nxt = urljoin(url, loc.strip())
+                if follow is not None and not follow(url, nxt):
+                    r.final_url = nxt
+                    return r
+                url = nxt
                 continue
             r.final_url = url
             return r
@@ -1071,6 +1077,17 @@ def collect_domain(item, shared, svg_render=None, raw_dir=None, limit=MAX_REQUES
     return rec
 
 
+_IMAGE_EXT = re.compile(r"\.(png|ico|jpe?g|gif|webp|svgz?|avif|bmp)$", re.I)
+
+
+def fallback_follow(src, dst):
+    """A fixed path (/favicon.ico …) that redirects is followed only to the same file name or another image file
+    (http -> https, www, a CDN copy). A redirect to a page ('/error/404.html', the hosting company's error site)
+    means the file is not there: not followed."""
+    a, b = urlsplit(src).path.rsplit("/", 1)[-1].lower(), urlsplit(dst).path.rsplit("/", 1)[-1].lower()
+    return a == b or bool(_IMAGE_EXT.search(b))
+
+
 def fallback_skip(c, tried):
     """Why a fixed-path fallback is not worth a request ('' to try it): the host already answered a fixed path with
     a web page (its 'not found' page: the others would be too); /favicon.ico when the page's own declared icon was
@@ -1078,7 +1095,7 @@ def fallback_skip(c, tried):
     if not c["kind"].startswith("fallback-"):
         return ""
     if any(t["kind"].startswith("fallback-") and t.get("result") == "not_image" for t in tried):
-        return "this host answers fixed paths with a web page"
+        return "this host answers fixed paths with a web page or a redirect to one"
     if c["kind"] == "fallback-favicon" and any(t["kind"] == "icon" and t.get("result") in FOUND for t in tried):
         return "the page's declared icon was already read"
     if c["kind"] == "fallback-apple-touch-icon-precomposed" and any(
@@ -1204,8 +1221,12 @@ def _collect(rec, item, net, svg_render, raw_dir):
                 body, c["final_url"], c["status"] = data_uri_bytes(c["url"]), "data:", 200
                 c["url"] = c["url"][:64] + "..."
             else:
-                r = net.get(c["url"], ACCEPT_IMAGE, MAX_ICON)
+                fixed = c["kind"].startswith("fallback-")
+                r = net.get(c["url"], ACCEPT_IMAGE, MAX_ICON, follow=fallback_follow if fixed else None)
                 c["status"], c["final_url"], c["ctype"] = r.status, r.final_url, r.headers.get("content-type", "")
+                if 300 <= r.status < 400 and fixed:
+                    c["result"], c["note"] = "not_image", f"redirects to a page ({r.final_url[:80]}): not followed"
+                    continue
                 if not 200 <= r.status < 300:
                     c["result"], c["note"] = "http", f"HTTP {r.status}"
                     continue
