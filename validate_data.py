@@ -907,11 +907,16 @@ def _factor_ok(f):
     return f > 0 and any(abs(f / (a * b) - 1) < 1e-4 for a in base for b in base)
 
 
+def _isnum(x):
+    """JSON 숫자인지 (글자 '0.07'·참/거짓·NaN 은 아니에요) — v19.1b 새 칸은 모양까지 엄격하게 봐요."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
 def _nums3(v):
     """길이 3 목록이고 칸마다 숫자 또는 빈 칸이면 그 숫자들, 아니면 None."""
-    if not isinstance(v, list) or len(v) != 3 or any(x is not None and num(x) is None for x in v):
+    if not isinstance(v, list) or len(v) != 3 or any(x is not None and not _isnum(x) for x in v):
         return None
-    return [num(x) for x in v]
+    return [float(x) if x is not None else None for x in v]
 
 
 def div_row_problem(s):
@@ -973,10 +978,9 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
     for s in kr:
         a3 = _nums3(s.get("dps3a")) if s.get("divSt") else None
         a0, p, y, z = (a3[0] if a3 else None), num(s.get("price")), s.get("dyt"), s.get("dz")
-        if (y is not None and num(y) is None) or (z is not None and num(z) is None):
+        if (y is not None and not _isnum(y)) or (z is not None and not _isnum(z)):
             bad.append(f"{s['t']} 숫자 아님")
             continue
-        y, z = num(y), num(z)
         want = None if a0 is None or not p or p <= 0 else a0 / p * 100
         if y is not None:
             if want is None or not (0 <= y <= DYT_MAX) or abs(y - want) > DIV_TOL:
@@ -1017,8 +1021,7 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
             if se is not None or n is not None:
                 bad.append(f"{s['t']} 베타 없이 SE")
             continue
-        se = num(se)
-        if se is None or not 0 < se <= BETA_SE_MAX or not isinstance(n, int) or isinstance(n, bool) or not BETA_N[0] <= n <= BETA_N[1]:
+        if not _isnum(se) or not 0 < se <= BETA_SE_MAX or not isinstance(n, int) or isinstance(n, bool) or not BETA_N[0] <= n <= BETA_N[1]:
             bad.append(f"{s['t']} SE {s.get('betaSE')} n {n}")
         elif s.get("etf") is not True:
             ses.append(se)
@@ -1052,7 +1055,7 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
             bad.append(f"{c.get('t')} 해외 기업 금액")
     for s in kr:
         if is_foreign(s.get("t")) and (any(x not in (None, 0) for x in _nums3(s.get("dps3a")) or [])
-                                       or num(s.get("dyt")) not in (None, 0)):
+                                       or s.get("dyt") not in (None, 0)):
             bad.append(f"{s['t']} 해외 기업 배당")
     rep.add("새 금액 칸 모양 (총액·주당순이익·해외 기업)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""), "0")
 

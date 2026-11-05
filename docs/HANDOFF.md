@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 10:40 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 18:00 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -19,6 +19,33 @@ have it. Never delete or rename it. Since PR #42 a plain visit (no `?from=app` m
 every 2.0 link into the old app carries the marker (`src/links.js` `OLD_APP`), and old shared links with a `#` still
 open the old app. When the old app retires, `baepsae.html` stays as a permanent redirect to 2.0 — and the old app
 retires only once every tool worth keeping lives in 2.0 and old-app portfolios can be carried into 2.0 first.
+
+**v19.1b (data only, branch `claude/v19.1b-data`, PR open, not merged — Jack's top priority 2026-11-05).** Split-safe
+Korean dividends, β error band, `flRan`, DART cache v2. New fields:
+- data.json KR stocks: `dps3a` (dps3 on today's share basis), `dpsF` (factor per year = today's shares ÷ that year's
+  basis), `divSt` (`same` · `adj` · `nc` not comparable · `nd` not derivable · `zero`), `dyt` (today's-close yield =
+  dps3a[0] ÷ price, blank when unverified), `dz` (KR dividend percentile, from `dyt` only); top-level `divCheck` (counts;
+  its presence switches on the new gate rows). KR and US stocks: `betaSE`, `betaN`.
+- corp.json: the same dividend fields plus `cash3` (현금배당금총액, 억원), `eps3r` (company-reported EPS), `epsNi3` (the
+  net income on the same basis, 억원), `epsB` (연결/별도), `flRan` (warning checks that ran), `flNa` (not applicable,
+  financial companies). The existing `eps` (today's shares) is unchanged.
+- How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
+  shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
+  candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the
+  ceilings inside the same report. Live check 2026-11-05 (31 DART calls): all must-haves `same`; 대한제분 10:1 after the
+  report → [400, 350, 250]; 리노공업 5:1 in 2025 → [800, 600, 600]; 엠앤씨솔루션 bonus ×3 → adjusted; 하이비젼시스템's
+  real cut stays a cut; 한화에어로스페이스 `nc` (2024 spin-off + 2025 rights issue) but its yield ranks.
+- **Two-day plan (DART rule: one full-DART run per KST day; never start one 03:40–08:30 KST):** day 1 = the branch dry
+  run (`dry_run=true`, `dart=cache` on an empty v2 cache = that day's full-DART run, ~15,300 calls estimated, logged at
+  the start). Show Jack the new gate rows with that run's numbers; he approves rows/thresholds and test changes. Day 2:
+  merge only after that morning's timer run has published (it still uses the v1 cache), then start one manual
+  `dart=full` run on `main` the same day (not 03:40–08:30, not while a scheduled or timer run is waiting). It publishes
+  the new fields and saves the first v2 cache on `main`; the next morning's timer run uses it. Until that run publishes,
+  the site's data has no `divCheck`: the gate's `--live` check (Deploy, watchdog) shows one WARN row, not a failure.
+- Follow-up app PR (separate): Korean dividend trend on with `dps3a` (`KR_DIV_TREND`), the exact check (`dyt`, `divSt`)
+  instead of the 1.8× guard and the 1/3–3× `dpsAgrees` cross-check, 배당 감소 re-enabled for Korea on `dps3a`, the
+  배당 card ranking Korean stocks on `dyt`, β with its band (Korean wording needs Jack), "재무 경고 신호는 없어요" only
+  when every check is in `flRan` (or `flNa`).
 
 **Merged 2026-11-04:** #21 v17.5.4 (KRX close + 30 min, CSAT 11/19 → 17:00; gate WARN/FAIL rows also GitHub
 annotations), #22/#26 docs, #23 v19.0b visual pass, #24 v18.4.1 JSON import, #25 v18.5 missing holdings (old app),

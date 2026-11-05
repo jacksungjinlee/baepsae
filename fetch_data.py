@@ -2917,8 +2917,8 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
         cnt[r["divSt"]] += 1
         price = _fin(s.get("price"))
         d0 = _fin(s["dps3"][0]) if s["dps3"] else None
-        if d0 is not None and d0 > 0:
-            cnt["payers"] += 1
+        payer = d0 is not None and d0 > 0
+        cnt["payers"] += payer
         if not price or price <= 0:
             pass                      # 종가가 없으면 수익률도 없어요 (국내 종목은 늘 종가가 있어요)
         elif r["st3"][0] == "zero":
@@ -2931,6 +2931,7 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
                 big.append(f"{t} {s.get('nk', '')} {y:.0f}%")
         if s.get("dyt") is not None:
             cnt["dyt"] += 1
+            cnt["payersDyt"] += payer
         tag = f"{t} {s.get('nk', '')}".strip()
         if r["divSt"] == "adj":
             adj_ex.append(f"{tag} ×{'/'.join(f'{x:g}' for x in r['dpsF'] if x is not None)}")
@@ -2950,8 +2951,6 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
                     e["epsB"] = bas["epsB"]
             if e:
                 extra[t] = e
-    for s in kr_stocks:          # 혹시 남은 임시 칸도 지워요 (국내가 아닌 종목 등)
-        s.pop("_bas", None)
 
     def ex(arr):
         return f": {', '.join(sorted(arr)[:8])}{'…' if len(arr) > 8 else ''}" if arr else ""
@@ -2959,8 +2958,9 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
     log(f"{'  !! ' if loud else '· '}배당 분할 확인: 그대로 {cnt['same']:,} · 맞춤 {cnt['adj']:,}{ex(adj_ex)} · "
         f"비교 불가 {cnt['nc']:,}{ex(nc_ex)} · 알 수 없음 {cnt['nd']:,}{ex(nd_ex)} · 배당 없음 {cnt['zero']:,} · "
         f"DART 배당 표 없음 {cnt['noDps']:,} · 우선주 {cnt['pref']:,}")
-    log(f"{'  !! ' if cnt['payers'] and cnt['dyt'] < cnt['zero'] + cnt['payers'] * 0.9 else '· '}오늘 종가 기준 배당수익률(dyt): "
-        f"{cnt['dyt']:,}종목 (배당한 {cnt['payers']:,}종목 + 배당 없음) — 확인 못 한 종목은 빈 칸이라 배당 순위에서 빠져요"
+    share = cnt["payersDyt"] / cnt["payers"] if cnt["payers"] else 0.0
+    log(f"{'  !! ' if share < 0.9 else '· '}오늘 종가 기준 배당수익률(dyt): 배당한 {cnt['payers']:,}종목 중 {cnt['payersDyt']:,} "
+        f"({share:.1%}) + 배당 없음 {cnt['dyt'] - cnt['payersDyt']:,} — 확인 못 한 종목은 빈 칸이라 배당 순위에서 빠져요"
         + (f" · 30% 넘어 믿지 않은 {len(big)}: {', '.join(big[:5])}" if big else ""))
     counts = {"v": 1, **{k: cnt[k] for k in DIV_STATUS}, "noDps": cnt["noDps"], "pref": cnt["pref"],
               "payers": cnt["payers"], "dyt": cnt["dyt"]}
