@@ -96,8 +96,11 @@ def test_us_growth_number_always_says_what_it_is():
     """미국 실적 숫자 (Jack, 2026-11-05): 야후의 매출 증가는 최근 분기를 1년 전 같은 분기와 비교한 값이라, 그렇게 말하는 이름
     (co.tiles.usGrowth) 과 함께만 보여요. 그 이름이 승인 전(null)이면 숫자도 빼요. 연 · 3년 같은 말은 붙이지 않아요."""
     copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
-    m = re.search(r'usGrowth: null, // 제안 \(Jack 승인 대기\): "([^"]*)"', copy)
-    assert m and m.group(1) == "최근 분기 매출, 1년 전보다 {pct}", "제안 문구(Jack 의 예시)가 바뀌었어요"
+    # 승인 전: null 과 제안 주석 · 승인 뒤: 그 문구 (어느 쪽이든 이 검사는 그대로 통과해요)
+    m = re.search(r'usGrowth: (?:null, // 제안 \(Jack 승인 대기\): "([^"]*)"|"([^"]*)",)', copy)
+    assert m, "co.tiles.usGrowth 가 없어요"
+    label = m.group(1) or m.group(2)
+    assert "최근 분기" in label and "1년 전" in label and "{pct}" in label and "연 " not in label and "3년" not in label, label
     cofmt = open(os.path.join(ROOT, "src", "v2", "cofmt.js"), encoding="utf-8").read()
     assert "export function usGrowthText(g)" in cofmt and "C.co.tiles.usGrowth" in cofmt
     # 미국 실적 숫자를 보여 주는 곳(요약 칸 · 실적 탭)은 모두 usGrowthText 를 거쳐요: 예전 이름표를 붙인 맨 숫자는 없어요
@@ -105,13 +108,14 @@ def test_us_growth_number_always_says_what_it_is():
         body = open(os.path.join(ROOT, "src", "v2", f), encoding="utf-8").read()
         assert "usGrowthText(r.g)" in body, f
         assert "growthUs" not in body and "signedPct(s.g3)" not in body and "signedPct(r.g)" not in body, f
-    got = run("""const { F, CP } = T; const xs = [16.4, -3.24, 0.04, null, NaN, undefined, '5'];
+    got = run("""const { F, CP } = T; const xs = [16.4, -3.24, 0.04, 1234.5, null, NaN, undefined, '5'];
+      CP.C.co.tiles.usGrowth = null;
       out = { pending: xs.map((g) => F.usGrowthText(g)) };
       CP.C.co.tiles.usGrowth = M;
-      out.filled = xs.map((g) => F.usGrowthText(g));""", M=m.group(1))
-    assert got["pending"] == [None] * 7                                                # 이름이 승인 전이면 숫자도 없어요
-    assert got["filled"] == ["최근 분기 매출, 1년 전보다 +16.4%", "최근 분기 매출, 1년 전보다 \u22123.2%", "최근 분기 매출, 1년 전보다 0.0%",
-                             None, None, None, None]
+      out.filled = xs.map((g) => F.usGrowthText(g));""", M=label)
+    assert got["pending"] == [None] * 8                                                # 이름이 승인 전이면 숫자도 없어요
+    f = lambda p: label.replace("{pct}", p)
+    assert got["filled"] == [f("+16.4%"), f("\u22123.2%"), f("0.0%"), f("+1,234.5%"), None, None, None, None], got["filled"]
 
 
 # ── 가치 칸 ──

@@ -61,7 +61,9 @@ export function tileViews(load, s) {
   };
   if (usOf(s)) {
     const r = earnUs(s);
-    add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnUs[r.rule], usGrowthText(r.g), { g: r.g });
+    const number = usGrowthText(r.g);
+    // The phrase reads one quarter against the same quarter a year before: no phrase without the number that says so.
+    add("earn", T().label.earn, r, r.rule === "na" ? na : number ? T().earnUs[r.rule] : null, number, { g: r.g });
   } else {
     const r = earnKr(co);
     const number = r.pct != null && T().opChange ? fill(T().opChange, { pct: signedPct(r.pct) }) : r.amount != null && T().opAmount && eokText(r.amount) ? fill(T().opAmount, { x: eokText(r.amount) }) : null;

@@ -163,8 +163,9 @@ export function EarnTab({ load, s, onMore }) {
   const [metric, setMetric] = useState("op");
   if (usOf(s)) {
     const r = earnUs(s);
-    const head = r.rule === "na" ? null : C.co.tiles.earnUs[r.rule];
     const growth = usGrowthText(r.g);            // "최근 분기 매출, 1년 전보다 +16.4%": the number only with what it is
+    // The verdict (매출이 늘고 있어요 …) reads one quarter against a year before: it shows only with that labelled number.
+    const head = r.rule === "na" || !growth ? null : C.co.tiles.earnUs[r.rule];
     const md = priceMd(load, s);
     return (
       <div data-ui-v2="co-earn" data-cls="us" data-rule={r.rule}>
@@ -594,9 +595,10 @@ export function DiscTab({ load, s, disc }) {
         {n > 0 && all(D.buy, D.sell) && (
           <div data-ui-v2="co-disc-rows" style={{ marginTop: SPACE(3) }}>
             {v.rows.slice(0, DISC_ROWS).map((x) => {
-              // The row itself is the link to that filing on DART (exact receipt number only; none -> a plain row).
+              // The row itself is the link to that filing on DART (exact receipt number only; none -> a plain row of the same
+              // height). The arrow-out mark says it opens outside the app (in-app moves use the caret).
               const href = dartFilingUrl(x.rc);
-              const st = { display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` };
+              const st = { display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH, padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` };
               const body = (
                 <>
                   <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
@@ -607,13 +609,13 @@ export function DiscTab({ load, s, disc }) {
                       {fill(C.plan.shares, { n: nf(Math.abs(x.q)) })}{x.won != null ? <>{" · "}{fill(C.app.about, { x: bigWon(x.won) })}</> : null}</span>
                   </span>
                   <StatusChip tone="neutral">{x.q > 0 ? D.buy : D.sell}</StatusChip>
-                  {href && <Icon name="chevronRight" size={16} tone="on" />}
+                  {href && <Icon name="arrow-square-out" size={16} tone="on" />}
                 </>
               );
               const key = x.rc || x.date + x.nm + x.q;
               return href
                 ? <a key={key} data-ui-v2="co-disc-row" data-q={x.q} data-rc={x.rc} href={href} target="_blank" rel="noopener"
-                    style={{ ...st, ...tap, minHeight: TOUCH, padding: st.padding, textDecoration: "none", color: "inherit" }}>{body}</a>
+                    style={{ ...tap, ...st, textDecoration: "none", color: "inherit" }}>{body}</a>
                 : <div key={key} data-ui-v2="co-disc-row" data-q={x.q} style={st}>{body}</div>;
             })}
           </div>

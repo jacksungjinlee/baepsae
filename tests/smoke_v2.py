@@ -2796,7 +2796,13 @@ def js_round(x, d):
 def signed_pct(v):
     """deckcalc.signedPct: 한 자리로 반올림, 0 이면 부호 없음, 빼기는 U+2212."""
     r = js_round(v, 1)
-    return ("\u2212" if r < 0 else "+" if r > 0 else "") + f"{abs(r):.1f}%"
+    return ("\u2212" if r < 0 else "+" if r > 0 else "") + f"{abs(r):,.1f}%"        # nf: 천 단위 쉼표
+
+
+def pct_text(v):
+    """cofmt.pctText: 한 자리, 부호는 빼기(U+2212)만."""
+    r = js_round(v, 1)
+    return ("\u2212" if r < 0 else "") + f"{abs(r):,.1f}%"
 
 
 DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="
@@ -3005,6 +3011,8 @@ def scene_company(R, files, width):
         tiles = {t.get_attribute("data-topic"): t for t in page.locator('[data-ui-v2="co-tile"]').all()}
         for topic in ("earn", "value", "div", "risk"):
             label, phrase = tile_copy(topic, exp[topic], us, exp.get("streak", 0))
+            if topic == "earn" and us and exp["earn"] != "na" and not CO["tiles"]["usGrowth"]:
+                phrase = None                                               # 미국 실적 문장은 '최근 분기 …' 숫자와 함께만 (Jack, 2026-11-05)
             if not (label and phrase):
                 assert topic not in tiles, (code, topic, "승인 전 문구인데 칸이 보여요")
                 continue
@@ -3062,7 +3070,12 @@ def scene_company(R, files, width):
                 assert g.count() == 0, "미국 매출 숫자가 이름 없이 보여요"
             if s.get("g3") is not None:                                         # 그 숫자는 이름이 붙은 그 줄에만 있어요
                 bare = signed_pct(s["g3"])
-                assert e.inner_text().count(bare) == (1 if CO["tiles"]["usGrowth"] else 0), (bare, e.inner_text())
+                rest = e.inner_text().replace(g.inner_text(), "", 1) if g.count() else e.inner_text()
+                others = {pct_text(s[k]) for k in ("opm", "roe") if s.get(k) is not None}  # 영업이익률 · ROE 가 우연히 같은 글자일 때
+                assert bare not in rest or bare in others, (bare, rest)
+            # 실적 문장(매출이 늘고 있어요 …)도 그 숫자가 있을 때만 (한 분기 비교라는 걸 말하지 않고는 추세처럼 읽혀요)
+            if not (CO["tiles"]["usGrowth"] and s.get("g3") is not None):
+                assert e.locator("h3").count() == 0, e.inner_text()
         else:
             bars = e.locator('[data-ui-v2="bars"] [data-year]')
             if bars.count():
