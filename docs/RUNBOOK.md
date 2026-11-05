@@ -23,6 +23,9 @@ the pages users get are the current build, and the site's `data.json` is exactly
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
+- The same test also sends healthchecks.io one failure signal, so Jack gets a "down" email, then rechecks the real site
+  and, if it is fine, sends the normal signal ("up" email, usually within a minute) and closes the [시험] issue. A "down"
+  email with no "up" email after it means the recheck found a real problem.
 
 ## What to do
 

@@ -200,11 +200,50 @@ def test_recovery_comments_and_closes(monkeypatch):
     assert ("PATCH", f"/repos/{W.REPO}/issues/9", {"state": "closed", "state_reason": "completed"}) in net.calls
 
 
-def test_selftest_marks_the_issue_and_does_not_page_jack(monkeypatch):
+def broken_only_gate(d):
+    """진짜 관문처럼: 받은 data.json 에 필수 종목(005930)이 없을 때만 실패 (시험이 망가뜨린 파일만 걸려요)."""
+    with open(os.path.join(d, "data.json"), encoding="utf-8") as fh:
+        ts = {s.get("t") for s in json.load(fh).get("stocks", [])}
+    return ok_gate(d) if "005930" in ts else bad_gate(d)
+
+
+def hc_pings(net):
+    return [u for u in net.urls if "hc-ping" in u]
+
+
+def test_selftest_marks_the_issue_then_pages_jack_down_and_up(monkeypatch):
+    """Jack, 2026-11-05: the test sends one failure signal to healthchecks.io, then a normal one — he gets 'down', then 'up'."""
+    net = FakeNet()
+    assert go(net, AFTER, argv=["--selftest", "broken"], gate=broken_only_gate, monkeypatch=monkeypatch) == 1
+    test_issue = net.issues[-1]
+    assert test_issue["body"].startswith("**[시험]**")
+    assert hc_pings(net) == ["https://hc-ping.com/xyz/fail", "https://hc-ping.com/xyz"]      # 문제 → 정상, 이 순서로 한 번씩
+    n = test_issue["number"]
+    assert posts(net, f"/issues/{n}/comments")[-1][2]["body"].startswith("정상화됐어요")
+    assert ("PATCH", f"/repos/{W.REPO}/issues/{n}", {"state": "closed", "state_reason": "completed"}) in net.calls
+
+
+def test_selftest_leaves_a_real_problem_open_and_down(monkeypatch):
+    """다시 점검에서도 진짜 문제가 있으면: '정상' 알림을 보내지 않고, 이슈를 닫지 않고, 진짜 경보로 남겨요."""
     net = FakeNet()
     assert go(net, AFTER, argv=["--selftest", "broken"], gate=bad_gate, monkeypatch=monkeypatch) == 1
-    assert net.issues[-1]["body"].startswith("**[시험]**")
-    assert not any("hc-ping" in u for u in net.urls)
+    assert hc_pings(net) == ["https://hc-ping.com/xyz/fail"]
+    assert not any(c[0] == "PATCH" and c[2] == {"state": "closed", "state_reason": "completed"} for c in net.calls)
+    n = net.issues[-1]["number"]
+    comments = posts(net, f"/issues/{n}/comments")
+    assert comments and not comments[-1][2]["body"].startswith("**[시험]**")       # 진짜 경보의 반복 댓글 ([시험] 아님)
+    assert net.issues[-1].get("state", "open") == "open"
+    body = net.issues[-1]["body"]                       # 이슈 첫 줄이 '[시험] … 실제 사이트는 문제가 없어요'로 남으면 안 돼요
+    assert not body.startswith("**[시험]**") and "뱁새 감시가 문제를 찾았어요" in body and f"이슈 #{n} 이 떴어" in body
+
+
+def test_selftest_never_rewrites_a_real_alert_that_was_already_open(monkeypatch):
+    """시험 전부터 열린 진짜 경보는 본문을 바꾸지 않아요 (언제부터 · 첫 줄이 그대로)."""
+    real = {"number": 9, "created_at": "2026-11-04T07:37:00Z", "state": "open", "body": "@jacksungjinlee 진짜 경보 (처음 본문)"}
+    net = FakeNet(issues=[real])
+    assert go(net, AFTER, argv=["--selftest", "broken"], gate=bad_gate, monkeypatch=monkeypatch) == 1
+    assert net.issues[0]["body"] == real["body"] and net.issues[0].get("state", "open") == "open"
+    assert not any(c[0] == "PATCH" and c[1].endswith("/issues/9") for c in net.calls)
 
 
 def test_selftest_really_breaks_the_downloaded_data(tmp_path):
