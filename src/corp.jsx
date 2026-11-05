@@ -991,7 +991,7 @@ function DecompCard({ c, setExplain }) {
     );
   } else {
     body = (
-      <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
+      <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
         {/* 보이는 숫자가 0 이면 '+0% 올랐어요' 대신 '거의 변하지 않았어요', 움직이지 않았으니 뒤 문장(움직인 가격은…)은 빼요 (Jack, 2026-11-05).
             r36 은 소수 한 자리 그대로 보여요 (0 · −0 이면 0) */}
