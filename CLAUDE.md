@@ -158,6 +158,10 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
   credit line (Jack, 2026-11-03). The 소개 page does not lead with "교육용"; the footer disclaimer stays on every page.
+- `baepsae.html` is on Jack's CV: never delete or rename it. A plain visit (no `?from=app` marker, no `#`) lands in 2.0;
+  every 2.0 link into the old app carries the marker. When the old app retires, `baepsae.html` stays as a permanent
+  redirect to 2.0 — and the old app retires only once every tool worth keeping lives in 2.0 and old-app portfolios can
+  be carried into 2.0 first (Jack, 2026-11-05).
 
 ## Repo map
 
@@ -166,7 +170,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 | `src/*.jsx`, `src/*.js` | App source (React, bundled by esbuild). Entry `src/main.jsx` → `src/shell.jsx` |
 | `template.html` | HTML shell: meta/OG tags, GoatCounter, manifest. `build.sh` injects the bundle at `/*BUNDLE*/` |
 | `app.html` | 뱁새 2.0, the main address: `index.html` redirects to it (v18.3 Part F). Built from `src/v2/` by `bash build-app.sh` |
-| `baepsae.html` | The current app (예전 뱁새), opened from 2.0's 예전 뱁새 보기 and 찾기. Built by `bash build.sh` |
+| `baepsae.html` | The current app (예전 뱁새), opened from 2.0 with `?from=app`; a plain visit goes to `app.html` (CV link). Built by `bash build.sh` |
 | `fetch_data.py` | Daily data pipeline (Python 3.11) → `data.json`, `corp.json`, `macro.json`, `disc.json` |
 | `validate_data.py` | Publication gate (created in v17.5) |
 | `.github/workflows/update-data.yml` | Daily data run, started six times a day: 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat). An early start waits for the US close; a start that finds today's data already published stops before any download (`already_published.py`). Plus manual "Run workflow" |

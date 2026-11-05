@@ -13,6 +13,13 @@ nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of an
 Decide engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions,
 in one short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
 
+**`baepsae.html` is permanent (Jack, 2026-11-05; CLAUDE.md product rules):** the address is on Jack's CV and recruiters
+have it. Never delete or rename it. Since PR #PR_NUM a plain visit (no `?from=app` marker, no `#`) goes straight to 2.0
+(`template.html`'s first script: `location.replace`, one separate GoatCounter count at `/baepsae/baepsae.html→app`);
+every 2.0 link into the old app carries the marker (`src/links.js` `OLD_APP`), and old shared links with a `#` still
+open the old app. When the old app retires, `baepsae.html` stays as a permanent redirect to 2.0 — and the old app
+retires only once every tool worth keeping lives in 2.0 and old-app portfolios can be carried into 2.0 first.
+
 **Merged 2026-11-04:** #21 v17.5.4 (KRX close + 30 min, CSAT 11/19 → 17:00; gate WARN/FAIL rows also GitHub
 annotations), #22/#26 docs, #23 v19.0b visual pass, #24 v18.4.1 JSON import, #25 v18.5 missing holdings (old app),
 and v19.0c (four tabs, phone) — see CHANGELOG. All checked on the live site.

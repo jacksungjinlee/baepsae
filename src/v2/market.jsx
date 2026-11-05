@@ -2,7 +2,7 @@
 // macro.json idxHist), 국고채 3년 and 원/달러 (level only: the data has no daily change for them, so none is shown) — each
 // with its own content date; a value that is missing or cannot be dated shows "–". When macro.json did not load, the
 // approved load-failure line is shown above the tiles (원/달러 still comes from data.json). Two buttons open the old app's
-// full screens (금리·원자재, 공시·수급: ./baepsae.html#macro · #disc, read once by src/shell.jsx); the preview page has
+// full screens (금리·원자재, 공시·수급: ./baepsae.html?from=app#macro · #disc, routes.js OLD_LINKS, read once by src/shell.jsx); the preview page has
 // none. MarketTiles is also 홈's 시장 한눈에. No 뱁이 here: the tiles are numbers.
 // PC (v19.0d, board PcMarket): two columns, the tiles on the left and the two buttons on the right (the preview page,
 // without the buttons: the four tiles in one row). In 홈's narrow side column the tiles stack (cols 1).
