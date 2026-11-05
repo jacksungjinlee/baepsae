@@ -553,16 +553,75 @@ def test_the_96_px_rule_is_on_the_shorter_side(tmp_path, w, h, ok):
 
 def test_a_small_icon_enlarged_with_hard_pixels_counts_as_too_small(tmp_path):
     blocky = logo(16, 16).resize((256, 256), Image.NEAREST)
-    assert si.upscaled_from(blocky) == 16
-    assert si.upscaled_from(logo(32, 32).resize((128, 128), Image.NEAREST)) == 32
+    assert si.upscaled_from(blocky) == (16, "blocky")
+    assert si.upscaled_from(logo(32, 32).resize((128, 128), Image.NEAREST)) == (32, "blocky")
     flat = Image.new("RGBA", (256, 256), (20, 40, 120, 255))     # a real flat icon with edges on a 4 px grid
     ImageDraw.Draw(flat).rectangle([100, 100, 139, 179], fill=(255, 255, 255, 255))
+    ImageDraw.Draw(flat).ellipse([30, 30, 90, 90], fill=(250, 190, 40, 255))
     assert si.upscaled_from(flat) is None
     assert si.upscaled_from(logo(256, 256)) is None and si.upscaled_from(logo(180, 180)) is None
-    assert si.upscaled_from(logo(32, 32).resize((128, 128), Image.LANCZOS)) is None     # smooth: not this rule
     c = {"kind": "icon", "url": "https://www.acme.co.kr/favicon.ico"}
     assert not si.judge_candidate(c, png(blocky), "acme.co.kr", None, tmp_path)
     assert c["result"] == "too_small" and "enlarged from a 16 px" in c["note"]
+
+
+def test_a_small_icon_enlarged_smoothly_or_by_an_uneven_factor_counts_as_too_small():
+    assert si.upscaled_from(logo(24, 24).resize((567, 567), Image.NEAREST)) == (24, "blocky")     # 23.6x
+    from PIL import ImageFilter
+    soft = logo(180, 180).filter(ImageFilter.GaussianBlur(9))       # no more detail than a ~16 px icon
+    assert si.upscaled_from(soft) == (32, "blurry")
+    assert si.upscaled_from(logo(180, 180)) is None
+
+
+def _photo(w=180, h=180, seed=5):
+    import random
+    rnd = random.Random(seed)
+    im = Image.new("RGB", (w, h))
+    px = im.load()
+    for y in range(h):
+        for x in range(w):
+            px[x, y] = (min(255, x + rnd.randrange(40)), min(255, y + rnd.randrange(40)),
+                        min(255, (x * y) // 160 + rnd.randrange(60)))
+    return im.convert("RGBA")
+
+
+def test_photo_like_pictures_are_flagged_and_logos_are_not():
+    m = si.photo_metrics(_photo())
+    flags = si.photo_flags(m)
+    assert any(f.startswith("many colours") for f in flags) and any("every edge" in f for f in flags)
+    gradient = Image.linear_gradient("L").resize((180, 180)).convert("RGBA")
+    assert any("smooth" in f or "many colours" in f for f in si.photo_flags(si.photo_metrics(
+        Image.merge("RGBA", (gradient.getchannel(0), gradient.getchannel(0).rotate(90),
+                             gradient.getchannel(0).rotate(180), Image.new("L", (180, 180), 255))))))
+    for img in (logo(), logo(alpha_bg=True), logo(512, 512, seed=3), Image.new("RGBA", (180, 180), (0, 0, 0, 0))):
+        assert si.photo_flags(si.photo_metrics(img)) == [], si.photo_metrics(img)
+    assert si.photo_flags(si.photo_metrics(logo(400, 200))) == ["far from square (400x200)"]
+    text = Image.new("RGBA", (180, 180), (255, 255, 255, 255))
+    d = ImageDraw.Draw(text)
+    for y in range(6, 174, 8):
+        for x in range(4, 176, 6):
+            d.rectangle([x, y, x + 2, y + 4], fill=(0, 0, 0, 255))
+    assert any("text-heavy" in f for f in si.photo_flags(si.photo_metrics(text)))
+
+
+def test_known_stock_icons_are_generic_even_on_one_site(monkeypatch):
+    assert si.KNOWN_GENERIC and all(len(hx) == 64 and int(hx, 16) and len(col) == 3 and label
+                                    for label, hx, col in si.KNOWN_GENERIC)
+    assert si.known_generic(si.normalise(logo())) == ""
+    stock = si.normalise(logo(seed=4, colour=(10, 10, 10)))
+    monkeypatch.setattr(si, "KNOWN_GENERIC", (("test globe", format(si.dhash(stock), "064x"), si.mean_colour(stock)),))
+    again = logo(seed=4, colour=(10, 10, 10)).resize((256, 256), Image.LANCZOS)      # the same icon, another size
+    assert si.known_generic(si.normalise(again)) == "test globe"
+    assert si.known_generic(si.normalise(logo())) == ""
+
+
+def test_preview_pictures_are_never_candidates():
+    page = si.parse_page('<meta property="og:image" content="/og.png"><meta name="twitter:image" content="/tw.png">'
+                         '<link rel="image_src" href="/share.png"><link rel="preload" as="image" href="/hero.jpg">'
+                         '<meta name="msapplication-TileImage" content="/tile.png"><img src="/logo.png">')
+    urls = [c["url"] for c in si.page_candidates(page, "https://www.acme.co.kr/")]
+    assert urls == ["https://www.acme.co.kr/apple-touch-icon.png", "https://www.acme.co.kr/favicon.ico",
+                    "https://www.acme.co.kr/apple-touch-icon-precomposed.png"]
 
 
 def test_broken_bytes_and_an_svg_without_a_renderer_are_broken(tmp_path):

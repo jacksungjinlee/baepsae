@@ -27,18 +27,25 @@ robots.txt asks, up to 10 s), at most 6 requests at once overall, 15 s timeout, 
 (4xx or 5xx) and no retry on a TLS error (normal verification only, counted as unreachable). If the session proxy
 refuses many hosts (403/407 from the proxy itself), the run stops after a sample of 50 and says so.
 
-What it keeps (Jack's rules): icons whose decoded image is at least 96 x 96 px (ICO: the largest frame; SVG: drawn at
-256 px in headless Chromium with every network request blocked), that are not
+What it keeps (Jack's rules): icons whose decoded image is at least 96 x 96 px on its own pixels (ICO: the largest
+frame; SVG: drawn at 256 px in headless Chromium with every network request blocked; a small icon the site enlarged,
+blocky or blurry, counts at its real size — nothing is ever enlarged to reach 96 px), that are not
   (a) the same image (exact bytes, same pixels, or a near-identical perceptual hash) chosen by 3 or more different
       companies with different domains,
-  (b) a known website-builder or hosting default (BUILDER_* and PLATFORM_* below), a homepage that is a parked or
-      placeholder page, or a homepage that moved to a blog, cafe or builder platform,
+  (b) a known website-builder or hosting default (BUILDER_* and PLATFORM_* below), a known stock icon
+      (KNOWN_GENERIC), a homepage that is a parked or placeholder page, or one that moved to a blog, cafe or builder,
   (c) blank, almost one colour, or broken.
-When several candidates pass: apple-touch-icon, then the largest manifest icon, then the largest <link rel=icon>,
-then the fixed paths. Candidates are fetched in that order and the first that passes is kept (fewer requests).
+A kept icon that looks like a picture rather than a mark (photo_flags: many colours, smooth gradients or photo noise,
+no transparency with content off every edge, far from square, a text-heavy block) is "needs_review", not kept: Jack
+looks at each one (Jack's coverage test, 2026-11-05: campaign pictures, building photos, game art, mascots, slogans).
+Only icons count: apple-touch-icon, manifest icons, <link rel=icon> and the fixed paths — never og:image,
+twitter:image or any other preview picture. When several candidates pass: apple-touch-icon, then the largest
+manifest icon, then the largest <link rel=icon>, then the fixed paths. Candidates are fetched in that order and the
+first that passes is kept (fewer requests).
 
 Outputs (outside the repository; icons are never committed — Jack looks first):
-  OUT/kr/<code>.png      128 x 128 PNG, transparency kept, centred, never stretched (a non-square icon is padded)
+  OUT/kr/<code>.png      kept: 128 x 128 PNG, transparency kept, centred, never stretched (a non-square icon padded)
+  OUT/review/<code>.png  needs review: the same, for Jack to look at
   OUT/site_icons.csv     code, domain, final_url, source_type, original_size, sha256, decision, reason (+ details)
   OUT/decisions.json     the same per domain, for the contact sheet
   OUT/collect.jsonl      what was fetched (append-only; a rerun skips domains already in it)
@@ -806,24 +813,131 @@ def normalise(img, side=OUT_SIDE):
     return out
 
 
+SOFT_LOWRES_MAX = 1.6          # mean difference (0-255) after shrinking to 32 px and enlarging back: a blurred-up icon
+
+
 def upscaled_from(img, sizes=(8, 16, 24, 32)):
-    """A small icon blown up with hard pixel edges (a 16 px favicon saved as a 256 px frame): the size it was enlarged
-    from, else None. Checks whole-number enlargements from 32 px or less (blocks of 3+ px at 96 px and up): shrinking
-    to that size and enlarging back again (nearest pixel) must give the same picture on almost every pixel. A real
-    large icon has smooth (anti-aliased) edges and fails this; a flat design drawn on a coarse grid is the rare
+    """A small icon the website enlarged (Jack: never let an enlarged small icon pass for a large one; the size rule
+    is about the pixels the icon really has). Returns (size, how) or None:
+      - 'blocky': hard pixel blocks (a 16 px favicon saved as a 256 px frame, also by a non-whole factor): shrinking
+        to that size and enlarging back (nearest pixel) gives the same picture on all but 1 % of the pixels;
+      - 'blurry': a smooth enlargement: shrinking to 32 px and enlarging back (bicubic) changes almost nothing (mean
+        difference <= SOFT_LOWRES_MAX).
+    A real large icon has fine anti-aliased edges and fails both; a flat design drawn on a coarse grid is the rare
     exception, and it looks the same as the enlarged small icon anyway."""
     from PIL import Image, ImageChops
     im = img.convert("RGBA")
     w, h = im.size
     for s in sizes:
-        if s >= MIN_SIDE or w % s or h % s or w // s != h // s or w // s < 2:
+        if min(w, h) < 3 * s:
             continue
-        back = im.resize((s, s), Image.NEAREST).resize((w, h), Image.NEAREST)   # samples each block's middle
+        k = s / max(w, h)
+        small = (max(1, round(w * k)), max(1, round(h * k)))
+        back = im.resize(small, Image.NEAREST).resize((w, h), Image.NEAREST)   # samples each block's middle
         r, g, b, a = ImageChops.difference(im, back).split()
         worst = ImageChops.lighter(ImageChops.lighter(r, g), ImageChops.lighter(b, a))
-        if worst.point(lambda v: 255 if v > 6 else 0).histogram()[255] <= 0.005 * w * h:
-            return s
+        if worst.point(lambda v: 255 if v > 24 else 0).histogram()[255] <= 0.01 * w * h:
+            return s, "blocky"
+    if min(w, h) >= 96:
+        g0 = Image.alpha_composite(Image.new("RGBA", (w, h), (128, 128, 128, 255)), im).convert("RGB")
+        k = 32 / max(w, h)
+        back = g0.resize((max(1, round(w * k)), max(1, round(h * k))), Image.BOX).resize((w, h), Image.BICUBIC)
+        r, g, b = ImageChops.difference(g0, back).split()
+        worst = ImageChops.lighter(ImageChops.lighter(r, g), b)
+        hist = worst.histogram()
+        if sum(i * n for i, n in enumerate(hist)) / (w * h) <= SOFT_LOWRES_MAX:
+            return 32, "blurry"
     return None
+
+
+# ── photo-like: kept back for Jack to look at ("needs review"), never kept silently ──────────────────────────────
+# Jack's coverage test (2026-11-05) found campaign pictures, product and building photos, game art, a mascot and a
+# slogan where a logo should be. A site icon is a small flat mark; these signs say "picture, not a mark". Thresholds
+# set on the first 123 kept icons (all real logos: entropy at most 5.6 bits, at most 487 colours, soft share at
+# most 0.67, one 1.9:1 image) so that none of them would trip a rule on its own except a 3D-sphere logo (gradient).
+PHOTO_ENTROPY = 6.5            # bits, colour histogram (16 levels per channel) of the visible pixels -> many colours
+PHOTO_COLOURS = 1200           # distinct colours (32 levels per channel) of the visible pixels -> many colours
+PHOTO_SOFT = 0.55              # share of soft transitions (2-16 levels between neighbours) ...
+PHOTO_SOFT_ENTROPY = 5.0       # ... together with this entropy -> smooth gradients or photographic noise
+PHOTO_BLEED_RING = 0.6         # fully opaque, and less than this share of the edge in one colour ...
+PHOTO_BLEED_ENTROPY = 4.0      # ... with entropy (or soft share PHOTO_BLEED_SOFT) above -> a full-bleed picture
+PHOTO_BLEED_SOFT = 0.3
+PHOTO_ASPECT = 1.6             # longer side / shorter side of the image as served -> far from square (banner)
+PHOTO_TEXT_STRONG = 0.3        # share of hard edges in an opaque block -> text-heavy banner
+PHOTO_TEXT_OPAQUE = 0.9
+
+
+def photo_metrics(img):
+    """Numbers behind photo_flags, measured on the 128 px normalised icon (aspect on the image as served)."""
+    import numpy as np
+    from PIL import Image
+    im = img.convert("RGBA")
+    w, h = im.size
+    n = normalise(im)
+    a = np.asarray(n).astype(np.int32)
+    vis = a[..., 3] >= 128
+    rgb = a[..., :3][vis]
+    m = {"w": w, "h": h, "aspect": round(max(w, h) / min(w, h), 2), "opaque": float((a[..., 3] >= 250).mean())}
+    if rgb.size:
+        q5 = rgb >> 3
+        m["colours"] = int(len(np.unique(q5[:, 0] * 1024 + q5[:, 1] * 32 + q5[:, 2])))
+        q4 = rgb >> 4
+        _, cnt = np.unique(q4[:, 0] * 256 + q4[:, 1] * 16 + q4[:, 2], return_counts=True)
+        p = cnt / cnt.sum()
+        m["entropy"] = round(float(-(p * np.log2(p)).sum()), 2)
+    else:
+        m["colours"], m["entropy"] = 0, 0.0
+    nw, nh, x, y = fit_geometry(w, h)
+    box = a[y:y + nh, x:x + nw]
+    e = max(1, min(3, nw // 8, nh // 8))
+    ring = np.concatenate([box[:e].reshape(-1, 4), box[-e:].reshape(-1, 4), box[:, :e].reshape(-1, 4),
+                           box[:, -e:].reshape(-1, 4)])
+    m["ring_opaque"] = float((ring[:, 3] >= 250).mean())
+    med = np.median(ring[:, :3], axis=0)
+    m["ring_uniform"] = round(float((np.abs(ring[:, :3] - med).max(axis=1) <= 24).mean()), 3)
+    g = np.asarray(Image.alpha_composite(Image.new("RGBA", n.size, (128, 128, 128, 255)), n).convert("L"))
+    g = g.astype(np.int32)
+    mag = np.maximum(np.abs(np.diff(g, axis=1))[:-1, :], np.abs(np.diff(g, axis=0))[:, :-1])
+    region = vis[:-1, :-1]
+    tot = max(int(region.sum()), 1)
+    m["soft"] = round(float(((mag >= 2) & (mag <= 16) & region).sum() / tot), 3)
+    m["strong"] = round(float(((mag >= 60) & region).sum() / tot), 3)
+    return m
+
+
+def photo_flags(m):
+    """Why an icon looks like a picture rather than a mark ([] when it does not). Each sign alone is enough for a
+    look by eye; none rejects anything."""
+    out = []
+    if m["entropy"] >= PHOTO_ENTROPY or m["colours"] >= PHOTO_COLOURS:
+        out.append(f"many colours ({m['colours']} colours, entropy {m['entropy']:.1f} bits)")
+    if m["soft"] >= PHOTO_SOFT and m["entropy"] >= PHOTO_SOFT_ENTROPY:
+        out.append(f"smooth gradients or photo noise (soft share {m['soft']:.2f})")
+    if m["opaque"] >= 0.995 and m["ring_uniform"] < PHOTO_BLEED_RING and (
+            m["entropy"] >= PHOTO_BLEED_ENTROPY or m["soft"] >= PHOTO_BLEED_SOFT):
+        out.append("no transparency and the picture runs off every edge")
+    if m["aspect"] >= PHOTO_ASPECT:
+        out.append(f"far from square ({m['w']}x{m['h']})")
+    if m["strong"] >= PHOTO_TEXT_STRONG and m["opaque"] >= PHOTO_TEXT_OPAQUE:
+        out.append(f"text-heavy block (hard-edge share {m['strong']:.2f})")
+    return out
+
+
+# Stock icons several unrelated companies use (a floppy disk, a globe …), matched like rule (a): (label, difference
+# hash of the 128 px icon, mean colour over grey). Each one was seen on more than one unrelated site in the
+# 2026-11-05 run and looked at by eye; rule (a) catches any that 3+ companies share anyway.
+KNOWN_GENERIC = (
+    ("Next.js / Vercel default favicon (black circle, white triangle)",
+     "20f9c01c8826201b050b4b25571516912d497c055a251013200b88a6c01c20f9", (55.1, 55.1, 55.1)),
+)
+
+
+def known_generic(norm):
+    dh, col = dhash(norm), mean_colour(norm)
+    for label, hx, colour in KNOWN_GENERIC:
+        if (dh ^ int(hx, 16)).bit_count() <= DHASH_MAX and max(abs(col[k] - colour[k]) for k in range(3)) <= COLOUR_MAX:
+            return label
+    return ""
 
 
 def _rgb_pixels(im):
@@ -1104,7 +1218,7 @@ def judge_candidate(c, body, domain, svg_render, raw_dir):
         return False
     up = upscaled_from(img)
     if up:
-        c["result"], c["note"] = "too_small", f"{img.width}x{img.height} enlarged from a {up} px icon"
+        c["result"], c["note"] = "too_small", f"{img.width}x{img.height} enlarged from a {up[0]} px icon ({up[1]})"
         return False
     c["result"] = "ok"
     return True
@@ -1535,10 +1649,21 @@ def decide(recs, raw_dir):
             continue
         up = upscaled_from(img)
         if up:
-            d["decision"], d["reason"] = "too_small", f"{best.get('original_size')} enlarged from a {up} px icon"
+            d["decision"], d["reason"] = "too_small", \
+                f"{best.get('original_size')} enlarged from a {up[0]} px icon ({up[1]})"
             continue
-        d["decision"] = "kept"
         norm = normalise(img)
+        stock = known_generic(norm)
+        if stock:
+            d["decision"], d["reason"] = "generic", f"(b) known stock icon: {stock}"
+            continue
+        m = photo_metrics(img)
+        size = re.fullmatch(r"(\d+)x(\d+)", str(best.get("original_size") or ""))
+        if size:                                            # raw/ keeps at most 1024 px: report the served size
+            m["w"], m["h"] = int(size.group(1)), int(size.group(2))
+        d["metrics"] = m
+        flags = photo_flags(m)
+        d["decision"], d["reason"] = ("needs_review", "photo-like: " + "; ".join(flags)) if flags else ("kept", "")
         imgs[dom] = norm
         items.append({"key": dom, "domain": dom, "sha": d["sha256"], "pix": pixel_hash(norm), "dh": dhash(norm),
                       "colour": mean_colour(norm)})
@@ -1564,17 +1689,24 @@ CSV_COLS = ["code", "domain", "final_url", "source_type", "original_size", "sha2
 
 
 def write_outputs(out, dec, imgs):
-    kr = out / "kr"
-    kr.mkdir(parents=True, exist_ok=True)
-    keep_files = set()
-    for dom, img in imgs.items():
-        for code in dec[dom]["codes"]:
-            f = kr / f"{code}.png"
-            img.save(f, "PNG", optimize=True)
-            keep_files.add(f.name)
-    stale = [f for f in kr.glob("*.png") if f.name not in keep_files]
-    for f in stale:
-        f.unlink()
+    """kept -> OUT/kr/<code>.png · needs_review -> OUT/review/<code>.png (Jack looks; nothing there is kept until he
+    says so) · anything else in those folders from an earlier run is removed."""
+    stale = []
+    for sub, decision in (("kr", "kept"), ("review", "needs_review")):
+        folder = out / sub
+        folder.mkdir(parents=True, exist_ok=True)
+        keep_files = set()
+        for dom, img in imgs.items():
+            if dec[dom]["decision"] != decision:
+                continue
+            for code in dec[dom]["codes"]:
+                f = folder / f"{code}.png"
+                img.save(f, "PNG", optimize=True)
+                keep_files.add(f.name)
+        old = [f for f in folder.glob("*.png") if f.name not in keep_files]
+        for f in old:
+            f.unlink()
+        stale += old
     rows = []
     for dom, d in dec.items():
         for code in d["codes"]:
@@ -1595,12 +1727,13 @@ def write_outputs(out, dec, imgs):
 COUNT_KEYS = ["tried", "reachable", "robots-blocked", "unreachable", "  of which TLS", "  of which proxy refused",
               "homepage on a platform (b, no icon fetched)", "icon found", ">= 96 px", "generic rejected",
               "  (a) same image as 3+ companies", "  (b) builder or hosting default, parked page",
-              "  (c) blank or one colour", "too small (< 96 px)", "kept", "broken image seen (any candidate)"]
+              "  (c) blank or one colour", "needs review (photo-like)", "kept", "too small (< 96 px)",
+              "  of which enlarged from a small icon", "broken image seen (any candidate)", "tool error"]
 
 
 def counts(recs, dec):
     """The loud counts, by domain and by company (stock code). The ladder: tried >= reachable >= icon found >= 96 px
-    >= kept, and >= 96 px = generic rejected + kept."""
+    >= kept, and >= 96 px = generic rejected + needs review + kept."""
     c = collections.Counter()
     for dom, r in recs.items():
         n = len(r["codes"])
@@ -1617,14 +1750,17 @@ def counts(recs, dec):
                 ("  of which proxy refused", r["outcome"] == "proxy_blocked"),
                 ("homepage on a platform (b, no icon fetched)", d.get("decision") == "platform"),
                 ("icon found", any(x.get("result") in FOUND for x in cands)),
-                (">= 96 px", d.get("decision") in ("kept", "generic")),
+                (">= 96 px", d.get("decision") in ("kept", "generic", "needs_review")),
                 ("generic rejected", gen),
                 ("  (a) same image as 3+ companies", gen and why.startswith("(a)")),
                 ("  (b) builder or hosting default, parked page", gen and why.startswith("(b)")),
                 ("  (c) blank or one colour", gen and why.startswith("(c)")),
-                ("too small (< 96 px)", d.get("decision") == "too_small"),
+                ("needs review (photo-like)", d.get("decision") == "needs_review"),
                 ("kept", d.get("decision") == "kept"),
-                ("broken image seen (any candidate)", any(x.get("result") == "broken" for x in cands))]
+                ("too small (< 96 px)", d.get("decision") == "too_small"),
+                ("  of which enlarged from a small icon", d.get("decision") == "too_small" and "enlarged" in why),
+                ("broken image seen (any candidate)", any(x.get("result") == "broken" for x in cands)),
+                ("tool error", r["outcome"] == "error")]
         for k, v in rows:
             if v:
                 c[("domains", k)] += 1
@@ -1739,7 +1875,9 @@ def main(argv=None):
     nrows, stale = write_outputs(out, dec, imgs)
     print_counts(recs, dec, len(items))
     log(f"· wrote {out / 'site_icons.csv'} ({nrows:,} rows) · {out / 'kr'} "
-        f"({sum(len(dec[d]['codes']) for d in imgs):,} icons, {stale} stale removed) · {out / 'decisions.json'}")
+        f"({sum(len(dec[d]['codes']) for d in imgs if dec[d]['decision'] == 'kept'):,} icons) · {out / 'review'} "
+        f"({sum(len(dec[d]['codes']) for d in imgs if dec[d]['decision'] == 'needs_review'):,}) · {stale} stale "
+        f"removed · {out / 'decisions.json'}")
     if stop_flag.is_set():
         log("!! stopped early (see above)")
         return 2
