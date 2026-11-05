@@ -133,7 +133,7 @@ button.mini{padding:2px 10px;font-size:12px}
   <li><b>Exact identifiers only, never names.</b> Ticker: KOSPI and KONEX 005930.KS, KOSDAQ 247540.KQ, US as listed. ISIN from the KRX listing (check digit verified). Domain: the homepage filed with DART, Korea only; platform hosts (blog.naver.com and the like) and a domain two companies share are not used.</li>
   <li><b>Agreement</b> is checked only here, in this browser: both images are loaded so the page may read them (CORS), shrunk to a tiny fingerprint and compared. If a provider does not let the page read its images, the agreement rule is skipped for it and the order decides. <span id="agreestate">Not checked yet.</span></li>
   <li><b>Review.</b> Tap a tile to mark it wrong (tap again to undo). Hover (PC) or press and hold (phone) to see it bigger. Judge a grid once the bar at the bottom says it is ready: until then a tile with a dashed border can still change. Then tap <b>Confirm this grid</b>: every tile you did not mark keeps its pre-pick; for each tile you marked, choose among the logos that loaded, the letter mark, a pasted image address or <b>None of these &mdash; find more</b>. A grid counts as reviewed only after Confirm. Companies you have not reviewed keep the letter mark in the app.</li>
-  <li><b>Paste an image address</b> (in the Fix panel, when every alternative is wrong): copy the address of the right logo, usually from the company's own website (right-click or press and hold the picture, then Copy image address), and paste it. The page checks the address (https only: http is changed to https; no data: or javascript: addresses; at most 2,000 characters; a public website, not an IP number or a local name; not a Brandfetch or logo.dev address, which you choose among the alternatives instead) and shows a preview, loaded in this browser like any picture. Nothing is sent anywhere else. The picture must be at least 64 px on its shorter side; under 96 px you get a warning. Tap <b>Use this picture</b> to choose it; only its address is kept. <b>Later step, not done yet:</b> each pasted address will be downloaded once and stored as a file of this site, so the app never loads it from the company's website.</li>
+  <li><b>Paste an image address</b> (in the Fix panel, when every alternative is wrong): copy the address of the right logo, usually from the company's own website (right-click or press and hold the picture, then Copy image address), and paste it. The page checks the address (https only: http is changed to https; no data: or javascript: addresses; at most 2,000 characters; a public website, not an IP number or a local name; not a Brandfetch or logo.dev address, which you choose among the alternatives instead) and shows a preview, loaded in this browser like any picture. Nothing is sent anywhere else. The picture must be at least 64 px on its longer side, so wide name logos are fine; small, very thin or very wide pictures get a warning. Tap <b>Use this picture</b> to choose it; only its address is kept. <b>Later step, not done yet:</b> each pasted address will be downloaded once and stored as a file of this site, so the app never loads it from the company's website.</li>
   <li><b>None of these &mdash; find more</b> (in the Fix panel): the company keeps the letter mark for now and counts as <b>needs a logo</b>: a separate count in the summary, and the <b>Needs a logo</b> view (button above, or the last entry in the grid list) lists only those companies, so a later round can show them new candidates. Tap a company there to open its grid; tap it again there and Confirm changes to choose differently.</li>
   <li><b>Badges:</b> <span class="b agr">agree</span> both services show this logo; <span class="b low">low-res</span> the picture the provider sent is smaller than 64 px (a provider may also enlarge a small logo, which this cannot see); <span class="b sav">saved</span> your confirmed choice; <span class="b gap">not checked</span> a provider was stopped or timed out for this company.</li>
   <li><b>No logo = image error.</b> Every request asks for an error when there is no logo (Brandfetch fallback/404, logo.dev fallback=404), so a miss never shows a placeholder. logo.dev answers a domain it has never seen with a placeholder (HTTP 202) on the first request, so every logo.dev domain hit is loaded again after 5&frac12; minutes and only the second answer counts. That is why a grid can take a few minutes; the next grid loads while you review this one.</li>
@@ -208,7 +208,7 @@ var STORE_KEY = "baepsae-logo-review-v1";
 // Which sources found a logo for which company (hit / miss and the KST day, never a picture or an address), kept apart
 // from the choices so that a full or broken entry here can never cost a confirmed choice.
 var PROBE_KEY = "baepsae-logo-review-probes-v1", PROBE_DAYS = 7;
-var MANUAL_MAX = 2000, MANUAL_MIN_PX = 64, MANUAL_SOFT_PX = 96;
+var MANUAL_MAX = 2000, MANUAL_MIN_PX = 64, MANUAL_SOFT_PX = 128, MANUAL_THIN_PX = 24, MANUAL_WIDE = 4;
 // Pasted addresses are later downloaded and stored as our own files; provider images may not be copied, so their
 // addresses are refused here (they are chosen among the alternatives instead).
 var PROVIDER_DOMAINS = ["brandfetch.io", "brandfetch.com", "logo.dev"];
@@ -246,9 +246,14 @@ function checkManualUrl(raw) {
 // What a loaded preview measured (naturalWidth x naturalHeight) allows: {ok, warn, text}.
 function judgeSize(w, h) {
   if (!(w > 0) || !(h > 0)) return { ok: false, text: "The browser could not measure this picture (an SVG without a set size?). Find a PNG or a larger picture." };
-  var lo = Math.min(w, h), dims = w + " × " + h + " px";
-  if (lo < MANUAL_MIN_PX) return { ok: false, text: "Too small: " + dims + ". It must be at least " + MANUAL_MIN_PX + " px on its shorter side." };
-  if (lo < MANUAL_SOFT_PX) return { ok: true, warn: true, text: "Small: " + dims + " (under " + MANUAL_SOFT_PX + " px on its shorter side): it may look soft. Usable." };
+  // Judged on the longer side, so wide wordmarks (e.g. 240 x 48) are usable: the app fits a logo inside a square spot.
+  var lo = Math.min(w, h), hi = Math.max(w, h), dims = w + " × " + h + " px";
+  if (hi < MANUAL_MIN_PX) return { ok: false, text: "Too small: " + dims + ". It must be at least " + MANUAL_MIN_PX + " px on its longer side." };
+  var why = [];
+  if (hi < MANUAL_SOFT_PX) why.push("under " + MANUAL_SOFT_PX + " px on its longer side, so it may look soft");
+  if (lo < MANUAL_THIN_PX) why.push("thinner than " + MANUAL_THIN_PX + " px");
+  if (hi / lo > MANUAL_WIDE) why.push("more than " + MANUAL_WIDE + " times wider than tall, so it will look small in the square logo spot");
+  if (why.length) return { ok: true, warn: true, text: "Usable, but check it: " + dims + " is " + why.join("; ") + "." };
   return { ok: true, warn: false, text: dims + "." };
 }
 function isDay(d) {

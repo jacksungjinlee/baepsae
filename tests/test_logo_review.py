@@ -401,9 +401,10 @@ def test_kst_dates():
 # ── a pasted image address ("manual") and None of these - find more ("need"), added 2026-11-05 ──
 
 def test_extra_sources_match_python():
-    got = node("console.log(JSON.stringify([SOURCES, EXTRA_SOURCES, ALL_SOURCES, MANUAL_MAX, MANUAL_MIN_PX, MANUAL_SOFT_PX]));")
+    got = node("console.log(JSON.stringify([SOURCES, EXTRA_SOURCES, ALL_SOURCES, MANUAL_MAX, MANUAL_MIN_PX, MANUAL_SOFT_PX,"
+               " MANUAL_THIN_PX, MANUAL_WIDE]));")
     assert got[0] == list(br.SOURCES) and got[1] == list(br.EXTRA_SOURCES) == ["manual", "need"]
-    assert got[2] == list(br.SOURCES) + ["manual", "need"] and got[3:] == [2000, 64, 96]
+    assert got[2] == list(br.SOURCES) + ["manual", "need"] and got[3:] == [2000, 64, 128, 24, 4]
 
 
 def manual(raws):
@@ -455,11 +456,24 @@ def test_manual_url_refused(raw, why):
 
 
 def test_preview_size_rule():
-    got = node("console.log(JSON.stringify([[128,128],[96,96],[95,400],[64,64],[63,500],[500,63],[0,0],[null,10]]"
-               ".map(x => judgeSize(x[0], x[1]))));")
-    assert [(g["ok"], g.get("warn")) for g in got] == [(True, False), (True, False), (True, True), (True, True),
-                                                       (False, None), (False, None), (False, None), (False, None)]
-    assert "63 × 500 px" in got[4]["text"] and "64 px" in got[4]["text"] and "measure" in got[6]["text"]
+    """Judged on the longer side (Jack's wide wordmarks, 2026-11-05): refused only under 64 px on the longer side;
+    small (< 128), thin (< 24) or very wide (> 4:1) pictures are usable with a warning."""
+    cases = [[128, 128], [240, 48], [400, 95], [96, 96], [64, 64], [500, 63], [600, 20], [63, 40], [40, 63], [0, 0], [None, 10]]
+    got = node("console.log(JSON.stringify(%s.map(x => judgeSize(x[0], x[1]))));" % json.dumps(cases))
+    assert [(g["ok"], g.get("warn")) for g in got] == [
+        (True, False),            # 128 x 128: fine
+        (True, True),             # 240 x 48 wordmark: usable, 5:1 wide
+        (True, True),             # 400 x 95: usable, a little over 4:1
+        (True, True),             # 96 x 96: usable, soft
+        (True, True),             # 64 x 64: usable, soft
+        (True, True),             # 500 x 63: usable, very wide
+        (True, True),             # 600 x 20: usable, thin and very wide
+        (False, None),            # 63 x 40: too small (longer side under 64)
+        (False, None),            # 40 x 63: too small
+        (False, None), (False, None)]   # not measurable
+    assert "longer side" in got[7]["text"] and "64 px" in got[7]["text"] and "63 × 40 px" in got[7]["text"]
+    assert "wider than tall" in got[1]["text"] and "thinner than 24 px" in got[6]["text"] and "measure" in got[9]["text"]
+    assert got[0]["text"] == "128 × 128 px."
 
 
 def test_export_and_load_choices_with_manual_and_need():

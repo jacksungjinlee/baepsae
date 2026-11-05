@@ -692,7 +692,7 @@ async def scenario_j(browser, base, data, keys, out, mask, vp, name, img_base, i
     await preview(f"{img_base}/missing.png")
     check(not await said("did not load", "bad"), f"J-{name}: Use on for a missing picture", mask)
     await preview(f"{img_base}/soft.png")
-    check(await said("Small: 80 × 80 px", "warn"), f"J-{name}: Use off for an 80 px picture", mask)
+    check(await said("Usable, but check it: 80 × 80 px", "warn"), f"J-{name}: Use off for an 80 px picture", mask)
     url = f"{img_base}/logo.png"
     await preview(url)
     check(await said("128 × 128 px", "good"), f"J-{name}: Use off for the right picture", mask)
