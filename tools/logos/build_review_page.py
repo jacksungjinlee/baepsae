@@ -19,10 +19,11 @@ Pre-pick order (the page's JavaScript; pre_pick() below is the same rule in Pyth
   2. Brandfetch by exact ID: ISIN, then ticker;
   3. logo.dev: ticker, then the DART-homepage domain;
   4. Brandfetch by the DART-homepage domain (added 2026-11-05: it was right for 금호석유화학);
-  5. our own website icon, when logo-review/icons.json lists one (optional, reviewed by Jack first);
+  5. our own website icon, when logo-review/icons.json lists it as kept (tools/logos/add_site_icons.py; an icon
+     flagged as photo-like or hard to see is never pre-picked, only offered in the Fix panel as "Own icon (check)");
   else the letter mark.
 Identifiers are exact only (ticker, ISIN, DART homepage), never names — the same ones as the coverage test page
-(build_test_page.build_companies). Nothing here requests a logo: both providers' terms forbid fetching their images
+(logo_sources.build_companies). Nothing here requests a logo: both providers' terms forbid fetching their images
 with a script, so this builder only writes the page.
 
 Keys: BRANDFETCH_CLIENT_ID and LOGODEV_TOKEN (publishable, meant to sit in page source) from --keys-file or the
@@ -38,8 +39,8 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
-import build_test_page as bt  # noqa: E402
-from logo_ids import Masker, now_kst  # noqa: E402
+import logo_sources as lsrc  # noqa: E402
+from logo_ids import Masker, common_code, is_krx_code, now_kst  # noqa: E402
 
 TEMPLATE = HERE / "logo_review_template.html"
 OUT = ROOT / "logo-review.html"
@@ -79,13 +80,13 @@ def agrees(x, y):
 
 
 def pre_pick(cands):
-    """cands: {route: {"s": state, "hash": {d, a, ar} | None}}; a missing route is 'na'.
+    """cands: {route: {"s": state, "hash": {g, ar} | None, "check": our icon needs a look}}; a missing route is 'na'.
     Returns {pick: route | None (letter mark), via: agree | order | none, partner, settled}.
     settled = every route has ended (a route still loading could still win, by order or by agreeing)."""
     def get(r):
         return cands.get(r) or {"s": "na"}
     settled = all(get(r)["s"] in ENDED for r in ORDER)
-    hits = [r for r in ORDER if get(r)["s"] == "hit"]
+    hits = [r for r in ORDER if get(r)["s"] == "hit" and not get(r).get("check")]   # an icon to check: Fix panel only
     for r in hits:
         if PROVIDER[r] == "own":
             continue
@@ -165,20 +166,36 @@ def icon_path(raw):
 
 
 def load_icons(manifest, codes, root=ROOT):
-    """{code: page-relative PNG path} from logo-review/icons.json ({code: path under logo-review/icons/}). A missing
-    manifest is fine (no icons yet). Entries for unknown codes, bad paths and missing files are left out, loudly."""
+    """{code: (page-relative PNG path, check)} from logo-review/icons.json, which tools/logos/add_site_icons.py writes:
+    {code: "icons/<file>.png"} for a kept icon, {code: {"path": ..., "check": true}} for one that needs a look (never
+    pre-picked; offered in the Fix panel only). A missing manifest is fine (no icons yet). A preferred share's entry
+    (it points to its issuer's file) is accepted but not shown: preferred shares are not on the page. Entries for
+    other codes, bad paths and missing files are left out, loudly."""
     manifest = pathlib.Path(manifest)
     if not manifest.exists():
         return {}, [f"· no {manifest.name}: our website icons are not candidates yet"]
     raw = json.loads(manifest.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise SystemExit(f"!! {manifest}: expected an object {{code: path}}")
-    icons, log, bad = {}, [], {"unknown code": 0, "bad path": 0, "missing file": 0}
-    for code, path in sorted(raw.items()):
+    icons, log = {}, []
+    bad = {"unknown code": 0, "bad entry": 0, "bad path": 0, "missing file": 0}
+    preferred = 0
+    for code, entry in sorted(raw.items()):
+        if isinstance(entry, str):
+            path, check = entry, False
+        elif isinstance(entry, dict) and isinstance(entry.get("path"), str) and entry.get("check", False) in (True, False):
+            path, check = entry["path"], bool(entry.get("check"))
+        else:
+            bad["bad entry"] += 1
+            log.append(f"  !! icon for {code}: {str(entry)[:80]!r} is neither a path nor {{path, check}} — left out")
+            continue
         p = icon_path(path)
         if code not in codes:
-            bad["unknown code"] += 1
-            log.append(f"  !! icon for {code}: not a company on this page — left out")
+            if is_krx_code(code) and common_code(code) != code and common_code(code) in codes:
+                preferred += 1                                 # same issuer as a company on the page: not shown
+            else:
+                bad["unknown code"] += 1
+                log.append(f"  !! icon for {code}: not a company on this page — left out")
         elif not p:
             bad["bad path"] += 1
             log.append(f"  !! icon for {code}: {str(path)[:80]!r} is not a .png under {ICONS_DIR}/ — left out")
@@ -186,9 +203,11 @@ def load_icons(manifest, codes, root=ROOT):
             bad["missing file"] += 1
             log.append(f"  !! icon for {code}: {p} does not exist — left out")
         else:
-            icons[code] = p
-    log.insert(0, f"· our website icons: {len(icons):,} of {len(raw):,} in {manifest.name} usable"
-               + "".join(f" · {k} {v}" for k, v in bad.items() if v))
+            icons[code] = (p, check)
+    nchk = sum(1 for _, c in icons.values() if c)
+    log.insert(0, f"· our website icons: {len(icons):,} of {len(raw):,} in {manifest.name} on the page "
+               f"({len(icons) - nchk:,} kept, {nchk:,} to check) · preferred shares (same file as their issuer, not "
+               f"shown) {preferred:,}" + "".join(f" · {k} {v}" for k, v in bad.items() if v))
     return icons, log
 
 
@@ -197,13 +216,15 @@ def load_icons(manifest, codes, root=ROOT):
 def page_data(rows, grids, zones, icons, meta):
     """The JSON the page embeds (short keys keep the page small)."""
     comp = [{"c": r["code"], "n": r["name"], "s": r["side"], "m": r["market"], "r": r["rank"], "g": r["grid"],
-             "z": r["zone"], "tk": r["ticker"], "isin": r["isin"], "dom": r["domain"], "ic": icons.get(r["code"], ""),
+             "z": r["zone"], "tk": r["ticker"], "isin": r["isin"], "dom": r["domain"],
+             "ic": icons[r["code"]][0] if r["code"] in icons else "",
+             **({"icx": 1} if r["code"] in icons and icons[r["code"]][1] else {}),
              **({"nc": 1} if r["nocap"] else {})} for r in rows]
     return {"meta": meta, "grids": grids, "zones": zones, "companies": comp}
 
 
 def build(data, listing, homepages, keys, icons_manifest=None, built_at=None, template=None, root=ROOT):
-    companies, log = bt.build_companies(data, listing, homepages)
+    companies, log = lsrc.build_companies(data, listing, homepages)
     rows, rlog = rank_companies(companies)
     log += rlog
     for side, must in MUST.items():
@@ -216,29 +237,29 @@ def build(data, listing, homepages, keys, icons_manifest=None, built_at=None, te
     rotate = [r["ticker"] for r in rows if r["side"] == "us" and not r["nocap"]][:ROTATE]
     meta = {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf"),
             "builtAt": built_at or now_kst().strftime("%Y-%m-%d %H:%M KST"), "grid": GRID,
-            "good": bt.GOOD, "bad": bt.BAD, "rotate": rotate,
+            "good": lsrc.GOOD, "bad": lsrc.BAD, "rotate": rotate,
             "counts": {side: sum(1 for r in rows if r["side"] == side) for side in ("kr", "us")},
-            "icons": len(icons)}
+            "icons": len(icons), "iconsCheck": sum(1 for _, c in icons.values() if c)}
     pdata = page_data(rows, grids, zones, icons, meta)
     tpl = template if template is not None else TEMPLATE.read_text(encoding="utf-8")
-    return bt.render(tpl, pdata, keys), pdata, log
+    return lsrc.render(tpl, pdata, keys), pdata, log
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--data", default=bt.DATA_URL, help="data.json URL or path (default: the live site)")
+    ap.add_argument("--data", default=lsrc.DATA_URL, help="data.json URL or path (default: the live site)")
     ap.add_argument("--listing", default="auto", help="KRX listing CSV path, or auto (the file for data.json pxDate)")
-    ap.add_argument("--homepages", default=str(bt.HOMEPAGES))
+    ap.add_argument("--homepages", default=str(lsrc.HOMEPAGES))
     ap.add_argument("--icons", default=str(ICONS_MANIFEST), help="optional manifest of our own website icons")
     ap.add_argument("--keys-file", default=os.environ.get("LOGO_KEYS_FILE"),
                     help="file with BRANDFETCH_CLIENT_ID=... and LOGODEV_TOKEN=pk_... lines (else the environment)")
     ap.add_argument("--out", default=str(OUT))
     a = ap.parse_args(argv)
-    keys = bt.read_keys(a.keys_file)
+    keys = lsrc.read_keys(a.keys_file)
     mask = Masker(*keys)
-    data = json.loads(bt.load_text(a.data, "data.json"))
-    listing = bt.load_listing(a.listing, data.get("pxDate"))
-    homepages = bt.load_homepages(a.homepages)
+    data = json.loads(lsrc.load_text(a.data, "data.json"))
+    listing = lsrc.load_listing(a.listing, data.get("pxDate"))
+    homepages = lsrc.load_homepages(a.homepages)
     page, pdata, log = build(data, listing, homepages, keys, a.icons)
     for line in log:
         print(mask(line))

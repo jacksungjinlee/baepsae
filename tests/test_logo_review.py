@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "tools" / "logos"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import build_review_page as br  # noqa: E402
-import build_test_page as bt  # noqa: E402
+import logo_sources as lsrc  # noqa: E402
 import logo_ids as li  # noqa: E402
 
 TEMPLATE = (ROOT / "tools" / "logos" / "logo_review_template.html").read_text(encoding="utf-8")
@@ -121,17 +121,23 @@ def test_icon_path(raw, want):
 
 def test_icons_manifest_keeps_valid_entries_only(tmp_path):
     (tmp_path / "logo-review" / "icons").mkdir(parents=True)
-    (tmp_path / "logo-review" / "icons" / "005930.png").write_bytes(b"png")
-    (tmp_path / "logo-review" / "icons" / "AAPL.png").write_bytes(b"png")
-    page, pdata, log = build(tmp_path, icons={"005930": "icons/005930.png", "AAPL": "logo-review/icons/AAPL.png",
-                                              "000660": "icons/missing.png", "005380": "../x.png",
-                                              "999990": "icons/005930.png"})
+    for name in ("005930.png", "AAPL.png", "100010.png"):
+        (tmp_path / "logo-review" / "icons" / name).write_bytes(b"png")
+    page, pdata, log = build(tmp_path, icons={
+        "005930": "icons/005930.png", "AAPL": "logo-review/icons/AAPL.png",
+        "100010": {"path": "icons/100010.png", "check": True},          # needs a look: Fix panel only
+        "100005": "icons/005930.png",                                   # a preferred share of 100000: accepted, not shown
+        "000660": "icons/missing.png", "005380": "../x.png", "999990": "icons/005930.png",
+        "100020": {"path": "icons/100010.png", "check": "yes"}, "100030": ["icons/100010.png"]})
     by = {c["c"]: c for c in pdata["companies"]}
     assert by["005930"]["ic"] == "logo-review/icons/005930.png" and by["AAPL"]["ic"] == "logo-review/icons/AAPL.png"
-    assert by["000660"]["ic"] == "" and by["005380"]["ic"] == ""
-    assert pdata["meta"]["icons"] == 2
-    assert "2 of 5" in log[next(i for i, line in enumerate(log) if "website icons" in line)]
-    assert sum("left out" in line for line in log if "icon for" in line) == 3
+    assert by["100010"]["ic"] == "logo-review/icons/100010.png" and by["100010"]["icx"] == 1
+    assert "icx" not in by["005930"] and "100005" not in by
+    assert by["000660"]["ic"] == "" and by["005380"]["ic"] == "" and by["100020"]["ic"] == "" and by["100030"]["ic"] == ""
+    assert pdata["meta"]["icons"] == 3 and pdata["meta"]["iconsCheck"] == 1
+    head = log[next(i for i, line in enumerate(log) if "website icons" in line)]
+    assert "3 of 9" in head and "(2 kept, 1 to check)" in head and "preferred shares (same file as their issuer, not shown) 1" in head
+    assert sum("left out" in line for line in log if "icon for" in line) == 5
 
 
 def test_no_icons_manifest_is_fine(tmp_path):
@@ -166,6 +172,10 @@ MISS = {"s": "miss"}
     ({"bfI": MISS, "bfT": MISS, "ldT": MISS, "ldD": MISS, "bfD": MISS, "own": hit(6)}, ("own", "order", None)),
     ({"bfI": MISS, "bfT": MISS, "ldT": MISS}, (None, "none", None)),
     ({}, (None, "none", None)),
+    # our icon that needs a look is never pre-picked (Fix panel only); a kept one is, last
+    ({"bfI": MISS, "bfT": MISS, "own": {"s": "hit", "hash": fp(6), "check": True}}, (None, "none", None)),
+    ({"bfI": MISS, "ldT": hit(2), "own": {"s": "hit", "hash": fp(2), "check": True}}, ("ldT", "order", None)),
+    ({"bfI": MISS, "bfT": MISS, "own": {"s": "hit", "hash": fp(6), "check": False}}, ("own", "order", None)),
     # never agreement within one provider, nor with our own icon; no fingerprint = unknown, not agreement
     ({"bfI": hit(1), "bfT": hit(2), "bfD": hit(2), "ldT": hit(3)}, ("bfI", "order", None)),
     ({"bfI": hit(1), "ldT": hit(2), "own": hit(2)}, ("bfI", "order", None)),
@@ -213,7 +223,8 @@ def test_page_pre_pick_is_the_same_as_python():
         c = {}
         for r in br.ORDER:
             s = rng.choice(states)
-            c[r] = {"s": s, "hash": fp(rng.randrange(4)) if s == "hit" and rng.random() < 0.8 else None}
+            c[r] = {"s": s, "hash": fp(rng.randrange(4)) if s == "hit" and rng.random() < 0.8 else None,
+                    "check": r == "own" and rng.random() < 0.5}
         cases.append(c)
     got = node(f"console.log(JSON.stringify({json.dumps(cases)}.map(prePick)));")
     want = [br.pre_pick(c) for c in cases]
@@ -314,6 +325,8 @@ def test_load_choices_accepts_only_exact_addresses_for_companies_on_the_page():
         "image data": ("005930", {"source": "bf-isin", "url": "data:image/png;base64,AAAA", "reviewed": "2026-11-05"}),
         "letter with an address": ("005930", {"source": "letter", "url": good, "reviewed": "2026-11-05"}),
         "no date": ("005930", {"source": "letter", "url": None}),
+        "impossible date": ("005930", {"source": "letter", "url": None, "reviewed": "2026-13-45"}),
+        "Feb 30": ("005930", {"source": "letter", "url": None, "reviewed": "2026-02-30"}),
         "no identifier": ("AAPL", {"source": "bf-isin", "url": None, "reviewed": "2026-11-05"}),
         "another icon": ("AAPL", {"source": "own-icon", "url": "logo-review/icons/x.png", "reviewed": "2026-11-05"}),
         "not an object": ("005930", "letter"),
@@ -345,6 +358,7 @@ def test_merge_choices_later_review_wins_and_the_file_wins_a_tie():
     m = node(f"console.log(JSON.stringify(mergeChoices({json.dumps(a)}, {json.dumps(b)})));")
     assert m["choices"]["X"]["source"] == "own-icon" and m["choices"]["Y"]["source"] == "letter" and "W" in m["choices"]
     assert (m["added"], m["replaced"], m["kept"], m["same"]) == (1, 1, 1, 1)
+    assert sorted(m["used"]) == ["W", "X", "Z"]                         # Y: the newer choice here stays, with its marks
 
 
 def test_summary_counts_reviewed_logo_and_letter_per_size_group():
@@ -414,7 +428,7 @@ def check_page(html, template=TEMPLATE):
     keys = json.loads(re.search(r"var KEYS = (\{.*?\});", html).group(1))
     li.check_publishable_keys(keys["bf"], keys["ld"])                              # publishable only, never sk_
     assert set(keys) == {"bf", "ld"}
-    assert bt.render(template, data, (keys["bf"], keys["ld"])) == html, "logo-review.html was edited by hand"
+    assert lsrc.render(template, data, (keys["bf"], keys["ld"])) == html, "logo-review.html was edited by hand"
     assert '<meta name="robots" content="noindex,nofollow">' in html
     assert "<title>Logo picker (temporary review tool)</title>" in html
     outside = html.replace(re.search(r'<script id="data".*?</script>', html, re.S).group(0), "")
@@ -428,6 +442,92 @@ def check_page(html, template=TEMPLATE):
 def test_a_built_page_is_safe(tmp_path):
     page, pdata, log = build(tmp_path)
     check_page(page)
+
+
+# ── adding our website icons (tools/logos/add_site_icons.py): append only, one file per picture, lossless ──
+
+def png_bytes(color, size=(128, 128), shape="square", mode="RGBA"):
+    from PIL import Image, ImageDraw
+    import io
+    im = Image.new("RGBA", size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    (d.ellipse if shape == "disc" else d.rectangle)([16, 16, size[0] - 16, size[1] - 16], fill=color)
+    buf = io.BytesIO()
+    im.convert(mode).save(buf, "PNG", compress_level=0)                    # big on purpose: room to optimise
+    return buf.getvalue()
+
+
+def collection(tmp_path, kept, review, decisions=None):
+    src = tmp_path / "src"
+    (src / "kr").mkdir(parents=True, exist_ok=True)
+    (src / "review").mkdir(parents=True, exist_ok=True)
+    for folder, items in (("kr", kept), ("review", review)):
+        for code, data in items.items():
+            (src / folder / f"{code}.png").write_bytes(data)
+    rows = {**{c: "kept" for c in kept}, **{c: "needs_review" for c in review}, **(decisions or {})}
+    (src / "site_icons.csv").write_text("code,decision\n" + "".join(f"{c},{d}\n" for c, d in rows.items()),
+                                        encoding="utf-8")
+    return src
+
+
+def test_add_site_icons_append_only_one_file_per_picture(tmp_path):
+    import add_site_icons as ai
+    red, blue, green = png_bytes((200, 0, 0, 255)), png_bytes((0, 0, 200, 255), shape="disc"), png_bytes((0, 150, 0, 255))
+    src = collection(tmp_path, {"005930": red, "005935": red, "000660": blue, "123450": green},
+                     {"003310": png_bytes((90, 90, 90, 255), shape="disc")},
+                     decisions={"777770": "too_small"})
+    (src / "kr" / "777770.png").write_bytes(red)                               # the CSV says too_small: refused
+    (src / "kr" / "BADCODE.png").write_bytes(red)                              # not a KRX code: refused
+    out, man = tmp_path / "site" / "logo-review" / "icons", tmp_path / "site" / "logo-review" / "icons.json"
+    n, log = ai.add_icons(src, out, man)
+    m = json.loads(man.read_text(encoding="utf-8"))
+    assert m == {"005930": "icons/005930.png", "005935": "icons/005930.png", "000660": "icons/000660.png",
+                 "123450": "icons/123450.png", "003310": {"path": "icons/003310.png", "check": True}}
+    assert sorted(p.name for p in out.glob("*.png")) == ["000660.png", "003310.png", "005930.png", "123450.png"]
+    assert (n["kept"], n["check"], n["files written"], n["same picture as a file already there"], n["refused"]) == (4, 1, 4, 1, 2)
+    for code in ("005930", "000660", "123450"):                                # lossless: same pixels, smaller file
+        assert ai.rgba((out / f"{code}.png").read_bytes()) == ai.rgba((src / "kr" / f"{code}.png").read_bytes())
+        assert (out / f"{code}.png").stat().st_size < (src / "kr" / f"{code}.png").stat().st_size
+    # a later collection: new codes are added, nothing that is there changes (not even when the source changed)
+    before = {p.name: p.read_bytes() for p in out.glob("*.png")}
+    (src / "kr" / "005930.png").write_bytes(green)
+    (src / "kr" / "000020.png").write_bytes(green)                             # same picture as 123450's file
+    (src / "kr" / "000040.png").write_bytes(png_bytes((10, 10, 10, 255), shape="disc"))
+    (src / "site_icons.csv").write_text((src / "site_icons.csv").read_text() + "000020,kept\n000040,kept\n",
+                                        encoding="utf-8")
+    n2, log2 = ai.add_icons(src, out, man)
+    m2 = json.loads(man.read_text(encoding="utf-8"))
+    assert {k: v for k, v in m2.items() if k in m} == m
+    assert m2["000020"] == "icons/123450.png" and m2["000040"] == "icons/000040.png"
+    assert all((out / k).read_bytes() == v for k, v in before.items())
+    assert n2["already in the manifest (left as is)"] == 5 and n2["files written"] == 1
+
+
+def test_add_site_icons_never_overwrites_a_file(tmp_path):
+    import add_site_icons as ai
+    out, man = tmp_path / "icons", tmp_path / "icons.json"
+    out.mkdir()
+    black = png_bytes((0, 0, 0, 255))
+    (out / "005930.png").write_bytes(black)                                    # there, but not in the manifest
+    src = collection(tmp_path, {"005930": png_bytes((250, 0, 0, 255))}, {})
+    n, log = ai.add_icons(src, out, man)
+    assert n["refused"] == 1 and any("already exists with another picture" in line for line in log)
+    assert json.loads(man.read_text()) == {} and (out / "005930.png").read_bytes() == black
+
+
+@pytest.mark.skipif(not (ROOT / "logo-review" / "icons.json").exists(), reason="no icons yet")
+def test_the_committed_icons_are_complete_and_stored_once():
+    import add_site_icons as ai
+    man = json.loads((ROOT / "logo-review" / "icons.json").read_text(encoding="utf-8"))
+    files = sorted((ROOT / "logo-review" / "icons").glob("*.png"))
+    paths = {ai.entry_path(e) for e in man.values()}
+    assert paths == {f"icons/{p.name}" for p in files}                        # every file used, none missing
+    keys = [ai.pixel_key(p.read_bytes()) for p in files]
+    assert len(keys) == len(set(keys))                                        # no picture stored twice
+    for code, e in man.items():
+        assert li.is_krx_code(code) and br.icon_path(ai.entry_path(e))
+        assert isinstance(e, str) or (set(e) == {"path", "check"} and e["check"] is True)
+    assert sum(p.stat().st_size for p in files) < 4_000_000
 
 
 @pytest.mark.skipif(not PAGE.exists(), reason="logo-review.html not built")
@@ -452,3 +552,9 @@ def test_the_committed_page_is_the_template_plus_its_data_and_is_safe():
         else:
             assert c["tk"] == c["c"] and not c["isin"] and not c["dom"], c
         assert not c["ic"] or (br.icon_path(c["ic"]) == c["ic"] and (ROOT / c["ic"]).is_file()), c
+        assert c.get("icx", 0) in (0, 1) and (not c.get("icx") or c["ic"]), c
+    if (ROOT / "logo-review" / "icons.json").exists():
+        man = json.loads((ROOT / "logo-review" / "icons.json").read_text(encoding="utf-8"))
+        shown = {c["c"]: c for c in comps if c["ic"]}
+        assert shown and all(c in man for c in shown)
+        assert {c for c, x in shown.items() if x.get("icx")} == {c for c, e in man.items() if not isinstance(e, str) and c in shown}

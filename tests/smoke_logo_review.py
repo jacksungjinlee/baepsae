@@ -24,6 +24,9 @@ is aborted too and fails the test. Keys in the page are never printed.
   G  CORS loses logos         Brandfetch passes the readable check but answers logos without CORS headers: the first
                               audited miss loads the plain way, the page switches Brandfetch to plain loads and tries
                               its misses again; pre-picks as expected
+  H  Retry and the window     both providers stop (blocked), the block lifts, Retry: checks run first, then the grid
+                              loads and pre-picks as expected; a request that timed out is not tried again once Jack
+                              has moved to another grid, and after the move only that grid and the next one load
 Zero page errors in every scenario; screenshots go to SMOKE_OUT, else a new temporary folder.
 """
 import asyncio
@@ -35,6 +38,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import socketserver
 import sys
 import tempfile
@@ -45,7 +49,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools" / "logos"))
 import build_review_page as br  # noqa: E402
-import build_test_page as bt  # noqa: E402
+import logo_sources as lsrc  # noqa: E402
 from logo_ids import Masker, logo_url  # noqa: E402
 
 PROVIDER_HOSTS = {"cdn.brandfetch.io", "img.logo.dev"}
@@ -141,7 +145,7 @@ def expected(co, readable=("bf", "ld"), icons=None):
             if t else {"s": "miss"}
     if co.get("ic"):
         d = DESIGNS[H(co["c"], "true") % len(DESIGNS)]
-        cands["own"] = {"s": "hit", "hash": {"g": FP[d], "ar": 1.0}}
+        cands["own"] = {"s": "hit", "hash": {"g": FP[d], "ar": 1.0}, "check": bool(co.get("icx"))}
     return br.pre_pick(cands)
 
 
@@ -168,6 +172,7 @@ class Fake:
         self.good = set(meta["good"].values()) | set(meta["rotate"])
         self.bad = set(meta["bad"].values())
         self.cors = dict({"bf": "all", "ld": "all"}, **(cors or {}))
+        self.slow = set()                                    # identifiers answered only after 3 s (a timeout)
         self.idents = {}
         for co in data["companies"]:
             for rid, p, r, f in ROUTES:
@@ -240,15 +245,19 @@ class Run:
         if lane:
             self.inflight[lane] += 1
             self.max_inflight[lane] = max(self.max_inflight[lane], self.inflight[lane])
-        await asyncio.sleep(0.004 + (H(req.url) % 12) / 1000)
+        await asyncio.sleep(0.004 + (H(req.url) % 12) / 1000 + (3.0 if ident in self.fake.slow else 0))
         if lane:
             self.inflight[lane] -= 1
         status, body = self.fake.answer(p, r, ident, v, size)
         hdr = self.fake.headers(p, size)
-        if status == 404:
-            await route.fulfill(status=404, body=b"", headers=hdr)
-        else:
-            await route.fulfill(status=status, content_type="image/png", body=body, headers=hdr)
+        try:
+            if status == 404:
+                await route.fulfill(status=404, body=b"", headers=hdr)
+            else:
+                await route.fulfill(status=status, content_type="image/png", body=body, headers=hdr)
+        except Exception:                                    # noqa: BLE001 — the page gave up on it (timed out)
+            if ident not in self.fake.slow:
+                raise
 
     async def js(self, expr):
         return await self.page.evaluate(expr)
@@ -280,23 +289,30 @@ def url_for(co, rid, keys):
 
 
 def with_icons(html, data, keys, folder, n=8):
-    """The same page with our own icons for a few companies of the first Korean grid (some with no provider logo)."""
+    """The same page with fake own icons (instead of the real ones) for a few companies of the first Korean grid:
+    kept ones, some for companies with no provider logo, and two that need a look (never pre-picked)."""
     data = json.loads(json.dumps(data))
+    for c in data["companies"]:
+        c["ic"] = ""
+        c.pop("icx", None)
     kr1 = [c for c in data["companies"] if c["g"] == "KR-1"]
     none = [c for c in kr1 if not any(c[f] and truth(c["c"], rid) for rid, _, _, f in ROUTES)]
     some = [c for c in kr1 if c not in none]
     pick = none[:n // 2] + some[:n - len(none[:n // 2])]
-    (folder / "logo-review" / "icons").mkdir(parents=True, exist_ok=True)
-    for c in pick:
+    check = none[n // 2:n // 2 + 1] + some[n:n + 1]                     # needs a look: one with, one without logos
+    (folder / "logo-review" / "fake").mkdir(parents=True, exist_ok=True)
+    for c in pick + check:
         name = f"{c['c']}.png"
-        (folder / "logo-review" / "icons" / name).write_bytes(png(DESIGNS[H(c["c"], "true") % len(DESIGNS)]))
-        c["ic"] = f"logo-review/icons/{name}"
-    data["meta"]["icons"] = len(pick)
+        (folder / "logo-review" / "fake" / name).write_bytes(png(DESIGNS[H(c["c"], "true") % len(DESIGNS)]))
+        c["ic"] = f"logo-review/fake/{name}"
+    for c in check:
+        c["icx"] = 1
+    data["meta"]["icons"], data["meta"]["iconsCheck"] = len(pick) + len(check), len(check)
     tpl = (ROOT / "tools" / "logos" / "logo_review_template.html").read_text(encoding="utf-8")
-    page = bt.render(tpl, data, (keys["bf"], keys["ld"]))
-    assert bt.render(tpl, json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', html,
+    page = lsrc.render(tpl, data, (keys["bf"], keys["ld"]))
+    assert lsrc.render(tpl, json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', html,
                                                  re.S).group(1)), (keys["bf"], keys["ld"])) == html, "page != template"
-    return page, data, [c["c"] for c in pick], [c["c"] for c in none[:n // 2]]
+    return page, data, [c["c"] for c in pick + check], [c["c"] for c in none[:n // 2]], [c["c"] for c in check]
 
 
 async def picks_match(run, data, gid, readable, mask, label):
@@ -312,7 +328,7 @@ async def picks_match(run, data, gid, readable, mask, label):
     return got, vias
 
 
-async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes, iconless):
+async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes, iconless, checks):
     comps = {c["c"]: c for c in data["companies"]}
     cfg = {"bfGapMs": 5, "ldGapMs": 5, "recheckMs": 1500, "canaryRetryMs": 300, "checkEvery": 150, "badEvery": 400,
            "longPressMs": 400}
@@ -327,6 +343,8 @@ async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes,
     exp_ic = [c for c in iconless if expected(comps[c])["pick"] == "own"]
     check(all(got[c]["pick"] == "own" for c in iconless) and len(exp_ic) == len(iconless) and iconless,
           f"D-{name}: own icon not the pre-pick for {iconless}", mask)
+    check(len(checks) == 2 and all(got[c]["pick"] != "own" for c in checks) and got[checks[0]]["pick"] is None,
+          f"D-{name}: an icon to check was pre-picked: {[(c, got[c]) for c in checks]}", mask)
     def first_hit(c):
         return next(rid for rid, _, _, f in ROUTES if comps[c][f] and truth(c, rid))
     overrode = [c for c, g in got.items() if g["via"] == "agree" and g["pick"] != first_hit(c)]
@@ -401,9 +419,9 @@ async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes,
     multi = next(c for c in codes[1:] if len(hits[c]) >= 2 and c not in icon_codes)
     single = next(c for c in codes[1:] if hits[c] and c != multi and c not in icon_codes)
     nothing = next((c for c in codes if not hits[c] and not comps[c].get("ic")), None)
-    undone = next(c for c in codes[1:] if c not in (multi, single, nothing))
+    undone = next(c for c in codes[1:] if c not in (multi, single, nothing) and c not in checks)
     other = next(rid for rid in hits[multi] if rid != got[multi]["pick"])
-    plan = {multi: other, single: "letter"}
+    plan = {multi: other, single: "letter", checks[1]: "own"}                  # Jack takes an icon that needed a look
     if nothing:
         plan[nothing] = "letter"
 
@@ -427,6 +445,8 @@ async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes,
     src_of = dict(br.SOURCE)
     want_rows = [[c, [src_of[r] for r in br.ORDER if r in hits[c]] + ["letter"]] for c in codes if c in plan]
     check(rows == want_rows, f"D-{name}: Fix rows {rows} vs {want_rows}", mask)
+    label = await run.js(f"document.querySelector('#fixlist .fixrow[data-code=\"{checks[1]}\"] .opt[data-src=\"own-icon\"]').textContent")
+    check(label.startswith("Own icon (check)"), f"D-{name}: the icon to check is labelled {label!r}", mask)
     check(await run.js("document.getElementById('fixsave').disabled"), f"D-{name}: Save on before choosing", mask)
     await run.page.screenshot(path=str(out / f"D-{name}-fix.png"))
     for c, rid in plan.items():
@@ -465,7 +485,8 @@ async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes,
     check(not wrong, f"D-{name}: {len(wrong)} exported choices differ, e.g. {wrong[:2]}", mask)
     check("data:" not in json.dumps(exp) and "base64" not in json.dumps(exp), f"D-{name}: image data in export", mask)
     own = [c for c in codes if exp["choices"][c]["source"] == "own-icon"]
-    check(set(iconless) <= set(own), f"D-{name}: own icons in export {own}", mask)
+    check(set(iconless) <= set(own) and checks[1] in own and checks[0] not in own, f"D-{name}: own icons in export {own}",
+          mask)
 
     # storage: only this page's key; progress survives a reload
     await run.page.locator(f'#grid .tile[data-code="{grid_codes(data, "KR-2")[3]}"]').click()
@@ -479,7 +500,8 @@ async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes,
     await run.ctx.close()
     return path, (f"D fake answers ({name} {vp[0]} px): KR-1 pre-picks as expected ({vias['agree']} by agreement, "
                   f"{len(overrode)} of them overriding the order, {vias['order']} by order, {vias['none']} letter marks, "
-                  f"{len(iconless)} own icons) · {low} low-res badges · {placeholders} placeholders caught · 1 request "
+                  f"{len(iconless)} own icons; {len(checks)} icons to check never pre-picked, one taken in Fix as 'Own icon (check)') · "
+                  f"{low} low-res badges · {placeholders} placeholders caught · 1 request "
                   f"per URL, 1 in flight per route · Fix rows = loaded logos + letter mark · export = KR-1 only, exact "
                   "URLs · reload keeps progress · one localStorage key")
 
@@ -488,7 +510,7 @@ async def scenarios(html, data, keys, base, folder, out, mask):
     from playwright.async_api import async_playwright
     comps = {c["c"]: c for c in data["companies"]}
     results = []
-    page_i, data_i, icon_codes, iconless = with_icons(html, data, keys, folder)
+    page_i, data_i, icon_codes, iconless, checks = with_icons(html, data, keys, folder)
     (folder / "logo-review-icons.html").write_text(page_i, encoding="utf-8")
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)         # no proxy: nothing can leave the machine
@@ -501,8 +523,12 @@ async def scenarios(html, data, keys, base, folder, out, mask):
             n_by = collections.Counter(p for _, p, *_ in run.reqs)
             company = [u for *_, size, mode, u in run.reqs if size == 128]
             check(n_by == {"bf": 3, "ld": 3} and not company, f"A: requests {dict(n_by)}, company URLs {len(company)}", mask)
-            states = collections.Counter((await run.js("Object.values(window.__logoReview.state).map(s => s.s)")))
+            states = collections.Counter((await run.js("Object.entries(window.__logoReview.state)"
+                                                       ".filter(([k]) => !k.endsWith('|own')).map(([k, s]) => s.s)")))
             check(set(states) <= {"stopped", "na", "idle"} and states["stopped"] > 0, f"A: states {states}", mask)
+            own = collections.Counter((await run.js("Object.entries(window.__logoReview.state)"
+                                                    ".filter(([k]) => k.endsWith('|own')).map(([k, s]) => s.s)")))
+            check(own["hit"] > 0 and not own["miss"], f"A: our own icons {own} (they are site files: they load)", mask)
             gaps = await run.js("document.querySelectorAll('#grid .b.gap').length")
             dock = await run.page.inner_text("#dock")
             check(gaps == 100 and await run.js("document.getElementById('confirm').disabled") and "Retry" in dock,
@@ -561,7 +587,8 @@ async def scenarios(html, data, keys, base, folder, out, mask):
             # D: fake answers with CORS, phone and PC
             dl_path = None
             for vp, name in (((390, 844), "phone"), ((1280, 900), "pc")):
-                path, line = await scenario_d(browser, base, data_i, keys, out, mask, vp, name, icon_codes, iconless)
+                path, line = await scenario_d(browser, base, data_i, keys, out, mask, vp, name, icon_codes, iconless,
+                                              checks)
                 dl_path = dl_path or path
                 results.append(line)
             saved = pathlib.Path(out / "choices.json")
@@ -634,6 +661,47 @@ async def scenarios(html, data, keys, base, folder, out, mask):
             await run.ctx.close()
             results.append("G CORS loses Brandfetch logos: the audited miss loaded the plain way, Brandfetch switched "
                            "to plain loads, its misses tried again; KR-1 pre-picks as expected")
+
+            # H1: blocked -> both stop; the block lifts; Retry -> checks first, then KR-1 loads as expected
+            run = await Run("abort").open(browser, base, dict(fast, timeoutMs=4000))
+            await run.wait("window.__logoReview.providers.bf.stopped && window.__logoReview.providers.ld.stopped", 30,
+                           "both providers stopped")
+            n0 = len(run.reqs)
+            run.mode, run.fake = "fake", Fake(data)
+            await run.page.click("#retry")
+            await run.ready("KR-1", 180)
+            got, vias = await picks_match(run, data, "KR-1", ("bf", "ld"), mask, "H1")
+            after = run.reqs[n0:]
+            first_company = next(i for i, x in enumerate(after) if x[5] == 128 and not run.fake.control(x[3], x[5]))
+            checks_first = {x[1] for x in after[:first_company] if x[5] != 128}
+            check(checks_first == {"bf", "ld"} and not await run.js("window.__logoReview.providers.bf.stopped"),
+                  f"H1: before the first logo after Retry, checks from {checks_first}", mask)
+            check(not run.errors and not run.other, f"H1: page errors {run.errors} · other {run.other}", mask)
+            await run.ctx.close()
+
+            # H2: a KR-2 logo times out; Jack moves to US-5 before its retry: it is not tried again
+            fake = Fake(data)
+            slow_code = grid_codes(data, "KR-2")[0]
+            fake.slow = {comps[slow_code]["tk"]}
+            run = await Run("fake", fake).open(browser, base, dict(fast, timeoutMs=800, retryMs=2500))
+            await run.wait(f"window.__logoReview.state['{slow_code}|bfT'].tries >= 1", 60, "the slow logo to time out")
+            await run.page.select_option("#gridsel", "US-5")
+            t_nav = time.monotonic()
+            await asyncio.sleep(5)
+            window = {comps[c]["tk"] for g in ("US-5", "US-6") for c in grid_codes(data, g)}
+            late = [x for x in run.reqs if x[0] > t_nav + 0.3 and not run.fake.control(x[3], x[5])]
+            check(late and all(x[3] in window for x in late), f"H2: after the move, requests outside US-5/US-6: "
+                  f"{[x[3] for x in late if x[3] not in window][:5]}", mask)
+            again = [x for x in run.reqs if x[3] in fake.slow and x[0] > t_nav]
+            st_ = await run.js(f"window.__logoReview.state['{slow_code}|bfT'].s")
+            check(not again and st_ == "idle", f"H2: the timed-out logo was tried {len(again)} times after the move "
+                  f"(state {st_})", mask)
+            await run.ready("US-5", 120)
+            check(not run.errors and not run.other, f"H2: page errors {run.errors} · other {run.other}", mask)
+            await run.ctx.close()
+            results.append(f"H Retry: both providers stopped, the block lifted, Retry ran the checks first, then KR-1 "
+                           f"loaded with pre-picks as expected · a timed-out KR-2 logo was not tried again after the "
+                           f"move to US-5 ({len(late)} later requests, all for US-5/US-6)")
         finally:
             await browser.close()
     return results
@@ -663,6 +731,8 @@ def main(argv):
     out.mkdir(parents=True, exist_ok=True)
     folder = pathlib.Path(tempfile.mkdtemp(prefix="logo-review-site-"))
     (folder / "logo-review.html").write_text(html, encoding="utf-8")
+    if (src.parent / "logo-review").is_dir():                                 # our own icons, as the site serves them
+        shutil.copytree(src.parent / "logo-review", folder / "logo-review")
     base, httpd = serve(folder)
     try:
         results = asyncio.run(scenarios(html, data, keys, base, folder, out, mask))
