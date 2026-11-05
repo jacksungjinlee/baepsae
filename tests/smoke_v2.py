@@ -41,7 +41,6 @@ v19.0b (진지한 화면): 글을 모으는 모든 화면에서 (visual_ok) — 
 로고(뱁이 마크 + '뱁새' 22px/800) · 덱 짜기 첫 화면 · 빈 내 덱 · 불러오기 실패 · 준비 중의 뱁이 · 기록했어요는 그림 대신 아이콘 칩.
 """
 import argparse
-import atexit
 import datetime as dt
 import functools
 import http.server
@@ -80,10 +79,10 @@ _OTHER = {}
 
 def other_trend_app():
     """app.html 을 한국 배당 추세 스위치만 반대로 놓고 임시 폴더에 빌드해요 (커밋하지 않아요). 배당 삭감 화면(확인 필요의 두 버튼 ·
-    실제로 줄였어요 → 규칙 깨짐 · 매도 조건 띠)은 스위치가 켜져 있어야 나와서, 꺼져 있는 동안에도 그 화면을 시험하려고요."""
-    if "p" not in _OTHER:
-        tmp = tempfile.mkdtemp(prefix="baepsae-v2-trend-")
-        atexit.register(shutil.rmtree, tmp, True)
+    실제로 줄였어요 → 규칙 깨짐 · 매도 조건 띠)은 스위치가 켜져 있어야 나와서, 꺼져 있는 동안에도 그 화면을 시험하려고요.
+    빌드한 페이지는 글로 들고 있고 임시 폴더는 바로 지워요 (돌리는 동안 폴더가 사라져도 상관없게)."""
+    if "html" not in _OTHER:
+        tmp = tempfile.mkdtemp(prefix="baepsae-trendflip-")
         shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
         os.makedirs(os.path.join(tmp, "tools"))
         for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
@@ -100,9 +99,11 @@ def other_trend_app():
         r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
         assert r.returncode == 0, r.stdout + r.stderr
         with open(os.path.join(out, "app.html"), encoding="utf-8") as a, open(os.path.join(ROOT, "app.html"), encoding="utf-8") as b:
-            assert a.read() != b.read(), "스위치를 바꿔 빌드했는데 app.html 이 같아요"
-        _OTHER["p"] = os.path.join(out, "app.html")
-    return _OTHER["p"]
+            html = a.read()
+            assert html != b.read(), "스위치를 바꿔 빌드했는데 app.html 이 같아요"
+        shutil.rmtree(tmp, ignore_errors=True)
+        _OTHER["html"] = html
+    return _OTHER["html"]
 
 
 def trend_label(trend):
@@ -179,8 +180,12 @@ def build_site(files, raw=None, drop=(), app=None):
     site = tempfile.mkdtemp(prefix="baepsae-v2-")
     for f in SITE_FILES:
         shutil.copy(os.path.join(ROOT, f), site)
-    # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요). app: 배당 추세 스위치를 반대로 놓은 빌드 (other_trend_app)
-    shutil.copy(app or os.path.join(ROOT, "app.html"), os.path.join(site, "app.html"))
+    # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요). app: 배당 추세 스위치를 반대로 놓은 빌드의 글 (other_trend_app)
+    if app is None:
+        shutil.copy(os.path.join(ROOT, "app.html"), os.path.join(site, "app.html"))
+    else:
+        with open(os.path.join(site, "app.html"), "w", encoding="utf-8") as fh:
+            fh.write(app)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(site, "fonts"))
     for name, obj in files.items():
         if name in drop:
