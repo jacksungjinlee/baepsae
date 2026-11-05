@@ -8,6 +8,7 @@
                                          #        정상이면 열린 경보를 '정상화됐어요'로 닫고 healthchecks.io 에 알려요
   python3 watchdog.py --dry              # 점검만 (이슈·알림 없이) — 로컬 시험용
   python3 watchdog.py --selftest broken  # 사이트 파일을 받은 뒤 일부러 망가뜨려서 (경보가 열리는지 시험, 이슈에 [시험] 표시)
+                                         #   healthchecks.io 에 '문제'를 보낸 뒤 진짜 파일로 다시 점검해서, 정상이면 이슈를 닫고 '정상'을 보내요
   python3 watchdog.py --decide           # workflow_run 으로 불렸을 때: 지금 점검할지 (GITHUB_OUTPUT 에 go=true|false)
 
 점검 (하나라도 실패면 경보):
@@ -552,12 +553,31 @@ def main(argv=None, net=None, now=None, **kw):
         try:
             raise_alert(net, rep, ctx, now, run_url, a.selftest)
         finally:                            # 이슈를 못 열어도(GitHub 장애) healthchecks.io 는 알아요
-            if a.selftest == "none":        # 시험 경보로 Jack 에게 메일을 보내지 않아요
-                ping(net, hc, fail=True)
+            ping(net, hc, fail=True)        # 시험도 보내요: 알림이 Jack 에게 닿는지까지 시험해요 (Jack, 2026-11-05)
+        if a.selftest != "none":
+            finish_selftest(net, now, run_url, hc, kw)
         return 1
     clear_alerts(net, ctx, now, run_url)
     ping(net, hc)
     return 0
+
+
+def finish_selftest(net, now, run_url, hc, kw):
+    """시험 경보 뒤: 진짜 사이트를 다시 점검해요. 문제가 없으면 [시험] 이슈를 닫고 정상 알림을 보내요 — Jack 은 '문제' 메일
+    뒤에 바로 '정상' 메일을 받아요 (Jack, 2026-11-05). 진짜 문제가 있으면 진짜 경보로 남겨요 (healthchecks.io 는 이미 '문제')."""
+    print("\n· 시험 끝: 망가뜨리지 않은 사이트 파일로 다시 점검해요", flush=True)
+    rep, ctx = run_all(net, now, "none", **kw)
+    for n, s, d in rep.rows:
+        print(f"  {s:4}  {n}: {d}")
+    bad = rep.problems
+    print(f"\n다시 점검: {'문제 ' + str(len(bad)) + '개' if bad else '정상'} · 점검 {len(rep.rows)}개", flush=True)
+    if bad:
+        for n, _, d in bad:
+            print(f"::error title=뱁새 감시::{V._gh_escape(f'{n}: {d}')}", flush=True)
+        raise_alert(net, rep, ctx, now, run_url, "none")
+        return
+    clear_alerts(net, ctx, now, run_url)
+    ping(net, hc)
 
 
 if __name__ == "__main__":
