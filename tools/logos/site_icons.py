@@ -96,6 +96,7 @@ MAX_ROBOTS = 512_000
 MAX_MANIFEST = 256_000
 PROXY_SAMPLE = 50
 PROXY_STOP_SHARE = 0.2
+PROXY_BUSY_PAUSE_S = 20.0
 DHASH_N = 16                                    # 16 x 16 = 256-bit difference hash
 DHASH_MAX = 6                                   # bits apart for "the same image" (rule a)
 COLOUR_MAX = 12                                 # mean colour apart (0-255) for "the same image" (rule a)
@@ -255,6 +256,16 @@ class Robots:
         return rules_allow(self.rules, path)
 
 
+def join_location(url, location):
+    """A redirect's Location against the URL it came from; a malformed one is refused (never a crash)."""
+    try:
+        nxt = urljoin(url, str(location).strip())
+        urlsplit(nxt).port                                  # raises on a bad port or a broken [IPv6] host
+        return nxt
+    except ValueError:
+        raise Refused(f"malformed redirect {str(location)[:60]!r}", url) from None
+
+
 def path_of(url):
     p = urlsplit(url)
     return (p.path or "/") + (f"?{p.query}" if p.query else "")
@@ -278,8 +289,16 @@ class ProxyBlocked(FetchError):      # 403/407 from the session proxy itself
     kind = "proxy"
 
 
-class Refused(FetchError):           # we refuse to request it (logo provider, bad scheme)
+class ProxyBusy(FetchError):         # 429/503 from the session proxy: back off; never a reason to go around it
+    kind = "proxy_busy"
+
+
+class Refused(FetchError):           # we refuse to request it (logo provider, bad scheme, malformed redirect)
     kind = "refused"
+
+    def __init__(self, why, url=""):
+        super().__init__(why)
+        self.url = url
 
 
 class BudgetUsed(FetchError):        # the company's 6 requests are used
@@ -344,6 +363,8 @@ class RealTransport:
             m = re.search(r"Tunnel connection failed: (\d{3})", str(e))
             if m and m.group(1) in ("403", "407"):
                 raise ProxyBlocked(f"proxy answered {m.group(1)}") from None
+            if m and m.group(1) in ("429", "503"):
+                raise ProxyBusy(f"proxy answered {m.group(1)} (busy)") from None
             raise NetError(short_error(e)) from None
         except (rq.exceptions.ConnectionError, rq.exceptions.Timeout, rq.exceptions.ChunkedEncodingError,
                 rq.exceptions.ContentDecodingError) as e:
@@ -406,6 +427,7 @@ class Shared:
         self.robots = {}
         self.robots_locks = collections.defaultdict(threading.Lock)
         self.meta = threading.Lock()
+        self.proxy_busy = 0
 
 
 class CompanyNet:
@@ -425,7 +447,7 @@ class CompanyNet:
         why = never_fetch(url)
         if why:
             self.trail.append((url, f"refused: {why}"))
-            raise Refused(why)
+            raise Refused(why, url)
         host = host_key(url)
         headers = {"User-Agent": UA, "Accept": accept, "Accept-Language": "ko,en;q=0.8"}
         tries = 0
@@ -441,6 +463,13 @@ class CompanyNet:
             except NetError as e:
                 self.trail.append((url, f"network: {e}"))
                 if retry and tries < 2:
+                    continue
+                raise
+            except ProxyBusy as e:                          # the proxy asks us to slow down: wait, then once more
+                self.trail.append((url, f"{e.kind}: {e}"))
+                self.sh.proxy_busy += 1
+                if tries < 2:
+                    self.sh.gate.sleep(PROXY_BUSY_PAUSE_S)
                     continue
                 raise
             except FetchError as e:
@@ -464,7 +493,7 @@ class CompanyNet:
                 r = self._send(url, ACCEPT_ROBOTS, MAX_ROBOTS, retry=retry)
                 loc = r.headers.get("location")
                 if r.status in (301, 302, 303, 307, 308) and loc:
-                    url = urljoin(url, loc.strip())
+                    url = join_location(url, loc)
                     continue
                 rb = Robots.from_answer(r.status, r.body.decode("utf-8", "replace") if 200 <= r.status < 300 else "")
                 break
@@ -489,7 +518,7 @@ class CompanyNet:
             why = never_fetch(url)
             if why:
                 self.trail.append((url, f"refused: {why}"))
-                raise Refused(why)
+                raise Refused(why, url)
             p = urlsplit(url)
             rb = self.robots(p.scheme, host_key(p), retry=retry)
             if not rb.allows(path_of(url)):
@@ -498,7 +527,7 @@ class CompanyNet:
             r = self._send(url, accept, max_bytes, stop_early, retry=retry)
             loc = r.headers.get("location")
             if r.status in (301, 302, 303, 307, 308) and loc:
-                nxt = urljoin(url, loc.strip())
+                nxt = join_location(url, loc)
                 if follow is not None and not follow(url, nxt):
                     r.final_url = nxt
                     return r
@@ -707,6 +736,16 @@ def is_svg(body):
     return head.startswith((b"<?xml", b"<!doctype svg", b"<!--")) and b"<svg" in head and b"<html" not in head
 
 
+_SVG_OUTSIDE = re.compile(rb"""(?:\bhref|\bsrc)\s*=\s*["']\s*(?!#|data:)[^"'\s]|url\(\s*["']?\s*(?!#|data:)[^)\s"']|@import""",
+                          re.I)
+
+
+def svg_refers_outside(body):
+    """True when an SVG points to other files (an <image href>, url(...), @import). We never fetch those, and
+    Chromium draws its broken-picture symbol in their place, which must not pass for a logo."""
+    return bool(_SVG_OUTSIDE.search(body))
+
+
 def decode_image(body):
     """Raster bytes -> (RGBA image at its native size, format). ICO: the largest frame (by area, then colour depth);
     an animation: its first frame. Raises BadImage for anything that does not decode or is unreasonably large."""
@@ -767,10 +806,12 @@ def normalise(img, side=OUT_SIDE):
     return out
 
 
-def upscaled_from(img, sizes=(8, 16, 24, 32, 48, 64)):
+def upscaled_from(img, sizes=(8, 16, 24, 32)):
     """A small icon blown up with hard pixel edges (a 16 px favicon saved as a 256 px frame): the size it was enlarged
-    from, else None. Checks whole-number enlargements only: shrinking to that size and enlarging back again (nearest
-    pixel) must give the same picture on almost every pixel. A real large icon has smooth edges and fails this."""
+    from, else None. Checks whole-number enlargements from 32 px or less (blocks of 3+ px at 96 px and up): shrinking
+    to that size and enlarging back again (nearest pixel) must give the same picture on almost every pixel. A real
+    large icon has smooth (anti-aliased) edges and fails this; a flat design drawn on a coarse grid is the rare
+    exception, and it looks the same as the enlarged small icon anyway."""
     from PIL import Image, ImageChops
     im = img.convert("RGBA")
     w, h = im.size
@@ -927,8 +968,10 @@ def title_reason(title):
 def shared_clusters(items, max_bits=DHASH_MAX, max_colour=COLOUR_MAX, min_domains=SHARED_MIN):
     """items: [{key, domain, sha, pix, dh, colour}] (one per company's chosen icon). Two icons are 'the same image'
     when their bytes or pixels are identical, or their difference hashes are at most max_bits apart and their mean
-    colours at most max_colour apart. Returns {key: (cluster_no, sorted domains)} for every icon whose group spans
-    at least min_domains different domains. Same domain twice (a preferred share) counts once."""
+    colours at most max_colour apart. Identical ones form a unit first; a unit then joins a group only when it is
+    near every unit already in it (no chaining: A~B and B~C does not make A~C). Returns {key: (cluster_no, sorted
+    domains)} for every icon whose group spans at least min_domains different domains. Same domain twice (a
+    preferred share) counts once."""
     n = len(items)
     parent = list(range(n))
 
@@ -938,28 +981,33 @@ def shared_clusters(items, max_bits=DHASH_MAX, max_colour=COLOUR_MAX, min_domain
             i = parent[i]
         return i
 
-    def union(i, j):
-        a, b = find(i), find(j)
-        if a != b:
-            parent[max(a, b)] = min(a, b)
-
     by = collections.defaultdict(list)
     for i, it in enumerate(items):
         by[("sha", it["sha"])].append(i)
         by[("pix", it["pix"])].append(i)
     for idx in by.values():
         for j in idx[1:]:
-            union(idx[0], j)
+            a, b = find(idx[0]), find(j)
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+    units = collections.defaultdict(list)
     for i in range(n):
-        a = items[i]
-        for j in range(i + 1, n):
-            b = items[j]
-            if (a["dh"] ^ b["dh"]).bit_count() <= max_bits and \
-                    max(abs(a["colour"][k] - b["colour"][k]) for k in range(3)) <= max_colour:
-                union(i, j)
-    groups = collections.defaultdict(list)
-    for i in range(n):
-        groups[find(i)].append(i)
+        units[find(i)].append(i)
+
+    def near(i, j):
+        a, b = items[i], items[j]
+        return (a["dh"] ^ b["dh"]).bit_count() <= max_bits and \
+            max(abs(a["colour"][k] - b["colour"][k]) for k in range(3)) <= max_colour
+
+    groups = []                                             # [[unit roots]]
+    for root in sorted(units, key=lambda r: (-len(units[r]), min(items[i]["key"] for i in units[r]))):
+        for g in groups:
+            if all(near(root, other) for other in g):
+                g.append(root)
+                break
+        else:
+            groups.append([root])
+    groups = {g[0]: [i for root in g for i in units[root]] for g in groups}
     out, no = {}, 0
     for root in sorted(groups, key=lambda r: min(items[i]["key"] for i in groups[r])):
         idx = groups[root]
@@ -1002,9 +1050,12 @@ def _raw_save(raw_dir, body, img, fmt):
     sha = hashlib.sha256(body).hexdigest()
     if raw_dir is not None:
         raw_dir.mkdir(parents=True, exist_ok=True)
+        tag = f".{os.getpid()}-{threading.get_ident()}.tmp"     # written whole, then moved into place
         orig = raw_dir / f"{sha}.orig"
         if not orig.exists():
-            orig.write_bytes(body)
+            tmp = raw_dir / (orig.name + tag)
+            tmp.write_bytes(body)
+            os.replace(tmp, orig)
         png = raw_dir / f"{sha}.png"
         if img is not None and not png.exists():
             keep = img
@@ -1012,7 +1063,9 @@ def _raw_save(raw_dir, body, img, fmt):
                 from PIL import Image
                 nw, nh, _, _ = fit_geometry(img.width, img.height, 1024)
                 keep = img.convert("RGBa").resize((nw, nh), Image.LANCZOS).convert("RGBA")
-            keep.save(png, "PNG")
+            tmp = raw_dir / (png.name + tag)
+            keep.save(tmp, "PNG")
+            os.replace(tmp, png)
     return sha
 
 
@@ -1023,6 +1076,8 @@ def judge_candidate(c, body, domain, svg_render, raw_dir):
     try:
         if is_svg(body):
             c["format"] = "SVG"
+            if svg_refers_outside(body):
+                raise BadImage("SVG refers to other files (not fetched)")
             img = svg_render(body) if svg_render else None
             if img is None:
                 raise BadImage("SVG did not render")
@@ -1067,6 +1122,10 @@ def collect_domain(item, shared, svg_render=None, raw_dir=None, limit=MAX_REQUES
     except BudgetUsed:
         rec["outcome"] = rec["outcome"] or "budget"
         rec["reason"] = rec["reason"] or f"{limit} requests used before an icon passed"
+    except Exception as e:                                  # noqa: BLE001 — one odd site never stops the run
+        rec["outcome"], rec["chosen"] = "error", None
+        rec["reason"] = f"tool error: {type(e).__name__}: {str(e)[:120]}"
+        log(f"  !! {dom}: {rec['reason']}")
     finally:
         net.close()
         rec["requests"] = net.used
@@ -1132,10 +1191,20 @@ def _collect(rec, item, net, svg_render, raw_dir):
         except ProxyBlocked as e:
             rec["outcome"], rec["reason"] = "proxy_blocked", str(e)
             return
+        except ProxyBusy as e:                              # never answered by going around the proxy (no http)
+            rec["outcome"], rec["reason"] = "unreachable", f"proxy busy: {e}"
+            return
         except RobotsDenied as e:
             rec["outcome"], rec["reason"] = "robots_blocked", str(e)
             return
-        except (Refused, TooManyRedirects) as e:
+        except Refused as e:
+            plat = platform_reason(e.url, dom) if e.url else ""
+            if plat:                                        # e.g. a homepage that moved to sites.google.com
+                rec["outcome"], rec["reason"] = "platform", plat
+            else:
+                rec["outcome"], rec["reason"] = "unreachable", f"{e.kind}: {e}"
+            return
+        except TooManyRedirects as e:
             rec["outcome"], rec["reason"] = "unreachable", f"{e.kind}: {e}"
             return
     rec["page_status"], rec["page_url"] = page.status, page.final_url
@@ -1339,17 +1408,16 @@ def read_optout(path=OPTOUT):
 def load_items(homepages=HOMEPAGES, optout=frozenset()):
     """kr_homepages.csv -> one item per usable domain {domain, hm_url, codes}, in a fixed order that mixes company
     sizes (sha1 of the domain), so a --limit pilot is a spread and a rerun continues in the same order.
-    Opted-out codes and domains are left out (and counted)."""
+    A company that opted out (by any of its codes, or by its domain) is left out whole: every share class of that
+    issuer, i.e. the whole domain. Returns (items, opted-out domains)."""
     with open(homepages, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+        rows = [r for r in csv.DictReader(f) if r.get("domain_ok") == "1"]
+    opted = {r["domain"].strip().lower() for r in rows
+             if r["code"].strip().lower() in optout or r["domain"].strip().lower() in optout}
     by = {}
-    skipped = 0
     for r in rows:
-        if r.get("domain_ok") != "1":
-            continue
         code, dom = r["code"].strip().upper(), r["domain"].strip().lower()
-        if code.lower() in optout or dom in optout:
-            skipped += 1
+        if dom in opted:
             continue
         it = by.setdefault(dom, {"domain": dom, "hm_url": r["hm_url"], "codes": []})
         it["codes"].append(code)
@@ -1358,7 +1426,24 @@ def load_items(homepages=HOMEPAGES, optout=frozenset()):
     items = sorted(by.values(), key=lambda it: hashlib.sha1(it["domain"].encode()).hexdigest())
     for it in items:
         it["codes"].sort()
-    return items, skipped
+    return items, opted
+
+
+def purge_raw(recs, domains, raw_dir):
+    """Delete the kept copies (raw/) of every image collected for these domains, unless another domain's record
+    uses the same file. For opt-outs: 'never written' includes our working copies."""
+    mine, others = set(), set()
+    for dom, r in recs.items():
+        shas = {c.get("sha256") for c in r.get("candidates") or [] if c.get("sha256")}
+        (mine if dom in domains else others).update(shas)
+    gone = 0
+    for sha in mine - others:
+        for ext in (".orig", ".png"):
+            f = pathlib.Path(raw_dir) / f"{sha}{ext}"
+            if f.exists():
+                f.unlink()
+                gone += 1
+    return gone
 
 
 def read_state(path):
@@ -1377,7 +1462,7 @@ def read_state(path):
     return recs
 
 
-RETRYABLE = ("unreachable", "budget")
+RETRYABLE = ("unreachable", "budget", "proxy_blocked", "error")
 
 
 def default_out():
@@ -1619,9 +1704,9 @@ def main(argv=None):
     raw_dir, state = out / "raw", out / "collect.jsonl"
     workers = max(1, min(a.workers, MAX_WORKERS))
     optout = read_optout()
-    items, skipped = load_items(a.homepages, optout)
+    items, opted = load_items(a.homepages, optout)
     log(f"· {len(items):,} usable domains ({sum(len(i['codes']) for i in items):,} companies) from {a.homepages}"
-        f" · opted out {skipped}")
+        f" · opted out {len(opted)} domain(s)")
     if a.fresh and state.exists():
         aside = state.with_name(f"collect-{now_kst():%Y%m%d-%H%M%S}.jsonl")
         os.replace(state, aside)
@@ -1644,8 +1729,11 @@ def main(argv=None):
         finally:
             if svg:
                 svg.close()
-        log("· this run: " + ", ".join(f"{k} {v}" for k, v in done.most_common() if k != "n"))
+        log("· this run: " + ", ".join(f"{k} {v}" for k, v in done.most_common() if k != "n")
+            + f" · proxy busy answers {shared.proxy_busy}")
         recs = read_state(state)
+    if opted:
+        log(f"· opt-outs: {purge_raw(recs, opted, raw_dir)} kept file(s) deleted from {raw_dir}")
     recs = {d: r for d, r in recs.items() if d in {it["domain"] for it in items}}     # opt-outs drop out here too
     dec, imgs = decide(recs, raw_dir)
     nrows, stale = write_outputs(out, dec, imgs)

@@ -349,6 +349,36 @@ def test_an_explicit_scheme_is_used_as_it_is():
 def test_a_proxy_refusal_is_counted_as_such_and_not_retried():
     rec, web = collect({"https://www.acme.co.kr/robots.txt": si.ProxyBlocked("proxy answered 403")})
     assert rec["outcome"] == "proxy_blocked" and len(web.calls) == 1
+    assert "proxy_blocked" in si.RETRYABLE and "error" in si.RETRYABLE
+
+
+def test_a_busy_proxy_is_waited_for_once_and_never_answered_with_plain_http():
+    web = FakeWeb({"https://www.acme.co.kr/robots.txt": si.ProxyBusy("proxy answered 503 (busy)")})
+    slept = []
+    sh = si.Shared(web, si.HostGate(gap=0, sleep=slept.append))
+    rec = si.collect_domain({"domain": "acme.co.kr", "hm_url": "www.acme.co.kr", "codes": ["123450"]}, sh)
+    assert web.urls() == ["https://www.acme.co.kr/robots.txt"] * 2 and slept == [si.PROXY_BUSY_PAUSE_S]
+    assert rec["outcome"] == "unreachable" and "busy" in rec["reason"] and sh.proxy_busy == 2
+
+
+def test_a_homepage_that_moved_to_a_refused_platform_is_a_platform_not_unreachable():
+    rec, web = collect({"https://www.acme.co.kr/robots.txt": OK_ROBOTS,
+                        "https://www.acme.co.kr/": (302, {"location": "https://sites.google.com/view/acme"}, b"")})
+    assert rec["outcome"] == "platform" and not any("google" in u for u in web.urls())
+
+
+def test_a_malformed_redirect_or_a_tool_error_never_stops_the_run(tmp_path, monkeypatch):
+    rec, _ = collect({"https://www.acme.co.kr/robots.txt": OK_ROBOTS,
+                      "https://www.acme.co.kr/": (302, {"location": "http://[bad"}, b"")})
+    assert rec["outcome"] == "unreachable" and "malformed redirect" in rec["reason"]
+
+    def boom(*a, **k):
+        raise RuntimeError("decoder exploded")
+    monkeypatch.setattr(si, "judge_candidate", boom)
+    rec, _ = collect({"https://www.acme.co.kr/robots.txt": OK_ROBOTS,
+                      "https://www.acme.co.kr/": (200, HTML, html_page('<link rel="apple-touch-icon" href="/a.png">')),
+                      "https://www.acme.co.kr/a.png": (200, PNGH, png(logo()))}, tmp=tmp_path)
+    assert rec["outcome"] == "error" and "RuntimeError" in rec["reason"] and rec["chosen"] is None
 
 
 def test_one_request_at_a_time_per_host_and_at_most_six_at_once():
@@ -524,7 +554,10 @@ def test_the_96_px_rule_is_on_the_shorter_side(tmp_path, w, h, ok):
 def test_a_small_icon_enlarged_with_hard_pixels_counts_as_too_small(tmp_path):
     blocky = logo(16, 16).resize((256, 256), Image.NEAREST)
     assert si.upscaled_from(blocky) == 16
-    assert si.upscaled_from(logo(48, 48).resize((192, 192), Image.NEAREST)) == 48
+    assert si.upscaled_from(logo(32, 32).resize((128, 128), Image.NEAREST)) == 32
+    flat = Image.new("RGBA", (256, 256), (20, 40, 120, 255))     # a real flat icon with edges on a 4 px grid
+    ImageDraw.Draw(flat).rectangle([100, 100, 139, 179], fill=(255, 255, 255, 255))
+    assert si.upscaled_from(flat) is None
     assert si.upscaled_from(logo(256, 256)) is None and si.upscaled_from(logo(180, 180)) is None
     assert si.upscaled_from(logo(32, 32).resize((128, 128), Image.LANCZOS)) is None     # smooth: not this rule
     c = {"kind": "icon", "url": "https://www.acme.co.kr/favicon.ico"}
@@ -556,6 +589,24 @@ def test_svg_goes_through_the_renderer_at_256_px_and_must_have_content(tmp_path)
     assert not si.judge_candidate(c, b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "acme.co.kr", renderer,
                                   tmp_path)
     assert c["result"] == "blank" and len(seen) == 2
+
+
+def test_an_svg_that_points_to_other_files_is_broken_and_never_drawn(tmp_path):
+    drawn = []
+    outside = [b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">'
+               b'<image xlink:href="https://cdn.x.kr/logo.png"/></svg>',
+               b'<svg xmlns="http://www.w3.org/2000/svg"><image href="/logo.png"/></svg>',
+               b'<svg xmlns="http://www.w3.org/2000/svg"><style>@import "x.css";</style></svg>',
+               b'<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(other.svg#g)"/></svg>']
+    for body in outside:
+        c = {"kind": "icon", "url": "https://www.acme.co.kr/logo.svg"}
+        assert not si.judge_candidate(c, body, "acme.co.kr", lambda b: drawn.append(b), tmp_path)
+        assert c["result"] == "broken" and "other files" in c["note"]
+    assert not drawn
+    inside = (b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><defs>'
+              b'<linearGradient id="g"/></defs><rect fill="url(#g)"/><use xlink:href="#g"/>'
+              b'<image href="data:image/png;base64,AAAA"/></svg>')
+    assert not si.svg_refers_outside(inside)
 
 
 def test_is_svg_sniffs_content_not_the_name():
@@ -634,6 +685,15 @@ def test_identical_bytes_group_even_when_hashes_differ():
     items = [_item("a", "a.kr", logo(seed=1), sha="S"), _item("b", "b.kr", logo(seed=3), sha="S"),
              _item("c", "c.kr", logo(colour=(0, 150, 0), seed=0), sha="S")]
     assert len(si.shared_clusters(items)) == 3
+
+
+def test_near_matches_do_not_chain_unrelated_icons_together():
+    a, b, c = {"dh": 0, "colour": (100, 100, 100)}, {"dh": 0b111, "colour": (100, 100, 100)}, \
+        {"dh": 0b111111, "colour": (100, 100, 100)}
+    items = [dict(a, key="a", domain="a.kr", sha="1", pix="1"), dict(b, key="b", domain="b.kr", sha="2", pix="2"),
+             dict(c, key="c", domain="c.kr", sha="3", pix="3")]
+    assert si.shared_clusters(items, max_bits=3) == {}        # a~b (3 bits), b~c (3 bits), but a and c are 6 apart
+    assert len(si.shared_clusters(items, max_bits=6)) == 3
 
 
 def test_a_recoloured_template_is_not_the_same_image():
@@ -747,12 +807,24 @@ def test_load_items_one_per_domain_preferred_shares_follow_and_opt_outs_are_left
                     "000200,2,,B,Y,blog.naver.com/b,blog.naver.com,0,platform host,,ok\n"
                     "000300,3,,C,K,www.c.com,c.com,1,,,ok\n"
                     "000400,4,,D,K,www.d.com,d.com,1,,,ok\n", encoding="utf-8")
-    items, skipped = si.load_items(csvp, optout={"000300"})
+    items, opted = si.load_items(csvp, optout={"000300"})
     assert sorted((i["domain"], tuple(i["codes"])) for i in items) == [("a.co.kr", ("000100", "000105")),
                                                                        ("d.com", ("000400",))]
-    assert skipped == 1
+    assert opted == {"c.com"}
     again, _ = si.load_items(csvp, optout={"000300"})
     assert [i["domain"] for i in again] == [i["domain"] for i in items]       # fixed order
+    pref, opted = si.load_items(csvp, optout={"000105"})        # asking through a preferred share removes the issuer
+    assert "a.co.kr" not in {i["domain"] for i in pref} and opted == {"a.co.kr"}
+
+
+def test_an_opt_out_deletes_the_kept_copies_of_that_company_only(tmp_path):
+    for sha in ("s1", "s2", "shared"):
+        for ext in (".orig", ".png"):
+            (tmp_path / f"{sha}{ext}").write_bytes(b"x")
+    recs = {"a.kr": {"candidates": [{"sha256": "s1"}, {"sha256": "shared"}]},
+            "b.kr": {"candidates": [{"sha256": "s2"}, {"sha256": "shared"}]}}
+    assert si.purge_raw(recs, {"a.kr"}, tmp_path) == 2
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["s2.orig", "s2.png", "shared.orig", "shared.png"]
 
 
 def test_the_optout_file_is_read_and_the_output_folder_must_be_outside_the_repo(tmp_path):
