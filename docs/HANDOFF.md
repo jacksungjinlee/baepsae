@@ -20,7 +20,7 @@ every 2.0 link into the old app carries the marker (`src/links.js` `OLD_APP`), a
 open the old app. When the old app retires, `baepsae.html` stays as a permanent redirect to 2.0 — and the old app
 retires only once every tool worth keeping lives in 2.0 and old-app portfolios can be carried into 2.0 first.
 
-**v19.1b (data only, branch `claude/v19.1b-data`, PR open, not merged — Jack's top priority 2026-11-05).** Split-safe
+**v19.1b (data for the app, branch `claude/v19.1b-data`, PR #50, not merged — Jack's top priority 2026-11-05).** Split-safe
 Korean dividends, β error band, `flRan`, DART cache v2. New fields:
 - data.json KR stocks: `dps3a` (dps3 on today's share basis), `dpsF` (factor per year = today's shares ÷ that year's
   basis), `divSt` (`same` · `adj` · `nc` not comparable · `nd` not derivable · `zero`), `dyt` (today's-close yield =
@@ -314,6 +314,8 @@ quarter. The current quarter is probed once via 삼성전자 (11014 → 11012 �
 Units in JSON (from v17.5): `cap` in 조원 for **both** markets (US converted at the run's `fx`), `val` in 억원,
 `price` in 원 (KR, = `Marcap ÷ Stocks`, the official KRX close) or USD (US), percentages as numbers. Top-level `pxDate`
 (KR price date = official close date), `ksDate`, `usPxDate`, `publishedAt` (KST run timestamp), `units`.
+
+**`g3` means different things per market until v19.2 makes them the same** (Jack, 2026-11-05). Korea: revenue growth from the latest 사업보고서, the **2-year average a year** ((당기 ÷ 전전기)^0.5 − 1) when this year's and the year before last's revenue are both positive, otherwise **1 year** (당기 ÷ 전기 − 1) when this year's is non-zero and last year's is positive, e.g. when the year before last is missing (`parse_dart_list`; corp.json `rev` lets the apps tell which: 2.0 `engine.growthBasis`, old app `data.js krGrowthBasis`). US: Yahoo's `revenueGrowth`, the **latest quarter vs the same quarter a year before**. Never call either "3년"/"3y", never compare the two, and label each by how it was calculated: 2.0 "매출 증가율 (최근 2년 연평균)" / "(최근 1년)" / "최근 분기 매출, 1년 전보다"; old app "매출성장(최근 2년 연평균)" / "매출성장(최근 1년)" / "매출성장(최근 분기, 1년 전 대비)". The sector growth in corp.json (`sectors[].g`) is the 2-year average of summed revenue.
 
 **The listing file's `Close` column is not the official close** in the evening versions: after ~16:00 it is replaced by
 an after-hours (Nextrade) price, while `Marcap` stays at the official close × listed shares. Verified on 2026-10-27~30:
