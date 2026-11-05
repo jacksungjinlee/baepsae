@@ -26,7 +26,9 @@ validate_data.py 를 통과해야만 커밋(발행)돼요. 파일은 write_json(
   성과     al(3년 알파 %p) sh(3년 샤프) mom(12개월 수익률)
   가치·질  per pbr dy roe debt opm g3(매출성장) frn(외국인)
   분류     s(업종) dk(사업 개요)
-  팩터     pz(규모) vz(가치) mz(모멘텀) qz(퀄리티) lz(저변동) — 같은 시장 안에서의 백분위 0~100
+  팩터     pz(규모) vz(가치) mz(모멘텀) qz(퀄리티) lz(저변동) dz(배당, 한국만) — 같은 시장 안에서의 백분위 0~100
+  v19.1b   betaSE·betaN(베타의 표준오차·쓴 수익률 수) · 한국 배당: dps3a(오늘 주식 수 기준으로 맞춘 주당 배당금 3년)
+           dpsF(해마다 맞춘 배율) divSt(분할 확인 결과) dyt(오늘 종가 기준 배당수익률) · corp.json flRan(실제로 돌린 재무 경고 검사)
 
 시장 가정(도구의 기본값으로 자동 반영)
   rf 국고채 10년(ECOS, 출처는 settings.rfSrc) · mktVol/usVol/mtVol · rhoKrUs/rhoKrMt/rhoUsMt …
@@ -785,22 +787,30 @@ def ann_vol(returns):
     return round(v, 1) if np.isfinite(v) and 0 < v < 300 else None
 
 
-def beta_alpha(stock_ret, bench_ret, rf):
+def beta_fit(stock_ret, bench_ret, rf):
+    """(베타, 알파, 베타의 표준오차, 쓴 일별 수익률 수). 데이터가 모자라면 모두 None. (순수 함수)
+    v19.1b: 베타는 일별 수익률 회귀(절편 포함 최소제곱)의 기울기예요. 표준오차는 같은 회귀의 기울기 표준오차
+    √(잔차 제곱합 ÷ (n − 2) ÷ Σ(시장 수익률 − 평균)²) — 앱이 베타를 오차 범위와 함께 보여 줄 때 써요."""
     df = pd.concat([stock_ret, bench_ret], axis=1).dropna()
-    if len(df) < MIN_DAYS:
-        return None, None
+    n = len(df)
+    if n < MIN_DAYS:
+        return None, None, None, None
     y, x = df.iloc[:, 0].values, df.iloc[:, 1].values
     vx = np.var(x, ddof=1)
     if vx <= 0:
-        return None, None
+        return None, None, None, None
     b = float(np.cov(y, x, ddof=1)[0, 1] / vx)
     if not np.isfinite(b) or abs(b) > 5:
-        return None, None
+        return None, None, None, None
     rf_d = rf / 252
     a = float(np.mean(y - rf_d) - b * np.mean(x - rf_d)) * 252 * 100
     if not np.isfinite(a) or abs(a) > 200:
         a = None
-    return round(b, 2), (round(a, 1) if a is not None else None)
+    resid = (y - y.mean()) - b * (x - x.mean())
+    sxx = float(np.sum((x - x.mean()) ** 2))
+    se = math.sqrt(float(np.sum(resid ** 2)) / (n - 2) / sxx) if sxx > 0 else None
+    se = round(se, 4) if se is not None and math.isfinite(se) and se >= 0.00005 else None   # 지수 ETF(SPY 등)는 0.001 안팎이라 넷째 자리까지
+    return round(b, 2), (round(a, 1) if a is not None else None), se, n
 
 
 def perf_stats(px, rf):
@@ -845,14 +855,17 @@ def add_percentiles(stocks):
     if len(mk) > 1:
         raise ValueError(f"add_percentiles 에 여러 시장이 섞였어요: {sorted(map(str, mk))}")
     df = pd.DataFrame({k: pd.to_numeric(pd.Series([_fin(s.get(k)) for s in stocks], dtype="object"), errors="coerce")
-                       for k in ("cap", "pbr", "mom", "roe", "vol")})
+                       for k in ("cap", "pbr", "mom", "roe", "vol", "dyt")})
 
     def pr(col):
         return df[col].rank(pct=True) * 100
 
     # 규모는 작을수록, 가치는 PBR 낮을수록 높은 점수 (SMB·HML 방향과 일치)
     # 저변동(lz)은 변동성이 낮을수록 높은 점수
-    series = {"pz": 100 - pr("cap"), "vz": 100 - pr("pbr"), "mz": pr("mom"), "qz": pr("roe"), "lz": 100 - pr("vol")}
+    # v19.1b 배당(dz): 한국만 — 오늘 종가 기준 배당수익률(dyt)이 높을수록. dyt 는 분할을 확인한 주당 배당금으로만 만들어요
+    # (확인 못 한 종목은 빈 칸이라 순위에서 빠져요). 미국은 dyt 가 없어 dz 도 없어요 (미국 배당은 그대로 야후 수익률 dy).
+    series = {"pz": 100 - pr("cap"), "vz": 100 - pr("pbr"), "mz": pr("mom"), "qz": pr("roe"), "lz": 100 - pr("vol"),
+              "dz": pr("dyt")}
     for i, s in enumerate(stocks):
         for k, ser in series.items():
             v = ser.iloc[i]
@@ -869,9 +882,18 @@ def add_percentiles(stocks):
 #   찾은 보고서(000)는 확정. 다만 90일 넘은 것은 하루 300건씩 다시 확인해요 (정정공시 대비).
 #   아직 없음(013)은 7일마다 다시 확인. 제출 마감 7일 전부터 마감 2일 뒤까지는 매일.
 #   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
-DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v1.json.gz")
+# v19.1b: v1 → v2. 배당 표(alotMatter)의 현금배당금총액·주당순이익·액면가와 재무제표의 3년 자본금을 새로 담아요.
+# 예전 항목에는 이 값이 없어서 캐시를 통째로 새로 받아요 (파일 이름도 바꿔서 v1 파일을 잘못 읽을 일이 없게 · 워크플로 키 dart-cache-v2-).
+DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v2.json.gz")
 COMPANY_TTL_DAYS = 180   # 기업개황(업종 코드) 보관 기간
-DART_CACHE_VERSION = 1   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
+DART_CACHE_VERSION = 2   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
+# v19.1b: 캐시 없이 처음부터 받는 '전체 DART 실행'의 호출 수 어림 (하루 한도 약 20,000회 · 목표 16,000회 아래).
+# 2026-11-01 전체 실행(41319552163): 재무·배당·분기 11,588회 / 2,418곳 = 기업당 4.8회. 업종 코드(company.json)는 그 뒤에 생겨
+# 빈 캐시면 기업당 1회 더. 공시는 목록 + 상세 최대 1,200회 (DISC_CALL_CAP) — 넉넉히 1,300회로 잡아요.
+DART_PER_COMPANY = 4.8
+DART_DISC_MAX = 1300
+DART_DAY_LIMIT = 20000
+DART_FULL_TARGET = 16000
 DART_REVALIDATE_DAYS = 90
 DART_REVALIDATE_PER_RUN = 300
 DART_RETRY_DAYS = 7
@@ -933,6 +955,7 @@ class DartClient:
         self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
         self.entries, self.meta = {}, {}
         self._load()
+        self.started_empty = not self.entries      # v19.1b: 빈 캐시로 시작 = 전체 DART 실행 (호출 수 어림을 로그로 남겨요)
         # v17.5.3: 정해진 시각 실행은 하루 여러 번이에요. 캐시가 비었거나(없음·읽지 못함·형식이 다름) 처음부터 조회하면
         # 그게 그날의 전체 DART 실행이 돼요 — 하루 한 번, 사람이(또는 Claude 가 규칙대로) 수동으로만 해요 (CLAUDE.md).
         # v17.5.5: 바깥 타이머(cron-job.org) 실행도 같아요 — 워크플로가 BAEPSAE_AUTO_RUN=1 을 넘겨요
@@ -962,7 +985,7 @@ class DartClient:
             self.entries, self.meta = js.get("entries", {}), js.get("meta", {})
             log(f"· DART 캐시 {len(self.entries):,}건 불러옴 (저장 {self.meta.get('savedAt', '?')})")
         except FileNotFoundError:
-            log("  !! DART 캐시 없음 → 처음부터 조회해요 (약 15,000회 · 하루 한도의 대부분)")
+            log("  !! DART 캐시 없음 → 처음부터 조회해요 (전체 DART 실행 · 호출 수 어림은 조회 직전에 남겨요)")
         except Exception as e:
             log(f"  !! DART 캐시를 읽지 못해 처음부터 조회해요: {e}")
 
@@ -1138,6 +1161,7 @@ def parse_dart_list(rows):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
     rev = op = ni = None
     eq = li = nio = eqo = cash = ocf = ca = cl = cs = ie = None
+    cs3 = None
     bor, has_bor = 0.0, False
     dep, has_dep = 0.0, False
     BORROW = {"단기차입금", "장기차입금", "사채", "유동성장기부채", "유동성장기차입금", "단기사채", "전환사채", "리스부채"}
@@ -1169,6 +1193,7 @@ def parse_dart_list(rows):
             cl = _num(row.get("thstrm_amount"))
         elif nm == "자본금" and sj in ("BS", "") and cs is None:
             cs = _num(row.get("thstrm_amount"))
+            cs3 = tri(row)            # v19.1b: 3년 자본금 — 액면가로 나누면 그해 말 발행 주식 수의 상한 (배당 분할 확인)
         elif nm in ("이자비용", "금융비용") and sj in ("IS", "CIS", "") and ie is None:
             ie = _num(row.get("thstrm_amount"))
         elif sj == "CF" and nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
@@ -1201,6 +1226,8 @@ def parse_dart_list(rows):
            "bor": ek(bor) if has_bor else None, "cash": ek(cash), "ocf": ek(ocf),
            "dep": ek(dep) if has_dep else None,
            "ca": ek(ca), "cl": ek(cl), "cs": ek(cs), "ie": ek(ie)}
+    if cs3 and any(v is not None for v in cs3):
+        fin["cs3"] = [round(v / 1e8, 4) if v is not None else None for v in cs3]     # 억원 · 1만원 단위까지 (주식 수 계산용)
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
     return out
@@ -1244,9 +1271,58 @@ def _num_or_dash0(x):
     return _num(x)
 
 
+AMOUNT_UNITS = {"백만원": 1e6, "천원": 1e3, "원": 1.0}
+
+
+def _amount_unit(se):
+    """배당 표 항목 이름 끝의 단위 '(백만원)' → 1e6 (원으로 바꾸는 곱). 단위가 없거나 모르는 단위면 None."""
+    m = re.search(r"\((백만원|천원|원)\)$", se)
+    return AMOUNT_UNITS[m.group(1)] if m else None
+
+
+def _tri3(row, conv, mult=1.0):
+    return [None if v is None else v * mult for v in (conv(row.get(k)) for k in ("thstrm", "frmtrm", "lwfr"))]
+
+
+def parse_dart_basis(rows):
+    """v19.1b: 같은 배당 표에서 해마다의 '주식 수'를 거꾸로 셀 수 있는 값들 (당기·전기·전전기). (순수 함수)
+    cash3 현금배당금총액(원) · pdps3 우선주·종류주 주당 현금배당금(원) · par3 주당액면가액(원) · eps3 회사가 낸 주당순이익(원) ·
+    ni3 그 주당순이익과 같은 기준(연결/별도)의 당기순이익(원) · epsB 그 기준 · stlm 결산기준일.
+    총액의 '-' 는 0(배당 없음), 순이익·주당순이익·액면가의 '-' 는 모름. 하나도 없으면 None."""
+    out, eps_by, ni_by, stlm = {}, {}, {}, None
+    for row in rows:
+        se = (row.get("se") or "").replace(" ", "")
+        knd = (row.get("stock_knd") or "").strip()
+        unit = _amount_unit(se)
+        stlm = stlm or (str(row.get("stlm_dt") or "").strip() or None)
+        basis = "연결" if "(연결)" in se else ("별도" if "(별도)" in se else "")
+        if se.startswith("주당액면가액") and "par3" not in out:
+            out["par3"] = _tri3(row, _num)
+        elif se.startswith("현금배당금총액") and unit and "cash3" not in out:
+            out["cash3"] = _tri3(row, _num_or_dash0, unit)
+        elif "주당현금배당금" in se and knd and knd not in DASHES and "보통" not in knd and "pdps3" not in out:
+            out["pdps3"] = _tri3(row, _num_or_dash0)      # 우선주·종류주 (보통주 1주 기준 무게를 재요)
+        elif "주당순이익" in se and "희석" not in se:
+            eps_by.setdefault(basis, _tri3(row, _num))
+        elif "당기순이익" in se and unit:
+            ni_by.setdefault(basis, _tri3(row, _num, unit))
+    for b in ("연결", "별도", ""):
+        if any(v is not None for v in eps_by.get(b) or []):
+            out.update(eps3=eps_by[b], ni3=ni_by.get(b) or [None, None, None])
+            if b:
+                out["epsB"] = b                            # DART 표의 이름 그대로 (연결 · 별도) — 표에 구분이 없으면 칸 없음
+            break
+    if not any(k in out for k in ("cash3", "par3", "eps3")):
+        return None
+    if stlm:
+        out["stlm"] = stlm
+    return out
+
+
 def parse_dart_dividend(rows):
     """alotMatter(배당에 관한 사항) 응답에서 보통주 배당 지표를 뽑습니다. (순수 함수)
-    v17.5.1: 주당 배당금 0 원(표에 '-')도 '배당 없음'이라는 사실이라 0 으로 남겨요. 줄 자체가 없으면 '모름'(빈 칸)."""
+    v17.5.1: 주당 배당금 0 원(표에 '-')도 '배당 없음'이라는 사실이라 0 으로 남겨요. 줄 자체가 없으면 '모름'(빈 칸).
+    v19.1b: 표에 총액·액면가·주당순이익 줄이 있으면 'bas'(parse_dart_basis)도 함께 담아요 (분할 확인용)."""
     dy = dps = None
     dps3 = [None, None, None]
     for row in rows:
@@ -1268,6 +1344,9 @@ def parse_dart_dividend(rows):
         out["dps3"] = [round(x, 0) if x is not None and x >= 0 else None for x in dps3]
     if dy is not None and dy >= 0:      # DART 가 숫자로 알려 준 값만 (0% 도 '배당 없음'이라는 사실이라 그대로 둬요)
         out["dy"] = round(dy, 2)
+    bas = parse_dart_basis(rows)
+    if bas:
+        out["bas"] = bas
     return out
 
 
@@ -1370,6 +1449,16 @@ def pick_current_quarter(shares):
     return None
 
 
+def dart_full_estimate(n_companies, ksic=True):
+    """v19.1b: 처음부터 받는 전체 DART 실행의 호출 수 어림 → (합계, 설명). (순수 함수)
+    재무·배당·분기 기업당 4.8회 + 업종 코드 기업당 1회(캐시가 비었을 때) + 기업코드 목록 1회 + 공시 최대 1,300회."""
+    main_ = math.ceil(n_companies * DART_PER_COMPANY)
+    ks = n_companies if ksic else 0
+    total = main_ + ks + 1 + DART_DISC_MAX
+    why = (f"재무·배당·분기 {main_:,} + 업종 코드 {ks:,} + 기업코드 목록 1 + 공시 최대 {DART_DISC_MAX:,}")
+    return total, why
+
+
 def enrich_with_dart(kr_stocks, client):
     """사업보고서·배당·분기보고서(TTM)를 붙입니다. 기업마다 분기를 따로 확인해요 (3Q → 2Q → 1Q)."""
     fin_map = {}
@@ -1382,6 +1471,11 @@ def enrich_with_dart(kr_stocks, client):
     cmap = dart_corp_map(client)
     year = today.year - 1
     targets = [s for s in kr_stocks if s["t"] in cmap]
+    if client.started_empty or client.mode == "full":
+        est, why = dart_full_estimate(len(targets), ksic=client.started_empty)
+        loud = est > DART_FULL_TARGET
+        log(f"{'  !! ' if loud else '· '}전체 DART 실행 호출 수 어림: 약 {est:,}회 ({why}) · 하루 한도 {DART_DAY_LIMIT:,} · "
+            f"목표 {DART_FULL_TARGET:,} 아래" + (" — 목표를 넘어요" if loud else ""))
     qy = year + 1
     cands = [r for r in Q_NEWEST_FIRST if report_period_end(qy, r) < today]
 
@@ -1430,6 +1524,8 @@ def enrich_with_dart(kr_stocks, client):
         for k in ("dps", "dps3", "dy"):
             if div.get(k) is not None:
                 s[k] = div[k]
+        if div.get("bas"):
+            s["_bas"] = div["bas"]        # v19.1b: 분할 확인용 원값 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
         if f or div:
             s["fy"] = yr          # v17.5.1: op·debt·roe·dps·dps3 가 나온 사업보고서의 연도 (bq 는 TTM 분기만 뜻해요)
         if f:
@@ -2066,8 +2162,16 @@ def _median(vals):
 FIN_SECS = {"bank", "insure", "broker", "holding"}
 
 
-def build_corp(kr_stocks, fin_map, as_of, market=None):
-    """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)"""
+FL_KEYS = ("cr", "icr", "l3", "imp")      # 재무 경고 검사: 유동비율 · 이자보상배율 · 3년 연속 적자 · 자본잠식
+CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
+
+
+def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
+    """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
+    v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
+    flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 FL_KEYS 가 모두
+    flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
+    extra = extra or {}
     comps = []
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
@@ -2110,22 +2214,35 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
             row["bq"] = fin["bq"]
 
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
-        fl = {}
+        fl, ran = {}, []
         if eff["ca"] and eff["cl"] and eff["cl"] > 0 and row["s"] not in FIN_SECS:
+            ran.append("cr")
             cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
         if op0f is not None and eff["ie"] and eff["ie"] > 0 and row["s"] not in FIN_SECS:
+            ran.append("icr")
             icr = op0f / eff["ie"]
             if icr < 1:
                 fl["icr"] = round(icr, 2)
+        if all(v is not None for v in ni):
+            ran.append("l3")
         if all(v is not None and v < 0 for v in ni):
             fl["l3"] = 1
+        if eff["cs"] and eff["eq"] is not None:
+            ran.append("imp")
         if eff["cs"] and eff["eq"] is not None and eff["eq"] < eff["cs"]:
             fl["imp"] = 1
         if fl:
             row["fl"] = fl
+        row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
+        if row["s"] in FIN_SECS:
+            row["flNa"] = ["cr", "icr"]                      # 금융업은 유동비율·이자보상배율이 해당 없어요
+        for k in CORP_DIV_KEYS:                              # v19.1b: 분할 확인한 배당 · 베타 표준오차
+            if s.get(k) is not None:
+                row[k] = s[k]
+        row.update(extra.get(s["t"]) or {})
 
         # EV 계열·현금흐름 멀티플 (금융업은 EV 지표가 무의미하므로 제외)
         op0 = eff["op0"]
@@ -2151,7 +2268,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None):
         if is_foreign_issuer(s["t"]):
             # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어 비워요 (blank_foreign_dart 참고). 위에서 만든 fl 신호는 비율·부호라 남겨요.
             row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
-            for k in ("evE", "evR", "pcf", "bq"):
+            for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB"):     # v19.1b: 배당 총액·주당순이익도 금액
                 row.pop(k, None)
         comps.append(row)
 
@@ -2257,6 +2374,7 @@ def fetch_korea(start, today, rf, prev=None):
         if c not in listing.columns:
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
+    pref_shares = kr_pref_shares(listing)     # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
 
     # 업종·주요제품 (KRX 상장법인 상세). v17.5.1: 열을 바로잡아요 — Sector 는 소속부(우량기업부 등, 코스피는 빈 칸),
     # Industry 가 업종, Products 가 주요제품이에요. 예전엔 Sector→업종, Industry→주요제품으로 읽어서 "nan · 주요제품: <업종>"이 됐어요.
@@ -2439,7 +2557,7 @@ def fetch_korea(start, today, rf, prev=None):
                 return None
             ret = px.pct_change().dropna()
             ret.name = "r"
-            b, a = beta_alpha(ret, bench, rf)
+            b, a, bse, bn = beta_fit(ret, bench, rf)
             f = fundamentals.get(code, {})
             per, pbr = _num(f.get("PER")), _num(f.get("PBR"))
             eps, bps, dps = _num(f.get("EPS")), _num(f.get("BPS")), _num(f.get("DPS"))
@@ -2454,6 +2572,7 @@ def fetch_korea(start, today, rf, prev=None):
                 "s": (row.get("_prev_s") if isinstance(row.get("_prev_s"), str) and row.get("_prev_s") and not sec_txt else map_sector_kr(sec_txt, prod_txt)),
                 "price": close if close is not None else float(px.iloc[-1]),
                 "vol": ann_vol(ret.values), "beta": b, "al": a,
+                "betaSE": bse if b is not None else None, "betaN": bn if b is not None else None,   # v19.1b
                 "per": round(per, 1) if per and per > 0 else None,
                 "pbr": round(pbr, 2) if pbr and pbr > 0 else None,
                 "dy": round(dyv, 2) if dyv is not None else None,   # 모르면 빈 칸 (0% 로 보이지 않게). DART 가 나중에 채워요
@@ -2519,7 +2638,8 @@ def fetch_korea(start, today, rf, prev=None):
         log(f"· 최근 {len(off_by_day)}거래일 네이버 일봉을 공식 종가로 고침: {pin['recent_fixed']:,}개 봉 · {pin['recent_stocks']:,}종목"
             " (넥스트레이드 체결가가 섞인 날)")
     meta = {"pxDate": px_date.isoformat() if px_date else None,
-            "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map}
+            "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
+            "_prefShares": pref_shares}
     return out, bench, mkt, meta
 
 
@@ -2599,6 +2719,264 @@ def fill_multiples(kr_stocks, fin_map):
         if s.get("per") is not None or s.get("pbr") is not None:
             n += 1
     log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 상장주식수 기반)")
+
+
+# ────────────────────────────────────────────────────────────
+# v19.1b: 분할에 안전한 한국 배당 (Jack, 2026-11-05)
+# ────────────────────────────────────────────────────────────
+# 문제: dps3(최근 사업보고서의 당기·전기·전전기 주당 배당금)만으로는 액면분할·무상증자와 진짜 배당 감소를 구별하지 못해요.
+# 1:2 분할 뒤에는 회사가 똑같이 줘도 주당 배당금이 반으로 보여요. 그래서 '그해 배당금이 몇 주 기준이었나'를 정확한 값으로 거꾸로 셉니다.
+#   N  그해 배당을 받은 주식 수 = 현금배당금총액 ÷ 보통주 주당 배당금 (우선주 배당도 총액에 들어 있어 보통주 1주 기준으로 세요)
+#   W  그해 주당순이익 뒤의 평균 주식 수 = 당기순이익 ÷ 주당순이익 (같은 연결/별도 기준) — 그해 배당이 0 일 때만 써요
+#   I  그해 말 발행 주식 수의 상한 = 자본금 ÷ 액면가 (이익소각한 주식만큼 실제보다 커요)
+# 오늘 상장 주식 수(shr + 같은 회사 우선주)를 그해 기준 주식 수로 나눈 '배율'을 구해요.
+#   - 자기주식은 배당을 못 받아서 N 은 상장 주식 수보다 작아요 (3~40%). 그래서 N 과 오늘 주식 수를 바로 맞대면 2:1 분할과
+#     자기주식 50% 를 구별할 수 없어요. 대신 정확한 두 끝을 써요: 배율은 '오늘 ÷ I' 이상, '오늘 ÷ N' 이하예요.
+#     이 범위에 걸치는 후보(1 또는 깨끗한 분할 배율)가 딱 하나일 때만 그 배율로 맞춰요. 둘 이상이면 '알 수 없음', 없으면 '비교 불가'.
+#   - 이전 해(전기·전전기)는 같은 보고서 안에서 비교해요: 발행 주식 수 상한의 비 I₀/Iᵢ 가 바뀐 배율(분할·무상증자는 정확한 배수,
+#     유상증자·합병은 어중간한 배수)이고, 배당 받은 주식 수의 비 N₀/Nᵢ 가 그해 배당금이 옛 기준인지(회사가 고치지 않음) 새 기준인지
+#     (회사가 고쳐 적음) 알려 줘요. 자기주식 매입·소각은 I 를 바꾸지 않아서 배율로 오해하지 않아요.
+#   - 깨끗한 배율: 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 과 그 역수 (±5%). 10% 안의 변화는 '그대로' (스톡옵션·전환사채·소각).
+#   - 어림한 배율로는 절대 맞추지 않아요. 맞출 수 없으면 그해 dps3a 는 빈 칸이고 이유가 divSt 에 남아요.
+# 결과: dps3a(오늘 주식 수 기준 주당 배당금) dpsF(해마다 배율 = 오늘 주식 수 ÷ 그해 기준) divSt(same·adj·nc·nd·zero)
+#       dyt(오늘 종가 기준 배당수익률 = dps3a[0] ÷ 종가) → 배당 순위(dz)는 dyt 로만 매겨요.
+SPLIT_FACTORS = (2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100)
+SHARE_SAME = 0.10        # 주식 수 비가 1 ± 10% 면 같은 기준 (분할 아님)
+SPLIT_TOL = 0.05         # 깨끗한 배율 k 의 ±5%
+DRIFT_TOL = 0.15         # 발행 주식 수로 배율을 정한 뒤, 배당 받은 주식 수가 해마다 이만큼까지는 흔들려도 돼요 (자기주식 매입·소각)
+DYT_MAX = 30.0           # 오늘 종가 기준 배당수익률이 이보다 크면 믿지 않아요 (앱·미국 수익률과 같은 한도)
+DIV_FACTORS = (1.0,) + tuple(float(k) for k in SPLIT_FACTORS) + tuple(1.0 / k for k in SPLIT_FACTORS)
+DIV_STATUS = ("same", "adj", "nc", "nd", "zero")      # 그대로 · 맞춤 · 비교 불가 · 알 수 없음 · 배당 없음
+
+
+def _factor_band(c):
+    return (1 - SHARE_SAME, 1 + SHARE_SAME) if c == 1.0 else (c * (1 - SPLIT_TOL), c * (1 + SPLIT_TOL))
+
+
+def clean_factor(x):
+    """주식 수 비 x 가 1(±10%)이면 1.0, 깨끗한 분할 배율(±5%)이면 그 배율, 아니면 None. (순수 함수)"""
+    x = _fin(x)
+    if x is None or x <= 0:
+        return None
+    for c in DIV_FACTORS:
+        lo, hi = _factor_band(c)
+        if lo <= x <= hi:
+            return c
+    return None
+
+
+def factor_between(lo, hi):
+    """배율이 lo 이상 hi 이하라는 것만 알 때: 그 범위에 걸치는 후보가 하나뿐이면 (그 배율, 'ok').
+    후보가 없으면 (None, 'nc' 비교 불가), 둘 이상이거나 범위가 이상하면 (None, 'nd' 알 수 없음). (순수 함수)"""
+    lo, hi = _fin(lo), _fin(hi)
+    if lo is None or hi is None or lo <= 0 or hi <= 0 or lo > hi * 1.02:
+        return None, "nd"
+    hits = [c for c in DIV_FACTORS if _factor_band(c)[0] <= hi and _factor_band(c)[1] >= lo]
+    if len(hits) == 1:
+        return hits[0], "ok"
+    return None, ("nc" if not hits else "nd")
+
+
+def div_basis(dps3, bas, cs3, shr, prefs=()):
+    """한 회사의 주당 배당금 3년을 오늘 주식 수 기준으로 맞춰요. (순수 함수)
+    dps3 보통주 주당 배당금 [당기, 전기, 전전기] (0 = 배당 없음 · None = 모름) · bas = parse_dart_basis 결과 ·
+    cs3 자본금 3년 (억원) · shr 오늘 상장 보통주 수 · prefs 같은 회사 상장 우선주들의 오늘 주식 수.
+    반환 {"dps3a", "dpsF", "st3", "divSt", "f0", "lo", "hi"} — divSt 는 배당한 해들 중 가장 나쁜 결과
+    (nc 비교 불가 > nd 알 수 없음 > adj 맞춤 > same 그대로), 배당한 해가 없으면 zero."""
+    d = (list(dps3 or []) + [None] * 3)[:3]
+    d = [_fin(x) for x in d]
+    bas = bas or {}
+
+    def tri(k):
+        v = bas.get(k)
+        return [_fin(x) for x in (list(v) + [None] * 3)[:3]] if isinstance(v, list) else [None] * 3
+    cash, par, pd3, eps, ni = tri("cash3"), tri("par3"), bas.get("pdps3"), tri("eps3"), tri("ni3")
+    pd3 = [_fin(x) for x in (list(pd3) + [None] * 3)[:3]] if isinstance(pd3, list) else None
+    cs = [_fin(x) for x in (list(cs3 or []) + [None] * 3)[:3]]
+    shr = _fin(shr)
+    prefs = [p for p in (_fin(x) for x in prefs or ()) if p and p > 0]
+    pref_all = sum(prefs)
+    N = [cash[i] / d[i] if d[i] and d[i] > 0 and cash[i] and cash[i] > 0 else None for i in range(3)]
+    W = [ni[i] / eps[i] if ni[i] and eps[i] and ni[i] * eps[i] > 0 else None for i in range(3)]
+    I = [cs[i] * 1e8 / par[i] if cs[i] and cs[i] > 0 and par[i] and par[i] > 0 else None for i in range(3)]
+
+    def today_w(i):
+        """오늘 상장 주식 수, 우선주는 그해 (우선주 주당 배당 ÷ 보통주 주당 배당) 만큼 — N 과 같은 셈법."""
+        w = pd3[i] / d[i] if pd3 is not None and pd3[i] is not None and d[i] else 1.0
+        return shr + w * pref_all
+
+    # 오늘 ÷ 최근 사업보고서(당기) 기준 = f0. 위 끝(hi)은 배당 받은 주식 수(배당이 없던 해는 주당순이익의 평균 주식 수)로,
+    # 아래 끝(lo)은 자본금 ÷ 액면가로. 총액(백만원 단위 반올림)·주당 배당금(원 단위)의 반올림만큼 범위를 넓혀요.
+    hi = lo = None
+    if shr and shr > 0:
+        if N[0]:
+            hi = today_w(0) / N[0] * (1 + 0.5e6 / cash[0] + 0.5 / d[0])
+        elif d[0] == 0 and W[0]:
+            hi = (shr + pref_all) / W[0] * (1 + 0.5e6 / abs(ni[0]) + 0.5 / abs(eps[0]))
+        if I[0]:
+            lo = (shr + pref_all) / I[0] * 0.999
+    f0, st0 = factor_between(lo, hi)
+
+    def rel(i):
+        """당기 기준 ÷ i 해 기준 = gᵢ. 발행 주식 수 상한의 비(q)가 바뀐 배율을, 배당 받은 주식 수의 비(r)가 그해 배당금이
+        옛 기준(g = q)인지 회사가 고쳐 적은 새 기준(g = 1)인지 알려 줘요."""
+        q = I[0] / I[i] if I[0] and I[i] else None
+        r = N[0] / N[i] if N[0] and N[i] else None
+        p = par[i] / par[0] if par[0] and par[i] else None
+        if q is not None:
+            kq = clean_factor(q)
+            if kq is None:
+                return None, "nc"                       # 유상증자·합병처럼 어중간하게 바뀐 주식 수
+            if kq == 1.0:
+                kr = clean_factor(r) if r is not None else None
+                if (kr is not None and kr != 1.0) or (p is not None and abs(p - 1) > 1e-9):
+                    return None, "nd"                   # 발행 주식 수는 그대로인데 다른 값이 분할을 말해요 — 판단하지 않아요
+                return 1.0, "ok"
+            if r is None:
+                return None, "nd"
+            if abs(r / kq - 1) <= DRIFT_TOL:
+                return kq, "ok"                         # 그해 배당금이 옛 기준 그대로
+            if abs(r - 1) <= DRIFT_TOL:
+                return 1.0, "ok"                        # 회사가 새 기준으로 고쳐 적음
+            return None, "nd"
+        if r is None:
+            return None, "nd"
+        kr = clean_factor(r)
+        if kr is None:
+            return None, "nc"
+        if kr == 1.0:
+            return 1.0, "ok"
+        if p is not None and abs(p / kr - 1) < 1e-6:
+            return kr, "ok"                             # 액면가가 같은 배율로 바뀜 = 액면분할 확인
+        return None, "nd"
+
+    dps3a, dpsF, st3 = [None] * 3, [None] * 3, [None] * 3
+    for i in range(3):
+        if d[i] is None:
+            continue
+        if d[i] == 0:
+            dps3a[i], st3[i] = 0.0, "zero"
+            continue
+        if i == 0:
+            f, st = f0, st0
+        else:
+            g, st = rel(i)
+            f = f0 * g if g is not None and f0 is not None else None
+            if g is not None and f0 is None:
+                st = st0
+        if f is None:
+            st3[i] = st if st in ("nc", "nd") else "nd"
+            continue
+        dpsF[i] = round(f, 6)
+        dps3a[i] = round(d[i] / f, 2)
+        st3[i] = "same" if f == 1.0 else "adj"
+    paid = [x for x in st3 if x in ("same", "adj", "nc", "nd")]
+    if not paid:
+        div_st = "zero" if "zero" in st3 else None
+    else:
+        div_st = next(x for x in ("nc", "nd", "adj", "same") if x in paid)
+    return {"dps3a": dps3a, "dpsF": dpsF, "st3": st3, "divSt": div_st, "f0": f0, "lo": lo, "hi": hi}
+
+
+def kr_pref_shares(listing):
+    """목록 파일 전체(상위 2,500개로 자르기 전)에서 우선주 상장 주식 수: {보통주 코드 앞 5자리: [주식 수, …]}. (순수 함수)
+    우선주 코드는 보통주 코드의 끝자리만 바꾼 것이에요 (005930 → 005935 · 005380 → 005385·005387·005389 · 006800 → 00680K)."""
+    out = {}
+    if listing is None or "Code" not in getattr(listing, "columns", []):
+        return out
+    for code, sh in zip(listing["Code"].astype(str), listing.get("Stocks", pd.Series([None] * len(listing)))):
+        code = code.strip()
+        v = _fin(_num(sh))
+        if is_preferred(code) and v and v > 0:
+            out.setdefault(code[:5], []).append(v)
+    return out
+
+
+def apply_div_basis(kr_stocks, fin_map, pref_shares):
+    """v19.1b: 국내 종목마다 dps3a·dpsF·divSt·dyt 를 붙이고, corp.json 에 실을 원값(총액·주당순이익)을 돌려줘요.
+    분할 확인용 임시 칸(_bas)은 여기서 지워요 (파일에 나가지 않게). 반환: (집계 dict, {코드: corp.json 추가 칸})."""
+    cnt = collections.Counter()
+    extra, adj_ex, nc_ex, nd_ex, big = {}, [], [], [], []
+    for s in kr_stocks:
+        bas = s.pop("_bas", None)
+        if s.get("cls") != "kr":
+            continue
+        t = s["t"]
+        if is_preferred(t):
+            cnt["pref"] += 1          # 우선주 종목에는 DART 배당 표가 따로 없어요 (보통주의 표에 우선주 줄로 있어요)
+            continue
+        if not isinstance(s.get("dps3"), list):
+            cnt["noDps"] += 1
+            continue
+        fin = fin_map.get(t) or {}
+        r = div_basis(s["dps3"], bas, fin.get("cs3"), s.get("shr"), pref_shares.get(t[:5], ()))
+        if r["divSt"] is None:
+            cnt["noDps"] += 1
+            continue
+        s["dps3a"], s["dpsF"], s["divSt"] = r["dps3a"], r["dpsF"], r["divSt"]
+        cnt[r["divSt"]] += 1
+        price = _fin(s.get("price"))
+        d0 = _fin(s["dps3"][0]) if s["dps3"] else None
+        if d0 is not None and d0 > 0:
+            cnt["payers"] += 1
+        if not price or price <= 0:
+            pass                      # 종가가 없으면 수익률도 없어요 (국내 종목은 늘 종가가 있어요)
+        elif r["st3"][0] == "zero":
+            s["dyt"] = 0.0
+        elif r["dpsF"][0] is not None:
+            y = _fin(s["dps3"][0]) / r["dpsF"][0] / price * 100
+            if y <= DYT_MAX:
+                s["dyt"] = round(y, 2)
+            else:
+                big.append(f"{t} {s.get('nk', '')} {y:.0f}%")
+        if s.get("dyt") is not None:
+            cnt["dyt"] += 1
+        tag = f"{t} {s.get('nk', '')}".strip()
+        if r["divSt"] == "adj":
+            adj_ex.append(f"{tag} ×{'/'.join(f'{x:g}' for x in r['dpsF'] if x is not None)}")
+        elif r["divSt"] == "nc":
+            nc_ex.append(tag)
+        elif r["divSt"] == "nd":
+            nd_ex.append(tag)
+        if bas and not is_foreign_issuer(t):      # 해외 기업 금액은 원화가 아닐 수 있어 싣지 않아요 (blank_foreign_dart 참고)
+            ek2 = lambda v: round(v / 1e8, 2) if _fin(v) is not None else None       # 원 → 억원 (백만원 단위까지)
+            e = {}
+            if isinstance(bas.get("cash3"), list):
+                e["cash3"] = [ek2(v) for v in bas["cash3"]]
+            if isinstance(bas.get("eps3"), list):
+                e["eps3r"] = [round(v, 0) if _fin(v) is not None else None for v in bas["eps3"]]
+                e["epsNi3"] = [ek2(v) for v in bas.get("ni3") or [None] * 3]
+                if bas.get("epsB"):
+                    e["epsB"] = bas["epsB"]
+            if e:
+                extra[t] = e
+    for s in kr_stocks:          # 혹시 남은 임시 칸도 지워요 (국내가 아닌 종목 등)
+        s.pop("_bas", None)
+
+    def ex(arr):
+        return f": {', '.join(sorted(arr)[:8])}{'…' if len(arr) > 8 else ''}" if arr else ""
+    loud = cnt["nc"] + cnt["nd"] > 0
+    log(f"{'  !! ' if loud else '· '}배당 분할 확인: 그대로 {cnt['same']:,} · 맞춤 {cnt['adj']:,}{ex(adj_ex)} · "
+        f"비교 불가 {cnt['nc']:,}{ex(nc_ex)} · 알 수 없음 {cnt['nd']:,}{ex(nd_ex)} · 배당 없음 {cnt['zero']:,} · "
+        f"DART 배당 표 없음 {cnt['noDps']:,} · 우선주 {cnt['pref']:,}")
+    log(f"{'  !! ' if cnt['payers'] and cnt['dyt'] < cnt['zero'] + cnt['payers'] * 0.9 else '· '}오늘 종가 기준 배당수익률(dyt): "
+        f"{cnt['dyt']:,}종목 (배당한 {cnt['payers']:,}종목 + 배당 없음) — 확인 못 한 종목은 빈 칸이라 배당 순위에서 빠져요"
+        + (f" · 30% 넘어 믿지 않은 {len(big)}: {', '.join(big[:5])}" if big else ""))
+    counts = {"v": 1, **{k: cnt[k] for k in DIV_STATUS}, "noDps": cnt["noDps"], "pref": cnt["pref"],
+              "payers": cnt["payers"], "dyt": cnt["dyt"]}
+    return counts, extra
+
+
+def dividend_rank_missing(kr_stocks, must=MUST_KR):
+    """배당 순위(dz)에 빠진 필수 종목 → [(코드, 이유)]. (순수 함수)"""
+    by = {s.get("t"): s for s in kr_stocks}
+    out = []
+    for t in must:
+        s = by.get(t) or {}
+        if _fin(s.get("dz")) is None:
+            why = s.get("divSt") or ("DART 배당 표 없음" if "dps3" not in s else "?")
+            out.append((t, why))
+    return out
 
 
 # ────────────────────────────────────────────────────────────
@@ -2914,13 +3292,14 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
                 continue
             ret = px.pct_change().dropna()
             ret.name = "r"
-            b, a = beta_alpha(ret, bench, rf)
+            b, a, bse, bn = beta_fit(ret, bench, rf)
             krw = (px * fx.reindex(px.index).ffill()).dropna()
             rec = {"t": sym, "nk": sym, "ne": sym, "cls": "us", "ccy": "USD", "fxu": True, "s": "etc",
                    "etf": sym in US_ETFS,
                    "d1": us_d1(px, us_px_date),
                    "price": round(float(px.iloc[-1]), 2),
                    "vol": ann_vol(krw.pct_change().dropna().values), "beta": b, "al": a,
+                   "betaSE": bse if b is not None else None, "betaN": bn if b is not None else None,   # v19.1b
                    "lo": round(float(px.tail(252).min()), 2), "hi": round(float(px.tail(252).max()), 2)}
             rec.update(perf_stats(px, rf))
             out.append({k: v for k, v in rec.items() if v is not None})
@@ -3037,6 +3416,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "d1": "% (전 거래일 공식 종가 대비 · 미국은 자기 기준일, 야후 수정 종가라 배당락일엔 배당 포함 · 한국 ±30% 넘거나 직전 거래일 파일이 없으면 빈 칸)",
          "dps": "원 (한국 · 0 = 배당 없음, 빈 칸 = 모름)",
          "fy": "op·debt·roe·opm·g3·dps·dps3 가 나온 사업보고서 연도 (bq 는 TTM 분기)",
+         "dps3a": "원 (한국 · dps3 를 오늘 상장 주식 수 기준으로 맞춘 값 [당기, 전기, 전전기] · 빈 칸 = 그해 기준을 확인하지 못함)",
+         "dpsF": "배율 (오늘 주식 수 ÷ 그해 배당금의 기준 주식 수 · 1 = 그대로 · dps3a = dps3 ÷ dpsF · 배당 없는 해는 빈 칸)",
+         "divSt": "same 그대로 · adj 분할·무상증자를 맞춤 · nc 비교 불가(어중간한 주식 수 변화) · nd 알 수 없음 · zero 3년 배당 없음",
+         "dyt": "% (한국 · 오늘 종가 기준 배당수익률 = dps3a[0] ÷ price · 확인 못 한 종목은 빈 칸 · dz 는 이 값의 시장 내 백분위)",
+         "betaSE": "베타의 표준오차 (일별 수익률 회귀) · betaN 은 쓴 일별 수익률 수",
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
@@ -3099,6 +3483,8 @@ def main():
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
     blank_foreign_dart(kr)                # v17.5.2: 해외 기업 (점수·corp.json 보다 먼저)
     fill_multiples(kr, fin_map)
+    # v19.1b: 분할에 안전한 배당 (dps3a·dpsF·divSt·dyt) — 해외 기업 비우기 뒤, 점수(dz)·corp.json 보다 먼저
+    div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {})
     n_dy = sum(1 for s in kr if s.get("dy") is not None)
     log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
     n_dps = sum(1 for s in kr if s.get("dps") is not None)
@@ -3172,6 +3558,16 @@ def main():
     # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리)
     add_percentiles(kr)
     add_percentiles(us)
+    # v19.1b: 배당 순위(dz)는 확인한 배당으로만 매겨요. 필수 종목은 꼭 들어 있어야 해요 (CLAUDE.md: 빈 칸일 수 있는 값으로
+    # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). DART 가 정상이었는데 빠졌으면 계산이 틀린 거라 멈춰요.
+    # DART 가 꺼졌거나 닿지 않은 실행은 크게 남기고 관문(필수 종목 배당 순위)이 막아요.
+    n_dz = sum(1 for s in kr if _fin(s.get("dz")) is not None)
+    miss_dz = dividend_rank_missing(kr)
+    log(f"{'  !! ' if miss_dz else '· '}배당 순위(dz): {n_dz:,}종목 · 필수 종목 "
+        + ("모두 있음" if not miss_dz else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_dz)))
+    if miss_dz and client is not None and not client.down and not client.fatal:
+        raise RuntimeError("!! 배당 순위에 필수 종목이 빠졌어요: " + ", ".join(f"{t}({why})" for t, why in miss_dz)
+                           + " — DART 는 정상이었으니 분할 확인 계산을 고쳐야 해요. 발행하지 않고 중단합니다")
     stocks = kr + us + bonds + funds
     if selftest == "corrupt-price":
         for x in stocks:
@@ -3186,6 +3582,7 @@ def main():
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
+        "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
         "stocks": stocks,
     }
     write_json(OUT, payload)
@@ -3193,7 +3590,7 @@ def main():
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
-    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt)
+    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra)
     corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
@@ -3220,6 +3617,9 @@ def main():
         disc = ph.run("공시", fetch_disclosures, kr, client.meta.get("corpMap") or {}, today, client)
         client.save()
         log(f"· DART 전체: {client.summary()}")
+        n_calls = sum(client.status.values())
+        if n_calls > DART_FULL_TARGET:
+            log(f"  !! 이번 실행의 DART 호출 {n_calls:,}회가 목표 {DART_FULL_TARGET:,}회를 넘었어요 (하루 한도 {DART_DAY_LIMIT:,})")
     else:
         disc = {"asOf": today.isoformat(), "newest": None, "listOk": False, "insider": [], "nps": []}
     disc["publishedAt"] = published_at
