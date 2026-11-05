@@ -11,6 +11,7 @@ import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
 import { writeStore } from "./store.js";
+import { KR_DIV_TREND } from "./engine.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
   const st = builder.settings;
@@ -98,6 +99,13 @@ function Summary({ r }) {
       {big(aboutWon(div.won))}
       <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
       {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
+      {/* Korean holdings whose dividend the company page does not trust (engine.annualDividend unchecked): left out of the
+          total and named, never silently (Jack, 2026-11-05). Long lists wrap; a name is never cut. */}
+      {div.unchecked.length > 0 && (
+        <div data-ui-v2="div-unchecked" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { overflowWrap: "anywhere" })}>
+          {fill(C.plan.divUnchecked, { n: div.unchecked.length, names: div.unchecked.map((x) => x.nk || x.t).join(", ") })}
+        </div>
+      )}
       {y2022.ok && (
         <div data-ui-v2="y2022">
           <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.y2022}</div>
@@ -149,7 +157,9 @@ function RuleList({ rules, name }) {
   const line = (x) => {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
     switch (x.id) {
-      case "divCut": return x.check === "pending" ? <RuleLine key={x.id} name={R.divCut} pending />
+      // a checked dividend-cut rule is always Korean; with the trend switch off it is not checked (준비 중): its history may
+      // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on.
+      case "divCut": return x.check === "pending" || !KR_DIV_TREND ? <RuleLine key={x.id} name={R.divCut} pending />
         // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
         : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
             note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />

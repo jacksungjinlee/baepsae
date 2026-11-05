@@ -26,6 +26,10 @@
 //   "broken") or not a cut (cleared for that report). Answers live in the deck record (store.js), keyed by the report
 //   year and both numbers, so a later, newer cut is asked about again. A confirmed cut stays 규칙 깨짐 whatever later
 //   reports show (the sell condition fired; only the user's own answer can change it).
+// - Korean dividend-trend switch off (engine.js KR_DIV_TREND, Jack 2026-11-05): a Korean dividend-cut rule is not checked
+//   (준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"), never passed, and today's history never fires it (no 확인 필요
+//   for a drop): the per-share history cannot tell a stock split from a cut. A cut the user already confirmed
+//   (실제로 줄였어요: they ruled out a split themselves) stays 규칙 깨짐, with both answers still open. US is not affected.
 // - Only reports NEWER than the rule's `since` can fire an annual rule: a fall that happened before purchase never
 //   counts. A report OLDER than at purchase (the pipeline fell back a year) is not used: the input counts as missing.
 // - A rule input that existed at purchase and is blank today -> "check" (missing), never 괜찮아요.
@@ -39,7 +43,7 @@
 // - Stale (published more than 4 days ago, the v17.5 rule) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
-import { num, isFin, priceWon, fyOf, fellTwice } from "./engine.js";
+import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND } from "./engine.js";
 import { STALE_DAYS, daysSince } from "../data.js";
 import { sameConfirm } from "./store.js";
 
@@ -171,11 +175,20 @@ const isYear = (y) => Number.isInteger(y);
 // year before it, inside the same report (a split restated by the company stays comparable). drops lists every drop
 // after purchase with the user's answer (null = not answered yet), newest first, including cuts the user confirmed
 // earlier that today's report no longer shows (they stay: the sell condition fired).
-function evalDiv(r, h, s, co, deck) {
+// trend off (KR_DIV_TREND): a dividend-cut rule not on a US holding (only Korean holdings ever get a checked one) reads
+// nothing from today's history, which may hide a split: not checked (준비 중), unless the user already confirmed a cut
+// after purchase (then 규칙 깨짐 as always: the sell condition fired on their own answer).
+function evalDiv(r, h, s, co, deck, trend) {
   if (!isYear(r.since)) return pendingOf(r);
   const out = { id: "divCut", kind: "sell", check: "checked", input: "dps", since: r.since };
   const confirms = ((deck && deck.confirms) || []).filter((c) => c && c.t === h.t && c.rule === "divCut" && isYear(c.fy) && c.fy > r.since);
   const drops = confirms.filter((c) => c.answer === "cut").map((c) => ({ t: h.t, rule: "divCut", fy: c.fy, a: c.a, b: c.b, answer: "cut" }));
+  if (!trend && (h.cls || (s && s.cls)) !== "us") {
+    if (!drops.length) return pendingOf(r);
+    drops.sort((x, y) => y.fy - x.fy);
+    const fy = s ? fyOf(s, co) : null;
+    return { ...out, result: "broken", missing: false, fy, now: null, newer: fy != null && fy > r.since, drops };
+  }
   const fy = s ? fyOf(s, co) : null;
   const d3 = s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
   const v = d3 ? [0, 1, 2].map((i) => num(d3[i])) : [null, null, null];
@@ -262,10 +275,11 @@ function evalBand(r, h, weights) {
   return { ...out, target: ref, refBands, bands, gap, planW, scale: k, result: band ? "band" : "ok", band, now: w };
 }
 
-export function evalRule(r, h, s, co, deck, weights) {
+// trend: the Korean dividend-trend switch (engine.js KR_DIV_TREND unless a test passes another state).
+export function evalRule(r, h, s, co, deck, weights, trend = KR_DIV_TREND) {
   if (!r || typeof r !== "object" || r.check !== "checked") return pendingOf(r);
   switch (r.id) {
-    case "divCut": return evalDiv(r, h, s, co, deck);
+    case "divCut": return evalDiv(r, h, s, co, deck, trend);
     case "debtCeiling": return evalDebt(r, h, s, co);
     case "roeFloor": return evalRoe(r, h, s, co);
     case "opDecline": return evalOp(r, h, s, co);
@@ -304,7 +318,9 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   const s = ctx.byT.get(h.t) || null;
   const co = ctx.coByT.get(h.t) || null;
   const book = Array.isArray(h.rules) ? h.rules : [];
-  const rules = book.map((r) => evalRule(r, h, s, co, deck, weights));
+  // ctx.krDivTrend: set only by tests, to check both states of the switch; todayCtx leaves it out (the switch applies)
+  const trend = typeof ctx.krDivTrend === "boolean" ? ctx.krDivTrend : KR_DIV_TREND;
+  const rules = book.map((r) => evalRule(r, h, s, co, deck, weights, trend));
   const reasons = reasonsOf(rules);
   // No rule that could be checked at all (an empty or malformed book, only possible in a hand-made file): nothing was
   // checked, so never 할 일 없음.

@@ -46,7 +46,7 @@ export function computePlan(load, settings, items, pinned) {
   const sz = size({ picks: items, pinned, cushion: cushionStocks(load), settings, amountWon });
   if (!sz.ok) return { ok: false, clash: sz.clash };
   const plan = planShares(sz.items, amountWon, load.data.fx);
-  const div = annualDividend(plan.rows, load.data.fx);
+  const div = annualDividend(plan.rows, load.data.fx, load.coByT);
   const y2022 = estimate2022(plan.rows, load.r2022);
   const vol = y2022.ok ? null : deckVol(plan.rows, load.data.settings, amountWon);
   return { ok: true, items: sz.items, plan, div, y2022, vol, amountWon };

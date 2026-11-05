@@ -7,7 +7,7 @@
 // "업종" is the `ind` group (hasGroup: never "other" / "etc" / missing) inside the same market, as 왜 움직였나 uses.
 // Units: corp.json op / ni / rev are 억원; KR prices are 원; US prices are $ (data.json units).
 import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy,
-  krDivYield, DY_MAX } from "./engine.js";
+  krDivYield, DY_MAX, KR_DIV_TREND, SPLIT_GUARD, splitGuarded, krYieldToday } from "./engine.js";
 import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
@@ -90,34 +90,18 @@ export function valueTile(s, group) {
 // The Korean dividend trend (늘렸어요 · 줄였어요 · 비슷하게 · N년 연속, and the 3-year bars) is OFF (Jack, 2026-11-05) until the
 // pipeline gives a split-adjusted per-share history: after a split the per-share dividend drops with no real cut, and the
 // data has no per-report share count to tell the two apart. This one switch turns it back on; both states are tested.
+// The switch is engine.js KR_DIV_TREND (re-exported here): the same one turns off the 배당 감소 caution and the
+// dividend-cut rule of 후보 고르기 · 포트폴리오 · 홈. It lives in engine.js because engine.js and rules.js need it too and
+// importing this file from them would make an import cycle.
 //   off: dps > 0 -> pays (배당을 줘요) · dps 0 -> none (배당이 없어요) · missing or contradictory (dps 0 with a yield, or a
 //        payer whose report says 0%) -> na (자료가 없어요, and no number is shown with it).
 //   on:  the trend rules below; a yield with no earlier year to compare -> noPrev (작년과 비교할 기록이 없어요).
-export const KR_DIV_TREND = false;
+export { KR_DIV_TREND };
 
-// KR yield on today's price (Jack, 2026-11-05): the latest 사업보고서's dividend per share ÷ today's close (data.json price,
-// the pxDate close), the same inputs as the 100만원 line, so the two always agree. Only a dps the card trusts: it agrees
-// with that report's own yield (engine.dpsAgrees, 1/3x-3x: a split after the report or a total filed in the per-share row
-// fails it) and gives at most 30% a year (DY_MAX). A payer whose report gives no yield can't be cross-checked, so no yield
-// either (review: a split after such a report would go unseen). Otherwise null: the yield is hidden, never the report-year
-// yield instead. dps 0 with a price -> 0.
-// Interim split guard (Jack, 2026-11-05), until the pipeline brings split-adjusted dividends: today's yield at 1.8x the
-// report's own yield or more is hidden too. A 2:1 split after the report doubles dps ÷ close, which the 1/3x-3x check lets
-// through; the data has no report-year share count to tell a split from a price fall (fetch_data.py eps is today's).
-export const SPLIT_GUARD = 1.8;
-// The one predicate (yield, 100만원 line, 배당성향, the console count): a payer whose dividend per share may predate a
-// split. true when dps > 0 and the report gives no yield to check against, or today's yield / the report's >= 1.8.
-export function splitGuarded(s) {
-  const d = num(s && s.dps), dy = num(s && s.dy), y = krDivYield(s);
-  if (!(d > 0)) return false;
-  if (dy == null) return true;
-  return dy > 0 && y != null && y / dy >= SPLIT_GUARD - EPS;
-}
-export function krYieldToday(s) {
-  if (splitGuarded(s)) return null;
-  const y = krDivYield(s);
-  return y != null && y <= DY_MAX ? y : null;
-}
+// KR yield on today's price and the interim split guard (Jack, 2026-11-05): engine.js krYieldToday · splitGuarded ·
+// SPLIT_GUARD, re-exported here. They live in engine.js because the portfolio's expected dividend (engine.annualDividend)
+// uses the same guard (Jack, 2026-11-05), and importing this file from engine.js would make an import cycle.
+export { SPLIT_GUARD, splitGuarded, krYieldToday };
 // The guard's count for the console (no silent hiding): Korean payers with a report year whose dps passes the 1/3x-3x
 // check and the 30% cap but which the 1.8x guard hides. -> { hidden, of, examples: [{ t, ratio }] } (largest first, 5).
 // of = Korean payers with a report year that pass the 1/3x-3x check and the cap (the ones that would show a yield).

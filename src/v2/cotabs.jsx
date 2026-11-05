@@ -518,9 +518,9 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 
 // ================= 배당 =================
 // KR (Jack, 2026-11-05): the yield and the 100만원 line both use the latest 사업보고서's dividend per share over today's
-// close (company.js krYieldToday / perMillionKr), so they always agree; a dps that fails the cross-check with the report's
+// close (engine.js krYieldToday, company.js perMillionKr), so they always agree; a dps that fails the cross-check with the report's
 // own yield shows neither. The per-share figure only when it passes (divKr dpsOk); the 3-year bars and the trend headline
-// only with company.js KR_DIV_TREND on (off until the history is split-adjusted). 배당성향 on one basis (payout).
+// only with engine.js KR_DIV_TREND on (off until the history is split-adjusted). 배당성향 on one basis (payout).
 // US: Yahoo's yield only (no per-share dividend in the data until v19.2).
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
