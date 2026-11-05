@@ -112,7 +112,7 @@ function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {
     : `최근 3개월 +${c.r3}% 올랐지만 연간 실적은 그대로예요 — 가격을 움직인 건 실적보다 기대나 수급일 수 있어요.`);
   else if (c.r3 != null && c.r3 <= -15 && niYoY != null && niYoY >= 10) lines.push(en
     ? `Earnings improved but the stock fell ${Math.abs(c.r3)}% in 3 months — worth asking what the market is worried about.`
-    : `실적은 좋아졌는데 3개월간 ${c.r3}% 내렸어요 — 시장이 무엇을 걱정하는지 볼 대목이에요.`);
+    : `실적은 좋아졌는데 3개월간 ${Math.abs(c.r3)}% 내렸어요 — 시장이 무엇을 걱정하는지 볼 대목이에요.`);
   else if (growthLine) lines.push(growthLine);
   const flagN = c.fl ? Object.keys(c.fl).length : 0;
   return (

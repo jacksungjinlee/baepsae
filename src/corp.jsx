@@ -1068,7 +1068,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
     if (c.r3 >= 15 && niYoY != null && niYoY <= 5)
       return `최근 3개월 주가는 +${c.r3}% 올랐지만 연간 실적 추세는 뚜렷이 개선되지 않았어요. 가격을 움직인 것이 실적보다 기대나 수급일 가능성을 염두에 둘 대목이에요.`;
     if (c.r3 <= -15 && niYoY != null && niYoY >= 10)
-      return `연간 실적은 개선됐는데 최근 3개월 주가는 ${c.r3}% 내렸어요. 시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요.`;
+      return `연간 실적은 개선됐는데 최근 3개월 주가는 ${Math.abs(c.r3)}% 내렸어요. 시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요.`;
     return null;
   })();
 
