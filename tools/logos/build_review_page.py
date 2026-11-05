@@ -22,6 +22,13 @@ Pre-pick order (the page's JavaScript; pre_pick() below is the same rule in Pyth
   5. our own website icon, when logo-review/icons.json lists it as kept (tools/logos/add_site_icons.py; an icon
      flagged as photo-like or hard to see is never pre-picked, only offered in the Fix panel as "Own icon (check)");
   else the letter mark.
+When every alternative is wrong, the Fix panel also takes a pasted image address (source "manual": https only, checked
+and previewed in Jack's browser, at least 64 px; later downloaded once and stored as our own site file, not done here) or
+"None of these - find more" (source "need": letter mark for now, listed in the page's Needs a logo view).
+The page remembers in Jack's browser, for 7 days, which sources found a logo per company (hit / miss and the day, never an
+image), so a reload asks again only for the found logos, after the usual checks; once Start was tapped in that browser,
+a reload starts loading by itself on the first grid not reviewed yet.
+
 Identifiers are exact only (ticker, ISIN, DART homepage), never names — the same ones as the coverage test page
 (logo_sources.build_companies). Nothing here requests a logo: both providers' terms forbid fetching their images
 with a script, so this builder only writes the page.
@@ -57,6 +64,13 @@ ORDER = ("bfI", "bfT", "ldT", "ldD", "bfD", "own")
 SOURCE = {"bfI": "bf-isin", "bfT": "bf-ticker", "ldT": "ld-ticker", "ldD": "ld-domain", "bfD": "bf-domain",
           "own": "own-icon"}
 SOURCES = tuple(SOURCE[r] for r in ORDER) + ("letter",)
+# Added 2026-11-05, chosen in the Fix panel only (exports stay version 1: the format is the same, these are additions):
+# "manual" = an image address Jack pasted (https, checked in the page; later downloaded once and stored as our own file),
+# "need" = none of these, find more (url null; letter mark for now, listed in the Needs a logo view).
+EXTRA_SOURCES = ("manual", "need")
+STORE_KEY = "baepsae-logo-review-v1"               # Jack's choices (the page's localStorage)
+PROBE_KEY = "baepsae-logo-review-probes-v1"        # hit / miss per company and source, with the day; never an image
+PROBE_DAYS = 7
 PROVIDER = {"bfI": "bf", "bfT": "bf", "bfD": "bf", "ldT": "ld", "ldD": "ld", "own": "own"}
 ENDED = ("na", "hit", "miss", "off", "err", "stopped")
 AGREE_MAX = 0.15       # fingerprints (16 x 16 ink cells, one hex digit each) that differ by at most this agree
