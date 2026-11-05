@@ -329,13 +329,14 @@ def test_apply_writes_todays_yield_only_from_a_verified_dividend(capsys):
     assert "배당 분할 확인: 그대로 0 · 맞춤 1: 001130 대한제분 ×10/10/10" in out and "알 수 없음 1: 000010 자기주식많음" in out
     F.add_percentiles(kr)
     assert a["dz"] > c["dz"] and "dz" not in b and "dz" not in d                  # 순위는 확인한 배당으로만
-    assert F.dividend_rank_missing(kr, ("001130", "000010", "000030")) == [("000010", "nd"), ("000030", "DART 배당 표 없음")]
+    assert F.dividend_rank_missing(kr, ("001130", "000010", "000030", "999990")) == [     # 관문과 같은 이유 문구
+        ("000010", "알 수 없음 (오늘 주식 수 기준을 확인 못 함)"), ("000030", "DART 배당 표 없음"), ("999990", "데이터에 없음")]
     json.dumps(kr, allow_nan=False)
 
 
 def test_main_ranks_dividends_after_the_split_check_and_logs_a_missing_must_have():
-    # 필수 종목이 배당 순위에서 빠지면 이유와 함께 크게 남기고 관문(필수 종목 배당 순위)이 발행을 막아요. 파이프라인은 멈추지 않아요:
-    # 파일과 관문 표가 남아야 시험 실행에서 원인을 볼 수 있어서예요 (리뷰 1)
+    # 필수 종목이 배당 순위에서 빠지면 이유와 함께 크게 남겨요. 관문(필수 종목 배당 순위)은 1곳이면 경고, 2곳 이상이면 발행을 막아요.
+    # 파이프라인은 멈추지 않아요: 파일과 관문 표가 남아야 시험 실행에서 원인을 볼 수 있어서예요 (리뷰 1)
     import inspect
     src = inspect.getsource(F.main)
     i_basis, i_rank = src.find("apply_div_basis(kr"), src.find("add_percentiles(kr)")
@@ -493,10 +494,11 @@ def with_new_fields(files):
     by = {s["t"]: s for s in kr}
     for c in corp["companies"]:
         s = by[c["t"]]
-        c.update(flRan=["cr", "icr", "l3", "imp"], dps3a=s["dps3a"], dpsF=s["dpsF"], divSt=s["divSt"],
+        c.update(flRan=["cr", "icr", "l3", "imp"], dps3a=list(s["dps3a"]), dpsF=list(s["dpsF"]), divSt=s["divSt"],
                  cash3=[1.0, 1.0, 1.0], eps3r=[100.0, 90.0, 80.0], epsNi3=[1.0, 0.9, 0.8], epsB="연결")
-        if s.get("dyt") is not None:
-            c["dyt"] = s["dyt"]
+        for k in ("dyt", "dz"):                                    # build_corp 처럼 data.json 값을 그대로 (없으면 없음)
+            if s.get(k) is not None:
+                c[k] = s[k]
     st = [s.get("divSt") for s in kr]
     data["divCheck"] = {"v": 1, **{k: st.count(k) for k in V.DIV_STATUS}, "noDps": 0, "pref": 0,
                         "payers": sum(1 for s in kr if s["dps3"][0] > 0), "dyt": sum(1 for s in kr if s.get("dyt") is not None)}
@@ -601,13 +603,84 @@ def test_todays_yield_must_come_from_the_adjusted_dividend(pair, change):
     _fails(cur, prev, "국내 오늘 배당수익률 dyt = dps3a[0] ÷ 종가 · dz")
 
 
-def test_too_few_verified_yields_fail(pair):
+ROW4 = "배당한 국내 회사 중 오늘 수익률(dyt) 확인"
+
+
+def unverify(files, s):
+    """파이프라인이 오늘 주식 수 기준을 확인하지 못한 종목처럼 (알 수 없음 · 수익률·순위 없음). corp.json 도 파이프라인처럼 같이."""
+    s.update(dps3a=[None if x else x for x in s["dps3a"]], dpsF=[None] * 3, divSt="nd")
+    s.pop("dyt", None), s.pop("dz", None)
+    for c in files["corp"]["companies"]:
+        if c["t"] == s["t"]:
+            c.update(dps3a=list(s["dps3a"]), dpsF=list(s["dpsF"]), divSt="nd")
+            c.pop("dyt", None), c.pop("dz", None)
+
+
+def _d0(s):
+    v = (s.get("dps3") or [None])[0]
+    return v if isinstance(v, (int, float)) else None
+
+
+def recount(files):
+    """divCheck 집계를 종목에 맞춰 다시 세요 (파이프라인은 늘 맞게 써요 — 'divCheck 집계' 줄이 다른 이유로 실패하지 않게)."""
+    kr = kr_of(files)
+    com = [s for s in kr if not V.is_pref(s["t"])]
+    st = [s.get("divSt") for s in com]
+    files["data"]["divCheck"] = {"v": 1, **{k: st.count(k) for k in V.DIV_STATUS}, "noDps": st.count(None),
+                                 "pref": len(kr) - len(com),
+                                 "payers": sum(1 for s in com if s.get("divSt") and (_d0(s) or 0) > 0),
+                                 "dyt": sum(1 for s in kr if s.get("dyt") is not None)}
+
+
+def payer_share(files):
+    """관문과 같은 셈: 해외 기업이 아닌 보통주 중 올해 배당한 회사, 그중 dyt 가 있는 비율 (%)."""
+    payers = [s for s in kr_of(files) if not V.is_pref(s["t"]) and not V.is_foreign(s["t"]) and (_d0(s) or 0) > 0]
+    return 100.0 * sum(1 for s in payers if s.get("dyt") is not None) / len(payers), payers
+
+
+def drop_share_to(files, target):
+    """필수 종목이 아닌 배당 회사를 하나씩 확인 못 한 것으로 바꿔 비율을 target 아래로 (한 종목씩이라 바로 아래)."""
+    share, payers = payer_share(files)
+    for s in [s for s in payers if s.get("dyt") is not None and s["t"] not in V.MUST]:
+        if share < target:
+            break
+        unverify(files, s)
+        share, _ = payer_share(files)
+    recount(files)
+    return share
+
+
+def test_row4_bands_live_in_one_place_and_floor_is_ten_points_below_the_test_run():
+    # Jack 2026-11-05: 실패 = 시험 실행에서 본 비율 − 10%p 아래, 경고 = 그 사이. 두 값은 한곳(DYT_COVER_BANDS)에 있어요.
+    # 지금 값은 자리 표시예요 (제안하던 85% 가 floor). 금요일 시험 실행 뒤 바꿀 때 이 관계를 지켜야 이 시험이 통과해요
+    assert set(V.DYT_COVER_BANDS) == {"seen", "floor"}
+    assert math.isclose(V.DYT_COVER_BANDS["floor"], V.DYT_COVER_BANDS["seen"] - 10.0, abs_tol=1e-9)
+    assert 0 < V.DYT_COVER_BANDS["floor"] < V.DYT_COVER_BANDS["seen"] <= 100
+
+
+@pytest.mark.parametrize("seen_off, want", [(-1.0, "PASS"), (0.0, "PASS"), (1.0, "WARN"), (10.0, "WARN"), (10.5, "FAIL")])
+def test_row4_pass_warn_and_fail_bands(pair, monkeypatch, seen_off, want):
+    # 이 픽스처의 비율(s0)을 기준으로 seen 을 옮겨요: s0 ≥ seen 이면 통과, floor(= seen − 10) ≤ s0 < seen 이면 경고, 그 아래면 실패
     cur, prev = pair
-    payers = [s for s in kr_of(cur) if s["divSt"] in ("same", "adj") and s["t"] not in V.MUST]
-    for s in payers[:int(len(payers) * 0.2)]:
-        s.update(dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd")
-        s.pop("dyt", None), s.pop("dz", None)
-    _fails(cur, prev, "배당한 국내 회사 중 오늘 수익률(dyt) 확인")
+    s0, _ = payer_share(cur)
+    monkeypatch.setitem(V.DYT_COVER_BANDS, "seen", s0 + seen_off)
+    monkeypatch.setitem(V.DYT_COVER_BANDS, "floor", s0 + seen_off - 10.0)
+    rep = check(cur, prev)
+    assert rows_of(rep)[ROW4][3] == want, rows_of(rep)[ROW4]
+    assert bool(rep.failed) is (want == "FAIL"), rep.table()        # 경고는 발행을 막지 않아요
+
+
+def test_row4_with_the_numbers_in_the_file(pair):
+    # 지금 파일에 적힌 기준(금요일 뒤에 바뀌어도 그대로 돌아요)으로: 경고 구간 한가운데면 경고만 (발행돼요), floor 아래면 실패
+    cur, prev = pair
+    seen, floor = V.DYT_COVER_BANDS["seen"], V.DYT_COVER_BANDS["floor"]
+    assert payer_share(cur)[0] >= seen, "기준(seen)이 좋은 픽스처의 비율보다 높아요 — 기준이나 픽스처를 다시 봐야 해요"
+    s1 = drop_share_to(cur, (seen + floor) / 2)
+    assert floor <= s1 < seen, s1
+    rep = check(cur, prev)
+    assert rows_of(rep)[ROW4][3] == "WARN" and not rep.failed, rep.table()
+    assert drop_share_to(cur, floor) < floor
+    _fails(cur, prev, ROW4)
 
 
 def test_too_many_adjusted_dividends_fail(pair):
@@ -618,13 +691,115 @@ def test_too_many_adjusted_dividends_fail(pair):
     _fails(cur, prev, "배당한 국내 회사 중 분할·무상증자로 맞춘 비율")
 
 
-@pytest.mark.parametrize("t", ["005930", "015760"])
-def test_must_have_out_of_the_dividend_rank_fails(pair, t):
+ROW6 = "필수 종목 배당 순위 (dyt·dz)"
+ROW7 = "필수 종목 새 칸 (배당 분할 확인·베타 표준오차·재무 경고 검사)"
+
+
+@pytest.mark.parametrize("n, want", [(0, "PASS"), (1, "WARN"), (2, "FAIL"), (3, "FAIL")])
+def test_row6_one_missing_must_have_warns_two_fail(pair, n, want):
+    # Jack 2026-11-05: 필수 종목 1곳이 배당 순위에서 빠지면 종목·이유를 적은 경고 (발행돼요), 2곳 이상이면 실패
     cur, prev = pair
-    s = next(s for s in kr_of(cur) if s["t"] == t)
-    s.update(dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd")
-    s.pop("dyt", None), s.pop("dz", None)
-    _fails(cur, prev, "필수 종목 배당 순위 (dyt·dz)")
+    paying = [s["t"] for s in kr_of(cur) if s["t"] in V.MUST and s["divSt"] in ("same", "adj")]
+    assert len(paying) >= 3
+    gone = paying[:n]
+    for t in gone:
+        unverify(cur, next(s for s in kr_of(cur) if s["t"] == t))
+    recount(cur)
+    rep = check(cur, prev)
+    row = rows_of(rep)[ROW6]
+    assert row[3] == want, row
+    assert bool(rep.failed) is (want == "FAIL"), rep.table()
+    assert rows_of(rep)[ROW7][3] == "PASS"                          # 행 7 이 행 6 의 경고를 실패로 뒤집지 않아요
+    for t in gone:
+        assert f"{t} 알 수 없음 (오늘 주식 수 기준을 확인 못 함)" in row[1]   # 어떤 종목이 왜 빠졌는지 적어요
+
+
+def test_row6_names_the_reason_for_each_kind_of_gap(pair):
+    cur, prev = pair
+    s = next(s for s in kr_of(cur) if s["t"] == "005380")
+    for k in ("divSt", "dps3a", "dpsF", "dyt", "dz", "dps3"):        # DART 배당 표가 없던 날
+        s.pop(k, None)
+    c = next(c for c in cur["corp"]["companies"] if c["t"] == "005380")
+    for k in ("dps3a", "dpsF", "divSt", "dyt", "dz", "cash3", "eps3r", "epsNi3", "epsB"):   # build_corp 도 함께 없어요
+        c.pop(k, None)
+    recount(cur)
+    rep = check(cur, prev)
+    assert rows_of(rep)[ROW6][3] == "WARN" and "005380 DART 배당 표 없음" in rows_of(rep)[ROW6][1], rows_of(rep)[ROW6]
+    assert not rep.failed, rep.table()
+    assert V.rank_miss_reason(None) == "데이터에 없음"
+    assert V.rank_miss_reason({"divSt": "nc", "dps3a": [None, None, 1.0]}).startswith("비교 불가")
+    assert V.rank_miss_reason({"divSt": "same", "dps3a": [1.0, 1.0, 1.0]}).startswith("수익률 없음")
+    assert V.rank_miss_reason({"divSt": "same", "dps3a": [1.0, 1.0, 1.0], "dyt": 1.0}) == "배당 점수(dz) 없음"
+
+
+@pytest.mark.parametrize("key", ["divSt", "dps3a", "dpsF"])
+def test_row7_corp_must_match_data_even_for_an_unranked_must_have(pair, key):
+    # 리뷰 3: 순위에서 빠진(알 수 없음) 필수 종목도 DART 배당 표는 있었어요 → corp.json 의 배당 칸은 data.json 과 같아야 해요.
+    # 두 파일이 어긋나는 파이프라인 버그를 경고 한 줄 뒤에 숨기지 않아요
+    cur, prev = pair
+    unverify(cur, next(s for s in kr_of(cur) if s["t"] == "005930"))
+    recount(cur)
+    next(c for c in cur["corp"]["companies"] if c["t"] == "005930").pop(key)
+    _fails(cur, prev, ROW7)
+
+
+def test_row7_corp_must_not_keep_dividend_fields_data_does_not_have(pair):
+    # 리뷰 4: data.json 에 배당 칸이 없는(DART 배당 표 없음) 필수 종목인데 corp.json 에 배당 점수가 남으면 두 파일이 어긋난 거예요
+    cur, prev = pair
+    s = next(s for s in kr_of(cur) if s["t"] == "005380")
+    for k in ("divSt", "dps3a", "dpsF", "dyt", "dz", "dps3"):
+        s.pop(k, None)
+    c = next(c for c in cur["corp"]["companies"] if c["t"] == "005380")
+    for k in ("dps3a", "dpsF", "divSt", "dyt", "cash3", "eps3r"):
+        c.pop(k, None)                                                 # dz 만 남김
+    recount(cur)
+    _fails(cur, prev, ROW7)
+
+
+def test_row4_share_is_shown_rounded_down():
+    # 84.96% 가 '85.0%' 로 보여 '85% 미만 실패' 옆에 서지 않게 (리뷰 4)
+    assert V.floor_1(84.96) == "84.9" and V.floor_1(95.0) == "95.0" and V.floor_1(99.999) == "99.9" and V.floor_1(0.0) == "0.0"
+
+
+def test_row7_amounts_of_an_unranked_must_have_are_left_to_the_rank_row(pair):
+    # 순위에서 빠진 필수 종목 1곳의 총액·주당순이익 구멍은 '필수 종목 배당 순위' 경고가 알려요 (실패로 뒤집지 않아요)
+    cur, prev = pair
+    unverify(cur, next(s for s in kr_of(cur) if s["t"] == "005930"))
+    recount(cur)
+    c = next(c for c in cur["corp"]["companies"] if c["t"] == "005930")
+    c.pop("cash3"), c.pop("eps3r")
+    rep = check(cur, prev)
+    assert rows_of(rep)[ROW7][3] == "PASS" and rows_of(rep)[ROW6][3] == "WARN" and not rep.failed, rep.table()
+
+
+def test_row7_still_checks_amounts_of_ranked_must_haves(pair):
+    cur, prev = pair
+    next(c for c in cur["corp"]["companies"] if c["t"] == "005930").pop("cash3")
+    _fails(cur, prev, ROW7)
+    cur2, prev2 = good_pair()[:2]
+    cur2 = with_new_fields(cur2)
+    next(c for c in cur2["corp"]["companies"] if c["t"] == "005930")["dyt"] = 99.0       # corp 가 data 와 다른 수익률
+    _fails(cur2, prev2, ROW7)
+
+
+def test_foreign_issuer_paying_every_year_has_no_dps3_at_all():
+    # 해외 기업이 3년 모두 배당하면 금액을 모두 비우는데, 그때는 dps3 를 통째로 지워요 (blank_foreign_dart) — [빈 칸 ×3] 은 나오지 않아
+    # '국내 배당 분할 확인 칸' 줄(dps3 가 있는 보통주는 모두 divSt)이 그대로 맞아요. 올해 배당이 숫자가 아니면 dps3 자체를 쓰지 않아요
+    kr = [{"t": "950160", "nk": "가", "cls": "kr", "dps": 50.0, "dy": 1.0, "dps3": [50.0, 40.0, 30.0], "price": 1.0}]
+    F.blank_foreign_dart(kr)
+    assert "dps3" not in kr[0]
+    assert "dps3" not in F.parse_dart_dividend([{"se": "주당 현금배당금(원)", "stock_knd": "보통주", "thstrm": "",
+                                                 "frmtrm": "100", "lwfr": "100"}])
+
+
+def test_pipeline_log_matches_the_gate_rank_rule():
+    import inspect
+    assert F.DIV_RANK_MISS_FAIL == V.DIV_RANK_MISS_FAIL == 2
+    # 기준·이유 문구는 관문 파일 한곳에서 읽어요 (따로 적은 사본이 어긋나지 않게)
+    assert F.DYT_COVER_BANDS is V.DYT_COVER_BANDS and F.rank_miss_reason is V.rank_miss_reason
+    src = inspect.getsource(F.main)
+    tail = src[src.find("dividend_rank_missing(kr)"):src.find("payload = {")]
+    assert "len(miss_dz) >= DIV_RANK_MISS_FAIL" in tail and "관문에서 경고해요" in tail
 
 
 @pytest.mark.parametrize("where, key", [("data", "betaSE"), ("data", "betaN"), ("corp", "flRan"), ("corp", "eps3r")])
@@ -654,6 +829,36 @@ def test_a_few_wild_betas_pass_but_many_fail(pair):
     for s in kr[110:200]:
         s["betaSE"] = 0.85
     _fails(cur, prev, "베타 표준오차 (betaSE·betaN)")
+
+
+def test_beta_floor_is_the_pipelines_real_minimum():
+    # 파이프라인은 일별 수익률이 MIN_DAYS(250)보다 적으면 베타·알파·표준오차·수 넷을 모두 비워요 (beta_fit). 관문의 betaN 아래 끝도 같아요
+    assert F.MIN_DAYS == 250 and V.BETA_N[0] == F.MIN_DAYS
+    rng = np.random.default_rng(3)
+    for n, has in ((249, False), (250, True)):
+        idx = pd.bdate_range("2025-01-02", periods=n)
+        x = pd.Series(rng.normal(0, 0.01, n), index=idx)
+        got = F.beta_fit(pd.Series(1.1 * x.values + rng.normal(0, 0.01, n), index=idx), x, 0.03)
+        assert (got[0] is not None) is has and (got[3] == n if has else got == (None, None, None, None))
+
+
+def test_new_listing_120_trading_days_never_blocks_a_publish(pair):
+    # 120거래일 전에 상장한 종목: 시세 121일(60일 넘어 목록에는 남아요) → 수익률 120개 < 250 → 베타·표준오차·수·변동성이 비어요.
+    # 관문은 베타가 없는 종목의 표준오차를 묻지 않아요 → 발행돼요 (Jack 2026-11-05)
+    idx = pd.bdate_range("2026-05-14", periods=121)
+    rng = np.random.default_rng(5)
+    px = pd.Series(10000 * np.cumprod(1 + rng.normal(0, 0.02, 121)), index=idx)
+    bench = pd.Series(rng.normal(0, 0.01, 120), index=idx[1:])
+    ret = px.pct_change().dropna()
+    assert len(px) >= 60 and F.beta_fit(ret, bench, 0.03) == (None, None, None, None) and F.ann_vol(ret.values) is None
+    cur, prev = pair
+    for market in ("kr", "us"):
+        s = next(s for s in cur["data"]["stocks"] if s.get("cls") == market and s["t"] not in V.MUST
+                 and s.get("beta") is not None and not s.get("etf"))
+        for k in ("beta", "al", "betaSE", "betaN", "vol"):
+            s.pop(k, None)
+    rep = check(cur, prev)
+    assert rows_of(rep)["베타 표준오차 (betaSE·betaN)"][3] == "PASS" and not rep.failed, rep.table()
 
 
 def test_implausible_median_beta_standard_error_fails(pair):

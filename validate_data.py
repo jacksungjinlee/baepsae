@@ -120,17 +120,30 @@ FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
 DIV_STATUS = ("same", "adj", "nc", "nd", "zero")        # 그대로 · 맞춤 · 비교 불가 · 알 수 없음 · 배당 없음
 SPLIT_FACTORS = (2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100)  # 깨끗한 분할 배율 (fetch_data.py 와 같은 목록을 따로 적어요)
-DYT_COVER = 85.0         # 배당한 국내 회사 중 오늘 종가 기준 배당수익률(dyt = 배당 순위에 들어감)을 확인한 비율 하한 (%)
+# 행 4 (배당한 국내 회사 중 오늘 수익률 dyt 를 확인한 비율, %) — Jack 2026-11-05: 배당 자료 구멍이 사이트 전체를 멈추면 안 돼요.
+#   floor 아래 = 실패 · floor ~ seen 사이 = 경고 · seen 이상 = 통과. floor = seen − 10%p.
+#   ★ 두 값은 자리 표시예요 (지금 제안 85% 를 floor 로). 금요일 시험 실행에서 본 비율을 seen 에, 그 − 10 을 floor 에 넣어요.
+#   파이프라인 로그(fetch_data.apply_div_basis)도 이 값을 읽어 같은 기준으로 크게 알려요.
+DYT_COVER_BANDS = {"seen": 95.0, "floor": 85.0}
+DIV_RANK_MISS_FAIL = 2   # 행 6: 배당 순위(dyt·dz)에서 빠진 필수 종목이 이만큼이면 실패. 1곳은 이름·이유와 함께 경고 (Jack 2026-11-05)
 DIV_ADJ_MAX = 10.0       # 배당한 국내 회사 중 분할·무상증자로 맞춘(adj) 비율 상한 (%) — 넘으면 배율을 대량으로 잘못 읽은 날
 DYT_MAX = 30.0           # 이보다 큰 배당수익률은 믿지 않아요 (파이프라인이 빈 칸으로 둬요)
 DIV_TOL = 0.011          # dps3a = dps3 ÷ dpsF · dyt = dps3a[0] ÷ 종가 × 100 — 둘 다 소수 둘째 자리 반올림
 BETA_SE_WILD = 0.5       # 이보다 큰 베타 표준오차는 '흔들리는 베타' (일별 3년 회귀는 보통 0.03~0.15 · 가격 이력이 깨진 종목은 0.5~0.9)
 BETA_SE_WILD_MAX = 2.0   # 흔들리는 베타 종목 비율 상한 (%) — 몇 개는 진짜로 있어요(분할을 못 고친 이력). 많으면 계산이 틀린 날
 BETA_SE_MED = (0.02, 0.2)   # 회사 주식(ETF 빼고) 베타 표준오차 중앙값의 범위 — 계산이 통째로 틀린 날을 잡아요
-BETA_N = (250, 800)      # 베타에 쓴 일별 수익률 수 (3년 ≈ 740 · 250 미만이면 파이프라인이 베타를 비워요)
+BETA_N = (250, 800)      # 베타에 쓴 일별 수익률 수. 아래 끝 = 파이프라인의 실제 최소(fetch_data.MIN_DAYS = 250: 그보다 적으면
+                         # 베타·표준오차를 비워요 — 신규 상장은 베타 없이 발행). 위 끝: 3년 + 40일 창(1,135일)의 평일은 최대 812일
+                         # (수익률 811), 휴장일(미국 평일 연 10일 안팎 · 국내 더 많음)을 빼면 미국 ≤ 약 783 · 국내는 그보다 적어요
 FL_KEYS = ("cr", "icr", "l3", "imp")                    # 재무 경고 검사 (corp.json fl · flRan · flNa)
-CORP_NEW_MUST = ("flRan", "dps3a", "divSt", "cash3", "eps3r")   # 필수 종목 corp.json 에 있어야 할 새 칸
-DATA_NEW_MUST = ("divSt", "dps3a", "dpsF", "dyt", "dz", "betaSE", "betaN")   # 필수 종목 data.json 에 있어야 할 새 칸
+# '필수 종목 새 칸' 줄: 필수 종목은 언제나 data betaSE·betaN · corp flRan, 그리고 corp.json 의 배당 칸이 data.json 과 같아야
+# 해요 (있으면 같은 값, 없으면 둘 다 없음 — 두 파일이 어긋나지 않게). 총액·주당순이익(cash3·eps3r)은 배당 순위에 든
+# 필수 종목만 봐요 — 순위에서 빠진 종목의 배당 자료 구멍은 '필수 종목 배당 순위 (dyt·dz)' 줄이 1곳은 경고 · 2곳부터 실패로 알려요.
+# (data 쪽 divSt·dps3a·dpsF 는 '국내 배당 분할 확인 칸' 줄이 모든 보통주에 대해 봐요.)
+DATA_NEW_MUST = ("betaSE", "betaN")
+CORP_NEW_MUST = ("flRan",)
+CORP_MIRROR = ("divSt", "dps3a", "dpsF", "dyt", "dz")
+CORP_NEW_MUST_AMT = ("cash3", "eps3r")
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -956,6 +969,32 @@ def div_row_problem(s):
     return None
 
 
+def floor_1(x):
+    """소수 첫째 자리까지 내림한 글자 — 84.96% 가 '85.0%' 로 보여 '85% 미만 실패' 옆에 서지 않게."""
+    return f"{math.floor(x * 10 + 1e-9) / 10:.1f}"
+
+
+def in_div_rank(s):
+    """배당 순위에 든 종목인지 (dyt·dz 가 모두 숫자)."""
+    return bool(s) and num(s.get("dyt")) is not None and num(s.get("dz")) is not None
+
+
+def rank_miss_reason(s):
+    """필수 종목이 배당 순위(dyt·dz)에 없는 이유 — 경고·실패 줄에 그대로 적어요. (v19.1b)"""
+    if not s:
+        return "데이터에 없음"
+    st = s.get("divSt")
+    if not st:
+        return "DART 배당 표 없음"
+    a3 = _nums3(s.get("dps3a"))
+    if a3 is None or a3[0] is None:
+        return {"nc": "비교 불가 (유상증자·합병 등으로 오늘 주식 수 기준을 확인 못 함)",
+                "nd": "알 수 없음 (오늘 주식 수 기준을 확인 못 함)"}.get(st, f"올해 배당 기준 없음 ({st})")
+    if num(s.get("dyt")) is None:
+        return "수익률 없음 (종가 없음 또는 30% 초과)"
+    return "배당 점수(dz) 없음"
+
+
 def check_v191b(rep, data, kr, us, by, comps, pdata):
     """v19.1b 새 줄 (Jack 승인 필요): 분할에 안전한 국내 배당 · 배당 순위 · 베타 표준오차 · 재무 경고 검사 기록."""
     dc = data.get("divCheck")
@@ -1003,24 +1042,38 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
 
     # 4·5. 배당한 국내 회사(외국 기업 빼고) 중 오늘 수익률을 확인한 비율 · 분할로 맞춘 비율
     payers = [s for s in com if not is_foreign(s.get("t")) and (_nums3(s.get("dps3")) or [None])[0] and _nums3(s["dps3"])[0] > 0]
-    share = 100.0 * sum(1 for s in payers if num(s.get("dyt")) is not None) / len(payers) if payers else 0.0
-    rep.pct("배당한 국내 회사 중 오늘 수익률(dyt) 확인", share, DYT_COVER)
+    n_ok = sum(1 for s in payers if num(s.get("dyt")) is not None)
+    share = 100.0 * n_ok / len(payers) if payers else 0.0
+    seen, floor = DYT_COVER_BANDS["seen"], DYT_COVER_BANDS["floor"]
+    rep.add("배당한 국내 회사 중 오늘 수익률(dyt) 확인", bool(payers) and share >= floor,
+            f"{floor_1(share)}% ({n_ok:,} / {len(payers):,})",
+            f"{floor:g}% 미만 실패 · {seen:g}% 미만 경고 (기준: DYT_COVER_BANDS)", warn=share < seen)
     adj = sum(1 for s in payers if s.get("divSt") == "adj")
     ashare = 100.0 * adj / len(payers) if payers else 0.0
     rep.add("배당한 국내 회사 중 분할·무상증자로 맞춘 비율", bool(payers) and ashare <= DIV_ADJ_MAX,
             f"{ashare:.1f}% ({adj} / {len(payers):,})", f"≤ {DIV_ADJ_MAX:g}% (많으면 배율을 잘못 읽은 날)")
 
-    # 6. 배당 순위: 필수 종목은 모두 dyt·dz 가 있어야 해요
-    miss = [t for t in must_kr if num((by.get(t) or {}).get("dyt")) is None or num((by.get(t) or {}).get("dz")) is None]
-    rep.add("필수 종목 배당 순위 (dyt·dz)", not miss, "모두 있음" if not miss else "없음: " + ",".join(miss), ",".join(must_kr))
+    # 6. 배당 순위: 필수 종목의 dyt·dz. 2곳 이상 빠지면 실패, 빠진 종목이 있으면 종목·이유를 적은 경고
+    #    (Jack 2026-11-05: 배당 자료 구멍 하나가 사이트 전체를 멈추지 않게)
+    rank_miss = [(t, rank_miss_reason(by.get(t))) for t in must_kr if not in_div_rank(by.get(t))]
+    rep.add("필수 종목 배당 순위 (dyt·dz)", len(rank_miss) < DIV_RANK_MISS_FAIL,
+            "모두 있음" if not rank_miss else f"빠짐 {len(rank_miss)}: " + " · ".join(f"{t} {why}" for t, why in rank_miss),
+            f"{','.join(must_kr)} (빠지면 경고 · {DIV_RANK_MISS_FAIL}곳 이상 실패)", warn=bool(rank_miss))
 
-    # 7. 필수 종목의 새 칸 (data.json · corp.json)
+    # 7. 필수 종목의 새 칸 (data.json · corp.json) — 위 DATA_NEW_MUST · CORP_NEW_MUST · CORP_MIRROR · CORP_NEW_MUST_AMT 설명
     cby = {c.get("t"): c for c in comps}
-    miss = [f"{t}.{k}" for t in must_kr for k in DATA_NEW_MUST if (by.get(t) or {}).get(k) is None]
-    miss += [f"corp {t}.{k}" for t in must_kr for k in CORP_NEW_MUST if (cby.get(t) or {}).get(k) is None]
+    miss = []
+    for t in must_kr:
+        s, c = by.get(t) or {}, cby.get(t) or {}
+        miss += [f"{t}.{k}" for k in DATA_NEW_MUST if s.get(k) is None]
+        miss += [f"corp {t}.{k}" for k in CORP_NEW_MUST if c.get(k) is None]
+        miss += [f"corp {t}.{k}≠data" for k in CORP_MIRROR if c.get(k) != s.get(k)]   # 없으면 둘 다 없어야 해요
+        if in_div_rank(s):
+            miss += [f"corp {t}.{k}" for k in CORP_NEW_MUST_AMT if c.get(k) is None]
     rep.add("필수 종목 새 칸 (배당 분할 확인·베타 표준오차·재무 경고 검사)", not miss,
             "모두 있음" if not miss else "없음: " + ",".join(miss[:6]) + ("…" if len(miss) > 6 else ""),
-            "data " + "·".join(DATA_NEW_MUST) + " / corp " + "·".join(CORP_NEW_MUST))
+            "data " + "·".join(DATA_NEW_MUST) + " · corp " + "·".join(CORP_NEW_MUST) + " · corp 배당 칸 = data · "
+            + "·".join(CORP_NEW_MUST_AMT) + " ('필수 종목 배당 순위'에서 빠진 종목은 총액·주당순이익 빼고)")
 
     # 8. 베타 표준오차: 베타가 있는 종목은 모두 (SE > 0, 250 ≤ n ≤ 800), 회사 주식의 중앙값이 그럴듯한 범위,
     #    흔들리는 베타(SE > 0.5 — 가격 이력이 깨진 종목)는 2% 이하. 종목 하나가 발행 전체를 막지 않게 상한은 비율로 봐요

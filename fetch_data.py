@@ -60,6 +60,10 @@ import numpy as np
 import pandas as pd
 import requests
 
+# v19.1b: 배당 순위·수익률 확인 비율의 관문 기준과 '빠진 이유' 문구는 관문 파일 한곳에 있어요. 파이프라인 로그는 그걸 그대로
+# 읽어 관문과 같은 선·같은 말로 알려요 (관문은 이 파일을 읽지 않아요 — 계산은 따로)
+from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason
+
 # ────────────────────────────────────────────────────────────
 # 설정
 # ────────────────────────────────────────────────────────────
@@ -2981,9 +2985,11 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
     log(f"{'  !! ' if loud else '· '}배당 분할 확인: 그대로 {cnt['same']:,} · 맞춤 {cnt['adj']:,}{ex(adj_ex)} · "
         f"비교 불가 {cnt['nc']:,}{ex(nc_ex)} · 알 수 없음 {cnt['nd']:,}{ex(nd_ex)} · 배당 없음 {cnt['zero']:,} · "
         f"DART 배당 표 없음 {cnt['noDps']:,} · 우선주 {cnt['pref']:,}")
-    share = cnt["payersDyt"] / cnt["payers"] if cnt["payers"] else 0.0
-    log(f"{'  !! ' if share < 0.9 else '· '}오늘 종가 기준 배당수익률(dyt): 배당한 {cnt['payers']:,}종목 중 {cnt['payersDyt']:,} "
-        f"({share:.1%}) + 배당 없음 {cnt['dyt'] - cnt['payersDyt']:,} — 확인 못 한 종목은 빈 칸이라 배당 순위에서 빠져요"
+    share = 100.0 * cnt["payersDyt"] / cnt["payers"] if cnt["payers"] else 0.0
+    band = ("관문 실패" if share < DYT_COVER_BANDS["floor"] else "관문 경고" if share < DYT_COVER_BANDS["seen"] else None)
+    log(f"{'  !! ' if band else '· '}오늘 종가 기준 배당수익률(dyt): 배당한 {cnt['payers']:,}종목 중 {cnt['payersDyt']:,} "
+        f"({floor_1(share)}%{' · ' + band if band else ''}) + 배당 없음 {cnt['dyt'] - cnt['payersDyt']:,}"
+        f" — 확인 못 한 종목은 빈 칸이라 배당 순위에서 빠져요"
         + (f" · 믿지 않아 비운 값(수익률 30% 초과·음수 총액) {len(big)}: {', '.join(big[:5])}" if big else ""))
     counts = {"v": 1, **{k: cnt[k] for k in DIV_STATUS}, "noDps": cnt["noDps"], "pref": cnt["pref"],
               "payers": cnt["payers"], "dyt": cnt["dyt"]}
@@ -2994,14 +3000,15 @@ DIV_RANK_MUST = MUST_KR + ("035420", "012450")   # 관문의 필수 종목 중 �
 
 
 def dividend_rank_missing(kr_stocks, must=DIV_RANK_MUST):
-    """배당 순위(dz)에 빠진 필수 종목 → [(코드, 이유)]. 관문의 '필수 종목 배당 순위'와 같은 7개를 봐요. (순수 함수)"""
+    """배당 순위(dyt·dz)에 빠진 필수 종목 → [(코드, 이유)]. 관문의 '필수 종목 배당 순위'와 같은 7개, 같은 이유 문구예요.
+    목록에 아예 없는 종목은 '데이터에 없음'으로 적어요 (관문은 그 종목을 '필수 종목 (가격·시총)' 줄에서 실패로 막아요). (순수 함수)"""
     by = {s.get("t"): s for s in kr_stocks}
     out = []
     for t in must:
-        s = by.get(t) or {}
-        if _fin(s.get("dz")) is None:
-            why = s.get("divSt") or ("DART 배당 표 없음" if "dps3" not in s else "?")
-            out.append((t, why))
+        s = by.get(t)
+        if s is not None and _fin(s.get("dyt")) is not None and _fin(s.get("dz")) is not None:
+            continue
+        out.append((t, rank_miss_reason(s)))
     return out
 
 
@@ -3591,13 +3598,16 @@ def main():
     add_percentiles(kr)
     add_percentiles(us)
     # v19.1b: 배당 순위(dz)는 확인한 배당으로만 매겨요. 필수 종목은 꼭 들어 있어야 해요 (CLAUDE.md: 빈 칸일 수 있는 값으로
-    # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). 빠지면 여기서 이유와 함께 크게 남기고, 관문의 '필수 종목 배당 순위'
-    # 줄이 발행을 막아요. 여기서 멈추지 않는 건 파일과 관문 표가 남아야 시험 실행에서 원인을 볼 수 있어서예요.
+    # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). 빠지면 여기서 이유와 함께 크게 남겨요. 관문의 '필수 종목 배당 순위'
+    # 줄은 1곳이면 경고(종목·이유), 2곳 이상이면 실패로 발행을 막아요 (Jack 2026-11-05: 배당 자료 구멍 하나가 사이트를 멈추지 않게).
+    # 여기서 멈추지 않는 건 파일과 관문 표가 남아야 시험 실행에서 원인을 볼 수 있어서예요.
     n_dz = sum(1 for s in kr if _fin(s.get("dz")) is not None)
     miss_dz = dividend_rank_missing(kr)
     log(f"{'  !! ' if miss_dz else '· '}배당 순위(dz): {n_dz:,}종목 · 필수 종목 "
         + ("모두 있음" if not miss_dz else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_dz)
-           + " — 관문에서 실패해 발행하지 않아요"))
+           + (" — 관문에서 실패해 발행하지 않아요" if len(miss_dz) >= DIV_RANK_MISS_FAIL
+              or any(t not in {s["t"] for s in kr} for t, _ in miss_dz)          # 목록에 없는 필수 종목은 다른 줄이 실패로 막아요
+              else " — 관문에서 경고해요 (이 일로는 발행이 막히지 않아요 · 이 종목은 배당 순위에서 빠져요)")))
     stocks = kr + us + bonds + funds
     if selftest == "corrupt-price":
         for x in stocks:
