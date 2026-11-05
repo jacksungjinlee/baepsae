@@ -993,7 +993,7 @@ function DecompCard({ c, setExplain }) {
     body = (
       <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
-        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" : ""}{c.r36}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>}
+        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>}
       </div>
     );
   }

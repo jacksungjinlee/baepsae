@@ -866,7 +866,7 @@ const T = {
   editData: { ko:"데이터 수정", en:"Edit data" },
   mcap: { ko:"시가총액", en:"Mkt cap" }, roe: { ko:"ROE", en:"ROE" }, opm: { ko:"영업이익률", en:"Op margin" },
   // 오늘 데이터의 미국 종목 g3 는 야후 revenueGrowth: 최근 분기 매출을 1년 전 같은 분기와 비교한 값이에요 (3년 · 연율이 아니에요).
-  // 이름표는 Jack 승인 (2026-11-05). 한국 종목과 내장 예시 값은 예전 이름표 그대로예요.
+  // 이름표는 Jack 승인 (2026-11-05). 한국 종목은 아래 g3Kr2 · g3Kr1, 오늘 데이터에 없는 내장 예시 값은 칸을 빼요 (growthCell).
   g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" },
   // 한국 종목 g3 는 최근 2년 연평균, 전전기 매출이 없으면 최근 1년이에요 (Jack 승인 2026-11-05). 어느 쪽인지 모르면 칸을 빼요.
   g3Kr2: { ko:"매출성장(최근 2년 연평균)", en:"Rev growth (2-yr avg/yr)" }, g3Kr1: { ko:"매출성장(최근 1년)", en:"Rev growth (1 yr)" }, debt: { ko:"부채비율", en:"Debt ratio" }, frn: { ko:"외국인", en:"Foreign" },
@@ -5141,7 +5141,7 @@ function useKrGrowthBasis(s, open) {
       setBasis(b);
     });
     return () => { live = false; };
-  }, [open, s && s.t, x.g3]);
+  }, [open, s && s.t, x.g3, x.g3Kr]);                  // g3Kr: 오늘 데이터가 늦게 들어와 내장 예시 값을 바꿔도 다시 맞춰 봐요
   return basis;
 }
 

@@ -687,6 +687,9 @@ def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_das
     # 3개월 주가가 내린 문장도 같은 규칙 ('내렸어요' 옆에 부호 없이): 성적표와 기업분석
     assert "실적은 좋아졌는데 3개월간 ${Math.abs(c.r3)}% 내렸어요" in shell and "최근 3개월 주가는 ${Math.abs(c.r3)}% 내렸어요" in corp
     assert "${c.r3}% 내렸어요" not in shell + corp
+    assert '지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}.' in corp
+    detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    assert "}, [open, s && s.t, x.g3, x.g3Kr]);" in detail                          # 오늘 데이터가 늦게 들어와도 다시 맞춰 봐요
     assert "const growthLine = krGrowthDcfLine(c.g3, c.rev);" in corp and '이 담겨 있어요.{growthLine ? " " + growthLine : null}' in corp
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
     assert "지금 주가가 가정하는 성장률과 비교해 보세요." in built and "2년 동안 연평균" in built and "최근 2년간 연평균" in built
