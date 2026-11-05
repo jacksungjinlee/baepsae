@@ -1,4 +1,7 @@
 name: 시세 데이터 갱신
+# v17.6: 시험 실행은 목록에서 '시험 실행'이 붙어요. 감시(watchdog.py)가 이 표시로 시험 실행을 빼고 실제 실행만 봐요.
+# 다른 실행의 제목은 지금과 같아요 ('시세 데이터 갱신' — 매일 09:13 점검이 보는 이름 그대로).
+run-name: ${{ inputs.dry_run && '시세 데이터 갱신 · 시험 실행' || '시세 데이터 갱신' }}
 
 on:
   schedule:
@@ -204,6 +207,8 @@ jobs:
             args="$args --prev-ref FETCH_HEAD"
           fi
           python validate_data.py $args
+          # v17.6: 여기까지 왔으면 PASS 예요 (실패하면 위 줄에서 단계가 멈춰요). 통과한 네 파일의 영수증 — 커밋 단계가 확인해요.
+          sha256sum data.json corp.json disc.json macro.json > "$RUNNER_TEMP/gate-pass.sha256"
 
       - name: 커밋 & 푸시
         if: ${{ !inputs.dry_run }}
@@ -212,9 +217,23 @@ jobs:
             echo "!! 데이터 커밋은 main 에서만 해요 (지금: $GITHUB_REF_NAME)"
             exit 1
           fi
+          # v17.6: 관문을 통과한 바로 그 네 파일인지 영수증으로 확인해요 (없거나 다르면 멈춰요)
+          sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"
           git config user.name  "baepsae-bot"
           git config user.email "actions@github.com"
           git add data.json corp.json disc.json macro.json
           git diff --staged --quiet && echo "변경 없음" || git commit -m "데이터 갱신 $(TZ=Asia/Seoul date +%Y-%m-%d)"
           git pull --rebase origin main
           git push
+
+      # v17.6 Part 3a: main 에 올린 같은 네 파일을 data 브랜치에도 올려요. 사이트 배포(deploy.yml)가 여기서 가져가요.
+      # data 브랜치가 없으면(이 버전의 첫 발행) 네 파일만 담아 새로 만들어요. 관문 영수증이 없거나 다르면 멈춰요. 강제 푸시는 안 해요.
+      # (매일 09:13 점검은 위 '커밋 & 푸시' 단계로 발행한 실행을 찾아요 — 그 이름은 그대로예요.)
+      - name: data 브랜치에 올리기
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "!! 데이터는 main 에서만 올려요 (지금: $GITHUB_REF_NAME)"
+            exit 1
+          fi
+          bash tools/push_data_branch.sh "$RUNNER_TEMP/gate-pass.sha256"

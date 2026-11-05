@@ -2499,6 +2499,9 @@ def scene_pc(R, files):
         inp.fill("Apple")
         page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-cls="us"]').first.wait_for(state="visible")
         side_tab(page, "home")                                             # 종목을 떠나면 칸이 비어요 (홈에 지난 검색어가 남지 않음)
+        # 칸은 화면이 홈으로 바뀐 다음 렌더에서 비워져요 (app.jsx 의 effect). GitHub 의 기계에서는 그 사이에 읽혀 실패했어요 (v17.6 CI,
+        # 2026-11-05) — 비워질 때까지 3초 기다린 뒤 똑같이 확인해요. 끝내 안 비면 여전히 실패예요.
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.value === ''; }", arg=TOP_INPUT, timeout=3000)
         assert inp.input_value() == "", inp.input_value()
         for kind in ("input", "textarea", "select", "contenteditable"):    # 다른 칸에 쓰는 중이면 '/' 는 그 칸의 글자
             assert page.evaluate(SLASH_PROBE, kind), kind
