@@ -58,6 +58,9 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    - **Fresh-eyes review** — what it found and what you fixed.
    - **After merge** — what you will run and check yourself, and anything Jack should look at on his phone, or "없음".
 6. One version per PR. Small and reviewable beats big.
+7. Usage: Jack's main sessions run at Extra high effort. Run helper agents for routine, fully specified work (mechanical
+   edits, test runs, screenshots, data collection) at medium effort. Fresh-eyes reviews, pipeline and publish-gate
+   changes, anything touching data correctness, and Korean wording stay at high or above.
 
 ## GitHub process — you own it (Jack's standing rule, 2026-10-31)
 
