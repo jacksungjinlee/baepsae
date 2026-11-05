@@ -14,7 +14,7 @@ Decide engineering details yourself and list them in the PR; bring Jack only Kor
 in one short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
 
 **`baepsae.html` is permanent (Jack, 2026-11-05; CLAUDE.md product rules):** the address is on Jack's CV and recruiters
-have it. Never delete or rename it. Since PR #PR_NUM a plain visit (no `?from=app` marker, no `#`) goes straight to 2.0
+have it. Never delete or rename it. Since PR #42 a plain visit (no `?from=app` marker, no `#`) goes straight to 2.0
 (`template.html`'s first script: `location.replace`, one separate GoatCounter count at `/baepsae/baepsae.html→app`);
 every 2.0 link into the old app carries the marker (`src/links.js` `OLD_APP`), and old shared links with a `#` still
 open the old app. When the old app retires, `baepsae.html` stays as a permanent redirect to 2.0 — and the old app
