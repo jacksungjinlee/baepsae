@@ -571,25 +571,30 @@ def test_us_revenue_growth_is_labelled_as_the_latest_quarter_year_on_year():
             {"t": "MSFT", "nk": "마이크로소프트", "ne": "Microsoft", "s": "it", "cls": "us", "ccy": "USD", "price": 420, "beta": 1.0,
              "vol": 24, "x": {"g3": 14}},
             {"t": "005930", "nk": "삼성전자", "ne": "Samsung", "s": "semi", "cls": "kr", "price": 78000, "beta": 1.1, "vol": 30}]
+    base.append({"t": "AAPL2", "nk": "애플2", "ne": "Apple2", "s": "elec", "cls": "us", "ccy": "USD", "price": 1, "beta": 1, "vol": 20})
     live = [{"t": "AAPL", "cls": "us", "price": 349.5, "beta": 1.2, "vol": 25, "g3": 11.7},
+            {"t": "AAPL2", "price": 2, "beta": 1, "vol": 20, "g3": 5.0},                 # 오늘 데이터에 cls 가 없어도 내장 목록이 미국이면 미국
             {"t": "NVDA", "nk": "NVIDIA", "cls": "us", "ccy": "USD", "price": 190, "beta": 1.8, "vol": 50, "g3": -3.2},
             {"t": "005930", "cls": "kr", "price": 218000, "beta": 1.26, "vol": 51, "g3": 13.5}]
     got = run_js(f"const out = D.mergeStocks({json.dumps(base, ensure_ascii=False)}, {json.dumps(live, ensure_ascii=False)});"
                  "console.log(JSON.stringify(Object.fromEntries(out.map((s) => [s.t, s.x]))));")
-    assert got["AAPL"]["g3Q"] is True and got["AAPL"]["g3"] == 11.7 and got["NVDA"]["g3Q"] is True
+    assert got["AAPL"]["g3Q"] is True and got["AAPL"]["g3"] == 11.7 and got["NVDA"]["g3Q"] is True and got["AAPL2"]["g3Q"] is True
     assert got["005930"]["g3Q"] is False and not got["MSFT"].get("g3Q")                # 한국 · 오늘 데이터에 없는 내장 예시 값
     T = {"g3": {"ko": "매출성장(3y)", "en": "Rev growth 3y"}, "g3Us": {"ko": "매출성장(최근 분기, 1년 전 대비)", "en": "Rev growth (latest qtr y/y)"}}
     cells = run_metrics("const T = " + json.dumps(T, ensure_ascii=False) + ";"
                         "const out = {};"
                         "for (const lang of ['ko', 'en']) { const t = (k) => T[k][lang];"
                         " out[lang] = [D.growthCell({ g3: 11.7, g3Q: true }, t), D.growthCell({ g3: -3.2, g3Q: true }, t),"
-                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: 13.5, g3Q: false }, t), D.growthCell({ g3: 6 }, t)]; }"
+                        " D.growthCell({ g3: null, g3Q: true }, t), D.growthCell({ g3: 13.5, g3Q: false }, t), D.growthCell({ g3: 6 }, t),"
+                        " D.growthCell(undefined, t)]; }"
                         "console.log(JSON.stringify(out));")
     assert cells["ko"] == [["매출성장(최근 분기, 1년 전 대비)", "+11.7%"], ["매출성장(최근 분기, 1년 전 대비)", "-3.2%"],
-                           ["매출성장(최근 분기, 1년 전 대비)", "–"], ["매출성장(3y)", "+13.5%/y"], ["매출성장(3y)", "+6%/y"]], cells["ko"]
-    assert [c[0] for c in cells["en"]] == ["Rev growth (latest qtr y/y)"] * 3 + ["Rev growth 3y"] * 2
+                           ["매출성장(최근 분기, 1년 전 대비)", "–"], ["매출성장(3y)", "+13.5%/y"], ["매출성장(3y)", "+6%/y"],
+                           ["매출성장(3y)", "–"]], cells["ko"]
+    assert [c[0] for c in cells["en"]] == ["Rev growth (latest qtr y/y)"] * 3 + ["Rev growth 3y"] * 3
     src = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
     assert 'g3Us: { ko:"매출성장(최근 분기, 1년 전 대비)", en:"Rev growth (latest qtr y/y)" }' in src
-    assert src.count("growthCell(x, t)") == 2 and '[t("g3"), (x.g3 > 0' not in src.split("export function growthCell")[0]  # 정의 + 칸 하나
+    assert 'growthCell(x, t), [t("debt")' in src                                       # 화면의 매출성장 칸은 growthCell 로만
+    assert src.count('[t("g3"), (x.g3 > 0') == 1 and src.count('t("g3Us")') == 1           # 예전 이름표 칸은 growthCell 안에만
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
     assert "매출성장(최근 분기, 1년 전 대비)" in built and "Rev growth (latest qtr y/y)" in built

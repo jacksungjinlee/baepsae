@@ -103,7 +103,7 @@ export function mergeStocks(base, live) {
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
-             mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: L.cls === "us" },
+             mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us" },   // 미국 g3 = 최근 분기 · 1년 전 대비
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];

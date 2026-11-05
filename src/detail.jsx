@@ -428,6 +428,8 @@ const LENS = {
 
 // ================= Stock snapshot (approximate, editable) =================
 // price KRW · beta vs KOSPI · vol annual % · x: {mcap 조원, roe %, opm %, g3 rev growth %/y, debt %, frn foreign %, lo/hi 52w, dk/de desc}
+// (today's data, src/data.js: a US stock's g3 is Yahoo's latest quarter vs the same quarter a year before, flagged x.g3Q;
+//  show it only through growthCell, which labels it so)
 const BASE_STOCKS = [
   { t:"005930", nk:"삼성전자", ne:"Samsung Elec", s:"semi", price:78000, beta:1.15, vol:32, per:14, pbr:1.4, dy:1.8, al:-6,
     x:{ mcap:466, roe:9.2, opm:15, g3:8, debt:27, frn:52, lo:52300, hi:84500, dk:"메모리 세계 1위. 스마트폰·가전·파운드리 종합 IT. 메모리 가격 사이클을 크게 타요.", de:"World #1 memory; phones, appliances, foundry. Rides the memory cycle." } },
@@ -5110,7 +5112,8 @@ function AppInner({ seed, lang: langProp }) {
 // 매출성장 칸: 오늘 데이터의 미국 종목(x.g3Q, src/data.js)은 '최근 분기, 1년 전 대비' 이름표에 % (연율 '/y' 없이),
 // 그 밖(한국 · 내장 예시 값)은 예전 그대로. [이름표, 값] 을 돌려줘요.
 export function growthCell(x, t) {
-  if (x && x.g3Q) return [t("g3Us"), x.g3 != null ? (x.g3 > 0 ? "+" : "") + x.g3 + "%" : "\u2013"];
+  x = x || {};
+  if (x.g3Q) return [t("g3Us"), x.g3 != null ? (x.g3 > 0 ? "+" : "") + x.g3 + "%" : "\u2013"];
   return [t("g3"), (x.g3 > 0 ? "+" : "") + (x.g3 != null ? x.g3 + "%/y" : "\u2013")];
 }
 
