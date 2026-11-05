@@ -442,6 +442,11 @@ def test_manual_url_https_only_and_normalised():
     ("https://cdn.brandfetch.io/ticker/AAPL/w/128/h/128?c=x", "Brandfetch"), ("https://asset.brandfetch.io/x.png", "Brandfetch"),
     ("https://brandfetch.com/x.png", "Brandfetch"), ("https://img.logo.dev/apple.com?token=pk_x", "logo.dev"),
     ("https://LOGO.DEV/x.png", "logo.dev"), ("http://img.logo.dev./x", "logo.dev"),
+    ("https://127.0.0.1/a.png", "public website"), ("https://169.254.169.254/latest/meta-data", "public website"),
+    ("https://0x7f.1/a.png", "public website"), ("https://[::1]/a.png", "public website"),
+    ("https://localhost:8443/a.png", "public website"), ("https://intranet/a.png", "public website"),
+    ("https://printer.local/a.png", "public website"), ("https://x.home.arpa/a.png", "public website"),
+    ("https://app.localhost/a.png", "public website"),
     ("https://x.com/" + "a" * 1987, "at most 2000"), ("https://" + "a" * 2100, "at most 2000"),
 ])
 def test_manual_url_refused(raw, why):
@@ -521,7 +526,8 @@ def test_an_old_export_file_loads_unchanged_and_exports_the_same():
 
 def test_old_saved_progress_reads_back_unchanged():
     """Jack's saved progress as the merged page writes it ({v: 1, savedAt, grid, choices, flags, fix}): every choice,
-    mark and fix and the grid come back unchanged; it counts as Start tapped before (it has confirmed choices)."""
+    mark and fix and the grid come back unchanged. Nothing in it says Start was tapped, so it does not resume by itself;
+    what the new page writes back (the same keys plus fixUrl, started, paused) reads back unchanged too."""
     keys = {"bf": KEYS[0], "ld": KEYS[1]}
     old = {"v": 1, "savedAt": "2026-11-05T15:02:11+09:00", "grid": "KR-2", "choices": old_choices(keys),
            "flags": {"000660": 1, "MSFT": 1}, "fix": {"000660": "letter", "MSFT": "bf-ticker"}}
@@ -529,21 +535,24 @@ def test_old_saved_progress_reads_back_unchanged():
     js = (f"var C = {json.dumps(old_comps())}, K = {json.dumps(keys)}, G = {json.dumps(grids)}, old = {json.dumps(old)};\n"
           "var r = parseProgress(JSON.parse(JSON.stringify(old)), C, K, G);\n"
           # the new page writes the same keys plus fixUrl and started: read back unchanged too
-          "var saved = {v: 1, savedAt: 'x', grid: r.grid, choices: r.choices, flags: r.flags, fix: r.fix, fixUrl: r.fixUrl, started: true};\n"
+          "var saved = {v: 1, savedAt: 'x', grid: r.grid, choices: r.choices, flags: r.flags, fix: r.fix, fixUrl: r.fixUrl, started: true, paused: false};\n"
           "console.log(JSON.stringify([r, parseProgress(JSON.parse(JSON.stringify(saved)), C, K, G)]));")
     r, r2 = node(js)
     for got in (r, r2):
         assert got["choices"] == old["choices"] and got["flags"] == old["flags"] and got["fix"] == old["fix"]
         assert got["grid"] == "KR-2" and got["fixUrl"] == {} and got["rejected"] == [] and got["error"] == ""
-        assert got["resume"] is True
+    assert (r["resume"], r2["resume"]) == (False, True)
 
 
 @pytest.mark.parametrize("blob,resume", [
-    ({"v": 1, "choices": {}, "flags": {}, "fix": {}}, False),                      # old format, nothing done yet
-    ({"v": 1, "choices": {}, "flags": {"MSFT": 1}, "fix": {}}, True),              # old format, marks: Start was tapped
-    ({"v": 1, "choices": {"005380": {"source": "letter", "url": None, "reviewed": "2026-11-05"}}}, True),
+    ({"v": 1, "choices": {}, "flags": {}, "fix": {}}, False),                      # old format: says nothing about Start
+    ({"v": 1, "choices": {}, "flags": {"MSFT": 1}, "fix": {}}, False),             # marks can be made before Start
+    ({"v": 1, "choices": {"005380": {"source": "letter", "url": None, "reviewed": "2026-11-05"}}}, False),  # Load choices
     ({"v": 1, "choices": {"005380": {"source": "letter", "url": None, "reviewed": "2026-11-05"}}, "started": False}, False),
     ({"v": 1, "choices": {}, "started": True}, True),
+    ({"v": 1, "choices": {}, "started": True, "paused": False}, True),
+    ({"v": 1, "choices": {}, "started": True, "paused": True}, False),            # Pause was tapped last
+    ({"v": 1, "started": "yes"}, False),
     ({"v": 1}, False),
 ])
 def test_resume_only_after_start_was_tapped(blob, resume):

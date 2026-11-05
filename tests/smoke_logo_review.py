@@ -34,13 +34,16 @@ is aborted too and fails the test. Keys in the page are never printed.
                               http made https; a preview from a local HTTPS server (its own certificate): 48 px refused,
                               80 px usable with a warning, 128 px -> Use this picture; None of these - find more ->
                               Save: choices, summary ('needs a logo: 1'), Download, the Needs a logo view (tap -> its
-                              grid); only image GETs reach that server, without a referrer; the download loads back
+                              grid); only image GETs reach that server (a public-looking name Chromium maps to this
+                              machine), without a referrer; the download loads back
   K  old saved progress       (phone and PC) Jack's saved progress as the page of PR #45 writes it loads, saves back
-                              and exports unchanged; his old export loads as 'the same'; loading resumes by itself
+                              and exports unchanged; his old export loads as 'the same'; it does not say Start was
+                              tapped, so nothing loads by itself
   L  remembered + resume      first visit and a reload without Start load nothing; after Start, what was found is
                               remembered (source, hit/miss, day); a reload resumes by itself ('Loading resumed' +
                               Pause), runs the checks first, asks only the remembered hits, never a known miss; a
-                              remembered logo that no longer loads gets its company checked again
+                              second tab does not start by itself; after Pause a reload does not start; a remembered
+                              logo that no longer loads gets its company checked again
 Zero page errors in every scenario; screenshots go to SMOKE_OUT, else a new temporary folder.
 """
 import asyncio
@@ -68,6 +71,10 @@ import logo_sources as lsrc  # noqa: E402
 from logo_ids import Masker, logo_url  # noqa: E402
 
 PROVIDER_HOSTS = {"cdn.brandfetch.io", "img.logo.dev"}
+# The local HTTPS server for pasted image addresses goes by a public-looking name (the page refuses IP numbers and local
+# names): Chromium maps it to this machine, so nothing leaves it.
+IMG_HOST = "logos.example.com"
+LOCAL_HOSTS = {"127.0.0.1", IMG_HOST}
 STORE_KEY = "baepsae-logo-review-v1"
 PROBE_KEY = "baepsae-logo-review-probes-v1"
 ROUTES = [("bfI", "bf", "isin", "isin"), ("bfT", "bf", "ticker", "tk"), ("ldT", "ld", "ticker", "tk"),
@@ -266,7 +273,7 @@ class Run:
     async def _on_route(self, route):
         req = route.request
         host = urlparse(req.url).hostname
-        if host == "127.0.0.1":
+        if host in LOCAL_HOSTS:
             await route.continue_()
             return
         if host not in PROVIDER_HOSTS:
@@ -538,6 +545,7 @@ async def scenario_d(browser, base, data, keys, out, mask, vp, name, icon_codes,
     keys_ = await run.js("[Object.keys(localStorage).sort(), sessionStorage.length, document.cookie]")
     check(keys_ == [sorted([STORE_KEY, PROBE_KEY]), 0, ""], f"D-{name}: storage {keys_}", mask)
     await run.page.reload(wait_until="domcontentloaded")
+    await run.wait("window.__logoReview.running()", 5, "loading resumed after the reload")
     back = await run.js("[window.__logoReview.current(), Object.keys(window.__logoReview.prog().choices).length, "
                         "Object.keys(window.__logoReview.prog().flags), window.__logoReview.running(), "
                         "!document.getElementById('resumed').classList.contains('hide')]")
@@ -615,7 +623,7 @@ def https_images(folder):
 
     httpd = Server(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    return f"https://127.0.0.1:{httpd.server_address[1]}", httpd, log
+    return f"https://{IMG_HOST}:{httpd.server_address[1]}", httpd, log
 
 
 async def tap_tile(run, code, vp):
@@ -670,7 +678,8 @@ async def scenario_j(browser, base, data, keys, out, mask, vp, name, img_base, i
     refused = [("javascript:alert(1)", "script"), ("data:image/png;base64,AAAA", "data:"),
                ("https://cdn.brandfetch.io/ticker/AAPL/w/128/h/128?c=x", "Brandfetch"),
                ("https://img.logo.dev/apple.com?token=pk_x", "logo.dev"), ("ftp://x.example/a.png", "https"),
-               ("https://x.example/" + "a" * 2000, "at most 2000"), ("www.x.example/a.png", "full web address")]
+               ("https://x.example/" + "a" * 2000, "at most 2000"), ("www.x.example/a.png", "full web address"),
+               ("https://127.0.0.1/a.png", "public website"), ("https://localhost/a.png", "public website")]
     for addr, why in refused:
         await preview(addr)
         check(not await said(why, "bad", 3), f"J-{name}: Use on for {addr[:40]}", mask)
@@ -693,6 +702,15 @@ async def scenario_j(browser, base, data, keys, out, mask, vp, name, img_base, i
     await said("Chosen", "good", 3)
     on = await run.js(f"[...document.querySelectorAll('{rowa} .opt.on')].map(o => o.dataset.src)")
     check(on == ["manual"] and await run.page.inner_text("#fixsave") == "Choose for 1 more", f"J-{name}: chosen {on}", mask)
+    await run.page.fill(inp, f"{img_base}/soft.png")                      # another address, not previewed
+    await said("no longer chosen", "warn", 3)
+    left = await run.js(f"[document.querySelectorAll('{rowa} .opt.on').length, window.__logoReview.prog().fix[{json.dumps(a)}] "
+                        "|| null, document.getElementById('fixsave').textContent]")
+    check(left == [0, None, "Choose for 2 more"], f"J-{name}: after typing another address {left}", mask)
+    await preview(url)
+    check(await said("128 × 128 px", "good"), f"J-{name}: Use off for the right picture again", mask)
+    await run.page.click(use)
+    await said("Chosen", "good", 3)
     await run.page.click(f'#fixlist .fixrow[data-code="{b}"] .opt[data-src="need"]')
     sideways = await run.js("[document.documentElement.scrollWidth, (s => s.scrollWidth - s.clientWidth)"
                             "(document.querySelector('#fix .sheet'))]")
@@ -741,8 +759,9 @@ async def scenario_j(browser, base, data, keys, out, mask, vp, name, img_base, i
     check(not provider and not run.errors and not run.other, f"J-{name}: refused addresses requested {provider} · page "
           f"errors {run.errors} · other hosts {run.other}", mask)
     await run.close()
-    return path, (f"J paste + find more ({name} {vp[0]} px): 7 addresses refused before any request (script, data:, "
-                  f"Brandfetch, logo.dev, ftp, over 2,000 characters, no https://); http made https; 48 px refused, a "
+    return path, (f"J paste + find more ({name} {vp[0]} px): 9 addresses refused before any request (script, data:, "
+                  f"Brandfetch, logo.dev, ftp, over 2,000 characters, no https://, an IP number, localhost); http made "
+                  f"https; 48 px refused, a "
                   f"missing picture said so, 80 px usable with a warning, 128 px chosen; find more = needs a logo: 1 in "
                   f"the summary, the export and the Needs a logo view; the view's tap opened KR-1 at that tile; only "
                   f"{len(new)} GETs to the image server, no referrer")
@@ -772,7 +791,7 @@ def old_progress(data, keys):
 
 async def scenario_k(browser, base, data, keys, out, mask, vp, name, old_file):
     """Jack's saved progress from the page he is using loads intact: every choice, mark and fix; it saves back the
-    same; his old export loads as 'the same'. Its confirmed grid means Start was tapped: loading resumes by itself."""
+    same; his old export loads as 'the same'. Nothing in it says Start was tapped, so nothing loads by itself."""
     blob = old_progress(data, keys)
     init = (f"if (!localStorage.getItem({json.dumps(STORE_KEY)})) "
             f"localStorage.setItem({json.dumps(STORE_KEY)}, {json.dumps(json.dumps(blob))});")
@@ -781,11 +800,13 @@ async def scenario_k(browser, base, data, keys, out, mask, vp, name, old_file):
                        "!document.getElementById('resumed').classList.contains('hide'), "
                        "document.getElementById('alerts').textContent, window.__logoReview.exportObj().choices]")
     prog, cur, running, note, alerts, exported = got
+    await asyncio.sleep(1.0)
+    running = running or await run.js("window.__logoReview.running()") or bool(run.reqs)
     kinds = collections.Counter(e["source"] for e in blob["choices"].values())
     check(prog["choices"] == blob["choices"] and prog["flags"] == blob["flags"] and prog["fix"] == blob["fix"]
           and exported == blob["choices"], f"K-{name}: saved progress changed on load "
           f"({len(prog['choices'])} of {len(blob['choices'])} choices)", mask)
-    check(cur == "KR-2" and running and note and "left out" not in alerts and "could not" not in alerts,
+    check(cur == "KR-2" and not running and not note and "left out" not in alerts and "could not" not in alerts,
           f"K-{name}: grid {cur}, running {running}, note {note}, alerts {alerts[:200]}", mask)
     check(len(kinds) == 7 and kinds["letter"] and kinds["own-icon"], f"K-{name}: the old progress has {dict(kinds)}", mask)
     # any change saves: the entry keeps every old choice, mark and fix, plus started
@@ -794,7 +815,7 @@ async def scenario_k(browser, base, data, keys, out, mask, vp, name, old_file):
     await tap_tile(run, tile, vp)
     saved = json.loads(await run.js(f"localStorage.getItem({json.dumps(STORE_KEY)})"))
     check(saved["choices"] == blob["choices"] and saved["flags"] == blob["flags"] and saved["fix"] == blob["fix"]
-          and saved["grid"] == "KR-2" and saved["started"] is True and saved["v"] == 1,
+          and saved["grid"] == "KR-2" and saved["started"] is False and saved["v"] == 1,
           f"K-{name}: saved back differently: {sorted(set(saved) - {'choices'})}", mask)
     await run.page.set_input_files("#importfile", str(old_file))
     await run.wait("document.getElementById('msg').textContent.includes('Loaded')", 10, "the old file loaded")
@@ -809,8 +830,8 @@ async def scenario_k(browser, base, data, keys, out, mask, vp, name, old_file):
     check(not run.errors and not run.other, f"K-{name}: page errors {run.errors} · other hosts {run.other}", mask)
     await run.close()
     return (f"K old saved progress ({name} {vp[0]} px): {len(blob['choices'])} choices ({dict(kinds)}), 2 marks and 1 "
-            "fix load unchanged, save back unchanged (+ started), export unchanged; the old export loads as '100 the "
-            "same'; a reload keeps them; loading resumed by itself on KR-2")
+            "fix load unchanged, save back unchanged, export unchanged; the old export loads as '100 the same'; a "
+            "reload keeps them; nothing loads by itself (the old entry does not say Start was tapped)")
 
 
 async def scenario_l(browser, base, data, keys, out, mask):
@@ -849,7 +870,7 @@ async def scenario_l(browser, base, data, keys, out, mask):
                 want.setdefault(c, {})[br.SOURCE[rid]] = ["hit" if t else "miss", day]
                 u = url_for(comps[c], rid, keys)
                 if t:
-                    hits.add(u + "&v=2" if rid == "ldD" else u)
+                    hits.update({u, u + "&v=2"} if rid == "ldD" else {u})
                 else:
                     misses.setdefault(c, set()).update({u, u + "&v=2"} if rid == "ldD" else {u})
     nmiss = sum(1 for c in want for x in want[c].values() if x[0] == "miss")
@@ -862,11 +883,21 @@ async def scenario_l(browser, base, data, keys, out, mask):
     # a reload: loading resumes by itself; only the remembered hits are asked for, after the checks
     n0 = len(run.reqs)
     await run.page.reload(wait_until="domcontentloaded")
+    await run.wait("window.__logoReview.running()", 5, "loading resumed after the reload")
     note = await run.js("[window.__logoReview.running(), window.__logoReview.current(), "
                         "(e => !e.classList.contains('hide') && e.textContent)(document.getElementById('resumed'))]")
     check(note[0] and note[1] == "KR-1" and "Loading resumed" in (note[2] or "") and "Pause" in note[2],
           f"L: after the reload {note}", mask)
     await run.page.screenshot(path=str(out / "L-phone-resumed.png"))
+    tab2 = await run.ctx.new_page()                                # a second tab while this one loads: it does not start
+    tab2_errors = []
+    tab2.on("pageerror", lambda e: tab2_errors.append(str(e)))
+    await tab2.goto(f"{base}/logo-review.html", wait_until="domcontentloaded")
+    await asyncio.sleep(1.2)
+    t2 = await tab2.evaluate("[window.__logoReview.running(), document.getElementById('alerts').textContent]")
+    check(not t2[0] and "Another tab of this page is loading" in t2[1] and not tab2_errors,
+          f"L: a second tab {t2[0]} {t2[1][-160:]} {tab2_errors}", mask)
+    await tab2.close()
     await run.ready("KR-1")
     await run.ready("KR-2")
     after = run.reqs[n0:]
@@ -883,6 +914,10 @@ async def scenario_l(browser, base, data, keys, out, mask):
     await run.page.click("#resumepause")
     paused = await run.js("[window.__logoReview.running(), document.getElementById('resumed').classList.contains('hide')]")
     check(paused == [False, True], f"L: Pause in the note {paused}", mask)
+    n_p = len(run.reqs)
+    await run.page.reload(wait_until="domcontentloaded")          # Pause is remembered: no loading by itself
+    await asyncio.sleep(1.0)
+    check(not await run.js("window.__logoReview.running()") and len(run.reqs) == n_p, "L: loading resumed after Pause", mask)
 
     # a remembered logo that no longer loads: its company is checked again (every source), nothing else is
     x = next(c for c in kr1 if any(want[c].get(br.SOURCE[r]) == ["hit", day] for r in ("bfI", "bfT")) and c in misses)
@@ -890,7 +925,8 @@ async def scenario_l(browser, base, data, keys, out, mask):
     _, p, r, f = next(t for t in ROUTES if t[0] == rid)
     fake.gone.add((p, r, comps[x][f]))
     n1 = len(run.reqs)
-    await run.page.reload(wait_until="domcontentloaded")
+    await run.page.click("#start")                                 # Continue (the reload above kept it paused)
+    await run.wait(f"window.__logoReview.counters.reprobed === 1", 30, "the company checked again")
     await run.ready("KR-1")
     await run.ready("KR-2")
     await run.wait("window.__logoReview.pending() === 0", 30, "timers")
@@ -905,9 +941,10 @@ async def scenario_l(browser, base, data, keys, out, mask):
     await run.close()
     return (f"L remembered results: {sum(len(v) for v in want.values())} (source, hit/miss, day; no address or image) "
             f"for KR-1 + KR-2; first visit and a reload without Start loaded nothing; after Start, a reload resumed by "
-            f"itself with 'Loading resumed' + Pause, ran the checks first, asked only the {len(hits)} remembered hits "
-            f"(logo.dev domains: the confirmed second load only), none of the {nmiss} known misses; pre-picks as "
-            f"expected; a remembered logo that stopped loading had its company checked again")
+            f"itself with 'Loading resumed' + Pause, ran the checks first, asked only the remembered hits ({len(hits)} "
+            f"URLs; logo.dev domains loaded twice as always), none of the {nmiss} known misses; pre-picks as expected; "
+            f"a second tab did not start by itself; after Pause a reload did not start; a remembered logo that stopped "
+            f"loading had its company checked again")
 
 
 async def scenarios(html, data, keys, base, folder, out, mask):
@@ -917,7 +954,9 @@ async def scenarios(html, data, keys, base, folder, out, mask):
     page_i, data_i, icon_codes, iconless, checks = with_icons(html, data, keys, folder)
     (folder / "logo-review-icons.html").write_text(page_i, encoding="utf-8")
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)         # no proxy: nothing can leave the machine
+        # direct, no proxy (not even one from the environment): nothing can leave the machine; the image host is local
+        browser = await pw.chromium.launch(headless=True, args=["--proxy-server=direct://",
+                                                                f"--host-resolver-rules=MAP {IMG_HOST} 127.0.0.1"])
         try:
             # A: blocked, checks on
             run = await Run("abort").open(browser, base, {"autostart": True, "canaryRetryMs": 300})
@@ -1130,7 +1169,8 @@ async def scenarios(html, data, keys, base, folder, out, mask):
                            f"move to US-5 ({len(late)} later requests, all for US-5/US-6)")
 
             # J: a pasted image address and None of these - find more (phone and PC); the download loads back
-            img_base, img_httpd, img_log = https_images(pathlib.Path(tempfile.mkdtemp(prefix="logo-review-img-")))
+            img_dir = pathlib.Path(tempfile.mkdtemp(prefix="logo-review-img-"))
+            img_base, img_httpd, img_log = https_images(img_dir)
             try:
                 j_path = None
                 for vp, name in (((390, 844), "phone"), ((1280, 900), "pc")):
@@ -1149,6 +1189,8 @@ async def scenarios(html, data, keys, base, folder, out, mask):
                                "fresh browser")
             finally:
                 img_httpd.shutdown()
+                img_httpd.server_close()
+                shutil.rmtree(img_dir, ignore_errors=True)
 
             # K: Jack's saved progress and his downloaded file, as the page he is using writes them
             blob = old_progress(data, keys)

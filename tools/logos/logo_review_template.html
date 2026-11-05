@@ -133,7 +133,7 @@ button.mini{padding:2px 10px;font-size:12px}
   <li><b>Exact identifiers only, never names.</b> Ticker: KOSPI and KONEX 005930.KS, KOSDAQ 247540.KQ, US as listed. ISIN from the KRX listing (check digit verified). Domain: the homepage filed with DART, Korea only; platform hosts (blog.naver.com and the like) and a domain two companies share are not used.</li>
   <li><b>Agreement</b> is checked only here, in this browser: both images are loaded so the page may read them (CORS), shrunk to a tiny fingerprint and compared. If a provider does not let the page read its images, the agreement rule is skipped for it and the order decides. <span id="agreestate">Not checked yet.</span></li>
   <li><b>Review.</b> Tap a tile to mark it wrong (tap again to undo). Hover (PC) or press and hold (phone) to see it bigger. Judge a grid once the bar at the bottom says it is ready: until then a tile with a dashed border can still change. Then tap <b>Confirm this grid</b>: every tile you did not mark keeps its pre-pick; for each tile you marked, choose among the logos that loaded, the letter mark, a pasted image address or <b>None of these &mdash; find more</b>. A grid counts as reviewed only after Confirm. Companies you have not reviewed keep the letter mark in the app.</li>
-  <li><b>Paste an image address</b> (in the Fix panel, when every alternative is wrong): copy the address of the right logo, usually from the company's own website (right-click or press and hold the picture, then Copy image address), and paste it. The page checks the address (https only: http is changed to https; no data: or javascript: addresses; at most 2,000 characters; not a Brandfetch or logo.dev address, which you choose among the alternatives instead) and shows a preview, loaded in this browser like any picture. Nothing is sent anywhere else. The picture must be at least 64 px on its shorter side; under 96 px you get a warning. Tap <b>Use this picture</b> to choose it; only its address is kept. <b>Later step, not done yet:</b> each pasted address will be downloaded once and stored as a file of this site, so the app never loads it from the company's website.</li>
+  <li><b>Paste an image address</b> (in the Fix panel, when every alternative is wrong): copy the address of the right logo, usually from the company's own website (right-click or press and hold the picture, then Copy image address), and paste it. The page checks the address (https only: http is changed to https; no data: or javascript: addresses; at most 2,000 characters; a public website, not an IP number or a local name; not a Brandfetch or logo.dev address, which you choose among the alternatives instead) and shows a preview, loaded in this browser like any picture. Nothing is sent anywhere else. The picture must be at least 64 px on its shorter side; under 96 px you get a warning. Tap <b>Use this picture</b> to choose it; only its address is kept. <b>Later step, not done yet:</b> each pasted address will be downloaded once and stored as a file of this site, so the app never loads it from the company's website.</li>
   <li><b>None of these &mdash; find more</b> (in the Fix panel): the company keeps the letter mark for now and counts as <b>needs a logo</b>: a separate count in the summary, and the <b>Needs a logo</b> view (button above, or the last entry in the grid list) lists only those companies, so a later round can show them new candidates. Tap a company there to open its grid; tap it again there and Confirm changes to choose differently.</li>
   <li><b>Badges:</b> <span class="b agr">agree</span> both services show this logo; <span class="b low">low-res</span> the picture the provider sent is smaller than 64 px (a provider may also enlarge a small logo, which this cannot see); <span class="b sav">saved</span> your confirmed choice; <span class="b gap">not checked</span> a provider was stopped or timed out for this company.</li>
   <li><b>No logo = image error.</b> Every request asks for an error when there is no logo (Brandfetch fallback/404, logo.dev fallback=404), so a miss never shows a placeholder. logo.dev answers a domain it has never seen with a placeholder (HTTP 202) on the first request, so every logo.dev domain hit is loaded again after 5&frac12; minutes and only the second answer counts. That is why a grid can take a few minutes; the next grid loads while you review this one.</li>
@@ -141,7 +141,7 @@ button.mini{padding:2px 10px;font-size:12px}
   <li><b>Pace:</b> at most 2 requests a second to Brandfetch and 4 a second to logo.dev, one at a time per route; only the grid you are on and the next unreviewed one load, never all companies at once. Keep this tab in front while it loads.</li>
   <li><b>What is saved:</b> only your choices (the source and the exact logo address, a pasted address, the letter mark or needs a logo), in this browser's storage for this page. Logos are never copied: the app will load them from the provider, as here. Download choices gives a JSON file of the reviewed companies; Load choices reads one back (on another device too). When the same company is in both, the later review date wins (the file wins a tie).</li>
   <li><b>Remembered for 7 days:</b> for each company and source, whether a logo was found (hit) or not (miss) and on which day, never a picture or an address. After a reload, a source known to have no logo is not asked again, and only the found logos load again, paced, after the same checks as always (a remembered result is used only once that service has passed its checks in this visit). A miss is remembered only after a later check showed the service was answering. If a remembered logo no longer loads, every source of that company is checked again. A new build of this page starts over.</li>
-  <li><b>Reload:</b> once you have tapped Start in this browser, a reload starts loading again by itself, on the first grid you have not reviewed, and says so at the bottom with a Pause button. On a first visit nothing loads until you tap Start.</li>
+  <li><b>Reload:</b> once you have tapped Start in this browser (and not Pause after it), a reload starts loading again by itself, on the first grid you have not reviewed, and says so at the bottom with a Pause button. A tab opened in the background waits until you look at it, and a second tab of this page does not start by itself while another one is loading. On a first visit nothing loads until you tap Start.</li>
   <li><b>Who is here:</b> every Korean company (common shares; preferred shares use their common share's logo; ETFs and funds left out) and every US company in the data shown below, largest market cap first, in grids of 100.</li>
 </ul>
 </details>
@@ -230,6 +230,10 @@ function checkManualUrl(raw) {
   if (u.username || u.password) return { error: "The address has a user name or password in it." };
   var host = u.hostname.toLowerCase().replace(/\.$/, "");
   if (!host) return { error: "The address has no website in it." };
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.charAt(0) === "[" || host.indexOf(".") < 0 ||
+      /(^|\.)(localhost|local|internal|lan|home\.arpa|intranet)$/.test(host)) {
+    return { error: "That is not a public website address (an IP number or a local name)." };
+  }
   for (var i = 0; i < PROVIDER_DOMAINS.length; i++) {
     var d = PROVIDER_DOMAINS[i];
     if (host === d || host.slice(-d.length - 1) === "." + d) {
@@ -422,12 +426,13 @@ function kstDate(ms) { return new Date(ms + 9 * 3600e3).toISOString().slice(0, 1
 function kstStamp(ms) { return new Date(ms + 9 * 3600e3).toISOString().slice(0, 19) + "+09:00"; }
 // Saved progress (this page's STORE_KEY entry, JSON-parsed) -> what the page keeps. The format of 2026-11-05 ({v: 1,
 // savedAt, grid, choices, flags, fix}) reads exactly as before; added since, all optional: fixUrl (a pasted address
-// being chosen in the Fix panel) and started (Start was tapped in this browser). Choices follow the Load choices rules.
-// resume: loading starts by itself after a reload: Start was tapped before (started), or, in a file from before
-// "started" existed, there are confirmed choices or marks (only possible after Start).
+// being chosen in the Fix panel), started (Start was tapped in this browser) and paused (Pause was the last of the two
+// tapped). Choices follow the Load choices rules. resume: loading starts by itself after a reload, only when started is
+// stored and paused is not (an entry from before "started" existed never resumes: nothing in it says Start was tapped).
 function parseProgress(o, byCode, keys, gridIds) {
   if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("not an object");
-  var out = { choices: {}, flags: {}, fix: {}, fixUrl: {}, grid: null, rejected: [], error: "", resume: false };
+  var out = { choices: {}, flags: {}, fix: {}, fixUrl: {}, grid: null, rejected: [], error: "", started: false, paused: false,
+    resume: false };
   var v = validateImport({ version: 1, choices: o.choices || {} }, byCode, keys);
   if (v.error) out.error = v.error;
   else { out.choices = v.choices; out.rejected = v.rejected; }
@@ -445,8 +450,9 @@ function parseProgress(o, byCode, keys, gridIds) {
     out.fix[c] = fix[c];
   });
   if (typeof o.grid === "string" && gridIds.indexOf(o.grid) >= 0) out.grid = o.grid;
-  var nChoices = o.choices && typeof o.choices === "object" ? Object.keys(o.choices).length : 0;
-  out.resume = o.started === true || (!has(o, "started") && (nChoices > 0 || Object.keys(out.flags).length > 0));
+  out.started = o.started === true;
+  out.paused = o.paused === true;
+  out.resume = out.started && !out.paused;
   return out;
 }
 // A remembered result {source: [status, day]} is used while it is younger than PROBE_DAYS days (KST days).
@@ -532,7 +538,7 @@ function colorOf(code) {
 var DATA = JSON.parse(document.getElementById("data").textContent);
 var CFG = { bfGapMs: 500, ldGapMs: 250, ownGapMs: 20, recheckMs: 330000, timeoutMs: 20000, retryMs: 60000, controls: true,
   checkEvery: 100, badEvery: 300, canaryRetryMs: 15000, canaryPauseMs: 120000, autostart: false, longPressMs: 450,
-  auditMisses: 20, auditEvery: 10, assumeCors: false, probeSaveMs: 3000, resumeNoteMs: 30000 };
+  auditMisses: 20, auditEvery: 10, assumeCors: false, probeSaveMs: 3000, resumeNoteMs: 30000, tabCheckMs: 400 };
 var over = window.__LOGO_REVIEW_CONFIG || {};            // set only by a test harness before this script runs
 for (var ck in over) if (has(over, ck)) CFG[ck] = over[ck];
 
@@ -546,7 +552,7 @@ COMPS.forEach(function (co) { GRIDS[gridIdx[co.g]].codes.push(co.c); });
 
 // ── progress: this page's own localStorage entries only (STORE_KEY here, PROBE_KEY below), every access in try ──
 var prog = { choices: {}, flags: {}, fix: {}, fixUrl: {}, grid: GRIDS[0].id };
-var storageWarned = false, resumeAsked = false;
+var storageWarned = false, resumeAsked = false, everStarted = false, pausedByJack = false;
 function loadProgress() {
   var raw = null;
   try { raw = window.localStorage.getItem(STORE_KEY); } catch (e) {
@@ -559,7 +565,7 @@ function loadProgress() {
     var r = parseProgress(JSON.parse(raw), byCode, KEYS, GRIDS.map(function (g) { return g.id; }));
     prog.choices = r.choices; prog.flags = r.flags; prog.fix = r.fix; prog.fixUrl = r.fixUrl;
     if (r.grid) prog.grid = r.grid;
-    resumeAsked = r.resume;
+    resumeAsked = r.resume; everStarted = r.started; pausedByJack = r.paused;
     if (r.error) alertMsg("bad", "Saved choices could not be read (" + r.error + "). Load your downloaded file if you have one.");
     if (r.rejected.length) {
       alertMsg("bad", r.rejected.length + " saved choices no longer match this page and were left out (e.g. " +
@@ -574,7 +580,8 @@ function saveProgress() {
   Object.keys(prog.fix).forEach(function (c) { if (prog.fix[c] === "manual" && prog.fixUrl[c]) fixUrl[c] = prog.fixUrl[c]; });
   try {
     window.localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, savedAt: kstStamp(Date.now()), grid: prog.grid,
-      choices: prog.choices, flags: prog.flags, fix: prog.fix, fixUrl: fixUrl, started: started || resumeAsked }));
+      choices: prog.choices, flags: prog.flags, fix: prog.fix, fixUrl: fixUrl, started: started || everStarted,
+      paused: pausedByJack }));
   } catch (e) {
     if (!storageWarned) {
       storageWarned = true;
@@ -597,7 +604,7 @@ function memLoad() {
   }
 }
 function memGet(code, rt) {
-  var e = rt.p !== "own" && has(mem, code) && has(mem[code], rt.src) ? mem[code][rt.src] : null;
+  var e = rt.p !== "own" && !noMem[code] && has(mem, code) && has(mem[code], rt.src) ? mem[code][rt.src] : null;
   return e && probeFresh(e[1], today()) ? e : null;
 }
 function memSet(code, rt, status) {
@@ -678,7 +685,7 @@ function gridStatus(g) {
 
 // ── loading, paced per provider, one at a time per route ──
 var running = false, started = false, pendingTimers = 0, alerts = [];
-var counters = { loads: 0, placeholders: 0, requeued: 0, retries: 0, remembered: 0, reprobed: 0, manual: 0 };
+var counters = { loads: 0, placeholders: 0, requeued: 0, retries: 0, remembered: 0, reprobed: 0 };
 var ldKnown = {};        // logo.dev domain -> "hit" | "miss" from a second load this session (no new 202 wait needed)
 var lanes = {};
 ROUTES.forEach(function (rt) { lanes[rt.id] = { rt: rt, q: [], busy: false, stopped: null, off: null }; });
@@ -707,14 +714,18 @@ function later(ms, fn) {
   pendingTimers++;
   setTimeout(function () { pendingTimers--; fn(); }, ms);
 }
-function pickJob(p) {
-  if (p.ctl.length && !p.ctlBusy) { p.ctlBusy = true; return p.ctl.shift(); }
-  if (p.phase !== "run") return null;
-  p.lanes.forEach(function (id) {                    // checks passed in this visit: remembered misses apply, no request
+// Checks passed in this visit: remembered misses apply, with no request.
+function applyMemos(p) {
+  if (p.phase !== "run") return;
+  p.lanes.forEach(function (id) {
     var L = lanes[id];
     if (L.stopped || L.off || !L.q.some(function (j) { return j.memo; })) return;
     L.q = L.q.filter(function (j) { if (j.memo) { memoDone(j); return false; } return true; });
   });
+}
+function pickJob(p) {
+  if (p.ctl.length && !p.ctlBusy) { p.ctlBusy = true; return p.ctl.shift(); }
+  if (p.phase !== "run") return null;
   for (var i = 0; i < p.lanes.length; i++) {
     var id = p.lanes[(p.rr + i) % p.lanes.length], L = lanes[id];
     if (!L.busy && !L.stopped && !L.off && L.q.length) { p.rr = (p.rr + i + 1) % p.lanes.length; L.busy = true; return L.q.shift(); }
@@ -726,6 +737,7 @@ function pump(p) {
   if (!running || p.stopped) return;
   var now = performance.now(), at = Math.max(p.next, p.pausedUntil);
   if (now < at) { p.timer = setTimeout(function () { pump(p); }, at - now); return; }
+  applyMemos(p);
   if (CFG.controls && p.checks && p.phase === "run" && !p.ctlBusy) maybeCheck(p);
   var job = pickJob(p);
   if (!job) return;
@@ -811,7 +823,7 @@ function jobDone(p, job, ok, timedOut, img, t0, cors) {
       if (lanes.ldD.stopped) { s.s = "stopped"; paintTile(job.co.c); return; }
       if (!inWindow(job.g)) { s.s = "idle"; s.img = null; paintTile(job.co.c); return; }   // loads again if Jack comes back
       s.s = "queued";
-      lanes.ldD.q.unshift({ co: job.co, rt: job.rt, ident: job.ident, g: job.g, v: "2" });
+      lanes.ldD.q.unshift({ co: job.co, rt: job.rt, ident: job.ident, g: job.g, v: "2", mem: job.mem });
       pump(P.ld);
     });
   } else if (ok) {
@@ -856,9 +868,12 @@ function memoDone(job) {
   paintTile(job.co.c);
   scheduleRender();
 }
-// Forget what was remembered for a company and ask again every source whose miss came from memory.
+// Ask again, in this visit, every source of the company whose miss came from memory (memory is not used for it any more
+// in this visit; fresh results replace what is remembered).
+var noMem = {};
 function reprobe(co) {
-  memForget({ code: co.c });
+  if (noMem[co.c]) return;
+  noMem[co.c] = 1;
   counters.reprobed++;
   ROUTES.forEach(function (rt) {
     lanes[rt.id].q.forEach(function (j) { if (j.co === co && j.memo) delete j.memo; });   // not applied yet: a real load
@@ -1113,7 +1128,7 @@ function plan() {
         s.s = "queued";
         var job = { co: co, rt: rt, ident: s.ident, g: gid }, m = memGet(code, rt);
         if (m && m[0] === "miss") job.memo = m[1];       // known to have no logo: applied without a request, after the checks
-        else if (m) { job.mem = m[1]; if (rt.id === "ldD") job.v = "2"; }   // known logo: loads again (its confirmed answer)
+        else if (m) job.mem = m[1];                       // known logo: loads again, the usual way (logo.dev domain: twice)
         if (rt.id === "ldD" && ldKnown[s.ident]) job.v = "2";      // seen this session: load the confirmed answer
         L.q.push(job);
       });
@@ -1130,15 +1145,16 @@ function plan() {
 // ── start, pause, retry ──
 function start() {
   if (running) return;
+  pausedByJack = false;
   if (!started) {
     started = true;
-    saveProgress();                                  // remembered: a reload in this browser carries on by itself
     if (CFG.controls) { initChecks(P.bf); initChecks(P.ld); }
     initOwn(P.own);
     plan();
     Object.keys(tiles).forEach(paintTile);           // pasted addresses of saved choices load now
   }
   running = true;
+  saveProgress();                                    // remembered: a reload in this browser carries on by itself
   $("start").disabled = true; $("pause").disabled = false; $("start").textContent = "Start loading logos";
   pumpAll();
   renderAgree();
@@ -1146,9 +1162,41 @@ function start() {
 }
 function pause() {
   running = false;
+  pausedByJack = true;
+  saveProgress();                                    // a reload does not start by itself after Pause
   $("start").disabled = false; $("pause").disabled = true; $("start").textContent = "Continue";
   $("resumed").classList.add("hide");
   scheduleRender();
+}
+// Other open tabs of this page: is one of them loading? (BroadcastChannel: messages between tabs, nothing stored.)
+var chan = null, otherLoading = false;
+try {
+  chan = new BroadcastChannel("baepsae-logo-review");
+  chan.onmessage = function (ev) {
+    var d = ev.data || {};
+    if (d.q === "loading?" && running) chan.postMessage({ a: "loading" });
+    else if (d.a === "loading") otherLoading = true;
+  };
+} catch (e) { chan = null; }
+function resumeWhenAlone() {
+  if (document.visibilityState === "hidden") {                 // a tab restored in the background waits until it is shown
+    var onShow = function () {
+      if (document.visibilityState === "hidden") return;
+      document.removeEventListener("visibilitychange", onShow);
+      resumeWhenAlone();
+    };
+    document.addEventListener("visibilitychange", onShow);
+    return;
+  }
+  if (!chan) { resume(); return; }
+  otherLoading = false;
+  chan.postMessage({ q: "loading?" });
+  setTimeout(function () {
+    if (running) return;
+    if (otherLoading) {
+      alertMsg("info", "Another tab of this page is loading logos, so this one did not start by itself (one tab at a time keeps the pace). Tap Start to load here instead.");
+    } else resume();
+  }, CFG.tabCheckMs);
 }
 // After a reload in a browser where Start was tapped before: start by itself on the first grid not reviewed yet.
 function resume() {
@@ -1218,7 +1266,7 @@ function manualImg(url, cb) {
     clearTimeout(timer);
     if (timedOut) img.src = "";
     m.s = ok ? "hit" : "miss"; m.img = ok ? img : null; m.w = ok ? img.naturalWidth : 0; m.h = ok ? img.naturalHeight : 0;
-    counters.manual++;
+    m.at = Date.now();
     var cbs = m.cbs; m.cbs = [];
     cbs.forEach(function (f) { f(m); });
   }
@@ -1317,7 +1365,10 @@ function paintTile(code) {
   var t = tiles[code];
   if (!t) return;
   var ch = has(prog.choices, code) ? prog.choices[code] : null;
-  if (started && ch && ch.source === "manual" && !has(manualImgs, ch.url)) manualImg(ch.url, function () { paintTile(code); });
+  if (started && ch && ch.source === "manual" && (!has(manualImgs, ch.url) ||
+      (manualImgs[ch.url].s === "miss" && Date.now() - manualImgs[ch.url].at > CFG.retryMs))) {
+    manualImg(ch.url, function () { paintTile(code); });
+  }
   var co = byCode[code], d = shown(co), flagged = !!prog.flags[code];
   var box = t.children[0], srcEl = t.children[3], badges = t.children[4];
   var blank = isBlank(d);
@@ -1541,9 +1592,9 @@ function pastePanel(co, optBtn, url0) {
   pv.type = "button"; use.type = "button"; use.disabled = true;
   pv.setAttribute("data-act", "preview"); use.setAttribute("data-act", "use");
   bar.appendChild(pv); bar.appendChild(use);
-  var view = el("div", "pv"), box = el("div", "lg blank", "\u00b7"), say = el("p", "pmsg info", "");
-  view.appendChild(box); view.appendChild(say);
-  [lab, inp, bar, view, el("p", "sub", "Copy the address of the right logo, usually from the company's own website (right-click or " +
+  var pvRow = el("div", "pv"), box = el("div", "lg blank", "\u00b7"), say = el("p", "pmsg info", "");
+  pvRow.appendChild(box); pvRow.appendChild(say);
+  [lab, inp, bar, pvRow, el("p", "sub", "Copy the address of the right logo, usually from the company's own website (right-click or " +
     "press and hold the picture, then Copy image address), and paste it here. The preview loads in this browser like any " +
     "picture; nothing is sent anywhere else. Later step, not done yet: each pasted picture will be downloaded once and " +
     "kept as a file of this site, so the app never loads it from the company's website.")].forEach(function (x) { pane.appendChild(x); });
@@ -1576,7 +1627,19 @@ function pastePanel(co, optBtn, url0) {
       tell(j.warn ? "warn" : "good", pre + j.text + " Tap Use this picture if it is the right logo.");
     });
   }
-  inp.addEventListener("input", function () { seq++; ready = null; use.disabled = true; blank(); tell("info", ""); });
+  inp.addEventListener("input", function () {
+    seq++; ready = null; use.disabled = true; blank();
+    if (prog.fix[co.c] === "manual" && prog.fixUrl[co.c] !== inp.value) {
+      delete prog.fix[co.c]; delete prog.fixUrl[co.c];
+      saveProgress();
+      optBtn.classList.remove("on"); optBtn.setAttribute("aria-pressed", "false");
+      var ob = optBtn.querySelector(".lg");
+      ob.className = "lg blank"; while (ob.firstChild) ob.removeChild(ob.firstChild); ob.textContent = "+";
+      paintTile(co.c);
+      renderFixSave();
+      tell("warn", "The address changed, so the picture chosen before is no longer chosen. Tap Preview, then Use this picture.");
+    } else tell("info", "");
+  });
   inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); preview(); } });
   pv.addEventListener("click", preview);
   use.addEventListener("click", function () {
@@ -1771,7 +1834,7 @@ window.__logoReview = { state: st, counters: counters, providers: P, lanes: lane
   view: function () { return view; }, mem: function () { return mem; }, flushMem: memFlush, manual: manualImgs,
   running: function () { return running; } };
 if (CFG.autostart) start();
-else if (resumeAsked) resume();
+else if (resumeAsked) resumeWhenAlone();
 })();
 </script>
 </body>
