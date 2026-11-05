@@ -21,11 +21,14 @@
 <script>
 // CV link (Jack, 2026-11-05): this address is on Jack's CV, so a plain visit lands in 2.0 before anything is drawn.
 // Stays in the old app when: the 2.0 marker ?from=app is there (src/links.js OLD_APP, on every 2.0 link into the old
-// app) · there is a # (old shared links, 2.0's deep links) · this tab already entered the old app · or this tab was sent
-// to 2.0 less than 10 s ago (loop guard). Staying without the marker adds it (the old app clears its # after reading),
-// so a reload stays too. Other query parameters (?utm_*, ?trk=) never keep a visitor here. Sending: hide the page, count
-// one GoatCounter hit at "<path>→app" (skipped on local hosts and dev browsers, like the snippet below and count.js),
-// location.replace (no history entry), then stop parsing so the old app never runs, paints or touches storage.
+// app) · there is a # (old shared links, 2.0's deep links) · this tab already entered the old app · or (loop guard) this
+// tab was sent to 2.0 less than 10 s ago and came back from this site (a visitor who goes Back to LinkedIn and clicks
+// again comes from elsewhere and is sent again). Staying without the marker adds it (the old app clears its # after
+// reading), so a reload stays too. Other query parameters (?utm_*, ?trk=) never keep a visitor here. Sending: hide the
+// page, count one GoatCounter hit at "<path>→app" (skipped on local hosts and dev browsers, like the snippet below and
+// count.js), location.replace (no history entry), then stop parsing so the old app never runs, paints or touches
+// storage: document.write('<plaintext>') from this inline, parser-run script turns the rest of the file into hidden
+// text (Chromium already stops on its own; WebKit keeps parsing until 2.0 arrives).
 // Storage: only this tab's two sessionStorage flags. Tests: tests/test_cv_link.py, tests/smoke_launch.py.
 (function(){
   var MARK="from=app",L=location,path=L.pathname,search=L.search,ss=null;
@@ -33,9 +36,10 @@
   try{ss=window.sessionStorage;}catch(e){}
   function get(k){try{return ss?ss.getItem(k):null;}catch(e){return null;}}
   function put(k,v){try{if(ss)ss.setItem(k,v);}catch(e){}}
-  var args=search.slice(1).split("&"),marked=args.indexOf(MARK)>-1,now=Date.now(),last=Number(get("baepsae_cv_sent"))||0;
-  if(marked||L.hash||get("baepsae_old_tab")==="1"||(now>=last&&now-last<10000)){
-    put("baepsae_old_tab","1");
+  var args=search.slice(1).split("&"),marked=args.indexOf(MARK)>-1,now=Date.now(),last=Number(get("baepsae_cv_sent"))||0,
+    loop=now>=last&&now-last<10000&&document.referrer.indexOf(L.protocol+"//"+L.host+"/")===0;
+  if(marked||L.hash||get("baepsae_old_tab")==="1"||loop){
+    if(marked||L.hash||!loop)put("baepsae_old_tab","1");   // the loop guard alone doesn't keep this tab in the old app
     if(!marked){try{history.replaceState(history.state,"",path+(search?search+"&":"?")+MARK+L.hash);}catch(e){}}
     // The old app's own pageview keeps its path as before: count.js counts pathname + search, so leave the marker out.
     window.goatcounter=window.goatcounter||{};
@@ -50,7 +54,7 @@
     var h=L.hostname,skip=dev==="1"||L.protocol==="file:"||window.top!==window||document.visibilityState==="prerender"||
       /(localhost$|^127\.|^10\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^192\.168\.|^0\.0\.0\.0$)/.test(h);
     try{skip=skip||localStorage.getItem("baepsae_dev")==="1"||localStorage.getItem("skipgc")==="t";}catch(e){}
-    if(!skip){
+    if(!skip){                                    // the fields count.js sends; b=153 is count.js's code for navigator.webdriver
       var enc=encodeURIComponent,r=document.referrer,
         u="https://baepsae.goatcounter.com/count?p="+enc(path.replace(/(\.html)?$/,".html")+"→app")+
           "&t="+enc("CV link → 2.0")+(r?"&r="+enc(r):"")+"&s="+screen.width+(search?"&q="+enc(search):"")+
@@ -58,7 +62,7 @@
       if(!(navigator.sendBeacon&&navigator.sendBeacon(u))){new Image().src=u;}
     }
   }catch(e){}
-  L.replace("./app.html"+(dev?"?dev="+dev:""));
+  try{L.replace("./app.html"+(dev?"?dev="+dev:""));}catch(e){document.documentElement.style.display="";return;}  // blocked: the old app
   try{document.write('<plaintext style="display:none">');}catch(e){}
 })();
 </script>

@@ -56,8 +56,8 @@ function store(init, name, log) {
 function run(c, session) {
   const url = new URL(c.href);
   const out = { replace: [], replaceState: [], write: [], beacons: [], images: [], writes: [] };
-  const location = { pathname: url.pathname, search: url.search, hash: url.hash, hostname: url.hostname, protocol: url.protocol,
-                     href: url.href, replace: (u) => out.replace.push(new URL(u, url.href).href) };
+  const location = { pathname: url.pathname, search: url.search, hash: url.hash, hostname: url.hostname, host: url.host,
+                     protocol: url.protocol, href: url.href, replace: (u) => out.replace.push(new URL(u, url.href).href) };
   const history = { state: { keep: 1 }, replaceState: (s, t, u) => out.replaceState.push([s, new URL(u, url.href).href]) };
   const ss = session || store(c.session || {}, 'session', out.writes);
   const ls = store(c.local || {}, 'local', out.writes);
@@ -151,18 +151,24 @@ def test_redirect_guard_and_storage():
     L = LIVE + "baepsae.html"
     t = 1700000000000
     got = decide({
-        # 같은 탭: 보낸 지 10초 안에 다시 오면 남아요 (되돌이 막기), 그 뒤로는 이 탭이 예전 뱁새에 들어온 것으로 봐요
-        "loop": {"sequence": [{"href": L, "now": t}, {"href": L, "now": t + 3000}, {"href": L, "now": t + 60000}]},
-        # 10초가 지나면 다시 보내요
-        "later": {"sequence": [{"href": L, "now": t}, {"href": L, "now": t + 10001}]},
+        # 되돌이 막기: 보낸 지 10초 안에 이 사이트에서 다시 오면 남아요 (표시를 붙이고, 이 탭을 예전 뱁새 탭으로 정하지는 않아요)
+        "loop": {"sequence": [{"href": L, "now": t}, {"href": L, "now": t + 3000, "referrer": LIVE + "app.html#home"},
+                              {"href": L, "now": t + 60000}]},
+        # 리뷰(2026-11-05): 뒤로 가서 링크드인 · PDF 에서 바로 다시 누르면 다시 2.0 (예전 뱁새에 갇히지 않아요)
+        "again": {"sequence": [{"href": L, "now": t}, {"href": L, "now": t + 3000, "referrer": "https://www.linkedin.com/"},
+                               {"href": L, "now": t + 5000}, {"href": L, "now": t + 7000, "referrer": "https://jacksungjinlee.github.io.example/"}]},
+        # 10초가 지나면 이 사이트에서 와도 다시 보내요
+        "later": {"sequence": [{"href": L, "now": t}, {"href": L, "now": t + 10001, "referrer": LIVE + "app.html"}]},
         # 저장소가 막힌 브라우저(사생활 보호 등): 오류 없이 그대로 보내거나 남아요
         "blocked": {"href": L, "session": "throw", "local": "throw"},
         "blockedHash": {"href": L + "#macro", "session": "throw", "local": "throw"},
         "saved": {"href": L, "local": {"baepsae_v10_slots": "[{\"id\":\"s1\"}]", "baepsae_v10_slot_s1": "{}", "baepsae_lang": "en"}},
     })
     first, again, third = got["loop"]
-    assert first["replace"] == [LIVE + "app.html"] and again["replace"] == [] and third["replace"] == []
-    assert again["replaceState"][0][1] == L + "?from=app" and again["session"]["baepsae_old_tab"] == "1"
+    assert first["replace"] == [LIVE + "app.html"] and again["replace"] == [] and again["write"] == [] and not again["hidden"]
+    assert again["replaceState"][0][1] == L + "?from=app" and "baepsae_old_tab" not in again["session"], again
+    assert third["replace"] == [LIVE + "app.html"]                                 # 막기만으로는 이 탭을 예전 뱁새에 두지 않아요
+    assert [len(x["replace"]) for x in got["again"]] == [1, 1, 1, 1], [x["replace"] for x in got["again"]]
     assert [len(x["replace"]) for x in got["later"]] == [1, 1]
     assert got["blocked"]["replace"] == [LIVE + "app.html"] and got["blocked"]["writes"] == []
     assert got["blockedHash"]["replace"] == [] and got["blockedHash"]["replaceState"][0][1] == L + "?from=app#macro"
@@ -244,15 +250,15 @@ async function serve(href) {
   const r = await p;
   return r ? r.body : 'NOTHING';
 }
-function decide(href, ss, now) {      // the old app's first script, run on whatever page the worker served at this address
+function decide(href, ss, now, ref) {   // the old app's first script, run on whatever page the worker served at this address
   const url = new URL(href);
   let to = null;
   const window = { sessionStorage: ss };
   window.top = window;
   new Function('window', 'location', 'history', 'document', 'navigator', 'screen', 'Image', 'Date', 'localStorage', src)(
-    window, { pathname: url.pathname, search: url.search, hash: url.hash, hostname: url.hostname, protocol: url.protocol,
-              replace: (u) => { to = new URL(u, href).href; } },
-    { state: null, replaceState() {} }, { documentElement: { style: {} }, referrer: '', write() {}, visibilityState: 'visible' },
+    window, { pathname: url.pathname, search: url.search, hash: url.hash, hostname: url.hostname, host: url.host,
+              protocol: url.protocol, replace: (u) => { to = new URL(u, href).href; } },
+    { state: null, replaceState() {} }, { documentElement: { style: {} }, referrer: ref, write() {}, visibilityState: 'visible' },
     { webdriver: true, sendBeacon: () => true }, { width: 390 }, function () { return {}; }, { now: () => now },
     { getItem: () => '1' });                                  // dev browser: no GoatCounter in this test
   return to;
@@ -269,7 +275,7 @@ function decide(href, ss, now) {      // the old app's first script, run on what
       const body = await serve(href);
       hops.push([href.slice(BASE.length), body]);
       if (body !== 'OLD') break;                 // app.html (2.0), index.html → app.html, or nothing: this page never sends back
-      const to = decide(href, ss, now);
+      const to = decide(href, ss, now, hops.length > 1 ? BASE + hops[hops.length - 2][0] : '');   // came from the page before
       if (!to) break;
       href = to; now += 300;
     }

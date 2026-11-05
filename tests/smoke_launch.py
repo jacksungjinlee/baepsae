@@ -194,8 +194,19 @@ def cv_link(browser, check, errors):
         assert "baepsae_cv_sent" in ss and "baepsae_old_tab" not in ss, ss
         page.go_back()                                                                   # 뒤로 → 온 곳 (baepsae.html 이 아니에요)
         page.wait_for_url(re.compile(r"/icon-192\.png$"))
-    check(W + "표시 없이 열면 app.html (예전 뱁새는 붙지도 그려지지도 않음 · 기록 하나 · 뒤로 → 온 곳 · 로컬은 세지 않음)",
-          plain_visit_lands_in_2_0, page, "cv")
+        # 리뷰(2026-11-05): 온 곳(링크드인 · PDF)에서 10초 안에 다시 눌러도 2.0 이에요 (되돌이 막기에 걸리지 않아요)
+        for ref in (None, "https://www.linkedin.com/"):
+            page.goto(base + "/baepsae.html", wait_until="domcontentloaded", referer=ref)
+            page.wait_for_url(APP_URL)
+            page.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
+        # 되돌이 막기: 보낸 지 10초 안에 이 사이트가 이 탭을 다시 표시 없는 baepsae.html 로 보내면 남아요 (표시를 붙여요)
+        with page.expect_navigation():
+            page.evaluate("location.href = './baepsae.html'")
+        page.wait_for_url(OLD_URL)
+        page.get_by_text(OLD_FIRST).wait_for(state="visible")
+        assert page.evaluate("sessionStorage.getItem('baepsae_old_tab')") is None    # 막기만으로는 이 탭을 예전 뱁새에 두지 않아요
+    check(W + "표시 없이 열면 app.html (예전 뱁새는 붙지도 그려지지도 않음 · 기록 하나 · 뒤로 → 온 곳 · 로컬은 세지 않음 · "
+          "곧바로 다시 눌러도 2.0 · 이 사이트에서 10초 안에 되돌아오면 남음)", plain_visit_lands_in_2_0, page, "cv")
 
     def other_params_are_redirected():
         for q in ("?utm_source=x", "?trk=public_profile&from=linkedin", "?utm_medium=email#"):
