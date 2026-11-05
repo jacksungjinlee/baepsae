@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 09:00 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-05 10:40 KST — read this first)
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -42,6 +42,30 @@ only in cron-job.org (never in a chat, the repo or a log).
 - Timer runs share the live concurrency group with scheduled and manual runs (1 running + 1 pending; a newer queued
   run cancels the older pending one). Don't queue a manual run while a scheduled **or timer** run is waiting or queued.
 
+**v17.6 (started 2026-11-05 01:30 KST): PR #34, parts 1 (watchdog), 2 (CI), 3a (deploy + `data` branch), 4
+(`docs/RUNBOOK.md`). Waits for Jack's "merge".** New: `.github/workflows/ci.yml` (job `ci`), `deploy.yml` ("Deploy"),
+`watchdog.yml` ("Watchdog") + `watchdog.py`; `tools/push_data_branch.sh` (the daily run's new last step
+`data 브랜치에 올리기`: the same four files to the `data` branch, only with the gate's sha256 receipt, never forced; the
+first live run after the merge creates the branch), `tools/assemble_site.py`, `tools/build_tag.py` (build tag only when
+Deploy builds). `already_published.py` reads the `data` branch (falls back to `main` only while it doesn't exist). The
+daily run still commits to `main` as before (3a). Deploy's automatic triggers act only once Pages → Source is "GitHub
+Actions" (Jack's click, after the `data` branch exists and one manual Deploy was green); a deliberate deviation from the
+spec's "manual only", explained in the PR. `ci` is green on the PR (run 41875398590, 6 min 42 s) and went red on the
+deliberately broken test PR #35 (closed; its branch `claude/v17.6-ci-proof` still needs deleting — the session's git proxy
+refused). Branch dry run 41872130591 (`dart=off`): only the DART rows failed, as expected. One existing test changed and
+needs Jack's OK: `tests/smoke_v2.py` waits up to 3 s for the PC search box to empty (a CI timing race). Fresh-eyes
+review done (no blocker; five fixes: daily watchdog for healthchecks.io, live `data.json` = published copy, no-op
+deploys skipped in the run check, exact `refs/heads/data`, `/fail` ping before the issue and a stripped ping URL).
+Branch dry run 41935114973 (`dart=cache`, 2026-11-05 08:37 KST): gate PASS 95/0/0, cache hit, 816 DART calls.
+**Jack, 2026-11-05: yes to the test changes and the deviations; his chat reviewed it (no blocker); "fix the conflict,
+then merge".** Before he switches the Pages setting: one manual Deploy must prove it works. Alerts must reach him by
+email or phone through healthchecks.io — he doesn't read GitHub, so the issue alone is not enough. Planned follow-ups:
+(a) a PR that stops committing data to `main` after the switch (3b); (b) before price history lands, the `data` branch
+keeps only recent versions — rewriting the `data` branch's history is fine (Jack), only `main`'s is protected.
+After the merge: the steps in PR #34 (first live run creates `data`, watchdog selftest, manual Deploy, Jack's
+healthchecks.io + Pages clicks), then 3b, then 3c. The 09:13 check needs no change until 3b (it keys on the step
+`커밋 & 푸시`, unchanged).
+
 **Next, in Jack's order (2026-11-04): 자동 settings fix (v18.6, with the 타임머신 line stopping at the low point) → v19.0d (PC) → v17.6:**
 1. **09:13 check reports gate warnings:** done 2026-11-04 (Jack allowed the change).
 2. **Outside timer:** workflow change merged (v17.5.5); Jack set up cron-job.org 2026-11-04 (above). Check that the
@@ -71,8 +95,8 @@ only in cron-job.org (never in a chat, the repo or a log).
 9. **v17.6 is PR #34** (branch `claude/v17.6-never-again`): CI on every PR, deploy from main + `data` branch, watchdog.
    `ci` green; the `dart=off` dry run failed at the gate as it should (no company data → PER/PBR/ROE 0%); the
    `dry_run=true dart=cache` run 41935114973 (2026-11-05 08:37 KST) passed: gate PASS 95/0/0, cache hit, 816 DART
-   calls (comment "Dry run with saved DART data" on the PR). **Still needed:** Jack's yes on the test changes, then
-   Jack's "merge" (CLAUDE.md). Jack must also create the
+   calls (comment "Dry run with saved DART data" on the PR). Jack said yes and "merge" on 2026-11-05 (see the v17.6
+   paragraph above for his conditions). Jack must also create the
    healthchecks.io check and the `HC_PING_URL` secret, and later switch Pages to GitHub Actions and add the
    protect-main ruleset (steps in the PR). The leftover branch `claude/v17.6-ci-proof` (test PR #35) couldn't be
    deleted from the session (git proxy); delete it when possible.
@@ -205,7 +229,7 @@ is triggered six times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53,
 - a run ends before any download or DART call when main's `data.json` already holds the last KRX trading day before
   today and the last US trading day whose close is final (trading calendars from the gate's own sources: Naver KOSPI and
   Yahoo ^KS11, Yahoo ^GSPC). If the calendars can't be read it falls back to weekdays and says so loudly; if only one
-  KOSPI source answers it never skips. (v17.6 must point this check at the `data` branch when the data moves there.)
+  KOSPI source answers it never skips. (Since v17.6 / PR #34 it reads the `data` branch, and `main` only while that branch doesn't exist yet.)
 Runs share one queue (`concurrency`), so two never publish at once. A scheduled run never starts DART from an empty,
 unreadable or old-format cache: it stops loudly, and the day's one full-DART run is started by hand. Before starting a
 manual live run, check the run list: don't start one while a scheduled run is in progress, waiting or queued (a newer

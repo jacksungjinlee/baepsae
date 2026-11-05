@@ -1,0 +1,75 @@
+name: ci
+# v17.6 Part 2: PR 마다 (그리고 main 에 들어올 때마다) 빌드 · 테스트 · 휴대폰 크기 스모크 테스트를 돌려요.
+# 이 job 의 이름 'ci' 가 main 보호 규칙(v17.6 Part 3c)에서 '통과해야 머지되는 검사'예요 — 이름을 바꾸지 마세요.
+# 데이터 커밋 · 배포 · 비밀 값(DART · ECOS)은 쓰지 않아요 (읽기 권한만).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 같은 PR 에 새 커밋이 오면 이전 검사는 멈춰요 (main 은 하나씩 끝까지)
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20      # 목표는 10분 안
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.22.0"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: 라이브러리 설치 (package-lock.json · requirements-dev.txt 그대로)
+        run: |
+          npm ci
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      # 커밋한 페이지가 지금 src/ 로 빌드한 것과 한 글자도 다르지 않아야 해요 (v17.6 Part 3b 에서 배포가 빌드를 맡으면 없애요)
+      - name: 빌드 · 커밋한 페이지 = 소스
+        run: |
+          bash build.sh
+          bash build-app.sh
+          bash build-styleguide.sh
+          git diff --exit-code --stat -- baepsae.html app.html app-preview.html styleguide.html
+
+      - name: pytest
+        run: python -m pytest tests/ -q -p no:cacheprovider
+
+      - name: 글자 점검 (이모지 · 금지어 · JSON 의 NaN)
+        run: python tests/check_text.py
+
+      # 스모크 테스트 다섯 개를 하나씩 돌려요 (동시에 돌리면 GitHub 의 4코어 기계에서 화면 전환을 기다리는 검사가 가끔 흔들렸어요,
+      # 2026-11-05). 하나가 실패해도 나머지를 끝까지 돌려 모든 결과를 보여 주고, 하나라도 실패면 빨갛게 끝나요.
+      - name: 스모크 테스트 (헤드리스 크롬 · 휴대폰 크기)
+        run: |
+          failed=()
+          for t in smoke_app smoke_v2 smoke_preview smoke_styleguide smoke_launch; do
+            echo "::group::$t"
+            if python "tests/$t.py"; then ok=통과; else ok=실패; failed+=("$t"); fi
+            echo "::endgroup::"
+            echo "· $t: $ok"
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "!! 스모크 테스트 실패: ${failed[*]}"
+            exit 1
+          fi
