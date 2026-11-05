@@ -30,7 +30,8 @@ import logodev_api_check as L  # noqa: E402
 
 FAKE_KEY = "sk_TestOnly0123456789abcdefXYZ"
 IMG_URL = "https://img.logo.dev/assets/SIGNED_TOKEN_abc"
-PNG_BYTES = L.PNG + b"\x00" * 64
+PNG_BYTES = (L.PNG + b"\x00\x00\x00\rIHDR" + (256).to_bytes(4, "big") + (256).to_bytes(4, "big")
+             + b"\x08\x06\x00\x00\x00" + b"\x00" * 40)                           # a 256 x 256 PNG header
 KST = ZoneInfo("Asia/Seoul")
 
 
@@ -98,8 +99,9 @@ class FakeAPI:
         self.image, self.image_type = image, image_type
         self.calls = []
 
-    def __call__(self, url, params=None, headers=None, timeout=None):
-        self.calls.append({"t": self.clock(), "url": url, "params": dict(params or {}), "headers": dict(headers or {})})
+    def __call__(self, url, params=None, headers=None, timeout=None, max_bytes=None):
+        self.calls.append({"t": self.clock(), "url": url, "params": dict(params or {}), "headers": dict(headers or {}),
+                           "max_bytes": max_bytes})
         if url.startswith(L.API_BASE):
             (route, ident), = params.items()
             seq = self.script.get((route, ident))
@@ -237,12 +239,18 @@ def test_status_mapping(resp, kind):
 def test_a_logo_answer_is_read_as_documented():
     kind, info = L.classify(ok_logo(w=800, h=600))
     assert kind == "logo" and info["image"] == {"url": IMG_URL, "width": 800, "height": 600, "format": "png",
-                                                "is_vector": False, "etag": "e1", "shape": "data"}
+                                                "is_vector": False, "etag": "e1", "shape": "data", "kind": "logo"}
     brand_style = L.Resp(200, {"Credits-Charged": "1"}, body({"data": {"object": "brand", "status": "ready", "logo": {
         "url": IMG_URL, "etag": "e2", "source": {"width": 10, "height": 10, "format": "svg", "is_vector": True}}},
         "metadata": {}}))
     assert L.classify(brand_style)[1]["image"]["shape"] == "data.logo"
-    assert L.classify(indexing("45"))[1] == {"wait": 45}
+    assert L.classify(indexing("45"))[1] == {"wait": 45, "wait_source": "Retry-After"}
+    no_header = L.Resp(202, {}, body({"data": {"object": "image", "status": "not_indexed"},
+                                      "metadata": {"pending": {"retry_after_seconds": 50}}}))
+    assert L.classify(no_header)[1] == {"wait": 50, "wait_source": "metadata.pending.retry_after_seconds"}
+    bare = L.Resp(202, {}, body({"data": {"object": "image", "status": "not_indexed"}, "metadata": []}))
+    assert L.classify(bare)[1]["wait"] == 30                              # documented value, said in the log
+    assert L.classify(ok_logo(w=512.0, h=256.0))[1]["image"]["width"] == 512   # a whole number sent as 512.0
 
 
 @pytest.mark.parametrize("resp", [
@@ -279,9 +287,11 @@ def test_202_is_retried_at_most_twice_and_the_others_go_on_meanwhile():
     assert all(b - a >= 30 for a, b in zip(times["005930.KS"], times["005930.KS"][1:]))
     assert all(b - a >= 40 for a, b in zip(times["000660.KS"], times["000660.KS"][1:]))
     assert ch.credits_counted == 2 and ch.counts["202 retries"] == 4
-    huge = make_checker({("ticker", "005930.KS"): [indexing("9999"), ok_logo()]})
-    huge[0].run([comp("005930")])
-    assert max(huge[2].sleeps) <= L.MAX_WAIT_202_S                        # a long Retry-After is capped
+    huge, hapi, hclock = make_checker({("ticker", "005930.KS"): [indexing("9999"), ok_logo()]})
+    huge.run([comp("005930")])                                             # never asked again sooner than told
+    row = L.result_rows(huge)[0]
+    assert len(hapi.calls) == 1 and row["status"] == "not_indexed" and "9999 s" in row["note"]
+    assert huge.counts["202 not retried (wait too long)"] == 1 and not hclock.sleeps
 
 
 def test_429_waits_as_told_then_backs_off_and_stops_when_it_never_ends():
@@ -423,6 +433,9 @@ def test_downloads_carry_no_key_and_go_only_to_logo_dev(tmp_path):
     assert len(dl) == 1 and dl[0]["headers"] == {} and dl[0]["params"] == {}
     assert dl[0]["url"] == "https://img.logo.dev/assets/SIGNED_TOKEN_abc?size=256&format=png"
     assert (tmp_path / "images" / "US_AAPL.png").read_bytes() == PNG_BYTES and rows[0]["image_file"] == "images/US_AAPL.png"
+    assert rows[0]["saved_px"] == "256x256" and saved[0]["px"] == (256, 256)          # read from the file itself
+    assert dl[0]["max_bytes"] == L.MAX_IMAGE_BYTES + 1                                  # never read past the limit
+    assert api.calls[0]["max_bytes"] == L.MAX_ANSWER_BYTES
     for bad in ("https://evil.example.com/a.png", "http://img.logo.dev/a.png"):
         with pytest.raises(ValueError):
             ch.client.download(bad)
@@ -492,9 +505,9 @@ def write_inputs(tmp_path, n_kr=14, n_us=8):
     return kr, us
 
 
-def run_main(tmp_path, extra=(), script=None, environ=None, render=None, kr_top=6):
+def run_main(tmp_path, extra=(), script=None, environ=None, render=None, kr_top=6, **fake):
     clock = Clock()
-    api = FakeAPI(clock, script)
+    api = FakeAPI(clock, script, **fake)
     env = {"LOGO_DEV_SECRET_KEY": FAKE_KEY, "OTHER": "x"} if environ is None else environ
     deps = L.Deps(send=api, clock=clock, sleep=clock.sleep, wall=lambda: dt.datetime(2026, 11, 5, 21, 0, tzinfo=KST),
                   environ=env, jitter=lambda: 0.0, min_counts={"kr": 1, "us": 1}, kr_top=kr_top,
@@ -570,6 +583,8 @@ def test_a_crash_with_the_key_in_its_message_is_masked_everywhere(tmp_path, caps
     cap = capsys.readouterr()
     info = json.loads((out / "run.json").read_text(encoding="utf-8"))
     assert rc == 1 and info["outcome"] == "crashed" and info["ok"] is False and "***" in info["reason"]
+    assert info["sample"] == 12 and info["checked"] == 0 and info["unfinished"] == 1 and info["not_started"] == 11
+    assert len(list(csv.DictReader(open(out / "results.csv", encoding="utf-8")))) == 12    # nobody dropped
     for blob in all_output_text(out, cap):
         assert FAKE_KEY.encode() not in blob and FAKE_KEY[3:15].encode() not in blob
 
@@ -588,7 +603,7 @@ def test_an_unexpected_answer_stops_the_run_and_keeps_the_results_so_far(tmp_pat
     capsys.readouterr()
     info = json.loads((out / "run.json").read_text(encoding="utf-8"))
     assert rc == 1 and info["outcome"] == "unexpected" and info["ok"] is False
-    assert "docs don't describe" in info["reason"] and "data is not a ready image" in info["reason"]
+    assert "docs don't describe" in info["reason"] and "data is not a ready logo image" in info["reason"]
     assert info["images"]["saved"] == 0 and not any(                       # no downloads after an error stop
         not c["url"].startswith(L.API_BASE) for c in api.calls)
     rows = list(csv.DictReader(open(out / "results.csv", encoding="utf-8")))
@@ -617,6 +632,141 @@ def test_found_key_in_an_output_file_is_reported(tmp_path):
     (tmp_path / "a.txt").write_text("nothing here")
     (tmp_path / "b.txt").write_text("x" + FAKE_KEY)
     assert [p.name for p in L.find_key_in_files(tmp_path, FAKE_KEY)] == ["b.txt"]
+
+
+# ── what the fresh-eyes review found (2026-11-05) ──
+
+def test_only_a_ready_logo_counts_never_a_brandmark():
+    j = json.loads(ok_logo().body)
+    for kind in ("brandmark", None):
+        j["data"]["kind"] = kind
+        with pytest.raises(L.Unexpected, match="not a ready logo image"):
+            L.classify(L.Resp(200, {"Credits-Charged": "1"}, body(j)))
+    with pytest.raises(L.Unexpected, match="whole numbers"):
+        L.classify(ok_logo(w=512.5))
+    assert L.classify(ok_logo())[1]["image"]["kind"] == "logo"
+
+
+def test_a_request_without_an_answer_counts_as_possibly_billed_even_when_a_server_error_follows():
+    ch, api, _ = make_checker({("ticker", "AAPL"): [ConnectionError("x"), L.Resp(500, {}, b"{}"),
+                                                    L.Resp(503, {}, b"{}")]})
+    ch.run([comp("AAPL", side="us")])
+    assert len(api.calls) == 3 and L.result_rows(ch)[0]["status"] == "error"
+    assert ch.credits_unknown == 2 and ch.credits_counted == 2           # counted at once, toward the cap
+    ch2, api2, _ = make_checker({("ticker", "AAPL"): [ConnectionError("x"), ok_logo()]}, max_credits=3)
+    ch2.run([comp("AAPL", side="us")])                                    # 2 counted for the lost request: the
+    assert len(api2.calls) == 1 and ch2.stop.outcome == "max_credits"     # retry could pass a cap of 3, so no retry
+
+
+def test_a_stop_in_the_middle_of_a_company_keeps_the_request_it_sent():
+    ch, api, _ = make_checker({("ticker", "U0"): [broke()]})
+    ch.run([comp("U0", side="us"), comp("U1", side="us")])
+    rows = L.result_rows(ch)
+    assert rows[0]["requests"] == 1 and rows[0]["note"] == "unfinished: ticker stopped (out_of_credits)"
+    assert rows[1]["requests"] == 0 and rows[1]["note"] == "not checked: the run stopped first"
+    weird = L.Resp(200, {"Credits-Charged": "1"}, body({"data": {"what": 1}}))
+    ch2, _, _ = make_checker({("ticker", "U0"): [weird]})
+    ch2.run([comp("U0", side="us")])
+    r = L.result_rows(ch2)[0]
+    assert ch2.stop.outcome == "unexpected" and r["credits"] == 2 and r["requests"] == 1
+    assert r["note"] == "unfinished: ticker stopped (Unexpected)"
+    ch3, _, _ = make_checker({("domain", "samsung.com"): [broke()]})
+    ch3.run([comp("005930", domain="samsung.com")])
+    assert L.result_rows(ch3)[0]["note"] == "unfinished: ticker not_found; domain stopped (out_of_credits)"
+
+
+def test_429_waits_for_the_reset_unless_requests_are_left_in_the_minute():
+    zero = lambda: 0.0                                                     # noqa: E731
+    assert L.rate_limit_wait({"ratelimit-reset": "45"}, 1, zero) == (45.0, "RateLimit-Reset")
+    assert L.rate_limit_wait({"ratelimit-reset": "45", "ratelimit-remaining": "0"}, 1, zero) == (45.0, "RateLimit-Reset")
+    assert L.rate_limit_wait({"ratelimit-reset": "45", "ratelimit-remaining": "3"}, 1, zero) == (2.0, "backoff")
+    assert L.rate_limit_wait({"retry-after": "9", "ratelimit-reset": "45"}, 1, zero) == (9.0, "Retry-After")
+
+
+def test_the_korea_top_group_needs_market_caps_and_the_must_have_companies():
+    cs = universe(n_kr=1500, n_us=10)
+    caps = {"005930": 900.0, "000660": 800.0, "005380": 700.0}
+    for c in cs:
+        c["cap"] = caps.get(c["code"], c["cap"])
+    assert L.check_ranking(cs).startswith("· Korea top 1,000: 005930 rank 1, 000660 rank 2, 005380 rank 3")
+    low = [dict(c, cap=0.0001) if c["code"] == "005380" else c for c in cs]
+    with pytest.raises(SystemExit, match=r"not in the top 1,000 by market cap: \['005380'\]"):
+        L.check_ranking(low)
+    blank = [dict(c, cap=None) if i < 30 else c for i, c in enumerate(cs)]
+    with pytest.raises(SystemExit, match="30 Korean companies have no market cap"):
+        L.check_ranking(blank)
+
+
+def test_a_run_refuses_a_top_group_without_a_must_have_company(tmp_path, capsys):
+    write_inputs(tmp_path)
+    data = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
+    next(s for s in data["stocks"] if s["t"] == "005380")["cap"] = 0.5     # 14th of 14, top group is 6
+    (tmp_path / "data.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"not in the top 6 by market cap: \['005380'\]"):
+        run_main(tmp_path)
+    assert not (tmp_path / "out").exists()                                 # refused before any lookup
+
+
+def test_the_time_limit_stops_the_lookups_and_keeps_the_results(tmp_path, capsys):
+    write_inputs(tmp_path)
+    rc, out, api, _ = run_main(tmp_path, ("--time-limit-min", "0.05"))     # 3 seconds of fake time
+    capsys.readouterr()
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 1 and info["outcome"] == "time_limit" and info["ok"] is False
+    assert 0 < len(api.calls) <= 4 and info["sample"] == 12 and (out / "summary.md").exists()
+
+
+def test_most_images_failing_makes_the_run_not_ok(tmp_path, capsys):
+    write_inputs(tmp_path)
+    script = {("ticker", c): [ok_logo()] for c in ("AAPL", "MSFT", "U0", "U1", "U2", "U3", "U4", "U5")}
+    rc, out, _, _ = run_main(tmp_path, ("--save-images", "4"), script=script, image=b"<html>", image_type="text/html")
+    capsys.readouterr()
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 1 and info["outcome"] == "complete" and info["ok"] is False
+    assert info["problems"] == ["4 of 4 chosen logo images could not be downloaded"]
+    assert "Not saved (4): " in (out / "summary.md").read_text(encoding="utf-8")
+
+
+def test_a_key_found_at_the_end_is_said_in_the_summary_too(tmp_path, capsys, monkeypatch):
+    write_inputs(tmp_path)
+    real, seen = L.find_key_in_files, []
+
+    def finds_it_once(folder, key):
+        seen.append(1)
+        return [folder / "results.csv"] if len(seen) == 1 else real(folder, key)
+
+    monkeypatch.setattr(L, "find_key_in_files", finds_it_once)
+    rc, out, _, _ = run_main(tmp_path)
+    capsys.readouterr()
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 1 and info["ok"] is False and not (out / "results.csv").exists()
+    assert info["problems"] == ["the key was found in ['results.csv']; those files were deleted"]
+    for f in ("summary.md", "run.log"):
+        assert "the key was found in ['results.csv']" in (out / f).read_text(encoding="utf-8"), f
+
+
+def test_an_error_outside_the_lookups_is_printed_masked(tmp_path, capsys, monkeypatch):
+    write_inputs(tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError(f"bad thing near Bearer {FAKE_KEY}")
+
+    monkeypatch.setattr(L, "build_info", boom)
+    rc, out, _, _ = run_main(tmp_path)
+    cap = capsys.readouterr()
+    assert rc == 1 and "RuntimeError: bad thing near Bearer ***" in cap.err
+    assert FAKE_KEY not in cap.err + cap.out and FAKE_KEY[3:15] not in cap.err + cap.out
+
+
+def test_the_data_sources_are_in_the_kept_files(tmp_path, capsys):
+    write_inputs(tmp_path)
+    rc, out, _, _ = run_main(tmp_path)
+    capsys.readouterr()
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert f"- data.json: {tmp_path / 'data.json'} (" in summary and f"- KRX listing: {tmp_path / 'listing.csv'} (" in summary
+    assert f"- DART homepages: {tmp_path / 'homepages.csv'} (14 companies)" in summary
+    assert f"· KRX listing: {tmp_path / 'listing.csv'}" in (out / "run.log").read_text(encoding="utf-8")
+    assert "Limit: logo.dev bills a brand once per 24 hours" in summary
 
 
 # ── the key: where it may come from ──

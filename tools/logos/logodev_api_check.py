@@ -30,7 +30,10 @@ platform/errors, platform/credits, platform/rate-limits, platform/conventions):
   - 404, data.status not_found, Credits-Charged 0: no brand matches. Free.
   - 404, Credits-Charged 1: a brand matches but has no logo image. Billed: 2 credits.
   - 202, data.status not_indexed, Retry-After: logo.dev is indexing the brand. Retried after Retry-After seconds, at
-    most twice (retries are not billed); the run goes on with other companies meanwhile.
+    most twice (retries are not billed); the run goes on with other companies meanwhile. A Retry-After above 60 s is
+    not waited for (never retried sooner than asked): the company ends as not_indexed.
+  - A brand is billed once per 24 hours; a repeat inside that time is free, so a repeat 404 for a brand without a logo
+    looks like "no brand" (not_found). Run this at most once in 24 hours for the same sample (REPEAT_NOTE).
   - 402 insufficient_credits: the whole run stops cleanly and reports. 429 rate_limited: waits Retry-After, or
     RateLimit-Reset when RateLimit-Remaining is 0, else backs off.
   - Community plan: 500 credits a month, 100 API requests a minute, 5 open at once. This tool sends one request at a
@@ -45,14 +48,17 @@ The key
   is searched for it. A value that looks like a secret key (sk_...) anywhere on the command line is refused.
 
 No silent failure: counts are logged as it goes; an answer the docs don't describe stops the run with a clear message,
-and the results so far are saved. Exit code 0 when the run finished or stopped cleanly (credit cap, 402); 1 when it
-stopped on an error. With --defer-failure (the workflow) it exits 0 once everything is saved, so the results can be
+and the results so far are saved. No new lookup starts after --time-limit-min (40), so a slow run still saves and
+uploads its results before the workflow's 60-minute limit. Exit code 0 when the run finished or stopped cleanly
+(credit cap, 402); 1 when it stopped on an error, hit the time limit, or more than half the chosen images or sheet.png
+failed. With --defer-failure (the workflow) it exits 0 once everything is saved, so the results can be
 uploaded, and the workflow's last step (--verdict run.json) fails the run.
 Unit tests: tests/test_logodev_check.py (no network; the HTTP client is faked).
 """
 import argparse
 import base64
 import collections
+import contextlib
 import csv
 import heapq
 import html
@@ -71,7 +77,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 import logo_sources as lsrc  # noqa: E402
-from logo_ids import Masker, now_kst  # noqa: E402
+from logo_ids import Masker, _cap, now_kst  # noqa: E402
 
 API_BASE = "https://api.logo.dev/v2"
 LOGO_ROUTE = "/brands/logo"
@@ -95,6 +101,8 @@ ERROR_STOP = 5                                 # companies in a row that end in 
 TIMEOUT_S = 30                                 # logo.dev: at least 15 s, it may prepare a brand at request time
 DOWNLOAD = {"size": "256", "format": "png"}
 MAX_IMAGE_BYTES = 2_000_000
+MAX_ANSWER_BYTES = 1_000_000                   # an API answer is a small JSON document
+TIME_LIMIT_MIN = 40                            # lookups stop by then; the workflow's job limit is 60 minutes
 MUST = {"kr": ("005930", "000660", "005380"), "us": ("AAPL", "MSFT")}
 MIN_COMPANIES = {"kr": 2000, "us": 500}
 
@@ -113,6 +121,11 @@ STATUS_MEANING = {
     "error": "No usable answer: HTTP 400 for this identifier, or no answer or a server error after "
              f"{RETRIES_TRANSIENT} retries. A request that got no answer is counted as 2 credits in case it was billed.",
 }
+REPEAT_NOTE = ("logo.dev bills a brand once per 24 hours, and a repeat answer inside that time is free (Credits-Charged "
+               "0). A repeat answer for a brand without a logo is then a free 404, the same as no brand at all, so it "
+               "reads as not_found. In a first run this is rare (two sampled companies would have to reach the same "
+               "brand). Run this check at most once in 24 hours for the same sample, or no_image companies from the "
+               "earlier run come back as not_found.")
 PNG, JPEG, WEBP = b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"WEBP"
 
 SK_LIKE = re.compile(r"(?<![A-Za-z0-9])sk_[A-Za-z0-9_\-]{4,}")
@@ -170,12 +183,30 @@ class Log:
 
 # ── companies and the sample ───────────────────────────────────────────────────────────────────────────────────────
 
-def cap_of(c):
-    try:
-        v = float(c.get("cap"))
-    except (TypeError, ValueError):
-        return None
-    return v if v == v and v not in (float("inf"), float("-inf")) and v > 0 else None
+cap_of = _cap                                  # the logo picker's rule: a finite market cap above 0, else None
+MAX_KR_NOCAP = 25                              # more Korean companies without a market cap -> refuse to rank
+
+
+def rank_korea(companies):
+    """Korean companies with a ticker and a market cap, largest first (ties by code), with rank 1, 2, ..."""
+    kr = sorted((c for c in companies if c["side"] == "kr" and c.get("ticker") and cap_of(c) is not None),
+                key=lambda c: (-cap_of(c), str(c["code"])))
+    return [dict(c, rank=i) for i, c in enumerate(kr, 1)]
+
+
+def check_ranking(companies, kr_top=KR_TOP):
+    """The Korea top-1,000 group is ranked by market cap, a field that can be blank: refuse when too many Korean
+    companies have none, or when a must-have company is not in the top group (CLAUDE.md). Returns a log line."""
+    nocap = [c["code"] for c in companies if c["side"] == "kr" and cap_of(c) is None]
+    if len(nocap) > MAX_KR_NOCAP:
+        raise SystemExit(f"!! {len(nocap):,} Korean companies have no market cap (at most {MAX_KR_NOCAP} allowed), so "
+                         f"a top {kr_top:,} by market cap would be wrong. data.json may be a pre-market file.")
+    top = {c["code"]: c["rank"] for c in rank_korea(companies)[:kr_top]}
+    lost = [m for m in MUST["kr"] if m not in top]
+    if lost:
+        raise SystemExit(f"!! must-have Korean companies are not in the top {kr_top:,} by market cap: {lost}")
+    return f"· Korea top {kr_top:,}: " + ", ".join(f"{m} rank {top[m]}" for m in MUST["kr"]) + \
+        f" · without a market cap: {len(nocap)}"
 
 
 def load_companies(data, listing, homepages, min_counts=None):
@@ -222,9 +253,7 @@ def draw_sample(companies, n, seed, kr_top=KR_TOP):
     no_ticker = sorted(c["code"] for c in companies if not c.get("ticker"))
     usable = [c for c in companies if c.get("ticker")]
     kr_nocap = sorted(c["code"] for c in usable if c["side"] == "kr" and cap_of(c) is None)
-    kr = sorted((c for c in usable if c["side"] == "kr" and cap_of(c) is not None),
-                key=lambda c: (-cap_of(c), str(c["code"])))
-    ranked = [dict(c, rank=i) for i, c in enumerate(kr, 1)]
+    ranked = rank_korea(usable)
     pools = {"US": [dict(c, rank=None) for c in sorted((c for c in usable if c["side"] == "us"),
                                                       key=lambda c: str(c["code"]))],
              "KR-TOP": ranked[:kr_top], "KR-REST": ranked[kr_top:]}
@@ -257,11 +286,13 @@ class Resp:
             return None
 
 
-def requests_transport(url, params=None, headers=None, timeout=TIMEOUT_S):
-    """The real network: one GET, no redirects followed (a redirect is an unexpected answer), no shared session."""
+def requests_transport(url, params=None, headers=None, timeout=TIMEOUT_S, max_bytes=MAX_ANSWER_BYTES):
+    """The real network: one GET, no redirects followed (a redirect is an unexpected answer), no shared session, and
+    at most max_bytes of the body read (a longer body is cut, so it fails the JSON or image check)."""
     import requests
-    r = requests.get(url, params=params, headers=headers or {}, timeout=timeout, allow_redirects=False)
-    return Resp(r.status_code, r.headers, r.content)
+    with requests.get(url, params=params, headers=headers or {}, timeout=timeout, allow_redirects=False,
+                      stream=True) as r:
+        return Resp(r.status_code, r.headers, r.raw.read(max_bytes, decode_content=True))
 
 
 class Pacer:
@@ -273,7 +304,6 @@ class Pacer:
         self.per_minute, self.interval = per_minute, interval
         self.starts = collections.deque()
         self.not_before = None
-        self.count = 0
         self.waited = 0.0
 
     def sleep(self, seconds):
@@ -301,7 +331,6 @@ class Pacer:
             while self.starts and now - self.starts[0] >= 60:
                 self.starts.popleft()
         self.starts.append(now)
-        self.count += 1
 
 
 class Client:
@@ -323,7 +352,8 @@ class Client:
         self.pacer.wait()
         self.api_requests += 1
         return self.send(API_BASE + LOGO_ROUTE, params={route: ident},
-                         headers={"Authorization": self._auth, "Accept": "application/json"}, timeout=TIMEOUT_S)
+                         headers={"Authorization": self._auth, "Accept": "application/json"}, timeout=TIMEOUT_S,
+                         max_bytes=MAX_ANSWER_BYTES)
 
     def download(self, url):
         u = urlsplit(url)
@@ -333,7 +363,7 @@ class Client:
         self.pacer.wait()
         self.downloads += 1
         return self.send(urlunsplit((u.scheme, u.netloc, u.path, urlencode(q), "")), params=None, headers={},
-                         timeout=TIMEOUT_S)
+                         timeout=TIMEOUT_S, max_bytes=MAX_IMAGE_BYTES + 1)
 
 
 # ── reading an answer ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -372,23 +402,27 @@ def read_image(j):
     data = j.get("data") if isinstance(j, dict) else None
     if not isinstance(data, dict):
         raise Unexpected("HTTP 200 without a data object")
-    img, shape = data, "data"
+    img, shape, kind = data, "data", data.get("kind")
     if "url" not in data and isinstance(data.get("logo"), dict):
-        img, shape = data["logo"], "data.logo"
-    elif data.get("object") != "image" or data.get("status") != "ready":
-        raise Unexpected(f"HTTP 200 whose data is not a ready image (object {data.get('object')!r}, "
-                         f"status {data.get('status')!r}, keys {sorted(data)})")
+        img, shape, kind = data["logo"], "data.logo", "logo"
+    elif data.get("object") != "image" or data.get("status") != "ready" or kind != "logo":
+        raise Unexpected(f"HTTP 200 whose data is not a ready logo image (object {data.get('object')!r}, "
+                         f"kind {kind!r}, status {data.get('status')!r}, keys {sorted(data)})")
     url, src = img.get("url"), img.get("source")
     if not isinstance(url, str) or not isinstance(src, dict):
         raise Unexpected(f"HTTP 200 without an image url and source (keys {sorted(img)})")
     u = urlsplit(url)
     if u.scheme != "https" or u.hostname not in IMAGE_HOSTS:
         raise Unexpected(f"HTTP 200 whose image address is not https://{IMAGE_HOSTS[0]} (host {u.hostname!r})")
-    w, h = src.get("width"), src.get("height")
-    if not all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in (w, h)):
-        raise Unexpected(f"HTTP 200 with an image size that is not two positive whole numbers ({w!r} x {h!r})")
-    return {"url": url, "width": w, "height": h, "format": str(src.get("format") or ""),
-            "is_vector": bool(src.get("is_vector")), "etag": str(img.get("etag") or ""), "shape": shape}
+    size = []
+    for x in (src.get("width"), src.get("height")):
+        if isinstance(x, bool) or not isinstance(x, (int, float)) or not 0 < x < 1e6 or x != int(x):
+            raise Unexpected(f"HTTP 200 with an image size that is not two positive whole numbers "
+                             f"({src.get('width')!r} x {src.get('height')!r})")
+        size.append(int(x))
+    return {"url": url, "width": size[0], "height": size[1], "format": str(src.get("format") or ""),
+            "is_vector": bool(src.get("is_vector")), "etag": str(img.get("etag") or ""), "shape": shape,
+            "kind": kind}
 
 
 def classify(resp):
@@ -410,11 +444,14 @@ def classify(resp):
         data = j.get("data") if isinstance(j, dict) else None
         if not isinstance(data, dict) or data.get("status") != "not_indexed":
             raise Unexpected(f"a 202 that is not not_indexed ({describe(resp)})")
-        pend = (j.get("metadata") or {}).get("pending") or {}
-        wait = _int(resp.headers.get("retry-after"))
+        meta = j.get("metadata") if isinstance(j.get("metadata"), dict) else {}
+        pend = meta.get("pending") if isinstance(meta.get("pending"), dict) else {}
+        wait, source = _int(resp.headers.get("retry-after")), "Retry-After"
         if wait is None or wait < 1:
-            wait = _int(pend.get("retry_after_seconds") if isinstance(pend, dict) else None) or 30
-        return "retry", {"wait": wait}
+            wait, source = _int(pend.get("retry_after_seconds")), "metadata.pending.retry_after_seconds"
+        if wait is None or wait < 1:
+            wait, source = 30, "none given: 30 s, logo.dev's documented value"
+        return "retry", {"wait": wait, "wait_source": source}
     code = str(err.get("code") or "")
     if st == 402:
         return "out_of_credits", {"code": code}
@@ -430,13 +467,14 @@ def classify(resp):
 
 
 def rate_limit_wait(headers, attempt, jitter):
-    """Seconds to wait after a 429: Retry-After; else RateLimit-Reset when RateLimit-Remaining is 0 (the minute's
-    requests are used); else too many open lookups: exponential backoff with jitter (logo.dev's advice)."""
+    """Seconds to wait after a 429: Retry-After; else RateLimit-Reset unless RateLimit-Remaining says requests are
+    left in the minute (0 or missing: the minute is used up); else too many open lookups: exponential backoff with
+    jitter (logo.dev's advice)."""
     ra = _int(headers.get("retry-after"))
     if ra is not None and ra >= 0:
         return float(max(ra, 1)), "Retry-After"
     rem, reset = _int(headers.get("ratelimit-remaining")), _int(headers.get("ratelimit-reset"))
-    if rem == 0 and reset is not None and reset >= 0:
+    if reset is not None and reset >= 0 and not (rem and rem > 0):
         return float(max(reset, 1)), "RateLimit-Reset"
     return float(min(2 ** attempt, 32)) + jitter(), "backoff"
 
@@ -464,12 +502,13 @@ class Task:
 class Checker:
     """Looks the sample up, one request at a time, and keeps every count the summary needs."""
 
-    def __init__(self, client, max_credits, log, clock=time.monotonic, sleep=None, jitter=None):
+    def __init__(self, client, max_credits, log, clock=time.monotonic, sleep=None, jitter=None, deadline=None):
         self.client, self.max_credits, self.log, self.clock = client, max_credits, log, clock
+        self.deadline = deadline                 # clock() value after which no new request starts
         self._sleep = sleep or client.pacer.sleep
         self.jitter = jitter or random.SystemRandom().random
         self.credits_billed = 0            # 2 per answer that was (or may have been) billed
-        self.credits_unknown = 0           # 2 per request that got no answer after its retries
+        self.credits_unknown = 0           # 2 per lookup where a request got no answer (it may have been billed)
         self.server_charged = 0            # answers with Credits-Charged: 1
         self.balance_first = self.balance_last = None
         self.shapes = collections.Counter()
@@ -497,21 +536,27 @@ class Checker:
     # one request (with its 429 / 5xx / no-answer retries) -> (kind, info)
     def call(self, route, ident):
         rl = tr = 0
+        unanswered = False
         while True:
             if not self.can_spend():
                 raise StopRun("max_credits", f"reached --max-credits {self.max_credits}: {self.credits_counted} "
                                              f"credits counted, and the next lookup could cost {CREDITS_PER_LOOKUP} more")
+            if self.deadline is not None and self.clock() >= self.deadline:
+                raise StopRun("time_limit", "reached the time limit (--time-limit-min), so the results so far can "
+                                            "still be saved and uploaded before the workflow's own limit")
             try:
                 resp = self.client.lookup(route, ident)
             except Exception as e:                       # noqa: BLE001 — no answer: counted, masked, retried, kept
                 self.counts["no answer (network)"] += 1
+                if not unanswered:                       # it may have reached logo.dev and been billed: count it
+                    unanswered = True                    # now (once: a repeat of the same brand is free for 24 h)
+                    self.credits_unknown += CREDITS_PER_LOOKUP
                 if tr < RETRIES_TRANSIENT:
                     self.log(f"  !! {route} {ident}: no answer ({type(e).__name__}); trying again in {BACKOFF_S[tr]} s")
                     self.sleep(BACKOFF_S[tr])
                     tr += 1
                     self.counts["retries after an error"] += 1
                     continue
-                self.credits_unknown += CREDITS_PER_LOOKUP
                 return "error", {"note": f"no answer after {tr + 1} tries ({type(e).__name__}); counted as "
                                          f"{CREDITS_PER_LOOKUP} credits in case it was billed"}
             self.counts[f"HTTP {resp.status}"] += 1
@@ -576,18 +621,32 @@ class Checker:
         cr, rq = self.credits_counted, self.client.api_requests
         try:
             kind, info = self.call(route, ident)
+        except Exception as e:                           # the run stops here: keep what this company already sent
+            if self.client.api_requests > rq:
+                t.lookups.append({"route": route, "id": ident, "http": None,
+                                  "result": f"stopped ({getattr(e, 'outcome', type(e).__name__)})"})
+            raise
         finally:
             t.credits += self.credits_counted - cr
             t.requests += self.client.api_requests - rq
         t.lookups.append({"route": route, "id": ident, "http": info.get("http"),
                           "result": "not_indexed (retry)" if kind == "retry" else kind})
         if kind == "retry":
-            if t.tries_202 < RETRIES_202:
+            if info["wait_source"] != "Retry-After":
+                self.counts["202 without Retry-After"] += 1
+                self.log(f"  !! {route} {ident}: 202 without a Retry-After header; waiting {info['wait']} s "
+                         f"({info['wait_source']})")
+            if info["wait"] > MAX_WAIT_202_S:            # never ask again sooner than logo.dev said
+                self.counts["202 not retried (wait too long)"] += 1
+                info["note"] = f"logo.dev asked to wait {info['wait']} s (more than {MAX_WAIT_202_S} s): not retried"
+                kind = "not_indexed"
+            elif t.tries_202 < RETRIES_202:
                 t.tries_202 += 1
-                t.wait = min(max(info["wait"], 1), MAX_WAIT_202_S)
+                t.wait = max(info["wait"], 1)
                 self.counts["202 retries"] += 1
                 return "retry"
-            kind = "not_indexed"
+            else:
+                kind = "not_indexed"
         t.results[route] = kind
         if route == "ticker" and kind == "not_found" and c["side"] == "kr" and c.get("domain"):
             t.stage, t.tries_202 = "domain", 0
@@ -620,35 +679,33 @@ class Checker:
         an unexpected answer; whatever was not finished is in self.remaining."""
         self.total = len(order)
         queue = collections.deque(Task(c) for c in order)
-        pending, n = [], 0
-        while (queue or pending) and not self.stop:
-            now = self.clock()
-            if pending and pending[0][0] <= now:
-                task = heapq.heappop(pending)[2]
-            elif queue:
-                task = queue.popleft()
-            else:
-                self.sleep(pending[0][0] - now)
-                continue
-            try:
+        pending, n, task = [], 0, None
+        try:
+            while (queue or pending) and not self.stop:
+                now = self.clock()
+                if pending and pending[0][0] <= now:
+                    task = heapq.heappop(pending)[2]
+                elif queue:
+                    task = queue.popleft()
+                else:
+                    self.sleep(pending[0][0] - now)
+                    continue
                 nxt = self.step(task)
-            except StopRun as s:
-                self.stop = s
-                queue.appendleft(task)
-                break
-            except Unexpected as u:
-                self.stop = StopRun("unexpected", f"logo.dev answered in a way its docs don't describe: {u}. "
-                                                  f"(company {task.c['code']}, {task.stage} lookup)")
-                queue.appendleft(task)
-                break
-            if nxt == "retry":
-                n += 1
-                heapq.heappush(pending, (self.clock() + task.wait, n, task))
-            elif nxt == "domain":
-                queue.appendleft(task)
-        self.remaining = [p[2] for p in sorted(pending)] + list(queue)
-        if self.stop:
-            self.log(f"!! stopped: {self.stop.reason}")
+                if nxt == "retry":
+                    n += 1
+                    heapq.heappush(pending, (self.clock() + task.wait, n, task))
+                elif nxt == "domain":
+                    queue.appendleft(task)
+                task = None
+        except StopRun as s:
+            self.stop = s
+        except Unexpected as u:
+            self.stop = StopRun("unexpected", f"logo.dev answered in a way its docs don't describe: {u}. "
+                                              f"(company {task.c['code']}, {task.stage} lookup)")
+        finally:                                         # also on a crash: every company stays in the results
+            self.remaining = ([task] if task is not None else []) + [p[2] for p in sorted(pending)] + list(queue)
+            if self.stop:
+                self.log(f"!! stopped: {self.stop.reason}")
 
 
 # ── results ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -668,13 +725,14 @@ def result_rows(checker):
                      "ticker": c.get("ticker", ""), "domain": c.get("domain", ""), "status": t.final or "",
                      "route": t.route, "ticker_status": t.results.get("ticker", ""),
                      "domain_status": t.results.get("domain", ""), "credits": t.credits, "requests": t.requests,
-                     "width": img.get("width", ""), "height": img.get("height", ""), "format": img.get("format", ""),
-                     "is_vector": img.get("is_vector", ""), "etag": img.get("etag", ""), "image_file": "",
+                     "kind": img.get("kind", ""), "width": img.get("width", ""), "height": img.get("height", ""),
+                     "format": img.get("format", ""), "is_vector": img.get("is_vector", ""),
+                     "etag": img.get("etag", ""), "image_file": "", "saved_px": "",
                      "note": note, "_url": img.get("url", ""), "_lookups": t.lookups})
     return rows
 
 
-def coverage(rows, groups=None):
+def coverage(rows):
     """Per group and for all: companies in the sample, companies checked (a final status), and the count and share
     (of those checked, in %, one decimal) of each status."""
     out = {}
@@ -731,6 +789,13 @@ def image_kind(resp):
     return None
 
 
+def png_size(b):
+    """(width, height) from a PNG's header, or None."""
+    if b.startswith(PNG) and len(b) >= 24 and b[12:16] == b"IHDR":
+        return int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
+    return None
+
+
 def save_images(chosen, client, folder, log):
     """Downloads each chosen logo once (no key: the signed address is the credential) into folder/images."""
     (folder / "images").mkdir(parents=True, exist_ok=True)
@@ -747,8 +812,9 @@ def save_images(chosen, client, folder, log):
             continue
         name = f"{r['group']}_{re.sub(r'[^A-Za-z0-9_.-]', '_', r['code'])}.{kind[0]}"
         (folder / "images" / name).write_bytes(resp.body)
-        r["image_file"] = f"images/{name}"
-        saved.append({"row": r, "file": name, "mime": kind[1], "bytes": len(resp.body), "data": resp.body})
+        px = png_size(resp.body)
+        r["image_file"], r["saved_px"] = f"images/{name}", f"{px[0]}x{px[1]}" if px else ""
+        saved.append({"row": r, "file": name, "mime": kind[1], "bytes": len(resp.body), "data": resp.body, "px": px})
     for r, why in failed:
         log(f"  !! image {r['code']}: not saved: {why}")
     log(f"· images saved: {len(saved)} / {len(chosen)}"
@@ -803,8 +869,8 @@ def sheet_html(saved, meta, font_href=None):
                 f'<div class="name">{e(r["name"])}</div>'
                 f'<div class="line">{e(r["code"])} · {e(r["route"])} {e(ident)}</div>'
                 f'<div class="line">source {r["width"]}×{r["height"]} {e(r["format"])}{vec}</div>'
-                f'<div class="line">saved {e(DOWNLOAD["size"])} px {e(s["mime"].split("/")[1])}, '
-                f'{s["bytes"] / 1024:.1f} KB</div></div>')
+                f'<div class="line">saved {"×".join(map(str, s["px"])) if s.get("px") else "size not read"} '
+                f'{e(s["mime"].split("/")[1])}, {s["bytes"] / 1024:.1f} KB</div></div>')
         parts.append("</div>")
     parts.append("</body></html>")
     return "\n".join(parts)
@@ -855,6 +921,7 @@ OUTCOME_TEXT = {
     "unexpected": "Stopped on an error: logo.dev answered in a way its docs don't describe.",
     "error": "Stopped on an error.",
     "crashed": "Stopped on an error in this tool.",
+    "time_limit": "Stopped at the time limit (--time-limit-min), before the workflow's own limit.",
 }
 OK_OUTCOMES = ("complete", "max_credits", "out_of_credits")
 
@@ -898,17 +965,18 @@ def summary_md(info):
             f"after the first and after the last answer: {cr['balance_first'] or 'not reported'} → "
             f"{cr['balance_last'] or 'not reported'} (Credits-Remaining).",
             f"- API requests: **{rq['api']:,}** (retries after 202: {rq['retries_202']:,} · after 429: "
-            f"{rq['retries_429']:,} · after no answer or a server error: {rq['retries_error']:,}) · image downloads: "
+            f"{rq['retries_429']:,} · after no answer or a server error: {rq['retries_error']:,}; requests that got "
+            f"no answer: {rq['no_answer']:,}; 202 without Retry-After: {rq['no_retry_after']:,}) · image downloads: "
             f"{rq['downloads']:,}. One at a time, at most {PER_MINUTE} a minute; time spent waiting "
             f"{rq['waited_s']:,.0f} s.",
             "- Answer shapes for logos: " + (", ".join(f"{k} {v:,}" for k, v in info["shapes"].items()) or "none")
-            + " (data = the documented shape).", "",
+            + " (data = the documented shape; every one is kind logo, never a brandmark).", "",
             "## Images", "",
             f"{im['saved']:,} of {im['chosen']:,} chosen logos saved in images/ (asked for {im['asked']:,}, spread over "
             f"the three groups: " + ", ".join(f"{GROUP_LABEL[g]} {n}" for g, n in im["per_group"].items())
             + f"). Contact sheet: sheet.html{' and sheet.png' if im['png'] else ' (sheet.png: not drawn)'}.", ""]
     if im["failed"]:
-        out += [f"Not saved: {im['failed']}", ""]
+        out += [f"Not saved ({len(im['failed'])}): " + "; ".join(im["failed"]), ""]
     g = info["groups"]
     out += ["## The sample", "",
             f"Stratified random sample, seed {info['seed']}, from data.json's Korean common shares and US stocks "
@@ -917,14 +985,17 @@ def summary_md(info):
             "Left out before sampling: " + "; ".join(f"{k}: {len(v):,}" for k, v in info["left_out"].items()) + ".",
             "Lookups use exact identifiers only (never a name search): the ticker first (Korea 005930.KS / 247540.KQ, "
             "US bare); for Korea only, the DART-homepage domain when the ticker found no brand.", "",
-            "## What each status means", ""]
+            "Sources:", ""]
+    out += [f"- {s}" for s in info["sources"]]
+    out += ["", "## What each status means", ""]
     out += [f"- **{s}** — {STATUS_MEANING[s]}" for s in STATUSES]
-    out += ["", "Per-company results: results.csv (and results.json, with every lookup). The signed image addresses "
-                "logo.dev returns are not kept: they expire after about 24 hours.", ""]
+    out += ["", f"Limit: {REPEAT_NOTE}", "",
+            "Per-company results: results.csv (and results.json, with every lookup). The signed image addresses "
+            "logo.dev returns are not kept: they expire after about 24 hours.", ""]
     return "\n".join(out)
 
 
-def build_info(a, checker, rows, groups, left_out, data, started, finished, images, problems, client):
+def build_info(a, checker, rows, groups, left_out, data, started, finished, images, problems, client, sources=()):
     cov = coverage(rows)
     done = [r for r in rows if r["status"] in STATUSES]
     kr = [r for r in done if r["side"] == "kr"]
@@ -939,7 +1010,7 @@ def build_info(a, checker, rows, groups, left_out, data, started, finished, imag
         "checked": len(done), "unfinished": sum(1 for r in rows if not r["status"] and r["_lookups"]),
         "not_started": sum(1 for r in rows if not r["status"] and not r["_lookups"]),
         "data": {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf")},
-        "groups": groups, "left_out": left_out, "coverage": cov,
+        "sources": list(sources), "groups": groups, "left_out": left_out, "coverage": cov,
         "korea_routes": {"logo_by_ticker": sum(1 for r in kr if r["status"] == "logo" and r["route"] == "ticker"),
                          "logo_by_domain": sum(1 for r in kr if r["status"] == "logo" and r["route"] == "domain"),
                          "domain_tried": sum(1 for r in kr if r["domain_status"]),
@@ -951,7 +1022,9 @@ def build_info(a, checker, rows, groups, left_out, data, started, finished, imag
         "requests": {"api": client.api_requests, "downloads": client.downloads,
                      "retries_202": checker.counts["202 retries"], "retries_429": checker.counts["retries after 429"],
                      "retries_error": checker.counts["retries after an error"],
-                     "http": {k: v for k, v in sorted(checker.counts.items()) if k.startswith("HTTP ")},
+                     "no_answer": checker.counts["no answer (network)"],
+                     "no_retry_after": checker.counts["202 without Retry-After"],
+                     "counts": dict(sorted(checker.counts.items())),
                      "waited_s": round(client.pacer.waited, 1)},
         "shapes": dict(checker.shapes), "images": images,
     }
@@ -960,28 +1033,34 @@ def build_info(a, checker, rows, groups, left_out, data, started, finished, imag
 # ── output ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 CSV_COLS = ["group", "rank", "code", "name", "side", "market", "cap", "ticker", "domain", "status", "route",
-            "ticker_status", "domain_status", "credits", "requests", "width", "height", "format", "is_vector", "etag",
-            "image_file", "note"]
+            "ticker_status", "domain_status", "credits", "requests", "kind", "width", "height", "format", "is_vector",
+            "etag", "image_file", "saved_px", "note"]
+
+
+def _put(folder, name, text, mask):
+    (folder / name).write_text(mask(text), encoding="utf-8")
+
+
+def write_reports(folder, info, log, mask):
+    """summary.md, run.json and run.log: what is written again when the run's verdict changes at the very end."""
+    _put(folder, "summary.md", summary_md(info), mask)
+    _put(folder, "run.json", json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False), mask)
+    _put(folder, "run.log", "\n".join(log.lines) + "\n", mask)
 
 
 def write_outputs(folder, rows, info, sheet, log, mask):
-    def put(name, text):
-        (folder / name).write_text(mask(text), encoding="utf-8")
-
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=CSV_COLS, extrasaction="ignore", lineterminator="\n")
     w.writeheader()
     for r in rows:
         w.writerow(r)
-    put("results.csv", buf.getvalue())
+    _put(folder, "results.csv", buf.getvalue(), mask)
     clean = [{k: v for k, v in r.items() if k != "_url"} for r in rows]
     for r in clean:
         r["lookups"] = r.pop("_lookups")
-    put("results.json", json.dumps(clean, ensure_ascii=False, indent=1, allow_nan=False))
-    put("sheet.html", sheet)
-    put("summary.md", summary_md(info))
-    put("run.json", json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False))
-    put("run.log", "\n".join(log.lines) + "\n")
+    _put(folder, "results.json", json.dumps(clean, ensure_ascii=False, indent=1, allow_nan=False), mask)
+    _put(folder, "sheet.html", sheet, mask)
+    write_reports(folder, info, log, mask)
 
 
 def verdict(path):
@@ -1029,6 +1108,8 @@ def parse_args(argv):
     ap.add_argument("--data", default=lsrc.DATA_URL, help="data.json URL or path (default: the live site)")
     ap.add_argument("--listing", default="auto", help="KRX listing CSV path, or auto (the file for data.json pxDate)")
     ap.add_argument("--homepages", default=str(lsrc.HOMEPAGES))
+    ap.add_argument("--time-limit-min", type=float, default=TIME_LIMIT_MIN,
+                    help="no new lookup starts after this many minutes; the results so far are saved")
     ap.add_argument("--no-png", action="store_true", help="write sheet.html only (no browser)")
     ap.add_argument("--plan-only", action="store_true", help="draw and print the sample; no logo.dev call, no key")
     ap.add_argument("--defer-failure", action="store_true",
@@ -1036,35 +1117,68 @@ def parse_args(argv):
                          "outcome and --verdict turns it into the exit code (the workflow's last step)")
     ap.add_argument("--verdict", metavar="RUN_JSON", help="only read a run's run.json and exit 1 unless it was ok")
     a = ap.parse_args(argv)
-    if a.sample < 3 or a.max_credits < CREDITS_PER_LOOKUP or a.save_images < 0:
-        ap.error("--sample must be at least 3, --max-credits at least 2 and --save-images 0 or more")
+    if a.sample < 3 or a.max_credits < CREDITS_PER_LOOKUP or a.save_images < 0 or a.time_limit_min <= 0:
+        ap.error("--sample must be at least 3, --max-credits at least 2, --save-images 0 or more and "
+                 "--time-limit-min above 0")
     return a
 
 
+def logged(log, sources, fn, *args):
+    """Runs a logo_sources loader, which reports with print(), and puts what it printed into the log and the
+    sources list (which data.json and KRX listing were used, and any fallback to an older listing)."""
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            return fn(*args)
+    finally:
+        for line in buf.getvalue().splitlines():
+            log(line)
+            sources.append(line.lstrip("· "))
+
+
 def main(argv=None, deps=None):
+    """Every error that reaches here is printed through the masker (the key never shows), then exit 1."""
+    state = {"mask": str}
+    try:
+        return _main(argv, deps, state)
+    except SystemExit:
+        raise
+    except Exception:                                    # noqa: BLE001 — printed masked, then a failing exit
+        for line in traceback.format_exc().splitlines():
+            print(state["mask"](line), file=sys.stderr, flush=True)
+        print("!! the check stopped on an error in this tool (above)", file=sys.stderr, flush=True)
+        return 1
+
+
+def _main(argv, deps, state):
     argv = list(sys.argv[1:] if argv is None else argv)
     refuse_key_in_args(argv)
     a = parse_args(argv)
     if a.verdict:
         return verdict(a.verdict)
     d = deps or Deps()
+    t0 = d.clock()
     key = None
     if not a.plan_only:
         key = read_secret_key(d.environ)
         d.environ.pop(KEY_ENV, None)          # children (the browser for sheet.png) never inherit it
     mask = Masker(key) if key else str
+    state["mask"] = mask
     log = Log(mask)
     started = d.wall()
     stamp = f"{started:%Y-%m-%d %H:%M}"
     log(f"logo.dev API check · {stamp} KST · seed {a.seed} · sample {a.sample} · max credits {a.max_credits} · "
         f"images {a.save_images}")
 
-    data = json.loads(lsrc.load_text(a.data, "data.json"))
-    listing = lsrc.load_listing(a.listing, data.get("pxDate"))
+    sources = []
+    data = json.loads(logged(log, sources, lsrc.load_text, a.data, "data.json"))
+    listing = logged(log, sources, lsrc.load_listing, a.listing, data.get("pxDate"))
     homepages = lsrc.load_homepages(a.homepages)
+    sources.append(f"DART homepages: {a.homepages} ({len(homepages):,} companies)")
     companies, clog = load_companies(data, listing, homepages, d.min_counts)
     for line in clog:
         log(line)
+    log(check_ranking(companies, d.kr_top))
     order, groups, left_out = draw_sample(companies, a.sample, a.seed, d.kr_top)
     log(f"· data.json asOf {data.get('asOf')} · prices {data.get('pxDate')} (US {data.get('usPxDate')}) · companies "
         f"{len(companies):,} (Korea {sum(1 for c in companies if c['side'] == 'kr'):,} · "
@@ -1084,8 +1198,9 @@ def main(argv=None, deps=None):
 
     out = prepare_out(a.out or CACHE_DIR / f"logo-dev-check-{started:%Y%m%d-%H%M%S}")
     log(f"· output folder: {out}")
+    log(f"· {REPEAT_NOTE}")
     client = Client(key, d.send, Pacer(d.clock, d.sleep))
-    checker = Checker(client, a.max_credits, log, d.clock, None, d.jitter)
+    checker = Checker(client, a.max_credits, log, d.clock, None, d.jitter, deadline=t0 + a.time_limit_min * 60)
     problems = []
     try:
         checker.run(order)
@@ -1100,6 +1215,9 @@ def main(argv=None, deps=None):
     if not clean_stop:
         log("· images: none downloaded, because the run stopped on an error")
     saved, failed = save_images(chosen, client, out, log) if chosen else ([], [])
+    if chosen and len(failed) * 2 > len(chosen):
+        problems.append(f"{len(failed)} of {len(chosen)} chosen logo images could not be downloaded")
+        log(f"!! {problems[-1]}")
     finished = f"{d.wall():%Y-%m-%d %H:%M}"
     meta = (f"{stamp} KST · seed {a.seed} · {len(saved)} logos from a sample of {len(rows)} "
             f"({', '.join(GROUP_LABEL[g] for g, _ in GROUPS)})")
@@ -1118,7 +1236,7 @@ def main(argv=None, deps=None):
     images = {"asked": a.save_images, "chosen": len(chosen), "saved": len(saved), "png": png,
               "per_group": {g: sum(1 for s in saved if s["row"]["group"] == g) for g, _ in GROUPS},
               "failed": [f"{r['code']}: {why}" for r, why in failed]}
-    info = build_info(a, checker, rows, groups, left_out, data, stamp, finished, images, problems, client)
+    info = build_info(a, checker, rows, groups, left_out, data, stamp, finished, images, problems, client, sources)
     cov = info["coverage"]["ALL"]
     log(f"· checked {info['checked']:,} of {len(rows):,} · " + " · ".join(f"{s} {cov['counts'][s]:,}" for s in STATUSES)
         + f" · credits counted {checker.credits_counted:,}/{a.max_credits:,} · API requests {client.api_requests:,}"
@@ -1133,8 +1251,9 @@ def main(argv=None, deps=None):
         info["ok"] = False
         info["problems"].append(f"the key was found in {[p.name for p in leaks]}; those files were deleted")
         log(f"!! NOT OK: the key was found in {[p.name for p in leaks]}; those files were deleted")
-        (out / "run.json").write_text(mask(json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False)),
-                                      encoding="utf-8")
+        write_reports(out, info, log, mask)              # the summary and run.json say so too
+        for p in find_key_in_files(out, key):
+            p.unlink()
     if info["ok"] or a.defer_failure:
         return 0
     return 1
