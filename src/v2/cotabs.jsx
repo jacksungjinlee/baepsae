@@ -517,10 +517,11 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 }
 
 // ================= 배당 =================
-// KR: the yield is the report's own 현금배당수익률 (dy, that year's price) with its report year; the per-share figure and the
-// bars only when dps agrees with dy (company.js divKr dpsOk); 배당성향 only on one basis (company.js payout). 100만원어치
-// (Jack, 2026-11-05): 1,000,000 ÷ today's close × that report's dividend per share (the same trusted dps). US: Yahoo's
-// yield only (no per-share dividend in the data until v19.2).
+// KR (Jack, 2026-11-05): the yield and the 100만원 line both use the latest 사업보고서's dividend per share over today's
+// close (company.js krYieldToday / perMillionKr), so they always agree; a dps that fails the cross-check with the report's
+// own yield shows neither. The per-share figure only when it passes (divKr dpsOk); the 3-year bars and the trend headline
+// only with company.js KR_DIV_TREND on (off until the history is split-adjusted). 배당성향 on one basis (payout).
+// US: Yahoo's yield only (no per-share dividend in the data until v19.2).
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
   const Dv = C.co.div;
@@ -528,7 +529,8 @@ export function DivTab({ load, s }) {
   const us = usOf(s);
   const r = us ? divUs(s) : divKr(s, co);
   // na (the per-share figures disagree with the report's yield, or are missing): the tile's own phrase, never an empty card
-  const head = r.rule === "na" ? C.co.tiles.na : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : us && r.rule === "pays" ? Dv.head.pays : Dv.head[r.rule];
+  const head = r.rule === "na" ? C.co.tiles.na : r.rule === "noPrev" ? C.co.tiles.div.noPrev
+    : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null) : Dv.head[r.rule];
   const md = priceMd(load, s);
   const fy = us ? null : r.fy;
   // KR (Jack, 2026-11-05): 1,000,000 ÷ today's close × the report's dividend per share (company.js perMillionKr); US: Yahoo's yield
@@ -567,7 +569,8 @@ export function DivTab({ load, s }) {
       )}
       <Card>
         <Stats>
-          {r.yieldPct != null && <Stat data-ui-v2="co-yield" label={C.pick.receipt.yield} value={yieldText(r.yieldPct)} sub={us ? Dv.yieldSubUs : yearText(fy)} />}
+          {r.yieldPct != null && <Stat data-ui-v2="co-yield" data-y={r.yieldPct} label={C.pick.receipt.yield} value={yieldText(r.yieldPct)}
+            sub={us ? Dv.yieldSubUs : fy ? fill(Dv.basisKr, { fy }) : null} />}
           {po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}

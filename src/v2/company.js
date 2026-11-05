@@ -87,24 +87,44 @@ export function valueTile(s, group) {
 }
 
 // ---------------- 배당 tile ----------------
-// KR yield: the latest 사업보고서's own 현금배당수익률 (data.json dy: DART alotMatter, at that year's price; the publication
-// gate checks it), shown with that report year. Not dps / today's close: a split after the report, or a total dividend
-// filed in the per-share row, makes that absurd (v19.1a review: 와이엔텍 28,593,458%). The per-share figures (dps, dps3)
-// are used only when dps agrees with dy (engine.dpsAgrees); otherwise the trend is na (판단할 자료가 없어요).
+// The Korean dividend trend (늘렸어요 · 줄였어요 · 비슷하게 · N년 연속, and the 3-year bars) is OFF (Jack, 2026-11-05) until the
+// pipeline gives a split-adjusted per-share history: after a split the per-share dividend drops with no real cut, and the
+// data has no per-report share count to tell the two apart. This one switch turns it back on; both states are tested.
+//   off: dps > 0 -> pays (배당을 줘요) · dps 0 -> none (배당이 없어요) · missing or contradictory (dps 0 with a yield, or a
+//        payer whose report says 0%) -> na (자료가 없어요, and no number is shown with it).
+//   on:  the trend rules below; a yield with no earlier year to compare -> noPrev (작년과 비교할 기록이 없어요).
+export const KR_DIV_TREND = false;
+
+// KR yield on today's price (Jack, 2026-11-05): the latest 사업보고서's dividend per share ÷ today's close (data.json price,
+// the pxDate close), the same inputs as the 100만원 line, so the two always agree. Only a dps the card trusts: it agrees
+// with that report's own yield (engine.dpsAgrees, 1/3x-3x: a split after the report or a total filed in the per-share row
+// fails it) and gives at most 30% a year (DY_MAX). Otherwise null: the yield is hidden, never the report-year yield instead.
+export function krYieldToday(s) {
+  const y = krDivYield(s);
+  return y != null && y <= DY_MAX ? y : null;
+}
 const d3Of = (s, co) => (s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null);
 
-// dps 0 -> none · a cut (latest < last year) -> cut · 2+ raises in a row -> streak · a raise of more than 3% -> raised ·
-// else steady. dps missing, disagreeing with dy, last year's missing (nothing to compare), or dps3 disagreeing with dps -> na.
-export function divKr(s, co) {
-  const dps = num(s && s.dps), dy = okDy(s);                        // dy above 30% is not believed (engine.DY_MAX)
+// trend on: dps 0 -> none · a cut (latest < last year) -> cut · 2+ raises in a row -> streak · a raise of more than 3% ->
+// raised · else steady. dps missing or disagreeing with dy -> na; no usable earlier year (or dps3 not matching dps) ->
+// noPrev when a yield is shown, else na.
+export function divKr(s, co, trend = KR_DIV_TREND) {
+  const dps = num(s && s.dps), dy = num(s && s.dy);
   const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
-  const yieldPct = dy != null && fy != null ? dy : null;
-  if (dps == null) return { rule: "na", dps: null, yieldPct, fy, dpsOk: false };
-  if (!dpsAgrees(s)) return { rule: "na", dps, yieldPct, fy, dpsOk: false };
+  const ok = dpsAgrees(s);
+  const yieldPct = ok && fy != null ? krYieldToday(s) : null;
+  if (dps == null) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
+  if (!ok) {
+    // the per-share figure and the report's yield disagree: no yield, no per-share figure. With the trend off a payer
+    // (dps > 0, the report's yield not 0) still reads 배당을 줘요; a contradiction (dps 0 with a yield, or the reverse) is na.
+    const pays = !trend && dps > 0 && (dy == null || dy > 0);
+    return { rule: pays ? "pays" : "na", dps, yieldPct: null, fy, dpsOk: false };
+  }
   if (dps === 0) return { rule: "none", dps: 0, yieldPct: fy != null ? 0 : null, fy, dpsOk: true };
+  if (!trend) return { rule: "pays", dps, yieldPct, fy, dpsOk: true };
   const d3 = d3Of(s, co);
   const cur = d3 ? num(d3[0]) : null, prev = d3 ? num(d3[1]) : null;
-  if (cur == null || prev == null || cur !== dps) return { rule: "na", dps, yieldPct, fy, dpsOk: true };
+  if (cur == null || prev == null || cur !== dps) return { rule: yieldPct != null ? "noPrev" : "na", dps, yieldPct, fy, dpsOk: true };
   const base = { dps, yieldPct, fy, dpsOk: true, d3: [0, 1, 2].map((i) => num(d3[i])) };
   if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);
@@ -142,8 +162,8 @@ const millionView = (raw) => (raw < 1000 ? { under: true, raw } : { won: Math.ro
 // card trusts: it agrees with the same report's yield (engine.krDivYield / dpsAgrees), so a split after the report or a
 // total filed in the per-share row (와이엔텍) never turns into an absurd amount; above 30% a year is not believed (DY_MAX).
 export function perMillionKr(s) {
-  const y = krDivYield(s);                        // null without dps, a price above 0, or agreement with the report's yield
-  if (y == null || !(y > 0) || y > DY_MAX) return null;
+  const y = krYieldToday(s);                      // null without dps, a price above 0, agreement with the report's yield, <= 30%
+  if (y == null || !(y > 0)) return null;
   return millionView((MILLION * s.dps) / s.price);
 }
 

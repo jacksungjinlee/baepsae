@@ -2787,6 +2787,31 @@ def scene_hint(R, files, devices):
 
 # ── v19.1a 회사 페이지 ──
 CO = C["co"]
+# 한국 배당 추세 스위치 (src/v2/company.js KR_DIV_TREND, Jack 2026-11-05: 분할을 고친 기록이 생길 때까지 꺼짐). 화면 시험은 코드의 값을 따라요
+KR_DIV_TREND = re.search(r"export const KR_DIV_TREND = (true|false);", open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8").read()).group(1) == "true"
+
+
+def kr_dps_agrees(s):
+    """engine.dpsAgrees: 주당 배당 ÷ 오늘 종가가 그 보고서 수익률의 1/3 ~ 3 배 (보고서 수익률이 없으면 그대로)."""
+    d, y, p = s.get("dps"), s.get("dy"), s.get("price")
+    if d is None:
+        return False
+    if d == 0:
+        return y is None or y == 0
+    if y is None:
+        return True
+    if not (y > 0) or y > 30 or not (p and p > 0):
+        return False
+    return 1 / 3 <= d / p * 100 / y <= 3
+
+
+def kr_yield_today(s, co):
+    """company.js krYieldToday (보고서 연도를 알 때만): 최근 사업보고서 주당 배당 ÷ 오늘 종가, 맞춰 본 값만 · 연 30% 이하만."""
+    fy = s.get("fy") or (co or {}).get("fy")
+    if not fy or not kr_dps_agrees(s) or not (s.get("price") or 0) > 0:
+        return None
+    y = s["dps"] / s["price"] * 100
+    return y if y <= 30 else None
 MEMO_TEXT = "서비스 매출이 이어지는지 보려고요"
 CO_SEL = '[data-ui-v2="company"], [data-ui-v2="co-not-found"], [data-ui-v2="co-value-more"], [data-ui-v2="co-earn-more"]'
 
@@ -2870,15 +2895,24 @@ def expect_rules(s, co, stocks):
     if s["cls"] == "us":
         dy = s.get("dy")
         out["div"] = "na" if dy is None else "none" if dy == 0 else "pays"
+    elif not KR_DIV_TREND:                                                  # 지금: 추세 없이 줘요 · 없어요 (Jack, 2026-11-05)
+        dps, dy = s.get("dps"), s.get("dy")
+        if dps is None:
+            out["div"] = "na"
+        elif not kr_dps_agrees(s):
+            out["div"] = "pays" if dps > 0 and (dy is None or dy > 0) else "na"
+        else:
+            out["div"] = "none" if dps == 0 else "pays"
+        out["streak"] = 0
     else:
         dps, d3 = s.get("dps"), s.get("dps3") or (co or {}).get("dps3")
         n = 0
-        if dps is None:
+        if dps is None or not kr_dps_agrees(s):
             out["div"] = "na"
         elif dps == 0:
             out["div"] = "none"
         elif not d3 or d3[0] is None or d3[1] is None or d3[0] != dps:
-            out["div"] = "na"
+            out["div"] = "noPrev" if kr_yield_today(s, co) is not None else "na"
         elif d3[0] < d3[1]:
             out["div"] = "cut"
         else:
@@ -3039,9 +3073,23 @@ def scene_company(R, files, width):
                 assert page.locator('[data-ui-v2="co-tiles-source"]').count() == 0
             # 칸마다 자기 근거: 실적 · 배당은 그 사업보고서, 가치(오늘 종가의 PBR) · 출렁임(그날까지의 베타)은 가격 날짜 (리뷰)
             report = fillp(C["app"]["reportYear"], year=co["fy"]) if co and co.get("fy") else None
-            want = {"earn": None if us else report, "div": None if us else report, "value": fillp(C["app"]["asOf"], md=md), "risk": fillp(C["app"]["asOf"], md=md)}
+            # 한국 배당: 수익률이 보일 때만 그 근거 '{fy}년 사업보고서 주당 배당과 오늘 주가로 계산했어요.' (Jack, 2026-11-05)
+            kfy = s.get("fy") or (co or {}).get("fy")
+            kdiv = fillp(CO["div"]["basisKr"], fy=kfy) if not us and kfy and kr_yield_today(s, co) is not None else None
+            want = {"earn": None if us else report, "div": None if us else kdiv, "value": fillp(C["app"]["asOf"], md=md), "risk": fillp(C["app"]["asOf"], md=md)}
             for topic, t in tiles.items():
                 b = t.locator('[data-ui-v2="tile-basis"]')
+                if topic == "div" and not us:
+                    ky = kr_yield_today(s, co)
+                    num_el = t.locator('[data-ui-v2="tile-number"]')
+                    if ky is None:
+                        assert num_el.count() == 0 and b.count() == 0, ("배당 칸: 믿을 수 있는 수익률이 없으면 숫자 · 근거 없음", code)
+                    else:
+                        assert abs(float(t.get_attribute("data-y")) - ky) < 1e-9, (t.get_attribute("data-y"), ky)
+                        assert b.inner_text() == kdiv, (b.inner_text(), kdiv)
+                    if t.get_attribute("data-rule") == "na":
+                        assert num_el.count() == 0, "자료가 없어요 옆에 숫자"
+                    continue
                 if t.get_attribute("data-rule") == "na":
                     assert b.count() == 0, topic
                 elif want[topic] or us:
@@ -3139,6 +3187,20 @@ def scene_company(R, files, width):
             assert want in m.inner_text(), (want, m.inner_text())
             assert "지난 1년 기준" not in m.inner_text() and "약 0원" not in m.inner_text()
             assert m.locator('[data-ui-v2="date-line"]').first.inner_text().startswith(fillp(C["app"]["asOf"], md=md))   # 어느 날 종가인지
+        if not us:                                                           # 한국 수익률 = 100만원 줄과 같은 오늘 주가 기준 (Jack, 2026-11-05)
+            ky = kr_yield_today(s, co)
+            ys = page.locator('[data-ui-v2="co-yield"]')
+            if ky is None:
+                assert ys.count() == 0, ("믿을 수 있는 수익률이 없는데 배당수익률이 보여요", code)
+            else:
+                assert abs(float(ys.get_attribute("data-y")) - ky) < 1e-9 and fillp(CO["div"]["basisKr"], fy=fy) in ys.inner_text()
+            if not KR_DIV_TREND:                                             # 추세가 꺼져 있으면 3년 막대도, 늘렸어요 · 줄였어요도 없어요
+                assert d.locator('[data-ui-v2="bars"]').count() == 0
+                for k in ("cut", "streak", "raised", "steady"):
+                    head = CO["div"]["head"][k]
+                    if head and "{" not in head:
+                        assert head not in d.inner_text(), head
+                assert CO["tiles"]["div"]["noPrev"] not in d.inner_text()
         if page.locator('[data-ui-v2="co-dps"]').count():                   # 주당 배당은 보고서 수익률과 맞을 때만 (1/3 ~ 3 배)
             r = s["dps"] / s["price"] * 100 / s["dy"]
             assert 1 / 3 <= r <= 3, r

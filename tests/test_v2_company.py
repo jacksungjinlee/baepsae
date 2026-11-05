@@ -92,6 +92,24 @@ def test_earnings_tile_rules_us_use_yahoo_quarterly_growth():
     assert got == ["up", "flat", "down", "flat", "up", "na", "na"]
 
 
+def test_revenue_growth_labels_say_each_markets_period_and_never_three_years():
+    """g3 이름표 (Jack, 2026-11-05): 한국은 최근 2년 연평균(또는 최근 1년), 미국은 최근 분기를 1년 전과 비교. 2.0 어디에도 '3년'은 없어요.
+    한국 이름표는 계산 기준(engine.growthBasis)대로, 미국 이름표는 미국 종목에만."""
+    copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
+    for line in copy.splitlines():
+        code = line.split("//", 1)[0]
+        if ("매출" in code or "성장" in code) and re.search(r"3\\s*년|3y|3\\s*yr", code, re.I):
+            assert "3년 연속 순손실" in code or "3년 주가" in code, line          # 매출 · 성장 이름표에 3년은 없어요
+    rx = {k: re.search(k + r': "([^"]*)"', copy).group(1) for k in ("growthKr", "growthKr1y", "growthUs", "usGrowth")}
+    assert "최근 2년 연평균" in rx["growthKr"] and "최근 1년" in rx["growthKr1y"]
+    assert "최근 분기" in rx["growthUs"] and rx["usGrowth"] == "최근 분기 매출, 1년 전보다 {pct}"
+    pick = open(os.path.join(ROOT, "src", "v2", "pick.jsx"), encoding="utf-8").read()
+    assert 'growthLabel = s.cls === "us" ? R.growthUs : gb === "y2" ? R.growthKr : gb === "y1" ? R.growthKr1y : null' in pick   # 시장별
+    tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    assert tabs.count("C.pick.receipt.growthKr1y") == 2 and "growthUs" not in tabs        # 회사 페이지: 한국 이름표 (2년 · 1년) · 미국은 usGrowthText
+    assert 'if (!s || s.cls !== "kr") return null;' in open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8").read()
+
+
 def test_us_growth_number_always_says_what_it_is():
     """미국 실적 숫자 (Jack, 2026-11-05): 야후의 매출 증가는 최근 분기를 1년 전 같은 분기와 비교한 값이라, 그렇게 말하는 이름
     (co.tiles.usGrowth) 과 함께만 보여요. 그 이름이 승인 전(null)이면 숫자도 빼요. 연 · 3년 같은 말은 붙이지 않아요."""
@@ -141,6 +159,9 @@ def test_value_tile_median_is_the_shown_two_decimals():
 
 # ── 배당 칸 ──
 def test_dividend_tile_rules_korea():
+    """한국 배당 칸 (Jack, 2026-11-05). 추세(늘렸어요 · 줄였어요 · 비슷하게 · N년 연속 · 3년 막대)는 company.js 의 스위치 하나
+    (KR_DIV_TREND) 뒤에 있어요: 지금은 꺼져 있고(주식 분할을 고친 기록이 생길 때까지), 두 상태를 모두 시험해요.
+    수익률은 두 상태 모두 오늘 주가 기준 (최근 사업보고서 주당 배당 ÷ 오늘 종가), 보고서 수익률과 맞을 때만."""
     base = {"t": "X", "cls": "kr", "price": 50000, "fy": 2025, "dy": 2.0}     # dy: 그 사업보고서의 현금배당수익률 (dps 1,000원과 맞아요)
     cases = {"zeroMismatch": {"dps": 0, "dps3": [0, 100, 100]}, "na": {"dps": None}, "noPrev": {"dps": 1000, "dps3": [1000, None, 900]},
              "mismatch": {"dps": 1000, "dps3": [900, 800, 700]}, "cut": {"dps": 900, "dps3": [900, 1000, 1000]},
@@ -148,21 +169,46 @@ def test_dividend_tile_rules_korea():
              "steady": {"dps": 1020, "dps3": [1020, 1000, 1000]}, "same": {"dps": 1000, "dps3": [1000, 1000, 1000]},
              "cutThenRaise": {"dps": 1000, "dps3": [1000, 900, 1000]}, "tinyCut": {"dps": 999, "dps3": [999, 1000, 900]},
              "fromZero": {"dps": 100, "dps3": [100, 0, 0], "dy": 0.2}, "coOnly": {"dps": 1200}, "zero": {"dps": 0, "dy": 0},
-             "noFy": {"dps": 1000, "dps3": [1000, 900, 800], "fy": None}}
-    got = run("""out = Object.fromEntries(Object.entries(C).map(([k, x]) => [k, K.divKr({ ...B, ...x }, k === 'coOnly' ? { dps3: [1200, 1100, 1000] } : null)]));""",
-              B=base, C=cases)
-    assert got["zero"]["rule"] == "none" and got["zero"]["yieldPct"] == 0
-    assert got["zeroMismatch"]["rule"] == "na"                              # 0원인데 보고서 수익률은 2%: 서로 맞지 않아 판단하지 않아요
-    assert got["na"]["rule"] == "na" and got["na"]["yieldPct"] == 2.0
-    assert got["noPrev"]["rule"] == "na" and got["noPrev"]["yieldPct"] == 2.0   # 비교할 해가 없으면 판단 안 함 (수익률은 그대로)
-    assert got["mismatch"]["rule"] == "na"
-    assert got["cut"]["rule"] == "cut" and got["tinyCut"]["rule"] == "cut"  # 줄었으면 조금이라도 '줄였어요'
-    assert got["streak"]["rule"] == "streak" and got["streak"]["n"] == 2 and got["coOnly"]["rule"] == "streak"
-    assert got["raised"]["rule"] == "raised" and got["cutThenRaise"]["rule"] == "raised"    # 한 번 3% 넘게: '비슷하게'가 아니에요
-    assert got["fromZero"]["rule"] == "raised"
-    assert got["steady"]["rule"] == "steady" and got["same"]["rule"] == "steady"
-    assert got["streak"]["yieldPct"] == 2.0 and got["streak"]["dpsOk"]     # 수익률은 보고서의 dy 그대로 (오늘 종가로 나누지 않아요)
-    assert got["noFy"]["yieldPct"] is None                                  # 어느 보고서인지 모르면 수익률을 보이지 않아요
+             "noFy": {"dps": 1000, "dps3": [1000, 900, 800], "fy": None}, "noD3": {"dps": 1000},
+             "payerZeroDy": {"dps": 500, "dps3": [500, 400, 300], "dy": 0},           # 보고서는 0% 인데 주당 배당은 500원: 서로 어긋나요
+             "split": {"dps": 5000, "dps3": [5000, 5000, 5000], "dy": 2.0, "price": 10000}}   # 분할 뒤 오늘 종가: dps ÷ 종가 50% (믿지 않아요)
+    body = """const run = (trend) => Object.fromEntries(Object.entries(C).map(([k, x]) =>
+        [k, K.divKr({ ...B, ...x }, k === 'coOnly' ? { dps3: [1200, 1100, 1000] } : null, trend)]));
+      out = { on: run(true), off: run(false), dflt: Object.fromEntries(Object.keys(C).map((k) => [k, K.divKr({ ...B, ...C[k] }, null)])),
+        switch: K.KR_DIV_TREND };"""
+    got = run(body, B=base, C=cases)
+    assert got["switch"] is False                                            # 지금은 꺼져 있어요 (분할을 고친 배당 기록이 생기면 켜요)
+    on, off = got["on"], got["off"]
+    for k in cases:                                                          # 기본값 = 스위치
+        if k != "coOnly":
+            assert got["dflt"][k]["rule"] == off[k]["rule"], k
+    # 꺼짐 (지금): 0원 → 배당이 없어요 · 0원 초과 → 배당을 줘요 · 없거나 서로 어긋나면 → 자료가 없어요 (그때는 숫자도 없어요)
+    for k in ("noPrev", "mismatch", "cut", "streak", "raised", "steady", "same", "cutThenRaise", "tinyCut", "fromZero", "coOnly", "noFy", "noD3", "split"):
+        assert off[k]["rule"] == "pays", (k, off[k])
+        assert "d3" not in off[k], k                                         # 3년 막대도 없어요
+    assert off["zero"]["rule"] == "none" and off["zero"]["yieldPct"] == 0
+    for k in ("zeroMismatch", "na", "payerZeroDy"):
+        assert off[k]["rule"] == "na" and off[k]["yieldPct"] is None, (k, off[k])
+    # 수익률: 최근 사업보고서 주당 배당 ÷ 오늘 종가 (두 상태 같아요) · 보고서 수익률과 어긋나면 · 30% 넘으면 · 어느 보고서인지 모르면 없음
+    for g in (on, off):
+        assert abs(g["streak"]["yieldPct"] - 1200 / 50000 * 100) < 1e-9 and g["streak"]["dpsOk"]
+        assert abs(g["noPrev"]["yieldPct"] - 2.0) < 1e-9
+        assert g["noFy"]["yieldPct"] is None and g["na"]["yieldPct"] is None and g["split"]["yieldPct"] is None
+        assert not g["split"]["dpsOk"]
+    # 켜짐 (추세가 돌아올 때): 예전 규칙 + 수익률은 있는데 비교할 작년 기록이 없으면 noPrev (작년과 비교할 기록이 없어요)
+    assert on["zero"]["rule"] == "none" and on["zero"]["yieldPct"] == 0
+    assert on["zeroMismatch"]["rule"] == "na"                                # 0원인데 보고서 수익률은 2%: 서로 맞지 않아 판단하지 않아요
+    assert on["na"]["rule"] == "na" and on["na"]["yieldPct"] is None
+    assert on["noPrev"]["rule"] == "noPrev" and on["mismatch"]["rule"] == "noPrev" and on["noD3"]["rule"] == "noPrev"
+    assert on["noFy"]["rule"] == "streak" and on["noFy"]["yieldPct"] is None  # 추세는 기록으로, 수익률은 어느 보고서인지 알 때만
+    nofy_gap = run("out = K.divKr({ t: 'X', cls: 'kr', price: 50000, dy: 2.0, dps: 1000 }, null, true);")
+    assert nofy_gap["rule"] == "na" and nofy_gap["yieldPct"] is None         # 수익률도 비교할 기록도 없으면 noPrev 가 아니라 na (숫자 없음)
+    assert on["cut"]["rule"] == "cut" and on["tinyCut"]["rule"] == "cut"     # 줄었으면 조금이라도 '줄였어요'
+    assert on["streak"]["rule"] == "streak" and on["streak"]["n"] == 2 and on["coOnly"]["rule"] == "streak"
+    assert on["raised"]["rule"] == "raised" and on["cutThenRaise"]["rule"] == "raised"    # 한 번 3% 넘게: '비슷하게'가 아니에요
+    assert on["fromZero"]["rule"] == "raised"
+    assert on["steady"]["rule"] == "steady" and on["same"]["rule"] == "steady"
+    assert on["split"]["rule"] == "na" and on["payerZeroDy"]["rule"] == "na"
 
 def test_dividend_tile_rules_us_missing_is_not_no_dividend():
     got = run("out = [0, 0.32, null].map((dy) => K.divUs({ cls: 'us', dy })).concat([K.divUs({ cls: 'us' })]);")
@@ -197,25 +243,32 @@ REAL_CO = {"067900": {"ni": [304.3, 313.1, 240.7], "shm": 18.2, "fy": 2025}, "00
                       "eps": 50941.0, "bq": "2026.2Q"}}
 
 
-def test_korean_yield_is_the_reports_own_and_per_share_figures_are_cross_checked():
-    got = run("""out = Object.fromEntries(Object.entries(RS).map(([t, s]) => [t, { div: K.divKr(s, null), agrees: E.dpsAgrees(s), ky: E.krDivYield(s),
-        card: E.cardRaw(s, E.CARDS.find((c) => c.id === 'div')), pm: K.perMillionView(K.divKr(s, null).yieldPct) }]));""", RS=REAL)
+def test_korean_yield_is_todays_and_per_share_figures_are_cross_checked():
+    """한국 수익률은 오늘 주가 기준 (Jack, 2026-11-05: 최근 사업보고서 주당 배당 ÷ 오늘 종가, 100만원 줄과 같은 숫자). 주당 배당이 그
+    보고서 자신의 수익률과 맞지 않으면 (주식 분할 · 총액 공시) 수익률을 보이지 않아요. 보고서 수익률로 바꿔 보이지도 않아요."""
+    got = run("""out = Object.fromEntries(Object.entries(RS).map(([t, s]) => [t, { div: K.divKr(s, null), on: K.divKr(s, null, true), agrees: E.dpsAgrees(s),
+        ky: E.krDivYield(s), today: K.krYieldToday(s), card: E.cardRaw(s, E.CARDS.find((c) => c.id === 'div')), pm: K.perMillionKr(s) }]));""", RS=REAL)
     for t in ("067900", "001130", "134380", "015360"):                     # 와이엔텍 · 대한제분 · 미원화학 · INVENI
         g = got[t]
-        assert g["div"]["yieldPct"] == REAL[t]["dy"], (t, g["div"])         # 보이는 수익률 = 보고서의 dy (1.48 · 2.6 · 4.76 · 8.1 %)
-        assert not g["agrees"] and g["ky"] is None and g["card"] is None    # dps ÷ 종가(28,593,458% · 37.3% · 40.2% · 39.5%)는 쓰지 않아요
-        assert g["div"]["rule"] == "na" and not g["div"]["dpsOk"]            # 주당 배당 · 추세 · 배당성향도 보이지 않아요
-        assert g["pm"]["won"] == round(1e6 * REAL[t]["dy"] / 100 / 1000) * 1000, (t, g["pm"])
-    assert got["067900"]["pm"]["won"] == 15000 and got["134380"]["pm"]["won"] == 48000 and got["015360"]["pm"]["won"] == 81000
+        assert not g["agrees"] and g["ky"] is None and g["card"] is None and g["today"] is None   # dps ÷ 종가(28,593,458% · 37.3% · …)는 쓰지 않아요
+        assert g["div"]["yieldPct"] is None and g["pm"] is None, (t, g)     # 수익률도 100만원 줄도 없어요 (보고서 수익률로 바꾸지 않아요)
+        assert g["div"]["rule"] == "pays" and not g["div"]["dpsOk"]         # 배당은 줘요 · 주당 배당 · 배당성향은 보이지 않아요
+        assert g["on"]["rule"] == "na"
     sam = got["005930"]
-    assert sam["agrees"] and abs(sam["ky"] - 1668 / 219500 * 100) < 1e-9 and sam["div"]["rule"] == "streak" and sam["div"]["yieldPct"] == 1.5
+    y = 1668 / 219500 * 100
+    assert sam["agrees"] and abs(sam["ky"] - y) < 1e-9 and abs(sam["div"]["yieldPct"] - y) < 1e-9 and sam["div"]["rule"] == "pays"
+    assert sam["on"]["rule"] == "streak" and abs(sam["on"]["yieldPct"] - y) < 1e-9
+    assert abs(sam["pm"]["raw"] - 1e6 * y / 100) < 1e-6                     # 수익률과 100만원 줄이 같은 숫자에서 나와요
     edge = run("out = [E.dpsAgrees({ dps: 100, price: 1000, dy: 10 }), E.dpsAgrees({ dps: 100, price: 1000, dy: 3.4 }), E.dpsAgrees({ dps: 100, price: 1000, dy: 3.3 }),"
                " E.dpsAgrees({ dps: 100, price: 1000, dy: 30 }), E.dpsAgrees({ dps: 100, price: 1000, dy: 31 }), E.dpsAgrees({ dps: 100, price: 1000 }),"
                " E.dpsAgrees({ dps: 100, price: 1000, dy: 0 }), E.dpsAgrees({ dps: 0, dy: 0 }), E.dpsAgrees({ dps: 0 }), E.dpsAgrees({ dps: 0, dy: 1 })];")
     assert edge == [True, True, False, True, False, True, False, True, True, False], edge   # 1/3 ~ 3 배 안 · dy 가 없으면 예전처럼
-    # 보고서 수익률이 30% 를 넘으면 믿지 않아요 (리뷰 sweep: 지투파워 33.7% · 흥국 56% · 피코그램 100%): 수익률도 · 100만원 줄도 없음
+    # 보고서 수익률이 30% 를 넘으면 믿지 않아요 (지투파워 33.7% · 흥국 56% · 피코그램 100%): 수익률 없음 · 배당은 줘요 (주당 50원)
     big = run("out = [33.7, 56, 100, 30].map((dy) => [K.divKr({ t: 'X', cls: 'kr', price: 10000, fy: 2025, dps: 50, dy }, null), K.divUs({ cls: 'us', dy })]);")
-    assert all(k["yieldPct"] is None and k["rule"] == "na" and u["rule"] == "na" for k, u in big[:3]) and big[3][1]["yieldPct"] == 30, big
+    assert all(k["yieldPct"] is None and k["rule"] == "pays" and u["rule"] == "na" for k, u in big[:3]) and big[3][1]["yieldPct"] == 30, big
+    # 오늘 주가 기준이라도 연 30% 를 넘으면 믿지 않아요 (보고서 수익률이 없어 맞춰 볼 수 없을 때)
+    huge = run("out = [K.krYieldToday({ dps: 4000, price: 10000 }), K.krYieldToday({ dps: 2000, price: 10000 }), K.perMillionKr({ dps: 4000, price: 10000 })];")
+    assert huge[0] is None and abs(huge[1] - 20) < 1e-9 and huge[2] is None
 
 
 def test_hundred_man_won_for_korea_is_dps_over_todays_close():
