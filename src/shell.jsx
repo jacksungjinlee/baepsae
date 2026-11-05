@@ -97,7 +97,7 @@ function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {
   const sec = sectors[c.s] || {};
   const niYoY = c.ni && c.ni[0] != null && c.ni[1] > 0 ? (c.ni[0] / c.ni[1] - 1) * 100 : null;
   // 매출 성장은 최근 2년 연평균이거나 최근 1년이에요 (3년이 아니에요, Jack 2026-11-05). 어느 쪽인지 모르면 null: 이 줄을 빼요.
-  // 줄었으면 '감소했어요' · 'shrank' 옆에 마이너스 부호 없이 (data.js krGrowthScoreLine).
+  // 줄었으면 '감소했어요' · 'shrank' 옆에 마이너스 부호 없이, 보이는 숫자가 0.0 이면 '거의 변하지 않았어요' (data.js krGrowthScoreLine).
   const growthLine = krGrowthScoreLine(c.g3, c.rev, en);
   const lines = [];
   if (c.per != null && sec.perQ) lines.push(en
@@ -111,7 +111,7 @@ function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {
     ? `Up +${c.r3}% in 3 months while annual earnings stayed flat — the move may be sentiment, not fundamentals.`
     : `최근 3개월 +${c.r3}% 올랐지만 연간 실적은 그대로예요 — 가격을 움직인 건 실적보다 기대나 수급일 수 있어요.`);
   else if (c.r3 != null && c.r3 <= -15 && niYoY != null && niYoY >= 10) lines.push(en
-    ? `Earnings improved but the stock fell ${Math.abs(c.r3)}% in 3 months — worth asking what the market is worried about.`
+    ? `Earnings improved but the stock fell ${Math.abs(c.r3)}% in 3 months. It may be worth asking what the market is worried about.`
     : `실적은 좋아졌는데 3개월간 ${Math.abs(c.r3)}% 내렸어요 — 시장이 무엇을 걱정하는지 볼 대목이에요.`);
   else if (growthLine) lines.push(growthLine);
   const flagN = c.fl ? Object.keys(c.fl).length : 0;

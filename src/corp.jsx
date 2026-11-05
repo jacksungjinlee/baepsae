@@ -1485,7 +1485,7 @@ export function DcfCard({ c, sharesM, setExplain }) {
   const val = dcfPerShare({ ni0: N, sharesM: S, g1, fade, disc, term });
   const gap = val && c.price ? (val / c.price - 1) * 100 : null;
   const rev = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
-  // 리버스 DCF 옆의 매출 성장 문장 (Jack, 2026-11-05: 줄표 없이, 부호 없는 숫자로 늘었어요 · 줄었어요). 기준을 모르면 빼요.
+  // 리버스 DCF 옆의 매출 성장 문장 (Jack, 2026-11-05: 줄표 없이, 부호 없는 숫자로 늘었어요 · 줄었어요, 0.0% 면 거의 변하지 않았어요). 기준을 모르면 빼요.
   const growthLine = krGrowthDcfLine(c.g3, c.rev);
 
   // 민감도: 할인율 × 영구성장률

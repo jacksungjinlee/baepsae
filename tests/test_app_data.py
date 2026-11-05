@@ -652,32 +652,46 @@ def test_korean_growth_basis_matches_2_0_on_todays_data():
 def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_dash():
     """성적표: '매출은 최근 2년간 연평균 3% 감소했어요.' (1년이면 '매출은 최근 1년간 3% 감소했어요.'), 늘었으면 '+x% 성장했어요.' 그대로.
     리버스 DCF: '이 회사 매출은 최근 2년 동안 연평균 x% 늘었어요(줄었어요). 지금 주가가 가정하는 성장률과 비교해 보세요.'
-    (1년이면 '최근 1년 동안', 연평균 없이). 숫자는 부호 없이, 줄표 없이. 계산 기준을 모르면 문장을 빼요. 0% 는 늘어난 쪽 말로, 부호 없이."""
-    # [g3, rev]: y2 늘었어요 · y2 줄었어요 · y1 늘었어요 · y1 줄었어요 · 0% (y2) · 기준을 모름 · 숫자 없음 · 매출 없음 · 소수 둘째 자리
+    (1년이면 '최근 1년 동안', 연평균 없이). 숫자는 부호 없이, 줄표 없이. 계산 기준을 모르면 문장을 빼요.
+    보이는 숫자(소수 한 자리, 부호 없이)가 0.0 이면 '거의 변하지 않았어요' / 'was flat' (Jack 2026-11-05):
+    0.04 → 0.0 → 그대로, 0.05 → 0.1 → 늘었어요 (자바스크립트 toFixed 반올림), −0.04 → 그대로, −0.05 → 0.1 → 줄었어요."""
+    # [g3, rev]: y2 늘었어요 · y2 줄었어요 · y1 늘었어요 · y1 줄었어요 · 0 (y2) · 기준을 모름 · 숫자 없음 · 매출 없음 · 정수 · 0 (y1) ·
+    #            0.04 · 0.05 · −0.04 · −0.05 (y2)
+    flat = [100, 100, 100]
     cases = [[41.4, [200, 150, 100]], [-29.3, [100, 150, 200]], [33.3, [200, 150, None]], [-33.3, [100, 150, None]],
-             [0, [100, 100, 100]], [10, [200, 150, 100]], [None, [1, 1, 1]], [5, None], [-3, [94.1, 97, 100]]]
+             [0, flat], [10, [200, 150, 100]], [None, [1, 1, 1]], [5, None], [-3, [94.1, 97, 100]], [0, [100, 100, None]],
+             [0.04, flat], [0.05, flat], [-0.04, flat], [-0.05, flat]]
     got = run_js(f"const cases = {json.dumps(cases)};"
                  "console.log(JSON.stringify(cases.map(([g, r]) => [D.krGrowthBasis(g, r), D.krGrowthScoreLine(g, r, false),"
                  " D.krGrowthScoreLine(g, r, true), D.krGrowthDcfLine(g, r)])));")
-    assert [g[0] for g in got] == ["y2", "y2", "y1", "y1", "y2", None, None, None, "y2"], got
+    assert [g[0] for g in got] == ["y2", "y2", "y1", "y1", "y2", None, None, None, "y2", "y1", "y2", "y2", "y2", "y2"], got
     ko = [g[1] for g in got]
+    flat2, flat1 = "매출은 최근 2년 동안 거의 변하지 않았어요.", "매출은 최근 1년 동안 거의 변하지 않았어요."
     assert ko == ["매출은 최근 2년간 연평균 +41.4% 성장했어요.", "매출은 최근 2년간 연평균 29.3% 감소했어요.",
                   "매출은 최근 1년간 +33.3% 성장했어요.", "매출은 최근 1년간 33.3% 감소했어요.",
-                  "매출은 최근 2년간 연평균 0% 성장했어요.", None, None, None, "매출은 최근 2년간 연평균 3% 감소했어요."], ko
+                  flat2, None, None, None, "매출은 최근 2년간 연평균 3% 감소했어요.", flat1,
+                  flat2, "매출은 최근 2년간 연평균 +0.1% 성장했어요.", flat2, "매출은 최근 2년간 연평균 0.1% 감소했어요."], ko
     en = [g[2] for g in got]
+    en2, en1 = "Revenue was flat over the last 2 years.", "Revenue was flat over the last year."
     assert en == ["Revenue grew +41.4% a year over the last 2 years.", "Revenue shrank 29.3% a year over the last 2 years.",
                   "Revenue grew +33.3% over the last year.", "Revenue shrank 33.3% over the last year.",
-                  "Revenue grew 0% a year over the last 2 years.", None, None, None, "Revenue shrank 3% a year over the last 2 years."], en
+                  en2, None, None, None, "Revenue shrank 3% a year over the last 2 years.", en1,
+                  en2, "Revenue grew +0.1% a year over the last 2 years.", en2, "Revenue shrank 0.1% a year over the last 2 years."], en
     dcf = [g[3] for g in got]
     tail = " 지금 주가가 가정하는 성장률과 비교해 보세요."
+    d2, d1 = "이 회사 매출은 최근 2년 동안 거의 변하지 않았어요." + tail, "이 회사 매출은 최근 1년 동안 거의 변하지 않았어요." + tail
     assert dcf == ["이 회사 매출은 최근 2년 동안 연평균 41.4% 늘었어요." + tail, "이 회사 매출은 최근 2년 동안 연평균 29.3% 줄었어요." + tail,
                    "이 회사 매출은 최근 1년 동안 33.3% 늘었어요." + tail, "이 회사 매출은 최근 1년 동안 33.3% 줄었어요." + tail,
-                   "이 회사 매출은 최근 2년 동안 연평균 0.0% 늘었어요." + tail, None, None, None,
-                   "이 회사 매출은 최근 2년 동안 연평균 3.0% 줄었어요." + tail], dcf
+                   d2, None, None, None, "이 회사 매출은 최근 2년 동안 연평균 3.0% 줄었어요." + tail, d1,
+                   d2, "이 회사 매출은 최근 2년 동안 연평균 0.1% 늘었어요." + tail, d2,
+                   "이 회사 매출은 최근 2년 동안 연평균 0.1% 줄었어요." + tail], dcf
     for line in [x for x in ko + en + dcf if x]:
-        for sign in ("-", "−", "–", "—"):                  # 마이너스 부호도 줄표도 없어요
+        for sign in ("-", "\u2212", "\u2013", "\u2014"):                  # 마이너스 부호도 줄표도 없어요
             assert sign not in line, (sign, line)
-    for one in (ko[2], ko[3], dcf[2], dcf[3]):                           # 1년짜리엔 연평균이 없어요
+        head = line.replace(tail, "")                                   # 리버스 DCF 의 둘째 문장(성장률과 비교해 보세요)은 빼고
+        if "거의 변하지 않았어요" in head or "was flat" in head:              # 그대로면 숫자 · 늘었다 · 줄었다 없이
+            assert "%" not in head and not any(w in head for w in ("늘었어요", "줄었어요", "성장", "감소", "grew", "shrank")), line
+    for one in (ko[2], ko[3], dcf[2], dcf[3], ko[9], dcf[9]):           # 1년짜리엔 연평균이 없어요
         assert "연평균" not in one and "1년" in one, one
     # 화면이 이 문장들을 써요 (예전 문장을 직접 만드는 곳이 없어요)
     shell = open(os.path.join(ROOT, "src", "shell.jsx"), encoding="utf-8").read()
@@ -692,6 +706,10 @@ def test_korean_growth_sentences_have_no_minus_sign_next_to_a_decline_and_no_das
     assert "}, [open, s && s.t, x.g3, x.g3Kr]);" in detail                          # 오늘 데이터가 늦게 들어와도 다시 맞춰 봐요
     assert "const growthLine = krGrowthDcfLine(c.g3, c.rev);" in corp and '이 담겨 있어요.{growthLine ? " " + growthLine : null}' in corp
     built = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
-    assert "지금 주가가 가정하는 성장률과 비교해 보세요." in built and "2년 동안 연평균" in built and "최근 2년간 연평균" in built
+    assert "지금 주가가 가정하는 성장률과 비교해 보세요." in built and "거의 변하지 않았어요" in built and "최근 2년간 연평균" in built
+    assert "was flat over the last" in built
+    # 영어 성적표의 3개월 줄은 줄표 없이 두 문장 (Jack 2026-11-05)
+    assert "the stock fell ${Math.abs(c.r3)}% in 3 months. It may be worth asking what the market is worried about.`" in shell
+    assert "in 3 months. It may be worth asking what the market is worried about." in built and "in 3 months \u2014 worth asking" not in built
     for bad in ("그 간극이 그럴듯한지가 핵심 질문이에요", "였어요 — 그 간극"):
         assert bad not in built, bad

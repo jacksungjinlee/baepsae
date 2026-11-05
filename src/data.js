@@ -168,12 +168,17 @@ export function krGrowthBasis(g3, rev) {
 
 // ---- 한국 매출 성장 문장 (Jack, 2026-11-05) ----
 // 줄어든 경우 '감소했어요' · '줄었어요' · 'shrank' 옆에 마이너스 부호를 붙이지 않아요: 숫자는 절댓값이에요.
-// 0% 는 늘어난 쪽 말로, 부호 없이 읽어요 (성적표 '0% 성장했어요', 리버스 DCF '0.0% 늘었어요'). 계산 기준을 모르면 null: 문장을 빼요.
-// 성적표(검색 결과 카드)의 한 줄. 숫자는 g3 그대로 (0.1 단위), 늘었으면 '+'.
+// 보이는 숫자(소수 한 자리로 반올림, 부호 없이)가 0.0 이면 늘었다고도 줄었다고도 하지 않고 '거의 변하지 않았어요' ·
+// 'was flat' 이라고 써요 (Jack, 2026-11-05). 0.04 → 0.0 → 그대로, 0.05 → 0.1 → 늘었어요 (자바스크립트 toFixed 반올림).
+// 계산 기준을 모르면 null: 문장을 빼요.
+const g3Shown = (g3) => Math.abs(g3).toFixed(1);
+// 성적표(검색 결과 카드)의 한 줄. 숫자는 소수 한 자리까지 (g3 는 원래 0.1 단위라 보이는 숫자는 예전 그대로예요: 13.5, 3), 늘었으면 '+'.
 export function krGrowthScoreLine(g3, rev, en) {
   const basis = krGrowthBasis(g3, rev);
   if (!basis) return null;
-  const up = g3 >= 0, two = basis === "y2", x = (g3 > 0 ? "+" : "") + Math.abs(g3);
+  const two = basis === "y2", n = Number(g3Shown(g3));
+  if (n === 0) return en ? `Revenue was flat over the last ${two ? "2 years" : "year"}.` : `매출은 최근 ${two ? "2년" : "1년"} 동안 거의 변하지 않았어요.`;
+  const up = g3 > 0, x = (up ? "+" : "") + n;
   if (en) return two ? `Revenue ${up ? "grew" : "shrank"} ${x}% a year over the last 2 years.` : `Revenue ${up ? "grew" : "shrank"} ${x}% over the last year.`;
   return two ? `매출은 최근 2년간 연평균 ${x}% ${up ? "성장했어요" : "감소했어요"}.` : `매출은 최근 1년간 ${x}% ${up ? "성장했어요" : "감소했어요"}.`;
 }
@@ -181,8 +186,9 @@ export function krGrowthScoreLine(g3, rev, en) {
 export function krGrowthDcfLine(g3, rev) {
   const basis = krGrowthBasis(g3, rev);
   if (!basis) return null;
-  const x = Math.abs(g3).toFixed(1), down = g3 < 0 && Number(x) > 0;
-  return `이 회사 매출은 최근 ${basis === "y2" ? "2년 동안 연평균" : "1년 동안"} ${x}% ${down ? "줄었어요" : "늘었어요"}. 지금 주가가 가정하는 성장률과 비교해 보세요.`;
+  const x = g3Shown(g3);
+  const what = Number(x) === 0 ? "거의 변하지 않았어요" : `${basis === "y2" ? "연평균 " : ""}${x}% ${g3 < 0 ? "줄었어요" : "늘었어요"}`;
+  return `이 회사 매출은 최근 ${basis === "y2" ? "2년" : "1년"} 동안 ${what}. 지금 주가가 가정하는 성장률과 비교해 보세요.`;
 }
 
 // corp.json 을 한 번만 받아요 (검색 칸의 성적표와 포트폴리오의 한국 매출성장 이름표가 같이 써요. 기업분석 탭은 따로 받아요). 받는 중이면 그 요청을 같이 기다리고,
