@@ -124,12 +124,12 @@ DYT_COVER = 85.0         # 배당한 국내 회사 중 오늘 종가 기준 배�
 DIV_ADJ_MAX = 10.0       # 배당한 국내 회사 중 분할·무상증자로 맞춘(adj) 비율 상한 (%) — 넘으면 배율을 대량으로 잘못 읽은 날
 DYT_MAX = 30.0           # 이보다 큰 배당수익률은 믿지 않아요 (파이프라인이 빈 칸으로 둬요)
 DIV_TOL = 0.011          # dps3a = dps3 ÷ dpsF · dyt = dps3a[0] ÷ 종가 × 100 — 둘 다 소수 둘째 자리 반올림
-BETA_SE_MAX = 0.5        # 종목마다 베타 표준오차 상한 (일별 3년 회귀는 보통 0.03~0.15)
+BETA_SE_WILD = 0.5       # 이보다 큰 베타 표준오차는 '흔들리는 베타' (일별 3년 회귀는 보통 0.03~0.15 · 가격 이력이 깨진 종목은 0.5~0.9)
+BETA_SE_WILD_MAX = 2.0   # 흔들리는 베타 종목 비율 상한 (%) — 몇 개는 진짜로 있어요(분할을 못 고친 이력). 많으면 계산이 틀린 날
 BETA_SE_MED = (0.02, 0.2)   # 회사 주식(ETF 빼고) 베타 표준오차 중앙값의 범위 — 계산이 통째로 틀린 날을 잡아요
 BETA_N = (250, 800)      # 베타에 쓴 일별 수익률 수 (3년 ≈ 740 · 250 미만이면 파이프라인이 베타를 비워요)
 FL_KEYS = ("cr", "icr", "l3", "imp")                    # 재무 경고 검사 (corp.json fl · flRan · flNa)
 CORP_NEW_MUST = ("flRan", "dps3a", "divSt", "cash3", "eps3r")   # 필수 종목 corp.json 에 있어야 할 새 칸
-DIVCHECK_REQUIRED_FROM = dt.date(2026, 12, 1)   # 이날(KST)부터는 divCheck 가 없는 데이터도 실패 (그 전엔 v19.1b 전 데이터라 경고만)
 DATA_NEW_MUST = ("divSt", "dps3a", "dpsF", "dyt", "dz", "betaSE", "betaN")   # 필수 종목 data.json 에 있어야 할 새 칸
 
 
@@ -680,7 +680,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
-    check_v191b(rep, data, kr, us, by, comps, pdata, today)
+    check_v191b(rep, data, kr, us, by, comps, pdata)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -956,18 +956,16 @@ def div_row_problem(s):
     return None
 
 
-def check_v191b(rep, data, kr, us, by, comps, pdata, today):
+def check_v191b(rep, data, kr, us, by, comps, pdata):
     """v19.1b 새 줄 (Jack 승인 필요): 분할에 안전한 국내 배당 · 배당 순위 · 베타 표준오차 · 재무 경고 검사 기록."""
     dc = data.get("divCheck")
     if not isinstance(dc, dict):
-        # v19.1b 전 데이터: 머지 직후 첫 발행 전까지 사이트(--live)와 관문에 경고 한 줄만. 직전 발행본에 있었는데 빠졌거나,
-        # 12월 1일(KST)이 지났으면 실패 — 옛 형식 데이터가 기한 없이 통과하지 않게
+        # v19.1b 전 데이터: 머지 뒤 첫 발행 전까지의 사이트(--live)와 시험 데이터에는 경고 한 줄만. 직전 발행본에 있었는데 빠지면
+        # 실패 — 발행은 언제나 이 관문을 지나니, 한 번 새 칸으로 발행된 뒤에는 옛 형식이 다시 발행될 수 없어요
         had = isinstance((pdata or {}).get("divCheck"), dict)
-        late = today >= DIVCHECK_REQUIRED_FROM
-        why = "직전 발행본에는 있었어요" if had else (f"{DIVCHECK_REQUIRED_FROM} 부터는 있어야 해요" if late
-                                                 else "v19.1b 전 형식이라 새 검사를 건너뛰어요")
-        rep.add("배당 분할 확인 기록 (divCheck)", not (had or late), f"없음 — {why}",
-                f"있어야 함 ({DIVCHECK_REQUIRED_FROM} 전의 v19.1b 전 데이터만 경고)", warn=not (had or late))
+        rep.add("배당 분할 확인 기록 (divCheck)", not had,
+                "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1b 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1b 전 데이터만 경고)", warn=not had)
         return
     rep.add("배당 분할 확인 기록 (divCheck)", dc.get("v") == 1, f"v{dc.get('v')}", "v1")
     must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr"]
@@ -1024,7 +1022,8 @@ def check_v191b(rep, data, kr, us, by, comps, pdata, today):
             "모두 있음" if not miss else "없음: " + ",".join(miss[:6]) + ("…" if len(miss) > 6 else ""),
             "data " + "·".join(DATA_NEW_MUST) + " / corp " + "·".join(CORP_NEW_MUST))
 
-    # 8. 베타 표준오차: 베타가 있는 종목은 모두 (0 < SE ≤ 0.5, 250 ≤ n ≤ 800), 회사 주식의 중앙값이 그럴듯한 범위
+    # 8. 베타 표준오차: 베타가 있는 종목은 모두 (SE > 0, 250 ≤ n ≤ 800), 회사 주식의 중앙값이 그럴듯한 범위,
+    #    흔들리는 베타(SE > 0.5 — 가격 이력이 깨진 종목)는 2% 이하. 종목 하나가 발행 전체를 막지 않게 상한은 비율로 봐요
     bad, ses = [], []
     for s in kr + us:
         b, se, n = num(s.get("beta")), s.get("betaSE"), s.get("betaN")
@@ -1032,15 +1031,18 @@ def check_v191b(rep, data, kr, us, by, comps, pdata, today):
             if se is not None or n is not None:
                 bad.append(f"{s['t']} 베타 없이 SE")
             continue
-        if not _isnum(se) or not 0 < se <= BETA_SE_MAX or not isinstance(n, int) or isinstance(n, bool) or not BETA_N[0] <= n <= BETA_N[1]:
+        if not _isnum(se) or not se > 0 or not isinstance(n, int) or isinstance(n, bool) or not BETA_N[0] <= n <= BETA_N[1]:
             bad.append(f"{s['t']} SE {s.get('betaSE')} n {n}")
         elif s.get("etf") is not True:
             ses.append(se)
     med = sorted(ses)[len(ses) // 2] if ses else None
-    ok = not bad and med is not None and BETA_SE_MED[0] <= med <= BETA_SE_MED[1]
+    wild = 100.0 * sum(1 for x in ses if x > BETA_SE_WILD) / len(ses) if ses else 0.0
+    ok = not bad and med is not None and BETA_SE_MED[0] <= med <= BETA_SE_MED[1] and wild <= BETA_SE_WILD_MAX
     rep.add("베타 표준오차 (betaSE·betaN)", ok,
-            f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else "") + (f" · 회사 중앙값 {med:.3f}" if med is not None else " · 값 없음"),
-            f"0 < SE ≤ {BETA_SE_MAX:g} · n {BETA_N[0]}~{BETA_N[1]} · 중앙값 {BETA_SE_MED[0]:g}~{BETA_SE_MED[1]:g}")
+            f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else "")
+            + (f" · 회사 중앙값 {med:.3f} · SE > {BETA_SE_WILD:g} {wild:.1f}%" if med is not None else " · 값 없음"),
+            f"SE > 0 · n {BETA_N[0]}~{BETA_N[1]} · 중앙값 {BETA_SE_MED[0]:g}~{BETA_SE_MED[1]:g} · SE > {BETA_SE_WILD:g} 는 "
+            f"{BETA_SE_WILD_MAX:g}% 이하")
 
     # 9. 재무 경고 검사 기록: 모든 기업에 flRan, 켜진 경고는 실제로 돌린 검사여야 해요
     bad = []

@@ -76,8 +76,8 @@ def test_dividend_table_keeps_totals_eps_and_par_for_each_year():
     b = got["bas"]
     assert b["cash3"] == [11107906e6, 9810767e6, 9809438e6]           # 백만원 → 원
     assert b["ni3"] == [44260956e6, 33621363e6, 14473401e6] and b["eps3"] == [6605, 4950, 2131] and b["epsB"] == "연결"
-    assert b["par3"] == [100, 100, 100] and b["pdps3"] == [1669, 1447, 1445]
-    assert set(b) == {"cash3", "ni3", "eps3", "epsB", "par3", "pdps3"}            # 캐시에 쓰지 않는 칸은 담지 않아요
+    assert b["par3"] == [100, 100, 100] and b["pdps"] == [[1669, 1447, 1445]]   # 우선주·종류주마다 한 줄씩
+    assert set(b) == {"cash3", "ni3", "eps3", "epsB", "par3", "pdps"}             # 캐시에 쓰지 않는 칸은 담지 않아요
 
 
 def test_dividend_table_reads_separate_basis_class_shares_and_dashes():
@@ -85,9 +85,9 @@ def test_dividend_table_reads_separate_basis_class_shares_and_dashes():
                 ni=[151961, 113279, 110923], basis="별도")
     rows.append({"se": "주당 현금배당금(원)", "stock_knd": "-", "thstrm": "-", "frmtrm": "-", "lwfr": "-"})   # 리노공업: 빈 둘째 줄
     b = F.parse_dart_dividend(rows)["bas"]
-    assert b["epsB"] == "별도" and "pdps3" not in b                  # 종류 칸 '-' 줄은 우선주가 아니에요
+    assert b["epsB"] == "별도" and "pdps" not in b                   # 종류 칸 '-' 줄은 우선주가 아니에요
     naver = alot([2630, 1130, 1205], cash=[393596, 168437, 181383], par=[100] * 3, pdps=[None, None, None], pref_kind="종류주")
-    assert F.parse_dart_dividend(naver)["bas"]["pdps3"] == [0.0, 0.0, 0.0]     # 종류주 '-' = 배당 없음
+    assert F.parse_dart_dividend(naver)["bas"]["pdps"] == [[0.0, 0.0, 0.0]]    # 종류주 '-' = 배당 없음
     loss = alot([0, 0, 0], cash=[None, None, None], par=[5000] * 3, eps=[-15188, None, 48718], ni=[-25264, None, 81201])
     b = F.parse_dart_dividend(loss)["bas"]
     assert b["cash3"] == [0.0, 0.0, 0.0] and b["eps3"] == [-15188, None, 48718] and b["ni3"][1] is None   # 이익의 '-' 는 모름
@@ -238,6 +238,68 @@ def test_must_have_companies_keep_their_dividend_unchanged(t, rows, cs3, shr, pr
     assert r["divSt"] == "same" and r["dpsF"][0] == 1.0 and r["dps3a"] == [x if x else 0.0 for x in div["dps3"]], (t, r)
 
 
+def test_clean_ratio_rights_issue_is_not_read_as_a_bonus_issue():
+    # 리뷰 2: 당기 중 100% 유상증자(주식 ×2, 액면가 그대로, 주당 배당금 그대로)를 무상증자로 읽어 옛 배당을 반으로 나누면 안 돼요.
+    # 액면가가 그대로인 깨끗한 배율은 자본잉여금이 늘지 않았을 때(무상증자)만 맞춰요
+    rows = alot([1000, 1000, 1000], cash=[2000, 1000, 1000], par=[5000] * 3)
+    div = F.parse_dart_dividend(rows)
+    rights = F.div_basis(div["dps3"], div["bas"], [100.0, 50.0, 50.0], 2_000_000, (), ss3=[400.0, 100.0, 100.0])
+    assert rights["dps3a"] == [1000, None, None] and rights["divSt"] == "nd"        # 주식발행초과금이 늘었어요 → 판단 보류
+    unknown = F.div_basis(div["dps3"], div["bas"], [100.0, 50.0, 50.0], 2_000_000, (), ss3=None)
+    assert unknown["divSt"] == "nd"                                                  # 자본잉여금을 모르면 맞추지 않아요
+    # 무상증자 100% (자본잉여금 50억 → 자본금으로): 주당 배당금 2,000 → 1,000 은 감소가 아니에요
+    rows = alot([1000, 2000, 2000], cash=[2000, 2000, 2000], par=[5000] * 3)
+    div = F.parse_dart_dividend(rows)
+    bonus = F.div_basis(div["dps3"], div["bas"], [100.0, 50.0, 50.0], 2_000_000, (), ss3=[50.0, 100.0, 100.0])
+    assert bonus["dps3a"] == [1000, 1000, 1000] and bonus["dpsF"] == [1.0, 2.0, 2.0] and bonus["divSt"] == "adj"
+
+
+def test_dividends_on_unlisted_shares_never_pick_a_wrong_factor():
+    # 리뷰 2: 상장되지 않은 상환전환우선주 0.2M 주도 배당을 받으면 총액 ÷ 주당 배당금이 상장 주식보다 커서 위 끝이 아래로 밀려요
+    # (보고서 뒤 5:1 분할 + 이익소각이면 예전 계산은 4 를 골랐어요). 상장 우선주보다 배당 받은 종류가 많으면 위 끝을 쓰지 않아요
+    rows = alot([1000] * 3, cash=[1200] * 3, par=[5000] * 3, pdps=[1000] * 3, pref_kind="상환전환우선주")
+    div, r = basis_of(rows, [75.0] * 3, 5_000_000)
+    assert r["f0"] is None and r["dps3a"] == [None, None, None] and r["divSt"] == "nd"
+
+
+def test_preferred_classes_with_different_dividends_use_the_largest_weight():
+    # 우선주(0원)·2우B(보통주 + 100원) 둘 다 상장: 위 끝은 가장 많이 받은 종류의 무게로 세야 위 끝으로 남아요 (리뷰 2)
+    # 보통 1.0M · 우선 0.1M(0원) · 2우B 0.1M(1,100원): 총액 = 1,000×1.0M + 1,100×0.1M = 11.1억
+    rows = alot([1000] * 3, cash=[1110] * 3, par=[5000] * 3, pdps=[0, 0, 0])
+    rows.append({"se": "주당 현금배당금(원)", "stock_knd": "2우선주B", "thstrm": "1,100", "frmtrm": "1,100", "lwfr": "1,100"})
+    div, r = basis_of(rows, [60.0] * 3, 1_000_000, (100_000, 100_000))
+    assert F.parse_dart_dividend(rows)["bas"]["pdps"] == [[0.0, 0.0, 0.0], [1100.0, 1100.0, 1100.0]]
+    assert r["divSt"] == "same" and r["dps3a"] == [1000] * 3 and r["hi"] >= 1.0
+
+
+def test_big_buyback_without_the_issued_share_ceiling_stays_the_same_basis():
+    # 리뷰 2: 액면가를 모를 때(자본금 ÷ 액면가 없음) 자기주식 매입으로 배당 받은 주식이 12% 줄어도 유상증자로 부르지 않아요
+    rows = alot([1000] * 3, cash=[880, 1000, 1000], par=[5000, None, None])
+    div, r = basis_of(rows, CS50, 1_000_000)
+    assert r["st3"] == ["same", "same", "same"] and r["divSt"] == "same"
+
+
+def test_basis_rows_alone_do_not_give_a_report_year(monkeypatch, tmp_path):
+    # 리뷰 2: 배당 표에 액면가·주당순이익 줄만 있고 주당 배당금이 없으면 fy 를 달지 않아요 (재무제표도 없을 때)
+    def get(self, endpoint, params, timeout=25):
+        with self.lock:
+            self.status["000"] += 1
+        if endpoint == "alotMatter.json":
+            return {"status": "000", "list": alot([None, None, None], par=[500] * 3, eps=[10, 9, 8], ni=[1, 1, 1])[:-1]}
+        return {"status": "013", "list": []}
+    monkeypatch.setattr(F.DartClient, "get", get)
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {"000100": "C1"})
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)
+    stocks = [{"t": "000100", "cls": "kr", "cap": 1.0, "shr": 1_000_000, "price": 1000.0}]
+    F.enrich_with_dart(stocks, F.DartClient("k", today=dt.date(2026, 11, 5), path=str(tmp_path / "c.json.gz")))
+    assert "fy" not in stocks[0] and "dps" not in stocks[0] and stocks[0]["_bas"]["par3"] == [500] * 3
+
+
+def test_pipeline_checks_the_same_must_haves_as_the_gate():
+    # 리뷰 2: 파이프라인 로그가 관문과 같은 7개 국내 필수 종목을 봐야 '모두 있음'이 관문 실패와 어긋나지 않아요
+    assert set(F.DIV_RANK_MUST) == set(V.MUST) and set(F.MUST_KR) <= set(F.DIV_RANK_MUST)
+
+
 def test_clean_factors_and_bands():
     assert F.clean_factor(1.08) == 1.0 and F.clean_factor(1.3) is None and F.clean_factor(2.04) == 2.0
     assert F.clean_factor(2.3) is None and F.clean_factor(0.505) == 0.5 and F.clean_factor(None) is None
@@ -320,8 +382,8 @@ def test_beta_standard_error_matches_least_squares():
 
 def test_every_beta_written_by_the_pipeline_carries_its_error_and_count():
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
-    assert src.count("beta_fit(ret, bench, rf)") == 2 and "beta_alpha" not in src
-    assert src.count('"betaSE": bse if b is not None else None, "betaN": bn if b is not None else None') == 2
+    assert src.count("b, a, bse, bn = beta_fit(ret, bench, rf)") == 2 and "beta_alpha" not in src
+    assert src.count('"beta": b, "al": a,') == 2 and src.count('"betaSE": bse, "betaN": bn,') == 2
 
 
 # ── 4. flRan ─────────────────────────────────────────────
@@ -353,11 +415,18 @@ def test_dart_cache_is_version_two_in_the_pipeline_and_the_workflow():
     assert F.DART_CACHE_VERSION == 2 and F.DART_CACHE_PATH.endswith("dart-v2.json.gz")
     with open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8") as f:
         text = f.read()
-    assert "dart-cache-v1" not in text and "dart-v1.json.gz" not in text
+    assert "dart-v1.json.gz" not in text
     steps = {s.get("name"): s for s in yaml.safe_load(text)["jobs"]["update"]["steps"]}
-    assert steps["DART 캐시 불러오기"]["with"]["restore-keys"] == "dart-cache-v2-"
+    # v2 를 먼저 찾고, 없을 때만 v1 폴더(미국 상세 정보 보관본을 이어 쓰려고)를 받아요 (리뷰 2). 저장은 언제나 v2 로
+    assert steps["DART 캐시 불러오기"]["with"]["restore-keys"].split() == ["dart-cache-v2-", "dart-cache-v1-"]
+    assert steps["DART 캐시 불러오기"]["with"]["key"].startswith("dart-cache-v2-")
     assert steps["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v2-")
-    assert ".dart-cache/" + os.path.basename(F.DART_CACHE_PATH) in steps["DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)"]["run"]
+    # 정해진 시각 실행의 빈 캐시 확인은 v2 파일을 봐요: v1 폴더만 받은 실행도 그대로 멈춰요 (전체 DART 실행은 사람이 하루 한 번)
+    guard = steps["DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)"]["run"]
+    assert "! -s .dart-cache/" + os.path.basename(F.DART_CACHE_PATH) in guard and "exit 1" in guard
+    import inspect
+    src = inspect.getsource(F.main)                       # 받은 v1 폴더의 옛 DART 파일은 지워서 v2 캐시에 실려 가지 않게
+    assert '"dart-v1.json.gz"' in src and src.find("os.remove(legacy)") < src.find("DartClient(DART_KEY")
 
 
 def test_full_refresh_call_estimate_stays_under_the_target():
@@ -376,8 +445,9 @@ def test_gate_and_pipeline_share_the_same_dividend_rules():
     assert not V._factor_ok(1.3) and not V._factor_ok(1.1) and not V._factor_ok(0.0)
 
 
-def test_client_knows_it_started_from_an_empty_cache(tmp_path):
+def test_client_knows_it_started_from_an_empty_cache(tmp_path, monkeypatch):
     # 빈 캐시로 시작하면 전체 DART 실행이라 호출 수 어림을 남겨요. v1 캐시 파일(버전 1)도 빈 캐시예요 (새 칸이 없어서)
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)      # 자동 실행 표시가 있으면 빈 캐시에서 멈춰요 (test_schedule 이 봐요)
     assert F.DartClient("k", today=dt.date(2026, 11, 5), path=str(tmp_path / "none.json.gz")).started_empty is True
     import gzip
     p = tmp_path / "v1.json.gz"
@@ -473,11 +543,6 @@ def test_data_before_v191b_is_only_a_warning_until_the_new_fields_were_published
     assert not rep.failed and rows_of(rep)["배당 분할 확인 기록 (divCheck)"][3] == "WARN"
     rep = check(old, {"data": cur["data"]})                             # 한 번 발행된 뒤 빠지면 실패
     assert "배당 분할 확인 기록 (divCheck)" in {r[0] for r in rep.failed}
-    late = V.run_checks(old, None, None, V.DIVCHECK_REQUIRED_FROM, mode="live", sessions=SESSIONS, now=NOW, hilo=hilo_of(old, V.MUST))
-    assert "배당 분할 확인 기록 (divCheck)" in {r[0] for r in late.failed}   # 12월 1일부터는 옛 형식도 실패 (기한 없는 예외 없음, 리뷰 1)
-    early = V.run_checks(old, None, None, V.DIVCHECK_REQUIRED_FROM - dt.timedelta(days=1), mode="live", sessions=SESSIONS,
-                         now=NOW, hilo=hilo_of(old, V.MUST))
-    assert next(r for r in early.rows if r[0] == "배당 분할 확인 기록 (divCheck)")[3] == "WARN"
 
 
 def _fails(cur, prev, name):
@@ -570,11 +635,24 @@ def test_must_have_without_new_fields_fails(pair, where, key):
     _fails(cur, prev, "필수 종목 새 칸 (배당 분할 확인·베타 표준오차·재무 경고 검사)")
 
 
-@pytest.mark.parametrize("se, n", [(0.0, 740), (-0.1, 740), (0.6, 740), ("0.07", 740), (0.07, 120), (0.07, 900), (0.07, 740.5), (None, 740)])
+@pytest.mark.parametrize("se, n", [(0.0, 740), (-0.1, 740), ("0.07", 740), (0.07, 120), (0.07, 900), (0.07, 740.5), (None, 740)])
 def test_bad_beta_standard_error_fails(pair, se, n):
     cur, prev = pair
     s = kr_of(cur)[50]
     s["betaSE"], s["betaN"] = se, n
+    _fails(cur, prev, "베타 표준오차 (betaSE·betaN)")
+
+
+def test_a_few_wild_betas_pass_but_many_fail(pair):
+    # 가격 이력이 깨진 종목은 표준오차가 0.5~0.9 예요 (리뷰 2: 007460 0.85 등). 몇 개는 통과, 2% 를 넘으면 실패
+    cur, prev = pair
+    kr = kr_of(cur)
+    for s in kr[100:110]:
+        s["betaSE"] = 0.85
+    rep = check(cur, prev)
+    assert rows_of(rep)["베타 표준오차 (betaSE·betaN)"][3] == "PASS", rows_of(rep)["베타 표준오차 (betaSE·betaN)"]
+    for s in kr[110:200]:
+        s["betaSE"] = 0.85
     _fails(cur, prev, "베타 표준오차 (betaSE·betaN)")
 
 

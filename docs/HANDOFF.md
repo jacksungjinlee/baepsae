@@ -28,16 +28,20 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   its presence switches on the new gate rows). KR and US stocks: `betaSE`, `betaN`.
 - corp.json: the same dividend fields plus `cash3` (현금배당금총액, 억원), `eps3r` (company-reported EPS), `epsNi3` (the
   net income on the same basis, 억원), `epsB` (연결/별도), `flRan` (warning checks that ran), `flNa` (not applicable,
-  financial companies). The existing `eps` (today's shares) is unchanged.
+  financial companies). The existing `eps` (today's shares) is unchanged. **Visible on the first v2 publish:** 2.0's
+  company page already reads `flRan` (#36), so "재무 경고 신호는 없어요" (approved text) starts showing where all four
+  checks ran and none fired. Nothing else users see changes until the app PR.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the
-  ceilings inside the same report. Live check 2026-11-05 (31 DART calls): all must-haves `same`; 대한제분 10:1 after the
+  ceilings inside the same report (a clean change with unchanged par counts only if 자본잉여금 didn't grow, i.e. a bonus
+  issue, not a rights issue). Live check 2026-11-05 (31 DART calls): all must-haves `same`; 대한제분 10:1 after the
   report → [400, 350, 250]; 리노공업 5:1 in 2025 → [800, 600, 600]; 엠앤씨솔루션 bonus ×3 → adjusted; 하이비젼시스템's
   real cut stays a cut; 한화에어로스페이스 `nc` (2024 spin-off + 2025 rights issue) but its yield ranks.
 - **Two-day plan (DART rule: one full-DART run per KST day; never start one 03:40–08:30 KST):** day 1 = the branch dry
-  run (`dry_run=true`, `dart=cache` on an empty v2 cache = that day's full-DART run, ~15,300 calls estimated, logged at
-  the start). Show Jack the new gate rows with that run's numbers; he approves rows/thresholds and test changes. Day 2:
+  run (`dry_run=true`, `dart=cache` on an empty v2 cache = that day's full-DART run, ~15,500 calls estimated, logged at
+  the start; the workflow restores the v1 folder only to keep the US Yahoo-info cache). Show Jack the new gate rows with
+  that run's numbers; he approves rows/thresholds and test changes. Day 2:
   merge only after that morning's timer run has published (it still uses the v1 cache), then start one manual
   `dart=full` run on `main` the same day (not 03:40–08:30, not while a scheduled or timer run is waiting). It publishes
   the new fields and saves the first v2 cache on `main`; the next morning's timer run uses it. Until that run publishes,

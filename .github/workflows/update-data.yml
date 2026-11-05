@@ -144,13 +144,17 @@ jobs:
 
       # v19.1b: 캐시 v1 → v2 (배당 표·재무제표에서 새 값을 담아 예전 항목은 못 써요). v2 캐시가 처음 생기는 실행은 빈 캐시로
       # 시작하는 전체 DART 실행이에요 — 한국 날짜로 하루 한 번만, 수동으로 (CLAUDE.md · HANDOFF § 0 의 이틀 계획).
+      # v2 캐시가 아직 없으면 v1 폴더를 받아 같은 폴더의 미국 상세 정보 보관본(us-info-v1)만 이어 써요. v1 DART 파일은 읽지 않고
+      # fetch_data.py 가 지워요. 정해진 시각 실행의 빈 캐시 확인(아래)은 v2 파일을 봐서, v1 만 받은 실행은 그대로 멈춰요.
       - name: DART 캐시 불러오기
         id: dart_cache
         uses: actions/cache/restore@v6
         with:
           path: .dart-cache
           key: dart-cache-v2-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: dart-cache-v2-
+          restore-keys: |
+            dart-cache-v2-
+            dart-cache-v1-
 
       # v17.5.3: 정해진 시각 실행이 여러 번이라, 캐시가 없을 때 그대로 가면 하루에 전체 DART 실행이 여러 번 될 수 있어요.
       # 빈 캐시로 시작하는 DART 실행은 하루 한 번, 사람이(또는 Claude 가 규칙대로) 수동으로만 해요 (CLAUDE.md).

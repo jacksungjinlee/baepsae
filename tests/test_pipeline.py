@@ -407,7 +407,7 @@ def test_workflow_never_hides_failures():
     assert inp["dart"]["default"] == "cache" and inp["dart"]["options"] == ["cache", "full", "off"]
     assert inp["selftest"]["default"] == "none"
     # DART 캐시 키 (스펙 C)
-    assert by["DART 캐시 불러오기"]["with"]["restore-keys"] == "dart-cache-v2-"
+    assert by["DART 캐시 불러오기"]["with"]["restore-keys"].split() == ["dart-cache-v2-", "dart-cache-v1-"]
     assert by["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v2-${{ github.run_id }}")
     assert wf["jobs"]["update"]["timeout-minutes"] == 300
     assert "inputs.dry_run" in wf["concurrency"]["group"]
