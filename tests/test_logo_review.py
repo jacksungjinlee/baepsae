@@ -398,6 +398,237 @@ def test_kst_dates():
     assert got == ["2026-11-05", "2026-11-05T00:30:00+09:00"]
 
 
+# ── a pasted image address ("manual") and None of these - find more ("need"), added 2026-11-05 ──
+
+def test_extra_sources_match_python():
+    got = node("console.log(JSON.stringify([SOURCES, EXTRA_SOURCES, ALL_SOURCES, MANUAL_MAX, MANUAL_MIN_PX, MANUAL_SOFT_PX,"
+               " MANUAL_THIN_PX, MANUAL_WIDE]));")
+    assert got[0] == list(br.SOURCES) and got[1] == list(br.EXTRA_SOURCES) == ["manual", "need"]
+    assert got[2] == list(br.SOURCES) + ["manual", "need"] and got[3:] == [2000, 64, 128, 24, 4]
+
+
+def manual(raws):
+    return node(f"console.log(JSON.stringify({json.dumps(raws)}.map(checkManualUrl)));")
+
+
+def test_manual_url_https_only_and_normalised():
+    ok = {"https://www.samsung.com/images/logo.png": "https://www.samsung.com/images/logo.png",
+          "  https://x.co.kr/a.png\n": "https://x.co.kr/a.png",
+          "HTTPS://X.CO.KR/a.png": "https://x.co.kr/a.png",
+          "https://x.co.kr/logo.svg?v=3#top": "https://x.co.kr/logo.svg?v=3#top",
+          "https://x.co.kr:8443/a.png": "https://x.co.kr:8443/a.png",
+          "https://notlogo.dev/a.png": "https://notlogo.dev/a.png",            # not a provider's own domain
+          "https://logo.dev.example.com/a.png": "https://logo.dev.example.com/a.png",
+          "https://www.삼성.com/로고.png": "https://www.xn--cg4bki.com/%EB%A1%9C%EA%B3%A0.png",
+          "https://x.com/" + "a" * 1986: "https://x.com/" + "a" * 1986}      # exactly 2,000 characters
+    upgraded = {"http://x.co.kr/a.png": "https://x.co.kr/a.png", "HTTP://X.CO.KR:80/a.png": "https://x.co.kr/a.png",
+                "http://x.co.kr:8080/a.png": "https://x.co.kr:8080/a.png"}
+    got = manual(list(ok) + list(upgraded))
+    for (raw, want), g in zip(list(ok.items()) + list(upgraded.items()), got):
+        assert g.get("url") == want and not g.get("error"), (raw[:60], g)
+        assert ("http to https" in g["note"]) == (raw in upgraded), (raw, g)
+    again = manual([g["url"] for g in got])                                      # the checked form is stable
+    assert [a["url"] for a in again] == [g["url"] for g in got] and not any(a["note"] for a in again)
+    assert all(len(g["url"]) <= 2000 for g in got)
+
+
+@pytest.mark.parametrize("raw,why", [
+    ("", "Paste"), ("   ", "Paste"), (None, "No address"), (5, "No address"),
+    ("data:image/png;base64,iVBORw0KGgo=", "data:"), (" DATA:image/svg+xml,<svg/>", "data:"),
+    ("javascript:alert(1)", "script"), ("JavaScript:alert(1)", "script"), ("java\tscript:alert(1)", "script"),
+    ("vbscript:msgbox", "script"), ("ftp://x.com/a.png", "https"), ("file:///etc/passwd", "https"),
+    ("blob:https://x.com/1234", "https"), ("//x.com/a.png", "full web address"), ("x.com/a.png", "full web address"),
+    ("https://user:pw@x.com/a.png", "user name"), ("https://x.com/a b.png", "space"),
+    ("https://x.com/a.png\nhttps://y.com/b.png", "space"),
+    ("https://cdn.brandfetch.io/ticker/AAPL/w/128/h/128?c=x", "Brandfetch"), ("https://asset.brandfetch.io/x.png", "Brandfetch"),
+    ("https://brandfetch.com/x.png", "Brandfetch"), ("https://img.logo.dev/apple.com?token=pk_x", "logo.dev"),
+    ("https://LOGO.DEV/x.png", "logo.dev"), ("http://img.logo.dev./x", "logo.dev"),
+    ("https://127.0.0.1/a.png", "public website"), ("https://169.254.169.254/latest/meta-data", "public website"),
+    ("https://0x7f.1/a.png", "public website"), ("https://[::1]/a.png", "public website"),
+    ("https://localhost:8443/a.png", "public website"), ("https://intranet/a.png", "public website"),
+    ("https://printer.local/a.png", "public website"), ("https://x.home.arpa/a.png", "public website"),
+    ("https://app.localhost/a.png", "public website"),
+    ("https://x.com/" + "a" * 1987, "at most 2000"), ("https://" + "a" * 2100, "at most 2000"),
+])
+def test_manual_url_refused(raw, why):
+    g = manual([raw])[0]
+    assert "url" not in g and why in g["error"], (str(raw)[:60], g)
+
+
+def test_preview_size_rule():
+    """Judged on the longer side (Jack's wide wordmarks, 2026-11-05): refused only under 64 px on the longer side;
+    small (< 128), thin (< 24) or very wide (> 4:1) pictures are usable with a warning."""
+    cases = [[128, 128], [240, 48], [400, 95], [96, 96], [64, 64], [500, 63], [600, 20], [63, 40], [40, 63], [0, 0], [None, 10]]
+    got = node("console.log(JSON.stringify(%s.map(x => judgeSize(x[0], x[1]))));" % json.dumps(cases))
+    assert [(g["ok"], g.get("warn")) for g in got] == [
+        (True, False),            # 128 x 128: fine
+        (True, True),             # 240 x 48 wordmark: usable, 5:1 wide
+        (True, True),             # 400 x 95: usable, a little over 4:1
+        (True, True),             # 96 x 96: usable, soft
+        (True, True),             # 64 x 64: usable, soft
+        (True, True),             # 500 x 63: usable, very wide
+        (True, True),             # 600 x 20: usable, thin and very wide
+        (False, None),            # 63 x 40: too small (longer side under 64)
+        (False, None),            # 40 x 63: too small
+        (False, None), (False, None)]   # not measurable
+    assert "longer side" in got[7]["text"] and "64 px" in got[7]["text"] and "63 × 40 px" in got[7]["text"]
+    assert "wider than tall" in got[1]["text"] and "thinner than 24 px" in got[6]["text"] and "measure" in got[9]["text"]
+    assert got[0]["text"] == "128 × 128 px."
+
+
+def test_export_and_load_choices_with_manual_and_need():
+    keys = {"bf": KEYS[0], "ld": KEYS[1]}
+    good = li.logo_url("brandfetch", "isin", "KR7005930003", keys["bf"])
+    comps = dict(company_js(), **{"000660": {"c": "000660", "tk": "000660.KS", "isin": "", "dom": "", "ic": ""}})
+    ch = {"005930": {"source": "manual", "url": "https://www.samsung.com/logo.png", "reviewed": "2026-11-05"},
+          "000660": {"source": "need", "url": None, "reviewed": "2026-11-05"},
+          "AAPL": {"source": "own-icon", "url": "logo-review/icons/AAPL.png", "reviewed": "2026-11-04"}}
+    js = (f"var C = {json.dumps(comps)}, K = {json.dumps(keys)}, ch = {json.dumps(ch)};\n"
+          "var ex = exportChoices(ch, 'T'), back = validateImport(JSON.parse(JSON.stringify(ex)), C, K);\n"
+          "console.log(JSON.stringify([ex, back, exportChoices(back.choices, 'T')]));")
+    ex, back, again = node(js)
+    assert ex == {"version": 1, "created": "T", "choices": ch} and back == {"choices": ch, "rejected": []} and again == ex
+    need_url = node("console.log(JSON.stringify(exportChoices({X: {source: 'need', url: 'u', reviewed: '2026-11-05'}}, 'T')));")
+    assert need_url["choices"]["X"]["url"] is None
+    bad = {
+        "http (not the checked form)": ("005930", {"source": "manual", "url": "http://www.samsung.com/logo.png"}),
+        "data:": ("005930", {"source": "manual", "url": "data:image/png;base64,AAAA"}),
+        "javascript:": ("005930", {"source": "manual", "url": "javascript:alert(1)"}),
+        "provider address": ("005930", {"source": "manual", "url": good}),
+        "no address": ("005930", {"source": "manual", "url": None}),
+        "too long": ("005930", {"source": "manual", "url": "https://x.com/" + "a" * 1990}),
+        "need with an address": ("000660", {"source": "need", "url": "https://x.com/a.png"}),
+        "manual for an unknown company": ("999990", {"source": "manual", "url": "https://x.com/a.png"}),
+        "unknown source": ("005930", {"source": "manuall", "url": "https://x.com/a.png"}),
+        "manual, bad date": ("005930", {"source": "manual", "url": "https://x.com/a.png", "reviewed": "2026-02-30"}),
+    }
+    js = f"var C = {json.dumps(comps)}, K = {json.dumps(keys)}, B = {json.dumps(bad)}, out = {{}};\n"
+    js += ("for (var k in B) { var e = Object.assign({reviewed: '2026-11-05'}, B[k][1]), c = {}; c[B[k][0]] = e;"
+           " out[k] = validateImport({version: 1, choices: c}, C, K); }\nconsole.log(JSON.stringify(out));")
+    for name, res in node(js).items():
+        assert res["choices"] == {} and len(res["rejected"]) == 1, (name, res)
+
+
+# What the page of PR #45 (merged 2026-11-05, the one Jack is using) writes: these must read back unchanged.
+def old_choices(keys):
+    return {"005930": {"source": "bf-isin", "url": li.logo_url("brandfetch", "isin", "KR7005930003", keys["bf"]),
+                       "reviewed": "2026-11-05"},
+            "000660": {"source": "ld-ticker", "url": li.logo_url("logodev", "ticker", "000660.KS", keys["ld"]),
+                       "reviewed": "2026-11-05"},
+            "005380": {"source": "letter", "url": None, "reviewed": "2026-11-04"},
+            "AAPL": {"source": "own-icon", "url": "logo-review/icons/AAPL.png", "reviewed": "2026-11-05"},
+            "MSFT": {"source": "bf-ticker", "url": li.logo_url("brandfetch", "ticker", "MSFT", keys["bf"]),
+                     "reviewed": "2026-11-05"}}
+
+
+def old_comps():
+    return {"005930": {"c": "005930", "tk": "005930.KS", "isin": "KR7005930003", "dom": "samsung.com", "ic": ""},
+            "000660": {"c": "000660", "tk": "000660.KS", "isin": "KR7000660001", "dom": "", "ic": ""},
+            "005380": {"c": "005380", "tk": "005380.KS", "isin": "", "dom": "", "ic": ""},
+            "AAPL": {"c": "AAPL", "tk": "AAPL", "isin": "", "dom": "", "ic": "logo-review/icons/AAPL.png"},
+            "MSFT": {"c": "MSFT", "tk": "MSFT", "isin": "", "dom": "", "ic": ""}}
+
+
+def test_an_old_export_file_loads_unchanged_and_exports_the_same():
+    keys = {"bf": KEYS[0], "ld": KEYS[1]}
+    old = {"version": 1, "created": "2026-11-05T15:02:11+09:00", "choices": old_choices(keys)}
+    js = (f"var C = {json.dumps(old_comps())}, K = {json.dumps(keys)}, old = {json.dumps(old)};\n"
+          "var v = validateImport(old, C, K); console.log(JSON.stringify([v, exportChoices(v.choices, old.created)]));")
+    v, again = node(js)
+    assert v == {"choices": old["choices"], "rejected": []} and again == old
+
+
+def test_old_saved_progress_reads_back_unchanged():
+    """Jack's saved progress as the merged page writes it ({v: 1, savedAt, grid, choices, flags, fix}): every choice,
+    mark and fix and the grid come back unchanged. Nothing in it says Start was tapped, so it does not resume by itself;
+    what the new page writes back (the same keys plus fixUrl, started, paused) reads back unchanged too."""
+    keys = {"bf": KEYS[0], "ld": KEYS[1]}
+    old = {"v": 1, "savedAt": "2026-11-05T15:02:11+09:00", "grid": "KR-2", "choices": old_choices(keys),
+           "flags": {"000660": 1, "MSFT": 1}, "fix": {"000660": "letter", "MSFT": "bf-ticker"}}
+    grids = ["KR-1", "KR-2", "US-1"]
+    js = (f"var C = {json.dumps(old_comps())}, K = {json.dumps(keys)}, G = {json.dumps(grids)}, old = {json.dumps(old)};\n"
+          "var r = parseProgress(JSON.parse(JSON.stringify(old)), C, K, G);\n"
+          # the new page writes the same keys plus fixUrl and started: read back unchanged too
+          "var saved = {v: 1, savedAt: 'x', grid: r.grid, choices: r.choices, flags: r.flags, fix: r.fix, fixUrl: r.fixUrl, started: true, paused: false};\n"
+          "console.log(JSON.stringify([r, parseProgress(JSON.parse(JSON.stringify(saved)), C, K, G)]));")
+    r, r2 = node(js)
+    for got in (r, r2):
+        assert got["choices"] == old["choices"] and got["flags"] == old["flags"] and got["fix"] == old["fix"]
+        assert got["grid"] == "KR-2" and got["fixUrl"] == {} and got["rejected"] == [] and got["error"] == ""
+    assert (r["resume"], r2["resume"]) == (False, True)
+
+
+@pytest.mark.parametrize("blob,resume", [
+    ({"v": 1, "choices": {}, "flags": {}, "fix": {}}, False),                      # old format: says nothing about Start
+    ({"v": 1, "choices": {}, "flags": {"MSFT": 1}, "fix": {}}, False),             # marks can be made before Start
+    ({"v": 1, "choices": {"005380": {"source": "letter", "url": None, "reviewed": "2026-11-05"}}}, False),  # Load choices
+    ({"v": 1, "choices": {"005380": {"source": "letter", "url": None, "reviewed": "2026-11-05"}}, "started": False}, False),
+    ({"v": 1, "choices": {}, "started": True}, True),
+    ({"v": 1, "choices": {}, "started": True, "paused": False}, True),
+    ({"v": 1, "choices": {}, "started": True, "paused": True}, False),            # Pause was tapped last
+    ({"v": 1, "started": "yes"}, False),
+    ({"v": 1}, False),
+])
+def test_resume_only_after_start_was_tapped(blob, resume):
+    r = node(f"console.log(JSON.stringify(parseProgress({json.dumps(blob)}, {json.dumps(old_comps())}, {{}}, ['KR-1'])));")
+    assert r["resume"] is resume
+
+
+def test_saved_fixes_keep_a_pasted_address_only_in_its_checked_form():
+    blob = {"v": 1, "choices": {}, "grid": "nope",
+            "flags": {"005930": 1, "000660": 1, "005380": 1, "MSFT": 1, "ZZZZ": 1},
+            "fix": {"005930": "manual", "000660": "manual", "005380": "need", "MSFT": "made-up", "ZZZZ": "letter"},
+            "fixUrl": {"005930": "https://www.samsung.com/logo.png", "000660": "http://x.co.kr/a.png"}}
+    r = node(f"console.log(JSON.stringify(parseProgress({json.dumps(blob)}, {json.dumps(old_comps())}, {{}}, ['KR-1'])));")
+    assert r["fix"] == {"005930": "manual", "005380": "need"} and r["fixUrl"] == {"005930": "https://www.samsung.com/logo.png"}
+    assert r["flags"] == {"005930": 1, "000660": 1, "005380": 1, "MSFT": 1} and r["grid"] is None
+    for bad in (None, [], "x", 3):
+        out = subprocess.run(["node"], input=pure_js() + f"\ntry {{ parseProgress({json.dumps(bad)}, {{}}, {{}}, []); "
+                             "console.log('no'); } catch (e) { console.log('threw'); }", capture_output=True, text=True)
+        assert out.stdout.strip() == "threw", bad
+
+
+# ── what was found, remembered for 7 days (PROBE_KEY): source name, hit or miss, day; never an image ──
+
+def test_probe_memory_reads_fresh_entries_for_this_build_only():
+    comps = old_comps()
+    o = {"v": 1, "page": "B1", "savedAt": "x", "probes": {
+        "005930": {"bf-isin": ["hit", "2026-11-05"], "ld-domain": ["miss", "2026-10-30"],      # 6 days old: kept
+                   "bf-ticker": ["miss", "2026-10-29"],                                       # 7 days old: expired
+                   "ld-ticker": ["miss", "2026-11-06"]},                                      # in the future: dropped
+        "000660": {"ld-domain": ["miss", "2026-11-05"],                                       # no domain now: dropped
+                   "bf-isin": ["maybe", "2026-11-05"], "bf-ticker": ["hit"], "ld-ticker": "hit",
+                   "own-icon": ["hit", "2026-11-05"], "bf-name": ["hit", "2026-11-05"]},
+        "AAPL": {"ld-ticker": ["hit", "2026-11-05"]},
+        "999990": {"bf-isin": ["hit", "2026-11-05"]}, "MSFT": "hit"}}
+    js = (f"var C = {json.dumps(comps)}, o = {json.dumps(o)};\n"
+          "console.log(JSON.stringify([readProbes(o, 'B1', '2026-11-05', C), readProbes(o, 'B2', '2026-11-05', C),"
+          " readProbes(Object.assign({}, o, {v: 2}), 'B1', '2026-11-05', C), readProbes(null, 'B1', '2026-11-05', C),"
+          " packProbes(o.probes, 'B1', '2026-11-05', 'S')]));")
+    same, other, v2, none, packed = node(js)
+    assert same["probes"] == {"005930": {"bf-isin": ["hit", "2026-11-05"], "ld-domain": ["miss", "2026-10-30"]},
+                              "AAPL": {"ld-ticker": ["hit", "2026-11-05"]}}
+    assert same["n"] == 3 and same["dropped"] == 10 and not same["other"]
+    assert other == {"probes": {}, "n": 0, "dropped": 0, "other": True} and v2["probes"] == {} and none["probes"] == {}
+    assert packed["v"] == 1 and packed["page"] == "B1" and "2026-10-29" not in json.dumps(packed)
+    assert "http" not in json.dumps(same) and "data:" not in json.dumps(same)
+
+
+def test_probe_memory_expires_after_7_days():
+    got = node("console.log(JSON.stringify(['2026-11-05','2026-11-04','2026-10-30','2026-10-29','2026-11-06','x', null]"
+               ".map(d => probeFresh(d, '2026-11-05'))));")
+    assert got == [True, True, True, False, False, False, False]
+
+
+def test_summary_counts_needs_a_logo_apart():
+    comps = [{"c": f"K{i}", "s": "kr", "z": 0} for i in range(4)]
+    zones = [{"side": "kr", "z": 0, "label": "Korea 1-4"}]
+    ch = {"K0": {"source": "manual"}, "K1": {"source": "need"}, "K2": {"source": "letter"}}
+    rows = node(f"console.log(JSON.stringify(summarize({json.dumps(comps)}, {json.dumps(ch)}, {json.dumps(zones)})));")
+    assert [(r["label"], r["n"], r["reviewed"], r["logo"], r["letter"], r["need"]) for r in rows] == [
+        ("Korea 1-4", 4, 3, 1, 1, 1), ("Korea all", 4, 3, 1, 1, 1), ("US all", 0, 0, 0, 0, 0), ("All", 4, 3, 1, 1, 1)]
+
+
 # ── pacing, keys, storage, links ──
 
 def test_pacing_and_check_defaults_are_the_test_pages():
@@ -423,12 +654,20 @@ def test_built_page_has_only_the_two_publishable_keys(tmp_path):
     assert "sk_" not in page and page.count("pk_") == 1
 
 
-def test_only_this_pages_own_storage_key():
+def test_only_this_pages_own_storage_keys_each_access_in_try():
+    """Two keys of its own since 2026-11-05: the choices (STORE_KEY, unchanged) and what was found (PROBE_KEY, kept
+    apart so that a full or broken entry there can never cost a confirmed choice). Every access is inside a try."""
     js = TEMPLATE.split("<script>", 1)[1]
     assert "sessionStorage" not in js and "indexedDB" not in js and "document.cookie" not in js
     assert "caches." not in js and "serviceWorker" not in js
     uses = re.findall(r"localStorage\.(\w+)\(([^,)]*)", js)
-    assert uses == [("getItem", "STORE_KEY"), ("setItem", "STORE_KEY")], uses
+    assert uses == [("getItem", "STORE_KEY"), ("setItem", "STORE_KEY"), ("getItem", "PROBE_KEY"),
+                    ("setItem", "PROBE_KEY")], uses
+    for m in re.finditer(r"localStorage\.", js):
+        before = js[:m.start()]
+        assert before.rfind("try {") > before.rfind("\n}"), js[m.start() - 120:m.start() + 40]
+    got = node("console.log(JSON.stringify([STORE_KEY, PROBE_KEY, PROBE_DAYS]));")
+    assert got == ["baepsae-logo-review-v1", "baepsae-logo-review-probes-v1", 7]
 
 
 SITE_PAGES = ["index.html", "app.html", "app-preview.html", "baepsae.html", "styleguide.html", "template.html",
