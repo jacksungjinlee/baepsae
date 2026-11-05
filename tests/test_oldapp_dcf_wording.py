@@ -180,7 +180,8 @@ def test_three_month_line_after_a_fall_reads_jacks_sentence_on_both_screens(bund
 # ── 주가가 그대로일 때: '+0% 올랐어요' 대신 '거의 변하지 않았어요' ──
 def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
     """기업분석 '주가는 무엇으로 움직였나'에서 적자 구간이 있어 나누지 못할 때의 3년 주가 문장. r36 은 소수 한 자리 그대로 보여요.
-    0 (−0 도)이면 '지난 3년 주가는 거의 변하지 않았어요.', 아니면 예전 그대로 (+x% 올랐어요 · x% 내렸어요). 뒤 문장은 그대로."""
+    0 (−0 도)이면 '지난 3년 주가는 거의 변하지 않았어요.' 하나만: 움직이지 않았으니 뒤 문장('이익 없이 움직인 가격은…')은 빼요
+    (Jack, 2026-11-05). 0 이 아니면 예전 그대로 (+x% 올랐어요 · x% 내렸어요) 뒤 문장과 함께."""
     sam = samsung()
     loss = [sam["ni"][0], sam["ni"][1], -100.0]                                 # 3년 전 적자: 이익과 눈높이로 나누지 못해요
     got = run(bundle, """
@@ -193,12 +194,15 @@ def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
       }""", SAM=sam, LOSS=loss)
     lead = "적자 구간이 있어서 이익과 눈높이로 나누기 어려워요. "
     tail = " 이익 없이 움직인 가격은 기대와 수급이 만든 거예요."
-    same = lead + "지난 3년 주가는 거의 변하지 않았어요." + tail
+    same = lead + "지난 3년 주가는 거의 변하지 않았어요."                      # 뒤 문장 없이
     assert got["zero"] == [same] and got["negZero"] == [same], got
+    assert "움직인 가격" not in got["zero"][0] and "기대와 수급" not in got["negZero"][0], got
     assert got["up"] == [lead + "지난 3년 주가는 +12.3% 올랐어요." + tail], got
     assert got["down"] == [lead + "지난 3년 주가는 7% 내렸어요." + tail], got
     assert got["tiny"] == [lead + "지난 3년 주가는 +0.1% 올랐어요." + tail], got     # 보이는 숫자가 0 이 아니면 그대로
     assert got["tinyDown"] == [lead + "지난 3년 주가는 0.1% 내렸어요." + tail], got
+    for k in ("up", "down", "tiny", "tinyDown"):                                 # 0 이 아니면 뒤 문장이 그대로 남아요
+        assert got[k][0].endswith(tail) and got[k][0].count("이익 없이 움직인 가격은") == 1, (k, got[k])
     no_dash(same)
     for bad in ("+0%", " 0% "):
         assert bad not in got["zero"][0] and bad not in got["negZero"][0], bad
