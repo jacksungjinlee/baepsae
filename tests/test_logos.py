@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Logo plan (tools/logos/): exact identifiers, the DART homepage tool, and what the logo tools build on.
+"""Logo plan (tools/logos/): exact identifiers, the DART homepage tool, and what the logo picker builds on.
 
 No network and no logo provider: ISIN check digit and the exact short-code rule, homepage -> domain on the messy values
 DART and KRX hold, platform hosts that are never a company's domain, the DART quiet window (03:40-08:30 KST), the
 DART loop's pacing, batches, call budget and stops (status 020, key errors, network errors) against a fake DART, the
 seeded sample (same seed -> same sample), the provider URL formats, key checks, and every company's exact identifiers
 from data.json + the KRX listing + the DART homepages (logo_sources.py). The coverage test page that used to be tested
-here was removed on 2026-11-05 (Jack); the logo picker and its own tests were removed on 2026-11-06 (v19.3a Part J).
+here was removed on 2026-11-05 (Jack); the logo picker's own tests are in tests/test_logo_review.py.
 """
 import datetime as dt
 import pathlib
@@ -422,7 +422,7 @@ def test_only_publishable_keys_go_into_a_page():
         assert all(v not in str(e.value) for v in (bf, ld) if len(v) > 3), e.value      # never echoes a key
 
 
-# ── every company's exact identifiers, keys (tools/logos/logo_sources.py, used by the logo.dev tools) ──
+# ── every company's exact identifiers, keys (tools/logos/logo_sources.py, used by the logo picker) ──
 
 MUST_KR_TOP = ("005930", "000660", "005380")
 
