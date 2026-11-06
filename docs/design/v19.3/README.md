@@ -1,7 +1,7 @@
 # v19.3 design hand-off (Jack's claude.ai design chat, 2026-11-06)
 
 Boards and pictures for `docs/tasks/v19.3-portfolio-pictures-accounts.md`. Jack approved the design on the private design
-board (version 46). Read the boards for layout, sizes, colours and structure. All companies, logos and numbers on them
+board (version 47). Read the boards for layout, sizes, colours and structure. All companies, logos and numbers on them
 are made up. Their Korean text is final only where the task file's 「새 문구」 table lists it.
 
 These boards replace `PfStart`, `PfEdit` and `PfReport` in `docs/design/v19.1/` (the planned v19.1b screens).
