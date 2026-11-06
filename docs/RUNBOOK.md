@@ -67,6 +67,18 @@ tells you what happened in plain words.
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
+  Pro on 2026-11-06 and checked by eye. Deploy copies it into the site; if the branch is missing or fails its check,
+  Deploy warns and publishes without logos (every company shows its coloured letter mark). Logos never go on `main`.
+- **`logos-run`** is a record branch (not on the site) with the checked folder the logo tool works on: the same `logos/`,
+  the switched-off pictures in `dropped/`, and the review records (`drops.csv`, `keeps.csv`, `review.csv`, `run.json`).
+  To change one logo later: copy that branch into a new folder, switch a wrong logo to its letter mark with
+  `python3 tools/logos/logodev_fetch.py --drop CODE --dir FOLDER` (or bring back a checked one with `--keep CODE`),
+  push with `bash tools/push_logos_branch.sh FOLDER/logos`, run Deploy, then save the changed folder back to
+  `logos-run` as a new commit. Never push the GitHub artifact of a logo run (`logo-dev-fetch`) as it is: that is the
+  unchecked run, from before the review.
+- A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
+  logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
   data commits count as activity; on the 1st of every month the watchdog also switches both scheduled workflows back on
   through GitHub's API. If GitHub Actions stops completely, healthchecks.io is the alarm.
