@@ -24,7 +24,8 @@ export const useMode = () => useContext(ModeContext);
 
 // The ☰ button's action (v19.0c, src/v2/app.jsx): openMenu, and whether the menu is open. Without it no ☰ is drawn.
 // openStock(t) (v19.1a): open the 2.0 company page of a stock (null outside the app shell: rows are then not tappable).
-export const NavContext = createContext({ openMenu: null, menuOpen: false, openStock: null });
+// goHome() (v19.5a): the 뱁새 logo's action (null outside the app shell: the link's own #home then does it).
+export const NavContext = createContext({ openMenu: null, menuOpen: false, openStock: null, goHome: null });
 export const useNav = () => useContext(NavContext);
 
 // PC layout (v19.0d, Layout C PC step 1). From 1024 px wide: a 240 px left menu (nav.jsx SideMenu) with the four tabs,
@@ -124,7 +125,7 @@ export function HomeLink({ onHome, children, style }) {
   };
   return (
     <a href="#home" data-ui-v2="home-link" aria-label={C.app.homeLink} onClick={click}
-      style={{ ...tap, display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH, minWidth: 0, color: "inherit", textDecoration: "none", ...style }}>
+      style={{ ...tap, display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH, minWidth: TOUCH, color: "inherit", textDecoration: "none", ...style }}>
       {children}
     </a>
   );

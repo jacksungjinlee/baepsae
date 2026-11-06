@@ -127,6 +127,7 @@ export function useRouter() {
     if (cur.menu) replace({ v2: cur.depth }, hash);
     else push({ v2: cur.depth + 1 }, hash);
     sync();
+    if (cur.menu && !cur.about && cur.tab === tab && cur.sub === sub) toTop();   // v19.5a: e.g. the 뱁새 logo in the menu over 홈
   }, [sync]);
   const openAbout = useCallback(() => {
     const cur = locRef.current;
@@ -210,7 +211,7 @@ export function MenuSheet({ open, load, onClose, onAbout, onHome, tabH }) {
   useEffect(() => {
     if (!open) return undefined;
     opener.current = document.activeElement;
-    const first = panel.current && panel.current.querySelector("button, a");
+    const first = panel.current && (panel.current.querySelector('[data-ui-v2="menu-close"]') || panel.current.querySelector("button, a"));
     if (first) { try { first.focus(); } catch (e) { /* ignore */ } }
     const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } };
     document.addEventListener("keydown", onKey);
@@ -229,10 +230,11 @@ export function MenuSheet({ open, load, onClose, onAbout, onHome, tabH }) {
       style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: tabH, zIndex: 80, background: COLOR.page, overflowY: "auto", overscrollBehavior: "contain" }}>
       <div style={{ maxWidth: 520, margin: "0 auto", padding: `${SPACE(4)}px ${SPACE(4)}px ${SPACE(6)}px` }}>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH }}>
-          <HomeLink onHome={onHome} style={{ flex: 1 }}>
+          <HomeLink onHome={onHome}>
             <img src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />
             <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</div>
           </HomeLink>
+          <span style={{ flex: 1 }} />
           <button type="button" data-ui-v2="menu-close" aria-label={C.app.close} onClick={onClose}
             style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginRight: -SPACE(2) }}>
             <Icon name="close" tone="on" />
