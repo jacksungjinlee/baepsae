@@ -631,10 +631,13 @@ def test_mark_colours_are_fixed_readable_and_stable():
     assert got["letters"] == ["삼", "A", "A", "N"]
 
 
-def test_logo_provider_is_off_and_makes_no_request():
+def test_logos_are_our_own_files_and_make_no_outside_request():
+    """v19.3a (needs Jack's yes): logos are our own files (logos/ on this site), so still no outside address; no timer
+    (a lazy picture below the fold must not fall back before it is scrolled to); the letter mark stays underneath."""
     src = open(os.path.join(ROOT, "src", "v2", "logo.jsx"), encoding="utf-8").read()
-    assert "export const LOGO_PROVIDER = null;" in src and "http" not in re.sub(r"//.*", "", src)
-    assert "LOGO_TIMEOUT_MS = 3000" in src and "data-initial" in src and 'aria-hidden="true"' in src
+    assert "LOGO_PROVIDER" not in src and "http" not in re.sub(r"//.*", "", src)
+    assert "TIMEOUT" not in src and "setTimeout(() => setImg" not in src and 'loading="lazy"' in src
+    assert "data-initial" in src and 'aria-hidden="true"' in src
 
 
 # ── 기록: 내 메모 · 저장한 가정 ──

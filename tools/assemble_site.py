@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """사이트에 올릴 폴더 만들기 (v17.6 Part 3a, deploy.yml).
 
-  python3 tools/assemble_site.py OUT DATA_REF
+  python3 tools/assemble_site.py OUT DATA_REF [LOGOS_REF]
 
 - main 의 파일: git 이 관리하는 파일 전부 (지금 'main 브랜치에서 배포'가 보여 주는 것과 같게), 점(.)으로 시작하는 것
   (.github · .gitignore …)과 docs/ 는 빼요. 작업 폴더에서 복사하니 방금 빌드한 페이지(빌드 표시가 달린 것)가 들어가요.
@@ -9,11 +9,20 @@
   (docs/design/v19.3/LICENSES.md). 사이트 페이지는 docs/ 의 파일을 쓰지 않아요.
 - 데이터: data.json · corp.json · disc.json · macro.json 은 main 의 것을 쓰지 않고 DATA_REF(data 브랜치)에서만 가져와요.
   하나라도 없거나 비었으면 멈춰요 (main 의 파일로 조용히 바꾸지 않아요). 검사(validate_data.py --live)는 이 다음 단계예요.
+- 회사 로고 (v19.3a): logos/ 는 LOGOS_REF(logos 브랜치)에서만 가져와요. main 에 logos/ 가 있으면 그건 올리지 않아요.
+  로고는 사이트를 멈추게 하지 않아요: 브랜치가 없거나, logos/index.json 과 그림이 서로 맞지 않거나(tools/logos/logo_index.py),
+  다른 파일이 섞여 있으면 크게 경고하고 logos/ 없이 사이트를 만들어요 (앱은 글자 표시를 보여 줘요).
 """
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "logos"))
+import logo_index as LI  # noqa: E402
+
+LOGOS = "logos"
 
 DATA_FILES = ("data.json", "corp.json", "disc.json", "macro.json")
 EXCLUDED_DIR = "docs"            # Jack 2026-11-06: docs/ 는 사이트에 올리지 않아요 (Adobe Stock 그림 라이선스)
@@ -43,10 +52,86 @@ def site_files(paths):
     return keep
 
 
-def assemble(root, out, data_ref):
+def no_logos(why):
+    """로고 없이 배포한다는 경고: 로그에 크게, GitHub 실행 화면에는 경고 표시로."""
+    print(f"!! 회사 로고 없이 배포해요: {why} → 앱은 회사마다 글자 표시를 보여 줘요")
+    print(f"::warning title=로고 없이 배포::{why} 이번 배포는 회사 로고 대신 글자 표시를 보여 줘요.")
+    return None
+
+
+def logo_entries(root, ref):
+    """ref 의 파일 [(이름, blob, 크기)] — logos/ 바로 아래의 보통 파일만. 다른 것이 하나라도 있으면 (None, 이유)."""
+    r = subprocess.run(["git", "ls-tree", "-r", "-l", "-z", "--full-tree", ref], cwd=root, capture_output=True)
+    if r.returncode != 0:
+        return None, f"{ref} 의 파일 목록을 읽지 못했어요"
+    out = []
+    for item in (x for x in r.stdout.decode("utf-8", "replace").split("\0") if x):
+        meta, _, path = item.partition("\t")
+        parts = meta.split()
+        if len(parts) != 4:
+            return None, f"{ref} 의 파일 목록을 읽지 못했어요 ({meta!r})"
+        mode, kind, obj, size = parts
+        name = path[len(LOGOS) + 1:] if path.startswith(LOGOS + "/") else ""
+        if mode != "100644" or kind != "blob" or not name or "/" in name:
+            return None, f"{ref} 에 logos/ 의 보통 파일이 아닌 것이 있어요 ({path!r}, {mode})"
+        if name != LI.INDEX and not LI.FILE_RE.match(name):
+            return None, f"{ref} 에 그림(.webp · .png)도 index.json 도 아닌 파일이 있어요 ({path!r})"
+        limit = LI.MAX_INDEX_BYTES if name == LI.INDEX else LI.MAX_FILE_BYTES
+        if not size.isdigit() or int(size) > limit:
+            return None, f"{ref} 의 {path} 가 너무 커요 ({size} bytes)"
+        out.append((name, obj, int(size)))
+    if len(out) > LI.MAX_FILES + 1:
+        return None, f"{ref} 에 파일이 너무 많아요 ({len(out):,}개)"
+    return out, None
+
+
+def copy_logos(root, out, ref):
+    """logos 브랜치(ref)의 logos/ 를 사이트 폴더에 넣어요. 무엇이 잘못되든 사이트는 멈추지 않아요: 크게 경고하고 로고 없이.
+    반환: 넣은 회사 수 (넣지 않았으면 None)."""
+    if not ref:
+        return no_logos("logos 브랜치를 주지 않았어요.")
+    r = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{ref}^{{commit}}"], cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return no_logos(f"logos 브랜치({ref})가 없어요.")
+    sha = r.stdout.strip()
+    entries, why = logo_entries(root, sha)
+    if why:
+        return no_logos(why)
+    stage = tempfile.mkdtemp(prefix=".logos-", dir=os.path.dirname(os.path.abspath(out)))
+    try:
+        for name, obj, size in entries:
+            blob = subprocess.run(["git", "cat-file", "blob", obj], cwd=root, capture_output=True)
+            if blob.returncode != 0 or len(blob.stdout) != size:
+                return no_logos(f"{ref} 의 logos/{name} 를 읽지 못했어요.")
+            with open(os.path.join(stage, name), "wb") as fh:
+                fh.write(blob.stdout)
+        index, bad = LI.validate_dir(stage)
+        if bad:
+            return no_logos(f"{ref} 의 logos/ 가 검사를 통과하지 못했어요 ({len(bad)}건: " + "; ".join(bad[:3]) + ").")
+        dst = os.path.join(out, LOGOS)
+        if os.path.exists(dst):
+            return no_logos(f"사이트 폴더에 이미 {LOGOS}/ 가 있어요.")
+        shutil.move(stage, dst)
+        stage = None
+        pictures = sum(1 for n, _, _ in entries if n != LI.INDEX)
+        print(f"· 회사 로고: {ref} ({sha[:7]}) 의 logos/ · 회사 {len(index['logos']):,}곳 · 그림 {pictures:,}개 "
+              f"({sum(s for _, _, s in entries) // 1024:,}KB)")
+        return len(index["logos"])
+    finally:
+        if stage:
+            shutil.rmtree(stage, ignore_errors=True)
+
+
+def assemble(root, out, data_ref, logos_ref=None):
     if os.path.exists(out):
         raise SystemExit(f"!! {out} 가 이미 있어요 (빈 곳에 새로 만들어요)")
     files = site_files(tracked(root))
+    on_main = [p for p in files if p.split("/", 1)[0] == LOGOS]
+    if on_main:                                           # 로고는 logos 브랜치에서만 (main 에 들어오면 안 돼요)
+        print(f"!! main 에 {LOGOS}/ 파일이 {len(on_main)}개 있어요: 올리지 않아요 (로고는 logos 브랜치에서만 가져와요)")
+        print(f"::warning title=main 에 로고 파일::main 의 {LOGOS}/ 파일 {len(on_main)}개는 사이트에 올리지 않았어요. "
+              "로고는 logos 브랜치에만 있어야 해요.")
+        files = [p for p in files if p not in on_main]
     for p in files:
         src = os.path.join(root, p)
         if not os.path.isfile(src):
@@ -70,13 +155,18 @@ def assemble(root, out, data_ref):
     sha = subprocess.run(["git", "rev-parse", "--short", data_ref], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
     print(f"· 사이트 폴더 {out}: main 파일 {len(files)}개 + {data_ref} ({sha}) 의 데이터 네 파일 "
           + " · ".join(f"{k} {v // 1024:,}KB" for k, v in sizes.items()))
+    try:
+        copy_logos(root, out, logos_ref)
+    except Exception as e:                               # noqa: BLE001 — 로고 때문에 사이트 배포가 멈추지 않아요 (크게 남겨요)
+        shutil.rmtree(os.path.join(out, LOGOS), ignore_errors=True)
+        no_logos(f"로고를 넣다가 오류가 났어요 ({type(e).__name__}: {e}).")
     return files
 
 
 def main(argv):
-    if len(argv) != 2:
-        raise SystemExit("쓰는 법: python3 tools/assemble_site.py OUT DATA_REF")
-    assemble(os.getcwd(), argv[0], argv[1])
+    if len(argv) not in (2, 3):
+        raise SystemExit("쓰는 법: python3 tools/assemble_site.py OUT DATA_REF [LOGOS_REF]")
+    assemble(os.getcwd(), argv[0], argv[1], argv[2] if len(argv) == 3 else None)
     return 0
 
 

@@ -58,7 +58,7 @@ def assert_no_hidden_failure(wf, allow_always=()):
             assert n in allow_always, n
 
 
-ALL = ("ci.yml", "deploy.yml", "watchdog.yml", "update-data.yml", "logo-dev-check.yml")
+ALL = ("ci.yml", "deploy.yml", "watchdog.yml", "update-data.yml", "logo-dev-check.yml", "logo-dev-fetch.yml")
 
 
 def test_the_four_workflows_exist_and_nothing_else():
@@ -70,7 +70,7 @@ def test_no_workflow_hides_a_failure(name):
     assert_no_hidden_failure(load(name), allow_always=("DART 캐시 저장",) if name == "update-data.yml" else ())
 
 
-@pytest.mark.parametrize("name", ["ci.yml", "deploy.yml", "watchdog.yml", "logo-dev-check.yml"])
+@pytest.mark.parametrize("name", ["ci.yml", "deploy.yml", "watchdog.yml", "logo-dev-check.yml", "logo-dev-fetch.yml"])
 def test_only_the_daily_run_can_write_to_the_repository(name):
     wf, raw = load(name), text(name)
     assert wf["permissions"] == {"contents": "read"}
@@ -147,10 +147,14 @@ def test_deploy_gates_exactly_what_it_publishes():
     i_site = next(i for i, x in enumerate(n) if x.startswith("올릴 폴더 만들기"))
     i_gate = next(i for i, x in enumerate(n) if x.startswith("발행 관문"))
     i_up = next(i for i, x in enumerate(n) if x.startswith("actions/upload-pages-artifact"))
-    assert i_build < i_site < i_gate < i_up and i_data < i_site and i_up == len(st) - 1
-    assert st[i_site]["run"] == "python3 tools/assemble_site.py _site origin/data"
+    i_logos = n.index("logos 브랜치의 로고 받기")                                               # v19.3a: 회사 로고
+    assert i_build < i_site < i_gate < i_up and i_data < i_logos < i_site and i_up == len(st) - 1
+    assert st[i_site]["run"] == "python3 tools/assemble_site.py _site origin/data refs/remotes/origin/logos"
     data_step = st[i_data]["run"]
     assert '$2 == "refs/heads/data"' in data_step and "--heads" not in data_step              # 정확히 data 브랜치만
+    logos_step = st[i_logos]["run"]
+    assert '$2 == "refs/heads/logos"' in logos_step and "--heads" not in logos_step          # 정확히 logos 브랜치만
+    assert "exit 1" not in logos_step and "::warning" in logos_step                          # 로고가 없어도 배포는 멈추지 않아요
     assert st[i_gate]["run"].splitlines()[0] == "python validate_data.py --live --dir _site"
     assert st[i_up]["with"]["path"] == "_site"
     assert "npm ci" in st[n.index("라이브러리 설치 (package-lock.json · requirements.txt 그대로)")]["run"]

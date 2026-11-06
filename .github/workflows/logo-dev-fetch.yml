@@ -1,0 +1,87 @@
+name: logo.dev 로고 받기
+# v19.3a (docs/tasks/v19.3-portfolio-pictures-accounts.md Part J): logo.dev Pro 로 우리 회사 목록 전체의 로고를 한 번 받아서,
+# 128 px WebP 와 index.json 으로 만들어요. 손으로만 돌려요 (Run workflow). 정해진 시각 실행도, PR 마다 도는 일도 없어요.
+# 하는 일 · 한도(크레딧 상한 14,000 = $140, 1분에 200번, 한 번에 4개) · 품질 검사 · 키를 다루는 방법은
+# tools/logos/logodev_fetch.py 머리말에 있어요.
+# 결과 폴더(logos/ · summary.md · review.csv · sheet.html · sheet-01.png …)는 artifact 'logo-dev-fetch' 로 1일 보관하고,
+# summary.md 는 이 실행의 요약 화면에도 보여요. 저장소에는 아무것도 쓰지 않아요 (읽기 권한만): logos 브랜치에 올리는 것은
+# 세션이 artifact 를 보고 나서 tools/ 의 logos 브랜치 스크립트로 해요 (이 workflow 는 쓰기 권한이 없어요).
+# 비밀 값은 LOGO_DEV_SECRET_KEY 하나만, 받기 실행 단계에만 넘겨요.
+# 받기 실행이 오류로 멈춰도 그때까지의 결과는 저장하고 올려요. 그다음 마지막 단계가 run.json 을 읽고, 오류로 멈춘 실행이면
+# 이 실행을 빨갛게 끝내요 (크레딧 상한이나 402 로 멈춘 것은 정상 종료예요 — 요약에 그렇게 적혀요).
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_credits:
+        description: "이만큼의 크레딧을 넘기 전에 멈춰요 (1 크레딧 = 1센트, 로고 조회 하나에 2 · 14,000 = $140)"
+        type: number
+        default: 14000
+      workers:
+        description: "한 번에 여는 조회 수 (Pro 는 15까지)"
+        type: number
+        default: 4
+      per_minute:
+        description: "1분에 보내는 조회 수 (Pro 는 500까지)"
+        type: number
+        default: 200
+      limit:
+        description: "시가총액 상위 몇 회사만 (0 = 전부, 작은 시험 실행용)"
+        type: number
+        default: 0
+
+permissions:
+  contents: read
+
+concurrency:
+  # 한 번에 하나만 (두 실행이 같은 크레딧을 동시에 쓰지 않게). 기다리는 실행은 취소하지 않아요.
+  group: logo-dev-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150     # 조회 약 5,500번 + 내려받기 약 3,000번: 보통 40분 안팎. 110분이 지나면 새 조회를 멈추고 저장해요
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # requirements-dev.txt = requirements.txt (pillow · numpy 포함) + 고정한 Playwright. 크롬은 대조표 PNG 를 그릴 때만 써요.
+      - name: 라이브러리 설치 (requirements-dev.txt 그대로 · 크롬)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: logo.dev 로고 받기 실행
+        env:
+          LOGO_DEV_SECRET_KEY: ${{ secrets.LOGO_DEV_SECRET_KEY }}
+          MAX_CREDITS: ${{ inputs.max_credits }}
+          WORKERS: ${{ inputs.workers }}
+          PER_MINUTE: ${{ inputs.per_minute }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          python tools/logos/logodev_fetch.py --max-credits "$MAX_CREDITS" --workers "$WORKERS" \
+            --per-minute "$PER_MINUTE" --limit "$LIMIT" --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure
+
+      - name: 결과 폴더 보관 (artifact logo-dev-fetch, 1일)
+        uses: actions/upload-artifact@v7
+        with:
+          name: logo-dev-fetch
+          path: ${{ runner.temp }}/logo-dev-fetch
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: 요약 · 판정
+        run: |
+          cat "$RUNNER_TEMP/logo-dev-fetch/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          python tools/logos/logodev_fetch.py --verdict "$RUNNER_TEMP/logo-dev-fetch/run.json"
