@@ -62,8 +62,9 @@ tells you what happened in plain words.
   The first daily run after v17.6 creates the branch by itself.
 - **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
   folder it is about to publish, and only then publishes. It runs after every merge to `main` and after every daily run
-  that published new data, once Settings → Pages → Source is **GitHub Actions**. Until then GitHub keeps serving `main`
-  directly, as before.
+  that published new data. Settings → Pages → Source has been **GitHub Actions** since 2026-11-06. Never switch it back
+  to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
+  folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
   data commits count as activity; on the 1st of every month the watchdog also switches both scheduled workflows back on
