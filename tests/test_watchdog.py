@@ -474,11 +474,36 @@ def test_docs_on_the_site_opens_an_alert(monkeypatch):
 def test_docs_probe_must_be_404():
     for st in (200, 301, 403, 500):
         rep = W.Report()
-        W.check_no_docs(rep, FakeNet(docs_status=st), AFTER)
+        W.check_no_docs(rep, FakeNet(docs_status=st), AFTER, sleep=lambda s: None)
         assert [r[0] for r in rep.problems] == ["사이트에 docs/ 없음"], st
     rep = W.Report()
     W.check_no_docs(rep, FakeNet(), AFTER)
-    assert rep.rows == [("사이트에 docs/ 없음", "PASS", "2개 모두 404")] and not rep.problems
+    assert rep.rows == [("사이트에 docs/ 없음", "PASS", f"{len(W.DOCS_PROBES)}개 모두 404")] and not rep.problems
+
+
+def test_docs_probe_retries_a_server_error_then_trusts_the_404():
+    class Flaky(FakeNet):
+        def get(self, url, timeout=30):
+            if "/docs/" in url:
+                self.tries = getattr(self, "tries", 0) + 1
+                if self.tries == 1:
+                    return Resp(503)
+            return super().get(url, timeout)
+    waits, rep, net = [], W.Report(), Flaky()
+    W.check_no_docs(rep, net, AFTER, sleep=waits.append)
+    assert not rep.problems and waits == [5] and net.tries == len(W.DOCS_PROBES) + 1
+    rep, net = W.Report(), FakeNet(docs_status=502)                 # 계속 5xx 면 실패예요 (한 파일에 세 번까지)
+    W.check_no_docs(rep, net, AFTER, sleep=lambda s: None)
+    assert rep.problems and sum("/docs/" in u for u in net.urls) == 3 * len(W.DOCS_PROBES)
+
+
+def test_docs_seen_while_a_deploy_runs_waits_for_it():
+    rep = W.Report()
+    W.check_no_docs(rep, FakeNet(docs_status=200, busy=1), AFTER)
+    assert rep.rows[0][:2] == ("사이트에 docs/ 없음", "SKIP") and not rep.problems
+    rep = W.Report()
+    W.check_no_docs(rep, FakeNet(docs_status=403, busy=1), AFTER)      # 배포 중이어도 200 이 아닌 이상한 답은 실패예요
+    assert rep.problems
 
 
 def test_docs_probe_that_cannot_be_asked_is_a_problem():
@@ -501,6 +526,6 @@ def test_every_check_asks_the_site_for_both_docs_probes(monkeypatch):
 
 def test_docs_probes_are_real_files_on_main():
     """지워지거나 이름이 바뀐 파일을 물으면 docs/ 가 올라가 있어도 404 라서 그냥 통과해 버려요."""
-    assert len(W.DOCS_PROBES) >= 2
+    assert len(W.DOCS_PROBES) >= 3 and any(p.endswith(".png") for p in W.DOCS_PROBES)
     for p in W.DOCS_PROBES:
         assert p.startswith("docs/") and os.path.isfile(os.path.join(ROOT, p)), p

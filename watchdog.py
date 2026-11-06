@@ -22,6 +22,8 @@
    (main 이 바뀐 지 45분 안이거나 배포가 돌고 있으면 기다려요).
 5. 사이트의 data.json 이 발행본과 한 글자도 같아요: 브랜치 배포면 main 의 것, Actions 배포면 data 브랜치 끝의 것
    (그 끝이 바뀐 지 45분 안이면 기다려요). 데이터만 바뀐 날 배포나 Pages 빌드가 실패해도 잡아요.
+6. 사이트에 docs/ 가 없어요: DOCS_PROBES 의 파일이 모두 404 (Jack 2026-11-06, Adobe Stock 그림 라이선스). 200 이 나와도
+   배포가 돌고 있으면 기다려요.
 """
 import argparse
 import datetime as dt
@@ -44,7 +46,8 @@ SITE = os.environ.get("BAEPSAE_SITE", "https://jacksungjinlee.github.io/baepsae/
 REPO = os.environ.get("GITHUB_REPOSITORY", "jacksungjinlee/baepsae")
 API = "https://api.github.com"
 PAGES = ("baepsae.html", "app.html", "styleguide.html")
-DOCS_PROBES = ("docs/RUNBOOK.md", "docs/CHANGELOG.md")   # main 에 늘 있는 docs/ 파일 (tests 가 있는지 지켜요). 사이트에서는 404 여야 해요
+# main 에 늘 있는 docs/ 파일 (tests 가 있는지 지켜요). 사이트에서는 404 여야 해요. 그림도 하나 물어요 (지켜야 할 건 그림이에요)
+DOCS_PROBES = ("docs/RUNBOOK.md", "docs/CHANGELOG.md", "docs/design/v19/assets/baepi-mark.png")
 STALE_FROM = dt.time(15, 30)              # 이 시각(KST) 전에는 낡은 가격을 보지 않아요 (그날 실행이 아직 돌 수 있어요)
 GRACE = dt.timedelta(minutes=45)          # main 이 바뀐 직후에는 배포가 따라올 시간을 줘요
 ISSUE_TITLE = "뱁새 데이터 경보"
@@ -336,22 +339,33 @@ def check_live_data(rep, net, now, live_sha, mode, read_ref=ref_file):
             f"다름: 사이트 {live_sha[:12]} · {ref} {tip_sha[:7]} 의 것 {want[:12]} — 배포나 Pages 빌드가 실패했거나 예전 파일이에요")
 
 
-def check_no_docs(rep, net, now):
+def check_no_docs(rep, net, now, sleep=time.sleep):
     """docs/ 는 사이트에 없어야 해요 (Jack 2026-11-06). 설계 자료의 Adobe Stock 그림은 라이선스상 따로 내려받는 파일이 되면 안 되고,
-    Deploy 는 docs/ 를 빼고 올려요 (tools/assemble_site.py). 여기서 보이면 Pages 가 브랜치 배포로 되돌아갔거나 그 규칙이 깨진 거예요."""
+    Deploy 는 docs/ 를 빼고 올려요 (tools/assemble_site.py). 여기서 보이면 Pages 가 브랜치 배포로 되돌아갔거나 배포가 실패한 거예요.
+    Pages 의 5xx 는 두 번까지 다시 물어요 (한 번의 서버 오류로 경보를 열지 않게). 그래도 404 가 아니면 실패예요."""
     got = []
     for p in DOCS_PROBES:
-        try:
-            got.append((p, net.get(f"{SITE}{p}?t={int(now.timestamp())}").status_code))
-        except RuntimeError as e:
-            got.append((p, str(e)[:120]))
+        st = None
+        for i in range(3):
+            try:
+                st = net.get(f"{SITE}{p}?t={int(now.timestamp())}").status_code
+            except RuntimeError as e:
+                st = str(e)[:120]
+                break                                   # Net.get 이 이미 세 번 물었어요
+            if not (isinstance(st, int) and st >= 500) or i == 2:
+                break
+            sleep(5 * (i + 1))
+        got.append((p, st))
     ok = all(st == 404 for _, st in got)
+    if not ok and any(st == 200 for _, st in got) and deploy_busy(net):
+        rep.skip("사이트에 docs/ 없음", "배포가 돌고 있어요 (끝나면 다시 봐요): " + " · ".join(f"{p} HTTP {st}" for p, st in got))
+        return
     if ok:
         detail = f"{len(got)}개 모두 404"
     else:
         detail = " · ".join(f"{p} {'HTTP ' + str(st) if isinstance(st, int) else st}" for p, st in got)
         if any(st == 200 for _, st in got):
-            detail += " — docs/ 가 사이트에 올라가 있어요 (Pages 가 브랜치 배포로 바뀌었는지 확인해요)"
+            detail += " — docs/ 가 사이트에 올라가 있어요 (Pages 가 브랜치 배포로 바뀌었거나 배포가 실패했는지 확인해요)"
         else:
             detail += " — 404 가 아니라서 docs/ 가 빠졌는지 확인하지 못했어요"
     rep.add("사이트에 docs/ 없음", ok, detail)
