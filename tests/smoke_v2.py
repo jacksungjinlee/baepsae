@@ -155,8 +155,9 @@ IMG_WAIT_MS = 5000          # Jack 2026-11-06: 그림이 다 열릴 때까지 5�
 
 def img_loaded(img):
     """보이는 그림(locator 하나)이 다 열렸는지. 보이자마자 보면 느린 기계에서 아직 받는 중이라 가끔 틀려요 (#53 의 ci)."""
+    handle = img.element_handle()        # 그림이 없으면 여기서 바로 실패해요 (기다림 안에 숨기지 않아요)
     try:
-        img.page.wait_for_function(IMG_OK, arg=img.element_handle(), timeout=IMG_WAIT_MS)
+        img.page.wait_for_function(IMG_OK, arg=handle, timeout=IMG_WAIT_MS)
     except PWTimeout:
         pass                # 아래에서 다시 보고, 안 열렸으면 부른 쪽의 assert 가 실패로 잡아요
     return img.evaluate(IMG_OK)
@@ -165,7 +166,7 @@ def img_loaded(img):
 def mascot_img(loc, src, px, alt):
     img = loc.locator(f'img[src="{src}"]')
     img.wait_for(state="visible")
-    assert img_loaded(img), f"{src} 가 {IMG_WAIT_MS // 1000}초 안에 열리지 않았어요"
+    assert img_loaded(img), f"{src} 가 열리지 않았어요 ({IMG_WAIT_MS // 1000}초까지 기다렸어요)"
     box = img.bounding_box()
     assert box and abs(box["width"] - px) < 1, (src, box)
     assert img.get_attribute("alt") == alt and alt, (src, img.get_attribute("alt"), alt)     # Jack 이 승인한 alt (2026-11-04)
@@ -1942,7 +1943,8 @@ def footer_ok(page):
 
 def images_loaded(page):
     try:
-        page.wait_for_function("""() => [...document.querySelectorAll('[data-ui-v2="about"] img')].every((i) => i.complete && i.naturalWidth > 0)""",
+        page.wait_for_function("""() => { const l = [...document.querySelectorAll('[data-ui-v2="about"] img')];
+                                          return l.length === 2 && l.every((i) => i.complete && i.naturalWidth > 0); }""",
                                timeout=IMG_WAIT_MS)
     except PWTimeout:
         pass                # 아래 assert 가 어느 그림이 안 열렸는지 보여 줘요
