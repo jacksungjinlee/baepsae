@@ -24,6 +24,11 @@ def tracked(root):
     return [p for p in out.decode("utf-8").split("\0") if p]
 
 
+def in_excluded(p):
+    """맨 위 폴더가 docs 인 경로 (Docs/ 처럼 대소문자만 다른 것도 — Pages 는 대소문자를 가려서 그대로 올려 버려요)."""
+    return p.split("/", 1)[0].lower() == EXCLUDED_DIR
+
+
 def site_files(paths):
     """올릴 main 파일: 점으로 시작하는 경로 조각이 하나도 없고, 데이터 네 파일도 docs/ 아래 파일도 아닌 것."""
     keep = []
@@ -32,7 +37,7 @@ def site_files(paths):
             continue
         if p in DATA_FILES:
             continue
-        if p.split("/", 1)[0] == EXCLUDED_DIR:          # 설계 자료 (Adobe 그림 포함)는 사이트에 올리지 않아요
+        if in_excluded(p):                                # 설계 자료 (Adobe 그림 포함)는 사이트에 올리지 않아요
             continue
         keep.append(p)
     return keep
@@ -58,9 +63,9 @@ def assemble(root, out, data_ref):
         with open(os.path.join(out, f), "wb") as fh:
             fh.write(r.stdout)
         sizes[f] = len(r.stdout)
-    if os.path.exists(os.path.join(out, EXCLUDED_DIR)):         # 위 규칙이 깨지면 조용히 올리지 않고 멈춰요
+    if any(in_excluded(n) for n in os.listdir(out)):              # 위 규칙이 깨지면 조용히 올리지 않고 멈춰요
         raise SystemExit(f"!! 사이트 폴더에 {EXCLUDED_DIR}/ 가 들어갔어요 → 배포하지 않아요 (Adobe 그림은 따로 내려받는 파일이 되면 안 돼요)")
-    skipped = sum(1 for p in tracked(root) if p.split("/", 1)[0] == EXCLUDED_DIR)
+    skipped = sum(1 for p in tracked(root) if in_excluded(p))
     print(f"· {EXCLUDED_DIR}/ 의 파일 {skipped}개는 올리지 않아요 (설계 자료)")
     sha = subprocess.run(["git", "rev-parse", "--short", data_ref], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
     print(f"· 사이트 폴더 {out}: main 파일 {len(files)}개 + {data_ref} ({sha}) 의 데이터 네 파일 "
