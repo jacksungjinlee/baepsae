@@ -112,6 +112,24 @@ export function Card({ children, style, ...rest }) {
   return <section {...rest} style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(5), marginTop: SPACE(3), ...style }}>{children}</section>;
 }
 
+// v19.5 Part B: the 뱁새 logo (the 뱁이 mark and the 뱁새 wordmark) opens 홈 wherever it shows — the phone header, the PC
+// left menu and the ☰ menu sheet; on 홈 it scrolls to the top (router.go). A real link (#home) named 홈으로 for screen
+// readers; a plain click goes through the router (one history entry, the menu closes), a modified click is left to the
+// browser (new tab). The wordmark stays the page's <h1> inside the link.
+export function HomeLink({ onHome, children, style }) {
+  const click = (e) => {
+    if (!onHome || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onHome();
+  };
+  return (
+    <a href="#home" data-ui-v2="home-link" aria-label={C.app.homeLink} onClick={click}
+      style={{ ...tap, display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH, minWidth: 0, color: "inherit", textDecoration: "none", ...style }}>
+      {children}
+    </a>
+  );
+}
+
 // App bar: the name 뱁새 on every screen (v19.0: the page title is now the long "뱁새 — 내 기준으로 …", so the header shows
 // only C.app.brand), the preview label, optional back button, and the ☰ menu button on the right (v19.0c, board NavC:
 // the Phosphor "list" icon, never the ☰ character). 예전 뱁새 보기 and 찾기 moved from here into the menu and the 종목 tab.
@@ -142,13 +160,17 @@ export function AppBar({ onBack, backLabel, right, menu = true }) {
   return (
     <header data-ui-v2="app-bar" style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH,
       ...(preview ? { position: "sticky", top: 0, zIndex: 40, background: COLOR.page, margin: `0 -${SPACE(4)}px`, padding: `0 ${SPACE(4)}px` } : {}) }}>
-      {onBack ? (
+      {onBack && (
         <button type="button" aria-label={backLabel} onClick={onBack}
           style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginLeft: -SPACE(3) }}>
           <Icon name="back" tone="on" />
         </button>
-      ) : <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />}
-      <h1 data-ui-v2="wordmark" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
+      )}
+      <HomeLink onHome={nav.goHome}>
+        {!onBack && <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />}
+        <h1 data-ui-v2="wordmark" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
+      </HomeLink>
+      <span style={{ flex: 1 }} />
       {preview && <SampleLabel />}
       {right}
       {menu && nav.openMenu && (
