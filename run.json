@@ -1,0 +1,1292 @@
+{
+ "tool": "tools/logos/logodev_fetch.py",
+ "outcome": "complete",
+ "ok": true,
+ "reason": "",
+ "problems": [],
+ "started_kst": "2026-11-06 20:33",
+ "finished_kst": "2026-11-06 21:33",
+ "minutes": 59.9,
+ "companies": 3151,
+ "finished": 3151,
+ "unfinished": 0,
+ "max_credits": 14000,
+ "format": "webp",
+ "sheet_top": 300,
+ "sheet_pages": [
+  "sheet-01.png",
+  "sheet-02.png",
+  "sheet-03.png",
+  "sheet-04.png",
+  "sheet-05.png",
+  "sheet-06.png",
+  "sheet-07.png",
+  "sheet-08.png",
+  "sheet-09.png",
+  "sheet-10.png",
+  "sheet-11.png",
+  "sheet-12.png",
+  "sheet-13.png",
+  "sheet-14.png",
+  "sheet-15.png",
+  "sheet-16.png",
+  "sheet-17.png",
+  "sheet-18.png",
+  "sheet-19.png",
+  "sheet-20.png",
+  "sheet-21.png",
+  "sheet-22.png",
+  "sheet-23.png",
+  "sheet-24.png",
+  "sheet-25.png",
+  "sheet-26.png",
+  "sheet-27.png",
+  "sheet-28.png",
+  "sheet-29.png",
+  "sheet-30.png",
+  "sheet-31.png",
+  "sheet-32.png",
+  "sheet-33.png",
+  "sheet-34.png",
+  "sheet-35.png"
+ ],
+ "data": {
+  "pxDate": "2026-11-05",
+  "usPxDate": "2026-11-05",
+  "asOf": "2026-11-06"
+ },
+ "sources": [
+  "data.json: https://jacksungjinlee.github.io/baepsae/data.json (2,335,944 bytes)",
+  "KRX listing: https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx/2026-11-05.csv (397,696 bytes)",
+  "DART homepages: /home/runner/work/baepsae/baepsae/tools/logos/kr_homepages.csv (2,470 companies)"
+ ],
+ "plan": {
+  "ticker": 3151,
+  "domain": 2320,
+  "lookups": 5471,
+  "ceiling": 10942
+ },
+ "pace": {
+  "per_minute": 200,
+  "workers": 4
+ },
+ "tally": {
+  "kr": {
+   "label": "Korea (common shares)",
+   "companies": 2411,
+   "finished": 2411,
+   "by_ticker": 709,
+   "by_domain": 755,
+   "letter": 947,
+   "reasons": {
+    "small": 407,
+    "no_image": 304,
+    "shared": 21,
+    "not_found": 143,
+    "download_failed": 1,
+    "not_indexed": 69,
+    "blank": 1,
+    "faint": 1
+   },
+   "checks": {
+    "same-brand": 650,
+    "homepage-over-ticker": 42,
+    "homepage": 713,
+    "unverified": 59
+   }
+  },
+  "us": {
+   "label": "US",
+   "companies": 740,
+   "finished": 740,
+   "by_ticker": 699,
+   "by_domain": 0,
+   "letter": 41,
+   "reasons": {
+    "not_found": 25,
+    "odd_answer": 1,
+    "download_failed": 1,
+    "small": 12,
+    "not_indexed": 2
+   },
+   "checks": {
+    "ticker": 699
+   }
+  },
+  "preferred": {
+   "companies": 59,
+   "logo": 51
+  },
+  "unverified_why": {
+   "homepage: not_found": 10,
+   "no usable DART homepage domain": 30,
+   "homepage: no_image": 16,
+   "homepage: not_indexed": 3
+  },
+  "flags": {
+   "monogram-looking": 181,
+   "small": 419,
+   "faint": 83,
+   "blank": 90,
+   "shared": 21
+  }
+ },
+ "shared": [
+  [
+   "000040",
+   "003460",
+   "003830",
+   "027710",
+   "034590",
+   "053050"
+  ],
+  [
+   "000430",
+   "042000",
+   "168360",
+   "317240",
+   "435570"
+  ],
+  [
+   "096770",
+   "285130",
+   "326030",
+   "361610",
+   "402340"
+  ],
+  [
+   "003960",
+   "007160",
+   "008040",
+   "014710"
+  ],
+  [
+   "006800",
+   "085620",
+   "100790",
+   "357250"
+  ],
+  [
+   "001820",
+   "009470",
+   "011230"
+  ],
+  [
+   "014910",
+   "014970",
+   "018290"
+  ],
+  [
+   "031820",
+   "232830",
+   "243870"
+  ],
+  [
+   "089850",
+   "123010",
+   "GDDY"
+  ],
+  [
+   "001230",
+   "460860"
+  ],
+  [
+   "001680",
+   "084690"
+  ],
+  [
+   "002620",
+   "271980"
+  ],
+  [
+   "002790",
+   "090430"
+  ],
+  [
+   "003030",
+   "306200"
+  ],
+  [
+   "004800",
+   "298000"
+  ],
+  [
+   "004840",
+   "163560"
+  ],
+  [
+   "005440",
+   "069960"
+  ],
+  [
+   "005860",
+   "307280"
+  ],
+  [
+   "007540",
+   "248170"
+  ],
+  [
+   "008060",
+   "353200"
+  ],
+  [
+   "009830",
+   "042660"
+  ],
+  [
+   "009970",
+   "111770"
+  ],
+  [
+   "010690",
+   "126640"
+  ],
+  [
+   "013570",
+   "210540"
+  ],
+  [
+   "014160",
+   "016590"
+  ],
+  [
+   "016790",
+   "243840"
+  ],
+  [
+   "024720",
+   "161890"
+  ],
+  [
+   "036530",
+   "100840"
+  ],
+  [
+   "036670",
+   "272550"
+  ],
+  [
+   "037350",
+   "068240"
+  ],
+  [
+   "042420",
+   "095660"
+  ],
+  [
+   "049960",
+   "320000"
+  ],
+  [
+   "052710",
+   "357580"
+  ],
+  [
+   "063080",
+   "078340"
+  ],
+  [
+   "068270",
+   "068760"
+  ],
+  [
+   "094840",
+   "236200"
+  ],
+  [
+   "108380",
+   "122640"
+  ],
+  [
+   "192400",
+   "284740"
+  ],
+  [
+   "404990",
+   "481850"
+  ],
+  [
+   "DGX",
+   "MEDP"
+  ],
+  [
+   "FOX",
+   "FOXA"
+  ],
+  [
+   "GOOG",
+   "GOOGL"
+  ],
+  [
+   "NWS",
+   "NWSA"
+  ]
+ ],
+ "shared_dropped": {
+  "groups": [
+   1,
+   8,
+   11,
+   15,
+   18,
+   21,
+   26,
+   29,
+   30,
+   32,
+   33,
+   36,
+   39
+  ],
+  "companies": [
+   "027710",
+   "053050",
+   "232830",
+   "243870",
+   "001680",
+   "084690",
+   "298000",
+   "005860",
+   "307280",
+   "009830",
+   "016790",
+   "036670",
+   "037350",
+   "068240",
+   "049960",
+   "320000",
+   "052710",
+   "357580",
+   "094840",
+   "236200",
+   "404990"
+  ],
+  "kept_same_brand": [
+   "000040",
+   "003460",
+   "003830",
+   "034590",
+   "096770",
+   "285130",
+   "326030",
+   "361610",
+   "402340",
+   "014910",
+   "014970",
+   "018290",
+   "031820",
+   "004800",
+   "042660",
+   "243840",
+   "024720",
+   "161890",
+   "036530",
+   "100840",
+   "272550",
+   "068270",
+   "068760",
+   "481850"
+  ]
+ },
+ "sheet_counts": [
+  [
+   "Korea: the 300 largest by market cap",
+   300
+  ],
+  [
+   "US: the 300 largest by market cap",
+   300
+  ],
+  [
+   "Korea outside the top 300: homepage logo used instead of a different ticker brand",
+   27
+  ],
+  [
+   "Korea outside the top 300: ticker logo kept, unverified by the DART homepage",
+   47
+  ],
+  [
+   "Korea outside the top 300: no ticker logo, homepage logo used",
+   695
+  ],
+  [
+   "Monogram-looking (kept): every company, any rank",
+   181
+  ],
+  [
+   "Size-less vector (kept): every company, any rank",
+   0
+  ],
+  [
+   "Odd answers from logo.dev (letter mark): every company, any rank",
+   1
+  ],
+  [
+   "Shared picture, group 1: 6 companies, 2 switched to letter marks (different brands), 4 kept (same-brand)",
+   6
+  ],
+  [
+   "Shared picture, group 2: 5 companies, kept (one brand)",
+   5
+  ],
+  [
+   "Shared picture, group 3: 5 companies, kept (one brand)",
+   5
+  ],
+  [
+   "Shared picture, group 4: 4 companies, kept (one brand)",
+   4
+  ],
+  [
+   "Shared picture, group 5: 4 companies, kept (one brand)",
+   4
+  ],
+  [
+   "Shared picture, group 6: 3 companies, kept (one brand)",
+   3
+  ],
+  [
+   "Shared picture, group 7: 3 companies, kept (one brand)",
+   3
+  ],
+  [
+   "Shared picture, group 8: 3 companies, 2 switched to letter marks (different brands), 1 kept (same-brand)",
+   3
+  ],
+  [
+   "Shared picture, group 9: 3 companies, kept (one brand)",
+   3
+  ],
+  [
+   "Shared picture, group 10: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 11: 2 companies, 2 switched to letter marks (different brands)",
+   2
+  ],
+  [
+   "Shared picture, group 12: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 13: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 14: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 15: 2 companies, 1 switched to letter marks (different brands), 1 kept (same-brand)",
+   2
+  ],
+  [
+   "Shared picture, group 16: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 17: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 18: 2 companies, 2 switched to letter marks (different brands)",
+   2
+  ],
+  [
+   "Shared picture, group 19: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 20: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 21: 2 companies, 1 switched to letter marks (different brands), 1 kept (same-brand)",
+   2
+  ],
+  [
+   "Shared picture, group 22: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 23: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 24: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 25: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 26: 2 companies, 1 switched to letter marks (different brands), 1 kept (same-brand)",
+   2
+  ],
+  [
+   "Shared picture, group 27: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 28: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 29: 2 companies, 1 switched to letter marks (different brands), 1 kept (same-brand)",
+   2
+  ],
+  [
+   "Shared picture, group 30: 2 companies, 2 switched to letter marks (different brands)",
+   2
+  ],
+  [
+   "Shared picture, group 31: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 32: 2 companies, 2 switched to letter marks (different brands)",
+   2
+  ],
+  [
+   "Shared picture, group 33: 2 companies, 2 switched to letter marks (different brands)",
+   2
+  ],
+  [
+   "Shared picture, group 34: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 35: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 36: 2 companies, 2 switched to letter marks (different brands)",
+   2
+  ],
+  [
+   "Shared picture, group 37: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 38: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 39: 2 companies, 1 switched to letter marks (different brands), 1 kept (same-brand)",
+   2
+  ],
+  [
+   "Shared picture, group 40: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 41: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 42: 2 companies, kept (one brand)",
+   2
+  ],
+  [
+   "Shared picture, group 43: 2 companies, kept (one brand)",
+   2
+  ]
+ ],
+ "odd": 1,
+ "index_count": 2214,
+ "credits": {
+  "counted": 5282,
+  "charged": 2637,
+  "free": 6601,
+  "no_header": 0,
+  "unknown": 8,
+  "balance_first": "14830",
+  "balance_last": "9562"
+ },
+ "requests": {
+  "api": 9242,
+  "downloads": 2650,
+  "counts": {
+   "202 retries": 3767,
+   "HTTP 200": 3456,
+   "HTTP 202": 3885,
+   "HTTP 404": 1897,
+   "downloads failed": 2,
+   "monogram-looking (kept)": 184,
+   "no answer (network)": 4,
+   "retries after an error": 4
+  }
+ },
+ "drops": [
+  {
+   "code": "000040",
+   "name": "KR모터스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "000430",
+   "name": "대원강업",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "003460",
+   "name": "유화증권",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "003465",
+   "name": "유화증권우",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06) (preferred share of an issuer above)"
+  },
+  {
+   "code": "003830",
+   "name": "대한화섬",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "009150",
+   "name": "삼성전기",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "009155",
+   "name": "삼성전기우",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06) (preferred share of an issuer above)"
+  },
+  {
+   "code": "009470",
+   "name": "삼화전기",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "011000",
+   "name": "진원생명과학",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "011230",
+   "name": "삼화전자",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "011500",
+   "name": "한농화성",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "014910",
+   "name": "성문전자",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "014970",
+   "name": "삼륭물산",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "018290",
+   "name": "브이티",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "027410",
+   "name": "BGF",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "034590",
+   "name": "인천도시가스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "036000",
+   "name": "예림당",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "039560",
+   "name": "다산네트웍스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "042000",
+   "name": "카페24",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "045660",
+   "name": "에이텍",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "067990",
+   "name": "도이치모터스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "069260",
+   "name": "TKG휴켐스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "089150",
+   "name": "케이씨티",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "089850",
+   "name": "유비벨록스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "090460",
+   "name": "비에이치",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "108380",
+   "name": "대양전기공업",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "123010",
+   "name": "MSDI",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "123040",
+   "name": "엠에스오토텍",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "143240",
+   "name": "사람인",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "168360",
+   "name": "펨트론",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "191410",
+   "name": "육일씨엔에쓰",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "192410",
+   "name": "오늘이엔엠",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "246960",
+   "name": "SCL사이언스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "317240",
+   "name": "TS트릴리온",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "435570",
+   "name": "에르코스",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "452160",
+   "name": "제이엔비",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "ARGX",
+   "name": "argenx SE",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "MEDP",
+   "name": "Medpace Holdings, Inc.",
+   "reason": "다른 회사·호스팅 업체의 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "000240",
+   "name": "한국앤컴퍼니",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "0013V0",
+   "name": "삼진식품",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "002030",
+   "name": "아세아",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "003570",
+   "name": "SNT다이내믹스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "007280",
+   "name": "한국특강",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "008250",
+   "name": "이건산업",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "011780",
+   "name": "금호석유화학",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "011785",
+   "name": "금호석유화학우",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06) (preferred share of an issuer above)"
+  },
+  {
+   "code": "013360",
+   "name": "일성건설",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "021040",
+   "name": "대호특수강",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "035250",
+   "name": "강원랜드",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "038010",
+   "name": "제일테크노스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "038540",
+   "name": "상상인",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "041460",
+   "name": "한국전자인증",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "052260",
+   "name": "현대바이오랜드",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "054210",
+   "name": "이랜텍",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "060540",
+   "name": "에스에이티",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "064960",
+   "name": "SNT모티브",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "085910",
+   "name": "네오티스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "092230",
+   "name": "KPX홀딩스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "115570",
+   "name": "스타플렉스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "145270",
+   "name": "케이탑리츠",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "171120",
+   "name": "라이온켐텍",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "187270",
+   "name": "신화콘텍",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "189300",
+   "name": "인텔리안테크",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "194700",
+   "name": "노바렉스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "247660",
+   "name": "나노씨엠에스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "261520",
+   "name": "이지스",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "288330",
+   "name": "파라택시스코리아",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "365550",
+   "name": "ESR켄달스퀘어리츠",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "368600",
+   "name": "아이씨에이치",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "424980",
+   "name": "마이크로투나노",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "462520",
+   "name": "조선내화",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "HONA",
+   "name": "Honeywell Aerospace Inc.",
+   "reason": "사진·배너·화면 캡처 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "002990",
+   "name": "금호건설",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "005800",
+   "name": "신영와코루",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "007720",
+   "name": "소노스퀘어",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "013580",
+   "name": "계룡건설",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "015590",
+   "name": "DKME",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "030960",
+   "name": "양지사",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "064520",
+   "name": "테크엘",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "068290",
+   "name": "삼성출판사",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "073640",
+   "name": "테라사이언스",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "078020",
+   "name": "LS증권",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "091810",
+   "name": "트리니티항공",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "101730",
+   "name": "위메이드맥스",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "108320",
+   "name": "LX세미콘",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "114450",
+   "name": "그린생명과학",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "187420",
+   "name": "HLB제넥스",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "196300",
+   "name": "HLB펩",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "200470",
+   "name": "에이팩트",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "234690",
+   "name": "녹십자웰빙",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "290560",
+   "name": "파라택시스이더리움",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "290660",
+   "name": "다이나믹솔루션",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "317530",
+   "name": "에피소드컴퍼니",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "317860",
+   "name": "노드메이슨",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "352700",
+   "name": "씨앤투스",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "462980",
+   "name": "아이지넷",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "APA",
+   "name": "APA Corporation",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "BEN",
+   "name": "Franklin Templeton, Inc.",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "DOC",
+   "name": "Healthpeak Properties, Inc.",
+   "reason": "제품 브랜드·슬로건·예전 이름 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "001560",
+   "name": "제일연마",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "004410",
+   "name": "서울식품",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "007530",
+   "name": "와이엠",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "020120",
+   "name": "키다리스튜디오",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "030000",
+   "name": "제일기획",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "030610",
+   "name": "교보증권",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "033340",
+   "name": "좋은사람들",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "039340",
+   "name": "한국경제TV",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "039830",
+   "name": "오로라",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "067280",
+   "name": "멀티캠퍼스",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "073570",
+   "name": "리튬포어스",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "078590",
+   "name": "휴림에이텍",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "096350",
+   "name": "대창솔루션",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "099430",
+   "name": "바이오플러스",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "142280",
+   "name": "녹십자엠에스",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "175140",
+   "name": "아고스",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "180060",
+   "name": "탑선",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "277070",
+   "name": "린드먼아시아",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "308430",
+   "name": "셀비온",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "317330",
+   "name": "덕산테코피아",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "397810",
+   "name": "애드포러스",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "475560",
+   "name": "더본코리아",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "481070",
+   "name": "에이유브랜즈",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "APTV",
+   "name": "Aptiv PLC",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "CLX",
+   "name": "Clorox Company (The)",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "CZR",
+   "name": "Caesars Entertainment, Inc.",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "IBRX",
+   "name": "ImmunityBio, Inc.",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "TPR",
+   "name": "Tapestry, Inc.",
+   "reason": "의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)"
+  }
+ ],
+ "keeps": [
+  {
+   "code": "009830",
+   "name": "한화솔루션",
+   "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "009835",
+   "name": "한화솔루션우",
+   "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06) (preferred share of an issuer above)"
+  },
+  {
+   "code": "052710",
+   "name": "아모텍",
+   "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "094840",
+   "name": "슈프리마에이치큐",
+   "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "236200",
+   "name": "슈프리마",
+   "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06)"
+  },
+  {
+   "code": "016790",
+   "name": "현대사료",
+   "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06)"
+  }
+ ]
+}
