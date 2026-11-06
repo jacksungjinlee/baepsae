@@ -254,9 +254,13 @@ def test_pages_never_load_fixtures_or_other_sites():
         assert bad not in disc_tab, bad
     src = read("src/v2/load.js")
     # v19.1a: disc.json too (the company page's 공시 tab, same site, fetched only when a company page opens: loadDisc)
-    assert set(re.findall(r'"\./(\w+\.json)"', src)) == {"data.json", "corp.json", "macro.json", "disc.json"}
+    # v19.3a: the logo index (our own logos/ folder on the same site, from the logos branch; the live page only)
+    assert set(re.findall(r'"\./([\w/]+\.json)"', src)) == {"data.json", "corp.json", "macro.json", "disc.json", "logos/index.json"}
     assert src.count('"./disc.json"') == 1 and "export function loadDisc()" in src
     assert "./disc.json" in built("app.html") and "./disc.json" not in built("app-preview.html")   # 미리 보기는 아무것도 받지 않아요
+    assert src.count('"./logos/index.json"') == 1 and 'export const LOGO_DIR = "./logos/";' in src
+    assert "./logos/index.json" in built("app.html") and "./logos/index.json" not in built("app-preview.html")
+    assert '"./logos/"' not in built("app-preview.html") and "setLogoSource" not in read("src/v2/main-preview.jsx")
 
 
 def test_outside_check_catches_each_problem():

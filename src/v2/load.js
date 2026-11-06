@@ -35,6 +35,15 @@ export function loadDisc() {
   return loadJson("./disc.json", CHECKS.disc);
 }
 
+// v19.3a: company logos are our own files on this site (the logos branch, copied in by Deploy; never another site).
+// The index is asked for once, by the live page only (main.jsx hands this to logo.jsx); the preview never asks.
+export const LOGO_DIR = "./logos/";
+export const logoIndexOk = (d) => !!(d && typeof d === "object" && !Array.isArray(d) && d.version === 1
+  && d.logos && typeof d.logos === "object" && !Array.isArray(d.logos));
+export function loadLogoIndex() {
+  return loadJson("./logos/index.json", logoIndexOk);
+}
+
 // opts.preview: the fictional example data of app-preview.html. It has a fixed publish date, so the stale check
 // (publishedAt more than 4 days old) is switched off there and only there; the page says "예시 데이터" on every screen.
 export function resolveLoad({ data, corp, macro }, now, opts = {}) {
