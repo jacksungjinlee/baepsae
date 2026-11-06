@@ -130,18 +130,19 @@ class Net:
         self.lock = threading.Lock()
         self.open = self.most_open = 0
 
-    def __call__(self, url, params=None, headers=None, timeout=None, max_bytes=None):
+    def __call__(self, url, params=None, headers=None, timeout=None, max_bytes=None, follow=False):
         with self.lock:
             self.open += 1
             self.most_open = max(self.most_open, self.open)
         try:
             if url == chk.API_BASE + chk.LOGO_ROUTE:
                 (route, ident), = params.items()
+                assert follow is False                                     # a lookup never follows a redirect
                 self.lookups.append((route, ident))
                 self.headers.append(("api", dict(headers)))
                 q = self.answers.get((route, ident)) or [not_found()]
                 return q.pop(0) if len(q) > 1 else q[0]
-            assert url.startswith("https://img.logo.dev/assets/"), url
+            assert url.startswith("https://img.logo.dev/assets/") and follow is True, url
             self.headers.append(("img", dict(headers)))
             token = url.split("/assets/", 1)[1].split("?", 1)[0]
             q = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&"))
@@ -313,7 +314,7 @@ def test_quality_checks_drop_doubtful_pictures(tmp_path):
     s = (out / "summary.md").read_text(encoding="utf-8")
     for k in ("small", "blank", "one_colour", "monogram"):
         assert f"- {k}: **1**" in s, k
-    assert "difference hash" in s and "monogram" in s                          # the methods are described
+    assert "difference hash" in s and "thumbnails" in s and "monogram" in s                          # the methods are described
 
 
 def test_monogram_check_keeps_ordinary_logos():
@@ -326,8 +327,10 @@ def test_monogram_check_keeps_ordinary_logos():
 
 def test_shared_pictures_are_grouped():
     a, b = F.normalise(PICS["good"]), F.normalise(PICS["mono"])
-    groups = F.shared_groups([("A", F.dhash(a)), ("B", F.dhash(a)), ("C", F.dhash(b))])
-    assert groups == [["A", "B"]]
+    swapped = Image.merge("RGBA", [a.getchannel(c) for c in ("B", "G", "R", "A")])          # same shapes, other colours
+    groups = F.shared_groups([("A", F.fingerprint(a)), ("B", F.fingerprint(a)), ("C", F.fingerprint(b)),
+                              ("D", F.fingerprint(swapped))])
+    assert groups == [["A", "B"]]                                              # D: same shapes, not the same picture
 
 
 # ── spend, stops and pacing ──

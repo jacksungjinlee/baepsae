@@ -95,6 +95,8 @@ MAX_WAIT_202_S = 60
 SIZE = LI.SIZE
 SMALL_PX = 64
 TILES_PER_PAGE = 48
+SHEET_EXTRA_MAX = 300                            # the sheet's "homepage over ticker" section outside the top: at most
+SHARED_PER_GROUP, SHARED_TILES_MAX = 24, 480     # shared pictures: tiles per group and in all (review.csv has every one)
 MAX_KR_NOCAP = MAX_US_NOCAP = 25
 MUST = chk.MUST
 MUST_TOP = 300                                   # each must-have company sits in its market's top 300 by market cap
@@ -115,9 +117,9 @@ QUALITY_NOTE = (
     "picture fully opaque) of two flat colours (background 55% or more, a far colour 4–40%, at most 6% of other "
     "colours besides the blend between them) whose far colour forms one or two blobs centred within 12% of the middle, "
     "25–75% of the height and 10–75% of the width. Real letter-on-colour logos fail it too; they then show our own "
-    "letter mark, which looks alike. Not dropped but listed: **shared** — the same picture (difference hash, 64 bits, "
-    "at most 3 bits apart) for different companies (a group logo, or a generic picture); every shared group is on the "
-    "contact sheet."
+    "letter mark, which looks alike. Not dropped but listed: **shared** — the same picture for different companies "
+    "(a group logo, or a generic picture): the same 64-bit difference hash and 16 x 16 colour thumbnails at most 6 "
+    "levels apart on average; only checked pairs form a group. Shared groups are on the contact sheet."
 )
 
 
@@ -178,6 +180,21 @@ def plan(order):
 
 # ── network ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def transport(url, params=None, headers=None, timeout=chk.TIMEOUT_S, max_bytes=chk.MAX_ANSWER_BYTES, follow=False):
+    """The real network. A lookup (follow=False) never follows a redirect (an unexpected answer). A download from a
+    signed address (follow=True) may follow up to 3 https redirects: it carries no key, the signature is the credential.
+    At most max_bytes of the body are read."""
+    import requests
+    if not follow:
+        return chk.requests_transport(url, params=params, headers=headers, timeout=timeout, max_bytes=max_bytes)
+    with requests.Session() as s:
+        s.max_redirects = 3
+        with s.get(url, params=params, headers=headers or {}, timeout=timeout, allow_redirects=True, stream=True) as r:
+            if not str(r.url).startswith("https://"):
+                return chk.Resp(599, {}, b"")
+            return chk.Resp(r.status_code, r.headers, r.raw.read(max_bytes, decode_content=True))
+
+
 class SafePacer(chk.Pacer):
     """chk.Pacer (at most per_minute starts in any 60 s, a minimum gap, hold) shared by the workers."""
 
@@ -227,7 +244,7 @@ class Client:
         with self._lock:
             self.downloads += 1
         return self.send(urlunsplit((u.scheme, u.netloc, u.path, urlencode(q + list(want.items())), "")), params=None,
-                         headers={}, timeout=chk.TIMEOUT_S, max_bytes=chk.MAX_IMAGE_BYTES + 1)
+                         headers={}, timeout=chk.TIMEOUT_S, max_bytes=chk.MAX_IMAGE_BYTES + 1, follow=True)
 
 
 class Ledger:
@@ -437,18 +454,28 @@ def quality(canvas, img):
     return out
 
 
-def dhash(canvas):
-    """64-bit difference hash of the picture laid on white."""
+def fingerprint(canvas):
+    """(64-bit difference hash, 16 x 16 colour thumbnail) of the picture laid on white."""
     from PIL import Image
     np = _np()
-    g = Image.fromarray(_composite(np.asarray(canvas.convert("RGBA")), 255.0)).convert("L").resize((9, 8), Image.LANCZOS)
-    a = np.asarray(g, dtype=np.int16)
+    flat = Image.fromarray(_composite(np.asarray(canvas.convert("RGBA")), 255.0))
+    a = np.asarray(flat.convert("L").resize((9, 8), Image.LANCZOS), dtype=np.int16)
     bits = (a[:, 1:] > a[:, :-1]).flatten()
-    return int("".join("1" if b else "0" for b in bits), 2)
+    thumb = np.asarray(flat.resize((16, 16), Image.LANCZOS), dtype=np.uint8).tobytes()
+    return int("".join("1" if b else "0" for b in bits), 2), thumb
 
 
-def shared_groups(items, max_bits=3):
-    """items: [(code, hash)] -> groups (lists of codes, 2 or more) whose pictures are at most max_bits apart."""
+SAME_PICTURE = 6.0                               # mean colour difference (0-255) of the thumbnails for "the same picture"
+
+
+def shared_groups(items):
+    """items: [(code, fingerprint)] -> groups (lists of codes, 2 or more) showing the same picture: the same difference
+    hash and thumbnails that differ by at most SAME_PICTURE on average. Only checked pairs join a group, so similar-
+    looking but different logos never chain into one big group."""
+    np = _np()
+    buckets = collections.defaultdict(list)
+    for c, (h, thumb) in items:
+        buckets[h].append((c, np.frombuffer(thumb, dtype=np.uint8).astype(np.int16)))
     parent = {c: c for c, _ in items}
 
     def find(c):
@@ -456,10 +483,11 @@ def shared_groups(items, max_bits=3):
             parent[c] = parent[parent[c]]
             c = parent[c]
         return c
-    for i in range(len(items)):
-        for j in range(i + 1, len(items)):
-            if bin(items[i][1] ^ items[j][1]).count("1") <= max_bits:
-                parent[find(items[i][0])] = find(items[j][0])
+    for members in buckets.values():
+        for i in range(len(members)):
+            for j in range(i + 1, len(members)):
+                if np.abs(members[i][1] - members[j][1]).mean() <= SAME_PICTURE:
+                    parent[find(members[i][0])] = find(members[j][0])
     groups = collections.defaultdict(list)
     for c, _ in items:
         groups[find(c)].append(c)
@@ -774,7 +802,7 @@ class Fetcher:
         data, ext = encode(canvas, self.webp)
         name = f"{safe_file(job.c['code'])}.{ext}"
         (self.out_logos / name).write_bytes(data)
-        job.final, job.file, job.bytes, job.hash = "logo", name, len(data), dhash(canvas)
+        job.final, job.file, job.bytes, job.hash = "logo", name, len(data), fingerprint(canvas)
 
     def finish(self, job):
         for cand in job.cands.values():
@@ -1130,10 +1158,19 @@ def sheet_sections(rows, jobs, groups, top):
     over = sorted((r for r in comp if r["check"] == "homepage-over-ticker" and r["result"] == "logo"
                    and r["market"] != "US" and (r["market_rank"] == "" or int(r["market_rank"]) > top)),
                   key=lambda r: int(r["market_rank"] or 10 ** 6))
-    secs.append(("Korea outside the top: homepage logo used instead of a different ticker brand", over))
+    secs.append(("Korea outside the top: homepage logo used instead of a different ticker brand"
+                 + (f" (the {SHEET_EXTRA_MAX} largest of {len(over):,}; every one is in review.csv)"
+                    if len(over) > SHEET_EXTRA_MAX else ""), over[:SHEET_EXTRA_MAX]))
     by = {r["code"]: r for r in comp}
+    left = SHARED_TILES_MAX
     for i, g in enumerate(groups, 1):
-        secs.append((f"Shared picture, group {i}: {len(g)} companies", [by[c] for c in g if c in by]))
+        if left <= 0:
+            secs.append((f"Shared pictures: {len(groups) - i + 1} more groups not drawn (review.csv, shared_group)", []))
+            break
+        mine = [by[c] for c in g if c in by][:min(SHARED_PER_GROUP, left)]
+        left -= len(mine)
+        secs.append((f"Shared picture, group {i}: {len(g)} companies"
+                     + (f" (first {len(mine)} drawn)" if len(mine) < len(g) else ""), mine))
     return secs
 
 
@@ -1185,6 +1222,28 @@ def render_pages(pages, meta, cands, cols, folder, log):
     if not FONT_CSS.exists():
         return [], f"sheet PNG pages not drawn: {FONT_CSS} is missing"
     names, problem = [], None
+
+    def one(browser, i, secs, tmp):
+        """None when sheet-NN.png was written, else the problem. A fresh context per page keeps memory flat."""
+        ctx = browser.new_context(viewport={"width": 1240, "height": 900}, device_scale_factor=1)
+        try:
+            page = ctx.new_page()
+            errors = []
+            page.on("pageerror", lambda err: errors.append(str(err)))
+            page.goto(tmp.as_uri(), wait_until="load")
+            korean = "".join(r["name"] + mark_letter(r["name"], r["code"]) for _, rs in secs for r in rs) + "한국"
+            r = page.evaluate(CHECK_JS, [FAMILY, korean])
+            if errors:
+                return f"sheet page {i}: page errors {errors[:3]}"
+            if r["bad"]:
+                return f"sheet page {i}: Pretendard did not draw {r['bad'][:10]}"
+            if not all(ok and w > 0 for ok, w in r["imgs"]):
+                return f"sheet page {i}: a picture did not load"
+            page.screenshot(path=str(folder / f"sheet-{i:02d}.png"), full_page=True)
+            return None
+        finally:
+            ctx.close()
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
@@ -1193,27 +1252,18 @@ def render_pages(pages, meta, cands, cols, folder, log):
                 tmp.write_text(sheet_page(f"{meta} · page {i} of {len(pages)}", secs, cands, cols, FONT_CSS.as_uri()),
                                encoding="utf-8")
                 try:
-                    page = browser.new_page(viewport={"width": 1240, "height": 900}, device_scale_factor=1)
-                    errors = []
-                    page.on("pageerror", lambda err: errors.append(str(err)))
-                    page.goto(tmp.as_uri(), wait_until="load")
-                    korean = "".join(r["name"] + mark_letter(r["name"], r["code"]) for _, rs in secs for r in rs) + "한국"
-                    r = page.evaluate(CHECK_JS, [FAMILY, korean])
-                    if errors:
-                        problem = f"sheet page {i}: page errors {errors[:3]}"
-                    elif r["bad"]:
-                        problem = f"sheet page {i}: Pretendard did not draw {r['bad'][:10]}"
-                    elif not all(ok and w > 0 for ok, w in r["imgs"]):
-                        problem = f"sheet page {i}: a picture did not load"
-                    else:
-                        name = f"sheet-{i:02d}.png"
-                        page.screenshot(path=str(folder / name), full_page=True)
-                        names.append(name)
-                    page.close()
+                    try:
+                        problem = one(browser, i, secs, tmp)
+                    except Exception as e:               # noqa: BLE001 — once more in a new browser, then give up
+                        log(f"  !! sheet page {i}: {type(e).__name__}; trying once more in a new browser")
+                        browser.close()
+                        browser = p.chromium.launch()
+                        problem = one(browser, i, secs, tmp)
                 finally:
                     tmp.unlink(missing_ok=True)
                 if problem:
                     break
+                names.append(f"sheet-{i:02d}.png")
         finally:
             browser.close()
     log(f"· contact sheet: {len(names)} PNG pages" + (f" · !! {problem}" if problem else ""))
@@ -1308,7 +1358,7 @@ class Deps:
 
     def __init__(self, send=None, clock=time.monotonic, sleep=time.sleep, wall=now_kst, environ=None, jitter=None,
                  min_counts=None, render=render_pages, webp=None):
-        self.send = send or chk.requests_transport
+        self.send = send or transport
         self.clock, self.sleep, self.wall, self.jitter = clock, sleep, wall, jitter
         self.environ = os.environ if environ is None else environ
         self.min_counts, self.render = min_counts, render
