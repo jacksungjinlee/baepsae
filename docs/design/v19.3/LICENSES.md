@@ -21,9 +21,9 @@ Files: `assets/pictures/adobe-*.png` (9 pictures: coins, arrows-coins, tree, pro
 ## Microsoft Fluent Emoji 3D (MIT licence)
 
 Files: `assets/pictures/fluent-*.png`. Source: https://github.com/microsoft/fluentui-emoji (MIT). The MIT licence needs
-its copyright and permission notice included with copies: put "Fluent Emoji © Microsoft Corporation, MIT License" with
-a link to the licence in the 그림 · 로고 출처 section of the existing 데이터 출처 page, and keep the full licence text next
-to the pictures the app ships.
+its copyright and permission notice included with copies: ship the full licence text (it carries Microsoft's copyright
+notice) next to the Fluent pictures the app ships, and on the 데이터 출처 page's 그림 · 로고 출처 section link "MIT
+라이선스" in the approved credit line to that file.
 
 ## 뱁이
 
