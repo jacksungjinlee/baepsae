@@ -5,7 +5,7 @@ where the task's Appendix 1 lists it. Image addresses inside the boards map as i
 
 | Path | What it is |
 |---|---|
-| `reference/HomeMovers2.dc.html` | 홈 · 오늘의 종목, 시가총액 chip (the list rolls upward; open the board to see the motion) |
+| `reference/HomeMovers2.dc.html` | 홈 · 종목 순위, 시가총액 chip (the list rolls upward; open the board to see the motion) |
 | `reference/HomeMovers2b.dc.html` | 기준별 chip with the 기준 picture chips |
 | `reference/HomeMovers2c.dc.html` | 업종별 등락: industry rows with three overlapped logos |
 | `assets/apple-touch-icon-v19.png` | iPhone home-screen icon, 180 × 180 |
