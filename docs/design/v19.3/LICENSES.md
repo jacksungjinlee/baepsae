@@ -16,14 +16,14 @@ Files: `assets/pictures/adobe-*.png` (9 pictures: coins, arrows-coins, tree, pro
   - Never commit versions larger than 192 px to this public repository.
   - Free Adobe Stock assets carry no legal indemnity. If Adobe or a rights holder ever objects, swap the picture for the
     Fluent one listed in set A on the design board (same 기준) in one PR.
-- No attribution is required. The 데이터 출처 · 그림 출처 page may still name Adobe Stock.
+- No attribution is required. The 그림 · 로고 출처 section still names Adobe Stock.
 
 ## Microsoft Fluent Emoji 3D (MIT licence)
 
 Files: `assets/pictures/fluent-*.png`. Source: https://github.com/microsoft/fluentui-emoji (MIT). The MIT licence needs
-its copyright and permission notice included with copies: put "Fluent Emoji © Microsoft Corporation, MIT License" with
-a link to the licence on the 데이터 출처 · 그림 출처 page, and keep the full licence text in the repository next to the
-pictures the app ships.
+its copyright and permission notice included with copies: ship the full licence text (it carries Microsoft's copyright
+notice) next to the Fluent pictures the app ships, and on the 데이터 출처 page's 그림 · 로고 출처 section link "MIT
+라이선스" in the approved credit line to that file.
 
 ## 뱁이
 
