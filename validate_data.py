@@ -122,9 +122,10 @@ DIV_STATUS = ("same", "adj", "nc", "nd", "zero")        # 그대로 · 맞춤 ·
 SPLIT_FACTORS = (2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100)  # 깨끗한 분할 배율 (fetch_data.py 와 같은 목록을 따로 적어요)
 # 행 4 (배당한 국내 회사 중 오늘 수익률 dyt 를 확인한 비율, %) — Jack 2026-11-05: 배당 자료 구멍이 사이트 전체를 멈추면 안 돼요.
 #   floor 아래 = 실패 · floor ~ seen 사이 = 경고 · seen 이상 = 통과. floor = seen − 10%p.
-#   ★ 두 값은 자리 표시예요 (지금 제안 85% 를 floor 로). 금요일 시험 실행에서 본 비율을 seen 에, 그 − 10 을 floor 에 넣어요.
+#   2026-11-06 시험 실행(run 42145175627, dart=full)에서 본 비율 89.1% (1,088 / 1,220) → 정수로 내림해 seen 89, floor 79
+#   (Jack 2026-11-05: 본 비율을 정수로 내리고, floor = seen − 10).
 #   파이프라인 로그(fetch_data.apply_div_basis)도 이 값을 읽어 같은 기준으로 크게 알려요.
-DYT_COVER_BANDS = {"seen": 95.0, "floor": 85.0}
+DYT_COVER_BANDS = {"seen": 89.0, "floor": 79.0}
 DIV_RANK_MISS_FAIL = 2   # 행 6: 배당 순위(dyt·dz)에서 빠진 필수 종목이 이만큼이면 실패. 1곳은 이름·이유와 함께 경고 (Jack 2026-11-05)
 DIV_ADJ_MAX = 10.0       # 배당한 국내 회사 중 분할·무상증자로 맞춘(adj) 비율 상한 (%) — 넘으면 배율을 대량으로 잘못 읽은 날
 DYT_MAX = 30.0           # 이보다 큰 배당수익률은 믿지 않아요 (파이프라인이 빈 칸으로 둬요)

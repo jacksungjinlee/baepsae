@@ -191,6 +191,38 @@ export function krGrowthDcfLine(g3, rev) {
   return `이 회사 매출은 최근 ${basis === "y2" ? "2년" : "1년"} 동안 ${what}. 지금 주가가 가정하는 성장률과 비교해 보세요.`;
 }
 
+// ---- 기업분석 리버스 DCF 의 첫 문장 (Jack, 2026-11-05) ----
+// 카드의 '성장률이 5년에 걸쳐 영구성장률로 수렴' 칸이 켜져 있으면(기본) 2.0 의 '지금 가격이 가정하는 것'과 같은 계산이에요
+// (corp.jsx reverseDcf: 첫해 증가율이 5년에 걸쳐 영구성장률로 바뀌고, 첫해 범위는 −30% ~ +60%). 그래서 그때는 2.0 의 승인된
+// 문장(src/copy/v2.js co.dcf.headUp · headDown · high · low · note)을 글자 그대로 써요. 칸을 끄면 5년 내내 같은 증가율이라
+// '첫해' 문장이 맞지 않아요: 카드가 예전 문장을 그대로 보여요 (corp.jsx DcfCard).
+// 예전 뱁새는 2.0 코드를 가져오지 않아서 여기 따로 두고, tests/test_oldapp_dcf_wording.py 가 2.0 과 같은지 봐요.
+// 숫자도 2.0 처럼: 첫해 증가율을 소수 한 자리로 반올림한 뒤 0 이상(0, −0 포함)이면 '는다는', 0보다 작으면 '준다는' 에 빼기 없이.
+// 첫 문장(head)에는 2.0 처럼 마침표가 없어요: 카드에서 한 줄을 따로 차지해요.
+const REV_DCF = {
+  headUp: "지금 주가에는 이익이 첫해 {g}% 는다는 가정이 담겨 있어요",
+  headDown: "지금 주가에는 이익이 첫해 {g}% 준다는 가정이 담겨 있어요",
+  high: "지금 주가가 맞으려면 이익이 첫해 60% 넘게 늘어야 해요.",
+  low: "지금 주가는 이익이 첫해 30% 넘게 준다고 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)가 있을 수 있어요.",
+  note: "예측이 아니라 지금 가격을 거꾸로 읽은 숫자예요. 증가율은 5년에 걸쳐 {t}%까지 바뀐다고 놓고 계산했어요.",
+};
+// 첫 문장 아래 2.0 의 설명 줄 (co.dcf.note): 2.0 카드처럼 영구성장률({t})을 이 줄에 보여요 (예전 첫 문장의 '(이후 2%)' 대신).
+// {t} 는 2.0 cotabs pctNum 그대로: 2 → "2", 2.5 → "2.5". 숫자가 아니면 null.
+export function krRevDcfNote(term) {
+  if (typeof term !== "number" || !Number.isFinite(term)) return null;
+  return REV_DCF.note.replace("{t}", term.toLocaleString("ko-KR", { minimumFractionDigits: term % 1 ? 1 : 0, maximumFractionDigits: term % 1 ? 1 : 0 }));
+}
+// rev: reverseDcf 의 결과 ({ g } · { edge: "high" | "low" }). 문장을 만들 수 없으면 null.
+export function krRevDcfText(rev) {
+  if (!rev) return null;
+  if (rev.edge === "high") return REV_DCF.high;
+  if (rev.edge === "low") return REV_DCF.low;
+  if (typeof rev.g !== "number" || !Number.isFinite(rev.g)) return null;
+  const g = Math.round(rev.g * 10) / 10;                                           // 2.0 cotabs: round(r.g, 1)
+  const x = (Math.round(Math.abs(g) * 10) / 10).toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });   // 2.0 p1
+  return (g < 0 ? REV_DCF.headDown : REV_DCF.headUp).replace("{g}", x);
+}
+
 // corp.json 을 한 번만 받아요 (검색 칸의 성적표와 포트폴리오의 한국 매출성장 이름표가 같이 써요. 기업분석 탭은 따로 받아요). 받는 중이면 그 요청을 같이 기다리고,
 // 못 받으면 { failed: true } (실패는 기억하지 않아요: 다음에 다시 받아요).
 let CORP_DATA = null, CORP_PENDING = null;

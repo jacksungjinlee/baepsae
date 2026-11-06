@@ -1,0 +1,80 @@
+name: logo.dev 확인
+# Jack 의 로고 계획: logo.dev 공식 API(비밀 키)로, 우리 회사 목록의 표본 중 로고가 있는 회사가 얼마나 되는지 확인해요.
+# 손으로만 돌려요 (Run workflow). 정해진 시각 실행도, PR 마다 도는 일도 없어요.
+# 하는 일 · 한도(크레딧 상한, 1분에 60번, 한 번에 하나) · 키를 다루는 방법은 tools/logos/logodev_api_check.py 머리말에 있어요.
+# 결과 폴더(summary.md · sheet.html · sheet.png · results.csv · 로고 그림)는 artifact 'logo-dev-check' 로 7일 보관하고,
+# summary.md 는 이 실행의 요약 화면에도 보여요. 저장소에는 아무것도 쓰지 않아요 (읽기 권한만).
+# 비밀 값은 LOGO_DEV_SECRET_KEY 하나만, 확인 실행 단계에만 넘겨요.
+# 확인 실행이 오류로 멈춰도 그때까지의 결과는 저장하고 올려요. 그다음 마지막 단계가 run.json 을 읽고, 오류로 멈춘 실행이면
+# 이 실행을 빨갛게 끝내요 (크레딧 상한이나 402 로 멈춘 것은 정상 종료예요 — 요약에 그렇게 적혀요).
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "표본 회사 수 (미국 · 한국 시가총액 상위 1,000 · 한국 나머지에서 3분의 1씩)"
+        type: number
+        default: 300
+      seed:
+        description: "표본을 뽑는 seed (같은 seed 면 같은 표본)"
+        type: number
+        default: 20261105
+      max_credits:
+        description: "이만큼의 크레딧을 넘기 전에 멈춰요 (Community 요금제는 한 달 500, 로고 조회 하나에 2)"
+        type: number
+        default: 480
+
+permissions:
+  contents: read
+
+concurrency:
+  # 한 번에 하나만 (두 실행이 같은 크레딧을 동시에 쓰지 않게). 기다리는 실행은 취소하지 않아요.
+  group: logo-dev-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60      # 표본 300 은 보통 10분 안팎 (1분에 60번 이하)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # requirements-dev.txt = requirements.txt + 고정한 Playwright (CI 와 같은 버전). 크롬은 sheet.png 를 그릴 때만 써요.
+      - name: 라이브러리 설치 (requirements-dev.txt 그대로 · 크롬)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: logo.dev 확인 실행
+        env:
+          LOGO_DEV_SECRET_KEY: ${{ secrets.LOGO_DEV_SECRET_KEY }}
+          SAMPLE: ${{ inputs.sample }}
+          SEED: ${{ inputs.seed }}
+          MAX_CREDITS: ${{ inputs.max_credits }}
+        run: |
+          python tools/logos/logodev_api_check.py --sample "$SAMPLE" --seed "$SEED" --max-credits "$MAX_CREDITS" \
+            --save-images 50 --out "$RUNNER_TEMP/logo-dev-check" --defer-failure
+
+      - name: 결과 폴더 보관 (artifact logo-dev-check, 7일)
+        uses: actions/upload-artifact@v7
+        with:
+          name: logo-dev-check
+          path: ${{ runner.temp }}/logo-dev-check
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: 요약 · 판정
+        run: |
+          cat "$RUNNER_TEMP/logo-dev-check/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          python tools/logos/logodev_api_check.py --verdict "$RUNNER_TEMP/logo-dev-check/run.json"

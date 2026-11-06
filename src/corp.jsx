@@ -7,7 +7,7 @@ import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
-import { loadJson, krGrowthBasis, krGrowthDcfLine } from "./data.js";
+import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -991,9 +991,13 @@ function DecompCard({ c, setExplain }) {
     );
   } else {
     body = (
-      <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7 }}>
+      <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
-        {c.r36 != null && <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>}
+        {/* 보이는 숫자가 0 이면 '+0% 올랐어요' 대신 '거의 변하지 않았어요', 움직이지 않았으니 뒤 문장(움직인 가격은…)은 빼요 (Jack, 2026-11-05).
+            r36 은 소수 한 자리 그대로 보여요 (0 · −0 이면 0) */}
+        {c.r36 != null && (c.r36 === 0
+          ? <> 지난 3년 주가는 거의 변하지 않았어요.</>
+          : <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>)}
       </div>
     );
   }
@@ -1068,7 +1072,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
     if (c.r3 >= 15 && niYoY != null && niYoY <= 5)
       return `최근 3개월 주가는 +${c.r3}% 올랐지만 연간 실적 추세는 뚜렷이 개선되지 않았어요. 가격을 움직인 것이 실적보다 기대나 수급일 가능성을 염두에 둘 대목이에요.`;
     if (c.r3 <= -15 && niYoY != null && niYoY >= 10)
-      return `연간 실적은 개선됐는데 최근 3개월 주가는 ${Math.abs(c.r3)}% 내렸어요. 시장이 다른 무엇을 걱정하는지 살펴볼 대목이에요.`;
+      return `실적은 좋아졌는데 3개월간 ${Math.abs(c.r3)}% 내렸어요. 시장이 무엇을 걱정하는지 살펴볼 만해요.`;   // 성적표와 같은 문장 (Jack, 2026-11-05)
     return null;
   })();
 
@@ -1484,7 +1488,13 @@ export function DcfCard({ c, sharesM, setExplain }) {
   const N = +ni0 || null, S = +shm || null;
   const val = dcfPerShare({ ni0: N, sharesM: S, g1, fade, disc, term });
   const gap = val && c.price ? (val / c.price - 1) * 100 : null;
-  const rev = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
+  const rev0 = useMemo(() => reverseDcf({ price: c.price, ni0: N, sharesM: S, fade, disc, term }), [c.price, N, S, fade, disc, term]);
+  // 수렴 칸이 켜져 있을 때(기본)의 문장 (data.js). 만들 수 없으면 리버스 DCF 칸을 빼고 console 에 남겨요 (빈 칸을 보여 주지 않게)
+  const revText = rev0 && fade ? krRevDcfText(rev0) : null;
+  const revNote = rev0 && fade && !rev0.edge ? krRevDcfNote(term) : null;
+  const revBad = !!rev0 && fade && !revText;
+  const rev = revBad ? null : rev0;
+  useEffect(() => { if (revBad) console.warn(`[뱁새] 리버스 DCF 문장을 만들지 못해 칸을 뺐어요 (${c.t}): ${JSON.stringify(rev0)}`); }, [revBad, c.t, rev0]);
   // 리버스 DCF 옆의 매출 성장 문장 (Jack, 2026-11-05: 줄표 없이, 부호 없는 숫자로 늘었어요 · 줄었어요, 0.0% 면 거의 변하지 않았어요). 기준을 모르면 빼요.
   const growthLine = krGrowthDcfLine(c.g3, c.rev);
 
@@ -1553,11 +1563,22 @@ export function DcfCard({ c, sharesM, setExplain }) {
                 <span style={{ fontSize: 12, fontWeight: 800, color: C.apricotDeep }}>리버스 DCF</span>
                 <button onClick={() => setExplain("rev")} style={{ fontSize: 9, color: C.apricotDeep, background: "#fff", border: "none", borderRadius: 999, width: 15, height: 15, cursor: "pointer", fontWeight: 800, fontFamily: FONT }}>?</button>
               </div>
-              <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5 }}>
-                {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
-                  : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
-                  : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요.{growthLine ? " " + growthLine : null}</>}
-              </div>
+              {fade ? (
+                /* 수렴 칸이 켜져 있으면(기본) 2.0 '지금 가격이 가정하는 것'과 같은 계산이라 그 문장 그대로 (Jack, 2026-11-05, data.js krRevDcfText):
+                   첫 문장은 마침표 없이 한 줄, 매출 문장(PR #47), 2.0 의 설명 줄(영구성장률). 줄은 2.0 처럼 낱말 사이에서만 바꿔요 (keep-all) */
+                <div data-rev-dcf={rev.edge || "g"} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5, wordBreak: "keep-all", overflowWrap: "break-word" }}>
+                  {rev.edge ? revText
+                    : <><b style={{ display: "block" }}>{revText}</b>{growthLine && <span style={{ display: "block", marginTop: 4 }}>{growthLine}</span>}
+                      {revNote && <span data-rev-dcf-note="" style={{ display: "block", marginTop: 6, fontSize: 11, color: C.sub, lineHeight: 1.6 }}>{revNote}</span>}</>}
+                </div>
+              ) : (
+                /* 수렴 칸을 끄면 5년 내내 같은 증가율이라 '첫해' 문장이 맞지 않아요: 예전 문장 그대로 */
+                <div data-rev-dcf-flat={rev.edge || "g"} style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.65, marginTop: 5 }}>
+                  {rev.edge === "low" ? "지금 주가는 연 −30% 이하의 역성장을 가정해도 설명되지 않을 만큼 낮아요. 모형 밖의 이유(부채, 소송, 지배구조 등)를 봐야 해요."
+                    : rev.edge === "high" ? "지금 주가를 정당화하려면 5년간 연 60%가 넘는 성장이 필요해요. 그만한 근거가 있는지가 질문이에요."
+                    : <>지금 주가에는 <b>향후 5년 연 {rev.g.toFixed(1)}% 성장</b>(이후 {term}%)이 담겨 있어요.{growthLine ? " " + growthLine : null}</>}
+                </div>
+              )}
             </div>
           )}
           {N != null && N <= 0 && <Sub style={{ color: C.coral, fontSize: 11 }}>순이익이 0 이하라 이 단순 모형으로는 계산할 수 없어요. 흑자 전환 가정을 직접 입력해보거나, 이 회사엔 다른 지표가 필요해요.</Sub>}
