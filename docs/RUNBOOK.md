@@ -13,7 +13,8 @@ One page for Jack. Claude Code does every step below for you; this page says wha
 What the watchdog checks, on the files users actually download: the four data files pass `validate_data.py --live`; after
 15:30 KST, the Korean price date is the last finished trading day (checked against KRX's final listing and Yahoo's KOSPI,
 both separate from our pipeline); the last daily run and the last deploy succeeded; the daily run is still switched on;
-the pages users get are the current build, and the site's `data.json` is exactly the published copy.
+the pages users get are the current build, the site's `data.json` is exactly the published copy, and the site does not
+serve the `docs/` folder (two of its files must answer "not found").
 
 ## What an alert means
 

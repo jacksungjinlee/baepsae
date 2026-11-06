@@ -44,6 +44,7 @@ SITE = os.environ.get("BAEPSAE_SITE", "https://jacksungjinlee.github.io/baepsae/
 REPO = os.environ.get("GITHUB_REPOSITORY", "jacksungjinlee/baepsae")
 API = "https://api.github.com"
 PAGES = ("baepsae.html", "app.html", "styleguide.html")
+DOCS_PROBES = ("docs/RUNBOOK.md", "docs/CHANGELOG.md")   # main 에 늘 있는 docs/ 파일 (tests 가 있는지 지켜요). 사이트에서는 404 여야 해요
 STALE_FROM = dt.time(15, 30)              # 이 시각(KST) 전에는 낡은 가격을 보지 않아요 (그날 실행이 아직 돌 수 있어요)
 GRACE = dt.timedelta(minutes=45)          # main 이 바뀐 직후에는 배포가 따라올 시간을 줘요
 ISSUE_TITLE = "뱁새 데이터 경보"
@@ -335,6 +336,27 @@ def check_live_data(rep, net, now, live_sha, mode, read_ref=ref_file):
             f"다름: 사이트 {live_sha[:12]} · {ref} {tip_sha[:7]} 의 것 {want[:12]} — 배포나 Pages 빌드가 실패했거나 예전 파일이에요")
 
 
+def check_no_docs(rep, net, now):
+    """docs/ 는 사이트에 없어야 해요 (Jack 2026-11-06). 설계 자료의 Adobe Stock 그림은 라이선스상 따로 내려받는 파일이 되면 안 되고,
+    Deploy 는 docs/ 를 빼고 올려요 (tools/assemble_site.py). 여기서 보이면 Pages 가 브랜치 배포로 되돌아갔거나 그 규칙이 깨진 거예요."""
+    got = []
+    for p in DOCS_PROBES:
+        try:
+            got.append((p, net.get(f"{SITE}{p}?t={int(now.timestamp())}").status_code))
+        except RuntimeError as e:
+            got.append((p, str(e)[:120]))
+    ok = all(st == 404 for _, st in got)
+    if ok:
+        detail = f"{len(got)}개 모두 404"
+    else:
+        detail = " · ".join(f"{p} {'HTTP ' + str(st) if isinstance(st, int) else st}" for p, st in got)
+        if any(st == 200 for _, st in got):
+            detail += " — docs/ 가 사이트에 올라가 있어요 (Pages 가 브랜치 배포로 바뀌었는지 확인해요)"
+        else:
+            detail += " — 404 가 아니라서 docs/ 가 빠졌는지 확인하지 못했어요"
+    rep.add("사이트에 docs/ 없음", ok, detail)
+
+
 # ── 점검 전체 ───────────────────────────────────────────────
 def run_all(net, now, selftest="none", gate=run_live_gate, expect=expected_px, read_ref=ref_file):
     rep, ctx = Report(), {"gate_md": "", "px": None, "files_ok": True}
@@ -379,6 +401,10 @@ def run_all(net, now, selftest="none", gate=run_live_gate, expect=expected_px, r
         check_live_data(rep, net, now, live_sha, mode, read_ref)
     except Exception as e:
         rep.add("사이트 data.json = 발행본", False, f"확인하지 못했어요: {str(e)[:150]}")
+    try:
+        check_no_docs(rep, net, now)
+    except Exception as e:
+        rep.add("사이트에 docs/ 없음", False, f"확인하지 못했어요: {str(e)[:150]}")
     return rep, ctx
 
 
