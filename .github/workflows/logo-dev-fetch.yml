@@ -3,7 +3,7 @@ name: logo.dev 로고 받기
 # 128 px WebP 와 index.json 으로 만들어요. 손으로만 돌려요 (Run workflow). 정해진 시각 실행도, PR 마다 도는 일도 없어요.
 # 하는 일 · 한도(크레딧 상한 14,000 = $140, 1분에 200번, 한 번에 4개) · 품질 검사 · 키를 다루는 방법은
 # tools/logos/logodev_fetch.py 머리말에 있어요.
-# 결과 폴더(logos/ · summary.md · review.csv · sheet.html · sheet-01.png …)는 artifact 'logo-dev-fetch' 로 1일 보관하고,
+# 결과 폴더(logos/ · summary.md · review.csv · sheet.html · sheet-01.png …)는 artifact 'logo-dev-fetch' 로 7일 보관하고,
 # summary.md 는 이 실행의 요약 화면에도 보여요. 저장소에는 아무것도 쓰지 않아요 (읽기 권한만): logos 브랜치에 올리는 것은
 # 세션이 artifact 를 보고 나서 tools/ 의 logos 브랜치 스크립트로 해요 (이 workflow 는 쓰기 권한이 없어요).
 # 비밀 값은 LOGO_DEV_SECRET_KEY 하나만, 받기 실행 단계에만 넘겨요.
@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       max_credits:
-        description: "이만큼의 크레딧을 넘기 전에 멈춰요 (1 크레딧 = 1센트, 로고 조회 하나에 2 · 14,000 = $140)"
+        description: "이만큼의 크레딧을 넘기 전에 멈춰요 (1 크레딧 = 1센트, 로고 조회 하나에 2). 14,000 = $140 이 가장 커요: 더 크면 실행하지 않아요. logo.dev 가 알려 주는 남은 크레딧이 1,000 아래로 내려갈 것 같아도 멈춰요"
         type: number
         default: 14000
       workers:
@@ -73,12 +73,12 @@ jobs:
           python tools/logos/logodev_fetch.py --max-credits "$MAX_CREDITS" --workers "$WORKERS" \
             --per-minute "$PER_MINUTE" --limit "$LIMIT" --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure
 
-      - name: 결과 폴더 보관 (artifact logo-dev-fetch, 1일)
+      - name: 결과 폴더 보관 (artifact logo-dev-fetch, 7일)
         uses: actions/upload-artifact@v7
         with:
           name: logo-dev-fetch
           path: ${{ runner.temp }}/logo-dev-fetch
-          retention-days: 1
+          retention-days: 7
           if-no-files-found: error
 
       - name: 요약 · 판정

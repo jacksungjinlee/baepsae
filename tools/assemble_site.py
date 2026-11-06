@@ -12,7 +12,9 @@
 - 회사 로고 (v19.3a): logos/ 는 LOGOS_REF(logos 브랜치)에서만 가져와요. main 에 logos/ 가 있으면 그건 올리지 않아요.
   로고는 사이트를 멈추게 하지 않아요: 브랜치가 없거나, logos/index.json 과 그림이 서로 맞지 않거나(tools/logos/logo_index.py),
   다른 파일이 섞여 있으면 크게 경고하고 logos/ 없이 사이트를 만들어요 (앱은 글자 표시를 보여 줘요).
+  색인의 회사 이름이 오늘 data.json 과 다른 항목(코드가 다른 회사로 바뀐 것)은 빼요. logos/ 는 누구나 읽을 수 있게(0755 · 0644) 둬요.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -108,14 +110,38 @@ def copy_logos(root, out, ref):
         index, bad = LI.validate_dir(stage)
         if bad:
             return no_logos(f"{ref} 의 logos/ 가 검사를 통과하지 못했어요 ({len(bad)}건: " + "; ".join(bad[:3]) + ").")
+        # 코드 재사용: 오늘 data.json 의 회사 이름과 다른 항목은 빼요 (코드가 다른 회사로 바뀌면 글자 표시가 안전해요)
+        try:
+            with open(os.path.join(out, "data.json"), encoding="utf-8") as fh:
+                names = LI.stock_names(json.load(fh))
+        except (OSError, ValueError) as e:
+            return no_logos(f"사이트 폴더의 data.json 을 읽지 못해 로고 이름을 맞춰 보지 못했어요 ({type(e).__name__}).")
+        index, gone = LI.keep_current(index, names)
+        if gone:
+            print(f"!! 로고 {len(gone)}개는 오늘 data.json 의 회사 이름과 맞지 않아서 뺐어요 (코드가 다른 회사로 바뀌었거나 이름이 "
+                  f"바뀜 → 글자 표시): {', '.join(gone[:30])}{' …' if len(gone) > 30 else ''}")
+            print(f"::warning title=로고 이름 불일치::로고 {len(gone)}개는 오늘 회사 이름과 달라서 글자 표시로 보여 줘요.")
+            used = {e["file"] for e in index["logos"].values()}
+            for n in os.listdir(stage):
+                if n != LI.INDEX and n not in used:
+                    os.remove(os.path.join(stage, n))
+            with open(os.path.join(stage, LI.INDEX), "w", encoding="utf-8") as fh:
+                json.dump(index, fh, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            index, bad = LI.validate_dir(stage)
+            if bad:
+                return no_logos("이름이 맞지 않는 로고를 뺀 뒤 logos/ 가 검사를 통과하지 못했어요 (" + "; ".join(bad[:3]) + ").")
+        # Pages 의 artifact 는 모두가 읽을 수 있어야 해요 (mkdtemp 는 0700 이라 그대로 두면 배포가 실패해요)
+        os.chmod(stage, 0o755)
+        for n in os.listdir(stage):
+            os.chmod(os.path.join(stage, n), 0o644)
         dst = os.path.join(out, LOGOS)
         if os.path.exists(dst):
             return no_logos(f"사이트 폴더에 이미 {LOGOS}/ 가 있어요.")
         shutil.move(stage, dst)
         stage = None
-        pictures = sum(1 for n, _, _ in entries if n != LI.INDEX)
+        pictures = len(os.listdir(dst)) - 1
         print(f"· 회사 로고: {ref} ({sha[:7]}) 의 logos/ · 회사 {len(index['logos']):,}곳 · 그림 {pictures:,}개 "
-              f"({sum(s for _, _, s in entries) // 1024:,}KB)")
+              f"({sum(os.path.getsize(os.path.join(dst, n)) for n in os.listdir(dst)) // 1024:,}KB)")
         return len(index["logos"])
     finally:
         if stage:

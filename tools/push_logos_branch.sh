@@ -79,5 +79,15 @@ if [ -n "$parent" ]; then
 else
   commit=$(git commit-tree "$tree" -m "$msg")
 fi
-git push "$REMOTE" "$commit:refs/heads/$BRANCH"
+if [ -n "$parent" ] && ! git merge-base --is-ancestor "$parent" "$commit"; then
+  echo "!! 새 커밋이 logos 브랜치 끝 위에 있지 않아요 → 올리지 않아요"
+  exit 1
+fi
+# 처음이면 logos 브랜치를 새로 만들고, 그다음부터는 끝 위에 커밋 하나를 더하는 보통 푸시(fast-forward)만 해요.
+# 강제 푸시 · 브랜치 지우기는 절대 하지 않아요 (이 세션의 git 프록시도 막아요).
+if ! git push "$REMOTE" "$commit:refs/heads/$BRANCH"; then
+  echo "!! logos 브랜치에 올리지 못했어요: 원격이 거절했어요 (그사이 누가 먼저 올려서 fast-forward 가 아니거나, 권한이 없어요)."
+  echo "!! 강제로 올리지 않아요. 이 스크립트를 다시 돌리면 새 끝 위에 다시 만들어요. logos 브랜치와 사이트는 그대로예요."
+  exit 1
+fi
 echo "· logos 브랜치에 올렸어요: ${commit:0:7} ($msg)"

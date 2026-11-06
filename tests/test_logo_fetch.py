@@ -62,11 +62,28 @@ def monogram():
     return im
 
 
+_DISTINCT = {}
+
+
+def distinct(token):
+    """A different ordinary logo for every token (so no two companies share a picture by accident)."""
+    if token not in _DISTINCT:
+        import hashlib
+        h = hashlib.sha256(token.encode()).digest()
+        im = Image.new("RGBA", (256, 256), (255, 255, 255, 0))
+        d = ImageDraw.Draw(im)
+        for k in range(2 + h[0] % 3):
+            x, y, w = h[1 + k * 3] % 150, h[2 + k * 3] % 150, 50 + h[3 + k * 3] % 80
+            (d.ellipse if k % 2 else d.rectangle)((x, y, x + w, y + w), fill=(h[10 + k], h[13 + k], h[16 + k], 255))
+        _DISTINCT[token] = png(im)
+    return _DISTINCT[token]
+
+
 PICS = {
     "good": png(good_logo()),
     "good100": png(good_logo(100)),
     "blank": png(Image.new("RGBA", (128, 128), (0, 0, 0, 0))),
-    "flat": png(Image.new("RGBA", (128, 128), (238, 238, 238, 255))),
+    "flat": png(Image.new("RGBA", (128, 128), (40, 90, 180, 255))),
     "mono": png(monogram()),
     "white_on_clear": None,
 }
@@ -94,8 +111,8 @@ def body(obj):
     return json.dumps(obj).encode("utf-8")
 
 
-def logo_answer(token, brand, w=512, h=512, vector=False, cc="1", etag=None):
-    return chk.Resp(200, {"Credits-Charged": cc, "Credits-Remaining": "15000"}, body(
+def logo_answer(token, brand, w=512, h=512, vector=False, cc="1", etag=None, remaining="15000"):
+    return chk.Resp(200, {"Credits-Charged": cc, "Credits-Remaining": remaining}, body(
         {"data": {"object": "image", "kind": "logo", "brand_id": brand, "status": "ready",
                   "url": f"https://img.logo.dev/assets/{token}?sig=SIGNED", "etag": etag or f"etag-{token}",
                   "blurhash": "x", "source": {"width": w, "height": h, "format": "svg" if vector else "png",
@@ -147,7 +164,7 @@ class Net:
             token = url.split("/assets/", 1)[1].split("?", 1)[0]
             q = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&"))
             self.downloads.append((token, q))
-            pic = self.pics.get(token, PICS["good"])
+            pic = self.pics.get(token) or distinct(token)
             return chk.Resp(200, {"Content-Type": "image/png"}, pic)
         finally:
             with self.lock:
@@ -233,7 +250,7 @@ def test_exact_identifiers_market_cap_order_and_no_lookup_for_preferred_or_etf(t
     idx = index(out)
     assert LI.validate_dir(out / "logos")[1] == []
     assert sorted(idx["logos"]) == sorted(["005930", "005935", "000660", "005380", "247540", "AAPL", "MSFT", "BRK-B"])
-    assert idx["logos"]["005935"] == dict(idx["logos"]["005930"], via="005930")    # preferred: the issuer's file
+    assert idx["logos"]["005935"] == dict(idx["logos"]["005930"], name="삼성전자우", via="005930")    # preferred: the issuer's file
     assert not (out / "logos" / "005935.webp").exists()
     for name in ("005930.webp", "AAPL.webp", "BRK-B.webp"):
         im = Image.open(out / "logos" / name)
@@ -309,12 +326,128 @@ def test_quality_checks_drop_doubtful_pictures(tmp_path):
     assert (rv["BRK-B"]["result"], rv["BRK-B"]["reason"]) == ("letter", "blank")
     assert (rv["247540"]["result"], rv["247540"]["reason"]) == ("letter", "one_colour")
     assert (rv["005380"]["result"], rv["005380"]["reason"]) == ("letter", "monogram")
-    assert rv["000660"]["result"] == "logo"                                   # a white logo on transparency passes
+    assert (rv["000660"]["result"], rv["000660"]["reason"]) == ("letter", "faint")   # white on transparency: invisible on white
     assert rv["AAPL"]["result"] == "logo"
     s = (out / "summary.md").read_text(encoding="utf-8")
-    for k in ("small", "blank", "one_colour", "monogram"):
+    for k in ("small", "blank", "faint", "one_colour", "monogram"):
         assert f"- {k}: **1**" in s, k
     assert "difference hash" in s and "thumbnails" in s and "monogram" in s                          # the methods are described
+
+
+BIG = {"width": 512, "height": 512, "is_vector": False}
+
+
+def flat(bg, blocks=()):
+    a = F._np().zeros((128, 128, 4), F._np().uint8)
+    a[:] = bg
+    for y0, y1, x0, x1, col in blocks:
+        a[y0:y1, x0:x1] = col
+    return Image.fromarray(a, "RGBA")
+
+
+def bar(w, h, dx=0):
+    x0, y0 = 64 - w // 2 + dx, 64 - h // 2
+    return flat((51, 102, 204, 255), [(y0, y0 + h, x0, x0 + w, (255, 255, 255, 255))])
+
+
+BLACK, WHITE = (0, 0, 0, 255), (255, 255, 255, 255)
+
+
+def test_every_quality_threshold_on_both_sides():
+    q = F.quality
+    # small: the shorter side of a raster source; 64 kept, 63 dropped; a vector source is never small
+    assert "small" not in q(flat(WHITE, [(0, 64, 0, 64, BLACK)]), {"width": 64, "height": 64})
+    assert "small" in q(flat(WHITE, [(0, 64, 0, 64, BLACK)]), {"width": 63, "height": 200})
+    assert "small" not in q(flat(WHITE, [(0, 64, 0, 64, BLACK)]), {"width": 16, "height": 16, "is_vector": True})
+    # blank: under 1% of 16,384 pixels visible (163 px blank, 165 px not)
+    assert q(flat((0, 0, 0, 0), [(0, 1, 0, 128, BLACK), (1, 2, 0, 35, BLACK)]), BIG) == ["blank"]
+    assert "blank" not in q(flat((0, 0, 0, 0), [(0, 1, 0, 128, BLACK), (1, 2, 0, 37, BLACK)]), BIG)
+    # faint on white: under 1.5% of pixels more than 40 levels from white (225 px faint, 256 px kept)
+    assert q(flat(WHITE, [(10, 25, 10, 25, BLACK)]), BIG) == ["faint"]
+    assert q(flat(WHITE, [(10, 26, 10, 26, BLACK)]), BIG) == []
+    assert q(flat((0, 0, 0, 0), [(0, 64, 0, 128, (215, 215, 215, 255))]), BIG) == ["faint"]     # 40 away: not visible
+    assert q(flat((0, 0, 0, 0), [(0, 64, 0, 128, (214, 214, 214, 255))]), BIG) == []            # 41 away: visible
+    assert q(flat((0, 0, 0, 0), [(50, 78, 20, 108, WHITE)]), BIG) == ["faint"]                   # white on transparency
+    # one colour: at least 98.5% one colour on white and on black (225 px of white on blue: one colour; 272 px: not)
+    assert q(flat((30, 60, 200, 255), [(10, 25, 10, 25, WHITE)]), BIG) == ["one_colour"]
+    assert q(flat((30, 60, 200, 255), [(10, 27, 10, 26, WHITE)]), BIG) == []
+    # monogram: the far colour 4-40% (16 x 43 = 4.2% in, 14 x 43 = 3.7% out), centred within 12% (14 px in, 17 out),
+    # 25-75% tall (33 px in, 31 out)
+    mono = lambda im: F.is_monogram(F._np().asarray(im))                                        # noqa: E731
+    assert mono(bar(16, 43)) and not mono(bar(14, 43))
+    assert mono(bar(16, 43, dx=14)) and not mono(bar(16, 43, dx=17))
+    assert mono(bar(22, 33)) and not mono(bar(22, 31))
+    assert q(bar(16, 43), BIG) == ["monogram"] and q(bar(14, 43), BIG) == []
+
+
+def test_max_credits_can_never_go_above_14000(tmp_path):
+    write_inputs(tmp_path)
+    with pytest.raises(SystemExit):
+        run(tmp_path, Net(ALL_GOOD), "--max-credits", "14002")
+    rc, out = run(tmp_path, Net(ALL_GOOD), "--max-credits", "14000")
+    assert rc == 0
+
+
+def test_stops_before_logo_dev_balance_goes_below_1000(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "AAPL")] = [logo_answer("aapl", "brand_aapl", remaining="1001.5")]
+    net = Net(answers)
+    rc, out = run(tmp_path, net)
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 0 and info["outcome"] == "balance_floor" and info["ok"] is True
+    assert net.lookups == [("ticker", "AAPL")]                                  # 1003.5 - 2 < 1000 for the next one
+    assert "below 1,000" in (out / "run.log").read_text(encoding="utf-8")
+    assert sorted(index(out)["logos"]) == ["AAPL"]
+
+
+def test_a_picture_shared_by_different_brands_becomes_letter_marks(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "MSFT")] = [logo_answer("same", "brand_msft")]
+    answers[("ticker", "BRK-B")] = [logo_answer("same", "brand_brk")]                         # same picture, other brand
+    answers[("ticker", "005380.KS")] = [logo_answer("grp", "brand_grp")]
+    answers[("domain", "hyundai.com")] = [logo_answer("grp", "brand_grp", cc="0")]
+    answers[("ticker", "247540.KQ")] = [logo_answer("grp", "brand_grp")]                       # same picture, same brand
+    rc, out = run(tmp_path, Net(answers))
+    rv, idx = review(out), index(out)
+    for code in ("MSFT", "BRK-B"):
+        assert (rv[code]["result"], rv[code]["reason"]) == ("letter", "shared") and code not in idx["logos"], code
+        assert not (out / "logos" / f"{code}.webp").exists()
+    assert rv["005380"]["result"] == rv["247540"]["result"] == "logo" and rv["005380"]["shared_group"]
+    assert LI.validate_dir(out / "logos")[1] == []
+    s = (out / "summary.md").read_text(encoding="utf-8")
+    assert "- shared: **2**" in s and "**1** groups with different brands switched to letter marks" in s
+    log = (out / "run.log").read_text(encoding="utf-8")
+    assert "!! shared picture" in log and "different brands" in log
+
+
+def test_index_entries_carry_the_company_name_and_odd_codes_get_letter_marks(tmp_path):
+    stocks = list(BASE_STOCKS) + [stock("X/Y", "us", 700.0, "Odd Co")]
+    write_inputs(tmp_path, stocks)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "X/Y")] = [logo_answer("odd", "brand_odd")]
+    rc, out = run(tmp_path, Net(answers))
+    idx = index(out)
+    assert idx["logos"]["005930"]["name"] == "삼성전자" and idx["logos"]["005935"]["name"] == "삼성전자우"
+    assert idx["logos"]["AAPL"]["name"] == "Apple"
+    assert (review(out)["X/Y"]["result"], review(out)["X/Y"]["reason"]) == ("letter", "odd_code")
+    assert LI.validate_dir(out / "logos")[1] == []
+
+
+def test_review_sheet_draws_every_flagged_company_without_caps(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("domain", "skhynix.com")] = [logo_answer("hynhome", "brand_other")]
+    rc, out = run(tmp_path, Net(answers), "--sheet-top", "1")
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    counts = dict(info["sheet_counts"])
+    assert counts["Korea outside the top 1: homepage logo used instead of a different ticker brand"] == 1
+    assert counts["Korea outside the top 1: ticker logo kept, unverified by the DART homepage"] == 1   # 247540
+    s = (out / "summary.md").read_text(encoding="utf-8")
+    assert "## Review sheet" in s and "no caps" in s
+    html_ = (out / "sheet.html").read_text(encoding="utf-8")
+    assert "에코프로비엠" in html_ and "SK하이닉스" in html_
 
 
 def test_monogram_check_keeps_ordinary_logos():
@@ -485,13 +618,17 @@ def make_folder(path, logos, files):
     return path
 
 
-ENTRY = {"file": "005930.webp", "route": "ticker", "w": 512, "h": 512, "vector": False, "flags": []}
+ENTRY = {"file": "005930.webp", "name": "삼성전자", "route": "ticker", "w": 512, "h": 512, "vector": False, "flags": []}
 
 
 def test_index_rules(tmp_path):
-    ok = make_folder(tmp_path / "ok", {"005930": ENTRY, "005935": dict(ENTRY, via="005930")}, {"005930.webp": webp128()})
+    ok = make_folder(tmp_path / "ok", {"005930": ENTRY, "005935": dict(ENTRY, name="삼성전자우", via="005930")},
+                     {"005930.webp": webp128()})
     assert LI.validate_dir(ok)[1] == []
     cases = {
+        "two-codes-one-file": ({"005930": ENTRY, "000660": dict(ENTRY, name="SK하이닉스")}, {"005930.webp": webp128()}),
+        "no-name": ({"005930": {k: v for k, v in ENTRY.items() if k != "name"}}, {"005930.webp": webp128()}),
+        "blank-name": ({"005930": dict(ENTRY, name="  ")}, {"005930.webp": webp128()}),
         "unlisted": ({"005930": ENTRY}, {"005930.webp": webp128(), "000660.webp": webp128()}),
         "missing": ({"005930": ENTRY, "000660": dict(ENTRY, file="000660.webp")}, {"005930.webp": webp128()}),
         "svg": ({"005930": dict(ENTRY, file="005930.svg")}, {"005930.svg": b"<svg onload=alert(1)>"}),
@@ -510,6 +647,19 @@ def test_index_rules(tmp_path):
     (nan / "index.json").write_text('{"version": 1, "size": 128, "logos": {"005930": {"file": "005930.webp", '
                                     '"route": "ticker", "w": NaN, "h": 1}}}')
     assert LI.validate_dir(nan)[1]
+
+
+def test_keep_current_drops_reused_or_renamed_codes_and_their_preferred_shares():
+    index = {"version": 1, "size": 128, "logos": {
+        "005930": ENTRY, "005935": dict(ENTRY, name="삼성전자우", via="005930"),
+        "000660": dict(ENTRY, file="000660.webp", name="SK하이닉스"), "AAPL": dict(ENTRY, file="AAPL.webp", name="Apple")}}
+    data = {"stocks": [{"t": "005930", "nk": "삼성전자"}, {"t": "005935", "nk": "삼성전자우"},
+                       {"t": "000660", "nk": "다른 회사"}, {"t": "MSFT", "nk": "Microsoft"}]}
+    out, gone = LI.keep_current(index, LI.stock_names(data))
+    assert sorted(out["logos"]) == ["005930", "005935"] and gone == ["000660", "AAPL"] and out["count"] == 2
+    out, gone = LI.keep_current(index, LI.stock_names({"stocks": [{"t": "005935", "nk": "삼성전자우"}]}))
+    assert out["logos"] == {} and "005935" in gone                                # issuer gone -> preferred gone too
+    assert index["logos"]["000660"]["name"] == "SK하이닉스"                        # the input is not changed
 
 
 def test_image_size_reads_png_and_every_webp_kind():
@@ -540,7 +690,10 @@ def test_fetch_workflow_is_hand_run_read_only_and_keeps_the_secret_in_one_step()
     run_ = with_key[0]["run"]
     assert "tools/logos/logodev_fetch.py" in run_ and "--defer-failure" in run_ and "--out" in run_
     up = next(s for s in st if s.get("uses", "").startswith("actions/upload-artifact"))
-    assert up["with"]["retention-days"] == 1 and up["with"]["if-no-files-found"] == "error"
+    assert up["with"]["retention-days"] == 7 and up["with"]["if-no-files-found"] == "error"
+    assert wf["concurrency"]["group"] == "logo-dev-fetch"                       # two runs never overlap
+    inp = wf[True]["workflow_dispatch"]["inputs"]["max_credits"]
+    assert inp["default"] == 14000 and "14,000" in inp["description"]
     assert "--verdict" in st[-1]["run"]
     assert "push_logos_branch" not in raw and "git push" not in raw and "contents: write" not in raw
     assert wf["concurrency"]["cancel-in-progress"] is False

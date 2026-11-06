@@ -8,7 +8,9 @@
   unexpected error -> a loud warning and the site without logos (letter marks), never a failed deploy. A logos/ folder
   on main is not published.
 - deploy.yml's step "logos 브랜치의 로고 받기": a missing or unreachable branch never fails the deploy.
-- sw.js: logo files are network-first like everything else (offline: the cached copy, else an error -> letter mark).
+- sw.js: logo files never go into the service-worker cache (the browser fetches them itself; offline -> letter mark).
+- The site folder is readable by everyone (upload-pages-artifact); a code whose name no longer matches today's data.json
+  loses its logo (letter mark); a push the remote refuses fails loudly and never forces.
 Real git repositories in temporary folders (the remote is a bare repository), like tests/test_data_branch.py.
 """
 import io
@@ -36,14 +38,18 @@ def webp(color, size=128):
     return b.getvalue()
 
 
+NAMES = {"005930": "삼성전자", "005935": "삼성전자우", "000660": "SK하이닉스", "AAPL": "Apple"}
+
+
 def make_logos(path, codes, color=(30, 60, 90, 255), extra=None):
     path.mkdir(parents=True, exist_ok=True)
     logos = {}
     for c in codes:
         (path / f"{c}.webp").write_bytes(webp(color))
-        logos[c] = {"file": f"{c}.webp", "route": "ticker", "w": 512, "h": 512, "vector": False, "flags": []}
+        logos[c] = {"file": f"{c}.webp", "name": NAMES[c], "route": "ticker", "w": 512, "h": 512, "vector": False,
+                    "flags": []}
     if "005930" in logos:
-        logos["005935"] = dict(logos["005930"], via="005930")
+        logos["005935"] = dict(logos["005930"], name=NAMES["005935"], via="005930")
     (path / "index.json").write_text(json.dumps({"version": 1, "size": 128, "format": "webp", "logos": logos}),
                                      encoding="utf-8")
     for name, body in (extra or {}).items():
@@ -118,11 +124,26 @@ def test_logos_branch_is_never_written_from_a_folder_that_fails_the_check(repo, 
 
 def test_push_logos_never_forces_and_writes_only_the_logos_branch():
     text = open(PUSH_LOGOS, encoding="utf-8").read()
-    pushes = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("git push")]
-    assert pushes == ['git push "$REMOTE" "$commit:refs/heads/$BRANCH"']
+    code = [ln.strip() for ln in text.splitlines() if not ln.strip().startswith("#")]
+    pushes = [ln for ln in code if "git push" in ln]
+    assert pushes == ['if ! git push "$REMOTE" "$commit:refs/heads/$BRANCH"; then']          # one plain push, no "+"
     assert 'BRANCH="logos"' in text and "LOGOS_BRANCH" not in text                            # the name is fixed
-    assert "--force" not in text and "-f " not in text and "|| true" not in text
+    assert "--force" not in text and "-f " not in text and "|| true" not in text and "--delete" not in text
+    assert ':refs/heads/$BRANCH"' in pushes[0] and '"+' not in pushes[0] and '" :' not in pushes[0]
+    assert 'git merge-base --is-ancestor "$parent" "$commit"' in text                       # only fast-forwards
     assert os.stat(PUSH_LOGOS).st_mode & stat.S_IXUSR
+
+
+def test_a_refused_push_fails_loudly_and_changes_nothing(repo, tmp_path):
+    work, origin, _ = repo
+    assert push_logos(work, make_logos(tmp_path / "a", ["005930"])).returncode == 0
+    first = tip(origin)
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'not a fast-forward (test)' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    r = push_logos(work, make_logos(tmp_path / "b", ["005930", "000660"]))
+    assert r.returncode == 1 and "올리지 못했어요" in r.stdout and "강제로 올리지 않아요" in r.stdout
+    assert tip(origin) == first
 
 
 def test_a_branch_merely_ending_in_logos_is_not_the_logos_branch(repo, tmp_path):
@@ -136,8 +157,12 @@ def test_a_branch_merely_ending_in_logos_is_not_the_logos_branch(repo, tmp_path)
 
 # ── tools/assemble_site.py ──
 
-def publish_data(work, rec):
+def publish_data(work, rec, names=None):
+    """The data branch, with a data.json that names today's companies (Deploy compares logo names with it)."""
     write_data(work, 7)
+    stocks = [{"t": t, "nk": n} for t, n in (NAMES if names is None else names).items()]
+    (work / "data.json").write_text(json.dumps({"from": "gate", "tag": 7, "stocks": stocks}, ensure_ascii=False),
+                                    encoding="utf-8")
     receipt(work, rec)
     assert push(work, rec).returncode == 0
     for f in FILES:
@@ -168,6 +193,50 @@ def test_site_takes_logos_from_the_logos_branch(repo, tmp_path):
         assert (out / "logos" / f).read_bytes() == (folder / f).read_bytes()
     assert "회사 로고:" in r.stdout and "로고 없이" not in r.stdout
     assert not [p for p in os.listdir(tmp_path) if p.startswith(".logos-")]                    # no staging left over
+
+
+def test_everything_in_the_site_folder_is_readable_by_others(repo, tmp_path):
+    """upload-pages-artifact needs others-readable folders and files (mkdtemp makes 0700; Deploy would fail)."""
+    work, origin, rec = repo
+    publish_data(work, rec)
+    assert push_logos(work, make_logos(tmp_path / "art" / "logos", ["005930", "AAPL"])).returncode == 0
+    git(work, "fetch", "-q", "origin", "+refs/heads/logos:refs/remotes/origin/logos")
+    old = os.umask(0o022)
+    try:
+        out = tmp_path / "_site"
+        assert assemble(work, out, "refs/remotes/origin/logos").returncode == 0
+    finally:
+        os.umask(old)
+    assert (out / "logos" / "index.json").exists()
+    for p in [out, *out.rglob("*")]:
+        mode = p.stat().st_mode
+        if p.is_dir():
+            assert mode & 0o005 == 0o005, (p, oct(mode))                                     # others: read + enter
+        else:
+            assert mode & 0o004, (p, oct(mode))                                               # others: read
+    assert stat.S_IMODE((out / "logos").stat().st_mode) == 0o755
+    assert stat.S_IMODE((out / "logos" / "005930.webp").stat().st_mode) == 0o644
+
+
+def test_a_code_now_used_by_another_company_falls_back_to_the_letter_mark(repo, tmp_path):
+    work, origin, rec = repo
+    publish_data(work, rec, names={"005930": "삼성전자", "005935": "삼성전자우", "AAPL": "Another Company"})
+    assert push_logos(work, make_logos(tmp_path / "art" / "logos", ["005930", "AAPL"])).returncode == 0
+    git(work, "fetch", "-q", "origin", "+refs/heads/logos:refs/remotes/origin/logos")
+    out = tmp_path / "_site"
+    r = assemble(work, out, "refs/remotes/origin/logos")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert files_in(out) == sorted(["src/a.js", *FILES, "logos/005930.webp", "logos/index.json"])   # AAPL's file gone
+    idx = json.loads((out / "logos" / "index.json").read_text(encoding="utf-8"))
+    assert sorted(idx["logos"]) == ["005930", "005935"] and idx["count"] == 2
+    assert "!! 로고 1개는 오늘 data.json 의 회사 이름과 맞지 않아서 뺐어요" in r.stdout and "AAPL" in r.stdout
+    assert "::warning title=로고 이름 불일치::" in r.stdout
+    # the issuer renamed: its preferred share goes too
+    out2 = tmp_path / "_site2"
+    publish_data(work, rec, names={"005930": "다른 이름", "005935": "삼성전자우", "AAPL": "Apple"})
+    r = assemble(work, out2, "refs/remotes/origin/logos")
+    idx = json.loads((out2 / "logos" / "index.json").read_text(encoding="utf-8"))
+    assert r.returncode == 0 and sorted(idx["logos"]) == ["AAPL"]
 
 
 def test_site_without_a_logos_branch_deploys_with_letter_marks_and_says_so(repo, tmp_path):
@@ -203,7 +272,7 @@ def test_a_bad_logos_branch_never_breaks_the_site(repo, tmp_path, how):
     work, origin, rec = repo
     publish_data(work, rec)
     good = webp((10, 20, 30, 255))
-    entry = {"file": "005930.webp", "route": "ticker", "w": 512, "h": 512, "vector": False, "flags": []}
+    entry = {"file": "005930.webp", "name": "삼성전자", "route": "ticker", "w": 512, "h": 512, "vector": False, "flags": []}
     index = json.dumps({"version": 1, "size": 128, "logos": {"005930": entry}}).encode()
     files = {"logos/index.json": index, "logos/005930.webp": good}
     if how == "broken-index":
@@ -281,7 +350,9 @@ def test_deploy_logos_step_never_fails_the_deploy(tmp_path):
 
 # ── sw.js: logo files ──
 
-def test_service_worker_serves_logos_network_first_and_offline_from_cache():
+def test_service_worker_never_caches_logo_files():
+    """Jack's rule: logos are not kept in the service worker's cache. The worker leaves logos/ to the browser (no
+    respondWith), online and offline; everything else is still network-first with the cache for offline."""
     node = __import__("shutil").which("node")
     if not node:
         pytest.skip("node 가 없어요")
@@ -291,18 +362,22 @@ def test_service_worker_serves_logos_network_first_and_offline_from_cache():
   const out = {};
   out.index1 = await get('logos/index.json');
   out.img1 = await get('logos/005930.webp', 'no-cors');
-  version = 'v2';
-  out.img2 = await get('logos/005930.webp', 'no-cors');
+  out.data1 = await get('data.json');
   online = false;
   out.imgOff = await get('logos/005930.webp', 'no-cors');
   out.indexOff = await get('logos/index.json');
-  out.missOff = await get('logos/000660.webp', 'no-cors');
+  out.dataOff = await get('data.json');
+  out.cached = store.map((e) => new URL(e.url).pathname);
+  out.netCalls = netCalls;
   console.log(JSON.stringify(out));
 })();
 """
     r = subprocess.run([node, "-e", script, os.path.join(ROOT, "sw.js")], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
-    assert got["index1"] == "net v1 /baepsae/logos/index.json" and got["img2"] == "net v2 /baepsae/logos/005930.webp"
-    assert got["imgOff"] == "net v2 /baepsae/logos/005930.webp" and got["indexOff"] == "net v1 /baepsae/logos/index.json"
-    assert got["missOff"] == "ERROR"                                                            # -> the letter mark
+    for k in ("index1", "img1", "imgOff", "indexOff"):
+        assert got[k] == "PASS-THROUGH", (k, got[k])                                             # the browser's own fetch
+    assert got["cached"] == ["/baepsae/data.json"] and got["netCalls"] == 2                      # no logo in the cache
+    assert got["data1"] == "net v1 /baepsae/data.json" and got["dataOff"] == "net v1 /baepsae/data.json"
+    src = open(os.path.join(ROOT, "sw.js"), encoding="utf-8").read()
+    assert src.count(r"if (/\/logos\/[^/]*$/.test(url.pathname)) return;") == 1

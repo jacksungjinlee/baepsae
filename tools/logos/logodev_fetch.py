@@ -27,19 +27,23 @@ What it does
      about 24 hours and is never written anywhere; the etag is kept). Raster sources are downloaded as PNG at their own
      size up to 128 px, vector sources rasterised by logo.dev at 128 px. Normalised to a 128 x 128 WebP (PNG when this
      Pillow has no WebP), transparency kept, centred, never stretched or upscaled. SVG is never stored.
-  4. Automatic quality checks; a failing logo gets the letter mark, never a doubtful logo (QUALITY_NOTE below).
-  5. Writes to --out: logos/<code>.webp + logos/index.json (the folder tools/push_logos_branch.sh publishes),
-     summary.md, review.csv (one row per company), sheet.html and sheet-01.png … (contact sheet: the --sheet-top largest
-     companies of each market with their chosen logo or letter mark, then every Korean company whose homepage logo
-     replaced the ticker's, then every picture shared by different companies), run.json and run.log.
+  4. Automatic quality checks; a failing logo gets the letter mark, never a doubtful logo (QUALITY_NOTE below). A
+     picture shared by companies of different brands gets the letter mark for all of them.
+  5. Writes to --out: logos/<code>.webp + logos/index.json (the folder tools/push_logos_branch.sh publishes; each entry
+     carries the company's name, which Deploy compares with that day's data.json), summary.md, review.csv (one row per
+     company), sheet.html and sheet-01.png … (review sheet, no caps: the --sheet-top largest companies of each market
+     with their chosen logo or letter mark, then every Korean company outside them whose homepage logo replaced the
+     ticker's, whose ticker logo is unverified, or whose logo came from the homepage only, then every shared picture),
+     run.json and run.log.
 
 Spend, pace and stops (logo.dev docs and pricing page, read 2026-11-06: Pro = 500 API requests a minute, 15 open at once,
 $150 of API credit a month, 1 credit = 1¢, logo lookup 2 credits)
   - Credits are counted here, never trusted to logo.dev alone: 2 per answer marked Credits-Charged: 1 (2 also when a
     200 or 404 carries no such header, and 2 for a request that got no answer, in case it was billed). Before every
-    request 2 credits are reserved; a request that could pass --max-credits (default 14,000 = $140) is never sent. The
-    run also stops on 402 (no credit left). With auto-reload on the account a 402 may never come: the local cap is the
-    real stop.
+    request 2 credits are reserved; a request that could pass --max-credits (14,000 = $140, also the most it accepts) is
+    never sent. The cap also holds across runs: when logo.dev reports its balance (Credits-Remaining), no request is
+    sent that could take it below 1,000 credits (15,000 of Pro credit − 14,000). The run also stops on 402 (no credit
+    left). With auto-reload on the account a 402 may never come: the local limits are the real stop.
   - At most --per-minute (200) lookups a minute and --workers (4) open at once; downloads (not billed, not CDN
     requests) at most 300 a minute. 429: waits Retry-After or RateLimit-Reset, else backs off. 202 (indexing): the
     company waits Retry-After (30 s) while the others go on, at most RETRIES_202 times. 401/403, an answer the docs
@@ -84,7 +88,9 @@ from logo_ids import Masker, common_code, is_common_share, is_krx_code, now_kst 
 
 KEY_ENV = chk.KEY_ENV
 CREDITS = chk.CREDITS_PER_LOOKUP                 # 2 per billed logo lookup
-DEFAULT_MAX_CREDITS = 14_000                     # $140 at 1 credit = 1 cent (Jack's stop, 2026-11-06)
+DEFAULT_MAX_CREDITS = MAX_CREDITS = 14_000       # $140 at 1 credit = 1 cent (Jack's stop, 2026-11-06): never more
+MIN_BALANCE = 1_000                              # stop before logo.dev's reported balance could go below this
+                                                 # (15,000 of Pro credit - 14,000): the cap holds across runs too
 DEFAULT_WORKERS = 4                              # open at once (Pro allows 15)
 DEFAULT_PER_MINUTE = 200                         # lookups a minute (Pro allows 500)
 DOWNLOADS_PER_MINUTE = 300
@@ -93,33 +99,43 @@ SHEET_TOP = 300                                  # per market
 RETRIES_202 = 6                                  # logo.dev: usually ready within a minute; stop polling after 300 s
 MAX_WAIT_202_S = 60
 SIZE = LI.SIZE
-SMALL_PX = 64
+SMALL_PX = 64                                    # a raster whose shorter side is under this is dropped (63 yes, 64 no)
+BLANK_SHARE = 0.01                               # visible share (alpha 32 or more) under this: blank
+FAINT_DIST, FAINT_SHARE = 40, 0.015              # on white, pixels more than 40 levels from white under 1.5%: faint
+ONE_COLOUR = 0.985                               # one colour on white and on black at least this share: one_colour
 TILES_PER_PAGE = 48
-SHEET_EXTRA_MAX = 300                            # the sheet's "homepage over ticker" section outside the top: at most
-SHARED_PER_GROUP, SHARED_TILES_MAX = 24, 480     # shared pictures: tiles per group and in all (review.csv has every one)
 MAX_KR_NOCAP = MAX_US_NOCAP = 25
 MUST = chk.MUST
 MUST_TOP = 300                                   # each must-have company sits in its market's top 300 by market cap
 MIN_COMPANIES = chk.MIN_COMPANIES
 URL_NEEDLE = b"img.logo.dev/"                    # a signed image address must never be written
 URL_RE = re.compile(r"https?://img\.logo\.dev/\S*")
-DROP_REASONS = ("small", "blank", "one_colour", "monogram")
-OK_OUTCOMES = ("complete", "max_credits", "out_of_credits")
-OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.")
+DROP_REASONS = ("small", "blank", "faint", "one_colour", "monogram", "shared", "file_clash", "odd_code")
+OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor")
+OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.",
+                    balance_floor=f"Stopped cleanly: logo.dev's reported credit balance would have gone below "
+                                  f"{MIN_BALANCE:,} credits.")
 
 QUALITY_NOTE = (
     "Quality checks (a failing logo gets the letter mark): "
     "**small** — a raster source whose shorter side is under 64 px (logo.dev's width and height); "
     "**blank** — under 1% of the 128 px picture is visible (alpha 32 or more); "
+    "**faint** — near-invisible on white, which is how the app shows logos: laid on white, under 1.5% of the pixels "
+    "are more than 40 levels (of 255) away from white in any channel, so a white or very light logo on transparency "
+    "is dropped; "
     "**one_colour** — the picture laid on white and laid on black is, both times, at least 98.5% one colour "
-    "(colours rounded to 32 levels a channel), so a white logo on transparency or a black one passes; "
+    "(colours rounded to 32 levels a channel), such as a flat coloured square; "
     "**monogram** — logo.dev's generic letter tile, recognised by its shape: an opaque square (75% or more of the "
     "picture fully opaque) of two flat colours (background 55% or more, a far colour 4–40%, at most 6% of other "
     "colours besides the blend between them) whose far colour forms one or two blobs centred within 12% of the middle, "
     "25–75% of the height and 10–75% of the width. Real letter-on-colour logos fail it too; they then show our own "
-    "letter mark, which looks alike. Not dropped but listed: **shared** — the same picture for different companies "
-    "(a group logo, or a generic picture): the same 64-bit difference hash and 16 x 16 colour thumbnails at most 6 "
-    "levels apart on average; only checked pairs form a group. Shared groups are on the contact sheet."
+    "letter mark, which looks alike. "
+    "**shared** — the same picture for companies whose logo.dev brand_id differs (a generic picture, or a group logo "
+    "under different brands): the same 64-bit difference hash and 16 x 16 colour thumbnails at most 6 levels apart on "
+    "average; only checked pairs form a group. Every company in such a group gets the letter mark; a group whose "
+    "companies all have the same brand_id is kept. Every shared group is on the contact sheet. "
+    "**file_clash** — two codes would share one file name; **odd_code** — a code that is not a plain stock code (both "
+    "never expected)."
 )
 
 
@@ -260,17 +276,22 @@ class Ledger:
         self.free = 0                    # answers with Credits-Charged: 0
         self.no_header = 0               # billable answers without the header (counted as billed)
         self.balance_first = self.balance_last = None
+        self.balance = None              # the lowest Credits-Remaining seen (credits), when logo.dev reports one
 
     @property
     def counted(self):
         return self.billed + self.unknown
 
     def reserve(self):
+        """None when 2 credits are reserved; else why not: "cap" (--max-credits) or "floor" (logo.dev's reported
+        balance minus what is in flight could go below MIN_BALANCE)."""
         with self._lock:
             if self.billed + self.unknown + self.reserved + CREDITS > self.cap:
-                return False
+                return "cap"
+            if self.balance is not None and self.balance - self.reserved - CREDITS < MIN_BALANCE:
+                return "floor"
             self.reserved += CREDITS
-            return True
+            return None
 
     def release(self):
         with self._lock:
@@ -295,6 +316,12 @@ class Ledger:
             if bal:
                 self.balance_last = bal
                 self.balance_first = self.balance_first or bal
+                try:
+                    v = float(bal)
+                except ValueError:
+                    v = None
+                if v is not None and v == v:
+                    self.balance = v if self.balance is None else min(self.balance, v)
         return cost
 
     def unanswered(self):
@@ -445,9 +472,12 @@ def quality(canvas, img):
     if not img.get("is_vector") and min(int(img["width"]), int(img["height"])) < SMALL_PX:
         out.append("small")
     arr = np.asarray(canvas.convert("RGBA"))
-    if (arr[..., 3] >= 32).mean() < 0.01:
+    if (arr[..., 3] >= 32).mean() < BLANK_SHARE:
         return out + ["blank"]
-    if top_share(_composite(arr, 255.0)) >= 0.985 and top_share(_composite(arr, 0.0)) >= 0.985:
+    on_white = _composite(arr, 255.0)
+    if ((255 - on_white.astype(np.int16)).max(axis=2) > FAINT_DIST).mean() < FAINT_SHARE:
+        out.append("faint")
+    elif top_share(on_white) >= ONE_COLOUR and top_share(_composite(arr, 0.0)) >= ONE_COLOUR:
         out.append("one_colour")
     elif is_monogram(arr):
         out.append("monogram")
@@ -590,6 +620,7 @@ class Fetcher:
         self.lock = threading.Lock()
         self.counts = collections.Counter()
         self.done = []
+        self.used_files = set()
         self.unfinished = []
         self.remaining = []
         self.stop = None
@@ -620,9 +651,14 @@ class Fetcher:
             if self.deadline is not None and self.clock() >= self.deadline:
                 raise chk.StopRun("time_limit", "reached the time limit (--time-limit-min): the results so far are "
                                                 "saved and uploaded before the workflow's own limit")
-            if not self.ledger.reserve():
+            why = self.ledger.reserve()
+            if why == "cap":
                 raise chk.StopRun("max_credits", f"reached --max-credits {self.ledger.cap:,}: {self.ledger.counted:,} "
                                                  f"credits counted, and the next lookup could cost {CREDITS} more")
+            if why == "floor":
+                raise chk.StopRun("balance_floor", f"logo.dev reports {self.ledger.balance:,.0f} credits left; one more "
+                                                   f"lookup could take the balance below {MIN_BALANCE:,} (the cap across "
+                                                   "runs): stopping")
             sent += 1
             try:
                 resp = self.client.lookup(route, ident)
@@ -756,7 +792,7 @@ class Fetcher:
         """Downloads the chosen logo (and, for a company on the contact sheet, the other route's logo when it is a
         different picture), normalises it and runs the checks. Sets the final result."""
         routes = [job.choice] if job.choice else []
-        if job.c["code"] in self.scope:                  # on the sheet: also the other route's picture, when different
+        if job.c["code"] in self.scope or job.check == "homepage-over-ticker":   # on the sheet: the other picture too
             chosen_etag = job.results[job.choice][1]["image"].get("etag") if job.choice else None
             for rt in ("ticker", "domain"):
                 k, info = job.results.get(rt, ("", {}))
@@ -798,9 +834,21 @@ class Fetcher:
         if cand.get("flags"):
             job.final, job.reason, job.flags = "letter", cand["flags"][0], list(cand["flags"])
             return
+        if not LI.CODE_RE.match(str(job.c["code"])):     # the index takes plain stock codes only
+            job.final, job.reason, job.flags = "letter", "odd_code", ["odd_code"]
+            self.log(f"  !! {job.c['code']!r}: not a plain stock code for logos/index.json → letter mark")
+            return
         canvas = cand["canvas"]
         data, ext = encode(canvas, self.webp)
         name = f"{safe_file(job.c['code'])}.{ext}"
+        with self.lock:
+            clash = name in self.used_files
+            self.used_files.add(name)
+        if clash:                                        # never two codes in one file (only a preferred share reuses one)
+            job.final, job.reason, job.flags = "letter", "file_clash", ["file_clash"]
+            self.count("file name clashes")
+            self.log(f"  !! {job.c['code']}: the file name {name} is taken by another code → letter mark")
+            return
         (self.out_logos / name).write_bytes(data)
         job.final, job.file, job.bytes, job.hash = "logo", name, len(data), fingerprint(canvas)
 
@@ -897,6 +945,29 @@ class Fetcher:
 
 # ── results ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def drop_shared(fetcher, groups, log):
+    """A picture shared by companies whose chosen logos have different brand_ids (or a missing one) is doubtful: every
+    company in that group gets the letter mark and its file is deleted. Returns the indexes (1-based) of those groups."""
+    by = {j.c["code"]: j for j in fetcher.done}
+    dropped = []
+    for i, g in enumerate(groups, 1):
+        jobs = [by[c] for c in g if c in by]
+        brands = {(j.results.get(j.choice, ("", {}))[1].get("brand_id") or "") for j in jobs}
+        if len(brands) == 1 and "" not in brands:
+            log(f"· shared picture {i} kept (one brand, {next(iter(brands))}): " + ", ".join(g))
+            continue
+        dropped.append(i)
+        for j in jobs:
+            if j.file:
+                (fetcher.out_logos / j.file).unlink(missing_ok=True)
+                fetcher.used_files.discard(j.file)
+            j.final, j.reason, j.flags, j.file, j.bytes = "letter", "shared", ["shared"], "", 0
+        log(f"!! shared picture {i}: {len(jobs)} companies of different brands share it → letter marks: " + ", ".join(g))
+    if dropped:
+        log(f"!! shared pictures across different brands: {len(dropped)} groups, "
+            f"{sum(len(groups[i - 1]) for i in dropped):,} companies switched to the letter mark")
+    return dropped
+
 def brand_domain(job):
     if job.final != "logo":
         return ""
@@ -956,12 +1027,12 @@ def make_index(rows, stamp, data, fmt):
     for r in rows:
         if r["result"] != "logo" or r["via"]:
             continue
-        logos[r["code"]] = {"file": r["file"], "route": r["route"], "w": int(r["width"]), "h": int(r["height"]),
-                            "vector": bool(r["vector"]), "flags": [r["check"]] if r["check"] else []}
+        logos[r["code"]] = {"file": r["file"], "name": r["name"], "route": r["route"], "w": int(r["width"]),
+                            "h": int(r["height"]), "vector": bool(r["vector"]), "flags": [r["check"]] if r["check"] else []}
     for r in rows:
         if r["result"] == "logo" and r["via"] and r["via"] in logos:
             e = logos[r["via"]]
-            logos[r["code"]] = dict(e, via=r["via"])
+            logos[r["code"]] = dict(e, name=r["name"], via=r["via"])
     return {"version": LI.VERSION, "size": SIZE, "format": fmt, "source": "logo.dev", "fetched_kst": stamp,
             "data_pxDate": data.get("pxDate"), "count": len(logos), "logos": dict(sorted(logos.items()))}
 
@@ -1038,8 +1109,11 @@ def summary_md(info):
             "## Automatic quality checks", "",
             "Counted on the chosen picture (dropped → letter mark), plus companies whose final logo is shared:", ""]
     out += [f"- {k}: **{t['flags'].get(k, 0):,}**" for k in DROP_REASONS]
-    out += [f"- shared pictures: **{len(info['shared'])}** groups, {sum(len(g) for g in info['shared']):,} companies "
-            "(kept; on the contact sheet)", "", QUALITY_NOTE, "",
+    dropped = info.get("shared_dropped", [])
+    out += [f"- shared pictures: **{len(info['shared'])}** groups, {sum(len(g) for g in info['shared']):,} companies; "
+            f"**{len(dropped)}** groups with different brands switched to letter marks "
+            f"({sum(len(info['shared'][i - 1]) for i in dropped):,} companies), the rest kept (one brand each)", "",
+            QUALITY_NOTE, "",
             "## Credits and requests", "",
             f"- Credits counted: **{cr['counted']:,}** of the {info['max_credits']:,} cap (${cr['counted'] / 100:,.2f}) — "
             f"{CREDITS} for each of {cr['charged']:,} answers marked Credits-Charged: 1, {cr['no_header']:,} billable "
@@ -1056,10 +1130,11 @@ def summary_md(info):
             f"requests) · failed downloads of a chosen logo: {rq['counts'].get('downloads failed', 0):,}.",
             f"- Pace: at most {info['pace']['per_minute']} lookups a minute, {info['pace']['workers']} open at once, "
             f"downloads at most {DOWNLOADS_PER_MINUTE} a minute · run time {info['minutes']:.1f} min.", "",
-            "## Contact sheet", "",
-            f"sheet.html{' and ' + ', '.join(info['sheet_pages']) if info['sheet_pages'] else ' (no PNG pages)'}: the "
-            f"{info['sheet_top']} largest companies of each market (chosen logo or letter mark, with any dropped picture "
-            "beside it), every Korean company whose homepage logo replaced the ticker's, and every shared picture.", ""]
+            "## Review sheet", "",
+            f"sheet.html{' and ' + ', '.join(info['sheet_pages']) if info['sheet_pages'] else ' (no PNG pages)'}, every "
+            "tile in each category, no caps (chosen logo or letter mark, with any dropped picture beside it):", ""]
+    out += [f"- {title}: **{n:,}**" for title, n in info.get("sheet_counts", [])]
+    out += [""]
     if info.get("drops"):
         out += ["## Switched to the letter mark after review", ""]
         out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["drops"]]
@@ -1155,22 +1230,18 @@ def sheet_sections(rows, jobs, groups, top):
         mine = sorted((r for r in comp if (r["market"] != "US") == (side == "kr") and r["market_rank"] != ""
                        and int(r["market_rank"]) <= top), key=lambda r: int(r["market_rank"]))
         secs.append((f"{label}: the {top} largest by market cap", mine))
-    over = sorted((r for r in comp if r["check"] == "homepage-over-ticker" and r["result"] == "logo"
-                   and r["market"] != "US" and (r["market_rank"] == "" or int(r["market_rank"]) > top)),
-                  key=lambda r: int(r["market_rank"] or 10 ** 6))
-    secs.append(("Korea outside the top: homepage logo used instead of a different ticker brand"
-                 + (f" (the {SHEET_EXTRA_MAX} largest of {len(over):,}; every one is in review.csv)"
-                    if len(over) > SHEET_EXTRA_MAX else ""), over[:SHEET_EXTRA_MAX]))
+    outside = [r for r in comp if r["market"] != "US" and (r["market_rank"] == "" or int(r["market_rank"]) > top)
+               and r["result"] == "logo"]
+    for check, title in (("homepage-over-ticker", "homepage logo used instead of a different ticker brand"),
+                         ("unverified", "ticker logo kept, unverified by the DART homepage"),
+                         ("homepage", "no ticker logo, homepage logo used")):
+        mine = sorted((r for r in outside if r["check"] == check), key=lambda r: int(r["market_rank"] or 10 ** 6))
+        secs.append((f"Korea outside the top {top}: {title}", mine))
     by = {r["code"]: r for r in comp}
-    left = SHARED_TILES_MAX
     for i, g in enumerate(groups, 1):
-        if left <= 0:
-            secs.append((f"Shared pictures: {len(groups) - i + 1} more groups not drawn (review.csv, shared_group)", []))
-            break
-        mine = [by[c] for c in g if c in by][:min(SHARED_PER_GROUP, left)]
-        left -= len(mine)
-        secs.append((f"Shared picture, group {i}: {len(g)} companies"
-                     + (f" (first {len(mine)} drawn)" if len(mine) < len(g) else ""), mine))
+        mine = [by[c] for c in g if c in by]
+        what = "letter marks (different brands)" if mine and all(r["reason"] == "shared" for r in mine) else "kept (one brand)"
+        secs.append((f"Shared picture, group {i}: {len(g)} companies, {what}", mine))
     return secs
 
 
@@ -1385,10 +1456,10 @@ def parse_args(argv):
     ap.add_argument("--dir", help="the output folder of an earlier run (with --drop)")
     ap.add_argument("--reason", default="wrong company on the contact sheet", help="why (with --drop)")
     a = ap.parse_args(argv)
-    if a.max_credits < CREDITS or not 1 <= a.workers <= 10 or not 1 <= a.per_minute <= 450 or a.limit < 0 \
-            or a.sheet_top < 1 or a.time_limit_min <= 0:
-        ap.error("--max-credits at least 2, --workers 1 to 10, --per-minute 1 to 450 (Pro allows 500), --limit 0 or "
-                 "more, --sheet-top at least 1, --time-limit-min above 0")
+    if not CREDITS <= a.max_credits <= MAX_CREDITS or not 1 <= a.workers <= 10 or not 1 <= a.per_minute <= 450 \
+            or a.limit < 0 or a.sheet_top < 1 or a.time_limit_min <= 0:
+        ap.error(f"--max-credits 2 to {MAX_CREDITS:,} (never more: Jack's $140 stop), --workers 1 to 10, --per-minute 1 "
+                 "to 450 (Pro allows 500), --limit 0 or more, --sheet-top at least 1, --time-limit-min above 0")
     if bool(a.drop) != bool(a.dir):
         ap.error("--drop and --dir go together")
     return a
@@ -1474,9 +1545,8 @@ def _main(argv, deps, state):
         for line in traceback.format_exc().splitlines():
             log("  " + line)
     groups = shared_groups([(j.c["code"], j.hash) for j in f.done if j.final == "logo" and j.hash is not None])
+    shared_dropped = drop_shared(f, groups, log)
     rows = rows_of(f, preferred, groups)
-    for i, g in enumerate(groups, 1):
-        log(f"· shared picture {i}: " + ", ".join(g))
     fmt = "webp" if d.webp else "png"
     index = make_index(rows, stamp, data, fmt)
     (out_logos / LI.INDEX).write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
@@ -1493,6 +1563,9 @@ def _main(argv, deps, state):
     cands = {j.c["code"]: j.cands for j in f.done}
     cols = mark_colors()
     secs = sheet_sections(rows, f.done, groups, a.sheet_top)
+    sheet_counts = [(title, len(rs)) for title, rs in secs]
+    for title, n in sheet_counts:
+        log(f"· review sheet · {title}: {n:,}")
     finished = f"{d.wall():%Y-%m-%d %H:%M}"
     meta = f"{stamp} KST · data.json prices {data.get('pxDate')} · {index['count']:,} logos"
     _put(out, "sheet.html", sheet_page(meta, secs, cands, cols), mask)
@@ -1518,7 +1591,8 @@ def _main(argv, deps, state):
         "max_credits": a.max_credits, "format": fmt, "sheet_top": a.sheet_top, "sheet_pages": pages,
         "data": {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf")},
         "sources": sources, "plan": pl, "pace": {"per_minute": a.per_minute, "workers": a.workers},
-        "tally": tally(rows), "shared": groups, "index_count": index["count"],
+        "tally": tally(rows), "shared": groups, "shared_dropped": shared_dropped, "sheet_counts": sheet_counts,
+        "index_count": index["count"],
         "credits": {"counted": ledger.counted, "charged": ledger.charged, "free": ledger.free,
                     "no_header": ledger.no_header, "unknown": ledger.unknown, "balance_first": ledger.balance_first,
                     "balance_last": ledger.balance_last},

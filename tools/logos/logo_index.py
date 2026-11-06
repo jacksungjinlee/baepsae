@@ -4,10 +4,13 @@ what may be in it and how its index must look. Pure checks, no network, no Pillo
 
 The folder `logos/` holds only:
   index.json         {"version": 1, "size": 128, "format": "webp", "source": "logo.dev", "logos": {code: entry}}
-                     entry: {"file": "005930.webp", "route": "ticker" | "domain", "w": source width, "h": source height,
-                             "vector": bool, "flags": [...], "via": issuer code (a preferred share reusing its issuer's
-                             file; optional)}
-  <name>.webp|png    one square 128 x 128 picture per company that has a logo (a preferred share has no file of its own)
+                     entry: {"file": "005930.webp", "name": the company's name in data.json at fetch time,
+                             "route": "ticker" | "domain", "w": source width, "h": source height, "vector": bool,
+                             "flags": [...], "via": issuer code (a preferred share reusing its issuer's file; optional)}
+  <name>.webp|png    one square 128 x 128 picture per company that has a logo (a preferred share has no file of its own;
+                     no two companies share a file)
+Deploy keeps only the entries whose name still matches today's data.json (keep_current): a code that now belongs to
+another company falls back to the letter mark.
 Anything else (another name, a sub-folder, a link, an SVG) makes the folder unusable as a whole: the fetch tool does not
 write it, tools/push_logos_branch.sh refuses to push it, and tools/assemble_site.py deploys the site without logos
 (every company then shows its letter mark). SVG is never served: it could carry script on our own origin.
@@ -93,7 +96,7 @@ def check_index(index, files):
         return bad + ["logos is not an object"]
     if len(logos) > MAX_FILES:
         bad.append(f"{len(logos):,} entries (at most {MAX_FILES:,})")
-    used = set()
+    used, owners = set(), {}
     for code, e in logos.items():
         if not CODE_RE.match(str(code)):
             bad.append(f"{code!r}: not a stock code")
@@ -105,6 +108,9 @@ def check_index(index, files):
         if not isinstance(f, str) or not FILE_RE.match(f):
             bad.append(f"{code}: file {f!r} is not a plain .webp or .png name")
             continue
+        name = e.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > 200:
+            bad.append(f"{code}: name {name!r} is not the company's name (Deploy compares it with today's data.json)")
         if e.get("route") not in ROUTES:
             bad.append(f"{code}: route {e.get('route')!r} is not one of {ROUTES}")
         if not (_int_px(e.get("w")) and _int_px(e.get("h"))):
@@ -122,6 +128,12 @@ def check_index(index, files):
         if f not in files:
             bad.append(f"{code}: {f} is listed but not in the folder")
         used.add(f)
+        if via is None:
+            owners.setdefault(f, []).append(code)
+    for f, codes in sorted(owners.items()):          # one file per company; only a preferred share (via) reuses one
+        if len(codes) > 1:
+            bad.append(f"{f}: the file of {len(codes)} codes ({', '.join(codes[:5])}); only a preferred share may reuse "
+                       "its issuer's file (via)")
     for f in sorted(set(files) - used):
         bad.append(f"{f}: in the folder but not in index.json")
     total = 0
@@ -141,6 +153,26 @@ def check_index(index, files):
     if total > MAX_TOTAL_BYTES:
         bad.append(f"the pictures add up to {total:,} bytes (at most {MAX_TOTAL_BYTES:,})")
     return bad
+
+
+def stock_names(data):
+    """{code: name} from a parsed data.json, the way the fetch tool names a company (nk, else ne, else the code)."""
+    out = {}
+    for s in (data.get("stocks") or []) if isinstance(data, dict) else []:
+        if isinstance(s, dict) and s.get("t"):
+            code = str(s["t"]).strip()
+            out[code] = s.get("nk") or s.get("ne") or code
+    return out
+
+
+def keep_current(index, names):
+    """(index, dropped codes): the entries whose name still matches names (today's data.json). A code reused by another
+    company, or gone, is dropped; so is a preferred share whose issuer was dropped. Pure; the input is not changed."""
+    logos = index.get("logos") or {}
+    keep = {c: e for c, e in logos.items() if isinstance(e, dict) and names.get(c) == e.get("name")}
+    keep = {c: e for c, e in keep.items() if e.get("via") is None or e.get("via") in keep}
+    out = dict(index, logos=keep, count=len(keep))
+    return out, sorted(set(logos) - set(keep))
 
 
 def read_dir(path):

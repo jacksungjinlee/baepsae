@@ -116,13 +116,13 @@ export default function InfoApp({ lang, focus, onFocusDone }) {
             매일 새벽 자동 갱신돼요. PER·PBR 등 투자지표는 직전 사업보고서 기준 자체 계산이라 실시간 집계값과 소폭 다를 수 있어요.
             데이터의 정확성·완전성은 보장되지 않으며, 주문 전에는 반드시 증권사 시세를 확인하세요.
           </Sub>
-          {/* v19.3a (docs/tasks/v19.3-portfolio-pictures-accounts.md Part A · Part J.6, Appendix 1 문구): 회사 로고 출처.
-              그림 줄(Adobe Stock · Fluent)은 그림이 들어오는 v19.3b 에서 더해요. 링크 문구는 logo.dev 의 안내 그대로예요. */}
+          {/* v19.3a: 회사 로고 출처. 문구는 docs/tasks/v19.3-portfolio-pictures-accounts.md Part A 에서 승인됐어요 (Jack,
+              2026-11-06; Part J.6). 그림 줄(Adobe Stock · Fluent)은 그림이 들어오는 v19.3b 에서 더해요. 링크 문구는 logo.dev 의 안내 그대로예요. */}
           <div id="info-credits" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + C.line }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>그림 · 로고 출처</span>
             <Sub style={{ marginTop: 4 }}>
               회사 로고: Logo.dev. 로고의 권리는 각 회사에 있어요.{" "}
-              <a href="https://logo.dev" target="_blank" rel="noopener" style={{ color: C.blue, fontWeight: 800 }}>Logos provided by Logo.dev</a>
+              <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{ color: C.blue, fontWeight: 800 }}>Logos provided by Logo.dev</a>
             </Sub>
           </div>
         </Card>
