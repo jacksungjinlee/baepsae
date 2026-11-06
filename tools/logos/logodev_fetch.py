@@ -1169,7 +1169,8 @@ def rows_of(fetcher, preferred, groups):
         unfinished = job.final is None
         row = {"rank": c.get("rank", ""), "market_rank": c.get("mrank", ""), "code": c["code"], "name": c["name"],
                "market": c.get("market", ""), "cap": cap_of(c) or "", "ticker": c.get("ticker", ""),
-               "domain": c.get("domain", ""), "result": job.final or "", "route": job.choice or "",
+               "domain": c.get("domain", ""), "dart_homepage": c.get("hm_url", ""),
+               "result": job.final or "", "route": job.choice or "",
                "check": job.check if job.choice else "", "reason": job.reason if job.final == "letter" else "",
                "flags": " ".join(job.flags), "unverified_why": job.why, "ticker_status": t_kind,
                "ticker_brand": t.get("brand_id", ""), "domain_status": d_kind, "domain_brand": d.get("brand_id", ""),
@@ -1187,7 +1188,7 @@ def rows_of(fetcher, preferred, groups):
         job, row = by.get(p["issuer"], (None, None))
         ok = job is not None and job.final == "logo"
         rows.append({"rank": "", "market_rank": "", "code": p["code"], "name": p["name"], "market": "", "cap": cap_of(p) or "",
-                     "ticker": "", "domain": "", "result": "logo" if ok else ("letter" if job is None or job.final else ""),
+                     "ticker": "", "domain": "", "dart_homepage": "", "result": "logo" if ok else ("letter" if job is None or job.final else ""),
                      "route": row["route"] if ok else "", "check": row["check"] if ok else "",
                      "reason": "" if ok else ("issuer not in data.json" if not p["issuer_listed"] else
                                               (f"issuer {p['issuer']}: {row['reason'] or 'unfinished'}" if row else "")),
@@ -1217,7 +1218,7 @@ def make_index(rows, stamp, data, fmt):
             "data_pxDate": data.get("pxDate"), "count": len(logos), "logos": dict(sorted(logos.items()))}
 
 
-CSV_COLS = ["rank", "market_rank", "code", "name", "market", "cap", "ticker", "domain", "result", "route", "check",
+CSV_COLS = ["rank", "market_rank", "code", "name", "market", "cap", "ticker", "domain", "dart_homepage", "result", "route", "check",
             "reason", "flags", "unverified_why", "ticker_status", "ticker_brand", "domain_status", "domain_brand",
             "brand_domain", "resolution", "width", "height", "format", "vector", "transparency", "etag", "file", "bytes", "credits",
             "requests", "shared_group", "via", "note"]
@@ -1374,6 +1375,7 @@ h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 15px; margin: 18px 0 8p
 .name { font-weight: 700; margin-top: 6px; overflow-wrap: anywhere; }
 .line { color: #5B6576; overflow-wrap: anywhere; }
 .bad { color: #8A5A00; font-weight: 700; }
+.id { color: #1C2B45; }
 """
 
 
@@ -1405,8 +1407,20 @@ def _tile(r, cands, cols):
             f'<div class="line">{e(r["code"])} · #{e(str(r["market_rank"]))} {e(r["market"])}</div>'
             f'<div class="line">{what}</div><div class="line">{src}</div>'
             + (f'<div class="line">{e(r["unverified_why"])}</div>' if r["unverified_why"] else "")
-            + (f'<div class="line">shared picture group {r["shared_group"]}</div>' if r["shared_group"] else "")
+            + (f'<div class="line">shared picture group {r["shared_group"]}</div>' + _identity(r) if r["shared_group"]
+               else "")
             + "</div>")
+
+
+def _identity(r):
+    """For a shared-picture tile: the company's own DART homepage (Korea) and logo.dev's brand (brand_id, and the brand
+    domain when known), so --keep is decided by the company's own homepage, never by its name."""
+    e = html.escape
+    brand = r["ticker_brand"] if r["route"] == "ticker" else r["domain_brand"] if r["route"] == "domain" else ""
+    home = r["domain"] or r.get("dart_homepage") or ""
+    lines = [f'DART homepage: {e(home) or "none"}' if r["market"] != "US" else "DART homepage: — (US)",
+             f'logo.dev brand: {e(brand) or "unknown"}' + (f' · {e(r["brand_domain"])}' if r["brand_domain"] else "")]
+    return "".join(f'<div class="line id">{x}</div>' for x in lines)
 
 
 def sheet_sections(rows, jobs, groups, top):

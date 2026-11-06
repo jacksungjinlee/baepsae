@@ -441,6 +441,11 @@ def test_a_picture_shared_by_different_brands_becomes_letter_marks(tmp_path):
     sheet = (out / "sheet.html").read_text(encoding="utf-8")
     assert "ticker: shared" in sheet and "2 switched to letter marks (different brands), 1 kept (same-brand)" in sheet
     assert "kept (one brand)" in sheet
+    # every shared tile shows whose picture it is by the company's own homepage and logo.dev's brand, never by name
+    assert "DART homepage: samsung.com" in sheet and "logo.dev brand: brand_sam · samsung.com" in sheet
+    assert "DART homepage: — (US)" in sheet and "logo.dev brand: brand_msft" in sheet and "logo.dev brand: brand_brk" in sheet
+    assert sheet.count("DART homepage:") == 2 * 5        # 5 shared companies, each in its top-300 and its group section
+    assert review(out)["005930"]["dart_homepage"] == "samsung.com"
 
 
 def test_a_missing_brand_id_counts_as_unknown(tmp_path):
