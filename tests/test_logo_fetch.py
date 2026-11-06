@@ -420,6 +420,8 @@ def test_a_picture_shared_by_different_brands_becomes_letter_marks(tmp_path):
     assert "- shared: **2**" in s and "**1** groups with different brands switched to letter marks" in s
     log = (out / "run.log").read_text(encoding="utf-8")
     assert "!! shared picture" in log and "different brands" in log
+    sheet = (out / "sheet.html").read_text(encoding="utf-8")
+    assert "ticker: shared" in sheet and "letter marks (different brands)" in sheet and "kept (one brand)" in sheet
 
 
 def test_index_entries_carry_the_company_name_and_odd_codes_get_letter_marks(tmp_path):

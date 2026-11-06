@@ -1202,7 +1202,8 @@ def _tile(r, cands, cols):
     for rt, cd in sorted(cands.items()):
         if r["result"] == "logo" and rt == r["route"]:
             continue
-        why = " ".join(cd.get("flags") or []) or ("not chosen" if not cd.get("error") else "download failed")
+        why = (" ".join(cd.get("flags") or []) or ("download failed" if cd.get("error") else "")
+               or (r["reason"] if rt == r["route"] and r["result"] != "logo" and r["reason"] else "not chosen"))
         if cd.get("png"):
             extra.append(f'<div><img alt="" src="data:image/png;base64,{base64.b64encode(cd["png"]).decode()}">'
                          f'<div class="line bad">{e(rt)}: {e(why)}</div></div>')
