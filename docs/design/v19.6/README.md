@@ -1,6 +1,6 @@
 # v19.6 design hand-off (Jack's claude.ai design chat, 2026-11-06)
 
-Boards for `docs/tasks/v19.6-records-alerts-dark.md`. Jack approved them on the private design board (version 54).
+Boards for `docs/tasks/v19.6-records-alerts-dark.md`. Jack approved them on the private design board (version 55).
 Read them for layout, sizes, colours and structure. All companies, logos and numbers are made up. Their Korean text is
 final only where the task file's Appendix 1 lists it. Small grey lines that explain a board (not part of the screen)
 are notes, not UI.
