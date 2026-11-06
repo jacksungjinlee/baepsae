@@ -1,6 +1,6 @@
 # v19.6 design hand-off (Jack's claude.ai design chat, 2026-11-06)
 
-Boards for `docs/tasks/v19.6-records-alerts-dark.md`. Jack approved them on the private design board (version 53).
+Boards for `docs/tasks/v19.6-records-alerts-dark.md`. Jack approved them on the private design board (version 54).
 Read them for layout, sizes, colours and structure. All companies, logos and numbers are made up. Their Korean text is
 final only where the task file's Appendix 1 lists it. Small grey lines that explain a board (not part of the screen)
 are notes, not UI.
@@ -11,7 +11,7 @@ are notes, not UI.
 |---|---|---|
 | `Records2` | 팔았어요 · 배당 받았어요 | A |
 | `Returns2` | 내 수익: 가진 종목 · 판 종목 · 받은 배당, 미국 종목 환율 split, 기록 내려받기 | A |
-| `Today2` | 오늘 볼 것: 유상증자 · 전환사채 cards, 임원 지분 변동, 국민연금, 이번 주 일정 | B |
+| `Today2` | 오늘 볼 것: 유상증자 · 전환사채 cards, 임원 지분 변동, 국민연금, 다가오는 일정 | B |
 | `Watch2` | 관심 종목 with conditions | C |
 | `Home2Dark`, `BuildCards2Dark`, `CoSummary2Dark`, `HomeMovers2Dark` | 어두운 화면 versions of approved boards | D |
 | `Weekly2` | 이번 주 정리 | E |
