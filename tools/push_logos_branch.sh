@@ -7,6 +7,7 @@
 # - 손으로만 돌려요: 세션이 logo-dev-fetch 의 artifact(요약 · 대조표)를 보고 난 뒤에. 그 workflow 는 읽기 권한만 있어요.
 # - DIR 에는 index.json 과 .webp · .png 그림만 있어야 하고, index.json 과 그림이 서로 맞아야 해요 (tools/logos/logo_index.py:
 #   빠진 그림 · 목록에 없는 그림 · 다른 이름 · 하위 폴더 · 링크 · SVG · 128 x 128 이 아닌 그림 · 너무 큰 파일 → 아무것도 올리지 않아요).
+#   dropped/ 폴더(검사에서 빠진 그림)나, 오류 뒤 살려 낸 폴더(salvaged: 같은 그림 · 우선주 단계를 건너뜀)도 올리지 않아요.
 # - logos 브랜치의 커밋에는 logos/ 폴더 하나만 들어 있어요 (코드 없음). 있으면 그 끝 위에 커밋 하나를 더하고, 없으면 처음 만들어요.
 #   바뀐 것이 없으면 커밋하지 않아요. 브랜치 이름은 logos 로 정해져 있어요 (main · data 에는 절대 쓰지 않아요).
 # - 강제 푸시는 하지 않아요. 그사이 누가 먼저 올렸으면 푸시가 거절되고 멈춰요 (사이트는 그대로예요).
@@ -22,7 +23,7 @@ if [ ! -d "$DIR" ] || [ -L "$DIR" ]; then
   echo "!! 로고 폴더가 아니에요 ($DIR) → logos 브랜치에 올리지 않아요"
   exit 1
 fi
-if ! python3 "$HERE/logos/logo_index.py" check "$DIR"; then
+if ! python3 "$HERE/logos/logo_index.py" publishable "$DIR"; then
   echo "!! 로고 폴더가 검사를 통과하지 못했어요 (위 줄) → logos 브랜치에 올리지 않아요"
   exit 1
 fi

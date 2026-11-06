@@ -211,10 +211,10 @@ NOW = chk.now_kst()
 TODAY = f"{NOW:%Y-%m-%d}"
 
 
-def run(tmp, net, *extra, workers="1", env=None, webp=True, clock=None, full_run_date=TODAY, out_name="out"):
+def run(tmp, net, *extra, workers="1", env=None, webp=True, clock=None, full_run_date=TODAY, out_name="out", wall=None):
     clock = clock or Clock()
     environ = {F.KEY_ENV: FAKE_KEY} if env is None else env
-    deps = F.Deps(send=net, clock=clock, sleep=clock.sleep, wall=lambda: NOW, environ=environ,
+    deps = F.Deps(send=net, clock=clock, sleep=clock.sleep, wall=wall or (lambda: NOW), environ=environ,
                   jitter=lambda: 0.0, min_counts={"kr": 1, "us": 1}, render=lambda *a: ([], None), webp=webp)
     out = tmp / out_name
     date = ["--full-run-date", full_run_date] if full_run_date is not None else []
@@ -477,6 +477,108 @@ def test_keep_restores_a_dropped_picture_after_review_and_refuses_others(tmp_pat
     assert "005930" not in index(out)["logos"] and (out / "dropped" / "005930.webp").exists()
     assert F.main(["--keep", "005930", "--dir", str(out)]) == 0
     assert index(out)["logos"]["005935"]["via"] == "005930" and index(out)["logos"]["005935"]["name"] == "삼성전자우"
+
+
+def snapshot(out):
+    return {str(p.relative_to(out)): p.read_bytes() for p in sorted((out / "logos").iterdir()) + sorted(
+        (out / "dropped").iterdir() if (out / "dropped").exists() else [])}
+
+
+def test_drop_refuses_a_preferred_share_and_dropped_stays_valid(tmp_path):
+    write_inputs(tmp_path)
+    rc, out = run(tmp_path, Net(ALL_GOOD))
+    before = snapshot(out)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--drop", "005935", "--dir", str(out)])
+    assert "우선주는 보통주(005930)를 빼면 같이 빠져요" in str(e.value) and snapshot(out) == before
+    assert F.main(["--drop", "005930", "--dir", str(out)]) == 0                                 # the issuer: both go
+    idx = index(out)
+    assert "005930" not in idx["logos"] and "005935" not in idx["logos"]
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+    assert F.main(["--drop", "AAPL", "--dir", str(out)]) == 0                                    # later switches still work
+    assert F.main(["--keep", "005930,AAPL", "--dir", str(out)]) == 0
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+
+
+def test_a_code_given_twice_counts_once(tmp_path):
+    write_inputs(tmp_path)
+    rc, out = run(tmp_path, Net(ALL_GOOD))
+    assert F.main(["--drop", "AAPL,AAPL, AAPL", "--dir", str(out)]) == 0
+    assert F.main(["--keep", "AAPL,AAPL", "--dir", str(out)]) == 0
+    assert "AAPL" in index(out)["logos"] and (out / "logos" / "AAPL.webp").exists()
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+    assert (out / "keeps.csv").read_text(encoding="utf-8").count("AAPL") == 1
+
+
+@pytest.mark.parametrize("what", ["drop", "keep"])
+def test_a_failure_midway_changes_nothing(tmp_path, monkeypatch, what):
+    write_inputs(tmp_path)
+    rc, out = run(tmp_path, Net(ALL_GOOD))
+    if what == "keep":
+        assert F.main(["--drop", "AAPL,MSFT", "--dir", str(out)]) == 0
+    before = snapshot(out)
+    real, calls = F.write_index, []
+
+    def flaky(folder, index_):
+        calls.append(folder.name)
+        if len(calls) == 2:                                    # logos/index.json written, then the second one fails
+            raise OSError("disk full (test)")
+        return real(folder, index_)
+    monkeypatch.setattr(F, "write_index", flaky)
+    rc = F.main([f"--{what}", "AAPL,MSFT", "--dir", str(out)])
+    assert rc == 1 and len(calls) == 2
+    assert snapshot(out) == before                                                              # files and both indexes
+
+
+@pytest.mark.parametrize("bal", ["15,000", "$150.00", "15000 credits", "inf", "nan", "-5", "1e5", " "])
+def test_an_unreadable_balance_stops_the_run_cleanly(tmp_path, bal):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "AAPL")] = [logo_answer("aapl", "brand_aapl", remaining=bal)]
+    net = Net(answers)
+    rc, out = run(tmp_path, net)
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    if not bal.strip():                                                                         # no balance at all
+        assert info["outcome"] == "complete"
+        return
+    assert rc == 0 and info["outcome"] == "balance_unreadable" and info["ok"] is True, info["outcome"]
+    assert net.lookups == [("ticker", "AAPL")] and sorted(index(out)["logos"]) == ["AAPL"]      # results saved
+    assert "cannot read" in (out / "run.log").read_text(encoding="utf-8")
+
+
+def test_a_balance_written_150_00_reads_as_150_and_stops(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "AAPL")] = [logo_answer("aapl", "brand_aapl", remaining="150.00")]
+    net = Net(answers)
+    rc, out = run(tmp_path, net)
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert info["outcome"] in ("balance_low", "balance_floor") and net.lookups == [("ticker", "AAPL")]
+
+
+def test_same_brand_needs_a_real_brand_id_match(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "000660.KS")] = [logo_answer("hyn", "", etag="same-etag")]              # no brand_id, same etag
+    answers[("domain", "skhynix.com")] = [logo_answer("hyn", "", etag="same-etag", cc="0")]
+    answers[("ticker", "005380.KS")] = [logo_answer("hmc", "brand_a", etag="same2")]          # different brand_ids,
+    answers[("domain", "hyundai.com")] = [logo_answer("hmc", "brand_b", etag="same2")]        # same etag
+    rc, out = run(tmp_path, Net(answers))
+    rv = review(out)
+    assert (rv["000660"]["check"], rv["000660"]["unverified_why"]) == ("unverified", "brand id missing from an answer")
+    assert rv["005380"]["check"] == "homepage-over-ticker"
+    assert rv["005930"]["check"] == "same-brand"
+
+
+def test_full_run_date_is_the_korean_date_even_at_1am(tmp_path):
+    import datetime as dt
+    write_inputs(tmp_path)
+    utc_clock = lambda: dt.datetime(2026, 11, 6, 16, 0, tzinfo=dt.timezone.utc)                # noqa: E731 (01:00 KST)
+    with pytest.raises(SystemExit) as e:
+        run(tmp_path, Net(ALL_GOOD), full_run_date="2026-11-06", wall=utc_clock)
+    assert "2026-11-07" in str(e.value)
+    rc, out = run(tmp_path, Net(ALL_GOOD), full_run_date="2026-11-07", wall=utc_clock)
+    assert rc == 0 and "2026-11-07 01:00 KST" in (out / "run.log").read_text(encoding="utf-8")
 
 
 def test_a_crash_after_the_lookups_still_saves_and_uploads(tmp_path, monkeypatch):
@@ -810,14 +912,15 @@ def test_keep_current_drops_reused_or_renamed_codes_and_their_preferred_shares()
         "000660": dict(ENTRY, file="000660.webp", name="SK하이닉스"), "AAPL": dict(ENTRY, file="AAPL.webp", name="Apple")}}
     data = {"stocks": [{"t": "005930", "nk": "삼성전자"}, {"t": "005935", "nk": "삼성전자우"},
                        {"t": "000660", "nk": "다른 회사"}, {"t": "MSFT", "nk": "Microsoft"}]}
-    out, gone = LI.keep_current(index, LI.stock_names(data))
+    out, gone, unknown = LI.keep_current(index, LI.stock_names(data))
     assert sorted(out["logos"]) == ["005930", "005935"] and gone == ["000660", "AAPL"] and out["count"] == 2
-    out, gone = LI.keep_current(index, LI.stock_names({"stocks": [{"t": "005935", "nk": "삼성전자우"}]}))
+    assert unknown == []
+    out, gone, unknown = LI.keep_current(index, LI.stock_names({"stocks": [{"t": "005935", "nk": "삼성전자우"}]}))
     assert out["logos"] == {} and "005935" in gone                                # issuer gone -> preferred gone too
     assert index["logos"]["000660"]["name"] == "SK하이닉스"                        # the input is not changed
 
 
-def test_harmless_name_changes_keep_the_logo():
+def test_harmless_name_changes_keep_the_logo_and_nameless_ones_do_not():
     index = {"version": 1, "size": 128, "logos": {
         "HLT": dict(ENTRY, file="HLT.webp", name="Hilton Worldwide Holdings Inc. Common Stock"),
         "ZZ": dict(ENTRY, file="ZZ.webp", name="ZZ"),                                          # the name was the ticker
@@ -826,10 +929,13 @@ def test_harmless_name_changes_keep_the_logo():
         "OLD": dict(ENTRY, file="OLD.webp", name="Old Company")}}
     today = {"HLT": "Hilton Worldwide Holdings Inc.", "ZZ": "Zeta Zulu Holdings", "AB": "alpha beta corp",
              "005930": "삼성전자 주식회사", "C1": "GAMMA INC", "OLD": "New Company"}
-    out, gone = LI.keep_current(index, today)
-    assert gone == ["OLD"] and sorted(out["logos"]) == ["005930", "AB", "C1", "HLT", "ZZ"]
-    out, gone = LI.keep_current(index, dict(today, AB="", OLD="OLD"))                          # empty or the code: unknown
-    assert gone == [] and LI.same_company("A", "Alpha", "Beta") is False
+    out, gone, unknown = LI.keep_current(index, today)
+    assert gone == ["OLD"] and unknown == ["ZZ"] and sorted(out["logos"]) == ["005930", "AB", "C1", "HLT"]
+    out, gone, unknown = LI.keep_current(index, dict(today, AB="", OLD="OLD", ZZ="Zeta Zulu Holdings"))
+    assert unknown == ["AB", "OLD", "ZZ"] and gone == []                                       # empty or just the code
+    assert sorted(out["logos"]) == ["005930", "C1", "HLT"]
+    assert LI.same_company("A", "Alpha", "Beta") == "different" and LI.same_company("A", "Alpha", "ALPHA") == "same"
+    assert LI.same_company("A", "A", "Alpha") == LI.same_company("A", "Alpha", " ") == "unknown"
 
 
 def test_image_size_reads_png_and_every_webp_kind():

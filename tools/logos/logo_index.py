@@ -10,7 +10,7 @@ The folder `logos/` holds only:
   <name>.webp|png    one square 128 x 128 picture per company that has a logo (a preferred share has no file of its own;
                      no two companies share a file)
 Deploy keeps only the entries whose name still matches today's data.json (keep_current): a code that now belongs to
-another company falls back to the letter mark.
+another company, or whose name is empty or just the code, falls back to the letter mark.
 Anything else (another name, a sub-folder, a link, an SVG) makes the folder unusable as a whole: the fetch tool does not
 write it, tools/push_logos_branch.sh refuses to push it, and tools/assemble_site.py deploys the site without logos
 (every company then shows its letter mark). SVG is never served: it could carry script on our own origin.
@@ -188,25 +188,28 @@ def norm_name(name):
 
 
 def same_company(code, then, now):
-    """True unless both names are real and differ. A name that is empty or just the code/ticker says nothing, so the
-    logo stays."""
+    """"same" or "different", or "unknown" when either name is empty or just the code/ticker: such a name proves
+    nothing, and a reused code with a nameless listing is the risky case, so Deploy treats unknown like different."""
     c = norm_name(code)
     a, b = norm_name(then), norm_name(now)
     if a in ("", c) or b in ("", c):
-        return True
-    return a == b
+        return "unknown"
+    return "same" if a == b else "different"
 
 
 def keep_current(index, names):
-    """(index, dropped codes): the entries whose name still matches names (today's data.json), compared with norm_name.
-    A code reused by another company, or gone, is dropped; so is a preferred share whose issuer was dropped. Pure; the
-    input is not changed."""
+    """(index, different, unknown): only the entries whose name matches today's data.json (norm_name) stay. A code
+    reused by another company or gone ("different"), and one whose name, then or now, is empty or just the code
+    ("unknown"), is dropped, and so is a preferred share whose issuer was dropped. Pure; the input is not changed."""
     logos = index.get("logos") or {}
-    keep = {c: e for c, e in logos.items()
-            if isinstance(e, dict) and c in names and same_company(c, e.get("name"), names[c])}
+    verdict = {c: (same_company(c, e.get("name"), names[c]) if c in names else "different")
+               for c, e in logos.items() if isinstance(e, dict)}
+    keep = {c: e for c, e in logos.items() if verdict.get(c) == "same"}
     keep = {c: e for c, e in keep.items() if e.get("via") is None or e.get("via") in keep}
     out = dict(index, logos=keep, count=len(keep))
-    return out, sorted(set(logos) - set(keep))
+    gone = sorted(set(logos) - set(keep))
+    unknown = [c for c in gone if verdict.get(c) == "unknown"]
+    return out, [c for c in gone if c not in unknown], unknown
 
 
 def read_dir(path):
@@ -252,14 +255,29 @@ def validate_dir(path):
     return (index if not bad else None), bad
 
 
+def not_publishable(index):
+    """Why a valid folder still must not go to the logos branch: the dropped/ side folder, or a salvaged run (an error
+    after the lookups skipped the shared-picture and preferred-share steps). None when it may."""
+    if index.get("dropped") is True:
+        return "this is the dropped/ side folder (pictures that failed a check), not logos/"
+    if index.get("salvaged") is True:
+        return ("this folder was saved by the salvage path after an error: the shared-picture check and preferred "
+                "shares were skipped, so it must go through those checks again first")
+    return None
+
+
 def main(argv):
-    if len(argv) != 2 or argv[0] != "check":
-        raise SystemExit("usage: python3 tools/logos/logo_index.py check DIR")
+    if len(argv) != 2 or argv[0] not in ("check", "publishable"):
+        raise SystemExit("usage: python3 tools/logos/logo_index.py check|publishable DIR")
     index, bad = validate_dir(argv[1])
     for b in bad[:50]:
         print("!! " + b)
     if bad:
         print(f"!! {argv[1]}: {len(bad)} problems — not a valid logo folder")
+        return 1
+    why = not_publishable(index) if argv[0] == "publishable" else None
+    if why:
+        print(f"!! {argv[1]}: not for the logos branch — {why}")
         return 1
     n = len(index["logos"])
     files = len({e["file"] for e in index["logos"].values()})

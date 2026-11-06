@@ -116,11 +116,16 @@ def copy_logos(root, out, ref):
                 names = LI.stock_names(json.load(fh))
         except (OSError, ValueError) as e:
             return no_logos(f"사이트 폴더의 data.json 을 읽지 못해 로고 이름을 맞춰 보지 못했어요 ({type(e).__name__}).")
-        index, gone = LI.keep_current(index, names)
+        index, gone, unknown = LI.keep_current(index, names)
         if gone:
             print(f"!! 로고 {len(gone)}개는 오늘 data.json 의 회사 이름과 맞지 않아서 뺐어요 (코드가 다른 회사로 바뀌었거나 이름이 "
                   f"바뀜 → 글자 표시): {', '.join(gone[:30])}{' …' if len(gone) > 30 else ''}")
             print(f"::warning title=로고 이름 불일치::로고 {len(gone)}개는 오늘 회사 이름과 달라서 글자 표시로 보여 줘요.")
+        if unknown:                                       # 이름이 비었거나 코드뿐이면 같은 회사인지 알 수 없어요
+            print(f"!! 로고 {len(unknown)}개는 회사 이름이 비었거나 코드뿐이라 같은 회사인지 확인하지 못해서 뺐어요 (→ 글자 표시): "
+                  f"{', '.join(unknown[:30])}{' …' if len(unknown) > 30 else ''}")
+            print(f"::warning title=로고 이름 없음::로고 {len(unknown)}개는 회사 이름으로 확인하지 못해 글자 표시로 보여 줘요.")
+        if gone or unknown:
             used = {e["file"] for e in index["logos"].values()}
             for n in os.listdir(stage):
                 if n != LI.INDEX and n not in used:

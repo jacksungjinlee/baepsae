@@ -10,6 +10,8 @@ Part J). Run by hand only: from the workflow "logo.dev 로고 받기" (.github/w
                                                              # after looking at the sheet: those companies get the letter mark
   python3 tools/logos/logodev_fetch.py --keep 066570 --dir DIR --reason "LG group logo, checked"
                                                              # the mirror: a picture in dropped/ goes back into logos/
+--drop and --keep are all or nothing (both folders checked before and after; on any error nothing changes), take each
+code once, and --drop refuses a preferred share (it goes with its common share).
 A run of more than 50 companies (no --limit, or a bigger one) needs --full-run-date set to today's KST date (the
 workflow input full_run_date), so a re-run on another day refuses by itself before any request.
 
@@ -22,8 +24,9 @@ What it does
        ticker  KOSPI and KONEX 005930.KS · KOSDAQ 247540.KQ · US bare (AAPL, BRK-B);
        domain  Korea only: the DART homepage domain (kr_homepages.csv, domain_ok = 1), after the ticker, whatever the
                ticker found. The logo lookup does not return a brand domain, so the cross-check compares brand_id:
-                 ticker logo + homepage logo of the same brand (same brand_id or same etag) -> the ticker logo, "same-brand";
+                 ticker logo + homepage logo of the same real brand_id -> the ticker logo, "same-brand";
                  ticker logo + homepage logo of another brand -> the homepage logo ("homepage-over-ticker");
+                 either brand_id missing (an equal etag is not enough) -> the ticker logo, "unverified";
                  ticker logo, the homepage found no logo (or no usable domain) -> the ticker logo, flagged "unverified";
                  no ticker logo + homepage logo -> the homepage logo ("homepage"); neither -> the letter mark.
                A second lookup that reaches a brand already billed in the last 24 hours is free (Credits-Charged: 0).
@@ -50,7 +53,7 @@ $150 of API credit a month, 1 credit = 1¢, logo lookup 2 credits)
     never sent. The cap also holds across runs: when logo.dev reports its balance (Credits-Remaining), no request is
     sent that could take it below 1,000 credits (15,000 of Pro credit − 14,000). The first balance is logged with the
     run's worst case; below that worst case plus 1,000 the run stops before any further lookup. A billed answer without
-    a balance is said once. A --limit run's cap is its own ceiling (2 credits a lookup: 20 companies, at most 80). The
+    a balance is said once; a balance that is not a plain number ("15,000", "$150", "inf", "-5") stops the run. A --limit run's cap is its own ceiling (2 credits a lookup: 20 companies, at most 80). The
     run also stops on 402 (no credit left). With auto-reload on the account a 402 may never come: the local limits are
     the real stop.
   - At most --per-minute (200) lookups a minute and --workers (4) open at once; downloads (not billed, not CDN
@@ -96,7 +99,7 @@ sys.path.insert(0, str(HERE))
 import logo_index as LI  # noqa: E402
 import logo_sources as lsrc  # noqa: E402
 import logodev_api_check as chk  # noqa: E402
-from logo_ids import Masker, common_code, is_common_share, is_krx_code, now_kst  # noqa: E402
+from logo_ids import KST, Masker, common_code, is_common_share, is_krx_code, now_kst  # noqa: E402
 
 KEY_ENV = chk.KEY_ENV
 CREDITS = chk.CREDITS_PER_LOOKUP                 # 2 per billed logo lookup
@@ -123,13 +126,16 @@ MIN_COMPANIES = chk.MIN_COMPANIES
 URL_NEEDLE = b"img.logo.dev/"                    # a signed image address must never be written
 URL_RE = re.compile(r"https?://img\.logo\.dev/\S*")
 DROP_REASONS = ("small", "blank", "faint", "one_colour", "monogram", "shared", "file_clash", "odd_code")
-OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "balance_low")
+OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "balance_low", "balance_unreadable")
+BALANCE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # Credits-Remaining as logo.dev documents it ("18966.99"); else unreadable
 FULL_RUN_FREE_LIMIT = 50                         # a --limit run up to this many companies needs no --full-run-date
 OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.",
                     balance_floor=f"Stopped cleanly: logo.dev's reported credit balance would have gone below "
                                   f"{MIN_BALANCE:,} credits.",
                     balance_low=f"Stopped cleanly before the lookups: logo.dev's first reported balance was below this "
-                                f"run's worst case plus the {MIN_BALANCE:,}-credit floor.")
+                                f"run's worst case plus the {MIN_BALANCE:,}-credit floor.",
+                    balance_unreadable="Stopped cleanly: logo.dev reported a credit balance this tool cannot read, so "
+                                       "the 1,000-credit floor could not be kept.")
 
 QUALITY_NOTE = (
     "Quality checks (a failing logo gets the letter mark): "
@@ -295,6 +301,8 @@ class Ledger:
         self.balance = None              # the lowest Credits-Remaining seen (credits), when logo.dev reports one
         self._first, self._first_done = None, False      # the first balance reported, said once (take_notices)
         self._nobal, self._nobal_told = False, False     # a billed answer without a balance, said once
+        self.unreadable = None                           # a Credits-Remaining that is not a plain number: stop
+        self._unreadable_new = None
 
     @property
     def counted(self):
@@ -306,6 +314,8 @@ class Ledger:
         with self._lock:
             if self.billed + self.unknown + self.reserved + CREDITS > self.cap:
                 return "cap"
+            if self.unreadable is not None:
+                return "unreadable"
             if self.balance is not None and self.balance - self.reserved - CREDITS < MIN_BALANCE:
                 return "floor"
             self.reserved += CREDITS
@@ -331,28 +341,27 @@ class Ledger:
                 cost = CREDITS
             self.billed += cost
             bal = resp.headers.get("credits-remaining")
-            if bal:
+            if bal is not None and str(bal).strip() != "":
+                bal = str(bal).strip()
                 self.balance_last = bal
                 self.balance_first = self.balance_first or bal
-                try:
+                if BALANCE_RE.match(bal):
                     v = float(bal)
-                except ValueError:
-                    v = None
-                if v is not None and v == v:
                     self.balance = v if self.balance is None else min(self.balance, v)
                     if not self._first_done:
                         self._first_done, self._first = True, v
-                elif cost and not self._nobal_told:
-                    self._nobal_told = self._nobal = True
+                elif self.unreadable is None:            # "15,000", "$150.00", "inf", "-5": never go on without the floor
+                    self.unreadable = self._unreadable_new = bal
             elif cost and not self._nobal_told:
                 self._nobal_told = self._nobal = True
         return cost
 
     def take_notices(self):
-        """(first balance or None, True when a billed answer carried no balance): each one only once."""
+        """(first balance or None, True when a billed answer carried no balance, an unreadable balance or None):
+        each one only once."""
         with self._lock:
-            out = (self._first, self._nobal)
-            self._first, self._nobal = None, False
+            out = (self._first, self._nobal, self._unreadable_new)
+            self._first, self._nobal, self._unreadable_new = None, False, None
         return out
 
     def unanswered(self):
@@ -689,6 +698,9 @@ class Fetcher:
             if why == "cap":
                 raise chk.StopRun("max_credits", f"reached --max-credits {self.ledger.cap:,}: {self.ledger.counted:,} "
                                                  f"credits counted, and the next lookup could cost {CREDITS} more")
+            if why == "unreadable":
+                raise chk.StopRun("balance_unreadable", f"logo.dev's credit balance could not be read "
+                                                        f"({str(self.ledger.unreadable)[:40]!r}): stopping")
             if why == "floor":
                 raise chk.StopRun("balance_floor", f"logo.dev reports {self.ledger.balance:,.0f} credits left; one more "
                                                    f"lookup could take the balance below {MIN_BALANCE:,} (the cap across "
@@ -711,7 +723,12 @@ class Fetcher:
                     continue
                 return "error", {"note": f"no answer after {tr + 1} tries ({type(e).__name__})"}, spent, sent
             spent += self.ledger.settle(resp)
-            first, nobal = self.ledger.take_notices()
+            first, nobal, unreadable = self.ledger.take_notices()
+            if unreadable is not None:
+                self.set_stop(chk.StopRun("balance_unreadable", f"logo.dev reported a credit balance this tool cannot "
+                                                                f"read ({unreadable[:40]!r}); without it the "
+                                                                f"{MIN_BALANCE:,}-credit floor cannot be kept: no further "
+                                                                "lookup, what was found is saved"))
             if first is not None:
                 self.first_balance(first)
             if nobal:
@@ -809,11 +826,10 @@ class Fetcher:
         t_kind, t = r.get("ticker", ("", {}))
         d_kind, d = r.get("domain", ("", {}))
         if t_kind == "logo" and d_kind == "logo":
-            same = (t.get("brand_id") and t.get("brand_id") == d.get("brand_id")) or \
-                   (t["image"].get("etag") and t["image"].get("etag") == d["image"].get("etag"))
-            if same:
+            tb, db = t.get("brand_id") or "", d.get("brand_id") or ""
+            if tb and db and tb == db:                   # a real brand_id match only (an equal etag is not enough)
                 job.choice, job.check = "ticker", "same-brand"
-            elif t.get("brand_id") and d.get("brand_id"):
+            elif tb and db:
                 job.choice, job.check = "domain", "homepage-over-ticker"
             else:
                 job.choice, job.check, job.why = "ticker", "unverified", "brand id missing from an answer"
@@ -1484,108 +1500,163 @@ def write_index(folder, index):
                                    encoding="utf-8")
 
 
+def _dedupe(codes):
+    out = []
+    for c in (str(x).strip() for x in codes):
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
+def _files(folder):
+    return {p.name: p.read_bytes() for p in folder.iterdir() if p.name != LI.INDEX} if folder.exists() else {}
+
+
+def _copy(index):
+    return json.loads(json.dumps(index))
+
+
+def commit_switch(logos, dropped, index, dindex, moves):
+    """All or nothing, for --keep and --drop. moves: [(file name, "to_dropped" | "to_logos")]. First the result is
+    checked in memory (each index against the files its folder would hold); then the files move and both indexes are
+    written and checked on disk. On any error every file and both indexes are put back as they were."""
+    lfiles, dfiles = _files(logos), _files(dropped)
+    for name, way in moves:
+        src, dst = (lfiles, dfiles) if way == "to_dropped" else (dfiles, lfiles)
+        if name not in src or name in dst:
+            raise SystemExit(f"!! {name} cannot move ({way.replace('_', ' ')}); nothing was changed")
+        dst[name] = src.pop(name)
+    for idx in (index, dindex):
+        idx["count"] = len(idx["logos"])
+        idx["logos"] = dict(sorted(idx["logos"].items()))
+    bad = [f"logos/: {b}" for b in LI.check_index(index, lfiles)] + \
+          [f"dropped/: {b}" for b in LI.check_index(dindex, dfiles)]
+    if bad:
+        raise SystemExit("!! the switch would leave a folder that is not valid (" + "; ".join(bad[:5]) + "); nothing "
+                         "was changed")
+    old = {f: ((f / LI.INDEX).read_bytes() if (f / LI.INDEX).exists() else None) for f in (logos, dropped)}
+    had_dropped = dropped.exists()
+    done = []
+    try:
+        dropped.mkdir(exist_ok=True)
+        for name, way in moves:
+            src, dst = (logos, dropped) if way == "to_dropped" else (dropped, logos)
+            (src / name).replace(dst / name)
+            done.append((src / name, dst / name))
+        write_index(logos, index)
+        write_index(dropped, dindex)
+        for f, what in ((logos, "logos/"), (dropped, "dropped/")):
+            _, bad = LI.validate_dir(f)
+            if bad:
+                raise SystemExit(f"!! {what} is not valid after the switch: " + "; ".join(bad[:5]))
+    except BaseException:
+        for src, dst in reversed(done):
+            dst.replace(src)
+        for f, raw in old.items():
+            if raw is None:
+                (f / LI.INDEX).unlink(missing_ok=True)
+            else:
+                (f / LI.INDEX).write_bytes(raw)
+        if not had_dropped:
+            try:
+                dropped.rmdir()
+            except OSError:
+                pass
+        raise
+
+
+def _record(folder, kind, new):
+    """keeps.csv / drops.csv, run.json and summary.md after a switch."""
+    path = folder / f"{kind}.csv"
+    exists = path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["code", "name", "reason"], lineterminator="\n")
+        if not exists:
+            w.writeheader()
+        w.writerows(new)
+    info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    info[kind] = info.get(kind, []) + new
+    (folder / "run.json").write_text(json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
+    if "summary_text" not in info:
+        (folder / "summary.md").write_text(summary_md(info), encoding="utf-8")
+
+
+def _review_rows(folder):
+    with open(folder / "review.csv", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
 def keep(folder, codes, reason):
     """The mirror of --drop, after looking at the sheet: brings a dropped picture back from dropped/ into logos/ and
-    the index (with every preferred share that reuses it, from review.csv), loudly. Refuses a code not in dropped/."""
+    the index (with every preferred share that reuses it, from review.csv), loudly. All or nothing (commit_switch).
+    Refuses a code not in dropped/; a code given twice counts once."""
     folder = pathlib.Path(folder)
     logos, dropped = folder / "logos", folder / "dropped"
     index, bad = LI.validate_dir(logos)
     if bad:
         raise SystemExit("!! logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
     dindex = read_dropped(dropped)
-    want = [c.strip() for c in codes if c.strip()]
+    want = _dedupe(codes)
     unknown = [c for c in want if c not in dindex["logos"]]
     if unknown or not want:
-        raise SystemExit(f"!! not in dropped/ (nothing to restore): {unknown or want}")
-    rows = []
-    with open(folder / "review.csv", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+        raise SystemExit(f"!! not in dropped/ (nothing to restore): {unknown or want}; nothing was changed")
     used = {e["file"] for e in index["logos"].values()}
-    new = []
     for c in want:
         e = dindex["logos"][c]
-        if e["file"] in used or (logos / e["file"]).exists() or c in index["logos"]:
+        if e["file"] in used or c in index["logos"]:
             raise SystemExit(f"!! {c}: logos/ already has {e['file']} or an entry for {c}; nothing was changed")
+    rows = _review_rows(folder)
+    ni, nd = _copy(index), _copy(dindex)
+    moves, new = [], []
     for c in want:
-        e = dindex["logos"].pop(c)
-        (dropped / e["file"]).replace(logos / e["file"])
-        index["logos"][c] = dict(e, flags=[x for x in e.get("flags", []) if x != "switched-after-review"] + ["kept-after-review"])
+        e = nd["logos"].pop(c)
+        ni["logos"][c] = dict(e, flags=[x for x in e.get("flags", []) if x != "switched-after-review"] + ["kept-after-review"])
+        moves.append((e["file"], "to_logos"))
         new.append({"code": c, "name": e["name"], "reason": reason})
         for r in rows:
-            if r.get("via") == c and r.get("code") and r["code"] not in index["logos"]:
-                index["logos"][r["code"]] = dict(index["logos"][c], name=r["name"], via=c)
+            if r.get("via") == c and r.get("code") and r["code"] not in ni["logos"]:
+                ni["logos"][r["code"]] = dict(ni["logos"][c], name=r["name"], via=c)
                 new.append({"code": r["code"], "name": r["name"], "reason": reason + " (preferred share of an issuer above)"})
-    write_index(logos, index)
-    write_index(dropped, dindex)
-    for folder_, what in ((logos, "logos/"), (dropped, "dropped/")):
-        _, bad = LI.validate_dir(folder_)
-        if bad:
-            raise SystemExit(f"!! {what} is not valid after the restore: " + "; ".join(bad[:5]))
-    exists = (folder / "keeps.csv").exists()
-    with open(folder / "keeps.csv", "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["code", "name", "reason"], lineterminator="\n")
-        if not exists:
-            w.writeheader()
-        w.writerows(new)
-    info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
-    info["keeps"] = info.get("keeps", []) + new
-    (folder / "run.json").write_text(json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
-    if "summary_text" not in info:
-        (folder / "summary.md").write_text(summary_md(info), encoding="utf-8")
+    commit_switch(logos, dropped, ni, nd, moves)
+    _record(folder, "keeps", new)
     print(f"!! restored from dropped/ after review: {len(new)} ({', '.join(x['code'] for x in new)}) · "
-          f"logos now {len(index['logos']):,}")
+          f"logos now {len(ni['logos']):,}")
     return 0
 
 
 def drop(folder, codes, reason):
-    """After the sheet review: the listed companies (and every preferred share reusing them) get the letter mark.
-    Rewrites logos/index.json, deletes pictures nothing uses any more, records the switch in drops.csv and run.json,
-    and rewrites summary.md. Refuses a folder that is not valid before or after."""
+    """After the sheet review: the listed companies (and every preferred share reusing them) get the letter mark; their
+    pictures move to dropped/ (--keep brings them back). All or nothing (commit_switch). A preferred share is refused:
+    it goes with its common share. A code given twice counts once."""
     folder = pathlib.Path(folder)
-    logos = folder / "logos"
+    logos, dropped = folder / "logos", folder / "dropped"
     index, bad = LI.validate_dir(logos)
     if bad:
         raise SystemExit("!! logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
-    info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
-    names = {}
-    with open(folder / "review.csv", newline="", encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            names[r["code"]] = r["name"]
-    want = [c.strip() for c in codes if c.strip()]
-    unknown = [c for c in want if c not in index["logos"]]
-    if unknown:
-        raise SystemExit(f"!! not in index.json (no logo to switch off): {unknown}")
-    gone = set(want) | {c for c, e in index["logos"].items() if e.get("via") in want}
-    dropped = folder / "dropped"
     dindex = read_dropped(dropped)
+    want = _dedupe(codes)
+    unknown = [c for c in want if c not in index["logos"]]
+    if unknown or not want:
+        raise SystemExit(f"!! not in index.json (no logo to switch off): {unknown or want}; nothing was changed")
+    for c in want:
+        via = index["logos"][c].get("via")
+        if via:
+            raise SystemExit(f"!! {c} is a preferred share: 우선주는 보통주({via})를 빼면 같이 빠져요. Give --drop {via} "
+                             "instead; nothing was changed")
+    names = {r["code"]: r["name"] for r in _review_rows(folder)}
+    gone = set(want) | {c for c, e in index["logos"].items() if e.get("via") in want}
+    ni, nd = _copy(index), _copy(dindex)
+    moves = []
     for c in sorted(gone):
-        e = index["logos"].pop(c)
+        e = ni["logos"].pop(c)
         if c in want:                                    # the picture goes to dropped/, so --keep can bring it back
-            dindex["logos"][c] = dict(e, flags=list(e.get("flags", [])) + ["switched-after-review"])
-    used = {e["file"] for e in index["logos"].values()}
-    for p in logos.iterdir():
-        if p.name != LI.INDEX and p.name not in used:
-            dropped.mkdir(exist_ok=True)
-            p.replace(dropped / p.name)
-    write_index(dropped, dindex)
-    index["count"] = len(index["logos"])
-    (logos / LI.INDEX).write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
-                                  encoding="utf-8")
-    _, bad = LI.validate_dir(logos)
-    if bad:
-        raise SystemExit("!! logos/ is not valid after the switch: " + "; ".join(bad[:5]))
+            nd["logos"][c] = dict(e, flags=list(e.get("flags", [])) + ["switched-after-review"])
+            moves.append((e["file"], "to_dropped"))
+    commit_switch(logos, dropped, ni, nd, moves)
     new = [{"code": c, "name": names.get(c, c), "reason": reason + ("" if c in want else " (preferred share of an issuer above)")}
            for c in sorted(gone)]
-    exists = (folder / "drops.csv").exists()
-    with open(folder / "drops.csv", "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["code", "name", "reason"], lineterminator="\n")
-        if not exists:
-            w.writeheader()
-        w.writerows(new)
-    info["drops"] = info.get("drops", []) + new
-    (folder / "run.json").write_text(json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
-    (folder / "summary.md").write_text(summary_md(info), encoding="utf-8")
-    print(f"· switched to the letter mark: {len(gone)} ({', '.join(sorted(gone))}) · logos left {len(index['logos']):,}")
+    _record(folder, "drops", new)
+    print(f"!! switched to the letter mark: {len(gone)} ({', '.join(sorted(gone))}) · logos left {len(ni['logos']):,}")
     return 0
 
 
@@ -1659,7 +1730,7 @@ def _main(argv, deps, state):
         return keep(a.dir, a.keep.split(","), a.reason)
     d = deps or Deps()
     if not a.plan_only and (a.limit == 0 or a.limit > FULL_RUN_FREE_LIMIT):
-        today = f"{d.wall():%Y-%m-%d}"
+        today = f"{d.wall().astimezone(KST):%Y-%m-%d}"     # KST, even when the clock gives UTC
         if a.full_run_date.strip() != today:
             raise SystemExit(f"!! A run of more than {FULL_RUN_FREE_LIMIT} companies needs --full-run-date (the workflow "
                              f"input full_run_date) set to today's KST date, {today}; it is {a.full_run_date!r}. This "
@@ -1675,7 +1746,7 @@ def _main(argv, deps, state):
         return URL_RE.sub("[signed image address removed]", keymask(text))
     state["mask"] = mask
     log = chk.Log(mask)
-    started = d.wall()
+    started = d.wall().astimezone(KST)
     stamp = f"{started:%Y-%m-%d %H:%M}"
     log(f"logo.dev logos · {stamp} KST · max credits {a.max_credits:,} · {a.workers} at once · {a.per_minute} a minute")
 
@@ -1850,7 +1921,7 @@ def report(out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0
     sheet_counts = [(title, len(rs)) for title, rs in secs]
     for title, n in sheet_counts:
         log(f"· review sheet · {title}: {n:,}")
-    finished = f"{d.wall():%Y-%m-%d %H:%M}"
+    finished = f"{d.wall().astimezone(KST):%Y-%m-%d %H:%M}"
     meta = f"{stamp} KST · data.json prices {data.get('pxDate')} · {index['count']:,} logos"
     _put(out, "sheet.html", sheet_page(meta, secs, cands, cols), mask)
     pages = []

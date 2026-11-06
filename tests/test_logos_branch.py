@@ -134,6 +134,18 @@ def test_push_logos_never_forces_and_writes_only_the_logos_branch():
     assert os.stat(PUSH_LOGOS).st_mode & stat.S_IXUSR
 
 
+@pytest.mark.parametrize("flag", ["dropped", "salvaged"])
+def test_a_dropped_or_salvaged_folder_is_never_pushed(repo, tmp_path, flag):
+    work, origin, _ = repo
+    folder = make_logos(tmp_path / "logos", ["005930"])
+    idx = json.loads((folder / "index.json").read_text(encoding="utf-8"))
+    (folder / "index.json").write_text(json.dumps(dict(idx, **{flag: True})), encoding="utf-8")
+    r = push_logos(work, folder)
+    assert r.returncode == 1 and "not for the logos branch" in r.stdout and "올리지 않아요" in r.stdout
+    assert ("dropped/ side folder" if flag == "dropped" else "salvage path") in r.stdout
+    assert not tip(origin)
+
+
 def test_a_refused_push_fails_loudly_and_changes_nothing(repo, tmp_path):
     work, origin, _ = repo
     assert push_logos(work, make_logos(tmp_path / "a", ["005930"])).returncode == 0
@@ -271,6 +283,21 @@ def test_an_unreadable_site_data_json_deploys_with_letter_marks(repo, tmp_path, 
         said = capsys.readouterr().out
         assert "data.json 을 읽지 못해" in said and "::warning title=로고 없이 배포::" in said
         assert not [p for p in os.listdir(tmp_path) if p.startswith(".logos-")]
+
+
+def test_a_nameless_listing_or_a_name_that_is_just_the_code_loses_its_logo(repo, tmp_path):
+    """A reused code with a nameless listing is the risky case: no name to compare, so the letter mark, loudly."""
+    work, origin, rec = repo
+    publish_data(work, rec, names={"005930": "삼성전자", "005935": "삼성전자우", "AAPL": "AAPL"})
+    assert push_logos(work, make_logos(tmp_path / "art" / "logos", ["005930", "AAPL"])).returncode == 0
+    git(work, "fetch", "-q", "origin", "+refs/heads/logos:refs/remotes/origin/logos")
+    out = tmp_path / "_site"
+    r = assemble(work, out, "refs/remotes/origin/logos")
+    assert r.returncode == 0, r.stdout + r.stderr
+    idx = json.loads((out / "logos" / "index.json").read_text(encoding="utf-8"))
+    assert sorted(idx["logos"]) == ["005930", "005935"] and not (out / "logos" / "AAPL.webp").exists()
+    assert "!! 로고 1개는 회사 이름이 비었거나 코드뿐이라" in r.stdout and "AAPL" in r.stdout
+    assert "::warning title=로고 이름 없음::" in r.stdout
 
 
 def test_a_code_now_used_by_another_company_falls_back_to_the_letter_mark(repo, tmp_path):
