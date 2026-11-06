@@ -8,6 +8,10 @@ Part J). Run by hand only: from the workflow "logo.dev 로고 받기" (.github/w
   python3 tools/logos/logodev_fetch.py --verdict DIR/run.json # exit 1 unless that run finished or stopped cleanly
   python3 tools/logos/logodev_fetch.py --drop 005930,AAPL --dir DIR --reason "wrong company (sheet review)"
                                                              # after looking at the sheet: those companies get the letter mark
+  python3 tools/logos/logodev_fetch.py --keep 066570 --dir DIR --reason "LG group logo, checked"
+                                                             # the mirror: a picture in dropped/ goes back into logos/
+A run of more than 50 companies (no --limit, or a bigger one) needs --full-run-date set to today's KST date (the
+workflow input full_run_date), so a re-run on another day refuses by itself before any request.
 
 What it does
   1. Companies: every Korean company and every US company in the live data.json (or --data), ETFs and funds left out,
@@ -28,7 +32,9 @@ What it does
      size up to 128 px, vector sources rasterised by logo.dev at 128 px. Normalised to a 128 x 128 WebP (PNG when this
      Pillow has no WebP), transparency kept, centred, never stretched or upscaled. SVG is never stored.
   4. Automatic quality checks; a failing logo gets the letter mark, never a doubtful logo (QUALITY_NOTE below). A
-     picture shared by companies of different brands gets the letter mark for all of them.
+     picture shared by companies of different or unknown brands gets the letter mark, except for a company whose own
+     homepage confirmed its ticker logo (same-brand). Every dropped picture is kept in dropped/ (never published), so
+     --keep can restore one after review without paying again.
   5. Writes to --out: logos/<code>.webp + logos/index.json (the folder tools/push_logos_branch.sh publishes; each entry
      carries the company's name, which Deploy compares with that day's data.json), summary.md, review.csv (one row per
      company), sheet.html and sheet-01.png … (review sheet, no caps: the --sheet-top largest companies of each market
@@ -42,8 +48,11 @@ $150 of API credit a month, 1 credit = 1¢, logo lookup 2 credits)
     200 or 404 carries no such header, and 2 for a request that got no answer, in case it was billed). Before every
     request 2 credits are reserved; a request that could pass --max-credits (14,000 = $140, also the most it accepts) is
     never sent. The cap also holds across runs: when logo.dev reports its balance (Credits-Remaining), no request is
-    sent that could take it below 1,000 credits (15,000 of Pro credit − 14,000). The run also stops on 402 (no credit
-    left). With auto-reload on the account a 402 may never come: the local limits are the real stop.
+    sent that could take it below 1,000 credits (15,000 of Pro credit − 14,000). The first balance is logged with the
+    run's worst case; below that worst case plus 1,000 the run stops before any further lookup. A billed answer without
+    a balance is said once. A --limit run's cap is its own ceiling (2 credits a lookup: 20 companies, at most 80). The
+    run also stops on 402 (no credit left). With auto-reload on the account a 402 may never come: the local limits are
+    the real stop.
   - At most --per-minute (200) lookups a minute and --workers (4) open at once; downloads (not billed, not CDN
     requests) at most 300 a minute. 429: waits Retry-After or RateLimit-Reset, else backs off. 202 (indexing): the
     company waits Retry-After (30 s) while the others go on, at most RETRIES_202 times. 401/403, an answer the docs
@@ -56,8 +65,11 @@ The key
   written: every line passes a masker, and every output file is searched for it and for signed image addresses at the
   end (found -> deleted and the run is not OK). A value that looks like a secret key on the command line is refused.
 
-Exit code: 0 when the run finished or stopped cleanly (credit cap, 402); 1 otherwise. With --defer-failure (the
-workflow) it exits 0 once everything is saved, so the results are uploaded; the workflow's last step (--verdict) fails.
+Exit code: 0 when the run finished or stopped cleanly (credit cap, balance floor, 402); 1 otherwise. With
+--defer-failure (the workflow) it exits 0 once everything is saved, so the results are uploaded; the workflow's last step
+(--verdict) fails. An error after the lookups never loses what was paid for: index.json (from the pictures already in
+logos/), dropped/index.json, review.csv, run.json (ok false, outcome crashed, the traceback masked) and summary.md are
+still written.
 Unit tests: tests/test_logo_fetch.py (no network: the HTTP client is faked).
 """
 import argparse
@@ -111,10 +123,13 @@ MIN_COMPANIES = chk.MIN_COMPANIES
 URL_NEEDLE = b"img.logo.dev/"                    # a signed image address must never be written
 URL_RE = re.compile(r"https?://img\.logo\.dev/\S*")
 DROP_REASONS = ("small", "blank", "faint", "one_colour", "monogram", "shared", "file_clash", "odd_code")
-OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor")
+OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "balance_low")
+FULL_RUN_FREE_LIMIT = 50                         # a --limit run up to this many companies needs no --full-run-date
 OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.",
                     balance_floor=f"Stopped cleanly: logo.dev's reported credit balance would have gone below "
-                                  f"{MIN_BALANCE:,} credits.")
+                                  f"{MIN_BALANCE:,} credits.",
+                    balance_low=f"Stopped cleanly before the lookups: logo.dev's first reported balance was below this "
+                                f"run's worst case plus the {MIN_BALANCE:,}-credit floor.")
 
 QUALITY_NOTE = (
     "Quality checks (a failing logo gets the letter mark): "
@@ -130,10 +145,11 @@ QUALITY_NOTE = (
     "colours besides the blend between them) whose far colour forms one or two blobs centred within 12% of the middle, "
     "25–75% of the height and 10–75% of the width. Real letter-on-colour logos fail it too; they then show our own "
     "letter mark, which looks alike. "
-    "**shared** — the same picture for companies whose logo.dev brand_id differs (a generic picture, or a group logo "
-    "under different brands): the same 64-bit difference hash and 16 x 16 colour thumbnails at most 6 levels apart on "
-    "average; only checked pairs form a group. Every company in such a group gets the letter mark; a group whose "
-    "companies all have the same brand_id is kept. Every shared group is on the contact sheet. "
+    "**shared** — the same picture for companies whose logo.dev brand_id differs or is missing (a generic picture, or "
+    "a group logo under different brands): the same 64-bit difference hash and 16 x 16 colour thumbnails at most 6 "
+    "levels apart on average; only checked pairs form a group. In such a group every company gets the letter mark "
+    "except one whose own homepage confirmed its ticker logo (same-brand); a group whose companies all have one real "
+    "brand_id is kept. Every shared group is on the review sheet; --keep restores a checked one. "
     "**file_clash** — two codes would share one file name; **odd_code** — a code that is not a plain stock code (both "
     "never expected)."
 )
@@ -277,6 +293,8 @@ class Ledger:
         self.no_header = 0               # billable answers without the header (counted as billed)
         self.balance_first = self.balance_last = None
         self.balance = None              # the lowest Credits-Remaining seen (credits), when logo.dev reports one
+        self._first, self._first_done = None, False      # the first balance reported, said once (take_notices)
+        self._nobal, self._nobal_told = False, False     # a billed answer without a balance, said once
 
     @property
     def counted(self):
@@ -322,7 +340,20 @@ class Ledger:
                     v = None
                 if v is not None and v == v:
                     self.balance = v if self.balance is None else min(self.balance, v)
+                    if not self._first_done:
+                        self._first_done, self._first = True, v
+                elif cost and not self._nobal_told:
+                    self._nobal_told = self._nobal = True
+            elif cost and not self._nobal_told:
+                self._nobal_told = self._nobal = True
         return cost
+
+    def take_notices(self):
+        """(first balance or None, True when a billed answer carried no balance): each one only once."""
+        with self._lock:
+            out = (self._first, self._nobal)
+            self._first, self._nobal = None, False
+        return out
 
     def unanswered(self):
         with self._lock:
@@ -551,6 +582,7 @@ class Job:
         self.bytes = 0
         self.cands = {}                      # route -> {"png": bytes for the sheet, "flags": [...], "error": str}
         self.hash = None
+        self.dropped_file = ""               # its picture in dropped/ (a dropped logo)
         self.note = ""
 
 
@@ -612,9 +644,11 @@ class Scheduler:
 
 class Fetcher:
     def __init__(self, client, ledger, log, out_logos, scope=(), clock=time.monotonic, sleep=time.sleep, jitter=None,
-                 deadline=None, workers=DEFAULT_WORKERS, webp=True):
+                 deadline=None, workers=DEFAULT_WORKERS, webp=True, out_dropped=None, need=0):
         self.client, self.ledger, self.log = client, ledger, log
         self.out_logos, self.scope, self.webp = out_logos, set(scope), webp
+        self.out_dropped = out_dropped or out_logos.parent / "dropped"    # dropped pictures: never in logos/
+        self.need = need                                 # this run's worst case in credits (min of cap and plan)
         self.clock, self._sleep, self.deadline, self.workers = clock, sleep, deadline, max(1, int(workers))
         self.jitter = jitter or random.SystemRandom().random
         self.lock = threading.Lock()
@@ -677,6 +711,11 @@ class Fetcher:
                     continue
                 return "error", {"note": f"no answer after {tr + 1} tries ({type(e).__name__})"}, spent, sent
             spent += self.ledger.settle(resp)
+            first, nobal = self.ledger.take_notices()
+            if first is not None:
+                self.first_balance(first)
+            if nobal:
+                self.log(f"!! logo.dev 가 남은 크레딧을 알려 주지 않아요 — 이번 실행 상한 {self.ledger.cap:,} 만 지켜요")
             self.count(f"HTTP {resp.status}")
             if resp.status != 429:
                 self._respect_window(resp.headers)
@@ -686,7 +725,7 @@ class Fetcher:
                 j = resp.json() or {}
                 data = j.get("data") if isinstance(j.get("data"), dict) else {}
                 res = ((j.get("metadata") or {}).get("resolution") or {}) if isinstance(j.get("metadata"), dict) else {}
-                info["brand_id"] = str(data.get("brand_id") or data.get("id") or "")
+                info["brand_id"] = str(data.get("brand_id") or "")            # a real brand_id only
                 info["method"] = str(res.get("method") or "") if isinstance(res, dict) else ""
                 info["value"] = str(res.get("value") or "") if isinstance(res, dict) else ""
                 info["image"]["has_transparency"] = bool(((data.get("source") or {}) if isinstance(data.get("source"), dict)
@@ -721,6 +760,16 @@ class Fetcher:
                 self.count("retries after an error")
                 continue
             return "error", {"note": f"logo.dev answered HTTP {resp.status} {tr + 1} times", "http": resp.status}, spent, sent
+
+    def first_balance(self, v):
+        """The first Credits-Remaining logo.dev reports: said loudly; below the worst case plus the floor -> stop."""
+        need = self.need + MIN_BALANCE
+        self.log(f"!! logo.dev reports {v:,.0f} credits left (Credits-Remaining, first answer) · this run's worst case "
+                 f"{self.need:,} + floor {MIN_BALANCE:,} = {need:,} needed")
+        if v < need:
+            self.set_stop(chk.StopRun("balance_low", f"logo.dev reports {v:,.0f} credits left, below this run's worst "
+                                                     f"case {self.need:,} plus the {MIN_BALANCE:,}-credit floor: no "
+                                                     "further lookup; what was found is saved"))
 
     def _respect_window(self, headers):
         rem, reset = chk._int(headers.get("ratelimit-remaining")), chk._int(headers.get("ratelimit-reset"))
@@ -800,10 +849,6 @@ class Fetcher:
                     routes.append(rt)
         for rt in routes:
             img = job.results[rt][1]["image"]
-            facts_small = not img.get("is_vector") and min(img["width"], img["height"]) < SMALL_PX
-            if rt == job.choice and facts_small and job.c["code"] not in self.scope:
-                job.cands[rt] = {"png": None, "flags": ["small"], "error": ""}
-                continue
             try:
                 resp = self.client.download(img["url"], download_size(img))
             except Exception as e:                       # noqa: BLE001 — one picture: counted, said, the rest go on
@@ -833,6 +878,7 @@ class Fetcher:
             return
         if cand.get("flags"):
             job.final, job.reason, job.flags = "letter", cand["flags"][0], list(cand["flags"])
+            self.keep_dropped(job, cand["canvas"])
             return
         if not LI.CODE_RE.match(str(job.c["code"])):     # the index takes plain stock codes only
             job.final, job.reason, job.flags = "letter", "odd_code", ["odd_code"]
@@ -851,6 +897,16 @@ class Fetcher:
             return
         (self.out_logos / name).write_bytes(data)
         job.final, job.file, job.bytes, job.hash = "logo", name, len(data), fingerprint(canvas)
+
+    def keep_dropped(self, job, canvas):
+        """A dropped picture goes to dropped/ (never logos/), so --keep can restore it after review without paying."""
+        if not LI.CODE_RE.match(str(job.c["code"])):
+            return
+        data, ext = encode(canvas, self.webp)
+        name = f"{safe_file(job.c['code'])}.{ext}"
+        self.out_dropped.mkdir(exist_ok=True)
+        (self.out_dropped / name).write_bytes(data)
+        job.dropped_file = name
 
     def finish(self, job):
         for cand in job.cands.values():
@@ -946,27 +1002,53 @@ class Fetcher:
 # ── results ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def drop_shared(fetcher, groups, log):
-    """A picture shared by companies whose chosen logos have different brand_ids (or a missing one) is doubtful: every
-    company in that group gets the letter mark and its file is deleted. Returns the indexes (1-based) of those groups."""
+    """A picture shared by companies whose chosen logos do not all have one real brand_id (a missing brand_id counts as
+    unknown) is doubtful. In such a group a company whose own homepage confirmed its ticker logo (same-brand, an exact
+    identifier) keeps it; every other member gets the letter mark and its picture moves to dropped/ (--keep restores
+    it). Returns {"groups": [group numbers with a switch], "companies": [switched], "kept_same_brand": [kept]}."""
     by = {j.c["code"]: j for j in fetcher.done}
-    dropped = []
+    out = {"groups": [], "companies": [], "kept_same_brand": []}
     for i, g in enumerate(groups, 1):
         jobs = [by[c] for c in g if c in by]
         brands = {(j.results.get(j.choice, ("", {}))[1].get("brand_id") or "") for j in jobs}
         if len(brands) == 1 and "" not in brands:
             log(f"· shared picture {i} kept (one brand, {next(iter(brands))}): " + ", ".join(g))
             continue
-        dropped.append(i)
-        for j in jobs:
+        keep = [j for j in jobs if j.check == "same-brand"]
+        gone = [j for j in jobs if j.check != "same-brand"]
+        out["kept_same_brand"] += [j.c["code"] for j in keep]
+        if keep:
+            log(f"!! shared picture {i}: kept for {', '.join(j.c['code'] for j in keep)} (confirmed by their own homepage)")
+        if not gone:
+            continue
+        out["groups"].append(i)
+        for j in gone:
             if j.file:
-                (fetcher.out_logos / j.file).unlink(missing_ok=True)
+                fetcher.out_dropped.mkdir(exist_ok=True)
+                (fetcher.out_logos / j.file).replace(fetcher.out_dropped / j.file)
                 fetcher.used_files.discard(j.file)
+                j.dropped_file = j.file
             j.final, j.reason, j.flags, j.file, j.bytes = "letter", "shared", ["shared"], "", 0
-        log(f"!! shared picture {i}: {len(jobs)} companies of different brands share it → letter marks: " + ", ".join(g))
-    if dropped:
-        log(f"!! shared pictures across different brands: {len(dropped)} groups, "
-            f"{sum(len(groups[i - 1]) for i in dropped):,} companies switched to the letter mark")
-    return dropped
+            out["companies"].append(j.c["code"])
+        log(f"!! shared picture {i}: different or unknown brands → letter marks for "
+            + ", ".join(j.c["code"] for j in gone))
+    if out["companies"]:
+        log(f"!! shared pictures across different brands: {len(out['companies']):,} companies switched to the letter "
+            f"mark in {len(out['groups'])} groups · {len(out['kept_same_brand']):,} kept (same-brand)")
+    return out
+
+
+def dropped_index(fetcher, fmt, stamp):
+    """dropped/index.json: every dropped picture saved in dropped/, with what --keep needs to restore it."""
+    logos = {}
+    for j in fetcher.done:
+        if j.dropped_file and j.choice and (fetcher.out_dropped / j.dropped_file).exists():
+            img = j.results[j.choice][1]["image"]
+            logos[j.c["code"]] = {"file": j.dropped_file, "name": j.c["name"], "route": j.choice,
+                                  "w": int(img["width"]), "h": int(img["height"]), "vector": bool(img.get("is_vector")),
+                                  "flags": [j.reason] + ([j.check] if j.check else [])}
+    return {"version": LI.VERSION, "size": SIZE, "format": fmt, "source": "logo.dev", "fetched_kst": stamp,
+            "dropped": True, "count": len(logos), "logos": dict(sorted(logos.items()))}
 
 def brand_domain(job):
     if job.final != "logo":
@@ -1109,10 +1191,13 @@ def summary_md(info):
             "## Automatic quality checks", "",
             "Counted on the chosen picture (dropped → letter mark), plus companies whose final logo is shared:", ""]
     out += [f"- {k}: **{t['flags'].get(k, 0):,}**" for k in DROP_REASONS]
-    dropped = info.get("shared_dropped", [])
-    out += [f"- shared pictures: **{len(info['shared'])}** groups, {sum(len(g) for g in info['shared']):,} companies; "
-            f"**{len(dropped)}** groups with different brands switched to letter marks "
-            f"({sum(len(info['shared'][i - 1]) for i in dropped):,} companies), the rest kept (one brand each)", "",
+    sd = info.get("shared_dropped") or {"groups": [], "companies": [], "kept_same_brand": []}
+    out += [f"- shared pictures: **{len(info['shared'])}** groups, {sum(len(g) for g in info['shared']):,} companies: "
+            f"**{len(sd['companies']):,}** companies of different or unknown brands switched to letter marks (in "
+            f"{len(sd['groups'])} groups), **{len(sd['kept_same_brand']):,}** kept because their own homepage "
+            "confirmed them (same-brand); groups of one brand kept", "",
+            f"Every dropped picture is in dropped/ (never published); `--keep CODES --dir DIR` restores one after review. "
+            f"Restored after review: {', '.join(k['code'] for k in info.get('keeps', [])) or 'none'}.", "",
             QUALITY_NOTE, "",
             "## Credits and requests", "",
             f"- Credits counted: **{cr['counted']:,}** of the {info['max_credits']:,} cap (${cr['counted'] / 100:,.2f}) — "
@@ -1241,7 +1326,9 @@ def sheet_sections(rows, jobs, groups, top):
     by = {r["code"]: r for r in comp}
     for i, g in enumerate(groups, 1):
         mine = [by[c] for c in g if c in by]
-        what = "letter marks (different brands)" if mine and all(r["reason"] == "shared" for r in mine) else "kept (one brand)"
+        n_gone = sum(1 for r in mine if r["reason"] == "shared")
+        what = ("kept (one brand)" if not n_gone else f"{n_gone} switched to letter marks (different brands)"
+                + (f", {len(mine) - n_gone} kept (same-brand)" if n_gone < len(mine) else ""))
         secs.append((f"Shared picture, group {i}: {len(g)} companies, {what}", mine))
     return secs
 
@@ -1358,7 +1445,7 @@ def write_csv(folder, rows, mask):
 
 
 def write_reports(folder, info, log, mask):
-    _put(folder, "summary.md", summary_md(info), mask)
+    _put(folder, "summary.md", info["summary_text"] if "summary_text" in info else summary_md(info), mask)
     _put(folder, "run.json", json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False, default=str), mask)
     _put(folder, "run.log", "\n".join(log.lines) + "\n", mask)
 
@@ -1377,6 +1464,77 @@ def verdict(path):
     print(f"{'OK' if ok is True else '!! NOT OK'}: {OUTCOME_TEXT.get(outcome, outcome)} {info.get('reason') or ''}"
           f" Finished {info.get('finished')} of {info.get('companies')}. Problems: {info.get('problems') or 'none'}")
     return 0 if ok is True else 1
+
+
+def read_dropped(dropped):
+    """dropped/index.json (an empty one when there is none). Refuses a dropped/ folder that is not valid."""
+    if not (dropped / LI.INDEX).exists():
+        return {"version": LI.VERSION, "size": SIZE, "dropped": True, "count": 0, "logos": {}}
+    index, bad = LI.validate_dir(dropped)
+    if bad:
+        raise SystemExit("!! dropped/ is not a valid folder: " + "; ".join(bad[:5]))
+    return index
+
+
+def write_index(folder, index):
+    folder.mkdir(exist_ok=True)
+    index["count"] = len(index["logos"])
+    index["logos"] = dict(sorted(index["logos"].items()))
+    (folder / LI.INDEX).write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
+                                   encoding="utf-8")
+
+
+def keep(folder, codes, reason):
+    """The mirror of --drop, after looking at the sheet: brings a dropped picture back from dropped/ into logos/ and
+    the index (with every preferred share that reuses it, from review.csv), loudly. Refuses a code not in dropped/."""
+    folder = pathlib.Path(folder)
+    logos, dropped = folder / "logos", folder / "dropped"
+    index, bad = LI.validate_dir(logos)
+    if bad:
+        raise SystemExit("!! logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
+    dindex = read_dropped(dropped)
+    want = [c.strip() for c in codes if c.strip()]
+    unknown = [c for c in want if c not in dindex["logos"]]
+    if unknown or not want:
+        raise SystemExit(f"!! not in dropped/ (nothing to restore): {unknown or want}")
+    rows = []
+    with open(folder / "review.csv", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    used = {e["file"] for e in index["logos"].values()}
+    new = []
+    for c in want:
+        e = dindex["logos"][c]
+        if e["file"] in used or (logos / e["file"]).exists() or c in index["logos"]:
+            raise SystemExit(f"!! {c}: logos/ already has {e['file']} or an entry for {c}; nothing was changed")
+    for c in want:
+        e = dindex["logos"].pop(c)
+        (dropped / e["file"]).replace(logos / e["file"])
+        index["logos"][c] = dict(e, flags=[x for x in e.get("flags", []) if x != "switched-after-review"] + ["kept-after-review"])
+        new.append({"code": c, "name": e["name"], "reason": reason})
+        for r in rows:
+            if r.get("via") == c and r.get("code") and r["code"] not in index["logos"]:
+                index["logos"][r["code"]] = dict(index["logos"][c], name=r["name"], via=c)
+                new.append({"code": r["code"], "name": r["name"], "reason": reason + " (preferred share of an issuer above)"})
+    write_index(logos, index)
+    write_index(dropped, dindex)
+    for folder_, what in ((logos, "logos/"), (dropped, "dropped/")):
+        _, bad = LI.validate_dir(folder_)
+        if bad:
+            raise SystemExit(f"!! {what} is not valid after the restore: " + "; ".join(bad[:5]))
+    exists = (folder / "keeps.csv").exists()
+    with open(folder / "keeps.csv", "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["code", "name", "reason"], lineterminator="\n")
+        if not exists:
+            w.writeheader()
+        w.writerows(new)
+    info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    info["keeps"] = info.get("keeps", []) + new
+    (folder / "run.json").write_text(json.dumps(info, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
+    if "summary_text" not in info:
+        (folder / "summary.md").write_text(summary_md(info), encoding="utf-8")
+    print(f"!! restored from dropped/ after review: {len(new)} ({', '.join(x['code'] for x in new)}) · "
+          f"logos now {len(index['logos']):,}")
+    return 0
 
 
 def drop(folder, codes, reason):
@@ -1398,12 +1556,18 @@ def drop(folder, codes, reason):
     if unknown:
         raise SystemExit(f"!! not in index.json (no logo to switch off): {unknown}")
     gone = set(want) | {c for c, e in index["logos"].items() if e.get("via") in want}
+    dropped = folder / "dropped"
+    dindex = read_dropped(dropped)
     for c in sorted(gone):
-        index["logos"].pop(c)
+        e = index["logos"].pop(c)
+        if c in want:                                    # the picture goes to dropped/, so --keep can bring it back
+            dindex["logos"][c] = dict(e, flags=list(e.get("flags", [])) + ["switched-after-review"])
     used = {e["file"] for e in index["logos"].values()}
     for p in logos.iterdir():
         if p.name != LI.INDEX and p.name not in used:
-            p.unlink()
+            dropped.mkdir(exist_ok=True)
+            p.replace(dropped / p.name)
+    write_index(dropped, dindex)
     index["count"] = len(index["logos"])
     (logos / LI.INDEX).write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
                                   encoding="utf-8")
@@ -1454,15 +1618,18 @@ def parse_args(argv):
     ap.add_argument("--defer-failure", action="store_true", help="exit 0 once everything is saved (the workflow)")
     ap.add_argument("--verdict", metavar="RUN_JSON", help="only read run.json and exit 1 unless the run was ok")
     ap.add_argument("--drop", metavar="CODES", help="comma-separated codes to switch to the letter mark (with --dir)")
-    ap.add_argument("--dir", help="the output folder of an earlier run (with --drop)")
-    ap.add_argument("--reason", default="wrong company on the contact sheet", help="why (with --drop)")
+    ap.add_argument("--keep", metavar="CODES", help="comma-separated codes to restore from dropped/ (with --dir)")
+    ap.add_argument("--dir", help="the output folder of an earlier run (with --drop or --keep)")
+    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop or --keep)")
+    ap.add_argument("--full-run-date", default="", help="today's KST date (YYYY-MM-DD); needed for a run without --limit "
+                                                       f"or with --limit above {FULL_RUN_FREE_LIMIT}")
     a = ap.parse_args(argv)
     if not CREDITS <= a.max_credits <= MAX_CREDITS or not 1 <= a.workers <= 10 or not 1 <= a.per_minute <= 450 \
             or a.limit < 0 or a.sheet_top < 1 or a.time_limit_min <= 0:
         ap.error(f"--max-credits 2 to {MAX_CREDITS:,} (never more: Jack's $140 stop), --workers 1 to 10, --per-minute 1 "
                  "to 450 (Pro allows 500), --limit 0 or more, --sheet-top at least 1, --time-limit-min above 0")
-    if bool(a.drop) != bool(a.dir):
-        ap.error("--drop and --dir go together")
+    if bool(a.drop or a.keep) != bool(a.dir) or (a.drop and a.keep):
+        ap.error("--drop or --keep (one of them) goes with --dir")
     return a
 
 
@@ -1488,7 +1655,15 @@ def _main(argv, deps, state):
         return verdict(a.verdict)
     if a.drop:
         return drop(a.dir, a.drop.split(","), a.reason)
+    if a.keep:
+        return keep(a.dir, a.keep.split(","), a.reason)
     d = deps or Deps()
+    if not a.plan_only and (a.limit == 0 or a.limit > FULL_RUN_FREE_LIMIT):
+        today = f"{d.wall():%Y-%m-%d}"
+        if a.full_run_date.strip() != today:
+            raise SystemExit(f"!! A run of more than {FULL_RUN_FREE_LIMIT} companies needs --full-run-date (the workflow "
+                             f"input full_run_date) set to today's KST date, {today}; it is {a.full_run_date!r}. This "
+                             "keeps a re-run on another day from spending again. Nothing was looked up.")
     t0 = d.clock()
     key = None
     if not a.plan_only:
@@ -1514,16 +1689,18 @@ def _main(argv, deps, state):
         log(line)
     if a.limit:
         order = order[:a.limit]
-        keep = {c["code"] for c in order}
-        preferred = [p for p in preferred if p["issuer"] in keep]
+        in_run = {c["code"] for c in order}
+        preferred = [p for p in preferred if p["issuer"] in in_run]
         log(f"!! --limit {a.limit}: only the {len(order):,} largest companies (a trial run)")
     pl = plan(order)
+    cap = min(a.max_credits, pl["ceiling"]) if a.limit else a.max_credits      # a trial never spends past its plan
     log(f"· data.json asOf {data.get('asOf')} · prices {data.get('pxDate')} (US {data.get('usPxDate')}) · companies "
         f"{len(order):,} (Korea {sum(1 for c in order if c['side'] == 'kr'):,} · US "
         f"{sum(1 for c in order if c['side'] == 'us'):,}) · preferred shares {len(preferred):,}")
     log(f"· lookups: at most {pl['lookups']:,} ({pl['ticker']:,} by ticker + {pl['domain']:,} by DART homepage) · "
         f"ceiling if every one were billed: {pl['ceiling']:,} credits (${pl['ceiling'] / 100:,.2f}) · the cap stops at "
-        f"{a.max_credits:,} · no ticker: {sum(1 for c in order if not c.get('ticker'))}")
+        f"{cap:,}{' (a trial: its own ceiling)' if cap != a.max_credits else ''} · no ticker: "
+        f"{sum(1 for c in order if not c.get('ticker'))}")
     if a.plan_only:
         log("· plan only: no logo.dev call was made")
         return 0
@@ -1534,10 +1711,10 @@ def _main(argv, deps, state):
     log(f"· output folder: {out} · logo files {'WebP' if d.webp else 'PNG (this Pillow has no WebP)'}")
     client = Client(key, d.send, SafePacer(d.clock, d.sleep, per_minute=a.per_minute, interval=60.0 / a.per_minute * 0.9),
                     SafePacer(d.clock, d.sleep, per_minute=DOWNLOADS_PER_MINUTE, interval=0.15))
-    ledger = Ledger(a.max_credits)
+    ledger = Ledger(cap)
     scope = {c["code"] for c in order if c["mrank"] <= a.sheet_top}
     f = Fetcher(client, ledger, log, out_logos, scope, d.clock, d.sleep, d.jitter,
-                deadline=t0 + a.time_limit_min * 60, workers=a.workers, webp=d.webp)
+                deadline=t0 + a.time_limit_min * 60, workers=a.workers, webp=d.webp, need=min(cap, pl["ceiling"]))
     problems = []
     try:
         f.run(order)
@@ -1545,6 +1722,111 @@ def _main(argv, deps, state):
         f.stop = f.stop or chk.StopRun("crashed", f"{type(e).__name__}: {e}")
         for line in traceback.format_exc().splitlines():
             log("  " + line)
+    ctx = {"out": out, "a": a, "d": d, "f": f, "ledger": ledger, "client": client, "preferred": preferred, "data": data,
+           "pl": pl, "sources": sources, "stamp": stamp, "t0": t0, "problems": problems, "log": log, "mask": mask,
+           "cap": cap}
+    try:
+        info = report(**ctx)
+    except Exception as e:                               # noqa: BLE001 — never lose what was paid for: save what there is
+        tb = [mask(x) for x in traceback.format_exc().splitlines()]
+        for line in tb:
+            log("  " + line)
+        log(f"!! NOT OK: putting the results together failed ({type(e).__name__}); saving what there is")
+        info = salvage(e, tb, **ctx)
+    leaks = chk.find_key_in_files(out, key) + find_urls(out)
+    if leaks:                                            # never expected: deleted, and the run is not ok
+        for p in sorted(set(leaks)):
+            p.unlink()
+        info["ok"] = False
+        info["problems"].append(f"the key or a signed image address was found in {sorted({p.name for p in leaks})}; "
+                                "those files were deleted")
+        log(f"!! NOT OK: {info['problems'][-1]}")
+        write_reports(out, info, log, mask)
+        for p in chk.find_key_in_files(out, key) + find_urls(out):
+            p.unlink()
+    if info["ok"] or a.defer_failure:
+        return 0
+    return 1
+
+
+def salvage(err, tb, out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0, problems, log, mask, cap):
+    """After an error in putting the results together: index.json from the finished companies (pictures already in
+    logos/), dropped/index.json, review.csv, run.json (ok false, outcome crashed, traceback masked), summary.md and
+    run.log. Each one on its own, so one failure does not stop the others."""
+    fmt = "webp" if d.webp else "png"
+    out_logos = out / "logos"
+    saved = []
+    try:
+        logos = {}
+        for j in f.done:
+            if j.final == "logo" and j.file and (out_logos / j.file).exists() and LI.CODE_RE.match(str(j.c["code"])):
+                img = j.results[j.choice][1]["image"]
+                logos[j.c["code"]] = {"file": j.file, "name": j.c["name"], "route": j.choice, "w": int(img["width"]),
+                                      "h": int(img["height"]), "vector": bool(img.get("is_vector")),
+                                      "flags": [j.check] if j.check else []}
+        used = {e["file"] for e in logos.values()}
+        for p in out_logos.iterdir():                    # a picture without an entry would make the folder invalid
+            if p.name != LI.INDEX and p.name not in used:
+                f.out_dropped.mkdir(exist_ok=True)
+                p.replace(f.out_dropped / p.name)
+        write_index(out_logos, {"version": LI.VERSION, "size": SIZE, "format": fmt, "source": "logo.dev",
+                                "fetched_kst": stamp, "data_pxDate": data.get("pxDate"), "salvaged": True, "logos": logos})
+        saved.append(f"logos/index.json ({len(logos):,} logos)")
+    except Exception as e:                               # noqa: BLE001
+        log(f"!! salvage: logos/index.json not written ({type(e).__name__})")
+    try:
+        dx = dropped_index(f, fmt, stamp)
+        dx["logos"] = {c: e for c, e in dx["logos"].items() if (f.out_dropped / e["file"]).exists()}
+        write_index(f.out_dropped, dx)
+        saved.append("dropped/index.json")
+    except Exception as e:                               # noqa: BLE001
+        log(f"!! salvage: dropped/index.json not written ({type(e).__name__})")
+    try:
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=["code", "name", "result", "route", "check", "reason", "file", "credits",
+                                            "requests"], lineterminator="\n")
+        w.writeheader()
+        for j in f.done + f.remaining:
+            w.writerow({"code": j.c["code"], "name": j.c["name"], "result": j.final or "", "route": j.choice or "",
+                        "check": j.check, "reason": j.reason, "file": j.file, "credits": j.credits,
+                        "requests": j.requests})
+        _put(out, "review.csv", buf.getvalue(), mask)
+        saved.append("review.csv")
+    except Exception as e:                               # noqa: BLE001
+        log(f"!! salvage: review.csv not written ({type(e).__name__})")
+    stop = f.stop
+    info = {"tool": "tools/logos/logodev_fetch.py", "outcome": "crashed", "ok": False,
+            "reason": f"putting the results together failed: {type(err).__name__}: {mask(str(err))[:300]}"
+                      + (f" (the lookups had ended: {stop.outcome})" if stop else ""),
+            "problems": list(problems) + ["results put together by the salvage path; see traceback"],
+            "traceback": tb[-40:], "companies": len(f.done) + len(f.remaining), "finished": len(f.done),
+            "max_credits": cap, "saved": saved,
+            "credits": {"counted": ledger.counted, "charged": ledger.charged, "free": ledger.free,
+                        "no_header": ledger.no_header, "unknown": ledger.unknown,
+                        "balance_first": ledger.balance_first, "balance_last": ledger.balance_last},
+            "requests": {"api": client.api_requests, "downloads": client.downloads,
+                         "counts": dict(sorted(f.counts.items()))}}
+    info["summary_text"] = "\n".join([
+        "# logo.dev logos (v19.3a)", "",
+        "**Stopped on an error in this tool after the lookups. What was found is saved; the run is NOT OK.**", "",
+        f"- {info['reason']}",
+        f"- Companies looked up: {info['finished']:,} of {info['companies']:,} · credits counted {ledger.counted:,} of "
+        f"{cap:,} · balance logo.dev reported: {ledger.balance_first or 'not reported'} → "
+        f"{ledger.balance_last or 'not reported'}",
+        f"- Saved: {', '.join(saved) or 'nothing'} (pictures stay in logos/ and dropped/)", "",
+        "The traceback is in run.json and run.log. This logos/ folder is valid but was put together by the salvage path: "
+        "no shared-picture check and no preferred shares. Fix the tool and run again within 24 hours (a repeat lookup of "
+        "a brand already billed is free), or review every logo before pushing this folder.", ""])
+    try:
+        write_reports(out, info, log, mask)
+    except Exception as e:                               # noqa: BLE001
+        log(f"!! salvage: reports not written ({type(e).__name__})")
+    return info
+
+
+def report(out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0, problems, log, mask, cap):
+    """Everything after the lookups: shared pictures, the index, the review sheet, the reports. Returns run.json's info."""
+    out_logos = out / "logos"
     groups = shared_groups([(j.c["code"], j.hash) for j in f.done if j.final == "logo" and j.hash is not None])
     shared_dropped = drop_shared(f, groups, log)
     rows = rows_of(f, preferred, groups)
@@ -1552,6 +1834,7 @@ def _main(argv, deps, state):
     index = make_index(rows, stamp, data, fmt)
     (out_logos / LI.INDEX).write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
                                       encoding="utf-8")
+    write_index(f.out_dropped, dropped_index(f, fmt, stamp))
     _, bad = LI.validate_dir(out_logos)
     if bad:
         problems.append("logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
@@ -1589,7 +1872,7 @@ def _main(argv, deps, state):
         "tool": "tools/logos/logodev_fetch.py", "outcome": outcome, "ok": outcome in OK_OUTCOMES and not problems,
         "reason": stop.reason if stop else "", "problems": problems, "started_kst": stamp, "finished_kst": finished,
         "minutes": round((d.clock() - t0) / 60, 1), "companies": comp, "finished": fin, "unfinished": comp - fin,
-        "max_credits": a.max_credits, "format": fmt, "sheet_top": a.sheet_top, "sheet_pages": pages,
+        "max_credits": cap, "format": fmt, "sheet_top": a.sheet_top, "sheet_pages": pages,
         "data": {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf")},
         "sources": sources, "plan": pl, "pace": {"per_minute": a.per_minute, "workers": a.workers},
         "tally": tally(rows), "shared": groups, "shared_dropped": shared_dropped, "sheet_counts": sheet_counts,
@@ -1602,26 +1885,13 @@ def _main(argv, deps, state):
     t = info["tally"]
     log(f"· finished {fin:,} of {comp:,} · Korea: ticker {t['kr']['by_ticker']:,} · homepage {t['kr']['by_domain']:,} · "
         f"letter {t['kr']['letter']:,} · US: ticker {t['us']['by_ticker']:,} · letter {t['us']['letter']:,} · "
-        f"preferred reusing a logo {t['preferred']['logo']:,} · credits {ledger.counted:,}/{a.max_credits:,} · "
+        f"preferred reusing a logo {t['preferred']['logo']:,} · credits {ledger.counted:,}/{cap:,} · "
         f"lookups {client.api_requests:,} · downloads {client.downloads:,}")
     log(f"{'OK' if info['ok'] else '!! NOT OK'}: {OUTCOME_TEXT.get(outcome, outcome)} {info['reason']}".rstrip()
         + f" · results in {out}")
     write_csv(out, rows, mask)
     write_reports(out, info, log, mask)
-    leaks = chk.find_key_in_files(out, key) + find_urls(out)
-    if leaks:                                            # never expected: deleted, and the run is not ok
-        for p in sorted(set(leaks)):
-            p.unlink()
-        info["ok"] = False
-        info["problems"].append(f"the key or a signed image address was found in {sorted({p.name for p in leaks})}; "
-                                "those files were deleted")
-        log(f"!! NOT OK: {info['problems'][-1]}")
-        write_reports(out, info, log, mask)
-        for p in chk.find_key_in_files(out, key) + find_urls(out):
-            p.unlink()
-    if info["ok"] or a.defer_failure:
-        return 0
-    return 1
+    return info
 
 
 if __name__ == "__main__":

@@ -218,6 +218,61 @@ def test_everything_in_the_site_folder_is_readable_by_others(repo, tmp_path):
     assert stat.S_IMODE((out / "logos" / "005930.webp").stat().st_mode) == 0o644
 
 
+def test_logo_files_are_0644_even_under_umask_077(repo, tmp_path):
+    work, origin, rec = repo
+    publish_data(work, rec)
+    assert push_logos(work, make_logos(tmp_path / "art" / "logos", ["005930", "AAPL"])).returncode == 0
+    git(work, "fetch", "-q", "origin", "+refs/heads/logos:refs/remotes/origin/logos")
+    old = os.umask(0o077)
+    try:
+        out = tmp_path / "_site"
+        r = assemble(work, out, "refs/remotes/origin/logos")
+    finally:
+        os.umask(old)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert stat.S_IMODE((out / "logos").stat().st_mode) == 0o755
+    for p in (out / "logos").iterdir():
+        assert stat.S_IMODE(p.stat().st_mode) == 0o644, p
+
+
+@pytest.mark.parametrize("how", ["not-json", "missing"])
+def test_an_unreadable_site_data_json_deploys_with_letter_marks(repo, tmp_path, how, capsys):
+    work, origin, rec = repo
+    publish_data(work, rec)
+    assert push_logos(work, make_logos(tmp_path / "art" / "logos", ["005930"])).returncode == 0
+    git(work, "fetch", "-q", "origin", "+refs/heads/logos:refs/remotes/origin/logos")
+    if how == "not-json":                                       # the data branch's data.json cannot be read as JSON
+        write_data(work, 8)
+        (work / "data.json").write_text("{ not json", encoding="utf-8")
+        receipt(work, rec)
+        assert push(work, rec).returncode == 0
+        for f in FILES:
+            git(work, "checkout", "--", f)
+        git(work, "fetch", "-q", "origin", "+refs/heads/data:refs/remotes/origin/data")
+        out = tmp_path / "_site"
+        r = assemble(work, out, "refs/remotes/origin/logos")
+        assert r.returncode == 0, r.stdout + r.stderr                                        # Deploy goes on
+        assert not (out / "logos").exists() and "data.json 을 읽지 못해" in r.stdout
+        assert "::warning title=로고 없이 배포::" in r.stdout
+    else:                                                       # copy_logos with no data.json in the site folder
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import importlib
+        import assemble_site as AS
+        importlib.reload(AS)
+        out = tmp_path / "_site"
+        out.mkdir()
+        cwd = os.getcwd()
+        try:
+            os.chdir(work)
+            got = AS.copy_logos(str(work), str(out), "refs/remotes/origin/logos")
+        finally:
+            os.chdir(cwd)
+        assert got is None and not (out / "logos").exists()
+        said = capsys.readouterr().out
+        assert "data.json 을 읽지 못해" in said and "::warning title=로고 없이 배포::" in said
+        assert not [p for p in os.listdir(tmp_path) if p.startswith(".logos-")]
+
+
 def test_a_code_now_used_by_another_company_falls_back_to_the_letter_mark(repo, tmp_path):
     work, origin, rec = repo
     publish_data(work, rec, names={"005930": "삼성전자", "005935": "삼성전자우", "AAPL": "Another Company"})

@@ -29,6 +29,10 @@ on:
         description: "시가총액 상위 몇 회사만 (0 = 전부, 작은 시험 실행용)"
         type: number
         default: 0
+      full_run_date:
+        description: "전부(limit 0) 또는 51곳 이상을 받을 때만: 오늘 날짜(한국 시간, YYYY-MM-DD). 다른 날 다시 돌리면 실행하지 않아요"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -69,9 +73,11 @@ jobs:
           WORKERS: ${{ inputs.workers }}
           PER_MINUTE: ${{ inputs.per_minute }}
           LIMIT: ${{ inputs.limit }}
+          FULL_RUN_DATE: ${{ inputs.full_run_date }}
         run: |
           python tools/logos/logodev_fetch.py --max-credits "$MAX_CREDITS" --workers "$WORKERS" \
-            --per-minute "$PER_MINUTE" --limit "$LIMIT" --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure
+            --per-minute "$PER_MINUTE" --limit "$LIMIT" --full-run-date "$FULL_RUN_DATE" \
+            --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure
 
       - name: 결과 폴더 보관 (artifact logo-dev-fetch, 7일)
         uses: actions/upload-artifact@v7

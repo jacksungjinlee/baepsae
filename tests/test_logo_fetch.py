@@ -6,9 +6,12 @@ No network and no real key: the HTTP client is faked (lookups and downloads), th
 Covers: exact identifiers (Korea .KS / .KQ, US bare; the DART homepage domain only for Korea, only domain_ok = 1),
 market-cap order, the credit cap (also with several workers at once), the 402 stop, Credits-Charged counting, 202
 retries, the brand_id cross-check (same brand · another brand · unverified), preferred shares reusing their issuer's
-logo with no lookup, the automatic quality checks (small · blank · one colour · monogram), 128 px WebP files that are
-never upscaled, a valid index.json, the key and signed addresses never in any output, the --drop switch after review,
-and the workflow's shape (read-only, the secret in one step only).
+logo with no lookup, the automatic quality checks (small · blank · faint · one colour · monogram · shared, each limit on
+both sides), 128 px WebP files that are never upscaled, a valid index.json with names, the key and signed addresses
+never in any output, --drop and --keep after review (dropped pictures wait in dropped/), the spend guards across runs
+(the 14,000 cap, the 1,000 floor with lookups in flight, the first balance, a billed answer without a balance, today's
+date for a full run, a trial's own cap), an error after the lookups that still saves everything, and the workflow's
+shape (read-only, the secret in one step only, 7 days, one run at a time).
 """
 import csv
 import io
@@ -204,14 +207,19 @@ def write_inputs(tmp, stocks=None):
     return tmp
 
 
-def run(tmp, net, *extra, workers="1", env=None, webp=True, clock=None):
+NOW = chk.now_kst()
+TODAY = f"{NOW:%Y-%m-%d}"
+
+
+def run(tmp, net, *extra, workers="1", env=None, webp=True, clock=None, full_run_date=TODAY, out_name="out"):
     clock = clock or Clock()
     environ = {F.KEY_ENV: FAKE_KEY} if env is None else env
-    deps = F.Deps(send=net, clock=clock, sleep=clock.sleep, wall=lambda: chk.now_kst(), environ=environ,
+    deps = F.Deps(send=net, clock=clock, sleep=clock.sleep, wall=lambda: NOW, environ=environ,
                   jitter=lambda: 0.0, min_counts={"kr": 1, "us": 1}, render=lambda *a: ([], None), webp=webp)
-    out = tmp / "out"
+    out = tmp / out_name
+    date = ["--full-run-date", full_run_date] if full_run_date is not None else []
     rc = F.main(["--data", str(tmp / "data.json"), "--listing", str(tmp / "listing.csv"), "--homepages",
-                 str(tmp / "homes.csv"), "--out", str(out), "--workers", workers, "--no-png", *extra], deps)
+                 str(tmp / "homes.csv"), "--out", str(out), "--workers", workers, "--no-png", *date, *extra], deps)
     return rc, out
 
 
@@ -391,14 +399,14 @@ def test_max_credits_can_never_go_above_14000(tmp_path):
 def test_stops_before_logo_dev_balance_goes_below_1000(tmp_path):
     write_inputs(tmp_path)
     answers = dict(ALL_GOOD)
-    answers[("ticker", "AAPL")] = [logo_answer("aapl", "brand_aapl", remaining="1001.5")]
+    answers[("ticker", "MSFT")] = [logo_answer("msft", "brand_msft", remaining="1001.5")]     # first one was 15000
     net = Net(answers)
     rc, out = run(tmp_path, net)
     info = json.loads((out / "run.json").read_text(encoding="utf-8"))
     assert rc == 0 and info["outcome"] == "balance_floor" and info["ok"] is True
-    assert net.lookups == [("ticker", "AAPL")]                                  # 1003.5 - 2 < 1000 for the next one
+    assert net.lookups == [("ticker", "AAPL"), ("ticker", "MSFT")]             # 1001.5 - 2 < 1000 for the next one
     assert "below 1,000" in (out / "run.log").read_text(encoding="utf-8")
-    assert sorted(index(out)["logos"]) == ["AAPL"]
+    assert sorted(index(out)["logos"]) == ["AAPL", "MSFT"]
 
 
 def test_a_picture_shared_by_different_brands_becomes_letter_marks(tmp_path):
@@ -406,6 +414,8 @@ def test_a_picture_shared_by_different_brands_becomes_letter_marks(tmp_path):
     answers = dict(ALL_GOOD)
     answers[("ticker", "MSFT")] = [logo_answer("same", "brand_msft")]
     answers[("ticker", "BRK-B")] = [logo_answer("same", "brand_brk")]                         # same picture, other brand
+    answers[("ticker", "005930.KS")] = [logo_answer("same", "brand_sam")]                     # ... and 삼성전자, whose own
+    answers[("domain", "samsung.com")] = [logo_answer("same", "brand_sam", cc="0")]           # homepage confirms it
     answers[("ticker", "005380.KS")] = [logo_answer("grp", "brand_grp")]
     answers[("domain", "hyundai.com")] = [logo_answer("grp", "brand_grp", cc="0")]
     answers[("ticker", "247540.KQ")] = [logo_answer("grp", "brand_grp")]                       # same picture, same brand
@@ -413,15 +423,158 @@ def test_a_picture_shared_by_different_brands_becomes_letter_marks(tmp_path):
     rv, idx = review(out), index(out)
     for code in ("MSFT", "BRK-B"):
         assert (rv[code]["result"], rv[code]["reason"]) == ("letter", "shared") and code not in idx["logos"], code
-        assert not (out / "logos" / f"{code}.webp").exists()
+        assert not (out / "logos" / f"{code}.webp").exists() and (out / "dropped" / f"{code}.webp").exists()
+    assert rv["005930"]["result"] == "logo" and rv["005930"]["check"] == "same-brand"         # kept: an exact identifier
+    assert "005930" in idx["logos"] and "005935" in idx["logos"]
     assert rv["005380"]["result"] == rv["247540"]["result"] == "logo" and rv["005380"]["shared_group"]
-    assert LI.validate_dir(out / "logos")[1] == []
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+    dropped = json.loads((out / "dropped" / "index.json").read_text(encoding="utf-8"))
+    assert sorted(dropped["logos"]) == ["BRK-B", "MSFT"] and dropped["logos"]["MSFT"]["flags"][0] == "shared"
     s = (out / "summary.md").read_text(encoding="utf-8")
-    assert "- shared: **2**" in s and "**1** groups with different brands switched to letter marks" in s
+    assert "- shared: **2**" in s and "**2** companies of different or unknown brands switched" in s
+    assert "**1** kept because their own homepage confirmed them" in s
     log = (out / "run.log").read_text(encoding="utf-8")
-    assert "!! shared picture" in log and "different brands" in log
+    assert "!! shared picture" in log and "kept for 005930 (confirmed by their own homepage)" in log
     sheet = (out / "sheet.html").read_text(encoding="utf-8")
-    assert "ticker: shared" in sheet and "letter marks (different brands)" in sheet and "kept (one brand)" in sheet
+    assert "ticker: shared" in sheet and "2 switched to letter marks (different brands), 1 kept (same-brand)" in sheet
+    assert "kept (one brand)" in sheet
+
+
+def test_a_missing_brand_id_counts_as_unknown(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    no_id = logo_answer("dup", "")                                                             # no real brand_id
+    answers[("ticker", "MSFT")] = [no_id]
+    answers[("ticker", "BRK-B")] = [no_id]
+    rc, out = run(tmp_path, Net(answers))
+    rv = review(out)
+    assert rv["MSFT"]["reason"] == rv["BRK-B"]["reason"] == "shared"                          # never "one brand"
+    data = json.loads(logo_answer("x", "").body)["data"]
+    assert data.get("brand_id") == "" and "id" not in data
+
+
+def test_keep_restores_a_dropped_picture_after_review_and_refuses_others(tmp_path, capsys):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "MSFT")] = [logo_answer("same", "brand_msft")]
+    answers[("ticker", "BRK-B")] = [logo_answer("same", "brand_brk")]
+    answers[("ticker", "AAPL")] = [logo_answer("mono", "brand_aapl")]
+    rc, out = run(tmp_path, Net(answers, {"mono": PICS["mono"]}))
+    assert review(out)["AAPL"]["reason"] == "monogram" and (out / "dropped" / "AAPL.webp").exists()
+    assert F.main(["--keep", "MSFT,AAPL", "--dir", str(out), "--reason", "checked on the sheet"]) == 0
+    idx = index(out)
+    assert idx["logos"]["MSFT"]["flags"][-1] == "kept-after-review" and "AAPL" in idx["logos"]
+    assert (out / "logos" / "MSFT.webp").exists() and not (out / "dropped" / "MSFT.webp").exists()
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+    assert "restored from dropped/ after review" in capsys.readouterr().out
+    assert "MSFT" in (out / "keeps.csv").read_text(encoding="utf-8")
+    assert "Restored after review: MSFT, AAPL" in (out / "summary.md").read_text(encoding="utf-8")
+    for bad in ("005930", "NOPE", "MSFT"):                                                      # not in dropped/ (any more)
+        with pytest.raises(SystemExit):
+            F.main(["--keep", bad, "--dir", str(out)])
+    # --drop moves a picture to dropped/ (with its preferred share), and --keep brings both back
+    assert F.main(["--drop", "005930", "--dir", str(out)]) == 0
+    assert "005930" not in index(out)["logos"] and (out / "dropped" / "005930.webp").exists()
+    assert F.main(["--keep", "005930", "--dir", str(out)]) == 0
+    assert index(out)["logos"]["005935"]["via"] == "005930" and index(out)["logos"]["005935"]["name"] == "삼성전자우"
+
+
+def test_a_crash_after_the_lookups_still_saves_and_uploads(tmp_path, monkeypatch):
+    write_inputs(tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError("bug after the lookups " + FAKE_KEY)
+    monkeypatch.setattr(F, "drop_shared", boom)
+    net = Net(ALL_GOOD)
+    rc, out = run(tmp_path, net, "--defer-failure")
+    assert rc == 0                                                                             # so the artifact uploads
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert info["ok"] is False and info["outcome"] == "crashed" and "RuntimeError" in info["reason"]
+    assert any("boom" in line or "RuntimeError" in line for line in info["traceback"])
+    assert LI.validate_dir(out / "logos")[1] == [] and len(index(out)["logos"]) == 7          # every paid logo kept
+    assert (out / "review.csv").exists() and "NOT OK" in (out / "summary.md").read_text(encoding="utf-8")
+    for p in out.rglob("*"):
+        if p.is_file():
+            assert FAKE_KEY.encode() not in p.read_bytes(), p                                    # masked
+    assert F.verdict(out / "run.json") == 1
+    rc2, out2 = run(tmp_path, Net(ALL_GOOD), out_name="out2")
+    assert rc2 == 1                                                                            # without --defer-failure
+
+
+def test_full_runs_need_todays_date(tmp_path):
+    write_inputs(tmp_path)
+    net = Net(ALL_GOOD)
+    for date in (None, "", "2020-01-01"):
+        with pytest.raises(SystemExit) as e:
+            run(tmp_path, net, full_run_date=date)
+        assert "full_run_date" in str(e.value)
+    with pytest.raises(SystemExit):
+        run(tmp_path, net, "--limit", "51", full_run_date=None)
+    assert net.lookups == []                                                                   # refused before any request
+    rc, out = run(tmp_path, net, "--limit", "5", full_run_date=None)
+    assert rc == 0
+    rc, out = run(tmp_path, Net(ALL_GOOD), full_run_date=TODAY, out_name="out2")
+    assert rc == 0
+
+
+def test_a_limit_20_trial_is_a_clean_end_to_end_run(tmp_path, capsys):
+    stocks = list(BASE_STOCKS) + [stock(f"T{i:03d}", "us", 100.0 - i * 0.1, f"Co{i}") for i in range(40)]
+    write_inputs(tmp_path, stocks)
+    answers = dict(ALL_GOOD)
+    for i in range(40):
+        answers[("ticker", f"T{i:03d}")] = [logo_answer(f"t{i}", f"b{i}")]
+    net = Net(answers)
+    rc, out = run(tmp_path, net, "--limit", "20", "--defer-failure", full_run_date=None)
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 0 and info["ok"] is True and info["outcome"] == "complete" and info["companies"] == 20
+    assert info["max_credits"] == info["plan"]["ceiling"] <= 80 and info["credits"]["counted"] <= 80
+    for f in ("summary.md", "review.csv", "sheet.html", "run.json", "run.log", "logos/index.json", "dropped/index.json"):
+        assert (out / f).exists(), f
+    assert "credits left (Credits-Remaining, first answer)" in (out / "run.log").read_text(encoding="utf-8")
+    assert LI.validate_dir(out / "logos")[1] == []
+
+
+def test_first_balance_is_logged_and_a_low_one_stops_the_run(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "AAPL")] = [logo_answer("aapl", "brand_aapl", remaining="5000")]       # worst case 20 + 1,000 fits
+    rc, out = run(tmp_path, Net(answers))
+    log = (out / "run.log").read_text(encoding="utf-8")
+    assert "!! logo.dev reports 5,000 credits left" in log and "worst case 20 + floor 1,000 = 1,020 needed" in log
+    assert log.count("credits left (Credits-Remaining, first answer)") == 1
+    stocks = list(BASE_STOCKS) + [stock(f"T{i:03d}", "us", 100.0 - i * 0.1, f"Co{i}") for i in range(600)]
+    write_inputs(tmp_path, stocks)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "AAPL")] = [logo_answer("aapl", "brand_aapl", remaining="2000")]       # needs 1,220 + 1,000
+    for i in range(600):
+        answers[("ticker", f"T{i:03d}")] = [logo_answer(f"t{i}", f"b{i}")]
+    net = Net(answers)
+    rc, out = run(tmp_path, net, out_name="out2")
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 0 and info["outcome"] == "balance_low" and info["ok"] is True
+    assert net.lookups == [("ticker", "AAPL")] and sorted(index(out)["logos"]) == ["AAPL"]
+
+
+def test_billed_answers_without_a_balance_are_said_once(tmp_path):
+    write_inputs(tmp_path)
+    answers = {k: [chk.Resp(r.status, {kk: vv for kk, vv in r.headers.items() if kk != "credits-remaining"}, r.body)
+                   for r in v] for k, v in ALL_GOOD.items()}
+    rc, out = run(tmp_path, Net(answers))
+    log = (out / "run.log").read_text(encoding="utf-8")
+    assert log.count("logo.dev 가 남은 크레딧을 알려 주지 않아요 — 이번 실행 상한 14,000 만 지켜요") == 1
+
+
+def test_the_floor_counts_lookups_still_in_flight():
+    led = F.Ledger(14_000)
+    assert led.reserve() is None
+    led.settle(chk.Resp(200, {"Credits-Charged": "1", "Credits-Remaining": "1007"}, b"{}"))   # balance 1007, none in flight
+    assert led.reserve() is None                                                                # 1007 - 0 - 2 = 1005
+    assert led.reserve() is None                                                                # 1007 - 2 - 2 = 1003
+    assert led.reserve() is None                                                                # 1007 - 4 - 2 = 1001
+    assert led.reserve() == "floor"                       # 1007 - 6 - 2 = 999 (ignoring in-flight: 1005, wrongly allowed)
+    led.release()
+    assert led.reserve() is None                                                                # one came back
+    assert F.Ledger(10).reserve() is None and F.Ledger(1).reserve() == "cap"
 
 
 def test_index_entries_carry_the_company_name_and_odd_codes_get_letter_marks(tmp_path):
@@ -664,6 +817,21 @@ def test_keep_current_drops_reused_or_renamed_codes_and_their_preferred_shares()
     assert index["logos"]["000660"]["name"] == "SK하이닉스"                        # the input is not changed
 
 
+def test_harmless_name_changes_keep_the_logo():
+    index = {"version": 1, "size": 128, "logos": {
+        "HLT": dict(ENTRY, file="HLT.webp", name="Hilton Worldwide Holdings Inc. Common Stock"),
+        "ZZ": dict(ENTRY, file="ZZ.webp", name="ZZ"),                                          # the name was the ticker
+        "AB": dict(ENTRY, file="AB.webp", name="Alpha  Beta   Corp"),                          # double spaces
+        "005930": dict(ENTRY, name="㈜삼성전자"), "C1": dict(ENTRY, file="C1.webp", name="Gamma Inc. Class A"),
+        "OLD": dict(ENTRY, file="OLD.webp", name="Old Company")}}
+    today = {"HLT": "Hilton Worldwide Holdings Inc.", "ZZ": "Zeta Zulu Holdings", "AB": "alpha beta corp",
+             "005930": "삼성전자 주식회사", "C1": "GAMMA INC", "OLD": "New Company"}
+    out, gone = LI.keep_current(index, today)
+    assert gone == ["OLD"] and sorted(out["logos"]) == ["005930", "AB", "C1", "HLT", "ZZ"]
+    out, gone = LI.keep_current(index, dict(today, AB="", OLD="OLD"))                          # empty or the code: unknown
+    assert gone == [] and LI.same_company("A", "Alpha", "Beta") is False
+
+
 def test_image_size_reads_png_and_every_webp_kind():
     for mode, kw in (("RGBA", {}), ("RGB", {}), ("RGBA", {"lossless": True})):
         b = io.BytesIO()
@@ -696,6 +864,9 @@ def test_fetch_workflow_is_hand_run_read_only_and_keeps_the_secret_in_one_step()
     assert wf["concurrency"]["group"] == "logo-dev-fetch"                       # two runs never overlap
     inp = wf[True]["workflow_dispatch"]["inputs"]["max_credits"]
     assert inp["default"] == 14000 and "14,000" in inp["description"]
+    frd = wf[True]["workflow_dispatch"]["inputs"]["full_run_date"]                # the cross-run guard
+    assert frd["type"] == "string" and frd["default"] == ""
+    assert with_key[0]["env"]["FULL_RUN_DATE"] == "${{ inputs.full_run_date }}" and '--full-run-date "$FULL_RUN_DATE"' in run_
     assert "--verdict" in st[-1]["run"]
     assert "push_logos_branch" not in raw and "git push" not in raw and "contents: write" not in raw
     assert wf["concurrency"]["cancel-in-progress"] is False

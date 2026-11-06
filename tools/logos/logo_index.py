@@ -23,6 +23,7 @@ import os
 import re
 import stat
 import sys
+import unicodedata
 
 INDEX = "index.json"
 VERSION = 1
@@ -165,11 +166,44 @@ def stock_names(data):
     return out
 
 
+_NAME_SUFFIXES = ("common stock", "ordinary shares", "class a", "class b", "class c", "(주)", "주식회사")
+_NAME_PREFIXES = ("(주)", "주식회사")
+
+
+def norm_name(name):
+    """A company name for comparing: NFKC (㈜ -> (주)), case-folded, whitespace collapsed, and the share-class words
+    ("common stock", "class a/b/c", "ordinary shares") and "(주)" / "주식회사" removed, with trailing , . ; - too."""
+    t = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(name or "")).casefold()).strip()
+    while True:
+        before = t
+        for s in _NAME_SUFFIXES:
+            if t.endswith(s):
+                t = t[:-len(s)]
+        for s in _NAME_PREFIXES:
+            if t.startswith(s):
+                t = t[len(s):]
+        t = t.strip(" ,.;-")
+        if t == before:
+            return t
+
+
+def same_company(code, then, now):
+    """True unless both names are real and differ. A name that is empty or just the code/ticker says nothing, so the
+    logo stays."""
+    c = norm_name(code)
+    a, b = norm_name(then), norm_name(now)
+    if a in ("", c) or b in ("", c):
+        return True
+    return a == b
+
+
 def keep_current(index, names):
-    """(index, dropped codes): the entries whose name still matches names (today's data.json). A code reused by another
-    company, or gone, is dropped; so is a preferred share whose issuer was dropped. Pure; the input is not changed."""
+    """(index, dropped codes): the entries whose name still matches names (today's data.json), compared with norm_name.
+    A code reused by another company, or gone, is dropped; so is a preferred share whose issuer was dropped. Pure; the
+    input is not changed."""
     logos = index.get("logos") or {}
-    keep = {c: e for c, e in logos.items() if isinstance(e, dict) and names.get(c) == e.get("name")}
+    keep = {c: e for c, e in logos.items()
+            if isinstance(e, dict) and c in names and same_company(c, e.get("name"), names[c])}
     keep = {c: e for c, e in keep.items() if e.get("via") is None or e.get("via") in keep}
     out = dict(index, logos=keep, count=len(keep))
     return out, sorted(set(logos) - set(keep))
