@@ -1,0 +1,234 @@
+{
+ "v": 3,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-10-31T18:20:00+09:00"
+ },
+ "title": "뱁새 2.0 목업",
+ "launch": {
+  "view": "canvas"
+ },
+ "pages": [],
+ "boards": {
+  "VisualKit.dc.html": {
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 900,
+   "title": "그림 언어 2안 · 기준 그림 10개, 템플릿 그림 8개, 점과 칸",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "BuildStart2.dc.html": {
+   "x": 0,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "1 시작",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "BuildCards2.dc.html": {
+   "x": 470,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "2 기준 카드",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Import2.dc.html": {
+   "x": 940,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "3 가진 종목 넣기 · 평균 단가(선택)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Report2.dc.html": {
+   "x": 1410,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "4 점검 · 날짜와 계산 방법",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoSummary2.dc.html": {
+   "x": 0,
+   "y": 4824,
+   "w": 390,
+   "h": 844,
+   "title": "7 회사 · 요약",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoValue2.dc.html": {
+   "x": 470,
+   "y": 4824,
+   "w": 390,
+   "h": 844,
+   "title": "8 회사 · 가치",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "CoDiv2.dc.html": {
+   "x": 940,
+   "y": 4824,
+   "w": 390,
+   "h": 844,
+   "title": "9 회사 · 배당",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Home2.dc.html": {
+   "x": 1880,
+   "y": 4824,
+   "w": 390,
+   "h": 844,
+   "title": "11 홈 · 계정 저장 배너 · 내 수익(선택)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "PcStart2.dc.html": {
+   "x": 1860,
+   "y": 1800,
+   "w": 1280,
+   "h": 1000,
+   "title": "PC · 왼쪽 메뉴, 왼쪽 아래 계정",
+   "is_interactive": true,
+   "radius": 16
+  },
+  "CoSummaryUS.dc.html": {
+   "x": 1410,
+   "y": 4824,
+   "w": 390,
+   "h": 844,
+   "title": "10 미국 회사 · $ 먼저, 원 작게",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Signup2.dc.html": {
+   "x": 1880,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "5 계정 만들기 (선택)",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Login2.dc.html": {
+   "x": 2350,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "6 로그인",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Menu2.dc.html": {
+   "x": 2820,
+   "y": 3560,
+   "w": 390,
+   "h": 844,
+   "title": "7 메뉴 · 로그인 자리",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Guide2a.dc.html": {
+   "x": 0,
+   "y": 6188,
+   "w": 390,
+   "h": 844,
+   "title": "1 첫 방문 · 숫자 없는 화면이라 뱁이 가능",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Guide2b.dc.html": {
+   "x": 470,
+   "y": 6188,
+   "w": 390,
+   "h": 844,
+   "title": "2 직접 해 보기 1/3 · + 하나만 밝게",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Guide2c.dc.html": {
+   "x": 940,
+   "y": 6188,
+   "w": 390,
+   "h": 844,
+   "title": "3 직접 해 보기 2/3 · 회사 수가 줄어드는 걸 보여 줘요",
+   "is_interactive": true,
+   "radius": 28
+  },
+  "Guide2d.dc.html": {
+   "x": 1410,
+   "y": 6188,
+   "w": 390,
+   "h": 844,
+   "title": "4 직접 해 보기 3/3 · 나머지는 혼자",
+   "is_interactive": true,
+   "radius": 28
+  }
+ },
+ "order": [
+  "VisualKit.dc.html",
+  "PcStart2.dc.html",
+  "BuildStart2.dc.html",
+  "BuildCards2.dc.html",
+  "Import2.dc.html",
+  "Report2.dc.html",
+  "Signup2.dc.html",
+  "Login2.dc.html",
+  "Menu2.dc.html",
+  "CoSummary2.dc.html",
+  "CoValue2.dc.html",
+  "CoDiv2.dc.html",
+  "CoSummaryUS.dc.html",
+  "Home2.dc.html",
+  "Guide2a.dc.html",
+  "Guide2b.dc.html",
+  "Guide2c.dc.html",
+  "Guide2d.dc.html"
+ ],
+ "notes": {
+  "rowKit": {
+   "x": 0,
+   "y": -300,
+   "text": "그림 언어 · 게임에서 배운 것 12가지 · Adobe와 Fluent 비교",
+   "kind": "title1",
+   "maxW": 4200
+  },
+  "rowStyle": {
+   "x": 0,
+   "y": 1500,
+   "text": "고를 것: 그림 세트 네 가지를 뱁이와 나란히 · PC 화면",
+   "kind": "title1",
+   "maxW": 4200
+  },
+  "rowBuild": {
+   "x": 0,
+   "y": 3260,
+   "text": "포트폴리오 · 만들기부터 점검, 저장 코드까지",
+   "kind": "title1",
+   "maxW": 4200
+  },
+  "rowCo": {
+   "x": 0,
+   "y": 4524,
+   "text": "회사 화면과 홈 · 한국과 미국",
+   "kind": "title1",
+   "maxW": 4200
+  },
+  "rowGuide": {
+   "x": 0,
+   "y": 5888,
+   "text": "처음 방문 안내 · 직접 해 보기 (처음 한 번만, 메뉴에서 다시 보기)",
+   "kind": "title1",
+   "maxW": 2200
+  }
+ },
+ "designSystems": []
+}
