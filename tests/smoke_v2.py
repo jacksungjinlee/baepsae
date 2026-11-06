@@ -56,7 +56,7 @@ import tempfile
 import threading
 import time
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
@@ -149,10 +149,24 @@ def hero_colours(loc):
         return [getComputedStyle(b).backgroundColor, p ? getComputedStyle(p).backgroundColor : null, p ? getComputedStyle(p).color : null]; }""")
 
 
+IMG_OK = "(i) => i.complete && i.naturalWidth > 0"
+IMG_WAIT_MS = 5000          # Jack 2026-11-06: 그림이 다 열릴 때까지 5초까지 기다려요. 그래도 안 열리면 실패예요
+
+
+def img_loaded(img):
+    """보이는 그림(locator 하나)이 다 열렸는지. 보이자마자 보면 느린 기계에서 아직 받는 중이라 가끔 틀려요 (#53 의 ci)."""
+    handle = img.element_handle()        # 그림이 없으면 여기서 바로 실패해요 (기다림 안에 숨기지 않아요)
+    try:
+        img.page.wait_for_function(IMG_OK, arg=handle, timeout=IMG_WAIT_MS)
+    except PWTimeout:
+        pass                # 아래에서 다시 보고, 안 열렸으면 부른 쪽의 assert 가 실패로 잡아요
+    return img.evaluate(IMG_OK)
+
+
 def mascot_img(loc, src, px, alt):
     img = loc.locator(f'img[src="{src}"]')
     img.wait_for(state="visible")
-    assert img.evaluate("(i) => i.complete && i.naturalWidth > 0"), f"{src} 가 열리지 않았어요"
+    assert img_loaded(img), f"{src} 가 열리지 않았어요 ({IMG_WAIT_MS // 1000}초까지 기다렸어요)"
     box = img.bounding_box()
     assert box and abs(box["width"] - px) < 1, (src, box)
     assert img.get_attribute("alt") == alt and alt, (src, img.get_attribute("alt"), alt)     # Jack 이 승인한 alt (2026-11-04)
@@ -454,7 +468,7 @@ def scene_normal(R, files, width):
     def visual_start():
         bar = page.locator('[data-ui-v2="app-bar"]').first                   # 로고: 뱁이 마크 28px + '뱁새' 22px/800 (뒤로 버튼이 있으면 마크 대신)
         mark = bar.locator('img[data-ui-v2="logo-mark"]')
-        assert mark.get_attribute("src") == "baepi-mark.webp" and mark.get_attribute("alt") == "" and mark.evaluate("(i) => i.naturalWidth > 0")
+        assert mark.get_attribute("src") == "baepi-mark.webp" and mark.get_attribute("alt") == "" and img_loaded(mark)
         assert abs(mark.bounding_box()["width"] - 28) < 1
         assert bar.locator("img[src='icon-192.png']").count() == 0
         word = bar.locator('h1[data-ui-v2="wordmark"]')
@@ -1928,6 +1942,12 @@ def footer_ok(page):
 
 
 def images_loaded(page):
+    try:
+        page.wait_for_function("""() => { const l = [...document.querySelectorAll('[data-ui-v2="about"] img')];
+                                          return l.length === 2 && l.every((i) => i.complete && i.naturalWidth > 0); }""",
+                               timeout=IMG_WAIT_MS)
+    except PWTimeout:
+        pass                # 아래 assert 가 어느 그림이 안 열렸는지 보여 줘요
     imgs = page.evaluate("""() => [...document.querySelectorAll('[data-ui-v2="about"] img')].map((i) => [i.getAttribute('src'), i.complete && i.naturalWidth > 0])""")
     assert sorted(i for i, _ in imgs) == ["baepi-og.webp", "jack-photo.jpg"] and all(ok for _, ok in imgs), imgs
 
@@ -2667,7 +2687,7 @@ def pc_shell(page, width, live=True):
     assert box["x"] == 0 and abs(box["width"] - 240) < 0.5 and abs(box["height"] - page.viewport_size["height"]) < 1, box
     assert side.evaluate("(e) => getComputedStyle(e).position") == "fixed"
     mark = side.locator('img[data-ui-v2="logo-mark"]')
-    assert mark.get_attribute("src") == "baepi-mark.webp" and mark.get_attribute("alt") == "" and mark.evaluate("(i) => i.naturalWidth > 0")
+    assert mark.get_attribute("src") == "baepi-mark.webp" and mark.get_attribute("alt") == "" and img_loaded(mark)
     assert abs(mark.bounding_box()["width"] - 38) < 0.5
     word = side.locator('h1[data-ui-v2="wordmark"]')
     assert word.inner_text() == C["app"]["brand"] and word.evaluate("(e) => [getComputedStyle(e).fontSize, getComputedStyle(e).fontWeight]") == ["24px", "800"]
