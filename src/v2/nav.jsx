@@ -19,7 +19,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/token
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { BottomTabBar } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
-import { DateLine, Note, IMG, SampleLabel, SIDE_W, PC_PAD, PcFrame, tx, tap, useMode } from "./ui.jsx";
+import { DateLine, Note, IMG, SampleLabel, SIDE_W, PC_PAD, PcFrame, HomeLink, tx, tap, useMode } from "./ui.jsx";
 import { TABS, OLD_APP, OLD_LINKS, ABOUT_ROUTE, CO_MORE, parseHash, hashOf } from "./routes.js";
 
 const isMore = (ctab) => CO_MORE.includes(ctab);
@@ -127,6 +127,7 @@ export function useRouter() {
     if (cur.menu) replace({ v2: cur.depth }, hash);
     else push({ v2: cur.depth + 1 }, hash);
     sync();
+    if (cur.menu && !cur.about && cur.tab === tab && cur.sub === sub) toTop();   // v19.5a: e.g. the 뱁새 logo in the menu over 홈
   }, [sync]);
   const openAbout = useCallback(() => {
     const cur = locRef.current;
@@ -203,14 +204,14 @@ function MenuRow({ icon, label, href, onClick, id, first }) {
 // ☰ menu (board Menu): a screen over the current one, above the tab bar. 소개 · 용어 사전 · 데이터 출처 · 예전 뱁새 보기, then
 // the data-date box ("{md} 기준", the US close date when it differs). Escape and the close button close it; focus moves
 // into it on open and back to the ☰ button on close. The preview page shows 소개 and the data date only.
-export function MenuSheet({ open, load, onClose, onAbout, tabH }) {
+export function MenuSheet({ open, load, onClose, onAbout, onHome, tabH }) {
   const { preview } = useMode();
   const panel = useRef(null);
   const opener = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
     opener.current = document.activeElement;
-    const first = panel.current && panel.current.querySelector("button, a");
+    const first = panel.current && (panel.current.querySelector('[data-ui-v2="menu-close"]') || panel.current.querySelector("button, a"));
     if (first) { try { first.focus(); } catch (e) { /* ignore */ } }
     const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } };
     document.addEventListener("keydown", onKey);
@@ -229,8 +230,11 @@ export function MenuSheet({ open, load, onClose, onAbout, tabH }) {
       style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: tabH, zIndex: 80, background: COLOR.page, overflowY: "auto", overscrollBehavior: "contain" }}>
       <div style={{ maxWidth: 520, margin: "0 auto", padding: `${SPACE(4)}px ${SPACE(4)}px ${SPACE(6)}px` }}>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH }}>
-          <img src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />
-          <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</div>
+          <HomeLink onHome={onHome}>
+            <img src={IMG.mark} alt="" width={28} height={28} style={{ objectFit: "contain", flexShrink: 0, marginRight: -SPACE(1) }} />
+            <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { minWidth: 0, lineHeight: 1.2, letterSpacing: "-0.04em" })}>{C.app.brand}</div>
+          </HomeLink>
+          <span style={{ flex: 1 }} />
           <button type="button" data-ui-v2="menu-close" aria-label={C.app.close} onClick={onClose}
             style={{ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", marginRight: -SPACE(2) }}>
             <Icon name="close" tone="on" />
@@ -300,12 +304,14 @@ export function SideMenu({ tab, about, load, go, onAbout }) {
     <aside data-ui-v2="side-menu" style={{ position: "fixed", top: 0, bottom: 0, left: 0, width: SIDE_W, zIndex: 60, background: COLOR.surface,
       borderRight: `1px solid ${COLOR.border}`, display: "flex", flexDirection: "column", padding: `${SPACE(5)}px ${SPACE(3)}px ${SPACE(4)}px`,
       overflowY: "auto", overscrollBehavior: "contain" }}>
-      <div data-ui-v2="side-brand" style={{ display: "flex", alignItems: "center", gap: SPACE(2) + 2, padding: `0 ${SPACE(2)}px` }}>
-        <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={38} height={38} style={{ objectFit: "contain", flexShrink: 0 }} />
-        <div style={{ minWidth: 0 }}>
-          <h1 data-ui-v2="wordmark" style={tx(24, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.1, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
-          <p data-ui-v2="side-catch" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: 2, lineHeight: 1.35 })}>{C.about.ko.hero.catch}</p>
-        </div>
+      <div data-ui-v2="side-brand" style={{ padding: `0 ${SPACE(2)}px` }}>
+        <HomeLink onHome={() => go("home")} style={{ gap: SPACE(2) + 2 }}>
+          <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={38} height={38} style={{ objectFit: "contain", flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <h1 data-ui-v2="wordmark" style={tx(24, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.1, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
+            <p data-ui-v2="side-catch" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: 2, lineHeight: 1.35 })}>{C.about.ko.hero.catch}</p>
+          </div>
+        </HomeLink>
       </div>
       <nav aria-label={C.app.tabsLabel} data-ui-v2="side-tabs" style={{ display: "flex", flexDirection: "column", gap: SPACE(1), marginTop: SPACE(6) }}>
         {TABS.map((id) => <SideTab key={id} id={id} on={!about && tab === id} onClick={() => go(id)} />)}

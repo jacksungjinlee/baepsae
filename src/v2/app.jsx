@@ -135,6 +135,7 @@ export function App({ source }) {
     if (id === "build") { router.go("portfolio", "build"); return; }
     router.go(id);
   }, [router.go]);
+  const goHome = useCallback(() => go("home"), [go]);            // v19.5 Part B: the 뱁새 logo opens 홈 (or scrolls it to the top)
   // Typing in the top bar opens 종목 (one history entry), where the results show; the field keeps focus.
   const onSearch = useCallback((v) => {
     setStockQ(v);
@@ -171,7 +172,7 @@ export function App({ source }) {
     if (tab === "market") return <Market load={load} pad={pad} />;
     return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} />;
   })();
-  const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock };
+  const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
   // tabs keeps the page mounted; its 자세히 screens are screens of their own.
   const screenKey = !loc.about && tab === "stocks" && loc.code ? "stocks/" + loc.code + (CO_MORE.includes(loc.ctab) ? "/" + loc.ctab : "") : tab + (loc.sub || "");
@@ -192,7 +193,7 @@ export function App({ source }) {
               aria-hidden={loc.about ? true : undefined}>
               <ErrorBoundary name="app">
                 <ErrorBoundary key={screenKey} name={tab} pad={inBuild ? undefined : pad}>{screen}</ErrorBoundary>
-                {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} tabH={inBuild ? 0 : TAB_H} />}
+                {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} tabH={inBuild ? 0 : TAB_H} />}
                 {!wide && !inBuild && <TabBar value={tab} onChange={go} />}
               </ErrorBoundary>
             </div>
