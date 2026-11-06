@@ -168,6 +168,41 @@ def test_site_takes_data_only_from_the_data_branch(repo, tmp_path):
         assert json.loads((out / f).read_text())["tag"] == 7                       # main 의 JSON 이 아니에요
 
 
+def site_with_docs(work, rec):
+    """data 브랜치에 데이터를 올리고, main 에 docs/ 같은 파일들을 더해요 (Jack 2026-11-06: docs/ 는 사이트에 올리지 않아요)."""
+    write_data(work, 3)
+    receipt(work, rec)
+    assert push(work, rec).returncode == 0
+    for f in FILES:
+        git(work, "checkout", "--", f)
+    for rel in ("docs/a.png", "docs/design/b.md", "Docs/c.txt", "x/docs/d.js", "docs.js"):
+        (work / rel).parent.mkdir(parents=True, exist_ok=True)
+        (work / rel).write_text("x")
+    git(work, "add", "-A")
+    git(work, "commit", "-q", "-m", "docs")
+    git(work, "fetch", "-q", "origin", "+refs/heads/data:refs/remotes/origin/data")
+
+
+def test_site_leaves_out_docs_in_any_letter_case(repo, tmp_path):
+    work, origin, rec = repo
+    site_with_docs(work, rec)
+    out = tmp_path / "_site"
+    r = subprocess.run([sys.executable, ASSEMBLE, str(out), "origin/data"], cwd=work, capture_output=True, text=True, env=ENV)
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file())
+    assert got == sorted(["src/a.js", "x/docs/d.js", "docs.js", *FILES])          # 맨 위 docs/ · Docs/ 만 빠져요
+    assert "docs/ 의 파일 3개는 올리지 않아요" in r.stdout
+
+
+def test_site_stops_if_docs_gets_in_anyway(repo, tmp_path, monkeypatch):
+    import assemble_site as AS
+    work, origin, rec = repo
+    site_with_docs(work, rec)
+    monkeypatch.setattr(AS, "site_files", lambda paths: [p for p in paths if not p.startswith(".") and p not in FILES])
+    with pytest.raises(SystemExit, match="docs/ 가 들어갔어요"):
+        AS.assemble(str(work), str(tmp_path / "_site"), "origin/data")
+
+
 def test_site_refuses_a_data_ref_without_the_four_files(repo, tmp_path):
     work, origin, rec = repo
     out = tmp_path / "_site"
