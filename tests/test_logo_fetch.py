@@ -167,7 +167,9 @@ class Net:
             token = url.split("/assets/", 1)[1].split("?", 1)[0]
             q = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&"))
             self.downloads.append((token, q))
-            pic = self.pics.get(token) or distinct(token)
+            pic = self.pics.get(token) or self.pics.get("*") or distinct(token)
+            if isinstance(pic, chk.Resp):                          # a download answer as given (a failure, a 403)
+                return pic
             return chk.Resp(200, {"Content-Type": "image/png"}, pic)
         finally:
             with self.lock:
@@ -739,8 +741,83 @@ def test_a_vector_source_without_a_size_is_kept_after_a_good_download(tmp_path):
     for code in ("MSFT", "BRK-B"):
         assert rv[code]["result"] == "logo" and rv[code]["vector"] == "True", code
         assert (idx["logos"][code]["w"], idx["logos"][code]["h"]) == (256, 256)              # the downloaded rendition
+        assert "sizeless-vector" in idx["logos"][code]["flags"] and rv[code]["size_from"] == "download", code
+    assert rv["AAPL"]["size_from"] == "source"
     assert dict(net.downloads)["lmt"]["size"] == "128"                                          # rendered at our size
     assert LI.validate_dir(out / "logos")[1] == []
+    log = (out / "run.log").read_text(encoding="utf-8")
+    assert "!! MSFT (ticker): size-less vector" in log and "!! BRK-B (ticker): size-less vector" in log
+    s = (out / "summary.md").read_text(encoding="utf-8")
+    assert "judged on the downloaded picture), kept and flagged: **2**" in s
+    assert "Size-less vector (kept): every company, any rank · 2" in (out / "sheet.html").read_text(encoding="utf-8")
+
+
+def test_a_size_less_vector_whose_download_is_tiny_is_dropped_as_small(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "MSFT")] = [answer_with_source("tiny", "brand_msft", {"width": 0, "height": 0, "format": "svg",
+                                                                             "is_vector": True})]
+    answers[("ticker", "BRK-B")] = [answer_with_source("big", "brand_brk", {"width": 0, "height": 0, "format": "svg",
+                                                                            "is_vector": True})]
+    rc, out = run(tmp_path, Net(answers, {"tiny": png(good_logo(16)), "big": png(good_logo(256))}))
+    rv, idx = review(out), index(out)
+    assert (rv["MSFT"]["result"], rv["MSFT"]["reason"]) == ("letter", "small") and "MSFT" not in idx["logos"]
+    assert (out / "dropped" / "MSFT.webp").exists()
+    assert rv["BRK-B"]["result"] == "logo" and "sizeless-vector" in idx["logos"]["BRK-B"]["flags"]
+
+
+def test_a_korean_odd_ticker_answer_skips_the_homepage_lookup(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "005380.KS")] = [answer_with_source("odd", "brand_hmc", {"width": 0, "height": 0,
+                                                                                "format": "png", "is_vector": False})]
+    net = Net(answers)
+    rc, out = run(tmp_path, net)
+    assert review(out)["005380"]["reason"] == "odd_answer"
+    assert ("domain", "hyundai.com") not in net.lookups                                        # it would be ignored
+    assert ("domain", "samsung.com") in net.lookups                                            # the others still are
+
+
+def test_a_crash_keeps_the_logo_flags_in_the_salvaged_index(tmp_path, monkeypatch):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "AAPL")] = [answer_with_source("vec", "brand_aapl", {"width": 0, "height": 0, "format": "svg",
+                                                                            "is_vector": True})]
+    answers[("ticker", "MSFT")] = [logo_answer("mono", "brand_msft")]
+
+    def boom(*a, **k):
+        raise RuntimeError("bug after the lookups")
+    monkeypatch.setattr(F, "drop_shared", boom)
+    rc, out = run(tmp_path, Net(answers, {"mono": PICS["mono"]}), "--defer-failure")
+    idx = index(out)
+    assert idx.get("salvaged") is True
+    assert "sizeless-vector" in idx["logos"]["AAPL"]["flags"] and "monogram-looking" in idx["logos"]["MSFT"]["flags"]
+
+
+def test_failing_picture_downloads_stop_the_run(tmp_path):
+    stocks = list(BASE_STOCKS) + [stock(f"T{i:03d}", "us", 100.0 - i * 0.1, f"Co{i}") for i in range(40)]
+    write_inputs(tmp_path, stocks)
+    answers = dict(ALL_GOOD)
+    for i in range(40):
+        answers[("ticker", f"T{i:03d}")] = [logo_answer(f"t{i}", f"b{i}")]
+    fail = chk.Resp(500, {"Content-Type": "text/plain"}, b"oops")
+    net = Net(answers, {"*": fail})
+    rc, out = run(tmp_path, net, "--defer-failure")
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 0 and info["outcome"] == "download_failures" and info["ok"] is False
+    assert "20 picture downloads in a row failed" in info["reason"]
+    assert len(net.lookups) < 30                                                               # stopped early
+    assert (out / "review.csv").exists() and LI.validate_dir(out / "logos")[1] == []
+    assert F.verdict(out / "run.json") == 1
+
+
+def test_a_refused_signed_download_stops_the_run_at_once(tmp_path):
+    write_inputs(tmp_path)
+    net = Net(ALL_GOOD, {"*": chk.Resp(403, {}, b"")})
+    rc, out = run(tmp_path, net, "--defer-failure")
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert info["outcome"] == "download_failures" and "HTTP 403" in info["reason"]
+    assert net.lookups == [("ticker", "AAPL")]
 
 
 @pytest.mark.parametrize("source", [

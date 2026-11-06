@@ -60,9 +60,11 @@ $150 of API credit a month, 1 credit = 1¢, logo lookup 2 credits)
     requests) at most 300 a minute. 429: waits Retry-After or RateLimit-Reset, else backs off. 202 (indexing): the
     company waits Retry-After (30 s) while the others go on, at most RETRIES_202 times. An answer the docs don't
     describe is that company's alone: it gets the letter mark (odd_answer, the raw source fields in review.csv and the
-    log, never the signed address) and the run goes on; a vector source without a size (0 x 0) is fine. 401/403, more
-    than 30 odd answers (the API may have changed), or 5 companies in a row ending in an error stop the run; whatever
-    was found is still saved.
+    log, never the signed address) and the run goes on; a Korean company whose ticker answer is odd gets no homepage
+    lookup. A vector source without a size (0 x 0) is fine: it is judged on its downloaded picture (small when that is
+    under 64 px), flagged sizeless-vector, counted and drawn on the review sheet. 401/403, more than 30 odd answers (the
+    API may have changed), 20 failed picture downloads in a row or one 401/403 from the image host (lookups would be
+    billed for nothing), or 5 companies in a row ending in an error stop the run; whatever was found is still saved.
   - Nothing is skipped as "done before": every run looks every company up again. A brand billed in the last 24 hours
     is free again (logo.dev bills a brand once per 24 hours), so a rerun soon after a stopped run costs only the rest.
   - No new lookup starts after --time-limit-min (110), inside the workflow's 150-minute limit.
@@ -132,6 +134,7 @@ URL_NEEDLE = b"img.logo.dev/"                    # a signed image address must n
 URL_RE = re.compile(r"https?://img\.logo\.dev/\S*")
 DROP_REASONS = ("small", "blank", "faint", "one_colour", "shared", "file_clash", "odd_code")
 ODD_STOP = 30                                    # more odd answers than this in one run: logo.dev's API may have changed
+DOWNLOAD_STOP = 20                               # this many failed picture downloads in a row stop the run
 FORMATS = ("png", "jpg", "svg", "webp", "gif", "ico", "avif")    # source.format values logo.dev documents
 OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "balance_low", "balance_unreadable")
 BALANCE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # Credits-Remaining as logo.dev documents it ("18966.99"); else unreadable
@@ -142,7 +145,9 @@ OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was look
                     balance_low=f"Stopped cleanly before the lookups: logo.dev's first reported balance was below this "
                                 f"run's worst case plus the {MIN_BALANCE:,}-credit floor.",
                     balance_unreadable="Stopped cleanly: logo.dev reported a credit balance this tool cannot read, so "
-                                       "the 1,000-credit floor could not be kept.")
+                                       "the 1,000-credit floor could not be kept.",
+                    download_failures="Stopped: the signed picture downloads kept failing, so further lookups would be "
+                                      "billed for nothing. What was found is saved.")
 
 QUALITY_NOTE = (
     "Quality checks (a failing logo gets the letter mark): "
@@ -716,6 +721,7 @@ class Fetcher:
         self.counts = collections.Counter()
         self.done = []
         self.odd = 0                                     # odd answers (each one: that company's letter mark)
+        self.download_streak = 0                         # failed picture downloads in a row
         self.used_files = set()
         self.unfinished = []
         self.remaining = []
@@ -886,7 +892,8 @@ class Fetcher:
                 self.set_stop(chk.StopRun("unexpected", f"more than {ODD_STOP} odd answers from logo.dev ({n}): its API "
                                                         "may have changed; what was found is saved"))
         job.results[route] = (kind, info)
-        job.stage = "domain" if route == "ticker" and c["side"] == "kr" and c.get("domain") else "decide"
+        job.stage = ("domain" if route == "ticker" and c["side"] == "kr" and c.get("domain") and kind != "odd"
+                     else "decide")                      # an odd ticker answer means a letter mark: no homepage lookup
         return None
 
     def decide(self, job):
@@ -941,11 +948,21 @@ class Fetcher:
                 resp = self.client.download(img["url"], download_size(img))
             except Exception as e:                       # noqa: BLE001 — one picture: counted, said, the rest go on
                 job.cands[rt] = {"png": None, "flags": [], "error": f"no answer ({type(e).__name__})"}
+                self.download_failed(job, f"no answer ({type(e).__name__})")
+                continue
+            if resp.status in (401, 403):                # the image host refuses our signed addresses: stop at once
+                job.cands[rt] = {"png": None, "flags": [], "error": f"HTTP {resp.status} from the image host"}
+                self.set_stop(chk.StopRun("download_failures", f"the image host refused a signed download (HTTP "
+                                                               f"{resp.status}, company {job.c['code']}): no further "
+                                                               "lookup, so none is billed for nothing"))
                 continue
             if not chk.image_kind(resp):
                 job.cands[rt] = {"png": None, "flags": [], "error": f"HTTP {resp.status} "
                                  f"{resp.headers.get('content-type', '')!r}, {len(resp.body):,} bytes"}
+                self.download_failed(job, f"HTTP {resp.status}")
                 continue
+            with self.lock:
+                self.download_streak = 0
             try:
                 if img.get("width") is None or img.get("height") is None:     # a vector without a size: the rendition's
                     from PIL import Image
@@ -957,6 +974,11 @@ class Fetcher:
                 job.cands[rt] = {"png": None, "flags": [], "error": f"unreadable picture ({type(e).__name__}: {e})"[:120]}
                 continue
             flags = quality(canvas, img)
+            if img.get("size_from") == "download":       # a size-less vector: judged on the downloaded picture
+                self.log(f"!! {job.c['code']} ({rt}): size-less vector (source {img.get('format') or '?'}, no size) → "
+                         f"judged on the downloaded {img['width']} x {img['height']} picture")
+                if max(img["width"], img["height"]) < SMALL_PX and "small" not in flags:
+                    flags.insert(0, "small")
             mono = not flags and is_monogram(_np().asarray(canvas.convert("RGBA")))
             buf = io.BytesIO()
             canvas.save(buf, "PNG")
@@ -992,8 +1014,21 @@ class Fetcher:
         (self.out_logos / name).write_bytes(data)
         job.final, job.file, job.bytes, job.hash = "logo", name, len(data), fingerprint(canvas)
         if cand.get("mono"):                             # kept, flagged, drawn on the review sheet
-            job.flags = ["monogram-looking"]
+            job.flags.append("monogram-looking")
             self.count("monogram-looking (kept)")
+        if job.results[job.choice][1]["image"].get("size_from") == "download":   # kept, flagged, on the sheet
+            job.flags.append("sizeless-vector")
+            self.count("size-less vectors (kept)")
+
+    def download_failed(self, job, why):
+        """A failed picture download; DOWNLOAD_STOP of them in a row stop the run (lookups would be billed for nothing)."""
+        with self.lock:
+            self.download_streak += 1
+            n = self.download_streak
+        if n >= DOWNLOAD_STOP:
+            self.set_stop(chk.StopRun("download_failures", f"{n} picture downloads in a row failed (last: "
+                                                           f"{job.c['code']}, {why}): no further lookup, so none is "
+                                                           "billed for nothing"))
 
     def keep_dropped(self, job, canvas):
         """A dropped picture goes to dropped/ (never logos/), so --keep can restore it after review without paying."""
@@ -1175,7 +1210,8 @@ def rows_of(fetcher, preferred, groups):
                "flags": " ".join(job.flags), "unverified_why": job.why, "ticker_status": t_kind,
                "ticker_brand": t.get("brand_id", ""), "domain_status": d_kind, "domain_brand": d.get("brand_id", ""),
                "brand_domain": brand_domain(job),
-               "resolution": job.results[job.choice][1].get("method", "") if job.choice else "", "width": chosen.get("width", ""), "height": chosen.get("height", ""),
+               "resolution": job.results[job.choice][1].get("method", "") if job.choice else "",
+               "size_from": (chosen.get("size_from") or "source") if chosen else "", "width": chosen.get("width", ""), "height": chosen.get("height", ""),
                "format": chosen.get("format", ""), "vector": chosen.get("is_vector", ""),
                "transparency": chosen.get("has_transparency", ""), "etag": chosen.get("etag", ""),
                "file": job.file, "bytes": job.bytes or "", "credits": job.credits, "requests": job.requests,
@@ -1194,6 +1230,7 @@ def rows_of(fetcher, preferred, groups):
                                               (f"issuer {p['issuer']}: {row['reason'] or 'unfinished'}" if row else "")),
                      "flags": "", "unverified_why": "", "ticker_status": "", "ticker_brand": "", "domain_status": "",
                      "domain_brand": "", "brand_domain": row["brand_domain"] if ok else "", "resolution": "",
+                     "size_from": row["size_from"] if ok else "",
                      "width": row["width"] if ok else "", "height": row["height"] if ok else "",
                      "format": row["format"] if ok else "", "vector": row["vector"] if ok else "",
                      "transparency": row["transparency"] if ok else "", "etag": row["etag"] if ok else "",
@@ -1220,7 +1257,7 @@ def make_index(rows, stamp, data, fmt):
 
 CSV_COLS = ["rank", "market_rank", "code", "name", "market", "cap", "ticker", "domain", "dart_homepage", "result", "route", "check",
             "reason", "flags", "unverified_why", "ticker_status", "ticker_brand", "domain_status", "domain_brand",
-            "brand_domain", "resolution", "width", "height", "format", "vector", "transparency", "etag", "file", "bytes", "credits",
+            "brand_domain", "resolution", "size_from", "width", "height", "format", "vector", "transparency", "etag", "file", "bytes", "credits",
             "requests", "shared_group", "via", "note"]
 
 
@@ -1291,6 +1328,8 @@ def summary_md(info):
             "Counted on the chosen picture (dropped → letter mark), plus companies whose final logo is shared:", ""]
     out += [f"- {k}: **{t['flags'].get(k, 0):,}**" for k in DROP_REASONS]
     out += [f"- monogram-looking, kept and flagged (never dropped): **{t['flags'].get('monogram-looking', 0):,}**",
+            f"- size-less vectors (no size in the answer; judged on the downloaded picture), kept and flagged: "
+            f"**{t['flags'].get('sizeless-vector', 0):,}**",
             f"- odd answers from logo.dev (letter mark, reason odd_answer): **{info.get('odd', 0):,}** (the run stops "
             f"above {ODD_STOP})"]
     sd = info.get("shared_dropped") or {"groups": [], "companies": [], "kept_same_brand": []}
@@ -1441,6 +1480,8 @@ def sheet_sections(rows, jobs, groups, top):
     rank = lambda r: (r["market"] == "US", int(r["market_rank"] or 10 ** 6))    # noqa: E731
     secs.append(("Monogram-looking (kept): every company, any rank",
                  sorted((r for r in comp if "monogram-looking" in r["flags"].split()), key=rank)))
+    secs.append(("Size-less vector (kept): every company, any rank",
+                 sorted((r for r in comp if "sizeless-vector" in r["flags"].split()), key=rank)))
     secs.append(("Odd answers from logo.dev (letter mark): every company, any rank",
                  sorted((r for r in comp if r["reason"] == "odd_answer"), key=rank)))
     by = {r["code"]: r for r in comp}
@@ -1938,7 +1979,7 @@ def salvage(err, tb, out, a, d, f, ledger, client, preferred, data, pl, sources,
                 img = j.results[j.choice][1]["image"]
                 logos[j.c["code"]] = {"file": j.file, "name": j.c["name"], "route": j.choice, "w": int(img["width"] or SIZE),
                                       "h": int(img["height"] or SIZE), "vector": bool(img.get("is_vector")),
-                                      "flags": [j.check] if j.check else []}
+                                      "flags": ([j.check] if j.check else []) + list(j.flags)}
         used = {e["file"] for e in logos.values()}
         for p in out_logos.iterdir():                    # a picture without an entry would make the folder invalid
             if p.name != LI.INDEX and p.name not in used:
