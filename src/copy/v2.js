@@ -22,7 +22,7 @@ export const C = {
     sample: "예시 데이터",                                          // 3 · preview
     previewTitle: "{title} · {sample}",                           // 미리 보기 페이지의 <title>: 위 두 문구를 이어 붙여요
     brand: "뱁새",                                                 // 2 (v19.0: 머리말에는 긴 제목 대신 이 이름만)
-    homeLink: "홈으로",                                            // chat (2026-11-06: v19.5 Part B, 뱁새 로고를 누르면 홈 · 화면 읽기 이름)
+    homeLink: "뱁새, 홈으로",                                      // chat (2026-11-07: v19.5 Part B 로고 링크의 화면 읽기 이름. 보이는 '뱁새'로 시작해서 음성 조작으로도 눌러요)
     footer: "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", // footer · 552
     aboutLink: "소개",                                             // chat (2026-11-03: v19.0 Part E 푸터 "… · 소개", #about 으로 가요)
     tabsLabel: "주요 메뉴",                                        // 28

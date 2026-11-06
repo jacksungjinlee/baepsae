@@ -153,7 +153,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 - Company pages cover Korean and US stocks. Korean figures come from DART filings; US financial statements come from SEC
   filings (v19.2). Per-share US figures show $ first; the user's own money shows 원 first.
 - Mascot 뱁이: only Jack's own artwork (`baepi-1.png` … `baepi-9.png`, the `baepi-*` files from
-  `docs/design/v19/assets/`, `icon-*.png`). Never redraw, generate or "improve" it. Serious first, warm second
+  `docs/design/v19/assets/`, `icon-*.png`, `apple-touch-icon-v19.png`). Never redraw, generate or "improve" it. Serious first, warm second
   (Jack, 2026-11-03): 뱁이 appears only on the first visit, empty states, the load-failure screen, 준비 중 blocks,
   learning cards, the share card, the 소개 page, the link preview and the logo mark (`baepi-mark` beside the 뱁새
   wordmark) — never on a screen that shows numbers and never beside a verdict. Numbers means money, prices, returns,
