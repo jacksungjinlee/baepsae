@@ -6,8 +6,8 @@ No network and no real key: the HTTP client is faked (lookups and downloads), th
 Covers: exact identifiers (Korea .KS / .KQ, US bare; the DART homepage domain only for Korea, only domain_ok = 1),
 market-cap order, the credit cap (also with several workers at once), the 402 stop, Credits-Charged counting, 202
 retries, the brand_id cross-check (same brand · another brand · unverified), preferred shares reusing their issuer's
-logo with no lookup, the automatic quality checks (small · blank · faint · one colour · monogram · shared, each limit on
-both sides), 128 px WebP files that are never upscaled, a valid index.json with names, the key and signed addresses
+logo with no lookup, the automatic quality checks (small · blank · faint · one colour · shared drops and the monogram-looking flag,
+each limit on both sides), odd answers kept to their company (a vector 0 x 0 is fine; above 30 the run stops), 128 px WebP files that are never upscaled, a valid index.json with names, the key and signed addresses
 never in any output, --drop and --keep after review (dropped pictures wait in dropped/), the spend guards across runs
 (the 14,000 cap, the 1,000 floor with lookups in flight, the first balance, a billed answer without a balance, today's
 date for a full run, a trial's own cap), an error after the lookups that still saves everything, and the workflow's
@@ -333,12 +333,15 @@ def test_quality_checks_drop_doubtful_pictures(tmp_path):
     assert (rv["MSFT"]["result"], rv["MSFT"]["reason"]) == ("letter", "small")
     assert (rv["BRK-B"]["result"], rv["BRK-B"]["reason"]) == ("letter", "blank")
     assert (rv["247540"]["result"], rv["247540"]["reason"]) == ("letter", "one_colour")
-    assert (rv["005380"]["result"], rv["005380"]["reason"]) == ("letter", "monogram")
+    assert (rv["005380"]["result"], rv["005380"]["flags"]) == ("logo", "monogram-looking")    # kept, flagged
     assert (rv["000660"]["result"], rv["000660"]["reason"]) == ("letter", "faint")   # white on transparency: invisible on white
     assert rv["AAPL"]["result"] == "logo"
     s = (out / "summary.md").read_text(encoding="utf-8")
-    for k in ("small", "blank", "faint", "one_colour", "monogram"):
+    for k in ("small", "blank", "faint", "one_colour"):
         assert f"- {k}: **1**" in s, k
+    assert "- monogram-looking, kept and flagged (never dropped): **1**" in s
+    assert "monogram-looking" in index(out)["logos"]["005380"]["flags"]
+    assert "Monogram-looking (kept)" in (out / "sheet.html").read_text(encoding="utf-8")
     assert "difference hash" in s and "thumbnails" in s and "monogram" in s                          # the methods are described
 
 
@@ -385,7 +388,7 @@ def test_every_quality_threshold_on_both_sides():
     assert mono(bar(16, 43)) and not mono(bar(14, 43))
     assert mono(bar(16, 43, dx=14)) and not mono(bar(16, 43, dx=17))
     assert mono(bar(22, 33)) and not mono(bar(22, 31))
-    assert q(bar(16, 43), BIG) == ["monogram"] and q(bar(14, 43), BIG) == []
+    assert q(bar(16, 43), BIG) == [] and q(bar(14, 43), BIG) == []                            # never a drop reason
 
 
 def test_max_credits_can_never_go_above_14000(tmp_path):
@@ -458,9 +461,9 @@ def test_keep_restores_a_dropped_picture_after_review_and_refuses_others(tmp_pat
     answers = dict(ALL_GOOD)
     answers[("ticker", "MSFT")] = [logo_answer("same", "brand_msft")]
     answers[("ticker", "BRK-B")] = [logo_answer("same", "brand_brk")]
-    answers[("ticker", "AAPL")] = [logo_answer("mono", "brand_aapl")]
-    rc, out = run(tmp_path, Net(answers, {"mono": PICS["mono"]}))
-    assert review(out)["AAPL"]["reason"] == "monogram" and (out / "dropped" / "AAPL.webp").exists()
+    answers[("ticker", "AAPL")] = [logo_answer("faint", "brand_aapl")]
+    rc, out = run(tmp_path, Net(answers, {"faint": PICS["white_on_clear"]}))
+    assert review(out)["AAPL"]["reason"] == "faint" and (out / "dropped" / "AAPL.webp").exists()
     assert F.main(["--keep", "MSFT,AAPL", "--dir", str(out), "--reason", "checked on the sheet"]) == 0
     idx = index(out)
     assert idx["logos"]["MSFT"]["flags"][-1] == "kept-after-review" and "AAPL" in idx["logos"]
@@ -705,6 +708,100 @@ def test_review_sheet_draws_every_flagged_company_without_caps(tmp_path):
     assert "## Review sheet" in s and "no caps" in s
     html_ = (out / "sheet.html").read_text(encoding="utf-8")
     assert "에코프로비엠" in html_ and "SK하이닉스" in html_
+
+
+def answer_with_source(token, brand, source, cc="1"):
+    """A 200 answer whose source block is exactly `source` (to fake undocumented sizes and formats)."""
+    return chk.Resp(200, {"Credits-Charged": cc, "Credits-Remaining": "15000"}, body(
+        {"data": {"object": "image", "kind": "logo", "brand_id": brand, "status": "ready",
+                  "url": f"https://img.logo.dev/assets/{token}?sig=SIGNED", "etag": f"etag-{token}", "blurhash": "x",
+                  "source": source, "last_updated_at": None, "expires_at": "2026-11-07T12:00:00Z"},
+         "metadata": {"request_id": "r", "resolution": {"type": "ticker", "value": "X", "method": "security",
+                                                        "context": {}}}}))
+
+
+def test_a_vector_source_without_a_size_is_kept_after_a_good_download(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "MSFT")] = [answer_with_source("lmt", "brand_msft", {"width": 0, "height": 0, "format": "svg",
+                                                                            "has_transparency": True, "is_vector": True})]
+    answers[("ticker", "BRK-B")] = [answer_with_source("brk", "brand_brk", {"format": "svg", "has_transparency": True,
+                                                                            "is_vector": False})]     # svg, no size
+    net = Net(answers)
+    rc, out = run(tmp_path, net)
+    rv, idx = review(out), index(out)
+    assert rc == 0 and json.loads((out / "run.json").read_text(encoding="utf-8"))["outcome"] == "complete"
+    for code in ("MSFT", "BRK-B"):
+        assert rv[code]["result"] == "logo" and rv[code]["vector"] == "True", code
+        assert (idx["logos"][code]["w"], idx["logos"][code]["h"]) == (256, 256)              # the downloaded rendition
+    assert dict(net.downloads)["lmt"]["size"] == "128"                                          # rendered at our size
+    assert LI.validate_dir(out / "logos")[1] == []
+
+
+@pytest.mark.parametrize("source", [
+    {"width": 0, "height": 0, "format": "png", "has_transparency": True, "is_vector": False},   # a raster 0 x 0
+    {"width": 300, "format": "png", "is_vector": False},                                         # a raster, one side
+    {"width": 128, "height": 128, "format": "bmp2", "is_vector": False},                         # an unknown format
+])
+def test_an_odd_answer_is_that_companys_letter_mark_and_the_run_goes_on(tmp_path, source):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "MSFT")] = [answer_with_source("odd", "brand_msft", source)]
+    net = Net(answers)
+    rc, out = run(tmp_path, net)
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    rv = review(out)
+    assert rc == 0 and info["outcome"] == "complete" and info["odd"] == 1
+    assert (rv["MSFT"]["result"], rv["MSFT"]["reason"]) == ("letter", "odd_answer") and "MSFT" not in index(out)["logos"]
+    assert rv["AAPL"]["result"] == rv["005930"]["result"] == "logo"                            # the others went on
+    assert "source {" in rv["MSFT"]["note"] or "format" in rv["MSFT"]["note"]                   # raw source fields
+    log = (out / "run.log").read_text(encoding="utf-8")
+    assert "!! odd answer 1 (MSFT, ticker MSFT)" in log and '"width"' in log
+    assert "SIGNED" not in log and "img.logo.dev/" not in rv["MSFT"]["note"]                    # never the address
+    s = (out / "summary.md").read_text(encoding="utf-8")
+    assert "- odd answers from logo.dev (letter mark, reason odd_answer): **1**" in s
+    assert "Odd answers from logo.dev (letter mark)" in (out / "sheet.html").read_text(encoding="utf-8")
+
+
+def test_an_odd_non_200_answer_is_per_company_too(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("ticker", "MSFT")] = [chk.Resp(404, {"Credits-Charged": "0"}, body({"error": {"code": "x"}}))]
+    rc, out = run(tmp_path, Net(answers))
+    rv = review(out)
+    assert rc == 0 and rv["MSFT"]["reason"] == "odd_answer" and rv["AAPL"]["result"] == "logo"
+
+
+def test_more_than_30_odd_answers_stop_the_run_and_keep_what_was_found(tmp_path):
+    stocks = list(BASE_STOCKS) + [stock(f"T{i:03d}", "us", 100.0 - i * 0.1, f"Co{i}") for i in range(40)]
+    write_inputs(tmp_path, stocks)
+    answers = dict(ALL_GOOD)
+    for i in range(40):
+        answers[("ticker", f"T{i:03d}")] = [answer_with_source(f"t{i}", f"b{i}", {"width": 0, "height": 0,
+                                                                                    "format": "png", "is_vector": False})]
+    net = Net(answers)
+    rc, out = run(tmp_path, net, "--defer-failure")
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert rc == 0 and info["outcome"] == "unexpected" and info["ok"] is False and info["odd"] == 31
+    assert "more than 30 odd answers" in info["reason"]
+    assert not any(i == f"T{k:03d}" for _, i in net.lookups for k in range(31, 40))             # nothing after the 31st
+    assert sorted(index(out)["logos"]) == ["000660", "005930", "005935", "AAPL", "BRK-B", "MSFT"]   # found before: saved
+    assert ("ticker", "005380.KS") not in net.lookups                                           # smaller: never reached
+    assert LI.validate_dir(out / "logos")[1] == [] and (out / "review.csv").exists()
+    assert F.verdict(out / "run.json") == 1
+
+
+def test_the_answer_reader_on_its_own():
+    ok = json.loads(answer_with_source("v", "b", {"width": 0, "height": 0, "format": "svg", "is_vector": True}).body)
+    img, why = F.parse_logo(ok)
+    assert why is None and img["is_vector"] and img["width"] is None
+    for src in ({"width": 0, "height": 0, "is_vector": False}, {"width": -1, "height": 5}, {"width": True, "height": 5},
+                {"width": 1.5, "height": 5}, {"width": 5, "height": 5, "format": "exe"}):
+        assert F.parse_logo(json.loads(answer_with_source("v", "b", src).body))[1], src
+    assert F.parse_logo(None)[1] and F.parse_logo({"data": []})[1]
+    bad_host = json.loads(answer_with_source("v", "b", {"width": 5, "height": 5}).body)
+    bad_host["data"]["url"] = "https://evil.example/x"
+    assert "not https://img.logo.dev" in F.parse_logo(bad_host)[1]
 
 
 def test_monogram_check_keeps_ordinary_logos():

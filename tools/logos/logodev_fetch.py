@@ -58,8 +58,13 @@ $150 of API credit a month, 1 credit = 1¢, logo lookup 2 credits)
     the real stop.
   - At most --per-minute (200) lookups a minute and --workers (4) open at once; downloads (not billed, not CDN
     requests) at most 300 a minute. 429: waits Retry-After or RateLimit-Reset, else backs off. 202 (indexing): the
-    company waits Retry-After (30 s) while the others go on, at most RETRIES_202 times. 401/403, an answer the docs
-    don't describe, or 5 companies in a row ending in an error stop the run; whatever was found is still saved.
+    company waits Retry-After (30 s) while the others go on, at most RETRIES_202 times. An answer the docs don't
+    describe is that company's alone: it gets the letter mark (odd_answer, the raw source fields in review.csv and the
+    log, never the signed address) and the run goes on; a vector source without a size (0 x 0) is fine. 401/403, more
+    than 30 odd answers (the API may have changed), or 5 companies in a row ending in an error stop the run; whatever
+    was found is still saved.
+  - Nothing is skipped as "done before": every run looks every company up again. A brand billed in the last 24 hours
+    is free again (logo.dev bills a brand once per 24 hours), so a rerun soon after a stopped run costs only the rest.
   - No new lookup starts after --time-limit-min (110), inside the workflow's 150-minute limit.
 
 The key
@@ -125,7 +130,9 @@ MUST_TOP = 300                                   # each must-have company sits i
 MIN_COMPANIES = chk.MIN_COMPANIES
 URL_NEEDLE = b"img.logo.dev/"                    # a signed image address must never be written
 URL_RE = re.compile(r"https?://img\.logo\.dev/\S*")
-DROP_REASONS = ("small", "blank", "faint", "one_colour", "monogram", "shared", "file_clash", "odd_code")
+DROP_REASONS = ("small", "blank", "faint", "one_colour", "shared", "file_clash", "odd_code")
+ODD_STOP = 30                                    # more odd answers than this in one run: logo.dev's API may have changed
+FORMATS = ("png", "jpg", "svg", "webp", "gif", "ico", "avif")    # source.format values logo.dev documents
 OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "balance_low", "balance_unreadable")
 BALANCE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # Credits-Remaining as logo.dev documents it ("18966.99"); else unreadable
 FULL_RUN_FREE_LIMIT = 50                         # a --limit run up to this many companies needs no --full-run-date
@@ -146,11 +153,10 @@ QUALITY_NOTE = (
     "is dropped; "
     "**one_colour** — the picture laid on white and laid on black is, both times, at least 98.5% one colour "
     "(colours rounded to 32 levels a channel), such as a flat coloured square; "
-    "**monogram** — logo.dev's generic letter tile, recognised by its shape: an opaque square (75% or more of the "
-    "picture fully opaque) of two flat colours (background 55% or more, a far colour 4–40%, at most 6% of other "
-    "colours besides the blend between them) whose far colour forms one or two blobs centred within 12% of the middle, "
-    "25–75% of the height and 10–75% of the width. Real letter-on-colour logos fail it too; they then show our own "
-    "letter mark, which looks alike. "
+    "**monogram-looking** (a flag, never a drop: on real data it caught only real logos) — an opaque square (75% or "
+    "more of the picture fully opaque) of two flat colours (background 55% or more, a far colour 4–40%, at most 6% of "
+    "other colours besides the blend between them) whose far colour forms one or two blobs centred within 12% of the "
+    "middle, 25–75% of the height and 10–75% of the width. The logo is kept and drawn on the review sheet. "
     "**shared** — the same picture for companies whose logo.dev brand_id differs or is missing (a generic picture, or "
     "a group logo under different brands): the same 64-bit difference hash and 16 x 16 colour thumbnails at most 6 "
     "levels apart on average; only checked pairs form a group. In such a group every company gets the letter mark "
@@ -231,6 +237,53 @@ def transport(url, params=None, headers=None, timeout=chk.TIMEOUT_S, max_bytes=c
             if not str(r.url).startswith("https://"):
                 return chk.Resp(599, {}, b"")
             return chk.Resp(r.status_code, r.headers, r.raw.read(max_bytes, decode_content=True))
+
+
+def _px(x):
+    return not isinstance(x, bool) and isinstance(x, (int, float)) and 0 < x < 1e6 and x == int(x)
+
+
+def source_facts(src):
+    """The raw source fields of an answer, for the log (never the signed address)."""
+    src = src if isinstance(src, dict) else {}
+    return "source " + json.dumps({k: src.get(k) for k in ("width", "height", "format", "is_vector", "has_transparency")
+                                   if k in src}, ensure_ascii=False)[:200]
+
+
+def parse_logo(j):
+    """A 200 answer -> (image, None), or (None, why) when it is not what the docs describe. The image is the documented
+    `data` (a ready logo) or `data.logo`. A vector source (is_vector true or format svg) with a 0 x 0 or missing size
+    is accepted: logo.dev renders it at the size asked, and the downloaded picture's size is used. Anything else odd (a
+    raster without a size, an unknown format, a wrong address) is for this company only (odd_answer)."""
+    data = j.get("data") if isinstance(j, dict) else None
+    if not isinstance(data, dict):
+        return None, "HTTP 200 without a data object" + (" (not JSON)" if j is None else "")
+    img, shape, kind = data, "data", data.get("kind")
+    if "url" not in data and isinstance(data.get("logo"), dict):
+        img, shape, kind = data["logo"], "data.logo", "logo"
+    elif data.get("object") != "image" or data.get("status") != "ready" or kind != "logo":
+        return None, (f"HTTP 200 whose data is not a ready logo image (object {data.get('object')!r}, kind {kind!r}, "
+                      f"status {data.get('status')!r})")
+    url, src = img.get("url"), img.get("source")
+    if not isinstance(url, str) or not isinstance(src, dict):
+        return None, f"HTTP 200 without an image url and source (keys {sorted(img)})"
+    u = urlsplit(url)
+    if u.scheme != "https" or u.hostname not in chk.IMAGE_HOSTS:
+        return None, f"HTTP 200 whose image address is not https://{chk.IMAGE_HOSTS[0]} (host {u.hostname!r})"
+    fmt = str(src.get("format") or "").lower()
+    if fmt and fmt not in FORMATS:
+        return None, f"HTTP 200 with an unknown source format · {source_facts(src)}"
+    vector = src.get("is_vector") is True or fmt == "svg"
+    w, h = src.get("width"), src.get("height")
+    if _px(w) and _px(h):
+        size = (int(w), int(h))
+    elif vector and all(x in (None, 0) for x in (w, h)):
+        size = (None, None)                              # the downloaded rendition gives the size
+    else:
+        return None, f"HTTP 200 with an image size that is not two positive whole numbers · {source_facts(src)}"
+    return {"url": url, "width": size[0], "height": size[1], "format": fmt, "is_vector": vector,
+            "etag": str(img.get("etag") or ""), "shape": shape, "kind": kind,
+            "has_transparency": bool(src.get("has_transparency"))}, None
 
 
 class SafePacer(chk.Pacer):
@@ -506,7 +559,8 @@ def is_monogram(arr):
 
 
 def quality(canvas, img):
-    """The drop reasons for one normalised picture (empty = keep). img: logo.dev's facts (width, height, is_vector)."""
+    """The drop reasons for one normalised picture (empty = keep). img: logo.dev's facts (width, height, is_vector).
+    Monogram-looking is not a drop reason: images() flags it (monogram_looking)."""
     np = _np()
     out = []
     if not img.get("is_vector") and min(int(img["width"]), int(img["height"])) < SMALL_PX:
@@ -519,8 +573,6 @@ def quality(canvas, img):
         out.append("faint")
     elif top_share(on_white) >= ONE_COLOUR and top_share(_composite(arr, 0.0)) >= ONE_COLOUR:
         out.append("one_colour")
-    elif is_monogram(arr):
-        out.append("monogram")
     return out
 
 
@@ -663,6 +715,7 @@ class Fetcher:
         self.lock = threading.Lock()
         self.counts = collections.Counter()
         self.done = []
+        self.odd = 0                                     # odd answers (each one: that company's letter mark)
         self.used_files = set()
         self.unfinished = []
         self.remaining = []
@@ -736,17 +789,24 @@ class Fetcher:
             self.count(f"HTTP {resp.status}")
             if resp.status != 429:
                 self._respect_window(resp.headers)
-            kind, info = chk.classify(resp)
+            if resp.status == 200:                       # read here: an odd answer is this company's, not the run's
+                j = resp.json()
+                img, why = parse_logo(j)
+                if why:
+                    return "odd", {"note": why, "http": 200}, spent, sent
+                kind, info = "logo", {"image": img}
+            else:
+                try:
+                    kind, info = chk.classify(resp)
+                except chk.Unexpected as u:
+                    return "odd", {"note": f"HTTP {resp.status}: {u}", "http": resp.status}, spent, sent
             info["http"] = resp.status
             if kind == "logo":
-                j = resp.json() or {}
                 data = j.get("data") if isinstance(j.get("data"), dict) else {}
                 res = ((j.get("metadata") or {}).get("resolution") or {}) if isinstance(j.get("metadata"), dict) else {}
                 info["brand_id"] = str(data.get("brand_id") or "")            # a real brand_id only
                 info["method"] = str(res.get("method") or "") if isinstance(res, dict) else ""
                 info["value"] = str(res.get("value") or "") if isinstance(res, dict) else ""
-                info["image"]["has_transparency"] = bool(((data.get("source") or {}) if isinstance(data.get("source"), dict)
-                                                          else {}).get("has_transparency"))
             if kind in ("logo", "not_found", "no_image", "retry"):
                 return kind, info, spent, sent
             if kind == "bad_request":
@@ -817,12 +877,24 @@ class Fetcher:
                 return max(int(info["wait"]), 1)
             else:
                 kind = "not_indexed"
+        if kind == "odd":
+            with self.lock:
+                self.odd += 1
+                n = self.odd
+            self.log(f"!! odd answer {n} ({c['code']}, {route} {ident}): {info['note']} → letter mark")
+            if n > ODD_STOP:
+                self.set_stop(chk.StopRun("unexpected", f"more than {ODD_STOP} odd answers from logo.dev ({n}): its API "
+                                                        "may have changed; what was found is saved"))
         job.results[route] = (kind, info)
         job.stage = "domain" if route == "ticker" and c["side"] == "kr" and c.get("domain") else "decide"
         return None
 
     def decide(self, job):
         r = job.results
+        odd = [x.get("note", "") for k, x in r.values() if k == "odd"]
+        if odd:                                          # an answer the docs don't describe: never a doubtful logo
+            job.reason, job.note = "odd_answer", "; ".join(odd)
+            return
         t_kind, t = r.get("ticker", ("", {}))
         d_kind, d = r.get("domain", ("", {}))
         if t_kind == "logo" and d_kind == "logo":
@@ -875,14 +947,20 @@ class Fetcher:
                                  f"{resp.headers.get('content-type', '')!r}, {len(resp.body):,} bytes"}
                 continue
             try:
+                if img.get("width") is None or img.get("height") is None:     # a vector without a size: the rendition's
+                    from PIL import Image
+                    with Image.open(io.BytesIO(resp.body)) as im0:
+                        img["width"], img["height"] = im0.size
+                    img["size_from"] = "download"
                 canvas = normalise(resp.body)
             except Exception as e:                       # noqa: BLE001 — a picture that cannot be read
                 job.cands[rt] = {"png": None, "flags": [], "error": f"unreadable picture ({type(e).__name__}: {e})"[:120]}
                 continue
             flags = quality(canvas, img)
+            mono = not flags and is_monogram(_np().asarray(canvas.convert("RGBA")))
             buf = io.BytesIO()
             canvas.save(buf, "PNG")
-            job.cands[rt] = {"png": buf.getvalue(), "flags": flags, "error": "", "canvas": canvas}
+            job.cands[rt] = {"png": buf.getvalue(), "flags": flags, "error": "", "canvas": canvas, "mono": mono}
         if not job.choice:
             job.final = "letter"
             return
@@ -913,6 +991,9 @@ class Fetcher:
             return
         (self.out_logos / name).write_bytes(data)
         job.final, job.file, job.bytes, job.hash = "logo", name, len(data), fingerprint(canvas)
+        if cand.get("mono"):                             # kept, flagged, drawn on the review sheet
+            job.flags = ["monogram-looking"]
+            self.count("monogram-looking (kept)")
 
     def keep_dropped(self, job, canvas):
         """A dropped picture goes to dropped/ (never logos/), so --keep can restore it after review without paying."""
@@ -1061,7 +1142,7 @@ def dropped_index(fetcher, fmt, stamp):
         if j.dropped_file and j.choice and (fetcher.out_dropped / j.dropped_file).exists():
             img = j.results[j.choice][1]["image"]
             logos[j.c["code"]] = {"file": j.dropped_file, "name": j.c["name"], "route": j.choice,
-                                  "w": int(img["width"]), "h": int(img["height"]), "vector": bool(img.get("is_vector")),
+                                  "w": int(img["width"] or SIZE), "h": int(img["height"] or SIZE), "vector": bool(img.get("is_vector")),
                                   "flags": [j.reason] + ([j.check] if j.check else [])}
     return {"version": LI.VERSION, "size": SIZE, "format": fmt, "source": "logo.dev", "fetched_kst": stamp,
             "dropped": True, "count": len(logos), "logos": dict(sorted(logos.items()))}
@@ -1125,8 +1206,9 @@ def make_index(rows, stamp, data, fmt):
     for r in rows:
         if r["result"] != "logo" or r["via"]:
             continue
-        logos[r["code"]] = {"file": r["file"], "name": r["name"], "route": r["route"], "w": int(r["width"]),
-                            "h": int(r["height"]), "vector": bool(r["vector"]), "flags": [r["check"]] if r["check"] else []}
+        logos[r["code"]] = {"file": r["file"], "name": r["name"], "route": r["route"], "w": int(r["width"] or SIZE),
+                            "h": int(r["height"] or SIZE), "vector": bool(r["vector"]),
+                            "flags": ([r["check"]] if r["check"] else []) + r["flags"].split()}
     for r in rows:
         if r["result"] == "logo" and r["via"] and r["via"] in logos:
             e = logos[r["via"]]
@@ -1207,6 +1289,9 @@ def summary_md(info):
             "## Automatic quality checks", "",
             "Counted on the chosen picture (dropped → letter mark), plus companies whose final logo is shared:", ""]
     out += [f"- {k}: **{t['flags'].get(k, 0):,}**" for k in DROP_REASONS]
+    out += [f"- monogram-looking, kept and flagged (never dropped): **{t['flags'].get('monogram-looking', 0):,}**",
+            f"- odd answers from logo.dev (letter mark, reason odd_answer): **{info.get('odd', 0):,}** (the run stops "
+            f"above {ODD_STOP})"]
     sd = info.get("shared_dropped") or {"groups": [], "companies": [], "kept_same_brand": []}
     out += [f"- shared pictures: **{len(info['shared'])}** groups, {sum(len(g) for g in info['shared']):,} companies: "
             f"**{len(sd['companies']):,}** companies of different or unknown brands switched to letter marks (in "
@@ -1310,7 +1395,7 @@ def _tile(r, cands, cols):
                          f'<div class="line bad">{e(rt)}: {e(why)}</div></div>')
         else:
             extra.append(f'<div class="line bad">{e(rt)}: {e(why)}</div>')
-    what = (f"{e(r['route'])} · {e(r['check'])}" if r["result"] == "logo"
+    what = (f"{e(r['route'])} · {e(r['check'])}" + (f" · {e(r['flags'])}" if r["flags"] else "") if r["result"] == "logo"
             else f'<span class="bad">letter mark · {e(r["reason"] or "unfinished")}</span>')
     src = (f"{r['width']}×{r['height']} {e(str(r['format']))}{' vector' if r['vector'] is True else ''}"
            if r["width"] != "" else "")
@@ -1339,6 +1424,11 @@ def sheet_sections(rows, jobs, groups, top):
                          ("homepage", "no ticker logo, homepage logo used")):
         mine = sorted((r for r in outside if r["check"] == check), key=lambda r: int(r["market_rank"] or 10 ** 6))
         secs.append((f"Korea outside the top {top}: {title}", mine))
+    rank = lambda r: (r["market"] == "US", int(r["market_rank"] or 10 ** 6))    # noqa: E731
+    secs.append(("Monogram-looking (kept): every company, any rank",
+                 sorted((r for r in comp if "monogram-looking" in r["flags"].split()), key=rank)))
+    secs.append(("Odd answers from logo.dev (letter mark): every company, any rank",
+                 sorted((r for r in comp if r["reason"] == "odd_answer"), key=rank)))
     by = {r["code"]: r for r in comp}
     for i, g in enumerate(groups, 1):
         mine = [by[c] for c in g if c in by]
@@ -1832,8 +1922,8 @@ def salvage(err, tb, out, a, d, f, ledger, client, preferred, data, pl, sources,
         for j in f.done:
             if j.final == "logo" and j.file and (out_logos / j.file).exists() and LI.CODE_RE.match(str(j.c["code"])):
                 img = j.results[j.choice][1]["image"]
-                logos[j.c["code"]] = {"file": j.file, "name": j.c["name"], "route": j.choice, "w": int(img["width"]),
-                                      "h": int(img["height"]), "vector": bool(img.get("is_vector")),
+                logos[j.c["code"]] = {"file": j.file, "name": j.c["name"], "route": j.choice, "w": int(img["width"] or SIZE),
+                                      "h": int(img["height"] or SIZE), "vector": bool(img.get("is_vector")),
                                       "flags": [j.check] if j.check else []}
         used = {e["file"] for e in logos.values()}
         for p in out_logos.iterdir():                    # a picture without an entry would make the folder invalid
@@ -1947,6 +2037,7 @@ def report(out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0
         "data": {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf")},
         "sources": sources, "plan": pl, "pace": {"per_minute": a.per_minute, "workers": a.workers},
         "tally": tally(rows), "shared": groups, "shared_dropped": shared_dropped, "sheet_counts": sheet_counts,
+        "odd": f.odd,
         "index_count": index["count"],
         "credits": {"counted": ledger.counted, "charged": ledger.charged, "free": ledger.free,
                     "no_header": ledger.no_header, "unknown": ledger.unknown, "balance_first": ledger.balance_first,
