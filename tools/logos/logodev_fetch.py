@@ -21,7 +21,11 @@ Part J). Run by hand only: from the workflow "logo.dev 로고 받기" (.github/w
                                                              # nothing usable. Refuses a cap above $20 unless --over-20-ok
   python3 tools/logos/logodev_fetch.py --add-from RETRY --dir DIR --codes 078930,030530 --reason "checked by eye"
                                                              # a retry is added only company by company, by --codes
---drop, --keep and --add-from are all or nothing (both folders checked before and after; on any error nothing changes),
+  python3 tools/logos/logodev_fetch.py --group-mark 010120=006260 --dir DIR --reason "own site shows the LS mark"
+                                                             # a copy of the group's main mark (Jack, 2026-11-07)
+  python3 tools/logos/logodev_fetch.py --add-site-icons SURVEY --codes 017800 --dir DIR --reason "looked at"
+                                                             # the company's own homepage icon, 96 px or more
+--drop, --keep, --add-from, --group-mark and --add-site-icons are all or nothing (both folders checked before and after; on any error nothing changes),
 take each code once, and --drop refuses a preferred share (it goes with its common share). --add-from refuses a company
 that already has a logo in DIR (--drop it first); a preferred share follows its issuer.
 A run of more than 50 companies (no --limit, or a bigger one) needs --full-run-date set to today's KST date (the
@@ -1572,6 +1576,12 @@ def summary_md(info):
     if info.get("adds"):
         out += ["## Added after review (from a --only run)", ""]
         out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["adds"]]
+    if info.get("groups"):
+        out += ["", "## Group marks added after review (--group-mark; the company's own website shows the group's main mark)", ""]
+        out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["groups"]]
+    if info.get("sites"):
+        out += ["", "## Homepage icons added after review (--add-site-icons; the company's own icon, 96 px or more)", ""]
+        out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["sites"]]
         out.append("")
     out += ["## Sources", ""] + [f"- {s}" for s in info["sources"]] + [
         "", "Files: logos/ (pictures + index.json, for tools/push_logos_branch.sh), review.csv (one row per company), "
@@ -2016,6 +2026,10 @@ def drop(folder, codes, reason):
         if via:
             raise SystemExit(f"!! {c} is a preferred share: 우선주는 보통주({via})를 빼면 같이 빠져요. Give --drop {via} "
                              "instead; nothing was changed")
+    copies = sorted(c for c, e in index["logos"].items() if e.get("group") in want and c not in want)
+    if copies:
+        raise SystemExit(f"!! {copies} show a copy of this picture as their group mark (--group-mark): drop them too "
+                         "(name them in the same --drop) or keep the source; nothing was changed")
     names = {r["code"]: r["name"] for r in _review_rows(folder)}
     gone = set(want) | {c for c, e in index["logos"].items() if e.get("via") in want}
     ni, nd = _copy(index), _copy(dindex)
@@ -2032,6 +2046,54 @@ def drop(folder, codes, reason):
     _record(folder, "drops", new)
     print(f"!! switched to the letter mark: {len(gone)} ({', '.join(sorted(gone))}) · logos left {len(ni['logos']):,}")
     return 0
+
+
+def _commit_adds(folder, kind, new, ni, nd, adds, gone, lfiles, dfiles):
+    """All or nothing, for --add-from, --group-mark and --add-site-icons: ni/nd are the new indexes, adds the new
+    picture files {name: bytes}, gone the old dropped pictures that leave dropped/. Checked in memory (both indexes
+    against the files their folders would hold, and the record); then written; on any error every file and both
+    indexes are put back. Then the record (<kind>.csv, run.json, summary.md)."""
+    folder = pathlib.Path(folder)
+    logos, dropped = folder / "logos", folder / "dropped"
+    lf = dict(lfiles, **adds)
+    df = {k: v for k, v in dfiles.items() if k not in gone}
+    for idx in (ni, nd):
+        idx["count"] = len(idx["logos"])
+        idx["logos"] = dict(sorted(idx["logos"].items()))
+    bad = [f"logos/: {b}" for b in LI.check_index(ni, lf)] + [f"dropped/: {b}" for b in LI.check_index(nd, df)]
+    if bad:
+        raise SystemExit("!! adding would leave a folder that is not valid (" + "; ".join(bad[:5]) + "); nothing was "
+                         "changed")
+    _record_info(folder, kind, new)                    # the record can be written: checked before any change
+    old_idx = {f: ((f / LI.INDEX).read_bytes() if (f / LI.INDEX).exists() else None) for f in (logos, dropped)}
+    written, removed = [], []
+    try:
+        for name, data in adds.items():
+            written.append(logos / name)                 # first, so a half-written file is removed too
+            (logos / name).write_bytes(data)
+        for name in gone:
+            removed.append((dropped / name, dfiles[name]))
+            (dropped / name).unlink()
+        write_index(logos, ni)
+        if dropped.exists():
+            write_index(dropped, nd)
+        for f, what in ((logos, "logos/"), (dropped, "dropped/")):
+            if f.exists():
+                _, bad = LI.validate_dir(f)
+                if bad:
+                    raise SystemExit(f"!! {what} is not valid after adding: " + "; ".join(bad[:5]))
+    except BaseException:
+        for p in written:
+            p.unlink(missing_ok=True)
+        for p, data in removed:
+            p.write_bytes(data)
+        for f, raw in old_idx.items():
+            if raw is None:
+                (f / LI.INDEX).unlink(missing_ok=True)
+            elif f.exists():
+                (f / LI.INDEX).write_bytes(raw)
+        raise
+    _record(folder, kind, new)
 
 
 def add_from(folder, src, reason, codes=None):
@@ -2119,46 +2181,160 @@ def add_from(folder, src, reason, codes=None):
     if clash:
         raise SystemExit(f"!! the same picture as another company's logo: {clash} (a group logo or a wrong match: look "
                          "again); nothing was changed")
-    for idx in (ni, nd):
-        idx["count"] = len(idx["logos"])
-        idx["logos"] = dict(sorted(idx["logos"].items()))
-    bad = [f"logos/: {b}" for b in LI.check_index(ni, lf)] + [f"dropped/: {b}" for b in LI.check_index(nd, df)]
-    if bad:
-        raise SystemExit("!! adding would leave a folder that is not valid (" + "; ".join(bad[:5]) + "); nothing was "
-                         "changed")
-    _record_info(folder, "adds", new)                    # the record can be written: checked before any change
-    old_idx = {f: ((f / LI.INDEX).read_bytes() if (f / LI.INDEX).exists() else None) for f in (logos, dropped)}
-    written, removed = [], []
-    try:
-        for name, data in adds.items():
-            written.append(logos / name)                 # first, so a half-written file is removed too
-            (logos / name).write_bytes(data)
-        for name in gone:
-            removed.append((dropped / name, dfiles[name]))
-            (dropped / name).unlink()
-        write_index(logos, ni)
-        if dropped.exists():
-            write_index(dropped, nd)
-        for f, what in ((logos, "logos/"), (dropped, "dropped/")):
-            if f.exists():
-                _, bad = LI.validate_dir(f)
-                if bad:
-                    raise SystemExit(f"!! {what} is not valid after adding: " + "; ".join(bad[:5]))
-    except BaseException:
-        for p in written:
-            p.unlink(missing_ok=True)
-        for p, data in removed:
-            p.write_bytes(data)
-        for f, raw in old_idx.items():
-            if raw is None:
-                (f / LI.INDEX).unlink(missing_ok=True)
-            elif f.exists():
-                (f / LI.INDEX).write_bytes(raw)
-        raise
-    _record(folder, "adds", new)
+    _commit_adds(folder, "adds", new, ni, nd, adds, gone, lfiles, dfiles)
     print(f"!! added after review from {src}: {len(new)} ({', '.join(x['code'] for x in new)}) · "
           f"logos now {len(ni['logos']):,}")
     return 0
+
+
+SITE_ICON_MIN = 96           # Jack (2026-11-07): a homepage icon is used only from 96 px (its largest icon), checked by eye
+
+
+def _letter_rows(folder, index, codes, what):
+    """The review.csv rows of `codes` (Korean common shares without a logo in the folder), refusing anything else."""
+    rows = _review_rows(folder)
+    by = {r["code"]: r for r in rows if r.get("code")}
+    bad = [c for c in codes if c not in by or by[c].get("via") or by[c].get("market") == "US" or c in index["logos"]]
+    if bad or not codes:
+        raise SystemExit(f"!! {what}: not a Korean common share showing a letter mark in this folder: {bad or codes} "
+                         "(a preferred share follows its issuer; a company with a logo needs --drop first); nothing was "
+                         "changed")
+    return rows, by
+
+
+def _follow_preferred(rows, ni, code, reason, new):
+    for r in rows:
+        if r.get("via") == code and r.get("code") and r["code"] not in ni["logos"]:
+            ni["logos"][r["code"]] = dict(ni["logos"][code], name=r["name"], via=code)
+            new.append({"code": r["code"], "name": r["name"], "reason": reason + " (preferred share of an issuer above)"})
+
+
+def group_marks(folder, pairs, reason):
+    """--group-mark CODE=FROM,…: CODE (a letter mark) gets a copy of FROM's picture, the group's main mark, after
+    Claude checked that CODE's own website shows that same mark as its logo and that FROM's picture is the group's
+    main mark, never a sister company's own logo (Jack, 2026-11-07). The entry keeps FROM's source facts and says
+    flags ["group-mark"], group FROM; groups.csv records it. Same all-or-nothing rules as --add-from."""
+    folder = pathlib.Path(folder)
+    logos, dropped = folder / "logos", folder / "dropped"
+    index, bad = LI.validate_dir(logos)
+    if bad:
+        raise SystemExit("!! logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
+    want = []
+    for p in pairs:
+        code, sep, src = p.strip().partition("=")
+        if not sep or not code.strip() or not src.strip():
+            raise SystemExit(f"!! --group-mark takes CODE=FROM pairs, not {p!r}; nothing was changed")
+        want.append((code.strip(), src.strip()))
+    codes = [c for c, _ in want]
+    if len(set(codes)) != len(codes):
+        raise SystemExit(f"!! --group-mark: a code given twice in {codes}; nothing was changed")
+    rows, by = _letter_rows(folder, index, codes, "--group-mark")
+    dindex = read_dropped(dropped)
+    lfiles, dfiles = _files(logos), _files(dropped)
+    ni, nd = _copy(index), _copy(dindex)
+    adds, gone, new = {}, [], []
+    for code, src in want:
+        e = index["logos"].get(src)
+        srow = by.get(src) or {}
+        if e and (srow.get("market") == "US" or not srow):
+            raise SystemExit(f"!! --group-mark {code}={src}: the source must be a Korean company in this folder's "
+                             "review.csv; nothing was changed")
+        if not e or e.get("via") or "group-mark" in e.get("flags", []):
+            raise SystemExit(f"!! --group-mark {code}={src}: {src} has no picture of its own in logos/ (a copied group "
+                             "mark or a preferred share is never a source); nothing was changed")
+        ext = e["file"].rsplit(".", 1)[1]
+        name = f"{code}.{ext}"
+        if name in lfiles or name in adds:
+            raise SystemExit(f"!! logos/ already has a file named {name}; nothing was changed")
+        adds[name] = lfiles[e["file"]]
+        keep = {k: e[k] for k in ("route", "w", "h", "vector") if k in e}
+        ni["logos"][code] = dict(keep, file=name, name=by[code]["name"], flags=["group-mark"], group=src)
+        why = f"{reason} · group mark of {e['name']} ({src})"
+        new.append({"code": code, "name": by[code]["name"], "reason": why})
+        old = nd["logos"].pop(code, None)
+        if old and old["file"] not in gone:
+            gone.append(old["file"])
+        _follow_preferred(rows, ni, code, why, new)
+    _commit_adds(folder, "groups", new, ni, nd, adds, gone, lfiles, dfiles)
+    print(f"!! group marks added after review: {len(new)} ({', '.join(x['code'] for x in new)}) · "
+          f"logos now {len(ni['logos']):,}")
+    return 0
+
+
+def add_site_icons(folder, survey, codes, reason, webp=None):
+    """--add-site-icons SURVEY --codes …: the named companies get the icon of their own homepage that the site-icon
+    survey (tools/logos/site_icons.py on claude/logos-site-icons) kept or put up for review: its 128 px rendition,
+    only when its source is at least SITE_ICON_MIN px (or a vector) and every quality check passes (small, blank,
+    faint, one colour) and the picture is not the same as another company's logo in the folder. Claude looks at each
+    one first (Jack, 2026-11-07). route "site", flags ["homepage-icon"], src/page = the addresses it came from;
+    sites.csv records it. Same all-or-nothing rules as --add-from."""
+    from PIL import Image
+    folder, survey = pathlib.Path(folder), pathlib.Path(survey)
+    logos, dropped = folder / "logos", folder / "dropped"
+    index, bad = LI.validate_dir(logos)
+    if bad:
+        raise SystemExit("!! logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
+    try:
+        decisions = json.loads((survey / "decisions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"!! --add-site-icons: {survey}/decisions.json missing or unreadable ({type(e).__name__}); "
+                         "nothing was changed")
+    by_code = {}
+    for dom, d in decisions.items():
+        for c in d.get("codes") or []:
+            by_code[c] = dict(d, domain=dom)
+    codes = _dedupe(codes)
+    rows, by = _letter_rows(folder, index, codes, "--add-site-icons")
+    webp = (index.get("format") == "webp") if webp is None else webp
+    dindex = read_dropped(dropped)
+    lfiles, dfiles = _files(logos), _files(dropped)
+    ni, nd = _copy(index), _copy(dindex)
+    adds, gone, new = {}, [], []
+    for code in codes:
+        d = by_code.get(code)
+        if not d or d.get("decision") not in ("kept", "needs_review"):
+            raise SystemExit(f"!! --add-site-icons {code}: the survey has no kept icon for it "
+                             f"({(d or {}).get('decision', 'not in the survey')}); nothing was changed")
+        sub = "kr" if d["decision"] == "kept" else "review"
+        pic = survey / sub / f"{code}.png"
+        size = str(d.get("original_size") or "")
+        vector = size == "svg"                      # the survey marks an SVG icon by its size field only (never by address)
+        m = re.fullmatch(r"(\d+)x(\d+)", size)
+        if not pic.exists() or not (vector or m):
+            raise SystemExit(f"!! --add-site-icons {code}: no picture or no size in the survey ({pic.name}, {size!r}); "
+                             "nothing was changed")
+        w, h = (int(m.group(1)), int(m.group(2))) if m else (SIZE, SIZE)
+        if not vector and min(w, h) < SITE_ICON_MIN:
+            raise SystemExit(f"!! --add-site-icons {code}: its icon is {w} x {h}, under {SITE_ICON_MIN} px; nothing was "
+                             "changed")
+        canvas = normalise(pic.read_bytes())
+        why = quality(canvas, {"width": w, "height": h, "is_vector": vector})
+        if why:
+            raise SystemExit(f"!! --add-site-icons {code}: fails the quality check {why}; nothing was changed")
+        data, ext = encode(canvas, webp)
+        name = f"{code}.{ext}"
+        if name in lfiles or name in adds:
+            raise SystemExit(f"!! logos/ already has a file named {name}; nothing was changed")
+        adds[name] = data
+        ni["logos"][code] = {"file": name, "name": by[code]["name"], "route": "site", "w": w, "h": h, "vector": vector,
+                             "flags": ["homepage-icon"], "src": d.get("final_url", ""), "page": d.get("page_url", "")}
+        why = f"{reason} · {d.get('source_type', 'icon')} {size} from {d['domain']}"
+        new.append({"code": code, "name": by[code]["name"], "reason": why})
+        old = nd["logos"].pop(code, None)
+        if old and old["file"] not in gone:
+            gone.append(old["file"])
+        _follow_preferred(rows, ni, code, why, new)
+    lf = dict(lfiles, **adds)
+    fps = [(c, fingerprint(Image.open(io.BytesIO(lf[e["file"]])))) for c, e in ni["logos"].items() if not e.get("via")]
+    clash = [g for g in shared_groups(fps) if set(codes) & set(g)]
+    if clash:
+        raise SystemExit(f"!! the same picture as another company's logo: {clash} (a group mark goes through "
+                         "--group-mark, after the checks; a wrong icon is left out); nothing was changed")
+    _commit_adds(folder, "sites", new, ni, nd, adds, gone, lfiles, dfiles)
+    print(f"!! homepage icons added after review: {len(new)} ({', '.join(x['code'] for x in new)}) · "
+          f"logos now {len(ni['logos']):,}")
+    return 0
+
 
 
 class Deps:
@@ -2192,7 +2368,7 @@ def parse_args(argv):
     ap.add_argument("--drop", metavar="CODES", help="comma-separated codes to switch to the letter mark (with --dir)")
     ap.add_argument("--keep", metavar="CODES", help="comma-separated codes to restore from dropped/ (with --dir)")
     ap.add_argument("--dir", help="the output folder of an earlier run (with --drop, --keep or --add-from)")
-    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop, --keep or --add-from)")
+    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop, --keep, --add-from, --group-mark or --add-site-icons)")
     ap.add_argument("--only", metavar="CODES", default="",
                     help=f"only these companies (comma-separated codes, at most {ONLY_MAX}): a fix-up after a reviewed run")
     ap.add_argument("--route", choices=("auto", "ticker"), default="auto",
@@ -2205,7 +2381,12 @@ def parse_args(argv):
     ap.add_argument("--extra-routes", action="store_true",
                     help="Korean companies: after the ticker and the DART homepage find no usable logo, look up the ISIN "
                          "(2 credits), then the brandmark by ticker (3 credits)")
-    ap.add_argument("--codes", default="", help="with --add-from from a --letters-from run: the approved codes")
+    ap.add_argument("--codes", default="", help="with --add-from from a --letters-from run, or with --add-site-icons: "
+                    "the approved codes")
+    ap.add_argument("--group-mark", default="", help="CODE=FROM,…: CODE gets a copy of FROM's picture, its group's main "
+                    "mark (checked by eye: CODE's own website shows it; never a sister company's own logo)")
+    ap.add_argument("--add-site-icons", default="", help="SURVEY folder of tools/logos/site_icons.py: with --codes, those "
+                    "companies get their own homepage icon (checked by eye; at least 96 px; every quality check)")
     ap.add_argument("--over-20-ok", action="store_true",
                     help="a --letters-from run may plan more than $20 (only after Jack's yes)")
     ap.add_argument("--full-run-date", default="", help="today's KST date (YYYY-MM-DD); needed for a run without --limit "
@@ -2215,15 +2396,17 @@ def parse_args(argv):
             or a.limit < 0 or a.sheet_top < 1 or a.time_limit_min <= 0:
         ap.error(f"--max-credits 2 to {MAX_CREDITS:,} (never more: Jack's $140 stop), --workers 1 to 10, --per-minute 1 "
                  "to 450 (Pro allows 500), --limit 0 or more, --sheet-top at least 1, --time-limit-min above 0")
-    switches = [x for x in (a.drop, a.keep, a.add_from) if x]
+    switches = [x for x in (a.drop, a.keep, a.add_from, a.group_mark, a.add_site_icons) if x]
     if bool(switches) != bool(a.dir) or len(switches) > 1:
-        ap.error("--drop, --keep or --add-from (one of them) goes with --dir")
+        ap.error("--drop, --keep, --add-from, --group-mark or --add-site-icons (one of them) goes with --dir")
     if a.route == "ticker" and not a.only:
         ap.error("--route ticker goes with --only (a fix-up for named companies)")
     if a.only and a.limit:
         ap.error("--only and --limit don't go together")
-    if a.codes and not a.add_from:
-        ap.error("--codes goes with --add-from (the approved companies of a --letters-from retry)")
+    if a.codes and not (a.add_from or a.add_site_icons):
+        ap.error("--codes goes with --add-from (the approved companies of a --letters-from retry) or --add-site-icons")
+    if a.add_site_icons and not a.codes:
+        ap.error("--add-site-icons needs --codes: the companies whose icon was looked at and approved")
     if a.over_20_ok and not (a.letters_from or a.extra_routes):
         ap.error("--over-20-ok goes with --letters-from or --extra-routes (the runs it guards)")
     return a
@@ -2255,6 +2438,10 @@ def _main(argv, deps, state):
         return keep(a.dir, a.keep.split(","), a.reason)
     if a.add_from:
         return add_from(a.dir, a.add_from, a.reason, a.codes.split(",") if a.codes else None)
+    if a.group_mark:
+        return group_marks(a.dir, a.group_mark.split(","), a.reason)
+    if a.add_site_icons:
+        return add_site_icons(a.dir, a.add_site_icons, a.codes.split(","), a.reason)
     d = deps or Deps()
     if not a.plan_only and not a.only and (a.limit == 0 or a.limit > FULL_RUN_FREE_LIMIT):
         today = f"{d.wall().astimezone(KST):%Y-%m-%d}"     # KST, even when the clock gives UTC

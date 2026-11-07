@@ -188,7 +188,7 @@ def test_picture_credit_on_the_sources_page():
     line = ('기준 카드와 템플릿 그림: Adobe Stock, Microsoft Fluent Emoji (<a href="./pictures/LICENSE-fluent-emoji.txt" target="_blank" '
             'rel="noopener noreferrer" style={{ color: C.blue, fontWeight: 800 }}>MIT 라이선스</a>)')
     assert card.count(line) == 1
-    assert card.index(line) < card.index("회사 로고: Logo.dev.")                            # 그림 줄 다음에 로고 줄
+    assert card.index(line) < card.index("회사 로고: Logo.dev")                             # 그림 줄 다음에 로고 줄
     old = read("baepsae.html")
     for text in ("기준 카드와 템플릿 그림: Adobe Stock, Microsoft Fluent Emoji (", "MIT 라이선스", 'href:"./pictures/LICENSE-fluent-emoji.txt"'):
         assert old.count(text) == 1, text
