@@ -1,7 +1,8 @@
 // Shared pieces for the 2.0 screens, built on the v18.1 tokens and components. No Korean here: text comes in props
 // or from src/copy/v2.js.
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/tokens.js";
+import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, TOPIC_CHIP, ICON_CHIP } from "../ui/tokens.js";
+import { CARD_PICS, DECK_PICS, PIC_SIZES } from "./pictures.js";
 import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
@@ -227,6 +228,42 @@ export function Mascot({ src, alt, size, style }) {
   return <img data-ui-v2="mascot" src={src} alt={alt || ""} width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, ...style }} />;
 }
 
+// v19.3b Part A: a 기준 or template picture on its tint chip (src/v2/pictures.js). It always sits next to a visible name,
+// so the picture is decorative (alt ""). dim: a 기준 that is 준비 중 (its data does not exist yet). The picture is never
+// recoloured or filtered: dimming is the chip's opacity only.
+export function PicChip({ pic, size = "row", dim = false, style, ...rest }) {
+  if (!pic) return null;
+  const z = PIC_SIZES[size] || PIC_SIZES.row;
+  return (
+    <span {...rest} data-ui-v2="pic-chip" data-topic={pic.topic || "none"} data-dim={dim ? "1" : undefined}
+      style={{ width: z.chip, height: z.chip, borderRadius: ICON_CHIP.radius, background: (pic.topic && TOPIC_CHIP[pic.topic]) || ICON_CHIP.bg,
+        display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: dim ? 0.45 : 1, ...style }}>
+      <img src={pic.src} alt="" width={z.pic} height={z.pic} decoding="async" style={{ display: "block", width: z.pic, height: z.pic, objectFit: "contain" }} />
+    </span>
+  );
+}
+export const CardPic = ({ id, ...rest }) => <PicChip pic={CARD_PICS[id]} data-card-pic={id} {...rest} />;
+export const DeckPic = ({ id, ...rest }) => <PicChip pic={DECK_PICS[id]} data-deck-pic={id} {...rest} />;
+
+// "가치 82점 · 배당 70점" (포트폴리오 만들기의 미리 보기 · 후보 고르기 · 매수 계획): each 기준 with its picture in front.
+// list: [[card id, score], …]. Inline, so the words, their order and the text read out are the same as before; a piece
+// (picture, name, score) never breaks inside, the line wraps between pieces on a narrow screen.
+export function CardScores({ list, style }) {
+  return (
+    <span data-ui-v2="card-scores" style={style}>
+      {list.map(([id, v], i) => (
+        <React.Fragment key={id}>
+          {i ? " · " : ""}
+          <span style={{ whiteSpace: "nowrap" }}>
+            <CardPic id={id} style={{ verticalAlign: "middle", marginRight: SPACE(1) }} />
+            <span>{C.build.cards[id].name}</span>{" "}<span>{fill(C.build.s1.score, { score: Math.round(v) })}</span>
+          </span>
+        </React.Fragment>
+      ))}
+    </span>
+  );
+}
+
 // picture = false: the screen also shows figures (포트폴리오 with saved records, 시장), so the 뱁이 stays off (CLAUDE.md: never on
 // a screen that shows numbers). The message is the same either way.
 export function LoadFail({ picture = true }) {
@@ -258,7 +295,7 @@ export function PendingBlock(props) {
 // The link's tap area is padded out to the 44px touch size without moving the text around it.
 export function Footer() {
   return (
-    <footer data-ui-v2="footer" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(8) })}>
+    <footer data-ui-v2="footer" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(8) })}>
       <div>
         {C.app.footer}{" · "}
         <a data-ui-v2="about-link" href={ABOUT_HASH} style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3,
@@ -297,7 +334,7 @@ export function Toggle({ on, onChange, label, sub, side, disabled, chip }) {
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, disabled ? COLOR.text2 : COLOR.ink, { display: "block" })}>{label}</span>
         <span style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2), alignItems: "center" }}>
-          {sub && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{sub}</span>}
+          {sub && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{sub}</span>}
           {chip}
         </span>
       </span>
@@ -349,7 +386,7 @@ export function RuleLine({ name, now, limit, source, pending, note, state, state
         {pending ? <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.app.notChecked}</div>
           : <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{[now, limit].filter(Boolean).map((x, i) => <span key={i}>{i ? " · " : ""}{x}</span>)}</div>}
         {note && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.watch)}>{note}</div>}
-        {source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
+        {source && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
       </div>
       {pending && <PendingChip />}
       {!pending && stateLabel && <StatusChip tone={state === "broken" ? "broken" : state === "watch" ? "watch" : "ok"}>{stateLabel}</StatusChip>}

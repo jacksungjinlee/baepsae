@@ -16,7 +16,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
   splitGuardCount, SPLIT_GUARD } from "./company.js";
@@ -100,7 +100,7 @@ function Tile({ v, onOpen }) {
       </div>
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
-      {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
+      {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );
   const data = Object.fromEntries(Object.entries(v.data || {}).map(([k, x]) => [`data-${k}`, x == null ? "" : Array.isArray(x) ? x.join(",") : String(x)]));
@@ -135,7 +135,7 @@ function Tiles({ load, s, onTab, tabsOn }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
         {views.map((v) => <Tile key={v.topic} v={v} onOpen={tabsOn ? () => onTab(tabOf[v.topic]) : undefined} />)}
       </div>
-      {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
+      {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
     </section>
   );
 }
@@ -148,7 +148,7 @@ function RangeBar({ s }) {
   const f = (v) => priceText({ ...s, price: v });
   return (
     <div data-ui-v2="co-range" data-lo={lo} data-hi={hi} style={{ marginTop: SPACE(3) }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xxs, WEIGHT.regular, COLOR.text2) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
         <span>{fill(C.co.lo, { x: f(lo) })}</span><span>{fill(C.co.hi, { x: f(hi) })}</span>
       </div>
       <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), marginTop: SPACE(1) }}>
@@ -181,7 +181,7 @@ function Header({ load, s }) {
       </div>
       {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{won}</div>}
       {won && C.co.fxWon && mdText(load.data.fxDate) && (
-        <div data-ui-v2="co-fx" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{fill(C.co.fxWon, { md: mdText(load.data.fxDate), fx: nf(Math.round(load.data.fx * 10) / 10, 1) })}</div>
+        <div data-ui-v2="co-fx" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fill(C.co.fxWon, { md: mdText(load.data.fxDate), fx: nf(Math.round(load.data.fx * 10) / 10, 1) })}</div>
       )}
       <RangeBar s={s} />
     </section>
@@ -238,7 +238,7 @@ function Warnings({ load, s, wide }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{W.none}</div>
           <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noneSub}</div>
-          {warnSource(w) && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
+          {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
         </div>
       </Card>
     );
@@ -266,7 +266,7 @@ function Warnings({ load, s, wide }) {
               <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{x}</span>
             </div>
           ))}
-          {warnSource(w) && <p style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
+          {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
         </div>
       </BottomSheet>
     </>
@@ -285,20 +285,25 @@ function RankRow({ id, r, mine, basis }) {
   if (text == null) return null;
   const card = C.build.cards[id];
   const pos = r.side === "top" ? 100 - r.pct : r.side === "bottom" ? r.pct : null;
+  // v19.3b Part A: the 기준's picture on its tint chip in front of the row (the rows used no line icons before).
   return (
-    <div data-ui-v2="rank-row" data-card={id} data-side={r.side || (r.na ? "na" : "blank")} data-pct={r.pct ?? ""} style={{ padding: `${SPACE(3)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
-        <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{card.name}</span>
-        {mine && C.co.fit.mine && <StatusChip tone="neutral">{C.co.fit.mine}</StatusChip>}
-        {basis && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { minWidth: 0 })}>{card.basis}</span>}
-        <span style={{ flex: 1 }} />
-        <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { whiteSpace: "nowrap" })}>{text}</span>
-      </div>
-      {basis && pos != null && (
-        <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), marginTop: SPACE(2), background: COLOR.line, borderRadius: 999 }}>
-          <div style={{ position: "absolute", left: `calc(${pos}% - 5px)`, top: -1, width: 10, height: 10, borderRadius: 999, background: COLOR.ink }} />
+    <div data-ui-v2="rank-row" data-card={id} data-side={r.side || (r.na ? "na" : "blank")} data-pct={r.pct ?? ""}
+      style={{ padding: `${SPACE(3)}px 0`, borderTop: `1px solid ${COLOR.line}`, display: "flex", alignItems: "center", gap: SPACE(3) }}>
+      <CardPic id={id} size="fit" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
+          <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{card.name}</span>
+          {mine && C.co.fit.mine && <StatusChip tone="neutral">{C.co.fit.mine}</StatusChip>}
+          {basis && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { minWidth: 0 })}>{card.basis}</span>}
+          <span style={{ flex: 1 }} />
+          <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { whiteSpace: "nowrap" })}>{text}</span>
         </div>
-      )}
+        {basis && pos != null && (
+          <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), marginTop: SPACE(2), background: COLOR.line, borderRadius: 999 }}>
+            <div style={{ position: "absolute", left: `calc(${pos}% - 5px)`, top: -1, width: 10, height: 10, borderRadius: 999, background: COLOR.ink }} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -356,7 +361,7 @@ function Holdings({ held }) {
             style={{ display: "flex", alignItems: "center", gap: SPACE(2), flexWrap: "wrap", minHeight: TOUCH, padding: `${SPACE(1)}px 0` }}>
             <Icon name="deck" size={20} tone="on" />
             <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0 })}>{line}</span>
-            {chips || (k > 0 ? <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span> : null)}
+            {chips || (k > 0 ? <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span> : null)}
           </div>
         );
       })}
@@ -392,7 +397,7 @@ function Memo({ s, store, setStoreData, held }) {
       {!editing && note && (
         <>
           <p data-ui-v2="co-memo-text" style={tx(SIZE.sm, WEIGHT.regular, COLOR.ink, { marginTop: SPACE(2), whiteSpace: "pre-wrap" })}>{note.text}</p>
-          {M.at && mdText(note.at) && <p style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(M.at, { md: mdText(note.at) })}</p>}
+          {M.at && mdText(note.at) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(M.at, { md: mdText(note.at) })}</p>}
         </>
       )}
       {!editing && !note && M.empty && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{M.empty}</p>}

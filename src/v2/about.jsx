@@ -42,14 +42,14 @@ function SectionTitle({ children }) {
 
 const para = tx(SIZE.sm, WEIGHT.regular, COLOR.ink, { lineHeight: 1.65 });
 const rowLine = { borderTop: `1px solid ${COLOR.line}` };
-const label = tx(SIZE.xxs, WEIGHT.bold, COLOR.text3, { marginTop: SPACE(4), marginBottom: SPACE(1) });
+const label = tx(SIZE.xs, WEIGHT.bold, COLOR.text3, { marginTop: SPACE(4), marginBottom: SPACE(1) });
 
 function Figure({ value, name, testId }) {
   return (
     <span data-ui-v2={testId} style={{ background: COLOR.surface, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`,
       display: "flex", flexDirection: "column", justifyContent: "center" }}>
       {value != null && <span data-ui-v2="about-figure-value" style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{value}</span>}
-      <span style={tx(SIZE.xxs, value != null ? WEIGHT.regular : WEIGHT.bold, value != null ? COLOR.text2 : COLOR.ink)}>{name}</span>
+      <span style={tx(SIZE.xs, value != null ? WEIGHT.regular : WEIGHT.bold, value != null ? COLOR.text2 : COLOR.ink)}>{name}</span>
     </span>
   );
 }
