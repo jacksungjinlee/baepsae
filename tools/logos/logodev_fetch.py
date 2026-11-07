@@ -58,7 +58,7 @@ $150 of API credit a month, 1 credit = 1¢, logo lookup 2 credits)
     never sent. The cap also holds across runs: when logo.dev reports its balance (Credits-Remaining), no request is
     sent that could take it below 1,000 credits (15,000 of Pro credit − 14,000). The first balance is logged with the
     run's worst case; below that worst case plus 1,000 the run stops before any further lookup. A billed answer without
-    a balance is said once; a balance that is not a plain number ("15,000", "$150", "inf", "-5") stops the run. A --limit run's cap is its own ceiling (2 credits a lookup: 20 companies, at most 80). The
+    a balance is said once; a balance that is not a plain number ("15,000", "$150", "inf", "-5") stops the run. A --limit or --only run's cap is its own ceiling (2 credits a lookup: 20 companies, at most 80). The
     run also stops on 402 (no credit left). With auto-reload on the account a 402 may never come: the local limits are
     the real stop.
   - At most --per-minute (200) lookups a minute and --workers (4) open at once; downloads (not billed, not CDN
@@ -719,6 +719,8 @@ class Fetcher:
                  deadline=None, workers=DEFAULT_WORKERS, webp=True, out_dropped=None, need=0, ticker_only=False):
         self.client, self.ledger, self.log = client, ledger, log
         self.ticker_only = ticker_only                   # --route ticker: no homepage lookup, the ticker logo if it passes
+        self.route = "ticker" if ticker_only else "auto"
+        self.only_codes = []                             # --only: the named companies (for run.json)
         self.out_logos, self.scope, self.webp = out_logos, set(scope), webp
         self.out_dropped = out_dropped or out_logos.parent / "dropped"    # dropped pictures: never in logos/
         self.need = need                                 # this run's worst case in credits (min of cap and plan)
@@ -1131,6 +1133,7 @@ class Fetcher:
         for j in jobs:
             if self.ticker_only and j.stage == "domain":
                 j.stage = "decide"                       # --route ticker: no ticker, no lookup (the letter mark)
+                j.note = "ticker only (--route ticker): this company has no ticker"
         sched = Scheduler(jobs, self.clock, self.sleep)
         if self.workers == 1:
             self.worker(sched)
@@ -1308,6 +1311,8 @@ def summary_md(info):
            f"Run {info['started_kst']} – {info['finished_kst']} KST · data.json prices {info['data']['pxDate']} "
            f"(US {info['data']['usPxDate']}) · logo files: {info['format'].upper()} {SIZE} × {SIZE}", "",
            f"**{OUTCOME_TEXT.get(info['outcome'], info['outcome'])}** {info['reason'] or ''}".rstrip(), "",
+           *([f"**A fix-up for named companies (--only {', '.join(info['only'])}, route {info.get('route', 'auto')})**: "
+              "look at it, then add it to the reviewed folder with --add-from.", ""] if info.get("only") else []),
            f"Companies finished: **{info['finished']:,} of {info['companies']:,}**"
            + (f" ({info['unfinished']:,} unfinished or not started: they show the letter mark)"
               if info["finished"] < info["companies"] else ""), ""]
@@ -1835,6 +1840,18 @@ def add_from(folder, src, reason):
     sidx, sbad = LI.validate_dir(src / "logos")
     if sbad:
         raise SystemExit("!! the --only run's logos/ is not a valid logo folder: " + "; ".join(sbad[:5]))
+    why = LI.not_publishable(sidx)
+    if why:
+        raise SystemExit(f"!! the --only run's logos/ cannot be added: {why}; nothing was changed")
+    try:
+        sinfo = json.loads((src / "run.json").read_text(encoding="utf-8"))
+        json.loads((folder / "run.json").read_text(encoding="utf-8"))   # the folder's record is updated afterwards
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"!! run.json missing or unreadable ({type(e).__name__}): only a finished --only run can be "
+                         "added to a reviewed folder; nothing was changed")
+    if sinfo.get("ok") is not True or not sinfo.get("only"):
+        raise SystemExit("!! the source is not a finished --only run (run.json: ok "
+                         f"{sinfo.get('ok')!r}, only {sinfo.get('only')!r}); nothing was changed")
     if sidx.get("format") != index.get("format"):
         raise SystemExit(f"!! the --only run's pictures are {sidx.get('format')}, the folder's are {index.get('format')}; "
                          "nothing was changed")
@@ -1867,6 +1884,17 @@ def add_from(folder, src, reason):
                 new.append({"code": r["code"], "name": r["name"], "reason": reason + " (preferred share of an issuer above)"})
     lf = dict(lfiles, **adds)
     df = {k: v for k, v in dfiles.items() if k not in gone}
+    # the same picture as another company's logo in the reviewed set (the run's own shared check never saw them)
+    from PIL import Image
+    fps = []
+    for code, e in ni["logos"].items():
+        if not e.get("via"):
+            fps.append((code, fingerprint(Image.open(io.BytesIO(lf[e["file"]])))))
+    added = set(codes)
+    clash = [g for g in shared_groups(fps) if added & set(g)]
+    if clash:
+        raise SystemExit(f"!! the same picture as another company's logo: {clash} (a group logo or a wrong match: look "
+                         "again); nothing was changed")
     for idx in (ni, nd):
         idx["count"] = len(idx["logos"])
         idx["logos"] = dict(sorted(idx["logos"].items()))
@@ -1878,8 +1906,8 @@ def add_from(folder, src, reason):
     written, removed = [], []
     try:
         for name, data in adds.items():
+            written.append(logos / name)                 # first, so a half-written file is removed too
             (logos / name).write_bytes(data)
-            written.append(logos / name)
         for name in gone:
             removed.append((dropped / name, dfiles[name]))
             (dropped / name).unlink()
@@ -1938,8 +1966,8 @@ def parse_args(argv):
     ap.add_argument("--verdict", metavar="RUN_JSON", help="only read run.json and exit 1 unless the run was ok")
     ap.add_argument("--drop", metavar="CODES", help="comma-separated codes to switch to the letter mark (with --dir)")
     ap.add_argument("--keep", metavar="CODES", help="comma-separated codes to restore from dropped/ (with --dir)")
-    ap.add_argument("--dir", help="the output folder of an earlier run (with --drop or --keep)")
-    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop or --keep)")
+    ap.add_argument("--dir", help="the output folder of an earlier run (with --drop, --keep or --add-from)")
+    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop, --keep or --add-from)")
     ap.add_argument("--only", metavar="CODES", default="",
                     help=f"only these companies (comma-separated codes, at most {ONLY_MAX}): a fix-up after a reviewed run")
     ap.add_argument("--route", choices=("auto", "ticker"), default="auto",
@@ -2060,6 +2088,8 @@ def _main(argv, deps, state):
     f = Fetcher(client, ledger, log, out_logos, scope, d.clock, d.sleep, d.jitter,
                 deadline=t0 + a.time_limit_min * 60, workers=a.workers, webp=d.webp, need=min(cap, pl["ceiling"]),
                 ticker_only=ticker_only)
+    if a.only:
+        f.only_codes = list(order)
     problems = []
     try:
         f.run(order)
@@ -2221,7 +2251,7 @@ def report(out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0
         "data": {"pxDate": data.get("pxDate"), "usPxDate": data.get("usPxDate"), "asOf": data.get("asOf")},
         "sources": sources, "plan": pl, "pace": {"per_minute": a.per_minute, "workers": a.workers},
         "tally": tally(rows), "shared": groups, "shared_dropped": shared_dropped, "sheet_counts": sheet_counts,
-        "odd": f.odd,
+        "odd": f.odd, "only": [c["code"] for c in getattr(f, "only_codes", [])], "route": f.route,
         "index_count": index["count"],
         "credits": {"counted": ledger.counted, "charged": ledger.charged, "free": ledger.free,
                     "no_header": ledger.no_header, "unknown": ledger.unknown, "balance_first": ledger.balance_first,

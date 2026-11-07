@@ -39,7 +39,7 @@ on:
         options: ["auto", "ticker"]
         default: "auto"
       full_run_date:
-        description: "전부(limit 0) 또는 51곳 이상을 받을 때만: 오늘 날짜(한국 시간, YYYY-MM-DD). 다른 날 다시 돌리면 실행하지 않아요"
+        description: "전부(limit 0) 또는 51곳 이상을 받을 때만: 오늘 날짜(한국 시간, YYYY-MM-DD). 다른 날 다시 돌리면 실행하지 않아요 (only 를 쓸 때는 필요 없어요)"
         type: string
         default: ""
 

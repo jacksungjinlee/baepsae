@@ -10,8 +10,10 @@ logo with no lookup, the automatic quality checks (small · blank · faint · on
 each limit on both sides), odd answers kept to their company (a vector 0 x 0 is fine; above 30 the run stops), 128 px WebP files that are never upscaled, a valid index.json with names, the key and signed addresses
 never in any output, --drop and --keep after review (dropped pictures wait in dropped/), the spend guards across runs
 (the 14,000 cap, the 1,000 floor with lookups in flight, the first balance, a billed answer without a balance, today's
-date for a full run, a trial's own cap), an error after the lookups that still saves everything, and the workflow's
-shape (read-only, the secret in one step only, 7 days, one run at a time).
+date for a full run, a trial's own cap), an error after the lookups that still saves everything, the fix-up after a
+review (--only by ticker within its own 2-credit plan, its refusals, --add-from only from a finished --only run, never
+another company's picture, all or nothing), and the workflow's shape (read-only, the secret in one step only, 7 days,
+one run at a time, the only / route inputs through quoted env only).
 """
 import csv
 import io
@@ -1140,7 +1142,9 @@ def test_only_with_ticker_route_looks_up_just_those_companies_by_ticker(tmp_path
     assert rv["000660"]["unverified_why"].startswith("ticker only")
     assert set(index(out)["logos"]) == {"000660"}
     info = json.loads((out / "run.json").read_text(encoding="utf-8"))
-    assert info["ok"] and info["companies"] == 1
+    assert info["ok"] and info["companies"] == 1 and info["only"] == ["000660"] and info["route"] == "ticker"
+    assert info["max_credits"] == info["plan"]["ceiling"] == 2 and info["plan"]["domain"] == 0   # never past its plan
+    assert "A fix-up for named companies (--only 000660, route ticker)" in (out / "summary.md").read_text(encoding="utf-8")
 
 
 def test_only_without_ticker_route_still_checks_the_homepage(tmp_path):
@@ -1151,19 +1155,37 @@ def test_only_without_ticker_route_still_checks_the_homepage(tmp_path):
     assert set(index(out)["logos"]) == {"005930", "005935"}                           # the preferred share follows
 
 
-@pytest.mark.parametrize("extra", [
-    ("--only", "999999"),                                                            # not in today's data
-    ("--only", "005935"),                                                            # a preferred share: its issuer
-    ("--only", ",".join(["005930"] + [f"00000{i}" for i in range(10)])),             # more than 10
-    ("--route", "ticker"),                                                           # ticker route needs --only
-    ("--only", "005930", "--limit", "3"),                                            # not both
+@pytest.mark.parametrize("extra, said", [
+    (("--only", "999999"), "not usable: ['999999']"),                                # not in today's data
+    (("--only", "005935"), "not usable: ['005935']"),                                # a preferred share: its issuer
+    (("--only", "005930,000660,005380"), "1 to 2 codes"),                            # more than the limit (2 here)
+    (("--only", " , "), "1 to 2 codes"),                                             # nothing usable
 ])
-def test_only_refuses_codes_it_cannot_use_before_any_lookup(tmp_path, extra):
+def test_only_refuses_codes_it_cannot_use_before_any_lookup(tmp_path, monkeypatch, extra, said):
+    monkeypatch.setattr(F, "ONLY_MAX", 2)
     write_inputs(tmp_path)
     net = Net(dict(ALL_GOOD))
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as e:
         run(tmp_path, net, *extra, full_run_date=None)
-    assert net.lookups == []
+    assert said in str(e.value) and net.lookups == []
+
+
+@pytest.mark.parametrize("extra", [("--route", "ticker"), ("--only", "005930", "--limit", "3")])
+def test_only_and_route_refuse_wrong_combinations(tmp_path, extra, capsys):
+    write_inputs(tmp_path)
+    net = Net(dict(ALL_GOOD))
+    with pytest.raises(SystemExit) as e:
+        run(tmp_path, net, *extra, full_run_date=None)
+    assert e.value.code == 2 and net.lookups == []                                   # argparse refuses, nothing sent
+    assert "--only" in capsys.readouterr().err
+
+
+def test_an_empty_only_is_a_normal_run_with_its_date_guard(tmp_path):
+    write_inputs(tmp_path)
+    net = Net(dict(ALL_GOOD))
+    with pytest.raises(SystemExit) as e:                                              # what the workflow passes by default
+        run(tmp_path, net, "--only", "", "--route", "auto", full_run_date=None)
+    assert "--full-run-date" in str(e.value) and net.lookups == []
 
 
 def test_add_from_adds_a_checked_logo_and_its_preferred_share(tmp_path, capsys):
@@ -1192,6 +1214,65 @@ def test_add_from_adds_a_checked_logo_and_its_preferred_share(tmp_path, capsys):
     assert snapshot(out) == before
     assert F.main(["--drop", "005930", "--dir", str(out)]) == 0                      # later switches still work
     assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+
+
+def test_add_from_refuses_anything_but_a_finished_only_run(tmp_path):
+    write_inputs(tmp_path)
+    base = dict(ALL_GOOD)
+    base[("ticker", "AAPL")] = [not_found()]
+    rc, out = run(tmp_path, Net(base))
+    rc, full = run(tmp_path, Net(dict(ALL_GOOD)), out_name="full")                   # a whole run, not a fix-up
+    before = snapshot(out)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--add-from", str(full), "--dir", str(out)])
+    assert "not a finished --only run" in str(e.value) and snapshot(out) == before
+    rc, fix = run(tmp_path, Net({("ticker", "AAPL"): [logo_answer("aapl2", "brand_aapl")]}), "--only", "AAPL",
+                  full_run_date=None, out_name="fix")
+    info = json.loads((fix / "run.json").read_text(encoding="utf-8"))
+    (fix / "run.json").write_text(json.dumps(dict(info, ok=False)), encoding="utf-8")    # e.g. a run that stopped
+    with pytest.raises(SystemExit) as e:
+        F.main(["--add-from", str(fix), "--dir", str(out)])
+    assert "not a finished --only run" in str(e.value) and snapshot(out) == before
+    (fix / "run.json").write_text(json.dumps(info), encoding="utf-8")
+    idx = json.loads((fix / "logos" / "index.json").read_text(encoding="utf-8"))
+    (fix / "logos" / "index.json").write_text(json.dumps(dict(idx, salvaged=True)), encoding="utf-8")
+    with pytest.raises(SystemExit) as e:                                              # a salvaged folder never slips in
+        F.main(["--add-from", str(fix), "--dir", str(out)])
+    assert "salvage" in str(e.value) and snapshot(out) == before
+
+
+def test_add_from_refuses_another_companys_picture(tmp_path):
+    write_inputs(tmp_path)
+    base = dict(ALL_GOOD)
+    base[("ticker", "005930.KS")] = [not_found()]
+    base[("domain", "samsung.com")] = [not_found()]
+    rc, out = run(tmp_path, Net(base))
+    assert "000660" in index(out)["logos"] and "005930" not in index(out)["logos"]
+    rc, fix = run(tmp_path, Net({("ticker", "005930.KS"): [logo_answer("hyn", "brand_x")]}),        # SK하이닉스's picture
+                  "--only", "005930", "--route", "ticker", full_run_date=None, out_name="fix")
+    before = snapshot(out)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--add-from", str(fix), "--dir", str(out)])
+    assert "the same picture as another company's logo" in str(e.value) and "000660" in str(e.value)
+    assert snapshot(out) == before and not (out / "adds.csv").exists()
+
+
+def test_add_from_puts_everything_back_when_writing_fails(tmp_path, monkeypatch):
+    write_inputs(tmp_path)
+    base = dict(ALL_GOOD)
+    base[("ticker", "AAPL")] = [not_found()]
+    rc, out = run(tmp_path, Net(base))
+    rc, fix = run(tmp_path, Net({("ticker", "AAPL"): [logo_answer("aapl2", "brand_aapl")]}), "--only", "AAPL",
+                  full_run_date=None, out_name="fix")
+    before = snapshot(out)
+    idx_before = (out / "logos" / "index.json").read_bytes()
+
+    def broken(folder, index):                                                       # fails after the picture was written
+        raise OSError("disk full")
+    monkeypatch.setattr(F, "write_index", broken)
+    assert F.main(["--add-from", str(fix), "--dir", str(out)]) == 1                # said, and a failing exit
+    assert snapshot(out) == before and (out / "logos" / "index.json").read_bytes() == idx_before
+    assert not (out / "logos" / "AAPL.webp").exists() and not (out / "adds.csv").exists()
 
 
 def test_add_from_a_broken_run_changes_nothing(tmp_path):
@@ -1236,5 +1317,10 @@ def test_fetch_workflow_is_hand_run_read_only_and_keeps_the_secret_in_one_step()
     assert frd["type"] == "string" and frd["default"] == ""
     assert with_key[0]["env"]["FULL_RUN_DATE"] == "${{ inputs.full_run_date }}" and '--full-run-date "$FULL_RUN_DATE"' in run_
     assert "--verdict" in st[-1]["run"]
+    only, route = (wf[True]["workflow_dispatch"]["inputs"][k] for k in ("only", "route"))       # the fix-up inputs
+    assert only["type"] == "string" and only["default"] == ""
+    assert route["type"] == "choice" and route["options"] == ["auto", "ticker"] and route["default"] == "auto"
+    assert with_key[0]["env"]["ONLY"] == "${{ inputs.only }}" and with_key[0]["env"]["ROUTE"] == "${{ inputs.route }}"
+    assert '--only "$ONLY" --route "$ROUTE"' in run_ and "${{ inputs." not in run_    # inputs only through quoted env
     assert "push_logos_branch" not in raw and "git push" not in raw and "contents: write" not in raw
     assert wf["concurrency"]["cancel-in-progress"] is False
