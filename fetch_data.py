@@ -2201,6 +2201,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     extra = extra or {}
     comps = []
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
+    why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2270,6 +2271,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         if fl:
             row["fl"] = fl
         row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
+        if not fin_co and not unknown and "icr" not in ran:
+            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
+            # '이자 비용만 따로 나오지 않아 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수
+            row["flWhy"] = {"icr": "op" if op0f is None else "ie" if eff["ie"] is None else "neg"}
+            why_n[row["flWhy"]["icr"]] += 1
         if fin_co:
             row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
         elif unknown:
@@ -2333,6 +2339,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
+    log(f"· 이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — 이자비용·금융비용 줄 없음 {why_n['ie']:,} · "
+        f"영업이익 없음 {why_n['op']:,} · 이자비용 음수 {why_n['neg']:,} (corp.json flWhy)")
     both = [h for h in hold_log if h[2] and h[3]]
     miss = [h for h in hold_log if not (h[2] and h[3])]
     log(f"· 지주회사(금융 빼고) 재무 경고: {len(hold_log)}곳 중 유동비율 {sum(h[2] for h in hold_log)} · 이자보상배율 "

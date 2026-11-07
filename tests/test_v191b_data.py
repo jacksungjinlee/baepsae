@@ -423,6 +423,34 @@ def test_holding_companies_run_both_checks_and_only_financial_companies_skip_the
     assert not F.fl_financial({"s": "broker", "ind": "services"}) and F.fl_financial({"s": "broker"})   # 그룹이 없으면 s
 
 
+def test_the_reason_icr_did_not_run_is_written_only_for_non_financial_companies():
+    """Jack (2026-11-07): 이자보상배율만 못 돌린 회사에 '이자 비용만 따로 나오지 않아 확인하지 못했어요'라고 쓰려면 그 이유가 정말
+    이자비용 줄이 없어서여야 해요. flWhy.icr: ie = 이자비용·금융비용 줄 없음 · op = 영업이익 없음 · neg = 이자비용 음수.
+    돌렸거나 금융회사(해당 없음)거나 그룹 없는 지주회사(쉼)면 적지 않아요."""
+    base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
+    full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [9.0, 0, 0], "ie": 1.0}
+    no_ie = {k: v for k, v in full.items() if k != "ie"}
+    cases = {
+        "000100": (dict(base, t="000100", nk="다 있음", s="chem", ind="chem"), full),
+        "000200": (dict(base, t="000200", nk="금융원가만", s="chem", ind="chem"), no_ie),
+        "000300": (dict(base, t="000300", nk="영업이익 없음", s="chem", ind="chem"), dict(no_ie, op=[None, None, None])),
+        "000400": (dict(base, t="000400", nk="음수", s="chem", ind="chem"), dict(full, ie=-0.5)),
+        "000500": (dict(base, t="000500", nk="은행", s="bank", ind="bank"), no_ie),
+        "000600": (dict(base, t="000600", nk="그룹 없는 지주", s="holding"), no_ie),
+        "000700": (dict(base, t="000700", nk="이자 0", s="chem", ind="chem"), dict(full, ie=0.0)),
+    }
+    out = F.build_corp([c[0] for c in cases.values()], {t: c[1] for t, c in cases.items()}, "2026-11-07")["companies"]
+    by = {c["t"]: c for c in out}
+    assert "flWhy" not in by["000100"] and "flWhy" not in by["000700"]                       # 돌렸어요 (이자 0 도)
+    assert by["000200"]["flWhy"] == {"icr": "ie"} and by["000200"]["flRan"] == ["cr", "l3", "imp"]
+    assert by["000300"]["flWhy"] == {"icr": "op"}                                              # 영업이익이 없으면 이자 줄 탓이 아니에요
+    assert by["000400"]["flWhy"] == {"icr": "neg"}
+    assert "flWhy" not in by["000500"] and "flWhy" not in by["000600"]                       # 해당 없음 · 쉼
+    for c in out:                                                                              # 이유가 있으면 그 검사는 안 돌았어요
+        if "flWhy" in c:
+            assert "icr" not in c["flRan"] and "icr" not in c.get("flNa", []), c["t"]
+
+
 def test_flran_lists_the_checks_that_actually_ran():
     s = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "cap": 1.0, "s": "chem", "shr": 1_000_000,
          "dps3a": [10.0, 10.0, 10.0], "dpsF": [1.0, 1.0, 1.0], "divSt": "same", "dyt": 1.0, "betaSE": 0.07, "betaN": 740}
