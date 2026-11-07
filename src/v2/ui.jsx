@@ -114,8 +114,8 @@ export function Card({ children, style, ...rest }) {
 }
 
 // v19.5 Part B: the 뱁새 logo (the 뱁이 mark and the 뱁새 wordmark) opens 홈 wherever it shows — the phone header, the PC
-// left menu and the ☰ menu sheet; on 홈 it scrolls to the top (router.go). A real link (#home) named 홈으로 for screen
-// readers; a plain click goes through the router (one history entry, the menu closes), a modified click is left to the
+// left menu and the ☰ menu sheet; on 홈 it scrolls to the top (router.go). A real link (#home) named "뱁새, 홈으로" (C.app.homeLink)
+// for screen readers; a plain click goes through the router (one history entry, the menu closes), a modified click is left to the
 // browser (new tab). The wordmark stays the page's <h1> inside the link.
 export function HomeLink({ onHome, children, style }) {
   const click = (e) => {

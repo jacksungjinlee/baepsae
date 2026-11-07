@@ -16,7 +16,7 @@ from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGES = ("template.html", "baepsae.html", "app.html")
-LINK = re.compile(r'<link rel="(icon|apple-touch-icon)"([^>]*)>')
+LINK = re.compile(r"<link\b[^>]*>")                      # every <link>, whatever the order of its attributes
 
 
 def read(name):
@@ -44,14 +44,29 @@ def png(rel):
     return im
 
 
+def attr(tag, name):
+    m = re.search(r'\b' + name + r'="([^"]*)"', tag)
+    return m.group(1) if m else None
+
+
 def links(page):
+    """Every <link> whose rel names an icon (icon, apple-touch-icon, shortcut icon, mask-icon …), in page order."""
     out = []
-    for rel, attrs in LINK.findall(read(page)):
-        href = re.search(r'href="([^"]+)"', attrs)
-        sizes = re.search(r'sizes="(\d+)x(\d+)"', attrs)
+    for tag in LINK.findall(read(page)):
+        rel = attr(tag, "rel") or ""
+        if not any("icon" in r for r in rel.split()):
+            continue
+        href, sizes = attr(tag, "href"), attr(tag, "sizes")
         assert href, f"{page}: href 없는 {rel} 링크"
-        out.append((rel, href.group(1), (int(sizes.group(1)), int(sizes.group(2))) if sizes else None))
+        size = tuple(int(x) for x in sizes.split("x")) if sizes and re.fullmatch(r"\d+x\d+", sizes) else None
+        out.append((rel, href, size))
     return out
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_page_links_the_manifest_this_test_reads(page):
+    hrefs = [attr(t, "href") for t in LINK.findall(read(page)) if (attr(t, "rel") or "").split() == ["manifest"]]
+    assert hrefs == ["./manifest.webmanifest"], f"{page}: manifest 링크 {hrefs}"
 
 
 @pytest.mark.parametrize("page", PAGES)
@@ -64,8 +79,8 @@ def test_page_icon_links_point_at_real_png_files(page):
             assert im.size == size, f"{page}: {href} 는 {im.size}, 적힌 크기는 {size}"
         if rel == "apple-touch-icon":
             assert im.size == (180, 180), f"{page}: 아이폰 아이콘은 180 x 180 이어야 해요 ({im.size})"
-            alpha = im.getchannel("A").getextrema() if "A" in im.getbands() else (255, 255)
-            assert im.mode in ("RGB", "RGBA", "P", "L") and alpha[0] == 255, f"{page}: 아이폰 아이콘에 투명한 곳이 있어요 ({href})"
+            # convert("RGBA") also turns a transparent colour (PNG tRNS, in P · RGB · L pictures) into alpha
+            assert im.convert("RGBA").getchannel("A").getextrema()[0] == 255, f"{page}: 아이폰 아이콘에 투명한 곳이 있어요 ({href})"
 
 
 def test_both_pages_use_the_same_icons_as_the_template():
