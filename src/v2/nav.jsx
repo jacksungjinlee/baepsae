@@ -357,7 +357,8 @@ export function typingIn(el) {
 }
 
 // "/" focuses the search field (PC only). Not while typing in a field, not with Ctrl / Alt / Cmd, not during IME
-// composition, and not while a dialog (a sheet) is open: focus stays where the dialog keeps it.
+// composition, not while a dialog (a sheet) is open: focus stays where the dialog keeps it, and not while the first-visit
+// guide is on screen.
 export function useSlashFocus(ref, on) {
   useEffect(() => {
     if (!on) return undefined;
@@ -365,6 +366,8 @@ export function useSlashFocus(ref, on) {
       if (e.key !== "/" || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
       if (typingIn(e.target) || typingIn(document.activeElement)) return;
       if (document.querySelector('[aria-modal="true"]')) return;
+      // v19.3c: nor while the first-visit guide is on screen (its welcome on 홈 or a step's bubble): it keeps the focus.
+      if (document.querySelector('[data-ui-v2="guide-welcome"], [data-ui-v2="guide-bubble"]')) return;
       const el = ref.current;
       if (!el || !el.isConnected) return;
       e.preventDefault();
