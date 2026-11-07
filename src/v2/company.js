@@ -331,7 +331,14 @@ export function warnings(s, co) {
   const finCo = FIN_SUB_SECTORS.includes(sec) || FIN_SUB_INDS.includes(s.ind);
   const narrow = exactNa && !!ran && ["l3", "imp"].every((c) => ran.includes(c));
   const sub = !narrow ? null : finCo ? "fin" : sec === "holding" ? "holding" : null;
-  return { allRan: !!ran && ran.length + na.length === WARN_CHECKS.length, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
+  const allRan = !!ran && ran.length + na.length === WARN_CHECKS.length;
+  // Jack, PR #68 B7 (2026-11-07): when every check ran except 이자보상배율, and the pipeline says that is because the
+  // statements have no interest-expense line (corp.json flWhy.icr "ie"), the card says which three it checked ("확인한 …
+  // 없어요"). Any other reason (no operating profit "op", a negative figure "neg", or no reason written) claims nothing.
+  const why = co.flWhy && typeof co.flWhy === "object" ? co.flWhy.icr : null;
+  const partial = !allRan && !!ran && ["cr", "l3", "imp"].every((c) => ran.includes(c)) && !ran.includes("icr") &&
+    !na.includes("icr") && why === "ie";
+  return { allRan, partial, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------

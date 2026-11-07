@@ -444,6 +444,38 @@ out.line = C.co.warn.noneSubFin; out.hold = C.co.warn.noneSubHolding; out.old = 
     assert '(w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub' in src
 
 
+def test_the_partial_line_only_when_icr_alone_is_missing_for_want_of_an_interest_line():
+    """Jack, PR #68 B7 (2026-11-07, option 1): 유동비율 · 3년 연속 순손실 · 자본잠식은 돌았고 이자보상배율만 못 돌렸는데 그 이유가
+    재무제표에 이자비용 줄이 없어서(corp.json flWhy.icr 'ie')일 때만 '확인한 재무 경고 신호는 없어요' + 그 이유 줄. 업종과 상관없어요.
+    이유가 다르거나(영업이익 없음 op · 음수 neg) 적혀 있지 않거나, 다른 확인도 빠졌거나, 경고가 하나라도 있으면 그 줄은 없어요."""
+    rows = {
+        "ie": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}},
+        "holdingIe": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}, "s": "holding"},
+        "op": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "op"}},
+        "neg": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "neg"}},
+        "noWhy": {"flRan": ["cr", "l3", "imp"]},
+        "badWhy": {"flRan": ["cr", "l3", "imp"], "flWhy": "ie"},
+        "noCr": {"flRan": ["l3", "imp"], "flWhy": {"icr": "ie"}},
+        "all": {"flRan": ["cr", "icr", "l3", "imp"], "flWhy": {"icr": "ie"}},
+        "na": {"flRan": ["l3", "imp"], "flNa": ["cr", "icr"], "flWhy": {"icr": "ie"}, "s": "bank"},
+        "flag": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}, "fl": {"cr": 80}},
+    }
+    got = run("""out = Object.fromEntries(Object.entries(ROWS).map(([k, r]) => {
+  const w = K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, ...r });
+  return [k, [w.allRan, w.partial, w.flags.length]]; }));
+out.head = C.co.warn.nonePartial; out.sub = C.co.warn.noneSubNoIcr;""", ROWS=rows)
+    assert got["ie"] == [False, True, 0] and got["holdingIe"] == [False, True, 0]
+    for k in ("op", "neg", "noWhy", "badWhy", "noCr"):
+        assert got[k][1] is False, k
+    assert got["all"] == [True, False, 0] and got["na"] == [True, False, 0]
+    assert got["flag"] == [False, True, 1]                     # 경고가 있으면 화면은 경고 줄 (아래 확인 · '없어요' 아님)
+    assert got["head"] == "확인한 재무 경고 신호는 없어요"
+    assert got["sub"] == "이자보상배율은 공시에 이자 비용만 따로 나오지 않아 확인하지 못했어요. 나머지 세 가지는 최근 공시로 확인했어요."
+    src = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
+    assert "if (!w.flags.length) {" in src and "if (!w.allRan && !w.partial) return null;" in src
+    assert src.index("if (!w.flags.length) {") < src.index("const head = w.partial ? W.nonePartial : W.none;")
+
+
 # ── 분할 · 무상증자로 다시 계산한 주당 배당 (Jack, PR #68 B3) ──
 def test_the_report_figure_note_only_under_a_recalculated_per_share_figure():
     leeno_now = LEENO                                                                     # dpsF [1, 5, 5]: 올해 숫자는 그대로 (앞 막대만 맞춤)

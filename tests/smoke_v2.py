@@ -3689,6 +3689,8 @@ V191B_NC = "000660"        # SK하이닉스: 비교 불가 (유상증자처럼) 
 V191B_ND = "105560"        # KB금융: 알 수 없음 · 오늘 기준 수익률 없음 · 금융지주 (유동비율 · 이자보상배율은 해당 없음)
 V191B_FIN = "032830"       # 삼성생명: 보험사 (유동비율 · 이자보상배율은 해당 없음) → 금융회사 밑 줄
 V191B_HOLD = "402340"      # SK스퀘어: 금융이 아닌 지주회사 → 지주회사 밑 줄 (PR #68 B3/B7)
+V191B_PART = "033780"      # KT&G: 이자보상배율만 못 돌림 (재무제표에 이자비용 줄 없음, flWhy ie) → '확인한 …' 줄 (PR #68 B7)
+V191B_OPMISS = "035420"    # NAVER: 이자보상배율만 못 돌렸지만 이유가 영업이익 없음(flWhy op) → 아무 말도 하지 않아요
 V191B_SPLIT10 = "028260"   # 삼성물산: 보고서 뒤 10:1 분할을 지어내요 (보고서 28,000원 → 오늘 1주 2,800원) → 사업보고서 숫자 안내 (B3)
 
 
@@ -3725,6 +3727,8 @@ def v191b_files(files, se=None, beta=None):
     coby[V191B_ND].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
     coby[V191B_FIN].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
     coby[V191B_HOLD].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    coby[V191B_PART].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "ie"})
+    coby[V191B_OPMISS].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "op"})
     s10 = by[V191B_SPLIT10]
     s10.update(dps=28000.0, dps3=[28000.0, 26000.0, 25500.0], dps3a=[2800.0, 2600.0, 2550.0], dpsF=[10.0, 10.0, 10.0], divSt="adj",
                dyt=round(2800.0 / s10["price"] * 100, 2))
@@ -3836,6 +3840,19 @@ def scene_v191b(R, files, width):
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
         sub = page.locator('[data-ui-v2="co-warn-sub"]')
         assert sub.get_attribute("data-sub") == "holding" and sub.inner_text() == CO["warn"]["noneSubHolding"], sub.inner_text()
+        # 이자보상배율만 이자비용 줄이 없어 못 돌림: '확인한 재무 경고 신호는 없어요' + 그 이유 (Jack, PR #68 B7 · 2026-11-07)
+        open_co(V191B_PART)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        card = page.locator('[data-ui-v2="co-warn"]')
+        assert card.get_attribute("data-partial") == "1"
+        assert CO["warn"]["nonePartial"] in card.inner_text() and CO["warn"]["none"] not in card.inner_text().replace(CO["warn"]["nonePartial"], "")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "noIcr" and sub.inner_text() == CO["warn"]["noneSubNoIcr"], sub.inner_text()
+        no_hscroll(page, width)
+        # 이유가 영업이익 없음이면 그 줄은 틀린 말이라 아무것도 말하지 않아요
+        open_co(V191B_OPMISS)
+        tile(V191B_OPMISS, "div")                                           # 회사 자료가 다 그려질 때까지
+        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
         # 삼성전자: 금융도 지주회사도 아니고 네 확인이 다 돌았어요 → 지금 밑 줄
         open_co("005930")
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
