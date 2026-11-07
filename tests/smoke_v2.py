@@ -3868,6 +3868,7 @@ def scene_v191b(R, files, width):
         row = page.locator('[data-ui-v2="co-warn-list"] [data-flag="icr"]')
         row.wait_for(state="visible")
         assert row.locator('[data-ui-v2="co-warn-cf"]').inner_text() == CO["warn"]["icrCfNote"]
+        floor_ok(page, "회사 재무 경고 (현금흐름 안내)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
         no_hscroll(page, width)
         page.keyboard.press("Escape")
         open_co(V191B_ICRLOSS)
@@ -3887,6 +3888,7 @@ def scene_v191b(R, files, width):
         assert page.locator('[data-ui-v2="co-dps-adj"]').inner_text() == fillp(CO["div"]["adjNote"], x="28,000")
         # 앞 막대도 다시 계산했어요 (dpsF [10, 10, 10]) → 막대 밑 안내도 (PR #68 2022/bars)
         assert page.locator('[data-ui-v2="co-bars-adj"]').inner_text() == fillp(CO["div"]["barsAdjNote"], years="2023·2024")
+        floor_ok(page, "회사 배당 (주식 수 맞춤 안내)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
         no_hscroll(page, width)
         R.collect(page)
         open_co(V191B_SPLIT)
@@ -3924,6 +3926,7 @@ def scene_v191b(R, files, width):
         assert tile("AAPL", "risk")[2] == fillp(T["riskBand"]["us"], lo=lo, hi=hi)
         co_open_tab(page, "AAPL", "value", "us")
         assert page.locator('[data-ui-v2="co-risk-band"]').inner_text() == fillp(CO["risk"]["band"]["us"], lo=lo, hi=hi)
+        floor_ok(page, "회사 출렁임 범위 (미국)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
         no_mascot(page)
         no_hscroll(page, width)
         R.collect(page)
@@ -3948,6 +3951,7 @@ def scene_v191b(R, files, width):
         # PR #68 B5: 범위 밑에서는 '…어림한 범위예요' ('값이에요' 아님)
         assert y.locator('[data-ui-v2="y2022-note"]').inner_text() == C["plan"]["y2022NoteRange"]
         assert C["plan"]["y2022Note"] not in y.inner_text()
+        floor_ok(page, "매수 계획 2022 범위")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
         # 내 투자 규칙: 분할을 확인한 기록이 있는 한국 배당 종목은 배당 삭감 규칙을 점검해요 (준비 중이 아니에요)
         rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
         for i in range(rules.count()):
@@ -3998,6 +4002,7 @@ def scene_v191b(R, files, width):
         assert y.get_attribute("data-band") == "wide"
         assert y.locator('[data-ui-v2="y2022-wide"]').inner_text() == C["plan"]["y2022Wide"]
         assert y.locator('[data-ui-v2="big-number"]').count() == 0 and C["plan"]["y2022Range"] not in y.inner_text()
+        floor_ok(page, "매수 계획 2022 (추정하지 않음)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "2022년 범위의 작은 쪽이 하락이 아니면: 덱 짜기 · 매수 계획 모두 '오차가 너무 커서 추정하지 않았어요.' (숫자 없음)", wide)
