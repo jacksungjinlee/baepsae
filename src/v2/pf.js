@@ -362,11 +362,14 @@ function exact(stocks, q) {
   return hits.length === 1 ? hits[0] : hits.find((s) => s.t.toUpperCase() === up) || null;
 }
 
-// A quantity token: 1234 · 1,234 (thousands groups of 3) · 12.5 · with an optional 주 after it. null if not one.
-const QTY = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(주)?$/u;
+// A quantity token: 1234 · 1,234 (thousands groups of 3) · 12.5 · with the share unit after it (unit: the words after
+// {n} in C.plan.shares, passed in by the screen: no Korean in this file). null if not one.
+const QTY = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?$/;
 const hasDigit = (x) => /\d/.test(x);
+let UNIT_WORD = "";
+const bare = (tok) => (UNIT_WORD && tok.endsWith(UNIT_WORD) ? tok.slice(0, -UNIT_WORD.length) : tok);
 function qtyOf(tok) {
-  const m = QTY.exec(tok);
+  const m = QTY.exec(bare(tok));
   if (!m) return null;
   const v = Number(m[1].replace(/,/g, "") + (m[2] ? "." + m[2] : ""));
   return Number.isFinite(v) ? { v, dec: m[2] ? m[2].length : 0 } : null;
@@ -377,7 +380,7 @@ function tokens(line) {
   for (const raw of line.split(/[\t ]+/)) {
     const t = raw.replace(/^[,;]+|[,;]+$/g, "");
     if (!t) continue;
-    if (t.includes(",") && !QTY.test(t)) out.push(...t.split(",").map((x) => x.trim()).filter(Boolean));
+    if (t.includes(",") && !QTY.test(bare(t))) out.push(...t.split(",").map((x) => x.trim()).filter(Boolean));
     else out.push(t);
   }
   return out;
@@ -387,7 +390,8 @@ function tokens(line) {
 // -> [{ line (1-based), text, st: "ok" | "noStock" | "noQty" | "pick", s?, qty?, q?, choices? }] (empty lines skipped)
 //   noStock: no stock matches · noQty: no single clear quantity (none, several numbers, a fraction of a Korean share, more
 //   than 4 decimals, 0) · pick: a partial name two or more stocks match (never guessed: the user picks one; q = the words).
-export function parsePaste(text, stocks) {
+export function parsePaste(text, stocks, unit = "") {
+  UNIT_WORD = typeof unit === "string" ? unit.trim() : "";
   const out = [];
   String(text || "").split(/\r?\n/).forEach((raw, i) => {
     const line = raw.trim();

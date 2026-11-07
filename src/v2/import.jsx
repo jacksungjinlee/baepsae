@@ -215,7 +215,7 @@ function ModeButton({ icon, title, sub, on, onClick, data }) {
 
 // 붙여 넣기: the text, then what was read (nothing is added until 이대로 넣기).
 function PastePanel({ load, paste, setPaste, onConfirm }) {
-  const parsed = useMemo(() => parsePaste(paste.text, load.data.stocks), [paste.text, load.data.stocks]);
+  const parsed = useMemo(() => parsePaste(paste.text, load.data.stocks, around(C.plan.shares, "n")[1]), [paste.text, load.data.stocks]);
   // a line where the user picked one of several stocks: read again with that stock (its own quantity rule)
   const lines = parsed.map((l) => {
     if (l.st !== "pick" || !paste.picks[l.line]) return l;

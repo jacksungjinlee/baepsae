@@ -42,6 +42,8 @@ import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
+import { pfState, isImported } from "./pf.js";
+import { ImportedDeck } from "./pfview.jsx";
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -197,6 +199,14 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
   );
 }
 
+// v19.3d: one portfolio made with 가진 종목 넣기 on 홈: its four portfolio rules and its holdings (pfview.jsx).
+function ImportedStrip({ deck, de, ctx, load, go }) {
+  const { openStock } = useNav();
+  const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
+  const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home />;
+}
+
 // 홈's first visit (no saved portfolio): no numbers on this screen (it shows a 뱁이).
 // The date line stays (a date is not a number here, and it carries the "N일째 갱신이 멈췄어요" warning).
 function FirstVisit({ load, go }) {
@@ -265,13 +275,16 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   const onConfirm = confirmer(store, setStoreData);
   const ok = load.status === "ok";
   const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.length) : [];
+  // v19.3d (v19.3 F.1): portfolios made with 가진 종목 넣기 have no per-stock rules: their own strip shows the four
+  // portfolio rules (pf.js), never 확인 필요 for every stock, and they take no part in the verdict above.
+  const imported = ev.ok ? decks.filter(isImported) : [];
   const us = held.some((de) => de.holdings.some((x) => x.cls === "us"));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   if (welcome) {
     return (
       <Page pad={pad} cols={2}>
         <AppBar />
-        <Welcome load={load} first={first} onTry={welcome.onTry} onBrowse={welcome.onBrowse} />
+        <Welcome load={load} first={first} onTry={welcome.onTry} onBrowse={welcome.onBrowse} onImport={welcome.onImport} />
         <Footer />
       </Page>
     );
@@ -290,10 +303,12 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       <AppBar />
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
+      {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <Cols main={[
         ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />),
-        ev.ok && !held.length && (
+        ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} />),
+        ev.ok && !held.length && !imported.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),
       ]} side={ok && <MarketGlance load={load} go={go} />} />

@@ -110,7 +110,7 @@ function Group({ label, rows, icon, tone, bg, id }) {
         <Icon name={icon} size={16} tone={tone} /><span>{label}</span>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), marginTop: SPACE(2) }}>
-        {rows.map((r) => <span key={r.key} title={r.nk}><CoMark t={r.t} s={r.s} name={r.nk} size={SPACE(8)} /></span>)}
+        {rows.map((r) => <span key={r.key} title={r.nk} data-group-row={r.key} style={{ display: "flex" }}><CoMark t={r.t} s={r.s} name={r.nk} size={SPACE(8)} /></span>)}
       </div>
     </div>
   );
@@ -136,7 +136,7 @@ function Whole({ st }) {
               </div>
               <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), borderRadius: 999, background: COLOR.page, marginTop: SPACE(1) + 2 }}>
                 <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${s.top}%`, background: tint, borderRadius: 999 }} />
-                {a && <div style={{ position: "absolute", top: -3, width: 14, height: 14, borderRadius: 999, background: COLOR.apricot, border: `2px solid ${COLOR.surface}`,
+                {a && <div style={{ position: "absolute", top: -3, width: 14, height: 14, borderRadius: 999, background: COLOR.ink, border: `2px solid ${COLOR.surface}`,
                   left: `calc(${Math.min(100, Math.max(0, a.x))}% - 7px)` }} />}
               </div>
             </div>
@@ -156,7 +156,7 @@ function Whole({ st }) {
 function Dot({ id, kind }) {
   const label = kind === "full" ? C.rpt.dots[0] : kind === "half" ? C.rpt.dots[1] : kind === "empty" ? C.rpt.dots[2] : kind === "na" ? C.rpt.na : C.rpt.noData;
   if (kind === "blank") return <span role="img" aria-label={label} data-dot="blank" style={tx(SIZE.sm, WEIGHT.bold, COLOR.text2)}>–</span>;
-  if (kind === "na") return <span data-dot="na" style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" })}>{label}</span>;
+  if (kind === "na") return <span data-dot="na" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { whiteSpace: "nowrap" })}>{label}</span>;
   const c = id ? dotColor(id) : COLOR.text2;
   const bg = kind === "full" ? c : kind === "half" ? `linear-gradient(90deg, ${c} 50%, ${COLOR.surface} 50%)` : COLOR.surface;
   return <span role="img" aria-label={label} data-dot={kind} style={{ display: "inline-block", width: 16, height: 16, borderRadius: 999, background: bg,
@@ -179,7 +179,7 @@ function ByStock({ st }) {
             {s.cards.map((c) => (
               <span key={c.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                 <CardPic id={c.id} />
-                <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { textAlign: "center", lineHeight: 1.2 })}>{cardName(c.id)}</span>
+                <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { textAlign: "center", lineHeight: 1.2 })}>{cardName(c.id)}</span>
               </span>
             ))}
           </div>
@@ -235,7 +235,7 @@ function Industry({ st }) {
                 width: `${(x.w / TM_W) * 100}%`, height: `${(x.h / TM_H) * 100}%`, background: shade, boxShadow: `inset 0 0 0 1px ${COLOR.surface}`, padding: SPACE(1) + 2,
                 boxSizing: "border-box", overflow: "hidden" }}>
                 {big && <span style={tx(SIZE.sm, WEIGHT.heavy, light ? COLOR.ink : COLOR.surface, { display: "block", lineHeight: 1.2 })}>{pct0(r.w)}%</span>}
-                {big && <span style={tx(SIZE.xxs, WEIGHT.semi, light ? COLOR.ink : COLOR.surface, { display: "block", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{r.nk}</span>}
+                {big && <span style={tx(SIZE.xs, WEIGHT.semi, light ? COLOR.ink : COLOR.surface, { display: "block", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{r.nk}</span>}
               </div>
             );
           })}

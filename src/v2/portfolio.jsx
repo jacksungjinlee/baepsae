@@ -15,7 +15,7 @@ import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
-import { parseImport, importProblem, mergeStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
+import { parseImport, importProblem, importIssues, mergeStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
@@ -23,11 +23,16 @@ import { DeckSummary, ByStockHead, WeightLine, AddMoney, MissingNote, PausedNote
 import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
 import { isCompany } from "./stocklist.js";
+import { heldQty } from "./held.js";
+import { pfState, isImported } from "./pf.js";
+import { ImportedDeck } from "./pfview.jsx";
 
-function avgCost(purchases, t) {
-  const ps = purchases.filter((p) => p.t === t && p.qty > 0);
+// The held quantity (held.js: the one rule every screen uses) and the 평균 단가 of the 샀어요 records.
+function avgCost(deck, t) {
+  const ps = deck.purchases.filter((p) => p.t === t && p.qty > 0);
   const q = ps.reduce((a, p) => a + p.qty, 0);
-  return q > 0 ? { qty: q, avg: ps.reduce((a, p) => a + p.qty * p.price, 0) / q, ccy: ps[0].ccy } : null;
+  const held = heldQty(deck).get(t) || 0;
+  return q > 0 && held > 0 ? { qty: held, avg: ps.reduce((a, p) => a + p.qty * p.price, 0) / q, ccy: ps[0].ccy } : null;
 }
 
 // 포트폴리오에서 빼기 (the old app's label): a small secondary button under the missing stock's row.
@@ -41,7 +46,8 @@ function RemoveButton({ onClick }) {
 
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 
-export function Portfolio({ load, store, setStoreData, pad, go }) {
+// onImport (v19.3d): opens 가진 종목 넣기.
+export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null }) {
   const { openStock } = useNav();
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
@@ -55,7 +61,7 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
   const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 포트폴리오에서 빼기: only the stock missing from today's data, only from this portfolio, only when tapped.
   const onRemove = (deckId, t) => {
-    const next = withoutHolding(store.data, deckId, t);
+    const next = withoutHolding(store.data, deckId, t, todayKst());
     if (next) { console.warn(`[v2] ${deckId}: ${t} removed from the portfolio (user tapped remove; it was not in today's data)`); setStoreData(next); }
     else console.warn("[v2] remove refused: " + JSON.stringify({ deckId, t }));
   };
@@ -73,7 +79,9 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
     const inc = text != null ? parseImport(text, todayKst(), store.preview) : null;  // any bad field, or the other page's file, rejects it
     if (!inc) {
       const why = text == null ? "bad" : importProblem(text, todayKst(), store.preview) || "bad";
-      console.warn("[v2] import refused: " + why);
+      // v19.3 F.1: name what is wrong (the portfolio, the part, the row, the stock), not only that it is
+      const issues = text == null ? [] : importIssues(text, todayKst());
+      console.warn("[v2] import refused: " + why + (issues.length ? " · " + issues.join("; ") : ""));
       setImportBad(why);
       return;
     }
@@ -99,7 +107,8 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
         <Note tone="watch" data-ui-v2="deck-stale">{fill(C.today.stale, { n: ev.days })}</Note>
       )}
       {decks.map((d) => {
-        const ts = [...new Set(d.purchases.filter((p) => p.qty > 0).map((p) => p.t))];
+        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} />;
+        const ts = [...heldQty(d).keys()];
         const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
         const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
         const m = de && de.ok ? deckMoney(d, de, ctx) : { ok: false };   // Part E: value · 원금 · return (fresh data only)
@@ -118,7 +127,7 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
             {paused && <PausedNote />}
             {ts.map((t) => {
               const h = d.holdings.find((x) => x.t === t) || { nk: t };
-              const a = avgCost(d.purchases, t);
+              const a = avgCost(d, t);
               const x = de && de.ok ? de.holdings.find((y) => y.t === t) || null : null;
               const ret = m.ok && m.per[t] && m.per[t].ret != null ? m.per[t].ret * 100 : null;
               const gone = !!(x && x.absent);
@@ -136,11 +145,15 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
         );
       })}
       {decks.length > 0 && go && (
-        <Card data-ui-v2="build-more"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
+        <Card data-ui-v2="build-more">
+          <Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button>
+          {openImport && <div data-ui-v2="import-more" style={{ marginTop: SPACE(2) }}><Button kind="secondary" onClick={openImport}>{C.build.s0.holdings}</Button></div>}
+        </Card>
       )}
       <Card data-ui-v2="records">
         {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
         {store.locked && C.store.locked && <Note tone="watch" data-ui-v2="store-locked">{C.store.locked}</Note>}
+        {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE(2), marginTop: store.writable ? 0 : SPACE(3) }}>
           <Button kind="secondary" onClick={() => downloadRecords(store.data, todayKst(), store.exportPrefix, store.preview)}>{C.store.export}</Button>
           <Button kind="secondary" disabled={!store.writable} onClick={() => fileRef.current && fileRef.current.click()}>{C.store.import}</Button>
@@ -163,3 +176,11 @@ export function Portfolio({ load, store, setStoreData, pad, go }) {
   );
 }
 
+// v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기. Its four portfolio rules instead of 확인 필요 for every stock;
+// on stale or failed data no number and no rule (the screen's own line says why).
+function ImportedCard({ deck, ev, ctx, load, openStock, onRemove }) {
+  const de = ev.ok ? ev.decks.find((x) => x.id === deck.id) : null;
+  const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
+  const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} />;
+}

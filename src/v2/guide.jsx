@@ -3,7 +3,7 @@
 //   welcome  (Guide2a) on 홈: the 뱁이 carrying twigs (no numbers on this screen: CLAUDE.md), the title and line, the
 //            three-step strip (기준 고르기 › 점수 나누기 › 종목과 비중, no digits), 직접 해 보기 and 그냥 둘러볼게요. The
 //            data date line, the iPhone home-screen hint and the load-failure message stay as on today's first visit.
-//            The second button 가진 종목 넣기 comes with that feature (Part F, v19.3d).
+//            The second button 가진 종목 넣기 opens 가진 종목 넣기 (Part F, v19.3d).
 //   1/3–3/3  (Guide2b-d) on the real 기준 카드 step (build.jsx StepCards): a dark overlay over everything but the target.
 //            1: the 배당 card and its + are lit (a pulsing ring and a hand); the user taps the real +. 2: the meter is
 //            lit and shows the pool struck through → the new count, both the engine's own numbers; it moves on after
@@ -13,9 +13,9 @@
 // When it shows: GUIDE_FIRST_VISIT (below) — the first visit to 2.0 whose first screen is 홈, with no saved portfolio and
 // the guide not yet seen, in place of today's first-visit landing. The ☰ menu's (PC: the left menu's) 처음 안내 다시 보기
 // replays it at any time, whatever the switch says.
-// "Seen" is one flag in this page's own storage next to its store (key + ".guideSeen"; app.html and the preview page each
-// keep their own), read and written inside try/catch. It is not part of the store's records (the store's next version
-// comes with v19.3d): a browser that cannot store anything simply shows the welcome again on the next first visit.
+// "Seen" is the store's guideSeen (v19.3d, Part E; app.html and the preview page each keep their own store), written with
+// the store: a browser that cannot store anything simply shows the welcome again on the next first visit.
+// v19.3d: the welcome's second button 가진 종목 넣기 opens 가진 종목 넣기 (Part F).
 // No Korean here: the words come from src/copy/v2.js.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_CHIP, ICON_CHIP } from "../ui/tokens.js";
@@ -25,28 +25,23 @@ import { C } from "./format.js";
 import { Card, DateLine, LoadFail, Mascot, IMG, SIDE_W, useLayout, tx, tap } from "./ui.jsx";
 import { IosHint } from "./hint.jsx";
 import { CARD_PICS, TOPIC_DOT, DOT_EMPTY } from "./pictures.js";
+import { guideSeenIn } from "./store.js";
 
 // Off until Jack says yes to the smoke-test edits it needs: with it on, a first visit to 홈 shows the welcome instead of
 // today's landing, which tests/smoke_v2.py · smoke_launch.py · smoke_preview.py check word for word (v19.3c PR).
 // Off, everything on a first visit is exactly as before; the guide is still there behind 처음 안내 다시 보기.
 export const GUIDE_FIRST_VISIT = false;
 
-export const guideKey = (storeKey) => storeKey + ".guideSeen";
-export function guideSeen(storeKey) {
-  try { return localStorage.getItem(guideKey(storeKey)) === "1"; } catch (e) { return false; }
-}
-export function markGuideSeen(storeKey) {
-  try { localStorage.setItem(guideKey(storeKey), "1"); return true; } catch (e) {
-    console.warn("[v2] could not remember that the first-visit guide was seen: " + ((e && e.message) || e) + " (it shows again on the next first visit)");
-    return false;
-  }
-}
+// v19.3d (Part E: "Store the flag in the 2.0 store"): "seen" is the store's guideSeen (store.js), written with the store
+// (app.jsx endGuide). The flag of v19.3c's own key (storeKey + ".guideSeen") is read into the store once (store.js
+// readStore) and never written again.
+export const guideSeen = (store) => guideSeenIn(store && store.data);
 
 // Shown at start: GUIDE_FIRST_VISIT, the page opened on 홈 (no sub-screen, not 소개), nothing saved and nothing
 // unreadable in the store, and the guide not seen yet.
-export function firstVisitGuide(loc, store, storeKey, on = GUIDE_FIRST_VISIT) {
+export function firstVisitGuide(loc, store, on = GUIDE_FIRST_VISIT) {
   return !!(on && loc && loc.tab === "home" && !loc.sub && !loc.about && store && !store.locked && store.data && store.data.decks.length === 0
-    && !guideSeen(storeKey));
+    && !guideSeen(store));
 }
 
 // ---------------- the welcome (Guide2a) ----------------
@@ -93,7 +88,8 @@ function StepStrip() {
 
 // first: no portfolio saved (the iPhone hint is the first-visit one, as on today's landing). A replay from the menu by
 // someone with portfolios shows the same welcome without it.
-export function Welcome({ load, first, onTry, onBrowse }) {
+// onImport (v19.3d): the second button, 가진 종목 넣기 (Part F); left out when there is nowhere to go (no data).
+export function Welcome({ load, first, onTry, onBrowse, onImport = null }) {
   const { wide } = useLayout();
   return (
     <>
@@ -105,6 +101,7 @@ export function Welcome({ load, first, onTry, onBrowse }) {
         <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(2) })}>{C.guide.body}</p>
         <StepStrip />
         <div data-ui-v2="guide-try" style={{ marginTop: SPACE(5) }}><Button onClick={onTry} style={{ minHeight: TOUCH + SPACE(1) + 2 }}>{C.guide.try}</Button></div>
+        {onImport && <div data-ui-v2="guide-holdings" style={{ marginTop: SPACE(2) }}><Button kind="secondary" onClick={onImport} style={{ minHeight: TOUCH + SPACE(1) + 2 }}>{C.guide.holdings}</Button></div>}
         <button type="button" data-ui-v2="guide-browse" onClick={onBrowse}
           style={{ ...tap, marginTop: SPACE(2), minHeight: TOUCH, width: "100%", border: "none", background: "none", ...tx(SIZE.sm, WEIGHT.bold, COLOR.text2) }}>{C.guide.browse}</button>
       </Card>
