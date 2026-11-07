@@ -1089,7 +1089,7 @@ class DartClient:
         if rd and st != "000":            # 다시 받기는 찾은 값을 지우지 않아요. 며칠 뒤(DART_RETRY_DAYS) 다시 해 봐요
             with self.lock:
                 self.redo_kept += 1
-                e["rpTry"] = self.today.isoformat()
+                self.entries[key] = {**e, "rpTry": self.today.isoformat()}   # 바꿔 끼워요 (저장 중인 dict 를 고치지 않게)
             return copy.deepcopy(e["d"])
         if st == "000":
             try:
@@ -1099,7 +1099,7 @@ class DartClient:
                     self.parse_errors[type(ex).__name__] += 1
                     if rd:
                         self.redo_failed += 1
-                        e["rpTry"] = self.today.isoformat()
+                        self.entries[key] = {**e, "rpTry": self.today.isoformat()}
                 return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         elif st == "013":
             d = None
@@ -1263,7 +1263,8 @@ def parse_capital(rows):
     elif "common" in first:
         v, kind, src = first["common"], "common", "common"
     elif "paid" in first:
-        v, kind, src = first["paid"], "all", "paid"
+        # 우선주 줄이 따로 있으면 납입자본이 보통주만일 수 있어요: 보통주만으로 보면 아래 끝이 늘 맞아요 (리뷰 2026-11-07)
+        v, kind, src = first["paid"], ("common" if "pref" in first else "all"), "paid"
     elif "paidCommon" in first:
         v, kind, src = first["paidCommon"], "common", "paid"
     else:

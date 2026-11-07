@@ -98,6 +98,16 @@ def test_paid_in_capital_is_never_used_to_compare_earlier_years():
     assert wrong["st3"] == ["same", "same", "same"]
 
 
+def test_the_pipeline_passes_the_paid_in_source_through_to_the_check():
+    """리뷰 2026-11-07: apply_div_basis 가 _cap 의 src 를 div_basis 에 넘기지 않으면 위의 구멍이 다시 열려요. 파이프라인 경로 그대로 확인."""
+    bas = {"cash3": [18e6 * 500, 10e6 * 1000, 10e6 * 1000], "par3": [500.0] * 3, "eps3": [None] * 3, "ni3": [None] * 3}
+    s = {"t": "000300", "nk": "가", "cls": "kr", "price": 10000.0, "shr": 20e6, "dps": 500.0, "dps3": [500.0, 1000.0, 1000.0],
+         "_bas": bas, "_cap": F.parse_capital([bs("보통주납입자본", 11_000e6)])}
+    F.apply_div_basis([s], {}, {})
+    assert s["dps3a"] == [500.0, None, None] and s["divSt"] == "nd" and s["dyt"] == 5.0
+    assert F.parse_capital([bs("납입자본", 1e10), bs("우선주자본금", 1e9)])["k"] == "common"   # 우선주 줄이 따로 있으면 보통주만으로
+
+
 def test_common_share_capital_still_compares_earlier_years():
     """보통주자본금은 액면가 × 보통주 수라 해마다의 비가 주식 수의 비예요: 2:1 액면분할도 맞춰요."""
     cap = F.parse_capital([bs("보통주자본금", 1e10, 1e10, 1e10)])
