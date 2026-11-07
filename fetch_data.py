@@ -3069,7 +3069,10 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
         q = I[0] / I[i] if I[0] and I[i] else None
         # v19.1g: 상장되지 않은 우선주가 배당을 받은 해의 N 에는 그 몫이 섞여 해마다 흔들려요 — 그 해가 끼면 배당 받은 주식 수의 비를
         # 쓰지 않아요 (자본금이 그대로면 '그대로', 아니면 판단하지 않음 · 리뷰 2026-11-07: 지아이텍 N/보통주 2.14 · 1.74 · 1.24)
-        r = N[0] / N[i] if N[0] and N[i] and not unlisted_in(0) and not unlisted_in(i) else None
+        r_raw = N[0] / N[i] if N[0] and N[i] else None
+        r = r_raw if not unlisted_in(0) and not unlisted_in(i) else None
+        # 흔들린 비(r_raw)는 배율을 고르는 데는 쓰지 않지만 '판단하지 않음'을 고르는 데는 그대로 써요 (리뷰 2026-11-07: 지운 비 때문에
+        # 예전엔 판단하지 않던 해가 '그대로'가 되지 않게). 섞인 몫은 '판단하지 않음'만 늘릴 수 있어요
         p = par[i] / par[0] if par[0] and par[i] else None
         if q is None:
             # 발행 주식 수 상한을 모르면 배당 받은 주식 수만으로: 자기주식 매입·처분 만큼(±15%)은 같은 기준,
@@ -3086,7 +3089,7 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
         if kq is None:
             return None, "nc"                           # 유상증자·합병·인적분할처럼 어중간하게 바뀐 주식 수
         if kq == 1.0:
-            kr = clean_factor(r) if r is not None else None
+            kr = clean_factor(r_raw) if r_raw is not None else None
             if (kr is not None and kr != 1.0) or (p is not None and abs(p - 1) > 1e-9):
                 return None, "nd"                       # 발행 주식 수는 그대로인데 다른 값이 분할을 말해요 — 판단하지 않아요
             return 1.0, "ok"

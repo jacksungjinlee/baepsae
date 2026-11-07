@@ -112,6 +112,17 @@ def test_earlier_years_never_use_dividend_shares_mixed_with_unlisted_preferreds(
     assert r["st3"][2] == "nd" and r["dps3a"][2] is None                                # 18원으로 맞추지 않아요
 
 
+def test_a_mixed_dividend_ratio_can_still_veto_but_never_pick():
+    """리뷰 2026-11-07: 상장되지 않은 우선주가 2023 년에만 배당을 받은 회사(올해는 아님). 2:1 분할 뒤 배당 표가 액면가는 해마다 새
+    기준으로 고쳤는데 2023 주당 배당은 옛 기준 그대로면, 발행 주식 수와 액면가는 '그대로'를 말하지만 배당 받은 주식 수의 비는 2 예요.
+    예전엔 그 비로 '판단하지 않음'이었어요. 섞인 해라고 그 비를 지우면 '그대로'(200원 — 실제 100원)가 됐어요. 거부권으로는 남겨요."""
+    b = {"cash3": [20e6 * 100, 10e6 * 200, 10e6 * 200], "par3": [500.0] * 3, "eps3": [None] * 3, "ni3": [None] * 3,
+         "pdps": [[0.0, 0.0, 300.0]]}
+    cs3 = [20e6 * 500 / 1e8] * 3
+    r = F.div_basis([100.0, 200.0, 200.0], b, cs3, 20e6, (), None)
+    assert r["st3"][2] == "nd" and r["dps3a"][2] is None
+
+
 def test_the_largest_preferred_dividend_is_subtracted():
     """우선주 종류가 둘이면 가장 큰 주당 배당으로 빼요 (보통주 몫을 작게 잡아 위 끝이 위 끝으로 남게)."""
     stk = {"cmo": 100.0, "pfo": 10.0}
