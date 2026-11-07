@@ -2551,8 +2551,9 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         if not fin_co and not unknown and "icr" not in ran:
             # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
             # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
-            # off = 돌릴 수 있었지만 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요)
-            row["flWhy"] = {"icr": "off" if icr_ok else "op" if op0f is None else "ie" if ie_v is None else "neg"}
+            # off = 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요). 꺼진 동안은 이자 줄이 없는 회사도 off: 어떤 회사엔 '확인한 …
+            # 없어요' 카드가, 같은 결과의 다른 회사엔 아무것도 없는 차이가 생기지 않게 (리뷰 2026-11-07)
+            row["flWhy"] = {"icr": "off" if ICR_OFF else "op" if op0f is None else "ie" if ie_v is None else "neg"}
             why_n[row["flWhy"]["icr"]] += 1
         if fin_co:
             row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요

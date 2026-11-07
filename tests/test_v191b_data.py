@@ -389,9 +389,9 @@ def test_every_beta_written_by_the_pipeline_carries_its_error_and_count():
 
 # ── 4. flRan ─────────────────────────────────────────────
 def test_holding_companies_run_both_checks_and_only_financial_companies_skip_them(monkeypatch):
-    monkeypatch.setattr(F, "ICR_OFF", False)       # 이자보상배율을 켰을 때의 규칙 (v19.1f 가 다시 켜요 · 꺼진 지금은 아래 시험)
     """Jack (2026-11-07): 유동비율·이자보상배율은 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과 금융 지주(업종 그룹
     은행·보험·증권·금융)만 해당 없음(flNa). 줄이 없는 지주회사는 돌린 것으로도, 해당 없음으로도 치지 않아요."""
+    monkeypatch.setattr(F, "ICR_OFF", False)       # 이자보상배율을 켰을 때의 규칙 (v19.1f 가 다시 켜요 · 꺼진 지금은 아래 시험)
     base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
     lines = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [9.0, 0, 0], "ie": 1.0}
     cases = {
@@ -425,10 +425,10 @@ def test_holding_companies_run_both_checks_and_only_financial_companies_skip_the
 
 
 def test_the_reason_icr_did_not_run_is_written_only_for_non_financial_companies(monkeypatch):
-    monkeypatch.setattr(F, "ICR_OFF", False)
     """Jack (2026-11-07): 이자보상배율만 못 돌린 회사에 '이자 비용만 따로 나오지 않아 확인하지 못했어요'라고 쓰려면 그 이유가 정말
     이자비용 줄이 없어서여야 해요. flWhy.icr: ie = 이자비용·금융비용 줄 없음 · op = 영업이익 없음 · neg = 이자비용 음수.
     돌렸거나 금융회사(해당 없음)거나 그룹 없는 지주회사(쉼)면 적지 않아요."""
+    monkeypatch.setattr(F, "ICR_OFF", False)       # 이자보상배율을 켰을 때의 규칙 (v19.1f 가 다시 켜요 · 꺼진 지금은 아래 시험)
     base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
     full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [9.0, 0, 0], "ie": 1.0}
     no_ie = {k: v for k, v in full.items() if k != "ie"}
@@ -455,7 +455,8 @@ def test_the_reason_icr_did_not_run_is_written_only_for_non_financial_companies(
 
 def test_icr_is_off_everywhere_until_the_interest_re_read(monkeypatch):
     """Jack (2026-11-07): 이자보상배율은 잠시 모든 회사에서 꺼요 — 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요.
-    돌릴 수 있었던 회사는 flWhy.icr "off"(앱은 아무 말도 하지 않아요), 이자 줄이 없는 회사는 그대로 "ie", 금융회사는 그대로 해당 없음."""
+    금융회사가 아니면 모두 flWhy.icr "off"(앱은 아무 말도 하지 않아요 · 이자 줄이 없는 회사의 '확인한 … 없어요' 카드도 쉬어요),
+    금융회사는 그대로 해당 없음."""
     monkeypatch.setattr(F, "ICR_OFF", True)        # v19.1f 가 다시 켰어요 — 끄는 스위치가 여전히 끄는지 확인
     base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
     full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [-9.0, 0, 0], "ie": 1.0}
@@ -466,7 +467,7 @@ def test_icr_is_off_everywhere_until_the_interest_re_read(monkeypatch):
     for t in ("000100", "000400"):
         assert "icr" not in by[t]["flRan"] and "icr" not in (by[t].get("fl") or {}) and by[t]["flWhy"] == {"icr": "off"}, t
         assert {"cr", "l3", "imp"} <= set(by[t]["flRan"])
-    assert by["000200"]["flWhy"] == {"icr": "ie"}
+    assert by["000200"]["flWhy"] == {"icr": "off"}                                # 꺼진 동안은 줄이 없는 회사도 아무 말 안 해요
     assert by["000300"]["flNa"] == ["cr", "icr"] and "flWhy" not in by["000300"]
     for c in by.values():                                                         # 어디에도 이자보상배율 숫자가 없어요
         assert "icr" not in (c.get("fl") or {}) and "icr" not in c["flRan"]

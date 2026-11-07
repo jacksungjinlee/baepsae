@@ -36,12 +36,14 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   checks ran and none fired. Nothing else users see changes until the app PR.
 - v19.1d (B7 pipeline PR): 유동비율 and 이자보상배율 run for every company whose statements have the lines, except
   financial companies (banks, insurers, brokers and financial holding companies by industry group → `flNa`).
-  corp.json `flWhy` = `{"icr": "ie" | "op" | "neg"}` says why 이자보상배율 didn't run for a non-financial company: no
-  이자비용/금융비용 line on the income statement, no operating profit, or a negative figure.
+  corp.json `flWhy` = `{"icr": "ie" | "op" | "neg" | "off"}` says why 이자보상배율 didn't run for a non-financial company: no
+  interest line found, no operating profit, a negative figure, or switched off (`ICR_OFF`, Jack 2026-11-07, held until the
+  v19.1f interest re-read: every non-financial company gets "off" and the app says nothing).
 - v19.1f (interest re-read, DART cache v3): 이자보상배율 uses the income statement's 이자비용, or else the sum of the
   cash-flow statement's interest-paid lines (`ifrs-full_InterestPaidClassifiedAs…`, as positive amounts; never interest
   received; 신종자본증권 distributions left out while `HYBRID_INTEREST` is False). 금융비용/금융원가 are no longer read as
-  interest. corp.json `flSrc` = `{"icr": "is" | "cf"}` when the check ran. Income lines not found under the old names
+  interest. corp.json `flSrc` = `{"icr": "is" | "cf"}` when the check ran; `ICR_OFF` is False again, and flWhy "ie" now
+  means neither line exists. Income lines not found under the old names
   are read under numbered and loss names (영업손실 · Ⅲ.영업손익 · V.영업이익 · 당기순손실 …) or, when exactly one row carries
   it, the standard code; a loss-only name with a positive current figure is dropped and logged. Cache v2 → v3 means an
   empty cache: the branch dry run is one day's full-DART run and main's first run after the merge is the next day's.
