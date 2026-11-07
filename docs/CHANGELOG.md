@@ -5,6 +5,8 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-08 | #75 | 데이터 출처's logo line now reads "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07), ahead of the company homepage icons; the Logo.dev link is unchanged. |
+| 2026-11-07 | #76 | Tests only: the smoke tests delete their own temporary site copies when they pass and keep only the latest failed run (about 4,000 had filled the session's disk). |
 | 2026-11-07 | #73 | v19.3b: every 기준 now shows its picture on its colour chip (기준 카드, 미리 보기, 후보, 매수 계획, the company page's 내 기준과 맞는 정도), the 8 templates show theirs; no text under 12 px on 2.0 screens; company logo colours never colour a chart; 데이터 출처 credits the pictures (Adobe Stock, Microsoft Fluent Emoji, MIT licence). Live check: pictures load, nothing under 12 px, no page errors. |
 | 2026-11-07 | #72 | CLAUDE.md: tests that are only added, checks made only stricter and test edits a merged spec lists need no separate yes (listed under 안전 규칙 변경); Korean lines approved by the design chat and relayed by Jack count as approved. HANDOFF records Jack's working cadence (two lanes, app order, batched questions, evening list). |
 | 2026-11-07 | – | 8 more company logos are live from the logo.dev retry (#70), each checked by eye: GS (and GS우), ISC, 원익홀딩스, 파라다이스, 아이에스동서, 전진건설로봇, 필옵틱스, 씨어스 (no PR: `--add-from` into `logos-run`, `logos` 8843d9b, Deploy). Korean top 100 with a logo 86 → 87, top 500 364 → 372. |
