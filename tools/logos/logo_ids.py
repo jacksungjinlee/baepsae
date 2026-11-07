@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Exact identifiers for company logos (shared by dart_homepages.py, logo_sources.py and the logo picker,
-build_review_page.py). Pure functions only.
+"""Exact identifiers for company logos (shared by dart_homepages.py, logo_sources.py, logodev_fetch.py and
+logodev_api_check.py). Pure functions only.
 
 Jack's rule (2026-11-05): a logo is looked up by an exact identifier only — ticker, ISIN or the company's own homepage
 from DART — never by matching names. Anything without a hit gets a coloured letter mark in the app.

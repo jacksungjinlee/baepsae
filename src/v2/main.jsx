@@ -4,9 +4,11 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.jsx";
-import { loadAll, loadDisc } from "./load.js";
+import { loadAll, loadDisc, loadLogoIndex, LOGO_DIR } from "./load.js";
+import { setLogoSource } from "./logo.jsx";
 import { STORE_KEY } from "./store.js";
 
 const LIVE = { preview: false, storeKey: STORE_KEY, exportPrefix: "baepsae-records", load: () => loadAll(), loadDisc: () => loadDisc() };
+setLogoSource(loadLogoIndex, LOGO_DIR);           // v19.3a: company logos from this site's logos/ (the preview never does this)
 
 createRoot(document.getElementById("root")).render(<App source={LIVE} />);

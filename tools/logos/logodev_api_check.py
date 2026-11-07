@@ -10,7 +10,7 @@ from the workflow "logo.dev 확인" (.github/workflows/logo-dev-check.yml), or f
 
 What it does
   1. Sample. From the live data.json (or --data): every Korean common share and every US stock, ETFs and funds left
-     out (logo_sources.build_companies: the logo picker's exact identifiers). A stratified random sample with a fixed
+     out (logo_sources.build_companies: every company's exact identifiers). A stratified random sample with a fixed
      seed, printed: about a third US, a third Korea top 1,000 by market cap, a third Korea rest. A Korean company
      without a market cap cannot be ranked, and a company without a ticker cannot be looked up: both are left out,
      counted. The three groups are looked up in turn, so a run that stops early still covers all three.
@@ -183,7 +183,7 @@ class Log:
 
 # ── companies and the sample ───────────────────────────────────────────────────────────────────────────────────────
 
-cap_of = _cap                                  # the logo picker's rule: a finite market cap above 0, else None
+cap_of = _cap                                  # a finite market cap above 0, else None
 MAX_KR_NOCAP = 25                              # more Korean companies without a market cap -> refuse to rank
 
 

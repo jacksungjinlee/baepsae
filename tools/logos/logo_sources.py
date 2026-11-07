@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""What Jack's logo picker (build_review_page.py) builds on: reading the two publishable keys, the live data.json,
-the KRX listing and the DART homepages, every company with its exact identifiers, the known-logo / made-up-identifier
-checks, and writing a page from its template. Moved here from the coverage test page's builder, which was removed on
-2026-11-05 with that page.
+"""What the logo.dev tools build on (logodev_fetch.py, logodev_api_check.py): the live data.json, the KRX listing and
+the DART homepages, and every company with its exact identifiers. Moved here from the coverage test page's builder
+(removed on 2026-11-05 with that page); the logo picker that also used it was removed on 2026-11-06 once the logos were
+live (v19.3a Part J step 5). read_keys (below) is left from the picker: no tool uses it now, only its unit test.
 
 Identifiers (exact only, never names):
   ticker  KOSPI and KONEX 005930.KS · KOSDAQ 247540.KQ (market from the KRX listing for data.json's pxDate, else
@@ -10,21 +10,20 @@ Identifiers (exact only, never names):
           codes too, so it is not exact.
   ISIN    KRX listing ISU_CD (check digit verified), else the exact common-share rule (kr_isin_from_code), else none.
   domain  tools/logos/kr_homepages.csv (DART hm_url) where domain_ok = 1. Korea only.
-Keys: BRANDFETCH_CLIENT_ID and LOGODEV_TOKEN (publishable, meant to sit in page source) from a keys file or the
-environment. A secret key (sk_...) is refused. Keys are never printed. Nothing here requests a logo.
-Unit tests: tests/test_logos.py (build_companies, read_keys), tests/test_logo_review.py.
+Keys (read_keys): BRANDFETCH_CLIENT_ID and LOGODEV_TOKEN (publishable keys) from a keys file or the environment.
+A secret key (sk_...) is refused. Keys are never printed. Nothing here requests a logo.
+Unit tests: tests/test_logos.py (build_companies, read_keys).
 """
 import csv
 import datetime as dt
 import io
-import json
 import os
 import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from logo_ids import (check_publishable_keys, is_common_share, is_krx_code, isin_check_digit,  # noqa: E402
+from logo_ids import (check_publishable_keys, is_common_share, is_krx_code,  # noqa: E402
                       isin_valid, kr_isin_from_code, logodev_ticker)
 
 DATA_URL = "https://jacksungjinlee.github.io/baepsae/data.json"
@@ -33,10 +32,6 @@ LISTING_URL = ("https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache
 HOMEPAGES = HERE / "kr_homepages.csv"
 MARKET_MAP = {"KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KOSDAQ GLOBAL": "KOSDAQ", "KONEX": "KONEX"}
 DART_CLS = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX"}
-# Checks the page runs before and during the test: a logo every provider has, and identifiers nobody has.
-GOOD = {"ticker": "AAPL", "isin": "US0378331005", "domain": "apple.com"}
-BAD = {"ticker": "ZZQXJ9", "isin": "KR799999900" + isin_check_digit("KR799999900"),
-       "domain": "no-such-brand-baepsae-test.com"}
 
 
 def read_keys(keys_file=None):
@@ -64,7 +59,7 @@ def load_text(src, what):
 
 def load_listing(spec, px):
     """{code: row} of the KRX listing. spec = a CSV path or URL, or 'auto': the file for data.json's pxDate, else the
-    newest of the 7 days before it (said loudly). Also used by build_review_page.py."""
+    newest of the 7 days before it (said loudly). Used by logodev_fetch.py and logodev_api_check.py."""
     if not px:
         raise SystemExit("!! data.json has no pxDate")
     if spec == "auto":
@@ -143,11 +138,3 @@ def build_companies(data, listing, homepages):
                "(a preferred share uses its common share's logo)")
     return out, log
 
-
-def render(template, data, keys):
-    bf, ld = keys
-    blob = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    blob = blob.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    keys_js = json.dumps({"bf": bf, "ld": ld})
-    assert template.count("/*DATA*/") == 1 and template.count("/*KEYS*/") == 1, "template placeholders"
-    return template.replace("/*DATA*/", blob).replace("/*KEYS*/", keys_js)
