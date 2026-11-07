@@ -6,12 +6,12 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
-import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount } from "../ui/components.jsx";
+import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore } from "./store.js";
-import { KR_DIV_TREND } from "./engine.js";
+import { KR_DIV_TREND, exactData } from "./engine.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
   const st = builder.settings;
@@ -82,10 +82,27 @@ function Clash({ parts }) {
   );
 }
 
+// The 2022 line (v19.1b data, deckcalc.y2022View: "약 50~77만원 줄어들 수 있어요"), units drawn small like Amount. A narrow
+// column never breaks inside the amount or inside a word (keep-all), so the three columns of 포트폴리오 만들기 4단계 wrap the
+// same way. v: y2022View's { parts, text, pieces: [pre, amount, verb] }.
+export function Y2022Amount({ v }) {
+  const [pre, amount, verb] = v.pieces;
+  const nw = { whiteSpace: "nowrap" };
+  return (
+    <span data-ui="amount" data-ui-v2={v.parts.length > 1 ? "y2022-range" : "y2022-one"} style={{ wordBreak: "keep-all" }}>
+      {pre}<span style={nw}>{amountParts(amount).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "max(12px, 0.6em)", fontWeight: WEIGHT.bold }}>{p}</span> : p))}</span>
+      {verb ? " " : ""}{verb ? <span>{verb}</span> : null}
+    </span>
+  );
+}
+
 // Risk lines: the 2022 line when any holding has a figure (holdings without one move like the rest, with the approved
 // v17.5 note naming their share); else the yearly-swing line; else the approved "can't calculate" line. Never silent.
+// v19.1b data (Part O.1): the 2022 line is a range from the beta band, explained by plan.y2022Range; when its smaller
+// end is not a fall, plan.y2022Wide says so instead of a number. Older files: one number, as before.
 function Summary({ r }) {
   const { plan, div, y2022 } = r;
+  const yv = y2022.ok ? y2022View(y2022) : null;
   // more than half of the money without data: no 2022 number and no yearly swing (the current app's rule)
   const half = !!(y2022.half || (r.vol && r.vol.half));
   const vol = r.vol && !r.vol.half ? r.vol : null;
@@ -107,12 +124,17 @@ function Summary({ r }) {
         </div>
       )}
       {y2022.ok && (
-        <div data-ui-v2="y2022">
+        <div data-ui-v2="y2022" data-band={yv ? (yv.wide ? "wide" : yv.parts.length > 1 ? "range" : "one") : ""}>
           <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.y2022}</div>
-          {big(aboutWon(Math.min(0, y2022.won)))}
-          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Note}</div>
+          {yv && yv.wide
+            ? <div data-ui-v2="y2022-wide" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.plan.y2022Wide}</div>
+            : yv ? <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Y2022Amount v={yv} /></div>
+            : big(aboutWon(Math.min(0, y2022.won)))}
+          {!(yv && yv.wide) && <div data-ui-v2="y2022-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
+            {yv && yv.parts.length > 1 && C.plan.y2022NoteRange ? C.plan.y2022NoteRange : C.plan.y2022Note}</div>}
+          {yv && !yv.wide && yv.parts.length > 1 && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Range}</div>}
           <div data-ui-v2="y2022-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
-          {partial(y2022.missing)}
+          {!(yv && yv.wide) && partial(y2022.missing)}
         </div>
       )}
       {!y2022.ok && !half && vol != null && (
@@ -158,11 +180,13 @@ function RuleList({ rules, name }) {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
     switch (x.id) {
       // a checked dividend-cut rule is always Korean; with the trend switch off it is not checked (준비 중): its history may
-      // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on.
-      case "divCut": return x.check === "pending" || !KR_DIV_TREND ? <RuleLine key={x.id} name={R.divCut} pending />
+      // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on. v19.1b data
+      // (exactData): the rule book is checked on a comparable, split-checked history (dps3a), so it shows as checked; one
+      // saved while the history is not comparable (comparable: false, engine.ruleBook) shows as 준비 중 until it is.
+      case "divCut": return x.check === "pending" || x.comparable === false || !(KR_DIV_TREND || exactData()) ? <RuleLine key={x.id} name={R.divCut} pending />
         // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
         : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
-            note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />
+            note={divDropBody()} limit={R.divLimit} source={src} />
         : <RuleLine key={x.id} name={R.dividend} now={fill(R.dpsChange, { a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })} limit={R.divLimit} source={src} />;
       case "audit": return <RuleLine key={x.id} name={R.audit} pending />;
       case "acquisition": return <RuleLine key={x.id} name={R.acquisition} pending />;

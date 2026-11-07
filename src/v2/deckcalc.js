@@ -2,7 +2,7 @@
 // plus the code -> copy mapping for reasons, clashes and cautions.
 import {
   screen, splitCounts, survivorCheck, candidates, preselect, size, planShares, annualDividend, estimate2022,
-  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup,
+  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup, band2022, exactData,
 } from "./engine.js";
 import { C, fill, nf, p1, wonText, signed } from "./format.js";
 
@@ -126,7 +126,7 @@ export function cautionTexts(c, s) {
     case "revFall": return [K.revFall];
     case "opFall": return opPieces(c.op, c.pct);
     case "volHigh": return K.volHigh ? [fill(K.volHigh, { vol: p1(c.vol) })] : [];
-    case "divDrop": return [fill(K.divDrop, { name: s.nk, a: nf(Math.round(c.a)), b: nf(Math.round(c.b)) }), K.divDropBody];
+    case "divDrop": return [fill(K.divDrop, { name: s.nk, a: nf(Math.round(c.a)), b: nf(Math.round(c.b)) }), divDropBody()];
     default: return [];
   }
 }
@@ -178,5 +178,45 @@ export function opPieces(op, pct) {
 }
 
 export const aboutWon = (won) => fill(C.app.about, { x: wonText(won) });
+// The 배당 감소 hint (확인 필요): v19.1b data has already ruled out splits on the history it compares, so its hint asks only
+// about a special dividend (Jack, PR #68 B4); files before v19.1b keep the hint that names 액면분할 too.
+export const divDropBody = () => (exactData() && C.pick.caution.divDropBodyExact ? C.pick.caution.divDropBodyExact : C.pick.caution.divDropBody);
+
+// The 2022 line with the beta band (v19.1b data, Part O.1; engine.band2022; Jack, PR #68): the size of the fall with no minus
+// sign, the smaller fall first, won only, ending 줄어들 수 있어요 (the label says 2022년처럼 떨어지면):
+//   both ends from 1만원 -> 만원 as wonText does, from 1억 too: "약 50~77만원 줄어들 수 있어요" (plan.y2022MayRange)
+//   both ends below 1만원 -> 원: "약 4,000~8,000원 …" (plan.y2022May)
+//   the two ends on either side of 1만원 -> the app's won format (wonText) on each end, unit repeated: "약 7,500원~1만원 …"
+//   both ends the same amount -> one: "약 63만원 줄어들 수 있어요" (plan.y2022May)
+// short: the narrow columns of 포트폴리오 만들기 4단계, the same without 약 (build.s4.y2022MayRange · y2022May). The smaller end
+// not a fall (whole % 0 or a gain) -> { wide: true }: the screen says plan.y2022Wide instead. null -> no band (files before
+// v19.1b): the screen keeps its one signed number. parts: the amount texts (1 = one number, 2 = a range); pct: whole % of each end.
+export function y2022View(est, short = false) {
+  const b = band2022(est);
+  if (!b) return null;
+  if (b.wide) return { wide: true };
+  const T = short ? C.build.s4 : C.plan;
+  const L = Math.round(-b.small), H = Math.round(-b.big);  // sizes of the fall in won, L <= H
+  const pct = [b.pctSmall, b.pctBig];
+  const one = (x) => ({ parts: [x], ...fallPieces(T.y2022May, { x }), pct });
+  if (L >= 10000) {
+    const x = Math.round(L / 10000), y = Math.round(H / 10000), man = (n) => fill(C.app.man, { n: nf(n) });
+    return x === y ? one(man(x)) : { parts: [nf(x), man(y)], ...fallPieces(T.y2022MayRange, { small: nf(x), big: nf(y) }), pct };
+  }
+  if (H < 10000) {
+    const won = (n) => fill(C.app.won, { n: nf(n) });
+    return L === H ? one(won(L)) : { parts: [nf(L), won(H)], ...fallPieces(T.y2022May, { x: `${nf(L)}~${won(H)}` }), pct };
+  }
+  return { parts: [wonText(L), wonText(H)], ...fallPieces(T.y2022May, { x: `${wonText(L)}~${wonText(H)}` }), pct };
+}
+// The approved line cut where a narrow column may wrap, without any word of it in the code: the text before the first
+// {slot} (pre), the slots with the unit glued to the last one (amount), and the rest (verb). pre + amount + " " + verb is
+// exactly fill(template, vals); the screen keeps the amount and the verb each on one line.
+function fallPieces(t, vals) {
+  const i = t.indexOf("{"), j = t.lastIndexOf("}") + 1;
+  const glued = /^\S*/.exec(t.slice(j))[0];
+  const amount = fill(t.slice(i, j + glued.length), vals), verb = t.slice(j + glued.length).trim();
+  return { text: fill(t, vals), pieces: [t.slice(0, i), amount, verb] };
+}
 // The sign follows the rounded value: −0.04 is "0.0%", never "−0.0%" (v19.1a review).
 export const signedPct = (v) => { const r = Math.round(v * 10) / 10; return `${r < 0 ? "\u2212" : r > 0 ? "+" : ""}${p1(Math.abs(r))}%`; };

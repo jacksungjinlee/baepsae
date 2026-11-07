@@ -30,6 +30,12 @@
 //   (준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"), never passed, and today's history never fires it (no 확인 필요
 //   for a drop): the per-share history cannot tell a stock split from a cut. A cut the user already confirmed
 //   (실제로 줄였어요: they ruled out a split themselves) stays 규칙 깨짐, with both answers still open. US is not affected.
+//   v19.1b: the switch governs only files published before v19.1b. Exact data (engine.exactData: data.json divCheck) has
+//   the split-checked history on today's share basis (dps3a): the rule is checked on it whenever today's history is
+//   comparable (engine.krDivHistory: divSt same · adj · zero). Not comparable today (nc · nd, or no dps3a) -> 준비 중 as
+//   above (never a guessed cut), a confirmed cut still 규칙 깨짐. Answers keep their key { t, fy, a, b }: for a stock with
+//   no share change (same) dps3a is dps3, so earlier answers still match; after a split the numbers differ and a drop
+//   that is still there is asked about again (an answer about the old numbers never clears new ones).
 // - Only reports NEWER than the rule's `since` can fire an annual rule: a fall that happened before purchase never
 //   counts. A report OLDER than at purchase (the pipeline fell back a year) is not used: the input counts as missing.
 // - A rule input that existed at purchase and is blank today -> "check" (missing), never 괜찮아요.
@@ -43,7 +49,7 @@
 // - Stale (published more than 4 days ago, the v17.5 rule) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
-import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND } from "./engine.js";
+import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory } from "./engine.js";
 import { STALE_DAYS, daysSince } from "../data.js";
 import { sameConfirm } from "./store.js";
 
@@ -178,19 +184,25 @@ const isYear = (y) => Number.isInteger(y);
 // trend off (KR_DIV_TREND): a dividend-cut rule not on a US holding (only Korean holdings ever get a checked one) reads
 // nothing from today's history, which may hide a split: not checked (준비 중), unless the user already confirmed a cut
 // after purchase (then 규칙 깨짐 as always: the sell condition fired on their own answer).
+// Exact data (v19.1b): today's comparable history (dps3a) instead; not comparable today -> as with the switch off.
 function evalDiv(r, h, s, co, deck, trend) {
   if (!isYear(r.since)) return pendingOf(r);
   const out = { id: "divCut", kind: "sell", check: "checked", input: "dps", since: r.since };
   const confirms = ((deck && deck.confirms) || []).filter((c) => c && c.t === h.t && c.rule === "divCut" && isYear(c.fy) && c.fy > r.since);
   const drops = confirms.filter((c) => c.answer === "cut").map((c) => ({ t: h.t, rule: "divCut", fy: c.fy, a: c.a, b: c.b, answer: "cut" }));
-  if (!trend && (h.cls || (s && s.cls)) !== "us") {
+  const kr = (h.cls || (s && s.cls)) !== "us";
+  const exact = kr && exactData();
+  // exact: the stock is in today's data but its history is not comparable (a held stock missing from the data reads
+  // nothing and is "missing" below, as with the switch on)
+  const hist = exact && s ? krDivHistory(s, co) : null;
+  if ((exact && s && !hist) || (!exact && !trend && kr)) {
     if (!drops.length) return pendingOf(r);
     drops.sort((x, y) => y.fy - x.fy);
     const fy = s ? fyOf(s, co) : null;
     return { ...out, result: "broken", missing: false, fy, now: null, newer: fy != null && fy > r.since, drops };
   }
   const fy = s ? fyOf(s, co) : null;
-  const d3 = s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
+  const d3 = exact ? hist : s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
   const v = d3 ? [0, 1, 2].map((i) => num(d3[i])) : [null, null, null];
   let missing = fy == null || fy < r.since || v[0] == null || v[1] == null;
   const now = missing ? null : { a: v[1], b: v[0] };             // 주당 {a}원 -> {b}원 (last year -> this report)

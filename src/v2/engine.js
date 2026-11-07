@@ -160,6 +160,69 @@ export function detectFeatures(data, corp, macro) {
 export const BUILD_NEEDS = ["ind", "dps0", "val20", "fy", "etf"];
 export const missingForBuild = (f) => BUILD_NEEDS.filter((k) => !f[k]);
 
+// ---------------- the data's shape: v19.1b (PR #50) ----------------
+// From the first v19.1b publish on, data.json carries a top-level divCheck (the split check's counts). Its presence means
+// the file has the exact fields: Korean stocks dps3a (the 3 report years' dividend per share on today's share basis),
+// dpsF, divSt (same · adj · nc not comparable · nd not derivable · zero) and dyt (today's-close yield, dps3a[0] ÷ price,
+// blank when it could not be verified), and every stock with a beta has betaSE and betaN. Files published before that
+// have none of these: then the app keeps its earlier behaviour exactly (the 1/3x-3x cross-check and the 1.8x split guard
+// below, no Korean dividend trend, no beta number). Never a mix: one file is read one way.
+// Set once per load by load.js resolveLoad (setDataShape); tests set it themselves. Read it through exactData().
+let EXACT_DATA = false;
+export const hasDivCheck = (d) => !!(d && typeof d === "object" && !Array.isArray(d) && d.divCheck && typeof d.divCheck === "object"
+  && !Array.isArray(d.divCheck));
+export function setDataShape(data) { EXACT_DATA = hasDivCheck(data); return EXACT_DATA; }
+export const exactData = () => EXACT_DATA;
+
+// Exact data only. A Korean history is comparable year to year when the split check put every paying year on today's
+// share basis: divSt same (no change), adj (a split or bonus issue, adjusted by its exact factor) or zero (no dividend
+// in any of the 3 years). nc (an uneven share change: rights issue, merger, spin-off) and nd (the factor could not be
+// derived) are not comparable: no trend, no 배당 감소, no cut check, never a guessed one.
+export const DIV_COMPARABLE = ["same", "adj", "zero"];
+const three = (a) => (Array.isArray(a) ? [0, 1, 2].map((i) => num(a[i])) : null);
+export const divStOf = (s, co) => (s && typeof s.divSt === "string" ? s.divSt : co && typeof co.divSt === "string" ? co.divSt : null);
+// dps3a [this report, last year, two years ago] in won per today's share (data.json, else corp.json's copy). null = absent.
+export const dps3aOf = (s, co) => three(s && Array.isArray(s.dps3a) ? s.dps3a : co && Array.isArray(co.dps3a) ? co.dps3a : null);
+// The comparable history (exact data, Korean stocks, divSt same · adj · zero), else null. Each year rounded to whole won
+// (dps3a carries 2 decimals after an uneven factor, e.g. 333.33): every comparison (the trend, 배당 감소, the daily cut
+// check) and every number shown from it are whole won, so a split never reads as "주당 100원 → 100원".
+export function krDivHistory(s, co) {
+  if (!EXACT_DATA || !s || s.cls !== "kr" || !DIV_COMPARABLE.includes(divStOf(s, co))) return null;
+  const a = dps3aOf(s, co);
+  return a ? a.map((x) => (x == null ? null : Math.round(x))) : null;
+}
+// Today's-close yield from the exact check (%): dyt when it is a number from 0 to 30 (DY_MAX), else null (not verified).
+export function dytOf(s) {
+  const y = num(s && s.dyt);
+  return y != null && y >= 0 && y <= DY_MAX ? y : null;
+}
+// Exact data: THE rule for "this Korean stock's dividend is checked", used by every reader (the company page's 배당 tile and
+// tab, the 배당 card's rank, 후보 고르기's receipts, the plan's 연 배당금, 100만원어치, 배당성향 needs a payer). The split
+// check alone decides (dyt, dps3a), never the report's own yield (dy): a report yield that disagrees is not a reason to
+// hide or to zero anything. -> null (no dps in the data: nothing known) or
+//   { zero: true, y }          the latest report paid nothing (dps 0): y = dyt (0, or null without a price)
+//   { zero: false, y, now }    a payer: y = dyt and now = dps3a[0] (won per today's share) when both are verified, else
+//                              both null (not verified: no yield, no amount, never ranked or summed as 0)
+export function krDivState(s, co = null) {
+  const dps = num(s && s.dps);
+  if (!s || s.cls !== "kr" || dps == null) return null;
+  const y = dytOf(s);
+  if (dps === 0) return { zero: true, y };
+  const a = (dps3aOf(s, co) || [null])[0];
+  return y != null && a != null && a > 0 ? { zero: false, y, now: a } : { zero: false, y: null, now: null };
+}
+
+// Beta with its estimation-error band (exact data only; Part O.1 of docs/tasks/v19.3-portfolio-pictures-accounts.md).
+// low = beta - 2 x betaSE, high = beta + 2 x betaSE. A betaSE above 0.5 is a broken price history (PR #50's gate treats
+// it so): no band, and the beta is not used. Without betaSE there is no band either. -> { beta, se, lo, hi } or null.
+export const BETA_SE_MAX = 0.5;
+export function betaBand(s) {
+  if (!EXACT_DATA) return null;
+  const b = num(s && s.beta), se = num(s && s.betaSE);
+  if (b == null || se == null || se < 0 || se > BETA_SE_MAX) return null;
+  return { beta: b, se, lo: b - 2 * se, hi: b + 2 * se };
+}
+
 // ---------------- values ----------------
 // v19.1a review: a Korean dividend per share (DART 주당 현금배당금) is not always per today's share. A split after the
 // report, or a filing that put the total dividend in the per-share row, makes dps / today's close absurd (와이엔텍
@@ -187,12 +250,17 @@ export function dpsAgrees(s) {
 // the daily check (rules.js evalDiv: 준비 중, counted in "아직 자동으로 확인하지 못하는 규칙"; a cut the user already
 // confirmed stays 규칙 깨짐). The rule book saved at 샀어요 (ruleBook) is the same in both states, with its purchase-time
 // baseline, so a deck bought while this is off is checked once it is on. US is not affected (it has no per-share history).
-// Defined here, the module every other one imports, so there is one switch and no import cycle. Turn it on only when the
-// pipeline gives a split-adjusted history; both states are tested.
+// Defined here, the module every other one imports, so there is one switch and no import cycle. Both states are tested.
+// v19.1b: the pipeline now gives the split-adjusted history (dps3a, PR #50). With such a file (exactData) the trend is on
+// from dps3a for every comparable stock (krDivHistory) and this switch is not read; it governs only files published
+// before v19.1b, whose raw dps3 mixes share bases across splits, and stays off for them.
 export const KR_DIV_TREND = false;
 
 // dps / today's close (%) for Korean stocks, only when dps agrees with the report's yield (dpsAgrees). null otherwise.
+// Exact data (v19.1b): the pipeline's today's-close yield dyt instead (dps3a[0] ÷ price, blank when not verified). It is
+// what the 배당 card ranks on (cardRaw): a blank is never ranked, never read as 0.
 export function krDivYield(s) {
+  if (EXACT_DATA) { const st = krDivState(s); return st ? st.y : null; }
   const d = num(s && s.dps), p = num(s && s.price);
   return d == null || !(p > 0) || !dpsAgrees(s) ? null : (d / p) * 100;
 }
@@ -209,13 +277,17 @@ export const SPLIT_GUARD = 1.8;
 // The one predicate (the company page's yield, 100만원 line, 배당성향 and console count; the plan's expected dividend): a
 // payer whose dividend per share may predate a split. true when dps > 0 and the report gives no yield to check against,
 // or today's yield / the report's >= 1.8.
+// Exact data (v19.1b): no guard. The split check itself decides, and dyt is blank where it could not verify the basis.
 export function splitGuarded(s) {
+  if (EXACT_DATA) return false;
   const d = num(s && s.dps), dy = num(s && s.dy), y = krDivYield(s);
   if (!(d > 0)) return false;
   if (dy == null) return true;
   return dy > 0 && y != null && y / dy >= SPLIT_GUARD - EPS;
 }
+// Exact data (v19.1b): krDivState's yield (dyt, 0-30%), else null. Older files: as above.
 export function krYieldToday(s) {
+  if (EXACT_DATA) { const st = krDivState(s); return st ? st.y : null; }
   if (splitGuarded(s)) return null;
   const y = krDivYield(s);
   return y != null && y <= DY_MAX ? y : null;
@@ -708,6 +780,8 @@ export function planShares(items, amountWon, fx) {
 // is not caught by the interim split guard). Any other Korean holding that has a dps is left out and named (unchecked:
 // [{ t, nk }]), never silently: the plan says "배당을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요." under the total.
 // No dps at all -> unknown (the v17.5 line). US and ETFs are not affected. coByT: corp.json rows (the report year).
+// Exact data (v19.1b): krDivState decides (the same rule as the company page): dps 0 -> 0원, a verified payer -> the
+// dividend per today's share (dps3a[0]) x shares, any other payer left out and named the same way.
 export function annualDividend(rows, fx, coByT = null) {
   let won = 0, unknown = 0;
   const unchecked = [];
@@ -716,8 +790,15 @@ export function annualDividend(rows, fx, coByT = null) {
     const s = r.s;
     if (s.cls === "kr") {
       const d = num(s.dps);
-      const fy = fyOf(s, coByT ? coByT.get(s.t) || null : null);
+      const co = coByT ? coByT.get(s.t) || null : null;
+      const fy = fyOf(s, co);
+      const st = EXACT_DATA ? krDivState(s, co) : null;
       if (d == null) unknown++;
+      else if (EXACT_DATA) {
+        if (st.zero) { /* pays nothing (배당이 없어요 on the company page): 0원 */ }
+        else if (fy == null || st.now == null) unchecked.push({ t: s.t, nk: s.nk });     // the company page shows no yield either
+        else won += st.now * r.shares;
+      }
       else if (d === 0 && dpsAgrees(s)) { /* pays nothing (배당이 없어요 on the company page): 0원, whatever the report year */ }
       else if (fy == null || krYieldToday(s) == null) unchecked.push({ t: s.t, nk: s.nk });   // the company page hides its yield too
       else won += d * r.shares;
@@ -733,26 +814,55 @@ export function annualDividend(rows, fx, coByT = null) {
 // Holdings without a figure (no beta) are assumed to move like the rest (the v17.5 rule of the current app): the rate
 // comes from the holdings with data and applies to the whole amount bought. missing = their share of the money.
 // None with data -> { ok: false, none: true }.
+// Exact data (v19.1b, Part O.1): a range from the beta's error band. Per holding, its market's 2022 fall x beta low and x
+// beta high (engine.betaBand); the cushion ETFs use their real 2022 result at both ends (no band). Each end is added up
+// by weight. The falls are negative, so the high beta gives the bigger fall. A holding whose beta has no band (no betaSE,
+// or betaSE above 0.5) has no figure: it is counted in `missing` like a holding without a beta. Returns, besides won
+// (the point estimate on the same holdings), band: { small, big, base } in won: the smaller fall first (small >= big, as
+// both are usually negative); base = the money they are counted on (every holding bought, as won). Older files: no band
+// (the single number as before).
 export function estimate2022(rows, R = R2022) {
-  let won = 0, known = 0, total = 0;
+  const exact = EXACT_DATA;
+  let won = 0, known = 0, total = 0, wSmall = 0, wBig = 0;
   for (const r of rows) {
     if (!(r.shares > 0)) continue;
     const s = r.s;
     total += r.cost;
-    let ret = null;
+    let ret = null, ends = null;
     if (s.cls === "kr" || s.cls === "us") {
       const b = num(s.beta);
-      if (b != null && !s.etf && !s.fund) ret = (s.cls === "kr" ? R.kr : R.usWon) * b;
-      else if (R.etf && R.etf[s.t] != null) ret = R.etf[s.t];
+      const band = exact ? betaBand(s) : null;
+      const m = s.cls === "kr" ? R.kr : R.usWon;
+      if (b != null && !s.etf && !s.fund && (!exact || band)) {
+        ret = m * b;
+        if (band) ends = [m * band.lo, m * band.hi];
+      } else if (R.etf && R.etf[s.t] != null) ret = R.etf[s.t];
     } else if (R.etf && R.etf[s.t] != null) ret = R.etf[s.t];
     if (ret == null || !Number.isFinite(ret)) continue;
+    if (!ends) ends = [ret, ret];
+    if (!ends.every(Number.isFinite)) continue;
     won += ret * r.cost;
+    wSmall += Math.max(ends[0], ends[1]) * r.cost;
+    wBig += Math.min(ends[0], ends[1]) * r.cost;
     known += r.cost;
   }
   if (!(known > 0)) return { ok: false, none: true };
   const missing = total > 0 ? 1 - known / total : 0;
   if (overHalf(missing)) return { ok: false, half: true, missing };
-  return { ok: true, won: (won / known) * total, missing };
+  const scale = total / known;
+  return { ok: true, won: (won / known) * total, missing, ...(exact ? { band: { small: wSmall * scale, big: wBig * scale, base: total } } : {}) };
+}
+
+// What the 2022 line shows with a band (Part O.1), in won and as rates of the whole amount. Each end rounded to a whole %:
+// smaller end not a fall (0% or a gain) -> "wide" (오차가 너무 커서 추정하지 않았어요). Otherwise { small, big } in won and
+// the rounded % of each (pctSmall <= pctBig). One number when both ends show the same amount is the screen's choice.
+// est: estimate2022's result. null when there is no band (older files, or no estimate).
+export function band2022(est) {
+  const b = est && est.ok ? est.band : null;
+  if (!b || !(b.base > 0)) return null;
+  const pctSmall = Math.round((-b.small / b.base) * 100), pctBig = Math.round((-b.big / b.base) * 100);
+  if (!(pctSmall > 0)) return { wide: true };
+  return { small: b.small, big: b.big, pctSmall, pctBig };
 }
 
 // The current app's rule (v17.5, computeMetrics): when holdings without data are MORE than half of the money, no risk
@@ -769,8 +879,10 @@ export function deckVol(rows, st, amountWon) {
   if (!(amountWon > 0)) return null;
   const expo = { kr: 0, us: 0, bond: 0, metal: 0 };
   let idio = 0;
-  // holdings without vol or beta are assumed to move like the rest: weights are taken within the holdings with data
-  const usable = (x) => { const s = x.s, c = s.cls; return num(s.vol) != null && c in expo && F[c] != null && ((c !== "kr" && c !== "us") || num(s.beta) != null); };
+  // holdings without vol or beta are assumed to move like the rest: weights are taken within the holdings with data.
+  // Exact data (v19.1b): a beta without its band (no betaSE, or betaSE above 0.5: a broken price history) is not used.
+  const betaOk = (s) => num(s.beta) != null && (!EXACT_DATA || betaBand(s) != null);
+  const usable = (x) => { const s = x.s, c = s.cls; return num(s.vol) != null && c in expo && F[c] != null && ((c !== "kr" && c !== "us") || betaOk(s)); };
   const known = rows.filter((x) => x.shares > 0 && usable(x)).reduce((a, x) => a + x.cost, 0);
   if (!(known > 0)) return null;
   for (const x of rows) {
@@ -853,6 +965,7 @@ export function cautionContext(stocks) {
 
 // Returns { items: [{ code, ... }], ran: [codes of the checks that had data] }. co = corp.json company (KR) or null.
 // trend: the Korean dividend-trend switch (KR_DIV_TREND; tests pass both states). Off: no 배당 감소 and no "div" in ran.
+// It applies to files published before v19.1b only; exact data reads dps3a (krDivHistory) whatever it says.
 export function cautions(s, co, ctx, trend = KR_DIV_TREND) {
   const items = [], ran = [];
   const pbr = num(s.pbr), p75 = hasGroup(s) ? ctx.pbrP75.get(`${s.cls}|${s.ind}`) : null;
@@ -873,8 +986,11 @@ export function cautions(s, co, ctx, trend = KR_DIV_TREND) {
   else if (co && Array.isArray(co.op) && co.op.slice(0, 3).filter((x) => num(x) != null).length >= 3) ran.push("op");
   const vol = num(s.vol), p80 = ctx.volP80[s.cls];
   if (vol != null && p80 != null) { ran.push("vol"); if (vol > p80) items.push({ code: "volHigh", vol }); }
-  // the Korean history may hide a split: with the switch off this check does not run (and is not named as run)
-  const d3 = s.cls === "kr" && trend ? (Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null) : null;
+  // the Korean history may hide a split: with the switch off this check does not run (and is not named as run).
+  // Exact data (v19.1b): the split-checked history on today's share basis (dps3a) when it is comparable (divSt same ·
+  // adj · zero), whatever the switch says; not comparable (nc · nd) -> the check does not run, never a guessed drop.
+  const d3 = s.cls !== "kr" ? null : EXACT_DATA ? krDivHistory(s, co)
+    : trend ? (Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null) : null;
   if (d3 && num(d3[0]) != null && num(d3[1]) != null) {
     ran.push("div");
     if (d3[0] < d3[1]) items.push({ code: "divDrop", a: d3[1], b: d3[0] });   // never 규칙 깨짐 on its own: 확인 필요
@@ -908,7 +1024,8 @@ export function opFell2(co) {
 export const roeFloorFor = (roe) => Math.max(0, Math.floor(roe / 2));
 
 // The Korean dividend-cut rule is written the same whatever KR_DIV_TREND says (the record outlives the switch): with the
-// switch off, 매수 계획 shows it as 준비 중 and the daily check does not run it (rules.js evalDiv).
+// switch off, 매수 계획 shows it as 준비 중 and the daily check does not run it (rules.js evalDiv). Exact data (v19.1b) has
+// its own history (dps3a), so there the rule is shown and checked whenever that history is comparable.
 export function ruleBook(s, co, points, targetW) {
   const rules = [];
   const fy = fyOf(s, co);
@@ -919,13 +1036,26 @@ export function ruleBook(s, co, points, targetW) {
   // before purchase never counts as broken, and the next cut is still caught. Such a fall shows at purchase as a
   // caution in 후보 고르기 instead (주의할 점: 배당 감소 = 확인 필요, 영업이익 2년 연속 감소).
   // 1. common sell conditions
-  const dps = num(s.dps);
-  const d3 = Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
+  // Exact data (v19.1b): the numbers are the split-checked history on today's share basis (dps3a, basis "today"). A history
+  // that is not comparable today (divSt nc · nd) still gets the rule, with its purchase report year (since) and the
+  // report's own figures (basis "report"), marked comparable: false: 매수 계획 shows it as 준비 중, and the daily check
+  // (rules.js evalDiv) runs it once a later file can compare (not comparable that day -> 준비 중). Older files: the report's
+  // own per-share figures, as before. The daily check compares only years inside today's report, so every baseline reads
+  // the same way.
+  const raw = num(s.dps);
+  const rawD3 = Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null;
+  const hist = EXACT_DATA && s.cls === "kr" ? krDivHistory(s, co) : null;
+  const flat = EXACT_DATA && s.cls === "kr" && !hist;                  // exact data, history not comparable today
+  const d3 = EXACT_DATA && hist ? hist : rawD3;
+  const dps = EXACT_DATA && hist ? hist[0] : raw;
   const prev = d3 ? num(d3[1]) : null;
-  if (s.cls === "kr" && dps === 0) { /* pays nothing: no dividend-cut rule */ }
-  else if (s.cls === "kr" && dps != null && dps > 0 && dated && prev != null) {
+  if (s.cls === "kr" && raw === 0) { /* pays nothing: no dividend-cut rule */ }
+  else if (s.cls === "kr" && flat && raw != null && raw > 0 && dated && prev != null) {
+    rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", baseline: raw, since: fy, dps: raw, prev, fy,
+      basis: "report", comparable: false });
+  } else if (s.cls === "kr" && dps != null && dps > 0 && dated && prev != null) {
     rules.push({ id: "divCut", kind: "sell", check: "checked", input: "dps", baseline: dps, since: fy, dps, prev, dps3: d3,
-      streak: dividendStreak(d3), fy, droppedBefore: dps < prev });
+      streak: dividendStreak(d3), fy, droppedBefore: dps < prev, ...(EXACT_DATA ? { basis: "today" } : {}) });
   } else rules.push({ id: "divCut", kind: "sell", check: "pending" });
   rules.push({ id: "audit", kind: "sell", check: "pending" });
   rules.push({ id: "embezzle", kind: "sell", check: "pending" });

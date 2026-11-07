@@ -148,7 +148,8 @@ function Row({ k, v, id, basis, card }) {
 function Receipts({ s, co, c, st }) {
   const R = C.pick.receipt;
   const pbr = num(s.pbr), roe = num(s.roe), debt = num(s.debt);
-  // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (engine.js krYieldToday)
+  // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (engine.js krYieldToday;
+  // v19.1b data: the verified today's-close yield dyt)
   const y = s.cls === "kr" ? krYieldToday(s) : num(s.dy);
   const fy = s.cls === "kr" ? fyOf(s, co) : null;
   // Korean growth is labelled by how it was actually calculated (engine.growthBasis); no label = the row is hidden.

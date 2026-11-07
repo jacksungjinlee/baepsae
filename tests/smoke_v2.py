@@ -27,6 +27,10 @@
   소개        (v19.0 Part D) 푸터: 고지문 · 소개 링크, 만든 사람 줄 없음 · #about 으로 열면 한국어 · English 로 바꾸면 영어 머리글 ·
               새로 고침해도 그 선택 · 저장소가 막혀도 동작 · 숫자 줄 = 시험 데이터로 센 값(분석 종목 · 업종 그룹) · 멈춘 데이터면
               숫자 줄 없음(문단은 그대로) · data.json 이 없으면 숫자 줄과 숫자 문단 없이 나머지는 그대로 · 뒤로 → 전 화면, # 없음
+  v19.1b      divCheck 가 있는 파일 (PR #50): 분할 뒤 배당은 오늘 주식 수 기준(dps3a)으로 늘린 기록 · 진짜 삭감은 삭감 · 비교 불가와
+              알 수 없음은 추세 없이 · 베타는 오차 범위와 함께(양 끝이 같으면 한 숫자, 표준오차 0.5 초과는 자료가 없어요) · 재무 경고는 확인이
+              다 돌았거나 해당 없을 때만 '없어요' · 덱 짜기와 매수 계획의 2022년은 범위(작은 하락 먼저), 작은 쪽이 하락이 아니면 '오차가
+              너무 커서 추정하지 않았어요.' · 예전 파일은 출렁임 문장만
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
@@ -3679,6 +3683,383 @@ def scene_company(R, files, width):
     R.check(page, S, "공시: 오늘 목록을 못 받은 파일 → 가장 최근 공시일 + 'N일째 갱신이 멈췄어요' (오늘 날짜 아님)", disc_stale)
 
 
+# ── v19.1b 데이터 (PR #50 의 새 칸: divCheck 가 있는 파일) ──
+# data.json 에 divCheck 가 있으면 앱이 분할을 확인한 한국 배당(dps3a · divSt · dyt)과 베타 오차 범위(betaSE)를 써요. 시험 데이터에 그 칸을
+# 붙여서 봐요: 분할 뒤의 배당이 '줄였어요'가 아니라 늘린 기록으로 · 진짜 삭감은 그대로 삭감 · 비교 불가(nc)와 알 수 없음(nd)은 추세 없이 ·
+# 베타는 범위와 함께(양 끝이 같으면 한 숫자, 믿을 수 없으면 자료가 없어요) · 재무 경고는 확인이 다 돌았거나 해당 없을 때만 '없어요' ·
+# 매수 계획과 덱 짜기의 2022년은 범위(작은 하락 먼저)와 그 설명 줄, 작은 쪽이 하락이 아니면 '오차가 너무 커서 추정하지 않았어요.'
+# 예전 파일(divCheck 없음)에서는 출렁임에 숫자도 '오차 범위를 계산할 수 있을 때' 줄도 없어요 (Part O.1 이 그 줄을 없앴어요).
+V191B_SPLIT = "009150"     # 삼성전기: 2024년 5:1 분할을 지어내요 (보고서 원래 숫자 9,000 · 5,750원 → 오늘 기준 1,800 · 1,150원)
+V191B_CUT = "005380"       # 현대차: 같은 기준에서 12,000 → 10,000원 (진짜 삭감) · 베타 양 끝이 같아요
+V191B_NC = "000660"        # SK하이닉스: 비교 불가 (유상증자처럼) · 베타 표준오차 0.6 (믿을 수 없어요)
+V191B_ND = "105560"        # KB금융: 알 수 없음 · 오늘 기준 수익률 없음 · 금융지주 (유동비율 · 이자보상배율은 해당 없음)
+V191B_FIN = "032830"       # 삼성생명: 보험사 (유동비율 · 이자보상배율은 해당 없음) → 금융회사 밑 줄
+V191B_HOLD = "402340"      # SK스퀘어: 금융이 아닌 지주회사 → 지주회사 밑 줄 (PR #68 B3/B7)
+V191B_PART = "033780"      # KT&G: 이자보상배율만 못 돌림 (재무제표에 이자비용 줄 없음, flWhy ie) → '확인한 …' 줄 (PR #68 B7)
+V191B_OPMISS = "035420"    # NAVER: 이자보상배율만 못 돌렸지만 이유가 영업이익 없음(flWhy op) → 아무 말도 하지 않아요
+V191B_ICRCF = "034020"     # 두산에너빌리티: 이자보상배율 0.65배를 현금흐름표의 이자 지급액으로 (flSrc cf) → 그 밑 안내 (PR #68)
+V191B_ICRLOSS = "005490"   # POSCO홀딩스: 영업손실 (fl.icr 음수) → 숫자 없이 '영업손실이 나서 …' (PR #68)
+V191B_SPLIT10 = "028260"   # 삼성물산: 보고서 뒤 10:1 분할을 지어내요 (보고서 28,000원 → 오늘 1주 2,800원) → 사업보고서 숫자 안내 (B3)
+
+
+def v191b_files(files, se=None, beta=None):
+    """divCheck 가 있는 파일처럼: 한국 배당 종목마다 dps3a = dps3 (같은 기준) · dyt = dps3a[0] ÷ 종가 (연 30% 까지), 베타가 있는 종목마다
+    betaSE (기본 0.05). 위의 네 종목은 따로. se · beta: 모든 종목에 같은 값 (2022년 범위가 너무 넓은 장면)."""
+    f = clone(files)
+    d = f["data.json"]
+    d["divCheck"] = {"v": 1, "same": 0, "adj": 1, "nc": 1, "nd": 1, "zero": 0, "noDps": 0, "pref": 0, "payers": 0, "dyt": 0}
+    for s in d["stocks"]:
+        if beta is not None and s.get("beta") is not None:
+            s["beta"] = beta
+        if s.get("beta") is not None:
+            s["betaSE"], s["betaN"] = (0.05 if se is None else se), 750
+        if s.get("cls") != "kr" or s.get("dps") is None or s.get("etf") or s["t"][-1] != "0":
+            continue
+        d3 = s["dps3"] if isinstance(s.get("dps3"), list) else [s["dps"], 0.0, 0.0] if s["dps"] == 0 else [s["dps"], None, None]
+        s["dps3"], s["dps3a"], s["dpsF"] = d3, list(d3), [1.0 if x else None for x in d3]
+        s["divSt"] = "zero" if all(x == 0 for x in d3) else "same"
+        y = d3[0] / s["price"] * 100 if s.get("price") else None
+        if y is not None and y <= 30:
+            s["dyt"] = round(y, 2)
+    by = {s["t"]: s for s in d["stocks"]}
+    sp = by[V191B_SPLIT]
+    sp.update(dps3=[2350.0, 9000.0, 5750.0], dps3a=[2350.0, 1800.0, 1150.0], dpsF=[1.0, 5.0, 5.0], divSt="adj")
+    by[V191B_CUT]["betaSE"] = 0.001 if se is None else se
+    nc = by[V191B_NC]
+    nc.update(dps3a=[3000.0, None, 1200.0], dpsF=[1.0, None, 1.0], divSt="nc", betaSE=0.6 if se is None else se)
+    nd = by[V191B_ND]
+    nd.update(dps3a=[None, None, None], dpsF=[None, None, None], divSt="nd")
+    nd.pop("dyt", None)
+    coby = {c["t"]: c for c in f["corp.json"]["companies"]}
+    coby["005930"]["flRan"] = ["cr", "icr", "l3", "imp"]
+    coby[V191B_ND].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    coby[V191B_FIN].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    coby[V191B_HOLD].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    coby[V191B_PART].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "ie"})
+    coby[V191B_OPMISS].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "op"})
+    coby[V191B_ICRCF].update(fl={"icr": 0.65}, flRan=["cr", "icr", "l3", "imp"], flSrc={"icr": "cf"})
+    coby[V191B_ICRLOSS].update(fl={"icr": -0.41}, flRan=["cr", "icr", "l3", "imp"], flSrc={"icr": "cf"})   # cf 여도 영업손실엔 안내 없음
+    s10 = by[V191B_SPLIT10]
+    s10.update(dps=28000.0, dps3=[28000.0, 26000.0, 25500.0], dps3a=[2800.0, 2600.0, 2550.0], dpsF=[10.0, 10.0, 10.0], divSt="adj",
+               dyt=round(2800.0 / s10["price"] * 100, 2))
+    coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '없어요'라고 하지 않아요
+    return f
+
+
+def to_plan_v191b(page):
+    """to_plan 과 같은 길 (배당 생활비 → 1,000만원 → 후보 고르기 → 매수 계획). v19.1b 데이터의 4단계 칸은 '약' 없이 하락 폭이라
+    (PR #68) 칸 자체가 보일 때까지 기다려요. → [(종목, 주식 수)] 화면 순서대로"""
+    wait_ready(page)
+    start_build(page)
+    page.locator('[data-deck="income"]').click()
+    see(page, C["build"]["s1"]["title"])
+    click_next(page)
+    see(page, C["build"]["s3"]["title"])
+    click_next(page)
+    see(page, C["build"]["s4"]["title"])
+    page.get_by_role("button", name="+1,000만").first.click()
+    page.locator('[data-ui-v2="y2022-methods"] [data-method]').first.wait_for(state="visible")
+    click_next(page)
+    see(page, C["pick"]["title"])
+    click_next(page)
+    see(page, C["plan"]["stocks"])
+    rows = page.locator('[data-ui-v2="screen"] [data-row]')
+    rows.first.wait_for(state="visible")
+    out = []
+    for i in range(rows.count()):
+        r = rows.nth(i)
+        out.append((r.get_attribute("data-row"), int(re.search(r"([\d,]+)주", r.inner_text()).group(1).replace(",", ""))))
+    return out
+
+
+def scene_v191b(R, files, width):
+    S = f"v19.1b 데이터 {width}"
+    f = v191b_files(co_files(files))
+    by = {x["t"]: x for x in f["data.json"]["stocks"]}
+    srv, ctx, page, base = R.open(build_site(f), width, path="/app.html?dev=1#stocks")
+
+    def tile(code, topic):
+        t = page.locator(f'[data-ui-v2="co-tile"][data-topic="{topic}"]')
+        t.first.wait_for(state="visible")
+        num = t.locator('[data-ui-v2="tile-number"]')
+        return t.get_attribute("data-rule"), t.locator('[data-ui-v2="tile-phrase"]').inner_text(), num.inner_text() if num.count() else None
+
+    def open_co(code):
+        co_hash(page, f"#stocks/{code}")
+        page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"co-head\"]'); return !!e && e.dataset.t === t; }", arg=code)
+
+    def ytext(y):
+        r = round(y * 10) / 10
+        return f"{C['pick']['receipt']['yield']} " + (f"{y:,.2f}%" if 0 < y < 0.1 else f"{r:,.1f}%")
+
+    def company():
+        wait_ready(page)
+        T = CO["tiles"]
+        # 분할: 예전 기록(9,000 → 2,350원)이면 '배당을 줄였어요'였어요. 오늘 기준 1,150 → 1,800 → 2,350원: 2년 연속 늘렸어요
+        open_co(V191B_SPLIT)
+        s = by[V191B_SPLIT]
+        rule, phrase, num = tile(V191B_SPLIT, "div")
+        assert (rule, phrase) == ("streak", fillp(T["div"]["streak"], n=2)), (rule, phrase)
+        assert num == ytext(s["dyt"]), (num, s["dyt"])
+        co_open_tab(page, V191B_SPLIT, "div", "kr")
+        dv = page.locator('[data-ui-v2="co-div"]')
+        assert dv.get_attribute("data-rule") == "streak"
+        bars = dv.locator('[data-ui-v2="bars"] [data-year]')
+        assert [(b.get_attribute("data-year"), float(b.get_attribute("data-v"))) for b in bars.all()] == [("2023", 1150.0), ("2024", 1800.0), ("2025", 2350.0)]
+        assert page.locator('[data-ui-v2="co-dps"] [data-ui="amount"]').first.inner_text() == "2,350원"
+        m = page.locator('[data-ui-v2="co-million"]')
+        assert int(m.get_attribute("data-won")) == math.floor(1e6 * 2350 / s["price"] / 1000 + 0.5) * 1000
+        assert abs(float(page.locator('[data-ui-v2="co-yield"]').get_attribute("data-y")) - s["dyt"]) < 1e-9
+        no_hscroll(page, width)
+        R.collect(page)
+        # 진짜 삭감은 그대로 삭감 · 베타 양 끝이 같아요: 한 숫자 · 재무 경고 확인 하나가 안 돌았어요: '없어요' 없음
+        open_co(V191B_CUT)
+        assert tile(V191B_CUT, "div")[:2] == ("cut", T["div"]["cut"])
+        b = by[V191B_CUT]["beta"]
+        x = f"{round(b * 10) / 10:.1f}"
+        rule, phrase, num = tile(V191B_CUT, "risk")
+        assert num == fillp(T["riskOne"]["kr"], x=x), num
+        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        co_open_tab(page, V191B_CUT, "value", "kr")
+        rk = page.locator('[data-ui-v2="co-risk"]')
+        assert rk.locator('[data-ui-v2="co-risk-band"]').inner_text() == fillp(CO["risk"]["one"]["kr"], x=x)
+        assert CO["risk"]["oneNote"] in rk.inner_text() and CO["risk"]["bandNote"] not in rk.inner_text()
+        R.collect(page)
+        # 비교 불가: 추세 없이 '배당을 줘요' + 오늘 기준 수익률 · 막대 없음 · 베타를 믿을 수 없어요: 자료가 없어요 (범위도 숫자도 없음)
+        open_co(V191B_NC)
+        rule, phrase, num = tile(V191B_NC, "div")
+        assert (rule, phrase, num) == ("pays", T["div"]["pays"], ytext(by[V191B_NC]["dyt"])), (rule, phrase, num)
+        assert tile(V191B_NC, "risk") == ("na", T["na"], None)
+        co_open_tab(page, V191B_NC, "div", "kr")
+        assert page.locator('[data-ui-v2="co-div"] [data-ui-v2="bars"]').count() == 0
+        co_open_tab(page, V191B_NC, "value", "kr")
+        # Jack, PR #68 B6: 쓸 수 있는 범위가 없으면 가치 탭의 출렁임 카드는 아예 없어요 (베타가 없는 종목처럼)
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-risk"]').count() == 0
+        R.collect(page)
+        # 알 수 없음: '배당을 줘요', 숫자 없음 · 금융지주(s holding, 업종 은행): 두 확인은 해당 없고 둘은 돌았어요 → '재무 경고 신호는
+        # 없어요' + 금융회사 밑 줄 (PR #68 B3/B7: 업종이 금융이면 금융회사)
+        open_co(V191B_ND)
+        assert tile(V191B_ND, "div") == ("pays", T["div"]["pays"], None)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        assert CO["warn"]["none"] in page.locator('[data-ui-v2="co-warn"]').inner_text()
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "fin" and sub.inner_text() == CO["warn"]["noneSubFin"], sub.inner_text()
+        # 금융이 아닌 지주회사: 지주회사 밑 줄
+        open_co(V191B_HOLD)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "holding" and sub.inner_text() == CO["warn"]["noneSubHolding"], sub.inner_text()
+        # 이자보상배율만 이자비용 줄이 없어 못 돌림: '확인한 재무 경고 신호는 없어요' + 그 이유 (Jack, PR #68 B7 · 2026-11-07)
+        open_co(V191B_PART)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        card = page.locator('[data-ui-v2="co-warn"]')
+        assert card.get_attribute("data-partial") == "1"
+        assert CO["warn"]["nonePartial"] in card.inner_text() and CO["warn"]["none"] not in card.inner_text().replace(CO["warn"]["nonePartial"], "")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "noIcr" and sub.inner_text() == CO["warn"]["noneSubNoIcr"], sub.inner_text()
+        no_hscroll(page, width)
+        # 이유가 영업이익 없음이면 그 줄은 틀린 말이라 아무것도 말하지 않아요
+        open_co(V191B_OPMISS)
+        tile(V191B_OPMISS, "div")                                           # 회사 자료가 다 그려질 때까지
+        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        # 이자보상배율을 현금흐름표의 이자 지급액으로 계산: 경고 밑에 그 안내 (버튼과 목록 모두) · 영업손실: 숫자 없이 (Jack, PR #68)
+        open_co(V191B_ICRCF)
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
+        btn.wait_for(state="visible")
+        assert fillp(CO["warn"]["icr"], x="0.65") in btn.inner_text()
+        assert btn.locator('[data-ui-v2="co-warn-cf"]').inner_text() == CO["warn"]["icrCfNote"]
+        btn.click()
+        row = page.locator('[data-ui-v2="co-warn-list"] [data-flag="icr"]')
+        row.wait_for(state="visible")
+        assert row.locator('[data-ui-v2="co-warn-cf"]').inner_text() == CO["warn"]["icrCfNote"]
+        floor_ok(page, "회사 재무 경고 (현금흐름 안내)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
+        no_hscroll(page, width)
+        page.keyboard.press("Escape")
+        open_co(V191B_ICRLOSS)
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
+        btn.wait_for(state="visible")
+        assert CO["warn"]["icrLoss"] in btn.inner_text() and not re.search(r"\d배", btn.inner_text()), btn.inner_text()
+        assert btn.locator('[data-ui-v2="co-warn-cf"]').count() == 0                   # 숫자가 없으니 '계산했어요' 안내도 없어요
+        # 삼성전자: 금융도 지주회사도 아니고 네 확인이 다 돌았어요 → 지금 밑 줄
+        open_co("005930")
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "" and sub.inner_text() == CO["warn"]["noneSub"], sub.inner_text()
+        # B3: 보고서 뒤 10:1 분할 → 2,800원 밑에 '사업보고서에는 28,000원으로 나와요' · 올해 숫자가 그대로인 분할(삼성전기)은 안내 없음
+        open_co(V191B_SPLIT10)
+        co_open_tab(page, V191B_SPLIT10, "div", "kr")
+        assert page.locator('[data-ui-v2="co-dps"] [data-ui="amount"]').first.inner_text() == "2,800원"
+        assert page.locator('[data-ui-v2="co-dps-adj"]').inner_text() == fillp(CO["div"]["adjNote"], x="28,000")
+        # 앞 막대도 다시 계산했어요 (dpsF [10, 10, 10]) → 막대 밑 안내도 (PR #68 2022/bars)
+        assert page.locator('[data-ui-v2="co-bars-adj"]').inner_text() == fillp(CO["div"]["barsAdjNote"], years="2023·2024")
+        floor_ok(page, "회사 배당 (주식 수 맞춤 안내)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
+        no_hscroll(page, width)
+        R.collect(page)
+        open_co(V191B_SPLIT)
+        co_open_tab(page, V191B_SPLIT, "div", "kr")
+        assert page.locator('[data-ui-v2="co-dps"]').count() == 1 and page.locator('[data-ui-v2="co-dps-adj"]').count() == 0
+        # 2024 · 2023 막대는 5:1 분할 전의 배당을 다시 계산한 값 (dpsF [1, 5, 5]) → 막대 밑 안내 (PR #68 2022/bars)
+        assert page.locator('[data-ui-v2="co-bars-adj"]').inner_text() == fillp(CO["div"]["barsAdjNote"], years="2023·2024")
+        open_co(V191B_CUT)                                                  # 다시 계산한 막대가 없으면 안내도 없어요
+        co_open_tab(page, V191B_CUT, "div", "kr")
+        assert page.locator('[data-ui-v2="co-div"] [data-ui-v2="bars"]').count() == 1 and page.locator('[data-ui-v2="co-bars-adj"]').count() == 0
+        R.collect(page)
+        # 보험사(s insure): 금융회사 밑 줄 (PR #68 B7)
+        open_co(V191B_FIN)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "fin" and sub.inner_text() == CO["warn"]["noneSubFin"], sub.inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+        # 삼성전자: 베타 범위 + 그 밑 줄 · 재무 경고 없음
+        open_co("005930")
+        s = by["005930"]
+        lo, hi = (f"{round((s['beta'] + k * 2 * s['betaSE']) * 10) / 10:.1f}" for k in (-1, 1))
+        assert tile("005930", "risk")[2] == fillp(T["riskBand"]["kr"], lo=lo, hi=hi)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        co_open_tab(page, "005930", "value", "kr")
+        rk = page.locator('[data-ui-v2="co-risk"]')
+        assert rk.locator('[data-ui-v2="co-risk-band"]').inner_text() == fillp(CO["risk"]["band"]["kr"], lo=lo, hi=hi)
+        assert CO["risk"]["bandNote"] in rk.inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+        # 미국: S&P 500 과 비교한 범위
+        open_co("AAPL")
+        s = by["AAPL"]
+        lo, hi = (f"{round((s['beta'] + k * 2 * s['betaSE']) * 10) / 10:.1f}" for k in (-1, 1))
+        assert tile("AAPL", "risk")[2] == fillp(T["riskBand"]["us"], lo=lo, hi=hi)
+        co_open_tab(page, "AAPL", "value", "us")
+        assert page.locator('[data-ui-v2="co-risk-band"]').inner_text() == fillp(CO["risk"]["band"]["us"], lo=lo, hi=hi)
+        floor_ok(page, "회사 출렁임 범위 (미국)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
+        no_mascot(page)
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "회사: 분할 뒤 배당은 오늘 기준으로 늘린 기록 · 진짜 삭감 · 비교 불가 · 알 수 없음 · 베타 범위(한 숫자 · 자료 없음) · 재무 경고 '없어요'", company)
+    ctx.close()
+    srv.shutdown()
+
+    pf = plan_files(f)                                                          # 보고서 수익률만 바꿔요 (dyt 는 그대로)
+    srv, ctx, page, _ = R.open(build_site(pf), width)
+
+    def plan():
+        rows = to_plan_v191b(page)
+        assert rows, rows
+        y = page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="y2022"]')
+        assert y.get_attribute("data-band") == "range", y.get_attribute("data-band")
+        big = y.locator('[data-ui-v2="big-number"]').inner_text().replace("\n", "")
+        # Jack, PR #68: 빼기 없이 하락 폭으로, 작은 하락 먼저 ("약 {small}~{big}만원 줄어들 수 있어요")
+        m = re.fullmatch(r"약 ([\d,]+)~([\d,]+)만원 줄어들 수 있어요", big)
+        assert m and int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", "")), big
+        assert big == fillp(C["plan"]["y2022MayRange"], small=m.group(1), big=m.group(2)) and "−" not in y.inner_text()
+        assert y.locator('[data-ui-v2="y2022-range-note"]').inner_text() == C["plan"]["y2022Range"]
+        # PR #68 B5: 범위 밑에서는 '…어림한 범위예요' ('값이에요' 아님)
+        assert y.locator('[data-ui-v2="y2022-note"]').inner_text() == C["plan"]["y2022NoteRange"]
+        assert C["plan"]["y2022Note"] not in y.inner_text()
+        floor_ok(page, "매수 계획 2022 범위")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
+        # 내 투자 규칙: 분할을 확인한 기록이 있는 한국 배당 종목은 배당 삭감 규칙을 점검해요 (준비 중이 아니에요)
+        rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
+        for i in range(rules.count()):
+            rules.nth(i).locator("button").first.click()
+        book = page.locator("[data-rules-for]")
+        book.first.wait_for(state="visible")
+        payers = [t for t, n in rows if n > 0 and by.get(t, {}).get("cls") == "kr" and (by[t].get("dps") or 0) > 0 and by[t].get("divSt") in ("same", "adj")]
+        if payers:
+            checked = book.locator('[data-ui-v2="rule-line"][data-check="checked"]', has_text=C["plan"]["rules"]["divLimit"])
+            assert checked.count() >= len(payers), ("\n".join(book.all_inner_texts()), payers)
+        # PR #68 B4: 사기 전에 이미 줄어든 배당의 안내는 특별배당만 물어요 (분할은 이미 확인했어요)
+        txt = "\n".join(book.all_inner_texts())
+        assert C["pick"]["caution"]["divDropBody"] not in page.locator("body").inner_text()
+        if "배당이 줄었어요" in txt:
+            assert C["pick"]["caution"]["divDropBodyExact"] in txt, txt
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "매수 계획: 2022년은 하락 폭 범위(작은 하락 먼저, 만원, 빼기 없음) + '…어림한 범위예요' · '범위는 베타를 …' 줄 · 배당 삭감 규칙 · 특별배당 안내", plan)
+    ctx.close()
+    srv.shutdown()
+
+    # 2022년 범위가 너무 넓어요: 모든 베타 0.8 ± 2 × 0.5 → 작은 쪽 끝이 오히려 올라요 → 숫자 대신 '오차가 너무 커서 추정하지 않았어요.'
+    wf = plan_files(v191b_files(co_files(files), se=0.5, beta=0.8))
+    srv, ctx, page, _ = R.open(build_site(wf), width)
+
+    def wide():
+        wait_ready(page)
+        start_build(page)
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        w4 = page.locator('[data-ui-v2="y2022-methods"] [data-ui-v2="y2022-wide"]')
+        w4.wait_for(state="visible")
+        assert w4.inner_text() == C["plan"]["y2022Wide"]
+        assert page.locator('[data-ui-v2="y2022-methods"] [data-method]').count() == 0      # 방법별 숫자 없음
+        no_hscroll(page, width)
+        R.collect(page)
+        click_next(page)
+        see(page, C["pick"]["title"])
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        y = page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="y2022"]')
+        y.wait_for(state="visible")
+        assert y.get_attribute("data-band") == "wide"
+        assert y.locator('[data-ui-v2="y2022-wide"]').inner_text() == C["plan"]["y2022Wide"]
+        assert y.locator('[data-ui-v2="big-number"]').count() == 0 and C["plan"]["y2022Range"] not in y.inner_text()
+        floor_ok(page, "매수 계획 2022 (추정하지 않음)")                     # v19.3b 12px 바닥: #68 의 새 줄도 화면에서 재요 (검사만 추가)
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "2022년 범위의 작은 쪽이 하락이 아니면: 덱 짜기 · 매수 계획 모두 '오차가 너무 커서 추정하지 않았어요.' (숫자 없음)", wide)
+    ctx.close()
+    srv.shutdown()
+
+    # 덱 짜기 4단계: 방법 셋 모두 범위 + 설명 줄, 좁은 칸에서도 금액 가운데서 줄이 바뀌지 않아요 (가로 스크롤 없음)
+    srv, ctx, page, _ = R.open(build_site(pf), width)
+
+    def step4():
+        wait_ready(page)
+        start_build(page)
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        box = page.locator('[data-ui-v2="y2022-methods"]')
+        box.locator('[data-method]').first.wait_for(state="visible")
+        cells = box.locator('[data-method]')
+        assert cells.count() == 3
+        for i in range(3):
+            txt = cells.nth(i).inner_text().replace("\n", "")
+            m = re.fullmatch(r"([\d,]+)(?:~([\d,]+))?만원 줄어들 수 있어요", txt)       # PR #68: 하락 폭, 빼기 없음, 좁은 칸은 '약' 없이
+            assert m and (m.group(2) is None or int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", ""))), txt
+            assert cells.nth(i).evaluate("(e) => e.scrollWidth <= e.clientWidth"), txt           # 칸 밖으로 나가지 않아요 (낱말 가운데서 끊지 않음)
+        assert box.locator('[data-ui-v2="y2022-range-note"]').inner_text() == C["plan"]["y2022Range"]
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "덱 짜기 4단계: 2022년 같은 해가 오면 = 방법마다 하락 폭 범위(빼기 없음) · 설명 줄 · 칸 밖으로 나가지 않아요", step4)
+    ctx.close()
+    srv.shutdown()
+
+    # 예전 파일(divCheck 없음): 출렁임은 문장만, 숫자도 '오차 범위를 계산할 수 있을 때' 줄도 없어요
+    srv, ctx, page, _ = R.open(build_site(co_files(files)), width, path="/app.html?dev=1#stocks")
+
+    def old():
+        wait_ready(page)
+        open_co("005930")
+        assert tile("005930", "risk")[2] is None
+        co_open_tab(page, "005930", "value", "kr")
+        rk = page.locator('[data-ui-v2="co-risk"]')
+        assert rk.count() == 1 and rk.locator('[data-ui-v2="co-risk-band"]').count() == 0
+        assert rk.inner_text().strip() == CO["risk"][rk.get_attribute("data-rule")], rk.inner_text()
+        assert "오차 범위" not in page.locator("body").inner_text()
+        R.collect(page)
+    R.check(page, S, "예전 파일: 출렁임은 문장만 (베타 숫자 · 범위 없음, 예전의 '오차 범위를 …' 줄 없음)", old)
+    ctx.close()
+    srv.shutdown()
+
 
 # ── v19.3b (docs/tasks/v19.3-portfolio-pictures-accounts.md Part A · B · N.2) ──
 with open(os.path.join(ROOT, "src", "v2", "pictures.js"), encoding="utf-8") as _f:
@@ -4437,7 +4818,8 @@ def main():
                       lambda: scene_daily(R, files, width, trend=not KR_DIV_TREND), lambda: scene_today(R, files, width, trend=not KR_DIV_TREND),
                       lambda: scene_about(R, files, width), lambda: scene_routes(R, files, width),
                       lambda: scene_market(R, files, width), lambda: scene_stocks(R, files, width),
-                      lambda: scene_missing(R, files, width), lambda: scene_no_holding(R, files, width)]
+                      lambda: scene_missing(R, files, width), lambda: scene_no_holding(R, files, width),
+                      lambda: scene_v191b(R, files, width)]           # v19.1b: divCheck 가 있는 파일 (분할 확인 배당 · 베타 범위 · 2022년 범위)
             for fn in scenes:
                 try:
                     fn()
