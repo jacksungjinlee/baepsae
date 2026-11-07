@@ -1463,6 +1463,16 @@ def _pct(n, d):
     return f"{n:,} ({100.0 * n / d:.1f}%)" if d else f"{n:,} (–)"
 
 
+def _billed_text(cr):
+    """'98 × 2 + 7 × 3'. A run record from before the 2026-11-07 retry has no billed_at: every billed lookup then was a
+    2-credit logo lookup (charged + billable without the header)."""
+    at = cr.get("billed_at")
+    if at is None:
+        n = cr.get("charged", 0) + cr.get("no_header", 0)
+        return f"{n:,} × {CREDITS}" if n else "0"
+    return " + ".join(f"{n:,} × {p}" for p, n in sorted(at.items(), key=lambda x: int(x[0]))) or "0"
+
+
 def summary_md(info):
     t, cr, rq = info["tally"], info["credits"], info["requests"]
     out = ["# logo.dev logos (v19.3a)", "",
@@ -1484,8 +1494,8 @@ def summary_md(info):
     for side in ("kr", "us"):
         m = t[side]
         out.append(f"| {m['label']} | {m['companies']:,} | {m['finished']:,} | {_pct(m['by_ticker'], m['finished'])} | "
-                   f"{_pct(m['by_domain'], m['finished'])} | {_pct(m['by_isin'], m['finished'])} | "
-                   f"{_pct(m['by_brandmark'], m['finished'])} | {_pct(m['letter'], m['finished'])} |")
+                   f"{_pct(m['by_domain'], m['finished'])} | {_pct(m.get('by_isin', 0), m['finished'])} | "
+                   f"{_pct(m.get('by_brandmark', 0), m['finished'])} | {_pct(m['letter'], m['finished'])} |")
     p = t["preferred"]
     out += ["", f"Korean preferred shares: {p['companies']:,}, of which {p['logo']:,} reuse their issuer's logo "
                 "(no lookup of their own); the rest show the letter mark.", "",
@@ -1518,7 +1528,7 @@ def summary_md(info):
             QUALITY_NOTE, "",
             "## Credits and requests", "",
             f"- Credits counted: **{cr['counted']:,}** of the {info['max_credits']:,} cap (${cr['counted'] / 100:,.2f}) — "
-            f"billed answers {' + '.join(f'{n:,} × {p}' for p, n in sorted((cr.get('billed_at') or {}).items())) or '0'} "
+            f"billed answers {_billed_text(cr)} "
             f"({cr['charged']:,} marked Credits-Charged: 1, {cr['no_header']:,} billable without the header; 2 credits a "
             f"logo lookup, 3 a brandmark), and {cr.get('unanswered', 0):,} requests that got no answer "
             f"({cr['unknown']:,} credits). "
@@ -1897,6 +1907,16 @@ def commit_switch(logos, dropped, index, dindex, moves):
         raise
 
 
+def _record_info(folder, kind, new):
+    """The folder's updated run.json record and summary text, built in memory only. Called before a switch touches any
+    file, so a record that cannot be written (an unreadable run.json, a summary that fails on an older record) stops the
+    switch with nothing changed. -> (info, summary text or None)"""
+    info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    info[kind] = info.get(kind, []) + new
+    json.dumps(info, ensure_ascii=False, allow_nan=False)
+    return info, (None if "summary_text" in info else summary_md(info))
+
+
 def _record(folder, kind, new):
     """keeps.csv / drops.csv, run.json and summary.md after a switch."""
     path = folder / f"{kind}.csv"
@@ -1949,6 +1969,7 @@ def keep(folder, codes, reason):
             if r.get("via") == c and r.get("code") and r["code"] not in ni["logos"]:
                 ni["logos"][r["code"]] = dict(ni["logos"][c], name=r["name"], via=c)
                 new.append({"code": r["code"], "name": r["name"], "reason": reason + " (preferred share of an issuer above)"})
+    _record_info(folder, "keeps", new)                   # the record can be written: checked before any change
     commit_switch(logos, dropped, ni, nd, moves)
     _record(folder, "keeps", new)
     print(f"!! restored from dropped/ after review: {len(new)} ({', '.join(x['code'] for x in new)}) · "
@@ -1984,9 +2005,10 @@ def drop(folder, codes, reason):
         if c in want:                                    # the picture goes to dropped/, so --keep can bring it back
             nd["logos"][c] = dict(e, flags=list(e.get("flags", [])) + ["switched-after-review"])
             moves.append((e["file"], "to_dropped"))
-    commit_switch(logos, dropped, ni, nd, moves)
     new = [{"code": c, "name": names.get(c, c), "reason": reason + ("" if c in want else " (preferred share of an issuer above)")}
            for c in sorted(gone)]
+    _record_info(folder, "drops", new)                   # the record can be written: checked before any change
+    commit_switch(logos, dropped, ni, nd, moves)
     _record(folder, "drops", new)
     print(f"!! switched to the letter mark: {len(gone)} ({', '.join(sorted(gone))}) · logos left {len(ni['logos']):,}")
     return 0
@@ -2084,6 +2106,7 @@ def add_from(folder, src, reason, codes=None):
     if bad:
         raise SystemExit("!! adding would leave a folder that is not valid (" + "; ".join(bad[:5]) + "); nothing was "
                          "changed")
+    _record_info(folder, "adds", new)                    # the record can be written: checked before any change
     old_idx = {f: ((f / LI.INDEX).read_bytes() if (f / LI.INDEX).exists() else None) for f in (logos, dropped)}
     written, removed = [], []
     try:

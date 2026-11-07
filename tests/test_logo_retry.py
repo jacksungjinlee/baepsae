@@ -273,3 +273,43 @@ def test_the_workflow_passes_the_over_20_dollars_yes_through_env_only():
     assert wf[True]["workflow_dispatch"]["inputs"]["over_20_dollars_ok"]["default"] is False
     run = {s.get("name"): s for s in wf["jobs"]["fetch"]["steps"]}["logo.dev 로고 받기 실행"]
     assert run["env"]["OVER_20_OK"] == "${{ inputs.over_20_dollars_ok }}" and "--over-20-ok" in run["run"]
+
+
+def test_the_checked_folder_from_before_the_retry_still_takes_switches_and_adds(tmp_path):
+    """logos-run's run.json was written before 2026-11-07: no ISIN/brandmark counts, no billed_at. Rewriting its
+    summary after --drop or --add-from must work and still state what that run billed (found by the rehearsal)."""
+    first = letters_setup(tmp_path, gone=("005380",))
+    info = json.loads((first / "run.json").read_text(encoding="utf-8"))
+    for m in info["tally"].values():
+        if isinstance(m, dict):
+            m.pop("by_isin", None)
+            m.pop("by_brandmark", None)
+    info["credits"].pop("billed_at", None)
+    info["credits"].pop("unanswered", None)
+    for k in ("letters_from", "extra_routes"):
+        info.pop(k, None)
+    for k in ("isin", "brandmark"):
+        info["plan"].pop(k, None)
+    (first / "run.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    billed = info["credits"]["charged"] + info["credits"]["no_header"]
+    rc, fix = T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--only", "005380", full_run_date=None, out_name="fix")
+    assert F.main(["--add-from", str(fix), "--dir", str(first), "--reason", "checked"]) == 0
+    text = (first / "summary.md").read_text(encoding="utf-8")
+    assert f"billed answers {billed:,} × 2" in text and "Added after review" in text
+    assert F.main(["--drop", "005380", "--dir", str(first), "--reason", "test"]) == 0
+
+
+def test_a_record_that_cannot_be_written_stops_the_switch_before_any_change(tmp_path, monkeypatch):
+    first = letters_setup(tmp_path, gone=("005380",))
+    rc, fix = T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--only", "005380", full_run_date=None, out_name="fix")
+    before = T.snapshot(first)
+
+    def broken(info):
+        raise KeyError("by_isin")
+    monkeypatch.setattr(F, "summary_md", broken)
+    for argv in (["--add-from", str(fix), "--dir", str(first)], ["--drop", "000660", "--dir", str(first)]):
+        try:
+            rc = F.main(argv)
+        except KeyError:
+            rc = 1
+        assert rc == 1 and T.snapshot(first) == before                                          # nothing moved, nothing written
