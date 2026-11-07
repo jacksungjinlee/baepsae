@@ -18,11 +18,12 @@ import { refreshFresh, nextFreshCheck } from "./load.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
-import { Build, newBuilder } from "./build.jsx";
+import { Build, newBuilder, buildInProgress } from "./build.jsx";
 import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
 import { Company, logSplitGuard } from "./company.jsx";
+import { firstVisitGuide, markGuideSeen } from "./guide.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
@@ -60,6 +61,9 @@ export function App({ source }) {
   const [disc, setDisc] = useState(() => ({ status: source.loadDisc ? "idle" : "none" }));   // v19.1a 공시 tab (disc.json)
   const router = useRouter();
   const { loc } = router;
+  // v19.3c Part E: the first-visit guide — null, { stage: "welcome" } on 홈, or { stage: 1 · 2 · 3 } on 포트폴리오 만들기's
+  // 기준 step (guide.jsx). It starts on its own only behind GUIDE_FIRST_VISIT; the menu's 처음 안내 다시 보기 always replays it.
+  const [guide, setGuide] = useState(() => (firstVisitGuide(loc, store, source.storeKey) ? { stage: "welcome" } : null));
   const wasAbout = useRef(loc.about);
   const wide = useWide();
   const layout = useMemo(() => ({ wide }), [wide]);
@@ -181,14 +185,55 @@ export function App({ source }) {
   // 기록했어요 -> 홈: the finished build is replaced by 홈, and the next 포트폴리오 만들기 starts fresh.
   const doneToHome = useCallback(() => { setBuilder(newBuilder()); router.replaceRoute("home"); }, [router.replaceRoute]);
 
+  // v19.3c Part E. seen = remember it (건너뛰기, Esc, 알겠어요, 그냥 둘러볼게요, leaving the steps); a guide that could not run
+  // (no data) ends without it.
+  const endGuide = useCallback((seen) => { setGuide(null); if (seen) markGuideSeen(source.storeKey); }, [source.storeKey]);
+  // ☰ (PC: the left menu) 처음 안내 다시 보기: the welcome on 홈, whatever was on screen.
+  const replayGuide = useCallback(() => { setGuide({ stage: "welcome" }); router.go("home"); }, [router.go]);
+  // 직접 해 보기: a fresh 포트폴리오 만들기 at its 기준 step, the guide's step 1 over it. Without the data (it failed to load)
+  // there is no 배당 card to light: the screen opens as usual, with no guide. A half-made portfolio is never thrown away:
+  // 포트폴리오 만들기 opens where the user left off, without the guide (it needs an untouched 기준 step).
+  const tryGuide = useCallback(() => {
+    if (buildInProgress(builder)) {
+      setGuide(null);
+      router.go("portfolio", "build");
+      return;
+    }
+    setBuilder({ ...newBuilder(), step: 1 });
+    setGuide(load.status === "fail" ? null : { stage: 1 });
+    router.go("portfolio", "build");
+  }, [builder, load.status, router.go]);
+  const browseGuide = useCallback(() => { endGuide(true); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }, [endGuide]);
+  const stepNo = guide && typeof guide.stage === "number" ? guide.stage : null;
+  const coach = useMemo(() => (stepNo == null ? null : {
+    stage: stepNo, go: (n) => setGuide({ stage: n }), done: () => endGuide(true), skip: () => endGuide(true), lost: () => endGuide(false),
+  }), [stepNo, endGuide]);
+  const welcome = useMemo(() => (guide && guide.stage === "welcome" ? { onTry: tryGuide, onBrowse: browseGuide } : null), [guide, tryGuide, browseGuide]);
+
   const tab = loc.about ? router.lastTab : loc.tab;
   const inBuild = tab === "portfolio" && loc.sub === "build";
+  // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
+  // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
+  // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,
+  // 이전 단계 or 다시 시작): the guide ends as seen, so it never comes back over another step or a changed draft.
+  const offStep = builder.step !== 1 || builder.stage !== "steps";
+  useEffect(() => {
+    if (stepNo == null) return;
+    if (!inBuild || loc.about || offStep) endGuide(true);
+    else if (load.status === "fail" || (load.status === "ok" && load.missing.length)) endGuide(false);
+  }, [stepNo, inBuild, loc.about, offStep, load, endGuide]);
+  // The welcome lives on 홈: leaving 홈 (another tab, 포트폴리오 만들기, a sub-screen) ends it as seen, so it never comes
+  // back over 홈 later (e.g. after 기록했어요). 소개 opens over 홈 and keeps it.
+  const onWelcome = !!(guide && guide.stage === "welcome");
+  useEffect(() => {
+    if (onWelcome && (tab !== "home" || loc.sub)) endGuide(true);
+  }, [onWelcome, tab, loc.sub, endGuide]);
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     if (inBuild) {
       return <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => router.back("portfolio")} goToday={doneToHome}
-        store={store} setStoreData={setStoreData} />;
+        store={store} setStoreData={setStoreData} coach={builder.step === 1 && builder.stage === "steps" ? coach : null} />;
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (tab === "portfolio") return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} />;
@@ -197,7 +242,7 @@ export function App({ source }) {
     }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
@@ -208,7 +253,7 @@ export function App({ source }) {
     <ModeContext.Provider value={{ preview: !!source.preview }}>
       <NavContext.Provider value={nav}>
         <LayoutContext.Provider value={layout}>
-          {wide && <SideMenu tab={tab} about={loc.about} load={load} go={go} onAbout={router.openAbout} />}
+          {wide && <SideMenu tab={tab} about={loc.about} load={load} go={go} onAbout={router.openAbout} onGuide={replayGuide} />}
           <div data-ui-v2="main-area" style={wide ? { marginLeft: SIDE_W, minWidth: 0 } : undefined}>
             {wide && <TopBar q={stockQ} onSearch={onSearch} inputRef={searchRef} load={load} />}
             {loc.about && (
@@ -220,7 +265,8 @@ export function App({ source }) {
               aria-hidden={loc.about ? true : undefined}>
               <ErrorBoundary name="app">
                 <ErrorBoundary key={screenKey} name={tab} pad={inBuild ? undefined : pad}>{screen}</ErrorBoundary>
-                {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} tabH={inBuild ? 0 : TAB_H} />}
+                {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
+                  tabH={inBuild ? 0 : TAB_H} />}
                 {!wide && !inBuild && <TabBar value={tab} onChange={go} />}
               </ErrorBoundary>
             </div>

@@ -34,8 +34,18 @@ export const DECK_PICS = {
   income: { src: "pictures/fluent-shopping-cart.webp", topic: "div" },
 };
 
-// 가진 종목으로 시작하기 (the start card of v19.3c Part D): shipped and cached now, shown from v19.3c.
+// 가진 종목으로 시작하기 (the start card of v19.3c Part D, boards BuildStart2 · PcStart2).
 export const START_PICS = { holdings: { src: "pictures/adobe-wallet.webp", topic: null } };
+
+// v19.3c Part D: the five pictures fanned out on the 처음부터 직접 만들기 card (board BuildStart2, left to right).
+export const FAN_CARDS = ["value", "div", "growth", "stable", "trend"];
+
+// v19.3c Part D: the dots that count a 기준's points (five per 기준: a recipe card's ingredient rows, a 기준 card) take
+// the darker shade of the 기준's topic (boards BuildStart2 · BuildCards2 · VisualKit "점수는 점과 칸으로"); an empty dot
+// is the light border grey. Like the tints, these colours only say which 기준 it is, never good or bad.
+export const TOPIC_DOT = { value: "#4E9A72", div: "#C59A2E", earn: "#6E93CF", risk: "#8C78C6", disc: "#3E9A9A" };
+export const DOT_EMPTY = "#E8E4DE";
+export const dotColor = (id) => TOPIC_DOT[(CARD_PICS[id] || {}).topic] || "#5A6B87";
 
 // Chip and picture sizes (px): the picture sits in the middle of its chip. Part A: at 18–24 px some Adobe pictures go
 // muddy, so a spot whose picture was hard to read in the 1× and 2× screenshots moved up one size on the board grid
@@ -46,3 +56,6 @@ export const PIC_SIZES = {
   card: { chip: 48, pic: 32 },     // 기준 카드: BuildCards2 (v19.3c's two-column cards)
   deck: { chip: 52, pic: 36 },     // template: BuildStart2
 };
+// v19.3c: the two-column 기준 cards keep "fit" (the board's 48 px "card" chip waits for its test change, see build.jsx),
+// a recipe card's ingredient rows use "row" (the board's 18 px picture is muddy at 1×: Part A), and the 10-slot meter
+// sizes its own slots to the width (build.jsx Meter).

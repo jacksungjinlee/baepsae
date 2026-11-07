@@ -388,7 +388,93 @@ def test_every_beta_written_by_the_pipeline_carries_its_error_and_count():
 
 
 # ── 4. flRan ─────────────────────────────────────────────
-def test_flran_lists_the_checks_that_actually_ran():
+def test_holding_companies_run_both_checks_and_only_financial_companies_skip_them(monkeypatch):
+    """Jack (2026-11-07): 유동비율·이자보상배율은 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과 금융 지주(업종 그룹
+    은행·보험·증권·금융)만 해당 없음(flNa). 줄이 없는 지주회사는 돌린 것으로도, 해당 없음으로도 치지 않아요."""
+    monkeypatch.setattr(F, "ICR_OFF", False)       # 이자보상배율을 켰을 때의 규칙 (v19.1f 가 다시 켜요 · 꺼진 지금은 아래 시험)
+    base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
+    lines = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [9.0, 0, 0], "ie": 1.0}
+    cases = {
+        "000100": (dict(base, t="000100", nk="LG", s="holding", ind="holding"), lines),
+        "000200": (dict(base, t="000200", nk="KB금융", s="holding", ind="bank"), lines),
+        "000300": (dict(base, t="000300", nk="메리츠금융지주", s="holding", ind="insurance"), lines),
+        "000400": (dict(base, t="000400", nk="한국금융지주", s="holding", ind="securities"), lines),
+        "000500": (dict(base, t="000500", nk="벤처투자", s="holding", ind="finance"), lines),
+        "000600": (dict(base, t="000600", nk="증권사", s="broker", ind="securities"), lines),
+        "000700": (dict(base, t="000700", nk="줄 없는 지주", s="holding", ind="holding"), {"ni": [1.0, 1.0, 1.0], "cs": 1.0, "eq": 5.0}),
+    }
+    out = F.build_corp([c[0] for c in cases.values()], {t: c[1] for t, c in cases.items()}, "2026-11-07")["companies"]
+    by = {c["t"]: c for c in out}
+    assert by["000100"]["flRan"] == ["cr", "icr", "l3", "imp"] and "flNa" not in by["000100"]      # 금융 아닌 지주: 이제 돌려요
+    for t in ("000200", "000300", "000400", "000500", "000600"):                                  # 금융회사: 그대로 해당 없음
+        assert by[t]["flNa"] == ["cr", "icr"] and not {"cr", "icr"} & set(by[t]["flRan"]), t
+    assert by["000700"]["flRan"] == ["l3", "imp"] and "flNa" not in by["000700"]                  # 줄이 없으면 안 돌았다고만
+    # 그룹 없는 지주회사: 줄이 있어도 두 검사를 쉬고 해당 없음으로도 치지 않아요 (금융 지주일 수도 있어서 · 앱은 '경고 없음'이라 하지 않아요)
+    c = F.build_corp([dict(base, t="000800", nk="그룹 없는 지주", s="holding")], {"000800": lines}, "2026-11-07")["companies"][0]
+    assert c["flRan"] == ["l3", "imp"] and "flNa" not in c and "fl" not in c
+    # 금융 상위 그룹(fin)으로 합쳐진 은행 지주: 이자보상배율이 1 아래여도 돌리지 않아요 (예금 이자 > 영업이익이 정상)
+    bank_like = dict(lines, op=[0.9, 0, 0], ie=1.0)
+    c = F.build_corp([dict(base, t="000900", nk="작은 금융 지주", s="holding", ind="fin")], {"000900": bank_like}, "2026-11-07")["companies"][0]
+    assert c["flNa"] == ["cr", "icr"] and "icr" not in (c.get("fl") or {})
+    assert F.fl_financial({"s": "bank"}) and F.fl_financial({"s": "holding", "ind": "bank"})
+    assert not F.fl_financial({"s": "holding", "ind": "holding"}) and F.fl_unknown_holding({"s": "holding"})
+    assert F.fl_financial({"s": "holding", "ind": "fin"})                                         # 금융 상위 그룹도 금융
+    # 업종 그룹이 있으면 그것으로만: 보험사인데 s 가 auto(DB손해보험) → 금융 · s 가 bank 인 바이오(지씨셀) → 금융 아님
+    assert F.fl_financial({"s": "auto", "ind": "insurance"}) and not F.fl_financial({"s": "bank", "ind": "bio"})
+    assert not F.fl_financial({"s": "broker", "ind": "services"}) and F.fl_financial({"s": "broker"})   # 그룹이 없으면 s
+
+
+def test_the_reason_icr_did_not_run_is_written_only_for_non_financial_companies(monkeypatch):
+    """Jack (2026-11-07): 이자보상배율만 못 돌린 회사에 '이자 비용만 따로 나오지 않아 확인하지 못했어요'라고 쓰려면 그 이유가 정말
+    이자비용 줄이 없어서여야 해요. flWhy.icr: ie = 이자비용·금융비용 줄 없음 · op = 영업이익 없음 · neg = 이자비용 음수.
+    돌렸거나 금융회사(해당 없음)거나 그룹 없는 지주회사(쉼)면 적지 않아요."""
+    monkeypatch.setattr(F, "ICR_OFF", False)       # 이자보상배율을 켰을 때의 규칙 (v19.1f 가 다시 켜요 · 꺼진 지금은 아래 시험)
+    base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
+    full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [9.0, 0, 0], "ie": 1.0}
+    no_ie = {k: v for k, v in full.items() if k != "ie"}
+    cases = {
+        "000100": (dict(base, t="000100", nk="다 있음", s="chem", ind="chem"), full),
+        "000200": (dict(base, t="000200", nk="금융원가만", s="chem", ind="chem"), no_ie),
+        "000300": (dict(base, t="000300", nk="영업이익 없음", s="chem", ind="chem"), dict(no_ie, op=[None, None, None])),
+        "000400": (dict(base, t="000400", nk="음수", s="chem", ind="chem"), dict(full, ie=-0.5)),
+        "000500": (dict(base, t="000500", nk="은행", s="bank", ind="bank"), no_ie),
+        "000600": (dict(base, t="000600", nk="그룹 없는 지주", s="holding"), no_ie),
+        "000700": (dict(base, t="000700", nk="이자 0", s="chem", ind="chem"), dict(full, ie=0.0)),
+    }
+    out = F.build_corp([c[0] for c in cases.values()], {t: c[1] for t, c in cases.items()}, "2026-11-07")["companies"]
+    by = {c["t"]: c for c in out}
+    assert "flWhy" not in by["000100"] and "flWhy" not in by["000700"]                       # 돌렸어요 (이자 0 도)
+    assert by["000200"]["flWhy"] == {"icr": "ie"} and by["000200"]["flRan"] == ["cr", "l3", "imp"]
+    assert by["000300"]["flWhy"] == {"icr": "op"}                                              # 영업이익이 없으면 이자 줄 탓이 아니에요
+    assert by["000400"]["flWhy"] == {"icr": "neg"}
+    assert "flWhy" not in by["000500"] and "flWhy" not in by["000600"]                       # 해당 없음 · 쉼
+    for c in out:                                                                              # 이유가 있으면 그 검사는 안 돌았어요
+        if "flWhy" in c:
+            assert "icr" not in c["flRan"] and "icr" not in c.get("flNa", []), c["t"]
+
+
+def test_icr_is_off_everywhere_until_the_interest_re_read():
+    """Jack (2026-11-07): 이자보상배율은 잠시 모든 회사에서 꺼요 — 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요.
+    금융회사가 아니면 모두 flWhy.icr "off"(앱은 아무 말도 하지 않아요 · 이자 줄이 없는 회사의 '확인한 … 없어요' 카드도 쉬어요),
+    금융회사는 그대로 해당 없음."""
+    assert F.ICR_OFF is True
+    base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
+    full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [-9.0, 0, 0], "ie": 1.0}
+    rows = [dict(base, t="000100", nk="적자", s="chem", ind="chem"), dict(base, t="000200", nk="줄 없음", s="chem", ind="chem"),
+            dict(base, t="000300", nk="은행", s="bank", ind="bank"), dict(base, t="000400", nk="LG", s="holding", ind="holding")]
+    fin = {"000100": full, "000200": {k: v for k, v in full.items() if k != "ie"}, "000300": full, "000400": dict(full, op=[9.0, 0, 0])}
+    by = {c["t"]: c for c in F.build_corp(rows, fin, "2026-11-07")["companies"]}
+    for t in ("000100", "000400"):
+        assert "icr" not in by[t]["flRan"] and "icr" not in (by[t].get("fl") or {}) and by[t]["flWhy"] == {"icr": "off"}, t
+        assert {"cr", "l3", "imp"} <= set(by[t]["flRan"])
+    assert by["000200"]["flWhy"] == {"icr": "off"}                                # 꺼진 동안은 줄이 없는 회사도 아무 말 안 해요
+    assert by["000300"]["flNa"] == ["cr", "icr"] and "flWhy" not in by["000300"]
+    for c in by.values():                                                         # 어디에도 이자보상배율 숫자가 없어요
+        assert "icr" not in (c.get("fl") or {}) and "icr" not in c["flRan"]
+
+
+def test_flran_lists_the_checks_that_actually_ran(monkeypatch):
+    monkeypatch.setattr(F, "ICR_OFF", False)       # 이자보상배율을 켰을 때의 규칙 (꺼진 지금은 위 시험)
     s = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "cap": 1.0, "s": "chem", "shr": 1_000_000,
          "dps3a": [10.0, 10.0, 10.0], "dpsF": [1.0, 1.0, 1.0], "divSt": "same", "dyt": 1.0, "betaSE": 0.07, "betaN": 740}
     fin = {"000100": {"ni": [-1.0, -2.0, -3.0], "ca": 1.0, "cl": 2.0, "cs": 5.0, "eq": 1.0, "op": [-1.0, 0, 0], "ie": 0.5}}

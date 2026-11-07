@@ -50,6 +50,11 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   financial companies). The existing `eps` (today's shares) is unchanged. **Visible on the first v2 publish:** 2.0's
   company page already reads `flRan` (#36), so "재무 경고 신호는 없어요" (approved text) starts showing where all four
   checks ran and none fired. Nothing else users see changes until the app PR.
+- v19.1d (B7 pipeline PR): 유동비율 and 이자보상배율 run for every company whose statements have the lines, except
+  financial companies (banks, insurers, brokers and financial holding companies by industry group → `flNa`).
+  corp.json `flWhy` = `{"icr": "ie" | "op" | "neg" | "off"}` says why 이자보상배율 didn't run for a non-financial company: no
+  이자비용/금융비용 line on the income statement, no operating profit, a negative figure, or switched off (`ICR_OFF`,
+  Jack 2026-11-07, until the v19.1f interest re-read: every non-financial company gets "off" and the app says nothing).
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the
@@ -301,7 +306,10 @@ in v19.1c after two Yahoo gaps around 10:00–10:40 KST) — and a first job
   Yahoo ^KS11, Yahoo ^GSPC). If the calendars can't be read it falls back to weekdays and says so loudly; if only one
   KOSPI source answers it never skips. (Since v17.6 / PR #34 it reads the `data` branch, and `main` only while that branch doesn't exist yet.)
 Runs share one queue (`concurrency`), so two never publish at once. A scheduled run never starts DART from an empty,
-unreadable or old-format cache: it stops loudly, and the day's one full-DART run is started by hand. Before starting a
+unreadable or old-format cache: it stops loudly, and the day's one full-DART run is started by hand. The cache holds
+parsed values, so a parse fix normally means a full re-read; v19.1e instead re-reads once only the annual statements saved
+without a capital line (`DART_REDO_PER_RUN` = 800 per run, marked `rp: cap1`; a "not found" answer keeps the old entry and waits `DART_RETRY_DAYS`; logged as "자본금 다시 읽기 대상 N건" at the start and "남은 N건" at the end). v19.1g fetches DART's share-count report (`stockTotqySttus`, tag STK) only for companies
+whose dividend table shows more paid preferred classes than listed preferreds (about 30, one cached call each). Before starting a
 manual live run, check the run list: don't start one while a scheduled run is in progress, waiting or queued (a newer
 trigger cancels a queued manual run), and confirm it actually started. Don't merge pipeline PRs while a scheduled run is
 waiting. A daily scheduled check at 09:13 KST (Tue–Sat) confirms the live site has the last trading day and tells Jack

@@ -371,13 +371,16 @@ def open_menu(page):
 
 
 def menu_links(page, live=True):
-    """☰ 메뉴: 소개 · 용어 사전 · 데이터 출처 · 예전 뱁새 보기 (예전 뱁새로 가는 셋은 실제 앱에만), 닫기로 닫혀요."""
+    """☰ 메뉴: 소개 · 용어 사전 · 데이터 출처 · 처음 안내 다시 보기 · 예전 뱁새 보기 (예전 뱁새로 가는 셋은 실제 앱에만; v19.3c Part E ·
+    O.2: 처음 안내 다시 보기는 예전 뱁새 보기 바로 앞, 미리 보기에서는 소개 바로 뒤), 닫기로 닫혀요."""
     m = open_menu(page)
     items = m.locator('[data-ui-v2="menu-item"]')
     want = [("about", C["app"]["aboutLink"], None)]
     if live:
         want += [("glossary", C["menu"]["glossary"], "./baepsae.html?from=app#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html?from=app#info=sources"),
-                 ("old-app", C["app"]["oldApp"], "./baepsae.html?from=app")]
+                 ("guide", C["menu"]["guide"], None), ("old-app", C["app"]["oldApp"], "./baepsae.html?from=app")]
+    else:
+        want += [("guide", C["menu"]["guide"], None)]
     got = [(items.nth(i).get_attribute("data-item"), items.nth(i).inner_text().strip(), items.nth(i).get_attribute("href")) for i in range(items.count())]
     assert got == want, got
     m.locator('[data-ui-v2="menu-close"]').click()
@@ -2712,7 +2715,9 @@ def pc_shell(page, width, live=True):
     want = [("about", C["app"]["aboutLink"], None)]
     if live:
         want += [("glossary", C["menu"]["glossary"], "./baepsae.html?from=app#info=glossary"), ("sources", C["menu"]["sources"], "./baepsae.html?from=app#info=sources"),
-                 ("old-app", C["app"]["oldApp"], "./baepsae.html?from=app")]
+                 ("guide", C["menu"]["guide"], None), ("old-app", C["app"]["oldApp"], "./baepsae.html?from=app")]
+    else:
+        want += [("guide", C["menu"]["guide"], None)]
     assert got == want, got
     assert "10월 30일 기준" in side.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').inner_text()
     for gone in ('nav[data-ui="bottom-tab-bar"]', '[data-ui-v2="menu-button"]', '[data-ui-v2="menu"]', '[data-ui-v2="app-bar"] h1'):
@@ -4488,6 +4493,610 @@ def scene_stale_recheck(R, files, width):
         srv.shutdown()
 
 
+import random  # noqa: E402  (v19.3c: 무작위 점수 열 가지, 씨앗을 정해 늘 같아요)
+
+
+# ── v19.3c: 포트폴리오 만들기의 기준 카드 · 내 점수 · 처음 안내 (docs/tasks/v19.3-portfolio-pictures-accounts.md Part D · E · N.3) ──
+# 두 스위치(코드의 값을 읽어요): RECIPE_START (새 시작 화면) · GUIDE_FIRST_VISIT (첫 방문에 저절로 뜨는 처음 안내). 꺼져 있는 동안에도
+# 그 화면을 시험하려고, 두 스위치를 켜고 임시 폴더에 빌드한 app.html (v193c_on_app) 로 한 장면을 더 돌려요 (커밋하지 않아요).
+def _flag(rel, name):
+    with open(os.path.join(ROOT, *rel.split("/")), encoding="utf-8") as fh:
+        got = re.findall(rf"^export const {name} = (true|false);$", fh.read(), flags=re.M)
+    assert len(got) == 1, (rel, name, got)
+    return got[0] == "true"
+
+
+RECIPE_START = _flag("src/v2/build.jsx", "RECIPE_START")
+GUIDE_FIRST_VISIT = _flag("src/v2/guide.jsx", "GUIDE_FIRST_VISIT")
+GUIDE_SEEN = "baepsae2.v1.guideSeen"                     # src/v2/guide.jsx guideKey(STORE_KEY): 저장 기록과 따로, 이 한 칸만
+LIVE_CARDS = ("value", "div", "growth", "profit", "stable", "lowVol", "trend", "large")     # 준비 중이 아닌 기준 (engine.js CARDS)
+_ON = {}
+
+
+def v193c_on_app():
+    """app.html 을 RECIPE_START · GUIDE_FIRST_VISIT 를 켜고 임시 폴더에 빌드해요 (커밋하지 않아요). 폴더는 바로 지워요."""
+    if "html" not in _ON:
+        tmp = tmpdirs.make("baepsae-v193c-on-")
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+            os.makedirs(os.path.join(tmp, "tools"))
+            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+            for rel, name in (("src/v2/build.jsx", "RECIPE_START"), ("src/v2/guide.jsx", "GUIDE_FIRST_VISIT")):
+                p = os.path.join(tmp, *rel.split("/"))
+                with open(p, encoding="utf-8") as fh:
+                    src = fh.read()
+                old = re.findall(rf"^export const {name} = (?:true|false);$", src, flags=re.M)
+                assert len(old) == 1, (rel, old)
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(src.replace(old[0], f"export const {name} = true;"))
+            out = os.path.join(tmp, "out")
+            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+            assert r.returncode == 0, r.stdout + r.stderr
+            with open(os.path.join(out, "app.html"), encoding="utf-8") as fh:
+                _ON["html"] = fh.read()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _ON["html"]
+
+
+def engine_numbers(settings_list):
+    """설정마다 엔진의 수 [{pool, n, list}] — node 가 src/v2/engine.js 를 시험 데이터(tests/fixtures/v2/data.json)로 돌려요.
+    pool: 기준 전의 수(engine.poolCount) · n: 내 점수 칸의 수(engine.meterCount) · list: screen() 결과 목록의 길이(시장마다 더해서)."""
+    tmp = tmpdirs.make("baepsae-v193c-engine-")
+    try:
+        exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+        r = subprocess.run([exe, "src/v2/engine.js", "--bundle", "--format=esm", "--platform=node", f"--outfile={os.path.join(tmp, 'engine.mjs')}",
+                            "--log-level=warning"], cwd=ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        with open(os.path.join(tmp, "in.json"), "w", encoding="utf-8") as fh:
+            json.dump(settings_list, fh)
+        code = ("import * as E from './engine.mjs'; import { readFileSync } from 'node:fs';"
+                f"const stocks = JSON.parse(readFileSync({json.dumps(os.path.join(FIX, 'data.json'))}, 'utf8')).stocks;"
+                "const out = JSON.parse(readFileSync('./in.json', 'utf8')).map((o) => { const s = { ...E.defaultSettings(), ...o };"
+                " const r = E.screen(stocks, s); return { pool: E.poolCount(stocks, s), n: E.meterCount(r).n,"
+                " list: Object.values(r.markets).reduce((a, m) => a + m.survivors.length, 0) }; });"
+                "console.log(JSON.stringify(out));")
+        r = subprocess.run(["node", "--input-type=module", "-e", code], cwd=tmp, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def ko_num(n):
+    return f"{n:,}"
+
+
+def meter(page):
+    m = page.locator('[data-ui-v2="meter-count"]')
+    m.wait_for(state="visible")
+    return {"pool": m.get_attribute("data-pool") == "1", "n": int(m.get_attribute("data-n")), "text": m.inner_text()}
+
+
+def bubble(page, step):
+    b = page.locator(f'[data-ui-v2="guide-bubble"][data-step="{step}"]')
+    b.wait_for(state="visible")
+    return b
+
+
+def guide_gone(page):
+    page.locator('[data-ui-v2="guide-bubble"]').wait_for(state="detached")
+    assert page.locator('[data-ui-v2="guide-shade"], [data-ui-v2="guide-hole"]').count() == 0
+
+
+def open_guide(page, wide):
+    """메뉴의 '처음 안내 다시 보기' (휴대폰 ☰ · PC 왼쪽 메뉴) → 홈에 반기는 화면."""
+    if wide:
+        page.locator('[data-ui-v2="side-link"][data-item="guide"]').click()
+    else:
+        m = open_menu(page)
+        m.locator('[data-ui-v2="menu-item"][data-item="guide"]').click()
+        m.wait_for(state="detached")
+    at(page, "home")
+    w = page.locator('[data-ui-v2="guide-welcome"]')
+    w.wait_for(state="visible")
+    return w
+
+
+def guide_step1(page, wide):
+    """처음 안내 1/3 을 새로 열어요: 만들던 포트폴리오가 있으면 직접 해 보기가 그 자리로 가니까(keeps_draft), 먼저 다시 시작해요."""
+    again = page.get_by_role("button", name=C["build"]["restart"], exact=True)
+    if page.locator('[data-ui-v2="screen"][data-route="portfolio/build"]').count() and again.count():
+        again.click()
+        see(page, C["build"]["s0"]["title"])
+    w = open_guide(page, wide)
+    w.locator('[data-ui-v2="guide-try"] button').click()
+    at(page, "portfolio/build")
+    return bubble(page, 1)
+
+
+def to_build_start(page, wide):
+    """포트폴리오 만들기의 첫 단계(시작)로: PC 는 왼쪽 메뉴, 휴대폰은 start_build. 만들던 것이 있으면 다시 시작."""
+    if wide:
+        page.locator('[data-ui-v2="side-build"]').click()
+    else:
+        start_build(page)
+    at(page, "portfolio/build")
+    again = page.get_by_role("button", name=C["build"]["restart"], exact=True)
+    if again.count():
+        again.click()
+    see(page, C["build"]["s0"]["title"])
+
+
+def scene_v193c(R, files, width):
+    """v19.3c (Part D · E · N.3): 기준 카드 두 칸(그림 칩 · 작은 그림 · 이름 · 기준 · 쉬운 한 줄 · − 점 다섯 + · 준비 중 둘은 흐리게) ·
+    내 점수 칸(열 칸 · '{n}점 남았어요' · '지금 기준이면 회사 {n}개가 남아요'): 점수가 없을 때는 기준 전의 수(pool), 있으면 엔진이 고른
+    목록의 길이 — 무작위 점수 열 가지 모두 엔진과 같아요 (휴대폰 390) · 아래 띠의 수도 같은 수 · 깐깐함 그대로. 메뉴의 '처음 안내 다시 보기'
+    (예전 뱁새 보기 바로 앞) → 반기는 화면(뱁이 132px, 숫자 없음) → 직접 해 보기 → 1/3 배당 + 만 눌려요(어두운 곳은 안 눌려요) →
+    2/3 기준 전의 수 → 엔진의 새 수 (2.5초 또는 누르면) → 3/3 알겠어요 (준 점수는 그대로). 건너뛰기는 세 단계 모두에서, Esc 도 끝내고
+    '본 적 있음'을 남겨요. 그냥 둘러볼게요 · 휴대폰 뒤로도 끝내요."""
+    S = f"v19.3c {width}"
+    wide = width >= 1024
+    srv, ctx, page, base = R.open(build_site(files), width, device=pc_device(width) if wide else None)
+    seen = lambda: page.evaluate(f"() => localStorage.getItem({json.dumps(GUIDE_SEEN)})")
+
+    def first_screen():
+        wait_ready(page)
+        at(page, "home")
+        if GUIDE_FIRST_VISIT:                                              # 스위치가 켜져 있으면 첫 방문 홈 대신 반기는 화면
+            page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="visible")
+        else:                                                              # 꺼져 있으면 첫 방문 홈 그대로 (반기는 화면 없음)
+            page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+            assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0
+        assert seen() is None
+        R.collect(page)
+    R.check(page, S, "첫 화면: 처음 안내 스위치를 따라요 (꺼져 있으면 첫 방문 홈 그대로)", first_screen)
+
+    def welcome():
+        if GUIDE_FIRST_VISIT:
+            page.locator('[data-ui-v2="guide-browse"]').click()            # 그냥 둘러볼게요 → 홈, 본 적 있음
+            page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+        w = open_guide(page, wide)
+        mascot_img(w, "baepi-16-build.webp", 132, C["build"]["s0"]["imgAlt"])
+        t = w.inner_text()
+        assert C["guide"]["title"] in t.replace("\n", " ") and C["guide"]["body"] in t, t
+        assert [x.strip() for x in w.locator('[data-ui-v2="guide-steps"] [role="listitem"]').all_inner_texts()] == C["guide"]["steps"]
+        assert not re.search(r"\d", t), t                                  # 뱁이 화면: 숫자 없음 (날짜 줄은 카드 밖)
+        assert w.locator('[data-ui-v2="guide-try"]').inner_text().strip() == C["guide"]["try"]
+        assert w.locator('[data-ui-v2="guide-browse"]').inner_text().strip() == C["guide"]["browse"]
+        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="home-hero"], [data-ui-v2="popular"]').count() == 0
+        floor_ok(page, "반기는 화면")
+        no_hscroll(page, width)
+        R.collect(page)
+        page.locator('[data-ui-v2="guide-browse"]').click()                # 그냥 둘러볼게요: 홈으로, 본 적 있음
+        page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="detached")
+        at(page, "home")
+        assert seen() == "1"
+    R.check(page, S, "메뉴 '처음 안내 다시 보기' → 반기는 화면(뱁이 132px · 제목 · 세 단계 · 숫자 없음) → 그냥 둘러볼게요 → 홈 · 본 적 있음", welcome)
+
+    def steps_and_skip():
+        page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+        b = guide_step1(page, wide)                                        # 1/3: 배당 카드와 + 만 밝아요
+        assert b.locator('[data-ui-v2="guide-count"]').inner_text() == "1/3"
+        assert b.inner_text().count(C["guide"]["s1"][0]) == 1 and C["guide"]["s1"][1] in b.inner_text()
+        page.wait_for_function("() => document.activeElement && document.activeElement.dataset.uiV2 === 'guide-bubble'")   # 초점은 말풍선에
+        assert b.get_attribute("role") == "dialog" and page.locator("#v2-guide-title").inner_text() == C["guide"]["s1"][0]
+        assert page.locator('[data-ui-v2="guide-ring"]').count() == 1 and page.locator('[data-ui-v2="guide-hand"] svg[data-ph="hand-pointing"]').count() == 1
+        assert meter(page)["pool"]
+        box = page.locator('[data-card="value"] [data-ui-v2="card-inc"]').bounding_box()          # 어두운 곳의 + 는 안 눌려요
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(150)
+        assert page.locator('[data-card="value"]').get_attribute("data-points") == "0"
+        assert page.locator('[data-ui-v2="points-left"]').inner_text() == "10"
+        R.collect(page)
+        b.locator('[data-ui-v2="guide-skip"]').click()                     # 건너뛰기 (1/3): 끝, 본 적 있음
+        guide_gone(page)
+        page.wait_for_function("() => !!document.activeElement && document.activeElement.matches('[data-card=\"div\"] [data-ui-v2=\"card-inc\"]')")      # 초점은 배당 카드의 + 로
+        assert seen() == "1" and page.locator('[data-ui-v2="points-left"]').inner_text() == "10"
+        page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+        bubble_ = guide_step1(page, wide)
+        page.keyboard.press("Escape")                                      # Esc (1/3): 건너뛰기와 같아요
+        guide_gone(page)
+        assert seen() == "1"
+        assert bubble_.count() == 0
+        guide_step1(page, wide)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()  # 진짜 + → 2/3
+        b2 = bubble(page, 2)
+        assert b2.locator('[data-ui-v2="guide-count"]').inner_text() == "2/3"
+        b2.locator('[data-ui-v2="guide-skip"]').click()                    # 건너뛰기 (2/3)
+        guide_gone(page)
+        assert page.locator('[data-card="div"]').get_attribute("data-points") == "1"
+        guide_step1(page, wide)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        bubble(page, 2)
+        page.keyboard.press("Escape")                                      # Esc (2/3)
+        guide_gone(page)
+        guide_step1(page, wide)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        bubble(page, 2).click()                                            # 누르면 바로 3/3
+        b3 = bubble(page, 3)
+        assert b3.locator('[data-ui-v2="guide-count"]').inner_text() == "3/3"
+        b3.locator('[data-ui-v2="guide-skip"]').click()                    # 건너뛰기 (3/3)
+        guide_gone(page)
+        guide_step1(page, wide)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        bubble(page, 3)
+        page.keyboard.press("Escape")                                      # Esc (3/3)
+        guide_gone(page)
+        R.collect(page)
+    R.check(page, S, "처음 안내 1/3 · 2/3 · 3/3 모두에서 건너뛰기와 Esc 가 끝내요 (본 적 있음) · 1/3 은 배당의 + 만 눌려요 · 초점은 말풍선", steps_and_skip)
+
+    def whole_guide():
+        eng = engine_numbers([{"points": {}}, {"points": {"div": 1}}])
+        guide_step1(page, wide)
+        m0 = meter(page)
+        assert m0["pool"] and m0["n"] == eng[0]["pool"] == eng[1]["pool"] and ko_num(m0["n"]) in m0["text"], (m0, eng)
+        assert action(page).inner_text() == C["build"]["pickCardsBtn"]
+        assert fillp(C["app"]["count"], count=0) in page.locator('[data-ui-v2="match-count"]').inner_text()   # 아래 띠는 main 그대로 (점수 없으면 0)
+        R.collect(page)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        b2 = bubble(page, 2)                                               # 2/3: 기준 전의 수를 긋고 → 엔진의 새 수
+        m1 = meter(page)
+        assert not m1["pool"] and m1["n"] == eng[1]["n"] == eng[1]["list"] < eng[1]["pool"], (m1, eng)
+        assert page.locator('[data-ui-v2="meter-pool"]').inner_text() == fillp(C["app"]["count"], count=ko_num(eng[1]["pool"]))
+        assert page.locator('[data-ui-v2="meter-n"]').inner_text() == ko_num(eng[1]["n"])
+        assert fillp(C["guide"]["s2"][0], n=ko_num(eng[1]["n"])) in b2.inner_text()
+        assert fillp(C["guide"]["s2"][1], top=50) in b2.inner_text()        # 보통 = 상위 50%
+        R.collect(page)
+        b3 = bubble(page, 3)                                               # 2.5초 뒤 저절로 3/3
+        assert fillp(C["guide"]["s3"][0], n=9) in b3.inner_text() and C["guide"]["s3"][1] in b3.inner_text()
+        assert page.locator('[data-ui-v2="meter-pool"]').count() == 0
+        R.collect(page)
+        b3.get_by_role("button", name=C["guide"]["done"]).click()          # 알겠어요: 끝, 준 점수는 그대로
+        guide_gone(page)
+        page.wait_for_function("() => !!document.activeElement && document.activeElement.matches('[data-card=\"div\"] [data-ui-v2=\"card-inc\"]')")      # 초점은 배당 카드의 + 로 (페이지로 떨어지지 않아요)
+        assert seen() == "1"
+        assert page.locator('[data-card="div"]').get_attribute("data-points") == "1" and page.locator('[data-ui-v2="points-left"]').inner_text() == "9"
+        click_next(page)                                                   # 그다음은 늘 하던 대로
+        see(page, C["build"]["s3"]["title"])
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
+        see(page, C["build"]["s1"]["title"])
+        if not wide:                                                       # 휴대폰 뒤로: 안내 중에 포트폴리오 만들기를 떠나면 끝 (본 적 있음)
+            page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+            guide_step1(page, wide)
+            page.go_back()
+            at(page, "home")
+            page.wait_for_function(f"() => localStorage.getItem({json.dumps(GUIDE_SEEN)}) === '1'")
+            assert page.locator('[data-ui-v2="guide-bubble"], [data-ui-v2="guide-welcome"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "처음 안내 끝까지: 기준 전의 수(엔진 poolCount) → 배당 1점 → 엔진의 새 수 · '회사가 {n}개로 줄었어요' · 2.5초 뒤 3/3 · 알겠어요 · 휴대폰 뒤로도 끝",
+            whole_guide)
+
+    def cards():
+        to_build_start(page, wide)
+        page.locator('[data-deck="blank"]').click()
+        see(page, C["build"]["s1"]["title"])
+        assert C["build"]["s1"]["body"] in page.locator("main").inner_text()
+        ids = page.locator("[data-card]").evaluate_all("(els) => els.map((e) => e.dataset.card)")
+        assert ids == ["value", "div", "divGrowth", "growth", "profit", "stable", "lowVol", "trend", "payout", "large"], ids
+        for cid in ids:
+            card = page.locator(f'[data-card="{cid}"]')
+            cc = C["build"]["cards"][cid]
+            t = card.inner_text()
+            assert cc["name"] in t and cc["basis"] in t and cc["plain"] in t, (cid, t)
+            assert card.locator('svg[data-ui-v2="card-art"]').count() == 1 and card.locator("svg text").count() == 0
+            if cid in ("divGrowth", "payout"):
+                assert C["build"]["s1"]["pendingCard"] in t and card.locator("button").count() == 0
+                dims = card.evaluate("""(e) => [getComputedStyle(e).opacity, getComputedStyle(e.querySelector('[data-card-pic]')).opacity,
+                    e.querySelector('[data-card-pic]').dataset.dim || '', getComputedStyle(e.querySelector('svg[data-ui-v2="card-art"]')).opacity,
+                    getComputedStyle(e.querySelector('h3')).color]""")
+                assert dims == ["1", "0.45", "1", "0.45", NAVY_RGB], (cid, dims)      # 글은 그대로, 그림 둘만 흐리게
+            else:
+                assert card.locator('[data-ui-v2="card-inc"]').get_attribute("aria-label") == fillp(C["build"]["s1"]["inc"], card=cc["name"], n=0)
+                assert card.locator('[data-ui-v2="card-dec"]').is_disabled()
+        cols = page.locator('[data-ui-v2="card-grid"]').evaluate("(e) => getComputedStyle(e).gridTemplateColumns.split(' ').length")
+        assert cols == (3 if wide else 2), cols                            # 휴대폰 두 칸 · PC 세 칸
+        page.locator('[data-card="profit"] [data-ui-v2="card-inc"]').click()
+        sel = page.locator('[data-card="profit"]').evaluate("(e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e).boxShadow]")
+        assert sel[0] == SELECT_RGB and NAVY_RGB in sel[1], sel                 # 고른 카드: 따뜻한 바탕 + 남색 테두리 (살구색 아님)
+        basis = page.locator('[data-card="profit"] h3 + p').evaluate("(e) => [e.textContent, getComputedStyle(e).color]")
+        assert basis == [C["build"]["cards"]["profit"]["basis"], TEXT2_RGB], basis     # 고른 카드의 기준 줄: text2 (text3 은 4.5:1 미달)
+        slot = page.locator('[data-ui-v2="meter-slot"][data-slot="profit"]')
+        assert slot.count() == 1 and slot.get_attribute("aria-label") == fillp(C["build"]["s1"]["slot"], card=C["build"]["cards"]["profit"]["name"], n=1)
+        assert page.locator('[data-ui-v2="meter-slot"][data-empty="1"]').count() == 9
+        assert slot.locator("img").get_attribute("src") == PICS["CARD_PICS"]["profit"]
+        page.locator('[data-ui-v2="card-grid"]').scroll_into_view_if_needed()
+        page.evaluate("() => window.scrollBy(0, 400)")                     # 내 점수 칸은 위에 붙어 있어요
+        page.wait_for_timeout(100)
+        top = page.locator('[data-ui-v2="meter-bar"]').bounding_box()["y"]
+        assert abs(top - (68 if wide else 0)) < 1.5, top
+        floor_ok(page, "기준 카드")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "기준 카드: 엔진 순서 열 장 · 그림 · 작은 그림(글 없음) · 기준 · 쉬운 한 줄 · 준비 중 둘은 흐리고 버튼 없음 · 휴대폰 두 칸 / PC 세 칸 · "
+            "고른 카드 남색 테두리 · 내 점수 칸(그림 · 화면 읽기 이름) · 위에 붙어요", cards)
+
+    def random_mixes():
+        if wide:
+            return
+        rnd = random.Random(193)
+        mixes = []
+        for _ in range(10):
+            k = rnd.randint(1, 4)
+            chosen = rnd.sample(LIVE_CARDS, k)
+            pts, left = {}, 10
+            for i, cid in enumerate(chosen):
+                most = min(5, left - (k - i - 1))
+                pts[cid] = rnd.randint(1, max(1, most))
+                left -= pts[cid]
+            mixes.append({"points": pts, "strict": rnd.choice(["loose", "normal", "strict", "very"])})
+        eng = engine_numbers([{"points": {}}] + mixes)
+        page.get_by_role("button", name=C["build"]["restart"]).click()
+        page.locator('[data-deck="blank"]').click()
+        m0 = meter(page)                                                   # 점수 0: 기준 전의 수
+        assert m0["pool"] and m0["n"] == eng[0]["pool"] and fillp(C["build"]["s1"]["remain"], n=ko_num(eng[0]["pool"])) == m0["text"].strip(), (m0, eng[0])
+        got = []
+        for mix, e in zip(mixes, eng[1:]):
+            page.get_by_role("button", name=C["build"]["restart"]).click()
+            page.locator('[data-deck="blank"]').click()
+            page.get_by_role("radio", name=C["build"]["s1"]["strict"][mix["strict"]], exact=True).click()
+            for cid, n in mix["points"].items():
+                for _ in range(n):
+                    page.locator(f'[data-card="{cid}"] [data-ui-v2="card-inc"]').click()
+            m = meter(page)
+            assert not m["pool"] and m["n"] == e["n"] == e["list"], (mix, m, e)
+            want = C["build"]["s1"]["remainNone"] if e["n"] == 0 else fillp(C["build"]["s1"]["remain"], n=ko_num(e["n"]))
+            assert m["text"].strip() == want, (mix, m["text"], want)
+            assert ko_num(e["n"]) in page.locator('[data-ui-v2="match-count"]').inner_text()
+            assert page.locator('[data-ui-v2="points-left"]').inner_text() == str(10 - sum(mix["points"].values()))
+            got.append(e["n"])
+        assert len(set(got)) >= 4, got                                     # 서로 다른 결과가 나오는 섞임이에요
+        R.collect(page)
+    R.check(page, S, "무작위 점수 열 가지: 내 점수 칸의 수 = 엔진이 고른 목록의 길이 (점수 0 이면 기준 전의 수) · 아래 띠도 같은 수", random_mixes)
+
+    def keeps_draft():
+        to_build_start(page, wide)                                         # 만들던 것: 배당 생활비 → 빼기 단계
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        open_guide(page, wide).locator('[data-ui-v2="guide-try"] button').click()     # 직접 해 보기: 처음부터가 아니라 그 자리로
+        at(page, "portfolio/build")
+        see(page, C["build"]["s3"]["title"])
+        page.wait_for_timeout(300)
+        assert page.locator('[data-ui-v2="guide-bubble"], [data-ui-v2="guide-shade"]').count() == 0
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
+        see(page, C["build"]["s1"]["title"])
+        assert page.locator('[data-card="div"]').get_attribute("data-points") == "5" and page.locator('[data-ui-v2="points-left"]').inner_text() == "0"
+        page.get_by_role("button", name=C["build"]["restart"], exact=True).click()   # 다시 시작: 만들던 것 없음 → 직접 해 보기는 새로
+        see(page, C["build"]["s0"]["title"])
+        open_guide(page, wide).locator('[data-ui-v2="guide-try"] button').click()
+        bubble(page, 1).locator('[data-ui-v2="guide-skip"]').click()
+        guide_gone(page)
+        assert page.locator('[data-ui-v2="points-left"]').inner_text() == "10" and page.locator('[data-card="div"]').get_attribute("data-points") == "0"
+        R.collect(page)
+    R.check(page, S, "직접 해 보기: 만들던 포트폴리오(점수를 준 것)가 있으면 그 자리로(점수 그대로, 안내 없음) · 없으면 새로 시작해 1/3", keeps_draft)
+
+    def welcome_leaves():
+        page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+        open_guide(page, wide)
+        if wide:                                                           # PC: 안내가 떠 있는 동안 '/' 는 검색 칸으로 가지 않아요
+            page.evaluate("() => document.activeElement && document.activeElement.blur()")
+            page.keyboard.press("/")
+            page.wait_for_timeout(100)
+            assert not focused_in(page, TOP_INPUT), "반기는 화면에서 '/' 가 검색 칸으로 갔어요"
+            page.locator('[data-ui-v2="side-tab"][data-tab="stocks"]').click()
+        else:
+            tab(page, TABS["stocks"])
+        at(page, "stocks")                                                 # 홈을 떠나면 반기는 화면은 끝 (본 적 있음)
+        page.wait_for_function(f"() => localStorage.getItem({json.dumps(GUIDE_SEEN)}) === '1'")
+        if wide:
+            page.locator('[data-ui-v2="side-tab"][data-tab="home"]').click()
+        else:
+            tab(page, TABS["home"])
+        at(page, "home")
+        page.wait_for_timeout(200)
+        assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0, "홈을 떠났다 돌아왔는데 반기는 화면이 그대로예요"
+        if wide:
+            guide_step1(page, wide)                                        # 1/3 말풍선이 떠 있는 동안에도 '/' 는 그대로
+            page.keyboard.press("/")
+            page.wait_for_timeout(100)
+            assert not focused_in(page, TOP_INPUT) and page.locator('[data-ui-v2="guide-bubble"]').count() == 1
+            page.keyboard.press("Escape")
+            guide_gone(page)
+        R.collect(page)
+    R.check(page, S, "반기는 화면에서 다른 탭으로 가면 안내는 끝(본 적 있음), 홈에 돌아와도 안 떠요 · PC: 안내 중에는 '/' 가 검색 칸으로 가지 않아요", welcome_leaves)
+    ctx.close()
+    srv.shutdown()
+
+
+TEXT2_RGB = "rgb(91, 101, 118)"                           # src/ui/tokens.js COLOR.text2 #5B6576
+
+
+def scene_v193c_landscape(R, files, size):
+    """v19.3c 처음 안내 1/3 을 옆으로 눕힌 휴대폰에서: 누를 + 는 위에 붙은 내 점수 칸 아래, 말풍선 위(그 틈이 좁으면 말풍선이 위로)에 있고
+    눌려요 · 밝은 곳은 내 점수 칸과 말풍선을 덮지 않아요 · 창의 높이만 바뀌어도 어두운 곳은 끝까지 눌리지 않아요(그 아래 페이지는 안 눌려요)."""
+    w, h = size
+    S = f"v19.3c 가로 휴대폰 {w}x{h}"
+    dev = {"viewport": {"width": w, "height": h}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
+    srv, ctx, page, base = R.open(build_site(files), w, device=dev)
+
+    def step1_fits():
+        wait_ready(page)
+        at(page, "home")
+        b = guide_step1(page, False)
+        page.wait_for_timeout(300)
+        g = page.evaluate("""() => { const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect();
+            return { top: b.top, bottom: b.bottom, left: b.left, right: b.right }; };
+          const p = r('[data-card="div"] [data-ui-v2="card-inc"]');
+          const t = document.elementFromPoint((p.left + p.right) / 2, (p.top + p.bottom) / 2);
+          return { plus: p, meter: r('[data-ui-v2="meter-bar"]'), bubble: r('[data-ui-v2="guide-bubble"]'), hole: r('[data-ui-v2="guide-hole"]'),
+            at: document.querySelector('[data-ui-v2="guide-bubble"]').dataset.at, hit: t && t.closest('[data-ui-v2="card-inc"]') ? 'plus' : (t && t.dataset.uiV2) }; }""")
+        assert g["hit"] == "plus", g                                       # + 가운데를 누르면 + 가 눌려요 (말풍선 · 어두운 곳 아님)
+        lo = g["meter"]["bottom"] if g["at"] == "bottom" else max(g["meter"]["bottom"], g["bubble"]["bottom"])
+        hi = g["bubble"]["top"] if g["at"] == "bottom" else h
+        assert g["plus"]["top"] >= lo - 0.5 and g["plus"]["bottom"] <= hi + 0.5, g     # + 는 내 점수 칸 · 말풍선 사이
+        assert g["hole"]["top"] >= g["meter"]["bottom"] - 0.5 or g["at"] == "top", g   # 밝은 곳이 내 점수 칸을 덮지 않아요
+        if g["at"] == "bottom":
+            assert g["hole"]["bottom"] <= g["bubble"]["top"] + 0.5, g
+        else:
+            assert g["hole"]["top"] >= g["bubble"]["bottom"] - 0.5, g
+        R.collect(page)
+        page.set_viewport_size({"width": w, "height": h + 300})              # 높이만 바뀌어도: 새로 생긴 아래쪽도 어둡고 눌리지 않아요
+        page.wait_for_timeout(200)
+        hit = page.evaluate(f"() => {{ const e = document.elementFromPoint(3, {h + 290}); return e ? (e.dataset.uiV2 || e.tagName) : null; }}")
+        assert hit == "guide-shade", hit
+        page.set_viewport_size({"width": w, "height": h})
+        page.wait_for_timeout(200)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()  # 진짜 + 를 누르면 2/3
+        bubble(page, 2).locator('[data-ui-v2="guide-skip"]').click()
+        guide_gone(page)
+        R.collect(page)
+    R.check(page, S, "처음 안내 1/3: + 가 내 점수 칸과 말풍선 사이에서 눌려요 · 밝은 곳이 칸 · 말풍선을 덮지 않아요 · 높이만 바뀐 창의 아래쪽도 어둡고 막혀요", step1_fits)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_offstep(R, files, width=390):
+    """v19.3c: 안내 중에 기준 단계를 겹친 화면이 덮지 않는 길로 떠나면(화면 읽기 프로그램이 누른 다음 · 이전 단계 · 다시 시작) 안내는 끝나고
+    '본 적 있음'이 남아요. 이전 단계로 돌아와도 말풍선이 다시 뜨지 않아요."""
+    S = f"v19.3c 안내 밖 단계 이동 {width}"
+    srv, ctx, page, base = R.open(build_site(files), width)
+    seen = lambda: page.evaluate(f"() => localStorage.getItem({json.dumps(GUIDE_SEEN)})")
+    unseen = lambda: page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+
+    def off_step():
+        wait_ready(page)
+        at(page, "home")
+        guide_step1(page, False)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        bubble(page, 2).click()
+        bubble(page, 3)
+        page.evaluate("() => document.querySelector('[data-ui-v2=\"action-bar\"] button:not([disabled])').click()")   # 3/3 에서 아래 띠의 다음
+        see(page, C["build"]["s3"]["title"])
+        guide_gone(page)
+        assert seen() == "1"
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
+        see(page, C["build"]["s1"]["title"])
+        page.wait_for_timeout(400)
+        assert page.locator('[data-ui-v2="guide-bubble"], [data-ui-v2="guide-shade"]').count() == 0, "이전 단계로 돌아오니 안내가 다시 떠요"
+        for name in (C["build"]["restart"], C["build"]["prevStep"]):        # 1/3 에서 다시 시작 · 이전 단계 (말풍선 밖의 단추)
+            unseen()
+            guide_step1(page, False)
+            page.evaluate("(n) => [...document.querySelectorAll('[data-ui-v2=\"app-bar\"] button, main button')].find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === n).click()", name)
+            see(page, C["build"]["s0"]["title"])
+            guide_gone(page)
+            assert seen() == "1", name
+            page.locator('[data-deck="income"]').click()                   # 템플릿을 골라도 2/3 이 저절로 뜨지 않아요
+            see(page, C["build"]["s1"]["title"])
+            page.wait_for_timeout(400)
+            assert page.locator('[data-ui-v2="guide-bubble"]').count() == 0, name
+        R.collect(page)
+    R.check(page, S, "안내 중 다음(3/3) · 다시 시작 · 이전 단계(1/3)를 겹친 화면 밖에서 누르면 안내는 끝(본 적 있음) · 돌아와도 · 템플릿을 골라도 다시 안 떠요", off_step)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_narrow(R, files, width=320):
+    """v19.3c Part D: 320px 에서도 기준 카드는 두 칸이고, 카드 안의 글 · 버튼이 카드 밖으로 나가지 않아요 (가로 스크롤 없음)."""
+    S = f"v19.3c 좁은 화면 {width}"
+    srv, ctx, page, base = R.open(build_site(files), width)
+
+    def two_cols():
+        wait_ready(page)
+        to_build_start(page, False)
+        page.locator('[data-deck="krUs"]').click()                         # 고른 카드(상위 50% 칩 · 재무 안정 줄)도 함께
+        see(page, C["build"]["s1"]["title"])
+        cols = page.locator('[data-ui-v2="card-grid"]').evaluate("(e) => getComputedStyle(e).gridTemplateColumns.split(' ').length")
+        assert cols == 2, cols
+        spill = page.evaluate("""() => [...document.querySelectorAll('[data-card]')].flatMap((c) => {
+            const r = c.getBoundingClientRect(); const out = [];
+            if (c.scrollWidth > c.clientWidth + 0.5) out.push([c.dataset.card, 'scroll', c.scrollWidth, c.clientWidth]);
+            for (const e of c.querySelectorAll('h3, p, span, button, svg')) { const b = e.getBoundingClientRect();
+              if (b.width && (b.left < r.left - 0.5 || b.right > r.right + 0.5)) out.push([c.dataset.card, e.tagName, Math.round(b.left), Math.round(b.right), Math.round(r.left), Math.round(r.right)]); }
+            return out; })""")
+        assert not spill, spill[:5]
+        floor_ok(page, "기준 카드 320")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "320px: 기준 카드 두 칸 · 카드 밖으로 나가는 글 · 버튼 없음 · 가로 스크롤 없음", two_cols)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_empty(R, files, width=390):
+    """v19.3c Part D: 기준 전의 수가 0 이면(모든 종목이 거래대금 바닥 아래) 내 점수 칸은 '지금 기준이면 남는 회사가 없어요'."""
+    S = f"v19.3c 남는 회사 없음 {width}"
+    low = clone(files)
+    for s in low["data.json"]["stocks"]:
+        if s.get("cls") == "kr":
+            s["val20"] = 1.0
+        elif s.get("cls") == "us":
+            s["val"] = 1.0
+    srv, ctx, page, base = R.open(build_site(low), width)
+
+    def empty_pool():
+        wait_ready(page)
+        to_build_start(page, False)
+        page.locator('[data-deck="blank"]').click()
+        m = meter(page)
+        assert m["pool"] and m["n"] == 0 and m["text"].strip() == C["build"]["s1"]["remainNone"], m
+        R.collect(page)
+    R.check(page, S, "기준 전의 수가 0: '지금 기준이면 남는 회사가 없어요' (0개라고 쓰지 않아요)", empty_pool)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_on(R, files, width):
+    """v19.3c 두 스위치를 켠 빌드(커밋하지 않는 임시 빌드): 첫 방문 홈 대신 반기는 화면이 저절로 → 그냥 둘러볼게요 → 첫 방문 홈 · 다시 열어도
+    안 떠요. 새 시작 화면(BuildStart2 · PcStart2): 처음부터 카드(그림 다섯 · 기준 카드 고르기) · 가진 종목 카드(준비 중이에요, 버튼 없음) ·
+    템플릿 여덟 개가 재료 줄(그림 · 이름 · 점 다섯, 큰 점수부터, 셋까지 + '+ {n}개 더') · 깐깐한 기준 · 한미 반반 표시 · 뱁이 없음."""
+    S = f"v19.3c 스위치 켠 빌드 {width}"
+    wide = width >= 1024
+    srv, ctx, page, base = R.open(build_site(files, app=v193c_on_app()), width, device=pc_device(width) if wide else None)
+
+    def auto_welcome():
+        wait_ready(page)
+        at(page, "home")
+        page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="home-hero"]').count() == 0
+        R.collect(page)
+        page.locator('[data-ui-v2="guide-browse"]').click()
+        page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+        page.reload()
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0, "본 뒤에도 반기는 화면이 다시 떠요"
+    R.check(page, S, "첫 방문: 반기는 화면이 저절로 (첫 방문 홈 대신) → 그냥 둘러볼게요 → 첫 방문 홈 · 다시 열면 안 떠요", auto_welcome)
+
+    def start2():
+        to_build_start(page, wide)
+        st = page.locator('[data-ui-v2="build-start2"]')
+        st.wait_for(state="visible")
+        assert st.locator('img[src^="baepi-"]').count() == 0 and page.locator('[data-ui-v2="build-start"]').count() == 0     # 뱁이 없음
+        blank = st.locator('[data-ui-v2="start-blank"]')
+        assert blank.locator("img").count() == 5 and C["build"]["s0"]["blankBody"] in blank.inner_text()
+        assert blank.locator('[data-deck="blank"]').inner_text().strip() == C["build"]["s0"]["pickCards"]
+        hold = st.locator('[data-ui-v2="start-holdings"]')
+        assert C["build"]["s0"]["holdings"] in hold.inner_text() and C["build"]["s1"]["pendingCard"] in hold.inner_text()
+        assert hold.locator("button, a, [data-deck]").count() == 0
+        assert page.locator("[data-deck]").count() == 9
+        got = pics(page, "[data-deck] [data-deck-pic]", "DECK_PICS")
+        assert sorted(g["id"] for g in got) == sorted(PICS["DECK_PICS"]), got
+        rows = page.locator('[data-deck="krUs"] [data-ingredient]').evaluate_all("(els) => els.map((e) => e.dataset.ingredient)")
+        assert rows == ["profit", "value", "div"], rows                     # 3 · 2 · 2 · (2 · 1): 큰 점수부터, 같으면 엔진 순서
+        assert fillp(C["build"]["s0"]["more"], n=2) in page.locator('[data-deck="krUs"]').inner_text()
+        assert page.locator('[data-deck="krUs"] [data-ui-v2="recipe-badge"]').inner_text() == fillp(C["build"]["s0"]["badgeMix"], kr=50, us=50)
+        assert page.locator('[data-deck="strict"] [data-ui-v2="recipe-badge"]').inner_text() == fillp(C["build"]["s0"]["badgeStrict"], top=30)
+        assert page.locator('[data-ui-v2="recipe-badge"]').count() == 2
+        assert C["build"]["s0"]["dotsNote"] in st.inner_text() and C["build"]["s0"]["recipes"] in st.inner_text()
+        if wide:
+            x, w, cols = page_box(page)
+            assert cols == "2" and w > 720, (w, cols)
+            assert page.locator('[data-ui-v2="recipe-grid"]').evaluate("(e) => getComputedStyle(e).gridTemplateColumns.split(' ').length") == 3
+        floor_ok(page, "새 시작 화면")
+        no_hscroll(page, width)
+        R.collect(page)
+        page.locator('[data-deck="strict"]').click()
+        see(page, C["build"]["s1"]["title"])
+        assert page.locator('[data-card="profit"]').get_attribute("data-points") == "4"
+    R.check(page, S, "새 시작 화면: 처음부터 카드 · 가진 종목(준비 중) · 템플릿 여덟 개의 재료 줄과 표시 · 뱁이 없음 · PC 두 칸(템플릿 세 칸)", start2)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -4531,7 +5140,12 @@ def main():
         for fn in (lambda: scene_pc(R, files), lambda: scene_pc_back(R, files), lambda: scene_pc_stale(R, files),
                    lambda: scene_pc_edge(R, files), lambda: scene_company(R, files, 390),
                    lambda: scene_company(R, files, 1280),       # v19.0d PC · v19.1a 회사 페이지 (휴대폰 390 · PC 1280)
-                   lambda: scene_v193b(R, files, 390), lambda: scene_v193b(R, files, 1280)):   # v19.3b 그림 · 12px
+                   lambda: scene_v193b(R, files, 390), lambda: scene_v193b(R, files, 1280),     # v19.3b 그림 · 12px
+                   lambda: scene_v193c(R, files, 390), lambda: scene_v193c(R, files, 1280),     # v19.3c 기준 카드 · 내 점수 · 처음 안내
+                   lambda: scene_v193c_on(R, files, 390), lambda: scene_v193c_on(R, files, 1280),   # v19.3c 두 스위치를 켠 빌드
+                   lambda: scene_v193c_narrow(R, files), lambda: scene_v193c_empty(R, files),          # v19.3c 320px · 기준 전의 수 0
+                   lambda: scene_v193c_landscape(R, files, (844, 390)), lambda: scene_v193c_landscape(R, files, (568, 320)),   # 가로 휴대폰
+                   lambda: scene_v193c_offstep(R, files)):                                                 # 안내 밖 단계 이동
             try:
                 fn()
             except Exception as e:

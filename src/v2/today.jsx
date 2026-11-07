@@ -37,6 +37,7 @@ import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
 import { PopularLists } from "./stocks.jsx";
 import { IosHint } from "./hint.jsx";
+import { Welcome } from "./guide.jsx";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
@@ -263,7 +264,9 @@ function MarketGlance({ load, go }) {
   );
 }
 
-export function Home({ load, store, setStoreData, pad, onWhy, go }) {
+// welcome (v19.3c Part E): { onTry, onBrowse } while the first-visit guide's welcome is on (guide.jsx): it takes the place of
+// 홈's content until the user picks 직접 해 보기 or 그냥 둘러볼게요.
+export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null }) {
   const decks = store.data.decks;
   const first = decks.length === 0 && !store.locked;
   const { ev, ctx } = useDaily(load, store);
@@ -272,6 +275,15 @@ export function Home({ load, store, setStoreData, pad, onWhy, go }) {
   const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.length) : [];
   const us = held.some((de) => de.holdings.some((x) => x.cls === "us"));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
+  if (welcome) {
+    return (
+      <Page pad={pad} cols={2}>
+        <AppBar />
+        <Welcome load={load} first={first} onTry={welcome.onTry} onBrowse={welcome.onBrowse} />
+        <Footer />
+      </Page>
+    );
+  }
   if (first) {
     return (
       <Page pad={pad} cols={2}>

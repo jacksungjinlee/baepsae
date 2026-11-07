@@ -189,11 +189,11 @@ def main():
                 assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
                 assert page.locator('[data-ui-v2="today-hero"]').count() == 0 and page.get_by_text("할 일").count() == 0
                 shot(page, width, "0-landing")
-                page.locator('[data-ui-v2="menu-button"]').click()                   # 메뉴: 소개와 날짜만 (예전 뱁새로 가는 줄 없음)
+                page.locator('[data-ui-v2="menu-button"]').click()                   # 메뉴: 소개 · 처음 안내 다시 보기(v19.3c O.2: 소개 바로 뒤)와 날짜만 (예전 뱁새로 가는 줄 없음)
                 menu = page.locator('[data-ui-v2="menu"]')
                 menu.wait_for(state="visible")
                 items = menu.locator('[data-ui-v2="menu-item"]').evaluate_all("(els) => els.map((e) => e.dataset.item)")
-                assert items == ["about"], items
+                assert items == ["about", "guide"], items
                 assert "10월 30일 기준" in menu.locator('[data-ui-v2="menu-date"]').inner_text()
                 label_here()
                 shot(page, width, "1-menu", full=False)
@@ -354,7 +354,7 @@ def main():
             at("home")
             assert page.locator('nav[data-ui="bottom-tab-bar"], [data-ui-v2="menu-button"]').count() == 0
             items = page.locator('[data-ui-v2="side-link"]').evaluate_all("(els) => els.map((e) => e.dataset.item)")
-            assert items == ["about"], items                                   # 예전 뱁새(실제 데이터)로 가는 줄 없음
+            assert items == ["about", "guide"], items                          # 예전 뱁새(실제 데이터)로 가는 줄 없음 · 처음 안내 다시 보기는 소개 뒤 (v19.3c O.2)
             for key in ("home", "portfolio", "stocks", "market"):
                 page.locator(f'[data-ui-v2="side-tab"][data-tab="{key}"]').click()
                 at(key)
