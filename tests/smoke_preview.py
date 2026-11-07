@@ -24,7 +24,6 @@ import os
 import re
 import shutil
 import sys
-import tempfile
 import threading
 
 from playwright.sync_api import sync_playwright
@@ -32,6 +31,7 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
 from visualcheck import V2_IMAGES, visual_ok, copy_pictures  # noqa: E402
+import tmpdirs  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WAIT = 15000
@@ -53,7 +53,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 
 def site():
-    d = tempfile.mkdtemp(prefix="baepsae-preview-")
+    d = tmpdirs.make("baepsae-preview-")
     for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
@@ -236,7 +236,7 @@ def main():
                 tab(TABS["portfolio"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
                 assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기 내 덱에 '예전 뱁새' 안내가 떠요"
-                live = os.path.join(tempfile.mkdtemp(), "live.json")          # 실제 앱에서 내보낸 기록을 미리 보기에서 열면
+                live = os.path.join(tmpdirs.make("baepsae-preview-file-"), "live.json")          # 실제 앱에서 내보낸 기록을 미리 보기에서 열면
                 with open(live, "w", encoding="utf-8") as fh:
                     json.dump({"v": 1, "decks": []}, fh)
                 page.locator('[data-ui-v2="import-file"]').set_input_files(live)
@@ -403,4 +403,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(tmpdirs.run(main))        # 통과하면 이번 실행의 임시 폴더를 지우고, 실패하면 남겨요 (tests/tmpdirs.py)
