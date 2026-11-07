@@ -57,7 +57,7 @@ def kr(t, nk, vz, debt, ind="semi", **kw):
 
 
 def us(t, nk, vz, debt, ind="software", **kw):
-    return {"t": t, "nk": nk, "ne": nk, "cls": "us", "price": 100.0, "val": 50.0, "vz": vz, "debt": debt, "ind": ind, "indName": "소프트웨어",
+    return {"t": t, "nk": nk, "ne": nk, "cls": "us", "ccy": "USD", "price": 100.0, "val": 50.0, "vz": vz, "debt": debt, "ind": ind, "indName": "소프트웨어",
             "beta": 1.0, "betaSE": 0.0, "d1": 0.5, "dy": 1.0, **kw}
 
 
@@ -216,14 +216,70 @@ def test_money_reads_imported_holdings_and_leaves_out_what_it_cannot_know():
     assert got["stale"]["ok"] is False
 
 
+def test_a_korean_listing_priced_in_won_is_never_a_dollar_holding():
+    """v19.3d review (blocker): data.json lists 379800 KODEX 미국S&P500 with cls "us" but priced in won (no ccy). It is a KRX
+    listing: 한국, whole shares, its record in KRW, its value price × quantity (never × the exchange rate)."""
+    kodex = {"t": "379800", "nk": "KODEX 미국S&P500", "ne": "KODEX 미국S&P500", "cls": "us", "price": 22415.0, "etf": True, "val": 300.0}
+    stocks = STOCKS + [kodex]
+    got = run("""const load = { data: { stocks: ST, fx: 1356.3, pxDate: '2026-11-06', usPxDate: '2026-11-05' }, byT: new Map(ST.map((s) => [s.t, s])) };
+      const k = load.byT.get('379800'), a = load.byT.get('AAA');
+      const d = P.importedRecord({ drafts: [{ t: '379800', mode: 'qty', qty: 10, avg: 21000 }, { t: '379800', mode: 'amount', amountWon: 500000 }],
+        load, settings: { points: { value: 1 } }, id: 'dk', name: 'p', today: '2026-11-07' });
+      const d2 = P.importedRecord({ drafts: [{ t: '379800', mode: 'amount', amountWon: 500000 }], load, settings: { points: { value: 1 } }, id: 'dk2', name: 'p', today: '2026-11-07' });
+      const ctx = { state: { ok: true }, byT: load.byT, coByT: new Map(), fx: 1356.3, pxDate: '2026-11-06' };
+      const st = P.pfState(d, ctx, ST);
+      out = { usd: [P.usdOf(k), P.usdOf(a)], market: [P.marketKey(k), P.marketKey(a)], won: [P.wonPrice(k, 1356.3), P.wonPrice(a, 1356.3)],
+        rec: d.imported[0], rec2: d2.imported[0], problem: S.deckProblem(d, '2026-11-07'), value: st.view.rows[0].value, usdRow: st.view.rows[0].usd,
+        qty: [P.okQty(1.5, k), P.okQty(1.5, a), P.okQty(2, k)], ok: [P.draftOk({ mode: 'amount', amountWon: 500000 }, k, null), P.draftOk({ mode: 'amount', amountWon: 500000 }, a, null),
+          P.draftOk({ mode: 'amount', amountWon: 500000 }, a, 1356.3), P.draftOk({ mode: 'amount', amountWon: 1 }, k, null)],
+        money: T.deckMoney(d, R.evaluateDeck(d, ctx), ctx), dates: P.reportDates(st.view, ctx, new Map()).us };""", ST=stocks)
+    assert got["usd"] == [False, True] and got["market"] == ["kr", "us"] and got["won"] == [22415.0, 100.0 * 1356.3]
+    assert got["rec"] == {"t": "379800", "nk": "KODEX 미국S&P500", "ccy": "KRW", "avg": 21000, "qty": 10, "unscored": True}
+    assert got["rec2"]["ccy"] == "KRW" and "fx" not in got["rec2"] and got["rec2"]["date"] == "2026-11-06" and got["problem"] is None
+    assert got["value"] == 224150.0 and got["usdRow"] is False                    # 10주 × 22,415원 (환율을 곱하지 않아요)
+    assert got["qty"] == [False, True, True]                                       # 원화 상장: 정수 주식만
+    assert got["ok"] == [True, False, True, False]                                 # 미국 금액은 오늘 환율이 있어야 · 1원은 1/10,000주도 안 돼요
+    assert got["money"]["ok"] and got["money"]["value"] == 224150.0 and got["money"]["cost"] == 210000 and got["money"]["usdToday"] is False
+    assert got["dates"] is False
+
+
 def test_sandbox_squarify_and_the_warning_checks():
     got = run("""const w = P.moveWeight(new Map([['a', 0.5], ['b', 0.3], ['c', 0.2]]), 'a', 0.2);
       const rects = P.squarify([6, 6, 4, 3, 2, 2, 1].map((v, i) => ({ key: 'k' + i, v })), 0, 0, 6, 4);
-      out = { w: Object.fromEntries(w), sum: [...w.values()].reduce((x, y) => x + y, 0), rects, warn: [P.PF_WARN_CHECKS, K.WARN_CHECKS],
+      const KR = { t: 'X', cls: 'kr' };
+      const cos = [{ fy: 2025, flRan: ['cr', 'icr', 'l3', 'imp'] }, { fy: 2025, flRan: ['l3', 'imp'], flNa: ['cr', 'icr'] }, { fy: 2025, flRan: ['cr', 'l3', 'imp'] },
+        { fy: 2025, flRan: ['cr', 'icr', 'l3', 'imp'], fl: { cr: 70 } }, { fy: 2025 }, null];
+      const warn = cos.map((co) => [P.warnOf(KR, co), K.warnings(KR, co)]);
+      out = { w: Object.fromEntries(w), sum: [...w.values()].reduce((x, y) => x + y, 0), rects, warn,
         same: P.moveWeight(new Map([['a', 1]]), 'zz', 0.5).get('a') };""")
     assert got["w"]["a"] == 0.2 and abs(got["w"]["b"] - 0.48) < 1e-12 and abs(got["w"]["c"] - 0.32) < 1e-12 and abs(got["sum"] - 1) < 1e-12
     rects = got["rects"]
     assert len(rects) == 7 and abs(sum(r["w"] * r["h"] for r in rects) - 24) < 1e-9
     for r, v in zip(rects, [6, 6, 4, 3, 2, 2, 1]):
         assert abs(r["w"] * r["h"] - v) < 1e-9 and r["x"] >= -1e-9 and r["y"] >= -1e-9 and r["x"] + r["w"] <= 6 + 1e-9 and r["y"] + r["h"] <= 4 + 1e-9
-    assert got["warn"][0] == got["warn"][1] and got["same"] == 1
+    assert got["same"] == 1
+    for mine, page in got["warn"]:                                     # 회사 페이지와 같은 함수 (warn.js): 두 화면이 늘 같은 말
+        assert mine == ("flag" if page["flags"] else "clear" if page["allRan"] else "unknown"), (mine, page)
+    assert [m for m, _ in got["warn"]] == ["clear", "clear", "unknown", "flag", "unknown", "unknown"]
+
+def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holding_is_not_unbought():
+    """v19.3d review: until v19.6a's lot maths, a built portfolio with a sale has no 원금, return or KOSPI comparison (null,
+    never 9 of 10 shares sold counted as −40.9%), and a holding sold down to 0 is sold out, not "planned, never bought"
+    (no rebased note)."""
+    got = run("""const ctx = ctxOf(STOCKS, CORPS);
+      const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
+      const deck = { id: 'db', name: 'b', holdings: [{ t: '000010', nk: '가나전자', target: 0.5, rules: band(0.5) }, { t: '000040', nk: '마바물산', target: 0.5, rules: band(0.5) }],
+        purchases: [{ t: '000010', qty: 10, price: 10000, date: '2026-10-01', ccy: 'KRW' }, { t: '000040', qty: 10, price: 10000, date: '2026-10-01', ccy: 'KRW' }] };
+      const sold = { ...deck, sales: [{ t: '000040', qty: 10, price: 9000, date: '2026-11-01', ccy: 'KRW' }, { t: '000010', qty: 9, price: 10000, date: '2026-11-01', ccy: 'KRW' }] };
+      const ev = (d) => R.evaluateDeck(d, ctx);
+      const idx = { asOf: '2026-11-06', rows: [['2026-09-30', 100], ['2026-11-06', 110]] };
+      out = { plain: T.deckMoney(deck, ev(deck), ctx), sold: T.deckMoney(sold, ev(sold), ctx), e: ev(sold), k: [T.indexSince(deck, idx, '2026-11-06').ok, T.indexSince(sold, idx, '2026-11-06')],
+        imp: S.deckProblem({ ...deck, imported: [{ t: '000010', nk: '가나전자', ccy: 'KRW', qty: 1 }] }, '2026-11-07') };""", STOCKS=STOCKS, CORPS=CORPS)
+    assert got["plain"]["cost"] == 200000 and got["plain"]["ret"] == 0
+    s = got["sold"]
+    assert s["ok"] and s["value"] == 10000 and s["cost"] is None and s["gain"] is None and s["ret"] is None and s["lots"] is True
+    assert all(r["cost"] is None and r["ret"] is None for r in s["per"].values())
+    e = got["e"]
+    assert e["unheld"] == [] and e["soldOut"] == ["000040"] and e["rebased"] is False and [x["t"] for x in e["holdings"]] == ["000010"]
+    assert got["k"] == [True, {"ok": False, "why": "lots"}]
+    assert got["imp"]["part"] == "imported" and "imported portfolio" in got["imp"]["why"]     # 만든 포트폴리오에는 가져온 줄이 없어요

@@ -42,7 +42,6 @@
 // aside with a console message naming it (portfolio, part, row, stock, reason), the other portfolios stay readable, and
 // the first write keeps the stored text under a backup key, so nothing is ever lost.
 import { okAssume } from "./dcf.js";
-import { CARDS, STRICT, POINTS_MAX, POINTS_TOTAL } from "./engine.js";
 import { okUnits, belowZero, importedUnits } from "./held.js";
 
 export const STORE_KEY = "baepsae2.v1";
@@ -191,17 +190,15 @@ function historyProblem(hs, today) {
   return null;
 }
 
-// The 기준 of an imported portfolio (its report and its 내 기준 rule read them).
+// The 기준 of an imported portfolio (its report and its 내 기준 rule read them). Only the shape is checked: whether a card
+// still exists, is 준비 중 or has a new points limit is the evaluation's business (pf.js activeOf, strictTop), so a saved
+// portfolio never becomes unreadable because the app's cards or strictness choices changed.
 function settingsProblem(s) {
   if (!plainObj(s) || !plainObj(s.points)) return bad("settings", null, null, "the criteria points are missing");
-  let sum = 0;
   for (const [id, v] of Object.entries(s.points)) {
-    const c = CARDS.find((x) => x.id === id);
-    if (!c || !(Number.isInteger(v) && v >= 0 && v <= POINTS_MAX) || (c.pending && v > 0)) return bad("settings", null, null, `points for ${id} are not valid`);
-    sum += v;
+    if (!isStr(id, 40) || !(Number.isInteger(v) && v >= 0 && v <= 100)) return bad("settings", null, null, `points for ${id} are not a whole number`);
   }
-  if (sum > POINTS_TOTAL) return bad("settings", null, null, "more than 10 points");
-  if (s.strict != null && !STRICT.some((x) => x.id === s.strict)) return bad("settings", null, null, "strictness is not valid");
+  if (s.strict != null && !isStr(s.strict, 40)) return bad("settings", null, null, "strictness is not a name");
   return null;
 }
 
@@ -222,6 +219,7 @@ export function deckProblem(x, today) {
   }
   const holds = (t) => x.holdings.some((h) => h.t === t);
   if (x.kind != null && x.kind !== "imported") return bad("kind", null, null, "unknown kind");
+  if (x.imported != null && x.kind !== "imported") return bad("imported", null, null, "imported rows belong to an imported portfolio only");
   if (x.kind === "imported") {
     if (!Array.isArray(x.imported)) return bad("imported", null, null, "an imported portfolio needs its rows");
     const sp = settingsProblem(x.settings);
@@ -253,7 +251,7 @@ export function problemText(deck, p) {
 }
 
 // ---------------- the whole store ----------------
-const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "preview"];
+const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "preview", "setAside"];
 // -> { readable: false, why } when it is not a records store this app can read at all (not an object, an unknown or newer
 // version, no portfolio list); else { readable: true, data, problems: [text] }: data keeps every valid portfolio and part,
 // problems names what was set aside (a bad portfolio, a duplicate id, a bad notes / assume / guideSeen part).
@@ -396,7 +394,15 @@ export function withDeck(data, deck, today) {
   return { ...data, decks: [...data.decks, deck] };
 }
 
-// ---------------- another tab of the earlier app (v19.6 A.1 [Q5]) ----------------
+// ---------------- another tab (v19.6 A.1 [Q5]: no record lost, in either direction) ----------------
+// Backup keys: key + ".unreadable.<time>" (what a write found and could not read: this app's, or an earlier app's that
+// moved a v2 store aside), key + ".other.<time>" (what another tab had written since this tab last read or wrote: kept
+// before this tab writes, merged back on the next read) and key + ".restored.<time>" (a copy of what was merged back).
+// Each kind keeps its newest BACKUPS_KEEP entries; the newest is never removed.
+export const BACKUPS_KEEP = 3;
+const BACKUP_KINDS = [".unreadable.", ".other.", ".restored."];
+// The text this tab last read or wrote, per key: a write that finds anything else there knows another tab wrote meanwhile.
+const lastText = new Map();
 const backupKeys = (key, mid) => {
   const out = [];
   try {
@@ -410,66 +416,120 @@ const backupKeys = (key, mid) => {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const later = (a, b) => (a && b && typeof b.at === "string" && typeof a.at === "string" && b.at > a.at ? b : a);
 
-// One portfolio both tabs changed: everything either one holds is kept (nothing is lost; a stock one tab took out comes
-// back, which the notice asks the user to check). The version-2 copy leads (it is the only one that can hold v2 parts).
-function unionDeck(a, b) {
-  const holdings = [...a.holdings, ...b.holdings.filter((h) => !a.holdings.some((x) => x.t === h.t))];
-  const purchases = [...a.purchases, ...b.purchases.filter((p) => !a.purchases.some((x) => same(x, p)))];
-  const confirms = [...(a.confirms || [])];
-  for (const c of b.confirms || []) {
+// A list both copies hold: everything in the current copy, then whatever only the other one has (the same record is
+// the same JSON). Nothing is dropped; a record one tab deleted can come back, which the notice asks the user to check.
+const unionList = (a, b) => {
+  if (!Array.isArray(a) && !Array.isArray(b)) return undefined;
+  const out = [...(Array.isArray(a) ? a : [])];
+  for (const x of Array.isArray(b) ? b : []) if (!out.some((y) => same(y, x))) out.push(x);
+  return out;
+};
+// One portfolio both copies hold, both changed: the current copy leads (its name, settings, kind, limits) and every
+// record either one holds is kept: holdings (by stock), imported rows (by stock: the current row wins), purchases, sales,
+// dividends and history entries (by identity), answers to 확인 필요 (the later answer for the same item).
+function unionDeck(cur, other) {
+  const holdings = [...cur.holdings, ...other.holdings.filter((h) => !cur.holdings.some((x) => x.t === h.t))];
+  const out = { ...other, ...cur, holdings, purchases: unionList(cur.purchases, other.purchases) || [] };
+  const imp = Array.isArray(cur.imported) || Array.isArray(other.imported)
+    ? [...(cur.imported || []), ...(other.imported || []).filter((r) => r.t == null ? !(cur.imported || []).some((y) => same(y, r))
+      : !(cur.imported || []).some((y) => y.t === r.t))] : undefined;
+  if (imp) out.imported = imp;
+  for (const k of ["sales", "divs", "history"]) { const u = unionList(cur[k], other[k]); if (u) out[k] = u; }
+  const confirms = [...(cur.confirms || [])];
+  for (const c of other.confirms || []) {
     const i = confirms.findIndex((x) => sameConfirm(x, c));
     if (i < 0) confirms.push(c); else confirms[i] = later(confirms[i], c);
   }
-  return { ...a, holdings, purchases, ...(confirms.length ? { confirms } : {}) };
+  if (confirms.length) out.confirms = confirms;
+  return out;
 }
 
-// The store an earlier-app tab moved aside (v2) with what that tab then saved (cur) added in. null when the result
-// would not be valid (then nothing is changed and the backup stays).
-export function mergeTabs(v2, cur, today) {
-  const decks = [...v2.decks];
-  for (const d of cur.decks) {
+// The current store with another copy's records added in (cur leads; nothing either holds is lost). null when the result
+// would not be valid (then nothing is changed and the other copy stays where it is).
+export function mergeTabs(other, cur, today) {
+  const decks = [...cur.decks];
+  for (const d of other.decks) {
     const i = decks.findIndex((x) => x.id === d.id);
     if (i < 0) decks.push(d);
     else if (!same(decks[i], d)) decks[i] = unionDeck(decks[i], d);
   }
-  const out = { v: STORE_VERSION, decks };
+  const out = { ...other, ...cur, decks };
   for (const key of ["notes", "assume"]) {
-    const m = { ...(perStock(v2, key) || {}) };
-    for (const [t, x] of Object.entries(perStock(cur, key) || {})) m[t] = m[t] ? later(m[t], x) : x;
+    const m = { ...(perStock(other, key) || {}) };
+    for (const [t, x] of Object.entries(perStock(cur, key) || {})) m[t] = m[t] ? later(x, m[t]) : x;
     if (Object.keys(m).length) out[key] = m;
   }
-  if (guideSeenIn(v2) || guideSeenIn(cur)) out.guideSeen = guideSeenIn(v2) ? v2.guideSeen : cur.guideSeen;
+  if (guideSeenIn(cur) || guideSeenIn(other)) out.guideSeen = guideSeenIn(cur) ? cur.guideSeen : other.guideSeen;
+  delete out.preview;
   out.v = versionFor(out);
   return validStore(out, today) ? out : null;
 }
 
-// After a good read: a v2 store with v2 parts sitting in a backup key is one an earlier-app tab moved aside. It is put
-// back with the current one merged in; the backup is kept under ".restored.<time>" (never deleted). -> the merged store, or null.
+// After a good read, copies another tab left behind are merged back in:
+//   ".other.<time>"      any readable store: what another tab had written before this one overwrote it (writeStore).
+//   ".unreadable.<time>" only a v2 store with v2 parts, and only while the current store has none: an earlier-app tab
+//                        moved it aside and wrote its own. A current store with v2 parts was written by this version
+//                        after that, so it leads and the backup stays as it is.
+// Each merged copy is kept under ".restored.<time>". -> the merged store, or null when nothing was merged.
 function restoreMoved(key, cur, today) {
   let merged = null;
   const used = [];
-  for (const k of backupKeys(key, ".unreadable.")) {
+  const cands = [...backupKeys(key, ".unreadable.").map((k) => [k, true]), ...backupKeys(key, ".other.").map((k) => [k, false])]
+    .sort((a, b) => stamp(a[0]) - stamp(b[0]));
+  for (const [k, moved] of cands) {
     let d = null;
     try { d = JSON.parse(localStorage.getItem(k)); } catch (e) { d = null; }
-    if (!d || d.v !== STORE_VERSION || !hasV2Parts(d) || !validStore(d, today)) continue;
+    if (!d || !validStore(d, today)) continue;
+    if (moved && (d.v !== STORE_VERSION || !hasV2Parts(d) || hasV2Parts(merged || cur))) continue;
     const m = mergeTabs(d, merged || cur, today);
-    if (!m) { console.warn(`[v2] a version-2 store in ${k} could not be merged with the current one; both are kept as they are`); continue; }
+    if (!m) { console.warn(`[v2] the copy in ${k} could not be merged with the current records; both are kept as they are`); continue; }
     merged = m;
     used.push(k);
   }
   if (!merged) return null;
   try {
-    localStorage.setItem(key, JSON.stringify(merged));
+    const text = JSON.stringify(merged);
+    localStorage.setItem(key, text);
+    lastText.set(key, text);
     for (const k of used) {
-      localStorage.setItem(key + ".restored." + k.slice(k.lastIndexOf(".") + 1), localStorage.getItem(k));
+      localStorage.setItem(key + ".restored." + stamp(k), localStorage.getItem(k));
       localStorage.removeItem(k);
     }
   } catch (e) {
-    console.warn("[v2] could not put back the records another tab moved aside: " + ((e && e.message) || e));
+    console.warn("[v2] could not merge back the records another tab left: " + ((e && e.message) || e));
     return null;
   }
-  console.warn(`[v2] records another tab of an earlier version had moved aside were put back and merged (${used.join(", ")})`);
+  pruneBackups(key);
+  console.warn(`[v2] records another tab had left were merged back (${used.join(", ")})`);
   return merged;
+}
+const stamp = (k) => Number(k.slice(k.lastIndexOf(".") + 1)) || 0;
+// A new backup key: a time not used yet for that kind.
+function backupKey(key, kind) {
+  let t = Date.now();
+  try { while (localStorage.getItem(key + kind + t) != null) t++; } catch (e) { /* the write will say */ }
+  return key + kind + t;
+}
+// Each kind keeps its newest BACKUPS_KEEP copies (never the newest one removed).
+export function pruneBackups(key) {
+  try {
+    for (const kind of BACKUP_KINDS) {
+      const ks = backupKeys(key, kind);
+      for (const k of ks.slice(0, Math.max(0, ks.length - BACKUPS_KEEP))) localStorage.removeItem(k);
+    }
+  } catch (e) { /* nothing removed */ }
+}
+// What 기록 내보내기 adds besides the records: every copy not merged back (".unreadable." and ".other."), as stored, so a
+// portfolio that was set aside travels in the file too. [{ key, text }], newest last.
+export function setAsideCopies(key) {
+  const out = [];
+  try {
+    for (const k of [...backupKeys(key, ".unreadable."), ...backupKeys(key, ".other.")].sort((a, b) => stamp(a) - stamp(b))) {
+      const text = localStorage.getItem(k);
+      if (typeof text === "string") out.push({ key: k.slice(key.length + 1), text });
+    }
+  } catch (e) { return []; }
+  return out;
 }
 
 // { data, writable, locked, problems, restored }: locked = something stored could not be read (all of it, or some
@@ -486,6 +546,7 @@ export function readStore(key = STORE_KEY, today) {
   let raw = null;
   try { raw = localStorage.getItem(key); } catch (e) { return { data: emptyStore(), writable: false, locked: false, problems: [], restored: false }; }
   let out = { data: emptyStore(), writable, locked: false, problems: [], restored: false };
+  lastText.set(key, raw);
   if (raw != null) {
     let r = { readable: false, why: "not JSON" };
     try { r = checkStore(JSON.parse(raw), today); } catch (e) { /* unreadable */ }
@@ -524,9 +585,17 @@ export function writeStore(d, key = STORE_KEY, today) {
     if (cur != null) {
       let ok = false;
       try { ok = validStore(JSON.parse(cur), today); } catch (e) { ok = false; }
-      if (!ok) localStorage.setItem(`${key}.unreadable.${Date.now()}`, cur);   // keep what we could not read
+      if (!ok) localStorage.setItem(backupKey(key, ".unreadable."), cur);   // keep what we could not read
+      // another tab wrote since this one last read or wrote: keep its text; the next read merges it back (restoreMoved)
+      else if (lastText.has(key) && cur !== lastText.get(key)) {
+        localStorage.setItem(backupKey(key, ".other."), cur);
+        console.warn("[v2] another tab had saved records since this one read them: kept, and merged back on the next start");
+      }
     }
-    localStorage.setItem(key, JSON.stringify(next));
+    const text = JSON.stringify(next);
+    localStorage.setItem(key, text);
+    lastText.set(key, text);
+    pruneBackups(key);
     return true;
   } catch (e) {
     console.warn("[v2] could not save records: " + ((e && e.message) || e));
@@ -590,14 +659,17 @@ export function mergeStores(cur, inc) {
   return { v: versionFor(out), ...out };
 }
 
-export function exportText(d, preview = false) {
+// aside: setAsideCopies (records this device kept aside: they travel in the file under "setAside", never read back by
+// 기록 불러오기, so nothing set aside is lost when the device is).
+export function exportText(d, preview = false, aside = null) {
   const v = versionFor(d);
-  return JSON.stringify(preview ? { v, preview: true, decks: d.decks, ...extras(d) } : { v, decks: d.decks, ...extras(d) }, null, 1);
+  const more = Array.isArray(aside) && aside.length ? { setAside: aside } : {};
+  return JSON.stringify(preview ? { v, preview: true, decks: d.decks, ...extras(d), ...more } : { v, decks: d.decks, ...extras(d), ...more }, null, 1);
 }
 
-export function downloadRecords(d, today, prefix = "baepsae-records", preview = false) {
+export function downloadRecords(d, today, prefix = "baepsae-records", preview = false, key = null) {
   try {
-    const blob = new Blob([exportText(d, preview)], { type: "application/json" });
+    const blob = new Blob([exportText(d, preview, key ? setAsideCopies(key) : null)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

@@ -177,9 +177,9 @@ BAD_ROWS = {
     "모르는 한도": (["limits", "cash"], 10),
     "모르는 종류": (["kind"], "other"),
     "가져온 포트폴리오에 기준 없음": (["settings"], KeyError),
-    "점수 6": (["settings", "points", "value"], 6),
-    "준비 중 카드에 점수": (["settings", "points", "divGrowth"], 1),
-    "모르는 깐깐함": (["settings", "strict"], "loose-ish"),
+    "점수가 정수 아님": (["settings", "points", "value"], 2.5),
+    "깐깐함이 이름 아님": (["settings", "strict"], 3),
+    "가져온 줄이 만든 포트폴리오에": (["kind"], KeyError),
 }
 
 
@@ -225,6 +225,15 @@ def test_a_top_level_part_of_a_later_version_is_kept_through_reads_writes_and_im
               f"const m = S.mergeStores(stored(), S.parseImport({json.dumps(json.dumps({'v': 1, 'decks': [BUILT]}, ensure_ascii=False))}, T));"
               "out = { read: r.data.watch, locked: r.locked, written: stored().watch, merged: m.watch, ids: m.decks.map((x) => x.id) };")
     assert got == {"read": later["watch"], "locked": False, "written": later["watch"], "merged": later["watch"], "ids": ["dimp", "d1"]}
+
+
+def test_saved_criteria_stay_readable_when_the_apps_cards_change():
+    """v19.3d review: a saved portfolio never becomes unreadable because a card it has points on became 준비 중, the points
+    limit or the strictness names changed. The evaluation leaves out what it does not know (pf.js activeOf · fitTop)."""
+    d = json.loads(json.dumps(IMPORTED))
+    d["settings"] = {"points": {"value": 6, "divGrowth": 2, "someday": 1}, "strict": "loose-ish"}
+    got = run(f"out = [S.deckProblem({json.dumps(d, ensure_ascii=False)}, T), S.validStore({{ v: 2, decks: [{json.dumps(d, ensure_ascii=False)}] }}, T)];")
+    assert got == [None, True]
 
 
 def test_a_version_2_part_in_a_version_1_store_is_not_read():
@@ -302,7 +311,7 @@ def test_records_an_older_tab_moved_aside_are_put_back_and_merged_once():
               "out = { restored: r.restored, again: again.restored, ids: r.data.decks.map((x) => x.id), v: stored().v, data: r.data,"
               " keys: [...mem.keys()].sort(), notes: Object.keys(r.data.notes).sort(), guide: r.data.guideSeen };")
     assert got["restored"] is True and got["again"] is False             # 한 번만 ('다른 창에서 저장한 내용과 기록을 합쳤어요')
-    assert got["ids"] == ["d1", "dimp", "dnew"] and got["v"] == 2       # 가진 종목 포트폴리오도, 예전 창의 새 포트폴리오도
+    assert got["ids"] == ["d1", "dnew", "dimp"] and got["v"] == 2       # 지금 기록이 앞, 가진 종목 포트폴리오도 · 예전 창의 새 포트폴리오도
     d1 = next(x for x in got["data"]["decks"] if x["id"] == "d1")
     assert d1["confirms"][0]["answer"] == "cut"                          # 예전 창이 남긴 답도
     assert got["notes"] == ["000660", "005930"] and got["guide"] == "2026-11-06"
@@ -339,3 +348,70 @@ def test_the_old_guide_key_is_never_written_again():
     app = open(os.path.join(ROOT, "src", "v2", "app.jsx"), encoding="utf-8").read()
     assert "setItem(key + OLD_GUIDE_SUFFIX" not in src and "localStorage" not in guide.split("// No Korean here")[1]
     assert "markGuideSeen" not in app and "withGuideSeen" in app
+
+# ── v19.3d review: tabs meeting in both directions, newer records never lost, backups kept to the newest few ──
+def with_sale(deck, sale):
+    d = json.loads(json.dumps(deck))
+    d["sales"] = d.get("sales", []) + [sale]
+    return d
+
+
+SALE_B = {"t": "005930", "qty": 1, "price": 191000, "date": "2026-11-07", "ccy": "KRW"}
+
+
+def test_a_newer_v2_store_leads_and_an_older_moved_copy_never_drops_its_records():
+    """An earlier-app tab moved a v2 store aside, then this version wrote again (a new sale): the current store has v2 parts,
+    so the older copy is not merged over it (the sale stays) and the copy stays where it is."""
+    newer = {"v": 2, "decks": [BUILT, with_sale(IMPORTED, SALE_B)]}
+    got = run(f"mem.set(K + '.unreadable.1700000000000', {json.dumps(json.dumps(V2, ensure_ascii=False))});"
+              f"mem.set(K, {json.dumps(json.dumps(newer, ensure_ascii=False))});"
+              "const r = S.readStore(K, T); out = { restored: r.restored, sales: r.data.decks[1].sales.length, keys: [...mem.keys()].sort() };")
+    assert got == {"restored": False, "sales": 3, "keys": ["baepsae2.v1", "baepsae2.v1.unreadable.1700000000000"]}
+
+
+def test_merging_another_copy_keeps_every_record_of_both():
+    """Both copies changed the same portfolio: the current copy leads and every sale, dividend, history entry, imported row
+    and purchase of either one is kept (never dropped)."""
+    cur = with_sale(IMPORTED, SALE_B)
+    other = with_sale(IMPORTED, {"t": "005930", "qty": 2, "price": 192000, "date": "2026-11-06", "ccy": "KRW"})
+    other["divs"].append({"t": "005930", "amount": 500, "ccy": "KRW", "date": "2026-11-06"})
+    other["name"] = "다른 이름"
+    got = run(f"const m = S.mergeTabs({{ v: 2, decks: [{json.dumps(other, ensure_ascii=False)}] }}, {{ v: 2, decks: [{json.dumps(cur, ensure_ascii=False)}] }}, T);"
+              "out = m && { name: m.decks[0].name, sales: m.decks[0].sales.map((x) => x.qty), divs: m.decks[0].divs.length, hist: m.decks[0].history.length,"
+              " imp: m.decks[0].imported.length, valid: S.validStore(m, T) };")
+    assert got == {"name": "포트폴리오", "sales": [0.5, 3, 1, 2], "divs": 2, "hist": 1, "imp": 6, "valid": True}
+
+
+def test_an_open_new_tab_keeps_what_an_old_tab_wrote_meanwhile():
+    """The other direction (v19.6 A.1: test both): this tab read the records, an earlier-app tab then wrote its own (v1),
+    and this tab writes again. The old tab's text is kept before the write and merged back on the next start."""
+    old_tab = {"v": 1, "decks": [BUILT, {**BUILT, "id": "dold", "name": "예전 창에서 만든 포트폴리오"}]}
+    got = run(f"mem.set(K, {json.dumps(json.dumps(V2, ensure_ascii=False))}); const r = S.readStore(K, T);"
+              f"mem.set(K, {json.dumps(json.dumps(old_tab, ensure_ascii=False))});"
+              "const ok = S.writeStore(r.data, K, T); const kept = [...mem.keys()].filter((k) => k.includes('.other.')).length;"
+              "const again = S.readStore(K, T); const third = S.readStore(K, T);"
+              "out = { ok, kept, restored: again.restored, ids: again.data.decks.map((x) => x.id), later: third.restored,"
+              " keys: [...mem.keys()].filter((k) => k !== K).map((k) => k.replace(/[0-9]+$/, 'N')) };")
+    assert got["ok"] and got["kept"] == 1 and got["restored"] is True and got["later"] is False
+    assert got["ids"] == ["d1", "dimp", "dold"]                        # 이 창의 가진 종목 포트폴리오도, 예전 창의 새 포트폴리오도
+    assert got["keys"] == ["baepsae2.v1.restored.N"]
+
+
+def test_the_same_tab_writing_twice_makes_no_copy():
+    got = run(f"S.readStore(K, T); S.writeStore({json.dumps(V2, ensure_ascii=False)}, K, T); S.writeStore({{ v: 2, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}, K, T);"
+              "out = [...mem.keys()];")
+    assert got == ["baepsae2.v1"]
+
+
+def test_backups_keep_the_newest_three_of_each_kind_and_travel_in_the_export():
+    got = run("for (let i = 1; i <= 5; i++) { mem.set(K + '.restored.' + i, 'r' + i); mem.set(K + '.unreadable.' + (10 + i), JSON.stringify({ v: 9, n: i })); }"
+              f"S.writeStore({json.dumps(V2, ensure_ascii=False)}, K, T);"
+              "const keys = [...mem.keys()].filter((k) => k !== K).sort();"
+              "const file = JSON.parse(S.exportText(S.readStore(K, T).data, false, S.setAsideCopies(K)));"
+              "out = { keys, aside: file.setAside, plain: Object.keys(JSON.parse(S.exportText(S.readStore(K, T).data))),"
+              " back: S.parseImport(JSON.stringify(file), T) !== null, backKeys: Object.keys(S.parseImport(JSON.stringify(file), T)) };")
+    assert got["keys"] == ["baepsae2.v1.restored.3", "baepsae2.v1.restored.4", "baepsae2.v1.restored.5",
+                           "baepsae2.v1.unreadable.13", "baepsae2.v1.unreadable.14", "baepsae2.v1.unreadable.15"]
+    assert [a["key"] for a in got["aside"]] == ["unreadable.13", "unreadable.14", "unreadable.15"] and got["aside"][-1]["text"] == '{"v":9,"n":5}'
+    assert "setAside" not in got["plain"]                               # 따로 둔 것이 없으면 파일은 예전 모양 그대로
+    assert got["back"] and "setAside" not in got["backKeys"]            # 불러오기는 따로 둔 것을 기록으로 읽지 않아요

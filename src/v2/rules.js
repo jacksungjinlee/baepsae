@@ -52,7 +52,7 @@
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory } from "./engine.js";
 import { STALE_DAYS, daysSince } from "../data.js";
 import { sameConfirm } from "./store.js";
-import { heldQty as heldOf } from "./held.js";
+import { heldQty as heldOf, heldUnits } from "./held.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
@@ -383,13 +383,17 @@ export function evaluateDeck(deck, ctx) {
   // With a held stock missing from today's data, the weights wait for all held stocks (with or without a band rule).
   const weights = absent.length ? pausedWeights(held, ctx, absent) : deckWeights(held, ctx, targets);
   if (weights.ok) weights.planW = planWeights(deck, targets);
-  const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h)).map((h) => h.t)).size;
+  // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
+  // it is not in unheld and does not make the targets look rebased (v19.6 A.1). Its band status waits for v19.6a.
+  const units = heldUnits(deck);
+  const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
+  const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h) && !soldOut.includes(h.t)).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
   for (const h of deck.holdings || []) {
     if (!h || seen.has(h.t)) continue;
     seen.add(h.t);
-    if (!held.has(h.t)) { unheld.push(h.t); continue; }
+    if (!held.has(h.t)) { if (!soldOut.includes(h.t)) unheld.push(h.t); continue; }
     holdings.push(evaluateHolding(h, deck, ctx, weights, held.get(h.t)));
   }
   const counts = zeroCounts();
@@ -401,7 +405,7 @@ export function evaluateDeck(deck, ctx) {
   }
   return { ok: true, id: deck.id, name: deck.name, pxDate: ctx.pxDate, holdings, counts, todo: counts.broken + counts.check,
     notChecked, notCheckedIds: [...ids], bigMoves: holdings.filter((x) => x.bigMove).map((x) => x.t),
-    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld,
+    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld, soldOut,
     bandPlanned, bandHeld: targets.size, rebased: targets.size > 0 && targets.size < bandPlanned };
 }
 

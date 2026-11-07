@@ -19,10 +19,10 @@ import { Amount } from "../ui/components.jsx";
 import { C, fill, nf, mdText, wonText, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingBlock, Footer, Note, ActionBar, useLayout, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { defaultSettings, activeCards, priceWon, num } from "./engine.js";
+import { defaultSettings, activeCards, num } from "./engine.js";
 import { deckState } from "./deckcalc.js";
 import { StepCards } from "./build.jsx";
-import { findStocks, parsePaste, okQty, draftOk, importedRecord } from "./pf.js";
+import { findStocks, parsePaste, okQty, draftOk, importedRecord, usdOf, wonPrice, marketKey } from "./pf.js";
 import { qtyText } from "./pfview.jsx";
 import { Report } from "./report.jsx";
 import { withDeck, writeStore } from "./store.js";
@@ -95,15 +95,16 @@ function HoldingsStep({ load, importer, setImporter, go, onExit }) {
   const rows = drafts.map((d) => {
     const s = byT.get(d.t) || null;
     const r = readDraft(d, s);
-    const px = s ? priceWon(s, fx) : null;
+    const px = s ? wonPrice(s, fx) : null;
     const value = !(px > 0) ? null : d.mode === "amount" ? r.amountWon : r.qty != null ? r.qty * px : null;
     return { d, s, r, value: value > 0 ? value : null };
   });
   const ready = rows.filter((x) => x.value != null);
   const total = ready.reduce((a, x) => a + x.value, 0);
   const shades = holdingShades(rows.map((x) => (x.value != null && total > 0 ? x.value / total : null)));
-  const allOk = rows.length > 0 && rows.every((x) => x.s && draftOk({ mode: x.d.mode, qty: x.r.qty, amountWon: x.r.amountWon }, x.s) && !x.r.badAvg);
-  const us = rows.some((x) => x.s && x.s.cls === "us");
+  // every row must make a record store.js accepts (draftOk mirrors its checks), so 매일 점검 시작하기 can never be refused
+  const allOk = rows.length > 0 && rows.every((x) => x.s && draftOk({ mode: x.d.mode, qty: x.r.qty, amountWon: x.r.amountWon }, x.s, fx) && !x.r.badAvg);
+  const us = rows.some((x) => usdOf(x.s));
   const md = mdText(load.data.pxDate);
   const usMd = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   return (
@@ -151,9 +152,9 @@ function mergeLines(drafts, lines) {
   for (const l of lines) {
     const cur = out.find((d) => d.t === l.s.t);
     if (!cur) { out.push({ t: l.s.t, mode: "qty", qty: String(l.qty), amount: "", avg: "", avgOpen: false }); continue; }
+    if (cur.mode !== "qty") continue;          // never reached: PastePanel marks such a line "amount" and does not pass it
     const before = Number(clean(cur.qty));
-    if (cur.mode === "qty" && NUM.test(clean(cur.qty))) cur.qty = String(Math.round((before + l.qty) * 10000) / 10000);
-    else if (cur.mode === "qty") cur.qty = String(l.qty);
+    cur.qty = NUM.test(clean(cur.qty)) ? String(Math.round((before + l.qty) * 10000) / 10000) : String(l.qty);
   }
   return out;
 }
@@ -195,7 +196,8 @@ function Search({ q, setQ, results, drafts, onAdd }) {
 }
 
 // The market a row shows: the data has no exchange name, so 한국 / 미국 (Part F: "otherwise 한국 / 미국").
-const marketOf = (s) => C.pick.market[s && s.cls === "us" ? "us" : "kr"];
+// v19.3d review: the currency decides (pf.js marketKey): 379800 KODEX 미국S&P500 is a KRX listing in won (한국).
+const marketOf = (s) => C.pick.market[marketKey(s)];
 
 function ModeButton({ icon, title, sub, on, onClick, data }) {
   return (
@@ -214,14 +216,16 @@ function ModeButton({ icon, title, sub, on, onClick, data }) {
 }
 
 // 붙여 넣기: the text, then what was read (nothing is added until 이대로 넣기).
-function PastePanel({ load, paste, setPaste, onConfirm }) {
+function PastePanel({ load, paste, setPaste, onConfirm, drafts = [] }) {
   const parsed = useMemo(() => parsePaste(paste.text, load.data.stocks, around(C.plan.shares, "n")[1]), [paste.text, load.data.stocks]);
   // a line where the user picked one of several stocks: read again with that stock (its own quantity rule)
   const lines = parsed.map((l) => {
     if (l.st !== "pick" || !paste.picks[l.line]) return l;
     const s = load.byT.get(paste.picks[l.line]);
     return s && l.qty != null && okQty(l.qty, s) ? { ...l, st: "ok", s } : { ...l, st: "noQty", s };
-  });
+  }).map((l) => (l.st === "ok" && drafts.some((d) => d.t === l.s.t && d.mode === "amount") ? { ...l, st: "amount" } : l));
+  // "amount": the stock is already listed by amount, and a quantity cannot be added to an amount. The line is shown as not
+  // used (marked, with the line in grey) and 이대로 넣기 leaves it out; its own sentence waits for Jack's wording.
   const ok = lines.filter((l) => l.st === "ok");
   return (
     <Card data-ui-v2="paste-panel">
@@ -254,6 +258,18 @@ function PasteLine({ l, onPick }) {
         <CoMark s={l.s} size={SPACE(7)} />
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0 })}>{l.s.nk}</span>
         <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{fill(C.plan.shares, { n: qtyText(l.qty) })}</span>
+      </div>
+    );
+  }
+  if (l.st === "amount") {
+    return (
+      <div data-paste-line={l.line} data-st="amount" style={{ ...row, display: "flex", alignItems: "center", gap: SPACE(2) }}>
+        <span aria-hidden="true" style={{ display: "flex" }}><Icon name="warning" size={18} tone="on" /></span>
+        <CoMark s={l.s} size={SPACE(7)} />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.text2, { display: "block", textDecoration: "line-through" })}>{l.s.nk}</span>
+          <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block", wordBreak: "break-all" })}>{l.text}</span>
+        </span>
       </div>
     );
   }
@@ -298,7 +314,7 @@ const around = (tpl, slot) => { const i = tpl.indexOf(`{${slot}}`); return i < 0
 function DraftRow({ x, shade, total, onChange, onRemove }) {
   const { d, s, r, value } = x;
   const name = s ? s.nk : d.t;
-  const usd = s && s.cls === "us";
+  const usd = usdOf(s);
   // Each word next to a field is a whole approved piece: 수량 (주) before the quantity, 만원 after the amount, 평균 단가 before
   // the 평균 단가 (US: "$" in front; the won amount needs no unit word of its own).
   const [ab] = around(C.imp.avg, "price");
@@ -309,7 +325,7 @@ function DraftRow({ x, shade, total, onChange, onRemove }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap" }}>
           <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{name}</span>
-          <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{marketOf(s)}</span>
+          <span data-ui-v2="import-market" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{marketOf(s)}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(1) }}>
           {d.mode === "amount"
@@ -408,8 +424,11 @@ function ReportStep({ load, store, setStoreData, importer, go, onSaved }) {
   // 매일 점검 시작하기: the portfolio is checked (store.js withDeck names a refused one in the console) and written here,
   // so the screen moves on only once it is really saved.
   const start = () => {
+    // the rows were checked on the first step (draftOk mirrors store.js), so withDeck refusing is not expected; if it ever
+    // does, the console names the row and the screen asks to check the inputs (never the storage line, which is not why)
     const next = withDeck(store.data, deck, today);
-    if (!next || !store.writable || !writeStore(next, store.key, today)) { setFail(true); return; }
+    if (!next) { setFail("input"); return; }
+    if (!store.writable || !writeStore(next, store.key, today)) { setFail("storage"); return; }
     setFail(false);
     setStoreData(next, true);
     onSaved(deck);
@@ -419,7 +438,8 @@ function ReportStep({ load, store, setStoreData, importer, go, onSaved }) {
       <AppBar onBack={() => go(1)} backLabel={C.build.prevStep} />
       <StepBars step={2} />
       <Report load={load} deck={deck} />
-      {fail && <Note tone="watch">{C.store.unavailable}</Note>}
+      {fail === "storage" && <Note tone="watch" data-ui-v2="report-fail">{C.store.unavailable}</Note>}
+      {fail === "input" && <Note tone="watch" data-ui-v2="report-fail">{C.plan.badInput}</Note>}
       <div data-ui-v2="report-buttons" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE(2), marginTop: SPACE(4) }}>
         <button type="button" data-ui-v2="report-again" onClick={() => go(0)}
           style={{ ...tap, minHeight: TOUCH + SPACE(1), borderRadius: RADIUS.sm, border: `1px solid ${COLOR.border}`, background: COLOR.surface, ...tx(SIZE.sm, WEIGHT.bold, COLOR.ink) }}>{C.rpt.again}</button>

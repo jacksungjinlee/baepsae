@@ -4893,7 +4893,7 @@ def scene_v193d(R, files, width):
 
     def paste():
         page.locator('[data-ui-v2="import-mode"][data-mode="paste"]').click()
-        lines = ["SK하이닉스 2", "없는회사 5", "삼성전자 10 71,500 715,000", "삼성 3"]
+        lines = ["SK하이닉스 2", "없는회사 5", "삼성전자 10 71,500 715,000", "삼성 3", "현대차 3"]
         text = "\n".join(lines)
         R.names = sorted(set(R.names) | {text, *lines}, key=len, reverse=True)   # 사용자가 붙여 넣은 글이에요 (문구 파일 밖)
         page.locator('[data-ui-v2="paste-panel"] textarea').fill(text)
@@ -4903,7 +4903,7 @@ def scene_v193d(R, files, width):
         assert page.locator("[data-import-row]").count() == 4             # 확인 전에는 아무것도 넣지 않아요
         st = {page.locator("[data-paste-line]").nth(i).get_attribute("data-paste-line"): page.locator("[data-paste-line]").nth(i).get_attribute("data-st")
               for i in range(page.locator("[data-paste-line]").count())}
-        assert st == {"1": "ok", "2": "noStock", "3": "noQty", "4": "pick"}, st
+        assert st == {"1": "ok", "2": "noStock", "3": "noQty", "4": "pick", "5": "amount"}, st      # 금액으로 넣은 현대차: 쓰지 않는 줄로 보여요
         assert fillp(C["imp"]["noStockLine"], n=2) in prev.inner_text() and "없는회사 5" in prev.inner_text()   # 그 줄을 회색으로
         assert fillp(C["imp"]["noQtyLine"], n=3) in prev.inner_text()
         assert fillp(C["imp"]["pick"], q="삼성") in prev.inner_text() and page.locator('[data-paste-line="4"] [data-pick]').count() >= 2
@@ -4912,6 +4912,8 @@ def scene_v193d(R, files, width):
         page.locator('[data-ui-v2="paste-confirm"]').click()
         page.locator('[data-import-row="000660"]').wait_for(state="visible")
         assert page.locator("[data-import-row]").count() == 5 and page.locator('[data-import-row="000660"] input[data-ui-v2="import-qty"]').input_value() == "2"
+        assert page.locator('[data-import-row="005380"]').get_attribute("data-mode") == "amount"
+        assert page.locator('[data-import-row="005380"] input[data-ui-v2="import-amount"]').input_value() == "500"     # 금액 줄은 그대로
         assert page.locator('[data-ui-v2="paste-panel"]').count() == 0
     R.check(page, S, "붙여 넣기: 미리 보기 · 종목을 못 찾은 줄 · 수량이 둘 이상인 줄 · 여러 종목에 맞는 이름(고르기) · 이대로 넣기 뒤에만 들어가요", paste)
 
@@ -4992,6 +4994,87 @@ def scene_v193d(R, files, width):
     srv.shutdown()
 
 
+def scene_v193d_more(R, files, width=390):
+    """v19.3d review: 점검 on stale data opens with '데이터가 {n}일째 갱신되지 않았어요. {date} 종가 기준 결과예요.' · 379800 KODEX
+    미국S&P500 (cls "us" but a KRX listing in won) is 한국, whole shares, valued without the exchange rate · #portfolio/import with
+    data.json missing shows the load-failure message · records an earlier-app tab moved aside are merged back with
+    '다른 창에서 저장한 내용과 기록을 합쳤어요. 기록을 한 번 확인해 주세요.' on 포트폴리오 and 홈."""
+    S = f"v19.3d 더 {width}"
+    stale = clone(files)
+    for n in DATA_FILES:
+        stale[n]["publishedAt"] = now_kst(days_ago=6)
+    by = {s["t"]: s for s in stale["data.json"]["stocks"]}
+    srv, ctx, page, base = R.open(build_site(stale), width, path="/app.html?dev=1#portfolio/import")
+
+    def stale_report():
+        page.locator('[data-ui-v2="import-search"]').wait_for(state="visible")
+        for t, q in (("005930", "10"), ("379800", "10")):
+            page.locator('[data-ui-v2="import-search"] input').fill(t)
+            page.locator(f'[data-import-result="{t}"] button').click()
+            page.locator(f'[data-import-row="{t}"] input[data-ui-v2="import-qty"]').fill(q)
+        row = page.locator('[data-import-row="379800"]')
+        assert row.locator('[data-ui-v2="import-market"]').inner_text() == C["pick"]["market"]["kr"], row.inner_text()   # 한국 상장
+        assert row.locator('[data-ui-v2="import-value"]').inner_text() == won_text(10 * by["379800"]["price"])     # 환율을 곱하지 않아요
+        row.locator('input[data-ui-v2="import-qty"]').fill("1.5")                                              # 원화 상장: 정수 주식만
+        assert row.locator('input[data-ui-v2="import-qty"]').get_attribute("aria-invalid") == "true"
+        row.locator('input[data-ui-v2="import-qty"]').fill("10")
+        action(page).click()
+        page.locator('[data-card="value"] [data-ui-v2="card-inc"]').click()
+        action(page).click()
+        note = page.locator('[data-ui-v2="report-stale"]')
+        note.wait_for(state="visible")
+        md = f"{int(stale['data.json']['pxDate'][5:7])}월 {int(stale['data.json']['pxDate'][8:])}일"
+        assert note.inner_text() == fillp(C["rpt"]["stale"], n=6, date=md), note.inner_text()
+        floor_ok(page, "점검 (멈춘 데이터)")
+        R.collect(page)
+        page.locator('[data-ui-v2="report-start"]').click()
+        at(page, "portfolio")
+        rec = {r["t"]: r for r in page.evaluate(STORED_JS)["decks"][0]["imported"]}
+        assert rec["379800"]["ccy"] == "KRW" and rec["379800"]["qty"] == 10 and rec["005930"]["ccy"] == "KRW"
+    R.check(page, S, "멈춘 데이터의 점검: 첫 줄이 '데이터가 {n}일째 갱신되지 않았어요…' · 379800 은 한국 · 정수 · 원화 (환율 곱하지 않음)", stale_report)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), width, path="/app.html?dev=1#portfolio/import")
+
+    def import_fail():
+        page.locator('[data-ui-v2="load-fail"]').wait_for(state="visible")
+        assert C["app"]["loadFail"] in page.locator('[data-ui-v2="load-fail"]').inner_text()
+        assert page.locator('[data-ui-v2="import-search"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "#portfolio/import 에서 data.json 을 못 읽으면 불러오기 실패 문구 (빈 화면 · 예시 없음)", import_fail)
+    ctx.close()
+    srv.shutdown()
+
+    pxd = files["data.json"]["pxDate"]
+    moved = {"v": 2, "decks": [{"id": "dmoved", "name": "포트폴리오", "createdAt": pxd, "kind": "imported",
+                                "settings": {"points": {"value": 2}, "strict": "normal"},
+                                "holdings": [{"t": "005930", "nk": "삼성전자", "cls": "kr"}], "purchases": [],
+                                "imported": [{"t": "005930", "nk": "삼성전자", "ccy": "KRW", "qty": 3}]}]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1.unreadable.1700000000000', {json.dumps(json.dumps(moved, ensure_ascii=False))});"
+            " localStorage.setItem('baepsae2.v1', JSON.stringify({ v: 1, decks: [] })); })();")
+    srv, ctx, page, base = R.open(build_site(files), width, init=seed, path="/app.html?dev=1#portfolio")
+
+    def merged_notice():
+        at(page, "portfolio")
+        note = page.locator('[data-ui-v2="store-merged"]')
+        note.wait_for(state="visible")
+        assert note.inner_text() == C["store"]["merged"]
+        assert page.locator('[data-deck-id="dmoved"][data-kind="imported"]').count() == 1
+        stored = page.evaluate(STORED_JS)
+        assert stored["v"] == 2 and [d["id"] for d in stored["decks"]] == ["dmoved"]
+        assert page.evaluate("() => Object.keys(localStorage).filter((k) => k.includes('.restored.')).length") == 1
+        R.collect(page)
+        tab(page, TABS["home"])
+        at(page, "home")
+        page.locator('[data-ui-v2="store-merged"]').wait_for(state="visible")
+        R.collect(page)
+    R.check(page, S, "예전 앱 창이 옮겨 둔 2판 기록: 되돌려 합치고 '다른 창에서 저장한 내용과 기록을 합쳤어요…' (포트폴리오 · 홈)", merged_notice)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -5038,7 +5121,8 @@ def main():
                    lambda: scene_v193c_narrow(R, files), lambda: scene_v193c_empty(R, files),          # v19.3c 320px · 기준 전의 수 0
                    lambda: scene_v193c_landscape(R, files, (844, 390)), lambda: scene_v193c_landscape(R, files, (568, 320)),   # 가로 휴대폰
                    lambda: scene_v193c_offstep(R, files),                                                  # 안내 밖 단계 이동
-                   lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280)):          # v19.3d 가진 종목 넣기 → 점검
+                   lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
+                   lambda: scene_v193d_more(R, files)):                                                    # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
             try:
                 fn()
             except Exception as e:

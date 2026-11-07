@@ -39,6 +39,19 @@ export function purchaseWon(p, planFx) {
 export function deckMoney(deck, de, ctx) {
   if (!de || !de.ok || !ctx) return { ok: false, why: "day" };
   if (de.imported) return importedMoney(deck, ctx);
+  const m = builtMoney(deck, de, ctx);
+  // v19.3d: a built portfolio with a sale (or an imported row) holds fewer or other shares than its purchases paid for;
+  // until v19.6a's lot maths, 원금 and the return are unknown (shown as nothing, never a wrong number).
+  if (!lotsPending(deck)) return m;
+  const absent = m.absent ? { absent: m.absent.map((a) => ({ ...a, cost: null })) } : {};
+  if (!m.ok) return { ...m, ...absent };
+  const per = Object.fromEntries(Object.entries(m.per).map(([t, r]) => [t, { ...r, cost: null, ret: null }]));
+  return { ...m, ...absent, cost: null, gain: null, ret: null, per, lots: true };
+}
+// Records the purchases-only maths cannot price yet (v19.6a): a sale, or an imported row on a built portfolio.
+export const lotsPending = (deck) => !!deck && ((Array.isArray(deck.sales) && deck.sales.length > 0) || (Array.isArray(deck.imported) && deck.imported.length > 0));
+
+function builtMoney(deck, de, ctx) {
   const gone = new Set(de.absent || []);
   const absentOf = () => de.holdings.filter((x) => gone.has(x.t)).map((x) => ({ t: x.t, nk: x.nk, cls: x.cls, cost: heldCost(deck, x.t) }));
   // the missing stocks are named even when the totals cannot be made (never silent)
@@ -151,6 +164,7 @@ export function validRows(idx) {
 }
 
 export function indexSince(deck, idx, pxDate) {
+  if (lotsPending(deck)) return { ok: false, why: "lots" };   // v19.3d: sales need v19.6a's lot maths (the same money in KOSPI)
   const rows = validRows(idx);
   if (!rows) return { ok: false, why: "noIndex" };
   const end = rows[rows.length - 1];

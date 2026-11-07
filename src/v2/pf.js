@@ -16,18 +16,27 @@
 //   count in value, weights and the concentration rules, are left out of the 기준 averages, and are named.
 // - Nothing is invented: no 평균 단가 is filled in, no quantity is guessed from a partial name, no number for a missing input.
 import {
-  num, CARDS, NA, universe, cardRaw, percentileScores, strictTop, hasGroup, priceWon, annualDividend, fyOf, isStockLike,
+  num, CARDS, NA, universe, cardRaw, percentileScores, strictTop, hasGroup, annualDividend, fyOf, isStockLike,
 } from "./engine.js";
 import { R2022 } from "./y2022.js";
-import { heldQty, byAmount } from "./held.js";
+import { heldQty, byAmount, importedUnits } from "./held.js";
 import { dayState } from "./rules.js";
+import { warnings } from "./warn.js";
 
 export const LIMITS = { stock: 30, ind: 35 };          // Part G defaults (%), editable per portfolio (store.js limits)
 export const LOOSE_TOP = 50;                            // 넉넉하게 has no cut: the grouping and the 내 기준 rule use 50%
 export const fitTop = (strict) => strictTop(strict) ?? LOOSE_TOP;
-// The four 재무 경고 checks (the same list as company.js WARN_CHECKS; a test keeps them equal): 유동비율 · 이자보상배율 ·
-// 3년 연속 적자 · 자본잠식.
-export const PF_WARN_CHECKS = ["cr", "icr", "l3", "imp"];
+// Currency and market of a holding (v19.3d review): from the data's own currency, never from cls. data.json lists a
+// KRX-listed fund on the S&P 500 (379800 KODEX 미국S&P500) with cls "us" but priced in won (no ccy): it is a Korean
+// listing in won, whole shares. Only s.ccy "USD" is a dollar price.
+export const usdOf = (s) => !!s && s.ccy === "USD";
+export const marketKey = (s) => (usdOf(s) ? "us" : "kr");
+export const wonPrice = (s, fx) => {
+  const p = num(s && s.price);
+  if (!(p > 0)) return null;
+  if (!usdOf(s)) return p;
+  return num(fx) > 0 ? p * fx : null;
+};
 export const BETA_SE_MAX = 0.5;                         // Part O.1: a beta error above this is not believed (PR #50's gate)
 const EPS = 1e-9;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -68,9 +77,9 @@ export function pfRows(deck, ctx) {
   for (const [t, qty] of heldQty(deck || {})) {
     const h = names.get(t) || {};
     const s = byT.get(t) || null;
-    const px = s ? priceWon(s, ctx && ctx.fx) : null;
+    const px = s ? wonPrice(s, ctx && ctx.fx) : null;
     const imp = ((deck && deck.imported) || []).find((r) => r && r.t === t) || null;
-    const row = { key: t, t, nk: (s && s.nk) || h.nk || t, cls: (s && s.cls) || h.cls || null, s, qty, px: px > 0 ? px : null,
+    const row = { key: t, t, nk: (s && s.nk) || h.nk || t, cls: (s && s.cls) || h.cls || null, usd: s ? usdOf(s) : !!imp && imp.ccy === "USD", s, qty, px: px > 0 ? px : null,
       value: px > 0 ? qty * px : null, w: null, absent: !s, frozen: false, date: null, byAmount: byAmount(imp), ccy: imp ? imp.ccy : null };
     if (!s) absent.push(t); else if (!(px > 0)) missing.push(t);
     rows.push(row);
@@ -163,15 +172,14 @@ export function dotOf(cell) {
 }
 
 // ---------------- 재무 경고 (one holding) ----------------
-// Korean companies only: "flag" when a check fired, "clear" when all four checks ran (or don't apply: financial
-// companies skip two) and none fired, else "unknown" (US holdings, funds, missing checks, not in the data).
+// The company page's own function (warn.js warnings), so the two screens always agree: "flag" when a check fired, "clear"
+// only when the company page says 재무 경고 신호는 없어요 (every check ran or does not apply), else "unknown" (US holdings,
+// funds, a check that did not run: the company page's partial line is not a full clear either).
 export function warnOf(s, co) {
-  if (!s || s.cls !== "kr" || s.etf === true || s.fund || !co) return "unknown";
-  const fl = co.fl && typeof co.fl === "object" ? co.fl : {};
-  if (num(fl.cr) != null || num(fl.icr) != null || fl.l3 || fl.imp) return "flag";
-  const ran = Array.isArray(co.flRan) ? co.flRan : null;
-  const na = Array.isArray(co.flNa) ? co.flNa : [];
-  return ran && PF_WARN_CHECKS.every((c) => ran.includes(c) || na.includes(c)) ? "clear" : "unknown";
+  if (!s || s.etf === true || s.fund) return "unknown";
+  const w = warnings(s, co);
+  if (w.flags && w.flags.length) return "flag";
+  return w.allRan ? "clear" : "unknown";
 }
 
 // ---------------- the four portfolio rules ----------------
@@ -310,7 +318,7 @@ export function dividendYear(view, fx, coByT) {
   const rows = view.rows.filter((r) => r.s && r.qty > 0 && r.value > 0).map((r) => ({ s: r.s, shares: r.qty, cost: r.value }));
   const d = annualDividend(rows, fx, coByT);
   const extra = view.rows.filter((r) => !r.s || !(r.value > 0)).length;
-  return { ...d, unknown: d.unknown + extra, us: rows.some((r) => r.s.cls === "us") };
+  return { ...d, unknown: d.unknown + extra, us: rows.some((r) => usdOf(r.s)) };
 }
 
 // ---------------- 비중을 바꿔 보면 (Part G 7) ----------------
@@ -331,7 +339,7 @@ export function moveWeight(weights, key, w) {
 export function reportDates(view, ctx, coByT) {
   const ys = new Set();
   for (const r of view.rows) if (r.s && r.s.cls === "kr" && isStockLike(r.s)) { const y = fyOf(r.s, coByT ? coByT.get(r.t) || null : null); if (y != null) ys.add(y); }
-  return { pxDate: ctx.pxDate || null, krYear: ys.size === 1 ? [...ys][0] : null, us: view.rows.some((r) => r.cls === "us") };
+  return { pxDate: ctx.pxDate || null, krYear: ys.size === 1 ? [...ys][0] : null, us: view.rows.some((r) => r.usd) };
 }
 
 // ---------------- 가진 종목 넣기: search and paste ----------------
@@ -431,10 +439,10 @@ function qtyFrom(rest, s) {
   if (!q || !(q.v > 0)) return null;
   return okQty(q.v, s) ? q.v : null;
 }
-// Korea (and the Korean funds): whole shares. US: up to 4 decimals.
+// A won-priced listing (Korea, the Korean funds, 379800 too): whole shares. A dollar listing: up to 4 decimals.
 export function okQty(v, s) {
   if (!Number.isFinite(v) || !(v > 0)) return false;
-  if (s && s.cls !== "us") return Number.isInteger(v);
+  if (s && !usdOf(s)) return Number.isInteger(v);
   return Math.abs(v * 10000 - Math.round(v * 10000)) < 1e-6;
 }
 
@@ -447,12 +455,12 @@ export function importedRecord({ drafts, load, settings, id, name, today }) {
   for (const d of drafts) {
     const s = load.byT.get(d.t);
     if (!s || holdings.some((h) => h.t === d.t)) continue;
-    const ccy = s.cls === "us" ? "USD" : "KRW";
+    const ccy = usdOf(s) ? "USD" : "KRW";
     holdings.push({ t: s.t, nk: s.nk, cls: s.cls, ind: hasGroup(s) ? s.ind : null });
     const scored = (s.cls === "kr" || s.cls === "us") && inUni(load.data.stocks, s) && isStockLike(s);
     const base = { t: s.t, nk: s.nk, ccy, ...(num(d.avg) > 0 ? { avg: d.avg } : {}), ...(scored ? {} : { unscored: true }) };
     if (d.mode === "amount") {
-      const date = s.cls === "us" ? (DATE.test(s.pxd || "") ? s.pxd : load.data.usPxDate) : load.data.pxDate;
+      const date = usdOf(s) ? (DATE.test(s.pxd || "") ? s.pxd : load.data.usPxDate) : load.data.pxDate;
       imported.push({ ...base, amountWon: d.amountWon, close: s.price, date, ...(ccy === "USD" ? { fx } : {}) });
     } else imported.push({ ...base, qty: d.qty });
   }
@@ -461,15 +469,23 @@ export function importedRecord({ drafts, load, settings, id, name, today }) {
     settings: { points: { ...(st.points || {}) }, strict: st.strict || "normal" }, holdings, purchases: [], imported };
 }
 
-// A draft is ready when its quantity (or amount) is valid and the stock has today's price.
-export function draftOk(d, s) {
+// A draft is ready only when the record it makes passes store.js: a valid quantity, or an amount worth at least
+// 1/10,000 share at today's close (a dollar listing also needs today's rate), and today's price.
+export function draftOk(d, s, fx = null) {
   if (!s || !(num(s.price) > 0)) return false;
-  if (d.mode === "amount") return num(d.amountWon) > 0;
+  if (d.mode === "amount") {
+    if (!(num(d.amountWon) > 0)) return false;
+    const usd = usdOf(s);
+    if (usd && !(num(fx) > 0)) return false;
+    return importedUnits({ t: s.t, amountWon: d.amountWon, close: s.price, ccy: usd ? "USD" : "KRW", ...(usd ? { fx } : {}) }) != null;
+  }
   return okQty(num(d.qty), s);
 }
 
 // ---------------- state of the whole store's imported portfolios (홈 · 포트폴리오) ----------------
 export const isImported = (deck) => !!deck && deck.kind === "imported";
+// A 가진 종목 portfolio holding a dollar listing today (for "미국 종목은 현지 기준 {md} 종가예요.").
+export const usHeld = (deck, load) => isImported(deck) && !!load && load.status === "ok" && [...heldQty(deck).keys()].some((t) => usdOf(load.byT.get(t)));
 // Only for tests and the console: the portfolio rules' one-line summary.
 export const summary = (st) => (st && st.ok ? `${st.kept}/${st.checked} kept, ${st.unchecked} unchecked` : `not checked (${st && st.why})`);
 export { dayState };

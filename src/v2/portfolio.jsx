@@ -24,7 +24,7 @@ import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
 import { isCompany } from "./stocklist.js";
 import { heldQty } from "./held.js";
-import { pfState, isImported } from "./pf.js";
+import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 
 // The held quantity (held.js: the one rule every screen uses) and the 평균 단가 of the 샀어요 records.
@@ -57,7 +57,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
   // Part E: values use US prices at their own close date; say so when it differs from the Korean one.
-  const us = ev.ok && ev.decks.some((de) => de.ok && de.holdings.some((x) => x.cls === "us"));
+  // v19.3d: a 가진 종목 portfolio has no per-stock rows in the daily check, so its dollar holdings are looked up here
+  const us = ev.ok && (ev.decks.some((de) => de.ok && de.holdings.some((x) => x.cls === "us")) || decks.some((d) => usHeld(d, load)));
   const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 포트폴리오에서 빼기: only the stock missing from today's data, only from this portfolio, only when tapped.
   const onRemove = (deckId, t) => {
@@ -155,7 +156,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         {store.locked && C.store.locked && <Note tone="watch" data-ui-v2="store-locked">{C.store.locked}</Note>}
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE(2), marginTop: store.writable ? 0 : SPACE(3) }}>
-          <Button kind="secondary" onClick={() => downloadRecords(store.data, todayKst(), store.exportPrefix, store.preview)}>{C.store.export}</Button>
+          <Button kind="secondary" onClick={() => downloadRecords(store.data, todayKst(), store.exportPrefix, store.preview, store.key)}>{C.store.export}</Button>
           <Button kind="secondary" disabled={!store.writable} onClick={() => fileRef.current && fileRef.current.click()}>{C.store.import}</Button>
           <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImport} style={{ display: "none" }} data-ui-v2="import-file" />
         </div>

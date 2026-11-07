@@ -42,7 +42,7 @@ import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
-import { pfState, isImported } from "./pf.js";
+import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
@@ -278,7 +278,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   // v19.3d (v19.3 F.1): portfolios made with 가진 종목 넣기 have no per-stock rules: their own strip shows the four
   // portfolio rules (pf.js), never 확인 필요 for every stock, and they take no part in the verdict above.
   const imported = ev.ok ? decks.filter(isImported) : [];
-  const us = held.some((de) => de.holdings.some((x) => x.cls === "us"));
+  const us = held.some((de) => de.holdings.some((x) => x.cls === "us")) || (ev.ok && decks.some((d) => usHeld(d, load)));   // v19.3d: 가진 종목 too
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   if (welcome) {
     return (

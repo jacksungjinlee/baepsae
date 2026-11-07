@@ -72,6 +72,7 @@ function Headline({ st, deck, load }) {
   const d = reportDates(st.view, { pxDate: load.data.pxDate }, load.coByT);
   const parts = C.rpt.dates.split(" · ");
   const md = mdText(d.pxDate);
+  const usMd = load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   const dateLine = [md && fill(parts[0], { date: md }), d.krYear != null && fill(parts[1], { year: d.krYear })].filter(Boolean);
   const s = st.stats;
   const slots = CARDS.filter((c) => !c.pending).flatMap((c) => {
@@ -84,6 +85,8 @@ function Headline({ st, deck, load }) {
       {dateLine.length > 0 && <div data-ui-v2="report-dates" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
         {dateLine.map((x, i) => <span key={i}>{i ? " · " : ""}{x}</span>)}
       </div>}
+      {/* the US close when it is another day (the approved app.usClose line); "미국 {fy} 회계연도" waits for v19.2's SEC data */}
+      {d.us && usMd && <div data-ui-v2="report-us-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.usClose, { md: usMd })}</div>}
       <h2 data-ui-v2="report-headline" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), lineHeight: 1.35, textWrap: "balance" })}>
         {fill(C.rpt.head, { a: s.fit.length, b: s.less.length })}
       </h2>
@@ -217,6 +220,14 @@ function ByStock({ st }) {
 
 // ---------------- 4 ----------------
 const TM_W = 320, TM_H = 200;
+// The text colour on a treemap block: the first of white, navy ink and black that reads at 4.5:1 or more on that shade
+// (#7C889C needs black: white 3.6:1, navy 4.0:1).
+const lum = (hex) => {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+};
+const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+export const textOn = (shade) => [COLOR.surface, COLOR.ink, "#000000"].find((c) => ratio(c, shade) >= 4.5) || "#000000";
 function Industry({ st }) {
   const v = st.view;
   const stock = st.rules.find((r) => r.id === "stock"), ind = st.rules.find((r) => r.id === "ind");
@@ -231,14 +242,14 @@ function Industry({ st }) {
         <div data-ui-v2="treemap" style={{ position: "relative", width: "100%", aspectRatio: `${TM_W} / ${TM_H}`, marginTop: SPACE(3), borderRadius: RADIUS.md, overflow: "hidden" }}>
           {rects.map((x) => {
             const { r, shade } = byKey.get(x.key);
-            const light = HOLDING_SHADES.indexOf(shade) >= 3;
+            const ink = textOn(shade);
             const big = x.w >= 64 && x.h >= 40;
             return (
               <div key={x.key} data-tm={x.key} title={r.nk} style={{ position: "absolute", left: `${(x.x / TM_W) * 100}%`, top: `${(x.y / TM_H) * 100}%`,
                 width: `${(x.w / TM_W) * 100}%`, height: `${(x.h / TM_H) * 100}%`, background: shade, boxShadow: `inset 0 0 0 1px ${COLOR.surface}`, padding: SPACE(1) + 2,
                 boxSizing: "border-box", overflow: "hidden" }}>
-                {big && <span style={tx(SIZE.sm, WEIGHT.heavy, light ? COLOR.ink : COLOR.surface, { display: "block", lineHeight: 1.2 })}>{pct0(r.w)}%</span>}
-                {big && <span style={tx(SIZE.xs, WEIGHT.semi, light ? COLOR.ink : COLOR.surface, { display: "block", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{r.nk}</span>}
+                {big && <span style={tx(SIZE.sm, WEIGHT.heavy, ink, { display: "block", lineHeight: 1.2 })}>{pct0(r.w)}%</span>}
+                {big && <span style={tx(SIZE.xs, WEIGHT.semi, ink, { display: "block", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{r.nk}</span>}
               </div>
             );
           })}
