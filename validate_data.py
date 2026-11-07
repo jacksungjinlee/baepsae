@@ -46,6 +46,13 @@ PUBLISHED_MAX_HOURS = 12  # 발행 시각(publishedAt)은 관문 실행 12시간
 NORMAL_CLOSE = dt.time(15, 30)            # 보통 날 KRX 정규장 마감
 FINAL_AFTER = dt.timedelta(minutes=30)    # 마감 30분 뒤 커밋부터 최종본 (보통 날 16:00 — v17.5 와 같아요)
 SPECIAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "krx_special_sessions.csv")
+# v19.1c (Jack, 2026-11-07): 휴장일 표 · 다음 발행 예정일 · 늦음 경고 시각. fetch_data.py 와 같은 표를 따로 읽고 따로 계산해요.
+HOLIDAYS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_holidays.csv")
+HOL_COLS = ["date", "market", "name", "source"]
+LAST_RETRY = dt.time(14, 47)              # update-data.yml 의 그날 마지막 정해진 시각 실행 (월~토 14:47 KST)
+STALE_GRACE_H = 2                         # GitHub 정해진 시각 실행이 늦게 시작하는 시간 + 실행 시간
+HOL_COVER_WARN_DAYS = 45                  # 표가 오늘부터 이만큼 앞을 덮지 못하면 경고 (다음 해 줄을 넣을 때)
+HOL_CHECK_DAYS = 90                       # 지수 일봉과 표를 맞춰 보는 지난 날 수 (봉 없는 평일 = 표의 휴장일)
 SPECIAL_COLS = ["date", "open", "close", "kind", "reason", "source"]
 SPECIAL_KINDS = {"수능", "연초 개장", "기타"}
 CSAT_CHECK_FROM = (9, 1)                  # 이날(KST)부터 올해 수능일 줄이 표에 없으면 경고
@@ -251,6 +258,45 @@ def load_special_sessions(path=SPECIAL_CSV):
                 raise RuntimeError(f"{where}: reason·source 가 비었어요 (출처 없는 줄은 받지 않아요)")
             out[d] = (op, cl, v["kind"])
     return out
+
+
+def load_holidays(path=HOLIDAYS_CSV):
+    """data/market_holidays.csv → ({"KR": {날짜}, "US": {날짜}}, 표가 덮는 마지막 날). 이상한 줄이면 RuntimeError (줄 번호와 함께)."""
+    name = os.path.basename(path)
+    out = {"KR": set(), "US": set()}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rd = csv.DictReader(f, restkey="_more")
+        if rd.fieldnames != HOL_COLS:
+            raise RuntimeError(f"{name} 머리줄 {rd.fieldnames} — {','.join(HOL_COLS)} 이어야 해요")
+        for r in rd:
+            where = f"{name} {rd.line_num}번째 줄"
+            if "_more" in r or any(v is None for v in r.values()):
+                raise RuntimeError(f"{where}: 칸 수가 머리줄과 달라요")
+            v = {k: r[k].strip() for k in HOL_COLS}
+            if not re.fullmatch(r"20\d\d-[01]\d-[0-3]\d", v["date"]) or v["market"] not in out or not v["name"] or not v["source"]:
+                raise RuntimeError(f"{where}: 날짜 YYYY-MM-DD · market KR/US · 이름·출처가 있어야 해요 ({','.join(v.values())[:80]})")
+            d = dt.date.fromisoformat(v["date"])
+            if d.weekday() >= 5 or d in out[v["market"]]:
+                raise RuntimeError(f"{where}: {d} 는 주말이거나 두 번 있어요")
+            out[v["market"]].add(d)
+    years = sorted({d.year for m in out.values() for d in m})
+    if not years or years != list(range(years[0], years[-1] + 1)) or any(
+            not any(d.year == y for d in out[m]) for m in out for y in years):
+        raise RuntimeError(f"{name}: 해마다 한국·미국 줄이 다 있어야 해요 (적힌 해: {years})")
+    return out, dt.date(years[-1], 12, 31)
+
+
+def expected_next_pub(px, usd, hol, end):
+    """다음 발행 예정일 = 한국·미국 중 먼저 오는 다음 거래일의 다음 날 (fetch_data.next_publish 와 따로 구현). 표 밖이면 None."""
+    firsts = []
+    for start, closed in ((px, hol["KR"]), (usd, hol["US"])):
+        d = start + dt.timedelta(days=1)
+        while d.weekday() >= 5 or d in closed:
+            d += dt.timedelta(days=1)
+        if d > end:
+            return None
+        firsts.append(d)
+    return min(firsts) + dt.timedelta(days=1)
 
 
 def final_cut(d, special):
@@ -703,10 +749,92 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
     check_v191b(rep, data, kr, us, by, comps, pdata)
+    check_v191c(rep, cur, us, mode, today)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
     return rep
+
+
+def check_v191c(rep, cur, us, mode, today):
+    """v19.1c (Jack, 2026-11-07): 휴장일 표 · 다음 발행 예정일(nextPub · staleAfter) · 미국 종목의 자기 가격 날짜(pxd)."""
+    data, macro = cur["data"], cur.get("macro") or {}
+    try:
+        hol, end = load_holidays()
+    except Exception as e:
+        rep.add("휴장일 표 (data/market_holidays.csv)", False, f"읽지 못함: {e}"[:120], "읽을 수 있어야 함")
+        hol, end = None, None
+    # 1. 다음 발행 예정일 — 파이프라인이 늘 써요. 이 버전의 첫 발행 전 사이트 파일(--live)에만 없어도 돼요 (경고)
+    npub, sa = data.get("nextPub"), data.get("staleAfter")
+    if npub is None and sa is None:
+        rep.add("다음 발행 예정 (nextPub · staleAfter)", mode == "live", "없음",
+                "있어야 함 (사이트 점검은 이 버전의 첫 발행 전까지 경고)", warn=True)
+    else:
+        why, want = [], None
+        try:
+            got_np = dt.date.fromisoformat(str(npub))
+            got_sa = dt.datetime.fromisoformat(str(sa))
+            px, usd = dt.date.fromisoformat(data.get("pxDate")), dt.date.fromisoformat(data.get("usPxDate"))
+        except (TypeError, ValueError) as e:
+            why.append(f"날짜를 읽을 수 없어요 ({e})"[:80])
+        else:
+            if hol is not None:
+                want = expected_next_pub(px, usd, hol, end)
+                if want is None:
+                    why.append(f"휴장일 표가 {end} 까지만 있어요")
+                elif got_np != want:
+                    why.append(f"nextPub {got_np} ≠ 표로 계산한 {want}")
+            want_sa = dt.datetime.combine(got_np, LAST_RETRY, KST) + dt.timedelta(hours=STALE_GRACE_H)
+            if got_sa.utcoffset() != dt.timedelta(hours=9) or got_sa != want_sa:
+                why.append(f"staleAfter {sa} ≠ {want_sa.isoformat()}")
+            if got_np <= max(px, usd):
+                why.append(f"nextPub {got_np} 가 기준일 뒤가 아니에요")
+        rep.add("다음 발행 예정 (nextPub · staleAfter)", not why, f"{npub} · {sa}" if not why else " · ".join(why),
+                "휴장일 표로 다시 계산한 값과 같음 (한국·미국 다음 거래일 중 먼저 + 1일 · 그날 14:47 + 2시간)")
+    # 2. 휴장일 표: 앞으로 45일을 덮는지, 지난 90일의 지수 일봉과 맞는지 (봉 없는 평일 = 표의 휴장일)
+    if hol is not None:
+        probs = []
+        for key, mk in (("KOSPI", "KR"), ("SP500", "US")):
+            rows = ((macro.get("idxHist") or {}).get(key) or {}).get("rows") or []
+            bars = {str(r[0]) for r in rows if isinstance(r, (list, tuple)) and r}
+            if not bars:
+                continue
+            last = dt.date.fromisoformat(max(bars))
+            d = last - dt.timedelta(days=HOL_CHECK_DAYS)
+            while d <= last:
+                if d.weekday() < 5 and d.year <= end.year:
+                    iso = d.isoformat()
+                    if iso not in bars and d not in hol[mk]:
+                        probs.append(f"{mk} {iso} 봉 없음·표에 없음")
+                    elif iso in bars and d in hol[mk]:
+                        probs.append(f"{mk} {iso} 표엔 휴장·봉 있음")
+                d += dt.timedelta(days=1)
+        short = end < today + dt.timedelta(days=HOL_COVER_WARN_DAYS)
+        rep.add("휴장일 표 (data/market_holidays.csv)", True,
+                f"{end.year}년까지 · 한국 {len(hol['KR'])}일 · 미국 {len(hol['US'])}일"
+                + (" · " + " · ".join(probs[:4]) if probs else "") + (" · 다음 해 줄을 넣어 주세요" if short else ""),
+                f"앞으로 {HOL_COVER_WARN_DAYS}일을 덮고 지난 {HOL_CHECK_DAYS}일 지수 일봉과 맞음 (어긋나면 경고)",
+                warn=bool(probs) or short)
+    # 3. 미국 종목의 자기 가격 날짜: d1 이 없는 종목(마지막 봉이 기준일이 아님)은 pxd 가 있고 기준일보다 앞이어야, 앱이 그 날짜를 보여요
+    if npub is None and sa is None:
+        rep.skip("미국 자기 가격 날짜 (pxd)", "이 버전 전의 파일 (pxd 를 쓰지 않았어요)")
+        return
+    usd = str(data.get("usPxDate") or "")
+    bad, own = [], []
+    for s in us:
+        t, pxd = s.get("t"), s.get("pxd")
+        if num(s.get("d1")) is None:
+            if not (isinstance(pxd, str) and re.fullmatch(r"20\d\d-[01]\d-[0-3]\d", pxd) and pxd < usd):
+                bad.append(f"{t}: d1 없음 · pxd {pxd!r}")
+            else:
+                own.append(f"{t}({pxd})")
+        elif pxd is not None:
+            bad.append(f"{t}: d1 있는데 pxd {pxd!r}")
+    rep.add("미국 자기 가격 날짜 (pxd)", not bad,
+            (" · ".join(bad[:5]) + (f" 외 {len(bad) - 5}개" if len(bad) > 5 else "")) if bad
+            else (f"{len(own)}종목: " + ", ".join(own[:US_D1_SHOW]) + (f" 외 {len(own) - US_D1_SHOW}개" if len(own) > US_D1_SHOW else "")
+                  if own else "없음 (모두 미국 기준일 종가)"),
+            f"d1 이 없는 미국 종목은 pxd < {usd} · d1 이 있으면 pxd 없음")
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
@@ -756,7 +884,8 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
     shown = ", ".join(us_no_d1[:US_D1_SHOW]) + (f" 외 {len(us_no_d1) - US_D1_SHOW:,}개" if len(us_no_d1) > US_D1_SHOW else "")
     rep.add("미국 d1 채움 (미국 기준일 봉)", us_cov >= US_D1_COVER,
             f"{floor_1(us_cov)}% ({len(us) - len(us_no_d1):,} / {len(us):,})" + (f" · 빠짐: {shown}" if us_no_d1 else ""),
-            f"≥ {US_D1_COVER:g}% (미국 기준일 {data.get('usPxDate')} 봉이 있는 종목)")
+            f"≥ {US_D1_COVER:g}% (미국 기준일 {data.get('usPxDate')} 봉이 있는 종목 · 하나라도 빠지면 경고)",
+            warn=bool(us_no_d1))    # v19.1c (Jack, 2026-11-07): 1~15종목만 빠져도 아침 점검이 알림으로 읽어요
     if us_no_d1:
         rep.detail(f"미국 d1 없는 종목 (마지막 봉이 미국 기준일 {data.get('usPxDate')} 이 아님)", us_no_d1)
 

@@ -67,6 +67,15 @@ tells you what happened in plain words.
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
+  whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of
+  the two markets' next trading days, plus one day) and `staleAfter` (that day's last scheduled start, 14:47 KST, plus 2
+  hours). The app shows "갱신이 멈췄어요" once `staleAfter` has passed without a newer file; weekends and holidays stay
+  quiet. Keep the table current: add the next year's rows each December (KRX publishes its holiday list in late
+  December; the NYSE list is out years ahead), with a source in every row. The gate warns when the table covers less
+  than 45 days ahead and fails a publish it can't compute; it also warns when the last 90 days of index bars disagree
+  with the table (a missed or wrong holiday). The 2027 KR rows 노동절 대체 휴일 (5/3) and 제헌절 대체 휴일 (7/19) follow the
+  2026 law changes and still need KRX's own notice.
 - **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
   Pro on 2026-11-06 and checked by eye. Deploy copies it into the site; if the branch is missing or fails its check,
   Deploy warns and publishes without logos (every company shows its coloured letter mark). Logos never go on `main`.

@@ -270,7 +270,8 @@ allow web pages to install themselves. KakaoTalk's in-app browser is told to ope
 
 Scheduled runs (v17.5.3, PR #19, merged 2026-11-03 22:24 KST; first morning 2026-11-04): GitHub started the old single
 06:30 KST run 2¼–5½ hours late all October (never before 08:44 KST; see § 5 for what late runs once caused). Now the run
-is triggered six times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat) — and a first job
+is triggered seven times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37, 14:47 KST (Mon–Sat; 14:47 added
+in v19.1c after two Yahoo gaps around 10:00–10:40 KST) — and a first job
 (`already_published.py`, scheduled runs only; manual runs skip it) decides:
 - a run that starts in the hours before a US trading day's close is final (New York 12:00–16:30; the close is final at
   16:30 New York = 06:30 KST in winter, 05:30 in summer) waits until 16:33 New York and then re-checks. If the close is
