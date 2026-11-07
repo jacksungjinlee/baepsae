@@ -31,7 +31,7 @@ const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
 const rateText = (g) => (g < 0 ? "\u2212" : "") + p1(Math.abs(g));
 const H = ({ children, ...rest }) => <h3 {...rest} style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.4 })}>{children}</h3>;
-const Src = ({ children, ...rest }) => (children ? <div {...rest} style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{children}</div> : null);
+const Src = ({ children, ...rest }) => (children ? <div {...rest} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{children}</div> : null);
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
 function CardHead({ icon, tone, title }) {
   return (
@@ -44,9 +44,9 @@ function CardHead({ icon, tone, title }) {
 function Stat({ label, value, sub, ...rest }) {
   return (
     <div {...rest} style={{ background: COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(3)}px`, minWidth: 0 }}>
-      <div style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2)}>{label}</div>
+      <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{label}</div>
       <div style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{value}</div>
-      {sub && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{sub}</div>}
+      {sub && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{sub}</div>}
     </div>
   );
 }
@@ -76,13 +76,13 @@ function Bars({ rows, fmt, aria }) {
         const last = i === rows.length - 1;
         return (
           <div key={r.year} data-year={r.year} data-v={r.v} style={{ textAlign: "center", minWidth: 0 }}>
-            <div style={tx(SIZE.xxs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{fmt(r.v)}</div>
+            <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{fmt(r.v)}</div>
             <div aria-hidden="true" style={{ position: "relative", height: H0, marginTop: SPACE(1) }}>
               <div style={{ position: "absolute", left: "28%", right: "28%", borderRadius: 4, background: last ? COLOR.ink : COLOR.border,
                 ...(r.v >= 0 ? { bottom: H0 - base, height: h } : { top: base, height: h }) }} />
               <div style={{ position: "absolute", left: 0, right: 0, top: base, height: 1, background: COLOR.line }} />
             </div>
-            <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{r.year}</div>
+            <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{r.year}</div>
           </div>
         );
       })}
@@ -99,9 +99,9 @@ function Decomp({ co }) {
   // multipliers, as the old card: 3년 주가 = 이익 × 눈높이 (a true equation), each with its inputs (then → now)
   const box = (label, v, from, to, dark) => (
     <div style={{ background: dark ? COLOR.ink : COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(1)}px`, textAlign: "center", minWidth: 0 }}>
-      <div style={tx(SIZE.xxs, WEIGHT.semi, dark ? COLOR.surface : COLOR.text2)}>{label}</div>
+      <div style={tx(SIZE.xs, WEIGHT.semi, dark ? COLOR.surface : COLOR.text2)}>{label}</div>
       <div style={tx(SIZE.body, WEIGHT.heavy, dark ? COLOR.surface : COLOR.ink)}>{timesText(v, v >= 100 ? 0 : 2)}</div>
-      {from && to && <div style={tx(10, WEIGHT.regular, dark ? COLOR.surface : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
+      {from && to && <div style={tx(SIZE.xxs, WEIGHT.regular, dark ? COLOR.surface : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
     </div>
   );
   const op = (ch) => <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{ch}</span>;
@@ -200,7 +200,7 @@ export function EarnTab({ load, s, onMore }) {
           <>
             <div data-ui-v2="co-earn-big" data-metric={m} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
               <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={eokText(last)} /></span>
-              {ch != null && E.yoy && <span style={tx(SIZE.xs, WEIGHT.bold, ch < 0 ? COLOR.down : COLOR.up)}>{fill(E.yoy, { pct: signedPct(ch) })}</span>}
+              {ch != null && E.yoy && <span style={tx(SIZE.xs, WEIGHT.bold, ch < 0 ? COLOR.down : ch > 0 ? COLOR.up : COLOR.text2)}>{fill(E.yoy, { pct: signedPct(ch) })}</span>}
             </div>
             <Bars rows={series} fmt={(v) => eokText(v)} />
           </>
@@ -229,7 +229,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
           <Card>
             <div role="table" style={{ display: "grid", gridTemplateColumns: `auto repeat(${rows.length}, minmax(0, 1fr))`, columnGap: SPACE(3), rowGap: SPACE(2) }}>
               <span role="columnheader" />
-              {rows.map((x) => <span key={x.year} role="columnheader" style={tx(SIZE.xxs, WEIGHT.bold, COLOR.text2, { textAlign: "right" })}>{x.year}</span>)}
+              {rows.map((x) => <span key={x.year} role="columnheader" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textAlign: "right" })}>{x.year}</span>)}
               {cols.map(([label, k]) => (
                 <React.Fragment key={k}>
                   <span role="rowheader" style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink)}>{label}</span>
@@ -270,10 +270,10 @@ function Strip({ s, group }) {
         <span style={{ position: "absolute", left: `calc(${X(st.medX)} - 1px)`, top: SPACE(2), width: 2, height: SPACE(6), background: COLOR.text2 }} />
         <span data-ui-v2="co-strip-me" style={{ position: "absolute", left: `calc(${X(st.mine)} - 7px)`, top: SPACE(5) - 7, width: 14, height: 14, borderRadius: 999, background: COLOR.ink, border: `2px solid ${COLOR.surface}` }} />
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xxs, WEIGHT.regular, COLOR.text2) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
         <span>{timesText(0, 0)}</span><span>{fill(V.axisMax, { x: nf(round(st.cap, 1), 1) })}</span>
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xxs, WEIGHT.bold, COLOR.ink) }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>
         <span>{fill(V.me, { x: nf(s.pbr, 2) })}</span><span style={{ color: COLOR.text2 }}>{fill(V.med, { x: nf(st.med, 2) })}</span>
       </div>
     </div>
@@ -403,7 +403,7 @@ function Scatter({ s, group }) {
         {m.pts.filter((p) => !p.mine).map((p) => <circle key={p.t} cx={sx(p.x)} cy={sy(p.y)} r={4} fill={COLOR.text3} opacity={0.45} />)}
         <circle cx={sx(me.x)} cy={sy(me.y)} r={7} fill={COLOR.ink} stroke={COLOR.surface} strokeWidth={2} />
       </svg>
-      <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
+      <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
         <div>{M.x}</div><div>{M.y}</div><div>{M.line}</div>
       </div>
       {M[m.pos] && <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{M[m.pos]}</p>}
@@ -464,7 +464,7 @@ function RatioRow({ label, mean, value, med, calc, first }) {
         <span style={{ flex: 1 }} />
         <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{value}</span>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xxs, WEIGHT.regular, COLOR.text2) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
         <span>{mean}</span>{med && <span style={{ whiteSpace: "nowrap" }}>{med}</span>}
       </div>
       {calc && <div data-ui-v2="co-receipt" style={{ marginTop: SPACE(2), border: `1px dashed ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{calc}</div>}
@@ -610,11 +610,11 @@ export function DiscTab({ load, s, disc }) {
               const st = { display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH, padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` };
               const body = (
                 <>
-                  <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
+                  <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>
                       {x.nm}{x.pos ? <span style={{ color: COLOR.text2, fontWeight: WEIGHT.regular }}>{" · "}{x.pos}</span> : null}</span>
-                    <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
+                    <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
                       {fill(C.plan.shares, { n: nf(Math.abs(x.q)) })}{x.won != null ? <>{" · "}{fill(C.app.about, { x: bigWon(x.won) })}</> : null}</span>
                   </span>
                   <StatusChip tone="neutral">{x.q > 0 ? D.buy : D.sell}</StatusChip>

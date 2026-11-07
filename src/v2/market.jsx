@@ -36,7 +36,7 @@ function Tile({ x }) {
       <div data-ui-v2="tile-value" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), whiteSpace: "nowrap" })}>{valueText(x)}</div>
       <div style={{ display: "flex", flexWrap: "wrap", columnGap: SPACE(2), alignItems: "baseline" }}>
         {change != null && <span data-ui-v2="tile-change" style={tx(SIZE.xs, WEIGHT.bold, change < 0 ? COLOR.down : change > 0 ? COLOR.upOnPage : COLOR.text2)}>{signedPct(change)}</span>}
-        {x.date && <span data-ui-v2="tile-date" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(x.date) })}</span>}
+        {x.date && <span data-ui-v2="tile-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(x.date) })}</span>}
       </div>
     </div>
   );

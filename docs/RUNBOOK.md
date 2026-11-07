@@ -102,6 +102,13 @@ tells you what happened in plain words.
   Jack's yes, and only while logo.dev is on a plan that allows it): run the logo job with `only` set to their codes (and `route` = `ticker` to skip the DART homepage), look at its
   artifact, then `python3 tools/logos/logodev_fetch.py --add-from ARTIFACT_FOLDER --dir FOLDER` adds the checked logos
   to the copy of `logos-run`; push and deploy as above.
+  To retry every Korean letter mark at once (2026-11-07): run the logo job with `letters_only` (it reads `logos-run`'s
+  `logos/`, `review.csv` and `drops.csv`, so pictures already rejected are not asked for again)
+  and, if wanted, `extra_routes` (an ISIN lookup, 2 credits, and a brandmark lookup, 3 credits, only for companies whose
+  ticker and homepage gave nothing usable; a brandmark wider than 2:1 is dropped). It refuses a cap above 2,000 credits
+  ($20) unless `over_20_dollars_ok` is ticked, which needs Jack's yes first. Look at every new logo on its sheet: the
+  automatic checks do not catch photos, banners, old logos or another company's logo. Add only the checked ones with
+  `--add-from ARTIFACT_FOLDER --dir FOLDER --codes CODE,CODE` (a retry is never added whole), then push and deploy.
 - A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
   logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily

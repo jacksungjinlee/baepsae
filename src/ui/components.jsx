@@ -26,7 +26,7 @@ export const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (
 const priceColor = (v, onPage) => (v > 0 ? (onPage ? COLOR.upOnPage : COLOR.up) : v < 0 ? COLOR.down : COLOR.text2);
 const toneColor = (tone, onPage) => (tone === "up" ? (onPage ? COLOR.upOnPage : COLOR.up) : tone === "down" ? COLOR.down : COLOR.ink);
 
-// 큰 숫자의 단위: 숫자 바로 뒤의 정해진 단위만 숫자보다 작고(0.6em) 가볍게(700) 그려요.
+// 큰 숫자의 단위: 숫자 바로 뒤의 정해진 단위만 숫자보다 작고(0.6em, 그래도 12px 아래로는 줄이지 않아요: v19.3b Part B) 가볍게(700) 그려요.
 // 단위 목록: 원 · 만원 · 만 원 · 억 · 억원 · 조 · 조원 · 만 · % · %p ("3억 2,000만원" 은 억과 만원 두 조각).
 // 숫자 앞뒤의 낱말("약" · "남는 돈" · "2022년처럼")은 그대로예요. 글자 내용은 바뀌지 않아서 읽는 순서·복사는 같아요.
 // 단위 뒤에 한글이 바로 이어지면(낱말의 일부) 줄이지 않아요. 코드에 한국어를 두지 않으려고 유니코드로 써요
@@ -49,7 +49,7 @@ export function amountParts(text) {
 export function Amount({ text }) {
   return (
     <span data-ui="amount">
-      {amountParts(text).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}
+      {amountParts(text).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "max(12px, 0.6em)", fontWeight: WEIGHT.bold }}>{p}</span> : p))}
     </span>
   );
 }
@@ -62,7 +62,7 @@ const CHIP_ICON_TONE = { ok: "ok", watch: "on", broken: "onNavy", neutral: "on" 
 export function StatusChip({ tone = "neutral", children, icon }) {
   const c = STATUS[tone] || STATUS.neutral;
   return (
-    <span data-ui="status-chip" data-tone={tone} style={T(SIZE.xxs, WEIGHT.bold, c.fg, {
+    <span data-ui="status-chip" data-tone={tone} style={T(SIZE.xs, WEIGHT.bold, c.fg, {
       display: "inline-flex", alignItems: "center", gap: SPACE(1), background: c.bg, borderRadius: RADIUS.sm,
       padding: `${SPACE(1)}px ${SPACE(2)}px`, maxWidth: "100%", wordBreak: "keep-all", lineHeight: 1.35 })}>
       {icon && <Icon name={icon} size={12} tone={CHIP_ICON_TONE[tone] || "on"} />}<span>{children}</span>
@@ -133,13 +133,13 @@ export function StatStrip({ items, note, onPage = false }) {
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${items.length}, 1fr)`, gap: SPACE(3) }}>
         {items.map((it) => (
           <div key={it.label}>
-            <div style={T(SIZE.xxs, WEIGHT.semi, small)}>{it.label}</div>
+            <div style={T(SIZE.xs, WEIGHT.semi, small)}>{it.label}</div>
             <div style={T(SIZE.h3, WEIGHT.heavy, toneColor(it.tone, onPage))}><Amount text={it.value} /></div>
-            {it.sub && <div style={T(SIZE.xxs, WEIGHT.regular, small)}>{it.sub}</div>}
+            {it.sub && <div style={T(SIZE.xs, WEIGHT.regular, small)}>{it.sub}</div>}
           </div>
         ))}
       </div>
-      {note && <div style={T(SIZE.xxs, WEIGHT.regular, small, { marginTop: SPACE(2) })}>{note}</div>}
+      {note && <div style={T(SIZE.xs, WEIGHT.regular, small, { marginTop: SPACE(2) })}>{note}</div>}
     </div>
   );
 }
@@ -160,7 +160,7 @@ export function ListRow({ title, sub, value, change, chip, onClick, selected = f
       <div data-ui-part="main" style={{ flex: 1, minWidth: 0 }}>
         <div style={T(SIZE.body, WEIGHT.bold, COLOR.ink, { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{title}</div>
         {(sub || chip) && <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), columnGap: SPACE(2), alignItems: "center", marginTop: SPACE(1) }}>
-          {chip}{sub && <span style={T(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{sub}</span>}
+          {chip}{sub && <span style={T(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{sub}</span>}
         </div>}
       </div>
       <div data-ui-part="side" style={{ textAlign: "right", flexShrink: 0 }}>
@@ -343,7 +343,7 @@ export function Collapsible({ title, sub, defaultOpen = false, children }) {
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} style={{ ...tapReset, width: "100%", minHeight: TOUCH + SPACE(1), border: "none", background: "none", display: "flex", alignItems: "center", gap: SPACE(2), padding: 0, textAlign: "left" }}>
         <span style={{ flex: 1 }}>
           <span style={T(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block" })}>{title}</span>
-          {sub && <span style={T(SIZE.xxs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
+          {sub && <span style={T(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
         </span>
         <Icon name="chevronDown" size={20} tone="off" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
       </button>
@@ -365,7 +365,7 @@ export function BottomTabBar({ tabs, value, onChange, label, fixed = false }) {
             style={{ ...tapReset, border: "none", background: "none", minHeight: TOUCH + SPACE(3), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0, opacity: t.disabled ? 0.45 : 1, cursor: t.disabled ? "default" : "pointer" }}>
             <span data-ui-part="tab-pill" data-selected={on ? "1" : undefined} style={{ display: "flex", borderRadius: RADIUS.sm, padding: `${SPACE(1)}px ${SPACE(3)}px`,
               background: on ? SELECTED.background : "transparent" }}><Icon name={t.icon} size={22} tone={on ? "on" : "off"} /></span>
-            <span style={T(SIZE.xxs, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.ink : COLOR.text3)}>{t.label}</span>
+            <span style={T(SIZE.xs, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.ink : COLOR.text3)}>{t.label}</span>
           </button>
         );
       })}
@@ -391,13 +391,13 @@ export function DotStrip({ items, mine, avgLabel, mineLabel, aria }) {   // item
         <div style={{ position: "absolute", left: "6%", right: "6%", top: SPACE(9) + 2, height: 2, background: COLOR.line }} />
         <div style={{ position: "absolute", left: `${x(0)}%`, top: SPACE(6) + 2, height: SPACE(6) + 2, width: 1, background: COLOR.border }} />
         <div style={{ position: "absolute", left: `${x(avg)}%`, top: SPACE(5), height: SPACE(9), width: 2, background: COLOR.ink, transform: "translateX(-1px)" }} />
-        <div style={T(SIZE.xxs, WEIGHT.bold, COLOR.ink, { position: "absolute", top: 0, left: `${lx(avg)}%`, transform: "translateX(-50%)", whiteSpace: "nowrap" })}>{fill(avgLabel, { pct: fmtPct(avg) })}</div>
+        <div style={T(SIZE.xs, WEIGHT.bold, COLOR.ink, { position: "absolute", top: 0, left: `${lx(avg)}%`, transform: "translateX(-50%)", whiteSpace: "nowrap" })}>{fill(avgLabel, { pct: fmtPct(avg) })}</div>
         {ok.map((i) => { const m = i.id === mine; return (
           <div key={i.id} data-mine={m ? "1" : undefined} style={{ position: "absolute", top: m ? SPACE(8) - 1 : SPACE(8) + 2, left: `${x(i.pct)}%`, transform: "translateX(-50%)", zIndex: m ? 2 : 1,
             width: m ? 16 : 10, height: m ? 16 : 10, borderRadius: 999,
             background: m ? COLOR.apricot : COLOR.text3, border: m ? `2px solid ${COLOR.surface}` : `1px solid ${COLOR.surface}`, boxSizing: "border-box" }} />
         ); })}
-        {me && <div style={T(SIZE.xxs, WEIGHT.bold, COLOR.apricotText, { position: "absolute", top: SPACE(14), left: `${lx(me.pct)}%`, transform: "translateX(-50%)", whiteSpace: "nowrap" })}>{fill(mineLabel, { pct: fmtPct(me.pct) })}</div>}
+        {me && <div style={T(SIZE.xs, WEIGHT.bold, COLOR.apricotText, { position: "absolute", top: SPACE(14), left: `${lx(me.pct)}%`, transform: "translateX(-50%)", whiteSpace: "nowrap" })}>{fill(mineLabel, { pct: fmtPct(me.pct) })}</div>}
       </div>
     </figure>
   );

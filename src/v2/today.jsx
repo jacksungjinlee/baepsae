@@ -86,7 +86,7 @@ function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its na
   return (
     <div data-ui-v2="todo-item" data-t={x.t} data-status={x.status} style={{ paddingTop: first ? 0 : SPACE(3), marginTop: first ? 0 : SPACE(3), borderTop: first ? "none" : `1px solid ${COLOR.line}` }}>
       {!first && <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.nk}</div>}
-      {x.status === "broken" && <div style={tx(SIZE.xxs, WEIGHT.bold, COLOR.text2)}>{C.today.sellLabel}</div>}
+      {x.status === "broken" && <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.today.sellLabel}</div>}
       <div style={{ marginTop: SPACE(1) }}>
         <DividendAnswers x={x} onConfirm={(item, answer) => onConfirm(deck.id, item, answer)} sellSaid={sellSaid} />
         {views.map(([r, v], i) => <Line key={i} code={r.code} level={r.level} {...v} first={i === 0 && !x.divDrops.length} />)}
