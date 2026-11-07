@@ -95,6 +95,9 @@ export const kstDaysBetween = (fromIso, toIso) => Math.round(dayNo(toIso) - dayN
 // n = 예정일부터 오늘까지 한국 달력의 날 수 + 1 (예정일 = 1일째 · 최소 1) — 이때 due: true 가 붙어요. 토요일 발행을 화요일에 놓치면
 // 화요일 16:48 에 n = 1 ('갱신이 늦어지고 있어요'), 수요일에 2. 그 밖에는(예전 파일 · nextPub 없음 · 4일 규칙만 걸림) 지금처럼
 // 발행 뒤 지난 날 수 (내림). 문구는 staleWordsLate 를 봐요.
+// 날 수는 줄지 않아요: 4일 규칙의 경고가 staleAfter 보다 먼저 떴으면(긴 연휴처럼 예정일이 먼 때, backstopFirst) staleAfter 가 지난
+// 뒤에도 두 셈 중 큰 쪽을 써요. '6일째 갱신이 멈췄어요'가 '갱신이 늦어지고 있어요'로 되돌아가는 일은 없어요. staleAfter 가 먼저
+// 지났으면 예정일부터 센 날 그대로예요 (토요일 발행을 놓치면 목요일에 3, 그 아침 4일 규칙이 걸려도).
 export function freshness(contentDate, publishedAt, lang, now, staleAfter, nextPub) {
   const t = now == null ? Date.now() : now;
   const sincePub = daysSince(publishedAt, t);
@@ -102,9 +105,77 @@ export function freshness(contentDate, publishedAt, lang, now, staleAfter, nextP
   const late = at != null && t > at;
   const stale = late || (sincePub != null && sincePub > STALE_DAYS);
   if (late && typeof nextPub === "string" && ISO_DATE.test(nextPub)) {
-    return { md: mdOf(contentDate, lang), days: Math.max(1, kstDaysBetween(nextPub, kstDate(t)) + 1), stale, due: true };
+    const fromDue = Math.max(1, kstDaysBetween(nextPub, kstDate(t)) + 1);
+    const keep = backstopFirst(publishedAt, staleAfter) && sincePub != null;
+    return { md: mdOf(contentDate, lang), days: keep ? Math.max(fromDue, sincePub) : fromDue, stale, due: true };
   }
   return { md: mdOf(contentDate, lang), days: sincePub, stale };
+}
+
+// 4일 규칙의 경고(발행 뒤 STALE_DAYS 일 넘게)가 staleAfter 가 지나기 전에 이미 떴는지: 발행 시각 + (STALE_DAYS + 1)일 ≤ staleAfter.
+// 그랬다면 화면은 그때부터 발행 뒤 날 수를 보여 왔으니, staleAfter 뒤에도 그 날 수보다 작은 n 으로 바꾸지 않아요 (freshness ·
+// 2.0 홈 띠 rules.js dayState). 둘 중 하나라도 읽을 수 없으면 false.
+export function backstopFirst(publishedAt, staleAfter) {
+  const p = Date.parse(publishedAt || "");
+  const at = staleAfterTime(staleAfter);
+  return Number.isFinite(p) && at != null && p + (STALE_DAYS + 1) * 86400000 <= at;
+}
+
+// v19.1c: 늦음 판단에 쓰는 data.json 의 두 칸을 읽을 수 없을 때 크게 남겨요 (조용한 대체 없음). 돌려줌: 남긴 경고 수.
+// staleAfter 가 없거나 못 읽으면 발행 뒤 4일 규칙만 쓰고, staleAfter 는 읽는데 nextPub 이 없거나 날짜가 아니면 n 을 발행 뒤 날 수로 세요.
+export function warnStaleFields(j, where) {
+  const sa = j && j.staleAfter, np = j && j.nextPub;
+  if (sa == null) { console.warn("[뱁새] " + where + ": data.json 에 staleAfter 가 없어요 · 늦음 경고는 발행 뒤 " + STALE_DAYS + "일 규칙만 써요"); return 1; }
+  if (staleAfterTime(sa) == null) {
+    console.warn("[뱁새] " + where + ": data.json 의 staleAfter " + JSON.stringify(sa) + " 를 읽을 수 없어요 · 늦음 경고는 발행 뒤 " + STALE_DAYS + "일 규칙만 써요");
+    return 1;
+  }
+  if (!(typeof np === "string" && ISO_DATE.test(np))) {
+    console.warn("[뱁새] " + where + ": data.json 의 nextPub " + (np == null ? "이 없어요" : JSON.stringify(np) + " 이 날짜가 아니에요")
+      + " · staleAfter 가 지나면 늦음 경고의 n 은 예정일이 아니라 발행 뒤 날 수로 세요");
+    return 1;
+  }
+  return 0;
+}
+
+// v19.1c: 예전 뱁새의 기업분석 · 첫 화면 성적표는 corp.json 의 날짜를 보여요. corp.json 에는 staleAfter · nextPub 이 없어서, data.json
+// 과 같은 발행(publishedAt 이 같은 시각)일 때만 data.json 의 것을 빌려 써요. 다른 발행이면 예전 4일 규칙 (console 에 남겨요).
+// data.json 의 발행 정보는 한 번 받아 두고, corp.json 이 다른 발행이면 다시 받아요 (포트폴리오가 받은 data.json 도 같이 써요).
+let DATA_PUB = null, DATA_PUB_PENDING = null;
+const pubOf = (j) => ({ publishedAt: (j && j.publishedAt) || null, staleAfter: j && j.staleAfter != null ? j.staleAfter : null,
+  nextPub: j && j.nextPub != null ? j.nextPub : null });
+export function samePublish(a, b) {
+  const x = Date.parse(a || ""), y = Date.parse(b || "");
+  return Number.isFinite(x) && x === y;
+}
+export function rememberDataPublish(j) { DATA_PUB = pubOf(j); }
+export async function loadDataPublishFor(corpPublishedAt) {
+  if (DATA_PUB && samePublish(DATA_PUB.publishedAt, corpPublishedAt)) return DATA_PUB;
+  if (!DATA_PUB_PENDING) {
+    DATA_PUB_PENDING = loadJson("./data.json", (j) => !!j && typeof j === "object" && !Array.isArray(j)).then((r) => {
+      DATA_PUB_PENDING = null;
+      if (!r.ok) {
+        console.warn("[뱁새] data.json: " + r.error + " · 기업분석 · 첫 화면 성적표의 늦음 경고는 발행 뒤 " + STALE_DAYS + "일 규칙만 써요");
+        return null;
+      }
+      warnStaleFields(r.data, "기업분석 · 첫 화면 성적표");
+      DATA_PUB = pubOf(r.data);
+      return DATA_PUB;
+    });
+  }
+  return DATA_PUB_PENDING;
+}
+// corp.json 의 날짜 표시(DateBadge)에 넘길 staleAfter · nextPub. pub: loadDataPublishFor 의 결과 (null 이면 받는 중이거나 못 받음 ·
+// 못 받은 건 그쪽에서 남겨요). 같은 발행이 아니면 null 둘 (4일 규칙)이고 그 이유를 남겨요.
+export function corpStaleArgs(corpPublishedAt, pub, where) {
+  const none = { staleAfter: null, nextPub: null };
+  if (!pub) return none;
+  if (!samePublish(corpPublishedAt, pub.publishedAt)) {
+    console.warn("[뱁새] " + where + ": corp.json(" + corpPublishedAt + ")과 data.json(" + pub.publishedAt + ")의 발행이 달라 늦음 경고는 발행 뒤 "
+      + STALE_DAYS + "일 규칙만 써요");
+    return none;
+  }
+  return { staleAfter: pub.staleAfter, nextPub: pub.nextPub };
 }
 
 // v19.1c: 열어 둔 화면이 '늦음'을 놓치지 않게 다시 볼 시각 (데이터를 다시 받지는 않아요). 아침에 열어 둔 앱도 staleAfter(예정일 16:47)가

@@ -14,7 +14,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
-import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange } from "./data.js";
+import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 
@@ -333,6 +333,14 @@ async function loadLiveData() {
   const j = r.data;
   // v19.1c: staleAfter (다음 발행이 와 있어야 하는 시각) — 지나면 '늦음' 경고 (없거나 못 읽으면 예전 4일 규칙: data.js freshness)
   // nextPub (발행 예정일): 늦음 경고의 n 을 그 예정일 아침부터 세요 (data.js freshness)
+  // 대체하는 경우는 조용히 넘기지 않아요: 두 칸을 못 읽으면 · pxd 를 못 읽는 미국 종목이 있으면 console 에 개수와 함께 남겨요.
+  warnStaleFields(j, "포트폴리오");
+  const px = ownCloseReport(j.stocks, j.usPxDate || null);
+  if (px.bad.length) {
+    console.warn("[뱁새] data.json 의 미국 종목 " + j.stocks.filter((s) => s && s.cls === "us").length + "개 중 " + px.bad.length
+      + "개는 pxd(자기 가격 날짜)를 읽을 수 없어요 · 그 종목은 날짜 안내 없이 나가요: " + px.bad.slice(0, 30).join(", "));
+  }
+  rememberDataPublish(j);                                    // 기업분석 · 첫 화면 성적표가 같은 발행이면 늦음 시각을 같이 써요 (data.js)
   return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null, staleAfter: j.staleAfter || null,
     nextPub: j.nextPub || null,
     fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null,

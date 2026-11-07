@@ -11,6 +11,21 @@ export const usOf = (s) => !!s && s.cls === "us";
 // all (the price is not at the market's date, and a wrong date is worse than none). data.js stockPriceDate.
 export const priceDate = (load, s) => stockPriceDate(s, usOf(s) ? load.data.usPxDate : load.data.pxDate);
 export const priceMd = (load, s) => mdText(priceDate(load, s));
+// The date of the company page's date lines (DateLine: "{md} 기준" and the stale warning beside it). Normally the price date
+// above. A pxd that cannot be read leaves the price without a date, but must not take the date line and its stale warning
+// away with it: the line falls back to the market's date (US usPxDate, KR pxDate), with a console warning once per stock.
+// No market date (a US stock in a file without usPxDate): none, as before.
+const LINE_WARNED = new Set();
+export function lineDate(load, s) {
+  const d = priceDate(load, s);
+  if (d || !s || s.pxd == null) return d;
+  const market = stockPriceDate(null, usOf(s) ? load.data.usPxDate : load.data.pxDate);
+  if (market && !LINE_WARNED.has(String(s.t))) {
+    LINE_WARNED.add(String(s.t));
+    console.warn(`[v2] ${s.t}: pxd ${JSON.stringify(s.pxd)} cannot be read; its price shows no date, the date line uses the market date ${market}`);
+  }
+  return market;
+}
 // The date beside a price: KR "11월 3일 종가" (why.close), US "미국 11월 3일 종가" (pending; before: the approved sentence).
 export function closeLine(load, s) {
   const md = priceMd(load, s);

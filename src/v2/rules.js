@@ -51,7 +51,7 @@
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
-import { STALE_DAYS, daysSince, ownCloseDate } from "../data.js";
+import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
 import { sameConfirm } from "./store.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
@@ -77,7 +77,13 @@ export function dayState(load, now) {
   if (f.days == null || corpDays == null) return { ok: false, why: "undated" };
   // v19.1c (Jack, 2026-11-07): data.json late past its staleAfter with a due date (nextPub): n counts from the morning the
   // publish was due (data.js freshness, fresh.due), so the band says the same n as the date line. Otherwise as before.
-  if (f.stale && f.due) return { ok: false, why: "stale", days: f.days };
+  // The count never goes down: when corp.json is itself past the 4-day rule and that warning was already showing before
+  // staleAfter passed (data.js backstopFirst: a corp.json older than data.json, or a long holiday gap), the band keeps the
+  // larger of the two counts. When staleAfter came first, the band says the due-day n of the date line.
+  if (f.stale && f.due) {
+    const keep = corpDays > STALE_DAYS && backstopFirst(load.corp.publishedAt, load.data && load.data.staleAfter);
+    return { ok: false, why: "stale", days: keep ? Math.max(f.days, corpDays) : f.days };
+  }
   const days = Math.max(f.days, corpDays);
   if (f.stale || days > STALE_DAYS) return { ok: false, why: "stale", days };
   return { ok: true };

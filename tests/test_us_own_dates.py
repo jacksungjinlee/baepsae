@@ -411,3 +411,111 @@ def test_today_stale_late_has_jacks_wording():
     assert re.search("[가-힣]", v), v
     assert chat_approved().get("today.staleLate") == v, "today.staleLate 의 승인 기록(docs/tasks/v18.3-approved-in-chat.md)이 없어요"
     assert v == "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요.", v              # Jack, 2026-11-07 (design chat, stale US prices A3)
+
+
+# ── 리뷰 뒤 보강 (PR #82, 2026-11-08): 날 수는 줄지 않아요 · 조용한 대체 없음 · 못 읽는 pxd 도 날짜 줄과 경고는 남아요 ──
+def test_day_count_never_goes_down_after_a_long_gap():
+    """긴 연휴: 발행 뒤 4일 규칙이 staleAfter 보다 먼저 떴으면(9월 25일 발행 · 예정 10월 5일 16:47), staleAfter 가 지나도 n 이
+    '갱신이 늦어지고 있어요'(1)로 줄지 않고 발행 뒤 날 수를 이어 가요. staleAfter 가 먼저였으면 Jack 의 예 그대로 (목요일 3)."""
+    got = run("""
+const f = (pub, sa, np, at) => D.freshness('2026-09-24', pub, 'ko', Date.parse(at), sa, np);
+const P = '2026-09-25T06:40:00+09:00', SA = '2026-10-05T16:47:00+09:00', NP = '2026-10-05';
+out = { before: f(P, SA, NP, '2026-10-05T16:46:00+09:00'), after: f(P, SA, NP, '2026-10-05T16:48:00+09:00'),
+  next: f(P, SA, NP, '2026-10-06T09:00:00+09:00'),
+  thu: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', '2026-11-12T09:00:00+09:00'),
+  first: [D.backstopFirst(P, SA), D.backstopFirst('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00'),
+          D.backstopFirst('2026-11-05T16:47:00+09:00', '2026-11-10T16:47:00+09:00'), D.backstopFirst(null, SA), D.backstopFirst(P, null)],
+  words: [D.staleWordsLate(f(P, SA, NP, '2026-10-05T16:46:00+09:00').days), D.staleWordsLate(f(P, SA, NP, '2026-10-05T16:48:00+09:00').days)] };""")
+    assert got["before"] == {"md": "9월 24일", "days": 10, "stale": True}, got["before"]          # 4일 규칙: '10일째 갱신이 멈췄어요'
+    assert got["after"] == {"md": "9월 24일", "days": 10, "stale": True, "due": True}, got["after"]   # staleAfter 뒤에도 10 (1 이 아니에요)
+    assert got["next"]["days"] == 11, got["next"]
+    assert got["words"] == [False, False], got["words"]                                           # '늦어지고 있어요'로 돌아가지 않아요
+    assert got["thu"] == {"md": "9월 24일", "days": 3, "stale": True, "due": True}, got["thu"]    # staleAfter 가 먼저: 예정일부터 3
+    assert got["first"] == [True, False, True, False, False], got["first"]                         # 발행 + 5일 ≤ staleAfter 일 때만
+
+
+def test_home_band_keeps_the_larger_count_when_corp_was_already_past_four_days():
+    """홈 띠 (rules.js dayState): corp.json 이 data.json 보다 오래돼 staleAfter 전부터 4일 규칙이 걸려 있었으면 큰 날 수를 그대로 둬요.
+    같은 발행이고 staleAfter 가 먼저면 날짜 줄과 같은 예정일 n (목요일 3). 긴 연휴(같은 발행, 4일 규칙이 먼저)도 날짜 줄과 같은 n."""
+    sat = "2026-11-07T06:40:00+09:00"
+    f_old_corp = _files(publishedAt=sat, nextPub="2026-11-10", staleAfter="2026-11-10T16:47:00+09:00")
+    f_old_corp["corp"]["publishedAt"] = "2026-11-03T06:40:00+09:00"
+    f_same = _files(publishedAt=sat, nextPub="2026-11-10", staleAfter="2026-11-10T16:47:00+09:00")
+    f_same["corp"]["publishedAt"] = sat
+    f_gap = _files(publishedAt="2026-09-25T06:40:00+09:00", nextPub="2026-10-05", staleAfter="2026-10-05T16:47:00+09:00")
+    f_gap["corp"]["publishedAt"] = "2026-09-25T06:40:00+09:00"
+    got = run("""
+const L2 = (f, now) => LD.resolveLoad({ data: { ok: true, data: f.data }, corp: { ok: true, data: f.corp }, macro: { ok: false, error: 'x' } }, Date.parse(now));
+const day = (f, now) => { const l = L2(f, now); return [l.fresh.days, R.dayState(l, Date.parse(now))]; };
+out = { oldTue: day(OLDC, '2026-11-10T16:48:00+09:00'), oldBefore: day(OLDC, '2026-11-10T16:46:00+09:00'),
+  sameThu: day(SAME, '2026-11-12T09:00:00+09:00'), sameTue: day(SAME, '2026-11-10T16:48:00+09:00'),
+  gapBefore: day(GAP, '2026-10-05T16:46:00+09:00'), gapAfter: day(GAP, '2026-10-05T16:48:00+09:00') };""",
+              OLDC=f_old_corp, SAME=f_same, GAP=f_gap)
+    assert got["oldBefore"][1] == {"ok": False, "why": "stale", "days": 7}, got["oldBefore"]       # staleAfter 전: corp 7일째
+    assert got["oldTue"][0] == 1 and got["oldTue"][1] == {"ok": False, "why": "stale", "days": 7}, got["oldTue"]   # 뒤에도 7 (1 이 아니에요)
+    assert got["sameTue"][1]["days"] == 1 and got["sameThu"] == [3, {"ok": False, "why": "stale", "days": 3}], got   # 날짜 줄과 같은 n
+    assert got["gapBefore"][1]["days"] == 10 and got["gapAfter"] == [10, {"ok": False, "why": "stale", "days": 10}], got
+
+
+def test_company_date_line_falls_back_to_the_market_date_for_an_unreadable_pxd():
+    """회사 페이지의 날짜 줄(DateLine · 늦음 경고)은 pxd 를 못 읽어도 사라지지 않아요: 시장의 날짜로 (console 에 한 번). 가격 옆
+    날짜(closeLine)는 그대로 비워요 (틀린 날짜 대신)."""
+    got = run("""
+const load = { data: { pxDate: '2026-11-06', usPxDate: U } };
+const noUs = { data: { pxDate: '2026-11-06' } };
+WARN.splice(0);
+const bad = [CF.lineDate(load, X), CF.lineDate(load, X)]; const wBad = WARN.splice(0);
+out = { bad, wBad, close: CF.closeLine(load, X), own: CF.lineDate(load, A), us: CF.lineDate(load, B), kr: CF.lineDate(load, K),
+  noUs: CF.lineDate(noUs, Y), wRest: WARN.splice(0) };""",
+              X=us("BAD", pxd="2026/11/04", d1=None), Y=us("BAD2", pxd="??", d1=None), A=us("AAPL", pxd="2026-11-04", d1=None),
+              B=us("MSFT"), K=kr("005930"), U=US_DATE)
+    assert got["bad"] == [US_DATE, US_DATE] and got["close"] is None, got
+    assert len(got["wBad"]) == 1 and "BAD" in got["wBad"][0] and "cannot be read" in got["wBad"][0] and US_DATE in got["wBad"][0], got["wBad"]
+    assert got["own"] == "2026-11-04" and got["us"] == US_DATE and got["kr"] == "2026-11-06", got
+    assert got["noUs"] is None and got["wRest"] == [], got                                       # 미국 날짜가 없는 파일: 예전처럼 없음
+    src = {n: open(os.path.join(ROOT, "src", "v2", n), encoding="utf-8").read() for n in ("company.jsx", "cotabs.jsx")}
+    for n, s in src.items():                                                                     # 회사 페이지의 날짜 줄은 모두 lineDate
+        assert "<DateLine date={priceDate(" not in s and "<DateLine date={lineDate(load, s)}" in s, n
+
+
+def test_no_silent_fallback_for_stale_fields_and_unreadable_pxd():
+    """2.0: staleAfter 는 읽는데 nextPub 이 없거나 날짜가 아니면 console 에 남겨요 (n 은 발행 뒤 날 수). 예전 뱁새: data.js
+    warnStaleFields 가 staleAfter 없음 · 못 읽음 · nextPub 없음을 남기고 (smoke_app 이 화면에서 봐요), 맞으면 조용해요."""
+    good = _files(nextPub="2026-11-11", staleAfter="2026-11-11T16:47:00+09:00")
+    good["data"]["stocks"] = [kr("005930"), us("MSFT")]
+    no_np = _files(staleAfter="2026-11-11T16:47:00+09:00")
+    no_np["data"]["stocks"] = good["data"]["stocks"]
+    bad_np = _files(staleAfter="2026-11-11T16:47:00+09:00", nextPub="11/11")
+    bad_np["data"]["stocks"] = good["data"]["stocks"]
+    got = run("""
+const W = (d) => { WARN.splice(0); LD.logDates(d); return WARN.splice(0); };
+const O = (j) => { WARN.splice(0); const n = D.warnStaleFields(j, 'X'); return [n, WARN.splice(0)]; };
+out = { good: W(G.data), noNp: W(N.data), badNp: W(B.data),
+  old: [O(G.data), O(N.data), O(B.data), O({ staleAfter: null }), O({ staleAfter: '2026-11-11' }), O({})] };""", G=good, N=no_np, B=bad_np)
+    assert got["good"] == [], got["good"]
+    assert len(got["noNp"]) == 1 and "nextPub is missing" in got["noNp"][0] and "publishedAt" in got["noNp"][0], got["noNp"]
+    assert len(got["badNp"]) == 1 and '"11/11"' in got["badNp"][0], got["badNp"]
+    old = got["old"]
+    assert old[0] == [0, []], old[0]
+    assert old[1][0] == 1 and "nextPub" in old[1][1][0] and old[2][0] == 1 and '"11/11"' in old[2][1][0], old
+    for k in (3, 5):
+        assert old[k][0] == 1 and "staleAfter 가 없어요" in old[k][1][0] and "4일" in old[k][1][0], old[k]
+    assert old[4][0] == 1 and "읽을 수 없어요" in old[4][1][0], old[4]
+    detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    body = detail.split("async function loadLiveData() {", 1)[1].split("\n}\n", 1)[0]
+    assert "warnStaleFields(j," in body and "ownCloseReport(j.stocks" in body and "px.bad.length" in body, body[:400]
+
+
+def test_old_app_corp_dates_borrow_data_json_stale_time_only_for_the_same_publish():
+    """예전 뱁새 기업분석 · 첫 화면 성적표 (corp.json): data.json 과 같은 발행이면 그 staleAfter · nextPub, 다르면 4일 규칙 (console 에 이유)."""
+    got = run("""
+const P = { publishedAt: '2026-11-07T06:40:00+09:00', staleAfter: '2026-11-10T16:47:00+09:00', nextPub: '2026-11-10' };
+WARN.splice(0);
+const same = D.corpStaleArgs('2026-11-06T21:40:00Z', P, 'X'); const w1 = WARN.splice(0);
+const other = D.corpStaleArgs('2026-11-07T06:41:00+09:00', P, 'X'); const w2 = WARN.splice(0);
+const none = D.corpStaleArgs('2026-11-07T06:40:00+09:00', null, 'X'); const w3 = WARN.splice(0);
+out = { same, w1, other, w2, none, w3, sp: [D.samePublish('a', 'a'), D.samePublish(null, null), D.samePublish(P.publishedAt, '2026-11-06T21:40:00Z')] };""")
+    assert got["same"] == {"staleAfter": "2026-11-10T16:47:00+09:00", "nextPub": "2026-11-10"} and got["w1"] == [], got
+    assert got["other"] == {"staleAfter": None, "nextPub": None} and len(got["w2"]) == 1 and "발행이 달라" in got["w2"][0], got
+    assert got["none"] == {"staleAfter": None, "nextPub": None} and got["w3"] == [], got     # 받는 중 · 못 받음 (못 받은 건 받을 때 남겨요)
+    assert got["sp"] == [False, False, True], got["sp"]

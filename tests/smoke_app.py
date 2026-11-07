@@ -31,7 +31,8 @@
               (v18.6.1) '새로 시작하기' · 읽을 설정이 없는 파일은 기본값 + 오늘 값 (앞 포트폴리오의 설정을 잇지 않아요)
   미국 날짜   (v19.1c) 앞선 종가의 미국 종목(pxd): 배너 · 종목 고르기 · 주문 메모 · CSV · JSON(priceDate)에 '{티커} 가격은 {날짜} 종가예요.' (KO · EN)
   늦음        (v19.1c) staleAfter 가 지나면 '갱신이 늦어지고 있어요'(발행 뒤 하루 이내) · '3일째 갱신이 멈췄어요', 전이면 조용 (KO · EN) ·
-              열어 둔 화면도 시계가 staleAfter 를 지나면 새로 고침 없이 경고 (타이머 · 다시 보일 때)
+              열어 둔 화면도 시계가 staleAfter 를 지나면 새로 고침 없이 경고 (타이머 · 다시 보일 때) · 기업분석 · 첫 화면 성적표(corp.json)도
+              data.json 과 같은 발행이면 그 staleAfter 로 (다른 발행이면 4일 규칙) · staleAfter 없음 · 못 읽는 pxd 는 console 에 개수와 함께
   못 읽는 저장본 (v18.6.2) JSON 이 깨졌거나 · 내용이 없거나 · 종목 목록이 없거나 · 읽다가 · 옮기다 오류가 난 저장본은 열지 않아요:
               첫 화면 그대로(언어 · 세금도), 저장된 글은 그대로(자동 저장으로 덮지 않음), console 에 저장본 id 와 진짜 이유 ·
               종목만 있는 저장본은 앞 포트폴리오의 것 없이 기본값으로 열림 · 멀쩡한 저장본은 그대로 열림
@@ -353,9 +354,6 @@ def scene_stale(R, files):
     f = json.loads(json.dumps(files, allow_nan=True))
     for name in DATA_FILES:
         f[name]["publishedAt"] = now_kst(days_ago=6)
-    if "staleAfter" in f["data.json"]:                                     # v19.1c: 발행 6일 전이면 예정 시각도 지났어요
-        f["data.json"]["staleAfter"] = now_kst(days_ago=4)
-        f["data.json"]["nextPub"] = (dt.datetime.now(KST).date() - dt.timedelta(days=5)).isoformat()   # 예정일 5일 전 → n = 6
     srv, ctx, page, _ = R.open(build_site(f))
 
     def run():
@@ -2422,6 +2420,75 @@ def scene_stale_recheck(R, files):
         ctx.close(); srv.shutdown()
 
 
+def scene_corp_stale_after(R, files):
+    """v19.1c (PR #82 리뷰): 예전 뱁새의 기업분석 · 첫 화면 성적표는 corp.json 의 날짜를 보여요. corp.json 이 data.json 과 같은 발행이면
+    data.json 의 staleAfter · nextPub 을 써요: 예정일 당일 staleAfter 가 지나면 '갱신이 늦어지고 있어요', 전이면 조용. 다른 발행이면
+    예전 4일 규칙(발행 뒤 하루는 조용) · console 에 이유. 그리고 data.json 에 staleAfter 가 없고 pxd 를 못 읽는 미국 종목이 있으면
+    포트폴리오가 console 에 개수와 함께 남겨요 (조용한 대체 없음)."""
+    now = dt.datetime.now(KST)
+    pub = (now - dt.timedelta(hours=30)).isoformat(timespec="seconds")
+    other = (now - dt.timedelta(hours=31)).isoformat(timespec="seconds")
+    for label, after, corp_pub, words in (("지남", -1, pub, "갱신이 늦어지고 있어요"), ("전", 5, pub, None), ("다른 발행", -1, other, None)):
+        f = json.loads(json.dumps(files, allow_nan=True))
+        f["data.json"]["publishedAt"] = pub
+        f["corp.json"]["publishedAt"] = corp_pub
+        f["data.json"]["nextPub"] = now.date().isoformat()
+        f["data.json"]["staleAfter"] = (now + dt.timedelta(hours=after)).isoformat(timespec="seconds")
+        R.console.clear()
+        srv, ctx, page, _ = R.open(build_site(f))
+        got = []
+        page.on("requestfinished", lambda r: got.append(r.url) if r.url.endswith("/data.json") else None)
+
+        def settle(n):
+            poll(page, "true", lambda v: len(got) >= n, "data.json 을 받지 않았어요")
+            page.wait_for_timeout(300)
+
+        def badges():
+            return page.evaluate("() => [...document.querySelectorAll('.dateBadge')].map((b) => [b.dataset.stale, b.textContent])")
+
+        def check(where):
+            if words:
+                poll(page, "(() => { const b = document.querySelector('.dateBadge'); return b ? b.dataset.stale : null; })()",
+                     lambda v: v == "1", f"{where}: staleAfter 가 지났는데 경고가 없어요")
+                bs = badges()
+                assert bs and all(st == "1" and (" 기준 · " + words) in t for st, t in bs), (where, bs)
+            else:
+                settle(1)
+                bs = badges()
+                assert bs and all(st == "0" and "갱신이" not in t for st, t in bs), (where, bs)
+
+        def run():
+            search(page, "삼성전자", "005930")
+            page.locator("button", has_text="005930").first.click()
+            see(page, "사실의 요약일 뿐")
+            check("첫 화면 성적표")
+            tab(page, "기업분석")
+            see(page, "시장 지도")
+            check("기업분석")
+            if label == "다른 발행":
+                assert any("발행이 달라" in t for _, t in R.console), R.console[-5:]
+        R.check(page, "늦음 시각", f"기업분석 · 첫 화면 성적표 ({label}): "
+                + (f"같은 발행 · staleAfter 지남 → '{words}'" if words else "staleAfter 전 → 조용" if label == "전"
+                   else "corp.json 이 다른 발행 → 4일 규칙(하루 뒤는 조용) · console 에 이유"), run)
+        ctx.close(); srv.shutdown()
+
+    f = json.loads(json.dumps(files, allow_nan=True))                    # staleAfter 없음 + pxd 를 못 읽는 미국 종목 하나
+    f["data.json"].pop("staleAfter", None)
+    us = next(x for x in f["data.json"]["stocks"] if x.get("cls") == "us" and not x.get("etf") and x.get("pxd") is None)
+    us["pxd"] = "2026/11/04"
+    R.console.clear()
+    srv, ctx, page, _ = R.open(build_site(f))
+
+    def warns():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.locator(".dateBadge", has_text="기준").first.wait_for(state="visible", timeout=WAIT)
+        logs = [t for _, t in R.console]
+        assert any("staleAfter 가 없어요" in t and "4일" in t for t in logs), logs[-8:]
+        assert any("1개는 pxd" in t and us["t"] in t for t in logs), logs[-8:]
+    R.check(page, "늦음 시각", f"staleAfter 없음 · pxd 를 못 읽는 미국 종목({us['t']}) → console 에 개수와 함께 (조용한 대체 없음)", warns)
+    ctx.close(); srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
@@ -2452,7 +2519,7 @@ def main():
                   ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
                   ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh)),
                   ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
-                  ("늦음", lambda: scene_stale_recheck(R, fresh))]
+                  ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

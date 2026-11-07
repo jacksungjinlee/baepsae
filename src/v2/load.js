@@ -45,13 +45,19 @@ export function loadLogoIndex() {
 }
 
 // v19.1c: console warnings at load about the dates the screens use (never silent): the fallback to the 4-day rule when the
-// file has no staleAfter or one that cannot be read, and the US stocks priced at an earlier close (pxd), with counts. A pxd
+// file has no staleAfter or one that cannot be read, the day count from publishedAt when nextPub is missing, and the US stocks priced at an earlier close (pxd), with counts. A pxd
 // that cannot be read is its own warning: that stock shows its price with no date and no change. A readable staleAfter says
 // nothing (console.warn only: nothing here writes to stdout, which the Node tests read).
 export function logDates(d) {
   const sa = d.staleAfter;
   if (sa == null) console.warn("[v2] data.json staleAfter is missing or null: stale after " + STALE_DAYS + " days from publishedAt");
   else if (staleAfterTime(sa) == null) console.warn("[v2] data.json staleAfter cannot be read (" + JSON.stringify(sa) + "): stale after " + STALE_DAYS + " days from publishedAt");
+  // A readable staleAfter without a readable nextPub: the warning still shows when staleAfter passes, but its day count n
+  // counts from publishedAt, not from the morning the publish was due (data.js freshness).
+  else if (!(typeof d.nextPub === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.nextPub))) {
+    console.warn("[v2] data.json nextPub is " + (d.nextPub == null ? "missing or null" : "not a YYYY-MM-DD date (" + JSON.stringify(d.nextPub) + ")")
+      + ": once staleAfter passes, the day count of the warning counts from publishedAt, not from the due day");
+  }
   const r = ownCloseReport(d.stocks, d.usPxDate);
   const us = d.stocks.filter((s) => s && s.cls === "us").length;
   if (r.own.length) {
