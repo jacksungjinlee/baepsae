@@ -12,7 +12,8 @@ data.json 의 새 칸 (파이프라인 PR, claude/us-stale-dates):
 - 매일 점검(rules.js evaluateHolding)이 pxd 를 실어 보내요 · 회사 페이지 날짜(cofmt.priceDate · closeLine)가 그 종목의 날짜
 - 예전 뱁새 mergeStocks 가 pxd 를 지켜요 (두 갈래 모두)
 - 늦음 규칙: staleAfter 전 · 뒤 · 없음(4일 규칙) · 못 읽음(4일 규칙) · 4일 규칙은 staleAfter 가 있어도 그대로 (늦게 뜨는 일 없음) ·
-  n ≤ 1 이면 '갱신이 늦어지고 있어요', 2 부터 '{n}일째 갱신이 멈췄어요'
+  n ≤ 1 이면 '갱신이 늦어지고 있어요', 2 부터 '{n}일째 갱신이 멈췄어요' · 공시 탭의 n(가장 최근 공시일부터) = 1 도 같은 규칙
+- 열어 둔 화면: 데이터를 다시 받지 않고 늦음만 다시 봐요 (load.js refreshFresh · nextFreshCheck, data.js nextFreshChange)
 - 문구: 승인된 그대로 (Jack, 2026-11-07 디자인 채팅) · 홈 띠의 n ≤ 1 문구(today.staleLate)는 Jack 의 문구를 기다리는 자리표시라서
   test_today_stale_late_has_jacks_wording 이 그때까지 실패해요 (이대로는 내보내지 못하게)
 - pxd · staleAfter 가 없는 파일은 지금과 똑같이 동작해요
@@ -34,7 +35,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 _B = {}
 MODS = {"D": "src/data.js", "L": "src/v2/stocklist.js", "E": "src/v2/engine.js", "R": "src/v2/rules.js", "T": "src/v2/track.js",
-        "CF": "src/v2/cofmt.js", "F": "src/v2/format.js", "LD": "src/v2/load.js", "C": "src/copy/v2.js"}
+        "CF": "src/v2/cofmt.js", "F": "src/v2/format.js", "LD": "src/v2/load.js", "C": "src/copy/v2.js", "CO": "src/v2/company.js"}
 
 
 def bundle_dir():
@@ -53,7 +54,7 @@ def bundle_dir():
 
 def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
-    code = ("import * as M from './own.mjs';\nconst { D, L, E, R, T, CF, F, LD } = M; const CP = M.C.C;\n"
+    code = ("import * as M from './own.mjs';\nconst { D, L, E, R, T, CF, F, LD, CO } = M; const CP = M.C.C;\n"
             "const WARN = []; console.warn = (m) => WARN.push(String(m));\n" + decl + "let out;\n" + body
             + "\nconsole.log(JSON.stringify(out));")
     fd, path = tempfile.mkstemp(suffix=".mjs", dir=bundle_dir())
@@ -264,21 +265,81 @@ out = { a: a.fresh, b: b.fresh, c: c.fresh, p: p.fresh, wa, wc, wp, day: R.daySt
     assert "1 US stocks with a pxd that cannot be read" in wa and "BAD" in wa, wa
     assert "staleAfter" not in wa, wa                                                  # 읽을 수 있는 staleAfter 는 조용해요
     wc = " | ".join(got["wc"])
-    assert "no staleAfter" in wc and "4 days" in wc and "earlier close" not in wc, wc   # 예전 규칙으로 돌아갈 때는 크게
+    assert "staleAfter is missing or null" in wc and "4 days" in wc and "earlier close" not in wc, wc   # 예전 규칙으로 돌아갈 때는 크게
 
 
-def test_files_without_pxd_or_stale_after_behave_as_before():
-    """오늘의 실제 파일 모양(pxd · staleAfter 없음): 날짜 · d1 · 안내 · 늦음 판단이 이 PR 전과 같아요."""
-    f = _files()
+def test_files_without_pxd_or_stale_after_follow_the_four_day_rule():
+    """오늘의 실제 파일 모양(pxd · staleAfter 없음): 늦음 판단은 예전 4일 규칙 그대로 (발행 뒤 지난 날 수 = 내림, 4일을 넘으면 멈춤),
+    날짜 · d1 · 안내도 이 PR 전과 같아요. 기대값은 파이썬에서 4일 규칙으로 따로 계산해요."""
+    pub = dt.datetime(2026, 11, 10, 6, 40, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    f = _files(publishedAt=pub.isoformat())
     f["data"]["stocks"] = [kr("005930", d1=-6.0), us("MSFT", d1=-7.0)]
+    f["corp"]["publishedAt"] = pub.isoformat()
+    offsets = [dt.timedelta(0), dt.timedelta(hours=23, minutes=59), dt.timedelta(days=1), dt.timedelta(days=2, hours=3),
+               dt.timedelta(days=4, hours=23, minutes=59), dt.timedelta(days=5), dt.timedelta(days=6, hours=1)]
+    nows = [int((pub + o).timestamp() * 1000) for o in offsets]
     got = run("""
-const now = Date.parse('2026-11-12T08:00:00+09:00');
+const out1 = NOWS.map((now) => {
+  const load = LD.resolveLoad({ data: { ok: true, data: F0.data }, corp: { ok: true, data: F0.corp }, macro: { ok: false, error: 'x' } }, now);
+  return { fresh: load.fresh, day: R.dayState(load, now) };
+});
+const now = NOWS[3];
 const load = LD.resolveLoad({ data: { ok: true, data: F0.data }, corp: { ok: true, data: F0.corp }, macro: { ok: false, error: 'x' } }, now);
 const [k, m] = F0.data.stocks;
-out = { fresh: load.fresh, old: D.freshness(F0.data.pxDate, F0.data.publishedAt, 'ko', now),
-  d1: [E.todayD1(k), E.todayD1(m)], dates: [CF.priceDate(load, k), CF.priceDate(load, m)], groups: L.ownCloses(load, F0.data.stocks) };""", F0=f)
-    assert got["fresh"] == got["old"] == {"md": "11월 9일", "days": 2, "stale": False}, got
+out = { all: out1, d1: [E.todayD1(k), E.todayD1(m)], dates: [CF.priceDate(load, k), CF.priceDate(load, m)], groups: L.ownCloses(load, F0.data.stocks) };""",
+              F0=f, NOWS=nows)
+    for o, g in zip(offsets, got["all"]):
+        days = int(o.total_seconds() // 86400)
+        stale = days > 4                                                         # STALE_DAYS = 4 (src/data.js), 바꾸지 않았어요
+        assert g["fresh"] == {"md": "11월 9일", "days": days, "stale": stale}, (o, g)
+        assert g["day"] == ({"ok": False, "why": "stale", "days": days} if stale else {"ok": True}), (o, g["day"])
     assert got["d1"] == [-6.0, -7.0] and got["dates"] == ["2026-11-09", "2026-11-09"] and got["groups"] == [], got
+
+
+# ── 열어 둔 화면의 늦음 다시 보기 (load.js refreshFresh · nextFreshCheck, data.js nextFreshChange) ──
+def test_refresh_fresh_turns_stale_after_stale_after_without_new_data():
+    f = _files(nextPub="2026-11-11", staleAfter="2026-11-11T16:47:00+09:00", publishedAt="2026-11-10T06:40:00+09:00")
+    f["corp"]["publishedAt"] = "2026-11-10T06:40:00+09:00"
+    got = run("""
+const at = (x) => Date.parse(x);
+const load = LD.resolveLoad({ data: { ok: true, data: F0.data }, corp: { ok: true, data: F0.corp }, macro: { ok: false, error: 'x' } }, at('2026-11-11T09:00:00+09:00'));
+const same = LD.refreshFresh(load, at('2026-11-11T16:00:00+09:00'));
+const late = LD.refreshFresh(load, at('2026-11-11T16:48:00+09:00'));
+const again = LD.refreshFresh(late, at('2026-11-11T18:00:00+09:00'));
+const day2 = LD.refreshFresh(late, at('2026-11-12T06:41:00+09:00'));
+const ctxA = R.todayCtx(load, at('2026-11-11T16:00:00+09:00')), ctxB = R.todayCtx(late, at('2026-11-11T16:48:00+09:00'));
+const prev = LD.resolveLoad({ data: { ok: true, data: F0.data }, corp: { ok: true, data: F0.corp }, macro: { ok: false, error: 'x' } }, at('2026-11-11T09:00:00+09:00'), { preview: true });
+out = { first: load.fresh, sameIsSame: same === load, late: late.fresh, lateData: late.data === load.data && late.byT === load.byT,
+  againIsSame: again === late, day2: day2.fresh, stateA: ctxA.state, stateB: ctxB.state,
+  prevSame: LD.refreshFresh(prev, at('2026-11-20T00:00:00+09:00')) === prev, failSame: LD.refreshFresh({ status: 'fail' }, 0).status,
+  waits: [LD.nextFreshCheck(load, at('2026-11-11T09:00:00+09:00')), LD.nextFreshCheck(load, at('2026-11-11T16:30:00+09:00')),
+          LD.nextFreshCheck(load, at('2026-11-11T16:47:30+09:00')), LD.nextFreshCheck(late, at('2026-11-12T06:30:00+09:00')),
+          LD.nextFreshCheck(prev, 0), LD.nextFreshCheck({ status: 'loading' }, 0)],
+  raw: [D.nextFreshChange(at('2026-11-11T16:30:00+09:00'), [], '2026-11-11T16:47:00+09:00'), D.nextFreshChange(0, [null, 'x'], 'bogus'),
+        D.nextFreshChange(at('2026-11-11T16:30:00+09:00'), ['2026-11-10T06:40:00+09:00'], null)] };""", F0=f)
+    assert got["first"] == {"md": "11월 9일", "days": 1, "stale": False}, got["first"]
+    assert got["sameIsSame"] is True and got["againIsSame"] is True                 # 바뀐 게 없으면 같은 객체 (다시 그리지 않아요)
+    assert got["late"] == {"md": "11월 9일", "days": 1, "stale": True} and got["lateData"], got   # 데이터는 그대로, 경고만
+    assert got["day2"] == {"md": "11월 9일", "days": 2, "stale": True}, got["day2"]               # 날 수가 늘면 문구의 n 도
+    assert got["stateA"] == {"ok": True} and got["stateB"] == {"ok": False, "why": "stale", "days": 1}, got   # 홈 판정도 멈춤으로
+    assert got["prevSame"] is True and got["failSame"] == "fail"                    # 미리 보기 · 실패는 건드리지 않아요
+    H, M = 3600000, 60000
+    assert got["waits"][0] == H and got["waits"][1] == 17 * M + 1000, got["waits"]  # 길어도 1시간 · staleAfter 1초 뒤
+    assert got["waits"][2] == H and got["waits"][3] == 10 * M + 1000, got["waits"]      # 지난 뒤엔 1시간마다 · 발행 뒤 날 수가 느는 때(06:40) 1초 뒤
+    assert got["waits"][4] is None and got["waits"][5] is None, got["waits"]
+    assert got["raw"] == [17 * M + 1000, None, H], got["raw"]
+
+
+# ── 공시 탭: n 은 가장 최근 공시일부터 (최소 1) ──
+def test_disclosure_tab_n_is_days_since_the_newest_filing_and_reads_late_at_one():
+    got = run("""
+const N = Date.parse('2026-11-11T09:00:00+09:00');
+const one = CO.discDate({ asOf: '2026-11-11', newest: '2026-11-10', listOk: false, publishedAt: '2026-11-11T07:30:00+09:00' }, N);
+const three = CO.discDate({ asOf: '2026-11-11', newest: '2026-11-08', listOk: false, publishedAt: '2026-11-11T07:30:00+09:00' }, N);
+out = { one, three, w1: F.staleText(one.days), w3: F.staleText(three.days) };""")
+    assert got["one"]["stale"] is True and got["one"]["days"] == 1, got["one"]
+    assert got["w1"] == "갱신이 늦어지고 있어요", got["w1"]                       # 공시 목록을 못 받은 날, 가장 최근 공시가 어제
+    assert got["three"]["days"] == 3 and got["w3"] == "3일째 갱신이 멈췄어요", got
 
 
 # ── 문구 ──

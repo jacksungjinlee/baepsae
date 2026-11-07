@@ -31,7 +31,7 @@ import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { isCompany, ownCloses } from "./stocklist.js";
+import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -148,7 +148,12 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo">
           <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
             body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
-            inset={todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)} />
+            inset={<>
+              {todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)}
+              {/* v19.1c: an item here about a US stock priced at an earlier close (pxd, carried by the daily check) read that
+                  close: the same note, naming only those stocks */}
+              <OwnCloseNote groups={ownCloseGroups(todo.map(({ x }) => x), null)} data-scope="todo" />
+            </>} />
         </div>
         {bigs.length > 0 && <Card><BigMoves items={bigs} load={load} onWhy={onWhy} /></Card>}
       </>

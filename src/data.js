@@ -93,6 +93,25 @@ export function freshness(contentDate, publishedAt, lang, now, staleAfter) {
   return { md: mdOf(contentDate, lang), days, stale: late || (days != null && days > STALE_DAYS) };
 }
 
+// v19.1c: 열어 둔 화면이 '늦음'을 놓치지 않게 다시 볼 시각 (데이터를 다시 받지는 않아요). 아침에 열어 둔 앱도 staleAfter(예정일 16:47)가
+// 지나면 경고가 떠야 해요. → 지금부터 freshness 가 바뀔 수 있는 가장 이른 때까지 남은 ms: staleAfter 바로 뒤, 그리고 각 발행 시각
+// (publishedAts) 에서 날 수가 하나 느는 때 (문구의 n · 4일 규칙). 1초 여유를 두고, 길어도 FRESH_RECHECK_MAX_MS (1시간) 마다 다시 봐요.
+// 읽을 수 있는 시각이 하나도 없으면 null (그때는 화면이 다시 보일 때만 다시 봐요).
+const DAY_MS = 86400000;
+export const FRESH_RECHECK_MAX_MS = 3600000;
+export function nextFreshChange(now, publishedAts, staleAfter) {
+  const t = now == null ? Date.now() : now;
+  const at = [];
+  const due = staleAfterTime(staleAfter);
+  if (due != null && due >= t) at.push(due + 1000);
+  for (const p of publishedAts || []) {
+    const pt = Date.parse(p || "");
+    if (Number.isFinite(pt)) at.push(pt + (Math.floor((t - pt) / DAY_MS) + 1) * DAY_MS + 1000);
+  }
+  if (!at.length) return null;
+  return Math.max(1000, Math.min(FRESH_RECHECK_MAX_MS, Math.min(...at) - t));
+}
+
 // 멈춤 문구 (Jack, 2026-11-07 디자인 채팅): 발행 뒤 하루 이내(n ≤ 1, 예정일 발행이 늦어진 것)는 '갱신이 늦어지고 있어요',
 // 이틀째부터는 예전 그대로 '{n}일째 갱신이 멈췄어요'. 발행 시각을 모르면(n 없음) 날 수를 말할 수 없어서 '늦어지고 있어요'.
 export const STALE_LATE_MAX_DAYS = 1;

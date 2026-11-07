@@ -30,7 +30,8 @@
               JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수) ·
               (v18.6.1) '새로 시작하기' · 읽을 설정이 없는 파일은 기본값 + 오늘 값 (앞 포트폴리오의 설정을 잇지 않아요)
   미국 날짜   (v19.1c) 앞선 종가의 미국 종목(pxd): 배너 · 종목 고르기 · 주문 메모 · CSV · JSON(priceDate)에 '{티커} 가격은 {날짜} 종가예요.' (KO · EN)
-  늦음        (v19.1c) staleAfter 가 지나면 '갱신이 늦어지고 있어요'(발행 뒤 하루 이내) · '3일째 갱신이 멈췄어요', 전이면 조용 (KO · EN)
+  늦음        (v19.1c) staleAfter 가 지나면 '갱신이 늦어지고 있어요'(발행 뒤 하루 이내) · '3일째 갱신이 멈췄어요', 전이면 조용 (KO · EN) ·
+              열어 둔 화면도 시계가 staleAfter 를 지나면 새로 고침 없이 경고 (타이머 · 다시 보일 때)
   못 읽는 저장본 (v18.6.2) JSON 이 깨졌거나 · 내용이 없거나 · 종목 목록이 없거나 · 읽다가 · 옮기다 오류가 난 저장본은 열지 않아요:
               첫 화면 그대로(언어 · 세금도), 저장된 글은 그대로(자동 저장으로 덮지 않음), console 에 저장본 id 와 진짜 이유 ·
               종목만 있는 저장본은 앞 포트폴리오의 것 없이 기본값으로 열림 · 멀쩡한 저장본은 그대로 열림
@@ -2375,6 +2376,46 @@ def scene_stale_after(R, files):
         ctx.close(); srv.shutdown()
 
 
+def scene_stale_recheck(R, files):
+    """v19.1c: 열어 둔 예전 뱁새도 새로 고치지 않고 staleAfter 가 지나면 날짜 표시에 '갱신이 늦어지고 있어요' (시계를 앞으로 돌려
+    타이머로 · 시계만 옮기고 화면이 다시 보일 때). data.json 은 다시 받지 않아요."""
+    for how in ("timer", "visible"):
+        f = json.loads(json.dumps(files, allow_nan=True))
+        now = dt.datetime.now(KST)
+        f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=2)).isoformat(timespec="seconds")
+        f["data.json"]["nextPub"] = now.date().isoformat()
+        f["data.json"]["staleAfter"] = (now + dt.timedelta(minutes=30)).isoformat(timespec="seconds")
+        srv, base = serve(build_site(f))
+        ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+        page = ctx.new_page()
+        page.on("pageerror", lambda e: R.errors.append(str(e)))
+        page.clock.install(time=now)
+        fetched = []
+        page.on("request", lambda r: fetched.append(r.url) if r.url.endswith("data.json") else None)
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+
+        def run():
+            page.get_by_text("차근차근 만들기", exact=True).click()
+            badge = page.locator(".dateBadge", has_text="기준").first
+            badge.wait_for(state="visible", timeout=WAIT)
+            assert badge.get_attribute("data-stale") == "0", badge.inner_text()
+            n = len(fetched)
+            if how == "timer":
+                page.clock.fast_forward("31:00")
+            else:
+                page.clock.set_system_time(now + dt.timedelta(minutes=45))
+                page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+            poll(page, "(() => { const b = document.querySelector('.dateBadge'); return b ? b.dataset.stale : null; })()", lambda v: v == "1",
+                 "시계가 staleAfter 를 지났는데 경고가 뜨지 않았어요")
+            txt = page.locator(".dateBadge", has_text="기준").first.inner_text()
+            assert txt.endswith(" 기준 · 갱신이 늦어지고 있어요"), txt
+            assert len(fetched) == n, fetched[n:]
+        R.check(page, "열어 둔 화면", ("시계가 staleAfter 를 지나면 타이머로" if how == "timer" else "화면이 다시 보일 때")
+                + " 새로 고침 없이 '갱신이 늦어지고 있어요' · data.json 다시 받지 않음", run)
+        ctx.close(); srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
@@ -2403,7 +2444,8 @@ def main():
                   ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)), ("바로가기", lambda: scene_deep_links(R, fresh)),
                   ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
                   ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh)),
-                  ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh))]   # v19.1c
+                  ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
+                  ("늦음", lambda: scene_stale_recheck(R, fresh))]
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

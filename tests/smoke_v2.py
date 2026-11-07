@@ -33,7 +33,8 @@
               너무 커서 추정하지 않았어요.' · 예전 파일은 출렁임 문장만
   v19.1c      미국 종목의 자기 가격 날짜(pxd): 회사 페이지 '미국 {날짜} 종가' · 목록·합계마다 '{티커} 가격은 {날짜} 종가예요.' (덱 짜기 상위
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
-              늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용
+              늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
+              홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
@@ -4155,6 +4156,37 @@ def scene_own_dates(R, files, width):
     ctx.close()
     srv.shutdown()
 
+    # 홈 '오늘 확인할 일': 앞선 종가 종목(NVDA)과 기준일 종가 종목(MSFT)이 둘 다 ROE 자료가 비어 확인 필요 → 띠 안에 NVDA 만 이름이 나와요
+    g = own_files(files)
+    gby = {x["t"]: x for x in g["data.json"]["stocks"]}
+    fx = g["data.json"]["fx"]
+    for t in ("NVDA", "MSFT"):
+        gby[t].pop("roe", None)
+    roe = lambda: {"id": "roeFloor", "kind": "keep", "check": "checked", "input": "roe", "baseline": 20.0, "since": None, "roe": 20.0, "floor": 10, "fy": None}
+    rows = [("005930", "삼성전자", "kr", 0.4, 2, "KRW"), ("NVDA", gby["NVDA"]["nk"], "us", 0.3, 3, "USD"), ("MSFT", gby["MSFT"]["nk"], "us", 0.3, 1, "USD")]
+    hold = [{**_holding(t, nk, tg, [] if cls == "kr" else [roe()]), "cls": cls, "plannedQty": q} for t, nk, cls, tg, q, _ in rows]
+    buys = [{"t": t, "date": "2026-10-01", "qty": q, "price": round(gby[t]["price"] * 0.95, 2), "ccy": c, **({"fx": fx} if c == "USD" else {})}
+            for t, _, _, _, q, c in rows]
+    store = {"v": 1, "decks": [{"id": "dtodo", "name": "미국 확인 포트폴리오", "createdAt": "2026-10-01", "holdings": hold, "purchases": buys, "planFx": fx}]}
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, _ = R.open(build_site(g), width, init=init)
+
+    def todo_note():
+        hero = page.locator('[data-ui-v2="today-hero"]')
+        hero.wait_for(state="visible")
+        assert hero.get_attribute("data-state") == "todo", hero.inner_text()
+        items = hero.locator('[data-ui-v2="todo-item"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
+        assert set(items) == {"NVDA", "MSFT"}, items
+        note = hero.locator('[data-ui-v2="own-close"][data-scope="todo"]')
+        assert note.count() == 1 and note.inner_text() == "NVDA 가격은 10월 28일 종가예요.", note.all_inner_texts()   # MSFT 는 기준일 종가라 빠져요
+        strip = page.locator('[data-ui-v2="deck-strip"] [data-ui-v2="own-close"]')
+        assert strip.all_inner_texts() == ["NVDA 가격은 10월 28일 종가예요."], strip.all_inner_texts()
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, S, "홈 '오늘 확인할 일': 앞선 종가 종목이 든 항목이면 띠 안에 그 종목만 '… 가격은 10월 28일 종가예요.' (기준일 종가 종목은 이름 없음)", todo_note)
+    ctx.close()
+    srv.shutdown()
+
 
 def stale_files(files, hours_ago, after_hours):
     """발행 hours_ago 시간 전 · staleAfter 는 지금에서 after_hours 시간 뒤(음수면 이미 지남). 매일 점검 덱과 같이 써요."""
@@ -4207,6 +4239,49 @@ def scene_stale_after(R, files, width):
         srv.shutdown()
 
 
+def scene_stale_recheck(R, files, width):
+    """열어 둔 화면 (v19.1c): 아침에 연 2.0 을 새로 고치지 않아도 staleAfter 가 지나면 날짜 줄 · 홈 띠에 늦음 경고가 떠요. 시계를 앞으로
+    돌려 (Playwright clock) 타이머로 한 번, 시계만 옮기고 화면이 다시 보일 때(visibilitychange)로 한 번 봐요. 데이터는 다시 받지 않아요."""
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    for how in ("timer", "visible"):
+        now = dt.datetime.now(KST)
+        f = stale_files(files, 2, 0.5)                                            # 발행 2시간 전 · staleAfter 30분 뒤
+        srv, base = serve(build_site(f))
+        ctx = R.browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
+        ctx.add_init_script(init)
+        page = ctx.new_page()
+        page.set_default_timeout(WAIT)
+        page.on("pageerror", lambda e: R.errors.append(str(e)))
+        page.clock.install(time=now)
+        fetched = []
+        page.on("request", lambda r: fetched.append(r.url) if r.url.endswith(".json") else None)
+        page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
+
+        def run():
+            hero = page.locator('[data-ui-v2="today-hero"]')
+            hero.wait_for(state="visible")                                        # 아직은 판정 그대로, 경고 없음
+            dl = page.locator('[data-ui-v2="date-line"]').first
+            assert dl.get_attribute("data-stale") == "0", dl.inner_text()
+            n = len(fetched)
+            if how == "timer":
+                page.clock.fast_forward("31:00")                                  # staleAfter 를 지나 타이머가 돌아요
+            else:
+                page.clock.set_system_time(now + dt.timedelta(minutes=45))        # 타이머는 돌지 않고 시계만
+                page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+            page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"date-line\"]'); return !!e && e.dataset.stale === '1'; }")
+            assert dl.inner_text().endswith(" · " + C["app"]["staleLate"]), dl.inner_text()          # 발행 2시간 뒤: n = 0 → 늦어지고 있어요
+            band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"] h2')
+            band.wait_for(state="visible")
+            assert band.inner_text() == C["today"]["staleLate"] and hero.count() == 0, band.inner_text()
+            assert len(fetched) == n, fetched[n:]                                  # 데이터 파일을 다시 받지 않았어요
+            R.collect(page)
+        R.check(page, f"열어 둔 화면 {width}", ("시계가 staleAfter 를 지나면 타이머로" if how == "timer" else "화면이 다시 보일 때(visibilitychange)")
+                + " 새로 고침 없이 날짜 줄 '갱신이 늦어지고 있어요' · 홈 띠(today.staleLate) · 판정 멈춤, 데이터 다시 받지 않음", run)
+        ctx.close()
+        srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -4239,7 +4314,8 @@ def main():
                       lambda: scene_missing(R, files, width), lambda: scene_no_holding(R, files, width),
                       lambda: scene_v191b(R, files, width),           # v19.1b: divCheck 가 있는 파일 (분할 확인 배당 · 베타 범위 · 2022년 범위)
                       lambda: scene_own_dates(R, files, width),       # v19.1c: 미국 종목의 자기 가격 날짜 (pxd)
-                      lambda: scene_stale_after(R, files, width)]     # v19.1c: 늦음 경고 시각 (staleAfter)
+                      lambda: scene_stale_after(R, files, width),     # v19.1c: 늦음 경고 시각 (staleAfter)
+                      lambda: scene_stale_recheck(R, files, width)]   # v19.1c: 열어 둔 화면도 staleAfter 가 지나면 경고
             for fn in scenes:
                 try:
                     fn()

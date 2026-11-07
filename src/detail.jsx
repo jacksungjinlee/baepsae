@@ -14,7 +14,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
-import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups } from "./data.js";
+import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 
@@ -4798,6 +4798,35 @@ function AppInner({ seed, lang: langProp }) {
   const [onb, setOnb] = useState(false);
   const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null, staleAfter: null });
   const universe = useRef(null);
+  // v19.1c: 열어 둔 화면도 '늦음'을 놓치지 않게 (데이터를 다시 받지 않아요): 화면이 다시 보일 때와, staleAfter 바로 뒤 · 발행 뒤
+  // 날 수가 느는 때(길어도 1시간)에 data.json 의 freshness 를 다시 봐요. 답이 바뀌었을 때만 다시 그려요 (DateBadge 와 경고 칸).
+  const [, setFreshTick] = useState(0);
+  const freshSig = useRef("");
+  useEffect(() => {
+    if (!live.live) return undefined;
+    let on = true, timer = null;
+    const sig = () => { const f = freshness(live.pxDate || live.asOf, live.publishedAt, "ko", Date.now(), live.staleAfter); return f.stale + ":" + f.days; };
+    freshSig.current = sig();
+    const check = () => {
+      if (!on) return;
+      const now = sig();
+      if (now !== freshSig.current) { freshSig.current = now; setFreshTick((n) => n + 1); }
+    };
+    const arm = () => {
+      const wait = nextFreshChange(Date.now(), [live.publishedAt], live.staleAfter);
+      if (on && wait != null) timer = setTimeout(() => { check(); arm(); }, wait);
+    };
+    const onShow = () => { if (document.visibilityState !== "hidden") check(); };
+    arm();
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("focus", check);
+    return () => {
+      on = false;
+      if (timer != null) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("focus", check);
+    };
+  }, [live.live, live.pxDate, live.asOf, live.publishedAt, live.staleAfter]);
   const [autoVals, setAutoVals] = useState({});      // 오늘 data.json 이 준 자동 값 (환율 · 시장 가정). 못 읽은 날은 비어 있어요
   const [typedKeys, setTypedKeys] = useState([]);    // 설정 화면에서 직접 입력한 칸 (v18.6): 저장본 · 파일에 같이 저장해요
   const markTyped = (ks) => setTypedKeys((ts) => [...ts, ...ks.filter((k) => !ts.includes(k))]);

@@ -14,6 +14,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
 import { readStore, writeStore, askPersist } from "./store.js";
+import { refreshFresh, nextFreshCheck } from "./load.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -76,6 +77,32 @@ export function App({ source }) {
     if (store.writable) askPersist();
     return () => { live = false; };
   }, []);
+
+  // v19.1c: the stale check again while the page stays open (load.js refreshFresh): when it is shown again and from a timer
+  // that fires just after staleAfter or the next day of a publish (at most an hour apart). Nothing is fetched again: only
+  // fresh (and what reads it: the date lines, the 홈 stale band, the daily check) can change. Not on the preview page.
+  const liveData = load.status === "ok" && !load.preview;
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(() => {
+    if (!liveData) return undefined;
+    let on = true, timer = null;
+    const check = () => { if (on) setLoad((l) => refreshFresh(l, Date.now())); };
+    const arm = () => {
+      const wait = nextFreshCheck(loadRef.current, Date.now());
+      if (on && wait != null) timer = setTimeout(() => { check(); arm(); }, wait);
+    };
+    const onShow = () => { if (document.visibilityState !== "hidden") check(); };
+    arm();
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("focus", check);
+    return () => {
+      on = false;
+      if (timer != null) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("focus", check);
+    };
+  }, [liveData]);
 
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
