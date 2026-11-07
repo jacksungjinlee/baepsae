@@ -762,3 +762,62 @@ def test_korean_growth_is_labelled_by_how_it_was_calculated():
                    "no g3": None, "us": None, "rounding": "y2", "both rules fit": None, "only the 1-year rule fits": "y1",
                    "this year missing": None, "this year missing, 1 year only": None, "this year 0.0": None, "코오롱티슈진": None,
                    "two years ago missing": "y1", "two years ago 0.0": None, "last year missing": "y2"}, got
+
+
+# ── v19.3c Part D: 내 점수 칸의 수 (기준 전의 수 · 엔진이 고른 목록의 길이) ──
+def test_pool_before_any_criterion_is_universe_then_trading_value_then_switches_then_mix():
+    """screen() 은 점수가 없으면 0 이라서, 점수가 없을 때 보여 줄 '기준 전의 수' (Part D): 대상 종목 → 거래대금 바닥(자료 없는 종목도 빠져요)
+    → 켠 빼기 → 한국 : 미국 비율의 시장. 꼭 담을 종목은 결과 목록처럼 따로 붙어서 여기에도 세지 않아요. 점수를 줘도 같은 수예요."""
+    stocks = [kr("000010", opm=-3), kr("000020", debt=250), kr("000040", dps=0), kr("000060", ind="holding", indName="지주회사"),
+              kr("000070", val20=4.9), kr("000075", val20=None), kr("000080"), kr("000090"), kr("005935"), kr("000100", etf=True),
+              us("AAA", val=3), us("BBB"), us("CCC")]
+    got = run(SET + "const n = (o) => E.poolCount(stocks, S(o)); const m = (o) => E.meterCount(E.screen(stocks, S(o)));"
+              "out = { kr: n({ mix: 'kr' }), us: n({ mix: 'us' }), both: n({ mix: 'k55' }),"
+              " off: n({ mix: 'kr', exclude: { loss: true, debt: true, noDiv: true, holding: true } }),"
+              " pinned: n({ mix: 'kr', pinned: ['000080'] }), withPoints: n({ mix: 'kr', points: { value: 5 } }),"
+              " none: m({ mix: 'k55' }), some: m({ mix: 'k55', points: { profit: 3 }, strict: 'loose' }),"
+              " res: E.screen(stocks, S({ mix: 'k55', points: { profit: 3 }, strict: 'loose' })).pool,"
+              " markets: E.screen(stocks, S({ mix: 'k55' })).markets };", stocks=stocks)
+    # 한국: 대상 8 (우선주 · ETF 빠짐) - 바닥 아래 1 - 거래대금 자료 없음 1 = 6 · 미국: 3 - 바닥 아래 1 = 2
+    assert got["kr"] == 6 and got["us"] == 2 and got["both"] == 8, got
+    assert got["off"] == 2, got                                          # 적자 · 부채 · 무배당 · 지주회사 빼기를 켜면 둘만
+    assert got["pinned"] == 5 and got["withPoints"] == 6, got
+    assert got["none"] == {"pool": True, "n": 8}, got                    # 점수가 없으면 기준 전의 수
+    assert got["some"] == {"pool": False, "n": 8} and got["res"] == 8, got   # 넉넉하게 · 자료가 다 있으면 모두 남아요
+    assert got["markets"]["kr"]["pool"] == 6 and got["markets"]["us"]["pool"] == 2
+
+
+def test_meter_count_is_the_result_list_length_for_ten_random_point_mixes():
+    """N.3: 무작위 점수 열 가지(시험 데이터 tests/fixtures/v2/data.json) 모두 내 점수 칸의 수 = screen() 결과 목록의 길이(시장마다 더해서)
+    = 후보를 고르는 목록 그 자체(topOverall 전체). 기준 전의 수는 그보다 작지 않고, 점수 0 이면 그 수를 보여요."""
+    import random as _random
+    rnd = _random.Random(1931)
+    live = ["value", "div", "growth", "profit", "stable", "lowVol", "trend", "large"]
+    mixes = []
+    for _ in range(10):
+        k = rnd.randint(1, 5)
+        pts, left = {}, 10
+        for i, cid in enumerate(rnd.sample(live, k)):
+            pts[cid] = rnd.randint(1, max(1, min(5, left - (k - i - 1))))
+            left -= pts[cid]
+        mixes.append({"points": pts, "strict": rnd.choice(["loose", "normal", "strict", "very"]), "mix": rnd.choice(["kr", "k73", "k55", "us"])})
+    path = os.path.join(ROOT, "tests", "fixtures", "v2", "data.json")
+    got = run(SET + f"const {{ readFileSync }} = await import('node:fs'); const stocks = JSON.parse(readFileSync({json.dumps(path)}, 'utf8')).stocks;"
+              "out = MIXES.map((o) => { const r = E.screen(stocks, S(o)); const m = E.meterCount(r);"
+              " return { m, list: Object.values(r.markets).reduce((a, x) => a + x.survivors.length, 0), all: E.topOverall(r, 1e9).length,"
+              " survivors: r.survivors, pool: E.poolCount(stocks, S(o)), zero: E.meterCount(E.screen(stocks, S({ ...o, points: {} }))) }; });",
+              MIXES=mixes)
+    assert len(got) == 10
+    for o, g in zip(mixes, got):
+        assert g["m"]["pool"] is False and g["m"]["n"] == g["list"] == g["all"] == g["survivors"], (o, g)
+        assert g["pool"] >= g["m"]["n"] and g["zero"] == {"pool": True, "n": g["pool"]}, (o, g)
+    assert len({g["m"]["n"] for g in got}) >= 5, got                    # 서로 다른 결과가 나오는 섞임이에요
+
+
+def test_recipe_badges_come_from_the_templates_own_settings():
+    """v19.3c Part D 의 표시 두 개: 깐깐한 기준 → '세 기준 모두 상위 {top}% 안' (기준 셋 · 깐깐하게 = 30), 한미 반반 → '한국 {kr}% · 미국 {us}%'
+    (50 · 50). 화면은 이 값을 템플릿에서 읽어 채워요 (src/v2/build.jsx recipeBadge)."""
+    got = run("const d = (id) => E.DECKS.find((x) => x.id === id);"
+              "out = { strictN: Object.keys(d('strict').points).length, top: E.strictTop(d('strict').strict), kr: E.mixKr(d('krUs').mix),"
+              " others: E.DECKS.filter((x) => !x.hidden && (x.strict || x.mix)).map((x) => x.id) };")
+    assert got == {"strictN": 3, "top": 30, "kr": 0.5, "others": ["strict", "krUs"]}, got
