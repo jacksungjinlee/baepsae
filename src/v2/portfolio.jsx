@@ -145,10 +145,10 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         );
       })}
       {decks.length > 0 && go && (
-        <Card data-ui-v2="build-more">
-          <Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button>
-          {openImport && <div data-ui-v2="import-more" style={{ marginTop: SPACE(2) }}><Button kind="secondary" onClick={openImport}>{C.build.s0.holdings}</Button></div>}
-        </Card>
+        <Card data-ui-v2="build-more"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
+      )}
+      {decks.length > 0 && openImport && (
+        <Card data-ui-v2="import-more"><Button kind="secondary" onClick={openImport}>{C.build.s0.holdings}</Button></Card>
       )}
       <Card data-ui-v2="records">
         {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
