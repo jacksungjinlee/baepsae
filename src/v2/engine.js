@@ -347,16 +347,19 @@ export function marketsOf(settings) {
 
 // ---------------- screening ----------------
 // Universe -> liquidity floor -> 빼기 switches -> blanks left out -> strictness cut-off -> score order.
+// pool (v19.3c Part D): the stocks still in after the steps before any 기준 (universe -> trading-value floor -> 빼기, in
+// the markets of the Korea:US mix), the number 포트폴리오 만들기 shows while no card has points. 꼭 담을 종목 are left
+// out of it as they are of survivors (they join the list on their own), so pool >= survivors always holds.
 export function screen(stocks, settings) {
   const active = activeCards(settings.points);
   const top = strictTop(settings.strict);
   const pinned = new Set(settings.pinned || []);
-  const res = { markets: {}, blanks: 0, survivors: 0, liqOut: 0, excludeCounts: { loss: 0, debt: 0, noDiv: 0, holding: 0 }, active: active.map((c) => c.id) };
+  const res = { markets: {}, blanks: 0, survivors: 0, pool: 0, liqOut: 0, excludeCounts: { loss: 0, debt: 0, noDiv: 0, holding: 0 }, active: active.map((c) => c.id) };
   for (const mk of marketsOf(settings)) {
     const uni = universe(stocks, mk);
     const pct = Object.fromEntries(active.map((c) => [c.id, percentileScores(uni, c)]));
     const surv = [];
-    let blanks = 0;
+    let blanks = 0, pool = 0;
     for (const s of uni) {
       const liq = liquidity(s);
       if (liq == null) { blanks++; continue; }
@@ -364,7 +367,9 @@ export function screen(stocks, settings) {
       const ex = exclusionsHit(s);
       for (const k of ex) res.excludeCounts[k]++;
       if (ex.some((k) => settings.exclude[k])) continue;
-      if (!active.length || pinned.has(s.t)) continue;
+      if (pinned.has(s.t)) continue;
+      pool++;
+      if (!active.length) continue;
       let blank = false, cut = false, wsum = 0, psum = 0;
       const scores = {};
       for (const c of active) {
@@ -382,11 +387,23 @@ export function screen(stocks, settings) {
       surv.push({ t: s.t, s, scores, total: wsum / psum });
     }
     surv.sort((a, b) => b.total - a.total || (a.t < b.t ? -1 : 1));
-    res.markets[mk] = { survivors: surv, blanks, universe: uni.length };
+    res.markets[mk] = { survivors: surv, blanks, universe: uni.length, pool };
     res.blanks += blanks;
     res.survivors += surv.length;
+    res.pool += pool;
   }
   return res;
+}
+
+// The pool before any 기준 for these settings (the points are ignored): screen()'s own steps, so it can never disagree
+// with the list the next steps use.
+export const poolCount = (stocks, settings) => screen(stocks, { ...settings, points: {} }).pool;
+
+// What 포트폴리오 만들기's 내 점수 meter counts (v19.3c Part D): with points, the length of screen()'s result list (every
+// market's survivors); with none, the pool. Never an estimate. res: a screen() result for the same settings.
+export function meterCount(res) {
+  if (!res.active.length) return { pool: true, n: res.pool };
+  return { pool: false, n: Object.values(res.markets).reduce((a, m) => a + m.survivors.length, 0) };
 }
 
 export function topOverall(res, n) {
