@@ -727,6 +727,115 @@ def test_us_must_have_without_d1_fails():
     fails_on("미국 필수 종목 d1", lambda c: stock(c, "AAPL").pop("d1"))
 
 
+# ── 미국 d1 채움 (Jack, 2026-11-07): 98% 아래면 실패, 빠진 종목은 값 칸 · 로그 · 실행 요약에 이름으로 ──
+US_D1 = "미국 d1 채움 (미국 기준일 봉)"
+
+
+def us_of(c):
+    return [s for s in c["data"]["stocks"] if s.get("cls") == "us" and not s.get("fund")]
+
+
+def row_of(rep, name):
+    return next(r for r in rep.rows if r[0] == name)
+
+
+def drop_us_d1(cur, n):
+    gone = [s for s in us_of(cur) if s["t"] not in ("AAPL", "MSFT", "NVDA")][:n]
+    for s in gone:
+        s.pop("d1")
+    return [s["t"] for s in gone]
+
+
+def test_us_d1_coverage_below_98_percent_fails_and_names_the_stocks():
+    cur, prev, final = good_pair()
+    assert len(us_of(cur)) == 600
+    gone = drop_us_d1(cur, 13)                                           # 587 / 600 = 97.8%
+    rep = check(cur, prev, final)
+    r = row_of(rep, US_D1)
+    assert r[3] == "FAIL" and r[1].startswith("97.8% (587 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 3개"), r
+    assert "2026-10-30" in r[2]                                          # 기준 칸에 미국 기준일
+    assert rep.details == [("미국 d1 없는 종목 (마지막 봉이 미국 기준일 2026-10-30 이 아님)", gone)]   # 13개 전부
+    assert [x[0] for x in rep.failed] == [US_D1], rep.table()            # 필수 세 종목은 d1 이 있어서 그 줄은 통과
+
+
+def test_us_d1_coverage_at_98_percent_passes_and_still_names_the_stocks():
+    cur, prev, final = good_pair()
+    gone = drop_us_d1(cur, 12)                                           # 588 / 600 = 98.0% — 기준선은 통과
+    rep = check(cur, prev, final)
+    r = row_of(rep, US_D1)
+    assert r[3] == "PASS" and r[1] == "98.0% (588 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 2개", r
+    assert rep.details[0][1] == gone and not rep.failed, rep.table()
+    cur, prev, final = good_pair()                                       # 다 있으면 목록도 없어요
+    rep = check(cur, prev, final)
+    assert row_of(rep, US_D1)[1:] == ("100.0% (600 / 600)", "≥ 98% (미국 기준일 2026-10-30 봉이 있는 종목)", "PASS")
+    assert rep.details == []
+
+
+def test_us_d1_of_zero_counts_as_present_and_the_shown_share_never_rounds_up_to_the_line():
+    cur, prev, final = good_pair()
+    for s in us_of(cur)[3:40]:
+        s["d1"] = 0.0                                                    # 그대로인 날도 '있음'
+    r = row_of(check(cur, prev, final), US_D1)
+    assert r[1] == "100.0% (600 / 600)" and r[3] == "PASS", r
+    cur, prev, final = good_pair()                                       # 781 중 16 빠짐 = 97.95% → '97.9%' 로 보이고 실패
+    us = us_of(cur)
+    cur["data"]["stocks"] += [{**clone(us[10]), "t": f"X{i:03d}"} for i in range(181)]
+    gone = drop_us_d1(cur, 16)
+    assert len(us_of(cur)) == 781
+    r = row_of(check(cur, prev, final), US_D1)
+    assert r[3] == "FAIL" and r[1].startswith("97.9% (765 / 781)"), r
+
+
+def test_us_d1_row_passes_after_a_us_holiday_and_a_half_day_and_fails_on_a_yahoo_gap():
+    """Jack 2026-11-07 (a): 파이프라인과 같은 함수로 d1 을 만들어 관문에 넣어요. 미국 휴장일 다음 아침과 조기 폐장일 다음
+    아침에는 모든 종목에 기준일 봉이 있어서 통과하고, 야후가 기준일 봉을 일부 종목에서 빠뜨린 날은 그 종목들 이름으로 실패해요."""
+    import pandas as pd
+    import fetch_data as F
+    idx = pd.to_datetime(["2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-27"])   # 11-26 추수감사절 휴장
+    spx = pd.Series([6800.0, 6810.0, 6790.0, 6820.0, 6850.0], index=idx)
+    utc = dt.timezone.utc
+    for now, gap in ((dt.datetime(2026, 11, 26, 22, 0, tzinfo=utc), 0),    # 11-27 07:00 KST (휴장일 다음 아침)
+                     (dt.datetime(2026, 11, 27, 22, 0, tzinfo=utc), 0),    # 11-28 07:00 KST (조기 폐장일 다음 아침)
+                     (dt.datetime(2026, 11, 27, 22, 0, tzinfo=utc), 15)):  # 같은 아침, 야후가 15종목의 11-27 봉을 빠뜨림
+        cur, prev, final = good_pair()
+        d = F.us_data_date(spx, F.us_last_complete_day(now))
+        missing = []
+        for k, s in enumerate(us_of(cur)):
+            px = pd.Series([100.0 + k, 101.0 + k, 99.0 + k, 102.0 + k, 103.0 + k], index=idx)
+            if k >= 3 and len(missing) < gap:                            # 필수 세 종목(앞의 셋)은 그대로
+                px = px.iloc[:-1]
+                missing.append(s["t"])
+            s["d1"] = F.us_d1(F.cut_at(px, d), d)
+        r = row_of(check(cur, prev, final), US_D1)
+        if not gap:
+            assert r[3] == "PASS" and r[1] == "100.0% (600 / 600)", (now, r)
+        else:
+            assert r[3] == "FAIL" and r[1].startswith("97.5% (585 / 600) · 빠짐: " + ", ".join(missing[:10])), r
+
+
+def test_us_d1_missing_list_goes_to_the_log_and_the_run_summary(monkeypatch, capsys, tmp_path):
+    """Jack 2026-11-07 (c): 관문이 막으면 빠진 미국 종목 이름이 로그와 실행 요약(GITHUB_STEP_SUMMARY)에 전부 남아요."""
+    cur, _, _ = good_pair()
+    gone = drop_us_d1(cur, 25)
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)                    # 네트워크 없이 (위 알림 시험과 같은 가짜들)
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    summ = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summ))
+    assert V.main(["--dir", "unused", "--bootstrap", "--today", "2026-10-31"]) == 1
+    out = capsys.readouterr().out
+    title = "미국 d1 없는 종목 (마지막 봉이 미국 기준일 2026-10-30 이 아님)"
+    assert f"!! {title} (25): " + ", ".join(gone) in out                  # 로그: 25개 전부
+    assert f"!! FAIL  {US_D1}: 95.8% (575 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 15개" in out
+    assert f"::error title=발행 관문 실패::{US_D1}: 95.8%" in out          # 실행 화면의 알림
+    text = summ.read_text(encoding="utf-8")
+    row = next(x for x in text.splitlines() if x.startswith(f"| {US_D1} |"))
+    assert row.startswith(f"| {US_D1} | 95.8% (575 / 600) · 빠짐: ") and row.endswith("| **FAIL** |"), row
+    assert f"**{title}** (25): " + ", ".join(gone) in text               # 실행 요약: 25개 전부
+
+
 def test_must_have_without_val20_fails():
     fails_on("필수 종목 val20", lambda c: stock(c, "105560").pop("val20"))
 
@@ -958,7 +1067,8 @@ def test_us_market_cap_coverage_counts_companies_only():
     for t in ("SPY", "QQQ"):                                   # ETF 는 시가총액이 없어도 돼요
         stock(cur, t).pop("cap")
     cur["data"]["stocks"] += [{"t": f"E{i:03d}", "nk": f"ETF {i}", "ne": f"ETF {i}", "cls": "us", "price": 50.0,
-                               "val": 100.0, "de": "A fund.", "fxu": True, "etf": True} for i in range(40)]   # 2026-11-03: 33개
+                               "val": 100.0, "de": "A fund.", "fxu": True, "etf": True,
+                               "d1": 0.5} for i in range(40)]   # 2026-11-03: 33개 · 진짜 ETF 처럼 d1 이 있어요 ('미국 d1 채움')
     for s in us_companies(cur)[10:13]:                         # 회사 주식 3개 빠짐 (2026-11-03 발행본의 우선주 3개처럼)
         s["cap"] = None
     rep = check(cur, prev, final)

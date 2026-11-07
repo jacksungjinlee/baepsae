@@ -880,6 +880,31 @@ def test_us_d1_only_when_last_bar_is_the_us_date():
     assert F.us_d1(px.iloc[:1], D30) is None
 
 
+def test_us_data_date_and_d1_on_a_us_holiday_and_a_half_day():
+    """Jack 2026-11-07 (a): 미국 휴장일·조기 폐장일에는 d1 이 비지 않아요 — 미국 기준일이 S&P 500 의 마지막 '끝난' 봉이고,
+    종목도 같은 날에서 잘라 d1 을 내니까요 (fetch_us 와 같은 순서). 발행 관문의 '미국 d1 채움'은 그래서 야후가 기준일 봉을
+    빠뜨린 종목만 세요."""
+    # 2026 추수감사절: 11-26(목) 휴장 → 야후 일봉에 11-26 봉이 없어요. 11-27(금) 13:00 ET 조기 폐장 → 봉은 있어요.
+    idx = pd.to_datetime(["2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-27"])
+    spx = pd.Series([6800.0, 6810.0, 6790.0, 6820.0, 6850.0], index=idx)
+    stocks = {t: pd.Series([100.0 + k, 101.0 + k, 99.0 + k, 102.0 + k, 103.0 + k], index=idx)
+              for k, t in enumerate(("AAPL", "MSFT", "NVDA", "KO"))}
+    utc = dt.timezone.utc
+    for now, want in ((dt.datetime(2026, 11, 26, 22, 0, tzinfo=utc), dt.date(2026, 11, 25)),   # 11-27 07:00 KST: 휴장일 다음 아침
+                      (dt.datetime(2026, 11, 27, 19, 0, tzinfo=utc), dt.date(2026, 11, 25)),   # 조기 폐장(13:00) 뒤, 16:30 ET 전
+                      (dt.datetime(2026, 11, 27, 22, 0, tzinfo=utc), dt.date(2026, 11, 27))):  # 11-28 07:00 KST: 조기 폐장일 봉
+        d = F.us_data_date(spx, F.us_last_complete_day(now))
+        assert d == want, (now, d)
+        d1 = {t: F.us_d1(F.cut_at(px, d), d) for t, px in stocks.items()}
+        assert all(v is not None for v in d1.values()), (now, d1)
+    # 2026-11-07 10시 야후: S&P 500 에는 11-06 봉이 있는데 개별 종목에는 없었어요 → 기준일 11-06, 그 종목 d1 은 빈 칸
+    idx = pd.to_datetime(["2026-11-04", "2026-11-05", "2026-11-06"])
+    spx = pd.Series([7688.62, 7353.73, 7376.86], index=idx)
+    aapl = pd.Series([349.51, 344.17], index=idx[:2])
+    d = F.us_data_date(spx, dt.date(2026, 11, 6))
+    assert d == dt.date(2026, 11, 6) and F.us_d1(F.cut_at(aapl, d), d) is None
+
+
 def test_yahoo_quote_type_safety_net_marks_unlisted_etfs():
     out = [{"t": "NEWETF", "etf": False}, {"t": "AAPL", "etf": False}]
     cache = {"NEWETF": {"info": {"quoteType": "ETF"}}, "AAPL": {"info": {"quoteType": "EQUITY"}}}
