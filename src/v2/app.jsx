@@ -17,7 +17,7 @@ import { readStore, writeStore, askPersist } from "./store.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
-import { Build, newBuilder } from "./build.jsx";
+import { Build, newBuilder, buildInProgress } from "./build.jsx";
 import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
@@ -164,12 +164,18 @@ export function App({ source }) {
   // ☰ (PC: the left menu) 처음 안내 다시 보기: the welcome on 홈, whatever was on screen.
   const replayGuide = useCallback(() => { setGuide({ stage: "welcome" }); router.go("home"); }, [router.go]);
   // 직접 해 보기: a fresh 포트폴리오 만들기 at its 기준 step, the guide's step 1 over it. Without the data (it failed to load)
-  // there is no 배당 card to light: the screen opens as usual, with no guide.
+  // there is no 배당 card to light: the screen opens as usual, with no guide. A half-made portfolio is never thrown away:
+  // 포트폴리오 만들기 opens where the user left off, without the guide (it needs an untouched 기준 step).
   const tryGuide = useCallback(() => {
+    if (buildInProgress(builder)) {
+      setGuide(null);
+      router.go("portfolio", "build");
+      return;
+    }
     setBuilder({ ...newBuilder(), step: 1 });
     setGuide(load.status === "fail" ? null : { stage: 1 });
     router.go("portfolio", "build");
-  }, [load.status, router.go]);
+  }, [builder, load.status, router.go]);
   const browseGuide = useCallback(() => { endGuide(true); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }, [endGuide]);
   const stepNo = guide && typeof guide.stage === "number" ? guide.stage : null;
   const coach = useMemo(() => (stepNo == null ? null : {

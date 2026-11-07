@@ -3912,6 +3912,11 @@ def open_guide(page, wide):
 
 
 def guide_step1(page, wide):
+    """처음 안내 1/3 을 새로 열어요: 만들던 포트폴리오가 있으면 직접 해 보기가 그 자리로 가니까(keeps_draft), 먼저 다시 시작해요."""
+    again = page.get_by_role("button", name=C["build"]["restart"], exact=True)
+    if page.locator('[data-ui-v2="screen"][data-route="portfolio/build"]').count() and again.count():
+        again.click()
+        see(page, C["build"]["s0"]["title"])
     w = open_guide(page, wide)
     w.locator('[data-ui-v2="guide-try"] button').click()
     at(page, "portfolio/build")
@@ -4144,6 +4149,29 @@ def scene_v193c(R, files, width):
         assert len(set(got)) >= 4, got                                     # 서로 다른 결과가 나오는 섞임이에요
         R.collect(page)
     R.check(page, S, "무작위 점수 열 가지: 내 점수 칸의 수 = 엔진이 고른 목록의 길이 (점수 0 이면 기준 전의 수) · 아래 띠도 같은 수", random_mixes)
+
+    def keeps_draft():
+        to_build_start(page, wide)                                         # 만들던 것: 배당 생활비 → 빼기 단계
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        open_guide(page, wide).locator('[data-ui-v2="guide-try"] button').click()     # 직접 해 보기: 처음부터가 아니라 그 자리로
+        at(page, "portfolio/build")
+        see(page, C["build"]["s3"]["title"])
+        page.wait_for_timeout(300)
+        assert page.locator('[data-ui-v2="guide-bubble"], [data-ui-v2="guide-shade"]').count() == 0
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
+        see(page, C["build"]["s1"]["title"])
+        assert page.locator('[data-card="div"]').get_attribute("data-points") == "5" and page.locator('[data-ui-v2="points-left"]').inner_text() == "0"
+        page.get_by_role("button", name=C["build"]["restart"], exact=True).click()   # 다시 시작: 만들던 것 없음 → 직접 해 보기는 새로
+        see(page, C["build"]["s0"]["title"])
+        open_guide(page, wide).locator('[data-ui-v2="guide-try"] button').click()
+        bubble(page, 1).locator('[data-ui-v2="guide-skip"]').click()
+        guide_gone(page)
+        assert page.locator('[data-ui-v2="points-left"]').inner_text() == "10" and page.locator('[data-card="div"]').get_attribute("data-points") == "0"
+        R.collect(page)
+    R.check(page, S, "직접 해 보기: 만들던 포트폴리오(점수를 준 것)가 있으면 그 자리로(점수 그대로, 안내 없음) · 없으면 새로 시작해 1/3", keeps_draft)
     ctx.close()
     srv.shutdown()
 

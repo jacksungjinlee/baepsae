@@ -38,6 +38,10 @@ export const STEPS = ["start", "cards", "exclude", "terms"];
 // meanwhile it is the tab name 홈.
 export const backLabel = () => C.build.backToday || C.app.tabs.home;
 export const newBuilder = () => ({ step: 0, stage: "steps", settings: defaultSettings(), picks: null });
+// A half-made portfolio (v19.3c): points given (a template or the user's own), or 후보 고르기 / 매수 계획 open. The guide's
+// 직접 해 보기 then resumes it instead of starting over, so nothing unsaved is ever thrown away. Without points nothing
+// past the 기준 step can be reached, so an empty 기준 step is not a draft.
+export const buildInProgress = (b) => !!b && (b.stage !== "steps" || pointsUsed((b.settings && b.settings.points) || {}) > 0);
 
 // coach (v19.3c Part E): the first-visit guide's step while it runs ({ stage: 1 · 2 · 3, go, done, skip, lost }), else null.
 export function Build({ load, builder, setBuilder, onExit, store, setStoreData, goToday, coach = null }) {
