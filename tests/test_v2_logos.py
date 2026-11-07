@@ -62,10 +62,11 @@ def test_logo_address_only_for_plain_files_in_logos():
 
 
 def test_logo_credit_on_the_sources_page_is_the_approved_text():
-    """데이터 출처 (old app src/info.jsx; 2.0's menu opens it): the wording approved in Part A (Jack, 2026-11-06) and
+    """데이터 출처 (old app src/info.jsx; 2.0's menu opens it): the wording approved in Part A (Jack, 2026-11-06; changed
+    by Jack on 2026-11-07 when homepage icons were added: "일부는 각 회사 홈페이지") and
     logo.dev's own link text, once each, the link opening logo.dev in a new tab with noopener noreferrer."""
     src = open(os.path.join(ROOT, "src", "info.jsx"), encoding="utf-8").read()
-    for text in ("그림 · 로고 출처", "회사 로고: Logo.dev. 로고의 권리는 각 회사에 있어요.", "Logos provided by Logo.dev"):
+    for text in ("그림 · 로고 출처", "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요.", "Logos provided by Logo.dev"):
         assert src.count(text) == 1, text
     assert src.count('<a href="https://logo.dev" target="_blank" rel="noopener noreferrer"') == 1
     assert "Part A" in src.split("그림 · 로고 출처", 1)[0][-600:]                           # the comment cites where it is approved
@@ -73,7 +74,7 @@ def test_logo_credit_on_the_sources_page_is_the_approved_text():
     assert "Logos provided by Logo.dev" in sources_card                                     # inside the 데이터 출처 card
     old = open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8").read()
     assert old.count('href:"https://logo.dev",target:"_blank",rel:"noopener noreferrer"') == 1
-    for text in ("그림 · 로고 출처", "회사 로고: Logo.dev. 로고의 권리는 각 회사에 있어요.", "Logos provided by Logo.dev"):
+    for text in ("그림 · 로고 출처", "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요.", "Logos provided by Logo.dev"):
         assert old.count(text) == 1, text
     assert "logo.dev" not in open(os.path.join(ROOT, "app.html"), encoding="utf-8").read().lower()  # 2.0 has no link
 
