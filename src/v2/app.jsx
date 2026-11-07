@@ -130,12 +130,13 @@ export function App({ source }) {
 
   // saved = true when the caller already wrote it (the purchase sheet checks the write itself)
   // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
-  // not a storage failure, so the "can't save on this device" line stays off.
+  // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
+  // the screens, until the next change that saves).
   const setStoreData = useCallback((data, saved) => {
     setStore((s) => {
-      if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return s; }
+      if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
-      return { ...s, data, locked: false };
+      return { ...s, data, locked: false, refused: false };
     });
   }, []);
 

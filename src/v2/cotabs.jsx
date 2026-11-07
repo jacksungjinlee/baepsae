@@ -450,6 +450,7 @@ function Calc({ load, s, store, setStoreData }) {
           <Button kind="secondary" onClick={save}>{done && K.saved ? K.saved : K.save}</Button>
         </div>
       )}
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
     </Card>
   );
 }

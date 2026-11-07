@@ -304,6 +304,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
+      {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <Cols main={[
         ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />),

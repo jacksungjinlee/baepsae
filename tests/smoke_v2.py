@@ -4998,7 +4998,8 @@ def scene_v193d_more(R, files, width=390):
     """v19.3d review: 점검 on stale data opens with '데이터가 {n}일째 갱신되지 않았어요. {date} 종가 기준 결과예요.' · 379800 KODEX
     미국S&P500 (cls "us" but a KRX listing in won) is 한국, whole shares, valued without the exchange rate · #portfolio/import with
     data.json missing shows the load-failure message · records an earlier-app tab moved aside are merged back with
-    '다른 창에서 저장한 내용과 기록을 합쳤어요. 기록을 한 번 확인해 주세요.' on 포트폴리오 and 홈."""
+    '다른 창에서 저장한 내용과 기록을 합쳤어요. 기록을 한 번 확인해 주세요.' on 포트폴리오 and 홈 · a copy that would not read
+    back merged stays where it is, with '이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요.' (review round 3)."""
     S = f"v19.3d 더 {width}"
     stale = clone(files)
     for n in DATA_FILES:
@@ -5071,6 +5072,37 @@ def scene_v193d_more(R, files, width=390):
         page.locator('[data-ui-v2="store-merged"]').wait_for(state="visible")
         R.collect(page)
     R.check(page, S, "예전 앱 창이 옮겨 둔 2판 기록: 되돌려 합치고 '다른 창에서 저장한 내용과 기록을 합쳤어요…' (포트폴리오 · 홈)", merged_notice)
+    ctx.close()
+    srv.shutdown()
+
+    # 리뷰 3차 4: 합치면 읽히지 않는 사본 (한 창에서 뺀 종목을 다른 창에서 또 팔았어요) — 그대로 두고 '따로 보관해 두었어요'
+    row = lambda q: {"t": "005930", "nk": "삼성전자", "ccy": "KRW", "qty": q}
+    sale1 = {"t": "005930", "qty": 1, "price": 50000, "date": pxd, "ccy": "KRW"}
+    deck0 = {"id": "dtk", "name": "포트폴리오", "createdAt": pxd, "kind": "imported", "settings": {"points": {"value": 2}, "strict": "normal"},
+            "holdings": [{"t": "005930", "nk": "삼성전자", "cls": "kr"}, {"t": "005380", "nk": "현대차", "cls": "kr"}], "purchases": [],
+            "imported": [row(3), {"t": "005380", "nk": "현대차", "ccy": "KRW", "qty": 2}], "sales": [sale1]}
+    taken = {**deck0, "holdings": deck0["holdings"][1:], "imported": deck0["imported"][1:], "sales": [],
+             "history": [{"t": "005930", "nk": "삼성전자", "out": pxd, "cls": "kr", "imported": row(3), "purchases": [], "sales": [sale1], "divs": []}]}
+    stale_copy = {**deck0, "sales": [sale1, {**sale1, "id": "late-sale1"}]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1.other.1700000000000', {json.dumps(json.dumps({'v': 2, 'decks': [stale_copy]}, ensure_ascii=False))});"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [taken]}, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base_url = R.open(build_site(files), width, init=seed, path="/app.html?dev=1#portfolio")
+
+    def unmerged_notice():
+        at(page, "portfolio")
+        note = page.locator('[data-ui-v2="store-unmerged"]')
+        note.wait_for(state="visible")
+        assert note.inner_text() == C["store"]["locked"]
+        assert page.locator('[data-ui-v2="store-merged"]').count() == 0
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1.other.1700000000000') !== null")   # 그대로 남아요
+        assert [h["t"] for h in page.evaluate(STORED_JS)["decks"][0]["holdings"]] == ["005380"]
+        R.collect(page)
+        tab(page, TABS["home"])
+        at(page, "home")
+        page.locator('[data-ui-v2="store-unmerged"]').wait_for(state="visible")
+        R.collect(page)
+    R.check(page, S, "합치면 읽히지 않는 다른 창의 사본: 그대로 두고 '이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요' (포트폴리오 · 홈)", unmerged_notice)
     ctx.close()
     srv.shutdown()
 

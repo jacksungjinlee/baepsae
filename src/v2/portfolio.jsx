@@ -155,6 +155,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
         {store.locked && C.store.locked && <Note tone="watch" data-ui-v2="store-locked">{C.store.locked}</Note>}
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
+        {store.unmerged && !store.locked && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
+        {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE(2), marginTop: store.writable ? 0 : SPACE(3) }}>
           <Button kind="secondary" onClick={() => downloadRecords(store.data, todayKst(), store.exportPrefix, store.preview, store.key)}>{C.store.export}</Button>
           <Button kind="secondary" disabled={!store.writable} onClick={() => fileRef.current && fileRef.current.click()}>{C.store.import}</Button>

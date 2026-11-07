@@ -428,6 +428,7 @@ function Memo({ s, store, setStoreData, held }) {
         <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={start}>{M.add}</Button></div>
       )}
       {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       {editing && (
         <div data-ui-v2="co-memo-form" style={{ marginTop: SPACE(2) }}>
           <textarea value={text} maxLength={NOTE_MAX} rows={4} aria-label={M.title} onChange={(e) => setText(e.target.value)} placeholder={M.empty || undefined}

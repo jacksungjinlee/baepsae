@@ -360,13 +360,177 @@ SALE_B = {"t": "005930", "qty": 1, "price": 191000, "date": "2026-11-07", "ccy":
 
 
 def test_a_newer_v2_store_leads_and_an_older_moved_copy_never_drops_its_records():
-    """An earlier-app tab moved a v2 store aside, then this version wrote again (a new sale): the current store has v2 parts,
-    so the older copy is not merged over it (the sale stays) and the copy stays where it is."""
+    """An earlier-app tab moved a v2 store aside, then this version wrote again (a new sale): the older copy is merged in as
+    well (review round 3, item 1). The current store leads, its new sale stays and is not doubled, and what only the older
+    copy held (the note, the guide flag) comes back; the copy leaves for .restored. once merged."""
     newer = {"v": 2, "decks": [BUILT, with_sale(IMPORTED, SALE_B)]}
     got = run(f"mem.set(K + '.unreadable.1700000000000', {json.dumps(json.dumps(V2, ensure_ascii=False))});"
               f"mem.set(K, {json.dumps(json.dumps(newer, ensure_ascii=False))});"
-              "const r = S.readStore(K, T); out = { restored: r.restored, sales: r.data.decks[1].sales.length, keys: [...mem.keys()].sort() };")
-    assert got == {"restored": False, "sales": 3, "keys": ["baepsae2.v1", "baepsae2.v1.unreadable.1700000000000"]}
+              "const r = S.readStore(K, T); out = { restored: r.restored, sales: r.data.decks[1].sales, notes: Object.keys(r.data.notes || {}),"
+              " guide: r.data.guideSeen, keys: [...mem.keys()].sort(), stored: stored() };")
+    assert got["restored"] is True and got["sales"] == with_sale(IMPORTED, SALE_B)["sales"]   # 새 판 기록 그대로, 두 번 세지 않아요
+    assert got["notes"] == ["005930"] and got["guide"] == "2026-11-06"
+    assert got["keys"] == ["baepsae2.v1", "baepsae2.v1.restored.1700000000000"] and got["stored"]["decks"][1]["sales"] == got["sales"]
+
+
+def test_an_old_tab_and_a_new_tab_taking_turns_lose_nothing():
+    """Review round 3, item 1 (the blocker): old tab M and new tab A take turns. A imports P1; M saves (A's store moves to
+    .unreadable.); A imports P2 and sells (M's text moves to .other.); M saves again (A's store moves to .unreadable. again).
+    On the next start every copy is merged, oldest first: P1, P2 and the sale are all there, and only then 합쳤어요."""
+    p2 = {**IMPORTED, "id": "dimp2", "name": "두 번째"}
+    m1 = {"v": 1, "decks": [{**BUILT, "confirms": [{"t": "005930", "rule": "divCut", "fy": 2025, "a": 1446.0, "b": 1200.0, "answer": "cut", "at": "2026-11-07"}]}]}
+    got = run(f"""mem.set(K, JSON.stringify({{ v: 1, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}));
+      const a = S.readStore(K, T);
+      const p1 = {json.dumps(IMPORTED, ensure_ascii=False)}, p2 = {json.dumps(p2, ensure_ascii=False)};
+      const okA1 = S.writeStore({{ ...a.data, decks: [...a.data.decks, p1] }}, K, T);                 // A: 가진 종목 넣기 (P1)
+      mem.set(K + '.unreadable.1000', mem.get(K)); mem.set(K, JSON.stringify({json.dumps(m1, ensure_ascii=False)}));   // M saves
+      const sold = {{ ...p1, sales: [...p1.sales, {json.dumps(SALE_B)}] }};
+      const okA2 = S.writeStore({{ ...a.data, decks: [...a.data.decks, sold, p2] }}, K, T);           // A: P2 and a sale
+      mem.set(K + '.unreadable.' + (Date.now() + 1000), mem.get(K)); mem.set(K, JSON.stringify({json.dumps(m1, ensure_ascii=False)}));   // M again
+      const r = S.readStore(K, T); const again = S.readStore(K, T);
+      const dimp = r.data.decks.find((x) => x.id === 'dimp');
+      out = {{ okA1, okA2, restored: r.restored, unmerged: !!r.unmerged, again: again.restored, ids: r.data.decks.map((x) => x.id),
+        sales: dimp.sales.length, held: S.H.heldQty(dimp).get('005930'), answer: r.data.decks[0].confirms[0].answer,
+        left: [...mem.keys()].filter((k) => k.includes('.unreadable.') || k.includes('.other.')), restoredN: [...mem.keys()].filter((k) => k.includes('.restored.')).length }};""")
+    assert got["okA1"] and got["okA2"]
+    assert got["restored"] is True and got["unmerged"] is False and got["again"] is False
+    assert got["ids"] == ["d1", "dimp", "dimp2"]                        # P1도 P2도 (예전에는 P2가 사라졌어요)
+    assert got["sales"] == 3 and got["held"] == 8                       # 판 기록도: 10 + 2 − 3 − 1 = 8주 (예전에는 9주)
+    assert got["answer"] == "cut"                                       # 예전 창의 답도
+    assert got["left"] == [] and got["restoredN"] == 3
+
+
+def test_records_with_ids_merge_by_id_and_equal_records_without_one_stay_as_many_as_they_were():
+    """Review round 3, item 5: two genuinely equal sales stay two (a multiset, each record keeps the higher count of the
+    two copies); the same record with its fields in another order counts once; a record with an id is the record with
+    that id, whatever else either copy holds."""
+    sale = {"t": "005930", "qty": 1, "price": 191000, "date": "2026-11-07", "ccy": "KRW"}
+    turned = {"ccy": "KRW", "date": "2026-11-07", "price": 191000, "qty": 1, "t": "005930"}
+    a, b = with_sale(IMPORTED, sale), with_sale(with_sale(IMPORTED, sale), sale)
+    c = with_sale(IMPORTED, turned)
+    ida = with_sale(IMPORTED, {**sale, "id": "sale-aaaa1"})
+    idb = with_sale(with_sale(IMPORTED, {**sale, "id": "sale-aaaa1"}), {**sale, "id": "sale-bbbb2"})
+    got = run(f"""const one = (d) => ({{ v: 2, decks: [d] }});
+      const m = (o, c) => S.mergeTabs(one(o), one(c), T);
+      const n = (x) => x && x.decks[0].sales.filter((r) => r.t === '005930' && r.qty === 1).length;
+      out = {{ twoIntoOne: n(m({json.dumps(b, ensure_ascii=False)}, {json.dumps(a, ensure_ascii=False)})),
+        oneIntoTwo: n(m({json.dumps(a, ensure_ascii=False)}, {json.dumps(b, ensure_ascii=False)})),
+        turned: n(m({json.dumps(c, ensure_ascii=False)}, {json.dumps(a, ensure_ascii=False)})),
+        byId: m({json.dumps(idb, ensure_ascii=False)}, {json.dumps(ida, ensure_ascii=False)}).decks[0].sales.filter((r) => r.id).map((r) => r.id),
+        idOnce: n(m({json.dumps(ida, ensure_ascii=False)}, {json.dumps(ida, ensure_ascii=False)})),
+        union: S.unionRecords([{{ id: 'x-aaaa1', q: 1 }}, {{ q: 2 }}, {{ q: 2 }}], [{{ id: 'x-aaaa1', q: 9 }}, {{ q: 2 }}, {{ q: 2 }}, {{ q: 2 }}, {{ q: 3 }}]),
+        none: S.unionRecords(undefined, undefined) === undefined, id: /^[A-Za-z0-9_-]{{6,40}}$/.test(S.recordId()) && S.recordId() !== S.recordId() }};""")
+    assert got["twoIntoOne"] == 2 and got["oneIntoTwo"] == 2           # 같은 기록 두 개는 두 개 (예전에는 하나로 합쳐졌어요)
+    assert got["turned"] == 1                                           # 순서만 다른 같은 기록은 한 번 (예전에는 두 번)
+    assert got["byId"] == ["sale-aaaa1", "sale-bbbb2"] and got["idOnce"] == 1
+    assert got["union"] == [{"id": "x-aaaa1", "q": 1}, {"q": 2}, {"q": 2}, {"q": 2}, {"q": 3}] and got["none"] and got["id"]
+
+
+def test_record_ids_are_checked_and_an_old_store_with_them_keeps_its_version():
+    sale = {**SALE_B, "id": "sale-aaaa1"}
+    twice = with_sale(with_sale(IMPORTED, sale), {**SALE_B, "date": "2026-11-06", "id": "sale-aaaa1"})
+    bad_id = with_sale(IMPORTED, {**SALE_B, "id": "a b"})
+    built = {**BUILT, "purchases": [{**BUILT["purchases"][0], "id": "buy-aaaa1"}, BUILT["purchases"][1]]}
+    got = run(f"""const v = (d) => S.checkStore({{ v: 2, decks: [d] }}, T).problems;
+      const ok = S.writeStore({{ v: 1, decks: [{json.dumps(built, ensure_ascii=False)}] }}, K, T);
+      out = {{ twice: v({json.dumps(twice, ensure_ascii=False)}), bad: v({json.dumps(bad_id, ensure_ascii=False)}),
+        fine: v({json.dumps(with_sale(IMPORTED, sale), ensure_ascii=False)}), ok, tag: stored().v }};""")
+    assert len(got["twice"]) == 1 and "the same id twice" in got["twice"][0]
+    assert len(got["bad"]) == 1 and "id is not valid" in got["bad"][0] and got["fine"] == []
+    assert got["ok"] and got["tag"] == 1                                # id는 2판 부분이 아니에요: 예전 창도 그대로 읽어요
+
+
+def test_a_stock_taken_out_in_one_copy_and_still_held_in_the_other_is_not_counted_twice():
+    """Review round 3, item 5c: one tab took 005930 out (its records moved into history), the other still holds it. Either
+    way round, the merged portfolio has its records once, in history, and no longer holds it."""
+    got = run(f"""const d = {{ v: 2, decks: [{json.dumps(IMPORTED, ensure_ascii=False)}] }};
+      const taken = S.withoutHolding(d, 'dimp', '005930', T);
+      const look = (m) => m && {{ held: m.decks[0].holdings.some((h) => h.t === '005930'),
+        own: ['purchases', 'imported', 'sales', 'divs'].reduce((n, k) => n + (m.decks[0][k] || []).filter((r) => r.t === '005930').length, 0),
+        hist: m.decks[0].history.filter((e) => e.t === '005930').length, entry: m.decks[0].history.find((e) => e.t === '005930'),
+        others: m.decks[0].holdings.map((h) => h.t), valid: S.validStore(m, T) }};
+      const later = S.withoutHolding(d, 'dimp', '005930', '2026-11-08');
+      const both = S.mergeTabs(later, taken, '2026-11-08');
+      out = {{ a: look(S.mergeTabs(taken, d, T)), b: look(S.mergeTabs(d, taken, T)), want: taken.decks[0].history.find((e) => e.t === '005930'),
+        wantHold: taken.decks[0].holdings.map((h) => h.t), both: both.decks[0].history.filter((e) => e.t === '005930').map((e) => e.out) }};""")
+    for k in ("a", "b"):
+        x = got[k]
+        assert x["held"] is False and x["own"] == 0 and x["hist"] == 1 and x["valid"], (k, x)   # 판 기록이 두 곳에 있지 않아요
+        assert x["entry"] == got["want"] and sorted(x["others"]) == sorted(got["wantHold"]), k
+    assert got["both"] == ["2026-11-07"]                                # 두 창 다 뺐으면 (다른 날) 기록 하나, 지금 창의 것
+
+
+def test_a_copy_that_cannot_be_merged_stays_and_the_screens_say_so():
+    """Review round 3, item 4: the stale tab sold more of a stock the other tab had taken out; merged, it would sell more
+    than held, so it is not merged. It stays (never pruned, in the export) and readStore says unmerged (C.store.locked)."""
+    got = run(f"""const d = {{ v: 2, decks: [{json.dumps(IMPORTED, ensure_ascii=False)}] }};
+      const taken = S.withoutHolding(d, 'dimp', '005930', T);
+      const stale = {{ v: 2, decks: [{{ ...d.decks[0], sales: [...d.decks[0].sales, {{ t: '005930', qty: 1, price: 190000, date: '2026-11-07', ccy: 'KRW', id: 'late-sale1' }}] }}] }};
+      mem.set(K, JSON.stringify(taken)); mem.set(K + '.other.5', JSON.stringify(stale));
+      const r = S.readStore(K, T);
+      for (let i = 0; i < 5; i++) S.writeStore({{ ...r.data, guideSeen: '2026-11-0' + (i + 1) }}, K, T);
+      const again = S.readStore(K, T);
+      out = {{ merge: S.mergeTabs(stale, taken, T), unmerged: r.unmerged, restored: r.restored, again: again.unmerged, same: JSON.stringify(r.data) === JSON.stringify(taken),
+        kept: mem.has(K + '.other.5'), aside: S.setAsideCopies(K).map((x) => x.key), warned: warns.some((w) => w.includes('could not be merged')) }};""")
+    assert got["merge"] is None and got["unmerged"] is True and got["restored"] is False and got["again"] is True
+    assert got["same"] and got["kept"] and got["aside"] == ["other.5"] and got["warned"]
+
+
+def test_storage_full_while_merging_keeps_the_merged_records_and_every_copy():
+    """Review round 3, item 3: once the merged store is written it is used, even when its .restored. copy cannot be written
+    (the source then stays, and merging it again on the next start adds nothing). When the merged store itself cannot be
+    written, nothing changes."""
+    other = with_sale(IMPORTED, SALE_B)
+    got = run(f"""const set0 = localStorage.setItem; const cur = {{ v: 2, decks: [{json.dumps(IMPORTED, ensure_ascii=False)}] }};
+      mem.set(K, JSON.stringify(cur)); mem.set(K + '.other.5', JSON.stringify({{ v: 2, decks: [{json.dumps(other, ensure_ascii=False)}] }}));
+      localStorage.setItem = (k, v) => {{ if (k.includes('.restored.')) throw new Error('full'); set0(k, v); }};
+      const r = S.readStore(K, T); const first = {{ restored: r.restored, sales: r.data.decks[0].sales.length, stored: stored().decks[0].sales.length, kept: mem.has(K + '.other.5') }};
+      localStorage.setItem = set0;
+      const r2 = S.readStore(K, T); const second = {{ restored: r2.restored, sales: r2.data.decks[0].sales.length, kept: mem.has(K + '.other.5'),
+        moved: [...mem.keys()].filter((k) => k.includes('.restored.')).length }};
+      mem.clear(); mem.set(K, JSON.stringify(cur)); mem.set(K + '.other.6', JSON.stringify({{ v: 2, decks: [{json.dumps(other, ensure_ascii=False)}] }}));
+      localStorage.setItem = (k, v) => {{ if (k === K) throw new Error('full'); set0(k, v); }};
+      const r3 = S.readStore(K, T); localStorage.setItem = set0;
+      out = {{ first, second, third: {{ restored: r3.restored, sales: r3.data.decks[0].sales.length, kept: mem.has(K + '.other.6'), stored: stored().decks[0].sales.length }} }};""")
+    assert got["first"] == {"restored": True, "sales": 3, "stored": 3, "kept": True}
+    assert got["second"] == {"restored": False, "sales": 3, "kept": False, "moved": 1}   # 다시 합쳐도 더해지는 것이 없어요
+    assert got["third"] == {"restored": False, "sales": 2, "kept": True, "stored": 2}
+
+
+def test_copies_made_in_the_same_millisecond_never_share_a_key():
+    """Review round 3, item 10: an .unreadable. and an .other. copy with the same time are both merged and both kept under
+    their own .restored. key; a new backup never takes a time another kind already uses."""
+    other = {"v": 1, "decks": [{**BUILT, "id": "dold", "name": "예전 창"}]}
+    got = run(f"""Date.now = () => 1700000000000;
+      mem.set(K, JSON.stringify({{ v: 1, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}));
+      mem.set(K + '.unreadable.1700000000000', {json.dumps(json.dumps(V2, ensure_ascii=False))}); mem.set(K + '.other.1700000000000', {json.dumps(json.dumps(other, ensure_ascii=False))});
+      const r = S.readStore(K, T);
+      const keys = [...mem.keys()].filter((k) => k !== K).sort();
+      mem.set(K, '{{"v":1,"decks":[]}}'); S.writeStore(r.data, K, T);
+      out = {{ ids: r.data.decks.map((x) => x.id), keys, after: [...mem.keys()].filter((k) => k.includes('.other.')) }};""")
+    assert got["ids"] == ["d1", "dimp", "dold"]
+    assert got["keys"] == ["baepsae2.v1.restored.1700000000000", "baepsae2.v1.restored.1700000000001"]
+    assert got["after"] == ["baepsae2.v1.other.1700000000002"]
+
+
+def test_a_write_that_fails_after_its_backup_leaves_nothing_to_merge():
+    """Review round 3, item 9: another tab wrote, this tab's write keeps that text as .other. and then fails: the copy is
+    removed again (the stored text is still the other tab's), so the next start does not say 합쳤어요. Old .restored.
+    copies are pruned before the backup is written, so a nearly full storage still takes the backup and the write."""
+    got = run(f"""const set0 = localStorage.setItem;
+      mem.set(K, {json.dumps(json.dumps(V2, ensure_ascii=False))}); const r = S.readStore(K, T);
+      mem.set(K, '{{"v":1,"decks":[]}}');
+      localStorage.setItem = (k, v) => {{ if (k === K) throw new Error('full'); set0(k, v); }};
+      const failed = S.writeStore(r.data, K, T); localStorage.setItem = set0;
+      const left = [...mem.keys()].filter((k) => k !== K); const next = S.readStore(K, T);
+      mem.clear(); mem.set(K, {json.dumps(json.dumps(V2, ensure_ascii=False))}); const r2 = S.readStore(K, T);
+      for (let i = 1; i <= 5; i++) mem.set(K + '.restored.' + i, 'r' + i);
+      mem.set(K, '{{"v":1,"decks":[]}}');
+      localStorage.setItem = (k, v) => {{ if (!mem.has(k) && mem.size >= 6) throw new Error('quota'); set0(k, v); }};
+      const ok = S.writeStore(r2.data, K, T); localStorage.setItem = set0;
+      out = {{ failed, left, restored: next.restored, data: next.data, ok, keys: [...mem.keys()].filter((k) => k !== K).sort().map((k) => k.replace(/other[.][0-9]+$/, 'other.N')) }};""")
+    assert got["failed"] is False and got["left"] == [] and got["restored"] is False and got["data"] == {"v": 1, "decks": []}
+    assert got["ok"] is True and got["keys"] == ["baepsae2.v1.other.N", "baepsae2.v1.restored.3", "baepsae2.v1.restored.4", "baepsae2.v1.restored.5"]
 
 
 def test_merging_another_copy_keeps_every_record_of_both():
@@ -403,15 +567,21 @@ def test_the_same_tab_writing_twice_makes_no_copy():
     assert got == ["baepsae2.v1"]
 
 
-def test_backups_keep_the_newest_three_of_each_kind_and_travel_in_the_export():
+def test_only_merged_back_copies_are_pruned_and_the_others_travel_in_the_export():
+    """Review round 3, item 2: only .restored. copies are pruned (the newest three kept) and exact duplicates of a newer copy
+    of the same kind; a copy never merged back (.unreadable., .other.) is never removed, and every one travels in the
+    export under setAside."""
     got = run("for (let i = 1; i <= 5; i++) { mem.set(K + '.restored.' + i, 'r' + i); mem.set(K + '.unreadable.' + (10 + i), JSON.stringify({ v: 9, n: i })); }"
+              "mem.set(K + '.unreadable.9', JSON.stringify({ v: 9, n: 5 }));"
               f"S.writeStore({json.dumps(V2, ensure_ascii=False)}, K, T);"
               "const keys = [...mem.keys()].filter((k) => k !== K).sort();"
               "const file = JSON.parse(S.exportText(S.readStore(K, T).data, false, S.setAsideCopies(K)));"
               "out = { keys, aside: file.setAside, plain: Object.keys(JSON.parse(S.exportText(S.readStore(K, T).data))),"
               " back: S.parseImport(JSON.stringify(file), T) !== null, backKeys: Object.keys(S.parseImport(JSON.stringify(file), T)) };")
     assert got["keys"] == ["baepsae2.v1.restored.3", "baepsae2.v1.restored.4", "baepsae2.v1.restored.5",
-                           "baepsae2.v1.unreadable.13", "baepsae2.v1.unreadable.14", "baepsae2.v1.unreadable.15"]
-    assert [a["key"] for a in got["aside"]] == ["unreadable.13", "unreadable.14", "unreadable.15"] and got["aside"][-1]["text"] == '{"v":9,"n":5}'
+                           "baepsae2.v1.unreadable.11", "baepsae2.v1.unreadable.12", "baepsae2.v1.unreadable.13",
+                           "baepsae2.v1.unreadable.14", "baepsae2.v1.unreadable.15"]   # .unreadable.9 = 15와 같은 글자라서만 지워요
+    assert [a["key"] for a in got["aside"]] == ["unreadable.11", "unreadable.12", "unreadable.13", "unreadable.14", "unreadable.15"]
+    assert got["aside"][-1]["text"] == '{"v":9,"n":5}'
     assert "setAside" not in got["plain"]                               # 따로 둔 것이 없으면 파일은 예전 모양 그대로
     assert got["back"] and "setAside" not in got["backKeys"]            # 불러오기는 따로 둔 것을 기록으로 읽지 않아요

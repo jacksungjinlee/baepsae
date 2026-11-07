@@ -15,6 +15,8 @@ export const TOGETHER_SHARE = 0.8;    // "같은 업종이 다 같이 빠졌어�
 export const ADD_CAP = 1.25;          // 추가로 넣을 돈 never takes a stock above its 1.25x edge (REDESIGN 4.1)
 const EPS = 1e-9;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const warned = new Set();
+const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.warn(msg); } };   // a number left out is said once
 
 // ---------------- money put in (원금) ----------------
 // One purchase in won, from the purchase record (qty x price). KRW as is. USD x the exchange rate recorded when it was
@@ -43,6 +45,8 @@ export function deckMoney(deck, de, ctx) {
   // v19.3d: a built portfolio with a sale (or an imported row) holds fewer or other shares than its purchases paid for;
   // until v19.6a's lot maths, 원금 and the return are unknown (shown as nothing, never a wrong number).
   if (!lotsPending(deck)) return m;
+  const ns = Array.isArray(deck.sales) ? deck.sales.length : 0, ni = Array.isArray(deck.imported) ? deck.imported.length : 0;
+  warnOnce(`[v2] ${deck.id}: ${ns} sale(s) and ${ni} imported row(s) on a built portfolio: money put in, return and the KOSPI comparison left out until the lot maths (v19.6a)`);
   const absent = m.absent ? { absent: m.absent.map((a) => ({ ...a, cost: null })) } : {};
   if (!m.ok) return { ...m, ...absent };
   const per = Object.fromEntries(Object.entries(m.per).map(([t, r]) => [t, { ...r, cost: null, ret: null }]));
