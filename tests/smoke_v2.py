@@ -3686,7 +3686,8 @@ def scene_company(R, files, width):
 V191B_SPLIT = "009150"     # 삼성전기: 2024년 5:1 분할을 지어내요 (보고서 원래 숫자 9,000 · 5,750원 → 오늘 기준 1,800 · 1,150원)
 V191B_CUT = "005380"       # 현대차: 같은 기준에서 12,000 → 10,000원 (진짜 삭감) · 베타 양 끝이 같아요
 V191B_NC = "000660"        # SK하이닉스: 비교 불가 (유상증자처럼) · 베타 표준오차 0.6 (믿을 수 없어요)
-V191B_ND = "105560"        # KB금융: 알 수 없음 · 오늘 기준 수익률 없음 · 금융업 (유동비율 · 이자보상배율은 해당 없음)
+V191B_ND = "105560"        # KB금융: 알 수 없음 · 오늘 기준 수익률 없음 · 금융지주 (유동비율 · 이자보상배율은 해당 없음)
+V191B_FIN = "032830"       # 삼성생명: 보험사 (유동비율 · 이자보상배율은 해당 없음) → 금융회사 밑 줄
 
 
 def v191b_files(files, se=None, beta=None):
@@ -3720,6 +3721,7 @@ def v191b_files(files, se=None, beta=None):
     coby = {c["t"]: c for c in f["corp.json"]["companies"]}
     coby["005930"]["flRan"] = ["cr", "icr", "l3", "imp"]
     coby[V191B_ND].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    coby[V191B_FIN].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
     coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '없어요'라고 하지 않아요
     return f
 
@@ -3785,15 +3787,25 @@ def scene_v191b(R, files, width):
         co_open_tab(page, V191B_NC, "div", "kr")
         assert page.locator('[data-ui-v2="co-div"] [data-ui-v2="bars"]').count() == 0
         co_open_tab(page, V191B_NC, "value", "kr")
-        rk = page.locator('[data-ui-v2="co-risk"]')
-        assert rk.get_attribute("data-rule") == "na" and rk.inner_text().strip() == T["na"], rk.inner_text()
-        assert not re.search(r"\d", rk.inner_text())
+        # Jack, PR #68 B6: 쓸 수 있는 범위가 없으면 가치 탭의 출렁임 카드는 아예 없어요 (베타가 없는 종목처럼)
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-risk"]').count() == 0
         R.collect(page)
-        # 알 수 없음: '배당을 줘요', 숫자 없음 · 금융업: 두 확인은 해당 없고 둘은 돌았어요 → '재무 경고 신호는 없어요'
+        # 알 수 없음: '배당을 줘요', 숫자 없음 · 금융지주(s holding): 두 확인은 해당 없고 둘은 돌았어요 → '재무 경고 신호는 없어요' +
+        # 지금 밑 줄 그대로 (PR #68 B7: 지주회사의 문구는 Jack 이 정해요)
         open_co(V191B_ND)
         assert tile(V191B_ND, "div") == ("pays", T["div"]["pays"], None)
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
         assert CO["warn"]["none"] in page.locator('[data-ui-v2="co-warn"]').inner_text()
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "" and sub.inner_text() == CO["warn"]["noneSub"], sub.inner_text()
+        # 보험사(s insure): 금융회사 밑 줄 (PR #68 B7)
+        open_co(V191B_FIN)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "fin" and sub.inner_text() == CO["warn"]["noneSubFin"], sub.inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
         # 삼성전자: 베타 범위 + 그 밑 줄 · 재무 경고 없음
         open_co("005930")
         s = by["005930"]
@@ -3829,10 +3841,14 @@ def scene_v191b(R, files, width):
         y = page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="y2022"]')
         assert y.get_attribute("data-band") == "range", y.get_attribute("data-band")
         big = y.locator('[data-ui-v2="big-number"]').inner_text().replace("\n", "")
-        m = re.fullmatch(r"약 −([\d,]+)만원~−([\d,]+)만원", big)
-        assert m and int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", "")), big       # 작은 하락 먼저
+        # Jack, PR #68 B1: 빼기 없이 하락 폭으로, 작은 하락 먼저 ("약 {small}~{big}만원 줄었을 거예요")
+        m = re.fullmatch(r"약 ([\d,]+)~([\d,]+)만원 줄었을 거예요", big)
+        assert m and int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", "")), big
+        assert big == fillp(C["plan"]["y2022FallRange"], small=m.group(1), big=m.group(2)) and "−" not in y.inner_text()
         assert y.locator('[data-ui-v2="y2022-range-note"]').inner_text() == C["plan"]["y2022Range"]
-        assert C["plan"]["y2022Note"] in y.inner_text()
+        # PR #68 B5: 범위 밑에서는 '…어림한 범위예요' ('값이에요' 아님)
+        assert y.locator('[data-ui-v2="y2022-note"]').inner_text() == C["plan"]["y2022NoteRange"]
+        assert C["plan"]["y2022Note"] not in y.inner_text()
         # 내 투자 규칙: 분할을 확인한 기록이 있는 한국 배당 종목은 배당 삭감 규칙을 점검해요 (준비 중이 아니에요)
         rules = page.locator('[data-ui-v2="rules"] [data-ui="collapsible"]')
         for i in range(rules.count()):
@@ -3843,9 +3859,14 @@ def scene_v191b(R, files, width):
         if payers:
             checked = book.locator('[data-ui-v2="rule-line"][data-check="checked"]', has_text=C["plan"]["rules"]["divLimit"])
             assert checked.count() >= len(payers), ("\n".join(book.all_inner_texts()), payers)
+        # PR #68 B4: 사기 전에 이미 줄어든 배당의 안내는 특별배당만 물어요 (분할은 이미 확인했어요)
+        txt = "\n".join(book.all_inner_texts())
+        assert C["pick"]["caution"]["divDropBody"] not in page.locator("body").inner_text()
+        if "배당이 줄었어요" in txt:
+            assert C["pick"]["caution"]["divDropBodyExact"] in txt, txt
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "매수 계획: 2022년은 범위(작은 하락 먼저, 만원) + '범위는 베타를 …' 줄 · 배당 삭감 규칙은 점검해요", plan)
+    R.check(page, S, "매수 계획: 2022년은 하락 폭 범위(작은 하락 먼저, 만원, 빼기 없음) + '…어림한 범위예요' · '범위는 베타를 …' 줄 · 배당 삭감 규칙 · 특별배당 안내", plan)
     ctx.close()
     srv.shutdown()
 
@@ -3903,14 +3924,13 @@ def scene_v191b(R, files, width):
         assert cells.count() == 3
         for i in range(3):
             txt = cells.nth(i).inner_text().replace("\n", "")
-            m = re.fullmatch(r"약 −([\d,]+)만원(?:~−([\d,]+)만원)?", txt)
-            assert m and (m.group(2) is None or int(m.group(1).replace(",", "")) <= int(m.group(2).replace(",", ""))), txt
-            for a in cells.nth(i).locator('[data-ui="amount"]').all():                    # 금액 하나는 한 줄에 (가운데서 끊기지 않아요)
-                assert a.evaluate("(e) => e.getClientRects().length") == 1, a.inner_text()
+            m = re.fullmatch(r"약 ([\d,]+)(?:~([\d,]+))?만원 줄었을 거예요", txt)       # PR #68 B1: 하락 폭, 빼기 없음
+            assert m and (m.group(2) is None or int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", ""))), txt
+            assert cells.nth(i).evaluate("(e) => e.scrollWidth <= e.clientWidth"), txt           # 칸 밖으로 나가지 않아요 (낱말 가운데서 끊지 않음)
         assert box.locator('[data-ui-v2="y2022-range-note"]').inner_text() == C["plan"]["y2022Range"]
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "덱 짜기 4단계: 2022년 같은 해가 오면 = 방법마다 범위 · 설명 줄 · 금액은 끊기지 않아요", step4)
+    R.check(page, S, "덱 짜기 4단계: 2022년 같은 해가 오면 = 방법마다 하락 폭 범위(빼기 없음) · 설명 줄 · 칸 밖으로 나가지 않아요", step4)
     ctx.close()
     srv.shutdown()
 

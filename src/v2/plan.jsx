@@ -6,10 +6,10 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
-import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount } from "../ui/components.jsx";
+import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View } from "./deckcalc.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 import { KR_DIV_TREND, exactData } from "./engine.js";
 
@@ -82,14 +82,16 @@ function Clash({ parts }) {
   );
 }
 
-// The 2022 amount (v19.1b data: a range, deckcalc.y2022View). A range may wrap after "~" in a narrow column, never inside
-// an amount. v: y2022View's { parts, text }.
+// The 2022 line (v19.1b data, deckcalc.y2022View: "약 50~77만원 줄었을 거예요"), units drawn small like Amount. A narrow column
+// wraps only after the first word or between the amount and the verb, never inside either, so the three columns of
+// 포트폴리오 만들기 4단계 wrap the same way. v: y2022View's { parts, text, pieces: [pre, amount, verb] }.
 export function Y2022Amount({ v }) {
+  const [pre, amount, verb] = v.pieces;
   const nw = { whiteSpace: "nowrap" };
-  if (v.parts.length < 2) return <span style={nw}><Amount text={v.text} /></span>;
   return (
-    <span data-ui-v2="y2022-range">
-      <span style={nw}><Amount text={fill(C.app.about, { x: `${v.parts[0]}~` })} /></span><wbr /><span style={nw}><Amount text={v.parts[1]} /></span>
+    <span data-ui="amount" data-ui-v2={v.parts.length > 1 ? "y2022-range" : "y2022-one"} style={{ wordBreak: "keep-all" }}>
+      {pre}<span style={nw}>{amountParts(amount).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}</span>
+      {verb ? " " : ""}{verb ? <span style={nw}>{verb}</span> : null}
     </span>
   );
 }
@@ -128,7 +130,8 @@ function Summary({ r }) {
             ? <div data-ui-v2="y2022-wide" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.plan.y2022Wide}</div>
             : yv ? <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Y2022Amount v={yv} /></div>
             : big(aboutWon(Math.min(0, y2022.won)))}
-          {!(yv && yv.wide) && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Note}</div>}
+          {!(yv && yv.wide) && <div data-ui-v2="y2022-note" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>
+            {yv && yv.parts.length > 1 && C.plan.y2022NoteRange ? C.plan.y2022NoteRange : C.plan.y2022Note}</div>}
           {yv && !yv.wide && yv.parts.length > 1 && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Range}</div>}
           <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
           {!(yv && yv.wide) && partial(y2022.missing)}
@@ -183,7 +186,7 @@ function RuleList({ rules, name }) {
       case "divCut": return x.check === "pending" || x.comparable === false || !(KR_DIV_TREND || exactData()) ? <RuleLine key={x.id} name={R.divCut} pending />
         // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
         : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
-            note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />
+            note={divDropBody()} limit={R.divLimit} source={src} />
         : <RuleLine key={x.id} name={R.dividend} now={fill(R.dpsChange, { a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })} limit={R.divLimit} source={src} />;
       case "audit": return <RuleLine key={x.id} name={R.audit} pending />;
       case "acquisition": return <RuleLine key={x.id} name={R.acquisition} pending />;

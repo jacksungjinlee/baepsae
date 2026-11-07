@@ -2,7 +2,7 @@
 // plus the code -> copy mapping for reasons, clashes and cautions.
 import {
   screen, splitCounts, survivorCheck, candidates, preselect, size, planShares, annualDividend, estimate2022,
-  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup, band2022,
+  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup, band2022, exactData,
 } from "./engine.js";
 import { C, fill, nf, p1, wonText, signed } from "./format.js";
 
@@ -126,7 +126,7 @@ export function cautionTexts(c, s) {
     case "revFall": return [K.revFall];
     case "opFall": return opPieces(c.op, c.pct);
     case "volHigh": return K.volHigh ? [fill(K.volHigh, { vol: p1(c.vol) })] : [];
-    case "divDrop": return [fill(K.divDrop, { name: s.nk, a: nf(Math.round(c.a)), b: nf(Math.round(c.b)) }), K.divDropBody];
+    case "divDrop": return [fill(K.divDrop, { name: s.nk, a: nf(Math.round(c.a)), b: nf(Math.round(c.b)) }), divDropBody()];
     default: return [];
   }
 }
@@ -178,18 +178,37 @@ export function opPieces(op, pct) {
 }
 
 export const aboutWon = (won) => fill(C.app.about, { x: wonText(won) });
-// The 2022 line with the beta band (v19.1b data, Part O.1; engine.band2022). The approved line "약 {x}" takes "{small}~{big}"
-// where it had one number: both ends in 만원 style with their sign, the smaller fall first ("약 −150만원~−207만원"); both
-// ends the same amount -> one ("약 −150만원"). The smaller end not a fall (whole % 0 or a gain) -> { wide: true }: the
-// screen says plan.y2022Wide instead of a number. null -> no band (files before v19.1b): the screen keeps the one number.
-// parts: the amounts, so the screen can let a narrow column wrap after "~".
+// The 배당 감소 hint (확인 필요): v19.1b data has already ruled out splits on the history it compares, so its hint asks only
+// about a special dividend (Jack, PR #68 B4); files before v19.1b keep the hint that names 액면분할 too.
+export const divDropBody = () => (exactData() && C.pick.caution.divDropBodyExact ? C.pick.caution.divDropBodyExact : C.pick.caution.divDropBody);
+
+// The 2022 line with the beta band (v19.1b data, Part O.1; engine.band2022; Jack, PR #68 B1): the size of the fall with no
+// minus sign, the smaller fall first: "약 50~77만원 줄었을 거예요" (plan.y2022FallRange). Amounts in 만원 as wonText does (from
+// 1억 too: "약 10,234~12,000만원 …"); when the smaller fall is below 1만원 both ends in 원 ("약 4,000~12,000원 …",
+// plan.y2022Fall). Both ends the same amount -> one: "약 63만원 줄었을 거예요" (plan.y2022Fall). The smaller end not a fall
+// (whole % 0 or a gain) -> { wide: true }: the screen says plan.y2022Wide instead. null -> no band (files before v19.1b):
+// the screen keeps its one signed number. parts: the amount texts (1 = one number, 2 = a range); pct: the whole % of each end.
 export function y2022View(est) {
   const b = band2022(est);
   if (!b) return null;
   if (b.wide) return { wide: true };
-  const a = wonText(b.small), z = wonText(b.big);
-  return a === z ? { parts: [a], text: fill(C.app.about, { x: a }), pct: [b.pctSmall, b.pctBig] }
-    : { parts: [a, z], text: fill(C.app.about, { x: `${a}~${z}` }), pct: [b.pctSmall, b.pctBig] };
+  const lo = -b.small, hi = -b.big;                       // sizes of the fall, lo <= hi
+  const man = lo >= 10000;                                 // as wonText: 만원 from 1만원
+  const x = man ? Math.round(lo / 10000) : Math.round(lo), y = man ? Math.round(hi / 10000) : Math.round(hi);
+  const unit = (n) => fill(man ? C.app.man : C.app.won, { n: nf(n) });
+  const pct = [b.pctSmall, b.pctBig];
+  if (x === y) return { parts: [unit(x)], ...fallPieces(C.plan.y2022Fall, { x: unit(x) }), pct };
+  return { parts: [nf(x), unit(y)], pct, ...(man ? fallPieces(C.plan.y2022FallRange, { small: nf(x), big: nf(y) })
+    : fallPieces(C.plan.y2022Fall, { x: `${nf(x)}~${unit(y)}` })) };
+}
+// The approved line cut where a narrow column may wrap, without any word of it in the code: the text before the first
+// {slot} (pre), the slots with the unit glued to the last one (amount), and the rest (verb). pre + amount + " " + verb is
+// exactly fill(template, vals); the screen keeps the amount and the verb each on one line.
+function fallPieces(t, vals) {
+  const i = t.indexOf("{"), j = t.lastIndexOf("}") + 1;
+  const glued = /^\S*/.exec(t.slice(j))[0];
+  const amount = fill(t.slice(i, j + glued.length), vals), verb = t.slice(j + glued.length).trim();
+  return { text: fill(t, vals), pieces: [t.slice(0, i), amount, verb] };
 }
 // The sign follows the rounded value: −0.04 is "0.0%", never "−0.0%" (v19.1a review).
 export const signedPct = (v) => { const r = Math.round(v * 10) / 10; return `${r < 0 ? "\u2212" : r > 0 ? "+" : ""}${p1(Math.abs(r))}%`; };

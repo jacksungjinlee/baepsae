@@ -6,8 +6,8 @@
 //   same quarter a year before and always carries that label (cofmt.usGrowthText; no label approved -> no number).
 // 가치: PBR against the industry (strip), PBR · PER with industry medians, 지금 가격이 가정하는 것 (KR: the old DcfCard
 //   reverse calculation; out of range -> its two messages), the 출렁임 line: the phrase, then (v19.1b data) the beta band
-//   "코스피가 1% 움직일 때 평균 {lo}~{hi}% 움직였어요." with its note, or 자료가 없어요 when the band is not there (Part O.1).
-//   Older files have no band: the phrase only, never a bare beta.
+//   "코스피가 1% 움직일 때 평균 {lo}~{hi}% 움직였어요." with its note. No usable band: no card at all, as for a stock with no
+//   beta (Jack, PR #68 B6; the 요약 tile says 자료가 없어요). Older files have no band: the phrase only, never a bare beta.
 // 배당: KR dividend per share (report year) and three years; 100만원어치 rounded to 1,000원, before tax, with the basis it
 //   was really computed on and the price date: KR 1,000,000 ÷ the close × the report's dividend per share (Jack,
 //   2026-11-05); US 1,000,000 x Yahoo's yield until v19.2.
@@ -378,12 +378,6 @@ export function ValueTab({ load, s, store, onMore }) {
           <CardHead icon="umbrella" tone="risk" title={C.co.risk[risk.rule]} />
           {bandLine && <p data-ui-v2="co-risk-band" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{bandLine}</p>}
           {bandLine && riskBandNote(risk) && <Note>{riskBandNote(risk)}</Note>}
-        </Card>
-      )}
-      {risk.rule === "na" && exactData() && risk.beta != null && (
-        // v19.1b data: a beta without its band (no betaSE, or above 0.5): 자료가 없어요, never a range or a bare beta
-        <Card data-ui-v2="co-risk" data-rule="na">
-          <CardHead icon="umbrella" tone="risk" title={C.co.tiles.na} />
         </Card>
       )}
       {C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}

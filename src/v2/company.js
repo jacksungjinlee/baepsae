@@ -295,6 +295,7 @@ export function riskTile(s) {
 // every one of the four is in flRan or flNa. Without flRan (files before v19.1b) the screen claims nothing when no flag
 // fired. US: none until v19.2 (Yahoo's debtToEquity is not 부채비율).
 export const WARN_CHECKS = ["cr", "icr", "l3", "imp"];
+export const FIN_SUB_SECTORS = ["bank", "insure", "broker"];   // corp.json s (fetch_data.py FIN_SECS without holding)
 export function warnings(s, co) {
   if (!s || s.cls !== "kr" || !co) return { allRan: false, ran: null, flags: [] };
   const fl = co.fl && typeof co.fl === "object" ? co.fl : {};
@@ -306,7 +307,13 @@ export function warnings(s, co) {
   const ran = Array.isArray(co.flRan) ? WARN_CHECKS.filter((c) => co.flRan.includes(c)) : null;
   const na = Array.isArray(co.flNa) ? WARN_CHECKS.filter((c) => co.flNa.includes(c) && !(ran || []).includes(c)) : [];
   const q = typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  return { allRan: !!ran && ran.length + na.length === WARN_CHECKS.length, ran, na, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
+  // sub "fin" (Jack, PR #68 B7): a bank, insurer or broker (corp.json s) whose two 'not applicable' checks are exactly
+  // 유동비율 and 이자보상배율 and whose two others ran: the line under 없어요 says which checks it is. Holding companies are
+  // left as they are (Jack decides their wording), as is anything else.
+  const sec = typeof co.s === "string" ? co.s : typeof s.s === "string" ? s.s : null;
+  const exactNa = Array.isArray(co.flNa) && co.flNa.length === 2 && ["cr", "icr"].every((c) => co.flNa.includes(c));
+  const sub = FIN_SUB_SECTORS.includes(sec) && exactNa && !!ran && ["l3", "imp"].every((c) => ran.includes(c)) ? "fin" : null;
+  return { allRan: !!ran && ran.length + na.length === WARN_CHECKS.length, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
