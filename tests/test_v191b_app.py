@@ -478,8 +478,11 @@ out.head = C.co.warn.nonePartial; out.sub = C.co.warn.noneSubNoIcr;""", ROWS=row
   K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'is' } }).icrCf,
   K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { cr: 80 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'cf' } }).icrCf,
   K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: 'cf' }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: -0.41 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'cf' } }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, flRan: ['cr', 'l3', 'imp'], flWhy: { icr: 'off' } }).partial,
   C.co.warn.icrLoss, C.co.warn.icrCfNote];""")
-    assert cf == [True, False, False, False, "영업손실이 나서 영업이익으로 이자를 내지 못해요.", "현금흐름표의 이자 지급액으로 계산했어요."]
+    assert cf == [True, False, False, False, False, False,                     # 영업손실(숫자 없음)엔 계산 안내도 없어요 · off 는 말 없음
+                  "영업손실이 나서 영업이익으로 이자를 내지 못해요.", "현금흐름표의 이자 지급액으로 계산했어요."]
     assert 'f.x < 0 || Object.is(f.x, -0) ? W.icrLoss || null' in src
     assert src.index("if (!w.flags.length) {") < src.index("const head = w.partial ? W.nonePartial : W.none;")
 

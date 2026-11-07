@@ -334,12 +334,16 @@ export function warnings(s, co) {
   const allRan = !!ran && ran.length + na.length === WARN_CHECKS.length;
   // Jack, PR #68 B7 (2026-11-07): when every check ran except 이자보상배율, and the pipeline says that is because the
   // statements have no interest-expense line (corp.json flWhy.icr "ie"), the card says which three it checked ("확인한 …
-  // 없어요"). Any other reason (no operating profit "op", a negative figure "neg", or no reason written) claims nothing.
+  // 없어요"). Any other reason (no operating profit "op", a negative figure "neg", switched off "off" while the pipeline's
+  // ICR_OFF holds the check back, or no reason written) claims nothing.
   const why = co.flWhy && typeof co.flWhy === "object" ? co.flWhy.icr : null;
   const partial = !flags.length && !allRan && !!ran && ["cr", "l3", "imp"].every((c) => ran.includes(c)) && !ran.includes("icr") &&
     !na.includes("icr") && why === "ie";
-  // Jack, PR #68 (2026-11-07): the ratio used the cash-flow statement's interest paid (corp.json flSrc.icr "cf", v19.1f)
-  const icrCf = flags.some((f) => f.code === "icr") && !!co.flSrc && typeof co.flSrc === "object" && co.flSrc.icr === "cf";
+  // Jack, PR #68 (2026-11-07): the ratio used the cash-flow statement's interest paid (corp.json flSrc.icr "cf", v19.1f).
+  // Not with an operating loss: that line shows no number, so there is no calculation to explain (review).
+  const icrFlag = flags.find((f) => f.code === "icr");
+  const icrCf = !!icrFlag && !(icrFlag.x < 0 || Object.is(icrFlag.x, -0)) && !!co.flSrc && typeof co.flSrc === "object" &&
+    co.flSrc.icr === "cf";
   return { allRan, partial, icrCf, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 
