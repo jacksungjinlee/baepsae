@@ -22,13 +22,15 @@ const PICTURES = [
   "fluent-label", "fluent-magnifying-glass-tilted-left", "fluent-sailboat", "fluent-shopping-cart", "fluent-turtle", "fluent-umbrella",
 ].map((n) => "./pictures/" + n + ".webp");
 
+// 2026-11-08: 그림 미리 받기는 설치를 최대 INSTALL_WAIT_MS 까지만 붙잡아요. 느린 휴대폰에서도 새 워커가 곧 켜져서 예전 캐시
+// (baepsae-v10 등)를 지워요 — 그게 이 워커의 첫 일이에요. 덜 받은 그림은 처음 보일 때 받아요 (네트워크 우선).
+const INSTALL_WAIT_MS = 3000;
 self.addEventListener("install", (e) => {
   self.skipWaiting();
-  e.waitUntil(
-    caches.open(CACHE)
+  const precache = caches.open(CACHE)
       .then((c) => c.addAll(PICTURES))
-      .catch((err) => console.warn("[sw] could not pre-cache the " + PICTURES.length + " pictures (they load when first shown online): " + err))
-  );
+      .catch((err) => console.warn("[sw] could not pre-cache the " + PICTURES.length + " pictures (they load when first shown online): " + err));
+  e.waitUntil(Promise.race([precache, new Promise((done) => setTimeout(done, INSTALL_WAIT_MS))]));
 });
 
 self.addEventListener("activate", (e) => {
