@@ -191,7 +191,14 @@ function divKrExact(s, co) {
   if (!st) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
   const yieldPct = fy != null ? st.y : null;
   if (st.zero) return { rule: "none", dps: 0, yieldPct, fy, dpsOk: true };
-  const view = { dps: st.now, yieldPct, fy, dpsOk: st.now != null };
+  // adjFrom (Jack, PR #68 B3): the report's own figure (won) when the per-share figure shown was recalculated for a share
+  // count change (dpsF[0], the latest year's factor, is not 1: a split, a bonus issue or a consolidation), so the 배당 tab
+  // can say what the report says. Only under the figure it describes: a stock whose latest year is unadjusted gets none,
+  // even when an earlier bar is.
+  const f0 = num(((s && Array.isArray(s.dpsF) ? s.dpsF : co && Array.isArray(co.dpsF) ? co.dpsF : null) || [])[0]);
+  const raw = num(s && s.dps);
+  const adjFrom = st.now != null && f0 != null && f0 !== 1 && raw > 0 ? raw : null;
+  const view = { dps: st.now, yieldPct, fy, dpsOk: st.now != null, ...(adjFrom != null ? { adjFrom } : {}) };
   const d3 = krDivHistory(s, co);                          // whole won
   if (!d3 || !(d3[0] > 0)) return { rule: "pays", ...view };
   const cur = d3[0], prev = d3[1];
@@ -296,6 +303,7 @@ export function riskTile(s) {
 // fired. US: none until v19.2 (Yahoo's debtToEquity is not 부채비율).
 export const WARN_CHECKS = ["cr", "icr", "l3", "imp"];
 export const FIN_SUB_SECTORS = ["bank", "insure", "broker"];   // corp.json s (fetch_data.py FIN_SECS without holding)
+export const FIN_SUB_INDS = ["bank", "insurance", "securities", "finance"];   // data.json ind: financial holding companies too
 export function warnings(s, co) {
   if (!s || s.cls !== "kr" || !co) return { allRan: false, ran: null, flags: [] };
   const fl = co.fl && typeof co.fl === "object" ? co.fl : {};
@@ -307,12 +315,18 @@ export function warnings(s, co) {
   const ran = Array.isArray(co.flRan) ? WARN_CHECKS.filter((c) => co.flRan.includes(c)) : null;
   const na = Array.isArray(co.flNa) ? WARN_CHECKS.filter((c) => co.flNa.includes(c) && !(ran || []).includes(c)) : [];
   const q = typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  // sub "fin" (Jack, PR #68 B7): a bank, insurer or broker (corp.json s) whose two 'not applicable' checks are exactly
-  // 유동비율 and 이자보상배율 and whose two others ran: the line under 없어요 says which checks it is. Holding companies are
-  // left as they are (Jack decides their wording), as is anything else.
+  // The line under 없어요 says which checks it is (Jack, PR #68 B7), only when the two 'not applicable' checks are exactly
+  // 유동비율 and 이자보상배율 (flNa) and the two others ran (flRan):
+  //   "fin"     a financial company: corp.json s bank · insure · broker, or data.json ind bank · insurance · securities ·
+  //             finance (KB금융 · 신한지주 · 메리츠금융지주 · 한국금융지주 …)
+  //   "holding" any other company with s holding. Once the pipeline runs those two checks for such a holding, flNa goes
+  //             and this stops matching by itself (the plain line again).
+  //   null      everyone else (the plain line)
   const sec = typeof co.s === "string" ? co.s : typeof s.s === "string" ? s.s : null;
   const exactNa = Array.isArray(co.flNa) && co.flNa.length === 2 && ["cr", "icr"].every((c) => co.flNa.includes(c));
-  const sub = FIN_SUB_SECTORS.includes(sec) && exactNa && !!ran && ["l3", "imp"].every((c) => ran.includes(c)) ? "fin" : null;
+  const finCo = FIN_SUB_SECTORS.includes(sec) || FIN_SUB_INDS.includes(s.ind);
+  const narrow = exactNa && !!ran && ["l3", "imp"].every((c) => ran.includes(c));
+  const sub = !narrow ? null : finCo ? "fin" : sec === "holding" ? "holding" : null;
   return { allRan: !!ran && ran.length + na.length === WARN_CHECKS.length, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 

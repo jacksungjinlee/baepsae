@@ -251,7 +251,7 @@ function Warnings({ load, s, wide }) {
         <IconChip name="shield-check" size={32} tone="risk" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{W.none}</div>
-          <div data-ui-v2="co-warn-sub" data-sub={w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{w.sub === "fin" && W.noneSubFin ? W.noneSubFin : W.noneSub}</div>
+          <div data-ui-v2="co-warn-sub" data-sub={w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{(w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub}</div>
           {warnSource(w) && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
         </div>
       </Card>

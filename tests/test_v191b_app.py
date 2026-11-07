@@ -383,23 +383,59 @@ out = { exact, old: D.divDropBody() };""")
 
 
 # ── 재무 경고 '없어요' 밑 줄 (Jack, PR #68 B7) ──
-def test_the_no_warning_sub_line_for_banks_insurers_and_brokers_only():
+def test_the_no_warning_sub_line_for_financial_and_holding_companies():
+    """Jack, PR #68 B7 · B3/B7: 금융회사(s bank · insure · broker, 또는 업종 ind bank · insurance · securities · finance — 금융지주 포함)는
+    금융회사 줄, 그 밖의 지주회사(s holding)는 지주회사 줄, 나머지는 지금 줄. 모두 flNa 가 정확히 cr + icr 이고 flRan 에 l3 + imp 가
+    있을 때만이에요: 파이프라인이 지주회사의 두 확인을 돌리면(flNa 없음) 지주회사 줄은 저절로 사라져요."""
     rows = {"bank": {"s": "bank"}, "insure": {"s": "insure"}, "broker": {"s": "broker"}, "holding": {"s": "holding"}, "machine": {"s": "machine"},
             "bankOnlyImp": {"s": "bank", "flRan": ["imp"]}, "bankNa3": {"s": "bank", "flNa": ["cr", "icr", "l3"]}, "bankNoNa": {"s": "bank", "flNa": None},
-            "stockSector": {"s": None, "stockS": "insure"}}
+            "stockSector": {"s": None, "stockS": "insure"},
+            "kbHolding": {"s": "holding", "ind": "bank"}, "meritz": {"s": "holding", "ind": "insurance"}, "koreaInv": {"s": "holding", "ind": "securities"},
+            "venture": {"s": "etc", "ind": "finance"}, "umbrella": {"s": "holding", "ind": "fin"},
+            "holdingRanAll": {"s": "holding", "flRan": ["cr", "icr", "l3", "imp"], "flNa": None},
+            "holdingOnlyL3": {"s": "holding", "flRan": ["l3"]}}
     got = run("""out = Object.fromEntries(Object.entries(ROWS).map(([k, r]) => {
   const co = { fy: 2025, flRan: r.flRan || ['l3', 'imp'], ...(r.flNa === null ? {} : { flNa: r.flNa || ['cr', 'icr'] }), ...(r.s ? { s: r.s } : {}) };
-  const w = K.warnings({ t: 'X', cls: 'kr', ...(r.stockS ? { s: r.stockS } : {}) }, co);
+  const w = K.warnings({ t: 'X', cls: 'kr', ...(r.stockS ? { s: r.stockS } : {}), ...(r.ind ? { ind: r.ind } : {}) }, co);
   return [k, [w.allRan, w.sub]]; }));
-out.line = C.co.warn.noneSubFin; out.old = C.co.warn.noneSub;""", ROWS=rows)
+out.line = C.co.warn.noneSubFin; out.hold = C.co.warn.noneSubHolding; out.old = C.co.warn.noneSub;""", ROWS=rows)
     assert got["bank"] == got["insure"] == got["broker"] == [True, "fin"]
-    assert got["holding"] == [True, None] and got["machine"] == [True, None]                 # 지주회사는 지금 줄 그대로 (Jack 이 정해요)
+    assert got["kbHolding"] == got["meritz"] == got["koreaInv"] == got["venture"] == [True, "fin"]   # 금융지주 · 캐피탈도 금융회사
+    assert got["holding"] == [True, "holding"] and got["umbrella"] == [True, "holding"]          # 그 밖의 지주회사
+    assert got["machine"] == [True, None]
+    assert got["holdingRanAll"] == [True, None]                                                # 두 확인을 돌리면 지주회사 줄은 없어요
+    assert got["holdingOnlyL3"] == [False, None]
     assert got["bankOnlyImp"] == [False, None] and got["bankNa3"][1] is None and got["bankNoNa"] == [False, None]
     assert got["stockSector"] == [True, "fin"]                                                # corp.json 에 s 가 없으면 data.json 의 s
     assert got["line"] == "금융회사라 유동비율과 이자보상배율은 보지 않고, 3년 연속 순손실과 자본잠식 신호만 확인해요."
+    assert got["hold"] == "지주회사라 유동비율과 이자보상배율은 보지 않고, 3년 연속 순손실과 자본잠식 신호만 확인해요."
     assert got["old"] == "3년 연속 순손실, 빚 부담, 자본잠식 같은 신호를 최근 공시로 확인해요."
     src = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
-    assert 'w.sub === "fin" && W.noneSubFin ? W.noneSubFin : W.noneSub' in src
+    assert '(w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub' in src
+
+
+# ── 분할 · 무상증자로 다시 계산한 주당 배당 (Jack, PR #68 B3) ──
+def test_the_report_figure_note_only_under_a_recalculated_per_share_figure():
+    leeno_now = LEENO                                                                     # dpsF [1, 5, 5]: 올해 숫자는 그대로 (앞 막대만 맞춤)
+    nc_adj = dict(SAMSUNG, t="484870", divSt="nc", dps=2491.0, dps3=[2491.0, 1480.0, None], dps3a=[830.33, 493.33, None],
+                  dpsF=[3.0, 3.0, None], dyt=6.9)                                         # 엠앤씨솔루션처럼: 비교 불가지만 올해 숫자는 맞춤
+    unverified = dict(DAEHAN, t="000099", dyt=None)
+    corp_only = dict(DAEHAN, t="000098", dpsF=None)
+    got = run(EXACT + """
+const f = (s, co = null) => { const d = K.divKr(s, co); return [d.rule, d.dps, d.adjFrom ?? null]; };
+out = { daehan: f(DAEHAN), leeno: f(LEENO), samsung: f(SAMSUNG), nc: f(NC), unverified: f(UNV), corpOnly: f(CO1, { dpsF: [10, 10, 10], fy: 2025 }),
+  note: C.co.div.adjNote };
+E.setDataShape({});
+out.old = f(DAEHAN);""", DAEHAN=DAEHAN, LEENO=leeno_now, SAMSUNG=SAMSUNG, NC=nc_adj, UNV=unverified, CO1=corp_only)
+    assert got["daehan"] == ["streak", 400, 4000]                                          # 400원 밑에: 사업보고서에는 4,000원
+    assert got["leeno"][2] is None and got["samsung"][2] is None                             # 올해 숫자가 그대로면 없어요
+    assert got["nc"] == ["pays", 830.33, 2491]                                             # 비교 불가여도 보여 주는 숫자가 맞춘 값이면 있어요
+    assert got["unverified"][2] is None and got["unverified"][1] is None                     # 숫자를 안 보이면 안내도 없어요
+    assert got["corpOnly"][2] == 4000                                                      # corp.json 의 dpsF 로도
+    assert got["old"][2] is None                                                           # 예전 파일: 없어요
+    assert got["note"] == "주식 수가 달라진 만큼 지금 1주 기준으로 다시 계산한 금액이에요. 사업보고서에는 {x}원으로 나와요."
+    tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    assert 'showDps && r.adjFrom != null && Dv.adjNote && <Note data-ui-v2="co-dps-adj">{fill(Dv.adjNote, { x: nf(r.adjFrom) })}</Note>' in tabs
 
 
 # ── 재무 경고: 확인이 모두 돌았거나 해당 없을 때만 '없어요' ──

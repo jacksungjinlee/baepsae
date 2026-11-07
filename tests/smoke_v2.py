@@ -3691,6 +3691,8 @@ V191B_CUT = "005380"       # 현대차: 같은 기준에서 12,000 → 10,000원
 V191B_NC = "000660"        # SK하이닉스: 비교 불가 (유상증자처럼) · 베타 표준오차 0.6 (믿을 수 없어요)
 V191B_ND = "105560"        # KB금융: 알 수 없음 · 오늘 기준 수익률 없음 · 금융지주 (유동비율 · 이자보상배율은 해당 없음)
 V191B_FIN = "032830"       # 삼성생명: 보험사 (유동비율 · 이자보상배율은 해당 없음) → 금융회사 밑 줄
+V191B_HOLD = "402340"      # SK스퀘어: 금융이 아닌 지주회사 → 지주회사 밑 줄 (PR #68 B3/B7)
+V191B_SPLIT10 = "028260"   # 삼성물산: 보고서 뒤 10:1 분할을 지어내요 (보고서 28,000원 → 오늘 1주 2,800원) → 사업보고서 숫자 안내 (B3)
 
 
 def v191b_files(files, se=None, beta=None):
@@ -3725,6 +3727,10 @@ def v191b_files(files, se=None, beta=None):
     coby["005930"]["flRan"] = ["cr", "icr", "l3", "imp"]
     coby[V191B_ND].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
     coby[V191B_FIN].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    coby[V191B_HOLD].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
+    s10 = by[V191B_SPLIT10]
+    s10.update(dps=28000.0, dps3=[28000.0, 26000.0, 25500.0], dps3a=[2800.0, 2600.0, 2550.0], dpsF=[10.0, 10.0, 10.0], divSt="adj",
+               dyt=round(2800.0 / s10["price"] * 100, 2))
     coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '없어요'라고 하지 않아요
     return f
 
@@ -3794,14 +3800,34 @@ def scene_v191b(R, files, width):
         page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="co-risk"]').count() == 0
         R.collect(page)
-        # 알 수 없음: '배당을 줘요', 숫자 없음 · 금융지주(s holding): 두 확인은 해당 없고 둘은 돌았어요 → '재무 경고 신호는 없어요' +
-        # 지금 밑 줄 그대로 (PR #68 B7: 지주회사의 문구는 Jack 이 정해요)
+        # 알 수 없음: '배당을 줘요', 숫자 없음 · 금융지주(s holding, 업종 은행): 두 확인은 해당 없고 둘은 돌았어요 → '재무 경고 신호는
+        # 없어요' + 금융회사 밑 줄 (PR #68 B3/B7: 업종이 금융이면 금융회사)
         open_co(V191B_ND)
         assert tile(V191B_ND, "div") == ("pays", T["div"]["pays"], None)
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
         assert CO["warn"]["none"] in page.locator('[data-ui-v2="co-warn"]').inner_text()
         sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "fin" and sub.inner_text() == CO["warn"]["noneSubFin"], sub.inner_text()
+        # 금융이 아닌 지주회사: 지주회사 밑 줄
+        open_co(V191B_HOLD)
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
+        assert sub.get_attribute("data-sub") == "holding" and sub.inner_text() == CO["warn"]["noneSubHolding"], sub.inner_text()
+        # 삼성전자: 금융도 지주회사도 아니고 네 확인이 다 돌았어요 → 지금 밑 줄
+        open_co("005930")
+        page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
+        sub = page.locator('[data-ui-v2="co-warn-sub"]')
         assert sub.get_attribute("data-sub") == "" and sub.inner_text() == CO["warn"]["noneSub"], sub.inner_text()
+        # B3: 보고서 뒤 10:1 분할 → 2,800원 밑에 '사업보고서에는 28,000원으로 나와요' · 올해 숫자가 그대로인 분할(삼성전기)은 안내 없음
+        open_co(V191B_SPLIT10)
+        co_open_tab(page, V191B_SPLIT10, "div", "kr")
+        assert page.locator('[data-ui-v2="co-dps"] [data-ui="amount"]').first.inner_text() == "2,800원"
+        assert page.locator('[data-ui-v2="co-dps-adj"]').inner_text() == fillp(CO["div"]["adjNote"], x="28,000")
+        no_hscroll(page, width)
+        R.collect(page)
+        open_co(V191B_SPLIT)
+        co_open_tab(page, V191B_SPLIT, "div", "kr")
+        assert page.locator('[data-ui-v2="co-dps"]').count() == 1 and page.locator('[data-ui-v2="co-dps-adj"]').count() == 0
         # 보험사(s insure): 금융회사 밑 줄 (PR #68 B7)
         open_co(V191B_FIN)
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")

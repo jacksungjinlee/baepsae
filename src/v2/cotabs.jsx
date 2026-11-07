@@ -567,6 +567,8 @@ export function DivTab({ load, s }) {
             <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{Dv.dps}</span>
           </div>
         )}
+        {/* v19.1b data (Jack, PR #68 B3): the figure above was recalculated for a share count change; say what the report says */}
+        {showDps && r.adjFrom != null && Dv.adjNote && <Note data-ui-v2="co-dps-adj">{fill(Dv.adjNote, { x: nf(r.adjFrom) })}</Note>}
         {bars && <Bars rows={bars} fmt={(v) => nf(v)} />}
         {showDps && <Src>{yearText(fy)}</Src>}
         {us && Dv.usLater && <Note>{Dv.usLater}</Note>}
