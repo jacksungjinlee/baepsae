@@ -388,6 +388,30 @@ def test_every_beta_written_by_the_pipeline_carries_its_error_and_count():
 
 
 # ── 4. flRan ─────────────────────────────────────────────
+def test_holding_companies_run_both_checks_and_only_financial_companies_skip_them():
+    """Jack (2026-11-07): 유동비율·이자보상배율은 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과 금융 지주(업종 그룹
+    은행·보험·증권·금융)만 해당 없음(flNa). 줄이 없는 지주회사는 돌린 것으로도, 해당 없음으로도 치지 않아요."""
+    base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
+    lines = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [9.0, 0, 0], "ie": 1.0}
+    cases = {
+        "000100": (dict(base, t="000100", nk="LG", s="holding", ind="holding"), lines),
+        "000200": (dict(base, t="000200", nk="KB금융", s="holding", ind="bank"), lines),
+        "000300": (dict(base, t="000300", nk="메리츠금융지주", s="holding", ind="insurance"), lines),
+        "000400": (dict(base, t="000400", nk="한국금융지주", s="holding", ind="securities"), lines),
+        "000500": (dict(base, t="000500", nk="벤처투자", s="holding", ind="finance"), lines),
+        "000600": (dict(base, t="000600", nk="증권사", s="broker", ind="securities"), lines),
+        "000700": (dict(base, t="000700", nk="줄 없는 지주", s="holding", ind="holding"), {"ni": [1.0, 1.0, 1.0], "cs": 1.0, "eq": 5.0}),
+    }
+    out = F.build_corp([c[0] for c in cases.values()], {t: c[1] for t, c in cases.items()}, "2026-11-07")["companies"]
+    by = {c["t"]: c for c in out}
+    assert by["000100"]["flRan"] == ["cr", "icr", "l3", "imp"] and "flNa" not in by["000100"]      # 금융 아닌 지주: 이제 돌려요
+    for t in ("000200", "000300", "000400", "000500", "000600"):                                  # 금융회사: 그대로 해당 없음
+        assert by[t]["flNa"] == ["cr", "icr"] and not {"cr", "icr"} & set(by[t]["flRan"]), t
+    assert by["000700"]["flRan"] == ["l3", "imp"] and "flNa" not in by["000700"]                  # 줄이 없으면 안 돌았다고만
+    assert F.fl_financial({"s": "bank"}) and F.fl_financial({"s": "holding", "ind": "bank"})
+    assert not F.fl_financial({"s": "holding", "ind": "holding"}) and not F.fl_financial({"s": "holding"})
+
+
 def test_flran_lists_the_checks_that_actually_ran():
     s = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "cap": 1.0, "s": "chem", "shr": 1_000_000,
          "dps3a": [10.0, 10.0, 10.0], "dpsF": [1.0, 1.0, 1.0], "divSt": "same", "dyt": 1.0, "betaSE": 0.07, "betaN": 740}

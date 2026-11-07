@@ -2166,7 +2166,16 @@ def _median(vals):
     return round(float(np.median(vals)), 1) if len(vals) >= 5 else None
 
 
-FIN_SECS = {"bank", "insure", "broker", "holding"}
+FIN_SECS = {"bank", "insure", "broker", "holding"}    # EV 계열 멀티플을 빼는 업종 (그대로)
+# v19.1d (Jack, 2026-11-07): 유동비율·이자보상배율은 재무제표에 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과
+# 금융 지주(KB금융·신한지주 …: 업종 그룹이 은행·보험·증권·금융)만 해당 없음(flNa). 그 밖의 지주회사(LG·GS·CJ …)는 이제 돌려요.
+FL_FIN_SECS = {"bank", "insure", "broker"}
+FL_FIN_INDS = {"bank", "insurance", "securities", "finance"}
+
+
+def fl_financial(s):
+    """재무 경고의 유동비율·이자보상배율이 해당 없는 금융회사인지 (업종 s 또는 업종 그룹 ind). (순수 함수)"""
+    return (s.get("s") or "etc") in FL_FIN_SECS or s.get("ind") in FL_FIN_INDS
 
 
 CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
@@ -2179,6 +2188,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
     extra = extra or {}
     comps = []
+    hold_log = []          # v19.1d: 금융이 아닌 지주회사 (코드, 이름, 유동비율 돌림, 이자보상배율 돌림)
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2221,15 +2231,16 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
 
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
         fl, ran = {}, []
-        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and row["s"] not in FIN_SECS:
+        fin_co = fl_financial(s)
+        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and not fin_co:
             ran.append("cr")
             cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
-        if op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and row["s"] not in FIN_SECS:
+        if op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and not fin_co:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
-        if op0f is not None and eff["ie"] and eff["ie"] > 0 and row["s"] not in FIN_SECS:
+        if op0f is not None and eff["ie"] and eff["ie"] > 0 and not fin_co:
             icr = op0f / eff["ie"]
             if icr < 1:
                 fl["icr"] = round(icr, 2)
@@ -2244,8 +2255,10 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         if fl:
             row["fl"] = fl
         row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
-        if row["s"] in FIN_SECS:
-            row["flNa"] = ["cr", "icr"]                      # 금융업은 유동비율·이자보상배율이 해당 없어요
+        if fin_co:
+            row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
+        elif row["s"] == "holding":                          # v19.1d: 금융이 아닌 지주회사 — 몇 곳이 돌았는지 로그로 남겨요
+            hold_log.append((s["t"], s["nk"], "cr" in ran, "icr" in ran))
         for k in CORP_DIV_KEYS:                              # v19.1b: 분할 확인한 배당 · 베타 표준오차
             if s.get(k) is not None:
                 row[k] = s[k]
@@ -2303,6 +2316,15 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
+    if hold_log:
+        both = [h for h in hold_log if h[2] and h[3]]
+        miss = [h for h in hold_log if not (h[2] and h[3])]
+        log(f"· 지주회사(금융 빼고) 재무 경고: {len(hold_log)}곳 중 유동비율 {sum(h[2] for h in hold_log)} · 이자보상배율 "
+            f"{sum(h[3] for h in hold_log)} · 둘 다 {len(both)}곳 돌렸어요")
+        if miss:
+            log(f"  !! 재무제표에 필요한 줄이 없어 못 돌린 지주회사 {len(miss)}곳: " + ", ".join(
+                f"{t} {nk}({'유동비율' if not cr else ''}{'·' if not cr and not icr else ''}{'이자보상배율' if not icr else ''} 없음)"
+                for t, nk, cr, icr in miss))
     return {"asOf": as_of, "market": market or {}, "sectors": sectors, "companies": comps}
 
 
