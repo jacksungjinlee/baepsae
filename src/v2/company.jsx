@@ -231,7 +231,8 @@ function MoveLine({ load, s, held, onWhy }) {
 export function warnText(f) {
   const W = C.co.warn;
   if (f.code === "cr") return W.cr ? fill(W.cr, { x: nf(Math.abs(f.x)) }) : null;                  // a ratio of assets: never negative
-  if (f.code === "icr") return W.icr ? fill(W.icr, { x: (f.x < 0 ? "\u2212" : "") + nf(Math.abs(f.x), 2) }) : null;   // U+2212 for a negative
+  // Jack, PR #68 (2026-11-07): an operating loss (ratio below 0, interest above 0) says so without a number
+  if (f.code === "icr") return f.x < 0 || Object.is(f.x, -0) ? W.icrLoss || null : W.icr ? fill(W.icr, { x: nf(f.x, 2) }) : null;
   return W[f.code] || null;
 }
 function warnSource(w) {
@@ -261,6 +262,8 @@ function Warnings({ load, s, wide }) {
   }
   const texts = w.flags.map(warnText);
   if (!W.count || texts.some((x) => !x)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+  // Jack, PR #68 (2026-11-07): under the 이자보상배율 warning, say when it used the cash-flow statement's interest paid
+  const cfNote = (code) => code === "icr" && w.icrCf && W.icrCfNote ? W.icrCfNote : null;
   return (
     <>
       <button type="button" data-ui-v2="co-warn" data-n={w.flags.length} onClick={() => setOpen(true)} aria-haspopup="dialog"
@@ -270,6 +273,7 @@ function Warnings({ load, s, wide }) {
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
+          {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
       </button>
@@ -279,7 +283,10 @@ function Warnings({ load, s, wide }) {
           {texts.map((x, i) => (
             <div key={w.flags[i].code} data-flag={w.flags[i].code} style={{ display: "flex", gap: SPACE(2), padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <Icon name="alert" size={18} tone="on" />
-              <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{x}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { display: "block" })}>{x}</span>
+                {cfNote(w.flags[i].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[i].code)}</span>}
+              </span>
             </div>
           ))}
           {warnSource(w) && <p style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}

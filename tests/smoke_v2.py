@@ -3691,6 +3691,8 @@ V191B_FIN = "032830"       # 삼성생명: 보험사 (유동비율 · 이자보�
 V191B_HOLD = "402340"      # SK스퀘어: 금융이 아닌 지주회사 → 지주회사 밑 줄 (PR #68 B3/B7)
 V191B_PART = "033780"      # KT&G: 이자보상배율만 못 돌림 (재무제표에 이자비용 줄 없음, flWhy ie) → '확인한 …' 줄 (PR #68 B7)
 V191B_OPMISS = "035420"    # NAVER: 이자보상배율만 못 돌렸지만 이유가 영업이익 없음(flWhy op) → 아무 말도 하지 않아요
+V191B_ICRCF = "034020"     # 두산에너빌리티: 이자보상배율 0.65배를 현금흐름표의 이자 지급액으로 (flSrc cf) → 그 밑 안내 (PR #68)
+V191B_ICRLOSS = "005490"   # POSCO홀딩스: 영업손실 (fl.icr 음수) → 숫자 없이 '영업손실이 나서 …' (PR #68)
 V191B_SPLIT10 = "028260"   # 삼성물산: 보고서 뒤 10:1 분할을 지어내요 (보고서 28,000원 → 오늘 1주 2,800원) → 사업보고서 숫자 안내 (B3)
 
 
@@ -3729,6 +3731,8 @@ def v191b_files(files, se=None, beta=None):
     coby[V191B_HOLD].update(flRan=["l3", "imp"], flNa=["cr", "icr"])
     coby[V191B_PART].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "ie"})
     coby[V191B_OPMISS].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "op"})
+    coby[V191B_ICRCF].update(fl={"icr": 0.65}, flRan=["cr", "icr", "l3", "imp"], flSrc={"icr": "cf"})
+    coby[V191B_ICRLOSS].update(fl={"icr": -0.41}, flRan=["cr", "icr", "l3", "imp"], flSrc={"icr": "is"})
     s10 = by[V191B_SPLIT10]
     s10.update(dps=28000.0, dps3=[28000.0, 26000.0, 25500.0], dps3a=[2800.0, 2600.0, 2550.0], dpsF=[10.0, 10.0, 10.0], divSt="adj",
                dyt=round(2800.0 / s10["price"] * 100, 2))
@@ -3853,6 +3857,23 @@ def scene_v191b(R, files, width):
         open_co(V191B_OPMISS)
         tile(V191B_OPMISS, "div")                                           # 회사 자료가 다 그려질 때까지
         assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        # 이자보상배율을 현금흐름표의 이자 지급액으로 계산: 경고 밑에 그 안내 (버튼과 목록 모두) · 영업손실: 숫자 없이 (Jack, PR #68)
+        open_co(V191B_ICRCF)
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
+        btn.wait_for(state="visible")
+        assert fillp(CO["warn"]["icr"], x="0.65") in btn.inner_text()
+        assert btn.locator('[data-ui-v2="co-warn-cf"]').inner_text() == CO["warn"]["icrCfNote"]
+        btn.click()
+        row = page.locator('[data-ui-v2="co-warn-list"] [data-flag="icr"]')
+        row.wait_for(state="visible")
+        assert row.locator('[data-ui-v2="co-warn-cf"]').inner_text() == CO["warn"]["icrCfNote"]
+        no_hscroll(page, width)
+        page.keyboard.press("Escape")
+        open_co(V191B_ICRLOSS)
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
+        btn.wait_for(state="visible")
+        assert CO["warn"]["icrLoss"] in btn.inner_text() and not re.search(r"\d배", btn.inner_text()), btn.inner_text()
+        assert btn.locator('[data-ui-v2="co-warn-cf"]').count() == 0                   # 손익계산서의 이자비용(is)이면 안내 없음
         # 삼성전자: 금융도 지주회사도 아니고 네 확인이 다 돌았어요 → 지금 밑 줄
         open_co("005930")
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")

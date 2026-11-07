@@ -338,7 +338,9 @@ export function warnings(s, co) {
   const why = co.flWhy && typeof co.flWhy === "object" ? co.flWhy.icr : null;
   const partial = !flags.length && !allRan && !!ran && ["cr", "l3", "imp"].every((c) => ran.includes(c)) && !ran.includes("icr") &&
     !na.includes("icr") && why === "ie";
-  return { allRan, partial, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
+  // Jack, PR #68 (2026-11-07): the ratio used the cash-flow statement's interest paid (corp.json flSrc.icr "cf", v19.1f)
+  const icrCf = flags.some((f) => f.code === "icr") && !!co.flSrc && typeof co.flSrc === "object" && co.flSrc.icr === "cf";
+  return { allRan, partial, icrCf, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
