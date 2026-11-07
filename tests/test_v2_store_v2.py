@@ -1087,3 +1087,132 @@ def test_only_the_write_that_takes_in_a_file_goes_without_a_fingerprint():
       const edited = S.withNote(imported, '005930', 'x', T, 6); S.writeStore(edited, K, T);
       out = {{ fileKeys: Object.keys(JSON.parse(file)), first: 'wts' in first, keys: Object.keys(imported), next: stored().wts === S.storeHash(stored()) }};""")
     assert got == {"fileKeys": ["v", "decks"], "first": False, "keys": ["v", "decks"], "next": True}
+
+
+# ── v19.3d review round 6: answers and times across 기록 불러오기, and the order copies merge in ──
+R6_ITEM = {"t": "005930", "rule": "divCut", "fy": 2025, "a": 1000, "b": 800}
+
+
+@pytest.mark.parametrize("stale_writes", [True, False])
+def test_an_older_backup_without_an_answer_never_brings_back_a_superseded_one(stale_writes):
+    """Review round 6, item 1 (the reviewer's E1): a backup exported before any answer; tab A answers 'cut', tab S opens
+    (sees 'cut'), A changes it to 'notCut' and imports the backup. The file has no word on that item, so the device's
+    latest answer stays ('notCut'), and S saving later does not bring 'cut' back (it did, silently: a sell condition
+    shown as fired)."""
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const item = {json.dumps(R6_ITEM)};
+      S.writeStore({{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}] }}, K, T);
+      const A = await import('./store.mjs?A'); let a = A.readStore(K, T).data; const file = A.exportText(a);
+      a = A.withConfirm(a, 'dA', item, 'cut', T, ts()); A.writeStore(a, K, T);
+      const St = await import('./store.mjs?S'); let st = St.readStore(K, T).data;
+      a = A.withConfirm(a, 'dA', item, 'notCut', T, ts()); A.writeStore(a, K, T); St.keepOwnText(K, mem.get(K), T);
+      a = A.mergeStores(a, A.parseImport(file, T), ts(), A.storedStores(K, T), T); A.writeStore(a, K, T); St.keepOwnText(K, mem.get(K), T);
+      const afterImport = a.decks[0].confirms.map((c) => c.answer);
+      if ({'true' if stale_writes else 'false'}) {{ st = St.withNote(st, '000660', 'memo', T, ts()); St.writeStore(st, K, T); A.keepOwnText(K, mem.get(K), T); }}
+      A.keepMine(K); St.keepMine(K);
+      const f = (await import('./store.mjs?F')).readStore(K, T);
+      out = {{ afterImport, next: f.data.decks[0].confirms.map((c) => c.answer) }};""")
+    assert got == {"afterImport": ["notCut"], "next": ["notCut"]}
+
+
+@pytest.mark.parametrize("what", ["stock", "memo", "answer"])
+def test_importing_the_same_backup_twice_never_lowers_the_time_the_first_import_set(what):
+    """Review round 6, item 2 (the reviewer's twice.mjs): tab A takes a stock out / deletes a memo / changes an answer;
+    tab B imports a backup that has the old value twice (the second time nothing differs, and the file's old time used to
+    replace the first import's); stale A saves: what B brought back stays."""
+    deck = {**R5_DECK, "confirms": [{**R6_ITEM, "answer": "cut", "at": T_, "ts": 1793000000000}]}
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const item = {json.dumps(R6_ITEM)}, what = {json.dumps(what)};
+      S.writeStore({{ v: 1, decks: [{json.dumps(deck, ensure_ascii=False)}], notes: {{ '000660': {{ text: '내 메모', at: T, ts: ts() }} }} }}, K, T);
+      const A = await import('./store.mjs?A'); let a = A.readStore(K, T).data; const file = A.exportText(a);
+      a = what === 'stock' ? A.withoutHolding(a, 'dA', '000660', T, ts()) : what === 'memo' ? A.withNote(a, '000660', '', T, ts()) : A.withConfirm(a, 'dA', item, 'notCut', T, ts());
+      A.writeStore(a, K, T);
+      const B = await import('./store.mjs?B'); let b = B.readStore(K, T).data;
+      for (let i = 0; i < 2; i++) {{ b = B.mergeStores(b, B.parseImport(file, T), ts(), B.storedStores(K, T), T); B.writeStore(b, K, T); A.keepOwnText(K, mem.get(K), T); }}
+      a = A.withNote(a, '005930', 'memo', T, ts()); A.writeStore(a, K, T); B.keepOwnText(K, mem.get(K), T);
+      A.keepMine(K); B.keepMine(K);
+      const d = (await import('./store.mjs?F')).readStore(K, T).data;
+      out = what === 'stock' ? d.decks[0].holdings.some((h) => h.t === '000660') : what === 'memo' ? !!(d.notes && d.notes['000660']) : d.decks[0].confirms.find((c) => c.t === '005930').answer === 'cut';""")
+    assert got is True                                                      # 불러온 것이 그대로 남아요 (예전에는 조용히 되돌아갔어요)
+
+
+def test_the_last_answer_on_a_stock_brought_back_survives_whatever_order_the_copies_merge_in():
+    """Review round 6, item 3 (the reviewer's E2): C is open from the start; A takes 000660 out; B re-imports a file that
+    has it (B's holding gets the import time); A saves a memo; C, which never saw either, answers 'notCut' on 000660.
+    Every copy's holding takes the latest time any copy has before the merges, so A's older removal mark no longer
+    filters C's answer out on the way: 000660 is held and the answer is 'notCut'."""
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const item = {{ ...{json.dumps(R6_ITEM)}, t: '000660' }};
+      S.writeStore({{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}] }}, K, T);
+      const C = await import('./store.mjs?C'); let c = C.readStore(K, T).data;
+      const A = await import('./store.mjs?A'); let a = A.readStore(K, T).data; const file = A.exportText(a);
+      a = A.withoutHolding(a, 'dA', '000660', T, ts()); A.writeStore(a, K, T); C.keepOwnText(K, mem.get(K), T);
+      const B = await import('./store.mjs?B'); let b = B.readStore(K, T).data;
+      b = B.mergeStores(b, B.parseImport(file, T), ts(), B.storedStores(K, T), T); B.writeStore(b, K, T); A.keepOwnText(K, mem.get(K), T); C.keepOwnText(K, mem.get(K), T);
+      a = A.withNote(a, '005930', 'memo', T, ts()); A.writeStore(a, K, T); B.keepOwnText(K, mem.get(K), T); C.keepOwnText(K, mem.get(K), T);
+      c = C.withConfirm(c, 'dA', item, 'notCut', T, ts()); C.writeStore(c, K, T); A.keepOwnText(K, mem.get(K), T); B.keepOwnText(K, mem.get(K), T);
+      for (const x of [A, B, C]) x.keepMine(K);
+      const f = (await import('./store.mjs?F')).readStore(K, T);
+      out = {{ held: f.data.decks[0].holdings.map((h) => h.t), answer: (f.data.decks[0].confirms || []).filter((x) => x.t === '000660').map((x) => x.answer), restored: f.restored }};""")
+    assert got == {"held": ["005930", "000660"], "answer": ["notCut"], "restored": True}
+
+
+def test_an_imported_answer_wins_over_one_another_tab_wrote_after_this_tab_read():
+    """From the reviewer's sim5 (onemain seq 435): another tab writes 'cut' after this tab read the records; this tab then
+    imports a file that says 'notCut'. The records as stored now count among what the file is checked against
+    (storedStores), so the file's answer gets the import time and stays 'notCut' after the merge."""
+    got = run_tabs(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const item = {json.dumps(R6_ITEM)};
+      const deck = {{ ...{json.dumps(R5_DECK, ensure_ascii=False)}, confirms: [{{ ...item, answer: 'notCut', at: T }}] }};
+      mem.set(K, JSON.stringify({{ v: 1, decks: [deck] }}));
+      const N = await tab(); let n = N.readStore(K, T).data; const file = N.exportText(n);
+      const m = oldRead(); oldWrite(S.withConfirm(m, 'dA', item, 'cut', T));           // another (earlier-app) tab: 'cut'
+      n = N.mergeStores(n, N.parseImport(file, T), ts(), N.storedStores(K, T), T); N.writeStore(n, K, T);
+      const f = (await tab()).readStore(K, T);
+      out = {{ stamped: !!n.decks[0].confirms[0].ts, next: f.data.decks[0].confirms.map((c) => c.answer) }};""")
+    assert got == {"stamped": True, "next": ["notCut"]}
+
+
+def test_an_answer_from_before_a_stock_was_taken_out_does_not_come_back_with_it():
+    """빼기 clears a stock's answers. When 기록 불러오기 brings the stock back (from a file without an answer), an answer a
+    stale copy still has from before the removal stays cleared, in the import and in later merges; an answer given after
+    it came back stays, and the file's own answer on a stock it brings back comes in with the import time."""
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const item = {{ ...{json.dumps(R6_ITEM)}, t: '000660' }};
+      S.writeStore({{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}] }}, K, T);
+      const A = await import('./store.mjs?A'); let a = A.readStore(K, T).data; const file = A.exportText(a);
+      a = A.withConfirm(a, 'dA', item, 'cut', T, ts()); A.writeStore(a, K, T);
+      const withAnswer = A.exportText(a);
+      const St = await import('./store.mjs?S'); let st = St.readStore(K, T).data;      // a stale tab: sees 'cut'
+      a = A.withoutHolding(a, 'dA', '000660', T, ts()); A.writeStore(a, K, T); St.keepOwnText(K, mem.get(K), T);
+      a = A.mergeStores(a, A.parseImport(file, T), ts(), A.storedStores(K, T), T); A.writeStore(a, K, T); St.keepOwnText(K, mem.get(K), T);
+      const afterImport = (a.decks[0].confirms || []).map((c) => c.answer);
+      st = St.withNote(st, '005930', 'x', T, ts()); St.writeStore(st, K, T); A.keepOwnText(K, mem.get(K), T);
+      A.keepMine(K); St.keepMine(K);
+      const f = (await import('./store.mjs?F')).readStore(K, T);
+      const next = (f.data.decks[0].confirms || []).map((c) => c.answer);
+      // an answer given after the stock came back stays
+      const G = await import('./store.mjs?G'); let g = G.readStore(K, T).data;
+      g = G.withConfirm(g, 'dA', item, 'notCut', T, ts()); G.writeStore(g, K, T);
+      const later = ((await import('./store.mjs?H')).readStore(K, T).data.decks[0].confirms || []).map((c) => c.answer);
+      // the file's own answer on a stock it brings back
+      const B = await import('./store.mjs?B'); let b = B.readStore(K, T).data;
+      b = B.withoutHolding(b, 'dA', '000660', T, ts()); B.writeStore(b, K, T);
+      b = B.mergeStores(b, B.parseImport(withAnswer, T), ts(), B.storedStores(K, T), T);
+      const own = b.decks[0].confirms.map((c) => [c.answer, c.ts === clock]);
+      out = {{ afterImport, next, held: f.data.decks[0].holdings.map((h) => h.t), later, own }};""")
+    assert got == {"afterImport": [], "next": [], "held": ["005930", "000660"], "later": ["notCut"], "own": [["cut", True]]}
+
+
+def test_without_times_the_answer_as_stored_now_is_the_one_an_import_keeps():
+    """From the reviewer's sim5 (onemain seq 269): the earlier app answered 'cut' then 'notCut' (no times); this tab read
+    'cut'. Importing a file without that answer keeps the device's latest one, and where times cannot tell, the records as
+    stored now come first: 'notCut'."""
+    got = run_tabs(f"""const item = {json.dumps(R6_ITEM)};
+      mem.set(K, JSON.stringify({{ v: 1, decks: [{{ ...{json.dumps(R5_DECK, ensure_ascii=False)}, confirms: [{{ ...item, answer: 'cut', at: T }}] }}] }}));
+      const N = await tab(); let n = N.readStore(K, T).data;
+      const file = N.exportText({{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}] }});
+      oldWrite(S.withConfirm(oldRead(), 'dA', item, 'notCut', T));
+      n = N.mergeStores(n, N.parseImport(file, T), 1794000000000, N.storedStores(K, T), T);
+      out = n.decks[0].confirms.map((c) => c.answer);""")
+    assert got == ["notCut"]

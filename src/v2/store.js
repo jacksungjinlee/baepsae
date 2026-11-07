@@ -661,7 +661,12 @@ function unionDeck(cur, other) {
   if (marks.size) out.removed = [...marks.values()];
   for (const r of marks.values()) {
     const h = out.holdings.find((x) => x.t === r.t);
-    if (!h || (okTs(h.ts) && h.ts > r.ts)) continue;
+    if (h && okTs(h.ts) && h.ts > r.ts) {
+      // held again after it was taken out: the answers from before the removal (빼기 cleared them) stay cleared
+      if (Array.isArray(out.confirms)) out.confirms = out.confirms.filter((c) => !(plainObj(c) && c.t === r.t && !(editOrder(c, r) > 0)));
+      continue;
+    }
+    if (!h) continue;
     out.holdings = out.holdings.filter((x) => x.t !== r.t);
     // its own records go with it, as 빼기 does (withoutHolding): with a sale or dividend still in the lists (one copy had
     // them, the other took the stock out), they move into a history entry, so nothing is dropped and the merge stays valid
@@ -803,13 +808,25 @@ function restoreMoved(key, cur, raw, today) {
   const descends = mine != null && mine !== raw && sameLineage(raw, mine);
   if (descends) { try { localStorage.setItem(key + MINE, raw); } catch (e) { /* the next write sets it */ } }
   else if (mine != null && mine !== raw) cands.unshift([key + MINE, false]);
-  for (const [k, moved] of cands) {
-    const d = readCopy(k, today);
-    if (!d || (moved && (d.v !== STORE_VERSION || !hasV2Parts(d)))) continue;
+  const copies = cands.map(([k, moved]) => [k, readCopy(k, today), moved]).filter(([, d, moved]) => d && !(moved && (d.v !== STORE_VERSION || !hasV2Parts(d))));
+  // a stock one copy brought back (its holding's time) stays back whichever copy with an older removal mark is merged
+  // first: every copy, and the records as read, take each holding's latest time before the merges (so the answers and
+  // records of a copy that held it are not filtered out on the way)
+  const best = new Map();
+  for (const d of [cur, ...copies.map(([, x]) => x)]) for (const x of d.decks) for (const h of x.holdings || []) {
+    if (plainObj(h) && okTs(h.ts) && !(best.get(x.id + "\u0000" + h.t) >= h.ts)) best.set(x.id + "\u0000" + h.t, h.ts);
+  }
+  const lift = (d) => (best.size ? { ...d, decks: d.decks.map((x) => ({ ...x, holdings: (x.holdings || []).map((h) => {
+    const t = plainObj(h) ? best.get(x.id + "\u0000" + h.t) : undefined;
+    return t && !(okTs(h.ts) && h.ts >= t) ? { ...h, ts: t } : h;
+  }) })) } : d);
+  merged = lift(cur);
+  for (const [k, d0] of copies) {
+    const d = lift(d0);
     const m = mergeTabs(d, merged, today);
     if (!m) { unmerged = true; console.warn(`[v2] the copy in ${k} could not be merged with the current records (the result would not read back); it is kept as it is`); continue; }
     merged = m;
-    used.push([k, d]);
+    used.push([k, d0]);
   }
   if (!used.length) return { data: null, notice: false, unmerged };
   const base = normal(cur, today) || cur;
@@ -1086,22 +1103,48 @@ export function importProblem(text, today, preview = false) {
 // identical records is stored exactly as it is.
 export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null) {
   if (!isDate(today) && okTs(ts)) today = new Date(ts + 9 * 3600 * 1000).toISOString().slice(0, 10);   // KST, as todayKst
-  const all = [cur, ...(Array.isArray(known) ? known : [])].filter((x) => plainObj(x) && Array.isArray(x.decks));
+  // newest first where times cannot tell (values saved without one): the records as stored now (storedStores lists them
+  // first), then this tab's, then the copies
+  const kn = Array.isArray(known) ? known : [];
+  const all = [...kn.slice(0, 1), cur, ...kn.slice(1)].filter((x) => plainObj(x) && Array.isArray(x.decks));
   const decksOf = (id) => all.map((x) => x.decks.find((d) => plainObj(d) && d.id === id)).filter(Boolean);
   const stamp = (v) => (okTs(ts) ? { ...v, ts } : v);
+  // an import never lowers a time: a value equal to this device's keeps the later of the two times (the same file
+  // imported twice does not undo what the first import brought back)
+  const keepLater = (v, times) => { const t = Math.max(0, ...times.filter(okTs)); return t && !(okTs(v.ts) && v.ts >= t) ? { ...v, ts: t } : v; };
   const fresh = (x) => {
     const mine = decksOf(x.id);
     const gone = (t) => mine.some((d) => (Array.isArray(d.removed) && d.removed.some((r) => plainObj(r) && r.t === t))
       || (Array.isArray(d.history) && d.history.some((e) => plainObj(e) && e.t === t)));
     const other = (c) => mine.some((d) => Array.isArray(d.confirms) && d.confirms.some((y) => sameConfirm(y, c) && y.answer !== c.answer));
-    // the file replaces the portfolio: a stock this device's copies hold and the file does not is taken out now, and a
-    // removal mark the replaced portfolio had for a stock the file does not hold stays (so no older copy brings either back)
+    // the file replaces the portfolio: a stock this device's copies hold and the file does not is taken out now, and the
+    // replaced portfolio's removal marks stay (the latest per stock): a stock the file does not hold stays out, and one it
+    // brings back (its holding gets the import time, after the mark) leaves its answers from before the removal behind
     const holds = (t) => x.holdings.some((h) => h.t === t);
-    const marks = new Map((Array.isArray(x.removed) ? x.removed : []).filter((r) => plainObj(r) && !holds(r.t)).map((r) => [r.t, r]));
-    for (const d of mine) for (const r of Array.isArray(d.removed) ? d.removed : []) if (plainObj(r) && !holds(r.t) && !(marks.has(r.t) && marks.get(r.t).ts >= r.ts)) marks.set(r.t, r);
+    const marks = new Map((Array.isArray(x.removed) ? x.removed : []).filter((r) => plainObj(r)).map((r) => [r.t, r]));
+    for (const d of mine) for (const r of Array.isArray(d.removed) ? d.removed : []) if (plainObj(r) && !(marks.has(r.t) && marks.get(r.t).ts >= r.ts)) marks.set(r.t, r);
     if (okTs(ts) && isDate(today)) for (const d of mine) for (const h of d.holdings || []) if (plainObj(h) && !holds(h.t)) marks.set(h.t, { t: h.t, at: today, ts });
-    return { ...x, holdings: x.holdings.map((h) => (gone(h.t) ? stamp(h) : h)),
-      ...(Array.isArray(x.confirms) ? { confirms: x.confirms.map((c) => (other(c) ? stamp(c) : c)) } : {}),
+    const heldTimes = (t) => mine.flatMap((d) => (d.holdings || []).filter((h) => plainObj(h) && h.t === t).map((h) => h.ts));
+    const sameAnswers = (c) => mine.flatMap((d) => (d.confirms || []).filter((y) => sameConfirm(y, c) && y.answer === c.answer).map((y) => y.ts));
+    const holdings = x.holdings.map((h) => (gone(h.t) ? stamp(h) : keepLater(h, heldTimes(h.t))));
+    // the file's answers come in now too where they differ, or on a stock it brings back (they come back with it)
+    const own = (Array.isArray(x.confirms) ? x.confirms : []).map((c) => (other(c) || gone(c.t) ? stamp(c) : keepLater(c, sameAnswers(c))));
+    // an answer to 확인 필요 the file lacks, on a stock the file holds: this device's latest answer stays (the file has no
+    // later word on it, and an older answer must not come back through a stale copy) — unless the stock was taken out
+    // after it (빼기 clears its answers)
+    const lastOut = (t) => mine.flatMap((d) => (Array.isArray(d.removed) ? d.removed : []).filter((r) => plainObj(r) && r.t === t && okTs(r.ts)))
+      .reduce((a, r) => (!a || r.ts > a.ts ? r : a), null);
+    const add = [];
+    for (const d of mine) for (const c of Array.isArray(d.confirms) ? d.confirms : []) {
+      if (!plainObj(c) || !holds(c.t) || own.some((y) => sameConfirm(y, c))) continue;
+      const out = lastOut(c.t);
+      if (out && !(editOrder(c, out) > 0)) continue;
+      const i = add.findIndex((y) => sameConfirm(y, c));
+      if (i < 0) add.push(c); else add[i] = laterOf(add[i], c);
+    }
+    const confirms = [...own, ...add];
+    const { confirms: _c, ...rest } = x;
+    return { ...rest, holdings, ...(confirms.length || Array.isArray(x.confirms) ? { confirms } : {}),
       ...(marks.size ? { removed: [...marks.values()] } : {}) };
   };
   const by = new Map(cur.decks.map((x) => [x.id, x]));
@@ -1109,9 +1152,10 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
   const out = { decks: [...by.values()] };
   const noteDiffers = (t, n) => all.some((x) => { const st = noteState(x, t); return st && (st.gone || st.text !== n.text); });
   const assumeDiffers = (t, a) => all.some((x) => { const b = (perStock(x, "assume") || {})[t]; return plainObj(b) && (b.disc !== a.disc || b.term !== a.term); });
+  const sameTimes = (key, t) => all.map((x) => (perStock(x, key) || {})[t]).filter(plainObj).map((v) => v.ts);
   for (const key of ["notes", "assume"]) {
     const brought = Object.fromEntries(Object.entries(perStock(inc, key) || {}).map(([t, v]) =>
-      [t, (key === "notes" ? noteDiffers(t, v) : assumeDiffers(t, v)) ? stamp(v) : v]));
+      [t, (key === "notes" ? noteDiffers(t, v) : assumeDiffers(t, v)) ? stamp(v) : keepLater(v, sameTimes(key, t))]));
     const m = { ...(perStock(cur, key) || {}), ...brought };
     if (Object.keys(m).length) out[key] = m;
   }
@@ -1137,12 +1181,12 @@ export function exportText(d, preview = false, aside = null) {
   return JSON.stringify(preview ? { v, preview: true, decks: d.decks, ...extras(d), ...more } : { v, decks: d.decks, ...extras(d), ...more }, null, 1);
 }
 
-// The readable copies stored beside the records (".mine", ".other.", ".unreadable."): what 기록 불러오기 checks the file
-// against (mergeStores known).
+// The records as stored now (another tab may have written them since this tab read) and the readable copies beside them
+// (".mine", ".other.", ".unreadable."): what 기록 불러오기 checks the file against (mergeStores known).
 export function storedStores(key, today) {
   const out = [];
   try {
-    for (const k of [key + MINE, ...backupKeys(key, ".other."), ...backupKeys(key, ".unreadable.")]) { const d = readCopy(k, today); if (d) out.push(d); }
+    for (const k of [key, key + MINE, ...backupKeys(key, ".other."), ...backupKeys(key, ".unreadable.")]) { const d = readCopy(k, today); if (d) out.push(d); }
   } catch (e) { return out; }
   return out;
 }
