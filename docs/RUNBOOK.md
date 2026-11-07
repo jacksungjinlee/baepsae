@@ -118,7 +118,8 @@ tells you what happened in plain words.
   (`tools/logos/site_icons.py` on `claude/logos-site-icons`), only its largest icon of 96 px or more, every quality check,
   never the same picture as another company's logo, each looked at first:
   `--add-site-icons SURVEY_FOLDER --codes CODE,CODE --dir FOLDER` (route `site`, flagged `homepage-icon`; `sites.csv`).
-  The 데이터 출처 page says so: "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요."
+  Before the first homepage icon goes live, the 데이터 출처 line must read "회사 로고: Logo.dev, 일부는 각 회사 홈페이지.
+  로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07).
 - After pushing the `logos` branch and running Deploy, check the live `logos/index.json` (its count and a new code).
   On 2026-11-07 a Deploy of the same `main` commit two minutes after another one reported success but the site kept
   the older files; running Deploy once more published them.

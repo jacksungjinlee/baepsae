@@ -36,7 +36,7 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import copy_strings  # noqa: E402
 from test_launch import V175_FORMAT, real_data_missing  # noqa: E402
-from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
+from visualcheck import V2_IMAGES, visual_ok, copy_pictures  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 C, _ = copy_strings()
@@ -64,6 +64,7 @@ def site(variant):
     for f in SITE:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
+    copy_pictures(d)                                                 # v19.3b: 기준 · 템플릿 그림
     for f in DATA:
         shutil.copy(os.path.join(ROOT, f), d)                       # 지금 저장소의 파일 (지금 앱이 쓰는 것)
     if variant == "fixtures":                                        # 월요일 모습: v17.5 형식 + v17.5.1 필드

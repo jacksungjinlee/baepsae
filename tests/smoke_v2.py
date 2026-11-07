@@ -60,7 +60,7 @@ from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table  # noqa: E402
+from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table, copy_pictures, text_floor  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
@@ -201,6 +201,7 @@ def build_site(files, raw=None, drop=(), app=None):
         with open(os.path.join(site, "app.html"), "w", encoding="utf-8") as fh:
             fh.write(app)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(site, "fonts"))
+    copy_pictures(site)                                              # v19.3b: 기준 · 템플릿 그림
     for name, obj in files.items():
         if name in drop:
             continue
@@ -3673,6 +3674,131 @@ def scene_company(R, files, width):
     R.check(page, S, "공시: 오늘 목록을 못 받은 파일 → 가장 최근 공시일 + 'N일째 갱신이 멈췄어요' (오늘 날짜 아님)", disc_stale)
 
 
+
+# ── v19.3b (docs/tasks/v19.3-portfolio-pictures-accounts.md Part A · B · N.2) ──
+with open(os.path.join(ROOT, "src", "v2", "pictures.js"), encoding="utf-8") as _f:
+    _PICS_SRC = _f.read()
+PICS = {grp: dict(re.findall(r'(\w+): \{ src: "(pictures/[\w-]+\.webp)"', _PICS_SRC.split(f"export const {grp} = {{", 1)[1].split("};", 1)[0]))
+        for grp in ("CARD_PICS", "DECK_PICS")}
+assert len(PICS["CARD_PICS"]) == 10 and len(PICS["DECK_PICS"]) == 8, PICS
+PIC_STATE = r"""(sel) => [...document.querySelectorAll(sel)].map((c) => { const i = c.querySelector('img'); const r = i ? i.getBoundingClientRect() : null;
+  return { id: c.dataset.cardPic || c.dataset.deckPic, dim: c.dataset.dim || '', src: i ? i.getAttribute('src') : '', alt: i ? i.getAttribute('alt') : null,
+    ok: !!i && i.complete && i.naturalWidth > 0, w: r ? Math.round(r.width) : 0, bg: getComputedStyle(c).backgroundColor }; })"""
+
+
+def pics(page, sel, table):
+    """sel 의 그림 칩마다: 그 기준 · 템플릿의 그림 · 열림 · alt "" (이름 옆의 장식) · 주제 색 칩. 돌려줌: 칩 목록."""
+    try:
+        page.wait_for_function("(sel) => [...document.querySelectorAll(sel + ' img')].every((i) => i.complete)", arg=sel, timeout=5000)
+    except PWTimeout:
+        pass
+    got = page.evaluate(PIC_STATE, sel)
+    assert got, f"그림이 없어요: {sel}"
+    for g in got:
+        assert g["src"] == PICS[table][g["id"]] and g["ok"] and g["alt"] == "" and g["w"] >= 20, g
+        assert g["bg"] != "rgba(0, 0, 0, 0)", g
+    return got
+
+
+def floor_ok(page, where):
+    small = text_floor(page)
+    assert not small, f"{where}: 12px 아래 글 {small[:5]}"
+
+
+def scene_v193b(R, files, width):
+    """v19.3b: 홈 · 포트폴리오 · 회사 페이지 · 시장 · 포트폴리오 만들기(시작 · 기준 · 빼기 · 조건 · 후보 고르기)에서 12px 아래 글이 없어요
+    (Part B, 휴대폰 390 · PC 1280). 기준이 나오는 곳마다 그 기준의 그림이 주제 색 칩 위에 있어요: 기준 카드 열 장(준비 중인 두 장은
+    흐리게) · 미리 보기 · 후보의 점수 줄과 근거 수치 · 회사 페이지의 내 기준과 맞는 정도와 그 시트. 템플릿 여덟 개도 자기 그림 (Part A)."""
+    S = f"v19.3b {width}"
+    wide = width >= 1024
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, base = R.open(build_site(daily_files(files)), width, init=init, device=pc_device(width) if wide else None)
+
+    def go(h, r):
+        page.goto(base + "/app.html?dev=1" + h, wait_until="domcontentloaded")
+        if not r.startswith("stocks/"):                                          # 회사 페이지는 날짜 줄 대신 자기 날짜 (co_wait)
+            wait_ready(page)
+        at(page, r)
+
+    def tabs():
+        for h, r, sel in (("#home", "home", '[data-ui-v2="date-line"]'), ("#portfolio", "portfolio", "[data-holding][data-status]"),
+                          ("#market", "market", '[data-ui-v2="date-line"]')):
+            go(h, r)
+            page.locator(sel).first.wait_for(state="visible")
+            floor_ok(page, r)
+            R.collect(page)
+    R.check(page, S, "홈 · 포트폴리오(저장된 포트폴리오) · 시장: 12px 아래 글 없음", tabs)
+
+    def company():
+        go("#stocks/005930", "stocks/005930")
+        co_wait(page)
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        fit.wait_for(state="visible")
+        rows = fit.locator('[data-ui-v2="rank-row"]')
+        got = pics(page, '[data-ui-v2="co-fit"] [data-ui-v2="rank-row"] [data-card-pic]', "CARD_PICS")
+        assert [g["id"] for g in got] == [rows.nth(i).get_attribute("data-card") for i in range(rows.count())], got
+        floor_ok(page, "회사 요약")
+        R.collect(page)
+        fit.get_by_role("button", name=C["co"]["fit"]["all"]).click()            # 기준 카드 8개 모두 보기 (시트)
+        sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+        sheet.wait_for(state="visible")
+        got = pics(page, '[data-ui-v2="co-fit-sheet"] [data-ui-v2="rank-row"] [data-card-pic]', "CARD_PICS")
+        assert len(got) == sheet.locator('[data-ui-v2="rank-row"]').count() >= 6, got
+        floor_ok(page, "회사 시트")
+        R.collect(page)
+        page.keyboard.press("Escape")
+        sheet.wait_for(state="detached")
+        for tab_ in ("earn", "value", "div", "disc"):                             # 회사 페이지의 탭마다
+            co_hash(page, f"#stocks/005930/{tab_}")
+            page.wait_for_timeout(200)
+            floor_ok(page, f"회사 {tab_}")
+            R.collect(page)
+    R.check(page, S, "회사 페이지(삼성전자 요약 · 시트 · 네 탭): 12px 아래 글 없음 · 내 기준과 맞는 정도의 줄마다 그 기준의 그림", company)
+
+    def build():
+        go("#portfolio/build", "portfolio/build")
+        see(page, C["build"]["s0"]["title"])
+        got = pics(page, "[data-deck] [data-deck-pic]", "DECK_PICS")
+        assert sorted(g["id"] for g in got) == sorted(PICS["DECK_PICS"]), got        # 보이는 템플릿 여덟 개 모두 자기 그림
+        assert page.locator('[data-deck="blank"] img').count() == 0
+        floor_ok(page, "시작")
+        R.collect(page)
+        page.locator('[data-deck="garp"]').click()
+        see(page, C["build"]["s1"]["title"])
+        got = pics(page, "[data-card] [data-card-pic]", "CARD_PICS")
+        assert [g["id"] for g in got] == list(PICS["CARD_PICS"]), got             # 기준 카드 열 장, 엔진 순서 그대로
+        assert {g["id"] for g in got if g["dim"]} == {"divGrowth", "payout"}, got   # 준비 중인 두 장만 흐리게
+        see(page, C["build"]["s1"]["preview"])
+        prev = pics(page, '[data-ui-v2="preview"] [data-card-pic]', "CARD_PICS")
+        assert prev and {g["id"] for g in prev} <= {"growth", "value", "profit"}, prev   # 미리 보기: 점수를 준 기준만
+        floor_ok(page, "기준")
+        R.collect(page)
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        floor_ok(page, "빼기")
+        R.collect(page)
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
+        floor_ok(page, "조건")
+        R.collect(page)
+        click_next(page)
+        see(page, C["pick"]["title"])
+        got = pics(page, '[data-cand] [data-ui-v2="card-scores"] [data-card-pic]', "CARD_PICS")
+        assert {g["id"] for g in got} <= {"growth", "value", "profit"}, got
+        first = page.locator("[data-cand]").first
+        first.get_by_role("button", name=C["pick"]["receipts"]).click()
+        rec = pics(page, '[data-ui-v2="receipts"] [data-card-pic]', "CARD_PICS")
+        assert {g["id"] for g in rec} == {"growth", "value", "profit"}, rec          # 근거 수치: 점수를 준 기준 세 줄
+        floor_ok(page, "후보 고르기")
+        R.collect(page)
+    R.check(page, S, "포트폴리오 만들기(시작 · 기준 · 빼기 · 조건 · 후보 고르기): 12px 아래 글 없음 · 템플릿 여덟 개와 기준 카드 열 장마다 "
+            "그림(준비 중 두 장은 흐리게) · 미리 보기 · 후보 · 근거 수치의 기준 그림", build)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -3711,7 +3837,8 @@ def main():
                     print(f"  FAIL  [{width}] 장면 실행: {e}", flush=True)
         for fn in (lambda: scene_pc(R, files), lambda: scene_pc_back(R, files), lambda: scene_pc_stale(R, files),
                    lambda: scene_pc_edge(R, files), lambda: scene_company(R, files, 390),
-                   lambda: scene_company(R, files, 1280)):       # v19.0d PC · v19.1a 회사 페이지 (휴대폰 390 · PC 1280)
+                   lambda: scene_company(R, files, 1280),       # v19.0d PC · v19.1a 회사 페이지 (휴대폰 390 · PC 1280)
+                   lambda: scene_v193b(R, files, 390), lambda: scene_v193b(R, files, 1280)):   # v19.3b 그림 · 12px
             try:
                 fn()
             except Exception as e:

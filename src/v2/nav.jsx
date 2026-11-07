@@ -309,7 +309,7 @@ export function SideMenu({ tab, about, load, go, onAbout }) {
           <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={38} height={38} style={{ objectFit: "contain", flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
             <h1 data-ui-v2="wordmark" style={tx(24, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.1, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
-            <p data-ui-v2="side-catch" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: 2, lineHeight: 1.35 })}>{C.about.ko.hero.catch}</p>
+            <p data-ui-v2="side-catch" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2, lineHeight: 1.35 })}>{C.about.ko.hero.catch}</p>
           </div>
         </HomeLink>
       </div>
@@ -388,7 +388,7 @@ export function TopBar({ q, onSearch, inputRef, load }) {
               placeholder={C.stocks.search || undefined} enterKeyHint="search" autoComplete="off" aria-keyshortcuts="/"
               style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", minHeight: TOUCH - 2, ...tx(SIZE.body, WEIGHT.semi, COLOR.ink) }} />
             <kbd aria-hidden="true" style={{ flexShrink: 0, minWidth: SPACE(6), height: SPACE(6), display: "inline-flex", alignItems: "center", justifyContent: "center",
-              border: `1px solid ${COLOR.border}`, borderRadius: SPACE(1) + 2, background: COLOR.surface, ...tx(SIZE.xxs, WEIGHT.bold, COLOR.text2, { lineHeight: 1 }) }}>/</kbd>
+              border: `1px solid ${COLOR.border}`, borderRadius: SPACE(1) + 2, background: COLOR.surface, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { lineHeight: 1 }) }}>/</kbd>
           </label>
         )}
         <span style={{ flex: 1 }} />
