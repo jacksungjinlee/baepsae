@@ -15,7 +15,7 @@ import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
-import { parseImport, importProblem, importIssues, mergeStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
+import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
@@ -87,7 +87,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       return;
     }
     setImportBad(false);
-    setStoreData(mergeStores(store.data, inc));
+    setStoreData(mergeStores(store.data, inc, Date.now(), storedStores(store.key, todayKst()), todayKst()));   // what the file brings back is an edit made now
   };
   return (
     <Page pad={pad}>

@@ -39,7 +39,12 @@
 //   gone     top level { notes: { [code]: { at, ts } } }: a 메모 deleted (so a merge does not bring it back); it stays
 //            on this device, never in a records file;
 //   removed  per portfolio [{ t, at, ts }]: a stock taken out with 포트폴리오에서 빼기 (so a merge keeps it out unless the
-//            holding was added again later: a holding's own ts, after the mark's).
+//            holding was added again later: a holding's own ts, after the mark's; 기록 불러오기 stamps one, mergeStores);
+//   wts      top level: a fingerprint of the records as this app wrote them (storeHash). The earlier app keeps it when it
+//            saves (it keeps top-level parts it does not know), so on the next start it tells whether the earlier app
+//            wrote from this app's last write (its changes, deletions too, are the user's) or from an older copy (then
+//            this app's last write, ".mine", is merged back). Every write stamps it except the one that takes in a
+//            records file (mergeStores): that write stores the file exactly as it is, and a file never carries it.
 //
 // Version tag: a store is written as v1 while it holds no version-2-only part (above: kind … limits), so a tab still
 // running the earlier app, or a revert of this change, keeps reading it; it becomes v2 with the first such part. An
@@ -218,6 +223,7 @@ function historyProblem(hs, today) {
     if (!isStr(h.nk, 120)) return bad("history", i, h.t, "name missing");
     if (!pastDate(h.out, today)) return bad("history", i, h.t, "date taken out must be a real date, not after today");
     if (h.cls != null && !isStr(h.cls, 10)) return bad("history", i, h.t, "market is not valid");
+    if (h.ts != null && !okTs(h.ts)) return bad("history", i, h.t, "time taken out (ts) is not valid");
     for (const k of ["purchases", "sales", "divs"]) if (h[k] != null && !Array.isArray(h[k])) return bad("history", i, h.t, k + " is not a list");
     if (h.imported != null && !plainObj(h.imported)) return bad("history", i, h.t, "imported is not one row");
     const recs = { purchases: h.purchases || [], sales: h.sales || [], divs: h.divs || [], imported: h.imported ? [h.imported] : [] };
@@ -298,7 +304,7 @@ export function problemText(deck, p) {
 }
 
 // ---------------- the whole store ----------------
-const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "gone", "preview", "setAside"];
+const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "gone", "wts", "preview", "setAside"];
 // -> { readable: false, why } when it is not a records store this app can read at all (not an object, an unknown or newer
 // version, no portfolio list); else { readable: true, data, problems: [text] }: data keeps every valid portfolio and part,
 // problems names what was set aside (a bad portfolio, a duplicate id, a bad notes / assume / guideSeen part).
@@ -327,6 +333,10 @@ export function checkStore(d, today) {
   if (d.guideSeen != null) {
     if (pastDate(d.guideSeen, today)) data.guideSeen = d.guideSeen;
     else problems.push("guideSeen: not a date up to today");
+  }
+  if (d.wts != null) {
+    if (typeof d.wts === "string" && /^[0-9a-f]{16}$/.test(d.wts)) data.wts = d.wts;
+    else problems.push("wts (write fingerprint): not valid");
   }
   if (d.gone != null) {
     if (plainObj(d.gone) && (d.gone.notes == null || validPerStock(d.gone.notes, (g) => okTs(g.ts) && (g.h == null || /^[0-9a-f]{8}$/.test(g.h)), today))) data.gone = d.gone;
@@ -452,7 +462,7 @@ export function withoutHolding(data, deckId, t, today = null, ts = null) {
     const h = deck.holdings.find((x) => x.t === t);
     const imp = of(deck.imported)[0];
     const out = isDate(today) ? today : [...sales, ...divs].reduce((a, r) => (r.date > a ? r.date : a), "0000-00-00");
-    next.history = [...(Array.isArray(deck.history) ? deck.history : []), { t, nk: h.nk, out, ...(h.cls ? { cls: h.cls } : {}),
+    next.history = [...(Array.isArray(deck.history) ? deck.history : []), { t, nk: h.nk, out, ...(isDate(today) ? { ts: okTs(ts) ? ts : Date.now() } : {}), ...(h.cls ? { cls: h.cls } : {}),
       ...(imp ? { imported: imp } : {}), purchases: of(deck.purchases), sales, divs }];
   }
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
@@ -504,6 +514,26 @@ function backupKey(key, kind, t = Date.now(), among = BACKUP_KINDS) {
   try { while (among.some((k) => localStorage.getItem(key + k + t) != null)) t++; } catch (e) { /* the write will say */ }
   return key + kind + t;
 }
+// A fingerprint of the records (everything but wts, preview and setAside, in canonical order): 16 hex digits.
+function fnv(s, h) {
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, "0");
+}
+export function storeHash(d) {
+  const { wts: _w, preview: _p, setAside: _s, ...rest } = plainObj(d) ? d : {};
+  const t = canon(rest);
+  return fnv(t, 0x811c9dc5) + fnv(t, 0x050c5d1f);
+}
+const stamped = (d) => ({ ...d, wts: storeHash(d) });
+// mergeStores marks what it returns (a records file taken in): writeStore stores it as it is, without a fingerprint.
+export const FROM_FILE = Symbol("from a records file");
+// The fingerprint of the write a stored text came from (null: none, e.g. the earlier app imported a file).
+function lineageOf(text) {
+  try { const d = JSON.parse(text); return plainObj(d) && typeof d.wts === "string" ? d.wts : null; } catch (e) { return null; }
+}
+// Did the stored text a come from b's write (the earlier app saved from it: it keeps the fingerprint)? Then a's changes,
+// deletions too, are the user's own: b is not merged back into it.
+function sameLineage(a, b) { const x = lineageOf(a); return !!x && x === lineageOf(b); }
 const readCopy = (k, today) => {
   try { const d = JSON.parse(localStorage.getItem(k)); return d && validStore(d, today) ? d : null; } catch (e) { return null; }
 };
@@ -525,16 +555,22 @@ const sameRec = (a, b) => (hasId(a) && hasId(b) ? a.id === b.id : same(a, b));
 // and a tab left open (of either app) carries such a value unchanged, so preferring the copy written last would let a
 // stale tab undo an edit made with this app (random runs: 14 such per 200 sequences, 0 with this rule). With no time on
 // either side, or the same, x (never the older copy's).
+// When both carry a time, the time decides (a value 기록 불러오기 brought in keeps its date but gets the time it came in).
+function editOrder(x, y) {
+  if (okTs(x.ts) && okTs(y.ts) && x.ts !== y.ts) return x.ts > y.ts ? 1 : -1;
+  if (isDate(x.at) && isDate(y.at) && x.at !== y.at) return x.at > y.at ? 1 : -1;
+  return 0;
+}
 function laterOf(x, y) {
   if (!x) return y;
   if (!y) return x;
-  if (isDate(x.at) && isDate(y.at) && x.at !== y.at) return y.at > x.at ? y : x;
-  if (okTs(x.ts) && okTs(y.ts) && x.ts !== y.ts) return y.ts > x.ts ? y : x;
+  const o = editOrder(x, y);
+  if (o) return o > 0 ? x : y;
   if (okTs(y.ts) && !okTs(x.ts)) return y;
   return x;
 }
-// a is a later edit than b by its date or time (not only by the tie rule)
-const surelyLater = (a, b) => !!(a && b && ((isDate(a.at) && isDate(b.at) && a.at > b.at) || (isDate(a.at) && a.at === b.at && okTs(a.ts) && okTs(b.ts) && a.ts > b.ts)));
+// a is a later edit than b by its time or date (not only by the tie rule)
+const surelyLater = (a, b) => !!(a && b && editOrder(a, b) > 0);
 
 // Two copies of one list of records: everything in the current copy, then what only the other one holds. A record with
 // an id is the same record as the one with that id; records without an id count as a multiset (two equal sales stay two:
@@ -571,7 +607,13 @@ const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases:
 // own lists (not counted twice).
 function unionDeck(cur, other) {
   const where = `portfolio ${cur.id}`;
-  const holdings = [...cur.holdings, ...other.holdings.filter((h) => !cur.holdings.some((x) => x.t === h.t))];
+  // a holding both copies have: the current copy's, with the later of the two times it was added (a holding brought back
+  // by 기록 불러오기 in one copy stays back however the copies meet)
+  const later = (h) => {
+    const o = other.holdings.find((x) => x.t === h.t);
+    return o && okTs(o.ts) && !(okTs(h.ts) && h.ts >= o.ts) ? { ...h, ts: o.ts } : h;
+  };
+  const holdings = [...cur.holdings.map(later), ...other.holdings.filter((h) => !cur.holdings.some((x) => x.t === h.t))];
   const out = { ...other, ...cur, holdings, purchases: unionRecords(cur.purchases, other.purchases, where) || [] };
   if (Array.isArray(cur.imported) || Array.isArray(other.imported)) {
     // rows with a code: one per stock, the current copy's wins; rows added by name only: as a multiset
@@ -595,6 +637,15 @@ function unionDeck(cur, other) {
   for (const [a, b] of [[cur, other], [other, cur]]) {
     for (const e of a.history || []) {
       if (a.holdings.some((h) => h.t === e.t) || !b.holdings.some((h) => h.t === e.t) || (b.history || []).some((x) => same(x, e))) continue;
+      // the holding came back after the stock was taken out (기록 불러오기 or added again: its ts is later): it stays, and
+      // the entry goes when the portfolio's own lists hold every record of it (else both stay: nothing is dropped)
+      const back = b.holdings.find((h) => h.t === e.t);
+      if (okTs(back.ts) && !(okTs(e.ts) && e.ts > back.ts)) {
+        const lists = ["purchases", "sales", "divs", "imported"].flatMap((k) => out[k] || []);
+        const all = ["purchases", "sales", "divs"].every((k) => (e[k] || []).every((r) => lists.some((x) => sameRec(x, r)))) && (!e.imported || lists.some((x) => same(x, e.imported)));
+        if (all && Array.isArray(out.history)) out.history = out.history.filter((x) => !same(x, e));
+        continue;
+      }
       const keep = (r) => !(plainObj(r) && r.t === e.t && inEntry(e, r));
       for (const k of ["purchases", "sales", "divs", "imported"]) if (Array.isArray(out[k])) out[k] = out[k].filter(keep);
       const left = ["purchases", "sales", "divs", "imported"].some((k) => (out[k] || []).some((r) => plainObj(r) && r.t === e.t));
@@ -612,9 +663,16 @@ function unionDeck(cur, other) {
     const h = out.holdings.find((x) => x.t === r.t);
     if (!h || (okTs(h.ts) && h.ts > r.ts)) continue;
     out.holdings = out.holdings.filter((x) => x.t !== r.t);
-    // its own records go with it (a sale or dividend it had moved into history above; one left over makes the merge
-    // invalid, so the copy is kept aside rather than a record dropped)
-    for (const k of ["purchases", "imported", "confirms"]) if (Array.isArray(out[k])) out[k] = out[k].filter((x) => !(plainObj(x) && x.t === r.t));
+    // its own records go with it, as 빼기 does (withoutHolding): with a sale or dividend still in the lists (one copy had
+    // them, the other took the stock out), they move into a history entry, so nothing is dropped and the merge stays valid
+    const of = (k) => (Array.isArray(out[k]) ? out[k].filter((x) => plainObj(x) && x.t === r.t) : []);
+    const sales = of("sales"), divs = of("divs");
+    if (sales.length || divs.length) {
+      const imp = of("imported")[0];
+      out.history = [...(Array.isArray(out.history) ? out.history : []), { t: r.t, nk: h.nk, out: r.at, ts: r.ts, ...(h.cls ? { cls: h.cls } : {}),
+        ...(imp ? { imported: imp } : {}), purchases: of("purchases"), sales, divs }];
+    }
+    for (const k of ["purchases", "imported", "confirms", "sales", "divs"]) if (Array.isArray(out[k])) out[k] = out[k].filter((x) => !(plainObj(x) && x.t === r.t));
   }
   return out;
 }
@@ -665,6 +723,8 @@ export function mergeTabs(other, cur, today) {
   if (guideSeenIn(cur) || guideSeenIn(other)) out.guideSeen = guideSeenIn(cur) ? cur.guideSeen : other.guideSeen;
   delete out.preview;
   delete out.setAside;
+  delete out.wts;
+  if (cur.wts) out.wts = cur.wts;
   out.v = versionFor(out);
   return validStore(out, today) ? out : null;
 }
@@ -738,7 +798,11 @@ function restoreMoved(key, cur, raw, today) {
     .sort((a, b) => stamp(b[0]) - stamp(a[0]));
   let mine = null;
   try { mine = localStorage.getItem(key + MINE); } catch (e) { mine = null; }
-  if (mine != null && mine !== raw) cands.unshift([key + MINE, false]);
+  // the records were saved from this app's last write (the earlier app keeps its fingerprint, e.g. after a revert): its
+  // changes stand, and .mine follows them; otherwise they come from an older copy and .mine is merged back
+  const descends = mine != null && mine !== raw && sameLineage(raw, mine);
+  if (descends) { try { localStorage.setItem(key + MINE, raw); } catch (e) { /* the next write sets it */ } }
+  else if (mine != null && mine !== raw) cands.unshift([key + MINE, false]);
   for (const [k, moved] of cands) {
     const d = readCopy(k, today);
     if (!d || (moved && (d.v !== STORE_VERSION || !hasV2Parts(d)))) continue;
@@ -751,6 +815,7 @@ function restoreMoved(key, cur, raw, today) {
   const base = normal(cur, today) || cur;
   const changed = canon(merged) !== canon(base);
   const notice = changed || used.some(([, d]) => droppedFrom(d, merged));
+  if (changed) merged = stamped(merged);
   const text = JSON.stringify(merged);
   if (changed) {
     try {
@@ -784,6 +849,7 @@ export function keepOwnText(key, newText, today) {
   try {
     const own = lastText.get(key);
     if (typeof own !== "string" || own === newText) return false;
+    if (typeof newText === "string" && sameLineage(newText, own)) return false;     // saved from this tab's text: its changes stand
     const d = readText(own, today);
     if (!d) return false;
     const n = typeof newText === "string" ? readText(newText, today) : null;
@@ -913,7 +979,9 @@ export function readStore(key = STORE_KEY, today) {
 // what it holds (versionFor). The text written is also kept under key + ".mine" (see the tab section).
 export function writeStore(d, key = STORE_KEY, today) {
   try {
-    const next = { ...d, v: versionFor(d) };
+    const plain = { ...d, v: versionFor(d) };
+    let next;
+    if (d && d[FROM_FILE]) { const { wts: _w, ...rest } = plain; next = rest; } else next = stamped(plain);
     const chk = checkStore(next, today);
     if (!chk.readable || chk.problems.length) {
       console.warn("[v2] records not saved, they would not read back: " + (chk.why || chk.problems.join("; ")));
@@ -939,7 +1007,7 @@ export function writeStore(d, key = STORE_KEY, today) {
     // over it and the merge on start has not taken it in. Kept as a copy before .mine is replaced, unless this write holds it.
     let mine = null;
     try { mine = localStorage.getItem(key + MINE); } catch (e) { mine = null; }
-    if (mine != null && mine !== cur && mine !== text && mine !== lastText.get(key)) {
+    if (mine != null && mine !== cur && mine !== text && mine !== lastText.get(key) && !(cur != null && sameLineage(cur, mine))) {
       const m = parsed(mine);
       if (!(m && validStore(m, today) && covers(next, m, today))) {
         keep(".other.", mine);
@@ -1010,12 +1078,41 @@ export function importProblem(text, today, preview = false) {
 
 // Imported decks replace decks with the same id; other decks are kept. Notes and assumptions the same way, per stock.
 // The guide flag is this device's: it stays as it is.
-export function mergeStores(cur, inc) {
+// v19.3d review: what the file brings back is an edit made now. Where this device's records (cur, and known: the copies
+// other tabs left, storedStores) say otherwise — a removal mark or a history entry for an imported holding, a deletion
+// mark or another text for an imported note, another assumption or answer — the imported value gets the time ts, so a
+// merge with an older copy keeps it (and a later edit still wins); a stock the copies hold and the file's portfolio does
+// not is taken out at that time (a removal mark, dated today). Nothing else is stamped: a file imported into empty or
+// identical records is stored exactly as it is.
+export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null) {
+  if (!isDate(today) && okTs(ts)) today = new Date(ts + 9 * 3600 * 1000).toISOString().slice(0, 10);   // KST, as todayKst
+  const all = [cur, ...(Array.isArray(known) ? known : [])].filter((x) => plainObj(x) && Array.isArray(x.decks));
+  const decksOf = (id) => all.map((x) => x.decks.find((d) => plainObj(d) && d.id === id)).filter(Boolean);
+  const stamp = (v) => (okTs(ts) ? { ...v, ts } : v);
+  const fresh = (x) => {
+    const mine = decksOf(x.id);
+    const gone = (t) => mine.some((d) => (Array.isArray(d.removed) && d.removed.some((r) => plainObj(r) && r.t === t))
+      || (Array.isArray(d.history) && d.history.some((e) => plainObj(e) && e.t === t)));
+    const other = (c) => mine.some((d) => Array.isArray(d.confirms) && d.confirms.some((y) => sameConfirm(y, c) && y.answer !== c.answer));
+    // the file replaces the portfolio: a stock this device's copies hold and the file does not is taken out now, and a
+    // removal mark the replaced portfolio had for a stock the file does not hold stays (so no older copy brings either back)
+    const holds = (t) => x.holdings.some((h) => h.t === t);
+    const marks = new Map((Array.isArray(x.removed) ? x.removed : []).filter((r) => plainObj(r) && !holds(r.t)).map((r) => [r.t, r]));
+    for (const d of mine) for (const r of Array.isArray(d.removed) ? d.removed : []) if (plainObj(r) && !holds(r.t) && !(marks.has(r.t) && marks.get(r.t).ts >= r.ts)) marks.set(r.t, r);
+    if (okTs(ts) && isDate(today)) for (const d of mine) for (const h of d.holdings || []) if (plainObj(h) && !holds(h.t)) marks.set(h.t, { t: h.t, at: today, ts });
+    return { ...x, holdings: x.holdings.map((h) => (gone(h.t) ? stamp(h) : h)),
+      ...(Array.isArray(x.confirms) ? { confirms: x.confirms.map((c) => (other(c) ? stamp(c) : c)) } : {}),
+      ...(marks.size ? { removed: [...marks.values()] } : {}) };
+  };
   const by = new Map(cur.decks.map((x) => [x.id, x]));
-  for (const x of inc.decks) by.set(x.id, x);
+  for (const x of inc.decks) by.set(x.id, fresh(x));
   const out = { decks: [...by.values()] };
+  const noteDiffers = (t, n) => all.some((x) => { const st = noteState(x, t); return st && (st.gone || st.text !== n.text); });
+  const assumeDiffers = (t, a) => all.some((x) => { const b = (perStock(x, "assume") || {})[t]; return plainObj(b) && (b.disc !== a.disc || b.term !== a.term); });
   for (const key of ["notes", "assume"]) {
-    const m = { ...(perStock(cur, key) || {}), ...(perStock(inc, key) || {}) };
+    const brought = Object.fromEntries(Object.entries(perStock(inc, key) || {}).map(([t, v]) =>
+      [t, (key === "notes" ? noteDiffers(t, v) : assumeDiffers(t, v)) ? stamp(v) : v]));
+    const m = { ...(perStock(cur, key) || {}), ...brought };
     if (Object.keys(m).length) out[key] = m;
   }
   if (guideSeenIn(cur)) out.guideSeen = cur.guideSeen;
@@ -1028,7 +1125,8 @@ export function mergeStores(cur, inc) {
     if (Object.keys(gone).length) out.gone = gone;
   }
   for (const k of Object.keys(cur || {})) if (!KNOWN_TOP.includes(k)) out[k] = cur[k];   // a later version's parts stay
-  return { v: versionFor(out), ...out };
+  // the mark is not enumerable: a later edit (made by spreading these records) is an ordinary write again
+  return Object.defineProperty({ v: versionFor(out), ...out }, FROM_FILE, { value: true });
 }
 
 // aside: setAsideCopies (records this device kept aside: they travel in the file under "setAside", never read back by
@@ -1037,6 +1135,16 @@ export function exportText(d, preview = false, aside = null) {
   const v = versionFor(d);
   const more = Array.isArray(aside) && aside.length ? { setAside: aside } : {};
   return JSON.stringify(preview ? { v, preview: true, decks: d.decks, ...extras(d), ...more } : { v, decks: d.decks, ...extras(d), ...more }, null, 1);
+}
+
+// The readable copies stored beside the records (".mine", ".other.", ".unreadable."): what 기록 불러오기 checks the file
+// against (mergeStores known).
+export function storedStores(key, today) {
+  const out = [];
+  try {
+    for (const k of [key + MINE, ...backupKeys(key, ".other."), ...backupKeys(key, ".unreadable.")]) { const d = readCopy(k, today); if (d) out.push(d); }
+  } catch (e) { return out; }
+  return out;
 }
 
 export function downloadRecords(d, today, prefix = "baepsae-records", preview = false, key = null) {

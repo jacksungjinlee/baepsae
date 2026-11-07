@@ -31,6 +31,10 @@ globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null),
 console.warn = (m) => warns.push(String(m));
 const K = 'baepsae2.v1', T = '2026-11-07';
 const stored = () => JSON.parse(mem.get(K));
+// the records as stored, without the write fingerprint (wts: storeHash, checked to match the rest)
+// the records as stored, without the write fingerprint (wts: storeHash, checked to match the rest)
+const bare = (d) => { if (!d || typeof d !== 'object') return d; const { wts, ...rest } = d; if (wts !== undefined && wts !== S.storeHash(rest)) throw new Error('wts does not match'); return rest; };
+const wtsOf = (d) => (d.wts ? [d.wts] : []);
 """
 
 
@@ -84,10 +88,11 @@ def test_every_store_shape_saved_before_still_reads(name):
     d = OLD_SHAPES[name]
     got = run(f"mem.set(K, {json.dumps(json.dumps(d, ensure_ascii=False))}); const r = S.readStore(K, T);"
               "S.writeStore(r.data, K, T);"
-              "out = { data: r.data, locked: r.locked, problems: r.problems, again: stored(), backups: [...mem.keys()].filter((k) => k.includes('.unreadable.')).length };")
+              "out = { data: r.data, locked: r.locked, problems: r.problems, again: bare(stored()), wts: wtsOf(stored()), backups: [...mem.keys()].filter((k) => k.includes('.unreadable.')).length };")
     assert got["locked"] is False and got["problems"] == [], name
     assert got["data"] == d, name                                       # 그대로 읽어요 (고쳐 쓸 것이 없어요)
     assert got["again"] == d and got["again"]["v"] == 1, name             # 2판 부분이 없으면 1판 그대로 적어요 (예전 창이 읽어요)
+    assert [len(w) for w in got["wts"]] == [16], name                     # 이 앱이 쓴 기록의 지문 (리뷰 5차 2: 예전 앱이 어디서 이어 썼는지)
     assert got["backups"] == 0, name
 
 
@@ -119,8 +124,8 @@ def test_a_v2_store_round_trips_through_storage_and_files():
     got = run(f"const d = {json.dumps(V2, ensure_ascii=False)};"
               "const ok = S.writeStore(d, K, T); const r = S.readStore(K, T);"
               "const text = S.exportText(r.data); const back = S.parseImport(text, T);"
-              "out = { ok, raw: stored(), data: r.data, locked: r.locked, problems: r.problems, file: JSON.parse(text), back,"
-              " merged: S.mergeStores(r.data, back), valid: S.validStore(d, T) };")
+              "out = { ok, raw: bare(stored()), data: bare(r.data), locked: r.locked, problems: r.problems, file: bare(JSON.parse(text)), back: bare(back),"
+              " merged: bare(S.mergeStores(r.data, back)), valid: S.validStore(d, T) };")
     assert got["ok"] and got["valid"] and not got["locked"] and got["problems"] == []
     assert got["raw"] == V2 and got["data"] == V2                        # 저장 → 읽기: 한 글자도 그대로
     want_file = {k: v for k, v in V2.items() if k != "guideSeen"}          # 처음 안내 표시는 이 기기의 것: 파일에는 없어요
@@ -332,8 +337,8 @@ def test_the_guide_flag_moves_into_the_store_and_round_trips():
               "const ok = S.writeStore(first.data, K, T); const keys = [...mem.keys()].sort();"
               "const again = S.readStore(K, '2026-11-09');"
               "const fresh = S.withGuideSeen(S.emptyStore(), '2026-11-08');"
-              "out = { first: first.data, ok, raw: stored(), again: again.data.guideSeen, seen: [S.guideSeenIn(first.data), S.guideSeenIn(S.emptyStore())],"
-              " fresh, same: S.withGuideSeen(fresh, '2026-11-09') === fresh, keys, exported: JSON.parse(S.exportText(fresh)),"
+              "out = { first: first.data, ok, raw: bare(stored()), again: again.data.guideSeen, seen: [S.guideSeenIn(first.data), S.guideSeenIn(S.emptyStore())],"
+              " fresh, same: S.withGuideSeen(fresh, '2026-11-09') === fresh, keys, exported: bare(JSON.parse(S.exportText(fresh))),"
               " bad: S.readStore.length, future: S.checkStore({ v: 1, decks: [], guideSeen: '2026-11-08' }, T).problems };")
     assert got["first"] == {"v": 1, "decks": [], "guideSeen": "2026-11-07"} and got["seen"] == [True, False]
     assert got["ok"] and got["raw"] == {"v": 1, "decks": [], "guideSeen": "2026-11-07"} and got["again"] == "2026-11-07"
@@ -701,7 +706,7 @@ def test_a_deleted_note_stays_deleted_when_a_stale_copy_still_has_it():
         again: g.data.notes['005930'].text, exported: Object.keys(JSON.parse(S.exportText(f.data))), hash: S.textHash('메모') };""")
     assert got["mark"] == {"notes": {"005930": {"at": "2026-11-07", "ts": 4001, "h": got["hash"]}}}
     assert got["note"] is None and got["gone"] == ["005930"] and got["restored"] is True    # 예전에는 지운 메모가 돌아왔어요
-    assert got["again"] == "메모" and got["exported"] == ["v", "decks", "notes"]            # 지운 표시(gone)는 이 기기에만 (파일에는 없어요)
+    assert got["again"] == "메모" and got["exported"] == ["v", "decks", "notes"]     # 지운 표시(gone)는 이 기기에만 (파일에는 없어요)
 
 
 def test_a_stock_taken_out_without_sales_stays_out_and_the_merge_says_so():
@@ -900,3 +905,185 @@ def test_a_tab_that_wrote_the_first_records_keeps_them_when_it_closes():
       const f = (await tab()).readStore(K, T);
       out = {{ before, kept, twice, ids: f.data.decks.map((x) => x.id), restored: f.restored }};""")
     assert got == {"before": ["baepsae2.v1"], "kept": True, "twice": False, "ids": ["d1"], "restored": True}
+
+
+# ── v19.3d review round 5: 기록 불러오기 is an edit made now; the earlier app on its own (a revert) ──
+R5_DECK = {"id": "dA", "name": "A", "createdAt": T_, "settings": {"points": {"div": 50}},
+           "holdings": [{"t": "005930", "nk": "삼성전자"}, {"t": "000660", "nk": "SK하이닉스"}],
+           "purchases": [{"id": "pdA005930x", "t": "005930", "date": T_, "qty": 1, "price": 1000, "ccy": "KRW"},
+                         {"id": "pdA000660x", "t": "000660", "date": T_, "qty": 1, "price": 1001, "ccy": "KRW"}]}
+
+
+@pytest.mark.parametrize("then", ["memo", "buy"])
+def test_a_reimport_that_brings_back_a_removed_stock_is_not_undone_by_a_stale_tab(then):
+    """Review round 5, item 1 (the reviewer's d2s): tab A takes 000660 out (a removal mark); tab B imports an older backup
+    that still holds it; the stale tab A saves something else. 기록 불러오기 stamps the holding it brings back with the time
+    of the import (the merge keeps a holding added after the mark), so 000660 stays, a copy keeps B's records until the
+    next start, and that start says 합쳤어요. A 빼기 made after the import still wins."""
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const deck = {json.dumps(R5_DECK, ensure_ascii=False)};
+      S.writeStore({{ v: 1, decks: [deck] }}, K, T);
+      const A = await import('./store.mjs?A'), B = await import('./store.mjs?B');
+      let a = A.readStore(K, T).data;
+      const file = A.exportText(a);                                                     // the backup file
+      a = A.withoutHolding(a, 'dA', '000660', T, ts()); A.writeStore(a, K, T);         // 1. 빼기 in tab A
+      let b = B.readStore(K, T).data;                                                   // 2. tab B opened later
+      const when = ts();
+      b = B.mergeStores(b, B.parseImport(file, T), when, B.storedStores(K, T)); B.writeStore(b, K, T);   // 3. B: 기록 불러오기
+      const stampedTs = b.decks[0].holdings.find((h) => h.t === '000660').ts, otherTs = b.decks[0].holdings.find((h) => h.t === '005930').ts ?? null;
+      A.keepOwnText(K, mem.get(K), T);                                                  // the storage event in tab A
+      if ({json.dumps(then)} === 'memo') a = A.withNote(a, '005930', 'memo', T, ts()); else a = {{ ...a, decks: [...a.decks, {{ ...deck, id: 'dZ' }}] }};
+      A.writeStore(a, K, T);                                                            // 4. the stale tab saves
+      const copies = [...mem.keys()].filter((k) => k !== K && mem.get(k).includes('"t":"000660","nk"')).length;
+      const f = (await import('./store.mjs?F')).readStore(K, T);
+      const held = f.data.decks[0].holdings.map((h) => h.t), buys = f.data.decks[0].purchases.map((p) => p.id);
+      // a 빼기 made after the import still wins
+      const C = await import('./store.mjs?C'); let c = C.readStore(K, T).data;
+      c = C.withoutHolding(c, 'dA', '000660', T, ts()); C.writeStore(c, K, T);
+      const later = (await import('./store.mjs?G')).readStore(K, T).data.decks[0].holdings.map((h) => h.t);
+      out = {{ stampedTs, when, otherTs, copies, held, buys, restored: f.restored, later }};""")
+    assert got["stampedTs"] == got["when"] and got["otherTs"] is None     # 표시와 부딪히는 종목에만 불러온 시각
+    assert got["copies"] >= 1 and got["held"] == ["005930", "000660"] and "pdA000660x" in got["buys"]
+    assert got["restored"] is True                                         # 조용히 지나가지 않아요
+    assert got["later"] == ["005930"]                                      # 불러온 뒤에 다시 뺀 것은 그대로 빠져요
+
+
+def test_a_reimported_memo_is_not_undone_by_an_older_deletion_and_a_later_edit_still_wins():
+    """Review round 5, item 1 (with a memo): tab A deletes a memo (a deletion mark); tab B imports the backup that has it;
+    the stale tab A saves something else: the memo stays (the file's note gets the time of the import; when both values
+    have a time, the time decides, even though the note keeps its own older date). A later edit or deletion still wins."""
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      S.writeStore({{ v: 1, decks: [], notes: {{ '005930': {{ text: '내 메모', at: '2026-11-01', ts: 1793500000000 }} }} }}, K, T);
+      const A = await import('./store.mjs?A'), B = await import('./store.mjs?B');
+      let a = A.readStore(K, T).data; const file = A.exportText(a);
+      a = A.withNote(a, '005930', '', T, ts()); A.writeStore(a, K, T);                 // deleted in tab A
+      let b = B.readStore(K, T).data; const when = ts();
+      b = B.mergeStores(b, B.parseImport(file, T), when, B.storedStores(K, T)); B.writeStore(b, K, T);
+      A.keepOwnText(K, mem.get(K), T);
+      a = A.withNote(a, '000660', 'x', T, ts()); A.writeStore(a, K, T);                // the stale tab saves
+      const f = (await import('./store.mjs?F')).readStore(K, T);
+      const C = await import('./store.mjs?C'); let c = C.readStore(K, T).data;
+      c = C.withNote(c, '005930', '고친 메모', T, ts()); C.writeStore(c, K, T);
+      const g = (await import('./store.mjs?G')).readStore(K, T);
+      out = {{ note: f.data.notes['005930'], restored: f.restored, when, later: g.data.notes['005930'].text,
+        order: [S.mergeTabs({{ v: 1, decks: [], gone: {{ notes: {{ '005930': {{ at: '2026-11-07', ts: 5 }} }} }} }}, {{ v: 1, decks: [], notes: {{ '005930': {{ text: 'a', at: '2026-11-01', ts: 9 }} }} }}, T).notes['005930'].text] }};""")
+    assert got["note"] == {"text": "내 메모", "at": "2026-11-01", "ts": got["when"]} and got["restored"] is True   # 예전에는 다시 지워졌어요
+    assert got["later"] == "고친 메모" and got["order"] == ["a"]           # 둘 다 시각이 있으면 시각으로 (날짜는 그다음)
+
+
+def test_a_file_imported_into_empty_or_identical_records_is_stored_exactly_as_it_is():
+    """Nothing contradicts it, so nothing is stamped: the stored records equal the file (smoke_v2's iPhone rule), the file
+    carries the same fingerprint (wts) the records get, and importing the same file again changes nothing."""
+    got = run(f"""const d = {{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}], notes: {{ '005930': {{ text: '메모', at: T, ts: 5 }} }} }};
+      S.writeStore(d, 'baepsae2.other.v1', T);                                   // the device the file came from
+      const file = JSON.parse(S.exportText(S.readStore('baepsae2.other.v1', T).data));
+      const inc = S.parseImport(JSON.stringify(file), T);
+      S.writeStore(S.mergeStores(S.readStore(K, T).data, inc, 999, S.storedStores(K, T)), K, T); const first = mem.get(K);
+      S.writeStore(S.mergeStores(S.readStore(K, T).data, inc, 1000, S.storedStores(K, T)), K, T);
+      out = {{ file, stored: stored(), same: mem.get(K) === first, hash: S.storeHash(file) }};""")
+    assert got["stored"] == got["file"] and got["same"] and "wts" not in got["file"]          # 파일을 받아들인 쓰기는 지문 없이 파일 그대로
+
+
+def test_after_a_revert_the_earlier_apps_own_deletions_stand():
+    """Review round 5, item 2 (the reviewer's revert.mjs): this app saves; the deploy is reverted and the earlier app alone
+    takes 000660 out and deletes a memo (it keeps the records' fingerprint, wts, when it saves). Re-deployed, the next
+    start sees the records were saved from this app's last write: nothing comes back, no 합쳤어요, and .mine follows."""
+    got = run_tabs(f"""const N = await tab();
+      N.writeStore({{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}], notes: {{ '005930': {{ text: 'memo', at: T }} }} }}, K, T);
+      N.readStore(K, T); N.keepMine(K); const wts = JSON.parse(mem.get(K)).wts;
+      let m = oldRead(); m = S.withoutHolding(m, 'dA', '000660'); oldWrite(m);           // the earlier app, one tab at a time
+      m = oldRead(); m = S.withNote(m, '005930', '', T); oldWrite(m);
+      const kept = JSON.parse(mem.get(K)).wts;
+      const f = (await tab()).readStore(K, T);
+      out = {{ wts, kept, held: f.data.decks[0].holdings.map((h) => h.t), note: f.data.notes ? f.data.notes['005930'] || null : null, restored: f.restored,
+        mine: mem.get(K + '.mine') === mem.get(K), keys: [...mem.keys()].sort() }};""")
+    assert got["kept"] == got["wts"]                                        # 예전 앱은 지문을 그대로 남겨요
+    assert got["held"] == ["005930"] and got["note"] is None and got["restored"] is False   # 예전에는 둘 다 돌아왔어요
+    assert got["mine"] and got["keys"] == ["baepsae2.v1", "baepsae2.v1.mine"]
+
+
+def test_an_earlier_app_tab_that_saved_from_an_older_copy_still_has_this_apps_save_merged_back():
+    """The other side of item 2: the earlier app saved from records older than this app's last write (a different
+    fingerprint, or none), so .mine is merged back as in round 4; an open new tab hearing that write keeps its text only
+    then (keepOwnText), never for an earlier-app save made from its own text."""
+    got = run_tabs(f"""mem.set(K, JSON.stringify({{ v: 1, decks: [] }}));
+      const N = await tab(); const n = N.readStore(K, T); const stale = oldRead();
+      N.writeStore({{ ...n.data, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}] }}, K, T);
+      const fromMine = oldRead(); oldWrite(S.withNote(fromMine, '000660', '예전 창', T));     // saved from this app's write
+      const keptOwn = N.keepOwnText(K, mem.get(K), T);
+      oldWrite(S.withNote(stale, '035420', '오래된 창', T));                                    // saved from an older copy
+      const keptStale = N.keepOwnText(K, mem.get(K), T);
+      const f = (await tab()).readStore(K, T);
+      out = {{ keptOwn, keptStale, ids: f.data.decks.map((x) => x.id), notes: Object.keys(f.data.notes || {{}}).sort(), restored: f.restored }};""")
+    assert got["keptOwn"] is False and got["keptStale"] is True
+    # the first earlier-app save (000660's memo) was written over by the other earlier-app tab: the earlier app's own way
+    assert got["ids"] == ["dA"] and got["notes"] == ["035420"] and got["restored"] is True
+
+
+def test_a_holding_brought_back_in_one_copy_stays_back_when_the_other_copy_holds_it_without_a_time():
+    """From the reviewer's random runs (sim4 seq 339): one copy holds a stock with the time 기록 불러오기 brought it back (and
+    the older removal mark), the other holds it with no time. The merged holding keeps the later time, so the removal
+    mark does not take it out (before: it did, its sales were left without a holding, and the copy stayed unmerged)."""
+    deck = {"id": "i4", "name": "i4", "createdAt": T_, "kind": "imported", "settings": {"points": {"div": 50}, "strict": "normal"},
+            "holdings": [{"t": "000660", "nk": "SK하이닉스"}], "purchases": [],
+            "imported": [{"t": "000660", "nk": "SK하이닉스", "ccy": "KRW", "qty": 10}],
+            "sales": [{"id": "sale-aaaa1", "t": "000660", "qty": 2, "price": 200000, "date": T_, "ccy": "KRW"}]}
+    back = {**deck, "holdings": [{"t": "000660", "nk": "SK하이닉스", "ts": 17}], "removed": [{"t": "000660", "at": T_, "ts": 15}]}
+    got = run(f"""const a = S.mergeTabs({{ v: 2, decks: [{json.dumps(back, ensure_ascii=False)}] }}, {{ v: 2, decks: [{json.dumps(deck, ensure_ascii=False)}] }}, T);
+      const b = S.mergeTabs({{ v: 2, decks: [{json.dumps(deck, ensure_ascii=False)}] }}, {{ v: 2, decks: [{json.dumps(back, ensure_ascii=False)}] }}, T);
+      out = [a && a.decks[0].holdings, b && b.decks[0].holdings];""")
+    assert got == [[{"t": "000660", "nk": "SK하이닉스", "ts": 17}], [{"t": "000660", "nk": "SK하이닉스", "ts": 17}]]
+
+
+def test_a_stock_the_imported_file_leaves_out_stays_out_and_the_replaced_portfolios_marks_stay():
+    """The file replaces the portfolio: a stock this device holds and the file does not is taken out at the time of the
+    import (a removal mark, dated today), and a removal mark the replaced portfolio had for a stock the file does not hold
+    is kept, so a stale copy brings neither back (the reviewer's sim4: 'RESURRECTED <- import')."""
+    three = {**R5_DECK, "holdings": R5_DECK["holdings"] + [{"t": "035420", "nk": "NAVER"}],
+             "purchases": R5_DECK["purchases"] + [{"id": "pdA035420x", "t": "035420", "date": T_, "qty": 1, "price": 1002, "ccy": "KRW"}]}
+    one = {**R5_DECK, "holdings": R5_DECK["holdings"][:1], "purchases": R5_DECK["purchases"][:1]}
+    got = run(f"""let clock = 1794000000000; const ts = () => (clock += 60000);
+      const file = S.exportText({{ v: 1, decks: [{json.dumps(one, ensure_ascii=False)}] }});      // a file with 005930 only
+      S.writeStore({{ v: 1, decks: [{json.dumps(three, ensure_ascii=False)}] }}, K, T);
+      const A = await import('./store.mjs?A'), B = await import('./store.mjs?B');
+      let a = A.readStore(K, T).data;
+      a = A.withoutHolding(a, 'dA', '035420', T, ts()); A.writeStore(a, K, T);                  // 035420 taken out in A (a mark)
+      const stale = await import('./store.mjs?S'); let st = stale.readStore(K, T).data;          // a tab that still holds 000660
+      let b = B.readStore(K, T).data; const when = ts();
+      b = B.mergeStores(b, B.parseImport(file, T), when, B.storedStores(K, T), T); B.writeStore(b, K, T);
+      const marks = b.decks[0].removed.map((r) => r.t + '@' + (r.ts === when ? 'import' : 'earlier')).sort();
+      st = stale.withNote(st, '005930', 'x', T, ts()); stale.writeStore(st, K, T);
+      const f = (await import('./store.mjs?F')).readStore(K, T);
+      out = {{ marks, held: f.data.decks[0].holdings.map((h) => h.t), restored: f.restored }};""")
+    assert got["marks"] == ["000660@import", "035420@earlier"]
+    assert got["held"] == ["005930"] and got["restored"] is True
+
+
+def test_a_stock_a_removal_mark_takes_out_keeps_its_sales_in_history():
+    """A removal mark in one copy takes out a stock whose sale and dividend only the other copy has (e.g. 기록 불러오기 of a
+    file without it, while a stale tab still had its records): the records move into a history entry as 빼기 does, so the
+    merge stays valid and nothing is dropped (the reviewer's sim4: 'LOST deck' was the whole copy kept aside)."""
+    deck = {"id": "i4", "name": "i4", "createdAt": T_, "kind": "imported", "settings": {"points": {"div": 50}, "strict": "normal"},
+            "holdings": [{"t": "000660", "nk": "SK하이닉스"}, {"t": "005930", "nk": "삼성전자"}], "purchases": [],
+            "imported": [{"t": "000660", "nk": "SK하이닉스", "ccy": "KRW", "qty": 10}, {"t": "005930", "nk": "삼성전자", "ccy": "KRW", "qty": 1}],
+            "sales": [{"id": "sale-aaaa1", "t": "000660", "qty": 2, "price": 200000, "date": T_, "ccy": "KRW"}],
+            "divs": [{"id": "div-aaaa1", "t": "000660", "amount": 3000, "date": T_, "ccy": "KRW"}]}
+    marked = {**deck, "holdings": deck["holdings"][1:], "imported": deck["imported"][1:], "sales": [], "divs": [],
+              "removed": [{"t": "000660", "at": T_, "ts": 50}]}
+    got = run(f"""const m = S.mergeTabs({{ v: 2, decks: [{json.dumps(deck, ensure_ascii=False)}] }}, {{ v: 2, decks: [{json.dumps(marked, ensure_ascii=False)}] }}, T);
+      out = m && {{ held: m.decks[0].holdings.map((h) => h.t), sales: m.decks[0].sales.length, divs: m.decks[0].divs.length,
+        entry: m.decks[0].history.map((e) => [e.t, e.out, e.ts, e.imported.qty, e.sales.length, e.divs.length]), valid: S.validStore(m, T) }};""")
+    assert got == {"held": ["005930"], "sales": 0, "divs": 0, "entry": [["000660", "2026-11-07", 50, 10, 1, 1]], "valid": True}
+
+
+def test_only_the_write_that_takes_in_a_file_goes_without_a_fingerprint():
+    """smoke_v2's iPhone rules: a records file is exactly {v, decks, …} and the write that takes it in stores it exactly as
+    it is, so that one write carries no fingerprint (mergeStores marks its result, not enumerably). The next edit made
+    from those records is an ordinary write again and is stamped; a file never carries the fingerprint."""
+    got = run(f"""S.writeStore({{ v: 1, decks: [{json.dumps(R5_DECK, ensure_ascii=False)}] }}, 'baepsae2.other.v1', T);
+      const file = S.exportText(S.readStore('baepsae2.other.v1', T).data);
+      const imported = S.mergeStores(S.readStore(K, T).data, S.parseImport(file, T), 5, [], T);
+      S.writeStore(imported, K, T); const first = stored();
+      const edited = S.withNote(imported, '005930', 'x', T, 6); S.writeStore(edited, K, T);
+      out = {{ fileKeys: Object.keys(JSON.parse(file)), first: 'wts' in first, keys: Object.keys(imported), next: stored().wts === S.storeHash(stored()) }};""")
+    assert got == {"fileKeys": ["v", "decks"], "first": False, "keys": ["v", "decks"], "next": True}
