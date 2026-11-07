@@ -242,6 +242,10 @@ sheet.html and sheet-01.png, sheet-02.png, sheet-03.png, sheet-04.png, sheet-05.
 - IBRX ImmunityBio, Inc. — 의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)
 - TPR Tapestry, Inc. — 의심스럽거나 알아보기 어려운 그림 (sheet review 2026-11-06)
 
+## Added after review (from a --only run)
+
+- 000270 기아 — Jack 2026-11-07: 기아 ticker logo (KIA wordmark), looked at by eye; replaces the 32 px homepage picture
+
 ## Sources
 
 - data.json: https://jacksungjinlee.github.io/baepsae/data.json (2,335,944 bytes)

@@ -1288,5 +1288,12 @@
    "name": "현대사료",
    "reason": "회사 홈페이지에서 직접 확인한 로고 (sheet review 2026-11-06)"
   }
+ ],
+ "adds": [
+  {
+   "code": "000270",
+   "name": "기아",
+   "reason": "Jack 2026-11-07: 기아 ticker logo (KIA wordmark), looked at by eye; replaces the 32 px homepage picture"
+  }
  ]
 }
