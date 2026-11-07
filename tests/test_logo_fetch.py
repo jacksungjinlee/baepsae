@@ -1126,6 +1126,89 @@ def test_image_size_reads_png_and_every_webp_kind():
     assert LI.image_size("x.png", PICS["good"][:10]) is None
 
 
+# ── a fix-up after the review: --only, --route ticker, --add-from (Jack, 2026-11-07: 기아 again before the downgrade) ──
+
+def test_only_with_ticker_route_looks_up_just_those_companies_by_ticker(tmp_path):
+    write_inputs(tmp_path)
+    answers = dict(ALL_GOOD)
+    answers[("domain", "skhynix.com")] = [logo_answer("hynhome", "brand_other")]     # would win in a normal run
+    net = Net(answers)
+    rc, out = run(tmp_path, net, "--only", "000660", "--route", "ticker", full_run_date=None)
+    assert rc == 0 and net.lookups == [("ticker", "000660.KS")]                       # no homepage, no other company
+    rv = review(out)
+    assert (rv["000660"]["route"], rv["000660"]["check"]) == ("ticker", "unverified")
+    assert rv["000660"]["unverified_why"].startswith("ticker only")
+    assert set(index(out)["logos"]) == {"000660"}
+    info = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert info["ok"] and info["companies"] == 1
+
+
+def test_only_without_ticker_route_still_checks_the_homepage(tmp_path):
+    write_inputs(tmp_path)
+    net = Net(dict(ALL_GOOD))
+    rc, out = run(tmp_path, net, "--only", "005930", full_run_date=None)
+    assert rc == 0 and net.lookups == [("ticker", "005930.KS"), ("domain", "samsung.com")]
+    assert set(index(out)["logos"]) == {"005930", "005935"}                           # the preferred share follows
+
+
+@pytest.mark.parametrize("extra", [
+    ("--only", "999999"),                                                            # not in today's data
+    ("--only", "005935"),                                                            # a preferred share: its issuer
+    ("--only", ",".join(["005930"] + [f"00000{i}" for i in range(10)])),             # more than 10
+    ("--route", "ticker"),                                                           # ticker route needs --only
+    ("--only", "005930", "--limit", "3"),                                            # not both
+])
+def test_only_refuses_codes_it_cannot_use_before_any_lookup(tmp_path, extra):
+    write_inputs(tmp_path)
+    net = Net(dict(ALL_GOOD))
+    with pytest.raises(SystemExit):
+        run(tmp_path, net, *extra, full_run_date=None)
+    assert net.lookups == []
+
+
+def test_add_from_adds_a_checked_logo_and_its_preferred_share(tmp_path, capsys):
+    write_inputs(tmp_path)
+    base = dict(ALL_GOOD)
+    base[("ticker", "005930.KS")] = [not_found()]
+    base[("domain", "samsung.com")] = [logo_answer("faint", "brand_sam")]           # the homepage picture is dropped
+    rc, out = run(tmp_path, Net(base, {"faint": PICS["white_on_clear"]}))
+    assert rc == 0 and "005930" not in index(out)["logos"] and (out / "dropped" / "005930.webp").exists()
+    fix_answers = {("ticker", "005930.KS"): [logo_answer("sam", "brand_sam")]}
+    rc, fix = run(tmp_path, Net(fix_answers), "--only", "005930", "--route", "ticker", full_run_date=None, out_name="fix")
+    assert rc == 0 and "005930" in index(fix)["logos"]
+    assert F.main(["--add-from", str(fix), "--dir", str(out), "--reason", "ticker logo, checked"]) == 0
+    idx = index(out)
+    assert idx["logos"]["005930"]["flags"][-1] == "added-after-review"
+    assert idx["logos"]["005935"]["via"] == "005930" and idx["logos"]["005935"]["name"] == "삼성전자우"
+    assert (out / "logos" / "005930.webp").read_bytes() == (fix / "logos" / "005930.webp").read_bytes()
+    assert not (out / "dropped" / "005930.webp").exists()                            # the old dropped picture leaves
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+    assert "005930" in (out / "adds.csv").read_text(encoding="utf-8")
+    assert "Added after review" in (out / "summary.md").read_text(encoding="utf-8")
+    assert "added after review" in capsys.readouterr().out
+    before = snapshot(out)
+    with pytest.raises(SystemExit):                                                  # already there: --drop it first
+        F.main(["--add-from", str(fix), "--dir", str(out)])
+    assert snapshot(out) == before
+    assert F.main(["--drop", "005930", "--dir", str(out)]) == 0                      # later switches still work
+    assert LI.validate_dir(out / "logos")[1] == [] and LI.validate_dir(out / "dropped")[1] == []
+
+
+def test_add_from_a_broken_run_changes_nothing(tmp_path):
+    write_inputs(tmp_path)
+    base = dict(ALL_GOOD)
+    base[("ticker", "AAPL")] = [not_found()]                                         # Apple: the letter mark
+    rc, out = run(tmp_path, Net(base))
+    fix_answers = {("ticker", "AAPL"): [logo_answer("aapl2", "brand_aapl")]}
+    rc, fix = run(tmp_path, Net(fix_answers), "--only", "AAPL", full_run_date=None, out_name="fix")
+    assert rc == 0 and "AAPL" not in index(out)["logos"]
+    before = snapshot(out)
+    (fix / "logos" / "AAPL.webp").write_bytes(b"not a picture")                       # the folder no longer checks out
+    with pytest.raises(SystemExit):
+        F.main(["--add-from", str(fix), "--dir", str(out)])
+    assert snapshot(out) == before and not (out / "adds.csv").exists()
+
+
 # ── the workflow ──
 
 def test_fetch_workflow_is_hand_run_read_only_and_keeps_the_secret_in_one_step():

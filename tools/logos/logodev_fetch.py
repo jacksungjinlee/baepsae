@@ -10,8 +10,13 @@ Part J). Run by hand only: from the workflow "logo.dev 로고 받기" (.github/w
                                                              # after looking at the sheet: those companies get the letter mark
   python3 tools/logos/logodev_fetch.py --keep 066570 --dir DIR --reason "LG group logo, checked"
                                                              # the mirror: a picture in dropped/ goes back into logos/
---drop and --keep are all or nothing (both folders checked before and after; on any error nothing changes), take each
-code once, and --drop refuses a preferred share (it goes with its common share).
+  LOGO_DEV_SECRET_KEY=sk_... python3 tools/logos/logodev_fetch.py --only 000270 --route ticker --out FIX
+                                                             # a fix-up: only the named companies (at most 10), by ticker only
+  python3 tools/logos/logodev_fetch.py --add-from FIX --dir DIR --reason "기아: ticker logo, checked"
+                                                             # after looking at FIX: its logos join the reviewed folder DIR
+--drop, --keep and --add-from are all or nothing (both folders checked before and after; on any error nothing changes),
+take each code once, and --drop refuses a preferred share (it goes with its common share). --add-from refuses a company
+that already has a logo in DIR (--drop it first); a preferred share follows its issuer.
 A run of more than 50 companies (no --limit, or a bigger one) needs --full-run-date set to today's KST date (the
 workflow input full_run_date), so a re-run on another day refuses by itself before any request.
 
@@ -139,6 +144,7 @@ FORMATS = ("png", "jpg", "svg", "webp", "gif", "ico", "avif")    # source.format
 OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "balance_low", "balance_unreadable")
 BALANCE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # Credits-Remaining as logo.dev documents it ("18966.99"); else unreadable
 FULL_RUN_FREE_LIMIT = 50                         # a --limit run up to this many companies needs no --full-run-date
+ONLY_MAX = 10                                    # --only: named companies, at most this many (a fix-up, never a run)
 OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.",
                     balance_floor=f"Stopped cleanly: logo.dev's reported credit balance would have gone below "
                                   f"{MIN_BALANCE:,} credits.",
@@ -219,11 +225,11 @@ def load_all(data, listing, homepages, min_counts=None, sheet_top=SHEET_TOP):
     return order, preferred, log
 
 
-def plan(order):
+def plan(order, ticker_only=False):
     """Lookups and the credit ceiling: one ticker lookup per company with a ticker, plus one homepage lookup per Korean
-    company with a usable DART domain; every one could be billed (2 credits)."""
+    company with a usable DART domain (none with --route ticker); every one could be billed (2 credits)."""
     t = sum(1 for c in order if c.get("ticker"))
-    d = sum(1 for c in order if c["side"] == "kr" and c.get("domain"))
+    d = 0 if ticker_only else sum(1 for c in order if c["side"] == "kr" and c.get("domain"))
     return {"ticker": t, "domain": d, "lookups": t + d, "ceiling": CREDITS * (t + d)}
 
 
@@ -710,8 +716,9 @@ class Scheduler:
 
 class Fetcher:
     def __init__(self, client, ledger, log, out_logos, scope=(), clock=time.monotonic, sleep=time.sleep, jitter=None,
-                 deadline=None, workers=DEFAULT_WORKERS, webp=True, out_dropped=None, need=0):
+                 deadline=None, workers=DEFAULT_WORKERS, webp=True, out_dropped=None, need=0, ticker_only=False):
         self.client, self.ledger, self.log = client, ledger, log
+        self.ticker_only = ticker_only                   # --route ticker: no homepage lookup, the ticker logo if it passes
         self.out_logos, self.scope, self.webp = out_logos, set(scope), webp
         self.out_dropped = out_dropped or out_logos.parent / "dropped"    # dropped pictures: never in logos/
         self.need = need                                 # this run's worst case in credits (min of cap and plan)
@@ -893,7 +900,7 @@ class Fetcher:
                                                         "may have changed; what was found is saved"))
         job.results[route] = (kind, info)
         job.stage = ("domain" if route == "ticker" and c["side"] == "kr" and c.get("domain") and kind != "odd"
-                     else "decide")                      # an odd ticker answer means a letter mark: no homepage lookup
+                     and not self.ticker_only else "decide")   # an odd ticker answer means a letter mark: no homepage lookup
         return None
 
     def decide(self, job):
@@ -917,7 +924,8 @@ class Fetcher:
                 job.choice, job.check = "ticker", "ticker"
             else:
                 job.choice, job.check = "ticker", "unverified"
-                job.why = (f"homepage {job.c['domain']}: {d_kind}" if d_kind
+                job.why = ("ticker only (--route ticker): no homepage lookup" if self.ticker_only
+                           else f"homepage {job.c['domain']}: {d_kind}" if d_kind
                            else "no usable DART homepage domain")
         elif d_kind == "logo":
             job.choice, job.check = "domain", "homepage"
@@ -1119,7 +1127,11 @@ class Fetcher:
 
     def run(self, companies):
         self.total = len(companies)
-        sched = Scheduler([Job(c) for c in companies], self.clock, self.sleep)
+        jobs = [Job(c) for c in companies]
+        for j in jobs:
+            if self.ticker_only and j.stage == "domain":
+                j.stage = "decide"                       # --route ticker: no ticker, no lookup (the letter mark)
+        sched = Scheduler(jobs, self.clock, self.sleep)
         if self.workers == 1:
             self.worker(sched)
         else:
@@ -1364,6 +1376,10 @@ def summary_md(info):
     if info.get("drops"):
         out += ["## Switched to the letter mark after review", ""]
         out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["drops"]]
+        out.append("")
+    if info.get("adds"):
+        out += ["## Added after review (from a --only run)", ""]
+        out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["adds"]]
         out.append("")
     out += ["## Sources", ""] + [f"- {s}" for s in info["sources"]] + [
         "", "Files: logos/ (pictures + index.json, for tools/push_logos_branch.sh), review.csv (one row per company), "
@@ -1805,6 +1821,93 @@ def drop(folder, codes, reason):
     return 0
 
 
+def add_from(folder, src, reason):
+    """After looking at a --only run's result (src): adds its logos to an earlier, reviewed run's folder (the checked
+    folder kept on the logos-run branch), with every preferred share that reuses them (from the folder's review.csv),
+    loudly. Refuses a company that already has a logo in the folder (--drop it first) and a file name already used; an
+    old dropped picture of the same company leaves dropped/ (its record stays in drops.csv). All or nothing: the result
+    is checked in memory first, then written; on any error every file and both indexes are put back."""
+    folder, src = pathlib.Path(folder), pathlib.Path(src)
+    logos, dropped = folder / "logos", folder / "dropped"
+    index, bad = LI.validate_dir(logos)
+    if bad:
+        raise SystemExit("!! logos/ is not a valid logo folder: " + "; ".join(bad[:5]))
+    sidx, sbad = LI.validate_dir(src / "logos")
+    if sbad:
+        raise SystemExit("!! the --only run's logos/ is not a valid logo folder: " + "; ".join(sbad[:5]))
+    if sidx.get("format") != index.get("format"):
+        raise SystemExit(f"!! the --only run's pictures are {sidx.get('format')}, the folder's are {index.get('format')}; "
+                         "nothing was changed")
+    dindex = read_dropped(dropped)
+    codes = [c for c, e in sorted(sidx["logos"].items()) if not e.get("via")]
+    if not codes or len(codes) > ONLY_MAX:
+        raise SystemExit(f"!! the --only run has {len(codes)} logos to add (1 to {ONLY_MAX}); nothing was changed")
+    clash = [c for c in codes if c in index["logos"]]
+    if clash:
+        raise SystemExit(f"!! already in logos/: {clash} (--drop them first if the new picture should replace them); "
+                         "nothing was changed")
+    lfiles, dfiles = _files(logos), _files(dropped)
+    rows = _review_rows(folder)
+    ni, nd = _copy(index), _copy(dindex)
+    adds, gone, new = {}, [], []
+    for c in codes:
+        e = sidx["logos"][c]
+        name = e["file"]
+        if name in lfiles or name in adds:
+            raise SystemExit(f"!! logos/ already has a file named {name}; nothing was changed")
+        adds[name] = (src / "logos" / name).read_bytes()
+        ni["logos"][c] = dict(e, flags=list(e.get("flags", [])) + ["added-after-review"])
+        new.append({"code": c, "name": e["name"], "reason": reason})
+        old = nd["logos"].pop(c, None)
+        if old and old["file"] not in gone:
+            gone.append(old["file"])
+        for r in rows:
+            if r.get("via") == c and r.get("code") and r["code"] not in ni["logos"]:
+                ni["logos"][r["code"]] = dict(ni["logos"][c], name=r["name"], via=c)
+                new.append({"code": r["code"], "name": r["name"], "reason": reason + " (preferred share of an issuer above)"})
+    lf = dict(lfiles, **adds)
+    df = {k: v for k, v in dfiles.items() if k not in gone}
+    for idx in (ni, nd):
+        idx["count"] = len(idx["logos"])
+        idx["logos"] = dict(sorted(idx["logos"].items()))
+    bad = [f"logos/: {b}" for b in LI.check_index(ni, lf)] + [f"dropped/: {b}" for b in LI.check_index(nd, df)]
+    if bad:
+        raise SystemExit("!! adding would leave a folder that is not valid (" + "; ".join(bad[:5]) + "); nothing was "
+                         "changed")
+    old_idx = {f: ((f / LI.INDEX).read_bytes() if (f / LI.INDEX).exists() else None) for f in (logos, dropped)}
+    written, removed = [], []
+    try:
+        for name, data in adds.items():
+            (logos / name).write_bytes(data)
+            written.append(logos / name)
+        for name in gone:
+            removed.append((dropped / name, dfiles[name]))
+            (dropped / name).unlink()
+        write_index(logos, ni)
+        if dropped.exists():
+            write_index(dropped, nd)
+        for f, what in ((logos, "logos/"), (dropped, "dropped/")):
+            if f.exists():
+                _, bad = LI.validate_dir(f)
+                if bad:
+                    raise SystemExit(f"!! {what} is not valid after adding: " + "; ".join(bad[:5]))
+    except BaseException:
+        for p in written:
+            p.unlink(missing_ok=True)
+        for p, data in removed:
+            p.write_bytes(data)
+        for f, raw in old_idx.items():
+            if raw is None:
+                (f / LI.INDEX).unlink(missing_ok=True)
+            elif f.exists():
+                (f / LI.INDEX).write_bytes(raw)
+        raise
+    _record(folder, "adds", new)
+    print(f"!! added after review from {src}: {len(new)} ({', '.join(x['code'] for x in new)}) · "
+          f"logos now {len(ni['logos']):,}")
+    return 0
+
+
 class Deps:
     """What the tests replace: the network, the clocks, the environment, the sheet renderer."""
 
@@ -1837,6 +1940,12 @@ def parse_args(argv):
     ap.add_argument("--keep", metavar="CODES", help="comma-separated codes to restore from dropped/ (with --dir)")
     ap.add_argument("--dir", help="the output folder of an earlier run (with --drop or --keep)")
     ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop or --keep)")
+    ap.add_argument("--only", metavar="CODES", default="",
+                    help=f"only these companies (comma-separated codes, at most {ONLY_MAX}): a fix-up after a reviewed run")
+    ap.add_argument("--route", choices=("auto", "ticker"), default="auto",
+                    help="with --only: ticker = look up by ticker only (no DART homepage lookup)")
+    ap.add_argument("--add-from", metavar="RUN_DIR",
+                    help="add the logos of a reviewed --only run (RUN_DIR) to an earlier run's folder (with --dir)")
     ap.add_argument("--full-run-date", default="", help="today's KST date (YYYY-MM-DD); needed for a run without --limit "
                                                        f"or with --limit above {FULL_RUN_FREE_LIMIT}")
     a = ap.parse_args(argv)
@@ -1844,8 +1953,13 @@ def parse_args(argv):
             or a.limit < 0 or a.sheet_top < 1 or a.time_limit_min <= 0:
         ap.error(f"--max-credits 2 to {MAX_CREDITS:,} (never more: Jack's $140 stop), --workers 1 to 10, --per-minute 1 "
                  "to 450 (Pro allows 500), --limit 0 or more, --sheet-top at least 1, --time-limit-min above 0")
-    if bool(a.drop or a.keep) != bool(a.dir) or (a.drop and a.keep):
-        ap.error("--drop or --keep (one of them) goes with --dir")
+    switches = [x for x in (a.drop, a.keep, a.add_from) if x]
+    if bool(switches) != bool(a.dir) or len(switches) > 1:
+        ap.error("--drop, --keep or --add-from (one of them) goes with --dir")
+    if a.route == "ticker" and not a.only:
+        ap.error("--route ticker goes with --only (a fix-up for named companies)")
+    if a.only and a.limit:
+        ap.error("--only and --limit don't go together")
     return a
 
 
@@ -1873,8 +1987,10 @@ def _main(argv, deps, state):
         return drop(a.dir, a.drop.split(","), a.reason)
     if a.keep:
         return keep(a.dir, a.keep.split(","), a.reason)
+    if a.add_from:
+        return add_from(a.dir, a.add_from, a.reason)
     d = deps or Deps()
-    if not a.plan_only and (a.limit == 0 or a.limit > FULL_RUN_FREE_LIMIT):
+    if not a.plan_only and not a.only and (a.limit == 0 or a.limit > FULL_RUN_FREE_LIMIT):
         today = f"{d.wall().astimezone(KST):%Y-%m-%d}"     # KST, even when the clock gives UTC
         if a.full_run_date.strip() != today:
             raise SystemExit(f"!! A run of more than {FULL_RUN_FREE_LIMIT} companies needs --full-run-date (the workflow "
@@ -1908,8 +2024,20 @@ def _main(argv, deps, state):
         in_run = {c["code"] for c in order}
         preferred = [p for p in preferred if p["issuer"] in in_run]
         log(f"!! --limit {a.limit}: only the {len(order):,} largest companies (a trial run)")
-    pl = plan(order)
-    cap = min(a.max_credits, pl["ceiling"]) if a.limit else a.max_credits      # a trial never spends past its plan
+    if a.only:
+        want = _dedupe(a.only.split(","))
+        known = {c["code"]: c for c in order}
+        unknown = [c for c in want if c not in known]
+        if not want or len(want) > ONLY_MAX or unknown:
+            raise SystemExit(f"!! --only takes 1 to {ONLY_MAX} codes of Korean common shares or US stocks in today's data "
+                             f"(a preferred share goes with its issuer); not usable: {unknown or want}. Nothing was looked up.")
+        order = [known[c] for c in want]
+        preferred = [p for p in preferred if p["issuer"] in set(want)]
+        log(f"!! --only {','.join(want)} · route {a.route}: a fix-up for named companies (add it to the reviewed folder "
+            "with --add-from after looking at it)")
+    ticker_only = a.route == "ticker"
+    pl = plan(order, ticker_only)
+    cap = min(a.max_credits, pl["ceiling"]) if (a.limit or a.only) else a.max_credits   # a trial never spends past its plan
     log(f"· data.json asOf {data.get('asOf')} · prices {data.get('pxDate')} (US {data.get('usPxDate')}) · companies "
         f"{len(order):,} (Korea {sum(1 for c in order if c['side'] == 'kr'):,} · US "
         f"{sum(1 for c in order if c['side'] == 'us'):,}) · preferred shares {len(preferred):,}")
@@ -1930,7 +2058,8 @@ def _main(argv, deps, state):
     ledger = Ledger(cap)
     scope = {c["code"] for c in order if c["mrank"] <= a.sheet_top}
     f = Fetcher(client, ledger, log, out_logos, scope, d.clock, d.sleep, d.jitter,
-                deadline=t0 + a.time_limit_min * 60, workers=a.workers, webp=d.webp, need=min(cap, pl["ceiling"]))
+                deadline=t0 + a.time_limit_min * 60, workers=a.workers, webp=d.webp, need=min(cap, pl["ceiling"]),
+                ticker_only=ticker_only)
     problems = []
     try:
         f.run(order)

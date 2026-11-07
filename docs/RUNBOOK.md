@@ -76,7 +76,10 @@ tells you what happened in plain words.
   `python3 tools/logos/logodev_fetch.py --drop CODE --dir FOLDER` (or bring back a checked one with `--keep CODE`),
   push with `bash tools/push_logos_branch.sh FOLDER/logos`, run Deploy, then save the changed folder back to
   `logos-run` as a new commit. Never push the GitHub artifact of a logo run (`logo-dev-fetch`) as it is: that is the
-  unchecked run, from before the review.
+  unchecked run, from before the review. To fetch one or two companies again (while logo.dev is on a plan that allows
+  it): run the logo job with `only` set to their codes (and `route` = `ticker` to skip the DART homepage), look at its
+  artifact, then `python3 tools/logos/logodev_fetch.py --add-from ARTIFACT_FOLDER --dir FOLDER` adds the checked logos
+  to the copy of `logos-run`; push and deploy as above.
 - A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
   logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
