@@ -67,6 +67,27 @@ tells you what happened in plain words.
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
+  whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of
+  the two markets' next trading days, plus one day) and `staleAfter` (that day's last scheduled start, 14:47 KST, plus 2
+  hours). Once the app part ships (a later PR), the app shows its stale warning when `staleAfter` has passed without a
+  newer file; weekends and holidays stay quiet. GitHub starts afternoon runs 7–8 hours late, so at `staleAfter` the
+  day's retries may not have run yet: the warning then means "the morning publish was missed".
+  Keep the table current:
+  - Add a 임시공휴일 or an NYSE special closure (e.g. a national day of mourning) as soon as it is announced. Without it,
+    the morning after such a day gets a false stale warning, and the gate's '다음 발행 예정' row warns ("예정일이 오늘 이전").
+  - Add the next year's rows every December (KRX publishes its holiday list in late December; the NYSE list is out
+    years ahead), with a source in every row and at least 8 weekday closures per market and year. The table only sets
+    the warning time, so it never stops a run or a publish (Jack, 2026-11-07): when it is short, missing or broken, the
+    run logs it loudly, the gate warns (the 09:13 morning check reads it) and days past the table follow the weekday
+    rule, so a warning may come a day early around a holiday, never late. The gate warns from 45 days before the
+    table ends.
+  - The gate also warns when the last 90 days of index bars disagree with the table (a missed or wrong holiday); the
+    index bars are right (one-off holidays and US mourning-day closures come at short notice). Every problem with
+    `nextPub`/`staleAfter` warns and never blocks a publish. After a table edit, the live-site check may warn once
+    (the published file was computed with the old table) until the next publish.
+  - The 2027 KR rows 노동절 대체 휴일 (5/3) and 제헌절 대체 휴일 (7/19) follow the 2026 law changes and still need KRX's
+    own notice.
 - **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
   Pro on 2026-11-06 and checked by eye. Deploy copies it into the site; if the branch is missing or fails its check,
   Deploy warns and publishes without logos (every company shows its coloured letter mark). Logos never go on `main`.
@@ -81,6 +102,29 @@ tells you what happened in plain words.
   Jack's yes, and only while logo.dev is on a plan that allows it): run the logo job with `only` set to their codes (and `route` = `ticker` to skip the DART homepage), look at its
   artifact, then `python3 tools/logos/logodev_fetch.py --add-from ARTIFACT_FOLDER --dir FOLDER` adds the checked logos
   to the copy of `logos-run`; push and deploy as above.
+  To retry every Korean letter mark at once (2026-11-07): run the logo job with `letters_only` (it reads `logos-run`'s
+  `logos/`, `review.csv` and `drops.csv`, so pictures already rejected are not asked for again)
+  and, if wanted, `extra_routes` (an ISIN lookup, 2 credits, and a brandmark lookup, 3 credits, only for companies whose
+  ticker and homepage gave nothing usable; a brandmark wider than 2:1 is dropped). It refuses a cap above 2,000 credits
+  ($20) unless `over_20_dollars_ok` is ticked, which needs Jack's yes first. Look at every new logo on its sheet: the
+  automatic checks do not catch photos, banners, old logos or another company's logo. Add only the checked ones with
+  `--add-from ARTIFACT_FOLDER --dir FOLDER --codes CODE,CODE` (a retry is never added whole), then push and deploy.
+- **Group marks** (Jack, 2026-11-07): a company still showing a letter mark may get its group's main mark, only when
+  its own website shows that same mark as its logo and the picture used is the group's main mark, never a sister
+  company's own logo (e.g. not "SAMSUNG HEAVY INDUSTRIES" for 삼성전기). Look at both first, then
+  `python3 tools/logos/logodev_fetch.py --group-mark CODE=FROM,CODE=FROM --dir FOLDER --reason "..."` (an exact copy of
+  FROM's picture, flagged `group-mark`; recorded in `groups.csv`).
+- **Homepage icons** (Jack, 2026-11-07): the company's own homepage icon from the site-icon survey
+  (`tools/logos/site_icons.py` on `claude/logos-site-icons`), 96 px or more, every quality check, never the same picture
+  as another company's logo, each looked at first. Jack asked for the largest icon: logos are stored at 128 px, so any
+  icon of 128 px or more gives the same picture; for an icon under 128 px, check the site's other icons (link rel=icon,
+  apple-touch-icon, manifest) and use the largest:
+  `--add-site-icons SURVEY_FOLDER --codes CODE,CODE --dir FOLDER` (route `site`, flagged `homepage-icon`; `sites.csv`).
+  Before the first homepage icon goes live, the 데이터 출처 line must read "회사 로고: Logo.dev, 일부는 각 회사 홈페이지.
+  로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07).
+- After pushing the `logos` branch and running Deploy, check the live `logos/index.json` (its count and a new code).
+  On 2026-11-07 a Deploy of the same `main` commit two minutes after another one reported success but the site kept
+  the older files; running Deploy once more published them.
 - A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
   logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily

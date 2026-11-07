@@ -28,7 +28,6 @@ import os
 import re
 import shutil
 import sys
-import tempfile
 import threading
 
 from playwright.sync_api import sync_playwright
@@ -36,7 +35,8 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import copy_strings  # noqa: E402
 from test_launch import V175_FORMAT, real_data_missing  # noqa: E402
-from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
+from visualcheck import V2_IMAGES, visual_ok, copy_pictures  # noqa: E402
+import tmpdirs  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 C, _ = copy_strings()
@@ -60,10 +60,11 @@ SAVED = {"v": 1, "decks": [{"id": "dlaunch", "name": "배당 생활비 덱", "cr
 
 
 def site(variant):
-    d = tempfile.mkdtemp(prefix="baepsae-launch-")
+    d = tmpdirs.make("baepsae-launch-")
     for f in SITE:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
+    copy_pictures(d)                                                 # v19.3b: 기준 · 템플릿 그림
     for f in DATA:
         shutil.copy(os.path.join(ROOT, f), d)                       # 지금 저장소의 파일 (지금 앱이 쓰는 것)
     if variant == "fixtures":                                        # 월요일 모습: v17.5 형식 + v17.5.1 필드
@@ -629,4 +630,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(tmpdirs.run(main))        # 통과하면 이번 실행의 임시 폴더를 지우고, 실패하면 남겨요 (tests/tmpdirs.py)

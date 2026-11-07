@@ -3113,12 +3113,113 @@ def save_us_info(d, path=None):
         log(f"  !! 미국 상세 정보 보관본 저장 실패: {e}")
 
 
+# v19.1c (Jack, 2026-11-07): 다음 발행 예정일과 '늦음' 경고 시각. 앱은 이 시각이 지나도 새 파일이 오지 않으면 갱신이 멈췄다고
+# 알려요 (고정 4일 대신). 주말·휴장일에는 다음 거래일까지 조용해요. 휴장일은 사람이 출처를 확인해 적은 표에서만 읽어요.
+MARKET_HOLIDAYS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_holidays.csv")
+MARKET_HOLIDAYS_HEAD = ["date", "market", "name", "source"]
+HOLIDAYS_MIN_PER_YEAR = 8     # 한국 평일 휴장은 해마다 12~16일, NYSE 는 9~10일 — 이보다 적으면 반쯤 적은 해예요
+# update-data.yml 의 그날 마지막 정해진 시각 실행 (월~토 14:47 KST = cron "47 5 * * 1-6") — 테스트가 workflow 와 맞춰 봐요.
+LAST_RETRY_KST = dt.time(14, 47)
+# GitHub 의 정해진 시각 실행은 늦게 시작해요: 아침 실행은 2~3시간, 오후 실행은 7~8시간 (2026-11-05·06: 13:37 실행이 21:41 ·
+# 21:24 시작). 그래서 이 시각에는 그날 오후 재시도가 아직 돌기 전일 수 있어요 — 아침 발행(06:40 바깥 타이머)이 빠진 것은 맞으니
+# 경고는 사실이에요. Jack (2026-11-07): 16:47 (14:47 + 2시간)으로 정했어요 — 늦게 뜨는 쪽보다 일찍 알리는 쪽.
+STALE_GRACE = dt.timedelta(hours=2)
+
+
+def load_market_holidays(path=None):
+    """data/market_holidays.csv → {"KR": {날짜: 이름}, "US": {날짜: 이름}, "end": 표가 덮는 마지막 날(마지막 해의 12월 31일)}.
+    평일 휴장만 적어요 (주말은 언제나 쉬어요). 이상한 줄이 하나라도 있으면 줄 번호와 함께 예외 — 조용히 '휴장 없음'이 되지 않게.
+    표는 해 단위로 빠짐없이 적어요: 적힌 해가 이어지지 않으면 예외."""
+    path = path or MARKET_HOLIDAYS_PATH
+    name = os.path.basename(path)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows or [c.strip() for c in rows[0]] != MARKET_HOLIDAYS_HEAD:
+        raise RuntimeError(f"!! {name} 머리줄이 {','.join(MARKET_HOLIDAYS_HEAD)} 이 아니에요: {rows[0] if rows else '빈 파일'}")
+    out = {"KR": {}, "US": {}}
+    for n, row in enumerate(rows[1:], start=2):
+        if not any(c.strip() for c in row):
+            continue
+
+        def bad(why, n=n, row=row):
+            return RuntimeError(f"!! {name} {n}번째 줄이 이상해요 ({why}): {','.join(row)[:120]}")
+        if len(row) != len(MARKET_HOLIDAYS_HEAD):
+            raise bad(f"칸 {len(row)}개 — {len(MARKET_HOLIDAYS_HEAD)}개여야 해요 (쉼표가 섞였는지 확인)")
+        r = dict(zip(MARKET_HOLIDAYS_HEAD, (c.strip() for c in row)))
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", r["date"]):
+                raise ValueError(r["date"])
+            d = dt.date.fromisoformat(r["date"])
+        except ValueError:
+            raise bad("날짜는 YYYY-MM-DD") from None
+        if r["market"] not in out:
+            raise bad("market 은 KR 또는 US")
+        if d.weekday() >= 5:
+            raise bad("주말은 적지 않아요 (언제나 쉬어요)")
+        if d in out[r["market"]]:
+            raise bad(f"{r['market']} {d} 가 두 번 있어요")
+        if not r["name"] or not r["source"]:
+            raise bad("이름과 출처가 있어야 해요")
+        out[r["market"]][d] = r["name"]
+    years = sorted({d.year for m in ("KR", "US") for d in out[m]})
+    if not years or years != list(range(years[0], years[-1] + 1)) or any(
+            not any(d.year == y for d in out[m]) for m in ("KR", "US") for y in years):
+        raise RuntimeError(f"!! {name}: 해마다 한국·미국 줄이 다 있어야 해요 (적힌 해: {years})")
+    thin = [f"{m} {y}" for m in ("KR", "US") for y in years if sum(1 for d in out[m] if d.year == y) < HOLIDAYS_MIN_PER_YEAR]
+    if thin:
+        raise RuntimeError(f"!! {name}: 한 해의 평일 휴장일이 {HOLIDAYS_MIN_PER_YEAR}일보다 적어요 ({', '.join(thin)}) — 반쯤 적은 해 같아요")
+    out["start"], out["end"] = dt.date(years[0], 1, 1), dt.date(years[-1], 12, 31)
+    return out
+
+
+def next_session(after, closed, end):
+    """after 다음의 첫 거래일 (주말·closed 빼고). 표가 덮지 않는 날(end 뒤, 또는 표가 없으면 모두)은 평일 규칙으로만 봐요. (순수 함수)
+    표는 '늦음' 경고 시각에만 써요 (어느 날 데이터를 받을지는 최종본 목록·지수 일봉이 정해요) — 그래서 표가 모자라도 멈추지 않아요
+    (Jack, 2026-11-07: 멈추면 우리가 경고하려는 낡은 데이터가 생겨요). 휴장일을 모르면 경고가 하루 일찍 뜰 수는 있어도 늦지는 않아요."""
+    d = after + dt.timedelta(days=1)
+    while d.weekday() >= 5 or (end is not None and d <= end and d in closed):
+        d += dt.timedelta(days=1)
+    return d
+
+
+def next_publish(px_date, us_px_date, hol):
+    """다음 발행 예정일(한국 날짜) = 한국·미국 중 먼저 오는 다음 거래일의 다음 날. 한국 종가 최종본은 그날 저녁, 미국 종가는
+    한국 다음 날 새벽에 확정돼서 둘 다 그다음 날 아침 실행이 발행해요 (화~토). 거래일은 월~금이라 예정일은 늘 화~토예요. (순수 함수)"""
+    k = next_session(px_date, hol["KR"], hol.get("end"))
+    u = next_session(us_px_date, hol["US"], hol.get("end"))
+    return min(k, u) + dt.timedelta(days=1)
+
+
+def stale_after(next_pub):
+    """앱이 '갱신이 멈췄어요'를 보이기 시작하는 시각 = 예정일의 마지막 정해진 시각 실행 + 여유 (한국 시간 ISO). (순수 함수)"""
+    return (dt.datetime.combine(next_pub, LAST_RETRY_KST, tzinfo=KST) + STALE_GRACE).isoformat(timespec="seconds")
+
+
+def us_own_date(px, us_px_date):
+    """미국 종목의 자기 가격 날짜: 마지막 봉이 미국 기준일이 아니면 그 날짜(ISO), 같으면 None — data.json 의 pxd 칸이에요.
+    가격은 그 날짜의 종가라서, 앱이 '오늘' 날짜가 아니라 이 날짜를 보여 줘요 (Jack, 2026-11-07). (순수 함수)"""
+    own = px.index[-1].date()
+    return None if own == us_px_date else own.isoformat()
+
+
+def us_data_date(spx, last_ok):
+    """미국 기준일(usPxDate) = S&P 500 일봉에서 장이 끝난 마지막 날(last_ok) 이하의 마지막 봉 날짜. (순수 함수)
+    휴장일(추수감사절 등)에는 봉이 없으니 그 전 거래일이에요. 조기 폐장일은 16:30 ET 가 지난 뒤(한국 다음 날 아침)에야 그날이고,
+    13:00 폐장 뒤 16:30 전에는 아직 그 전 거래일이에요 (us_last_complete_day 가 16:30 을 봐요). 개별 종목 d1 은
+    이 날짜의 봉이 있을 때만 채워요 (us_d1) — 그래서 휴장·조기 폐장은 d1 을 비우지 않고, 발행 관문의 '미국 d1 채움'은 야후가
+    기준일 봉을 빠뜨린 종목만 세요."""
+    return cut_at(spx, last_ok).index[-1].date()
+
+
 def us_d1(px, us_px_date):
     """미국 d1: 그 종목의 마지막 봉이 미국 기준일일 때만 마지막 ÷ 그 전 봉 (거래 정지로 낡은 봉이면 빈 칸). (순수 함수)
     야후 수정 종가라 배당락일에는 배당만큼이 더해져 보여요 (작은 차이 — 필드 설명에 적어 둬요)."""
     if len(px) < 2 or px.index[-1].date() != us_px_date:
         return None
-    return round(float(px.iloc[-1] / px.iloc[-2] - 1) * 100, 2)
+    prev, last = float(px.iloc[-2]), float(px.iloc[-1])
+    if not (prev > 0 and math.isfinite(prev) and math.isfinite(last)):
+        return None                      # 깨진 봉 — fetch_us 가 이 종목을 크게 남기고 빼요 (d1 이 없으면 pxd 가 있어야 하니까요)
+    return round((last / prev - 1) * 100, 2)
 
 
 def etf_from_quote_type(out, cache):
@@ -3305,7 +3406,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
 
     fx = cut_at(_yf_close(yf.download(FX_TICKER, start=start, end=end_x, progress=False, auto_adjust=True)), today)
     spx = cut_at(_yf_close(yf.download(US_INDEX, start=start, end=end_x, progress=False, auto_adjust=True)), last_ok)
-    us_px_date = spx.index[-1].date()
+    us_px_date = us_data_date(spx, last_ok)
     fx = cut_at(fx, max(us_px_date, last_ok))
     fx_last, fx_date = float(fx.iloc[-1]), fx.index[-1].date()
     log(f"· 미국 기준일(S&P500 마지막 봉) {us_px_date} · 환율 {fx_last:,.1f} ({fx_date})")
@@ -3317,7 +3418,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     data = yf.download(syms, start=start, end=end_x, progress=False,
                        auto_adjust=True, group_by="ticker", threads=True)
 
-    out, dropped = [], []
+    out, dropped, bad_bar = [], [], []
     for sym in syms:
         try:
             px = cut_at(_yf_close(data, sym), us_px_date)
@@ -3327,9 +3428,13 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
             ret.name = "r"
             b, a, bse, bn = beta_fit(ret, bench, rf)
             krw = (px * fx.reindex(px.index).ffill()).dropna()
+            if us_d1(px, us_px_date) is None and us_own_date(px, us_px_date) is None:
+                bad_bar.append(sym)      # 기준일 봉은 있는데 그 전 봉이 깨짐 (0·무한) — 날짜를 말할 수 없는 가격은 내보내지 않아요
+                continue
             rec = {"t": sym, "nk": sym, "ne": sym, "cls": "us", "ccy": "USD", "fxu": True, "s": "etc",
                    "etf": sym in US_ETFS,
                    "d1": us_d1(px, us_px_date),
+                   "pxd": us_own_date(px, us_px_date),   # v19.1c: 자기 가격 날짜 (기준일과 같으면 None → 칸이 빠져요)
                    "price": round(float(px.iloc[-1]), 2),
                    "vol": ann_vol(krw.pct_change().dropna().values), "beta": b, "al": a,
                    "betaSE": bse, "betaN": bn,   # v19.1b: beta_fit 은 넷을 함께 내거나 함께 비워요
@@ -3340,6 +3445,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
             dropped.append(sym)
     if dropped:
         log(f"  !! 시세를 받지 못해 빠진 미국 종목 {len(dropped)}개: {', '.join(dropped[:8])}{'…' if len(dropped) > 8 else ''}")
+    if bad_bar:
+        log(f"  !! 기준일 {us_px_date} 봉은 있는데 그 전 봉이 깨져(0·무한) 뺀 미국 종목 {len(bad_bar)}개: {', '.join(bad_bar)}")
 
     # 상세 정보(이름·업종·설명·기초 지표)는 자주 바뀌지 않아요. 3일 안에 받은 것은 다시 쓰고,
     # 오늘 못 받으면 14일 안의 보관본을 (크게 알리고) 써요. 그보다 오래되면 비워 두고 검증이 잡아요.
@@ -3398,8 +3505,12 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
+    no_d1 = [f"{r['t']}({r.get('pxd') or '?'})" for r in out if r.get("d1") is None]
+    if no_d1:   # 발행 관문이 98% 아래면 막고 전부 적어요 — 여기서는 앞의 30개 (Jack, 2026-11-07). 괄호 = 그 종목의 자기 가격 날짜(pxd)
+        log(f"  !! 미국 d1 없는 종목 {len(no_d1):,}개 (마지막 봉이 미국 기준일 {us_px_date} 이 아님 — 거래 정지이거나 야후가 봉을 "
+            f"빠뜨림 · 가격은 괄호 날짜의 종가로 나가요): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
-            "usLeftOut": left_out}
+            "usLeftOut": {**left_out, "badBar": bad_bar}}   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
     return out, bench, fx, fx_last, us_vol_krw, meta
 
 
@@ -3457,6 +3568,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
+         "pxd": "미국 종목의 자기 가격 날짜 (그 종목의 마지막 봉이 usPxDate 가 아닐 때만 · 가격·d1 은 이 날짜 기준, d1 은 빈 칸)",
+         "nextPub": "다음 발행 예정일 (한국 날짜 · data/market_holidays.csv 기준 한국·미국 중 먼저 오는 다음 거래일의 다음 날)",
+         "staleAfter": "이 시각(한국 시간)이 지나도 새 파일이 없으면 앱이 '갱신이 멈췄어요'를 보여요 (예정일 마지막 정해진 실행 + 2시간)",
          "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분"}
 IDX_YEARS = 3
 
@@ -3495,6 +3609,14 @@ def main():
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
     dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     special = load_krx_special_sessions() # KRX 특별 거래시간 표도 (v17.5.4) — 최종본 판단에 써요
+    try:                                  # 휴장일 표도 (v19.1c) — '늦음' 경고 시각에만 써서, 깨졌거나 모자라도 멈추지 않고 크게 남겨요
+        hol = load_market_holidays()
+        if hol["end"] < today + dt.timedelta(days=45):
+            log(f"  !! 휴장일 표가 {hol['end']} 까지만 있어요 — 그 뒤는 평일 규칙으로 정해요 (휴장일 다음 날 '늦음' 경고가 일찍 뜰 수 있어요). "
+                "data/market_holidays.csv 에 다음 해를 넣어 주세요 (RUNBOOK)")
+    except Exception as e:
+        hol = {"KR": {}, "US": {}, "start": None, "end": None}
+        log(f"  !! 휴장일 표를 읽지 못했어요 ({e}) — 평일 규칙으로 정해요 (휴장일 다음 날 '늦음' 경고가 일찍 뜰 수 있어요). 표를 고쳐 주세요")
     soon = [f"{d} {v['kind']} {v['open']:%H:%M}~{v['close']:%H:%M}" for d, v in sorted(special.items())
             if today - dt.timedelta(days=LISTING_LOOKBACK_DAYS) <= d <= today + dt.timedelta(days=60)]
     log(f"· KRX 특별 거래시간 표: {len(special)}줄" + (f" · 최근·다가오는 날: {' · '.join(soon)}" if soon else ""))
@@ -3615,9 +3737,18 @@ def main():
                 x["price"] = round(x["price"] * 1.1)
                 log(f"  !! 시험용(selftest): 005930 가격을 일부러 {x['price']:,}원으로 틀리게 써요 — 검증이 막아야 합니다")
 
+    try:      # 여기서 멈추지 않아요: 빈 칸으로 쓰면 관문이 경고하고, 앱은 예전 4일 규칙으로 '늦음'을 봐요 (Jack, 2026-11-07)
+        next_pub = next_publish(dt.date.fromisoformat(kmeta["pxDate"]), dt.date.fromisoformat(umeta["usPxDate"]), hol)
+        log(f"· 다음 발행 예정일 {next_pub} · 늦음 경고 {stale_after(next_pub)} (휴장일 표 "
+            + (f"{hol['end'].year}년까지 · 한국 {len(hol['KR'])}일 · 미국 {len(hol['US'])}일)" if hol.get("end") else "없음 — 평일 규칙)"))
+    except Exception as e:
+        next_pub = None
+        log(f"  !! 다음 발행 예정일을 정하지 못했어요 ({type(e).__name__}: {e}) → 빈 칸으로 써요 (관문이 경고해요 · 앱은 예전 4일 규칙)")
     payload = {
         "asOf": today.isoformat(), "pxDate": kmeta["pxDate"], "ksDate": kmeta["ksDate"],
         "usPxDate": umeta["usPxDate"], "fxDate": umeta["fxDate"], "publishedAt": published_at,
+        "nextPub": next_pub.isoformat() if next_pub else None,               # v19.1c: 앱의 '늦음' 판단 (고정 4일 대신)
+        "staleAfter": stale_after(next_pub) if next_pub else None,
         "listSrc": kmeta["listSrc"], "fx": round(fx_last, 1), "units": UNITS, "settings": settings,
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},

@@ -45,6 +45,21 @@ export const ICON_CHIP = { bg: COLOR.select, radius: "30%" };   // 아이콘 칩
 export const SELECTED = { background: COLOR.select };                 // 고른 칩 · 고른 카드 · 탭 알약
 export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 0 ${COLOR.ink}` };   // 고른 줄: 왼쪽 3px 남색 선
 
+// v19.3b Part C (Jack, 2026-11-06): 그래프에서 종목(보유 종목)은 비중이 큰 순서대로 이 남색 계열 여섯 가지로 칠해요. 일곱 번째부터는
+// 가장 옅은 색을 되풀이해요. 회사 로고 · 글자 표시의 색(company.js MARK_COLORS)은 그래프를 칠하지 않아요. 가격 빨강 · 파랑은 오름 ·
+// 내림에만, 주제 색은 기준과 주제에만, 살구색은 데이터 표시에만 써요.
+export const HOLDING_SHADES = ["#1C2B45", "#3D4B63", "#5A6B87", "#7C889C", "#9AA3B2", "#C9D0DB"];
+export const holdingShade = (rank) => HOLDING_SHADES[Math.min(HOLDING_SHADES.length - 1, Math.max(0, Math.floor(Number(rank)) || 0))];
+// weights: 종목마다 비중(숫자) → 같은 순서의 색. 비중이 큰 종목부터 진한 색이고, 비중이 같으면 앞에 있는 종목이 먼저예요.
+// 비중이 숫자가 아니면(빈칸) 맨 뒤 순위로 봐요 (빈칸을 0 으로 바꿔 순위를 매기지 않아요: 그래도 색은 하나 받아요).
+export function holdingShades(weights) {
+  const w = (weights || []).map((x) => (typeof x === "number" && Number.isFinite(x) ? x : null));
+  const order = w.map((x, i) => i).sort((a, b) => (w[a] == null) - (w[b] == null) || (w[b] ?? 0) - (w[a] ?? 0) || a - b);
+  const out = new Array(w.length);
+  order.forEach((i, rank) => { out[i] = holdingShade(rank); });
+  return out;
+}
+
 // 상태 색은 빨강·파랑을 쓰지 않아요 (한국에서는 가격 방향을 뜻하니까요)
 export const STATUS = {
   ok: { fg: COLOR.ok, bg: COLOR.okBg },

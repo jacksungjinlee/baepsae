@@ -12,10 +12,23 @@
 // 홈 화면 아이콘 (v19.5a, 2026-11-06): 새 이름의 그림(icon-v19-*.png · apple-touch-icon-v19.png)이라 어떤 캐시에도 없어요. 예전
 // icon-*.png 는 그대로 두고 홈 화면 아이콘으로는 더 쓰지 않아요 (예전 뱁새 화면 안의 작은 그림은 그대로예요). 이 줄로 워커 파일이 바뀌어서 휴대폰이 새 워커를 받아요 (캐시 이름은 그대로: 네트워크 우선이라
 // 온라인이면 새 페이지와 새 아이콘을 받아요).
+// 기준 · 템플릿 그림 (v19.3b Part A): 처음 설치될 때 미리 받아 둬서, 오프라인에서도 그림이 보여요. 그 뒤로는 다른 파일과
+// 같아요 (네트워크 우선, 받을 때마다 캐시를 새로 써요). 미리 받기가 실패해도 워커 설치는 멈추지 않고, 이유를 남겨요.
+// 목록은 pictures/ 의 그림 파일과 같아요 (tests/test_pictures.py). 이 줄들로 워커 파일이 바뀌어서 휴대폰이 새 워커를 받아요.
 const CACHE = "baepsae-v19-cv";
+const PICTURES = [
+  "adobe-arrows-coins", "adobe-bank", "adobe-chart", "adobe-coins", "adobe-gift", "adobe-profit", "adobe-safe", "adobe-tree",
+  "adobe-wallet", "fluent-balance-scale", "fluent-deciduous-tree", "fluent-gem-stone", "fluent-globe-showing-asia-australia",
+  "fluent-label", "fluent-magnifying-glass-tilted-left", "fluent-sailboat", "fluent-shopping-cart", "fluent-turtle", "fluent-umbrella",
+].map((n) => "./pictures/" + n + ".webp");
 
-self.addEventListener("install", () => {
+self.addEventListener("install", (e) => {
   self.skipWaiting();
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(PICTURES))
+      .catch((err) => console.warn("[sw] could not pre-cache the " + PICTURES.length + " pictures (they load when first shown online): " + err))
+  );
 });
 
 self.addEventListener("activate", (e) => {

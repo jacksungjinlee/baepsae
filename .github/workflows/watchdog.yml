@@ -9,7 +9,7 @@ name: Watchdog
 
 on:
   schedule:
-    # 16:37 KST 매일 (그날 실행이 늦어도 끝났을 때 · 정각·30분은 GitHub 이 붐벼서 피해요). 주말에도 돌아야 healthchecks.io 가
+    # 16:37 KST 매일 (아침 실행이 늦어도 끝났을 때 — 오후 재시도는 GitHub 이 7~8시간 늦게 시작하기도 해서 이 뒤에 끝날 수 있어요 · 정각·30분은 GitHub 이 붐벼서 피해요). 주말에도 돌아야 healthchecks.io 가
     # 하루 넘게 소식이 없다고 잘못 알리지 않아요 (주말의 기대 가격 날짜는 금요일이라 통과해요).
     - cron: "37 7 * * *"
     - cron: "19 3 1 * *"       # 매달 1일 12:19 KST: 다시 켜기만 (keepalive job)

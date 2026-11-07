@@ -30,7 +30,7 @@ export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, ex
       <CoMark t={t} name={nk} size={SPACE(9)} />
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{nk}</span>
-        {sub && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
+        {sub && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
       </span>
       {!plain && d1 != null && <span style={tx(SIZE.xs, WEIGHT.bold, changeColor(d1), { flexShrink: 0 })}>{signedPct(d1)}</span>}
     </>
@@ -81,7 +81,7 @@ export function PopularLists({ load, plain = false, tapper }) {
     <div data-ui-v2="popular-list" data-market={key} style={{ marginTop: SPACE(3), minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: SPACE(2) }}>
         <span style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{C.pick.market[key]}</span>
-        <span data-ui-v2="list-date" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(date) })}</span>
+        <span data-ui-v2="list-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(date) })}</span>
       </div>
       {items.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} plain={plain} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
       {/* v19.1c: a listed US stock priced at an earlier close (pxd). Names only (plain, the first-visit home): no note */}

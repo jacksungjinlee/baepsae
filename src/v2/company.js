@@ -199,11 +199,15 @@ function divKrExact(s, co) {
   const raw = num(s && s.dps);
   const adjFrom = st.now != null && f0 != null && f0 !== 1 && raw > 0 ? raw : null;
   const view = { dps: st.now, yieldPct, fy, dpsOk: st.now != null, ...(adjFrom != null ? { adjFrom } : {}) };
+  // adjYears (Jack, PR #68 2022/bars): the earlier report years (not the latest) whose bar was recalculated for a share count
+  // change (that year's dpsF is not 1), oldest first, for the note under the bars. Only years that have a bar.
+  const F = (s && Array.isArray(s.dpsF) ? s.dpsF : co && Array.isArray(co.dpsF) ? co.dpsF : null) || [];
+  const adjYearsOf = (d3) => (fy == null ? [] : [2, 1].filter((i) => d3[i] != null && num(F[i]) != null && num(F[i]) !== 1).map((i) => fy - i));
   const d3 = krDivHistory(s, co);                          // whole won
   if (!d3 || !(d3[0] > 0)) return { rule: "pays", ...view };
   const cur = d3[0], prev = d3[1];
   if (prev == null) return { rule: yieldPct != null ? "noPrev" : "na", ...view, ...(yieldPct != null ? {} : { dps: null, dpsOk: false }) };
-  const base = { ...view, d3 };
+  const base = { ...view, d3, adjYears: adjYearsOf(d3) };
   if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);
   if (n >= 2) return { rule: "streak", n, ...base };
@@ -327,7 +331,20 @@ export function warnings(s, co) {
   const finCo = FIN_SUB_SECTORS.includes(sec) || FIN_SUB_INDS.includes(s.ind);
   const narrow = exactNa && !!ran && ["l3", "imp"].every((c) => ran.includes(c));
   const sub = !narrow ? null : finCo ? "fin" : sec === "holding" ? "holding" : null;
-  return { allRan: !!ran && ran.length + na.length === WARN_CHECKS.length, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
+  const allRan = !!ran && ran.length + na.length === WARN_CHECKS.length;
+  // Jack, PR #68 B7 (2026-11-07): when every check ran except 이자보상배율, and the pipeline says that is because the
+  // statements have no interest-expense line (corp.json flWhy.icr "ie"), the card says which three it checked ("확인한 …
+  // 없어요"). Any other reason (no operating profit "op", a negative figure "neg", switched off "off" while the pipeline's
+  // ICR_OFF holds the check back, or no reason written) claims nothing.
+  const why = co.flWhy && typeof co.flWhy === "object" ? co.flWhy.icr : null;
+  const partial = !flags.length && !allRan && !!ran && ["cr", "l3", "imp"].every((c) => ran.includes(c)) && !ran.includes("icr") &&
+    !na.includes("icr") && why === "ie";
+  // Jack, PR #68 (2026-11-07): the ratio used the cash-flow statement's interest paid (corp.json flSrc.icr "cf", v19.1f).
+  // Not with an operating loss: that line shows no number, so there is no calculation to explain (review).
+  const icrFlag = flags.find((f) => f.code === "icr");
+  const icrCf = !!icrFlag && !(icrFlag.x < 0 || Object.is(icrFlag.x, -0)) && !!co.flSrc && typeof co.flSrc === "object" &&
+    co.flSrc.icr === "cf";
+  return { allRan, partial, icrCf, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------

@@ -328,15 +328,17 @@ def test_2022_estimate_is_a_range_from_the_beta_band():
     tinier = [{"s": kr("000050", beta=0.01, betaSE=0.001), "shares": 1, "cost": 1000000}]     # 0.2% → 0%: 하락이 아니에요
     flat = [{"s": kr("000060", beta=1.0, betaSE=0.0), "shares": 1, "cost": 1000000}]          # 양 끝이 같아요
     rich = [{"s": kr("000070", beta=1.2, betaSE=0.1), "shares": 1, "cost": 4e8}]              # 4억원: 1억 넘는 하락도 만원으로
-    small_amt = [{"s": kr("000080", beta=1.2, betaSE=0.1), "shares": 1, "cost": 30000}]       # 3만원: 1만원 밑의 하락은 원으로
+    small_amt = [{"s": kr("000080", beta=1.2, betaSE=0.1), "shares": 1, "cost": 30000}]       # 3만원: 7,500 ~ 10,500원 (1만원을 사이에 둬요)
+    tiny_amt = [{"s": kr("000090", beta=1.2, betaSE=0.1), "shares": 1, "cost": 20000}]        # 2만원: 5,000 ~ 7,000원 (둘 다 1만원 밑)
     got = run(EXACT + """
 const est = (r) => E.estimate2022(r, RR);
+const both = (r) => [D.y2022View(est(r)), D.y2022View(est(r), true)];
 out = { rows: est(ROWS), shaky: est(SHAKY), wide: D.y2022View(est(WIDE)), tiny: E.band2022(est(TINY)), tinier: D.y2022View(est(TINIER)),
-  flat: D.y2022View(est(FLAT)), view: D.y2022View(est(ROWS)), rich: D.y2022View(est(RICH)), smallAmt: D.y2022View(est(SMALL)),
+  flat: both(FLAT), view: both(ROWS), rich: both(RICH), straddle: both(SMALL), under: both(UNDER), wideShort: D.y2022View(est(WIDE), true),
   vol: E.deckVol(SHAKY.map((r) => ({ ...r, s: { vol: 30, ...r.s } })), { mktVol: 30, usVol: 18, bdVol: 5, rhoKrUs: 0.3, rhoKrBd: 0.1, rhoUsBd: 0 }, 3e6) };
 E.setDataShape({});
 out.legacy = est(ROWS); out.legacyView = D.y2022View(out.legacy);""", RR=R, ROWS=rows, SHAKY=shaky, WIDE=wide, TINY=tiny, TINIER=tinier, FLAT=flat,
-              RICH=rich, SMALL=small_amt)
+              RICH=rich, SMALL=small_amt, UNDER=tiny_amt)
     r = got["rows"]
     assert r["ok"] and abs(r["won"] - (-300000 - 75000 - 10000)) < 1e-6
     small = -0.25 * 1.0 * 1e6 - 0.15 * 0.4 * 1e6 - 0.02 * 5e5
@@ -346,26 +348,54 @@ out.legacy = est(ROWS); out.legacyView = D.y2022View(out.legacy);""", RR=R, ROWS
     s = got["shaky"]
     assert abs(s["missing"] - 0.5 / 3) < 1e-12 and abs(s["band"]["small"] - small / 2.5e6 * 3e6) < 1e-6
     assert abs(got["vol"]["missing"] - 0.5 / 3) < 1e-12                                     # 1년 출렁임도 그 베타를 쓰지 않아요
-    # Jack, PR #68 B1: 빼기 없이 하락 폭으로, 작은 하락 먼저, 만원
-    assert got["view"]["text"] == "약 32~45만원 줄었을 거예요" and got["view"]["parts"] == ["32", "45만원"]
-    assert got["view"]["pct"] == [13, 18]                                                  # 320,000 / 2,500,000 = 12.8% → 13%
-    assert got["rich"]["text"] == "약 10,000~14,000만원 줄었을 거예요"                       # 1억 넘어도 만원 (wonText 와 같은 모양)
-    assert got["smallAmt"]["text"] == "약 7,500~10,500원 줄었을 거예요"                       # 작은 하락이 1만원 밑이면 두 끝 모두 원
-    for v in (got["view"], got["rich"], got["smallAmt"], got["flat"]):
-        assert "\u2212" not in v["text"] and "-" not in v["text"], v
-        pre, amount, verb = v["pieces"]                                                   # \uc881\uc740 \uce78\uc740 \uae08\uc561 \u00b7 \ub3d9\uc0ac \uac00\uc6b4\ub370\uc11c \ub04a\uc9c0 \uc54a\uc544\uc694
-        assert pre + amount + " " + verb == v["text"] and pre == "\uc57d " and verb == "\uc904\uc5c8\uc744 \uac70\uc608\uc694", v
-    assert got["view"]["pieces"][1] == "32~45\ub9cc\uc6d0" and got["flat"]["pieces"][1] == "25\ub9cc\uc6d0"
-    assert got["wide"] == {"wide": True} and got["tinier"] == {"wide": True}
+    # Jack, PR #68: 빼기 없이 하락 폭으로, 작은 하락 먼저, 원으로만, '줄어들 수 있어요' · 4단계의 좁은 칸은 '약' 없이
+    want = {"view": ("32~45만원", "약 32~45만원 줄어들 수 있어요", "32~45만원 줄어들 수 있어요"),
+            "rich": ("10,000~14,000만원", "약 10,000~14,000만원 줄어들 수 있어요", "10,000~14,000만원 줄어들 수 있어요"),   # 1억 넘어도 만원
+            "straddle": ("7,500원~1만원", "약 7,500원~1만원 줄어들 수 있어요", "7,500원~1만원 줄어들 수 있어요"),        # 두 끝 모두 앱의 원 표기
+            "under": ("5,000~7,000원", "약 5,000~7,000원 줄어들 수 있어요", "5,000~7,000원 줄어들 수 있어요"),
+            "flat": ("25만원", "약 25만원 줄어들 수 있어요", "25만원 줄어들 수 있어요")}                                # 같은 금액이면 한 숫자
+    for k, (amount, plan, short) in want.items():
+        v, w = got[k]
+        assert (v["text"], w["text"]) == (plan, short), (k, v["text"], w["text"])
+        assert v["pieces"] == ["약 ", amount, "줄어들 수 있어요"] and w["pieces"] == ["", amount, "줄어들 수 있어요"], (k, v["pieces"], w["pieces"])
+        assert "\u2212" not in v["text"] + w["text"] and "-" not in v["text"] + w["text"] and "%" not in v["text"] + w["text"], k
+    assert got["view"][0]["pct"] == [13, 18]                                               # 320,000 / 2,500,000 = 12.8% → 13% (화면에는 없어요)
+    assert len(got["flat"][0]["parts"]) == 1 and len(got["view"][0]["parts"]) == 2
+    assert got["wide"] == {"wide": True} and got["tinier"] == {"wide": True} and got["wideShort"] == {"wide": True}
     assert got["tiny"]["pctSmall"] == 1
-    assert got["flat"]["parts"] == ["25만원"] and got["flat"]["text"] == "약 25만원 줄었을 거예요"   # 같은 금액이면 한 숫자
     assert "band" not in got["legacy"] and got["legacyView"] is None                         # 예전 파일: 한 숫자 그대로
 
 
 def test_2022_copy_lines_are_the_approved_ones():
-    got = run("out = [C.plan.y2022Wide, C.plan.y2022Range, C.co.risk.noBand === undefined, C.plan.y2022FallRange, C.plan.y2022Fall, C.plan.y2022NoteRange, C.plan.y2022Note];")
-    assert got == ["오차가 너무 커서 추정하지 않았어요.", "범위는 베타를 계산할 때 생기는 오차를 반영했어요.", True, "약 {small}~{big}만원 줄었을 거예요",
-                   "약 {x} 줄었을 거예요", "2022년 시장 하락 폭을 바탕으로 어림한 범위예요", "2022년 시장 하락 폭을 바탕으로 어림한 값이에요"]
+    got = run("out = [C.plan.y2022Wide, C.plan.y2022Range, C.co.risk.noBand === undefined, C.plan.y2022MayRange, C.plan.y2022May,"
+              " C.build.s4.y2022MayRange, C.build.s4.y2022May, C.plan.y2022NoteRange, C.plan.y2022Note, C.plan.y2022FallRange === undefined];")
+    assert got == ["오차가 너무 커서 추정하지 않았어요.", "범위는 베타를 계산할 때 생기는 오차를 반영했어요.", True, "약 {small}~{big}만원 줄어들 수 있어요",
+                   "약 {x} 줄어들 수 있어요", "{small}~{big}만원 줄어들 수 있어요", "{x} 줄어들 수 있어요",
+                   "2022년 시장 하락 폭을 바탕으로 어림한 범위예요", "2022년 시장 하락 폭을 바탕으로 어림한 값이에요", True]
+    build = open(os.path.join(ROOT, "src", "v2", "build.jsx"), encoding="utf-8").read()
+    assert "view: y2022View(r.y2022, true)" in build                                        # 4단계는 '약' 없는 칸 문구
+
+
+# ── 앞 막대를 다시 계산했을 때 (Jack, PR #68 2022/bars) ──
+def test_the_bars_note_only_when_an_earlier_bar_was_recalculated():
+    base = dict(SAMSUNG, t="000500", divSt="adj", dps=800.0, dps3=[800.0, 600.0, 500.0], dps3a=[800.0, 600.0, 500.0], dyt=0.4)
+    cases = {"leeno": dict(base, dpsF=[1.0, 5.0, 5.0]), "one": dict(base, dpsF=[1.0, 1.0, 10.0]), "all": dict(base, dpsF=[10.0, 10.0, 10.0], dps=8000.0),
+             "none": dict(base, divSt="same", dpsF=[1.0, 1.0, 1.0]), "gap": dict(base, dpsF=[1.0, 2.0, None], dps3a=[800.0, 600.0, None]),
+             "nc": dict(base, divSt="nc", dpsF=[1.0, None, 5.0], dps3a=[800.0, None, 100.0])}
+    got = run(EXACT + """out = Object.fromEntries(Object.entries(CS).map(([k, s]) => { const d = K.divKr(s, null);
+  return [k, { rule: d.rule, years: d.adjYears ?? null, adjFrom: d.adjFrom ?? null }]; }));
+out.note = C.co.div.barsAdjNote;
+E.setDataShape({}); out.old = K.divKr(CS.leeno, null).adjYears ?? null;""", CS=cases)
+    assert got["leeno"]["years"] == [2023, 2024] and got["leeno"]["adjFrom"] is None              # [1, 5, 5] → "2023·2024", 위 안내 없음
+    assert got["one"]["years"] == [2023] and got["one"]["adjFrom"] is None                        # [1, 1, 10] → "2023"
+    assert got["all"]["years"] == [2023, 2024] and got["all"]["adjFrom"] == 8000                  # [10, 10, 10] → 두 안내 모두
+    assert got["none"]["years"] == [] and got["none"]["adjFrom"] is None                          # [1, 1, 1] → 없음
+    assert got["gap"]["years"] == [2024]                                                         # 막대가 없는 해(2023)는 말하지 않아요
+    assert got["nc"]["years"] is None and got["nc"]["rule"] == "pays"                            # 비교 불가: 막대도 안내도 없음
+    assert got["old"] is None
+    assert got["note"] == "주식 수가 달라지기 전인 {years}년 배당은 지금 1주 기준으로 다시 계산했어요."
+    tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    assert '<Note data-ui-v2="co-bars-adj">{fill(Dv.barsAdjNote, { years: adjYears.join("·") })}</Note>' in tabs
 
 
 # ── 배당 감소 안내 (Jack, PR #68 B4) ──
@@ -412,6 +442,49 @@ out.line = C.co.warn.noneSubFin; out.hold = C.co.warn.noneSubHolding; out.old = 
     assert got["old"] == "3년 연속 순손실, 빚 부담, 자본잠식 같은 신호를 최근 공시로 확인해요."
     src = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
     assert '(w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub' in src
+
+
+def test_the_partial_line_only_when_icr_alone_is_missing_for_want_of_an_interest_line():
+    """Jack, PR #68 B7 (2026-11-07, option 1): 유동비율 · 3년 연속 순손실 · 자본잠식은 돌았고 이자보상배율만 못 돌렸는데 그 이유가
+    재무제표에 이자비용 줄이 없어서(corp.json flWhy.icr 'ie')일 때만 '확인한 재무 경고 신호는 없어요' + 그 이유 줄. 업종과 상관없어요.
+    이유가 다르거나(영업이익 없음 op · 음수 neg) 적혀 있지 않거나, 다른 확인도 빠졌거나, 경고가 하나라도 있으면 그 줄은 없어요."""
+    rows = {
+        "ie": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}},
+        "holdingIe": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}, "s": "holding"},
+        "op": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "op"}},
+        "neg": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "neg"}},
+        "noWhy": {"flRan": ["cr", "l3", "imp"]},
+        "badWhy": {"flRan": ["cr", "l3", "imp"], "flWhy": "ie"},
+        "noCr": {"flRan": ["l3", "imp"], "flWhy": {"icr": "ie"}},
+        "all": {"flRan": ["cr", "icr", "l3", "imp"], "flWhy": {"icr": "ie"}},
+        "na": {"flRan": ["l3", "imp"], "flNa": ["cr", "icr"], "flWhy": {"icr": "ie"}, "s": "bank"},
+        "flag": {"flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}, "fl": {"cr": 80}},
+    }
+    got = run("""out = Object.fromEntries(Object.entries(ROWS).map(([k, r]) => {
+  const w = K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, ...r });
+  return [k, [w.allRan, w.partial, w.flags.length]]; }));
+out.head = C.co.warn.nonePartial; out.sub = C.co.warn.noneSubNoIcr;""", ROWS=rows)
+    assert got["ie"] == [False, True, 0] and got["holdingIe"] == [False, True, 0]
+    for k in ("op", "neg", "noWhy", "badWhy", "noCr"):
+        assert got[k][1] is False, k
+    assert got["all"] == [True, False, 0] and got["na"] == [True, False, 0]
+    assert got["flag"] == [False, False, 1]                    # 경고가 있으면 '없어요' 줄은 없어요 (화면은 경고 줄)
+    assert got["head"] == "확인한 재무 경고 신호는 없어요"
+    assert got["sub"] == "이자보상배율은 재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요. 유동비율, 3년 연속 순손실, 자본잠식은 최근 공시로 확인했어요."
+    src = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
+    assert "if (!w.flags.length) {" in src and "if (!w.allRan && !w.partial) return null;" in src
+    # 영업손실은 숫자 없이 · 현금흐름표의 이자 지급액이면 그 경고 밑에 안내 (Jack, PR #68 · 2026-11-07)
+    cf = run("""out = [K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'cf' } }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'is' } }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { cr: 80 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'cf' } }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: 'cf' }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: -0.41 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'cf' } }).icrCf,
+  K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, flRan: ['cr', 'l3', 'imp'], flWhy: { icr: 'off' } }).partial,
+  C.co.warn.icrLoss, C.co.warn.icrCfNote];""")
+    assert cf == [True, False, False, False, False, False,                     # 영업손실(숫자 없음)엔 계산 안내도 없어요 · off 는 말 없음
+                  "영업손실이 나서 영업이익으로 이자를 내지 못해요.", "현금흐름표의 이자 지급액으로 계산했어요."]
+    assert 'f.x < 0 || Object.is(f.x, -0) ? W.icrLoss || null' in src
+    assert src.index("if (!w.flags.length) {") < src.index("const head = w.partial ? W.nonePartial : W.none;")
 
 
 # ── 분할 · 무상증자로 다시 계산한 주당 배당 (Jack, PR #68 B3) ──

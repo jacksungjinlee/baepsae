@@ -25,11 +25,11 @@ def now_kst():
 
 
 # ── DART quiet window ──────────────────────────────────────────────────────────────────────────────────────────────
-# The daily data run (update-data.yml) starts 03:47 · 05:13 · 06:43 · 08:17 KST (Tue–Sat) and 10:53 · 13:37 KST
+# The daily data run (update-data.yml) starts 03:47 · 05:13 · 06:43 · 08:17 KST (Tue–Sat) and 10:53 · 13:37 · 14:47 KST
 # (Mon–Sat); the morning starts are the ones that normally fetch, and a later start stops before DART once the day's
 # data is published (already_published.py). A tool that spends the same DART key's daily allowance must not run in
 # 03:40–08:30 KST (Jack, 2026-11-05), so the morning run never finds the allowance used up. If a morning run failed,
-# a 10:53 or 13:37 run may use DART too: the 3,000-call cap of dart_homepages.py leaves room for it.
+# a 10:53, 13:37 or 14:47 run may use DART too: the 3,000-call cap of dart_homepages.py leaves room for it.
 QUIET_START = dt.time(3, 40)
 QUIET_END = dt.time(8, 30)
 

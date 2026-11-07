@@ -182,24 +182,32 @@ export const aboutWon = (won) => fill(C.app.about, { x: wonText(won) });
 // about a special dividend (Jack, PR #68 B4); files before v19.1b keep the hint that names 액면분할 too.
 export const divDropBody = () => (exactData() && C.pick.caution.divDropBodyExact ? C.pick.caution.divDropBodyExact : C.pick.caution.divDropBody);
 
-// The 2022 line with the beta band (v19.1b data, Part O.1; engine.band2022; Jack, PR #68 B1): the size of the fall with no
-// minus sign, the smaller fall first: "약 50~77만원 줄었을 거예요" (plan.y2022FallRange). Amounts in 만원 as wonText does (from
-// 1억 too: "약 10,234~12,000만원 …"); when the smaller fall is below 1만원 both ends in 원 ("약 4,000~12,000원 …",
-// plan.y2022Fall). Both ends the same amount -> one: "약 63만원 줄었을 거예요" (plan.y2022Fall). The smaller end not a fall
-// (whole % 0 or a gain) -> { wide: true }: the screen says plan.y2022Wide instead. null -> no band (files before v19.1b):
-// the screen keeps its one signed number. parts: the amount texts (1 = one number, 2 = a range); pct: the whole % of each end.
-export function y2022View(est) {
+// The 2022 line with the beta band (v19.1b data, Part O.1; engine.band2022; Jack, PR #68): the size of the fall with no minus
+// sign, the smaller fall first, won only, ending 줄어들 수 있어요 (the label says 2022년처럼 떨어지면):
+//   both ends from 1만원 -> 만원 as wonText does, from 1억 too: "약 50~77만원 줄어들 수 있어요" (plan.y2022MayRange)
+//   both ends below 1만원 -> 원: "약 4,000~8,000원 …" (plan.y2022May)
+//   the two ends on either side of 1만원 -> the app's won format (wonText) on each end, unit repeated: "약 7,500원~1만원 …"
+//   both ends the same amount -> one: "약 63만원 줄어들 수 있어요" (plan.y2022May)
+// short: the narrow columns of 포트폴리오 만들기 4단계, the same without 약 (build.s4.y2022MayRange · y2022May). The smaller end
+// not a fall (whole % 0 or a gain) -> { wide: true }: the screen says plan.y2022Wide instead. null -> no band (files before
+// v19.1b): the screen keeps its one signed number. parts: the amount texts (1 = one number, 2 = a range); pct: whole % of each end.
+export function y2022View(est, short = false) {
   const b = band2022(est);
   if (!b) return null;
   if (b.wide) return { wide: true };
-  const lo = -b.small, hi = -b.big;                       // sizes of the fall, lo <= hi
-  const man = lo >= 10000;                                 // as wonText: 만원 from 1만원
-  const x = man ? Math.round(lo / 10000) : Math.round(lo), y = man ? Math.round(hi / 10000) : Math.round(hi);
-  const unit = (n) => fill(man ? C.app.man : C.app.won, { n: nf(n) });
+  const T = short ? C.build.s4 : C.plan;
+  const L = Math.round(-b.small), H = Math.round(-b.big);  // sizes of the fall in won, L <= H
   const pct = [b.pctSmall, b.pctBig];
-  if (x === y) return { parts: [unit(x)], ...fallPieces(C.plan.y2022Fall, { x: unit(x) }), pct };
-  return { parts: [nf(x), unit(y)], pct, ...(man ? fallPieces(C.plan.y2022FallRange, { small: nf(x), big: nf(y) })
-    : fallPieces(C.plan.y2022Fall, { x: `${nf(x)}~${unit(y)}` })) };
+  const one = (x) => ({ parts: [x], ...fallPieces(T.y2022May, { x }), pct });
+  if (L >= 10000) {
+    const x = Math.round(L / 10000), y = Math.round(H / 10000), man = (n) => fill(C.app.man, { n: nf(n) });
+    return x === y ? one(man(x)) : { parts: [nf(x), man(y)], ...fallPieces(T.y2022MayRange, { small: nf(x), big: nf(y) }), pct };
+  }
+  if (H < 10000) {
+    const won = (n) => fill(C.app.won, { n: nf(n) });
+    return L === H ? one(won(L)) : { parts: [nf(L), won(H)], ...fallPieces(T.y2022May, { x: `${nf(L)}~${won(H)}` }), pct };
+  }
+  return { parts: [wonText(L), wonText(H)], ...fallPieces(T.y2022May, { x: `${wonText(L)}~${wonText(H)}` }), pct };
 }
 // The approved line cut where a narrow column may wrap, without any word of it in the code: the text before the first
 // {slot} (pre), the slots with the unit glued to the last one (amount), and the rest (verb). pre + amount + " " + verb is
