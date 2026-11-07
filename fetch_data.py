@@ -1369,9 +1369,10 @@ def interest_paid_rows(rows):
              and "신종자본" not in acct_name(r.get("account_nm"))
              and any(w in acct_name(r.get("account_nm")) for w in ("지급", "지출", "납부"))]
     # 표준 계정이 없는 줄도 더해요 (예: '차입원가 자본화 이자의 지급'). 다만 코드가 있는 줄과 이름 · 금액이 같으면 같은 줄이라 한 번만
-    coded = {(acct_name(r.get("account_nm")), r.get("thstrm_amount")) for r in by_id}
+    amt = lambda r: abs(_num(r.get("thstrm_amount")) or 0.0)       # −X 와 +X 로 적힌 같은 줄도 같은 줄로
+    coded = {(acct_name(r.get("account_nm")), amt(r)) for r in by_id}
     seen, out = set(), []
-    for r in by_id + [r for r in loose if (acct_name(r.get("account_nm")), r.get("thstrm_amount")) not in coded]:
+    for r in by_id + [r for r in loose if (acct_name(r.get("account_nm")), amt(r)) not in coded]:
         k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
         if k not in seen:
             seen.add(k)
@@ -2534,8 +2535,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         iec_v, ttm_neg = eff["iec"], False
         if iec_v is not None and iec_v < 0 and _fin(fin.get("iec")) is not None and fin["iec"] >= 0:
             iec_v, ttm_neg = fin["iec"], True
-        if eff["ie"] is not None and (eff["ie"] >= 0 or iec_v is None):
-            ie_v, ie_src = eff["ie"], "is"
+        ie_is = eff["ie"]
+        if ie_is is not None and ie_is < 0 and _fin(fin.get("ie")) is not None and fin["ie"] >= 0:
+            ie_is = fin["ie"]                           # TTM 이자비용이 음수면 연간 이자비용 먼저 (그래도 손익계산서 값)
+        if ie_is is not None and (ie_is >= 0 or iec_v is None):
+            ie_v, ie_src = ie_is, "is"
         elif iec_v is not None:
             ie_v, ie_src = iec_v, "cf"
         else:
@@ -2545,7 +2549,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
             row["flSrc"] = {"icr": ie_src}
             src_n[ie_src] += 1
-            src_n["isNeg"] += ie_src == "cf" and eff["ie"] is not None
+            src_n["isNeg"] += ie_src == "cf" and ie_is is not None
             src_n["cfTtmNeg"] += ie_src == "cf" and ttm_neg
         if icr_ok and not ICR_OFF and ie_v > 0:
             icr = op0f / ie_v

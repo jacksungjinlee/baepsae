@@ -151,8 +151,8 @@ def test_lines_without_a_standard_code_are_added_unless_they_repeat_a_coded_line
     assert F.parse_dart_list(loose)["_fin"]["iec"] == 20.0
     both = loose + [row("CF", "이자지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", -1e9)]
     assert F.parse_dart_list(both)["_fin"]["iec"] == 30.0                           # 코드 없는 줄도 더해요 ('모든 이자 지급 줄')
-    same = loose + [row("CF", "이자의 지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", -2e9)]
-    assert F.parse_dart_list(same)["_fin"]["iec"] == 20.0                           # 이름 · 금액이 같은 줄은 한 번만 (두 번 세지 않게)
+    same = loose + [row("CF", "이자의 지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", 2e9)]
+    assert F.parse_dart_list(same)["_fin"]["iec"] == 20.0                           # 이름 · 금액(부호 무시)이 같은 줄은 한 번만
     none = BS + [row("IS", "매출액", "ifrs-full_Revenue", 1e11)]
     assert F.parse_dart_list(none)["_fin"]["iec"] is None
 
@@ -184,7 +184,7 @@ def test_icr_is_on_again_and_says_which_interest_it_used():
     c = corp(dict(common, iec=2.0))
     assert c["flSrc"] == {"icr": "cf"} and "fl" not in c and c["flRan"] == ["cr", "icr", "l3", "imp"]   # 5 ÷ 2 = 2.5배: 경고 없음
     c = corp(dict(common, op=[-3.0, 0, 0], iec=2.0))
-    assert c["fl"]["icr"] == -1.5 and c["flSrc"] == {"icr": "cf"}                  # 영업손실 (2.0 은 #68 부터 숫자 없이 말해요)
+    assert c["fl"]["icr"] == -1.5 and c["flSrc"] == {"icr": "cf"}                  # 영업손실 (PR #68 이 들어가면 2.0 은 숫자 없이 말해요)
     c = corp(common)
     assert c["flWhy"] == {"icr": "ie"} and "flSrc" not in c and "icr" not in c["flRan"]   # 둘 다 없음: '찾지 못해' 줄
     bank = corp(dict(common, ie=10.0), s="bank", ind="bank")
@@ -199,6 +199,8 @@ def test_a_negative_interest_figure_falls_back_instead_of_silencing_the_check():
     assert c["flWhy"] == {"icr": "neg"}
     c = corp(dict(common, iec=10.0, ttm={"op": 5.0, "iec": -3.0}))                 # TTM 이 음수(분기마다 줄이 달라서) → 연간 값으로
     assert c["flSrc"] == {"icr": "cf"} and c["fl"]["icr"] == 0.5
+    c = corp(dict(common, ie=10.0, iec=1.0, ttm={"op": 5.0, "ie": -2.0}))         # TTM 이자비용이 음수 → 연간 이자비용 (손익계산서)
+    assert c["flSrc"] == {"icr": "is"} and c["fl"]["icr"] == 0.5
 
 
 def test_quarter_and_half_year_net_income_names():
