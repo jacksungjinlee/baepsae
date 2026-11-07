@@ -74,7 +74,7 @@ def test_a_good_file_imports_and_round_trips():
     ("통화", bad(["decks", 0, "purchases", 0, "ccy"], "EUR")),
     ("보유에 없는 종목", bad(["decks", 0, "purchases", 0, "t"], "999999")),
     ("목표 비중 2", bad(["decks", 0, "holdings", 0, "target"], 2)),
-    ("판 버전", bad(["v"], 2)),
+    ("판 버전", bad(["v"], 3)),          # v19.3d: 2 는 이제 읽는 판이라(저장 기록 2판) 이 앱이 모르는 다음 판으로 (v19.6 스펙 'Test changes': test_v2_store.py version)
     ("덱 배열 아님", bad(["decks"], {"0": 1})),
 ])
 def test_malformed_files_are_rejected_whole(why, text):

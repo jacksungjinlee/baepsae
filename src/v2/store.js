@@ -6,13 +6,51 @@
 // v19.1a: two more optional parts, per stock (any stock, held or not): notes (내 메모: { [code]: { text, at } }) and
 // assume (가치 자세히 · 이 가정 저장하기: { [code]: { disc, term, at } }). Same rule: absent is fine, present must be valid.
 // The preview page (app-preview.html) uses its own key so example records never mix with real ones.
+//
+// ---------------- store version 2 (v19.3d; v19.3 Part F.1 and v19.6 Part A.1, one migration for both) ----------------
+// Every part below is optional, so every store saved before (version 1, with or without confirms, planFx, planPx, notes,
+// assume) is a valid version-2 store: it is read as it is ("migrate on read" has nothing to rewrite).
+// Per portfolio:
+//   kind     "imported": made with 가진 종목 넣기. It has no per-stock rule book, so only the four portfolio rules run on
+//            it (pf.js); settings then holds the 기준 the user chose ({ points, strict }) and is checked here.
+//   imported [row]: holdings the user already owned, one row per stock, each with a matching holding (like purchases):
+//              { t, nk, ccy, qty, date?, avg?, unscored? }                 quantity: Korea whole shares, US up to 4 decimals
+//              { t, nk, ccy, amountWon, close, date, fx?, avg?, unscored? } 금액으로 넣기: the amount in won with that day's
+//                                                                          close (own currency), date and (US) rate; the
+//                                                                          share count is derived from them (held.js)
+//              { nk, ccy: "KRW", amountWon, date, unscored: true }         a stock not in the data, added by name: no code,
+//                                                                          no share count; its value is the amount as of date
+//            avg = 평균 단가 as typed, in the stock's currency (never filled in by the app). unscored = the 기준 could not
+//            score it when it was added (a display mark; the report always decides from today's data).
+//   sales    [{ t, qty, price, date, ccy, fx? }] 팔았어요 (v19.6a). qty in 1/10,000 units; a Korean sale is whole shares
+//            unless the stock was imported by amount (then it can only be sold all at once, v19.6 A.2).
+//   divs     [{ t, amount, ccy, date, fx? }] 배당 받았어요 (v19.6a), after tax, in the stock's currency.
+//   history  [{ t, nk, out, cls?, imported?, purchases?, sales?, divs? }] records of a stock taken out of the portfolio
+//            (v19.6 A.3): they need no matching holding, and a later dividend of that stock goes into its entry.
+//   limits   { stock?, ind? } the two concentration rules' limits in % (defaults 30 and 35, pf.js), when the user changed them.
+// Held quantity everywhere = imported + purchases − sales (held.js); no sale may take a holding below 0.
+// Top level: guideSeen (v19.3c Part E: the first-visit guide was seen, the date) — a flag of this device, so it never
+// travels in a records file; until v19.3d it lived in its own key (key + ".guideSeen"), which is still read once.
+//
+// Version tag: a store is written as v1 while it holds no version-2-only part (above: kind … limits), so a tab still
+// running the earlier app, or a revert of this change, keeps reading it; it becomes v2 with the first such part. An
+// older app moves a v2 store it cannot read to a backup key before writing its own; readStore finds that backup, puts
+// it back and adds what the other tab saved (mergeTabs), and the screens say so once (C.store.merged).
+//
+// Checking: every field the app reads back is checked. A records FILE with one bad field is refused whole (nothing is
+// stored). STORED records are checked per portfolio: a portfolio with a bad field (e.g. one bad imported row) is set
+// aside with a console message naming it (portfolio, part, row, stock, reason), the other portfolios stay readable, and
+// the first write keeps the stored text under a backup key, so nothing is ever lost.
 import { okAssume } from "./dcf.js";
+import { CARDS, STRICT, POINTS_MAX, POINTS_TOTAL } from "./engine.js";
+import { okUnits, belowZero, importedUnits } from "./held.js";
 
 export const STORE_KEY = "baepsae2.v1";
 export const PREVIEW_STORE_KEY = "baepsae2.preview.v1";
-export const STORE_VERSION = 1;
+export const STORE_VERSION = 2;                      // the newest version this app reads and writes
+export const BASE_VERSION = 1;                       // the tag of a store with no version-2-only part
 
-export const emptyStore = () => ({ v: STORE_VERSION, decks: [] });
+export const emptyStore = () => ({ v: BASE_VERSION, decks: [] });
 
 // The current app (baepsae.html) keeps its portfolios under this key. 2.0 never reads their contents or changes them:
 // it only checks whether any exist, to tell a returning visitor where to find them (Part F, Jack 2026-11-01).
@@ -26,51 +64,235 @@ export function hasOldAppRecords(get = (k) => localStorage.getItem(k)) {
 
 const isStr = (x, max = 200) => typeof x === "string" && x.length > 0 && x.length <= max;
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+const isPos = (x) => isNum(x) && x > 0;
 const isDate = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + "T00:00:00Z"))
   && new Date(x + "T00:00:00Z").toISOString().slice(0, 10) === x;
+const pastDate = (x, today) => isDate(x) && !(today && x > today);
+const plainObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+const okStockCode = (t) => isStr(t, 20) && /^[0-9A-Za-z][0-9A-Za-z.-]*$/.test(t);
+const CCY = ["KRW", "USD"];
 
-// Every field the app reads back is checked. One bad field rejects the whole file (nothing is stored).
-export function validStore(d, today) {
-  if (!d || typeof d !== "object" || Array.isArray(d) || d.v !== STORE_VERSION || !Array.isArray(d.decks)) return false;
-  const ids = new Set();
-  for (const x of d.decks) {
-    if (!x || typeof x !== "object" || !isStr(x.id, 60) || ids.has(x.id) || !isStr(x.name, 60)) return false;
-    ids.add(x.id);
-    if (x.createdAt != null && !isDate(x.createdAt)) return false;
-    if (x.planFx != null && !(isNum(x.planFx) && x.planFx > 0)) return false;           // the USD/KRW rate the plan used
-    if (!Array.isArray(x.holdings) || !Array.isArray(x.purchases)) return false;
-    for (const h of x.holdings) {
-      if (!h || typeof h !== "object" || !isStr(h.t, 20) || !isStr(h.nk, 120)) return false;
-      if (h.target != null && !(isNum(h.target) && h.target >= 0 && h.target <= 1)) return false;
-      if (h.plannedQty != null && !(Number.isInteger(h.plannedQty) && h.plannedQty >= 0)) return false;
-      if (h.planPx != null && !(isNum(h.planPx) && h.planPx > 0)) return false;          // the price the plan used
-      if (h.rules != null && !Array.isArray(h.rules)) return false;
+// The version-2-only parts of a portfolio (any of them present makes the store v2).
+export const V2_DECK_PARTS = ["kind", "imported", "sales", "divs", "history", "limits"];
+export const hasV2Parts = (d) => !!(d && Array.isArray(d.decks) && d.decks.some((x) => plainObj(x) && V2_DECK_PARTS.some((k) => x[k] != null)));
+export const versionFor = (d) => (hasV2Parts(d) ? STORE_VERSION : BASE_VERSION);
+
+// ---------------- one portfolio ----------------
+// null when the portfolio is valid, else the first problem: { part, row (1-based) or null, t, why } (English, for the
+// console: the screens use their own approved words).
+const bad = (part, row, t, why) => ({ part, row: row == null ? null : row + 1, t: t || null, why });
+
+function purchaseProblem(p, i, today, holds, part = "purchases") {
+  if (!plainObj(p) || !isStr(p.t, 20)) return bad(part, i, null, "not a record with a stock code");
+  if (!(Number.isInteger(p.qty) && p.qty > 0)) return bad(part, i, p.t, "quantity must be a whole number above 0");
+  if (!isPos(p.price)) return bad(part, i, p.t, "price must be a number above 0");
+  if (!pastDate(p.date, today)) return bad(part, i, p.t, "date must be a real date, not after today");
+  if (!CCY.includes(p.ccy)) return bad(part, i, p.t, "currency must be KRW or USD");
+  // Part E: a US purchase carries the won-per-dollar rate the plan used (for 원금 in won). Optional, so earlier records
+  // still read; when present it must be a positive number on a USD purchase.
+  if (p.fx != null && !(p.ccy === "USD" && isPos(p.fx))) return bad(part, i, p.t, "exchange rate only on a USD record, above 0");
+  if (!holds(p.t)) return bad(part, i, p.t, "no holding with this code");
+  return null;
+}
+
+// 평균 단가 (optional): as typed, in the stock's currency, above 0.
+function importedProblem(r, i, today, holds, part = "imported") {
+  if (!plainObj(r)) return bad(part, i, null, "not a row");
+  const t = r.t;
+  if (!isStr(r.nk, 120)) return bad(part, i, t, "name missing");
+  if (!CCY.includes(r.ccy)) return bad(part, i, t, "currency must be KRW or USD");
+  if (r.avg != null && !isPos(r.avg)) return bad(part, i, t, "평균 단가 must be a number above 0");
+  if (r.unscored != null && r.unscored !== true) return bad(part, i, t, "unscored must be true when present");
+  if (r.date != null && !pastDate(r.date, today)) return bad(part, i, t, "date must be a real date, not after today");
+  if (t == null) {                                         // a stock not in the data, added by name with an amount only
+    if (r.qty != null || r.close != null || r.fx != null || r.avg != null) return bad(part, i, null, "a row without a code takes an amount only");
+    if (r.ccy !== "KRW" || !isPos(r.amountWon) || !isDate(r.date) || r.unscored !== true) return bad(part, i, null, "a row without a code needs an amount in won, its date and the unscored mark");
+    return null;
+  }
+  if (!okStockCode(t)) return bad(part, i, t, "stock code is not valid");
+  if (!holds(t)) return bad(part, i, t, "no holding with this code");
+  const hasQ = r.qty != null, hasA = r.amountWon != null;
+  if (hasQ === hasA) return bad(part, i, t, "needs a quantity or an amount, not both");
+  if (hasQ) {
+    if (r.close != null || r.fx != null) return bad(part, i, t, "a quantity row takes no close or rate");
+    if (r.ccy === "KRW" ? !(Number.isInteger(r.qty) && r.qty > 0) : !okUnits(r.qty)) {
+      return bad(part, i, t, r.ccy === "KRW" ? "quantity must be whole shares for a Korean stock" : "quantity must be above 0 with at most 4 decimals");
     }
-    for (const p of x.purchases) {
-      if (!p || typeof p !== "object" || !isStr(p.t, 20)) return false;
-      if (!(Number.isInteger(p.qty) && p.qty > 0)) return false;
-      if (!(isNum(p.price) && p.price > 0)) return false;
-      if (!isDate(p.date) || (today && p.date > today)) return false;
-      if (p.ccy !== "KRW" && p.ccy !== "USD") return false;
-      // Part E: a US purchase carries the won-per-dollar rate the plan used (for 원금 in won). Optional, so earlier records
-      // still read; when present it must be a positive number on a USD purchase.
-      if (p.fx != null && !(p.ccy === "USD" && isNum(p.fx) && p.fx > 0)) return false;
-      if (!x.holdings.some((h) => h.t === p.t)) return false;
-    }
-    if (x.confirms != null) {
-      if (!Array.isArray(x.confirms)) return false;
-      for (const c of x.confirms) if (!validConfirm(c, today) || !x.holdings.some((h) => h.t === c.t)) return false;
+    return null;
+  }
+  if (!isPos(r.amountWon)) return bad(part, i, t, "amount must be a number above 0");
+  if (!isPos(r.close)) return bad(part, i, t, "close must be a number above 0");
+  if (!isDate(r.date)) return bad(part, i, t, "an amount row needs the date of its close");
+  if (r.ccy === "USD" ? !isPos(r.fx) : r.fx != null) return bad(part, i, t, "exchange rate on a USD row only (and required there)");
+  if (importedUnits(r) == null) return bad(part, i, t, "amount is too small for one 1/10,000 share");
+  return null;
+}
+
+function saleProblem(s, i, today, holds, byAmountT, part = "sales") {
+  if (!plainObj(s) || !isStr(s.t, 20)) return bad(part, i, null, "not a record with a stock code");
+  if (!okUnits(s.qty)) return bad(part, i, s.t, "quantity must be above 0 with at most 4 decimals");
+  if (s.ccy === "KRW" && !Number.isInteger(s.qty) && !byAmountT(s.t)) return bad(part, i, s.t, "a Korean sale is whole shares");
+  if (!isPos(s.price)) return bad(part, i, s.t, "price must be a number above 0");
+  if (!pastDate(s.date, today)) return bad(part, i, s.t, "date must be a real date, not after today");
+  if (!CCY.includes(s.ccy)) return bad(part, i, s.t, "currency must be KRW or USD");
+  if (s.fx != null && !(s.ccy === "USD" && isPos(s.fx))) return bad(part, i, s.t, "exchange rate only on a USD record, above 0");
+  if (!holds(s.t)) return bad(part, i, s.t, "no holding with this code");
+  return null;
+}
+
+function divProblem(x, i, today, holds, part = "divs") {
+  if (!plainObj(x) || !isStr(x.t, 20)) return bad(part, i, null, "not a record with a stock code");
+  if (!isPos(x.amount)) return bad(part, i, x.t, "amount must be a number above 0");
+  if (!CCY.includes(x.ccy)) return bad(part, i, x.t, "currency must be KRW or USD");
+  if (!pastDate(x.date, today)) return bad(part, i, x.t, "date must be a real date, not after today");
+  if (x.fx != null && !(x.ccy === "USD" && isPos(x.fx))) return bad(part, i, x.t, "exchange rate only on a USD record, above 0");
+  if (!holds(x.t)) return bad(part, i, x.t, "no holding with this code");
+  return null;
+}
+
+// One record set (a portfolio, or one history entry): its purchases, imported rows, sales and dividends; one imported row
+// per stock; no sale below 0 shares.
+function recordsProblem(x, today, holds, prefix = "") {
+  const lists = { purchases: x.purchases, imported: x.imported, sales: x.sales, divs: x.divs };
+  for (const k of ["imported", "sales", "divs"]) if (lists[k] != null && !Array.isArray(lists[k])) return bad(prefix + k, null, null, "not a list");
+  const imp = lists.imported || [];
+  const byAmountT = (t) => imp.some((r) => plainObj(r) && r.t === t && r.amountWon != null);
+  for (let i = 0; i < (lists.purchases || []).length; i++) { const p = purchaseProblem(lists.purchases[i], i, today, holds, prefix + "purchases"); if (p) return p; }
+  const seen = new Set();
+  for (let i = 0; i < imp.length; i++) {
+    const p = importedProblem(imp[i], i, today, holds, prefix + "imported");
+    if (p) return p;
+    if (imp[i].t != null) {
+      if (seen.has(imp[i].t)) return bad(prefix + "imported", i, imp[i].t, "the same stock twice");
+      seen.add(imp[i].t);
     }
   }
-  if (d.notes != null && !validPerStock(d.notes, (n) => typeof n.text === "string" && n.text.length > 0 && n.text.length <= NOTE_MAX, today)) return false;
-  if (d.assume != null && !validPerStock(d.assume, (a) => okAssume(a), today)) return false;
-  return true;
+  for (let i = 0; i < (lists.sales || []).length; i++) { const p = saleProblem(lists.sales[i], i, today, holds, byAmountT, prefix + "sales"); if (p) return p; }
+  for (let i = 0; i < (lists.divs || []).length; i++) { const p = divProblem(lists.divs[i], i, today, holds, prefix + "divs"); if (p) return p; }
+  const low = belowZero({ imported: imp, purchases: lists.purchases || [], sales: lists.sales || [] });
+  if (low) return bad(prefix + "sales", null, low.t, `sold more than held (${low.date || "undated"})`);
+  return null;
+}
+
+function historyProblem(hs, today) {
+  if (!Array.isArray(hs)) return bad("history", null, null, "not a list");
+  for (let i = 0; i < hs.length; i++) {
+    const h = hs[i];
+    if (!plainObj(h) || !okStockCode(h.t)) return bad("history", i, null, "not an entry with a stock code");
+    if (!isStr(h.nk, 120)) return bad("history", i, h.t, "name missing");
+    if (!pastDate(h.out, today)) return bad("history", i, h.t, "date taken out must be a real date, not after today");
+    if (h.cls != null && !isStr(h.cls, 10)) return bad("history", i, h.t, "market is not valid");
+    for (const k of ["purchases", "sales", "divs"]) if (h[k] != null && !Array.isArray(h[k])) return bad("history", i, h.t, k + " is not a list");
+    if (h.imported != null && !plainObj(h.imported)) return bad("history", i, h.t, "imported is not one row");
+    const recs = { purchases: h.purchases || [], sales: h.sales || [], divs: h.divs || [], imported: h.imported ? [h.imported] : [] };
+    const p = recordsProblem(recs, today, (t) => t === h.t, `history[${i + 1}].`);
+    if (p) return p;
+  }
+  return null;
+}
+
+// The 기준 of an imported portfolio (its report and its 내 기준 rule read them).
+function settingsProblem(s) {
+  if (!plainObj(s) || !plainObj(s.points)) return bad("settings", null, null, "the 기준 points are missing");
+  let sum = 0;
+  for (const [id, v] of Object.entries(s.points)) {
+    const c = CARDS.find((x) => x.id === id);
+    if (!c || !(Number.isInteger(v) && v >= 0 && v <= POINTS_MAX) || (c.pending && v > 0)) return bad("settings", null, null, `points for ${id} are not valid`);
+    sum += v;
+  }
+  if (sum > POINTS_TOTAL) return bad("settings", null, null, "more than 10 points");
+  if (s.strict != null && !STRICT.some((x) => x.id === s.strict)) return bad("settings", null, null, "strictness is not valid");
+  return null;
+}
+
+export function deckProblem(x, today) {
+  if (!plainObj(x)) return bad("deck", null, null, "not a portfolio");
+  if (!isStr(x.id, 60)) return bad("id", null, null, "id missing");
+  if (!isStr(x.name, 60)) return bad("name", null, null, "name missing");
+  if (x.createdAt != null && !isDate(x.createdAt)) return bad("createdAt", null, null, "not a date");
+  if (x.planFx != null && !isPos(x.planFx)) return bad("planFx", null, null, "rate must be above 0");   // the USD/KRW rate the plan used
+  if (!Array.isArray(x.holdings) || !Array.isArray(x.purchases)) return bad("holdings", null, null, "holdings or purchases missing");
+  for (let i = 0; i < x.holdings.length; i++) {
+    const h = x.holdings[i];
+    if (!plainObj(h) || !isStr(h.t, 20) || !isStr(h.nk, 120)) return bad("holdings", i, h && h.t, "code or name missing");
+    if (h.target != null && !(isNum(h.target) && h.target >= 0 && h.target <= 1)) return bad("holdings", i, h.t, "target must be 0-1");
+    if (h.plannedQty != null && !(Number.isInteger(h.plannedQty) && h.plannedQty >= 0)) return bad("holdings", i, h.t, "planned quantity not whole");
+    if (h.planPx != null && !isPos(h.planPx)) return bad("holdings", i, h.t, "plan price must be above 0");   // the price the plan used
+    if (h.rules != null && !Array.isArray(h.rules)) return bad("holdings", i, h.t, "rules is not a list");
+  }
+  const holds = (t) => x.holdings.some((h) => h.t === t);
+  if (x.kind != null && x.kind !== "imported") return bad("kind", null, null, "unknown kind");
+  if (x.kind === "imported") {
+    if (!Array.isArray(x.imported)) return bad("imported", null, null, "an imported portfolio needs its rows");
+    const sp = settingsProblem(x.settings);
+    if (sp) return sp;
+  }
+  const rp = recordsProblem(x, today, holds);
+  if (rp) return rp;
+  if (x.history != null) { const p = historyProblem(x.history, today); if (p) return p; }
+  if (x.limits != null) {
+    if (!plainObj(x.limits)) return bad("limits", null, null, "not an object");
+    for (const k of Object.keys(x.limits)) {
+      if (!["stock", "ind"].includes(k) || !(Number.isInteger(x.limits[k]) && x.limits[k] >= 1 && x.limits[k] <= 100)) return bad("limits", null, null, `${k} must be a whole % (1-100)`);
+    }
+  }
+  if (x.confirms != null) {
+    if (!Array.isArray(x.confirms)) return bad("confirms", null, null, "not a list");
+    for (let i = 0; i < x.confirms.length; i++) {
+      const c = x.confirms[i];
+      if (!validConfirm(c, today) || !holds(c.t)) return bad("confirms", i, c && c.t, "answer is not valid");
+    }
+  }
+  return null;
+}
+
+// "portfolio "name" (id): imported row 2 (005930): quantity must be whole shares for a Korean stock"
+export function problemText(deck, p) {
+  const who = plainObj(deck) ? `portfolio "${typeof deck.name === "string" ? deck.name : "?"}" (${typeof deck.id === "string" ? deck.id : "?"})` : "a portfolio";
+  return `${who}: ${p.part}${p.row != null ? " row " + p.row : ""}${p.t ? " (" + p.t + ")" : ""}: ${p.why}`;
+}
+
+// ---------------- the whole store ----------------
+// -> { readable: false, why } when it is not a records store this app can read at all (not an object, an unknown or newer
+// version, no portfolio list); else { readable: true, data, problems: [text] }: data keeps every valid portfolio and part,
+// problems names what was set aside (a bad portfolio, a duplicate id, a bad notes / assume / guideSeen part).
+export function checkStore(d, today) {
+  if (!plainObj(d)) return { readable: false, why: "not an object" };
+  if (d.v !== BASE_VERSION && d.v !== STORE_VERSION) return { readable: false, why: `version ${JSON.stringify(d.v)} is not one this app reads` };
+  if (!Array.isArray(d.decks)) return { readable: false, why: "no portfolio list" };
+  const problems = [], decks = [], ids = new Set();
+  for (const x of d.decks) {
+    let p = deckProblem(x, today);
+    if (!p && ids.has(x.id)) p = bad("id", null, null, "the same id twice");
+    if (!p && d.v === BASE_VERSION && V2_DECK_PARTS.some((k) => x[k] != null)) p = bad("version", null, null, "a version-2 part in a version-1 store");
+    if (p) { problems.push(problemText(x, p)); continue; }
+    ids.add(x.id);
+    decks.push(x);
+  }
+  const data = { v: d.v, decks };
+  if (d.notes != null) {
+    if (validPerStock(d.notes, (n) => typeof n.text === "string" && n.text.length > 0 && n.text.length <= NOTE_MAX, today)) data.notes = d.notes;
+    else problems.push("notes (내 메모): not valid");
+  }
+  if (d.assume != null) {
+    if (validPerStock(d.assume, (a) => okAssume(a), today)) data.assume = d.assume;
+    else problems.push("assume (saved 가치 assumptions): not valid");
+  }
+  if (d.guideSeen != null) {
+    if (pastDate(d.guideSeen, today)) data.guideSeen = d.guideSeen;
+    else problems.push("guideSeen: not a date up to today");
+  }
+  return { readable: true, data, problems };
+}
+
+// Every field the app reads back is checked. One bad field anywhere -> false (a records file is refused whole).
+export function validStore(d, today) {
+  const r = checkStore(d, today);
+  return r.readable && !r.problems.length;
 }
 
 // ---------------- per stock: 내 메모 and saved assumptions (v19.1a Part E, Part D) ----------------
 export const NOTE_MAX = 500;
-const plainObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
-const okStockCode = (t) => isStr(t, 20) && /^[0-9A-Za-z][0-9A-Za-z.-]*$/.test(t);
 function validPerStock(m, ok, today) {
   if (!plainObj(m)) return false;
   for (const [t, v] of Object.entries(m)) {
@@ -99,7 +321,18 @@ export function withAssume(data, t, a, today) {
 }
 export const noteOf = (data, t) => { const n = perStock(data, "notes"); return n && plainObj(n[t]) ? n[t] : null; };
 export const assumeOf = (data, t) => { const a = perStock(data, "assume"); return a && plainObj(a[t]) && okAssume(a[t]) ? a[t] : null; };
+// What travels in a records file besides the portfolios (the guide flag stays on the device).
 const extras = (d) => ({ ...(perStock(d, "notes") ? { notes: d.notes } : {}), ...(perStock(d, "assume") ? { assume: d.assume } : {}) });
+
+// ---------------- the first-visit guide (v19.3c Part E) ----------------
+// The flag of the old key (key + ".guideSeen" = "1", v19.3c): read once into the store, never written again.
+export const OLD_GUIDE_SUFFIX = ".guideSeen";
+export const guideSeenIn = (data) => !!(data && isDate(data.guideSeen));
+// The store with the guide marked as seen today (kept when it already is). Pure: the caller saves it.
+export function withGuideSeen(data, today) {
+  if (!isDate(today)) return null;
+  return guideSeenIn(data) ? data : { ...data, guideSeen: today };
+}
 
 // ---------------- 확인 필요: the user's answers (v18.3 Part C) ----------------
 // A dividend drop is never 규칙 깨짐 on its own: the user answers 실제로 줄였어요 ("cut": the sell condition fired) or
@@ -125,19 +358,119 @@ export function withConfirm(data, deckId, item, answer, today) {
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? { ...d, confirms } : d)) };
 }
 
-// 포트폴리오에서 빼기 (v19.0c): the store without one stock of one portfolio — its holding, its purchases and its
-// answers to 확인 필요. Pure: the caller saves it, and only when the user tapped the button (the screen offers it only
-// for a stock missing from today's data). The portfolio itself stays, even with no stock left. null = nothing to remove.
-export function withoutHolding(data, deckId, t) {
+// 포트폴리오에서 빼기 (v19.0c): the store without one stock of one portfolio — its holding, its purchases, its imported row
+// and its answers to 확인 필요. Pure: the caller saves it, and only when the user tapped the button (the screen offers it
+// only for a stock missing from today's data). The portfolio itself stays, even with no stock left. null = nothing to remove.
+// v19.6 A.3: when the stock has any sale or dividend, its records move into the portfolio's history instead of going
+// away (내 수익 keeps its realized gains and dividends); with none, the old behaviour stays.
+export function withoutHolding(data, deckId, t, today = null) {
   const deck = data && Array.isArray(data.decks) ? data.decks.find((d) => d && d.id === deckId) : null;
   if (!deck || typeof t !== "string" || !deck.holdings.some((h) => h && h.t === t)) return null;
-  const next = { ...deck, holdings: deck.holdings.filter((h) => h.t !== t), purchases: deck.purchases.filter((p) => p.t !== t),
-    ...(Array.isArray(deck.confirms) ? { confirms: deck.confirms.filter((c) => c.t !== t) } : {}) };
+  const of = (list) => (Array.isArray(list) ? list.filter((r) => r && r.t === t) : []);
+  const rest = (list) => list.filter((r) => !(r && r.t === t));
+  const sales = of(deck.sales), divs = of(deck.divs);
+  const next = { ...deck, holdings: deck.holdings.filter((h) => h.t !== t), purchases: rest(deck.purchases),
+    ...(Array.isArray(deck.confirms) ? { confirms: rest(deck.confirms) } : {}),
+    ...(Array.isArray(deck.imported) ? { imported: rest(deck.imported) } : {}),
+    ...(Array.isArray(deck.sales) ? { sales: rest(deck.sales) } : {}),
+    ...(Array.isArray(deck.divs) ? { divs: rest(deck.divs) } : {}) };
+  if (sales.length || divs.length) {
+    const h = deck.holdings.find((x) => x.t === t);
+    const imp = of(deck.imported)[0];
+    const out = isDate(today) ? today : [...sales, ...divs].reduce((a, r) => (r.date > a ? r.date : a), "0000-00-00");
+    next.history = [...(Array.isArray(deck.history) ? deck.history : []), { t, nk: h.nk, out, ...(h.cls ? { cls: h.cls } : {}),
+      ...(imp ? { imported: imp } : {}), purchases: of(deck.purchases), sales, divs }];
+  }
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
 }
 
-// { data, writable, locked }: locked = something unreadable is stored under the key. It stays untouched; the first
-// write moves it to a backup key first (see writeStore), so 기록 불러오기 and 샀어요 still work.
+// A new portfolio added to the store (가진 종목 넣기 · 매일 점검 시작하기). null when it is not valid (nothing saved).
+export function withDeck(data, deck, today) {
+  const p = deckProblem(deck, today);
+  if (p) { console.warn("[v2] portfolio not saved: " + problemText(deck, p)); return null; }
+  if (data.decks.some((d) => d.id === deck.id)) { console.warn("[v2] portfolio not saved: the same id twice (" + deck.id + ")"); return null; }
+  return { ...data, decks: [...data.decks, deck] };
+}
+
+// ---------------- another tab of the earlier app (v19.6 A.1 [Q5]) ----------------
+const backupKeys = (key, mid) => {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (typeof k === "string" && k.startsWith(key + mid)) out.push(k);
+    }
+  } catch (e) { return []; }
+  return out.sort((a, b) => Number(a.slice(a.lastIndexOf(".") + 1)) - Number(b.slice(b.lastIndexOf(".") + 1)));
+};
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const later = (a, b) => (a && b && typeof b.at === "string" && typeof a.at === "string" && b.at > a.at ? b : a);
+
+// One portfolio both tabs changed: everything either one holds is kept (nothing is lost; a stock one tab took out comes
+// back, which the notice asks the user to check). The version-2 copy leads (it is the only one that can hold v2 parts).
+function unionDeck(a, b) {
+  const holdings = [...a.holdings, ...b.holdings.filter((h) => !a.holdings.some((x) => x.t === h.t))];
+  const purchases = [...a.purchases, ...b.purchases.filter((p) => !a.purchases.some((x) => same(x, p)))];
+  const confirms = [...(a.confirms || [])];
+  for (const c of b.confirms || []) {
+    const i = confirms.findIndex((x) => sameConfirm(x, c));
+    if (i < 0) confirms.push(c); else confirms[i] = later(confirms[i], c);
+  }
+  return { ...a, holdings, purchases, ...(confirms.length ? { confirms } : {}) };
+}
+
+// The store an earlier-app tab moved aside (v2) with what that tab then saved (cur) added in. null when the result
+// would not be valid (then nothing is changed and the backup stays).
+export function mergeTabs(v2, cur, today) {
+  const decks = [...v2.decks];
+  for (const d of cur.decks) {
+    const i = decks.findIndex((x) => x.id === d.id);
+    if (i < 0) decks.push(d);
+    else if (!same(decks[i], d)) decks[i] = unionDeck(decks[i], d);
+  }
+  const out = { v: STORE_VERSION, decks };
+  for (const key of ["notes", "assume"]) {
+    const m = { ...(perStock(v2, key) || {}) };
+    for (const [t, x] of Object.entries(perStock(cur, key) || {})) m[t] = m[t] ? later(m[t], x) : x;
+    if (Object.keys(m).length) out[key] = m;
+  }
+  if (guideSeenIn(v2) || guideSeenIn(cur)) out.guideSeen = guideSeenIn(v2) ? v2.guideSeen : cur.guideSeen;
+  out.v = versionFor(out);
+  return validStore(out, today) ? out : null;
+}
+
+// After a good read: a v2 store with v2 parts sitting in a backup key is one an earlier-app tab moved aside. It is put
+// back with the current one merged in; the backup is kept under ".restored.<time>" (never deleted). -> the merged store, or null.
+function restoreMoved(key, cur, today) {
+  let merged = null;
+  const used = [];
+  for (const k of backupKeys(key, ".unreadable.")) {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(k)); } catch (e) { d = null; }
+    if (!d || d.v !== STORE_VERSION || !hasV2Parts(d) || !validStore(d, today)) continue;
+    const m = mergeTabs(d, merged || cur, today);
+    if (!m) { console.warn(`[v2] a version-2 store in ${k} could not be merged with the current one; both are kept as they are`); continue; }
+    merged = m;
+    used.push(k);
+  }
+  if (!merged) return null;
+  try {
+    localStorage.setItem(key, JSON.stringify(merged));
+    for (const k of used) {
+      localStorage.setItem(key + ".restored." + k.slice(k.lastIndexOf(".") + 1), localStorage.getItem(k));
+      localStorage.removeItem(k);
+    }
+  } catch (e) {
+    console.warn("[v2] could not put back the records another tab moved aside: " + ((e && e.message) || e));
+    return null;
+  }
+  console.warn(`[v2] records another tab of an earlier version had moved aside were put back and merged (${used.join(", ")})`);
+  return merged;
+}
+
+// { data, writable, locked, problems, restored }: locked = something stored could not be read (all of it, or some
+// portfolios: problems names them). It stays untouched; the first write moves it to a backup key first (see writeStore),
+// so 기록 불러오기 and 샀어요 still work. restored = records another tab had moved aside were put back (say so once).
 export function readStore(key = STORE_KEY, today) {
   let writable = false;
   try {
@@ -147,27 +480,49 @@ export function readStore(key = STORE_KEY, today) {
     writable = true;
   } catch (e) { writable = false; }
   let raw = null;
-  try { raw = localStorage.getItem(key); } catch (e) { return { data: emptyStore(), writable: false, locked: false }; }
-  if (raw == null) return { data: emptyStore(), writable, locked: false };
-  try {
-    const d = JSON.parse(raw);
-    if (validStore(d, today)) return { data: d, writable, locked: false };
-  } catch (e) { /* unreadable */ }
-  console.warn("[v2] stored records are in an unknown format; kept as they are");
-  return { data: emptyStore(), writable, locked: true };
+  try { raw = localStorage.getItem(key); } catch (e) { return { data: emptyStore(), writable: false, locked: false, problems: [], restored: false }; }
+  let out = { data: emptyStore(), writable, locked: false, problems: [], restored: false };
+  if (raw != null) {
+    let r = { readable: false, why: "not JSON" };
+    try { r = checkStore(JSON.parse(raw), today); } catch (e) { /* unreadable */ }
+    if (!r.readable) {
+      console.warn("[v2] stored records are in an unknown format (" + r.why + "); kept as they are");
+      out = { ...out, locked: true };
+    } else {
+      for (const p of r.problems) console.warn("[v2] set aside, kept as stored: " + p);
+      out = { ...out, data: r.data, locked: r.problems.length > 0, problems: r.problems };
+      const merged = writable && !out.locked ? restoreMoved(key, r.data, today) : null;
+      if (merged) out = { ...out, data: merged, restored: true };
+    }
+  }
+  // the guide flag of v19.3c's own key, read into the store (written with the store's next save)
+  if (!guideSeenIn(out.data) && isDate(today)) {
+    let old = null;
+    try { old = localStorage.getItem(key + OLD_GUIDE_SUFFIX); } catch (e) { old = null; }
+    if (old === "1") out = { ...out, data: { ...out.data, guideSeen: today } };
+  }
+  return out;
 }
 
 // Before overwriting, the stored blob is checked exactly like readStore does (with today's date); anything it would
-// reject on read is first copied to a backup key, so nothing unreadable is ever lost.
+// reject on read is first copied to a backup key, so nothing unreadable is ever lost. The store written is checked too:
+// a store that would not read back is never written (false, with the reason in the console). Its version tag follows
+// what it holds (versionFor).
 export function writeStore(d, key = STORE_KEY, today) {
   try {
+    const next = { ...d, v: versionFor(d) };
+    const chk = checkStore(next, today);
+    if (!chk.readable || chk.problems.length) {
+      console.warn("[v2] records not saved, they would not read back: " + (chk.why || chk.problems.join("; ")));
+      return false;
+    }
     const cur = localStorage.getItem(key);
     if (cur != null) {
       let ok = false;
       try { ok = validStore(JSON.parse(cur), today); } catch (e) { ok = false; }
       if (!ok) localStorage.setItem(`${key}.unreadable.${Date.now()}`, cur);   // keep what we could not read
     }
-    localStorage.setItem(key, JSON.stringify(d));
+    localStorage.setItem(key, JSON.stringify(next));
     return true;
   } catch (e) {
     console.warn("[v2] could not save records: " + ((e && e.message) || e));
@@ -187,10 +542,21 @@ export function parseImport(text, today, preview = false) {
   try {
     const d = JSON.parse(text);
     if (!!(d && d.preview) !== !!preview) return null;
-    return validStore(d, today) ? { v: STORE_VERSION, decks: d.decks, ...extras(d) } : null;
+    if (!validStore(d, today)) return null;
+    const out = { decks: d.decks, ...extras(d) };
+    return { v: versionFor(out), ...out };
   } catch (e) {
     return null;
   }
+}
+
+// What is wrong with a records file, one line per problem (the console names the portfolio, the part, the row and the
+// stock: v19.3 F.1 "a message naming it"). [] when nothing is.
+export function importIssues(text, today) {
+  let d;
+  try { d = JSON.parse(text); } catch (e) { return ["not JSON"]; }
+  const r = checkStore(d, today);
+  return r.readable ? r.problems : [r.why];
 }
 
 // Why a file cannot be imported here (null = it can):
@@ -206,19 +572,22 @@ export function importProblem(text, today, preview = false) {
 }
 
 // Imported decks replace decks with the same id; other decks are kept. Notes and assumptions the same way, per stock.
+// The guide flag is this device's: it stays as it is.
 export function mergeStores(cur, inc) {
   const by = new Map(cur.decks.map((x) => [x.id, x]));
   for (const x of inc.decks) by.set(x.id, x);
-  const out = { v: STORE_VERSION, decks: [...by.values()] };
+  const out = { decks: [...by.values()] };
   for (const key of ["notes", "assume"]) {
     const m = { ...(perStock(cur, key) || {}), ...(perStock(inc, key) || {}) };
     if (Object.keys(m).length) out[key] = m;
   }
-  return out;
+  if (guideSeenIn(cur)) out.guideSeen = cur.guideSeen;
+  return { v: versionFor(out), ...out };
 }
 
 export function exportText(d, preview = false) {
-  return JSON.stringify(preview ? { v: STORE_VERSION, preview: true, decks: d.decks, ...extras(d) } : { v: STORE_VERSION, decks: d.decks, ...extras(d) }, null, 1);
+  const v = versionFor(d);
+  return JSON.stringify(preview ? { v, preview: true, decks: d.decks, ...extras(d) } : { v, decks: d.decks, ...extras(d) }, null, 1);
 }
 
 export function downloadRecords(d, today, prefix = "baepsae-records", preview = false) {

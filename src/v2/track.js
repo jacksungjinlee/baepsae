@@ -8,6 +8,7 @@
 // a number whose input is missing is left out (ok: false), never filled in.
 import { num, hasGroup, universe, priceWon } from "./engine.js";
 import { NO_NEW_MONEY } from "./rules.js";
+import { pfRows, avgOf } from "./pf.js";
 
 export const GROUP_MIN = 5;           // 같은 업종 점 띠: a real industry group with at least 5 members in the same market
 export const TOGETHER_SHARE = 0.8;    // "같은 업종이 다 같이 빠졌어요": the stock fell and at least 80% of its group fell
@@ -37,6 +38,7 @@ export function purchaseWon(p, planFx) {
 //   with the "빼고 계산했어요" line. Every other stock must still have a price.
 export function deckMoney(deck, de, ctx) {
   if (!de || !de.ok || !ctx) return { ok: false, why: "day" };
+  if (de.imported) return importedMoney(deck, ctx);
   const gone = new Set(de.absent || []);
   const absentOf = () => de.holdings.filter((x) => gone.has(x.t)).map((x) => ({ t: x.t, nk: x.nk, cls: x.cls, cost: heldCost(deck, x.t) }));
   // the missing stocks are named even when the totals cannot be made (never silent)
@@ -71,6 +73,34 @@ export function deckMoney(deck, de, ctx) {
   const absent = absentOf();
   if (!held.size) return { ok: false, why: "absent", absent };   // every held stock is missing from today's data: no totals
   return { ok: true, value, cost: ok ? cost : null, gain: ok ? value - cost : null, ret: ok ? value / cost - 1 : null, start, per, noFx, absent };
+}
+
+// v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기, read explicitly: value = every held share (held.js: imported +
+// 샀어요 − 팔았어요) at today's close (US at today's rate), plus a stock added by name only at its typed amount (frozen:
+// it carries its own date, and the screens never show it as live). Money put in only when every holding has a 평균 단가
+// (avgOf: the imported row's, or the 샀어요 records', which count as one): never a guess. A US 평균 단가 has no rate of its
+// own, so it is converted at today's rate (usdToday: v19.3 Part H's line says so). A stock missing from today's data is
+// left out of every total and listed (absent), as for a built portfolio.
+function importedMoney(deck, ctx) {
+  const v = pfRows(deck, ctx);
+  const absent = v.rows.filter((r) => r.absent).map((r) => ({ t: r.t, nk: r.nk, cls: r.cls, cost: null }));
+  const live = v.rows.filter((r) => !r.absent);
+  if (!live.length) return { ok: false, why: "absent", absent };
+  if (live.some((r) => !(r.value > 0))) return { ok: false, why: "price", ...(absent.length ? { absent } : {}) };
+  const per = {}, noAvg = [];
+  let value = 0, cost = 0, usdToday = false;
+  for (const r of live) {
+    value += r.value;
+    const a = r.t ? avgOf(deck, r.t) : null;
+    const c = a && r.qty > 0 ? r.qty * a.avg * (a.ccy === "USD" ? (num(ctx.fx) > 0 ? ctx.fx : NaN) : 1) : null;
+    if (a && a.ccy === "USD") usdToday = true;
+    if (!(c > 0)) { noAvg.push(r.key); cost = null; }
+    else if (cost != null) cost += c;
+    if (r.t) per[r.t] = { qty: r.qty, value: r.value, cost: c > 0 ? c : null, ret: c > 0 ? r.value / c - 1 : null };
+  }
+  const ok = cost != null && cost > 0;
+  return { ok: true, imported: true, value, cost: ok ? cost : null, gain: ok ? value - cost : null, ret: ok ? value / cost - 1 : null, start: null, per,
+    noFx: [], noAvg, usdToday, frozen: live.filter((r) => r.frozen).map((r) => ({ nk: r.nk, date: r.date })), absent };
 }
 
 // The money put in for one held stock (won), or null when any of its purchases has no won cost.
