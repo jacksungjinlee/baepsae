@@ -78,6 +78,8 @@ KR_DEPTS = ("우량기업부", "중견기업부", "벤처기업부", "기술성�
 PROD_SAME_MAX = 5.0      # '주요제품'이 업종 이름과 똑같은 국내 설명 비율 상한 (%) — 열이 밀린 사고는 100%였어요
 D1_COVER = 95            # 국내 d1 채움 (%)
 D1_MAX_KR = 30.0         # 한국 하루 가격 제한폭 — 넘는 값은 파이프라인이 빈 칸으로 둬요
+US_D1_COVER = 98.0       # 미국 d1 채움 (%) — 아래면 실패 (Jack, 2026-11-07). 11-02 부터 매일 99.9~100%
+US_D1_SHOW = 10          # 표의 값 칸에 적는 빠진 종목 수 — 전부는 로그와 실행 요약에 따로 적어요
 VAL20_COVER = 95         # 국내 val20 채움 (%)
 IDX_MIN_ROWS = 700       # 지수 이력 3년 ≈ 740 (한국) · 752 (미국) 거래일
 IDX_MIN_DAYS = 3 * 365 - 30
@@ -151,6 +153,10 @@ CORP_NEW_MUST_AMT = ("cash3", "eps3r")
 class Report:
     def __init__(self):
         self.rows = []
+        self.details = []     # (제목, [항목…]) — 값 칸에 다 들어가지 않는 목록. 로그와 실행 요약에 표 아래로 적어요
+
+    def detail(self, title, items):
+        self.details.append((str(title), [str(x) for x in items]))
 
     def add(self, name, ok, value, threshold, warn=False):
         st = "FAIL" if not ok else ("WARN" if warn else "PASS")
@@ -182,6 +188,8 @@ class Report:
     def markdown(self):
         out = ["| 검사 | 값 | 기준 | 결과 |", "|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {'**FAIL**' if d == 'FAIL' else d} |" for a, b, c, d in self.rows]
+        for title, items in self.details:
+            out += ["", f"**{title}** ({len(items):,}): " + ", ".join(items)]
         return "\n".join(out)
 
 
@@ -739,6 +747,18 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
     usby = {s.get("t"): s for s in us}
     miss_us = [t for t in ("AAPL", "MSFT", "NVDA") if num((usby.get(t) or {}).get("d1")) is None]
     rep.add("미국 필수 종목 d1", not miss_us, "모두 있음" if not miss_us else "없음: " + ",".join(miss_us), "AAPL·MSFT·NVDA")
+    # 4b. 미국 d1 채움 (Jack, 2026-11-07). 2026-11-07 야후가 개별 종목의 11-06 봉을 비웠는데(S&P 500 은 있음) 그대로 갔으면
+    # 미국 가격이 하루 전 종가로 '11-06 기준'이 될 뻔했어요 — 필수 세 종목이 마침 같이 빠져서 잡혔어요. 이제 일부만 빠져도 잡아요.
+    # d1 은 파이프라인이 그 종목의 마지막 봉이 미국 기준일(usPxDate = S&P 500 의 마지막 '끝난' 거래일)일 때만 채워요
+    # (fetch_data.us_d1). 미국 휴장일·조기 폐장일에는 기준일이 그 전 거래일 / 그날이라 d1 이 줄지 않아요 (tests/test_pipeline.py).
+    us_no_d1 = [str(s.get("t")) for s in us if num(s.get("d1")) is None]
+    us_cov = 100.0 * (len(us) - len(us_no_d1)) / len(us) if us else 0.0
+    shown = ", ".join(us_no_d1[:US_D1_SHOW]) + (f" 외 {len(us_no_d1) - US_D1_SHOW:,}개" if len(us_no_d1) > US_D1_SHOW else "")
+    rep.add("미국 d1 채움 (미국 기준일 봉)", us_cov >= US_D1_COVER,
+            f"{us_cov:.1f}% ({len(us) - len(us_no_d1):,} / {len(us):,})" + (f" · 빠짐: {shown}" if us_no_d1 else ""),
+            f"≥ {US_D1_COVER:g}% (미국 기준일 {data.get('usPxDate')} 봉이 있는 종목)")
+    if us_no_d1:
+        rep.detail(f"미국 d1 없는 종목 (마지막 봉이 미국 기준일 {data.get('usPxDate')} 이 아님)", us_no_d1)
 
     # 8. val20: 20거래일 평균 거래대금 (억원)
     miss = [t for t in must_kr if not ((num((by.get(t) or {}).get("val20")) or 0) > 0)]
@@ -1263,6 +1283,10 @@ def _main(argv=None):
     print()
     print(rep.table())
     print()
+    for title, items in rep.details:
+        print(f"!! {title} ({len(items):,}): {', '.join(items)}")
+    if rep.details:
+        print()
     bad, warn = rep.failed, rep.warned
     print(f"결과: {'FAIL' if bad else 'PASS'} · 실패 {len(bad)} · 경고 {len(warn)} · 전체 {len(rep.rows)}")
     for r in bad:

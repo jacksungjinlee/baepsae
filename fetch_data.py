@@ -3113,6 +3113,14 @@ def save_us_info(d, path=None):
         log(f"  !! 미국 상세 정보 보관본 저장 실패: {e}")
 
 
+def us_data_date(spx, last_ok):
+    """미국 기준일(usPxDate) = S&P 500 일봉에서 장이 끝난 마지막 날(last_ok) 이하의 마지막 봉 날짜. (순수 함수)
+    휴장일(추수감사절 등)에는 봉이 없으니 그 전 거래일, 조기 폐장일(그다음 날)은 끝난 봉이 있으니 그날이에요. 개별 종목 d1 은
+    이 날짜의 봉이 있을 때만 채워요 (us_d1) — 그래서 휴장·조기 폐장은 d1 을 비우지 않고, 발행 관문의 '미국 d1 채움'은 야후가
+    기준일 봉을 빠뜨린 종목만 세요."""
+    return cut_at(spx, last_ok).index[-1].date()
+
+
 def us_d1(px, us_px_date):
     """미국 d1: 그 종목의 마지막 봉이 미국 기준일일 때만 마지막 ÷ 그 전 봉 (거래 정지로 낡은 봉이면 빈 칸). (순수 함수)
     야후 수정 종가라 배당락일에는 배당만큼이 더해져 보여요 (작은 차이 — 필드 설명에 적어 둬요)."""
@@ -3305,7 +3313,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
 
     fx = cut_at(_yf_close(yf.download(FX_TICKER, start=start, end=end_x, progress=False, auto_adjust=True)), today)
     spx = cut_at(_yf_close(yf.download(US_INDEX, start=start, end=end_x, progress=False, auto_adjust=True)), last_ok)
-    us_px_date = spx.index[-1].date()
+    us_px_date = us_data_date(spx, last_ok)
     fx = cut_at(fx, max(us_px_date, last_ok))
     fx_last, fx_date = float(fx.iloc[-1]), fx.index[-1].date()
     log(f"· 미국 기준일(S&P500 마지막 봉) {us_px_date} · 환율 {fx_last:,.1f} ({fx_date})")
@@ -3398,6 +3406,10 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
+    no_d1 = [r["t"] for r in out if r.get("d1") is None]
+    if no_d1:   # 발행 관문이 98% 아래면 막고 전부 적어요 — 여기서는 앞의 30개 (Jack, 2026-11-07)
+        log(f"  !! 미국 d1 없는 종목 {len(no_d1):,}개 (마지막 봉이 미국 기준일 {us_px_date} 이 아님 — 거래 정지이거나 야후가 봉을 "
+            f"빠뜨림): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
             "usLeftOut": left_out}
     return out, bench, fx, fx_last, us_vol_krw, meta
