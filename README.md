@@ -3,7 +3,7 @@
 This branch keeps the folder that `tools/logos/logodev_fetch.py --drop/--keep/--add-from` work on, after Claude's review
 of every logo (run 42211099051, logo.dev Pro). It is a record, not part of the site: Deploy reads only the `logos` branch.
 
-- `logos/` is exactly what was pushed to the `logos` branch (2,111 entries, 2,061 pictures; `logos` commit 8843d9b).
+- `logos/` is exactly what was pushed to the `logos` branch (2,185 entries, 2,130 pictures; `logos` commit 14b90fb).
 - `dropped/` holds every picture that was switched off (by the job's checks or after review), so `--keep` can bring one back.
 - `drops.csv` / `keeps.csv` list every switch made after review, with the reason. `review.csv`, `run.json`, `run.log`,
   `summary.md` are the run's own records (no keys: the job never writes one).
@@ -21,3 +21,5 @@ companies' logos stay dropped (삼성전기's dropped picture reads SAMSUNG HEAV
 
 
 2026-11-07 (Jack: retry the letter marks through every logo.dev route, PR #70): run 42357789298 retried the 136 largest Korean letter marks (272 credits); Claude looked at all 26 pictures it found and approved 8. The fix-up run 42359697867 (`only` = those 8, `extra_routes`, 0 credits billed, pictures identical) was added with `--add-from`: GS (+ GS우, brandmark = the 49 x 30 mark in gs.co.kr's own header), ISC (brandmark), 원익홀딩스 (ISIN; same oval as wonikholdings.kr's logo), 파라다이스 (brandmark), 아이에스동서 (ticker), 전진건설로봇, 필옵틱스 (same P as its own favicon), 씨어스 (homepage). Not added: photos, banners, 삼성중공업's logo for 삼성전기, other organisations' logos, an old 하나투어 mark, a subsidiary lockup for 비에이치, 펩트론 (2.7:1, too wide).
+
+2026-11-08 (Jack, 2026-11-07: group logos and homepage icons, each checked by eye): `--group-mark` gave 24 companies (+4 preferred shares) an exact copy of their group's main mark after their own website showed it (flag group-mark, `groups.csv`); `--add-site-icons` gave 45 companies (+1 preferred share) their own homepage icon (96 px or more, route site, `sites.csv`). `sheet-2026-11-07-groups-icons.html/.png` is the review sheet, each one labelled "group mark" or "homepage icon". The 데이터 출처 line names company homepages since #75.

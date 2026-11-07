@@ -1380,5 +1380,379 @@
    "name": "씨어스",
    "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
   }
+ ],
+ "groups": [
+  {
+   "code": "089860",
+   "name": "롯데렌탈",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 롯데지주 (004990)"
+  },
+  {
+   "code": "020150",
+   "name": "롯데에너지머티리얼즈",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 롯데지주 (004990)"
+  },
+  {
+   "code": "280360",
+   "name": "롯데웰푸드",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 롯데지주 (004990)"
+  },
+  {
+   "code": "010120",
+   "name": "LS ELECTRIC",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of LS (006260)"
+  },
+  {
+   "code": "229640",
+   "name": "LS에코에너지",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of LS (006260)"
+  },
+  {
+   "code": "322180",
+   "name": "LS티라유텍",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of LS (006260)"
+  },
+  {
+   "code": "475150",
+   "name": "SK이터닉스",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of SK스퀘어 (402340)"
+  },
+  {
+   "code": "006120",
+   "name": "SK디스커버리",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of SK스퀘어 (402340)"
+  },
+  {
+   "code": "006125",
+   "name": "SK디스커버리우",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of SK스퀘어 (402340) (preferred share of an issuer above)"
+  },
+  {
+   "code": "000990",
+   "name": "DB하이텍",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of DB증권 (016610)"
+  },
+  {
+   "code": "012030",
+   "name": "DB",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of DB증권 (016610)"
+  },
+  {
+   "code": "003570",
+   "name": "SNT다이내믹스",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of SNT홀딩스 (036530)"
+  },
+  {
+   "code": "066570",
+   "name": "LG전자",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of LG이노텍 (011070)"
+  },
+  {
+   "code": "066575",
+   "name": "LG전자우",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of LG이노텍 (011070) (preferred share of an issuer above)"
+  },
+  {
+   "code": "443060",
+   "name": "HD현대마린솔루션",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of HD현대 (267250)"
+  },
+  {
+   "code": "006360",
+   "name": "GS건설",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of GS피앤엘 (499790)"
+  },
+  {
+   "code": "375500",
+   "name": "DL이앤씨",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of DL (000210)"
+  },
+  {
+   "code": "37550L",
+   "name": "DL이앤씨2우(전환)",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of DL (000210) (preferred share of an issuer above)"
+  },
+  {
+   "code": "37550K",
+   "name": "DL이앤씨우",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of DL (000210) (preferred share of an issuer above)"
+  },
+  {
+   "code": "001800",
+   "name": "오리온홀딩스",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 오리온 (271560)"
+  },
+  {
+   "code": "103140",
+   "name": "풍산",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 풍산홀딩스 (005810)"
+  },
+  {
+   "code": "072710",
+   "name": "농심홀딩스",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 농심 (004370)"
+  },
+  {
+   "code": "074600",
+   "name": "원익QnC",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 원익홀딩스 (030530)"
+  },
+  {
+   "code": "005250",
+   "name": "녹십자홀딩스",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 녹십자 (006280)"
+  },
+  {
+   "code": "003090",
+   "name": "대웅",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 대웅제약 (069620)"
+  },
+  {
+   "code": "003300",
+   "name": "한일홀딩스",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 한일시멘트 (300720)"
+  },
+  {
+   "code": "002780",
+   "name": "진흥기업",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 효성 (004800)"
+  },
+  {
+   "code": "001430",
+   "name": "세아베스틸지주",
+   "reason": "2026-11-07 (Jack): checked by eye — the company's own website shows this group mark as its logo, and the picture is the group's main mark · group mark of 세아제강지주 (003030)"
+  }
+ ],
+ "sites": [
+  {
+   "code": "017800",
+   "name": "현대엘리베이터",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 310x310 from hyundaielevator.co.kr"
+  },
+  {
+   "code": "013030",
+   "name": "하이록코리아",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 256x256 from hy-lok.com"
+  },
+  {
+   "code": "009160",
+   "name": "SIMPAC",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 128x128 from simpac.co.kr"
+  },
+  {
+   "code": "025770",
+   "name": "한국정보통신",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 256x256 from kicc.co.kr"
+  },
+  {
+   "code": "199800",
+   "name": "툴젠",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 128x128 from toolgen.com"
+  },
+  {
+   "code": "126720",
+   "name": "수산인더스트리",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 180x180 from soosanind.co.kr"
+  },
+  {
+   "code": "002320",
+   "name": "한진",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 256x256 from hanjin.com"
+  },
+  {
+   "code": "389260",
+   "name": "대명에너지",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from daemyoung-eng.com"
+  },
+  {
+   "code": "099430",
+   "name": "바이오플러스",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 310x310 from bioplus.co.kr"
+  },
+  {
+   "code": "064820",
+   "name": "케이프",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 192x192 from cape.co.kr"
+  },
+  {
+   "code": "007860",
+   "name": "서연",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 192x192 from seo-yon.com"
+  },
+  {
+   "code": "003460",
+   "name": "유화증권",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from yhs.co.kr"
+  },
+  {
+   "code": "003465",
+   "name": "유화증권우",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from yhs.co.kr (preferred share of an issuer above)"
+  },
+  {
+   "code": "002170",
+   "name": "SYTS",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from syts.com"
+  },
+  {
+   "code": "419530",
+   "name": "SAMG엔터",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from samg.net"
+  },
+  {
+   "code": "049960",
+   "name": "쎌바이오텍",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from cellbiotech.com"
+  },
+  {
+   "code": "004090",
+   "name": "한국석유",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 152x152 from koreapetroleum.com"
+  },
+  {
+   "code": "0015G0",
+   "name": "그린광학",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from greenoptics.com"
+  },
+  {
+   "code": "411080",
+   "name": "샌즈랩",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 256x256 from sandslab.io"
+  },
+  {
+   "code": "474170",
+   "name": "루미르",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 256x256 from lumir.space"
+  },
+  {
+   "code": "357230",
+   "name": "에이치피오",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from denps.com"
+  },
+  {
+   "code": "209640",
+   "name": "와이제이링크",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from yjlink.com"
+  },
+  {
+   "code": "205100",
+   "name": "엑셈",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from ex-em.com"
+  },
+  {
+   "code": "171120",
+   "name": "라이온켐텍",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 256x256 from lctkorea.com"
+  },
+  {
+   "code": "153890",
+   "name": "져스텍",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from justek.com"
+  },
+  {
+   "code": "067570",
+   "name": "엔브이에이치코리아",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 128x128 from nvhkorea.com"
+  },
+  {
+   "code": "142280",
+   "name": "녹십자엠에스",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 120x120 from greencrossms.com"
+  },
+  {
+   "code": "007280",
+   "name": "한국특강",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from ekosco.com"
+  },
+  {
+   "code": "024950",
+   "name": "삼천리자전거",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 128x128 from samchuly.co.kr"
+  },
+  {
+   "code": "317850",
+   "name": "대모",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 192x192 from daemo.co.kr"
+  },
+  {
+   "code": "950200",
+   "name": "소마젠",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 2415x2793 from psomagen.com"
+  },
+  {
+   "code": "150900",
+   "name": "파수AI",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from fasoo.com"
+  },
+  {
+   "code": "184230",
+   "name": "SGA솔루션즈",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 110x110 from sgasol.kr"
+  },
+  {
+   "code": "019550",
+   "name": "SBI인베스트먼트",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from sbik.co.kr"
+  },
+  {
+   "code": "131400",
+   "name": "이브이첨단소재",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · manifest 512x512 from evam.co.kr"
+  },
+  {
+   "code": "261200",
+   "name": "덴티스",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 128x128 from dentis.co.kr"
+  },
+  {
+   "code": "262260",
+   "name": "에이프로",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from aproele.com"
+  },
+  {
+   "code": "0010V0",
+   "name": "제이피아이헬스케어",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from jpi-korea.com"
+  },
+  {
+   "code": "476040",
+   "name": "오가노이드사이언스",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 300x300 from organoidrx.com"
+  },
+  {
+   "code": "250030",
+   "name": "진코스텍",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 192x192 from jincostech.com"
+  },
+  {
+   "code": "106240",
+   "name": "파인테크닉스",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 192x192 from finetechnix.com"
+  },
+  {
+   "code": "148250",
+   "name": "알엔투테크놀로지",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from rn2.co.kr"
+  },
+  {
+   "code": "317240",
+   "name": "TS트릴리온",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from tstrillion.co.kr"
+  },
+  {
+   "code": "139670",
+   "name": "키네마스터",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 114x114 from kinemastercorp.com"
+  },
+  {
+   "code": "102950",
+   "name": "아하",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · apple-touch-icon 180x180 from i-aha.com"
+  },
+  {
+   "code": "054090",
+   "name": "삼진엘앤디",
+   "reason": "2026-11-07 (Jack): the company's own homepage icon, looked at by eye; its largest icon (≥96 px) · icon 128x128 from samjin.co.kr"
+  }
  ]
 }
