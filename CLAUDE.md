@@ -78,10 +78,14 @@ setting to change (where it is and what to click), never just "go to GitHub".
 
 **Ask Jack first, in this chat, with a short yes/no question in plain words** (never send him to GitHub), when a change:
 - adds or changes user-facing Korean text — show him the 「새 문구」 table in the chat;
+  Korean lines approved by the design chat and relayed by Jack count as approved.
 - changes what users see or how a feature works, beyond what an approved spec already says;
 - needs him to pay for, sign up for, or change a setting in anything;
 - changes `CLAUDE.md`, any threshold in `validate_data.py`, or anything in `tests/` — even when nothing is loosened
   (Jack, 2026-11-01). Say in one line what changed and why;
+  Exception (Jack, 2026-11-07): tests that are only added, checks made only stricter, and test edits that a merged task
+  spec lists by name need no separate yes. List them under **안전 규칙 변경** and in the after-merge summary. Removing or
+  weakening any test, or an edit no spec lists, still needs Jack's yes first.
 - is v17.5 or v17.6 — open the PR, tell him its number, and wait for his "merge" (his claude.ai chat reviews it first).
   This rule ends after v17.6.
 
