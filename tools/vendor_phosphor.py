@@ -45,6 +45,8 @@ ICONS = [
     "trend-up", "tag", "shield-check", "note-pencil", "scales", "chart-scatter", "calculator",
     # v19.1a 공시 줄: 그 공시의 DART 원문이 새 탭으로 열려요 (Jack 2026-11-05: 링크만) — 앱 안 이동(caret-right)과 구별해요
     "arrow-square-out",
+    # v19.3c 처음 안내(직접 해 보기) 1/3: 눌러 볼 + 를 가리키는 손
+    "hand-pointing",
 ]
 
 PATH = re.compile(r'<path d="([^"]+)"( opacity="0\.2")?/>')
