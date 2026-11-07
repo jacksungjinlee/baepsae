@@ -38,6 +38,14 @@ on:
         type: choice
         options: ["auto", "ticker"]
         default: "auto"
+      letters_only:
+        description: "검사를 마친 logos-run 브랜치에서 아직 글자 표시인 한국 회사만, 시가총액 큰 순서로 다시 찾아요 (limit 과 함께 쓰면 그중 큰 N곳)"
+        type: boolean
+        default: false
+      extra_routes:
+        description: "한국 회사: 종목 코드 · DART 홈페이지로 쓸 만한 로고가 없을 때 ISIN(2 크레딧), 그다음 brandmark(3 크레딧, 2:1 보다 넓으면 안 써요)도 찾아요"
+        type: boolean
+        default: false
       full_run_date:
         description: "전부(limit 0) 또는 51곳 이상을 받을 때만: 오늘 날짜(한국 시간, YYYY-MM-DD). 다른 날 다시 돌리면 실행하지 않아요 (only 를 쓸 때는 필요 없어요)"
         type: string
@@ -75,6 +83,15 @@ jobs:
           pip install -r requirements-dev.txt
           python -m playwright install --with-deps chromium
 
+      # 2026-11-07: letters_only 면 검사를 마친 폴더(logos-run 브랜치의 logos/)를 받아, 거기서 로고가 없는 한국 회사만 다시 찾아요
+      - name: 검사를 마친 로고 폴더 받기 (letters_only 일 때만)
+        if: inputs.letters_only
+        run: |
+          git fetch --depth=1 origin +refs/heads/logos-run:refs/remotes/origin/logos-run
+          mkdir -p "$RUNNER_TEMP/reviewed"
+          git archive refs/remotes/origin/logos-run logos | tar -x -C "$RUNNER_TEMP/reviewed"
+          echo "· 검사를 마친 폴더: logos-run $(git rev-parse --short refs/remotes/origin/logos-run) · $(ls "$RUNNER_TEMP/reviewed/logos" | wc -l) 파일"
+
       - name: logo.dev 로고 받기 실행
         env:
           LOGO_DEV_SECRET_KEY: ${{ secrets.LOGO_DEV_SECRET_KEY }}
@@ -85,10 +102,15 @@ jobs:
           FULL_RUN_DATE: ${{ inputs.full_run_date }}
           ONLY: ${{ inputs.only }}
           ROUTE: ${{ inputs.route }}
+          LETTERS_ONLY: ${{ inputs.letters_only }}
+          EXTRA_ROUTES: ${{ inputs.extra_routes }}
         run: |
+          extra=()
+          if [ "$LETTERS_ONLY" = "true" ]; then extra+=(--letters-from "$RUNNER_TEMP/reviewed"); fi
+          if [ "$EXTRA_ROUTES" = "true" ]; then extra+=(--extra-routes); fi
           python tools/logos/logodev_fetch.py --max-credits "$MAX_CREDITS" --workers "$WORKERS" \
             --per-minute "$PER_MINUTE" --limit "$LIMIT" --full-run-date "$FULL_RUN_DATE" \
-            --only "$ONLY" --route "$ROUTE" --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure
+            --only "$ONLY" --route "$ROUTE" --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure "${extra[@]}"
 
       - name: 결과 폴더 보관 (artifact logo-dev-fetch, 7일)
         uses: actions/upload-artifact@v7

@@ -145,6 +145,16 @@ OK_OUTCOMES = ("complete", "max_credits", "out_of_credits", "balance_floor", "ba
 BALANCE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # Credits-Remaining as logo.dev documents it ("18966.99"); else unreadable
 FULL_RUN_FREE_LIMIT = 50                         # a --limit run up to this many companies needs no --full-run-date
 ONLY_MAX = 10                                    # --only: named companies, at most this many (a fix-up, never a run)
+# v19.3a retry (Jack, 2026-11-07): two more exact-identifier routes, for Korean companies only, and only after the ticker
+# and the DART homepage found no usable logo (none, or a raster under SMALL_PX): GET /v2/brands/logo?isin=KR7… (2 credits),
+# (the company's ISIN from logo_sources: the KRX listing's ISU_CD, check digit verified, else the common-share rule),
+# then GET /v2/brands/brandmark?ticker=… (3 credits; "the wide logo lockup" — kept only when no wider than
+# BRANDMARK_MAX_ASPECT : 1, so it still reads in the app's square). logo.dev docs, read 2026-11-07: brands/look-up-a-brand,
+# logos/get-a-brandmark, platform/credits. Every quality check below applies to these pictures unchanged.
+EXTRA_ROUTES = ("isin", "brandmark")
+ROUTE_COST = {"ticker": CREDITS, "domain": CREDITS, "isin": CREDITS, "brandmark": 3}
+BRANDMARK_ROUTE = "/brands/brandmark"
+BRANDMARK_MAX_ASPECT = 2.0
 OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.",
                     balance_floor=f"Stopped cleanly: logo.dev's reported credit balance would have gone below "
                                   f"{MIN_BALANCE:,} credits.",
@@ -190,6 +200,18 @@ def safe_file(code):
     return stem
 
 
+def letters_from(order, folder):
+    """--letters-from DIR: only the Korean companies that have no picture in the reviewed folder DIR (its
+    logos/index.json), in market-cap order. -> (companies, log lines). (pure but for reading the file)"""
+    index, bad = LI.validate_dir(pathlib.Path(folder) / "logos")
+    if bad:
+        raise SystemExit("!! --letters-from: not a valid logo folder: " + "; ".join(bad[:5]))
+    have = set(index["logos"])
+    keep = [c for c in order if c["side"] == "kr" and c["code"] not in have]
+    return keep, [f"!! --letters-from {folder}: the {len(keep):,} Korean companies without a logo there "
+                  f"(of {sum(1 for c in order if c['side'] == 'kr'):,}; {len(have):,} entries in its index)"]
+
+
 def load_all(data, listing, homepages, min_counts=None, sheet_top=SHEET_TOP):
     """data.json + KRX listing + DART homepages -> (companies, preferred, log). companies: KR common shares and US
     stocks with exact identifiers, ranked by market cap (rank overall and within the market); preferred: Korean
@@ -225,12 +247,16 @@ def load_all(data, listing, homepages, min_counts=None, sheet_top=SHEET_TOP):
     return order, preferred, log
 
 
-def plan(order, ticker_only=False):
+def plan(order, ticker_only=False, extra=False):
     """Lookups and the credit ceiling: one ticker lookup per company with a ticker, plus one homepage lookup per Korean
-    company with a usable DART domain (none with --route ticker); every one could be billed (2 credits)."""
+    company with a usable DART domain (none with --route ticker); every one could be billed (2 credits). With --extra
+    routes, every Korean company could also need an ISIN lookup (2) and a brandmark lookup by ticker (3)."""
     t = sum(1 for c in order if c.get("ticker"))
     d = 0 if ticker_only else sum(1 for c in order if c["side"] == "kr" and c.get("domain"))
-    return {"ticker": t, "domain": d, "lookups": t + d, "ceiling": CREDITS * (t + d)}
+    i = sum(1 for c in order if c["side"] == "kr" and c.get("isin")) if extra else 0
+    b = sum(1 for c in order if c["side"] == "kr" and c.get("ticker")) if extra else 0
+    return {"ticker": t, "domain": d, "isin": i, "brandmark": b, "lookups": t + d + i + b,
+            "ceiling": CREDITS * (t + d + i) + ROUTE_COST["brandmark"] * b}
 
 
 # ── network ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -261,7 +287,7 @@ def source_facts(src):
                                    if k in src}, ensure_ascii=False)[:200]
 
 
-def parse_logo(j):
+def parse_logo(j, want="logo"):
     """A 200 answer -> (image, None), or (None, why) when it is not what the docs describe. The image is the documented
     `data` (a ready logo) or `data.logo`. A vector source (is_vector true or format svg) with a 0 x 0 or missing size
     is accepted: logo.dev renders it at the size asked, and the downloaded picture's size is used. Anything else odd (a
@@ -272,7 +298,7 @@ def parse_logo(j):
     img, shape, kind = data, "data", data.get("kind")
     if "url" not in data and isinstance(data.get("logo"), dict):
         img, shape, kind = data["logo"], "data.logo", "logo"
-    elif data.get("object") != "image" or data.get("status") != "ready" or kind != "logo":
+    elif data.get("object") != "image" or data.get("status") != "ready" or kind != want:
         return None, (f"HTTP 200 whose data is not a ready logo image (object {data.get('object')!r}, kind {kind!r}, "
                       f"status {data.get('status')!r})")
     url, src = img.get("url"), img.get("source")
@@ -327,12 +353,13 @@ class Client:
         return "Client(api.logo.dev)"
 
     def lookup(self, route, ident):
-        if route not in chk.ROUTES:
-            raise ValueError(f"route {route!r} is not an exact identifier ({', '.join(chk.ROUTES)})")
+        if route not in chk.ROUTES + EXTRA_ROUTES:
+            raise ValueError(f"route {route!r} is not an exact identifier ({', '.join(chk.ROUTES + EXTRA_ROUTES)})")
         self.api_pacer.wait()
         with self._lock:
             self.api_requests += 1
-        return self.send(chk.API_BASE + chk.LOGO_ROUTE, params={route: ident},
+        path, params = ((BRANDMARK_ROUTE, {"ticker": ident}) if route == "brandmark" else (chk.LOGO_ROUTE, {route: ident}))
+        return self.send(chk.API_BASE + path, params=params,
                          headers={"Authorization": self._auth, "Accept": "application/json"}, timeout=chk.TIMEOUT_S,
                          max_bytes=chk.MAX_ANSWER_BYTES)
 
@@ -372,37 +399,37 @@ class Ledger:
     def counted(self):
         return self.billed + self.unknown
 
-    def reserve(self):
-        """None when 2 credits are reserved; else why not: "cap" (--max-credits) or "floor" (logo.dev's reported
-        balance minus what is in flight could go below MIN_BALANCE)."""
+    def reserve(self, price=CREDITS):
+        """None when `price` credits (2 a logo lookup, 3 a brandmark) are reserved; else why not: "cap"
+        (--max-credits) or "floor" (logo.dev's reported balance minus what is in flight could go below MIN_BALANCE)."""
         with self._lock:
-            if self.billed + self.unknown + self.reserved + CREDITS > self.cap:
+            if self.billed + self.unknown + self.reserved + price > self.cap:
                 return "cap"
             if self.unreadable is not None:
                 return "unreadable"
-            if self.balance is not None and self.balance - self.reserved - CREDITS < MIN_BALANCE:
+            if self.balance is not None and self.balance - self.reserved - price < MIN_BALANCE:
                 return "floor"
-            self.reserved += CREDITS
+            self.reserved += price
             return None
 
-    def release(self):
+    def release(self, price=CREDITS):
         with self._lock:
-            self.reserved -= CREDITS
+            self.reserved -= price
 
-    def settle(self, resp):
+    def settle(self, resp, price=CREDITS):
         """Releases the reservation and counts the answer. Returns the credits it cost."""
         cc = resp.headers.get("credits-charged")
         cost = 0
         with self._lock:
-            self.reserved -= CREDITS
+            self.reserved -= price
             if cc == "1":
                 self.charged += 1
-                cost = CREDITS
+                cost = price
             elif cc == "0":
                 self.free += 1
             elif resp.status in (200, 404):
                 self.no_header += 1
-                cost = CREDITS
+                cost = price
             self.billed += cost
             bal = resp.headers.get("credits-remaining")
             if bal is not None and str(bal).strip() != "":
@@ -428,11 +455,11 @@ class Ledger:
             self._first, self._nobal, self._unreadable_new = None, False, None
         return out
 
-    def unanswered(self):
+    def unanswered(self, price=CREDITS):
         with self._lock:
-            self.reserved -= CREDITS
-            self.unknown += CREDITS
-        return CREDITS
+            self.reserved -= price
+            self.unknown += price
+        return price
 
 
 # ── images ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -629,6 +656,21 @@ def shared_groups(items):
 
 # ── the run ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def usable(route, kind, info):
+    """A lookup answer worth downloading before the checks: a logo whose source is a vector, or a raster whose shorter
+    side is at least SMALL_PX (the 'small' check, read from logo.dev's own size). A brandmark (the wide lockup) must also be
+    no wider than BRANDMARK_MAX_ASPECT : 1. (pure)"""
+    if kind != "logo":
+        return False
+    img = info.get("image") or {}
+    w, h = img.get("width"), img.get("height")
+    if img.get("is_vector"):
+        return route != "brandmark" or not (w and h) or max(w, h) / min(w, h) <= BRANDMARK_MAX_ASPECT
+    if not (w and h) or min(w, h) < SMALL_PX:
+        return False
+    return route != "brandmark" or max(w, h) / min(w, h) <= BRANDMARK_MAX_ASPECT
+
+
 class Job:
     """One company on its way through its lookups, download and checks."""
 
@@ -716,10 +758,12 @@ class Scheduler:
 
 class Fetcher:
     def __init__(self, client, ledger, log, out_logos, scope=(), clock=time.monotonic, sleep=time.sleep, jitter=None,
-                 deadline=None, workers=DEFAULT_WORKERS, webp=True, out_dropped=None, need=0, ticker_only=False):
+                 deadline=None, workers=DEFAULT_WORKERS, webp=True, out_dropped=None, need=0, ticker_only=False,
+                 extra=False):
         self.client, self.ledger, self.log = client, ledger, log
         self.ticker_only = ticker_only                   # --route ticker: no homepage lookup, the ticker logo if it passes
         self.route = "ticker" if ticker_only else "auto"
+        self.extra = extra                               # --extra-routes: ISIN, then brandmark, for Korean companies
         self.only_codes = []                             # --only: the named companies (for run.json)
         self.out_logos, self.scope, self.webp = out_logos, set(scope), webp
         self.out_dropped = out_dropped or out_logos.parent / "dropped"    # dropped pictures: never in logos/
@@ -755,6 +799,7 @@ class Fetcher:
     # one request (with its 429 / 5xx / no-answer retries) -> (kind, info, credits, requests sent)
     def call(self, route, ident):
         rl = tr = spent = sent = 0
+        price = ROUTE_COST.get(route, CREDITS)
         unanswered = False
         while True:
             if self.stop is not None:
@@ -762,10 +807,10 @@ class Fetcher:
             if self.deadline is not None and self.clock() >= self.deadline:
                 raise chk.StopRun("time_limit", "reached the time limit (--time-limit-min): the results so far are "
                                                 "saved and uploaded before the workflow's own limit")
-            why = self.ledger.reserve()
+            why = self.ledger.reserve(price)
             if why == "cap":
                 raise chk.StopRun("max_credits", f"reached --max-credits {self.ledger.cap:,}: {self.ledger.counted:,} "
-                                                 f"credits counted, and the next lookup could cost {CREDITS} more")
+                                                 f"credits counted, and the next lookup could cost {price} more")
             if why == "unreadable":
                 raise chk.StopRun("balance_unreadable", f"logo.dev's credit balance could not be read "
                                                         f"({str(self.ledger.unreadable)[:40]!r}): stopping")
@@ -780,9 +825,9 @@ class Fetcher:
                 self.count("no answer (network)")
                 if not unanswered:
                     unanswered = True
-                    spent += self.ledger.unanswered()
+                    spent += self.ledger.unanswered(price)
                 else:
-                    self.ledger.release()
+                    self.ledger.release(price)
                 if tr < chk.RETRIES_TRANSIENT:
                     self.log(f"  !! {route} {ident}: no answer ({type(e).__name__}); trying again in {chk.BACKOFF_S[tr]} s")
                     self.sleep(chk.BACKOFF_S[tr])
@@ -790,7 +835,7 @@ class Fetcher:
                     self.count("retries after an error")
                     continue
                 return "error", {"note": f"no answer after {tr + 1} tries ({type(e).__name__})"}, spent, sent
-            spent += self.ledger.settle(resp)
+            spent += self.ledger.settle(resp, price)
             first, nobal, unreadable = self.ledger.take_notices()
             if unreadable is not None:
                 self.set_stop(chk.StopRun("balance_unreadable", f"logo.dev reported a credit balance this tool cannot "
@@ -806,7 +851,7 @@ class Fetcher:
                 self._respect_window(resp.headers)
             if resp.status == 200:                       # read here: an odd answer is this company's, not the run's
                 j = resp.json()
-                img, why = parse_logo(j)
+                img, why = parse_logo(j, "brandmark" if route == "brandmark" else "logo")
                 if why:
                     return "odd", {"note": why, "http": 200}, spent, sent
                 kind, info = "logo", {"image": img}
@@ -869,10 +914,31 @@ class Fetcher:
             self.count("holds (RateLimit-Remaining 0)")
             self.client.api_pacer.hold(min(reset, chk.MAX_WAIT_429_S))
 
+    def next_stage(self, job, route, kind):
+        """The stage after `route`: the DART homepage after the ticker (Korea), then — only with --extra-routes, only for a
+        Korean company, and only while no route has given a usable logo — the ISIN, then the brandmark by ticker."""
+        c = job.c
+        if kind == "odd":
+            return "decide"                              # an odd answer means a letter mark: no further lookup
+        order = ["ticker"]
+        if c["side"] == "kr" and c.get("domain") and not self.ticker_only:
+            order.append("domain")
+        if self.extra and c["side"] == "kr":
+            if c.get("isin"):
+                order.append("isin")
+            if c.get("ticker"):
+                order.append("brandmark")
+        after = order[order.index(route) + 1:] if route in order else []
+        for nxt in after:
+            if nxt in EXTRA_ROUTES and any(usable(rt, *job.results[rt]) for rt in job.results):
+                return "decide"                          # an earlier route already has a usable logo
+            return nxt
+        return "decide"
+
     # one lookup stage -> None (stage finished) or seconds to wait (202)
     def lookup(self, job):
         c, route = job.c, job.stage
-        ident = c["ticker"] if route == "ticker" else c["domain"]
+        ident = c["isin"] if route == "isin" else c["ticker"] if route in ("ticker", "brandmark") else c["domain"]
         kind, info, spent, sent = self.call(route, ident)
         job.credits += spent
         job.requests += sent
@@ -901,8 +967,7 @@ class Fetcher:
                 self.set_stop(chk.StopRun("unexpected", f"more than {ODD_STOP} odd answers from logo.dev ({n}): its API "
                                                         "may have changed; what was found is saved"))
         job.results[route] = (kind, info)
-        job.stage = ("domain" if route == "ticker" and c["side"] == "kr" and c.get("domain") and kind != "odd"
-                     and not self.ticker_only else "decide")   # an odd ticker answer means a letter mark: no homepage lookup
+        job.stage = self.next_stage(job, route, kind)
         return None
 
     def decide(self, job):
@@ -931,8 +996,15 @@ class Fetcher:
                            else "no usable DART homepage domain")
         elif d_kind == "logo":
             job.choice, job.check = "domain", "homepage"
+        if self.extra and not (job.choice and usable(job.choice, *r[job.choice])):
+            for rt in EXTRA_ROUTES:                      # --extra-routes: only when ticker and homepage gave nothing usable
+                if rt in r and usable(rt, *r[rt]):
+                    job.choice, job.check, job.why = rt, rt, ""
+                    return
+        if job.choice:
+            return
         else:
-            kinds = [k for k in (t_kind, d_kind) if k]
+            kinds = [k for k in (t_kind, d_kind) + tuple(r.get(rt, ("", {}))[0] for rt in EXTRA_ROUTES) if k]
             for k in ("no_image", "not_indexed", "error", "not_found"):
                 if k in kinds:
                     job.reason = k
@@ -1078,7 +1150,7 @@ class Fetcher:
 
     def process(self, job):
         """-> None when the company is finished, else seconds to wait (202)."""
-        while job.stage in ("ticker", "domain"):
+        while job.stage in ("ticker", "domain") + EXTRA_ROUTES:
             wait = self.lookup(job)
             if wait is not None:
                 return wait
@@ -1231,6 +1303,12 @@ def rows_of(fetcher, preferred, groups):
                "transparency": chosen.get("has_transparency", ""), "etag": chosen.get("etag", ""),
                "file": job.file, "bytes": job.bytes or "", "credits": job.credits, "requests": job.requests,
                "shared_group": shared.get(c["code"], ""), "via": "",
+               "isin": c.get("isin", "") if "isin" in job.results else "",
+               "isin_status": job.results.get("isin", ("", {}))[0], "isin_brand": job.results.get("isin", ("", {}))[1].get("brand_id", ""),
+               "brandmark_status": job.results.get("brandmark", ("", {}))[0],
+               "brandmark_size": ("{}x{}".format((job.results["brandmark"][1].get("image") or {}).get("width"),
+                                                 (job.results["brandmark"][1].get("image") or {}).get("height"))
+                                  if job.results.get("brandmark", ("", {}))[0] == "logo" else ""),
                "note": ("unfinished: " + "; ".join(f"{x['route']} {x['result']}" for x in job.lookups) if job.lookups
                         else "not looked up: the run stopped first") if unfinished else job.note}
         rows.append(row)
@@ -1273,7 +1351,7 @@ def make_index(rows, stamp, data, fmt):
 CSV_COLS = ["rank", "market_rank", "code", "name", "market", "cap", "ticker", "domain", "dart_homepage", "result", "route", "check",
             "reason", "flags", "unverified_why", "ticker_status", "ticker_brand", "domain_status", "domain_brand",
             "brand_domain", "resolution", "size_from", "width", "height", "format", "vector", "transparency", "etag", "file", "bytes", "credits",
-            "requests", "shared_group", "via", "note"]
+            "requests", "shared_group", "via", "note", "isin", "isin_status", "isin_brand", "brandmark_status", "brandmark_size"]
 
 
 def tally(rows):
@@ -1499,6 +1577,10 @@ def sheet_sections(rows, jobs, groups, top):
         mine = sorted((r for r in outside if r["check"] == check), key=lambda r: int(r["market_rank"] or 10 ** 6))
         secs.append((f"Korea outside the top {top}: {title}", mine))
     rank = lambda r: (r["market"] == "US", int(r["market_rank"] or 10 ** 6))    # noqa: E731
+    for check, title in (("isin", "logo found by ISIN (--extra-routes)"),
+                         ("brandmark", "brandmark (wide lockup) found by ticker (--extra-routes)")):
+        secs.append((f"Korea, any rank: {title}", sorted((r for r in comp if r["check"] == check and r["result"] == "logo"),
+                                                         key=lambda r: int(r["market_rank"] or 10 ** 6))))
     secs.append(("Monogram-looking (kept): every company, any rank",
                  sorted((r for r in comp if "monogram-looking" in r["flags"].split()), key=rank)))
     secs.append(("Size-less vector (kept): every company, any rank",
@@ -1974,6 +2056,12 @@ def parse_args(argv):
                     help="with --only: ticker = look up by ticker only (no DART homepage lookup)")
     ap.add_argument("--add-from", metavar="RUN_DIR",
                     help="add the logos of a reviewed --only run (RUN_DIR) to an earlier run's folder (with --dir)")
+    ap.add_argument("--letters-from", metavar="DIR", default="",
+                    help="only the Korean companies without a logo in this reviewed folder (its logos/index.json), "
+                         "largest first; --limit keeps the N largest of them")
+    ap.add_argument("--extra-routes", action="store_true",
+                    help="Korean companies: after the ticker and the DART homepage find no usable logo, look up the ISIN "
+                         "(2 credits), then the brandmark by ticker (3 credits)")
     ap.add_argument("--full-run-date", default="", help="today's KST date (YYYY-MM-DD); needed for a run without --limit "
                                                        f"or with --limit above {FULL_RUN_FREE_LIMIT}")
     a = ap.parse_args(argv)
@@ -2047,6 +2135,16 @@ def _main(argv, deps, state):
     order, preferred, clog = load_all(data, listing, homepages, d.min_counts, a.sheet_top)
     for line in clog:
         log(line)
+    if a.letters_from:
+        order, more = letters_from(order, a.letters_from)
+        for line in more:
+            log(line)
+        in_run = {c["code"] for c in order}
+        preferred = [p for p in preferred if p["issuer"] in in_run]
+    if a.extra_routes:                                   # ISIN: the company's own (logo_sources: KRX ISU_CD, else rule)
+        log(f"!! --extra-routes: Korean companies without a usable ticker or homepage logo also get an ISIN lookup "
+            f"({ROUTE_COST['isin']} credits) and a brandmark lookup by ticker ({ROUTE_COST['brandmark']} credits, kept only "
+            f"when no wider than {BRANDMARK_MAX_ASPECT:g}:1)")
     if a.limit:
         order = order[:a.limit]
         in_run = {c["code"] for c in order}
@@ -2064,12 +2162,14 @@ def _main(argv, deps, state):
         log(f"!! --only {','.join(want)} · route {a.route}: a fix-up for named companies (add it to the reviewed folder "
             "with --add-from after looking at it)")
     ticker_only = a.route == "ticker"
-    pl = plan(order, ticker_only)
-    cap = min(a.max_credits, pl["ceiling"]) if (a.limit or a.only) else a.max_credits   # a trial never spends past its plan
+    pl = plan(order, ticker_only, a.extra_routes)
+    cap = (min(a.max_credits, pl["ceiling"]) if (a.limit or a.only or a.letters_from)
+           else a.max_credits)                           # a trial or a retry never spends past its plan
     log(f"· data.json asOf {data.get('asOf')} · prices {data.get('pxDate')} (US {data.get('usPxDate')}) · companies "
         f"{len(order):,} (Korea {sum(1 for c in order if c['side'] == 'kr'):,} · US "
         f"{sum(1 for c in order if c['side'] == 'us'):,}) · preferred shares {len(preferred):,}")
-    log(f"· lookups: at most {pl['lookups']:,} ({pl['ticker']:,} by ticker + {pl['domain']:,} by DART homepage) · "
+    log(f"· lookups: at most {pl['lookups']:,} ({pl['ticker']:,} by ticker + {pl['domain']:,} by DART homepage"
+        + (f" + {pl['isin']:,} by ISIN + {pl['brandmark']:,} brandmarks" if a.extra_routes else "") + ") · "
         f"ceiling if every one were billed: {pl['ceiling']:,} credits (${pl['ceiling'] / 100:,.2f}) · the cap stops at "
         f"{cap:,}{' (a trial: its own ceiling)' if cap != a.max_credits else ''} · no ticker: "
         f"{sum(1 for c in order if not c.get('ticker'))}")
@@ -2087,7 +2187,7 @@ def _main(argv, deps, state):
     scope = {c["code"] for c in order if c["mrank"] <= a.sheet_top}
     f = Fetcher(client, ledger, log, out_logos, scope, d.clock, d.sleep, d.jitter,
                 deadline=t0 + a.time_limit_min * 60, workers=a.workers, webp=d.webp, need=min(cap, pl["ceiling"]),
-                ticker_only=ticker_only)
+                ticker_only=ticker_only, extra=a.extra_routes)
     if a.only:
         f.only_codes = list(order)
     problems = []
