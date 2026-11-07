@@ -199,11 +199,15 @@ function divKrExact(s, co) {
   const raw = num(s && s.dps);
   const adjFrom = st.now != null && f0 != null && f0 !== 1 && raw > 0 ? raw : null;
   const view = { dps: st.now, yieldPct, fy, dpsOk: st.now != null, ...(adjFrom != null ? { adjFrom } : {}) };
+  // adjYears (Jack, PR #68 2022/bars): the earlier report years (not the latest) whose bar was recalculated for a share count
+  // change (that year's dpsF is not 1), oldest first, for the note under the bars. Only years that have a bar.
+  const F = (s && Array.isArray(s.dpsF) ? s.dpsF : co && Array.isArray(co.dpsF) ? co.dpsF : null) || [];
+  const adjYearsOf = (d3) => (fy == null ? [] : [2, 1].filter((i) => d3[i] != null && num(F[i]) != null && num(F[i]) !== 1).map((i) => fy - i));
   const d3 = krDivHistory(s, co);                          // whole won
   if (!d3 || !(d3[0] > 0)) return { rule: "pays", ...view };
   const cur = d3[0], prev = d3[1];
   if (prev == null) return { rule: yieldPct != null ? "noPrev" : "na", ...view, ...(yieldPct != null ? {} : { dps: null, dpsOk: false }) };
-  const base = { ...view, d3 };
+  const base = { ...view, d3, adjYears: adjYearsOf(d3) };
   if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);
   if (n >= 2) return { rule: "streak", n, ...base };

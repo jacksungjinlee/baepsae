@@ -556,6 +556,7 @@ export function DivTab({ load, s }) {
   const showDps = !us && r.dpsOk && r.dps != null && r.dps > 0;
   const years = showDps && r.d3 && fy ? [2, 1, 0].filter((i) => r.d3[i] != null).map((i) => ({ year: fy - i, v: r.d3[i] })) : [];
   const bars = years.length >= 2 ? years : null;
+  const adjYears = bars && r.adjYears ? r.adjYears.filter((y) => bars.some((b) => b.year === y)) : [];   // earlier bars recalculated
   const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
@@ -570,6 +571,8 @@ export function DivTab({ load, s }) {
         {/* v19.1b data (Jack, PR #68 B3): the figure above was recalculated for a share count change; say what the report says */}
         {showDps && r.adjFrom != null && Dv.adjNote && <Note data-ui-v2="co-dps-adj">{fill(Dv.adjNote, { x: nf(r.adjFrom) })}</Note>}
         {bars && <Bars rows={bars} fmt={(v) => nf(v)} />}
+        {/* v19.1b data (Jack, PR #68 2022/bars): an earlier bar was recalculated for a share count change */}
+        {adjYears.length > 0 && Dv.barsAdjNote && <Note data-ui-v2="co-bars-adj">{fill(Dv.barsAdjNote, { years: adjYears.join("·") })}</Note>}
         {showDps && <Src>{yearText(fy)}</Src>}
         {us && Dv.usLater && <Note>{Dv.usLater}</Note>}
       </Card>}

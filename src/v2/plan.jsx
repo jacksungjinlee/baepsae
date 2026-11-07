@@ -82,16 +82,16 @@ function Clash({ parts }) {
   );
 }
 
-// The 2022 line (v19.1b data, deckcalc.y2022View: "약 50~77만원 줄었을 거예요"), units drawn small like Amount. A narrow column
-// wraps only after the first word or between the amount and the verb, never inside either, so the three columns of
-// 포트폴리오 만들기 4단계 wrap the same way. v: y2022View's { parts, text, pieces: [pre, amount, verb] }.
+// The 2022 line (v19.1b data, deckcalc.y2022View: "약 50~77만원 줄어들 수 있어요"), units drawn small like Amount. A narrow
+// column never breaks inside the amount or inside a word (keep-all), so the three columns of 포트폴리오 만들기 4단계 wrap the
+// same way. v: y2022View's { parts, text, pieces: [pre, amount, verb] }.
 export function Y2022Amount({ v }) {
   const [pre, amount, verb] = v.pieces;
   const nw = { whiteSpace: "nowrap" };
   return (
     <span data-ui="amount" data-ui-v2={v.parts.length > 1 ? "y2022-range" : "y2022-one"} style={{ wordBreak: "keep-all" }}>
       {pre}<span style={nw}>{amountParts(amount).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}</span>
-      {verb ? " " : ""}{verb ? <span style={nw}>{verb}</span> : null}
+      {verb ? " " : ""}{verb ? <span>{verb}</span> : null}
     </span>
   );
 }

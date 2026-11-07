@@ -3732,6 +3732,32 @@ def v191b_files(files, se=None, beta=None):
     return f
 
 
+def to_plan_v191b(page):
+    """to_plan 과 같은 길 (배당 생활비 → 1,000만원 → 후보 고르기 → 매수 계획). v19.1b 데이터의 4단계 칸은 '약' 없이 하락 폭이라
+    (PR #68) 칸 자체가 보일 때까지 기다려요. → [(종목, 주식 수)] 화면 순서대로"""
+    wait_ready(page)
+    start_build(page)
+    page.locator('[data-deck="income"]').click()
+    see(page, C["build"]["s1"]["title"])
+    click_next(page)
+    see(page, C["build"]["s3"]["title"])
+    click_next(page)
+    see(page, C["build"]["s4"]["title"])
+    page.get_by_role("button", name="+1,000만").first.click()
+    page.locator('[data-ui-v2="y2022-methods"] [data-method]').first.wait_for(state="visible")
+    click_next(page)
+    see(page, C["pick"]["title"])
+    click_next(page)
+    see(page, C["plan"]["stocks"])
+    rows = page.locator('[data-ui-v2="screen"] [data-row]')
+    rows.first.wait_for(state="visible")
+    out = []
+    for i in range(rows.count()):
+        r = rows.nth(i)
+        out.append((r.get_attribute("data-row"), int(re.search(r"([\d,]+)주", r.inner_text()).group(1).replace(",", ""))))
+    return out
+
+
 def scene_v191b(R, files, width):
     S = f"v19.1b 데이터 {width}"
     f = v191b_files(co_files(files))
@@ -3820,11 +3846,19 @@ def scene_v191b(R, files, width):
         co_open_tab(page, V191B_SPLIT10, "div", "kr")
         assert page.locator('[data-ui-v2="co-dps"] [data-ui="amount"]').first.inner_text() == "2,800원"
         assert page.locator('[data-ui-v2="co-dps-adj"]').inner_text() == fillp(CO["div"]["adjNote"], x="28,000")
+        # 앞 막대도 다시 계산했어요 (dpsF [10, 10, 10]) → 막대 밑 안내도 (PR #68 2022/bars)
+        assert page.locator('[data-ui-v2="co-bars-adj"]').inner_text() == fillp(CO["div"]["barsAdjNote"], years="2023·2024")
         no_hscroll(page, width)
         R.collect(page)
         open_co(V191B_SPLIT)
         co_open_tab(page, V191B_SPLIT, "div", "kr")
         assert page.locator('[data-ui-v2="co-dps"]').count() == 1 and page.locator('[data-ui-v2="co-dps-adj"]').count() == 0
+        # 2024 · 2023 막대는 5:1 분할 전의 배당을 다시 계산한 값 (dpsF [1, 5, 5]) → 막대 밑 안내 (PR #68 2022/bars)
+        assert page.locator('[data-ui-v2="co-bars-adj"]').inner_text() == fillp(CO["div"]["barsAdjNote"], years="2023·2024")
+        open_co(V191B_CUT)                                                  # 다시 계산한 막대가 없으면 안내도 없어요
+        co_open_tab(page, V191B_CUT, "div", "kr")
+        assert page.locator('[data-ui-v2="co-div"] [data-ui-v2="bars"]').count() == 1 and page.locator('[data-ui-v2="co-bars-adj"]').count() == 0
+        R.collect(page)
         # 보험사(s insure): 금융회사 밑 줄 (PR #68 B7)
         open_co(V191B_FIN)
         page.locator('[data-ui-v2="co-warn"][data-n="0"]').wait_for(state="visible")
@@ -3862,15 +3896,15 @@ def scene_v191b(R, files, width):
     srv, ctx, page, _ = R.open(build_site(pf), width)
 
     def plan():
-        rows = to_plan(page)
+        rows = to_plan_v191b(page)
         assert rows, rows
         y = page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="y2022"]')
         assert y.get_attribute("data-band") == "range", y.get_attribute("data-band")
         big = y.locator('[data-ui-v2="big-number"]').inner_text().replace("\n", "")
-        # Jack, PR #68 B1: 빼기 없이 하락 폭으로, 작은 하락 먼저 ("약 {small}~{big}만원 줄었을 거예요")
-        m = re.fullmatch(r"약 ([\d,]+)~([\d,]+)만원 줄었을 거예요", big)
+        # Jack, PR #68: 빼기 없이 하락 폭으로, 작은 하락 먼저 ("약 {small}~{big}만원 줄어들 수 있어요")
+        m = re.fullmatch(r"약 ([\d,]+)~([\d,]+)만원 줄어들 수 있어요", big)
         assert m and int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", "")), big
-        assert big == fillp(C["plan"]["y2022FallRange"], small=m.group(1), big=m.group(2)) and "−" not in y.inner_text()
+        assert big == fillp(C["plan"]["y2022MayRange"], small=m.group(1), big=m.group(2)) and "−" not in y.inner_text()
         assert y.locator('[data-ui-v2="y2022-range-note"]').inner_text() == C["plan"]["y2022Range"]
         # PR #68 B5: 범위 밑에서는 '…어림한 범위예요' ('값이에요' 아님)
         assert y.locator('[data-ui-v2="y2022-note"]').inner_text() == C["plan"]["y2022NoteRange"]
@@ -3950,7 +3984,7 @@ def scene_v191b(R, files, width):
         assert cells.count() == 3
         for i in range(3):
             txt = cells.nth(i).inner_text().replace("\n", "")
-            m = re.fullmatch(r"약 ([\d,]+)(?:~([\d,]+))?만원 줄었을 거예요", txt)       # PR #68 B1: 하락 폭, 빼기 없음
+            m = re.fullmatch(r"([\d,]+)(?:~([\d,]+))?만원 줄어들 수 있어요", txt)       # PR #68: 하락 폭, 빼기 없음, 좁은 칸은 '약' 없이
             assert m and (m.group(2) is None or int(m.group(1).replace(",", "")) < int(m.group(2).replace(",", ""))), txt
             assert cells.nth(i).evaluate("(e) => e.scrollWidth <= e.clientWidth"), txt           # 칸 밖으로 나가지 않아요 (낱말 가운데서 끊지 않음)
         assert box.locator('[data-ui-v2="y2022-range-note"]').inner_text() == C["plan"]["y2022Range"]

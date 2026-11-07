@@ -282,7 +282,7 @@ function StepTerms({ st, set, ds, load }) {
     const out = {};
     for (const m of METHODS) {
       const r = computePlan(load, { ...st, method: m }, picks, ds.pinned);
-      out[m] = r.ok && r.y2022.ok ? { won: r.y2022.won, view: y2022View(r.y2022) } : null;
+      out[m] = r.ok && r.y2022.ok ? { won: r.y2022.won, view: y2022View(r.y2022, true) } : null;
     }
     return Object.values(out).every((v) => v != null) ? out : "hide";
   }, [ds, st, load, amt]);
