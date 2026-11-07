@@ -5,6 +5,7 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-08 | #80 | v19.3c: 포트폴리오 만들기's 기준 cards are redesigned (picture, short description, sorting basis, dots for points) with a 내 점수 meter that shows the points left and how many companies are left with today's 기준; a first-visit guide (welcome + 3 steps, 건너뛰기 or Esc any time) opens from ☰ "처음 안내 다시 보기". The new start screen with recipe cards and the guide opening by itself on a first visit are built but switched off until Jack approves their test changes. |
 | 2026-11-08 | #78 | Data: dividends are checked against stock splits for more Korean companies — the pipeline now reads 자본금 under its other names (보통주자본금, 납입자본) and re-read 81 reports once, so today's dividend yield is confirmed for 1,123 of 1,220 payers (was 1,088); the rest stay blank and unranked, never guessed. |
 | 2026-11-08 | #75 | 데이터 출처's logo line now reads "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07), ahead of the company homepage icons; the Logo.dev link is unchanged. |
 | 2026-11-07 | #76 | Tests only: the smoke tests delete their own temporary site copies when they pass and keep only the latest failed run (about 4,000 had filled the session's disk). |
