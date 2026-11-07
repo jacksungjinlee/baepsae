@@ -29,22 +29,26 @@ def test_company_capital_under_its_numbered_and_spaced_names(nm):
     assert got == {"cs3": [100.0, 100.0, 100.0], "k": "all", "src": "total"}
 
 
-def test_common_capital_alone_is_marked_common_and_preferred_capital_is_added():
+def test_common_capital_is_marked_common_and_preferred_capital_is_never_added():
     kia = F.parse_capital([bs("보통주자본금", 2139317000000)])                      # 기아: 보통주자본금 (id IssuedCapital) 뿐
     assert kia["k"] == "common" and kia["src"] == "common" and kia["cs3"][0] == 21393.17
     kt = F.parse_capital([bs("자본금, 보통주", 49019283000, aid="ifrs-full_IssuedCapitalOrdinaryShares")])   # 케이티알파
     assert kt["k"] == "common"
+    # 우선주 자본금은 더하지 않아요: 더한 줄이 상장되지 않은 상환전환우선주이거나 상장 우선주가 다른 이름이면 합이 실제보다
+    # 작아져요 (리뷰 2026-11-07). 보통주만이면 아래 끝도 오늘 보통주 수로만 계산해서 늘 맞아요
     both = F.parse_capital([bs("보통주자본금", 7.78e11, aid="dart_IssuedCapitalOfCommonStock"),
                             bs("우선주자본금", 1.22e11, aid="dart_IssuedCapitalOfPreferredStock")])
-    assert both == {"cs3": [9000.0, 9000.0, 9000.0], "k": "all", "src": "sum"}
-    # 우선주 줄이 있는데 그해 값이 비면 그해 자본금은 모름 (보통주만 더하면 실제보다 작아져 틀린 배율로 맞출 수 있어요)
-    gap = F.parse_capital([bs("보통주자본금", 1e10), {**bs("우선주자본금", 1e9), "frmtrm_amount": "-"}])
-    assert gap["cs3"] == [110.0, None, 110.0] and gap["k"] == "all"
+    assert both == {"cs3": [7780.0, 7780.0, 7780.0], "k": "common", "src": "common"}
+    rcps = F.parse_capital([bs("보통주자본금", 500e8, aid="x"), bs("상환전환우선주자본금", 5e8, aid="x"), bs("종류주식자본금", 100e8, aid="x")])
+    assert rcps["k"] == "common" and rcps["cs3"][0] == 500.0
+    assert F.cap_kind("종류주식자본금", "x") == "pref" and F.cap_kind("우선주자본금", "x") == "pref"
 
 
 def test_paid_in_capital_only_when_nothing_better_and_never_for_the_impairment_check():
     sds = [bs("납입자본", 38688900000), bs("보통주납입자본", 38688900000, aid="dart_IssuedCapitalOfCommonStock")]
-    assert F.parse_capital(sds)["src"] == "common"                                 # 삼성에스디에스: 보통주 줄이 먼저예요
+    assert F.parse_capital(sds)["src"] == "paid"                                   # 삼성에스디에스: 이름에 납입자본 → 올해만
+    tbh = F.parse_capital([bs("보통주납입자본", 10428409500)])                       # TBH글로벌: 보통주 납입자본
+    assert tbh["src"] == "paid" and tbh["k"] == "common"
     kc = [bs("납입자본", 122789687434, 192789687434), bs("보통주자본금", 25954226000, aid="dart_IssuedCapitalOfCommonStock")]
     assert F.parse_capital(kc)["cs3"][0] == 259.5423                               # 한국카본: 주식발행초과금이 섞인 납입자본은 안 써요
     both = [bs("납입자본", 4053578000000, aid="-표준계정코드 미사용-"), bs("자본금", 3209820000000)]
@@ -71,6 +75,35 @@ def test_the_new_read_equals_the_old_one_wherever_the_old_one_found_capital():
             bs("우선주자본금", 119467000000, aid="dart_IssuedCapitalOfPreferredStock"), bs("자본잉여금", 4.4e12)]
     out = F.parse_dart_list(rows)                                                   # 삼성전자처럼 '자본금'과 종류별 줄이 함께
     assert out["_cap"]["cs3"] == out["_fin"]["cs3"] and out["_cap"]["ss3"] == out["_fin"]["ss3"]
+
+
+def test_paid_in_capital_is_never_used_to_compare_earlier_years():
+    """리뷰 2026-11-07 (막는 문제였어요): 주식발행초과금으로 1:1 무상증자를 하면 주식 수는 두 배인데 납입자본(자본금 + 주식발행초과금)은
+    그대로예요. 납입자본의 비를 주식 수의 비로 보면 앞 해 배당(옛 기준 1,000원)을 '그대로'로 잘못 봐서 [500, 1000, 1000] — 없는
+    배당 삭감이 생겨요. 납입자본은 올해 아래 끝에만 쓰고, 앞 해는 배당 받은 주식 수의 비와 액면분할 확인으로만 판단해요."""
+    paid = F.parse_capital([bs("납입자본", 11_000e6)])
+    assert paid["src"] == "paid"
+    bas = {"cash3": [18e6 * 500, 10e6 * 1000, 10e6 * 1000], "par3": [500.0] * 3, "eps3": [None] * 3, "ni3": [None] * 3}
+    r = F.div_basis([500.0, 1000.0, 1000.0], bas, paid["cs3"], 20e6, (), None, cap_k=paid["k"], cap_src=paid["src"])
+    assert r["f0"] == 1.0 and r["st3"][0] == "same"
+    assert r["dps3a"][1:] != [1000.0, 1000.0] and r["st3"][1] != "same" and r["divSt"] != "same"   # 앞 해는 판단하지 않아요
+    exact = F.div_basis([500.0, 1000.0, 1000.0], bas, [100.0, 50.0, 50.0], 20e6, (), [10.0, 60.0, 60.0])
+    assert exact["st3"] == ["same", "adj", "adj"] and exact["dps3a"] == [500.0, 500.0, 500.0]      # 진짜 자본금이면 맞춰요
+    # 앞 해 현금배당금총액이 비어 있어도 '그대로'로 보지 않아요
+    bas2 = {"cash3": [20e6 * 500, None, None], "par3": [500.0] * 3, "eps3": [None] * 3, "ni3": [None] * 3}
+    r2 = F.div_basis([500.0, 1000.0, 1000.0], bas2, paid["cs3"], 20e6, (), None, cap_k="all", cap_src="paid")
+    assert r2["st3"][1:] == ["nd", "nd"] and r2["dps3a"][1:] == [None, None]
+    # 예전처럼 납입자본 비교를 했다면 틀렸을 거예요 (이 시험이 무엇을 막는지)
+    wrong = F.div_basis([500.0, 1000.0, 1000.0], bas, paid["cs3"], 20e6, (), None)
+    assert wrong["st3"] == ["same", "same", "same"]
+
+
+def test_common_share_capital_still_compares_earlier_years():
+    """보통주자본금은 액면가 × 보통주 수라 해마다의 비가 주식 수의 비예요: 2:1 액면분할도 맞춰요."""
+    cap = F.parse_capital([bs("보통주자본금", 1e10, 1e10, 1e10)])
+    bas = {"cash3": [20e6 * 500, 10e6 * 1000, 10e6 * 1000], "par3": [500.0, 1000.0, 1000.0], "eps3": [None] * 3, "ni3": [None] * 3}
+    r = F.div_basis([500.0, 1000.0, 1000.0], bas, cap["cs3"], 20e6, (), None, cap_k=cap["k"], cap_src=cap["src"])
+    assert r["st3"] == ["same", "adj", "adj"] and r["dps3a"] == [500.0, 500.0, 500.0]
 
 
 # ── 2. 손익 줄 없이도 자본금 ─────────────────────────────
@@ -128,23 +161,79 @@ def test_an_old_entry_without_capital_is_fetched_once_and_marked(tmp_path, monke
     assert d1["_cap"]["k"] == "common" and "_cap" not in d2
     assert calls == [("C1", "CFS")] and c.redone == 1
     assert c.entries["C1|2025|11011|CFS"]["rp"] == F.CAP_REDO_TAG
-    assert "자본금 다시 읽기 1건" in c.summary()
+    assert "자본금 다시 읽기 1건 시도 (실행당 최대 800): 새로 읽음 1" in c.summary()
     c.save()
     c2 = F.DartClient("k", today=dt.date(2026, 11, 9), path=path)
     F.dart_financials(c2, "C1", 2025)
     assert len(calls) == 1 and c2.redone == 0                                        # 다음 실행엔 다시 받지 않아요
 
 
-def test_a_refetch_that_finds_nothing_keeps_the_old_entry(tmp_path, monkeypatch):
+def test_a_refetch_that_finds_nothing_keeps_the_old_entry_and_waits(tmp_path, monkeypatch):
     get, calls = counting_get(status="013", rows=[])
     monkeypatch.setattr(F.DartClient, "get", get)
-    c = F.DartClient("k", today=dt.date(2026, 11, 8), path=str(tmp_path / "c.json.gz"))
+    path = str(tmp_path / "c.json.gz")
+    c = F.DartClient("k", today=dt.date(2026, 11, 8), path=path)
     old = {"debt": 50.0, "_fin": {"rev": [1000.0, None, None]}}
     seed(c, "C1", old)
     assert F.dart_financials(c, "C1", 2025)["debt"] == 50.0
     e = c.entries["C1|2025|11011|CFS"]
     assert e["st"] == "000" and e["d"] == old and "rp" not in e and c.redo_kept == 1   # 찾은 보고서를 '없음'으로 바꾸지 않아요
-    assert "예전 값을 둔 1건" in c.summary()
+    assert e["rpTry"] == "2026-11-08" and c.redone == 0
+    assert "찾은 보고서가 없다고 해 예전 값을 둔 1" in c.summary() and "새로 읽음 0" in c.summary()
+    c.save()
+    n = len(calls)
+    c2 = F.DartClient("k", today=dt.date(2026, 11, 10), path=path)                 # 이틀 뒤: 다시 받지 않아요 (매 실행 호출하지 않게)
+    F.dart_financials(c2, "C1", 2025)
+    assert len(calls) == n
+    c3 = F.DartClient("k", today=dt.date(2026, 11, 15), path=path)                 # 7일 뒤: 다시 해 봐요
+    F.dart_financials(c3, "C1", 2025)
+    assert len(calls) == n + 1
+
+
+def test_a_refetch_that_fails_to_connect_keeps_the_old_entry_unmarked(tmp_path, monkeypatch):
+    calls = []
+
+    def get(self, endpoint, params, timeout=25):
+        calls.append(1)
+        return None                                                                   # 연결 문제
+    monkeypatch.setattr(F.DartClient, "get", get)
+    c = F.DartClient("k", today=dt.date(2026, 11, 8), path=str(tmp_path / "c.json.gz"))
+    old = {"debt": 50.0}
+    seed(c, "C1", old)
+    assert F.dart_financials(c, "C1", 2025) == old
+    e = c.entries["C1|2025|11011|CFS"]
+    assert e["d"] == old and "rp" not in e and "rpTry" not in e and c.redo_failed == 1 and c.redone == 0
+    assert "연결 문제·해석 오류 1" in c.summary()
+
+
+def test_revalidation_and_full_mode_mark_entries_without_counting_a_redo(tmp_path, monkeypatch):
+    get, calls = counting_get()
+    monkeypatch.setattr(F.DartClient, "get", get)
+    c = F.DartClient("k", today=dt.date(2026, 11, 8), path=str(tmp_path / "c.json.gz"))
+    seed(c, "C1", {"debt": 50.0}, at="2026-07-01")                                  # 90일 지남: 재확인이 받아요
+    F.dart_financials(c, "C1", 2025)
+    assert len(calls) == 1 and c.revalidated == 1 and c.redone == 0 and c.redo_left == F.DART_REDO_PER_RUN
+    assert c.entries["C1|2025|11011|CFS"]["rp"] == F.CAP_REDO_TAG
+    full = F.DartClient("k", mode="full", today=dt.date(2026, 11, 8), path=str(tmp_path / "f.json.gz"))
+    seed(full, "C2", {"debt": 50.0})
+    F.dart_financials(full, "C2", 2025)
+    assert full.redone == 0 and full.entries["C2|2025|11011|CFS"]["rp"] == F.CAP_REDO_TAG
+
+
+def test_the_backlog_counts_only_annual_statements_that_still_need_capital():
+    today = dt.date(2026, 11, 8)
+    e = lambda d, **x: {"st": "000", "at": "2026-11-01", "d": d, **x}
+    entries = {
+        "A|2025|11011|CFS": e({"debt": 1.0}),                                  # 다시 받을 것
+        "B|2024|11011|OFS": e({"_fin": {"cs": None}}),                         # 다시 받을 것 (앞 해)
+        "C|2025|11011|CFS": e({"debt": 1.0}, rp=F.CAP_REDO_TAG),              # 이미 새 해석
+        "D|2025|11011|CFS": e({"_fin": {"cs3": [1.0, 1.0, 1.0]}}),            # '자본금'을 읽었어요
+        "E|2025|11011|CFS": e({"debt": 1.0}, rpTry="2026-11-06"),             # 며칠 기다려요
+        "F|2026|11014|CFS": e({"rev": 1.0}),                                   # 분기 보고서
+        "G|2023|11011|CFS": e({"debt": 1.0}),                                  # 쓰지 않는 해
+        "H|2025|11011|CFS": {"st": "013", "at": "2026-11-01", "d": None},      # 없음
+    }
+    assert F.capital_backlog(entries, (2025, 2024), today) == 2
 
 
 def test_refetches_stay_within_the_per_run_limit_and_new_fetches_are_marked(tmp_path, monkeypatch):
@@ -233,4 +322,4 @@ def test_capital_sources_are_logged_with_counts(capsys):
                        "dps3": [6500.0, 5600.0, 3500.0], "_bas": kia_bas(), **({"_cap": cap} if cap else {})})
     F.apply_div_basis(stocks, {}, {})
     out = capsys.readouterr().out
-    assert "!! 배당 분할 확인에 쓴 자본금 (배당한 종목): '자본금' 1 · 보통주+우선주 0 · 보통주만 1 · 납입자본(크게 잡힐 수 있음) 0 · 못 읽음 1" in out
+    assert "!! 배당 분할 확인에 쓴 자본금 (배당한 종목): '자본금' 1 · 보통주자본금 1 · 납입자본(올해만 · 크게 잡힐 수 있음) 0 · 못 읽음 1" in out
