@@ -109,6 +109,16 @@ tells you what happened in plain words.
   ($20) unless `over_20_dollars_ok` is ticked, which needs Jack's yes first. Look at every new logo on its sheet: the
   automatic checks do not catch photos, banners, old logos or another company's logo. Add only the checked ones with
   `--add-from ARTIFACT_FOLDER --dir FOLDER --codes CODE,CODE` (a retry is never added whole), then push and deploy.
+- **Group marks** (Jack, 2026-11-07): a company still showing a letter mark may get its group's main mark, only when
+  its own website shows that same mark as its logo and the picture used is the group's main mark, never a sister
+  company's own logo (e.g. not "SAMSUNG HEAVY INDUSTRIES" for 삼성전기). Look at both first, then
+  `python3 tools/logos/logodev_fetch.py --group-mark CODE=FROM,CODE=FROM --dir FOLDER --reason "..."` (an exact copy of
+  FROM's picture, flagged `group-mark`; recorded in `groups.csv`).
+- **Homepage icons** (Jack, 2026-11-07): the company's own homepage icon from the site-icon survey
+  (`tools/logos/site_icons.py` on `claude/logos-site-icons`), only its largest icon of 96 px or more, every quality check,
+  never the same picture as another company's logo, each looked at first:
+  `--add-site-icons SURVEY_FOLDER --codes CODE,CODE --dir FOLDER` (route `site`, flagged `homepage-icon`; `sites.csv`).
+  The 데이터 출처 page says so: "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요."
 - A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
   logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
