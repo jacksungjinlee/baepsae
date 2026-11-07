@@ -2323,7 +2323,33 @@ def _median(vals):
     return round(float(np.median(vals)), 1) if len(vals) >= 5 else None
 
 
-FIN_SECS = {"bank", "insure", "broker", "holding"}
+FIN_SECS = {"bank", "insure", "broker", "holding"}    # EV 계열 멀티플을 빼는 업종 (그대로)
+# v19.1d (Jack, 2026-11-07): 유동비율·이자보상배율은 재무제표에 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과
+# 금융 지주(KB금융·신한지주 …: 업종 그룹이 은행·보험·증권·금융)만 해당 없음(flNa). 그 밖의 지주회사(LG·GS·CJ …)는 이제 돌려요.
+FL_FIN_SECS = {"bank", "insure", "broker"}
+FL_FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}   # data/industry_groups.csv 의 financial=yes 그룹과 같아요
+# 금융 지주 (업종 그룹이 industry_overrides.csv 에서 와요): 이 회사들이 금융으로 잡히지 않으면 크게 남겨요
+FL_FIN_HOLDINGS = ("105560", "055550", "086790", "316140", "138930", "139130", "175330", "138040", "071050")
+# v19.1d (Jack, 2026-11-07): 이자보상배율을 잠시 모든 회사에서 꺼요. 2026-11-07 경고 505곳 중 502곳이 '이자비용'이 아니라 환손실·
+# 파생상품 손실까지 든 '금융비용'으로 계산됐어요 (두산에너빌리티 0.65배 → 실제 이자 지급액으로는 약 2.0배). 이자비용, 없으면
+# 현금흐름표의 이자 지급액으로 다시 읽는 PR(v19.1f, 전체 DART 다시 읽기)이 이 스위치를 끄고 바른 값으로 다시 켜요.
+# 꺼져 있으면 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요 (flRan 에 icr 없음 · flWhy.icr "off" — 앱은 아무 말도 안 해요).
+ICR_OFF = True
+
+
+def fl_unknown_holding(s):
+    """업종 그룹(ind)이 없는 지주회사 — 금융 지주인지 알 수 없어서 두 검사를 돌리지도, 해당 없음으로 치지도 않아요. (순수 함수)"""
+    return not s.get("ind") and (s.get("s") or "etc") == "holding"
+
+
+def fl_financial(s):
+    """재무 경고의 유동비율·이자보상배율이 해당 없는 금융회사인지. 업종 그룹(ind)이 있으면 그것으로만, 없을 때만 업종(s)으로 봐요
+    (순수 함수). 업종 s 는 거칠어요: 2026-11-06 데이터에서 DB손해보험·현대해상은 s 가 auto(보험인데 두 검사를 돌림), 지씨셀은
+    bank, 신원·제이에스티나·한국기업평가는 broker(금융이 아닌데 건너뜀)였어요. 업종 그룹은 둘 다 맞게 잡아요."""
+    ind = s.get("ind")
+    if ind:
+        return ind in FL_FIN_INDS
+    return (s.get("s") or "etc") in FL_FIN_SECS
 
 
 CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
@@ -2336,6 +2362,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
     extra = extra or {}
     comps = []
+    hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
+    why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2378,15 +2406,20 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
 
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
         fl, ran = {}, []
-        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and row["s"] not in FIN_SECS:
+        fin_co = fl_financial(s)
+        unknown = fl_unknown_holding(s)      # 그룹 없는 지주: 금융 지주일 수도 있어 두 검사를 쉬어요 (앱은 '경고 없음'이라 말하지 않아요)
+        if s["t"] in FL_FIN_HOLDINGS and not fin_co:
+            hold_bad.append(f"{s['t']} {s['nk']}")
+        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and not fin_co and not unknown:
             ran.append("cr")
             cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
-        if op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and row["s"] not in FIN_SECS:
+        icr_ok = op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and not fin_co and not unknown
+        if icr_ok and not ICR_OFF:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
-        if op0f is not None and eff["ie"] and eff["ie"] > 0 and row["s"] not in FIN_SECS:
+        if icr_ok and not ICR_OFF and eff["ie"] > 0:
             icr = op0f / eff["ie"]
             if icr < 1:
                 fl["icr"] = round(icr, 2)
@@ -2401,8 +2434,18 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         if fl:
             row["fl"] = fl
         row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
-        if row["s"] in FIN_SECS:
-            row["flNa"] = ["cr", "icr"]                      # 금융업은 유동비율·이자보상배율이 해당 없어요
+        if not fin_co and not unknown and "icr" not in ran:
+            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
+            # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
+            # off = 돌릴 수 있었지만 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요)
+            row["flWhy"] = {"icr": "off" if icr_ok else "op" if op0f is None else "ie" if eff["ie"] is None else "neg"}
+            why_n[row["flWhy"]["icr"]] += 1
+        if fin_co:
+            row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
+        elif unknown:
+            hold_unknown.append(f"{s['t']} {s['nk']}")
+        elif row["s"] == "holding" or s.get("ind") == "holding":   # v19.1d: 금융이 아닌 지주회사 — 몇 곳이 돌았는지 로그로 남겨요
+            hold_log.append((s["t"], s["nk"], "cr" in ran, icr_ok))   # 이자보상배율은 '돌릴 수 있었는지' (ICR_OFF 와 상관없이)
         for k in CORP_DIV_KEYS:                              # v19.1b: 분할 확인한 배당 · 베타 표준오차
             if s.get(k) is not None:
                 row[k] = s[k]
@@ -2460,6 +2503,21 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
+    log(f"{'  !! ' if ICR_OFF else '· '}이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — "
+        + (f"잠시 꺼 둠(ICR_OFF · 금융비용으로 계산되던 값이라) {why_n['off']:,} · " if ICR_OFF else "")
+        + f"이자비용·금융비용 줄 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자비용 음수 {why_n['neg']:,} (corp.json flWhy)")
+    both = [h for h in hold_log if h[2] and h[3]]
+    miss = [h for h in hold_log if not (h[2] and h[3])]
+    log(f"· 지주회사(금융 빼고) 재무 경고: {len(hold_log)}곳 중 유동비율 {sum(h[2] for h in hold_log)} · 이자보상배율 "
+        f"{sum(h[3] for h in hold_log)} · 둘 다 {len(both)}곳 돌릴 수 있어요" + (" (이자보상배율은 지금 꺼 둠 · ICR_OFF)" if ICR_OFF else ""))
+    if hold_unknown:
+        log(f"  !! 업종 그룹이 없어 금융 지주인지 알 수 없는 지주회사 {len(hold_unknown)}곳: 두 검사를 쉬어요 — " + ", ".join(hold_unknown))
+    if hold_bad:
+        log(f"  !! 금융 지주인데 금융으로 잡히지 않은 회사 {len(hold_bad)}곳 (업종 그룹 확인): " + ", ".join(hold_bad))
+    if miss:
+        log(f"  !! 재무제표에 필요한 줄이 없거나 쓸 수 없어(유동부채 0 이하·이자비용 음수 포함) 못 돌린 지주회사 {len(miss)}곳: " + ", ".join(
+            f"{t} {nk}({'유동비율' if not cr else ''}{'·' if not cr and not icr else ''}{'이자보상배율' if not icr else ''} 없음)"
+            for t, nk, cr, icr in miss))
     return {"asOf": as_of, "market": market or {}, "sectors": sectors, "companies": comps}
 
 
