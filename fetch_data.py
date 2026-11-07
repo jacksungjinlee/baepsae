@@ -1311,10 +1311,11 @@ INC_NAMES = {
     "rev": ("매출액", "수익(매출액)", "영업수익", "매출", "매출액(영업수익)", "영업수익(매출액)"),
     "op": ("영업이익", "영업이익(손실)", "영업손실", "영업손익", "영업손실(이익)"),
     "ni": ("당기순이익", "당기순이익(손실)", "연결당기순이익", "당기순손실", "당기순손익", "당기순손실(이익)",
-           "연결당기순이익(손실)", "연결당기순손익", "연결당기순손실"),
+           "연결당기순이익(손실)", "연결당기순손익", "연결당기순손실",
+           "분기순이익", "분기순이익(손실)", "분기순손실", "분기순손익", "반기순이익", "반기순이익(손실)", "반기순손실", "반기순손익"),
 }
 INC_IDS = {"rev": ("ifrs-full_Revenue",), "op": ("dart_OperatingIncomeLoss",), "ni": ("ifrs-full_ProfitLoss",)}
-LOSS_ONLY = ("영업손실", "당기순손실", "연결당기순손실")
+LOSS_ONLY = ("영업손실", "당기순손실", "연결당기순손실", "분기순손실", "반기순손실")
 INC_SEEN = collections.Counter()        # 새 규칙으로 찾은 줄 · 부호가 틀려 버린 줄 (이번 실행에서 받은 재무제표만 · 실행 로그용)
 _INC_LOCK = threading.Lock()
 
@@ -1346,8 +1347,8 @@ def income_fallback(rows, key, value):
 
 # v19.1f (Jack, 2026-11-07): 이자보상배율의 이자. 손익계산서에 '이자비용' 줄이 있으면 그것, 없으면 현금흐름표의 이자 지급 줄을 모두
 # 더한 값(양수로)이에요. 예전에는 '금융비용'(환손실·파생상품 손실까지 든 금융원가)도 이자로 읽었어요 — 2026-11-07 경고 505곳 중 502곳.
-# 이자 지급 줄: 표준 계정 ifrs-full_InterestPaidClassifiedAs…(영업·투자·재무활동). 그런 줄이 하나도 없을 때만 표준 계정이 없는 줄 중
-# 이름에 '이자'와 '지급'('지출' · '납부')이 든 줄. 이자의 수취(받은 이자)는 절대 아니에요. 신종자본증권 이자(dart_InterestPaidToHybridBond)는
+# 이자 지급 줄: 표준 계정 ifrs-full_InterestPaidClassifiedAs…(영업·투자·재무활동)과, 표준 계정이 없는 줄 중 이름에 '이자'와
+# '지급'('지출' · '납부')이 든 줄 (코드가 있는 줄과 이름 · 금액이 같으면 같은 줄로 봐요). 이자의 수취(받은 이자)는 절대 아니에요. 신종자본증권 이자(dart_InterestPaidToHybridBond)는
 # 회계상 자본에 대한 분배라 빼요 (HYBRID_INTEREST — Jack 확인 대기).
 HYBRID_INTEREST = False
 _NO_ID = ("-표준계정코드 미사용-", "")
@@ -1363,12 +1364,14 @@ def interest_paid_rows(rows):
              and not received(acct_name(r.get("account_nm")))]
     if HYBRID_INTEREST:
         by_id += [r for r in cf if (r.get("account_id") or "").strip() == "dart_InterestPaidToHybridBond"]
-    picked = by_id or [r for r in cf if (r.get("account_id") or "").strip() in _NO_ID
-                       and "이자" in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
-                       and "신종자본" not in acct_name(r.get("account_nm"))
-                       and any(w in acct_name(r.get("account_nm")) for w in ("지급", "지출", "납부"))]
+    loose = [r for r in cf if (r.get("account_id") or "").strip() in _NO_ID
+             and "이자" in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
+             and "신종자본" not in acct_name(r.get("account_nm"))
+             and any(w in acct_name(r.get("account_nm")) for w in ("지급", "지출", "납부"))]
+    # 표준 계정이 없는 줄도 더해요 (예: '차입원가 자본화 이자의 지급'). 다만 코드가 있는 줄과 이름 · 금액이 같으면 같은 줄이라 한 번만
+    coded = {(acct_name(r.get("account_nm")), r.get("thstrm_amount")) for r in by_id}
     seen, out = set(), []
-    for r in picked:
+    for r in by_id + [r for r in loose if (acct_name(r.get("account_nm")), r.get("thstrm_amount")) not in coded]:
         k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
         if k not in seen:
             seen.add(k)
@@ -2527,12 +2530,23 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
         # v19.1f: 이자 = 손익계산서 이자비용(is), 없으면 현금흐름표 이자 지급액(cf). 어느 것을 썼는지 flSrc 에 남겨요
-        ie_v, ie_src = (eff["ie"], "is") if eff["ie"] is not None else (eff["iec"], "cf") if eff["iec"] is not None else (None, None)
+        # 이자비용이 음수(잘못 적은 값)면 현금흐름표 값으로 · TTM 이자 지급액이 음수(연간과 분기의 줄 이름이 달라서)면 연간 값으로
+        iec_v, ttm_neg = eff["iec"], False
+        if iec_v is not None and iec_v < 0 and _fin(fin.get("iec")) is not None and fin["iec"] >= 0:
+            iec_v, ttm_neg = fin["iec"], True
+        if eff["ie"] is not None and (eff["ie"] >= 0 or iec_v is None):
+            ie_v, ie_src = eff["ie"], "is"
+        elif iec_v is not None:
+            ie_v, ie_src = iec_v, "cf"
+        else:
+            ie_v, ie_src = None, None
         icr_ok = op0f is not None and ie_v is not None and ie_v >= 0 and not fin_co and not unknown
         if icr_ok and not ICR_OFF:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
             row["flSrc"] = {"icr": ie_src}
             src_n[ie_src] += 1
+            src_n["isNeg"] += ie_src == "cf" and eff["ie"] is not None
+            src_n["cfTtmNeg"] += ie_src == "cf" and ttm_neg
         if icr_ok and not ICR_OFF and ie_v > 0:
             icr = op0f / ie_v
             if icr < 1:
@@ -2549,7 +2563,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             row["fl"] = fl
         row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
         if not fin_co and not unknown and "icr" not in ran:
-            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
+            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(v19.1f: 손익계산서 이자비용도, 현금흐름표 이자 지급액도 없음)일 때만
             # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
             # off = 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요). 꺼진 동안은 이자 줄이 없는 회사도 off: 어떤 회사엔 '확인한 …
             # 없어요' 카드가, 같은 결과의 다른 회사엔 아무것도 없는 차이가 생기지 않게 (리뷰 2026-11-07)
@@ -2618,12 +2632,13 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
-    log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 · 경고 "
+    log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 (이자비용이 음수라 "
+        f"현금흐름표로 {src_n['isNeg']:,} · TTM 이자 지급액이 음수라 연간 값으로 {src_n['cfTtmNeg']:,}) · 경고 "
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
         f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
     log(f"{'  !! ' if ICR_OFF else '· '}이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — "
         + (f"잠시 꺼 둠(ICR_OFF · 금융비용으로 계산되던 값이라) {why_n['off']:,} · " if ICR_OFF else "")
-        + f"이자비용·금융비용 줄 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자비용 음수 {why_n['neg']:,} (corp.json flWhy)")
+        + f"이자비용도 이자 지급액도 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자 음수 {why_n['neg']:,} (corp.json flWhy)")
     both = [h for h in hold_log if h[2] and h[3]]
     miss = [h for h in hold_log if not (h[2] and h[3])]
     log(f"· 지주회사(금융 빼고) 재무 경고: {len(hold_log)}곳 중 유동비율 {sum(h[2] for h in hold_log)} · 이자보상배율 "
