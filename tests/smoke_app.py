@@ -42,11 +42,13 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import threading
 import time
 
 from playwright.sync_api import sync_playwright
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tmpdirs  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og-v19.png", "icon-192.png", "icon-512.png"]
@@ -98,7 +100,7 @@ def read_data(data_dir):
 
 def build_site(files, raw=None, drop=()):
     """files: {이름: 객체} 를 쓰고, raw: {이름: 그대로 쓸 글자}, drop: 빼둘 파일(→ 404)."""
-    site = tempfile.mkdtemp(prefix="baepsae-smoke-")
+    site = tmpdirs.make("baepsae-smoke-")
     for f in SITE_FILES:
         if os.path.exists(os.path.join(ROOT, f)):
             shutil.copy(os.path.join(ROOT, f), site)
@@ -1300,7 +1302,7 @@ def scene_json_import(R, files):
       · 종목이 없는 파일 · 깨진 파일 · 줄이 모두 틀린 파일 → '파일을 읽을 수 없어요.' 알림, 있던 포트폴리오는 그대로;
       · 예전 저장 상태 모양({ state: … }) 파일도 그대로 열려요;
       · 지금 목록에 없는 종목이 섞인 파일: 있는 종목은 보이고, 없는 종목은 저장본에 남아요 (새로 고침 뒤에도)."""
-    tmp = tempfile.mkdtemp(prefix="baepsae-json-")          # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    tmp = tmpdirs.make("baepsae-json-")          # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
     try:
         _json_import(R, files, tmp)
     finally:
@@ -1603,7 +1605,7 @@ def scene_ghost_holding(R, files):
         assert {"t": gone, "mw": 200, "nk": "없어진 회사"} in slot_now["holdings"], slot_now["holdings"]   # 저장본에는 그대로 남아요
     R.check(page, S, "첫 화면 저장 목록: '1종목' (없는 종목은 세지 않음), 저장본에는 그대로", launch_count)
 
-    tmp = tempfile.mkdtemp(prefix="baepsae-ghost-")
+    tmp = tmpdirs.make("baepsae-ghost-")
     got = {}
     ghost_row = {"ticker": gone, "name": "없어진 회사", "sector": None, "priceAssumed": None, "amountWon": 2000000, "weightPct": None,
                  "approxShares": None, "beta": None, "volPct": None, "notInData": True}
@@ -1692,7 +1694,7 @@ def scene_import_while_loading(R, files):
         파일 그대로 열려요 (부팅이 파일 내용을 덮지 않아요). 이 파일의 환율은 직접 입력한 값(typedKeys ["fx"])이라 그대로여야 해요.
         typedKeys 가 없는 파일의 '자동' 칸은 오늘 값으로 열려요 (Jack 2026-11-04 승인, 장면 '자동 설정').
       · data.json 을 못 읽은 날: 파일을 불러오지 않고 '데이터를 불러오지 못했어요…' 알림('파일을 읽을 수 없어요.' 아님), 저장본은 그대로."""
-    tmp = tempfile.mkdtemp(prefix="baepsae-boot-")
+    tmp = tmpdirs.make("baepsae-boot-")
     try:
         _import_while_loading(R, files, tmp)
     finally:
@@ -1799,7 +1801,7 @@ def scene_auto_settings(R, files):
       · 설정에서 직접 입력한 1,234.5 → '가정', 새로 고침 뒤 다시 열어도 · JSON 저장 → 새 브라우저에서 불러와도 1,234.5 · '가정';
       · typedKeys 없는 예전 파일을 불러오면 오늘 값 · '자동';
       · (v18.6.1) '새로 시작하기'와 읽을 설정이 없는 파일은 앞 포트폴리오의 설정 · 직접 입력 기록을 잇지 않고 기본값 + 오늘 값 · '자동'."""
-    tmp = tempfile.mkdtemp(prefix="baepsae-auto-")
+    tmp = tmpdirs.make("baepsae-auto-")
     try:
         _auto_settings(R, files, tmp)
     finally:
@@ -2283,4 +2285,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(tmpdirs.run(main))        # 통과하면 이번 실행의 임시 폴더를 지우고, 실패하면 남겨요 (tests/tmpdirs.py)

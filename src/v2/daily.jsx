@@ -67,7 +67,7 @@ export function Line({ code, level, pieces, body, source, children, first }) {
     <div data-ui-v2="status-line" data-code={code} style={{ marginTop: first ? 0 : SPACE(2) }}>
       <div style={tx(SIZE.xs, WEIGHT.bold, levelColor(level))}>{pieces.map((p, j) => <span key={j}>{j ? " · " : ""}{p}</span>)}</div>
       {body && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{body}</div>}
-      {source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
+      {source && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
       {children}
     </div>
   );
