@@ -5,7 +5,23 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-05 18:00 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-07 22:00 KST — read this first)
+
+**Working cadence (Jack, 2026-11-07 evening — replaces the "work lean" note below where they differ):** ship faster;
+Jack is fine with more of his plan being used.
+- Two lanes in parallel. **Data lane:** B7, 자본금, unlisted preferred, the full re-read — DART-limited, as planned.
+  **App lane:** v19.3b first, in a separate worktree with helper agents at Extra high; it never waits for the data lane.
+- At most two app PRs open at once, each with its own fresh-eyes review, CI and live check.
+- App order: v19.3b, then v19.6a + v19.7a if v19.3 Part F.1's imported-holdings shape folds into the same store
+  version (one migration); otherwise v19.3c → v19.3d first and v19.6a + v19.7a right after. Then the rest in this
+  order, skipping any already done: v19.3c, v19.3d, v19.3e, v19.5b, v19.6b/c, v19.7b, v19.6d, v19.4, v19.6e–h.
+  Only a fix for wrong data or a broken site jumps the queue.
+- Questions: batched, at most two question messages a day unless something blocks; each item yes/no with the
+  recommended answer. While waiting, work the other lane.
+- CLAUDE.md's 2026-11-07 test exception covers tests and test checks. Claude still asks before tightening a
+  `validate_data.py` threshold or the must-have stock list, because a stricter gate can stop the daily publish.
+- Every evening: one short list — what users can see now that they couldn't this morning, and the next three items
+  with rough dates.
 
 Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
 pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
@@ -26,6 +42,9 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   basis), `divSt` (`same` · `adj` · `nc` not comparable · `nd` not derivable · `zero`), `dyt` (today's-close yield =
   dps3a[0] ÷ price, blank when unverified), `dz` (KR dividend percentile, from `dyt` only); top-level `divCheck` (counts;
   its presence switches on the new gate rows). KR and US stocks: `betaSE`, `betaN`.
+- v19.1c (PR after #67): data.json US stocks `pxd` (that stock's own price date, only when its last bar is not
+  `usPxDate`; its `d1` is then blank); top-level `nextPub` (the next morning new data is due) and `staleAfter` (that
+  day's 14:47 KST start + 2 h), from `data/market_holidays.csv` (RUNBOOK).
 - corp.json: the same dividend fields plus `cash3` (현금배당금총액, 억원), `eps3r` (company-reported EPS), `epsNi3` (the
   net income on the same basis, 억원), `epsB` (연결/별도), `flRan` (warning checks that ran), `flNa` (not applicable,
   financial companies). The existing `eps` (today's shares) is unchanged. **Visible on the first v2 publish:** 2.0's
@@ -270,7 +289,8 @@ allow web pages to install themselves. KakaoTalk's in-app browser is told to ope
 
 Scheduled runs (v17.5.3, PR #19, merged 2026-11-03 22:24 KST; first morning 2026-11-04): GitHub started the old single
 06:30 KST run 2¼–5½ hours late all October (never before 08:44 KST; see § 5 for what late runs once caused). Now the run
-is triggered six times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat) — and a first job
+is triggered seven times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37, 14:47 KST (Mon–Sat; 14:47 added
+in v19.1c after two Yahoo gaps around 10:00–10:40 KST) — and a first job
 (`already_published.py`, scheduled runs only; manual runs skip it) decides:
 - a run that starts in the hours before a US trading day's close is final (New York 12:00–16:30; the close is final at
   16:30 New York = 06:30 KST in winter, 05:30 in summer) waits until 16:33 New York and then re-checks. If the close is

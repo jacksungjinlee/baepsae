@@ -727,6 +727,264 @@ def test_us_must_have_without_d1_fails():
     fails_on("미국 필수 종목 d1", lambda c: stock(c, "AAPL").pop("d1"))
 
 
+# ── 미국 d1 채움 (Jack, 2026-11-07): 98% 아래면 실패, 빠진 종목은 값 칸 · 로그 · 실행 요약에 이름으로 ──
+US_D1 = "미국 d1 채움 (미국 기준일 봉)"
+
+
+def us_of(c):
+    return [s for s in c["data"]["stocks"] if s.get("cls") == "us" and not s.get("fund")]
+
+
+def row_of(rep, name):
+    return next(r for r in rep.rows if r[0] == name)
+
+
+def drop_us_d1(cur, n):
+    """야후가 미국 기준일 봉을 빠뜨린 종목처럼: d1 이 없고 자기 가격 날짜(pxd)는 그 전 거래일 (파이프라인이 그렇게 써요 · v19.1c)."""
+    gone = [s for s in us_of(cur) if s["t"] not in ("AAPL", "MSFT", "NVDA")][:n]
+    for s in gone:
+        s.pop("d1")
+        s["pxd"] = "2026-10-29"
+    return [s["t"] for s in gone]
+
+
+def test_us_d1_coverage_below_98_percent_fails_and_names_the_stocks():
+    cur, prev, final = good_pair()
+    assert len(us_of(cur)) == 600
+    gone = drop_us_d1(cur, 13)                                           # 587 / 600 = 97.8%
+    rep = check(cur, prev, final)
+    r = row_of(rep, US_D1)
+    assert r[3] == "FAIL" and r[1].startswith("97.8% (587 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 3개"), r
+    assert "2026-10-30" in r[2]                                          # 기준 칸에 미국 기준일
+    assert rep.details == [("미국 d1 없는 종목 (마지막 봉이 미국 기준일 2026-10-30 이 아님)", gone)]   # 13개 전부
+    assert [x[0] for x in rep.failed] == [US_D1], rep.table()            # 필수 세 종목은 d1 이 있어서 그 줄은 통과
+
+
+def test_us_d1_coverage_at_98_percent_passes_and_still_names_the_stocks():
+    cur, prev, final = good_pair()
+    gone = drop_us_d1(cur, 12)                                           # 588 / 600 = 98.0% — 기준선은 통과
+    rep = check(cur, prev, final)
+    r = row_of(rep, US_D1)
+    assert r[3] == "WARN" and r[1] == "98.0% (588 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 2개", r   # v19.1c: 빠지면 경고
+    assert rep.details[0][1] == gone and not rep.failed, rep.table()
+    cur, prev, final = good_pair()                                       # 다 있으면 목록도 없어요
+    rep = check(cur, prev, final)
+    assert row_of(rep, US_D1)[1:] == ("100.0% (600 / 600)", "≥ 98% (미국 기준일 2026-10-30 봉이 있는 종목 · 하나라도 빠지면 경고)", "PASS")
+    assert rep.details == []
+
+
+def test_us_d1_of_zero_counts_as_present_and_the_shown_share_never_rounds_up_to_the_line():
+    cur, prev, final = good_pair()
+    for s in us_of(cur)[3:40]:
+        s["d1"] = 0.0                                                    # 그대로인 날도 '있음'
+    r = row_of(check(cur, prev, final), US_D1)
+    assert r[1] == "100.0% (600 / 600)" and r[3] == "PASS", r
+    cur, prev, final = good_pair()                                       # 781 중 16 빠짐 = 97.95% → '97.9%' 로 보이고 실패
+    us = us_of(cur)
+    cur["data"]["stocks"] += [{**clone(us[10]), "t": f"X{i:03d}"} for i in range(181)]
+    gone = drop_us_d1(cur, 16)
+    assert len(us_of(cur)) == 781
+    r = row_of(check(cur, prev, final), US_D1)
+    assert r[3] == "FAIL" and r[1].startswith("97.9% (765 / 781)"), r
+
+
+def test_us_d1_row_passes_after_a_us_holiday_and_a_half_day_and_fails_on_a_yahoo_gap():
+    """Jack 2026-11-07 (a): 파이프라인과 같은 함수로 d1 을 만들어 관문에 넣어요. 미국 휴장일 다음 아침과 조기 폐장일 다음
+    아침에는 모든 종목에 기준일 봉이 있어서 통과하고, 야후가 기준일 봉을 일부 종목에서 빠뜨린 날은 그 종목들 이름으로 실패해요."""
+    import pandas as pd
+    import fetch_data as F
+    idx = pd.to_datetime(["2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-27"])   # 11-26 추수감사절 휴장
+    spx = pd.Series([6800.0, 6810.0, 6790.0, 6820.0, 6850.0], index=idx)
+    utc = dt.timezone.utc
+    for now, gap in ((dt.datetime(2026, 11, 26, 22, 0, tzinfo=utc), 0),    # 11-27 07:00 KST (휴장일 다음 아침)
+                     (dt.datetime(2026, 11, 27, 22, 0, tzinfo=utc), 0),    # 11-28 07:00 KST (조기 폐장일 다음 아침)
+                     (dt.datetime(2026, 11, 27, 22, 0, tzinfo=utc), 15)):  # 같은 아침, 야후가 15종목의 11-27 봉을 빠뜨림
+        cur, prev, final = good_pair()
+        d = F.us_data_date(spx, F.us_last_complete_day(now))
+        missing = []
+        for k, s in enumerate(us_of(cur)):
+            px = pd.Series([100.0 + k, 101.0 + k, 99.0 + k, 102.0 + k, 103.0 + k], index=idx)
+            if k >= 3 and len(missing) < gap:                            # 필수 세 종목(앞의 셋)은 그대로
+                px = px.iloc[:-1]
+                missing.append(s["t"])
+            s["d1"] = F.us_d1(F.cut_at(px, d), d)
+        r = row_of(check(cur, prev, final), US_D1)
+        if not gap:
+            assert r[3] == "PASS" and r[1] == "100.0% (600 / 600)", (now, r)
+        else:
+            assert r[3] == "FAIL" and r[1].startswith("97.5% (585 / 600) · 빠짐: " + ", ".join(missing[:10])), r
+
+
+# ── v19.1c (Jack, 2026-11-07): 미국 종목의 자기 가격 날짜 · 1~15종목 경고 · 다음 발행 예정 · 휴장일 표 ──
+NEXT = "다음 발행 예정 (nextPub · staleAfter)"
+PXD = "미국 자기 가격 날짜 (pxd)"
+HOL = "휴장일 표 (data/market_holidays.csv)"
+
+
+def test_good_data_has_its_next_publish_date_and_no_stale_us_price():
+    cur, prev, final = good_pair()
+    assert (cur["data"]["nextPub"], cur["data"]["staleAfter"]) == ("2026-11-03", "2026-11-03T16:47:00+09:00")  # 금 → 화
+    rep = check(cur, prev, final)
+    assert row_of(rep, NEXT)[3] == "PASS" and row_of(rep, PXD)[1:] == (
+        "없음 (모두 미국 기준일 종가)", "d1 이 없는 미국 종목은 pxd < 2026-10-30 · d1 이 있으면 pxd 없음", "PASS")
+    assert row_of(rep, HOL)[3] == "PASS", row_of(rep, HOL)                     # 지난 90일 일봉과 표가 맞아요
+
+
+def test_one_us_stock_without_todays_bar_warns_with_its_own_date():
+    cur, prev, final = good_pair()
+    gone = drop_us_d1(cur, 1)
+    rep = check(cur, prev, final)
+    assert not rep.failed, rep.table()
+    assert row_of(rep, US_D1)[3] == "WARN" and row_of(rep, PXD)[1] == f"1종목: {gone[0]}(2026-10-29)"
+    notes = V.annotations(rep)
+    assert any(n.startswith("::warning title=발행 관문 경고::미국 d1 채움 (미국 기준일 봉): 99.8%25 (599 / 600) · 빠짐: " + gone[0])
+               for n in notes), notes                                        # 아침 점검이 읽는 알림
+
+
+@pytest.mark.parametrize("mutate, said", [
+    (lambda s: s.pop("pxd"), "d1 없음 · pxd None"),                           # 날짜 없이 옛 가격 → 앱이 오늘 날짜를 보여요
+    (lambda s: s.update(pxd="2026-10-30"), "d1 없음 · pxd '2026-10-30'"),     # 기준일과 같은 날짜는 말이 안 돼요
+    (lambda s: s.update(pxd="10/29"), "d1 없음 · pxd '10/29'"),
+    (lambda s: s.update(d1=0.4), "d1 있는데 pxd '2026-10-29'"),
+])
+def test_stale_us_price_without_a_correct_own_date_fails(mutate, said):
+    cur, prev, final = good_pair()
+    gone = drop_us_d1(cur, 1)
+    mutate(stock(cur, gone[0]))
+    rep = check(cur, prev, final)
+    r = row_of(rep, PXD)
+    assert r[3] == "FAIL" and r[1] == f"{gone[0]}: {said}", r
+
+
+@pytest.mark.parametrize("field, value, said", [
+    ("nextPub", "2026-11-02", "nextPub 2026-11-02 ≠ 표로 계산한 2026-11-03"),
+    ("staleAfter", "2026-11-03T18:00:00+09:00", "staleAfter 2026-11-03T18:00:00+09:00 ≠ 2026-11-03T16:47:00+09:00"),
+    ("staleAfter", "2026-11-03T07:47:00+00:00", "staleAfter 2026-11-03T07:47:00+00:00 ≠"),   # 같은 순간이라도 한국 시간으로
+    ("nextPub", "11월 3일", "날짜를 읽을 수 없어요"),
+])
+def test_wrong_next_publish_date_warns_and_never_blocks_the_publish(field, value, said):
+    """Jack (2026-11-07): 예정일은 '늦음' 경고 시각에만 써요 — 어긋나면 크게 경고하지만 발행은 막지 않아요 (막으면 낡은 데이터)."""
+    cur, prev, final = good_pair()
+    cur["data"][field] = value
+    rep = check(cur, prev, final)
+    r = row_of(rep, NEXT)
+    assert r[3] == "WARN" and said in r[1], r
+    assert not rep.failed, rep.table()
+
+
+def test_missing_next_publish_only_warns():
+    cur, prev, final = good_pair()
+    for k in ("nextPub", "staleAfter"):
+        cur["data"].pop(k)
+    for mode in ("publish", "live"):
+        rep = check(cur, prev, final, mode=mode)
+        assert row_of(rep, NEXT)[3] == "WARN" and "예전 4일 규칙" in row_of(rep, NEXT)[1]
+        assert row_of(rep, PXD)[3] == "SKIP"
+    assert not check(cur, prev, final).failed
+
+
+def test_next_publish_date_already_past_warns_on_a_publish_but_not_on_the_live_site():
+    """제때 발행이면 예정일은 늘 내일 이후 — 오늘 이전이면 표에 없는 임시공휴일이거나 날짜가 하루 늦은 것 (아침 점검이 읽어요)."""
+    cur, prev, final = good_pair()
+    r = row_of(check(cur, prev, final, today=dt.date(2026, 11, 3)), NEXT)   # 예정일(11-03) 당일에 발행
+    assert r[3] == "WARN" and "예정일 2026-11-03 이 오늘(2026-11-03) 이전이에요" in r[1], r
+    assert row_of(check(cur, prev, final), NEXT)[3] == "PASS"               # 10-31 발행: 예정일은 뒤
+    assert row_of(check(cur, prev, final, mode="live", today=dt.date(2026, 11, 3)), NEXT)[3] == "PASS"
+
+
+def test_live_site_file_made_before_a_table_change_warns_with_the_reason():
+    cur, prev, final = good_pair()
+    cur["data"]["nextPub"], cur["data"]["staleAfter"] = "2026-11-04", "2026-11-04T16:47:00+09:00"   # 옛 표로 계산된 것처럼
+    r = row_of(check(cur, prev, final, mode="live"), NEXT)
+    assert r[3] == "WARN" and "사이트 점검: 발행 뒤 표가 바뀌었을 수 있어요" in r[1], r
+
+
+def test_holiday_table_that_disagrees_with_the_index_bars_warns(monkeypatch):
+    cur, prev, final = good_pair()
+    rows = cur["macro"]["idxHist"]["KOSPI"]["rows"]
+    rows[:] = [r for r in rows if r[0] != "2026-10-21"]                     # 표에 없는 날 봉이 없음 (표가 휴장일을 놓친 것)
+    rows.append(["2026-10-09", 2500.0])                                      # 한글날(표의 휴장일)에 봉이 있음
+    rows.sort()
+    r = row_of(check(cur, prev, final), HOL)
+    assert r[3] == "WARN" and "KR 2026-10-09 표엔 휴장·봉 있음" in r[1] and "KR 2026-10-21 봉 없음·표에 없음" in r[1], r
+    monkeypatch.setattr(V, "HOL_COVER_WARN_DAYS", (V.load_holidays()[1] - TODAY).days + 1)   # 표 끝 하루 뒤까지 → 경고
+    cur, prev, final = good_pair()
+    r = row_of(check(cur, prev, final), HOL)
+    assert r[3] == "WARN" and "다음 해 줄을 넣어 주세요" in r[1], r
+
+
+def test_blank_next_publish_never_switches_off_the_stale_price_check():
+    """파이프라인이 nextPub·staleAfter 를 빈 칸(null)으로 써도 pxd 검사는 돌아요 — 날짜 없는 옛 가격은 늘 실패예요."""
+    cur, prev, final = good_pair()
+    cur["data"]["nextPub"] = cur["data"]["staleAfter"] = None
+    gone = drop_us_d1(cur, 1)
+    stock(cur, gone[0]).pop("pxd")
+    rep = check(cur, prev, final)
+    assert row_of(rep, PXD)[3] == "FAIL" and row_of(rep, NEXT)[3] == "WARN", rep.table()
+
+
+def test_us_stocks_dropped_for_a_broken_bar_are_named_in_a_warning():
+    cur, prev, final = good_pair()
+    cur["data"]["usLeftOut"]["badBar"] = ["ZZZ", "YYY"]
+    rep = check(cur, prev, final)
+    assert ("미국 깨진 봉으로 뺀 종목", "2개: ZZZ, YYY", "없어야 함 (있으면 경고)", "WARN") in rep.rows and not rep.failed
+
+
+def test_holiday_table_loaders_accept_the_same_files(monkeypatch, tmp_path):
+    """머리줄 공백 · 빈 줄(,,,)은 파이프라인과 관문이 똑같이 받아요 (한쪽만 받으면 엉뚱한 경고가 나요)."""
+    import fetch_data as F
+    src = open(V.HOLIDAYS_CSV, encoding="utf-8").read().splitlines(True)
+    p = tmp_path / "h.csv"
+    p.write_text("date, market, name, source\n" + "".join(src[1:]) + ",,,\n", encoding="utf-8")
+    hol, end = V.load_holidays(str(p))
+    fh = F.load_market_holidays(str(p))
+    assert end == fh["end"] and hol["KR"] == set(fh["KR"]) and hol["US"] == set(fh["US"])
+
+
+def test_bad_index_dates_never_stop_the_holiday_cross_check():
+    """휴장일 표 검사는 경고만 하는 검사라 날짜가 아닌 일봉 줄에 멈추지 않아요 (그 줄은 '지수 이력' 검사가 따로 막아요)."""
+    cur, _, _ = good_pair()
+    cur["macro"]["idxHist"]["KOSPI"]["rows"] += [["None", 1.0], ["2026-13-40", 1.0]]
+    rep = V.Report()
+    V.check_v191c(rep, cur, us_of(cur), "publish", TODAY)                   # 예외 없이
+    assert row_of(rep, HOL)[3] == "PASS", row_of(rep, HOL)
+
+
+def test_unreadable_holiday_table_warns_and_falls_back_to_weekdays(monkeypatch, tmp_path):
+    p = tmp_path / "h.csv"
+    p.write_text("date,market,name,source\n2026-11-07,KR,토요일,x\n", encoding="utf-8")
+    monkeypatch.setattr(V, "HOLIDAYS_CSV", str(p))
+    monkeypatch.setattr(V.load_holidays, "__defaults__", (str(p),))
+    cur, prev, final = good_pair()
+    rep = check(cur, prev, final)
+    assert row_of(rep, HOL)[3] == "WARN" and "주말" in row_of(rep, HOL)[1], rep.table()
+    assert row_of(rep, NEXT)[3] == "PASS"            # 10-30 금 → 화 11-03: 그 사이 휴장일이 없어 평일 규칙과 같아요
+    assert not rep.failed, rep.table()
+
+
+def test_us_d1_missing_list_goes_to_the_log_and_the_run_summary(monkeypatch, capsys, tmp_path):
+    """Jack 2026-11-07 (c): 관문이 막으면 빠진 미국 종목 이름이 로그와 실행 요약(GITHUB_STEP_SUMMARY)에 전부 남아요."""
+    cur, _, _ = good_pair()
+    gone = drop_us_d1(cur, 25)
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)                    # 네트워크 없이 (위 알림 시험과 같은 가짜들)
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    summ = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summ))
+    assert V.main(["--dir", "unused", "--bootstrap", "--today", "2026-10-31"]) == 1
+    out = capsys.readouterr().out
+    title = "미국 d1 없는 종목 (마지막 봉이 미국 기준일 2026-10-30 이 아님)"
+    assert f"!! {title} (25): " + ", ".join(gone) in out                  # 로그: 25개 전부
+    assert f"!! FAIL  {US_D1}: 95.8% (575 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 15개" in out
+    assert f"::error title=발행 관문 실패::{US_D1}: 95.8%" in out          # 실행 화면의 알림
+    text = summ.read_text(encoding="utf-8")
+    row = next(x for x in text.splitlines() if x.startswith(f"| {US_D1} |"))
+    assert row.startswith(f"| {US_D1} | 95.8% (575 / 600) · 빠짐: ") and row.endswith("| **FAIL** |"), row
+    assert f"**{title}** (25): " + ", ".join(gone) in text               # 실행 요약: 25개 전부
+
+
 def test_must_have_without_val20_fails():
     fails_on("필수 종목 val20", lambda c: stock(c, "105560").pop("val20"))
 
@@ -958,7 +1216,8 @@ def test_us_market_cap_coverage_counts_companies_only():
     for t in ("SPY", "QQQ"):                                   # ETF 는 시가총액이 없어도 돼요
         stock(cur, t).pop("cap")
     cur["data"]["stocks"] += [{"t": f"E{i:03d}", "nk": f"ETF {i}", "ne": f"ETF {i}", "cls": "us", "price": 50.0,
-                               "val": 100.0, "de": "A fund.", "fxu": True, "etf": True} for i in range(40)]   # 2026-11-03: 33개
+                               "val": 100.0, "de": "A fund.", "fxu": True, "etf": True,
+                               "d1": 0.5} for i in range(40)]   # 2026-11-03: 33개 · 진짜 ETF 처럼 d1 이 있어요 ('미국 d1 채움')
     for s in us_companies(cur)[10:13]:                         # 회사 주식 3개 빠짐 (2026-11-03 발행본의 우선주 3개처럼)
         s["cap"] = None
     rep = check(cur, prev, final)

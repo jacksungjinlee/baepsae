@@ -8,7 +8,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 import { KR_DIV_TREND, exactData } from "./engine.js";
@@ -47,7 +47,7 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
       {ok && (
         <Card data-ui-v2="plan-rows">
           <Label>{C.plan.stocks}</Label>
-          <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.targetNote}</div>
+          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.targetNote}</div>
           {plan.rows.map((x) => <PlanRow key={x.t} x={x} />)}
           <Note>{fill(C.plan.priceNote, { md: mdText(load.data.pxDate), fx: nf(Math.round(load.data.fx)) })}</Note>
           {usRows && usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
@@ -90,7 +90,7 @@ export function Y2022Amount({ v }) {
   const nw = { whiteSpace: "nowrap" };
   return (
     <span data-ui="amount" data-ui-v2={v.parts.length > 1 ? "y2022-range" : "y2022-one"} style={{ wordBreak: "keep-all" }}>
-      {pre}<span style={nw}>{amountParts(amount).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "0.6em", fontWeight: WEIGHT.bold }}>{p}</span> : p))}</span>
+      {pre}<span style={nw}>{amountParts(amount).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "max(12px, 0.6em)", fontWeight: WEIGHT.bold }}>{p}</span> : p))}</span>
       {verb ? " " : ""}{verb ? <span>{verb}</span> : null}
     </span>
   );
@@ -106,7 +106,7 @@ function Summary({ r }) {
   // more than half of the money without data: no 2022 number and no yearly swing (the current app's rule)
   const half = !!(y2022.half || (r.vol && r.vol.half));
   const vol = r.vol && !r.vol.half ? r.vol : null;
-  const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
+  const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
   const big = (v) => <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Amount text={v} /></div>;
   return (
     <Card data-ui-v2="plan-summary">
@@ -114,12 +114,12 @@ function Summary({ r }) {
       {big(fill(C.plan.left, { leftText: wonText(plan.left) }))}
       <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.div}</div>
       {big(aboutWon(div.won))}
-      <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
-      {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
+      <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
+      {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
       {/* Korean holdings whose dividend the company page does not trust (engine.annualDividend unchecked): left out of the
           total and named, never silently (Jack, 2026-11-05). Long lists wrap; a name is never cut. */}
       {div.unchecked.length > 0 && (
-        <div data-ui-v2="div-unchecked" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { overflowWrap: "anywhere" })}>
+        <div data-ui-v2="div-unchecked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { overflowWrap: "anywhere" })}>
           {fill(C.plan.divUnchecked, { n: div.unchecked.length, names: div.unchecked.map((x) => x.nk || x.t).join(", ") })}
         </div>
       )}
@@ -130,10 +130,10 @@ function Summary({ r }) {
             ? <div data-ui-v2="y2022-wide" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.plan.y2022Wide}</div>
             : yv ? <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Y2022Amount v={yv} /></div>
             : big(aboutWon(Math.min(0, y2022.won)))}
-          {!(yv && yv.wide) && <div data-ui-v2="y2022-note" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>
+          {!(yv && yv.wide) && <div data-ui-v2="y2022-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
             {yv && yv.parts.length > 1 && C.plan.y2022NoteRange ? C.plan.y2022NoteRange : C.plan.y2022Note}</div>}
-          {yv && !yv.wide && yv.parts.length > 1 && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Range}</div>}
-          <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
+          {yv && !yv.wide && yv.parts.length > 1 && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Range}</div>}
+          <div data-ui-v2="y2022-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
           {!(yv && yv.wide) && partial(y2022.missing)}
         </div>
       )}
@@ -167,7 +167,7 @@ function PlanRow({ x }) {
         <div style={{ flex: 1 }}><WeightBar current={Math.round(x.w * 1000) / 10} target={Math.round(x.targetW * 1000) / 10} max={Math.max(30, x.targetW * 160)} label={C.plan.weightAria} status={x.shares > 0 ? "ok" : "watch"} /></div>
         <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { width: SPACE(12), textAlign: "right" })}>{`${p1(x.w * 100)}%`}</span>
       </div>
-      {line && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{line}</div>}
+      {line && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{line}</div>}
     </div>
   );
 }
@@ -242,7 +242,7 @@ function Rules({ load, rows, st, ds }) {
               <div data-rules-for={x.t}>
                 <div style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{R.reason}</div>
                 <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
-                  {why ? why : b.map(([id, v], i) => <span key={id}>{i ? " · " : ""}<span>{C.build.cards[id].name}</span>{" "}<span>{fill(C.build.s1.score, { score: Math.round(v) })}</span></span>)}
+                  {why ? why : <CardScores list={b} />}
                 </div>
                 <RuleList rules={rulesFor(load, x, st, ds)} name={x.s.nk} />
               </div>
@@ -274,7 +274,7 @@ function DeckWarnings({ rows, st }) {
       {tax && (
         <div data-ui-v2="us-tax" style={{ marginTop: falls.length ? SPACE(2) : 0 }}>
           {line(W.usTax, "t")}
-          <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{W.usTaxSource}</div>
+          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{W.usTaxSource}</div>
         </div>
       )}
     </Card>

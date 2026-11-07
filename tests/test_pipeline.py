@@ -880,6 +880,154 @@ def test_us_d1_only_when_last_bar_is_the_us_date():
     assert F.us_d1(px.iloc[:1], D30) is None
 
 
+def test_us_own_date_is_set_only_when_the_last_bar_is_not_the_us_date():
+    idx = pd.to_datetime(["2026-11-04", "2026-11-05", "2026-11-06"])
+    px = pd.Series([1.0, 2.0, 3.0], index=idx)
+    assert F.us_own_date(px, dt.date(2026, 11, 6)) is None                     # 기준일 봉 → 칸 없음
+    assert F.us_own_date(px.iloc[:2], dt.date(2026, 11, 6)) == "2026-11-05"    # 야후가 11-06 봉을 빠뜨림 → 자기 날짜
+
+
+def test_market_holidays_table_is_read_strictly():
+    hol = F.load_market_holidays()
+    assert hol["end"].month == 12 and hol["end"].day == 31 and hol["end"] >= dt.date(2027, 12, 31)   # 해 단위 · 다음 해를 더해도 그대로
+    assert dt.date(2026, 11, 26) in hol["US"] and dt.date(2026, 11, 26) not in hol["KR"]       # 추수감사절
+    assert dt.date(2026, 12, 31) in hol["KR"] and dt.date(2026, 12, 31) not in hol["US"]       # 한국거래소 연말 휴장
+    assert dt.date(2026, 7, 17) in hol["KR"] and dt.date(2026, 6, 3) in hol["KR"]              # 2026 KOSPI 일봉으로 확인한 날
+
+
+@pytest.mark.parametrize("line, said", [
+    ("2026-11-07,KR,토요일,x", "주말"),
+    ("2026-11-26,US,Thanksgiving Day,again", "두 번"),
+    ("2026-11-09,JP,x,y", "market"),
+    ("2026-11-09,KR,이름,", "출처"),
+    ("2026/11/09,KR,x,y", "YYYY-MM-DD"),
+    ("2026-11-09,KR,x,y,z", "칸"),
+])
+def test_market_holidays_refuses_odd_rows(tmp_path, line, said):
+    src = open(F.MARKET_HOLIDAYS_PATH, encoding="utf-8").read()
+    p = tmp_path / "h.csv"
+    p.write_text(src + line + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=said):
+        F.load_market_holidays(str(p))
+    p.write_text("".join(l for l in src.splitlines(True) if not (l.startswith("2027") and ",US," in l)), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="해마다"):                   # 2027 미국 줄이 빠진 표 → 해가 빈 채로 덮지 않아요
+        F.load_market_holidays(str(p))
+    keep = [l for l in src.splitlines(True) if not l.startswith("2027") or ",US," not in l] + \
+        [l for l in src.splitlines(True) if l.startswith("2027") and ",US," in l][:3]
+    p.write_text("".join(keep), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="8일보다 적어요"):            # 2027 미국 줄이 세 개뿐 → 반쯤 적은 해
+        F.load_market_holidays(str(p))
+
+
+@pytest.mark.parametrize("px, usd, want", [
+    ("2026-11-06", "2026-11-06", "2026-11-10"),   # 금요일 발행본 → 다음은 화요일 아침 (주말·월요일은 조용)
+    ("2026-11-09", "2026-11-09", "2026-11-11"),   # 평일
+    ("2026-11-25", "2026-11-25", "2026-11-27"),   # 추수감사절(미국 11-26 휴장)에도 한국 11-26 종가가 금요일에
+    ("2026-11-26", "2026-11-25", "2026-11-28"),   # 그다음: 한국 금 · 미국 금(조기 폐장) → 토요일
+    ("2026-12-24", "2026-12-24", "2026-12-29"),   # 성탄절(둘 다 휴장) + 주말 → 화요일
+    ("2026-12-30", "2026-12-30", "2027-01-01"),   # 한국 연말 휴장 12-31 · 미국 12-31 은 열림 → 1월 1일 아침에 미국 종가
+    ("2026-12-30", "2026-12-31", "2027-01-05"),   # 그다음: 둘 다 1월 4일(월) → 화요일
+    ("2027-02-05", "2027-02-05", "2027-02-09"),   # 설 연휴(한국 2-8·2-9) · 미국 2-8 열림 → 2-9
+    ("2027-01-15", "2027-01-15", "2027-01-19"),   # 미국만 쉬는 월요일(MLK 1-18) · 한국 1-18 열림 → 1-19
+    ("2027-02-26", "2027-02-26", "2027-03-02"),   # 한국만 쉬는 월요일(삼일절 3-1) · 미국 3-1 열림 → 3-2
+    ("2027-03-25", "2027-03-25", "2027-03-27"),   # 미국 성금요일(3-26) · 한국 3-26 열림 → 3-27(토)
+    ("2027-09-13", "2027-09-13", "2027-09-15"),   # 추석(한국 9-14~16) · 미국 9-14 열림 → 9-15
+    ("2027-09-17", "2027-09-16", "2027-09-18"),   # 그다음: 한국 9-17(금) · 미국 9-17 → 9-18(토)
+])
+def test_next_publish_follows_both_calendars(px, usd, want):
+    hol = F.load_market_holidays()
+    got = F.next_publish(dt.date.fromisoformat(px), dt.date.fromisoformat(usd), hol)
+    assert got.isoformat() == want and got.weekday() in (1, 2, 3, 4, 5)       # 늘 화~토
+    assert F.stale_after(got) == f"{want}T16:47:00+09:00"
+
+
+def test_next_publish_beyond_the_table_uses_weekdays_and_never_stops_the_run():
+    """Jack (2026-11-07): 표는 '늦음' 경고 시각에만 써요 — 모자라도 멈추지 않고 평일 규칙으로 (경고가 일찍 뜰 수는 있어도 늦지 않아요)."""
+    hol = F.load_market_holidays()
+    end = hol["end"]
+    after = end + dt.timedelta(days=30)
+    while after.weekday() != 4:                     # 표 밖의 금요일
+        after += dt.timedelta(days=1)
+    assert F.next_publish(after, after, hol) == after + dt.timedelta(days=4)           # 금 → 화 (평일 규칙)
+    none = {"KR": {}, "US": {}, "start": None, "end": None}                             # 표를 못 읽었을 때
+    assert F.next_publish(dt.date(2026, 11, 25), dt.date(2026, 11, 25), none) == dt.date(2026, 11, 27)
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    i = src.index("    try:                                  # 휴장일 표도 (v19.1c)")
+    assert "raise" not in src[i:i + 900] and "except Exception as e:" in src[i:i + 900]   # 시작할 때 멈추지 않아요
+
+
+def test_next_publish_agrees_with_the_gates_own_calculation_everywhere():
+    """파이프라인과 관문이 따로 구현한 예정일이 표가 덮는 모든 날짜 쌍(10일 안)에서 같아요."""
+    import validate_data as V
+    hol = F.load_market_holidays()
+    vhol, vend = V.load_holidays()
+    none_f, none_v = {"KR": {}, "US": {}, "start": None, "end": None}, {"KR": set(), "US": set(), "start": None}
+    short_end = dt.date(hol["start"].year, 12, 31)                           # 첫 해만 있는 표
+    short_f = {"KR": {d: n for d, n in hol["KR"].items() if d <= short_end}, "US": {d: n for d, n in hol["US"].items() if d <= short_end},
+               "start": hol["start"], "end": short_end}
+    short_v = {"KR": {d for d in vhol["KR"] if d <= short_end}, "US": {d for d in vhol["US"] if d <= short_end}, "start": vhol["start"]}
+    d = hol["start"]
+    n = 0
+    while d <= hol["end"]:
+        for lag in range(0, 11):
+            u = d - dt.timedelta(days=lag)
+            for px, usd in ((d, u), (u, d)):
+                f = F.next_publish(px, usd, hol)                       # 예외 없이 (표 밖은 평일 규칙)
+                assert f == V.expected_next_pub(px, usd, vhol, vend), (px, usd)
+                for fh, vh, ve in ((none_f, none_v, None), (short_f, short_v, short_end)):   # 표가 없거나 짧을 때도 같고, 늦지 않아요
+                    g = F.next_publish(px, usd, fh)
+                    assert g == V.expected_next_pub(px, usd, vh, ve) and g <= f, (px, usd)
+                n += 1
+        d += dt.timedelta(days=1)
+    assert n > 10000
+
+
+def test_us_d1_is_blank_on_a_broken_previous_bar_and_fetch_drops_that_stock():
+    idx = pd.to_datetime(["2026-11-05", "2026-11-06"])
+    assert F.us_d1(pd.Series([0.0, 3.0], index=idx), dt.date(2026, 11, 6)) is None          # 0 으로 나누지 않아요
+    assert F.us_d1(pd.Series([float("inf"), 3.0], index=idx), dt.date(2026, 11, 6)) is None
+    assert F.us_own_date(pd.Series([0.0, 3.0], index=idx), dt.date(2026, 11, 6)) is None   # 날짜는 기준일 → fetch_us 가 빼요
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert "if us_d1(px, us_px_date) is None and us_own_date(px, us_px_date) is None:\n                bad_bar.append(sym)" in src
+
+
+def test_stale_time_follows_the_last_scheduled_start_of_the_daily_run():
+    """앱의 '늦음' 시각은 그날 마지막 정해진 시각 실행 + 2시간 — workflow 를 바꾸면 이 값도 같이 바꿔야 해요."""
+    import yaml
+    import validate_data as V
+    with open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8") as f:
+        crons = [c["cron"] for c in yaml.safe_load(f)[True]["schedule"]]
+    kst = [((int(c.split()[1]) * 60 + int(c.split()[0])) + 9 * 60) % (24 * 60) for c in crons]
+    last = max(kst)
+    assert (F.LAST_RETRY_KST.hour * 60 + F.LAST_RETRY_KST.minute) == last == (V.LAST_RETRY.hour * 60 + V.LAST_RETRY.minute)
+    assert F.STALE_GRACE == dt.timedelta(hours=V.STALE_GRACE_H) == dt.timedelta(hours=2)
+
+
+def test_us_data_date_and_d1_on_a_us_holiday_and_a_half_day():
+    """Jack 2026-11-07 (a): 미국 휴장일·조기 폐장일에는 d1 이 비지 않아요 — 미국 기준일이 S&P 500 의 마지막 '끝난' 봉이고,
+    종목도 같은 날에서 잘라 d1 을 내니까요 (fetch_us 와 같은 순서). 발행 관문의 '미국 d1 채움'은 그래서 야후가 기준일 봉을
+    빠뜨린 종목만 세요."""
+    # 2026 추수감사절: 11-26(목) 휴장 → 야후 일봉에 11-26 봉이 없어요. 11-27(금) 13:00 ET 조기 폐장 → 봉은 있어요.
+    idx = pd.to_datetime(["2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-27"])
+    spx = pd.Series([6800.0, 6810.0, 6790.0, 6820.0, 6850.0], index=idx)
+    stocks = {t: pd.Series([100.0 + k, 101.0 + k, 99.0 + k, 102.0 + k, 103.0 + k], index=idx)
+              for k, t in enumerate(("AAPL", "MSFT", "NVDA", "KO"))}
+    utc = dt.timezone.utc
+    for now, want in ((dt.datetime(2026, 11, 26, 22, 0, tzinfo=utc), dt.date(2026, 11, 25)),   # 11-27 07:00 KST: 휴장일 다음 아침
+                      (dt.datetime(2026, 11, 27, 19, 0, tzinfo=utc), dt.date(2026, 11, 25)),   # 조기 폐장(13:00) 뒤, 16:30 ET 전
+                      (dt.datetime(2026, 11, 27, 22, 0, tzinfo=utc), dt.date(2026, 11, 27))):  # 11-28 07:00 KST: 조기 폐장일 봉
+        d = F.us_data_date(spx, F.us_last_complete_day(now))
+        assert d == want, (now, d)
+        d1 = {t: F.us_d1(F.cut_at(px, d), d) for t, px in stocks.items()}
+        assert all(v is not None for v in d1.values()), (now, d1)
+    # 2026-11-07 10시 야후: S&P 500 에는 11-06 봉이 있는데 개별 종목에는 없었어요 → 기준일 11-06, 그 종목 d1 은 빈 칸
+    idx = pd.to_datetime(["2026-11-04", "2026-11-05", "2026-11-06"])
+    spx = pd.Series([7688.62, 7353.73, 7376.86], index=idx)
+    aapl = pd.Series([349.51, 344.17], index=idx[:2])
+    d = F.us_data_date(spx, dt.date(2026, 11, 6))
+    assert d == dt.date(2026, 11, 6) and F.us_d1(F.cut_at(aapl, d), d) is None
+
+
 def test_yahoo_quote_type_safety_net_marks_unlisted_etfs():
     out = [{"t": "NEWETF", "etf": False}, {"t": "AAPL", "etf": False}]
     cache = {"NEWETF": {"info": {"quoteType": "ETF"}}, "AAPL": {"info": {"quoteType": "EQUITY"}}}

@@ -78,10 +78,14 @@ setting to change (where it is and what to click), never just "go to GitHub".
 
 **Ask Jack first, in this chat, with a short yes/no question in plain words** (never send him to GitHub), when a change:
 - adds or changes user-facing Korean text — show him the 「새 문구」 table in the chat;
+  Korean lines approved by the design chat and relayed by Jack count as approved.
 - changes what users see or how a feature works, beyond what an approved spec already says;
 - needs him to pay for, sign up for, or change a setting in anything;
 - changes `CLAUDE.md`, any threshold in `validate_data.py`, or anything in `tests/` — even when nothing is loosened
   (Jack, 2026-11-01). Say in one line what changed and why;
+  Exception (Jack, 2026-11-07): tests that are only added, checks made only stricter, and test edits that a merged task
+  spec lists by name need no separate yes. List them under **안전 규칙 변경** and in the after-merge summary. Removing or
+  weakening any test, or an edit no spec lists, still needs Jack's yes first.
 - is v17.5 or v17.6 — open the PR, tell him its number, and wait for his "merge" (his claude.ai chat reviews it first).
   This rule ends after v17.6.
 
@@ -164,6 +168,13 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   light chip background (Jack, 2026-11-05): 실적 `#B9CDEB` / `#EAF1FB` · 가치 `#BFE0CC` / `#E9F5EE` · 배당 `#EBD49A` /
   `#FBF4E1` · 출렁임·위험 `#D3C8EC` / `#F1EDF9` · 공시·수급·금리 차트 등 `#B5DDDD` / `#E6F4F4`. Tints carry no good/bad
   meaning. No apricot and no price red/blue in icons or selection states. Apricot marks data only.
+- Pictures: 기준 cards and templates use the pictures in `docs/design/v19.3/assets/pictures` (Adobe Stock free and
+  Microsoft Fluent 3D); one picture per 기준 everywhere. The pictures keep their own colours; the icon colour rules apply
+  to Phosphor icons and chips. Small UI icons stay Phosphor duotone. Never draw, generate, recolour or replace these
+  pictures without Jack. Never commit Adobe files larger than 192 px.
+- Text size: No text under 12 px on 2.0 screens.
+- Chart colours: Holdings use neutral navy shades by weight; logo colours never colour charts; price red/blue only for
+  up/down.
 - Company logos come from the provider(s) named on the 데이터 출처 page, with a coloured letter mark as fallback.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
@@ -183,7 +194,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 | `baepsae.html` | The current app (예전 뱁새), opened from 2.0 with `?from=app`; a plain visit goes to `app.html` (CV link). Built by `bash build.sh` |
 | `fetch_data.py` | Daily data pipeline (Python 3.11) → `data.json`, `corp.json`, `macro.json`, `disc.json` |
 | `validate_data.py` | Publication gate (created in v17.5) |
-| `.github/workflows/update-data.yml` | Daily data run, started six times a day: 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat). An early start waits for the US close; a start that finds today's data already published stops before any download (`already_published.py`). Plus manual "Run workflow" |
+| `.github/workflows/update-data.yml` | Daily data run, started seven times a day: 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37, 14:47 KST (Mon–Sat). An early start waits for the US close; a start that finds today's data already published stops before any download (`already_published.py`). Plus manual "Run workflow" |
 | `sw.js`, `manifest.webmanifest` | Service worker and home-screen install metadata |
 | `tests/` | Pipeline unit tests and the app smoke test (created in v17.5) |
 | `docs/` | Handoff, voice guide, task specs, runbook, `CHANGELOG.md` (one line per merge) |

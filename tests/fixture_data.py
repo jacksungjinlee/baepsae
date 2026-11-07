@@ -2,8 +2,26 @@
 """검증용 가짜 데이터 — 모든 검사를 통과하는 '좋은' 네 파일을 만들어요.
 must-fail 테스트는 여기서 한 군데씩만 망가뜨립니다. (네트워크 없음)"""
 import copy
+import csv
 import datetime as dt
+import os
 import random
+
+HOL_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "market_holidays.csv")
+
+
+def next_pub_of(px_date, us_date):
+    """v19.1c: 파이프라인이 쓰는 다음 발행 예정일·늦음 시각을 이 파일만의 방법으로 (휴장일 표 · 다음 거래일 중 먼저 + 1일 · 14:47 + 2시간)."""
+    with open(HOL_CSV, encoding="utf-8") as f:
+        closed = {(r["market"], r["date"]) for r in csv.DictReader(f)}
+
+    def nxt(iso, mk):
+        d = dt.date.fromisoformat(iso) + dt.timedelta(days=1)
+        while d.weekday() >= 5 or (mk, d.isoformat()) in closed:
+            d += dt.timedelta(days=1)
+        return d
+    npub = min(nxt(px_date, "KR"), nxt(us_date, "US")) + dt.timedelta(days=1)
+    return npub.isoformat(), f"{npub.isoformat()}T16:47:00+09:00"
 
 MUST = [("005930", "삼성전자"), ("000660", "SK하이닉스"), ("005380", "현대차"), ("015760", "한국전력"),
         ("105560", "KB금융"), ("035420", "NAVER"), ("012450", "한화에어로스페이스"),
@@ -52,8 +70,10 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
             s["indName"] = IND_NAME[s["ind"]]
     bonds = [{"t": f"B{i}", "nk": f"채권{i}", "cls": "bond", "s": "bond", "price": 100000.0, "etf": True} for i in range(8)]
     funds = [{"t": t, "nk": t, "cls": c, "s": "index", "price": 10000.0, "fund": True, "etf": True} for t, c in FUNDS]
+    npub, stale = next_pub_of(px_date, us_date)
     data = {"asOf": "2026-10-31", "pxDate": px_date, "ksDate": px_date, "usPxDate": us_date,
-            "publishedAt": "2026-10-31T09:30:00+09:00", "listSrc": "fdr_krx_data_cache", "fx": 1333.3,
+            "publishedAt": "2026-10-31T09:30:00+09:00", "nextPub": npub, "staleAfter": stale,    # v19.1c
+            "listSrc": "fdr_krx_data_cache", "fx": 1333.3,
             "settings": {"rf": 4.0, "rfSrc": "ECOS 국고채10년 " + px_date},
             "popular": ["005930", "000660"] + [s["t"] for s in kr[7:30]],
             "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds)},
@@ -65,18 +85,22 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
     pub = data["publishedAt"]          # 네 파일 모두 같은 발행 시각 (fetch_data.main 이 한 번 정해서 씀)
     corp = {"asOf": "2026-10-31", "pxDate": px_date, "publishedAt": pub, "sectors": {k: {"n": 1} for k in SECTORS}, "companies": comps}
     macro = {"asOf": "2026-10-31", "publishedAt": pub, "curve": {"tenors": [3, 10], "now": [3.1, 4.0], "ago": [3.0, 3.5], "date": px_date},
-             "idxHist": {"KOSPI": idx_rows(px_date, 2500.0), "SP500": idx_rows(us_date, 5000.0)}}
+             "idxHist": {"KOSPI": idx_rows(px_date, 2500.0, market="KR"), "SP500": idx_rows(us_date, 5000.0, market="US")}}
     disc = {"asOf": "2026-10-31", "publishedAt": pub, "newest": "2026-10-30", "listOk": True, "insider": [], "nps": []}
     closes = {s["t"]: round(s["price"]) for s in kr}
     return {"data": data, "corp": corp, "disc": disc, "macro": macro}, closes
 
 
-def idx_rows(end, base, years=3):
-    """평일만 3년치 지수 종가 (마지막 = end)."""
+def idx_rows(end, base, years=3, market=None):
+    """평일만 3년치 지수 종가 (마지막 = end). market(KR·US)을 주면 휴장일 표의 날은 빼요 (진짜 일봉처럼 · v19.1c)."""
+    closed = set()
+    if market:
+        with open(HOL_CSV, encoding="utf-8") as f:
+            closed = {r["date"] for r in csv.DictReader(f) if r["market"] == market}
     e = dt.date.fromisoformat(end)
     d, rows = e - dt.timedelta(days=365 * years - 1), []
     while d <= e:
-        if d.weekday() < 5:
+        if d.weekday() < 5 and d.isoformat() not in closed:
             rows.append([d.isoformat(), round(base + len(rows) * 0.5, 2)])
         d += dt.timedelta(days=1)
     return {"asOf": end, "rows": rows}

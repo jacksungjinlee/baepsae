@@ -12,7 +12,7 @@ import {
   marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, useLayout, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, CardPic, DeckPic, CardScores, useLayout, tx, tap } from "./ui.jsx";
 import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView, y2022View } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan, Y2022Amount } from "./plan.jsx";
@@ -47,18 +47,20 @@ function StepDots({ step }) {
       {STEPS.map((k, i) => (
         <li key={k} aria-current={i === step ? "step" : undefined} style={{ flex: 1 }}>
           <div style={{ height: SPACE(1), borderRadius: 2, background: i <= step ? COLOR.ink : COLOR.border }} />
-          <div style={tx(SIZE.xxs, i === step ? WEIGHT.heavy : WEIGHT.semi, i === step ? COLOR.ink : COLOR.text2, { marginTop: SPACE(1) })}>{C.build.steps[k]}</div>
+          <div style={tx(SIZE.xs, i === step ? WEIGHT.heavy : WEIGHT.semi, i === step ? COLOR.ink : COLOR.text2, { marginTop: SPACE(1) })}>{C.build.steps[k]}</div>
         </li>
       ))}
     </ol>
   );
 }
 
-function Option({ title, sub, onClick, id }) {
+// v19.3b Part A: a template shows its picture on its tint chip (src/v2/pictures.js); 처음부터 (blank) has none until v19.3c.
+function Option({ title, sub, onClick, id, pic }) {
   return (
     <button type="button" data-deck={id} onClick={onClick}
       style={{ ...tap, width: "100%", textAlign: "left", border: `1px solid ${COLOR.border}`, background: COLOR.surface, borderRadius: RADIUS.md,
         padding: `${SPACE(3)}px ${SPACE(4)}px`, marginTop: SPACE(2), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(4) }}>
+      {pic && <DeckPic id={id} size="deck" />}
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.body, WEIGHT.bold, COLOR.ink, { display: "block" })}>{title}</span>
         {sub && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{sub}</span>}
@@ -161,7 +163,7 @@ function StepStart({ start }) {
       <div style={{ marginTop: SPACE(3) }}>
         <Option id="blank" title={s0.blank} sub={s0.blankSub} onClick={() => start(null)} />
         {DECKS.filter((d) => !d.hidden).map((d) => (
-          <Option key={d.id} id={d.id} title={C.build.decks[d.id].name} sub={C.build.decks[d.id].sub} onClick={() => start(d.id)} />
+          <Option key={d.id} id={d.id} pic title={C.build.decks[d.id].name} sub={C.build.decks[d.id].sub} onClick={() => start(d.id)} />
         ))}
       </div>
     </div>
@@ -188,13 +190,14 @@ function StepCards({ st, set, ds }) {
           const pts = st.points[c.id] || 0;
           const name = (
             <span style={{ display: "block" }}>
+              <CardPic id={c.id} size="fit" dim={!!c.pending} style={{ marginBottom: SPACE(1) }} />
               <span style={tx(SIZE.body, WEIGHT.bold, COLOR.ink, { display: "block" })}>{cc.name}</span>
-              {cc.basis && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{cc.basis}</span>}
+              {cc.basis && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{cc.basis}</span>}
               <span style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), marginTop: SPACE(1) }}>
                 {c.pending && <PendingChip />}
                 {!c.pending && pts > 0 && top != null && <StatusChip tone="neutral">{fill(s1.topPct, { pct: top })}</StatusChip>}
               </span>
-              {c.id === "stable" && pts > 0 && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{s1.finNA}</span>}
+              {c.id === "stable" && pts > 0 && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{s1.finNA}</span>}
             </span>
           );
           return (
@@ -223,7 +226,7 @@ function StepCards({ st, set, ds }) {
               <div key={x.t} style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
                 <span style={{ minWidth: 0 }}>
                   <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{x.s.nk}</span>
-                  {b && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}><span>{C.build.cards[b.id].name}</span>{" "}<span>{fill(s1.score, { score: Math.round(b.score) })}</span></span>}
+                  {b && <CardScores list={[[b.id, b.score]]} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block", marginTop: SPACE(1) })} />}
                 </span>
                 <span data-ui-v2="preview-score" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flexShrink: 0 })}>{fill(s1.score, { score: Math.round(x.total) })}</span>
               </div>
@@ -331,7 +334,7 @@ function StepTerms({ st, set, ds, load }) {
               <div key={s.t} style={{ display: "flex", alignItems: "center", gap: SPACE(2), padding: `${SPACE(1)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block" })}>{s.nk}</span>
-                  <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{s.t}</span>
+                  <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{s.t}</span>
                 </span>
                 <button type="button" aria-label={fill(s4.addAria, { name: s.nk })} disabled={st.count <= st.pinned.length + 1}
                   onClick={() => pin(s)}
@@ -358,8 +361,8 @@ function StepTerms({ st, set, ds, load }) {
                 ))}
               </div>
             )}
-            {yRange && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.plan.y2022Range}</div>}
-            {y2022 && <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{C.plan.y2022Source}</div>}
+            {yRange && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.plan.y2022Range}</div>}
+            {y2022 && <div data-ui-v2="y2022-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{C.plan.y2022Source}</div>}
           </div>
         )}
         <div style={{ display: "flex", gap: SPACE(2), alignItems: "flex-start", marginTop: SPACE(3) }}>
