@@ -151,11 +151,20 @@ const PULSE_CSS = "@keyframes v2-guide-pulse { 0%, 100% { box-shadow: 0 0 0 4px 
 // onLost: the target never appeared (e.g. the screen changed): the guide ends without a word.
 // focusAfter: where focus goes when the bubble is gone (the first of these selectors still on the page), so it never
 // drops to the page itself; nothing is moved when focus is already somewhere else on the page.
-export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSkip, onLost, focusAfter = [] }) {
+// keepClear (step 1): { top, bottom } selectors of what covers the page there (the sticky meter above, the action bar
+// below). The button to tap must sit in the gap between them and the bubble, and the lit part stops at their edges.
+// On a short screen (a phone held sideways) where that gap is under a tap's height, the bubble moves to the top; if it
+// still does not fit, the guide ends quietly, as seen.
+export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSkip, onLost, focusAfter = [], keepClear = null }) {
   const { wide } = useLayout();
   const box = useTrack(hole, true);
   const btn = useTrack(ring || "", !!ring);
   const bubble = useRef(null);
+  const clear = stage === 1 && ring && keepClear ? keepClear : null;
+  const [atTop, setAtTop] = useState(false);
+  const capTop = useTrack(clear ? clear.top : "", !!clear);
+  const capBottom = useTrack(clear ? clear.bottom : "", !!clear);
+  const bub = useTrack('[data-ui-v2="guide-bubble"]', !!clear);
   const after = useRef(focusAfter);
   after.current = focusAfter;
 
@@ -177,7 +186,30 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
     return () => window.clearTimeout(id);
   }, [!!box, hole]);
 
+  // The free band for the button to tap: below the sticky meter (and the bubble, when it is at the top), above the action
+  // bar (and the bubble, when it is at the bottom).
+  const band = (top) => {
+    const rect = (sel) => { const e = sel ? document.querySelector(sel) : null; return e ? e.getBoundingClientRect() : null; };
+    const a = rect(clear && clear.top), z = rect(clear && clear.bottom);
+    const b = bubble.current ? bubble.current.getBoundingClientRect() : null;
+    let lo = a ? Math.max(0, a.bottom) : 0;
+    let hi = z ? Math.min(window.innerHeight, z.top) : window.innerHeight;
+    if (b) { if (top) lo = Math.max(lo, b.bottom); else hi = Math.min(hi, b.top); }
+    return { lo, hi };
+  };
+  // Scrolls the button to tap into the middle of the band if it is not inside it already. false: the band is too short.
+  const fitRing = (top) => {
+    const el = ring ? document.querySelector(ring) : null;
+    if (!el) return true;
+    const { lo, hi } = band(top);
+    if (hi - lo < TOUCH + SPACE(2)) return false;
+    const r = el.getBoundingClientRect();
+    if (r.top < lo + SPACE(1) || r.bottom > hi - SPACE(1)) { try { window.scrollBy(0, (r.top + r.bottom) / 2 - (lo + hi) / 2); } catch (e) { /* ignore */ } }
+    return true;
+  };
+
   // Each step: bring the target into view above the bubble, then move focus into the bubble (its text is read out).
+  // Step 1 then makes sure the button to tap is clear of the meter, the bubble and the action bar (see keepClear).
   useEffect(() => {
     const el = document.querySelector(hole);
     if (el) {
@@ -185,9 +217,14 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
       const under = bubble.current ? bubble.current.getBoundingClientRect().top : window.innerHeight;
       if (r.top < 0 || r.bottom > under - SPACE(3)) { try { el.scrollIntoView({ block: "center" }); } catch (e) { /* ignore */ } }
     }
+    if (clear && !atTop && !fitRing(false)) setAtTop(true);
     const b = bubble.current;
     if (b) { try { b.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
   }, [stage]);
+  useEffect(() => {
+    if (!clear || !atTop) return;
+    if (!fitRing(true)) onSkip();                         // nothing fits on this screen: end the guide quietly, as seen
+  }, [atTop]);
 
   // Esc = 건너뛰기. Tab stays between the bubble's buttons and the button to tap (nothing under the dark part).
   useEffect(() => {
@@ -206,21 +243,27 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
     return () => document.removeEventListener("keydown", onKey, true);
   }, [onSkip, ring]);
 
-  const W = typeof window !== "undefined" ? window.innerWidth : 0;
-  const H = typeof window !== "undefined" ? window.innerHeight : 0;
-  const h = box ? { x: box.x - HOLE_PAD, y: box.y - HOLE_PAD, w: box.w + 2 * HOLE_PAD, h: box.h + 2 * HOLE_PAD } : null;
+  let h = box ? { x: box.x - HOLE_PAD, y: box.y - HOLE_PAD, w: box.w + 2 * HOLE_PAD, h: box.h + 2 * HOLE_PAD } : null;
+  if (h && clear) {                                       // step 1: the lit part stops at the meter, the bubble and the action bar
+    let lo = capTop ? Math.max(0, capTop.y + capTop.h) : 0;
+    let hi = capBottom ? capBottom.y : Infinity;
+    if (bub) { if (atTop && clear) lo = Math.max(lo, bub.y + bub.h); else hi = Math.min(hi, bub.y); }
+    const y1 = Math.max(h.y, lo), y2 = Math.min(h.y + h.h, hi);
+    h = { ...h, y: y1, h: Math.max(0, y2 - y1) };
+  }
   // Four clear blocks around the lit part catch every tap outside it (nothing under the dark part can be pressed); the
-  // dark itself is the lit part's own shadow, so its corners stay round.
+  // dark itself is the lit part's own shadow, so its corners stay round. The blocks reach the window's edges (right /
+  // bottom 0), so a window that changes size never leaves a dark strip that can be tapped.
   const block = (style) => <div data-ui-v2="guide-shade" onClick={onBackdrop} style={{ position: "fixed", zIndex: 90, ...style }} />;
   return (
     <>
       <style>{PULSE_CSS}</style>
       {h ? (
         <>
-          {block({ left: 0, top: 0, width: "100%", height: Math.max(0, h.y) })}
-          {block({ left: 0, top: h.y + h.h, width: "100%", height: Math.max(0, H - h.y - h.h) })}
+          {block({ left: 0, right: 0, top: 0, height: Math.max(0, h.y) })}
+          {block({ left: 0, right: 0, top: h.y + h.h, bottom: 0 })}
           {block({ left: 0, top: h.y, width: Math.max(0, h.x), height: h.h })}
-          {block({ left: h.x + h.w, top: h.y, width: Math.max(0, W - h.x - h.w), height: h.h })}
+          {block({ left: h.x + h.w, right: 0, top: h.y, height: h.h })}
           <div data-ui-v2="guide-hole" aria-hidden="true" onClick={stage === 2 ? onBackdrop : undefined}
             style={{ position: "fixed", zIndex: 89, left: h.x, top: h.y, width: h.w, height: h.h, borderRadius: RADIUS.lg + 2,
               boxShadow: `${stage === 1 ? "" : `0 0 0 4px ${LIGHT}, `}0 0 0 200vmax ${SHADE}`, pointerEvents: stage === 2 ? "auto" : "none" }} />
@@ -235,8 +278,10 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
           </span>
         </>
       )}
-      <div style={{ position: "fixed", zIndex: 93, left: wide ? SIDE_W : 0, right: 0, bottom: 0, padding: `0 ${SPACE(3)}px calc(${SPACE(3) + 2}px + env(safe-area-inset-bottom))`, pointerEvents: "none" }}>
-        <div ref={bubble} data-ui-v2="guide-bubble" data-step={stage} role="dialog" aria-modal="false" aria-labelledby="v2-guide-title" aria-describedby="v2-guide-body"
+      <div style={{ position: "fixed", zIndex: 93, left: wide ? SIDE_W : 0, right: 0, pointerEvents: "none",
+        ...(atTop && clear ? { top: 0, padding: `calc(${SPACE(3)}px + env(safe-area-inset-top)) ${SPACE(3)}px 0` }
+          : { bottom: 0, padding: `0 ${SPACE(3)}px calc(${SPACE(3) + 2}px + env(safe-area-inset-bottom))` }) }}>
+        <div ref={bubble} data-ui-v2="guide-bubble" data-step={stage} data-at={atTop && clear ? "top" : "bottom"} role="dialog" aria-modal="false" aria-labelledby="v2-guide-title" aria-describedby="v2-guide-body"
           tabIndex={-1} onClick={stage === 2 ? onBackdrop : undefined}
           style={{ maxWidth: 520, margin: "0 auto", pointerEvents: "auto", background: COLOR.surface, borderRadius: RADIUS.lg, padding: `${SPACE(4)}px ${SPACE(4)}px ${SPACE(3) + 2}px`,
             boxShadow: "0 8px 28px rgba(28, 43, 69, 0.35)", outline: "none" }}>

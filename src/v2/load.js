@@ -4,7 +4,7 @@
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
 import { loadJson, freshness } from "../data.js";
-import { detectFeatures, missingForBuild, CUSHION_ASSETS } from "./engine.js";
+import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 
 // publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
@@ -50,10 +50,15 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   if (!data.ok || !corp.ok) {
     const why = [!data.ok && "data.json: " + data.error, !corp.ok && "corp.json: " + corp.error].filter(Boolean).join(" / ");
     console.warn("[v2] load failed: " + why);
+    setDataShape(null);
     return { status: "fail" };
   }
   if (!macro.ok) console.warn("[v2] macro.json not loaded: " + macro.error + " (features that need it stay hidden)");
   const d = data.data, c = corp.data, m = macro.ok ? macro.data : null;
+  // v19.1b: data.json with divCheck carries the exact dividend fields and the beta error band (engine.setDataShape). The
+  // whole app reads this one file one way; a file without it keeps the earlier behaviour. The console line with the
+  // counts is company.jsx logSplitGuard (once per load, in the browser).
+  const exact = setDataShape(d);
   const features = detectFeatures(d, c, m);
   const missing = missingForBuild(features);
   if (missing.length) console.warn("[v2] fields not live yet, deck builder hidden: " + missing.join(", "));
@@ -61,5 +66,5 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   const byT = new Map(d.stocks.map((s) => [s.t, s]));
   const coByT = new Map(c.companies.map((x) => [x.t, x]));
   return { status: "ok", data: d, corp: c, macro: m, features, missing, fresh, byT, coByT, preview: !!opts.preview,
-    cushion: opts.cushion || CUSHION_ASSETS, r2022: opts.r2022 || R2022 };
+    cushion: opts.cushion || CUSHION_ASSETS, r2022: opts.r2022 || R2022, exact };
 }
