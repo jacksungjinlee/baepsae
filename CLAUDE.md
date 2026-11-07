@@ -168,6 +168,13 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   light chip background (Jack, 2026-11-05): 실적 `#B9CDEB` / `#EAF1FB` · 가치 `#BFE0CC` / `#E9F5EE` · 배당 `#EBD49A` /
   `#FBF4E1` · 출렁임·위험 `#D3C8EC` / `#F1EDF9` · 공시·수급·금리 차트 등 `#B5DDDD` / `#E6F4F4`. Tints carry no good/bad
   meaning. No apricot and no price red/blue in icons or selection states. Apricot marks data only.
+- Pictures: 기준 cards and templates use the pictures in `docs/design/v19.3/assets/pictures` (Adobe Stock free and
+  Microsoft Fluent 3D); one picture per 기준 everywhere. The pictures keep their own colours; the icon colour rules apply
+  to Phosphor icons and chips. Small UI icons stay Phosphor duotone. Never draw, generate, recolour or replace these
+  pictures without Jack. Never commit Adobe files larger than 192 px.
+- Text size: No text under 12 px on 2.0 screens.
+- Chart colours: Holdings use neutral navy shades by weight; logo colours never colour charts; price red/blue only for
+  up/down.
 - Company logos come from the provider(s) named on the 데이터 출처 page, with a coloured letter mark as fallback.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no

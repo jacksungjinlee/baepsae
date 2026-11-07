@@ -31,7 +31,7 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
+from visualcheck import V2_IMAGES, visual_ok, copy_pictures  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WAIT = 15000
@@ -57,6 +57,7 @@ def site():
     for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
+    copy_pictures(d)                                                 # v19.3b: 기준 · 템플릿 그림
     return d
 
 
