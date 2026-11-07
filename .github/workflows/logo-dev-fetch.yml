@@ -93,8 +93,10 @@ jobs:
         run: |
           git fetch --depth=1 origin +refs/heads/logos-run:refs/remotes/origin/logos-run
           mkdir -p "$RUNNER_TEMP/reviewed"
-          git archive refs/remotes/origin/logos-run logos | tar -x -C "$RUNNER_TEMP/reviewed"
-          echo "· 검사를 마친 폴더: logos-run $(git rev-parse --short refs/remotes/origin/logos-run) · $(ls "$RUNNER_TEMP/reviewed/logos" | wc -l) 파일"
+          ref=refs/remotes/origin/logos-run
+          # logos/ 와 함께 검사 기록(review.csv · drops.csv)도 받아요: 이미 눈으로 뺀 그림을 다시 묻고 다시 쓰지 않게 (없으면 실행이 멈춰요)
+          git archive "$ref" logos review.csv $(git ls-tree --name-only "$ref" drops.csv) | tar -x -C "$RUNNER_TEMP/reviewed"
+          echo "· 검사를 마친 폴더: logos-run $(git rev-parse --short "$ref") · $(ls "$RUNNER_TEMP/reviewed/logos" | wc -l) 파일 · $(ls "$RUNNER_TEMP/reviewed")"
 
       - name: logo.dev 로고 받기 실행
         env:

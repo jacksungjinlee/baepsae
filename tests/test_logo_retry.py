@@ -99,6 +99,10 @@ def test_a_small_brandmark_still_fails_the_small_check(tmp_path):
     net.answers[("brandmark", "005380.KS")] = [brandmark_answer("tiny", "brand_hmc", w=40, h=40)]
     rc, out = T.run(tmp_path, net, "--extra-routes")
     assert (T.review(out)["005380"]["result"], T.review(out)["005380"]["reason"]) == ("letter", "small")
+    rv = T.review(out)["005380"]
+    assert ("brandmark", "005380.KS") in net.lookups                                  # it was asked, found 40 px,
+    assert (rv["brandmark_status"], rv["brandmark_size"]) == ("logo", "40x40")        # and not used: the small check
+    assert "005380" not in T.index(out)["logos"]
 
 
 def test_a_brandmark_costs_three_credits_and_the_cap_holds():
@@ -141,6 +145,7 @@ def test_the_workflow_passes_the_retry_inputs_through_env_only():
     assert run["env"]["LETTERS_ONLY"] == "${{ inputs.letters_only }}" and run["env"]["EXTRA_ROUTES"] == "${{ inputs.extra_routes }}"
     assert "${{" not in run["run"]                                                  # inputs only through env
     assert '--letters-from "$RUNNER_TEMP/reviewed"' in run["run"] and "--extra-routes" in run["run"]
+    assert "review.csv" in get["run"] and "drops.csv" in get["run"]                 # the records that skip rejected pictures
     # the published logo folder accepts the new routes (Deploy validates with tools/logos/logo_index.py)
     import logo_index as LI
     assert {"isin", "brandmark"} <= set(LI.ROUTES)
@@ -313,3 +318,88 @@ def test_a_record_that_cannot_be_written_stops_the_switch_before_any_change(tmp_
         except KeyError:
             rc = 1
         assert rc == 1 and T.snapshot(first) == before                                          # nothing moved, nothing written
+
+
+# ── after the second fresh-eyes review (2026-11-07) ──
+def test_letters_from_needs_the_review_records(tmp_path):
+    first = letters_setup(tmp_path)
+    (first / "review.csv").unlink()
+    with pytest.raises(SystemExit) as e:
+        T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--letters-from", str(first), "--extra-routes", out_name="r")
+    assert "no review.csv" in str(e.value)
+
+
+def test_the_folder_the_workflow_builds_skips_what_was_rejected(tmp_path):
+    """The workflow extracts logos/, review.csv and drops.csv from logos-run into one folder (nothing else)."""
+    import shutil
+    first = letters_setup(tmp_path, gone=("005380", "247540"))
+    (first / "drops.csv").write_text("code,name,reason\n247540,에코프로비엠,photo\n", encoding="utf-8")
+    wf = tmp_path / "reviewed"
+    wf.mkdir()
+    shutil.copytree(first / "logos", wf / "logos")
+    for f in ("review.csv", "drops.csv"):
+        shutil.copy(first / f, wf / f)
+    net = Net(dict(T.ALL_GOOD))
+    rc, out = T.run(tmp_path, net, "--letters-from", str(wf), "--extra-routes", out_name="r")
+    assert rc == 0 and ("ticker", "247540.KQ") not in net.lookups and ("ticker", "005380.KS") in net.lookups
+
+
+def test_every_logo_of_a_retry_is_on_the_sheet(tmp_path, monkeypatch):
+    first = letters_setup(tmp_path)
+    seen = {}
+    real = F.sheet_sections
+
+    def spy(rows, jobs, groups, top, retry=False):
+        secs = real(rows, jobs, groups, top, retry)
+        seen["codes"] = {r["code"] for _, rs in secs for r in rs}
+        return secs
+    monkeypatch.setattr(F, "sheet_sections", spy)
+    rc, out = T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--letters-from", str(first), "--sheet-top", "1", out_name="r")
+    logos = {c for c, e in T.index(out)["logos"].items() if not e.get("via")}
+    assert rc == 0 and logos == {"000660", "005380"} and logos <= seen["codes"]
+
+
+def test_the_20_dollar_guard_also_covers_extra_routes_without_letters(tmp_path, monkeypatch):
+    T.write_inputs(tmp_path)
+    monkeypatch.setattr(F, "RETRY_SPEND_ASK", 5)                                   # the 3 largest (US) plan 6 credits
+    with pytest.raises(SystemExit) as e:
+        T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--extra-routes", "--limit", "3", full_run_date=None, out_name="a")
+    assert "Jack asked to be told first" in str(e.value)
+    rc, out = T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--extra-routes", "--only", "005380", full_run_date=None,
+                    out_name="b")                                                    # a named fix-up stays exempt
+    assert rc == 0
+
+
+def test_an_opaque_lockup_padded_to_a_white_square_is_wide():
+    from PIL import Image, ImageDraw
+    im = Image.new("RGBA", (128, 128), (255, 255, 255, 255))                        # opaque white square, square size
+    ImageDraw.Draw(im).rectangle((4, 54, 123, 73), fill=(200, 20, 30, 255))          # drawn part 6:1
+    assert F.wide(im, {"width": 512, "height": 512})
+    ok = Image.new("RGBA", (128, 128), (255, 255, 255, 255))
+    ImageDraw.Draw(ok).rectangle((24, 34, 103, 93), fill=(200, 20, 30, 255))         # 4:3
+    assert not F.wide(ok, {"width": 512, "height": 512})
+
+
+@pytest.mark.parametrize("what", ["small_isin", "wide_brandmark"])
+def test_a_rejected_extra_picture_is_dropped_not_published(tmp_path, what):
+    T.write_inputs(tmp_path)
+    net = Net(dict(T.ALL_GOOD))
+    net.answers[("ticker", "005380.KS")] = [T.not_found()]
+    net.answers[("domain", "hyundai.com")] = [T.not_found()]
+    if what == "small_isin":
+        net.answers[("isin", "KR7005380001")] = [T.logo_answer("tiny", "brand_hmc", w=40, h=40)]
+    else:
+        net.answers[("brandmark", "005380.KS")] = [brandmark_answer("wide", "brand_hmc", w=600, h=150)]
+    rc, out = T.run(tmp_path, net, "--extra-routes")
+    rv = T.review(out)["005380"]
+    assert rc == 0 and rv["result"] == "letter" and rv["reason"] == ("small" if what == "small_isin" else "wide_brandmark")
+    assert "005380" not in T.index(out)["logos"]
+    assert "005380" in json.loads((out / "dropped" / "index.json").read_text(encoding="utf-8"))["logos"]
+
+
+def test_stray_flags_are_refused(tmp_path):
+    T.write_inputs(tmp_path)
+    with pytest.raises(SystemExit):
+        T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--codes", "005930", "--limit", "1", full_run_date=None)
+    with pytest.raises(SystemExit):
+        T.run(tmp_path, Net(dict(T.ALL_GOOD)), "--over-20-ok", "--limit", "1", full_run_date=None)

@@ -222,10 +222,13 @@ def letters_from(order, folder):
     have = set(index["logos"])
     keep = [c for c in order if c["side"] == "kr" and c["code"] not in have]
     folder = pathlib.Path(folder)
-    prev, dropped_after_review = {}, set()
-    if (folder / "review.csv").exists():
-        with open(folder / "review.csv", newline="", encoding="utf-8") as f:
-            prev = {r["code"]: r for r in csv.DictReader(f)}
+    if not (folder / "review.csv").exists():             # without it every rejected picture would be asked for (and
+        raise SystemExit(f"!! --letters-from {folder}: no review.csv beside logos/ — the retry needs the reviewed "
+                         "folder's records (review.csv, drops.csv) to leave out pictures already rejected. Nothing was "
+                         "looked up.")              # billed) again and come back as a "new" logo (fresh-eyes review)
+    with open(folder / "review.csv", newline="", encoding="utf-8") as f:
+        prev = {r["code"]: r for r in csv.DictReader(f)}
+    dropped_after_review = set()
     if (folder / "drops.csv").exists():
         with open(folder / "drops.csv", newline="", encoding="utf-8") as f:
             dropped_after_review = {r["code"] for r in csv.DictReader(f)}
@@ -234,10 +237,14 @@ def letters_from(order, folder):
         if why in SKIP_KNOWN or c["code"] in dropped_after_review:  # so the retry starts at the ISIN
             c["skip_known"] = "dropped after review" if c["code"] in dropped_after_review else why
     n_skip = sum(1 for c in keep if c.get("skip_known"))
-    return keep, [f"!! --letters-from {folder}: the {len(keep):,} Korean companies without a logo there "
+    n_eye = sum(1 for c in keep if c.get("skip_known") == "dropped after review")
+    return keep, [f"!! --letters-from {folder}: review.csv {len(prev):,} rows · drops.csv "
+                  f"{len(dropped_after_review):,} companies dropped by eye"
+                  + ("" if (folder / "drops.csv").exists() else " (no drops.csv)"),
+                  f"!! --letters-from {folder}: the {len(keep):,} Korean companies without a logo there "
                   f"(of {sum(1 for c in order if c['side'] == 'kr'):,}; {len(have):,} entries in its index) · "
-                  f"{n_skip:,} of them get no new ticker/homepage lookup (their old answer was another brand's picture or was "
-                  "dropped after review; with --extra-routes they start at the ISIN, without it they are left out)"]
+                  f"{n_skip:,} of them get no new ticker/homepage lookup ({n_eye:,} dropped by eye, {n_skip - n_eye:,} another "
+                  "brand's picture; with --extra-routes they start at the ISIN, without it they are left out)"]
 
 
 def load_all(data, listing, homepages, min_counts=None, sheet_top=SHEET_TOP):
@@ -325,7 +332,7 @@ def parse_logo(j, want="logo"):
     if not isinstance(data, dict):
         return None, "HTTP 200 without a data object" + (" (not JSON)" if j is None else "")
     img, shape, kind = data, "data", data.get("kind")
-    if "url" not in data and isinstance(data.get("logo"), dict):
+    if "url" not in data and isinstance(data.get("logo"), dict) and want == "logo":
         img, shape, kind = data["logo"], "data.logo", "logo"
     elif data.get("object") != "image" or data.get("status") != "ready" or kind != want:
         return None, (f"HTTP 200 whose data is not a ready logo image (object {data.get('object')!r}, kind {kind!r}, "
@@ -655,12 +662,20 @@ def wide(canvas, img):
     w, h = img.get("width"), img.get("height")
     if w and h and max(w, h) / min(w, h) > BRANDMARK_MAX_ASPECT:
         return True
-    a = np.asarray(canvas.convert("RGBA"))[..., 3] >= 32
-    ys, xs = np.nonzero(a)
-    if not len(xs):
-        return False
-    bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
-    return max(bw, bh) / min(bw, bh) > BRANDMARK_MAX_ASPECT
+    from PIL import Image
+    rgba = canvas.convert("RGBA")
+    on_white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    on_white.alpha_composite(rgba)
+    px = np.asarray(on_white.convert("RGB")).astype(np.int16)
+    for drawn in (np.asarray(rgba)[..., 3] >= 32,                 # by transparency
+                  (255 - px).max(axis=2) > 40):                   # by colour on white, as the faint check sees it
+        ys, xs = np.nonzero(drawn)
+        if not len(xs):
+            continue
+        bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
+        if max(bw, bh) / min(bw, bh) > BRANDMARK_MAX_ASPECT:
+            return True
+    return False
 
 
 def fingerprint(canvas):
@@ -1655,8 +1670,9 @@ def _identity(r):
     return "".join(f'<div class="line id">{x}</div>' for x in lines)
 
 
-def sheet_sections(rows, jobs, groups, top):
-    """[(title, [row, ...])] in the order the sheet shows them."""
+def sheet_sections(rows, jobs, groups, top, retry=False):
+    """[(title, [row, ...])] in the order the sheet shows them. retry (--letters-from): every logo of the run is on the
+    sheet, since each one is added only after being looked at (--codes)."""
     comp = [r for r in rows if not r["via"]]
     secs = []
     for side, label in (("kr", "Korea"), ("us", "US")):
@@ -1670,6 +1686,10 @@ def sheet_sections(rows, jobs, groups, top):
                          ("homepage", "no ticker logo, homepage logo used")):
         mine = sorted((r for r in outside if r["check"] == check), key=lambda r: int(r["market_rank"] or 10 ** 6))
         secs.append((f"Korea outside the top {top}: {title}", mine))
+    if retry:
+        shown = ("homepage-over-ticker", "unverified", "homepage", "isin", "brandmark")
+        secs.append((f"Korea outside the top {top}: every other logo of this retry (--letters-from)",
+                     sorted((r for r in outside if r["check"] not in shown), key=lambda r: int(r["market_rank"] or 10 ** 6))))
     rank = lambda r: (r["market"] == "US", int(r["market_rank"] or 10 ** 6))    # noqa: E731
     for check, title in (("isin", "logo found by ISIN (--extra-routes)"),
                          ("brandmark", "brandmark (wide lockup) found by ticker (--extra-routes)")):
@@ -2202,6 +2222,10 @@ def parse_args(argv):
         ap.error("--route ticker goes with --only (a fix-up for named companies)")
     if a.only and a.limit:
         ap.error("--only and --limit don't go together")
+    if a.codes and not a.add_from:
+        ap.error("--codes goes with --add-from (the approved companies of a --letters-from retry)")
+    if a.over_20_ok and not (a.letters_from or a.extra_routes):
+        ap.error("--over-20-ok goes with --letters-from or --extra-routes (the runs it guards)")
     return a
 
 
@@ -2291,9 +2315,9 @@ def _main(argv, deps, state):
             "with --add-from after looking at it)")
     ticker_only = a.route == "ticker"
     pl = plan(order, ticker_only, a.extra_routes)
-    cap = (min(a.max_credits, pl["ceiling"]) if (a.limit or a.only or a.letters_from)
+    cap = (min(a.max_credits, pl["ceiling"]) if (a.limit or a.only or a.letters_from or a.extra_routes)
            else a.max_credits)                           # a trial or a retry never spends past its plan
-    if a.letters_from and cap > RETRY_SPEND_ASK and not a.over_20_ok and not a.plan_only:
+    if (a.letters_from or a.extra_routes) and not a.only and cap > RETRY_SPEND_ASK and not a.over_20_ok and not a.plan_only:
         raise SystemExit(f"!! this retry could spend {cap:,} credits (${cap / 100:,.2f}), above ${RETRY_SPEND_ASK / 100:,.0f}: "
                          "Jack asked to be told first (2026-11-07). Run with a smaller --limit or --max-credits, or with "
                          "--over-20-ok (workflow input over_20_dollars_ok) once he has said yes. Nothing was looked up.")
@@ -2454,7 +2478,7 @@ def report(out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0
         log(f"!! {problems[-1]}")
     cands = {j.c["code"]: j.cands for j in f.done}
     cols = mark_colors()
-    secs = sheet_sections(rows, f.done, groups, a.sheet_top)
+    secs = sheet_sections(rows, f.done, groups, a.sheet_top, retry=bool(a.letters_from))
     sheet_counts = [(title, len(rs)) for title, rs in secs]
     for title, n in sheet_counts:
         log(f"· review sheet · {title}: {n:,}")
