@@ -453,10 +453,10 @@ def test_the_reason_icr_did_not_run_is_written_only_for_non_financial_companies(
             assert "icr" not in c["flRan"] and "icr" not in c.get("flNa", []), c["t"]
 
 
-def test_icr_is_off_everywhere_until_the_interest_re_read():
+def test_icr_is_off_everywhere_until_the_interest_re_read(monkeypatch):
     """Jack (2026-11-07): 이자보상배율은 잠시 모든 회사에서 꺼요 — 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요.
     돌릴 수 있었던 회사는 flWhy.icr "off"(앱은 아무 말도 하지 않아요), 이자 줄이 없는 회사는 그대로 "ie", 금융회사는 그대로 해당 없음."""
-    assert F.ICR_OFF is True
+    monkeypatch.setattr(F, "ICR_OFF", True)        # v19.1f 가 다시 켰어요 — 끄는 스위치가 여전히 끄는지 확인
     base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
     full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [-9.0, 0, 0], "ie": 1.0}
     rows = [dict(base, t="000100", nk="적자", s="chem", ind="chem"), dict(base, t="000200", nk="줄 없음", s="chem", ind="chem"),
@@ -497,22 +497,23 @@ def test_flran_lists_the_checks_that_actually_ran(monkeypatch):
 
 
 # ── 5. DART 캐시 v2 · 호출 수 어림 ────────────────────────
-def test_dart_cache_is_version_two_in_the_pipeline_and_the_workflow():
-    assert F.DART_CACHE_VERSION == 2 and F.DART_CACHE_PATH.endswith("dart-v2.json.gz")
+def test_dart_cache_is_version_three_in_the_pipeline_and_the_workflow():
+    """v19.1b 에 v2, v19.1f 에 v3 (이자비용 · 현금흐름표 이자 지급액 · 손익 줄 이름을 새로 읽어요)."""
+    assert F.DART_CACHE_VERSION == 3 and F.DART_CACHE_PATH.endswith("dart-v3.json.gz")
     with open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8") as f:
         text = f.read()
-    assert "dart-v1.json.gz" not in text
+    assert "dart-v1.json.gz" not in text and "dart-v2.json.gz" not in text
     steps = {s.get("name"): s for s in yaml.safe_load(text)["jobs"]["update"]["steps"]}
-    # v2 를 먼저 찾고, 없을 때만 v1 폴더(미국 상세 정보 보관본을 이어 쓰려고)를 받아요 (리뷰 2). 저장은 언제나 v2 로
-    assert steps["DART 캐시 불러오기"]["with"]["restore-keys"].split() == ["dart-cache-v2-", "dart-cache-v1-"]
-    assert steps["DART 캐시 불러오기"]["with"]["key"].startswith("dart-cache-v2-")
-    assert steps["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v2-")
-    # 정해진 시각 실행의 빈 캐시 확인은 v2 파일을 봐요: v1 폴더만 받은 실행도 그대로 멈춰요 (전체 DART 실행은 사람이 하루 한 번)
+    # v3 를 먼저 찾고, 없을 때만 v2 폴더(미국 상세 정보 보관본을 이어 쓰려고)를 받아요 (리뷰 2). 저장은 언제나 v3 로
+    assert steps["DART 캐시 불러오기"]["with"]["restore-keys"].split() == ["dart-cache-v3-", "dart-cache-v2-"]
+    assert steps["DART 캐시 불러오기"]["with"]["key"].startswith("dart-cache-v3-")
+    assert steps["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v3-")
+    # 정해진 시각 실행의 빈 캐시 확인은 v3 파일을 봐요: v2 폴더만 받은 실행도 그대로 멈춰요 (전체 DART 실행은 사람이 하루 한 번)
     guard = steps["DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)"]["run"]
     assert "! -s .dart-cache/" + os.path.basename(F.DART_CACHE_PATH) in guard and "exit 1" in guard
     import inspect
-    src = inspect.getsource(F.main)                       # 받은 v1 폴더의 옛 DART 파일은 지워서 v2 캐시에 실려 가지 않게
-    assert '"dart-v1.json.gz"' in src and src.find("os.remove(legacy)") < src.find("DartClient(DART_KEY")
+    src = inspect.getsource(F.main)                       # 받은 옛 폴더의 v1 · v2 DART 파일은 지워서 v3 캐시에 실려 가지 않게
+    assert '"dart-v1.json.gz", "dart-v2.json.gz"' in src and src.find("os.remove(legacy)") < src.find("DartClient(DART_KEY")
 
 
 def test_full_refresh_call_estimate_stays_under_the_target():

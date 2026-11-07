@@ -38,6 +38,13 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   financial companies (banks, insurers, brokers and financial holding companies by industry group → `flNa`).
   corp.json `flWhy` = `{"icr": "ie" | "op" | "neg"}` says why 이자보상배율 didn't run for a non-financial company: no
   이자비용/금융비용 line on the income statement, no operating profit, or a negative figure.
+- v19.1f (interest re-read, DART cache v3): 이자보상배율 uses the income statement's 이자비용, or else the sum of the
+  cash-flow statement's interest-paid lines (`ifrs-full_InterestPaidClassifiedAs…`, as positive amounts; never interest
+  received; 신종자본증권 distributions left out while `HYBRID_INTEREST` is False). 금융비용/금융원가 are no longer read as
+  interest. corp.json `flSrc` = `{"icr": "is" | "cf"}` when the check ran. Income lines not found under the old names
+  are read under numbered and loss names (영업손실 · Ⅲ.영업손익 · V.영업이익 · 당기순손실 …) or, when exactly one row carries
+  it, the standard code; a loss-only name with a positive current figure is dropped and logged. Cache v2 → v3 means an
+  empty cache: the branch dry run is one day's full-DART run and main's first run after the merge is the next day's.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the

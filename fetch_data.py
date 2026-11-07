@@ -889,9 +889,12 @@ def add_percentiles(stocks):
 #   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
 # v19.1b: v1 → v2. 배당 표(alotMatter)의 현금배당금총액·주당순이익·액면가와 재무제표의 3년 자본금을 새로 담아요.
 # 예전 항목에는 이 값이 없어서 캐시를 통째로 새로 받아요 (파일 이름도 바꿔서 v1 파일을 잘못 읽을 일이 없게 · 워크플로 키 dart-cache-v2-).
-DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v2.json.gz")
+# v19.1f: v2 → v3. 손익계산서의 이자비용 · 현금흐름표의 이자 지급액 · 손익 줄 이름(영업손실 …)을 새로 읽어요. 예전 재무제표 항목은
+# 이 값이 없고 '금융비용'을 이자로 담고 있어서 통째로 새로 받아요 (파일 이름도 바꿔서 v2 파일을 잘못 읽을 일이 없게 · 워크플로 키 dart-cache-v3-).
+# 빈 v3 캐시로 시작하는 실행은 그날의 전체 DART 실행이에요 (이틀: 브랜치 시험 실행 하루, main 첫 실행 다음 날).
+DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v3.json.gz")
 COMPANY_TTL_DAYS = 180   # 기업개황(업종 코드) 보관 기간
-DART_CACHE_VERSION = 2   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
+DART_CACHE_VERSION = 3   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
 # v19.1b: 캐시 없이 처음부터 받는 '전체 DART 실행'의 호출 수 어림 (하루 한도 약 20,000회 · 목표 16,000회 아래).
 # 2026-11-01 전체 실행(41319552163): 재무·배당·분기 11,588회 / 2,418곳 = 기업당 4.8회. 업종 코드(company.json)는 그 뒤에 생겨
 # 빈 캐시면 기업당 1회 더. 공시는 최대 목록 30쪽 + 내부자 상세 1,200회(DISC_CALL_CAP) + 국민연금 200회 = 1,430회.
@@ -1297,9 +1300,93 @@ def needs_capital(d):
     return isinstance(d, dict) and "_cap" not in d and not (d.get("_fin") or {}).get("cs3")
 
 
+# v19.1f (Jack, 2026-11-07): 손익계산서의 매출·영업이익·순이익을 예전 이름으로 못 찾으면 이름의 앞 번호(Ⅲ. · V.)를 빼고 더 많은
+# 이름('영업손실' · '영업손익' · '당기순손실' …)으로, 그래도 없으면 표준 계정 코드로 찾아요. 2026-11-07 발행본에서 재무제표를 읽고도
+# 매출·영업이익·순이익이 모두 빈 회사가 51곳이었어요 (롯데케미칼 '영업손실' · 넷마블 'Ⅲ.영업손익' · 코오롱인더 'V.영업이익').
+# 예전 이름으로 찾던 회사는 값이 그대로예요 (먼저 예전 규칙, 못 찾을 때만 새 규칙).
+# 금액은 표준 계정(dart_OperatingIncomeLoss · ifrs-full_ProfitLoss)의 부호를 그대로 써요: 손실이면 음수. 2026-11-07 실제 재무제표에서
+# '영업손실'(롯데케미칼 −9,431억)과 '당기순손실' 12곳이 모두 음수였어요. 그래서 이름이 손실뿐인 줄('영업손실' · '당기순손실')의 올해
+# 값이 양수면 잘못 적은 것으로 보고 쓰지 않아요 (로그에 남겨요).
+INC_NAMES = {
+    "rev": ("매출액", "수익(매출액)", "영업수익", "매출", "매출액(영업수익)", "영업수익(매출액)"),
+    "op": ("영업이익", "영업이익(손실)", "영업손실", "영업손익", "영업손실(이익)"),
+    "ni": ("당기순이익", "당기순이익(손실)", "연결당기순이익", "당기순손실", "당기순손익", "당기순손실(이익)",
+           "연결당기순이익(손실)", "연결당기순손익", "연결당기순손실"),
+}
+INC_IDS = {"rev": ("ifrs-full_Revenue",), "op": ("dart_OperatingIncomeLoss",), "ni": ("ifrs-full_ProfitLoss",)}
+LOSS_ONLY = ("영업손실", "당기순손실", "연결당기순손실")
+INC_SEEN = collections.Counter()        # 새 규칙으로 찾은 줄 · 부호가 틀려 버린 줄 (이번 실행에서 받은 재무제표만 · 실행 로그용)
+_INC_LOCK = threading.Lock()
+
+
+def income_fallback(rows, key, value):
+    """예전 이름으로 못 찾은 손익 항목(key: rev · op · ni)을 손익계산서(IS · CIS)에서 다시 찾아요 → value(row) 또는 None.
+    1) 앞 번호를 뺀 이름이 INC_NAMES 2) 표준 계정 코드 INC_IDS. 이름이 손실뿐인데 올해 값이 양수면 쓰지 않아요. (거의 순수 함수)"""
+    cands = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
+    hit = next((r for r in cands if acct_name(r.get("account_nm")) in INC_NAMES[key]), None)
+    if hit is None:
+        # 표준 계정 코드는 그 코드를 단 줄이 하나뿐일 때만 (둘 이상이면 제품별 매출 같은 아랫줄일 수 있어서)
+        coded = [r for r in cands if (r.get("account_id") or "").strip() in INC_IDS[key]]
+        hit = coded[0] if len(coded) == 1 else None
+        if len(coded) > 1:
+            with _INC_LOCK:
+                INC_SEEN[f"{key}:many"] += 1
+    if hit is None:
+        return None
+    v = value(hit)
+    cur = v[0] if isinstance(v, list) else v
+    if acct_name(hit.get("account_nm")) in LOSS_ONLY and cur is not None and cur > 0:
+        with _INC_LOCK:
+            INC_SEEN[f"{key}:sign"] += 1
+        return None
+    with _INC_LOCK:
+        INC_SEEN[key] += 1
+    return v
+
+
+# v19.1f (Jack, 2026-11-07): 이자보상배율의 이자. 손익계산서에 '이자비용' 줄이 있으면 그것, 없으면 현금흐름표의 이자 지급 줄을 모두
+# 더한 값(양수로)이에요. 예전에는 '금융비용'(환손실·파생상품 손실까지 든 금융원가)도 이자로 읽었어요 — 2026-11-07 경고 505곳 중 502곳.
+# 이자 지급 줄: 표준 계정 ifrs-full_InterestPaidClassifiedAs…(영업·투자·재무활동). 그런 줄이 하나도 없을 때만 표준 계정이 없는 줄 중
+# 이름에 '이자'와 '지급'('지출' · '납부')이 든 줄. 이자의 수취(받은 이자)는 절대 아니에요. 신종자본증권 이자(dart_InterestPaidToHybridBond)는
+# 회계상 자본에 대한 분배라 빼요 (HYBRID_INTEREST — Jack 확인 대기).
+HYBRID_INTEREST = False
+_NO_ID = ("-표준계정코드 미사용-", "")
+
+
+def interest_paid_rows(rows):
+    """현금흐름표에서 이자 지급 줄들 (위 규칙, 같은 줄이 두 번 나와도 한 번). (순수 함수)"""
+    cf = [r for r in rows if (r.get("sj_div") or "").strip() == "CF"]
+
+    def received(n):
+        return any(w in n for w in ("수취", "수입", "수령", "수익", "받은"))
+    by_id = [r for r in cf if (r.get("account_id") or "").strip().startswith("ifrs-full_InterestPaid")
+             and not received(acct_name(r.get("account_nm")))]
+    if HYBRID_INTEREST:
+        by_id += [r for r in cf if (r.get("account_id") or "").strip() == "dart_InterestPaidToHybridBond"]
+    picked = by_id or [r for r in cf if (r.get("account_id") or "").strip() in _NO_ID
+                       and "이자" in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
+                       and "신종자본" not in acct_name(r.get("account_nm"))
+                       and any(w in acct_name(r.get("account_nm")) for w in ("지급", "지출", "납부"))]
+    seen, out = set(), []
+    for r in picked:
+        k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def interest_paid(rows, value):
+    """이자 지급 줄들의 합 (양수) → 원, 줄이 없거나 값이 하나도 없으면 None. value(row) 는 그 줄의 값. (순수 함수)"""
+    vals = [value(r) for r in interest_paid_rows(rows)]
+    vals = [abs(v) for v in vals if v is not None]
+    return sum(vals) if vals else None
+
+
 def parse_dart_list(rows):
     """fnlttSinglAcntAll 응답의 계정 목록에서 3개년 주요 항목을 뽑습니다. (순수 함수 — 테스트 가능)
-    v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital)."""
+    v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital).
+    v19.1f: 예전 이름으로 못 찾은 매출·영업이익·순이익은 income_fallback 으로. 이자는 '이자비용'(ie)과 현금흐름표 이자 지급액(iec)."""
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
     rev = op = ni = None
@@ -1339,8 +1426,8 @@ def parse_dart_list(rows):
             cs3 = tri(row)            # v19.1b: 3년 자본금 — 액면가로 나누면 그해 말 발행 주식 수의 상한 (배당 분할 확인)
         elif nm == "자본잉여금" and sj in ("BS", "") and ss3 is None:
             ss3 = tri(row)            # v19.1b: 3년 자본잉여금 — 무상증자(늘지 않음)와 유상증자(주식발행초과금으로 늚)를 가려요
-        elif nm in ("이자비용", "금융비용") and sj in ("IS", "CIS", "") and ie is None:
-            ie = _num(row.get("thstrm_amount"))
+        elif acct_name(nm) == "이자비용" and sj in ("IS", "CIS") and ie is None:
+            ie = _num(row.get("thstrm_amount"))       # v19.1f: 손익계산서의 이자비용만 (금융비용 · 금융원가는 이자가 아니에요)
         elif sj == "CF" and nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
             ocf = _num(row.get("thstrm_amount"))
         elif sj == "CF" and nm in ("감가상각비", "유형자산감가상각비", "무형자산상각비", "사용권자산상각비", "투자부동산감가상각비"):
@@ -1350,6 +1437,13 @@ def parse_dart_list(rows):
                 has_dep = True
         elif nm == "부채총계" and li is None:
             li = _num(row.get("thstrm_amount"))
+    if rev is None:
+        rev = income_fallback(rows, "rev", tri)
+    if op is None:
+        op = income_fallback(rows, "op", tri)
+    if ni is None:
+        ni = income_fallback(rows, "ni", tri)
+    iec = interest_paid(rows, lambda r: _num(r.get("thstrm_amount")))
     rev = rev or [None, None, None]; op = op or [None, None, None]; ni = ni or [None, None, None]
 
     out = {}
@@ -1370,7 +1464,7 @@ def parse_dart_list(rows):
            "eq": ek(eq), "li": ek(li), "nio": ek(nio), "eqo": ek(eqo),
            "bor": ek(bor) if has_bor else None, "cash": ek(cash), "ocf": ek(ocf),
            "dep": ek(dep) if has_dep else None,
-           "ca": ek(ca), "cl": ek(cl), "cs": ek(cs), "ie": ek(ie)}
+           "ca": ek(ca), "cl": ek(cl), "cs": ek(cs), "ie": ek(ie), "iec": ek(iec)}
     if cs3 and any(v is not None for v in cs3):
         fin["cs3"] = [round(v / 1e8, 4) if v is not None else None for v in cs3]     # 억원 · 1만원 단위까지 (주식 수 계산용)
     if ss3 and any(v is not None for v in ss3):
@@ -1519,7 +1613,7 @@ def parse_dart_quarter(rows):
             elif nm == "영업이익" and op is None: op = _ytd(row)
             elif nm in ("당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익") and ni is None: ni = _ytd(row)
             elif "지배기업" in nm and ("순이익" in nm or "당기순이익" in nm) and "비지배" not in nm and nio is None: nio = _ytd(row)
-            elif nm in ("이자비용", "금융비용") and ie is None: ie = _ytd(row)
+            elif acct_name(nm) == "이자비용" and ie is None: ie = _ytd(row)     # v19.1f: 이자비용만 (금융비용은 이자가 아니에요)
         elif sj == "CF":
             if nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
                 ocf = _ytd(row)
@@ -1536,9 +1630,17 @@ def parse_dart_quarter(rows):
             elif nm == "유동자산" and ca is None: ca = v
             elif nm == "유동부채" and cl is None: cl = v
             elif nm == "자본금" and cs is None: cs = v
+    # v19.1f: 예전 이름으로 못 찾은 매출·영업이익·순이익 (연간과 같은 규칙 · 분기는 '영업이익(손실)'도 예전엔 못 찾았어요)
+    if rev is None:
+        rev = income_fallback(rows, "rev", _ytd)
+    if op is None:
+        op = income_fallback(rows, "op", _ytd)
+    if ni is None:
+        ni = income_fallback(rows, "ni", _ytd)
+    iec = interest_paid(rows, _ytd)
     if rev is None and ni is None:
         return None
-    return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie),
+    return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie), "iec": ek(iec),
             "dep": ek(dep) if has_dep else None,
             "eq": ek(eq), "eqo": ek(eqo), "bor": ek(bor) if has_bor else None, "cash": ek(cash),
             "ca": ek(ca), "cl": ek(cl), "cs": ek(cs)}
@@ -1558,7 +1660,8 @@ def compute_ttm(fin, ytd, ytd_prev):
            "nio": flow(fin.get("nio"), ytd.get("nio"), ytd_prev.get("nio")),
            "ocf": flow(fin.get("ocf"), ytd.get("ocf"), ytd_prev.get("ocf")),
            "dep": flow(fin.get("dep"), ytd.get("dep"), ytd_prev.get("dep")),
-           "ie": flow(fin.get("ie"), ytd.get("ie"), ytd_prev.get("ie"))}
+           "ie": flow(fin.get("ie"), ytd.get("ie"), ytd_prev.get("ie")),
+           "iec": flow(fin.get("iec"), ytd.get("iec"), ytd_prev.get("iec"))}     # v19.1f: 현금흐름표 이자 지급액
     if ttm["rev"] is None and ttm["ni"] is None:
         return None
     bs = {k: ytd.get(k) for k in ("eq", "eqo", "bor", "cash", "ca", "cl", "cs") if ytd.get(k) is not None}
@@ -1723,6 +1826,10 @@ def enrich_with_dart(kr_stocks, client):
         list(ex.map(one, targets))
     client.save()
     log(f"· DART: {client.summary()}")
+    log(f"{'  !! ' if any(k.endswith(':sign') for k in INC_SEEN) else '· '}손익 줄 새 규칙 (이번 실행에서 받은 재무제표 · 예전 이름으로 "
+        f"못 찾은 줄): 매출 {INC_SEEN['rev']:,} · 영업이익 {INC_SEEN['op']:,} · 순이익 {INC_SEEN['ni']:,} · 이름이 손실인데 올해 값이 "
+        f"양수라 버린 줄 {sum(v for k, v in INC_SEEN.items() if k.endswith(':sign')):,} · 같은 코드가 여러 줄이라 안 쓴 항목 "
+        f"{sum(v for k, v in INC_SEEN.items() if k.endswith(':many')):,}")
     if backlog0:
         left = capital_backlog(client.entries, (year, year - 1), today)
         capped = client.redo_left <= 0
@@ -2334,7 +2441,8 @@ FL_FIN_HOLDINGS = ("105560", "055550", "086790", "316140", "138930", "139130", "
 # 파생상품 손실까지 든 '금융비용'으로 계산됐어요 (두산에너빌리티 0.65배 → 실제 이자 지급액으로는 약 2.0배). 이자비용, 없으면
 # 현금흐름표의 이자 지급액으로 다시 읽는 PR(v19.1f, 전체 DART 다시 읽기)이 이 스위치를 끄고 바른 값으로 다시 켜요.
 # 꺼져 있으면 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요 (flRan 에 icr 없음 · flWhy.icr "off" — 앱은 아무 말도 안 해요).
-ICR_OFF = True
+# v19.1f: 다시 켜요. 이자는 손익계산서의 '이자비용'(flSrc.icr "is"), 없으면 현금흐름표의 이자 지급액(flSrc.icr "cf").
+ICR_OFF = False
 
 
 def fl_unknown_holding(s):
@@ -2364,6 +2472,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     comps = []
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
     why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
+    src_n = collections.Counter()                   # v19.1f: 이자보상배율에 쓴 이자 (is 손익계산서 이자비용 · cf 현금흐름표 이자 지급액)
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2394,6 +2503,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "ocf": _t.get("ocf") if _t.get("ocf") is not None else fin.get("ocf"),
             "dep": _t.get("dep") if _t.get("dep") is not None else fin.get("dep"),
             "ie": _t.get("ie") if _t.get("ie") is not None else fin.get("ie"),
+            "iec": _t.get("iec") if _t.get("iec") is not None else fin.get("iec"),
             "eq": _b.get("eq") if _b.get("eq") is not None else fin.get("eq"),
             "cs": _b.get("cs") if _b.get("cs") is not None else fin.get("cs"),
             "ca": _b.get("ca") if _b.get("ca") is not None else fin.get("ca"),
@@ -2416,11 +2526,15 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             if cr < 100:
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
-        icr_ok = op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and not fin_co and not unknown
+        # v19.1f: 이자 = 손익계산서 이자비용(is), 없으면 현금흐름표 이자 지급액(cf). 어느 것을 썼는지 flSrc 에 남겨요
+        ie_v, ie_src = (eff["ie"], "is") if eff["ie"] is not None else (eff["iec"], "cf") if eff["iec"] is not None else (None, None)
+        icr_ok = op0f is not None and ie_v is not None and ie_v >= 0 and not fin_co and not unknown
         if icr_ok and not ICR_OFF:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
-        if icr_ok and not ICR_OFF and eff["ie"] > 0:
-            icr = op0f / eff["ie"]
+            row["flSrc"] = {"icr": ie_src}
+            src_n[ie_src] += 1
+        if icr_ok and not ICR_OFF and ie_v > 0:
+            icr = op0f / ie_v
             if icr < 1:
                 fl["icr"] = round(icr, 2)
         if all(v is not None for v in ni):
@@ -2438,7 +2552,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
             # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
             # off = 돌릴 수 있었지만 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요)
-            row["flWhy"] = {"icr": "off" if icr_ok else "op" if op0f is None else "ie" if eff["ie"] is None else "neg"}
+            row["flWhy"] = {"icr": "off" if icr_ok else "op" if op0f is None else "ie" if ie_v is None else "neg"}
             why_n[row["flWhy"]["icr"]] += 1
         if fin_co:
             row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
@@ -2503,6 +2617,9 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
+    log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 · 경고 "
+        f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
+        f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
     log(f"{'  !! ' if ICR_OFF else '· '}이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — "
         + (f"잠시 꺼 둠(ICR_OFF · 금융비용으로 계산되던 값이라) {why_n['off']:,} · " if ICR_OFF else "")
         + f"이자비용·금융비용 줄 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자비용 음수 {why_n['neg']:,} (corp.json flWhy)")
@@ -3860,10 +3977,11 @@ def main():
     fin_map, client, ksic = {}, None, {}
     # v19.1b: v2 캐시가 없던 첫 실행은 워크플로가 v1 폴더를 받아요(미국 상세 정보 보관본을 이어 쓰려고). 옛 DART 파일은 읽지 않으니
     # 지워서 v2 캐시에 실려 가지 않게 해요.
-    legacy = os.path.join(os.path.dirname(DART_CACHE_PATH) or ".", "dart-v1.json.gz")
-    if os.path.abspath(legacy) != os.path.abspath(DART_CACHE_PATH) and os.path.exists(legacy):
-        os.remove(legacy)
-        log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
+    for old_name in ("dart-v1.json.gz", "dart-v2.json.gz"):      # v19.1f: v2 파일도 (v3 부터 새로 받아요)
+        legacy = os.path.join(os.path.dirname(DART_CACHE_PATH) or ".", old_name)
+        if os.path.abspath(legacy) != os.path.abspath(DART_CACHE_PATH) and os.path.exists(legacy):
+            os.remove(legacy)
+            log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
     if dart_mode == "off":
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:

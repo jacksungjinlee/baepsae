@@ -296,7 +296,7 @@ def test_scheduled_runs_never_start_dart_from_an_empty_cache():
     assert i_restore < i_guard < i_collect
     restore, guard = steps[i_restore], steps[i_guard]
     assert restore["id"] == "dart_cache" and guard["if"] == "github.event_name == 'schedule' || inputs.timer"
-    assert '-z "${{ steps.dart_cache.outputs.cache-matched-key }}"' in guard["run"] and "! -s .dart-cache/dart-v2.json.gz" in guard["run"]
+    assert '-z "${{ steps.dart_cache.outputs.cache-matched-key }}"' in guard["run"] and "! -s .dart-cache/dart-v3.json.gz" in guard["run"]
     assert "exit 1" in guard["run"]
 
 
