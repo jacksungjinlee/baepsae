@@ -44,6 +44,15 @@ import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
 import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
+import { Home2 } from "./home2.jsx";
+
+// v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx: the four portfolio rules in a navy hero,
+// the portfolio card with 오늘 and 산 가격보다, 가진 종목 with weight bars, 오늘 볼 것). Off until Jack says yes to the smoke-test
+// edits it needs: tests/smoke_v2.py checks today's 홈 (the per-stock verdict band, one strip per portfolio, their rows and
+// chips) in many scenes, and the new 홈 moves those to 오늘 볼 것 and the 가진 종목 card (the list of edits is in the v19.3e
+// report). Off, 홈 is exactly as v19.3d left it. The v19.3e smoke scenes build it on (tests/smoke_v2.py v193e_on_app).
+// The first visit, the first-visit guide's welcome and the stale and failed states are the same either way.
+export const HOME2 = false;
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -67,8 +76,8 @@ export function brokenTitle(name) {
 }
 
 const namesOf = (deck) => new Map(((deck && deck.holdings) || []).map((h) => [h.t, h.nk]));
-const isTodo = (x) => x.status === "broken" || x.status === "check";
-const lines = (xs) => { const ls = xs.filter(Boolean); return ls.length ? ls.map((l, i) => <span key={i} style={{ display: "block" }}>{l}</span>) : null; };
+export const isTodo = (x) => x.status === "broken" || x.status === "check";
+export const lines = (xs) => { const ls = xs.filter(Boolean); return ls.length ? ls.map((l, i) => <span key={i} style={{ display: "block" }}>{l}</span>) : null; };
 
 export function LinkButton({ children, onClick, ...rest }) {
   return (
@@ -82,7 +91,7 @@ export function LinkButton({ children, onClick, ...rest }) {
 // One stock to look at today: its name, the rule that fired (or what needs confirming), numbers, report year, and the
 // 확인 필요 answers (Part C's DividendAnswers: both answers stay open, the chosen one marked). sellSaid: the band above
 // already says "규칙대로면 팔 때예요…", so a confirmed cut does not repeat it.
-function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its name is already the band's title
+export function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its name is already the band's title
   const names = namesOf(deck);
   const views = x.reasons.filter((r) => (r.level === "broken" || r.level === "check") && r.code !== "divCut" && r.code !== "divDrop")
     .map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
@@ -100,7 +109,7 @@ function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its na
 
 // 크게 움직인 종목: name, today's change, and "같은 업종이 다 같이 빠졌어요" only when its real industry group (5+
 // members) fell together. A note only: it never changes a status. 자세히 보기 opens 왜 움직였나.
-function BigMoves({ items, load, onWhy }) {
+export function BigMoves({ items, load, onWhy }) {
   return (
     <div data-ui-v2="big-moves">
       <div style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{fill(C.today.bigInset, { n: items.length })}</div>
@@ -251,7 +260,7 @@ function FirstVisit({ load, go }) {
 // in place of the tiles (never a row of "–" without a word).
 // PC: in the narrow side column the four tiles stack; standing alone across the page (nothing in the main column, e.g.
 // stale data or no saved portfolio with stocks) they sit four in a row.
-function MarketGlance({ load, go }) {
+export function MarketGlance({ load, go }) {
   const { wide } = useLayout();
   const col = useCol();
   const tiles = !wide ? 2 : col === "side" ? 1 : 4;
@@ -298,6 +307,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       </Page>
     );
   }
+  if (HOME2) return <Home2 load={load} store={store} ev={ev} ctx={ctx} onConfirm={onConfirm} pad={pad} onWhy={onWhy} go={go} />;
   return (
     <Page pad={pad} cols={2}>
       <AppBar />

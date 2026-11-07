@@ -41,6 +41,15 @@ export const ICON_TONE = {
 };
 export const TOPICS = ["earn", "value", "div", "risk", "disc"];
 export const TOPIC_CHIP = { earn: "#EAF1FB", value: "#E9F5EE", div: "#FBF4E1", risk: "#F1EDF9", disc: "#E6F4F4" };
+// v19.3e (v19.3 Part I, 보드 CoSummary2 · CoValue2 · CoDiv2, Jack 승인 보드 48판): 회사 페이지의 작은 그림(실적 막대 · 가치 눈금 · 배당 동전 ·
+// 출렁임 물결)과 요약 칸 왼쪽 띠에 쓰는 같은 주제의 진한 색(ink)과 옅은 색(light). 아이콘 색이 아니에요(아이콘은 위 ICON_TONE 만).
+// 주제 색처럼 좋고 나쁨을 뜻하지 않아요. 살구색 · 가격 빨강 · 파랑 · 회사 로고 색은 없어요.
+export const TOPIC_ART = {
+  earn: { ink: "#6E93CF", light: "#DCE7F7" },
+  value: { ink: "#4E9A72", light: "#DCEFE3" },
+  div: { ink: "#C59A2E", light: "#F6EACB" },
+  risk: { ink: "#8C78C6", light: "#B9C1CE" },
+};
 export const ICON_CHIP = { bg: COLOR.select, radius: "30%" };   // 아이콘 칩: 크기의 30% 둥글기
 export const SELECTED = { background: COLOR.select };                 // 고른 칩 · 고른 카드 · 탭 알약
 export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 0 ${COLOR.ink}` };   // 고른 줄: 왼쪽 3px 남색 선

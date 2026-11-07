@@ -7,11 +7,17 @@ export const usOf = (s) => !!s && s.cls === "us";
 // The price date of this stock's market: KR pxDate, US usPxDate (never the Korean date for a US price: none then).
 export const priceDate = (load, s) => (usOf(s) ? load.data.usPxDate || null : load.data.pxDate || null);
 export const priceMd = (load, s) => mdText(priceDate(load, s));
+// v19.3e (v19.3 Part I, board CoSummaryUS): the US header reads "{date} 종가 (미국 시간)" beside the $ price and
+// "약 {won} · 환율 {fx}원" under it (one line instead of the 원 line and the rate sentence). Off until Jack says yes to the
+// smoke-test edit it needs (tests/smoke_v2.py pins today's US date line "미국 {md} 종가" and "약 {n}원"): off, the header is
+// exactly as before. The v19.3e smoke scenes build it on (tests/smoke_v2.py v193e_on_app).
+export const US_HEAD2 = false;
 // The date beside a price: KR "11월 3일 종가" (why.close), US "미국 11월 3일 종가" (pending; before: the approved sentence).
 export function closeLine(load, s) {
   const md = priceMd(load, s);
   if (!md) return null;
   if (!usOf(s)) return fill(C.why.close, { md });
+  if (US_HEAD2 && C.co.usCloseTime) return fill(C.co.usCloseTime, { date: md });
   return C.co.usClose ? fill(C.co.usClose, { md }) : fill(C.app.usClose, { md });
 }
 // "약 445,900원" under a $ price, at today's rate (data.json fx), rounded to 100원.
@@ -19,6 +25,12 @@ export function wonOfUsd(load, usd) {
   const fx = load.data.fx;
   if (!(typeof fx === "number" && fx > 0) || !(typeof usd === "number" && Number.isFinite(usd))) return null;
   return fill(C.app.about, { x: fill(C.app.won, { n: nf(Math.round((usd * fx) / 100) * 100) }) });
+}
+// US_HEAD2: "약 445,900원 · 환율 1,390.5원" (the rate with one decimal, as the sentence it replaces).
+export function wonLineUsd(load, usd) {
+  const fx = load.data.fx;
+  if (!C.co.usWon || !(typeof fx === "number" && fx > 0) || !(typeof usd === "number" && Number.isFinite(usd))) return null;
+  return fill(C.co.usWon, { won: fill(C.app.won, { n: nf(Math.round((usd * fx) / 100) * 100) }), fx: nf(Math.round(fx * 10) / 10, 1) });
 }
 // The US 실적 figure says what it is (Jack, 2026-11-05): Yahoo's revenueGrowth is the latest quarter's revenue against the
 // same quarter a year before, never a yearly or 3-year rate. "최근 분기 매출, 1년 전보다 +16.4%" (pending: null until then, and

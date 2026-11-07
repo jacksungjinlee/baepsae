@@ -20,6 +20,19 @@ import { avgOf } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 
 const pct = (w) => Math.round(w * 100);
+// v19.3e: a share shown against its limit. Whole %, but with one decimal (two if needed) whenever the whole number would
+// put it on the wrong side of the limit: 30.4% against "30% 이하" is broken and must not read "30%" (pf.js compares the
+// exact share). -> the number as text, without "%".
+export function limitPct(w, limit) {
+  const p = w * 100;
+  const over = p > limit + 1e-9;
+  for (const d of [0, 1, 2]) {
+    const k = 10 ** d;
+    const r = Math.round(p * k) / k;
+    if (d === 2 || (over ? r > limit : r <= limit)) return nf(r, d);
+  }
+  return nf(p, 2);
+}
 // Shares: whole numbers as they are, a fraction (US, or derived from an amount) with up to 4 decimals.
 export const qtyText = (q) => Number(q).toLocaleString("ko-KR", { maximumFractionDigits: 4 });
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
@@ -34,8 +47,8 @@ export function ruleLabel(r) {
 }
 export function ruleDetail(r) {
   if (r.state === "unknown") return null;
-  if (r.id === "stock") return fill(C.pfr.max, { y: pct(r.max.w) });
-  if (r.id === "ind") return r.top.name ? `${r.top.name} ${pct(r.top.w)}%` : null;
+  if (r.id === "stock") return fill(C.pfr.max, { y: limitPct(r.max.w, r.limit) });
+  if (r.id === "ind") return r.top.name ? `${r.top.name} ${limitPct(r.top.w, r.limit)}%` : null;
   if (r.id === "fit") {
     const worst = r.cards.map((c) => [c.id, r.avg[c.id]]).sort((a, b) => b[1].shown - a[1].shown)[0];
     return worst ? `${cardName(worst[0])} ${fill(C.rpt.avgTop, { x: worst[1].shown })}` : null;
@@ -49,7 +62,7 @@ export function brokenLine(st) {
   const group = r.id === "stock" ? r.max.nk : r.top.name;
   if (!group) return null;
   const w = r.id === "stock" ? r.max.w : r.top.w;
-  return fill(subjectParticle(group) === "i" ? C.pfr.over : C.pfr.overGa, { group, x: pct(w), limit: r.limit });
+  return fill(subjectParticle(group) === "i" ? C.pfr.over : C.pfr.overGa, { group, x: limitPct(w, r.limit), limit: r.limit });
 }
 
 const STATE_ICON = { ok: { name: "check-circle", tone: "ok" }, broken: { name: "warning", tone: "on" } };

@@ -334,7 +334,8 @@ function highEdge(x, target) {
 // ---------------- 왜 움직였나: the same industry today ----------------
 // Every common share of the stock's own industry group in the same market with a d1 today (the stock itself always
 // included). Only a real group (hasGroup: never "other" or "etc", never a missing group) with at least GROUP_MIN members.
-// -> { ok: false, n } | { ok: true, n, fell, avg, together, items: [{ id, pct }] }
+// -> { ok: false, n } | { ok: true, n, fell, rose, avg, together, togetherUp, items: [{ id, pct }] }
+//   together: the stock fell and at least 80% of its group fell · togetherUp (v19.3e): the same on a rise
 export function peerGroup(s, stocks) {
   if (!s || !hasGroup(s) || num(s.d1) == null || (s.cls !== "kr" && s.cls !== "us")) return { ok: false, n: 0 };
   const items = universe(stocks || [], s.cls).filter((x) => hasGroup(x) && x.ind === s.ind && num(x.d1) != null);
@@ -342,8 +343,10 @@ export function peerGroup(s, stocks) {
   const n = items.length;
   if (n < GROUP_MIN) return { ok: false, n };
   const fell = items.filter((x) => x.d1 < 0).length;
+  const rose = items.filter((x) => x.d1 > 0).length;               // v19.3e: the company page's rise-day line (Part I)
   const avg = items.reduce((a, x) => a + x.d1, 0) / n;
-  return { ok: true, n, fell, avg, together: s.d1 < 0 && fell >= TOGETHER_SHARE * n - EPS, items: items.map((x) => ({ id: x.t, pct: x.d1 })) };
+  return { ok: true, n, fell, rose, avg, together: s.d1 < 0 && fell >= TOGETHER_SHARE * n - EPS,
+    togetherUp: s.d1 > 0 && rose >= TOGETHER_SHARE * n - EPS, items: items.map((x) => ({ id: x.t, pct: x.d1 })) };
 }
 
 // ---------------- Korean subject particle (이 / 가) ----------------
