@@ -889,7 +889,7 @@ def test_us_own_date_is_set_only_when_the_last_bar_is_not_the_us_date():
 
 def test_market_holidays_table_is_read_strictly():
     hol = F.load_market_holidays()
-    assert hol["end"] == dt.date(2027, 12, 31)
+    assert hol["end"].month == 12 and hol["end"].day == 31 and hol["end"] >= dt.date(2027, 12, 31)   # 해 단위 · 다음 해를 더해도 그대로
     assert dt.date(2026, 11, 26) in hol["US"] and dt.date(2026, 11, 26) not in hol["KR"]       # 추수감사절
     assert dt.date(2026, 12, 31) in hol["KR"] and dt.date(2026, 12, 31) not in hol["US"]       # 한국거래소 연말 휴장
     assert dt.date(2026, 7, 17) in hol["KR"] and dt.date(2026, 6, 3) in hol["KR"]              # 2026 KOSPI 일봉으로 확인한 날
@@ -912,6 +912,11 @@ def test_market_holidays_refuses_odd_rows(tmp_path, line, said):
     p.write_text("".join(l for l in src.splitlines(True) if not (l.startswith("2027") and ",US," in l)), encoding="utf-8")
     with pytest.raises(RuntimeError, match="해마다"):                   # 2027 미국 줄이 빠진 표 → 해가 빈 채로 덮지 않아요
         F.load_market_holidays(str(p))
+    keep = [l for l in src.splitlines(True) if not l.startswith("2027") or ",US," not in l] + \
+        [l for l in src.splitlines(True) if l.startswith("2027") and ",US," in l][:3]
+    p.write_text("".join(keep), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="8일보다 적어요"):            # 2027 미국 줄이 세 개뿐 → 반쯤 적은 해
+        F.load_market_holidays(str(p))
 
 
 @pytest.mark.parametrize("px, usd, want", [
@@ -923,6 +928,11 @@ def test_market_holidays_refuses_odd_rows(tmp_path, line, said):
     ("2026-12-30", "2026-12-30", "2027-01-01"),   # 한국 연말 휴장 12-31 · 미국 12-31 은 열림 → 1월 1일 아침에 미국 종가
     ("2026-12-30", "2026-12-31", "2027-01-05"),   # 그다음: 둘 다 1월 4일(월) → 화요일
     ("2027-02-05", "2027-02-05", "2027-02-09"),   # 설 연휴(한국 2-8·2-9) · 미국 2-8 열림 → 2-9
+    ("2027-01-15", "2027-01-15", "2027-01-19"),   # 미국만 쉬는 월요일(MLK 1-18) · 한국 1-18 열림 → 1-19
+    ("2027-02-26", "2027-02-26", "2027-03-02"),   # 한국만 쉬는 월요일(삼일절 3-1) · 미국 3-1 열림 → 3-2
+    ("2027-03-25", "2027-03-25", "2027-03-27"),   # 미국 성금요일(3-26) · 한국 3-26 열림 → 3-27(토)
+    ("2027-09-13", "2027-09-13", "2027-09-15"),   # 추석(한국 9-14~16) · 미국 9-14 열림 → 9-15
+    ("2027-09-17", "2027-09-16", "2027-09-18"),   # 그다음: 한국 9-17(금) · 미국 9-17 → 9-18(토)
 ])
 def test_next_publish_follows_both_calendars(px, usd, want):
     hol = F.load_market_holidays()
@@ -931,10 +941,46 @@ def test_next_publish_follows_both_calendars(px, usd, want):
     assert F.stale_after(got) == f"{want}T16:47:00+09:00"
 
 
-def test_next_publish_refuses_dates_beyond_the_table():
+def test_next_publish_at_the_end_of_the_table():
     hol = F.load_market_holidays()
-    with pytest.raises(RuntimeError, match="휴장일 표가 2027-12-31 까지만"):
-        F.next_publish(dt.date(2027, 12, 30), dt.date(2027, 12, 30), hol)
+    end = hol["end"]
+    last_kr = max(d for d in hol["KR"] if d.year == end.year)
+    if last_kr == end:                            # 한국 연말 휴장(12-31)이면 한국 다음 거래일은 표 밖 → 미국 쪽으로 정해요
+        us_open = end.weekday() < 5 and end not in hol["US"]
+        if us_open:
+            assert F.next_publish(end - dt.timedelta(days=1), end - dt.timedelta(days=1), hol) == end + dt.timedelta(days=1)
+    with pytest.raises(RuntimeError, match=f"휴장일 표가 {end} 까지만"):   # 둘 다 표 밖이면 알 수 없어요
+        F.next_publish(end, end, hol)
+
+
+def test_next_publish_agrees_with_the_gates_own_calculation_everywhere():
+    """파이프라인과 관문이 따로 구현한 예정일이 표가 덮는 모든 날짜 쌍(10일 안)에서 같아요."""
+    import validate_data as V
+    hol = F.load_market_holidays()
+    vhol, vend = V.load_holidays()
+    d = hol["start"]
+    n = 0
+    while d <= hol["end"]:
+        for lag in range(0, 11):
+            u = d - dt.timedelta(days=lag)
+            for px, usd in ((d, u), (u, d)):
+                try:
+                    f = F.next_publish(px, usd, hol)
+                except RuntimeError:
+                    f = None
+                assert f == V.expected_next_pub(px, usd, vhol, vend), (px, usd)
+                n += 1
+        d += dt.timedelta(days=1)
+    assert n > 10000
+
+
+def test_us_d1_is_blank_on_a_broken_previous_bar_and_fetch_drops_that_stock():
+    idx = pd.to_datetime(["2026-11-05", "2026-11-06"])
+    assert F.us_d1(pd.Series([0.0, 3.0], index=idx), dt.date(2026, 11, 6)) is None          # 0 으로 나누지 않아요
+    assert F.us_d1(pd.Series([float("inf"), 3.0], index=idx), dt.date(2026, 11, 6)) is None
+    assert F.us_own_date(pd.Series([0.0, 3.0], index=idx), dt.date(2026, 11, 6)) is None   # 날짜는 기준일 → fetch_us 가 빼요
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert "if us_d1(px, us_px_date) is None and us_own_date(px, us_px_date) is None:\n                bad_bar.append(sym)" in src
 
 
 def test_stale_time_follows_the_last_scheduled_start_of_the_daily_run():

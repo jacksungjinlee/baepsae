@@ -893,6 +893,25 @@ def test_holiday_table_that_disagrees_with_the_index_bars_warns(monkeypatch):
     assert r[3] == "WARN" and "다음 해 줄을 넣어 주세요" in r[1], r
 
 
+def test_next_publish_date_already_past_warns_on_a_publish_but_not_on_the_live_site():
+    """제때 발행이면 예정일은 늘 내일 이후 — 오늘 이전이면 표에 없는 임시공휴일이거나 날짜가 하루 늦은 것 (아침 점검이 읽어요)."""
+    cur, prev, final = good_pair()
+    rep = check(cur, prev, final, today=dt.date(2026, 11, 3))               # 예정일(11-03) 당일에 발행
+    r = row_of(rep, NEXT)
+    assert r[3] == "WARN" and "예정일이 오늘(2026-11-03) 이전이에요" in r[1], r
+    assert row_of(check(cur, prev, final), NEXT)[3] == "PASS"               # 10-31 발행: 예정일은 뒤
+
+
+def test_live_site_file_made_before_a_table_change_only_warns():
+    cur, prev, final = good_pair()
+    cur["data"]["nextPub"], cur["data"]["staleAfter"] = "2026-11-04", "2026-11-04T16:47:00+09:00"   # 옛 표로 계산된 것처럼
+    assert row_of(check(cur, prev, final), NEXT)[3] == "FAIL"               # 발행 관문은 막고
+    r = row_of(check(cur, prev, final, mode="live"), NEXT)
+    assert r[3] == "WARN" and "사이트 점검: 발행 뒤 표가 바뀐 것" in r[1], r   # 사이트 점검(배포·감시)은 경고만
+    cur["data"]["nextPub"] = "11월 4일"                                    # 읽을 수 없는 값은 사이트 점검도 실패
+    assert row_of(check(cur, prev, final, mode="live"), NEXT)[3] == "FAIL"
+
+
 def test_unreadable_holiday_table_fails(monkeypatch, tmp_path):
     p = tmp_path / "h.csv"
     p.write_text("date,market,name,source\n2026-11-07,KR,토요일,x\n", encoding="utf-8")

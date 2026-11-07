@@ -53,6 +53,7 @@ LAST_RETRY = dt.time(14, 47)              # update-data.yml 의 그날 마지막
 STALE_GRACE_H = 2                         # GitHub 정해진 시각 실행이 늦게 시작하는 시간 + 실행 시간
 HOL_COVER_WARN_DAYS = 45                  # 표가 오늘부터 이만큼 앞을 덮지 못하면 경고 (다음 해 줄을 넣을 때)
 HOL_CHECK_DAYS = 90                       # 지수 일봉과 표를 맞춰 보는 지난 날 수 (봉 없는 평일 = 표의 휴장일)
+HOL_MIN_PER_YEAR = 8                      # 한 해 평일 휴장이 이보다 적으면 반쯤 적은 해 (한국 12~16일 · NYSE 9~10일)
 SPECIAL_COLS = ["date", "open", "close", "kind", "reason", "source"]
 SPECIAL_KINDS = {"수능", "연초 개장", "기타"}
 CSAT_CHECK_FROM = (9, 1)                  # 이날(KST)부터 올해 수능일 줄이 표에 없으면 경고
@@ -281,22 +282,23 @@ def load_holidays(path=HOLIDAYS_CSV):
             out[v["market"]].add(d)
     years = sorted({d.year for m in out.values() for d in m})
     if not years or years != list(range(years[0], years[-1] + 1)) or any(
-            not any(d.year == y for d in out[m]) for m in out for y in years):
-        raise RuntimeError(f"{name}: 해마다 한국·미국 줄이 다 있어야 해요 (적힌 해: {years})")
+            sum(1 for d in out[m] if d.year == y) < HOL_MIN_PER_YEAR for m in out for y in years):
+        raise RuntimeError(f"{name}: 해마다 한국·미국 줄이 {HOL_MIN_PER_YEAR}개 이상 있어야 해요 (적힌 해: {years})")
+    out["start"] = dt.date(years[0], 1, 1)
     return out, dt.date(years[-1], 12, 31)
 
 
 def expected_next_pub(px, usd, hol, end):
-    """다음 발행 예정일 = 한국·미국 중 먼저 오는 다음 거래일의 다음 날 (fetch_data.next_publish 와 따로 구현). 표 밖이면 None."""
+    """다음 발행 예정일 = 한국·미국 중 먼저 오는 다음 거래일의 다음 날 (fetch_data.next_publish 와 따로 구현).
+    한쪽만 표 밖이면 표 안의 쪽이 더 빨라서 그대로 정해요. 둘 다 표 밖이면 None."""
     firsts = []
     for start, closed in ((px, hol["KR"]), (usd, hol["US"])):
         d = start + dt.timedelta(days=1)
         while d.weekday() >= 5 or d in closed:
             d += dt.timedelta(days=1)
-        if d > end:
-            return None
-        firsts.append(d)
-    return min(firsts) + dt.timedelta(days=1)
+        if d <= end:
+            firsts.append(d)
+    return min(firsts) + dt.timedelta(days=1) if firsts else None
 
 
 def final_cut(d, special):
@@ -789,8 +791,15 @@ def check_v191c(rep, cur, us, mode, today):
                 why.append(f"staleAfter {sa} ≠ {want_sa.isoformat()}")
             if got_np <= max(px, usd):
                 why.append(f"nextPub {got_np} 가 기준일 뒤가 아니에요")
-        rep.add("다음 발행 예정 (nextPub · staleAfter)", not why, f"{npub} · {sa}" if not why else " · ".join(why),
-                "휴장일 표로 다시 계산한 값과 같음 (한국·미국 다음 거래일 중 먼저 + 1일 · 그날 14:47 + 2시간)")
+        late = not why and mode != "live" and got_np <= today
+        if late:     # 제때 발행이면 예정일은 늘 내일 이후 — 표에 없는 임시공휴일이거나 미국 날짜가 하루 늦은 것
+            why_w = f"{npub} · {sa} · 예정일이 오늘({today}) 이전이에요 — 표에 없는 휴장일(임시공휴일 등)이나 하루 늦은 날짜인지 확인"
+        # 사이트 점검(--live)은 발행 뒤에 표가 바뀌면 어긋날 수 있어요: 그때는 경고만 (배포·감시를 멈추지 않게, 다음 발행이 고쳐요)
+        live_only = bool(why) and mode == "live" and all("≠" in w for w in why)
+        rep.add("다음 발행 예정 (nextPub · staleAfter)", not why or live_only,
+                why_w if late else (f"{npub} · {sa}" if not why else " · ".join(why) + (" (사이트 점검: 발행 뒤 표가 바뀐 것)" if live_only else "")),
+                "휴장일 표로 다시 계산한 값과 같음 (한국·미국 다음 거래일 중 먼저 + 1일 · 그날 14:47 + 2시간 · 예정일은 오늘 뒤)",
+                warn=late or live_only)
     # 2. 휴장일 표: 앞으로 45일을 덮는지, 지난 90일의 지수 일봉과 맞는지 (봉 없는 평일 = 표의 휴장일)
     if hol is not None:
         probs = []
@@ -802,7 +811,7 @@ def check_v191c(rep, cur, us, mode, today):
             last = dt.date.fromisoformat(max(bars))
             d = last - dt.timedelta(days=HOL_CHECK_DAYS)
             while d <= last:
-                if d.weekday() < 5 and d.year <= end.year:
+                if d.weekday() < 5 and hol["start"] <= d <= end:
                     iso = d.isoformat()
                     if iso not in bars and d not in hol[mk]:
                         probs.append(f"{mk} {iso} 봉 없음·표에 없음")
