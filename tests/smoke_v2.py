@@ -3827,7 +3827,7 @@ _ON = {}
 def v193c_on_app():
     """app.html 을 RECIPE_START · GUIDE_FIRST_VISIT 를 켜고 임시 폴더에 빌드해요 (커밋하지 않아요). 폴더는 바로 지워요."""
     if "html" not in _ON:
-        tmp = tempfile.mkdtemp(prefix="baepsae-v193c-on-")
+        tmp = tmpdirs.make("baepsae-v193c-on-")
         try:
             shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
             os.makedirs(os.path.join(tmp, "tools"))
@@ -3855,7 +3855,7 @@ def v193c_on_app():
 def engine_numbers(settings_list):
     """설정마다 엔진의 수 [{pool, n, list}] — node 가 src/v2/engine.js 를 시험 데이터(tests/fixtures/v2/data.json)로 돌려요.
     pool: 기준 전의 수(engine.poolCount) · n: 내 점수 칸의 수(engine.meterCount) · list: screen() 결과 목록의 길이(시장마다 더해서)."""
-    tmp = tempfile.mkdtemp(prefix="baepsae-v193c-engine-")
+    tmp = tmpdirs.make("baepsae-v193c-engine-")
     try:
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, "src/v2/engine.js", "--bundle", "--format=esm", "--platform=node", f"--outfile={os.path.join(tmp, 'engine.mjs')}",
