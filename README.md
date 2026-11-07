@@ -3,7 +3,7 @@
 This branch keeps the folder that `tools/logos/logodev_fetch.py --drop/--keep/--add-from` work on, after Claude's review
 of every logo (run 42211099051, logo.dev Pro). It is a record, not part of the site: Deploy reads only the `logos` branch.
 
-- `logos/` is exactly what was pushed to the `logos` branch (2,094 entries, 2,045 pictures; `logos` commit 9504c43).
+- `logos/` is exactly what was pushed to the `logos` branch (2,102 entries, 2,053 pictures; `logos` commit 3210a3b).
 - `dropped/` holds every picture that was switched off (by the job's checks or after review), so `--keep` can bring one back.
 - `drops.csv` / `keeps.csv` list every switch made after review, with the reason. `review.csv`, `run.json`, `run.log`,
   `summary.md` are the run's own records (no keys: the job never writes one).
@@ -13,3 +13,8 @@ of every logo (run 42211099051, logo.dev Pro). It is a record, not part of the s
   here has a section for it.
 
 Never push the GitHub artifact of a logo run (`logo-dev-fetch`) as it is: that is the unchecked run.
+
+2026-11-07 (Jack: a company's own group logo is correct): 8 pictures dropped by the job's 'shared' check came back with
+`--keep` after Claude looked at each one — 대상 · 대상홀딩스 (대상 mark), 효성화학 (Hyosung H), 신한서부티엔디리츠 (Shinhan S),
+삼양케이씨아이 (SAMYANG, its own homepage), 아이티센코어 · 아이티센피엔에스 (아이티센 symbol), 아모센스 (AMO). Hosting icons and other
+companies' logos stay dropped (삼성전기's dropped picture reads SAMSUNG HEAVY INDUSTRIES, so it stays dropped). See `keeps.csv`.
