@@ -77,12 +77,15 @@ tells you what happened in plain words.
   - Add a 임시공휴일 or an NYSE special closure (e.g. a national day of mourning) as soon as it is announced. Without it,
     the morning after such a day gets a false stale warning, and the gate's '다음 발행 예정' row warns ("예정일이 오늘 이전").
   - Add the next year's rows every December (KRX publishes its holiday list in late December; the NYSE list is out
-    years ahead), with a source in every row and at least 8 weekday closures per market and year. The gate warns when
-    the table covers less than 45 days ahead; when it covers less than 10, the daily run stops before any download, so
-    the site stops updating. Next year's rows must be in by about 12-20.
-  - The gate also warns when the last 90 days of index bars disagree with the table (a missed or wrong holiday). After a
-    table edit, the live-site check may warn once (the published file was computed with the old table) until the next
-    publish.
+    years ahead), with a source in every row and at least 8 weekday closures per market and year. The table only sets
+    the warning time, so it never stops a run or a publish (Jack, 2026-11-07): when it is short, missing or broken, the
+    run logs it loudly, the gate warns (the 09:13 morning check reads it) and days past the table follow the weekday
+    rule, so a warning may come a day early around a holiday, never late. The gate warns from 45 days before the
+    table ends.
+  - The gate also warns when the last 90 days of index bars disagree with the table (a missed or wrong holiday); the
+    index bars are right (one-off holidays and US mourning-day closures come at short notice). Every problem with
+    `nextPub`/`staleAfter` warns and never blocks a publish. After a table edit, the live-site check may warn once
+    (the published file was computed with the old table) until the next publish.
   - The 2027 KR rows 노동절 대체 휴일 (5/3) and 제헌절 대체 휴일 (7/19) follow the 2026 law changes and still need KRX's
     own notice.
 - **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
