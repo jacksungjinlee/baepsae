@@ -941,16 +941,19 @@ def test_next_publish_follows_both_calendars(px, usd, want):
     assert F.stale_after(got) == f"{want}T16:47:00+09:00"
 
 
-def test_next_publish_at_the_end_of_the_table():
+def test_next_publish_beyond_the_table_uses_weekdays_and_never_stops_the_run():
+    """Jack (2026-11-07): 표는 '늦음' 경고 시각에만 써요 — 모자라도 멈추지 않고 평일 규칙으로 (경고가 일찍 뜰 수는 있어도 늦지 않아요)."""
     hol = F.load_market_holidays()
     end = hol["end"]
-    last_kr = max(d for d in hol["KR"] if d.year == end.year)
-    if last_kr == end:                            # 한국 연말 휴장(12-31)이면 한국 다음 거래일은 표 밖 → 미국 쪽으로 정해요
-        us_open = end.weekday() < 5 and end not in hol["US"]
-        if us_open:
-            assert F.next_publish(end - dt.timedelta(days=1), end - dt.timedelta(days=1), hol) == end + dt.timedelta(days=1)
-    with pytest.raises(RuntimeError, match=f"휴장일 표가 {end} 까지만"):   # 둘 다 표 밖이면 알 수 없어요
-        F.next_publish(end, end, hol)
+    after = end + dt.timedelta(days=30)
+    while after.weekday() != 4:                     # 표 밖의 금요일
+        after += dt.timedelta(days=1)
+    assert F.next_publish(after, after, hol) == after + dt.timedelta(days=4)           # 금 → 화 (평일 규칙)
+    none = {"KR": {}, "US": {}, "start": None, "end": None}                             # 표를 못 읽었을 때
+    assert F.next_publish(dt.date(2026, 11, 25), dt.date(2026, 11, 25), none) == dt.date(2026, 11, 27)
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    i = src.index("    try:                                  # 휴장일 표도 (v19.1c)")
+    assert "raise" not in src[i:i + 900] and "except Exception as e:" in src[i:i + 900]   # 시작할 때 멈추지 않아요
 
 
 def test_next_publish_agrees_with_the_gates_own_calculation_everywhere():

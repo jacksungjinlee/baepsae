@@ -862,21 +862,41 @@ def test_stale_us_price_without_a_correct_own_date_fails(mutate, said):
     ("staleAfter", "2026-11-03T07:47:00+00:00", "staleAfter 2026-11-03T07:47:00+00:00 ≠"),   # 같은 순간이라도 한국 시간으로
     ("nextPub", "11월 3일", "날짜를 읽을 수 없어요"),
 ])
-def test_wrong_next_publish_date_fails(field, value, said):
+def test_wrong_next_publish_date_warns_and_never_blocks_the_publish(field, value, said):
+    """Jack (2026-11-07): 예정일은 '늦음' 경고 시각에만 써요 — 어긋나면 크게 경고하지만 발행은 막지 않아요 (막으면 낡은 데이터)."""
     cur, prev, final = good_pair()
     cur["data"][field] = value
-    r = row_of(check(cur, prev, final), NEXT)
-    assert r[3] == "FAIL" and said in r[1], r
+    rep = check(cur, prev, final)
+    r = row_of(rep, NEXT)
+    assert r[3] == "WARN" and said in r[1], r
+    assert not rep.failed, rep.table()
 
 
-def test_missing_next_publish_fails_a_publish_but_only_warns_on_the_live_site():
+def test_missing_next_publish_only_warns():
     cur, prev, final = good_pair()
     for k in ("nextPub", "staleAfter"):
         cur["data"].pop(k)
-    rep = check(cur, prev, final)
-    assert row_of(rep, NEXT)[3] == "FAIL" and row_of(rep, PXD)[3] == "SKIP"
-    rep = check(cur, prev, final, mode="live")
-    assert row_of(rep, NEXT)[3] == "WARN"                                    # 이 버전의 첫 발행 전 사이트 파일
+    for mode in ("publish", "live"):
+        rep = check(cur, prev, final, mode=mode)
+        assert row_of(rep, NEXT)[3] == "WARN" and "예전 4일 규칙" in row_of(rep, NEXT)[1]
+        assert row_of(rep, PXD)[3] == "SKIP"
+    assert not check(cur, prev, final).failed
+
+
+def test_next_publish_date_already_past_warns_on_a_publish_but_not_on_the_live_site():
+    """제때 발행이면 예정일은 늘 내일 이후 — 오늘 이전이면 표에 없는 임시공휴일이거나 날짜가 하루 늦은 것 (아침 점검이 읽어요)."""
+    cur, prev, final = good_pair()
+    r = row_of(check(cur, prev, final, today=dt.date(2026, 11, 3)), NEXT)   # 예정일(11-03) 당일에 발행
+    assert r[3] == "WARN" and "예정일 2026-11-03 이 오늘(2026-11-03) 이전이에요" in r[1], r
+    assert row_of(check(cur, prev, final), NEXT)[3] == "PASS"               # 10-31 발행: 예정일은 뒤
+    assert row_of(check(cur, prev, final, mode="live", today=dt.date(2026, 11, 3)), NEXT)[3] == "PASS"
+
+
+def test_live_site_file_made_before_a_table_change_warns_with_the_reason():
+    cur, prev, final = good_pair()
+    cur["data"]["nextPub"], cur["data"]["staleAfter"] = "2026-11-04", "2026-11-04T16:47:00+09:00"   # 옛 표로 계산된 것처럼
+    r = row_of(check(cur, prev, final, mode="live"), NEXT)
+    assert r[3] == "WARN" and "사이트 점검: 발행 뒤 표가 바뀌었을 수 있어요" in r[1], r
 
 
 def test_holiday_table_that_disagrees_with_the_index_bars_warns(monkeypatch):
@@ -893,33 +913,16 @@ def test_holiday_table_that_disagrees_with_the_index_bars_warns(monkeypatch):
     assert r[3] == "WARN" and "다음 해 줄을 넣어 주세요" in r[1], r
 
 
-def test_next_publish_date_already_past_warns_on_a_publish_but_not_on_the_live_site():
-    """제때 발행이면 예정일은 늘 내일 이후 — 오늘 이전이면 표에 없는 임시공휴일이거나 날짜가 하루 늦은 것 (아침 점검이 읽어요)."""
-    cur, prev, final = good_pair()
-    rep = check(cur, prev, final, today=dt.date(2026, 11, 3))               # 예정일(11-03) 당일에 발행
-    r = row_of(rep, NEXT)
-    assert r[3] == "WARN" and "예정일이 오늘(2026-11-03) 이전이에요" in r[1], r
-    assert row_of(check(cur, prev, final), NEXT)[3] == "PASS"               # 10-31 발행: 예정일은 뒤
-
-
-def test_live_site_file_made_before_a_table_change_only_warns():
-    cur, prev, final = good_pair()
-    cur["data"]["nextPub"], cur["data"]["staleAfter"] = "2026-11-04", "2026-11-04T16:47:00+09:00"   # 옛 표로 계산된 것처럼
-    assert row_of(check(cur, prev, final), NEXT)[3] == "FAIL"               # 발행 관문은 막고
-    r = row_of(check(cur, prev, final, mode="live"), NEXT)
-    assert r[3] == "WARN" and "사이트 점검: 발행 뒤 표가 바뀐 것" in r[1], r   # 사이트 점검(배포·감시)은 경고만
-    cur["data"]["nextPub"] = "11월 4일"                                    # 읽을 수 없는 값은 사이트 점검도 실패
-    assert row_of(check(cur, prev, final, mode="live"), NEXT)[3] == "FAIL"
-
-
-def test_unreadable_holiday_table_fails(monkeypatch, tmp_path):
+def test_unreadable_holiday_table_warns_and_falls_back_to_weekdays(monkeypatch, tmp_path):
     p = tmp_path / "h.csv"
     p.write_text("date,market,name,source\n2026-11-07,KR,토요일,x\n", encoding="utf-8")
     monkeypatch.setattr(V, "HOLIDAYS_CSV", str(p))
     monkeypatch.setattr(V.load_holidays, "__defaults__", (str(p),))
     cur, prev, final = good_pair()
     rep = check(cur, prev, final)
-    assert row_of(rep, HOL)[3] == "FAIL" and "주말" in row_of(rep, HOL)[1], rep.table()
+    assert row_of(rep, HOL)[3] == "WARN" and "주말" in row_of(rep, HOL)[1], rep.table()
+    assert row_of(rep, NEXT)[3] == "PASS"            # 10-30 금 → 화 11-03: 그 사이 휴장일이 없어 평일 규칙과 같아요
+    assert not rep.failed, rep.table()
 
 
 def test_us_d1_missing_list_goes_to_the_log_and_the_run_summary(monkeypatch, capsys, tmp_path):

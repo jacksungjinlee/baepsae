@@ -290,15 +290,14 @@ def load_holidays(path=HOLIDAYS_CSV):
 
 def expected_next_pub(px, usd, hol, end):
     """다음 발행 예정일 = 한국·미국 중 먼저 오는 다음 거래일의 다음 날 (fetch_data.next_publish 와 따로 구현).
-    한쪽만 표 밖이면 표 안의 쪽이 더 빨라서 그대로 정해요. 둘 다 표 밖이면 None."""
+    표가 덮지 않는 날은 평일 규칙으로 봐요 (fetch_data 와 같아요)."""
     firsts = []
     for start, closed in ((px, hol["KR"]), (usd, hol["US"])):
         d = start + dt.timedelta(days=1)
-        while d.weekday() >= 5 or d in closed:
+        while d.weekday() >= 5 or (end is not None and d <= end and d in closed):    # 표 밖은 평일 규칙
             d += dt.timedelta(days=1)
-        if d <= end:
-            firsts.append(d)
-    return min(firsts) + dt.timedelta(days=1) if firsts else None
+        firsts.append(d)
+    return min(firsts) + dt.timedelta(days=1)
 
 
 def final_cut(d, special):
@@ -761,18 +760,21 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
 def check_v191c(rep, cur, us, mode, today):
     """v19.1c (Jack, 2026-11-07): 휴장일 표 · 다음 발행 예정일(nextPub · staleAfter) · 미국 종목의 자기 가격 날짜(pxd)."""
     data, macro = cur["data"], cur.get("macro") or {}
+    # Jack (2026-11-07): 휴장일 표와 예정일은 '늦음' 경고 시각에만 써요. 무엇이 어긋나도 경고만 — 발행을 막으면 우리가 경고하려는
+    # 낡은 데이터가 생겨요. 지수 일봉과 표가 다르면 일봉이 맞아요 (임시공휴일·미국 애도일은 갑자기 정해져요). 아침 점검이 경고를 읽어요.
     try:
         hol, end = load_holidays()
     except Exception as e:
-        rep.add("휴장일 표 (data/market_holidays.csv)", False, f"읽지 못함: {e}"[:120], "읽을 수 있어야 함")
-        hol, end = None, None
-    # 1. 다음 발행 예정일 — 파이프라인이 늘 써요. 이 버전의 첫 발행 전 사이트 파일(--live)에만 없어도 돼요 (경고)
+        rep.add("휴장일 표 (data/market_holidays.csv)", True, f"읽지 못함: {e} — 평일 규칙으로 봐요"[:140],
+                "읽을 수 있어야 함 (못 읽으면 경고 · 발행은 막지 않아요)", warn=True)
+        hol, end = {"KR": set(), "US": set(), "start": None}, None
+    # 1. 다음 발행 예정일 — 파이프라인이 늘 써요. 없거나 어긋나도 경고만 (앱은 없으면 예전 4일 규칙으로 돌아가요)
     npub, sa = data.get("nextPub"), data.get("staleAfter")
+    TH = "휴장일 표로 다시 계산한 값과 같음 (한국·미국 다음 거래일 중 먼저 + 1일 · 그날 14:47 + 2시간 · 예정일은 오늘 뒤 · 어긋나면 경고)"
     if npub is None and sa is None:
-        rep.add("다음 발행 예정 (nextPub · staleAfter)", mode == "live", "없음",
-                "있어야 함 (사이트 점검은 이 버전의 첫 발행 전까지 경고)", warn=True)
+        rep.add("다음 발행 예정 (nextPub · staleAfter)", True, "없음 (앱은 예전 4일 규칙으로 '늦음'을 봐요)", TH, warn=True)
     else:
-        why, want = [], None
+        why = []
         try:
             got_np = dt.date.fromisoformat(str(npub))
             got_sa = dt.datetime.fromisoformat(str(sa))
@@ -780,28 +782,21 @@ def check_v191c(rep, cur, us, mode, today):
         except (TypeError, ValueError) as e:
             why.append(f"날짜를 읽을 수 없어요 ({e})"[:80])
         else:
-            if hol is not None:
-                want = expected_next_pub(px, usd, hol, end)
-                if want is None:
-                    why.append(f"휴장일 표가 {end} 까지만 있어요")
-                elif got_np != want:
-                    why.append(f"nextPub {got_np} ≠ 표로 계산한 {want}")
+            want = expected_next_pub(px, usd, hol, end)
+            if got_np != want:
+                why.append(f"nextPub {got_np} ≠ 표로 계산한 {want}" + (" (사이트 점검: 발행 뒤 표가 바뀌었을 수 있어요)" if mode == "live" else ""))
             want_sa = dt.datetime.combine(got_np, LAST_RETRY, KST) + dt.timedelta(hours=STALE_GRACE_H)
             if got_sa.utcoffset() != dt.timedelta(hours=9) or got_sa != want_sa:
                 why.append(f"staleAfter {sa} ≠ {want_sa.isoformat()}")
             if got_np <= max(px, usd):
                 why.append(f"nextPub {got_np} 가 기준일 뒤가 아니에요")
-        late = not why and mode != "live" and got_np <= today
-        if late:     # 제때 발행이면 예정일은 늘 내일 이후 — 표에 없는 임시공휴일이거나 미국 날짜가 하루 늦은 것
-            why_w = f"{npub} · {sa} · 예정일이 오늘({today}) 이전이에요 — 표에 없는 휴장일(임시공휴일 등)이나 하루 늦은 날짜인지 확인"
-        # 사이트 점검(--live)은 발행 뒤에 표가 바뀌면 어긋날 수 있어요: 그때는 경고만 (배포·감시를 멈추지 않게, 다음 발행이 고쳐요)
-        live_only = bool(why) and mode == "live" and all("≠" in w for w in why)
-        rep.add("다음 발행 예정 (nextPub · staleAfter)", not why or live_only,
-                why_w if late else (f"{npub} · {sa}" if not why else " · ".join(why) + (" (사이트 점검: 발행 뒤 표가 바뀐 것)" if live_only else "")),
-                "휴장일 표로 다시 계산한 값과 같음 (한국·미국 다음 거래일 중 먼저 + 1일 · 그날 14:47 + 2시간 · 예정일은 오늘 뒤)",
-                warn=late or live_only)
-    # 2. 휴장일 표: 앞으로 45일을 덮는지, 지난 90일의 지수 일봉과 맞는지 (봉 없는 평일 = 표의 휴장일)
-    if hol is not None:
+            if not why and mode != "live" and got_np <= today:
+                # 제때 발행이면 예정일은 늘 내일 이후 — 표에 없는 임시공휴일이거나 미국 날짜가 하루 늦은 것
+                why.append(f"예정일 {got_np} 이 오늘({today}) 이전이에요 — 표에 없는 휴장일(임시공휴일 등)이나 하루 늦은 날짜인지 확인")
+        rep.add("다음 발행 예정 (nextPub · staleAfter)", True, f"{npub} · {sa}" + (" · " + " · ".join(why) if why else ""), TH,
+                warn=bool(why))
+    # 2. 휴장일 표: 앞으로 45일을 덮는지, 지난 90일의 지수 일봉과 맞는지 (봉 없는 평일 = 표의 휴장일) — 어긋나면 경고, 일봉이 맞아요
+    if end is not None:
         probs = []
         for key, mk in (("KOSPI", "KR"), ("SP500", "US")):
             rows = ((macro.get("idxHist") or {}).get(key) or {}).get("rows") or []

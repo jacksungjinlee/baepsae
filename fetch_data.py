@@ -3173,23 +3173,21 @@ def load_market_holidays(path=None):
 
 
 def next_session(after, closed, end):
-    """after 다음의 첫 거래일 (주말·closed 빼고). 표가 덮는 날(end)을 넘으면 None — 모르는 날을 거래일로 치지 않아요. (순수 함수)"""
+    """after 다음의 첫 거래일 (주말·closed 빼고). 표가 덮지 않는 날(end 뒤, 또는 표가 없으면 모두)은 평일 규칙으로만 봐요. (순수 함수)
+    표는 '늦음' 경고 시각에만 써요 (어느 날 데이터를 받을지는 최종본 목록·지수 일봉이 정해요) — 그래서 표가 모자라도 멈추지 않아요
+    (Jack, 2026-11-07: 멈추면 우리가 경고하려는 낡은 데이터가 생겨요). 휴장일을 모르면 경고가 하루 일찍 뜰 수는 있어도 늦지는 않아요."""
     d = after + dt.timedelta(days=1)
-    while d.weekday() >= 5 or d in closed:
+    while d.weekday() >= 5 or (end is not None and d <= end and d in closed):
         d += dt.timedelta(days=1)
-    return d if d <= end else None
+    return d
 
 
 def next_publish(px_date, us_px_date, hol):
     """다음 발행 예정일(한국 날짜) = 한국·미국 중 먼저 오는 다음 거래일의 다음 날. 한국 종가 최종본은 그날 저녁, 미국 종가는
     한국 다음 날 새벽에 확정돼서 둘 다 그다음 날 아침 실행이 발행해요 (화~토). 거래일은 월~금이라 예정일은 늘 화~토예요. (순수 함수)"""
-    k = next_session(px_date, hol["KR"], hol["end"])
-    u = next_session(us_px_date, hol["US"], hol["end"])
-    known = [d for d in (k, u) if d is not None]
-    # 한쪽만 표 밖이면 그쪽은 표 끝보다 뒤라서, 표 안의 다른 쪽이 더 빨라요 → 그대로 알 수 있어요
-    if not known:
-        raise RuntimeError(f"!! 휴장일 표가 {hol['end']} 까지만 있어요 — 다음 거래일을 알 수 없어요 (data/market_holidays.csv 에 다음 해를 넣어 주세요)")
-    return min(known) + dt.timedelta(days=1)
+    k = next_session(px_date, hol["KR"], hol.get("end"))
+    u = next_session(us_px_date, hol["US"], hol.get("end"))
+    return min(k, u) + dt.timedelta(days=1)
 
 
 def stale_after(next_pub):
@@ -3611,9 +3609,14 @@ def main():
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
     dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     special = load_krx_special_sessions() # KRX 특별 거래시간 표도 (v17.5.4) — 최종본 판단에 써요
-    hol = load_market_holidays()          # 휴장일 표도 (v19.1c) — 깨졌거나 앞으로 10일을 덮지 못하면 DART·다운로드 전에 멈춰요
-    if hol["end"] < today + dt.timedelta(days=10):
-        raise RuntimeError(f"!! 휴장일 표가 {hol['end']} 까지만 있어요 — data/market_holidays.csv 에 다음 해를 넣어 주세요 (RUNBOOK)")
+    try:                                  # 휴장일 표도 (v19.1c) — '늦음' 경고 시각에만 써서, 깨졌거나 모자라도 멈추지 않고 크게 남겨요
+        hol = load_market_holidays()
+        if hol["end"] < today + dt.timedelta(days=45):
+            log(f"  !! 휴장일 표가 {hol['end']} 까지만 있어요 — 그 뒤는 평일 규칙으로 정해요 (휴장일 다음 날 '늦음' 경고가 일찍 뜰 수 있어요). "
+                "data/market_holidays.csv 에 다음 해를 넣어 주세요 (RUNBOOK)")
+    except Exception as e:
+        hol = {"KR": {}, "US": {}, "start": None, "end": None}
+        log(f"  !! 휴장일 표를 읽지 못했어요 ({e}) — 평일 규칙으로 정해요 (휴장일 다음 날 '늦음' 경고가 일찍 뜰 수 있어요). 표를 고쳐 주세요")
     soon = [f"{d} {v['kind']} {v['open']:%H:%M}~{v['close']:%H:%M}" for d, v in sorted(special.items())
             if today - dt.timedelta(days=LISTING_LOOKBACK_DAYS) <= d <= today + dt.timedelta(days=60)]
     log(f"· KRX 특별 거래시간 표: {len(special)}줄" + (f" · 최근·다가오는 날: {' · '.join(soon)}" if soon else ""))
@@ -3736,8 +3739,8 @@ def main():
 
     try:      # 파일과 관문 표가 남아야 원인을 볼 수 있어요: 여기서 멈추지 않고 빈 칸으로 써서 관문이 실패로 막아요
         next_pub = next_publish(dt.date.fromisoformat(kmeta["pxDate"]), dt.date.fromisoformat(umeta["usPxDate"]), hol)
-        log(f"· 다음 발행 예정일 {next_pub} · 늦음 경고 {stale_after(next_pub)} (휴장일 표 {hol['end'].year}년까지 · "
-            f"한국 {len(hol['KR'])}일 · 미국 {len(hol['US'])}일)")
+        log(f"· 다음 발행 예정일 {next_pub} · 늦음 경고 {stale_after(next_pub)} (휴장일 표 "
+            + (f"{hol['end'].year}년까지 · 한국 {len(hol['KR'])}일 · 미국 {len(hol['US'])}일)" if hol.get("end") else "없음 — 평일 규칙)"))
     except Exception as e:
         next_pub = None
         log(f"  !! 다음 발행 예정일을 정하지 못했어요 ({type(e).__name__}: {e}) → 빈 칸으로 써요 (관문이 실패로 막아요)")
