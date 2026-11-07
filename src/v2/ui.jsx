@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
-import { C, fill, mdText } from "./format.js";
+import { C, fill, mdText, staleText, ownCloseText } from "./format.js";
 import { hasOldAppRecords } from "./store.js";
 import { ABOUT_HASH } from "../links.js";
 
@@ -194,7 +194,9 @@ export function ScreenTitle({ children, sub }) {
   );
 }
 
-// "10월 30일 기준" — the content date. Publication stopped for more than 4 days: "· N일째 갱신이 멈췄어요" in warning colour.
+// "10월 30일 기준" — the content date. Publication late (data.js freshness: staleAfter passed, or more than 4 days since
+// the publish): in warning colour "· 갱신이 늦어지고 있어요" within a day of the publish, "· N일째 갱신이 멈췄어요" from the
+// second day (format.staleText, Jack 2026-11-07).
 export function DateLine({ date, fresh, style }) {
   const md = mdText(date);
   if (!md) return null;
@@ -203,7 +205,7 @@ export function DateLine({ date, fresh, style }) {
     <div data-ui-v2="date-line" data-stale={stale ? "1" : "0"} style={tx(SIZE.xs, stale ? WEIGHT.bold : WEIGHT.regular, stale ? COLOR.watch : COLOR.text2, { marginTop: SPACE(1), ...style })}>
       <span>{fill(C.app.asOf, { md })}</span>
       {stale && <span>{" · "}</span>}
-      {stale && <span>{fill(C.app.stale, { n: fresh.days })}</span>}
+      {stale && <span>{staleText(fresh.days)}</span>}
     </div>
   );
 }
@@ -266,6 +268,14 @@ export function Footer() {
       </div>
     </footer>
   );
+}
+
+// v19.1c (Jack, 2026-11-07): the note under a list or a total that includes a US stock priced at an earlier close (data.json
+// pxd): "AAPL 가격은 11월 4일 종가예요." (format.ownCloseText). groups: stocklist.js ownCloseGroups. Nothing when none is there.
+export function OwnCloseNote({ groups, style, ...rest }) {
+  const text = groups && groups.length ? ownCloseText(groups) : null;
+  if (!text) return null;
+  return <Note data-ui-v2="own-close" data-ts={groups.flatMap((g) => g.ts).join(",")} style={style} {...rest}>{text}</Note>;
 }
 
 export function Note({ children, tone, style, ...rest }) {

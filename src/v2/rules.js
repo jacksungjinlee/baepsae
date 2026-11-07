@@ -46,11 +46,12 @@
 //   추가로 넣을 돈 out, and count the totals without it ("오늘 데이터에 없는 종목 {n}개(…)는 빼고 계산했어요"). Nothing is
 //   removed from the saved record unless the user taps 포트폴리오에서 빼기. A stock that IS in today's data but has no
 //   price is different: its value is unknown, so every band of the portfolio is "missing" (확인 필요), as before.
-// - Stale (published more than 4 days ago, the v17.5 rule) or failed data computes no status at all: the output says
+// - Stale (data.json's staleAfter passed, v19.1c; or published more than 4 days ago, the v17.5 rule, kept as the fallback
+//   and the backstop: data.js freshness) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
-import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory } from "./engine.js";
-import { STALE_DAYS, daysSince } from "../data.js";
+import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
+import { STALE_DAYS, daysSince, ownCloseDate } from "../data.js";
 import { sameConfirm } from "./store.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
@@ -83,7 +84,7 @@ export function dayState(load, now) {
 export function todayCtx(load, now) {
   const ok = load && load.status === "ok";
   return { state: dayState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
-    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null };
+    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null };
 }
 
 // ---------------- one deck ----------------
@@ -325,7 +326,9 @@ function reasonsOf(results) {
   return out.sort((a, b) => LEVEL[a.level] - LEVEL[b.level]);
 }
 
-// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, d1, bigMove, noNewMoney }
+// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, d1, pxd, bigMove, noNewMoney }
+//   pxd (v19.1c): the stock's own price date when it is priced at an earlier close than the US date (data.json pxd), else
+//   null; its d1 is then null (engine.todayD1), so it is never a 큰 움직임 and the screens name it in their notes.
 export function evaluateHolding(h, deck, ctx, weights, qty) {
   const s = ctx.byT.get(h.t) || null;
   const co = ctx.coByT.get(h.t) || null;
@@ -338,7 +341,8 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   // checked, so never 할 일 없음.
   if (!rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = reasons.length ? reasons[0].level : "none";
-  const d1 = s ? num(s.d1) : null;
+  const d1 = todayD1(s);
+  const pxd = ownCloseDate(s, ctx.usPxDate);
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
@@ -352,7 +356,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     planTarget: band ? band.planTarget : num(h.target),
     value: (weights.ok || weights.paused) && weights.value && weights.value.has(h.t) ? weights.value.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
-    d1, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,          // a note only: never changes the status
+    d1, pxd, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,     // a note only: never changes the status
     noNewMoney: NO_NEW_MONEY.includes(status),
   };
 }

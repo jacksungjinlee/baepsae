@@ -29,6 +29,7 @@ import { shownName } from "./legacy.js";
 import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
+import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
@@ -173,7 +174,7 @@ function RangeBar({ s }) {
 }
 
 function Header({ load, s }) {
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);                   // v19.1c: none for a stock priced at an earlier close (its date is in closeLine)
   const won = usOf(s) ? wonOfUsd(load, s.price) : null;
   const ind = s.indName && typeof s.indName === "string" ? s.indName : null;
   return (
@@ -203,7 +204,7 @@ function Header({ load, s }) {
 
 // ---------------- 왜 움직였나 line (Part B item 2): 2.0's big-move rule, for any stock ----------------
 function MoveLine({ load, s, held, onWhy }) {
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);
   if (d1 == null || Math.abs(d1) < BIG_MOVE) return null;
   const g = peerGroup(s, load.data.stocks);
   const together = g.ok && g.together;

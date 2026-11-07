@@ -7,7 +7,8 @@
 // States, from the daily check in rules.js (evaluateAll):
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
-//   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all)
+//   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all); within a day of
+//                      the publish (n <= 1, v19.1c staleAfter) today.staleLate instead (format.todayStaleText)
 //   no held stock      no verdict (nothing was checked), only the way to 포트폴리오 만들기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
@@ -27,10 +28,10 @@
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
-import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
+import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { isCompany } from "./stocklist.js";
+import { isCompany, ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -125,7 +126,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
     if (ev.why === "stale") {
       return (
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-stale">
-          <HeroBand tone="stale" title={fill(C.today.stale, { n: ev.days })} />
+          <HeroBand tone="stale" title={todayStaleText(ev.days)} />
         </div>
       );
     }
@@ -166,7 +167,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
 
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
 // exceptions). A big mover's row opens 왜 움직였나; any other row opens the 2.0 company page (v19.1a), each with its mark.
-function DeckStrip({ de, deck, ctx, onWhy, go }) {
+function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
   const { openStock } = useNav();
   const m = deckMoney(deck, de, ctx);                    // v19.0c: a stock missing from today's data is left out, and said
   const gone = new Set(de.absent || []);
@@ -185,6 +186,8 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
         </div>
       )}
       {m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={de.id} />}
+      {/* v19.1c: a held US stock priced at an earlier close (pxd) is in the value and the list below: named once here */}
+      <OwnCloseNote groups={ownCloses(load, de.holdings.filter((x) => !gone.has(x.t)).map((x) => ctx.byT.get(x.t)))} data-deck-id={de.id} />
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n: de.holdings.length })}</div>
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
@@ -280,7 +283,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go }) {
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <Cols main={[
-        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />),
+        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} />),
         ev.ok && !held.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),

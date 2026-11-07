@@ -13,7 +13,8 @@
 import React from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/components.jsx";
-import { hasGroup } from "./engine.js";
+import { hasGroup, todayD1 } from "./engine.js";
+import { priceDate } from "./cofmt.js";
 import { C, fill, mdText, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
@@ -124,10 +125,11 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   const names = new Map(deck.holdings.map((h) => [h.t, h.nk]));
   const conf = confirmer(store, setStoreData);
   const g = peerGroup(s, load.data.stocks);
-  const md = mdText(s.cls === "us" ? load.data.usPxDate || load.data.pxDate : load.data.pxDate);
+  // v19.1c: a stock priced at an earlier close (pxd) shows that close's date (cofmt.priceDate); others as before
+  const md = s.pxd != null ? mdText(priceDate(load, s)) : mdText(s.cls === "us" ? load.data.usPxDate || load.data.pxDate : load.data.pxDate);
   // Today's change as the data gives it (d1, % between official closes). The won change is not shown: worked back from
   // a rounded percentage it would look exact and be off by a few won.
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={backLabel()} />

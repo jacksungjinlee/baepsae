@@ -1,5 +1,6 @@
 // Number and date formatting for app.html. Every word comes from src/copy/v2.js.
 import { C, fill } from "../copy/v2.js";
+import { staleWordsLate } from "../data.js";
 
 export { C, fill };
 
@@ -20,6 +21,27 @@ export function wonText(won) {
 }
 
 export const manText = (man) => fill(C.app.man, { n: nf(man) });
+
+// v19.1c (Jack, 2026-11-07, design chat): wherever a list or a total includes a US stock priced at an earlier close
+// (data.json pxd), one short note names it: "AAPL, TSLA 가격은 11월 5일 종가예요. NVDA 가격은 11월 4일 종가예요." — one
+// sentence per date, newest first, joined with a space; names = the tickers, all of them, ", ". groups: data.js
+// ownCloseGroups (stocklist.js). null when there is nothing to say (or a date cannot be written: never a sentence without it).
+export function ownCloseText(groups) {
+  const out = [];
+  for (const g of groups || []) {
+    const md = mdText(g && g.date);
+    if (!md || !g.ts || !g.ts.length) return null;
+    out.push(fill(C.app.ownClose, { names: g.ts.join(", "), md }));
+  }
+  return out.length ? out.join(" ") : null;
+}
+
+// The stale part of a date line (Jack, 2026-11-07): within a day of the last publish (n <= 1: the expected publish is late)
+// "갱신이 늦어지고 있어요", from the second day "{n}일째 갱신이 멈췄어요" as before. data.js staleWordsLate.
+export const staleText = (n) => (staleWordsLate(n) ? C.app.staleLate : fill(C.app.stale, { n }));
+// The same rule for the 홈 band "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (today.stale) and its n <= 1 line
+// (today.staleLate: waiting for Jack's wording, see tests/test_us_own_dates.py).
+export const todayStaleText = (n) => (staleWordsLate(n) ? C.today.staleLate : fill(C.today.stale, { n }));
 
 // Percent with one decimal (no sign), e.g. "12.3"
 export const p1 = (v) => nf(Math.round(v * 10) / 10, 1);

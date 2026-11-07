@@ -12,7 +12,8 @@ import {
   marketsOf, canPin, PINNED_MAX,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, useLayout, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, OwnCloseNote, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, useLayout, tx, tap } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
 import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView, y2022View } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
 import { Plan, Y2022Amount } from "./plan.jsx";
@@ -168,7 +169,7 @@ function StepStart({ start }) {
   );
 }
 
-function StepCards({ st, set, ds }) {
+function StepCards({ st, set, ds, load }) {
   const s1 = C.build.s1;
   const used = pointsUsed(st.points);
   const left = POINTS_TOTAL - used;
@@ -220,7 +221,7 @@ function StepCards({ st, set, ds }) {
           {preview.map((x) => {
             const b = bestCard(x, st.points);
             return (
-              <div key={x.t} style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
+              <div key={x.t} data-preview={x.t} style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
                 <span style={{ minWidth: 0 }}>
                   <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{x.s.nk}</span>
                   {b && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}><span>{C.build.cards[b.id].name}</span>{" "}<span>{fill(s1.score, { score: Math.round(b.score) })}</span></span>}
@@ -229,6 +230,8 @@ function StepCards({ st, set, ds }) {
               </div>
             );
           })}
+          {/* v19.1c: a top stock priced at an earlier US close (pxd): its scores read that price, so it is named */}
+          <OwnCloseNote groups={ownCloses(load, preview.map((x) => x.s))} />
         </Card>
       )}
     </div>

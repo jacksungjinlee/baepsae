@@ -38,6 +38,11 @@ const EPS = 1e-9;
 export const NOT_GROUPS = ["etc", "other"];
 
 export const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+// v19.1c (Jack, 2026-11-07): today's change (d1, % between the last two official closes) of a stock priced at today's close.
+// A US stock priced at an earlier close carries pxd (its own price date, data.json) and no d1: any d1 it did carry would be
+// about another day, so it is never read (no change shown, no 큰 움직임, no peer dot). Keyed off pxd being there, never
+// off the market (379800 is cls "us" with a KRX price). Every d1 reader in 2.0 goes through this.
+export const todayD1 = (s) => (s && s.pxd == null ? num(s.d1) : null);
 export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0 && !NOT_GROUPS.includes(s.ind);
 export const isFin = (s) => hasGroup(s) && FINANCIAL_INDS.includes(s.ind);
 export const isPreferred = (s) => s.cls === "kr" && typeof s.t === "string" && !s.t.endsWith("0");  // KRX: common shares end in 0

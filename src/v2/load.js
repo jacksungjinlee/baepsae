@@ -3,7 +3,7 @@
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
-import { loadJson, freshness } from "../data.js";
+import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS } from "../data.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 
@@ -44,6 +44,25 @@ export function loadLogoIndex() {
   return loadJson("./logos/index.json", logoIndexOk);
 }
 
+// v19.1c: console warnings at load about the dates the screens use (never silent): the fallback to the 4-day rule when the
+// file has no staleAfter or one that cannot be read, and the US stocks priced at an earlier close (pxd), with counts. A pxd
+// that cannot be read is its own warning: that stock shows its price with no date and no change. A readable staleAfter says
+// nothing (console.warn only: nothing here writes to stdout, which the Node tests read).
+export function logDates(d) {
+  const sa = d.staleAfter;
+  if (sa == null) console.warn("[v2] data.json has no staleAfter (a file before v19.1c): stale after " + STALE_DAYS + " days from publishedAt");
+  else if (staleAfterTime(sa) == null) console.warn("[v2] data.json staleAfter cannot be read (" + JSON.stringify(sa) + "): stale after " + STALE_DAYS + " days from publishedAt");
+  const r = ownCloseReport(d.stocks, d.usPxDate);
+  const us = d.stocks.filter((s) => s && s.cls === "us").length;
+  if (r.own.length) {
+    console.warn(`[v2] ${r.own.length} of ${us} US stocks at an earlier close than ${d.usPxDate} (pxd, no daily change): `
+      + r.own.slice(0, 30).map(([t, x]) => `${t} ${x}`).join(", ") + (r.own.length > 30 ? ` and ${r.own.length - 30} more` : ""));
+  }
+  if (r.same.length) console.warn(`[v2] ${r.same.length} US stocks carry pxd equal to usPxDate (treated as today's close): ${r.same.slice(0, 30).join(", ")}`);
+  if (r.bad.length) console.warn(`[v2] ${r.bad.length} US stocks with a pxd that cannot be read (price shown with no date and no daily change): ${r.bad.slice(0, 30).join(", ")}`);
+  return r;
+}
+
 // opts.preview: the fictional example data of app-preview.html. It has a fixed publish date, so the stale check
 // (publishedAt more than 4 days old) is switched off there and only there; the page says "예시 데이터" on every screen.
 export function resolveLoad({ data, corp, macro }, now, opts = {}) {
@@ -62,7 +81,11 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   const features = detectFeatures(d, c, m);
   const missing = missingForBuild(features);
   if (missing.length) console.warn("[v2] fields not live yet, deck builder hidden: " + missing.join(", "));
-  const fresh = opts.preview ? { md: null, days: 0, stale: false } : freshness(d.pxDate, d.publishedAt, "ko", now);
+  // v19.1c (Jack, 2026-11-07): stale once data.json's staleAfter has passed (the time the next publish is due, weekends and
+  // market holidays counted by the pipeline); a file without one, or with one that cannot be read, keeps the 4-day rule.
+  // The 4-day rule also stays as a backstop (data.js freshness).
+  const fresh = opts.preview ? { md: null, days: 0, stale: false } : freshness(d.pxDate, d.publishedAt, "ko", now, d.staleAfter);
+  if (!opts.preview) logDates(d);
   const byT = new Map(d.stocks.map((s) => [s.t, s]));
   const coByT = new Map(c.companies.map((x) => [x.t, x]));
   return { status: "ok", data: d, corp: c, macro: m, features, missing, fresh, byT, coByT, preview: !!opts.preview,

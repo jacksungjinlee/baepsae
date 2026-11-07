@@ -72,10 +72,77 @@ export function daysSince(ts, now) {
   return Math.floor(((now == null ? Date.now() : now) - t) / 86400000);
 }
 
-// { md: "10월 30일", stale: bool, days } — 표시 문구는 detail.jsx 의 DateBadge 가 만들어요
-export function freshness(contentDate, publishedAt, lang, now) {
+// v19.1c (Jack, 2026-11-07): data.json 의 staleAfter = 다음 발행이 와 있어야 하는 시각 (한국 시간 ISO, 예정일의 마지막 정해진
+// 실행 + 2시간 · 주말·휴장일은 파이프라인이 이미 셌어요). 시각과 시간대가 다 적힌 값만 읽어요 ("2026-11-10" 같은 날짜만 있는 값은
+// 브라우저가 UTC 자정으로 읽어서 받지 않아요). 못 읽으면 null → 예전 규칙(STALE_DAYS)만 써요.
+const STALE_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+export function staleAfterTime(v) {
+  if (typeof v !== "string" || !STALE_AT.test(v)) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+// { md: "10월 30일", stale: bool, days } — 표시 문구는 detail.jsx 의 DateBadge 와 2.0 의 DateLine 이 만들어요.
+// stale: staleAfter 가 지났거나(v19.1c), 발행 뒤 STALE_DAYS 일이 지났을 때. 4일 규칙은 staleAfter 가 있어도 그대로 둬요:
+// staleAfter 가 잘못 먼 날로 적혀도 경고가 예전보다 늦게 뜨는 일은 없어요 (안전 규칙을 느슨하게 하지 않아요).
+// days 는 언제나 발행 뒤 지난 날 수 (내림) — 문구는 staleWordsLate 를 봐요.
+export function freshness(contentDate, publishedAt, lang, now, staleAfter) {
   const days = daysSince(publishedAt, now);
-  return { md: mdOf(contentDate, lang), days, stale: days != null && days > STALE_DAYS };
+  const due = staleAfterTime(staleAfter);
+  const late = due != null && (now == null ? Date.now() : now) > due;
+  return { md: mdOf(contentDate, lang), days, stale: late || (days != null && days > STALE_DAYS) };
+}
+
+// 멈춤 문구 (Jack, 2026-11-07 디자인 채팅): 발행 뒤 하루 이내(n ≤ 1, 예정일 발행이 늦어진 것)는 '갱신이 늦어지고 있어요',
+// 이틀째부터는 예전 그대로 '{n}일째 갱신이 멈췄어요'. 발행 시각을 모르면(n 없음) 날 수를 말할 수 없어서 '늦어지고 있어요'.
+export const STALE_LATE_MAX_DAYS = 1;
+export const staleWordsLate = (days) => days == null || days <= STALE_LATE_MAX_DAYS;
+
+// ---- 미국 종목의 자기 가격 날짜 (v19.1c, Jack 2026-11-07) ----
+// data.json 의 미국 종목 pxd = 그 종목의 마지막 종가 날짜. 미국 기준일(usPxDate)의 봉이 없는 종목에만 있고, 그때 d1 은 없어요.
+// 가격은 숨기지 않고 그 날짜를 보여 주며, 그 종목이 들어간 목록·합계에는 짧은 안내를 붙여요. 시장 구분(cls)이 아니라 pxd 가
+// 있는지로만 봐요 (379800 KODEX 미국S&P500 은 cls 가 us 지만 한국거래소 가격이에요).
+// ownCloseDate: 읽을 수 있는 날짜(YYYY-MM-DD)이고 기준일과 다를 때만 그 날짜, 아니면 null.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+export function ownCloseDate(s, marketDate) {
+  const d = s && s.pxd;
+  return typeof d === "string" && ISO_DAY.test(d) && d !== marketDate ? d : null;
+}
+// 화면에 나온 종목들 → [{ date, ts }]: 날짜마다 한 묶음, 새 날짜 먼저, 묶음 안은 화면 순서, 같은 종목은 한 번만. 오늘 데이터에
+// 없는 종목(null)이나 자기 날짜가 없는 종목은 빠져요. 이름은 티커(t) — 미국 종목만 pxd 가 있어요.
+export function ownCloseGroups(stocks, marketDate) {
+  const by = new Map(), seen = new Set();
+  for (const s of stocks || []) {
+    if (!s || s.t == null || s.t === "") continue;
+    const t = String(s.t);
+    const d = ownCloseDate(s, marketDate);
+    if (!d || seen.has(t)) continue;
+    seen.add(t);
+    if (!by.has(d)) by.set(d, []);
+    by.get(d).push(t);
+  }
+  return [...by.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0)).map(([date, ts]) => ({ date, ts }));
+}
+// 그 종목 가격의 날짜: pxd 가 없으면 기준일(marketDate), 읽을 수 있는 pxd 면 그 날짜, pxd 가 기준일과 같으면 기준일, 읽을 수 없는
+// pxd 면 null (기준일이 아닌 건 아는데 언제인지 몰라요: 틀린 날짜를 보이느니 날짜를 빼요).
+export function stockPriceDate(s, marketDate) {
+  const md = typeof marketDate === "string" && ISO_DAY.test(marketDate) ? marketDate : null;
+  if (!s || s.pxd == null) return md;
+  return ownCloseDate(s, marketDate) || (s.pxd === marketDate ? md : null);
+}
+// 불러올 때 남기는 기록: 자기 날짜가 있는 종목(own: [[t, 날짜]]) · pxd 가 기준일과 같은 종목(same: [t], 가격은 기준일 것이라 그대로) ·
+// pxd 를 읽을 수 없는 종목(bad: [t] — 날짜를 말할 수 없어서 화면에 날짜 없이, 오늘 변화도 없이 나가요. 관문이 막는 경우라 여기 오면
+// 크게 알려요).
+export function ownCloseReport(stocks, marketDate) {
+  const own = [], same = [], bad = [];
+  for (const s of stocks || []) {
+    if (!s || s.pxd == null) continue;
+    const d = ownCloseDate(s, marketDate);
+    if (d) own.push([String(s.t), d]);
+    else if (s.pxd === marketDate) same.push(String(s.t));
+    else bad.push(String(s.t));
+  }
+  return { own, same, bad };
 }
 
 // ---- 오늘 데이터(data.json)와 앱 내장 목록 합치기 ----
@@ -105,6 +172,7 @@ export function mergeStocks(base, live) {
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
              mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us", g3Kr: (L.cls || b.cls) === "kr" },   // 미국 g3 = 최근 분기 · 1년 전 대비
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
+        ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 미국 종목의 자기 가격 날짜 (그 종목이 들어간 화면이 안내해요)
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
     } else {
@@ -122,6 +190,7 @@ export function mergeStocks(base, live) {
         per: keep(L.per), pbr: keep(L.pbr), dy: keep(L.dy), al: keep(L.al),
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
+        ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 위와 같아요
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
              mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us", g3Kr: L.cls === "kr" } });
     }
