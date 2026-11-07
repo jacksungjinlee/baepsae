@@ -1334,6 +1334,51 @@
    "code": "000270",
    "name": "기아",
    "reason": "Jack 2026-11-07: 기아 ticker logo (KIA wordmark), looked at by eye; replaces the 32 px homepage picture"
+  },
+  {
+   "code": "010780",
+   "name": "아이에스동서",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "030530",
+   "name": "원익홀딩스",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "034230",
+   "name": "파라다이스",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "078930",
+   "name": "GS",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "078935",
+   "name": "GS우",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages (preferred share of an issuer above)"
+  },
+  {
+   "code": "079900",
+   "name": "전진건설로봇",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "095340",
+   "name": "ISC",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "161580",
+   "name": "필옵틱스",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
+  },
+  {
+   "code": "458870",
+   "name": "씨어스",
+   "reason": "2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages"
   }
  ]
 }

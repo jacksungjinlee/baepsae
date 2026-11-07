@@ -10,10 +10,10 @@ Companies finished: **3,151 of 3,151**
 
 Shares are of the companies finished in that market.
 
-| Market | Companies | Finished | Logo by ticker | Logo by DART homepage | Letter mark |
-|---|---:|---:|---:|---:|---:|
-| Korea (common shares) | 2,411 | 2,411 | 709 (29.4%) | 755 (31.3%) | 947 (39.3%) |
-| US | 740 | 740 | 699 (94.5%) | 0 (0.0%) | 41 (5.5%) |
+| Market | Companies | Finished | Logo by ticker | Logo by DART homepage | Logo by ISIN | Brandmark | Letter mark |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Korea (common shares) | 2,411 | 2,411 | 709 (29.4%) | 755 (31.3%) | 0 (0.0%) | 0 (0.0%) | 947 (39.3%) |
+| US | 740 | 740 | 699 (94.5%) | 0 (0.0%) | 0 (0.0%) | 0 (0.0%) | 41 (5.5%) |
 
 Korean preferred shares: 59, of which 51 reuse their issuer's logo (no lookup of their own); the rest show the letter mark.
 
@@ -39,6 +39,7 @@ Counted on the chosen picture (dropped → letter mark), plus companies whose fi
 - shared: **21**
 - file_clash: **0**
 - odd_code: **0**
+- wide_brandmark: **0**
 - monogram-looking, kept and flagged (never dropped): **181**
 - size-less vectors (no size in the answer; judged on the downloaded picture), kept and flagged: **0**
 - odd answers from logo.dev (letter mark, reason odd_answer): **1** (the run stops above 30)
@@ -50,7 +51,7 @@ Quality checks (a failing logo gets the letter mark): **small** — a raster sou
 
 ## Credits and requests
 
-- Credits counted: **5,282** of the 14,000 cap ($52.82) — 2 for each of 2,637 answers marked Credits-Charged: 1, 0 billable answers without the header, and 4 requests that got no answer. 6,601 answers were free (Credits-Charged: 0).
+- Credits counted: **5,282** of the 14,000 cap ($52.82) — billed answers 2,637 × 2 (2,637 marked Credits-Charged: 1, 0 billable without the header; 2 credits a logo lookup, 3 a brandmark), and 0 requests that got no answer (8 credits). 6,601 answers were free (Credits-Charged: 0).
 - Balance logo.dev reported (Credits-Remaining), first → last answer: 14830 → 9562.
 - Ceiling before the run (every lookup billed): 10,942 credits for 5,471 lookups (3,151 by ticker, 2,320 by DART homepage).
 - API lookups sent: **9,242** (retries after 202: 3,767 · after 429: 0 · after an error: 4) · downloads: 2,650 (not billed, not CDN requests) · failed downloads of a chosen logo: 2.
@@ -245,6 +246,15 @@ sheet.html and sheet-01.png, sheet-02.png, sheet-03.png, sheet-04.png, sheet-05.
 ## Added after review (from a --only run)
 
 - 000270 기아 — Jack 2026-11-07: 기아 ticker logo (KIA wordmark), looked at by eye; replaces the 32 px homepage picture
+- 010780 아이에스동서 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 030530 원익홀딩스 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 034230 파라다이스 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 078930 GS — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 078935 GS우 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages (preferred share of an issuer above)
+- 079900 전진건설로봇 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 095340 ISC — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 161580 필옵틱스 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
+- 458870 씨어스 — 2026-11-07 retry (runs 42357789298 + 42359697867): checked by eye; GS, 원익홀딩스, 필옵틱스 also against their own homepages
 
 ## Sources
 
