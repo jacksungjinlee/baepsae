@@ -27,6 +27,17 @@ if ! python3 "$HERE/logos/logo_index.py" publishable "$DIR"; then
   echo "!! 로고 폴더가 검사를 통과하지 못했어요 (위 줄) → logos 브랜치에 올리지 않아요"
   exit 1
 fi
+# 2026-11-07 (Jack): 회사 홈페이지 아이콘(route site)이 있으면, main 의 데이터 출처 줄이 "일부는 각 회사 홈페이지" 를 말한 뒤에만 올려요
+if python3 "$HERE/logos/logo_index.py" has-site "$DIR"; then
+  if ! git fetch -q "$REMOTE" main; then
+    echo "!! main 을 받지 못해 데이터 출처 줄을 확인하지 못했어요 → logos 브랜치에 올리지 않아요"
+    exit 1
+  fi
+  if ! git show "$REMOTE/main:src/info.jsx" 2>/dev/null | grep -q "일부는 각 회사 홈페이지"; then
+    echo "!! 홈페이지 아이콘이 있는데 main 의 데이터 출처 줄에 '일부는 각 회사 홈페이지' 가 아직 없어요 → logos 브랜치에 올리지 않아요"
+    exit 1
+  fi
+fi
 ABS="$(cd "$DIR" && pwd)"
 
 mapfile -t names < <(find "$ABS" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
