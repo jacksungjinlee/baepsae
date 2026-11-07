@@ -115,6 +115,36 @@ FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json �
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
 FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp.json 3개년 금액
+# v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
+# data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
+# 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
+DIV_STATUS = ("same", "adj", "nc", "nd", "zero")        # 그대로 · 맞춤 · 비교 불가 · 알 수 없음 · 배당 없음
+SPLIT_FACTORS = (2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100)  # 깨끗한 분할 배율 (fetch_data.py 와 같은 목록을 따로 적어요)
+# 행 4 (배당한 국내 회사 중 오늘 수익률 dyt 를 확인한 비율, %) — Jack 2026-11-05: 배당 자료 구멍이 사이트 전체를 멈추면 안 돼요.
+#   floor 아래 = 실패 · floor ~ seen 사이 = 경고 · seen 이상 = 통과. floor = seen − 10%p.
+#   2026-11-06 시험 실행(run 42145175627, dart=full)에서 본 비율 89.1% (1,088 / 1,220) → 정수로 내림해 seen 89, floor 79
+#   (Jack 2026-11-05: 본 비율을 정수로 내리고, floor = seen − 10).
+#   파이프라인 로그(fetch_data.apply_div_basis)도 이 값을 읽어 같은 기준으로 크게 알려요.
+DYT_COVER_BANDS = {"seen": 89.0, "floor": 79.0}
+DIV_RANK_MISS_FAIL = 2   # 행 6: 배당 순위(dyt·dz)에서 빠진 필수 종목이 이만큼이면 실패. 1곳은 이름·이유와 함께 경고 (Jack 2026-11-05)
+DIV_ADJ_MAX = 10.0       # 배당한 국내 회사 중 분할·무상증자로 맞춘(adj) 비율 상한 (%) — 넘으면 배율을 대량으로 잘못 읽은 날
+DYT_MAX = 30.0           # 이보다 큰 배당수익률은 믿지 않아요 (파이프라인이 빈 칸으로 둬요)
+DIV_TOL = 0.011          # dps3a = dps3 ÷ dpsF · dyt = dps3a[0] ÷ 종가 × 100 — 둘 다 소수 둘째 자리 반올림
+BETA_SE_WILD = 0.5       # 이보다 큰 베타 표준오차는 '흔들리는 베타' (일별 3년 회귀는 보통 0.03~0.15 · 가격 이력이 깨진 종목은 0.5~0.9)
+BETA_SE_WILD_MAX = 2.0   # 흔들리는 베타 종목 비율 상한 (%) — 몇 개는 진짜로 있어요(분할을 못 고친 이력). 많으면 계산이 틀린 날
+BETA_SE_MED = (0.02, 0.2)   # 회사 주식(ETF 빼고) 베타 표준오차 중앙값의 범위 — 계산이 통째로 틀린 날을 잡아요
+BETA_N = (250, 800)      # 베타에 쓴 일별 수익률 수. 아래 끝 = 파이프라인의 실제 최소(fetch_data.MIN_DAYS = 250: 그보다 적으면
+                         # 베타·표준오차를 비워요 — 신규 상장은 베타 없이 발행). 위 끝: 3년 + 40일 창(1,135일)의 평일은 최대 812일
+                         # (수익률 811), 휴장일(미국 평일 연 10일 안팎 · 국내 더 많음)을 빼면 미국 ≤ 약 783 · 국내는 그보다 적어요
+FL_KEYS = ("cr", "icr", "l3", "imp")                    # 재무 경고 검사 (corp.json fl · flRan · flNa)
+# '필수 종목 새 칸' 줄: 필수 종목은 언제나 data betaSE·betaN · corp flRan, 그리고 corp.json 의 배당 칸이 data.json 과 같아야
+# 해요 (있으면 같은 값, 없으면 둘 다 없음 — 두 파일이 어긋나지 않게). 총액·주당순이익(cash3·eps3r)은 배당 순위에 든
+# 필수 종목만 봐요 — 순위에서 빠진 종목의 배당 자료 구멍은 '필수 종목 배당 순위 (dyt·dz)' 줄이 1곳은 경고 · 2곳부터 실패로 알려요.
+# (data 쪽 divSt·dps3a·dpsF 는 '국내 배당 분할 확인 칸' 줄이 모든 보통주에 대해 봐요.)
+DATA_NEW_MUST = ("betaSE", "betaN")
+CORP_NEW_MUST = ("flRan",)
+CORP_MIRROR = ("divSt", "dps3a", "dpsF", "dyt", "dz")
+CORP_NEW_MUST_AMT = ("cash3", "eps3r")
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -664,6 +694,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
+    check_v191b(rep, data, kr, us, by, comps, pdata)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -879,6 +910,229 @@ def check_foreign(rep, kr, comps):
     n = sum(1 for s in kr if is_foreign(s.get("t")))
     rep.add("해외 기업(9…) 원화 아닐 수 있는 금액 비움", not bad, f"{n}곳 · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:3])})" if bad else ""),
             "PBR·PER·EPS·BPS·금액·DCF 빈 칸 · 배당은 빈 칸 또는 0")
+
+
+def is_pref(code):
+    return isinstance(code, str) and len(code) == 6 and code[-1] != "0"
+
+
+_BASE_FACTORS = [1.0] + [float(k) for k in SPLIT_FACTORS] + [1.0 / k for k in SPLIT_FACTORS]
+_OK_FACTORS = sorted({a * b for a in _BASE_FACTORS for b in _BASE_FACTORS})   # 당기 배율 × 이전 해 배율
+
+
+def _factor_ok(f):
+    """배율이 1 · 깨끗한 분할 배율 · 그 역수, 또는 그 둘의 곱인지 (발행값은 소수 여섯째 자리 반올림)."""
+    return f > 0 and any(abs(f / g - 1) < 1e-4 for g in _OK_FACTORS)
+
+
+def _isnum(x):
+    """JSON 숫자인지 (글자 '0.07'·참/거짓·NaN 은 아니에요) — v19.1b 새 칸은 모양까지 엄격하게 봐요."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def _nums3(v):
+    """길이 3 목록이고 칸마다 숫자 또는 빈 칸이면 그 숫자들, 아니면 None."""
+    if not isinstance(v, list) or len(v) != 3 or any(x is not None and not _isnum(x) for x in v):
+        return None
+    return [float(x) if x is not None else None for x in v]
+
+
+def div_row_problem(s):
+    """한 국내 종목의 dps3 · dps3a · dpsF · divSt 가 서로 맞는지. 맞으면 None, 아니면 이유. (v19.1b)"""
+    d3, a3, f3 = _nums3(s.get("dps3")), _nums3(s.get("dps3a")), _nums3(s.get("dpsF"))
+    st = s.get("divSt")
+    if d3 is None or a3 is None or f3 is None or st not in DIV_STATUS:
+        return "칸 모양"
+    paying = []
+    for d, a, f in zip(d3, a3, f3):
+        if d is None:
+            if a is not None or f is not None:
+                return "모르는 해에 값"
+        elif d == 0:
+            if a != 0 or f is not None:
+                return "배당 없는 해"
+        elif f is None:
+            paying.append(None)
+            if a is not None:
+                return "배율 없이 맞춘 값"
+        else:
+            paying.append(f)
+            if not _factor_ok(f):
+                return f"깨끗하지 않은 배율 {f:g}"
+            if a is None or a < 0 or abs(a - d / f) > DIV_TOL:
+                return f"dps3a {a} ≠ {d:g} ÷ {f:g}"
+    if not paying:          # 3년 모두 0 이면 배당 없음, 모르는 해가 섞이면 알 수 없음
+        want = "zero" if all(d == 0 for d in d3) else "nd"
+    else:
+        want = "nc/nd" if None in paying else ("same" if all(f == 1 for f in paying) else "adj")
+    if (want == "nc/nd" and st not in ("nc", "nd")) or (want != "nc/nd" and st != want):
+        return f"divSt {st} (값으로는 {want})"
+    return None
+
+
+def floor_1(x):
+    """소수 첫째 자리까지 내림한 글자 — 84.96% 가 '85.0%' 로 보여 '85% 미만 실패' 옆에 서지 않게."""
+    return f"{math.floor(x * 10 + 1e-9) / 10:.1f}"
+
+
+def in_div_rank(s):
+    """배당 순위에 든 종목인지 (dyt·dz 가 모두 숫자)."""
+    return bool(s) and num(s.get("dyt")) is not None and num(s.get("dz")) is not None
+
+
+def rank_miss_reason(s):
+    """필수 종목이 배당 순위(dyt·dz)에 없는 이유 — 경고·실패 줄에 그대로 적어요. (v19.1b)"""
+    if not s:
+        return "데이터에 없음"
+    st = s.get("divSt")
+    if not st:
+        return "DART 배당 표 없음"
+    a3 = _nums3(s.get("dps3a"))
+    if a3 is None or a3[0] is None:
+        return {"nc": "비교 불가 (유상증자·합병 등으로 오늘 주식 수 기준을 확인 못 함)",
+                "nd": "알 수 없음 (오늘 주식 수 기준을 확인 못 함)"}.get(st, f"올해 배당 기준 없음 ({st})")
+    if num(s.get("dyt")) is None:
+        return "수익률 없음 (종가 없음 또는 30% 초과)"
+    return "배당 점수(dz) 없음"
+
+
+def check_v191b(rep, data, kr, us, by, comps, pdata):
+    """v19.1b 새 줄 (Jack 승인 필요): 분할에 안전한 국내 배당 · 배당 순위 · 베타 표준오차 · 재무 경고 검사 기록."""
+    dc = data.get("divCheck")
+    if not isinstance(dc, dict):
+        # v19.1b 전 데이터: 머지 뒤 첫 발행 전까지의 사이트(--live)와 시험 데이터에는 경고 한 줄만. 직전 발행본에 있었는데 빠지면
+        # 실패 — 발행은 언제나 이 관문을 지나니, 한 번 새 칸으로 발행된 뒤에는 옛 형식이 다시 발행될 수 없어요
+        had = isinstance((pdata or {}).get("divCheck"), dict)
+        rep.add("배당 분할 확인 기록 (divCheck)", not had,
+                "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1b 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1b 전 데이터만 경고)", warn=not had)
+        return
+    rep.add("배당 분할 확인 기록 (divCheck)", dc.get("v") == 1, f"v{dc.get('v')}", "v1")
+    must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr"]
+    com = [s for s in kr if not is_pref(s.get("t"))]
+
+    # 1. 칸 채움: dps3 가 있는 보통주는 모두 divSt · dps3a · dpsF 를 갖고, 없는 종목은 갖지 않아요
+    miss = [s["t"] for s in com if isinstance(s.get("dps3"), list) and not s.get("divSt")]
+    extra = [s["t"] for s in kr if s.get("divSt") and (is_pref(s["t"]) or not isinstance(s.get("dps3"), list))]
+    rep.add("국내 배당 분할 확인 칸 (dps3 있는 보통주 모두)", not miss and not extra,
+            f"빠짐 {len(miss)} · 엉뚱한 종목 {len(extra)}" + (f" (예: {(miss + extra)[0]})" if miss or extra else ""), "0 · 0")
+
+    # 2. dps3a = dps3 ÷ dpsF (배율은 1 · 깨끗한 분할 배율 · 그 곱), divSt 가 값과 맞음
+    bad = [(s["t"], why) for s in com if s.get("divSt") for why in [div_row_problem(s)] if why]
+    rep.add("국내 dps3a = dps3 ÷ 배율 · divSt 맞음", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0][0]} {bad[0][1]})" if bad else ""),
+            "0 (배율은 1·2·2.5·3·4·5·10·20·25·50·100·그 역수와 곱)")
+
+    # 3. dyt = dps3a[0] ÷ 종가 × 100 (0~30%), dz 는 dyt 가 있는 종목에만 (0~100)
+    bad = []
+    for s in kr:
+        a3 = _nums3(s.get("dps3a")) if s.get("divSt") else None
+        a0, p, y, z = (a3[0] if a3 else None), num(s.get("price")), s.get("dyt"), s.get("dz")
+        if (y is not None and not _isnum(y)) or (z is not None and not _isnum(z)):
+            bad.append(f"{s['t']} 숫자 아님")
+            continue
+        want = None if a0 is None or not p or p <= 0 else a0 / p * 100
+        if y is not None:
+            if want is None or not (0 <= y <= DYT_MAX) or abs(y - want) > DIV_TOL:
+                bad.append(f"{s['t']} dyt {y}")
+        elif want is not None and want <= DYT_MAX:
+            bad.append(f"{s['t']} dyt 빈 칸 (계산하면 {want:.2f})")
+        if (y is None) != (z is None) or (z is not None and not 0 <= z <= 100):
+            bad.append(f"{s['t']} dz {z}")
+    rep.add("국내 오늘 배당수익률 dyt = dps3a[0] ÷ 종가 · dz", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
+            f"0 (dyt 0~{DYT_MAX:g}% · dz 는 dyt 있는 종목에만)")
+
+    # 4·5. 배당한 국내 회사(외국 기업 빼고) 중 오늘 수익률을 확인한 비율 · 분할로 맞춘 비율
+    payers = [s for s in com if not is_foreign(s.get("t")) and (_nums3(s.get("dps3")) or [None])[0] and _nums3(s["dps3"])[0] > 0]
+    n_ok = sum(1 for s in payers if num(s.get("dyt")) is not None)
+    share = 100.0 * n_ok / len(payers) if payers else 0.0
+    seen, floor = DYT_COVER_BANDS["seen"], DYT_COVER_BANDS["floor"]
+    rep.add("배당한 국내 회사 중 오늘 수익률(dyt) 확인", bool(payers) and share >= floor,
+            f"{floor_1(share)}% ({n_ok:,} / {len(payers):,})",
+            f"{floor:g}% 미만 실패 · {seen:g}% 미만 경고 (기준: DYT_COVER_BANDS)", warn=share < seen)
+    adj = sum(1 for s in payers if s.get("divSt") == "adj")
+    ashare = 100.0 * adj / len(payers) if payers else 0.0
+    rep.add("배당한 국내 회사 중 분할·무상증자로 맞춘 비율", bool(payers) and ashare <= DIV_ADJ_MAX,
+            f"{ashare:.1f}% ({adj} / {len(payers):,})", f"≤ {DIV_ADJ_MAX:g}% (많으면 배율을 잘못 읽은 날)")
+
+    # 6. 배당 순위: 필수 종목의 dyt·dz. 2곳 이상 빠지면 실패, 빠진 종목이 있으면 종목·이유를 적은 경고
+    #    (Jack 2026-11-05: 배당 자료 구멍 하나가 사이트 전체를 멈추지 않게)
+    rank_miss = [(t, rank_miss_reason(by.get(t))) for t in must_kr if not in_div_rank(by.get(t))]
+    rep.add("필수 종목 배당 순위 (dyt·dz)", len(rank_miss) < DIV_RANK_MISS_FAIL,
+            "모두 있음" if not rank_miss else f"빠짐 {len(rank_miss)}: " + " · ".join(f"{t} {why}" for t, why in rank_miss),
+            f"{','.join(must_kr)} (빠지면 경고 · {DIV_RANK_MISS_FAIL}곳 이상 실패)", warn=bool(rank_miss))
+
+    # 7. 필수 종목의 새 칸 (data.json · corp.json) — 위 DATA_NEW_MUST · CORP_NEW_MUST · CORP_MIRROR · CORP_NEW_MUST_AMT 설명
+    cby = {c.get("t"): c for c in comps}
+    miss = []
+    for t in must_kr:
+        s, c = by.get(t) or {}, cby.get(t) or {}
+        miss += [f"{t}.{k}" for k in DATA_NEW_MUST if s.get(k) is None]
+        miss += [f"corp {t}.{k}" for k in CORP_NEW_MUST if c.get(k) is None]
+        miss += [f"corp {t}.{k}≠data" for k in CORP_MIRROR if c.get(k) != s.get(k)]   # 없으면 둘 다 없어야 해요
+        if in_div_rank(s):
+            miss += [f"corp {t}.{k}" for k in CORP_NEW_MUST_AMT if c.get(k) is None]
+    rep.add("필수 종목 새 칸 (배당 분할 확인·베타 표준오차·재무 경고 검사)", not miss,
+            "모두 있음" if not miss else "없음: " + ",".join(miss[:6]) + ("…" if len(miss) > 6 else ""),
+            "data " + "·".join(DATA_NEW_MUST) + " · corp " + "·".join(CORP_NEW_MUST) + " · corp 배당 칸 = data · "
+            + "·".join(CORP_NEW_MUST_AMT) + " ('필수 종목 배당 순위'에서 빠진 종목은 총액·주당순이익 빼고)")
+
+    # 8. 베타 표준오차: 베타가 있는 종목은 모두 (SE > 0, 250 ≤ n ≤ 800), 회사 주식의 중앙값이 그럴듯한 범위,
+    #    흔들리는 베타(SE > 0.5 — 가격 이력이 깨진 종목)는 2% 이하. 종목 하나가 발행 전체를 막지 않게 상한은 비율로 봐요
+    bad, ses = [], []
+    for s in kr + us:
+        b, se, n = num(s.get("beta")), s.get("betaSE"), s.get("betaN")
+        if b is None:
+            if se is not None or n is not None:
+                bad.append(f"{s['t']} 베타 없이 SE")
+            continue
+        if not _isnum(se) or not se > 0 or not isinstance(n, int) or isinstance(n, bool) or not BETA_N[0] <= n <= BETA_N[1]:
+            bad.append(f"{s['t']} SE {s.get('betaSE')} n {n}")
+        elif s.get("etf") is not True:
+            ses.append(se)
+    med = sorted(ses)[len(ses) // 2] if ses else None
+    wild = 100.0 * sum(1 for x in ses if x > BETA_SE_WILD) / len(ses) if ses else 0.0
+    ok = not bad and med is not None and BETA_SE_MED[0] <= med <= BETA_SE_MED[1] and wild <= BETA_SE_WILD_MAX
+    rep.add("베타 표준오차 (betaSE·betaN)", ok,
+            f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else "")
+            + (f" · 회사 중앙값 {med:.3f} · SE > {BETA_SE_WILD:g} {wild:.1f}%" if med is not None else " · 값 없음"),
+            f"SE > 0 · n {BETA_N[0]}~{BETA_N[1]} · 중앙값 {BETA_SE_MED[0]:g}~{BETA_SE_MED[1]:g} · SE > {BETA_SE_WILD:g} 는 "
+            f"{BETA_SE_WILD_MAX:g}% 이하")
+
+    # 9. 재무 경고 검사 기록: 모든 기업에 flRan, 켜진 경고는 실제로 돌린 검사여야 해요
+    bad = []
+    for c in comps:
+        ran, na, fl = c.get("flRan"), c.get("flNa", []), c.get("fl") or {}
+        if not isinstance(ran, list) or not isinstance(na, list) or not set(ran) | set(na) <= set(FL_KEYS) \
+                or len(set(ran)) != len(ran) or set(ran) & set(na) or not set(fl) <= set(ran):
+            bad.append(c.get("t"))
+    rep.add("재무 경고 검사 기록 (flRan, 국내 기업 모두)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
+            f"0 ({'·'.join(FL_KEYS)} 중 · 켜진 경고는 flRan 안)")
+
+    # 10. 새 금액 칸 모양: 숫자 3개 · 총액은 0 이상 · 해외 기업(9…)은 총액·주당순이익을 싣지 않고 배당은 0 또는 빈 칸
+    bad = []
+    for c in comps:
+        for k in ("cash3", "eps3r", "epsNi3"):
+            if k in c and _nums3(c[k]) is None:
+                bad.append(f"{c.get('t')}.{k}")
+        if any(x is not None and x < 0 for x in _nums3(c.get("cash3")) or []):
+            bad.append(f"{c.get('t')}.cash3 음수")
+        if "epsB" in c and c["epsB"] not in ("연결", "별도"):
+            bad.append(f"{c.get('t')}.epsB")
+        if is_foreign(c.get("t")) and any(k in c for k in ("cash3", "eps3r", "epsNi3", "epsB")):
+            bad.append(f"{c.get('t')} 해외 기업 금액")
+    for s in kr:
+        if is_foreign(s.get("t")) and (any(x not in (None, 0) for x in _nums3(s.get("dps3a")) or [])
+                                       or s.get("dyt") not in (None, 0)):
+            bad.append(f"{s['t']} 해외 기업 배당")
+    rep.add("새 금액 칸 모양 (총액·주당순이익·해외 기업)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""), "0")
+
+    # 11. divCheck 집계가 종목과 맞음 (이 칸이 낡거나 다른 실행 것이면 잡아요)
+    got = {k: sum(1 for s in com if s.get("divSt") == k) for k in DIV_STATUS}
+    got.update(pref=sum(1 for s in kr if is_pref(s.get("t"))), noDps=sum(1 for s in com if not s.get("divSt")),
+               payers=sum(1 for s in com if s.get("divSt") and ((_nums3(s.get("dps3")) or [None])[0] or 0) > 0),
+               dyt=sum(1 for s in kr if num(s.get("dyt")) is not None))
+    off = [f"{k} {dc.get(k)}≠{v}" for k, v in got.items() if dc.get(k) != v]
+    rep.add("divCheck 집계 = 종목 수", not off, "맞음" if not off else " · ".join(off[:4]), "같아야 함")
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────
