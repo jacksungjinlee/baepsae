@@ -55,7 +55,7 @@ export function useDaily(load, store) {
 
 export function confirmer(store, setStoreData) {
   return (deckId, item, answer) => {
-    const next = withConfirm(store.data, deckId, item, answer, todayKst());
+    const next = withConfirm(store.data, deckId, item, answer, todayKst(), Date.now());
     if (next) setStoreData(next);
     else console.warn("[v2] answer not recorded: " + JSON.stringify(item));
   };

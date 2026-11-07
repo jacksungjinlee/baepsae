@@ -434,7 +434,7 @@ function Calc({ load, s, store, setStoreData }) {
   const res = r.g != null ? fill(K.result, { g: rateText(round(r.g, 1)) }) : r.edge === "low" ? D.low : r.edge === "high" ? D.high : D.loss;
   const inputs = r.g != null ? dcfInputs(r) : null;
   const save = () => {
-    const next = withAssume(store.data, s.t, a, todayKst());
+    const next = withAssume(store.data, s.t, a, todayKst(), Date.now());
     if (next) { setStoreData(next); setDone(true); } else console.warn("[v2] assumption not saved for " + s.t);
   };
   return (

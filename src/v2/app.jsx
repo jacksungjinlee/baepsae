@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -85,6 +85,19 @@ export function App({ source }) {
 
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
+
+  // v19.3d review: another tab writing the records (a tab of the earlier app writes over them without looking) never
+  // drops what this tab saved: store.js keeps this tab's text as a copy, merged back on the next start.
+  useEffect(() => {
+    const on = (e) => { if (e.key === store.key && e.storageArea === window.localStorage) keepOwnText(store.key, e.newValue, todayKst()); };
+    // leaving the page: the first records this tab wrote get their .mine copy now (store.js keepMine)
+    const hide = () => keepMine(store.key);
+    const vis = () => { if (document.visibilityState === "hidden") keepMine(store.key); };
+    window.addEventListener("storage", on);
+    window.addEventListener("pagehide", hide);
+    document.addEventListener("visibilitychange", vis);
+    return () => { window.removeEventListener("storage", on); window.removeEventListener("pagehide", hide); document.removeEventListener("visibilitychange", vis); };
+  }, [store.key]);
 
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
   useEffect(() => {

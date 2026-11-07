@@ -402,7 +402,7 @@ function Memo({ s, store, setStoreData, held }) {
   if (!M.title) return null;
   const start = () => { setText(note ? note.text : ""); setBad(false); setEditing(true); };
   const save = () => {
-    const next = withNote(store.data, s.t, text, todayKst());
+    const next = withNote(store.data, s.t, text, todayKst(), Date.now());   // ts: the later edit wins when two tabs meet
     if (!next) { setBad(true); console.warn("[v2] note not saved for " + s.t); return; }
     setStoreData(next);
     setEditing(false);

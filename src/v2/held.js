@@ -12,10 +12,13 @@
 export const UNIT = 10000;                                     // 1 unit = 1/10,000 share
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
 
+// Units are whole numbers up to Number.MAX_SAFE_INTEGER (about 900 billion shares): a crafted file with a bigger or
+// non-finite quantity or amount counts nothing (null), so no sum ever becomes Infinity or loses whole units.
+const okU = (u) => Number.isSafeInteger(u);
 // A quantity in units (rounded to the nearest unit), or null.
-export const toUnits = (q) => (isNum(q) ? Math.round(q * UNIT) : null);
+export const toUnits = (q) => { const u = isNum(q) ? Math.round(q * UNIT) : null; return u != null && okU(u) ? u : null; };
 // A positive quantity with at most 4 decimals (a whole number of units).
-export const okUnits = (q) => isNum(q) && q > 0 && Math.abs(q * UNIT - Math.round(q * UNIT)) < 1e-6 && Math.round(q * UNIT) >= 1;
+export const okUnits = (q) => isNum(q) && q > 0 && okU(Math.round(q * UNIT)) && Math.abs(q * UNIT - Math.round(q * UNIT)) < 1e-6 && Math.round(q * UNIT) >= 1;
 
 // The units one imported row stands for: its quantity, or (금액으로 넣기) the amount in won divided by that day's close
 // (US at that day's rate), rounded to the nearest unit. A row added by name only (no stock code, not in the data) has no
@@ -26,7 +29,7 @@ export function importedUnits(r) {
   if (r.amountWon != null && typeof r.t === "string") {
     const px = isNum(r.close) && r.close > 0 ? r.close * (r.ccy === "USD" ? (isNum(r.fx) && r.fx > 0 ? r.fx : NaN) : 1) : NaN;
     const u = isNum(r.amountWon) && r.amountWon > 0 && px > 0 ? Math.round((r.amountWon / px) * UNIT) : null;
-    return u != null && u >= 1 ? u : null;
+    return u != null && okU(u) && u >= 1 ? u : null;
   }
   return null;
 }
@@ -46,7 +49,7 @@ function events(recs, t) {
     }
   };
   add(recs && recs.imported, 0, importedUnits);
-  add(recs && recs.purchases, 1, (p) => (Number.isInteger(p.qty) && p.qty > 0 ? p.qty * UNIT : null));
+  add(recs && recs.purchases, 1, (p) => (Number.isInteger(p.qty) && p.qty > 0 && okU(p.qty * UNIT) ? p.qty * UNIT : null));
   add(recs && recs.sales, 2, (s) => (okUnits(s.qty) ? -toUnits(s.qty) : null));
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind - b.kind));
 }

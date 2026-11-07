@@ -322,7 +322,7 @@ def test_a_backup_that_is_not_a_version_2_store_is_left_alone():
     got = run("mem.set(K + '.unreadable.1', '{\"v\":9}'); mem.set(K + '.unreadable.2', " + json.dumps(json.dumps(OLD_SHAPES["처음 모양 (v18.3 출시)"])) + ");"
               f"mem.set(K, {json.dumps(json.dumps({'v': 1, 'decks': []}))});"
               "const r = S.readStore(K, T); out = { restored: r.restored, keys: [...mem.keys()].sort() };")
-    assert got == {"restored": False, "keys": ["baepsae2.v1", "baepsae2.v1.unreadable.1", "baepsae2.v1.unreadable.2"]}
+    assert got == {"restored": False, "keys": ["baepsae2.v1", "baepsae2.v1.mine", "baepsae2.v1.unreadable.1", "baepsae2.v1.unreadable.2"]}
 
 
 # ── 처음 안내를 본 표시 (v19.3 Part E: 저장 기록 안에) ──
@@ -370,7 +370,7 @@ def test_a_newer_v2_store_leads_and_an_older_moved_copy_never_drops_its_records(
               " guide: r.data.guideSeen, keys: [...mem.keys()].sort(), stored: stored() };")
     assert got["restored"] is True and got["sales"] == with_sale(IMPORTED, SALE_B)["sales"]   # 새 판 기록 그대로, 두 번 세지 않아요
     assert got["notes"] == ["005930"] and got["guide"] == "2026-11-06"
-    assert got["keys"] == ["baepsae2.v1", "baepsae2.v1.restored.1700000000000"] and got["stored"]["decks"][1]["sales"] == got["sales"]
+    assert got["keys"] == ["baepsae2.v1", "baepsae2.v1.mine", "baepsae2.v1.restored.1700000000000"] and got["stored"]["decks"][1]["sales"] == got["sales"]
 
 
 def test_an_old_tab_and_a_new_tab_taking_turns_lose_nothing():
@@ -397,7 +397,7 @@ def test_an_old_tab_and_a_new_tab_taking_turns_lose_nothing():
     assert got["ids"] == ["d1", "dimp", "dimp2"]                        # P1도 P2도 (예전에는 P2가 사라졌어요)
     assert got["sales"] == 3 and got["held"] == 8                       # 판 기록도: 10 + 2 − 3 − 1 = 8주 (예전에는 9주)
     assert got["answer"] == "cut"                                       # 예전 창의 답도
-    assert got["left"] == [] and got["restoredN"] == 3
+    assert got["left"] == [] and got["restoredN"] == 2                  # A의 두 번째 저장이 첫 사본을 다 담아서 그 사본은 지웠어요 (리뷰 4차 7)
 
 
 def test_records_with_ids_merge_by_id_and_equal_records_without_one_stay_as_many_as_they_were():
@@ -494,7 +494,7 @@ def test_storage_full_while_merging_keeps_the_merged_records_and_every_copy():
       out = {{ first, second, third: {{ restored: r3.restored, sales: r3.data.decks[0].sales.length, kept: mem.has(K + '.other.6'), stored: stored().decks[0].sales.length }} }};""")
     assert got["first"] == {"restored": True, "sales": 3, "stored": 3, "kept": True}
     assert got["second"] == {"restored": False, "sales": 3, "kept": False, "moved": 1}   # 다시 합쳐도 더해지는 것이 없어요
-    assert got["third"] == {"restored": False, "sales": 2, "kept": True, "stored": 2}
+    assert got["third"] == {"restored": True, "sales": 3, "kept": True, "stored": 2}   # 리뷰 4차 4: 이번에는 합친 기록을 보여 주고, 사본은 다음 시작까지
 
 
 def test_copies_made_in_the_same_millisecond_never_share_a_key():
@@ -506,10 +506,10 @@ def test_copies_made_in_the_same_millisecond_never_share_a_key():
       mem.set(K + '.unreadable.1700000000000', {json.dumps(json.dumps(V2, ensure_ascii=False))}); mem.set(K + '.other.1700000000000', {json.dumps(json.dumps(other, ensure_ascii=False))});
       const r = S.readStore(K, T);
       const keys = [...mem.keys()].filter((k) => k !== K).sort();
-      mem.set(K, '{{"v":1,"decks":[]}}'); S.writeStore(r.data, K, T);
+      mem.set(K, JSON.stringify({{ v: 1, decks: [{{ ...{json.dumps(BUILT, ensure_ascii=False)}, id: 'dold2' }}] }})); S.writeStore(r.data, K, T);
       out = {{ ids: r.data.decks.map((x) => x.id), keys, after: [...mem.keys()].filter((k) => k.includes('.other.')) }};""")
     assert got["ids"] == ["d1", "dimp", "dold"]
-    assert got["keys"] == ["baepsae2.v1.restored.1700000000000", "baepsae2.v1.restored.1700000000001"]
+    assert got["keys"] == ["baepsae2.v1.mine", "baepsae2.v1.restored.1700000000000", "baepsae2.v1.restored.1700000000001"]
     assert got["after"] == ["baepsae2.v1.other.1700000000002"]
 
 
@@ -518,19 +518,21 @@ def test_a_write_that_fails_after_its_backup_leaves_nothing_to_merge():
     removed again (the stored text is still the other tab's), so the next start does not say 합쳤어요. Old .restored.
     copies are pruned before the backup is written, so a nearly full storage still takes the backup and the write."""
     got = run(f"""const set0 = localStorage.setItem;
+      const V2 = {json.dumps(V2, ensure_ascii=False)};
+      const OTHER = JSON.stringify({{ ...V2, decks: [...V2.decks, {{ ...{json.dumps(BUILT, ensure_ascii=False)}, id: 'dold' }}] }});   // the other tab: everything, and more
       mem.set(K, {json.dumps(json.dumps(V2, ensure_ascii=False))}); const r = S.readStore(K, T);
-      mem.set(K, '{{"v":1,"decks":[]}}');
+      mem.set(K, OTHER);
       localStorage.setItem = (k, v) => {{ if (k === K) throw new Error('full'); set0(k, v); }};
       const failed = S.writeStore(r.data, K, T); localStorage.setItem = set0;
-      const left = [...mem.keys()].filter((k) => k !== K); const next = S.readStore(K, T);
+      const left = [...mem.keys()].filter((k) => k.includes('.other.')); const next = S.readStore(K, T);
       mem.clear(); mem.set(K, {json.dumps(json.dumps(V2, ensure_ascii=False))}); const r2 = S.readStore(K, T);
       for (let i = 1; i <= 5; i++) mem.set(K + '.restored.' + i, 'r' + i);
-      mem.set(K, '{{"v":1,"decks":[]}}');
+      mem.set(K, OTHER);
       localStorage.setItem = (k, v) => {{ if (!mem.has(k) && mem.size >= 6) throw new Error('quota'); set0(k, v); }};
       const ok = S.writeStore(r2.data, K, T); localStorage.setItem = set0;
       out = {{ failed, left, restored: next.restored, data: next.data, ok, keys: [...mem.keys()].filter((k) => k !== K).sort().map((k) => k.replace(/other[.][0-9]+$/, 'other.N')) }};""")
-    assert got["failed"] is False and got["left"] == [] and got["restored"] is False and got["data"] == {"v": 1, "decks": []}
-    assert got["ok"] is True and got["keys"] == ["baepsae2.v1.other.N", "baepsae2.v1.restored.3", "baepsae2.v1.restored.4", "baepsae2.v1.restored.5"]
+    assert got["failed"] is False and got["left"] == [] and got["restored"] is False and [x["id"] for x in got["data"]["decks"]] == ["d1", "dimp", "dold"]
+    assert got["ok"] is True and got["keys"] == ["baepsae2.v1.mine", "baepsae2.v1.other.N", "baepsae2.v1.restored.3", "baepsae2.v1.restored.4", "baepsae2.v1.restored.5"]
 
 
 def test_merging_another_copy_keeps_every_record_of_both():
@@ -558,13 +560,13 @@ def test_an_open_new_tab_keeps_what_an_old_tab_wrote_meanwhile():
               " keys: [...mem.keys()].filter((k) => k !== K).map((k) => k.replace(/[0-9]+$/, 'N')) };")
     assert got["ok"] and got["kept"] == 1 and got["restored"] is True and got["later"] is False
     assert got["ids"] == ["d1", "dimp", "dold"]                        # 이 창의 가진 종목 포트폴리오도, 예전 창의 새 포트폴리오도
-    assert got["keys"] == ["baepsae2.v1.restored.N"]
+    assert got["keys"] == ["baepsae2.v1.mine", "baepsae2.v1.restored.N"]
 
 
 def test_the_same_tab_writing_twice_makes_no_copy():
     got = run(f"S.readStore(K, T); S.writeStore({json.dumps(V2, ensure_ascii=False)}, K, T); S.writeStore({{ v: 2, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}, K, T);"
               "out = [...mem.keys()];")
-    assert got == ["baepsae2.v1"]
+    assert got == ["baepsae2.v1", "baepsae2.v1.mine"]                     # 이 앱이 마지막으로 쓴 글자 (예전 앱 창이 덮어써도 남아요)
 
 
 def test_only_merged_back_copies_are_pruned_and_the_others_travel_in_the_export():
@@ -585,3 +587,316 @@ def test_only_merged_back_copies_are_pruned_and_the_others_travel_in_the_export(
     assert got["aside"][-1]["text"] == '{"v":9,"n":5}'
     assert "setAside" not in got["plain"]                               # 따로 둔 것이 없으면 파일은 예전 모양 그대로
     assert got["back"] and "setAside" not in got["backKeys"]            # 불러오기는 따로 둔 것을 기록으로 읽지 않아요
+
+
+# ── v19.3d review round 4: the earlier app writing over this app's save, same-day edits, 빼기, odd stores ──
+T_ = "2026-11-07"
+OLD_APP = """
+// The earlier app (origin/main store.js) as far as two tabs go: it reads a version-1 store only, and writes over the
+// records without looking (a store it cannot read is moved to .unreadable. first). Its helpers are this app's called
+// without a time (no ts, no deletion or removal marks), as the earlier app's are.
+const oldRead = () => { try { const d = JSON.parse(mem.get(K)); if (d && d.v === 1 && Array.isArray(d.decks)) return d; } catch (e) {} return null; };
+const oldWrite = (d) => { const cur = mem.get(K); if (cur != null && !oldRead()) mem.set(K + '.unreadable.' + Date.now(), cur); mem.set(K, JSON.stringify(d)); };
+let inst = 0; const tab = async () => import('./store.mjs?tab=' + (++inst));     // one tab = one module (its own memory)
+"""
+
+
+def run_tabs(body):
+    return run(OLD_APP + body)
+
+
+def test_the_earlier_app_writing_over_a_new_tabs_version_1_save_loses_nothing():
+    """Review round 4, item 1 (the blocker): an old tab M and a new tab N are open. N does 샀어요 (dB: no v2 part, so the
+    store stays v1), then M saves a memo over it without looking. The next start merges this app's last write
+    (key + '.mine', which the earlier app never touches) back in: dB is there, M's memo too, and 합쳤어요 shows."""
+    got = run_tabs(f"""mem.set(K, JSON.stringify({{ v: 1, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}));
+      const N = await tab(); const n = N.readStore(K, T);
+      const m = oldRead();
+      const dB = {{ ...{json.dumps(BUILT, ensure_ascii=False)}, id: 'dB', name: 'B' }};
+      dB.purchases = dB.purchases.map((p) => ({{ ...p, id: N.recordId() }}));
+      const okN = N.writeStore({{ ...n.data, decks: [...n.data.decks, dB] }}, K, T); const v = JSON.parse(mem.get(K)).v;
+      oldWrite({{ ...m, notes: {{ '005930': {{ text: '예전 창 메모', at: T }} }} }});
+      const F = await tab(); const f = F.readStore(K, T); const again = (await tab()).readStore(K, T);
+      // once more: the merged records are this app's last write now, and the old tab writes over them again
+      oldWrite({{ ...m, notes: {{ '005930': {{ text: '예전 창 메모 2', at: T }} }} }});
+      const G = (await tab()).readStore(K, T);
+      out = {{ okN, v, ids: f.data.decks.map((x) => x.id), note: f.data.notes['005930'].text, restored: f.restored, again: again.restored,
+        later: G.data.decks.map((x) => x.id), laterNote: G.data.notes['005930'].text, laterRestored: G.restored,
+        keys: [...mem.keys()].filter((k) => k !== K).map((k) => k.replace(/[0-9]+$/, 'N')) }};""")
+    assert got["okN"] and got["v"] == 1
+    assert got["ids"] == ["d1", "dB"] and got["note"] == "예전 창 메모" and got["restored"] is True and got["again"] is False
+    assert got["later"] == ["d1", "dB"] and got["laterNote"] == "예전 창 메모 2" and got["laterRestored"] is True
+    assert got["keys"] == ["baepsae2.v1.mine"]
+
+
+def test_a_new_tabs_save_kept_under_mine_is_never_lost_to_a_later_write():
+    """The earlier app wrote over this app's save and another new tab (which never read that save) writes before any
+    restart: this app's last save is kept as a copy first (it differs from the records and from what that tab wrote last),
+    so the next start still has it."""
+    got = run_tabs(f"""mem.set(K, JSON.stringify({{ v: 1, decks: [] }}));
+      const A = await tab(), B = await tab(); const a = A.readStore(K, T), b = B.readStore(K, T); const m = oldRead();
+      A.writeStore({{ ...a.data, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}, K, T);          // A: 샀어요
+      oldWrite({{ ...m, notes: {{ '000660': {{ text: '예전 창', at: T }} }} }});                         // the old tab, over it
+      B.writeStore(B.withNote(b.data, '005930', 'B 메모', T, 1700000000001), K, T);                    // B never saw A's save
+      const f = (await tab()).readStore(K, T);
+      out = {{ ids: f.data.decks.map((x) => x.id), notes: Object.keys(f.data.notes).sort(), restored: f.restored }};""")
+    assert got == {"ids": ["d1"], "notes": ["000660", "005930"], "restored": True}
+
+
+def test_the_later_edit_of_a_note_an_answer_and_an_assumption_wins_on_the_same_day():
+    """Review round 4, item 2: at is a date only, so two edits on one day are told apart by ts (ms). The later edit wins
+    whichever copy is merged first; an edit with a time beats a same-day value without one (saved before v19.3d or by
+    the earlier app) that a stale tab carries."""
+    item = {"t": "005930", "rule": "divCut", "fy": 2025, "a": 1446.0, "b": 1200.0}
+    got = run_tabs(f"""const item = {json.dumps(item)};
+      mem.set(K, JSON.stringify({{ v: 1, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}));
+      const A = await tab(), B = await tab(); let a = A.readStore(K, T).data, b = B.readStore(K, T).data;
+      a = A.withNote(a, '005930', 'v1', T, 1001); A.writeStore(a, K, T);
+      b = B.withNote(b, '000660', 'y', T, 1002); B.writeStore(b, K, T);
+      a = A.withNote(a, '005930', 'v2', T, 1003); A.writeStore(a, K, T);
+      b = B.withNote(b, '000660', 'y2', T, 1004); B.writeStore(b, K, T);
+      const f = (await tab()).readStore(K, T);
+      mem.clear(); mem.set(K, JSON.stringify({{ v: 1, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}));
+      const C = await tab(), D = await tab(); let c = C.readStore(K, T).data, d = D.readStore(K, T).data;
+      c = C.withConfirm(c, 'd1', item, 'cut', T, 2001); C.writeStore(c, K, T);            // first answer
+      d = D.withConfirm(d, 'd1', item, 'notCut', T, 2002); D.writeStore(d, K, T);         // the user changes it
+      c = C.withNote(c, '000660', 'x', T, 2003); C.writeStore(c, K, T);                   // the stale tab saves something else
+      c = C.withAssume(c, 'AAPL', {{ disc: 9, term: 2 }}, T, 2004); C.writeStore(c, K, T);
+      d = D.withAssume(d, 'AAPL', {{ disc: 11, term: 1 }}, T, 2005); D.writeStore(d, K, T);
+      const g = (await tab()).readStore(K, T);
+      // a same-day note without a time (before v19.3d) carried by a stale tab never undoes an edit made with a time
+      mem.clear(); mem.set(K, JSON.stringify({{ v: 1, decks: [], notes: {{ '005930': {{ text: '예전', at: T }} }} }}));
+      const E = await tab(), H = await tab(); let e = E.readStore(K, T).data, h = H.readStore(K, T).data;
+      e = E.withNote(e, '005930', '새로 고침', T, 3001); E.writeStore(e, K, T);
+      h = H.withNote(h, '000660', 'z', T, 3002); H.writeStore(h, K, T);
+      const k = (await tab()).readStore(K, T);
+      out = {{ note: f.data.notes['005930'].text, other: f.data.notes['000660'].text, restored: f.restored,
+        answer: g.data.decks[0].confirms.map((x) => x.answer), assume: g.data.assume.AAPL.disc, gRestored: g.restored,
+        stale: k.data.notes['005930'].text, ts: [S.withNote(S.emptyStore(), '005930', 'a', T, 5).notes['005930'].ts, S.withNote(S.emptyStore(), '005930', 'a', T).notes['005930'].ts ?? null],
+        bad: [S.withNote(S.emptyStore(), '005930', 'a', T, 1.5), S.withConfirm({{ v: 1, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}, 'd1', item, 'cut', T, -1) && 'x'],
+        badStored: S.checkStore({{ v: 1, decks: [], notes: {{ '005930': {{ text: 'a', at: T, ts: 'x' }} }} }}, T).problems }};""")
+    assert got["note"] == "v2" and got["other"] == "y2" and got["restored"] is True       # 예전에는 'v1'이 돌아왔어요
+    assert got["answer"] == ["notCut"] and got["assume"] == 11                              # 예전에는 'cut'으로 뒤집혔어요 (매도 조건)
+    assert got["stale"] == "새로 고침"
+    assert got["ts"] == [5, None] and got["bad"] == [None, None] and got["badStored"] == ["notes: not valid"]
+
+
+def test_a_deleted_note_stays_deleted_when_a_stale_copy_still_has_it():
+    """Review round 4, item 2: deleting a note leaves a mark (gone, with its time and a fingerprint of the deleted text),
+    so a stale tab's copy of that note does not bring it back, even one saved before v19.3d without a time. A note
+    written again after the deletion does come back."""
+    got = run_tabs("""mem.set(K, JSON.stringify({ v: 1, decks: [], notes: { '005930': { text: '메모', at: T } } }));
+      const A = await tab(), B = await tab(); let a = A.readStore(K, T).data, b = B.readStore(K, T).data;
+      b = B.withNote(b, '005930', '', T, 4001); B.writeStore(b, K, T);                   // deleted
+      const mark = JSON.parse(mem.get(K)).gone;
+      a = A.withNote(a, '000660', 'x', T, 4002); A.writeStore(a, K, T);                  // the stale tab saves something else
+      const f = (await tab()).readStore(K, T);
+      // the stale tab writes the same text again after the deletion: that is a new note, and it stays
+      mem.clear(); mem.set(K, JSON.stringify({ v: 1, decks: [], notes: { '005930': { text: '메모', at: T, ts: 10 } } }));
+      const C = await tab(), D = await tab(); let c = C.readStore(K, T).data, d = D.readStore(K, T).data;
+      d = D.withNote(d, '005930', '', T, 20); D.writeStore(d, K, T);
+      c = C.withNote(c, '005930', '메모', T, 30); C.writeStore(c, K, T);
+      const g = (await tab()).readStore(K, T);
+      out = { mark, note: f.data.notes ? f.data.notes['005930'] || null : null, gone: Object.keys(((f.data.gone || {}).notes) || {}), restored: f.restored,
+        again: g.data.notes['005930'].text, exported: Object.keys(JSON.parse(S.exportText(f.data))), hash: S.textHash('메모') };""")
+    assert got["mark"] == {"notes": {"005930": {"at": "2026-11-07", "ts": 4001, "h": got["hash"]}}}
+    assert got["note"] is None and got["gone"] == ["005930"] and got["restored"] is True    # 예전에는 지운 메모가 돌아왔어요
+    assert got["again"] == "메모" and got["exported"] == ["v", "decks", "notes"]            # 지운 표시(gone)는 이 기기에만 (파일에는 없어요)
+
+
+def test_a_stock_taken_out_without_sales_stays_out_and_the_merge_says_so():
+    """Review round 4, item 3: 빼기 with no sale or dividend writes no history entry, so it keeps a removal mark (removed:
+    code, date, time). A stale tab's copy that still holds the stock does not bring it back, and 합쳤어요 shows whenever a
+    merged copy held something the result left out, even when the stored records did not change. A holding added again
+    after the mark (its own ts later) stays."""
+    deck = {**BUILT, "holdings": [{"t": "005930", "nk": "삼성전자"}, {"t": "000660", "nk": "SK하이닉스"}],
+            "purchases": [{"id": "pid000001", "t": "005930", "date": T_, "qty": 1, "price": 1000, "ccy": "KRW"},
+                          {"id": "pid000002", "t": "000660", "date": T_, "qty": 1, "price": 2000, "ccy": "KRW"}]}
+    got = run_tabs(f"""const deck = {json.dumps(deck, ensure_ascii=False)};
+      mem.set(K, JSON.stringify({{ v: 1, decks: [deck] }}));
+      const A = await tab(), B = await tab(); let a = A.readStore(K, T).data, b = B.readStore(K, T).data;
+      a = A.withoutHolding(a, 'd1', '000660', T, 5001); A.writeStore(a, K, T);
+      const marked = JSON.parse(mem.get(K)).decks[0].removed;
+      b = B.withNote(b, '005930', '메모', T, 5002); B.writeStore(b, K, T);
+      const f = (await tab()).readStore(K, T);
+      // nothing changes in the stored records, but the stale copy held the stock: still 합쳤어요
+      const taken = A.withoutHolding({{ v: 1, decks: [deck] }}, 'd1', '000660', T, 6001);
+      mem.clear(); mem.set(K, JSON.stringify(taken)); mem.set(K + '.other.5', JSON.stringify({{ v: 1, decks: [deck] }}));
+      const g = (await tab()).readStore(K, T);
+      // added again after the mark: the holding's own ts is later, so it stays
+      const back = {{ ...taken.decks[0], holdings: [...taken.decks[0].holdings, {{ t: '000660', nk: 'SK하이닉스', ts: 7001 }}],
+        purchases: [...taken.decks[0].purchases, {{ id: 'pid000003', t: '000660', date: T, qty: 2, price: 2100, ccy: 'KRW' }}] }};
+      const m = S.mergeTabs(taken, {{ v: 1, decks: [back] }}, T);
+      out = {{ marked, holdings: f.data.decks[0].holdings.map((h) => h.t), purchases: f.data.decks[0].purchases.map((p) => p.t), restored: f.restored,
+        same: JSON.stringify(g.data) === JSON.stringify(taken), gRestored: g.restored, back: m.decks[0].holdings.map((h) => h.t),
+        backBuys: m.decks[0].purchases.map((p) => p.id), v: f.data.v,
+        bad: S.checkStore({{ v: 1, decks: [{{ ...deck, removed: [{{ t: '000660', at: T }}] }}] }}, T).problems.length }};""")
+    assert got["marked"] == [{"t": "000660", "at": "2026-11-07", "ts": 5001}] and got["v"] == 1   # 2판 부분이 아니에요
+    assert got["holdings"] == ["005930"] and got["purchases"] == ["005930"] and got["restored"] is True   # 예전에는 돌아왔어요
+    assert got["same"] and got["gRestored"] is True
+    assert got["back"] == ["005930", "000660"] and got["backBuys"] == ["pid000001", "pid000003"] and got["bad"] == 1
+
+
+def test_a_record_with_one_id_and_two_different_copies_is_named_in_the_console():
+    got = run("""const d = (price) => ({ v: 1, decks: [{ id: 'dA', name: 'A', holdings: [{ t: '005930', nk: '삼성전자' }],
+        purchases: [{ id: 'same00001', t: '005930', date: T, qty: 1, price, ccy: 'KRW' }] }] });
+      const m = S.mergeTabs(d(9999), d(1000), T);
+      out = { prices: m.decks[0].purchases.map((p) => p.price), warns };""")
+    assert got["prices"] == [1000]
+    assert got["warns"] == ["[v2] portfolio dA: two copies hold record same00001 with different fields; the current copy's is kept"]
+
+
+def test_an_error_while_merging_or_a_very_deep_part_never_blanks_the_page():
+    """Review round 4, item 6: anything thrown while merging the copies on start is caught: the records as read, every
+    copy kept, and unmerged (the kept-aside line). A later version's part nested 3,000 deep reads, merges and writes."""
+    got = run("""const js = JSON.stringify;
+      mem.set(K, JSON.stringify({ v: 1, decks: [] })); mem.set(K + '.other.5', JSON.stringify({ v: 1, decks: [], notes: { '005930': { text: 'BOOM', at: T } } }));
+      JSON.stringify = (x, ...r) => { if (x === 'BOOM') throw new RangeError('boom'); return js(x, ...r); };
+      let r, threw = null; try { r = S.readStore(K, T); } catch (e) { threw = String(e); }
+      JSON.stringify = js;
+      const kept = mem.has(K + '.other.5');
+      const deep = JSON.parse('['.repeat(3000) + ']'.repeat(3000));
+      mem.clear(); mem.set(K, js({ v: 1, decks: [], future: deep })); mem.set(K + '.other.6', js({ v: 1, decks: [{ id: 'b', name: 'b', holdings: [], purchases: [] }], future: deep }));
+      let r2 = null, threw2 = null; try { r2 = S.readStore(K, T); S.writeStore(S.withNote(r2.data, '005930', 'm', T, 9), K, T); } catch (e) { threw2 = String(e); }
+      out = { threw, data: r && r.data, unmerged: r && r.unmerged, kept, warned: warns.some((w) => w.includes('merging the copies another tab left failed')),
+        threw2, ids: r2 && r2.data.decks.map((x) => x.id), future: !!(r2 && r2.data.future) };""")
+    assert got["threw"] is None and got["data"] == {"v": 1, "decks": []} and got["unmerged"] is True and got["kept"] and got["warned"]
+    assert got["threw2"] is None and got["ids"] == ["b"] and got["future"]
+
+
+def test_two_tabs_taking_turns_keep_one_copy_each_not_one_per_save():
+    """Review round 4, item 7: a copy is kept before a write only when the write does not hold everything in it, and a
+    write removes the copies it holds (all their records, or later edits of them). 100 turns each leave a few keys, and
+    the next start has every last edit."""
+    got = run_tabs("""mem.set(K, JSON.stringify({ v: 1, decks: [] }));
+      const A = await tab(), B = await tab(); let a = A.readStore(K, T).data, b = B.readStore(K, T).data; let ts = 1;
+      let most = 0;
+      for (let i = 0; i < 100; i++) {
+        a = A.withNote(a, '005930', 'A' + i, T, ++ts); A.writeStore(a, K, T); B.keepOwnText(K, mem.get(K), T);   // the storage event
+        most = Math.max(most, mem.size);
+        b = B.withNote(b, '000660', 'B' + i, T, ++ts); B.writeStore(b, K, T); A.keepOwnText(K, mem.get(K), T);
+        most = Math.max(most, mem.size);
+      }
+      const f = (await tab()).readStore(K, T);
+      out = { most, notes: Object.fromEntries(Object.entries(f.data.notes).map(([t, v]) => [t, v.text])), after: mem.size };""")
+    assert got["most"] <= 4 and got["after"] <= 4, got                 # 예전에는 200개 넘게 쌓였어요
+    assert got["notes"] == {"005930": "A99", "000660": "B99"}
+
+
+def test_held_units_never_overflow():
+    """Review round 4, item 8: a crafted file's quantity or amount beyond Number.MAX_SAFE_INTEGER units (or not finite)
+    counts nothing, so no sum becomes Infinity, and the store refuses such a purchase."""
+    got = run("""out = { amount: S.H.importedUnits({ t: '005930', ccy: 'KRW', amountWon: 1e308, close: 1e-300, date: T }),
+        units: S.H.toUnits(1e300), inf: S.H.toUnits(Infinity), ok: S.H.okUnits(1e300), held: [...S.H.heldUnits({ purchases: [{ t: 'A', qty: 1e300, price: 1, date: T, ccy: 'KRW' }] })],
+        fine: S.H.toUnits(1.5), store: S.checkStore({ v: 1, decks: [{ id: 'a', name: 'a', holdings: [{ t: '005930', nk: 'x' }],
+          purchases: [{ t: '005930', qty: 1e300, price: 1, date: T, ccy: 'KRW' }] }] }, T).problems };""")
+    assert got["amount"] is None and got["units"] is None and got["inf"] is None and got["ok"] is False and got["held"] == []
+    assert got["fine"] == 15000 and len(got["store"]) == 1 and "quantity" in got["store"][0]
+
+
+def test_random_runs_of_old_and_new_tabs_lose_no_record_and_keep_every_later_edit():
+    """Review round 4: random interleavings of new tabs, old (earlier-app) tabs and restarts, on one storage. Whatever the
+    order: no exception; every portfolio and purchase made in a new tab is there exactly once; nothing appears twice; a
+    stock a new tab took out stays out; the last note and 확인 필요 answer saved in a new tab is what the next start reads;
+    the keys stay few. (The earlier app writing over its own kind is its own behaviour and not checked.)"""
+    got = run_tabs("""
+      const STK = [['005930', '삼성전자'], ['000660', 'SK하이닉스'], ['035420', 'NAVER']];
+      const rng = (seed) => () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+      const res = { seqs: 0, errors: [], lost: [], dup: [], back: [], note: [], answer: [], keys: 0 };
+      for (let s = 0; s < 120; s++) {
+        mem.clear(); const R = rng(7000 + s); const pick = (a) => a[Math.floor(R() * a.length)];
+        let tabs = [], ctr = 0, ts = 1700000000000;
+        const or = { decks: new Map(), recs: [], removed: new Map(), notes: new Map(), answers: new Map() };
+        const hide = (x) => { if (x && x.kind === 'new') x.M.keepMine(K); };          // the page closes (pagehide)
+        const open = async (kind) => { if (kind === 'new') { const M = await tab(); const r = M.readStore(K, T); return { kind, M, data: r.data, ok: r.writable && !r.locked }; }
+          const d = oldRead(); return { kind, data: d || { v: 1, decks: [] }, ok: true }; };
+        const save = (x, next) => { if (!next || !x.ok) return false; const was = mem.get(K);
+          if (x.kind === 'new') { if (!x.M.writeStore(next, K, T)) return false; } else oldWrite(next); x.data = next;
+          if (mem.get(K) !== was) for (const y of tabs) if (y !== x && y.kind === 'new') y.M.keepOwnText(K, mem.get(K), T);   // the storage event
+          return true; };
+        try {
+          for (let i = 0; i < 30; i++) {
+            const r = R();
+            if (!tabs.length || r < 0.12) { if (tabs.length < 3) tabs.push(await open(R() < 0.6 ? 'new' : 'old')); continue; }
+            if (r < 0.2) { hide(tabs.splice(Math.floor(R() * tabs.length), 1)[0]); tabs.push(await open('new')); continue; }
+            const x = pick(tabs), d = x.data, op = pick(['buy', 'buy', 'note', 'delnote', 'confirm', 'remove']), nw = x.kind === 'new';
+            if (op === 'buy') {
+              const [t, nk] = pick(STK), id = 'd' + (++ctr) + x.kind, price = 1000 + ctr;
+              const deck = { id, name: id, createdAt: T, holdings: [{ t, nk, target: 1, plannedQty: 1, rules: [] }],
+                purchases: [{ ...(nw ? { id: 'p' + x.M.recordId() } : {}), t, date: T, qty: 1, price, ccy: 'KRW' }] };
+              if (save(x, { ...d, decks: [...d.decks, deck] })) { or.decks.set(id, x.kind); or.recs.push({ id, t, price, by: x.kind }); }
+            } else if (op === 'note' || op === 'delnote') {
+              const t = pick(STK)[0];
+              if (op === 'delnote' && !(d.notes && d.notes[t])) continue;
+              const text = op === 'note' ? 'n' + (++ctr) : '';
+              if (save(x, nw ? x.M.withNote(d, t, text, T, ++ts) : S.withNote(d, t, text, T))) or.notes.set(t, { text: text || null, by: x.kind });
+            } else {
+              const decks = d.decks.filter((y) => y.holdings.length);
+              if (!decks.length) continue;
+              const deck = pick(decks), t = pick(deck.holdings).t, k = deck.id + '|' + t;
+              if (op === 'confirm') {
+                const ans = pick(['cut', 'notCut']), item = { t, rule: 'divCut', fy: 2025, a: 1000, b: 800 };
+                if (save(x, nw ? x.M.withConfirm(d, deck.id, item, ans, T, ++ts) : S.withConfirm(d, deck.id, item, ans, T))) or.answers.set(k, { ans, by: x.kind });
+              } else if (save(x, nw ? x.M.withoutHolding(d, deck.id, t, T, ++ts) : S.withoutHolding(d, deck.id, t))) { or.removed.set(k, x.kind); or.answers.delete(k); }
+            }
+            res.keys = Math.max(res.keys, mem.size);
+          }
+          for (const x of tabs) hide(x);
+          const f = (await tab()).readStore(K, T), data = f.data;
+          for (const [id, by] of or.decks) if (by === 'new' && !data.decks.some((y) => y.id === id)) res.lost.push(s + ' deck ' + id);
+          for (const rec of or.recs) {
+            const deck = data.decks.find((y) => y.id === rec.id);
+            const n = deck ? deck.purchases.filter((p) => p.price === rec.price).length : 0;
+            if (n > 1) res.dup.push(s + ' ' + rec.id);
+            if (rec.by === 'new' && deck && !or.removed.has(rec.id + '|' + rec.t) && n !== 1) res.lost.push(s + ' purchase ' + rec.id + ' x' + n);
+          }
+          for (const [k, by] of or.removed) { const [id, t] = k.split('|'); const deck = data.decks.find((y) => y.id === id);
+            if (by === 'new' && deck && deck.holdings.some((h) => h.t === t)) res.back.push(s + ' ' + k); }
+          for (const [t, { text, by }] of or.notes) if (by === 'new' && ((data.notes && data.notes[t] ? data.notes[t].text : null) !== text)) res.note.push(s + ' ' + t);
+          for (const [k, { ans, by }] of or.answers) { const [id, t] = k.split('|'); const deck = data.decks.find((y) => y.id === id);
+            const c = deck && deck.holdings.some((h) => h.t === t) ? (deck.confirms || []).find((y) => y.t === t) : undefined;
+            if (by === 'new' && c !== undefined && (!c || c.answer !== ans)) res.answer.push(s + ' ' + k); }
+        } catch (e) { res.errors.push(s + ': ' + (e && e.stack)); }
+        res.seqs++;
+      }
+      out = res;""")
+    assert got["seqs"] == 120 and got["errors"] == [], got["errors"][:2]
+    assert got["lost"] == [] and got["dup"] == [] and got["back"] == [], got
+    assert got["note"] == [] and got["answer"] == [], got
+    assert got["keys"] <= 12, got["keys"]
+
+
+def test_the_first_records_in_an_empty_storage_change_no_other_key_and_mine_starts_on_the_next_start():
+    """An import into an empty storage (the iPhone home-screen app's first 기록 불러오기) changes no stored value but the
+    records (smoke_v2's rule); this app's copy of its last write (.mine) starts at the next write or start."""
+    got = run(f"""const ok = S.writeStore({json.dumps(V2, ensure_ascii=False)}, K, T); const first = [...mem.keys()];
+      S.readStore(K, T); const next = [...mem.keys()].sort(); const same = mem.get(K + '.mine') === mem.get(K);
+      out = {{ ok, first, next, same }};""")
+    assert got == {"ok": True, "first": ["baepsae2.v1"], "next": ["baepsae2.v1", "baepsae2.v1.mine"], "same": True}
+
+
+def test_an_open_tab_keeps_its_records_when_another_tab_writes_over_them():
+    """The browser tells an open tab when another tab writes the records (the storage event, app.jsx): when what was
+    written does not hold everything this tab saved (the earlier app writes over without looking), this tab's text is
+    kept as a copy and merged back on the next start; when it does (another new tab that merged it), nothing is kept."""
+    got = run_tabs(f"""const N = await tab(); const n = N.readStore(K, T);
+      const m = oldRead() || {{ v: 1, decks: [] }};
+      N.writeStore({{ ...n.data, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}, K, T);    // the first records: no .mine yet
+      oldWrite({{ ...m, notes: {{ '000660': {{ text: '예전 창', at: T }} }} }});
+      const kept = N.keepOwnText(K, mem.get(K), T);
+      const f = (await tab()).readStore(K, T);
+      const again = N.keepOwnText(K, JSON.stringify({{ ...f.data }}), T);                       // a text that holds all of it
+      out = {{ kept, again, ids: f.data.decks.map((x) => x.id), notes: Object.keys(f.data.notes), restored: f.restored }};""")
+    assert got == {"kept": True, "again": False, "ids": ["d1"], "notes": ["000660"], "restored": True}
+
+
+def test_a_tab_that_wrote_the_first_records_keeps_them_when_it_closes():
+    """The first records written into an empty storage have no .mine yet; when the page closes or is hidden (pagehide,
+    visibilitychange: app.jsx), keepMine starts it, so a tab of the earlier app open since before cannot drop them."""
+    got = run_tabs(f"""const N = await tab(); const n = N.readStore(K, T); const m = oldRead() || {{ v: 1, decks: [] }};
+      N.writeStore({{ ...n.data, decks: [{json.dumps(BUILT, ensure_ascii=False)}] }}, K, T);
+      const before = [...mem.keys()]; const kept = N.keepMine(K); const twice = N.keepMine(K);
+      oldWrite({{ ...m, notes: {{ '000660': {{ text: '예전 창', at: T }} }} }});                 // the old tab, after N closed
+      const f = (await tab()).readStore(K, T);
+      out = {{ before, kept, twice, ids: f.data.decks.map((x) => x.id), restored: f.restored }};""")
+    assert got == {"before": ["baepsae2.v1"], "kept": True, "twice": False, "ids": ["d1"], "restored": True}

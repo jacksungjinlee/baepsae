@@ -62,12 +62,12 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 포트폴리오에서 빼기: only the stock missing from today's data, only from this portfolio, only when tapped.
   const onRemove = (deckId, t) => {
-    const next = withoutHolding(store.data, deckId, t, todayKst());
+    const next = withoutHolding(store.data, deckId, t, todayKst(), Date.now());   // with a removal mark (two tabs)
     if (next) { console.warn(`[v2] ${deckId}: ${t} removed from the portfolio (user tapped remove; it was not in today's data)`); setStoreData(next); }
     else console.warn("[v2] remove refused: " + JSON.stringify({ deckId, t }));
   };
   const onConfirm = (deckId, item, answer) => {
-    const next = withConfirm(store.data, deckId, item, answer, todayKst());
+    const next = withConfirm(store.data, deckId, item, answer, todayKst(), Date.now());
     if (next) setStoreData(next);
     else console.warn("[v2] answer not recorded: " + JSON.stringify(item));
   };
