@@ -50,6 +50,11 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   financial companies). The existing `eps` (today's shares) is unchanged. **Visible on the first v2 publish:** 2.0's
   company page already reads `flRan` (#36), so "재무 경고 신호는 없어요" (approved text) starts showing where all four
   checks ran and none fired. Nothing else users see changes until the app PR.
+- v19.1d (B7 pipeline PR): 유동비율 and 이자보상배율 run for every company whose statements have the lines, except
+  financial companies (banks, insurers, brokers and financial holding companies by industry group → `flNa`).
+  corp.json `flWhy` = `{"icr": "ie" | "op" | "neg" | "off"}` says why 이자보상배율 didn't run for a non-financial company: no
+  이자비용/금융비용 line on the income statement, no operating profit, a negative figure, or switched off (`ICR_OFF`,
+  Jack 2026-11-07, until the v19.1f interest re-read: every non-financial company gets "off" and the app says nothing).
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the

@@ -5,6 +5,7 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-08 | #79 | Data (shows with the next publish): 이자보상배율 is switched off everywhere until the interest re-read (yesterday 502 of its 505 warnings came from 금융비용, which includes FX and derivative losses), so neither app shows an 이자보상배율 number and 2.0 no longer says "재무 경고 신호는 없어요" (it needs all four checks); 유동비율 now also runs for non-financial holding companies (LG, GS, CJ …); the industry group decides who counts as financial (insurers tagged "auto" stop, 지씨셀·신원·한국기업평가 … start). Dry run PASS 0/0/111. |
 | 2026-11-08 | #78 | Data: dividends are checked against stock splits for more Korean companies — the pipeline now reads 자본금 under its other names (보통주자본금, 납입자본) and re-read 81 reports once, so today's dividend yield is confirmed for 1,123 of 1,220 payers (was 1,088); the rest stay blank and unranked, never guessed. |
 | 2026-11-08 | #75 | 데이터 출처's logo line now reads "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07), ahead of the company homepage icons; the Logo.dev link is unchanged. |
 | 2026-11-07 | #76 | Tests only: the smoke tests delete their own temporary site copies when they pass and keep only the latest failed run (about 4,000 had filled the session's disk). |
