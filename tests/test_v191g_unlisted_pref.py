@@ -15,8 +15,8 @@ def srow(se, iss, dist, tes="-"):
     return {"se": se, "istc_totqy": iss, "tesstk_co": tes, "distb_stock_co": dist}
 
 
-MOBIS = [srow("보통주", "93,697,543", "89,176,783", "4,520,760"), srow("우선주", "3,974", "3,974"),
-         srow("합계", "93,701,517", "89,180,757"), srow("비고", "-", "-")]
+MOBIS = [srow("보통주", "90,732,583", "89,176,783", "1,555,800"), srow("우선주", "3,974", "3,974"),
+         srow("합계", "90,736,557", "89,180,757"), srow("비고", "-", "-")]
 SOLUM = [srow("보통주", "47,816,236", "47,816,236"), srow("전환우선주", "-", "-"), srow("상환전환우선주", "7,000,000", "7,000,000"),
          srow("합계", "54,816,236", "54,816,236"), srow("비고", "-", "-")]
 KIWOOM = [srow("의결권 있는\n 주식", "26,793,591", "25,893,134", "900,457"), srow("의결권 없는\n 주식", "501,388", "501,388"),
@@ -27,14 +27,36 @@ ALTEOGEN = [srow("보통주식", "53,505,788", "53,482,080", "23,708"), srow("�
 
 
 def test_the_share_report_under_each_label_layout():
-    assert F.parse_dart_shares(MOBIS) == {"cmo": 89176783.0, "cmi": 93697543.0, "pfo": 3974.0}
+    assert F.parse_dart_shares(MOBIS) == {"cmo": 89176783.0, "cmi": 90732583.0, "pfo": 3974.0}
     assert F.parse_dart_shares(SOLUM) == {"cmo": 47816236.0, "cmi": 47816236.0, "pfo": 7000000.0}     # '-' 줄은 0
     assert F.parse_dart_shares(KIWOOM)["cmo"] == 25893134.0 and F.parse_dart_shares(KIWOOM)["pfo"] == 501388.0
     assert F.parse_dart_shares(HANWHA)["cmo"] == 69375482.0 and F.parse_dart_shares(HANWHA)["pfo"] == 19603474.0
     assert F.parse_dart_shares(ALTEOGEN) == {"cmo": 53482080.0, "cmi": 53505788.0, "pfo": 434848.0}
     assert F.parse_dart_shares([srow("합계", "1", "1")]) is None                         # 보통주 줄이 없으면 판단하지 않아요
-    assert F.parse_dart_shares([srow("보통주", "1", "1"), srow("보통주식", "2", "2")]) is None   # 둘이어도
-    assert F.parse_dart_shares([srow("보통주", "-", "-")]) is None
+    assert F.parse_dart_shares([srow("보통주", "1", "1"), srow("보통주식", "2", "2"), srow("합계", "3", "3")]) is None   # 둘이어도
+    assert F.parse_dart_shares([srow("보통주", "-", "-"), srow("합계", "-", "-")]) is None
+
+
+def test_the_rows_must_add_up_to_the_total_row():
+    """리뷰 2026-11-07: '합계'가 아닌 이름의 합계 줄(총계 · 계)이 우선주로 더해지면 우선주 몫을 너무 많이 빼서 다른 기준의 주당 배당이
+    맞는 것처럼 보일 수 있어요. 합계 줄이 하나 있고 보통주 + 그 밖 = 합계일 때만 믿어요."""
+    total_named = [srow("보통주", "10,000,000", "10,000,000"), srow("우선주", "1,000,000", "1,000,000"), srow("총계", "11,000,000", "11,000,000")]
+    assert F.parse_dart_shares(total_named) == {"cmo": 10000000.0, "cmi": 10000000.0, "pfo": 1000000.0}   # 총계도 합계로 알아봐요
+    no_total = [srow("보통주", "10,000,000", "10,000,000"), srow("우선주", "1,000,000", "1,000,000"), srow("Total", "11,000,000", "11,000,000")]
+    assert F.parse_dart_shares(no_total)["pfo"] == 1000000.0
+    odd_total = [srow("보통주", "10,000,000", "10,000,000"), srow("우선주", "1,000,000", "1,000,000"), srow("발행주식 계", "11,000,000", "11,000,000")]
+    assert F.parse_dart_shares(odd_total) is None                                       # 합계 줄을 못 찾으면 판단하지 않아요
+    mismatch = [srow("보통주", "10,000,000", "10,000,000"), srow("우선주", "1,000,000", "1,000,000"), srow("합계", "12,000,000", "12,000,000")]
+    assert F.parse_dart_shares(mismatch) is None
+    # 실제 보고서: KG스틸 — 주식이 없는 '의결권 있는 배당우선 전환주' 줄은 보통주가 아니에요 / 신한알파리츠 — 표가 두 번 실렸어요
+    kg = [srow("보통주", "100,008,897", "96,782,356"), srow("무의결권\n 배당우선주", "53,385", "52,707"), srow("합계", "100,062,282", "96,835,063"),
+          srow("무의결권\n 배당우선 전환주", "-", "-"), srow("비고", "-", "-"), srow("의결권 있는\n 배당우선 상환주", "-", "-"),
+          srow("의결권 있는\n 배당우선 전환주", "-", "-")]
+    assert F.parse_dart_shares(kg) == {"cmo": 96782356.0, "cmi": 100008897.0, "pfo": 52707.0}
+    twice = [srow("보통주", "120,940,123", "120,940,123"), srow("보통주", "120,940,123", "120,940,123"), srow("종류주", "4,000,000", "4,000,000"),
+             srow("종류주", "4,000,000", "4,000,000"), srow("합계", "124,940,123", "124,940,123"), srow("합계", "124,940,123", "124,940,123")]
+    assert F.parse_dart_shares(twice) == {"cmo": 120940123.0, "cmi": 120940123.0, "pfo": 4000000.0}
+    assert F.parse_dart_shares([srow("의결권 있는 배당우선주", "5", "5"), srow("합계", "5", "5")]) is None   # 이름에 우선 → 보통주 아님
 
 
 def bas(cash, dps, pdps, par=5000.0):
@@ -44,10 +66,10 @@ def bas(cash, dps, pdps, par=5000.0):
 def test_mobis_is_checked_with_the_share_report():
     """현대모비스: 우선주 배당 6,550원이 상장되지 않은 우선주 몫까지 총액에 들어 있어요 (예전: 위 끝 없음 → 알 수 없음)."""
     b = bas(89192923 * 6500.0, 6500.0, [6550.0])
-    cs3 = [93701517 * 5000 / 1e8] * 3
-    old = F.div_basis([6500.0, 5000.0, 4500.0], b, cs3, 89_820_000, (), None)
+    cs3 = [90736557 * 5000 / 1e8] * 3
+    old = F.div_basis([6500.0, 6000.0, 4500.0], b, cs3, 89_820_000, (), None)
     assert old["hi"] is None and old["divSt"] == "nd"
-    new = F.div_basis([6500.0, 5000.0, 4500.0], b, cs3, 89_820_000, (), None, stk=F.parse_dart_shares(MOBIS))
+    new = F.div_basis([6500.0, 6000.0, 4500.0], b, cs3, 89_820_000, (), None, stk=F.parse_dart_shares(MOBIS))
     assert new["f0"] == 1.0 and new["dps3a"][0] == 6500.0 and abs(new["hi"] - 89_820_000 / 89176783 * 1.001) < 1e-9
 
 
@@ -70,6 +92,32 @@ def test_the_share_report_is_not_used_when_it_disagrees_with_the_dividend_table(
     r = F.div_basis([75.0, 70.0, 0.0], bas(89866667 * 75.0, 75.0, [451.0], par=500.0), [274.08] * 3, 47_820_000, (), None,
                     stk=F.parse_dart_shares(no_pref))
     assert r["hi"] is None and r["f0"] is None
+
+
+def test_earlier_years_never_use_dividend_shares_mixed_with_unlisted_preferreds():
+    """리뷰 2026-11-07 (막는 문제): 상장되지 않은 우선주 몫이 든 '배당 받은 주식 수'는 해마다 흔들려요 (지아이텍: 보통주 유통 대비
+    2.14 · 1.74 · 1.24). 2023 년에 2:1 무상증자가 있었고 회사가 2023 배당을 새 기준(36원)으로 고쳐 적었는데, 흔들린 비(2.14/1.24 = 1.73)가
+    '옛 기준(×2)'의 15% 안에 들어 18원으로 잘못 맞췄어요. 이제 그런 해는 배당 받은 주식 수의 비를 쓰지 않아요."""
+    cmo, pfo = 38_220_976.0, 6_741_575.0
+    stk = {"cmo": cmo, "cmi": cmo, "pfo": pfo}
+    n = [2.14 * cmo, 1.74 * cmo, 1.24 * cmo]
+    d = [7.0, 7.0, 36.0]
+    b = {"cash3": [n[i] * d[i] for i in range(3)], "par3": [500.0] * 3, "eps3": [None] * 3, "ni3": [None] * 3,
+         "pdps": [[45.0, 40.0, 20.0]]}
+    cs3 = [45e6 * 500 / 1e8, 45e6 * 500 / 1e8, 22.5e6 * 500 / 1e8]                    # 2023 → 2024 에 주식 수 두 배 (액면가 그대로)
+    ss3 = [100.0, 100.0, 100.0]                                                         # 자본잉여금 그대로 (무상증자)
+    r = F.div_basis(d, b, cs3, 39_360_000, (), ss3, stk=stk)
+    assert r["f0"] == 1.0 and r["st3"][0] == "same"
+    assert r["st3"][1] == "same"                                                        # 자본금이 그대로인 해는 그대로
+    assert r["st3"][2] == "nd" and r["dps3a"][2] is None                                # 18원으로 맞추지 않아요
+
+
+def test_the_largest_preferred_dividend_is_subtracted():
+    """우선주 종류가 둘이면 가장 큰 주당 배당으로 빼요 (보통주 몫을 작게 잡아 위 끝이 위 끝으로 남게)."""
+    stk = {"cmo": 100.0, "pfo": 10.0}
+    # 총액 5,800: 가장 큰 80원으로 빼면 (5800 − 800) / 50 = 100 → 같은 기준. 가장 작은 60원으로 빼면 104 > 102 라 판단을 못 해요
+    assert F.stk_upper(100.0, stk, 5800.0, 50.0, [60.0, 80.0]) == 100.0 / 100.0 * 1.001
+    assert F.stk_upper(100.0, stk, 6300.0, 50.0, [60.0, 80.0]) is None                  # (6300 − 800) / 50 = 110 → 맞지 않아요
 
 
 def test_stk_upper_bounds():

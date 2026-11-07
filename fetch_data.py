@@ -1580,23 +1580,39 @@ def dart_financials(client, corp_code, year):
 # v19.1g (Jack, 2026-11-07): 상장되지 않은 우선주(상환전환우선주 · 종류주식)도 배당을 받으면 현금배당금총액을 보통주 1주 기준으로 나눌 수
 # 없어 배당 분할 확인의 위 끝을 셀 수 없었어요 (2026-11-07 30곳: 현대모비스 · 알테오젠 · 키움증권 · 솔루엠 …). 그런 회사만 DART '주식의
 # 총수 현황'(stockTotqySttus, 사업보고서)을 받아 그해 말 보통주 유통 주식 수로 위 끝을 세요 (회사당 1회 · 캐시 · 약 30회).
+STK_TOTAL = ("합계", "총계", "계", "합", "total")
+STK_NOT_COMMON = ("우선", "종류", "전환", "상환", "없는")
+
+
 def parse_dart_shares(rows):
     """주식의 총수 현황 → {"cmo": 보통주 유통 주식 수, "cmi": 보통주 발행 주식 수, "pfo": 그 밖의 종류 유통 주식 수 합} 또는 None.
-    줄 이름은 회사마다 달라요: '보통주' · '보통주식' · '의결권 있는 주식' · '보통주(의결권 있는 주식)' = 보통주, 그 밖(우선주 · 종류주식 ·
-    상환전환우선주 · 의결권 없는 주식)은 다른 종류. 합계 · 비고 줄은 빼요. 보통주 줄이 없거나 둘이면 None. (순수 함수)"""
-    cm, others = [], []
+    줄 이름은 회사마다 달라요: '보통주' · '보통주식' · '의결권 있는 주식' · '보통주(의결권 있는 주식)' = 보통주. 이름에 우선 · 종류 ·
+    전환 · 상환 · 없는 이 들면 보통주가 아니에요 ('의결권 있는 배당우선 전환주'). 주식이 없는 줄('-')과 비고 줄은 빼고, 똑같은 줄이
+    두 번 나오면(표를 두 번 실은 보고서) 한 번만. 합계 줄이 하나 있고 보통주 + 그 밖 = 합계(±1주)일 때만 믿어요 — '총계' 같은 다른
+    이름의 합계 줄이 우선주로 더해지지 않게 (리뷰 2026-11-07). 아니면 None. (순수 함수)"""
+    cm, others, totals, seen = [], [], [], set()
     for r in rows or []:
         se = re.sub(r"\s+", "", r.get("se") or "")
-        if not se or se.startswith("합계") or se.startswith("비고"):
-            continue
         dist, iss = _num(r.get("distb_stock_co")), _num(r.get("istc_totqy"))
-        if ("보통주" in se or "의결권있는" in se) and "없는" not in se:
+        key = (se, dist, iss)
+        if not se or se.startswith("비고") or key in seen:
+            continue
+        seen.add(key)
+        if se.lower() in STK_TOTAL or se.startswith("합계"):
+            totals.append(dist)
+            continue
+        if not (dist and dist > 0) and not (iss and iss > 0):
+            continue                                 # 발행하지 않은 종류
+        if ("보통주" in se or "의결권있는" in se) and not any(w in se for w in STK_NOT_COMMON):
             cm.append((dist, iss))
         else:
             others.append(dist)
-    if len(cm) != 1 or not cm[0][0] or cm[0][0] <= 0:
+    if len(cm) != 1 or not cm[0][0] or cm[0][0] <= 0 or len(totals) != 1 or totals[0] is None:
         return None
-    return {"cmo": cm[0][0], "cmi": cm[0][1], "pfo": sum(x for x in others if x is not None and x > 0)}
+    pfo = sum(x for x in others if x is not None and x > 0)
+    if abs(cm[0][0] + pfo - totals[0]) > 1:
+        return None
+    return {"cmo": cm[0][0], "cmi": cm[0][1], "pfo": pfo}
 
 
 def dart_shares(client, corp_code, year):
@@ -3017,6 +3033,10 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
     W = [ni[i] / eps[i] if ni[i] and eps[i] and ni[i] * eps[i] > 0 else None for i in range(3)]
     I = [cs[i] * 1e8 / par[i] if cs[i] and cs[i] > 0 and par[i] and par[i] > 0 else None for i in range(3)]
 
+    def unlisted_in(i):
+        """i 해에 배당을 받은 우선주·종류주 종류가 상장 우선주 종목 수보다 많은지 (상장되지 않은 주식이 총액에 섞임)."""
+        return sum(1 for p in pds if p[i] is not None and p[i] > 0) > len(prefs)
+
     def today_w(i):
         """오늘 상장 주식 수를 N 과 같은 셈법으로: 우선주는 그해 (가장 많이 받은 종류의 주당 배당 ÷ 보통주 주당 배당) 만큼.
         가장 큰 무게를 써야 위 끝이 위 끝으로 남아요. 배당을 받은 종류가 상장 우선주 종목 수보다 많으면(상환전환우선주 등
@@ -3047,7 +3067,9 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
         """당기 기준 ÷ i 해 기준 = gᵢ. 발행 주식 수 상한의 비(q)가 바뀐 배율을, 배당 받은 주식 수의 비(r)가 그해 배당금이
         옛 기준(g = q)인지 회사가 고쳐 적은 새 기준(g = 1)인지 알려 줘요."""
         q = I[0] / I[i] if I[0] and I[i] else None
-        r = N[0] / N[i] if N[0] and N[i] else None
+        # v19.1g: 상장되지 않은 우선주가 배당을 받은 해의 N 에는 그 몫이 섞여 해마다 흔들려요 — 그 해가 끼면 배당 받은 주식 수의 비를
+        # 쓰지 않아요 (자본금이 그대로면 '그대로', 아니면 판단하지 않음 · 리뷰 2026-11-07: 지아이텍 N/보통주 2.14 · 1.74 · 1.24)
+        r = N[0] / N[i] if N[0] and N[i] and not unlisted_in(0) and not unlisted_in(i) else None
         p = par[i] / par[0] if par[0] and par[i] else None
         if q is None:
             # 발행 주식 수 상한을 모르면 배당 받은 주식 수만으로: 자기주식 매입·처분 만큼(±15%)은 같은 기준,

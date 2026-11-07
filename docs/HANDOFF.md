@@ -287,8 +287,8 @@ in v19.1c after two Yahoo gaps around 10:00–10:40 KST) — and a first job
 Runs share one queue (`concurrency`), so two never publish at once. A scheduled run never starts DART from an empty,
 unreadable or old-format cache: it stops loudly, and the day's one full-DART run is started by hand. The cache holds
 parsed values, so a parse fix normally means a full re-read; v19.1e instead re-reads once only the annual statements saved
-without a capital line (v19.1g also fetches DART's share-count report, `stockTotqySttus`, tag STK, only for companies whose
-dividend table shows more paid preferred classes than listed preferreds, about 30; `DART_REDO_PER_RUN` = 800 per run, marked `rp: cap1`; a "not found" answer keeps the old entry and waits `DART_RETRY_DAYS`; logged as "자본금 다시 읽기 대상 N건" at the start and "남은 N건" at the end). Before starting a
+without a capital line (`DART_REDO_PER_RUN` = 800 per run, marked `rp: cap1`; a "not found" answer keeps the old entry and waits `DART_RETRY_DAYS`; logged as "자본금 다시 읽기 대상 N건" at the start and "남은 N건" at the end). v19.1g fetches DART's share-count report (`stockTotqySttus`, tag STK) only for companies
+whose dividend table shows more paid preferred classes than listed preferreds (about 30, one cached call each). Before starting a
 manual live run, check the run list: don't start one while a scheduled run is in progress, waiting or queued (a newer
 trigger cancels a queued manual run), and confirm it actually started. Don't merge pipeline PRs while a scheduled run is
 waiting. A daily scheduled check at 09:13 KST (Tue–Sat) confirms the live site has the last trading day and tells Jack
