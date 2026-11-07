@@ -4090,7 +4090,10 @@ def scene_v193c(R, files, width):
             assert card.locator('svg[data-ui-v2="card-art"]').count() == 1 and card.locator("svg text").count() == 0
             if cid in ("divGrowth", "payout"):
                 assert C["build"]["s1"]["pendingCard"] in t and card.locator("button").count() == 0
-                assert card.evaluate("(e) => getComputedStyle(e).opacity") == "0.6"
+                dims = card.evaluate("""(e) => [getComputedStyle(e).opacity, getComputedStyle(e.querySelector('[data-card-pic]')).opacity,
+                    e.querySelector('[data-card-pic]').dataset.dim || '', getComputedStyle(e.querySelector('svg[data-ui-v2="card-art"]')).opacity,
+                    getComputedStyle(e.querySelector('h3')).color]""")
+                assert dims == ["1", "0.45", "1", "0.45", NAVY_RGB], (cid, dims)      # 글은 그대로, 그림 둘만 흐리게
             else:
                 assert card.locator('[data-ui-v2="card-inc"]').get_attribute("aria-label") == fillp(C["build"]["s1"]["inc"], card=cc["name"], n=0)
                 assert card.locator('[data-ui-v2="card-dec"]').is_disabled()
@@ -4099,6 +4102,8 @@ def scene_v193c(R, files, width):
         page.locator('[data-card="profit"] [data-ui-v2="card-inc"]').click()
         sel = page.locator('[data-card="profit"]').evaluate("(e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e).boxShadow]")
         assert sel[0] == SELECT_RGB and NAVY_RGB in sel[1], sel                 # 고른 카드: 따뜻한 바탕 + 남색 테두리 (살구색 아님)
+        basis = page.locator('[data-card="profit"] h3 + p').evaluate("(e) => [e.textContent, getComputedStyle(e).color]")
+        assert basis == [C["build"]["cards"]["profit"]["basis"], TEXT2_RGB], basis     # 고른 카드의 기준 줄: text2 (text3 은 4.5:1 미달)
         slot = page.locator('[data-ui-v2="meter-slot"][data-slot="profit"]')
         assert slot.count() == 1 and slot.get_attribute("aria-label") == fillp(C["build"]["s1"]["slot"], card=C["build"]["cards"]["profit"]["name"], n=1)
         assert page.locator('[data-ui-v2="meter-slot"][data-empty="1"]').count() == 9
@@ -4204,6 +4209,93 @@ def scene_v193c(R, files, width):
             guide_gone(page)
         R.collect(page)
     R.check(page, S, "반기는 화면에서 다른 탭으로 가면 안내는 끝(본 적 있음), 홈에 돌아와도 안 떠요 · PC: 안내 중에는 '/' 가 검색 칸으로 가지 않아요", welcome_leaves)
+    ctx.close()
+    srv.shutdown()
+
+
+TEXT2_RGB = "rgb(91, 101, 118)"                           # src/ui/tokens.js COLOR.text2 #5B6576
+
+
+def scene_v193c_landscape(R, files, size):
+    """v19.3c 처음 안내 1/3 을 옆으로 눕힌 휴대폰에서: 누를 + 는 위에 붙은 내 점수 칸 아래, 말풍선 위(그 틈이 좁으면 말풍선이 위로)에 있고
+    눌려요 · 밝은 곳은 내 점수 칸과 말풍선을 덮지 않아요 · 창의 높이만 바뀌어도 어두운 곳은 끝까지 눌리지 않아요(그 아래 페이지는 안 눌려요)."""
+    w, h = size
+    S = f"v19.3c 가로 휴대폰 {w}x{h}"
+    dev = {"viewport": {"width": w, "height": h}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
+    srv, ctx, page, base = R.open(build_site(files), w, device=dev)
+
+    def step1_fits():
+        wait_ready(page)
+        at(page, "home")
+        b = guide_step1(page, False)
+        page.wait_for_timeout(300)
+        g = page.evaluate("""() => { const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect();
+            return { top: b.top, bottom: b.bottom, left: b.left, right: b.right }; };
+          const p = r('[data-card="div"] [data-ui-v2="card-inc"]');
+          const t = document.elementFromPoint((p.left + p.right) / 2, (p.top + p.bottom) / 2);
+          return { plus: p, meter: r('[data-ui-v2="meter-bar"]'), bubble: r('[data-ui-v2="guide-bubble"]'), hole: r('[data-ui-v2="guide-hole"]'),
+            at: document.querySelector('[data-ui-v2="guide-bubble"]').dataset.at, hit: t && t.closest('[data-ui-v2="card-inc"]') ? 'plus' : (t && t.dataset.uiV2) }; }""")
+        assert g["hit"] == "plus", g                                       # + 가운데를 누르면 + 가 눌려요 (말풍선 · 어두운 곳 아님)
+        lo = g["meter"]["bottom"] if g["at"] == "bottom" else max(g["meter"]["bottom"], g["bubble"]["bottom"])
+        hi = g["bubble"]["top"] if g["at"] == "bottom" else h
+        assert g["plus"]["top"] >= lo - 0.5 and g["plus"]["bottom"] <= hi + 0.5, g     # + 는 내 점수 칸 · 말풍선 사이
+        assert g["hole"]["top"] >= g["meter"]["bottom"] - 0.5 or g["at"] == "top", g   # 밝은 곳이 내 점수 칸을 덮지 않아요
+        if g["at"] == "bottom":
+            assert g["hole"]["bottom"] <= g["bubble"]["top"] + 0.5, g
+        else:
+            assert g["hole"]["top"] >= g["bubble"]["bottom"] - 0.5, g
+        R.collect(page)
+        page.set_viewport_size({"width": w, "height": h + 300})              # 높이만 바뀌어도: 새로 생긴 아래쪽도 어둡고 눌리지 않아요
+        page.wait_for_timeout(200)
+        hit = page.evaluate(f"() => {{ const e = document.elementFromPoint(3, {h + 290}); return e ? (e.dataset.uiV2 || e.tagName) : null; }}")
+        assert hit == "guide-shade", hit
+        page.set_viewport_size({"width": w, "height": h})
+        page.wait_for_timeout(200)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()  # 진짜 + 를 누르면 2/3
+        bubble(page, 2).locator('[data-ui-v2="guide-skip"]').click()
+        guide_gone(page)
+        R.collect(page)
+    R.check(page, S, "처음 안내 1/3: + 가 내 점수 칸과 말풍선 사이에서 눌려요 · 밝은 곳이 칸 · 말풍선을 덮지 않아요 · 높이만 바뀐 창의 아래쪽도 어둡고 막혀요", step1_fits)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_offstep(R, files, width=390):
+    """v19.3c: 안내 중에 기준 단계를 겹친 화면이 덮지 않는 길로 떠나면(화면 읽기 프로그램이 누른 다음 · 이전 단계 · 다시 시작) 안내는 끝나고
+    '본 적 있음'이 남아요. 이전 단계로 돌아와도 말풍선이 다시 뜨지 않아요."""
+    S = f"v19.3c 안내 밖 단계 이동 {width}"
+    srv, ctx, page, base = R.open(build_site(files), width)
+    seen = lambda: page.evaluate(f"() => localStorage.getItem({json.dumps(GUIDE_SEEN)})")
+    unseen = lambda: page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+
+    def off_step():
+        wait_ready(page)
+        at(page, "home")
+        guide_step1(page, False)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        bubble(page, 2).click()
+        bubble(page, 3)
+        page.evaluate("() => document.querySelector('[data-ui-v2=\"action-bar\"] button:not([disabled])').click()")   # 3/3 에서 아래 띠의 다음
+        see(page, C["build"]["s3"]["title"])
+        guide_gone(page)
+        assert seen() == "1"
+        page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
+        see(page, C["build"]["s1"]["title"])
+        page.wait_for_timeout(400)
+        assert page.locator('[data-ui-v2="guide-bubble"], [data-ui-v2="guide-shade"]').count() == 0, "이전 단계로 돌아오니 안내가 다시 떠요"
+        for name in (C["build"]["restart"], C["build"]["prevStep"]):        # 1/3 에서 다시 시작 · 이전 단계 (말풍선 밖의 단추)
+            unseen()
+            guide_step1(page, False)
+            page.evaluate("(n) => [...document.querySelectorAll('[data-ui-v2=\"app-bar\"] button, main button')].find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === n).click()", name)
+            see(page, C["build"]["s0"]["title"])
+            guide_gone(page)
+            assert seen() == "1", name
+            page.locator('[data-deck="income"]').click()                   # 템플릿을 골라도 2/3 이 저절로 뜨지 않아요
+            see(page, C["build"]["s1"]["title"])
+            page.wait_for_timeout(400)
+            assert page.locator('[data-ui-v2="guide-bubble"]').count() == 0, name
+        R.collect(page)
+    R.check(page, S, "안내 중 다음(3/3) · 다시 시작 · 이전 단계(1/3)를 겹친 화면 밖에서 누르면 안내는 끝(본 적 있음) · 돌아와도 · 템플릿을 골라도 다시 안 떠요", off_step)
     ctx.close()
     srv.shutdown()
 
@@ -4358,7 +4450,9 @@ def main():
                    lambda: scene_v193b(R, files, 390), lambda: scene_v193b(R, files, 1280),     # v19.3b 그림 · 12px
                    lambda: scene_v193c(R, files, 390), lambda: scene_v193c(R, files, 1280),     # v19.3c 기준 카드 · 내 점수 · 처음 안내
                    lambda: scene_v193c_on(R, files, 390), lambda: scene_v193c_on(R, files, 1280),   # v19.3c 두 스위치를 켠 빌드
-                   lambda: scene_v193c_narrow(R, files), lambda: scene_v193c_empty(R, files)):         # v19.3c 320px · 기준 전의 수 0
+                   lambda: scene_v193c_narrow(R, files), lambda: scene_v193c_empty(R, files),          # v19.3c 320px · 기준 전의 수 0
+                   lambda: scene_v193c_landscape(R, files, (844, 390)), lambda: scene_v193c_landscape(R, files, (568, 320)),   # 가로 휴대폰
+                   lambda: scene_v193c_offstep(R, files)):                                                 # 안내 밖 단계 이동
             try:
                 fn()
             except Exception as e:

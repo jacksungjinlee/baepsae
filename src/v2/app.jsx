@@ -187,11 +187,14 @@ export function App({ source }) {
   const inBuild = tab === "portfolio" && loc.sub === "build";
   // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
   // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
+  // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,
+  // 이전 단계 or 다시 시작): the guide ends as seen, so it never comes back over another step or a changed draft.
+  const offStep = builder.step !== 1 || builder.stage !== "steps";
   useEffect(() => {
     if (stepNo == null) return;
-    if (!inBuild || loc.about) endGuide(true);
+    if (!inBuild || loc.about || offStep) endGuide(true);
     else if (load.status === "fail" || (load.status === "ok" && load.missing.length)) endGuide(false);
-  }, [stepNo, inBuild, loc.about, load, endGuide]);
+  }, [stepNo, inBuild, loc.about, offStep, load, endGuide]);
   // The welcome lives on 홈: leaving 홈 (another tab, 포트폴리오 만들기, a sub-screen) ends it as seen, so it never comes
   // back over 홈 later (e.g. after 기록했어요). 소개 opens over 홈 and keeps it.
   const onWelcome = !!(guide && guide.stage === "welcome");

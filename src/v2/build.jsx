@@ -323,11 +323,11 @@ function around(tpl, slot) {
 }
 
 // The card's own small picture (copied from the board, src/v2/cardart.js). Decorative.
-function CardArt({ id }) {
+function CardArt({ id, dim = false }) {
   const art = CARD_ART[id];
   if (!art) return null;
   return (
-    <svg data-ui-v2="card-art" width={64} height={40} viewBox="0 0 64 40" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
+    <svg data-ui-v2="card-art" width={64} height={40} viewBox="0 0 64 40" aria-hidden="true" style={{ display: "block", flexShrink: 0, opacity: dim ? 0.45 : 1 }}>
       {art.map(([tag, a], i) => React.createElement(tag, { key: i, ...a }))}
     </svg>
   );
@@ -428,14 +428,14 @@ function CriterionCard({ c, pts, left, top, onSet }) {
   return (
     <div data-card={c.id} data-points={c.pending ? undefined : pts}
       style={{ background: on ? SELECTED.background : COLOR.surface, boxShadow: on ? `inset 0 0 0 2px ${COLOR.ink}` : "none", borderRadius: RADIUS.lg - 2,
-        padding: SPACE(3), minWidth: 0, display: "flex", flexDirection: "column", opacity: c.pending ? 0.6 : 1 }}>
+        padding: SPACE(3), minWidth: 0, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: SPACE(1) }}>
-        {/* The whole card is dimmed when 준비 중; the chip keeps its data-dim mark without dimming twice. */}
-        <CardPic id={c.id} size="fit" dim={!!c.pending} style={{ opacity: 1 }} />
-        <CardArt id={c.id} />
+        {/* 준비 중: only the two pictures are dimmed; the words keep their full contrast (as before v19.3c). */}
+        <CardPic id={c.id} size="fit" dim={!!c.pending} />
+        <CardArt id={c.id} dim={!!c.pending} />
       </div>
       <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) + 2, letterSpacing: "-0.02em" })}>{cc.name}</h3>
-      {cc.basis && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { textWrap: "balance" })}>{cc.basis}</p>}
+      {cc.basis && <p style={tx(SIZE.xs, WEIGHT.regular, on ? COLOR.text2 : COLOR.text3, { textWrap: "balance" })}>{cc.basis}</p>}
       {cc.plain && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1) + 2, lineHeight: 1.4, textWrap: "balance" })}>{cc.plain}</p>}
       {on && top != null && <span style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{fill(s1.topPct, { pct: top })}</StatusChip></span>}
       {c.id === "stable" && on && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{s1.finNA}</p>}
@@ -463,6 +463,8 @@ const GUIDE_HOLE = { 1: '[data-card="div"]', 2: '[data-ui-v2="meter"]', 3: '[dat
 const GUIDE_RING = '[data-card="div"] [data-ui-v2="card-inc"]';
 // When the bubble goes (알겠어요 · 건너뛰기 · Esc), focus lands on the 배당 card's + (where the user goes on), or the meter.
 const GUIDE_FOCUS_AFTER = [`${GUIDE_RING}:not(:disabled)`, '[data-ui-v2="meter"]'];
+// Step 1 keeps the + clear of the sticky meter above and the action bar below (a phone held sideways: guide.jsx keepClear).
+const GUIDE_KEEP_CLEAR = { top: '[data-ui-v2="meter-bar"]', bottom: '[data-ui-v2="action-bar"]' };
 
 function StepCards({ st, set, ds, coach }) {
   const s1 = C.build.s1;
@@ -519,7 +521,7 @@ function StepCards({ st, set, ds, coach }) {
       {bubble && (
         <Coach stage={stage} hole={GUIDE_HOLE[stage]} ring={stage === 1 ? GUIDE_RING : null} title={bubble.title} body={bubble.body}
           action={stage === 3 ? { label: g.done, onClick: coach.done } : null} onBackdrop={stage === 2 ? () => coach.go(3) : undefined}
-          onSkip={coach.skip} onLost={coach.lost} focusAfter={GUIDE_FOCUS_AFTER} />
+          onSkip={coach.skip} onLost={coach.lost} focusAfter={GUIDE_FOCUS_AFTER} keepClear={GUIDE_KEEP_CLEAR} />
       )}
     </div>
   );
