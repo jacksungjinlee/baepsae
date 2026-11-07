@@ -5,7 +5,8 @@ what may be in it and how its index must look. Pure checks, no network, no Pillo
 The folder `logos/` holds only:
   index.json         {"version": 1, "size": 128, "format": "webp", "source": "logo.dev", "logos": {code: entry}}
                      entry: {"file": "005930.webp", "name": the company's name in data.json at fetch time,
-                             "route": "ticker" | "domain", "w": source width, "h": source height, "vector": bool,
+                             "route": "ticker" | "domain" | "isin" | "brandmark" (the last two from the 2026-11-07
+                                      retry, --extra-routes), "w": source width, "h": source height, "vector": bool,
                              "flags": [...], "via": issuer code (a preferred share reusing its issuer's file; optional)}
   <name>.webp|png    one square 128 x 128 picture per company that has a logo (a preferred share has no file of its own;
                      no two companies share a file)

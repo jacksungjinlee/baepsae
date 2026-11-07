@@ -46,6 +46,10 @@ on:
         description: "한국 회사: 종목 코드 · DART 홈페이지로 쓸 만한 로고가 없을 때 ISIN(2 크레딧), 그다음 brandmark(3 크레딧, 2:1 보다 넓으면 안 써요)도 찾아요"
         type: boolean
         default: false
+      over_20_dollars_ok:
+        description: "letters_only 실행의 상한이 2,000 크레딧($20)을 넘어도 돼요 (Jack 이 그만큼 쓰자고 한 뒤에만)"
+        type: boolean
+        default: false
       full_run_date:
         description: "전부(limit 0) 또는 51곳 이상을 받을 때만: 오늘 날짜(한국 시간, YYYY-MM-DD). 다른 날 다시 돌리면 실행하지 않아요 (only 를 쓸 때는 필요 없어요)"
         type: string
@@ -104,10 +108,12 @@ jobs:
           ROUTE: ${{ inputs.route }}
           LETTERS_ONLY: ${{ inputs.letters_only }}
           EXTRA_ROUTES: ${{ inputs.extra_routes }}
+          OVER_20_OK: ${{ inputs.over_20_dollars_ok }}
         run: |
           extra=()
           if [ "$LETTERS_ONLY" = "true" ]; then extra+=(--letters-from "$RUNNER_TEMP/reviewed"); fi
           if [ "$EXTRA_ROUTES" = "true" ]; then extra+=(--extra-routes); fi
+          if [ "$OVER_20_OK" = "true" ]; then extra+=(--over-20-ok); fi
           python tools/logos/logodev_fetch.py --max-credits "$MAX_CREDITS" --workers "$WORKERS" \
             --per-minute "$PER_MINUTE" --limit "$LIMIT" --full-run-date "$FULL_RUN_DATE" \
             --only "$ONLY" --route "$ROUTE" --out "$RUNNER_TEMP/logo-dev-fetch" --defer-failure "${extra[@]}"

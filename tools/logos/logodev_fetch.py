@@ -14,6 +14,13 @@ Part J). Run by hand only: from the workflow "logo.dev 로고 받기" (.github/w
                                                              # a fix-up: only the named companies (at most 10), by ticker only
   python3 tools/logos/logodev_fetch.py --add-from FIX --dir DIR --reason "기아: ticker logo, checked"
                                                              # after looking at FIX: its logos join the reviewed folder DIR
+  LOGO_DEV_SECRET_KEY=sk_... python3 tools/logos/logodev_fetch.py --letters-from REVIEWED --extra-routes \
+      --full-run-date YYYY-MM-DD --out RETRY                  # a retry (2026-11-07): only the Korean companies that show a
+                                                             # letter mark in REVIEWED, largest first; --extra-routes adds
+                                                             # an ISIN and a brandmark lookup when ticker and homepage give
+                                                             # nothing usable. Refuses a cap above $20 unless --over-20-ok
+  python3 tools/logos/logodev_fetch.py --add-from RETRY --dir DIR --codes 078930,030530 --reason "checked by eye"
+                                                             # a retry is added only company by company, by --codes
 --drop, --keep and --add-from are all or nothing (both folders checked before and after; on any error nothing changes),
 take each code once, and --drop refuses a preferred share (it goes with its common share). --add-from refuses a company
 that already has a logo in DIR (--drop it first); a preferred share follows its issuer.
@@ -137,7 +144,7 @@ MUST_TOP = 300                                   # each must-have company sits i
 MIN_COMPANIES = chk.MIN_COMPANIES
 URL_NEEDLE = b"img.logo.dev/"                    # a signed image address must never be written
 URL_RE = re.compile(r"https?://img\.logo\.dev/\S*")
-DROP_REASONS = ("small", "blank", "faint", "one_colour", "shared", "file_clash", "odd_code")
+DROP_REASONS = ("small", "blank", "faint", "one_colour", "shared", "file_clash", "odd_code", "wide_brandmark")
 ODD_STOP = 30                                    # more odd answers than this in one run: logo.dev's API may have changed
 DOWNLOAD_STOP = 20                               # this many failed picture downloads in a row stop the run
 FORMATS = ("png", "jpg", "svg", "webp", "gif", "ico", "avif")    # source.format values logo.dev documents
@@ -154,6 +161,12 @@ ONLY_MAX = 10                                    # --only: named companies, at m
 EXTRA_ROUTES = ("isin", "brandmark")
 ROUTE_COST = {"ticker": CREDITS, "domain": CREDITS, "isin": CREDITS, "brandmark": 3}
 BRANDMARK_ROUTE = "/brands/brandmark"
+RETRY_SPEND_ASK = 2_000      # Jack (2026-11-07): report before a retry could spend more than $20 — a --letters-from run whose
+                             # cap is above this refuses unless --over-20-ok (the workflow input over_20_dollars_ok)
+SKIP_KNOWN = ("shared",)     # letters retry: the old ticker/homepage answer gave another brand's picture (a shared group),
+                             # or Claude dropped it after looking (drops.csv) — asking again would bill the same picture, so
+                             # those start at the ISIN. A small, blank or faint picture IS asked again: logo.dev's answer
+                             # changes (2026-11-07 retry: 아이에스동서's 16 px ticker icon came back as an 800 × 400 logo)
 BRANDMARK_MAX_ASPECT = 2.0
 OUTCOME_TEXT = dict(chk.OUTCOME_TEXT, complete="Finished: every company was looked up.",
                     balance_floor=f"Stopped cleanly: logo.dev's reported credit balance would have gone below "
@@ -208,8 +221,23 @@ def letters_from(order, folder):
         raise SystemExit("!! --letters-from: not a valid logo folder: " + "; ".join(bad[:5]))
     have = set(index["logos"])
     keep = [c for c in order if c["side"] == "kr" and c["code"] not in have]
+    folder = pathlib.Path(folder)
+    prev, dropped_after_review = {}, set()
+    if (folder / "review.csv").exists():
+        with open(folder / "review.csv", newline="", encoding="utf-8") as f:
+            prev = {r["code"]: r for r in csv.DictReader(f)}
+    if (folder / "drops.csv").exists():
+        with open(folder / "drops.csv", newline="", encoding="utf-8") as f:
+            dropped_after_review = {r["code"] for r in csv.DictReader(f)}
+    for c in keep:                                       # the old answer was another brand's picture or was dropped
+        why = (prev.get(c["code"]) or {}).get("reason", "")        # after review: asking again bills the same picture,
+        if why in SKIP_KNOWN or c["code"] in dropped_after_review:  # so the retry starts at the ISIN
+            c["skip_known"] = "dropped after review" if c["code"] in dropped_after_review else why
+    n_skip = sum(1 for c in keep if c.get("skip_known"))
     return keep, [f"!! --letters-from {folder}: the {len(keep):,} Korean companies without a logo there "
-                  f"(of {sum(1 for c in order if c['side'] == 'kr'):,}; {len(have):,} entries in its index)"]
+                  f"(of {sum(1 for c in order if c['side'] == 'kr'):,}; {len(have):,} entries in its index) · "
+                  f"{n_skip:,} of them get no new ticker/homepage lookup (their old answer was another brand's picture or was "
+                  "dropped after review; with --extra-routes they start at the ISIN, without it they are left out)"]
 
 
 def load_all(data, listing, homepages, min_counts=None, sheet_top=SHEET_TOP):
@@ -251,8 +279,9 @@ def plan(order, ticker_only=False, extra=False):
     """Lookups and the credit ceiling: one ticker lookup per company with a ticker, plus one homepage lookup per Korean
     company with a usable DART domain (none with --route ticker); every one could be billed (2 credits). With --extra
     routes, every Korean company could also need an ISIN lookup (2) and a brandmark lookup by ticker (3)."""
-    t = sum(1 for c in order if c.get("ticker"))
-    d = 0 if ticker_only else sum(1 for c in order if c["side"] == "kr" and c.get("domain"))
+    asked = [c for c in order if not (extra and c.get("skip_known"))]     # skip_known: straight to the ISIN
+    t = sum(1 for c in asked if c.get("ticker"))
+    d = 0 if ticker_only else sum(1 for c in asked if c["side"] == "kr" and c.get("domain"))
     i = sum(1 for c in order if c["side"] == "kr" and c.get("isin")) if extra else 0
     b = sum(1 for c in order if c["side"] == "kr" and c.get("ticker")) if extra else 0
     return {"ticker": t, "domain": d, "isin": i, "brandmark": b, "lookups": t + d + i + b,
@@ -388,6 +417,8 @@ class Ledger:
         self.charged = 0                 # answers with Credits-Charged: 1
         self.free = 0                    # answers with Credits-Charged: 0
         self.no_header = 0               # billable answers without the header (counted as billed)
+        self.billed_at = collections.Counter()   # price -> billed answers (2 a logo lookup, 3 a brandmark)
+        self.unanswered_n = 0            # requests that got no answer (counted once per lookup, at its price)
         self.balance_first = self.balance_last = None
         self.balance = None              # the lowest Credits-Remaining seen (credits), when logo.dev reports one
         self._first, self._first_done = None, False      # the first balance reported, said once (take_notices)
@@ -430,6 +461,8 @@ class Ledger:
             elif resp.status in (200, 404):
                 self.no_header += 1
                 cost = price
+            if cost:
+                self.billed_at[cost] += 1
             self.billed += cost
             bal = resp.headers.get("credits-remaining")
             if bal is not None and str(bal).strip() != "":
@@ -459,6 +492,7 @@ class Ledger:
         with self._lock:
             self.reserved -= price
             self.unknown += price
+            self.unanswered_n += 1
         return price
 
 
@@ -614,6 +648,21 @@ def quality(canvas, img):
     return out
 
 
+def wide(canvas, img):
+    """True when a picture is wider (or taller) than BRANDMARK_MAX_ASPECT : 1 — by logo.dev's own size or by the drawn
+    part of the downloaded picture (a vector without a size, or a rendition padded to a square). (pure)"""
+    np = _np()
+    w, h = img.get("width"), img.get("height")
+    if w and h and max(w, h) / min(w, h) > BRANDMARK_MAX_ASPECT:
+        return True
+    a = np.asarray(canvas.convert("RGBA"))[..., 3] >= 32
+    ys, xs = np.nonzero(a)
+    if not len(xs):
+        return False
+    bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
+    return max(bw, bh) / min(bw, bh) > BRANDMARK_MAX_ASPECT
+
+
 def fingerprint(canvas):
     """(64-bit difference hash, 16 x 16 colour thumbnail) of the picture laid on white."""
     from PIL import Image
@@ -656,6 +705,29 @@ def shared_groups(items):
 
 # ── the run ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def choose(r, c, ticker_only=False):
+    """The ticker/homepage choice from the lookup results r (route -> (kind, info)): (route or None, check, why). The
+    rules of the first run, unchanged (decide() uses it; the retry's early stop asks it too). (pure)"""
+    t_kind, t = r.get("ticker", ("", {}))
+    d_kind, d = r.get("domain", ("", {}))
+    if t_kind == "logo" and d_kind == "logo":
+        tb, db = t.get("brand_id") or "", d.get("brand_id") or ""
+        if tb and db and tb == db:                       # a real brand_id match only (an equal etag is not enough)
+            return "ticker", "same-brand", ""
+        if tb and db:
+            return "domain", "homepage-over-ticker", ""
+        return "ticker", "unverified", "brand id missing from an answer"
+    if t_kind == "logo":
+        if c["side"] == "us":
+            return "ticker", "ticker", ""
+        return "ticker", "unverified", ("ticker only (--route ticker): no homepage lookup" if ticker_only
+                                        else f"homepage {c['domain']}: {d_kind}" if d_kind
+                                        else "no usable DART homepage domain")
+    if d_kind == "logo":
+        return "domain", "homepage", ""
+    return None, "", ""
+
+
 def usable(route, kind, info):
     """A lookup answer worth downloading before the checks: a logo whose source is a vector, or a raster whose shorter
     side is at least SMALL_PX (the 'small' check, read from logo.dev's own size). A brandmark (the wide lockup) must also be
@@ -674,12 +746,16 @@ def usable(route, kind, info):
 class Job:
     """One company on its way through its lookups, download and checks."""
 
-    def __init__(self, c):
+    def __init__(self, c, extra=False):
         self.c = c
-        if c.get("ticker"):
+        if extra and c.get("skip_known"):                 # letters retry: the old answer can't change — ISIN first
+            self.stage = "isin" if c.get("isin") else "brandmark" if c.get("ticker") else "decide"
+        elif c.get("ticker"):
             self.stage = "ticker"
         elif c["side"] == "kr" and c.get("domain"):
             self.stage = "domain"
+        elif extra and c["side"] == "kr" and c.get("isin"):
+            self.stage = "isin"
         else:
             self.stage = "decide"
         self.tries_202 = collections.Counter()
@@ -930,10 +1006,27 @@ class Fetcher:
                 order.append("brandmark")
         after = order[order.index(route) + 1:] if route in order else []
         for nxt in after:
-            if nxt in EXTRA_ROUTES and any(usable(rt, *job.results[rt]) for rt in job.results):
-                return "decide"                          # an earlier route already has a usable logo
+            if nxt in EXTRA_ROUTES and self.has_usable(job):
+                return "decide"                          # what decide() would choose is already usable
             return nxt
         return "decide"
+
+    def pick(self, r, c):
+        """(route, check, why): the first run's choice; with --extra-routes, when that choice is not usable, a usable
+        homepage logo, else a usable ISIN logo, else a usable brandmark. decide() and the early stop both use this."""
+        ch, check, why = choose(r, c, self.ticker_only)
+        if not self.extra or (ch and usable(ch, *r[ch])):
+            return ch, check, why
+        if ch == "ticker" and "domain" in r and usable("domain", *r["domain"]):
+            return "domain", "homepage", ""             # the homepage has the larger picture of the company's logo
+        for rt in EXTRA_ROUTES:
+            if rt in r and usable(rt, *r[rt]):
+                return rt, rt, ""
+        return ch, check, why
+
+    def has_usable(self, job):
+        ch = self.pick(job.results, job.c)[0]
+        return bool(ch and usable(ch, *job.results[ch]))
 
     # one lookup stage -> None (stage finished) or seconds to wait (202)
     def lookup(self, job):
@@ -976,29 +1069,12 @@ class Fetcher:
         if odd:                                          # an answer the docs don't describe: never a doubtful logo
             job.reason, job.note = "odd_answer", "; ".join(odd)
             return
-        t_kind, t = r.get("ticker", ("", {}))
-        d_kind, d = r.get("domain", ("", {}))
-        if t_kind == "logo" and d_kind == "logo":
-            tb, db = t.get("brand_id") or "", d.get("brand_id") or ""
-            if tb and db and tb == db:                   # a real brand_id match only (an equal etag is not enough)
-                job.choice, job.check = "ticker", "same-brand"
-            elif tb and db:
-                job.choice, job.check = "domain", "homepage-over-ticker"
-            else:
-                job.choice, job.check, job.why = "ticker", "unverified", "brand id missing from an answer"
-        elif t_kind == "logo":
-            if job.c["side"] == "us":
-                job.choice, job.check = "ticker", "ticker"
-            else:
-                job.choice, job.check = "ticker", "unverified"
-                job.why = ("ticker only (--route ticker): no homepage lookup" if self.ticker_only
-                           else f"homepage {job.c['domain']}: {d_kind}" if d_kind
-                           else "no usable DART homepage domain")
-        elif d_kind == "logo":
-            job.choice, job.check = "domain", "homepage"
-        if self.extra and not (job.choice and usable(job.choice, *r[job.choice])):
-            for rt in EXTRA_ROUTES:                      # --extra-routes: only when ticker and homepage gave nothing usable
-                if rt in r and usable(rt, *r[rt]):
+        t_kind = r.get("ticker", ("", {}))[0]
+        d_kind = r.get("domain", ("", {}))[0]
+        job.choice, job.check, job.why = self.pick(r, job.c)
+        if self.extra and not job.choice:                # an extra route found a picture that is not usable (small, wide):
+            for rt in EXTRA_ROUTES:                      # download it anyway, so the named check drops it to dropped/
+                if r.get(rt, ("", {}))[0] == "logo":
                     job.choice, job.check, job.why = rt, rt, ""
                     return
         if job.choice:
@@ -1056,6 +1132,8 @@ class Fetcher:
                 job.cands[rt] = {"png": None, "flags": [], "error": f"unreadable picture ({type(e).__name__}: {e})"[:120]}
                 continue
             flags = quality(canvas, img)
+            if rt == "brandmark" and wide(canvas, img) and "wide_brandmark" not in flags:
+                flags.insert(0, "wide_brandmark")       # the wide lockup does not read in the app's square
             if img.get("size_from") == "download":       # a size-less vector: judged on the downloaded picture
                 self.log(f"!! {job.c['code']} ({rt}): size-less vector (source {img.get('format') or '?'}, no size) → "
                          f"judged on the downloaded {img['width']} x {img['height']} picture")
@@ -1201,7 +1279,7 @@ class Fetcher:
 
     def run(self, companies):
         self.total = len(companies)
-        jobs = [Job(c) for c in companies]
+        jobs = [Job(c, self.extra) for c in companies]
         for j in jobs:
             if self.ticker_only and j.stage == "domain":
                 j.stage = "decide"                       # --route ticker: no ticker, no lookup (the letter mark)
@@ -1363,6 +1441,8 @@ def tally(rows):
         out[side] = {"label": label, "companies": len(mine), "finished": len(fin),
                      "by_ticker": sum(1 for r in fin if r["result"] == "logo" and r["route"] == "ticker"),
                      "by_domain": sum(1 for r in fin if r["result"] == "logo" and r["route"] == "domain"),
+                     "by_isin": sum(1 for r in fin if r["result"] == "logo" and r["route"] == "isin"),
+                     "by_brandmark": sum(1 for r in fin if r["result"] == "logo" and r["route"] == "brandmark"),
                      "letter": sum(1 for r in fin if r["result"] == "letter"),
                      "reasons": collections.Counter(r["reason"] for r in fin if r["result"] == "letter"),
                      "checks": collections.Counter(r["check"] for r in fin if r["result"] == "logo")}
@@ -1399,12 +1479,13 @@ def summary_md(info):
     if info["problems"]:
         out.append("")
     out += ["## Coverage", "", "Shares are of the companies finished in that market.", "",
-            "| Market | Companies | Finished | Logo by ticker | Logo by DART homepage | Letter mark |",
-            "|---|---:|---:|---:|---:|---:|"]
+            "| Market | Companies | Finished | Logo by ticker | Logo by DART homepage | Logo by ISIN | Brandmark | Letter mark |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for side in ("kr", "us"):
         m = t[side]
         out.append(f"| {m['label']} | {m['companies']:,} | {m['finished']:,} | {_pct(m['by_ticker'], m['finished'])} | "
-                   f"{_pct(m['by_domain'], m['finished'])} | {_pct(m['letter'], m['finished'])} |")
+                   f"{_pct(m['by_domain'], m['finished'])} | {_pct(m['by_isin'], m['finished'])} | "
+                   f"{_pct(m['by_brandmark'], m['finished'])} | {_pct(m['letter'], m['finished'])} |")
     p = t["preferred"]
     out += ["", f"Korean preferred shares: {p['companies']:,}, of which {p['logo']:,} reuse their issuer's logo "
                 "(no lookup of their own); the rest show the letter mark.", "",
@@ -1437,14 +1518,17 @@ def summary_md(info):
             QUALITY_NOTE, "",
             "## Credits and requests", "",
             f"- Credits counted: **{cr['counted']:,}** of the {info['max_credits']:,} cap (${cr['counted'] / 100:,.2f}) — "
-            f"{CREDITS} for each of {cr['charged']:,} answers marked Credits-Charged: 1, {cr['no_header']:,} billable "
-            f"answers without the header, and {cr['unknown'] // CREDITS:,} requests that got no answer. "
+            f"billed answers {' + '.join(f'{n:,} × {p}' for p, n in sorted((cr.get('billed_at') or {}).items())) or '0'} "
+            f"({cr['charged']:,} marked Credits-Charged: 1, {cr['no_header']:,} billable without the header; 2 credits a "
+            f"logo lookup, 3 a brandmark), and {cr.get('unanswered', 0):,} requests that got no answer "
+            f"({cr['unknown']:,} credits). "
             f"{cr['free']:,} answers were free (Credits-Charged: 0).",
             f"- Balance logo.dev reported (Credits-Remaining), first → last answer: {cr['balance_first'] or 'not reported'}"
             f" → {cr['balance_last'] or 'not reported'}.",
             f"- Ceiling before the run (every lookup billed): {info['plan']['ceiling']:,} credits for "
             f"{info['plan']['lookups']:,} lookups ({info['plan']['ticker']:,} by ticker, {info['plan']['domain']:,} by "
-            "DART homepage).",
+            "DART homepage" + (f", {info['plan'].get('isin', 0):,} by ISIN, {info['plan'].get('brandmark', 0):,} brandmarks"
+                               if info["plan"].get("isin") or info["plan"].get("brandmark") else "") + ").",
             f"- API lookups sent: **{rq['api']:,}** (retries after 202: {rq['counts'].get('202 retries', 0):,} · after "
             f"429: {rq['counts'].get('retries after 429', 0):,} · after an error: "
             f"{rq['counts'].get('retries after an error', 0):,}) · downloads: {rq['downloads']:,} (not billed, not CDN "
@@ -1908,12 +1992,14 @@ def drop(folder, codes, reason):
     return 0
 
 
-def add_from(folder, src, reason):
+def add_from(folder, src, reason, codes=None):
     """After looking at a --only run's result (src): adds its logos to an earlier, reviewed run's folder (the checked
     folder kept on the logos-run branch), with every preferred share that reuses them (from the folder's review.csv),
     loudly. Refuses a company that already has a logo in the folder (--drop it first) and a file name already used; an
     old dropped picture of the same company leaves dropped/ (its record stays in drops.csv). All or nothing: the result
-    is checked in memory first, then written; on any error every file and both indexes are put back."""
+    is checked in memory first, then written; on any error every file and both indexes are put back.
+    A --letters-from retry (run.json letters_from) is added only company by company: `codes` (--codes) names the ones
+    approved on its sheet, any number; nothing else from that run is added."""
     folder, src = pathlib.Path(folder), pathlib.Path(src)
     logos, dropped = folder / "logos", folder / "dropped"
     index, bad = LI.validate_dir(logos)
@@ -1931,16 +2017,30 @@ def add_from(folder, src, reason):
     except (OSError, ValueError) as e:
         raise SystemExit(f"!! run.json missing or unreadable ({type(e).__name__}): only a finished --only run can be "
                          "added to a reviewed folder; nothing was changed")
-    if sinfo.get("ok") is not True or not sinfo.get("only"):
-        raise SystemExit("!! the source is not a finished --only run (run.json: ok "
-                         f"{sinfo.get('ok')!r}, only {sinfo.get('only')!r}); nothing was changed")
+    letters = bool(sinfo.get("letters_from"))
+    if sinfo.get("ok") is not True or not (sinfo.get("only") or letters):
+        raise SystemExit("!! the source is not a finished --only run, nor a finished --letters-from run (run.json: ok "
+                         f"{sinfo.get('ok')!r}, only {sinfo.get('only')!r}, letters_from "
+                         f"{sinfo.get('letters_from')!r}); nothing was changed")
+    if letters and not codes:
+        raise SystemExit("!! a --letters-from run is added company by company: name the approved ones with --codes; "
+                         "nothing was changed")
+    if codes and not letters:
+        raise SystemExit("!! --codes is for a --letters-from run (a --only run is added whole); nothing was changed")
     if sidx.get("format") != index.get("format"):
         raise SystemExit(f"!! the --only run's pictures are {sidx.get('format')}, the folder's are {index.get('format')}; "
                          "nothing was changed")
     dindex = read_dropped(dropped)
-    codes = [c for c, e in sorted(sidx["logos"].items()) if not e.get("via")]
-    if not codes or len(codes) > ONLY_MAX:
-        raise SystemExit(f"!! the --only run has {len(codes)} logos to add (1 to {ONLY_MAX}); nothing was changed")
+    if letters:
+        want = _dedupe(codes)
+        missing = [c for c in want if c not in sidx["logos"] or sidx["logos"][c].get("via")]
+        if missing or not want:
+            raise SystemExit(f"!! not a logo of that run: {missing or want}; nothing was changed")
+        codes = want
+    else:
+        codes = [c for c, e in sorted(sidx["logos"].items()) if not e.get("via")]
+        if not codes or len(codes) > ONLY_MAX:
+            raise SystemExit(f"!! the --only run has {len(codes)} logos to add (1 to {ONLY_MAX}); nothing was changed")
     clash = [c for c in codes if c in index["logos"]]
     if clash:
         raise SystemExit(f"!! already in logos/: {clash} (--drop them first if the new picture should replace them); "
@@ -2062,6 +2162,9 @@ def parse_args(argv):
     ap.add_argument("--extra-routes", action="store_true",
                     help="Korean companies: after the ticker and the DART homepage find no usable logo, look up the ISIN "
                          "(2 credits), then the brandmark by ticker (3 credits)")
+    ap.add_argument("--codes", default="", help="with --add-from from a --letters-from run: the approved codes")
+    ap.add_argument("--over-20-ok", action="store_true",
+                    help="a --letters-from run may plan more than $20 (only after Jack's yes)")
     ap.add_argument("--full-run-date", default="", help="today's KST date (YYYY-MM-DD); needed for a run without --limit "
                                                        f"or with --limit above {FULL_RUN_FREE_LIMIT}")
     a = ap.parse_args(argv)
@@ -2104,7 +2207,7 @@ def _main(argv, deps, state):
     if a.keep:
         return keep(a.dir, a.keep.split(","), a.reason)
     if a.add_from:
-        return add_from(a.dir, a.add_from, a.reason)
+        return add_from(a.dir, a.add_from, a.reason, a.codes.split(",") if a.codes else None)
     d = deps or Deps()
     if not a.plan_only and not a.only and (a.limit == 0 or a.limit > FULL_RUN_FREE_LIMIT):
         today = f"{d.wall().astimezone(KST):%Y-%m-%d}"     # KST, even when the clock gives UTC
@@ -2139,6 +2242,8 @@ def _main(argv, deps, state):
         order, more = letters_from(order, a.letters_from)
         for line in more:
             log(line)
+        if not a.extra_routes:                           # nothing new to ask them: never bill the same picture again
+            order = [c for c in order if not c.get("skip_known")]
         in_run = {c["code"] for c in order}
         preferred = [p for p in preferred if p["issuer"] in in_run]
     if a.extra_routes:                                   # ISIN: the company's own (logo_sources: KRX ISU_CD, else rule)
@@ -2165,6 +2270,10 @@ def _main(argv, deps, state):
     pl = plan(order, ticker_only, a.extra_routes)
     cap = (min(a.max_credits, pl["ceiling"]) if (a.limit or a.only or a.letters_from)
            else a.max_credits)                           # a trial or a retry never spends past its plan
+    if a.letters_from and cap > RETRY_SPEND_ASK and not a.over_20_ok and not a.plan_only:
+        raise SystemExit(f"!! this retry could spend {cap:,} credits (${cap / 100:,.2f}), above ${RETRY_SPEND_ASK / 100:,.0f}: "
+                         "Jack asked to be told first (2026-11-07). Run with a smaller --limit or --max-credits, or with "
+                         "--over-20-ok (workflow input over_20_dollars_ok) once he has said yes. Nothing was looked up.")
     log(f"· data.json asOf {data.get('asOf')} · prices {data.get('pxDate')} (US {data.get('usPxDate')}) · companies "
         f"{len(order):,} (Korea {sum(1 for c in order if c['side'] == 'kr'):,} · US "
         f"{sum(1 for c in order if c['side'] == 'us'):,}) · preferred shares {len(preferred):,}")
@@ -2277,7 +2386,8 @@ def salvage(err, tb, out, a, d, f, ledger, client, preferred, data, pl, sources,
             "traceback": tb[-40:], "companies": len(f.done) + len(f.remaining), "finished": len(f.done),
             "max_credits": cap, "saved": saved,
             "credits": {"counted": ledger.counted, "charged": ledger.charged, "free": ledger.free,
-                        "no_header": ledger.no_header, "unknown": ledger.unknown,
+                        "no_header": ledger.no_header, "unknown": ledger.unknown, "unanswered": ledger.unanswered_n,
+                        "billed_at": {str(k): v for k, v in sorted(ledger.billed_at.items())},
                         "balance_first": ledger.balance_first, "balance_last": ledger.balance_last},
             "requests": {"api": client.api_requests, "downloads": client.downloads,
                          "counts": dict(sorted(f.counts.items()))}}
@@ -2352,9 +2462,11 @@ def report(out, a, d, f, ledger, client, preferred, data, pl, sources, stamp, t0
         "sources": sources, "plan": pl, "pace": {"per_minute": a.per_minute, "workers": a.workers},
         "tally": tally(rows), "shared": groups, "shared_dropped": shared_dropped, "sheet_counts": sheet_counts,
         "odd": f.odd, "only": [c["code"] for c in getattr(f, "only_codes", [])], "route": f.route,
+        "letters_from": str(a.letters_from or ""), "extra_routes": bool(a.extra_routes),
         "index_count": index["count"],
         "credits": {"counted": ledger.counted, "charged": ledger.charged, "free": ledger.free,
-                    "no_header": ledger.no_header, "unknown": ledger.unknown, "balance_first": ledger.balance_first,
+                    "no_header": ledger.no_header, "unknown": ledger.unknown, "unanswered": ledger.unanswered_n,
+                    "billed_at": {str(k): v for k, v in sorted(ledger.billed_at.items())}, "balance_first": ledger.balance_first,
                     "balance_last": ledger.balance_last},
         "requests": {"api": client.api_requests, "downloads": client.downloads, "counts": dict(sorted(f.counts.items()))},
     }
