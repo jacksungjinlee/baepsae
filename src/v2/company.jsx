@@ -19,7 +19,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount } from "./company.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -30,7 +30,7 @@ import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -85,8 +85,12 @@ export function tileViews(load, s) {
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
   }
   {
+    // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
+    // (no betaSE in the data), never a bare beta.
     const r = riskTile(s);
-    add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], null, { beta: r.beta ?? null });     // no bare beta (no band yet)
+    const number = r.rule === "na" ? null : riskBandText(s, r);
+    add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], number,
+      { beta: r.beta ?? null, lo: r.band ? r.band.lo : null, hi: r.band ? r.band.hi : null });
   }
   return out;
 }
@@ -112,11 +116,20 @@ function Tile({ v, onOpen }) {
 
 // The interim split guard hides some Korean yields (company.js SPLIT_GUARD): say how many, once per data load (app.jsx
 // calls this when the data arrives, so the count is in the console whichever screen opens first).
+// v19.1b data: no guard; the exact check's own counts instead (payers whose yield could not be verified stay blank).
 const guardLogged = new WeakSet();
 export function logSplitGuard(load) {
   const stocks = load && load.status === "ok" && load.data ? load.data.stocks : null;
   if (!stocks || guardLogged.has(stocks)) return;
   guardLogged.add(stocks);
+  const x = divCheckCount(stocks, load.coByT);
+  if (x) {
+    const line = `[v2] Korean dividends: exact split check (data.json divCheck) · same ${x.st.same} · adj ${x.st.adj} · nc ${x.st.nc} `
+      + `· nd ${x.st.nd} · zero ${x.st.zero} · yield shown for ${x.shown} / ${x.payers} payers with a report year`;
+    if (x.hidden) console.warn(`${line}; not verified (no yield, no 100-man-won line, no payout, left out of a plan's dividend): ${x.hidden}, e.g. ${x.examples.join(", ")}`);
+    else console.info(line);
+    return;
+  }
   const g = splitGuardCount(stocks, load.coByT);
   if (g.hidden) console.warn(`[v2] dividend split guard: yield, 100-man-won line and payout hidden for ${g.hidden} / ${g.of} Korean payers `
     + `(today's yield ${SPLIT_GUARD}x the report's or more, or no report yield to check; until split-adjusted dividends). Largest: `
@@ -218,7 +231,8 @@ function MoveLine({ load, s, held, onWhy }) {
 export function warnText(f) {
   const W = C.co.warn;
   if (f.code === "cr") return W.cr ? fill(W.cr, { x: nf(Math.abs(f.x)) }) : null;                  // a ratio of assets: never negative
-  if (f.code === "icr") return W.icr ? fill(W.icr, { x: (f.x < 0 ? "\u2212" : "") + nf(Math.abs(f.x), 2) }) : null;   // U+2212 for a negative
+  // Jack, PR #68 (2026-11-07): an operating loss (ratio below 0, interest above 0) says so without a number
+  if (f.code === "icr") return f.x < 0 || Object.is(f.x, -0) ? W.icrLoss || null : W.icr ? fill(W.icr, { x: nf(f.x, 2) }) : null;
   return W[f.code] || null;
 }
 function warnSource(w) {
@@ -230,14 +244,17 @@ function Warnings({ load, s, wide }) {
   const w = useMemo(() => warnings(s, load.coByT.get(s.t) || null), [load, s]);
   const W = C.co.warn;
   if (!w.flags.length) {
-    if (!w.allRan) return null;                // no flag, but not every check is known to have run: nothing is claimed
-    if (!all(W.none, W.noneSub)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+    if (!w.allRan && !w.partial) return null;  // no flag, but not every check is known to have run: nothing is claimed
+    // partial (Jack, PR #68 B7): 이자보상배율 alone could not be checked, for want of an interest line -> "확인한 …" + why
+    const head = w.partial ? W.nonePartial : W.none;
+    const subText = w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
+    if (!all(head, subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
     return (
-      <Card data-ui-v2="co-warn" data-n="0" style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: SPACE(4) }}>
+      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: SPACE(4) }}>
         <IconChip name="shield-check" size={32} tone="risk" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{W.none}</div>
-          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noneSub}</div>
+          <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
+          <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
           {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
         </div>
       </Card>
@@ -245,6 +262,8 @@ function Warnings({ load, s, wide }) {
   }
   const texts = w.flags.map(warnText);
   if (!W.count || texts.some((x) => !x)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+  // Jack, PR #68 (2026-11-07): under the 이자보상배율 warning, say when it used the cash-flow statement's interest paid
+  const cfNote = (code) => code === "icr" && w.icrCf && W.icrCfNote ? W.icrCfNote : null;
   return (
     <>
       <button type="button" data-ui-v2="co-warn" data-n={w.flags.length} onClick={() => setOpen(true)} aria-haspopup="dialog"
@@ -254,6 +273,7 @@ function Warnings({ load, s, wide }) {
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
+          {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
       </button>
@@ -263,7 +283,10 @@ function Warnings({ load, s, wide }) {
           {texts.map((x, i) => (
             <div key={w.flags[i].code} data-flag={w.flags[i].code} style={{ display: "flex", gap: SPACE(2), padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <Icon name="alert" size={18} tone="on" />
-              <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{x}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { display: "block" })}>{x}</span>
+                {cfNote(w.flags[i].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[i].code)}</span>}
+              </span>
             </div>
           ))}
           {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}

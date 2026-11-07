@@ -13,9 +13,9 @@ import {
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, CardPic, DeckPic, CardScores, useLayout, tx, tap } from "./ui.jsx";
-import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView } from "./deckcalc.js";
+import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cushionStocks, clashView, y2022View } from "./deckcalc.js";
 import { Pick } from "./pick.jsx";
-import { Plan } from "./plan.jsx";
+import { Plan, Y2022Amount } from "./plan.jsx";
 
 export const STEPS = ["start", "cards", "exclude", "terms"];
 // The first step's back button leaves 포트폴리오 만들기 (to the screen before it). Its name waits for Jack (build.backToday):
@@ -276,17 +276,22 @@ function StepTerms({ st, set, ds, load }) {
     set({ pinned: [...st.pinned, s.t] });
     setQ("");
   };
-  // 2022 line per sizing choice, from the list that 후보 고르기 would pre-select
+  // 2022 line per sizing choice, from the list that 후보 고르기 would pre-select. v19.1b data (Part O.1): each a range from the
+  // beta band (deckcalc.y2022View). A choice whose smaller end is not a fall shows plan.y2022Wide in its own cell, the others
+  // keep their ranges; when all three are, the line once instead of the three cells.
   const y2022 = useMemo(() => {
     if (!(amt > 0)) return null;
     const picks = pickItems(ds, defaultPicks(ds));
     const out = {};
     for (const m of METHODS) {
       const r = computePlan(load, { ...st, method: m }, picks, ds.pinned);
-      out[m] = r.ok && r.y2022.ok ? r.y2022.won : null;
+      out[m] = r.ok && r.y2022.ok ? { won: r.y2022.won, view: y2022View(r.y2022, true) } : null;
     }
     return Object.values(out).every((v) => v != null) ? out : "hide";
   }, [ds, st, load, amt]);
+  const wideOf = (m) => !!(y2022 && y2022 !== "hide" && y2022[m].view && y2022[m].view.wide);
+  const yWide = METHODS.every(wideOf);
+  const yRange = y2022 && y2022 !== "hide" && METHODS.some((m) => !wideOf(m) && y2022[m].view && y2022[m].view.parts.length > 1);
   return (
     <div>
       <ScreenTitle>{s4.title}</ScreenTitle>
@@ -346,13 +351,17 @@ function StepTerms({ st, set, ds, load }) {
         {y2022 !== "hide" && (
           <div data-ui-v2="y2022-methods" style={{ marginTop: SPACE(3) }}>
             <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink)}>{s4.y2022Label}</div>
-            {!y2022 ? <Note>{s4.y2022Empty}</Note> : (
+            {!y2022 ? <Note>{s4.y2022Empty}</Note> : yWide ? <Note data-ui-v2="y2022-wide">{C.plan.y2022Wide}</Note> : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: SPACE(1), marginTop: SPACE(1) }}>
                 {METHODS.map((m) => (
-                  <div key={m} style={tx(SIZE.xs, m === st.method ? WEIGHT.heavy : WEIGHT.regular, m === st.method ? COLOR.ink : COLOR.text2, { textAlign: "center" })}>{aboutWon(y2022[m])}</div>
+                  <div key={m} data-method={m} style={tx(SIZE.xs, m === st.method ? WEIGHT.heavy : WEIGHT.regular, m === st.method ? COLOR.ink : COLOR.text2, { textAlign: "center", minWidth: 0 })}>
+                    {wideOf(m) ? <span data-ui-v2="y2022-wide">{C.plan.y2022Wide}</span>
+                      : y2022[m].view ? <Y2022Amount v={y2022[m].view} /> : aboutWon(y2022[m].won)}
+                  </div>
                 ))}
               </div>
             )}
+            {yRange && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.plan.y2022Range}</div>}
             {y2022 && <div data-ui-v2="y2022-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{C.plan.y2022Source}</div>}
           </div>
         )}

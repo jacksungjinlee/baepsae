@@ -9,7 +9,7 @@ import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { ListRow, StatusChip, Collapsible } from "../ui/components.jsx";
 import { C, fill, nf, p1 } from "./format.js";
 import { RuleLine, ChoiceGrid, tx } from "./ui.jsx";
-import { opPieces, opAmounts } from "./deckcalc.js";
+import { opPieces, opAmounts, divDropBody } from "./deckcalc.js";
 import { CoMark } from "./logo.jsx";
 
 const R = () => C.plan.rules;
@@ -83,7 +83,7 @@ export function DividendAnswers({ x, onConfirm, sellSaid }) {
     const drop = fill(C.pick.caution.divDrop, { name: x.nk, a: won(d.a), b: won(d.b) });
     const v = d.answer === "cut" ? { code: "divCut", level: "broken", pieces: [R().divCut, fill(R().dpsChange, { a: won(d.a), b: won(d.b) })], body: sellSaid ? null : C.daily.sellNow }
       : d.answer === "notCut" ? { code: "divCleared", level: "none", pieces: [drop] }
-      : { code: "divDrop", level: "check", pieces: [drop], body: C.pick.caution.divDropBody };
+      : { code: "divDrop", level: "check", pieces: [drop], body: divDropBody() };
     return (
       <Line key={`d${d.fy}${d.a}${d.b}`} {...v} source={yearText(d.fy)} first={i === 0}>
         {onConfirm && (

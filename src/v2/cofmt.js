@@ -50,3 +50,19 @@ export function bigWon(won) {
   if (Math.abs(won) >= 1e8 && eokText(won / 1e8)) return eokText(won / 1e8);
   return wonText(won);
 }
+// Beta with its band (v19.1b data, Part O.1): one decimal, the true minus sign "−" (U+2212) for a negative end, "0.0" for
+// zero. riskBandText: the 출렁임 tile's number ("코스피 1% → 평균 0.9~1.1%") or, with line = true, the 출렁임 line of the
+// 가치 tab ("코스피가 1% 움직일 때 평균 …% 움직였어요."); both ends the same after rounding -> the single-number wording.
+// Korea reads against 코스피, the US against S&P 500. r: company.js riskTile; no band -> null (no number, never a bare beta).
+export const betaText = (v) => `${v < 0 ? "−" : ""}${nf(Math.abs(v), 1)}`;
+export function riskBandText(s, r, line = false) {
+  const b = r && r.band;
+  if (!b) return null;
+  const mk = usOf(s) ? "us" : "kr";
+  const L = line ? (b.one ? C.co.risk.one : C.co.risk.band) : (b.one ? C.co.tiles.riskOne : C.co.tiles.riskBand);
+  const t = L && L[mk];
+  if (!t) return null;
+  return b.one ? fill(t, { x: betaText(b.lo) }) : fill(t, { lo: betaText(b.lo), hi: betaText(b.hi) });
+}
+// The note under the 출렁임 line: a range ("과거 주가로 계산한 범위예요. …") or one number ("… 값이에요. …").
+export const riskBandNote = (r) => (r && r.band ? (r.band.one ? C.co.risk.oneNote : C.co.risk.bandNote) || null : null);
