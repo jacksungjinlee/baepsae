@@ -25,7 +25,7 @@ Part J). Run by hand only: from the workflow "logo.dev 로고 받기" (.github/w
                                                              # a copy of the group's main mark (Jack, 2026-11-07)
   python3 tools/logos/logodev_fetch.py --add-site-icons SURVEY --codes 017800 --dir DIR --reason "looked at"
                                                              # the company's own homepage icon, 96 px or more
---drop, --keep and --add-from are all or nothing (both folders checked before and after; on any error nothing changes),
+--drop, --keep, --add-from, --group-mark and --add-site-icons are all or nothing (both folders checked before and after; on any error nothing changes),
 take each code once, and --drop refuses a preferred share (it goes with its common share). --add-from refuses a company
 that already has a logo in DIR (--drop it first); a preferred share follows its issuer.
 A run of more than 50 companies (no --limit, or a bigger one) needs --full-run-date set to today's KST date (the
@@ -1576,6 +1576,12 @@ def summary_md(info):
     if info.get("adds"):
         out += ["## Added after review (from a --only run)", ""]
         out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["adds"]]
+    if info.get("groups"):
+        out += ["", "## Group marks added after review (--group-mark; the company's own website shows the group's main mark)", ""]
+        out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["groups"]]
+    if info.get("sites"):
+        out += ["", "## Homepage icons added after review (--add-site-icons; the company's own icon, 96 px or more)", ""]
+        out += [f"- {d['code']} {d['name']} — {d['reason']}" for d in info["sites"]]
         out.append("")
     out += ["## Sources", ""] + [f"- {s}" for s in info["sources"]] + [
         "", "Files: logos/ (pictures + index.json, for tools/push_logos_branch.sh), review.csv (one row per company), "
@@ -2020,6 +2026,10 @@ def drop(folder, codes, reason):
         if via:
             raise SystemExit(f"!! {c} is a preferred share: 우선주는 보통주({via})를 빼면 같이 빠져요. Give --drop {via} "
                              "instead; nothing was changed")
+    copies = sorted(c for c, e in index["logos"].items() if e.get("group") in want and c not in want)
+    if copies:
+        raise SystemExit(f"!! {copies} show a copy of this picture as their group mark (--group-mark): drop them too "
+                         "(name them in the same --drop) or keep the source; nothing was changed")
     names = {r["code"]: r["name"] for r in _review_rows(folder)}
     gone = set(want) | {c for c, e in index["logos"].items() if e.get("via") in want}
     ni, nd = _copy(index), _copy(dindex)
@@ -2225,6 +2235,10 @@ def group_marks(folder, pairs, reason):
     adds, gone, new = {}, [], []
     for code, src in want:
         e = index["logos"].get(src)
+        srow = by.get(src) or {}
+        if e and (srow.get("market") == "US" or not srow):
+            raise SystemExit(f"!! --group-mark {code}={src}: the source must be a Korean company in this folder's "
+                             "review.csv; nothing was changed")
         if not e or e.get("via") or "group-mark" in e.get("flags", []):
             raise SystemExit(f"!! --group-mark {code}={src}: {src} has no picture of its own in logos/ (a copied group "
                              "mark or a preferred share is never a source); nothing was changed")
@@ -2284,7 +2298,7 @@ def add_site_icons(folder, survey, codes, reason, webp=None):
         sub = "kr" if d["decision"] == "kept" else "review"
         pic = survey / sub / f"{code}.png"
         size = str(d.get("original_size") or "")
-        vector = size == "svg" or d.get("source_type", "").endswith("svg") or str(d.get("final_url", "")).lower().endswith(".svg")
+        vector = size == "svg"                      # the survey marks an SVG icon by its size field only (never by address)
         m = re.fullmatch(r"(\d+)x(\d+)", size)
         if not pic.exists() or not (vector or m):
             raise SystemExit(f"!! --add-site-icons {code}: no picture or no size in the survey ({pic.name}, {size!r}); "
@@ -2354,7 +2368,7 @@ def parse_args(argv):
     ap.add_argument("--drop", metavar="CODES", help="comma-separated codes to switch to the letter mark (with --dir)")
     ap.add_argument("--keep", metavar="CODES", help="comma-separated codes to restore from dropped/ (with --dir)")
     ap.add_argument("--dir", help="the output folder of an earlier run (with --drop, --keep or --add-from)")
-    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop, --keep or --add-from)")
+    ap.add_argument("--reason", default="decided on the review sheet", help="why (with --drop, --keep, --add-from, --group-mark or --add-site-icons)")
     ap.add_argument("--only", metavar="CODES", default="",
                     help=f"only these companies (comma-separated codes, at most {ONLY_MAX}): a fix-up after a reviewed run")
     ap.add_argument("--route", choices=("auto", "ticker"), default="auto",

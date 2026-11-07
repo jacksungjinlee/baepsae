@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+from test_data_branch import repo  # noqa: F401, E402  (a fixture)
+
 import test_logo_fetch as T
 import test_logo_retry as R
 
@@ -171,3 +173,132 @@ def test_the_cli_pairs_each_command_with_its_inputs(tmp_path):
     with pytest.raises(SystemExit):
         F.main(["--group-mark", "005380=005930"])                                   # needs --dir
     assert "site" in LI.ROUTES
+
+
+# ── after the fresh-eyes review of PR #74 ──
+def test_an_svg_icon_is_judged_by_the_surveys_size_field_only(tmp_path):
+    first = folder(tmp_path)
+    s = survey(tmp_path, {"005380": ("kept", "svg", icon())})
+    assert F.main(["--add-site-icons", str(s), "--codes", "005380", "--dir", str(first)]) == 0
+    e = T.index(first)["logos"]["005380"]
+    assert e["vector"] is True and (e["w"], e["h"]) == (128, 128)
+    (tmp_path / "b").mkdir()
+    first2 = folder(tmp_path / "b")
+    s2 = survey(tmp_path / "b", {"005380": ("kept", "64x64", icon())})
+    d = json.loads((s2 / "decisions.json").read_text(encoding="utf-8"))
+    for v in d.values():
+        v["final_url"], v["source_type"] = "https://x.example.kr/logo.svg", "icon-svg"     # an address alone is not a vector
+    (s2 / "decisions.json").write_text(json.dumps(d), encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        F.main(["--add-site-icons", str(s2), "--codes", "005380", "--dir", str(first2)])
+    assert "under 96 px" in str(e.value)
+
+
+@pytest.mark.parametrize("size,ok", [("96x96", True), ("95x96", False), ("96x95", False)])
+def test_the_96_px_edge(tmp_path, size, ok):
+    first = folder(tmp_path)
+    s = survey(tmp_path, {"005380": ("kept", size, icon())})
+    if ok:
+        assert F.main(["--add-site-icons", str(s), "--codes", "005380", "--dir", str(first)]) == 0
+    else:
+        with pytest.raises(SystemExit) as e:
+            F.main(["--add-site-icons", str(s), "--codes", "005380", "--dir", str(first)])
+        assert "under 96 px" in str(e.value)
+
+
+def test_two_identical_icons_in_one_call_are_refused(tmp_path):
+    first = folder(tmp_path)
+    s = survey(tmp_path, {"005380": ("kept", "180x180", icon()), "000660": ("kept", "180x180", icon())})
+    before = T.snapshot(first)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--add-site-icons", str(s), "--codes", "005380,000660", "--dir", str(first)])
+    assert "the same picture as another company's logo" in str(e.value) and T.snapshot(first) == before
+
+
+def test_an_old_dropped_picture_leaves_dropped_for_group_marks_and_icons(tmp_path):
+    first = folder(tmp_path, gone=())
+    assert F.main(["--drop", "005380,000660", "--dir", str(first)]) == 0
+    assert (first / "dropped" / "005380.webp").exists() and (first / "dropped" / "000660.webp").exists()
+    s = survey(tmp_path, {"000660": ("kept", "180x180", icon())})
+    assert F.main(["--group-mark", "005380=005930", "--dir", str(first)]) == 0
+    assert F.main(["--add-site-icons", str(s), "--codes", "000660", "--dir", str(first)]) == 0
+    dropped = json.loads((first / "dropped" / "index.json").read_text(encoding="utf-8"))["logos"]
+    assert "005380" not in dropped and "000660" not in dropped
+    assert not (first / "dropped" / "005380.webp").exists() and not (first / "dropped" / "000660.webp").exists()
+    assert LI.validate_dir(first / "logos")[1] == [] and LI.validate_dir(first / "dropped")[1] == []
+
+
+def test_the_summary_lists_group_marks_and_homepage_icons(tmp_path):
+    first = folder(tmp_path)
+    s = survey(tmp_path, {"000660": ("kept", "180x180", icon())})
+    assert F.main(["--group-mark", "005380=005930", "--dir", str(first), "--reason", "own site shows it"]) == 0
+    assert F.main(["--add-site-icons", str(s), "--codes", "000660", "--dir", str(first)]) == 0
+    text = (first / "summary.md").read_text(encoding="utf-8")
+    assert "## Group marks added after review" in text and "005380" in text.split("## Group marks", 1)[1]
+    assert "## Homepage icons added after review" in text and "000660" in text.split("## Homepage icons", 1)[1]
+
+
+def test_a_group_mark_source_cannot_be_dropped_while_its_copies_are_live(tmp_path):
+    first = folder(tmp_path)
+    assert F.main(["--group-mark", "005380=005930", "--dir", str(first)]) == 0
+    before = T.snapshot(first)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--drop", "005930", "--dir", str(first)])
+    assert "005380" in str(e.value) and "group mark" in str(e.value) and T.snapshot(first) == before
+    assert F.main(["--drop", "005930,005380", "--dir", str(first)]) == 0           # both together is fine
+    assert "005380" not in T.index(first)["logos"]
+
+
+def test_a_us_company_is_never_a_group_mark_target_or_source(tmp_path):
+    first = folder(tmp_path, gone=("005380", "AAPL"))
+    before = T.snapshot(first)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--group-mark", "AAPL=005930", "--dir", str(first)])                # AAPL shows a letter mark: still refused
+    assert "not a Korean common share" in str(e.value)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--group-mark", "005380=MSFT", "--dir", str(first)])                # a US source
+    assert "must be a Korean company" in str(e.value) and T.snapshot(first) == before
+
+
+def test_add_site_icons_without_codes_is_an_argument_error(tmp_path, capsys):
+    first = folder(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        F.main(["--add-site-icons", str(tmp_path), "--dir", str(first)])
+    assert e.value.code == 2 and "--add-site-icons needs --codes" in capsys.readouterr().err
+
+
+def test_a_failed_write_also_leaves_the_records_as_they_were(tmp_path, monkeypatch):
+    first = folder(tmp_path)
+    s = survey(tmp_path, {"005380": ("kept", "180x180", icon())})
+    records = {n: (first / n).read_bytes() if (first / n).exists() else None
+               for n in ("run.json", "summary.md", "groups.csv", "sites.csv")}
+
+    def broken(f, index):
+        raise OSError("disk full")
+    monkeypatch.setattr(F, "write_index", broken)
+    for argv in (["--add-site-icons", str(s), "--codes", "005380", "--dir", str(first)],
+                 ["--group-mark", "005380=005930", "--dir", str(first)]):
+        try:
+            F.main(argv)
+        except OSError:
+            pass
+        assert {n: (first / n).read_bytes() if (first / n).exists() else None for n in records} == records
+
+
+def test_push_refuses_homepage_icons_until_main_names_company_homepages(repo, tmp_path):
+    import test_logos_branch as B
+    work, origin, _ = repo
+    folder_ = B.make_logos(tmp_path / "logos", ["005930"])
+    idx = json.loads((folder_ / "index.json").read_text(encoding="utf-8"))
+    idx["logos"]["005930"]["route"] = "site"
+    (folder_ / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+    r = B.push_logos(work, folder_)
+    assert r.returncode != 0 and "일부는 각 회사 홈페이지" in r.stdout and not B.tip(origin)
+    (work / "src" / "info.jsx").write_text("회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요.",
+                                           encoding="utf-8")
+    B.git(work, "add", "-A")
+    B.git(work, "commit", "-q", "-m", "credit line")
+    B.git(work, "push", "-q", "origin", "main")
+    r = B.push_logos(work, folder_)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert B.tip(origin)

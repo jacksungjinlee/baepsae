@@ -269,9 +269,18 @@ def not_publishable(index):
     return None
 
 
+def has_site_icons(index):
+    """True when any entry is a company's own homepage icon (route site): the 데이터 출처 line must name company
+    homepages before such a folder is published (Jack, 2026-11-07; tools/push_logos_branch.sh checks main)."""
+    return any(isinstance(e, dict) and e.get("route") == "site" for e in (index.get("logos") or {}).values())
+
+
 def main(argv):
+    if len(argv) == 2 and argv[0] == "has-site":       # exit 0 = the folder has homepage icons
+        index, bad = validate_dir(argv[1])
+        return 0 if not bad and has_site_icons(index) else 1
     if len(argv) != 2 or argv[0] not in ("check", "publishable"):
-        raise SystemExit("usage: python3 tools/logos/logo_index.py check|publishable DIR")
+        raise SystemExit("usage: python3 tools/logos/logo_index.py check|publishable|has-site DIR")
     index, bad = validate_dir(argv[1])
     for b in bad[:50]:
         print("!! " + b)

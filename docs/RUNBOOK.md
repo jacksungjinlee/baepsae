@@ -115,8 +115,10 @@ tells you what happened in plain words.
   `python3 tools/logos/logodev_fetch.py --group-mark CODE=FROM,CODE=FROM --dir FOLDER --reason "..."` (an exact copy of
   FROM's picture, flagged `group-mark`; recorded in `groups.csv`).
 - **Homepage icons** (Jack, 2026-11-07): the company's own homepage icon from the site-icon survey
-  (`tools/logos/site_icons.py` on `claude/logos-site-icons`), only its largest icon of 96 px or more, every quality check,
-  never the same picture as another company's logo, each looked at first:
+  (`tools/logos/site_icons.py` on `claude/logos-site-icons`), 96 px or more, every quality check, never the same picture
+  as another company's logo, each looked at first. Jack asked for the largest icon: logos are stored at 128 px, so any
+  icon of 128 px or more gives the same picture; for an icon under 128 px, check the site's other icons (link rel=icon,
+  apple-touch-icon, manifest) and use the largest:
   `--add-site-icons SURVEY_FOLDER --codes CODE,CODE --dir FOLDER` (route `site`, flagged `homepage-icon`; `sites.csv`).
   Before the first homepage icon goes live, the 데이터 출처 line must read "회사 로고: Logo.dev, 일부는 각 회사 홈페이지.
   로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07).
