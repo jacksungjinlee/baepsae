@@ -5306,6 +5306,23 @@ def scene_v193e_home(R, files, width):
         ctx.close()
         srv.shutdown()
 
+    nopx = clone(f)
+    for x in nopx["data.json"]["stocks"]:
+        if x["t"] == "000660":
+            x["price"] = None                                                 # 데이터에는 있지만 오늘 가격이 없어요
+    srv, ctx, page, base = R.open(build_site(nopx, app=app), width, init=e_store([deck]), path="/app.html?dev=1#home")
+
+    def no_price():
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="home-money"]').count() == 0          # 값을 모르면 빈 카드를 그리지 않아요
+        st = page.locator('[data-ui-v2="home-rule"]').evaluate_all("els => els.map((e) => e.dataset.rule + ':' + e.dataset.state)")
+        assert "stock:unknown" in st and "ind:unknown" in st, st             # 비중을 모르니 확인하지 못했어요 (✓ 아님)
+        R.collect(page)
+    R.check(page, S, "오늘 가격이 없는 종목: 포트폴리오 카드는 빠지고 비중 규칙은 확인하지 못했어요", no_price)
+    ctx.close()
+    srv.shutdown()
+
     srv, ctx, page, base = R.open(build_site(f, app=app), width, path="/app.html?dev=1#home")
 
     def first():
@@ -5315,6 +5332,11 @@ def scene_v193e_home(R, files, width):
     R.check(page, S, "저장한 포트폴리오가 없으면 첫 방문 화면 그대로", first)
     ctx.close()
     srv.shutdown()
+
+
+def div_shape(rule):
+    """company.divArt: 늘렸어요(streak · raised)만 올라가는 더미, 늘지 않은 지급(steady · pays · noPrev)은 같은 높이, 나머지는 그림 없음."""
+    return "rising" if rule in ("streak", "raised") else "even" if rule in ("steady", "pays", "noPrev") else None
 
 
 def scene_v193e_company(R, files, width):
@@ -5347,7 +5369,11 @@ def scene_v193e_company(R, files, width):
         assert art["earn"] == ("bars" if all(x > 0 for x in op) else None), art
         assert [float(b.get_attribute("data-v")) for b in tiles["earn"].locator('[data-ui-v2="tile-art"] [data-v]').all()] == [op[2], op[1], op[0]]
         assert art["value"] == ("scale" if tiles["value"].get_attribute("data-rule") in ("cheap", "dear", "similar") else None), art
-        assert art["div"] == ("coins" if tiles["div"].get_attribute("data-rule") not in ("none", "na") else None), art
+        assert art["div"] == ("coins" if div_shape(tiles["div"].get_attribute("data-rule")) else None), art
+        if art["div"]:
+            assert tiles["div"].locator('[data-art="coins"]').get_attribute("data-shape") == div_shape(tiles["div"].get_attribute("data-rule"))
+        keys = page.locator('[data-ui-v2="wave-key"]').evaluate_all("els => els.map((e) => e.getBoundingClientRect().height)")
+        assert keys and all(h < 24 for h in keys), keys                       # '이 회사' · '시장' 한 줄씩 (320px 에서도)
         risk = tiles["risk"].get_attribute("data-rule")
         assert art["risk"] == ("waves" if risk != "na" else None) and tiles["risk"].locator(f'[data-art="waves"][data-rule="{risk}"]').count() == (risk != "na")
         chips = page.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("els => els.map(e => e.dataset.check)")
@@ -5368,6 +5394,19 @@ def scene_v193e_company(R, files, width):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "요약: 칸마다 규칙대로 그림 · 재무 경고 칩 넷 · 오른 날 줄 · 내 포트폴리오의 {x}%", summary)
+
+    def div_coins():
+        for code in (V191B_CUT, "105560", V191B_SPLIT):
+            open_co(code)
+            t = page.locator('[data-ui-v2="co-tile"][data-topic="div"]')
+            t.wait_for(state="visible")
+            rule, coins = t.get_attribute("data-rule"), t.locator('[data-art="coins"]')
+            want = div_shape(rule)
+            assert (coins.get_attribute("data-shape") if coins.count() else None) == want, (code, rule, want)
+            if rule == "cut":
+                assert coins.count() == 0                                     # '배당을 줄였어요' 옆에 올라가는 동전 더미 없음
+        R.collect(page)
+    R.check(page, S, "배당 칸 동전: 늘렸어요만 올라가는 더미 · 늘지 않은 지급은 같은 높이 · 줄였어요는 그림 없음", div_coins)
 
     def chips_only_when_ran():
         for code, want in ((V191B_ND, ["l3", "imp"]), (V191B_PART, ["l3", "cr", "imp"]), (V191B_CUT, None), (V191B_OPMISS, None)):
@@ -5443,6 +5482,21 @@ def scene_v193e_company(R, files, width):
     ctx.close()
     srv.shutdown()
 
+    other = e_imported(by, d["pxDate"], [("005380", 5, None)], did="dother", name="배당 생활비 포트폴리오")
+    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([deck, other]), path="/app.html?dev=1#stocks/005930")
+
+    def two_portfolios():
+        co_wait(page)
+        row = page.locator('[data-ui-v2="co-held-row"][data-deck-id="dimp"] [data-ui-v2="co-held-line"]')
+        row.wait_for(state="visible")
+        w = 10 * by["005930"]["price"] / (10 * by["005930"]["price"] + 10 * by["005380"]["price"]) * 100
+        assert row.inner_text() == fillp(CO["hold"]["weight"], name="포트폴리오", pct=f"{round(w)}%"), row.inner_text()   # 포트폴리오가 둘: 이름과 함께
+        assert CO["hold"]["mine"].split("{")[0] not in page.locator('[data-ui-v2="co-held"]').inner_text()
+        R.collect(page)
+    R.check(page, S, "포트폴리오가 둘이면 이 종목을 하나만 가져도 '{이름}의 {x}%' ('내 포트폴리오의'가 아니에요)", two_portfolios)
+    ctx.close()
+    srv.shutdown()
+
     srv, ctx, page, base = R.open(build_site(f, app=v193e_on_app()), width, path="/app.html?dev=1#stocks/AAPL")
 
     def us_head():
@@ -5509,7 +5563,8 @@ def main():
                    lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
                    lambda: scene_v193e_home(R, files, 390), lambda: scene_v193e_home(R, files, 1280),    # v19.3e 새 홈 (스위치를 켠 빌드)
                    lambda: scene_v193e_home(R, files, 320),
-                   lambda: scene_v193e_company(R, files, 390), lambda: scene_v193e_company(R, files, 1280)):   # v19.3e 회사 페이지
+                   lambda: scene_v193e_company(R, files, 390), lambda: scene_v193e_company(R, files, 1280),     # v19.3e 회사 페이지
+                   lambda: scene_v193e_company(R, files, 320)):
             try:
                 fn()
             except Exception as e:

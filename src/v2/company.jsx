@@ -25,7 +25,8 @@ import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
   splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
-import { pfRows, isImported } from "./pf.js";
+import { pfRows, isImported, limitsOf } from "./pf.js";
+import { limitPct } from "./pfview.jsx";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -93,7 +94,7 @@ export function tileViews(load, s) {
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
-      r.rule !== "none" ? { kind: "coins" } : null);
+      divArt(r.rule));
   }
   {
     // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
@@ -106,12 +107,20 @@ export function tileViews(load, s) {
   return out;
 }
 
+// The 배당 tile's coins say no more than its phrase: rising stacks only for 늘렸어요 (streak · raised), equal stacks for a
+// payer with no rise (steady · pays · noPrev), no picture for 줄였어요 (cut), 배당이 없어요 (none) or 자료가 없어요 (na).
+export function divArt(rule) {
+  if (rule === "streak" || rule === "raised") return { kind: "coins", shape: "rising" };
+  if (rule === "steady" || rule === "pays" || rule === "noPrev") return { kind: "coins", shape: "even" };
+  return null;
+}
+
 // The tile's picture (coart.jsx). 출렁임's legend: 이 회사 (co.earn.mine) and 시장 (the same word as the 시장 tab).
 export function TileArt({ art }) {
   if (!art) return null;
   if (art.kind === "bars") return <EarnBars op={art.op} />;
   if (art.kind === "scale") return <ValueScale pbr={art.pbr} med={art.med} />;
-  if (art.kind === "coins") return <Coins />;
+  if (art.kind === "coins") return <Coins shape={art.shape} />;
   if (art.kind === "waves") return <Waves rule={art.rule} mine={C.co.earn.mine} market={C.app.tabs.market} />;
   return null;
 }
@@ -428,18 +437,30 @@ export function importedHeld(decks, ev, ctx, t) {
   }
   return out;
 }
-const holdPct = (w) => { const p = w * 100; return nf(p > 0 && p < 0.95 ? Math.round(p * 10) / 10 : Math.round(p), p > 0 && p < 0.95 ? 1 : 0); };
-function Holdings({ held }) {
+// The share as the rest of the page shows it: a built portfolio as its 비중 규칙 line does ("지금 14.5%", one decimal); a
+// 가진 종목 portfolio against its 한 종목 limit (pfview.limitPct: never reads as the limit when it broke it, as on 홈 and
+// 포트폴리오). -> the number without "%".
+export function holdShare(x, imported, deck) {
+  if (imported) return limitPct(x.w, limitsOf(deck).stock);
+  const r = Math.round(x.w * 1000) / 10;
+  return p1(r === 0 ? 0 : r);
+}
+// "내 포트폴리오의 {x}%" only when the user has a single portfolio; otherwise each line names its portfolio ("{name}의 {pct}").
+export function holdLine(h, single) {
+  const { name, x, imported, deck } = h;
+  if (x.w == null) return shownName(name);
+  const v = holdShare(x, imported, deck);
+  if (single && C.co.hold.mine) return fill(C.co.hold.mine, { x: v });
+  return C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: `${v}%` }) : shownName(name);
+}
+function Holdings({ held, single }) {
   if (!held.length) return null;
-  const one = held.length === 1;
   return (
     <Card data-ui-v2="co-held" style={{ padding: `${SPACE(2)}px ${SPACE(4)}px` }}>
       {held.map(({ deckId, name, x, imported }) => {
         const k = imported ? 0 : keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
         const chips = imported ? null : statusChips(x);
-        const line = x.w == null ? shownName(name)
-          : one && C.co.hold.mine ? fill(C.co.hold.mine, { x: holdPct(x.w) })
-          : C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: pctText(x.w * 100) }) : shownName(name);
+        const line = holdLine(held.find((h) => h.deckId === deckId), single);
         return (
           <div key={deckId} data-ui-v2="co-held-row" data-deck-id={deckId} data-status={x.status} data-kind={imported ? "imported" : undefined}
             style={{ padding: `${SPACE(2)}px 0`, borderTop: deckId === held[0].deckId ? "none" : `1px solid ${COLOR.line}` }}>
@@ -625,7 +646,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
             <Tiles load={load} s={s} onTab={setTab} tabsOn={!!labels} />
             <Warnings load={load} s={s} wide={wide} />
             <Fit load={load} s={s} store={store} wide={wide} />
-            <Holdings held={heldAll} />
+            <Holdings held={heldAll} single={store.data.decks.length === 1} />
             <Memo s={s} store={store} setStoreData={setStoreData} held={held} />
           </div>
         )}

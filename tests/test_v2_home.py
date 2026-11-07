@@ -29,7 +29,7 @@ def run(body, **data):
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
             for name, mod in (("Hm", "home.js"), ("P", "pf.js"), ("T", "track.js"), ("R", "rules.js"), ("K", "company.js"), ("W", "warn.js"),
-                              ("X", "cotabs.jsx"), ("V", "pfview.jsx"), ("A", "coart.jsx")):
+                              ("X", "cotabs.jsx"), ("V", "pfview.jsx"), ("A", "coart.jsx"), ("Co", "company.jsx")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
             f.write(f"export {{ C }} from {json.dumps(os.path.join(ROOT, 'src', 'copy', 'v2.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
@@ -39,7 +39,7 @@ def run(body, **data):
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
     pre = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
-    code = ("import { Hm, P, T, R, K, W, X, V, A, C } from './home.mjs';\nconst warns = []; console.warn = (m) => warns.push(String(m));\n" + pre + HELP
+    code = ("import { Hm, P, T, R, K, W, X, V, A, Co, C } from './home.mjs';\nconst warns = []; console.warn = (m) => warns.push(String(m));\n" + pre + HELP
             + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -150,8 +150,9 @@ def test_concentration_card_is_the_broken_industry_rule():
 
 
 def test_a_share_over_its_limit_never_reads_as_the_limit():
-    got = run("""out = [V.limitPct(0.304, 30), V.limitPct(0.296, 30), V.limitPct(0.30, 30), V.limitPct(0.3004, 30), V.limitPct(0.481, 35), V.limitPct(0.35, 35)];""")
-    assert got == ["30.4", "30", "30", "30.04", "48", "35"]
+    got = run("""out = [V.limitPct(0.304, 30), V.limitPct(0.296, 30), V.limitPct(0.30, 30), V.limitPct(0.3004, 30), V.limitPct(0.481, 35), V.limitPct(0.35, 35),
+      V.limitPct(0.004, 30), V.limitPct(0.0094, 30), V.limitPct(0.0096, 30)];""")
+    assert got == ["30.4", "30", "30", "30.04", "48", "35", "0.4", "0.9", "1"]          # 작은 종목은 0% 로 읽히지 않아요
 
 
 def test_value_fix_compares_net_income_with_net_income():
@@ -197,8 +198,9 @@ def test_rise_day_counts_and_together():
 
 
 def test_payout_as_won_out_of_a_hundred():
-    got = run("""out = [X.payoutWon(24.6), X.payoutWon(0.3), X.payoutWon(99.6), X.payoutWon(50), X.payoutWon(100)];""")
-    assert got == [{"x": "25", "y": "75"}, {"x": "0.3", "y": "99.7"}, {"x": "99.6", "y": "0.4"}, {"x": "50", "y": "50"}, {"x": "100.0", "y": "0.0"}]
+    got = run("""out = [X.payoutWon(24.6), X.payoutWon(0.3), X.payoutWon(99.6), X.payoutWon(50), X.payoutWon(100), X.payoutWon(99.97)];""")
+    assert got == [{"x": "25", "y": "75", "rest": True}, {"x": "0.3", "y": "99.7", "rest": True}, {"x": "99.6", "y": "0.4", "rest": True},
+                   {"x": "50", "y": "50", "rest": True}, {"x": "100.0", "y": "0.0", "rest": False}, {"x": "100.0", "y": "0.0", "rest": False}]   # '나머지 0원'은 말하지 않아요
 
 
 def test_tile_pictures_follow_the_tile_rule_only():
@@ -211,3 +213,41 @@ def test_the_value_fix_is_on():
     import re
     got = re.findall(r"^export const DCF_NI = (true|false);$", open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read(), flags=re.M)
     assert got == ["true"]
+
+
+def test_dividend_tile_coins_follow_its_rule():
+    """배당 칸의 동전 그림: 늘렸어요(streak · raised)만 올라가는 더미, 늘지 않은 지급(steady · pays · noPrev)은 같은 높이,
+    줄였어요(cut) · 배당이 없어요 · 자료가 없어요는 그림 없음 (현대차의 '배당을 줄였어요' 옆에 올라가는 더미가 없게)."""
+    got = run("""out = ['streak', 'raised', 'steady', 'pays', 'noPrev', 'cut', 'none', 'na'].map((r) => Co.divArt(r));""")
+    assert got == [{"kind": "coins", "shape": "rising"}] * 2 + [{"kind": "coins", "shape": "even"}] * 3 + [None] * 3
+
+
+def test_holding_line_matches_the_rest_of_the_page():
+    """회사 페이지의 가진 비중: 포트폴리오가 하나뿐일 때만 '내 포트폴리오의 {x}%', 아니면 이름과 함께. 만든 포트폴리오는 비중 규칙
+    줄처럼 한 자리(14.5%), 가진 종목 포트폴리오는 한 종목 한계에 맞춰(30.4% 는 30% 가 아니에요)."""
+    got = run("""const imp = { kind: 'imported', limits: { stock: 30 } };
+      const f = (w, imported, single, deck = imported ? imp : {}) => Co.holdLine({ name: '배당 포트폴리오', x: { w }, imported, deck }, single);
+      out = [f(0.145, false, true), f(0.145, false, false), f(0.304, true, true), f(0.304, true, false), f(0.296, true, true), f(0.004, true, true),
+        f(0.4449, true, true), f(null, false, true), f(0.20, true, true, { kind: 'imported', limits: { stock: 15 } })];""")
+    assert got == ["내 포트폴리오의 14.5%", "배당 포트폴리오의 14.5%", "내 포트폴리오의 30.4%", "배당 포트폴리오의 30.4%", "내 포트폴리오의 30%",
+                   "내 포트폴리오의 0.4%", "내 포트폴리오의 44%", "배당 포트폴리오", "내 포트폴리오의 20%"]
+
+
+def test_comparison_title_counts_the_smaller_median():
+    got = run("""out = [X.compareN(38, { med: 1, n: 30 }), X.compareN(38, { med: 1, n: 40 }), X.compareN(38, null), X.compareN(12, { med: 1, n: 0 })];""")
+    assert got == [30, 38, 38, 12]
+
+
+def test_home_money_says_why_there_is_no_value():
+    nopx = [dict(s) for s in STOCKS]
+    nopx[0]["price"] = None
+    got = run("""const d = impDeck([row('000010', '가나전자', 10, { avg: 8000 }), row('000020', '가나은행', 5)]);
+      const ctx = ctxOf(NOPX); const [b] = Hm.homeBlocks([d], R.evaluateAll([d], ctx), ctx, NOPX);
+      out = b.money;""", NOPX=nopx)
+    assert got == {"ok": False, "why": "price", "absent": []}                 # 홈은 빈 카드 대신 카드를 빼고 콘솔에 이유를 남겨요
+
+
+def test_dcf_bar_draws_nothing_at_or_below_zero():
+    src = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    bar = src.split("function DcfBar(", 1)[1].split("\nfunction ", 1)[0]
+    assert "{x > 0 && <div" in bar and "Math.max(0, x)" not in bar

@@ -30,7 +30,7 @@ import { statusChips } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { ruleLabel, ruleDetail, brokenLine, limitPct } from "./pfview.jsx";
 import { usHeld, limitsOf } from "./pf.js";
-import { homeBlocks, concentration, barOf, weightPct } from "./home.js";
+import { homeBlocks, concentration, barOf } from "./home.js";
 import { TodoItem, BigMoves, MarketGlance, brokenTitle, isTodo, lines } from "./today.jsx";
 import { todayCounts } from "./track.js";
 
@@ -84,8 +84,16 @@ function RulesHero({ block, many, narrow }) {
 }
 
 // ---------------- the portfolio card ----------------
+// No value today (a held stock has no price: track.deckMoney why "price"): 포트폴리오 shows no reason line for that case, so
+// the card is left out and the console says why; a stock missing from today's data keeps the approved missing line.
+const warnedMoney = new Set();
 function MoneyCard({ block, pxDate }) {
   const { deck, money } = block;
+  if (!money.ok && !(money.absent && money.absent.length)) {
+    const k = deck.id + "|" + (money.why || "");
+    if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: no portfolio value on the home screen today (${money.why || "unknown"}): the card is left out`); }
+    return null;
+  }
   const md = mdText(pxDate);
   const H = C.home;
   return (
@@ -149,7 +157,7 @@ function HeldCard({ block, onWhy }) {
                     <span data-ui-v2="home-bar" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(barOf(r.w, limit) * 100).toFixed(1)}%`, borderRadius: 3,
                       background: shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1] }} />
                   </span>
-                  <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { width: 36, textAlign: "right" })}>{weightPct(r.w)}%</span>
+                  <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { minWidth: 36, textAlign: "right", whiteSpace: "nowrap" })}>{limitPct(r.w, limit)}%</span>
                 </span>
               )}
               {chips && <span style={{ display: "flex", marginTop: SPACE(1) }}>{chips}</span>}

@@ -25,6 +25,7 @@ const pct = (w) => Math.round(w * 100);
 // exact share). -> the number as text, without "%".
 export function limitPct(w, limit) {
   const p = w * 100;
+  if (p > 0 && p < 0.95) return nf(Math.round(p * 10) / 10, 1);         // a small holding never reads 0%
   const over = p > limit + 1e-9;
   for (const d of [0, 1, 2]) {
     const k = 10 ** d;

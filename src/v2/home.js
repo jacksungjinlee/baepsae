@@ -52,10 +52,10 @@ export function gainOf(per, usdToday = false) {
 }
 
 // The money card of one portfolio. deck: stored · de: evaluateDeck for it · ctx: rules.todayCtx.
-// -> { ok: false } | { ok: true, value, day: { pct, amount } | null, gain: gainOf | null, absent }
+// -> { ok: false, why, absent } | { ok: true, value, day: { pct, amount } | null, gain: gainOf | null, absent }
 export function homeMoney(deck, de, ctx) {
   const m = deckMoney(deck, de, ctx);
-  if (!m || !m.ok) return { ok: false, absent: (m && m.absent) || [] };
+  if (!m || !m.ok) return { ok: false, why: (m && m.why) || null, absent: (m && m.absent) || [] };
   let day = null;
   if (isImported(deck)) {
     const v = pfRows(deck, ctx);

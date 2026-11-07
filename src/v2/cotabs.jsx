@@ -319,7 +319,7 @@ function DcfBar({ icon, tone, label, value, x, mx, dark, ...rest }) {
         <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), flexWrap: "wrap", ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
           <span>{label}</span><span style={{ whiteSpace: "nowrap", fontWeight: WEIGHT.heavy }}>{value}</span></div>
         <div aria-hidden="true" style={{ height: SPACE(2), background: COLOR.line, borderRadius: 999, marginTop: SPACE(1), overflow: "hidden" }}>
-          <div style={{ width: `${Math.max(2, (Math.max(0, x) / mx) * 100)}%`, height: "100%", background: dark ? COLOR.ink : TOPIC_ART.earn.ink, borderRadius: 999 }} />
+          {x > 0 && <div style={{ width: `${Math.max(2, (x / mx) * 100)}%`, height: "100%", background: dark ? COLOR.ink : TOPIC_ART.earn.ink, borderRadius: 999 }} />}
         </div>
       </div>
     </div>
@@ -412,6 +412,9 @@ export function valueBasis(co) {
   return co && Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
 }
 
+// "업종 {n}개 회사와 비교": the companies both medians stand on can differ (PBR from the strip's companies, PER only from
+// those with a profit), so the title says the smaller count.
+export const compareN = (pbrN, perMed) => (perMed && perMed.n > 0 ? Math.min(pbrN, perMed.n) : pbrN);
 // One ratio against the industry median (board CoValue2): "PBR · 1.10배 · 업종 1.60배" and a bar each for 이 회사 (navy,
 // the company page's colour for this company) and 업종 (grey). The first two lines keep the label, then the value, as the
 // Stat they replace. A negative PER (a loss) has no bar.
@@ -472,8 +475,8 @@ export function ValueTab({ load, s, store, onMore }) {
         <DateLine date={priceDate(load, s)} fresh={load.fresh} />
       </Card>
       {compare && (
-        <Card data-ui-v2="co-compare" data-n={st.n}>
-          <CardHead icon="tag" tone="value" title={fill(V.compare, { n: st.n })} />
+        <Card data-ui-v2="co-compare" data-n={compareN(st.n, per != null ? perMed : null)}>
+          <CardHead icon="tag" tone="value" title={fill(V.compare, { n: compareN(st.n, per != null ? perMed : null) })} />
           <CompareRow id="co-pbr" label="PBR" mine={r.pbr} med={r.med} value={timesText(r.pbr, 2)} sub={pbrSub} />
           {per != null && <CompareRow id="co-per" label="PER" mine={per} med={perMed ? perMed.med : null} value={timesText(per, 1)} sub={perSub} />}
           <Strip s={s} group={group} inCard />
@@ -645,7 +648,7 @@ export function payoutWon(pct) {
   const d = w <= 0 || w >= 100 ? 1 : 0;
   const x = Math.round(pct * 10 ** d) / 10 ** d;
   const y = Math.round((100 - x) * 10 ** d) / 10 ** d;
-  return { x: nf(x, d), y: nf(y, d) };
+  return { x: nf(x, d), y: nf(y, d), rest: y > 0 };            // rest false: "나머지 0원" is not said
 }
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
@@ -716,7 +719,7 @@ export function DivTab({ load, s }) {
             <PayoutRing pct={po.pct} label={`${ring.x}%`} />
             <div style={{ minWidth: 0 }}>
               <p data-ui-v2="co-payout-of" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(Dv.payoutOf, { x: ring.x })}</p>
-              {ring.y !== "0" && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{fill(Dv.payoutRest, { y: ring.y })}</p>}
+              {ring.rest && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{fill(Dv.payoutRest, { y: ring.y })}</p>}
               {yearText(po.fy) && <Src>{yearText(po.fy)}</Src>}
             </div>
           </div>

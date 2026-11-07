@@ -47,15 +47,16 @@ export function ValueScale({ pbr, med }) {
   );
 }
 
-// 배당: three coin stacks (board CoSummary2), a decoration with no number.
-export function Coins({ width = 92 }) {
+// 배당: three coin stacks (board CoSummary2), a decoration with no number. shape "rising" (늘렸어요: 2 · 3 · 4 coins, as the
+// board) or "even" (a payer with no rise: 3 · 3 · 3). company.divArt picks it from the tile's rule.
+export function Coins({ width = 92, shape = "even" }) {
   const A = TOPIC_ART.div;
   const stack = (cx, n) => Array.from({ length: n }, (_, i) => (
     <ellipse key={cx + "-" + i} cx={cx} cy={30 - i * 5} rx={8} ry={3} fill={i % 2 ? A.light : A.ink} stroke={A.ink} strokeWidth={0.9} />
   ));
   return (
-    <svg data-ui-v2="tile-art" data-art="coins" width={width} height={Math.round((width * 34) / 66)} viewBox="0 0 66 34" aria-hidden="true" style={{ display: "block", marginTop: SPACE(2) }}>
-      {stack(14, 2)}{stack(34, 3)}{stack(54, 4)}
+    <svg data-ui-v2="tile-art" data-art="coins" data-shape={shape === "rising" ? "rising" : "even"} width={width} height={Math.round((width * 34) / 66)} viewBox="0 0 66 34" aria-hidden="true" style={{ display: "block", marginTop: SPACE(2) }}>
+      {shape === "rising" ? <>{stack(14, 2)}{stack(34, 3)}{stack(54, 4)}</> : <>{stack(14, 3)}{stack(34, 3)}{stack(54, 3)}</>}
     </svg>
   );
 }
@@ -69,7 +70,7 @@ export function Waves({ rule, mine, market }) {
   if (amp == null) return null;
   const A = TOPIC_ART.risk;
   const key = (color, label, w) => (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: SPACE(1) }}>
+    <span data-ui-v2="wave-key" style={{ display: "inline-flex", alignItems: "center", gap: SPACE(1), whiteSpace: "nowrap" }}>
       <span aria-hidden="true" style={{ width: 12, height: w, borderRadius: 2, background: color, display: "inline-block" }} />{label}
     </span>
   );
@@ -80,7 +81,7 @@ export function Waves({ rule, mine, market }) {
         <polyline points={wave(amp)} fill="none" stroke={A.ink} strokeWidth={2.4} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       {mine && market && (
-        <div aria-hidden="true" style={{ display: "flex", gap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
+        <div aria-hidden="true" style={{ display: "flex", flexWrap: "wrap", columnGap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
           {key(A.ink, mine, 3)}{key(A.light, market, 2)}
         </div>
       )}
