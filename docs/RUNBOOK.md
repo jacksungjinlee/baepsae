@@ -119,6 +119,9 @@ tells you what happened in plain words.
   never the same picture as another company's logo, each looked at first:
   `--add-site-icons SURVEY_FOLDER --codes CODE,CODE --dir FOLDER` (route `site`, flagged `homepage-icon`; `sites.csv`).
   The 데이터 출처 page says so: "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요."
+- After pushing the `logos` branch and running Deploy, check the live `logos/index.json` (its count and a new code).
+  On 2026-11-07 a Deploy of the same `main` commit two minutes after another one reported success but the site kept
+  the older files; running Deploy once more published them.
 - A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
   logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
