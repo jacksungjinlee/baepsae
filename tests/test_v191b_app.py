@@ -468,7 +468,7 @@ out.head = C.co.warn.nonePartial; out.sub = C.co.warn.noneSubNoIcr;""", ROWS=row
     for k in ("op", "neg", "noWhy", "badWhy", "noCr"):
         assert got[k][1] is False, k
     assert got["all"] == [True, False, 0] and got["na"] == [True, False, 0]
-    assert got["flag"] == [False, True, 1]                     # 경고가 있으면 화면은 경고 줄 (아래 확인 · '없어요' 아님)
+    assert got["flag"] == [False, False, 1]                    # 경고가 있으면 '없어요' 줄은 없어요 (화면은 경고 줄)
     assert got["head"] == "확인한 재무 경고 신호는 없어요"
     assert got["sub"] == "이자보상배율은 공시에 이자 비용만 따로 나오지 않아 확인하지 못했어요. 나머지 세 가지는 최근 공시로 확인했어요."
     src = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()

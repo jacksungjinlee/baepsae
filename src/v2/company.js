@@ -336,7 +336,7 @@ export function warnings(s, co) {
   // statements have no interest-expense line (corp.json flWhy.icr "ie"), the card says which three it checked ("확인한 …
   // 없어요"). Any other reason (no operating profit "op", a negative figure "neg", or no reason written) claims nothing.
   const why = co.flWhy && typeof co.flWhy === "object" ? co.flWhy.icr : null;
-  const partial = !allRan && !!ran && ["cr", "l3", "imp"].every((c) => ran.includes(c)) && !ran.includes("icr") &&
+  const partial = !flags.length && !allRan && !!ran && ["cr", "l3", "imp"].every((c) => ran.includes(c)) && !ran.includes("icr") &&
     !na.includes("icr") && why === "ie";
   return { allRan, partial, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }
