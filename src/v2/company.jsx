@@ -19,7 +19,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount } from "./company.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -30,7 +30,7 @@ import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -85,8 +85,12 @@ export function tileViews(load, s) {
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
   }
   {
+    // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
+    // (no betaSE in the data), never a bare beta.
     const r = riskTile(s);
-    add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], null, { beta: r.beta ?? null });     // no bare beta (no band yet)
+    const number = r.rule === "na" ? null : riskBandText(s, r);
+    add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], number,
+      { beta: r.beta ?? null, lo: r.band ? r.band.lo : null, hi: r.band ? r.band.hi : null });
   }
   return out;
 }
@@ -112,11 +116,20 @@ function Tile({ v, onOpen }) {
 
 // The interim split guard hides some Korean yields (company.js SPLIT_GUARD): say how many, once per data load (app.jsx
 // calls this when the data arrives, so the count is in the console whichever screen opens first).
+// v19.1b data: no guard; the exact check's own counts instead (payers whose yield could not be verified stay blank).
 const guardLogged = new WeakSet();
 export function logSplitGuard(load) {
   const stocks = load && load.status === "ok" && load.data ? load.data.stocks : null;
   if (!stocks || guardLogged.has(stocks)) return;
   guardLogged.add(stocks);
+  const x = divCheckCount(stocks, load.coByT);
+  if (x) {
+    const line = `[v2] Korean dividends: exact split check (data.json divCheck) · same ${x.st.same} · adj ${x.st.adj} · nc ${x.st.nc} `
+      + `· nd ${x.st.nd} · zero ${x.st.zero} · yield shown for ${x.shown} / ${x.payers} payers with a report year`;
+    if (x.hidden) console.warn(`${line}; not verified (no yield, no 100-man-won line, no payout, left out of a plan's dividend): ${x.hidden}, e.g. ${x.examples.join(", ")}`);
+    else console.info(line);
+    return;
+  }
   const g = splitGuardCount(stocks, load.coByT);
   if (g.hidden) console.warn(`[v2] dividend split guard: yield, 100-man-won line and payout hidden for ${g.hidden} / ${g.of} Korean payers `
     + `(today's yield ${SPLIT_GUARD}x the report's or more, or no report yield to check; until split-adjusted dividends). Largest: `

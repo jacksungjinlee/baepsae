@@ -5,7 +5,9 @@
 //   US until v19.2: Yahoo's revenue growth, operating margin and ROE. The growth figure is the latest quarter against the
 //   same quarter a year before and always carries that label (cofmt.usGrowthText; no label approved -> no number).
 // 가치: PBR against the industry (strip), PBR · PER with industry medians, 지금 가격이 가정하는 것 (KR: the old DcfCard
-//   reverse calculation; out of range -> its two messages), the 출렁임 line (phrase only: no beta band in the data yet).
+//   reverse calculation; out of range -> its two messages), the 출렁임 line: the phrase, then (v19.1b data) the beta band
+//   "코스피가 1% 움직일 때 평균 {lo}~{hi}% 움직였어요." with its note, or 자료가 없어요 when the band is not there (Part O.1).
+//   Older files have no band: the phrase only, never a bare beta.
 // 배당: KR dividend per share (report year) and three years; 100만원어치 rounded to 1,000원, before tax, with the basis it
 //   was really computed on and the price date: KR 1,000,000 ÷ the close × the report's dividend per share (Jack,
 //   2026-11-05); US 1,000,000 x Yahoo's yield until v19.2.
@@ -21,11 +23,11 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
   roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round } from "./company.js";
-import { growthBasis, num } from "./engine.js";
+import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -355,6 +357,7 @@ export function ValueTab({ load, s, store, onMore }) {
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;
   const risk = riskTile(s);
+  const bandLine = riskBandText(s, risk, true);
   const a = assumeOf(store.data, s.t) || { disc: DCF.disc, term: DCF.term };
   return (
     <div data-ui-v2="co-value" data-rule={r.rule}>
@@ -371,9 +374,16 @@ export function ValueTab({ load, s, store, onMore }) {
       </Card>
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {risk.rule !== "na" && C.co.risk[risk.rule] && (
-        <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta}>
+        <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta} data-lo={risk.band ? risk.band.lo : ""} data-hi={risk.band ? risk.band.hi : ""}>
           <CardHead icon="umbrella" tone="risk" title={C.co.risk[risk.rule]} />
-          {C.co.risk.noBand && <Note>{C.co.risk.noBand}</Note>}
+          {bandLine && <p data-ui-v2="co-risk-band" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{bandLine}</p>}
+          {bandLine && riskBandNote(risk) && <Note>{riskBandNote(risk)}</Note>}
+        </Card>
+      )}
+      {risk.rule === "na" && exactData() && risk.beta != null && (
+        // v19.1b data: a beta without its band (no betaSE, or above 0.5): 자료가 없어요, never a range or a bare beta
+        <Card data-ui-v2="co-risk" data-rule="na">
+          <CardHead icon="umbrella" tone="risk" title={C.co.tiles.na} />
         </Card>
       )}
       {C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
@@ -521,6 +531,10 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 // close (engine.js krYieldToday, company.js perMillionKr), so they always agree; a dps that fails the cross-check with the report's
 // own yield shows neither. The per-share figure only when it passes (divKr dpsOk); the 3-year bars and the trend headline
 // only with engine.js KR_DIV_TREND on (off until the history is split-adjusted). 배당성향 on one basis (payout).
+// v19.1b data (engine.exactData): the yield is the pipeline's verified dyt, the per-share figure and the bars are on
+// today's share basis (dps3a: a report year before a split divided by its exact factor), and the trend headline and bars
+// show for every comparable stock (divSt same · adj · zero; nc · nd -> 배당을 줘요, no bars). The bars show the years the
+// data has (Part O.3 of the v19.3 spec), at least two.
 // US: Yahoo's yield only (no per-share dividend in the data until v19.2).
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
@@ -544,7 +558,8 @@ export function DivTab({ load, s }) {
     console.warn(`[v2] payout ratio not shown for ${s.t}: ${po.out.toFixed(1)}% is outside 0-100% (dividend x shares / net income, ${po.fy})`);
   }
   const showDps = !us && r.dpsOk && r.dps != null && r.dps > 0;
-  const bars = showDps && r.d3 && r.d3.every((v) => v != null) && fy ? [2, 1, 0].map((i) => ({ year: fy - i, v: r.d3[i] })) : null;
+  const years = showDps && r.d3 && fy ? [2, 1, 0].filter((i) => r.d3[i] != null).map((i) => ({ year: fy - i, v: r.d3[i] })) : [];
+  const bars = years.length >= 2 ? years : null;
   const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>

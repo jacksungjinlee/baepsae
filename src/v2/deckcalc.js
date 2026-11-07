@@ -2,7 +2,7 @@
 // plus the code -> copy mapping for reasons, clashes and cautions.
 import {
   screen, splitCounts, survivorCheck, candidates, preselect, size, planShares, annualDividend, estimate2022,
-  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup,
+  deckVol, num, liquidity, isStockLike, ruleBook, hasGroup, band2022,
 } from "./engine.js";
 import { C, fill, nf, p1, wonText, signed } from "./format.js";
 
@@ -178,5 +178,18 @@ export function opPieces(op, pct) {
 }
 
 export const aboutWon = (won) => fill(C.app.about, { x: wonText(won) });
+// The 2022 line with the beta band (v19.1b data, Part O.1; engine.band2022). The approved line "약 {x}" takes "{small}~{big}"
+// where it had one number: both ends in 만원 style with their sign, the smaller fall first ("약 −150만원~−207만원"); both
+// ends the same amount -> one ("약 −150만원"). The smaller end not a fall (whole % 0 or a gain) -> { wide: true }: the
+// screen says plan.y2022Wide instead of a number. null -> no band (files before v19.1b): the screen keeps the one number.
+// parts: the amounts, so the screen can let a narrow column wrap after "~".
+export function y2022View(est) {
+  const b = band2022(est);
+  if (!b) return null;
+  if (b.wide) return { wide: true };
+  const a = wonText(b.small), z = wonText(b.big);
+  return a === z ? { parts: [a], text: fill(C.app.about, { x: a }), pct: [b.pctSmall, b.pctBig] }
+    : { parts: [a, z], text: fill(C.app.about, { x: `${a}~${z}` }), pct: [b.pctSmall, b.pctBig] };
+}
 // The sign follows the rounded value: −0.04 is "0.0%", never "−0.0%" (v19.1a review).
 export const signedPct = (v) => { const r = Math.round(v * 10) / 10; return `${r < 0 ? "\u2212" : r > 0 ? "+" : ""}${p1(Math.abs(r))}%`; };

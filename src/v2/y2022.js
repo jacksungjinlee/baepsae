@@ -10,6 +10,8 @@
 //
 // Per holding (spec): that market's won return x the stock's beta; the cushion ETFs use their own 2022 return.
 // If a holding has no figure (no beta, or an ETF not listed here), the plan hides the 2022 line.
+// v19.1b data (Part O.1 of docs/tasks/v19.3-portfolio-pictures-accounts.md): a range, the return x beta low and x beta
+// high (beta -/+ 2 x betaSE); the cushion ETFs keep their one real result. See engine.estimate2022.
 
 export const Y2022_SOURCES = {
   kospi: { symbol: "^KS11", name: "KOSPI Composite Index", from: ["2021-12-30", 2977.65], to: ["2022-12-29", 2236.40] },
