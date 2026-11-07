@@ -901,6 +901,10 @@ DART_DAY_LIMIT = 20000
 DART_FULL_TARGET = 16000
 DART_REVALIDATE_DAYS = 90
 DART_REVALIDATE_PER_RUN = 300
+# v19.1e: 배당 분할 확인에 쓰는 자본금을 더 많은 이름으로 읽어요 (보통주자본금 · (1)자본금 · 납입자본 …). 캐시는 '해석된 값'이라
+# 캐시를 통째로 버리지 않고(전체 DART 실행), 자본금을 못 읽은 채 저장된 사업보고서 항목만 한 번 다시 받아요. 실행당 이만큼까지.
+DART_REDO_PER_RUN = 800
+CAP_REDO_TAG = "cap1"      # 이 표시가 있는 항목은 새 해석으로 읽은 것 (다시 받지 않아요)
 DART_RETRY_DAYS = 7
 REPRT_KO = {"11011": "연간", "11013": "1Q", "11012": "2Q", "11014": "3Q"}
 Q_NEWEST_FIRST = ("11014", "11012", "11013")
@@ -955,6 +959,10 @@ class DartClient:
         self.parse_errors = collections.Counter()
         self.revalidate_left = DART_REVALIDATE_PER_RUN
         self.revalidated = 0
+        self.redo_left = DART_REDO_PER_RUN    # v19.1e: 해석을 고친 항목 다시 받기 (실행당 한도 · 시도할 때 줄여요)
+        self.redone = 0                       # 다시 받아 새 해석으로 저장한 수
+        self.redo_kept = 0                    # 응답이 000 이 아니어서 예전 항목을 그대로 둔 수 (DART_RETRY_DAYS 뒤에 다시)
+        self.redo_failed = 0                  # 연결 문제·해석 오류로 못 한 수 (다음 실행에 다시)
         self.net_streak = 0          # 연달아 난 네트워크 예외 수 (서버가 답하면 0)
         self.down = None             # DART 에 닿지 않아 조회를 멈췄으면 그때의 예외 이름
         self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
@@ -1047,8 +1055,11 @@ class DartClient:
                 self.fatal = (st, str(j.get("message") or ""))
         return None if st in DART_FATAL else j
 
-    def report(self, endpoint, corp, year, reprt, tag, parse, extra=None):
-        """캐시를 거쳐 보고서 하나를 조회합니다. 찾으면 parse 결과, 없으면 None."""
+    def report(self, endpoint, corp, year, reprt, tag, parse, extra=None, redo=None):
+        """캐시를 거쳐 보고서 하나를 조회합니다. 찾으면 parse 결과, 없으면 None.
+        v19.1e: redo = (표시, 판정 함수). 해석을 고친 뒤, 찾은 보고서(000)로 저장된 항목이 이 표시 없이 판정 함수에 걸리면 (예: 자본금을
+        못 읽은 사업보고서) 한 번 다시 받아 새 해석으로 저장해요 (표시를 붙여서 다시 받지 않아요). 실행당 DART_REDO_PER_RUN 건까지.
+        다시 받은 응답이 000 이 아니면 예전 항목을 그대로 둬요 (찾은 보고서를 '없음'으로 바꾸지 않게)."""
         key = f"{corp}|{year}|{reprt}|{tag}"
         with self.lock:
             e = self.entries.get(key)
@@ -1059,21 +1070,36 @@ class DartClient:
             if reval:
                 self.revalidate_left -= 1
                 self.revalidated += 1
-        due = dart_entry_due(None if self.mode == "full" else e, year, reprt, self.today, revalidate=reval)
+            rd = bool(redo and not reval and e and e["st"] == "000" and self.mode != "full" and redo_due(e, redo, self.today)
+                      and self.redo_left > 0 and not self.down and not self.fatal)
+            if rd:
+                self.redo_left -= 1
+        due = dart_entry_due(None if self.mode == "full" else e, year, reprt, self.today, revalidate=reval or rd)
         if not due:
             with self.lock:
                 self.cache_hits += 1
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         j = self.get(endpoint, {"corp_code": corp, "bsns_year": str(year), "reprt_code": reprt, **(extra or {})})
         if j is None:          # 네트워크 문제·한도 초과: 예전에 찾은 값이 있으면 그대로 (집계에 남아요)
+            if rd:
+                with self.lock:
+                    self.redo_failed += 1
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         st = str(j.get("status"))
+        if rd and st != "000":            # 다시 받기는 찾은 값을 지우지 않아요. 며칠 뒤(DART_RETRY_DAYS) 다시 해 봐요
+            with self.lock:
+                self.redo_kept += 1
+                self.entries[key] = {**e, "rpTry": self.today.isoformat()}   # 바꿔 끼워요 (저장 중인 dict 를 고치지 않게)
+            return copy.deepcopy(e["d"])
         if st == "000":
             try:
                 d = parse(j.get("list", []))
             except Exception as ex:          # 이상한 응답 하나가 실행 전체를 멈추지 않게 (개수는 로그로)
                 with self.lock:
                     self.parse_errors[type(ex).__name__] += 1
+                    if rd:
+                        self.redo_failed += 1
+                        self.entries[key] = {**e, "rpTry": self.today.isoformat()}
                 return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         elif st == "013":
             d = None
@@ -1081,6 +1107,10 @@ class DartClient:
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         with self.lock:
             self.entries[key] = {"st": st, "at": self.today.isoformat(), "d": d}
+            if redo and st == "000":
+                self.entries[key]["rp"] = redo[0]     # 새 해석으로 읽었어요
+            if rd:
+                self.redone += 1
         return copy.deepcopy(d)
 
     def company(self, corp, ttl_days=None):
@@ -1107,6 +1137,11 @@ class DartClient:
     def summary(self):
         st = ", ".join(f"{k} {v:,}" for k, v in sorted(self.status.items()))
         extra = f" · 재확인 {self.revalidated:,}건" if self.revalidated else ""
+        tried = DART_REDO_PER_RUN - self.redo_left
+        if tried:
+            extra += (f" · 자본금 다시 읽기 {tried:,}건 시도 (실행당 최대 {DART_REDO_PER_RUN:,}): 새로 읽음 {self.redone:,}"
+                      + (f" · !! 찾은 보고서가 없다고 해 예전 값을 둔 {self.redo_kept:,}" if self.redo_kept else "")
+                      + (f" · !! 연결 문제·해석 오류 {self.redo_failed:,}" if self.redo_failed else ""))
         if self.parse_errors:
             extra += " · !! 해석 오류 " + ", ".join(f"{k} {v}" for k, v in self.parse_errors.items())
         if self.down:
@@ -1160,8 +1195,111 @@ def dart_corp_map(client):
         raise RuntimeError(f"!! DART 기업코드 목록을 받지 못했어요({e}) — 재무지표 없이 발행하지 않고 중단합니다") from None
 
 
+# v19.1e: 배당 분할 확인용 자본금. 2026-11-07 국내 배당 종목 132곳의 배당을 확인하지 못했는데 그중 47곳은 재무상태표의 자본금 줄을
+# 못 읽어서였어요: 이름이 '보통주자본금'(기아) · '(1) 자본금'(고려아연) · '납입자본'(삼성에스디에스) · 'Ⅰ. 자본금'이거나, 손익 줄을
+# 못 알아본 재무제표(은행·증권 · '영업손실' 이름)는 3년 원값(_fin)을 통째로 버리면서 자본금도 같이 버렸어요(카카오뱅크 · 롯데케미칼).
+# 그래서 자본금은 _fin 과 따로 _cap 에 담아요. 고르는 순서 (재무상태표, 이름의 띄어쓰기와 앞 번호 'Ⅰ.' '(1)' '1.' 는 빼고):
+#   1. '자본금' — 회사 전체 자본금
+#   2. 보통주자본금 — 보통주만이라고 표시해요(k common): 분할 확인의 아래 끝을 오늘 보통주 수로만 계산해요. 우선주자본금을 더하지
+#      않아요: 더한 줄이 상장되지 않은 상환전환우선주이거나 상장 우선주가 다른 이름(종류주식자본금 …)이면 합이 실제보다 작아지고,
+#      작은 자본금은 아래 끝을 키워 틀린 배율로 맞출 수 있어요 (리뷰 2026-11-07).
+#   3. 이름에 '납입자본'이 들어간 줄(납입자본 · 납입자본금 · 보통주납입자본)과 그 밖의 IssuedCapital 줄 — 주식발행초과금이 섞여
+#      실제보다 클 수 있어요. 올해 아래 끝에만 써요: 크면 아래 끝이 작아져 범위가 넓어질 뿐이라(후보가 늘면 '알 수 없음') 틀린 배율로
+#      맞추지 않아요. 앞 해와의 비교(자본금의 비 = 주식 수의 비)에는 쓰지 않아요: 주식발행초과금으로 한 무상증자는 주식 수를 늘려도
+#      납입자본이 그대로라 '그대로'로 잘못 볼 수 있어서 (리뷰 2026-11-07). src paid.
+#      자본잠식 확인(_fin.cs)에는 쓰지 않아요: 자본금이 실제보다 크면 없는 자본잠식을 경고할 수 있어서 (그건 예전처럼 '자본금'만).
+CAP_COMMON_IDS = ("dart_IssuedCapitalOfCommonStock", "ifrs-full_IssuedCapitalOrdinaryShares")
+CAP_PREF_IDS = ("dart_IssuedCapitalOfPreferredStock", "ifrs-full_IssuedCapitalPreferenceShares")
+_ACCT_NO = re.compile(r"^(?:\(\d+\)|\d+\.|[IVX]+\.|[\u2160-\u216B]+\.?)")
+
+
+_ACCT_NOTE = re.compile(r"\((?:주석|주)?[\d,]+\)$")
+
+
+def acct_name(nm):
+    """계정 이름에서 띄어쓰기, 앞 번호(Ⅰ. · I. · (1) · 1.), 끝의 주석 번호('(주석15)' · '(주15)')를 뺀 것. (순수 함수)"""
+    return _ACCT_NOTE.sub("", _ACCT_NO.sub("", (nm or "").replace(" ", "")))
+
+
+def cap_kind(nm, aid):
+    """재무상태표 한 줄이 자본금이면 그 종류, 아니면 None. (순수 함수)
+    total 회사 전체 자본금 · common 보통주자본금 · pref 우선주 자본금(쓰지 않아요) · paid 납입자본(크게 잡힐 수 있음) ·
+    paidCommon 보통주 납입자본."""
+    n = acct_name(nm)
+    if any(w in n for w in ("잉여", "조정", "총계", "비지배", "기타", "합계")):
+        return None
+    if n == "자본금":
+        return "total"
+    capish = "자본금" in n or "납입자본" in n
+    if (capish and ("우선주" in n or "종류주" in n)) or aid in CAP_PREF_IDS:
+        return "pref"
+    if "납입자본" in n:
+        return "paidCommon" if "보통주" in n else "paid"
+    if (capish and "보통주" in n) or aid in CAP_COMMON_IDS:
+        return "common"
+    if aid == "ifrs-full_IssuedCapital":
+        return "paid"
+    return None
+
+
+def parse_capital(rows):
+    """재무상태표에서 배당 분할 확인용 자본금 3년 (위 순서) → {"cs3": [억원 ×3], "k": "all"|"common", "src": total|common|paid}
+    또는 None. src paid 는 올해 값만 믿을 수 있어요 (div_basis 가 앞 해 비교에 쓰지 않아요).
+    ss3 는 자본잉여금 3년 (이름의 앞 번호를 빼고 '자본잉여금'인 첫 줄). (순수 함수)"""
+    first = {}
+    ss3 = None
+    for row in rows:
+        if (row.get("sj_div") or "").strip() not in ("BS", ""):
+            continue
+        tri = [_num(row.get(k)) for k in ("thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount")]
+        if acct_name(row.get("account_nm")) == "자본잉여금" and ss3 is None:
+            ss3 = tri
+            continue
+        k = cap_kind(row.get("account_nm"), (row.get("account_id") or "").strip())
+        if k and k not in first:
+            first[k] = tri
+    if "total" in first:
+        v, kind, src = first["total"], "all", "total"
+    elif "common" in first:
+        v, kind, src = first["common"], "common", "common"
+    elif "paid" in first:
+        # 우선주 줄이 따로 있으면 납입자본이 보통주만일 수 있어요: 보통주만으로 보면 아래 끝이 늘 맞아요 (리뷰 2026-11-07)
+        v, kind, src = first["paid"], ("common" if "pref" in first else "all"), "paid"
+    elif "paidCommon" in first:
+        v, kind, src = first["paidCommon"], "common", "paid"
+    else:
+        return None
+    if not any(x is not None and x > 0 for x in v):
+        return None
+    out = {"cs3": [round(x / 1e8, 4) if x is not None else None for x in v], "k": kind, "src": src}
+    if ss3 and any(x is not None for x in ss3):
+        out["ss3"] = [round(x / 1e8, 4) if x is not None else None for x in ss3]
+    return out
+
+
+def redo_due(e, redo, today):
+    """캐시 항목 e 를 해석을 고친 뒤 다시 받아야 하는지: 표시(rp)가 없고, 판정 함수에 걸리고, 지난번 다시 받기에서 찾은 보고서가
+    없다는 답(rpTry)을 받은 지 DART_RETRY_DAYS 가 지났을 때. (순수 함수)"""
+    if not e or e.get("st") != "000" or e.get("rp") == redo[0] or not redo[1](e.get("d")):
+        return False
+    t = e.get("rpTry")
+    return not t or (today - dt.date.fromisoformat(t)).days >= DART_RETRY_DAYS
+
+
+def capital_backlog(entries, years, today):
+    """자본금 없이 저장돼 다시 받을 사업보고서 항목 수 (그 해들의 연결·별도). (순수 함수)"""
+    tails = tuple(f"|{y}|11011|{fs}" for y in years for fs in ("CFS", "OFS"))
+    return sum(1 for k, e in entries.items() if k.endswith(tails) and redo_due(e, (CAP_REDO_TAG, needs_capital), today))
+
+
+def needs_capital(d):
+    """캐시에 찾은 보고서로 저장된 사업보고서 해석 결과가 배당 분할 확인용 자본금 없이 저장됐는지 (v19.1e 이전 해석). (순수 함수)"""
+    return isinstance(d, dict) and "_cap" not in d and not (d.get("_fin") or {}).get("cs3")
+
+
 def parse_dart_list(rows):
-    """fnlttSinglAcntAll 응답의 계정 목록에서 3개년 주요 항목을 뽑습니다. (순수 함수 — 테스트 가능)"""
+    """fnlttSinglAcntAll 응답의 계정 목록에서 3개년 주요 항목을 뽑습니다. (순수 함수 — 테스트 가능)
+    v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital)."""
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
     rev = op = ni = None
@@ -1239,6 +1377,9 @@ def parse_dart_list(rows):
         fin["ss3"] = [round(v / 1e8, 4) if v is not None else None for v in ss3]
     if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
         out["_fin"] = fin
+    cap = parse_capital(rows)
+    if cap:
+        out["_cap"] = cap
     return out
 
 
@@ -1425,10 +1566,13 @@ def compute_ttm(fin, ytd, ytd_prev):
 
 
 def dart_financials(client, corp_code, year):
-    """연결(없으면 별도) 사업보고서에서 주요 지표 + 3개년 원값."""
+    """연결(없으면 별도) 사업보고서에서 주요 지표 + 3개년 원값.
+    v19.1e: 자본금(_cap)만 읽힌 연결 재무제표는 예전처럼 '못 찾음'으로 보고 별도로 넘어가요 (어느 재무제표를 쓰는지 바뀌지 않게).
+    자본금 없이 저장된 예전 항목은 한 번 다시 받아요 (needs_capital · CAP_REDO_TAG)."""
     for fs in ("CFS", "OFS"):
-        d = client.report("fnlttSinglAcntAll.json", corp_code, year, "11011", fs, parse_dart_list, {"fs_div": fs})
-        if d:
+        d = client.report("fnlttSinglAcntAll.json", corp_code, year, "11011", fs, parse_dart_list, {"fs_div": fs},
+                          redo=(CAP_REDO_TAG, needs_capital))
+        if d and any(k != "_cap" for k in d):
             return d
     return {}
 
@@ -1477,6 +1621,10 @@ def enrich_with_dart(kr_stocks, client):
         log(f"· DART 캐시: 옛 배당 항목 {len(old):,}건을 지웠어요 (새 해석 DIV2 로 다시 받아요)")
     cmap = dart_corp_map(client)
     year = today.year - 1
+    backlog0 = capital_backlog(client.entries, (year, year - 1), today) if client.mode != "full" else 0
+    if backlog0:
+        log(f"· DART 자본금 다시 읽기 대상: 자본금 없이 저장된 {year - 1}~{year}년 사업보고서 {backlog0:,}건 — 이번 실행에서 쓰는 것 중 "
+            f"최대 {DART_REDO_PER_RUN:,}건 (v19.1e · 배당 분할 확인용)")
     targets = [s for s in kr_stocks if s["t"] in cmap]
     if client.started_empty or client.mode == "full":
         est, why = dart_full_estimate(len(targets), ksic=client.started_empty)
@@ -1533,6 +1681,9 @@ def enrich_with_dart(kr_stocks, client):
                 s[k] = div[k]
         if div.get("bas"):
             s["_bas"] = div["bas"]        # v19.1b: 분할 확인용 원값 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
+        cap = f.pop("_cap", None) if f else None
+        if cap:
+            s["_cap"] = cap               # v19.1e: 분할 확인용 자본금 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
         if f or any(div.get(k) is not None for k in ("dps", "dps3", "dy")):   # 분할 확인용 값(bas)만으로는 fy 를 달지 않아요
             s["fy"] = yr          # v17.5.1: op·debt·roe·dps·dps3 가 나온 사업보고서의 연도 (bq 는 TTM 분기만 뜻해요)
         if f:
@@ -1572,6 +1723,12 @@ def enrich_with_dart(kr_stocks, client):
         list(ex.map(one, targets))
     client.save()
     log(f"· DART: {client.summary()}")
+    if backlog0:
+        left = capital_backlog(client.entries, (year, year - 1), today)
+        capped = client.redo_left <= 0
+        log(f"{'  !! ' if capped else '· '}DART 자본금 다시 읽기: 대상 {backlog0:,}건 중 남은 {left:,}건"
+            + (f" — 실행당 한도({DART_REDO_PER_RUN:,})에 닿았어요. 다음 실행에서 이어서 받아요" if capped
+               else " (이번 실행에서 쓰지 않은 항목 · 며칠 뒤 다시 해 볼 항목)" if left else ""))
     try:
         log(f"· DART 캐시 저장: {len(client.entries):,}건 · {os.path.getsize(client.path) / 1e6:.1f}MB ({client.path})")
     except OSError as e:
@@ -2792,11 +2949,13 @@ def _three(v):
     return [_fin(x) for x in (list(v) + [None] * 3)[:3]] if isinstance(v, (list, tuple)) else [None] * 3
 
 
-def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None):
+def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None):
     """한 회사의 주당 배당금 3년을 오늘 주식 수 기준으로 맞춰요. (순수 함수)
     dps3 보통주 주당 배당금 [당기, 전기, 전전기] (0 = 배당 없음 · None = 모름) · bas = parse_dart_basis 결과 ·
     cs3 자본금 3년 (억원) · shr 오늘 상장 보통주 수 · prefs 같은 회사 상장 우선주들의 오늘 주식 수 ·
     ss3 자본잉여금 3년 (억원 — 액면가가 그대로인데 주식 수가 깨끗한 배율로 바뀐 해가 무상증자인지 확인해요).
+    cap_k 자본금의 범위: all = 회사 전체 · common = 보통주만 (v19.1e: 그러면 아래 끝은 오늘 보통주 수 ÷ 보통주 발행 주식 수 상한).
+    cap_src paid = 납입자본(주식발행초과금이 섞일 수 있음): 올해 아래 끝에만 쓰고 앞 해 비교에는 쓰지 않아요 (v19.1e).
     반환 {"dps3a", "dpsF", "st3", "divSt", "f0", "lo", "hi"} — divSt 는 배당한 해들 중 가장 나쁜 결과
     (nc 비교 불가 > nd 알 수 없음 > adj 맞춤 > same 그대로), 3년 모두 0 이면 zero."""
     d = _three(dps3)
@@ -2804,6 +2963,8 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None):
     cash, par, eps, ni = _three(bas.get("cash3")), _three(bas.get("par3")), _three(bas.get("eps3")), _three(bas.get("ni3"))
     pds = [_three(v) for v in bas.get("pdps") or [] if isinstance(v, (list, tuple))]
     cs, ss = _three(cs3), _three(ss3)
+    if cap_src == "paid":
+        cs = [cs[0], None, None]       # 납입자본의 비는 주식 수의 비가 아니에요 (주식발행초과금으로 한 무상증자)
     shr = _fin(shr)
     prefs = [p for p in (_fin(x) for x in prefs or ()) if p and p > 0]
     pref_all = sum(prefs)
@@ -2832,7 +2993,7 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None):
         elif d[0] == 0 and W[0]:
             hi = (shr + pref_all) / W[0] * (1 + 0.5e6 / abs(ni[0]) + 0.5 / abs(eps[0]))
         if I[0]:
-            lo = (shr + pref_all) / I[0] * 0.999
+            lo = ((shr + pref_all) if cap_k != "common" else shr) / I[0] * 0.999
     f0, st0 = factor_between(lo, hi)
 
     def rel(i):
@@ -2921,8 +3082,10 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
     분할 확인용 임시 칸(_bas)은 여기서 지워요 (파일에 나가지 않게). 반환: (집계 dict, {코드: corp.json 추가 칸})."""
     cnt = collections.Counter()
     extra, adj_ex, nc_ex, nd_ex, big = {}, [], [], [], []
+    srcs = collections.Counter()                 # v19.1e: 분할 확인에 쓴 자본금 줄 (배당 종목만)
     for s in kr_stocks:
         bas = s.pop("_bas", None)
+        cap = s.pop("_cap", None)
         if s.get("cls") != "kr":
             continue
         t = s["t"]
@@ -2933,7 +3096,14 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
             cnt["noDps"] += 1
             continue
         fin = fin_map.get(t) or {}
-        r = div_basis(s["dps3"], bas, fin.get("cs3"), s.get("shr"), pref_shares.get(t[:5], ()), fin.get("ss3"))
+        cap = cap if isinstance(cap, dict) and cap.get("cs3") else None
+        cs3 = cap["cs3"] if cap else fin.get("cs3")
+        ss3 = (cap.get("ss3") if cap else None) or fin.get("ss3")
+        r = div_basis(s["dps3"], bas, cs3, s.get("shr"), pref_shares.get(t[:5], ()), ss3, cap_k=(cap or {}).get("k", "all"),
+                      cap_src=(cap or {}).get("src"))
+        d0_ = _fin(s["dps3"][0]) if s["dps3"] else None
+        if d0_ is not None and d0_ > 0:
+            srcs[(cap or {}).get("src") or ("total" if cs3 else "none")] += 1
         if r["divSt"] is None:
             cnt["noDps"] += 1
             continue
@@ -2981,6 +3151,8 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
 
     def ex(arr):
         return f": {', '.join(sorted(arr)[:8])}{'…' if len(arr) > 8 else ''}" if arr else ""
+    log(f"{'  !! ' if srcs['none'] else '· '}배당 분할 확인에 쓴 자본금 (배당한 종목): '자본금' {srcs['total']:,} · 보통주자본금 "
+        f"{srcs['common']:,} · 납입자본(올해만 · 크게 잡힐 수 있음) {srcs['paid']:,} · 못 읽음 {srcs['none']:,}")
     loud = cnt["nc"] + cnt["nd"] > 0
     log(f"{'  !! ' if loud else '· '}배당 분할 확인: 그대로 {cnt['same']:,} · 맞춤 {cnt['adj']:,}{ex(adj_ex)} · "
         f"비교 불가 {cnt['nc']:,}{ex(nc_ex)} · 알 수 없음 {cnt['nd']:,}{ex(nd_ex)} · 배당 없음 {cnt['zero']:,} · "

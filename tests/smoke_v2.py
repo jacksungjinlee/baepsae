@@ -52,7 +52,6 @@ import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 
@@ -61,6 +60,7 @@ from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
 from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table, copy_pictures, text_floor  # noqa: E402
+import tmpdirs  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
@@ -82,7 +82,7 @@ def other_trend_app():
     실제로 줄였어요 → 규칙 깨짐 · 매도 조건 띠)은 스위치가 켜져 있어야 나와서, 꺼져 있는 동안에도 그 화면을 시험하려고요.
     빌드한 페이지는 글로 들고 있고 임시 폴더는 바로 지워요 (돌리는 동안 폴더가 사라져도 상관없게)."""
     if "html" not in _OTHER:
-        tmp = tempfile.mkdtemp(prefix="baepsae-trendflip-")
+        tmp = tmpdirs.make("baepsae-trendflip-")
         shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
         os.makedirs(os.path.join(tmp, "tools"))
         for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
@@ -191,7 +191,7 @@ def clone(x):
 
 
 def build_site(files, raw=None, drop=(), app=None):
-    site = tempfile.mkdtemp(prefix="baepsae-v2-")
+    site = tmpdirs.make("baepsae-v2-")
     for f in SITE_FILES:
         shutil.copy(os.path.join(ROOT, f), site)
     # 커밋한 app.html (test_v2_app 이 소스와 같은지 확인해요). app: 배당 추세 스위치를 반대로 놓은 빌드의 글 (other_trend_app)
@@ -732,7 +732,7 @@ def scene_normal(R, files, width):
         wait_ready(page)
         tab(page, C["app"]["tabs"]["portfolio"])
         see(page, "내 종목 6개")
-        bad = os.path.join(tempfile.mkdtemp(), "bad.json")
+        bad = os.path.join(tmpdirs.make("baepsae-v2-file-"), "bad.json")
         with open(bad, "w") as fh:
             fh.write('{"hello": 1}')
         page.locator('[data-ui-v2="import-file"]').set_input_files(bad)
@@ -740,7 +740,7 @@ def scene_normal(R, files, width):
         assert page.get_by_text("내 종목 6개").count() == 1, "잘못된 파일이 기록을 지웠어요"
         box = page.locator('[data-ui-v2="import-bad"]')
         assert box.get_attribute("data-why") == "bad" and box.inner_text() == C["store"]["importFail"], box.inner_text()
-        prev = os.path.join(tempfile.mkdtemp(), "preview.json")
+        prev = os.path.join(tmpdirs.make("baepsae-v2-file-"), "preview.json")
         with open(prev, "w", encoding="utf-8") as fh:
             json.dump({**exported, "preview": True}, fh, ensure_ascii=False)     # 미리 보기에서 내보낸 기록
         page.locator('[data-ui-v2="import-file"]').set_input_files(prev)
@@ -2144,7 +2144,7 @@ def scene_iphone_records(R, files, device):
                          덱이 늘지 않아요 · 미리 보기에서 만든 기록 파일은 '미리 보기에서 만든 기록은…' 으로 막혀요.
     이 시험이 보여 주지 못하는 것 (실제 아이폰에서만 볼 수 있어요): iOS 사파리가 <a download> 로 받은 파일을 '파일' 앱에 저장하는지,
     홈 화면 앱의 파일 고르기 창에서 그 파일을 고를 수 있는지, 홈 화면 모드에서의 동작, WebKit 의 File.text() · 저장소 동작."""
-    tmp = tempfile.mkdtemp(prefix="baepsae-records-")       # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
+    tmp = tmpdirs.make("baepsae-records-")       # 받은 파일 · 시험 파일 · 사이트를 한 폴더에 두고 끝나면 지워요
     try:
         _iphone_records(R, files, device, tmp)
     finally:
@@ -4394,4 +4394,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(tmpdirs.run(main))        # 통과하면 이번 실행의 임시 폴더를 지우고, 실패하면 남겨요 (tests/tmpdirs.py)
