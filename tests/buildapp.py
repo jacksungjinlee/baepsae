@@ -5,7 +5,10 @@ app.html 은 v17.5.1 필드가 실제 데이터에 들어올 때까지 커밋하
 저장소의 파일이 아니라 지금 소스로 새로 빌드한 것을 봐요. 한 번 빌드하면 같은 실행 안에서는 다시 쓰여요."""
 import os
 import subprocess
-import tempfile
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tmpdirs  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DIR = {}
@@ -13,7 +16,7 @@ _DIR = {}
 
 def built_dir():
     if "d" not in _DIR:
-        d = tempfile.mkdtemp(prefix="baepsae-app-build-")
+        d = tmpdirs.make("baepsae-app-build-")
         r = subprocess.run(["bash", "build-app.sh", d], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
         assert r.returncode == 0, r.stdout + r.stderr
         _DIR["d"] = d
