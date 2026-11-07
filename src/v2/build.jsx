@@ -115,11 +115,9 @@ function Steps({ load, builder, setBuilder, onExit, coach }) {
   // (off) and the clash line above names the limits. "기준을 낮춰 주세요" is only for too few survivors.
   const tooFew = last ? ds.check.block || ds.pre.short : ds.res.survivors === 0;
   const action = noCards ? C.build.pickCardsBtn : tooFew ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
-  // v19.3c: the same number as the 내 점수 meter (engine.meterCount), so the screen never shows two different counts: with
-  // points the survivors (as before), with none the pool before any 기준 (it used to say 0 there).
   const summary = (
     <span data-ui-v2="match-count"><span>{C.build.matchSummary}</span>{" "}
-      <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(meterCount(ds.res).n) })}</b></span>
+      <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(ds.res.survivors) })}</b></span>
   );
   return (
     <Page pad={SPACE(30)} cols={RECIPE_START && wide && step === 0 ? 2 : 1}>
@@ -371,7 +369,7 @@ function Meter({ st, ds, left, strike }) {
   return (
     <div data-ui-v2="meter-bar" style={{ position: "sticky", top: wide ? TOP_BAR : preview ? TOUCH : 0, zIndex: 30, background: COLOR.page,
       margin: `${SPACE(2)}px -${pad}px 0`, padding: `${SPACE(2)}px ${pad}px` }}>
-      <section data-ui-v2="meter" style={{ background: COLOR.surface, borderRadius: RADIUS.lg - 4, padding: `${SPACE(3)}px ${SPACE(3) + 2}px` }}>
+      <section data-ui-v2="meter" tabIndex={-1} style={{ outline: "none", background: COLOR.surface, borderRadius: RADIUS.lg - 4, padding: `${SPACE(3)}px ${SPACE(3) + 2}px` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: SPACE(2), marginBottom: SPACE(2) }}>
           <span style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{s1.meter}</span>
           <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
@@ -396,7 +394,7 @@ function Meter({ st, ds, left, strike }) {
           )}
           <span aria-live="polite">
             {strike && <><s data-ui-v2="meter-pool" style={{ color: COLOR.text2 }}>{fill(C.app.count, { count: nf(ds.res.pool) })}</s>{" → "}</>}
-            {!m.pool && m.n === 0 ? s1.remainNone : rp ? (
+            {m.n === 0 ? s1.remainNone : rp ? (
               <span data-ui="amount">{rp[0]}<b data-ui-v2="meter-n" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{nf(m.n)}</b>{rp[1]}</span>
             ) : fill(s1.remain, { n: nf(m.n) })}
           </span>
@@ -430,15 +428,15 @@ function CriterionCard({ c, pts, left, top, onSet }) {
   return (
     <div data-card={c.id} data-points={c.pending ? undefined : pts}
       style={{ background: on ? SELECTED.background : COLOR.surface, boxShadow: on ? `inset 0 0 0 2px ${COLOR.ink}` : "none", borderRadius: RADIUS.lg - 2,
-        padding: SPACE(3) + 2, minWidth: 0, display: "flex", flexDirection: "column", opacity: c.pending ? 0.6 : 1 }}>
+        padding: SPACE(3), minWidth: 0, display: "flex", flexDirection: "column", opacity: c.pending ? 0.6 : 1 }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: SPACE(1) }}>
         {/* The whole card is dimmed when 준비 중; the chip keeps its data-dim mark without dimming twice. */}
         <CardPic id={c.id} size="fit" dim={!!c.pending} style={{ opacity: 1 }} />
         <CardArt id={c.id} />
       </div>
       <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) + 2, letterSpacing: "-0.02em" })}>{cc.name}</h3>
-      {cc.basis && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{cc.basis}</p>}
-      {cc.plain && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1) + 2, lineHeight: 1.4 })}>{cc.plain}</p>}
+      {cc.basis && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { textWrap: "balance" })}>{cc.basis}</p>}
+      {cc.plain && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1) + 2, lineHeight: 1.4, textWrap: "balance" })}>{cc.plain}</p>}
       {on && top != null && <span style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{fill(s1.topPct, { pct: top })}</StatusChip></span>}
       {c.id === "stable" && on && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{s1.finNA}</p>}
       {c.pending ? (
@@ -449,7 +447,7 @@ function CriterionCard({ c, pts, left, top, onSet }) {
         <div style={{ marginTop: "auto", paddingTop: SPACE(2), display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <RoundBtn kind="dec" disabled={pts <= 0} label={fill(s1.dec, { card: cc.name })} onClick={() => onSet(Math.max(0, pts - 1))} />
           <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: SPACE(1) }}>
-            <Dots id={c.id} n={pts} size={9} gap={3} />
+            <Dots id={c.id} n={pts} size={8} gap={2} />
             <span data-ui-v2="card-points" aria-live="polite" style={tx(SIZE.xs, WEIGHT.heavy, on ? COLOR.ink : COLOR.text2)}>{fill(s1.score, { score: pts })}</span>
           </span>
           <RoundBtn kind="inc" filled={!on && left > 0} disabled={pts >= max} label={fill(s1.inc, { card: cc.name, n: pts })} onClick={() => onSet(Math.min(max, pts + 1))} />
@@ -463,6 +461,8 @@ function CriterionCard({ c, pts, left, top, onSet }) {
 // count (2.5 s or a tap), 3 · the meter and 알겠어요.
 const GUIDE_HOLE = { 1: '[data-card="div"]', 2: '[data-ui-v2="meter"]', 3: '[data-ui-v2="meter"]' };
 const GUIDE_RING = '[data-card="div"] [data-ui-v2="card-inc"]';
+// When the bubble goes (알겠어요 · 건너뛰기 · Esc), focus lands on the 배당 card's + (where the user goes on), or the meter.
+const GUIDE_FOCUS_AFTER = [`${GUIDE_RING}:not(:disabled)`, '[data-ui-v2="meter"]'];
 
 function StepCards({ st, set, ds, coach }) {
   const s1 = C.build.s1;
@@ -495,7 +495,7 @@ function StepCards({ st, set, ds, coach }) {
         <Note>{top == null ? s1.looseNote : fill(s1.strictNote, { pct: top })}</Note>
       </Card>
       <div data-ui-v2="card-grid" style={{ marginTop: SPACE(3), display: "grid", gap: SPACE(2),
-        gridTemplateColumns: "repeat(auto-fill, minmax(max(156px, calc((100% - 16px) / 3)), 1fr))" }}>
+        gridTemplateColumns: "repeat(auto-fill, minmax(max(136px, calc((100% - 16px) / 3)), 1fr))" }}>
         {CARDS.map((c) => <CriterionCard key={c.id} c={c} pts={st.points[c.id] || 0} left={left} top={top} onSet={(v) => setPts(c.id, v)} />)}
       </div>
       {activeCards(st.points).length > 0 && (
@@ -519,7 +519,7 @@ function StepCards({ st, set, ds, coach }) {
       {bubble && (
         <Coach stage={stage} hole={GUIDE_HOLE[stage]} ring={stage === 1 ? GUIDE_RING : null} title={bubble.title} body={bubble.body}
           action={stage === 3 ? { label: g.done, onClick: coach.done } : null} onBackdrop={stage === 2 ? () => coach.go(3) : undefined}
-          onSkip={coach.skip} onLost={coach.lost} />
+          onSkip={coach.skip} onLost={coach.lost} focusAfter={GUIDE_FOCUS_AFTER} />
       )}
     </div>
   );

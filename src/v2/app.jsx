@@ -192,6 +192,12 @@ export function App({ source }) {
     if (!inBuild || loc.about) endGuide(true);
     else if (load.status === "fail" || (load.status === "ok" && load.missing.length)) endGuide(false);
   }, [stepNo, inBuild, loc.about, load, endGuide]);
+  // The welcome lives on 홈: leaving 홈 (another tab, 포트폴리오 만들기, a sub-screen) ends it as seen, so it never comes
+  // back over 홈 later (e.g. after 기록했어요). 소개 opens over 홈 and keeps it.
+  const onWelcome = !!(guide && guide.stage === "welcome");
+  useEffect(() => {
+    if (onWelcome && (tab !== "home" || loc.sub)) endGuide(true);
+  }, [onWelcome, tab, loc.sub, endGuide]);
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {

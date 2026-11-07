@@ -3999,6 +3999,7 @@ def scene_v193c(R, files, width):
         R.collect(page)
         b.locator('[data-ui-v2="guide-skip"]').click()                     # 건너뛰기 (1/3): 끝, 본 적 있음
         guide_gone(page)
+        page.wait_for_function("() => !!document.activeElement && document.activeElement.matches('[data-card=\"div\"] [data-ui-v2=\"card-inc\"]')")      # 초점은 배당 카드의 + 로
         assert seen() == "1" and page.locator('[data-ui-v2="points-left"]').inner_text() == "10"
         page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
         bubble_ = guide_step1(page, wide)
@@ -4039,7 +4040,7 @@ def scene_v193c(R, files, width):
         m0 = meter(page)
         assert m0["pool"] and m0["n"] == eng[0]["pool"] == eng[1]["pool"] and ko_num(m0["n"]) in m0["text"], (m0, eng)
         assert action(page).inner_text() == C["build"]["pickCardsBtn"]
-        assert ko_num(eng[0]["pool"]) in page.locator('[data-ui-v2="match-count"]').inner_text()     # 아래 띠도 같은 수
+        assert fillp(C["app"]["count"], count=0) in page.locator('[data-ui-v2="match-count"]').inner_text()   # 아래 띠는 main 그대로 (점수 없으면 0)
         R.collect(page)
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
         b2 = bubble(page, 2)                                               # 2/3: 기준 전의 수를 긋고 → 엔진의 새 수
@@ -4056,6 +4057,7 @@ def scene_v193c(R, files, width):
         R.collect(page)
         b3.get_by_role("button", name=C["guide"]["done"]).click()          # 알겠어요: 끝, 준 점수는 그대로
         guide_gone(page)
+        page.wait_for_function("() => !!document.activeElement && document.activeElement.matches('[data-card=\"div\"] [data-ui-v2=\"card-inc\"]')")      # 초점은 배당 카드의 + 로 (페이지로 떨어지지 않아요)
         assert seen() == "1"
         assert page.locator('[data-card="div"]').get_attribute("data-points") == "1" and page.locator('[data-ui-v2="points-left"]').inner_text() == "9"
         click_next(page)                                                   # 그다음은 늘 하던 대로
@@ -4172,6 +4174,86 @@ def scene_v193c(R, files, width):
         assert page.locator('[data-ui-v2="points-left"]').inner_text() == "10" and page.locator('[data-card="div"]').get_attribute("data-points") == "0"
         R.collect(page)
     R.check(page, S, "직접 해 보기: 만들던 포트폴리오(점수를 준 것)가 있으면 그 자리로(점수 그대로, 안내 없음) · 없으면 새로 시작해 1/3", keeps_draft)
+
+    def welcome_leaves():
+        page.evaluate(f"() => localStorage.removeItem({json.dumps(GUIDE_SEEN)})")
+        open_guide(page, wide)
+        if wide:                                                           # PC: 안내가 떠 있는 동안 '/' 는 검색 칸으로 가지 않아요
+            page.evaluate("() => document.activeElement && document.activeElement.blur()")
+            page.keyboard.press("/")
+            page.wait_for_timeout(100)
+            assert not focused_in(page, TOP_INPUT), "반기는 화면에서 '/' 가 검색 칸으로 갔어요"
+            page.locator('[data-ui-v2="side-tab"][data-tab="stocks"]').click()
+        else:
+            tab(page, TABS["stocks"])
+        at(page, "stocks")                                                 # 홈을 떠나면 반기는 화면은 끝 (본 적 있음)
+        page.wait_for_function(f"() => localStorage.getItem({json.dumps(GUIDE_SEEN)}) === '1'")
+        if wide:
+            page.locator('[data-ui-v2="side-tab"][data-tab="home"]').click()
+        else:
+            tab(page, TABS["home"])
+        at(page, "home")
+        page.wait_for_timeout(200)
+        assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0, "홈을 떠났다 돌아왔는데 반기는 화면이 그대로예요"
+        if wide:
+            guide_step1(page, wide)                                        # 1/3 말풍선이 떠 있는 동안에도 '/' 는 그대로
+            page.keyboard.press("/")
+            page.wait_for_timeout(100)
+            assert not focused_in(page, TOP_INPUT) and page.locator('[data-ui-v2="guide-bubble"]').count() == 1
+            page.keyboard.press("Escape")
+            guide_gone(page)
+        R.collect(page)
+    R.check(page, S, "반기는 화면에서 다른 탭으로 가면 안내는 끝(본 적 있음), 홈에 돌아와도 안 떠요 · PC: 안내 중에는 '/' 가 검색 칸으로 가지 않아요", welcome_leaves)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_narrow(R, files, width=320):
+    """v19.3c Part D: 320px 에서도 기준 카드는 두 칸이고, 카드 안의 글 · 버튼이 카드 밖으로 나가지 않아요 (가로 스크롤 없음)."""
+    S = f"v19.3c 좁은 화면 {width}"
+    srv, ctx, page, base = R.open(build_site(files), width)
+
+    def two_cols():
+        wait_ready(page)
+        to_build_start(page, False)
+        page.locator('[data-deck="krUs"]').click()                         # 고른 카드(상위 50% 칩 · 재무 안정 줄)도 함께
+        see(page, C["build"]["s1"]["title"])
+        cols = page.locator('[data-ui-v2="card-grid"]').evaluate("(e) => getComputedStyle(e).gridTemplateColumns.split(' ').length")
+        assert cols == 2, cols
+        spill = page.evaluate("""() => [...document.querySelectorAll('[data-card]')].flatMap((c) => {
+            const r = c.getBoundingClientRect(); const out = [];
+            if (c.scrollWidth > c.clientWidth + 0.5) out.push([c.dataset.card, 'scroll', c.scrollWidth, c.clientWidth]);
+            for (const e of c.querySelectorAll('h3, p, span, button, svg')) { const b = e.getBoundingClientRect();
+              if (b.width && (b.left < r.left - 0.5 || b.right > r.right + 0.5)) out.push([c.dataset.card, e.tagName, Math.round(b.left), Math.round(b.right), Math.round(r.left), Math.round(r.right)]); }
+            return out; })""")
+        assert not spill, spill[:5]
+        floor_ok(page, "기준 카드 320")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "320px: 기준 카드 두 칸 · 카드 밖으로 나가는 글 · 버튼 없음 · 가로 스크롤 없음", two_cols)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v193c_empty(R, files, width=390):
+    """v19.3c Part D: 기준 전의 수가 0 이면(모든 종목이 거래대금 바닥 아래) 내 점수 칸은 '지금 기준이면 남는 회사가 없어요'."""
+    S = f"v19.3c 남는 회사 없음 {width}"
+    low = clone(files)
+    for s in low["data.json"]["stocks"]:
+        if s.get("cls") == "kr":
+            s["val20"] = 1.0
+        elif s.get("cls") == "us":
+            s["val"] = 1.0
+    srv, ctx, page, base = R.open(build_site(low), width)
+
+    def empty_pool():
+        wait_ready(page)
+        to_build_start(page, False)
+        page.locator('[data-deck="blank"]').click()
+        m = meter(page)
+        assert m["pool"] and m["n"] == 0 and m["text"].strip() == C["build"]["s1"]["remainNone"], m
+        R.collect(page)
+    R.check(page, S, "기준 전의 수가 0: '지금 기준이면 남는 회사가 없어요' (0개라고 쓰지 않아요)", empty_pool)
     ctx.close()
     srv.shutdown()
 
@@ -4275,7 +4357,8 @@ def main():
                    lambda: scene_company(R, files, 1280),       # v19.0d PC · v19.1a 회사 페이지 (휴대폰 390 · PC 1280)
                    lambda: scene_v193b(R, files, 390), lambda: scene_v193b(R, files, 1280),     # v19.3b 그림 · 12px
                    lambda: scene_v193c(R, files, 390), lambda: scene_v193c(R, files, 1280),     # v19.3c 기준 카드 · 내 점수 · 처음 안내
-                   lambda: scene_v193c_on(R, files, 390), lambda: scene_v193c_on(R, files, 1280)):   # v19.3c 두 스위치를 켠 빌드
+                   lambda: scene_v193c_on(R, files, 390), lambda: scene_v193c_on(R, files, 1280),   # v19.3c 두 스위치를 켠 빌드
+                   lambda: scene_v193c_narrow(R, files), lambda: scene_v193c_empty(R, files)):         # v19.3c 320px · 기준 전의 수 0
             try:
                 fn()
             except Exception as e:

@@ -152,11 +152,26 @@ const PULSE_CSS = "@keyframes v2-guide-pulse { 0%, 100% { box-shadow: 0 0 0 4px 
 // stage: 1 · 2 · 3. hole: what stays lit (a CSS selector); ring: the button to tap (stage 1); title / body: the bubble;
 // action: { label, onClick } (stage 3's 알겠어요); onBackdrop: a tap on the dark part (stage 2 moves on); onSkip: 건너뛰기 and Esc.
 // onLost: the target never appeared (e.g. the screen changed): the guide ends without a word.
-export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSkip, onLost }) {
+// focusAfter: where focus goes when the bubble is gone (the first of these selectors still on the page), so it never
+// drops to the page itself; nothing is moved when focus is already somewhere else on the page.
+export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSkip, onLost, focusAfter = [] }) {
   const { wide } = useLayout();
   const box = useTrack(hole, true);
   const btn = useTrack(ring || "", !!ring);
   const bubble = useRef(null);
+  const after = useRef(focusAfter);
+  after.current = focusAfter;
+
+  useEffect(() => () => {
+    window.setTimeout(() => {
+      const a = document.activeElement;
+      if (a && a !== document.body && a.isConnected) return;
+      for (const sel of after.current) {
+        const el = document.querySelector(sel);
+        if (el) { try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ } return; }
+      }
+    }, 0);
+  }, []);
 
   // The target must show up within about a second, or the guide gives up quietly (never a dark screen with nothing lit).
   useEffect(() => {
