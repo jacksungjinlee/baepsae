@@ -118,14 +118,15 @@ export default function InfoApp({ lang, focus, onFocusDone }) {
           </Sub>
           {/* v19.3a · v19.3b: 그림 · 회사 로고 출처. 문구는 docs/tasks/v19.3-portfolio-pictures-accounts.md Part A 에서 승인됐어요
               (Jack, 2026-11-06; Part J.6 · Part O.7). 그림 줄의 "MIT 라이선스"는 Fluent 그림 옆에 둔 라이선스 글(Microsoft 의 저작권
-              표시 포함)로 가요. 로고 링크 문구는 logo.dev 의 안내 그대로예요. */}
+              표시 포함)로 가요. 로고 링크 문구는 logo.dev 의 안내 그대로예요. 홈페이지 아이콘이 더해지며 Jack 이 2026-11-07 에 로고 줄을
+              "일부는 각 회사 홈페이지" 를 넣은 문구로 바꿨어요. */}
           <div id="info-credits" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + C.line }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>그림 · 로고 출처</span>
             <Sub style={{ marginTop: 4 }}>
               기준 카드와 템플릿 그림: Adobe Stock, Microsoft Fluent Emoji (<a href="./pictures/LICENSE-fluent-emoji.txt" target="_blank" rel="noopener noreferrer" style={{ color: C.blue, fontWeight: 800 }}>MIT 라이선스</a>)
             </Sub>
             <Sub style={{ marginTop: 4 }}>
-              회사 로고: Logo.dev. 로고의 권리는 각 회사에 있어요.{" "}
+              회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요.{" "}
               <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{ color: C.blue, fontWeight: 800 }}>Logos provided by Logo.dev</a>
             </Sub>
           </div>
