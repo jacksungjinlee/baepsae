@@ -254,12 +254,13 @@ def test_watchdog_names_match_the_workflows_it_follows():
 
 
 # ── 매일 실행 (update-data.yml) ──
-SIX = ["47 18 * * 1-5", "13 20 * * 1-5", "43 21 * * 1-5", "17 23 * * 1-5", "53 1 * * 1-6", "37 4 * * 1-6"]
+# v19.1c (Jack, 2026-11-07): 14:47 KST 재시도를 더해 일곱 번 — 그날 마지막 실행이 앱의 '늦음' 시각(staleAfter)의 기준이에요
+SEVEN = ["47 18 * * 1-5", "13 20 * * 1-5", "43 21 * * 1-5", "17 23 * * 1-5", "53 1 * * 1-6", "37 4 * * 1-6", "47 5 * * 1-6"]
 
 
-def test_daily_run_keeps_its_six_starts_timer_and_queue():
+def test_daily_run_keeps_its_seven_starts_timer_and_queue():
     wf = load("update-data.yml")
-    assert [c["cron"] for c in wf[True]["schedule"]] == SIX
+    assert [c["cron"] for c in wf[True]["schedule"]] == SEVEN
     assert wf[True]["workflow_dispatch"]["inputs"]["timer"] == {
         "description": wf[True]["workflow_dispatch"]["inputs"]["timer"]["description"], "type": "boolean", "default": False}
     assert wf["concurrency"] == {"group": "update-data-${{ inputs.dry_run && 'dry' || 'live' }}", "cancel-in-progress": False}

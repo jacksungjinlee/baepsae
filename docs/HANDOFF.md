@@ -26,6 +26,9 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   basis), `divSt` (`same` · `adj` · `nc` not comparable · `nd` not derivable · `zero`), `dyt` (today's-close yield =
   dps3a[0] ÷ price, blank when unverified), `dz` (KR dividend percentile, from `dyt` only); top-level `divCheck` (counts;
   its presence switches on the new gate rows). KR and US stocks: `betaSE`, `betaN`.
+- v19.1c (PR after #67): data.json US stocks `pxd` (that stock's own price date, only when its last bar is not
+  `usPxDate`; its `d1` is then blank); top-level `nextPub` (the next morning new data is due) and `staleAfter` (that
+  day's 14:47 KST start + 2 h), from `data/market_holidays.csv` (RUNBOOK).
 - corp.json: the same dividend fields plus `cash3` (현금배당금총액, 억원), `eps3r` (company-reported EPS), `epsNi3` (the
   net income on the same basis, 억원), `epsB` (연결/별도), `flRan` (warning checks that ran), `flNa` (not applicable,
   financial companies). The existing `eps` (today's shares) is unchanged. **Visible on the first v2 publish:** 2.0's
@@ -270,7 +273,8 @@ allow web pages to install themselves. KakaoTalk's in-app browser is told to ope
 
 Scheduled runs (v17.5.3, PR #19, merged 2026-11-03 22:24 KST; first morning 2026-11-04): GitHub started the old single
 06:30 KST run 2¼–5½ hours late all October (never before 08:44 KST; see § 5 for what late runs once caused). Now the run
-is triggered six times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37 KST (Mon–Sat) — and a first job
+is triggered seven times — 03:47, 05:13, 06:43, 08:17 KST (Tue–Sat) and 10:53, 13:37, 14:47 KST (Mon–Sat; 14:47 added
+in v19.1c after two Yahoo gaps around 10:00–10:40 KST) — and a first job
 (`already_published.py`, scheduled runs only; manual runs skip it) decides:
 - a run that starts in the hours before a US trading day's close is final (New York 12:00–16:30; the close is final at
   16:30 New York = 06:30 KST in winter, 05:30 in summer) waits until 16:33 New York and then re-checks. If the close is

@@ -67,6 +67,27 @@ tells you what happened in plain words.
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
+  whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of
+  the two markets' next trading days, plus one day) and `staleAfter` (that day's last scheduled start, 14:47 KST, plus 2
+  hours). Once the app part ships (a later PR), the app shows its stale warning when `staleAfter` has passed without a
+  newer file; weekends and holidays stay quiet. GitHub starts afternoon runs 7–8 hours late, so at `staleAfter` the
+  day's retries may not have run yet: the warning then means "the morning publish was missed".
+  Keep the table current:
+  - Add a 임시공휴일 or an NYSE special closure (e.g. a national day of mourning) as soon as it is announced. Without it,
+    the morning after such a day gets a false stale warning, and the gate's '다음 발행 예정' row warns ("예정일이 오늘 이전").
+  - Add the next year's rows every December (KRX publishes its holiday list in late December; the NYSE list is out
+    years ahead), with a source in every row and at least 8 weekday closures per market and year. The table only sets
+    the warning time, so it never stops a run or a publish (Jack, 2026-11-07): when it is short, missing or broken, the
+    run logs it loudly, the gate warns (the 09:13 morning check reads it) and days past the table follow the weekday
+    rule, so a warning may come a day early around a holiday, never late. The gate warns from 45 days before the
+    table ends.
+  - The gate also warns when the last 90 days of index bars disagree with the table (a missed or wrong holiday); the
+    index bars are right (one-off holidays and US mourning-day closures come at short notice). Every problem with
+    `nextPub`/`staleAfter` warns and never blocks a publish. After a table edit, the live-site check may warn once
+    (the published file was computed with the old table) until the next publish.
+  - The 2027 KR rows 노동절 대체 휴일 (5/3) and 제헌절 대체 휴일 (7/19) follow the 2026 law changes and still need KRX's
+    own notice.
 - **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
   Pro on 2026-11-06 and checked by eye. Deploy copies it into the site; if the branch is missing or fails its check,
   Deploy warns and publishes without logos (every company shows its coloured letter mark). Logos never go on `main`.
