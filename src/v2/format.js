@@ -36,11 +36,11 @@ export function ownCloseText(groups) {
   return out.length ? out.join(" ") : null;
 }
 
-// The stale part of a date line (Jack, 2026-11-07): within a day of the last publish (n <= 1: the expected publish is late)
-// "갱신이 늦어지고 있어요", from the second day "{n}일째 갱신이 멈췄어요" as before. data.js staleWordsLate.
+// The stale part of a date line (Jack, 2026-11-07): n <= 1 (the due day: n counts from the morning the publish was due, data.js
+// freshness) "갱신이 늦어지고 있어요", from n = 2 "{n}일째 갱신이 멈췄어요" as before. data.js staleWordsLate.
 export const staleText = (n) => (staleWordsLate(n) ? C.app.staleLate : fill(C.app.stale, { n }));
-// The same rule for the 홈 band "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (today.stale) and its n <= 1 line
-// (today.staleLate: waiting for Jack's wording, see tests/test_us_own_dates.py).
+// The same rule for the 홈 band (and 포트폴리오's line): n <= 1 "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요."
+// (today.staleLate, Jack 2026-11-07), from n = 2 "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (today.stale).
 export const todayStaleText = (n) => (staleWordsLate(n) ? C.today.staleLate : fill(C.today.stale, { n }));
 
 // Percent with one decimal (no sign), e.g. "12.3"

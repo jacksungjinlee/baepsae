@@ -7,8 +7,8 @@
 // States, from the daily check in rules.js (evaluateAll):
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
-//   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all); within a day of
-//                      the publish (n <= 1, v19.1c staleAfter) today.staleLate instead (format.todayStaleText)
+//   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all); when n <= 1
+//                      (v19.1c: the due day, n counted from nextPub) today.staleLate instead (format.todayStaleText)
 //   no held stock      no verdict (nothing was checked), only the way to 포트폴리오 만들기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.

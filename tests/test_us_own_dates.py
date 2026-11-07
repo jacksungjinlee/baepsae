@@ -14,8 +14,8 @@ data.json 의 새 칸 (파이프라인 PR, claude/us-stale-dates):
 - 늦음 규칙: staleAfter 전 · 뒤 · 없음(4일 규칙) · 못 읽음(4일 규칙) · 4일 규칙은 staleAfter 가 있어도 그대로 (늦게 뜨는 일 없음) ·
   n ≤ 1 이면 '갱신이 늦어지고 있어요', 2 부터 '{n}일째 갱신이 멈췄어요' · 공시 탭의 n(가장 최근 공시일부터) = 1 도 같은 규칙
 - 열어 둔 화면: 데이터를 다시 받지 않고 늦음만 다시 봐요 (load.js refreshFresh · nextFreshCheck, data.js nextFreshChange)
-- 문구: 승인된 그대로 (Jack, 2026-11-07 디자인 채팅) · 홈 띠의 n ≤ 1 문구(today.staleLate)는 Jack 의 문구를 기다리는 자리표시라서
-  test_today_stale_late_has_jacks_wording 이 그때까지 실패해요 (이대로는 내보내지 못하게)
+- 문구: 승인된 그대로 (Jack, 2026-11-07 디자인 채팅) · 홈 띠의 n ≤ 1 문구(today.staleLate)도 Jack 의 문장 그대로 (A3)
+- n 은 예정일(nextPub) 아침부터 한국 달력으로 세요 (staleAfter 가 지났을 때) · 그 밖에는 예전처럼 발행 뒤 날 수
 - pxd · staleAfter 가 없는 파일은 지금과 똑같이 동작해요
 """
 import datetime as dt
@@ -174,46 +174,69 @@ def test_old_app_merge_keeps_pxd_on_both_branches():
 
 
 # ── 늦음 규칙 (data.js freshness) ──
+# 화요일(11월 10일) 17:00. 토요일(11월 7일) 06:40 발행 → 다음 발행 예정 화요일(nextPub), 늦음 경고 화요일 16:47 (staleAfter).
 NOW = "2026-11-10T17:00:00+09:00"
 
 
 def fresh_cases():
     return run("""
 const now = Date.parse(N);
-const f = (pub, sa) => D.freshness('2026-11-06', pub, 'ko', now, sa);
+const f = (pub, sa, np, at = now) => D.freshness('2026-11-06', pub, 'ko', at, sa, np);
 out = {
-  before: f('2026-11-10T06:40:00+09:00', '2026-11-11T16:47:00+09:00'),
-  after: f('2026-11-09T06:40:00+09:00', '2026-11-10T16:47:00+09:00'),
-  afterDay0: f('2026-11-10T06:40:00+09:00', '2026-11-10T16:47:00+09:00'),
-  holiday: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00'),
-  quietWeekend: f('2026-11-07T06:40:00+09:00', '2026-11-10T18:47:00+09:00'),
+  before: f('2026-11-10T06:40:00+09:00', '2026-11-11T16:47:00+09:00', '2026-11-11'),
+  after: f('2026-11-09T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10'),
+  afterDay0: f('2026-11-10T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10'),
+  weekendTue1647: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', Date.parse('2026-11-10T16:46:00+09:00')),
+  weekendTue1648: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', Date.parse('2026-11-10T16:48:00+09:00')),
+  weekendTue2359: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', Date.parse('2026-11-10T23:59:00+09:00')),
+  weekendWed: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', Date.parse('2026-11-11T00:01:00+09:00')),
+  weekendThu: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', Date.parse('2026-11-12T09:00:00+09:00')),
+  utcDevice: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '2026-11-10', Date.parse('2026-11-10T15:30:00Z')),
+  lateNoNextPub: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', undefined),
+  lateBadNextPub: f('2026-11-07T06:40:00+09:00', '2026-11-10T16:47:00+09:00', '11/10'),
+  quietWeekend: f('2026-11-07T06:40:00+09:00', '2026-11-10T18:47:00+09:00', '2026-11-10'),
   missing: f('2026-11-07T06:40:00+09:00', undefined),
   missing5: f('2026-11-05T06:40:00+09:00', null),
+  nextPubOnly: f('2026-11-05T06:40:00+09:00', null, '2026-11-06'),
   dateOnly: f('2026-11-09T06:40:00+09:00', '2026-11-09'),
   bogus: f('2026-11-09T06:40:00+09:00', 'tomorrow'),
   number: f('2026-11-09T06:40:00+09:00', 1762761600000),
-  farAhead: f('2026-11-05T06:40:00+09:00', '2027-01-01T16:47:00+09:00'),
-  noPub: f(null, '2026-11-10T16:47:00+09:00'),
+  farAhead: f('2026-11-05T06:40:00+09:00', '2027-01-01T16:47:00+09:00', '2027-01-01'),
+  noPub: f(null, '2026-11-10T16:47:00+09:00', '2026-11-10'),
   old4: D.freshness('2026-11-06', '2026-11-07T06:40:00+09:00', 'ko', now),
   times: ['2026-11-10T16:47:00+09:00', '2026-11-10T07:47:00Z', '2026-11-10T16:47+09:00', '2026-11-10', '2026-11-10 16:47:00+09:00', null, 5].map(D.staleAfterTime),
   words: [null, 0, 1, 2, 6].map(D.staleWordsLate),
+  kst: [D.kstDate(Date.parse('2026-11-10T14:59:59Z')), D.kstDate(Date.parse('2026-11-10T15:00:00Z')), D.kstDaysBetween('2026-11-10', '2026-12-01')],
 };""", N=NOW)
 
 
 def test_stale_after_rule_before_and_after():
     got = fresh_cases()
-    assert got["before"] == {"md": "11월 6일", "days": 0, "stale": False}, got["before"]          # 모양은 그대로 {md, days, stale}
-    assert got["after"] == {"md": "11월 6일", "days": 1, "stale": True}, got["after"]             # 예정 시각이 지났어요 (n = 1)
-    assert got["afterDay0"]["stale"] is True and got["afterDay0"]["days"] == 0
-    assert got["holiday"] == {"md": "11월 6일", "days": 3, "stale": True}, got["holiday"]          # 토요일 발행 → 화요일 16:47 이 지났어요
+    assert got["before"] == {"md": "11월 6일", "days": 0, "stale": False}, got["before"]          # 예정 시각 전: 모양은 그대로 {md, days, stale}
+    assert got["after"] == {"md": "11월 6일", "days": 1, "stale": True, "due": True}, got["after"]   # 예정일 당일 16:47 이 지났어요: n = 1
+    assert got["afterDay0"] == {"md": "11월 6일", "days": 1, "stale": True, "due": True}, got["afterDay0"]
     assert got["quietWeekend"]["stale"] is False                                                  # 주말·휴장일: 예정 시각 전이라 조용해요
+
+
+def test_n_counts_from_the_morning_the_publish_was_due():
+    """Jack (2026-11-07): 토요일 발행을 화요일에 놓치면 화요일 16:48 에 n = 1 ('갱신이 늦어지고 있어요'), 수요일 2, 목요일 3.
+    한국 달력으로 세요 (기기 시간대와 상관없이). nextPub 이 없거나 못 읽으면 예전처럼 발행 뒤 지난 날 수."""
+    got = fresh_cases()
+    assert got["weekendTue1647"] == {"md": "11월 6일", "days": 3, "stale": False}, got["weekendTue1647"]   # 아직 16:47 전: 조용
+    assert got["weekendTue1648"] == {"md": "11월 6일", "days": 1, "stale": True, "due": True}, got["weekendTue1648"]   # '3일째' 가 아니에요
+    assert got["weekendTue2359"]["days"] == 1 and got["weekendWed"]["days"] == 2 and got["weekendThu"]["days"] == 3, got
+    assert got["utcDevice"]["days"] == 2, got["utcDevice"]                       # 15:30Z = 수요일 00:30 KST (기기가 UTC 여도)
+    for k in ("lateNoNextPub", "lateBadNextPub"):
+        assert got[k] == {"md": "11월 6일", "days": 3, "stale": True}, (k, got[k])   # 예정일을 모르면 발행 뒤 날 수 (due 없음)
+    assert got["kst"] == ["2026-11-10", "2026-11-11", 21], got["kst"]
 
 
 def test_missing_or_unreadable_stale_after_keeps_the_four_day_rule():
     got = fresh_cases()
     assert got["missing"] == {"md": "11월 6일", "days": 3, "stale": False}, got["missing"]       # 예전 규칙: 4일까지는 조용해요
-    assert got["missing5"]["stale"] is True and got["missing5"]["days"] == 5
-    assert got["old4"] == got["missing"]                                                          # 다섯째 인자 없이 부른 것과 같아요
+    assert got["missing5"] == {"md": "11월 6일", "days": 5, "stale": True}, got["missing5"]
+    assert got["nextPubOnly"] == got["missing5"]                                                  # staleAfter 없이 nextPub 만으로는 아무것도 안 바뀌어요
+    assert got["old4"] == got["missing"]                                                          # 다섯째 · 여섯째 인자 없이 부른 것과 같아요
     for k in ("dateOnly", "bogus", "number"):
         assert got[k] == {"md": "11월 6일", "days": 1, "stale": False}, (k, got[k])               # 못 읽는 값은 4일 규칙
     at = int(dt.datetime(2026, 11, 10, 7, 47, tzinfo=dt.timezone.utc).timestamp() * 1000)       # 16:47 KST
@@ -222,17 +245,40 @@ def test_missing_or_unreadable_stale_after_keeps_the_four_day_rule():
 
 def test_four_day_rule_stays_as_a_backstop():
     got = fresh_cases()
-    assert got["farAhead"] == {"md": "11월 6일", "days": 5, "stale": True}, got["farAhead"]      # 먼 날로 잘못 적힌 staleAfter 도 막지 못해요
-    assert got["noPub"]["stale"] is True and got["noPub"]["days"] is None                       # 발행 시각 없음: 예정 시각만으로
+    # 먼 날로 잘못 적힌 staleAfter 도 막지 못해요. 4일 규칙만 걸렸으니 n 은 발행 뒤 날 수 그대로 (Jack, 2026-11-07)
+    assert got["farAhead"] == {"md": "11월 6일", "days": 5, "stale": True}, got["farAhead"]
+    assert got["noPub"] == {"md": "11월 6일", "days": 1, "stale": True, "due": True}, got["noPub"]   # 발행 시각 없음: 예정일부터
 
 
 def test_stale_words_n_up_to_one_then_days():
     got = fresh_cases()
     assert got["words"] == [True, True, True, False, False], got["words"]
-    w = run("out = { app: [null, 0, 1, 2, 6].map(F.staleText), home: [2, 6].map(F.todayStaleText), late: F.todayStaleText(1), key: CP.today.staleLate };")
+    w = run("out = { app: [null, 0, 1, 2, 6].map(F.staleText), home: [null, 1, 2, 6].map(F.todayStaleText), key: CP.today.staleLate };")
     assert w["app"] == ["갱신이 늦어지고 있어요"] * 3 + ["2일째 갱신이 멈췄어요", "6일째 갱신이 멈췄어요"], w["app"]
-    assert w["home"] == ["데이터가 2일째 갱신되지 않아 오늘은 점검하지 않았어요", "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요"], w["home"]
-    assert w["late"] == w["key"] and w["late"], w                                   # n ≤ 1: 홈 띠는 today.staleLate (빈 값이 아니에요)
+    assert w["home"] == ["데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요."] * 2 + [
+        "데이터가 2일째 갱신되지 않아 오늘은 점검하지 않았어요", "데이터가 6일째 갱신되지 않아 오늘은 점검하지 않았어요"], w["home"]
+    assert w["key"] == "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요.", w["key"]
+
+
+def test_home_band_n_follows_the_due_day_not_the_older_corp_file():
+    """dayState (rules.js): 토요일 발행 · 화요일 16:48 → 홈 띠의 n = 1 (corp.json 이 토요일 것이라도 '3일째' 가 아니에요).
+    예정일이 없는 파일(예전 모양)은 예전대로 data · corp 중 큰 날 수."""
+    sat = "2026-11-07T06:40:00+09:00"
+    f_new = _files(publishedAt=sat, nextPub="2026-11-10", staleAfter="2026-11-10T16:47:00+09:00")
+    f_new["corp"]["publishedAt"] = sat
+    f_old = _files(publishedAt="2026-11-06T06:40:00+09:00")
+    f_old["corp"]["publishedAt"] = "2026-11-05T06:40:00+09:00"
+    got = run("""
+const L2 = (f, now) => LD.resolveLoad({ data: { ok: true, data: f.data }, corp: { ok: true, data: f.corp }, macro: { ok: false, error: 'x' } }, Date.parse(now));
+const at = (x) => Date.parse(x);
+const tue = L2(NEW, '2026-11-10T16:48:00+09:00'), wed = L2(NEW, '2026-11-11T09:00:00+09:00'), old = L2(OLD, '2026-11-10T09:00:00+09:00');
+out = { tue: [tue.fresh, R.dayState(tue, at('2026-11-10T16:48:00+09:00'))], wed: R.dayState(wed, at('2026-11-11T09:00:00+09:00')),
+  old: [old.fresh, R.dayState(old, at('2026-11-10T09:00:00+09:00'))], band: F.todayStaleText(R.dayState(tue, at('2026-11-10T16:48:00+09:00')).days) };""",
+              NEW=f_new, OLD=f_old)
+    assert got["tue"][0]["days"] == 1 and got["tue"][1] == {"ok": False, "why": "stale", "days": 1}, got["tue"]
+    assert got["band"] == "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요.", got["band"]
+    assert got["wed"] == {"ok": False, "why": "stale", "days": 2}, got["wed"]
+    assert got["old"][0] == {"md": "11월 9일", "days": 4, "stale": False} and got["old"][1] == {"ok": False, "why": "stale", "days": 5}, got["old"]
 
 
 # ── 불러오기 (load.js resolveLoad): staleAfter 로 판단하고, 크게 남겨요 ──
@@ -256,7 +302,7 @@ const c = L2(OLD, '2026-11-11T17:00:00+09:00'); const wc = WARN.splice(0);
 const p = LD.resolveLoad({ data: { ok: true, data: NEW.data }, corp: { ok: true, data: NEW.corp }, macro: { ok: false, error: 'x' } }, Date.parse('2026-11-20T00:00:00+09:00'), { preview: true }); const wp = WARN.splice(0);
 out = { a: a.fresh, b: b.fresh, c: c.fresh, p: p.fresh, wa, wc, wp, day: R.dayState(b, Date.parse('2026-11-11T17:00:00+09:00')) };""",
               NEW=f_new, OLD=f_old)
-    assert got["a"]["stale"] is False and got["b"] == {"md": "11월 9일", "days": 1, "stale": True}, got
+    assert got["a"]["stale"] is False and got["b"] == {"md": "11월 9일", "days": 1, "stale": True, "due": True}, got
     assert got["day"] == {"ok": False, "why": "stale", "days": 1}, got["day"]            # 홈은 판정 없이 멈춤 띠 (n = 1)
     assert got["c"]["stale"] is False                                                   # staleAfter 없는 파일: 4일 규칙 (하루 뒤는 조용)
     assert got["p"] == {"md": None, "days": 0, "stale": False} and not [w for w in got["wp"] if "pxd" in w or "staleAfter" in w], got
@@ -319,8 +365,8 @@ out = { first: load.fresh, sameIsSame: same === load, late: late.fresh, lateData
         D.nextFreshChange(at('2026-11-11T16:30:00+09:00'), ['2026-11-10T06:40:00+09:00'], null)] };""", F0=f)
     assert got["first"] == {"md": "11월 9일", "days": 1, "stale": False}, got["first"]
     assert got["sameIsSame"] is True and got["againIsSame"] is True                 # 바뀐 게 없으면 같은 객체 (다시 그리지 않아요)
-    assert got["late"] == {"md": "11월 9일", "days": 1, "stale": True} and got["lateData"], got   # 데이터는 그대로, 경고만
-    assert got["day2"] == {"md": "11월 9일", "days": 2, "stale": True}, got["day2"]               # 날 수가 늘면 문구의 n 도
+    assert got["late"] == {"md": "11월 9일", "days": 1, "stale": True, "due": True} and got["lateData"], got   # 데이터는 그대로, 경고만
+    assert got["day2"] == {"md": "11월 9일", "days": 2, "stale": True, "due": True}, got["day2"]   # 다음 날(한국 달력)이면 n = 2
     assert got["stateA"] == {"ok": True} and got["stateB"] == {"ok": False, "why": "stale", "days": 1}, got   # 홈 판정도 멈춤으로
     assert got["prevSame"] is True and got["failSame"] == "fail"                    # 미리 보기 · 실패는 건드리지 않아요
     H, M = 3600000, 60000
@@ -356,11 +402,12 @@ def test_new_words_are_the_approved_ones():
 
 
 def test_today_stale_late_has_jacks_wording():
-    """홈의 멈춤 띠(today.stale)의 n ≤ 1 문구는 아직 Jack 의 승인 전이에요 (2026-11-07). 그동안 값은 표시해 둔 자리표시라서 이 검사가
-    실패해요: Jack 의 문구로 바꾸고 docs/tasks/v18.3-approved-in-chat.md 에 그 줄을 넣으면 통과해요. 이 검사를 지우거나 건너뛰지 마세요."""
+    """홈의 멈춤 띠(today.stale)의 n ≤ 1 문구 (today.staleLate): Jack 의 문장 그대로 (2026-11-07, 디자인 채팅 A3). 자리표시로 시작했던
+    키라서, 다시 자리표시나 빈 값이 되거나 승인 기록과 달라지면 실패해요. 이 검사를 지우거나 건너뛰지 마세요."""
     c, _ = copy_strings()
     v = c["today"]["staleLate"]
     assert isinstance(v, str) and v.strip(), "today.staleLate 는 빈 값이면 안 돼요 (띠 제목이 비어요)"
     assert not re.search(r"PLACEHOLDER|TODO|자리표시", v, flags=re.I), f"today.staleLate 가 아직 자리표시예요: {v!r} — Jack 의 문구가 필요해요"
     assert re.search("[가-힣]", v), v
     assert chat_approved().get("today.staleLate") == v, "today.staleLate 의 승인 기록(docs/tasks/v18.3-approved-in-chat.md)이 없어요"
+    assert v == "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요.", v              # Jack, 2026-11-07 (design chat, stale US prices A3)

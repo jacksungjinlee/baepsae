@@ -195,8 +195,8 @@ export function ScreenTitle({ children, sub }) {
 }
 
 // "10월 30일 기준" — the content date. Publication late (data.js freshness: staleAfter passed, or more than 4 days since
-// the publish): in warning colour "· 갱신이 늦어지고 있어요" within a day of the publish, "· N일째 갱신이 멈췄어요" from the
-// second day (format.staleText, Jack 2026-11-07).
+// the publish): in warning colour "· 갱신이 늦어지고 있어요" when n <= 1, "· N일째 갱신이 멈췄어요" from n = 2 (format.staleText,
+// Jack 2026-11-07; n counts from the morning the publish was due when data.json has nextPub, else from the last publish).
 export function DateLine({ date, fresh, style }) {
   const md = mdText(date);
   if (!md) return null;

@@ -332,7 +332,9 @@ async function loadLiveData() {
   if (!r.ok) { console.warn("[뱁새] data.json: " + r.error); return null; }
   const j = r.data;
   // v19.1c: staleAfter (다음 발행이 와 있어야 하는 시각) — 지나면 '늦음' 경고 (없거나 못 읽으면 예전 4일 규칙: data.js freshness)
+  // nextPub (발행 예정일): 늦음 경고의 n 을 그 예정일 아침부터 세요 (data.js freshness)
   return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null, staleAfter: j.staleAfter || null,
+    nextPub: j.nextPub || null,
     fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null,
     stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
 }
@@ -1171,10 +1173,11 @@ function LoadFail({ onRetry, lang = "ko" }) {
 }
 
 // '10월 30일 기준' — 내용의 날짜. 발행이 늦으면(staleAfter 가 지났거나 4일 넘게 멈춤, data.js freshness) 경고색으로
-// 발행 뒤 하루 이내는 '· 갱신이 늦어지고 있어요', 이틀째부터 '· N일째 갱신이 멈췄어요' (Jack, 2026-11-07).
-// staleAfter 는 data.json 의 것만 넘겨요 (corp·disc·macro 에는 없어서 예전 4일 규칙).
-function DateBadge({ date, publishedAt, staleAfter = null, lang = "ko", suffix = "", style = {} }) {
-  const f = freshness(date, publishedAt, lang, undefined, staleAfter);
+// n ≤ 1 이면 '· 갱신이 늦어지고 있어요', 2 부터 '· N일째 갱신이 멈췄어요' (Jack, 2026-11-07).
+// staleAfter · nextPub 은 data.json 의 것만 넘겨요 (corp·disc·macro 에는 없어서 예전 4일 규칙 · 발행 뒤 날 수). n 은 staleAfter 가
+// 지났고 nextPub 이 있으면 예정일 아침부터 센 날 (Jack, 2026-11-07).
+function DateBadge({ date, publishedAt, staleAfter = null, nextPub = null, lang = "ko", suffix = "", style = {} }) {
+  const f = freshness(date, publishedAt, lang, undefined, staleAfter, nextPub);
   if (!f.md && !f.stale) return null;
   const base = f.md ? (lang === "en" ? "As of " + f.md : f.md + " 기준") : "";
   const stale = !f.stale ? "" : staleWordsLate(f.days) ? T_STALE_LATE[lang === "en" ? "en" : "ko"]
@@ -4682,13 +4685,13 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
         onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.onerror = () => onImport(""); rd.readAsText(f); } e.target.value = ""; }} />
       <Btn kind="ghost" onClick={() => fileRef.current && fileRef.current.click()} style={{ width: "100%" }}>{lang === "ko" ? "저장한 파일에서 불러오기 (JSON)" : "Load from a saved file (JSON)"}</Btn>
       {(() => {
-        const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang, undefined, dataInfo.staleAfter).stale;
+        const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang, undefined, dataInfo.staleAfter, dataInfo.nextPub).stale;
         const warn = stale || dataInfo.failed;
         return (
           <Card style={{ padding: 14, background: warn ? C.sandSoft : C.bg, border: "1px solid " + (warn ? "#F3DCB2" : C.line) }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: warn ? "#8A5A16" : C.sub }}>
               {dataInfo.failed ? T_NOLIVE_ALL[lang]
-                : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} staleAfter={dataInfo.staleAfter} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
+                : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} staleAfter={dataInfo.staleAfter} nextPub={dataInfo.nextPub} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
             </div>
             <div style={{ fontSize: 11, color: warn ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
               {dataInfo.failed ? null
@@ -4796,7 +4799,7 @@ function AppInner({ seed, lang: langProp }) {
   const [slotName, setSlotName] = useState("");
   const [booted, setBooted] = useState(false);
   const [onb, setOnb] = useState(false);
-  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null, staleAfter: null });
+  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null });
   const universe = useRef(null);
   // v19.1c: 열어 둔 화면도 '늦음'을 놓치지 않게 (데이터를 다시 받지 않아요): 화면이 다시 보일 때와, staleAfter 바로 뒤 · 발행 뒤
   // 날 수가 느는 때(길어도 1시간)에 data.json 의 freshness 를 다시 봐요. 답이 바뀌었을 때만 다시 그려요 (DateBadge 와 경고 칸).
@@ -4805,7 +4808,7 @@ function AppInner({ seed, lang: langProp }) {
   useEffect(() => {
     if (!live.live) return undefined;
     let on = true, timer = null;
-    const sig = () => { const f = freshness(live.pxDate || live.asOf, live.publishedAt, "ko", Date.now(), live.staleAfter); return f.stale + ":" + f.days; };
+    const sig = () => { const f = freshness(live.pxDate || live.asOf, live.publishedAt, "ko", Date.now(), live.staleAfter, live.nextPub); return f.stale + ":" + f.days; };
     freshSig.current = sig();
     const check = () => {
       if (!on) return;
@@ -4826,7 +4829,7 @@ function AppInner({ seed, lang: langProp }) {
       document.removeEventListener("visibilitychange", onShow);
       window.removeEventListener("focus", check);
     };
-  }, [live.live, live.pxDate, live.asOf, live.publishedAt, live.staleAfter]);
+  }, [live.live, live.pxDate, live.asOf, live.publishedAt, live.staleAfter, live.nextPub]);
   const [autoVals, setAutoVals] = useState({});      // 오늘 data.json 이 준 자동 값 (환율 · 시장 가정). 못 읽은 날은 비어 있어요
   const [typedKeys, setTypedKeys] = useState([]);    // 설정 화면에서 직접 입력한 칸 (v18.6): 저장본 · 파일에 같이 저장해요
   const markTyped = (ks) => setTypedKeys((ts) => [...ts, ...ks.filter((k) => !ts.includes(k))]);
@@ -4848,12 +4851,12 @@ function AppInner({ seed, lang: langProp }) {
         if (L.settings) AUTO.forEach((k) => { if (isFinNum(L.settings[k])) vals[k] = L.settings[k]; });
         setSettings((s) => ({ ...s, ...vals }));
         setAutoVals(vals);
-        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt, staleAfter: L.staleAfter });
+        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt, staleAfter: L.staleAfter, nextPub: L.nextPub });
       } else {
         // 못 읽었어요: 내장 예시 가격으로 열되, 모든 종목을 '실시간 아님'으로 표시하고 화면에서 알려요
         universe.current = mergeStocks(BASE_STOCKS, null);
         setStocks(universe.current.map((s) => ({ ...s })));
-        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null, staleAfter: null });
+        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null });
       }
       setBooted(true);
     })();
@@ -5121,9 +5124,9 @@ function AppInner({ seed, lang: langProp }) {
         {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onRename={renameSlot} onImport={importJson} dataInfo={live} />}
         {booted && (live.failed ? !!slotId : (nonLive.examples || nonLive.goldEst || (!!slotId && !metrics.riskBlind && metrics.noRiskN > 0) || (!!slotId && ownClose.length > 0))) &&
           <NonLiveBanner lang={lang} failed={!!live.failed} examples={nonLive.examples} goldEst={nonLive.goldEst} metrics={slotId ? metrics : null} ownClose={slotId ? ownClose : []} />}
-        {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang, undefined, live.staleAfter).stale && (
+        {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang, undefined, live.staleAfter, live.nextPub).stale && (
           <Card style={{ background: C.sandSoft, border: "1px solid #F3DCB2", padding: "11px 14px" }}>
-            <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} staleAfter={live.staleAfter} lang={lang} style={{ fontSize: 12 }} />
+            <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} staleAfter={live.staleAfter} nextPub={live.nextPub} lang={lang} style={{ fontSize: 12 }} />
           </Card>
         )}
         {slotId && stage === 0 && (

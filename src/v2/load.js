@@ -74,11 +74,11 @@ export function refreshFresh(load, now) {
   if (!load || load.status !== "ok" || load.preview) return load;
   const t = now == null ? Date.now() : now;
   const d = load.data;
-  const f = freshness(d.pxDate, d.publishedAt, "ko", t, d.staleAfter);
+  const f = freshness(d.pxDate, d.publishedAt, "ko", t, d.staleAfter, d.nextPub);
   const o = load.fresh || {};
   const corpPub = load.corp && load.corp.publishedAt;
   const sameCorp = daysSince(corpPub, load.checkedAt) === daysSince(corpPub, t);
-  if (f.stale === o.stale && f.days === o.days && f.md === o.md && sameCorp) return load;
+  if (f.stale === o.stale && f.days === o.days && f.md === o.md && !!f.due === !!o.due && sameCorp) return load;
   return { ...load, fresh: f, checkedAt: t };
 }
 // ms until the stale check can give another answer (data.js nextFreshChange: staleAfter, the next day of either publish
@@ -108,8 +108,9 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   if (missing.length) console.warn("[v2] fields not live yet, deck builder hidden: " + missing.join(", "));
   // v19.1c (Jack, 2026-11-07): stale once data.json's staleAfter has passed (the time the next publish is due, weekends and
   // market holidays counted by the pipeline); a file without one, or with one that cannot be read, keeps the 4-day rule.
-  // The 4-day rule also stays as a backstop (data.js freshness).
-  const fresh = opts.preview ? { md: null, days: 0, stale: false } : freshness(d.pxDate, d.publishedAt, "ko", now, d.staleAfter);
+  // The 4-day rule also stays as a backstop (data.js freshness). The day count n of the warning counts from the morning the
+  // publish was due (nextPub; fresh.due), else from the last publish as before.
+  const fresh = opts.preview ? { md: null, days: 0, stale: false } : freshness(d.pxDate, d.publishedAt, "ko", now, d.staleAfter, d.nextPub);
   if (!opts.preview) logDates(d);
   const byT = new Map(d.stocks.map((s) => [s.t, s]));
   const coByT = new Map(c.companies.map((x) => [x.t, x]));

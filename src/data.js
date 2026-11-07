@@ -82,20 +82,35 @@ export function staleAfterTime(v) {
   return Number.isFinite(t) ? t : null;
 }
 
+// 한국 날짜(YYYY-MM-DD) — 기기의 시간대와 상관없이 (한국은 서머타임이 없어서 +9시간이면 돼요). 날짜 사이의 날 수도 한국 달력으로.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const kstDate = (t) => new Date(t + 9 * 3600000).toISOString().slice(0, 10);
+const dayNo = (iso) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86400000;
+export const kstDaysBetween = (fromIso, toIso) => Math.round(dayNo(toIso) - dayNo(fromIso));
+
 // { md: "10월 30일", stale: bool, days } — 표시 문구는 detail.jsx 의 DateBadge 와 2.0 의 DateLine 이 만들어요.
-// stale: staleAfter 가 지났거나(v19.1c), 발행 뒤 STALE_DAYS 일이 지났을 때. 4일 규칙은 staleAfter 가 있어도 그대로 둬요:
-// staleAfter 가 잘못 먼 날로 적혀도 경고가 예전보다 늦게 뜨는 일은 없어요 (안전 규칙을 느슨하게 하지 않아요).
-// days 는 언제나 발행 뒤 지난 날 수 (내림) — 문구는 staleWordsLate 를 봐요.
-export function freshness(contentDate, publishedAt, lang, now, staleAfter) {
-  const days = daysSince(publishedAt, now);
-  const due = staleAfterTime(staleAfter);
-  const late = due != null && (now == null ? Date.now() : now) > due;
-  return { md: mdOf(contentDate, lang), days, stale: late || (days != null && days > STALE_DAYS) };
+// stale: staleAfter 가 지났거나(v19.1c), 발행 뒤 STALE_DAYS 일이 지났을 때. 4일 규칙은 staleAfter 가 있어도 그대로 둬요
+// (Jack 확인, 2026-11-07): staleAfter 가 잘못 먼 날로 적혀도 경고가 예전보다 늦게 뜨는 일은 없어요.
+// days = 경고 문구의 n. staleAfter 가 지났고 nextPub(발행 예정일, YYYY-MM-DD)이 있으면 그 예정일 아침부터 센 날 (Jack, 2026-11-07):
+// n = 예정일부터 오늘까지 한국 달력의 날 수 + 1 (예정일 = 1일째 · 최소 1) — 이때 due: true 가 붙어요. 토요일 발행을 화요일에 놓치면
+// 화요일 16:48 에 n = 1 ('갱신이 늦어지고 있어요'), 수요일에 2. 그 밖에는(예전 파일 · nextPub 없음 · 4일 규칙만 걸림) 지금처럼
+// 발행 뒤 지난 날 수 (내림). 문구는 staleWordsLate 를 봐요.
+export function freshness(contentDate, publishedAt, lang, now, staleAfter, nextPub) {
+  const t = now == null ? Date.now() : now;
+  const sincePub = daysSince(publishedAt, t);
+  const at = staleAfterTime(staleAfter);
+  const late = at != null && t > at;
+  const stale = late || (sincePub != null && sincePub > STALE_DAYS);
+  if (late && typeof nextPub === "string" && ISO_DATE.test(nextPub)) {
+    return { md: mdOf(contentDate, lang), days: Math.max(1, kstDaysBetween(nextPub, kstDate(t)) + 1), stale, due: true };
+  }
+  return { md: mdOf(contentDate, lang), days: sincePub, stale };
 }
 
 // v19.1c: 열어 둔 화면이 '늦음'을 놓치지 않게 다시 볼 시각 (데이터를 다시 받지는 않아요). 아침에 열어 둔 앱도 staleAfter(예정일 16:47)가
-// 지나면 경고가 떠야 해요. → 지금부터 freshness 가 바뀔 수 있는 가장 이른 때까지 남은 ms: staleAfter 바로 뒤, 그리고 각 발행 시각
-// (publishedAts) 에서 날 수가 하나 느는 때 (문구의 n · 4일 규칙). 1초 여유를 두고, 길어도 FRESH_RECHECK_MAX_MS (1시간) 마다 다시 봐요.
+// 지나면 경고가 떠야 해요. → 지금부터 freshness 가 바뀔 수 있는 가장 이른 때까지 남은 ms: staleAfter 바로 뒤, 각 발행 시각
+// (publishedAts) 에서 날 수가 하나 느는 때 (4일 규칙 · 예전 n), 그리고 staleAfter 가 있으면 다음 한국 자정 (예정일부터 센 n).
+// 1초 여유를 두고, 길어도 FRESH_RECHECK_MAX_MS (1시간) 마다 다시 봐요.
 // 읽을 수 있는 시각이 하나도 없으면 null (그때는 화면이 다시 보일 때만 다시 봐요).
 const DAY_MS = 86400000;
 export const FRESH_RECHECK_MAX_MS = 3600000;
@@ -104,6 +119,7 @@ export function nextFreshChange(now, publishedAts, staleAfter) {
   const at = [];
   const due = staleAfterTime(staleAfter);
   if (due != null && due >= t) at.push(due + 1000);
+  if (due != null) at.push(Date.parse(kstDate(t) + "T00:00:00+09:00") + DAY_MS + 1000);
   for (const p of publishedAts || []) {
     const pt = Date.parse(p || "");
     if (Number.isFinite(pt)) at.push(pt + (Math.floor((t - pt) / DAY_MS) + 1) * DAY_MS + 1000);
@@ -112,8 +128,8 @@ export function nextFreshChange(now, publishedAts, staleAfter) {
   return Math.max(1000, Math.min(FRESH_RECHECK_MAX_MS, Math.min(...at) - t));
 }
 
-// 멈춤 문구 (Jack, 2026-11-07 디자인 채팅): 발행 뒤 하루 이내(n ≤ 1, 예정일 발행이 늦어진 것)는 '갱신이 늦어지고 있어요',
-// 이틀째부터는 예전 그대로 '{n}일째 갱신이 멈췄어요'. 발행 시각을 모르면(n 없음) 날 수를 말할 수 없어서 '늦어지고 있어요'.
+// 멈춤 문구 (Jack, 2026-11-07 디자인 채팅): n ≤ 1 (예정일 당일, 또는 예전 셈으로 발행 뒤 하루 이내)은 '갱신이 늦어지고 있어요',
+// 2부터는 예전 그대로 '{n}일째 갱신이 멈췄어요'. n 을 모르면(발행 시각을 읽을 수 없음) 날 수를 말할 수 없어서 '늦어지고 있어요'.
 export const STALE_LATE_MAX_DAYS = 1;
 export const staleWordsLate = (days) => days == null || days <= STALE_LATE_MAX_DAYS;
 

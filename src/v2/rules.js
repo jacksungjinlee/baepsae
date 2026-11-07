@@ -75,6 +75,9 @@ export function dayState(load, now) {
   const f = load.fresh || {};
   const corpDays = daysSince(load.corp && load.corp.publishedAt, now);
   if (f.days == null || corpDays == null) return { ok: false, why: "undated" };
+  // v19.1c (Jack, 2026-11-07): data.json late past its staleAfter with a due date (nextPub): n counts from the morning the
+  // publish was due (data.js freshness, fresh.due), so the band says the same n as the date line. Otherwise as before.
+  if (f.stale && f.due) return { ok: false, why: "stale", days: f.days };
   const days = Math.max(f.days, corpDays);
   if (f.stale || days > STALE_DAYS) return { ok: false, why: "stale", days };
   return { ok: true };

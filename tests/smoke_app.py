@@ -353,6 +353,7 @@ def scene_stale(R, files):
         f[name]["publishedAt"] = now_kst(days_ago=6)
     if "staleAfter" in f["data.json"]:                                     # v19.1c: 발행 6일 전이면 예정 시각도 지났어요
         f["data.json"]["staleAfter"] = now_kst(days_ago=4)
+        f["data.json"]["nextPub"] = (dt.datetime.now(KST).date() - dt.timedelta(days=5)).isoformat()   # 예정일 5일 전 → n = 6
     srv, ctx, page, _ = R.open(build_site(f))
 
     def run():
@@ -2340,13 +2341,15 @@ def scene_own_close(R, files):
 def scene_stale_after(R, files):
     """v19.1c: data.json 의 staleAfter 가 지나면 날짜 표시에 경고 — 발행 뒤 하루 이내면 '갱신이 늦어지고 있어요' (영어 'update is running
     late'), 3일째면 예전 그대로 '3일째 갱신이 멈췄어요' · 아직 지나지 않았으면 3일 전 발행이어도 조용해요 (주말·휴장일)."""
-    for label, hours, after, ko_words, en_words in (("n=1", 30, -1, "갱신이 늦어지고 있어요", "update is running late"),
-                                                    ("n=3", 75, -2, "3일째 갱신이 멈췄어요", "updates stopped 3 days ago"),
-                                                    ("조용", 75, 5, None, None)):
+    # n 은 예정일(nextPub) 아침부터 (Jack, 2026-11-07): 3일 전 발행이어도 오늘이 예정일이면 n = 1, 예정일이 이틀 전이면 n = 3
+    for label, hours, after, due, ko_words, en_words in (("n=1", 30, -1, 0, "갱신이 늦어지고 있어요", "update is running late"),
+                                                         ("n=3", 75, -2, 2, "3일째 갱신이 멈췄어요", "updates stopped 3 days ago"),
+                                                         ("주말 뒤", 75, -0.1, 0, "갱신이 늦어지고 있어요", "update is running late"),
+                                                         ("조용", 75, 5, 0, None, None)):
         f = json.loads(json.dumps(files, allow_nan=True))
         now = dt.datetime.now(KST)
         f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=hours)).isoformat(timespec="seconds")
-        f["data.json"]["nextPub"] = now.date().isoformat()
+        f["data.json"]["nextPub"] = (now.date() - dt.timedelta(days=due)).isoformat()
         f["data.json"]["staleAfter"] = (now + dt.timedelta(hours=after)).isoformat(timespec="seconds")
         slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}]}
         srv, ctx, page, _ = R.open(build_site(f), local=slot_local([("sst", "늦음 시험", slot)]))
@@ -2385,6 +2388,7 @@ def scene_stale_recheck(R, files):
         f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=2)).isoformat(timespec="seconds")
         f["data.json"]["nextPub"] = now.date().isoformat()
         f["data.json"]["staleAfter"] = (now + dt.timedelta(minutes=30)).isoformat(timespec="seconds")
+        f["data.json"]["nextPub"] = (now + dt.timedelta(minutes=40)).date().isoformat()     # 경고가 뜨는 때의 날짜 (자정을 넘겨도 n = 1)
         srv, base = serve(build_site(f))
         ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
@@ -2431,6 +2435,7 @@ def main():
     # 늦음 경고가 끼어요. 늦음 장면들(멈춤 · 늦음)은 각자 자기 값을 넣어요.
     if "staleAfter" in fresh["data.json"]:
         fresh["data.json"]["staleAfter"] = (dt.datetime.now(KST) + dt.timedelta(days=2)).isoformat(timespec="seconds")
+        fresh["data.json"]["nextPub"] = (dt.datetime.now(KST) + dt.timedelta(days=2)).date().isoformat()
     full = bool((fresh["macro.json"].get("curve") or {}).get("date"))   # 국고채 커브가 있는 데이터면 커브까지 확인
 
     with sync_playwright() as p:

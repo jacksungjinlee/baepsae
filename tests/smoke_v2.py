@@ -4188,13 +4188,15 @@ def scene_own_dates(R, files, width):
     srv.shutdown()
 
 
-def stale_files(files, hours_ago, after_hours):
-    """발행 hours_ago 시간 전 · staleAfter 는 지금에서 after_hours 시간 뒤(음수면 이미 지남). 매일 점검 덱과 같이 써요."""
+def stale_files(files, hours_ago, after_hours, due_days_ago=0, due_at=None):
+    """발행 hours_ago 시간 전 · staleAfter 는 지금에서 after_hours 시간 뒤(음수면 이미 지남). 매일 점검 덱과 같이 써요.
+    nextPub(발행 예정일) = 오늘(한국)에서 due_days_ago 일 전 — 늦음 경고의 n 은 그 아침부터 세요 (Jack, 2026-11-07). due_at: 그 시각의
+    한국 날짜 (시계를 돌리는 장면: 경고가 뜨는 때의 날짜라서 자정을 넘겨도 n = 1)."""
     f = daily_files(files)
     now = dt.datetime.now(KST)
     for n in DATA_FILES:
         f[n]["publishedAt"] = (now - dt.timedelta(hours=hours_ago)).isoformat(timespec="seconds")
-    f["data.json"]["nextPub"] = now.date().isoformat()
+    f["data.json"]["nextPub"] = due_at.date().isoformat() if due_at else (now.date() - dt.timedelta(days=due_days_ago)).isoformat()
     f["data.json"]["staleAfter"] = (now + dt.timedelta(hours=after_hours)).isoformat(timespec="seconds")
     return f
 
@@ -4203,8 +4205,10 @@ def scene_stale_after(R, files, width):
     """staleAfter (v19.1c): 지나면 경고 — 발행 뒤 하루 이내(n ≤ 1)면 날짜 줄 '갱신이 늦어지고 있어요' · 홈 띠와 포트폴리오 줄은 today.staleLate,
     2일째부터 예전 그대로 '{n}일째 갱신이 멈췄어요' · '데이터가 {n}일째 …'. 아직 지나지 않았으면 3일 전 발행이어도 조용해요 (주말·휴장일)."""
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
-    for label, hours, after, n in (("n=1", 30, -1, 1), ("n=3", 75, -2, 3), ("조용", 75, 5, None)):
-        srv, ctx, page, _ = R.open(build_site(stale_files(files, hours, after)), width, init=init)
+    # n 은 예정일(nextPub) 아침부터 (Jack, 2026-11-07): n=1 은 오늘이 예정일, n=3 은 예정일이 이틀 전. '토요일 발행 → 화요일': 발행은
+    # 3일 전이어도 오늘이 예정일이면 n = 1 이에요 ('3일째' 가 아니에요).
+    for label, hours, after, due, n in (("n=1", 30, -1, 0, 1), ("n=3", 75, -2, 2, 3), ("주말 뒤", 75, -0.1, 0, 1), ("조용", 75, 5, 0, None)):
+        srv, ctx, page, _ = R.open(build_site(stale_files(files, hours, after, due)), width, init=init)
 
         def run():
             wait_ready(page)
@@ -4245,7 +4249,7 @@ def scene_stale_recheck(R, files, width):
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
     for how in ("timer", "visible"):
         now = dt.datetime.now(KST)
-        f = stale_files(files, 2, 0.5)                                            # 발행 2시간 전 · staleAfter 30분 뒤
+        f = stale_files(files, 2, 0.5, due_at=now + dt.timedelta(minutes=40))     # 발행 2시간 전 · staleAfter 30분 뒤 · 예정일 = 그때의 날짜
         srv, base = serve(build_site(f))
         ctx = R.browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
