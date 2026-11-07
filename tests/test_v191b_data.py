@@ -408,8 +408,19 @@ def test_holding_companies_run_both_checks_and_only_financial_companies_skip_the
     for t in ("000200", "000300", "000400", "000500", "000600"):                                  # 금융회사: 그대로 해당 없음
         assert by[t]["flNa"] == ["cr", "icr"] and not {"cr", "icr"} & set(by[t]["flRan"]), t
     assert by["000700"]["flRan"] == ["l3", "imp"] and "flNa" not in by["000700"]                  # 줄이 없으면 안 돌았다고만
+    # 그룹 없는 지주회사: 줄이 있어도 두 검사를 쉬고 해당 없음으로도 치지 않아요 (금융 지주일 수도 있어서 · 앱은 '경고 없음'이라 하지 않아요)
+    c = F.build_corp([dict(base, t="000800", nk="그룹 없는 지주", s="holding")], {"000800": lines}, "2026-11-07")["companies"][0]
+    assert c["flRan"] == ["l3", "imp"] and "flNa" not in c and "fl" not in c
+    # 금융 상위 그룹(fin)으로 합쳐진 은행 지주: 이자보상배율이 1 아래여도 돌리지 않아요 (예금 이자 > 영업이익이 정상)
+    bank_like = dict(lines, op=[0.9, 0, 0], ie=1.0)
+    c = F.build_corp([dict(base, t="000900", nk="작은 금융 지주", s="holding", ind="fin")], {"000900": bank_like}, "2026-11-07")["companies"][0]
+    assert c["flNa"] == ["cr", "icr"] and "icr" not in (c.get("fl") or {})
     assert F.fl_financial({"s": "bank"}) and F.fl_financial({"s": "holding", "ind": "bank"})
-    assert not F.fl_financial({"s": "holding", "ind": "holding"}) and not F.fl_financial({"s": "holding"})
+    assert not F.fl_financial({"s": "holding", "ind": "holding"}) and F.fl_unknown_holding({"s": "holding"})
+    assert F.fl_financial({"s": "holding", "ind": "fin"})                                         # 금융 상위 그룹도 금융
+    # 업종 그룹이 있으면 그것으로만: 보험사인데 s 가 auto(DB손해보험) → 금융 · s 가 bank 인 바이오(지씨셀) → 금융 아님
+    assert F.fl_financial({"s": "auto", "ind": "insurance"}) and not F.fl_financial({"s": "bank", "ind": "bio"})
+    assert not F.fl_financial({"s": "broker", "ind": "services"}) and F.fl_financial({"s": "broker"})   # 그룹이 없으면 s
 
 
 def test_flran_lists_the_checks_that_actually_ran():
