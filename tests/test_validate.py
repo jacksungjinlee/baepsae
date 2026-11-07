@@ -771,6 +771,21 @@ def test_us_d1_coverage_at_98_percent_passes_and_still_names_the_stocks():
     assert rep.details == []
 
 
+def test_us_d1_of_zero_counts_as_present_and_the_shown_share_never_rounds_up_to_the_line():
+    cur, prev, final = good_pair()
+    for s in us_of(cur)[3:40]:
+        s["d1"] = 0.0                                                    # 그대로인 날도 '있음'
+    r = row_of(check(cur, prev, final), US_D1)
+    assert r[1] == "100.0% (600 / 600)" and r[3] == "PASS", r
+    cur, prev, final = good_pair()                                       # 781 중 16 빠짐 = 97.95% → '97.9%' 로 보이고 실패
+    us = us_of(cur)
+    cur["data"]["stocks"] += [{**clone(us[10]), "t": f"X{i:03d}"} for i in range(181)]
+    gone = drop_us_d1(cur, 16)
+    assert len(us_of(cur)) == 781
+    r = row_of(check(cur, prev, final), US_D1)
+    assert r[3] == "FAIL" and r[1].startswith("97.9% (765 / 781)"), r
+
+
 def test_us_d1_row_passes_after_a_us_holiday_and_a_half_day_and_fails_on_a_yahoo_gap():
     """Jack 2026-11-07 (a): 파이프라인과 같은 함수로 d1 을 만들어 관문에 넣어요. 미국 휴장일 다음 아침과 조기 폐장일 다음
     아침에는 모든 종목에 기준일 봉이 있어서 통과하고, 야후가 기준일 봉을 일부 종목에서 빠뜨린 날은 그 종목들 이름으로 실패해요."""
@@ -816,7 +831,8 @@ def test_us_d1_missing_list_goes_to_the_log_and_the_run_summary(monkeypatch, cap
     assert f"!! FAIL  {US_D1}: 95.8% (575 / 600) · 빠짐: " + ", ".join(gone[:10]) + " 외 15개" in out
     assert f"::error title=발행 관문 실패::{US_D1}: 95.8%" in out          # 실행 화면의 알림
     text = summ.read_text(encoding="utf-8")
-    assert f"| {US_D1} | 95.8% (575 / 600)" in text and "| **FAIL** |" in text
+    row = next(x for x in text.splitlines() if x.startswith(f"| {US_D1} |"))
+    assert row.startswith(f"| {US_D1} | 95.8% (575 / 600) · 빠짐: ") and row.endswith("| **FAIL** |"), row
     assert f"**{title}** (25): " + ", ".join(gone) in text               # 실행 요약: 25개 전부
 
 

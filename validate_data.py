@@ -752,10 +752,10 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
     # d1 은 파이프라인이 그 종목의 마지막 봉이 미국 기준일(usPxDate = S&P 500 의 마지막 '끝난' 거래일)일 때만 채워요
     # (fetch_data.us_d1). 미국 휴장일·조기 폐장일에는 기준일이 그 전 거래일 / 그날이라 d1 이 줄지 않아요 (tests/test_pipeline.py).
     us_no_d1 = [str(s.get("t")) for s in us if num(s.get("d1")) is None]
-    us_cov = 100.0 * (len(us) - len(us_no_d1)) / len(us) if us else 0.0
+    us_cov = 100.0 * (len(us) - len(us_no_d1)) / len(us) if us else 0.0    # 보여 줄 때는 내림 (97.95% 가 '98.0%' 로 안 보이게)
     shown = ", ".join(us_no_d1[:US_D1_SHOW]) + (f" 외 {len(us_no_d1) - US_D1_SHOW:,}개" if len(us_no_d1) > US_D1_SHOW else "")
     rep.add("미국 d1 채움 (미국 기준일 봉)", us_cov >= US_D1_COVER,
-            f"{us_cov:.1f}% ({len(us) - len(us_no_d1):,} / {len(us):,})" + (f" · 빠짐: {shown}" if us_no_d1 else ""),
+            f"{floor_1(us_cov)}% ({len(us) - len(us_no_d1):,} / {len(us):,})" + (f" · 빠짐: {shown}" if us_no_d1 else ""),
             f"≥ {US_D1_COVER:g}% (미국 기준일 {data.get('usPxDate')} 봉이 있는 종목)")
     if us_no_d1:
         rep.detail(f"미국 d1 없는 종목 (마지막 봉이 미국 기준일 {data.get('usPxDate')} 이 아님)", us_no_d1)
