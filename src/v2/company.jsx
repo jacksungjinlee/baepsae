@@ -360,7 +360,7 @@ function Holdings({ held }) {
           <div key={deckId} data-ui-v2="co-held-row" data-deck-id={deckId} data-status={x.status}
             style={{ display: "flex", alignItems: "center", gap: SPACE(2), flexWrap: "wrap", minHeight: TOUCH, padding: `${SPACE(1)}px 0` }}>
             <Icon name="deck" size={20} tone="on" />
-            <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0 })}>{line}</span>
+            <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: "1 1 160px", minWidth: 0, wordBreak: "keep-all" })}>{line}</span>
             {chips || (k > 0 ? <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span> : null)}
           </div>
         );

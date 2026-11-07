@@ -247,14 +247,16 @@ export const DeckPic = ({ id, ...rest }) => <PicChip pic={DECK_PICS[id]} data-de
 
 // "가치 82점 · 배당 70점" (포트폴리오 만들기의 미리 보기 · 후보 고르기 · 매수 계획): each 기준 with its picture in front.
 // list: [[card id, score], …]. Inline, so the words, their order and the text read out are the same as before; a piece
-// (picture, name, score) never breaks inside, the line wraps between pieces on a narrow screen.
+// (picture, name, score) never breaks inside, the line wraps between pieces on a narrow screen; the " · " goes with the
+// next piece, so no line ends with a dangling dot (320 px).
 export function CardScores({ list, style }) {
   return (
     <span data-ui-v2="card-scores" style={style}>
       {list.map(([id, v], i) => (
         <React.Fragment key={id}>
-          {i ? " · " : ""}
+          {i ? " " : ""}
           <span style={{ whiteSpace: "nowrap" }}>
+            {i ? "· " : ""}
             <CardPic id={id} style={{ verticalAlign: "middle", marginRight: SPACE(1) }} />
             <span>{C.build.cards[id].name}</span>{" "}<span>{fill(C.build.s1.score, { score: Math.round(v) })}</span>
           </span>
