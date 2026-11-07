@@ -1577,6 +1577,54 @@ def dart_financials(client, corp_code, year):
     return {}
 
 
+# v19.1g (Jack, 2026-11-07): 상장되지 않은 우선주(상환전환우선주 · 종류주식)도 배당을 받으면 현금배당금총액을 보통주 1주 기준으로 나눌 수
+# 없어 배당 분할 확인의 위 끝을 셀 수 없었어요 (2026-11-07 30곳: 현대모비스 · 알테오젠 · 키움증권 · 솔루엠 …). 그런 회사만 DART '주식의
+# 총수 현황'(stockTotqySttus, 사업보고서)을 받아 그해 말 보통주 유통 주식 수로 위 끝을 세요 (회사당 1회 · 캐시 · 약 30회).
+STK_TOTAL = ("합계", "총계", "계", "합", "total")
+STK_NOT_COMMON = ("우선", "종류", "전환", "상환", "없는")
+
+
+def parse_dart_shares(rows):
+    """주식의 총수 현황 → {"cmo": 보통주 유통 주식 수, "cmi": 보통주 발행 주식 수, "pfo": 그 밖의 종류 유통 주식 수 합} 또는 None.
+    줄 이름은 회사마다 달라요: '보통주' · '보통주식' · '의결권 있는 주식' · '보통주(의결권 있는 주식)' = 보통주. 이름에 우선 · 종류 ·
+    전환 · 상환 · 없는 이 들면 보통주가 아니에요 ('의결권 있는 배당우선 전환주'). 주식이 없는 줄('-')과 비고 줄은 빼고, 똑같은 줄이
+    두 번 나오면(표를 두 번 실은 보고서) 한 번만. 합계 줄이 하나 있고 보통주 + 그 밖 = 합계(±1주)일 때만 믿어요 — '총계' 같은 다른
+    이름의 합계 줄이 우선주로 더해지지 않게 (리뷰 2026-11-07). 아니면 None. (순수 함수)"""
+    cm, others, totals, seen = [], [], [], set()
+    for r in rows or []:
+        se = re.sub(r"\s+", "", r.get("se") or "")
+        dist, iss = _num(r.get("distb_stock_co")), _num(r.get("istc_totqy"))
+        key = (se, dist, iss)
+        if not se or se.startswith("비고") or key in seen:
+            continue
+        seen.add(key)
+        if se.lower() in STK_TOTAL or se.startswith("합계"):
+            totals.append(dist)
+            continue
+        if not (dist and dist > 0) and not (iss and iss > 0):
+            continue                                 # 발행하지 않은 종류
+        if ("보통주" in se or "의결권있는" in se) and not any(w in se for w in STK_NOT_COMMON):
+            cm.append((dist, iss))
+        else:
+            others.append(dist)
+    if len(cm) != 1 or not cm[0][0] or cm[0][0] <= 0 or len(totals) != 1 or totals[0] is None:
+        return None
+    pfo = sum(x for x in others if x is not None and x > 0)
+    if abs(cm[0][0] + pfo - totals[0]) > 1:
+        return None
+    return {"cmo": cm[0][0], "cmi": cm[0][1], "pfo": pfo}
+
+
+def dart_shares(client, corp_code, year):
+    return client.report("stockTotqySttus.json", corp_code, year, "11011", "STK", parse_dart_shares)
+
+
+def unlisted_paid(bas, listed):
+    """배당 표에서 그해 배당을 받은 우선주·종류주 종류 수가 상장 우선주 종목 수(listed)보다 많은지. (순수 함수)"""
+    paid = sum(1 for p in (bas or {}).get("pdps") or [] if isinstance(p, (list, tuple)) and p and _fin(p[0]) and p[0] > 0)
+    return paid > listed
+
+
 def dart_dividend(client, corp_code, year):
     # v17.5.1: 0 원을 남기는 새 해석 → 태그 DIV2 (배당 항목만 한 번 다시 받아요, 약 2,500건. 다른 캐시는 그대로)
     return client.report("alotMatter.json", corp_code, year, "11011", "DIV2", parse_dart_dividend) or {}
@@ -1610,9 +1658,11 @@ def dart_full_estimate(n_companies, ksic=True):
     return total, why
 
 
-def enrich_with_dart(kr_stocks, client):
-    """사업보고서·배당·분기보고서(TTM)를 붙입니다. 기업마다 분기를 따로 확인해요 (3Q → 2Q → 1Q)."""
+def enrich_with_dart(kr_stocks, client, pref_shares=None):
+    """사업보고서·배당·분기보고서(TTM)를 붙입니다. 기업마다 분기를 따로 확인해요 (3Q → 2Q → 1Q).
+    v19.1g: pref_shares (kr_pref_shares) 로 상장 우선주 수를 알아요 — 배당 받은 종류가 더 많은 회사만 주식의 총수 현황을 받아요."""
     fin_map = {}
+    stk_n = collections.Counter()
     today = client.today
     old = [k for k in client.entries if k.endswith("|DIV")]
     for k in old:                       # v17.5.1: 옛 해석('-' = 모름)으로 저장된 배당 항목은 버려요 (DIV2 로 다시 받아요)
@@ -1681,6 +1731,12 @@ def enrich_with_dart(kr_stocks, client):
                 s[k] = div[k]
         if div.get("bas"):
             s["_bas"] = div["bas"]        # v19.1b: 분할 확인용 원값 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
+            if pref_shares is not None and unlisted_paid(div["bas"], len(pref_shares.get(s["t"][:5], ()))):
+                stk = dart_shares(client, corp, yr)
+                with client.lock:
+                    stk_n["got" if stk else "none"] += 1
+                if stk:
+                    s["_stk"] = stk       # v19.1g: 주식의 총수 현황 — apply_div_basis 가 쓰고 지워요
         cap = f.pop("_cap", None) if f else None
         if cap:
             s["_cap"] = cap               # v19.1e: 분할 확인용 자본금 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
@@ -1723,6 +1779,9 @@ def enrich_with_dart(kr_stocks, client):
         list(ex.map(one, targets))
     client.save()
     log(f"· DART: {client.summary()}")
+    if stk_n:
+        log(f"{'  !! ' if stk_n['none'] else '· '}상장되지 않은 우선주가 배당을 받은 회사: {sum(stk_n.values()):,}곳 — 주식의 총수 현황 "
+            f"받음 {stk_n['got']:,} · 못 받음(보통주 줄을 못 찾음 · 보고서 없음) {stk_n['none']:,}")
     if backlog0:
         left = capital_backlog(client.entries, (year, year - 1), today)
         capped = client.redo_left <= 0
@@ -2323,7 +2382,33 @@ def _median(vals):
     return round(float(np.median(vals)), 1) if len(vals) >= 5 else None
 
 
-FIN_SECS = {"bank", "insure", "broker", "holding"}
+FIN_SECS = {"bank", "insure", "broker", "holding"}    # EV 계열 멀티플을 빼는 업종 (그대로)
+# v19.1d (Jack, 2026-11-07): 유동비율·이자보상배율은 재무제표에 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과
+# 금융 지주(KB금융·신한지주 …: 업종 그룹이 은행·보험·증권·금융)만 해당 없음(flNa). 그 밖의 지주회사(LG·GS·CJ …)는 이제 돌려요.
+FL_FIN_SECS = {"bank", "insure", "broker"}
+FL_FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}   # data/industry_groups.csv 의 financial=yes 그룹과 같아요
+# 금융 지주 (업종 그룹이 industry_overrides.csv 에서 와요): 이 회사들이 금융으로 잡히지 않으면 크게 남겨요
+FL_FIN_HOLDINGS = ("105560", "055550", "086790", "316140", "138930", "139130", "175330", "138040", "071050")
+# v19.1d (Jack, 2026-11-07): 이자보상배율을 잠시 모든 회사에서 꺼요. 2026-11-07 경고 505곳 중 502곳이 '이자비용'이 아니라 환손실·
+# 파생상품 손실까지 든 '금융비용'으로 계산됐어요 (두산에너빌리티 0.65배 → 실제 이자 지급액으로는 약 2.0배). 이자비용, 없으면
+# 현금흐름표의 이자 지급액으로 다시 읽는 PR(v19.1f, 전체 DART 다시 읽기)이 이 스위치를 끄고 바른 값으로 다시 켜요.
+# 꺼져 있으면 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요 (flRan 에 icr 없음 · flWhy.icr "off" — 앱은 아무 말도 안 해요).
+ICR_OFF = True
+
+
+def fl_unknown_holding(s):
+    """업종 그룹(ind)이 없는 지주회사 — 금융 지주인지 알 수 없어서 두 검사를 돌리지도, 해당 없음으로 치지도 않아요. (순수 함수)"""
+    return not s.get("ind") and (s.get("s") or "etc") == "holding"
+
+
+def fl_financial(s):
+    """재무 경고의 유동비율·이자보상배율이 해당 없는 금융회사인지. 업종 그룹(ind)이 있으면 그것으로만, 없을 때만 업종(s)으로 봐요
+    (순수 함수). 업종 s 는 거칠어요: 2026-11-06 데이터에서 DB손해보험·현대해상은 s 가 auto(보험인데 두 검사를 돌림), 지씨셀은
+    bank, 신원·제이에스티나·한국기업평가는 broker(금융이 아닌데 건너뜀)였어요. 업종 그룹은 둘 다 맞게 잡아요."""
+    ind = s.get("ind")
+    if ind:
+        return ind in FL_FIN_INDS
+    return (s.get("s") or "etc") in FL_FIN_SECS
 
 
 CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
@@ -2336,6 +2421,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
     extra = extra or {}
     comps = []
+    hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
+    why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2378,15 +2465,20 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
 
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
         fl, ran = {}, []
-        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and row["s"] not in FIN_SECS:
+        fin_co = fl_financial(s)
+        unknown = fl_unknown_holding(s)      # 그룹 없는 지주: 금융 지주일 수도 있어 두 검사를 쉬어요 (앱은 '경고 없음'이라 말하지 않아요)
+        if s["t"] in FL_FIN_HOLDINGS and not fin_co:
+            hold_bad.append(f"{s['t']} {s['nk']}")
+        if eff["ca"] and eff["cl"] and eff["cl"] > 0 and not fin_co and not unknown:
             ran.append("cr")
             cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
         op0f = eff["op0"]
-        if op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and row["s"] not in FIN_SECS:
+        icr_ok = op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and not fin_co and not unknown
+        if icr_ok and not ICR_OFF:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
-        if op0f is not None and eff["ie"] and eff["ie"] > 0 and row["s"] not in FIN_SECS:
+        if icr_ok and not ICR_OFF and eff["ie"] > 0:
             icr = op0f / eff["ie"]
             if icr < 1:
                 fl["icr"] = round(icr, 2)
@@ -2401,8 +2493,19 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         if fl:
             row["fl"] = fl
         row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
-        if row["s"] in FIN_SECS:
-            row["flNa"] = ["cr", "icr"]                      # 금융업은 유동비율·이자보상배율이 해당 없어요
+        if not fin_co and not unknown and "icr" not in ran:
+            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
+            # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
+            # off = 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요). 꺼진 동안은 이자 줄이 없는 회사도 off: 어떤 회사엔 '확인한 …
+            # 없어요' 카드가, 같은 결과의 다른 회사엔 아무것도 없는 차이가 생기지 않게 (리뷰 2026-11-07)
+            row["flWhy"] = {"icr": "off" if ICR_OFF else "op" if op0f is None else "ie" if eff["ie"] is None else "neg"}
+            why_n[row["flWhy"]["icr"]] += 1
+        if fin_co:
+            row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
+        elif unknown:
+            hold_unknown.append(f"{s['t']} {s['nk']}")
+        elif row["s"] == "holding" or s.get("ind") == "holding":   # v19.1d: 금융이 아닌 지주회사 — 몇 곳이 돌았는지 로그로 남겨요
+            hold_log.append((s["t"], s["nk"], "cr" in ran, icr_ok))   # 이자보상배율은 '돌릴 수 있었는지' (ICR_OFF 와 상관없이)
         for k in CORP_DIV_KEYS:                              # v19.1b: 분할 확인한 배당 · 베타 표준오차
             if s.get(k) is not None:
                 row[k] = s[k]
@@ -2460,6 +2563,21 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
+    log(f"{'  !! ' if ICR_OFF else '· '}이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — "
+        + (f"잠시 꺼 둠(ICR_OFF · 금융비용으로 계산되던 값이라) {why_n['off']:,} · " if ICR_OFF else "")
+        + f"이자비용·금융비용 줄 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자비용 음수 {why_n['neg']:,} (corp.json flWhy)")
+    both = [h for h in hold_log if h[2] and h[3]]
+    miss = [h for h in hold_log if not (h[2] and h[3])]
+    log(f"· 지주회사(금융 빼고) 재무 경고: {len(hold_log)}곳 중 유동비율 {sum(h[2] for h in hold_log)} · 이자보상배율 "
+        f"{sum(h[3] for h in hold_log)} · 둘 다 {len(both)}곳 돌릴 수 있어요" + (" (이자보상배율은 지금 꺼 둠 · ICR_OFF)" if ICR_OFF else ""))
+    if hold_unknown:
+        log(f"  !! 업종 그룹이 없어 금융 지주인지 알 수 없는 지주회사 {len(hold_unknown)}곳: 두 검사를 쉬어요 — " + ", ".join(hold_unknown))
+    if hold_bad:
+        log(f"  !! 금융 지주인데 금융으로 잡히지 않은 회사 {len(hold_bad)}곳 (업종 그룹 확인): " + ", ".join(hold_bad))
+    if miss:
+        log(f"  !! 재무제표에 필요한 줄이 없거나 쓸 수 없어(유동부채 0 이하·이자비용 음수 포함) 못 돌린 지주회사 {len(miss)}곳: " + ", ".join(
+            f"{t} {nk}({'유동비율' if not cr else ''}{'·' if not cr and not icr else ''}{'이자보상배율' if not icr else ''} 없음)"
+            for t, nk, cr, icr in miss))
     return {"asOf": as_of, "market": market or {}, "sectors": sectors, "companies": comps}
 
 
@@ -2949,13 +3067,15 @@ def _three(v):
     return [_fin(x) for x in (list(v) + [None] * 3)[:3]] if isinstance(v, (list, tuple)) else [None] * 3
 
 
-def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None):
+def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None, stk=None):
     """한 회사의 주당 배당금 3년을 오늘 주식 수 기준으로 맞춰요. (순수 함수)
     dps3 보통주 주당 배당금 [당기, 전기, 전전기] (0 = 배당 없음 · None = 모름) · bas = parse_dart_basis 결과 ·
     cs3 자본금 3년 (억원) · shr 오늘 상장 보통주 수 · prefs 같은 회사 상장 우선주들의 오늘 주식 수 ·
     ss3 자본잉여금 3년 (억원 — 액면가가 그대로인데 주식 수가 깨끗한 배율로 바뀐 해가 무상증자인지 확인해요).
     cap_k 자본금의 범위: all = 회사 전체 · common = 보통주만 (v19.1e: 그러면 아래 끝은 오늘 보통주 수 ÷ 보통주 발행 주식 수 상한).
     cap_src paid = 납입자본(주식발행초과금이 섞일 수 있음): 올해 아래 끝에만 쓰고 앞 해 비교에는 쓰지 않아요 (v19.1e).
+    stk 주식의 총수 현황 (parse_dart_shares · v19.1g): 상장되지 않은 우선주가 배당을 받아 위 끝을 셀 수 없을 때만 그해 말 보통주 유통
+    주식 수로 위 끝을 세요. 배당 표와 맞는지 먼저 확인해요 (stk_upper).
     반환 {"dps3a", "dpsF", "st3", "divSt", "f0", "lo", "hi"} — divSt 는 배당한 해들 중 가장 나쁜 결과
     (nc 비교 불가 > nd 알 수 없음 > adj 맞춤 > same 그대로), 3년 모두 0 이면 zero."""
     d = _three(dps3)
@@ -2971,6 +3091,10 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
     N = [cash[i] / d[i] if d[i] and d[i] > 0 and cash[i] and cash[i] > 0 else None for i in range(3)]
     W = [ni[i] / eps[i] if ni[i] and eps[i] and ni[i] * eps[i] > 0 else None for i in range(3)]
     I = [cs[i] * 1e8 / par[i] if cs[i] and cs[i] > 0 and par[i] and par[i] > 0 else None for i in range(3)]
+
+    def unlisted_in(i):
+        """i 해에 배당을 받은 우선주·종류주 종류가 상장 우선주 종목 수보다 많은지 (상장되지 않은 주식이 총액에 섞임)."""
+        return sum(1 for p in pds if p[i] is not None and p[i] > 0) > len(prefs)
 
     def today_w(i):
         """오늘 상장 주식 수를 N 과 같은 셈법으로: 우선주는 그해 (가장 많이 받은 종류의 주당 배당 ÷ 보통주 주당 배당) 만큼.
@@ -2990,6 +3114,8 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
     if shr and shr > 0:
         if N[0] and today_w(0) is not None:
             hi = today_w(0) / N[0] * (1 + 0.5e6 / cash[0] + 0.5 / d[0])
+        elif N[0] and stk:
+            hi = stk_upper(shr, stk, cash[0], d[0], [p[0] for p in pds if p[0] is not None])
         elif d[0] == 0 and W[0]:
             hi = (shr + pref_all) / W[0] * (1 + 0.5e6 / abs(ni[0]) + 0.5 / abs(eps[0]))
         if I[0]:
@@ -3000,7 +3126,12 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
         """당기 기준 ÷ i 해 기준 = gᵢ. 발행 주식 수 상한의 비(q)가 바뀐 배율을, 배당 받은 주식 수의 비(r)가 그해 배당금이
         옛 기준(g = q)인지 회사가 고쳐 적은 새 기준(g = 1)인지 알려 줘요."""
         q = I[0] / I[i] if I[0] and I[i] else None
-        r = N[0] / N[i] if N[0] and N[i] else None
+        # v19.1g: 상장되지 않은 우선주가 배당을 받은 해의 N 에는 그 몫이 섞여 해마다 흔들려요 — 그 해가 끼면 배당 받은 주식 수의 비를
+        # 쓰지 않아요 (자본금이 그대로면 '그대로', 아니면 판단하지 않음 · 리뷰 2026-11-07: 지아이텍 N/보통주 2.14 · 1.74 · 1.24)
+        r_raw = N[0] / N[i] if N[0] and N[i] else None
+        r = r_raw if not unlisted_in(0) and not unlisted_in(i) else None
+        # 흔들린 비(r_raw)는 배율을 고르는 데는 쓰지 않지만 '판단하지 않음'을 고르는 데는 그대로 써요 (리뷰 2026-11-07: 지운 비 때문에
+        # 예전엔 판단하지 않던 해가 '그대로'가 되지 않게). 섞인 몫은 '판단하지 않음'만 늘릴 수 있어요
         p = par[i] / par[0] if par[0] and par[i] else None
         if q is None:
             # 발행 주식 수 상한을 모르면 배당 받은 주식 수만으로: 자기주식 매입·처분 만큼(±15%)은 같은 기준,
@@ -3017,7 +3148,7 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
         if kq is None:
             return None, "nc"                           # 유상증자·합병·인적분할처럼 어중간하게 바뀐 주식 수
         if kq == 1.0:
-            kr = clean_factor(r) if r is not None else None
+            kr = clean_factor(r_raw) if r_raw is not None else None
             if (kr is not None and kr != 1.0) or (p is not None and abs(p - 1) > 1e-9):
                 return None, "nd"                       # 발행 주식 수는 그대로인데 다른 값이 분할을 말해요 — 판단하지 않아요
             return 1.0, "ok"
@@ -3063,6 +3194,25 @@ def div_basis(dps3, bas, cs3, shr, prefs=(), ss3=None, cap_k="all", cap_src=None
     return {"dps3a": dps3a, "dpsF": dpsF, "st3": st3, "divSt": div_st, "f0": f0, "lo": lo, "hi": hi}
 
 
+STK_AGREE = (0.85, 1.02)    # 배당 표로 센 보통주 수 ÷ 주식의 총수 현황의 보통주 유통 주식 수가 이 안이어야 같은 기준이에요
+
+
+def stk_upper(shr, stk, cash0, d0, pdps0):
+    """상장되지 않은 우선주가 배당을 받은 해의 위 끝: 오늘 보통주 수 ÷ 그해 말 보통주 유통 주식 수. (순수 함수)
+    유통 주식 수 ≤ 발행 주식 수라서 위 끝으로 맞아요. 다만 주당 배당금이 같은 주식 기준인지 먼저 확인해요: 총액에서 우선주·종류주 몫
+    (유통 주식 수 × 가장 큰 종류 주당 배당)을 뺀 보통주 몫 ÷ 보통주 주당 배당 = 배당 받은 보통주 수가 유통 주식 수의 85~102% 여야 해요
+    (가장 큰 주당 배당으로 빼서 조금 작게 나올 수 있고, 기준일까지의 자기주식 매입도 있어서). 아니면 None (판단하지 않아요)."""
+    shr, cash0, d0 = _fin(shr), _fin(cash0), _fin(d0)
+    cmo, pfo = _fin((stk or {}).get("cmo")), _fin((stk or {}).get("pfo"))
+    paid = [p for p in (_fin(x) for x in pdps0 or ()) if p is not None and p > 0]
+    if not (shr and shr > 0 and cash0 and cash0 > 0 and d0 and d0 > 0 and cmo and cmo > 0) or pfo is None or not paid:
+        return None
+    n_common = (cash0 - pfo * max(paid)) / d0
+    if not (STK_AGREE[0] * cmo <= n_common <= STK_AGREE[1] * cmo):
+        return None
+    return shr / cmo * 1.001
+
+
 def kr_pref_shares(listing):
     """목록 파일 전체(상위 2,500개로 자르기 전)에서 우선주 상장 주식 수: {보통주 코드 앞 5자리: [주식 수, …]}. (순수 함수)
     우선주 코드는 보통주 코드의 끝자리만 바꾼 것이에요 (005930 → 005935 · 005380 → 005385·005387·005389 · 006800 → 00680K)."""
@@ -3086,6 +3236,7 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
     for s in kr_stocks:
         bas = s.pop("_bas", None)
         cap = s.pop("_cap", None)
+        stk = s.pop("_stk", None)
         if s.get("cls") != "kr":
             continue
         t = s["t"]
@@ -3100,7 +3251,9 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
         cs3 = cap["cs3"] if cap else fin.get("cs3")
         ss3 = (cap.get("ss3") if cap else None) or fin.get("ss3")
         r = div_basis(s["dps3"], bas, cs3, s.get("shr"), pref_shares.get(t[:5], ()), ss3, cap_k=(cap or {}).get("k", "all"),
-                      cap_src=(cap or {}).get("src"))
+                      cap_src=(cap or {}).get("src"), stk=stk)
+        if stk:
+            cnt["stkOk" if r["dpsF"][0] is not None else "stkNo"] += 1
         d0_ = _fin(s["dps3"][0]) if s["dps3"] else None
         if d0_ is not None and d0_ > 0:
             srcs[(cap or {}).get("src") or ("total" if cs3 else "none")] += 1
@@ -3156,7 +3309,9 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
     loud = cnt["nc"] + cnt["nd"] > 0
     log(f"{'  !! ' if loud else '· '}배당 분할 확인: 그대로 {cnt['same']:,} · 맞춤 {cnt['adj']:,}{ex(adj_ex)} · "
         f"비교 불가 {cnt['nc']:,}{ex(nc_ex)} · 알 수 없음 {cnt['nd']:,}{ex(nd_ex)} · 배당 없음 {cnt['zero']:,} · "
-        f"DART 배당 표 없음 {cnt['noDps']:,} · 우선주 {cnt['pref']:,}")
+        f"DART 배당 표 없음 {cnt['noDps']:,} · 우선주 {cnt['pref']:,}"
+        + (f" · 상장 안 된 우선주가 있어 주식의 총수 현황으로 확인 {cnt['stkOk'] + cnt['stkNo']:,}곳 (확인됨 {cnt['stkOk']:,})"
+           if cnt['stkOk'] + cnt['stkNo'] else ""))
     share = 100.0 * cnt["payersDyt"] / cnt["payers"] if cnt["payers"] else 0.0
     band = ("관문 실패" if share < DYT_COVER_BANDS["floor"] else "관문 경고" if share < DYT_COVER_BANDS["seen"] else None)
     log(f"{'  !! ' if band else '· '}오늘 종가 기준 배당수익률(dyt): 배당한 {cnt['payers']:,}종목 중 {cnt['payersDyt']:,} "
@@ -3810,7 +3965,7 @@ def main():
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
         client = DartClient(DART_KEY, mode=dart_mode, today=today)
-        kr, fin_map = ph.run("DART", enrich_with_dart, kr, client)
+        kr, fin_map = ph.run("DART", enrich_with_dart, kr, client, kmeta.get("_prefShares") or {})
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
