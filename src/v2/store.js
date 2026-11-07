@@ -101,7 +101,7 @@ function importedProblem(r, i, today, holds, part = "imported") {
   const t = r.t;
   if (!isStr(r.nk, 120)) return bad(part, i, t, "name missing");
   if (!CCY.includes(r.ccy)) return bad(part, i, t, "currency must be KRW or USD");
-  if (r.avg != null && !isPos(r.avg)) return bad(part, i, t, "평균 단가 must be a number above 0");
+  if (r.avg != null && !isPos(r.avg)) return bad(part, i, t, "average price (avg) must be a number above 0");
   if (r.unscored != null && r.unscored !== true) return bad(part, i, t, "unscored must be true when present");
   if (r.date != null && !pastDate(r.date, today)) return bad(part, i, t, "date must be a real date, not after today");
   if (t == null) {                                         // a stock not in the data, added by name with an amount only
@@ -193,7 +193,7 @@ function historyProblem(hs, today) {
 
 // The 기준 of an imported portfolio (its report and its 내 기준 rule read them).
 function settingsProblem(s) {
-  if (!plainObj(s) || !plainObj(s.points)) return bad("settings", null, null, "the 기준 points are missing");
+  if (!plainObj(s) || !plainObj(s.points)) return bad("settings", null, null, "the criteria points are missing");
   let sum = 0;
   for (const [id, v] of Object.entries(s.points)) {
     const c = CARDS.find((x) => x.id === id);
@@ -253,6 +253,7 @@ export function problemText(deck, p) {
 }
 
 // ---------------- the whole store ----------------
+const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "preview"];
 // -> { readable: false, why } when it is not a records store this app can read at all (not an object, an unknown or newer
 // version, no portfolio list); else { readable: true, data, problems: [text] }: data keeps every valid portfolio and part,
 // problems names what was set aside (a bad portfolio, a duplicate id, a bad notes / assume / guideSeen part).
@@ -272,16 +273,19 @@ export function checkStore(d, today) {
   const data = { v: d.v, decks };
   if (d.notes != null) {
     if (validPerStock(d.notes, (n) => typeof n.text === "string" && n.text.length > 0 && n.text.length <= NOTE_MAX, today)) data.notes = d.notes;
-    else problems.push("notes (내 메모): not valid");
+    else problems.push("notes: not valid");
   }
   if (d.assume != null) {
     if (validPerStock(d.assume, (a) => okAssume(a), today)) data.assume = d.assume;
-    else problems.push("assume (saved 가치 assumptions): not valid");
+    else problems.push("assume (saved value assumptions): not valid");
   }
   if (d.guideSeen != null) {
     if (pastDate(d.guideSeen, today)) data.guideSeen = d.guideSeen;
     else problems.push("guideSeen: not a date up to today");
   }
+  // A top-level part this version does not know (a later version's, e.g. v19.6's 관심 종목) is kept as it is, so a write
+  // from this tab never drops it; this app reads nothing from it.
+  for (const k of Object.keys(d)) if (!KNOWN_TOP.includes(k)) data[k] = d[k];
   return { readable: true, data, problems };
 }
 
@@ -582,6 +586,7 @@ export function mergeStores(cur, inc) {
     if (Object.keys(m).length) out[key] = m;
   }
   if (guideSeenIn(cur)) out.guideSeen = cur.guideSeen;
+  for (const k of Object.keys(cur || {})) if (!KNOWN_TOP.includes(k)) out[k] = cur[k];   // a later version's parts stay
   return { v: versionFor(out), ...out };
 }
 

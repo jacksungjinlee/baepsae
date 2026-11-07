@@ -59,8 +59,9 @@ export function Report({ load, deck }) {
       <Whole st={st} />
       <ByStock st={st} />
       <Industry st={st} />
-      <Y2022 st={st} load={load} />
-      <Dividends st={st} load={load} />
+      {/* both need every holding's value today (the 가진 종목 넣기 flow only reaches 점검 when they all have one) */}
+      {st.view.ok && <Y2022 st={st} load={load} />}
+      {st.view.ok && <Dividends st={st} load={load} />}
       <Sandbox st={st} />
     </div>
   );
@@ -71,7 +72,7 @@ function Headline({ st, deck, load }) {
   const d = reportDates(st.view, { pxDate: load.data.pxDate }, load.coByT);
   const parts = C.rpt.dates.split(" · ");
   const md = mdText(d.pxDate);
-  const dateLine = [md && fill(parts[0], { date: md }), d.krYear != null && fill(parts[1], { year: d.krYear })].filter(Boolean).join(" · ");
+  const dateLine = [md && fill(parts[0], { date: md }), d.krYear != null && fill(parts[1], { year: d.krYear })].filter(Boolean);
   const s = st.stats;
   const slots = CARDS.filter((c) => !c.pending).flatMap((c) => {
     const n = (deck.settings.points || {})[c.id] || 0;
@@ -80,7 +81,9 @@ function Headline({ st, deck, load }) {
   const warn = st.rules.find((r) => r.id === "warn");
   return (
     <Card data-ui-v2="report-head" style={{ marginTop: SPACE(3) }}>
-      {dateLine && <div data-ui-v2="report-dates" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{dateLine}</div>}
+      {dateLine.length > 0 && <div data-ui-v2="report-dates" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
+        {dateLine.map((x, i) => <span key={i}>{i ? " · " : ""}{x}</span>)}
+      </div>}
       <h2 data-ui-v2="report-headline" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), lineHeight: 1.35, textWrap: "balance" })}>
         {fill(C.rpt.head, { a: s.fit.length, b: s.less.length })}
       </h2>

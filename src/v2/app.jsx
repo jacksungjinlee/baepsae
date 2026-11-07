@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, askPersist, guideSeenIn, withGuideSeen } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen } from "./store.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -129,8 +129,11 @@ export function App({ source }) {
   }, [onStocks]);
 
   // saved = true when the caller already wrote it (the purchase sheet checks the write itself)
+  // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
+  // not a storage failure, so the "can't save on this device" line stays off.
   const setStoreData = useCallback((data, saved) => {
     setStore((s) => {
+      if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return s; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
       return { ...s, data, locked: false };
     });

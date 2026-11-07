@@ -299,8 +299,8 @@ function DraftRow({ x, shade, total, onChange, onRemove }) {
   const { d, s, r, value } = x;
   const name = s ? s.nk : d.t;
   const usd = s && s.cls === "us";
-  const [qb, qa] = around(C.plan.shares, "n");
-  const [mb, ma] = around(C.app.man, "n");
+  // Each word next to a field is a whole approved piece: 수량 (주) before the quantity, 만원 after the amount, 평균 단가 before
+  // the 평균 단가 (US: "$" in front; the won amount needs no unit word of its own).
   const [ab] = around(C.imp.avg, "price");
   const w = value != null && total > 0 ? value / total : null;
   return (
@@ -313,8 +313,8 @@ function DraftRow({ x, shade, total, onChange, onRemove }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(1) }}>
           {d.mode === "amount"
-            ? <NumField value={d.amount} onChange={(v) => onChange({ amount: v })} label={C.today.value} before={mb} unit={ma} invalid={r.badAmount} dataUi="import-amount" />
-            : <NumField value={d.qty} onChange={(v) => onChange({ qty: v })} label={C.plan.qty} before={qb} unit={qa} invalid={r.badQty} decimals={usd} dataUi="import-qty" />}
+            ? <NumField value={d.amount} onChange={(v) => onChange({ amount: v })} label={C.today.value} unit={C.app.manUnit} invalid={r.badAmount} dataUi="import-amount" />
+            : <NumField value={d.qty} onChange={(v) => onChange({ qty: v })} label={C.plan.qty} before={C.plan.qty} invalid={r.badQty} decimals={usd} dataUi="import-qty" />}
         </div>
         {w != null && (
           <div aria-hidden="true" style={{ height: SPACE(1) + 2, background: COLOR.page, borderRadius: 999, marginTop: SPACE(2) }}>
@@ -324,7 +324,7 @@ function DraftRow({ x, shade, total, onChange, onRemove }) {
         <div style={{ marginTop: SPACE(1) }}>
           {d.avgOpen || d.avg ? (
             <NumField value={d.avg} onChange={(v) => onChange({ avg: v })} label={C.imp.addAvg} before={usd ? `${ab.trim()} $` : ab.trim()}
-              unit={usd ? null : around(C.app.won, "n")[1]} invalid={r.badAvg} dataUi="import-avg" />
+              invalid={r.badAvg} dataUi="import-avg" />
           ) : (
             <button type="button" data-ui-v2="import-add-avg" onClick={() => onChange({ avgOpen: true })}
               style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, padding: 0, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.imp.addAvg}</button>

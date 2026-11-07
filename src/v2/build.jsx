@@ -92,8 +92,8 @@ function Option({ title, sub, onClick, id, pic }) {
   );
 }
 
-// v19.3d: 가진 종목으로 시작하기 (the wallet picture, board BuildStart2): opens 가진 종목 넣기 (Part F). Not a template, so it
-// carries no data-deck. big: the new start screen's card (RECIPE_START).
+// v19.3d: 가진 종목으로 시작하기 (the wallet picture, board BuildStart2) on today's start screen: opens 가진 종목 넣기 (Part F).
+// Not a template, so it carries no data-deck.
 function HoldingsOption({ onClick, big = false }) {
   const s0 = C.build.s0;
   return (
@@ -147,7 +147,7 @@ function Steps({ load, builder, setBuilder, onExit, coach, onImport }) {
       </div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <StepDots step={step} />
-      {step === 0 && (RECIPE_START ? <StepStart2 start={start} onImport={onImport} /> : <StepStart start={start} onImport={onImport} />)}
+      {step === 0 && (RECIPE_START ? <StepStart2 start={start} /> : <StepStart start={start} onImport={onImport} />)}
       {step === 1 && <StepCards st={st} set={set} ds={ds} load={load} coach={coach} />}
       {step === 2 && <StepExclude st={st} set={set} ds={ds} />}
       {step === 3 && <StepTerms st={st} set={set} ds={ds} load={load} />}
@@ -283,7 +283,7 @@ function Recipe({ d, start }) {
   );
 }
 
-function StepStart2({ start, onImport }) {
+function StepStart2({ start }) {
   const s0 = C.build.s0;
   const { wide } = useLayout();
   const ways = (
@@ -299,8 +299,20 @@ function StepStart2({ start, onImport }) {
           <span>{s0.pickCards}</span><Icon name="chevronRight" size={16} tone="on" />
         </button>
       </section>
-      {/* v19.3d: 가진 종목 넣기 (Part F) is live: the card opens it. */}
-      {onImport && <HoldingsOption onClick={onImport} big />}
+      {/* The new start screen (RECIPE_START, off) keeps this card as v19.3c left it, dimmed and 준비 중이에요 with no button:
+          tests/smoke_v2.py scene_v193c_on pins that, and making it open 가진 종목 넣기 needs that test changed (Jack's yes).
+          v19.3d opens 가진 종목 넣기 from today's start screen (HoldingsOption), the welcome's second button and 포트폴리오. */}
+      <section data-ui-v2="start-holdings" data-pending="1" style={{ marginTop: SPACE(2) + 2, display: "flex", alignItems: "center", gap: SPACE(3) + 2, background: COLOR.surface,
+        borderRadius: RADIUS.lg, padding: SPACE(4), opacity: 0.6 }}>
+        <PicChip pic={START_PICS.holdings} size="deck" />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={tx(SIZE.h3 - 1, WEIGHT.heavy, COLOR.ink, { display: "block" })}>{s0.holdings}</span>
+          <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, lineHeight: 1.45 })}>{s0.holdingsSub}</span>
+          <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { display: "flex", alignItems: "center", gap: SPACE(1), marginTop: SPACE(1) })}>
+            <Icon name="calendar" size={16} tone="off" /><span>{C.build.s1.pendingCard}</span>
+          </span>
+        </span>
+      </section>
       <OldAppNote />
     </div>
   );

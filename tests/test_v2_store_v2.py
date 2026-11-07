@@ -218,6 +218,15 @@ def test_a_newer_or_unknown_version_is_never_read_or_overwritten_unkept():
     assert got == {"locked": True, "n": 0, "ok": True, "kept": ['{"v":3,"decks":[]}']}
 
 
+def test_a_top_level_part_of_a_later_version_is_kept_through_reads_writes_and_imports():
+    later = {"v": 2, "decks": [IMPORTED], "watch": {"005930": {"at": "2026-11-07"}}}
+    got = run(f"mem.set(K, {json.dumps(json.dumps(later, ensure_ascii=False))}); const r = S.readStore(K, T);"
+              "const n = S.withNote(r.data, '005930', '메모', T); S.writeStore(n, K, T);"
+              f"const m = S.mergeStores(stored(), S.parseImport({json.dumps(json.dumps({'v': 1, 'decks': [BUILT]}, ensure_ascii=False))}, T));"
+              "out = { read: r.data.watch, locked: r.locked, written: stored().watch, merged: m.watch, ids: m.decks.map((x) => x.id) };")
+    assert got == {"read": later["watch"], "locked": False, "written": later["watch"], "merged": later["watch"], "ids": ["dimp", "d1"]}
+
+
 def test_a_version_2_part_in_a_version_1_store_is_not_read():
     got = run(f"mem.set(K, {json.dumps(json.dumps({'v': 1, 'decks': [BUILT, IMPORTED]}, ensure_ascii=False))}); out = S.readStore(K, T);")
     assert [x["id"] for x in got["data"]["decks"]] == ["d1"] and "version-2 part" in got["problems"][0]
