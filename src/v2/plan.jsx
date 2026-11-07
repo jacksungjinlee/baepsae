@@ -131,7 +131,7 @@ function Summary({ r }) {
           {!(yv && yv.wide) && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Note}</div>}
           {yv && !yv.wide && yv.parts.length > 1 && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Range}</div>}
           <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
-          {partial(y2022.missing)}
+          {!(yv && yv.wide) && partial(y2022.missing)}
         </div>
       )}
       {!y2022.ok && !half && vol != null && (
@@ -178,8 +178,9 @@ function RuleList({ rules, name }) {
     switch (x.id) {
       // a checked dividend-cut rule is always Korean; with the trend switch off it is not checked (준비 중): its history may
       // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on. v19.1b data
-      // (exactData): the rule book is checked only on a comparable, split-checked history (dps3a), so it shows as checked.
-      case "divCut": return x.check === "pending" || !(KR_DIV_TREND || exactData()) ? <RuleLine key={x.id} name={R.divCut} pending />
+      // (exactData): the rule book is checked on a comparable, split-checked history (dps3a), so it shows as checked; one
+      // saved while the history is not comparable (comparable: false, engine.ruleBook) shows as 준비 중 until it is.
+      case "divCut": return x.check === "pending" || x.comparable === false || !(KR_DIV_TREND || exactData()) ? <RuleLine key={x.id} name={R.divCut} pending />
         // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
         : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
             note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />

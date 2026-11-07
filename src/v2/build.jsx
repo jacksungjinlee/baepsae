@@ -274,7 +274,8 @@ function StepTerms({ st, set, ds, load }) {
     setQ("");
   };
   // 2022 line per sizing choice, from the list that 후보 고르기 would pre-select. v19.1b data (Part O.1): each a range from the
-  // beta band (deckcalc.y2022View); if any choice's smaller end is not a fall, plan.y2022Wide once instead of the three.
+  // beta band (deckcalc.y2022View). A choice whose smaller end is not a fall shows plan.y2022Wide in its own cell, the others
+  // keep their ranges; when all three are, the line once instead of the three cells.
   const y2022 = useMemo(() => {
     if (!(amt > 0)) return null;
     const picks = pickItems(ds, defaultPicks(ds));
@@ -285,8 +286,9 @@ function StepTerms({ st, set, ds, load }) {
     }
     return Object.values(out).every((v) => v != null) ? out : "hide";
   }, [ds, st, load, amt]);
-  const yWide = y2022 && y2022 !== "hide" && METHODS.some((m) => y2022[m].view && y2022[m].view.wide);
-  const yRange = y2022 && y2022 !== "hide" && !yWide && METHODS.some((m) => y2022[m].view && y2022[m].view.parts.length > 1);
+  const wideOf = (m) => !!(y2022 && y2022 !== "hide" && y2022[m].view && y2022[m].view.wide);
+  const yWide = METHODS.every(wideOf);
+  const yRange = y2022 && y2022 !== "hide" && METHODS.some((m) => !wideOf(m) && y2022[m].view && y2022[m].view.parts.length > 1);
   return (
     <div>
       <ScreenTitle>{s4.title}</ScreenTitle>
@@ -350,7 +352,8 @@ function StepTerms({ st, set, ds, load }) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: SPACE(1), marginTop: SPACE(1) }}>
                 {METHODS.map((m) => (
                   <div key={m} data-method={m} style={tx(SIZE.xs, m === st.method ? WEIGHT.heavy : WEIGHT.regular, m === st.method ? COLOR.ink : COLOR.text2, { textAlign: "center", minWidth: 0 })}>
-                    {y2022[m].view ? <Y2022Amount v={y2022[m].view} /> : aboutWon(y2022[m].won)}
+                    {wideOf(m) ? <span data-ui-v2="y2022-wide">{C.plan.y2022Wide}</span>
+                      : y2022[m].view ? <Y2022Amount v={y2022[m].view} /> : aboutWon(y2022[m].won)}
                   </div>
                 ))}
               </div>

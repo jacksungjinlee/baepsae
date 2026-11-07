@@ -550,12 +550,14 @@ export function DivTab({ load, s }) {
   const md = priceMd(load, s);
   const fy = us ? null : r.fy;
   // KR (Jack, 2026-11-05): 1,000,000 ÷ today's close × the report's dividend per share (company.js perMillionKr); US: Yahoo's yield
+  // (v19.1b data: perMillionKr can also read corp.json's dps3a, but a verified dyt only exists with data.json's own dps3a,
+  // so this call needs no corp row; tests/test_v2_company.py pins this line.)
   const pm = r.rule === "none" ? null : us ? perMillionView(r.yieldPct) : perMillionKr(s);
   const basis = us ? Dv.basisUs : Dv.basisKr && fy ? fill(Dv.basisKr, { fy }) : null;
   const po = us ? null : payout(s, co);
   if (po && po.out != null && !warnedPayout.has(s.t)) {
     warnedPayout.add(s.t);
-    console.warn(`[v2] payout ratio not shown for ${s.t}: ${po.out.toFixed(1)}% is outside 0-100% (dividend x shares / net income, ${po.fy})`);
+    console.warn(`[v2] payout ratio not shown for ${s.t}: ${po.out.toFixed(1)}% is outside 0-100% (${exactData() ? "cash dividends" : "dividend x shares"} / net income, ${po.fy})`);
   }
   const showDps = !us && r.dpsOk && r.dps != null && r.dps > 0;
   const years = showDps && r.d3 && fy ? [2, 1, 0].filter((i) => r.d3[i] != null).map((i) => ({ year: fy - i, v: r.d3[i] })) : [];

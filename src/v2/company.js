@@ -7,7 +7,7 @@
 // "업종" is the `ind` group (hasGroup: never "other" / "etc" / missing) inside the same market, as 왜 움직였나 uses.
 // Units: corp.json op / ni / rev are 억원; KR prices are 원; US prices are $ (data.json units).
 import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy,
-  krDivYield, DY_MAX, KR_DIV_TREND, SPLIT_GUARD, splitGuarded, krYieldToday, exactData, krDivHistory, dps3aOf, divStOf, betaBand } from "./engine.js";
+  krDivYield, DY_MAX, KR_DIV_TREND, SPLIT_GUARD, splitGuarded, krYieldToday, exactData, krDivHistory, krDivState, divStOf, betaBand } from "./engine.js";
 import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
@@ -177,33 +177,30 @@ export function divKr(s, co, trend = KR_DIV_TREND) {
   return { rule: "steady", ...base };
 }
 
-// Exact data (v19.1b): the same rules on the split-checked history. dps = the latest report's dividend per TODAY's share
-// (dps3a[0]: the report's figure divided by the exact split factor since, so it matches today's price and the yield
-// shown); dpsOk when that basis is known. yieldPct = dyt (blank when not verified), with a report year as before.
-//   dps missing -> na · dps 0 -> none (a report yield above 0 with it is a contradiction -> na) · a payer whose report
-//   says 0% -> na · a report record that disagrees with dps (dps3[0] !== dps) -> na with no yield
-//   not comparable (divSt nc · nd, or no dps3a) -> pays (배당을 줘요), never a trend · comparable -> the trend rules (cut ·
-//   streak · raised · steady), noPrev when last year is blank and a yield is shown (else na).
+// Exact data (v19.1b): the same rules on the split-checked history, and one rule for what is known (engine.krDivState,
+// shared with the 배당 card, 후보 고르기, the plan's 연 배당금, 100만원어치 and 배당성향): the report's own yield (dy) is
+// never used. dps = the latest report's dividend per TODAY's share (dps3a[0]: the report's figure divided by the exact
+// split factor since, so it matches today's price and the yield shown) and yieldPct = dyt, both only when verified
+// (dpsOk), the yield with a report year as before.
+//   dps missing -> na · dps 0 -> none · a payer: not comparable (divSt nc · nd, or no dps3a) -> pays (배당을 줘요), never
+//   a trend · comparable -> the trend rules on whole won (cut · streak · raised · steady), noPrev when last year is blank
+//   and a yield is shown (else na).
 function divKrExact(s, co) {
-  const dps = num(s && s.dps), dy = num(s && s.dy);
   const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
-  const yieldPct = fy != null ? krYieldToday(s) : null;
-  if (dps == null) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
-  if (dps === 0) return dy == null || dy === 0 ? { rule: "none", dps: 0, yieldPct, fy, dpsOk: true } : { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
-  const rec = d3Of(s, co);
-  if (dy === 0 || (rec && num(rec[0]) != null && num(rec[0]) !== dps)) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
-  const a = dps3aOf(s, co);
-  const now = a && a[0] > 0 ? a[0] : null;
-  const view = { dps: now, yieldPct, fy, dpsOk: now != null };
-  const d3 = krDivHistory(s, co);
-  if (!d3 || now == null) return { rule: "pays", ...view };
-  const prev = d3[1];
+  const st = krDivState(s, co);
+  if (!st) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
+  const yieldPct = fy != null ? st.y : null;
+  if (st.zero) return { rule: "none", dps: 0, yieldPct, fy, dpsOk: true };
+  const view = { dps: st.now, yieldPct, fy, dpsOk: st.now != null };
+  const d3 = krDivHistory(s, co);                          // whole won
+  if (!d3 || !(d3[0] > 0)) return { rule: "pays", ...view };
+  const cur = d3[0], prev = d3[1];
   if (prev == null) return { rule: yieldPct != null ? "noPrev" : "na", ...view, ...(yieldPct != null ? {} : { dps: null, dpsOk: false }) };
   const base = { ...view, d3 };
-  if (now < prev) return { rule: "cut", ...base };
+  if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);
   if (n >= 2) return { rule: "streak", n, ...base };
-  if (now > prev * (1 + DIV_SAME) + EPS) return { rule: "raised", ...base };
+  if (cur > prev * (1 + DIV_SAME) + EPS) return { rule: "raised", ...base };
   return { rule: "steady", ...base };
 }
 
@@ -235,29 +232,37 @@ const millionView = (raw) => (raw < 1000 ? { under: true, raw } : { won: Math.ro
 // price is missing, the price is not above 0, or dps is 0 (that is 배당이 없어요: divKr "none"). The dps must be the one the
 // card trusts: it agrees with the same report's yield (engine.krDivYield / dpsAgrees), so a split after the report or a
 // total filed in the per-share row (와이엔텍) never turns into an absurd amount; above 30% a year is not believed (DY_MAX).
-// Exact data (v19.1b): the dividend per today's share (dps3a[0]) ÷ today's close, only with a verified yield (dyt), so the
-// line, the yield and the per-share figure on the tab always agree.
-export function perMillionKr(s) {
+// Exact data (v19.1b): the dividend per today's share (dps3a[0], data.json else corp.json) ÷ today's close, only for a
+// verified payer (engine.krDivState), so the line, the yield and the per-share figure on the tab always agree.
+export function perMillionKr(s, co = null) {
+  if (exactData()) {
+    const st = krDivState(s, co);
+    return st && !st.zero && st.now != null && st.y > 0 && num(s.price) > 0 ? millionView((MILLION * st.now) / s.price) : null;
+  }
   const y = krYieldToday(s);                      // null without dps, a price above 0, agreement with the report's yield, <= 30%
   if (y == null || !(y > 0)) return null;
-  if (exactData()) {
-    const a = (dps3aOf(s, null) || [null])[0];
-    return a > 0 && num(s.price) > 0 ? millionView((MILLION * a) / s.price) : null;
-  }
   return millionView((MILLION * s.dps) / s.price);
 }
 
 // 배당성향 (KR), on one basis: the report's dividend per share x shares over the same report's net income (corp.json ni[0],
 // 억원), so both sides are that 사업보고서 (fy). Needs dps that agrees with dy, a profit and the share count. A result
 // outside 0-100% is not shown (out: the value, for the console).
-// Exact data (v19.1b): the dividend per today's share (dps3a[0]) x today's shares, so a split after the report no longer
-// mixes two share bases; only with a verified yield (dyt), in place of the 1/3x-3x cross-check and the split guard.
+// Exact data (v19.1b): the report's own totals, 현금배당금총액 over 당기순이익 (corp.json cash3[0] / ni[0], both 억원, the
+// same 사업보고서), for a payer (engine.krDivState: dps above 0). No share count and no per-share figure, so no split can
+// enter it, and no guess (no cross-check, no split guard). The same 0-100% rule.
 export function payout(s, co) {
   if (!s || s.cls !== "kr" || !co) return null;
-  const exact = exactData();
-  if (exact ? krYieldToday(s) == null : !dpsAgrees(s)) return null;
+  if (exactData()) {
+    const st = krDivState(s, co);
+    const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null, ni0 = Array.isArray(co.ni) ? num(co.ni[0]) : null;
+    const fy0 = num(co.fy) ?? num(s.fy);
+    if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
+    const p = (cash / ni0) * 100;
+    return p > 0 && p <= 100 ? { pct: p, fy: fy0 } : { out: p, fy: fy0 };
+  }
+  if (!dpsAgrees(s)) return null;
   if (splitGuarded(s)) return null;               // split guard: today's share count may be after a split (older files)
-  const d = exact ? (dps3aOf(s, co) || [null])[0] : num(s.dps), ni = Array.isArray(co.ni) ? num(co.ni[0]) : null;
+  const d = num(s.dps), ni = Array.isArray(co.ni) ? num(co.ni[0]) : null;
   const sh = num(s.shr) || (num(co.shm) ? co.shm * 1e6 : null);
   const fy = num(co.fy) ?? num(s.fy);
   if (d == null || !(d > 0) || !(ni > 0) || !(sh > 0) || fy == null) return null;

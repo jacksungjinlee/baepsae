@@ -142,16 +142,17 @@ def test_exact_dividend_trend_from_dps3a_never_a_split_as_a_cut():
     noprev = dict(SAMSUNG, t="000040", dps3=[1668.0, None, 1444.0], dps3a=[1668.0, None, 1444.0])
     noprev_noy = dict(noprev, t="000050", dyt=None)
     unverified = dict(LEENO, t="000060", dyt=None)
-    clash = dict(SAMSUNG, t="000070", dps3=[1500.0, 1446.0, 1444.0])                     # the record says another dps: na
-    zero_dy = dict(SAMSUNG, t="000080", dy=0.0)                                         # a payer whose report says 0%: na
-    paid0 = dict(zero, t="000090", dy=1.2)                                              # 0원 with a report yield: na
+    zero_dy = dict(SAMSUNG, t="000080", dy=0.0)                                         # 보고서 수익률 0%: 분할 확인(dyt)을 따라요
+    paid0 = dict(zero, t="000090", dy=1.2)                                              # 0원인데 보고서 수익률 1.2%: 배당이 없어요
+    uneven = dict(SAMSUNG, t="000110", divSt="adj", dps=333.0, dps3=[333.0, 1000.0, 900.0], dps3a=[333.0, 333.33, 300.0],
+                  dpsF=[1.0, 3.0, 3.0], dyt=0.15)                                       # 3:1 분할: 원 단위로는 333 → 333원 (줄지 않았어요)
     steady = dict(SAMSUNG, t="000100", dps3a=[1450.0, 1446.0, 1500.0], dps3=[1450.0, 1446.0, 1500.0], dps=1450.0)
     cases = {"daehan": DAEHAN, "leeno": LEENO, "hanwha": HANWHA, "hivision": HIVISION, "samsung": SAMSUNG, "nd": nd, "zero": zero,
-             "noprev": noprev, "noprevNoY": noprev_noy, "unverified": unverified, "clash": clash, "zeroDy": zero_dy, "paid0": paid0,
-             "steady": steady}
+             "noprev": noprev, "noprevNoY": noprev_noy, "unverified": unverified, "zeroDy": zero_dy, "paid0": paid0,
+             "steady": steady, "uneven": uneven}
     got = run(EXACT + """out = Object.fromEntries(Object.entries(CS).map(([k, s]) => [k, { d: K.divKr(s, null), pm: K.perMillionKr(s),
       y: E.krYieldToday(s), g: E.splitGuarded(s), card: E.cardRaw(s, E.CARDS.find((c) => c.id === 'div')),
-      po: K.payout(s, { ni: [1e4, 9e3, 8e3], fy: 2025 }) }]));
+      po: K.payout(s, { ni: [1e4, 9e3, 8e3], fy: 2025, cash3: [1500, 1400, 1300] }) }]));
     out.flip = [true, false].map((t) => K.divKr(DAEHAN, null, t).rule);""", CS=cases, DAEHAN=DAEHAN)
     d = {k: v["d"] for k, v in got.items() if k != "flip"}
     # 대한제분 10:1 분할 (보고서 뒤): 4,000 → 400원 기준으로 250 → 350 → 400, 2년 연속 늘렸어요 · 수익률 3.72% (보고서의 2.6% 아님)
@@ -169,13 +170,19 @@ def test_exact_dividend_trend_from_dps3a_never_a_split_as_a_cut():
     assert d["zero"]["rule"] == "none" and d["zero"]["yieldPct"] == 0
     assert d["noprev"]["rule"] == "noPrev" and d["noprev"]["yieldPct"] == 0.83
     assert d["noprevNoY"]["rule"] == "na" and d["noprevNoY"]["dps"] is None
-    # 확인 못 한 수익률은 빈 칸: 주당 배당 ÷ 종가로 대신 채우지 않아요 (100만원어치 · 배당성향 · 순위도 없음)
-    assert d["unverified"]["rule"] == "raised" and d["unverified"]["yieldPct"] is None
-    assert got["unverified"]["y"] is None and got["unverified"]["pm"] is None and got["unverified"]["card"] is None and got["unverified"]["po"] is None
-    for k in ("clash", "zeroDy", "paid0"):
-        assert d[k]["rule"] == "na" and d[k]["yieldPct"] is None and d[k]["dps"] is None, k
+    # 확인 못 한 수익률은 빈 칸: 주당 배당 ÷ 종가로 대신 채우지 않아요 (주당 배당 · 100만원어치 · 순위도 없음). 추세는 기록이 비교 가능하면 그대로
+    assert d["unverified"]["rule"] == "raised" and d["unverified"]["yieldPct"] is None and d["unverified"]["dps"] is None
+    assert d["unverified"]["dpsOk"] is False
+    assert got["unverified"]["y"] is None and got["unverified"]["pm"] is None and got["unverified"]["card"] is None
+    # 보고서 수익률(dy)은 쓰지 않아요: 0% 라고 적힌 배당 종목도 분할 확인을 따르고, 0원 종목은 수익률이 적혀 있어도 배당이 없어요
+    assert d["zeroDy"]["rule"] == "streak" and d["zeroDy"]["yieldPct"] == 0.83 and got["zeroDy"]["card"] == 0.83 and got["zeroDy"]["pm"]
+    assert d["paid0"]["rule"] == "none" and d["paid0"]["yieldPct"] == 0 and got["paid0"]["card"] == 0 and got["paid0"]["pm"] is None
+    assert got["paid0"]["po"] is None                                                   # 0원: 배당성향 없음
+    # 고르지 않은 배율 뒤 소수점: 원 단위로 비교해요 (333.33 → 333 은 '줄였어요'가 아니에요)
+    assert d["uneven"]["rule"] == "steady" and d["uneven"]["d3"] == [333, 333, 300], d["uneven"]
     assert got["flip"] == ["streak", "streak"]                                          # 예전 스위치는 이 파일에 쓰이지 않아요
-    assert got["daehan"]["po"] == {"pct": 400 * 1e6 / (1e4 * 1e8) * 100, "fy": 2025}       # 배당성향: 오늘 기준 주당 배당 × 오늘 주식 수
+    # 배당성향: 그 사업보고서의 현금배당금총액 ÷ 당기순이익 (주식 수 · 주당 배당 없이)
+    assert got["daehan"]["po"] == {"pct": 1500 / 1e4 * 100, "fy": 2025} and got["hanwha"]["po"] == got["daehan"]["po"]
 
 
 def test_exact_div_card_ranks_korea_on_dyt_and_a_blank_is_never_ranked():
@@ -215,7 +222,9 @@ out = { daehan: one(DAEHAN), leeno: one(LEENO), hanwha: one(HANWHA), hivision: o
     assert r["droppedBefore"] is False and r["since"] == 2025
     assert got["daehan"]["r"]["baseline"] == 400 and got["daehan"]["r"]["streak"] == 2
     assert got["hivision"]["r"]["check"] == "checked" and got["hivision"]["r"]["droppedBefore"] is True
-    assert got["hanwha"]["r"] == {"id": "divCut", "kind": "sell", "check": "pending"}     # 비교 불가: 준비 중
+    # 비교 불가: 규칙은 산 때의 보고서 연도와 함께 저장해요 (comparable: false → 매수 계획은 준비 중, 나중 파일이 비교할 수 있으면 점검)
+    assert got["hanwha"]["r"] == {"id": "divCut", "kind": "sell", "check": "checked", "input": "dps", "baseline": 7000, "since": 2025,
+                                  "dps": 7000, "prev": 3500, "fy": 2025, "basis": "report", "comparable": False}
     assert got["zero"].get("r") is None and got["us"]["r"]["check"] == "pending"
 
 
@@ -358,3 +367,77 @@ def test_no_warning_claim_only_when_every_check_ran_or_does_not_apply():
   K.warnings(KR, { flRan: ['l3', 'imp', 'x'], flNa: ['cr', 'zz'], fy: 2025 }).allRan,
   K.warnings(KR, { flRan: 'l3', flNa: ['cr', 'icr'], fy: 2025 }).allRan];""", KR=kr_)
     assert got == [True, False, False, True, False, False, False]
+
+
+# ── 하나의 규칙: 배당을 확인했는가 (리뷰 1) ──
+def test_one_rule_for_a_checked_korean_dividend_across_every_reader():
+    """보고서 수익률(dy)과 분할 확인(dyt)이 어긋나는 두 줄: 회사 페이지 · 배당 카드 · 후보 고르기 수익률 · 매수 계획 연 배당금 ·
+    100만원어치 · 배당성향이 모두 같은 답이에요. 빈 칸은 0 으로 순위에 들거나 더해지지 않아요."""
+    payer_dy0 = kr("028100", nk="동아지질", price=20000.0, dps=664.0, dy=0.0, dps3=[664.0, 600.0, 550.0], dps3a=[664.0, 600.0, 550.0],
+                   dpsF=[1.0, 1.0, 1.0], divSt="same", dyt=3.32)
+    zero_dy = kr("064820", nk="케이프", price=5000.0, dps=0.0, dy=6.6, dps3=[0.0, 300.0, 300.0], dps3a=[0.0, 300.0, 300.0],
+                 dpsF=[None, 1.0, 1.0], divSt="same", dyt=0.0)
+    blank = kr("000300", nk="빈칸", price=5000.0, dps=100.0, dy=2.0, dps3=[100.0, 100.0, 100.0], dps3a=[None, None, None],
+               dpsF=[None, None, None], divSt="nd")
+    corp = [{"t": t, "fy": 2025, "ni": [100.0, 90.0, 80.0], "cash3": [30.0, 28.0, 25.0]} for t in ("028100", "064820", "000300")]
+    got = run(EXACT + """
+const co = new Map(CO.map((c) => [c.t, c]));
+const card = (s) => E.cardRaw(s, E.CARDS.find((c) => c.id === 'div'));
+const one = (s) => { const d = K.divKr(s, co.get(s.t));
+  return { rule: d.rule, y: d.yieldPct, dps: d.dps, card: card(s), today: E.krYieldToday(s), pm: K.perMillionKr(s, co.get(s.t)), po: K.payout(s, co.get(s.t)),
+    plan: E.annualDividend([{ s, shares: 10, cost: s.price * 10 }], 1400, co) }; };
+const st = { ...E.defaultSettings(), points: { div: 5 }, strict: 'loose', mix: 'kr', count: 6 };
+const res = E.screen(STOCKS, st);
+out = { payer: one(STOCKS[0]), zero: one(STOCKS[1]), blank: one(STOCKS[2]), ranked: res.markets.kr.survivors.map((x) => x.t), blanks: res.markets.kr.blanks };""",
+              STOCKS=[payer_dy0, zero_dy, blank], CO=corp)
+    p, z, b = got["payer"], got["zero"], got["blank"]
+    # 보고서 수익률 0% 인 배당 종목: 페이지 수익률 = 카드 순위 = 후보 고르기 = 3.32% · 100만원어치 · 배당성향 · 연 배당금 모두 있어요
+    assert p["rule"] == "streak" and p["y"] == p["card"] == p["today"] == 3.32 and p["dps"] == 664
+    assert p["pm"]["won"] == round(1e6 * 664 / 20000 / 1000) * 1000 and p["po"]["pct"] == 30.0
+    assert p["plan"] == {"won": 6640, "unknown": 0, "unchecked": []}
+    # 0원인데 보고서 수익률 6.6%: 배당이 없어요 = 카드 0% = 연 배당금 0원 · 100만원어치 · 배당성향 없음 (페이지와 카드가 같은 답)
+    assert z["rule"] == "none" and z["y"] == z["card"] == z["today"] == 0 and z["pm"] is None and z["po"] is None
+    assert z["plan"] == {"won": 0, "unknown": 0, "unchecked": []}
+    # 확인하지 못한 배당: 페이지 수익률 · 카드 · 100만원어치 모두 빈 칸, 연 배당금에서는 빼고 이름을 밝혀요 (0 으로 세지 않아요)
+    assert b["rule"] == "pays" and b["y"] is None and b["card"] is None and b["today"] is None and b["pm"] is None and b["dps"] is None
+    assert b["plan"] == {"won": 0, "unknown": 0, "unchecked": [{"t": "000300", "nk": "빈칸"}]}
+    assert got["ranked"] == ["028100", "064820"] and got["blanks"] == 1
+
+
+def test_a_rule_saved_while_not_comparable_is_checked_once_a_later_file_can_compare():
+    """비교 불가(nc)일 때 산 종목: 규칙은 저장해요 (comparable: false, 산 때의 보고서 연도). 그날은 준비 중 · 기록이 비교 가능해진
+    다음 보고서에서 줄었으면 확인 필요 · 저장한 기록은 store.validStore 로 그대로 읽혀요."""
+    buy = dict(HANWHA, fy=2024, dps=3500.0, dps3=[3500.0, 1800.0, 1500.0], dps3a=[3500.0, None, 1500.0], dpsF=[1.0, None, 1.0], divSt="nc")
+    later_cut = dict(HANWHA, fy=2026, dps=6000.0, dps3=[6000.0, 7000.0, 3500.0], dps3a=[6000.0, 7000.0, 3500.0], dpsF=[1.0, 1.0, 1.0],
+                     divSt="same", dyt=0.88)
+    later_nc = dict(later_cut, divSt="nc", dps3a=[6000.0, None, None])
+    other = kr("000200", dps=0.0, dps3=[0.0, 0.0, 0.0], dps3a=[0.0, 0.0, 0.0], divSt="zero", dyt=0.0)
+    got = run(EXACT + HELPERS + """
+const deck = deckOf(BUY, O);
+const rule = deck.holdings[0].rules.find((r) => r.id === 'divCut');
+const store = { v: 1, decks: [deck] };
+out = { rule, valid: S.validStore(store, '2026-11-07'), today: div(deck, [BUY, O]), cut: div(deck, [LATER, O]), nc: div(deck, [NC, O]),
+  roundTrip: S.validStore(JSON.parse(JSON.stringify(store)), '2026-11-07') };""", BUY=buy, O=other, LATER=later_cut, NC=later_nc)
+    assert got["rule"]["check"] == "checked" and got["rule"]["comparable"] is False and got["rule"]["since"] == 2024
+    assert got["valid"] is True and got["roundTrip"] is True
+    assert got["today"]["res"]["result"] == "pending" and got["today"]["status"] == "none"
+    assert got["cut"]["res"]["result"] == "check" and [(x["fy"], x["a"], x["b"]) for x in got["cut"]["drops"]] == [(2026, 7000, 6000)]
+    assert got["nc"]["res"]["result"] == "pending"
+
+
+def test_daily_check_compares_whole_won_after_an_uneven_split():
+    buy = dict(SAMSUNG, t="000110", fy=2024, divSt="adj", dps=1000.0, dps3=[1000.0, 900.0, 800.0], dps3a=[333.33, 300.0, 266.67],
+               dpsF=[3.0, 3.0, 3.0], dyt=0.15)
+    now = dict(buy, fy=2025, dps=333.0, dps3=[333.0, 1000.0, 900.0], dps3a=[333.0, 333.33, 300.0], dpsF=[1.0, 3.0, 3.0])
+    other = kr("000200", dps=0.0, dps3=[0.0, 0.0, 0.0], dps3a=[0.0, 0.0, 0.0], divSt="zero", dyt=0.0)
+    got = run(EXACT + HELPERS + """out = { d: div(deckOf(BUY, O), [NOW, O]), c: E.cautions(NOW, null, E.cautionContext([])) };""",
+              BUY=buy, NOW=now, O=other)
+    assert got["d"]["res"]["result"] == "ok" and got["d"]["drops"] == []
+    assert not any(x["code"] == "divDrop" for x in got["c"]["items"]) and "div" in got["c"]["ran"]
+
+
+def test_build_and_plan_wide_cells_and_no_partial_line_under_the_wide_line():
+    src = open(os.path.join(ROOT, "src", "v2", "build.jsx"), encoding="utf-8").read()
+    assert "wideOf(m) ? <span data-ui-v2=\"y2022-wide\">{C.plan.y2022Wide}</span>" in src      # 그 칸에만
+    plan = open(os.path.join(ROOT, "src", "v2", "plan.jsx"), encoding="utf-8").read()
+    assert "{!(yv && yv.wide) && partial(y2022.missing)}" in plan
