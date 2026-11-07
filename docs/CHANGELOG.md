@@ -5,6 +5,7 @@ Claude Code adds a line for every merge so Jack and his claude.ai chat can follo
 
 | Date (KST) | PR | What changed |
 |---|---|---|
+| 2026-11-08 | #78 | Data: dividends are checked against stock splits for more Korean companies — the pipeline now reads 자본금 under its other names (보통주자본금, 납입자본) and re-read 81 reports once, so today's dividend yield is confirmed for 1,123 of 1,220 payers (was 1,088); the rest stay blank and unranked, never guessed. |
 | 2026-11-08 | #75 | 데이터 출처's logo line now reads "회사 로고: Logo.dev, 일부는 각 회사 홈페이지. 로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07), ahead of the company homepage icons; the Logo.dev link is unchanged. |
 | 2026-11-07 | #76 | Tests only: the smoke tests delete their own temporary site copies when they pass and keep only the latest failed run (about 4,000 had filled the session's disk). |
 | 2026-11-07 | #73 | v19.3b: every 기준 now shows its picture on its colour chip (기준 카드, 미리 보기, 후보, 매수 계획, the company page's 내 기준과 맞는 정도), the 8 templates show theirs; no text under 12 px on 2.0 screens; company logo colours never colour a chart; 데이터 출처 credits the pictures (Adobe Stock, Microsoft Fluent Emoji, MIT licence). Live check: pictures load, nothing under 12 px, no page errors. |
