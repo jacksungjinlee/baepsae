@@ -907,10 +907,47 @@ def test_holiday_table_that_disagrees_with_the_index_bars_warns(monkeypatch):
     rows.sort()
     r = row_of(check(cur, prev, final), HOL)
     assert r[3] == "WARN" and "KR 2026-10-09 표엔 휴장·봉 있음" in r[1] and "KR 2026-10-21 봉 없음·표에 없음" in r[1], r
-    monkeypatch.setattr(V, "HOL_COVER_WARN_DAYS", 500)                       # 표가 앞으로 500일을 덮지 못함 → 경고
+    monkeypatch.setattr(V, "HOL_COVER_WARN_DAYS", (V.load_holidays()[1] - TODAY).days + 1)   # 표 끝 하루 뒤까지 → 경고
     cur, prev, final = good_pair()
     r = row_of(check(cur, prev, final), HOL)
     assert r[3] == "WARN" and "다음 해 줄을 넣어 주세요" in r[1], r
+
+
+def test_blank_next_publish_never_switches_off_the_stale_price_check():
+    """파이프라인이 nextPub·staleAfter 를 빈 칸(null)으로 써도 pxd 검사는 돌아요 — 날짜 없는 옛 가격은 늘 실패예요."""
+    cur, prev, final = good_pair()
+    cur["data"]["nextPub"] = cur["data"]["staleAfter"] = None
+    gone = drop_us_d1(cur, 1)
+    stock(cur, gone[0]).pop("pxd")
+    rep = check(cur, prev, final)
+    assert row_of(rep, PXD)[3] == "FAIL" and row_of(rep, NEXT)[3] == "WARN", rep.table()
+
+
+def test_us_stocks_dropped_for_a_broken_bar_are_named_in_a_warning():
+    cur, prev, final = good_pair()
+    cur["data"]["usLeftOut"]["badBar"] = ["ZZZ", "YYY"]
+    rep = check(cur, prev, final)
+    assert ("미국 깨진 봉으로 뺀 종목", "2개: ZZZ, YYY", "없어야 함 (있으면 경고)", "WARN") in rep.rows and not rep.failed
+
+
+def test_holiday_table_loaders_accept_the_same_files(monkeypatch, tmp_path):
+    """머리줄 공백 · 빈 줄(,,,)은 파이프라인과 관문이 똑같이 받아요 (한쪽만 받으면 엉뚱한 경고가 나요)."""
+    import fetch_data as F
+    src = open(V.HOLIDAYS_CSV, encoding="utf-8").read().splitlines(True)
+    p = tmp_path / "h.csv"
+    p.write_text("date, market, name, source\n" + "".join(src[1:]) + ",,,\n", encoding="utf-8")
+    hol, end = V.load_holidays(str(p))
+    fh = F.load_market_holidays(str(p))
+    assert end == fh["end"] and hol["KR"] == set(fh["KR"]) and hol["US"] == set(fh["US"])
+
+
+def test_bad_index_dates_never_stop_the_holiday_cross_check():
+    """휴장일 표 검사는 경고만 하는 검사라 날짜가 아닌 일봉 줄에 멈추지 않아요 (그 줄은 '지수 이력' 검사가 따로 막아요)."""
+    cur, _, _ = good_pair()
+    cur["macro"]["idxHist"]["KOSPI"]["rows"] += [["None", 1.0], ["2026-13-40", 1.0]]
+    rep = V.Report()
+    V.check_v191c(rep, cur, us_of(cur), "publish", TODAY)                   # 예외 없이
+    assert row_of(rep, HOL)[3] == "PASS", row_of(rep, HOL)
 
 
 def test_unreadable_holiday_table_warns_and_falls_back_to_weekdays(monkeypatch, tmp_path):

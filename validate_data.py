@@ -223,6 +223,14 @@ def day(s):
     return dt.date.fromisoformat(str(s)[:10]) if s else None
 
 
+def is_day(s):
+    """YYYY-MM-DD 로 읽히는 값인지 (읽지 못하면 False — 경고만 하는 검사가 관문을 멈추지 않게)."""
+    try:
+        return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(s)[:10])) and day(s) is not None
+    except ValueError:
+        return False
+
+
 # ── KRX 특별 거래시간 표 (v17.5.4, fetch_data.py 와 별개 구현) ──
 def load_special_sessions(path=SPECIAL_CSV):
     """data/krx_special_sessions.csv → {날짜: (개장, 마감, 종류)}. 마감이 늦는 날만 최종본 기준이 늦어져요.
@@ -267,10 +275,13 @@ def load_holidays(path=HOLIDAYS_CSV):
     out = {"KR": set(), "US": set()}
     with open(path, encoding="utf-8-sig", newline="") as f:
         rd = csv.DictReader(f, restkey="_more")
+        rd.fieldnames = [c.strip() for c in (rd.fieldnames or [])]      # fetch_data 와 같은 파일을 받아요 (머리줄 공백)
         if rd.fieldnames != HOL_COLS:
             raise RuntimeError(f"{name} 머리줄 {rd.fieldnames} — {','.join(HOL_COLS)} 이어야 해요")
         for r in rd:
             where = f"{name} {rd.line_num}번째 줄"
+            if "_more" not in r and not any((v or "").strip() for v in r.values()):
+                continue                                              # 빈 줄(,,,)은 건너뛰어요 (fetch_data 와 같아요)
             if "_more" in r or any(v is None for v in r.values()):
                 raise RuntimeError(f"{where}: 칸 수가 머리줄과 달라요")
             v = {k: r[k].strip() for k in HOL_COLS}
@@ -800,7 +811,7 @@ def check_v191c(rep, cur, us, mode, today):
         probs = []
         for key, mk in (("KOSPI", "KR"), ("SP500", "US")):
             rows = ((macro.get("idxHist") or {}).get(key) or {}).get("rows") or []
-            bars = {str(r[0]) for r in rows if isinstance(r, (list, tuple)) and r}
+            bars = {str(r[0]) for r in rows if isinstance(r, (list, tuple)) and r and is_day(r[0])}   # 날짜가 아닌 줄은 빼요
             if not bars:
                 continue
             last = dt.date.fromisoformat(max(bars))
@@ -820,7 +831,7 @@ def check_v191c(rep, cur, us, mode, today):
                 f"앞으로 {HOL_COVER_WARN_DAYS}일을 덮고 지난 {HOL_CHECK_DAYS}일 지수 일봉과 맞음 (어긋나면 경고)",
                 warn=bool(probs) or short)
     # 3. 미국 종목의 자기 가격 날짜: d1 이 없는 종목(마지막 봉이 기준일이 아님)은 pxd 가 있고 기준일보다 앞이어야, 앱이 그 날짜를 보여요
-    if npub is None and sa is None:
+    if "nextPub" not in data and "staleAfter" not in data:      # 이 버전 전의 파일만 (파이프라인은 값이 없어도 칸은 늘 써요)
         rep.skip("미국 자기 가격 날짜 (pxd)", "이 버전 전의 파일 (pxd 를 쓰지 않았어요)")
         return
     usd = str(data.get("usPxDate") or "")
@@ -1026,6 +1037,10 @@ def check_v1752(rep, data, kr, us, pdata):
     lo = data.get("usLeftOut")
     pref = lo.get("preferred") if isinstance(lo, dict) else None
     ok = isinstance(pref, list) and all(isinstance(t, str) for t in pref) and len(pref) <= US_PREF_DROP_MAX
+    bad = lo.get("badBar") if isinstance(lo, dict) else None
+    if isinstance(bad, list) and bad:      # v19.1c: 기준일 봉은 있는데 그 전 봉이 깨져(0·무한) 뺀 종목 — 경고로 이름을 남겨요
+        rep.add("미국 깨진 봉으로 뺀 종목", True, f"{len(bad)}개: {', '.join(map(str, bad[:US_D1_SHOW]))}"
+                + (f" 외 {len(bad) - US_D1_SHOW}개" if len(bad) > US_D1_SHOW else ""), "없어야 함 (있으면 경고)", warn=True)
     rep.add("미국 우선주·예탁증서로 뺀 종목 수", ok,
             (f"{len(pref)}개" + (f": {', '.join(map(str, pref[:6]))}{'…' if len(pref) > 6 else ''}" if pref else ""))
             if isinstance(pref, list) else "기록 없음 (data.json usLeftOut)",

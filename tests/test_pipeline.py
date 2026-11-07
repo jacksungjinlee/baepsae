@@ -961,17 +961,22 @@ def test_next_publish_agrees_with_the_gates_own_calculation_everywhere():
     import validate_data as V
     hol = F.load_market_holidays()
     vhol, vend = V.load_holidays()
+    none_f, none_v = {"KR": {}, "US": {}, "start": None, "end": None}, {"KR": set(), "US": set(), "start": None}
+    short_end = dt.date(hol["start"].year, 12, 31)                           # 첫 해만 있는 표
+    short_f = {"KR": {d: n for d, n in hol["KR"].items() if d <= short_end}, "US": {d: n for d, n in hol["US"].items() if d <= short_end},
+               "start": hol["start"], "end": short_end}
+    short_v = {"KR": {d for d in vhol["KR"] if d <= short_end}, "US": {d for d in vhol["US"] if d <= short_end}, "start": vhol["start"]}
     d = hol["start"]
     n = 0
     while d <= hol["end"]:
         for lag in range(0, 11):
             u = d - dt.timedelta(days=lag)
             for px, usd in ((d, u), (u, d)):
-                try:
-                    f = F.next_publish(px, usd, hol)
-                except RuntimeError:
-                    f = None
+                f = F.next_publish(px, usd, hol)                       # 예외 없이 (표 밖은 평일 규칙)
                 assert f == V.expected_next_pub(px, usd, vhol, vend), (px, usd)
+                for fh, vh, ve in ((none_f, none_v, None), (short_f, short_v, short_end)):   # 표가 없거나 짧을 때도 같고, 늦지 않아요
+                    g = F.next_publish(px, usd, fh)
+                    assert g == V.expected_next_pub(px, usd, vh, ve) and g <= f, (px, usd)
                 n += 1
         d += dt.timedelta(days=1)
     assert n > 10000

@@ -3510,7 +3510,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
         log(f"  !! 미국 d1 없는 종목 {len(no_d1):,}개 (마지막 봉이 미국 기준일 {us_px_date} 이 아님 — 거래 정지이거나 야후가 봉을 "
             f"빠뜨림 · 가격은 괄호 날짜의 종가로 나가요): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
-            "usLeftOut": left_out}
+            "usLeftOut": {**left_out, "badBar": bad_bar}}   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
     return out, bench, fx, fx_last, us_vol_krw, meta
 
 
@@ -3737,13 +3737,13 @@ def main():
                 x["price"] = round(x["price"] * 1.1)
                 log(f"  !! 시험용(selftest): 005930 가격을 일부러 {x['price']:,}원으로 틀리게 써요 — 검증이 막아야 합니다")
 
-    try:      # 파일과 관문 표가 남아야 원인을 볼 수 있어요: 여기서 멈추지 않고 빈 칸으로 써서 관문이 실패로 막아요
+    try:      # 여기서 멈추지 않아요: 빈 칸으로 쓰면 관문이 경고하고, 앱은 예전 4일 규칙으로 '늦음'을 봐요 (Jack, 2026-11-07)
         next_pub = next_publish(dt.date.fromisoformat(kmeta["pxDate"]), dt.date.fromisoformat(umeta["usPxDate"]), hol)
         log(f"· 다음 발행 예정일 {next_pub} · 늦음 경고 {stale_after(next_pub)} (휴장일 표 "
             + (f"{hol['end'].year}년까지 · 한국 {len(hol['KR'])}일 · 미국 {len(hol['US'])}일)" if hol.get("end") else "없음 — 평일 규칙)"))
     except Exception as e:
         next_pub = None
-        log(f"  !! 다음 발행 예정일을 정하지 못했어요 ({type(e).__name__}: {e}) → 빈 칸으로 써요 (관문이 실패로 막아요)")
+        log(f"  !! 다음 발행 예정일을 정하지 못했어요 ({type(e).__name__}: {e}) → 빈 칸으로 써요 (관문이 경고해요 · 앱은 예전 4일 규칙)")
     payload = {
         "asOf": today.isoformat(), "pxDate": kmeta["pxDate"], "ksDate": kmeta["ksDate"],
         "usPxDate": umeta["usPxDate"], "fxDate": umeta["fxDate"], "publishedAt": published_at,
