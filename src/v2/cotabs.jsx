@@ -32,7 +32,7 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor } from "./fix.js";
+import { epsFixFor, stmtCurFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
 import { EpsFixNote, StmtCurNote } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
@@ -202,6 +202,8 @@ export function EarnTab({ load, s, onMore }) {
   }
   const r = earnKr(co);
   const rows = annualRows(co);
+  // statements not in won (corp.json stmtCur): only the currency line; no toggle, year line, 주가 분해 or 자세히 for amounts not shown
+  const cur = !!stmtCurFor(s, co);
   const opts = [{ value: "rev", label: C.pick.checks.rev }, { value: "op", label: C.plan.rules.opProfit }, { value: "ni", label: E.ni }].filter((o) => o.label);
   const m = opts.some((o) => o.value === metric) ? metric : "op";
   const series = rows ? rows.map((x) => ({ year: x.year, v: x[m] })) : null;
@@ -212,9 +214,9 @@ export function EarnTab({ load, s, onMore }) {
     <div data-ui-v2="co-earn" data-cls="kr" data-rule={r.rule}>
       <Card>
         {r.rule !== "na" && E.head[r.rule] && <H>{E.head[r.rule]}</H>}
-        {opts.length > 1 && <div style={{ marginTop: SPACE(3) }}><Segmented label={C.co.tabs.earn || C.plan.rules.opProfit} value={m} onChange={setMetric} options={opts} /></div>}
+        {!cur && opts.length > 1 && <div style={{ marginTop: SPACE(3) }}><Segmented label={C.co.tabs.earn || C.plan.rules.opProfit} value={m} onChange={setMetric} options={opts} /></div>}
         {/* statements not in won (corp.json stmtCur): no amounts; the reason where they would be */}
-        <StmtCurNote s={s} co={co} style={{ marginTop: SPACE(3) }} />
+        <StmtCurNote s={s} co={co} style={{ marginTop: 0 }} />
         {okSeries && (
           <>
             <div data-ui-v2="co-earn-big" data-metric={m} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
@@ -224,11 +226,11 @@ export function EarnTab({ load, s, onMore }) {
             <Bars rows={series} fmt={(v) => eokText(v)} latest={CHART.latest} earlier={CHART.earlier} />
           </>
         )}
-        <Src>{yearText(co && co.fy)}</Src>
+        {!cur && <Src>{yearText(co && co.fy)}</Src>}
       </Card>
-      <GrowthVs load={load} s={s} co={co} />
-      <Decomp co={co} s={s} />
-      {rows && E.moreTitle && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
+      {!cur && <GrowthVs load={load} s={s} co={co} />}
+      {!cur && <Decomp co={co} s={s} />}
+      {!cur && rows && E.moreTitle && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
     </div>
   );
 }
@@ -237,6 +239,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
   const E = C.co.earn;
   const co = load.coByT.get(s.t) || null;
   const rows = annualRows(co);
+  const cur = !!stmtCurFor(s, co);        // statements not in won: only the currency line (no table of – )
   const cols = [[C.pick.checks.rev, "rev"], [C.plan.rules.opProfit, "op"], [E.ni, "ni"]].filter(([l]) => l);
   const margin = (x, k) => (num(x[k]) != null && num(x.rev) > 0 ? pctText((x[k] / x.rev) * 100) : "–");
   return (
@@ -246,7 +249,8 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
         {E.moreTitle && <ScreenTitle>{fill(E.moreTitle, { name: s.nk })}</ScreenTitle>}
         {rows && (
           <Card>
-            <StmtCurNote s={s} co={co} style={{ marginTop: 0, marginBottom: SPACE(3) }} />
+            <StmtCurNote s={s} co={co} style={{ marginTop: 0 }} />
+            {!cur && (<>
             <div role="table" style={{ display: "grid", gridTemplateColumns: `auto repeat(${rows.length}, minmax(0, 1fr))`, columnGap: SPACE(3), rowGap: SPACE(2) }}>
               <span role="columnheader" />
               {rows.map((x) => <span key={x.year} role="columnheader" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textAlign: "right" })}>{x.year}</span>)}
@@ -265,6 +269,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
             </div>
             {E.marginNote && <Note>{E.marginNote}</Note>}
             <Src>{yearText(co && co.fy)}</Src>
+            </>)}
           </Card>
         )}
       </div>
@@ -436,6 +441,8 @@ export function ValueTab({ load, s, store, onMore }) {
   const group = groupOf(load.data.stocks, s);
   const r = valueTile(s, group);
   const per = num(s.per);
+  // statements not in won (corp.json stmtCur): no PER · PBR, so no basis line, date line or 자세히 for them
+  const cur = !!stmtCurFor(s, co);
   const perMed = useMemo(() => indMedian(group, (x) => num(x.per)), [group]);
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;
@@ -456,15 +463,15 @@ export function ValueTab({ load, s, store, onMore }) {
         {/* statements not in won (corp.json stmtCur): no PBR · PER; the reason where they would be */}
         <StmtCurNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
         {!compare && r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
-        {!compare && (
+        {!compare && !cur && (
           <Stats>
             {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={pbrSub} />}
             {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perSub} />}
           </Stats>
         )}
-        {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
+        {!usOf(s) && !cur && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
         <EpsFixNote show={epsFixFor(s) && per != null && !compare} />
-        <DateLine date={lineDate(load, s)} fresh={load.fresh} />
+        {!cur && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
       </Card>
       {compare && (
         <Card data-ui-v2="co-compare" data-n={compareN(st.n, per != null ? perMed : null)}>
@@ -484,7 +491,7 @@ export function ValueTab({ load, s, store, onMore }) {
           {bandLine && riskBandNote(risk) && <Note>{riskBandNote(risk)}</Note>}
         </Card>
       )}
-      {C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
+      {!cur && C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
     </div>
   );
 }

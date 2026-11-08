@@ -2646,11 +2646,55 @@ def scene_fix_notes(R, files, live=False):
     ctx.close(); srv.shutdown()
 
 
+
+# ── 2026-11-08 (Jack): DART 다시 읽기 뒤, 재무제표를 원화가 아닌 통화로 공시한 회사 (corp.json stmtCur · src/fixnote.jsx StmtCurLine) ──
+STMT_CUR_LINE = "이 회사는 재무제표를 원화가 아닌 USD로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+# 칸 설명 · 제목은 한 줄 그대로, 문장 속 말은 들어 있기만 해도 걸려요
+STMT_UNTRUE_LINES = ["적자이거나 데이터가 없어요", "데이터가 없어요", "차입금·상각비 데이터 부족", "현금흐름 데이터가 없어요", "배당이 없거나 이익 데이터가 없어요",
+                     "3개년 실적 흐름", "주가는 무엇으로 움직였나"]
+STMT_UNTRUE_PARTS = ["파이프라인이 사업보고서를 못 찾은 종목이에요", "적자 구간이 있어서"]
+
+
+def scene_stmt_cur(R, files):
+    """기업분석 241560 (두산밥캣, 달러 재무제표): 다시 읽은 발행처럼 금액 · PER · PBR · EPS 를 비우고 stmtCur "USD". 투자지표 제목 밑에 통화 줄
+    한 번 (12px 이상), 맞지 않는 이유('적자이거나 데이터가 없어요' …) · 보이지 않는 PER 의 기간 · 숫자 없는 3개년 실적 흐름과 주가 분해는
+    없어요. 업종 내 위치 · 가정으로 계산하는 가치는 그대로. 삼성전자는 예전 그대로."""
+    S = "다시 읽은 뒤"
+    f = json.loads(json.dumps(files, allow_nan=True))
+    co = next(c for c in f["corp.json"]["companies"] if c.get("t") == "241560")
+    co.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None, stmtCur="USD")
+    for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep"):
+        co.pop(k, None)
+    srv, ctx, page, base = R.open(build_site(f))
+
+    def corp_page():
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=241560", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        got = page.evaluate("""() => [...document.querySelectorAll('[data-fix="stmt-cur"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize), e.dataset.cur])""")
+        assert got == [[STMT_CUR_LINE, got[0][1], "USD"]] and got[0][1] >= 12, got
+        body = page.locator("body").inner_text()
+        lines = [x.strip() for x in body.split("\n")]
+        hits = [u for u in STMT_UNTRUE_LINES if u in lines] + [u for u in STMT_UNTRUE_PARTS if u in body]
+        assert not hits, hits
+        assert "직전 사업보고서" not in body and "최근 4개분기" not in body, "보이지 않는 PER 의 기간이 남아 있어요"
+        assert body.index("투자지표") < body.index(STMT_CUR_LINE) < body.index("PER")
+        assert "업종 내 위치" in body and "가정으로 계산하는 가치" in body
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "3개년 실적 흐름")
+        see(page, "주가는 무엇으로 움직였나")
+        assert page.locator('[data-fix="stmt-cur"]').count() == 0
+    R.check(page, S, "기업분석 241560 (stmtCur USD): 투자지표 밑 통화 줄 한 번 · 맞지 않는 이유와 빈 칸 없음 · 005930 은 그대로", corp_page)
+    ctx.close(); srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -2677,7 +2721,8 @@ def main():
                   ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh)),
                   ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
                   ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
-                  ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True))]   # 2026-11-08
+                  ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True)),   # 2026-11-08
+                  ("다시읽음", lambda: scene_stmt_cur(R, fresh))]                                                                 # 2026-11-08 stmtCur
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

@@ -11,7 +11,7 @@ import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, l
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLine, IcrOffLine, StmtCurLine } from "./fixnote.jsx";
-import { epsBase, epsPeriod } from "./repair.js";
+import { epsBase, epsPeriod, stmtCurOf } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1039,7 +1039,7 @@ function MTile({ label, val, band, cap, onWhy }) {
       </div>
       <div style={{ fontSize: 19, fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{val}</div>
       {band}
-      <div style={{ fontSize: 10.5, color: C.sub, lineHeight: 1.5 }}>{cap}</div>
+      {cap != null && <div style={{ fontSize: 10.5, color: C.sub, lineHeight: 1.5 }}>{cap}</div>}
     </div>
   );
 }
@@ -1072,6 +1072,10 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
   if (!c) return <Card><Sub>이 종목의 데이터를 찾지 못했어요.</Sub></Card>;
 
   const sharesM = c.shm || (c.cap && c.price ? c.cap * 1e12 / c.price / 1e6 : null);
+  // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액 · PER · PBR · EPS 가 비어요.
+  // 그 이유는 투자지표의 한 줄(StmtCurLine)이 말하고, '적자이거나 데이터가 없어요' 같은 맞지 않는 이유 · 보이지 않는 숫자의 기간 ·
+  // 숫자 없이 빈 칸(3개년 실적 흐름 · 주가는 무엇으로 움직였나)은 보이지 않아요. 글을 새로 쓰지 않고 숨기기만 해요.
+  const cur = !!stmtCurOf(c);
   const volTxt = c.beta == null ? null : c.beta > 1.15 ? "시장보다 출렁임이 큰 편" : c.beta < 0.85 ? "시장보다 출렁임이 작은 편" : "시장과 비슷하게 움직이는 편";
   const payout = c.dps && c.eps && c.eps > 0 ? c.dps / c.eps * 100 : null;
 
@@ -1164,7 +1168,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       </Card>
 
       <Card>
-        <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + epsPeriodSub(c)} onWhy={() => setExplain("box")} />
+        <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (cur ? "" : epsPeriodSub(c))} onWhy={() => setExplain("box")} />
         {/* DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액이 비어요 — 그 이유를 한 번 */}
         <StmtCurLine c={c} style={{ marginTop: 6 }} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
@@ -1185,19 +1189,19 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         <div className="mgrid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
           <MTile label="PER" val={c.per != null ? c.per + "배" : "—"} onWhy={() => setExplain("per")}
             band={<QuartBand q={sec?.perQ} v={c.per} max={60} />}
-            cap={c.per == null ? "적자이거나 데이터가 없어요" : sec?.perQ ? `업종 중간 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요" : "낮아요"}` : "업종 표본 부족"} />
+            cap={c.per == null ? (cur ? null : "적자이거나 데이터가 없어요") : sec?.perQ ? `업종 중간 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요" : "낮아요"}` : "업종 표본 부족"} />
           <MTile label="PBR" val={c.pbr != null ? c.pbr + "배" : "—"} onWhy={() => setExplain("pbr")}
             band={<QuartBand q={sec?.pbrQ} v={c.pbr} max={8} />}
-            cap={c.pbr == null ? "데이터가 없어요" : sec?.pbrQ ? `업종 중간 ${sec.pbrQ[1]}배 · ROE와 함께 읽기` : "업종 표본 부족"} />
+            cap={c.pbr == null ? (cur ? null : "데이터가 없어요") : sec?.pbrQ ? `업종 중간 ${sec.pbrQ[1]}배 · ROE와 함께 읽기` : "업종 표본 부족"} />
           <MTile label="EV/EBITDA" val={c.evE != null ? c.evE + "배" : "—"} onWhy={() => setExplain("evebitda")}
             band={<QuartBand q={sec?.evEQ} v={c.evE} max={40} />}
-            cap={c.evE != null ? (sec?.evEQ ? `업종 중간 ${sec.evEQ[1]}배 · 부채 포함 기준` : "부채 포함 기업가치 기준") : FIN_SECS[c.s] ? "금융업은 미적용 지표예요" : "차입금·상각비 데이터 부족"} />
+            cap={c.evE != null ? (sec?.evEQ ? `업종 중간 ${sec.evEQ[1]}배 · 부채 포함 기준` : "부채 포함 기업가치 기준") : FIN_SECS[c.s] ? "금융업은 미적용 지표예요" : cur ? null : "차입금·상각비 데이터 부족"} />
           <MTile label="P/영업현금흐름" val={c.pcf != null ? c.pcf + "배" : "—"} onWhy={() => setExplain("pocf")}
             band={<QuartBand q={sec?.pcfQ} v={c.pcf} max={40} />}
-            cap={c.pcf != null ? (sec?.pcfQ ? `업종 중간 ${sec.pcfQ[1]}배 · 현금 기준 가격` : "실제 들어온 현금 기준") : "현금흐름 데이터가 없어요"} />
+            cap={c.pcf != null ? (sec?.pcfQ ? `업종 중간 ${sec.pcfQ[1]}배 · 현금 기준 가격` : "실제 들어온 현금 기준") : cur ? null : "현금흐름 데이터가 없어요"} />
           <MTile label="ROE" val={pc(c.roe)} onWhy={() => setExplain("roe")}
             band={<div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>업종 중간 {pc(sec?.roe)}</div>}
-            cap={c.roe == null ? "데이터가 없어요" : `주주 돈 100원으로 연 ${c.roe}원${c.debt != null && c.debt > 200 ? " · 부채비율 " + c.debt + "% 감안" : ""}`} />
+            cap={c.roe == null ? (cur ? null : "데이터가 없어요") : `주주 돈 100원으로 연 ${c.roe}원${c.debt != null && c.debt > 200 ? " · 부채비율 " + c.debt + "% 감안" : ""}`} />
           <MTile label="배당수익률" val={pc(c.dy)} onWhy={() => setExplain("payout")}
             band={c.dps3 && c.dps3[0] != null ? (
               <div style={{ height: 20, display: "flex", alignItems: "flex-end", gap: 3 }}>
@@ -1208,7 +1212,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
                 {dpsTrend && <span style={{ fontSize: 10, fontWeight: 800, color: dpsTrend.col, marginLeft: 5 }}>{dpsTrend.w}</span>}
               </div>
             ) : <div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>3년 추이 데이터 없음</div>}
-            cap={payout == null ? "배당이 없거나 이익 데이터가 없어요" : payout > 100 ? `배당성향 ${payout.toFixed(0)}% — 이익보다 커요` : `배당성향 ${payout.toFixed(0)}% · 3년 주당배당 기준`} />
+            cap={payout == null ? (cur ? null : "배당이 없거나 이익 데이터가 없어요") : payout > 100 ? `배당성향 ${payout.toFixed(0)}% — 이익보다 커요` : `배당성향 ${payout.toFixed(0)}% · 3년 주당배당 기준`} />
         </div>
         <EpsFixLine corp={data} cos={[c]} show={c.per != null || c.roe != null || payout != null} style={{ marginTop: 10 }} />
         <button onClick={() => setExplain("trap")} style={{ marginTop: 14, background: C.apricotSoft, border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 12, fontWeight: 800, color: C.apricotDeep, cursor: "pointer", fontFamily: FONT }}>싼 값이 오래 싼 값으로 남는 이유 →</button>
@@ -1216,8 +1220,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
       <DiscSignals c={c} />
 
-      <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Card>
+      <div className="cgrid2" style={{ display: "grid", gridTemplateColumns: cur ? "1fr" : "1fr 1fr", gap: 12 }}>
+        {!cur && <Card>
           <H num="02" main="3개년 실적 흐름" sub="매출·영업이익·순이익 · 사업보고서 기준" />
           {(() => {
             const r = c.rev, n = c.ni;
@@ -1273,7 +1277,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
               )}
             </>
           )}
-        </Card>
+        </Card>}
         <Card>
           <H num="03" main="업종 내 위치" sub="상대가치 지표 비교 · PER·PBR·PSR·EV/EBITDA" onWhy={() => setExplain("ff")} />
           {(() => {
@@ -1327,7 +1331,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         </button>
       )}
       {guideOpen && <GuideReader id={c.s} onClose={() => setGuideOpen(false)} />}
-      <DecompCard c={c} setExplain={setExplain} corp={data} />
+      {!cur && <DecompCard c={c} setExplain={setExplain} corp={data} />}
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} corp={data} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>

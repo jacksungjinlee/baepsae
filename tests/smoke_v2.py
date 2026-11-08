@@ -7452,7 +7452,9 @@ def scene_reread_lines(R, files, width, shots=None):
     y, mo, d = (int(x) for x in _FIXD[0])
     day0 = dt.datetime(y, mo, d, 12, 0, tzinfo=KST)
     when = day0 + dt.timedelta(days=1)                         # 다시 읽은 다음 날 낮 (한 주 안)
-    srv, ctx, page, base = reread_open(R, build_site(reread_files(files, when)), width, when, init=fix_store())
+    fx = reread_files(files, when)
+    fx_corp = fx["corp.json"]
+    srv, ctx, page, base = reread_open(R, build_site(fx), width, when, init=fix_store())
 
     def shot(name, full=False):
         if shots:
@@ -7500,9 +7502,10 @@ def scene_reread_lines(R, files, width, shots=None):
         assert tiles.locator('[data-ui-v2="stmt-cur"]').count() == 1, "한눈에 칸 안이 아니에요"
         line_y = page.locator('[data-ui-v2="stmt-cur"]').bounding_box()["y"]
         assert line_y < page.locator('[data-ui-v2="co-tile"]').first.bounding_box()["y"]        # 비어 있는 칸들 위
-        for topic in ("earn", "value"):                                                           # 실적 · 가치 칸은 숫자 없이 '자료가 없어요'
-            t = tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{topic}"]')
-            assert t.get_attribute("data-rule") == "na" and t.locator('[data-ui-v2="tile-number"]').count() == 0, (topic, t.inner_text())
+        # '자료가 없어요' 뿐인 실적 · 가치 칸은 없어요 (숨기기만): 배당 · 출렁임 칸만, 그 위에 이유 한 줄
+        topics = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => e.dataset.topic)")
+        assert topics == ["div", "risk"], topics
+        assert C["co"]["tiles"]["na"] not in tiles.inner_text(), tiles.inner_text()
         assert page.locator('[data-ui-v2="stmt-cur"]').evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
         floor_ok(page, "원화가 아닌 재무제표 요약")
         no_hscroll(page, width)
@@ -7519,10 +7522,19 @@ def scene_reread_lines(R, files, width, shots=None):
                 page.locator(inside).wait_for(state="visible")
                 assert cur_lines() == [(STMT_LINE, "USD")], (ctab, cur_lines())                  # 실적 · 가치 탭: 한 번
                 assert page.locator(f'{inside} [data-ui-v2="stmt-cur"]').count() == 1, ctab
-                if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신
+                co_fy = next(x for x in fx_corp["companies"] if x["t"] == STMT_T)["fy"]
+                year = fillp(C["app"]["reportYear"], year=co_fy)
+                if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신, 통화 줄만
                     assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui-v2="bars"]').count() == 0
-                else:                                                                           # PBR · PER 대신
+                    assert page.locator('[data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
+                    assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
+                    assert year not in page.locator('[data-ui-v2="co-earn"]').inner_text()
+                    assert page.locator('[data-ui-v2="co-earn"] > *').count() == 1, "실적 탭에 통화 줄 카드 말고 다른 것이 있어요"
+                else:                                                                           # PBR · PER 대신, 그 기준 · 날짜 줄 없이
                     assert page.locator('[data-ui-v2="co-pbr"]').count() == 0 and page.locator('[data-ui-v2="co-per"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-value-basis"]').count() == 0 and page.locator('[data-ui-v2="co-value-more"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-risk"]').count() == 1                    # 출렁임은 그대로
                 if shots:
                     shot(f"reread-stmtcur-{ctab}-{width}.png")
             else:
@@ -7531,6 +7543,12 @@ def scene_reread_lines(R, files, width, shots=None):
             floor_ok(page, f"원화가 아닌 재무제표 {ctab}")
             no_hscroll(page, width)
             R.collect(page)
+        co_hash(page, "#stocks/005930/earn")                                                      # 다른 회사는 그대로 (숨김은 stmtCur 로만)
+        page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
+        assert page.locator('[data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
+        co_hash(page, "#stocks/005930/value")
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-value-basis"]').count() == 1 and page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() >= 1
         for code in ("005930", "AAPL"):                                                          # stmtCur 없는 회사 · 미국 종목: 없어요
             for ctab in (None, "earn", "value"):
                 co_hash(page, f"#stocks/{code}" + (f"/{ctab}" if ctab else ""))
@@ -7538,7 +7556,8 @@ def scene_reread_lines(R, files, width, shots=None):
                 page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"]').first.wait_for(state="visible")
                 assert cur_lines() == [], (code, ctab, cur_lines())
         R.collect(page)
-    R.check(page, S, f"{STMT_T} 원화가 아닌 재무제표: 요약 · 실적 · 가치에 한 번씩 (배당 · 삼성전자 · AAPL 에는 없음)", stmt_cur)
+    R.check(page, S, f"{STMT_T} 원화가 아닌 재무제표: 요약 · 실적 · 가치에 한 번씩 (배당 · 삼성전자 · AAPL 에는 없음) · '자료가 없어요' 칸 · "
+            "고르기 · 보이지 않는 숫자의 기준 줄 · 자세히 링크 없음", stmt_cur)
     ctx.close()
     srv.shutdown()
 

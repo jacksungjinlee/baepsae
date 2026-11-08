@@ -246,7 +246,7 @@ def test_the_currency_line_on_the_2_0_company_page_exactly_for_stmt_cur_companie
         return [ctab || 'summary', { n: marked(html, 'data-ui-v2', 'stmt-cur'), lines: lines(html).filter((l) => l === LINE).length,
           cur: (/data-ui-v2="stmt-cur" data-cur="([^"]*)"/.exec(html) || [])[1] || null, px: px(html, 'data-ui-v2', 'stmt-cur'),
           beforeTiles: i < 0 ? null : i < html.indexOf('data-ui-v2="co-tile"'), inEarnCard: i < 0 ? null : i > html.indexOf('data-ui-v2="co-earn"'),
-          inValueCard: i < 0 ? null : i > html.indexOf('data-ui-v2="co-value"') && i < html.indexOf('data-ui-v2="date-line"'),
+          inValueCard: i < 0 ? null : i > html.indexOf('data-ui-v2="co-value"') && i < html.indexOf('data-ui-v2="co-risk"'),
           tilesNa: lines(html).filter((l) => l === C2.co.tiles.na).length }];
       }));
       out = { stmt: look(STMT_T), sam: look('005930'), us: look('AAPL') };""", DATA=data, CORP=corp, STMT_T=STMT_T, LINE=CUR.format(currency="USD"))
@@ -254,7 +254,7 @@ def test_the_currency_line_on_the_2_0_company_page_exactly_for_stmt_cur_companie
     for tab in ("summary", "earn", "value", "earn-more", "value-more"):
         assert s[tab]["n"] == 1 and s[tab]["lines"] == 1 and s[tab]["cur"] == "USD", (tab, s[tab])   # 숫자가 있을 자리마다 한 번
         assert all(p >= 12 for p in s[tab]["px"]) and s[tab]["px"], (tab, s[tab]["px"])
-    assert s["summary"]["beforeTiles"] is True and s["summary"]["tilesNa"] == 2, s["summary"]   # 실적 · 가치 칸의 '자료가 없어요' 위에 이유
+    assert s["summary"]["beforeTiles"] is True and s["summary"]["tilesNa"] == 0, s["summary"]   # 남은 칸(배당 · 출렁임) 위에 이유, '자료가 없어요' 칸 없음
     assert s["earn"]["inEarnCard"] is True and s["value"]["inValueCard"] is True
     assert s["div"]["n"] == 0                                                 # 배당은 원화 표라 그대로예요
     for who in ("sam", "us"):
@@ -277,6 +277,86 @@ def test_the_currency_line_in_the_old_company_page():
     assert got["head"] >= 0 and got["head"] < got["at"] < got["per"], got     # 투자지표 제목 밑, 비어 있는 PER 칸 위
     assert got["px"] and all(p >= 12 for p in got["px"]), got["px"]
     assert got["noCur"] == 0 and got["sam"] == 0
+
+
+
+def test_stmt_cur_2_0_company_page_hides_what_would_be_untrue_or_empty():
+    """stmtCur 회사 (Jack 의 코디네이터, 2026-11-08 — 숨기기만, 새 글 없음): 요약은 '자료가 없어요' 뿐인 실적 · 가치 칸을 빼요. 실적 탭은
+    통화 줄만 (매출 · 영업이익 · 순이익 고르기 · 사업보고서 기준 줄 · 주가는 무엇으로 움직였나 · 실적 자세히 링크 없음). 가치 탭은 보이지 않는
+    PER · PBR 의 기준 줄 · 날짜 줄 · 가치 자세히 링크가 없어요 (출렁임 카드는 그대로). 실적 자세히(주소로 열면)는 '–' 표 없이 통화 줄만.
+    같은 빈 숫자라도 stmtCur 가 없으면 예전 그대로예요 (숨김은 stmtCur 로만 정해요)."""
+    data, corp = fixture("data.json"), fixture("corp.json")
+    blank_stmt_cur(data, corp)
+    nocur = json.loads(json.dumps(corp))
+    next(c for c in nocur["companies"] if c["t"] == STMT_T).pop("stmtCur")
+    got = run("""
+      const ms = kstMs(RP.isoPlusDays(RP.EPS_FIX_DATE, 1)); at(ms);
+      const store = { data: { v: 2, decks: [] }, writable: true, key: 'baepsae2.v1', preview: false };
+      const nav = { setTab() {}, more() {}, back() {}, onWhy() {} };
+      const YEAR = (fy) => C2.app.reportYear.replace('{year}', fy);
+      const look = (corp, code) => {
+        const load = mkLoad({ data: JSON.parse(JSON.stringify(DATA)), corp: JSON.parse(JSON.stringify(corp)), macro: read('macro.json') }, ms);
+        const fy = load.coByT.get(code).fy;
+        const page = (ctab) => renderToStaticMarkup(h(CO.Company, { load, store, setStoreData() {}, pad: 0, code, ctab, disc: null, nav }));
+        const sum = page(null), earn = page('earn'), value = page('value'), em = page('earn-more'), vm = page('value-more');
+        const val = value.slice(value.indexOf('data-ui-v2="co-value"'));
+        return {
+          tiles: [...sum.matchAll(/data-ui-v2="co-tile" data-topic="([a-z]+)"/g)].map((m) => m[1]),
+          na: lines(sum).filter((l) => l === C2.co.tiles.na).length,
+          earn: { seg: marked(earn, 'data-ui', 'segmented'), year: lines(earn).filter((l) => l === YEAR(fy)).length, decomp: marked(earn, 'data-ui-v2', 'co-decomp'),
+            more: marked(earn, 'data-ui-v2', 'co-earn-more'), cur: marked(earn, 'data-ui-v2', 'stmt-cur') },
+          value: { basis: marked(value, 'data-ui-v2', 'co-value-basis'), date: marked(val, 'data-ui-v2', 'date-line'), more: marked(value, 'data-ui-v2', 'co-value-more'),
+            risk: marked(value, 'data-ui-v2', 'co-risk'), cur: marked(value, 'data-ui-v2', 'stmt-cur') },
+          earnMore: { table: (em.match(/role="table"/g) || []).length, note: lines(em).filter((l) => l === C2.co.earn.marginNote).length,
+            year: lines(em).filter((l) => l === YEAR(fy)).length, cur: marked(em, 'data-ui-v2', 'stmt-cur') },
+          valueMore: { cur: marked(vm, 'data-ui-v2', 'stmt-cur'), ratios: marked(vm, 'data-ui-v2', 'co-ratios') },
+        };
+      };
+      out = { cur: look(CUR, STMT_T), nocur: look(NOCUR, STMT_T), sam: look(CUR, '005930') };""",
+              DATA=data, CUR=corp, NOCUR=nocur, STMT_T=STMT_T)
+    c, n, sam = got["cur"], got["nocur"], got["sam"]
+    assert c["tiles"] == ["div", "risk"] and c["na"] == 0, c                               # 실적 · 가치 칸 없음
+    assert n["tiles"] == ["earn", "value", "div", "risk"] and n["na"] == 2, n                # stmtCur 가 없으면 예전 그대로
+    assert c["earn"] == {"seg": 0, "year": 0, "decomp": 0, "more": 0, "cur": 1}, c["earn"]  # 실적 탭: 통화 줄만
+    assert n["earn"]["seg"] == 1 and n["earn"]["year"] == 1 and n["earn"]["decomp"] == 1 and n["earn"]["more"] == 1 and n["earn"]["cur"] == 0, n["earn"]
+    assert c["value"] == {"basis": 0, "date": 0, "more": 0, "risk": 1, "cur": 1}, c["value"]  # 가치 탭: 보이지 않는 PER · PBR 의 기준 · 날짜 줄 없음
+    assert n["value"]["basis"] == 1 and n["value"]["date"] >= 1 and n["value"]["more"] == 1 and n["value"]["cur"] == 0, n["value"]
+    assert sam["value"]["basis"] == 1 and sam["value"]["date"] >= 1 and sam["earn"]["seg"] == 1 and sam["tiles"] == ["earn", "value", "div", "risk"]
+    assert c["earnMore"] == {"table": 0, "note": 0, "year": 0, "cur": 1}, c["earnMore"]      # 실적 자세히: '–' 표 없이 통화 줄만
+    assert n["earnMore"]["table"] == 1 and n["earnMore"]["cur"] == 0
+    assert c["valueMore"] == {"cur": 1, "ratios": 0}
+
+
+def test_stmt_cur_old_company_page_hides_untrue_captions_and_empty_sections():
+    """예전 뱁새 기업분석, stmtCur 회사: 통화 줄이 이유를 말하니 '적자이거나 데이터가 없어요' 같은 칸 설명 · 보이지 않는 PER 의 기간
+    (' · 직전 사업보고서') · 숫자 없는 3개년 실적 흐름('파이프라인이 사업보고서를 못 찾은 종목이에요') · 주가는 무엇으로 움직였나('적자 구간이
+    있어서')는 없어요. 숫자가 있는 칸(ROE · 배당)의 글, 업종 내 위치, 가정으로 계산하는 가치는 그대로. 금융업의 '금융업은 미적용 지표예요'는
+    참이라 남아요. stmtCur 가 없으면 예전 그대로예요."""
+    data, corp = fixture("data.json"), fixture("corp.json")
+    blank_stmt_cur(data, corp)
+    untrue = ["적자이거나 데이터가 없어요", "데이터가 없어요", "차입금·상각비 데이터 부족", "현금흐름 데이터가 없어요", "배당이 없거나 이익 데이터가 없어요",
+              "재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)", "3개년 실적 흐름", "주가는 무엇으로 움직였나"]
+    got = run("""
+      const page = (cos, t) => lines(renderToStaticMarkup(h(OLD.CompanyView, { data: { ...BASE, companies: cos }, t, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} })));
+      const swap = (f) => BASE.companies.map((c) => (c.t === STMT_T ? f(c) : c));
+      out = { cur: page(BASE.companies, STMT_T), nocur: page(swap((c) => ({ ...c, stmtCur: undefined })), STMT_T),
+        bank: page(swap((c) => ({ ...c, s: 'bank' })), STMT_T), sam: page(BASE.companies, '005930'),
+        roeNull: page(swap((c) => ({ ...c, roe: null })), STMT_T), roeNullNoCur: page(swap((c) => ({ ...c, roe: null, stmtCur: undefined })), STMT_T) };""", BASE=corp, STMT_T=STMT_T)
+    cur, nocur, bank, sam = got["cur"], got["nocur"], got["bank"], got["sam"]
+    line = CUR.format(currency="USD")
+    assert cur.count(line) == 1 and "투자지표" in cur
+    hits = [u for u in untrue if u in cur] + [l for l in cur if "적자 구간이 있어서" in l]
+    assert not hits, hits                                                                 # 맞지 않는 이유 · 빈 칸이 없어요
+    assert "밸류에이션 멀티플 · 업종 사분위 대비" in cur and not any("직전 사업보고서" in l or "최근 4개분기" in l for l in cur), [l for l in cur if "밸류에이션" in l]
+    roe = next(c for c in corp["companies"] if c["t"] == STMT_T)["roe"]
+    assert roe is not None and f"주주 돈 100원으로 연 {roe}원" in cur                       # 숫자가 있는 칸의 글은 그대로
+    assert "업종 내 위치" in cur and "가정으로 계산하는 가치" in cur
+    # stmtCur 가 없으면 예전 그대로 (같은 빈 숫자라도): 이 시험이 무엇을 숨기는지 보여 줘요
+    assert all(u in nocur for u in untrue) and any("적자 구간이 있어서" in l for l in nocur), [u for u in untrue if u not in nocur]
+    assert "밸류에이션 멀티플 · 업종 사분위 대비 · 직전 사업보고서" in nocur and line not in nocur
+    assert "금융업은 미적용 지표예요" in bank and bank.count(line) == 1                       # 참인 설명은 남아요
+    assert got["roeNull"].count("데이터가 없어요") == 0 and got["roeNullNoCur"].count("데이터가 없어요") == 2   # ROE 칸이 비어도 (PBR · ROE)
+    assert "밸류에이션 멀티플 · 업종 사분위 대비 · 최근 4개분기 합산(2026.2Q)" in sam and "3개년 실적 흐름" in sam and "주가는 무엇으로 움직였나" in sam
 
 
 # ── 3. 예전 뱁새 영어 화면의 고치는 중 줄 ──

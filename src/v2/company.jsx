@@ -38,7 +38,7 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { icrOffShown } from "./fix.js";
+import { icrOffShown, stmtCurFor } from "./fix.js";
 import { IcrOffNote, IcrOffLine, StmtCurNote } from "./fixnote.jsx";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
@@ -176,8 +176,12 @@ export function logSplitGuard(load) {
     + g.examples.map((x) => `${x.t} ${x.ratio == null ? "no report yield" : x.ratio + "x"}`).join(", "));
 }
 
+// Statements not in won (corp.json stmtCur): the 실적 and 가치 tiles could only say 자료가 없어요, which is not why their numbers
+// are missing; they are left out and the currency line above the tiles says why (Jack's line, once).
+const AMOUNT_TILES = ["earn", "value"];
 function Tiles({ load, s, onTab, tabsOn }) {
-  const views = useMemo(() => tileViews(load, s), [load, s]);
+  const cur = !!stmtCurFor(s, load.coByT.get(s.t) || null);
+  const views = useMemo(() => tileViews(load, s).filter((v) => !(cur && AMOUNT_TILES.includes(v.topic))), [load, s, cur]);
   if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
   const md = priceMd(load, s);
   const src = usOf(s) && C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null;     // US: the source of every tile number
