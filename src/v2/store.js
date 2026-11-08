@@ -27,9 +27,10 @@
 //   divs     [{ t, amount, ccy, date, fx? }] 배당 받았어요 (v19.6a), after tax, in the stock's currency.
 //   history  [{ t, nk, out, cls?, imported?, purchases?, sales?, divs? }] records of a stock taken out of the portfolio
 //            (v19.6 A.3): they need no matching holding, and a later dividend of that stock goes into its entry.
-//   limits   { stock?, ind?, ts? } the two concentration rules' limits in % (defaults 30 and 35, pf.js), when the user
-//            changed them (내 규칙 정하기, v19.3d2); ts = when they were saved (a reset to the defaults keeps only ts), so
-//            two copies and a records file keep the later limits.
+//   limits   { stock?, ind? } the two concentration rules' limits in % (defaults 30 and 35, pf.js), when the user changed them.
+//   limitsTs when 내 규칙 정하기 last saved them (v19.3d2; ms, with or without a limits part: a 저장 at the defaults leaves
+//            none), so two copies and a records file keep the later limits. Beside limits, not in it: v19.3d (#83) reads
+//            limits strictly and passes portfolio keys it does not know, so a revert still reads every portfolio.
 // Held quantity everywhere = imported + purchases − sales (held.js); no sale may take a holding below 0.
 // Top level: guideSeen (v19.3c Part E: the first-visit guide was seen, the date) — a flag of this device, so it never
 // travels in a records file; until v19.3d it lived in its own key (key + ".guideSeen"), which is still read once.
@@ -89,7 +90,7 @@ const CCY = ["KRW", "USD"];
 const okTs = (x) => Number.isSafeInteger(x) && x > 0;                 // a time in ms (Date.now())
 
 // The version-2-only parts of a portfolio (any of them present makes the store v2).
-export const V2_DECK_PARTS = ["kind", "imported", "sales", "divs", "history", "limits"];
+export const V2_DECK_PARTS = ["kind", "imported", "sales", "divs", "history", "limits", "limitsTs"];
 export const hasV2Parts = (d) => !!(d && Array.isArray(d.decks) && d.decks.some((x) => plainObj(x) && V2_DECK_PARTS.some((k) => x[k] != null)));
 export const versionFor = (d) => (hasV2Parts(d) ? STORE_VERSION : BASE_VERSION);
 
@@ -286,10 +287,10 @@ export function deckProblem(x, today) {
   if (x.limits != null) {
     if (!plainObj(x.limits)) return bad("limits", null, null, "not an object");
     for (const k of Object.keys(x.limits)) {
-      if (k === "ts") { if (!okTs(x.limits.ts)) return bad("limits", null, null, "ts must be a time"); continue; }
       if (!["stock", "ind"].includes(k) || !(Number.isInteger(x.limits[k]) && x.limits[k] >= 1 && x.limits[k] <= 100)) return bad("limits", null, null, `${k} must be a whole % (1-100)`);
     }
   }
+  if (x.limitsTs != null && !okTs(x.limitsTs)) return bad("limitsTs", null, null, "not a time");
   if (x.confirms != null) {
     if (!Array.isArray(x.confirms)) return bad("confirms", null, null, "not a list");
     for (let i = 0; i < x.confirms.length; i++) {
@@ -574,8 +575,15 @@ function laterOf(x, y) {
 }
 // a is a later edit than b by its time or date (not only by the tie rule)
 const surelyLater = (a, b) => !!(a && b && editOrder(a, b) > 0);
-// A portfolio's limits as values only (no part = the defaults; its time left out), to tell two copies' limits apart.
+// A portfolio's limits (내 규칙 정하기) as one edit: { limits, ts } (null: never saved, the defaults), and its values only
+// (no part = the defaults) to tell two copies' limits apart.
+const limitsEdit = (d) => (plainObj(d) && (plainObj(d.limits) || d.limitsTs != null) ? { limits: plainObj(d.limits) ? d.limits : null, ts: d.limitsTs } : null);
 const limitValues = (l) => canon({ stock: plainObj(l) && l.stock != null ? l.stock : null, ind: plainObj(l) && l.ind != null ? l.ind : null });
+// d with the limits of edit e (null: none)
+const withLimitsEdit = (d, e) => {
+  const { limits: _l, limitsTs: _t, ...rest } = d;
+  return { ...rest, ...(e && e.limits ? { limits: e.limits } : {}), ...(e && okTs(e.ts) ? { limitsTs: e.ts } : {}) };
+};
 
 // Two copies of one list of records: everything in the current copy, then what only the other one holds. A record with
 // an id is the same record as the one with that id; records without an id count as a multiset (two equal sales stay two:
@@ -620,9 +628,8 @@ function unionDeck(cur, other) {
     return o && okTs(o.ts) && !(okTs(h.ts) && h.ts >= o.ts) ? { ...h, ts: o.ts } : h;
   };
   const holdings = [...cur.holdings.map(later), ...other.holdings.filter((h) => !cur.holdings.some((x) => x.t === h.t))];
-  const out = { ...other, ...cur, holdings, purchases: unionRecords(cur.purchases, other.purchases, where) || [] };
-  const limits = laterOf(plainObj(cur.limits) ? cur.limits : null, plainObj(other.limits) ? other.limits : null);
-  if (limits) out.limits = limits; else delete out.limits;
+  let out = { ...other, ...cur, holdings, purchases: unionRecords(cur.purchases, other.purchases, where) || [] };
+  out = withLimitsEdit(out, laterOf(limitsEdit(cur), limitsEdit(other)));
   if (Array.isArray(cur.imported) || Array.isArray(other.imported)) {
     // rows with a code: one per stock, the current copy's wins; rows added by name only: as a multiset
     const ci = cur.imported || [], oi = other.imported || [];
@@ -756,7 +763,7 @@ function droppedFrom(copy, res) {
     for (const k of ["purchases", "imported", "sales", "divs"]) if ((d[k] || []).some((x) => !kept(x))) return true;
     if ((d.history || []).some((e) => !hist.some((y) => entryKey(y) === entryKey(e)))) return true;
     if ((d.confirms || []).some((c) => !(r.confirms || []).some((y) => sameConfirm(y, c) && y.answer === c.answer))) return true;
-    if (plainObj(d.limits) && limitValues(d.limits) !== limitValues(r.limits)) return true;
+    if (limitsEdit(d) && limitValues(d.limits) !== limitValues(r.limits)) return true;
   }
   // a note the copy had deleted is back in the result (its deletion lost to a later edit)
   for (const t of Object.keys((plainObj(copy.gone) && perStock(copy.gone, "notes")) || {})) {
@@ -796,7 +803,7 @@ function covers(y, d, today) {
       return false;
     }
     // its limits: the same values, or replaced by limits saved surely later
-    if (plainObj(x.limits) && r && limitValues(x.limits) !== limitValues(r.limits) && !surelyLater(r.limits, x.limits)) return false;
+    if (limitsEdit(x) && r && limitValues(x.limits) !== limitValues(r.limits) && !surelyLater(limitsEdit(r), limitsEdit(x))) return false;
   }
   return true;
 }
@@ -1156,14 +1163,14 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
     const confirms = [...own, ...add];
     // 내 규칙 (v19.3d2): the file's limits come in now where this device's copies hold other ones; a file without a limits
     // part (made before 내 규칙 정하기, or never changed) leaves this device's latest limits as they are, as for an answer
-    const ownLim = mine.map((d) => d.limits).filter(plainObj);
-    const limits = plainObj(x.limits)
-      ? (mine.some((d) => limitValues(d.limits) !== limitValues(x.limits)) ? stamp(x.limits)
-        : keepLater(x.limits, ownLim.filter((l) => limitValues(l) === limitValues(x.limits)).map((l) => l.ts)))
-      : ownLim.reduce((a, l) => laterOf(a, l), null);
-    const { confirms: _c, limits: _l, ...rest } = x;
-    return { ...rest, holdings, ...(confirms.length || Array.isArray(x.confirms) ? { confirms } : {}),
-      ...(marks.size ? { removed: [...marks.values()] } : {}), ...(limits ? { limits } : {}) };
+    const ownLim = mine.map(limitsEdit).filter(Boolean), fileLim = limitsEdit(x);
+    const lim = fileLim
+      ? (mine.some((d) => limitValues(d.limits) !== limitValues(x.limits)) ? stamp(fileLim)
+        : keepLater(fileLim, ownLim.filter((e) => limitValues(e.limits) === limitValues(x.limits)).map((e) => e.ts)))
+      : ownLim.reduce((a, e) => laterOf(a, e), null);
+    const { confirms: _c, ...rest } = x;
+    return withLimitsEdit({ ...rest, holdings, ...(confirms.length || Array.isArray(x.confirms) ? { confirms } : {}),
+      ...(marks.size ? { removed: [...marks.values()] } : {}) }, lim);
   };
   const by = new Map(cur.decks.map((x) => [x.id, x]));
   for (const x of inc.decks) by.set(x.id, fresh(x));

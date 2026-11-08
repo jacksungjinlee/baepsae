@@ -4,7 +4,7 @@
 - 반도체 · 반도체 장비 · 전자부품은 점검의 업종 보기와 한 업종 규칙에서만 한 묶음 (Jack Q8). 다른 업종은 그대로
 - 데이터에 없는 종목을 이름과 금액으로: 코드 없는 줄 { nk, ccy KRW, amountWon, date, unscored } 로 저장되고 store.js 를 통과해요
 - 내 규칙 정하기: 한도는 1~100 의 정수 %, 처음 값(30 · 35)과 같으면 저장하지 않아요. 저장한 한도로 규칙을 점검해요
-- 한도는 저장한 시각을 함께 둬요: 두 사본(탭)과 기록 파일이 만나도 나중에 저장한 한도가 남아요. 가진 종목 포트폴리오에만 있어요
+- 한도는 저장한 시각(limitsTs)을 함께 둬요: 두 사본(탭)과 기록 파일이 만나도 나중에 저장한 한도가 남아요. 가진 종목 포트폴리오에만 있어요
 - 다 판 종목은 '계획한 n종목 중 m종목만' 이 아니에요 (rebased 아님), 목표 비중은 남은 종목끼리 나눠요
 - 주소 #portfolio/rules/<포트폴리오 id>
 """
@@ -116,27 +116,30 @@ def test_the_limits_screen_saves_whole_percents_and_the_rules_use_them():
 
 
 def test_limits_keep_the_later_save_across_two_copies_and_a_records_file():
-    """내 규칙 정하기 is an edit like a 메모: the limits keep the time they were saved (a reset to 30 · 35 keeps only the time),
-    so two copies (tabs) merge to the later limits whichever copy leads; a records file's other limits come in as an edit
-    made now, and a file without limits leaves this device's latest ones. Only a 가진 종목 portfolio has limits (a built
-    one would turn a v1 store into v2)."""
+    """내 규칙 정하기 is an edit like a 메모: the portfolio keeps when its limits were saved (limitsTs, beside limits, so
+    limits keeps #83's shape; a reset to 30 · 35 keeps only the time), so two copies (tabs) merge to the later limits
+    whichever copy leads; a records file's other limits come in as an edit made now, and a file without limits leaves
+    this device's latest ones. Only a 가진 종목 portfolio has limits (a built one would turn a v1 store into v2)."""
     got = run("""const base = { v: 2, decks: [deckOf([['000010', 20], ['000040', 30]])] };
       const A = { ...P.withLimits(base, 'dimp', 40, 60, 1000), v: 2 }, B = { ...P.withLimits(base, 'dimp', 20, 25, 2000), v: 2 };
       const R0 = { ...P.withLimits(A, 'dimp', 30, 35, 3000), v: 2 };
-      const lim = (d) => (d ? d.decks[0].limits : 'null');
+      const lim = (d) => (d ? { ...(d.decks[0].limits || {}), ...(d.decks[0].limitsTs != null ? { ts: d.decks[0].limitsTs } : {}) } : 'null');
       const built = { v: 1, decks: [{ id: 'db', name: 'b', createdAt: T, settings: { points: {} }, holdings: [{ t: '000010', nk: 'a', target: 1, rules: [] }],
         purchases: [{ t: '000010', qty: 1, price: 10000, date: T, ccy: 'KRW' }] }] };
       const file = (d) => S.parseImport(S.exportText(d), T);
-      const { limits: _l, ...plain } = A.decks[0];
+      const { limits: _l, limitsTs: _t, ...plain } = A.decks[0];
       out = { A: lim(A), R0: lim(R0), R0read: P.limitsOf(R0.decks[0]), valid: [A, B, R0].map((d) => S.validStore(d, T)),
         tabs: [lim(S.mergeTabs(A, B, T)), lim(S.mergeTabs(B, A, T)), lim(S.mergeTabs(R0, A, T)), lim(S.mergeTabs(A, R0, T))],
-        badTs: [S.validStore({ v: 2, decks: [{ ...A.decks[0], limits: { ts: -1 } }] }, T), S.validStore({ v: 2, decks: [{ ...A.decks[0], limits: { stock: 40, ts: 'x' } }] }, T)],
+        badTs: [S.validStore({ v: 2, decks: [{ ...A.decks[0], limitsTs: -1 }] }, T), S.validStore({ v: 2, decks: [{ ...A.decks[0], limitsTs: 'x' }] }, T),
+          S.validStore({ v: 2, decks: [{ ...A.decks[0], limits: { stock: 40, ts: 1 } }] }, T)],
+        raw: [A.decks[0].limits, 'limits' in R0.decks[0], R0.decks[0].limitsTs, S.versionFor({ decks: [{ id: 'x', limitsTs: 5 }] })],
         imp: [lim(S.mergeStores(B, file(A), 5000, [], T)), lim(S.mergeStores(A, file({ v: 2, decks: [plain] }), 5000, [], T)),
           lim(S.mergeStores({ v: 2, decks: [] }, file(A), 5000, [], T)), lim(S.mergeStores(A, file(A), 5000, [], T)),
           lim(S.mergeStores(base, file(A), 5000, [], T))],
         built: P.withLimits(built, 'db', 40, 60, 1000), same: lim(P.withLimits(base, 'dimp', 30, 35, 4000)) };""")
     assert got["A"] == {"stock": 40, "ind": 60, "ts": 1000} and got["R0"] == {"ts": 3000} and got["R0read"] == {"stock": 30, "ind": 35}
-    assert got["valid"] == [True, True, True] and got["badTs"] == [False, False]
+    assert got["valid"] == [True, True, True] and got["badTs"] == [False, False, False]
+    assert got["raw"] == [{"stock": 40, "ind": 60}, False, 3000, 2]       # limits keeps #83's shape; the time sits beside it
     # mergeTabs(other, cur): the later save wins whichever copy is current
     assert got["tabs"] == [{"stock": 20, "ind": 25, "ts": 2000}, {"stock": 20, "ind": 25, "ts": 2000}, {"ts": 3000}, {"ts": 3000}]
     # records files: other limits come in now; a file without limits keeps this device's; into empty records exactly as the file

@@ -5551,8 +5551,8 @@ def scene_v193d2(R, files, width):
         ind.fill("50")
         page.locator('[data-ui-v2="limits-save"] button').click()
         at(page, "portfolio")
-        lim = stored()["decks"][0]["limits"]
-        assert {k: v for k, v in lim.items() if k != "ts"} == {"stock": 40, "ind": 50} and isinstance(lim.get("ts"), int) and lim["ts"] > 0, lim
+        dk = stored()["decks"][0]
+        assert dk["limits"] == {"stock": 40, "ind": 50} and isinstance(dk.get("limitsTs"), int) and dk["limitsTs"] > 0, dk.get("limits")
         card = page.locator('[data-deck-id][data-kind="imported"]')
         assert fillp(C["pfr"]["stock"], x=40) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
         assert fillp(C["pfr"]["ind"], x=50) in card.locator('[data-ui-v2="pf-rule"][data-rule="ind"]').inner_text()
@@ -5562,8 +5562,8 @@ def scene_v193d2(R, files, width):
         page.locator('[data-ui-v2="limits-reset"]').click()
         page.locator('[data-ui-v2="limits-save"] button').click()
         at(page, "portfolio")
-        lim2 = stored()["decks"][0]["limits"]
-        assert list(lim2) == ["ts"] and lim2["ts"] >= lim["ts"], lim2
+        dk2 = stored()["decks"][0]
+        assert "limits" not in dk2 and dk2["limitsTs"] >= dk["limitsTs"], dk2.get("limits")
         card = page.locator('[data-deck-id][data-kind="imported"]')
         assert fillp(C["pfr"]["stock"], x=30) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
         # a portfolio that is not a 가진 종목 one, or no portfolio: the address opens 포트폴리오

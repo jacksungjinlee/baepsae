@@ -3,7 +3,7 @@
 // kept in the portfolio's `limits { stock, ind }` (store.js: whole % 1-100). Address #portfolio/rules/<deck id>.
 // The fields start at the portfolio's current limits; 처음 값으로 되돌리기 puts back 30% and 35% (not saved until 저장).
 // 저장 writes through setStoreData, which never writes records that would not read back (app.jsx: the refused line
-// shows then). A limit equal to its default is not stored; the limits keep the time they were saved (pf.js withLimits).
+// shows then). A limit equal to its default is not stored; the portfolio keeps when they were saved (limitsTs, pf.js).
 // No 뱁이 (numbers). No Korean here: src/copy/v2.js.
 import React, { useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
