@@ -268,6 +268,37 @@ out = { before, ok: r.ok, fetched, m: m.ok, refused, shown, f: f.ok, afterRetry,
     assert got["f"] is True and got["afterRetry"] is False and got["retryShown"] is True, got
 
 
+def test_the_per_eps_basis_on_screen_is_put_back_not_reset():
+    """Round-4 review: the other direction, so a restore can be told from a reset. On screen: corp.json with epsBasis
+    "owners" and company 000000 re-read (epsIn.b "o"): its PER/EPS line is off. (a) A fetched later publish whose corp.json
+    has no marker, held (not put on screen): the line stays off. (b) A fetched data.json that passes its check but makes
+    resolveLoad throw after it set the basis (a stock that is null): refused, the line stays off. Put on screen, a publish
+    without the marker turns it on."""
+    old = old_files()
+    old["corp"]["epsBasis"] = "owners"
+    old["corp"]["companies"][0]["epsIn"] = {"b": "o"}
+    broken = new_files()
+    broken["data"]["stocks"].append(None)
+    got = run("""
+const kr0 = { t: '000000', cls: 'kr' };
+const cur = loadOf(OLD, NOW);
+const before = [FX.epsBasisIsLive(), FX.epsFixFor(kr0)];
+serve(SITE_NEW);
+const r = await LD.refetchNewer(cur, null, at(NOW));                  // fetched and held: not put on screen
+const held = [FX.epsBasisIsLive(), FX.epsFixFor(kr0)];
+serve(SITE_BROKEN);
+const b = await LD.refetchNewer(cur, null, at(NOW));                  // resolveLoad throws after setting the basis
+const thrown = [FX.epsBasisIsLive(), FX.epsFixFor(kr0)];
+LD.adoptLoad(r.load);
+const shown = [FX.epsBasisIsLive(), FX.epsFixFor(kr0)];
+out = { before, ok: r.ok, held, b: b.ok, bWhy: b.why, thrown, shown };""",
+              OLD=old, NOW=NOW, SITE_NEW=site(new_files()), SITE_BROKEN=site(broken))
+    assert got["before"] == [True, False], got                                             # on screen: re-read, the line off
+    assert got["ok"] is True and got["held"] == [True, False], got                          # (a) held: still off
+    assert got["b"] is False and "the new files could not be read" in got["bWhy"] and got["thrown"] == [True, False], got   # (b)
+    assert got["shown"] == [False, True], got                                               # put on screen: no marker, the line on
+
+
 def test_the_data_shape_follows_what_is_on_screen():
     """The engine reads the data on screen one way (engine.setDataShape; resolveLoad sets it from the file it reads). A
     data.json that passes its check but cannot be read (a stock that is null) never changes it; a good later publish
