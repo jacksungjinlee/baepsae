@@ -437,6 +437,27 @@ def test_old_screener_and_compare_decide_the_line_only_from_rows_with_per_or_roe
     assert got["scrNum"] == 1 and got["cmpNum"] == 1, got             # PER 이 보이는 총 순이익 회사가 있으면 줄
 
 
+
+# ── v19.3e '지금 주가가 가정하는 이익 증가 / 지난 2년 실제 이익': 지난 2년도 EPS 와 같은 기준 ──
+def test_past_profit_growth_stands_on_the_same_basis_as_the_implied_rate():
+    """company.pastNiGrowth (v19.3e 가치 fix) 도 epsBase 를 따라요: 지금 발행은 ni[0] · ni[2] 그대로 (v19.3e 의 식), 다시 읽은 뒤 "o" 는
+    지배주주 순이익 nio3, "s" 는 ni. "t" 는 비교하지 않아요 (그때 impliedGrowth 가 "basis" 라 카드는 숫자 대신 그 줄)."""
+    sam = company("005930")
+    import math
+    shapes = {"today": sam, "o": {**sam, **reread(sam, "o")}, "s": {**sam, **reread(sam, "s", nio3=None)}, "t": {**sam, **reread(sam, "t", nio3=None)},
+              "oNoThen": {**sam, **reread(sam, "o", nio3=SAM_NIO3[:2] + [None])}}
+    got = run(bundle_dir(), """
+      out = Object.fromEntries(Object.entries(SHAPES).map(([k, co]) => [k, { p: B.K.pastNiGrowth(co),
+        g: B.K.impliedGrowth({ t: co.t, cls: 'kr', price: co.price, cap: co.cap }, co) }]));""", SHAPES=shapes)
+    g2 = lambda ni: (math.sqrt(ni[0] / ni[2]) - 1) * 100
+    assert abs(got["today"]["p"]["x"] - g2(sam["ni"])) < 1e-9 and got["today"]["p"]["fy"] == sam["fy"]     # v19.3e 그대로
+    assert abs(got["o"]["p"]["x"] - g2(SAM_NIO3)) < 1e-9 and got["o"]["g"]["ni0"] == SAM_NIO3[0]           # 둘 다 지배주주 순이익
+    assert abs(got["s"]["p"]["x"] - g2(sam["ni"])) < 1e-9 and got["s"]["g"]["ni0"] == sam["ni"][0]
+    assert got["t"]["p"] is None and got["t"]["g"] == {"why": "basis"}                                       # 숫자 대신 그 줄
+    assert got["oNoThen"]["p"] is None and got["oNoThen"]["g"]["ni0"] == SAM_NIO3[0]                       # 3년 전이 없으면 비교만 빠져요
+    assert abs(g2(SAM_NIO3) - g2(sam["ni"])) > 1                                                            # 실제로 다른 숫자예요
+
+
 _TMP = {}
 
 

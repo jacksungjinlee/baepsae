@@ -26,6 +26,7 @@ import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { companySub, CO_MORE } from "./routes.js";
+import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
@@ -51,8 +52,9 @@ export class ErrorBoundary extends React.Component {
 }
 
 // source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }> }
-// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab, fetched once, the first time a company page
-// opens. The preview page has none (it fetches nothing): its company pages have no 공시 tab.
+// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab and 홈's 오늘 볼 것 (v19.3e), fetched once,
+// the first time a company page opens or 홈 opens with a Korean stock held. The preview page has none (it fetches nothing):
+// its company pages have no 공시 tab and its 홈 no filings rows.
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
   const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
@@ -127,14 +129,18 @@ export function App({ source }) {
   }, [store.key]);
 
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
+  // v19.3e (Jack, 2026-11-08): also when 홈 opens and a saved portfolio holds a Korean stock (오늘 볼 것's filings rows; a
+  // failure shows the same message there). After the first paint (an effect), once per visit for both.
+  const homeKr = useMemo(() => holdsKorean(store.data.decks, load.status === "ok" ? load.byT : null), [store.data.decks, load]);
+  const wantDisc = !!loc.code || (loc.tab === "home" && homeKr);
   useEffect(() => {
-    if (!loc.code || disc.status !== "idle") return;
+    if (!wantDisc || disc.status !== "idle") return;
     setDisc({ status: "loading" });
     source.loadDisc().then((r) => {
       if (r && r.ok) setDisc({ status: "ok", data: r.data });
       else { console.warn("[v2] disc.json not loaded: " + ((r && r.error) || "unknown") + " (the disclosures tab shows the load-failure message)"); setDisc({ status: "fail" }); }
     }).catch((e) => { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); });
-  }, [loc.code, disc.status]);
+  }, [wantDisc, disc.status]);
 
   // 왜 움직였나 needs its target: loaded on its own (a reload, a shared address) it shows 홈 instead.
   useEffect(() => {
@@ -290,7 +296,7 @@ export function App({ source }) {
     }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={disc} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
