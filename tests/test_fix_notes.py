@@ -406,6 +406,29 @@ def test_period_labels_follow_eps_in_p_with_existing_words_only():
     assert "c.bq ?" not in open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
 
 
+def test_the_pipelines_ttm_period_reads_as_the_companys_latest_four_quarters():
+    """다시 읽기 파이프라인은 epsIn.p 를 "ttm" · "fy" 로 써요 (validate_data.py EPS_P). "ttm" 은 그 회사 bq 까지의 최근 4개 분기라서
+    "YYYY.QQ" 와 같은 이름표를 달아요. bq 가 없거나 읽을 수 없으면 이름표 없음 (틀린 말 대신). 대문자 "TTM" 같은 다른 값은 그대로 없음."""
+    sam = company("005930")                              # 시험 데이터: bq "2026.2Q", fy 2025
+    assert sam.get("bq") == "2026.2Q" and sam["fy"] == 2025
+    rr = lambda p, **kw: {**sam, "epsIn": {"ni": 1.0, "b": "o", "p": p, "sh": 1}, **kw}
+    cases = {"ttm": rr("ttm"), "ttmBoth": rr("ttm", bpsIn={"p": "ttm"}), "ttmFyB": rr("ttm", bpsIn={"p": "fy"}),
+             "ttmNoBq": rr("ttm", bq=None), "ttmOddBq": rr("ttm", bq="2026Q2"), "ttmQ1": rr("ttm", bq="2026.1Q"),
+             "fyTtmB": rr("fy", bpsIn={"p": "ttm"}), "upper": rr("TTM")}
+    got = run(bundle_dir(), """
+      out = Object.fromEntries(Object.entries(CS).map(([k, co]) => [k, { v: B.CT.valueBasis(co), e: RP.epsPeriod(co), b: RP.bpsPeriod(co), old: OLD.epsPeriodSub(co) }]));""",
+              CS=cases)
+    Q = "PER은 2026년 2분기까지 최근 4개 분기 이익, PBR은 그 분기 자본 기준이에요."
+    OLD_Q, OLD_Q1, OLD_Y = " · 최근 4개분기 합산(2026.2Q)", " · 최근 4개분기 합산(2026.1Q)", " · 직전 사업보고서"
+    assert got["ttm"]["e"] == {"y": 2026, "q": 2} and got["ttm"]["v"] == Q and got["ttm"]["old"] == OLD_Q, got["ttm"]
+    assert got["ttmBoth"]["b"] == {"y": 2026, "q": 2} and got["ttmBoth"]["v"] == Q, got["ttmBoth"]
+    assert got["ttmFyB"]["e"] == {"y": 2026, "q": 2} and got["ttmFyB"]["b"] == {"fy": True} and got["ttmFyB"]["v"] is None   # 두 기간이 달라요
+    for k in ("ttmNoBq", "ttmOddBq", "upper"):
+        assert got[k]["e"] is None and got[k]["v"] is None and got[k]["old"] == "", (k, got[k])                    # 이름표 없음
+    assert got["ttmQ1"]["e"] == {"y": 2026, "q": 1} and got["ttmQ1"]["old"] == OLD_Q1, got["ttmQ1"]
+    assert got["fyTtmB"]["e"] == {"fy": True} and got["fyTtmB"]["b"] == {"y": 2026, "q": 2} and got["fyTtmB"]["old"] == OLD_Y
+
+
 def test_the_example_page_shows_neither_line():
     got = run(bundle_dir(), """
       const OFF = { flWhy: { icr: 'off' } };
