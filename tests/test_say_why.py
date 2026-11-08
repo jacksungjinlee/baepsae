@@ -53,6 +53,28 @@ def test_plan_reuses_the_checkup_us_dividend_line_with_one_key():
     assert read("src/copy/v2.js").count(DIV_US) == 1
     plan = read("src/v2/plan.jsx")
     assert plan.count("{C.rpt.divUs}") == 1 and 'data-ui-v2="div-us"' in plan
-    # 미국 종목을 산 계획(주식 수 > 0, 배당을 아는 종목)에만 · '세전 금액이에요' 바로 다음 줄
-    assert "const usDiv = plan.rows.some((x) => usOf(x.s) && x.shares > 0 && num(x.s.dy) != null);" in plan
+    # 미국 종목을 산 계획(주식 수 > 0, 배당을 아는 종목: engine.usDividendCounted)에만 · '세전 금액이에요' 바로 다음 줄
+    assert "const usDiv = usDividendCounted(plan.rows);" in plan
     assert plan.index("{C.plan.preTax}</div>") < plan.index("{usDiv && <div data-ui-v2=\"div-us\"") < plan.index("div.unknown > 0 &&")
+
+
+def test_us_dividend_line_only_when_a_known_us_dividend_is_in_the_total():
+    """engine.usDividendCounted: 미국 종목을 사고(주식 수 > 0) 그 배당(dy)을 알 때만 참이에요. 계획의 유일한 미국 종목이 배당을 모르면
+    (annualDividend 가 0원으로 세고 '배당 정보가 없는 종목' 줄이 말해요) 미국 배당 줄은 없어요. 채권 · 금 ETF 는 미국 종목이 아니에요."""
+    k, u = kr("000010"), us("AAA")
+    rows = lambda *xs: [{"s": s, "shares": n, "cost": 1000000} for s, n in xs]
+    cases = {
+        "kr only": rows((k, 10)),
+        "us with dividend": rows((k, 10), (u, 3)),
+        "us dividend 0": rows((k, 10), (us("ZERO", dy=0.0), 3)),
+        "only us has no dividend": rows((k, 10), (us("NODY", dy=None), 3)),
+        "us not bought": rows((k, 10), (u, 0)),
+        "bond and gold etfs": rows((k, 10), ({"t": "114260", "cls": "bond", "price": 1.0, "dy": 3.0}, 5), ({"t": "132030", "cls": "metal", "price": 1.0}, 5)),
+        "krx-listed us etf without dy": rows((k, 10), ({"t": "379800", "cls": "us", "price": 1.0, "etf": True}, 5)),
+    }
+    got = run("out = Object.fromEntries(Object.entries(CASES).map(([n, r]) => [n, { line: E.usDividendCounted(r), unknown: E.annualDividend(r, 1400).unknown }]));",
+              CASES=cases)
+    assert {n: g["line"] for n, g in got.items()} == {
+        "kr only": False, "us with dividend": True, "us dividend 0": True, "only us has no dividend": False,
+        "us not bought": False, "bond and gold etfs": False, "krx-listed us etf without dy": False}, got
+    assert got["only us has no dividend"]["unknown"] == 1, got           # 그 종목은 '배당 정보가 없는 종목' 줄이 말해요

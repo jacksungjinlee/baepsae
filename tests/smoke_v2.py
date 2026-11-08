@@ -1163,9 +1163,8 @@ def won_value(text):
     return int(m.group(1).replace(",", ""))
 
 
-def to_plan(page, mix=None):
-    """배당 생활비 → 다음 → 다음 → 1,000만원 → 후보 고르기(미리 고른 6종목) → 매수 계획. → [(종목, 주식 수)] 화면 순서대로
-    mix: 조건 단계의 한국 : 미국 버튼 이름 (예: '한국만'). 없으면 그 템플릿의 비율 그대로."""
+def to_plan(page):
+    """배당 생활비 → 다음 → 다음 → 1,000만원 → 후보 고르기(미리 고른 6종목) → 매수 계획. → [(종목, 주식 수)] 화면 순서대로"""
     wait_ready(page)
     start_build(page)
     page.locator('[data-deck="income"]').click()
@@ -1174,9 +1173,6 @@ def to_plan(page, mix=None):
     see(page, C["build"]["s3"]["title"])
     click_next(page)
     see(page, C["build"]["s4"]["title"])
-    if mix:
-        page.get_by_role("radio", name=mix, exact=True).click()
-        assert page.get_by_role("radio", name=mix, exact=True).get_attribute("aria-checked") == "true", mix
     page.get_by_role("button", name="+1,000만").first.click()
     page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
     click_next(page)
@@ -1276,6 +1272,33 @@ def scene_plan_dividend(R, files, width):
 
 
 # ── say-why 두 줄 (Jack, 2026-11-08) ──
+def to_plan_mix(page, mix):
+    """to_plan 과 같은 길에서 조건 단계의 한국 : 미국만 mix(버튼 이름, 예: '한국만')로 바꿔요. → [(종목, 주식 수)] 화면 순서대로"""
+    wait_ready(page)
+    start_build(page)
+    page.locator('[data-deck="income"]').click()
+    see(page, C["build"]["s1"]["title"])
+    click_next(page)
+    see(page, C["build"]["s3"]["title"])
+    click_next(page)
+    see(page, C["build"]["s4"]["title"])
+    page.get_by_role("radio", name=mix, exact=True).click()
+    assert page.get_by_role("radio", name=mix, exact=True).get_attribute("aria-checked") == "true", mix
+    page.get_by_role("button", name="+1,000만").first.click()
+    page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
+    click_next(page)
+    see(page, C["pick"]["title"])
+    click_next(page)
+    see(page, C["plan"]["stocks"])
+    rows = page.locator('[data-ui-v2="screen"] [data-row]')
+    rows.first.wait_for(state="visible")
+    out = []
+    for i in range(rows.count()):
+        r = rows.nth(i)
+        out.append((r.get_attribute("data-row"), int(re.search(r"([\d,]+)주", r.inner_text()).group(1).replace(",", ""))))
+    return out
+
+
 def scene_say_why(R, files, width):
     """기준 단계: 내 점수 칸 바로 밑에 '하루 거래대금 5억원 미만 종목과 우선주는 빼고 셌어요.' (점수를 주기 전에도 · 준 뒤에도. 위에 붙는
     칸 안이 아니라 그 밑이라 칸의 높이는 그대로예요) · 12px 이상 · 가로 스크롤 없음. 매수 계획 · 연 배당금: 미국 종목을 산 계획에만
@@ -1344,7 +1367,7 @@ def scene_say_why(R, files, width):
     srv, ctx, page, _ = R.open(build_site(files), width)
 
     def kr_plan():
-        rows = to_plan(page, mix=C["build"]["s4"]["mix"]["kr"])
+        rows = to_plan_mix(page, C["build"]["s4"]["mix"]["kr"])
         assert rows and all(by[t]["cls"] == "kr" for t, n in rows), rows   # 한국만: 미국 종목이 없어요
         el, info = div_us(rows)
         assert el.count() == 0 and info["pre"] and info["next"] != "div-us", (el.all_inner_texts(), info)

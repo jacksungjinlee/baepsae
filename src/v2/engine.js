@@ -815,6 +815,12 @@ export function annualDividend(rows, fx, coByT = null) {
   return { won, unknown, unchecked };
 }
 
+// say-why (Jack, 2026-11-08): does annualDividend's total include a US stock's dividend? Its 연 배당금 is Yahoo's current
+// dividend rate made into a year (dy x cost), not the past year, and 매수 계획 says so (rpt.divUs) only then: a bought
+// (shares > 0) US company share (cls "us") whose dy is known. A US stock with no dy is counted by `unknown` instead (0원,
+// its own line); bond and gold ETFs (cls bond · metal) are not US stocks.
+export const usDividendCounted = (rows) => rows.some((r) => r.s && r.s.cls === "us" && r.shares > 0 && num(r.s.dy) != null);
+
 // "2022년처럼 떨어지면": market's 2022 won return x beta per stock; cushion ETFs their own 2022 return.
 // Holdings without a figure (no beta) are assumed to move like the rest (the v17.5 rule of the current app): the rate
 // comes from the holdings with data and applies to the whole amount bought. missing = their share of the money.
