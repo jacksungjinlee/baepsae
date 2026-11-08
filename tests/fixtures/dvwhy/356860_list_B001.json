@@ -1,0 +1,65 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 5,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20260806000214",
+"flr_nm": "티엘비",
+"rcept_dt": "20260806",
+"rm": ""
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(유무상증자결정)",
+"rcept_no": "20260702000142",
+"flr_nm": "티엘비",
+"rcept_dt": "20260702",
+"rm": ""
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20241007000033",
+"flr_nm": "티엘비",
+"rcept_dt": "20241007",
+"rm": ""
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약해지결정)",
+"rcept_no": "20240325000802",
+"flr_nm": "티엘비",
+"rcept_dt": "20240325",
+"rm": ""
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20230921000237",
+"flr_nm": "티엘비",
+"rcept_dt": "20230921",
+"rm": ""
+}
+]
+}

@@ -1,0 +1,98 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 8,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "주주총회소집결의              (임시주주총회)",
+"rcept_no": "20261029900505",
+"flr_nm": "티엘비",
+"rcept_dt": "20261029",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정              ",
+"rcept_no": "20261029900521",
+"flr_nm": "티엘비",
+"rcept_dt": "20261029",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "주주명부폐쇄기간또는기준일설정              ",
+"rcept_no": "20261029900517",
+"flr_nm": "티엘비",
+"rcept_dt": "20261029",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "중간(분기)배당을위한주주명부폐쇄(기준일)결정              ",
+"rcept_no": "20260806900159",
+"flr_nm": "티엘비",
+"rcept_dt": "20260806",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "유상증자1차발행가액결정              ",
+"rcept_no": "20260528900812",
+"flr_nm": "티엘비",
+"rcept_dt": "20260528",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "중간(분기)배당을위한주주명부폐쇄(기준일)결정              ",
+"rcept_no": "20251013900282",
+"flr_nm": "티엘비",
+"rcept_dt": "20251013",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "단기차입금증가결정              ",
+"rcept_no": "20250919900160",
+"flr_nm": "티엘비",
+"rcept_dt": "20250919",
+"rm": "코"
+},
+{
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"stock_code": "356860",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정",
+"rcept_no": "20230412900336",
+"flr_nm": "티엘비",
+"rcept_dt": "20230412",
+"rm": "코"
+}
+]
+}

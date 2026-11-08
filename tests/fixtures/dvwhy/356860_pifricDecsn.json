@@ -1,0 +1,42 @@
+{
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20260702000142",
+"corp_cls": "K",
+"corp_code": "00920379",
+"corp_name": "티엘비",
+"piic_nstk_ostk_cnt": "2,073,000",
+"piic_nstk_estk_cnt": "-",
+"piic_fv_ps": "500",
+"piic_bfic_tisstk_ostk": "9,832,630",
+"piic_bfic_tisstk_estk": "-",
+"piic_fdpp_fclt": "133,086,600,000",
+"piic_fdpp_bsninh": "-",
+"piic_fdpp_op": "-",
+"piic_fdpp_dtrp": "-",
+"piic_fdpp_ocsa": "-",
+"piic_fdpp_etc": "-",
+"piic_ic_mthn": "주주배정후 실권주 일반공모",
+"fric_nstk_ostk_cnt": "11,795,630",
+"fric_nstk_estk_cnt": "-",
+"fric_fv_ps": "500",
+"fric_bfic_tisstk_ostk": "11,905,630",
+"fric_bfic_tisstk_estk": "-",
+"fric_nstk_asstd": "2026년 07월 20일",
+"fric_nstk_ascnt_ps_ostk": "1",
+"fric_nstk_ascnt_ps_estk": "-",
+"fric_nstk_dividrk": "2026년 01월 01일",
+"fric_nstk_dlprd": "-",
+"fric_nstk_lstprd": "2026년 08월 07일",
+"fric_bddd": "2026년 04월 10일",
+"fric_od_a_at_t": "3",
+"fric_od_a_at_b": "-",
+"fric_adt_a_atn": "참석",
+"ssl_at": "Y",
+"ssl_bgd": "20260413",
+"ssl_edd": "20260701"
+}
+]
+}

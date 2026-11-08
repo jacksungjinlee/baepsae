@@ -22,6 +22,7 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
 임계값은 2026-10-17 발행본(DART 정상 마지막 날)에 맞춰 정했어요. 안전 규칙이라 함부로 낮추지 않습니다.
 """
 import argparse
+import collections
 import csv
 import datetime as dt
 import io
@@ -166,6 +167,19 @@ EPS_B = ("o", "s", "t")    # epsIn.b: 지배주주 몫(연결) · 별도 재무�
 EPS_P = ("ttm", "fy")      # epsIn.p: 최근 4개 분기 · 사업보고서 한 해
 ICR_WARN_SHARE = 10.0      # 이자보상배율을 돌린 회사 중 경고(1배 미만) 비율이 이보다 크면 경고 (실패 아님 · 2026-11-07 옛 값은 약 25%)
 CORP_FIN_SECS = ("bank", "insure", "broker")   # 업종 그룹(ind)이 없을 때 금융회사로 보는 corp.json 업종 (매출 줄이 없을 수 있어요)
+# v19.1h (새 줄만 · Jack 의 답 2026-11-08 · PR 의 '안전 규칙 변경'): 배당 맞춤 이유 (data.json 종목의 dvWhy · divCheck.why).
+# 주식 수가 바뀌어 배당을 다시 계산하려 한 국내 종목마다 DART 결정 공시로 찾은 결론이에요 (ok 다시 계산 · nf 공시 없이 다시 계산 ·
+# filed 유상증자·사채가 설명해 공시 그대로 · nc-mismatch / nc-unexplained 다시 계산하지 않고 배당수익률을 숨김). 이 값들은 fetch_data.py 와
+# 일부러 따로 적어요. 모양이 틀리거나 배율·날짜·숨김이 맞지 않으면 실패. nf · filed · nc-* · 조회 실패 · 스위치 꺼짐은 경고만 (이름을
+# 적어요) — DART 장애가 발행을 막지 않게. divCheck.why 가 없으면 v19.1h 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패.
+DVWHY_KINDS = ("split", "merge", "bonus", "reduce")   # 액면분할 · 주식병합 · 무상증자 · 주식병합으로 한 감자
+DVWHY_ST = ("ok", "nf", "filed", "nc-mismatch", "nc-unexplained")
+DVWHY_FX_KINDS = ("rights", "cb", "bw")     # 유상증자 · 전환사채 · 신주인수권부사채
+DVWHY_TOL = 0.005        # 공시 사건 배율의 곱 = 그해 dpsF ± 0.5%
+DVWHY_CLEAN_TOL = 1e-4   # 사건 하나의 배율은 깨끗한 분할 배율(SPLIT_FACTORS · 역수)과 이만큼 안
+DVWHY_SAME = 0.10        # 10% 이하 변화는 이름 붙이지 않아요 · filed 의 여유 (fetch_data.SHARE_SAME 과 같은 값)
+DVWHY_CB_FLOOR = 0.7     # 전환·행사가액의 하한 (발행 때의 70%) → 사채가 만드는 주식 수는 많아야 1/0.7 배
+DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 말보다 이만큼 앞부터
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -772,6 +786,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
     check_v191b(rep, data, kr, us, by, comps, pdata)
+    check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
 
@@ -1463,6 +1478,241 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
     off = [f"epsB.{k} {(ic.get('epsB') or {}).get(k)}≠{v}" for k, v in eb.items() if (ic.get("epsB") or {}).get(k) != v]
     off += [f"epsP.{k} {(ic.get('epsP') or {}).get(k)}≠{v}" for k, v in ep.items() if (ic.get("epsP") or {}).get(k) != v]
     rep.add("incCheck 집계 = corp.json 영수증 수", not off, "맞음" if not off else " · ".join(off[:4]), "같아야 함")
+
+
+def _dvwhy_clean(r):
+    """사건 하나의 배율이 깨끗한 분할 배율이나 그 역수인지 (±DVWHY_CLEAN_TOL)."""
+    return any(abs(r / c - 1) <= DVWHY_CLEAN_TOL for k in SPLIT_FACTORS for c in (float(k), 1.0 / k))
+
+
+def _real_day(x):
+    """YYYY-MM-DD 이고 있는 날짜면 그 날짜, 아니면 None."""
+    if not isinstance(x, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", x):
+        return None
+    try:
+        return dt.date.fromisoformat(x)
+    except ValueError:
+        return None
+
+
+def _rc_ok(rc, today):
+    """DART 접수번호: 14자리이고 앞 8자리가 2000-01-01 ~ 오늘의 날짜."""
+    rd = _real_day(f"{rc[:4]}-{rc[4:6]}-{rc[6:8]}") if isinstance(rc, str) and re.fullmatch(r"\d{14}", rc) else None
+    return rd is not None and dt.date(2000, 1, 1) <= rd <= today
+
+
+def _posint(x):
+    return isinstance(x, int) and not isinstance(x, bool) and x > 0
+
+
+def dvwhy_adj_years(s):
+    """배당을 다시 계산한 해 (dpsF 가 1 이 아닌 숫자인 해) 의 번호 [0 당기 · 1 전기 · 2 전전기]."""
+    f3 = _nums3(s.get("dpsF"))
+    return [i for i in range(3) if f3[i] is not None and f3[i] != 1] if f3 else []
+
+
+def _dvwhy_events(ev, today):
+    """사건 목록의 모양 문제 → 이유 또는 None."""
+    if not isinstance(ev, list) or not ev:
+        return "사건 목록 (비었거나 목록이 아님)"
+    prev = None
+    for e in ev:
+        if not isinstance(e, dict) or e.get("k") not in DVWHY_KINDS:
+            return "사건 종류"
+        if set(e) != ({"k", "d", "r", "rc", "x"} if e["k"] == "bonus" else {"k", "d", "r", "rc"}):
+            return f"사건 칸 {sorted(e)}"
+        r = e.get("r")
+        if not _isnum(r) or r <= 0 or not _dvwhy_clean(r) or abs(r - 1) <= DVWHY_SAME + 1e-9:
+            return f"깨끗하지 않은 배율 {r}"
+        if (e["k"] == "split" and not r > 1) or (e["k"] in ("merge", "reduce") and not r < 1):
+            return f"{e['k']} 배율 {r:g}"
+        if e["k"] == "bonus" and (not _isnum(e.get("x")) or not e["x"] > 0 or abs(r - (1 + e["x"])) > 1e-6):
+            return f"무상증자 배율 {r:g} ≠ 1 + {e.get('x')}"
+        if _real_day(e.get("d")) is None:
+            return f"날짜 {e.get('d')}"
+        if not _rc_ok(e.get("rc"), today):
+            return f"접수번호 {e.get('rc')}"
+        if prev is not None and (e["d"], e["rc"]) < prev:
+            return "사건 순서 (오래된 것부터)"
+        prev = (e["d"], e["rc"])
+    return None
+
+
+def _dvwhy_ratio(ev, fy, f3, adj, px):
+    """사건의 곱 = 다시 계산한 해마다 dpsF (그해 12월 31일 뒤 ~ pxDate) · 사건은 가장 오래된 해 12월 31일 뒤 ~ pxDate 안 ·
+    당기 배율이 1 이면 그 뒤 사건 없음 → 이유 또는 None."""
+    start = dt.date(fy - max(adj), 12, 31)
+    out = [e for e in ev if not start < _real_day(e["d"]) <= px]
+    if out:
+        return f"날짜 {out[0]['d']} 가 {start} 뒤 ~ {px} 밖"
+    for i in adj:
+        cut = dt.date(fy - i, 12, 31)
+        prod = math.prod(e["r"] for e in ev if cut < _real_day(e["d"]) <= px)
+        if abs(prod / f3[i] - 1) > DVWHY_TOL:
+            return f"{fy - i}년 배율 {f3[i]:g} ≠ 사건의 곱 {prod:.4g}"
+    if f3[0] == 1 and any(dt.date(fy, 12, 31) < _real_day(e["d"]) for e in ev):    # 당기 배율 1 = 사업보고서 뒤 사건 없음
+        return f"{fy}년 배율 1 인데 그 뒤 사건이 있어요"
+    return None
+
+
+def dvwhy_problems(s, px, today):
+    """한 종목의 dvWhy → (모양 문제, 배율·날짜 문제) — 없으면 None. (v19.1h)
+    ok    사건 목록(깨끗한 배율 · 10% 넘는 변화 · 분할 > 1 · 병합 < 1 · 무상증자 = 1 + x · 날짜 · 접수번호 · 오래된 것부터) · 다시 계산한
+          해가 있고, 해마다 그해 12월 31일 뒤 ~ pxDate 사건의 곱 = dpsF ± 0.5%.
+    nf    a · b 양의 정수 · a ≠ b · b = 오늘 상장 주식 수(shr) · b ÷ a 가 가장 오래된 다시 계산한 해 dpsF ± 10%.
+    filed a · b · fx(유상증자 · 전환사채 · 신주인수권부사채: 공시일 · 주식 수 · 접수번호) · b = shr · a < b ≤ a + 덮는 수 + a 의 10% ·
+          당기 배율 1 (또는 당기 배당 없음) · 남은 다시 계산한 해는 사업보고서 안 사건(ev)으로 설명돼요.
+    nc-*  칸은 v · st 만 · 다시 계산한 해가 없고 배당한 해는 모두 비교 불가(배당수익률이 숨겨져요)."""
+    w = s.get("dvWhy")
+    if not isinstance(w, dict) or w.get("v") != 1 or isinstance(w.get("v"), bool) or w.get("st") not in DVWHY_ST:
+        return "칸 모양 (v · st)", None
+    st, fy, f3, adj = w["st"], s.get("fy"), _nums3(s.get("dpsF")), dvwhy_adj_years(s)
+    keys = {"ok": ({"v", "st", "ev"}, set()), "nf": ({"v", "st", "a", "b"}, set()), "filed": ({"v", "st", "a", "b", "fx"}, {"ev"}),
+            "nc-mismatch": ({"v", "st"}, set()), "nc-unexplained": ({"v", "st"}, set())}[st]
+    if not keys[0] <= set(w) <= keys[0] | keys[1]:
+        return f"{st} 칸 {sorted(w)}", None
+    if not isinstance(fy, int) or isinstance(fy, bool) or not 2000 <= fy <= today.year or f3 is None or px is None:
+        return None, "사업보고서 연도 · dpsF · pxDate 없음"
+    d3 = _nums3(s.get("dps3")) or [None] * 3
+    if st.startswith("nc-"):
+        shown = [i for i in range(3) if (d3[i] or 0) > 0 and f3[i] is not None]
+        if adj or shown or s.get("divSt") not in ("nc", "nd"):
+            return None, f"{st} 인데 다시 계산했거나 배당한 해의 배율이 남았어요 (배당수익률을 숨겨야 해요)"
+        return None, None
+    if st in ("ok", "nf") and not adj:
+        return None, f"{st} 인데 다시 계산한 해가 없어요"
+    if st == "ok":
+        bad = _dvwhy_events(w["ev"], today)
+        return (bad, None) if bad else (None, _dvwhy_ratio(w["ev"], fy, f3, adj, px))
+    a, b = w.get("a"), w.get("b")
+    if not _posint(a) or not _posint(b) or a == b:
+        return f"{st} 의 a · b (양의 정수 · a ≠ b)", None
+    shr = num(s.get("shr"))
+    if shr is None or b != shr:
+        return None, f"b {b} ≠ 오늘 상장 주식 수 {s.get('shr')}"
+    if st == "nf":
+        old = max(adj)
+        if abs((b / a) / f3[old] - 1) > DVWHY_SAME:
+            return None, f"b ÷ a = {b / a:.3f} 가 {fy - old}년 배율 {f3[old]:g} 와 달라요"
+        return None, None
+    fx = w.get("fx")                                                        # filed
+    if not isinstance(fx, list) or not fx:
+        return "filed 의 fx (비었거나 목록이 아님)", None
+    lo_r = dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_LOOKBACK_DAYS)
+    cover = 0.0
+    for x in fx:
+        if not isinstance(x, dict) or set(x) != {"k", "d", "n", "rc"} or x.get("k") not in DVWHY_FX_KINDS or not _posint(x.get("n")) \
+                or _real_day(x.get("d")) is None or not _rc_ok(x.get("rc"), today):
+            return f"filed 의 fx 칸 {x}", None
+        d = _real_day(x["d"])
+        if d > px or (x["k"] == "rights" and d <= lo_r) or d < dt.date(fy - 2, 1, 1):
+            return None, f"fx 날짜 {x['d']} 가 기간 밖"
+        cover += x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR
+    if not a < b <= a + cover + DVWHY_SAME * a:
+        return None, f"늘어난 주식 수 {b - a:,} 를 공시({cover:,.0f})가 설명하지 못해요"
+    if f3[0] not in (1, None) or (f3[0] is None and (d3[0] or 0) > 0):
+        return None, "filed 인데 당기 배당이 공시 그대로가 아니에요"
+    if adj:
+        bad = _dvwhy_events(w.get("ev"), today)
+        if bad:
+            return bad, None
+        if any(_real_day(e["d"]) > dt.date(fy, 12, 31) for e in w["ev"]):
+            return None, "filed 의 사건은 사업보고서 안이어야 해요"
+        return None, _dvwhy_ratio(w["ev"], fy, f3, adj, px)
+    if "ev" in w:
+        return "filed 인데 다시 계산한 해 없이 사건이 있어요", None
+    return None, None
+
+
+def check_v191h(rep, data, kr, by, comps, pdata, today):
+    """v19.1h 새 줄 (Jack 의 답 2026-11-08): 배당 맞춤 이유 (dvWhy · divCheck.why)."""
+    dc = data.get("divCheck")
+    if not isinstance(dc, dict):
+        return                                    # v19.1b 전 데이터 — '배당 분할 확인 기록' 줄이 알려요
+    why = dc.get("why")
+    name = "배당 맞춤 이유 기록 (divCheck.why)"
+    if not isinstance(why, dict):
+        had = isinstance(((pdata or {}).get("divCheck") or {}).get("why"), dict)
+        rep.add(name, not had, "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1h 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1h 전 데이터만 경고)", warn=not had)
+        return
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    com = [s for s in kr if not is_pref(s.get("t"))]
+    kr_t = {s.get("t") for s in kr}
+    has = [s for s in kr if "dvWhy" in s]
+    adj = {s["t"] for s in com if dvwhy_adj_years(s)}
+    st_of = {s["t"]: s["dvWhy"].get("st") for s in has if isinstance(s.get("dvWhy"), dict) and s["dvWhy"].get("st") in DVWHY_ST}
+    st_n = collections.Counter(st_of.values())
+
+    # 1. 기록: v1 · 결론마다 종목 수 = dvWhy 가 그 결론인 종목 · 줄이 없는 종목(failT 조회 실패 · keptT 스위치가 꺼져 맞춤 그대로)은
+    #    그 수만큼, 실제 종목이고, dvWhy 가 없고, 다시 계산한 해가 있어요
+    bad = []
+    if why.get("v") != 1:
+        bad.append(f"v{why.get('v')}")
+    for k in DVWHY_ST + ("fail", "kept"):
+        if not isinstance(why.get(k), int) or isinstance(why.get(k), bool) or why[k] < 0:
+            bad.append(f"{k} {why.get(k)}")
+    for k in DVWHY_ST:
+        if why.get(k) != st_n.get(k, 0):
+            bad.append(f"{k} {why.get(k)}≠{st_n.get(k, 0)}")
+    for k in ("fail", "kept"):
+        lst = why.get(k + "T")
+        if not isinstance(lst, list) or not all(isinstance(t, str) for t in lst) or len(set(lst)) != len(lst) \
+                or len(lst) != why.get(k) or any(t not in kr_t for t in lst):
+            bad.append(f"{k}T")
+        elif any("dvWhy" in by[t] or t not in adj for t in lst):
+            bad.append(f"{k}T 인데 dvWhy 가 있거나 다시 계산한 해가 없음")
+    rep.add(name, not bad, "맞음" if not bad else " · ".join(bad[:4]),
+            "v1 · 결론마다 수 = dvWhy 종목 · failT·keptT = 그 수의 줄 없는 종목")
+
+    # 2. 칸: 다시 계산한 해가 있는 보통주는 dvWhy(ok · nf · filed)가 있거나 조회 실패(failT) · 스위치 꺼짐(keptT)으로 적혀 있어요.
+    #    ok · nf 는 다시 계산한 해가 있는 종목에만, nc-* 는 다시 계산한 해가 없는 종목에만. 이유 없이 빠지거나 엉뚱하면 실패
+    known = set(why.get("failT") or []) | set(why.get("keptT") or [])
+    miss = sorted(t for t in adj if "dvWhy" not in by[t] and t not in known)
+    extra = sorted(s["t"] for s in has if is_pref(s["t"]) or (st_of.get(s["t"]) in ("ok", "nf") and s["t"] not in adj)
+                   or (str(st_of.get(s["t"])).startswith("nc-") and s["t"] in adj))
+    left = sorted(t for t in adj if "dvWhy" not in by[t] and t in known)
+    rep.add("배당 맞춤 이유 칸 (dvWhy · 다시 계산한 해가 있는 종목)", not extra and not miss,
+            f"엉뚱한 종목 {len(extra)} · 이유 없이 빠짐 {len(miss)}" + (f" (예: {(extra + miss)[0]})" if extra or miss else "")
+            + f" · 조회 실패·스위치 꺼짐으로 빠짐 {len(left)}",
+            "0 · 0 (조회 실패는 경고 줄이 이름을 적어요)")
+
+    # 3·4. 모양 · 배율과 날짜
+    shape, ratio = [], []
+    for s in has:
+        a, b = dvwhy_problems(s, px, today)
+        if a:
+            shape.append(f"{s['t']} {a}")
+        if b:
+            ratio.append(f"{s['t']} {b}")
+    rep.add("배당 맞춤 이유 모양 (사건 · 배율 · 날짜 · 접수번호 · a·b · fx)", not shape,
+            f"어긋남 {len(shape)}" + (f" (예: {shape[0]})" if shape else ""),
+            "0 (결론별 칸 · 분할·병합·무상증자 · 10% 넘는 깨끗한 배율 · 접수번호 14자리)")
+    rep.add("배당 맞춤 이유 = 배율 (사건의 곱 = dpsF · 숨긴 수익률 · 날짜는 그 사이)", not ratio,
+            f"어긋남 {len(ratio)}" + (f" (예: {ratio[0]})" if ratio else ""),
+            f"0 (해마다 사건의 곱 = dpsF ± {DVWHY_TOL:.1%} · nf·filed 는 b = shr · filed 는 늘어난 수를 공시가 덮음 · nc-* 는 배율 없음)")
+
+    # 5. corp.json 의 dvWhy 는 data.json 과 같아요 (없으면 둘 다 없음)
+    off = [c.get("t") for c in comps if c.get("dvWhy") != (by.get(c.get("t")) or {}).get("dvWhy")]
+    rep.add("corp.json dvWhy = data.json", not off, f"다름 {len(off)}" + (f" (예: {off[0]})" if off else ""), "0")
+
+    # 6. 경고만 (발행은 막지 않아요): 공시를 찾지 못함(nf) · 공시된 배당 그대로(filed) · 수익률을 숨김(nc-mismatch · nc-unexplained) ·
+    #    조회 실패(이유 줄 없음 · 맞춤 그대로) · 스위치 꺼짐. Jack 이 하나하나 볼 수 있게 이름을 적어요
+    def nm(t):
+        return f"{t} {(by.get(t) or {}).get('nk') or ''}".strip()
+    groups = [("공시 없음", sorted(t for t, st in st_of.items() if st == "nf")),
+              ("공시된 배당 그대로", sorted(t for t, st in st_of.items() if st == "filed")),
+              ("공시와 달라 수익률 숨김", sorted(t for t, st in st_of.items() if st == "nc-mismatch")),
+              ("설명 못 해 수익률 숨김", sorted(t for t, st in st_of.items() if st == "nc-unexplained")),
+              ("조회 실패", [t for t in why.get("failT") or [] if isinstance(t, str)]),
+              ("스위치 꺼짐", [t for t in why.get("keptT") or [] if isinstance(t, str)])]
+    named = [(g, ts) for g, ts in groups if ts]
+    for g, ts in named:
+        rep.detail(f"배당 맞춤 이유 {g}", [nm(t) for t in ts])
+    rep.add("배당 맞춤 이유 경고 (공시 없음 · 공시 그대로 · 수익률 숨김 · 조회 실패)", True,
+            "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
+                                               for g, ts in named),
+            f"있으면 경고 (발행은 막지 않아요) · 이유 확인 {why.get('ok')}", warn=bool(named))
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

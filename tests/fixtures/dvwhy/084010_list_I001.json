@@ -1,0 +1,87 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 7,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "유상증자결정(자율공시)(종속회사의주요경영사항)              ",
+"rcept_no": "20261007800324",
+"flr_nm": "대한제강",
+"rcept_dt": "20261007",
+"rm": "유"
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "현금ㆍ현물배당결정              ",
+"rcept_no": "20260818800368",
+"flr_nm": "대한제강",
+"rcept_dt": "20260818",
+"rm": "유"
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "현금ㆍ현물배당을위한주주명부폐쇄(기준일)결정              ",
+"rcept_no": "20260818800351",
+"flr_nm": "대한제강",
+"rcept_dt": "20260818",
+"rm": "유"
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "중대재해발생(종속회사의주요경영사항)              ",
+"rcept_no": "20260112800129",
+"flr_nm": "대한제강",
+"rcept_dt": "20260112",
+"rm": "유"
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주식소각결정              ",
+"rcept_no": "20251104800172",
+"flr_nm": "대한제강",
+"rcept_dt": "20251104",
+"rm": "유"
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "[기재정정]타법인주식및출자증권취득결정(자율공시)              ",
+"rcept_no": "20240830800331",
+"flr_nm": "대한제강",
+"rcept_dt": "20240830",
+"rm": "유"
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "[기재정정]주식소각결정",
+"rcept_no": "20231017800207",
+"flr_nm": "대한제강",
+"rcept_dt": "20231017",
+"rm": "유"
+}
+]
+}

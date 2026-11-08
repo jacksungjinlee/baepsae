@@ -1,0 +1,76 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 6,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00141413",
+"corp_name": "영화금속",
+"stock_code": "012280",
+"corp_cls": "Y",
+"report_nm": "주식소각결정              ",
+"rcept_no": "20260928800210",
+"flr_nm": "영화금속",
+"rcept_dt": "20260928",
+"rm": "유"
+},
+{
+"corp_code": "00141413",
+"corp_name": "영화금속",
+"stock_code": "012280",
+"corp_cls": "Y",
+"report_nm": "투자유의안내              ",
+"rcept_no": "20260805800862",
+"flr_nm": "유가증권시장본부",
+"rcept_dt": "20260805",
+"rm": "유"
+},
+{
+"corp_code": "00141413",
+"corp_name": "영화금속",
+"stock_code": "012280",
+"corp_cls": "Y",
+"report_nm": "임시주주총회결과              ",
+"rcept_no": "20260729800543",
+"flr_nm": "영화금속",
+"rcept_dt": "20260729",
+"rm": "유"
+},
+{
+"corp_code": "00141413",
+"corp_name": "영화금속",
+"stock_code": "012280",
+"corp_cls": "Y",
+"report_nm": "[기재정정]주식병합결정              ",
+"rcept_no": "20260617800484",
+"flr_nm": "영화금속",
+"rcept_dt": "20260617",
+"rm": "유"
+},
+{
+"corp_code": "00141413",
+"corp_name": "영화금속",
+"stock_code": "012280",
+"corp_cls": "Y",
+"report_nm": "주식소각결정              ",
+"rcept_no": "20260428800338",
+"flr_nm": "영화금속",
+"rcept_dt": "20260428",
+"rm": "유"
+},
+{
+"corp_code": "00141413",
+"corp_name": "영화금속",
+"stock_code": "012280",
+"corp_cls": "Y",
+"report_nm": "주식소각결정",
+"rcept_no": "20240131800722",
+"flr_nm": "영화금속",
+"rcept_dt": "20240131",
+"rm": "유"
+}
+]
+}

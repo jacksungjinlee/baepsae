@@ -1,0 +1,54 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 4,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00113243",
+"corp_name": "대한제분",
+"stock_code": "001130",
+"corp_cls": "Y",
+"report_nm": "[기재정정]벌금등의부과              ",
+"rcept_no": "20260910800693",
+"flr_nm": "대한제분",
+"rcept_dt": "20260910",
+"rm": "유"
+},
+{
+"corp_code": "00113243",
+"corp_name": "대한제분",
+"stock_code": "001130",
+"corp_cls": "Y",
+"report_nm": "기업가치제고계획(자율공시)              ",
+"rcept_no": "20260623800322",
+"flr_nm": "대한제분",
+"rcept_dt": "20260623",
+"rm": "유"
+},
+{
+"corp_code": "00113243",
+"corp_name": "대한제분",
+"stock_code": "001130",
+"corp_cls": "Y",
+"report_nm": "기업지배구조보고서공시              ",
+"rcept_no": "20260529800554",
+"flr_nm": "대한제분",
+"rcept_dt": "20260529",
+"rm": "유"
+},
+{
+"corp_code": "00113243",
+"corp_name": "대한제분",
+"stock_code": "001130",
+"corp_cls": "Y",
+"report_nm": "주식분할결정              ",
+"rcept_no": "20260312802368",
+"flr_nm": "대한제분",
+"rcept_dt": "20260312",
+"rm": "유"
+}
+]
+}

@@ -1,0 +1,120 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 10,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20260120000084",
+"flr_nm": "대한제강",
+"rcept_dt": "20260120",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(무상증자결정)",
+"rcept_no": "20251222000129",
+"flr_nm": "대한제강",
+"rcept_dt": "20251222",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20251218000416",
+"flr_nm": "대한제강",
+"rcept_dt": "20251218",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20251218000413",
+"flr_nm": "대한제강",
+"rcept_dt": "20251218",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20251028000337",
+"flr_nm": "대한제강",
+"rcept_dt": "20251028",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식취득신탁계약해지결정)",
+"rcept_no": "20250507000545",
+"flr_nm": "대한제강",
+"rcept_dt": "20250507",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20241101000265",
+"flr_nm": "대한제강",
+"rcept_dt": "20241101",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식취득신탁계약해지결정)",
+"rcept_no": "20230926000519",
+"flr_nm": "대한제강",
+"rcept_dt": "20230926",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "[기재정정]주요사항보고서(회사분할결정)",
+"rcept_no": "20230522000160",
+"flr_nm": "대한제강",
+"rcept_dt": "20230522",
+"rm": ""
+},
+{
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"stock_code": "084010",
+"corp_cls": "Y",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20230329000820",
+"flr_nm": "대한제강",
+"rcept_dt": "20230329",
+"rm": ""
+}
+]
+}

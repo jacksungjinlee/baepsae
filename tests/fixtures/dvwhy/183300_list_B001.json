@@ -1,0 +1,87 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 7,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(무상증자결정)",
+"rcept_no": "20260522000156",
+"flr_nm": "코미코",
+"rcept_dt": "20260522",
+"rm": ""
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20260115000050",
+"flr_nm": "코미코",
+"rcept_dt": "20260115",
+"rm": ""
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20250102000333",
+"flr_nm": "코미코",
+"rcept_dt": "20250102",
+"rm": ""
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20241007000146",
+"flr_nm": "코미코",
+"rcept_dt": "20241007",
+"rm": ""
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20240806000023",
+"flr_nm": "코미코",
+"rcept_dt": "20240806",
+"rm": ""
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(유상증자결정)",
+"rcept_no": "20230601000160",
+"flr_nm": "코미코",
+"rcept_dt": "20230601",
+"rm": ""
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(타법인주식및출자증권양수결정)",
+"rcept_no": "20230601000155",
+"flr_nm": "코미코",
+"rcept_dt": "20230601",
+"rm": ""
+}
+]
+}

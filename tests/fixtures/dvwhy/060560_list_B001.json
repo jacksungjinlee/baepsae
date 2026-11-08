@@ -1,0 +1,43 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 3,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(타법인주식및출자증권양수결정)",
+"rcept_no": "20250317000992",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20250317",
+"rm": ""
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(감자결정)",
+"rcept_no": "20241206000308",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20241206",
+"rm": ""
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(전환사채권발행결정)",
+"rcept_no": "20240223002359",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20240223",
+"rm": ""
+}
+]
+}
