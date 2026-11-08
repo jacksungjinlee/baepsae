@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, askPersist } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
 import { refreshFresh, nextFreshCheck } from "./load.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
@@ -23,7 +23,8 @@ import { Stocks } from "./stocks.jsx";
 import { Market } from "./market.jsx";
 import { About } from "./about.jsx";
 import { Company, logSplitGuard } from "./company.jsx";
-import { firstVisitGuide, markGuideSeen } from "./guide.jsx";
+import { firstVisitGuide } from "./guide.jsx";
+import { Import, newImporter } from "./import.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
@@ -57,13 +58,14 @@ export function App({ source }) {
   const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
     preview: !!source.preview }));
   const [builder, setBuilder] = useState(newBuilder);
+  const [importer, setImporter] = useState(newImporter);   // v19.3d 가진 종목 넣기 (#portfolio/import): kept while the user moves around
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 홈 (Part E)
   const [disc, setDisc] = useState(() => ({ status: source.loadDisc ? "idle" : "none" }));   // v19.1a 공시 tab (disc.json)
   const router = useRouter();
   const { loc } = router;
   // v19.3c Part E: the first-visit guide — null, { stage: "welcome" } on 홈, or { stage: 1 · 2 · 3 } on 포트폴리오 만들기's
   // 기준 step (guide.jsx). It starts on its own only behind GUIDE_FIRST_VISIT; the menu's 처음 안내 다시 보기 always replays it.
-  const [guide, setGuide] = useState(() => (firstVisitGuide(loc, store, source.storeKey) ? { stage: "welcome" } : null));
+  const [guide, setGuide] = useState(() => (firstVisitGuide(loc, store) ? { stage: "welcome" } : null));
   const wasAbout = useRef(loc.about);
   const wide = useWide();
   const layout = useMemo(() => ({ wide }), [wide]);
@@ -111,6 +113,19 @@ export function App({ source }) {
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
 
+  // v19.3d review: another tab writing the records (a tab of the earlier app writes over them without looking) never
+  // drops what this tab saved: store.js keeps this tab's text as a copy, merged back on the next start.
+  useEffect(() => {
+    const on = (e) => { if (e.key === store.key && e.storageArea === window.localStorage) keepOwnText(store.key, e.newValue, todayKst()); };
+    // leaving the page: the first records this tab wrote get their .mine copy now (store.js keepMine)
+    const hide = () => keepMine(store.key);
+    const vis = () => { if (document.visibilityState === "hidden") keepMine(store.key); };
+    window.addEventListener("storage", on);
+    window.addEventListener("pagehide", hide);
+    document.addEventListener("visibilitychange", vis);
+    return () => { window.removeEventListener("storage", on); window.removeEventListener("pagehide", hide); document.removeEventListener("visibilitychange", vis); };
+  }, [store.key]);
+
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
   useEffect(() => {
     if (!loc.code || disc.status !== "idle") return;
@@ -154,10 +169,14 @@ export function App({ source }) {
   }, [onStocks]);
 
   // saved = true when the caller already wrote it (the purchase sheet checks the write itself)
+  // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
+  // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
+  // the screens, until the next change that saves).
   const setStoreData = useCallback((data, saved) => {
     setStore((s) => {
+      if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
-      return { ...s, data, locked: false };
+      return { ...s, data, locked: false, refused: false };
     });
   }, []);
 
@@ -187,7 +206,22 @@ export function App({ source }) {
 
   // v19.3c Part E. seen = remember it (건너뛰기, Esc, 알겠어요, 그냥 둘러볼게요, leaving the steps); a guide that could not run
   // (no data) ends without it.
-  const endGuide = useCallback((seen) => { setGuide(null); if (seen) markGuideSeen(source.storeKey); }, [source.storeKey]);
+  // v19.3d: "seen" is the store's guideSeen, written with the store. Records that could not be read are never moved aside
+  // for it (a locked store keeps the flag in memory only), and a device that cannot store anything shows the welcome again
+  // on the next first visit, as before.
+  const markSeen = useCallback(() => {
+    setStore((s) => {
+      if (guideSeenIn(s.data)) return s;
+      const next = withGuideSeen(s.data, todayKst());
+      if (!next) return s;
+      if (s.locked || !s.writable || !writeStore(next, s.key, todayKst())) {
+        console.warn("[v2] the first-visit guide is remembered for this visit only (records not writable or not readable)");
+        return { ...s, data: next };
+      }
+      return { ...s, data: next, locked: false };
+    });
+  }, []);
+  const endGuide = useCallback((seen) => { setGuide(null); if (seen) markSeen(); }, [markSeen]);
   // ☰ (PC: the left menu) 처음 안내 다시 보기: the welcome on 홈, whatever was on screen.
   const replayGuide = useCallback(() => { setGuide({ stage: "welcome" }); router.go("home"); }, [router.go]);
   // 직접 해 보기: a fresh 포트폴리오 만들기 at its 기준 step, the guide's step 1 over it. Without the data (it failed to load)
@@ -208,10 +242,17 @@ export function App({ source }) {
   const coach = useMemo(() => (stepNo == null ? null : {
     stage: stepNo, go: (n) => setGuide({ stage: n }), done: () => endGuide(true), skip: () => endGuide(true), lost: () => endGuide(false),
   }), [stepNo, endGuide]);
-  const welcome = useMemo(() => (guide && guide.stage === "welcome" ? { onTry: tryGuide, onBrowse: browseGuide } : null), [guide, tryGuide, browseGuide]);
+  // v19.3d: 가진 종목 넣기 (Part F), from the start step, the welcome's second button and 포트폴리오.
+  const openImport = useCallback(() => router.go("portfolio", "import"), [router.go]);
+  const welcome = useMemo(() => (guide && guide.stage === "welcome" ? { onTry: tryGuide, onBrowse: browseGuide, onImport: load.status === "fail" ? null : openImport } : null),
+    [guide, tryGuide, browseGuide, openImport, load.status]);
+  // 매일 점검 시작하기 saved the portfolio: 포트폴리오 shows it, and the next 가진 종목 넣기 starts fresh.
+  const importSaved = useCallback(() => { setImporter(newImporter()); router.replaceRoute("portfolio"); }, [router.replaceRoute]);
 
   const tab = loc.about ? router.lastTab : loc.tab;
   const inBuild = tab === "portfolio" && loc.sub === "build";
+  const inImport = tab === "portfolio" && loc.sub === "import";
+  const ownBar = inBuild || inImport;                     // screens with their own bottom bar: no tab bar
   // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
   // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
   // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,
@@ -233,10 +274,14 @@ export function App({ source }) {
   const screen = (() => {
     if (inBuild) {
       return <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => router.back("portfolio")} goToday={doneToHome}
-        store={store} setStoreData={setStoreData} coach={builder.step === 1 && builder.stage === "steps" ? coach : null} />;
+        store={store} setStoreData={setStoreData} coach={builder.step === 1 && builder.stage === "steps" ? coach : null} onImport={openImport} />;
+    }
+    if (inImport) {
+      return <Import load={load} store={store} setStoreData={setStoreData} importer={importer} setImporter={setImporter} onExit={() => router.back("portfolio")}
+        onSaved={importSaved} />;
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
-    if (tab === "portfolio") return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} />;
+    if (tab === "portfolio") return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport} />;
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={disc} nav={coNav} />;
     }
@@ -264,10 +309,10 @@ export function App({ source }) {
             <div data-ui-v2="screen" data-route={tab + (loc.sub ? "/" + loc.sub : "")} style={{ ...tall, background: COLOR.page, ...(loc.about ? { display: "none" } : {}) }}
               aria-hidden={loc.about ? true : undefined}>
               <ErrorBoundary name="app">
-                <ErrorBoundary key={screenKey} name={tab} pad={inBuild ? undefined : pad}>{screen}</ErrorBoundary>
+                <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
                 {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
-                  tabH={inBuild ? 0 : TAB_H} />}
-                {!wide && !inBuild && <TabBar value={tab} onChange={go} />}
+                  tabH={ownBar ? 0 : TAB_H} />}
+                {!wide && !ownBar && <TabBar value={tab} onChange={go} />}
               </ErrorBoundary>
             </div>
           </div>

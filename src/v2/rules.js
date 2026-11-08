@@ -53,6 +53,7 @@
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
 import { sameConfirm } from "./store.js";
+import { heldQty as heldOf, heldUnits } from "./held.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
@@ -97,12 +98,9 @@ export function todayCtx(load, now) {
 }
 
 // ---------------- one deck ----------------
-// Shares held per stock (purchases with qty > 0). Holdings planned but never bought are not checked.
-export function heldQty(deck) {
-  const m = new Map();
-  for (const p of (deck && deck.purchases) || []) if (p && p.qty > 0) m.set(p.t, (m.get(p.t) || 0) + p.qty);
-  return m;
-}
+// Shares held per stock, more than 0 (v19.3d: the shared rule of held.js, imported + purchases − sales; before it, the
+// purchases alone, which it still is for a portfolio with nothing else). Holdings planned but never bought are not checked.
+export const heldQty = (deck) => heldOf(deck || {});
 
 // A holding's band rule when it can be used (a target and three edges), else null.
 export function bandRuleOf(h) {
@@ -381,6 +379,14 @@ const zeroCounts = () => Object.fromEntries(STATUS_ORDER.map((s) => [s, 0]));
 export function evaluateDeck(deck, ctx) {
   if (!ctx.state.ok) return { ok: false, why: ctx.state.why, days: ctx.state.days ?? null, id: deck && deck.id };
   const held = heldQty(deck);
+  // v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기 has no per-stock rule book. Its held stocks (imported rows
+  // and any later records, held.js) are read here but get no per-stock status: nothing in it is 확인 필요 or 할 일 없음.
+  // Only the four portfolio rules run on it (pf.js pfState), and 홈 and 포트폴리오 show those instead.
+  if (deck && deck.kind === "imported") {
+    return { ok: true, id: deck.id, name: deck.name, pxDate: ctx.pxDate, imported: true, held: [...held.entries()], holdings: [], counts: zeroCounts(),
+      todo: 0, notChecked: 0, notCheckedIds: [], bigMoves: [], weights: { ok: false, missing: [] }, absent: [], unheld: [], bandPlanned: 0, bandHeld: 0,
+      rebased: false };
+  }
   const targets = new Map();
   for (const h of deck.holdings || []) {
     const b = h && held.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
@@ -390,13 +396,19 @@ export function evaluateDeck(deck, ctx) {
   // With a held stock missing from today's data, the weights wait for all held stocks (with or without a band rule).
   const weights = absent.length ? pausedWeights(held, ctx, absent) : deckWeights(held, ctx, targets);
   if (weights.ok) weights.planW = planWeights(deck, targets);
+  // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
+  // it is not in unheld (v19.6 A.1). Until v19.6a, the other targets are rebased over what is held, as for a stock never
+  // bought, and rebased says so (the rebased note): kept in the target sum at weight 0 instead, every stock still held
+  // would read as over its target and get a wrong 비중 줄이기 instruction.
+  const units = heldUnits(deck);
+  const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
   const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h)).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
   for (const h of deck.holdings || []) {
     if (!h || seen.has(h.t)) continue;
     seen.add(h.t);
-    if (!held.has(h.t)) { unheld.push(h.t); continue; }
+    if (!held.has(h.t)) { if (!soldOut.includes(h.t)) unheld.push(h.t); continue; }
     holdings.push(evaluateHolding(h, deck, ctx, weights, held.get(h.t)));
   }
   const counts = zeroCounts();
@@ -408,7 +420,7 @@ export function evaluateDeck(deck, ctx) {
   }
   return { ok: true, id: deck.id, name: deck.name, pxDate: ctx.pxDate, holdings, counts, todo: counts.broken + counts.check,
     notChecked, notCheckedIds: [...ids], bigMoves: holdings.filter((x) => x.bigMove).map((x) => x.t),
-    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld,
+    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld, soldOut,
     bandPlanned, bandHeld: targets.size, rebased: targets.size > 0 && targets.size < bandPlanned };
 }
 

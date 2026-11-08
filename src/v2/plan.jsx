@@ -12,7 +12,7 @@ import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, 
 import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
-import { writeStore } from "./store.js";
+import { writeStore, recordId } from "./store.js";
 import { KR_DIV_TREND, exactData } from "./engine.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
@@ -325,8 +325,8 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     // A US purchase keeps the exchange rate the plan used (data.json fx), so 포트폴리오 can show 원금 in won (Part E).
     const fx = typeof load.data.fx === "number" && Number.isFinite(load.data.fx) && load.data.fx > 0 ? load.data.fx : null;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
-      ? { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
-      : { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));
+      ? { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
+      : { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));   // id: two tabs' copies merge by it
     const id = `d${Date.now().toString(36)}`;
     const deck = deckRecord({ load, st, plan, purchases, id, today: todayKst() });
     const next = { ...store.data, decks: [...store.data.decks, deck] };

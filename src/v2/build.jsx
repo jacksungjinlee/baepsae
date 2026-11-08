@@ -45,7 +45,8 @@ export const newBuilder = () => ({ step: 0, stage: "steps", settings: defaultSet
 export const buildInProgress = (b) => !!b && (b.stage !== "steps" || pointsUsed((b.settings && b.settings.points) || {}) > 0);
 
 // coach (v19.3c Part E): the first-visit guide's step while it runs ({ stage: 1 · 2 · 3, go, done, skip, lost }), else null.
-export function Build({ load, builder, setBuilder, onExit, store, setStoreData, goToday, coach = null }) {
+// onImport (v19.3d): opens 가진 종목 넣기 (Part F) from the start step.
+export function Build({ load, builder, setBuilder, onExit, store, setStoreData, goToday, coach = null, onImport = null }) {
   if (load.status !== "ok" || load.missing.length) {
     return (
       <Page>
@@ -60,7 +61,7 @@ export function Build({ load, builder, setBuilder, onExit, store, setStoreData, 
   }
   if (builder.stage === "pick") return <Pick load={load} builder={builder} setBuilder={setBuilder} />;
   if (builder.stage === "plan") return <Plan load={load} builder={builder} setBuilder={setBuilder} store={store} setStoreData={setStoreData} goToday={goToday} />;
-  return <Steps load={load} builder={builder} setBuilder={setBuilder} onExit={onExit} coach={coach} />;
+  return <Steps load={load} builder={builder} setBuilder={setBuilder} onExit={onExit} coach={coach} onImport={onImport} />;
 }
 
 function StepDots({ step }) {
@@ -92,7 +93,25 @@ function Option({ title, sub, onClick, id, pic }) {
   );
 }
 
-function Steps({ load, builder, setBuilder, onExit, coach }) {
+// v19.3d: 가진 종목으로 시작하기 (the wallet picture, board BuildStart2) on today's start screen: opens 가진 종목 넣기 (Part F).
+// Not a template, so it carries no data-deck.
+function HoldingsOption({ onClick, big = false }) {
+  const s0 = C.build.s0;
+  return (
+    <button type="button" data-ui-v2="start-holdings" onClick={onClick}
+      style={{ ...tap, width: "100%", textAlign: "left", border: big ? "none" : `1px solid ${COLOR.border}`, background: COLOR.surface, borderRadius: big ? RADIUS.lg : RADIUS.md,
+        padding: big ? SPACE(4) : `${SPACE(3)}px ${SPACE(4)}px`, marginTop: big ? SPACE(2) + 2 : SPACE(4), display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH + SPACE(4) }}>
+      <PicChip pic={START_PICS.holdings} size="deck" />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={tx(big ? SIZE.h3 - 1 : SIZE.body, big ? WEIGHT.heavy : WEIGHT.bold, COLOR.ink, { display: "block" })}>{s0.holdings}</span>
+        <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", lineHeight: 1.45 })}>{s0.holdingsSub}</span>
+      </span>
+      <Icon name="chevronRight" size={20} tone="off" />
+    </button>
+  );
+}
+
+function Steps({ load, builder, setBuilder, onExit, coach, onImport }) {
   const { wide } = useLayout();
   const st = builder.settings;
   const step = builder.step;
@@ -129,7 +148,7 @@ function Steps({ load, builder, setBuilder, onExit, coach }) {
       </div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <StepDots step={step} />
-      {step === 0 && (RECIPE_START ? <StepStart2 start={start} /> : <StepStart start={start} />)}
+      {step === 0 && (RECIPE_START ? <StepStart2 start={start} /> : <StepStart start={start} onImport={onImport} />)}
       {step === 1 && <StepCards st={st} set={set} ds={ds} load={load} coach={coach} />}
       {step === 2 && <StepExclude st={st} set={set} ds={ds} />}
       {step === 3 && <StepTerms st={st} set={set} ds={ds} load={load} />}
@@ -173,7 +192,7 @@ function SurvivorNotes({ ds, two }) {
   );
 }
 
-function StepStart({ start }) {
+function StepStart({ start, onImport }) {
   const s0 = C.build.s0;
   const { wide } = useLayout();                          // the 뱁이: 92 px on the phone, 176 px on PC (Part C)
   return (
@@ -189,13 +208,14 @@ function StepStart({ start }) {
           <Option key={d.id} id={d.id} pic title={C.build.decks[d.id].name} sub={C.build.decks[d.id].sub} onClick={() => start(d.id)} />
         ))}
       </div>
+      {onImport && <HoldingsOption onClick={onImport} />}
     </div>
   );
 }
 
 // ---------------- v19.3c Part D: the new start screen (boards BuildStart2 · PcStart2), behind RECIPE_START ----------------
 // Five dots for a 기준's points (one dot = one point), in the 기준's topic shade. label: what a screen reader says instead.
-function Dots({ id, n, size = 7, gap = 3, label }) {
+export function Dots({ id, n, size = 7, gap = 3, label }) {
   return (
     <span role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true} style={{ display: "inline-flex", gap, flexShrink: 0 }}>
       {Array.from({ length: POINTS_MAX }, (_, i) => (
@@ -280,7 +300,9 @@ function StepStart2({ start }) {
           <span>{s0.pickCards}</span><Icon name="chevronRight" size={16} tone="on" />
         </button>
       </section>
-      {/* 가진 종목 넣기 (Part F) comes in v19.3d: until then the card is shown, dimmed, as 준비 중이에요 (no button). */}
+      {/* The new start screen (RECIPE_START, off) keeps this card as v19.3c left it, dimmed and 준비 중이에요 with no button:
+          tests/smoke_v2.py scene_v193c_on pins that, and making it open 가진 종목 넣기 needs that test changed (Jack's yes).
+          v19.3d opens 가진 종목 넣기 from today's start screen (HoldingsOption), the welcome's second button and 포트폴리오. */}
       <section data-ui-v2="start-holdings" data-pending="1" style={{ marginTop: SPACE(2) + 2, display: "flex", alignItems: "center", gap: SPACE(3) + 2, background: COLOR.surface,
         borderRadius: RADIUS.lg, padding: SPACE(4), opacity: 0.6 }}>
         <PicChip pic={START_PICS.holdings} size="deck" />
@@ -336,7 +358,7 @@ function CardArt({ id, dim = false }) {
 
 // One of the meter's ten slots: a chosen 기준's picture on its tint, or an empty outlined slot. The first slot of each
 // 기준 carries the screen-reader name for all of them ("가치 4점"); the others and the empty ones are hidden from it.
-function Slot({ slot }) {
+export function Slot({ slot }) {
   const base = { width: "100%", aspectRatio: "1 / 1", borderRadius: ICON_CHIP.radius, display: "flex", alignItems: "center", justifyContent: "center" };
   if (!slot) return <span data-ui-v2="meter-slot" data-empty="1" aria-hidden="true" style={{ ...base, boxShadow: "inset 0 0 0 1.5px #D9D4CC" }} />;
   const pic = CARD_PICS[slot.id];
@@ -467,7 +489,7 @@ const GUIDE_FOCUS_AFTER = [`${GUIDE_RING}:not(:disabled)`, '[data-ui-v2="meter"]
 // Step 1 keeps the + clear of the sticky meter above and the action bar below (a phone held sideways: guide.jsx keepClear).
 const GUIDE_KEEP_CLEAR = { top: '[data-ui-v2="meter-bar"]', bottom: '[data-ui-v2="action-bar"]' };
 
-function StepCards({ st, set, ds, load, coach }) {
+export function StepCards({ st, set, ds, load, coach }) {
   const s1 = C.build.s1;
   const g = C.guide;
   const used = pointsUsed(st.points);

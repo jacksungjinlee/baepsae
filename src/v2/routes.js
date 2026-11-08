@@ -7,7 +7,7 @@ import { OLD_APP } from "../links.js";
 export { OLD_APP };
 
 export const TABS = ["home", "portfolio", "stocks", "market"];
-const SUBS = { home: ["why"], portfolio: ["build"] };
+const SUBS = { home: ["why"], portfolio: ["build", "import"] };   // v19.3d: #portfolio/import (가진 종목 넣기)
 export const ABOUT_ROUTE = "#about";
 
 // v19.1a company page (#stocks/<code>[/<tab>]): the tabs after 요약, and the 자세히 screens (layer 3).

@@ -16,7 +16,7 @@ import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/compo
 import { hasGroup, todayD1 } from "./engine.js";
 import { priceDate } from "./cofmt.js";
 import { C, fill, mdText, priceText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, Footer, tx } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, Footer, Note, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { StatusLines, HoldingRules } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -133,6 +133,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={backLabel()} />
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
         <CoMark t={x.t} name={x.nk} size={SPACE(10)} />
         <div style={{ flex: 1, minWidth: 0 }}><ScreenTitle>{fill(C.why.title, { name: x.nk })}</ScreenTitle></div>
