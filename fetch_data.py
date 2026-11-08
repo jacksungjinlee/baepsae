@@ -1300,49 +1300,104 @@ def needs_capital(d):
     return isinstance(d, dict) and "_cap" not in d and not (d.get("_fin") or {}).get("cs3")
 
 
-# v19.1f (Jack, 2026-11-07): 손익계산서의 매출·영업이익·순이익을 예전 이름으로 못 찾으면 이름의 앞 번호(Ⅲ. · V.)를 빼고 더 많은
-# 이름('영업손실' · '영업손익' · '당기순손실' …)으로, 그래도 없으면 표준 계정 코드로 찾아요. 2026-11-07 발행본에서 재무제표를 읽고도
-# 매출·영업이익·순이익이 모두 빈 회사가 51곳이었어요 (롯데케미칼 '영업손실' · 넷마블 'Ⅲ.영업손익' · 코오롱인더 'V.영업이익').
-# 예전 이름으로 찾던 회사는 값이 그대로예요 (먼저 예전 규칙, 못 찾을 때만 새 규칙).
-# 금액은 표준 계정(dart_OperatingIncomeLoss · ifrs-full_ProfitLoss)의 부호를 그대로 써요: 손실이면 음수. 2026-11-07 실제 재무제표에서
-# '영업손실'(롯데케미칼 −9,431억)과 '당기순손실' 12곳이 모두 음수였어요. 그래서 이름이 손실뿐인 줄('영업손실' · '당기순손실')의 올해
-# 값이 양수면 잘못 적은 것으로 보고 쓰지 않아요 (로그에 남겨요).
-INC_NAMES = {
-    "rev": ("매출액", "수익(매출액)", "영업수익", "매출", "매출액(영업수익)", "영업수익(매출액)"),
-    "op": ("영업이익", "영업이익(손실)", "영업손실", "영업손익", "영업손실(이익)"),
-    "ni": ("당기순이익", "당기순이익(손실)", "연결당기순이익", "당기순손실", "당기순손익", "당기순손실(이익)",
-           "연결당기순이익(손실)", "연결당기순손익", "연결당기순손실",
-           "분기순이익", "분기순이익(손실)", "분기순손실", "분기순손익", "반기순이익", "반기순이익(손실)", "반기순손실", "반기순손익"),
+# v19.1f (Jack, 2026-11-07 · 2026-11-08): 손익계산서의 매출·영업이익·순이익·지배주주 순이익을 DART 표준 계정 코드로 먼저 찾아요.
+# 2026-11-08 감사: 이름이 정확히 같은 줄만 찾던 규칙 때문에 261곳의 손익 줄이 빠졌어요 (앞 번호 'Ⅴ.영업이익' · 'I. 영업수익',
+# 다른 이름 '매출' · '영업손익' · '영업손실' · '당기순손익' · '매출및지분법손익'). DART 의 정규화된 주요 계정(fnlttMultiAcnt)은
+# 표준 계정 코드 줄의 값과 같았어요 (24개 재무제표 · 0건 다름). 그래서:
+#   1. 손익계산서(IS · CIS) 줄 중 표준 코드가 INC_IDS 인 줄 (코드 순서대로: 영업이익은 dart_OperatingIncomeLoss 먼저)
+#   2. 그 코드의 줄이 하나도 없을 때만 이름: 앞 번호 · 띄어쓰기 · 주석 번호를 뺀 이름이 INC_NAMES (지배주주 순이익은 표준 코드가
+#      없는 줄만 — 포괄손익계산서의 '지배기업의 소유주' 줄은 이름이 같아도 총포괄손익이에요. 그 줄은 표준 코드가 달라요)
+# 같은 코드의 줄이 손익계산서(IS)와 포괄손익계산서(CIS)에 다 있으면 IS 줄 (CIS 는 순이익을 한 번 더 적어요). 같은 표에 값이 다른
+# 줄이 여럿이면 이름이 INC_NAMES 인 줄이 하나일 때만 그 줄, 아니면 쓰지 않아요 (제품별 매출 같은 아랫줄일 수 있어서 · 로그).
+# 금액은 표준 계정의 부호를 그대로 써요: 손실이면 음수. 이름이 손실뿐인 줄('영업손실' · '당기순손실')의 올해 값이 양수면 잘못 적은
+# 것으로 보고 쓰지 않아요 (로그).
+# 금융회사(은행 · 보험 · 일부 증권)는 매출 줄이 재무제표에 없어요 (KB금융 · 삼성생명 · 삼성증권). 지어내지 않고 빈 칸으로 두고,
+# corp.json incNa 에 '그 회사엔 없는 줄'로 적어요 (앱이 나중에 이유를 말할 수 있게 · build_corp).
+INC_IDS = {
+    "rev": ("ifrs-full_Revenue",),
+    "op": ("dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"),
+    "ni": ("ifrs-full_ProfitLoss",),
+    "nio": ("ifrs-full_ProfitLossAttributableToOwnersOfParent",),
 }
-INC_IDS = {"rev": ("ifrs-full_Revenue",), "op": ("dart_OperatingIncomeLoss",), "ni": ("ifrs-full_ProfitLoss",)}
-LOSS_ONLY = ("영업손실", "당기순손실", "연결당기순손실", "분기순손실", "반기순손실")
-INC_SEEN = collections.Counter()        # 새 규칙으로 찾은 줄 · 부호가 틀려 버린 줄 (이번 실행에서 받은 재무제표만 · 실행 로그용)
+_NI_Q = ("당기", "분기", "반기", "연결당기", "연결분기", "연결반기")
+INC_NAMES = {
+    "rev": ("매출액", "수익(매출액)", "영업수익", "매출", "매출액(영업수익)", "영업수익(매출액)", "매출및지분법손익",
+            "매출액및지분법손익"),
+    "op": ("영업이익", "영업이익(손실)", "영업손실", "영업손익", "영업손실(이익)", "영업순손익", "영업손익(손실)"),
+    "ni": tuple(f"{p}{s}" for p in _NI_Q for s in ("순이익", "순이익(손실)", "순손실", "순손익", "순손실(이익)")),
+}
+INC_OLD = {"rev": ("매출액", "수익(매출액)", "영업수익"), "op": ("영업이익", "영업이익(손실)"),     # v19.1f 전 규칙 (비교만)
+           "ni": ("당기순이익", "당기순이익(손실)", "연결당기순이익")}
+LOSS_ONLY = tuple(f"{p}순손실" for p in _NI_Q) + ("영업손실",)
+EQO_ID = "ifrs-full_EquityAttributableToOwnersOfParent"      # 재무상태표의 지배기업 소유주지분 (BPS)
+INC_SEEN = collections.Counter()        # 이번 실행에서 받은 재무제표만: 찾은 방법 · 부호가 틀려 버린 줄 · 고르지 못한 줄 (실행 로그용)
 _INC_LOCK = threading.Lock()
 
 
-def income_fallback(rows, key, value):
-    """예전 이름으로 못 찾은 손익 항목(key: rev · op · ni)을 손익계산서(IS · CIS)에서 다시 찾아요 → value(row) 또는 None.
-    1) 앞 번호를 뺀 이름이 INC_NAMES 2) 표준 계정 코드 INC_IDS. 이름이 손실뿐인데 올해 값이 양수면 쓰지 않아요. (거의 순수 함수)"""
-    cands = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
-    hit = next((r for r in cands if acct_name(r.get("account_nm")) in INC_NAMES[key]), None)
-    if hit is None:
-        # 표준 계정 코드는 그 코드를 단 줄이 하나뿐일 때만 (둘 이상이면 제품별 매출 같은 아랫줄일 수 있어서)
-        coded = [r for r in cands if (r.get("account_id") or "").strip() in INC_IDS[key]]
-        hit = coded[0] if len(coded) == 1 else None
-        if len(coded) > 1:
-            with _INC_LOCK:
-                INC_SEEN[f"{key}:many"] += 1
-    if hit is None:
-        return None
-    v = value(hit)
-    cur = v[0] if isinstance(v, list) else v
-    if acct_name(hit.get("account_nm")) in LOSS_ONLY and cur is not None and cur > 0:
-        with _INC_LOCK:
-            INC_SEEN[f"{key}:sign"] += 1
-        return None
+def _inc_seen(tag):
     with _INC_LOCK:
-        INC_SEEN[key] += 1
-    return v
+        INC_SEEN[tag] += 1
+
+
+def _nio_name_ok(n):
+    """표준 코드가 없는 줄의 이름이 지배주주 순이익인지 (포괄손익 · 계속/중단영업 · 비지배 줄은 아니에요). (순수 함수)"""
+    return ("지배" in n and "비지배" not in n and any(w in n for w in ("순이익", "순손익", "순손실"))
+            and not any(w in n for w in ("포괄", "계속", "중단")))
+
+
+def _inc_name_ok(key, n):
+    return _nio_name_ok(n) if key == "nio" else n in INC_NAMES[key]
+
+
+def income_line(rows, key, value):
+    """손익 항목 하나(key: rev · op · ni · nio)를 손익계산서에서 찾아요 → (value(row), 'id' | 'name') 또는 (None, 이유).
+    이유: None 줄 없음 · 'many' 값이 다른 줄이 여럿이라 못 고름 · 'sign' 이름이 손실뿐인데 올해 값이 양수. (순수 함수)"""
+    inc = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
+
+    def cur(r):
+        v = value(r)
+        return v[0] if isinstance(v, list) else v
+
+    def pick(cands, how):
+        grp = [r for r in cands if (r.get("sj_div") or "").strip() == "IS"] or cands
+        grp = [r for r in grp if cur(r) is not None] or grp
+        by_v = {}
+        for r in grp:
+            by_v.setdefault(cur(r), r)              # 값이 같은 줄은 한 줄로
+        if len(by_v) > 1:
+            by_v = {k: r for k, r in by_v.items() if _inc_name_ok(key, acct_name(r.get("account_nm")))}
+            if len(by_v) != 1:
+                _inc_seen(f"{key}:many")
+                return None, "many"
+        r = next(iter(by_v.values()))
+        c = cur(r)
+        if acct_name(r.get("account_nm")) in LOSS_ONLY and c is not None and c > 0:
+            _inc_seen(f"{key}:sign")
+            return None, "sign"
+        return value(r), how
+
+    for aid in INC_IDS[key]:
+        coded = [r for r in inc if (r.get("account_id") or "").strip() == aid]
+        if coded:
+            return pick(coded, "id")
+    named = [r for r in inc if _inc_name_ok(key, acct_name(r.get("account_nm")))
+             and (key != "nio" or (r.get("account_id") or "").strip() in _NO_ID)]
+    if named:
+        return pick(named, "name")
+    return None, None
+
+
+def owners_equity(rows, value):
+    """재무상태표의 지배기업 소유주지분: 표준 코드 줄, 없으면 예전 이름 규칙(재무상태표만). (순수 함수)"""
+    bs = [r for r in rows if (r.get("sj_div") or "").strip() in ("BS", "")]
+    for r in bs:
+        if (r.get("account_id") or "").strip() == EQO_ID:
+            return value(r)
+    for r in bs:
+        nm = (r.get("account_nm") or "").replace(" ", "")
+        if "지배기업" in nm and "자본" in nm and "비지배" not in nm:
+            return value(r)
+    return None
 
 
 # v19.1f (Jack, 2026-11-07): 이자보상배율의 이자. 손익계산서에 '이자비용' 줄이 있으면 그것, 없으면 현금흐름표의 이자 지급 줄을 모두
@@ -1390,11 +1445,13 @@ def interest_paid(rows, value):
 def parse_dart_list(rows):
     """fnlttSinglAcntAll 응답의 계정 목록에서 3개년 주요 항목을 뽑습니다. (순수 함수 — 테스트 가능)
     v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital).
-    v19.1f: 예전 이름으로 못 찾은 매출·영업이익·순이익은 income_fallback 으로. 이자는 '이자비용'(ie)과 현금흐름표 이자 지급액(iec)."""
+    v19.1f: 매출·영업이익·순이익·지배주주 순이익은 표준 계정 코드 먼저, 없으면 이름 (income_line). 손익 줄을 못 읽어도 재무상태표
+    값(자본 · 부채 · 현금 …)은 버리지 않아요 (2026-11-08 전엔 _fin 을 통째로 버렸어요: 카카오뱅크). 지배기업 소유주지분(eqo)도
+    표준 코드로. _inc = {"src": 줄마다 찾은 방법, "old": v19.1f 전 이름 규칙과 올해 값이 다른 줄} — enrich_with_dart 가 로그로 세고 지워요.
+    이자는 '이자비용'(ie)과 현금흐름표 이자 지급액(iec)."""
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
-    rev = op = ni = None
-    eq = li = nio = eqo = cash = ocf = ca = cl = cs = ie = None
+    eq = li = cash = ocf = ca = cl = cs = ie = None
     cs3 = ss3 = None
     bor, has_bor = 0.0, False
     dep, has_dep = 0.0, False
@@ -1402,18 +1459,8 @@ def parse_dart_list(rows):
     for row in rows:
         nm = (row.get("account_nm") or "").replace(" ", "")
         sj = (row.get("sj_div") or "").strip()
-        if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None:
-            rev = tri(row)
-        elif nm in ("영업이익", "영업이익(손실)") and op is None:
-            op = tri(row)
-        elif nm in ("당기순이익", "당기순이익(손실)", "연결당기순이익") and ni is None:
-            ni = tri(row)
-        elif "지배기업" in nm and "당기순이익" in nm and "비지배" not in nm and nio is None:
-            nio = _num(row.get("thstrm_amount"))
-        elif nm == "자본총계" and eq is None:
+        if nm == "자본총계" and eq is None:
             eq = _num(row.get("thstrm_amount"))
-        elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None:
-            eqo = _num(row.get("thstrm_amount"))
         elif nm in BORROW and sj in ("BS", ""):
             v = _num(row.get("thstrm_amount"))
             if v and v > 0:
@@ -1441,12 +1488,20 @@ def parse_dart_list(rows):
                 has_dep = True
         elif nm == "부채총계" and li is None:
             li = _num(row.get("thstrm_amount"))
-    if rev is None:
-        rev = income_fallback(rows, "rev", tri)
-    if op is None:
-        op = income_fallback(rows, "op", tri)
-    if ni is None:
-        ni = income_fallback(rows, "ni", tri)
+    got, src, old_diff = {}, {}, []
+    for key in ("rev", "op", "ni", "nio"):
+        v, how = income_line(rows, key, tri)
+        _inc_seen(f"a:{key}:{how}")
+        got[key] = v
+        if v is not None:
+            src[key] = how
+        if key in INC_OLD:          # v19.1f 전 규칙(이름이 똑같은 첫 줄, 어느 표든)이 읽던 값과 다르면 남겨요 (시험 실행에서 확인)
+            o = next((tri(r) for r in rows if (r.get("account_nm") or "").replace(" ", "") in INC_OLD[key]), None)
+            if o is not None and o[0] is not None and (v is None or v[0] != o[0]):
+                old_diff.append(key)
+    rev, op, ni, nio3 = got["rev"], got["op"], got["ni"], got["nio"]
+    nio = nio3[0] if nio3 else None
+    eqo = owners_equity(rows, lambda r: _num(r.get("thstrm_amount")))
     iec = interest_paid(rows, lambda r: _num(r.get("thstrm_amount")))
     rev = rev or [None, None, None]; op = op or [None, None, None]; ni = ni or [None, None, None]
 
@@ -1473,11 +1528,15 @@ def parse_dart_list(rows):
         fin["cs3"] = [round(v / 1e8, 4) if v is not None else None for v in cs3]     # 억원 · 1만원 단위까지 (주식 수 계산용)
     if ss3 and any(v is not None for v in ss3):
         fin["ss3"] = [round(v / 1e8, 4) if v is not None else None for v in ss3]
-    if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
+    if nio3 and any(v is not None for v in nio3):
+        fin["nio3"] = [ek(x) for x in nio3]       # v19.1f: 지배주주 순이익 3년 (연결) — corp.json nio3
+    # v19.1f: 손익 줄이 없어도 자본·부채가 있으면 재무상태표 값은 남겨요 (자본금만 있는 표는 예전처럼 '못 찾음')
+    if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a) or eq is not None or li is not None:
         out["_fin"] = fin
     cap = parse_capital(rows)
     if cap:
         out["_cap"] = cap
+    out["_inc"] = {"src": src, **({"old": old_diff} if old_diff else {})}
     return out
 
 
@@ -1602,10 +1661,13 @@ def _ytd(row):
 
 
 def parse_dart_quarter(rows):
-    """분기·반기 보고서에서 손익/현금흐름 누적값과 시점 재무상태를 뽑습니다."""
+    """분기·반기 보고서에서 손익/현금흐름 누적값과 시점 재무상태를 뽑습니다.
+    v19.1f: 매출·영업이익·순이익·지배주주 순이익은 사업보고서와 같은 규칙 (income_line: 표준 코드 먼저 · '연결반기순이익' 같은
+    이름도). 지배기업 소유주지분(eqo)도 표준 코드로. 손익 줄을 못 읽어도 자본·부채 값이 있으면 돌려줘요 (그 분기는 TTM 을 못 만들어
+    다음 분기로 넘어가요 — 연결이 없다고 별도로 넘어가 둘을 섞지 않게)."""
     ek = lambda w: round(w / 1e8, 1) if w is not None else None
-    rev = op = ni = nio = ocf = ie = None
-    eq = eqo = cash = ca = cl = cs = None
+    ocf = ie = None
+    eq = cash = ca = cl = cs = None
     bor, has_bor = 0.0, False
     dep, has_dep = 0.0, False
     BORROW = {"단기차입금", "장기차입금", "사채", "유동성장기부채", "유동성장기차입금", "단기사채", "전환사채", "리스부채"}
@@ -1613,11 +1675,7 @@ def parse_dart_quarter(rows):
         nm = (row.get("account_nm") or "").replace(" ", "")
         sj = (row.get("sj_div") or "").strip()
         if sj in ("IS", "CIS"):
-            if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None: rev = _ytd(row)
-            elif nm == "영업이익" and op is None: op = _ytd(row)
-            elif nm in ("당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익") and ni is None: ni = _ytd(row)
-            elif "지배기업" in nm and ("순이익" in nm or "당기순이익" in nm) and "비지배" not in nm and nio is None: nio = _ytd(row)
-            elif acct_name(nm) == "이자비용" and ie is None: ie = _ytd(row)     # v19.1f: 이자비용만 (금융비용은 이자가 아니에요)
+            if acct_name(nm) == "이자비용" and ie is None: ie = _ytd(row)     # v19.1f: 이자비용만 (금융비용은 이자가 아니에요)
         elif sj == "CF":
             if nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
                 ocf = _ytd(row)
@@ -1627,22 +1685,20 @@ def parse_dart_quarter(rows):
         elif sj in ("BS", ""):
             v = _num(row.get("thstrm_amount"))
             if nm == "자본총계" and eq is None: eq = v
-            elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None: eqo = v
             elif nm in BORROW:
                 if v and v > 0: bor += v; has_bor = True
             elif nm in ("현금및현금성자산", "현금및현금성자산등", "기말현금및현금성자산") and cash is None: cash = v
             elif nm == "유동자산" and ca is None: ca = v
             elif nm == "유동부채" and cl is None: cl = v
             elif nm == "자본금" and cs is None: cs = v
-    # v19.1f: 예전 이름으로 못 찾은 매출·영업이익·순이익 (연간과 같은 규칙 · 분기는 '영업이익(손실)'도 예전엔 못 찾았어요)
-    if rev is None:
-        rev = income_fallback(rows, "rev", _ytd)
-    if op is None:
-        op = income_fallback(rows, "op", _ytd)
-    if ni is None:
-        ni = income_fallback(rows, "ni", _ytd)
+    got = {}
+    for key in ("rev", "op", "ni", "nio"):
+        got[key], how = income_line(rows, key, _ytd)
+        _inc_seen(f"q:{key}:{how}")
+    rev, op, ni, nio = got["rev"], got["op"], got["ni"], got["nio"]
+    eqo = owners_equity(rows, lambda r: _num(r.get("thstrm_amount")))
     iec = interest_paid(rows, _ytd)
-    if rev is None and ni is None:
+    if rev is None and ni is None and eq is None:
         return None
     return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie), "iec": ek(iec),
             "dep": ek(dep) if has_dep else None,
@@ -1675,11 +1731,14 @@ def compute_ttm(fin, ytd, ytd_prev):
 def dart_financials(client, corp_code, year):
     """연결(없으면 별도) 사업보고서에서 주요 지표 + 3개년 원값.
     v19.1e: 자본금(_cap)만 읽힌 연결 재무제표는 예전처럼 '못 찾음'으로 보고 별도로 넘어가요 (어느 재무제표를 쓰는지 바뀌지 않게).
-    자본금 없이 저장된 예전 항목은 한 번 다시 받아요 (needs_capital · CAP_REDO_TAG)."""
+    자본금 없이 저장된 예전 항목은 한 번 다시 받아요 (needs_capital · CAP_REDO_TAG).
+    v19.1f: _fin.fs = 쓴 재무제표 (CFS 연결 · OFS 별도) — 분기 TTM 은 같은 종류만 써요 (dart_quarter), EPS 기준(fill_multiples)."""
     for fs in ("CFS", "OFS"):
         d = client.report("fnlttSinglAcntAll.json", corp_code, year, "11011", fs, parse_dart_list, {"fs_div": fs},
                           redo=(CAP_REDO_TAG, needs_capital))
-        if d and any(k != "_cap" for k in d):
+        if d and any(k not in ("_cap", "_inc") for k in d):
+            if isinstance(d.get("_fin"), dict):
+                d["_fin"]["fs"] = fs
             return d
     return {}
 
@@ -1737,9 +1796,11 @@ def dart_dividend(client, corp_code, year):
     return client.report("alotMatter.json", corp_code, year, "11011", "DIV2", parse_dart_dividend) or {}
 
 
-def dart_quarter(client, corp_code, year, reprt):
-    """분기·반기 보고서의 누적값 (연결 우선, 없으면 별도)."""
-    for fs in ("CFS", "OFS"):
+def dart_quarter(client, corp_code, year, reprt, fs=None):
+    """분기·반기 보고서의 누적값 (연결 우선, 없으면 별도).
+    v19.1f: fs 를 주면 그 재무제표만 (사업보고서와 같은 종류 — 연결 연간에 별도 분기를 섞은 TTM 을 만들지 않게. 별도만 내는 회사는
+    없는 연결 분기를 묻지 않아 호출도 줄어요)."""
+    for fs in ((fs,) if fs in ("CFS", "OFS") else ("CFS", "OFS")):
         d = client.report("fnlttSinglAcntAll.json", corp_code, year, reprt, fs, parse_dart_quarter, {"fs_div": fs})
         if d:
             return d
@@ -1765,11 +1826,45 @@ def dart_full_estimate(n_companies, ksic=True):
     return total, why
 
 
+INC_KO = {"rev": "매출", "op": "영업이익", "ni": "순이익", "nio": "지배주주 순이익"}
+
+
+def income_log(inc_by):
+    """v19.1f: 손익 줄을 어떻게 읽었는지 크게 남겨요 (사업보고서는 캐시에서 온 것까지 회사마다 · 받은 재무제표의 부호·여러 줄 수).
+    inc_by = {코드: (이름, _inc, 재무제표 값 있음)}. 반환: 재무제표는 있는데 손익 줄을 하나도 못 읽은 회사 ["코드 이름", …]."""
+    n = len(inc_by)
+    cnt = collections.Counter()
+    old, none_at_all = collections.defaultdict(list), []
+    for t, (nk, inc, has_fin) in sorted(inc_by.items()):
+        src = (inc or {}).get("src") or {}
+        for k in INC_KO:
+            cnt[f"{k}:{src.get(k) or 'none'}"] += 1
+        for k in (inc or {}).get("old") or []:
+            old[k].append(f"{t} {nk}".strip())
+        if has_fin and not any(k in src for k in ("rev", "op", "ni")):
+            none_at_all.append(f"{t} {nk}".strip())
+    log(f"· 손익 줄 (사업보고서 {n:,}곳 · 표준 코드 / 이름 / 없음): "
+        + " · ".join(f"{INC_KO[k]} {cnt[k + ':id']:,} / {cnt[k + ':name']:,} / {cnt[k + ':none']:,}" for k in INC_KO))
+    sign = {p: sum(v for k, v in INC_SEEN.items() if k.startswith(p) and k.endswith(":sign")) for p in ("a:", "q:")}
+    many = {p: sum(v for k, v in INC_SEEN.items() if k.startswith(p) and k.endswith(":many")) for p in ("a:", "q:")}
+    loud = any(sign.values()) or any(many.values())
+    log(f"{'  !! ' if loud else '· '}손익 줄을 쓰지 않은 경우 (이번 실행에서 받은 재무제표 · 사업보고서 / 분기·반기): 이름이 손실인데 "
+        f"올해 값이 양수 {sign['a:']:,} / {sign['q:']:,} · 값이 다른 같은 코드 줄이 여럿 {many['a:']:,} / {many['q:']:,}")
+    n_old = sum(len(v) for v in old.values())
+    log(f"{'  !! ' if n_old else '· '}v19.1f 전 이름 규칙과 올해 값이 다른 손익 줄: {n_old:,}"
+        + "".join(f" · {INC_KO[k]} {len(v):,}곳 ({', '.join(v[:8])}{'…' if len(v) > 8 else ''})" for k, v in old.items())
+        + (" — 표준 코드 줄을 썼어요. 시험 실행에서 값을 확인해요" if n_old else ""))
+    log(f"{'  !! ' if none_at_all else '· '}재무제표는 있는데 매출·영업이익·순이익을 하나도 못 읽은 곳: {len(none_at_all):,}"
+        + (f" ({', '.join(none_at_all[:15])}{'…' if len(none_at_all) > 15 else ''}) — 재무상태표 값은 남겨요" if none_at_all else ""))
+    return none_at_all
+
+
 def enrich_with_dart(kr_stocks, client, pref_shares=None):
     """사업보고서·배당·분기보고서(TTM)를 붙입니다. 기업마다 분기를 따로 확인해요 (3Q → 2Q → 1Q).
     v19.1g: pref_shares (kr_pref_shares) 로 상장 우선주 수를 알아요 — 배당 받은 종류가 더 많은 회사만 주식의 총수 현황을 받아요."""
     fin_map = {}
     stk_n = collections.Counter()
+    inc_by = {}                            # v19.1f: {코드: (이름, 손익 줄 _inc, 재무제표 값 있음)} — 로그용
     today = client.today
     old = [k for k in client.entries if k.endswith("|DIV")]
     for k in old:                       # v17.5.1: 옛 해석('-' = 모름)으로 저장된 배당 항목은 버려요 (DIV2 로 다시 받아요)
@@ -1847,6 +1942,10 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
         cap = f.pop("_cap", None) if f else None
         if cap:
             s["_cap"] = cap               # v19.1e: 분할 확인용 자본금 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
+        inc = f.pop("_inc", None) if f else None
+        if inc is not None:
+            with client.lock:
+                inc_by[s["t"]] = (s.get("nk") or "", inc, "_fin" in f)   # v19.1f: 손익 줄을 찾은 방법 (로그만 · 파일에 나가지 않아요)
         if f or any(div.get(k) is not None for k in ("dps", "dps3", "dy")):   # 분할 확인용 값(bas)만으로는 fy 를 달지 않아요
             s["fy"] = yr          # v17.5.1: op·debt·roe·dps·dps3 가 나온 사업보고서의 연도 (bq 는 TTM 분기만 뜻해요)
         if f:
@@ -1859,10 +1958,10 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
                 qy_c = yr + 1
                 order_c = order if qy_c == qy else [r for r in Q_NEWEST_FIRST if report_period_end(qy_c, r) < today]
                 for r in order_c:
-                    ytd = dart_quarter(client, corp, qy_c, r)
+                    ytd = dart_quarter(client, corp, qy_c, r, fs=fin.get("fs"))
                     if not ytd:
                         continue
-                    t2 = compute_ttm(fin, ytd, dart_quarter(client, corp, yr, r))
+                    t2 = compute_ttm(fin, ytd, dart_quarter(client, corp, yr, r, fs=fin.get("fs")))
                     if t2:
                         fin["ttm"], fin["bs2"], fin["bq"] = t2["ttm"], t2["bs"], f"{qy_c}.{REPRT_KO[r]}"
                         break
@@ -1886,10 +1985,7 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
         list(ex.map(one, targets))
     client.save()
     log(f"· DART: {client.summary()}")
-    log(f"{'  !! ' if any(k.endswith(':sign') for k in INC_SEEN) else '· '}손익 줄 새 규칙 (이번 실행에서 받은 재무제표 · 예전 이름으로 "
-        f"못 찾은 줄): 매출 {INC_SEEN['rev']:,} · 영업이익 {INC_SEEN['op']:,} · 순이익 {INC_SEEN['ni']:,} · 이름이 손실인데 올해 값이 "
-        f"양수라 버린 줄 {sum(v for k, v in INC_SEEN.items() if k.endswith(':sign')):,} · 같은 코드가 여러 줄이라 안 쓴 항목 "
-        f"{sum(v for k, v in INC_SEEN.items() if k.endswith(':many')):,}")
+    income_log(inc_by)
     if stk_n:
         log(f"{'  !! ' if stk_n['none'] else '· '}상장되지 않은 우선주가 배당을 받은 회사: {sum(stk_n.values()):,}곳 — 주식의 총수 현황 "
             f"받음 {stk_n['got']:,} · 못 받음(보통주 줄을 못 찾음 · 보고서 없음) {stk_n['none']:,}")
@@ -2494,6 +2590,9 @@ def _median(vals):
 
 
 FIN_SECS = {"bank", "insure", "broker", "holding"}    # EV 계열 멀티플을 빼는 업종 (그대로)
+# v19.1f (Jack 확인 대기): EV(기업가치)와 P/영업현금흐름의 시가총액 = 보통주 + 같은 회사 상장 우선주 (회사 전체의 값). False 면
+# v19.1f 전처럼 보통주만 (우선주가 있는 회사의 EV 가 작아 보여요 — 삼성전자 약 11%).
+COMPANY_CAP_WITH_PREF = True
 # v19.1d (Jack, 2026-11-07): 유동비율·이자보상배율은 재무제표에 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과
 # 금융 지주(KB금융·신한지주 …: 업종 그룹이 은행·보험·증권·금융)만 해당 없음(flNa). 그 밖의 지주회사(LG·GS·CJ …)는 이제 돌려요.
 FL_FIN_SECS = {"bank", "insure", "broker"}
@@ -2536,6 +2635,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
     why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
     src_n = collections.Counter()                   # v19.1f: 이자보상배율에 쓴 이자 (is 손익계산서 이자비용 · cf 현금흐름표 이자 지급액)
+    # v19.1f: 같은 회사 상장 우선주의 시가총액 (COMPANY_CAP_WITH_PREF 면 EV·P/CF 의 회사 시가총액에 더해요)
+    pref_cap = collections.Counter()
+    for s in kr_stocks:
+        if s.get("cls") == "kr" and is_preferred(s.get("t") or "") and (_fin(s.get("cap")) or 0) > 0:
+            pref_cap[s["t"][:5]] += s["cap"]
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2576,6 +2680,10 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         }
         if fin.get("bq"):
             row["bq"] = fin["bq"]
+        if fin.get("nio3"):
+            row["nio3"] = fin["nio3"]                      # v19.1f: 지배주주 순이익 3년 (연결 · 억원). ni 는 전체 순이익 그대로
+        if fin and fl_financial(s) and rev[0] is None:
+            row["incNa"] = ["rev"]                         # v19.1f: 금융회사 재무제표엔 매출 줄이 없어요 (지어내지 않음 · 앱이 이유를 말할 수 있게)
 
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
         fl, ran = {}, []
@@ -2647,7 +2755,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         op0 = eff["op0"]
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
         if s.get("cap") and fin:
-            ev = s["cap"] * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0)
+            co_cap = s["cap"] + (pref_cap[s["t"][:5]] if COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) else 0.0)   # 조원
+            ev = co_cap * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0)
             if row["s"] not in FIN_SECS and ev > 0:
                 if ebitda and ebitda > 0:
                     v = ev / ebitda
@@ -2659,7 +2768,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
                         row["evR"] = round(v, 2)
             ocf = eff["ocf"]
             if ocf and ocf > 0:
-                v = s["cap"] * 1e4 / ocf
+                v = co_cap * 1e4 / ocf
                 if 0 < v < 200:
                     row["pcf"] = round(v, 1)
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
@@ -2667,7 +2776,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         if is_foreign_issuer(s["t"]):
             # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어 비워요 (blank_foreign_dart 참고). 위에서 만든 fl 신호는 비율·부호라 남겨요.
             row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
-            for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB"):     # v19.1b: 배당 총액·주당순이익도 금액
+            for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn"):   # v19.1f: 지배주주 순이익·영수증도
                 row.pop(k, None)
         comps.append(row)
 
@@ -3107,40 +3216,129 @@ def blank_foreign_dart(kr_stocks):
     return hit
 
 
-def fill_multiples(kr_stocks, fin_map):
-    """DART 재무(순이익·자본) + 상장주식수로 EPS/BPS/PER/PBR을 직접 계산합니다.
+# v19.1f (2026-11-08): EPS·BPS 의 기준. 2026-11-08 감사에서 연결 재무제표 30곳 중 23곳이 지배주주 순이익 줄을 못 읽어 EPS·PER 이
+# 비지배지분까지 든 '전체' 순이익으로 계산됐어요 (LG에너지솔루션 EPS +345 · PER 977, 주주 몫은 손실 −1조 728억 · 회사 발표 EPS −4,585).
+# 지배기업 소유주지분(자본)도 대부분 못 읽어 BPS·PBR 이 전체 자본이었어요 (한화에어로스페이스 16.8조 vs 주주 몫 9.7조).
+# 이제 EPS 는 주주 몫(지배주주) 순이익, BPS 는 주주 몫 자본으로 계산하고, 어느 값을 썼는지 corp.json epsIn · bpsIn 에 남겨요 (영수증).
+#   epsIn = {"ni": 억원, "b": 기준, "p": 기간, "sh": 주식 수}   bpsIn = {"eq": 억원, "b": 기준, "sh": 주식 수}
+#   b: "o" 연결 재무제표의 지배주주 몫 · "s" 별도 재무제표 (비지배지분이 없어 전체 = 주주 몫) · "t" 연결인데 지배주주 줄이 없어
+#      전체 값을 쓴 경우 (로그 · 관문 경고)
+#   p: "ttm" 최근 4개 분기 (corp.json bq) · "fy" 사업보고서 한 해 (TTM 지배주주 순이익을 만들 수 없을 때 — 관문이 bq 와 함께 경고)
+# 순서: TTM 지배주주 → 연간 지배주주 → (별도 재무제표 · 지배주주 줄 없는 연결) TTM 전체 → 연간 전체. 연결에서 기간보다 기준을 먼저
+# 지켜요: EPS 는 정의상 주주 몫이에요 (전체 순이익이면 비지배지분이 큰 회사의 PER 이 크게 틀려요).
+# 주식 수 (PER_SHARE_WITH_PREF — Jack 확인 대기): True = 보통주 + 같은 회사 상장 우선주 (지배주주 순이익·자본은 우선주 몫까지 들어
+# 있어요. 회사가 발표하는 기본주당이익과 같은 방식: 삼성전자 2025 지배주주 순이익 44.26조 ÷ 약 67억 주 = 6,605원). False = 보통주만
+# (v19.1f 전: 우선주가 있는 회사의 EPS·BPS 가 커 보여요 — 삼성전자 약 14%).
+PER_SHARE_WITH_PREF = True
+EPS_BASIS = "owners"          # data.json · corp.json 맨 위 epsBasis — 앱의 'PER·EPS 계산 방법을 고치는 중' 줄이 이 표시를 보면 사라져요
+
+
+def per_share_count(s, pref_shares):
+    """EPS·BPS 를 나눌 주식 수: 보통주(shr) + (PER_SHARE_WITH_PREF 면) 같은 회사 상장 우선주. (순수 함수)"""
+    shr = _fin(s.get("shr"))
+    if not shr or shr <= 0:
+        return None
+    pref = sum(p for p in (_fin(x) for x in (pref_shares or {}).get(s["t"][:5], ())) if p and p > 0) if PER_SHARE_WITH_PREF else 0
+    return int(round(shr + pref))
+
+
+def eps_source(fin):
+    """EPS 에 쓸 순이익 → (억원, 기준 o·s·t, 기간 ttm·fy) 또는 None. 위 순서. (순수 함수)"""
+    _t = fin.get("ttm") or {}
+    ofs = fin.get("fs") == "OFS"
+    if not ofs:
+        if _fin(_t.get("nio")) is not None:
+            return _t["nio"], "o", "ttm"
+        if _fin(fin.get("nio")) is not None:
+            return fin["nio"], "o", "fy"
+    b = "s" if ofs else "t"
+    if _fin(_t.get("ni")) is not None:
+        return _t["ni"], b, "ttm"
+    ni0 = _fin((fin.get("ni") or [None])[0])
+    return (ni0, b, "fy") if ni0 is not None else None
+
+
+def bps_source(fin):
+    """BPS 에 쓸 자본 → (억원, 기준 o·s·t) 또는 None: 최신 분기 지배주주 몫 → 연간 지배주주 몫 → 전체 자본. (순수 함수)"""
+    _b = fin.get("bs2") or {}
+    ofs = fin.get("fs") == "OFS"
+    for src in (_b, fin):
+        if not ofs and _fin(src.get("eqo")) is not None:
+            return src["eqo"], "o"
+    for src in (_b, fin):
+        if _fin(src.get("eq")) is not None:
+            return src["eq"], ("s" if ofs else "t")
+    return None
+
+
+def fill_multiples(kr_stocks, fin_map, pref_shares=None):
+    """DART 재무(순이익·자본) + 주식 수로 EPS/BPS/PER/PBR을 직접 계산합니다.
     pykrx는 KRX 로그인이 필요해져 CI에서 동작하지 않으므로, 있으면 쓰고 없으면 이 값으로 채웁니다.
-    순이익·자본은 지배주주 귀속분을 우선 사용합니다."""
+    v19.1f: 순이익·자본은 지배주주 몫 (eps_source · bps_source), 주식 수는 per_share_count. 반환: {코드: {"epsIn", "bpsIn"}} —
+    corp.json 에 싣는 영수증 (이 함수가 채운 값만)."""
     n = 0
+    extra = {}
+    cnt = collections.Counter()
+    tot_b, fy_q = [], []
+    top = {s["t"] for s in sorted((x for x in kr_stocks if x.get("cls") == "kr"), key=lambda x: -(_fin(x.get("cap")) or 0))[:200]}
     for s in kr_stocks:
         fin = fin_map.get(s["t"])
-        shr = s.get("shr")
         price = s.get("price")
-        if not fin or not shr or not price or is_foreign_issuer(s["t"]):     # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어요
+        sh = per_share_count(s, pref_shares)
+        if not fin or not sh or not price or is_foreign_issuer(s["t"]):     # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어요
             continue
-        _t = fin.get("ttm") or {}
-        _b = fin.get("bs2") or {}
-        ni = (_t.get("nio") if _t.get("nio") is not None else
-              (_t.get("ni") if _t.get("ni") is not None else
-               (fin.get("nio") if fin.get("nio") is not None else (fin.get("ni") or [None])[0])))
-        eq = (_b.get("eqo") if _b.get("eqo") is not None else
-              (_b.get("eq") if _b.get("eq") is not None else
-               (fin.get("eqo") if fin.get("eqo") is not None else fin.get("eq"))))
-        if ni is not None:
-            eps = ni * 1e8 / shr
-            if s.get("eps") is None:
-                s["eps"] = round(eps, 0)
+        es, bs_ = eps_source(fin), bps_source(fin)
+        if es is not None and s.get("eps") is None:
+            ni, b, p = es
+            eps = ni * 1e8 / sh
+            s["eps"] = round(eps, 0)
             if s.get("per") is None and eps > 0:
                 s["per"] = round(price / eps, 1)
-        if eq and eq > 0:
-            bps = eq * 1e8 / shr
-            if s.get("bps") is None:
-                s["bps"] = round(bps, 0)
+            extra.setdefault(s["t"], {})["epsIn"] = {"ni": ni, "b": b, "p": p, "sh": sh}
+            cnt[f"eps:{b}:{p}"] += 1
+            nm = f"{s['t']} {s.get('nk', '')}".strip()
+            if b == "t" and s["t"] in top:
+                tot_b.append(nm)
+            if p == "fy" and fin.get("bq"):
+                fy_q.append(nm)
+        if bs_ is not None and bs_[0] > 0 and s.get("bps") is None:
+            eq, b = bs_
+            bps = eq * 1e8 / sh
+            s["bps"] = round(bps, 0)
             if s.get("pbr") is None:
                 s["pbr"] = round(price / bps, 2)
+            extra.setdefault(s["t"], {})["bpsIn"] = {"eq": eq, "b": b, "sh": sh}
+            cnt[f"bps:{b}"] += 1
         if s.get("per") is not None or s.get("pbr") is not None:
             n += 1
-    log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 상장주식수 기반)")
+    n_pref = sum(1 for t, e in extra.items() if "epsIn" in e and pref_shares and pref_shares.get(t[:5]) and PER_SHARE_WITH_PREF)
+    log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 주식 수 · 주식 수에 상장 우선주 포함 {'켬' if PER_SHARE_WITH_PREF else '끔'}"
+        f"(PER_SHARE_WITH_PREF) — 우선주가 있는 회사 {n_pref:,}곳)")
+    log(f"· EPS 순이익 기준: 지배주주 TTM {cnt['eps:o:ttm']:,} · 지배주주 연간 {cnt['eps:o:fy']:,} · 별도 TTM {cnt['eps:s:ttm']:,} · "
+        f"별도 연간 {cnt['eps:s:fy']:,} · 연결 전체(지배주주 줄 없음) TTM {cnt['eps:t:ttm']:,} · 연간 {cnt['eps:t:fy']:,} | BPS 자본 기준: "
+        f"지배주주 {cnt['bps:o']:,} · 별도 {cnt['bps:s']:,} · 연결 전체 {cnt['bps:t']:,}")
+    if tot_b:
+        log(f"  !! 시가총액 상위 200곳 중 연결인데 지배주주 순이익 줄이 없어 전체 순이익으로 EPS 를 낸 곳 {len(tot_b)}: "
+            f"{', '.join(tot_b[:20])}{'…' if len(tot_b) > 20 else ''}")
+    if fy_q:
+        log(f"  !! TTM(bq) 이 있는데 EPS 는 사업보고서 한 해 지배주주 순이익인 곳 {len(fy_q)} (분기 지배주주 줄이 없음 · epsIn.p fy): "
+            f"{', '.join(fy_q[:20])}{'…' if len(fy_q) > 20 else ''}")
+    return extra
+
+
+def income_check(kr_stocks, fin_map, mult_extra):
+    """v19.1f: data.json incCheck — 관문이 corp.json 과 맞춰 보는 집계. (순수 함수)
+    stmts 재무제표를 읽은 회사 · noInc 그중 매출·영업이익·순이익이 모두 빈 곳 · finNoRev 매출 줄이 없는 금융회사(incNa) ·
+    eps 기준·기간별 수 (epsIn)."""
+    kr = [s for s in kr_stocks if s.get("cls") == "kr" and s["t"] in fin_map and not is_foreign_issuer(s["t"])]
+    def blank(fin, k):
+        return (fin.get(k) or [None])[0] is None
+    no_inc = [s["t"] for s in kr if all(blank(fin_map[s["t"]], k) for k in ("rev", "op", "ni"))]
+    fin_no_rev = [s["t"] for s in kr if fl_financial(s) and blank(fin_map[s["t"]], "rev")]
+    eb = collections.Counter(e["epsIn"]["b"] for e in mult_extra.values() if "epsIn" in e)
+    ep = collections.Counter(e["epsIn"]["p"] for e in mult_extra.values() if "epsIn" in e)
+    return {"v": 1, "stmts": len(kr), "noInc": len(no_inc), "finNoRev": len(fin_no_rev),
+            "epsB": {k: eb[k] for k in ("o", "s", "t")}, "epsP": {k: ep[k] for k in ("ttm", "fy")}}
 
 
 # ────────────────────────────────────────────────────────────
@@ -4107,9 +4305,13 @@ def main():
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
     blank_foreign_dart(kr)                # v17.5.2: 해외 기업 (점수·corp.json 보다 먼저)
-    fill_multiples(kr, fin_map)
+    mult_extra = fill_multiples(kr, fin_map, kmeta.get("_prefShares") or {})     # v19.1f: 지배주주 몫 · 영수증(epsIn·bpsIn)
     # v19.1b: 분할에 안전한 배당 (dps3a·dpsF·divSt·dyt) — 해외 기업 비우기 뒤, 점수(dz)·corp.json 보다 먼저
     div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {})
+    for t, e in mult_extra.items():
+        corp_extra.setdefault(t, {}).update(e)
+    inc_check = income_check(kr, fin_map, mult_extra)
+    log(f"· 손익 줄 집계(incCheck): {inc_check}")
     n_dy = sum(1 for s in kr if s.get("dy") is not None)
     log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
     n_dps = sum(1 for s in kr if s.get("dps") is not None)
@@ -4218,6 +4420,8 @@ def main():
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
+        "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
+        "epsBasis": EPS_BASIS,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "stocks": stocks,
     }
     write_json(OUT, payload)
@@ -4226,7 +4430,7 @@ def main():
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
     corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra)
-    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at})
+    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at, "epsBasis": EPS_BASIS})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")

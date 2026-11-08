@@ -1,0 +1,497 @@
+# -*- coding: utf-8 -*-
+"""v19.1f (2026-11-08): 손익 줄은 DART 표준 계정 코드로 먼저 · EPS·BPS 는 지배주주 몫 · 새 관문 줄. (네트워크 없음)
+
+픽스처 tests/fixtures/dart_income_samples.json 은 2026-11-08 에 DART 에서 받은 실제 재무제표(fnlttSinglAcntAll)의 손익 줄과
+자본·부채 줄, 그리고 같은 날 받은 DART 의 정규화된 주요 계정(fnlttMultiAcnt)이에요. 인증키는 응답에 없어요.
+주식 수 · 가격은 2026-11-06 종가 기준 발행본(data.json, 2026-11-08 01:49 KST)의 값이에요.
+"""
+import copy
+import datetime as dt
+import json
+import math
+import os
+import sys
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+import fetch_data as F  # noqa: E402
+import validate_data as V  # noqa: E402
+from fixture_data import good_pair, hilo_of  # noqa: E402
+
+with open(os.path.join(ROOT, "tests", "fixtures", "dart_income_samples.json"), encoding="utf-8") as _f:
+    FIX = json.load(_f)
+ST, MULTI = FIX["statements"], FIX["multi"]
+
+
+def rows(t, y=2025, r="11011", fs="CFS"):
+    return copy.deepcopy(ST[f"{t}|{y}|{r}|{fs}"]["rows"])
+
+
+def annual(t, fs="CFS"):
+    return F.parse_dart_list(rows(t, fs=fs))
+
+
+def eok(won):
+    return round(won / 1e8, 1)
+
+
+def r(sj, nm, aid, a, b=None, c=None, add=None):
+    out = {"sj_div": sj, "account_nm": nm, "account_id": aid, "thstrm_amount": str(a)}
+    for k, v in (("frmtrm_amount", b), ("bfefrmtrm_amount", c), ("thstrm_add_amount", add)):
+        if v is not None:
+            out[k] = str(v)
+    return out
+
+
+NO_ID = "-표준계정코드 미사용-"
+BS = [r("BS", "자본총계", "ifrs-full_Equity", 4e12), r("BS", "부채총계", "ifrs-full_Liabilities", 2e12)]
+
+
+# ── 1. 실제 재무제표: DART 의 정규화된 주요 계정과 같아요 ─────────────
+@pytest.mark.parametrize("key", sorted(k for k in ST if k.endswith("|2025|11011|CFS") or k.endswith("|2025|11011|OFS")))
+def test_every_sampled_annual_statement_matches_darts_own_main_accounts(key):
+    t, _, _, fs = key.split("|")
+    fin = annual(t, fs)["_fin"]
+    want = MULTI[f"{t}|{fs}"]
+    for k in ("rev", "op", "ni"):
+        if k in want:
+            assert fin[k][0] == eok(want[k]), (key, k)
+        else:
+            assert fin[k][0] is None, (key, k)          # 금융회사: DART 에도 매출 줄이 없어요 (지어내지 않아요)
+
+
+def test_numbered_and_variant_names_from_the_audit():
+    g = annual("010130")["_fin"]                                  # 고려아연: 'Ⅴ.영업이익' · 'XI. 당기순이익'
+    assert (g["op"][0], g["ni"][0]) == (12319.3, 7702.5)
+    k = annual("120110")["_fin"]                                  # 코오롱인더: 'I. 매출' · 'V. 영업이익' · 'X. 당기순이익'
+    assert (k["rev"][0], k["op"][0], k["ni"][0]) == (48734.0, 1089.0, 515.7)
+    n = annual("251270")["_fin"]                                  # 넷마블: 'Ⅰ.영업수익' · 'Ⅲ.영업손익' · '당기순손익'
+    assert (n["rev"][0], n["op"][0], n["ni"][0]) == (28350.7, 3524.8, 2308.2)
+    lc = annual("011170")["_fin"]                                 # 롯데케미칼: '매출' · '영업손실' · '당기순손실' (음수)
+    assert (lc["rev"][0], lc["op"][0], lc["ni"][0]) == (184830.1, -9431.2, -24761.8)
+    sdi = annual("006400")["_fin"]                                # 삼성SDI: '영업손익' · '당기순손익'
+    assert (sdi["op"][0], sdi["ni"][0]) == (-17223.6, -5848.8)
+    assert annual("003550")["_fin"]["rev"][0] == 72525.5          # LG: '매출및지분법손익'
+    ha = annual("012450")                                         # 한화에어로스페이스: '매출'
+    assert ha["_fin"]["rev"][0] == 267029.0 and ha["_inc"]["src"] == {"rev": "id", "op": "id", "ni": "id", "nio": "id"}
+    kb = annual("323410", "OFS")["_fin"]                          # 카카오뱅크 (별도만): 'I. 영업수익' · 'IV. 영업이익' · 'IX. 당기순이익'
+    assert (kb["rev"][0], kb["op"][0], kb["ni"][0]) == (30862.9, 6493.7, 4802.8)
+
+
+def test_old_name_rule_differences_are_recorded():
+    # 예전 규칙이 읽던 값과 다르면 _inc.old 에 남겨요 (시험 실행 로그에서 확인). 예전에 못 찾던 줄은 '다름'이 아니에요
+    out = F.parse_dart_list(BS + [r("IS", "매출액", "ifrs-full_RevenueFromSaleOfGoods", 3e10), r("IS", "수익", "ifrs-full_Revenue", 9e10)])
+    assert out["_fin"]["rev"][0] == 900.0 and out["_inc"]["old"] == ["rev"]
+    assert "old" not in annual("011170")["_inc"]                  # 롯데케미칼은 예전에 아무것도 못 읽었어요
+
+
+# ── 2. 코드 · 이름 규칙 ────────────────────────────────────────
+def test_names_are_used_only_when_no_line_carries_the_code():
+    rows_ = BS + [r("CIS", "Ⅲ.영업손익", NO_ID, -2e9, -1e9, 5e8), r("CIS", "I. 매출", NO_ID, 1e11),
+                  r("CIS", "XII. 당기순손실", NO_ID, -3e9), r("CIS", "지배기업 소유주지분 순손실", NO_ID, -2.5e9),
+                  r("CIS", "지배기업의 소유주", "ifrs-full_ComprehensiveIncomeAttributableToOwnersOfParent", 7e9)]
+    out = F.parse_dart_list(rows_)
+    fin = out["_fin"]
+    assert fin["op"] == [-20.0, -10.0, 5.0] and fin["rev"][0] == 1000.0 and fin["ni"][0] == -30.0
+    assert fin["nio"] == -25.0 and fin["nio3"] == [-25.0, None, None]       # 총포괄손익 줄(코드가 다름)은 아니에요
+    assert out["_inc"]["src"] == {"rev": "name", "op": "name", "ni": "name", "nio": "name"}
+
+
+def test_owners_line_by_name_never_takes_comprehensive_or_continuing_lines():
+    rows_ = BS + [r("CIS", "매출", "ifrs-full_Revenue", 1e11), r("CIS", "당기순이익", "ifrs-full_ProfitLoss", 5e9),
+                  r("CIS", "지배기업 소유주지분 총포괄이익", NO_ID, 8e9), r("CIS", "계속영업 지배기업 순이익", NO_ID, 6e9),
+                  r("CIS", "비지배지분 순이익", NO_ID, 1e9)]
+    assert F.parse_dart_list(rows_)["_fin"]["nio"] is None                # 모르면 비워요 (EPS 는 '전체'로 표시 · epsIn.b t)
+
+
+def test_the_income_statement_wins_over_the_comprehensive_one_and_equal_lines_count_once():
+    rows_ = BS + [r("CIS", "당기순이익", "ifrs-full_ProfitLoss", 5e9), r("IS", "당기순이익", "ifrs-full_ProfitLoss", 5e9),
+                  r("IS", "매출액", "ifrs-full_Revenue", 1e11), r("IS", "매출액", "ifrs-full_Revenue", 1e11)]
+    fin = F.parse_dart_list(rows_)["_fin"]
+    assert fin["ni"][0] == 50.0 and fin["rev"][0] == 1000.0
+
+
+def test_several_different_coded_lines_pick_the_total_by_name_or_none():
+    two = [r("IS", "매출액", "ifrs-full_Revenue", 1e11), r("IS", "제품매출", "ifrs-full_Revenue", 6e10)]
+    assert F.parse_dart_list(BS + two)["_fin"]["rev"][0] == 1000.0        # 이름이 매출 총계인 줄 하나
+    before = F.INC_SEEN["rev:many"]
+    bad = [r("IS", "제품매출", "ifrs-full_Revenue", 4e10), r("IS", "상품매출", "ifrs-full_Revenue", 6e10)]
+    assert F.parse_dart_list(BS + bad)["_fin"]["rev"][0] is None and F.INC_SEEN["rev:many"] == before + 1
+
+
+def test_operating_income_code_order_and_financial_companies():
+    rows_ = BS + [r("CIS", "영업이익", "ifrs-full_ProfitLossFromOperatingActivities", 7e9),
+                  r("CIS", "영업이익(손실)", "dart_OperatingIncomeLoss", 6e9)]
+    assert F.parse_dart_list(rows_)["_fin"]["op"][0] == 60.0              # dart_OperatingIncomeLoss 먼저
+    for t in ("105560", "032830", "016360"):                              # KB금융 · 삼성생명 · 삼성증권: 매출 줄 없음, 영업이익·순이익 있음
+        fin = annual(t)["_fin"]
+        assert fin["rev"][0] is None and fin["op"][0] is not None and fin["ni"][0] is not None
+
+
+# ── 3. 재무상태표는 손익 줄이 없어도 남아요 ─────────────────────
+def test_balance_sheet_is_kept_when_no_income_line_is_read():
+    rows_ = BS + [r("BS", "지배기업 소유주지분", "ifrs-full_EquityAttributableToOwnersOfParent", 3.5e12),
+                  r("BS", "유동자산", "ifrs-full_CurrentAssets", 1e12), r("CIS", "기타수익", "dart_OtherGains", 1e9)]
+    out = F.parse_dart_list(rows_)
+    assert out["_fin"]["eq"] == 40000.0 and out["_fin"]["eqo"] == 35000.0 and out["debt"] == 50.0
+    assert out["_fin"]["rev"] == out["_fin"]["op"] == out["_fin"]["ni"] == [None, None, None]
+    q = F.parse_dart_quarter(rows_)
+    assert q is not None and q["eq"] == 40000.0 and q["eqo"] == 35000.0 and q["rev"] is None
+    assert F.compute_ttm({"rev": [1.0], "ni": [1.0]}, q, q) is None      # 손익이 없는 분기로는 TTM 을 만들지 않아요
+    cap_only = F.parse_dart_list([r("BS", "자본금", "ifrs-full_IssuedCapital", 1e10)])
+    assert "_fin" not in cap_only                                         # 자본금만 있는 표는 예전처럼 '못 찾음'
+
+
+class FakeDart:
+    def __init__(self, by):
+        self.by, self.calls = by, []
+
+    def report(self, endpoint, corp, year, reprt, tag, parse, extra=None, redo=None):
+        self.calls.append((year, reprt, tag))
+        rows_ = self.by.get((year, reprt, tag))
+        return parse(rows_) if rows_ is not None else None
+
+
+def test_quarters_use_the_same_kind_of_statement_as_the_annual_report():
+    q = [r("IS", "매출액", "ifrs-full_Revenue", 1e10, add=3e10)] + BS
+    c = FakeDart({(2026, "11012", "OFS"): q})
+    assert F.dart_quarter(c, "C", 2026, "11012", fs="CFS") is None and c.calls == [(2026, "11012", "CFS")]
+    assert F.dart_quarter(c, "C", 2026, "11012", fs="OFS")["rev"] == 300.0
+    assert F.dart_quarter(c, "C", 2026, "11012")["rev"] == 300.0          # 종류를 모를 때(분기 판단)는 예전처럼 연결 → 별도
+    d = F.dart_financials(FakeDart({(2025, "11011", "OFS"): q}), "C", 2025)
+    assert d["_fin"]["fs"] == "OFS" and "_inc" in d
+
+
+# ── 4. 반기 이름 · TTM · 지배주주 EPS (실제 회사) ───────────────
+def test_half_year_names_are_read():
+    h = F.parse_dart_quarter(rows("005380", 2026, "11012"))              # 현대차 '연결반기순이익' · '지배기업소유주지분'
+    assert h["ni"] is not None and h["nio"] is not None and h["rev"] is not None
+    lg = F.parse_dart_quarter(rows("373220", 2026, "11012"))             # LG에너지솔루션 '매출액 및 기타수익' · '반기순이익(손실)'
+    assert (lg["rev"], lg["ni"], lg["nio"]) == (eok(14115216000000), eok(-1272678000000), eok(-1053435000000))
+    sdi = F.parse_dart_quarter(rows("006400", 2026, "11012"))            # 삼성SDI '영업손익' · '반기순손익'
+    assert sdi["op"] is not None and sdi["ni"] is not None
+    lc = F.parse_dart_quarter(rows("011170", 2026, "11012"))             # 롯데케미칼 '매출' · '영업손익' · '반기순손익'
+    assert lc["rev"] is not None and lc["op"] is not None and lc["ni"] is not None
+
+
+# 2026-11-06 종가 · 상장 주식 수 (data.json 2026-11-08 발행본): 보통주, 같은 회사 상장 우선주
+SHARES = {"005930": (188700.0, 5846278608, [802371203]), "005380": (279500.0, 203466492, [22839037, 34257047, 2321926]),
+          "373220": (337500.0, 234000000, []), "012450": (660000.0, 51563401, []), "105560": (151000.0, 354687734, []),
+          "323410": (20750.0, 477120437, [])}
+
+
+def eps_case(t, fs="CFS"):
+    fin = annual(t, fs)["_fin"]
+    fin["fs"] = fs
+    t2 = F.compute_ttm(fin, F.parse_dart_quarter(rows(t, 2026, "11012", fs)), F.parse_dart_quarter(rows(t, 2025, "11012", fs)))
+    fin["ttm"], fin["bs2"], fin["bq"] = t2["ttm"], t2["bs"], "2026.2Q"
+    price, shr, pref = SHARES[t]
+    s = {"t": t, "nk": ST[f"{t}|2025|11011|{fs}"]["name"], "cls": "kr", "price": price, "shr": shr, "cap": 1.0}
+    extra = F.fill_multiples([s], {t: fin}, {t[:5]: pref} if pref else {})
+    return s, extra[t], fin
+
+
+def test_lg_energy_solution_eps_follows_the_shareholders_loss():
+    s, e, fin = eps_case("373220")
+    # 예전: EPS +345 · PER 977 (전체 순이익 808억 ÷ 주식 수). 주주 몫은 손실이에요 (2025 회사 발표 EPS −4,585)
+    assert fin["nio"] == -10728.1 and fin["ni"][0] == 808.0
+    assert e["epsIn"] == {"ni": -16830.6, "b": "o", "p": "ttm", "sh": 234000000}
+    assert s["eps"] == -7193.0 and s.get("per") is None                  # 손실이면 PER 은 빈 칸
+    assert s["eps"] < 0 and math.copysign(1, s["eps"]) == math.copysign(1, -4585)
+
+
+def test_hyundai_eps_is_owners_ttm_over_all_listed_shares():
+    s, e, fin = eps_case("005380")
+    # 예전: EPS 50,941 = 2025 전체 순이익 ÷ 보통주 (TTM '2026.2Q' 라고 적혀 있었어요: 반기 '연결반기순이익'을 못 읽어서)
+    assert e["epsIn"]["b"] == "o" and e["epsIn"]["p"] == "ttm" and e["epsIn"]["sh"] == 203466492 + 22839037 + 34257047 + 2321926
+    assert s["eps"] == 30989.0 and s["per"] == 9.0 and e["bpsIn"]["b"] == "o"
+
+
+def test_samsung_and_hanwha_aerospace_use_owners_profit_and_equity():
+    s, e, _ = eps_case("005930")
+    assert (s["eps"], s["per"], s["bps"], s["pbr"]) == (22511.0, 8.4, 84989.0, 2.22)   # 예전 25,780 · 7.3 · 99,090 · 1.9
+    assert e["epsIn"]["sh"] == 5846278608 + 802371203
+    h, he, hf = eps_case("012450")
+    assert hf["eqo"] == 96849.1 and hf["eq"] == 167881.8                  # 지배주주 자본 9.7조 vs 전체 16.8조
+    assert he["epsIn"] == {"ni": 20161.4, "b": "o", "p": "ttm", "sh": 51563401} and h["eps"] == 39100.0   # 예전 64,251
+
+
+def test_separate_statements_use_their_whole_profit():
+    s, e, _ = eps_case("323410", "OFS")                                    # 카카오뱅크 (별도만): 비지배지분이 없어 전체 = 주주 몫
+    assert e["epsIn"]["b"] == "s" and e["bpsIn"]["b"] == "s" and s["eps"] == 1142.0
+
+
+def test_eps_source_order():
+    base = {"ni": [10.0, None, None], "fs": "CFS"}
+    assert F.eps_source(dict(base, nio=8.0, ttm={"nio": 9.0, "ni": 12.0})) == (9.0, "o", "ttm")
+    assert F.eps_source(dict(base, nio=8.0, ttm={"ni": 12.0})) == (8.0, "o", "fy")         # 기간보다 주주 몫이 먼저
+    assert F.eps_source(dict(base, ttm={"ni": 12.0})) == (12.0, "t", "ttm")                 # 지배주주 줄이 없는 연결
+    assert F.eps_source(dict(base, fs="OFS", nio=8.0, ttm={"ni": 12.0})) == (12.0, "s", "ttm")
+    assert F.eps_source({"ni": [float("nan"), None, None]}) is None                        # NaN 은 숫자로 안 써요
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o")
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s")
+
+
+def test_share_count_switch(monkeypatch):
+    s = {"t": "005930", "shr": 100}
+    assert F.per_share_count(s, {"00593": [30, float("nan")]}) == 130
+    monkeypatch.setattr(F, "PER_SHARE_WITH_PREF", False)
+    assert F.per_share_count(s, {"00593": [30]}) == 100
+
+
+def test_nan_amounts_never_reach_the_files():
+    rows_ = BS + [r("IS", "매출액", "ifrs-full_Revenue", "NaN", "Infinity", "-"), r("IS", "당기순이익", "ifrs-full_ProfitLoss", "nan"),
+                  r("IS", "지배기업 소유주지분", "ifrs-full_ProfitLossAttributableToOwnersOfParent", "")]
+    out = F.parse_dart_list(rows_)
+    json.dumps(out, allow_nan=False)
+    q = F.parse_dart_quarter([dict(x, thstrm_add_amount="NaN") for x in rows_])
+    json.dumps(q, allow_nan=False)
+    s = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0}
+    extra = F.fill_multiples([s], {"000100": dict(out["_fin"], fs="CFS", ttm={"nio": float("nan")})}, {})
+    json.dumps([s, extra], allow_nan=False)
+    assert "eps" not in s and s["bps"] == 4e12 / 1000                     # 순이익이 없으면 EPS 도 없어요 (자본으로 BPS 는 있어요)
+
+
+# ── 5. corp.json: nio3 · incNa · 영수증 · 회사 시가총액 ─────────────
+def corp_of(stocks, fin, extra=None):
+    return {c["t"]: c for c in F.build_corp(stocks, fin, "2026-11-08", extra=extra)["companies"]}
+
+
+def test_corp_json_carries_owners_profit_receipts_and_says_why_revenue_is_missing():
+    kb = annual("105560")["_fin"]
+    bank = {"t": "105560", "nk": "KB금융", "cls": "kr", "price": 151000.0, "cap": 53.558, "shr": 354687734, "s": "bank", "ind": "bank"}
+    chem = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1000, "s": "chem", "ind": "chem"}
+    c = corp_of([bank, chem], {"105560": kb, "000100": {"rev": [None] * 3, "ni": [1.0] * 3, "eq": 5.0}},
+                {"105560": {"epsIn": {"ni": 1.0, "b": "o", "p": "fy", "sh": 1}}})
+    assert c["105560"]["incNa"] == ["rev"] and c["105560"]["nio3"][0] == 58331.6 and c["105560"]["epsIn"]["b"] == "o"
+    assert "incNa" not in c["000100"]                                      # 금융이 아닌 회사의 빈 매출은 '없는 줄'이 아니에요 (관문이 봐요)
+    foreign = dict(chem, t="900100")
+    c = corp_of([foreign], {"900100": dict(kb)}, {"900100": {"epsIn": {"ni": 1.0, "b": "o", "p": "fy", "sh": 1}}})
+    assert not {"nio3", "epsIn", "bpsIn"} & set(c["900100"])               # 해외 기업 금액은 비워요
+
+
+def test_ev_uses_the_whole_company_market_cap(monkeypatch):
+    com = {"t": "005930", "nk": "삼성전자", "cls": "kr", "price": 100.0, "cap": 10.0, "shr": 1, "s": "semi"}
+    pref = {"t": "005935", "nk": "삼성전자우", "cls": "kr", "price": 80.0, "cap": 2.0, "shr": 1, "s": "semi"}
+    fin = {"005930": {"rev": [100000.0, None, None], "op": [10.0, None, None], "ni": [1.0] * 3, "dep": 0.0, "bor": 0.0, "cash": 0.0,
+                      "ocf": 120000.0}}
+    c = corp_of([com, pref], fin)["005930"]
+    assert c["evR"] == 1.2 and c["pcf"] == 1.0                             # (10 + 2)조 ÷ 10조 매출 · 12조 ÷ 12조
+    monkeypatch.setattr(F, "COMPANY_CAP_WITH_PREF", False)
+    c = corp_of([com, pref], fin)["005930"]
+    assert c["evR"] == 1.0                                                 # 보통주만 (v19.1f 전)
+
+
+def test_pipeline_writes_the_eps_basis_marker_and_income_check():
+    import inspect
+    src = inspect.getsource(F.main)
+    assert '"epsBasis": EPS_BASIS' in src and '"incCheck": inc_check' in src and '"epsBasis": EPS_BASIS})' in src
+    assert F.EPS_BASIS == "owners"
+    i = src.find("fill_multiples(kr, fin_map, kmeta.get(\"_prefShares\")")
+    assert 0 < i < src.find("income_check(kr, fin_map, mult_extra)") < src.find("write_json(OUT, payload)")
+    kr = [{"t": "000100", "cls": "kr", "s": "bank", "ind": "bank"}, {"t": "000200", "cls": "kr"}, {"t": "900300", "cls": "kr"}]
+    fin = {"000100": {"rev": [None] * 3, "op": [1.0] * 3, "ni": [1.0] * 3}, "000200": {"rev": [None] * 3, "eq": 1.0},
+           "900300": {"rev": [None] * 3}}
+    ic = F.income_check(kr, fin, {"000100": {"epsIn": {"b": "o", "p": "ttm"}}})
+    assert ic == {"v": 1, "stmts": 2, "noInc": 1, "finNoRev": 1, "epsB": {"o": 1, "s": 0, "t": 0}, "epsP": {"ttm": 1, "fy": 0}}
+
+
+def test_income_log_names_statements_without_any_income_line(capsys):
+    got = F.income_log({"000100": ("가", {"src": {}}, True), "000200": ("나", {"src": {"rev": "id", "op": "name"}, "old": ["rev"]}, True)})
+    out = capsys.readouterr().out
+    assert got == ["000100 가"] and "!! 재무제표는 있는데 매출·영업이익·순이익을 하나도 못 읽은 곳: 1 (000100 가)" in out
+    assert "!! v19.1f 전 이름 규칙과 올해 값이 다른 손익 줄: 1 · 매출 1곳 (000200 나)" in out
+
+
+# ── 6. 관문 새 줄 ─────────────────────────────────────────────
+TODAY = dt.date(2026, 10, 31)
+NOW = dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST)
+SESSIONS = {"dates": [dt.date(2026, 10, d) for d in (13, 14, 15, 16, 17, 20, 21, 22, 23, 26, 27, 28, 29, 30)], "src": "시험"}
+NEW_ROWS = ("손익 줄 검사 기록 (incCheck)", "EPS 기준 표시 (epsBasis = owners)", "국내 손익 줄 채움 — 시총 상위 200 (매출은 금융회사 빼고)",
+            "필수 종목 손익 3줄 (매출·영업이익·순이익)", "재무제표는 있는데 손익 줄을 하나도 못 읽은 회사",
+            "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)", "필수 종목 EPS = 지배주주 순이익 (부호 같음)",
+            "EPS 기준이 다른 회사 (상위 200 연결 전체 순이익 · TTM 표시인데 연간)", "incCheck 집계 = corp.json 영수증 수")
+
+
+def with_income(files):
+    """좋은 픽스처에 v19.1f 칸을 파이프라인과 같은 규칙으로: 손익 3줄 · 지배주주 EPS 영수증 · incCheck · epsBasis."""
+    data, corp = files["data"], files["corp"]
+    by = {s["t"]: s for s in data["stocks"]}
+    for c in corp["companies"]:
+        s = by[c["t"]]
+        c.update(rev=[1000.0, 900.0, 800.0], ni=[50.0, 40.0, 30.0], eq=500.0, debt=50.0, nio3=[45.0, 36.0, 27.0])
+        sh = 1_000_000
+        ni = 45.0 * (1 if c["t"] != "000660" else 2)
+        s["eps"] = c["eps"] = round(ni * 1e8 / sh, 0)
+        c["epsIn"] = {"ni": ni, "b": "o", "p": "ttm" if c.get("bq") else "fy", "sh": sh}
+        c["bps"] = s["bps"] = round(500.0 * 1e8 / sh, 0)
+        c["bpsIn"] = {"eq": 500.0, "b": "o", "sh": sh}
+        if c["t"] == "105560":
+            c["rev"] = [None, None, None]
+            c["incNa"] = ["rev"]
+    data["incCheck"] = {"v": 1, "stmts": len(corp["companies"]), "noInc": 0, "finNoRev": 1,
+                        "epsB": {"o": len(corp["companies"]), "s": 0, "t": 0},
+                        "epsP": {"ttm": sum(1 for c in corp["companies"] if c.get("bq")),
+                                 "fy": sum(1 for c in corp["companies"] if not c.get("bq"))}}
+    data["epsBasis"] = corp["epsBasis"] = "owners"
+    return files
+
+
+def check(cur, prev, mode="publish"):
+    final = {"date": dt.date(2026, 10, 30), "closes": {s["t"]: round(s["price"]) for s in cur["data"]["stocks"] if s.get("cls") == "kr"},
+             "how": "시험"}
+    return V.run_checks(cur, prev, final, TODAY, mode=mode, count_between=lambda a, b: 1, sessions=SESSIONS, now=NOW,
+                        hilo=hilo_of(cur, V.MUST))
+
+
+def rows_of(rep):
+    return {x[0]: x for x in rep.rows}
+
+
+@pytest.fixture
+def pair():
+    cur, prev, _ = good_pair()
+    return with_income(cur), prev
+
+
+def comp(files, t):
+    return next(c for c in files["corp"]["companies"] if c["t"] == t)
+
+
+def fails(cur, prev, name):
+    rep = check(cur, prev)
+    assert name in {x[0] for x in rep.failed}, rep.table()
+    return rows_of(rep)[name]
+
+
+def test_good_income_fields_pass_every_new_row(pair):
+    cur, prev = pair
+    rep = check(cur, prev)
+    assert not rep.failed, rep.table()
+    got = rows_of(rep)
+    assert all(got[n][3] == "PASS" for n in NEW_ROWS), [got[n] for n in NEW_ROWS if got[n][3] != "PASS"]
+    assert not check(cur, None, mode="live").failed
+
+
+def test_data_before_v191f_is_only_a_warning_until_the_new_fields_were_published(pair):
+    cur, prev = pair
+    old, _, _ = good_pair()
+    rep = check(old, prev)
+    assert not rep.failed and rows_of(rep)["손익 줄 검사 기록 (incCheck)"][3] == "WARN"
+    assert not any(n in rows_of(rep) for n in NEW_ROWS[1:])
+    rep = check(old, {"data": cur["data"]})                              # 한 번 발행된 뒤 빠지면 실패
+    assert "손익 줄 검사 기록 (incCheck)" in {x[0] for x in rep.failed}
+
+
+@pytest.mark.parametrize("where", ["data", "corp"])
+def test_missing_eps_basis_marker_fails(pair, where):
+    cur, prev = pair
+    cur[where].pop("epsBasis")
+    fails(cur, prev, "EPS 기준 표시 (epsBasis = owners)")
+
+
+def test_hanwha_aerospace_without_revenue_fails_and_the_re_read_fixes_it(pair):
+    cur, prev = pair
+    c = comp(cur, "012450")
+    c["rev"] = [None, None, None]                                          # 2026-11-08 발행본 그대로: '매출' 이름을 못 읽음
+    assert "012450" in fails(cur, prev, "필수 종목 손익 3줄 (매출·영업이익·순이익)")[1]
+    fin = annual("012450")["_fin"]                                         # 새 규칙으로 실제 재무제표를 읽으면
+    c.update(rev=fin["rev"], op=fin["op"], ni=fin["ni"])
+    assert rows_of(check(cur, prev))["필수 종목 손익 3줄 (매출·영업이익·순이익)"][3] == "PASS"
+
+
+def test_a_bank_without_revenue_is_not_a_must_have_failure(pair):
+    cur, prev = pair
+    assert comp(cur, "105560")["rev"] == [None, None, None]
+    assert rows_of(check(cur, prev))["필수 종목 손익 3줄 (매출·영업이익·순이익)"][3] == "PASS"
+    comp(cur, "105560")["ni"] = [None, 1.0, 1.0]
+    assert "105560" in fails(cur, prev, "필수 종목 손익 3줄 (매출·영업이익·순이익)")[1]
+
+
+def test_coverage_is_a_warning_now_and_fails_below_the_floor_once_set(pair, monkeypatch):
+    cur, prev = pair
+    top = sorted((c for c in cur["corp"]["companies"] if c["t"] not in V.MUST), key=lambda c: -c["cap"])[:20]
+    for c in top:
+        c["op"] = [None, 1.0, 1.0]
+    name = "국내 손익 줄 채움 — 시총 상위 200 (매출은 금융회사 빼고)"
+    row = rows_of(check(cur, prev))[name]
+    assert row[3] == "WARN" and "영업이익 90.0% (180/200)" in row[1]
+    monkeypatch.setattr(V, "INC_TOP_FLOOR", 95.0)
+    fails(cur, prev, name)
+    monkeypatch.setattr(V, "INC_TOP_FLOOR", 90.0)
+    assert rows_of(check(cur, prev))[name][3] == "WARN"
+
+
+def test_statements_without_any_income_line_are_named(pair):
+    cur, prev = pair
+    c = comp(cur, "200100")
+    c.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3)
+    rep = check(cur, prev)
+    row = rows_of(rep)["재무제표는 있는데 손익 줄을 하나도 못 읽은 회사"]
+    assert row[3] == "WARN" and "200100" in row[1] and not rep.failed
+
+
+@pytest.mark.parametrize("change, said", [
+    (lambda c: c["epsIn"].update(b="t"), "전체 순이익"),                                  # 연결인데 전체 순이익 (지배주주 아님)
+    (lambda c: c["epsIn"].update(ni=-c["epsIn"]["ni"]), None),                            # 부호가 다름 (영수증 모양 줄도 실패)
+    (lambda c: c.pop("epsIn"), "영수증 없음"),
+    (lambda c: (c["epsIn"].update(p="fy"), c.update(eps3r=[-100.0, 1.0, 1.0])), "회사 발표 EPS"),
+])
+def test_must_have_eps_must_be_the_owners_profit(pair, change, said):
+    cur, prev = pair
+    change(comp(cur, "005930"))
+    row = fails(cur, prev, "필수 종목 EPS = 지배주주 순이익 (부호 같음)")
+    assert "005930" in row[1] and (said is None or said in row[1])
+
+
+def test_must_have_eps_must_match_data_json(pair):
+    cur, prev = pair
+    next(s for s in cur["data"]["stocks"] if s["t"] == "005380")["eps"] = 1.0
+    assert "data.json eps" in fails(cur, prev, "필수 종목 EPS = 지배주주 순이익 (부호 같음)")[1]
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: c.update(eps=c["eps"] + 5),                                  # EPS ≠ 순이익 ÷ 주식 수
+    lambda c: c["epsIn"].update(sh=0),
+    lambda c: c["bpsIn"].update(eq=-1.0),
+    lambda c: c.update(nio3=[1.0, "x"]),
+    lambda c: c.update(incNa=["op"]),
+    lambda c: c["epsIn"].update(b="owners"),
+])
+def test_receipt_shape_problems_fail(pair, change):
+    cur, prev = pair
+    change(comp(cur, "200200"))
+    fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)")
+
+
+def test_foreign_issuer_with_receipts_fails(pair):
+    cur, prev = pair
+    c = comp(cur, "200200")
+    c["t"] = "950999"
+    next(s for s in cur["data"]["stocks"] if s["t"] == "200200")["t"] = "950999"
+    assert "950999" in fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)")[1]
+
+
+def test_eps_basis_differences_are_a_named_warning(pair):
+    cur, prev = pair
+    c = next(c for c in cur["corp"]["companies"] if c.get("bq") and c["t"] not in V.MUST)
+    c["epsIn"]["p"] = "fy"
+    cur["data"]["incCheck"]["epsP"] = {"ttm": cur["data"]["incCheck"]["epsP"]["ttm"] - 1, "fy": cur["data"]["incCheck"]["epsP"]["fy"] + 1}
+    rep = check(cur, prev)
+    row = rows_of(rep)["EPS 기준이 다른 회사 (상위 200 연결 전체 순이익 · TTM 표시인데 연간)"]
+    assert row[3] == "WARN" and "TTM 표시인데 연간 1" in row[1] and not rep.failed
+
+
+def test_income_check_counts_must_match_the_receipts(pair):
+    cur, prev = pair
+    cur["data"]["incCheck"]["epsB"]["o"] += 1
+    fails(cur, prev, "incCheck 집계 = corp.json 영수증 수")
+
+
+def test_wrong_income_check_version_fails(pair):
+    cur, prev = pair
+    cur["data"]["incCheck"]["v"] = 2
+    fails(cur, prev, "손익 줄 검사 기록 (incCheck)")

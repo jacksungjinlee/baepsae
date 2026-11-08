@@ -155,6 +155,16 @@ DATA_NEW_MUST = ("betaSE", "betaN")
 CORP_NEW_MUST = ("flRan",)
 CORP_MIRROR = ("divSt", "dps3a", "dpsF", "dyt", "dz")
 CORP_NEW_MUST_AMT = ("cash3", "eps3r")
+# v19.1f (2026-11-08 · 새 줄만, 늦추는 줄 없음): 손익 줄 (매출·영업이익·순이익)과 EPS 기준 (지배주주 몫). data.json 에 incCheck 가
+# 있으면(v19.1f 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1f 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데
+# 빠졌으면 실패. 2026-11-08 발행본(재읽기 전): 시총 상위 200 매출 88.4% · 영업이익 93.0% · 순이익 90.5%, 한화에어로스페이스 매출 없음.
+INC_TOP_N = 200            # 손익 줄 채움을 보는 시가총액 상위 국내 회사 수 (보통주 · 해외 기업과 펀드 빼고 · 사업보고서 연도 fy 있는 곳)
+# TODO(Jack, 시험 실행 뒤): 손익 줄 채움 실패 기준 (%). 재읽기 시험 실행(dart=full)에서 본 세 비율을 보고 정해요 — 예: 본 값에서
+# 1%p 뺀 값을 정수로 내림. None 인 동안은 실패하지 않고, 100% 가 아니면 경고만 해요 (빠진 회사 이름과 함께).
+INC_TOP_FLOOR = None
+EPS_B = ("o", "s", "t")    # epsIn.b: 지배주주 몫(연결) · 별도 재무제표 · 연결인데 지배주주 줄 없음(전체)
+EPS_P = ("ttm", "fy")      # epsIn.p: 최근 4개 분기 · 사업보고서 한 해
+CORP_FIN_SECS = ("bank", "insure", "broker")   # 업종 그룹(ind)이 없을 때 금융회사로 보는 corp.json 업종 (매출 줄이 없을 수 있어요)
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -762,6 +772,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_foreign(rep, kr, comps)
     check_v191b(rep, data, kr, us, by, comps, pdata)
     check_v191c(rep, cur, us, mode, today)
+    check_v191f(rep, data, corp, kr, by, comps, pdata)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1301,6 +1312,140 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
                dyt=sum(1 for s in kr if num(s.get("dyt")) is not None))
     off = [f"{k} {dc.get(k)}≠{v}" for k, v in got.items() if dc.get(k) != v]
     rep.add("divCheck 집계 = 종목 수", not off, "맞음" if not off else " · ".join(off[:4]), "같아야 함")
+
+
+def _first(v):
+    return num(v[0]) if isinstance(v, list) and v else None
+
+
+def _sign(x):
+    return (x > 0) - (x < 0)
+
+
+def is_fin_co(s, c):
+    """금융회사인지 (매출 줄이 재무제표에 없을 수 있어요): 업종 그룹이 있으면 그것으로, 없으면 corp.json 업종으로. (파이프라인과 따로)"""
+    ind = (s or {}).get("ind")
+    return ind in FIN_INDS if ind else (c or {}).get("s") in CORP_FIN_SECS
+
+
+def check_v191f(rep, data, corp, kr, by, comps, pdata):
+    """v19.1f 새 줄: 손익 줄 채움 · 필수 종목 손익 3줄 · 재무제표는 있는데 손익 줄이 없는 회사 · EPS 기준(지배주주 몫)과 영수증."""
+    ic = data.get("incCheck")
+    if not isinstance(ic, dict):
+        had = isinstance((pdata or {}).get("incCheck"), dict)
+        rep.add("손익 줄 검사 기록 (incCheck)", not had,
+                "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1f 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1f 전 데이터만 경고)", warn=not had)
+        return
+    rep.add("손익 줄 검사 기록 (incCheck)", ic.get("v") == 1, f"v{ic.get('v')}", "v1")
+    corp_basis = (corp or {}).get("epsBasis")
+    rep.add("EPS 기준 표시 (epsBasis = owners)", data.get("epsBasis") == "owners" and corp_basis == "owners",
+            f"data {data.get('epsBasis')} · corp {corp_basis}", "둘 다 owners (재읽기가 돈 발행본 — 앱의 '고치는 중' 줄이 이걸 봐요)")
+    cby = {c.get("t"): c for c in comps}
+    must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr" and not is_foreign(t)]
+
+    # 1. 시가총액 상위 200 (보통주 · 해외 기업과 펀드 빼고 · fy 있는 회사)의 올해 매출(금융회사 빼고) · 영업이익 · 순이익 채움
+    pool = [s for s in kr if not is_pref(s.get("t")) and not is_foreign(s.get("t")) and not s.get("etf") and not s.get("fund")
+            and s.get("t") not in KR_FUND_SET and isinstance((cby.get(s.get("t")) or {}).get("fy"), int)]
+    top = sorted(pool, key=lambda s: -(num(s.get("cap")) or 0))[:INC_TOP_N]
+    parts, miss_all, worst = [], [], 100.0
+    for k, ko in (("rev", "매출"), ("op", "영업이익"), ("ni", "순이익")):
+        base = [s for s in top if not (k == "rev" and is_fin_co(s, cby.get(s["t"])))]
+        miss = [s for s in base if _first(cby[s["t"]].get(k)) is None]
+        share = 100.0 * (len(base) - len(miss)) / len(base) if base else 0.0
+        worst = min(worst, share)
+        parts.append(f"{ko} {floor_1(share)}% ({len(base) - len(miss)}/{len(base)})")
+        miss_all += [f"{s['t']} {s.get('nk', '')} {ko}" for s in miss]
+    floor = INC_TOP_FLOOR
+    rep.add(f"국내 손익 줄 채움 — 시총 상위 {INC_TOP_N} (매출은 금융회사 빼고)", bool(top) and (floor is None or worst >= floor),
+            " · ".join(parts),
+            (f"{floor:g}% 미만 실패 · 100% 아니면 경고" if floor is not None
+             else "100% 아니면 경고 (실패 기준 INC_TOP_FLOOR 는 시험 실행 뒤에 정해요)"), warn=worst < 100.0)
+    if miss_all:
+        rep.detail(f"시총 상위 {INC_TOP_N} 중 올해 손익 줄이 빈 회사", miss_all)
+
+    # 2. 필수 종목은 손익 3줄 (금융회사는 매출 빼고)
+    bad = []
+    for t in must_kr:
+        c = cby.get(t) or {}
+        for k, ko in (("rev", "매출"), ("op", "영업이익"), ("ni", "순이익")):
+            if k == "rev" and is_fin_co(by.get(t), c):
+                continue
+            if _first(c.get(k)) is None:
+                bad.append(f"{t} {by[t].get('nk', '')} {ko}")
+    rep.add("필수 종목 손익 3줄 (매출·영업이익·순이익)", not bad, "모두 있음" if not bad else "없음: " + ", ".join(bad),
+            ",".join(must_kr) + " (금융회사는 매출 빼고)")
+
+    # 3. 재무제표(자본·부채)는 있는데 매출·영업이익·순이익이 모두 빈 회사 — 경고 (이름과 함께)
+    noinc = [f"{c.get('t')} {c.get('nk', '')}" for c in comps if not is_foreign(c.get("t")) and isinstance(c.get("fy"), int)
+             and (num(c.get("eq")) is not None or num(c.get("debt")) is not None)
+             and all(_first(c.get(k)) is None for k in ("rev", "op", "ni"))]
+    rep.add("재무제표는 있는데 손익 줄을 하나도 못 읽은 회사", True, f"{len(noinc)}곳" + (f": {', '.join(noinc[:6])}…" if len(noinc) > 6
+            else f": {', '.join(noinc)}" if noinc else ""), "0 (있으면 경고)", warn=bool(noinc))
+    if noinc:
+        rep.detail("재무제표는 있는데 손익 줄을 못 읽은 회사", noinc)
+
+    # 4. 영수증 모양: epsIn · bpsIn · nio3 · incNa. 해외 기업(9…)은 금액 영수증을 싣지 않아요
+    bad = []
+    for c in comps:
+        t = c.get("t")
+        e, b = c.get("epsIn"), c.get("bpsIn")
+        if is_foreign(t) and any(k in c for k in ("epsIn", "bpsIn", "nio3")):
+            bad.append(f"{t} 해외 기업 금액")
+        if e is not None:
+            if not (isinstance(e, dict) and _isnum(e.get("ni")) and e.get("b") in EPS_B and e.get("p") in EPS_P
+                    and isinstance(e.get("sh"), int) and e["sh"] > 0 and _isnum(c.get("eps"))):
+                bad.append(f"{t}.epsIn")
+            elif abs(c["eps"] - e["ni"] * 1e8 / e["sh"]) > 0.5 + 1e-6 * abs(c["eps"]):
+                bad.append(f"{t} eps ≠ ni ÷ 주식 수")
+        if b is not None:
+            if not (isinstance(b, dict) and _isnum(b.get("eq")) and b["eq"] > 0 and b.get("b") in EPS_B
+                    and isinstance(b.get("sh"), int) and b["sh"] > 0 and _isnum(c.get("bps"))):
+                bad.append(f"{t}.bpsIn")
+            elif abs(c["bps"] - b["eq"] * 1e8 / b["sh"]) > 0.5 + 1e-6 * abs(c["bps"]):
+                bad.append(f"{t} bps ≠ 자본 ÷ 주식 수")
+        if "nio3" in c and _nums3(c["nio3"]) is None:
+            bad.append(f"{t}.nio3")
+        if "incNa" in c and (c["incNa"] != ["rev"] or _first(c.get("rev")) is not None):
+            bad.append(f"{t}.incNa")
+    rep.add("EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
+            "0 (eps = 순이익 ÷ 주식 수 · bps = 자본 ÷ 주식 수 · 해외 기업은 없음)")
+
+    # 5. 필수 종목 EPS: 지배주주(또는 별도) 순이익으로, 부호가 그 순이익과 같고, 사업보고서 한 해 기준이면 회사가 낸 주당순이익과도 부호가 같음
+    bad = []
+    for t in must_kr:
+        s, c = by.get(t) or {}, cby.get(t) or {}
+        e, eps = c.get("epsIn"), num(c.get("eps"))
+        if eps is None or not isinstance(e, dict) or not _isnum(e.get("ni")):
+            bad.append(f"{t} EPS·영수증 없음")
+            continue
+        if e.get("b") not in ("o", "s"):
+            bad.append(f"{t} 전체 순이익(지배주주 아님)")
+        if _sign(eps) != _sign(e["ni"]):
+            bad.append(f"{t} 부호 다름 (EPS {eps:,.0f} · 순이익 {e['ni']:,.1f}억)")
+        r0 = _first(c.get("eps3r"))
+        if e.get("p") == "fy" and r0 is not None and _sign(r0) != _sign(eps):
+            bad.append(f"{t} 회사 발표 EPS({r0:,.0f})와 부호 다름")
+        if num(s.get("eps")) != eps:
+            bad.append(f"{t} data.json eps ≠ corp.json")
+    rep.add("필수 종목 EPS = 지배주주 순이익 (부호 같음)", not bad, "모두 맞음" if not bad else " · ".join(bad[:4]),
+            ",".join(must_kr) + " (epsIn.b o·s · 부호 = 순이익 · 연간이면 회사 발표 EPS 와도)")
+
+    # 6. EPS 기준 경고: 시총 상위 200 중 연결인데 전체 순이익(b t) · TTM(bq) 표시인데 사업보고서 한 해(p fy)
+    tops = {s["t"] for s in top}
+    tb = [f"{c['t']} {c.get('nk', '')}" for c in comps if c.get("t") in tops and (c.get("epsIn") or {}).get("b") == "t"]
+    fq = [f"{c['t']} {c.get('nk', '')}" for c in comps if c.get("bq") and (c.get("epsIn") or {}).get("p") == "fy"]
+    rep.add("EPS 기준이 다른 회사 (상위 200 연결 전체 순이익 · TTM 표시인데 연간)", True,
+            f"전체 순이익 {len(tb)} · TTM 표시인데 연간 {len(fq)}", "0 · 0 (있으면 경고)", warn=bool(tb or fq))
+    if tb or fq:
+        rep.detail("EPS 기준이 다른 회사", [f"{x} 전체 순이익" for x in tb] + [f"{x} 연간" for x in fq])
+
+    # 7. incCheck 집계 = corp.json 영수증 수 (이 칸이 낡거나 다른 실행 것이면 잡아요)
+    eb = {k: sum(1 for c in comps if (c.get("epsIn") or {}).get("b") == k) for k in EPS_B}
+    ep = {k: sum(1 for c in comps if (c.get("epsIn") or {}).get("p") == k) for k in EPS_P}
+    off = [f"epsB.{k} {(ic.get('epsB') or {}).get(k)}≠{v}" for k, v in eb.items() if (ic.get("epsB") or {}).get(k) != v]
+    off += [f"epsP.{k} {(ic.get('epsP') or {}).get(k)}≠{v}" for k, v in ep.items() if (ic.get("epsP") or {}).get(k) != v]
+    rep.add("incCheck 집계 = corp.json 영수증 수", not off, "맞음" if not off else " · ".join(off[:4]), "같아야 함")
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

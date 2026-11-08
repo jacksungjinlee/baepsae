@@ -59,10 +59,26 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   cash-flow statement's interest-paid lines (`ifrs-full_InterestPaidClassifiedAs…`, as positive amounts; never interest
   received; 신종자본증권 distributions left out while `HYBRID_INTEREST` is False). 금융비용/금융원가 are no longer read as
   interest. corp.json `flSrc` = `{"icr": "is" | "cf"}` when the check ran; `ICR_OFF` is False again, and flWhy "ie" now
-  means neither line exists. Income lines not found under the old names
-  are read under numbered and loss names (영업손실 · Ⅲ.영업손익 · V.영업이익 · 당기순손실 …) or, when exactly one row carries
-  it, the standard code; a loss-only name with a positive current figure is dropped and logged. Cache v2 → v3 means an
-  empty cache: the branch dry run is one day's full-DART run and main's first run after the merge is the next day's.
+  means neither line exists. Cache v2 → v3 means an empty cache: the branch dry run is one day's full-DART run and
+  main's first run after the merge is the next day's.
+- v19.1f income lines (2026-11-08 audit: 261 companies missing a line DART has): 매출 · 영업이익 · 순이익 · 지배주주 순이익
+  are matched on income-statement rows (IS/CIS) by DART's standard code first (`ifrs-full_Revenue`,
+  `dart_OperatingIncomeLoss` then `ifrs-full_ProfitLossFromOperatingActivities`, `ifrs-full_ProfitLoss`,
+  `ifrs-full_ProfitLossAttributableToOwnersOfParent`), then by cleaned names (numbering, spaces, note refs removed; 매출,
+  영업손익, 영업손실, 당기순손익, 연결반기순이익 …). IS beats CIS; several coded rows with different values → the one named like a
+  total, else none (logged). A loss-only name with a positive figure is dropped. Owners' equity uses
+  `ifrs-full_EquityAttributableToOwnersOfParent`. A statement without income lines keeps its balance-sheet values.
+  Quarters use the same statement kind (CFS/OFS) as the annual report. Financial companies have no revenue line:
+  corp.json `incNa: ["rev"]`.
+- v19.1f EPS/BPS: EPS = owners' net income (TTM, else the annual figure; separate statements use their whole profit) ÷
+  (common + listed preferred shares, `PER_SHARE_WITH_PREF`); BPS = owners' equity ÷ the same shares. EV and P/CF use the
+  company market cap (common + listed preferreds, `COMPANY_CAP_WITH_PREF`). corp.json receipts `epsIn {ni, b, p, sh}`,
+  `bpsIn {eq, b, sh}`, `nio3` (owners' net income, 3 years); `ni` stays the statement's total net income. data.json and
+  corp.json carry `epsBasis: "owners"` (the app's temporary "PER과 EPS는 계산 방법을 고치는 중" line hides when it appears) and
+  data.json `incCheck`. New gate rows (add-only): incCheck/epsBasis present, top-200 income-line coverage (WARN; FAIL floor
+  `INC_TOP_FLOOR` to set from the dry run), must-haves have all three lines (FAIL), statements without income lines
+  (WARN, named), receipts consistent (FAIL), must-have EPS on owners' profit with matching sign (FAIL), EPS basis
+  differences (WARN), incCheck counts = receipts (FAIL).
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the
