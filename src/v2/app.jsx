@@ -15,7 +15,7 @@ import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
 import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
-import { publishGate } from "./hold.js";
+import { publishGate, discAfter, discFits } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -27,6 +27,7 @@ import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { companySub, CO_MORE } from "./routes.js";
+import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
@@ -53,8 +54,9 @@ export class ErrorBoundary extends React.Component {
 
 // source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }>,
 //   refetch?: (load, disc) => Promise<{ ok, load?, disc?, why? }> }
-// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab, fetched once, the first time a company page
-// opens. The preview page has none (it fetches nothing): its company pages have no 공시 tab.
+// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab and 홈's 오늘 볼 것 (v19.3e), fetched once,
+// the first time a company page opens or 홈 opens with a Korean stock held. The preview page has none (it fetches nothing):
+// its company pages have no 공시 tab and its 홈 no filings rows.
 // refetch (2026-11-08, live page only): load.js refetchNewer, for a page brought back into view with stale data.
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
@@ -98,6 +100,8 @@ export function App({ source }) {
   loadRef.current = load;
   const discRef = useRef(disc);
   discRef.current = disc;
+  const discGen = useRef(0);                              // bumped when a newer publish goes on screen (the disc effect below)
+  const discPub = useRef(null);                           // the publishedAt of the data put on screen by a return's fetch
   useEffect(() => {
     if (!liveData) return undefined;
     let on = true, timer = null;
@@ -138,7 +142,12 @@ export function App({ source }) {
       put: (r) => {
         // its stale check as of now, not as of the fetch (a publish held for days must not show as fresh: round-2 review)
         setLoad(refreshFresh(adoptLoad(r.load), Date.now()));
-        if (r.disc) setDisc((d) => (d.status === "ok" ? { status: "ok", data: r.disc } : d));
+        // disc.json goes with it (hold.js discAfter): the one fetched with this publish, or the one on screen when it is
+        // already this publish's; else it loads again (and an answer still out from before is not used: discGen).
+        const pub = r.load.data.publishedAt;
+        discGen.current += 1;
+        discPub.current = pub;
+        setDisc((d) => discAfter(d, r.disc, pub));
       },
     });
   }
@@ -185,14 +194,31 @@ export function App({ source }) {
   }, [store.key]);
 
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
+  // v19.3e (Jack, 2026-11-08): also when 홈 opens and a saved portfolio holds a Korean stock (오늘 볼 것's filings rows; a
+  // failure shows the same message there). After the first paint (an effect), once per visit for both.
+  const homeKr = useMemo(() => holdsKorean(store.data.decks, load.status === "ok" ? load.byT : null), [store.data.decks, load]);
+  const wantDisc = !!loc.code || (loc.tab === "home" && homeKr);
+  // 2026-11-08 (the stale re-fetch): a load still out when a newer publish goes on screen is not used (discGen: it loads
+  // again with that publish, hold.js discAfter), and one loaded again then is shown only if it is not older than that
+  // publish (discPub, hold.js discFits; else the load-failure message), so an older disc.json never sits beside newer data.
   useEffect(() => {
-    if (!loc.code || disc.status !== "idle") return;
+    if (!wantDisc || disc.status !== "idle") return;
     setDisc({ status: "loading" });
+    const gen = discGen.current, pub = discPub.current;
+    const mine = () => {
+      if (gen === discGen.current) return true;
+      console.info("[v2] disc.json loaded for data that is no longer on screen: not used (it loads again with the new publish)");
+      return false;
+    };
     source.loadDisc().then((r) => {
-      if (r && r.ok) setDisc({ status: "ok", data: r.data });
+      if (!mine()) return;
+      if (r && r.ok && !discFits(r.data, pub)) {
+        console.warn("[v2] disc.json not shown: it is from " + r.data.publishedAt + ", older than the data on screen (" + pub + "); the disclosures show the load-failure message");
+        setDisc({ status: "fail" });
+      } else if (r && r.ok) setDisc({ status: "ok", data: r.data });
       else { console.warn("[v2] disc.json not loaded: " + ((r && r.error) || "unknown") + " (the disclosures tab shows the load-failure message)"); setDisc({ status: "fail" }); }
-    }).catch((e) => { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); });
-  }, [loc.code, disc.status]);
+    }).catch((e) => { if (mine()) { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); } });
+  }, [wantDisc, disc.status]);
 
   // 왜 움직였나 needs its target: loaded on its own (a reload, a shared address) it shows 홈 instead.
   useEffect(() => {
@@ -351,7 +377,7 @@ export function App({ source }) {
     }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={disc} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching

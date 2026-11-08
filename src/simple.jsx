@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
-import { Bird, DEFAULT_SETTINGS, store, normCdf, AboutLink } from "./detail.jsx";
+import { Bird, DEFAULT_SETTINGS, store, normCdf, SiteFooterLine } from "./detail.jsx";
 import { SHOW_ER } from "./flags.js";
 
 const KEY_SIMPLE = "baepsae_v11_simple";
@@ -407,7 +407,7 @@ export default function SimpleApp({ onGraduate, onExit }) {
         <button onClick={onExit} style={{ background: "none", border: "none", color: C.faint, fontSize: 12.5, cursor: "pointer", fontFamily: FONT }}>← 모드 선택으로</button>
       </div>
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 14, lineHeight: 1.6 }}>
-        교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.{" · "}<AboutLink />
+        <SiteFooterLine />
       </div>
     </div>
   );

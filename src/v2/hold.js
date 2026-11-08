@@ -51,6 +51,25 @@ export function holdReason(ctx, next) {
   return null;
 }
 
+// The disc.json state that goes on screen with a publish (app.jsx put; the merge with v19.3e, where 홈 loads disc.json
+// itself for 오늘 볼 것's filings and its "오늘은 할 일이 없어요" waits for them): never an older disc.json beside newer data.
+// d: app.jsx's disc state · fetched: the disc.json data fetched with the publish (all or none), or null · pub: its publishedAt.
+// -> the disc fetched with it; the one on screen when it is already this publish's (or there is none yet, or none at all:
+// the preview); otherwise "idle", so it loads again from the site when a screen needs it (the filings wait meanwhile: 홈
+// says nothing is quiet before they are checked), logged.
+export function discAfter(d, fetched, pub) {
+  if (!d || d.status === "none") return d;
+  if (fetched) return { status: "ok", data: fetched };
+  if (d.status === "idle") return d;
+  if (d.status === "ok" && d.data && Date.parse(d.data.publishedAt || "") === Date.parse(pub || "")) return d;
+  console.info("[v2] back in view: disc.json " + (d.status === "ok" ? "on screen is from " + (d.data && d.data.publishedAt)
+    : d.status === "loading" ? "was still loading" : "had not loaded") + ", not from the publish of " + pub + ": it loads again from the site");
+  return { status: "idle" };
+}
+// A disc.json loaded again after a publish went on screen (discAfter) that is older than that publish is not shown beside it
+// (app.jsx: the filings show the load-failure message instead). -> true when it may be shown.
+export const discFits = (data, pub) => !pub || !(Date.parse((data && data.publishedAt) || "") < Date.parse(pub));
+
 // The app's side of a return's fetch (app.jsx): a result goes on screen now, or is held while holdReason says so and goes
 // on screen when check() finds nothing holding it any more. Either way it goes on screen only if the data on screen is
 // still the data it was fetched for (else it is dropped, logged). A failed first load holds nothing (no draft can exist

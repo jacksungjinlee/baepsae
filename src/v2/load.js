@@ -1,5 +1,5 @@
 // Data loading for app.html. Same-origin files only, through src/data.js (loadJson: no-store fetch, NaN repair).
-// v19.1a: disc.json too, but only when a company page opens (loadDisc).
+// v19.1a: disc.json too, but only when a company page opens or (v19.3e) 홈 opens with a Korean stock held (loadDisc).
 // 2026-11-08: a page brought back into view with stale data fetches the files once more (refetchNewer, returnWatch).
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
@@ -33,7 +33,8 @@ export async function loadAll(now, opts) {
   return resolveLoad({ data, corp, macro }, now);
 }
 
-// v19.1a: disc.json, only when a company page opens (the live page; app.jsx asks once). -> { ok, data, error }
+// v19.1a: disc.json, only when a company page opens or (v19.3e) 홈 opens with a Korean stock held (the live page; app.jsx
+// asks once per visit). -> { ok, data, error }
 export function loadDisc() {
   return loadJson("./disc.json", CHECKS.disc);
 }

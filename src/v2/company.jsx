@@ -11,15 +11,22 @@
 // - No 뱁이 anywhere on company screens (they all show numbers): the load-failure message here has no picture.
 // - Unknown code: "이 종목의 데이터를 찾지 못했어요." (the old app's sentence), never an empty page.
 // PC (v19.0d frame): one column of up to 720 px, the same content.
+// v19.3e (v19.3 Part I, boards CoSummary2 · CoSummaryUS): each 요약 tile carries its small picture (coart.jsx) and the
+// board's coloured edge; the "재무 경고 신호는 없어요" card lists one chip per check that ran and passed (never one for a
+// check that did not run); a rise day reads as one ("…개가 올랐어요"); the holding card says "내 포트폴리오의 {x}%" when one
+// portfolio holds the stock (가진 종목 넣기 portfolios count too); the US header lines wait behind cofmt.js US_HEAD2.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_ART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips } from "./company.js";
+import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
+import { pfRows, isImported, limitsOf } from "./pf.js";
+import { limitPct } from "./pfview.jsx";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -31,7 +38,7 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -60,9 +67,12 @@ export function tileViews(load, s) {
   // KR 배당: the yield is that report's dividend per share over today's close (Jack, 2026-11-05), so its basis names both;
   // the year is the dps's own (divKr r.fy). A 배당 basis line only under a number (a payer with no trusted yield: phrase only).
   const basisOf = { earn: usOf(s) ? asOf : report, value: asOf, div: (r) => (usOf(s) ? asOf : r.fy != null ? fill(C.co.div.basisKr, { fy: r.fy }) : null), risk: asOf };
-  const add = (topic, label, r, phrase, number, data) => {
+  // v19.3e (Part I, board CoSummary2): each tile also carries its small picture (coart.jsx), drawn from the same rule and
+  // numbers as its phrase; none on 자료가 없어요 (na), and no coins on 배당이 없어요.
+  const add = (topic, label, r, phrase, number, data, art = null) => {
     const b = typeof basisOf[topic] === "function" ? basisOf[topic](r) : basisOf[topic];
-    if (all(label, phrase)) out.push({ topic, label, phrase, number, rule: r.rule, data, basis: r.rule === "na" || (topic === "div" && !number) ? null : b });
+    if (all(label, phrase)) out.push({ topic, label, phrase, number, rule: r.rule, data, basis: r.rule === "na" || (topic === "div" && !number) ? null : b,
+      art: r.rule === "na" ? null : art });
   };
   if (usOf(s)) {
     const r = earnUs(s);
@@ -72,18 +82,20 @@ export function tileViews(load, s) {
   } else {
     const r = earnKr(co);
     const number = r.pct != null && T().opChange ? fill(T().opChange, { pct: signedPct(r.pct) }) : r.amount != null && T().opAmount && eokText(r.amount) ? fill(T().opAmount, { x: eokText(r.amount) }) : null;
-    add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnKr[r.rule], number, { op: r.op });
+    add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnKr[r.rule], number, { op: r.op }, { kind: "bars", op: r.op });
   }
   {
     const r = valueTile(s, group);
     const number = r.med != null && T().pbr ? fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) }) : r.pbr != null ? `PBR ${timesText(r.pbr, 2)}` : null;
-    add("value", T().label.value, r, r.rule === "na" ? na : T().value[r.rule], number, { pbr: r.pbr, med: r.med, n: r.n });
+    add("value", T().label.value, r, r.rule === "na" ? na : T().value[r.rule], number, { pbr: r.pbr, med: r.med, n: r.n },
+      r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med, ends: !!(number && T().pbr && number === fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) })) } : null);
   }
   {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
-    add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
+    add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
+      divArt(r.rule));
   }
   {
     // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
@@ -91,9 +103,30 @@ export function tileViews(load, s) {
     const r = riskTile(s);
     const number = r.rule === "na" ? null : riskBandText(s, r);
     add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], number,
-      { beta: r.beta ?? null, lo: r.band ? r.band.lo : null, hi: r.band ? r.band.hi : null });
+      { beta: r.beta ?? null, lo: r.band ? r.band.lo : null, hi: r.band ? r.band.hi : null }, { kind: "waves", rule: r.rule });
   }
   return out;
+}
+
+// The 배당 tile's coins say no more than its phrase: rising stacks only for 늘렸어요 (streak · raised), equal stacks for
+// 작년과 비슷하게 (steady: the years compared paid alike), one stack for a payer whose years are not compared (pays: the US,
+// or Korea without the trend; noPrev: no record of last year), so no picture implies a history the data does not show.
+// No picture for 줄였어요 (cut), 배당이 없어요 (none) or 자료가 없어요 (na).
+export function divArt(rule) {
+  if (rule === "streak" || rule === "raised") return { kind: "coins", shape: "rising" };
+  if (rule === "steady") return { kind: "coins", shape: "even" };
+  if (rule === "pays" || rule === "noPrev") return { kind: "coins", shape: "one" };
+  return null;
+}
+
+// The tile's picture (coart.jsx). 출렁임's legend: 이 회사 (co.earn.mine) and 시장 (the same word as the 시장 tab).
+export function TileArt({ art }) {
+  if (!art) return null;
+  if (art.kind === "bars") return <EarnBars op={art.op} />;
+  if (art.kind === "scale") return <ValueScale pbr={art.pbr} med={art.med} ends={art.ends && T().scale ? T().scale : null} />;
+  if (art.kind === "coins") return <Coins shape={art.shape} />;
+  if (art.kind === "waves") return <Waves rule={art.rule} mine={C.co.earn.mine} market={C.app.tabs.market} />;
+  return null;
 }
 
 function Tile({ v, onOpen }) {
@@ -104,12 +137,16 @@ function Tile({ v, onOpen }) {
         <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{v.label}</span>
       </div>
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
+      <TileArt art={v.art} />
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
       {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );
   const data = Object.fromEntries(Object.entries(v.data || {}).map(([k, x]) => [`data-${k}`, x == null ? "" : Array.isArray(x) ? x.join(",") : String(x)]));
-  const style = { ...tap, display: "block", width: "100%", minHeight: SPACE(32), textAlign: "left", border: "none", background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(4) };
+  // The board's coloured edge on the left of each tile (tokens.js TOPIC_ART: the topic's darker shade; 실적's is its light
+  // tint #B9CDEB, never a blue: Jack, 2026-11-08).
+  const edge = TOPIC_ART[v.topic] ? { boxShadow: `inset 4px 0 0 ${TOPIC_ART[v.topic].ink}` } : {};
+  const style = { ...tap, display: "block", width: "100%", minHeight: SPACE(32), textAlign: "left", border: "none", background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(4), ...edge };
   return onOpen
     ? <button type="button" data-ui-v2="co-tile" data-topic={v.topic} data-rule={v.rule} {...data} onClick={onOpen} style={style}>{body}</button>
     : <div data-ui-v2="co-tile" data-topic={v.topic} data-rule={v.rule} {...data} style={{ ...style, cursor: "default" }}>{body}</div>;
@@ -193,10 +230,10 @@ function Header({ load, s }) {
         {d1 != null && <span data-ui-v2="co-change" style={tx(SIZE.sm, WEIGHT.heavy, d1 < 0 ? COLOR.down : d1 > 0 ? COLOR.upOnPage : COLOR.text2)}>{signedPct(d1)}</span>}
         {closeLine(load, s) && <span data-ui-v2="co-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{closeLine(load, s)}</span>}
       </div>
-      {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{won}</div>}
-      {won && C.co.fxWon && mdText(load.data.fxDate) && (
-        <div data-ui-v2="co-fx" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fill(C.co.fxWon, { md: mdText(load.data.fxDate), fx: nf(Math.round(load.data.fx * 10) / 10, 1) })}</div>
-      )}
+      {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{(US_HEAD2 && wonLineUsd(load, s.price)) || won}</div>}
+      {/* The rate's own date (cofmt.fxDateLine): always without US_HEAD2; with it, whenever the rate is from another day than
+          the price date in the header, so the won line never reads as that day's rate */}
+      {won && fxDateLine(load, s) && <div data-ui-v2="co-fx" data-fx-date={load.data.fxDate} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fxDateLine(load, s)}</div>}
       <RangeBar s={s} />
     </section>
   );
@@ -207,16 +244,20 @@ function MoveLine({ load, s, held, onWhy }) {
   const d1 = todayD1(s);
   if (d1 == null || Math.abs(d1) < BIG_MOVE) return null;
   const g = peerGroup(s, load.data.stocks);
-  const together = g.ok && g.together;
+  // v19.3e (Part I): a rise day reads as one ("{ind} 종목 {n}개 중 {k}개가 올랐어요", "업종이 다 같이 오른 날이에요"); a fall
+  // day as before. Without the rise lines approved, the fall day's count line (k fell) as before.
+  const up = d1 > 0 && !!(C.co.moveUp && C.co.moveUp.together && C.co.moveUp.body);
+  const together = g.ok && (up ? g.togetherUp : g.together);
   const h = held.find((x) => x.x.bigMove) || null;
   return (
     <div data-ui-v2="co-move" data-together={together ? "1" : "0"} style={{ marginTop: SPACE(3), background: together ? COLOR.heroCalm : COLOR.surface, borderRadius: RADIUS.md,
       padding: `${SPACE(3)}px ${SPACE(4)}px`, display: "flex", alignItems: "center", gap: SPACE(3) }}>
       <Icon name={together ? "check-circle" : "info"} size={22} tone={together ? "ok" : "on"} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        {together ? <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.why.together.replace("\n", " ")}</div>
+        {together ? <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{(up ? C.co.moveUp.together : C.why.together).replace("\n", " ")}</div>
           : <StatusChip tone="neutral">{C.daily.bigMove}</StatusChip>}
-        {g.ok && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{fill(C.why.c1Body, { ind: s.indName, n: g.n, k: g.fell })}</div>}
+        {g.ok && <div data-ui-v2="co-move-count" data-up={up ? "1" : "0"} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>
+          {up ? fill(C.co.moveUp.body, { ind: s.indName, n: g.n, k: g.rose }) : fill(C.why.c1Body, { ind: s.indName, n: g.n, k: g.fell })}</div>}
       </div>
       {h && onWhy && (
         <button type="button" data-ui-v2="co-why" onClick={() => onWhy(h.deckId, s.t)}
@@ -250,14 +291,29 @@ function Warnings({ load, s, wide }) {
     const head = w.partial ? W.nonePartial : W.none;
     const subText = w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
     if (!all(head, subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+    // v19.3e (Part I): one chip per check that ran and passed (company.warnChips: flRan, no flag); a check that did not run
+    // or does not apply (flNa) gets none, never a ✓.
+    const chips = warnChips(w).filter((c) => W.chips && W.chips[c]);
     return (
-      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: SPACE(4) }}>
-        <IconChip name="shield-check" size={32} tone="risk" />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
-          <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
-          {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
+      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ padding: SPACE(4) }}>
+        <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
+          <IconChip name="shield-check" size={32} tone="risk" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
+            <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
+            {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
+          </div>
         </div>
+        {chips.length > 0 && (
+          <div data-ui-v2="co-warn-chips" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(1) + 2, marginTop: SPACE(3) }}>
+            {chips.map((c) => (
+              <span key={c} data-ui-v2="co-warn-chip" data-check={c} style={{ display: "flex", alignItems: "center", gap: SPACE(1) + 2, padding: `${SPACE(2)}px ${SPACE(2) + 2}px`,
+                borderRadius: RADIUS.sm, background: COLOR.heroCalm, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { lineHeight: 1.35 }) }}>
+                <Icon name="check-circle" size={18} tone="ok" />{W.chips[c]}
+              </span>
+            ))}
+          </div>
+        )}
       </Card>
     );
   }
@@ -372,20 +428,64 @@ function Fit({ load, s, store, wide }) {
 }
 
 // ---------------- holding line (Part B item 6) ----------------
-function Holdings({ held }) {
+// v19.3e (Part I, board CoSummary2): with one portfolio holding the stock, "내 포트폴리오의 {x}%" with its weight bar and
+// value; with two or more, each keeps its name ("{name}의 {pct}") so they can be told apart. A portfolio made with 가진 종목
+// 넣기 counts too (imported: its weight and value from pf.pfRows, no per-stock chips: it has no per-stock rules).
+export function importedHeld(decks, ev, ctx, t) {
+  if (!ev || !ev.ok) return [];
+  const out = [];
+  for (const d of decks || []) {
+    if (!isImported(d)) continue;
+    const v = pfRows(d, ctx);
+    const r = v.rows.find((x) => x.t === t && !x.absent);
+    if (r) out.push({ deckId: d.id, name: d.name, x: { t, w: v.ok ? r.w : null, value: r.value }, imported: true, deck: d });
+  }
+  return out;
+}
+// The share as the rest of the page shows it: a built portfolio as its 비중 규칙 line does ("지금 14.5%", one decimal); a
+// 가진 종목 portfolio against its 한 종목 limit (pfview.limitPct: never reads as the limit when it broke it, as on 홈 and
+// 포트폴리오). -> the number without "%".
+export function holdShare(x, imported, deck) {
+  if (imported) return limitPct(x.w, limitsOf(deck).stock);
+  const r = Math.round(x.w * 1000) / 10;
+  return p1(r === 0 ? 0 : r);
+}
+// "내 포트폴리오의 {x}%" only when the user has a single portfolio; otherwise each line names its portfolio ("{name}의 {pct}").
+export function holdLine(h, single) {
+  const { name, x, imported, deck } = h;
+  if (x.w == null) return shownName(name);
+  const v = holdShare(x, imported, deck);
+  if (single && C.co.hold.mine) return fill(C.co.hold.mine, { x: v });
+  return C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: `${v}%` }) : shownName(name);
+}
+function Holdings({ held, single }) {
   if (!held.length) return null;
   return (
     <Card data-ui-v2="co-held" style={{ padding: `${SPACE(2)}px ${SPACE(4)}px` }}>
-      {held.map(({ deckId, name, x }) => {
-        const k = keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
-        const chips = statusChips(x);
-        const line = x.w != null && C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: pctText(x.w * 100) }) : shownName(name);
+      {held.map(({ deckId, name, x, imported }) => {
+        const k = imported ? 0 : keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
+        const chips = imported ? null : statusChips(x);
+        const line = holdLine(held.find((h) => h.deckId === deckId), single);
         return (
-          <div key={deckId} data-ui-v2="co-held-row" data-deck-id={deckId} data-status={x.status}
-            style={{ display: "flex", alignItems: "center", gap: SPACE(2), flexWrap: "wrap", minHeight: TOUCH, padding: `${SPACE(1)}px 0` }}>
-            <Icon name="deck" size={20} tone="on" />
-            <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: "1 1 160px", minWidth: 0, wordBreak: "keep-all" })}>{line}</span>
-            {chips || (k > 0 ? <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span> : null)}
+          <div key={deckId} data-ui-v2="co-held-row" data-deck-id={deckId} data-status={x.status} data-kind={imported ? "imported" : undefined}
+            style={{ padding: `${SPACE(2)}px 0`, borderTop: deckId === held[0].deckId ? "none" : `1px solid ${COLOR.line}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH }}>
+              <IconChip name="deck" size={36} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span data-ui-v2="co-held-line" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block", wordBreak: "keep-all" })}>{line}</span>
+                {x.w != null && (
+                  <div aria-hidden="true" style={{ height: SPACE(1) + 2, background: COLOR.line, borderRadius: 999, marginTop: SPACE(1), overflow: "hidden" }}>
+                    <div style={{ width: `${Math.min(100, Math.max(0, x.w * 100))}%`, height: "100%", background: COLOR.ink, borderRadius: 999 }} />
+                  </div>
+                )}
+              </div>
+              {x.value != null && x.value > 0 && <span data-ui-v2="co-held-value" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { whiteSpace: "nowrap" })}><Amount text={wonText(x.value)} /></span>}
+            </div>
+            {(chips || k > 0) && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), marginTop: SPACE(1), paddingLeft: 36 + SPACE(3) }}>
+                {chips || <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span>}
+              </div>
+            )}
           </div>
         );
       })}
@@ -489,8 +589,9 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
   const { wide } = useLayout();
   const ok = load.status === "ok";
   const s = ok ? findCompany(load, code) : null;
-  const { ev } = useDaily(load, store);
+  const { ev, ctx } = useDaily(load, store);
   const held = useMemo(() => (s ? holdingsOf(ev, store.data.decks, s.t) : []), [ev, store.data.decks, s]);
+  const heldAll = useMemo(() => (s ? [...held, ...importedHeld(store.data.decks, ev, ctx, s.t)] : []), [held, ev, ctx, store.data.decks, s]);   // v19.3e
   const backLabel = C.co.back || C.app.close;
   if (load.status === "loading") return <Page pad={pad}><AppBar onBack={nav.back} backLabel={backLabel} /></Page>;
   if (!ok) return <Page pad={pad}><AppBar onBack={nav.back} backLabel={backLabel} /><LoadFail picture={false} /><Footer /></Page>;
@@ -510,11 +611,11 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
   if (ctab === "value-more" && C.co.valueMore.title) return <ValueMore load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} onBack={nav.back} backLabel={backLabel} />;
   if (ctab === "earn-more" && C.co.earn.moreTitle && !usOf(s)) return <EarnMore load={load} s={s} pad={pad} onBack={nav.back} backLabel={backLabel} />;
   const shown = ctab === "value-more" ? "value" : ctab === "earn-more" ? "earn" : ctab;
-  return <CompanyPage load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} ctab={shown} disc={disc} nav={nav} held={held}
+  return <CompanyPage load={load} s={s} store={store} setStoreData={setStoreData} pad={pad} ctab={shown} disc={disc} nav={nav} held={held} heldAll={heldAll}
     preview={preview} wide={wide} backLabel={backLabel} />;
 }
 
-function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held, preview, wide, backLabel }) {
+function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held, heldAll, preview, wide, backLabel }) {
   const discShown = !usOf(s) && !preview && disc && disc.status !== "none";
   const labels = tabLabels(s, discShown);
   // A tab opens from its address even while its name waits for Jack (no tab bar then, so nothing links to it); 공시 only
@@ -550,7 +651,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
             <Tiles load={load} s={s} onTab={setTab} tabsOn={!!labels} />
             <Warnings load={load} s={s} wide={wide} />
             <Fit load={load} s={s} store={store} wide={wide} />
-            <Holdings held={held} />
+            <Holdings held={heldAll} single={store.data.decks.length === 1} />
             <Memo s={s} store={store} setStoreData={setStoreData} held={held} />
           </div>
         )}

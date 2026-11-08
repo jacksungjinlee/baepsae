@@ -672,6 +672,42 @@ out = { before, survive, after, wrongSurvive, back, backShape, threw, inside, re
     assert got["threw"] == "inside" and got["inside"] is True, got                            # set inside, put back even on a throw
 
 
+# ── merge with v19.3e: 홈 loads disc.json itself ──
+def test_disc_json_goes_with_the_publish_put_on_screen():
+    """홈's filings (v19.3e) and its "오늘은 할 일이 없어요" read disc.json: a publish put on screen takes the disc.json fetched
+    with it, keeps the one on screen only when it is already that publish's, and otherwise sends disc.json back to "idle"
+    (it loads again; 홈 waits for the filings meanwhile, so it never says quiet with them unchecked). Never an older
+    disc.json beside newer data: one loaded again that is older than the publish is not shown (discFits)."""
+    old, new = old_files(), new_files()
+    got = run("""
+const A = (d, f) => H.discAfter(d, f, NEW_PUB);
+const okOld = { status: 'ok', data: OLD.disc }, okNew = { status: 'ok', data: NEW.disc };
+out = {
+  fetched: A(okOld, NEW.disc), fetchedLoading: A({ status: 'loading' }, NEW.disc), same: A(okNew, null) === okNew,
+  older: A(okOld, null), loading: A({ status: 'loading' }, null), fail: A({ status: 'fail' }, null),
+  idle: A({ status: 'idle' }, null), none: A({ status: 'none' }, null), noneFetched: A({ status: 'none' }, NEW.disc),
+  fits: [H.discFits(NEW.disc, NEW_PUB), H.discFits(OLD.disc, NEW_PUB), H.discFits({ publishedAt: '2026-11-11T06:40:00+09:00' }, NEW_PUB),
+    H.discFits(OLD.disc, null)],
+  info: INFO,
+};""", OLD=old, NEW=new, NEW_PUB=NEW_PUB)
+    assert got["fetched"] == {"status": "ok", "data": new["disc"]} and got["fetchedLoading"] == {"status": "ok", "data": new["disc"]}, got
+    assert got["same"] is True, got
+    assert got["older"] == {"status": "idle"} and got["loading"] == {"status": "idle"} and got["fail"] == {"status": "idle"}, got
+    assert got["idle"] == {"status": "idle"} and got["none"] == {"status": "none"} and got["noneFetched"] == {"status": "none"}, got
+    assert got["fits"] == [True, False, True, True], got
+    info = " | ".join(got["info"])
+    assert f"disc.json on screen is from {OLD_PUB}, not from the publish of {NEW_PUB}: it loads again from the site" in info, info
+    assert "disc.json was still loading" in info and "disc.json had not loaded" in info, info
+
+
+def test_the_app_keeps_disc_json_with_the_publish():
+    app = read("src/v2/app.jsx")
+    assert "discGen.current += 1;" in app and "setDisc((d) => discAfter(d, r.disc, pub));" in app
+    assert "const gen = discGen.current, pub = discPub.current;" in app and "if (!mine()) return;" in app
+    assert "if (r && r.ok && !discFits(r.data, pub)) {" in app
+    assert "const wantDisc = !!loc.code || (loc.tab === \"home\" && homeKr);" in app          # v19.3e's own rule, kept
+
+
 # ── wiring: the live page only ──
 def read(p):
     with open(os.path.join(ROOT, p), encoding="utf-8") as fh:

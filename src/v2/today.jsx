@@ -14,7 +14,8 @@
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
 //   할 일 없음          green band "매도 조건에 걸린 종목이 없어요": only when nothing is 규칙 깨짐 or 확인 필요. The
 //                      eyebrow "오늘은 할 일이 없어요" only when every holding is 할 일 없음 (REDESIGN 2.1: steps 1-3 all
-//                      clear, so no 지켜봐요 and no weight outside its band).
+//                      clear, so no 지켜봐요 and no weight outside its band) and, on the new 홈 (HOME2), nothing else
+//                      on the screen needs a look (Hero's quiet).
 // Counts are of distinct stocks: a stock held in two portfolios is one stock to look at (its lines still show per
 // portfolio, since each one keeps its own answers).
 // Every verdict band carries "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" whenever any rule is not checked, so a
@@ -45,6 +46,14 @@ import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
 import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
+import { Home2 } from "./home2.jsx";
+
+// v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
+// verdict band of portfolios made with 포트폴리오 만들기 stays at the top as before (Hero below), portfolios made with 가진
+// 종목 넣기 get the four portfolio rules in a navy hero, every portfolio gets the card with 오늘 and 산 가격보다 and the 가진
+// 종목 list, then 오늘 볼 것. Off is 홈 as v19.3d left it (an emergency switch only). The first visit, the first-visit
+// guide's welcome and the stale and failed states are the same either way.
+export const HOME2 = true;
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -68,8 +77,8 @@ export function brokenTitle(name) {
 }
 
 const namesOf = (deck) => new Map(((deck && deck.holdings) || []).map((h) => [h.t, h.nk]));
-const isTodo = (x) => x.status === "broken" || x.status === "check";
-const lines = (xs) => { const ls = xs.filter(Boolean); return ls.length ? ls.map((l, i) => <span key={i} style={{ display: "block" }}>{l}</span>) : null; };
+export const isTodo = (x) => x.status === "broken" || x.status === "check";
+export const lines = (xs) => { const ls = xs.filter(Boolean); return ls.length ? ls.map((l, i) => <span key={i} style={{ display: "block" }}>{l}</span>) : null; };
 
 export function LinkButton({ children, onClick, ...rest }) {
   return (
@@ -83,7 +92,7 @@ export function LinkButton({ children, onClick, ...rest }) {
 // One stock to look at today: its name, the rule that fired (or what needs confirming), numbers, report year, and the
 // 확인 필요 answers (Part C's DividendAnswers: both answers stay open, the chosen one marked). sellSaid: the band above
 // already says "규칙대로면 팔 때예요…", so a confirmed cut does not repeat it.
-function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its name is already the band's title
+export function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its name is already the band's title
   const names = namesOf(deck);
   const views = x.reasons.filter((r) => (r.level === "broken" || r.level === "check") && r.code !== "divCut" && r.code !== "divDrop")
     .map((r) => [r, reasonView(r, x, names)]).filter(([, v]) => v);
@@ -101,7 +110,7 @@ function TodoItem({ x, deck, onConfirm, sellSaid, first }) {    // first: its na
 
 // 크게 움직인 종목: name, today's change, and "같은 업종이 다 같이 빠졌어요" only when its real industry group (5+
 // members) fell together. A note only: it never changes a status. 자세히 보기 opens 왜 움직였나.
-function BigMoves({ items, load, onWhy }) {
+export function BigMoves({ items, load, onWhy }) {
   return (
     <div data-ui-v2="big-moves">
       <div style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{fill(C.today.bigInset, { n: items.length })}</div>
@@ -123,7 +132,11 @@ function BigMoves({ items, load, onWhy }) {
   );
 }
 
-function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
+// quiet (v19.3e, 홈 with HOME2): false when a portfolio made with 가진 종목 넣기 is not quiet (home.quietBlock: a broken rule,
+// 한 종목 · 한 업종 · 내 기준 not all checked, or its value unknown) or 오늘 볼 것 has a card (home2.jsx lookOf): the calm band
+// then drops "오늘은 할 일이 없어요" (the rest of the band is about the built portfolios' own rules and stays). Default true:
+// 홈 without HOME2 as before.
+export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) {
   if (!ev.ok) {
     if (ev.why === "loading") return null;
     if (ev.why === "stale") {
@@ -166,7 +179,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
   const allD1 = all.every(({ x }) => x.d1 != null);
   return (
     <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
-      <HeroBand tone="calm" eyebrow={allNone ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
+      <HeroBand tone="calm" eyebrow={allNone && quiet ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
         body={lines([bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
         inset={bigs.length ? <BigMoves items={bigs} load={load} onWhy={onWhy} /> : null} />
     </div>
@@ -259,7 +272,7 @@ function FirstVisit({ load, go }) {
 // in place of the tiles (never a row of "–" without a word).
 // PC: in the narrow side column the four tiles stack; standing alone across the page (nothing in the main column, e.g.
 // stale data or no saved portfolio with stocks) they sit four in a row.
-function MarketGlance({ load, go }) {
+export function MarketGlance({ load, go }) {
   const { wide } = useLayout();
   const col = useCol();
   const tiles = !wide ? 2 : col === "side" ? 1 : 4;
@@ -276,7 +289,7 @@ function MarketGlance({ load, go }) {
 
 // welcome (v19.3c Part E): { onTry, onBrowse } while the first-visit guide's welcome is on (guide.jsx): it takes the place of
 // 홈's content until the user picks 직접 해 보기 or 그냥 둘러볼게요.
-export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null }) {
+export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null, disc = null }) {
   const decks = store.data.decks;
   const first = decks.length === 0 && !store.locked;
   const { ev, ctx } = useDaily(load, store);
@@ -306,6 +319,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       </Page>
     );
   }
+  if (HOME2) return <Home2 load={load} store={store} ev={ev} ctx={ctx} onConfirm={onConfirm} pad={pad} onWhy={onWhy} go={go} disc={disc} />;
   return (
     <Page pad={pad} cols={2}>
       <AppBar />
