@@ -55,8 +55,8 @@ export function Limits({ deck, store, setStoreData, onBack, pad }) {
         <LimitField id="stock" tpl={C.pfr.stock} value={stock} saved={cur.stock} onChange={setStock} first />
         <LimitField id="ind" tpl={C.pfr.ind} value={ind} saved={cur.ind} onChange={setInd} />
         <button type="button" data-ui-v2="limits-reset" onClick={() => { setStock(String(LIMITS.stock)); setInd(String(LIMITS.ind)); }}
-          style={{ border: "none", background: "none", minHeight: TOUCH, padding: 0, marginTop: SPACE(1), cursor: "pointer",
-            ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textDecoration: "underline", textUnderlineOffset: 3 }) }}>{C.lim.reset}</button>
+          style={{ border: "none", background: "none", minHeight: TOUCH, padding: 0, cursor: "pointer",
+            ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(1), textDecoration: "underline", textUnderlineOffset: 3 }) }}>{C.lim.reset}</button>
       </Card>
       {tried && store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}

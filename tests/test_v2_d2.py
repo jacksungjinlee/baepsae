@@ -180,6 +180,76 @@ def test_the_2022_estimate_names_only_holdings_with_no_2022_price():
     assert got["both"]["share"] == round(1000000 / (5000000 + 1000000), 3)
 
 
+LS = """
+const mem = new Map();
+globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => { mem.set(k, String(v)); },
+  removeItem: (k) => { mem.delete(k); }, get length() { return mem.size; }, key: (i) => [...mem.keys()][i] ?? null };
+const K = 'baepsae2.v1', SIDE = K + '.limits';
+const side = () => JSON.parse(mem.get(SIDE) || 'null');
+const limOf = (d, id = 'dimp') => { const x = d.decks.find((y) => y.id === id); return x ? { l: x.limits || null, ts: x.limitsTs || null } : 'no deck'; };
+"""
+
+
+def test_limits_beside_the_records_come_back_after_an_earlier_app_drops_them():
+    """v19.3d2 review 3: v19.3d (#83) never reads or writes key + ".limits", but can drop limits (its merge keeps the current
+    copy's, its 'covered' check ignores them). Every write keeps the later limits there; on start, limits saved later than
+    the records hold come back (합쳤어요 when the screens change; quietly when only the time differs). Older entries, a built
+    portfolio of the same id, and bad entries (set aside as an ".unreadable." copy) never change the records."""
+    got = run(LS + """const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const A = P.withLimits(base, 'dimp', 40, 60, 2000);
+      S.writeStore(A, K, T);
+      const kept = side();
+      // only the side key and the records (no tab copies: each case on its own)
+      const only = (sideVal, recs) => { mem.clear(); if (sideVal) mem.set(SIDE, JSON.stringify(sideVal)); mem.set(K, JSON.stringify({ ...recs, v: S.versionFor(recs) })); };
+      // an earlier-app tab wrote its copy from before (limits 20/25 saved at 1000) over the records
+      const old = P.withLimits(base, 'dimp', 20, 25, 1000);
+      only(kept, old);
+      const r1 = S.readStore(K, T);
+      const stored1 = limOf(JSON.parse(mem.get(K)));
+      // the same values, only an older time in the records: brought up to date quietly
+      only(kept, P.withLimits(base, 'dimp', 40, 60, 1500));
+      const r2 = S.readStore(K, T);
+      // the records hold a later 저장 than the side key: they stay
+      only(kept, P.withLimits(base, 'dimp', 30, 35, 9000));
+      const r3 = S.readStore(K, T);
+      S.writeStore(r3.data, K, T);                                       // the next save keeps the later 저장 beside
+      const kept3 = side();
+      // a reset (only the time) kept beside: the values go
+      only({ v: 1, decks: { dimp: { ts: 9500 } } }, A);
+      const r4 = S.readStore(K, T);
+      // bad entries: set aside as a copy, the good one used
+      only({ v: 1, decks: { dimp: { limits: { stock: 50 }, ts: 7000 }, bad1: { limits: { stock: 0 }, ts: 1 }, bad2: { ts: -1 }, bad3: 'x' } }, A);
+      const r5 = S.readStore(K, T);
+      const side5 = side(), aside = [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).map((k) => JSON.parse(mem.get(k)));
+      // not JSON at all: set aside, the records as they are
+      only(null, A);
+      mem.set(SIDE, '{not json');
+      const r6 = S.readStore(K, T);
+      const side6 = mem.has(SIDE) ? mem.get(SIDE) : null, aside6 = [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).map((k) => mem.get(k));
+      // a built portfolio with the same id never takes limits (it would turn a v1 store into v2)
+      const built = { v: 1, decks: [{ id: 'dimp', name: 'b', createdAt: T, settings: { points: {} }, holdings: [{ t: '000010', nk: 'a', target: 1, rules: [] }],
+        purchases: [{ t: '000010', qty: 1, price: 10000, date: T, ccy: 'KRW' }] }] };
+      only({ v: 1, decks: { dimp: { limits: { stock: 50 }, ts: 7000 } } }, built);
+      const r7 = S.readStore(K, T);
+      out = { kept, r1: { lim: limOf(r1.data), restored: r1.restored }, stored1, r2: { lim: limOf(r2.data), restored: r2.restored },
+        r3: { lim: limOf(r3.data), restored: r3.restored }, kept3, r4: { lim: limOf(r4.data), restored: r4.restored },
+        r5: { lim: limOf(r5.data), restored: r5.restored, side: side5 }, aside,
+        r6: { lim: limOf(r6.data), restored: r6.restored, side: side6, aside: aside6 },
+        r7: { v: r7.data.v, lim: limOf(r7.data), restored: r7.restored } };""")
+    assert got["kept"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 40, "ind": 60}, "ts": 2000}}}
+    assert got["r1"] == {"lim": {"l": {"stock": 40, "ind": 60}, "ts": 2000}, "restored": True}
+    assert got["stored1"] == {"l": {"stock": 40, "ind": 60}, "ts": 2000}               # written back
+    assert got["r2"] == {"lim": {"l": {"stock": 40, "ind": 60}, "ts": 2000}, "restored": False}
+    assert got["r3"] == {"lim": {"l": None, "ts": 9000}, "restored": False}            # 30/35 at 9000: the defaults, no values
+    assert got["kept3"] == {"v": 1, "decks": {"dimp": {"ts": 9000}}}                  # the later 저장 is kept beside too
+    assert got["r4"] == {"lim": {"l": None, "ts": 9500}, "restored": True}
+    assert got["r5"]["lim"] == {"l": {"stock": 50}, "ts": 7000} and got["r5"]["restored"] is True
+    assert got["r5"]["side"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 50}, "ts": 7000}}}
+    assert len(got["aside"]) == 1 and set(got["aside"][0]["decks"]) == {"dimp", "bad1", "bad2", "bad3"}
+    assert got["r6"] == {"lim": {"l": {"stock": 40, "ind": 60}, "ts": 2000}, "restored": False, "side": None, "aside": ["{not json"]}
+    assert got["r7"] == {"v": 1, "lim": {"l": None, "ts": None}, "restored": False}
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""

@@ -5484,6 +5484,45 @@ def scene_v193d2(R, files, width):
         nrow = page.locator('[data-import-row="name"]')
         nrow.wait_for(state="visible")
         assert not action(page).is_enabled()                              # 이름과 금액이 없으면 아직 점검할 수 없어요
+        # 리뷰: 이름 없이 금액(다섯 자리)만 → 합계 · 고리에서 빠지고, 이름 칸이 표시되고, 버튼 이름은 '종목 …', 다음은 기다려요
+        nrow.locator('input[data-ui-v2="import-amount"]').fill("12345")
+        name_in = nrow.locator('input[data-ui-v2="import-name"]')
+        assert name_in.get_attribute("aria-invalid") == "true" and not action(page).is_enabled()
+        assert nrow.locator('[data-ui-v2="import-value"]').count() == 0
+        assert re.search(r"\bn[0-9a-z]{6,}", page.locator('[data-ui-v2="import-donut"]').inner_text()) is None     # 내부 키가 보이지 않아요
+        word = C["app"]["tabs"]["stocks"]
+        assert nrow.locator('[data-ui-v2="import-step"]').nth(0).get_attribute("aria-label") == fillp(C["imp"]["amountDown"], name=word)
+        assert nrow.locator('[data-ui-v2="import-step"]').nth(1).get_attribute("aria-label") == fillp(C["imp"]["amountUp"], name=word)
+        assert nrow.locator('[data-ui-v2="import-remove"]').get_attribute("aria-label") == fillp(C["build"]["s4"]["removeAria"], name=word)
+        # 다섯 자리 금액이 칸 안에 다 보이고, − 칸 + · 만원 · 빼기가 겹치거나 줄 밖으로 나가지 않아요 (320px 에서도)
+        amt = nrow.locator('input[data-ui-v2="import-amount"]')
+        assert amt.evaluate("e => e.scrollWidth <= e.clientWidth"), "다섯 자리 금액이 잘려요"
+        rb = nrow.bounding_box()
+        boxes = {k: nrow.locator(f'[data-ui-v2="{k}"]').first.bounding_box() for k in ("import-stepper", "import-unit", "import-remove")}
+        for k, b in boxes.items():
+            assert b["x"] >= rb["x"] - 0.5 and b["x"] + b["width"] <= rb["x"] + rb["width"] + 0.5, (k, b, rb)
+        def apart(a, b):
+            return a["x"] + a["width"] <= b["x"] + 0.5 or b["x"] + b["width"] <= a["x"] + 0.5 or a["y"] + a["height"] <= b["y"] + 0.5 or b["y"] + b["height"] <= a["y"] + 0.5
+        assert apart(boxes["import-unit"], boxes["import-remove"]) and apart(boxes["import-stepper"], boxes["import-remove"]) and apart(boxes["import-stepper"], boxes["import-unit"]), boxes
+        for b in nrow.locator('[data-ui-v2="import-step"]').all():
+            bb = b.bounding_box()
+            assert bb["width"] >= 44 - 0.5 and bb["height"] >= 44 - 0.5, bb             # 누르는 곳 44px
+        # 이미 넣은 종목의 코드: 그 종목으로 바꾸지 않고 이름 칸이 표시돼요 (다음은 기다려요)
+        name_in.fill("005930")
+        name_in.press("Tab")
+        assert page.locator('[data-import-row="name"]').count() == 1 and name_in.get_attribute("aria-invalid") == "true" and not action(page).is_enabled()
+        # 데이터에 있는 종목의 코드를 정확히 쓰면, 칸을 떠날 때 그 종목의 줄이 돼요 (금액으로, 쓴 금액 그대로)
+        name_in.fill("000660")
+        name_in.press("Tab")
+        hy = page.locator('[data-import-row="000660"]')
+        hy.wait_for(state="visible")
+        assert page.locator('[data-import-row="name"]').count() == 0 and hy.get_attribute("data-mode") == "amount"
+        assert hy.locator('input[data-ui-v2="import-amount"]').input_value() == "12345"
+        hy.locator('[data-ui-v2="import-remove"]').click()                       # 이 장면의 나머지는 그대로 (빼요)
+        assert page.locator('[data-import-row="000660"]').count() == 0
+        btn.click()
+        nrow = page.locator('[data-import-row="name"]')
+        nrow.wait_for(state="visible")
         R.names = sorted(set(R.names) | {"비상장 회사"}, key=len, reverse=True)   # 사용자가 넣은 이름이에요 (문구 파일 밖)
         nrow.locator('input[data-ui-v2="import-name"]').fill("비상장 회사")
         nrow.locator('input[data-ui-v2="import-amount"]').fill("100")
@@ -5542,6 +5581,8 @@ def scene_v193d2(R, files, width):
         card.locator('[data-ui-v2="pf-rules-edit"] button').click()
         at(page, "portfolio/rules/" + d["decks"][0]["id"])
         see(page, C["lim"]["title"])
+        assert page.locator('[data-ui-v2="app-bar"] button').first.get_attribute("aria-label") == C["co"]["back"]     # 단계가 아니에요
+        assert page.locator('[data-ui-v2="store-refused"]').count() == 0
         see(page, C["lim"]["sub"])
         stock, ind = page.locator('[data-ui-v2="limit-stock"]'), page.locator('[data-ui-v2="limit-ind"]')
         assert stock.input_value() == "30" and ind.input_value() == "35"
@@ -5561,6 +5602,8 @@ def scene_v193d2(R, files, width):
         at(page, "portfolio")
         dk = stored()["decks"][0]
         assert dk["limits"] == {"stock": 40, "ind": 50} and isinstance(dk.get("limitsTs"), int) and dk["limitsTs"] > 0, dk.get("limits")
+        side = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1.limits'))")          # 기록 옆에도 (리뷰 3)
+        assert side == {"v": 1, "decks": {dk["id"]: {"limits": {"stock": 40, "ind": 50}, "ts": dk["limitsTs"]}}}, side
         card = page.locator('[data-deck-id][data-kind="imported"]')
         assert fillp(C["pfr"]["stock"], x=40) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
         assert fillp(C["pfr"]["ind"], x=50) in card.locator('[data-ui-v2="pf-rule"][data-rule="ind"]').inner_text()
@@ -5719,6 +5762,7 @@ def main():
                    lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
                    lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
                    lambda: scene_v193d2(R, files, 390), lambda: scene_v193d2(R, files, 1280),           # v19.3d2 단계 · − / + · 이름으로 · 묶음 · 내 규칙 · 다 판 종목
+                   lambda: scene_v193d2(R, files, 320),                                                    # v19.3d2 320px (리뷰: 다섯 자리 금액 · 겹침)
                    lambda: scene_store_version(R, files, 390, False), lambda: scene_store_version(R, files, 390, True)):   # 기록 판 고침
             try:
                 fn()

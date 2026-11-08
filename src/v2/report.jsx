@@ -175,11 +175,14 @@ function ByStock({ st }) {
   const shades = holdingShades(st.view.rows.map((r) => r.w));
   const shadeOf = (r) => shades[st.view.rows.indexOf(r)] || HOLDING_SHADES[HOLDING_SHADES.length - 1];
   const cols = s.cards.length;
-  const grid = { display: "grid", gridTemplateColumns: `minmax(132px, 1fr) repeat(${cols}, 52px)`, alignItems: "center", columnGap: SPACE(1) };
+  // v19.3d2 review: the name column gives way down to 72px (it was 132px: 3 cards overflowed a 320px phone by 16px); what
+  // still does not fit scrolls inside the card, never the page
+  const NAME_MIN = 72;
+  const grid = { display: "grid", gridTemplateColumns: `minmax(${NAME_MIN}px, 1fr) repeat(${cols}, 52px)`, alignItems: "center", columnGap: SPACE(1) };
   return (
     <Section id="report-bystock" icon="list" title={C.rpt.byStock}>
-      <div style={{ overflowX: cols > 4 ? "auto" : "visible", marginTop: SPACE(3) }}>
-        <div style={{ minWidth: cols > 4 ? 132 + cols * 56 : undefined }}>
+      <div style={{ overflowX: "auto", marginTop: SPACE(3) }}>
+        <div style={{ minWidth: NAME_MIN + cols * 56 }}>
           <div style={{ ...grid, paddingBottom: SPACE(2), borderBottom: `1px solid ${COLOR.line}` }}>
             <span />
             {s.cards.map((c) => (

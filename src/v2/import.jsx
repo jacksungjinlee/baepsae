@@ -403,7 +403,7 @@ function DraftRow({ x, shade, total, onChange, onRemove, onNameDone }) {
         </span>
         {mode === "amount" && <span data-ui-v2="import-unit" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.app.manUnit}</span>}
         <button type="button" data-ui-v2="import-remove" aria-label={fill(C.build.s4.removeAria, { name: said })} onClick={onRemove}
-          style={{ ...tap, marginLeft: "auto", minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.s4.remove}</button>
+          style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginLeft: "auto" }) }}>{C.build.s4.remove}</button>
       </div>
       <div style={{ paddingLeft: wide ? SPACE(10) + SPACE(3) : 0 }}>
         {w != null && (
