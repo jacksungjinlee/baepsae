@@ -13,6 +13,10 @@
 // v19.3d2: the stepper's labels (종목 넣기 · 기준 · 점검); − and + around each quantity or amount (one share, or 10만원);
 // a pasted line whose stock is already listed by amount says so; with 금액으로 넣기, "+ 종목 더하기" adds a stock that is
 // not in the data by its name and an amount (stored with no code, marked unscored: its value is that amount as of today).
+// v19.3d2 review: a row with no name yet is left out of the total and the ring (its name field is marked, 다음 waits); a
+// name or code typed there that means one stock in the data exactly turns the row into that stock's own row when the
+// field is left (priced at the close, its amount kept); one that means a stock already listed is marked and 다음 waits.
+// The controls sit on their own line under the name (a 320px phone keeps − field + 만원 and 빼기 apart).
 // No 뱁이 (numbers on every step). No Korean here: src/copy/v2.js.
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, HOLDING_SHADES, holdingShades } from "../ui/tokens.js";
@@ -24,7 +28,7 @@ import { CoMark } from "./logo.jsx";
 import { defaultSettings, activeCards, num } from "./engine.js";
 import { deckState } from "./deckcalc.js";
 import { StepCards } from "./build.jsx";
-import { findStocks, parsePaste, okQty, draftOk, importedRecord, usdOf, wonPrice, marketKey } from "./pf.js";
+import { findStocks, parsePaste, okQty, draftOk, importedRecord, usdOf, wonPrice, marketKey, exactStock } from "./pf.js";
 import { qtyText } from "./pfview.jsx";
 import { Report } from "./report.jsx";
 import { withDeck, writeStore } from "./store.js";
@@ -99,20 +103,32 @@ function HoldingsStep({ load, importer, setImporter, go, onExit }) {
   const addName = () => setImporter((m) => ({ ...m, drafts: [...m.drafts, { key: "n" + Date.now().toString(36) + m.drafts.length, t: null, name: "", mode: "amount",
     qty: "", amount: "", avg: "", avgOpen: false }] }));
   const remove = (k) => setImporter((m) => ({ ...m, drafts: m.drafts.filter((d) => keyOf(d) !== k) }));
+  // a "+ 종목 더하기" row whose name or code means one stock in the data exactly, and not listed yet: that stock's own row,
+  // by amount (the amount typed stays), when the name field is left
+  const settle = (k) => setImporter((m) => {
+    const d = m.drafts.find((x) => keyOf(x) === k);
+    const s = d && d.t == null ? exactStock(stocks, d.name) : null;
+    if (!s || m.drafts.some((x) => x.t === s.t)) return m;
+    return { ...m, drafts: m.drafts.map((x) => (x === d ? { t: s.t, mode: "amount", qty: "", amount: d.amount, avg: "", avgOpen: false } : x)) };
+  });
   const results = useMemo(() => findStocks(stocks, q, 8), [stocks, q]);
   // values and weights of the rows that are ready (a quantity or an amount, and today's price)
   const rows = drafts.map((d) => {
     const s = byT.get(d.t) || null;
     const r = readDraft(d, s);
     const px = s ? wonPrice(s, fx) : null;
-    const value = d.t == null ? r.amountWon : !(px > 0) ? null : d.mode === "amount" ? r.amountWon : r.qty != null ? r.qty * px : null;
-    return { d, s, r, value: value > 0 ? value : null };
+    // a row added by name counts once it has a name (else it is left out of the total and the ring)
+    const value = d.t == null ? (r.name ? r.amountWon : null) : !(px > 0) ? null : d.mode === "amount" ? r.amountWon : r.qty != null ? r.qty * px : null;
+    // added by name with a name that means a stock already listed: marked, and 다음 waits
+    const same = d.t == null && r.name ? exactStock(stocks, r.name) : null;
+    const dupe = !!same && drafts.some((x) => x.t === same.t);
+    return { d, s, r, dupe, value: value > 0 ? value : null };
   });
   const ready = rows.filter((x) => x.value != null);
   const total = ready.reduce((a, x) => a + x.value, 0);
   const shades = holdingShades(rows.map((x) => (x.value != null && total > 0 ? x.value / total : null)));
   // every row must make a record store.js accepts (draftOk mirrors its checks), so 매일 점검 시작하기 can never be refused
-  const allOk = rows.length > 0 && rows.every((x) => (x.d.t == null ? draftOk({ t: null, name: x.r.name, mode: "amount", amountWon: x.r.amountWon })
+  const allOk = rows.length > 0 && rows.every((x) => (x.d.t == null ? !x.dupe && draftOk({ t: null, name: x.r.name, mode: "amount", amountWon: x.r.amountWon })
     : x.s && draftOk({ mode: x.d.mode, qty: x.r.qty, amountWon: x.r.amountWon }, x.s, fx)) && !x.r.badAvg);
   const us = rows.some((x) => usdOf(x.s));
   const md = mdText(load.data.pxDate);
@@ -140,7 +156,8 @@ function HoldingsStep({ load, importer, setImporter, go, onExit }) {
             <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.imp.cols}</span>
           </div>
           {rows.map((x, i) => (
-            <DraftRow key={keyOf(x.d)} x={x} shade={shades[i]} total={total} onChange={(patch) => setDraft(keyOf(x.d), patch)} onRemove={() => remove(keyOf(x.d))} />
+            <DraftRow key={keyOf(x.d)} x={x} shade={shades[i]} total={total} onChange={(patch) => setDraft(keyOf(x.d), patch)} onRemove={() => remove(keyOf(x.d))}
+              onNameDone={() => settle(keyOf(x.d))} />
           ))}
           {md && (
             <p data-ui-v2="import-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3) })}>
@@ -324,17 +341,22 @@ function stepped(value, mode, dir) {
 function StepButton({ label, sign, onClick, disabled }) {
   return (
     <button type="button" aria-label={label} disabled={disabled} onClick={onClick} data-ui-v2="import-step"
-      style={{ ...tap, width: SPACE(10), minHeight: TOUCH, flexShrink: 0, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.sm, background: COLOR.page,
+      style={{ ...tap, width: TOUCH, minHeight: TOUCH, flexShrink: 0, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.sm, background: COLOR.page,
         opacity: disabled ? 0.45 : 1, ...tx(SIZE.body, WEIGHT.heavy, COLOR.ink) }}><span aria-hidden="true">{sign}</span></button>
   );
 }
 // A copy line split at one {slot}: [before, after].
 const around = (tpl, slot) => { const i = tpl.indexOf(`{${slot}}`); return i < 0 ? [tpl, ""] : [tpl.slice(0, i), tpl.slice(i + slot.length + 2)]; };
 
-function DraftRow({ x, shade, total, onChange, onRemove }) {
-  const { d, s, r, value } = x;
+// The field for a quantity or an amount: wide enough for 6 digits, or a US quantity with 4 decimals.
+const FIELD_W = 96;
+function DraftRow({ x, shade, total, onChange, onRemove, onNameDone }) {
+  const { wide } = useLayout();
+  const { d, s, r, value, dupe } = x;
   const byName = d.t == null;
   const name = byName ? (r.name || "") : s ? s.nk : d.t;
+  // what a screen reader calls the row's buttons while it has no name yet
+  const said = name || C.app.tabs.stocks;
   const mode = d.mode === "amount" ? "amount" : "qty";
   const field = mode === "amount" ? d.amount : d.qty;
   const step = (dir) => { const v = stepped(field, mode, dir); if (v != null) onChange(mode === "amount" ? { amount: v } : { qty: v }); };
@@ -344,33 +366,46 @@ function DraftRow({ x, shade, total, onChange, onRemove }) {
   // the 평균 단가 (US: "$" in front; the won amount needs no unit word of its own).
   const [ab] = around(C.imp.avg, "price");
   const w = value != null && total > 0 ? value / total : null;
+  // the name field is marked when an amount is typed and there is no name yet, or the name means a stock already listed
+  const badName = byName && ((!r.name && clean(d.amount) !== "") || dupe);
   return (
-    <div data-import-row={byName ? "name" : d.t} data-mode={d.mode} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(3)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
-      <CoMark s={s} t={d.t} name={name || "?"} size={SPACE(10)} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {byName ? (
-          <input type="text" value={d.name} onChange={(e) => onChange({ name: e.target.value.slice(0, 120) })} placeholder={C.imp.search} aria-label={C.imp.search}
-            data-ui-v2="import-name" autoComplete="off"
-            style={{ width: "100%", boxSizing: "border-box", minHeight: TOUCH - SPACE(1), border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `0 ${SPACE(2)}px`,
-              background: COLOR.surface, ...tx(SIZE.body, WEIGHT.heavy, COLOR.ink) }} />
-        ) : (
-          <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap" }}>
-            <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{name}</span>
-            <span data-ui-v2="import-market" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{marketOf(s)}</span>
-          </div>
-        )}
-        <div style={{ display: "flex", alignItems: "center", columnGap: SPACE(2), rowGap: SPACE(1), flexWrap: "wrap", marginTop: SPACE(1) }}>
-          {mode === "qty" && <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.plan.qty}</span>}
-          {/* − field + (and 만원) stay together on one line, as on the board */}
-          <span data-ui-v2="import-stepper" style={{ display: "inline-flex", alignItems: "center", gap: SPACE(1), flexWrap: "nowrap" }}>
-            <StepButton sign={MINUS} label={fill(mode === "amount" ? C.imp.amountDown : C.imp.qtyDown, { name })} disabled={stepped(field, mode, -1) == null} onClick={() => step(-1)} />
-            {mode === "amount"
-              ? <NumField value={d.amount} onChange={(v) => onChange({ amount: v })} label={C.today.value} invalid={r.badAmount} dataUi="import-amount" width={64} />
-              : <NumField value={d.qty} onChange={(v) => onChange({ qty: v })} label={C.plan.qty} invalid={r.badQty} decimals={usd} dataUi="import-qty" width={64} />}
-            <StepButton sign="+" label={fill(mode === "amount" ? C.imp.amountUp : C.imp.qtyUp, { name })} onClick={() => step(1)} />
-            {mode === "amount" && <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.app.manUnit}</span>}
-          </span>
+    <div data-import-row={byName ? "name" : d.t} data-mode={d.mode} style={{ padding: `${SPACE(3)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
+      <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
+        <CoMark s={s} t={d.t} name={name || "?"} size={SPACE(10)} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {byName ? (
+            <input type="text" value={d.name} onChange={(e) => onChange({ name: e.target.value.slice(0, 120) })} onBlur={onNameDone}
+              placeholder={C.imp.search} aria-label={C.imp.search} aria-invalid={badName ? "true" : undefined} data-ui-v2="import-name" autoComplete="off"
+              style={{ width: "100%", boxSizing: "border-box", minHeight: TOUCH - SPACE(1), border: badName ? `2px solid ${COLOR.watch}` : `1px solid ${COLOR.border}`,
+                borderRadius: RADIUS.sm, padding: `0 ${SPACE(2)}px`, background: COLOR.surface, ...tx(SIZE.body, WEIGHT.heavy, COLOR.ink) }} />
+          ) : (
+            <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap" }}>
+              <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{name}</span>
+              <span data-ui-v2="import-market" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{marketOf(s)}</span>
+            </div>
+          )}
         </div>
+        <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          {value != null && <span data-ui-v2="import-value" style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}><Amount text={wonText(value)} /></span>}
+          {w != null && <span data-ui-v2="import-weight" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{Math.round(w * 100)}%</span>}
+        </div>
+      </div>
+      {/* the controls on their own line (under the name on a wide screen): − field + stay together, 만원 and 빼기 wrap */}
+      <div data-ui-v2="import-controls" style={{ display: "flex", alignItems: "center", columnGap: SPACE(2), rowGap: SPACE(1), flexWrap: "wrap", marginTop: SPACE(2),
+        paddingLeft: wide ? SPACE(10) + SPACE(3) : 0 }}>
+        {mode === "qty" && <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.plan.qty}</span>}
+        <span data-ui-v2="import-stepper" style={{ display: "inline-flex", alignItems: "center", gap: SPACE(1), flexWrap: "nowrap" }}>
+          <StepButton sign={MINUS} label={fill(mode === "amount" ? C.imp.amountDown : C.imp.qtyDown, { name: said })} disabled={stepped(field, mode, -1) == null} onClick={() => step(-1)} />
+          {mode === "amount"
+            ? <NumField value={d.amount} onChange={(v) => onChange({ amount: v })} label={C.today.value} invalid={r.badAmount} dataUi="import-amount" width={FIELD_W} />
+            : <NumField value={d.qty} onChange={(v) => onChange({ qty: v })} label={C.plan.qty} invalid={r.badQty} decimals={usd} dataUi="import-qty" width={FIELD_W} />}
+          <StepButton sign="+" label={fill(mode === "amount" ? C.imp.amountUp : C.imp.qtyUp, { name: said })} onClick={() => step(1)} />
+        </span>
+        {mode === "amount" && <span data-ui-v2="import-unit" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.app.manUnit}</span>}
+        <button type="button" data-ui-v2="import-remove" aria-label={fill(C.build.s4.removeAria, { name: said })} onClick={onRemove}
+          style={{ ...tap, marginLeft: "auto", minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.s4.remove}</button>
+      </div>
+      <div style={{ paddingLeft: wide ? SPACE(10) + SPACE(3) : 0 }}>
         {w != null && (
           <div aria-hidden="true" style={{ height: SPACE(1) + 2, background: COLOR.page, borderRadius: 999, marginTop: SPACE(2) }}>
             <div style={{ width: `${Math.min(100, w * 100)}%`, height: "100%", background: shade || HOLDING_SHADES[HOLDING_SHADES.length - 1], borderRadius: 999 }} />
@@ -385,12 +420,6 @@ function DraftRow({ x, shade, total, onChange, onRemove }) {
               style={{ ...tap, border: "none", background: "none", minHeight: TOUCH, padding: 0, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.imp.addAvg}</button>
           )}
         </div>}
-      </div>
-      <div style={{ textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-        {value != null && <span data-ui-v2="import-value" style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}><Amount text={wonText(value)} /></span>}
-        {w != null && <span data-ui-v2="import-weight" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{Math.round(w * 100)}%</span>}
-        <button type="button" aria-label={fill(C.build.s4.removeAria, { name: name || C.imp.search })} onClick={onRemove}
-          style={{ ...tap, marginTop: "auto", minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.build.s4.remove}</button>
       </div>
     </div>
   );

@@ -278,6 +278,9 @@ export function App({ source }) {
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
   // v19.3d2: 내 규칙 정하기 of a 가진 종목 portfolio that exists (else 포트폴리오, where the portfolio would be)
   const rulesDeck = tab === "portfolio" && loc.rules ? store.data.decks.find((d) => d.id === loc.rules && d.kind === "imported") || null : null;
+  // entering 내 규칙 정하기: a refusal left from another screen does not show there (only a refused 저장 of this screen)
+  const rulesId = rulesDeck ? rulesDeck.id : null;
+  useEffect(() => { if (rulesId) setStore((s) => (s.refused ? { ...s, refused: false } : s)); }, [rulesId]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     if (inBuild) {

@@ -36,16 +36,18 @@ export function Limits({ deck, store, setStoreData, onBack, pad }) {
   const [stock, setStock] = useState(String(cur.stock));
   const [ind, setInd] = useState(String(cur.ind));
   const s = readLimit(stock), i = readLimit(ind);
+  const [tried, setTried] = useState(false);              // the refused line only after a 저장 here (app.jsx clears an older one)
   const ok = s != null && i != null;
   const save = () => {
     const next = ok ? withLimits(store.data, deck.id, s, i, Date.now()) : null;
     if (!next) return;
+    setTried(true);
     setStoreData(next);                                  // refused (would not read back): the line shows here, and this stays
     if (validStore({ ...next, v: versionFor(next) }, todayKst())) onBack();
   };
   return (
     <Page pad={pad}>
-      <AppBar onBack={onBack} backLabel={C.build.prevStep} />
+      <AppBar onBack={onBack} backLabel={C.co.back} />
       <ScreenTitle>{C.lim.title}</ScreenTitle>
       <p data-ui-v2="limits-deck" style={tx(SIZE.sm, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{shownName(deck.name)}</p>
       <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{C.lim.sub}</p>
@@ -56,7 +58,7 @@ export function Limits({ deck, store, setStoreData, onBack, pad }) {
           style={{ border: "none", background: "none", minHeight: TOUCH, padding: 0, marginTop: SPACE(1), cursor: "pointer",
             ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textDecoration: "underline", textUnderlineOffset: 3 }) }}>{C.lim.reset}</button>
       </Card>
-      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
+      {tried && store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
       <div data-ui-v2="limits-save" style={{ marginTop: SPACE(4) }}>
         <Button kind="primary" disabled={!ok || !store.writable} onClick={save}>{C.lim.save}</Button>

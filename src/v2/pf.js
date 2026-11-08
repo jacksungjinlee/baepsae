@@ -313,12 +313,17 @@ export function squarify(items, x, y, w, h) {
 // Per holding: its market's 2022 fall (y2022.js: Korea −24.9%, US in won −14.7%) × its β low and × its β high (β ∓ 2 ×
 // betaSE); the cushion ETFs use their real 2022 result (no band). Each end added up by weight over the holdings with a
 // figure; holdings without β (or a β error above 0.5) are left out (out: names, share: their weight).
-// -> { ok: false, why: "none" | "half", share, out } | { ok: true, est: "range" | "one" | "uncertain", small, big (whole %,
-//    size of the fall, smaller first), amountSmall, amountBig (won), share, out, known }
+// v19.3d2 review: the left-out holdings in two kinds, each with its own line (report.jsx Y2022): noPrice = names of the
+// holdings with no data at all (added by name with an amount: no 2022 price), noBeta / noBetaShare = the holdings in the
+// data left out for another reason (no usable β, or a fund with no 2022 figure: #83's "베타·변동성 자료가 없어요" line).
+// A listing after 2022 is estimated the same way when it has a β (어떻게 계산했나요 says so), so it is never "no 2022 price".
+// -> { ok: false, why: "none" | "half", share, out } | { ok: true, est: "range" | "one" |
+//    "uncertain", small, big (whole %, size of the fall, smaller first), amountSmall, amountBig (won), share, out, noPrice,
+//    noBeta, noBetaShare, known }
 export function range2022(view, R = R2022) {
   if (!view.ok) return { ok: false, why: "none", share: 1, out: [] };
-  let lo = 0, hi = 0, known = 0;
-  const out = [];
+  let lo = 0, hi = 0, known = 0, noBetaShare = 0;
+  const out = [], noPrice = [], noBeta = [];
   for (const r of view.rows) {
     const s = r.s;
     let a = null, b = null;
@@ -326,18 +331,23 @@ export function range2022(view, R = R2022) {
       const m = s.cls === "kr" ? R.kr : R.usWon;
       a = m * (s.beta - 2 * s.betaSE); b = m * (s.beta + 2 * s.betaSE);
     } else if (s && R.etf && num(R.etf[s.t]) != null) { a = R.etf[s.t]; b = R.etf[s.t]; }
-    if (a == null) { out.push(r.nk); continue; }
+    if (a == null) {
+      out.push(r.nk);
+      if (s) { noBeta.push(r.nk); noBetaShare += r.w || 0; } else noPrice.push(r.nk);
+      continue;
+    }
     lo += r.w * Math.max(a, b); hi += r.w * Math.min(a, b);      // the market fell: the high β gives the bigger fall
     known += r.w;
   }
   const share = Math.max(0, 1 - known);
+  const parts = { out, noPrice, noBeta, noBetaShare };
   if (!(known > 0)) return { ok: false, why: "none", share, out };
   if (share > 0.5 + EPS) return { ok: false, why: "half", share, out };
   const fSmall = -lo / known, fBig = -hi / known;                // size of the fall over the holdings with a figure
   const small = Math.round(fSmall * 100), big = Math.round(fBig * 100);
   const value = view.total * known;
-  if (!(small > 0)) return { ok: true, est: "uncertain", share, out, known };
-  return { ok: true, est: small === big ? "one" : "range", small, big, fSmall, fBig, amountSmall: value * fSmall, amountBig: value * fBig, share, out, known };
+  if (!(small > 0)) return { ok: true, est: "uncertain", share, ...parts, known };
+  return { ok: true, est: small === big ? "one" : "range", small, big, fSmall, fBig, amountSmall: value * fSmall, amountBig: value * fBig, share, ...parts, known };
 }
 
 // ---------------- 1년 배당 (Part G 6) ----------------
@@ -391,7 +401,9 @@ export function findStocks(stocks, q, n = 8) {
   const cap = (s) => (num(s.cap) != null ? s.cap : -1);
   return g.flatMap((x) => x.sort((a, b) => cap(b) - cap(a))).slice(0, n);
 }
-// The one stock a name or code means exactly (code, Korean name or English name, any case), or null.
+// The one stock a name or code means exactly (code, Korean name or English name, any case), or null. Also used by 가진
+// 종목 넣기's "+ 종목 더하기" row (import.jsx): a name or code typed there that means a stock in the data becomes that stock.
+export function exactStock(stocks, q) { return exact(stocks, q); }
 function exact(stocks, q) {
   const query = norm(q), up = query.toUpperCase();
   if (!query) return null;

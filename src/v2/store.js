@@ -956,6 +956,77 @@ export function setAsideCopies(key) {
   return out;
 }
 
+// ---------------- 내 규칙 limits beside the records (v19.3d2 review) ----------------
+// key + ".limits" = { v: 1, decks: { <portfolio id>: { limits?: { stock?, ind? }, ts } } }: each 가진 종목 portfolio's latest
+// limits (내 규칙 정하기) and when they were saved (limitsTs). v19.3d (#83: a tab still open from before, or after a revert)
+// never reads or writes this key, but it can drop limits: its merge keeps the current copy's limits and its check of what
+// a copy holds ignores them, so a copy holding later limits can be merged away. Every write of this app records here the
+// limits it writes when they were saved later than what is here; on start, limits saved later than the records hold come
+// back from here (the screens say 합쳤어요 when that changes what they show). A bad entry is set aside (the whole text, as an
+// ".unreadable." copy, which 기록 내보내기 carries) and the good entries are used; nothing here is ever pruned.
+export const LIMITS_SUFFIX = ".limits";
+const okLimitsPart = (l) => plainObj(l) && Object.keys(l).every((k) => ["stock", "ind"].includes(k) && Number.isInteger(l[k]) && l[k] >= 1 && l[k] <= 100);
+const okSideEntry = (e) => plainObj(e) && okTs(e.ts) && Object.keys(e).every((k) => k === "limits" || k === "ts") && (e.limits == null || okLimitsPart(e.limits));
+const sideText = (map) => JSON.stringify({ v: 1, decks: Object.fromEntries([...map].map(([id, e]) => [id, { ...(e.limits ? { limits: e.limits } : {}), ts: e.ts }])) });
+// -> Map(id -> { limits | null, ts }) of the good entries (a bad text is set aside first and the good entries rewritten)
+export function readSideLimits(key) {
+  const map = new Map();
+  let raw = null;
+  try { raw = localStorage.getItem(key + LIMITS_SUFFIX); } catch (e) { return map; }
+  if (raw == null) return map;
+  let d = null;
+  try { d = JSON.parse(raw); } catch (e) { d = null; }
+  let bad = 0;
+  if (plainObj(d) && d.v === 1 && plainObj(d.decks)) {
+    for (const [id, e] of Object.entries(d.decks)) {
+      if (id && id.length <= 200 && okSideEntry(e)) map.set(id, { limits: e.limits || null, ts: e.ts }); else bad++;
+    }
+  } else bad = 1;
+  if (bad) {
+    console.warn(`[v2] ${key + LIMITS_SUFFIX}: ${bad} entr${bad === 1 ? "y" : "ies"} not readable; the text is kept aside and the other ${map.size} used`);
+    try {
+      localStorage.setItem(backupKey(key, ".unreadable."), raw);
+      if (map.size) localStorage.setItem(key + LIMITS_SUFFIX, sideText(map)); else localStorage.removeItem(key + LIMITS_SUFFIX);
+    } catch (e) { console.warn("[v2] could not set aside " + key + LIMITS_SUFFIX + " (storage full?): it stays as it is"); }
+  }
+  return map;
+}
+// After a write: the limits it holds, where they were saved later than what the side key holds (a tie keeps the side's).
+function keepSideLimits(key, data) {
+  try {
+    const decks = (data.decks || []).filter((x) => plainObj(x) && x.kind === "imported" && okTs(x.limitsTs));
+    if (!decks.length) return;
+    const map = readSideLimits(key);
+    let changed = false;
+    for (const x of decks) {
+      const e = map.get(x.id);
+      if (e && e.ts >= x.limitsTs) continue;
+      map.set(x.id, { limits: plainObj(x.limits) ? x.limits : null, ts: x.limitsTs });
+      changed = true;
+    }
+    if (changed) localStorage.setItem(key + LIMITS_SUFFIX, sideText(map));
+  } catch (e) {
+    console.warn("[v2] could not keep the limits beside the records (" + ((e && e.message) || e) + "); they are in the records");
+  }
+}
+// On start: limits saved later than the records hold, back from the side key. -> { data, visible } (data null: nothing
+// to bring back; visible: what the screens show changes) — only 가진 종목 portfolios (only they have limits).
+function sideLimitsInto(key, data) {
+  const map = readSideLimits(key);
+  if (!map.size || !plainObj(data) || !Array.isArray(data.decks)) return { data: null, visible: false };
+  let any = false, visible = false;
+  const decks = data.decks.map((x) => {
+    const e = plainObj(x) && x.kind === "imported" ? map.get(x.id) : null;
+    if (!e) return x;
+    const cur = limitsEdit(x);
+    if (cur && okTs(cur.ts) && cur.ts >= e.ts) return x;
+    any = true;
+    if (limitValues(x.limits) !== limitValues(e.limits)) visible = true;
+    return withLimitsEdit(x, e);
+  });
+  return any ? { data: { ...data, decks }, visible } : { data: null, visible: false };
+}
+
 // { data, writable, locked, problems, restored, unmerged }: locked = something stored could not be read (all of it, or
 // some portfolios: problems names them). It stays untouched; the first write moves it to a backup key first (see
 // writeStore), so 기록 불러오기 and 샀어요 still work. restored = records another tab left were merged back and changed the
@@ -993,6 +1064,17 @@ export function readStore(key = STORE_KEY, today) {
       if (m && m.data) out = { ...out, data: m.data };
       if (m && m.notice) out = { ...out, restored: true };
       if (m && m.unmerged) out = { ...out, unmerged: true };
+      // limits saved later than the records hold come back from beside them (an earlier-app tab dropped them)
+      if (writable && !out.locked) {
+        try {
+          const s = sideLimitsInto(key, out.data);
+          if (s.data && validStore(s.data, today)) {
+            if (!writeStore(s.data, key, today)) console.warn("[v2] limits brought back from " + key + LIMITS_SUFFIX + " could not be written: shown for now, back again on the next start");
+            out = { ...out, data: { ...s.data, v: versionFor(s.data) }, ...(s.visible ? { restored: true } : {}) };
+            console.warn("[v2] limits saved later than the records held were brought back from " + key + LIMITS_SUFFIX);
+          }
+        } catch (e) { console.warn("[v2] could not read the limits beside the records (" + ((e && e.message) || e) + "); the records as read are used"); }
+      }
     }
   }
   // this app's last write starts with the records as read, when there is none yet (see the tab section)
@@ -1057,6 +1139,7 @@ export function writeStore(d, key = STORE_KEY, today) {
       throw e;
     }
     lastText.set(key, text);
+    keepSideLimits(key, next);                                   // 내 규칙 limits beside the records (see that section)
     // .mine follows every write once the records exist; the very first records written into an empty storage get it
     // at the next write or start (readStore), and meanwhile an open tab keeps them itself (keepOwnText)
     if (cur != null || mine != null) {

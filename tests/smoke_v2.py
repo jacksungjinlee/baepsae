@@ -5426,8 +5426,11 @@ def scene_v193d2(R, files, width):
     by = {s["t"]: s for s in data["data.json"]["stocks"]}
     by["000990"].update(ind="semi_eq", indName="반도체 장비")              # 시험 데이터에 없는 두 업종을 한 종목씩
     by["080220"].update(ind="elec_parts", indName="전자부품")
-    for t in ("005930", "000990", "080220", "005380"):                   # 2022년 추정에 쓰는 betaSE (우선주는 없어요 → 이름으로 빠져요)
+    for t in ("005930", "000990", "080220", "005380"):                   # 2022년 추정에 쓰는 betaSE
         by[t]["betaSE"] = 0.05
+    # 삼성전자우는 2022년 주가가 있지만 쓸 수 있는 베타가 없어요 (betaSE 없음): #83 의 '베타·변동성 자료가 없어요' 줄(비중)로 빠져요.
+    # 2022년 주가가 없는 종목은 이름으로 넣은 '비상장 회사' 하나뿐이에요.
+    by["005935"].pop("betaSE", None)
     srv, ctx, page, base = R.open(build_site(data), width, device=pc_device(width) if wide else None)
     stored = lambda: page.evaluate(STORED_JS)
 
@@ -5514,7 +5517,12 @@ def scene_v193d2(R, files, width):
         ind = page.locator('[data-ui-v2="report"] [data-ui-v2="pf-rule"][data-rule="ind"]')
         assert C["rpt"]["chipGroup"] in ind.inner_text(), ind.inner_text()
         out = page.locator('[data-ui-v2="y2022-out"]')
-        assert out.inner_text() == fillp(C["rpt"]["y2022Out"], n=2, names="삼성전자우, 비상장 회사"), out.inner_text()
+        assert out.inner_text() == fillp(C["rpt"]["y2022Out"], n=1, names="비상장 회사"), out.inner_text()
+        total = 4 * by["005930"]["price"] + 10 * by["000990"]["price"] + 15 * by["080220"]["price"] + 10 * by["005935"]["price"] + 2000000 + 1000000
+        share = 10 * by["005935"]["price"] / total * 100                  # 삼성전자우의 비중 (deckcalc.js missingPct 처럼)
+        pct = f"{math.floor(share + 0.5):,}" if share >= 1 else f"{max(share, 0.1):.1f}"
+        part = page.locator('[data-ui-v2="y2022-partial"]')
+        assert part.inner_text() == fillp(C["plan"]["riskPartial"], pct=pct), (part.inner_text(), pct)
         assert page.locator('[data-ui-v2="report-unscored"]').inner_text() == fillp(C["rpt"]["unscored"], n=2, names="삼성전자우, 비상장 회사")
         floor_ok(page, "점검 (v19.3d2)")
         no_hscroll(page, width)

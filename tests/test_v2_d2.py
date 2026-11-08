@@ -149,6 +149,37 @@ def test_limits_keep_the_later_save_across_two_copies_and_a_records_file():
     assert got["same"] == {"ts": 4000}            # 저장 at the defaults still records when: the latest 저장 wins a merge
 
 
+def test_the_2022_estimate_names_only_holdings_with_no_2022_price():
+    """v19.3d2 review: of the holdings the 2022 estimate leaves out, only those with no data at all (added by name with an
+    amount) are "2022년 주가가 없는 종목" (noPrice). Holdings in the data left out for another reason (no β, a β error above
+    0.5, a fund with no 2022 figure — QQQ · SCHD · KODEX 200 · 맥쿼리인프라 on real data) go to noBeta and its share (#83's line).
+    A listing after 2022 with a β is estimated like any other (어떻게 계산했나요 says so)."""
+    got = run("""const RR = { kr: -0.249, usWon: -0.147, etf: { '114260': -0.0246 } };
+      const S2 = [kr('000010', '가나전자', 'semi', '반도체'), { ...kr('000020', '상장이후', 'semi_eq', '반도체 장비'), listed: '2024-03-02' },
+        { ...kr('005935', '가나전자우', 'semi', '반도체'), betaSE: null }, { ...kr('000030', '큰오차', 'elec_parts', '전자부품'), betaSE: 0.8 },
+        { ...kr('069500', 'KODEX 200', null, null), etf: true }, { ...kr('088980', '맥쿼리인프라', null, null), fund: true, beta: null },
+        { t: 'QQQ', nk: 'Invesco QQQ', ne: 'Invesco QQQ', cls: 'us', ccy: 'USD', price: 500, etf: true, beta: 1.1, betaSE: 0.05 },
+        { ...kr('114260', 'KODEX 국고채3년', null, null), etf: true }];
+      const deck = (rows, named = []) => ({ ...deckOf(rows), imported: [...deckOf(rows).imported, ...named] });
+      const nm = (nk, won) => ({ nk, ccy: 'KRW', amountWon: won, date: T, unscored: true });
+      const est = (d) => { const e = P.range2022(P.pfRows(d, { ...ctxOf(S2), fx: 1300 }), RR); return { ok: e.ok, out: e.out, noPrice: e.noPrice, noBeta: e.noBeta, share: Math.round((e.noBetaShare || 0) * 1000) / 1000 }; };
+      out = {
+        named: est(deck([['000010', 100], ['000020', 100]], [nm('비상장 회사', 1000000)])),
+        data: est(deck([['000010', 2000], ['005935', 100], ['000030', 100], ['069500', 100], ['088980', 100], ['QQQ', 2], ['114260', 100]])),
+        both: est(deck([['000010', 400], ['005935', 100]], [nm('비상장 회사', 1000000)])),
+      };""")
+    # only name-added rows: the new line names them; nothing in the data is left out (the listing after 2022 is estimated)
+    assert got["named"] == {"ok": True, "out": ["비상장 회사"], "noPrice": ["비상장 회사"], "noBeta": [], "share": 0}
+    # in the data, no usable β or no 2022 figure: never "2022년 주가가 없는"; the cushion ETF with a real 2022 result stays in
+    d = got["data"]
+    assert d["ok"] and d["noPrice"] == [] and d["noBeta"] == ["가나전자우", "큰오차", "KODEX 200", "맥쿼리인프라", "Invesco QQQ"], d
+    left = 4 * 100 * 10000 + 2 * 500 * 1300                                # 1주 10,000원 × 100주씩 넷, QQQ 2주 × $500 × 1,300원
+    assert d["share"] == round(left / (2000 * 10000 + 100 * 10000 + left), 3), d
+    # both kinds: each its own list (two lines on the screen)
+    assert got["both"]["noPrice"] == ["비상장 회사"] and got["both"]["noBeta"] == ["가나전자우"]
+    assert got["both"]["share"] == round(1000000 / (5000000 + 1000000), 3)
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""
