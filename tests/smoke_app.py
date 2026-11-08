@@ -892,6 +892,11 @@ def scene_missing_holding(R, files):
         # 저장할 때 이름이 붙어요 (나중에 빠지면 코드 대신 이름이 나오게). 미국 종목·빠진 종목은 코드 그대로
         named = {h["t"]: h.get("nk") for h in st["holdings"]}
         assert named["005930"] == "삼성전자" and named["STRC"] is None, named
+        # 영어 장면이 ② 구성·한국어로 돌아온 것도 저장될 때까지 기다려요 (자동 저장은 마지막 변경 0.8초 뒤). 그 전에 다시 불러오면
+        # ④ 내보내기(또는 영어)로 열려, 아래 'STRC 가 돌아오면' 확인이 ②의 '보통 해 ±' 를 끝내 못 찾았어요 (바쁜 기계에서 가끔 실패한 이유)
+        poll(page, "localStorage.getItem('baepsae_v10_slot_smiss')",
+             lambda v: bool(v) and json.loads(v).get("stage") == 1 and json.loads(v).get("lang") == "ko",
+             "② 구성·한국어로 돌아온 단계가 저장되지 않았어요")
         page.reload(wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         see(page, "빠진 종목 시험")
@@ -1251,6 +1256,27 @@ def scene_rates_fail(R, files):
     ctx.close(); srv.shutdown()
 
 
+# 서비스워커 장면: 지금(v10) 워커를 기억하고 controllerchange 를 세요. 페이지가 그 워커의 관리를 받는지 돌려줘요.
+SW_MARK = """async () => { const r = await navigator.serviceWorker.getRegistration();
+  Object.assign(window, { __oldSW: r && r.active, __swChanges: 0, __swChecks: 0, __swBusy: false, __swErr: null });
+  navigator.serviceWorker.addEventListener('controllerchange', () => { window.__swChanges += 1; });
+  if (r) r.addEventListener('updatefound', () => { const w = r.installing;     // 새 워커 설치가 실패하면(redundant) 바로 오류로 남겨요
+    if (w) w.addEventListener('statechange', () => { if (w.state === 'redundant' && !window.__swErr) window.__swErr = 'new worker install failed (redundant)'; }); });
+  return !!(r && r.active && navigator.serviceWorker.controller === r.active); }"""
+# 브라우저의 업데이트 확인(registration.update())을 많아야 두 번 시작해요. 첫 확인은 새 sw.js 를 쓰기 전에 이미 시작된 확인(예: 다시
+# 불러오기가 건 확인)에 합쳐져 예전 파일을 읽고 끝날 수 있어요. 두 번째는 그 확인이 끝난 뒤에 시작하니 반드시 새 파일을 읽어요.
+# 새 워커(installing · waiting · 다른 active)가 이미 있거나, 우리 확인이 진행 중이거나, 오류가 났으면 시작하지 않아요. 오류는 남겨요.
+SW_CHECK = """async () => { const r = await navigator.serviceWorker.getRegistration();
+  if (!r || r.installing || r.waiting || r.active !== window.__oldSW || window.__swBusy || window.__swErr || window.__swChecks >= 2) return;
+  window.__swBusy = true;
+  r.update().catch((e) => { window.__swErr = String(e); }).finally(() => { window.__swBusy = false; window.__swChecks += 1; }); }"""
+# 새 워커가 activated 이고, 예전 워커가 아니고, 이 페이지의 controller 이고, controllerchange 가 왔는지
+SW_NEW = """async () => { const r = await navigator.serviceWorker.getRegistration(); const a = r && r.active, c = navigator.serviceWorker.controller;
+  return { ready: !!(a && a !== window.__oldSW && a.state === 'activated' && c === a && window.__swChanges > 0), err: window.__swErr,
+           checks: window.__swChecks, changes: window.__swChanges, installing: !!(r && r.installing), waiting: !!(r && r.waiting),
+           active: a ? (a === window.__oldSW ? 'old ' : 'new ') + a.state : null, controller: c ? (c === a ? 'active' : 'other') : null }; }"""
+
+
 def scene_service_worker(R, files):
     f = json.loads(json.dumps(files, allow_nan=True))
     f["corp.json"]["__v"] = "A"
@@ -1274,14 +1300,23 @@ def scene_service_worker(R, files):
     R.check(page, "서비스워커", "예전 v10 워커: corp.json 이 얼어붙음 (재현)", old_worker)
 
     def new_worker():
-        shutil.copy(os.path.join(ROOT, "sw.js"), os.path.join(site, "sw.js"))
-        last = [0.0]
-
-        def nudge():   # 업데이트 확인이 이미 진행 중이면 합쳐지므로, 새 워커가 잡힐 때까지 몇 번 다시 요청해요
-            if time.time() - last[0] > 2:
-                last[0] = time.time()
-                page.evaluate("navigator.serviceWorker.getRegistration().then(r => r && r.update()).then(() => 1, () => 0)")
-        poll(page, "caches.keys()", lambda k: "baepsae-v10" not in k, "baepsae-v10 캐시가 지워지지 않았어요", every=nudge)
+        assert page.evaluate(SW_MARK), "새 sw.js 를 올리기 전에 페이지가 v10 워커의 관리를 받지 않아요"
+        sw, tmp = os.path.join(site, "sw.js"), os.path.join(site, "sw.js.new")
+        # 시험 서버는 If-Modified-Since 를 파일 수정 시각(초 단위)과 비교해요. 새 sw.js 가 예전 것과 같은 초에 쓰이면 304 를
+        # 받아 브라우저가 예전 워커를 그대로 둬요 (CI 에서 가끔 실패한 이유). 실제 배포처럼 새 파일이 확실히 나중에 쓰인 것으로 맞추고,
+        # 다 쓴 파일로 한 번에 바꿔요 (업데이트 확인이 반쯤 쓴 파일을 읽지 않게).
+        served = int(os.stat(sw).st_mtime)         # 브라우저가 받은 Last-Modified (초 단위로 잘림)
+        shutil.copy(os.path.join(ROOT, "sw.js"), tmp)
+        later = max(os.stat(tmp).st_mtime, served + 1)
+        os.utime(tmp, (later, later))
+        os.replace(tmp, sw)
+        assert int(os.stat(sw).st_mtime) > served, "새 sw.js 의 수정 시각이 예전 것보다 늦지 않아요"
+        # 진짜 조건을 기다려요: 새 워커가 activated 가 되고 이 페이지를 넘겨받음 (controllerchange). 업데이트 확인이 오류로
+        # 끝나면 바로 실패, 20초 안에 안 되면 실패예요.
+        v = poll(page, SW_NEW, lambda s: s["ready"] or bool(s["err"]), "새 워커가 이 페이지를 넘겨받지 않았어요",
+                 every=lambda: page.evaluate(SW_CHECK))
+        assert not v["err"], f"새 sw.js 업데이트 확인이 실패했어요: {v['err']}"
+        assert "baepsae-v10" not in page.evaluate(keys), "baepsae-v10 캐시가 지워지지 않았어요"
         page.reload(wait_until="domcontentloaded")
         assert page.evaluate(get_v) == "B", "새 워커인데도 예전 corp.json 이에요"
         k = page.evaluate(keys)
