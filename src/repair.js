@@ -77,19 +77,21 @@ export function epsBase(co, i) {
 }
 
 // The period behind a per-share figure, for its label ("최근 4개 분기" or "사업보고서"). in: corp.json epsIn or bpsIn. When
-// the re-read wrote one with p, p decides ("fy" = the 사업보고서, "YYYY.QQ" = the latest four quarters to that quarter);
+// the re-read wrote one with p, p decides ("fy" = the 사업보고서; "ttm" = the latest four quarters to this company's bq, which
+// is what the pipeline writes (fetch_data.py, validate_data.py EPS_P); "YYYY.QQ" = the latest four quarters to that quarter);
 // otherwise corp.json bq (the TTM quarter, as before) or the 사업보고서. -> { fy: true } | { y, q } | null (a p that
-// cannot be read: no label rather than a wrong one).
+// cannot be read, or "ttm" without a readable bq: no label rather than a wrong one).
 const Q_RX = /^(\d{4})\.([1-4])Q$/;
-function periodOf(p) {
+function periodOf(p, bq) {
   if (p === "fy") return { fy: true };
-  const m = typeof p === "string" ? Q_RX.exec(p) : null;
+  const q = p === "ttm" ? bq : p;
+  const m = typeof q === "string" ? Q_RX.exec(q) : null;
   return m ? { y: Number(m[1]), q: Number(m[2]) } : null;
 }
 export function periodFrom(co, key) {
   if (!co || typeof co !== "object") return null;
   const r = co[key];
-  if (r && typeof r === "object" && r.p != null) return periodOf(r.p);
+  if (r && typeof r === "object" && r.p != null) return periodOf(r.p, co.bq);
   const m = typeof co.bq === "string" ? Q_RX.exec(co.bq) : null;
   return m ? { y: Number(m[1]), q: Number(m[2]) } : { fy: true };
 }
