@@ -36,8 +36,22 @@ export async function loadAll(now, opts) {
 
 // v19.1a: disc.json, only when a company page opens or (v19.3e) 홈 opens with a Korean stock held (the live page; app.jsx
 // asks once per visit). -> { ok, data, error }
+// #90 review follow-up (2026-11-08): it gives up after REFETCH_TIMEOUT_MS, the data refetch's limit. A hung connection
+// would otherwise keep 홈's 오늘 볼 것 and the 공시 tab waiting for good: a timeout is a plain failure (the load-failure
+// message there), with the reason in the console (app.jsx).
 export function loadDisc() {
-  return loadJson("./disc.json", CHECKS.disc);
+  return loadWithin("./disc.json", CHECKS.disc, REFETCH_TIMEOUT_MS);
+}
+// loadJson with a time limit (ms): the request is stopped then and the answer is { ok: false, error: "no answer in N s" }.
+export async function loadWithin(path, check, ms) {
+  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+  if (!ctrl) return loadJson(path, check);
+  const timer = setTimeout(() => ctrl.abort(new Error("no answer in " + Math.round(ms / 1000) + " s")), ms);
+  try {
+    return await loadJson(path, check, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // v19.3a: company logos are our own files on this site (the logos branch, copied in by Deploy; never another site).

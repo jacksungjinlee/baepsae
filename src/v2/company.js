@@ -6,7 +6,7 @@
 //   rule "na" = an input is missing ("판단할 자료가 없어요"), never a guess.
 // "업종" is the `ind` group (hasGroup: never "other" / "etc" / missing) inside the same market, as 왜 움직였나 uses.
 // Units: corp.json op / ni / rev are 억원; KR prices are 원; US prices are $ (data.json units).
-import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy,
+import { num, hasGroup, universe, companyCount, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy,
   krDivYield, DY_MAX, KR_DIV_TREND, SPLIT_GUARD, splitGuarded, krYieldToday, exactData, krDivHistory, krDivState, divStOf, betaBand } from "./engine.js";
 import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
@@ -436,22 +436,28 @@ export function decompose(co) {
 // ---------------- 가치 tab ----------------
 // The industry PBR strip: every group member with a PBR as a dot on a 0..cap scale (cap: the 90th percentile, at least
 // twice the median, so a few very high PBRs do not squash the rest; dots above it sit at the right edge).
+// co (Jack, 2026-11-08: one company = one): the companies behind the dots, for the lines that say "업종 {n}개 회사": two
+// share classes of one US company (engine.companyCount) are one company there. The dots and the median stay one per listing.
 export function pbrStrip(s, group) {
-  const pts = (group || []).map((x) => ({ t: x.t, v: num(x.pbr) })).filter((p) => p.v != null && p.v > 0);
-  if (!pts.some((p) => p.t === s.t) && num(s.pbr) > 0) pts.push({ t: s.t, v: s.pbr });
+  const used = (group || []).filter((x) => num(x.pbr) > 0);
+  const pts = used.map((x) => ({ t: x.t, v: num(x.pbr) }));
+  if (!pts.some((p) => p.t === s.t) && num(s.pbr) > 0) { pts.push({ t: s.t, v: s.pbr }); used.push(s); }
   if (pts.length < VALUE_MIN) return null;
   const sorted = pts.map((p) => p.v).sort((a, b) => a - b);
   const med = round(median(sorted), 2);
   const p90 = sorted[Math.min(sorted.length - 1, Math.floor(0.9 * (sorted.length - 1)))];
   const cap = Math.max(p90, 2 * med, num(s.pbr) || 0) * 1.05;
   const at = (v) => Math.min(1, v / cap);
-  return { n: pts.length, med, cap, dots: pts.map((p) => ({ t: p.t, x: at(p.v), mine: p.t === s.t, over: p.v > cap })), mine: at(s.pbr), medX: at(med) };
+  return { n: pts.length, co: companyCount(used), med, cap, dots: pts.map((p) => ({ t: p.t, x: at(p.v), mine: p.t === s.t, over: p.v > cap })),
+    mine: at(s.pbr), medX: at(med) };
 }
 
 // Industry medians of PER, EV/EBITDA and P/영업현금흐름 (KR: corp.json evE · pcf), same group. null below 5 values.
+// co: the companies behind the values (two share classes of one company count once: engine.companyCount).
 export function indMedian(group, get) {
-  const vals = (group || []).map(get).filter((v) => v != null && v > 0);
-  return vals.length >= VALUE_MIN ? { med: median(vals), n: vals.length } : null;
+  const used = (group || []).filter((x) => { const v = get(x); return v != null && v > 0; });
+  const vals = used.map(get);
+  return vals.length >= VALUE_MIN ? { med: median(vals), n: vals.length, co: companyCount(used) } : null;
 }
 
 // 업종 지도 (ROE x PBR): this group's companies, with a least-squares line PBR = a + b x ROE fitted on the OTHER members
@@ -460,7 +466,8 @@ export function indMedian(group, get) {
 // outside it the line would be stretched past its data, so pos is "out" (no sentence).
 export function roePbrMap(s, group) {
   const ok = (p) => p.x != null && p.y != null && p.y > 0 && Math.abs(p.x) <= 100;
-  const peers = (group || []).filter((x) => x.t !== s.t).map((x) => ({ t: x.t, x: num(x.roe), y: num(x.pbr) })).filter(ok);
+  const used = (group || []).filter((x) => x.t !== s.t && ok({ x: num(x.roe), y: num(x.pbr) }));
+  const peers = used.map((x) => ({ t: x.t, x: num(x.roe), y: num(x.pbr) }));
   const me = { t: s.t, x: num(s.roe), y: num(s.pbr) };
   if (peers.length < VALUE_MIN || me.x == null || !(me.y > 0)) return null;
   const n = peers.length, mx = peers.reduce((a, p) => a + p.x, 0) / n, my = peers.reduce((a, p) => a + p.y, 0) / n;
@@ -470,7 +477,8 @@ export function roePbrMap(s, group) {
   const lo = Math.min(...peers.map((p) => p.x)), hi = Math.max(...peers.map((p) => p.x));
   const fit = a + b * me.x;
   const pos = me.x < lo || me.x > hi ? "out" : fit > 0 && Math.abs(me.y - fit) <= 0.1 * fit ? "near" : me.y > fit ? "above" : "below";
-  return { pts: [...peers.map((p) => ({ ...p, mine: false })), { ...me, mine: true }], a, b, pos, n: n + 1, range: [lo, hi] };
+  // co: the companies on the map for "{ind} {n}개 회사의 ROE와 PBR" (this company's other share class is the same company)
+  return { pts: [...peers.map((p) => ({ ...p, mine: false })), { ...me, mine: true }], a, b, pos, n: n + 1, co: companyCount([...used, s]), range: [lo, hi] };
 }
 
 // KR only (US until v19.2), with the old DcfCard's own defaults (discount 10%, 5년 뒤 성장률 2%, the growth rate fading

@@ -15,6 +15,7 @@
 import { deckState } from "./deckcalc.js";
 import { withDataShape } from "./engine.js";
 import { publishText, staleNow, REFETCH_GAP_MS } from "./load.js";
+import { discDate } from "./company.js";
 
 const STAGE = { pick: "its pick step", plan: "its plan step" };
 
@@ -52,6 +53,27 @@ export function holdReason(ctx, next) {
   return null;
 }
 
+// The line on the screen of a draft (Jack, 2026-11-08, approved: "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새
+// 데이터로 바뀌어요.", in place of the stale line "N일째 갱신이 멈췄어요", which is not true while a later publish waits):
+// a later publish is held (publishGate) and this screen is why. ctx: holdReason's ctx now · next: the held load state ·
+// now: ms (default: the clock).
+// -> "build" on 포트폴리오 만들기's 후보 고르기 or 매수 계획 (the 샀어요 sheet lives there), "import" on 가진 종목 넣기 (any of
+// its steps), else null, and the stale words stay as before:
+// - nothing held, or another screen;
+// - leaving this screen would not let it in (fresh-eyes review, 2026-11-08): the line says "저장하거나 나가면", so it shows
+//   only when both are true. Leaving keeps the drafts: holdReason off screen must find nothing (no pick, holding or 꼭 담을
+//   종목 the new data would lose, in either draft). Saving ends this screen's draft (기록했어요 → 홈, 매일 점검 시작하기 start
+//   the next one fresh), so whenever leaving lets it in, saving does too;
+// - the held publish is stale itself by now (staleNow; review): it is not "새 데이터", and a return to view drops it.
+export function heldOn(ctx, next, now) {
+  if (!ctx || !next || next.status !== "ok" || !holdReason(ctx, next)) return null;
+  const b = ctx.builder;
+  const screen = ctx.onBuild && b && STAGE[b.stage] ? "build" : ctx.onImport ? "import" : null;
+  if (!screen) return null;
+  if (holdReason({ builder: ctx.builder, importer: ctx.importer }, next)) return null;
+  return staleNow(next, now == null ? Date.now() : now) ? null : screen;
+}
+
 // The disc.json state that goes on screen with a publish (app.jsx put; the merge with v19.3e, where 홈 loads disc.json
 // itself for 오늘 볼 것's filings and its "오늘은 할 일이 없어요" waits for them): never an older disc.json beside newer data.
 // d: app.jsx's disc state · fetched: the disc.json data fetched with the publish (all or none), or null · pub: its publishedAt.
@@ -75,6 +97,18 @@ export const discFits = (data, pub) => !pub || !(Date.parse((data && data.publis
 // at least REFETCH_GAP_MS after it came, and only once for each publish put on screen (retried: app.jsx resets it then).
 export const discRetryDue = (d, now, retried) => !retried && !!d && d.status === "fail" && Number.isFinite(d.older)
   && Number.isFinite(now) && now - d.older >= REFETCH_GAP_MS;
+// The same rule on every load, not only after a return's fetch (#90 review follow-up, 2026-11-08): a first load can get a
+// disc.json from an older publish (the site's CDN serving an old copy just after a deploy, or the phone's offline copy).
+// Under 4 days old it reads as current (company.discDate), and 홈 could say "오늘은 할 일이 없어요" from it. Such a file
+// is not shown beside the data on screen: the load-failure message and the one more try (discRetryDue), as after a fetch.
+// One that is stale by its own rule already says so ("{md} 기준 · {n}일째 갱신이 멈췄어요") and keeps that line.
+// data: disc.json's data · load: the load state on screen · now: ms. -> true when it must not be shown as it is.
+export function discBehind(data, load, now = Date.now()) {
+  if (!data || !load || load.status !== "ok" || load.preview || !load.data) return false;
+  if (discFits(data, load.data.publishedAt)) return false;
+  const d = discDate(data, now);
+  return !!d && !d.stale;
+}
 
 // The app's side of a return's fetch (app.jsx): a result goes on screen now, or is held while holdReason says so and goes
 // on screen when check() finds nothing holding it any more. Either way it goes on screen only if the data on screen is
@@ -82,13 +116,15 @@ export const discRetryDue = (d, now, retried) => !retried && !!d && d.status ===
 // without data). Every step is logged with the publish and its counts.
 //   getLoad(): the load state on screen · ctx(): holdReason's ctx now · put(result): put it on screen (app.jsx: adoptLoad,
 //   then refreshFresh at that moment: a publish held for days goes on screen with today's stale check, never the one worked
-//   out when it was fetched).
+//   out when it was fetched) · onHold(load | null) (optional): told whenever the held publish changes (app.jsx: the line
+//   on the draft's screen, heldOn), null once nothing is held (put on screen, dropped, or stale itself).
 // -> { apply(result, cur): returnWatch's apply · check(): call when the screen or a draft changes; true when it put the
 //      held result on screen · held(now): the held publish described for the console, or null. A held publish that is
 //      itself stale by now (load.js staleNow) is dropped there, logged, and null comes back: the return fetches again under
 //      the usual rules (round-2 review). }
-export function publishGate({ getLoad, ctx, put }) {
+export function publishGate({ getLoad, ctx, put, onHold }) {
   let held = null;                                                // { r, cur, why }
+  const tell = (l) => { if (onHold) { try { onHold(l); } catch (e) { console.warn("[v2] back in view: " + ((e && e.message) || e)); } } };
   const fits = (cur) => { const l = getLoad(); return !!l && !!cur && l.status === cur.status && l.data === cur.data; };
   const show = (r, cur, late) => {
     const what = publishText(r.load) + (late ? ", held until now," : "");
@@ -107,7 +143,8 @@ export function publishGate({ getLoad, ctx, put }) {
       if (why) {
         held = { r, cur, why };
         console.warn("[v2] back in view: " + publishText(r.load) + " is held while " + why
-          + "; the screens keep the data they show (with its stale line) until then");
+          + "; the screens keep the data they show (with its stale line, or on the draft's screen the line that new data waits) until then");
+        tell(r.load);
         return;
       }
       show(r, cur, false);
@@ -116,6 +153,7 @@ export function publishGate({ getLoad, ctx, put }) {
       if (!held || holdReason(ctx(), held.r.load)) return false;
       const h = held;
       held = null;
+      tell(null);
       return show(h.r, h.cur, true);
     },
     held(now) {
@@ -123,6 +161,7 @@ export function publishGate({ getLoad, ctx, put }) {
       const what = publishText(held.r.load) + ", held while " + held.why + ",";
       if (staleNow(held.r.load, now)) {
         held = null;
+        tell(null);
         console.warn("[v2] back in view: " + what + " is stale itself by now: dropped; this return fetches again under the usual rules");
         return null;
       }
