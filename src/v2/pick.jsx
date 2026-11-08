@@ -9,6 +9,8 @@ import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, 
 import { ownCloses } from "./stocklist.js";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
 import { objectParticle } from "./track.js";
+import { epsFixFor } from "./fix.js";
+import { EpsFixNote } from "./fixnote.jsx";
 
 export function Pick({ load, builder, setBuilder }) {
   const st = builder.settings;
@@ -170,6 +172,8 @@ function Receipts({ s, co, c, st }) {
       {debt != null && s.cls === "us" && R.debtUs && <Row id="debt-us" k={R.debtUs} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
       {growth != null && growthLabel && <Row id="growth" basis={gb || undefined} k={growthLabel} v={`${p1(growth)}%`} />}
       {fy != null && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(C.app.reportYear, { year: fy })}</div>}
+      {/* 2026-11-08 (Jack): Korean ROE is total net income ÷ equity, the same net income as PER/EPS (fixnote.jsx) */}
+      <EpsFixNote show={epsFixFor(s) && roe != null && fy != null} />
     </div>
   );
 }

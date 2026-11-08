@@ -17,6 +17,8 @@ import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
 import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
+// 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
+import { EpsFixLineLoaded } from "./fixnote.jsx";
 
 // 공유 카드: 오늘 데이터에 있는 종목만. 빠진 종목이 있으면 카드에도 같은 안내 줄을 넣어요 (note, v18.5).
 // cashMw 는 metrics.cash (빠진 종목의 돈은 들어 있지 않아요).
@@ -1325,7 +1327,7 @@ function computeMetrics(holdings, budgetWon, settings) {
   // 모든 포트폴리오의 변동성·기대수익이 'NaN만원'으로 보였어요 (v15.3 부터, v17.5 에서 발견).
   const Wc = Object.fromEntries(CLS_LIST.map((c) => [c, 0]));
   const clsW = Object.fromEntries(CLS_LIST.map((c) => [c, 0]));
-  let idioVar = 0, perSum = 0, perW = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0, noRiskN = 0, dyUnknownN = 0;
+  let idioVar = 0, perSum = 0, perW = 0, dy = 0, hhi = 0, divWon = 0, fxW = 0, noRiskN = 0, dyUnknownN = 0, perKr = false;
   const sectorW = {};
   // 베타·변동성이 없는 종목은 위험 계산에서 빼고, 위험 수치는 '자료가 있는 종목'으로 계산해요.
   // 빠진 돈을 현금(위험 0)으로 치면 위험이 작아 보이니까, 같은 자산군(한국·미국·채권·금)의 자료 있는 종목이
@@ -1365,7 +1367,7 @@ function computeMetrics(holdings, budgetWon, settings) {
     const idio = Math.max(volTot * volTot - sysV, 0);
     Wc[c] += wr * b; clsW[c] += w; idioVar += wr * wr * idio;
     if (h.stock.fxu) fxW += w;
-    if (h.stock.per > 0) { perSum += w * h.stock.per; perW += w; }
+    if (h.stock.per > 0) { perSum += w * h.stock.per; perW += w; if (c === "kr" && !h.stock.custom) perKr = true; }   // perKr: 가중 PER 에 한국 PER 이 들어 있어요 (2026-11-08 줄)
     dy += w * (h.stock.dy || 0);
     divWon += h.won * ((h.stock.dy || 0) / 100);
     if (typeof h.stock.dy !== "number" && h.won > 0) dyUnknownN += 1;   // 배당 정보 없음 → 합계에는 0원으로 들어가요 (화면에 알림)
@@ -1407,7 +1409,7 @@ function computeMetrics(holdings, budgetWon, settings) {
   return {
     empty: false, invested, cash, total, overBudget, wAvgVol, top3, pastAl, te: te * 100,
     beta, volP: volP * 100, expRet: expRet * 100, sharpe, cagr: cagr * 100, r2: r2 * 100,
-    effN, per: perW > 0 ? perSum / perW : null, dy, divWon, dyUnknownN, noRiskN,
+    effN, per: perW > 0 ? perSum / perW : null, perKr, dy, divWon, dyUnknownN, noRiskN,
     noRiskPct, sectorW, maxSectorKey, maxSectorW: maxSectorW * 100,
     clsW: clsWInv, fxExp: investedW > 0 ? (fxW / investedW) * 100 : 0,
     investedW: investedW * 100, rows: rows2,
@@ -2294,6 +2296,9 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
               </div>
             </div>
           )}
+          {/* 2026-11-08 (Jack): 한국 종목의 ROE · PER (칸 · 성적표 · 같은 업종 표) 밑에 한 줄, 한국어 화면에서만 */}
+          <EpsFixLineLoaded show={lang === "ko" && clsOf(s) === "kr" && !s.custom
+            && (s.per != null || x.roe != null || peers.some((p) => p.per != null || (p.x && p.x.roe != null)))} />
           <button onClick={() => setEditing(!editing)} style={{ marginTop: 8, background: "none", border: "none", color: C.faint, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: FONT }}>{t("editData")}</button>
           {editing && (
             <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, background: C.bg, borderRadius: 12, padding: 10 }}>
@@ -2569,6 +2574,7 @@ function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
           </button>
         ))}
       </div>
+      <EpsFixLineLoaded show={lang === "ko" && metrics.perKr && shown.some(([id]) => id === "per")} />
       <div style={{ marginTop: 9, background: C.blueSoft, borderRadius: 12, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: C.blueDeep, lineHeight: 1.6 }}>
         {lang === "ko"
           ? <>지금 예산 기준: 보통 해 <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> 출렁{SHOW_ER && <> · 기대 <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/년</b></>}</>

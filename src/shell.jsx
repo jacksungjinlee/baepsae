@@ -7,6 +7,7 @@ import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
 import { loadJson, loadCorpOnce, krGrowthScoreLine, loadDataPublishFor, corpStaleArgs } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
+import { EpsFixLine, IcrOffLine } from "./fixnote.jsx";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
@@ -92,7 +93,8 @@ const gcEvent = (n) => { try { window.goatcounter && window.goatcounter.count({ 
 const loadGateCorp = loadCorpOnce;
 const fmtWonG = (v) => v == null ? "—" : Math.round(v).toLocaleString() + "원";
 
-export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {   // export: tests/test_oldapp_dcf_wording.py 가 그려 봐요
+// corp: the corp.json the card was read from (2026-11-08, Jack: the PER/EPS line shows until it carries epsBasis "owners").
+export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, corp = null }) {   // export: tests/test_oldapp_dcf_wording.py 가 그려 봐요
   const en = lang === "en";
   const sec = sectors[c.s] || {};
   const niYoY = c.ni && c.ni[0] != null && c.ni[1] > 0 ? (c.ni[0] / c.ni[1] - 1) * 100 : null;
@@ -100,6 +102,7 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {
   // 줄었으면 '감소했어요' · 'shrank' 옆에 마이너스 부호 없이, 보이는 숫자가 0.0 이면 '거의 변하지 않았어요' (data.js krGrowthScoreLine).
   const growthLine = krGrowthScoreLine(c.g3, c.rev, en);
   const lines = [];
+  const perShown = c.per != null && !!sec.perQ;     // the PER line below (2026-11-08: then the PER/EPS line, Korean screen only)
   if (c.per != null && sec.perQ) lines.push(en
     ? `P/E ${c.per}x vs. industry median ${sec.perQ[1]}x — ${c.per > sec.perQ[1] ? "priced above peers; worth asking what justifies the premium." : "priced below peers; could be cheap, or the market doubts the growth."}`
     : `PER ${c.per}배 — 업종 중간 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요. 시장의 기대가 큰 만큼 근거를 물을 자리예요." : "낮아요. 싸다는 뜻일 수도, 시장이 의심한다는 뜻일 수도 있어요."}`);
@@ -125,7 +128,9 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf }) {
       </div>
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 6 }}>
         {lines.map((l, i) => <div key={i} style={{ fontSize: 12, color: C.ink, lineHeight: 1.6 }}>{l}</div>)}
+        <EpsFixLine corp={corp} show={!en && perShown} style={{ marginTop: 0 }} />
         {flagN > 0 && <div style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>{en ? `${flagN} financial caution flag${flagN > 1 ? "s" : ""} to review` : `짚고 갈 재무 신호 ${flagN}개가 있어요`}</div>}
+        <IcrOffLine co={c} show={!en && flagN > 0} style={{ marginTop: 0 }} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 7, marginTop: 12 }}>
         <button onClick={() => { gcEvent("gate-diag"); onQuickDiag(c.t); }}
@@ -179,7 +184,7 @@ function GateSearch({ onOpenCorp, onQuickDiag, lang }) {
           ))}
         </div>
       )}
-      {sel && <ScoreCard c={sel} sectors={d.sectors} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} asOf={{ date: d.pxDate || (d.publishedAt ? null : d.asOf), publishedAt: d.publishedAt || d.asOf, staleAfter: stale && stale.staleAfter, nextPub: stale && stale.nextPub }} />}
+      {sel && <ScoreCard c={sel} sectors={d.sectors} corp={d} onOpenCorp={onOpenCorp} onQuickDiag={onQuickDiag} lang={lang} asOf={{ date: d.pxDate || (d.publishedAt ? null : d.asOf), publishedAt: d.publishedAt || d.asOf, staleAfter: stale && stale.staleAfter, nextPub: stale && stale.nextPub }} />}
       {q.trim() && d && d.failed && <div className="gateLoadFail" style={{ fontSize: 11.5, color: "#8A5A16", fontWeight: 700, marginTop: 8 }}>{T_LOAD_FAIL[en ? "en" : "ko"]}</div>}
       {q.trim() && d && !d.failed && res.length === 0 && !sel && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>{en ? "No match — search by listed-company name or 6-digit code." : (/[a-zA-Z]{2,}/.test(q) ? "성적표는 국내 상장사만 다뤄요. 미국 종목은 포트폴리오 탭에서 담을 수 있어요." : "찾지 못했어요. 상장사 이름이나 6자리 코드로 검색해 보세요.")}</div>}
     </div>
