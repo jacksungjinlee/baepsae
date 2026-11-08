@@ -431,7 +431,11 @@ def test_coverage_is_a_warning_now_and_fails_below_the_floor_once_set(pair, monk
     for c in top:
         c["op"] = [None, 1.0, 1.0]
     name = "국내 손익 줄 채움 — 시총 상위 200 (매출은 금융회사 빼고)"
-    assert V.INC_TOP_FLOOR == 98.0                                         # Jack 승인 2026-11-08
+    assert V.INC_TOP_FLOOR_APPROVED == 98.0                                # Jack 2026-11-08 (4월 확인을 기다려요 — 아직 꺼 둠)
+    monkeypatch.setattr(V, "INC_TOP_FLOOR", None)                          # 꺼져 있는 동안: 경고만
+    row = rows_of(check(cur, prev))[name]
+    assert row[3] == "WARN" and "영업이익 90.0% (180/200)" in row[1] and "4월 확인을 기다려요" in row[2]
+    monkeypatch.setattr(V, "INC_TOP_FLOOR", V.INC_TOP_FLOOR_APPROVED)      # 켜면
     assert "영업이익 90.0% (180/200)" in fails(cur, prev, name)[1]          # 98% 미만 → 발행을 막아요
     for c in top[:17]:
         c["op"] = [1.0, 1.0, 1.0]

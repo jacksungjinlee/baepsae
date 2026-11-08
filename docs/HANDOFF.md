@@ -112,8 +112,10 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   owners' profit (GMI벤처, 라이온켐텍; '비지배지분부채' is a liability, not NCI). 이자보상배율 warns only when interest was
   actually paid (이자비용 or 이자 지급액 > 0); zero interest → no warning, `flSrc.int0 = true`. A cache holding only
   carried industry codes is an empty cache (`dart_core_entries`; the workflow guard calls `dart_cache_core`), and the
-  v2 file is deleted only after the financial fetch finished without a DART stop (`fetch_done`). `INC_TOP_FLOOR` = 98
-  (Jack): top-200 coverage of the latest filed 사업보고서, financial companies left out of 매출. New gate rows (add-only):
+  v2 file is deleted only after the financial fetch finished without a DART stop (`fetch_done`). Jack approved a 98%
+  top-200 coverage block (`INC_TOP_FLOOR_APPROVED`; latest filed 사업보고서, financial companies left out of 매출) on
+  condition of an April back-test; the repository has no April data (first corp.json 2026-08-15), so `INC_TOP_FLOOR`
+  stays None (WARN only) until Jack decides. 아남전자 also files in USD (2025 revenue 151M dollars). New gate rows (add-only):
   owners' share recounted from corp.json (≥ 95), data.json = corp.json for EPS·BPS·PER·PBR·ROE, PER/PBR = price ÷
   receipts, epsIn.sh = bpsIn.sh, stmtCur amounts blank (in the receipt-shape row), ROE receipts; WARN rows for PER >
   2,000 or PBR > 100, annual EPS vs the statement's basic EPS (sign, or outside 0.67–1.5×), EPS owners but ROE old.

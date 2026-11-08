@@ -119,6 +119,18 @@ def test_statements_in_another_currency_are_marked_and_their_amounts_never_reach
     assert "stmtCur" not in corp["000100"]
 
 
+def test_anam_electronics_files_in_dollars_and_is_blanked_too():
+    """008700 아남전자: 2026-11-08 시험 실행에서 매출 1.5억 · PBR 964.92 (달러 금액을 원으로 읽음 — 매출 1억 5,135만 달러)."""
+    rows_ = rows("008700")
+    assert F.stmt_currency(rows_) == "USD"
+    fin = dict(F.parse_dart_list(rows_)["_fin"], fs="CFS")
+    assert fin["cur"] == "USD" and fin["rev"][0] == 1.5                       # 151,351,168 달러 → 원으로 읽으면 1.5억
+    s = {"t": "008700", "nk": "아남전자", "cls": "kr", "price": 1126.0, "shr": 77_124_820, "cap": 0.087, "pbr": 964.92, "bps": 1.0}
+    assert F.blank_non_won([s], {"008700": fin}) == ["008700 아남전자(USD)"] and "pbr" not in s
+    c = F.build_corp([s], {"008700": fin}, "2026-11-08", extra=F.fill_multiples([s], {"008700": fin}, {}))["companies"][0]
+    assert c["stmtCur"] == "USD" and c["pbr"] is None and c["rev"] == [None] * 3 and not V.stmt_cur_problems(c, s)
+
+
 def test_main_blanks_other_currencies_before_the_multiples():
     import inspect
     src = inspect.getsource(F.main)
@@ -260,6 +272,20 @@ def test_a_cache_with_only_carried_industry_codes_is_an_empty_cache(tmp_path, mo
     with open(p, "w") as f:
         f.write("not gzip")
     assert F.dart_cache_core(p) == 0
+
+
+def test_a_branch_full_run_reuses_the_cached_industry_codes(tmp_path, monkeypatch):
+    """코디네이터 계획 (2026-11-08): 월요일 브랜치 시험 실행은 dart=full. 업종 코드는 full 에서도 보관본을 써요 (약 2,400회 아낌)."""
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    p = str(tmp_path / ".dart-cache" / "dart-v3.json.gz")
+    write_cache(p, WITH_FS)
+    c = F.DartClient("k", mode="full", today=dt.date(2026, 11, 9), path=p)
+    monkeypatch.setattr(c, "get", lambda *a, **k: pytest.fail("업종 코드를 다시 받으면 안 돼요"))
+    assert c.company("C1") == {"induty": "264"} and c.meta["lastFull"] == "2026-11-09" and not c.started_empty
+    c.save()
+    with pytest.raises(RuntimeError, match="이미 dart=full"):
+        F.DartClient("k", mode="full", today=dt.date(2026, 11, 9), path=p)          # 하루 한 번만
 
 
 def guard_script():
