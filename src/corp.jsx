@@ -6,7 +6,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
-import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
+import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
@@ -1321,7 +1321,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} corp={data} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
-        뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.{" · "}<AboutLink />
+        <SiteFooterLine />
       </div>
     </div>
   );
@@ -1755,7 +1755,7 @@ export default function CorpApp({ jump, onJumpDone, lang, first, onFirstDone }) 
       {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
       {view.kind === "market" && (
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 20, lineHeight: 1.7 }}>
-          뱁새는 수익률을 약속하지 않아요. 지금 가격에 어떤 가정이 담겨 있는지 읽도록 돕는 교육용 도구이며,<br />투자 자문이 아니고 모든 판단과 책임은 본인에게 있습니다.{" · "}<AboutLink />
+          <SiteFooterLine />
         </div>
       )}
       <ExplainSheet id={explain} onClose={() => setExplain(null)} />

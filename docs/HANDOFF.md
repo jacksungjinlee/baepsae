@@ -221,8 +221,13 @@ for job interviews outside Korea. Real usage numbers are too small to drive deci
 **Brand** (Jack, 2026-11-03). Live since v19.0a (PR #18): name 뱁새 (the vinous-throated parrotbill, from the proverb
 뱁새가 황새 따라가다 가랑이 찢어진다); descriptor "내 기준으로 만드는 포트폴리오"; catchphrase "철새처럼 옮겨 다니지 않는
 투자", which replaced "황새 말고, 내 걸음으로" everywhere; the maker's credit lives on the 소개 page and footers show only the
-disclaimer and a 소개 link. Mascot 뱁이 (Jack's own art; where it may appear: CLAUDE.md — the old app keeps its existing
-뱁이 pictures until each tool moves to 2.0). Colours: ink `#1C2B45`; page background `#F5F3EF` in 2.0 (`src/ui/tokens.js`)
+disclaimer and a 소개 link. The disclaimer (Jack, 2026-11-08) is
+"뱁새의 정보는 투자 자문이나 투자 권유가 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다." (old app in English: "Not investment
+advice or a solicitation to invest. All investment decisions and responsibility are yours."). The product never calls 뱁새
+"교육용" (share card, 소개 and link preview included); `tests/test_footer.py` fails if the word comes back. The design
+references in `docs/design/*/reference/` still show the earlier footer: ignore it, CLAUDE.md's line wins. Mascot 뱁이
+(Jack's own art; where it may appear: CLAUDE.md — the old app keeps its existing 뱁이 pictures until each tool moves to
+2.0). Colours: ink `#1C2B45`; page background `#F5F3EF` in 2.0 (`src/ui/tokens.js`)
 and `#FAF8F5` in the old app (`src/tokens.js`). Status colours are `watch` (amber `#8A5A00` on `#FFF3D6`) and `broken`
 (white on navy) — never red or blue, which mean price direction in Korea (v18.1). **v19.0b targets, not live yet:**
 apricot `#C97757` marks data only (target-weight line, rank numbers, factor dots, "my portfolio" in charts) — not alerts,
