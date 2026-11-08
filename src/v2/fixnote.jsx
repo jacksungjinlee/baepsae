@@ -8,7 +8,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden } from "./fix.js";
 
 // The line with its date ("11월 9일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -16,18 +16,19 @@ export function epsFixText() {
   return C.fix.eps && md ? fill(C.fix.eps, { date: md }) : null;
 }
 
+// Never on the example page (fix.js fixNotesHidden), even where a card would show the line in place of its numbers.
 export function EpsFixNote({ show, style }) {
-  const text = show ? epsFixText() : null;
+  const text = show && !fixNotesHidden() ? epsFixText() : null;
   return text ? <Note data-ui-v2="eps-fix" style={style}>{text}</Note> : null;
 }
 
 export function IcrOffNote({ show, style }) {
-  return show && C.fix.icr ? <Note data-ui-v2="icr-off" style={style}>{C.fix.icr}</Note> : null;
+  return show && C.fix.icr && !fixNotesHidden() ? <Note data-ui-v2="icr-off" style={style}>{C.fix.icr}</Note> : null;
 }
 
 // Inside a button or a tile (phrasing content only): the same line as a block span.
 export function IcrOffLine({ show, style }) {
-  return show && C.fix.icr
+  return show && C.fix.icr && !fixNotesHidden()
     ? <span data-ui-v2="icr-off" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{C.fix.icr}</span>
     : null;
 }

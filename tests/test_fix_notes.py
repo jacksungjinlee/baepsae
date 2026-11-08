@@ -29,7 +29,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"RP": "src/repair.js", "FX": "src/v2/fix.js", "FN": "src/v2/fixnote.jsx", "P": "src/v2/pf.js", "PV": "src/v2/pfview.jsx",
         "CP": "src/copy/v2.js", "FM": "src/v2/format.js", "OF": "src/fixnote.jsx", "SH": "src/shell.jsx", "OLD": "src/corp.jsx", "D": "src/data.js",
-        "K": "src/v2/company.js", "E": "src/v2/engine.js"}
+        "K": "src/v2/company.js", "E": "src/v2/engine.js", "CT": "src/v2/cotabs.jsx"}
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v2", "corp.json")
 EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요."
 ICR = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요."
@@ -268,7 +268,8 @@ def test_both_ends_of_the_split_and_the_reverse_dcf_share_one_basis():
     sam = company("005930")
     shapes = {"today": sam, "o": {**sam, **reread(sam, "o")}, "s": {**sam, **reread(sam, "s", nio3=None)}, "t": {**sam, **reread(sam, "t", nio3=None)},
               "oNoNio3": {**sam, **reread(sam, "o", nio3=None)}, "oNoThen": {**sam, **reread(sam, "o", nio3=SAM_NIO3[:2] + [None])},
-              "oNoSh": {**sam, **reread(sam, "o"), "epsIn": {**reread(sam, "o")["epsIn"], "sh": None}}}
+              "oNoSh": {**sam, **reread(sam, "o"), "epsIn": {**reread(sam, "o")["epsIn"], "sh": None}},
+              "x": {**sam, **reread(sam, "x", nio3=None)}, "sNoThen": {**sam, **reread(sam, "s", nio3=None), "ni": sam["ni"][:2] + [None]}}
     got = run(bundle_dir(), """
       const K = B.K;
       out = Object.fromEntries(Object.entries(SHAPES).map(([k, co]) => {
@@ -298,10 +299,15 @@ def test_both_ends_of_the_split_and_the_reverse_dcf_share_one_basis():
         assert x["g"].get("g") == x["rev"].get("g") and x["g"].get("edge") == x["rev"].get("edge"), (k, x["g"], x["rev"])
         assert x["base0"]["basis"] == k and x["base2"]["basis"] == k
     # 같은 기준이 없으면 숫자를 만들지 않아요 (섞지 않아요)
-    for k in ("t", "oNoNio3", "oNoSh"):
+    for k in ("t", "x", "oNoSh"):                                                 # "t" · 모르는 b · 주식 수 없음
         assert got[k]["d"] == {"why": "basis"} and got[k]["old"] == {"why": "basis"} and got[k]["g"] == {"why": "basis"}, (k, got[k])
-    assert got["oNoThen"]["d"] == {"why": "basis"} and got["oNoThen"]["old"] == {"why": "basis"}     # 3년 전 지배주주 순이익이 없어요
+    # 고쳐진 회사("o" · "s")에서 그해 숫자가 없을 뿐이면 자료가 없는 것: 카드는 늘 하던 대로 (자료가 없어요 · 카드 없음), 그 줄이 아니에요
+    # (PR #89 리뷰: 지금도 3년 수익률이 있는 13개 회사가 ni[2] 가 없어요, 예: 036570 엔씨소프트)
+    assert got["oNoNio3"]["d"] == {"why": "missing"} and got["oNoNio3"]["old"] is None and got["oNoNio3"]["g"] == {"why": "notReady"}
+    assert got["oNoThen"]["d"] == {"why": "missing"} and got["oNoThen"]["old"] is None            # 3년 전 지배주주 순이익이 없어요
     assert got["oNoThen"]["g"]["ni0"] == SAM_NIO3[0]                              # 시작 순이익(올해)은 있어요
+    assert got["sNoThen"]["d"] == {"why": "missing"} and got["sNoThen"]["old"] is None
+    assert got["oNoThen"]["base2"] == {"basis": "o", "ni": None, "sharesM": shapes["oNoThen"]["epsIn"]["sh"] / 1e6}
     # 예전 식으로 섞으면 얼마나 틀리는지 (이 PR 이 막는 것): 3년 전 끝이 총 순이익 ÷ 보통주면 이익 배율이 달라져요
     mixed = shapes["o"]["eps"] / then_today
     assert abs(mixed / got["o"]["d"]["eF"] - 1) > 0.05
@@ -337,7 +343,8 @@ def test_old_app_cards_follow_the_same_basis_and_show_the_line_in_place_of_numbe
 # ── 배당성향: 다시 읽은 뒤에는 지배주주 순이익으로 (코디네이터, 데이터 검토 2026-11-08) ──
 def test_payout_uses_owners_net_income_after_the_reread_and_keeps_todays_number_before():
     """2.0 배당성향 = 현금배당금총액 ÷ 순이익. epsIn.b "o" 이고 nio3[0] 이 있으면 지배주주 순이익(nio3[0]), "s" 와 지금 발행(epsIn 없음)은
-    예전 그대로 ni[0], "t" 이거나 nio3[0] 이 없으면 예전 숫자 그대로 두고 basis "total" (화면은 PER · EPS 줄을 남겨요).
+    예전 그대로 ni[0], "t" 이거나 모르는 b 면 예전 숫자 그대로 두고 basis "total" (화면은 PER · EPS 줄을 남겨요). "o" 인데 nio3[0] 이
+    없으면 계산할 수 없는 배당성향처럼 보이지 않아요 (PR #89 리뷰: 총 순이익으로 되돌아가지 않아요).
     예전 뱁새의 배당성향은 주당 배당 ÷ EPS 라서, 다시 읽은 EPS(지배주주 순이익 ÷ 보통주 + 우선주)를 따라 저절로 지배주주 기준이에요."""
     sam = company("005930")
     cash3 = [111079.06, 98107.67, 98094.38]                 # 현금배당금총액 (억원, 실제 발행본의 값)
@@ -345,7 +352,8 @@ def test_payout_uses_owners_net_income_after_the_reread_and_keeps_todays_number_
     s = {"t": "005930", "cls": "kr", "price": sam["price"], "dps": 1668.0, "dps3a": [1668.0, 1446.0, 1444.0], "dyt": 0.74, "fy": 2025}
     shapes = {"today": base, "o": {**base, **reread(sam, "o")}, "s": {**base, **reread(sam, "s", nio3=None)},
               "t": {**base, **reread(sam, "t", nio3=None)}, "oNoNio0": {**base, **reread(sam, "o", nio3=[None] + SAM_NIO3[1:])},
-              "oLoss": {**base, **reread(sam, "o", nio3=[-10.0] + SAM_NIO3[1:])}}
+              "oLoss": {**base, **reread(sam, "o", nio3=[-10.0] + SAM_NIO3[1:])}, "oNone": {**base, **reread(sam, "o", nio3=None)},
+              "x": {**base, **reread(sam, "x", nio3=None)}}
     got = run(bundle_dir(), """
       B.E.setDataShape({ divCheck: { v: 1 } });
       out = Object.fromEntries(Object.entries(SHAPES).map(([k, co]) => [k, B.K.payout(S, co)]));""", SHAPES=shapes, S=s)
@@ -354,8 +362,9 @@ def test_payout_uses_owners_net_income_after_the_reread_and_keeps_todays_number_
     assert got["today"] == {"pct": got["today"]["pct"], "fy": 2025} and abs(got["today"]["pct"] - total) < 1e-9   # 지금 발행: 예전 그대로
     assert got["o"]["basis"] == "o" and abs(got["o"]["pct"] - owners) < 1e-9                     # 다시 읽은 뒤: 지배주주 순이익
     assert got["s"]["basis"] == "s" and abs(got["s"]["pct"] - total) < 1e-9                      # 별도 재무제표: 총 = 지배주주
-    for k in ("t", "oNoNio0"):
+    for k in ("t", "x"):
         assert got[k]["basis"] == "total" and abs(got[k]["pct"] - total) < 1e-9, (k, got[k])    # 숫자는 그대로, 줄이 남아요
+    assert got["oNoNio0"] is None and got["oNone"] is None                                       # 지배주주 순이익이 없으면 없어요
     assert got["oLoss"] is None                                                                  # 지배주주 순이익이 0 이하면 없어요
     assert abs(owners - total) > 0.1                                                             # 실제로 다른 숫자예요
     # 예전 뱁새: 배당성향 = 주당 배당 ÷ EPS — 다시 읽은 EPS 를 그대로 따라가요 (따로 고칠 것 없음)
@@ -366,6 +375,66 @@ def test_payout_uses_owners_net_income_after_the_reread_and_keeps_todays_number_
       out = { today: page(SAM), o: page(O) };""", SAM=sam, O=o)
     assert old["today"] == [f"배당성향 {round(sam['dps'] / sam['eps'] * 100)}% · 3년 주당배당 기준"], old
     assert old["o"] == [f"배당성향 {round(sam['dps'] / o['eps'] * 100)}% · 3년 주당배당 기준"], old
+
+
+
+# ── PR #89 리뷰: 기간 이름표 · 미리 보기 · 조건 검색과 비교의 줄 ──
+def test_period_labels_follow_eps_in_p_with_existing_words_only():
+    """다시 읽은 epsIn.p 가 "fy" 면 bq 가 있어도 사업보고서 이름표, "YYYY.QQ" 면 최근 4개 분기 이름표 (있는 글자만). 2.0 가치 탭의 근거 줄은
+    PER · PBR 을 한 번에 말하니까 두 기간(epsIn.p · bpsIn.p, 없으면 bq)이 같을 때만, 다르거나 읽을 수 없으면 줄이 없어요 (틀린 말 대신)."""
+    sam = company("005930")                              # 시험 데이터: bq "2026.2Q", fy 2025
+    assert sam.get("bq") == "2026.2Q" and sam["fy"] == 2025
+    rr = lambda p, **kw: {**sam, "epsIn": {"ni": 1.0, "b": "o", "p": p, "sh": 1}, **kw}
+    cases = {"today": sam, "noBq": {**sam, "bq": None}, "fy": rr("fy"), "fyBoth": rr("fy", bpsIn={"p": "fy"}), "q": rr("2026.2Q"),
+             "qBoth": rr("2026.2Q", bpsIn={"p": "2026.2Q"}), "qOtherB": rr("2026.2Q", bpsIn={"p": "2026.1Q"}), "qFyB": rr("2026.2Q", bpsIn={"p": "fy"}),
+             "odd": rr("TTM"), "fyNoBq": rr("fy", bq=None)}
+    got = run(bundle_dir(), """
+      out = Object.fromEntries(Object.entries(CS).map(([k, co]) => [k, { v: B.CT.valueBasis(co), e: RP.epsPeriod(co), b: RP.bpsPeriod(co), old: OLD.epsPeriodSub(co) }]));""",
+              CS=cases)
+    Q = "PER은 2026년 2분기까지 최근 4개 분기 이익, PBR은 그 분기 자본 기준이에요."
+    Y = "PER · PBR은 2025년 사업보고서 기준이에요."
+    OLD_Q, OLD_Y = " · 최근 4개분기 합산(2026.2Q)", " · 직전 사업보고서"
+    want = {"today": (Q, OLD_Q), "noBq": (Y, OLD_Y), "fy": (None, OLD_Y), "fyBoth": (Y, OLD_Y), "q": (Q, OLD_Q), "qBoth": (Q, OLD_Q),
+            "qOtherB": (None, OLD_Q), "qFyB": (None, OLD_Q), "odd": (None, ""), "fyNoBq": (Y, OLD_Y)}
+    for k, (v, old) in want.items():
+        assert got[k]["v"] == v and got[k]["old"] == old, (k, got[k])
+    assert got["fy"]["e"] == {"fy": True} and got["fy"]["b"] == {"y": 2026, "q": 2}       # PER 은 사업보고서, PBR 은 그 분기: 한 줄로 말할 수 없어요
+    assert got["odd"]["e"] is None                                                    # 읽을 수 없는 p: 이름표 없음
+    # 2.0 주가 분해의 근거 줄도 epsPeriod 로 고르고, 예전 식(bq 만 보기)은 남아 있지 않아요
+    src = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
+    assert "const pe = epsPeriod(co);" in src and src.count("co.bq") == 0, "cotabs.jsx 가 아직 bq 로 기간을 정해요"
+    assert "c.bq ?" not in open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+
+
+def test_the_example_page_shows_neither_line():
+    got = run(bundle_dir(), """
+      const OFF = { flWhy: { icr: 'off' } };
+      FX.setEpsBasis({ companies: [] }, { preview: true });
+      const pv = { kr: FX.epsFixFor({ t: '000010', cls: 'kr' }), icr: FX.icrOffShown(OFF), hidden: FX.fixNotesHidden(),
+        notes: [h(FN.EpsFixNote, { show: true }), h(FN.IcrOffNote, { show: true }), h(FN.IcrOffLine, { show: true })].map((x) => renderToStaticMarkup(x)) };
+      FX.setEpsBasis({ companies: [] });
+      const live = { kr: FX.epsFixFor({ t: '000010', cls: 'kr' }), icr: FX.icrOffShown(OFF), hidden: FX.fixNotesHidden(),
+        notes: [h(FN.EpsFixNote, { show: true }), h(FN.IcrOffNote, { show: true }), h(FN.IcrOffLine, { show: true })].map((x) => lines(renderToStaticMarkup(x)).length) };
+      out = { pv, live };""")
+    assert got["pv"] == {"kr": False, "icr": False, "hidden": True, "notes": ["", "", ""]}, got["pv"]     # 미리 보기: 어느 줄도 없어요
+    assert got["live"] == {"kr": True, "icr": True, "hidden": False, "notes": [1, 1, 1]}, got["live"]
+
+
+def test_old_screener_and_compare_decide_the_line_only_from_rows_with_per_or_roe():
+    """조건 검색 · 기업 비교: '–' 만 보이는 줄(PER · ROE 둘 다 없음)은 줄을 정하지 않아요. 고쳐진 회사만 숫자가 있으면 줄이 없어요."""
+    IN = lambda b: {"ni": 1.0, "b": b, "p": "fy", "sh": 1000}
+    base = {"s": "semi", "cap": 10.0, "rev": [1.0, 1.0, 1.0], "price": 1000.0}
+    fixed = {**base, "t": "000010", "nk": "가나", "per": 10.0, "roe": 5.0, "epsIn": IN("o")}
+    dash_t = {**base, "t": "000020", "nk": "다라", "cap": 9.0, "per": None, "roe": None, "epsIn": IN("t")}
+    num_t = {**base, "t": "000030", "nk": "마바", "cap": 8.0, "per": 12.0, "roe": None, "epsIn": IN("t")}
+    got = run(bundle_dir(), """
+      const data = (cos) => ({ epsBasis: 'owners', sectors: { semi: {} }, companies: cos });
+      const EPS = OF.fixEpsText();
+      const scr = (cos) => count(renderToStaticMarkup(h(OLD.ScreenerView, { data: data(cos), onOpen() {}, setExplain() {} })), EPS);
+      const cmp = (cos) => count(renderToStaticMarkup(h(OLD.CompareView, { data: data(cos), baseT: cos[0].t, onOpen() {}, onBack() {}, setExplain() {} })), EPS);
+      out = { scrDash: scr([F, DT]), scrNum: scr([F, NT]), cmpDash: cmp([F, DT]), cmpNum: cmp([F, NT]) };""", F=fixed, DT=dash_t, NT=num_t)
+    assert got["scrDash"] == 0 and got["cmpDash"] == 0, got           # '–' 만 있는 총 순이익 회사는 줄을 만들지 않아요
+    assert got["scrNum"] == 1 and got["cmpNum"] == 1, got             # PER 이 보이는 총 순이익 회사가 있으면 줄
 
 
 _TMP = {}

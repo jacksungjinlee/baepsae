@@ -31,7 +31,7 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { icrOff } from "./fix.js";
+import { icrOffShown } from "./fix.js";
 import { IcrOffNote, IcrOffLine } from "./fixnote.jsx";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
@@ -249,7 +249,7 @@ function Warnings({ load, s, wide }) {
   // 2026-11-08 (Jack; say-why audit rows 1 and 6): 이자보상배율 is switched off until the DART re-read (corp.json flWhy.icr
   // "off"). Under the list when a warning fired; when nothing can be claimed, the line alone where the card would be
   // (no '없어요' head: the existing rule allows "확인한 …" only for flWhy.icr "ie"). Goes by itself when flWhy.icr changes.
-  const off = s.cls === "kr" && icrOff(load.coByT.get(s.t) || null);
+  const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
     if (!w.allRan && !w.partial && off && C.fix.icr) {
       return (

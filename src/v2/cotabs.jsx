@@ -31,6 +31,7 @@ import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor } from "./fix.js";
+import { epsPeriod, bpsPeriod } from "../repair.js";
 import { EpsFixNote } from "./fixnote.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -113,9 +114,12 @@ function Decomp({ co, s }) {
   const op = (ch) => <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{ch}</span>;
   const won = (v) => (v != null ? fill(C.app.won, { n: nf(Math.round(v)) }) : null);
   const per = (v) => (v != null && v > 0 ? timesText(v, 1) : null);
-  const q = co && typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  const basis = !d.head ? null : q && D.basisQ && d.fyThen ? fill(D.basisQ, { y: q[1], q: q[2], fy: d.fyThen })
-    : !q && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
+  // EPS now's period (repair.js epsPeriod): the re-read's epsIn.p when it wrote one ("fy" = 사업보고서 even with bq set),
+  // else bq as before; a p that cannot be read -> no basis line rather than a wrong one
+  const pe = epsPeriod(co);
+  const q = pe && !pe.fy ? pe : null;
+  const basis = !d.head ? null : q && D.basisQ && d.fyThen ? fill(D.basisQ, { y: q.y, q: q.q, fy: d.fyThen })
+    : pe && pe.fy && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
   const msg = d.why === "loss" ? D.none : d.why === "missing" ? C.co.tiles.na : null;
   const noBasis = d.why === "basis";           // 2026-11-08: the two ends share no basis -> no numbers, the PER/EPS line in their place
   if (!d.head && !msg && !noBasis) return null;
@@ -356,12 +360,17 @@ function Dcf({ load, s, co, a, onTry }) {
 }
 
 // PER and PBR basis (KR): fetch_data fill_multiples uses the latest four quarters' net income and that quarter's equity
-// when corp.json carries the TTM quarter (bq), else the 사업보고서 (fy).
+// when corp.json carries the TTM quarter (bq), else the 사업보고서 (fy). After the DART re-read epsIn.p / bpsIn.p say each
+// one's period (repair.js epsPeriod · bpsPeriod: "fy" can come with bq set). The existing lines name both at once, so a line
+// only when PER and PBR are on the same period; on different periods (or a p that cannot be read) no line, never a wrong one.
 export function valueBasis(co) {
   const V = C.co.value;
-  const q = co && typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  if (q) return V.basisQ ? fill(V.basisQ, { y: q[1], q: q[2] }) : null;
-  return co && Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
+  if (!co) return null;
+  const pe = epsPeriod(co), pb = bpsPeriod(co);
+  if (!pe || !pb) return null;
+  if (!pe.fy && !pb.fy && pe.y === pb.y && pe.q === pb.q) return V.basisQ ? fill(V.basisQ, { y: pe.y, q: pe.q }) : null;
+  if (pe.fy && pb.fy) return Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
+  return null;
 }
 
 export function ValueTab({ load, s, store, onMore }) {

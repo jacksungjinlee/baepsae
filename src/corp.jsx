@@ -11,7 +11,7 @@ import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, l
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLine, IcrOffLine } from "./fixnote.jsx";
-import { epsBase } from "./repair.js";
+import { epsBase, epsPeriod } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -554,7 +554,8 @@ export function ScreenerView({ data, onOpen, setExplain }) {
               ))}
             </div>
             {rows.length > 100 && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8 }}>상위 100개까지 보여요. 조건을 좁히면 더 정확해져요.</div>}
-            <EpsFixLine corp={data} cos={rows.slice(0, 100)} show={cs.some((x) => x.k === "per" || x.k === "roe")} />
+            <EpsFixLine corp={data} cos={rows.slice(0, 100).filter((c) => c.per != null || c.roe != null)}
+              show={cs.some((x) => x.k === "per" || x.k === "roe") && rows.slice(0, 100).some((c) => c.per != null || c.roe != null)} />
           </>
         )}
       </Card>
@@ -1057,6 +1058,13 @@ function MultRow({ label, valTxt, band, sentence, onWhy }) {
   );
 }
 
+// 투자지표 부제의 기간: 다시 읽은 epsIn.p 가 있으면 그것("fy" = 직전 사업보고서, bq 가 있어도), 없으면 예전처럼 bq. 읽을 수 없는 p 면
+// 기간을 말하지 않아요 (틀린 말 대신). (repair.js epsPeriod, PR #89 리뷰)
+export function epsPeriodSub(c) {
+  const pe = epsPeriod(c);
+  return !pe ? "" : pe.fy ? " · 직전 사업보고서" : " · 최근 4개분기 합산(" + pe.y + "." + pe.q + "Q)";
+}
+
 export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain }) {
   const [guideOpen, setGuideOpen] = useState(false);
   const c = data.companies.find((x) => x.t === t);
@@ -1156,7 +1164,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       </Card>
 
       <Card>
-        <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (c.bq ? " · 최근 4개분기 합산(" + c.bq + ")" : " · 직전 사업보고서")} onWhy={() => setExplain("box")} />
+        <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + epsPeriodSub(c)} onWhy={() => setExplain("box")} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, padding: "9px 11px", background: C.bg, border: HAIR, borderRadius: 8, alignItems: "center" }}>
               <button onClick={() => setExplain("factor")} style={{ background: "none", border: "none", padding: 0, fontSize: 10.5, fontWeight: 800, color: C.faint, cursor: "pointer", fontFamily: FONT }}>성향(팩터) ?</button>
@@ -1475,7 +1483,7 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
           </table>
         </div>
         <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
-        <EpsFixLine corp={data} cos={cols} show={cols.some((c) => c.per != null || c.roe != null)} />
+        <EpsFixLine corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
       </Card>
     </div>
   );

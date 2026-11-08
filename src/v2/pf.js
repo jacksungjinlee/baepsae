@@ -22,7 +22,7 @@ import { R2022 } from "./y2022.js";
 import { heldQty, byAmount, importedUnits } from "./held.js";
 import { dayState } from "./rules.js";
 import { warnings } from "./warn.js";
-import { icrOff } from "./fix.js";
+import { icrOffShown } from "./fix.js";
 
 export const LIMITS = { stock: 30, ind: 35 };          // Part G defaults (%), editable per portfolio (store.js limits)
 export const LOOSE_TOP = 50;                            // 넉넉하게 has no cut: the grouping and the 내 기준 rule use 50%
@@ -226,7 +226,7 @@ export function pfState(deck, ctx, stocks) {
     if (w === "flag") flagged.push(r.nk);
     else if (w === "unknown") {
       unknown.push(r.nk);
-      if (r.s && r.s.cls === "kr" && icrOff(co)) offN += 1;
+      if (r.s && r.s.cls === "kr" && icrOffShown(co)) offN += 1;
     }
   }
   rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0 });

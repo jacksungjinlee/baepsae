@@ -263,19 +263,19 @@ export function perMillionKr(s, co = null) {
 // same 사업보고서), for a payer (engine.krDivState: dps above 0). No share count and no per-share figure, so no split can
 // enter it, and no guess (no cross-check, no split guard). The same 0-100% rule.
 // 2026-11-08 (data review of the DART re-read): for a group company the payout ratio is dividends ÷ the OWNERS' net income.
-// After the re-read (corp.json epsIn, nio3 in 억원): epsIn.b "o" with nio3[0] -> cash3[0] / nio3[0] (basis "o"). "s"
-// (separate statements: total = owners') and files before the re-read (no epsIn) -> cash3[0] / ni[0] exactly as before
-// (basis "s"; no basis field before the re-read). "t", or "o" without nio3[0] -> still cash3[0] / ni[0], basis "total": the screen keeps the PER/EPS
-// line under it (cotabs DivTab), since its line otherwise goes once the company's EPS is fixed.
+// After the re-read (corp.json epsIn, nio3 in 억원): epsIn.b "o" -> cash3[0] / nio3[0] (basis "o"; no nio3[0] -> no ratio,
+// as for any ratio that cannot be computed). "s" (separate statements: total = owners') and files before the re-read (no
+// epsIn) -> cash3[0] / ni[0] exactly as before (basis "s"; no basis field before the re-read). "t" or an unknown b -> still
+// cash3[0] / ni[0], basis "total": the screen keeps the PER/EPS line under it (cotabs DivTab).
 export function payout(s, co) {
   if (!s || s.cls !== "kr" || !co) return null;
   if (exactData()) {
     const st = krDivState(s, co);
     const e = co.epsIn && typeof co.epsIn === "object" ? co.epsIn : null;
-    const nio0 = e && e.b === "o" && Array.isArray(co.nio3) ? num(co.nio3[0]) : null;
-    const basis = !e ? "today" : nio0 != null ? "o" : e.b === "s" ? "s" : "total";
+    const basis = !e ? "today" : e.b === "o" || e.b === "s" ? e.b : "total";
     const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null;
-    const ni0 = basis === "o" ? nio0 : Array.isArray(co.ni) ? num(co.ni[0]) : null;
+    const src = basis === "o" ? co.nio3 : co.ni;
+    const ni0 = Array.isArray(src) ? num(src[0]) : null;
     const fy0 = num(co.fy) ?? num(s.fy);
     if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
     const p = (cash / ni0) * 100;

@@ -61,19 +61,40 @@ export function epsFixNeeded(corp, co) {
 //   no epsIn (files before the re-read): eps = total net income ÷ common shares, so ni[i] ÷ shm, exactly as before
 //   epsIn.b "o": owners' net income nio3[i] ÷ epsIn.sh (common + listed preferred shares, a count)
 //   epsIn.b "s": ni[i] ÷ epsIn.sh (separate statements: total and owners' profit are the same)
-//   epsIn.b "t", any other value, no share count, or the needed year missing: { bad: true } — the card shows no numbers,
-//   only the PER/EPS line (never a mixed basis, never a guess).
-// -> { basis: "today" | "o" | "s", ni, sharesM } (ni null = that year is missing in a file before the re-read) | { bad: true } | null
+//   A year missing on that basis (ni null) is just missing data: the cards say what they always say (자료가 없어요 · no
+//   card), as for a file before the re-read (review of PR #89: 13 companies with a 3-year return miss ni[2] today).
+//   epsIn.b "t", any other value, or no share count: { bad: true } — the card shows no numbers, only the PER/EPS line
+//   (never a mixed basis, never a guess).
+// -> { basis: "today" | "o" | "s", ni, sharesM } (ni null = that year is missing) | { bad: true } | null
 const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 export function epsBase(co, i) {
   if (!co || typeof co !== "object") return null;
   const at = (arr) => (Array.isArray(arr) ? finite(arr[i]) : null);
   const e = co.epsIn;
   if (e == null) return { basis: "today", ni: at(co.ni), sharesM: finite(co.shm) };
-  if (typeof e !== "object" || !(finite(e.sh) > 0)) return { bad: true };
-  const ni = e.b === "o" ? at(co.nio3) : e.b === "s" ? at(co.ni) : null;
-  return ni == null ? { bad: true } : { basis: e.b, ni, sharesM: e.sh / 1e6 };
+  if (typeof e !== "object" || !(finite(e.sh) > 0) || !EPS_IN_FIXED.includes(e.b)) return { bad: true };
+  return { basis: e.b, ni: at(e.b === "o" ? co.nio3 : co.ni), sharesM: e.sh / 1e6 };
 }
+
+// The period behind a per-share figure, for its label ("최근 4개 분기" or "사업보고서"). in: corp.json epsIn or bpsIn. When
+// the re-read wrote one with p, p decides ("fy" = the 사업보고서, "YYYY.QQ" = the latest four quarters to that quarter);
+// otherwise corp.json bq (the TTM quarter, as before) or the 사업보고서. -> { fy: true } | { y, q } | null (a p that
+// cannot be read: no label rather than a wrong one).
+const Q_RX = /^(\d{4})\.([1-4])Q$/;
+function periodOf(p) {
+  if (p === "fy") return { fy: true };
+  const m = typeof p === "string" ? Q_RX.exec(p) : null;
+  return m ? { y: Number(m[1]), q: Number(m[2]) } : null;
+}
+export function periodFrom(co, key) {
+  if (!co || typeof co !== "object") return null;
+  const r = co[key];
+  if (r && typeof r === "object" && r.p != null) return periodOf(r.p);
+  const m = typeof co.bq === "string" ? Q_RX.exec(co.bq) : null;
+  return m ? { y: Number(m[1]), q: Number(m[2]) } : { fy: true };
+}
+export const epsPeriod = (co) => periodFrom(co, "epsIn");
+export const bpsPeriod = (co) => periodFrom(co, "bpsIn");
 
 // The 이자보상배율 check is switched off for this company (corp.json flWhy.icr "off"; financial companies never carry it).
 export function icrOff(co) {

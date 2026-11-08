@@ -5494,7 +5494,9 @@ def fix_files(files, live):
         coby[FIX_FLAG_KR].update(flRan=["cr", "icr", "l3", "imp"], fl={"cr": 85})
         sam = coby[FIX_OFF_KR]
         sh = round(sam["shm"] * 1e6) + FIX_PREF
-        sam.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
+        # p "fy": 지배주주 EPS 가 사업보고서 기준 (bq 가 있어도) — 이름표가 '사업보고서'여야 해요 (PR #89 리뷰)
+        sam.update(epsIn={"ni": 450000.0, "b": "o", "p": "fy", "sh": sh}, bpsIn={"p": "fy"}, nio3=[442609.56, 336213.63, 144734.01],
+                   eps=round(450000.0 * 1e8 / sh))
         coby[FIX_FLAG_KR].update(epsIn={"ni": -8000.0, "b": "o", "p": "2026.2Q", "sh": 234000000}, nio3=[-10728.1, -10187.41, 12371.8],
                                  eps=round(-8000.0 * 1e8 / 234000000))
         hd = coby[FIX_T_KR]
@@ -5551,6 +5553,12 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
             line_y = page.locator(f'{first} [data-ui-v2="eps-fix"]').bounding_box()["y"]
             assert line_y > per_y, (line_y, per_y)                                        # 숫자 밑
             assert page.locator('[data-ui-v2="eps-fix"]').count() == 2, eps_lines("body")    # 카드마다 한 줄 (줄마다가 아니에요)
+        # 근거 줄의 기간: 지금은 bq(최근 4개 분기), 다시 읽은 뒤 epsIn.p · bpsIn.p "fy" 면 사업보고서 (bq 가 있어도)
+        vb = page.locator('[data-ui-v2="co-value-basis"]').inner_text()
+        co = coby[FIX_OFF_KR]
+        assert co.get("bq") == "2026.2Q", co.get("bq")
+        want = fillp(C["co"]["value"]["basisY"], fy=co["fy"]) if live else fillp(C["co"]["value"]["basisQ"], y=2026, q=2)
+        assert vb == want, (vb, want)
         floor_ok(page, "가치 탭")
         no_hscroll(page, width)
         shot("v2-005930-value.png")
@@ -5585,6 +5593,9 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
         got = float(card.locator('[data-ui-v2="co-decomp-eq"]').get_attribute("data-eps"))
         assert abs(got - want) < 1e-9, (got, want)
         assert f"{round(then):,}원" in card.inner_text(), (round(then), card.inner_text())     # 3년 전 EPS 도 그 기준
+        D = C["co"]["decomp"]
+        want = fillp(D["basisY"], fy=co["fy"] - 2, fyNow=co["fy"]) if live else fillp(D["basisQ"], y=2026, q=2, fy=co["fy"] - 2)
+        assert want in card.inner_text(), (want, card.inner_text())                               # 이름표도 EPS 의 기간대로
         floor_ok(page, "주가 분해")
         R.collect(page)
         # 현대차: 다시 읽은 뒤 총 순이익("t") → 숫자 없이 그 줄 (주가 분해 · 지금 가격이 가정하는 것), 가치 카드의 줄도 남아요
