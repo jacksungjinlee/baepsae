@@ -27,7 +27,7 @@ import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -426,7 +426,7 @@ export function ValueTab({ load, s, store, onMore }) {
           </Stats>
         )}
         {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
-        <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+        <DateLine date={lineDate(load, s)} fresh={load.fresh} />
       </Card>
       {compare && (
         <Card data-ui-v2="co-compare" data-n={compareN(st.n, per != null ? perMed : null)}>
@@ -574,7 +574,7 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
-            <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+            <DateLine date={lineDate(load, s)} fresh={load.fresh} />
           </Card>
         )}
         <Scatter s={s} group={group} />
@@ -665,7 +665,7 @@ export function DivTab({ load, s }) {
             : <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>}
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
-          <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+          <DateLine date={lineDate(load, s)} fresh={load.fresh} />
         </Card>
       )}
       {ring && (

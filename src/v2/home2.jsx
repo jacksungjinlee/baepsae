@@ -28,9 +28,9 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADE
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, Footer, Note, Cols, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, Footer, Note, OwnCloseNote, Cols, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { isCompany } from "./stocklist.js";
+import { isCompany, ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { statusChips } from "./daily.jsx";
@@ -96,7 +96,7 @@ function RulesHero({ block, many, narrow }) {
 // No value today (a held stock has no price: track.deckMoney why "price"): 포트폴리오 shows no reason line for that case, so
 // the card is left out and the console says why; a stock missing from today's data keeps the approved missing line.
 const warnedMoney = new Set();
-function MoneyCard({ block, pxDate }) {
+function MoneyCard({ block, pxDate, load }) {
   const { deck, money } = block;
   if (!money.ok && !(money.absent && money.absent.length)) {
     const k = deck.id + "|" + (money.why || "");
@@ -130,6 +130,8 @@ function MoneyCard({ block, pxDate }) {
       )}
       {money.ok && money.gain && money.gain.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
       {money.absent && money.absent.length > 0 && <MissingNote absent={money.absent} deckId={deck.id} />}
+      {/* v19.1c (PR #82): a held US stock priced at an earlier close is in the value and the list below: named once here */}
+      <OwnCloseNote groups={ownCloses(load, block.list.rows.filter((r) => r.t && !r.absent).map((r) => block.byT && block.byT.get(r.t)))} data-deck-id={deck.id} />
     </Card>
   );
 }
@@ -261,7 +263,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
     ...blocks.map((b) => (
       <div key={b.deck.id} data-ui-v2="home-block" data-deck-id={b.deck.id}>
         {b.st && <RulesHero block={b} many={many} narrow={narrow} />}
-        <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} />
+        <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} load={load} />
         <HeldCard block={b} onWhy={onWhy} />
       </div>
     )),

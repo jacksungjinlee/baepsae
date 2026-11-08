@@ -9,10 +9,11 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { C, fill, mdText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode, useLayout, useNav } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, tx, tap, useMode, useLayout, useNav } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { signedPct } from "./deckcalc.js";
-import { isCompany, popularLists, searchStocks, myStocks } from "./stocklist.js";
+import { todayD1 } from "./engine.js";
+import { isCompany, popularLists, searchStocks, myStocks, ownCloses } from "./stocklist.js";
 import { readRecent, addRecent, RECENT_KEY, PREVIEW_RECENT_KEY } from "./recent.js";
 
 const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -21,7 +22,7 @@ const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2)
 // plain: no numbers at all (홈's first visit, which shows a 뱁이). onTap / note / expands: from useStockTap (see below).
 export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, expands = false }) {
   const nk = name || (s && s.nk) || t;
-  const d1 = s && typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);                   // v19.1c: no change for a stock priced at an earlier close (the list's note names it)
   const sub = cls === "us" ? t : plain ? null : t;
   const body = (
     <>
@@ -83,6 +84,8 @@ export function PopularLists({ load, plain = false, tapper }) {
         <span data-ui-v2="list-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(date) })}</span>
       </div>
       {items.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} plain={plain} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
+      {/* v19.1c: a listed US stock priced at an earlier close (pxd). Names only (plain, the first-visit home): no note */}
+      {!plain && <OwnCloseNote groups={ownCloses(load, items)} data-market={key} />}
     </div>
   );
   return (
@@ -124,12 +127,16 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
   // (as 홈 and 포트폴리오 do). The 거래대금 lists carry their own dates.
   const usShown = (typing ? results : [...recent, ...mine.map((x) => x.s || x)]).some((s) => s && s.cls === "us");
   const usDate = ok && usShown && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
+  // v19.1c: the shown rows (search results, or recent and my stocks) with a US stock priced at an earlier close (pxd):
+  // named under the date line. The trading-value lists carry their own note.
+  const own = ok ? ownCloses(load, typing ? results : [...recent, ...mine.map((x) => x.s)]) : [];
   return (
     <Page pad={pad}>
       <AppBar />
       <ScreenTitle>{C.app.tabs.stocks}</ScreenTitle>
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note data-ui-v2="us-close">{fill(C.app.usClose, { md: usDate })}</Note>}
+      <OwnCloseNote groups={own} />
       {load.status === "fail" && <LoadFail picture={false} />}
       {ok && !top && (
         <label data-ui-v2="stock-search" style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(3), minHeight: TOUCH + SPACE(1),

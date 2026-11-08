@@ -14,7 +14,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
-import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis } from "./data.js";
+import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 
@@ -331,7 +331,18 @@ async function loadLiveData() {
   const r = await loadJson("./data.json", (j) => j && Array.isArray(j.stocks) && j.stocks.length > 0);
   if (!r.ok) { console.warn("[뱁새] data.json: " + r.error); return null; }
   const j = r.data;
-  return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null,
+  // v19.1c: staleAfter (다음 발행이 와 있어야 하는 시각) — 지나면 '늦음' 경고 (없거나 못 읽으면 예전 4일 규칙: data.js freshness)
+  // nextPub (발행 예정일): 늦음 경고의 n 을 그 예정일 아침부터 세요 (data.js freshness)
+  // 대체하는 경우는 조용히 넘기지 않아요: 두 칸을 못 읽으면 · pxd 를 못 읽는 미국 종목이 있으면 console 에 개수와 함께 남겨요.
+  warnStaleFields(j, "포트폴리오");
+  const px = ownCloseReport(j.stocks, j.usPxDate || null);
+  if (px.bad.length) {
+    console.warn("[뱁새] data.json 의 미국 종목 " + j.stocks.filter((s) => s && s.cls === "us").length + "개 중 " + px.bad.length
+      + "개는 pxd(자기 가격 날짜)를 읽을 수 없어요 · 그 종목은 날짜 안내 없이 나가요: " + px.bad.slice(0, 30).join(", "));
+  }
+  rememberDataPublish(j);                                    // 기업분석 · 첫 화면 성적표가 같은 발행이면 늦음 시각을 같이 써요 (data.js)
+  return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null, staleAfter: j.staleAfter || null,
+    nextPub: j.nextPub || null,
     fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null,
     stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
 }
@@ -1106,6 +1117,17 @@ const T_NONLIVE = { ko: "일부 종목은 최신 시세가 아니라 예시 가�
 const T_NOLIVE_ALL = { ko: "최신 시세를 불러오지 못해 예시 가격으로 보여 드려요.", en: "We couldn't load the latest prices, so sample prices are shown." };
 const T_GOLD_EST = { ko: "금현물은 국제 금값으로 환산한 추정치예요.", en: "Gold is an estimate converted from the world gold price." };
 const T_PX_OFFICIAL = { ko: "가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.", en: "Prices are official closes from {md}. Other figures are estimates." };
+// v19.1c (Jack 승인 2026-11-07, 디자인 채팅 · 미국 가격 날짜 A1–A3): 미국 기준일보다 앞선 종가로 나가는 미국 종목(data.json pxd)이
+// 목록이나 보유에 있을 때, 날짜마다 한 문장 (새 날짜 먼저 · 이름은 티커 · 모두 ", " 로). 2.0 의 app.ownClose 와 같은 문장이에요.
+const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요.", en: "{names}: priced at the {md} close." };
+// 늦음 경고 (같은 날 승인): 발행 뒤 하루 이내면 '갱신이 늦어지고 있어요', 이틀째부터 예전 그대로 '{n}일째 갱신이 멈췄어요'
+const T_STALE_LATE = { ko: "갱신이 늦어지고 있어요", en: "update is running late" };
+// 종목들 → 안내 문장들 (data.js ownCloseGroups: 날짜마다 한 묶음, 새 날짜 먼저). 기준일은 넘기지 않아요: pxd 는 기준일과 다를 때만
+// 있고(관문이 확인해요), 같아도 문장은 맞아요 (그 날짜의 종가니까요).
+function ownCloseLines(lang, list) {
+  const l = lang === "en" ? "en" : "ko";
+  return ownCloseGroups(list, null).map((g) => T_OWN_CLOSE[l].replace("{names}", g.ts.join(", ")).replace("{md}", mdOf(g.date, l)));
+}
 const T_RATES_FAIL = { ko: "금리 데이터를 불러오지 못했어요.", en: "We couldn't load the interest-rate data." };
 // v17.5 리뷰 뒤 새 문구 (Jack 승인 대기): 베타·변동성을 모르는 종목 · 배당 정보가 없는 종목
 const T_NORISK = { ko: "일부 종목(비중 {pct}%)은 베타·변동성 자료가 없어요. 위험 수치는 나머지 종목으로 계산했어요.",
@@ -1158,12 +1180,16 @@ function LoadFail({ onRetry, lang = "ko" }) {
   );
 }
 
-// '10월 30일 기준' — 내용의 날짜. 발행이 4일 넘게 멈추면 '· N일째 갱신이 멈췄어요' (경고색)
-function DateBadge({ date, publishedAt, lang = "ko", suffix = "", style = {} }) {
-  const f = freshness(date, publishedAt, lang);
+// '10월 30일 기준' — 내용의 날짜. 발행이 늦으면(staleAfter 가 지났거나 4일 넘게 멈춤, data.js freshness) 경고색으로
+// n ≤ 1 이면 '· 갱신이 늦어지고 있어요', 2 부터 '· N일째 갱신이 멈췄어요' (Jack, 2026-11-07).
+// staleAfter · nextPub 은 data.json 의 것만 넘겨요 (corp·disc·macro 에는 없어서 예전 4일 규칙 · 발행 뒤 날 수). n 은 staleAfter 가
+// 지났고 nextPub 이 있으면 예정일 아침부터 센 날 (Jack, 2026-11-07).
+function DateBadge({ date, publishedAt, staleAfter = null, nextPub = null, lang = "ko", suffix = "", style = {} }) {
+  const f = freshness(date, publishedAt, lang, undefined, staleAfter, nextPub);
   if (!f.md && !f.stale) return null;
   const base = f.md ? (lang === "en" ? "As of " + f.md : f.md + " 기준") : "";
-  const stale = f.stale ? (lang === "en" ? "updates stopped " + f.days + " days ago" : f.days + "일째 갱신이 멈췄어요") : "";
+  const stale = !f.stale ? "" : staleWordsLate(f.days) ? T_STALE_LATE[lang === "en" ? "en" : "ko"]
+    : (lang === "en" ? "updates stopped " + f.days + " days ago" : f.days + "일째 갱신이 멈췄어요");
   return (
     <span className="dateBadge" data-stale={f.stale ? "1" : "0"} style={{ fontSize: 10.5, color: f.stale ? WARN_INK : C.faint, fontWeight: f.stale ? 800 : 400, ...style }}>
       {[base, stale].filter(Boolean).join(" · ")}{suffix}
@@ -1173,7 +1199,8 @@ function DateBadge({ date, publishedAt, lang = "ko", suffix = "", style = {} }) 
 
 // 실시간이 아닌 종목이 화면이나 보유 목록에 있을 때.
 // failed: data.json 을 못 읽어 전부 예시 가격 · examples: 일부가 내장 예시 가격 · goldEst: 금현물이 국제 금값 환산 추정
-function NonLiveBanner({ lang = "ko", failed = false, examples = false, goldEst = false, metrics = null }) {
+// ownClose (v19.1c): 열린 포트폴리오의 보유 종목 중 앞선 종가로 나가는 미국 종목의 안내 문장들 (ownCloseLines)
+function NonLiveBanner({ lang = "ko", failed = false, examples = false, goldEst = false, metrics = null, ownClose = [] }) {
   const noRisk = !!metrics && !metrics.riskBlind && metrics.noRiskN > 0;
   return (
     <div className="nonLiveBanner" style={{ background: C.sandSoft, border: "1px solid #F3DCB2", borderRadius: RAD.card, padding: "11px 14px", fontSize: 12, fontWeight: 700, color: WARN_INK, lineHeight: 1.55, fontFamily: FONT }}>
@@ -1182,6 +1209,7 @@ function NonLiveBanner({ lang = "ko", failed = false, examples = false, goldEst 
         {goldEst && <div>{T_GOLD_EST[lang]}</div>}
       </>}
       {noRisk && <div>{noRiskLine(lang, metrics)}</div>}
+      {!failed && ownClose.map((x) => <div key={x} data-own-close="1">{x}</div>)}
     </div>
   );
 }
@@ -1192,6 +1220,7 @@ function nonLiveLines(lang, failed, list, m) {
   if (!failed && list.some((s) => s && s.est)) out.push(T_GOLD_EST[lang]);
   if (m && m.riskBlind) out.push(riskBlindTxt(lang, m));
   else if (m && m.noRiskN > 0) out.push(noRiskLine(lang, m));
+  if (!failed) out.push(...ownCloseLines(lang, list));     // v19.1c: 앞선 종가의 미국 종목 (배너와 같은 문장)
   return out;
 }
 
@@ -2103,6 +2132,8 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
     results.forEach((s) => g[clsOf(s)].push(s));
     return CLS_LIST.filter((c) => g[c].length).map((c) => [c, g[c]]);
   }, [results]);
+  // v19.1c: 보이는 줄에 앞선 종가로 나가는 미국 종목(pxd)이 있으면 목록 위에 이름과 날짜 (가격은 그 날짜의 종가)
+  const ownShown = useMemo(() => ownCloseLines(lang, results), [lang, results]);
 
   const add = (s) => {
     onAdd(s);
@@ -2157,6 +2188,11 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
           <span style={{ fontSize: 12, color: C.blueDeep, lineHeight: 1.6, fontWeight: 600 }}>
             {lang === "ko" ? <><b>{note}</b>은(는) 아직 설명을 못 적어둔 종목이에요. 담는 건 자유지만, 이 회사가 무엇으로 돈을 버는지 한 문장으로 말할 수 있는지만 스스로 확인해보세요.</> : <>No write-up exists for <b>{note}</b> yet. Adding it is fine — just check that you could explain in one sentence how this company makes money.</>}
           </span>
+        </div>
+      )}
+      {ownShown.length > 0 && (
+        <div className="ownCloseNote" style={{ marginTop: 9, fontSize: 11, color: C.sub, lineHeight: 1.55 }}>
+          {ownShown.map((x) => <div key={x}>{x}</div>)}
         </div>
       )}
       <div style={{ maxHeight: 620, overflowY: "auto", margin: "8px -4px 0", padding: "0 4px" }}>
@@ -4371,14 +4407,16 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
   // 메모의 '예산' = 계산에 든 금액(종목 + 현금) + 오늘 데이터에 없어 뺀 금액 → 입력한 예산과 같아요 (예산을 넘겼으면 담은 금액 전부)
   const budgetShown = metrics.budgetAll || metrics.total;
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
-    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, typedKeys, profile: shownProfile(profile), budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], ...(missing.length ? { notInDataNote: missingLine(lang, missing) } : {}), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
+    dataAsOf: (dataInfo && dataInfo.live && (dataInfo.pxDate || dataInfo.asOf)) || "built-in sample", notLive: rows.filter((r) => r.s.live === false).map((r) => r.t), settings, typedKeys, profile: shownProfile(profile), budgetWon: Math.round(budgetMw * 10000), customStocks: Object.values(stocksById).filter((s) => s.custom), holdings: [...rows.map((r) => ({ ticker: r.t, name: r.s.nk, sector: r.s.s, priceAssumed: r.s.price, ...(ownCloseGroups([r.s], null).length ? { priceDate: r.s.pxd } : {}), amountWon: r.won, weightPct: +(r.wInv * 100).toFixed(2), approxShares: r.shares, beta: r.s.beta, volPct: r.s.vol })), ...unlistedExportRows(holdings, stocksById)], ...(missing.length ? { notInDataNote: missingLine(lang, missing) } : {}), metrics: { beta: +num(metrics.beta), volPct: +num(metrics.volP), ...(SHOW_ER ? { expRetPct: +num(metrics.expRet), sharpe: +num(metrics.sharpe), cagrPct: +num(metrics.cagr) } : {}), r2Pct: +num(metrics.r2, 0), effN: +num(metrics.effN, 1), cashWon: Math.round(metrics.cash) } }, null, 2);
   const buildCsv = () => {
     const h = "ticker,name,sector,assumed_price_krw,amount_krw,weight_pct,approx_shares,beta,vol_pct";
     // 주문표에는 목록에 있는 종목만 (합계가 예산과 맞아야 해요). 목록에 없는 종목은 JSON 백업에만 남겨요 (리뷰 2026-11-04).
     const lines = rows.map((r) => [r.t, r.s.nk, r.s.s, r.s.price, Math.round(r.won), (r.wInv * 100).toFixed(2), r.shares, r.s.beta, r.s.vol].join(","));
     const note = missingLine(lang, missing);   // 빠진 종목은 주문 줄에 넣지 않고, 맨 아래에 안내 한 줄 (따옴표로 한 칸)
+    // v19.1c: 앞선 종가로 나가는 미국 종목의 안내도 맨 아래에 (날짜마다 한 줄, 따옴표로 한 칸)
+    const own = ownCloseLines(lang, rows.map((r) => r.s)).map((x) => "\n\"※ " + x.replace(/"/g, '""') + "\"").join("");
     return "\uFEFF" + h + "\n" + lines.join("\n") + "\nCASH,현금,-," + "-," + Math.round(metrics.cash) + "," + cashPctOf(metrics).toFixed(2) + ",-,0,0"
-      + (note ? "\n\"※ " + note.replace(/"/g, '""') + "\"" : "");
+      + (note ? "\n\"※ " + note.replace(/"/g, '""') + "\"" : "") + own;
   };
   const buildMemo = () => {
     const L = [];
@@ -4655,13 +4693,13 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
         onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { const rd = new FileReader(); rd.onload = () => onImport(String(rd.result)); rd.onerror = () => onImport(""); rd.readAsText(f); } e.target.value = ""; }} />
       <Btn kind="ghost" onClick={() => fileRef.current && fileRef.current.click()} style={{ width: "100%" }}>{lang === "ko" ? "저장한 파일에서 불러오기 (JSON)" : "Load from a saved file (JSON)"}</Btn>
       {(() => {
-        const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang).stale;
+        const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang, undefined, dataInfo.staleAfter, dataInfo.nextPub).stale;
         const warn = stale || dataInfo.failed;
         return (
           <Card style={{ padding: 14, background: warn ? C.sandSoft : C.bg, border: "1px solid " + (warn ? "#F3DCB2" : C.line) }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: warn ? "#8A5A16" : C.sub }}>
               {dataInfo.failed ? T_NOLIVE_ALL[lang]
-                : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
+                : dataInfo.live ? <DateBadge date={dataInfo.pxDate || dataInfo.asOf} publishedAt={dataInfo.publishedAt} staleAfter={dataInfo.staleAfter} nextPub={dataInfo.nextPub} lang={lang} style={{ fontSize: 12, fontWeight: 800, color: stale ? "#8A5A16" : C.sub }} /> : null}
             </div>
             <div style={{ fontSize: 11, color: warn ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55 }}>
               {dataInfo.failed ? null
@@ -4769,8 +4807,37 @@ function AppInner({ seed, lang: langProp }) {
   const [slotName, setSlotName] = useState("");
   const [booted, setBooted] = useState(false);
   const [onb, setOnb] = useState(false);
-  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null });
+  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null });
   const universe = useRef(null);
+  // v19.1c: 열어 둔 화면도 '늦음'을 놓치지 않게 (데이터를 다시 받지 않아요): 화면이 다시 보일 때와, staleAfter 바로 뒤 · 발행 뒤
+  // 날 수가 느는 때(길어도 1시간)에 data.json 의 freshness 를 다시 봐요. 답이 바뀌었을 때만 다시 그려요 (DateBadge 와 경고 칸).
+  const [, setFreshTick] = useState(0);
+  const freshSig = useRef("");
+  useEffect(() => {
+    if (!live.live) return undefined;
+    let on = true, timer = null;
+    const sig = () => { const f = freshness(live.pxDate || live.asOf, live.publishedAt, "ko", Date.now(), live.staleAfter, live.nextPub); return f.stale + ":" + f.days; };
+    freshSig.current = sig();
+    const check = () => {
+      if (!on) return;
+      const now = sig();
+      if (now !== freshSig.current) { freshSig.current = now; setFreshTick((n) => n + 1); }
+    };
+    const arm = () => {
+      const wait = nextFreshChange(Date.now(), [live.publishedAt], live.staleAfter);
+      if (on && wait != null) timer = setTimeout(() => { check(); arm(); }, wait);
+    };
+    const onShow = () => { if (document.visibilityState !== "hidden") check(); };
+    arm();
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("focus", check);
+    return () => {
+      on = false;
+      if (timer != null) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("focus", check);
+    };
+  }, [live.live, live.pxDate, live.asOf, live.publishedAt, live.staleAfter, live.nextPub]);
   const [autoVals, setAutoVals] = useState({});      // 오늘 data.json 이 준 자동 값 (환율 · 시장 가정). 못 읽은 날은 비어 있어요
   const [typedKeys, setTypedKeys] = useState([]);    // 설정 화면에서 직접 입력한 칸 (v18.6): 저장본 · 파일에 같이 저장해요
   const markTyped = (ks) => setTypedKeys((ts) => [...ts, ...ks.filter((k) => !ts.includes(k))]);
@@ -4792,12 +4859,12 @@ function AppInner({ seed, lang: langProp }) {
         if (L.settings) AUTO.forEach((k) => { if (isFinNum(L.settings[k])) vals[k] = L.settings[k]; });
         setSettings((s) => ({ ...s, ...vals }));
         setAutoVals(vals);
-        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt });
+        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt, staleAfter: L.staleAfter, nextPub: L.nextPub });
       } else {
         // 못 읽었어요: 내장 예시 가격으로 열되, 모든 종목을 '실시간 아님'으로 표시하고 화면에서 알려요
         universe.current = mergeStocks(BASE_STOCKS, null);
         setStocks(universe.current.map((s) => ({ ...s })));
-        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null });
+        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null });
       }
       setBooted(true);
     })();
@@ -4971,6 +5038,8 @@ function AppInner({ seed, lang: langProp }) {
     const all = stocks.filter((s) => !s.custom).concat(holdings.map((h) => stocksById[h.t]).filter(Boolean));
     return { examples: all.some((s) => s.live === false && !s.est), goldEst: all.some((s) => s.est) };
   }, [stocks, holdings, stocksById]);
+  // v19.1c: 열린 포트폴리오에 앞선 종가로 나가는 미국 종목(pxd)이 있으면 배너에 이름과 날짜 (보유 종목만)
+  const ownClose = useMemo(() => ownCloseLines(lang, holdings.map((h) => h && stocksById[h.t])), [lang, holdings, stocksById]);
   const holdingsFull = useMemo(() => holdings.map((h) => ({ ...h, won: h.mw * 10000, stock: stocksById[h.t] })).filter((h) => h.stock), [holdings, stocksById]);
   // 오늘 데이터에 없는 보유 종목 (v18.5): 위험 계산에서 빼고 화면에 알려요. holdings(저장되는 목록)에서는 지우지 않아요.
   // 그 금액은 계산의 투자금에도 '남는 현금 (무위험)'에도 넣지 않도록 계산용 예산에서 빼요 (화면의 예산 막대에는 회색 칸으로).
@@ -5061,11 +5130,11 @@ function AppInner({ seed, lang: langProp }) {
 
       <div className="wrap" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {!slotId && <LaunchScreen lang={lang} t={t} slots={slots} onNew={newSlot} onOpen={openSlot} onDelete={deleteSlot} onRename={renameSlot} onImport={importJson} dataInfo={live} />}
-        {booted && (live.failed ? !!slotId : (nonLive.examples || nonLive.goldEst || (!!slotId && !metrics.riskBlind && metrics.noRiskN > 0))) &&
-          <NonLiveBanner lang={lang} failed={!!live.failed} examples={nonLive.examples} goldEst={nonLive.goldEst} metrics={slotId ? metrics : null} />}
-        {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang).stale && (
+        {booted && (live.failed ? !!slotId : (nonLive.examples || nonLive.goldEst || (!!slotId && !metrics.riskBlind && metrics.noRiskN > 0) || (!!slotId && ownClose.length > 0))) &&
+          <NonLiveBanner lang={lang} failed={!!live.failed} examples={nonLive.examples} goldEst={nonLive.goldEst} metrics={slotId ? metrics : null} ownClose={slotId ? ownClose : []} />}
+        {slotId && live.live && freshness(live.pxDate || live.asOf, live.publishedAt, lang, undefined, live.staleAfter, live.nextPub).stale && (
           <Card style={{ background: C.sandSoft, border: "1px solid #F3DCB2", padding: "11px 14px" }}>
-            <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} lang={lang} style={{ fontSize: 12 }} />
+            <DateBadge date={live.pxDate || live.asOf} publishedAt={live.publishedAt} staleAfter={live.staleAfter} nextPub={live.nextPub} lang={lang} style={{ fontSize: 12 }} />
           </Card>
         )}
         {slotId && stage === 0 && (

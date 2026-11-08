@@ -14,11 +14,12 @@
 //   the 포트폴리오 tab's own (track.js deckMoney: built portfolios at the rate saved with each purchase, imported ones in
 //   their own currency, US at today's rate with usdToday set so the screen says so). A built portfolio with a sale waits
 //   for the lot maths (v19.6a), exactly as on 포트폴리오: no line.
-// - 오늘 is the change between the last two official closes of every holding still in today's data. Left out (null) when
+// - 오늘 is the change between the last two official closes of every holding still in today's data (engine.todayD1: a US
+//   stock priced at an earlier close, v19.1c pxd, has no change today). Left out (null) when
 //   any of them has no change, a holding is valued by a typed amount only (it does not move), or a US listing is held
 //   (its change is in dollars on another day and yesterday's rate is not in the data): the rule track.deckDayChange
 //   already keeps for built portfolios.
-import { num } from "./engine.js";
+import { num, todayD1 } from "./engine.js";
 import { pfRows, pfState, isImported } from "./pf.js";
 import { deckMoney, deckDayChange, lotsPending } from "./track.js";
 import { heldQty } from "./held.js";
@@ -60,7 +61,7 @@ export function homeMoney(deck, de, ctx) {
   if (isImported(deck)) {
     const v = pfRows(deck, ctx);
     const live = v.rows.filter((r) => !r.absent);
-    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? r.s.d1 : null, usd: r.usd, frozen: r.frozen })));
+    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? todayD1(r.s) : null, usd: r.usd, frozen: r.frozen })));
   } else {
     const pct = deckDayChange(de);
     if (pct != null && Number.isFinite(pct) && pct > -100) day = { pct, amount: m.value - m.value / (1 + pct / 100) };
@@ -88,7 +89,7 @@ export function holdingRows(deck, de, ctx) {
   const ev = new Map(((de && de.holdings) || []).map((x) => [x.t, x]));
   const rows = v.rows.map((r, i) => {
     const x = r.t ? ev.get(r.t) : null;
-    return { key: r.key, t: r.t, nk: r.nk, w: v.ok ? r.w : null, d1: !r.absent && r.s ? num(r.s.d1) : null, absent: r.absent, frozen: r.frozen,
+    return { key: r.key, t: r.t, nk: r.nk, w: v.ok ? r.w : null, d1: !r.absent && r.s ? todayD1(r.s) : null, absent: r.absent, frozen: r.frozen,
       usd: r.usd, i, x: x || null };
   });
   rows.sort((a, b) => (b.w ?? -1) - (a.w ?? -1) || a.i - b.i);
