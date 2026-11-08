@@ -90,3 +90,38 @@ def test_old_app_footers_all_use_the_one_line():
         src = read(os.path.join("src", f))
         assert "<SiteFooterLine" in src, f
         assert FOOTER_KO not in src and FOOTER_EN not in src and "투자 자문이 아니" not in src, f"{f}: 고지문을 따로 적었어요"
+
+
+# 교육이 빠진 네 문구 (Jack, 2026-11-08): 이용약관 제2조 · 산업 읽는 법 안내 · 정보 페이지(영어) · 공유 카드.
+# 옛 문구는 사용자가 여는 페이지(커밋한 것 · 지금 소스로 새로 빌드한 2.0)와 src/ · styleguide/ 의 어떤 파일(주석 포함)에도 없어요.
+EDU_GONE = ["교육·정보", "교육 자료", "rates·bond education", "투자 자문 아님"]
+EDU_NEW = {   # 파일 → 그 파일에 꼭 한 번 있어야 하는 새 문구 (예전 뱁새에 빌드된 baepsae.html 에도)
+    os.path.join("src", "info.jsx"): [
+        "제2조 (서비스의 성격) 서비스는 정보 제공 목적의 도구이며, 자본시장법상 투자자문업·투자일임업에 해당하는 서비스를 제공하지 않습니다. "
+        "서비스가 제공하는 모든 수치·분석·시각화는 투자 판단의 참고 자료일 뿐이며, 투자 권유가 아닙니다.",
+        "insider-filing and pension-fund tracking, and plain explanations of rates and bonds. It deliberately does"],
+    os.path.join("src", "corp.jsx"): ["업종을 이해하기 위한 자료예요. 특정 종목 추천이 아니에요."],
+    os.path.join("src", "sharecard.js"): ["jacksungjinlee.github.io/baepsae · 투자 자문·투자 권유 아님"],
+}
+
+
+def test_no_education_wording_left_in_pages_or_source():
+    from buildapp import built
+    found = []
+    for name in BUILT + OTHER + source_files():
+        text = read(name)
+        found += [(name, w) for w in EDU_GONE if w in text]
+    for name in ("app.html", "app-preview.html"):
+        found += [("built " + name, w) for w in EDU_GONE if w in built(name)]
+    assert not found, found
+
+
+def test_the_four_new_lines_are_in_source_and_in_the_old_app():
+    old = read("baepsae.html")
+    for f, lines in EDU_NEW.items():
+        src = read(f)
+        for line in lines:
+            assert src.count(line) == 1, (f, line)
+            assert old.count(line) == 1, ("baepsae.html", line)
+    # 공유 카드: 고지 조각은 푸터 줄 하나에 그려요 (같은 자리 · 같은 글꼴)
+    assert 'g.fillText("jacksungjinlee.github.io/baepsae · 투자 자문·투자 권유 아님", 100, H - 104);' in read(os.path.join("src", "sharecard.js"))

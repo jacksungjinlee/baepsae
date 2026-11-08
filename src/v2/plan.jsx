@@ -13,7 +13,7 @@ import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
-import { KR_DIV_TREND, exactData } from "./engine.js";
+import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
 import { EpsFixNote } from "./fixnote.jsx";
 
@@ -112,6 +112,10 @@ function Summary({ r }) {
   // more than half of the money without data: no 2022 number and no yearly swing (the current app's rule)
   const half = !!(y2022.half || (r.vol && r.vol.half));
   const vol = r.vol && !r.vol.half ? r.vol : null;
+  // say-why (Jack, 2026-11-08): a bought US stock's 연 배당금 is Yahoo's current dividend rate made into a year
+  // (engine.annualDividend: dy x cost), not the past year the label names. Said with 점검's line, word for word, when one
+  // went into the total (engine.usDividendCounted). No US stock, or only ones whose dividend is unknown (divUnknown): no line.
+  const usDiv = usDividendCounted(plan.rows);
   const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
   const big = (v) => <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Amount text={v} /></div>;
   return (
@@ -121,6 +125,7 @@ function Summary({ r }) {
       <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.div}</div>
       {big(aboutWon(div.won))}
       <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
+      {usDiv && <div data-ui-v2="div-us" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.rpt.divUs}</div>}
       {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
       {/* Korean holdings whose dividend the company page does not trust (engine.annualDividend unchecked): left out of the
           total and named, never silently (Jack, 2026-11-05). Long lists wrap; a name is never cut. */}
