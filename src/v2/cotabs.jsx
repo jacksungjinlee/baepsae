@@ -277,9 +277,10 @@ function Strip({ s, group, inCard = false }) {
   if (!st || !all(V.strip, V.me, V.med, V.axisMax, V.stripAria)) return null;
   const X = (x) => `${(x * 100).toFixed(2)}%`;
   return (
-    <div data-ui-v2="co-strip" data-n={st.n} data-med={st.med} style={{ marginTop: SPACE(4) }}>
-      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{inCard && V.where ? V.where : fill(V.strip, { n: st.n })}</div>
-      <div role="img" aria-label={fill(V.stripAria, { ind: s.indName, n: st.n, x: nf(s.pbr, 2), y: nf(st.med, 2) })} style={{ position: "relative", height: SPACE(10), marginTop: SPACE(2) }}>
+    <div data-ui-v2="co-strip" data-n={st.n} data-co={st.co} data-med={st.med} style={{ marginTop: SPACE(4) }}>
+      {/* "업종 {n}개 회사": companies (Jack, 2026-11-08: two share classes of one company are one; company.pbrStrip co) */}
+      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{inCard && V.where ? V.where : fill(V.strip, { n: st.co })}</div>
+      <div role="img" aria-label={fill(V.stripAria, { ind: s.indName, n: st.co, x: nf(s.pbr, 2), y: nf(st.med, 2) })} style={{ position: "relative", height: SPACE(10), marginTop: SPACE(2) }}>
         <div style={{ position: "absolute", left: 0, right: 0, top: SPACE(5), height: 1, background: COLOR.border }} />
         {st.dots.filter((d) => !d.mine).map((d) => (
           <span key={d.t} style={{ position: "absolute", left: `calc(${X(d.x)} - 4px)`, top: SPACE(5) - 4, width: 8, height: 8, borderRadius: 999, background: COLOR.text3, opacity: 0.45 }} />
@@ -397,8 +398,11 @@ export function valueBasis(co) {
 }
 
 // "업종 {n}개 회사와 비교": the companies both medians stand on can differ (PBR from the strip's companies, PER only from
-// those with a profit), so the title says the smaller count.
+// those with a profit), so the title says the smaller count. The caller passes company counts (Jack, 2026-11-08: two share
+// classes of one company are one): pbrStrip's co and perCo below.
 export const compareN = (pbrN, perMed) => (perMed && perMed.n > 0 ? Math.min(pbrN, perMed.n) : pbrN);
+// indMedian's companies in compareN's shape (n = its co), or null.
+const perCo = (m) => (m ? { med: m.med, n: m.co } : null);
 // One ratio against the industry median (board CoValue2): "PBR · 1.10배 · 업종 1.60배" and a bar each for 이 회사 (navy,
 // the company page's colour for this company) and 업종 (grey). The first two lines keep the label, then the value, as the
 // Stat they replace. A negative PER (a loss) has no bar.
@@ -460,8 +464,8 @@ export function ValueTab({ load, s, store, onMore }) {
         <DateLine date={lineDate(load, s)} fresh={load.fresh} />
       </Card>
       {compare && (
-        <Card data-ui-v2="co-compare" data-n={compareN(st.n, per != null ? perMed : null)}>
-          <CardHead icon="tag" tone="value" title={fill(V.compare, { n: compareN(st.n, per != null ? perMed : null) })} />
+        <Card data-ui-v2="co-compare" data-n={compareN(st.co, per != null ? perCo(perMed) : null)}>
+          <CardHead icon="tag" tone="value" title={fill(V.compare, { n: compareN(st.co, per != null ? perCo(perMed) : null) })} />
           <CompareRow id="co-pbr" label="PBR" mine={r.pbr} med={r.med} value={timesText(r.pbr, 2)} sub={pbrSub} />
           {per != null && <CompareRow id="co-per" label="PER" mine={per} med={perMed ? perMed.med : null} value={timesText(per, 1)} sub={perSub} />}
           <Strip s={s} group={group} inCard />
@@ -494,9 +498,9 @@ function Scatter({ s, group }) {
   const [lx0, lx1] = m.range;                                         // the line only over the peers' ROE range
   const me = m.pts.find((p) => p.mine);
   return (
-    <Card data-ui-v2="co-map" data-pos={m.pos} data-n={m.n}>
+    <Card data-ui-v2="co-map" data-pos={m.pos} data-n={m.n} data-co={m.co}>
       <CardHead icon="chart-scatter" tone="value" title={M.title} />
-      <svg viewBox={`0 0 ${W} ${Hh}`} width="100%" role="img" aria-label={fill(M.aria, { ind: s.indName, n: m.n, roe: p1(me.x), pbr: nf(me.y, 2) })}
+      <svg viewBox={`0 0 ${W} ${Hh}`} width="100%" role="img" aria-label={fill(M.aria, { ind: s.indName, n: m.co, roe: p1(me.x), pbr: nf(me.y, 2) })}
         style={{ display: "block", marginTop: SPACE(3), maxWidth: 480, marginLeft: "auto", marginRight: "auto" }}>
         <line x1={P} y1={Hh - P} x2={W - P} y2={Hh - P} stroke={COLOR.border} />
         <line x1={P} y1={P} x2={P} y2={Hh - P} stroke={COLOR.border} />

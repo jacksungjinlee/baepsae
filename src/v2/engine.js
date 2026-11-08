@@ -88,6 +88,67 @@ export function universe(stocks, mk) {
   return stocks.filter((s) => s.cls === mk && inUniverse(s) && !(out && out.has(s.t)));
 }
 
+// ---------------- one company, two listings (Jack, 2026-11-08: "one company = one") ----------------
+// A count that says 회사 counts companies, not listings. The US list carries some companies twice, once per share class
+// (GOOG · GOOGL, FOX · FOXA, NWS · NWSA on 2026-11-08). data.json has no company id for a US stock (the pipeline keeps
+// Yahoo's short name and market cap; no CIK, no class field), so two US listings are one company when both hold:
+//   1. the same name (nk: Yahoo's short name, compared without case and extra spaces), and
+//   2. the same total share count: Yahoo gives every class the market cap of the whole company at that class's own price,
+//      so cap ÷ price is the company's share count for each of them (within SAME_CO_SHARES; cap is rounded to 0.001조원).
+// Both, because names alone can collide (Yahoo cuts short names at 31 characters) and share counts alone collide by chance
+// (HON and HONA, a 1:1 spin-off, 2026-11-08). A pair with the same name and a different share count, or with no cap, stays
+// two companies (logged once per stock list: shareClassNote). Korean listings are never merged: in the universe a Korean
+// company is its common share (preferred shares are left out, isPreferred). Stock-level counts (종목) are not changed.
+export const SAME_CO_SHARES = 0.005;
+const coName = (s) => (s && s.cls === "us" && typeof s.nk === "string" ? s.nk.trim().replace(/\s+/g, " ").toLowerCase() : "");
+const coShares = (s) => { const c = num(s.cap), p = num(s.price); return c > 0 && p > 0 ? c / p : null; };
+export function sameCompany(a, b) {
+  if (!a || !b) return false;
+  if (a === b || a.t === b.t) return true;
+  const n = coName(a);
+  if (!n || n !== coName(b)) return false;
+  const x = coShares(a), y = coShares(b);
+  return x != null && y != null && Math.abs(x - y) <= SAME_CO_SHARES * Math.max(x, y);
+}
+// How many companies a list of stocks is: listings of one company (sameCompany) count once.
+export function companyCount(stocks) {
+  const byName = new Map();
+  let n = 0;
+  for (const s of stocks || []) {
+    if (!s) continue;
+    const name = coName(s);
+    if (!name) { n += 1; continue; }
+    const seen = byName.get(name);
+    if (seen && seen.some((x) => sameCompany(x, s))) continue;
+    n += 1;
+    if (seen) seen.push(s); else byName.set(name, [s]);
+  }
+  return n;
+}
+// The share classes in a stock list, named once per list in the console (no silent merging): the pairs counted as one
+// company, and the same-name pairs kept apart (a different share count, or no cap). -> { one: [[t, t]], apart: [[t, t]] }
+const classMemo = new WeakMap();
+export function shareClassNote(stocks) {
+  if (!Array.isArray(stocks)) return { one: [], apart: [] };
+  if (classMemo.has(stocks)) return classMemo.get(stocks);
+  const byName = new Map();
+  for (const s of universe(stocks, "us")) {
+    const name = coName(s);
+    if (name) byName.set(name, [...(byName.get(name) || []), s]);
+  }
+  const one = [], apart = [];
+  for (const list of byName.values()) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) (sameCompany(list[i], list[j]) ? one : apart).push([list[i].t, list[j].t]);
+    }
+  }
+  const out = { one, apart };
+  classMemo.set(stocks, out);
+  if (one.length) console.warn(`[v2] one company, two listings (every count of companies counts it once; counts of stocks unchanged): ${one.map((p) => p.join(" = ")).join(", ")}`);
+  if (apart.length) console.warn(`[v2] same name but not the same share count (or no market cap), so counted as separate companies: ${apart.map((p) => p.join(" · ")).join(", ")}`);
+  return out;
+}
+
 // ---------------- settings ----------------
 export const CARDS = [
   { id: "value", field: { kr: "vz", us: "vz" }, dir: 1 },
@@ -366,11 +427,12 @@ export function screen(stocks, settings) {
   const active = activeCards(settings.points);
   const top = strictTop(settings.strict);
   const pinned = new Set(settings.pinned || []);
-  const res = { markets: {}, blanks: 0, survivors: 0, pool: 0, liqOut: 0, excludeCounts: { loss: 0, debt: 0, noDiv: 0, holding: 0 }, active: active.map((c) => c.id) };
+  const res = { markets: {}, blanks: 0, survivors: 0, pool: 0, poolCo: 0, liqOut: 0, excludeCounts: { loss: 0, debt: 0, noDiv: 0, holding: 0 }, active: active.map((c) => c.id) };
+  shareClassNote(stocks);
   for (const mk of marketsOf(settings)) {
     const uni = universe(stocks, mk);
     const pct = Object.fromEntries(active.map((c) => [c.id, percentileScores(uni, c)]));
-    const surv = [];
+    const surv = [], inPool = [];
     let blanks = 0, pool = 0;
     for (const s of uni) {
       const liq = liquidity(s);
@@ -381,6 +443,7 @@ export function screen(stocks, settings) {
       if (ex.some((k) => settings.exclude[k])) continue;
       if (pinned.has(s.t)) continue;
       pool++;
+      inPool.push(s);
       if (!active.length) continue;
       let blank = false, cut = false, wsum = 0, psum = 0;
       const scores = {};
@@ -399,10 +462,12 @@ export function screen(stocks, settings) {
       surv.push({ t: s.t, s, scores, total: wsum / psum });
     }
     surv.sort((a, b) => b.total - a.total || (a.t < b.t ? -1 : 1));
-    res.markets[mk] = { survivors: surv, blanks, universe: uni.length, pool };
+    const poolCo = companyCount(inPool);
+    res.markets[mk] = { survivors: surv, blanks, universe: uni.length, pool, poolCo };
     res.blanks += blanks;
     res.survivors += surv.length;
     res.pool += pool;
+    res.poolCo += poolCo;
   }
   return res;
 }
@@ -416,6 +481,14 @@ export const poolCount = (stocks, settings) => screen(stocks, { ...settings, poi
 export function meterCount(res) {
   if (!res.active.length) return { pool: true, n: res.pool };
   return { pool: false, n: Object.values(res.markets).reduce((a, m) => a + m.survivors.length, 0) };
+}
+// The same list counted by company (Jack, 2026-11-08: "one company = one"): the 내 점수 meter's "지금 기준이면 회사 {n}개가
+// 남아요", its struck-through count before the points (res.poolCo) and the guide's "회사가 {n}개로 줄었어요" say 회사. Two
+// share classes of one company (companyCount) count once; the markets never share a company. The bottom bar's "조건에 맞는
+// 종목 {n}개" counts stocks and stays meterCount.
+export function meterCompanies(res) {
+  if (!res.active.length) return { pool: true, n: res.poolCo };
+  return { pool: false, n: Object.values(res.markets).reduce((a, m) => a + companyCount(m.survivors.map((x) => x.s)), 0) };
 }
 
 export function topOverall(res, n) {
