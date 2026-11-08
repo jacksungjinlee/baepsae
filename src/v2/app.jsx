@@ -15,6 +15,7 @@ import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
 import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
+import { publishGate } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -117,27 +118,38 @@ export function App({ source }) {
 
   // 2026-11-08 (Jack, Q9: "Old page brought back into view: yes, fetch once. If that fails, show the existing stale or
   // failed message."): a page brought back into view (visibilitychange to visible after it was hidden, or pageshow from the
-  // back-forward cache) whose data is stale at that moment fetches the files once (load.js returnWatch · refetchNewer).
+  // back-forward cache) whose data is stale at that moment, or whose first load failed, fetches the files once (load.js
+  // returnWatch · refetchNewer: a timeout, and no new fetch within 10 minutes of one that put nothing on screen).
   // A later publish, every file from it, replaces the data on every screen at once (and the 공시 tab's disc.json when it is
-  // already shown); anything else leaves the screens as they are, with their stale line, and says why in the console.
+  // already shown); a failed first load is replaced only by a load that works. Anything else leaves the screens as they are,
+  // with their stale line or the load-failure message, and says why in the console. The loading screen never shows again.
+  // Review (2026-11-08): never under a draft the new data could change (hold.js publishGate · holdReason): the result
+  // waits, and goes on screen when nothing holds it any more (the effect after inBuild and inImport below).
   // Focus alone is not a return. Live page only (the preview has no refetch).
+  const watchable = !!source.refetch && !load.preview && (load.status === "ok" || load.status === "fail");
+  const holdCtxRef = useRef({});
+  const gateRef = useRef(null);
+  if (!gateRef.current) {
+    gateRef.current = publishGate({
+      getLoad: () => loadRef.current,
+      ctx: () => holdCtxRef.current,
+      put: (r) => {
+        setLoad(adoptLoad(r.load));
+        if (r.disc) setDisc((d) => (d.status === "ok" ? { status: "ok", data: r.disc } : d));
+      },
+    });
+  }
   useEffect(() => {
-    if (!liveData || !source.refetch) return undefined;
+    if (!watchable) return undefined;
+    const gate = gateRef.current;
     const w = returnWatch({
       hidden: document.visibilityState === "hidden",
       getLoad: () => loadRef.current,
       getDisc: () => (discRef.current && discRef.current.status === "ok" ? discRef.current.data : null),
       refetch: source.refetch,
       now: () => Date.now(),
-      apply: (r, cur) => {
-        if (!r || !r.ok) return;
-        if (!loadRef.current || loadRef.current.data !== cur.data) {
-          console.warn("[v2] back in view: the data on screen changed while the files were fetched; the fetched files are not used");
-          return;
-        }
-        setLoad(adoptLoad(r.load));
-        if (r.disc) setDisc((d) => (d.status === "ok" ? { status: "ok", data: r.disc } : d));
-      },
+      apply: (r, cur) => gate.apply(r, cur),
+      held: () => gate.held(),
     });
     const onVis = () => { if (document.visibilityState === "hidden") w.hide(); else w.show(); };
     const onHide = () => w.hide();
@@ -151,7 +163,7 @@ export function App({ source }) {
       window.removeEventListener("pagehide", onHide);
       window.removeEventListener("pageshow", onBack);
     };
-  }, [liveData]);
+  }, [watchable]);
 
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
@@ -296,6 +308,9 @@ export function App({ source }) {
   const inBuild = tab === "portfolio" && loc.sub === "build";
   const inImport = tab === "portfolio" && loc.sub === "import";
   const ownBar = inBuild || inImport;                     // screens with their own bottom bar: no tab bar
+  // A later publish held under a draft (hold.js) goes on screen once the user leaves it or the draft no longer needs it.
+  holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };
+  useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);
   // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
   // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
   // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,

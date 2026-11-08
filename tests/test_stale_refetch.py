@@ -4,13 +4,19 @@ fetch once. If that fails, show the existing stale or failed message.") — run 
 
 src/v2/load.js:
 - staleNow: stale by the rule at this moment (data.json staleAfter passed, its 4-day backstop, or corp.json's 4-day rule);
-  never for the preview, a load in progress or a failed load
+  never for the preview, a load in progress or a failed load. dueOnReturn: stale, or a failed first load
 - refetchNewer: data.json first (no-store, the same checks as the first load); nothing more when it fails or is not a later
   publish; else corp.json and macro.json (+ disc.json when the page shows it). All files from one later publish, or none:
   a failure, an unreadable file, a file from another publish or no later publish keeps the data on screen. Logged with counts.
+  A failed first load is tried again through loadAll (its checks; macro.json may fail as on a first load). Every request of a
+  return's fetch gives up after REFETCH_TIMEOUT_MS (the first load has no limit)
 - returnWatch: at most one fetch per return to view (hidden -> visible, or pageshow from the back-forward cache), never
-  two at once, only when stale, no retries
-- app.jsx / main.jsx wiring: live page only (the preview never fetches)
+  two at once, only when due, no retries, none within REFETCH_GAP_MS of a fetch that put nothing on screen, none while a
+  later publish is held
+src/v2/hold.js (review 2026-11-08): the new data never goes on screen under a draft it could change (포트폴리오 만들기 at
+후보 고르기 · 매수 계획, 가진 종목 넣기 open, or a draft left there that would lose a stock); it waits and goes on screen
+later, only if the data on screen is still what it was fetched for
+- app.jsx / main.jsx wiring: live page only (the preview never fetches); the 점검 sandbox starts again on a new publish
 - sw.js: the data files go to the network first with the page's request (its no-store) passed through unchanged
 """
 import json
@@ -25,7 +31,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 _B = {}
-MODS = {"D": "src/data.js", "LD": "src/v2/load.js", "E": "src/v2/engine.js", "R": "src/v2/rules.js"}
+MODS = {"D": "src/data.js", "LD": "src/v2/load.js", "E": "src/v2/engine.js", "R": "src/v2/rules.js", "H": "src/v2/hold.js",
+        "DC": "src/v2/deckcalc.js"}
+FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 
 # The page's clock in these tests: Tuesday 2026-11-10 17:00 KST.
 NOW = "2026-11-10T17:00:00+09:00"
@@ -50,7 +58,8 @@ def bundle_dir():
 # A fake site: SITE[path] = { status, body } (body: text) or { throw: message }. Every fetch is recorded with its options.
 HARNESS = """
 import * as M from './refetch.mjs';
-const { D, LD, E, R } = M;
+import { readFileSync } from 'fs';
+const { D, LD, E, R, H, DC } = M;
 const WARN = [], INFO = [];
 console.warn = (m) => WARN.push(String(m));
 console.info = (m) => INFO.push(String(m));
@@ -58,12 +67,17 @@ const CALLS = [];
 let SITE = {};
 globalThis.fetch = async (url, opts) => {
   CALLS.push({ url, cache: opts && opts.cache });
+  SIGS.push(!!(opts && opts.signal));
   const x = SITE[url];
   if (!x) return { ok: false, status: 404, text: async () => 'not found' };
   if (x.throw) throw new Error(x.throw);
+  if (x.hang) {                                    // a connection that never answers: only its signal ends it
+    return new Promise((res, rej) => { if (opts && opts.signal) opts.signal.addEventListener('abort', () => rej(opts.signal.reason)); });
+  }
   return { ok: x.status === 200, status: x.status, text: async () => x.body };
 };
-const serve = (files) => { SITE = {}; for (const [n, v] of Object.entries(files)) SITE['./' + n] = typeof v === 'string' ? { status: 200, body: v } : (v && (v.throw || v.status)) ? v : { status: 200, body: JSON.stringify(v) }; };
+const SIGS = [];
+const serve = (files) => { SITE = {}; for (const [n, v] of Object.entries(files)) SITE['./' + n] = typeof v === 'string' ? { status: 200, body: v } : (v && (v.throw || v.status || v.hang)) ? v : { status: 200, body: JSON.stringify(v) }; };
 const ok = (d) => ({ ok: true, data: d, error: null });
 const at = (iso) => Date.parse(iso);
 const loadOf = (f, now) => LD.resolveLoad({ data: ok(f.data), corp: ok(f.corp), macro: f.macro ? ok(f.macro) : { ok: false, error: 'x' } }, at(now));
@@ -157,8 +171,8 @@ out = { ok: r.ok, pub: r.load.data.publishedAt, px: r.load.data.pxDate, corpPub:
     assert got["calls"] == [{"url": "./data.json", "cache": "no-store"}, {"url": "./corp.json", "cache": "no-store"},
                             {"url": "./macro.json", "cache": "no-store"}], got["calls"]
     info = " | ".join(got["info"])
-    assert f"published {OLD_PUB}" in info and f"the publish of {NEW_PUB}" in info and "3 stocks, 2 companies" in info, info
-    assert "data.json, corp.json, macro.json" in info and "now shows on every screen" in info, info
+    assert f"published {OLD_PUB}" in info and f"a later publish, {NEW_PUB}" in info and "3 stocks, 2 companies" in info, info
+    assert "data.json, corp.json, macro.json" in info and "is ready for every screen" in info, info
     assert not [w for w in got["warn"] if "kept" in w], got["warn"]
 
 
@@ -303,8 +317,8 @@ const log = [];
 let load = loadOf(OLD, NOW), clock = at(NOW), disc = null, gate = null;
 const results = [];
 const w = LD.returnWatch({ hidden: HIDDEN, getLoad: () => load, getDisc: () => disc, now: () => clock,
-  refetch: (cur, d) => { log.push({ pub: cur.data.publishedAt, disc: d && d.publishedAt }); return gate ? gate.p : Promise.resolve({ ok: false, why: 'x' }); },
-  apply: (r, cur) => { results.push({ ok: r.ok, for: cur.data.publishedAt }); if (THROW) throw new Error('boom'); } });
+  refetch: (cur, d) => { log.push({ pub: cur.data ? cur.data.publishedAt : cur.status, disc: d && d.publishedAt }); return gate ? gate.p : Promise.resolve({ ok: false, why: 'x' }); },
+  apply: (r, cur) => { results.push({ ok: r.ok, for: cur.data ? cur.data.publishedAt : cur.status }); if (THROW) throw new Error('boom'); } });
 const hold = () => { let res; const p = new Promise((ok) => { res = ok; }); gate = { p, res }; };
 const tick = () => new Promise((ok) => setTimeout(ok, 0));
 """
@@ -319,6 +333,7 @@ def test_only_a_return_to_view_fetches_and_only_once():
 const a = w.show();                                  // shown without having been hidden (focus, a stray event): no fetch
 w.hide(); const b = w.show(); await tick();          // a return: one fetch
 const c = w.show();                                  // the second event of the same return (pageshow after visibilitychange)
+clock += LD.REFETCH_GAP_MS;                          // (past the wait after a fetch that put nothing on screen)
 w.hide(); w.hide(); const d = w.show(); await tick(); // hidden twice, back once: one more fetch
 out = { a, b: !!b, c, d: !!d, log, results };""")
     assert got["a"] is None and got["b"] is True and got["c"] is None and got["d"] is True, got
@@ -341,6 +356,7 @@ gate.res({ ok: false, why: 'offline' }); await p;
 const after = log.length;
 await tick(); await tick();
 const later = log.length;                                         // a failed fetch is not retried on its own
+clock += LD.REFETCH_GAP_MS;
 gate = null; w.hide(); w.show(); await tick();                    // the next return fetches again (one per return)
 out = { during, after, later, q, r, final: log.length, results };""")
     assert got["during"] == 1 and got["after"] == 1 and got["later"] == 1 and got["q"] is None and got["r"] is None, got
@@ -361,16 +377,15 @@ out = { a, b, c: !!c, log };""")
 def test_the_disc_on_screen_is_passed_and_failures_are_logged_not_thrown():
     got = watch("""
 disc = OLD.disc;
-w.hide(); await w.show();
+w.hide(); await w.show();                                          // apply throws: logged, nothing escapes
 const failing = LD.returnWatch({ hidden: true, getLoad: () => load, getDisc: () => null, now: () => clock,
   refetch: () => { throw new Error('network gone'); }, apply: (r) => results.push(r) });
 const r2 = await failing.show();
-w.hide(); await w.show();                                          // apply throws: logged, nothing escapes
 out = { log, results, r2, warn: WARN };""", throw=True)
     assert got["log"][0] == {"pub": OLD_PUB, "disc": OLD_PUB}, got["log"]
     assert got["r2"] == {"ok": False, "why": "network gone"} and {"ok": False, "why": "network gone"} in got["results"], got
     warn = " | ".join(got["warn"])
-    assert "the fetch stopped (network gone)" in warn and "kept the data on screen" in warn, warn
+    assert "the fetch stopped (network gone)" in warn and "kept what is on screen" in warn, warn
     assert "the fetched files were not applied (boom)" in warn, warn
 
 
@@ -385,13 +400,186 @@ out = { log, results, q };""")
     assert len(got["log"]) == 1 and got["results"] == [] and got["q"] is None, got
 
 
-def test_preview_and_failed_loads_never_fetch():
+def test_the_preview_never_fetches_and_a_failed_load_fetches_once_per_return():
+    """Review 2026-11-08 (5): a page whose first load failed fetches once on a return too (the same rules: once per return,
+    the wait after a fetch that put nothing on screen). The preview page and a load still under way never fetch."""
     got = watch("""
 load = { ...load, preview: true }; w.hide(); const a = w.show();
-load = { status: 'fail' }; w.hide(); const b = w.show();
 load = { status: 'loading' }; w.hide(); const c = w.show();
-out = { a, b, c, log };""")
-    assert got["a"] is None and got["b"] is None and got["c"] is None and got["log"] == [], got
+load = { status: 'fail' }; w.hide(); const b = w.show(); await tick();
+const second = w.show();                                           // the same return: nothing more
+w.hide(); const soon = w.show();                                   // 9 minutes on, after a fetch that put nothing on screen
+clock += LD.REFETCH_GAP_MS; w.hide(); const late = w.show(); await tick();
+out = { a, c, b: !!b, second, soon, late: !!late, log: log.length, results, due: [LD.dueOnReturn({ status: 'fail' }, clock),
+  LD.dueOnReturn({ status: 'loading' }, clock), LD.dueOnReturn({ status: 'fail', preview: true }, clock), LD.dueOnReturn(null, clock)] };""")
+    assert got["a"] is None and got["c"] is None, got                          # preview · loading: never
+    assert got["b"] is True and got["second"] is None and got["soon"] is None and got["late"] is True and got["log"] == 2, got
+    assert got["due"] == [True, False, False, False], got
+
+
+def test_no_fetch_within_ten_minutes_of_one_that_put_nothing_on_screen():
+    """Review 2026-11-08 (2): GitHub Pages lets data.json be cached for 10 minutes (max-age=600), so a return sooner than
+    that after a fetch that put nothing on screen (failed, nothing later, mixed) does not fetch. Logged."""
+    got = watch("""
+w.hide(); await w.show();                                          // nothing later on the site
+const n1 = log.length;
+clock += LD.REFETCH_GAP_MS - 1000; w.hide(); const soon = w.show();
+clock += 1000; w.hide(); const now = w.show(); await tick();
+out = { n1, soon, now: !!now, n: log.length, info: INFO, gap: LD.REFETCH_GAP_MS };""")
+    assert got["gap"] == 600000 and got["n1"] == 1 and got["soon"] is None and got["now"] is True and got["n"] == 2, got
+    skip = [x for x in got["info"] if "nothing fetched" in x]
+    assert len(skip) == 1 and "the last fetch on a return, 599 s ago, put nothing on screen" in skip[0], skip
+
+
+def test_a_fetch_that_put_something_on_screen_starts_no_wait_and_a_held_publish_stops_fetching():
+    got = run("""
+let load = loadOf(OLD, NOW), clock = at(NOW), waiting = null;
+const log = [];
+const w = LD.returnWatch({ hidden: false, getLoad: () => load, getDisc: () => null, now: () => clock, held: () => waiting,
+  refetch: () => { log.push(1); return Promise.resolve({ ok: true, load }); }, apply: () => {} });
+w.hide(); await w.show();
+w.hide(); const again = w.show();                                  // still stale (the result was not put on screen here): no wait
+await again;
+waiting = 'the publish of X (3 stocks, 2 companies), held while the holdings import is open,';
+w.hide(); const held = w.show();
+out = { log: log.length, held, info: INFO };""", OLD=old_files(), NOW=NOW)
+    assert got["log"] == 2 and got["held"] is None, got
+    assert any("nothing fetched; the publish of X" in x and "is already waiting to go on screen" in x for x in got["info"]), got["info"]
+
+
+# ── a fetch that hangs gives up (review 2026-11-08, 3) ──
+def test_a_hung_fetch_gives_up_and_later_returns_fetch_again():
+    got = run("""
+const cur = loadOf(OLD, NOW);
+serve({ 'data.json': { hang: true } });
+const t0 = Date.now();
+const r = await LD.refetchNewer(cur, null, at(NOW), { timeoutMs: 80 });
+const took = Date.now() - t0;
+const sigs = SIGS.slice(); SIGS.length = 0;
+let clock = at(NOW);
+const w = LD.returnWatch({ hidden: false, getLoad: () => cur, getDisc: () => null, now: () => clock, apply: () => {},
+  refetch: (c, d) => LD.refetchNewer(c, d, clock, { timeoutMs: 80 }) });
+w.hide(); await w.show();                                          // hangs, gives up: not busy any more
+clock += LD.REFETCH_GAP_MS; w.hide(); const again = w.show();
+await again;
+serve({});
+await LD.loadAll(at(NOW));                                         // the first load: no time limit (no signal)
+out = { r, took, sigs, again: !!again, first: SIGS.slice(-3), warn: WARN, limit: LD.REFETCH_TIMEOUT_MS };""", OLD=old_files(), NOW=NOW)
+    assert got["r"]["ok"] is False and "data.json: no answer in" in got["r"]["why"], got["r"]
+    assert got["took"] < 5000 and got["sigs"] == [True] and got["limit"] == 60000, got
+    assert got["again"] is True and got["first"] == [False, False, False], got
+    assert any("kept the data on screen" in x and "no answer in" in x for x in got["warn"]), got["warn"]
+
+
+def test_a_failed_first_load_is_tried_again_through_load_all():
+    got = run("""
+const cur = { status: 'fail' };
+serve(SITE_NEW);
+const r = await LD.refetchNewer(cur, null, at(NOW));
+const calls = CALLS.map((c) => c.url).sort(); CALLS.length = 0;
+const shape = E.exactData();
+serve(SITE_NOMACRO);
+const m = await LD.refetchNewer(cur, null, at(NOW));
+serve(SITE_BAD);
+const b = await LD.refetchNewer(cur, null, at(NOW));
+out = { ok: r.ok, status: r.load.status, pub: r.load.data.publishedAt, calls, shape, m: m.ok, mMacro: m.load && m.load.macro, b, info: INFO, warn: WARN };""",
+              NOW=NOW, SITE_NEW=site(new_files(div_check=True)), SITE_NOMACRO=site(new_files(), **{"macro.json": {"status": 404}}),
+              SITE_BAD=site(new_files(), **{"corp.json": "{broken"}))
+    assert got["ok"] is True and got["status"] == "ok" and got["pub"] == NEW_PUB, got
+    assert got["calls"] == ["./corp.json", "./data.json", "./macro.json"], got
+    assert got["shape"] is False, got                                  # the failure on screen: the shape waits for adoptLoad
+    assert got["m"] is True and got["mMacro"] is None, got             # as a first load: on without macro.json
+    assert got["b"]["ok"] is False and "load" not in got["b"], got["b"]
+    info, warn = " | ".join(got["info"]), " | ".join(got["warn"])
+    assert "back in view after a failed load" in info and "replaces the load-failure message: 3 stocks, 2 companies" in info, info
+    assert "they still cannot be used" in warn and "the load-failure message stays" in warn, warn
+
+
+# ── hold.js: never under a draft the new data could change (review 2026-11-08, 1) ──
+HOLD = """
+const fx = (n) => JSON.parse(readFileSync(FIX + '/' + n + '.json', 'utf8'));
+const F = { data: fx('data'), corp: fx('corp'), macro: fx('macro') };
+for (const k of ['data', 'corp', 'macro']) F[k].publishedAt = OLD_PUB;
+const L0 = loadOf(F, NOW);
+const st = E.applyDeck(E.defaultSettings(), 'income');
+const ds = DC.deckState(L0, st);
+const picks = DC.defaultPicks(ds);
+const without = (t) => { const d = { ...F.data, publishedAt: NEW_PUB, stocks: F.data.stocks.filter((s) => s.t !== t) };
+  return LD.resolveLoad({ data: ok(d), corp: ok({ ...F.corp, publishedAt: NEW_PUB }), macro: ok({ ...F.macro, publishedAt: NEW_PUB }) }, at(NOW)); };
+const same = without('NONE');
+const krPick = picks.find((t) => L0.byT.get(t).cls === 'kr');
+const lost = without(krPick);
+const bPick = { step: 3, stage: 'pick', settings: st, picks };
+const bPlan = { ...bPick, stage: 'plan' };
+const bSteps = { ...bPick, stage: 'steps', picks: null };
+const im0 = { step: 0, drafts: [{ t: '005930' }, { t: krPick }] }, im2 = { ...im0, step: 2 };
+"""
+
+
+def hold_run(body):
+    return run(HOLD + body, FIX=FIX, OLD_PUB=OLD_PUB, NEW_PUB=NEW_PUB, NOW=NOW)
+
+
+def test_hold_reasons_cover_the_screens_and_the_drafts_left_behind():
+    got = hold_run("""
+const R0 = (ctx, next) => H.holdReason(ctx, next);
+out = {
+  n: picks.length, kr: krPick,
+  pickOn: R0({ onBuild: true, builder: bPick }, same), planOn: R0({ onBuild: true, builder: bPlan }, same),
+  stepsOn: R0({ onBuild: true, builder: bSteps }, lost), importOn: R0({ onImport: true, importer: im0 }, same),
+  pickOffSame: R0({ builder: bPick }, same), pickOffLost: R0({ builder: bPick }, lost), planOffLost: R0({ builder: bPlan }, lost),
+  imp2Lost: R0({ importer: im2 }, lost), imp2Same: R0({ importer: im2 }, same), imp0Lost: R0({ importer: im0 }, lost),
+  survive: [H.picksSurvive(bPick, same), H.picksSurvive(bPick, lost), H.draftsSurvive(im2, same), H.draftsSurvive(im2, lost)],
+  notReady: H.picksSurvive(bPick, { ...same, missing: ['ind'] }),
+  pinnedGone: H.picksSurvive({ ...bPick, settings: { ...st, pinned: [krPick] } }, lost),
+  failNext: R0({ builder: bPick }, { status: 'fail' }),
+};""")
+    assert got["n"] == 6 and got["kr"], got
+    assert got["pickOn"] == "the portfolio builder is on its pick step" and got["planOn"] == "the portfolio builder is on its plan step", got
+    assert got["stepsOn"] is None, got                                   # 기준 steps: the picks are drawn again from the new data
+    assert got["importOn"] == "the holdings import is open", got
+    assert got["pickOffSame"] is None, got                                # left behind, nothing lost: goes on screen
+    assert got["pickOffLost"] == "the portfolio builder draft left on its pick step would lose a stock with the new data", got
+    assert got["planOffLost"] and "plan step" in got["planOffLost"], got
+    assert got["imp2Lost"] == "the holdings import draft left on its step 3 would lose a holding with the new data", got
+    assert got["imp2Same"] is None and got["imp0Lost"] is None, got        # the first step shows a row it cannot price: not silent
+    assert got["survive"] == [True, False, True, False] and got["notReady"] is False and got["pinnedGone"] is False, got
+    assert got["failNext"] is None, got
+
+
+def test_the_gate_holds_releases_and_never_uses_a_result_fetched_for_other_data():
+    got = hold_run("""
+let shown = L0, ctx = { onBuild: true, builder: bPick };
+const put = [];
+const g = H.publishGate({ getLoad: () => shown, ctx: () => ctx, put: (r) => { put.push(r.load.data.publishedAt); shown = r.load; } });
+const r = { ok: true, load: lost, disc: null };
+g.apply({ ok: false, why: 'x' }, L0);                                  // nothing to put on screen
+g.apply(r, L0);
+const heldText = g.held();
+const c1 = g.check();                                                  // still on the pick step
+ctx = { onBuild: false, builder: bPick };
+const c2 = g.check();                                                  // left, but the draft would lose a pick
+ctx = { onBuild: false, builder: bSteps };
+const c3 = g.check();                                                  // back to the 기준 steps: on screen now
+const after = g.held();
+// the data on screen changed meanwhile: the held result is dropped
+ctx = { onImport: true, importer: im2 };
+g.apply({ ok: true, load: same, disc: null }, shown);
+shown = { ...shown, data: { ...shown.data } };
+ctx = {};
+const c4 = g.check();
+// a failed first load holds nothing, whatever is on screen
+const fail = { status: 'fail' }; shown = fail; ctx = { onImport: true, importer: im2 };
+g.apply({ ok: true, load: same, disc: null }, fail);
+out = { heldText, c1, c2, c3, after, c4, put, warn: WARN, info: INFO };""")
+    assert got["heldText"].startswith(f"the publish of {NEW_PUB} (") and "held while the portfolio builder is on its pick step," in got["heldText"], got
+    assert got["c1"] is False and got["c2"] is False and got["c3"] is True and got["after"] is None, got
+    assert got["c4"] is False and got["put"] == [NEW_PUB, NEW_PUB], got     # the second one: the failed load, not the dropped one
+    warn, info = " | ".join(got["warn"]), " | ".join(got["info"])
+    assert f"back in view: the publish of {NEW_PUB} (" in warn and "is held while the portfolio builder is on its pick step" in warn, warn
+    assert "stocks, " in warn and "companies)" in warn, warn                                         # with the counts
+    assert "held until now, now shows on every screen" in info, info
+    assert "held until now, is not used: the data on screen changed after it was fetched" in warn, warn
 
 
 # ── wiring: the live page only ──
@@ -400,11 +588,20 @@ def read(p):
         return fh.read()
 
 
+def test_the_report_sandbox_starts_again_on_a_new_publish():
+    """Review 2026-11-08 (4): the 점검 sandbox keeps its weights in state (useState): keyed by the publish, it starts again
+    from today's weights when newer data comes in. (The 점검 screen holds new data while it is open, hold.js; this covers any
+    way it could still meet new rows.)"""
+    rep = read("src/v2/report.jsx")
+    assert rep.count("<Sandbox key={load.data.publishedAt} st={st} />") == 1 and rep.count("<Sandbox") == 1
+
+
 def test_the_live_page_wires_the_return_to_view_and_the_preview_does_not():
     app, main, prev = read("src/v2/app.jsx"), read("src/v2/main.jsx"), read("src/v2/main-preview.jsx")
     assert "refetch: (cur, disc) => refetchNewer(cur, disc)" in main
     assert "refetch" not in prev and "refetchNewer" not in prev            # the preview fetches nothing
-    assert "if (!liveData || !source.refetch) return undefined;" in app
+    assert 'const watchable = !!source.refetch && !load.preview && (load.status === "ok" || load.status === "fail");' in app
+    assert "if (!watchable) return undefined;" in app and "}, [watchable]);" in app
     for ev in ('document.addEventListener("visibilitychange", onVis)', 'window.addEventListener("pagehide", onHide)',
                'window.addEventListener("pageshow", onBack)', 'document.removeEventListener("visibilitychange", onVis)',
                'window.removeEventListener("pagehide", onHide)', 'window.removeEventListener("pageshow", onBack)'):
@@ -412,6 +609,10 @@ def test_the_live_page_wires_the_return_to_view_and_the_preview_does_not():
     assert "if (e && e.persisted) w.show();" in app                         # pageshow counts only from the back-forward cache
     assert app.count("returnWatch(") == 1 and "w.stop();" in app
     assert app.count("setLoad(adoptLoad(r.load));") == 1                    # the new state goes on screen with its own data shape
+    # held under a draft (hold.js): the gate decides; it is asked again whenever the screen or a draft changes
+    assert "apply: (r, cur) => gate.apply(r, cur)," in app and "held: () => gate.held()," in app
+    assert "holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };" in app
+    assert "useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);" in app
 
 
 # ── service worker: the fetch reaches the network ──
