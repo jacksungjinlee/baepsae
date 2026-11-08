@@ -128,7 +128,7 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
       </div>
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 6 }}>
         {lines.map((l, i) => <div key={i} style={{ fontSize: 12, color: C.ink, lineHeight: 1.6 }}>{l}</div>)}
-        <EpsFixLine corp={corp} show={!en && perShown} style={{ marginTop: 0 }} />
+        <EpsFixLine corp={corp} cos={[c]} show={!en && perShown} style={{ marginTop: 0 }} />
         {flagN > 0 && <div style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>{en ? `${flagN} financial caution flag${flagN > 1 ? "s" : ""} to review` : `짚고 갈 재무 신호 ${flagN}개가 있어요`}</div>}
         <IcrOffLine co={c} show={!en && flagN > 0} style={{ marginTop: 0 }} />
       </div>

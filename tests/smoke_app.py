@@ -2538,21 +2538,26 @@ FIX_LINES = """(kind) => [...document.querySelectorAll('[data-fix="' + kind + '"
 
 
 def scene_fix_notes(R, files, live=False):
-    """예전 뱁새: 기업분석 · 첫 화면 성적표 · 포트폴리오의 펼친 종목 줄에 한국 PER · EPS (와 같은 순이익으로 계산한 숫자) 칸마다
+    """예전 뱁새: 기업분석 · 첫 화면 성적표의 한국 PER · EPS (와 같은 순이익으로 계산한 숫자) 칸마다
     'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.' (12px 이상, 한국어 화면에서만), 이자보상배율이 꺼진 회사의 재무 신호
-    밑에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.'. live: corp.json 에 epsBasis "owners" 가 있고 이자보상배율이
-    다시 돌면 어디에도 없어요."""
+    밑에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.'. live: corp.json 에 epsBasis "owners" 가 있고
+    그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 없어요 (총 순이익 "t" 인 회사에는 남아요)."""
     S = "고치는 중 안내 " + ("끝" if live else "지금")
     f = json.loads(json.dumps(files, allow_nan=True))
     corp = f["corp.json"]
     co = next(c for c in corp["companies"] if c.get("t") == "005930")
+    hd = next(c for c in corp["companies"] if c.get("t") == "005380")
     if live:
+        # 다시 읽은 발행의 모양 (지어낸 값): 삼성전자는 지배주주 순이익("o"), 현대차는 지배주주 줄이 없는 총 순이익("t")
         corp["epsBasis"] = "owners"
         for c in corp["companies"]:
             if (c.get("flWhy") or {}).get("icr") == "off":
                 c.pop("flWhy")
                 c["flRan"] = sorted(set(c.get("flRan") or []) | {"icr"})
         co["fl"] = {"cr": 85}
+        sh = round(co["shm"] * 1e6) + 815974664
+        co.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6)})
     else:
         corp.pop("epsBasis", None)
         co.update(fl={"cr": 85}, flWhy={"icr": "off"}, flRan=["cr", "l3", "imp"])     # 재무 신호 하나 · 이자보상배율 꺼짐
@@ -2578,6 +2583,27 @@ def scene_fix_notes(R, files, live=False):
         assert body.index("PER") < body.index(FIX_EPS), "줄이 숫자보다 위에 있어요"
     R.check(page, S, "기업분석 005930: 투자지표 · 업종 내 위치 · 주가 분해 · DCF 에 한 줄씩 · 재무 신호 밑에 이자보상배율 줄 (12px 이상)"
             + (" — 다시 읽기 뒤에는 없음" if live else ""), corp_page)
+
+    def split_basis():
+        """주가는 무엇으로 움직였나: 3년 전 EPS 도 지금 EPS 와 같은 기준 (지금: 총 순이익 ÷ 보통주 · 다시 읽은 뒤: 지배주주 순이익 ÷ 보통주 +
+        우선주). 현대차가 다시 읽은 뒤 총 순이익("t")이면 숫자 대신 그 줄."""
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "이익(EPS) 변화")
+        then = co["nio3"][2] * 1e8 / co["epsIn"]["sh"] if live else co["ni"][2] * 100 / co["shm"]
+        see(page, f"{round(then):,}원 → {round(co['eps']):,}원")
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005380", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        see(page, "지난 3년 주가 = 이익 변화 × 눈높이 변화")
+        body = page.locator("body").inner_text()
+        eps = lines("eps")
+        if live:
+            assert "이익(EPS) 변화" not in body and "적자 구간이 있어서" not in body, "총 순이익(t)인데 주가 분해 숫자 · 적자 문장이 보여요"
+            assert len(eps) >= 3 and all(t == FIX_EPS for t, _ in eps), eps        # 투자지표 · 주가 분해 · DCF (+ 업종 내 위치)
+        else:
+            assert len(eps) >= 3, eps
+    R.check(page, S, "주가 분해: 두 끝이 같은 기준 (005930)" + (" · 현대차 't'는 숫자 대신 그 줄" if live else ""), split_basis)
 
     def gate_card(lang):
         def run():

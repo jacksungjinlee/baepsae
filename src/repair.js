@@ -8,6 +8,7 @@
 //    주가 분해 use the same net income. A full DART re-read fixes it. Until corp.json says the re-read is live
 //    (top-level epsBasis === "owners"), every Korean screen section that shows one of these numbers carries the line
 //    "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요." with {date} = EPS_FIX_DATE as month-day ("11월 9일").
+//    After the re-read the line goes per company (epsFixNeeded: only companies whose epsIn.b is "o" or "s" lose it).
 //    US stocks never get it (their figures come from SEC / Yahoo, not DART).
 // 2. 이자보상배율: switched off in the pipeline for every company until the same re-read (fetch_data.py ICR_OFF, corp.json
 //    flWhy.icr "off"). Wherever 재무 경고 is shown for such a company the line "이자보상배율은 계산 방법을 고치는 중이라
@@ -39,6 +40,39 @@ export function warnEpsFixLate(corp, todayIso, where, date = EPS_FIX_DATE) {
   console.warn(`[${where}] !! The PER/EPS line still says the DART re-read goes live on ${date}, but today (KST) is ${todayIso} `
     + `and corp.json has no epsBasis "${EPS_BASIS_OWNERS}". The line stays on every Korean PER/EPS: update EPS_FIX_DATE in src/repair.js.`);
   return true;
+}
+
+// Per company (2026-11-08, coordinator relaying the data review): the re-read writes receipts corp.json epsIn { ni, b, p, sh }
+// per company, b = "o" (owners' profit) · "s" (separate statements: no minority interest) · "t" (total profit on a
+// consolidated statement with no owners' line). A company is fixed only when the top-level marker is there AND its
+// epsIn.b is "o" or "s"; companies still on total profit ("t", or no epsIn) keep the line after the re-read too.
+export const EPS_IN_FIXED = ["o", "s"];
+export function epsInFixed(co) {
+  return !!co && typeof co === "object" && !!co.epsIn && typeof co.epsIn === "object" && EPS_IN_FIXED.includes(co.epsIn.b);
+}
+// corp: corp.json · co: that company's row in it. true = the PER/EPS line shows for this company.
+export function epsFixNeeded(corp, co) {
+  return !(epsBasisLive(corp) && epsInFixed(co));
+}
+
+// The net income (억원) and share count (백만주) on which this company's EPS stands, for the report year fy − i (corp.json
+// ni / nio3 are [fy, fy−1, fy−2]): i = 2 is 주가는 무엇으로 움직였나's 'then' end, i = 0 the reverse DCF's start profit.
+// Both ends of a calculation must share one basis with the EPS shown (corp.json eps):
+//   no epsIn (files before the re-read): eps = total net income ÷ common shares, so ni[i] ÷ shm, exactly as before
+//   epsIn.b "o": owners' net income nio3[i] ÷ epsIn.sh (common + listed preferred shares, a count)
+//   epsIn.b "s": ni[i] ÷ epsIn.sh (separate statements: total and owners' profit are the same)
+//   epsIn.b "t", any other value, no share count, or the needed year missing: { bad: true } — the card shows no numbers,
+//   only the PER/EPS line (never a mixed basis, never a guess).
+// -> { basis: "today" | "o" | "s", ni, sharesM } (ni null = that year is missing in a file before the re-read) | { bad: true } | null
+const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+export function epsBase(co, i) {
+  if (!co || typeof co !== "object") return null;
+  const at = (arr) => (Array.isArray(arr) ? finite(arr[i]) : null);
+  const e = co.epsIn;
+  if (e == null) return { basis: "today", ni: at(co.ni), sharesM: finite(co.shm) };
+  if (typeof e !== "object" || !(finite(e.sh) > 0)) return { bad: true };
+  const ni = e.b === "o" ? at(co.nio3) : e.b === "s" ? at(co.ni) : null;
+  return ni == null ? { bad: true } : { basis: e.b, ni, sharesM: e.sh / 1e6 };
 }
 
 // The 이자보상배율 check is switched off for this company (corp.json flWhy.icr "off"; financial companies never carry it).

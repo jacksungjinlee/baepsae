@@ -5478,17 +5478,27 @@ assert len(_FIXD) == 1, _FIXD
 FIX_EPS = FIX_EPS_TPL.replace("{date}", f"{int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일")
 FIX_OFF_KR = "005930"          # 걸린 경고 없음 · 이자보상배율 꺼짐 → 재무 경고 카드 자리에 그 줄
 FIX_FLAG_KR = "373220"         # LG에너지솔루션: 유동비율 경고 · 이자보상배율 꺼짐 → 목록 밑에 그 줄 (PER 1,041배 · EPS 345원)
+FIX_T_KR = "005380"            # 현대차: 다시 읽은 뒤에도 총 순이익 (epsIn.b "t") → 줄이 남고, 주가 분해 · 지금 가격이 가정하는 것은 숫자 대신 그 줄
+FIX_PREF = 815974664           # 삼성전자우 상장 주식 수 (다시 읽은 epsIn.sh = 보통주 + 상장 우선주)
 
 
 def fix_files(files, live):
-    """live False: 지금의 발행처럼 (epsBasis 없음 · 두 회사의 flWhy.icr "off"). live True: 다시 읽기가 끝난 발행
-    (epsBasis "owners" · 이자보상배율이 다시 돌아요: flWhy 없음 · flRan 에 icr)."""
+    """live False: 지금의 발행처럼 (epsBasis 없음 · 두 회사의 flWhy.icr "off" · epsIn 없음). live True: 다시 읽기가 끝난 발행의 모양
+    (지어낸 값): epsBasis "owners" · 회사마다 epsIn {ni, b, p, sh} 와 지배주주 순이익 nio3 (억원), 그 기준의 eps (삼성전자 · LG에너지솔루션
+    "o", 현대차 "t") · 이자보상배율이 다시 돌아요 (flWhy 없음 · flRan 에 icr)."""
     f = clone(files)
     coby = {x["t"]: x for x in f["corp.json"]["companies"]}
     if live:
         f["corp.json"]["epsBasis"] = "owners"
         coby[FIX_OFF_KR].update(flRan=["cr", "icr", "l3", "imp"])
         coby[FIX_FLAG_KR].update(flRan=["cr", "icr", "l3", "imp"], fl={"cr": 85})
+        sam = coby[FIX_OFF_KR]
+        sh = round(sam["shm"] * 1e6) + FIX_PREF
+        sam.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
+        coby[FIX_FLAG_KR].update(epsIn={"ni": -8000.0, "b": "o", "p": "2026.2Q", "sh": 234000000}, nio3=[-10728.1, -10187.41, 12371.8],
+                                 eps=round(-8000.0 * 1e8 / 234000000))
+        hd = coby[FIX_T_KR]
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6)})
     else:
         f["corp.json"].pop("epsBasis", None)
         coby[FIX_OFF_KR].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "off"})
@@ -5509,10 +5519,13 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
     """2026-11-08 (Jack): 한국 PER · EPS (와 같은 순이익으로 계산한 숫자) 칸마다 'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수
     있어요.' 한 줄 (미국 종목은 없음), 이자보상배율이 꺼진 회사의 재무 경고에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지
     않아요.' (경고가 있으면 목록 밑 · 없으면 카드 자리 · 가진 종목 '재무 경고 0개'의 확인하지 못했어요 밑). 12px 이상.
-    live: corp.json 에 epsBasis "owners" 가 있고 이자보상배율이 다시 돌면 어디에도 두 줄이 없어요. shots: 스크린샷 폴더 (선택)."""
+    live: corp.json 에 epsBasis "owners" 가 있고 그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 두 줄이 없어요
+    (총 순이익 "t" 인 현대차에는 남아요). shots: 스크린샷 폴더 (선택)."""
     S = f"고치는 중 안내 {'끝' if live else '지금'} {width}"
     wide = width >= 1024
-    srv, ctx, page, base = R.open(build_site(fix_files(files, live)), width, init=fix_store(), path=f"/app.html?dev=1#stocks/{FIX_OFF_KR}/value",
+    fx = fix_files(files, live)
+    coby = {x["t"]: x for x in fx["corp.json"]["companies"]}
+    srv, ctx, page, base = R.open(build_site(fx), width, init=fix_store(), path=f"/app.html?dev=1#stocks/{FIX_OFF_KR}/value",
                                   device=pc_device(width) if wide else None)
 
     def eps_lines(sel):
@@ -5559,6 +5572,44 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
             floor_ok(page, why)
             R.collect(page)
     R.check(page, S, f"{FIX_OFF_KR} 실적 · 배당 탭: 주가 분해 · 배당성향 칸에 한 줄" + (" — 없음" if live else ""), other_tabs)
+
+    def split_basis():
+        """주가는 무엇으로 움직였나: 두 끝이 EPS 와 같은 기준 (지금: 총 순이익 ÷ 보통주 · 다시 읽은 뒤: 지배주주 순이익 ÷ 보통주 + 우선주)."""
+        co = coby[FIX_OFF_KR]
+        co_hash(page, f"#stocks/{FIX_OFF_KR}/earn")
+        card = page.locator('[data-ui-v2="co-decomp"]')
+        card.wait_for(state="visible")
+        assert card.get_attribute("data-head") in ("upE", "upM", "downE", "downM"), card.get_attribute("data-head")
+        then = co["nio3"][2] * 1e8 / co["epsIn"]["sh"] if live else co["ni"][2] * 100 / co["shm"]
+        want = co["eps"] / then
+        got = float(card.locator('[data-ui-v2="co-decomp-eq"]').get_attribute("data-eps"))
+        assert abs(got - want) < 1e-9, (got, want)
+        assert f"{round(then):,}원" in card.inner_text(), (round(then), card.inner_text())     # 3년 전 EPS 도 그 기준
+        floor_ok(page, "주가 분해")
+        R.collect(page)
+        # 현대차: 다시 읽은 뒤 총 순이익("t") → 숫자 없이 그 줄 (주가 분해 · 지금 가격이 가정하는 것), 가치 카드의 줄도 남아요
+        co_hash(page, f"#stocks/{FIX_T_KR}/earn")
+        card = page.locator('[data-ui-v2="co-decomp"]')
+        card.wait_for(state="visible")
+        if live:
+            assert card.get_attribute("data-head") == "basis" and card.locator('[data-ui-v2="co-decomp-eq"]').count() == 0, card.inner_text()
+            assert [card.locator('[data-ui-v2="eps-fix"]').nth(i).inner_text() for i in range(card.locator('[data-ui-v2="eps-fix"]').count())] == [FIX_EPS]
+            assert C["co"]["decomp"]["none"] not in card.inner_text() and C["co"]["tiles"]["na"] not in card.inner_text()
+        else:
+            assert card.get_attribute("data-head") != "basis"
+        R.collect(page)
+        co_hash(page, f"#stocks/{FIX_T_KR}/value")
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        dcf = page.locator('[data-ui-v2="co-dcf"]')
+        if live:
+            assert dcf.get_attribute("data-edge") == "basis" and dcf.locator('[data-ui-v2="co-dcf-inputs"]').count() == 0, dcf.inner_text()
+            assert dcf.locator('[data-ui-v2="eps-fix"]').count() == 1
+        else:
+            assert dcf.count() == 0 or dcf.get_attribute("data-edge") != "basis"
+        assert page.locator('[data-ui-v2="co-value"] > section:first-child [data-ui-v2="eps-fix"]').count() == 1   # 총 순이익: 줄이 남아요
+        floor_ok(page, "현대차 가치 탭")
+        R.collect(page)
+    R.check(page, S, "주가 분해: 두 끝이 같은 기준 (삼성전자)" + (" · 현대차 't'는 숫자 대신 그 줄 (주가 분해 · 지금 가격이 가정하는 것)" if live else " · 현대차도 숫자"), split_basis)
 
     def lges():
         co_hash(page, f"#stocks/{FIX_FLAG_KR}/value")

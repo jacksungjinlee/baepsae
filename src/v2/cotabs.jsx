@@ -117,7 +117,8 @@ function Decomp({ co, s }) {
   const basis = !d.head ? null : q && D.basisQ && d.fyThen ? fill(D.basisQ, { y: q[1], q: q[2], fy: d.fyThen })
     : !q && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
   const msg = d.why === "loss" ? D.none : d.why === "missing" ? C.co.tiles.na : null;
-  if (!d.head && !msg) return null;
+  const noBasis = d.why === "basis";           // 2026-11-08: the two ends share no basis -> no numbers, the PER/EPS line in their place
+  if (!d.head && !msg && !noBasis) return null;
   return (
     <Card data-ui-v2="co-decomp" data-head={d.head || d.why}>
       <CardHead icon="chart-bar" tone="earn" title={D.title} />
@@ -133,9 +134,9 @@ function Decomp({ co, s }) {
           {basis && <Src>{basis}</Src>}
           {D.past && <Note style={{ marginTop: SPACE(1) }}>{D.past}</Note>}
         </>
-      ) : !d.head ? <Note>{msg}</Note> : null}
+      ) : !d.head && msg ? <Note>{msg}</Note> : null}
       {/* EPS · PER (and the loss reading, from the same net income); not under 자료가 없어요 */}
-      <EpsFixNote show={epsFixFor(s) && (!!d.head || d.why === "loss")} />
+      <EpsFixNote show={noBasis || (epsFixFor(s) && (!!d.head || d.why === "loss"))} />
     </Card>
   );
 }
@@ -301,6 +302,15 @@ function Dcf({ load, s, co, a, onTry }) {
   const D = C.co.dcf;
   const r = impliedGrowth(s, co, a);
   if (!D.title || r.why === "us" || r.why === "notReady") return null;
+  // 2026-11-08: no start profit on EPS's basis (company.js impliedGrowth "basis"): no numbers, the PER/EPS line in their place
+  if (r.why === "basis") {
+    return (
+      <Card data-ui-v2="co-dcf" data-edge="basis">
+        <CardHead icon="scales" tone="value" title={D.title} />
+        <EpsFixNote show />
+      </Card>
+    );
+  }
   const gb = growthBasis(s, co);
   const glabel = gb === "y2" ? C.pick.receipt.growthKr : gb === "y1" ? C.pick.receipt.growthKr1y : null;
   const g3 = num(s.g3);
@@ -432,6 +442,14 @@ function Calc({ load, s, store, setStoreData }) {
   const [done, setDone] = useState(false);
   const r = impliedGrowth(s, co, a);
   if (usOf(s) || r.why === "notReady" || r.why === "us" || !all(K.title, K.intro, K.disc, K.term, K.result)) return null;
+  if (r.why === "basis") {                     // 2026-11-08: as the 가치 tab's card (no numbers, the PER/EPS line)
+    return (
+      <Card data-ui-v2="co-calc" data-g="" data-edge="basis">
+        <CardHead icon="calculator" tone="value" title={K.title} />
+        <EpsFixNote show />
+      </Card>
+    );
+  }
   const set = (k, v) => { setDone(false); setA((x) => ({ ...x, [k]: v })); };
   const slider = (k, label, [lo, hi]) => (
     <label style={{ display: "block", marginTop: SPACE(3) }}>
