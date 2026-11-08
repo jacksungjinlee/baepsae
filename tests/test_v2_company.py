@@ -106,7 +106,7 @@ def test_revenue_growth_labels_say_each_markets_period_and_never_three_years():
     pick = open(os.path.join(ROOT, "src", "v2", "pick.jsx"), encoding="utf-8").read()
     assert 'growthLabel = s.cls === "us" ? R.growthUs : gb === "y2" ? R.growthKr : gb === "y1" ? R.growthKr1y : null' in pick   # 시장별
     tabs = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
-    assert tabs.count("C.pick.receipt.growthKr1y") == 2 and "growthUs" not in tabs        # 회사 페이지: 한국 이름표 (2년 · 1년) · 미국은 usGrowthText
+    assert tabs.count("C.pick.receipt.growthKr1y") == 1 and "growthUs" not in tabs        # 회사 페이지: 한국 이름표 (2년 · 1년) · 미국은 usGrowthText
     assert 'if (!s || s.cls !== "kr") return null;' in open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8").read()
 
 

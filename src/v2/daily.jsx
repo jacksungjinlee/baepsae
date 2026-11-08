@@ -11,6 +11,8 @@ import { C, fill, nf, p1 } from "./format.js";
 import { RuleLine, ChoiceGrid, tx } from "./ui.jsx";
 import { opPieces, opAmounts, divDropBody } from "./deckcalc.js";
 import { CoMark } from "./logo.jsx";
+import { epsFixFor } from "./fix.js";
+import { EpsFixNote } from "./fixnote.jsx";
 
 const R = () => C.plan.rules;
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
@@ -104,6 +106,8 @@ export function StatusLines({ x, names, onConfirm }) {
     <div data-ui-v2="status-lines" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
       <DividendAnswers x={x} onConfirm={onConfirm} />
       {views.map(([r, v], i) => <Line key={i} code={r.code} level={r.level} {...v} first={i === 0 && !x.divDrops.length} />)}
+      {/* 2026-11-08 (Jack): a Korean ROE is from the same net income as PER/EPS (fixnote.jsx) */}
+      <EpsFixNote show={epsFixFor(x) && views.some(([r]) => r.code === "roeUnder")} />
     </div>
   );
 }
@@ -153,6 +157,8 @@ export function HoldingRules({ x, names }) {
   // v19.0c: a paused band (a held stock is missing from today's data) is not shown: the portfolio says why (PausedNote).
   const band = x.rules.find((r) => r.id === "band" && r.check === "checked" && r.result !== "paused");
   const bandMiss = band && band.result === "missing" ? itemOf(band, x, names) : null;
+  // 2026-11-08 (Jack): today's Korean ROE (the ROE floor rule, with its number) is from the same net income as PER/EPS
+  const roeShown = !!R().roeLimit && x.rules.some((r) => r.id === "roeFloor" && r.check !== "pending" && r.now != null);
   return (
     <div data-rules-today={x.t}>
       {section("sell", R().sell)}
@@ -165,6 +171,7 @@ export function HoldingRules({ x, names }) {
             note={bandMiss ? fill(C.daily.missing, { item: bandMiss }) : null} />
         </div>
       )}
+      <EpsFixNote show={epsFixFor(x) && roeShown} />
     </div>
   );
 }

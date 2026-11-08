@@ -149,9 +149,12 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 ## Product rules (locked — change only if Jack says so)
 
 - Education, not advice. No 추천, no target prices, no promised returns. Numbers are framed as "what today's price
-  assumes", never as forecasts. Footer: 교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.
+  assumes", never as forecasts. Footer: 뱁새의 정보는 투자 자문이나 투자 권유가 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다.
+  The product never calls 뱁새 an educational tool, in any language (Jack, 2026-11-08); tests/test_footer.py checks it.
 - Long-only. No leverage, short-selling or speculation features.
 - Cards lead with the conclusion (Verdict line), then evidence. Computed ratios show their inputs ("receipts").
+- Every adjusted, hidden, left-out or estimated number says what happened and why (Jack, 2026-11-08): whenever 뱁새
+  adjusts, hides, leaves out, estimates or can't show something, the screen says what happened and why, in one short line.
 - Won-first framing for the user's own money; per-share US figures show $ first with 원 small. Beta shown with its
   estimation-error band; alpha shown as past-only.
 - Company pages cover Korean and US stocks. Korean figures come from DART filings; US financial statements come from SEC
@@ -178,7 +181,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 - Company logos come from the provider(s) named on the 데이터 출처 page, with a coloured letter mark as fallback.
 - Factor labels: formal name + sorting basis as a small second line (가치 / PBR 낮은 순).
 - Credit: the maker's profile lives on the 소개 page (menu). Footers show only the disclaimer and a 소개 link — no
-  credit line (Jack, 2026-11-03). The 소개 page does not lead with "교육용"; the footer disclaimer stays on every page.
+  credit line (Jack, 2026-11-03). The footer disclaimer stays on every page.
 - `baepsae.html` is on Jack's CV: never delete or rename it. A plain visit (no `?from=app` marker, no `#`) lands in 2.0;
   every 2.0 link into the old app carries the marker. When the old app retires, `baepsae.html` stays as a permanent
   redirect to 2.0 — and the old app retires only once every tool worth keeping lives in 2.0 and old-app portfolios can

@@ -503,6 +503,10 @@ export function StepCards({ st, set, ds, load, coach }) {
     <div>
       <ScreenTitle sub={s1.body}>{s1.title}</ScreenTitle>
       <Meter st={st} ds={ds} left={left} strike={stage === 2} />
+      {/* say-why (Jack, 2026-11-08): what the meter's count already leaves out (engine.screen): stocks under the trading-value
+          floor (LIQ_FLOOR_EOK) and preferred shares (engine.universe). Under the sticky bar, not inside it, so the bar stays
+          as short as before on a phone (and a phone held sideways keeps room for the guide). */}
+      <Note data-ui-v2="meter-why" style={{ marginTop: 0, marginBottom: SPACE(2) }}>{s1.remainWhy}</Note>
       <Card style={{ marginTop: SPACE(1) }}>
         <Label>{s1.strictLabel}</Label>
         <Segmented label={s1.strictAria} value={st.strict} onChange={(v) => set({ strict: v })}

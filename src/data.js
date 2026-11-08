@@ -33,9 +33,11 @@ function gcEvent(name) {
   try { window.goatcounter && window.goatcounter.count({ path: "evt-" + name, title: name, event: true }); } catch (e) {}
 }
 
-export async function loadJson(path, check) {
+// opts.signal (2026-11-08, 2.0 only): an AbortSignal that stops the request (2.0 load.js refetchNewer: a fetch made when a
+// page comes back into view gives up after a while instead of hanging). Without it the request is exactly as before.
+export async function loadJson(path, check, opts) {
   try {
-    const r = await fetch(path, { cache: "no-store" });
+    const r = await fetch(path, opts && opts.signal ? { cache: "no-store", signal: opts.signal } : { cache: "no-store" });
     if (!r.ok) return { ok: false, data: null, error: "HTTP " + r.status };
     const raw = await r.text();
     let data;

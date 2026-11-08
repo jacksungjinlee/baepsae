@@ -233,6 +233,26 @@ def main():
                 shot(page, width, "1-market")
             check(W + "탭: 종목(한국 · 미국 회사 → 예시 데이터 회사 페이지, 공시 탭 없음 · 예전 뱁새 링크 없음) · 시장(네 칸, 예전 뱁새 버튼 없음)", stocks_and_market, page, width)
 
+            def no_fix_lines():
+                """PR #89 리뷰: 미리 보기(지어낸 데이터)에는 'PER과 EPS는 … 바뀔 수 있어요' · '이자보상배율은 …' 줄이 없어요 (요약 · 실적 · 가치 · 배당)."""
+                tab(TABS["stocks"])
+                at("stocks")
+                row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+                row.wait_for(state="visible")
+                t = row.get_attribute("data-t")
+                for ctab in (None, "earn", "value", "div"):
+                    page.evaluate("(h) => { location.replace(h); }", f"#stocks/{t}" + (f"/{ctab}" if ctab else ""))
+                    page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"company\"]'); return !!e && e.dataset.tab === t; }",
+                                           arg=ctab or "summary")
+                    if ctab == "value":
+                        assert page.locator('[data-ui-v2="co-per"]').count() == 1, "미리 보기 한국 회사에 PER 칸이 없어요 (이 확인이 뜻이 없어요)"
+                    n = page.locator('[data-ui-v2="eps-fix"], [data-ui-v2="icr-off"], [data-ui-v2="co-warn-off"]').count()
+                    assert n == 0, (t, ctab, n)
+                    label_here()
+                page.evaluate("() => { location.replace('#stocks'); }")
+                at("stocks")
+            check(W + "미리 보기의 한국 회사: 고치는 중 안내 두 줄이 없어요 (지어낸 데이터)", no_fix_lines, page, width)
+
             def deck_tab():
                 tab(TABS["portfolio"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
