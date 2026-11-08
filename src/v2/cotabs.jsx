@@ -15,6 +15,8 @@
 //   plain link to that filing on DART (new tab, Jack 2026-11-05: routes.dartFilingUrl); nothing is fetched from DART.
 // 자세히: 가치 (every ratio with receipts that reproduce it, 업종 지도, the calculator) and 실적 (margins, 3-year table).
 // Charts draw this company in navy and its peers in grey (apricot stays for the deck screens' data marks).
+// 2026-11-08 (Jack): every card showing a Korean PER, EPS or a number from the same net income (ROE map, the reverse DCF
+//   and its calculator, 배당성향, 주가는 무엇으로 움직였나) ends with the PER/EPS line until the DART re-read (fixnote.jsx).
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -28,6 +30,9 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
+import { epsFixFor } from "./fix.js";
+import { epsPeriod, bpsPeriod } from "../repair.js";
+import { EpsFixNote } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -95,7 +100,7 @@ function Bars({ rows, fmt, aria, latest = COLOR.ink, earlier = COLOR.border }) {
 }
 
 // ================= 실적 =================
-function Decomp({ co }) {
+function Decomp({ co, s }) {
   const D = C.co.decomp;
   if (!D.title) return null;
   const d = decompose(co);
@@ -111,11 +116,15 @@ function Decomp({ co }) {
   const op = (ch) => <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{ch}</span>;
   const won = (v) => (v != null ? fill(C.app.won, { n: nf(Math.round(v)) }) : null);
   const per = (v) => (v != null && v > 0 ? timesText(v, 1) : null);
-  const q = co && typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  const basis = !d.head ? null : q && D.basisQ && d.fyThen ? fill(D.basisQ, { y: q[1], q: q[2], fy: d.fyThen })
-    : !q && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
+  // EPS now's period (repair.js epsPeriod): the re-read's epsIn.p when it wrote one ("fy" = 사업보고서 even with bq set),
+  // else bq as before; a p that cannot be read -> no basis line rather than a wrong one
+  const pe = epsPeriod(co);
+  const q = pe && !pe.fy ? pe : null;
+  const basis = !d.head ? null : q && D.basisQ && d.fyThen ? fill(D.basisQ, { y: q.y, q: q.q, fy: d.fyThen })
+    : pe && pe.fy && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
   const msg = d.why === "loss" ? D.none : d.why === "missing" ? C.co.tiles.na : null;
-  if (!d.head && !msg) return null;
+  const noBasis = d.why === "basis";           // 2026-11-08: the two ends share no basis -> no numbers, the PER/EPS line in their place
+  if (!d.head && !msg && !noBasis) return null;
   return (
     <Card data-ui-v2="co-decomp" data-head={d.head || d.why}>
       <CardHead icon="chart-bar" tone="earn" title={D.title} />
@@ -131,7 +140,9 @@ function Decomp({ co }) {
           {basis && <Src>{basis}</Src>}
           {D.past && <Note style={{ marginTop: SPACE(1) }}>{D.past}</Note>}
         </>
-      ) : !d.head ? <Note>{msg}</Note> : null}
+      ) : !d.head && msg ? <Note>{msg}</Note> : null}
+      {/* EPS · PER (and the loss reading, from the same net income); not under 자료가 없어요 */}
+      <EpsFixNote show={noBasis || (epsFixFor(s) && (!!d.head || d.why === "loss"))} />
     </Card>
   );
 }
@@ -212,7 +223,7 @@ export function EarnTab({ load, s, onMore }) {
         <Src>{yearText(co && co.fy)}</Src>
       </Card>
       <GrowthVs load={load} s={s} co={co} />
-      <Decomp co={co} />
+      <Decomp co={co} s={s} />
       {rows && E.moreTitle && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
     </div>
   );
@@ -290,7 +301,9 @@ function Strip({ s, group, inCard = false }) {
 // report year, discount rate, 5년 뒤 성장률); out of range or a loss: the old card's message instead. The old card's
 // defaults (fade on): parity tests.
 // v19.3e 가치 fix (v19.3 Part I): impliedGrowth grows 순이익, so the second bar is the company's own past 순이익
-// growth (company.pastNiGrowth: the yearly average from ni[2] to ni[0], both above 0), labelled "지난 2년 실제 이익 ·
+// growth (company.pastNiGrowth, on the same basis as EPS via src/repair.js epsBase: owners' profit nio3 when epsIn.b is "o",
+// total ni otherwise, from year [2] to year [0], both above 0; when epsIn.b is "t" the card shows the PER/EPS line instead
+// of numbers, so no bar), labelled "지난 2년 실제 이익 ·
 // 연평균 {x}% 늘었어요 / 줄었어요" (no minus sign), then "지금 주가가 가정하는 이익 증가는 지난 2년보다 낮아요. / 높아요. /
 // 지난 2년과 비슷해요." (비슷 = within 3 percentage points, on the numbers shown) before the approved note. Never revenue.
 // Without both profits above 0 the comparison is hidden (the bar and the sentence), not the card. At the model's edge
@@ -328,6 +341,15 @@ function Dcf({ load, s, co, a, onTry }) {
   const D = C.co.dcf;
   const r = impliedGrowth(s, co, a);
   if (!D.title || r.why === "us" || r.why === "notReady") return null;
+  // 2026-11-08: no start profit on EPS's basis (company.js impliedGrowth "basis"): no numbers, the PER/EPS line in their place
+  if (r.why === "basis") {
+    return (
+      <Card data-ui-v2="co-dcf" data-edge="basis">
+        <CardHead icon="scales" tone="value" title={D.title} />
+        <EpsFixNote show />
+      </Card>
+    );
+  }
   const msg = r.edge === "low" ? D.low : r.edge === "high" ? D.high : r.why === "loss" ? D.loss : null;
   const g = r.g != null ? round(r.g, 1) : null;
   const head = dcfHeadText(g);                 // 는다 (g >= 0) / 준다 (g < 0, no minus sign): Jack, 2026-11-05
@@ -354,18 +376,24 @@ function Dcf({ load, s, co, a, onTry }) {
             ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{inputs}</div>
         </>
       ) : <Note>{msg}</Note>}
+      <EpsFixNote show={epsFixFor(s)} />
       {D.try && onTry && C.co.valueMore.title && C.co.calc.title && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={onTry}>{D.try}</Button></div>}
     </Card>
   );
 }
 
 // PER and PBR basis (KR): fetch_data fill_multiples uses the latest four quarters' net income and that quarter's equity
-// when corp.json carries the TTM quarter (bq), else the 사업보고서 (fy).
+// when corp.json carries the TTM quarter (bq), else the 사업보고서 (fy). After the DART re-read epsIn.p / bpsIn.p say each
+// one's period (repair.js epsPeriod · bpsPeriod: "fy" can come with bq set). The existing lines name both at once, so a line
+// only when PER and PBR are on the same period; on different periods (or a p that cannot be read) no line, never a wrong one.
 export function valueBasis(co) {
   const V = C.co.value;
-  const q = co && typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  if (q) return V.basisQ ? fill(V.basisQ, { y: q[1], q: q[2] }) : null;
-  return co && Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
+  if (!co) return null;
+  const pe = epsPeriod(co), pb = bpsPeriod(co);
+  if (!pe || !pb) return null;
+  if (!pe.fy && !pb.fy && pe.y === pb.y && pe.q === pb.q) return V.basisQ ? fill(V.basisQ, { y: pe.y, q: pe.q }) : null;
+  if (pe.fy && pb.fy) return Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
+  return null;
 }
 
 // "업종 {n}개 회사와 비교": the companies both medians stand on can differ (PBR from the strip's companies, PER only from
@@ -428,6 +456,7 @@ export function ValueTab({ load, s, store, onMore }) {
           </Stats>
         )}
         {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
+        <EpsFixNote show={epsFixFor(s) && per != null && !compare} />
         <DateLine date={lineDate(load, s)} fresh={load.fresh} />
       </Card>
       {compare && (
@@ -436,6 +465,8 @@ export function ValueTab({ load, s, store, onMore }) {
           <CompareRow id="co-pbr" label="PBR" mine={r.pbr} med={r.med} value={timesText(r.pbr, 2)} sub={pbrSub} />
           {per != null && <CompareRow id="co-per" label="PER" mine={per} med={perMed ? perMed.med : null} value={timesText(per, 1)} sub={perSub} />}
           <Strip s={s} group={group} inCard />
+          {/* 2026-11-08 (Jack): PER sits in this card when there is an industry to compare (v19.3e) */}
+          <EpsFixNote show={epsFixFor(s) && per != null} />
         </Card>
       )}
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
@@ -477,6 +508,7 @@ function Scatter({ s, group }) {
         <div>{M.x}</div><div>{M.y}</div><div>{M.line}</div>
       </div>
       {M[m.pos] && <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{M[m.pos]}</p>}
+      <EpsFixNote show={epsFixFor(s)} />
     </Card>
   );
 }
@@ -489,6 +521,14 @@ function Calc({ load, s, store, setStoreData }) {
   const [done, setDone] = useState(false);
   const r = impliedGrowth(s, co, a);
   if (usOf(s) || r.why === "notReady" || r.why === "us" || !all(K.title, K.intro, K.disc, K.term, K.result)) return null;
+  if (r.why === "basis") {                     // 2026-11-08: as the 가치 tab's card (no numbers, the PER/EPS line)
+    return (
+      <Card data-ui-v2="co-calc" data-g="" data-edge="basis">
+        <CardHead icon="calculator" tone="value" title={K.title} />
+        <EpsFixNote show />
+      </Card>
+    );
+  }
   const set = (k, v) => { setDone(false); setA((x) => ({ ...x, [k]: v })); };
   const slider = (k, label, [lo, hi]) => (
     <label style={{ display: "block", marginTop: SPACE(3) }}>
@@ -511,6 +551,7 @@ function Calc({ load, s, store, setStoreData }) {
       {slider("term", K.term, DCF.termRange)}
       {res && <div data-ui-v2="co-calc-result" style={{ marginTop: SPACE(3), background: COLOR.page, borderRadius: RADIUS.sm, padding: SPACE(3), ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>{res}</div>}
       {inputs && <Src>{inputs}</Src>}
+      <EpsFixNote show={epsFixFor(s)} />
       {K.save && store.writable && (
         <div style={{ marginTop: SPACE(3) }}>
           <Button kind="secondary" onClick={save}>{done && K.saved ? K.saved : K.save}</Button>
@@ -576,6 +617,7 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
+            <EpsFixNote show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
             <DateLine date={lineDate(load, s)} fresh={load.fresh} />
           </Card>
         )}
@@ -681,6 +723,9 @@ export function DivTab({ load, s }) {
               {yearText(po.fy) && <Src>{yearText(po.fy)}</Src>}
             </div>
           </div>
+          {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
+              when the payout still uses total profit after the re-read (basis "total") */}
+          <EpsFixNote show={epsFixFor(s) || po.basis === "total"} />
         </Card>
       )}
       {(r.yieldPct != null || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
@@ -690,6 +735,9 @@ export function DivTab({ load, s }) {
           {!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
+        {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
+            when the payout still uses total profit after the re-read (basis "total") */}
+        <EpsFixNote show={!ring && (epsFixFor(s) || (!!po && po.basis === "total")) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
       </Card>}
     </div>
   );

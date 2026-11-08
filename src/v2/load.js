@@ -7,6 +7,7 @@
 import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS, daysSince, nextFreshChange } from "../data.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
+import { setEpsBasis } from "./fix.js";
 
 // publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
 // like any other format problem (the load-failure message), never treated as fresh.
@@ -168,7 +169,7 @@ async function retryFailed(cur, now, o) {
     console.warn(head + ": the fetch of data.json, corp.json and macro.json stopped (" + errText(e) + "); the load-failure message stays");
     return { ok: false, why: errText(e) };
   } finally {
-    setDataShape(cur && cur.data);                // the failure on screen reads no data: the shape waits for adoptLoad
+    keepGlobals(cur);                             // the failure on screen reads no data: the readings wait for adoptLoad
   }
   if (!next || next.status !== "ok") {
     console.warn(head + ": fetched data.json, corp.json and macro.json once and they still cannot be used (the reason is logged above); the load-failure message stays");
@@ -217,9 +218,10 @@ async function laterPublish(cur, discNow, now, o) {
   } catch (e) {
     return keep(files, "the new files could not be read (" + errText(e) + "); none is used");
   } finally {
-    // resolveLoad set the engine's data shape from the new data.json: it stays the shape of the data on screen until the
-    // new state is put on screen (adoptLoad), so nothing on screen is ever read the other file's way.
-    setDataShape(cur.data);
+    // resolveLoad set the engine's data shape from the new data.json (and, since #89, the PER/EPS line's basis from the new
+    // corp.json: fix.js setEpsBasis): both stay those of the data on screen until the new state is put on screen
+    // (adoptLoad), so nothing on screen is ever read the other files' way.
+    keepGlobals(cur);
   }
   const d = next.data;
   console.info(head + ": fetched " + files.join(", ") + " once; a later publish, " + d.publishedAt + " (prices of " + d.pxDate
@@ -229,10 +231,16 @@ async function laterPublish(cur, discNow, now, o) {
   return { ok: true, load: next, disc: res.disc ? res.disc.data : null };
 }
 
-// The state refetchNewer returned, as it goes on screen: the engine reads the new data.json its own way from now on
-// (engine.setDataShape, as resolveLoad does for a first load). -> the state to show.
+// The app-wide readings resolveLoad sets from the files of a load (engine.setDataShape from data.json; fix.js setEpsBasis
+// from corp.json, #89), set again for the load on screen (a failed load: as before any load).
+function keepGlobals(load) {
+  setDataShape(load && load.data);
+  setEpsBasis(load && load.corp, { preview: !!(load && load.preview) });
+}
+// The state refetchNewer returned, as it goes on screen: the app reads the new files their own way from now on (the data
+// shape and the PER/EPS line's basis, as resolveLoad sets them for a first load). -> the state to show.
 export function adoptLoad(next) {
-  setDataShape(next.data);
+  keepGlobals(next);
   return next;
 }
 
@@ -314,6 +322,8 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   // whole app reads this one file one way; a file without it keeps the earlier behaviour. The console line with the
   // counts is company.jsx logSplitGuard (once per load, in the browser).
   const exact = setDataShape(d);
+  // 2026-11-08 (Jack): the PER/EPS line shows until corp.json carries epsBasis "owners" (src/repair.js, src/v2/fix.js)
+  setEpsBasis(c, { now, preview: !!opts.preview });
   const features = detectFeatures(d, c, m);
   const missing = missingForBuild(features);
   if (missing.length) console.warn("[v2] fields not live yet, deck builder hidden: " + missing.join(", "));

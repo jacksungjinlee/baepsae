@@ -12,6 +12,7 @@ import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
 import { okCode } from "./routes.js";
+import { epsBase } from "../repair.js";
 
 export { DCF, dcfPerShare, reverseDcf, okAssume } from "./dcf.js";
 
@@ -261,15 +262,25 @@ export function perMillionKr(s, co = null) {
 // Exact data (v19.1b): the report's own totals, 현금배당금총액 over 당기순이익 (corp.json cash3[0] / ni[0], both 억원, the
 // same 사업보고서), for a payer (engine.krDivState: dps above 0). No share count and no per-share figure, so no split can
 // enter it, and no guess (no cross-check, no split guard). The same 0-100% rule.
+// 2026-11-08 (data review of the DART re-read): for a group company the payout ratio is dividends ÷ the OWNERS' net income.
+// After the re-read (corp.json epsIn, nio3 in 억원): epsIn.b "o" -> cash3[0] / nio3[0] (basis "o"; no nio3[0] -> no ratio,
+// as for any ratio that cannot be computed). "s" (separate statements: total = owners') and files before the re-read (no
+// epsIn) -> cash3[0] / ni[0] exactly as before (basis "s"; no basis field before the re-read). "t" or an unknown b -> still
+// cash3[0] / ni[0], basis "total": the screen keeps the PER/EPS line under it (cotabs DivTab).
 export function payout(s, co) {
   if (!s || s.cls !== "kr" || !co) return null;
   if (exactData()) {
     const st = krDivState(s, co);
-    const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null, ni0 = Array.isArray(co.ni) ? num(co.ni[0]) : null;
+    const e = co.epsIn && typeof co.epsIn === "object" ? co.epsIn : null;
+    const basis = !e ? "today" : e.b === "o" || e.b === "s" ? e.b : "total";
+    const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null;
+    const src = basis === "o" ? co.nio3 : co.ni;
+    const ni0 = Array.isArray(src) ? num(src[0]) : null;
     const fy0 = num(co.fy) ?? num(s.fy);
     if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
     const p = (cash / ni0) * 100;
-    return p > 0 && p <= 100 ? { pct: p, fy: fy0 } : { out: p, fy: fy0 };
+    const b = e ? { basis } : {};                  // files before the re-read: the same result as before, nothing added
+    return p > 0 && p <= 100 ? { pct: p, fy: fy0, ...b } : { out: p, fy: fy0, ...b };
   }
   if (!dpsAgrees(s)) return null;
   if (splitGuarded(s)) return null;               // split guard: today's share count may be after a split (older files)
@@ -391,15 +402,22 @@ export const yoy = (cur, prev) => (num(cur) != null && num(prev) != null && prev
 // 주가는 무엇으로 움직였나 (the old DecompCard maths, src/corp.jsx decomposeReturn): 3-year price = earnings x 눈높이 (PER),
 // as multipliers (3.20배 = 9.73배 x 0.33배: a true equation). EPS then = net income two reports back / shares; EPS now is
 // data.json eps (its own basis: the latest four quarters when corp.json bq is set); the rest of the price change is the
-// change in PER. why: "missing" (an input is not in the data) · "loss" (a loss at either end). head: up/down x which part
-// was bigger (in log terms).
+// change in PER. why: "missing" (an input is not in the data) · "loss" (a loss at either end) · "basis" (2026-11-08: the
+// two ends cannot stand on one basis, src/repair.js epsBase: no numbers, the PER/EPS line instead). head: up/down x which
+// part was bigger (in log terms).
+// The 'then' end shares EPS now's basis: a file before the DART re-read has eps = total profit ÷ common shares, so ni[2] ÷
+// shm as always; after it eps = owners' profit ÷ (common + listed preferred), so nio3[2] (or ni[2] for separate statements)
+// ÷ epsIn.sh. Mixing them made 현대차's 이익 part about 25% too low and its 눈높이 part about 33% too high (data review).
 export function decompose(co) {
-  if (!co || num(co.r36) == null || !num(co.shm)) return { why: "missing" };
+  if (!co || num(co.r36) == null) return { why: "missing" };
+  const base = epsBase(co, 2);
+  if (base.bad) return { why: "basis" };
+  if (!base.sharesM) return { why: "missing" };
   const epsNow = num(co.eps);
-  const niThen = Array.isArray(co.ni) && co.ni.length > 2 ? num(co.ni[2]) : null;
+  const niThen = base.ni;
   if (epsNow == null || niThen == null) return { why: "missing" };
   if (epsNow <= 0 || niThen <= 0) return { why: "loss" };              // a real loss at one end: no split into two parts
-  const epsThen = (niThen * 100) / co.shm;
+  const epsThen = (niThen * 100) / base.sharesM;
   const priceRatio = 1 + co.r36 / 100;
   if (priceRatio <= 0) return { why: "missing" };
   const eF = epsNow / epsThen;
@@ -455,13 +473,18 @@ export function roePbrMap(s, group) {
 
 // KR only (US until v19.2), with the old DcfCard's own defaults (discount 10%, 5년 뒤 성장률 2%, the growth rate fading
 // over the 5 years to it): g is the first year's growth. Start profit: the latest 사업보고서's net income (corp.json ni[0],
-// fy). why: "us" · "notReady" (the old card's dcfReady, or no net income / shares) · "loss".
+// fy). why: "us" · "notReady" (the old card's dcfReady, or no net income / shares) · "loss" · "basis" (2026-11-08: no
+// basis shared with EPS, src/repair.js epsBase: no numbers, the PER/EPS line instead).
+// Start profit and share count stand on EPS's basis: before the DART re-read total profit ni[0] ÷ common shares (as always);
+// after it owners' profit nio3[0] (separate statements: ni[0]) ÷ epsIn.sh (common + listed preferred).
 export function impliedGrowth(s, co, { disc = DCF.disc, term = DCF.term } = {}) {
   if (!s || s.cls !== "kr") return { why: "us" };
   if (!co || co.dcfReady !== true) return { why: "notReady" };
-  const ni0 = num(co.ni && co.ni[0]);
+  const base = epsBase(co, 0);
+  if (base.bad) return { why: "basis" };
+  const ni0 = base.ni;
   const price = num(s.price);
-  const sharesM = num(co.shm) || (num(s.cap) && price ? (s.cap * 1e12) / price / 1e6 : null);
+  const sharesM = base.basis === "today" ? num(co.shm) || (num(s.cap) && price ? (s.cap * 1e12) / price / 1e6 : null) : base.sharesM;
   if (ni0 == null || !(sharesM > 0) || !(price > 0)) return { why: "notReady" };
   const inputs = { disc, term, ni0, sharesM, fy: num(co.fy), fade: DCF.fade };
   if (ni0 <= 0) return { why: "loss", ...inputs };
@@ -473,9 +496,13 @@ export function impliedGrowth(s, co, { disc = DCF.disc, term = DCF.term } = {}) 
 // 지금 가격이 가정하는 것 (v19.3e, v19.3 Part I "가치 fix"): impliedGrowth grows 순이익, so the comparison is the company's
 // own past 순이익 growth, never revenue: the yearly average from the 사업보고서 two years back (corp.json ni[2]) to the
 // latest (ni[0]), both above 0 (else null: the comparison is hidden, not the card). x in % a year, signed.
+// 2026-11-08 (PR #89, data review of the DART re-read): on the same basis as the implied rate (src/repair.js epsBase): owners'
+// profit nio3 for epsIn.b "o", ni for "s" and for files before the re-read (exactly as before); no shared basis ("t", no
+// share count) -> null, and impliedGrowth is "basis" then, so the card shows the PER/EPS line instead of both bars.
 export function pastNiGrowth(co) {
-  const ni = co && Array.isArray(co.ni) ? co.ni : null;
-  const a = ni ? num(ni[0]) : null, b = ni ? num(ni[2]) : null;
+  const b0 = epsBase(co, 0), b2 = epsBase(co, 2);
+  if (!b0 || b0.bad) return null;
+  const a = b0.ni, b = b2.ni;
   if (!(a > 0) || !(b > 0)) return null;
   return { x: (Math.sqrt(a / b) - 1) * 100, fy: num(co.fy) };
 }

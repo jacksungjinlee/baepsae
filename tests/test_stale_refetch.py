@@ -32,7 +32,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 _B = {}
 MODS = {"D": "src/data.js", "LD": "src/v2/load.js", "E": "src/v2/engine.js", "R": "src/v2/rules.js", "H": "src/v2/hold.js",
-        "DC": "src/v2/deckcalc.js"}
+        "DC": "src/v2/deckcalc.js", "FX": "src/v2/fix.js"}
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 
 # The page's clock in these tests: Tuesday 2026-11-10 17:00 KST.
@@ -59,7 +59,7 @@ def bundle_dir():
 HARNESS = """
 import * as M from './refetch.mjs';
 import { readFileSync } from 'fs';
-const { D, LD, E, R, H, DC } = M;
+const { D, LD, E, R, H, DC, FX } = M;
 const WARN = [], INFO = [];
 console.warn = (m) => WARN.push(String(m));
 console.info = (m) => INFO.push(String(m));
@@ -236,6 +236,36 @@ out = { r, calls: CALLS.map((c) => c.url), warn: WARN, info: INFO, shape: E.exac
     assert len(warn) == 1 and f"published {OLD_PUB}" in warn[0] and "kept the data on screen (its stale line stays)" in warn[0], (label, warn)
     assert why in warn[0] and not got["info"], (label, warn, got["info"])
     assert got["shape"] is True and got["stillStale"] is True, label
+
+
+def test_the_per_eps_basis_follows_what_is_on_screen():
+    """Since #89, resolveLoad also sets the PER/EPS line's basis from corp.json (fix.js setEpsBasis). A later publish whose
+    corp.json carries epsBasis "owners" changes it only when it goes on screen (adoptLoad); fetched and held, refused, or a
+    failed first load tried again: the basis of what is on screen stays."""
+    new = new_files()
+    new["corp"]["epsBasis"] = "owners"
+    got = run("""
+const cur = loadOf(OLD, NOW);
+const before = FX.epsBasisIsLive();
+serve(SITE_NEW);
+const r = await LD.refetchNewer(cur, null, at(NOW));
+const fetched = FX.epsBasisIsLive();
+serve(SITE_MIXED);
+const m = await LD.refetchNewer(cur, null, at(NOW));
+const refused = FX.epsBasisIsLive();
+LD.adoptLoad(r.load);
+const shown = FX.epsBasisIsLive();
+LD.adoptLoad(cur);
+serve(SITE_NEW);
+const f = await LD.refetchNewer({ status: 'fail' }, null, at(NOW));
+const afterRetry = FX.epsBasisIsLive();
+LD.adoptLoad(f.load);
+out = { before, ok: r.ok, fetched, m: m.ok, refused, shown, f: f.ok, afterRetry, retryShown: FX.epsBasisIsLive() };""",
+              OLD=old_files(), NOW=NOW, SITE_NEW=site(new), SITE_MIXED=site(new, **{"corp.json": old_files()["corp"]}))
+    assert got["before"] is False and got["ok"] is True and got["fetched"] is False, got     # fetched, not on screen yet
+    assert got["m"] is False and got["refused"] is False, got
+    assert got["shown"] is True, got                                                          # on screen: the new basis
+    assert got["f"] is True and got["afterRetry"] is False and got["retryShown"] is True, got
 
 
 def test_the_data_shape_follows_what_is_on_screen():

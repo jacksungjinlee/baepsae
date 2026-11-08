@@ -38,6 +38,8 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
+import { icrOffShown } from "./fix.js";
+import { IcrOffNote, IcrOffLine } from "./fixnote.jsx";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
@@ -281,11 +283,40 @@ function warnSource(w) {
   return [w.quarter && C.co.warn.quarter ? fill(C.co.warn.quarter, { y: w.quarter.y, q: w.quarter.q }) : null,
     w.fy ? fill(C.app.reportYear, { year: w.fy }) : null].filter(Boolean).join(" · ");
 }
+// v19.3e (Part I): the chips of the checks that ran and passed (company.warnChips), on the "없어요" card only.
+function WarnChipGrid({ chips }) {
+  const W = C.co.warn;
+  if (!chips.length) return null;
+  return (
+    <div data-ui-v2="co-warn-chips" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(1) + 2, marginTop: SPACE(3) }}>
+      {chips.map((c) => (
+        <span key={c} data-ui-v2="co-warn-chip" data-check={c} style={{ display: "flex", alignItems: "center", gap: SPACE(1) + 2, padding: `${SPACE(2)}px ${SPACE(2) + 2}px`,
+          borderRadius: RADIUS.sm, background: COLOR.heroCalm, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { lineHeight: 1.35 }) }}>
+          <Icon name="check-circle" size={18} tone="ok" />{W.chips[c]}
+        </span>
+      ))}
+    </div>
+  );
+}
 function Warnings({ load, s, wide }) {
   const [open, setOpen] = useState(false);
   const w = useMemo(() => warnings(s, load.coByT.get(s.t) || null), [load, s]);
   const W = C.co.warn;
+  // 2026-11-08 (Jack; say-why audit rows 1 and 6): 이자보상배율 is switched off until the DART re-read (corp.json flWhy.icr
+  // "off"). Under the list when a warning fired; when nothing can be claimed, the line alone where the card would be
+  // (no '없어요' head: the existing rule allows "확인한 …" only for flWhy.icr "ie"). Goes by itself when flWhy.icr changes.
+  const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
+    if (!w.allRan && !w.partial && off && C.fix.icr) {
+      // The line alone, no chips: v19.3e shows chips only when every check ran ("확인이 덜 돌면 카드도 칩도 없음"), and
+      // 이자보상배율 did not run.
+      return (
+        <Card data-ui-v2="co-warn-off" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
+          <IconChip name="info" size={32} tone="risk" />
+          <IcrOffNote show style={{ flex: 1, minWidth: 0, marginTop: 0 }} />
+        </Card>
+      );
+    }
     if (!w.allRan && !w.partial) return null;  // no flag, but not every check is known to have run: nothing is claimed
     // partial (Jack, PR #68 B7): 이자보상배율 alone could not be checked, for want of an interest line -> "확인한 …" + why
     const head = w.partial ? W.nonePartial : W.none;
@@ -304,16 +335,7 @@ function Warnings({ load, s, wide }) {
             {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
           </div>
         </div>
-        {chips.length > 0 && (
-          <div data-ui-v2="co-warn-chips" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(1) + 2, marginTop: SPACE(3) }}>
-            {chips.map((c) => (
-              <span key={c} data-ui-v2="co-warn-chip" data-check={c} style={{ display: "flex", alignItems: "center", gap: SPACE(1) + 2, padding: `${SPACE(2)}px ${SPACE(2) + 2}px`,
-                borderRadius: RADIUS.sm, background: COLOR.heroCalm, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { lineHeight: 1.35 }) }}>
-                <Icon name="check-circle" size={18} tone="ok" />{W.chips[c]}
-              </span>
-            ))}
-          </div>
-        )}
+        <WarnChipGrid chips={chips} />
       </Card>
     );
   }
@@ -331,6 +353,7 @@ function Warnings({ load, s, wide }) {
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
           {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
+          <IcrOffLine show={off} />
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
       </button>
@@ -346,6 +369,7 @@ function Warnings({ load, s, wide }) {
               </span>
             </div>
           ))}
+          <IcrOffNote show={off} />
           {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
         </div>
       </BottomSheet>
