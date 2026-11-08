@@ -344,7 +344,7 @@ def test_the_guide_flag_moves_into_the_store_and_round_trips():
     assert got["ok"] and got["raw"] == {"v": 1, "decks": [], "guideSeen": "2026-11-07"} and got["again"] == "2026-11-07"
     assert got["fresh"] == {"v": 1, "decks": [], "guideSeen": "2026-11-08"} and got["same"] is True
     assert got["exported"] == {"v": 1, "decks": []}                      # 이 기기의 표시라 기록 파일에는 없어요
-    assert got["future"] == ["guideSeen: not a date up to today"]
+    assert got["future"] == []                                           # 이 기기의 표시: 시계가 빨랐던 날짜도 '봤어요' (Jack, 2026-11-08)
 
 
 def test_the_old_guide_key_is_never_written_again():

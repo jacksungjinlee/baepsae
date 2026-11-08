@@ -16,7 +16,7 @@ import { shownName } from "./legacy.js";
 import { isCompany } from "./stocklist.js";
 import { subjectParticle } from "./track.js";
 import { MissingNote } from "./tracking.jsx";
-import { avgOf } from "./pf.js";
+import { avgOf, CHIP_GROUP } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 import { IcrOffLine } from "./fixnote.jsx";
 
@@ -39,6 +39,9 @@ export function limitPct(w, limit) {
 export const qtyText = (q) => Number(q).toLocaleString("ko-KR", { maximumFractionDigits: 4 });
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 const cardName = (id) => C.build.cards[id].name;
+// An industry group's name on 점검 and in the 한 업종 rule: the data's group name, or 반도체·전자부품 for the one chip group
+// (pf.js CHIP_GROUP, Jack Q8). null when the data has none.
+export const groupName = (g) => (g && g.ind === CHIP_GROUP ? C.rpt.chipGroup : (g && g.name) || null);
 
 // The rule's name with its limit ("한 종목 30% 이하") and what was found ("최대 25%", "반도체 38%"), or null.
 export function ruleLabel(r) {
@@ -50,7 +53,7 @@ export function ruleLabel(r) {
 export function ruleDetail(r) {
   if (r.state === "unknown") return null;
   if (r.id === "stock") return fill(C.pfr.max, { y: limitPct(r.max.w, r.limit) });
-  if (r.id === "ind") return r.top.name ? `${r.top.name} ${limitPct(r.top.w, r.limit)}%` : null;
+  if (r.id === "ind") return groupName(r.top) ? `${groupName(r.top)} ${limitPct(r.top.w, r.limit)}%` : null;
   if (r.id === "fit") {
     const worst = r.cards.map((c) => [c.id, r.avg[c.id]]).sort((a, b) => b[1].shown - a[1].shown)[0];
     return worst ? `${cardName(worst[0])} ${fill(C.rpt.avgTop, { x: worst[1].shown })}` : null;
@@ -61,7 +64,7 @@ export function ruleDetail(r) {
 export function brokenLine(st) {
   const r = st && st.ok ? st.rules.find((x) => x.state === "broken" && (x.id === "stock" || x.id === "ind")) : null;
   if (!r) return null;
-  const group = r.id === "stock" ? r.max.nk : r.top.name;
+  const group = r.id === "stock" ? r.max.nk : groupName(r.top);
   if (!group) return null;
   const w = r.id === "stock" ? r.max.w : r.top.w;
   return fill(subjectParticle(group) === "i" ? C.pfr.over : C.pfr.overGa, { group, x: limitPct(w, r.limit), limit: r.limit });
@@ -124,7 +127,8 @@ function WeightBar({ w, shade }) {
 
 // One portfolio made with 가진 종목 넣기 (홈 · 포트폴리오). st: pfState (or { ok: false } on stale or failed data, then
 // no number), m: deckMoney (value and, when every holding has a 평균 단가, 원금 · 수익).
-export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, home = false }) {
+// onRules: opens 내 규칙 정하기 (포트폴리오 only).
+export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, onRules, home = false }) {
   const rows = st && st.ok ? st.view.rows : null;
   const shades = rows ? holdingShades(rows.map((r) => r.w)) : [];
   const n = rows ? rows.length : (deck.imported || []).length;
@@ -145,6 +149,11 @@ export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, ho
       {m && m.ok && m.cost != null && m.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
       {m && m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={deck.id} />}
       {st && st.ok && <RulesHead st={st} pxDate={st.pxDate} />}
+      {onRules && (
+        <div data-ui-v2="pf-rules-edit" style={{ marginTop: SPACE(2) }}>
+          <Button kind="secondary" onClick={onRules}>{C.lim.title}</Button>
+        </div>
+      )}
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n })}</div>
       {rows && rows.map((r, i) => {
         const a = r.t ? avgOf(deck, r.t) : null;

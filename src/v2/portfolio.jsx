@@ -47,7 +47,7 @@ function RemoveButton({ onClick }) {
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 
 // onImport (v19.3d): opens 가진 종목 넣기.
-export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null }) {
+export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null, onRules = null }) {
   const { openStock } = useNav();
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
@@ -108,7 +108,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         <Note tone="watch" data-ui-v2="deck-stale">{todayStaleText(ev.days)}</Note>
       )}
       {decks.map((d) => {
-        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} />;
+        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null} />;
         const ts = [...heldQty(d).keys()];
         const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
         const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
@@ -139,6 +139,11 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
                 extra={!gone && m.ok && x ? <WeightLine x={x} /> : null} action={gone ? <RemoveButton onClick={() => onRemove(d.id, t)} /> : null} />;
             })}
+            {de && de.ok && (de.soldOut || []).map((t) => (
+              <div key={t} data-sold-out={t}>
+                <HoldingRow t={t} title={(d.holdings.find((x) => x.t === t) || { nk: t }).nk} sub={C.daily.soldOut} x={null} names={names} />
+              </div>
+            ))}
             {de && de.ok && de.rebased && C.daily.rebasedNote && (
               <Note data-ui-v2="rebased-note">{fill(C.daily.rebasedNote, { n: de.bandPlanned, m: de.bandHeld })}</Note>
             )}
@@ -183,9 +188,9 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
 
 // v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기. Its four portfolio rules instead of 확인 필요 for every stock;
 // on stale or failed data no number and no rule (the screen's own line says why).
-function ImportedCard({ deck, ev, ctx, load, openStock, onRemove }) {
+function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules }) {
   const de = ev.ok ? ev.decks.find((x) => x.id === deck.id) : null;
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} />;
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} />;
 }
