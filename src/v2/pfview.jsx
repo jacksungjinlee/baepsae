@@ -20,6 +20,20 @@ import { avgOf, CHIP_GROUP } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 
 const pct = (w) => Math.round(w * 100);
+// v19.3e: a share shown against its limit. Whole %, but with one decimal (two if needed) whenever the whole number would
+// put it on the wrong side of the limit: 30.4% against "30% 이하" is broken and must not read "30%" (pf.js compares the
+// exact share). -> the number as text, without "%".
+export function limitPct(w, limit) {
+  const p = w * 100;
+  if (p > 0 && p < 0.95) return nf(Math.round(p * 10) / 10, 1);         // a small holding never reads 0%
+  const over = p > limit + 1e-9;
+  for (const d of [0, 1, 2]) {
+    const k = 10 ** d;
+    const r = Math.round(p * k) / k;
+    if (d === 2 || (over ? r > limit : r <= limit)) return nf(r, d);
+  }
+  return nf(p, 2);
+}
 // Shares: whole numbers as they are, a fraction (US, or derived from an amount) with up to 4 decimals.
 export const qtyText = (q) => Number(q).toLocaleString("ko-KR", { maximumFractionDigits: 4 });
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
@@ -37,8 +51,8 @@ export function ruleLabel(r) {
 }
 export function ruleDetail(r) {
   if (r.state === "unknown") return null;
-  if (r.id === "stock") return fill(C.pfr.max, { y: pct(r.max.w) });
-  if (r.id === "ind") return groupName(r.top) ? `${groupName(r.top)} ${pct(r.top.w)}%` : null;
+  if (r.id === "stock") return fill(C.pfr.max, { y: limitPct(r.max.w, r.limit) });
+  if (r.id === "ind") return groupName(r.top) ? `${groupName(r.top)} ${limitPct(r.top.w, r.limit)}%` : null;
   if (r.id === "fit") {
     const worst = r.cards.map((c) => [c.id, r.avg[c.id]]).sort((a, b) => b[1].shown - a[1].shown)[0];
     return worst ? `${cardName(worst[0])} ${fill(C.rpt.avgTop, { x: worst[1].shown })}` : null;
@@ -52,7 +66,7 @@ export function brokenLine(st) {
   const group = r.id === "stock" ? r.max.nk : groupName(r.top);
   if (!group) return null;
   const w = r.id === "stock" ? r.max.w : r.top.w;
-  return fill(subjectParticle(group) === "i" ? C.pfr.over : C.pfr.overGa, { group, x: pct(w), limit: r.limit });
+  return fill(subjectParticle(group) === "i" ? C.pfr.over : C.pfr.overGa, { group, x: limitPct(w, r.limit), limit: r.limit });
 }
 
 const STATE_ICON = { ok: { name: "check-circle", tone: "ok" }, broken: { name: "warning", tone: "on" } };
@@ -83,13 +97,14 @@ export function RuleTiles({ st }) {
   );
 }
 
-// "{date} 종가로 점검했어요" · "내 규칙 {n}개 중 {k}개를 지키고 있어요" · the first broken rule's line · the unchecked count.
+// "{date} 종가로 점검했어요" (only when at least one rule was checked: with every tile 확인하지 못했어요 nothing was) ·
+// "내 규칙 {n}개 중 {k}개를 지키고 있어요" · the first broken rule's line · the unchecked count.
 export function RulesHead({ st, pxDate }) {
   const md = mdText(pxDate);
   const line = brokenLine(st);
   return (
     <div data-ui-v2="pf-head" data-kept={st.kept} data-checked={st.checked} style={{ marginTop: SPACE(3) }}>
-      {md && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.pfr.checked, { date: md })}</div>}
+      {md && st.checked > 0 && <div data-ui-v2="pf-checked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.pfr.checked, { date: md })}</div>}
       {st.checked > 0 && <div data-ui-v2="pf-kept" style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1) })}>{fill(C.pfr.kept, { n: st.checked, k: st.kept })}</div>}
       {line && <div data-ui-v2="pf-broken" style={tx(SIZE.sm, WEIGHT.semi, COLOR.watch, { marginTop: SPACE(1) })}>{line}</div>}
       {st.unchecked > 0 && <Note data-ui-v2="pf-not-checked">{fill(C.daily.notChecked, { n: st.unchecked })}</Note>}
