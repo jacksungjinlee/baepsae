@@ -76,7 +76,7 @@ def test_numbered_and_variant_names_from_the_audit():
     assert (sdi["op"][0], sdi["ni"][0]) == (-17223.6, -5848.8)
     assert annual("003550")["_fin"]["rev"][0] == 72525.5          # LG: '매출및지분법손익'
     ha = annual("012450")                                         # 한화에어로스페이스: '매출'
-    assert ha["_fin"]["rev"][0] == 267029.0 and ha["_inc"]["src"] == {"rev": "id", "op": "id", "ni": "id", "nio": "id"}
+    assert ha["_fin"]["rev"][0] == 267029.0 and ha["_inc"]["src"] == {"rev": "id", "op": "id", "ni": "id", "nio": "code"}
     kb = annual("323410", "OFS")["_fin"]                          # 카카오뱅크 (별도만): 'I. 영업수익' · 'IV. 영업이익' · 'IX. 당기순이익'
     assert (kb["rev"][0], kb["op"][0], kb["ni"][0]) == (30862.9, 6493.7, 4802.8)
 
@@ -92,19 +92,23 @@ def test_old_name_rule_differences_are_recorded():
 def test_names_are_used_only_when_no_line_carries_the_code():
     rows_ = BS + [r("CIS", "Ⅲ.영업손익", NO_ID, -2e9, -1e9, 5e8), r("CIS", "I. 매출", NO_ID, 1e11),
                   r("CIS", "XII. 당기순손실", NO_ID, -3e9), r("CIS", "지배기업 소유주지분 순손실", NO_ID, -2.5e9),
+                  r("CIS", "비지배지분", NO_ID, -0.5e9),
                   r("CIS", "지배기업의 소유주", "ifrs-full_ComprehensiveIncomeAttributableToOwnersOfParent", 7e9)]
     out = F.parse_dart_list(rows_)
     fin = out["_fin"]
     assert fin["op"] == [-20.0, -10.0, 5.0] and fin["rev"][0] == 1000.0 and fin["ni"][0] == -30.0
-    assert fin["nio"] == -25.0 and fin["nio3"] == [-25.0, None, None]       # 총포괄손익 줄(코드가 다름)은 아니에요
-    assert out["_inc"]["src"] == {"rev": "name", "op": "name", "ni": "name", "nio": "name"}
+    assert fin["nio"] == -25.0 and fin["nio3"] == [-25.0, None, None]       # −25 + 비지배 −5 = −30 (sum) · 총포괄손익 줄은 아니에요
+    assert out["_inc"]["src"] == {"rev": "name", "op": "name", "ni": "name", "nio": "sum"} and fin["nioHow"] == "sum"
 
 
 def test_owners_line_by_name_never_takes_comprehensive_or_continuing_lines():
     rows_ = BS + [r("CIS", "매출", "ifrs-full_Revenue", 1e11), r("CIS", "당기순이익", "ifrs-full_ProfitLoss", 5e9),
                   r("CIS", "지배기업 소유주지분 총포괄이익", NO_ID, 8e9), r("CIS", "계속영업 지배기업 순이익", NO_ID, 6e9),
                   r("CIS", "비지배지분 순이익", NO_ID, 1e9)]
-    assert F.parse_dart_list(rows_)["_fin"]["nio"] is None                # 모르면 비워요 (EPS 는 '전체'로 표시 · epsIn.b t)
+    fin = F.parse_dart_list(rows_)["_fin"]
+    assert fin["nio"] == 40.0 and fin["nioHow"] == "minus"                # 포괄 · 계속영업 줄이 아니라 당기순이익 5 − 비지배 1
+    no_nci = [r_ for r_ in rows_ if "비지배" not in r_["account_nm"]]
+    assert F.parse_dart_list(no_nci)["_fin"]["nio"] is None                # 맞지 않는 '지배' 줄이 있으면 nci0 로 보지 않아요 (전체 · t)
 
 
 def test_the_income_statement_wins_over_the_comprehensive_one_and_equal_lines_count_once():
@@ -198,7 +202,7 @@ def test_lg_energy_solution_eps_follows_the_shareholders_loss():
     s, e, fin = eps_case("373220")
     # 예전: EPS +345 · PER 977 (전체 순이익 808억 ÷ 주식 수). 주주 몫은 손실이에요 (2025 회사 발표 EPS −4,585)
     assert fin["nio"] == -10728.1 and fin["ni"][0] == 808.0
-    assert e["epsIn"] == {"ni": -16830.6, "b": "o", "p": "ttm", "sh": 234000000}
+    assert e["epsIn"] == {"ni": -16830.6, "b": "o", "p": "ttm", "sh": 234000000, "how": "code"}
     assert s["eps"] == -7193.0 and s.get("per") is None                  # 손실이면 PER 은 빈 칸
     assert s["eps"] < 0 and math.copysign(1, s["eps"]) == math.copysign(1, -4585)
 
@@ -216,7 +220,7 @@ def test_samsung_and_hanwha_aerospace_use_owners_profit_and_equity():
     assert e["epsIn"]["sh"] == 5846278608 + 802371203
     h, he, hf = eps_case("012450")
     assert hf["eqo"] == 96849.1 and hf["eq"] == 167881.8                  # 지배주주 자본 9.7조 vs 전체 16.8조
-    assert he["epsIn"] == {"ni": 20161.4, "b": "o", "p": "ttm", "sh": 51563401} and h["eps"] == 39100.0   # 예전 64,251
+    assert he["epsIn"] == {"ni": 20161.4, "b": "o", "p": "ttm", "sh": 51563401, "how": "code"} and h["eps"] == 39100.0   # 예전 64,251
 
 
 def test_separate_statements_use_their_whole_profit():
@@ -226,13 +230,17 @@ def test_separate_statements_use_their_whole_profit():
 
 def test_eps_source_order():
     base = {"ni": [10.0, None, None], "fs": "CFS"}
-    assert F.eps_source(dict(base, nio=8.0, ttm={"nio": 9.0, "ni": 12.0})) == (9.0, "o", "ttm")
-    assert F.eps_source(dict(base, nio=8.0, ttm={"ni": 12.0})) == (8.0, "o", "fy")         # 기간보다 주주 몫이 먼저
-    assert F.eps_source(dict(base, ttm={"ni": 12.0})) == (12.0, "t", "ttm")                 # 지배주주 줄이 없는 연결
-    assert F.eps_source(dict(base, fs="OFS", nio=8.0, ttm={"ni": 12.0})) == (12.0, "s", "ttm")
+    assert F.eps_source(dict(base, nio=8.0, nioHow="code", ttm={"nio": 9.0, "ni": 12.0, "nioHow": "code+nci0"})) == \
+        (9.0, "o", "ttm", "code+nci0")
+    assert F.eps_source(dict(base, nio=8.0, nioHow="alt", ttm={"ni": 12.0})) == (8.0, "o", "fy", "alt")   # 기간보다 주주 몫이 먼저
+    assert F.eps_source(dict(base, ttm={"ni": 12.0})) == (12.0, "t", "ttm", "total")         # 지배주주 줄이 없는 연결
+    assert F.eps_source(dict(base, fs="OFS", nio=8.0, ttm={"ni": 12.0})) == (12.0, "s", "ttm", "ofs")
     assert F.eps_source({"ni": [float("nan"), None, None]}) is None                        # NaN 은 숫자로 안 써요
-    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o")
-    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s")
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o", "code")
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s", "ofs")
+    assert F.bps_source({"eq": 9.0, "nciBs": None, "fs": "CFS"}) == (9.0, "o", "nci0")      # 비지배지분 줄 없음
+    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (9.0, "t", "total")       # 비지배지분이 있으면 아니에요
+    assert F.bps_source({"eq": 9.0, "fs": "CFS"}) == (9.0, "t", "total")                     # 증거가 없으면(예전 캐시) 아니에요
 
 
 def test_share_count_switch(monkeypatch):

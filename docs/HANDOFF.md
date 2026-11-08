@@ -79,6 +79,16 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   `INC_TOP_FLOOR` to set from the dry run), must-haves have all three lines (FAIL), statements without income lines
   (WARN, named), receipts consistent (FAIL), must-have EPS on owners' profit with matching sign (FAIL), EPS basis
   differences (WARN), incCheck counts = receipts (FAIL).
+- v19.1f owners' profit rules (after the 2026-11-08 branch dry run: 160 consolidated companies fell back to total
+  profit, 93.2% owners/separate): owners' profit is read in order `code` (ProfitLossAttributableToOwnersOfParent) ·
+  `alt` (…OrdinaryEquityHoldersOfParentEntity) · `cont` (continuing + discontinued owners' lines; continuing alone only
+  without discontinued operations) · `sum` (an uncoded 지배… line that + the NCI profit line, or 0, equals total profit
+  within ±1,000원) · `minus` (total − NCI profit) · `nci0` (no NCI line in the balance sheet or income statement, or
+  exactly 0, and owners' equity absent or equal to total equity → owners = total). Evidence `nciBs`/`nciPl` is stored
+  for annual and quarterly reports; `epsIn.how` / `bpsIn.how` say how each figure was read (`ofs` for separate
+  statements, `total` when it stays on total profit). Total profit with no ProfitLoss row = owners' + NCI lines. A
+  `dart=cache` run re-reads once only the consolidated entries saved before these rules without owners' or total profit
+  (`OWN_REDO_TAG`, inside the per-run cap). 이자보상배율 below 1 is rounded down to one decimal (never "1.0").
 - v19.1f review fixes (2026-11-08): '…손실(이익)' names with a positive figure are dropped like '…손실'; uncoded
   interest-paid lines need '이자(의) 지급·지출·납부' (not 지급이자 · 미지급이자) and are used only when no coded
   interest-paid line exists; pykrx PER/PBR/EPS/BPS are never used for Korean stocks (every EPS carries `epsIn`);
