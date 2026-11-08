@@ -7410,6 +7410,10 @@ def reread_files(files, when, marker=True):
         co.pop(k, None)
     s = next(x for x in f["data.json"]["stocks"] if x["t"] == STMT_T)
     s.update(per=None, pbr=None, eps=None, bps=None, vz=None)
+    # 이자를 내지 않은 회사 (v19.1f flSrc.int0, Jack 2026-11-08): 삼성전자를 그렇게 (지어낸 값) — 확인은 돌았고 경고 없음
+    sam = next(c for c in f["corp.json"]["companies"] if c["t"] == FIX_OFF_KR)
+    assert sam.get("flRan") == ["cr", "icr", "l3", "imp"] and not sam.get("fl"), (sam.get("flRan"), sam.get("fl"))
+    sam["flSrc"] = {"icr": "is", "int0": True}
     pub = (when - dt.timedelta(hours=1)).isoformat(timespec="seconds")
     for name in DATA_FILES:
         f[name]["publishedAt"] = pub
@@ -7558,6 +7562,25 @@ def scene_reread_lines(R, files, width, shots=None):
         R.collect(page)
     R.check(page, S, f"{STMT_T} 원화가 아닌 재무제표: 요약 · 실적 · 가치에 한 번씩 (배당 · 삼성전자 · AAPL 에는 없음) · '자료가 없어요' 칸 · "
             "고르기 · 보이지 않는 숫자의 기준 줄 · 자세히 링크 없음", stmt_cur)
+
+    def no_interest():
+        """이자를 내지 않은 회사(flSrc.int0): '재무 경고 신호는 없어요'와 칩 셋, '이자보상배율 1배 이상' 칩은 없어요. 가진 종목 규칙 칸 ·
+        새 홈의 '재무 경고 0개'는 ✓ 그대로 (회사 페이지와 같은 말)."""
+        co_hash(page, f"#stocks/{FIX_OFF_KR}")
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"]')
+        card.wait_for(state="visible")
+        chips = card.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.check)")
+        assert chips == ["l3", "cr", "imp"], chips
+        assert "이자보상배율" not in page.locator('[data-ui-v2="co-summary"]').inner_text()
+        floor_ok(page, "이자를 내지 않은 회사의 재무 경고")
+        R.collect(page)
+        page.evaluate("() => { location.hash = '#home'; }")
+        at(page, "home")
+        tile = page.locator('[data-ui-v2="home-rules"][data-deck-id="dfix"] [data-ui-v2="home-rule"][data-rule="warn"]')
+        tile.wait_for(state="visible")
+        assert tile.get_attribute("data-state") == "ok", tile.get_attribute("data-state")
+        R.collect(page)
+    R.check(page, S, f"{FIX_OFF_KR} 이자를 내지 않은 회사(flSrc.int0): 칩 셋, 이자보상배율 칩 없음 · 새 홈 '재무 경고 0개' ✓ 그대로", no_interest)
     ctx.close()
     srv.shutdown()
 

@@ -26,7 +26,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"RP": "src/repair.js", "FX": "src/v2/fix.js", "FN": "src/v2/fixnote.jsx", "L": "src/v2/load.js", "T": "src/v2/today.jsx",
         "PF": "src/v2/portfolio.jsx", "CO": "src/v2/company.jsx", "CP": "src/copy/v2.js", "OF": "src/fixnote.jsx", "OLD": "src/corp.jsx",
-        "SH": "src/shell.jsx", "D": "src/data.js", "FM": "src/v2/format.js"}
+        "SH": "src/shell.jsx", "D": "src/data.js", "FM": "src/v2/format.js", "K": "src/v2/company.js", "W": "src/v2/warn.js", "PFN": "src/v2/pf.js"}
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 OWNERS = "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요."
 CUR = "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
@@ -79,7 +79,7 @@ def run(body, **data):
     tmp = bundle_dir()
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react'; import fs from 'fs';\n"
-            "const { RP, FX, FN, L, T, PF, CO, CP, OF, OLD, SH, D, FM } = B; const C2 = CP.C;\n"
+            "const { RP, FX, FN, L, T, PF, CO, CP, OF, OLD, SH, D, FM, K, W, PFN } = B; const C2 = CP.C;\n"
             "const warns = []; console.warn = (m) => warns.push(String(m)); console.info = () => {};\n"
             f"const FIXDIR = {json.dumps(FIX)};\n"
             "const read = (f) => JSON.parse(fs.readFileSync(FIXDIR + '/' + f, 'utf8'));\n"
@@ -357,6 +357,64 @@ def test_stmt_cur_old_company_page_hides_untrue_captions_and_empty_sections():
     assert "금융업은 미적용 지표예요" in bank and bank.count(line) == 1                       # 참인 설명은 남아요
     assert got["roeNull"].count("데이터가 없어요") == 0 and got["roeNullNoCur"].count("데이터가 없어요") == 2   # ROE 칸이 비어도 (PBR · ROE)
     assert "밸류에이션 멀티플 · 업종 사분위 대비 · 최근 4개분기 합산(2026.2Q)" in sam and "3개년 실적 흐름" in sam and "주가는 무엇으로 움직였나" in sam
+
+
+
+# ── 이자를 내지 않은 회사 (DART 다시 읽기 v19.1f, Jack 2026-11-08: corp.json flSrc.int0) ──
+# 낸 이자가 0 이면 이자보상배율 경고를 하지 않아요 (영업손실이어도). 확인은 돌았고(flRan 에 icr, 경고 없음) flSrc = {"icr": "is"|"cf",
+# "int0": true}. 그런 회사에 '이자보상배율 1배 이상'이라고 말하면 틀려요 (이자가 없으면 배율도 없어요): 칩이 없어요. '재무 경고 0개' ·
+# '재무 경고 신호는 없어요'는 참이라 그대로예요 (경고가 날 수 없었어요 — 회사 페이지와 가진 종목 규칙 칸이 같은 말을 해요).
+# 예전 뱁새는 걸린 신호만 보여 주고 '확인했어요'라고 말하지 않아서, 그런 회사에 이자보상배율 글이 하나도 없어요.
+INT0 = {"flRan": ["cr", "icr", "l3", "imp"], "flSrc": {"icr": "is", "int0": True}}       # 예: 삼영에스앤씨 (영업손실 −17.0억, 이자 0)
+
+
+def test_no_interest_paid_means_no_interest_coverage_chip():
+    got = run("""const s = { t: '000010', cls: 'kr' };
+      const f = (co) => K.warnChips(W.warnings(s, co));
+      const ALL = ['cr', 'icr', 'l3', 'imp'];
+      out = { int0: f({ flRan: ALL, flSrc: { icr: 'is', int0: true } }), cf: f({ flRan: ALL, flSrc: { icr: 'cf', int0: true } }),
+        paid: f({ flRan: ALL, flSrc: { icr: 'is' } }), no: f({ flRan: ALL, flSrc: { icr: 'is', int0: false } }), str: f({ flRan: ALL, flSrc: { int0: 'true' } }),
+        bad: f({ flRan: ALL, flSrc: 'int0' }), fired: f({ flRan: ALL, flSrc: { icr: 'is', int0: true }, fl: { cr: 80 } }),
+        w: W.warnings(s, { flRan: ALL, flSrc: { icr: 'is', int0: true } }),
+        pf: [PFN.warnOf({ t: '000010', cls: 'kr' }, { flRan: ALL, flSrc: { icr: 'is', int0: true } }), PFN.warnOf({ t: '000010', cls: 'kr' }, { flRan: ALL })] };""")
+    assert got["int0"] == ["l3", "cr", "imp"] and got["cf"] == ["l3", "cr", "imp"], got   # 이자를 내지 않았으면 이자보상배율 칩 없음
+    assert got["paid"] == ["l3", "cr", "imp", "icr"] and got["no"] == got["paid"]          # 이자를 냈으면 그대로
+    assert got["str"] == got["paid"] and got["bad"] == got["paid"]                         # 정확히 int0 true 일 때만
+    assert got["fired"] == ["l3", "imp"]
+    w = got["w"]
+    assert w["allRan"] is True and w["int0"] is True and w["flags"] == []                  # 확인은 돌았고 경고는 없어요
+    assert got["pf"] == ["clear", "clear"]                                                 # '재무 경고 0개'는 참이라 그대로 (회사 페이지와 같아요)
+
+
+def test_no_interest_paid_company_on_every_screen():
+    """회사 페이지 요약: '재무 경고 신호는 없어요' + 칩 셋(3년 연속 적자 아님 · 유동비율 100% 이상 · 자본잠식 없음), 이자보상배율이라는 말은 없어요.
+    예전 뱁새 성적표(한국어 · 영어) · 기업분석: 이자보상배율 · Interest coverage 라는 말이 없어요 (걸린 신호만 보여 줘요)."""
+    data, corp = fixture("data.json"), fixture("corp.json")
+    co = next(c for c in corp["companies"] if c["t"] == "005930")
+    co.update(INT0)
+    co.pop("fl", None)
+    co.pop("flWhy", None)
+    paid = json.loads(json.dumps(corp))
+    next(c for c in paid["companies"] if c["t"] == "005930")["flSrc"] = {"icr": "is"}
+    got = run("""
+      const ms = kstMs(RP.isoPlusDays(RP.EPS_FIX_DATE, 1)); at(ms);
+      const store = { data: { v: 2, decks: [] }, writable: true, key: 'baepsae2.v1', preview: false };
+      const nav = { setTab() {}, more() {}, back() {}, onWhy() {} };
+      const v2 = (corp) => { const load = mkLoad({ data: JSON.parse(JSON.stringify(DATA)), corp: JSON.parse(JSON.stringify(corp)), macro: read('macro.json') }, ms);
+        const html = renderToStaticMarkup(h(CO.Company, { load, store, setStoreData() {}, pad: 0, code: '005930', ctab: null, disc: null, nav }));
+        return { chips: [...html.matchAll(/data-ui-v2="co-warn-chip" data-check="([a-z0-9]+)"/g)].map((m) => m[1]), n: (/data-ui-v2="co-warn" data-n="(\\d+)"/.exec(html) || [])[1] || null,
+          head: lines(html).includes(C2.co.warn.none), icrWords: lines(html).filter((l) => l.includes('이자보상배율')) }; };
+      const c = CORP.companies.find((x) => x.t === '005930');
+      const card = (lang) => lines(renderToStaticMarkup(h(SH.ScoreCard, { c, sectors: CORP.sectors, corp: CORP, onOpenCorp() {}, onQuickDiag() {}, lang,
+        asOf: { date: CORP.pxDate, publishedAt: CORP.publishedAt } })));
+      const page = lines(renderToStaticMarkup(h(OLD.CompanyView, { data: CORP, t: '005930', heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} })));
+      out = { int0: v2(CORP), paid: v2(PAID), ko: card('ko'), en: card('en'), page };""", DATA=data, CORP=corp, PAID=paid)
+    i, p = got["int0"], got["paid"]
+    assert i["n"] == "0" and i["head"] and i["chips"] == ["l3", "cr", "imp"] and i["icrWords"] == [], i   # 이자보상배율이라는 말 없음
+    assert p["n"] == "0" and p["chips"] == ["l3", "cr", "imp", "icr"] and p["icrWords"] == ["이자보상배율 1배 이상"], p
+    for k in ("ko", "en", "page"):
+        said = [l for l in got[k] if "이자보상배율" in l or "Interest coverage" in l or "interest coverage" in l]
+        assert said == [], (k, said)
 
 
 # ── 3. 예전 뱁새 영어 화면의 고치는 중 줄 ──
