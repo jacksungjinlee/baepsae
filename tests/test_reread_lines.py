@@ -490,6 +490,66 @@ def test_an_unreadable_currency_code_shows_no_currency_line():
     assert len(got["v2warns"]) == 2 and all("!!" in m and '"XXX"' in m for m in got["v2warns"]), got["v2warns"]   # 2.0 · 예전 뱁새 한 번씩
 
 
+
+# ── 원화가 아닌 재무제표 회사에는 고치는 중 두 줄이 없어요 (코디네이터, 2026-11-08) ──
+# 그런 회사는 epsIn 이 없어서 'PER과 EPS는 … {date}에 바뀔 수 있어요.'가 날짜가 지나도 남을 뻔했어요. 숫자는 비어 있고 통화 줄이 이유를
+# 말하니 PER · EPS 줄도, 이자보상배율 줄도 없어요 (2.0 · 예전 뱁새). 읽을 수 없는 코드("XXX" 등)는 stmtCur 가 없는 것과 같아요.
+def test_stmt_cur_companies_never_show_the_being_fixed_lines():
+    got = run("""
+      const OFF = { flWhy: { icr: 'off' } };
+      const A = { t: '000010', stmtCur: 'USD', ...OFF }, X = { t: '000020', stmtCur: 'XXX', ...OFF }, N = { t: '000030', ...OFF };
+      const COS = [A, X, N];
+      const rules = (corp) => COS.map((c) => RP.epsFixNeeded(corp, c));
+      const kr = (c) => ({ t: c.t, cls: 'kr' });
+      FX.setEpsBasis({ companies: COS });                         const now = COS.map((c) => FX.epsFixFor(kr(c)));
+      FX.setEpsBasis({ epsBasis: 'owners', companies: COS });     const live = COS.map((c) => FX.epsFixFor(kr(c)));
+      const note = (s) => renderToStaticMarkup(h(FN.EpsFixNote, { show: FX.epsFixFor(s) }));
+      const st = OF.corpFixState({ companies: COS }), stLive = OF.corpFixState({ epsBasis: 'owners', companies: COS });
+      out = { needNow: rules({ companies: COS }), needLive: rules({ epsBasis: 'owners', companies: COS }), now, live,
+        any: [FX.epsFixForAny([kr(A)]), FX.epsFixForAny([kr(A), kr(N)])], noteA: note(kr(A)), noteN: lines(note(kr(N))).length,
+        icr: COS.map(RP.icrOff), icrShown: COS.map(FX.icrOffShown),
+        loaded: [OF.epsFixNeedLoaded(st, [A.t]), OF.epsFixNeedLoaded(st, [X.t]), OF.epsFixNeedLoaded(st, [A.t, N.t]), OF.epsFixNeedLoaded(stLive, [A.t]),
+          OF.epsFixNeedLoaded(null, [A.t])],
+        notWon: [...st.notWon],
+        old: [renderToStaticMarkup(h(OF.EpsFixLine, { corp: { companies: COS }, cos: [A] })), lines(renderToStaticMarkup(h(OF.EpsFixLine, { corp: { companies: COS }, cos: [N] }))).length,
+          renderToStaticMarkup(h(OF.IcrOffLine, { co: A })), lines(renderToStaticMarkup(h(OF.IcrOffLine, { co: N }))).length] };""")
+    assert got["needNow"] == [False, True, True] and got["needLive"] == [False, True, True], got   # USD: 없음 · XXX 는 없는 것과 같아요
+    assert got["now"] == [False, True, True] and got["live"] == [False, True, True]
+    assert got["any"] == [False, True] and got["noteA"] == "" and got["noteN"] == 1
+    assert got["icr"] == [False, True, True] and got["icrShown"] == [False, True, True]
+    assert got["loaded"] == [False, True, True, False, True] and got["notWon"] == ["000010"]       # 받기 전에는 줄이 있어요 (짐작하지 않아요)
+    assert got["old"][0] == "" and got["old"][1] == 1 and got["old"][2] == "" and got["old"][3] == 1
+
+
+def test_stmt_cur_company_pages_and_score_card_have_no_being_fixed_lines():
+    """예전 뱁새 기업분석 (ROE 가 보여도) · 첫 화면 성적표 (한국어 · 영어): stmtCur 회사에는 고치는 중 두 줄이 없어요. 성적표의 '적자이거나 재무
+    데이터가 아직 없어요.' 자리는 한국어 화면에서 승인된 통화 줄, 영어 화면에서는 아무 줄도 없어요 (영어 통화 줄은 승인되지 않았어요).
+    stmtCur 가 없으면 예전 그대로."""
+    data, corp = fixture("data.json"), fixture("corp.json")
+    co, _ = blank_stmt_cur(data, corp)
+    co.update(flWhy={"icr": "off"}, fl={"cr": 80})                          # 줄이 생길 조건을 일부러 다 갖춰요
+    assert co.get("roe") is not None
+    got = run("""
+      const page = (cos) => renderToStaticMarkup(h(OLD.CompanyView, { data: { ...BASE, companies: cos }, t: STMT_T, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} }));
+      const swap = (f) => BASE.companies.map((c) => (c.t === STMT_T ? f(c) : c));
+      const card = (c, lang) => renderToStaticMarkup(h(SH.ScoreCard, { c, sectors: BASE.sectors, corp: BASE, onOpenCorp() {}, onQuickDiag() {}, lang,
+        asOf: { date: BASE.pxDate, publishedAt: BASE.publishedAt } }));
+      const C0 = BASE.companies.find((c) => c.t === STMT_T), CN = { ...C0, stmtCur: undefined };
+      const v = (html) => ({ eps: marked(html, 'data-fix', 'eps'), icr: marked(html, 'data-fix', 'icr'), cur: marked(html, 'data-fix', 'stmt-cur'), lines: lines(html) });
+      out = { page: v(page(BASE.companies)), pageNo: v(page(swap((c) => ({ ...c, stmtCur: undefined })))),
+        ko: v(card(C0, 'ko')), en: v(card(C0, 'en')), koNo: v(card(CN, 'ko')), enNo: v(card(CN, 'en')) };""", BASE=corp, STMT_T=STMT_T)
+    line = CUR.format(currency="USD")
+    assert got["page"]["eps"] == 0 and got["page"]["icr"] == 0 and got["page"]["cur"] == 1, got["page"]
+    assert got["pageNo"]["eps"] >= 1, got["pageNo"]                         # stmtCur 가 없으면 ROE 칸 밑에 그대로
+    ko, en = got["ko"], got["en"]
+    assert ko["cur"] == 1 and line in ko["lines"] and "적자이거나 재무 데이터가 아직 없어요." not in ko["lines"], ko["lines"]
+    assert ko["eps"] == 0 and ko["icr"] == 0
+    assert en["cur"] == 0 and "Loss-making or no financial data yet." not in en["lines"] and line not in en["lines"], en["lines"]
+    assert not any("USD" in l for l in en["lines"]) and en["eps"] == 0 and en["icr"] == 0
+    assert "적자이거나 재무 데이터가 아직 없어요." in got["koNo"]["lines"] and got["koNo"]["cur"] == 0
+    assert "Loss-making or no financial data yet." in got["enNo"]["lines"] and got["enNo"]["icr"] == 1
+
+
 # ── 3. 예전 뱁새 영어 화면의 고치는 중 줄 ──
 def test_old_app_english_lines_follow_the_korean_rules():
     sam = fixture("corp.json")

@@ -52,8 +52,10 @@ export function epsInFixed(co) {
   return !!co && typeof co === "object" && !!co.epsIn && typeof co.epsIn === "object" && EPS_IN_FIXED.includes(co.epsIn.b);
 }
 // corp: corp.json · co: that company's row in it. true = the PER/EPS line shows for this company.
+// Never for a company whose statements are not in won (stmtCurOf, item 4 below): the re-read blanks its EPS and the rest, it
+// has no epsIn, and the currency line says why; the line would otherwise stay forever with a past date.
 export function epsFixNeeded(corp, co) {
-  return !(epsBasisLive(corp) && epsInFixed(co));
+  return !stmtCurOf(co) && !(epsBasisLive(corp) && epsInFixed(co));
 }
 
 // The net income (억원) and share count (백만주) on which this company's EPS stands, for the report year fy − i (corp.json
@@ -113,8 +115,10 @@ export const epsPeriod = (co) => periodFrom(co, "epsIn");
 export const bpsPeriod = (co) => periodFrom(co, "bpsIn");
 
 // The 이자보상배율 check is switched off for this company (corp.json flWhy.icr "off"; financial companies never carry it).
+// Not for a company whose statements are not in won (stmtCurOf): no signal is computed for it at all, and the currency line
+// says why.
 export function icrOff(co) {
-  return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off";
+  return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off" && !stmtCurOf(co);
 }
 
 // ================= After the re-read: the week's notice and statements not in won (Jack, 2026-11-08) =================

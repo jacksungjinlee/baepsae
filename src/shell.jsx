@@ -7,7 +7,8 @@ import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, loadCorpOnce, krGrowthScoreLine, loadDataPublishFor, corpStaleArgs } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
-import { EpsFixLine, IcrOffLine } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, stmtCurLineText } from "./fixnote.jsx";
+import { stmtCurOf } from "./repair.js";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
@@ -109,6 +110,9 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
   else if (c.pbr != null && sec.pbrQ) lines.push(en
     ? `P/B ${c.pbr}x — ${c.pbr > sec.pbrQ[1] ? "above" : "below"} the industry median of ${sec.pbrQ[1]}x.`
     : `PBR ${c.pbr}배 — 업종 중간 ${sec.pbrQ[1]}배 대비 ${c.pbr > sec.pbrQ[1] ? "높은" : "낮은"} 평가예요.`);
+  // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(stmtCur)는 적자도 자료 없음도 아니에요. 한국어
+  // 화면은 승인된 통화 줄(다른 곳과 같은 글), 영어 화면은 영어 글이 승인되지 않아 아무 줄도 없어요 (맞지 않는 문장 대신).
+  else if (stmtCurOf(c)) { if (!en) lines.push(<span data-fix="stmt-cur" data-cur={stmtCurOf(c)}>{stmtCurLineText(c)}</span>); }
   else lines.push(en ? "Loss-making or no financial data yet." : "적자이거나 재무 데이터가 아직 없어요.");
   if (c.r3 != null && c.r3 >= 15 && niYoY != null && niYoY <= 5) lines.push(en
     ? `Up +${c.r3}% in 3 months while annual earnings stayed flat — the move may be sentiment, not fundamentals.`

@@ -8,7 +8,8 @@
 //   영어 화면 (Jack 승인 2026-11-08, DeepL 확인): 한국어 줄이 보이는 자리와 같은 규칙으로 FIX_EPS_EN · FIX_ICR_EN (lang "en").
 //               날짜는 예전 뱁새의 영어 월 · 일 (data.js mdOf "en": "Nov 10"). 기업분석(src/corp.jsx)은 영어 화면에서도 한국어로만
 //               보이는 칸이라 lang 을 넘기지 않아요 (한국어 줄 그대로). 영어 줄은 첫 화면 성적표와 포트폴리오(src/detail.jsx)에서.
-//   StmtCurLine 재무제표를 원화가 아닌 통화로 공시한 한국 회사(corp.json stmtCur, repair.js stmtCurOf): 기업분석 투자지표 칸에 한 번.
+//   StmtCurLine 재무제표를 원화가 아닌 통화로 공시한 한국 회사(corp.json stmtCur, repair.js stmtCurOf): 기업분석 투자지표 칸에 한 번,
+//               첫 화면 성적표(한국어)에서는 '적자이거나 재무 데이터가 아직 없어요.' 자리에. 그런 회사에는 위의 두 줄이 없어요.
 // 글자는 12px 이에요 (2.0 의 12px 바닥과 같게).
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
@@ -44,6 +45,17 @@ export function EpsFixLine({ corp, cos, show = true, force = false, style, lang 
 // 포트폴리오(data.json 으로 그려요): corp.json 을 한 번 받아(data.js loadCorpOnce, 다른 칸과 같이 써요) 표시와 회사마다의 epsIn 을
 // 봐요. 받는 중이거나 받지 못하면 줄이 있어요 (고쳐졌다고 짐작하지 않아요). -> null (모름) | { live, fixed: Set(코드) }
 let CORP_FIX = null;
+// 받은 corp.json 으로 정하는 상태 (순수): live · fixed(epsIn.b "o" · "s") · notWon(재무제표를 원화가 아닌 통화로 공시한 회사, repair.js
+// stmtCurOf — 숫자가 비어 있고 통화 줄이 이유를 말해요: 줄 없음)
+export function corpFixState(d) {
+  const live = epsBasisLive(d);
+  const cos = d && Array.isArray(d.companies) ? d.companies : [];
+  return { live, fixed: new Set(live ? cos.filter(epsInFixed).map((c) => c.t) : []), notWon: new Set(cos.filter((c) => stmtCurOf(c)).map((c) => c.t)) };
+}
+// 그 칸에 줄이 필요한지: 상태를 모르면(받는 중 · 못 받음) 있어요. 아니면 그 칸의 코드 중 하나라도 고쳐지지 않았고 원화 재무제표인 회사가 있을 때.
+export function epsFixNeedLoaded(st, codes) {
+  return !st || !Array.isArray(codes) || codes.some((t) => !st.notWon.has(t) && !(st.live && st.fixed.has(t)));
+}
 export function useEpsFixState(want) {
   const [st, setSt] = useState(CORP_FIX);
   useEffect(() => {
@@ -51,9 +63,8 @@ export function useEpsFixState(want) {
     let alive = true;
     loadCorpOnce().then((d) => {
       if (d && !d.failed) {
-        const live = epsBasisLive(d);
-        CORP_FIX = { live, fixed: new Set(live && Array.isArray(d.companies) ? d.companies.filter(epsInFixed).map((c) => c.t) : []) };
-        if (!live) warnEpsFixLate(d, kstDate(Date.now()), "뱁새");
+        CORP_FIX = corpFixState(d);
+        if (!CORP_FIX.live) warnEpsFixLate(d, kstDate(Date.now()), "뱁새");
       }
       if (alive) setSt(d && !d.failed ? CORP_FIX : null);
     });
@@ -64,7 +75,7 @@ export function useEpsFixState(want) {
 // codes: 그 칸에 PER · ROE 가 보이는 한국 종목 코드들.
 export function EpsFixLineLoaded({ show = true, codes, style, lang = "ko" }) {
   const st = useEpsFixState(show);
-  const need = !st || !Array.isArray(codes) || codes.some((t) => !(st.live && st.fixed.has(t)));
+  const need = epsFixNeedLoaded(st, codes);
   const text = show && need ? fixEpsText(lang) : null;
   return text ? <div data-fix="eps" data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
 }
