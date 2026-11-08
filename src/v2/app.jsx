@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
 import { refreshFresh, nextFreshCheck } from "./load.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
@@ -172,7 +172,10 @@ export function App({ source }) {
   // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
-  const setStoreData = useCallback((data, saved) => {
+  const setStoreData = useCallback((given, saved) => {
+    // the records in memory carry the version tag writeStore gives them (a 가진 종목 portfolio makes them version 2). Kept
+    // at the old tag (1), every later change in the same visit failed the check below and was refused.
+    const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
     setStore((s) => {
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
