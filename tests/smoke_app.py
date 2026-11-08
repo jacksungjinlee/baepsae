@@ -882,10 +882,11 @@ def scene_missing_holding(R, files):
         # 저장할 때 이름이 붙어요 (나중에 빠지면 코드 대신 이름이 나오게). 미국 종목·빠진 종목은 코드 그대로
         named = {h["t"]: h.get("nk") for h in st["holdings"]}
         assert named["005930"] == "삼성전자" and named["STRC"] is None, named
-        # 영어 장면이 ② 구성으로 돌아온 것도 저장될 때까지 기다려요 (자동 저장은 0.8초 뒤). 그 전에 다시 불러오면 ④ 내보내기에서
-        # 열려, 아래 'STRC 가 돌아오면' 확인이 ②의 '보통 해 ±' 를 끝내 못 찾았어요 (바쁜 기계에서 가끔 실패한 이유)
-        poll(page, "localStorage.getItem('baepsae_v10_slot_smiss')", lambda v: bool(v) and json.loads(v).get("stage") == 1,
-             "② 구성으로 돌아온 단계가 저장되지 않았어요")
+        # 영어 장면이 ② 구성·한국어로 돌아온 것도 저장될 때까지 기다려요 (자동 저장은 마지막 변경 0.8초 뒤). 그 전에 다시 불러오면
+        # ④ 내보내기(또는 영어)로 열려, 아래 'STRC 가 돌아오면' 확인이 ②의 '보통 해 ±' 를 끝내 못 찾았어요 (바쁜 기계에서 가끔 실패한 이유)
+        poll(page, "localStorage.getItem('baepsae_v10_slot_smiss')",
+             lambda v: bool(v) and json.loads(v).get("stage") == 1 and json.loads(v).get("lang") == "ko",
+             "② 구성·한국어로 돌아온 단계가 저장되지 않았어요")
         page.reload(wait_until="domcontentloaded")
         page.get_by_text("차근차근 만들기", exact=True).click()
         see(page, "빠진 종목 시험")
