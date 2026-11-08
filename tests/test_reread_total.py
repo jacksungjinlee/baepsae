@@ -13,6 +13,24 @@ import os
 import test_reread_lines as RL  # noqa: E402  (2.0 회사 페이지를 load 상태로 그리는 도우미)
 from test_fix_notes import bundle_dir, company, eps_line, reread, run  # noqa: F401  (bundle_dir: 같은 묶음)
 
+import shutil
+
+import pytest
+
+import test_fix_notes as FNT
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _own_bundles():
+    """The two helper modules clean their bundle when their own tests end: this module makes (and removes) its own."""
+    for m in (FNT, RL):
+        m._TMP.pop("p", None)
+    yield
+    for m in (FNT, RL):
+        if "p" in m._TMP:
+            shutil.rmtree(m._TMP.pop("p"), ignore_errors=True)
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요."
 CUR = "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
