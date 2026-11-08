@@ -80,7 +80,7 @@ def chat_approved():
 def footer():
     """CLAUDE.md 의 고정 고지문. 만든 사람 줄은 v19.0 에 소개 페이지로 옮겨 가서(Jack, 2026-11-03) 푸터에는 고지문만 남아요."""
     t = read("CLAUDE.md")
-    f = "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다."
+    f = "뱁새의 정보는 투자 자문이나 투자 권유가 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다."
     assert f"Footer: {f}" in t, "CLAUDE.md 에 푸터 고지문이 없어요"
     return [f]
 

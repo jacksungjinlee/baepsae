@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
   - Free-text voyage questionnaire scored by Claude API (robust, with preset fallback)
   - Long-only KRX builder: sliders, 4 risk rails, health score, rich stock cards
   - Insights: risk contribution, goal gap, projection fan, dividends, benchmark+robo
-  - Educational only. Data are dated, approximate, editable. Not investment advice.
+  - Data are dated, approximate, editable. Not investment advice.
 */
 
 // ================= Palette: tokens.js (v11 디자인 시스템) =================
@@ -765,7 +765,7 @@ const T = {
   tab1: { ko:"① 프로필", en:"① Profile" },
   tab2: { ko:"② 포트폴리오", en:"② Build" },
   tab3: { ko:"③ 내보내기", en:"③ Export" },
-  disclaimer: { ko:"교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", en:"An educational tool — not investment advice. All decisions and responsibility are your own." },
+  disclaimer: { ko:"뱁새의 정보는 투자 자문이나 투자 권유가 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다.", en:"Not investment advice or a solicitation to invest. All investment decisions and responsibility are yours." },   // Jack, 2026-11-08: 새 고지문 (CLAUDE.md Footer)
   skipPreset: { ko:"질문 건너뛰고 프리셋으로 시작하기", en:"Skip questions, pick a profile" },
   presetTitle: { ko:"프로필 고르기", en:"Pick a profile" },
   presetSub: { ko:"대충 이 정도다 싶은 걸 고르세요. 세부 수치는 나중에 언제든 바꿀 수 있어요.", en:"Start from a preset; fine-tune anytime." },
@@ -1163,10 +1163,10 @@ function AboutLink({ lang = "ko", style }) {
     </a>
   );
 }
-// 고지문 + ' · 소개' 한 줄 (고지문만 있던 푸터의 모양)
+// 고지문 + ' · 소개' 한 줄 (고지문만 있던 푸터의 모양). keep-all: 한국어 낱말 중간에서 줄이 바뀌지 않게 (2026-11-08)
 function SiteFooterLine({ lang = "ko" }) {
   const l = lang === "en" ? "en" : "ko";
-  return <>{T.disclaimer[l]}{" · "}<AboutLink lang={l} /></>;
+  return <span style={{ wordBreak: "keep-all" }}>{T.disclaimer[l]}{" · "}<AboutLink lang={l} /></span>;
 }
 
 // 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
@@ -4709,7 +4709,7 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
           </Card>
         );
       })()}
-      <Sub style={{ textAlign: "center", fontSize: 10.5, padding: "0 10px" }}>{t("disclaimer")}</Sub>
+      <Sub style={{ textAlign: "center", fontSize: 10.5, padding: "0 10px" }}><span style={{ wordBreak: "keep-all" }}>{t("disclaimer")}</span></Sub>
     </div>
   );
 }
