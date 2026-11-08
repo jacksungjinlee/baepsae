@@ -554,7 +554,7 @@ export function ScreenerView({ data, onOpen, setExplain }) {
               ))}
             </div>
             {rows.length > 100 && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8 }}>상위 100개까지 보여요. 조건을 좁히면 더 정확해져요.</div>}
-            <EpsFixLine corp={data} cos={rows.slice(0, 100).filter((c) => c.per != null || c.roe != null)}
+            <EpsFixLine many corp={data} cos={rows.slice(0, 100).filter((c) => c.per != null || c.roe != null)}
               show={cs.some((x) => x.k === "per" || x.k === "roe") && rows.slice(0, 100).some((c) => c.per != null || c.roe != null)} />
           </>
         )}
@@ -825,7 +825,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
             ))}
           </div>
           {secExcluded.length > 0 && <Sub style={{ marginTop: 8, fontSize: 10.5, color: C.faint }}>표본 부족으로 표시하지 않음: {secExcluded.join(", ")}</Sub>}
-          <EpsFixLine corp={data} cos={comps.filter((c) => secs[c.s] && secs[c.s].opm == null && secs[c.s].roe != null)} show={secRank.some((r) => r.opm == null && r.roe != null)} />
+          <EpsFixLine many corp={data} cos={comps.filter((c) => secs[c.s] && secs[c.s].opm == null && secs[c.s].roe != null)} show={secRank.some((r) => r.opm == null && r.roe != null)} />
         </Card>
         <Card>
           <H num="04" main="수익성과 주가 수준" sub="ROE × PBR · 원 크기는 시가총액" onWhy={() => setExplain("scatter")} />
@@ -835,7 +835,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
               : <Scatter pts={pbrRoePts} xDomain={[-10, 40]} yDomain={[0, 8]} height={340} zoomable trend={roeTrend}
                   xLabel="ROE (%) — 오른쪽일수록 자본을 잘 굴리는 회사" yLabel="PBR (배) — 위일수록 장부가치 대비 비싼 회사" onPick={onOpen} />}
           </div>
-          <EpsFixLine corp={data} cos={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} show={hasMult && pbrRoePts.length > 0} />
+          <EpsFixLine many corp={data} cos={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} show={hasMult && pbrRoePts.length > 0} />
         </Card>
       </div>
 
@@ -864,7 +864,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
               ))}
             </div>
             <Sub style={{ marginTop: 9, fontSize: 10.5, color: C.faint }}>굵은 점: 업종 중간값 · 옅은 막대: 업종의 25~75% 구간 · 점선: 시장 전체 중간값{boxKey === "per" ? " · 적자 기업 제외" : ""}</Sub>
-            <EpsFixLine corp={data} cos={comps.filter((c) => c.per != null && c.per > 0)} show={boxKey === "per"} />
+            <EpsFixLine many corp={data} cos={comps.filter((c) => c.per != null && c.per > 0)} show={boxKey === "per"} />
           </>
         )}
       </Card>
@@ -925,7 +925,7 @@ export function SearchView({ data, heldMap, onOpen }) {
           <button onClick={() => setLimit(limit + 30)} style={{ display: "block", width: "100%", background: "none", border: "none", color: C.blue, fontSize: 12.5, fontWeight: 800, padding: "12px", cursor: "pointer", fontFamily: FONT }}>더 보기 ({rows.length - limit}개 남음)</button>
         )}
         {rows.length === 0 && <Sub style={{ padding: "14px 2px" }}>{/[a-zA-Z]{2,}/.test(q) ? '미국 종목은 포트폴리오 탭에서 담을 수 있어요. 기업분석은 한국 공시(DART) 기반이라 국내 상장사만 다뤄요.' : '검색 결과가 없어요. 회사 이름이나 6자리 코드로 찾아보세요.'}</Sub>}
-        <EpsFixLine corp={data} cos={rows.slice(0, limit).filter((c) => c.per != null)} show={rows.slice(0, limit).some((c) => c.per != null)} style={{ margin: "8px 2px 10px" }} />
+        <EpsFixLine many corp={data} cos={rows.slice(0, limit).filter((c) => c.per != null)} show={rows.slice(0, limit).some((c) => c.per != null)} style={{ margin: "8px 2px 10px" }} />
       </Card>
     </div>
   );
@@ -1491,7 +1491,7 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
           </table>
         </div>
         <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
-        <EpsFixLine corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
+        <EpsFixLine many corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
         {/* 2026-11-08 (Jack): once, when a compared company files its statements in another currency (its numbers are blank):
             the first such company's currency (repair.js stmtCurOf) */}
         {cols.some((c) => stmtCurOf(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c))} />}

@@ -130,10 +130,10 @@ def test_the_eps_line_is_for_korean_stocks_until_the_marker_and_per_company():
         fixed: COS.map(RP.epsInFixed) };""")
     on = [True] * 6 + [False, False, False, True, True, False, False]
     assert got["failed"] == on and got["missing"] == on and got["other"] == on
-    # 다시 읽은 뒤 (Jack, 2026-11-08): 고치는 중 줄은 어느 회사에도 없어요 (날짜가 지났어요). 총 순이익 줄은 epsIn.nci 가 있는 "t" 만
-    assert got["live"] == [False, False, False, False, False, False] + [False, False, False, False, False, False, False]
+    # 다시 읽은 뒤 (Jack, 2026-11-08): 총 순이익 "t"(소수주주 표시 nci 없음)는 고치는 중 줄이 없어요. epsIn 없음 · 모르는 b · 잘못된 모양은 그대로
+    assert got["live"] == [False, False, False, True, True, True] + [False, False, False, False, False, False, False]
     assert got["needNow"] == [True] * 6
-    assert got["needLive"] == [False] * 6
+    assert got["needLive"] == [False, False, False, True, True, True]
     assert got["fixed"] == [True, True, False, False, False, False]
 
 
@@ -160,7 +160,7 @@ def test_both_apps_say_the_same_approved_words_with_the_month_day_date():
     assert got["v2"] == [eps_line()] and got["v2off"] == ""
     assert got["icr"] == [ICR] and got["icrLine"] == [ICR] and got["icrNo"] == ""
     assert got["old"] == [eps_line()] and got["oldLive"] == "" and got["oldIcr"] == [ICR] and got["oldIcrNo"] == ""
-    assert got["oldT"] == [] and got["oldForce"] == []   # 다시 읽은 뒤: 소수주주 표시(nci)가 없는 총 순이익 회사 · 숫자를 뺀 칸에도 없어요
+    assert got["oldT"] == [] and got["oldForce"] == [eps_line()]   # 다시 읽은 뒤 nci 가 없는 총 순이익 회사는 줄이 없어요 · 숫자를 뺀 칸은 언제나
     assert all(px >= 12 for px in got["px"]), got["px"]                      # 12px 바닥 (2.0 은 13px, 예전 뱁새 12px)
 
 
@@ -236,7 +236,7 @@ def test_old_app_score_card_and_company_page_show_the_lines_until_the_marker():
     assert ICR in got["ko"][got["ko"].index("짚고 갈 재무 신호 1개가 있어요"):]                         # 재무 신호 밑
     assert eps_line() not in got["en"] and ICR not in got["en"]               # 영어 화면: Jack 이 영어 글을 승인할 때까지 없어요
     assert eps_line() not in got["fixed"] and ICR not in got["fixed"]         # 다시 읽기가 끝나면 둘 다 없어요 (이 회사 epsIn.b "o")
-    assert eps_line() not in got["stillTotal"]                                # 다시 읽은 뒤에는 epsIn 이 없는 회사도 고치는 중 줄이 없어요
+    assert eps_line() in got["stillTotal"]                                    # 표시가 있어도 그 회사가 총 순이익이면 줄은 그대로
     # 기업분석: 투자지표 · 업종 내 위치 · 주가 분해 · DCF (네 칸에 한 줄씩), 재무 신호 밑에 이자보상배율 한 줄
     assert got["pageNow"] == 4 and got["pageIcr"] == 1, (got["pageNow"], got["pageIcr"])
     assert got["pageFixed"] == 0 and got["pageFixedIcr"] == 0

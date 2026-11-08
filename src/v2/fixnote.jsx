@@ -24,10 +24,10 @@ export function epsFixText() {
 }
 
 // Never on the example page (fix.js fixNotesHidden), even where a card would show the line in place of its numbers.
-// Once the corp.json on screen is the re-read (fix.js epsLineKind "total"), the same place shows C.fix.total instead
-// (Jack, 2026-11-08): the caller's show already holds only for a company on total profit with minority shareholders.
-export function EpsFixNote({ show, style }) {
-  const kind = show && !fixNotesHidden() ? epsLineKind() : null;
+// s: the stock of this section (one company). After the marker, a company on total profit with minority shareholders gets
+// C.fix.total in the same place (fix.js epsLineKind, Jack 2026-11-08); without s the being-fixed line.
+export function EpsFixNote({ show, s, style }) {
+  const kind = show && !fixNotesHidden() ? epsLineKind(s) : null;
   const text = kind === "eps" ? epsFixText() : kind === "total" ? C.fix.total || null : null;
   return text ? <Note data-ui-v2={kind === "total" ? "eps-total" : "eps-fix"} style={style}>{text}</Note> : null;
 }

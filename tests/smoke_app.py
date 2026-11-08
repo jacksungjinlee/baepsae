@@ -2572,7 +2572,7 @@ def scene_fix_notes(R, files, live=False):
         co["fl"] = {"cr": 85}
         sh = round(co["shm"] * 1e6) + 815974664
         co.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
-        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "nci": True})   # 소수주주 있음 (2026-11-08)
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "how": "total", "nci": True})   # 소수주주 있음 (2026-11-08)
     else:
         corp.pop("epsBasis", None)
         co.update(fl={"cr": 85}, flWhy={"icr": "off"}, flRan=["cr", "l3", "imp"])     # 재무 신호 하나 · 이자보상배율 꺼짐

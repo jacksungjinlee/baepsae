@@ -2299,7 +2299,7 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
           {/* 2026-11-08 (Jack): 한국 종목의 ROE · PER (칸 · 성적표 · 같은 업종 표) 밑에 한 줄 — 영어 화면은 영어 줄 (Jack 승인 2026-11-08) */}
           <EpsFixLineLoaded show={clsOf(s) === "kr" && !s.custom
             && (s.per != null || x.roe != null || peers.some((p) => p.per != null || (p.x && p.x.roe != null)))}
-            codes={[s.t, ...peers.filter((p) => p.t !== s.t && clsOf(p) === "kr" && (p.per != null || (p.x && p.x.roe != null))).map((p) => p.t)]} lang={lang} />
+            codes={[s.t, ...peers.filter((p) => p.t !== s.t && clsOf(p) === "kr" && (p.per != null || (p.x && p.x.roe != null))).map((p) => p.t)]} one={s.t} lang={lang} />
           <button onClick={() => setEditing(!editing)} style={{ marginTop: 8, background: "none", border: "none", color: C.faint, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: FONT }}>{t("editData")}</button>
           {editing && (
             <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, background: C.bg, borderRadius: 12, padding: 10 }}>

@@ -542,9 +542,9 @@ def test_stmt_cur_companies_never_show_the_being_fixed_lines():
         notWon: [...st.notWon],
         old: [renderToStaticMarkup(h(OF.EpsFixLine, { corp: { companies: COS }, cos: [A] })), lines(renderToStaticMarkup(h(OF.EpsFixLine, { corp: { companies: COS }, cos: [N] }))).length,
           renderToStaticMarkup(h(OF.IcrOffLine, { co: A })), lines(renderToStaticMarkup(h(OF.IcrOffLine, { co: N }))).length] };""")
-    assert got["needNow"] == [False, False, True] and got["needLive"] == [False, False, False], got  # USD · XXX(읽을 수 없어도 원화가 아니에요): 없음
-    assert got["now"] == [False, False, True] and got["live"] == [False, False, False]     # 다시 읽은 뒤: 고치는 중 줄은 어느 회사에도 (Jack, 2026-11-08)
-    assert got["any"] == [False, False] and got["noteA"] == "" and got["noteN"] == 0     # (표시가 있는 상태에서 읽어요)
+    assert got["needNow"] == [False, False, True] and got["needLive"] == [False, False, True], got  # USD · XXX(읽을 수 없어도 원화가 아니에요): 없음
+    assert got["now"] == [False, False, True] and got["live"] == [False, False, True]
+    assert got["any"] == [False, True] and got["noteA"] == "" and got["noteN"] == 1
     assert got["icr"] == [False, False, True] and got["icrShown"] == [False, False, True]
     assert got["loaded"] == [False, False, True, False, True] and got["notWon"] == ["000010", "000020"]   # 받기 전에는 줄이 있어요 (짐작하지 않아요)
     assert got["old"][0] == "" and got["old"][1] == 1 and got["old"][2] == "" and got["old"][3] == 1
@@ -629,7 +629,7 @@ def test_old_app_english_lines_follow_the_korean_rules():
     assert got["enLive"]["eps"] == 0 and got["enLive"]["icr"] == 0, got["enLive"]
     assert got["enStillTotal"]["eps"] == 0 and en_eps not in got["enStillTotal"]["lines"] and got["enStillTotal"]["icr"] == 0   # 다시 읽은 뒤 없어요
     assert got["enNoPer"]["eps"] == 0 and got["enNoFlag"]["icr"] == 0
-    assert got["lineEn"] == [en_eps] and got["lineEnLive"] == "" and got["lineEnForce"] == [] and got["lineEnOff"] == ""
+    assert got["lineEn"] == [en_eps] and got["lineEnLive"] == "" and got["lineEnForce"] == [en_eps] and got["lineEnOff"] == ""
     assert got["icrEn"] == [ICR_EN] and got["icrEnIe"] == "" and got["icrEnHidden"] == ""
     # 포트폴리오(src/detail.jsx)가 쓰는 줄: corp.json 을 받기 전에는 줄이 있어요 (고쳐졌다고 짐작하지 않아요)
     assert got["loadedEn"] == [en_eps] and got["loadedEnOff"] == "" and got["loadedKo"] == [ko_eps]

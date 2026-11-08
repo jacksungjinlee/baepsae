@@ -44,13 +44,13 @@ def test_the_total_line_words_are_jacks_and_the_same_in_both_apps():
 
 def test_the_total_line_rule_per_company():
     got = run(bundle_dir(), """
-      const IN = (b, extra) => ({ ni: 100, b, p: 'ttm', sh: 1000000, ...extra });
+      const IN = (b, extra) => ({ ni: 100, b, p: 'ttm', sh: 1000000, ...(b === 't' ? { how: 'total' } : {}), ...extra });
       const COS = [{ t: '000010', epsIn: IN('o') }, { t: '000020', epsIn: IN('t', { nci: true }) }, { t: '000030', epsIn: IN('t') },
-        { t: '000040', epsIn: IN('t', { how: 'hybrid' }) }, { t: '000050' }, { t: '900110' }, { t: '000060', epsIn: IN('t', { nci: 'yes' }) },
+        { t: '000040', epsIn: IN('t', { how: 'hybrid', nci: true }) }, { t: '000050' }, { t: '900110' }, { t: '000060', epsIn: IN('t', { nci: 'yes' }) },
         { t: '000070', epsIn: IN('t', { nci: true }), stmtCur: 'USD' }, { t: '000080', epsIn: IN('o', { nci: true }) }];
       const NOW = { companies: COS }, LIVE = { epsBasis: 'owners', companies: COS };
       const KR = COS.map((c) => ({ t: c.t, cls: 'kr' }));
-      const note = (s) => { const html = renderToStaticMarkup(h(FN.EpsFixNote, { show: FX.epsFixFor(s) }));
+      const note = (s) => { const html = renderToStaticMarkup(h(FN.EpsFixNote, { s, show: FX.epsFixFor(s) }));
         return { lines: lines(html), total: /data-ui-v2="eps-total"/.test(html) }; };
       FX.setEpsBasis(NOW);  const nowFor = KR.map(FX.epsFixFor), nowNote = note(KR[1]);
       FX.setEpsBasis(LIVE); const liveFor = KR.map(FX.epsFixFor), liveNote = note(KR[1]), liveNoteT = note(KR[2]);
@@ -61,24 +61,25 @@ def test_the_total_line_rule_per_company():
       out = { needNow: COS.map((c) => RP.epsFixNeeded(NOW, c)), totalNow: COS.map((c) => RP.epsTotalNeeded(NOW, c)),
         needLive: COS.map((c) => RP.epsFixNeeded(LIVE, c)), totalLive: COS.map((c) => RP.epsTotalNeeded(LIVE, c)),
         nowFor, liveFor, nowNote, liveNote, liveNoteT, pv,
-        oldNow: old(NOW, [COS[1]]), oldLive: old(LIVE, [COS[1]]), oldLiveMixed: old(LIVE, [COS[0], COS[2], COS[1]]), oldLiveT: old(LIVE, [COS[2], COS[3]]),
+        oldNow: old(NOW, [COS[1]]), oldLive: old(LIVE, [COS[1]]), oldLiveMixed: old(LIVE, [COS[0], COS[2], COS[1]], { many: true }), oldLiveManyOne: old(LIVE, [COS[1]], { many: true }), oldLiveT: old(LIVE, [COS[2], COS[3]]),
         oldForceT: old(LIVE, [COS[2]], { force: true }), oldForceNci: old(LIVE, [COS[1]], { force: true }), oldEn: old(LIVE, [COS[1]], { lang: 'en' }),
         oldOff: old(LIVE, [COS[1]], { show: false }),
         kind: [OF.epsLineKind({ corp: LIVE, cos: [COS[1]] }), OF.epsLineKind({ corp: LIVE, cos: [COS[2]] }), OF.epsLineKind({ corp: NOW, cos: [COS[1]] })],
-        loaded: [OF.epsFixNeedLoaded(st, ['000020']), OF.epsTotalNeedLoaded(st, ['000020']), OF.epsTotalNeedLoaded(st, ['000030', '000070']),
-          OF.epsFixNeedLoaded(stNow, ['000020']), OF.epsTotalNeedLoaded(stNow, ['000020']), OF.epsTotalNeedLoaded(null, ['000020'])] };""")
+        loaded: [OF.epsFixNeedLoaded(st, ['000020']), OF.epsTotalNeedLoaded(st, '000020'), OF.epsTotalNeedLoaded(st, undefined),
+          OF.epsFixNeedLoaded(stNow, ['000020']), OF.epsTotalNeedLoaded(stNow, '000020'), OF.epsTotalNeedLoaded(null, '000020'),
+          OF.epsFixNeedLoaded(st, ['000050']), OF.epsFixNeedLoaded(st, ['900110']), OF.epsTotalNeedLoaded(st, '000040')] };""")
     assert got["needNow"] == [True] * 7 + [False, True]                       # 표시 전: 예전 그대로 (원화가 아닌 회사만 없음)
     assert got["totalNow"] == [False] * 9
-    assert got["needLive"] == [False] * 9                                     # 표시 뒤: 고치는 중 줄은 어디에도 없어요
+    assert got["needLive"] == [False] * 4 + [True] + [False] * 4              # 표시 뒤: "t" · 해외 기업은 없고, epsIn 없음은 예전 그대로
     assert got["totalLive"] == [False, True] + [False] * 7                    # "t" + nci true 만 (o · nci 없는 t · hybrid · epsIn 없음 · 해외 · 원화 아님 · 'yes')
-    assert got["nowFor"] == [True] * 7 + [False, True] and got["liveFor"] == [False, True] + [False] * 7
+    assert got["nowFor"] == [True] * 7 + [False, True] and got["liveFor"] == [False, True, False, False, True] + [False] * 4
     assert got["nowNote"]["lines"] == [eps_line()] and not got["nowNote"]["total"]
     assert got["liveNote"]["lines"] == [TOTAL] and got["liveNote"]["total"] and got["liveNoteT"]["lines"] == []
     assert got["pv"]["lines"] == []                                           # 미리 보기에는 없어요
-    assert got["oldNow"] == [eps_line()] and got["oldLive"] == [TOTAL] and got["oldLiveMixed"] == [TOTAL] and got["oldLiveT"] == []
+    assert got["oldNow"] == [eps_line()] and got["oldLive"] == [TOTAL] and got["oldLiveMixed"] == [] and got["oldLiveManyOne"] == [] and got["oldLiveT"] == []
     assert got["oldForceT"] == [] and got["oldForceNci"] == [TOTAL] and got["oldEn"] == [] and got["oldOff"] == []
     assert got["kind"] == ["total", None, "eps"]
-    assert got["loaded"] == [False, True, False, True, False, False]
+    assert got["loaded"] == [False, True, False, True, False, False, True, False, False]   # 여러 회사 칸(one 없음)에는 총 순이익 줄 없음
 
 
 def test_the_total_line_takes_the_being_fixed_lines_places_on_the_old_company_page_and_score_card():
@@ -86,7 +87,7 @@ def test_the_total_line_takes_the_being_fixed_lines_places_on_the_old_company_pa
     nci 가 없는 "t" 는 두 줄 다 없고, 숫자를 뺀 주가 분해 칸은 제목만 남지 않게 칸이 없어요. 첫 화면 성적표(한국어)도 같은 자리."""
     sam = company("005930")
     tn = {**sam, **reread(sam, "t", nio3=None)}
-    tn["epsIn"] = {**tn["epsIn"], "nci": True}
+    tn["epsIn"] = {**tn["epsIn"], "how": "total", "nci": True}
     t0 = {**sam, **reread(sam, "t", nio3=None)}
     got = run(bundle_dir(), """
       const page = (data, t) => renderToStaticMarkup(h(OLD.CompanyView, { data, t, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} }));
@@ -99,7 +100,7 @@ def test_the_total_line_takes_the_being_fixed_lines_places_on_the_old_company_pa
       out = { now: v(TN, false), live: v(TN, true), t0: v(T0, true),
         card: card(TN, with_(TN, true), 'ko'), cardNow: card(TN, with_(TN, false), 'ko'), cardEn: card(TN, with_(TN, true), 'en') };""", TN=tn, T0=t0)
     assert got["now"]["eps"] == 4 and got["now"]["total"] == 0, got["now"]
-    assert got["live"]["eps"] == 0 and got["live"]["total"] == 4, got["live"]   # 같은 네 칸에
+    assert got["live"]["eps"] == 0 and got["live"]["total"] == 4, got["live"]   # 같은 네 칸 (모두 이 회사 하나의 칸)
     assert got["t0"]["eps"] == 0 and got["t0"]["total"] == 0 and not got["t0"]["split"], got["t0"]
     i = got["cardNow"].index(eps_line())
     assert got["card"][i] == TOTAL and eps_line() not in got["card"]          # 성적표: 같은 자리에 바뀌어요
@@ -121,7 +122,7 @@ def test_the_2_0_company_page_puts_the_total_line_where_the_being_fixed_line_was
         const corp = JSON.parse(JSON.stringify(CORP));
         if (live) corp.epsBasis = 'owners';
         const co = corp.companies.find((c) => c.t === '005930');
-        Object.assign(co, RR, { epsIn: { ...RR.epsIn, ...(nci ? { nci: true } : {}) } });
+        Object.assign(co, RR, { epsIn: { ...RR.epsIn, how: 'total', ...(nci ? { nci: true } : {}) } });
         delete co.nio3;
         const load = mkLoad({ data: JSON.parse(JSON.stringify(DATA)), corp, macro: read('macro.json') }, ms);
         const html = [null, 'earn', 'value', 'div', 'earn-more', 'value-more'].map((ctab) =>
@@ -196,3 +197,17 @@ def test_old_english_score_card_says_the_currency_line():
     assert CUR_EN.format(currency="USD") in got["en"] and CUR.format(currency="USD") not in got["en"]
     assert CUR.format(currency="USD") in got["ko"] and CUR_EN.format(currency="USD") not in got["ko"]
     assert not any("files its statements" in x for x in got["xxx"]) and "Loss-making or no financial data yet." not in got["xxx"]
+
+
+def test_market_wide_places_never_say_this_company():
+    """리뷰 2: 여러 회사가 함께 보이는 칸(조건 검색 · 기업 비교 표)은 그중 한 회사가 "t" + nci 여도 '이 회사는 …' 줄이 없어요."""
+    base = {"s": "semi", "cap": 10.0, "rev": [1.0, 1.0, 1.0], "price": 1000.0}
+    IN = {"ni": 1.0, "b": "t", "p": "fy", "sh": 1000, "how": "total", "nci": True}
+    tn = {**base, "t": "000030", "nk": "마바", "per": 12.0, "roe": 5.0, "epsIn": IN}
+    fixed = {**base, "t": "000010", "nk": "가나", "cap": 11.0, "per": 10.0, "roe": 5.0, "epsIn": {"ni": 1.0, "b": "o", "p": "fy", "sh": 1000}}
+    got = run(bundle_dir(), """
+      const data = (cos) => ({ epsBasis: 'owners', sectors: { semi: {} }, companies: cos });
+      const scr = (cos) => lines(renderToStaticMarkup(h(OLD.ScreenerView, { data: data(cos), onOpen() {}, setExplain() {} }))).filter((l) => l.startsWith('이 회사는')).length;
+      const cmp = (cos) => lines(renderToStaticMarkup(h(OLD.CompareView, { data: data(cos), baseT: cos[0].t, onOpen() {}, onBack() {}, setExplain() {} }))).filter((l) => l.startsWith('이 회사는')).length;
+      out = { scrOne: scr([TN]), scrMix: scr([F, TN]), cmpOne: cmp([TN]), cmpMix: cmp([F, TN]) };""", TN=tn, F=fixed)
+    assert got == {"scrOne": 0, "scrMix": 0, "cmpOne": 0, "cmpMix": 0}, got

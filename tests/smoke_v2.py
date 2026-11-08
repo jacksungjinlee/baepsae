@@ -7907,7 +7907,7 @@ def fix_files(files, live):
         coby[FIX_FLAG_KR].update(epsIn={"ni": -8000.0, "b": "o", "p": "2026.2Q", "sh": 234000000}, nio3=[-10728.1, -10187.41, 12371.8],
                                  eps=round(-8000.0 * 1e8 / 234000000))
         hd = coby[FIX_T_KR]
-        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "nci": True})   # 소수주주 있음 (2026-11-08)
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "how": "total", "nci": True})   # 소수주주 있음 (2026-11-08)
     else:
         f["corp.json"].pop("epsBasis", None)
         coby[FIX_OFF_KR].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "off"})

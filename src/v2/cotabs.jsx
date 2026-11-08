@@ -32,7 +32,7 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor, epsBasisIsLive, stmtNotWonFor } from "./fix.js";
+import { epsFixFor, epsBasisCardGone, stmtNotWonFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
 import { EpsFixNote, StmtCurNote } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
@@ -128,7 +128,7 @@ function Decomp({ co, s }) {
   const noBasis = d.why === "basis";           // 2026-11-08: the two ends share no basis -> no numbers, the PER/EPS line in their place
   // After the re-read (Jack, 2026-11-08) the line in their place is the total-profit line, only for a company with minority
   // shareholders (fix.js epsFixFor); with no line to show, no card (not a title over nothing)
-  const basisLine = noBasis && (!epsBasisIsLive() || epsFixFor(s));
+  const basisLine = noBasis && !epsBasisCardGone(s);
   if (!d.head && !msg && !basisLine) return null;
   return (
     <Card data-ui-v2="co-decomp" data-head={d.head || d.why}>
@@ -147,7 +147,7 @@ function Decomp({ co, s }) {
         </>
       ) : !d.head && msg ? <Note>{msg}</Note> : null}
       {/* EPS · PER (and the loss reading, from the same net income); not under 자료가 없어요 */}
-      <EpsFixNote show={basisLine || (epsFixFor(s) && (!!d.head || d.why === "loss"))} />
+      <EpsFixNote s={s} show={basisLine || (epsFixFor(s) && (!!d.head || d.why === "loss"))} />
     </Card>
   );
 }
@@ -357,11 +357,11 @@ function Dcf({ load, s, co, a, onTry }) {
   if (!D.title || r.why === "us" || r.why === "notReady") return null;
   // 2026-11-08: no start profit on EPS's basis (company.js impliedGrowth "basis"): no numbers, the PER/EPS line in their place
   if (r.why === "basis") {
-    if (epsBasisIsLive() && !epsFixFor(s)) return null;     // after the re-read: no line to put in their place, no card (as 주가 분해)
+    if (epsBasisCardGone(s)) return null;     // after the re-read: no line to put in their place, no card (as 주가 분해)
     return (
       <Card data-ui-v2="co-dcf" data-edge="basis">
         <CardHead icon="scales" tone="value" title={D.title} />
-        <EpsFixNote show />
+        <EpsFixNote s={s} show />
       </Card>
     );
   }
@@ -391,7 +391,7 @@ function Dcf({ load, s, co, a, onTry }) {
             ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{inputs}</div>
         </>
       ) : <Note>{msg}</Note>}
-      <EpsFixNote show={epsFixFor(s)} />
+      <EpsFixNote s={s} show={epsFixFor(s)} />
       {D.try && onTry && C.co.valueMore.title && C.co.calc.title && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={onTry}>{D.try}</Button></div>}
     </Card>
   );
@@ -478,7 +478,7 @@ export function ValueTab({ load, s, store, onMore }) {
           </Stats>
         )}
         {!usOf(s) && !cur && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
-        <EpsFixNote show={epsFixFor(s) && per != null && !compare} />
+        <EpsFixNote s={s} show={epsFixFor(s) && per != null && !compare} />
         {!cur && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
       </Card>
       {compare && (
@@ -488,7 +488,7 @@ export function ValueTab({ load, s, store, onMore }) {
           {per != null && <CompareRow id="co-per" label="PER" mine={per} med={perMed ? perMed.med : null} value={timesText(per, 1)} sub={perSub} />}
           <Strip s={s} group={group} inCard />
           {/* 2026-11-08 (Jack): PER sits in this card when there is an industry to compare (v19.3e) */}
-          <EpsFixNote show={epsFixFor(s) && per != null} />
+          <EpsFixNote s={s} show={epsFixFor(s) && per != null} />
         </Card>
       )}
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
@@ -530,7 +530,7 @@ function Scatter({ s, group }) {
         <div>{M.x}</div><div>{M.y}</div><div>{M.line}</div>
       </div>
       {M[m.pos] && <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{M[m.pos]}</p>}
-      <EpsFixNote show={epsFixFor(s)} />
+      <EpsFixNote s={s} show={epsFixFor(s)} />
     </Card>
   );
 }
@@ -544,11 +544,11 @@ function Calc({ load, s, store, setStoreData }) {
   const r = impliedGrowth(s, co, a);
   if (usOf(s) || r.why === "notReady" || r.why === "us" || !all(K.title, K.intro, K.disc, K.term, K.result)) return null;
   if (r.why === "basis") {                     // 2026-11-08: as the 가치 tab's card (no numbers, the PER/EPS line)
-    if (epsBasisIsLive() && !epsFixFor(s)) return null;
+    if (epsBasisCardGone(s)) return null;
     return (
       <Card data-ui-v2="co-calc" data-g="" data-edge="basis">
         <CardHead icon="calculator" tone="value" title={K.title} />
-        <EpsFixNote show />
+        <EpsFixNote s={s} show />
       </Card>
     );
   }
@@ -574,7 +574,7 @@ function Calc({ load, s, store, setStoreData }) {
       {slider("term", K.term, DCF.termRange)}
       {res && <div data-ui-v2="co-calc-result" style={{ marginTop: SPACE(3), background: COLOR.page, borderRadius: RADIUS.sm, padding: SPACE(3), ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>{res}</div>}
       {inputs && <Src>{inputs}</Src>}
-      <EpsFixNote show={epsFixFor(s)} />
+      <EpsFixNote s={s} show={epsFixFor(s)} />
       {K.save && store.writable && (
         <div style={{ marginTop: SPACE(3) }}>
           <Button kind="secondary" onClick={save}>{done && K.saved ? K.saved : K.save}</Button>
@@ -642,7 +642,7 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
-            <EpsFixNote show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
+            <EpsFixNote s={s} show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
             <DateLine date={lineDate(load, s)} fresh={load.fresh} />
           </Card>
         )}
@@ -750,7 +750,7 @@ export function DivTab({ load, s }) {
           </div>
           {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
               when the payout still uses total profit after the re-read (basis "total") */}
-          <EpsFixNote show={epsFixFor(s)} />
+          <EpsFixNote s={s} show={epsFixFor(s)} />
         </Card>
       )}
       {(r.yieldPct != null || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
@@ -762,7 +762,7 @@ export function DivTab({ load, s }) {
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
         {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
             when the payout still uses total profit after the re-read (basis "total") */}
-        <EpsFixNote show={!ring && epsFixFor(s) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
+        <EpsFixNote s={s} show={!ring && epsFixFor(s) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
       </Card>}
     </div>
   );

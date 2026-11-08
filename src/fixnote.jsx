@@ -14,7 +14,7 @@
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
 import { mdOf, kstDate, loadCorpOnce } from "./data.js";
-import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur } from "./repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, epsTotalSide, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur } from "./repair.js";
 
 export { icrOff };
 export const FIX_EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.eps
@@ -39,16 +39,18 @@ const LINE = { fontSize: 12, color: C.sub, lineHeight: 1.6, marginTop: 8, wordBr
 // 기업분석 · 첫 화면 성적표: 화면이 읽은 corp.json 과 그 칸에 숫자가 보이는 회사들(cos, corp.json 의 줄)로 정해요 — 그중 하나라도
 // 고쳐지지 않았으면 줄이 있어요. force: 두 끝을 같은 기준에 세울 수 없어 숫자를 빼고 이 줄만 보이는 칸 (repair.js epsBase).
 // lang: "en" on the old app's English screens (첫 화면 성적표 · 포트폴리오); 기업분석 passes none (Korean only).
-// 다시 읽은 뒤(표시가 있으면)는 같은 자리에 총 순이익 줄(FIX_TOTAL): 칸의 회사 중 하나라도 epsTotalNeeded 일 때 (force 도 그 회사여야 해요).
-// -> "eps" | "total" | null: 그 칸에 보일 줄.
-export function epsLineKind({ corp, cos, show = true, force = false }) {
-  if (epsBasisLive(corp)) {
-    return (force || show) && Array.isArray(cos) && cos.some((c) => epsTotalNeeded(corp, c)) ? "total" : null;
-  }
-  return force || (show && (!Array.isArray(cos) || cos.some((c) => epsFixNeeded(corp, c)))) ? "eps" : null;
+// 다시 읽은 뒤(표시가 있으면): 총 순이익("t") 회사 · 해외 기업은 고치는 중 줄이 없고, 그중 "t" + how total + nci 는 한 회사 칸에서만
+// 총 순이익 줄(FIX_TOTAL, "이 회사는 …"). many: 여러 회사가 함께 보이는 칸 (목록 · 표 · 그래프) — 총 순이익 줄은 없어요 (리뷰 2).
+// force(숫자를 뺀 칸)는 예전처럼 줄이 있되, "t" · 해외 기업이면 총 순이익 줄이거나 없어요. -> "eps" | "total" | null
+export function epsLineKind({ corp, cos, show = true, force = false, many = false }) {
+  if (!epsBasisLive(corp)) return force || (show && (!Array.isArray(cos) || cos.some((c) => epsFixNeeded(corp, c)))) ? "eps" : null;
+  if (!(force || show)) return null;
+  if (!Array.isArray(cos)) return "eps";
+  if (force ? cos.some((c) => !stmtNotWon(c) && !epsTotalSide(c)) : cos.some((c) => epsFixNeeded(corp, c))) return "eps";
+  return !many && cos.some((c) => epsTotalNeeded(corp, c)) ? "total" : null;
 }
-export function EpsFixLine({ corp, cos, show = true, force = false, style, lang = "ko" }) {
-  const kind = epsLineKind({ corp, cos, show, force });
+export function EpsFixLine({ corp, cos, show = true, force = false, many = false, style, lang = "ko" }) {
+  const kind = epsLineKind({ corp, cos, show, force, many });
   useEffect(() => { if (kind === "eps") warnEpsFixLate(corp, kstDate(Date.now()), "뱁새"); }, [kind, corp]);
   const text = kind === "eps" ? fixEpsText(lang) : kind === "total" && lang !== "en" ? FIX_TOTAL : null;
   return text ? <div data-fix={kind} data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
@@ -62,15 +64,16 @@ let CORP_FIX = null;
 export function corpFixState(d) {
   const live = epsBasisLive(d);
   const cos = d && Array.isArray(d.companies) ? d.companies : [];
-  return { live, fixed: new Set(live ? cos.filter(epsInFixed).map((c) => c.t) : []), notWon: new Set(cos.filter(stmtNotWon).map((c) => c.t)),
+  return { live, fixed: new Set(live ? cos.filter((c) => epsInFixed(c) || epsTotalSide(c)).map((c) => c.t) : []), notWon: new Set(cos.filter(stmtNotWon).map((c) => c.t)),
     total: new Set(live ? cos.filter((c) => epsTotalNci(c) && !stmtNotWon(c)).map((c) => c.t) : []) };
 }
 // 그 칸에 줄이 필요한지: 상태를 모르면(받는 중 · 못 받음) 있어요. 아니면 그 칸의 코드 중 하나라도 고쳐지지 않았고 원화 재무제표인 회사가 있을 때.
+// (다시 읽은 뒤 fixed 에는 총 순이익("t") 회사 · 해외 기업도 들어 있어요: 그 회사들은 고치는 중 줄이 없어요.)
 export function epsFixNeedLoaded(st, codes) {
-  return !st || !Array.isArray(codes) || (!st.live && codes.some((t) => !st.notWon.has(t)));
+  return !st || !Array.isArray(codes) || codes.some((t) => !st.notWon.has(t) && !(st.live && st.fixed.has(t)));
 }
-// 다시 읽은 뒤: 그 칸의 코드 중 총 순이익 줄이 필요한 회사가 있을 때 (상태를 모르면 없어요: 그때는 위의 PER · EPS 줄).
-export const epsTotalNeedLoaded = (st, codes) => !!st && st.live && Array.isArray(codes) && codes.some((t) => st.total.has(t));
+// 다시 읽은 뒤: 한 회사(one, 코드)의 칸에서 그 회사가 총 순이익 줄이 필요할 때 (상태를 모르면 없어요: 그때는 위의 PER · EPS 줄).
+export const epsTotalNeedLoaded = (st, one) => !!st && st.live && typeof one === "string" && st.total.has(one);
 export function useEpsFixState(want) {
   const [st, setSt] = useState(CORP_FIX);
   useEffect(() => {
@@ -87,10 +90,11 @@ export function useEpsFixState(want) {
   }, [want]);
   return st;
 }
-// codes: 그 칸에 PER · ROE 가 보이는 한국 종목 코드들.
-export function EpsFixLineLoaded({ show = true, codes, style, lang = "ko" }) {
+// codes: 그 칸에 PER · ROE 가 보이는 한국 종목 코드들. one: 한 회사의 칸이면 그 코드 — 총 순이익 줄은 그 회사로만 정해요 (같은 업종 표의
+// 다른 회사로는 아니에요). 여러 회사의 칸(one 없음)에는 총 순이익 줄이 없어요 (리뷰 2).
+export function EpsFixLineLoaded({ show = true, codes, one, style, lang = "ko" }) {
   const st = useEpsFixState(show);
-  const kind = !show ? null : epsFixNeedLoaded(st, codes) ? "eps" : epsTotalNeedLoaded(st, codes) ? "total" : null;
+  const kind = !show ? null : epsFixNeedLoaded(st, codes) ? "eps" : epsTotalNeedLoaded(st, one) ? "total" : null;
   const text = kind === "eps" ? fixEpsText(lang) : kind === "total" && lang !== "en" ? FIX_TOTAL : null;
   return text ? <div data-fix={kind} data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
 }

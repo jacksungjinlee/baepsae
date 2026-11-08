@@ -173,7 +173,7 @@ function Receipts({ s, co, c, st }) {
       {growth != null && growthLabel && <Row id="growth" basis={gb || undefined} k={growthLabel} v={`${p1(growth)}%`} />}
       {fy != null && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(C.app.reportYear, { year: fy })}</div>}
       {/* 2026-11-08 (Jack): Korean ROE is total net income ÷ equity, the same net income as PER/EPS (fixnote.jsx) */}
-      <EpsFixNote show={epsFixFor(s) && roe != null && fy != null} />
+      <EpsFixNote s={s} show={epsFixFor(s) && roe != null && fy != null} />
     </div>
   );
 }

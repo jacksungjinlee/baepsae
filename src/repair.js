@@ -54,18 +54,24 @@ export function epsInFixed(co) {
 // corp: corp.json · co: that company's row in it. true = the PER/EPS line shows for this company.
 // Never for a company whose statements are not in won (stmtNotWon, item 4 below; readable code or not): the re-read blanks its
 // EPS and the rest, it has no epsIn, and the currency line says why; the line would otherwise stay forever with a past date.
-// Once the marker is live (Jack, 2026-11-08) the being-fixed line goes for every company: its date has passed. A company the
-// re-read left on total profit because its statements have no owners' line but do show minority shareholders (epsIn.b "t"
-// with epsIn.nci true, fetch_data.py eps_nci) gets "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체
-// 순이익으로 계산했어요." in the same places instead (epsTotalNeeded). Other "t" companies (no minority shareholders: the
-// owners'-line mismatch guard, or hybrid capital that cannot be placed), companies with no epsIn and foreign issuers show
-// neither line. Before the marker nothing changes.
-export function epsFixNeeded(corp, co) {
-  return !stmtNotWon(co) && !epsBasisLive(corp);
+// Once the marker is live (Jack, 2026-11-08) a company the re-read left on total profit ("t") no longer gets the being-fixed
+// line: one with no owners' line but minority shareholders (epsIn.b "t", how "total", nci true: fetch_data.py eps_nci) gets
+// "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요." in the same single-company
+// places instead (epsTotalNeeded); other "t" companies (no minority shareholders, or how "hybrid") and foreign issuers
+// (900xxx · 950xxx, statements in a foreign currency) show neither line. Companies with no epsIn, an unknown b or a malformed
+// epsIn keep the line as before. Before the marker nothing changes.
+export const isForeignIssuer = (t) => typeof t === "string" && t.length === 6 && t[0] === "9";
+export function epsInTotal(co) {
+  return !!co && typeof co === "object" && !!co.epsIn && typeof co.epsIn === "object" && co.epsIn.b === "t";
 }
-// epsIn.b "t" with the minority-shareholder mark (pipeline writes nci only as true and only with b "t").
+// After the marker: neither line's place, except through epsTotalNeeded ("t" or a foreign issuer).
+export const epsTotalSide = (co) => epsInTotal(co) || (!!co && typeof co === "object" && isForeignIssuer(co.t));
+export function epsFixNeeded(corp, co) {
+  return !stmtNotWon(co) && !(epsBasisLive(corp) && (epsInFixed(co) || epsTotalSide(co)));
+}
+// epsIn.b "t" from a statement with no owners' line (how "total") and with minority shareholders (nci true).
 export function epsTotalNci(co) {
-  return !!co && typeof co === "object" && !!co.epsIn && typeof co.epsIn === "object" && co.epsIn.b === "t" && co.epsIn.nci === true;
+  return epsInTotal(co) && co.epsIn.how === "total" && co.epsIn.nci === true;
 }
 // true = the total-profit line shows for this company (corp: corp.json on screen · co: its row).
 export function epsTotalNeeded(corp, co) {

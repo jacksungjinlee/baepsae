@@ -3,7 +3,7 @@
 // whole app reads that one way: load.js resolveLoad calls setEpsBasis(corp) once per load (the way engine.setDataShape
 // works), so a screen that only has a held stock (daily.jsx) knows it too. Until a file is loaded the line is on (a fix is
 // never assumed). Pure; no Korean (src/copy/v2.js C.fix).
-import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur } from "../repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur } from "../repair.js";
 import { kstDate } from "../data.js";
 
 export { EPS_FIX_DATE, icrOff };
@@ -11,7 +11,8 @@ export { EPS_FIX_DATE, icrOff };
 let live = false;
 let fixed = new Set();        // codes whose epsIn.b is "o" or "s" (only read when live)
 let notWon = new Set();       // codes whose statements are not in won (repair.js stmtNotWon): never the PER/EPS line
-let total = new Set();        // codes on total profit with minority shareholders (epsIn.b "t" · nci true; only read when live)
+let total = new Set();        // codes on total profit with minority shareholders (epsIn.b "t" · how total · nci true; only read when live)
+let side = new Set();         // codes on total profit ("t") of any kind (only read when live; foreign issuers by their code)
 let hidden = false;           // the example page (app-preview.html, fictional data): neither line (PR #89 review)
 // corp: the loaded corp.json (null when it failed). now: ms (tests). preview: the example page (no lines, no warning).
 export function setEpsBasis(corp, { now, preview = false } = {}) {
@@ -20,6 +21,7 @@ export function setEpsBasis(corp, { now, preview = false } = {}) {
   fixed = new Set(live && Array.isArray(corp.companies) ? corp.companies.filter(epsInFixed).map((c) => c.t) : []);
   notWon = new Set(corp && Array.isArray(corp.companies) ? corp.companies.filter(stmtNotWon).map((c) => c.t) : []);
   total = new Set(live && Array.isArray(corp.companies) ? corp.companies.filter(epsTotalNci).map((c) => c.t) : []);
+  side = new Set(live && Array.isArray(corp.companies) ? corp.companies.filter(epsTotalSide).map((c) => c.t) : []);
   if (!preview && corp) warnEpsFixLate(corp, kstDate(now == null ? Date.now() : now), "v2");
   return live;
 }
@@ -32,12 +34,17 @@ export const icrOffShown = (co) => !hidden && icrOff(co);
 // DCF, 배당성향, 주가는 무엇으로 움직였나). s: the data.json row (or anything with t and cls). US and funds: never. After the
 // re-read: only for companies still on total profit (epsIn.b "t" or no epsIn). Never for a company whose statements are not
 // in won (stmtCur): its numbers are blanked and the currency line says why (repair.js epsFixNeeded, the old app's rule).
-// After the re-read (Jack, 2026-11-08): the being-fixed line goes for every company (its date has passed); a company on total
-// profit with minority shareholders (repair.js epsTotalNeeded) gets the total-profit line in the same places instead. So this
-// stays the one question each section asks ("does this stock get the line here?"), and epsLineKind says which line.
-export const epsFixFor = (s) => !hidden && !!s && s.cls === "kr" && !notWon.has(s.t) && (!live || total.has(s.t));
-// "eps" (the being-fixed line, before the marker) | "total" (after it) — which words EpsFixNote shows.
-export const epsLineKind = () => (live ? "total" : "eps");
+// After the re-read (Jack, 2026-11-08; repair.js epsFixNeeded): companies on total profit ("t") and foreign issuers lose the
+// being-fixed line; those with no owners' line and minority shareholders (repair.js epsTotalNeeded) get the total-profit line in
+// the same places instead. So this stays the one question each section asks ("does this stock get a line here?"), and
+// epsLineKind(s) says which line.
+const tSide = (t) => side.has(t) || isForeignIssuer(t);
+export const epsFixFor = (s) => !hidden && !!s && s.cls === "kr" && !notWon.has(s.t) && !(live && (fixed.has(s.t) || (tSide(s.t) && !total.has(s.t))));
+// "eps" (the being-fixed line) | "total" (after the marker, for that company) — which words EpsFixNote shows.
+export const epsLineKind = (s) => (live && !!s && total.has(s.t) ? "total" : "eps");
+// A card whose numbers are left out for lack of one basis (repair.js epsBase bad): after the marker, a "t" company without
+// the total-profit line (or a foreign issuer) has no line to put in their place, so the card is left out (not a bare title).
+export const epsBasisCardGone = (s) => live && !!s && tSide(s.t) && !total.has(s.t);
 // Same, for a section where several stocks show such numbers (any one that needs it is enough).
 export const epsFixForAny = (rows) => Array.isArray(rows) && rows.some(epsFixFor);
 
