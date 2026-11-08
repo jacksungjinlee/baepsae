@@ -10,7 +10,7 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, StmtCurLine } from "./fixnote.jsx";
 import { epsBase, epsPeriod } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
@@ -1165,6 +1165,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
 
       <Card>
         <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + epsPeriodSub(c)} onWhy={() => setExplain("box")} />
+        {/* DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액이 비어요 — 그 이유를 한 번 */}
+        <StmtCurLine c={c} style={{ marginTop: 6 }} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, padding: "9px 11px", background: C.bg, border: HAIR, borderRadius: 8, alignItems: "center" }}>
               <button onClick={() => setExplain("factor")} style={{ background: "none", border: "none", padding: 0, fontSize: 10.5, fontWeight: 800, color: C.faint, cursor: "pointer", fontFamily: FONT }}>성향(팩터) ?</button>

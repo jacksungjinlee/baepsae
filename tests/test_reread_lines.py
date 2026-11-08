@@ -1,0 +1,377 @@
+# -*- coding: utf-8 -*-
+"""DART 다시 읽기가 끝난 뒤의 세 가지 (Jack 승인 2026-11-08, DeepL 확인) — src/repair.js · src/v2/fix.js · src/v2/fixnote.jsx ·
+src/fixnote.jsx.
+
+1. 한 주 동안의 안내 (2.0 홈 · 포트폴리오): "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요."
+   화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE + 7일 전일 때만. {date} = EPS_FIX_DATE ("11월 9일").
+   표시가 없으면 · 그날부터 · 미리 보기(app-preview.html)에서는 없어요.
+2. 원화가 아닌 재무제표 (corp.json stmtCur, 예: "USD"): "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직
+   보여 드리지 않아요." 2.0 회사 페이지(요약의 한눈에 · 실적 탭 · 가치 탭 · 두 자세히 화면)에 한 번씩, 예전 뱁새 기업분석의 투자지표에
+   한 번. stmtCur 가 없는 회사 · 미국 종목에는 없어요.
+3. 예전 뱁새 영어 화면의 고치는 중 줄: "PER and EPS are being recalculated and may change on {date}." · "Interest coverage isn't
+   checked while we fix how it's calculated." 한국어 줄과 같은 규칙, 날짜는 data.js mdOf(…, "en") ("Nov 9").
+화면은 react-dom/server 로 실제 컴포넌트를 그려서 봐요. 브라우저 화면은 tests/smoke_v2.py 장면 '다시 읽은 뒤'가 봐요.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NODE = shutil.which("node")
+pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+MODS = {"RP": "src/repair.js", "FX": "src/v2/fix.js", "FN": "src/v2/fixnote.jsx", "L": "src/v2/load.js", "T": "src/v2/today.jsx",
+        "PF": "src/v2/portfolio.jsx", "CO": "src/v2/company.jsx", "CP": "src/copy/v2.js", "OF": "src/fixnote.jsx", "OLD": "src/corp.jsx",
+        "SH": "src/shell.jsx", "D": "src/data.js", "FM": "src/v2/format.js"}
+FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
+OWNERS = "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요."
+CUR = "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+EPS_EN = "PER and EPS are being recalculated and may change on {date}."
+ICR_EN = "Interest coverage isn't checked while we fix how it's calculated."
+EPS_KO = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요."
+ICR_KO = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요."
+MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+STMT_T = "241560"           # 두산밥캣: 실제로 재무제표를 달러로 공시하는 회사 (시험 데이터에 있어요)
+
+
+def fix_date():
+    src = open(os.path.join(ROOT, "src", "repair.js"), encoding="utf-8").read()
+    m = re.findall(r'^export const EPS_FIX_DATE = "(\d{4})-(\d{2})-(\d{2})";$', src, flags=re.M)
+    assert len(m) == 1, m
+    return m[0]
+
+
+def owners_line():
+    y, mo, d = fix_date()
+    return OWNERS.format(date=f"{int(mo)}월 {int(d)}일")
+
+
+def eps_en_line():
+    y, mo, d = fix_date()
+    return EPS_EN.format(date=f"{MON[int(mo) - 1]} {int(d)}")
+
+
+def fixture(name):
+    with open(os.path.join(FIX, name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def blank_stmt_cur(data, corp, t=STMT_T, cur="USD"):
+    """다시 읽은 발행에서 재무제표가 원화가 아닌 회사의 모양 (fetch_data.py v19.1f 처럼): 금액 · 영수증 · PER · PBR · EPS · BPS 를 비우고
+    stmtCur 에 통화를 남겨요 (배당은 원화 표라 남아요)."""
+    co = next(c for c in corp["companies"] if c["t"] == t)
+    co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None)
+    for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep"):
+        co.pop(k, None)
+    if cur is not None:
+        co["stmtCur"] = cur
+    s = next(x for x in data["stocks"] if x["t"] == t)
+    s.update(per=None, pbr=None, eps=None, bps=None, vz=None)
+    return co, s
+
+
+def run(body, **data):
+    """body 는 out 에 JSON 으로 돌려줄 값을 넣어요. FILES: 시험 데이터 네 파일, mkLoad(files, nowMs, opts): 2.0 의 load 상태."""
+    tmp = bundle_dir()
+    decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
+    code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react'; import fs from 'fs';\n"
+            "const { RP, FX, FN, L, T, PF, CO, CP, OF, OLD, SH, D, FM } = B; const C2 = CP.C;\n"
+            "const warns = []; console.warn = (m) => warns.push(String(m)); console.info = () => {};\n"
+            f"const FIXDIR = {json.dumps(FIX)};\n"
+            "const read = (f) => JSON.parse(fs.readFileSync(FIXDIR + '/' + f, 'utf8'));\n"
+            "const kstMs = (iso, hm = '12:00') => Date.parse(iso + 'T' + hm + ':00+09:00');\n"
+            "const realNow = Date.now; const at = (ms) => { Date.now = () => ms; };\n"
+            "const mkLoad = (files, ms, opts = {}) => { for (const f of ['data', 'corp', 'macro']) files[f].publishedAt = new Date(ms - 3600000).toISOString();\n"
+            "  return L.resolveLoad({ data: { ok: true, data: files.data }, corp: { ok: true, data: files.corp }, macro: { ok: true, data: files.macro } }, ms, opts); };\n"
+            "const FILES = () => ({ data: read('data.json'), corp: read('corp.json'), macro: read('macro.json') });\n"
+            "const ent = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#x27;/g, \"'\").replace(/&amp;/g, '&');\n"
+            "const lines = (html) => ent(html.replace(/<!--.*?-->/g, '')).replace(/<[^>]+>/g, '\\n').split('\\n').map((x) => x.trim()).filter(Boolean);\n"
+            "const count = (html, text) => lines(html).filter((l) => l === text).length;\n"
+            "const marked = (html, attr, val) => (html.match(new RegExp(attr + '=\"' + val + '\"', 'g')) || []).length;\n"
+            "const px = (html, attr, val) => [...html.matchAll(new RegExp(attr + '=\"' + val + '\"[^>]*style=\"[^\"]*font-size:(\\\\d+(?:\\\\.\\\\d+)?)px', 'g'))].map((m) => Number(m[1]));\n"
+            + decl + "let out;\n" + body + "\nDate.now = realNow;\nconsole.log(JSON.stringify(out));")
+    fd, path = tempfile.mkstemp(suffix=".mjs", dir=tmp)            # 시험 데이터를 통째로 넘기면 명령 줄에 다 들어가지 않아요
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(code)
+    r = subprocess.run([NODE, path], cwd=tmp, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-3000:]
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+# ── 1. 한 주 동안의 안내: 규칙 ──
+def test_the_week_notice_rule_reads_the_marker_and_the_date():
+    got = run("""
+      const D0 = RP.EPS_FIX_DATE, P = (n) => RP.isoPlusDays(D0, n), LIVE = { epsBasis: 'owners' };
+      out = {
+        days: RP.EPS_NOTICE_DAYS, d0: D0, end: P(RP.EPS_NOTICE_DAYS),
+        plus: [RP.isoPlusDays('2026-11-09', 7), RP.isoPlusDays('2026-12-28', 7), RP.isoPlusDays('2028-02-27', 3), RP.isoPlusDays('2027-02-27', 3),
+          RP.isoPlusDays('2026-11-09', -1), RP.isoPlusDays('2026-11-09', 0)],
+        bad: [RP.isoPlusDays('2026-02-30', 1), RP.isoPlusDays('2026-11-9', 1), RP.isoPlusDays('2026-11-09T00:00', 1), RP.isoPlusDays(null, 1),
+          RP.isoPlusDays('2026-11-09', 1.5), RP.isoPlusDays('2026-11-09', '7'), RP.isoPlusDays('2026-13-01', 1)],
+        live: [P(-1), D0, P(1), P(6), P(7), P(8), P(30)].map((d) => RP.epsNoticeOn(LIVE, d)),
+        off: [null, undefined, {}, { epsBasis: 'total' }, { epsBasis: 'Owners' }, [], 'owners'].map((c) => RP.epsNoticeOn(c, P(1))),
+        today: [null, '', 'tomorrow', P(1) + 'T00:00', D0.replace(/-/g, '/')].map((d) => RP.epsNoticeOn(LIVE, d)),
+        other: [RP.epsNoticeOn(LIVE, '2026-12-07', '2026-12-01'), RP.epsNoticeOn(LIVE, '2026-12-08', '2026-12-01'), RP.epsNoticeOn(LIVE, D0, 'soon')],
+      };""")
+    y, mo, d = fix_date()
+    assert got["days"] == 7 and got["d0"] == f"{y}-{mo}-{d}"
+    assert got["plus"] == ["2026-11-16", "2027-01-04", "2028-03-01", "2027-03-02", "2026-11-08", "2026-11-09"]
+    assert got["bad"] == [None] * 7                                       # 없는 날짜 · 다른 꼴은 날짜를 만들지 않아요
+    assert got["live"] == [True, True, True, True, False, False, False]    # EPS_FIX_DATE + 7일 전까지만 (그날부터 없어요)
+    assert got["off"] == [False] * 7                                      # 정확히 epsBasis "owners" 일 때만
+    assert got["today"] == [False] * 5                                    # 오늘을 읽을 수 없으면 없어요
+    assert got["other"] == [True, False, False]                           # 날짜는 EPS_FIX_DATE 하나에서 (바뀌면 따라가요)
+
+
+# ── 1. 한 주 동안의 안내: 2.0 의 한 줄 ──
+def test_the_week_notice_line_on_2_0_follows_the_load_on_screen():
+    got = run("""
+      const D0 = RP.EPS_FIX_DATE, P = (n) => RP.isoPlusDays(D0, n);
+      const note = (load, ms) => renderToStaticMarkup(h(FN.EpsOwnersNote, { load, now: ms }));
+      const live = (ms) => { const f = FILES(); f.corp.epsBasis = 'owners'; return mkLoad(f, ms); };
+      const none = (ms) => { const f = FILES(); delete f.corp.epsBasis; return mkLoad(f, ms); };
+      const t0 = kstMs(D0), last = kstMs(P(6), '23:59'), end = kstMs(P(7), '00:00'), endUtcTrap = kstMs(P(7), '00:30');
+      const L1 = live(t0);
+      const html = note(L1, t0);
+      const pv = (() => { const f = FILES(); f.corp.epsBasis = 'owners'; return mkLoad(f, t0, { preview: true }); })();
+      FX.setEpsBasis({ epsBasis: 'owners', companies: [] });              // the page-wide flag back on: the load's own preview mark must hide it
+      out = {
+        text: FN.epsOwnersText(), copy: C2.fix.owners, line: lines(html), marked: marked(html, 'data-ui-v2', 'eps-owners'), px: px(html, 'data-ui-v2', 'eps-owners'),
+        before: lines(note(live(kstMs(P(-1))), kstMs(P(-1)))), last: lines(note(live(last), last)),
+        end: note(live(end), end), utc: note(live(endUtcTrap), endUtcTrap), later: note(live(kstMs(P(30))), kstMs(P(30))),
+        noMarker: note(none(t0), t0), preview: note(pv, t0), fail: note({ status: 'fail' }, t0), loading: note({ status: 'loading' }, t0), nul: note(null, t0),
+        notOk: note({ status: 'loading', corp: { epsBasis: 'owners', companies: [] } }, t0),          // only a load that is on screen counts
+        shown: [FX.epsNoticeShown(L1, D0), FX.epsNoticeShown(L1, P(7)), FX.epsNoticeShown(pv, D0)],
+      };
+      FX.setEpsBasis({ epsBasis: 'owners', companies: [] }, { preview: true });       // 미리 보기 페이지: 어느 안내도 없어요
+      out.hiddenPage = note(L1, t0);
+      FX.setEpsBasis({ epsBasis: 'owners', companies: [] });
+      out.backOn = lines(note(L1, t0));""")
+    want = owners_line()
+    assert got["copy"] == OWNERS and got["text"] == want                   # Jack 의 글자 그대로 · 날짜는 월 · 일 ("11월 9일")
+    assert got["line"] == [want] and got["marked"] == 1                     # 한 줄
+    assert got["px"] and all(p >= 12 for p in got["px"]), got["px"]          # 12px 바닥 (조용한 안내 줄: 13px)
+    assert got["before"] == [want] and got["last"] == [want]                # 표시가 있으면 그날 전에도 · 이레째 밤 23:59 까지
+    assert got["end"] == "" and got["utc"] == "" and got["later"] == ""      # 이레가 지나면 (한국 시간 자정부터, UTC 날짜가 아니에요)
+    assert got["noMarker"] == "" and got["preview"] == "" and got["fail"] == "" and got["loading"] == "" and got["nul"] == "" and got["notOk"] == ""
+    assert got["shown"] == [True, False, False]
+    assert got["hiddenPage"] == "" and got["backOn"] == [want]
+
+
+def test_the_week_notice_is_one_line_near_the_top_of_home_and_portfolio():
+    """홈(첫 방문 · 처음 안내 · 돌아온 사람)과 포트폴리오(빈 화면 · 포트폴리오가 있을 때): 날짜 줄 바로 밑, 화면의 첫 카드보다 위에 한 줄.
+    표시가 없거나 · 이레가 지났거나 · 미리 보기면 없어요."""
+    deck = {"id": "dfix", "name": "가진 종목", "createdAt": "2026-10-30", "kind": "imported", "settings": {"points": {"value": 2}, "strict": "normal"},
+            "holdings": [{"t": "005930", "nk": "삼성전자", "cls": "kr"}], "purchases": [],
+            "imported": [{"t": "005930", "nk": "삼성전자", "ccy": "KRW", "qty": 10}]}
+    got = run("""
+      const D0 = RP.EPS_FIX_DATE, P = (n) => RP.isoPlusDays(D0, n);
+      const loadAt = (ms, marker = true, opts = {}) => { const f = FILES(); if (marker) f.corp.epsBasis = 'owners'; else delete f.corp.epsBasis; return mkLoad(f, ms, opts); };
+      const store = (decks) => ({ data: { v: 2, decks }, writable: true, key: 'baepsae2.v1', preview: false });
+      const noop = () => {};
+      const screens = (load) => ({
+        homeFirst: renderToStaticMarkup(h(T.Home, { load, store: store([]), setStoreData: noop, pad: 0, go: noop, onWhy: noop })),
+        homeWelcome: renderToStaticMarkup(h(T.Home, { load, store: store([]), setStoreData: noop, pad: 0, go: noop, onWhy: noop,
+          welcome: { onTry: noop, onBrowse: noop, onImport: noop } })),
+        home: renderToStaticMarkup(h(T.Home, { load, store: store([DECK]), setStoreData: noop, pad: 0, go: noop, onWhy: noop })),
+        pfEmpty: renderToStaticMarkup(h(PF.Portfolio, { load, store: store([]), setStoreData: noop, pad: 0, go: noop })),
+        pf: renderToStaticMarkup(h(PF.Portfolio, { load, store: store([DECK]), setStoreData: noop, pad: 0, go: noop })),
+      });
+      const look = (ms, marker, opts) => { at(ms); const s = screens(loadAt(ms, marker, opts)); return Object.fromEntries(Object.entries(s).map(([k, html]) => {
+        const i = html.indexOf('data-ui-v2="eps-owners"'), dl = html.indexOf('data-ui-v2="date-line"');
+        // the marked pieces after the date line, in order: the notice must be the first (before the screen's first card)
+        const after = [...html.matchAll(/data-ui-v2="([^"]+)"/g)].filter((m) => m.index > dl).map((m) => m[1]);
+        return [k, { n: marked(html, 'data-ui-v2', 'eps-owners'), lines: lines(html).filter((l) => l === OWNERS_LINE).length, afterDate: i > dl && dl >= 0,
+          next: after.slice(0, 2), home2: html.includes('data-ui-v2="home2"') }];
+      })); };
+      out = { on: look(kstMs(P(1)), true), end: look(kstMs(P(7), '00:00'), true), none: look(kstMs(P(1)), false), pv: look(kstMs(P(1)), true, { preview: true }) };""",
+              DECK=deck, OWNERS_LINE=owners_line())
+    on = got["on"]
+    assert set(on) == {"homeFirst", "homeWelcome", "home", "pfEmpty", "pf"}
+    assert on["home"]["home2"], "돌아온 사람의 홈은 v19.3e 새 홈이에요 (HOME2)"
+    for k, v in on.items():
+        assert v["n"] == 1 and v["lines"] == 1, (k, v)                     # 화면마다 한 줄
+        assert v["afterDate"] and v["next"][0] == "eps-owners", (k, v)     # 날짜 줄 바로 밑 · 첫 카드 위 (위쪽의 조용한 한 줄)
+    assert [on[k]["next"][1] for k in ("homeFirst", "homeWelcome", "home", "pfEmpty")] == ["home-hero", "guide-welcome", "home-block", "deck-empty"]
+    for case in ("end", "none", "pv"):
+        assert all(v["n"] == 0 and v["lines"] == 0 for v in got[case].values()), (case, got[case])
+
+
+# ── 2. 원화가 아닌 재무제표 ──
+def test_the_currency_code_rule():
+    got = run("""
+      const cos = [{ t: 'a', stmtCur: 'USD' }, { t: 'b', stmtCur: 'JPY' }, { t: 'c', stmtCur: 'KRW' }, { t: 'd', stmtCur: 'usd' }, { t: 'e', stmtCur: 'US$' },
+        { t: 'f', stmtCur: '' }, { t: 'g', stmtCur: 1 }, { t: 'h' }, { t: 'i', stmtCur: null }, null, 'USD', { t: 'j', stmtCur: 'USDT' }];
+      const of = cos.map(RP.stmtCurOf);
+      const w0 = warns.length;
+      const warned = cos.map((c) => RP.warnStmtCur(c, 'test'));
+      const again = cos.map((c) => RP.warnStmtCur(c, 'test'));
+      const KR = { t: 'k', cls: 'kr' }, US = { t: 'AAPL', cls: 'us' }, FUND = { t: 'f', cls: 'bond' };
+      out = { of, warned, again, msgs: warns.slice(w0),
+        for: [FX.stmtCurFor(KR, { stmtCur: 'USD' }), FX.stmtCurFor(US, { stmtCur: 'USD' }), FX.stmtCurFor(FUND, { stmtCur: 'USD' }), FX.stmtCurFor(KR, {}),
+          FX.stmtCurFor(KR, null), FX.stmtCurFor(null, { stmtCur: 'USD' }), FX.stmtCurFor({ t: 'k' }, { stmtCur: 'USD' })],
+        text: FN.stmtCurText(KR, { stmtCur: 'USD' }), textUs: FN.stmtCurText(US, { stmtCur: 'USD' }), copy: C2.co.stmtCur, old: OF.FIX_STMT_CUR,
+        oldText: OF.stmtCurLineText({ t: 'k', stmtCur: 'EUR' }), oldNone: OF.stmtCurLineText({ t: 'k' }) };""")
+    assert got["of"] == ["USD", "JPY", None, None, None, None, None, None, None, None, None, None]   # 세 글자 대문자 코드, KRW 는 아니에요
+    assert got["warned"] == [False, False, True, True, True, True, True, False, False, False, False, True]   # 쓸 수 없는 값은 console 에 크게
+    assert got["again"] == [False] * 12                                     # 한 번만
+    assert all("!!" in m and "stmtCur" in m for m in got["msgs"]), got["msgs"]
+    assert got["for"] == ["USD", None, None, None, None, None, None]        # 한국 종목만 (미국 · 펀드 · cls 없음: 없어요)
+    assert got["copy"] == CUR and got["old"] == CUR                          # Jack 의 글자 그대로, 두 앱이 같아요
+    assert got["text"] == CUR.format(currency="USD") and got["textUs"] is None
+    assert got["oldText"] == CUR.format(currency="EUR") and got["oldNone"] is None
+
+
+def test_the_currency_line_on_the_2_0_company_page_exactly_for_stmt_cur_companies():
+    """2.0 회사 페이지: stmtCur 가 있는 한국 회사에만, 요약(한눈에 칸 위) · 실적 탭 · 가치 탭 · 실적 자세히 · 가치 자세히에 한 번씩. 배당 탭과
+    다른 회사(삼성전자) · 미국 종목(AAPL, 회사 줄에 stmtCur 를 일부러 넣어도)에는 없어요."""
+    data, corp = fixture("data.json"), fixture("corp.json")
+    blank_stmt_cur(data, corp)
+    got = run("""
+      const D0 = RP.EPS_FIX_DATE, ms = kstMs(RP.isoPlusDays(D0, 1));
+      at(ms);
+      const f = { data: DATA, corp: CORP, macro: read('macro.json') };
+      const load = mkLoad(f, ms);
+      load.coByT.set('AAPL', { t: 'AAPL', stmtCur: 'USD' });             // 미국 종목: 회사 줄에 있어도 없어요
+      const store = { data: { v: 2, decks: [] }, writable: true, key: 'baepsae2.v1', preview: false };
+      const nav = { setTab() {}, more() {}, back() {}, onWhy() {} };
+      const page = (code, ctab) => renderToStaticMarkup(h(CO.Company, { load, store, setStoreData() {}, pad: 0, code, ctab: ctab || null, disc: null, nav }));
+      const look = (code) => Object.fromEntries([null, 'earn', 'value', 'div', 'earn-more', 'value-more'].map((ctab) => {
+        const html = page(code, ctab);
+        const i = html.indexOf('data-ui-v2="stmt-cur"');
+        return [ctab || 'summary', { n: marked(html, 'data-ui-v2', 'stmt-cur'), lines: lines(html).filter((l) => l === LINE).length,
+          cur: (/data-ui-v2="stmt-cur" data-cur="([^"]*)"/.exec(html) || [])[1] || null, px: px(html, 'data-ui-v2', 'stmt-cur'),
+          beforeTiles: i < 0 ? null : i < html.indexOf('data-ui-v2="co-tile"'), inEarnCard: i < 0 ? null : i > html.indexOf('data-ui-v2="co-earn"'),
+          inValueCard: i < 0 ? null : i > html.indexOf('data-ui-v2="co-value"') && i < html.indexOf('data-ui-v2="date-line"'),
+          tilesNa: lines(html).filter((l) => l === C2.co.tiles.na).length }];
+      }));
+      out = { stmt: look(STMT_T), sam: look('005930'), us: look('AAPL') };""", DATA=data, CORP=corp, STMT_T=STMT_T, LINE=CUR.format(currency="USD"))
+    s = got["stmt"]
+    for tab in ("summary", "earn", "value", "earn-more", "value-more"):
+        assert s[tab]["n"] == 1 and s[tab]["lines"] == 1 and s[tab]["cur"] == "USD", (tab, s[tab])   # 숫자가 있을 자리마다 한 번
+        assert all(p >= 12 for p in s[tab]["px"]) and s[tab]["px"], (tab, s[tab]["px"])
+    assert s["summary"]["beforeTiles"] is True and s["summary"]["tilesNa"] == 2, s["summary"]   # 실적 · 가치 칸의 '자료가 없어요' 위에 이유
+    assert s["earn"]["inEarnCard"] is True and s["value"]["inValueCard"] is True
+    assert s["div"]["n"] == 0                                                 # 배당은 원화 표라 그대로예요
+    for who in ("sam", "us"):
+        assert all(v["n"] == 0 and v["lines"] == 0 for v in got[who].values()), (who, got[who])
+
+
+def test_the_currency_line_in_the_old_company_page():
+    data, corp = fixture("data.json"), fixture("corp.json")
+    co, _ = blank_stmt_cur(data, corp)
+    got = run("""
+      const page = (cos, t) => renderToStaticMarkup(h(OLD.CompanyView, { data: { ...BASE, companies: cos }, t, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} }));
+      const withCur = page(BASE.companies, STMT_T);
+      const noCur = page(BASE.companies.map((c) => (c.t === STMT_T ? { ...c, stmtCur: undefined } : c)), STMT_T);
+      const sam = page(BASE.companies, '005930');
+      const LL = lines(withCur);
+      out = { n: marked(withCur, 'data-fix', 'stmt-cur'), lines: LL.filter((l) => l === LINE).length, at: LL.indexOf(LINE), head: LL.indexOf('투자지표'),
+        per: LL.indexOf('PER'), px: px(withCur, 'data-fix', 'stmt-cur'), noCur: marked(noCur, 'data-fix', 'stmt-cur'), sam: marked(sam, 'data-fix', 'stmt-cur') };""",
+              BASE=corp, STMT_T=STMT_T, LINE=CUR.format(currency="USD"))
+    assert got["n"] == 1 and got["lines"] == 1, got                            # 기업분석에 한 번
+    assert got["head"] >= 0 and got["head"] < got["at"] < got["per"], got     # 투자지표 제목 밑, 비어 있는 PER 칸 위
+    assert got["px"] and all(p >= 12 for p in got["px"]), got["px"]
+    assert got["noCur"] == 0 and got["sam"] == 0
+
+
+# ── 3. 예전 뱁새 영어 화면의 고치는 중 줄 ──
+def test_old_app_english_lines_follow_the_korean_rules():
+    sam = fixture("corp.json")
+    sam = next(c for c in sam["companies"] if c["t"] == "005930")
+    c_off = {**sam, "flWhy": {"icr": "off"}, "flRan": ["cr", "l3", "imp"], "fl": {"cr": 80}}
+    got = run("""
+      const CORP = read('corp.json');
+      const card = (c, corp, lang) => renderToStaticMarkup(h(SH.ScoreCard, { c, sectors: CORP.sectors, corp, onOpenCorp() {}, onQuickDiag() {}, lang,
+        asOf: { date: CORP.pxDate, publishedAt: CORP.publishedAt } }));
+      const NOW = { ...CORP, companies: CORP.companies.map((x) => (x.t === COFF.t ? COFF : x)) };
+      const O = { ...COFF, flWhy: undefined, flRan: ['cr', 'icr', 'l3', 'imp'], epsIn: { ni: 1, b: 'o', p: 'fy', sh: 1 } };
+      const T_ = { ...COFF, flWhy: undefined, epsIn: { ni: 1, b: 't', p: 'fy', sh: 1 } };
+      const LIVE = { ...NOW, epsBasis: 'owners', companies: NOW.companies.map((x) => (x.t === COFF.t ? O : x)) };
+      const LIVE_T = { ...NOW, epsBasis: 'owners', companies: NOW.companies.map((x) => (x.t === COFF.t ? T_ : x)) };
+      const view = (html) => ({ lines: lines(html), eps: marked(html, 'data-fix', 'eps'), icr: marked(html, 'data-fix', 'icr'), en: marked(html, 'data-lang', 'en'),
+        px: [...px(html, 'data-fix', 'eps'), ...px(html, 'data-fix', 'icr')] });
+      const r = (el) => renderToStaticMarkup(el);
+      out = {
+        words: [OF.FIX_EPS_EN, OF.FIX_ICR_EN, OF.fixEpsText('en'), OF.fixIcrText('en'), OF.fixEpsText('ko'), OF.fixIcrText('ko'), OF.fixEpsText()],
+        md: D.mdOf(RP.EPS_FIX_DATE, 'en'),
+        enNow: view(card(COFF, NOW, 'en')), koNow: view(card(COFF, NOW, 'ko')),
+        enLive: view(card(O, LIVE, 'en')), enStillTotal: view(card(T_, LIVE_T, 'en')),
+        enNoPer: view(card({ ...COFF, per: null }, NOW, 'en')), enNoFlag: view(card({ ...COFF, fl: undefined }, NOW, 'en')),
+        lineEn: lines(r(h(OF.EpsFixLine, { corp: NOW, cos: [COFF], lang: 'en' }))), lineEnLive: r(h(OF.EpsFixLine, { corp: LIVE, cos: [O], lang: 'en' })),
+        lineEnForce: lines(r(h(OF.EpsFixLine, { corp: LIVE, cos: [O], force: true, lang: 'en' }))), lineEnOff: r(h(OF.EpsFixLine, { corp: NOW, cos: [COFF], show: false, lang: 'en' })),
+        icrEn: lines(r(h(OF.IcrOffLine, { co: COFF, lang: 'en' }))), icrEnIe: r(h(OF.IcrOffLine, { co: { flWhy: { icr: 'ie' } }, lang: 'en' })),
+        icrEnHidden: r(h(OF.IcrOffLine, { co: COFF, show: false, lang: 'en' })),
+        loadedEn: lines(r(h(OF.EpsFixLineLoaded, { codes: ['005930'], lang: 'en' }))), loadedEnOff: r(h(OF.EpsFixLineLoaded, { show: false, codes: ['005930'], lang: 'en' })),
+        loadedKo: lines(r(h(OF.EpsFixLineLoaded, { codes: ['005930'] }))),
+      };""", COFF=c_off)
+    y, mo, d = fix_date()
+    en_eps, ko_eps = eps_en_line(), EPS_KO.format(date=f"{int(mo)}월 {int(d)}일")
+    assert got["md"] == f"{MON[int(mo) - 1]} {int(d)}"                        # 예전 뱁새의 영어 월 · 일 ("Nov 9")
+    assert got["words"] == [EPS_EN, ICR_EN, en_eps, ICR_EN, ko_eps, ICR_KO, ko_eps]   # Jack 의 글자 그대로 · 기본은 한국어
+    # 첫 화면 성적표 (영어): 한국어 줄과 같은 자리 (P/E 줄 밑 · 재무 신호 밑), 한국어 글은 없어요
+    en = got["enNow"]
+    assert en["eps"] == 1 and en["icr"] == 1 and en["en"] == 2 and en_eps in en["lines"] and ICR_EN in en["lines"], en
+    assert ko_eps not in en["lines"] and ICR_KO not in en["lines"]
+    assert en["lines"].index(en_eps) > next(i for i, l in enumerate(en["lines"]) if l.startswith("P/E "))          # P/E 줄 밑
+    assert en["lines"].index(en_eps) == got["koNow"]["lines"].index(ko_eps)                                      # 한국어 줄과 같은 자리
+    assert en["lines"].index(ICR_EN) == next(i for i, l in enumerate(en["lines"]) if "financial caution flag" in l) + 1   # 재무 신호 바로 밑
+    assert en["lines"].index(ICR_EN) == got["koNow"]["lines"].index(ICR_KO)
+    assert all(p >= 12 for p in en["px"]) and len(en["px"]) == 2, en["px"]
+    ko = got["koNow"]                                                          # 한국어 화면은 그대로
+    assert ko_eps in ko["lines"] and ICR_KO in ko["lines"] and en_eps not in ko["lines"] and ko["en"] == 0
+    # 같은 규칙: 다시 읽은 뒤 "o" 면 없고, 총 순이익("t")이면 남고, PER 줄이 없으면 · 재무 신호가 없으면 없어요
+    assert got["enLive"]["eps"] == 0 and got["enLive"]["icr"] == 0, got["enLive"]
+    assert got["enStillTotal"]["eps"] == 1 and en_eps in got["enStillTotal"]["lines"] and got["enStillTotal"]["icr"] == 0
+    assert got["enNoPer"]["eps"] == 0 and got["enNoFlag"]["icr"] == 0
+    assert got["lineEn"] == [en_eps] and got["lineEnLive"] == "" and got["lineEnForce"] == [en_eps] and got["lineEnOff"] == ""
+    assert got["icrEn"] == [ICR_EN] and got["icrEnIe"] == "" and got["icrEnHidden"] == ""
+    # 포트폴리오(src/detail.jsx)가 쓰는 줄: corp.json 을 받기 전에는 줄이 있어요 (고쳐졌다고 짐작하지 않아요)
+    assert got["loadedEn"] == [en_eps] and got["loadedEnOff"] == "" and got["loadedKo"] == [ko_eps]
+
+
+def test_old_app_passes_the_screen_language_to_the_lines():
+    """첫 화면 성적표(src/shell.jsx)와 포트폴리오(src/detail.jsx)는 화면의 lang 을 넘기고, '한국어 화면에서만' 조건이 남아 있지 않아요.
+    기업분석(src/corp.jsx)은 영어 화면에서도 한국어로만 보이는 칸이라 lang 을 넘기지 않아요 (한국어 줄 그대로)."""
+    shell = open(os.path.join(ROOT, "src", "shell.jsx"), encoding="utf-8").read()
+    detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
+    corp = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+    assert "<EpsFixLine corp={corp} cos={[c]} show={perShown} lang={lang}" in shell
+    assert "<IcrOffLine co={c} show={flagN > 0} lang={lang}" in shell
+    assert "!en && perShown" not in shell and "!en && flagN" not in shell
+    uses = re.findall(r"<EpsFixLineLoaded\b[^/]*?/>", detail, flags=re.S)
+    assert len(uses) == 2, uses
+    assert all("lang={lang}" in u and 'lang === "ko"' not in u for u in uses), uses
+    assert "lang=" not in "".join(re.findall(r"<(?:EpsFixLine|IcrOffLine)\b[^>]*>", corp))
+
+
+_TMP = {}
+
+
+def bundle_dir():
+    """필요한 모듈을 한 파일로 한 번만 묶어요. React 는 밖에 둬요 (node_modules 의 것)."""
+    if "p" not in _TMP:
+        tmp = tempfile.mkdtemp(prefix="baepsae-reread-")
+        entry = os.path.join(tmp, "entry.js")
+        with open(entry, "w", encoding="utf-8") as f:
+            for k, v in MODS.items():
+                f.write(f"export * as {k} from {json.dumps(os.path.join(ROOT, v))};\n")
+        exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+        r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", "--jsx=automatic", "--loader:.js=jsx",
+                            "--charset=utf8", "--external:react", "--external:react-dom", f"--outfile={tmp}/b.mjs", "--log-level=error"],
+                           cwd=ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+        _TMP["p"] = tmp
+    return _TMP["p"]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cleanup():
+    yield
+    if "p" in _TMP:
+        shutil.rmtree(_TMP["p"], ignore_errors=True)

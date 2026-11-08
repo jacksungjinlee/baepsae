@@ -3,7 +3,7 @@
 // whole app reads that one way: load.js resolveLoad calls setEpsBasis(corp) once per load (the way engine.setDataShape
 // works), so a screen that only has a held stock (daily.jsx) knows it too. Until a file is loaded the line is on (a fix is
 // never assumed). Pure; no Korean (src/copy/v2.js C.fix).
-import { EPS_FIX_DATE, epsBasisLive, epsInFixed, icrOff, warnEpsFixLate } from "../repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsInFixed, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, warnStmtCur } from "../repair.js";
 import { kstDate } from "../data.js";
 
 export { EPS_FIX_DATE, icrOff };
@@ -30,3 +30,15 @@ export const icrOffShown = (co) => !hidden && icrOff(co);
 export const epsFixFor = (s) => !hidden && !!s && s.cls === "kr" && !(live && fixed.has(s.t));
 // Same, for a section where several stocks show such numbers (any one that needs it is enough).
 export const epsFixForAny = (rows) => Array.isArray(rows) && rows.some(epsFixFor);
+
+// The week's notice on 홈 and 포트폴리오 (repair.js epsNoticeOn): read from the load on screen (its corp.json), never on the
+// example page. load: the load state · todayIso: today in KST.
+export const epsNoticeShown = (load, todayIso) => !hidden && !!load && load.status === "ok" && !load.preview && epsNoticeOn(load.corp, todayIso);
+
+// Statements not in won (repair.js stmtCurOf): the currency code for a Korean stock whose corp.json row carries stmtCur,
+// else null (US stocks and funds never: their figures do not come from DART). s: the data.json row · co: its corp.json row.
+export function stmtCurFor(s, co) {
+  if (!s || s.cls !== "kr" || !co) return null;
+  warnStmtCur(co, "v2");
+  return stmtCurOf(co);
+}

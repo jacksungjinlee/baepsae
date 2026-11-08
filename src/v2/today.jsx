@@ -47,6 +47,7 @@ import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } fro
 import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 import { Home2 } from "./home2.jsx";
+import { EpsOwnersNote } from "./fixnote.jsx";
 
 // v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
 // verdict band of portfolios made with 포트폴리오 만들기 stays at the top as before (Hero below), portfolios made with 가진
@@ -236,6 +237,7 @@ function FirstVisit({ load, go }) {
     return (
       <>
         {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+        <EpsOwnersNote load={load} />
         <Card data-ui-v2="home-hero" style={{ display: "flex", alignItems: "center", gap: SPACE(6), marginTop: SPACE(4), padding: `${SPACE(6)}px ${SPACE(8)}px` }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2 style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{C.about.ko.hero.descriptor}</h2>
@@ -253,6 +255,7 @@ function FirstVisit({ load, go }) {
   return (
     <>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      <EpsOwnersNote load={load} />
       <Card data-ui-v2="home-hero" style={{ display: "flex", alignItems: "center", gap: SPACE(4), marginTop: SPACE(4) }}>
         <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={92} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -325,6 +328,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       <AppBar />
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
+      <EpsOwnersNote load={load} />
       {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
       {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}

@@ -26,6 +26,7 @@ import { isCompany, ownCloses } from "./stocklist.js";
 import { heldQty } from "./held.js";
 import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
+import { EpsOwnersNote } from "./fixnote.jsx";
 
 // The held quantity (held.js: the one rule every screen uses) and the 평균 단가 of the 샀어요 records.
 function avgCost(deck, t) {
@@ -95,6 +96,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       <ScreenTitle>{C.deck.title}</ScreenTitle>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
+      {/* the week after the DART re-read (src/repair.js epsNoticeOn): one quiet line near the top */}
+      <EpsOwnersNote load={load} />
       {!ev.ok && (ev.why === "fail" || ev.why === "undated") && <LoadFail picture={decks.length === 0} />}
       <OldAppNote />
       {decks.length === 0 && !store.locked && ev.why !== "fail" && ev.why !== "undated" && (

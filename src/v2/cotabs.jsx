@@ -17,6 +17,8 @@
 // Charts draw this company in navy and its peers in grey (apricot stays for the deck screens' data marks).
 // 2026-11-08 (Jack): every card showing a Korean PER, EPS or a number from the same net income (ROE map, the reverse DCF
 //   and its calculator, 배당성향, 주가는 무엇으로 움직였나) ends with the PER/EPS line until the DART re-read (fixnote.jsx).
+// After the re-read (Jack, 2026-11-08): a Korean company whose statements are not in won (corp.json stmtCur) has its amounts
+//   blanked; the 실적 and 가치 tabs and their 자세히 screens say why once, where those numbers would be (fixnote.jsx StmtCurNote).
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -32,7 +34,7 @@ import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote } from "./fixnote.jsx";
+import { EpsFixNote, StmtCurNote } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -211,6 +213,8 @@ export function EarnTab({ load, s, onMore }) {
       <Card>
         {r.rule !== "na" && E.head[r.rule] && <H>{E.head[r.rule]}</H>}
         {opts.length > 1 && <div style={{ marginTop: SPACE(3) }}><Segmented label={C.co.tabs.earn || C.plan.rules.opProfit} value={m} onChange={setMetric} options={opts} /></div>}
+        {/* statements not in won (corp.json stmtCur): no amounts; the reason where they would be */}
+        <StmtCurNote s={s} co={co} style={{ marginTop: SPACE(3) }} />
         {okSeries && (
           <>
             <div data-ui-v2="co-earn-big" data-metric={m} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
@@ -242,6 +246,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
         {E.moreTitle && <ScreenTitle>{fill(E.moreTitle, { name: s.nk })}</ScreenTitle>}
         {rows && (
           <Card>
+            <StmtCurNote s={s} co={co} style={{ marginTop: 0, marginBottom: SPACE(3) }} />
             <div role="table" style={{ display: "grid", gridTemplateColumns: `auto repeat(${rows.length}, minmax(0, 1fr))`, columnGap: SPACE(3), rowGap: SPACE(2) }}>
               <span role="columnheader" />
               {rows.map((x) => <span key={x.year} role="columnheader" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textAlign: "right" })}>{x.year}</span>)}
@@ -448,6 +453,8 @@ export function ValueTab({ load, s, store, onMore }) {
       <Card>
         {head && <H>{head}</H>}
         {head && sub && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{sub}</p>}
+        {/* statements not in won (corp.json stmtCur): no PBR · PER; the reason where they would be */}
+        <StmtCurNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
         {!compare && r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
         {!compare && (
           <Stats>
@@ -612,6 +619,8 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
       <AppBar onBack={onBack} backLabel={backLabel} />
       <div data-ui-v2="co-value-more" data-t={s.t}>
         {V.title && <ScreenTitle sub={V.intro || undefined}>{fill(V.title, { name: s.nk })}</ScreenTitle>}
+        {/* statements not in won (corp.json stmtCur): no ratios to list; the reason where they would be */}
+        <StmtCurNote s={s} co={co} />
         {rows.length > 0 && V.ratios && (
           <Card data-ui-v2="co-ratios">
             <CardHead icon="tag" tone="value" title={V.ratios} />

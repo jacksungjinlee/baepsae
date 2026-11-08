@@ -102,7 +102,7 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
   // 줄었으면 '감소했어요' · 'shrank' 옆에 마이너스 부호 없이, 보이는 숫자가 0.0 이면 '거의 변하지 않았어요' (data.js krGrowthScoreLine).
   const growthLine = krGrowthScoreLine(c.g3, c.rev, en);
   const lines = [];
-  const perShown = c.per != null && !!sec.perQ;     // the PER line below (2026-11-08: then the PER/EPS line, Korean screen only)
+  const perShown = c.per != null && !!sec.perQ;     // the PER line below (2026-11-08: then the PER/EPS line, in English on the English screen)
   if (c.per != null && sec.perQ) lines.push(en
     ? `P/E ${c.per}x vs. industry median ${sec.perQ[1]}x — ${c.per > sec.perQ[1] ? "priced above peers; worth asking what justifies the premium." : "priced below peers; could be cheap, or the market doubts the growth."}`
     : `PER ${c.per}배 — 업종 중간 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요. 시장의 기대가 큰 만큼 근거를 물을 자리예요." : "낮아요. 싸다는 뜻일 수도, 시장이 의심한다는 뜻일 수도 있어요."}`);
@@ -128,9 +128,9 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
       </div>
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 6 }}>
         {lines.map((l, i) => <div key={i} style={{ fontSize: 12, color: C.ink, lineHeight: 1.6 }}>{l}</div>)}
-        <EpsFixLine corp={corp} cos={[c]} show={!en && perShown} style={{ marginTop: 0 }} />
+        <EpsFixLine corp={corp} cos={[c]} show={perShown} lang={lang} style={{ marginTop: 0 }} />
         {flagN > 0 && <div style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>{en ? `${flagN} financial caution flag${flagN > 1 ? "s" : ""} to review` : `짚고 갈 재무 신호 ${flagN}개가 있어요`}</div>}
-        <IcrOffLine co={c} show={!en && flagN > 0} style={{ marginTop: 0 }} />
+        <IcrOffLine co={c} show={flagN > 0} lang={lang} style={{ marginTop: 0 }} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 7, marginTop: 12 }}>
         <button onClick={() => { gcEvent("gate-diag"); onQuickDiag(c.t); }}

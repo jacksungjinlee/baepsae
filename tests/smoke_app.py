@@ -2543,13 +2543,17 @@ with open(os.path.join(ROOT, "src", "repair.js"), encoding="utf-8") as _f:
 assert len(_FIXD) == 1, _FIXD
 FIX_EPS = f"PER과 EPS는 계산 방법을 고치는 중이라 {int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일에 바뀔 수 있어요."
 FIX_ICR = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요."
+# 영어 화면 (Jack 승인 2026-11-08, DeepL 확인): 같은 규칙, 날짜는 예전 뱁새의 영어 월 · 일 (data.js mdOf "en")
+FIX_EPS_EN = "PER and EPS are being recalculated and may change on " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+                                                                      "Dec"][int(_FIXD[0][1]) - 1] + f" {int(_FIXD[0][2])}."
+FIX_ICR_EN = "Interest coverage isn't checked while we fix how it's calculated."
 FIX_LINES = """(kind) => [...document.querySelectorAll('[data-fix="' + kind + '"]')].filter((e) => e.getBoundingClientRect().height > 0)
   .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
 
 
 def scene_fix_notes(R, files, live=False):
     """예전 뱁새: 기업분석 · 첫 화면 성적표의 한국 PER · EPS (와 같은 순이익으로 계산한 숫자) 칸마다
-    'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.' (12px 이상, 한국어 화면에서만), 이자보상배율이 꺼진 회사의 재무 신호
+    'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.' (12px 이상; 첫 화면 성적표의 영어 화면은 영어 줄), 이자보상배율이 꺼진 회사의 재무 신호
     밑에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.'. live: corp.json 에 epsBasis "owners" 가 있고
     그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 없어요 (총 순이익 "t" 인 회사에는 남아요)."""
     S = "고치는 중 안내 " + ("끝" if live else "지금")
@@ -2629,14 +2633,16 @@ def scene_fix_notes(R, files, live=False):
             page.locator("button", has_text="005930").first.click()
             see(page, "A summary of facts" if lang == "en" else "사실의 요약일 뿐")
             eps, icr = lines("eps"), lines("icr")
-            if live or lang == "en":
-                assert not eps and not icr, (lang, eps, icr)                     # 영어 화면: Jack 이 영어 글을 승인할 때까지 없어요
+            if live:
+                assert not eps and not icr, (lang, eps, icr)
             else:
-                assert [t for t, _ in eps] == [FIX_EPS] and [t for t, _ in icr] == [FIX_ICR], (eps, icr)
+                # 영어 화면 (Jack 이 영어 글을 승인했어요, 2026-11-08): 한국어 줄과 같은 자리 · 같은 규칙으로 영어 줄, 한국어 줄은 없어요
+                want = ([FIX_EPS_EN], [FIX_ICR_EN]) if lang == "en" else ([FIX_EPS], [FIX_ICR])
+                assert ([t for t, _ in eps], [t for t, _ in icr]) == want, (lang, eps, icr)
                 assert all(px >= 12 for _, px in eps + icr), eps + icr
         return run
     R.check(page, S, "첫 화면 성적표 005930 (한국어): PER 줄 밑 · 재무 신호 밑" + (" — 없음" if live else ""), gate_card("ko"))
-    R.check(page, S, "첫 화면 성적표 005930 (영어): 두 줄 다 없음", gate_card("en"))
+    R.check(page, S, "첫 화면 성적표 005930 (영어): " + ("두 줄 다 없음" if live else "영어 두 줄 (PER 줄 밑 · 재무 신호 밑)"), gate_card("en"))
     ctx.close(); srv.shutdown()
 
 

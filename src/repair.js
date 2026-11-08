@@ -1,6 +1,7 @@
 // ================= DART 다시 읽기 전까지의 두 안내 줄 (Jack, 2026-11-08) =================
 // Shared by 뱁새 2.0 (src/v2/fix.js) and the old app (src/fixnote.jsx). Pure: no React, no Korean (the words live in
-// src/copy/v2.js for 2.0 and in src/fixnote.jsx for the old app; tests/test_fix_notes.py checks they are the same).
+// src/copy/v2.js for 2.0 and in src/fixnote.jsx for the old app; tests/test_fix_notes.py and tests/test_reread_lines.py
+// check they are the same). Items 3 and 4 (the week's notice, statements not in won) are at the end of this file.
 //
 // 1. PER · EPS: for many group companies the pipeline divides TOTAL net income (owners + minority interests) by the share
 //    count instead of the owners' share (docs/design-chat/2026-11-08-dart-gaps.md §2: LG에너지솔루션 shows EPS 345 / PER
@@ -101,4 +102,51 @@ export const bpsPeriod = (co) => periodFrom(co, "bpsIn");
 // The 이자보상배율 check is switched off for this company (corp.json flWhy.icr "off"; financial companies never carry it).
 export function icrOff(co) {
   return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off";
+}
+
+// ================= After the re-read: the week's notice and statements not in won (Jack, 2026-11-08) =================
+// 3. For a week from the re-read, 2.0's 홈 and 포트폴리오 carry one notice "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요.
+//    일부 규칙의 결과가 바뀔 수 있어요." ({date} = EPS_FIX_DATE as month-day): only while the corp.json on screen carries
+//    epsBasis "owners" AND today (KST, YYYY-MM-DD) is before EPS_FIX_DATE + EPS_NOTICE_DAYS. Before the marker there is
+//    nothing to announce (the per-company line above says it), and from EPS_FIX_DATE + 7 days it goes by itself.
+// 4. The re-read blanks the statement amounts (매출 · 영업이익 · 순이익 · 자본, PER · PBR · EPS · BPS and their receipts) of a
+//    Korean company whose DART statements are not in won, and writes that currency in corp.json stmtCur ("USD"; absent
+//    otherwise; validate_data.py lets through only a three-letter code other than KRW). Where those numbers would be, both
+//    apps say "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요." with the code as written.
+export const EPS_NOTICE_DAYS = 7;
+const ISO_RX = /^(\d{4})-(\d{2})-(\d{2})$/;
+// "YYYY-MM-DD" + n calendar days -> "YYYY-MM-DD" (a date, not a time: no time zone involved). null for a date that does
+// not exist ("2026-02-30") or anything else.
+export function isoPlusDays(iso, n) {
+  const m = typeof iso === "string" ? ISO_RX.exec(iso) : null;
+  if (!m || !Number.isInteger(n)) return null;
+  const y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  const at = new Date(Date.UTC(y, mo, d));
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== mo || at.getUTCDate() !== d) return null;
+  return new Date(Date.UTC(y, mo, d + n)).toISOString().slice(0, 10);
+}
+// corp: the corp.json on screen · todayIso: today in KST. true = the week's notice shows.
+export function epsNoticeOn(corp, todayIso, date = EPS_FIX_DATE) {
+  const end = isoPlusDays(date, EPS_NOTICE_DAYS);
+  return epsBasisLive(corp) && !!end && typeof todayIso === "string" && ISO_RX.test(todayIso) && todayIso < end;
+}
+
+// The currency of this company's statements when it is not won (corp.json stmtCur), exactly as written: "USD". null when
+// the field is absent, or holds anything but a three-letter upper-case code other than KRW (no line with an odd slot;
+// warnStmtCur says so in the console).
+const CUR_RX = /^[A-Z]{3}$/;
+export function stmtCurOf(co) {
+  const c = co && typeof co === "object" ? co.stmtCur : null;
+  return typeof c === "string" && CUR_RX.test(c) && c !== "KRW" ? c : null;
+}
+const warnedCur = new Set();
+// A stmtCur that cannot be shown: warns once per page, place and company. -> true when it warned (tests).
+export function warnStmtCur(co, where) {
+  if (!co || typeof co !== "object" || co.stmtCur == null || stmtCurOf(co)) return false;
+  const k = where + "|" + co.t;
+  if (warnedCur.has(k)) return false;
+  warnedCur.add(k);
+  console.warn(`[${where}] !! ${co.t}: corp.json stmtCur ${JSON.stringify(co.stmtCur)} is not a three-letter currency code other than KRW: `
+    + "its statement amounts may be blank with no reason on screen.");
+  return true;
 }
