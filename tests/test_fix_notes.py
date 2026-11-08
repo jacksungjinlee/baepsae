@@ -10,6 +10,7 @@
 - 다시 읽은 뒤에는 회사마다: 표시가 있고 그 회사의 epsIn.b 가 "o" · "s" 일 때만 줄이 사라져요 ("t" · epsIn 없음은 그대로)
 - 주가는 무엇으로 움직였나 · 지금 가격이 가정하는 것: 두 끝이 EPS 와 같은 기준 (지금 발행은 예전 식 그대로, 다시 읽은 뒤에는 지배주주
   순이익 ÷ 보통주 + 상장 우선주). 같은 기준이 없으면 숫자 없이 PER · EPS 줄만
+- 배당성향: 다시 읽은 뒤 epsIn.b "o" 면 지배주주 순이익(nio3[0]), 아니면 예전 숫자 그대로 ("t" · 칸이 없으면 줄이 남아요)
 - 두 앱의 글자가 같고(2.0 src/copy/v2.js C.fix · 예전 뱁새 src/fixnote.jsx), 글자는 12px 이상이에요
 화면은 react-dom/server 로 실제 컴포넌트를 그려서 봐요. 2.0 화면 전체(회사 페이지 · 재무 경고 · 규칙 칸)는 tests/smoke_v2.py 장면
 '고치는 중 안내', 예전 뱁새 기업분석은 tests/smoke_app.py 의 같은 이름 장면이 봐요.
@@ -28,7 +29,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"RP": "src/repair.js", "FX": "src/v2/fix.js", "FN": "src/v2/fixnote.jsx", "P": "src/v2/pf.js", "PV": "src/v2/pfview.jsx",
         "CP": "src/copy/v2.js", "FM": "src/v2/format.js", "OF": "src/fixnote.jsx", "SH": "src/shell.jsx", "OLD": "src/corp.jsx", "D": "src/data.js",
-        "K": "src/v2/company.js"}
+        "K": "src/v2/company.js", "E": "src/v2/engine.js"}
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "v2", "corp.json")
 EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요."
 ICR = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요."
@@ -330,6 +331,41 @@ def test_old_app_cards_follow_the_same_basis_and_show_the_line_in_place_of_numbe
     assert not got["t"]["split"] and not got["t"]["lossText"] and got["t"]["eps"] == 4, got["t"]
     assert got["t"]["inputs"][:2] == ["", ""], got["t"]["inputs"]
     assert not got["tNow"]["split"] and got["tNow"]["eps"] == 4
+
+
+
+# ── 배당성향: 다시 읽은 뒤에는 지배주주 순이익으로 (코디네이터, 데이터 검토 2026-11-08) ──
+def test_payout_uses_owners_net_income_after_the_reread_and_keeps_todays_number_before():
+    """2.0 배당성향 = 현금배당금총액 ÷ 순이익. epsIn.b "o" 이고 nio3[0] 이 있으면 지배주주 순이익(nio3[0]), "s" 와 지금 발행(epsIn 없음)은
+    예전 그대로 ni[0], "t" 이거나 nio3[0] 이 없으면 예전 숫자 그대로 두고 basis "total" (화면은 PER · EPS 줄을 남겨요).
+    예전 뱁새의 배당성향은 주당 배당 ÷ EPS 라서, 다시 읽은 EPS(지배주주 순이익 ÷ 보통주 + 우선주)를 따라 저절로 지배주주 기준이에요."""
+    sam = company("005930")
+    cash3 = [111079.06, 98107.67, 98094.38]                 # 현금배당금총액 (억원, 실제 발행본의 값)
+    base = {**sam, "cash3": cash3}
+    s = {"t": "005930", "cls": "kr", "price": sam["price"], "dps": 1668.0, "dps3a": [1668.0, 1446.0, 1444.0], "dyt": 0.74, "fy": 2025}
+    shapes = {"today": base, "o": {**base, **reread(sam, "o")}, "s": {**base, **reread(sam, "s", nio3=None)},
+              "t": {**base, **reread(sam, "t", nio3=None)}, "oNoNio0": {**base, **reread(sam, "o", nio3=[None] + SAM_NIO3[1:])},
+              "oLoss": {**base, **reread(sam, "o", nio3=[-10.0] + SAM_NIO3[1:])}}
+    got = run(bundle_dir(), """
+      B.E.setDataShape({ divCheck: { v: 1 } });
+      out = Object.fromEntries(Object.entries(SHAPES).map(([k, co]) => [k, B.K.payout(S, co)]));""", SHAPES=shapes, S=s)
+    total = cash3[0] / sam["ni"][0] * 100
+    owners = cash3[0] / SAM_NIO3[0] * 100
+    assert got["today"] == {"pct": got["today"]["pct"], "fy": 2025} and abs(got["today"]["pct"] - total) < 1e-9   # 지금 발행: 예전 그대로
+    assert got["o"]["basis"] == "o" and abs(got["o"]["pct"] - owners) < 1e-9                     # 다시 읽은 뒤: 지배주주 순이익
+    assert got["s"]["basis"] == "s" and abs(got["s"]["pct"] - total) < 1e-9                      # 별도 재무제표: 총 = 지배주주
+    for k in ("t", "oNoNio0"):
+        assert got[k]["basis"] == "total" and abs(got[k]["pct"] - total) < 1e-9, (k, got[k])    # 숫자는 그대로, 줄이 남아요
+    assert got["oLoss"] is None                                                                  # 지배주주 순이익이 0 이하면 없어요
+    assert abs(owners - total) > 0.1                                                             # 실제로 다른 숫자예요
+    # 예전 뱁새: 배당성향 = 주당 배당 ÷ EPS — 다시 읽은 EPS 를 그대로 따라가요 (따로 고칠 것 없음)
+    o = {**sam, **reread(sam, "o")}
+    old = run(bundle_dir(), """
+      const page = (co) => lines(renderToStaticMarkup(h(OLD.CompanyView, { data: { ...CORP, companies: CORP.companies.map((x) => (x.t === co.t ? co : x)) },
+        t: co.t, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} }))).filter((l) => l.startsWith('배당성향 '));
+      out = { today: page(SAM), o: page(O) };""", SAM=sam, O=o)
+    assert old["today"] == [f"배당성향 {round(sam['dps'] / sam['eps'] * 100)}% · 3년 주당배당 기준"], old
+    assert old["o"] == [f"배당성향 {round(sam['dps'] / o['eps'] * 100)}% · 3년 주당배당 기준"], old
 
 
 _TMP = {}

@@ -622,8 +622,9 @@ export function DivTab({ load, s }) {
           {po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
-        {/* 배당성향 = 현금배당금총액 ÷ the same net income (company.js payout) */}
-        <EpsFixNote show={epsFixFor(s) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
+        {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
+            when the payout still uses total profit after the re-read (basis "total") */}
+        <EpsFixNote show={(epsFixFor(s) || (!!po && po.basis === "total")) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
       </Card>}
     </div>
   );
