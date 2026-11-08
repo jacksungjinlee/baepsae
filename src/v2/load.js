@@ -1,5 +1,6 @@
 // Data loading for app.html. Same-origin files only, through src/data.js (loadJson: no-store fetch, NaN repair).
 // v19.1a: disc.json too, but only when a company page opens or (v19.3e) 홈 opens with a Korean stock held (loadDisc).
+// 2026-11-08: a page brought back into view with stale data fetches the files once more (refetchNewer, returnWatch).
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
@@ -22,11 +23,13 @@ export const CHECKS = {
     && typeof d.asOf === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.asOf) && typeof d.publishedAt === "string" && Number.isFinite(Date.parse(d.publishedAt))),
 };
 
-export async function loadAll(now) {
+// opts.signal: stops the requests (refetchNewer's timeout, when a page whose first load failed comes back into view).
+export async function loadAll(now, opts) {
+  const o = opts && opts.signal ? { signal: opts.signal } : undefined;
   const [data, corp, macro] = await Promise.all([
-    loadJson("./data.json", CHECKS.data),
-    loadJson("./corp.json", CHECKS.corp),
-    loadJson("./macro.json", CHECKS.macro),
+    loadJson("./data.json", CHECKS.data, o),
+    loadJson("./corp.json", CHECKS.corp, o),
+    loadJson("./macro.json", CHECKS.macro, o),
   ]);
   return resolveLoad({ data, corp, macro }, now);
 }
@@ -94,6 +97,214 @@ export function refreshFresh(load, now) {
 export function nextFreshCheck(load, now) {
   if (!load || load.status !== "ok" || load.preview) return null;
   return nextFreshChange(now, [load.data.publishedAt, load.corp && load.corp.publishedAt], load.data.staleAfter);
+}
+
+// ---- An old page brought back into view fetches the files once (Jack, 2026-11-08, Q9) ----
+// "Old page brought back into view: yes, fetch once. If that fails, show the existing stale or failed message."
+// Before this, a page left open (a home-screen app resumed days later) never fetched again: it said "N일째 갱신이 멈췄어요"
+// until a reload, even when a newer publish was already on the site. A page whose first load failed also tries once more.
+
+// Is the data on screen stale by the rule at this moment: data.json's (staleAfter passed, or the 4-day backstop; data.js
+// freshness) or corp.json's 4-day rule (rules.js dayState reads it too). Never for the preview, a load in progress or a
+// failed load (nothing loaded to be stale).
+export function staleNow(load, now) {
+  if (!load || load.status !== "ok" || load.preview) return false;
+  const t = now == null ? Date.now() : now;
+  const d = load.data;
+  if (freshness(d.pxDate, d.publishedAt, "ko", t, d.staleAfter, d.nextPub).stale) return true;
+  const corpDays = daysSince(load.corp && load.corp.publishedAt, t);
+  return corpDays != null && corpDays > STALE_DAYS;
+}
+
+// Should a return to view fetch: the data on screen is stale (staleNow), or the first load failed (the load-failure
+// message is on screen). Never on the preview page, never while the first load is still under way.
+export const dueOnReturn = (load, now) => !!load && !load.preview && (load.status === "fail" || staleNow(load, now));
+
+const pubMs = (j) => Date.parse((j && j.publishedAt) || "");
+const nOf = (a) => (Array.isArray(a) ? a.length : 0);
+const errText = (e) => String((e && e.message) || e);
+// A fetch made when a page comes back into view gives up after this long: one budget for the whole fetch (every file it
+// asks for, data.json first and then the others), not per request. A hung connection would otherwise keep every later
+// return from fetching. The first load has no such limit.
+export const REFETCH_TIMEOUT_MS = 60000;
+// After a return's fetch that put nothing on screen (it failed, found no later publish, or found files from different
+// publishes), the next return does not fetch for this long: GitHub Pages lets data.json be cached for 10 minutes
+// (max-age=600), so a sooner fetch almost always gets the same copy.
+export const REFETCH_GAP_MS = 10 * 60000;
+
+// The files fetched again, the way loadAll fetches them (loadJson: no-store, NaN repair, the same CHECKS), all of them
+// stopped once REFETCH_TIMEOUT_MS has passed since the fetch began (opts.timeoutMs for tests). now: for the new state's
+// fresh (default: when the files arrived; app.jsx works it out again when the state goes on screen).
+// cur: the load state on screen. discNow: the disc.json data on screen (the 공시 tab already loaded it), else null.
+// - cur failed (the load-failure message): data.json, corp.json and macro.json through loadAll, with all its checks (macro.json
+//   may fail, as on a first load). -> { ok: true, load, disc: null } when it loads, else { ok: false, why } and the failure
+//   message stays.
+// - cur loaded (stale): data.json first; when it fails or is not a later publish, nothing else is fetched (a site that
+//   stopped publishing costs one file per return, not four). Otherwise corp.json and macro.json, and disc.json when discNow.
+//   All of them or none: every file must load, pass its check and carry the same publishedAt (the pipeline writes one value
+//   into all four and the publication gate checks it), later than the publish on screen. Stricter than a first load on
+//   purpose: a macro.json that fails here keeps the data on screen (a first load would go on without it). Then
+//   -> { ok: true, load, disc } (disc: the new disc.json data or null); anything else -> { ok: false, why } and the data on
+//   screen stays as it is, with its stale line (a file that cannot be read never replaces readable data with the
+//   load-failure message).
+// The new state goes on screen through adoptLoad. Logged either way, with the counts or the reason.
+export async function refetchNewer(cur, discNow, now, opts = {}) {
+  const ms = opts.timeoutMs == null ? REFETCH_TIMEOUT_MS : opts.timeoutMs;
+  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(new Error("no answer in " + Math.round(ms / 1000) + " s")), ms) : null;
+  const o = ctrl ? { signal: ctrl.signal } : undefined;
+  try {
+    return cur && cur.status === "ok" ? await laterPublish(cur, discNow, now, o) : await retryFailed(cur, now, o);
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
+}
+
+async function retryFailed(cur, now, o) {
+  const head = "[v2] back in view after a failed load";
+  let next;
+  try {
+    next = await loadAll(now, o);
+  } catch (e) {
+    console.warn(head + ": the fetch of data.json, corp.json and macro.json stopped (" + errText(e) + "); the load-failure message stays");
+    return { ok: false, why: errText(e) };
+  } finally {
+    keepGlobals(cur);                             // the failure on screen reads no data: the readings wait for adoptLoad
+  }
+  if (!next || next.status !== "ok") {
+    console.warn(head + ": fetched data.json, corp.json and macro.json once and they still cannot be used (the reason is logged above); the load-failure message stays");
+    return { ok: false, why: "the files still cannot be used" };
+  }
+  const d = next.data;
+  console.info(head + ": fetched data.json, corp.json and macro.json once; the publish of " + d.publishedAt + " (prices of " + d.pxDate
+    + ") replaces the load-failure message: " + nOf(d.stocks) + " stocks, " + nOf(next.corp.companies) + " companies"
+    + (next.macro ? "" : ", no macro.json") + (next.fresh.stale ? " (stale by its own rule: the stale line shows)" : ""));
+  return { ok: true, load: next, disc: null };
+}
+
+async function laterPublish(cur, discNow, now, o) {
+  const head = "[v2] back in view with stale data (published " + cur.data.publishedAt + ")";
+  const keep = (fetched, why) => {
+    console.warn(head + ": fetched " + fetched.join(", ") + " once and kept the data on screen (its stale line stays): " + why);
+    return { ok: false, why };
+  };
+  // The publish times on screen (normally one: a first load during a deploy can have mixed them). A publish is later when it
+  // is later than the oldest of them and not older than any (never a step back for a file already newer).
+  const shown = [cur.data, cur.corp, cur.macro, discNow].map(pubMs).filter(Number.isFinite);
+  const data = await loadJson("./data.json", CHECKS.data, o);
+  if (!data.ok) return keep(["data.json"], "data.json: " + data.error);
+  const p0 = pubMs(data.data);
+  if (!(p0 > Math.min(...shown) && p0 >= Math.max(...shown))) {
+    return keep(["data.json"], "no later publish on the site (data.json published " + data.data.publishedAt + ")");
+  }
+  const rest = ["corp", "macro"].concat(discNow ? ["disc"] : []);
+  const got = await Promise.all(rest.map((n) => loadJson("./" + n + ".json", CHECKS[n], o)));
+  const res = { data };
+  rest.forEach((n, i) => { res[n] = got[i]; });
+  const names = ["data"].concat(rest);
+  const files = names.map((n) => n + ".json");
+  const bad = names.filter((n) => !res[n].ok);
+  if (bad.length) {
+    return keep(files, bad.map((n) => n + ".json: " + res[n].error).join(" / ") + " (" + (names.length - bad.length) + " / " + names.length
+      + " files loaded; none is used)");
+  }
+  if (names.some((n) => pubMs(res[n].data) !== p0)) {
+    return keep(files, "the files are from different publishes (" + names.map((n) => n + ".json " + res[n].data.publishedAt).join(", ") + "); none is used");
+  }
+  const t = now == null ? Date.now() : now;
+  let next;
+  try {
+    next = resolveLoad({ data, corp: res.corp, macro: res.macro }, t);
+  } catch (e) {
+    return keep(files, "the new files could not be read (" + errText(e) + "); none is used");
+  } finally {
+    // resolveLoad set the engine's data shape from the new data.json (and, since #89, the PER/EPS line's basis from the new
+    // corp.json: fix.js setEpsBasis): both stay those of the data on screen until the new state is put on screen
+    // (adoptLoad), so nothing on screen is ever read the other files' way.
+    keepGlobals(cur);
+  }
+  const d = next.data;
+  console.info(head + ": fetched " + files.join(", ") + " once; a later publish, " + d.publishedAt + " (prices of " + d.pxDate
+    + "), is ready for every screen: " + nOf(d.stocks) + " stocks, " + nOf(next.corp.companies) + " companies"
+    + (res.disc ? ", " + nOf(res.disc.data.insider) + " insider and " + nOf(res.disc.data.nps) + " NPS disclosures" : "")
+    + (next.fresh.stale ? " (stale by its own rule too: the stale line stays)" : ""));
+  return { ok: true, load: next, disc: res.disc ? res.disc.data : null };
+}
+
+// The app-wide readings resolveLoad sets from the files of a load (engine.setDataShape from data.json; fix.js setEpsBasis
+// from corp.json, #89), set again for the load on screen (a failed load: as before any load).
+function keepGlobals(load) {
+  setDataShape(load && load.data);
+  setEpsBasis(load && load.corp, { preview: !!(load && load.preview) });
+}
+// The state refetchNewer returned, as it goes on screen: the app reads the new files their own way from now on (the data
+// shape and the PER/EPS line's basis, as resolveLoad sets them for a first load). -> the state to show.
+export function adoptLoad(next) {
+  keepGlobals(next);
+  return next;
+}
+
+// A one-line description of a fetched state for the console: "the publish of <time> (<n> stocks, <m> companies)".
+export const publishText = (l) => (l && l.status === "ok"
+  ? "the publish of " + l.data.publishedAt + " (" + nOf(l.data.stocks) + " stocks, " + nOf(l.corp && l.corp.companies) + " companies)" : "no data");
+
+// One fetch per return to view. A return is visibilitychange to visible after the page was hidden (a page that starts
+// hidden counts as hidden), or pageshow from the back-forward cache (persisted; the pagehide before it marks the page
+// hidden). The events of one return fetch at most once between them (the first clears the mark), never while an earlier
+// fetch is still out, and only when the return is due (dueOnReturn: stale data, or a failed first load). No retries of
+// its own; and a return within REFETCH_GAP_MS after a fetch that put nothing on screen does not fetch (logged). Nor does
+// one while a later publish already fetched is held back (held(now): its description, or null; app.jsx holds it under a
+// draft; a held publish that is stale itself by now is dropped there and the return goes on under the usual rules).
+// app.jsx feeds the events in; the preview page never sets this up (it fetches nothing).
+//   hidden: the page is hidden now · getLoad(): the load state on screen · getDisc(): the disc.json data on screen or null ·
+//   refetch(load, disc): refetchNewer · apply(result, load): what to do with the result (the load it was fetched for) ·
+//   now(): the time · held(): see above (optional) · onReturn(now): called once on every return to view, whether or not it
+//   fetches (optional; app.jsx: the one more try of a disc.json that was older than the data on screen).
+// -> { hide(), show() -> the fetch's promise or null when nothing was fetched, stop() }.
+export function returnWatch({ hidden, getLoad, getDisc, refetch, apply, now, held, onReturn }) {
+  let away = !!hidden, busy = false, off = false, emptyAt = null;
+  return {
+    hide() { away = true; },
+    show() {
+      if (!away) return null;
+      away = false;
+      if (off) return null;
+      const t = now();
+      if (onReturn) {
+        try { onReturn(t); } catch (e) { console.warn("[v2] back in view: " + errText(e)); }
+      }
+      if (busy) return null;
+      const cur = getLoad();
+      if (!dueOnReturn(cur, t)) return null;
+      const what = cur.status === "ok" ? "with stale data" : "after a failed load";
+      const waiting = held ? held(t) : null;
+      if (waiting) {
+        console.info("[v2] back in view " + what + ": nothing fetched; " + waiting + " is already waiting to go on screen");
+        return null;
+      }
+      if (emptyAt != null && t - emptyAt < REFETCH_GAP_MS) {
+        console.info("[v2] back in view " + what + ": nothing fetched; the last fetch on a return, " + Math.round((t - emptyAt) / 1000)
+          + " s ago, put nothing on screen (the site keeps data.json for up to " + REFETCH_GAP_MS / 60000 + " minutes)");
+        return null;
+      }
+      busy = true;
+      return Promise.resolve()
+        .then(() => refetch(cur, getDisc()))
+        .catch((e) => {
+          console.warn("[v2] back in view " + what + ": the fetch stopped (" + errText(e) + "); kept what is on screen");
+          return { ok: false, why: errText(e) };
+        })
+        .then((r) => {
+          busy = false;
+          if (!r || !r.ok) emptyAt = now();
+          if (!off) {
+            try { apply(r, cur); } catch (e) { console.warn("[v2] back in view: the fetched files were not applied (" + errText(e) + ")"); }
+          }
+          return r;
+        });
+    },
+    stop() { off = true; },
+  };
 }
 
 // opts.preview: the fictional example data of app-preview.html. It has a fixed publish date, so the stale check
