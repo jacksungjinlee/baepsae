@@ -176,8 +176,10 @@ function ByStock({ st }) {
   const shadeOf = (r) => shades[st.view.rows.indexOf(r)] || HOLDING_SHADES[HOLDING_SHADES.length - 1];
   const cols = s.cards.length;
   // v19.3d2 review: the name column gives way down to 72px (it was 132px: 3 cards overflowed a 320px phone by 16px); what
-  // still does not fit scrolls inside the card, never the page
+  // still does not fit scrolls inside the card, never the page. On a phone narrower than 360px the logo makes way for the
+  // name (the whole name fits instead of "삼성…").
   const NAME_MIN = 72;
+  const narrow = typeof window !== "undefined" && window.innerWidth < 360;
   const grid = { display: "grid", gridTemplateColumns: `minmax(${NAME_MIN}px, 1fr) repeat(${cols}, 52px)`, alignItems: "center", columnGap: SPACE(1) };
   return (
     <Section id="report-bystock" icon="list" title={C.rpt.byStock}>
@@ -195,7 +197,7 @@ function ByStock({ st }) {
           {rows.map((r) => (
             <div key={r.key} data-report-row={r.key} style={{ ...grid, padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <span style={{ display: "flex", alignItems: "center", gap: SPACE(2), minWidth: 0 }}>
-                <CoMark t={r.t} s={r.s} name={r.nk} size={SPACE(8)} />
+                {!narrow && <CoMark t={r.t} s={r.s} name={r.nk} size={SPACE(8)} />}
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{r.nk}</span>
                   <span aria-hidden="true" style={{ display: "block", height: 4, borderRadius: 999, background: COLOR.page, marginTop: 3 }}>
