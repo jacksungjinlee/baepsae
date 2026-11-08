@@ -4168,13 +4168,13 @@ def scene_own_dates(R, files, width):
 
     def home_and_portfolio():
         assert have["done"], "앞 단계(샀어요)가 끝나지 않았어요"
-        strip = page.locator('[data-ui-v2="deck-strip"]')
+        strip = page.locator('[data-ui-v2="home-block"]')
         strip.wait_for(state="visible")
-        held = strip.locator("[data-today-holding]").evaluate_all("(els) => els.map((e) => e.dataset.todayHolding)")
+        held = strip.locator("[data-home-holding]").evaluate_all("(els) => els.map((e) => e.dataset.homeHolding)")
         assert "NVDA" in held and "MA" in held, held
         own_note(strip, held, "홈 포트폴리오 카드")
-        for t in ("NVDA", "MA"):                                                 # 다른 날의 변화는 보이지 않아요
-            assert "%" not in strip.locator(f'[data-today-holding="{t}"]').inner_text(), t
+        for t in ("NVDA", "MA"):                                                 # 다른 날의 변화는 보이지 않아요 (v19.3e: 줄의 % 는 비중이에요)
+            assert strip.locator(f'[data-home-holding="{t}"] [data-ui-v2="home-change"]').inner_text().strip() == "", t
         assert page.locator('[data-ui-v2="big-moves"], [data-big-move]').count() == 0
         R.collect(page)
         no_hscroll(page, width)
@@ -4262,7 +4262,7 @@ def scene_own_dates(R, files, width):
         assert set(items) == {"NVDA", "MSFT"}, items
         note = hero.locator('[data-ui-v2="own-close"][data-scope="todo"]')
         assert note.count() == 1 and note.inner_text() == "NVDA 가격은 10월 28일 종가예요.", note.all_inner_texts()   # MSFT 는 기준일 종가라 빠져요
-        strip = page.locator('[data-ui-v2="deck-strip"] [data-ui-v2="own-close"]')
+        strip = page.locator('[data-ui-v2="home-money"] [data-ui-v2="own-close"]')
         assert strip.all_inner_texts() == ["NVDA 가격은 10월 28일 종가예요."], strip.all_inner_texts()
         R.collect(page)
         no_hscroll(page, width)
