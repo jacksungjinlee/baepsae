@@ -7,4 +7,5 @@ Newest first. Each file says what it is based on (commit, data date).
 - 2026-11-08-dart-gaps.md: why company figures are missing or wrong (income-line names, owners' share for EPS/PER, financial companies, KONEX, foreign issuers, dividend tables, 우선주, no-trade days).
 - 2026-11-08-dividend-cause-research.md: where the cause, date and ratio of a share-count change come from (DART decision filings), per-stock table.
 - 2026-11-08-v19.3e-home-say-why.md: places on the new 홈 that hide or leave out something without saying why.
+- 2026-11-08-v19.7-review-3.md: third review of the v19.7 spec (#71, be58e52): 2 fixes before merge (B3 text; cap vs 100%), a–m to answer before v19.7a.
 - 2026-11-08-v19.7-review-2.md: second review of the v19.7 spec (#71) against the code (answered in spec commit be58e52).
