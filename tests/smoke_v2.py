@@ -423,10 +423,12 @@ def date_line(page):
     return loc.inner_text()
 
 
-def disc_settled(page):
+def disc_settled(page, timeout=None):
     """v19.3e: 홈이 한국 종목을 가지면 공시 목록(disc.json)을 스스로 받아요 (첫 화면 뒤에). 받는 동안('wait')은 '오늘은 할 일이 없어요'를
-    말하지 않으니, 홈의 판정을 보는 검사가 받기 전의 화면을 보지 않게 끝날 때까지 기다려요 (ok · stale · fail · none · skip)."""
-    page.wait_for_function("() => { const h = document.querySelector('[data-ui-v2=\"home2\"]'); return !h || h.dataset.disc !== 'wait'; }")
+    말하지 않으니, 홈의 판정을 보는 검사가 받기 전의 화면을 보지 않게 끝날 때까지 기다려요. 끝 = 'wait' 이 아닌 모든 상태 (ok · stale ·
+    fail · none · skip): 받지 못한 것(fail)도 끝이에요 (Jack, 2026-11-08: 실패 장면이 기다리다 멈추지 않고 실패 문구까지 가게)."""
+    page.wait_for_function("() => { const h = document.querySelector('[data-ui-v2=\"home2\"]'); return !h || h.dataset.disc !== 'wait'; }",
+                           **({"timeout": timeout} if timeout else {}))
 
 
 def disc_fetched(page):
@@ -5783,6 +5785,24 @@ def scene_v193e_home(R, files, width):
         ctx.close()
         srv.shutdown()
 
+    # disc.json 404 (Jack, 2026-11-08): 받지 못한 것도 끝이에요. disc_settled 가 몇 초 안에 끝나고 실패 문구가 보여요 (기다리다 멈추지 않아요)
+    srv, ctx, page, base = R.open(build_site(f, drop=("disc.json",), app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
+
+    def disc_404_settles():
+        page.locator('[data-ui-v2="home2"]').wait_for(state="attached")
+        t0 = time.monotonic()
+        disc_settled(page, timeout=5000)
+        took = time.monotonic() - t0
+        assert took < 5, took
+        assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "fail"
+        msg = page.locator('[data-ui-v2="home-disc-fail"] [data-ui-v2="load-fail"]')
+        assert msg.is_visible() and msg.inner_text() == C["app"]["loadFail"]
+        assert page.locator('[data-ui-v2="home-calm"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "disc.json 404: 공시 목록 기다림이 몇 초 안에 끝나고(5초 미만) 실패 문구가 보여요", disc_404_settles)
+    ctx.close()
+    srv.shutdown()
+
     # 멈춘 공시 목록 (리뷰 2026-11-08): 파일이 오래됐거나(발행 6일 전) 그날 DART 목록을 받지 못했으면(listOk false) 공시 줄도 '할 일이
     # 없어요'도 없이 공시 탭의 날짜 줄 그대로 ('{md} 기준 · {n}일째 갱신이 멈췄어요'), 공시 줄의 file-text 칩 옆에
     kst_now = dt.datetime.now(KST)
@@ -6087,6 +6107,10 @@ def scene_v193e_company(R, files, width):
         open_co("005930")
         tile = page.locator('[data-ui-v2="co-tile"][data-topic="earn"] [data-art="bars"]')
         tile.wait_for(state="visible")
+        # 요약 칸 왼쪽 띠 (Jack, 2026-11-08): 실적은 옅은 실적 주제 색 #B9CDEB (파랑 아님), 다른 칸은 주제의 진한 색 그대로
+        stripes = dict(page.locator('[data-ui-v2="co-tile"]').evaluate_all(
+            "els => els.map((e) => [e.dataset.topic, ((getComputedStyle(e).boxShadow || '').match(/rgb\\([^)]*\\)/) || [''])[0]])"))
+        assert stripes == {"earn": rgb("#B9CDEB"), "value": rgb("#4E9A72"), "div": rgb("#C59A2E"), "risk": rgb("#8C78C6")}, stripes
         got = tile.locator("[data-v]").evaluate_all("els => els.map((e) => getComputedStyle(e).backgroundColor)")
         assert got == [slate, slate, navy], got                                # 요약 칸의 실적 막대 (오래된 해 → 최근 해)
         waves = page.locator('[data-ui-v2="co-tile"][data-topic="risk"] [data-art="waves"]')
@@ -6109,7 +6133,7 @@ def scene_v193e_company(R, files, width):
         if past.count():                                                        # 지난 2년 실제 이익(비교)은 회청색, 파랑 아님
             assert past.get_attribute("data-bar") == "compare" and past.evaluate("(e) => getComputedStyle(e).backgroundColor") == slate
         R.collect(page)
-    R.check(page, S, "그래프 색: 실적 막대 남색 · 회청색 단계(요약 칸 · 실적 탭) · 출렁임 이 회사 남색 · 시장 회청색 · 가치의 지난 이익 회청색", chart_colours)
+    R.check(page, S, "그래프 색: 실적 칸 띠 #B9CDEB(파랑 아님) · 실적 막대 남색 · 회청색 단계(요약 칸 · 실적 탭) · 출렁임 이 회사 남색 · 시장 회청색 · 가치의 지난 이익 회청색", chart_colours)
 
     def div_coins():
         for code in (V191B_CUT, "105560", V191B_SPLIT, "AAPL"):

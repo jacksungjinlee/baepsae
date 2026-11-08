@@ -143,7 +143,8 @@ function Tile({ v, onOpen }) {
     </>
   );
   const data = Object.fromEntries(Object.entries(v.data || {}).map(([k, x]) => [`data-${k}`, x == null ? "" : Array.isArray(x) ? x.join(",") : String(x)]));
-  // The board's coloured edge on the left of each tile (the topic's darker shade, tokens.js TOPIC_ART).
+  // The board's coloured edge on the left of each tile (tokens.js TOPIC_ART: the topic's darker shade; 실적's is its light
+  // tint #B9CDEB, never a blue: Jack, 2026-11-08).
   const edge = TOPIC_ART[v.topic] ? { boxShadow: `inset 4px 0 0 ${TOPIC_ART[v.topic].ink}` } : {};
   const style = { ...tap, display: "block", width: "100%", minHeight: SPACE(32), textAlign: "left", border: "none", background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(4), ...edge };
   return onOpen
