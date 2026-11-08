@@ -27,10 +27,9 @@ import { IosHint } from "./hint.jsx";
 import { CARD_PICS, TOPIC_DOT, DOT_EMPTY } from "./pictures.js";
 import { guideSeenIn } from "./store.js";
 
-// Off until Jack says yes to the smoke-test edits it needs: with it on, a first visit to 홈 shows the welcome instead of
-// today's landing, which tests/smoke_v2.py · smoke_launch.py · smoke_preview.py check word for word (v19.3c PR).
-// Off, everything on a first visit is exactly as before; the guide is still there behind 처음 안내 다시 보기.
-export const GUIDE_FIRST_VISIT = false;
+// On since Jack's yes (2026-11-08): a first visit to 홈 shows the welcome instead of the first-visit landing (the smoke
+// tests' other scenes run as a visitor who has seen it). 처음 안내 다시 보기 replays it at any time.
+export const GUIDE_FIRST_VISIT = true;
 
 // v19.3d (Part E: "Store the flag in the 2.0 store"): "seen" is the store's guideSeen (store.js), written with the store
 // (app.jsx endGuide). The flag of v19.3c's own key (storeKey + ".guideSeen") is read into the store once (store.js

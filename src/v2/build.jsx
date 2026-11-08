@@ -8,7 +8,8 @@
 // companies' marks. The count is the engine's own (engine.meterCount: the length of screen()'s result list, or the pool
 // before any 기준 while no card has points), recomputed on every change, never an estimate. The strictness control stays,
 // under the meter. The first-visit guide (guide.jsx) runs its three steps on this screen.
-// The new start screen (dark 처음부터 card, 가진 종목 card, templates as recipe cards, no 뱁이) waits behind RECIPE_START.
+// The start screen (BuildStart2 · PcStart2): the dark 처음부터 card, 가진 종목으로 시작하기 (opens 가진 종목 넣기), the templates
+// as recipe cards, no 뱁이 (they show points and percentages). RECIPE_START on since Jack's yes (2026-11-08).
 import React, { useEffect, useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, TOPIC_CHIP, ICON_CHIP } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -32,7 +33,7 @@ import { Plan, Y2022Amount } from "./plan.jsx";
 // Off until Jack says yes to the smoke-test edits it needs (v19.3c PR): today's tests check the start screen's 뱁이 and a
 // one-column PC page, and the new start screen has neither (its recipe cards show points and percentages, so the 뱁이 must
 // go: CLAUDE.md). Off, the start screen is exactly as before.
-export const RECIPE_START = false;
+export const RECIPE_START = true;
 
 export const STEPS = ["start", "cards", "exclude", "terms"];
 // The first step's back button leaves 포트폴리오 만들기 (to the screen before it). Its name waits for Jack (build.backToday):
@@ -135,9 +136,11 @@ function Steps({ load, builder, setBuilder, onExit, coach, onImport }) {
   // (off) and the clash line above names the limits. "기준을 낮춰 주세요" is only for too few survivors.
   const tooFew = last ? ds.check.block || ds.pre.short : ds.res.survivors === 0;
   const action = noCards ? C.build.pickCardsBtn : tooFew ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
+  // The same live count as the 내 점수 meter (engine.meterCount; Jack, 2026-11-08): with points the survivors, before any
+  // points the pool before any 기준, never a 0 that the meter above contradicts.
   const summary = (
     <span data-ui-v2="match-count"><span>{C.build.matchSummary}</span>{" "}
-      <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(ds.res.survivors) })}</b></span>
+      <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(meterCount(ds.res).n) })}</b></span>
   );
   return (
     <Page pad={SPACE(30)} cols={RECIPE_START && wide && step === 0 ? 2 : 1}>
@@ -148,7 +151,7 @@ function Steps({ load, builder, setBuilder, onExit, coach, onImport }) {
       </div>
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
       <StepDots step={step} />
-      {step === 0 && (RECIPE_START ? <StepStart2 start={start} /> : <StepStart start={start} onImport={onImport} />)}
+      {step === 0 && (RECIPE_START ? <StepStart2 start={start} onImport={onImport} /> : <StepStart start={start} onImport={onImport} />)}
       {step === 1 && <StepCards st={st} set={set} ds={ds} load={load} coach={coach} />}
       {step === 2 && <StepExclude st={st} set={set} ds={ds} />}
       {step === 3 && <StepTerms st={st} set={set} ds={ds} load={load} />}
@@ -213,7 +216,7 @@ function StepStart({ start, onImport }) {
   );
 }
 
-// ---------------- v19.3c Part D: the new start screen (boards BuildStart2 · PcStart2), behind RECIPE_START ----------------
+// ---------------- v19.3c Part D: the start screen (boards BuildStart2 · PcStart2; RECIPE_START, on since 2026-11-08) ----------------
 // Five dots for a 기준's points (one dot = one point), in the 기준's topic shade. label: what a screen reader says instead.
 export function Dots({ id, n, size = 7, gap = 3, label }) {
   return (
@@ -284,7 +287,7 @@ function Recipe({ d, start }) {
   );
 }
 
-function StepStart2({ start }) {
+function StepStart2({ start, onImport }) {
   const s0 = C.build.s0;
   const { wide } = useLayout();
   const ways = (
@@ -300,20 +303,8 @@ function StepStart2({ start }) {
           <span>{s0.pickCards}</span><Icon name="chevronRight" size={16} tone="on" />
         </button>
       </section>
-      {/* The new start screen (RECIPE_START, off) keeps this card as v19.3c left it, dimmed and 준비 중이에요 with no button:
-          tests/smoke_v2.py scene_v193c_on pins that, and making it open 가진 종목 넣기 needs that test changed (Jack's yes).
-          v19.3d opens 가진 종목 넣기 from today's start screen (HoldingsOption), the welcome's second button and 포트폴리오. */}
-      <section data-ui-v2="start-holdings" data-pending="1" style={{ marginTop: SPACE(2) + 2, display: "flex", alignItems: "center", gap: SPACE(3) + 2, background: COLOR.surface,
-        borderRadius: RADIUS.lg, padding: SPACE(4), opacity: 0.6 }}>
-        <PicChip pic={START_PICS.holdings} size="deck" />
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={tx(SIZE.h3 - 1, WEIGHT.heavy, COLOR.ink, { display: "block" })}>{s0.holdings}</span>
-          <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, lineHeight: 1.45 })}>{s0.holdingsSub}</span>
-          <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { display: "flex", alignItems: "center", gap: SPACE(1), marginTop: SPACE(1) })}>
-            <Icon name="calendar" size={16} tone="off" /><span>{C.build.s1.pendingCard}</span>
-          </span>
-        </span>
-      </section>
+      {/* 가진 종목으로 시작하기 opens 가진 종목 넣기 (v19.3d Part F), as on the board (BuildStart2). */}
+      {onImport && <HoldingsOption onClick={onImport} big />}
       <OldAppNote />
     </div>
   );

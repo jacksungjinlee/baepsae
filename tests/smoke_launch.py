@@ -133,6 +133,7 @@ def cv_link(browser, check, errors):
     def context(local=None, live=False):
         # GoatCounter 의 개발 표시(baepsae_dev)를 심지 않아요: 로컬 주소에서 세지 않는 것을 그대로 보려고요 (요청은 모두 여기서 막아요)
         ctx = browser.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")             # v19.3c: 처음 안내를 이미 본 방문자 (Jack, 2026-11-08)
         ctx.expose_binding("__cvSeen", lambda src, w: seen.append(w))
         ctx.add_init_script(CV_SEEN)
         if local:                                                    # 처음 한 번만 심어요 (앱이 바꾼 것을 다시 덮지 않게)
@@ -384,6 +385,7 @@ def cv_link(browser, check, errors):
         threading.Thread(target=s2.serve_forever, daemon=True).start()
         b2 = f"http://127.0.0.1:{s2.server_address[1]}"
         c = browser.new_context(viewport={"width": 390, "height": 780}, locale="ko-KR", service_workers="allow")
+        c.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")               # v19.3c: 처음 안내를 이미 본 방문자
         c.route(lambda u: not u.startswith(b2), lambda r: r.abort())
         c.add_init_script("(() => { try { localStorage.setItem('baepsae_dev', '1'); } catch (e) {} })();")
         p1 = new_page(c)
@@ -463,6 +465,7 @@ def main():
                 def context(saved=False):
                     ctx = browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR",
                                               service_workers="block")
+                    ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")   # v19.3c: 처음 안내를 이미 본 방문자
 
                     def route(r):
                         if r.request.url.startswith(base):

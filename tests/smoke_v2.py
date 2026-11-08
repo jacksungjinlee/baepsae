@@ -245,7 +245,7 @@ class Runner:
         self.texts = set()
         self.names = sorted({n for n in names if n and HANGUL.search(n)}, key=len, reverse=True)
 
-    def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1", device=None):
+    def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1", device=None, guide_seen=True):
         srv, base = serve(site)
         # device: Playwright 의 기기 설명(사용자 에이전트 · 화면 · 터치)을 그대로 입혀요. 없으면 휴대폰 폭 width × 780.
         screen = dict(device) if device else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
@@ -263,6 +263,8 @@ class Runner:
                 self.outside.append(r.request.url)
             r.abort()
         ctx.route("**/*", route)
+        if guide_seen:                         # v19.3c GUIDE_FIRST_VISIT (Jack, 2026-11-08): a visitor who has already seen the guide
+            ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")       # (the app reads this flag into its store, store.js readStore)
         if init:
             ctx.add_init_script(init)
         page = ctx.new_page()
@@ -488,9 +490,9 @@ def scene_normal(R, files, width):
         page.locator('[data-ui-v2="home-start"] button').click()
         at(page, "portfolio/build")
         assert page.url.endswith("#portfolio/build") and page.locator('nav[data-ui="bottom-tab-bar"]').count() == 0
-        start = page.locator('[data-ui-v2="build-start"]')                 # 포트폴리오 만들기 첫 카드: 숫자 없음 → 나뭇가지를 나르는 뱁이 92px
-        mascot_img(start, "baepi-16-build.webp", 92, C["build"]["s0"]["imgAlt"])
-        assert not re.search(r"\d", start.inner_text()), start.inner_text()
+        start = page.locator('[data-ui-v2="build-start2"]')                # v19.3c 시작 화면: 템플릿이 점수 · 비중을 보여서 뱁이 없음 (CLAUDE.md)
+        start.wait_for(state="visible")
+        assert start.locator('img[src^="baepi-"]').count() == 0 and page.locator(MASCOT_IN_MAIN).count() == 0
         page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=BACK_BUILD).click()                 # 뒤로: 열었던 홈으로 (기록 한 칸 뒤)
         at(page, "home")
         start_build(page)
@@ -2123,6 +2125,16 @@ STANDALONE_INIT = """(() => {
 OTHER_KEYS = """() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
   if (k !== 'baepsae2.v1') o[k] = localStorage.getItem(k); } return o; }"""
 STORED = "JSON.parse(localStorage.getItem('baepsae2.v1') || 'null')"
+
+
+def stored_records(page):
+    """저장된 기록 그대로, 이 기기의 '처음 안내를 봤어요' 표시(guideSeen: 본 날)만 떼어 내고요. 그 표시는 기록 파일로 옮겨 다니지 않아요
+    (store.js: a flag of this device). 표시가 있으면 날짜인지 확인해요 (v19.3c 처음 안내가 첫 방문에 저절로 떠요, Jack 2026-11-08)."""
+    d = page.evaluate(STORED)
+    if isinstance(d, dict) and "guideSeen" in d:
+        seen = d.pop("guideSeen")
+        assert isinstance(seen, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", seen), seen
+    return d
 # 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로(1초 안에) 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤)
 REVOKE_SPY = """() => { if (window.__revoked) return; window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
   URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
@@ -2276,7 +2288,7 @@ def _iphone_records(R, files, device, tmp):
         imp.set_input_files(keep["path"])
         page.locator("[data-deck-id]").first.wait_for(state="visible")
         assert page.locator('[data-ui-v2="import-bad"]').count() == 0
-        assert page.evaluate(STORED) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
+        assert stored_records(page) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
         assert page.evaluate(OTHER_KEYS) == others, "기록 말고 다른 저장 값이 바뀌었어요"
         page.locator("[data-holding][data-status]").first.wait_for(state="visible")
         page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
@@ -2287,7 +2299,7 @@ def _iphone_records(R, files, device, tmp):
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
         page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
-        assert main_text(page) == keep["today"] and page.evaluate(STORED) == keep["file"], "새로 고침 뒤에 기록이 달라요"
+        assert main_text(page) == keep["today"] and stored_records(page) == keep["file"], "새로 고침 뒤에 기록이 달라요"
         R.collect(page)
     R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
 
@@ -2295,7 +2307,7 @@ def _iphone_records(R, files, device, tmp):
         open_deck_tab(page)
         imp.set_input_files(keep["path"])
         page.wait_for_timeout(1000)                                   # 불러오기는 바로 끝나요 (바뀌는 게 없어야 해서 기다려서 봐요)
-        assert page.locator("[data-deck-id]").count() == 1 and page.evaluate(STORED) == keep["file"], "같은 파일을 두 번 불러 덱이 늘었어요"
+        assert page.locator("[data-deck-id]").count() == 1 and stored_records(page) == keep["file"], "같은 파일을 두 번 불러 덱이 늘었어요"
         assert page.locator('[data-ui-v2="import-bad"]').count() == 0
     R.check(page, S, "같은 파일을 한 번 더 불러와도 덱이 늘지 않아요", twice)
 
@@ -2307,7 +2319,7 @@ def _iphone_records(R, files, device, tmp):
         box = page.locator('[data-ui-v2="import-bad"]')
         box.wait_for(state="visible")
         assert box.get_attribute("data-why") == "preview" and box.inner_text() == C["store"]["otherKind"], box.inner_text()
-        assert page.locator("[data-deck-id]").count() == 1 and page.evaluate(STORED) == keep["file"], "막힌 파일이 기록을 바꿨어요"
+        assert page.locator("[data-deck-id]").count() == 1 and stored_records(page) == keep["file"], "막힌 파일이 기록을 바꿨어요"
         R.collect(page)
     R.check(page, S, f"미리 보기에서 만든 기록 파일 → '{C['store']['otherKind']}' (기록은 그대로)", preview_file)
     ctx.close()
@@ -2873,11 +2885,13 @@ def scene_pc(R, files):
         page.locator('[data-ui-v2="side-build"]').click()                  # 포트폴리오 만들기: 왼쪽 메뉴에서, 고른 탭은 포트폴리오
         at(page, "portfolio/build")
         tab_selected(page, "portfolio")
-        mascot_img(page.locator('[data-ui-v2="build-start"]'), "baepi-16-build.webp", 176, C["build"]["s0"]["imgAlt"])    # PC 크기 (Part C)
-        x, w, cols = page_box(page)
-        assert cols == "1" and w <= 720, (w, cols)
+        start = page.locator('[data-ui-v2="build-start2"]')                # v19.3c PcStart2: 뱁이 없음, 시작 카드 | 템플릿 두 칸
+        start.wait_for(state="visible")
+        assert start.locator('img[src^="baepi-"]').count() == 0 and page_box(page)[2] == "2"
         page.locator('[data-deck="income"]').click()
         see(page, C["build"]["s1"]["title"])
+        x, w, cols = page_box(page)                                        # 기준 단계부터는 한 칸 (720px)
+        assert cols == "1" and w <= 720, (w, cols)
         bar = page.locator('[data-ui-v2="action-bar"]')                    # 아래 버튼 띠: 왼쪽 메뉴 오른쪽 끝부터, 안의 줄은 본문과 같은 왼쪽 끝
         bb = bar.bounding_box()
         assert abs(bb["x"] - 240) < 0.5 and abs(bb["x"] + bb["width"] - PC_W) < 0.5, bb
@@ -4648,7 +4662,7 @@ def scene_v193c(R, files, width):
     '본 적 있음'을 남겨요. 그냥 둘러볼게요 · 휴대폰 뒤로도 끝내요."""
     S = f"v19.3c {width}"
     wide = width >= 1024
-    srv, ctx, page, base = R.open(build_site(files), width, device=pc_device(width) if wide else None)
+    srv, ctx, page, base = R.open(build_site(files), width, device=pc_device(width) if wide else None, guide_seen=False)
     seen = lambda: page.evaluate(SEEN_JS)
 
     def first_screen():
@@ -4743,7 +4757,7 @@ def scene_v193c(R, files, width):
         m0 = meter(page)
         assert m0["pool"] and m0["n"] == eng[0]["pool"] == eng[1]["pool"] and ko_num(m0["n"]) in m0["text"], (m0, eng)
         assert action(page).inner_text() == C["build"]["pickCardsBtn"]
-        assert fillp(C["app"]["count"], count=0) in page.locator('[data-ui-v2="match-count"]').inner_text()   # 아래 띠는 main 그대로 (점수 없으면 0)
+        assert fillp(C["app"]["count"], count=ko_num(eng[0]["pool"])) in page.locator('[data-ui-v2="match-count"]').inner_text()   # 아래 띠도 내 점수 칸과 같은 수 (Jack, 2026-11-08)
         R.collect(page)
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
         b2 = bubble(page, 2)                                               # 2/3: 기준 전의 수를 긋고 → 엔진의 새 수
@@ -4925,7 +4939,7 @@ def scene_v193c_landscape(R, files, size):
     w, h = size
     S = f"v19.3c 가로 휴대폰 {w}x{h}"
     dev = {"viewport": {"width": w, "height": h}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
-    srv, ctx, page, base = R.open(build_site(files), w, device=dev)
+    srv, ctx, page, base = R.open(build_site(files), w, device=dev, guide_seen=False)
 
     def step1_fits():
         wait_ready(page)
@@ -4967,7 +4981,7 @@ def scene_v193c_offstep(R, files, width=390):
     """v19.3c: 안내 중에 기준 단계를 겹친 화면이 덮지 않는 길로 떠나면(화면 읽기 프로그램이 누른 다음 · 이전 단계 · 다시 시작) 안내는 끝나고
     '본 적 있음'이 남아요. 이전 단계로 돌아와도 말풍선이 다시 뜨지 않아요."""
     S = f"v19.3c 안내 밖 단계 이동 {width}"
-    srv, ctx, page, base = R.open(build_site(files), width)
+    srv, ctx, page, base = R.open(build_site(files), width, guide_seen=False)
     seen = lambda: page.evaluate(SEEN_JS)                              # v19.3d: 본 표시는 저장 기록 안에 있어요
     unseen = lambda: forget_guide(page)
 
@@ -5059,7 +5073,7 @@ def scene_v193c_on(R, files, width):
     템플릿 여덟 개가 재료 줄(그림 · 이름 · 점 다섯, 큰 점수부터, 셋까지 + '+ {n}개 더') · 깐깐한 기준 · 한미 반반 표시 · 뱁이 없음."""
     S = f"v19.3c 스위치 켠 빌드 {width}"
     wide = width >= 1024
-    srv, ctx, page, base = R.open(build_site(files, app=v193c_on_app()), width, device=pc_device(width) if wide else None)
+    srv, ctx, page, base = R.open(build_site(files, app=v193c_on_app()), width, device=pc_device(width) if wide else None, guide_seen=False)
 
     def auto_welcome():
         wait_ready(page)
@@ -5083,9 +5097,10 @@ def scene_v193c_on(R, files, width):
         blank = st.locator('[data-ui-v2="start-blank"]')
         assert blank.locator("img").count() == 5 and C["build"]["s0"]["blankBody"] in blank.inner_text()
         assert blank.locator('[data-deck="blank"]').inner_text().strip() == C["build"]["s0"]["pickCards"]
-        hold = st.locator('[data-ui-v2="start-holdings"]')
-        assert C["build"]["s0"]["holdings"] in hold.inner_text() and C["build"]["s1"]["pendingCard"] in hold.inner_text()
-        assert hold.locator("button, a, [data-deck]").count() == 0
+        hold = st.locator('[data-ui-v2="start-holdings"]')                # v19.3d: 가진 종목 넣기를 여는 단추 (준비 중 아님)
+        assert C["build"]["s0"]["holdings"] in hold.inner_text() and C["build"]["s0"]["holdingsSub"] in hold.inner_text()
+        assert C["build"]["s1"]["pendingCard"] not in hold.inner_text() and hold.evaluate("(e) => e.tagName") == "BUTTON"
+        assert hold.locator("[data-deck]").count() == 0 and hold.get_attribute("data-deck") is None
         assert page.locator("[data-deck]").count() == 9
         got = pics(page, "[data-deck] [data-deck-pic]", "DECK_PICS")
         assert sorted(g["id"] for g in got) == sorted(PICS["DECK_PICS"]), got
@@ -5103,10 +5118,16 @@ def scene_v193c_on(R, files, width):
         floor_ok(page, "새 시작 화면")
         no_hscroll(page, width)
         R.collect(page)
+        hold.click()                                                       # 가진 종목 넣기가 열려요 → 뒤로 → 시작 화면
+        at(page, "portfolio/import")
+        see(page, C["imp"]["title"])
+        page.go_back()
+        at(page, "portfolio/build")
+        see(page, C["build"]["s0"]["title"])
         page.locator('[data-deck="strict"]').click()
         see(page, C["build"]["s1"]["title"])
         assert page.locator('[data-card="profit"]').get_attribute("data-points") == "4"
-    R.check(page, S, "새 시작 화면: 처음부터 카드 · 가진 종목(준비 중) · 템플릿 여덟 개의 재료 줄과 표시 · 뱁이 없음 · PC 두 칸(템플릿 세 칸)", start2)
+    R.check(page, S, "새 시작 화면: 처음부터 카드 · 가진 종목으로 시작하기(가진 종목 넣기가 열려요) · 템플릿 여덟 개의 재료 줄과 표시 · 뱁이 없음 · PC 두 칸(템플릿 세 칸)", start2)
     ctx.close()
     srv.shutdown()
 
