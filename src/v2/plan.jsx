@@ -8,7 +8,9 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
+import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore } from "./store.js";
 import { KR_DIV_TREND, exactData } from "./engine.js";
@@ -51,6 +53,8 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
           {plan.rows.map((x) => <PlanRow key={x.t} x={x} />)}
           <Note>{fill(C.plan.priceNote, { md: mdText(load.data.pxDate), fx: nf(Math.round(load.data.fx)) })}</Note>
           {usRows && usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
+          {/* v19.1c: a planned US stock priced at an earlier close (pxd): its shares are worked out at that close */}
+          <OwnCloseNote groups={ownCloses(load, plan.rows.map((x) => x.s))} />
         </Card>
       )}
       {ok && <Rules load={load} rows={plan.rows} st={st} ds={ds} />}
@@ -287,6 +291,16 @@ function SheetSample() {
   return <div style={{ marginBottom: SPACE(2) }}><SampleLabel /></div>;
 }
 
+// v19.1c: under a US row of 샀어요 whose price is not at the Korean date the sheet names (sheetBody "{md} 종가"): "미국 {md}
+// 종가" (co.usClose) with the row's own date (cofmt.priceDate: usPxDate, or the stock's pxd). Before v19.1c a US row read the
+// Korean date only. Nothing for Korean rows, or when the dates are the same.
+function RecordClose({ load, s }) {
+  const own = usOf(s) ? priceDate(load, s) : null;
+  const md = own && own !== load.data.pxDate ? mdText(own) : null;
+  if (!md || !C.co.usClose) return null;
+  return <div data-ui-v2="record-close" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.co.usClose, { md })}</div>;
+}
+
 function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday }) {
   const rows = plan.rows.filter((x) => x.shares > 0);
   const [date, setDate] = useState("");
@@ -347,6 +361,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
         {rows.map((x) => (
           <div key={x.t} data-record={x.t} style={{ marginTop: SPACE(4), paddingTop: SPACE(2), borderTop: `1px solid ${COLOR.line}` }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.s.nk}</div>
+            <RecordClose load={load} s={x.s} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE(2) }}>
               <TextInput label={P.qty} inputMode="numeric" placeholder={nf(x.shares)} value={(vals[x.t] || {}).qty || ""} onChange={(v) => setV(x.t, "qty", v)}
                 invalid={tried && parsed.find((r) => r.x.t === x.t).badQ} />

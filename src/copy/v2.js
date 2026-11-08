@@ -32,8 +32,10 @@ export const C = {
     pendingAlt: "안전모를 쓰고 스패너를 든 뱁이",                     // chat (2026-11-04: v19.0b 통째로 준비 중인 칸의 baepi-21-wip)
     md: "{m}월 {d}일",                                             // 4 · 135 (날짜 부분)
     asOf: "{md} 기준",                                             // v17.5 (DateBadge)
-    stale: "{n}일째 갱신이 멈췄어요",                               // v17.5 (DateBadge)
+    stale: "{n}일째 갱신이 멈췄어요",                               // v17.5 (DateBadge) — n ≥ 2 (예정일부터 센 날, data.js freshness)
+    staleLate: "갱신이 늦어지고 있어요",                             // chat (2026-11-07: 미국 가격 날짜 A1–A3) — 늦음 경고의 n ≤ 1 (예정일 당일)
     usClose: "미국 종목은 현지 기준 {md} 종가예요.",                 // 26 (세 번째 문장)
+    ownClose: "{names} 가격은 {md} 종가예요.",                       // chat (2026-11-07: 미국 가격 날짜 A1–A3) — 미국 기준일보다 앞선 종가의 종목(pxd)이 든 목록·합계, 날짜마다 한 문장
     pending: "준비 중",                                            // new
     notChecked: "아직 자동으로 확인할 수 없어요",                    // new
     reportYear: "{year}년 사업보고서 기준",                         // new
@@ -423,7 +425,8 @@ export const C = {
   // 포트폴리오 띠 · 내 종목 · 크게 움직인 종목.
   today: {
     title: "오늘",                                                 // 19 · 68
-    stale: "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요", // new
+    stale: "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요", // new — n ≥ 2 (예정일부터 센 날, data.js freshness)
+    staleLate: "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요.", // chat (2026-11-07: 미국 가격 날짜 A3) — 같은 띠, n ≤ 1 (예정일 당일)
     todoN: "오늘 확인할 일 {n}개",                                  // 35
     calmEyebrow: "오늘은 할 일이 없어요",                            // 36
     calmTitle: "매도 조건에 걸린\n종목이 없어요",                    // 38

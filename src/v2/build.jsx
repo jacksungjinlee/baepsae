@@ -19,7 +19,8 @@ import {
   marketsOf, canPin, PINNED_MAX, meterCount, mixKr,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, PicChip, CardPic, DeckPic, CardScores, PC_PAD, useLayout, useMode, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, OwnCloseNote, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, PicChip, CardPic, DeckPic, CardScores, PC_PAD, useLayout, useMode, tx, tap } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
 import { CARD_PICS, START_PICS, FAN_CARDS, DOT_EMPTY, dotColor } from "./pictures.js";
 import { CARD_ART } from "./cardart.js";
 import { CoMark } from "./logo.jsx";
@@ -466,7 +467,7 @@ const GUIDE_FOCUS_AFTER = [`${GUIDE_RING}:not(:disabled)`, '[data-ui-v2="meter"]
 // Step 1 keeps the + clear of the sticky meter above and the action bar below (a phone held sideways: guide.jsx keepClear).
 const GUIDE_KEEP_CLEAR = { top: '[data-ui-v2="meter-bar"]', bottom: '[data-ui-v2="action-bar"]' };
 
-function StepCards({ st, set, ds, coach }) {
+function StepCards({ st, set, ds, load, coach }) {
   const s1 = C.build.s1;
   const g = C.guide;
   const used = pointsUsed(st.points);
@@ -507,7 +508,7 @@ function StepCards({ st, set, ds, coach }) {
           {preview.map((x) => {
             const b = bestCard(x, st.points);
             return (
-              <div key={x.t} style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
+              <div key={x.t} data-preview={x.t} style={{ display: "flex", justifyContent: "space-between", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
                 <span style={{ minWidth: 0 }}>
                   <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{x.s.nk}</span>
                   {b && <CardScores list={[[b.id, b.score]]} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block", marginTop: SPACE(1) })} />}
@@ -516,6 +517,8 @@ function StepCards({ st, set, ds, coach }) {
               </div>
             );
           })}
+          {/* v19.1c: a top stock priced at an earlier US close (pxd): its scores read that price, so it is named */}
+          <OwnCloseNote groups={ownCloses(load, preview.map((x) => x.s))} />
         </Card>
       )}
       {bubble && (

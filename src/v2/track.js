@@ -6,7 +6,7 @@
 // Everything here reads the daily evaluation from rules.js (evaluateDeck): its weights and targets, its statuses and its
 // "ok: false" when the data is stale or failed. Nothing is computed from stale or failed data, and nothing is estimated:
 // a number whose input is missing is left out (ok: false), never filled in.
-import { num, hasGroup, universe, priceWon } from "./engine.js";
+import { num, hasGroup, universe, priceWon, todayD1 } from "./engine.js";
 import { NO_NEW_MONEY } from "./rules.js";
 
 export const GROUP_MIN = 5;           // 같은 업종 점 띠: a real industry group with at least 5 members in the same market
@@ -287,15 +287,17 @@ function highEdge(x, target) {
 // Every common share of the stock's own industry group in the same market with a d1 today (the stock itself always
 // included). Only a real group (hasGroup: never "other" or "etc", never a missing group) with at least GROUP_MIN members.
 // -> { ok: false, n } | { ok: true, n, fell, avg, together, items: [{ id, pct }] }
+// v19.1c: a stock priced at an earlier close (pxd) has no change today (engine.todayD1): never in a group, never the one shown.
 export function peerGroup(s, stocks) {
-  if (!s || !hasGroup(s) || num(s.d1) == null || (s.cls !== "kr" && s.cls !== "us")) return { ok: false, n: 0 };
-  const items = universe(stocks || [], s.cls).filter((x) => hasGroup(x) && x.ind === s.ind && num(x.d1) != null);
-  if (!items.some((x) => x.t === s.t)) items.push(s);
+  const d1 = todayD1(s);
+  if (!s || !hasGroup(s) || d1 == null || (s.cls !== "kr" && s.cls !== "us")) return { ok: false, n: 0 };
+  const items = universe(stocks || [], s.cls).filter((x) => hasGroup(x) && x.ind === s.ind && todayD1(x) != null).map((x) => ({ t: x.t, d1: todayD1(x) }));
+  if (!items.some((x) => x.t === s.t)) items.push({ t: s.t, d1 });
   const n = items.length;
   if (n < GROUP_MIN) return { ok: false, n };
   const fell = items.filter((x) => x.d1 < 0).length;
   const avg = items.reduce((a, x) => a + x.d1, 0) / n;
-  return { ok: true, n, fell, avg, together: s.d1 < 0 && fell >= TOGETHER_SHARE * n - EPS, items: items.map((x) => ({ id: x.t, pct: x.d1 })) };
+  return { ok: true, n, fell, avg, together: d1 < 0 && fell >= TOGETHER_SHARE * n - EPS, items: items.map((x) => ({ id: x.t, pct: x.d1 })) };
 }
 
 // ---------------- Korean subject particle (이 / 가) ----------------
