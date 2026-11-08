@@ -20,7 +20,7 @@
 //   (its change is in dollars on another day and yesterday's rate is not in the data): the rule track.deckDayChange
 //   already keeps for built portfolios.
 import { num, todayD1 } from "./engine.js";
-import { pfRows, pfState, isImported } from "./pf.js";
+import { pfRows, pfState, isImported, CHIP_GROUP } from "./pf.js";
 import { deckMoney, deckDayChange, lotsPending } from "./track.js";
 import { heldQty } from "./held.js";
 
@@ -174,10 +174,12 @@ export function holdsKorean(decks, byT = null) {
 }
 
 // 오늘 볼 것's concentration card: the broken 한 업종 rule of a portfolio (its group, share, companies and limit), or null.
+// v19.3d2 (Jack Q8): 반도체 · 반도체 장비 · 전자부품 are one group in the 한 업종 rule (pf.js CHIP_GROUP, name null): ind says
+// so and the screen names it (pfview.jsx groupName: 반도체·전자부품).
 export function concentration(st) {
   const r = st && st.ok ? st.rules.find((x) => x.id === "ind" && x.state === "broken") : null;
-  if (!r || !r.top || !r.top.name) return null;
-  return { deckId: null, name: r.top.name, w: r.top.w, names: r.top.names || [], limit: r.limit };
+  if (!r || !r.top || !(r.top.name || r.top.ind === CHIP_GROUP)) return null;
+  return { deckId: null, name: r.top.name, ind: r.top.ind, w: r.top.w, names: r.top.names || [], limit: r.limit };
 }
 
 // A portfolio made with 가진 종목 넣기 with nothing to look at today ("오늘은 할 일이 없어요" may show, on 오늘 볼 것 or in the

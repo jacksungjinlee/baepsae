@@ -130,3 +130,22 @@ tells you what happened in plain words.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily
   data commits count as activity; on the 1st of every month the watchdog also switches both scheduled workflows back on
   through GitHub's API. If GitHub Actions stops completely, healthchecks.io is the alarm.
+
+## Known limits: 기록 and the phone clock
+
+뱁새 2.0 keeps each 가진 종목 portfolio's 내 규칙 limits (한 종목 · 한 업종) with the time they were saved, and also keeps a
+copy of them beside the saved records, so a tab of the earlier app cannot drop them. When two copies disagree, the one
+saved later wins. Four rare cases can still bring back an older setting (Jack, 2026-11-08). None of them touch
+holdings, purchases or notes, and the fix is always the same: open 내 규칙 정하기 and press 저장 again.
+
+- **The phone's clock was more than a day fast.** A 저장 made then carries a time more than a day ahead, which the app
+  does not believe. Once the clock is right again, an older copy (from another open tab, or 기록 불러오기 of a file
+  without limits) wins over it, so the limits go back to the earlier ones.
+- **The phone's clock was 24 to 48 hours fast.** That 저장's time becomes believable again about a day later, and can then
+  win over a later 저장 made with the right clock, without the 합쳤어요 message.
+- **The phone's clock was set back by more than a day.** Two copies saved while it was set back are compared fairly,
+  but a 저장 made before the clock went back can look newer than one made after, so an older setting can win (the app
+  then says 합쳤어요).
+- **A portfolio deleted in a tab of the earlier app.** The earlier app does not know the copy of the limits kept beside
+  the records, so that copy stays. If the portfolio is brought back later with 기록 불러오기 from an older file that has
+  no limits, its old limits come back too.

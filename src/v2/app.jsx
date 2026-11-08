@@ -26,6 +26,7 @@ import { About } from "./about.jsx";
 import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
+import { Limits } from "./limits.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -299,8 +300,10 @@ export function App({ source }) {
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
   const setStoreData = useCallback((given, saved) => {
-    // the records in memory carry the version tag writeStore gives them (a 가진 종목 portfolio makes them version 2). Kept
-    // at the old tag (1), every later change in the same visit failed the check below and was refused.
+    // #87 (hotfix of #83): the records in memory carry the version tag writeStore gives them (a portfolio made with 가진
+    // 종목 넣기 makes them version 2). Before, they kept the tag they had (1), so every later change in the same visit (a 메모,
+    // an answer, 빼기, 내 규칙) failed the check below and was refused. A store already tagged is kept as it is (the same
+    // object: a records file taken in keeps its mergeStores mark).
     const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
     setStore((s) => {
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
@@ -416,6 +419,11 @@ export function App({ source }) {
     if (onWelcome && load.status === "fail") setGuide(null);
   }, [onWelcome, load.status]);
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
+  // v19.3d2: 내 규칙 정하기 of a 가진 종목 portfolio that exists (else 포트폴리오, where the portfolio would be)
+  const rulesDeck = tab === "portfolio" && loc.rules ? store.data.decks.find((d) => d.id === loc.rules && d.kind === "imported") || null : null;
+  // entering 내 규칙 정하기: a refusal left from another screen does not show there (only a refused 저장 of this screen)
+  const rulesId = rulesDeck ? rulesDeck.id : null;
+  useEffect(() => { if (rulesId) setStore((s) => (s.refused ? { ...s, refused: false } : s)); }, [rulesId]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     if (inBuild) {
@@ -427,7 +435,11 @@ export function App({ source }) {
         onSaved={importSaved} />;
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
-    if (tab === "portfolio") return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport} />;
+    if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (tab === "portfolio") {
+      return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
+        onRules={(id) => router.go("portfolio", "rules/" + id)} />;
+    }
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;
     }

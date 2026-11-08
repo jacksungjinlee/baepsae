@@ -142,6 +142,11 @@ out = {
   importButPinned: O({ onImport: true, importer: im0, builder: pinned(bSteps) }, lost),
   // the other draft left behind keeps everything: the line shows
   buildImpSame: O({ onBuild: true, builder: bPlan, importer: im2 }, same),
+  // v19.3d2 (#94): a row added by name (no code) is never lost by new data, so it never keeps the line away
+  named: O({ onImport: true, importer: { step: 0, drafts: [{ key: 'n1', t: null, name: '비상장 회사', mode: 'amount', amount: '100' }, { t: '005930' }] } }, lost),
+  namedOnly: O({ onImport: true, importer: { step: 2, drafts: [{ key: 'n1', t: null, name: '비상장 회사', mode: 'amount', amount: '100' }] } }, lost),
+  namedLost: O({ onImport: true, importer: { step: 0, drafts: [{ key: 'n1', t: null, name: '비상장 회사', mode: 'amount', amount: '100' }, { t: krPick }] } }, lost),
+  namedPlan: O({ onBuild: true, builder: bPlan, importer: { step: 0, drafts: [{ key: 'n1', t: null, name: '비상장 회사', mode: 'amount', amount: '100' }] } }, same),
   // the held publish is stale itself by now: not new data, no line (it is fresh at NOW, stale weeks later)
   staleHeld: O({ onBuild: true, builder: bPick }, same, at('2026-11-30T10:00:00+09:00')),
   staleNow: LD.staleNow(same, at('2026-11-30T10:00:00+09:00')), freshNow: LD.staleNow(same, at(NOW)),
@@ -153,6 +158,7 @@ out = {
               "noNext", "failNext", "noCtx", "buildButImport", "importButBuild", "importButPinned", "staleHeld", "staleImport"):
         assert got[k] is None, (k, got)
     assert got["buildImpSame"] == "build", got
+    assert got["named"] == "import" and got["namedOnly"] == "import" and got["namedLost"] is None and got["namedPlan"] == "build", got
     assert got["staleNow"] is True and got["freshNow"] is False, got
 
 

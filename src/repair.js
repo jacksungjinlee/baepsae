@@ -7,7 +7,7 @@
 //    977 while owners' net income was a loss). ROE, 지금 가격이 가정하는 것 (reverse DCF), 배당성향 and the old app's
 //    주가 분해 use the same net income. A full DART re-read fixes it. Until corp.json says the re-read is live
 //    (top-level epsBasis === "owners"), every Korean screen section that shows one of these numbers carries the line
-//    "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요." with {date} = EPS_FIX_DATE as month-day ("11월 9일").
+//    "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요." with {date} = EPS_FIX_DATE as month-day ("11월 10일").
 //    After the re-read the line goes per company (epsFixNeeded: only companies whose epsIn.b is "o" or "s" lose it).
 //    US stocks never get it (their figures come from SEC / Yahoo, not DART).
 // 2. 이자보상배율: switched off in the pipeline for every company until the same re-read (fetch_data.py ICR_OFF, corp.json
@@ -16,7 +16,7 @@
 //    and the line goes by itself.
 
 // The date the re-read is planned to go live. THE ONE PLACE TO CHANGE IT (both apps read this constant).
-export const EPS_FIX_DATE = "2026-11-09";
+export const EPS_FIX_DATE = "2026-11-10";
 // corp.json's top-level marker the re-read writes (the pipeline builder uses the same name).
 export const EPS_BASIS_OWNERS = "owners";
 

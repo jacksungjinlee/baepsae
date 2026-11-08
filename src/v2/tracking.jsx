@@ -122,7 +122,7 @@ export function WeightLine({ x }) {
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
         <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text3, { width: SPACE(8) })}>{C.daily.weight}</span>
         <div style={{ flex: 1, minWidth: 0 }}><BandBar w={x.w} target={x.target} bands={b ? b.bands : null} out={out} /></div>
-        <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { width: SPACE(12), textAlign: "right" })}>{`${p1(x.w * 100)}%`}</span>
+        <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { minWidth: SPACE(12), textAlign: "right", whiteSpace: "nowrap" })}>{`${p1(x.w * 100)}%`}</span>
       </div>
       {edges.length > 0 && (
         <div data-ui-v2="weight-edges" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>

@@ -33,8 +33,9 @@ export function picksSurvive(builder, next) {
   });
 }
 
-// Would the 가진 종목 넣기 draft keep every holding on the new data?
-export const draftsSurvive = (importer, next) => (importer.drafts || []).every((d) => !!next.byT.get(d.t));
+// Would the 가진 종목 넣기 draft keep every holding on the new data? A row added by name with an amount (v19.3d2,
+// "+ 종목 더하기": no code) does not come from the data, so new data never loses it.
+export const draftsSurvive = (importer, next) => (importer.drafts || []).every((d) => d.t == null || !!next.byT.get(d.t));
 // Would every 꼭 담을 종목 of the 포트폴리오 만들기 draft still be in the new data?
 export const pinnedSurvive = (builder, next) => ((builder.settings && builder.settings.pinned) || []).every((t) => !!next.byT.get(t));
 
