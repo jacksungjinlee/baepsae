@@ -102,6 +102,7 @@ def main():
         browser = p.chromium.launch(executable_path=chromium_path())
         for width in (320, 390):
             ctx = browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR")
+            ctx.add_init_script("try { localStorage.setItem('baepsae2.preview.v1.guideSeen', '1'); } catch (e) {}")   # v19.3c: 처음 안내를 이미 본 방문자 (Jack, 2026-11-08)
 
             def route(r):
                 u = r.request.url
@@ -363,6 +364,7 @@ def main():
         # from this function, so they are set to the PC page here.
         width = 1280
         ctx = browser.new_context(viewport={"width": width, "height": 800}, device_scale_factor=1, locale="ko-KR")
+        ctx.add_init_script("try { localStorage.setItem('baepsae2.preview.v1.guideSeen', '1'); } catch (e) {}")       # v19.3c: 처음 안내를 이미 본 방문자
         ctx.route("**/*", route)
         page = ctx.new_page()
         page.set_default_timeout(WAIT)
