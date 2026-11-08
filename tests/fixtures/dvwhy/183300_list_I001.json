@@ -1,0 +1,197 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 17,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정              ",
+"rcept_no": "20261102900864",
+"flr_nm": "코미코",
+"rcept_dt": "20261102",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정              ",
+"rcept_no": "20261028900488",
+"flr_nm": "코미코",
+"rcept_dt": "20261028",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정              ",
+"rcept_no": "20261028900475",
+"flr_nm": "코미코",
+"rcept_dt": "20261028",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정              ",
+"rcept_no": "20261028900469",
+"flr_nm": "코미코",
+"rcept_dt": "20261028",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "유형자산취득결정(종속회사의주요경영사항)              ",
+"rcept_no": "20261019900362",
+"flr_nm": "코미코",
+"rcept_dt": "20261019",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]주식분할결정              ",
+"rcept_no": "20260716900397",
+"flr_nm": "코미코",
+"rcept_dt": "20260716",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정              ",
+"rcept_no": "20260518900971",
+"flr_nm": "코미코",
+"rcept_dt": "20260518",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정              ",
+"rcept_no": "20260518900969",
+"flr_nm": "코미코",
+"rcept_dt": "20260518",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타법인주식및출자증권취득결정              ",
+"rcept_no": "20260512900582",
+"flr_nm": "코미코",
+"rcept_dt": "20260512",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정              ",
+"rcept_no": "20260427901065",
+"flr_nm": "코미코",
+"rcept_dt": "20260427",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정              ",
+"rcept_no": "20260427901061",
+"flr_nm": "코미코",
+"rcept_dt": "20260427",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정              ",
+"rcept_no": "20251029900410",
+"flr_nm": "코미코",
+"rcept_dt": "20251029",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정              ",
+"rcept_no": "20251029900396",
+"flr_nm": "코미코",
+"rcept_dt": "20251029",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타법인주식및출자증권취득결정              ",
+"rcept_no": "20250818900433",
+"flr_nm": "코미코",
+"rcept_dt": "20250818",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "타인에대한채무보증결정              ",
+"rcept_no": "20250221900368",
+"flr_nm": "코미코",
+"rcept_dt": "20250221",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "회사합병결정(종속회사의주요경영사항)              ",
+"rcept_no": "20240424900324",
+"flr_nm": "코미코",
+"rcept_dt": "20240424",
+"rm": "코"
+},
+{
+"corp_code": "00997812",
+"corp_name": "코미코",
+"stock_code": "183300",
+"corp_cls": "K",
+"report_nm": "[기재정정]타인에대한채무보증결정",
+"rcept_no": "20230731900258",
+"flr_nm": "코미코",
+"rcept_dt": "20230731",
+"rm": "코"
+}
+]
+}

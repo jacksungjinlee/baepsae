@@ -1,0 +1,65 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 5,
+"total_page": 1,
+"list": [
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주식소각결정              ",
+"rcept_no": "20260909900188",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20260909",
+"rm": "코"
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "기업가치제고계획(자율공시)              ",
+"rcept_no": "20260327900303",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20260327",
+"rm": "코"
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "정기주주총회결과              ",
+"rcept_no": "20260326900294",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20260326",
+"rm": "코"
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주식병합결정              ",
+"rcept_no": "20260310900582",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20260310",
+"rm": "코"
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "유형자산취득결정(종속회사의주요경영사항)              ",
+"rcept_no": "20250804900132",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20250804",
+"rm": "코"
+}
+]
+}

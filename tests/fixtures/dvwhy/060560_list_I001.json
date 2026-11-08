@@ -1,0 +1,120 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 10,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "기업설명회(IR)개최              ",
+"rcept_no": "20261102900515",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20261102",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "기업설명회(IR)개최              ",
+"rcept_no": "20260612900494",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20260612",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "정기주주총회결과              ",
+"rcept_no": "20260331901581",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20260331",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "주식병합결정              ",
+"rcept_no": "20260316900559",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20260316",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(전환사채권발행결정)(자회사의 주요경영사항)              (제5회차)",
+"rcept_no": "20260213902049",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20260213",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "주식소각결정              ",
+"rcept_no": "20251002900225",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20251002",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(전환사채권발행결정)(자회사의 주요경영사항)              (제4회차)",
+"rcept_no": "20240223900773",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20240223",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(유형자산양수결정)(자회사의 주요경영사항)",
+"rcept_no": "20230911900240",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20230911",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "중간(분기)배당을위한주주명부폐쇄(기준일)결정(자회사의 주요경영사항)",
+"rcept_no": "20230908900334",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20230908",
+"rm": "코"
+},
+{
+"corp_code": "00288495",
+"corp_name": "HC홈센타",
+"stock_code": "060560",
+"corp_cls": "K",
+"report_nm": "중간(분기)배당을위한주주명부폐쇄(기준일)결정",
+"rcept_no": "20230908900245",
+"flr_nm": "HC홈센타",
+"rcept_dt": "20230908",
+"rm": "코"
+}
+]
+}
