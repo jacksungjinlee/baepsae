@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C, FONT, SERIF, RAD, HAIR, NAV, navPush, navInstall } from "./tokens.js";
 import { Ic, Seal } from "./icons.jsx";
-import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
+import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, loadCorpOnce, krGrowthScoreLine, loadDataPublishFor, corpStaleArgs } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
 import SimpleApp from "./simple.jsx";
@@ -300,8 +300,7 @@ function ModeGate({ onPick, hasSimpleSave, onOpenCorp, onQuickDiag, lang }) {
         </button>
       </div>
       <div style={{ textAlign: "center", marginTop: 34, fontSize: 11, color: C.faint, lineHeight: 1.8 }}>
-        {en ? "An educational tool — not investment advice. All decisions and responsibility are your own." : "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다."}
-        {" · "}<AboutLink lang={lang} />
+        <SiteFooterLine lang={lang} />
       </div>
     </div>
   );

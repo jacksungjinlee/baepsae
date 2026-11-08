@@ -125,7 +125,7 @@ export function renderPortfolioCard({ score, buckets, top, dateStr, note, noteAl
   g.fillStyle = C.apricot; g.font = "700 34px " + SERIF_CV;
   g.fillText("철새처럼 옮겨 다니지 않는 투자", 100, H - 150);
   g.fillStyle = "#fff"; g.globalAlpha = 0.55; g.font = "500 22px " + FONT_CV;
-  g.fillText("jacksungjinlee.github.io/baepsae · 교육용 도구 · 투자 자문 아님", 100, H - 104);
+  g.fillText("jacksungjinlee.github.io/baepsae · 투자 자문 아님", 100, H - 104);   // Jack, 2026-11-08: 앞의 '도구' 이름표를 빼고 고지만 남겨요
   g.fillText("뱁새", 100, H - 68);
   g.globalAlpha = 1;
 
