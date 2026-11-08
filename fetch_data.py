@@ -1684,9 +1684,23 @@ def no_nci(rows, value, eq=None, eqo=None):
 
 # v19.1f (리뷰 2026-11-08): 원화가 아닌 재무제표. DART 줄마다 currency 가 있어요 — 두산밥캣(241560)은 USD 로 내서 매출 61.8억 · EPS 4원 ·
 # PER 14,575.8 로 보였어요. 원화가 아니면 금액을 해외 기업(blank_foreign_dart)처럼 비워요 (비율 roe · opm · debt · g3 와 재무 신호는 남겨요).
+_CUR_NAMES = {"원": "KRW", "WON": "KRW", "₩": "KRW", "KRW": "KRW", "달러": "USD", "미국달러": "USD", "US$": "USD", "$": "USD",
+              "엔": "JPY", "엔화": "JPY", "위안": "CNY", "위안화": "CNY", "유로": "EUR", "€": "EUR"}
+
+
+def norm_currency(x):
+    """DART currency 칸 → ISO 4217 세 글자 대문자 (원화는 'KRW'), 빈 칸이면 None. 알 수 없는 글자면 'XXX' (ISO 의 '통화 없음' — 원화로
+    믿지 않고 금액을 비워요 · 리뷰 3: 관문이 철자 때문에 실패하지 않게). (순수 함수)"""
+    t = re.sub(r"\s+", "", str(x or "")).upper()
+    if not t:
+        return None
+    t = _CUR_NAMES.get(t, t)
+    return t if re.fullmatch(r"[A-Z]{3}", t) else "XXX"
+
+
 def stmt_currency(rows):
-    """재무제표의 통화가 원화가 아니면 그 통화 코드 (예: 'USD'), 원화거나 적혀 있지 않으면 None. (순수 함수)"""
-    curs = {(r.get("currency") or "").strip().upper() for r in rows or []} - {""}
+    """재무제표의 통화가 원화가 아니면 그 통화 코드 (ISO 세 글자 · 예: 'USD'), 원화거나 적혀 있지 않으면 None. (순수 함수)"""
+    curs = {norm_currency(r.get("currency")) for r in rows or []} - {None}
     other = sorted(curs - {"KRW"})
     return other[0] if other else None
 
@@ -1709,21 +1723,42 @@ def _owners_part(parts):
     return len(parts) >= 2 and "지배" in parts[1] and "비지배" not in parts[1]
 
 
+_SCE_COLS = ("thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount")
+
+
 def hybrid_info(rows):
-    """신종자본증권 → None (없음) 또는 {"ok": 주주 몫인지 알 수 있음, "eq": 재무상태표 신종자본증권(원), "dist": 그 기간 주주 몫 분배(원)}.
-    (순수 함수)"""
+    """신종자본증권 → None (없음) 또는 {"ok": 주주 몫인지 알 수 있음, "eq": 재무상태표 신종자본증권(원), "dist": 그 기간 주주 몫 분배(원),
+    "dist3": [당기, 전기, 전전기] 주주 몫 분배 (원 · 자본변동표에 그 해 칸이 아예 없으면 None — 모름)}. (순수 함수)
+    v19.1f (리뷰 3): 자본변동표에 지배·비지배로 나눈 칸이 없고 재무상태표에 비지배지분도 없으면 (별도 재무제표 · 비지배지분이 없는
+    연결) 자본 전체가 주주 몫이에요 — 분배는 맨 위(마디가 가장 적은) 칸, 신종자본증권도 주주 몫으로 봐요 (자본변동표가 아예 없으면
+    분배를 몰라서 ok 가 아니에요)."""
     eqh = next((_num(r.get("thstrm_amount")) for r in rows if (r.get("sj_div") or "").strip() == "BS"
                 and (r.get("account_id") or "").strip() == HYB_EQ_ID), None)
     sce = [r for r in rows if (r.get("sj_div") or "").strip() == "SCE"]
-    dist_rows = [r for r in sce if (r.get("account_id") or "").strip() in HYB_DIST_IDS and len(_detail(r)) == 2
-                 and _owners_part(_detail(r))]
+    split = any(len(_detail(r)) >= 2 and "지배" in _detail(r)[1] for r in sce)
+    hyb_ids = [r for r in sce if (r.get("account_id") or "").strip() in HYB_DIST_IDS]
+    if split:
+        dist_rows = [r for r in hyb_ids if len(_detail(r)) == 2 and _owners_part(_detail(r))]
+        marker = any(_owners_part(_detail(r)) and len(_detail(r)) >= 3 and "신종자본" in _detail(r)[-1] for r in sce)
+    else:
+        bs_nci = nci_lines(rows, lambda r: _num(r.get("thstrm_amount")))[0]
+        whole = all(x in (None, 0) for x in bs_nci) and not any("비지배" in seg for r in sce for seg in _detail(r))
+        top = min((len(_detail(r)) for r in hyb_ids), default=0)
+        dist_rows = [r for r in hyb_ids if len(_detail(r)) == top] if whole else []
+        marker = whole and bool(eqh) and bool(sce)      # 자본변동표가 없으면 분배를 몰라요 → 어디 몫인지 모름과 같게 (추측 안 함)
     if not dist_rows and not eqh:
         return None
-    marker = any(_owners_part(_detail(r)) and len(_detail(r)) >= 3 and "신종자본" in _detail(r)[-1] for r in sce)
+    shown = [any(_num(r.get(col)) is not None for r in sce) for col in _SCE_COLS]   # 자본변동표에 그 해 칸이 있는지
     by_id = {}
     for r in dist_rows:
-        by_id.setdefault((r.get("account_id") or "").strip(), abs(_num(r.get("thstrm_amount")) or 0.0))
-    return {"ok": bool(marker or dist_rows), "eq": eqh or 0.0, "dist": sum(by_id.values())}
+        by_id.setdefault((r.get("account_id") or "").strip(), r)
+    dist3 = []
+    for i, col in enumerate(_SCE_COLS):
+        if i and not shown[i]:
+            dist3.append(None)
+        else:
+            dist3.append(sum(abs(_num(r.get(col)) or 0.0) for r in by_id.values()))
+    return {"ok": bool(marker or dist_rows), "eq": eqh or 0.0, "dist": dist3[0], "dist3": dist3}
 
 
 def reported_eps(rows):
@@ -1783,7 +1818,7 @@ def _interest_paid_parts(rows):
     def received(n):
         return any(w in n for w in ("수취", "수입", "수령", "수익", "받은"))
     # v19.1f (리뷰 2026-11-08): ifrs-full_FinanceCostsPaidClassifiedAs… 도 이름이 '이자(의) 지급…'이면 이자 지급 (LG에너지솔루션
-    # '이자의 지급' 4,009억이 이 코드라 이자 줄 없음(flWhy ie)으로 보였어요). 이름이 이자 지급이 아니면 (금융원가 전체) 안 써요
+    # 2025 '이자의 지급' 8,731.5억이 이 코드라 이자 줄 없음(flWhy ie)으로 보였어요). 이름이 이자 지급이 아니면 (금융원가 전체) 안 써요
     by_id = [r for r in cf if ((r.get("account_id") or "").strip().startswith("ifrs-full_InterestPaid")
                                or ((r.get("account_id") or "").strip().startswith("ifrs-full_FinanceCostsPaid")
                                    and _INTEREST_PAID_NAME.search(acct_name(r.get("account_nm")))))
@@ -1922,7 +1957,7 @@ def parse_dart_list(rows):
         fin["cur"] = cur                          # v19.1f (리뷰): 원화가 아닌 재무제표 — 금액을 비워요 (not_won)
     hyb = hybrid_info(rows)
     if hyb:                                       # v19.1f (리뷰): 신종자본증권 — 주주 몫 분배 · 자본 (EPS · BPS · ROE 에서 빼요)
-        fin["hyb"] = {"ok": hyb["ok"], "eq": ek(hyb["eq"]), "dist": ek(hyb["dist"])}
+        fin["hyb"] = {"ok": hyb["ok"], "eq": ek(hyb["eq"]), "dist": ek(hyb["dist"]), "dist3": [ek(x) for x in hyb["dist3"]]}
     rep = reported_eps(rows)
     if rep is not None:
         fin["epsRep"] = rep                       # v19.1f (리뷰): 재무제표의 기본주당이익 (원) — 관문 경고용
@@ -3286,6 +3321,10 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
                 row.pop(k, None)
             if stmt_cur_of(fin):
                 row["stmtCur"] = stmt_cur_of(fin)
+                # v19.1f (리뷰 3): 다른 통화의 재무 신호는 0.1억으로 반올림한 값이라 믿을 수 없어요 (아남전자 이자 지급 1,068,247 달러 →
+                # 0.0 · 순이익 414만 달러 → 0.0). 신호를 계산하지 않은 것으로 둬요 — 앱은 아무 말도 하지 않아요
+                for k in ("fl", "flRan", "flSrc", "flWhy"):
+                    row.pop(k, None)
         comps.append(row)
 
     sectors = {}
@@ -3844,19 +3883,26 @@ def eps_source(fin):
 
 
 def _owners_eq(src, ofs):
-    """재무상태표 하나(src: bs2 또는 사업보고서)의 주주 몫 자본 → (억원, 기준, how) 또는 None. (순수 함수)"""
+    """재무상태표 하나(src: bs2 또는 사업보고서)의 주주 몫 자본 → (억원, 기준, how) 또는 None. (순수 함수)
+    연결: 지배주주 자본 줄(code) → 그 줄이 없고 비지배지분 줄이 있으면 자본총계 − 비지배지분 (minus · 리뷰 3: DH오토넥스 ·
+    삼기에너지솔루션즈) → 비지배지분 줄이 없거나 0 이면 자본총계 (nci0)."""
     if not ofs:
         if _fin(src.get("eqo")) is not None:
             return src["eqo"], "o", "code"
-        if "nciBs" in src and _fin(src.get("nciBs")) in (None, 0.0) and _fin(src.get("eq")) is not None:
-            return src["eq"], "o", "nci0"
+        if "nciBs" in src and _fin(src.get("eq")) is not None:
+            nci = _fin(src.get("nciBs"))
+            if nci in (None, 0.0):
+                return src["eq"], "o", "nci0"
+            return round(src["eq"] - nci, 1), "o", "minus"
         return None
     return (src["eq"], "s", "ofs") if _fin(src.get("eq")) is not None else None
 
 
 def bps_source(fin):
-    """BPS 에 쓸 자본 → (억원, 기준 o·s·t, how, 시점 p, 뺀 신종자본증권 억원) 또는 None: 최신 분기 지배주주 자본 → 연간 지배주주 자본
-    (how code) → 비지배지분이 없는 연결의 자본총계 (재무상태표에 비지배지분 줄이 없거나 0 · how nci0) → 전체 자본 (s: ofs · t: total).
+    """BPS 에 쓸 자본 → (억원, 기준 o·s·t, how, 시점 p, 뺀 신종자본증권 억원) 또는 None. 순서는 재무상태표마다예요 — 최신 분기(bs2)
+    먼저, 없으면 사업보고서 — 그 재무상태표로 주주 몫 자본을 정확히 알 수 있으면 그 값 (_owners_eq: 지배주주 자본 줄 code → 자본총계 −
+    비지배지분 minus → 비지배지분이 없는 연결의 자본총계 nci0). 셋 다 정확한 값이라 시점을 먼저 지켜요 (리뷰 3: 최신 분기로 정확히 알 수
+    있는데 사업보고서 값을 쓰면 PBR 이 낡아요). 어느 재무상태표로도 안 되면 전체 자본 (s: ofs · t: total).
     p: "ttm" = 최신 분기(bq) 재무상태표(bs2)의 자본 · "fy" = 사업보고서의 자본 (리뷰 2026-11-08: 앱의 'PBR 은 그 분기 자본 기준' 줄이
     사업보고서 자본일 때 틀리지 않게). v19.1f (리뷰): o · s 는 그 재무상태표의 주주 몫 신종자본증권을 빼요 (보통주 자본) · 어디 몫인지
     모르면 빼지 않고 t (how hybrid). (순수 함수)"""
@@ -3880,6 +3926,22 @@ def bps_source(fin):
 def annual_only(fin):
     """사업보고서 값만 남긴 재무 dict (TTM ttm · 최신 분기 재무상태표 bs2 를 뺌). (순수 함수)"""
     return {k: v for k, v in (fin or {}).items() if k not in ("ttm", "bs2")}
+
+
+def hybrid_net_series(fin, b):
+    """v19.1f (리뷰 3): 신종자본증권 분배를 뺀 3년 주주 몫 순이익 [fy, fy−1, fy−2] (억원) — 그 해 분배를 모르면(자본변동표에 그 해 칸이
+    없음) None ('자료가 없어요'). EPS 기준 b 가 o 면 nio3, s(별도)면 ni 에서 빼요. 사업보고서에 주주 몫 신종자본증권이 없거나 (hyb 없음 ·
+    어디 몫인지 모름) 세 해 모두 분배가 0 이면 None (그대로 둬요). (순수 함수)"""
+    h = fin.get("hyb") or {}
+    d3 = h.get("dist3")
+    if b not in ("o", "s") or not h.get("ok", True) or not isinstance(d3, list) or len(d3) != 3:
+        return None
+    if all(x == 0 for x in d3):
+        return None
+    base = fin.get("nio3") if b == "o" else fin.get("ni")
+    if not isinstance(base, list) or len(base) != 3:
+        return None
+    return [round(v - d, 1) if (_fin(v) is not None and _fin(d) is not None) else None for v, d in zip(base, d3)]
 
 
 def roe_source(fin):
@@ -3953,7 +4015,7 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
     n = 0
     extra = {}
     cnt = collections.Counter()
-    tot_b, fy_q, bps_fy_q, hyb_cut, hyb_t, roe_n, roe_gap = [], [], [], [], [], collections.Counter(), []
+    tot_b, fy_q, bps_fy_q, hyb_cut, hyb_t, roe_n, roe_gap, hyb_net = [], [], [], [], [], collections.Counter(), [], []
     top = {s["t"] for s in sorted((x for x in kr_stocks if x.get("cls") == "kr"), key=lambda x: -(_fin(x.get("cap")) or 0))[:200]}
     for s in kr_stocks:
         fin = fin_map.get(s["t"])
@@ -3991,6 +4053,10 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
                 extra[s["t"]]["epsFy"] = round(fy[0] * 1e8 / sh, 0)
             if _fin(fin.get("epsRep")) is not None:
                 extra[s["t"]]["epsRep"] = fin["epsRep"]
+            net = hybrid_net_series(fin, b)
+            if net is not None:             # v19.1f (리뷰 3): 역DCF · 주가 분해가 EPS 와 같은 순이익을 쓰게 (src/repair.js epsBase)
+                extra[s["t"]]["nio3"], extra[s["t"]]["nio3Hyb"] = net, fin["hyb"]["dist3"]
+                hyb_net.append(nm)
             for h in how.split("+"):
                 cnt[f"how:{h}"] += 1
             if b == "t" and s["t"] in top:
@@ -4029,7 +4095,8 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
         + (f": {', '.join(roe_gap[:20])}{'…' if len(roe_gap) > 20 else ''}" if roe_gap else ""))
     log(f"{'  !! ' if hyb_t else '· '}신종자본증권: 주주 몫 분배를 EPS 에서 뺀 곳 {len(hyb_cut)}"
         + (f" ({', '.join(hyb_cut[:12])}{'…' if len(hyb_cut) > 12 else ''})" if hyb_cut else "")
-        + f" · 어디 몫인지 알 수 없어 '전체'(t)로 둔 곳 {len(hyb_t)}" + (f": {', '.join(hyb_t[:12])}" if hyb_t else ""))
+        + f" · 어디 몫인지 알 수 없어 '전체'(t)로 둔 곳 {len(hyb_t)}" + (f": {', '.join(hyb_t[:12])}" if hyb_t else "")
+        + f" · corp.json nio3 를 분배를 뺀 값으로 쓴 곳 {len(hyb_net)} (nio3Hyb · 별도 재무제표(s)면 ni 대신 이 nio3 가 EPS 기준)")
     # v19.1f (리뷰 2026-11-08): BPS 도 같은 숫자 — 분기(bq) 표시인데 자본은 사업보고서 것인 곳 (bpsIn.p fy · 앱은 그 기간으로 적어요)
     log(f"{'  !! ' if bps_fy_q else '· '}TTM(bq) 이 있는데 BPS 는 사업보고서 자본인 곳 {len(bps_fy_q)} (최신 분기 재무상태표에 쓸 자본이 없음 · "
         f"bpsIn.p fy)" + (f": {', '.join(bps_fy_q[:20])}{'…' if len(bps_fy_q) > 20 else ''}" if bps_fy_q else ""))

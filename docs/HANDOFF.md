@@ -102,8 +102,8 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   사업보고서 (`roe_source`, receipt `roeIn {ni, eq, b, p:"fy"}`; always annual because the app labels ROE with the report
   year and 2.0's ROE-floor rule compares by `fy`; consolidated companies without owners' lines keep the old total ÷ total
   and are named in the log and a WARN row). Statements filed in another currency (DART row `currency`, e.g. 두산밥캣 USD)
-  are blanked like foreign issuers (`blank_non_won`, build_corp) and marked corp.json `stmtCur` (ISO code; the app's line
-  reads it); dividends stay (the dividend table is in 원). 신종자본증권: owners' distributions in the 자본변동표
+  are blanked like foreign issuers (`blank_non_won`, build_corp) and marked corp.json `stmtCur` (ISO code; the companion app
+  PR claude/reread-lines reads it); dividends stay (the dividend table is in 원). 신종자본증권: owners' distributions in the 자본변동표
   (`dart_DividendToHybridBond` / `dart_InterestExpenseForHybridBond` at the owners' level) come off EPS/ROE profit and the
   `dart_HybridBonds` balance off BPS/ROE equity (KB금융 2025: 58,331.6 − 2,023.9 → 15,410원 = the filed basic EPS); when the
   statements don't say whose hybrid it is, EPS/BPS stay on the total basis (`how: "hybrid"`), never guessed. Receipts
@@ -112,13 +112,24 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   owners' profit (GMI벤처, 라이온켐텍; '비지배지분부채' is a liability, not NCI). 이자보상배율 warns only when interest was
   actually paid (이자비용 or 이자 지급액 > 0); zero interest → no warning, `flSrc.int0 = true`. A cache holding only
   carried industry codes is an empty cache (`dart_core_entries`; the workflow guard calls `dart_cache_core`), and the
-  v2 file is deleted only after the financial fetch finished without a DART stop (`fetch_done`). Jack approved a 98%
-  top-200 coverage block (`INC_TOP_FLOOR_APPROVED`; latest filed 사업보고서, financial companies left out of 매출) on
-  condition of an April back-test; the repository has no April data (first corp.json 2026-08-15), so `INC_TOP_FLOOR`
-  stays None (WARN only) until Jack decides. 아남전자 also files in USD (2025 revenue 151M dollars). New gate rows (add-only):
+  v2 file is deleted only after the financial fetch finished without a DART stop (`fetch_done`). Top-200 coverage block:
+  98% approved by Jack 2026-11-08 on condition of an April back-test; no April data exists (first corp.json
+  2026-08-15); off (WARN only) until Jack decides (`INC_TOP_FLOOR` None, `INC_TOP_FLOOR_APPROVED` 98; latest filed
+  사업보고서, financial companies left out of 매출). 아남전자 also files in USD (2025 revenue 151M dollars). New gate rows (add-only):
   owners' share recounted from corp.json (≥ 95), data.json = corp.json for EPS·BPS·PER·PBR·ROE, PER/PBR = price ÷
-  receipts, epsIn.sh = bpsIn.sh, stmtCur amounts blank (in the receipt-shape row), ROE receipts; WARN rows for PER >
-  2,000 or PBR > 100, annual EPS vs the statement's basic EPS (sign, or outside 0.67–1.5×), EPS owners but ROE old.
+  receipts, epsIn.sh = bpsIn.sh, stmtCur amounts blank (in the receipt-shape row), ROE receipts; WARN rows for PBR >
+  100 (PER > 2,000 dropped: tiny-profit companies fired daily), annual EPS vs the statement's basic EPS (sign, or
+  outside 0.67–1.5×), EPS owners but ROE old.
+- v19.1f review 3 (delta review of 67750e2): corp.json `nio3` for hybrid companies is the owners' profit after
+  신종자본증권 payouts (`hybrid_net_series`, receipt `nio3Hyb` = [당기, 전기, 전전기] payouts from the 자본변동표; a year whose
+  자본변동표 column is absent is null → 자료가 없어요), so src/repair.js epsBase is on the EPS basis for "o"; for "s"
+  (separate statements with hybrid) the same net series is written to `nio3`, and the app must read it instead of `ni`
+  (or show {bad:true}) — companion app PR. Separate statements (or consolidated without NCI and without an owners
+  split in the 자본변동표) treat the hybrid as owners' and take the payout from the top 자본변동표 column. Owners' equity
+  = equity − NCI when the owners' line is missing (`_owners_eq` how `minus`). BPS takes the latest balance sheet that
+  gives owners' equity exactly (code → minus → nci0 per balance sheet; the quarter first). Currency codes are
+  normalised (`norm_currency`: 원/KRW → none, names → ISO, unknown → "XXX"); `stmtCur` companies carry no `fl`,
+  `flRan`, `flSrc`, `flWhy` (gate-checked). Interest-paid `int0`: corp.json `flSrc.int0 = true`.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the

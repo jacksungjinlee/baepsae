@@ -239,7 +239,7 @@ def test_eps_source_order():
     assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o", "code", "fy", 0.0)
     assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s", "ofs", "fy", 0.0)
     assert F.bps_source({"eq": 9.0, "nciBs": None, "fs": "CFS"}) == (9.0, "o", "nci0", "fy", 0.0)    # 비지배지분 줄 없음
-    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (9.0, "t", "total", "fy", 0.0)     # 비지배지분이 있으면 아니에요
+    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (8.5, "o", "minus", "fy", 0.0)     # 비지배지분이 있으면 자본총계 − 비지배지분 (리뷰 3)
     assert F.bps_source({"eq": 9.0, "fs": "CFS"}) == (9.0, "t", "total", "fy", 0.0)                   # 증거가 없으면(예전 캐시) 아니에요
 
 
@@ -431,10 +431,10 @@ def test_coverage_is_a_warning_now_and_fails_below_the_floor_once_set(pair, monk
     for c in top:
         c["op"] = [None, 1.0, 1.0]
     name = "국내 손익 줄 채움 — 시총 상위 200 (매출은 금융회사 빼고)"
-    assert V.INC_TOP_FLOOR_APPROVED == 98.0                                # Jack 2026-11-08 (4월 확인을 기다려요 — 아직 꺼 둠)
+    assert V.INC_TOP_FLOOR_APPROVED == 98.0     # 98% approved by Jack 2026-11-08 on condition of an April back-test; no April data exists; off (WARN only) until Jack decides
     monkeypatch.setattr(V, "INC_TOP_FLOOR", None)                          # 꺼져 있는 동안: 경고만
     row = rows_of(check(cur, prev))[name]
-    assert row[3] == "WARN" and "영업이익 90.0% (180/200)" in row[1] and "4월 확인을 기다려요" in row[2]
+    assert row[3] == "WARN" and "영업이익 90.0% (180/200)" in row[1] and "Jack 이 정할 때까지 꺼 둠" in row[2]
     monkeypatch.setattr(V, "INC_TOP_FLOOR", V.INC_TOP_FLOOR_APPROVED)      # 켜면
     assert "영업이익 90.0% (180/200)" in fails(cur, prev, name)[1]          # 98% 미만 → 발행을 막아요
     for c in top[:17]:

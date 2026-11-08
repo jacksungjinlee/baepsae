@@ -160,8 +160,8 @@ CORP_NEW_MUST_AMT = ("cash3", "eps3r")
 # 있으면(v19.1f 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1f 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데
 # 빠졌으면 실패. 2026-11-08 발행본(재읽기 전): 시총 상위 200 매출 88.4% · 영업이익 93.0% · 순이익 90.5%, 한화에어로스페이스 매출 없음.
 INC_TOP_N = 200            # 손익 줄 채움을 보는 시가총액 상위 국내 회사 수 (보통주 · 해외 기업과 펀드 빼고 · 사업보고서 연도 fy 있는 곳)
-# 손익 줄 채움 실패 기준 (%). Jack 2026-11-08: 98% approved on condition of an April back-test; no April data exists — waiting
-# for Jack. (98% 는 4월 데이터로 막지 않았는지 확인하는 조건으로 승인했는데, 저장소에 4월 데이터가 없어요 — 켜기 전에 Jack 을 기다려요.)
+# 손익 줄 채움 실패 기준 (%): 98% approved by Jack 2026-11-08 on condition of an April back-test; no April data exists; off (WARN only) until Jack decides.
+# (98% 는 4월 데이터로 막지 않았는지 확인하는 조건으로 승인했는데, 저장소에 4월 데이터가 없어요 — Jack 이 정할 때까지 꺼 둠 · 경고만.)
 # 켜면 시총 상위 200 의 매출·영업이익·순이익 중 하나라도 INC_TOP_FLOOR 미만일 때 발행을 막아요 (지금은 100% 가 아니면 경고만 · 빠진 회사
 # 이름과 함께). 켜는 건 INC_TOP_FLOOR = INC_TOP_FLOOR_APPROVED 한 줄이에요. 2026-11-08 재읽기 시험 실행: 매출 100.0% · 영업이익 100.0% ·
 # 순이익 99.5%.
@@ -178,7 +178,8 @@ CORP_FIN_SECS = ("bank", "insure", "broker")   # 업종 그룹(ind)이 없을 �
 # v19.1f (리뷰 2026-11-08 · 새 줄만, 늦추는 줄 없음): 파이프라인과 따로 적어요 (같은 실수를 같이 하지 않게 · 값이 같은지는 테스트가 봐요)
 EPS_OWNERS_MIN = 95.0      # EPS 영수증 중 주주 몫(o) · 별도(s) 비율(%)이 이보다 낮으면 실패 (fetch_data EPS_BASIS_MIN 0.95 와 같아요)
 PER_TOL, PBR_TOL = 0.06, 0.006   # PER 은 소수 첫째 · PBR 은 둘째 자리 반올림이라 (영수증으로 다시 나눈 값과의 차이)
-PER_WARN, PBR_WARN = 2000.0, 100.0   # 국내 PER · PBR 이 이보다 크면 경고 (단위·통화가 틀렸을 수 있어요 — 두산밥캣 USD 를 원으로 읽어 PER 14,575.8)
+PBR_WARN = 100.0          # 국내 PBR 이 이보다 크면 경고 (단위·통화가 틀렸을 수 있어요 — 아남전자 USD 를 원으로 읽어 PBR 964.92). PER 은 이익이
+                          # 아주 작은 회사가 날마다 걸려서 (지엘팜텍 5,319.9 · 레인보우로보틱스 4,385.5) 보지 않아요 (리뷰 3)
 EPS_REP_BAND = (0.67, 1.5)   # 사업보고서 한 해 EPS ÷ 재무제표 기본주당이익이 이 밖이거나 부호가 다르면 경고 (평균 주식 수가 달라 조금은 달라요)
 STMT_AMT_KEYS = ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep")
 # v19.1h (새 줄만 · Jack 의 답 2026-11-08 · PR 의 '안전 규칙 변경'): 배당 맞춤 이유 (data.json 종목의 dvWhy · divCheck.why).
@@ -1390,7 +1391,8 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
     rep.add(f"국내 손익 줄 채움 — 시총 상위 {INC_TOP_N} (매출은 금융회사 빼고)", bool(top) and (floor is None or worst >= floor),
             " · ".join(parts),
             (f"{floor:g}% 미만 실패 · 100% 아니면 경고" if floor is not None
-             else f"100% 아니면 경고 (실패 기준 {INC_TOP_FLOOR_APPROVED:g}% 는 4월 확인을 기다려요 · INC_TOP_FLOOR)"), warn=worst < 100.0)
+             else f"100% 아니면 경고 (실패 기준 {INC_TOP_FLOOR_APPROVED:g}% 는 Jack 승인 · 4월 확인 조건 · 4월 데이터 없음 → Jack 이 정할 때까지 꺼 둠)"),
+            warn=worst < 100.0)
     if miss_all:
         rep.detail(f"시총 상위 {INC_TOP_N} 중 최근 사업보고서 손익 줄이 빈 회사", miss_all)
 
@@ -1442,6 +1444,8 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
                 bad.append(f"{t} bps ≠ 자본 ÷ 주식 수")
         if "nio3" in c and _nums3(c["nio3"]) is None:
             bad.append(f"{t}.nio3")
+        if "nio3Hyb" in c and (_nums3(c["nio3Hyb"]) is None or "nio3" not in c):   # 리뷰 3: 신종자본증권 분배를 뺀 nio3 의 영수증
+            bad.append(f"{t}.nio3Hyb")
         if "incNa" in c and (c["incNa"] != ["rev"] or _first(c.get("rev")) is not None):
             bad.append(f"{t}.incNa")
         if "stmtCur" in c:                 # v19.1f (리뷰 · Jack 2026-11-08, 더하기만): 원화가 아닌 재무제표는 금액이 모두 빈 칸
@@ -1519,6 +1523,7 @@ def stmt_cur_problems(c, s):
     bad += [f"{t} data.{k}" for k in FOREIGN_BLANK if _has_amount((s or {}).get(k))]
     if c.get("dcfReady") is not False:
         bad.append(f"{t} corp.dcfReady")
+    bad += [f"{t} corp.{k}" for k in ("fl", "flRan", "flSrc", "flWhy") if k in c]   # 리뷰 3: 다른 통화로 만든 재무 신호도 없어야 해요
     return bad
 
 
@@ -1578,18 +1583,18 @@ def check_v191f_review(rep, data, corp, kr, by, comps):
     rep.add("원화가 아닌 재무제표로 낸 회사 (stmtCur · 금액은 비움)", True, f"{len(cur)}곳" + (f": {', '.join(cur[:6])}" if cur else ""),
             "알림 (금액이 남으면 '영수증 모양' 줄이 실패)")
 
-    # 12. PER · PBR 이 너무 큰 국내 회사 (경고만 — 단위·통화가 틀렸을 수 있어요)
+    # 12. PBR 이 너무 큰 국내 회사 (경고만 — 단위·통화가 틀렸을 수 있어요)
     big = []
     for s in kr:
         if is_foreign(s.get("t")):
             continue
-        per, pbr = num(s.get("per")), num(s.get("pbr"))
-        if (per is not None and per > PER_WARN) or (pbr is not None and pbr > PBR_WARN):
-            big.append(f"{s['t']} {s.get('nk', '')} PER {'-' if per is None else f'{per:,.1f}'} · PBR {'-' if pbr is None else f'{pbr:,.2f}'}")
-    rep.add(f"PER {PER_WARN:,.0f} · PBR {PBR_WARN:g} 넘는 국내 회사 (경고만)", True, f"{len(big)}곳" + (f": {', '.join(big[:4])}" if big else ""),
+        pbr = num(s.get("pbr"))
+        if pbr is not None and pbr > PBR_WARN:
+            big.append(f"{s['t']} {s.get('nk', '')} PBR {pbr:,.2f}")
+    rep.add(f"PBR {PBR_WARN:g} 넘는 국내 회사 (경고만)", True, f"{len(big)}곳" + (f": {', '.join(big[:4])}" if big else ""),
             "0 (있으면 경고 · 단위나 통화를 확인)", warn=bool(big))
     if big:
-        rep.detail(f"PER {PER_WARN:,.0f} · PBR {PBR_WARN:g} 넘는 국내 회사", big)
+        rep.detail(f"PBR {PBR_WARN:g} 넘는 국내 회사", big)
 
     # 13. 사업보고서 한 해 EPS (epsFy · 오늘 주식 수) 와 재무제표의 기본주당이익 (epsRep) — 부호가 다르거나 0.67~1.5배 밖이면 경고
     lo, hi = EPS_REP_BAND

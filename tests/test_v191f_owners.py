@@ -170,12 +170,12 @@ def test_every_receipt_says_how_it_was_read():
     base = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0}
     cases = {"o": ({"ni": [5.0, None, None], "nio": 4.0, "nioHow": "nci0", "eq": 9.0, "nciBs": None, "fs": "CFS"}, "nci0", "nci0"),
              "s": ({"ni": [5.0, None, None], "eq": 9.0, "fs": "OFS"}, "ofs", "ofs"),
-             "t": ({"ni": [5.0, None, None], "eq": 9.0, "nciBs": 1.0, "fs": "CFS"}, "total", "total")}
+             "t": ({"ni": [5.0, None, None], "eq": 9.0, "nciBs": 1.0, "fs": "CFS"}, "total", "minus")}
     for b, (fin, eh, bh) in cases.items():
         s = dict(base)
         e = F.fill_multiples([s], {"000100": fin}, {})["000100"]
         assert (e["epsIn"]["b"], e["epsIn"]["how"], e["bpsIn"]["how"]) == (b, eh, bh)
-        assert e["bpsIn"]["b"] == ("t" if b == "t" else b)
+        assert e["bpsIn"]["b"] == ("o" if b == "t" else b)       # 리뷰 3: 자본은 자본총계 − 비지배지분으로 주주 몫을 알아요 (순이익은 몰라요)
 
 
 # ── 7. 다시 받기 (dart=cache) ──────────────────────────────────────
