@@ -23,7 +23,7 @@ export const C = {
     previewTitle: "{title} · {sample}",                           // 미리 보기 페이지의 <title>: 위 두 문구를 이어 붙여요
     brand: "뱁새",                                                 // 2 (v19.0: 머리말에는 긴 제목 대신 이 이름만)
     homeLink: "뱁새, 홈으로",                                      // chat (2026-11-07: v19.5 Part B 로고 링크의 화면 읽기 이름. 보이는 '뱁새'로 시작해서 음성 조작으로도 눌러요)
-    footer: "교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.", // footer · 552
+    footer: "뱁새의 정보는 투자 자문이나 투자 권유가 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다.", // CLAUDE.md Footer (Jack, 2026-11-08: 새 고지문) · CSV 552
     aboutLink: "소개",                                             // chat (2026-11-03: v19.0 Part E 푸터 "… · 소개", #about 으로 가요)
     tabsLabel: "주요 메뉴",                                        // 28
     tabs: { home: "홈", portfolio: "포트폴리오", stocks: "종목", market: "시장" }, // chat (2026-11-03: v19.0 Part E 탭, v19.0c)
