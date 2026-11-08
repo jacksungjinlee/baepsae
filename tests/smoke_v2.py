@@ -5415,6 +5415,60 @@ def scene_v193d_more(R, files, width=390):
     srv.shutdown()
 
 
+def scene_store_version(R, files, width, seeded):
+    """저장 기록의 판(v) 고침 (hotfix): 가진 종목 포트폴리오가 없던 기록(v1: 비어 있거나 만든 포트폴리오만) → 가진 종목 넣기 →
+    매일 점검 시작하기 → 새로 고치지 않고 내 메모 남기기 → 저장되고(기록에 메모) '날짜·수량·가격을 다시 확인해 주세요' 줄은 없어요.
+    (고치기 전: 메모리의 기록이 v1 로 남아 판 2 부분을 가진 채 검사를 통과하지 못해, 그 뒤의 저장이 모두 거절됐어요.)"""
+    S = f"기록 판 {width}" + (" (만든 포트폴리오 있음)" if seeded else " (빈 기록)")
+    init = None
+    if seeded:
+        store = {"v": 1, "decks": [_deck("dcalm", "조용한 포트폴리오", [("000660", "SK하이닉스", 0.5, [], 1), (*SAMSUNG, 0.5, [], 6)])]}
+        init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, _ = R.open(build_site(files), width, init=init)
+    stored = lambda: page.evaluate(STORED_JS)
+    text = "실적 발표 뒤에 다시 볼게요"
+    R.names = sorted(set(R.names) | {text, "조용한 포트폴리오"}, key=len, reverse=True)      # 사용자가 쓴 글 · 시험 기록의 이름 (문구 파일 밖)
+
+    def run():
+        wait_ready(page)
+        if seeded:
+            assert stored()["v"] == 1 and len(stored()["decks"]) == 1
+        to_build_start(page, False)
+        page.locator('[data-ui-v2="start-holdings"]').click()
+        at(page, "portfolio/import")
+        page.locator('[data-ui-v2="import-search"] input').fill("005380")
+        page.locator('[data-import-result="005380"] button').click()
+        page.locator('[data-import-row="005380"] input[data-ui-v2="import-qty"]').fill("3")
+        action(page).click()
+        see(page, C["build"]["s1"]["title"])
+        page.locator('[data-card="value"] [data-ui-v2="card-inc"]').click()
+        action(page).click()
+        page.locator('[data-ui-v2="report"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="report-start"]').click()
+        at(page, "portfolio")
+        d = stored()
+        assert d["v"] == 2 and [x.get("kind") for x in d["decks"]] == ([None] if seeded else []) + ["imported"], d
+        page.evaluate("window.__sameVisit = 1")                         # 새로 고치면 사라져요
+        page.evaluate("location.hash = '#stocks/005930'")              # 같은 문서 안에서 회사 페이지로
+        at(page, "stocks/005930")
+        co_wait(page)
+        page.locator('[data-ui-v2="co-memo"] button', has_text=CO["memo"]["add"]).click()
+        page.locator('[data-ui-v2="co-memo-form"] textarea').fill(text)
+        page.locator('[data-ui-v2="co-memo-form"] button', has_text=C["plan"]["save"]).click()
+        page.locator('[data-ui-v2="co-memo-text"], [data-ui-v2="store-refused"]').first.wait_for(state="visible")
+        assert page.evaluate("window.__sameVisit") == 1, "새로 고쳐졌어요"
+        refused = page.locator('[data-ui-v2="store-refused"]')
+        assert refused.count() == 0, "저장이 거절됐어요: " + refused.inner_text()
+        assert C["plan"]["badInput"] not in page.locator("body").inner_text()
+        assert page.locator('[data-ui-v2="co-memo-text"]').inner_text() == text
+        d = stored()
+        assert d["v"] == 2 and d["notes"]["005930"]["text"] == text and len(d["decks"]) == (2 if seeded else 1), d
+        R.collect(page)
+    R.check(page, S, "가진 종목 넣기 → 매일 점검 시작하기 → 새로 고치지 않고 내 메모 남기기: 저장되고, 거절 줄 없음", run)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -5465,7 +5519,8 @@ def main():
                    lambda: scene_v193c_landscape(R, files, (844, 390)), lambda: scene_v193c_landscape(R, files, (568, 320)),   # 가로 휴대폰
                    lambda: scene_v193c_offstep(R, files),                                                  # 안내 밖 단계 이동
                    lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
-                   lambda: scene_v193d_more(R, files)):                                                    # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
+                   lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
+                   lambda: scene_store_version(R, files, 390, False), lambda: scene_store_version(R, files, 390, True)):   # 기록 판 고침
             try:
                 fn()
             except Exception as e:
