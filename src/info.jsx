@@ -88,7 +88,7 @@ export default function InfoApp({ lang, focus, onFocusDone }) {
             </Sub>
           )}
           <Sub style={{ marginTop: 14, textAlign: "left" }}>
-            뱁새는 한국 개인 투자자를 위한 <b style={{ color: C.ink }}>교육용 투자 연구 도구</b>예요.
+            뱁새는 한국 개인 투자자를 위한 <b style={{ color: C.ink }}>투자 연구 도구</b>예요.
             내 위험 그릇에 맞는 포트폴리오를 설계하고, 기업의 숫자를 업종의 분포 속에서 읽고, 공시와 금리의 맥락을 이해하도록 돕습니다.
             <br /><br />
             뱁새가 하지 않는 것도 분명해요 — <b style={{ color: C.ink }}>종목 추천, 적정주가 제시, 수익률 약속</b>은 하지 않아요.

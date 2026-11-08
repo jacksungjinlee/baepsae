@@ -13,8 +13,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
-import { refreshFresh, nextFreshCheck } from "./load.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
+import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
+import { publishGate, discAfter, discFits, discRetryDue } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -26,6 +27,7 @@ import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { companySub, CO_MORE } from "./routes.js";
+import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
@@ -50,9 +52,12 @@ export class ErrorBoundary extends React.Component {
   }
 }
 
-// source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }> }
-// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab, fetched once, the first time a company page
-// opens. The preview page has none (it fetches nothing): its company pages have no 공시 tab.
+// source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }>,
+//   refetch?: (load, disc) => Promise<{ ok, load?, disc?, why? }> }
+// loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab and 홈's 오늘 볼 것 (v19.3e), fetched once,
+// the first time a company page opens or 홈 opens with a Korean stock held. The preview page has none (it fetches nothing):
+// its company pages have no 공시 tab and its 홈 no filings rows.
+// refetch (2026-11-08, live page only): load.js refetchNewer, for a page brought back into view with stale data.
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
   const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
@@ -85,11 +90,19 @@ export function App({ source }) {
   }, []);
 
   // v19.1c: the stale check again while the page stays open (load.js refreshFresh): when it is shown again and from a timer
-  // that fires just after staleAfter or the next day of a publish (at most an hour apart). Nothing is fetched again: only
+  // that fires just after staleAfter or the next day of a publish (at most an hour apart). Nothing is fetched here: only
   // fresh (and what reads it: the date lines, the 홈 stale band, the daily check) can change. Not on the preview page.
+  // (A page brought back into view with stale data fetches the files once: the effect after this one.) The timer is set
+  // again for each publish on screen (livePub, round-2 review): one fetched on a return brings its own staleAfter.
   const liveData = load.status === "ok" && !load.preview;
+  const livePub = liveData ? load.data.publishedAt : null;
   const loadRef = useRef(load);
   loadRef.current = load;
+  const discRef = useRef(disc);
+  discRef.current = disc;
+  const discGen = useRef(0);                              // bumped when a newer publish goes on screen (the disc effect below)
+  const discPub = useRef(null);                           // the publishedAt of the data put on screen by a return's fetch
+  const discRetried = useRef(false);                      // the one more try of an older disc.json used (hold.js discRetryDue)
   useEffect(() => {
     if (!liveData) return undefined;
     let on = true, timer = null;
@@ -108,7 +121,72 @@ export function App({ source }) {
       document.removeEventListener("visibilitychange", onShow);
       window.removeEventListener("focus", check);
     };
-  }, [liveData]);
+  }, [liveData, livePub]);
+
+  // 2026-11-08 (Jack, Q9: "Old page brought back into view: yes, fetch once. If that fails, show the existing stale or
+  // failed message."): a page brought back into view (visibilitychange to visible after it was hidden, or pageshow from the
+  // back-forward cache) whose data is stale at that moment, or whose first load failed, fetches the files once (load.js
+  // returnWatch · refetchNewer: a timeout, and no new fetch within 10 minutes of one that put nothing on screen).
+  // A later publish, every file from it, replaces the data on every screen at once (and the 공시 tab's disc.json when it is
+  // already shown); a failed first load is replaced only by a load that works. Anything else leaves the screens as they are,
+  // with their stale line or the load-failure message, and says why in the console. The loading screen never shows again.
+  // Review (2026-11-08): never under a draft the new data could change (hold.js publishGate · holdReason): the result
+  // waits, and goes on screen when nothing holds it any more (the effect after inBuild and inImport below).
+  // Focus alone is not a return. Live page only (the preview has no refetch).
+  const watchable = !!source.refetch && !load.preview && (load.status === "ok" || load.status === "fail");
+  const holdCtxRef = useRef({});
+  const gateRef = useRef(null);
+  if (!gateRef.current) {
+    gateRef.current = publishGate({
+      getLoad: () => loadRef.current,
+      ctx: () => holdCtxRef.current,
+      put: (r) => {
+        // its stale check as of now, not as of the fetch (a publish held for days must not show as fresh: round-2 review)
+        setLoad(refreshFresh(adoptLoad(r.load), Date.now()));
+        // disc.json goes with it (hold.js discAfter): the one fetched with this publish, or the one on screen when it is
+        // already this publish's; else it loads again (and an answer still out from before is not used: discGen).
+        const pub = r.load.data.publishedAt;
+        discGen.current += 1;
+        discPub.current = pub;
+        discRetried.current = false;
+        setDisc((d) => discAfter(d, r.disc, pub));
+      },
+    });
+  }
+  useEffect(() => {
+    if (!watchable) return undefined;
+    const gate = gateRef.current;
+    const w = returnWatch({
+      hidden: document.visibilityState === "hidden",
+      getLoad: () => loadRef.current,
+      getDisc: () => (discRef.current && discRef.current.status === "ok" ? discRef.current.data : null),
+      refetch: source.refetch,
+      now: () => Date.now(),
+      apply: (r, cur) => gate.apply(r, cur),
+      held: (now) => gate.held(now),
+      // a disc.json that was older than the data on screen: one more try, 10 minutes on (hold.js discRetryDue)
+      onReturn: (now) => {
+        const d = discRef.current;
+        if (!discRetryDue(d, now, discRetried.current)) return;
+        discRetried.current = true;
+        console.info("[v2] back in view: disc.json was older than the data on screen " + Math.round((now - d.older) / 60000)
+          + " minutes ago: it loads once more");
+        setDisc((x) => (x === d ? { status: "idle" } : x));
+      },
+    });
+    const onVis = () => { if (document.visibilityState === "hidden") w.hide(); else w.show(); };
+    const onHide = () => w.hide();
+    const onBack = (e) => { if (e && e.persisted) w.show(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onBack);
+    return () => {
+      w.stop();
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onBack);
+    };
+  }, [watchable]);
 
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
@@ -127,14 +205,33 @@ export function App({ source }) {
   }, [store.key]);
 
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
+  // v19.3e (Jack, 2026-11-08): also when 홈 opens and a saved portfolio holds a Korean stock (오늘 볼 것's filings rows; a
+  // failure shows the same message there). After the first paint (an effect), once per visit for both.
+  const homeKr = useMemo(() => holdsKorean(store.data.decks, load.status === "ok" ? load.byT : null), [store.data.decks, load]);
+  const wantDisc = !!loc.code || (loc.tab === "home" && homeKr);
+  // 2026-11-08 (the stale re-fetch): a load still out when a newer publish goes on screen is not used (discGen: it loads
+  // again with that publish, hold.js discAfter), and one loaded again then is shown only if it is not older than that
+  // publish (discPub, hold.js discFits; else the load-failure message), so an older disc.json never sits beside newer data.
   useEffect(() => {
-    if (!loc.code || disc.status !== "idle") return;
+    if (!wantDisc || disc.status !== "idle") return;
     setDisc({ status: "loading" });
+    const gen = discGen.current, pub = discPub.current;
+    const mine = () => {
+      if (gen === discGen.current) return true;
+      console.info("[v2] disc.json loaded for data that is no longer on screen: not used (it loads again with the new publish)");
+      return false;
+    };
     source.loadDisc().then((r) => {
-      if (r && r.ok) setDisc({ status: "ok", data: r.data });
+      if (!mine()) return;
+      if (r && r.ok && !discFits(r.data, pub)) {
+        console.warn("[v2] disc.json not shown: it is from " + r.data.publishedAt + ", older than the data on screen (" + pub
+          + "); the disclosures show the load-failure message" + (discRetried.current ? " (it was the one more try: no more)"
+            : "; it is tried once more on a return to view at least 10 minutes from now"));
+        setDisc({ status: "fail", older: Date.now() });
+      } else if (r && r.ok) setDisc({ status: "ok", data: r.data });
       else { console.warn("[v2] disc.json not loaded: " + ((r && r.error) || "unknown") + " (the disclosures tab shows the load-failure message)"); setDisc({ status: "fail" }); }
-    }).catch((e) => { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); });
-  }, [loc.code, disc.status]);
+    }).catch((e) => { if (mine()) { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); } });
+  }, [wantDisc, disc.status]);
 
   // 왜 움직였나 needs its target: loaded on its own (a reload, a shared address) it shows 홈 instead.
   useEffect(() => {
@@ -172,7 +269,10 @@ export function App({ source }) {
   // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
-  const setStoreData = useCallback((data, saved) => {
+  const setStoreData = useCallback((given, saved) => {
+    // the records in memory carry the version tag writeStore gives them (a 가진 종목 portfolio makes them version 2). Kept
+    // at the old tag (1), every later change in the same visit failed the check below and was refused.
+    const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
     setStore((s) => {
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
@@ -253,6 +353,9 @@ export function App({ source }) {
   const inBuild = tab === "portfolio" && loc.sub === "build";
   const inImport = tab === "portfolio" && loc.sub === "import";
   const ownBar = inBuild || inImport;                     // screens with their own bottom bar: no tab bar
+  // A later publish held under a draft (hold.js) goes on screen once the user leaves it or the draft no longer needs it.
+  holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };
+  useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);
   // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
   // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
   // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,
@@ -287,7 +390,7 @@ export function App({ source }) {
     }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={disc} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching

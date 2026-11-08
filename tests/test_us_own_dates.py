@@ -155,8 +155,8 @@ out = { own: [CF.priceDate(load, A), CF.priceMd(load, A), CF.closeLine(load, A)]
   bad: [CF.priceDate(load, X), CF.closeLine(load, X)], fund: CF.priceDate(load, F379) };""",
               A=us("AAPL", pxd="2026-11-04", d1=None), B=us("MSFT"), K=kr("005930"), X=us("BAD", pxd="soon"),
               F379={"t": "379800", "nk": "KODEX 미국S&P500", "cls": "us", "fund": True, "etf": True, "price": 23140.0}, U=US_DATE)
-    assert got["own"] == ["2026-11-04", "11월 4일", "미국 11월 4일 종가"], got["own"]
-    assert got["us"] == [US_DATE, "미국 11월 5일 종가"] and got["kr"] == ["2026-11-06", "11월 6일 종가"], got
+    assert got["own"] == ["2026-11-04", "11월 4일", "11월 4일 종가 (미국 시간)"], got["own"]     # v19.3e US_HEAD2 (Jack, 2026-11-08)
+    assert got["us"] == [US_DATE, "11월 5일 종가 (미국 시간)"] and got["kr"] == ["2026-11-06", "11월 6일 종가"], got
     assert got["bad"] == [None, None], got["bad"]                                  # 못 읽는 pxd: 날짜를 빼요 (틀린 날짜 대신)
     assert got["fund"] == US_DATE                                                  # pxd 없는 379800 은 지금 그대로
 
