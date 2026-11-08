@@ -174,10 +174,10 @@ export function App({ source }) {
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
   const setStoreData = useCallback((given, saved) => {
-    // v19.3d2: the records in memory carry the version tag writeStore gives them (a portfolio made with 가진 종목 넣기 makes
-    // them version 2). Before, they kept the tag they had (1), so every later change in the same session (a 메모, an
-    // answer, 빼기, 내 규칙) failed the check below and was refused. A store already tagged is kept as it is (the same object:
-    // a records file taken in keeps its mergeStores mark).
+    // #87 (hotfix of #83): the records in memory carry the version tag writeStore gives them (a portfolio made with 가진
+    // 종목 넣기 makes them version 2). Before, they kept the tag they had (1), so every later change in the same visit (a 메모,
+    // an answer, 빼기, 내 규칙) failed the check below and was refused. A store already tagged is kept as it is (the same
+    // object: a records file taken in keeps its mergeStores mark).
     const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
     setStore((s) => {
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
