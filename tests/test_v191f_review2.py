@@ -542,3 +542,60 @@ def test_gate_counts_zero_interest_in_the_icr_row(pair):
     c = comp(cur, "000270")
     c.update(flRan=["cr", "icr", "l3", "imp"], flSrc={"icr": "is", "int0": True})
     assert "낸 이자 0 1" in rows_of(check(cur, prev))["이자보상배율 경고 수 · 쓴 이자 (경고만)"][1]
+
+
+# ── 2026-11-08: '전체'(t) 회사 중 소수주주(비지배지분)가 있는 곳 — epsIn.nci (앱의 '전체 순이익으로 계산했어요' 줄) ──
+def _eps_in(fin, t="000100"):
+    s = {"t": t, "nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0}
+    return F.fill_multiples([s], {t: fin}, {})[t]["epsIn"]
+
+
+def test_total_basis_with_minority_shareholders_is_marked_nci():
+    fy = {"ni": [12.0, None, None], "eq": 200.0, "nciBs": 20.0, "nciPl": None, "fs": "CFS"}
+    e = _eps_in(fy)
+    assert e["b"] == "t" and e["p"] == "fy" and e["nci"] is True
+    fy_pl = {"ni": [12.0, None, None], "eq": 200.0, "nciBs": None, "nciPl": -3.0, "fs": "CFS"}
+    assert _eps_in(fy_pl)["nci"] is True
+    # TTM 은 최신 분기 재무상태표(bs2)의 증거가 먼저예요: 사업보고서엔 있어도 최신 분기에 비지배지분이 없으면 nci 없음
+    ttm = {"ni": [12.0, None, None], "eq": 200.0, "nciBs": 20.0, "nciPl": 1.0, "fs": "CFS",
+           "ttm": {"ni": 15.0}, "bs2": {"eq": 210.0, "nciBs": None}}
+    e = _eps_in(ttm)
+    assert e["b"] == "t" and e["p"] == "ttm" and "nci" not in e
+    ttm["bs2"]["nciBs"] = 5.0
+    assert _eps_in(ttm)["nci"] is True
+    ttm["bs2"] = {"eq": 210.0}                     # 최신 분기에 증거 칸이 없으면 사업보고서 증거
+    assert _eps_in(ttm)["nci"] is True
+
+
+def test_total_basis_from_the_mismatch_guard_without_minority_has_no_nci():
+    from test_v191f_owners import annual
+    fin = annual("134790")                         # 시디즈: 지배 줄이 당기순이익과 달라 '전체' · 비지배지분 줄은 없음
+    assert fin.get("nio") is None and _fin0(fin)
+    e = _eps_in(dict(fin, fs="CFS"), "134790")
+    assert e["b"] == "t" and "nci" not in e
+    zero = {"ni": [12.0, None, None], "eq": 200.0, "nciBs": 0.0, "nciPl": 0.0, "fs": "CFS"}
+    assert "nci" not in _eps_in(zero)
+
+
+def _fin0(fin):
+    return not any(F._fin(fin.get(k)) not in (None, 0.0) for k in ("nciBs", "nciPl"))
+
+
+def test_owners_basis_never_carries_nci():
+    fin = {"ni": [12.0, None, None], "nio": 10.0, "eq": 200.0, "nciBs": 20.0, "nciPl": 2.0, "fs": "CFS"}
+    e = _eps_in(fin)
+    assert e["b"] == "o" and "nci" not in e
+    sep = {"ni": [12.0, None, None], "eq": 200.0, "nciBs": 20.0, "fs": "OFS"}
+    assert "nci" not in _eps_in(sep)
+
+
+def test_gate_checks_the_nci_mark_shape(pair):
+    cur, prev = pair
+    name = "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)"
+    c = next(x for x in cur["corp"]["companies"] if isinstance(x.get("epsIn"), dict))
+    c["epsIn"]["b"], c["epsIn"]["nci"] = "t", True
+    assert rows_of(check(cur, prev))[name][3] == "PASS"
+    c["epsIn"]["b"] = "o"
+    assert f"{c['t']}.epsIn.nci" in fails(cur, prev, name)[1]
+    c["epsIn"]["b"], c["epsIn"]["nci"] = "t", False
+    assert f"{c['t']}.epsIn.nci" in fails(cur, prev, name)[1]

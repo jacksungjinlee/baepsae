@@ -1432,6 +1432,8 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
             if not (isinstance(e, dict) and _isnum(e.get("ni")) and e.get("b") in EPS_B and e.get("p") in EPS_P
                     and isinstance(e.get("sh"), int) and e["sh"] > 0 and _isnum(c.get("eps"))):
                 bad.append(f"{t}.epsIn")
+            elif "nci" in e and not (e["nci"] is True and e.get("b") == "t"):   # (2026-11-08, 더하기만): 소수주주가 있는 '전체' 회사 표시
+                bad.append(f"{t}.epsIn.nci")
             elif abs(c["eps"] - e["ni"] * 1e8 / e["sh"]) > 0.5 + 1e-6 * abs(c["eps"]):
                 bad.append(f"{t} eps ≠ ni ÷ 주식 수")
         if b is not None:
