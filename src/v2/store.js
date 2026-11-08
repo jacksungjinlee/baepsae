@@ -577,7 +577,13 @@ function laterOf(x, y) {
 const surelyLater = (a, b) => !!(a && b && editOrder(a, b) > 0);
 // A portfolio's limits (내 규칙 정하기) as one edit: { limits, ts } (null: never saved, the defaults), and its values only
 // (no part = the defaults) to tell two copies' limits apart.
-const limitsEdit = (d) => (plainObj(d) && (plainObj(d.limits) || d.limitsTs != null) ? { limits: plainObj(d.limits) ? d.limits : null, ts: d.limitsTs } : null);
+// A limitsTs more than a day ahead of now (a clock that was fast) counts as no time at all (review 4): every merge, the
+// check of what a copy holds, the side key and 기록 불러오기 then let a believable 저장 outrank it (laterOf: a time wins
+// over none), and a merge writes the limits back without it.
+const LIMITS_AHEAD = 24 * 3600 * 1000;
+const believable = (ts, now = Date.now()) => okTs(ts) && ts <= now + LIMITS_AHEAD;
+const limitsEdit = (d) => (plainObj(d) && (plainObj(d.limits) || d.limitsTs != null)
+  ? { limits: plainObj(d.limits) ? d.limits : null, ts: believable(d.limitsTs) ? d.limitsTs : undefined } : null);
 const limitValues = (l) => canon({ stock: plainObj(l) && l.stock != null ? l.stock : null, ind: plainObj(l) && l.ind != null ? l.ind : null });
 // d with the limits of edit e (null: none)
 const withLimitsEdit = (d, e) => {
@@ -974,7 +980,7 @@ export function setAsideCopies(key) {
 // the user's last 저장 wins even after the clock was set back (it was up to a day fast, then corrected).
 export const LIMITS_SUFFIX = ".limits";
 const okLimitsPart = (l) => plainObj(l) && Object.keys(l).every((k) => ["stock", "ind"].includes(k) && Number.isInteger(l[k]) && l[k] >= 1 && l[k] <= 100);
-const SIDE_AHEAD = 24 * 3600 * 1000;                     // a time more than a day ahead of now is not believed
+const SIDE_AHEAD = LIMITS_AHEAD;                         // a time more than a day ahead of now is not believed
 const okSideEntry = (e, now = Date.now()) => plainObj(e) && okTs(e.ts) && e.ts <= now + SIDE_AHEAD && Object.keys(e).every((k) => k === "limits" || k === "ts")
   && (e.limits == null || okLimitsPart(e.limits));
 const sideText = (map) => JSON.stringify({ v: 1, decks: Object.fromEntries([...map].map(([id, e]) => [id, { ...(e.limits ? { limits: e.limits } : {}), ts: e.ts }])) });
@@ -1008,7 +1014,7 @@ export function readSideLimits(key) {
 // more than a day ahead of now is not believed (as beside the records): it is not carried on.
 export function limitsSaveTime(key, deck, now = Date.now()) {
   let t = now;
-  const near = (x) => okTs(x) && x <= now + SIDE_AHEAD;
+  const near = (x) => believable(x, now);
   if (plainObj(deck) && near(deck.limitsTs)) t = Math.max(t, deck.limitsTs + 1);
   try {
     const e = plainObj(deck) ? readSideLimits(key).get(deck.id) : null;
@@ -1290,8 +1296,12 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
     // 내 규칙 (v19.3d2): the file's limits come in now where this device's copies hold other ones; a file without a limits
     // part (made before 내 규칙 정하기, or never changed) leaves this device's latest limits as they are, as for an answer
     const ownLim = mine.map(limitsEdit).filter(Boolean), fileLim = limitsEdit(x);
+    // other limits come in as an edit made now, and after the latest believable time this device (or the side key) holds
+    // for them (a clock that was fast and has been corrected: the same rule as limitsSaveTime)
+    const ownLatest = Math.max(0, ...ownLim.map((e) => e.ts).filter((t) => believable(t, okTs(ts) ? ts : Date.now())));
+    const stampLim = (v) => (okTs(ts) ? { ...v, ts: Math.max(ts, ownLatest ? ownLatest + 1 : 0) } : v);
     const lim = fileLim
-      ? (mine.some((d) => limitValues(d.limits) !== limitValues(x.limits)) ? stamp(fileLim)
+      ? (mine.some((d) => limitValues(d.limits) !== limitValues(x.limits)) ? stampLim(fileLim)
         : keepLater(fileLim, ownLim.filter((e) => limitValues(e.limits) === limitValues(x.limits)).map((e) => e.ts)))
       : ownLim.reduce((a, e) => laterOf(a, e), null);
     const { confirms: _c, ...rest } = x;

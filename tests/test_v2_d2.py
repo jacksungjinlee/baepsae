@@ -359,10 +359,20 @@ def test_the_last_save_wins_after_the_clock_is_set_back_and_unreadable_records_k
       mem.clear();
       const ahead = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 48 * H }] };
       S.readStore(K, T); S.writeStore(ahead, K, T); S.readStore(K, T); S.writeStore(S.withNote(ahead, '000010', 'memo', T, BASE), K, T); S.readStore(K, T);
+      const k2 = { side: mem.has(SIDE) ? side() : null, aside: [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).length };   // before the clear
       mem.clear();
       const cap = [S.limitsSaveTime(K, { id: 'dimp', limitsTs: BASE + H }, BASE) - BASE, S.limitsSaveTime(K, { id: 'dimp', limitsTs: BASE + 48 * H }, BASE) - BASE];
-      out = { cap, k1, k1b, g: { locked: g.locked, wrote: gw, side: gside }, k2: { side: mem.has(SIDE) ? side() : null,
-        aside: [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).length } };""")
+      // S1 (review 4): tab B saves with the clock 3 h fast (beside the records too); tab A, which never saw it, saves after
+      // the correction: limitsSaveTime's side-key part stamps A's 저장 just after B's, so A's (the last 저장) wins
+      mem.clear();
+      S.readStore(K, T); S.writeStore(base, K, T);
+      const bSave = P.withLimits(base, 'dimp', 20, 25, S.limitsSaveTime(K, base.decks[0], BASE + 3 * H));
+      S.writeStore(bSave, K, T);
+      const aTs = S.limitsSaveTime(K, base.decks[0], BASE);                 // A still holds base (no limits)
+      S.writeStore(P.withLimits(base, 'dimp', 40, 45, aTs), K, T);
+      const s1 = S.readStore(K, T);
+      out = { cap, k1, k1b, g: { locked: g.locked, wrote: gw, side: gside }, k2,
+        s1: { after: aTs - bSave.decks[0].limitsTs, lim: limOf(s1.data).l, restored: s1.restored } };""")
     for k in ("k1", "k1b"):
         assert got[k]["lim"] == {"stock": 40, "ind": 45} and got[k]["restored"] is False and got[k]["after"] == 1, (k, got[k])
         assert got[k]["side"] == {"stock": 40, "ind": 45}, (k, got[k])
@@ -370,18 +380,65 @@ def test_the_last_save_wins_after_the_clock_is_set_back_and_unreadable_records_k
     assert got["g"]["side"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": got["g"]["side"]["decks"]["dimp"]["ts"]}}}
     assert got["k2"] == {"side": None, "aside": 0}
     assert got["cap"] == [3600 * 1000 + 1, 0]          # just after a time an hour ahead; one two days ahead is not carried on
+    assert got["s1"] == {"after": 1, "lim": {"stock": 40, "ind": 45}, "restored": False}
 
 
 def test_a_new_publish_is_not_held_for_a_row_added_by_name():
     """Merge with #90 (a page brought back into view switches to a newer publish, held while a draft would lose a holding):
     a "+ 종목 더하기" row has no code and does not come from the data, so it never holds the new data; a coded row whose stock
     is gone from the new data still does."""
-    got = run("""const next = { byT: new Map([['000010', { t: '000010' }]]) };
+    got = run("""const next = { status: 'ok', missing: [], byT: new Map([['000010', { t: '000010' }]]) };
       const im = (drafts) => ({ step: 0, drafts });
       const named = { key: 'n1', t: null, name: '비상장 회사', mode: 'amount', amount: '100' };
       out = [HD.draftsSurvive(im([named]), next), HD.draftsSurvive(im([{ t: '000010' }, named]), next), HD.draftsSurvive(im([{ t: '000020' }, named]), next),
-        HD.holdReason({ onBuild: false, onImport: false, builder: null, importer: im([{ t: '000010' }, named]) }, next)];""")
-    assert got == [True, True, False, None]
+        HD.holdReason({ onBuild: false, onImport: false, builder: null, importer: im([{ t: '000010' }, named]) }, next),
+        HD.holdReason({ onBuild: false, onImport: false, builder: null, importer: im([{ t: '000020' }, named]) }, next)];""")
+    assert got[:4] == [True, True, False, None]
+    assert "would lose a holding" in got[4], got[4]
+
+
+def test_imports_and_merges_never_let_a_fast_clock_time_win():
+    """v19.3d2 review 4. I1: clock 1 h / 23 h fast → 저장 20/25 → clock corrected → 기록 불러오기 of a file with 50/50: the
+    file's limits are stamped after the 저장 (mergeStores, the limitsSaveTime rule), so the next start shows 50/50, no
+    합쳤어요. A limitsTs more than a day ahead counts as no time (store.js limitsEdit): F2: a 저장 stamped two days ahead,
+    then a believable 저장 in another copy: the merge keeps the believable one. F1: a file whose limits are stamped three
+    days ahead, the same values as here, then a 저장: the 저장 wins."""
+    got = run(LS + """const H = 3600 * 1000, BASE = Date.now();
+      const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const file = (d) => S.parseImport(S.exportText(d), T);
+      const i1 = (fast) => {
+        mem.clear();
+        S.readStore(K, T);
+        const a = P.withLimits(base, 'dimp', 20, 25, S.limitsSaveTime(K, base.decks[0], BASE + fast));
+        S.writeStore(a, K, T);
+        const f = P.withLimits(base, 'dimp', 50, 50, BASE - 30 * 24 * H);
+        const m = S.mergeStores(a, file(f), BASE, S.storedStores(K, T), T);
+        S.writeStore(m, K, T);
+        const r = S.readStore(K, T);
+        return { lim: limOf(r.data).l, restored: r.restored, after: limOf(m).ts - a.decks[0].limitsTs };
+      };
+      const i1a = i1(H), i1b = i1(23 * H), i1c = i1(0);
+      // F2: copy A holds 20/25 stamped two days ahead; copy B holds 40/45 saved now: the merge keeps B's (either way round)
+      const A2 = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 48 * H }] };
+      const B2 = P.withLimits(base, 'dimp', 40, 45, BASE);
+      const f2 = [limOf(S.mergeTabs(A2, B2, T)).l, limOf(S.mergeTabs(B2, A2, T)).l];
+      // F1: a file with the same limits stamped three days ahead comes in; then a 저장 40/45 (now): the 저장 stays
+      mem.clear();
+      S.readStore(K, T);
+      const own = P.withLimits(base, 'dimp', 20, 25, BASE - H);
+      S.writeStore(own, K, T);
+      const fd = { v: 2, decks: [{ ...own.decks[0], limitsTs: BASE + 72 * H, name: 'renamed' }] };
+      const mi = S.mergeStores(own, file(fd), BASE, S.storedStores(K, T), T);
+      S.writeStore(mi, K, T);
+      const saved = P.withLimits(mi, 'dimp', 40, 45, S.limitsSaveTime(K, mi.decks[0], BASE));
+      const f1m = [limOf(S.mergeTabs(mi, saved, T)).l, limOf(S.mergeTabs(saved, mi, T)).l];
+      out = { i1a, i1b, i1c, f2, f1: { importTs: limOf(mi).ts, ownTs: own.decks[0].limitsTs, merge: f1m } };""")
+    for k in ("i1a", "i1b"):
+        assert got[k]["lim"] == {"stock": 50, "ind": 50} and got[k]["restored"] is False and got[k]["after"] == 1, (k, got[k])
+    assert got["i1c"]["lim"] == {"stock": 50, "ind": 50} and got["i1c"]["restored"] is False
+    assert got["f2"] == [{"stock": 40, "ind": 45}, {"stock": 40, "ind": 45}]
+    assert got["f1"]["merge"] == [{"stock": 40, "ind": 45}, {"stock": 40, "ind": 45}], got["f1"]
+    assert got["f1"]["importTs"] == got["f1"]["ownTs"]          # the file's time three days ahead is not kept: this device's stays
 
 
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():

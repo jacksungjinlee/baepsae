@@ -6294,6 +6294,20 @@ def scene_v193d2(R, files, width):
         assert "limits" not in dk2 and dk2["limitsTs"] >= dk["limitsTs"], dk2.get("limits")
         card = page.locator('[data-deck-id][data-kind="imported"]')
         assert fillp(C["pfr"]["stock"], x=30) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
+        # 리뷰 4: 이미 저장된 한도의 시각이 1시간 앞(빨랐던 시계)이면, 다음 저장은 그보다 꼭 1 뒤 (limits.jsx → store.js limitsSaveTime)
+        ahead = page.evaluate("""() => { const d = JSON.parse(localStorage.getItem('baepsae2.v1')); const t = Date.now() + 3600 * 1000;
+          d.decks[0].limitsTs = t; d.decks[0].limits = { stock: 45 }; delete d.wts; localStorage.setItem('baepsae2.v1', JSON.stringify(d)); return t; }""")
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        card = page.locator('[data-deck-id][data-kind="imported"]')
+        card.wait_for(state="visible")
+        card.locator('[data-ui-v2="pf-rules-edit"] button').click()
+        assert page.locator('[data-ui-v2="limit-stock"]').input_value() == "45"
+        page.locator('[data-ui-v2="limit-stock"]').fill("50")
+        page.locator('[data-ui-v2="limits-save"] button').click()
+        at(page, "portfolio")
+        dk3 = stored()["decks"][0]
+        assert dk3["limits"] == {"stock": 50} and dk3["limitsTs"] == ahead + 1, (dk3.get("limits"), dk3.get("limitsTs"), ahead)
         # a portfolio that is not a 가진 종목 one, or no portfolio: the address opens 포트폴리오
         page.evaluate("location.hash = '#portfolio/rules/nope'")
         page.locator('[data-deck-id][data-kind="imported"]').wait_for(state="visible")
