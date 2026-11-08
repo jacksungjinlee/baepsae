@@ -152,6 +152,8 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
   assumes", never as forecasts. Footer: 교육용 도구입니다. 투자 자문이 아니며, 모든 판단과 책임은 본인에게 있습니다.
 - Long-only. No leverage, short-selling or speculation features.
 - Cards lead with the conclusion (Verdict line), then evidence. Computed ratios show their inputs ("receipts").
+- Every adjusted, hidden, left-out or estimated number says what happened and why (Jack, 2026-11-08): whenever 뱁새
+  adjusts, hides, leaves out, estimates or can't show something, the screen says so and why, in one short line.
 - Won-first framing for the user's own money; per-share US figures show $ first with 원 small. Beta shown with its
   estimation-error band; alpha shown as past-only.
 - Company pages cover Korean and US stocks. Korean figures come from DART filings; US financial statements come from SEC
