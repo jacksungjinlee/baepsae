@@ -288,15 +288,12 @@ function Strip({ s, group, inCard = false }) {
 // 지금 가격이 가정하는 것 (KR): headline, two bars, the reading note, and the inputs as a receipt (start profit with its
 // report year, discount rate, 5년 뒤 성장률); out of range or a loss: the old card's message instead. The old card's
 // defaults (fade on): parity tests.
-// v19.3e 가치 fix (v19.3 Part I, DCF_NI): impliedGrowth grows 순이익, so the second bar is the company's own past 순이익
+// v19.3e 가치 fix (v19.3 Part I): impliedGrowth grows 순이익, so the second bar is the company's own past 순이익
 // growth (company.pastNiGrowth: the yearly average from ni[2] to ni[0], both above 0), labelled "지난 2년 실제 이익 ·
 // 연평균 {x}% 늘었어요 / 줄었어요" (no minus sign), then "지금 주가가 가정하는 이익 증가는 지난 2년보다 낮아요. / 높아요. /
 // 지난 2년과 비슷해요." (비슷 = within 3 percentage points, on the numbers shown) before the approved note. Never revenue.
 // Without both profits above 0 the comparison is hidden (the bar and the sentence), not the card. At the model's edge
 // only its message shows, as before.
-// DCF_NI off is the card before v19.3e (the second bar was revenue growth with its basis label): kept only so the switch
-// can go back, and because tests/test_v2_company.py pins the basis-label count in this file (see the v19.3e report).
-export const DCF_NI = true;
 const pctNum = (v) => nf(v, v % 1 ? 1 : 0);
 export function dcfInputs(r) {
   const D = C.co.dcf;
@@ -333,7 +330,6 @@ function Dcf({ load, s, co, a, onTry }) {
   const g = r.g != null ? round(r.g, 1) : null;
   const head = dcfHeadText(g);                 // 는다 (g >= 0) / 준다 (g < 0, no minus sign): Jack, 2026-11-05
   const inputs = dcfInputs(r);
-  if (!DCF_NI) return <DcfRevenue s={s} co={co} a={a} r={r} g={g} msg={msg} head={head} inputs={inputs} onTry={onTry} />;
   if (g != null && !all(head, D.impliedNi, D.perYear, D.note, inputs)) return null;
   if (g == null && !msg) return null;
   const past = g != null ? pastNiGrowth(co) : null;
@@ -350,49 +346,7 @@ function Dcf({ load, s, co, a, onTry }) {
           <p data-ui-v2="co-dcf-head" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
           <DcfBar data-ui-v2="co-dcf-implied" icon="scales" tone="on" label={D.impliedNi} value={fill(D.perYear, { g: rateText(g) })} x={g} mx={mx} dark />
           {vs && <DcfBar data-ui-v2="co-dcf-past" icon="trend-up" tone="earn" label={D.past} value={pastText} x={past.x} mx={mx} />}
-          <Note data-ui-v2="co-dcf-note">{[vsText, fill(D.note, { t: pctNum(a.term) })].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
-          <div data-ui-v2="co-dcf-inputs" style={{ marginTop: SPACE(2), border: `1px dashed ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`,
-            ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{inputs}</div>
-        </>
-      ) : <Note>{msg}</Note>}
-      {D.try && onTry && C.co.valueMore.title && C.co.calc.title && <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={onTry}>{D.try}</Button></div>}
-    </Card>
-  );
-}
-
-// The card before v19.3e (DCF_NI off): the implied first-year rate against the company's revenue growth with its real
-// basis. Not shown while DCF_NI is on (v19.3 Part I: never compare the implied 순이익 growth with revenue).
-function DcfRevenue({ s, co, a, r, g, msg, head, inputs, onTry }) {
-  const D = C.co.dcf;
-  const gb = growthBasis(s, co);
-  const glabel = gb === "y2" ? C.pick.receipt.growthKr : gb === "y1" ? C.pick.receipt.growthKr1y : null;
-  const g3 = num(s.g3);
-  if (g != null && !all(head, D.implied, D.perYear, D.note, inputs)) return null;
-  if (g == null && !msg) return null;
-  const mx = Math.max(Math.abs(g || 0), glabel && g3 != null ? Math.abs(g3) : 0, 1e-9);
-  const bar = (x, dark) => (
-    <div aria-hidden="true" style={{ height: SPACE(2), background: COLOR.line, borderRadius: 999, marginTop: SPACE(1), overflow: "hidden" }}>
-      <div style={{ width: `${Math.max(2, (Math.max(0, x) / mx) * 100)}%`, height: "100%", background: dark ? COLOR.ink : COLOR.border, borderRadius: 999 }} />
-    </div>
-  );
-  return (
-    <Card data-ui-v2="co-dcf" data-g={g ?? ""} data-edge={r.edge || r.why || ""} data-disc={a.disc} data-term={a.term}>
-      <CardHead icon="scales" tone="value" title={D.title} />
-      {g != null ? (
-        <>
-          <p data-ui-v2="co-dcf-head" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
-          <div style={{ marginTop: SPACE(3) }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
-              <span>{D.implied}</span><span style={{ whiteSpace: "nowrap" }}>{fill(D.perYear, { g: rateText(g) })}</span></div>
-            {bar(g, true)}
-            {glabel && g3 != null && (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
-                  <span>{glabel}</span><span style={{ whiteSpace: "nowrap" }}>{signedPct(g3)}</span></div>
-                {bar(g3, false)}
-              </>
-            )}
-          </div>
+          {vsText && <Note data-ui-v2="co-dcf-vs">{vsText}</Note>}
           <Note>{fill(D.note, { t: pctNum(a.term) })}</Note>
           <div data-ui-v2="co-dcf-inputs" style={{ marginTop: SPACE(2), border: `1px dashed ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`,
             ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{inputs}</div>
@@ -678,9 +632,11 @@ export function DivTab({ load, s }) {
   const bars = years.length >= 2 ? years : null;
   const adjYears = bars && r.adjYears ? r.adjYears.filter((y) => bars.some((b) => b.year === y)) : [];   // earlier bars recalculated
   const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
-  // v19.3e (board CoDiv2): the amount as a coin flow "→ 1년 동안 → 약 {x}" (the screen reader hears the same approved line).
-  // Below 1,000원 the sentence as before (never "약 0원").
-  const flow = pm && !pm.under && Dv.year && C.app.about ? fill(C.app.about, { x: manWon(pm.won) }) : null;
+  // v19.3e (board CoDiv2, wording Jack 2026-11-08): the coin picture labelled "100만원어치" with its sentence under it. Korea:
+  // "100만원어치면 지난 1년 배당으로 약 {x}이에요." (the 사업보고서 dividend: the past year). US: the line as before ("1년에 약 {x}"),
+  // because Yahoo's yield is the current dividend rate, not the past year. Below 1,000원 the sentence as before (never "약 0원").
+  const flowText = pm && !pm.under ? (us ? line : Dv.pastYear ? fill(Dv.pastYear, { x: manWon(pm.won) }) : null) : null;
+  const flow = flowText && Dv.coins ? flowText : null;
   // 이익 중 얼마를 배당으로 줬나요?: the payout as "이익 100원 중 {x}원" and "나머지 {y}원은 회사에 남았어요." (whole won; one
   // decimal when the whole number would read 0 or 100).
   const ring = po && po.pct != null && all(Dv.payoutQ, Dv.payoutOf, Dv.payoutRest) ? payoutWon(po.pct) : null;
@@ -705,7 +661,7 @@ export function DivTab({ load, s }) {
       {pm && all(Dv.million, line, basis) && (
         <Card data-ui-v2="co-million" data-won={pm.won ?? ""} data-under={pm.under ? "1" : ""} data-raw={pm.raw}>
           <CardHead icon="coins" tone="div" title={Dv.million} />
-          {flow ? <CoinFlow yearLabel={Dv.year} amount={flow} aria={line} />
+          {flow ? <CoinFlow label={Dv.coins} sentence={flow} />
             : <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>}
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>

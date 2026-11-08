@@ -8,10 +8,9 @@ export const usOf = (s) => !!s && s.cls === "us";
 export const priceDate = (load, s) => (usOf(s) ? load.data.usPxDate || null : load.data.pxDate || null);
 export const priceMd = (load, s) => mdText(priceDate(load, s));
 // v19.3e (v19.3 Part I, board CoSummaryUS): the US header reads "{date} 종가 (미국 시간)" beside the $ price and
-// "약 {won} · 환율 {fx}원" under it (one line instead of the 원 line and the rate sentence). Off until Jack says yes to the
-// smoke-test edit it needs (tests/smoke_v2.py pins today's US date line "미국 {md} 종가" and "약 {n}원"): off, the header is
-// exactly as before. The v19.3e smoke scenes build it on (tests/smoke_v2.py v193e_on_app).
-export const US_HEAD2 = false;
+// "약 {won} · 환율 {fx}원" under it (one line instead of the 원 line and the rate sentence). On since Jack's yes (2026-11-08);
+// off is the header before v19.3e.
+export const US_HEAD2 = true;
 // The date beside a price: KR "11월 3일 종가" (why.close), US "미국 11월 3일 종가" (pending; before: the approved sentence).
 export function closeLine(load, s) {
   const md = priceMd(load, s);

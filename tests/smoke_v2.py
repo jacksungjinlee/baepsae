@@ -1513,7 +1513,7 @@ def scene_daily(R, files, width, trend=KR_DIV_TREND):
         assert re.search(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", txt)
         big = page.locator('[data-ui-v2="big-moves"]')                 # 큰 움직임은 판정과 따로, 표시만
         assert "SK하이닉스" in big.inner_text() and big.locator('[data-ui-v2="why-link"]').count() == 1
-        assert page.locator('[data-ui-v2="deck-strip"]').count() == len(DAILY_DECKS["decks"])
+        assert page.locator('[data-ui-v2="home-block"]').count() == len(DAILY_DECKS["decks"])
         no_hscroll(page, width)
         R.collect(page)
     def today_hero_no_cut():
@@ -1529,7 +1529,7 @@ def scene_daily(R, files, width, trend=KR_DIV_TREND):
         for bad in (C["daily"]["sellNow"], C["today"]["sellLabel"], "배당 삭감", "배당이 줄었어요", C["pick"]["caution"]["divDropBody"]):
             assert bad not in txt, (bad, txt)
         assert re.search(r"아직 자동으로 확인하지 못하는 규칙이 \d+개 있어요", txt)
-        assert page.locator('[data-ui-v2="deck-strip"]').count() == len(DAILY_DECKS["decks"])
+        assert page.locator('[data-ui-v2="home-block"]').count() == len(DAILY_DECKS["decks"])
         no_hscroll(page, width)
         R.collect(page)
     if trend:
@@ -1554,7 +1554,7 @@ def scene_daily(R, files, width, trend=KR_DIV_TREND):
                 assert dl.get_attribute("data-stale") == "1" and "6일째 갱신이 멈췄어요" in dl.inner_text(), dl.inner_text()
             else:
                 see(page, LOAD_FAIL)
-            for sel in ('[data-ui-v2="today-hero"]', '[data-ui-v2="deck-strip"]', '[data-ui-v2="big-moves"]', '[data-ui-v2="today-not-checked"]'):
+            for sel in ('[data-ui-v2="today-hero"]', '[data-ui-v2="home-block"]', '[data-ui-v2="big-moves"]', '[data-ui-v2="today-not-checked"]'):
                 assert page.locator(sel).count() == 0, sel
             assert page.get_by_text("할 일").count() == 0
             R.collect(page)
@@ -1654,7 +1654,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
                     C["pick"]["caution"]["divDropBody"], C["daily"]["confirmCut"], C["daily"]["confirmNotCut"]):
             assert bad not in txt, (bad, txt)
         assert h.locator('[data-ui-v2="todo-item"]').count() == 0 and h.get_by_role("radio").count() == 0
-        assert page.locator(f'[data-today-holding="{t}"] [data-ui="status-chip"]').count() == 0
+        assert page.locator(f'[data-home-holding="{t}"] [data-ui="status-chip"]').count() == 0
         not_checked(txt)
         verdict_icon(h, "calm")
         no_hscroll(page, width)
@@ -1678,10 +1678,10 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         not_checked(txt)
         verdict_icon(h, "alert")                                                     # 확인할 일: flag, 규칙 깨짐이 있으니 남색 알약
         assert hero_colours(h) == ["rgb(255, 243, 214)", NAVY_RGB, "rgb(255, 255, 255)"], hero_colours(h)
-        assert page.locator('[data-today-holding="105560"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["broken"]]
-        assert page.locator('[data-today-holding="005930"] [data-ui="status-chip"]').count() == 0          # 칩 없음 = 괜찮아요
-        strip = page.locator('[data-ui-v2="deck-strip"]').inner_text()
-        assert "평가 금액" in strip and "수익률" in strip and re.search(r"오늘 [+−]?\d+\.\d%", strip), strip
+        assert page.locator('[data-home-holding="105560"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["broken"]]
+        assert page.locator('[data-home-holding="005930"] [data-ui="status-chip"]').count() == 0          # 칩 없음 = 괜찮아요
+        strip = page.locator('[data-ui-v2="home-money"]').inner_text()
+        assert C["home"]["gain"].split(" {")[0] in strip and re.search(r"오늘 [+−]?[\d,]+(만원|원) \([+−]?\d+\.\d%\)", strip), strip
         no_hscroll(page, width)
         R.collect(page)
     # '실제로 줄였어요'라고 답한 삭감은 사용자가 분할이 아니라고 확인한 것이라, 스위치가 꺼져 있어도 그대로 매도 조건이에요
@@ -1713,7 +1713,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         assert C["today"]["calmEyebrow"] not in txt, txt               # 하지만 '오늘은 할 일이 없어요'는 모든 종목이 할 일 없음일 때만
         not_checked(txt)
         verdict_icon(h, "calm")
-        assert page.locator('[data-today-holding="012450"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"], C["daily"]["bigMove"]]
+        assert page.locator('[data-home-holding="012450"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["watch"], C["daily"]["bigMove"]]
         assert "크게 움직인 종목은 1개 있어요" in txt
         R.collect(page)
         # 왜 움직였나는 규칙 판정을 그대로 보여요: 지켜봐요 · 부채비율 221% (기준 200%) · '할 일 없음'이 아님
@@ -1757,7 +1757,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         txt = h.inner_text()
         assert "현대차 배당이 줄었어요 · 주당 12,000원 → 10,000원" in txt and C["pick"]["caution"]["divDropBody"] in txt, txt
         assert C["daily"]["sellNow"] not in txt and C["daily"]["broken"] not in txt, "확인 전인데 매도처럼 보여요"
-        assert page.locator('[data-today-holding="005380"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["check"]]
+        assert page.locator('[data-home-holding="005380"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["check"]]
         not_checked(txt)
         verdict_icon(h, "alert")
         assert hero_colours(h) == ["rgb(255, 243, 214)", "rgb(138, 90, 0)", "rgb(255, 255, 255)"], hero_colours(h)   # 확인 필요만: 지켜봐요 알약
@@ -1782,7 +1782,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         txt = h.inner_text()
         assert C["today"]["calmTitle"] in txt and C["today"]["calmEyebrow"] not in txt, txt        # 줄일 차례는 할 일이 있어요
         not_checked(txt)
-        chips = {t: page.locator(f'[data-today-holding="{t}"] [data-ui="status-chip"]').all_inner_texts() for t in ("005930", "035420")}
+        chips = {t: page.locator(f'[data-home-holding="{t}"] [data-ui="status-chip"]').all_inner_texts() for t in ("005930", "035420")}
         assert chips == {"005930": [C["daily"]["band"]["trim"]], "035420": [C["daily"]["band"]["low"]]}, chips   # 비중 칩
         R.collect(page)
         tab(page, C["app"]["tabs"]["portfolio"])
@@ -1819,7 +1819,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
         assert "크게 움직인 종목 1개" in it and "SK하이닉스 −6.2%" in it and C["today"]["together"] in it, it
         assert "뉴스" not in it, "뉴스는 아직 확인하지 않아요"
         not_checked(txt)
-        assert page.locator('[data-today-holding="000660"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["bigMove"]]
+        assert page.locator('[data-home-holding="000660"] [data-ui="status-chip"]').all_inner_texts() == [C["daily"]["bigMove"]]
         R.collect(page)
         inset.locator('[data-ui-v2="why-link"]').click()
         see(page, "SK하이닉스 왜 움직였나")
@@ -1908,7 +1908,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
 
         def refused():
             see(page, LOAD_FAIL)
-            for sel in ('[data-ui-v2="today-hero"]', '[data-ui-v2="deck-strip"]', '[data-ui-v2="today-not-checked"]'):
+            for sel in ('[data-ui-v2="today-hero"]', '[data-ui-v2="home-block"]', '[data-ui-v2="today-not-checked"]'):
                 assert page.locator(sel).count() == 0, sel
             assert page.get_by_text("할 일").count() == 0 and page.get_by_text(C["daily"]["sellNow"]).count() == 0
             R.collect(page)
@@ -2602,10 +2602,10 @@ def scene_missing(R, files, width):
     def home():
         tab(page, TABS["home"])
         at(page, "home")
-        strip = page.locator('[data-ui-v2="deck-strip"][data-deck-id="dgone"]')
+        strip = page.locator('[data-ui-v2="home-money"][data-deck-id="dgone"]')
         strip.wait_for(state="visible")
         assert strip.locator('[data-ui-v2="missing-line"]').inner_text() == line
-        assert page.locator('[data-ui-v2="deck-strip"][data-deck-id="dkeep"] [data-ui-v2="missing-line"]').count() == 0
+        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dkeep"] [data-ui-v2="missing-line"]').count() == 0
         assert man(value) in strip.inner_text(), strip.inner_text()
         hero = page.locator('[data-ui-v2="today-hero"]')
         assert hero.get_attribute("data-state") == "todo" and "OLDX:check" in hero.locator('[data-ui-v2="todo-item"]').evaluate_all(
@@ -2642,7 +2642,7 @@ def scene_no_holding(R, files, width):
         empty = page.locator('[data-ui-v2="today-empty"]')
         empty.wait_for(state="visible")
         assert empty.inner_text().strip() == C["build"]["title"]
-        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="home-hero"], [data-ui-v2="deck-strip"]').count() == 0
+        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="home-hero"], [data-ui-v2="home-block"]').count() == 0
         assert page.get_by_text("할 일").count() == 0, "점검한 종목이 없는데 '할 일'이 보여요"
         page.locator('[data-ui-v2="market-glance"]').wait_for(state="visible")
         R.collect(page)
@@ -2921,11 +2921,11 @@ def scene_pc_back(R, files):
         wait_ready(page)
         at(page, "home")
         pc_shell(page, PC_W)
-        strip = page.locator('[data-ui-v2="col-main"] [data-ui-v2="deck-strip"]').first
+        strip = page.locator('[data-ui-v2="col-main"] [data-ui-v2="home-block"]').first
         glance = page.locator('[data-ui-v2="col-side"] [data-ui-v2="market-glance"]')
         side_by_side(strip, glance)
         assert glance.locator('[data-ui-v2="market-tiles"]').get_attribute("data-cols") == "1"     # 좁은 오른쪽 칸: 네 칸을 세로로
-        assert page.locator('[data-ui-v2="deck-strip"]').count() == 2 and page.locator('[data-ui-v2="col-side"] [data-ui-v2="deck-strip"]').count() == 0
+        assert page.locator('[data-ui-v2="home-block"]').count() == 2 and page.locator('[data-ui-v2="col-side"] [data-ui-v2="home-block"]').count() == 0
         hero = page.locator('[data-ui-v2="today-hero"]').bounding_box()      # 판정 띠는 두 칸 위에 전체 폭으로
         main_col = page.locator('[data-ui-v2="col-main"]').bounding_box()
         side_col = page.locator('[data-ui-v2="col-side"]').bounding_box()
@@ -2982,7 +2982,7 @@ def scene_pc_stale(R, files):
         wait_ready(page)
         at(page, "home")
         page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
-        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="deck-strip"]').count() == 0
+        assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="home-block"]').count() == 0
         assert page.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').get_attribute("data-stale") == "1"
         cols = page.locator('[data-ui-v2="cols"]')
         assert cols.get_attribute("data-n") == "1" and page.locator('[data-ui-v2="col-side"]').count() == 0
@@ -3339,8 +3339,8 @@ def scene_company(R, files, width):
         if us:                                                               # 미국: 1주 가격은 $ 먼저, 원은 작게 (Jack 결정 7)
             assert re.fullmatch(r"\$[\d,]+\.\d\d", price), price
             won = page.locator('[data-ui-v2="co-won"]').inner_text()
-            assert C["app"]["about"] == "약 {x}" and re.fullmatch(r"약 [\d,]+원", won), won
-            assert date == (fillp(CO["usClose"], md=md) if CO["usClose"] else fillp(C["app"]["usClose"], md=md)), date
+            assert CO["usWon"] == "약 {won} · 환율 {fx}원" and re.fullmatch(r"약 [\d,]+원 · 환율 [\d,]+\.\d원", won), won
+            assert date == fillp(CO["usCloseTime"], date=md), date
         else:
             assert re.fullmatch(r"[\d,]+원", price) and page.locator('[data-ui-v2="co-won"]').count() == 0, price
             assert date == fillp(C["why"]["close"], md=md), date
@@ -3621,10 +3621,10 @@ def scene_company(R, files, width):
         else:
             tab(page, TABS["home"])
         at(page, "home")
-        hf = page.locator('[data-today-holding="114260"] [data-ui="list-row"]').first
+        hf = page.locator('[data-home-holding="114260"]').first
         hf.wait_for(state="visible")
         assert hf.get_attribute("role") is None, "홈의 펀드 줄이 눌러져요"
-        hrow = page.locator('[data-today-holding="005380"] [data-ui="list-row"]').first
+        hrow = page.locator('[data-home-holding="005380"]').first
         hrow.wait_for(state="visible")
         hrow.click()
         at(page, "stocks/005380")
@@ -4974,9 +4974,9 @@ def scene_v193d(R, files, width):
         R.collect(page)
         tab(page, TABS["home"]) if not wide else side_tab(page, "home")
         at(page, "home")
-        strip = page.locator('[data-ui-v2="deck-strip"][data-kind="imported"]')
+        strip = page.locator('[data-ui-v2="home-block"]')
         strip.wait_for(state="visible")
-        assert strip.locator('[data-ui-v2="pf-rule"]').count() == 4 and page.locator('[data-ui-v2="today-hero"]').count() == 0
+        assert strip.locator('[data-ui-v2="home-rules"] [data-ui-v2="home-rule"]').count() == 4 and page.locator('[data-ui-v2="today-hero"]').count() == 0
         assert C["daily"]["check"] not in strip.inner_text() and page.locator('[data-ui-v2="today-empty"]').count() == 0
         floor_ok(page, "홈 (가진 종목)")
         no_hscroll(page, width)
@@ -5108,40 +5108,8 @@ def scene_v193d_more(R, files, width=390):
 
 
 # ── v19.3e: 홈 (Part H, board Home2) · 회사 페이지 고침 (Part I) · 수락 조건 5 ──
-# 새 홈(today.jsx HOME2)과 미국 머리줄(cofmt.js US_HEAD2)은 지금 장면들이 확인하는 화면을 바꿔서 Jack 의 승인 전까지 꺼져 있어요. 꺼져 있는
-# 동안에도 시험하려고 두 스위치를 켜고 임시 폴더에 빌드한 app.html (v193e_on_app) 로 돌려요 (커밋하지 않아요). 회사 페이지의 나머지
-# (작은 그림 · 재무 경고 칩 · 가치 고침 · 동전 그림 · 배당성향 고리 · 가진 비중 · 오른 날 줄)는 켜져 있어 커밋한 app.html 로 돌려요.
-HOME2 = _flag("src/v2/today.jsx", "HOME2")
-US_HEAD2 = _flag("src/v2/cofmt.js", "US_HEAD2")
-_ON_E = {}
-
-
-def v193e_on_app():
-    """app.html 을 HOME2 · US_HEAD2 를 켜고 임시 폴더에 빌드해요 (커밋하지 않아요). 폴더는 바로 지워요."""
-    if "html" not in _ON_E:
-        tmp = tmpdirs.make("baepsae-v193e-on-")
-        try:
-            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
-            os.makedirs(os.path.join(tmp, "tools"))
-            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
-                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
-            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
-            for rel, name in (("src/v2/today.jsx", "HOME2"), ("src/v2/cofmt.js", "US_HEAD2")):
-                p = os.path.join(tmp, *rel.split("/"))
-                with open(p, encoding="utf-8") as fh:
-                    src = fh.read()
-                old = re.findall(rf"^export const {name} = (?:true|false);$", src, flags=re.M)
-                assert len(old) == 1, (rel, old)
-                with open(p, "w", encoding="utf-8") as fh:
-                    fh.write(src.replace(old[0], f"export const {name} = true;"))
-            out = os.path.join(tmp, "out")
-            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
-            assert r.returncode == 0, r.stdout + r.stderr
-            with open(os.path.join(out, "app.html"), encoding="utf-8") as fh:
-                _ON_E["html"] = fh.read()
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-    return _ON_E["html"]
+# Jack (2026-11-08): 새 홈(today.jsx HOME2)과 미국 머리줄(cofmt.js US_HEAD2)을 켰어요. 포트폴리오 규칙 네 가지는 가진 종목 넣기로 만든
+# 포트폴리오에만 써요: 포트폴리오 만들기로 만든 포트폴리오는 맨 위 판정 띠(종목별 규칙 · 비중 띠)로 예전처럼 보여요.
 
 
 def rgb(hexc):
@@ -5177,13 +5145,14 @@ def e_imported(by, pxd, rows, did="dimp", name="포트폴리오"):
 
 
 def scene_v193e_home(R, files, width):
-    """v19.3e 홈 (Part H · 수락 조건 5, 스위치를 켠 빌드): 포트폴리오마다 남색 규칙 띠('{date} 종가로 점검했어요' · '내 규칙 {n}개 중
-    {k}개를 지키고 있어요' · 네 칸 ✓ / ! / 확인하지 못했어요) · 포트폴리오 카드(평가 금액 · '산 가격보다'는 평균 단가를 넣은 종목만 ·
-    미국 평균 단가는 오늘 환율 줄 · 미국 종목이 있으면 '오늘' 없음 · 3개월 그래프 없음) · 가진 종목(비중 큰 순 · 남색 단계 색 · 막대 = 한
-    종목 한계 대비) · 오늘 볼 것(확인 필요 띠 · 업종 쏠림 카드 · 큰 움직임). 멈춘 데이터: 멈춤 띠만, ✓ 없음 · 실패: 불러오기 실패 문구 ·
+    """v19.3e 홈 (Part H · 수락 조건 5): 가진 종목 포트폴리오에는 남색 규칙 띠('{date} 종가로 점검했어요' · '내 규칙 {n}개 중 {k}개를
+    지키고 있어요' · 네 칸 ✓ / ! / 확인하지 못했어요) · 포트폴리오 카드(평가 금액 · '산 가격보다'는 평균 단가를 넣은 종목만 · 미국 평균
+    단가는 오늘 환율 줄 · 미국 종목이 있으면 '오늘' 없음 · 3개월 그래프 없음) · 가진 종목(비중 큰 순 · 남색 단계 색 · 막대 = 한 종목 한계
+    대비) · 오늘 볼 것(업종 쏠림 카드 · 공시 줄 · 아무것도 없으면 '오늘은 할 일이 없어요'). 포트폴리오 만들기로 만든 포트폴리오는 네
+    규칙으로 판정하지 않고 맨 위 판정 띠(예전 그대로). 멈춘 데이터: 멈춤 띠만, ✓ 없음 · 실패: 불러오기 실패 문구('할 일이 없어요' 아님) ·
     첫 방문: 그대로. 뱁이 없음 · 12px 바닥 · 가로 스크롤 없음."""
     S = f"v19.3e 홈 {width}"
-    app = v193e_on_app()
+    app = None
     f = daily_files(files)
     d = f["data.json"]
     by = {s["t"]: s for s in d["stocks"]}
@@ -5241,6 +5210,7 @@ def scene_v193e_home(R, files, width):
         for t in ("005930", "000660"):
             ch = held.locator(f'[data-home-holding="{t}"] [data-ui-v2="home-change"]').inner_text()
             assert ch == signed_pct(by[t]["d1"]) and "-" not in ch, ch
+        assert page.locator('[data-ui-v2="today-hero"]').count() == 0          # 가진 종목만: 종목별 판정 띠 없음
         assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 홈에 뱁이"
         floor_ok(page, "새 홈 (가진 종목)")
         no_hscroll(page, width)
@@ -5255,6 +5225,7 @@ def scene_v193e_home(R, files, width):
             title, sub = conc.inner_text().split("\n")[:2]
             assert re.fullmatch(r".+ [\d.]+%", title) and sub.endswith(fillp(C["home"]["concentration"], names="", limit=35)), conc.inner_text()
             assert C["home"]["look"] in page.locator('[data-ui-v2="home-look"]').inner_text()
+            assert page.locator('[data-ui-v2="home-calm"]').count() == 0     # 깨진 규칙이 있으면 '오늘은 할 일이 없어요' 없음
             conc.click()
             at(page, "portfolio")
         else:
@@ -5268,13 +5239,13 @@ def scene_v193e_home(R, files, width):
 
     def built():
         wait_ready(page)
-        page.locator('[data-ui-v2="home-rules"]').first.wait_for(state="visible")
-        assert page.locator('[data-ui-v2="home-block"]').count() == 2 and page.locator('[data-ui-v2="home-rules-name"]').count() == 2   # 둘이면 이름 줄
-        look = page.locator('[data-ui-v2="home-look"]')
-        items = look.locator('[data-ui-v2="todo-item"]').evaluate_all("els => els.map(e => e.dataset.t + ':' + e.dataset.status)")
-        assert "000270:check" in items, items                               # 확인 필요(기아, 부채비율 자료 없음)는 오늘 볼 것 맨 앞
-        assert look.locator('[data-ui-v2="today-todo"]').count() == 1
-        assert "SK하이닉스" in look.locator('[data-ui-v2="home-bigs"]').inner_text()
+        hero = page.locator('[data-ui-v2="today-hero"]')                    # 만든 포트폴리오: 예전 판정 띠 그대로 (네 규칙으로 판정하지 않아요)
+        hero.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="home-block"]').count() == 2 and page.locator('[data-ui-v2="home-rules"]').count() == 0
+        items = hero.locator('[data-ui-v2="todo-item"]').evaluate_all("els => els.map(e => e.dataset.t + ':' + e.dataset.status)")
+        assert "000270:check" in items, items                               # 확인 필요(기아, 부채비율 자료 없음)는 판정 띠에
+        assert "SK하이닉스" in page.locator('[data-ui-v2="big-moves"]').inner_text()
+        assert page.locator('[data-ui-v2="home-look"]').count() == 0 and C["pfr"]["kept"].split("{")[0] not in page.locator("body").inner_text()
         assert page.locator('[data-ui-v2="home-held"][data-deck-id="dmiss"] [data-home-holding="000270"]').get_attribute("data-status") == "check"
         calm = page.locator('[data-ui-v2="home-money"][data-deck-id="dcalm"]')
         day = calm.locator('[data-ui-v2="home-day"]')                      # 한국 종목만: 오늘 변화 (금액 · %)
@@ -5284,7 +5255,7 @@ def scene_v193e_home(R, files, width):
         floor_ok(page, "새 홈 (만든 포트폴리오 둘)")
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "만든 포트폴리오 둘: 띠마다 이름 · 확인 필요는 오늘 볼 것 · 큰 움직임 · 오늘 변화 · 샀어요 기록은 평균 단가", built)
+    R.check(page, S, "만든 포트폴리오 둘: 네 규칙 띠 없음 · 판정 띠(확인 필요 · 큰 움직임) 그대로 · 오늘 변화 · 샀어요 기록은 평균 단가", built)
     ctx.close()
     srv.shutdown()
 
@@ -5299,10 +5270,11 @@ def scene_v193e_home(R, files, width):
             else:
                 see(page, LOAD_FAIL)
             for sel in ('[data-ui-v2="home-rules"]', '[data-ui-v2="home-money"]', '[data-ui-v2="home-held"]', '[data-ui-v2="home-look"]',
-                        f'[aria-label="{C["daily"]["ok"]}"]'):
+                        '[data-ui-v2="home-calm"]', f'[aria-label="{C["daily"]["ok"]}"]'):
                 assert page.locator(sel).count() == 0, sel                   # 멈추거나 실패한 데이터: 점검하지 않아요, ✓ 없음
+            assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text()     # 실패를 '할 일이 없어요'로 말하지 않아요
             R.collect(page)
-        R.check(page, S, f"{how}: 규칙 띠 · 숫자 · ✓ 없음 (멈춤 문장 또는 불러오기 실패)", no_check)
+        R.check(page, S, f"{how}: 규칙 띠 · 숫자 · ✓ · '오늘은 할 일이 없어요' 없음 (멈춤 문장 또는 불러오기 실패)", no_check)
         ctx.close()
         srv.shutdown()
 
@@ -5320,6 +5292,48 @@ def scene_v193e_home(R, files, width):
         assert "stock:unknown" in st and "ind:unknown" in st, st             # 비중을 모르니 확인하지 못했어요 (✓ 아님)
         R.collect(page)
     R.check(page, S, "오늘 가격이 없는 종목: 포트폴리오 카드는 빠지고 비중 규칙은 확인하지 못했어요", no_price)
+    ctx.close()
+    srv.shutdown()
+
+    # 아무것도 볼 것이 없는 가진 종목 포트폴리오 (다섯 업종에 고르게, 고른 기준 없음: 깨진 규칙 없음) → '오늘은 할 일이 없어요'
+    # · 공시 줄: 회사 페이지가 disc.json 을 불러온 뒤에만, 최근 7일 보고만
+    calm_ts = ("373220", "207940", "009150", "005380", "105560")
+    tot = 10000000
+    calm = e_imported(by, pxd, [(t, max(1, round(tot / 5 / by[t]["price"])), None) for t in calm_ts], did="dcalm5")
+    calm["settings"]["points"] = {}
+    ff = clone(f)
+    today = dt.datetime.now(KST).strftime("%Y%m%d")
+    ff["disc.json"]["newest"] = dt.datetime.now(KST).strftime("%Y-%m-%d")
+    ff["disc.json"]["insider"] = [{"rc": "20991231000001", "d": today, "t": "005380", "nk": by["005380"]["nk"], "s": "auto", "cap": 1.0, "nm": "가나다",
+                                   "pos": "상무", "q": 300, "r": 0.0, "amt": 1.0}] + ff["disc.json"]["insider"]
+    srv, ctx, page, base = R.open(build_site(ff, app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
+
+    def calm_and_filings():
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        st = page.locator('[data-ui-v2="home-rule"]').evaluate_all("els => els.map((e) => e.dataset.state)")
+        assert "broken" not in st, st
+        c = page.locator('[data-ui-v2="home-calm"]')
+        assert c.inner_text() == C["today"]["calmEyebrow"]                    # 오늘 볼 것이 비면 '오늘은 할 일이 없어요'
+        assert page.locator('[data-ui-v2="home-filing"]').count() == 0          # 공시 목록을 아직 받지 않았어요 (홈은 따로 받지 않아요)
+        R.collect(page)
+        co_hash(page, "#stocks/005380")                                       # 회사 페이지가 공시 목록을 불러와요
+        page.locator('[data-ui-v2="co-head"]').wait_for(state="visible")
+        page.wait_for_function("() => true")
+        tab(page, TABS["home"]) if width < 1024 else side_tab(page, "home")
+        at(page, "home")
+        row = page.locator('[data-ui-v2="home-filing"]')
+        row.wait_for(state="visible")
+        md2 = f"{int(today[4:6])}월 {int(today[6:])}일"
+        assert row.get_attribute("data-t") == "005380" and row.inner_text().strip() == fillp(C["home"]["filings"], name=by["005380"]["nk"], n=1,
+                                                                                           title=CO["disc"]["buys"], date=md2), row.inner_text()
+        assert page.locator('[data-ui-v2="home-calm"]').count() == 0          # 볼 것이 생기면 '할 일이 없어요'는 빠져요
+        floor_ok(page, "새 홈 (공시 줄)")
+        no_hscroll(page, width)
+        R.collect(page)
+        row.click()
+        at(page, "stocks/005380")
+    R.check(page, S, "볼 것이 없으면 '오늘은 할 일이 없어요' · 공시 줄은 회사 페이지가 불러온 최근 7일 보고로만 → 그 회사", calm_and_filings)
     ctx.close()
     srv.shutdown()
 
@@ -5344,7 +5358,7 @@ def scene_v193e_company(R, files, width):
     재무 경고 칩은 돌았고 걸리지 않은 확인만(해당 없음 · 못 돌린 이자보상배율은 칩 없음) · 가진 포트폴리오가 하나면 '내 포트폴리오의
     {x}%' · 가치: '업종 {n}개 회사와 비교' 카드와 '업종 안 PBR 위치', 지금 가격이 가정하는 것은 순이익끼리(지난 2년 연평균, 둘 다 0보다
     클 때만, 매출 이름표 없음) · 배당: 동전 그림 '1년 동안 → 약 {x}', 배당성향 고리 '이익 100원 중 {x}원' · 오른 날의 업종 줄 ·
-    (스위치를 켠 빌드) 미국 머리줄 '{date} 종가 (미국 시간)' · '약 {won} · 환율 {fx}원'."""
+    미국 머리줄 '{date} 종가 (미국 시간)' · '약 {won} · 환율 {fx}원'."""
     S = f"v19.3e 회사 {width}"
     f = v191b_files(co_files(files))
     d = f["data.json"]
@@ -5369,6 +5383,9 @@ def scene_v193e_company(R, files, width):
         assert art["earn"] == ("bars" if all(x > 0 for x in op) else None), art
         assert [float(b.get_attribute("data-v")) for b in tiles["earn"].locator('[data-ui-v2="tile-art"] [data-v]').all()] == [op[2], op[1], op[0]]
         assert art["value"] == ("scale" if tiles["value"].get_attribute("data-rule") in ("cheap", "dear", "similar") else None), art
+        if art["value"]:                                                      # 눈금 양 끝 '싸게 · 비싸게' (업종 중간 표시 · 업종과 비교하는 숫자 줄과 함께)
+            assert tiles["value"].locator('[data-ui-v2="scale-ends"]').inner_text().split("\n") == [CO["tiles"]["scale"]["cheap"], CO["tiles"]["scale"]["dear"]]
+            assert " · " in tiles["value"].locator('[data-ui-v2="tile-number"]').inner_text()
         assert art["div"] == ("coins" if div_shape(tiles["div"].get_attribute("data-rule")) else None), art
         if art["div"]:
             assert tiles["div"].locator('[data-art="coins"]').get_attribute("data-shape") == div_shape(tiles["div"].get_attribute("data-rule"))
@@ -5462,10 +5479,11 @@ def scene_v193e_company(R, files, width):
         m.wait_for(state="visible")
         if m.get_attribute("data-won"):
             flow = m.locator('[data-ui-v2="co-coinflow"]')
-            assert CO["div"]["year"] in flow.inner_text()
+            assert flow.locator('[data-ui-v2="co-coinflow-label"]').inner_text() == CO["div"]["coins"]
             won = int(m.get_attribute("data-won"))
             man = f"{won / 10000:,.1f}만원" if won % 10000 else f"{won // 10000:,}만원"
-            assert flow.locator('[data-ui-v2="co-coinflow-amount"]').inner_text() == fillp(C["app"]["about"], x=man if won >= 10000 else f"{won:,}원")
+            want = fillp(CO["div"]["pastYear"], x=man if won >= 10000 else f"{won:,}원")      # 지난 1년 배당 (예측이 아니에요)
+            assert flow.locator('[data-ui-v2="co-coinflow-text"]').inner_text() == want
         pay = page.locator('[data-ui-v2="co-payout"]')
         if pay.count():
             pct = float(pay.get_attribute("data-pct"))
@@ -5497,7 +5515,7 @@ def scene_v193e_company(R, files, width):
     ctx.close()
     srv.shutdown()
 
-    srv, ctx, page, base = R.open(build_site(f, app=v193e_on_app()), width, path="/app.html?dev=1#stocks/AAPL")
+    srv, ctx, page, base = R.open(build_site(f), width, path="/app.html?dev=1#stocks/AAPL")
 
     def us_head():
         co_wait(page)
@@ -5508,7 +5526,7 @@ def scene_v193e_company(R, files, width):
         assert page.locator('[data-ui-v2="co-won"]').inner_text() == fillp(CO["usWon"], won=f"{won:,}원", fx=fxs)
         assert page.locator('[data-ui-v2="co-fx"]').count() == 0
         R.collect(page)
-    R.check(page, S, "미국 머리줄 (스위치를 켠 빌드): '{date} 종가 (미국 시간)' · '약 {won} · 환율 {fx}원'", us_head)
+    R.check(page, S, "미국 머리줄: '{date} 종가 (미국 시간)' · '약 {won} · 환율 {fx}원'", us_head)
     ctx.close()
     srv.shutdown()
 
@@ -5561,7 +5579,7 @@ def main():
                    lambda: scene_v193c_offstep(R, files),                                                  # 안내 밖 단계 이동
                    lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
                    lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
-                   lambda: scene_v193e_home(R, files, 390), lambda: scene_v193e_home(R, files, 1280),    # v19.3e 새 홈 (스위치를 켠 빌드)
+                   lambda: scene_v193e_home(R, files, 390), lambda: scene_v193e_home(R, files, 1280),    # v19.3e 새 홈
                    lambda: scene_v193e_home(R, files, 320),
                    lambda: scene_v193e_company(R, files, 390), lambda: scene_v193e_company(R, files, 1280),     # v19.3e 회사 페이지
                    lambda: scene_v193e_company(R, files, 320)):

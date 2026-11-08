@@ -87,7 +87,7 @@ export function tileViews(load, s) {
     const r = valueTile(s, group);
     const number = r.med != null && T().pbr ? fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) }) : r.pbr != null ? `PBR ${timesText(r.pbr, 2)}` : null;
     add("value", T().label.value, r, r.rule === "na" ? na : T().value[r.rule], number, { pbr: r.pbr, med: r.med, n: r.n },
-      r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med } : null);
+      r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med, ends: !!(number && T().pbr && number === fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) })) } : null);
   }
   {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
@@ -119,7 +119,7 @@ export function divArt(rule) {
 export function TileArt({ art }) {
   if (!art) return null;
   if (art.kind === "bars") return <EarnBars op={art.op} />;
-  if (art.kind === "scale") return <ValueScale pbr={art.pbr} med={art.med} />;
+  if (art.kind === "scale") return <ValueScale pbr={art.pbr} med={art.med} ends={art.ends && T().scale ? T().scale : null} />;
   if (art.kind === "coins") return <Coins shape={art.shape} />;
   if (art.kind === "waves") return <Waves rule={art.rule} mine={C.co.earn.mine} market={C.app.tabs.market} />;
   return null;

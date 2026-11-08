@@ -159,21 +159,20 @@ def test_value_fix_compares_net_income_with_net_income():
     got = run("""out = { a: K.pastNiGrowth({ ni: [452068, 344513.5, 154871], fy: 2025 }), b: K.pastNiGrowth({ ni: [-251.4, 488.3, 812.4] }),
         c: K.pastNiGrowth({ ni: [100, 90, -5] }), d: K.pastNiGrowth({ ni: [100, 90, null] }), e: K.pastNiGrowth({ ni: [81, 0, 100] }), f: K.pastNiGrowth(null),
         vs: [K.dcfVs(4, 26), K.dcfVs(30, 26), K.dcfVs(29, 26), K.dcfVs(22.96, 26), K.dcfVs(22.94, 26), K.dcfVs(null, 2)],
-        txt: [X.pastNiText(26.04), X.pastNiText(-10), X.pastNiText(-0.04), X.pastNiText(NaN)], on: X.DCF_NI };""")
+        txt: [X.pastNiText(26.04), X.pastNiText(-10), X.pastNiText(-0.04), X.pastNiText(NaN)] };""")
     assert abs(got["a"]["x"] - ((452068 / 154871) ** 0.5 - 1) * 100) < 1e-9 and got["a"]["fy"] == 2025
     assert got["b"] is None and got["c"] is None and got["d"] is None and got["f"] is None     # 둘 다 0보다 클 때만
     assert abs(got["e"]["x"] - (-10.0)) < 1e-9                              # 가운데 해는 보지 않아요 (81 / 100 → 연 −10%)
     assert got["vs"] == ["lower", "higher", "similar", "similar", "lower", None]   # 보이는 한 자리 숫자로 3%p 안이면 비슷해요
     assert got["txt"] == ["연평균 26.0% 늘었어요", "연평균 10.0% 줄었어요", "연평균 0.0% 늘었어요", None]   # 빼기 기호 없이
-    assert got["on"] is True
 
 
-def test_value_tab_never_reads_revenue_growth_while_the_fix_is_on():
+def test_value_tab_never_reads_revenue_growth():
+    """예전 카드(매출 증가율과 비교)는 지웠어요 (Jack, 2026-11-08)."""
     src = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
-    dcf = src.split("function Dcf({", 1)[1].split("\nfunction DcfRevenue(", 1)[0]
-    assert "if (!DCF_NI) return <DcfRevenue" in dcf
-    on = dcf.split("if (!DCF_NI) return <DcfRevenue", 1)[1]
-    assert "g3" not in on and "growthBasis" not in on and "growthKr" not in on and "pastNiGrowth(co)" in on
+    dcf = src.split("function Dcf({", 1)[1].split("\n}\n", 1)[0]
+    assert "g3" not in dcf and "growthBasis" not in dcf and "growthKr" not in dcf and "pastNiGrowth(co)" in dcf
+    assert "DcfRevenue" not in src and "DCF_NI" not in src
 
 
 def test_warning_chips_only_for_checks_that_ran_and_passed():
@@ -206,13 +205,6 @@ def test_payout_as_won_out_of_a_hundred():
 def test_tile_pictures_follow_the_tile_rule_only():
     got = run("""out = { s: [A.scaleAt(1.1, 1.6), A.scaleAt(10, 1), A.scaleAt(0.01, 1), A.scaleAt(null, 1), A.scaleAt(1, 0)] };""")
     assert abs(got["s"][0] - 0.5 * 1.1 / 1.6) < 1e-12 and got["s"][1] == 0.96 and got["s"][2] == 0.04 and got["s"][3] is None and got["s"][4] is None
-
-
-def test_the_value_fix_is_on():
-    """가치 고침(DCF_NI)은 틀린 비교를 고치는 것이라 켜 두어요. 예전 카드(매출과 비교)는 스위치를 되돌릴 때만 써요."""
-    import re
-    got = re.findall(r"^export const DCF_NI = (true|false);$", open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read(), flags=re.M)
-    assert got == ["true"]
 
 
 def test_dividend_tile_coins_follow_its_rule():
@@ -251,3 +243,32 @@ def test_dcf_bar_draws_nothing_at_or_below_zero():
     src = open(os.path.join(ROOT, "src", "v2", "cotabs.jsx"), encoding="utf-8").read()
     bar = src.split("function DcfBar(", 1)[1].split("\nfunction ", 1)[0]
     assert "{x > 0 && <div" in bar and "Math.max(0, x)" not in bar
+
+
+def test_the_four_rules_only_judge_portfolios_made_with_imported_holdings():
+    """Jack (2026-11-08): 포트폴리오 규칙 네 가지는 가진 종목 넣기로 만든 포트폴리오에만. 포트폴리오 만들기로 만든 포트폴리오는
+    자기 종목별 규칙과 비중 띠로만 봐요 (홈의 판정 띠), 네 규칙으로 판정하지 않아요."""
+    got = run("""const b = builtDeck([['000010', '가나전자', 0.5, 10, 8000], ['000020', '가나은행', 0.5, 5, 18000]]);
+      const d = impDeck([row('000010', '가나전자', 10)]);
+      const ctx = ctxOf(STOCKS); const blocks = Hm.homeBlocks([b, d], R.evaluateAll([b, d], ctx), ctx, STOCKS);
+      out = blocks.map((x) => [x.deck.id, x.st == null ? null : x.st.rules.length, x.money.ok]);""", STOCKS=STOCKS)
+    assert got == [["dbuilt", None, True], ["dimp", 4, True]]
+
+
+def test_filing_rows_only_from_a_loaded_fresh_list_and_the_last_seven_days():
+    ins = [{"rc": "1", "d": "20261106", "t": "000010", "q": 100}, {"rc": "2", "d": "20261105", "t": "000010", "q": -50},
+           {"rc": "3", "d": "20261030", "t": "000010", "q": 10},                      # 8일 전: 빠져요
+           {"rc": "4", "d": "20261104", "t": "000020", "q": -5}, {"rc": "5", "d": "20261106", "t": "999999", "q": 5},   # 가지지 않은 종목
+           {"rc": "6", "d": "20261107", "t": "000040", "q": 0}]                       # 0주는 변동이 아니에요
+    got = run("""const disc = { status: 'ok', data: { insider: INS } }; const held = new Set(['000010', '000020', '000040']);
+      out = { ok: Hm.filingRows(disc, held, '2026-11-07', { stale: false }), stale: Hm.filingRows(disc, held, '2026-11-07', { stale: true }),
+        none: Hm.filingRows({ status: 'idle' }, held, '2026-11-07', { stale: false }), nofresh: Hm.filingRows(disc, held, '2026-11-07', null),
+        edge: Hm.filingRows(disc, held, '2026-11-12', { stale: false }) };""", INS=ins)
+    assert got["ok"] == [{"t": "000010", "n": 2, "date": "2026-11-06", "up": True}, {"t": "000020", "n": 1, "date": "2026-11-04", "up": False}]
+    assert got["stale"] == [] and got["none"] == [] and got["nofresh"] == []     # 멈춘 목록 · 아직 받지 않은 목록: 줄 없음
+    assert got["edge"] == [{"t": "000010", "n": 1, "date": "2026-11-06", "up": True}]   # 11-12 기준 7일: 11-06 부터
+
+
+def test_dividend_picture_wording_is_past_based_for_korea():
+    got = run("""out = [C.co.div.coins, C.co.div.pastYear, C.co.div.year === undefined, C.co.tiles.scale];""")
+    assert got == ["100만원어치", "100만원어치면 지난 1년 배당으로 약 {x}이에요.", True, {"cheap": "싸게", "dear": "비싸게"}]

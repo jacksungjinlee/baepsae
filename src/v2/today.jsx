@@ -46,13 +46,12 @@ import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 import { Home2 } from "./home2.jsx";
 
-// v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx: the four portfolio rules in a navy hero,
-// the portfolio card with 오늘 and 산 가격보다, 가진 종목 with weight bars, 오늘 볼 것). Off until Jack says yes to the smoke-test
-// edits it needs: tests/smoke_v2.py checks today's 홈 (the per-stock verdict band, one strip per portfolio, their rows and
-// chips) in many scenes, and the new 홈 moves those to 오늘 볼 것 and the 가진 종목 card (the list of edits is in the v19.3e
-// report). Off, 홈 is exactly as v19.3d left it. The v19.3e smoke scenes build it on (tests/smoke_v2.py v193e_on_app).
-// The first visit, the first-visit guide's welcome and the stale and failed states are the same either way.
-export const HOME2 = false;
+// v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
+// verdict band of portfolios made with 포트폴리오 만들기 stays at the top as before (Hero below), portfolios made with 가진
+// 종목 넣기 get the four portfolio rules in a navy hero, every portfolio gets the card with 오늘 and 산 가격보다 and the 가진
+// 종목 list, then 오늘 볼 것. Off is 홈 as v19.3d left it (an emergency switch only). The first visit, the first-visit
+// guide's welcome and the stale and failed states are the same either way.
+export const HOME2 = true;
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -131,7 +130,7 @@ export function BigMoves({ items, load, onWhy }) {
   );
 }
 
-function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
+export function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
   if (!ev.ok) {
     if (ev.why === "loading") return null;
     if (ev.why === "stale") {
@@ -277,7 +276,7 @@ export function MarketGlance({ load, go }) {
 
 // welcome (v19.3c Part E): { onTry, onBrowse } while the first-visit guide's welcome is on (guide.jsx): it takes the place of
 // 홈's content until the user picks 직접 해 보기 or 그냥 둘러볼게요.
-export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null }) {
+export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null, disc = null }) {
   const decks = store.data.decks;
   const first = decks.length === 0 && !store.locked;
   const { ev, ctx } = useDaily(load, store);
@@ -307,7 +306,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       </Page>
     );
   }
-  if (HOME2) return <Home2 load={load} store={store} ev={ev} ctx={ctx} onConfirm={onConfirm} pad={pad} onWhy={onWhy} go={go} />;
+  if (HOME2) return <Home2 load={load} store={store} ev={ev} ctx={ctx} onConfirm={onConfirm} pad={pad} onWhy={onWhy} go={go} disc={disc} />;
   return (
     <Page pad={pad} cols={2}>
       <AppBar />

@@ -32,17 +32,26 @@ export function EarnBars({ op }) {
 
 // 가치: where this PBR sits against the industry median (the median in the middle).
 export const scaleAt = (pbr, med) => (pbr > 0 && med > 0 ? Math.min(0.96, Math.max(0.04, (0.5 * pbr) / med)) : null);
-export function ValueScale({ pbr, med }) {
+// ends: { cheap, dear } words under the two ends (Jack, 2026-11-08: only with the median marker and a line naming the
+// comparison: the caller decides), or null.
+export function ValueScale({ pbr, med, ends = null }) {
   const x = scaleAt(pbr, med);
   if (x == null) return null;
   const A = TOPIC_ART.value;
   return (
-    <div data-ui-v2="tile-art" data-art="scale" data-x={Math.round(x * 1000) / 1000} aria-hidden="true" style={{ position: "relative", height: 26, marginTop: SPACE(2) }}>
+    <div data-ui-v2="tile-art" data-art="scale" data-x={Math.round(x * 1000) / 1000} style={{ marginTop: SPACE(2) }}>
+    <div aria-hidden="true" style={{ position: "relative", height: 26 }}>
       <div style={{ position: "absolute", left: 0, right: 0, top: 9, height: 8, borderRadius: 4,
         background: `linear-gradient(90deg, ${A.ink} 0%, ${A.light} 45%, #E3E7EE 55%, #B9C1CE 100%)` }} />
       <div style={{ position: "absolute", left: "calc(50% - 1px)", top: 5, width: 2, height: 16, background: COLOR.ink }} />
       <div style={{ position: "absolute", left: `calc(${(x * 100).toFixed(1)}% - 7px)`, top: 6, width: 14, height: 14, borderRadius: 7, background: COLOR.ink,
         border: `2px solid ${COLOR.surface}`, boxSizing: "border-box" }} />
+    </div>
+    {ends && ends.cheap && ends.dear && (
+      <div data-ui-v2="scale-ends" aria-hidden="true" style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
+        <span>{ends.cheap}</span><span>{ends.dear}</span>
+      </div>
+    )}
     </div>
   );
 }
@@ -89,29 +98,33 @@ export function Waves({ rule, mine, market }) {
   );
 }
 
-// 100만원어치 → 1년 동안 → 약 {x}: a big coin stack, a dashed arrow with its label, a small stack with the amount.
-export function CoinFlow({ yearLabel, amount, aria }) {
+// The 100만원 picture (Jack, 2026-11-08): a big coin stack labelled "100만원어치", an arrow, a small stack, and under it the
+// sentence that says what it is (Korea: "100만원어치면 지난 1년 배당으로 약 {x}이에요."; the US its own line). The picture is
+// decoration; the sentence is the text.
+export function CoinFlow({ label, sentence }) {
   const A = TOPIC_ART.div;
   const big = Array.from({ length: 8 }, (_, i) => (
     <ellipse key={i} cx={30} cy={66 - i * 8} rx={26} ry={8} fill={i % 2 ? A.light : A.ink} stroke={A.ink} strokeWidth={1.4} />
   ));
   return (
-    <div data-ui-v2="co-coinflow" role="img" aria-label={aria} style={{ display: "flex", alignItems: "flex-end", gap: SPACE(2), marginTop: SPACE(3) }}>
-      <svg width={60} height={76} viewBox="0 0 60 76" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>{big}</svg>
-      <div aria-hidden="true" style={{ flex: 1, minWidth: 0, paddingBottom: SPACE(5), textAlign: "center" }}>
-        <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{yearLabel}</div>
-        <svg width="100%" height={16} viewBox="0 0 100 16" preserveAspectRatio="none" style={{ display: "block", marginTop: 2 }}>
-          <path d="M2 8 H94" stroke={A.ink} strokeWidth={3} strokeDasharray="6 5" vectorEffect="non-scaling-stroke" fill="none" />
-          <path d="M88 2 L97 8 L88 14" fill="none" stroke={A.ink} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-        </svg>
-      </div>
-      <div aria-hidden="true" style={{ flexShrink: 0, textAlign: "center", minWidth: 72 }}>
-        <svg width={40} height={22} viewBox="0 0 40 22" style={{ display: "block", margin: "0 auto" }}>
+    <div data-ui-v2="co-coinflow" style={{ marginTop: SPACE(3) }}>
+      <div aria-hidden="true" style={{ display: "flex", alignItems: "flex-end", gap: SPACE(2) }}>
+        <div style={{ flexShrink: 0, textAlign: "center", width: 96 }}>
+          <svg width={60} height={76} viewBox="0 0 60 76" style={{ display: "block", margin: "0 auto" }}>{big}</svg>
+          <div data-ui-v2="co-coinflow-label" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), whiteSpace: "nowrap" })}>{label}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 0, paddingBottom: SPACE(7) }}>
+          <svg width="100%" height={16} viewBox="0 0 100 16" preserveAspectRatio="none" style={{ display: "block" }}>
+            <path d="M2 8 H94" stroke={A.ink} strokeWidth={3} strokeDasharray="6 5" vectorEffect="non-scaling-stroke" fill="none" />
+            <path d="M88 2 L97 8 L88 14" fill="none" stroke={A.ink} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          </svg>
+        </div>
+        <svg width={40} height={22} viewBox="0 0 40 22" style={{ display: "block", flexShrink: 0, marginBottom: SPACE(7) }}>
           <ellipse cx={20} cy={15} rx={18} ry={6} fill={A.ink} stroke={A.ink} strokeWidth={1.2} />
           <ellipse cx={20} cy={8} rx={18} ry={6} fill={A.light} stroke={A.ink} strokeWidth={1.2} />
         </svg>
-        <div data-ui-v2="co-coinflow-amount" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), whiteSpace: "nowrap" })}>{amount}</div>
       </div>
+      <p data-ui-v2="co-coinflow-text" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}>{sentence}</p>
     </div>
   );
 }

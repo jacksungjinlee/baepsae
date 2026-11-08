@@ -108,10 +108,38 @@ export function heldDecks(decks, ev) {
   return out;
 }
 
-// One block per portfolio: { deck, de, st: pfState, money: homeMoney, list: holdingRows }.
+// One block per portfolio: { deck, de, st, money: homeMoney, list: holdingRows }. st: the four portfolio rules (pf.pfState)
+// for a portfolio made with 가진 종목 넣기 only (Jack, 2026-11-08); a portfolio made with 포트폴리오 만들기 keeps its own
+// per-stock rules and bands (the verdict band, today.jsx Hero) and is never judged by the four rules: st null.
 export function homeBlocks(decks, ev, ctx, stocks) {
-  return heldDecks(decks, ev).map(({ deck, de }) => ({ deck, de, st: pfState(deck, ctx, stocks || []), money: homeMoney(deck, de, ctx),
-    list: holdingRows(deck, de, ctx) }));
+  return heldDecks(decks, ev).map(({ deck, de }) => ({ deck, de, st: isImported(deck) ? pfState(deck, ctx, stocks || []) : null,
+    money: homeMoney(deck, de, ctx), list: holdingRows(deck, de, ctx) }));
+}
+
+// ---------------- 오늘 볼 것 · 공시 (Jack, 2026-11-08: "{name} 공시 {n}건 · {first filing title} · {date}") ----------------
+// 홈 loads no filings of its own: disc.json comes in only when a company page has been opened in this visit (app.jsx
+// loadDisc). Rows come from what is loaded, never from a list that stopped (company.discDate stale, or today's list did not
+// come in): then none. One row per held stock with 임원·주요주주 지분 변동 reports dated within the last FILING_DAYS days (KST
+// today included): n = those reports, the newest one first (its date and whether it raised or lowered the stake).
+export const FILING_DAYS = 7;
+const ymdOf = (d) => (typeof d === "string" && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
+const dayNum = (iso) => Date.parse(iso + "T00:00:00Z") / 86400000;
+// disc: app.jsx's { status, data } · held: Set of held codes · today: KST YYYY-MM-DD · fresh: company.discDate(disc.data).
+// -> [{ t, n, date, up }] newest first
+export function filingRows(disc, held, today, fresh) {
+  if (!disc || disc.status !== "ok" || !disc.data || !fresh || fresh.stale || !held || !held.size || !today) return [];
+  const by = new Map();
+  for (const x of Array.isArray(disc.data.insider) ? disc.data.insider : []) {
+    if (!x || !held.has(x.t) || !Number.isInteger(x.q) || x.q === 0) continue;
+    const date = ymdOf(x.d);
+    if (!date || date > today || dayNum(today) - dayNum(date) >= FILING_DAYS) continue;
+    const cur = by.get(x.t) || { t: x.t, n: 0, date: null, up: null, rc: "" };
+    cur.n += 1;
+    const rc = typeof x.rc === "string" ? x.rc : "";
+    if (cur.date == null || date > cur.date || (date === cur.date && rc > cur.rc)) { cur.date = date; cur.up = x.q > 0; cur.rc = rc; }
+    by.set(x.t, cur);
+  }
+  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.t < b.t ? -1 : 1)).map(({ rc, ...r }) => r);
 }
 
 // 오늘 볼 것's concentration card: the broken 한 업종 rule of a portfolio (its group, share, companies and limit), or null.

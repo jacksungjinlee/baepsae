@@ -260,7 +260,7 @@ export function App({ source }) {
     }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={disc} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
