@@ -278,6 +278,57 @@ def test_a_records_file_counts_the_limits_kept_beside_the_records():
     assert got["m2"] == {"l": {"stock": 55, "ind": 60}, "ts": 2000}
 
 
+def test_side_key_ties_future_times_and_portfolios_taken_out():
+    """v19.3d2 review 2. S1: a v19.3d merge ({ ...other, ...cur }) can pair an older copy's limits (20/25) with the time of a
+    later 저장 that reset them; on a tie with other values the side key's (the reset) wins, and the screens say 합쳤어요.
+    A tie with the same values keeps the records quietly. Future: an entry more than a day ahead of now is set aside and not
+    used (one an hour ahead is). S3: a portfolio this tab's write takes out leaves the side key, so re-importing it from an
+    older file without limits does not bring its old limits back; a portfolio set aside as unreadable keeps its entry."""
+    got = run(LS + """const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const only = (sideVal, recs) => { mem.clear(); if (sideVal) mem.set(SIDE, JSON.stringify(sideVal)); mem.set(K, JSON.stringify({ ...recs, v: S.versionFor(recs) })); };
+      // S1: records 20/25 at T2 (the merge's pairing), side: the reset at T2
+      only({ v: 1, decks: { dimp: { ts: 2000 } } }, { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, 1000).decks[0], limitsTs: 2000 }] });
+      const s1 = S.readStore(K, T);
+      // a tie with the same values: kept quietly
+      only({ v: 1, decks: { dimp: { limits: { stock: 20, ind: 25 }, ts: 2000 } } }, { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, 1000).decks[0], limitsTs: 2000 }] });
+      const s1b = S.readStore(K, T);
+      // future times
+      const now = Date.now();
+      only({ v: 1, decks: { dimp: { limits: { stock: 50 }, ts: now + 3 * 24 * 3600 * 1000 } } }, P.withLimits(base, 'dimp', 40, 60, 1000));
+      const f1 = S.readStore(K, T);
+      const f1side = mem.has(SIDE) ? mem.get(SIDE) : null, f1aside = [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).length;
+      only({ v: 1, decks: { dimp: { limits: { stock: 50 }, ts: now + 3600 * 1000 } } }, P.withLimits(base, 'dimp', 40, 60, 1000));
+      const f2 = S.readStore(K, T);
+      // S3: two portfolios, dimp with limits; this tab takes dimp out; an older file without limits brings it back
+      mem.clear();
+      const two = { v: 2, decks: [P.withLimits(base, 'dimp', 20, 25, 1000).decks[0], { ...deckOf([['000040', 10]]), id: 'dx' }] };
+      S.readStore(K, T);
+      S.writeStore(two, K, T);
+      const before = side();
+      const fileText = S.exportText({ v: 2, decks: [deckOf([['000010', 20]])] });
+      const without = { ...two, decks: two.decks.filter((x) => x.id !== 'dimp') };
+      S.writeStore(without, K, T);
+      const after = side();
+      const m = S.mergeStores(without, S.parseImport(fileText, T), 5000, S.storedStores(K, T), T);
+      // a portfolio that cannot be read (set aside) keeps its entry
+      mem.clear();
+      mem.set(SIDE, JSON.stringify({ v: 1, decks: { dimp: { limits: { stock: 20, ind: 25 }, ts: 1000 } } }));
+      mem.set(K, JSON.stringify({ v: 2, decks: [{ ...two.decks[0], holdings: 'x' }, two.decks[1]] }));
+      const r = S.readStore(K, T);
+      S.writeStore({ ...r.data, decks: r.data.decks.map((x) => ({ ...x, name: 'renamed' })) }, K, T);
+      out = { s1: { lim: limOf(s1.data), restored: s1.restored }, s1b: { lim: limOf(s1b.data), restored: s1b.restored },
+        f1: { lim: limOf(f1.data), restored: f1.restored, side: f1side, aside: f1aside }, f2: { lim: limOf(f2.data), restored: f2.restored },
+        before, after, m: limOf(m), locked: r.locked, keptAside: side() };""")
+    assert got["s1"] == {"lim": {"l": None, "ts": 2000}, "restored": True}           # the reset stands
+    assert got["s1b"] == {"lim": {"l": {"stock": 20, "ind": 25}, "ts": 2000}, "restored": False}
+    assert got["f1"] == {"lim": {"l": {"stock": 40, "ind": 60}, "ts": 1000}, "restored": False, "side": None, "aside": 1}
+    assert got["f2"]["lim"]["l"] == {"stock": 50} and got["f2"]["restored"] is True
+    assert got["before"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": 1000}}}
+    assert got["after"] == {"v": 1, "decks": {}}                                      # taken out by this tab: its entry went
+    assert got["m"] == {"l": None, "ts": None}                                        # re-imported without limits: no old limits back
+    assert got["locked"] is True and got["keptAside"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": 1000}}}
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""

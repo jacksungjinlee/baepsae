@@ -11,7 +11,7 @@
 //   6 연 배당금 (지난 1년 기준), before tax
 //   7 비중을 바꿔 보면: starts at today's weights and moves only when the user moves one (never a suggestion)
 // No 뱁이 (numbers everywhere). No Korean here: src/copy/v2.js.
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOPIC_CHIP, HOLDING_SHADES, holdingShades } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Amount, Collapsible } from "../ui/components.jsx";
@@ -175,16 +175,35 @@ function ByStock({ st }) {
   const shades = holdingShades(st.view.rows.map((r) => r.w));
   const shadeOf = (r) => shades[st.view.rows.indexOf(r)] || HOLDING_SHADES[HOLDING_SHADES.length - 1];
   const cols = s.cards.length;
-  // v19.3d2 review: the name column gives way down to 72px (it was 132px: 3 cards overflowed a 320px phone by 16px); what
-  // still does not fit scrolls inside the card, never the page. On a phone narrower than 360px the logo makes way for the
-  // name (the whole name fits instead of "삼성…").
-  const NAME_MIN = 72;
-  const narrow = typeof window !== "undefined" && window.innerWidth < 360;
-  const grid = { display: "grid", gridTemplateColumns: `minmax(${NAME_MIN}px, 1fr) repeat(${cols}, 52px)`, alignItems: "center", columnGap: SPACE(1) };
+  // v19.3d2 review: the name column keeps at least NAME_MIN for the name itself (it was 132px with the logo: 3 cards
+  // overflowed a 320px phone by 16px). The logo shows only when the table has room for it besides that (measured on the
+  // table's own width, again when it changes); what still does not fit scrolls inside the card, never the page, with a
+  // fade at the right edge while columns are hidden there.
+  const NAME_MIN = 64, LOGO = SPACE(8) + SPACE(2), COL = 56;
+  const box = useRef(null);
+  const [fit, setFit] = useState(() => ({ logo: typeof window !== "undefined" && window.innerWidth >= 480, more: false }));   // a first guess
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const logo = el.clientWidth >= NAME_MIN + LOGO + cols * COL;
+      const more = el.scrollWidth - el.scrollLeft - el.clientWidth > 1;
+      setFit((f) => (f.logo === logo && f.more === more ? f : { logo, more }));
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(el);
+    window.addEventListener("resize", measure);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => { if (ro) ro.disconnect(); window.removeEventListener("resize", measure); el.removeEventListener("scroll", measure); };
+  }, [cols]);
+  const nameMin = NAME_MIN + (fit.logo ? LOGO : 0);
+  const grid = { display: "grid", gridTemplateColumns: `minmax(${nameMin}px, 1fr) repeat(${cols}, 52px)`, alignItems: "center", columnGap: SPACE(1) };
   return (
     <Section id="report-bystock" icon="list" title={C.rpt.byStock}>
-      <div style={{ overflowX: "auto", marginTop: SPACE(3) }}>
-        <div style={{ minWidth: NAME_MIN + cols * 56 }}>
+      <div style={{ position: "relative", marginTop: SPACE(3) }}>
+      <div ref={box} data-ui-v2="bystock-scroll" data-logo={fit.logo ? "1" : "0"} style={{ overflowX: "auto" }}>
+        <div style={{ minWidth: nameMin + cols * COL }}>
           <div style={{ ...grid, paddingBottom: SPACE(2), borderBottom: `1px solid ${COLOR.line}` }}>
             <span />
             {s.cards.map((c) => (
@@ -197,7 +216,7 @@ function ByStock({ st }) {
           {rows.map((r) => (
             <div key={r.key} data-report-row={r.key} style={{ ...grid, padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <span style={{ display: "flex", alignItems: "center", gap: SPACE(2), minWidth: 0 }}>
-                {!narrow && <CoMark t={r.t} s={r.s} name={r.nk} size={SPACE(8)} />}
+                {fit.logo && <CoMark t={r.t} s={r.s} name={r.nk} size={SPACE(8)} />}
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{r.nk}</span>
                   <span aria-hidden="true" style={{ display: "block", height: 4, borderRadius: 999, background: COLOR.page, marginTop: 3 }}>
@@ -211,6 +230,9 @@ function ByStock({ st }) {
             </div>
           ))}
         </div>
+      </div>
+      {fit.more && <div aria-hidden="true" data-ui-v2="bystock-more" style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: SPACE(8), pointerEvents: "none",
+        background: `linear-gradient(to right, ${COLOR.surface}00, ${COLOR.surface})` }} />}
       </div>
       <div data-ui-v2="dot-legend" style={{ display: "flex", flexWrap: "wrap", gap: SPACE(3), marginTop: SPACE(3) }}>
         {["full", "half", "empty"].map((k, i) => (

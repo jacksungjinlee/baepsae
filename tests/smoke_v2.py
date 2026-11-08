@@ -5545,6 +5545,20 @@ def scene_v193d2(R, files, width):
         assert hy.locator('input[data-ui-v2="import-amount"]').input_value() == "12345"
         hy.locator('[data-ui-v2="import-remove"]').click()                       # 이 장면의 나머지는 그대로 (빼요)
         assert page.locator('[data-import-row="000660"]').count() == 0
+        # 리뷰 2: 코드를 쓰고 바로 같은 줄의 금액 칸을 누르면, 줄이 그 종목이 되어도 그 자리에 있고 초점과 쓴 숫자가 남아요
+        btn.click()
+        nrow = page.locator('[data-import-row="name"]')
+        nrow.wait_for(state="visible")
+        nrow.locator('input[data-ui-v2="import-name"]').click()
+        page.keyboard.type("msft")
+        nrow.locator('input[data-ui-v2="import-amount"]').click()
+        page.keyboard.type("300")
+        ms = page.locator('[data-import-row="MSFT"]')
+        ms.wait_for(state="visible")
+        assert page.locator('[data-import-row="name"]').count() == 0 and ms.locator('input[data-ui-v2="import-amount"]').input_value() == "300"
+        assert ms.locator('input[data-ui-v2="import-amount"]').evaluate("e => e === document.activeElement"), "초점이 금액 칸에 없어요"
+        ms.locator('[data-ui-v2="import-remove"]').click()
+        assert page.locator('[data-import-row="MSFT"]').count() == 0
         btn.click()
         nrow = page.locator('[data-import-row="name"]')
         nrow.wait_for(state="visible")
@@ -6575,6 +6589,52 @@ def scene_store_version(R, files, width, seeded):
     srv.shutdown()
 
 
+def scene_bystock_fit(R, files, width):
+    """v19.3d2 리뷰 2: 점검의 종목별로 보면 — 기준 3 · 4 · 6개에서 페이지는 가로로 넘치지 않고, 이름 칸은 이름에 64px 이상(로고는 그
+    자리가 있을 때만), 표가 카드보다 넓으면 카드 안에서 밀리고 오른쪽 끝이 흐려져 더 있다는 것을 보여 줘요(밀어서 끝에 가면 사라져요)."""
+    S = f"종목별로 보면 {width}"
+    srv, ctx, page, base = R.open(build_site(files), width)
+    sets = (("value", "div", "stable"), ("value", "div", "stable", "growth"), ("value", "div", "stable", "growth", "profit", "lowVol"))
+
+    def run():
+        for cards in sets:
+            page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
+            wait_ready(page)
+            to_build_start(page, False)
+            page.locator('[data-ui-v2="start-holdings"]').click()
+            at(page, "portfolio/import")
+            for t in ("005930", "005380", "000660"):
+                page.locator('[data-ui-v2="import-search"] input').fill(t)
+                page.locator(f'[data-import-result="{t}"] button').click()
+                page.locator(f'[data-import-row="{t}"] input[data-ui-v2="import-qty"]').fill("3")
+            action(page).click()
+            for c in cards:
+                page.locator(f'[data-card="{c}"] [data-ui-v2="card-inc"]').click()
+            action(page).click()
+            page.locator('[data-ui-v2="report"]').wait_for(state="visible")
+            box = page.locator('[data-ui-v2="bystock-scroll"]')
+            box.scroll_into_view_if_needed()
+            page.wait_for_timeout(100)
+            m = box.evaluate("""e => ({ cw: e.clientWidth, sw: e.scrollWidth, logo: e.getAttribute('data-logo'),
+              names: [...e.querySelectorAll('[data-report-row]')].map((r) => { const n = [...r.querySelectorAll('span')].find((x) => getComputedStyle(x).textOverflow === 'ellipsis'); return n ? n.clientWidth : 0; }),
+              marks: e.querySelectorAll('[data-report-row] [data-ui-v2="co-mark"]').length })""")
+            no_hscroll(page, width)
+            assert min(m["names"]) >= 64 - 0.5, (cards, m)                   # 이름에 64px 이상
+            assert (m["logo"] == "1") == (m["cw"] >= 64 + 40 + len(cards) * 56) and (m["marks"] > 0) == (m["logo"] == "1"), (cards, m)
+            more = page.locator('[data-ui-v2="bystock-more"]')
+            if m["sw"] > m["cw"] + 1:                                          # 카드 안에서 밀려요: 오른쪽 끝이 흐려요
+                assert more.count() == 1, (cards, m)
+                box.evaluate("e => { e.scrollLeft = e.scrollWidth; }")
+                page.wait_for_timeout(100)
+                assert more.count() == 0, "끝까지 밀었는데 흐림이 남아요"
+            else:
+                assert more.count() == 0, (cards, m)
+            R.collect(page)
+    R.check(page, S, "기준 3 · 4 · 6개: 페이지 가로 넘침 없음 · 이름 64px 이상 · 로고는 자리가 있을 때만 · 카드 안에서 밀리면 오른쪽 끝 흐림", run)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -6628,6 +6688,8 @@ def main():
                    lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
                    lambda: scene_v193d2(R, files, 390), lambda: scene_v193d2(R, files, 1280),           # v19.3d2 단계 · − / + · 이름으로 · 묶음 · 내 규칙 · 다 판 종목
                    lambda: scene_v193d2(R, files, 320),                                                    # v19.3d2 320px (리뷰: 다섯 자리 금액 · 겹침)
+                   lambda: scene_bystock_fit(R, files, 320), lambda: scene_bystock_fit(R, files, 360),     # v19.3d2 리뷰 2: 종목별로 보면
+                   lambda: scene_bystock_fit(R, files, 390),
                    lambda: scene_v193e_home(R, files, 390), lambda: scene_v193e_home(R, files, 1280),    # v19.3e 새 홈
                    lambda: scene_v193e_home(R, files, 320),
                    lambda: scene_home2_off(R, files),                                                      # 새 홈 비상 스위치를 끈 빌드

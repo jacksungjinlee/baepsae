@@ -109,7 +109,8 @@ function HoldingsStep({ load, importer, setImporter, go, onExit }) {
     const d = m.drafts.find((x) => keyOf(x) === k);
     const s = d && d.t == null ? exactStock(stocks, d.name) : null;
     if (!s || m.drafts.some((x) => x.t === s.t)) return m;
-    return { ...m, drafts: m.drafts.map((x) => (x === d ? { t: s.t, mode: "amount", qty: "", amount: d.amount, avg: "", avgOpen: false } : x)) };
+    // the row keeps its key (keyOf), so the screen keeps it in place: a tap on its amount field keeps the focus there
+    return { ...m, drafts: m.drafts.map((x) => (x === d ? { key: d.key, t: s.t, mode: "amount", qty: "", amount: d.amount, avg: "", avgOpen: false } : x)) };
   });
   const results = useMemo(() => findStocks(stocks, q, 8), [stocks, q]);
   // values and weights of the rows that are ready (a quantity or an amount, and today's price)
