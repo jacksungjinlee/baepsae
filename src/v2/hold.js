@@ -5,28 +5,37 @@
 // portfolio. So the new data waits:
 // - while 포트폴리오 만들기 is on screen past its 기준 steps (후보 고르기 or 매수 계획, the 샀어요 sheet included: it lives
 //   in 매수 계획), or while 가진 종목 넣기 is on screen;
+// - while a 꼭 담을 종목 (settings.pinned) of 포트폴리오 만들기 is not in the new data.json, at any step, on screen or left
+//   behind (round-2 review): the builder would leave it out without a word and still keep its place, one stock short;
 // - after the user leaves them, while a draft they left behind (both are kept as the user moves around and reopen where
-//   they were) would lose a stock with the new data: a pick that is no longer a candidate, a 꼭 담을 종목 or a holding
-//   that is no longer in data.json, or 포트폴리오 만들기 no longer ready on the new data.
+//   they were) would lose a stock with the new data: a pick that is no longer a candidate, a holding of 가진 종목 넣기
+//   (at any of its steps) that is no longer in data.json, or 포트폴리오 만들기 no longer ready on the new data.
 // The draft ends the wait when it changes: back to the 기준 steps (the picks are drawn again from the new data), started
 // over, finished (기록했어요 → 홈, 매일 점검 시작하기), or edited so that nothing would be lost.
 import { deckState } from "./deckcalc.js";
-import { publishText } from "./load.js";
+import { withDataShape } from "./engine.js";
+import { publishText, staleNow } from "./load.js";
 
 const STAGE = { pick: "its pick step", plan: "its plan step" };
 
-// Would the 포트폴리오 만들기 draft keep every stock on the new data (next: a load state with status "ok")?
+// Would the 포트폴리오 만들기 draft keep every stock on the new data (next: a load state with status "ok")? The candidates
+// are worked out the way the new data.json is read (its own data shape: engine.withDataShape, round-2 review), and the
+// shape of the data on screen is back afterwards.
 export function picksSurvive(builder, next) {
   if (next.missing && next.missing.length) return false;          // 포트폴리오 만들기 would not be ready on the new data
   const st = builder.settings || {};
-  const ds = deckState(next, st);
-  if (ds.pinned.length !== (st.pinned || []).length) return false;
-  const cands = new Set(Object.values(ds.cands).flat().map((c) => c.t));
-  return (builder.picks || []).every((t) => cands.has(t));
+  return withDataShape(next.data, () => {
+    const ds = deckState(next, st);
+    if (ds.pinned.length !== (st.pinned || []).length) return false;
+    const cands = new Set(Object.values(ds.cands).flat().map((c) => c.t));
+    return (builder.picks || []).every((t) => cands.has(t));
+  });
 }
 
 // Would the 가진 종목 넣기 draft keep every holding on the new data?
 export const draftsSurvive = (importer, next) => (importer.drafts || []).every((d) => !!next.byT.get(d.t));
+// Would every 꼭 담을 종목 of the 포트폴리오 만들기 draft still be in the new data?
+export const pinnedSurvive = (builder, next) => ((builder.settings && builder.settings.pinned) || []).every((t) => !!next.byT.get(t));
 
 // ctx: { onBuild, onImport (that screen is showing), builder, importer } · next: the fetched load state.
 // -> why the new data waits (a phrase for the console, after "held while"), or null when it can go on screen now.
@@ -36,8 +45,9 @@ export function holdReason(ctx, next) {
   if (ctx.onBuild && stage) return "the portfolio builder is on " + stage;
   if (ctx.onImport) return "the holdings import is open";
   if (!next || next.status !== "ok") return null;
+  if (b && !pinnedSurvive(b, next)) return "a stock the portfolio builder must include (pinned) is not in the new data";
   if (stage && !picksSurvive(b, next)) return "the portfolio builder draft left on " + stage + " would lose a stock with the new data";
-  if (im && im.step >= 1 && !draftsSurvive(im, next)) return "the holdings import draft left on its step " + (im.step + 1) + " would lose a holding with the new data";
+  if (im && !draftsSurvive(im, next)) return "the holdings import draft left on its step " + (im.step + 1) + " would lose a holding with the new data";
   return null;
 }
 
@@ -45,9 +55,13 @@ export function holdReason(ctx, next) {
 // on screen when check() finds nothing holding it any more. Either way it goes on screen only if the data on screen is
 // still the data it was fetched for (else it is dropped, logged). A failed first load holds nothing (no draft can exist
 // without data). Every step is logged with the publish and its counts.
-//   getLoad(): the load state on screen · ctx(): holdReason's ctx now · put(result): put it on screen (setLoad(adoptLoad(...))).
+//   getLoad(): the load state on screen · ctx(): holdReason's ctx now · put(result): put it on screen (app.jsx: adoptLoad,
+//   then refreshFresh at that moment: a publish held for days goes on screen with today's stale check, never the one worked
+//   out when it was fetched).
 // -> { apply(result, cur): returnWatch's apply · check(): call when the screen or a draft changes; true when it put the
-//      held result on screen · held(): the held publish described for the console, or null }
+//      held result on screen · held(now): the held publish described for the console, or null. A held publish that is
+//      itself stale by now (load.js staleNow) is dropped there, logged, and null comes back: the return fetches again under
+//      the usual rules (round-2 review). }
 export function publishGate({ getLoad, ctx, put }) {
   let held = null;                                                // { r, cur, why }
   const fits = (cur) => { const l = getLoad(); return !!l && !!cur && l.status === cur.status && l.data === cur.data; };
@@ -79,6 +93,15 @@ export function publishGate({ getLoad, ctx, put }) {
       held = null;
       return show(h.r, h.cur, true);
     },
-    held: () => (held ? publishText(held.r.load) + ", held while " + held.why + "," : null),
+    held(now) {
+      if (!held) return null;
+      const what = publishText(held.r.load) + ", held while " + held.why + ",";
+      if (staleNow(held.r.load, now)) {
+        held = null;
+        console.warn("[v2] back in view: " + what + " is stale itself by now: dropped; this return fetches again under the usual rules");
+        return null;
+      }
+      return what;
+    },
   };
 }

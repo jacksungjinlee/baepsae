@@ -542,7 +542,9 @@ out = {
     assert got["pickOffLost"] == "the portfolio builder draft left on its pick step would lose a stock with the new data", got
     assert got["planOffLost"] and "plan step" in got["planOffLost"], got
     assert got["imp2Lost"] == "the holdings import draft left on its step 3 would lose a holding with the new data", got
-    assert got["imp2Same"] is None and got["imp0Lost"] is None, got        # the first step shows a row it cannot price: not silent
+    assert got["imp2Same"] is None, got
+    # round-2 review (3): a draft on its first step that would lose a holding waits too
+    assert got["imp0Lost"] == "the holdings import draft left on its step 1 would lose a holding with the new data", got
     assert got["survive"] == [True, False, True, False] and got["notReady"] is False and got["pinnedGone"] is False, got
     assert got["failNext"] is None, got
 
@@ -582,6 +584,94 @@ out = { heldText, c1, c2, c3, after, c4, put, warn: WARN, info: INFO };""")
     assert "held until now, is not used: the data on screen changed after it was fetched" in warn, warn
 
 
+# ── round-2 review ──
+def test_a_publish_put_on_screen_late_gets_the_stale_check_of_that_moment():
+    """(1) A publish fetched Wednesday and held until Friday must not show as fresh: app.jsx puts it on screen as
+    refreshFresh(adoptLoad(load), now), so its fresh (and the 홈 band's dayState) is worked out when it goes on screen."""
+    wed = publish("2026-11-11T06:40:00+09:00", "2026-11-10", stale_after="2026-11-12T16:47:00+09:00", next_pub="2026-11-12")
+    got = run("""
+const fetched = loadOf(WED, '2026-11-11T07:00:00+09:00');               // fetched Wednesday morning: fresh then
+const fri = at('2026-11-13T10:00:00+09:00');
+const asFetched = LD.adoptLoad(fetched);
+const shown = LD.refreshFresh(LD.adoptLoad(fetched), fri);
+out = { then: fetched.fresh, stale: [asFetched.fresh.stale, R.dayState(asFetched, fri).ok], now: shown.fresh, day: R.dayState(shown, fri),
+  same: LD.refreshFresh(LD.adoptLoad(fetched), at('2026-11-11T07:00:00+09:00')) === fetched };""", WED=wed)
+    assert got["then"]["stale"] is False and got["stale"] == [False, True], got           # the fetch-time answer: fresh (the bug)
+    assert got["now"]["stale"] is True and got["now"]["days"] == 2 and got["day"] == {"ok": False, "why": "stale", "days": 2}, got
+    assert got["same"] is True, got                                                        # nothing changed: the same state, no re-render
+
+
+def test_a_held_publish_that_went_stale_is_dropped_and_the_return_fetches_again():
+    """(1) A return that finds a held publish stale itself by now drops it (logged) and fetches again under the usual rules
+    (once per return, the 10-minute wait); one still fresh keeps the return from fetching."""
+    got = run("""
+let shown = loadOf(OLD, NOW), ctx = { onBuild: true, builder: { stage: 'pick', settings: {}, picks: [] } };
+const g = H.publishGate({ getLoad: () => shown, ctx: () => ctx, put: (r) => { shown = r.load; } });
+const fetched = loadOf(NEW, NOW);
+g.apply({ ok: true, load: fetched, disc: null }, shown);                  // held (on the pick step)
+let clock = at(NOW);
+const log = [];
+const w = LD.returnWatch({ hidden: false, getLoad: () => shown, getDisc: () => null, now: () => clock, held: (now) => g.held(now),
+  refetch: () => { log.push(clock); return Promise.resolve({ ok: false, why: 'x' }); }, apply: (r, cur) => g.apply(r, cur) });
+w.hide(); const a = w.show();                                             // Tuesday 17:00: the held one is fresh: no fetch
+const heldTue = g.held(clock);
+clock = at('2026-11-12T10:00:00+09:00');                                  // Thursday: the held one (staleAfter Wed 16:47) is stale
+w.hide(); const b = w.show(); await b;
+const heldThu = g.held(clock);
+w.hide(); const c = w.show();                                             // at once again: the 10-minute wait after nothing new
+out = { a, heldTue, b: !!b, heldThu, c, n: log.length, warn: WARN, info: INFO };""", OLD=old_files(), NEW=new_files(), NOW=NOW)
+    assert got["a"] is None and got["heldTue"] and "held while the portfolio builder is on its pick step" in got["heldTue"], got
+    assert got["b"] is True and got["n"] == 1 and got["heldThu"] is None and got["c"] is None, got
+    warn = " | ".join(got["warn"])
+    assert f"the publish of {NEW_PUB} (" in warn and "is stale itself by now: dropped; this return fetches again under the usual rules" in warn, warn
+    assert any("is already waiting to go on screen" in x for x in got["info"]), got["info"]
+
+
+def test_a_pinned_stock_missing_from_the_new_data_holds_at_every_step():
+    """(2) A 꼭 담을 종목 that left data.json would be left out without a word (and its place kept: one stock short) at any
+    step of 포트폴리오 만들기, on screen or left behind: the new data waits."""
+    got = hold_run("""
+const pin = (b) => ({ ...b, settings: { ...st, pinned: [krPick] } });
+const why = 'a stock the portfolio builder must include (pinned) is not in the new data';
+out = { why,
+  stepsOn: H.holdReason({ onBuild: true, builder: pin(bSteps) }, lost), stepsOff: H.holdReason({ builder: pin(bSteps) }, lost),
+  start: H.holdReason({ builder: pin({ ...bSteps, step: 0 }) }, lost), planOff: H.holdReason({ builder: pin(bPlan) }, lost),
+  kept: H.holdReason({ onBuild: true, builder: pin(bSteps) }, same), none: H.holdReason({ onBuild: true, builder: bSteps }, lost),
+  survive: [H.pinnedSurvive(pin(bSteps), same), H.pinnedSurvive(pin(bSteps), lost), H.pinnedSurvive(bSteps, lost)] };""")
+    w = got["why"]
+    assert got["stepsOn"] == w and got["stepsOff"] == w and got["start"] == w and got["planOff"] == w, got
+    assert got["kept"] is None and got["none"] is None and got["survive"] == [True, False, True], got
+
+
+def test_the_pick_check_reads_the_new_file_its_own_way_and_puts_the_shape_back():
+    """(5) picksSurvive works out the candidates the way the new data.json is read (divCheck present: the exact fields;
+    the fixture has no dyt, so Korean dividend yields are blank and the income candidates change), and the data on screen
+    is read its own way again afterwards. The same check in the other direction too."""
+    got = hold_run("""
+const exactOf = (load) => LD.resolveLoad({ data: ok({ ...load.data, divCheck: { same: 0 } }), corp: ok(load.corp), macro: ok(load.macro) }, at(NOW));
+const withDiv = exactOf(same);
+E.setDataShape(F.data);                                                    // the data on screen (no divCheck) is read its way
+const before = E.exactData();
+const survive = H.picksSurvive(bPick, withDiv);
+const after = E.exactData();
+const wrongWay = DC.deckState(withDiv, st);                                // what the check would see with the old shape
+const wrongSurvive = picks.every((t) => Object.values(wrongWay.cands).flat().some((c) => c.t === t));
+// the other way round: a draft made on exact data, new data without divCheck
+const L1 = exactOf(L0);
+const ds1 = DC.deckState(L1, st);
+const picks1 = DC.defaultPicks(ds1);
+const back = H.picksSurvive({ ...bPick, picks: picks1 }, same);
+const backShape = E.exactData();
+E.setDataShape(F.data);
+let threw = null, inside = null;
+try { E.withDataShape(withDiv.data, () => { inside = E.exactData(); throw new Error('inside'); }); } catch (e) { threw = e.message; }
+out = { before, survive, after, wrongSurvive, back, backShape, threw, inside, restored: E.exactData(), picks1: picks1.length };""")
+    assert got["before"] is False and got["after"] is False and got["restored"] is False, got     # the shape on screen, unchanged
+    assert got["wrongSurvive"] is True and got["survive"] is False, got                          # read the old way it would pass
+    assert got["back"] is True and got["backShape"] is True and got["picks1"] > 0, got
+    assert got["threw"] == "inside" and got["inside"] is True, got                            # set inside, put back even on a throw
+
+
 # ── wiring: the live page only ──
 def read(p):
     with open(os.path.join(ROOT, p), encoding="utf-8") as fh:
@@ -608,9 +698,13 @@ def test_the_live_page_wires_the_return_to_view_and_the_preview_does_not():
         assert app.count(ev) == 1, ev
     assert "if (e && e.persisted) w.show();" in app                         # pageshow counts only from the back-forward cache
     assert app.count("returnWatch(") == 1 and "w.stop();" in app
-    assert app.count("setLoad(adoptLoad(r.load));") == 1                    # the new state goes on screen with its own data shape
+    # the new state goes on screen with its own data shape and the stale check as of that moment (round-2 review, 1)
+    assert app.count("setLoad(refreshFresh(adoptLoad(r.load), Date.now()));") == 1 and app.count("adoptLoad(") == 1
     # held under a draft (hold.js): the gate decides; it is asked again whenever the screen or a draft changes
-    assert "apply: (r, cur) => gate.apply(r, cur)," in app and "held: () => gate.held()," in app
+    assert "apply: (r, cur) => gate.apply(r, cur)," in app and "held: (now) => gate.held(now)," in app
+    # the fresh-check timer is set again for each publish on screen (round-2 review, 6)
+    assert "const livePub = liveData ? load.data.publishedAt : null;" in app and app.count("}, [liveData, livePub]);") == 1
+    assert "}, [liveData]);" not in app
     assert "holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };" in app
     assert "useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);" in app
 

@@ -178,6 +178,13 @@ export const hasDivCheck = (d) => !!(d && typeof d === "object" && !Array.isArra
   && !Array.isArray(d.divCheck));
 export function setDataShape(data) { EXACT_DATA = hasDivCheck(data); return EXACT_DATA; }
 export const exactData = () => EXACT_DATA;
+// fn() with the engine reading `data` its own way, then the shape it had before, even if fn throws (hold.js: a check run
+// on fetched data that is not on screen yet, 2026-11-08). -> what fn returns.
+export function withDataShape(data, fn) {
+  const prev = EXACT_DATA;
+  EXACT_DATA = hasDivCheck(data);
+  try { return fn(); } finally { EXACT_DATA = prev; }
+}
 
 // Exact data only. A Korean history is comparable year to year when the split check put every paying year on today's
 // share basis: divSt same (no change), adj (a split or bonus issue, adjusted by its exact factor) or zero (no dividend

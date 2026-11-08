@@ -121,16 +121,18 @@ export const dueOnReturn = (load, now) => !!load && !load.preview && (load.statu
 const pubMs = (j) => Date.parse((j && j.publishedAt) || "");
 const nOf = (a) => (Array.isArray(a) ? a.length : 0);
 const errText = (e) => String((e && e.message) || e);
-// A fetch made when a page comes back into view gives up after this long (a hung connection would otherwise keep every
-// later return from fetching). The first load has no such limit.
+// A fetch made when a page comes back into view gives up after this long: one budget for the whole fetch (every file it
+// asks for, data.json first and then the others), not per request. A hung connection would otherwise keep every later
+// return from fetching. The first load has no such limit.
 export const REFETCH_TIMEOUT_MS = 60000;
 // After a return's fetch that put nothing on screen (it failed, found no later publish, or found files from different
 // publishes), the next return does not fetch for this long: GitHub Pages lets data.json be cached for 10 minutes
 // (max-age=600), so a sooner fetch almost always gets the same copy.
 export const REFETCH_GAP_MS = 10 * 60000;
 
-// The files fetched again, the way loadAll fetches them (loadJson: no-store, NaN repair, the same CHECKS), each request
-// stopped after REFETCH_TIMEOUT_MS (opts.timeoutMs for tests). now: for the new state's fresh (default: when the files arrived).
+// The files fetched again, the way loadAll fetches them (loadJson: no-store, NaN repair, the same CHECKS), all of them
+// stopped once REFETCH_TIMEOUT_MS has passed since the fetch began (opts.timeoutMs for tests). now: for the new state's
+// fresh (default: when the files arrived; app.jsx works it out again when the state goes on screen).
 // cur: the load state on screen. discNow: the disc.json data on screen (the 공시 tab already loaded it), else null.
 // - cur failed (the load-failure message): data.json, corp.json and macro.json through loadAll, with all its checks (macro.json
 //   may fail, as on a first load). -> { ok: true, load, disc: null } when it loads, else { ok: false, why } and the failure
@@ -242,7 +244,8 @@ export const publishText = (l) => (l && l.status === "ok"
 // hidden). The events of one return fetch at most once between them (the first clears the mark), never while an earlier
 // fetch is still out, and only when the return is due (dueOnReturn: stale data, or a failed first load). No retries of
 // its own; and a return within REFETCH_GAP_MS after a fetch that put nothing on screen does not fetch (logged). Nor does
-// one while a later publish already fetched is held back (held(): its description, or null; app.jsx holds it under a draft).
+// one while a later publish already fetched is held back (held(now): its description, or null; app.jsx holds it under a
+// draft; a held publish that is stale itself by now is dropped there and the return goes on under the usual rules).
 // app.jsx feeds the events in; the preview page never sets this up (it fetches nothing).
 //   hidden: the page is hidden now · getLoad(): the load state on screen · getDisc(): the disc.json data on screen or null ·
 //   refetch(load, disc): refetchNewer · apply(result, load): what to do with the result (the load it was fetched for) ·
@@ -260,7 +263,7 @@ export function returnWatch({ hidden, getLoad, getDisc, refetch, apply, now, hel
       const t = now();
       if (!dueOnReturn(cur, t)) return null;
       const what = cur.status === "ok" ? "with stale data" : "after a failed load";
-      const waiting = held ? held() : null;
+      const waiting = held ? held(t) : null;
       if (waiting) {
         console.info("[v2] back in view " + what + ": nothing fetched; " + waiting + " is already waiting to go on screen");
         return null;

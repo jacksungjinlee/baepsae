@@ -90,8 +90,10 @@ export function App({ source }) {
   // v19.1c: the stale check again while the page stays open (load.js refreshFresh): when it is shown again and from a timer
   // that fires just after staleAfter or the next day of a publish (at most an hour apart). Nothing is fetched here: only
   // fresh (and what reads it: the date lines, the 홈 stale band, the daily check) can change. Not on the preview page.
-  // (A page brought back into view with stale data fetches the files once: the effect after this one.)
+  // (A page brought back into view with stale data fetches the files once: the effect after this one.) The timer is set
+  // again for each publish on screen (livePub, round-2 review): one fetched on a return brings its own staleAfter.
   const liveData = load.status === "ok" && !load.preview;
+  const livePub = liveData ? load.data.publishedAt : null;
   const loadRef = useRef(load);
   loadRef.current = load;
   const discRef = useRef(disc);
@@ -114,7 +116,7 @@ export function App({ source }) {
       document.removeEventListener("visibilitychange", onShow);
       window.removeEventListener("focus", check);
     };
-  }, [liveData]);
+  }, [liveData, livePub]);
 
   // 2026-11-08 (Jack, Q9: "Old page brought back into view: yes, fetch once. If that fails, show the existing stale or
   // failed message."): a page brought back into view (visibilitychange to visible after it was hidden, or pageshow from the
@@ -134,7 +136,8 @@ export function App({ source }) {
       getLoad: () => loadRef.current,
       ctx: () => holdCtxRef.current,
       put: (r) => {
-        setLoad(adoptLoad(r.load));
+        // its stale check as of now, not as of the fetch (a publish held for days must not show as fresh: round-2 review)
+        setLoad(refreshFresh(adoptLoad(r.load), Date.now()));
         if (r.disc) setDisc((d) => (d.status === "ok" ? { status: "ok", data: r.disc } : d));
       },
     });
@@ -149,7 +152,7 @@ export function App({ source }) {
       refetch: source.refetch,
       now: () => Date.now(),
       apply: (r, cur) => gate.apply(r, cur),
-      held: () => gate.held(),
+      held: (now) => gate.held(now),
     });
     const onVis = () => { if (document.visibilityState === "hidden") w.hide(); else w.show(); };
     const onHide = () => w.hide();
