@@ -8,6 +8,8 @@ export { OLD_APP };
 
 export const TABS = ["home", "portfolio", "stocks", "market"];
 const SUBS = { home: ["why"], portfolio: ["build", "import"] };   // v19.3d: #portfolio/import (가진 종목 넣기)
+// v19.3d2: 내 규칙 정하기 of one portfolio, #portfolio/rules/<deck id> (ids as 2.0 makes them: letters, digits, "_" "-")
+export const DECK_ID_RX = /^[A-Za-z0-9_-]{1,60}$/;
 export const ABOUT_ROUTE = "#about";
 
 // v19.1a company page (#stocks/<code>[/<tab>]): the tabs after 요약, and the 자세히 screens (layer 3).
@@ -49,6 +51,9 @@ export function parseHash(hash) {
   const [tab, sub] = parts;
   if (TABS.includes(tab) && parts.length <= 2 && (sub == null || (SUBS[tab] || []).includes(sub))) {
     return { tab, sub: sub || null, about: false, known: true };
+  }
+  if (tab === "portfolio" && parts.length === 3 && parts[1] === "rules" && DECK_ID_RX.test(parts[2])) {
+    return { tab: "portfolio", sub: "rules/" + parts[2], about: false, known: true, rules: parts[2] };
   }
   if (tab === "stocks" && (parts.length === 2 || parts.length === 3)) {
     let code = null;

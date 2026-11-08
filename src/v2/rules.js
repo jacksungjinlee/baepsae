@@ -384,12 +384,13 @@ export function evaluateDeck(deck, ctx) {
   const weights = absent.length ? pausedWeights(held, ctx, absent) : deckWeights(held, ctx, targets);
   if (weights.ok) weights.planW = planWeights(deck, targets);
   // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
-  // it is not in unheld (v19.6 A.1). Until v19.6a, the other targets are rebased over what is held, as for a stock never
-  // bought, and rebased says so (the rebased note): kept in the target sum at weight 0 instead, every stock still held
-  // would read as over its target and get a wrong 비중 줄이기 instruction.
+  // it is not in unheld (v19.6 A.1). The other targets are rebased over what is held (kept in the target sum at weight 0
+  // instead, every stock still held would read as over its target and get a wrong 비중 줄이기 instruction), but the
+  // rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") is not about it: v19.3d2 (Jack) shows "다 팔고 목표 비중만 남아
+  // 있어요." for the sold-out holding instead (soldOut), so bandPlanned leaves it out.
   const units = heldUnits(deck);
   const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
-  const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h)).map((h) => h.t)).size;
+  const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h) && !soldOut.includes(h.t)).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
   for (const h of deck.holdings || []) {

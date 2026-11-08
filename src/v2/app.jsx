@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -24,6 +24,7 @@ import { About } from "./about.jsx";
 import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
+import { Limits } from "./limits.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
@@ -145,7 +146,12 @@ export function App({ source }) {
   // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
-  const setStoreData = useCallback((data, saved) => {
+  const setStoreData = useCallback((given, saved) => {
+    // v19.3d2: the records in memory carry the version tag writeStore gives them (a portfolio made with 가진 종목 넣기 makes
+    // them version 2). Before, they kept the tag they had (1), so every later change in the same session (a 메모, an
+    // answer, 빼기, 내 규칙) failed the check below and was refused. A store already tagged is kept as it is (the same object:
+    // a records file taken in keeps its mergeStores mark).
+    const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
     setStore((s) => {
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
@@ -243,6 +249,8 @@ export function App({ source }) {
     if (onWelcome && (tab !== "home" || loc.sub)) endGuide(true);
   }, [onWelcome, tab, loc.sub, endGuide]);
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
+  // v19.3d2: 내 규칙 정하기 of a portfolio that exists (else 포트폴리오, where the portfolio would be)
+  const rulesDeck = tab === "portfolio" && loc.rules ? store.data.decks.find((d) => d.id === loc.rules) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     if (inBuild) {
@@ -254,7 +262,11 @@ export function App({ source }) {
         onSaved={importSaved} />;
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
-    if (tab === "portfolio") return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport} />;
+    if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (tab === "portfolio") {
+      return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
+        onRules={(id) => router.go("portfolio", "rules/" + id)} />;
+    }
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={disc} nav={coNav} />;
     }

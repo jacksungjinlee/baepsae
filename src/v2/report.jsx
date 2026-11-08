@@ -21,9 +21,8 @@ import { CoMark } from "./logo.jsx";
 import { CARDS, POINTS_TOTAL } from "./engine.js";
 import { CARD_PICS, dotColor } from "./pictures.js";
 import { Slot } from "./build.jsx";
-import { RuleTile } from "./pfview.jsx";
+import { RuleTile, groupName } from "./pfview.jsx";
 import { pfState, range2022, dividendYear, reportDates, dotOf, averages, moveWeight, squarify } from "./pf.js";
-import { missingPct } from "./deckcalc.js";
 
 const cardName = (id) => C.build.cards[id].name;
 const pct0 = (w) => Math.round(w * 100);
@@ -235,7 +234,7 @@ function Industry({ st }) {
   const order = v.ok ? [...st.ind.groups.flatMap((g) => g.rows), ...st.ind.none.rows] : [];
   const rects = v.ok ? squarify(order.map((r) => ({ key: r.key, v: r.w })), 0, 0, TM_W, TM_H) : [];
   const byKey = new Map(v.rows.map((r, i) => [r.key, { r, shade: shades[i] }]));
-  const legend = v.ok ? [...st.ind.groups.map((g) => ({ k: g.ind, name: g.name || C.rpt.noInd, w: g.w })), ...(st.ind.none.rows.length ? [{ k: "none", name: C.rpt.noInd, w: st.ind.none.w }] : [])] : [];
+  const legend = v.ok ? [...st.ind.groups.map((g) => ({ k: g.ind, name: groupName(g) || C.rpt.noInd, w: g.w })), ...(st.ind.none.rows.length ? [{ k: "none", name: C.rpt.noInd, w: st.ind.none.w }] : [])] : [];
   return (
     <Section id="report-industry" icon="chart-pie-slice" title={C.rpt.ind}>
       {rects.length > 0 && (
@@ -303,7 +302,7 @@ function Y2022({ st, load }) {
       {sentence && <p data-ui-v2="y2022-line" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(3) })}>{sentence}</p>}
       {!est.ok && est.why === "half" && <Note>{C.plan.riskHalf}</Note>}
       {!est.ok && est.why === "none" && <Note>{C.plan.riskNone}</Note>}
-      {est.ok && est.share > 1e-9 && <Note data-ui-v2="y2022-partial">{fill(C.plan.riskPartial, { pct: missingPct(est.share) })}</Note>}
+      {est.ok && est.out.length > 0 && <Note data-ui-v2="y2022-out">{fill(C.rpt.y2022Out, { n: est.out.length, names: est.out.join(", ") })}</Note>}
       <div style={{ marginTop: SPACE(2) }}>
         <Collapsible title={C.rpt.how}>
           <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.rpt.y2022How} {C.rpt.y2022Band}</p>

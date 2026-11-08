@@ -41,6 +41,25 @@ export const BETA_SE_MAX = 0.5;                         // Part O.1: a beta erro
 const EPS = 1e-9;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// 내 규칙 정하기 (v19.3d2, limits.jsx): a typed limit is a whole number of % from 1 to 100 (store.js limits), else null.
+export const LIMIT_MIN = 1, LIMIT_MAX = 100;
+export function readLimit(v) {
+  const t = String(v == null ? "" : v).trim();
+  if (!/^\d{1,3}$/.test(t)) return null;
+  const n = Number(t);
+  return n >= LIMIT_MIN && n <= LIMIT_MAX ? n : null;
+}
+// The records with one portfolio's limits set; a limit equal to its default is not kept (a portfolio at the defaults has
+// no limits part). null when the portfolio or a value is not valid (nothing to save).
+export function withLimits(data, deckId, stock, ind) {
+  const deck = data && Array.isArray(data.decks) ? data.decks.find((d) => d && d.id === deckId) : null;
+  const s = readLimit(stock), i = readLimit(ind);
+  if (!deck || s == null || i == null) return null;
+  const limits = { ...(s !== LIMITS.stock ? { stock: s } : {}), ...(i !== LIMITS.ind ? { ind: i } : {}) };
+  const { limits: _l, ...rest } = deck;
+  const next = Object.keys(limits).length ? { ...rest, limits } : rest;
+  return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
+}
 export const limitsOf = (deck) => ({ stock: num(deck && deck.limits && deck.limits.stock) ?? LIMITS.stock,
   ind: num(deck && deck.limits && deck.limits.ind) ?? LIMITS.ind });
 export const activeOf = (points) => CARDS.filter((c) => !c.pending && (num(points && points[c.id]) || 0) > 0);
@@ -230,12 +249,19 @@ export function pfState(deck, ctx, stocks) {
 // ---------------- 어느 업종에 몰려 있나요? ----------------
 // Groups by the v17.5.1 industry group (US stocks use the same groups), largest first; stocks with no group go to
 // "업종 정보 없음" (none). Each group's rows largest first. Weights only when every row has a value (view.ok).
+// v19.3d2 (Jack Q8): 반도체, 반도체 장비 and 전자부품 count as ONE group here (CHIP_GROUP: the screens name it
+// rpt.chipGroup), so the 한 업종 rule does not understate chip exposure. Only 점검's industry view and that rule do this:
+// 업종별 등락 and 왜 움직였나 keep the v17.5.1 groups.
+export const CHIP_GROUP = "chips";
+export const CHIP_INDS = ["semi", "semi_eq", "elec_parts"];
+export const pfGroupOf = (s) => (CHIP_INDS.includes(s.ind) ? CHIP_GROUP : s.ind);
 export function industryView(view) {
   const by = new Map(), none = { w: 0, rows: [] };
   for (const r of view.rows) {
     if (r.s && hasGroup(r.s)) {
-      if (!by.has(r.s.ind)) by.set(r.s.ind, { ind: r.s.ind, name: r.s.indName || null, w: 0, rows: [] });
-      const g = by.get(r.s.ind);
+      const key = pfGroupOf(r.s);
+      if (!by.has(key)) by.set(key, { ind: key, name: key === CHIP_GROUP ? null : r.s.indName || null, w: 0, rows: [] });
+      const g = by.get(key);
       g.w += r.w || 0; g.rows.push(r);
     } else { none.w += r.w || 0; none.rows.push(r); }
   }
@@ -447,12 +473,19 @@ export function okQty(v, s) {
 }
 
 // ---------------- the portfolio saved by 매일 점검 시작하기 ----------------
-// drafts: [{ t, mode: "qty" | "amount", qty, amountWon, avg }] (avg null = not given: never filled in).
+// drafts: [{ t, mode: "qty" | "amount", qty, amountWon, avg }] (avg null = not given: never filled in); a stock not in
+// the data, added by name with an amount (v19.3d2, + 종목 더하기): { t: null, name, mode: "amount", amountWon }, stored as
+// a row with no code ({ nk, ccy: "KRW", amountWon, date: today, unscored: true }: its value is that amount as of today).
 // load: today's data (close, date and rate for amounts). -> the deck record (store.js validates it before saving).
 export function importedRecord({ drafts, load, settings, id, name, today }) {
   const fx = num(load.data.fx);
   const holdings = [], imported = [];
   for (const d of drafts) {
+    if (d.t == null) {
+      const nk = typeof d.name === "string" ? d.name.trim() : "";
+      if (nk && num(d.amountWon) > 0) imported.push({ nk, ccy: "KRW", amountWon: d.amountWon, date: today, unscored: true });
+      continue;
+    }
     const s = load.byT.get(d.t);
     if (!s || holdings.some((h) => h.t === d.t)) continue;
     const ccy = usdOf(s) ? "USD" : "KRW";
@@ -472,6 +505,10 @@ export function importedRecord({ drafts, load, settings, id, name, today }) {
 // A draft is ready only when the record it makes passes store.js: a valid quantity, or an amount worth at least
 // 1/10,000 share at today's close (a dollar listing also needs today's rate), and today's price.
 export function draftOk(d, s, fx = null) {
+  if (d && d.t == null && d.name != null) {                 // added by name: a name (up to 120 letters) and an amount
+    const nk = String(d.name).trim();
+    return nk.length > 0 && nk.length <= 120 && num(d.amountWon) > 0 && Number.isSafeInteger(d.amountWon);
+  }
   if (!s || !(num(s.price) > 0)) return false;
   if (d.mode === "amount") {
     if (!(num(d.amountWon) > 0)) return false;
