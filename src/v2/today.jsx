@@ -7,7 +7,8 @@
 // States, from the daily check in rules.js (evaluateAll):
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
-//   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all)
+//   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all); when n <= 1
+//                      (v19.1c: the due day, n counted from nextPub) today.staleLate instead (format.todayStaleText)
 //   no held stock      no verdict (nothing was checked), only the way to 포트폴리오 만들기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
@@ -27,10 +28,10 @@
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
-import { C, fill, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
+import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
-import { isCompany } from "./stocklist.js";
+import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
@@ -42,6 +43,8 @@ import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
+import { pfState, isImported, usHeld } from "./pf.js";
+import { ImportedDeck } from "./pfview.jsx";
 
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
@@ -53,7 +56,7 @@ export function useDaily(load, store) {
 
 export function confirmer(store, setStoreData) {
   return (deckId, item, answer) => {
-    const next = withConfirm(store.data, deckId, item, answer, todayKst());
+    const next = withConfirm(store.data, deckId, item, answer, todayKst(), Date.now());
     if (next) setStoreData(next);
     else console.warn("[v2] answer not recorded: " + JSON.stringify(item));
   };
@@ -126,7 +129,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
     if (ev.why === "stale") {
       return (
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-stale">
-          <HeroBand tone="stale" title={fill(C.today.stale, { n: ev.days })} />
+          <HeroBand tone="stale" title={todayStaleText(ev.days)} />
         </div>
       );
     }
@@ -148,7 +151,12 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo">
           <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
             body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
-            inset={todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)} />
+            inset={<>
+              {todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)}
+              {/* v19.1c: an item here about a US stock priced at an earlier close (pxd, carried by the daily check) read that
+                  close: the same note, naming only those stocks */}
+              <OwnCloseNote groups={ownCloseGroups(todo.map(({ x }) => x), null)} data-scope="todo" />
+            </>} />
         </div>
         {bigs.length > 0 && <Card><BigMoves items={bigs} load={load} onWhy={onWhy} /></Card>}
       </>
@@ -167,7 +175,7 @@ function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
 
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
 // exceptions). A big mover's row opens 왜 움직였나; any other row opens the 2.0 company page (v19.1a), each with its mark.
-function DeckStrip({ de, deck, ctx, onWhy, go }) {
+function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
   const { openStock } = useNav();
   const m = deckMoney(deck, de, ctx);                    // v19.0c: a stock missing from today's data is left out, and said
   const gone = new Set(de.absent || []);
@@ -186,6 +194,8 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
         </div>
       )}
       {m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={de.id} />}
+      {/* v19.1c: a held US stock priced at an earlier close (pxd) is in the value and the list below: named once here */}
+      <OwnCloseNote groups={ownCloses(load, de.holdings.filter((x) => !gone.has(x.t)).map((x) => ctx.byT.get(x.t)))} data-deck-id={de.id} />
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n: de.holdings.length })}</div>
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
@@ -195,6 +205,14 @@ function DeckStrip({ de, deck, ctx, onWhy, go }) {
       ))}
     </Card>
   );
+}
+
+// v19.3d: one portfolio made with 가진 종목 넣기 on 홈: its four portfolio rules and its holdings (pfview.jsx).
+function ImportedStrip({ deck, de, ctx, load, go }) {
+  const { openStock } = useNav();
+  const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
+  const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home />;
 }
 
 // 홈's first visit (no saved portfolio): no numbers on this screen (it shows a 뱁이).
@@ -265,13 +283,16 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   const onConfirm = confirmer(store, setStoreData);
   const ok = load.status === "ok";
   const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.length) : [];
-  const us = held.some((de) => de.holdings.some((x) => x.cls === "us"));
+  // v19.3d (v19.3 F.1): portfolios made with 가진 종목 넣기 have no per-stock rules: their own strip shows the four
+  // portfolio rules (pf.js), never 확인 필요 for every stock, and they take no part in the verdict above.
+  const imported = ev.ok ? decks.filter(isImported) : [];
+  const us = held.some((de) => de.holdings.some((x) => x.cls === "us")) || (ev.ok && decks.some((d) => usHeld(d, load)));   // v19.3d: 가진 종목 too
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   if (welcome) {
     return (
       <Page pad={pad} cols={2}>
         <AppBar />
-        <Welcome load={load} first={first} onTry={welcome.onTry} onBrowse={welcome.onBrowse} />
+        <Welcome load={load} first={first} onTry={welcome.onTry} onBrowse={welcome.onBrowse} onImport={welcome.onImport} />
         <Footer />
       </Page>
     );
@@ -290,10 +311,14 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       <AppBar />
       {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
+      {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
+      {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <Cols main={[
-        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} />),
-        ev.ok && !held.length && (
+        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} />),
+        ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} />),
+        ev.ok && !held.length && !imported.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),
       ]} side={ok && <MarketGlance load={load} go={go} />} />

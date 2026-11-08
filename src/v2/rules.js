@@ -46,12 +46,14 @@
 //   추가로 넣을 돈 out, and count the totals without it ("오늘 데이터에 없는 종목 {n}개(…)는 빼고 계산했어요"). Nothing is
 //   removed from the saved record unless the user taps 포트폴리오에서 빼기. A stock that IS in today's data but has no
 //   price is different: its value is unknown, so every band of the portfolio is "missing" (확인 필요), as before.
-// - Stale (published more than 4 days ago, the v17.5 rule) or failed data computes no status at all: the output says
+// - Stale (data.json's staleAfter passed, v19.1c; or published more than 4 days ago, the v17.5 rule, kept as the fallback
+//   and the backstop: data.js freshness) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
-import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory } from "./engine.js";
-import { STALE_DAYS, daysSince } from "../data.js";
+import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
+import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
 import { sameConfirm } from "./store.js";
+import { heldQty as heldOf, heldUnits } from "./held.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
@@ -74,6 +76,15 @@ export function dayState(load, now) {
   const f = load.fresh || {};
   const corpDays = daysSince(load.corp && load.corp.publishedAt, now);
   if (f.days == null || corpDays == null) return { ok: false, why: "undated" };
+  // v19.1c (Jack, 2026-11-07): data.json late past its staleAfter with a due date (nextPub): n counts from the morning the
+  // publish was due (data.js freshness, fresh.due), so the band says the same n as the date line. Otherwise as before.
+  // The count never goes down: when corp.json is itself past the 4-day rule and that warning was already showing before
+  // staleAfter passed (data.js backstopFirst: a corp.json older than data.json, or a long holiday gap), the band keeps the
+  // larger of the two counts. When staleAfter came first, the band says the due-day n of the date line.
+  if (f.stale && f.due) {
+    const keep = corpDays > STALE_DAYS && backstopFirst(load.corp.publishedAt, load.data && load.data.staleAfter);
+    return { ok: false, why: "stale", days: keep ? Math.max(f.days, corpDays) : f.days };
+  }
   const days = Math.max(f.days, corpDays);
   if (f.stale || days > STALE_DAYS) return { ok: false, why: "stale", days };
   return { ok: true };
@@ -83,16 +94,13 @@ export function dayState(load, now) {
 export function todayCtx(load, now) {
   const ok = load && load.status === "ok";
   return { state: dayState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
-    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null };
+    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null };
 }
 
 // ---------------- one deck ----------------
-// Shares held per stock (purchases with qty > 0). Holdings planned but never bought are not checked.
-export function heldQty(deck) {
-  const m = new Map();
-  for (const p of (deck && deck.purchases) || []) if (p && p.qty > 0) m.set(p.t, (m.get(p.t) || 0) + p.qty);
-  return m;
-}
+// Shares held per stock, more than 0 (v19.3d: the shared rule of held.js, imported + purchases − sales; before it, the
+// purchases alone, which it still is for a portfolio with nothing else). Holdings planned but never bought are not checked.
+export const heldQty = (deck) => heldOf(deck || {});
 
 // A holding's band rule when it can be used (a target and three edges), else null.
 export function bandRuleOf(h) {
@@ -325,7 +333,9 @@ function reasonsOf(results) {
   return out.sort((a, b) => LEVEL[a.level] - LEVEL[b.level]);
 }
 
-// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, d1, bigMove, noNewMoney }
+// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, d1, pxd, bigMove, noNewMoney }
+//   pxd (v19.1c): the stock's own price date when it is priced at an earlier close than the US date (data.json pxd), else
+//   null; its d1 is then null (engine.todayD1), so it is never a 큰 움직임 and the screens name it in their notes.
 export function evaluateHolding(h, deck, ctx, weights, qty) {
   const s = ctx.byT.get(h.t) || null;
   const co = ctx.coByT.get(h.t) || null;
@@ -338,7 +348,8 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   // checked, so never 할 일 없음.
   if (!rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = reasons.length ? reasons[0].level : "none";
-  const d1 = s ? num(s.d1) : null;
+  const d1 = todayD1(s);
+  const pxd = ownCloseDate(s, ctx.usPxDate);
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
@@ -352,7 +363,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     planTarget: band ? band.planTarget : num(h.target),
     value: (weights.ok || weights.paused) && weights.value && weights.value.has(h.t) ? weights.value.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
-    d1, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,          // a note only: never changes the status
+    d1, pxd, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,     // a note only: never changes the status
     noNewMoney: NO_NEW_MONEY.includes(status),
   };
 }
@@ -368,6 +379,14 @@ const zeroCounts = () => Object.fromEntries(STATUS_ORDER.map((s) => [s, 0]));
 export function evaluateDeck(deck, ctx) {
   if (!ctx.state.ok) return { ok: false, why: ctx.state.why, days: ctx.state.days ?? null, id: deck && deck.id };
   const held = heldQty(deck);
+  // v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기 has no per-stock rule book. Its held stocks (imported rows
+  // and any later records, held.js) are read here but get no per-stock status: nothing in it is 확인 필요 or 할 일 없음.
+  // Only the four portfolio rules run on it (pf.js pfState), and 홈 and 포트폴리오 show those instead.
+  if (deck && deck.kind === "imported") {
+    return { ok: true, id: deck.id, name: deck.name, pxDate: ctx.pxDate, imported: true, held: [...held.entries()], holdings: [], counts: zeroCounts(),
+      todo: 0, notChecked: 0, notCheckedIds: [], bigMoves: [], weights: { ok: false, missing: [] }, absent: [], unheld: [], bandPlanned: 0, bandHeld: 0,
+      rebased: false };
+  }
   const targets = new Map();
   for (const h of deck.holdings || []) {
     const b = h && held.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
@@ -377,13 +396,19 @@ export function evaluateDeck(deck, ctx) {
   // With a held stock missing from today's data, the weights wait for all held stocks (with or without a band rule).
   const weights = absent.length ? pausedWeights(held, ctx, absent) : deckWeights(held, ctx, targets);
   if (weights.ok) weights.planW = planWeights(deck, targets);
+  // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
+  // it is not in unheld (v19.6 A.1). Until v19.6a, the other targets are rebased over what is held, as for a stock never
+  // bought, and rebased says so (the rebased note): kept in the target sum at weight 0 instead, every stock still held
+  // would read as over its target and get a wrong 비중 줄이기 instruction.
+  const units = heldUnits(deck);
+  const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
   const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h)).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
   for (const h of deck.holdings || []) {
     if (!h || seen.has(h.t)) continue;
     seen.add(h.t);
-    if (!held.has(h.t)) { unheld.push(h.t); continue; }
+    if (!held.has(h.t)) { if (!soldOut.includes(h.t)) unheld.push(h.t); continue; }
     holdings.push(evaluateHolding(h, deck, ctx, weights, held.get(h.t)));
   }
   const counts = zeroCounts();
@@ -395,7 +420,7 @@ export function evaluateDeck(deck, ctx) {
   }
   return { ok: true, id: deck.id, name: deck.name, pxDate: ctx.pxDate, holdings, counts, todo: counts.broken + counts.check,
     notChecked, notCheckedIds: [...ids], bigMoves: holdings.filter((x) => x.bigMove).map((x) => x.t),
-    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld,
+    weights: { ok: weights.ok, missing: weights.ok ? [] : weights.missing, ...(weights.paused ? { paused: true } : {}) }, absent, unheld, soldOut,
     bandPlanned, bandHeld: targets.size, rebased: targets.size > 0 && targets.size < bandPlanned };
 }
 

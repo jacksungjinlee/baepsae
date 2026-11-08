@@ -7,7 +7,7 @@ import { C, FONT, SERIF, RAD, HAIR, navPush } from "./tokens.js";
 import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, AboutLink } from "./detail.jsx";
-import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote } from "./data.js";
+import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -670,7 +670,8 @@ export function GuideListView({ onRead }) {
 }
 
 // ---------------- 시장 지도 ----------------
-export function MarketView({ data, heldMap, onOpen, setExplain }) {
+// stale (v19.1c): data.json 의 staleAfter · nextPub — corp.json 과 같은 발행일 때만 (data.js corpStaleArgs), 아니면 null (4일 규칙)
+export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) {
   const [capMin, setCapMin] = useState(1);
   const [secFilter, setSecFilter] = useState("all");
   const [heldOnly, setHeldOnly] = useState(false);
@@ -738,7 +739,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain }) {
           <Ret ko="1개월" v={mkt.k1} /><Ret ko="3개월" v={mkt.k3} />
           {mkt.fx != null && <span style={{ fontSize: 11.5, color: C.sub, borderLeft: "1px solid " + C.line, paddingLeft: 14 }}>원달러 <b style={{ color: C.ink }}>{mkt.fx.toLocaleString()}원</b></span>}
           {mkt.rf != null && <span style={{ fontSize: 11.5, color: C.sub }}>국고채 10년 <b style={{ color: C.ink }}>{mkt.rf}%</b></span>}
-          <DateBadge date={data.pxDate || data.asOf} publishedAt={data.publishedAt || data.asOf} style={{ fontSize: 10, marginLeft: "auto" }} />
+          <DateBadge date={data.pxDate || data.asOf} publishedAt={data.publishedAt || data.asOf} staleAfter={stale && stale.staleAfter} nextPub={stale && stale.nextPub} style={{ fontSize: 10, marginLeft: "auto" }} />
         </div>
       )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -1656,15 +1657,20 @@ export default function CorpApp({ jump, onJumpDone, lang, first, onFirstDone }) 
   const [guideId, setGuideIdRaw] = useState(null);
   const setGuideId = (g) => { if (g) navPush(() => setGuideIdRaw(null)); setGuideIdRaw(g); };
   const [tries, setTries] = useState(0);
+  const [pub, setPub] = useState(null);
   useEffect(() => {
     if (jump) { setView({ kind: "co", t: jump }); onJumpDone && onJumpDone(); }
   }, [jump]);
 
   useEffect(() => { (async () => {
     setState({ st: "loading" });
+    setPub(null);
     const r = await loadJson("./corp.json", (d) => d && Array.isArray(d.companies) && d.companies.length > 0);
     setState(r.ok ? { st: "ready", data: r.data } : { st: "missing" });
+    // v19.1c: 날짜 표시의 늦음 시각은 data.json 의 것 (같은 발행일 때만). 받는 동안은 4일 규칙, 받으면 다시 그려요.
+    if (r.ok) setPub(await loadDataPublishFor(r.data.publishedAt));
   })(); }, [tries]);
+  const stale = useMemo(() => (state.st === "ready" ? corpStaleArgs(state.data.publishedAt, pub, "기업분석") : null), [state, pub]);
 
   // 포트폴리오 보유 종목 맵 (읽기 전용)
   useEffect(() => { (async () => {
@@ -1709,9 +1715,9 @@ export default function CorpApp({ jump, onJumpDone, lang, first, onFirstDone }) 
           <ChipBtn on={view.kind === "screen"} onClick={() => setView({ kind: "screen" })}>조건 검색</ChipBtn>
           <ChipBtn on={view.kind === "guide"} onClick={() => setView({ kind: "guide" })}>산업 읽는 법</ChipBtn>
         </div>
-        <DateBadge date={d.pxDate || d.asOf} publishedAt={d.publishedAt || d.asOf} suffix=" · 사업보고서는 직전 연도 기준" />
+        <DateBadge date={d.pxDate || d.asOf} publishedAt={d.publishedAt || d.asOf} staleAfter={stale && stale.staleAfter} nextPub={stale && stale.nextPub} suffix=" · 사업보고서는 직전 연도 기준" />
       </div>
-      {view.kind === "market" && <MarketView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
+      {view.kind === "market" && <MarketView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} stale={stale} />}
       {view.kind === "screen" && <ScreenerView data={d} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
       {view.kind === "guide" && <GuideListView onRead={setGuideId} />}
       {view.kind === "search" && <SearchView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} />}

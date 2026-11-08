@@ -2,6 +2,8 @@
 // Pure functions, no React and no Korean text. Unit tests: tests/test_v2_lists.py (run through Node).
 import { num } from "./engine.js";
 import { validRows } from "./track.js";
+import { heldQty } from "./held.js";
+import { ownCloseGroups } from "../data.js";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -9,6 +11,17 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const isKrCompany = (s) => !!s && s.cls === "kr" && s.etf !== true;
 // v19.1a: a Korean or US company has a 2.0 company page (company.jsx). Funds (etf) are not companies.
 export const isCompany = (s) => !!s && (s.cls === "kr" || s.cls === "us") && s.etf !== true && !s.fund;
+
+// ---------------- US stocks priced at an earlier close (v19.1c, Jack 2026-11-07) ----------------
+// data.json pxd: a US stock whose last close is not the US date (usPxDate) carries its own price date, and no d1. Its price
+// is shown with that date, and every list or total that includes it names it in one note (ui.jsx OwnCloseNote).
+// ownCloseGroups(stocks, usPxDate) -> [{ date, ts }]: one group per date, newest first; tickers in screen order, each once;
+// stocks missing from today's data (null) and stocks at the US date are left out. The rule lives in src/data.js so the
+// old app groups the same way. ownCloses(load, stocks): the same for the loaded data ([] before it loads).
+export { ownCloseGroups };
+export function ownCloses(load, stocks) {
+  return load && load.status === "ok" ? ownCloseGroups(stocks, load.data.usPxDate) : [];
+}
 
 // ---------------- 거래대금 상위 종목 ----------------
 // data.json popular is fetch_data.py popular_list: Korean stocks by the day's trading value, then US stocks by Yahoo's
@@ -58,13 +71,14 @@ export function searchStocks(load, q, n = 20) {
 }
 
 // ---------------- my portfolio's stocks ----------------
-// Every stock bought in any saved portfolio (purchases with qty > 0), once, in the order the portfolios list them, with
-// today's row when the stock is in today's data (s) and the name saved with the holding otherwise.
+// Every stock held in any saved portfolio (held.js: imported + purchases − sales, more than 0 shares; v19.3d), once, in
+// the order the portfolios list them, with today's row when the stock is in today's data (s) and the name saved with the
+// holding otherwise.
 export function myStocks(decks, load) {
   const out = [], seen = new Set();
   const byT = load && load.status === "ok" ? load.byT : new Map();
   for (const d of decks || []) {
-    const bought = new Set(((d && d.purchases) || []).filter((p) => p && p.qty > 0).map((p) => p.t));
+    const bought = new Set(heldQty(d || {}).keys());
     for (const h of (d && d.holdings) || []) {
       if (!h || !bought.has(h.t) || seen.has(h.t)) continue;
       seen.add(h.t);
