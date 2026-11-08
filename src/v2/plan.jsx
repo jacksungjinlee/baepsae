@@ -6,12 +6,14 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
-import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount } from "../ui/components.jsx";
+import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
-import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts } from "./deckcalc.js";
-import { writeStore } from "./store.js";
-import { KR_DIV_TREND } from "./engine.js";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
+import { usOf, priceDate } from "./cofmt.js";
+import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
+import { writeStore, recordId } from "./store.js";
+import { KR_DIV_TREND, exactData } from "./engine.js";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
   const st = builder.settings;
@@ -47,10 +49,12 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
       {ok && (
         <Card data-ui-v2="plan-rows">
           <Label>{C.plan.stocks}</Label>
-          <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.targetNote}</div>
+          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.targetNote}</div>
           {plan.rows.map((x) => <PlanRow key={x.t} x={x} />)}
           <Note>{fill(C.plan.priceNote, { md: mdText(load.data.pxDate), fx: nf(Math.round(load.data.fx)) })}</Note>
           {usRows && usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
+          {/* v19.1c: a planned US stock priced at an earlier close (pxd): its shares are worked out at that close */}
+          <OwnCloseNote groups={ownCloses(load, plan.rows.map((x) => x.s))} />
         </Card>
       )}
       {ok && <Rules load={load} rows={plan.rows} st={st} ds={ds} />}
@@ -82,14 +86,31 @@ function Clash({ parts }) {
   );
 }
 
+// The 2022 line (v19.1b data, deckcalc.y2022View: "약 50~77만원 줄어들 수 있어요"), units drawn small like Amount. A narrow
+// column never breaks inside the amount or inside a word (keep-all), so the three columns of 포트폴리오 만들기 4단계 wrap the
+// same way. v: y2022View's { parts, text, pieces: [pre, amount, verb] }.
+export function Y2022Amount({ v }) {
+  const [pre, amount, verb] = v.pieces;
+  const nw = { whiteSpace: "nowrap" };
+  return (
+    <span data-ui="amount" data-ui-v2={v.parts.length > 1 ? "y2022-range" : "y2022-one"} style={{ wordBreak: "keep-all" }}>
+      {pre}<span style={nw}>{amountParts(amount).map(([p, small], i) => (small ? <span key={i} data-unit="1" style={{ fontSize: "max(12px, 0.6em)", fontWeight: WEIGHT.bold }}>{p}</span> : p))}</span>
+      {verb ? " " : ""}{verb ? <span>{verb}</span> : null}
+    </span>
+  );
+}
+
 // Risk lines: the 2022 line when any holding has a figure (holdings without one move like the rest, with the approved
 // v17.5 note naming their share); else the yearly-swing line; else the approved "can't calculate" line. Never silent.
+// v19.1b data (Part O.1): the 2022 line is a range from the beta band, explained by plan.y2022Range; when its smaller
+// end is not a fall, plan.y2022Wide says so instead of a number. Older files: one number, as before.
 function Summary({ r }) {
   const { plan, div, y2022 } = r;
+  const yv = y2022.ok ? y2022View(y2022) : null;
   // more than half of the money without data: no 2022 number and no yearly swing (the current app's rule)
   const half = !!(y2022.half || (r.vol && r.vol.half));
   const vol = r.vol && !r.vol.half ? r.vol : null;
-  const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
+  const partial = (share) => share > 1e-9 && <div data-ui-v2="risk-partial" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.riskPartial, { pct: missingPct(share) })}</div>;
   const big = (v) => <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Amount text={v} /></div>;
   return (
     <Card data-ui-v2="plan-summary">
@@ -97,22 +118,27 @@ function Summary({ r }) {
       {big(fill(C.plan.left, { leftText: wonText(plan.left) }))}
       <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.div}</div>
       {big(aboutWon(div.won))}
-      <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
-      {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
+      <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.preTax}</div>
+      {div.unknown > 0 && <div data-ui-v2="div-unknown" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.plan.divUnknown, { n: div.unknown })}</div>}
       {/* Korean holdings whose dividend the company page does not trust (engine.annualDividend unchecked): left out of the
           total and named, never silently (Jack, 2026-11-05). Long lists wrap; a name is never cut. */}
       {div.unchecked.length > 0 && (
-        <div data-ui-v2="div-unchecked" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { overflowWrap: "anywhere" })}>
+        <div data-ui-v2="div-unchecked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { overflowWrap: "anywhere" })}>
           {fill(C.plan.divUnchecked, { n: div.unchecked.length, names: div.unchecked.map((x) => x.nk || x.t).join(", ") })}
         </div>
       )}
       {y2022.ok && (
-        <div data-ui-v2="y2022">
+        <div data-ui-v2="y2022" data-band={yv ? (yv.wide ? "wide" : yv.parts.length > 1 ? "range" : "one") : ""}>
           <div style={{ marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.plan.y2022}</div>
-          {big(aboutWon(Math.min(0, y2022.won)))}
-          <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Note}</div>
-          <div data-ui-v2="y2022-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
-          {partial(y2022.missing)}
+          {yv && yv.wide
+            ? <div data-ui-v2="y2022-wide" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.plan.y2022Wide}</div>
+            : yv ? <div data-ui-v2="big-number" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}><Y2022Amount v={yv} /></div>
+            : big(aboutWon(Math.min(0, y2022.won)))}
+          {!(yv && yv.wide) && <div data-ui-v2="y2022-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
+            {yv && yv.parts.length > 1 && C.plan.y2022NoteRange ? C.plan.y2022NoteRange : C.plan.y2022Note}</div>}
+          {yv && !yv.wide && yv.parts.length > 1 && C.plan.y2022Range && <div data-ui-v2="y2022-range-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.plan.y2022Range}</div>}
+          <div data-ui-v2="y2022-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{C.plan.y2022Source}</div>
+          {!(yv && yv.wide) && partial(y2022.missing)}
         </div>
       )}
       {!y2022.ok && !half && vol != null && (
@@ -145,7 +171,7 @@ function PlanRow({ x }) {
         <div style={{ flex: 1 }}><WeightBar current={Math.round(x.w * 1000) / 10} target={Math.round(x.targetW * 1000) / 10} max={Math.max(30, x.targetW * 160)} label={C.plan.weightAria} status={x.shares > 0 ? "ok" : "watch"} /></div>
         <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { width: SPACE(12), textAlign: "right" })}>{`${p1(x.w * 100)}%`}</span>
       </div>
-      {line && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{line}</div>}
+      {line && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{line}</div>}
     </div>
   );
 }
@@ -158,11 +184,13 @@ function RuleList({ rules, name }) {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
     switch (x.id) {
       // a checked dividend-cut rule is always Korean; with the trend switch off it is not checked (준비 중): its history may
-      // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on.
-      case "divCut": return x.check === "pending" || !KR_DIV_TREND ? <RuleLine key={x.id} name={R.divCut} pending />
+      // hide a split (engine.js KR_DIV_TREND). The saved rule keeps its baseline for when the switch is on. v19.1b data
+      // (exactData): the rule book is checked on a comparable, split-checked history (dps3a), so it shows as checked; one
+      // saved while the history is not comparable (comparable: false, engine.ruleBook) shows as 준비 중 until it is.
+      case "divCut": return x.check === "pending" || x.comparable === false || !(KR_DIV_TREND || exactData()) ? <RuleLine key={x.id} name={R.divCut} pending />
         // 사기 전에 이미 줄었으면 '팔 때'처럼 읽히지 않게, 승인된 확인 필요 문장 한 쌍으로 보여요 (스펙 규칙 4)
         : x.droppedBefore ? <RuleLine key={x.id} name={R.dividend} now={fill(C.pick.caution.divDrop, { name, a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })}
-            note={C.pick.caution.divDropBody} limit={R.divLimit} source={src} />
+            note={divDropBody()} limit={R.divLimit} source={src} />
         : <RuleLine key={x.id} name={R.dividend} now={fill(R.dpsChange, { a: nf(Math.round(x.prev)), b: nf(Math.round(x.dps)) })} limit={R.divLimit} source={src} />;
       case "audit": return <RuleLine key={x.id} name={R.audit} pending />;
       case "acquisition": return <RuleLine key={x.id} name={R.acquisition} pending />;
@@ -218,7 +246,7 @@ function Rules({ load, rows, st, ds }) {
               <div data-rules-for={x.t}>
                 <div style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{R.reason}</div>
                 <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
-                  {why ? why : b.map(([id, v], i) => <span key={id}>{i ? " · " : ""}<span>{C.build.cards[id].name}</span>{" "}<span>{fill(C.build.s1.score, { score: Math.round(v) })}</span></span>)}
+                  {why ? why : <CardScores list={b} />}
                 </div>
                 <RuleList rules={rulesFor(load, x, st, ds)} name={x.s.nk} />
               </div>
@@ -250,7 +278,7 @@ function DeckWarnings({ rows, st }) {
       {tax && (
         <div data-ui-v2="us-tax" style={{ marginTop: falls.length ? SPACE(2) : 0 }}>
           {line(W.usTax, "t")}
-          <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{W.usTaxSource}</div>
+          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{W.usTaxSource}</div>
         </div>
       )}
     </Card>
@@ -261,6 +289,16 @@ function DeckWarnings({ rows, st }) {
 // Preview page: the sheet covers the app bar, so the "예시 데이터" label sits right under the sheet's title too.
 function SheetSample() {
   return <div style={{ marginBottom: SPACE(2) }}><SampleLabel /></div>;
+}
+
+// v19.1c: under a US row of 샀어요 whose price is not at the Korean date the sheet names (sheetBody "{md} 종가"): "미국 {md}
+// 종가" (co.usClose) with the row's own date (cofmt.priceDate: usPxDate, or the stock's pxd). Before v19.1c a US row read the
+// Korean date only. Nothing for Korean rows, or when the dates are the same.
+function RecordClose({ load, s }) {
+  const own = usOf(s) ? priceDate(load, s) : null;
+  const md = own && own !== load.data.pxDate ? mdText(own) : null;
+  if (!md || !C.co.usClose) return null;
+  return <div data-ui-v2="record-close" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.co.usClose, { md })}</div>;
 }
 
 function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday }) {
@@ -287,8 +325,8 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     // A US purchase keeps the exchange rate the plan used (data.json fx), so 포트폴리오 can show 원금 in won (Part E).
     const fx = typeof load.data.fx === "number" && Number.isFinite(load.data.fx) && load.data.fx > 0 ? load.data.fx : null;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
-      ? { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
-      : { t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));
+      ? { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
+      : { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));   // id: two tabs' copies merge by it
     const id = `d${Date.now().toString(36)}`;
     const deck = deckRecord({ load, st, plan, purchases, id, today: todayKst() });
     const next = { ...store.data, decks: [...store.data.decks, deck] };
@@ -323,6 +361,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
         {rows.map((x) => (
           <div key={x.t} data-record={x.t} style={{ marginTop: SPACE(4), paddingTop: SPACE(2), borderTop: `1px solid ${COLOR.line}` }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.s.nk}</div>
+            <RecordClose load={load} s={x.s} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE(2) }}>
               <TextInput label={P.qty} inputMode="numeric" placeholder={nf(x.shares)} value={(vals[x.t] || {}).qty || ""} onChange={(v) => setV(x.t, "qty", v)}
                 invalid={tried && parsed.find((r) => r.x.t === x.t).badQ} />

@@ -16,10 +16,10 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount } from "./company.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
 import { statusChips, HoldingRules } from "./daily.jsx";
@@ -29,8 +29,9 @@ import { shownName } from "./legacy.js";
 import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
+import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -85,8 +86,12 @@ export function tileViews(load, s) {
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" });
   }
   {
+    // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
+    // (no betaSE in the data), never a bare beta.
     const r = riskTile(s);
-    add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], null, { beta: r.beta ?? null });     // no bare beta (no band yet)
+    const number = r.rule === "na" ? null : riskBandText(s, r);
+    add("risk", T().label.risk, r, r.rule === "na" ? na : T().risk[r.rule], number,
+      { beta: r.beta ?? null, lo: r.band ? r.band.lo : null, hi: r.band ? r.band.hi : null });
   }
   return out;
 }
@@ -100,7 +105,7 @@ function Tile({ v, onOpen }) {
       </div>
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
-      {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
+      {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );
   const data = Object.fromEntries(Object.entries(v.data || {}).map(([k, x]) => [`data-${k}`, x == null ? "" : Array.isArray(x) ? x.join(",") : String(x)]));
@@ -112,11 +117,20 @@ function Tile({ v, onOpen }) {
 
 // The interim split guard hides some Korean yields (company.js SPLIT_GUARD): say how many, once per data load (app.jsx
 // calls this when the data arrives, so the count is in the console whichever screen opens first).
+// v19.1b data: no guard; the exact check's own counts instead (payers whose yield could not be verified stay blank).
 const guardLogged = new WeakSet();
 export function logSplitGuard(load) {
   const stocks = load && load.status === "ok" && load.data ? load.data.stocks : null;
   if (!stocks || guardLogged.has(stocks)) return;
   guardLogged.add(stocks);
+  const x = divCheckCount(stocks, load.coByT);
+  if (x) {
+    const line = `[v2] Korean dividends: exact split check (data.json divCheck) · same ${x.st.same} · adj ${x.st.adj} · nc ${x.st.nc} `
+      + `· nd ${x.st.nd} · zero ${x.st.zero} · yield shown for ${x.shown} / ${x.payers} payers with a report year`;
+    if (x.hidden) console.warn(`${line}; not verified (no yield, no 100-man-won line, no payout, left out of a plan's dividend): ${x.hidden}, e.g. ${x.examples.join(", ")}`);
+    else console.info(line);
+    return;
+  }
   const g = splitGuardCount(stocks, load.coByT);
   if (g.hidden) console.warn(`[v2] dividend split guard: yield, 100-man-won line and payout hidden for ${g.hidden} / ${g.of} Korean payers `
     + `(today's yield ${SPLIT_GUARD}x the report's or more, or no report yield to check; until split-adjusted dividends). Largest: `
@@ -135,7 +149,7 @@ function Tiles({ load, s, onTab, tabsOn }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
         {views.map((v) => <Tile key={v.topic} v={v} onOpen={tabsOn ? () => onTab(tabOf[v.topic]) : undefined} />)}
       </div>
-      {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
+      {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
     </section>
   );
 }
@@ -148,7 +162,7 @@ function RangeBar({ s }) {
   const f = (v) => priceText({ ...s, price: v });
   return (
     <div data-ui-v2="co-range" data-lo={lo} data-hi={hi} style={{ marginTop: SPACE(3) }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xxs, WEIGHT.regular, COLOR.text2) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
         <span>{fill(C.co.lo, { x: f(lo) })}</span><span>{fill(C.co.hi, { x: f(hi) })}</span>
       </div>
       <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), marginTop: SPACE(1) }}>
@@ -160,7 +174,7 @@ function RangeBar({ s }) {
 }
 
 function Header({ load, s }) {
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);                   // v19.1c: none for a stock priced at an earlier close (its date is in closeLine)
   const won = usOf(s) ? wonOfUsd(load, s.price) : null;
   const ind = s.indName && typeof s.indName === "string" ? s.indName : null;
   return (
@@ -181,7 +195,7 @@ function Header({ load, s }) {
       </div>
       {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{won}</div>}
       {won && C.co.fxWon && mdText(load.data.fxDate) && (
-        <div data-ui-v2="co-fx" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{fill(C.co.fxWon, { md: mdText(load.data.fxDate), fx: nf(Math.round(load.data.fx * 10) / 10, 1) })}</div>
+        <div data-ui-v2="co-fx" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fill(C.co.fxWon, { md: mdText(load.data.fxDate), fx: nf(Math.round(load.data.fx * 10) / 10, 1) })}</div>
       )}
       <RangeBar s={s} />
     </section>
@@ -190,7 +204,7 @@ function Header({ load, s }) {
 
 // ---------------- 왜 움직였나 line (Part B item 2): 2.0's big-move rule, for any stock ----------------
 function MoveLine({ load, s, held, onWhy }) {
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);
   if (d1 == null || Math.abs(d1) < BIG_MOVE) return null;
   const g = peerGroup(s, load.data.stocks);
   const together = g.ok && g.together;
@@ -218,7 +232,8 @@ function MoveLine({ load, s, held, onWhy }) {
 export function warnText(f) {
   const W = C.co.warn;
   if (f.code === "cr") return W.cr ? fill(W.cr, { x: nf(Math.abs(f.x)) }) : null;                  // a ratio of assets: never negative
-  if (f.code === "icr") return W.icr ? fill(W.icr, { x: (f.x < 0 ? "\u2212" : "") + nf(Math.abs(f.x), 2) }) : null;   // U+2212 for a negative
+  // Jack, PR #68 (2026-11-07): an operating loss (ratio below 0, interest above 0) says so without a number
+  if (f.code === "icr") return f.x < 0 || Object.is(f.x, -0) ? W.icrLoss || null : W.icr ? fill(W.icr, { x: nf(f.x, 2) }) : null;
   return W[f.code] || null;
 }
 function warnSource(w) {
@@ -230,21 +245,26 @@ function Warnings({ load, s, wide }) {
   const w = useMemo(() => warnings(s, load.coByT.get(s.t) || null), [load, s]);
   const W = C.co.warn;
   if (!w.flags.length) {
-    if (!w.allRan) return null;                // no flag, but not every check is known to have run: nothing is claimed
-    if (!all(W.none, W.noneSub)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+    if (!w.allRan && !w.partial) return null;  // no flag, but not every check is known to have run: nothing is claimed
+    // partial (Jack, PR #68 B7): 이자보상배율 alone could not be checked, for want of an interest line -> "확인한 …" + why
+    const head = w.partial ? W.nonePartial : W.none;
+    const subText = w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
+    if (!all(head, subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
     return (
-      <Card data-ui-v2="co-warn" data-n="0" style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: SPACE(4) }}>
+      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start", padding: SPACE(4) }}>
         <IconChip name="shield-check" size={32} tone="risk" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{W.none}</div>
-          <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noneSub}</div>
-          {warnSource(w) && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
+          <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
+          <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
+          {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
         </div>
       </Card>
     );
   }
   const texts = w.flags.map(warnText);
   if (!W.count || texts.some((x) => !x)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+  // Jack, PR #68 (2026-11-07): under the 이자보상배율 warning, say when it used the cash-flow statement's interest paid
+  const cfNote = (code) => code === "icr" && w.icrCf && W.icrCfNote ? W.icrCfNote : null;
   return (
     <>
       <button type="button" data-ui-v2="co-warn" data-n={w.flags.length} onClick={() => setOpen(true)} aria-haspopup="dialog"
@@ -254,6 +274,7 @@ function Warnings({ load, s, wide }) {
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
+          {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
       </button>
@@ -263,10 +284,13 @@ function Warnings({ load, s, wide }) {
           {texts.map((x, i) => (
             <div key={w.flags[i].code} data-flag={w.flags[i].code} style={{ display: "flex", gap: SPACE(2), padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
               <Icon name="alert" size={18} tone="on" />
-              <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{x}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { display: "block" })}>{x}</span>
+                {cfNote(w.flags[i].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[i].code)}</span>}
+              </span>
             </div>
           ))}
-          {warnSource(w) && <p style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
+          {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
         </div>
       </BottomSheet>
     </>
@@ -285,20 +309,25 @@ function RankRow({ id, r, mine, basis }) {
   if (text == null) return null;
   const card = C.build.cards[id];
   const pos = r.side === "top" ? 100 - r.pct : r.side === "bottom" ? r.pct : null;
+  // v19.3b Part A: the 기준's picture on its tint chip in front of the row (the rows used no line icons before).
   return (
-    <div data-ui-v2="rank-row" data-card={id} data-side={r.side || (r.na ? "na" : "blank")} data-pct={r.pct ?? ""} style={{ padding: `${SPACE(3)}px 0`, borderTop: `1px solid ${COLOR.line}` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
-        <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{card.name}</span>
-        {mine && C.co.fit.mine && <StatusChip tone="neutral">{C.co.fit.mine}</StatusChip>}
-        {basis && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { minWidth: 0 })}>{card.basis}</span>}
-        <span style={{ flex: 1 }} />
-        <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { whiteSpace: "nowrap" })}>{text}</span>
-      </div>
-      {basis && pos != null && (
-        <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), marginTop: SPACE(2), background: COLOR.line, borderRadius: 999 }}>
-          <div style={{ position: "absolute", left: `calc(${pos}% - 5px)`, top: -1, width: 10, height: 10, borderRadius: 999, background: COLOR.ink }} />
+    <div data-ui-v2="rank-row" data-card={id} data-side={r.side || (r.na ? "na" : "blank")} data-pct={r.pct ?? ""}
+      style={{ padding: `${SPACE(3)}px 0`, borderTop: `1px solid ${COLOR.line}`, display: "flex", alignItems: "center", gap: SPACE(3) }}>
+      <CardPic id={id} size="fit" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
+          <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{card.name}</span>
+          {mine && C.co.fit.mine && <StatusChip tone="neutral">{C.co.fit.mine}</StatusChip>}
+          {basis && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { minWidth: 0 })}>{card.basis}</span>}
+          <span style={{ flex: 1 }} />
+          <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { whiteSpace: "nowrap" })}>{text}</span>
         </div>
-      )}
+        {basis && pos != null && (
+          <div aria-hidden="true" style={{ position: "relative", height: SPACE(2), marginTop: SPACE(2), background: COLOR.line, borderRadius: 999 }}>
+            <div style={{ position: "absolute", left: `calc(${pos}% - 5px)`, top: -1, width: 10, height: 10, borderRadius: 999, background: COLOR.ink }} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -335,7 +364,7 @@ function Fit({ load, s, store, wide }) {
           {indOk && <Segmented label={F.sheet} value={scope} onChange={setScope} options={[{ value: "market", label: F.market }, { value: "ind", label: F.ind }]} />}
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
-          {priceDate(load, s) && <DateLine date={priceDate(load, s)} fresh={load.fresh} />}
+          {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>
       </BottomSheet>
     </Card>
@@ -355,8 +384,8 @@ function Holdings({ held }) {
           <div key={deckId} data-ui-v2="co-held-row" data-deck-id={deckId} data-status={x.status}
             style={{ display: "flex", alignItems: "center", gap: SPACE(2), flexWrap: "wrap", minHeight: TOUCH, padding: `${SPACE(1)}px 0` }}>
             <Icon name="deck" size={20} tone="on" />
-            <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0 })}>{line}</span>
-            {chips || (k > 0 ? <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span> : null)}
+            <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: "1 1 160px", minWidth: 0, wordBreak: "keep-all" })}>{line}</span>
+            {chips || (k > 0 ? <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span> : null)}
           </div>
         );
       })}
@@ -374,7 +403,7 @@ function Memo({ s, store, setStoreData, held }) {
   if (!M.title) return null;
   const start = () => { setText(note ? note.text : ""); setBad(false); setEditing(true); };
   const save = () => {
-    const next = withNote(store.data, s.t, text, todayKst());
+    const next = withNote(store.data, s.t, text, todayKst(), Date.now());   // ts: the later edit wins when two tabs meet
     if (!next) { setBad(true); console.warn("[v2] note not saved for " + s.t); return; }
     setStoreData(next);
     setEditing(false);
@@ -392,7 +421,7 @@ function Memo({ s, store, setStoreData, held }) {
       {!editing && note && (
         <>
           <p data-ui-v2="co-memo-text" style={tx(SIZE.sm, WEIGHT.regular, COLOR.ink, { marginTop: SPACE(2), whiteSpace: "pre-wrap" })}>{note.text}</p>
-          {M.at && mdText(note.at) && <p style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(M.at, { md: mdText(note.at) })}</p>}
+          {M.at && mdText(note.at) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(M.at, { md: mdText(note.at) })}</p>}
         </>
       )}
       {!editing && !note && M.empty && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{M.empty}</p>}
@@ -400,6 +429,7 @@ function Memo({ s, store, setStoreData, held }) {
         <div style={{ marginTop: SPACE(3) }}><Button kind="secondary" onClick={start}>{M.add}</Button></div>
       )}
       {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       {editing && (
         <div data-ui-v2="co-memo-form" style={{ marginTop: SPACE(2) }}>
           <textarea value={text} maxLength={NOTE_MAX} rows={4} aria-label={M.title} onChange={(e) => setText(e.target.value)} placeholder={M.empty || undefined}
@@ -510,7 +540,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
         <Header load={load} s={s} />
-        {load.fresh && load.fresh.stale && priceDate(load, s) && <DateLine date={priceDate(load, s)} fresh={load.fresh} />}
+        {load.fresh && load.fresh.stale && lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         <MoveLine load={load} s={s} held={held} onWhy={nav.onWhy} />
         <div ref={mark} aria-hidden="true" />
         {labels ? <CoTabs labels={labels} value={tab || "summary"} onChange={setTab} stickyTop={stickyTop} /> : <span data-ui-v2="co-tabs" data-pending="1" hidden />}

@@ -9,7 +9,7 @@ import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { ListRow, StatusChip, Collapsible } from "../ui/components.jsx";
 import { C, fill, nf, p1 } from "./format.js";
 import { RuleLine, ChoiceGrid, tx } from "./ui.jsx";
-import { opPieces, opAmounts } from "./deckcalc.js";
+import { opPieces, opAmounts, divDropBody } from "./deckcalc.js";
 import { CoMark } from "./logo.jsx";
 
 const R = () => C.plan.rules;
@@ -67,7 +67,7 @@ export function Line({ code, level, pieces, body, source, children, first }) {
     <div data-ui-v2="status-line" data-code={code} style={{ marginTop: first ? 0 : SPACE(2) }}>
       <div style={tx(SIZE.xs, WEIGHT.bold, levelColor(level))}>{pieces.map((p, j) => <span key={j}>{j ? " · " : ""}{p}</span>)}</div>
       {body && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{body}</div>}
-      {source && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
+      {source && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{source}</div>}
       {children}
     </div>
   );
@@ -83,7 +83,7 @@ export function DividendAnswers({ x, onConfirm, sellSaid }) {
     const drop = fill(C.pick.caution.divDrop, { name: x.nk, a: won(d.a), b: won(d.b) });
     const v = d.answer === "cut" ? { code: "divCut", level: "broken", pieces: [R().divCut, fill(R().dpsChange, { a: won(d.a), b: won(d.b) })], body: sellSaid ? null : C.daily.sellNow }
       : d.answer === "notCut" ? { code: "divCleared", level: "none", pieces: [drop] }
-      : { code: "divDrop", level: "check", pieces: [drop], body: C.pick.caution.divDropBody };
+      : { code: "divDrop", level: "check", pieces: [drop], body: divDropBody() };
     return (
       <Line key={`d${d.fy}${d.a}${d.b}`} {...v} source={yearText(d.fy)} first={i === 0}>
         {onConfirm && (

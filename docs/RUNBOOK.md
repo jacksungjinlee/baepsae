@@ -102,6 +102,29 @@ tells you what happened in plain words.
   Jack's yes, and only while logo.dev is on a plan that allows it): run the logo job with `only` set to their codes (and `route` = `ticker` to skip the DART homepage), look at its
   artifact, then `python3 tools/logos/logodev_fetch.py --add-from ARTIFACT_FOLDER --dir FOLDER` adds the checked logos
   to the copy of `logos-run`; push and deploy as above.
+  To retry every Korean letter mark at once (2026-11-07): run the logo job with `letters_only` (it reads `logos-run`'s
+  `logos/`, `review.csv` and `drops.csv`, so pictures already rejected are not asked for again)
+  and, if wanted, `extra_routes` (an ISIN lookup, 2 credits, and a brandmark lookup, 3 credits, only for companies whose
+  ticker and homepage gave nothing usable; a brandmark wider than 2:1 is dropped). It refuses a cap above 2,000 credits
+  ($20) unless `over_20_dollars_ok` is ticked, which needs Jack's yes first. Look at every new logo on its sheet: the
+  automatic checks do not catch photos, banners, old logos or another company's logo. Add only the checked ones with
+  `--add-from ARTIFACT_FOLDER --dir FOLDER --codes CODE,CODE` (a retry is never added whole), then push and deploy.
+- **Group marks** (Jack, 2026-11-07): a company still showing a letter mark may get its group's main mark, only when
+  its own website shows that same mark as its logo and the picture used is the group's main mark, never a sister
+  company's own logo (e.g. not "SAMSUNG HEAVY INDUSTRIES" for 삼성전기). Look at both first, then
+  `python3 tools/logos/logodev_fetch.py --group-mark CODE=FROM,CODE=FROM --dir FOLDER --reason "..."` (an exact copy of
+  FROM's picture, flagged `group-mark`; recorded in `groups.csv`).
+- **Homepage icons** (Jack, 2026-11-07): the company's own homepage icon from the site-icon survey
+  (`tools/logos/site_icons.py` on `claude/logos-site-icons`), 96 px or more, every quality check, never the same picture
+  as another company's logo, each looked at first. Jack asked for the largest icon: logos are stored at 128 px, so any
+  icon of 128 px or more gives the same picture; for an icon under 128 px, check the site's other icons (link rel=icon,
+  apple-touch-icon, manifest) and use the largest:
+  `--add-site-icons SURVEY_FOLDER --codes CODE,CODE --dir FOLDER` (route `site`, flagged `homepage-icon`; `sites.csv`).
+  Before the first homepage icon goes live, the 데이터 출처 line must read "회사 로고: Logo.dev, 일부는 각 회사 홈페이지.
+  로고의 권리는 각 회사에 있어요." (Jack, 2026-11-07).
+- After pushing the `logos` branch and running Deploy, check the live `logos/index.json` (its count and a new code).
+  On 2026-11-07 a Deploy of the same `main` commit two minutes after another one reported success but the site kept
+  the older files; running Deploy once more published them.
 - A new paid logo run needs Jack's yes: after this run he moves logo.dev back to the free plan. Never delete the
   logo.dev account, because its terms cover the logos we host.
 - GitHub switches off scheduled workflows in public repositories after 60 days without repository activity. The daily

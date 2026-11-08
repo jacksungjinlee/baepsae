@@ -7,7 +7,7 @@
 // "업종" is the `ind` group (hasGroup: never "other" / "etc" / missing) inside the same market, as 왜 움직였나 uses.
 // Units: corp.json op / ni / rev are 억원; KR prices are 원; US prices are $ (data.json units).
 import { num, hasGroup, universe, isStockLike, CARDS, NA, cardRaw, percentileScores, growthBasis, dividendStreak, dpsAgrees, okDy,
-  krDivYield, DY_MAX, KR_DIV_TREND, SPLIT_GUARD, splitGuarded, krYieldToday } from "./engine.js";
+  krDivYield, DY_MAX, KR_DIV_TREND, SPLIT_GUARD, splitGuarded, krYieldToday, exactData, krDivHistory, krDivState, divStOf, betaBand } from "./engine.js";
 import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
@@ -96,6 +96,9 @@ export function valueTile(s, group) {
 //   off: dps > 0 -> pays (배당을 줘요) · dps 0 -> none (배당이 없어요) · missing or contradictory (dps 0 with a yield, or a
 //        payer whose report says 0%) -> na (자료가 없어요, and no number is shown with it).
 //   on:  the trend rules below; a yield with no earlier year to compare -> noPrev (작년과 비교할 기록이 없어요).
+// v19.1b: that history now exists (dps3a, PR #50). With such a file (engine.exactData) divKr reads it: the trend is on for
+// every comparable stock (engine.krDivHistory: divSt same · adj · zero) and off (pays · none · na, as above) for nc · nd,
+// whatever the switch says. The switch stays for files published before v19.1b.
 export { KR_DIV_TREND };
 
 // KR yield on today's price and the interim split guard (Jack, 2026-11-05): engine.js krYieldToday · splitGuarded ·
@@ -108,6 +111,7 @@ export { SPLIT_GUARD, splitGuarded, krYieldToday };
 export function splitGuardCount(stocks, coByT) {
   const hit = [];
   let of = 0;
+  if (exactData()) return { hidden: 0, of: 0, examples: [] };      // exact data: no guard (divCheckCount says what was hidden)
   for (const s of stocks || []) {
     if (!s || s.cls !== "kr" || !(num(s.dps) > 0) || !dpsAgrees(s)) continue;
     const co = coByT ? coByT.get(s.t) : null;
@@ -123,10 +127,31 @@ export function splitGuardCount(stocks, coByT) {
 }
 const d3Of = (s, co) => (s && Array.isArray(s.dps3) ? s.dps3 : co && Array.isArray(co.dps3) ? co.dps3 : null);
 
+// Exact data (v19.1b): the console line for the split check (no silent hiding). Korean payers (dps > 0) with a report year:
+// how many show a yield (dyt verified) and how many do not, and the divSt counts of all Korean stocks with one.
+// -> { payers, shown, hidden, st: { same, adj, nc, nd, zero }, examples: [codes without a yield, 5] } or null (older files).
+export function divCheckCount(stocks, coByT) {
+  if (!exactData()) return null;
+  const st = { same: 0, adj: 0, nc: 0, nd: 0, zero: 0 };
+  let payers = 0, shown = 0;
+  const miss = [];
+  for (const s of stocks || []) {
+    if (!s || s.cls !== "kr") continue;
+    const co = coByT ? coByT.get(s.t) : null;
+    const k = divStOf(s, co);
+    if (k in st) st[k] += 1;
+    if (!(num(s.dps) > 0) || (num(s.fy) ?? (co ? num(co.fy) : null)) == null) continue;
+    payers += 1;
+    if (krYieldToday(s) != null) shown += 1; else miss.push(s.t);
+  }
+  return { payers, shown, hidden: payers - shown, st, examples: miss.slice(0, 5) };
+}
+
 // trend on: dps 0 -> none · a cut (latest < last year) -> cut · 2+ raises in a row -> streak · a raise of more than 3% ->
 // raised · else steady. dps missing or disagreeing with dy -> na; no earlier year on record -> noPrev when a yield is
 // shown, else na; a record that disagrees with dps (dps3[0] !== dps) -> na with no yield (자료가 없어요 never beside a number).
 export function divKr(s, co, trend = KR_DIV_TREND) {
+  if (exactData()) return divKrExact(s, co);
   const dps = num(s && s.dps), dy = num(s && s.dy);
   const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
   const ok = dpsAgrees(s);
@@ -145,6 +170,44 @@ export function divKr(s, co, trend = KR_DIV_TREND) {
   if (cur != null && cur !== dps) return { rule: "na", dps, yieldPct: null, fy, dpsOk: true };
   if (cur == null || prev == null) return { rule: yieldPct != null ? "noPrev" : "na", dps, yieldPct, fy, dpsOk: true };
   const base = { dps, yieldPct, fy, dpsOk: true, d3: [0, 1, 2].map((i) => num(d3[i])) };
+  if (cur < prev) return { rule: "cut", ...base };
+  const n = dividendStreak(d3);
+  if (n >= 2) return { rule: "streak", n, ...base };
+  if (cur > prev * (1 + DIV_SAME) + EPS) return { rule: "raised", ...base };
+  return { rule: "steady", ...base };
+}
+
+// Exact data (v19.1b): the same rules on the split-checked history, and one rule for what is known (engine.krDivState,
+// shared with the 배당 card, 후보 고르기, the plan's 연 배당금, 100만원어치 and 배당성향): the report's own yield (dy) is
+// never used. dps = the latest report's dividend per TODAY's share (dps3a[0]: the report's figure divided by the exact
+// split factor since, so it matches today's price and the yield shown) and yieldPct = dyt, both only when verified
+// (dpsOk), the yield with a report year as before.
+//   dps missing -> na · dps 0 -> none · a payer: not comparable (divSt nc · nd, or no dps3a) -> pays (배당을 줘요), never
+//   a trend · comparable -> the trend rules on whole won (cut · streak · raised · steady), noPrev when last year is blank
+//   and a yield is shown (else na).
+function divKrExact(s, co) {
+  const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
+  const st = krDivState(s, co);
+  if (!st) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
+  const yieldPct = fy != null ? st.y : null;
+  if (st.zero) return { rule: "none", dps: 0, yieldPct, fy, dpsOk: true };
+  // adjFrom (Jack, PR #68 B3): the report's own figure (won) when the per-share figure shown was recalculated for a share
+  // count change (dpsF[0], the latest year's factor, is not 1: a split, a bonus issue or a consolidation), so the 배당 tab
+  // can say what the report says. Only under the figure it describes: a stock whose latest year is unadjusted gets none,
+  // even when an earlier bar is.
+  const f0 = num(((s && Array.isArray(s.dpsF) ? s.dpsF : co && Array.isArray(co.dpsF) ? co.dpsF : null) || [])[0]);
+  const raw = num(s && s.dps);
+  const adjFrom = st.now != null && f0 != null && f0 !== 1 && raw > 0 ? raw : null;
+  const view = { dps: st.now, yieldPct, fy, dpsOk: st.now != null, ...(adjFrom != null ? { adjFrom } : {}) };
+  // adjYears (Jack, PR #68 2022/bars): the earlier report years (not the latest) whose bar was recalculated for a share count
+  // change (that year's dpsF is not 1), oldest first, for the note under the bars. Only years that have a bar.
+  const F = (s && Array.isArray(s.dpsF) ? s.dpsF : co && Array.isArray(co.dpsF) ? co.dpsF : null) || [];
+  const adjYearsOf = (d3) => (fy == null ? [] : [2, 1].filter((i) => d3[i] != null && num(F[i]) != null && num(F[i]) !== 1).map((i) => fy - i));
+  const d3 = krDivHistory(s, co);                          // whole won
+  if (!d3 || !(d3[0] > 0)) return { rule: "pays", ...view };
+  const cur = d3[0], prev = d3[1];
+  if (prev == null) return { rule: yieldPct != null ? "noPrev" : "na", ...view, ...(yieldPct != null ? {} : { dps: null, dpsOk: false }) };
+  const base = { ...view, d3, adjYears: adjYearsOf(d3) };
   if (cur < prev) return { rule: "cut", ...base };
   const n = dividendStreak(d3);
   if (n >= 2) return { rule: "streak", n, ...base };
@@ -180,7 +243,13 @@ const millionView = (raw) => (raw < 1000 ? { under: true, raw } : { won: Math.ro
 // price is missing, the price is not above 0, or dps is 0 (that is 배당이 없어요: divKr "none"). The dps must be the one the
 // card trusts: it agrees with the same report's yield (engine.krDivYield / dpsAgrees), so a split after the report or a
 // total filed in the per-share row (와이엔텍) never turns into an absurd amount; above 30% a year is not believed (DY_MAX).
-export function perMillionKr(s) {
+// Exact data (v19.1b): the dividend per today's share (dps3a[0], data.json else corp.json) ÷ today's close, only for a
+// verified payer (engine.krDivState), so the line, the yield and the per-share figure on the tab always agree.
+export function perMillionKr(s, co = null) {
+  if (exactData()) {
+    const st = krDivState(s, co);
+    return st && !st.zero && st.now != null && st.y > 0 && num(s.price) > 0 ? millionView((MILLION * st.now) / s.price) : null;
+  }
   const y = krYieldToday(s);                      // null without dps, a price above 0, agreement with the report's yield, <= 30%
   if (y == null || !(y > 0)) return null;
   return millionView((MILLION * s.dps) / s.price);
@@ -189,9 +258,21 @@ export function perMillionKr(s) {
 // 배당성향 (KR), on one basis: the report's dividend per share x shares over the same report's net income (corp.json ni[0],
 // 억원), so both sides are that 사업보고서 (fy). Needs dps that agrees with dy, a profit and the share count. A result
 // outside 0-100% is not shown (out: the value, for the console).
+// Exact data (v19.1b): the report's own totals, 현금배당금총액 over 당기순이익 (corp.json cash3[0] / ni[0], both 억원, the
+// same 사업보고서), for a payer (engine.krDivState: dps above 0). No share count and no per-share figure, so no split can
+// enter it, and no guess (no cross-check, no split guard). The same 0-100% rule.
 export function payout(s, co) {
-  if (!s || s.cls !== "kr" || !co || !dpsAgrees(s)) return null;
-  if (splitGuarded(s)) return null;               // split guard: today's share count may be after a split
+  if (!s || s.cls !== "kr" || !co) return null;
+  if (exactData()) {
+    const st = krDivState(s, co);
+    const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null, ni0 = Array.isArray(co.ni) ? num(co.ni[0]) : null;
+    const fy0 = num(co.fy) ?? num(s.fy);
+    if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
+    const p = (cash / ni0) * 100;
+    return p > 0 && p <= 100 ? { pct: p, fy: fy0 } : { out: p, fy: fy0 };
+  }
+  if (!dpsAgrees(s)) return null;
+  if (splitGuarded(s)) return null;               // split guard: today's share count may be after a split (older files)
   const d = num(s.dps), ni = Array.isArray(co.ni) ? num(co.ni[0]) : null;
   const sh = num(s.shr) || (num(co.shm) ? co.shm * 1e6 : null);
   const fy = num(co.fy) ?? num(s.fy);
@@ -201,33 +282,25 @@ export function payout(s, co) {
 }
 
 // ---------------- 출렁임 tile ----------------
-// Beta against the stock's own market. The screen shows the phrase only: single stocks have no estimation-error band
-// in the data yet (CLAUDE.md: beta is shown with its band), so no bare beta number.
+// Beta against the stock's own market (Korea: 코스피, US: S&P 500). CLAUDE.md: beta is shown with its band, never bare.
+// Exact data (v19.1b, Part O.1 of docs/tasks/v19.3-portfolio-pictures-accounts.md): band = beta -/+ 2 x betaSE
+// (engine.betaBand), each end rounded to 0.1 (lo, hi; one = both ends the same after rounding). No betaSE, or betaSE above
+// 0.5 (a broken price history) -> na (자료가 없어요): no phrase, no range, no bare beta.
+// Older files (no betaSE in the data): the phrase only, as before, and no number.
+export const round1 = (v) => { const r = Math.round(v * 10) / 10; return r === 0 ? 0 : r; };     // never −0
 export function riskTile(s) {
   const b = num(s && s.beta);
   if (b == null) return { rule: "na" };
-  return { rule: b > BETA_BIG ? "big" : b < BETA_SMALL ? "small" : "similar", beta: b };
+  const rule = b > BETA_BIG ? "big" : b < BETA_SMALL ? "small" : "similar";
+  if (!exactData()) return { rule, beta: b };
+  const band = betaBand(s);
+  if (!band) return { rule: "na", beta: b, noBand: true };
+  const lo = round1(band.lo), hi = round1(band.hi);
+  return { rule, beta: b, band: { lo, hi, one: lo === hi, se: band.se } };
 }
 
-// ---------------- 재무 경고 신호 (KR) ----------------
-// The old app's flags (corp.json fl, written only when one fires): 유동비율 < 100% · 이자보상배율 < 1 · 3 years of net
-// loss · 자본잠식. "No flag" is only a fact when every check really ran, and corp.json does not say which ran (financial
-// sectors skip 유동비율 and 이자보상배율; a missing balance-sheet line skips others). So allRan needs the list of checks
-// that ran (corp.json flRan, a field the pipeline does not write yet): until then the screen claims nothing when no flag
-// fired. US: none until v19.2 (Yahoo's debtToEquity is not 부채비율).
-export const WARN_CHECKS = ["cr", "icr", "l3", "imp"];
-export function warnings(s, co) {
-  if (!s || s.cls !== "kr" || !co) return { allRan: false, ran: null, flags: [] };
-  const fl = co.fl && typeof co.fl === "object" ? co.fl : {};
-  const flags = [];
-  if (num(fl.cr) != null) flags.push({ code: "cr", x: fl.cr });
-  if (num(fl.icr) != null) flags.push({ code: "icr", x: fl.icr });
-  if (fl.l3) flags.push({ code: "l3" });
-  if (fl.imp) flags.push({ code: "imp" });
-  const ran = Array.isArray(co.flRan) ? WARN_CHECKS.filter((c) => co.flRan.includes(c)) : null;
-  const q = typeof co.bq === "string" ? /^(\d{4})\.([1-4])Q$/.exec(co.bq) : null;
-  return { allRan: !!ran && ran.length === WARN_CHECKS.length, ran, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
-}
+// ---------------- 재무 경고 신호 (KR): src/v2/warn.js (v19.3d: shared with the portfolio rule) ----------------
+export { WARN_CHECKS, FIN_SUB_SECTORS, FIN_SUB_INDS, warnings } from "./warn.js";
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
 export const RANK_CARDS = CARDS.filter((c) => !c.pending).map((c) => c.id);

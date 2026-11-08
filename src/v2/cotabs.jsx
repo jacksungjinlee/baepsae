@@ -5,7 +5,9 @@
 //   US until v19.2: Yahoo's revenue growth, operating margin and ROE. The growth figure is the latest quarter against the
 //   same quarter a year before and always carries that label (cofmt.usGrowthText; no label approved -> no number).
 // 가치: PBR against the industry (strip), PBR · PER with industry medians, 지금 가격이 가정하는 것 (KR: the old DcfCard
-//   reverse calculation; out of range -> its two messages), the 출렁임 line (phrase only: no beta band in the data yet).
+//   reverse calculation; out of range -> its two messages), the 출렁임 line: the phrase, then (v19.1b data) the beta band
+//   "코스피가 1% 움직일 때 평균 {lo}~{hi}% 움직였어요." with its note. No usable band: no card at all, as for a stock with no
+//   beta (Jack, PR #68 B6; the 요약 tile says 자료가 없어요). Older files have no band: the phrase only, never a bare beta.
 // 배당: KR dividend per share (report year) and three years; 100만원어치 rounded to 1,000원, before tax, with the basis it
 //   was really computed on and the price date: KR 1,000,000 ÷ the close × the report's dividend per share (Jack,
 //   2026-11-05); US 1,000,000 x Yahoo's yield until v19.2.
@@ -21,17 +23,17 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
   roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round } from "./company.js";
-import { growthBasis, num } from "./engine.js";
+import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
 const rateText = (g) => (g < 0 ? "\u2212" : "") + p1(Math.abs(g));
 const H = ({ children, ...rest }) => <h3 {...rest} style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.4 })}>{children}</h3>;
-const Src = ({ children, ...rest }) => (children ? <div {...rest} style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{children}</div> : null);
+const Src = ({ children, ...rest }) => (children ? <div {...rest} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{children}</div> : null);
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
 function CardHead({ icon, tone, title }) {
   return (
@@ -44,9 +46,9 @@ function CardHead({ icon, tone, title }) {
 function Stat({ label, value, sub, ...rest }) {
   return (
     <div {...rest} style={{ background: COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(3)}px`, minWidth: 0 }}>
-      <div style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2)}>{label}</div>
+      <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{label}</div>
       <div style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{value}</div>
-      {sub && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>{sub}</div>}
+      {sub && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{sub}</div>}
     </div>
   );
 }
@@ -76,13 +78,13 @@ function Bars({ rows, fmt, aria }) {
         const last = i === rows.length - 1;
         return (
           <div key={r.year} data-year={r.year} data-v={r.v} style={{ textAlign: "center", minWidth: 0 }}>
-            <div style={tx(SIZE.xxs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{fmt(r.v)}</div>
+            <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{fmt(r.v)}</div>
             <div aria-hidden="true" style={{ position: "relative", height: H0, marginTop: SPACE(1) }}>
               <div style={{ position: "absolute", left: "28%", right: "28%", borderRadius: 4, background: last ? COLOR.ink : COLOR.border,
                 ...(r.v >= 0 ? { bottom: H0 - base, height: h } : { top: base, height: h }) }} />
               <div style={{ position: "absolute", left: 0, right: 0, top: base, height: 1, background: COLOR.line }} />
             </div>
-            <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{r.year}</div>
+            <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{r.year}</div>
           </div>
         );
       })}
@@ -99,9 +101,9 @@ function Decomp({ co }) {
   // multipliers, as the old card: 3년 주가 = 이익 × 눈높이 (a true equation), each with its inputs (then → now)
   const box = (label, v, from, to, dark) => (
     <div style={{ background: dark ? COLOR.ink : COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(1)}px`, textAlign: "center", minWidth: 0 }}>
-      <div style={tx(SIZE.xxs, WEIGHT.semi, dark ? COLOR.surface : COLOR.text2)}>{label}</div>
+      <div style={tx(SIZE.xs, WEIGHT.semi, dark ? COLOR.surface : COLOR.text2)}>{label}</div>
       <div style={tx(SIZE.body, WEIGHT.heavy, dark ? COLOR.surface : COLOR.ink)}>{timesText(v, v >= 100 ? 0 : 2)}</div>
-      {from && to && <div style={tx(10, WEIGHT.regular, dark ? COLOR.surface : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
+      {from && to && <div style={tx(SIZE.xxs, WEIGHT.regular, dark ? COLOR.surface : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
     </div>
   );
   const op = (ch) => <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{ch}</span>;
@@ -200,7 +202,7 @@ export function EarnTab({ load, s, onMore }) {
           <>
             <div data-ui-v2="co-earn-big" data-metric={m} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
               <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={eokText(last)} /></span>
-              {ch != null && E.yoy && <span style={tx(SIZE.xs, WEIGHT.bold, ch < 0 ? COLOR.down : COLOR.up)}>{fill(E.yoy, { pct: signedPct(ch) })}</span>}
+              {ch != null && E.yoy && <span style={tx(SIZE.xs, WEIGHT.bold, ch < 0 ? COLOR.down : ch > 0 ? COLOR.up : COLOR.text2)}>{fill(E.yoy, { pct: signedPct(ch) })}</span>}
             </div>
             <Bars rows={series} fmt={(v) => eokText(v)} />
           </>
@@ -229,7 +231,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
           <Card>
             <div role="table" style={{ display: "grid", gridTemplateColumns: `auto repeat(${rows.length}, minmax(0, 1fr))`, columnGap: SPACE(3), rowGap: SPACE(2) }}>
               <span role="columnheader" />
-              {rows.map((x) => <span key={x.year} role="columnheader" style={tx(SIZE.xxs, WEIGHT.bold, COLOR.text2, { textAlign: "right" })}>{x.year}</span>)}
+              {rows.map((x) => <span key={x.year} role="columnheader" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textAlign: "right" })}>{x.year}</span>)}
               {cols.map(([label, k]) => (
                 <React.Fragment key={k}>
                   <span role="rowheader" style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink)}>{label}</span>
@@ -270,10 +272,10 @@ function Strip({ s, group }) {
         <span style={{ position: "absolute", left: `calc(${X(st.medX)} - 1px)`, top: SPACE(2), width: 2, height: SPACE(6), background: COLOR.text2 }} />
         <span data-ui-v2="co-strip-me" style={{ position: "absolute", left: `calc(${X(st.mine)} - 7px)`, top: SPACE(5) - 7, width: 14, height: 14, borderRadius: 999, background: COLOR.ink, border: `2px solid ${COLOR.surface}` }} />
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xxs, WEIGHT.regular, COLOR.text2) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
         <span>{timesText(0, 0)}</span><span>{fill(V.axisMax, { x: nf(round(st.cap, 1), 1) })}</span>
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xxs, WEIGHT.bold, COLOR.ink) }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>
         <span>{fill(V.me, { x: nf(s.pbr, 2) })}</span><span style={{ color: COLOR.text2 }}>{fill(V.med, { x: nf(st.med, 2) })}</span>
       </div>
     </div>
@@ -355,6 +357,7 @@ export function ValueTab({ load, s, store, onMore }) {
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;
   const risk = riskTile(s);
+  const bandLine = riskBandText(s, risk, true);
   const a = assumeOf(store.data, s.t) || { disc: DCF.disc, term: DCF.term };
   return (
     <div data-ui-v2="co-value" data-rule={r.rule}>
@@ -367,13 +370,14 @@ export function ValueTab({ load, s, store, onMore }) {
           {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perMed && V.indMed ? fill(V.indMed, { x: nf(round(perMed.med, 1), 1) }) : null} />}
         </Stats>
         {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
-        <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+        <DateLine date={lineDate(load, s)} fresh={load.fresh} />
       </Card>
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {risk.rule !== "na" && C.co.risk[risk.rule] && (
-        <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta}>
+        <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta} data-lo={risk.band ? risk.band.lo : ""} data-hi={risk.band ? risk.band.hi : ""}>
           <CardHead icon="umbrella" tone="risk" title={C.co.risk[risk.rule]} />
-          {C.co.risk.noBand && <Note>{C.co.risk.noBand}</Note>}
+          {bandLine && <p data-ui-v2="co-risk-band" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{bandLine}</p>}
+          {bandLine && riskBandNote(risk) && <Note>{riskBandNote(risk)}</Note>}
         </Card>
       )}
       {C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
@@ -403,7 +407,7 @@ function Scatter({ s, group }) {
         {m.pts.filter((p) => !p.mine).map((p) => <circle key={p.t} cx={sx(p.x)} cy={sy(p.y)} r={4} fill={COLOR.text3} opacity={0.45} />)}
         <circle cx={sx(me.x)} cy={sy(me.y)} r={7} fill={COLOR.ink} stroke={COLOR.surface} strokeWidth={2} />
       </svg>
-      <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
+      <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
         <div>{M.x}</div><div>{M.y}</div><div>{M.line}</div>
       </div>
       {M[m.pos] && <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{M[m.pos]}</p>}
@@ -430,7 +434,7 @@ function Calc({ load, s, store, setStoreData }) {
   const res = r.g != null ? fill(K.result, { g: rateText(round(r.g, 1)) }) : r.edge === "low" ? D.low : r.edge === "high" ? D.high : D.loss;
   const inputs = r.g != null ? dcfInputs(r) : null;
   const save = () => {
-    const next = withAssume(store.data, s.t, a, todayKst());
+    const next = withAssume(store.data, s.t, a, todayKst(), Date.now());
     if (next) { setStoreData(next); setDone(true); } else console.warn("[v2] assumption not saved for " + s.t);
   };
   return (
@@ -446,6 +450,7 @@ function Calc({ load, s, store, setStoreData }) {
           <Button kind="secondary" onClick={save}>{done && K.saved ? K.saved : K.save}</Button>
         </div>
       )}
+      {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
     </Card>
   );
 }
@@ -464,7 +469,7 @@ function RatioRow({ label, mean, value, med, calc, first }) {
         <span style={{ flex: 1 }} />
         <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{value}</span>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xxs, WEIGHT.regular, COLOR.text2) }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
         <span>{mean}</span>{med && <span style={{ whiteSpace: "nowrap" }}>{med}</span>}
       </div>
       {calc && <div data-ui-v2="co-receipt" style={{ marginTop: SPACE(2), border: `1px dashed ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{calc}</div>}
@@ -505,7 +510,7 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
-            <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+            <DateLine date={lineDate(load, s)} fresh={load.fresh} />
           </Card>
         )}
         <Scatter s={s} group={group} />
@@ -521,6 +526,10 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 // close (engine.js krYieldToday, company.js perMillionKr), so they always agree; a dps that fails the cross-check with the report's
 // own yield shows neither. The per-share figure only when it passes (divKr dpsOk); the 3-year bars and the trend headline
 // only with engine.js KR_DIV_TREND on (off until the history is split-adjusted). 배당성향 on one basis (payout).
+// v19.1b data (engine.exactData): the yield is the pipeline's verified dyt, the per-share figure and the bars are on
+// today's share basis (dps3a: a report year before a split divided by its exact factor), and the trend headline and bars
+// show for every comparable stock (divSt same · adj · zero; nc · nd -> 배당을 줘요, no bars). The bars show the years the
+// data has (Part O.3 of the v19.3 spec), at least two.
 // US: Yahoo's yield only (no per-share dividend in the data until v19.2).
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
@@ -536,15 +545,19 @@ export function DivTab({ load, s }) {
   const md = priceMd(load, s);
   const fy = us ? null : r.fy;
   // KR (Jack, 2026-11-05): 1,000,000 ÷ today's close × the report's dividend per share (company.js perMillionKr); US: Yahoo's yield
+  // (v19.1b data: perMillionKr can also read corp.json's dps3a, but a verified dyt only exists with data.json's own dps3a,
+  // so this call needs no corp row; tests/test_v2_company.py pins this line.)
   const pm = r.rule === "none" ? null : us ? perMillionView(r.yieldPct) : perMillionKr(s);
   const basis = us ? Dv.basisUs : Dv.basisKr && fy ? fill(Dv.basisKr, { fy }) : null;
   const po = us ? null : payout(s, co);
   if (po && po.out != null && !warnedPayout.has(s.t)) {
     warnedPayout.add(s.t);
-    console.warn(`[v2] payout ratio not shown for ${s.t}: ${po.out.toFixed(1)}% is outside 0-100% (dividend x shares / net income, ${po.fy})`);
+    console.warn(`[v2] payout ratio not shown for ${s.t}: ${po.out.toFixed(1)}% is outside 0-100% (${exactData() ? "cash dividends" : "dividend x shares"} / net income, ${po.fy})`);
   }
   const showDps = !us && r.dpsOk && r.dps != null && r.dps > 0;
-  const bars = showDps && r.d3 && r.d3.every((v) => v != null) && fy ? [2, 1, 0].map((i) => ({ year: fy - i, v: r.d3[i] })) : null;
+  const years = showDps && r.d3 && fy ? [2, 1, 0].filter((i) => r.d3[i] != null).map((i) => ({ year: fy - i, v: r.d3[i] })) : [];
+  const bars = years.length >= 2 ? years : null;
+  const adjYears = bars && r.adjYears ? r.adjYears.filter((y) => bars.some((b) => b.year === y)) : [];   // earlier bars recalculated
   const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
@@ -556,7 +569,11 @@ export function DivTab({ load, s }) {
             <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{Dv.dps}</span>
           </div>
         )}
+        {/* v19.1b data (Jack, PR #68 B3): the figure above was recalculated for a share count change; say what the report says */}
+        {showDps && r.adjFrom != null && Dv.adjNote && <Note data-ui-v2="co-dps-adj">{fill(Dv.adjNote, { x: nf(r.adjFrom) })}</Note>}
         {bars && <Bars rows={bars} fmt={(v) => nf(v)} />}
+        {/* v19.1b data (Jack, PR #68 2022/bars): an earlier bar was recalculated for a share count change */}
+        {adjYears.length > 0 && Dv.barsAdjNote && <Note data-ui-v2="co-bars-adj">{fill(Dv.barsAdjNote, { years: adjYears.join("·") })}</Note>}
         {showDps && <Src>{yearText(fy)}</Src>}
         {us && Dv.usLater && <Note>{Dv.usLater}</Note>}
       </Card>}
@@ -566,7 +583,7 @@ export function DivTab({ load, s }) {
           <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
-          <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+          <DateLine date={lineDate(load, s)} fresh={load.fresh} />
         </Card>
       )}
       {(r.yieldPct != null || (po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
@@ -610,11 +627,11 @@ export function DiscTab({ load, s, disc }) {
               const st = { display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH, padding: `${SPACE(2)}px 0`, borderTop: `1px solid ${COLOR.line}` };
               const body = (
                 <>
-                  <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
+                  <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { width: SPACE(14), flexShrink: 0 })}>{mdText(x.date)}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>
                       {x.nm}{x.pos ? <span style={{ color: COLOR.text2, fontWeight: WEIGHT.regular }}>{" · "}{x.pos}</span> : null}</span>
-                    <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
+                    <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
                       {fill(C.plan.shares, { n: nf(Math.abs(x.q)) })}{x.won != null ? <>{" · "}{fill(C.app.about, { x: bigWon(x.won) })}</> : null}</span>
                   </span>
                   <StatusChip tone="neutral">{x.q > 0 ? D.buy : D.sell}</StatusChip>

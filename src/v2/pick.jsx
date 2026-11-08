@@ -5,7 +5,8 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { StatusChip, Collapsible } from "../ui/components.jsx";
 import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis, krDivYield, krYieldToday } from "./engine.js";
 import { C, fill, nf, p1, mdText } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, tx, tap } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, ActionBar, CardPic, CardScores, tx, tap } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
 import { objectParticle } from "./track.js";
 
@@ -41,6 +42,8 @@ export function Pick({ load, builder, setBuilder }) {
       {ds.cands.us && ds.cands.us.length > 0 && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate && (
         <Note style={{ marginTop: 0 }}>{fill(C.app.usClose, { md: mdText(load.data.usPxDate) })}</Note>
       )}
+      {/* v19.1c: a candidate (or a 꼭 담을 종목) priced at an earlier US close (pxd) is named under the date line */}
+      <OwnCloseNote groups={ownCloses(load, [...ds.pinned, ...all.map((c) => c.s)])} style={{ marginTop: 0 }} />
       <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{deckLine}</div>
       <ScreenTitle sub={C.pick.body}>{fill(C.pick.heading, { n: N })}</ScreenTitle>
       {msg && <Note tone="watch" data-ui-v2="pick-limit">{msg}</Note>}
@@ -87,10 +90,10 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
           <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2), alignItems: "center", marginTop: SPACE(1) }}>
             {pinned ? <span data-ui-v2="manual-chip"><StatusChip tone="neutral">{C.pick.manual}</StatusChip></span>
               : <StatusChip tone="neutral">{fill(C.build.s1.score, { score: Math.round(c.total) })}</StatusChip>}
-            {indLine && <span style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{indLine}</span>}
+            {indLine && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{indLine}</span>}
           </div>
           <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>
-            {ranked.map(([id, v], i) => <span key={id}>{i ? " · " : ""}<span>{C.build.cards[id].name}</span>{" "}<span>{fill(C.build.s1.score, { score: Math.round(v) })}</span></span>)}
+            <CardScores list={ranked} />
           </div>
         </div>
         {!pinned && (
@@ -106,7 +109,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
           {lines.map((l, i) => (
             <div key={i} style={tx(SIZE.xs, l.body ? WEIGHT.regular : WEIGHT.semi, COLOR.watch)}>{l.body ? l.t : fill(C.pick.worry, { worry: l.t })}</div>
           ))}
-          {annualFy != null && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.watch)}>{fill(C.app.reportYear, { year: annualFy })}</div>}
+          {annualFy != null && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.watch)}>{fill(C.app.reportYear, { year: annualFy })}</div>}
         </div>
       )}
       {!lines.length && C.pick.caution.checksRun && checkNames(cau.ran).length > 0 && (
@@ -134,10 +137,12 @@ export function checksRunLine(names) {
   return fill(C.pick.caution.checksRun, { checks: names.join(" · ") });
 }
 
-function Row({ k, v, id, basis }) {
+// card: the 기준 this row scores (v19.3b Part A: its picture in front of the name).
+function Row({ k, v, id, basis, card }) {
   return (
-    <div data-ui-v2={id} data-basis={basis} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(1)}px 0` }}>
-      <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text3, { width: SPACE(32), flexShrink: 0 })}>{k}</span>
+    <div data-ui-v2={id} data-basis={basis} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(1)}px 0`, alignItems: card ? "center" : undefined }}>
+      <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text3, { width: SPACE(32), flexShrink: 0, ...(card ? { display: "flex", alignItems: "center", gap: SPACE(2) } : {}) })}>
+        {card && <CardPic id={card} />}{k}</span>
       <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.ink)}>{v}</span>
     </div>
   );
@@ -146,7 +151,8 @@ function Row({ k, v, id, basis }) {
 function Receipts({ s, co, c, st }) {
   const R = C.pick.receipt;
   const pbr = num(s.pbr), roe = num(s.roe), debt = num(s.debt);
-  // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (engine.js krYieldToday)
+  // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (engine.js krYieldToday;
+  // v19.1b data: the verified today's-close yield dyt)
   const y = s.cls === "kr" ? krYieldToday(s) : num(s.dy);
   const fy = s.cls === "kr" ? fyOf(s, co) : null;
   // Korean growth is labelled by how it was actually calculated (engine.growthBasis); no label = the row is hidden.
@@ -155,7 +161,7 @@ function Receipts({ s, co, c, st }) {
   return (
     <div data-ui-v2="receipts">
       {c.total != null && CARDS.filter((x) => !x.pending && (st.points[x.id] || 0) > 0).map((x) => (
-        <Row key={x.id} k={C.build.cards[x.id].name} v={c.scores[x.id] === NA ? C.build.s1.finNA : fill(C.build.s1.score, { score: Math.round(c.scores[x.id]) })} />
+        <Row key={x.id} card={x.id} k={C.build.cards[x.id].name} v={c.scores[x.id] === NA ? C.build.s1.finNA : fill(C.build.s1.score, { score: Math.round(c.scores[x.id]) })} />
       ))}
       {pbr != null && <Row k="PBR" v={fill(R.times, { x: nf(pbr, 2) })} />}
       {y != null && (s.cls === "us" || fy != null) && <Row k={R.yield} v={`${p1(y)}%`} />}
@@ -163,7 +169,7 @@ function Receipts({ s, co, c, st }) {
       {debt != null && s.cls === "kr" && fy != null && <Row k={R.debt} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
       {debt != null && s.cls === "us" && R.debtUs && <Row id="debt-us" k={R.debtUs} v={isFin(s) ? C.build.s1.finNA : `${nf(Math.round(debt))}%`} />}
       {growth != null && growthLabel && <Row id="growth" basis={gb || undefined} k={growthLabel} v={`${p1(growth)}%`} />}
-      {fy != null && <div style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(C.app.reportYear, { year: fy })}</div>}
+      {fy != null && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(C.app.reportYear, { year: fy })}</div>}
     </div>
   );
 }

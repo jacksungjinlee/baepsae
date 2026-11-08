@@ -201,10 +201,11 @@ function MenuRow({ icon, label, href, onClick, id, first }) {
     : <button data-ui-v2="menu-item" data-item={id} type="button" onClick={onClick} style={style}>{body}</button>;
 }
 
-// ☰ menu (board Menu): a screen over the current one, above the tab bar. 소개 · 용어 사전 · 데이터 출처 · 예전 뱁새 보기, then
-// the data-date box ("{md} 기준", the US close date when it differs). Escape and the close button close it; focus moves
-// into it on open and back to the ☰ button on close. The preview page shows 소개 and the data date only.
-export function MenuSheet({ open, load, onClose, onAbout, onHome, tabH }) {
+// ☰ menu (board Menu): a screen over the current one, above the tab bar. 소개 · 용어 사전 · 데이터 출처 · 처음 안내 다시 보기 ·
+// 예전 뱁새 보기, then the data-date box ("{md} 기준", the US close date when it differs). Escape and the close button close
+// it; focus moves into it on open and back to the ☰ button on close. The preview page shows 소개, 처음 안내 다시 보기 and
+// the data date only. v19.3c (Part E, board Menu2): 처음 안내 다시 보기 (onGuide) replays the first-visit guide on 홈.
+export function MenuSheet({ open, load, onClose, onAbout, onHome, onGuide, tabH }) {
   const { preview } = useMode();
   const panel = useRef(null);
   const opener = useRef(null);
@@ -244,6 +245,7 @@ export function MenuSheet({ open, load, onClose, onAbout, onHome, tabH }) {
           <MenuRow id="about" icon="info" label={C.app.aboutLink} onClick={onAbout} first />
           {!preview && <MenuRow id="glossary" icon="book-open-text" label={C.menu.glossary} href={OLD_LINKS.glossary} />}
           {!preview && <MenuRow id="sources" icon="database" label={C.menu.sources} href={OLD_LINKS.sources} />}
+          {onGuide && <MenuRow id="guide" icon="flag" label={C.menu.guide} onClick={onGuide} />}
           {!preview && <MenuRow id="old-app" icon="clock-counter-clockwise" label={C.app.oldApp} href={OLD_APP} />}
         </section>
         {ok && (
@@ -295,8 +297,9 @@ function SideLink({ id, icon, label, href, onClick, on }) {
     : <button data-ui-v2="side-link" data-item={id} type="button" onClick={onClick} aria-current={on ? "page" : undefined} style={style}>{body}</button>;
 }
 
-// tab: the tab on screen (none while 소개 is open); about: 소개 is open; go(id): a tab or "build"; onAbout: open 소개.
-export function SideMenu({ tab, about, load, go, onAbout }) {
+// tab: the tab on screen (none while 소개 is open); about: 소개 is open; go(id): a tab or "build"; onAbout: open 소개;
+// onGuide: 처음 안내 다시 보기 (v19.3c Part E, Part O.2: just before 예전 뱁새 보기; the preview page: right after 소개).
+export function SideMenu({ tab, about, load, go, onAbout, onGuide }) {
   const { preview } = useMode();
   const ok = load.status === "ok";
   const us = ok && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
@@ -309,7 +312,7 @@ export function SideMenu({ tab, about, load, go, onAbout }) {
           <img data-ui-v2="logo-mark" src={IMG.mark} alt="" width={38} height={38} style={{ objectFit: "contain", flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
             <h1 data-ui-v2="wordmark" style={tx(24, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.1, letterSpacing: "-0.04em" })}>{C.app.brand}</h1>
-            <p data-ui-v2="side-catch" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: 2, lineHeight: 1.35 })}>{C.about.ko.hero.catch}</p>
+            <p data-ui-v2="side-catch" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2, lineHeight: 1.35 })}>{C.about.ko.hero.catch}</p>
           </div>
         </HomeLink>
       </div>
@@ -337,6 +340,7 @@ export function SideMenu({ tab, about, load, go, onAbout }) {
         <SideLink id="about" icon="info" label={C.app.aboutLink} onClick={onAbout} on={about} />
         {!preview && <SideLink id="glossary" icon="book-open-text" label={C.menu.glossary} href={OLD_LINKS.glossary} />}
         {!preview && <SideLink id="sources" icon="database" label={C.menu.sources} href={OLD_LINKS.sources} />}
+        {onGuide && <SideLink id="guide" icon="flag" label={C.menu.guide} onClick={onGuide} />}
         {!preview && <SideLink id="old-app" icon="clock-counter-clockwise" label={C.app.oldApp} href={OLD_APP} />}
       </div>
     </aside>
@@ -353,7 +357,8 @@ export function typingIn(el) {
 }
 
 // "/" focuses the search field (PC only). Not while typing in a field, not with Ctrl / Alt / Cmd, not during IME
-// composition, and not while a dialog (a sheet) is open: focus stays where the dialog keeps it.
+// composition, not while a dialog (a sheet) is open: focus stays where the dialog keeps it, and not while the first-visit
+// guide is on screen.
 export function useSlashFocus(ref, on) {
   useEffect(() => {
     if (!on) return undefined;
@@ -361,6 +366,8 @@ export function useSlashFocus(ref, on) {
       if (e.key !== "/" || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
       if (typingIn(e.target) || typingIn(document.activeElement)) return;
       if (document.querySelector('[aria-modal="true"]')) return;
+      // v19.3c: nor while the first-visit guide is on screen (its welcome on 홈 or a step's bubble): it keeps the focus.
+      if (document.querySelector('[data-ui-v2="guide-welcome"], [data-ui-v2="guide-bubble"]')) return;
       const el = ref.current;
       if (!el || !el.isConnected) return;
       e.preventDefault();
@@ -388,7 +395,7 @@ export function TopBar({ q, onSearch, inputRef, load }) {
               placeholder={C.stocks.search || undefined} enterKeyHint="search" autoComplete="off" aria-keyshortcuts="/"
               style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", minHeight: TOUCH - 2, ...tx(SIZE.body, WEIGHT.semi, COLOR.ink) }} />
             <kbd aria-hidden="true" style={{ flexShrink: 0, minWidth: SPACE(6), height: SPACE(6), display: "inline-flex", alignItems: "center", justifyContent: "center",
-              border: `1px solid ${COLOR.border}`, borderRadius: SPACE(1) + 2, background: COLOR.surface, ...tx(SIZE.xxs, WEIGHT.bold, COLOR.text2, { lineHeight: 1 }) }}>/</kbd>
+              border: `1px solid ${COLOR.border}`, borderRadius: SPACE(1) + 2, background: COLOR.surface, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { lineHeight: 1 }) }}>/</kbd>
           </label>
         )}
         <span style={{ flex: 1 }} />

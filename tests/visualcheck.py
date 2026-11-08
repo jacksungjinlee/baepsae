@@ -13,9 +13,16 @@
     3) NOT_NUMBERS: 칸 밖에서도 숫자가 아닌 꼴 (날짜 · 종목 수). 이 셋으로 설명되지 않는 숫자가 하나라도 남으면 실패
 - 아이콘은 Phosphor 256 격자의 두 층(바탕 · 선, stroke 없음)이고, 색은 아이콘 표(on · off · ok · 남색 위 + v19.1 주제 색 다섯)의 짝뿐이에요
 - 고른 것(고른 탭 · 알약 · 줄 · 칩 · 라디오), 아이콘, 상태 아이콘, 판정 띠와 알약의 계산된 색에 살구색이 없어요
+- v19.3b (docs/tasks/v19.3-portfolio-pictures-accounts.md Part B · C), 2.0 페이지(app.html · app-preview.html)에서만:
+  보이는 글은 모두 12px 이상이에요 (SVG 안의 글은 그려진 크기로: 글자 크기 × 화면 배율). 회사 로고 · 글자 표시의 색
+  (src/v2/company.js MARK_COLORS 중 남색 #1C2B45 를 뺀 아홉 가지)은 회사 표시 밖의 어디에도(그래프 · 막대 · 글) 칠해지지 않아요.
 뱁이가 나온 화면은 PLACEMENTS 에 모여요 (그림 · 화면 · 걸린 숫자 · 쓴 예외 칸과 꼴) — 스모크 결과 끝에 표로 찍어요.
 """
+import os
 import re
+import shutil
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # 1) 언제나 '숫자' (CLAUDE.md: money, prices, returns, weights and scores) — 뱁이 화면에 있으면 예외 칸 안이라도 실패
@@ -156,7 +163,69 @@ def visual_ok(page):
         PLACEMENTS.add((src, screen, " / ".join(t for _, t in hit[:3]), " · ".join(used)))
     bad = visual_problems(v)
     assert not bad, f"v19.0b 화면 규칙: {bad}"
+    if page.evaluate(IS_V2):                                       # v19.3b: 2.0 페이지만 (예전 뱁새는 2.0 으로 옮길 때)
+        small = text_floor(page)
+        assert not small, f"v19.3b 12px 아래 글: {small[:6]}"
+        logo = page.evaluate(LOGO_PAINT, LOGO_RGB)
+        assert not logo, f"v19.3b 회사 표시 밖에 로고 색: {logo[:4]}"
     return v
+
+
+# ── v19.3b Part B: 12px 아래 글이 없어요 ──
+TEXT_FLOOR_PX = 12
+IS_V2 = r"() => /\/app(-preview)?\.html$/.test(location.pathname)"
+# 보이는 글 조각마다 그려진 글자 크기. 조각의 상자가 1px 아래이거나 숨은 것(visibility · display · opacity 0 인 조상)은 빼요.
+# SVG 안의 글은 화면 배율(getScreenCTM)을 곱해요. 회사 글자 표시는 CSS 의 ::before 로 그린 장식이라 글 조각이 아니에요.
+TEXT_SIZES = r"""(floor) => {
+  const out = [];
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (w.nextNode()) {
+    const n = w.currentNode, e = n.parentElement, t = n.textContent.trim();
+    if (!e || !t || e.closest('script, style, noscript, template')) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const r = range.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    if (e.checkVisibility && !e.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+    let px = parseFloat(getComputedStyle(e).fontSize);
+    if (e instanceof SVGElement && e.getScreenCTM) { const m = e.getScreenCTM(); if (m) px *= Math.hypot(m.a, m.b); }
+    if (px < floor - 0.01) out.push([t.slice(0, 40), Math.round(px * 100) / 100, e.closest('[data-ui-v2]') ? e.closest('[data-ui-v2]').dataset.uiV2 : e.tagName]);
+  }
+  return out; }"""
+
+
+def text_floor(page, floor=TEXT_FLOOR_PX):
+    """지금 화면에서 floor(12px) 아래로 그려진 보이는 글 [(글, px, 가까운 data-ui-v2)] — 빈 목록이면 통과."""
+    return page.evaluate(TEXT_SIZES, floor)
+
+
+# ── v19.3b Part C: 로고 색은 그래프를 칠하지 않아요 ──
+def _logo_colours():
+    with open(os.path.join(ROOT, "src", "v2", "company.js"), encoding="utf-8") as fh:
+        body = fh.read().split("export const MARK_COLORS = [", 1)[1].split("]", 1)[0]
+    cols = re.findall(r'"(#[0-9A-Fa-f]{6})"', body)
+    assert len(cols) == 10 and cols[0].upper() == "#1C2B45", cols
+    return cols[1:]                                                # 남색(글자 · 선의 색)은 어디에나 있어요
+
+
+LOGO_RGB = ["rgb(%d, %d, %d)" % tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in _logo_colours()]
+LOGO_PAINT = r"""(cols) => {
+  const out = [];
+  for (const e of document.body.querySelectorAll('*')) {
+    if (e.closest('[data-ui-v2="co-mark"]')) continue;
+    const s = getComputedStyle(e);
+    for (const v of [s.backgroundColor, s.color, s.fill, s.stroke, s.borderTopColor, s.borderBottomColor, s.borderLeftColor, s.borderRightColor, s.backgroundImage])
+      if (v && cols.some((c) => v.includes(c))) { out.push([e.tagName, e.dataset.uiV2 || e.dataset.ui || '', v]); break; }
+  }
+  return out; }"""
+
+
+# v19.3b: 기준 · 템플릿 그림 (tools/resize_pictures.py) — 시험 사이트에 폴더째 같이 놓아요
+PICTURE_DIR = "pictures"
+
+
+def copy_pictures(site):
+    shutil.copytree(os.path.join(ROOT, PICTURE_DIR), os.path.join(site, PICTURE_DIR))
 
 
 def placements_table():

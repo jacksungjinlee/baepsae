@@ -24,14 +24,14 @@ import os
 import re
 import shutil
 import sys
-import tempfile
 import threading
 
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from visualcheck import V2_IMAGES, visual_ok  # noqa: E402
+from visualcheck import V2_IMAGES, visual_ok, copy_pictures  # noqa: E402
+import tmpdirs  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WAIT = 15000
@@ -53,10 +53,11 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 
 def site():
-    d = tempfile.mkdtemp(prefix="baepsae-preview-")
+    d = tmpdirs.make("baepsae-preview-")
     for f in ["app-preview.html", "baepsae.html", "icon-192.png", "baepi-og.webp", "jack-photo.jpg"] + V2_IMAGES + [f"baepi-{i}.png" for i in range(1, 10)]:
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
+    copy_pictures(d)                                                 # v19.3b: 기준 · 템플릿 그림
     return d
 
 
@@ -188,11 +189,11 @@ def main():
                 assert page.evaluate("localStorage.getItem('baepsae_v10_slots')"), "예전 기록을 미리 넣지 못했어요"
                 assert page.locator('[data-ui-v2="today-hero"]').count() == 0 and page.get_by_text("할 일").count() == 0
                 shot(page, width, "0-landing")
-                page.locator('[data-ui-v2="menu-button"]').click()                   # 메뉴: 소개와 날짜만 (예전 뱁새로 가는 줄 없음)
+                page.locator('[data-ui-v2="menu-button"]').click()                   # 메뉴: 소개 · 처음 안내 다시 보기(v19.3c O.2: 소개 바로 뒤)와 날짜만 (예전 뱁새로 가는 줄 없음)
                 menu = page.locator('[data-ui-v2="menu"]')
                 menu.wait_for(state="visible")
                 items = menu.locator('[data-ui-v2="menu-item"]').evaluate_all("(els) => els.map((e) => e.dataset.item)")
-                assert items == ["about"], items
+                assert items == ["about", "guide"], items
                 assert "10월 30일 기준" in menu.locator('[data-ui-v2="menu-date"]').inner_text()
                 label_here()
                 shot(page, width, "1-menu", full=False)
@@ -235,7 +236,7 @@ def main():
                 tab(TABS["portfolio"])
                 page.get_by_text(C["store"]["export"]).wait_for(state="visible")
                 assert page.locator('[data-ui-v2="old-app-note"]').count() == 0, "미리 보기 내 덱에 '예전 뱁새' 안내가 떠요"
-                live = os.path.join(tempfile.mkdtemp(), "live.json")          # 실제 앱에서 내보낸 기록을 미리 보기에서 열면
+                live = os.path.join(tmpdirs.make("baepsae-preview-file-"), "live.json")          # 실제 앱에서 내보낸 기록을 미리 보기에서 열면
                 with open(live, "w", encoding="utf-8") as fh:
                     json.dump({"v": 1, "decks": []}, fh)
                 page.locator('[data-ui-v2="import-file"]').set_input_files(live)
@@ -353,7 +354,7 @@ def main():
             at("home")
             assert page.locator('nav[data-ui="bottom-tab-bar"], [data-ui-v2="menu-button"]').count() == 0
             items = page.locator('[data-ui-v2="side-link"]').evaluate_all("(els) => els.map((e) => e.dataset.item)")
-            assert items == ["about"], items                                   # 예전 뱁새(실제 데이터)로 가는 줄 없음
+            assert items == ["about", "guide"], items                          # 예전 뱁새(실제 데이터)로 가는 줄 없음 · 처음 안내 다시 보기는 소개 뒤 (v19.3c O.2)
             for key in ("home", "portfolio", "stocks", "market"):
                 page.locator(f'[data-ui-v2="side-tab"][data-tab="{key}"]').click()
                 at(key)
@@ -402,4 +403,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(tmpdirs.run(main))        # 통과하면 이번 실행의 임시 폴더를 지우고, 실패하면 남겨요 (tests/tmpdirs.py)

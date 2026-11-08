@@ -6,7 +6,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { MoneyInput, Amount } from "../ui/components.jsx";
 import { C, fill, p1, wonText } from "./format.js";
-import { Note, tx } from "./ui.jsx";
+import { Note, OwnCloseNote, tx } from "./ui.jsx";
+import { ownCloseGroups } from "./stocklist.js";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, indexSince, addMoney, addMessage, bandOf, plainEdges, withoutAbsent } from "./track.js";
 
@@ -78,10 +79,10 @@ export function ByStockHead({ plain, paused }) {
     <div style={{ marginTop: SPACE(4) }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.deck.byStock}</span>
-        <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text3)}>{C.deck.ret}</span>
+        <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text3)}>{C.deck.ret}</span>
       </div>
       {!paused && (
-        <div data-ui-v2="weight-legend" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2)}>
+        <div data-ui-v2="weight-legend" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
           <span style={{ display: "block" }}>{C.plan.targetNote}</span>
           {plain && <span style={{ display: "block" }} data-ui-v2="band-note">{C.deck.bandNote}</span>}
         </div>
@@ -119,12 +120,12 @@ export function WeightLine({ x }) {
   return (
     <div data-ui-v2="weight" data-band={out ? x.status : undefined} style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
-        <span style={tx(SIZE.xxs, WEIGHT.semi, COLOR.text3, { width: SPACE(8) })}>{C.daily.weight}</span>
+        <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.text3, { width: SPACE(8) })}>{C.daily.weight}</span>
         <div style={{ flex: 1, minWidth: 0 }}><BandBar w={x.w} target={x.target} bands={b ? b.bands : null} out={out} /></div>
         <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { width: SPACE(12), textAlign: "right" })}>{`${p1(x.w * 100)}%`}</span>
       </div>
       {edges.length > 0 && (
-        <div data-ui-v2="weight-edges" style={tx(SIZE.xxs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
+        <div data-ui-v2="weight-edges" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
           {edges.map((e, i) => <span key={i}>{i ? " · " : ""}{e}</span>)}
         </div>
       )}
@@ -164,6 +165,8 @@ export function AddMoney({ de }) {
           <div data-ui-v2="add-left" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(2) })}>
             {fill(A.left, { leftText: fill(A.leftText, { x: wonText(r.left) }) })}
           </div>
+          {/* v19.1c: a share bought here at a US stock's earlier close (its pxd, carried by the daily check) is named */}
+          <OwnCloseNote groups={ownCloseGroups(r.buys.map((b) => de.holdings.find((x) => x.t === b.t)), null)} />
         </div>
       )}
     </div>
