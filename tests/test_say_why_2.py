@@ -3,7 +3,8 @@
 
 1. 새 데이터가 만들던 것 밑에서 기다릴 때 (hold.js heldOn · publishGate onHold): 후보 고르기 · 매수 계획 · 가진 종목 넣기 화면은
    '새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새 데이터로 바뀌어요.' (app.heldNew) 를 멈춤 문구 대신 보여요. 그 화면 때문에
-   기다릴 때만, 그 화면의 일을 저장하면 정말 들어올 때만. 기다리는 발행이 없으면 절대 없어요. 화면에 들어가면 줄도 사라져요.
+   기다릴 때만, 저장해도 나가도 정말 들어올 때만, 기다리는 발행이 그 자체로 멈춘 것이 아닐 때만. 기다리는 발행이 없으면 절대 없어요.
+   화면에 들어가면 줄도 사라져요. ☰ 메뉴와 PC 왼쪽 메뉴의 날짜 줄은 그대로예요 (Jack 이 아직 정하지 않았어요).
 2. 내 점수 칸의 회사 수 (engine.companyCount · meterCompanies): 한 회사의 두 주식(미국 GOOG · GOOGL 같은 주식 종류)은 한 회사.
    이름이 같고 (cap ÷ price) 로 본 전체 주식 수가 같을 때만. 종목 수(조건에 맞는 종목 {n}개)는 그대로 종목을 세요.
    회사 페이지의 '업종 {n}개 회사' 줄들도 회사를 세요 (company.pbrStrip · indMedian · roePbrMap 의 co).
@@ -116,30 +117,43 @@ def hold_run(body):
 
 
 def test_the_line_shows_on_the_screen_the_publish_waits_for_and_nowhere_else():
+    """The line says "저장하거나 나가면": it shows only where saving and leaving would both let the held publish in, and
+    never for a held publish that is stale itself (fresh-eyes review, 2026-11-08)."""
     got = hold_run("""
-const O = (ctx, next) => H.heldOn(ctx, next);
+const O = (ctx, next, now = at(NOW)) => H.heldOn(ctx, next, now);
+const pinned = (b) => ({ ...b, settings: { ...st, pinned: [krPick] } });
+const imLost = { step: 0, drafts: [{ t: '005930' }, { t: krPick }] };
 out = {
   pick: O({ onBuild: true, builder: bPick }, same), plan: O({ onBuild: true, builder: bPlan }, same),
-  pickLost: O({ onBuild: true, builder: bPick }, lost),                          // leaving would not end it, saving would
   imp0: O({ onImport: true, importer: im0 }, same), imp2: O({ onImport: true, importer: im2, builder: bSteps }, same),
   impEmpty: O({ onImport: true, importer: imNone }, same),
+  // leaving would not let it in (the draft left behind would lose a stock): no line, the stale words stay
+  pickLost: O({ onBuild: true, builder: bPick }, lost), planLost: O({ onBuild: true, builder: bPlan }, lost),
+  importLost: O({ onImport: true, importer: imLost }, lost), importLost2: O({ onImport: true, importer: im2 }, lost),
+  pickPinned: O({ onBuild: true, builder: pinned(bPick) }, lost), planPinned: O({ onBuild: true, builder: pinned(bPlan) }, lost),
   // not the draft's screen: the stale line stays there
-  steps: O({ onBuild: true, builder: bSteps }, same), stepsPinned: O({ onBuild: true, builder: { ...bSteps, settings: { ...st, pinned: [krPick] } } }, lost),
+  steps: O({ onBuild: true, builder: bSteps }, same), stepsPinned: O({ onBuild: true, builder: pinned(bSteps) }, lost),
   away: O({ builder: bPick }, lost), awayImp: O({ importer: im2 }, lost),
   // nothing held, or nothing that could go on screen
   noNext: O({ onBuild: true, builder: bPick }, null), failNext: O({ onBuild: true, builder: bPick }, { status: 'fail' }), noCtx: O(null, same),
-  // the other draft holds it too: saving this screen would not let it in, so no promise
+  // the other draft holds it too
   buildButImport: O({ onBuild: true, builder: bPlan, importer: im2 }, lost),
   importButBuild: O({ onImport: true, importer: im0, builder: bPick }, lost),
-  importButPinned: O({ onImport: true, importer: im0, builder: { ...bSteps, settings: { ...st, pinned: [krPick] } } }, lost),
+  importButPinned: O({ onImport: true, importer: im0, builder: pinned(bSteps) }, lost),
   // the other draft left behind keeps everything: the line shows
   buildImpSame: O({ onBuild: true, builder: bPlan, importer: im2 }, same),
+  // the held publish is stale itself by now: not new data, no line (it is fresh at NOW, stale weeks later)
+  staleHeld: O({ onBuild: true, builder: bPick }, same, at('2026-11-30T10:00:00+09:00')),
+  staleNow: LD.staleNow(same, at('2026-11-30T10:00:00+09:00')), freshNow: LD.staleNow(same, at(NOW)),
+  staleImport: O({ onImport: true, importer: im0 }, same, at('2026-11-30T10:00:00+09:00')),
 };""")
-    assert got["pick"] == "build" and got["plan"] == "build" and got["pickLost"] == "build", got
+    assert got["pick"] == "build" and got["plan"] == "build", got
     assert got["imp0"] == "import" and got["imp2"] == "import" and got["impEmpty"] == "import", got
-    for k in ("steps", "stepsPinned", "away", "awayImp", "noNext", "failNext", "noCtx", "buildButImport", "importButBuild", "importButPinned"):
+    for k in ("pickLost", "planLost", "importLost", "importLost2", "pickPinned", "planPinned", "steps", "stepsPinned", "away", "awayImp",
+              "noNext", "failNext", "noCtx", "buildButImport", "importButBuild", "importButPinned", "staleHeld", "staleImport"):
         assert got[k] is None, (k, got)
     assert got["buildImpSame"] == "build", got
+    assert got["staleNow"] is True and got["freshNow"] is False, got
 
 
 def test_the_gate_tells_the_app_when_a_publish_is_held_and_when_it_is_not():
@@ -183,19 +197,24 @@ out = { t0, t1, t2, put, t3, dropped, t4, gone, t5, held3: !!g3.held(at(NOW)), w
     assert got["held3"] is True and any("back in view: boom" in w for w in got["warn"]), got
 
 
-def test_the_app_wires_the_line_and_the_menu_only_drops_the_stale_words():
+def test_the_app_wires_the_line_for_the_screen_only():
     app, ui, nav, rep = read("src/v2/app.jsx"), read("src/v2/ui.jsx"), read("src/v2/nav.jsx"), read("src/v2/report.jsx")
     assert "onHold: (l) => setHeldNext(l)," in app and app.count("const [heldNext, setHeldNext] = useState(null);") == 1
-    assert "const heldHere = !!heldNext && !loc.about && !!heldOn(holdCtxRef.current, heldNext);" in app
-    # after holdCtxRef is set for this render (the same ctx the gate reads)
-    assert app.index("holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };") < app.index("const heldHere =")
+    # worked out with the clock, only when the screen, a draft or the held publish changes (review: not every render)
+    assert "const heldHere = useMemo(() => !!heldNext && !loc.about" in app
+    assert "&& !!heldOn({ onBuild: inBuild, onImport: inImport, builder, importer }, heldNext, Date.now())," in app
+    assert "[heldNext, heldTick, inBuild, inImport, builder, importer, loc.about]);" in app
+    # and again when the held publish's own stale check can change
+    assert "const wait = nextFreshCheck(heldNext, Date.now());" in app and "}, [heldNext, heldTick]);" in app
+    # the screen only: the ☰ menu (MenuSheet) and the PC left menu (SideMenu) are outside the provider
     assert app.count("<HeldContext.Provider value={heldHere}>") == 1 and app.count("</HeldContext.Provider>") == 1
+    inner = app.split("<HeldContext.Provider value={heldHere}>", 1)[1].split("</HeldContext.Provider>", 1)[0]
+    assert inner.strip() == "<ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>", inner
     assert "export const HeldContext = createContext(false);" in ui
     dl = ui.split("export function DateLine(", 1)[1].split("\n}\n", 1)[0]
     assert "const wait = useHeld();" in dl and "{stale && !wait && <span>{staleText(fresh.days)}</span>}" in dl
-    assert '{wait && !brief && <span data-ui-v2="held-line"' in dl and "{C.app.heldNew}</span>}" in dl
-    assert nav.count("fresh={load.fresh} brief />") == 1 and nav.count("style={{ marginTop: 0 }} brief />") == 1
-    assert nav.count("<DateLine ") == 2
+    assert '{wait && <span data-ui-v2="held-line"' in dl and "{C.app.heldNew}</span>}" in dl and "brief" not in dl
+    assert "brief" not in nav and "useHeld" not in nav and "HeldContext" not in nav       # the menus' date lines as before
     assert "const held = useHeld();" in rep and "{held ? C.app.heldNew : fill(C.rpt.stale," in rep
     assert copy()["app"]["heldNew"] == HELD
 

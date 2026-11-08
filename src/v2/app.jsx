@@ -69,6 +69,7 @@ export function App({ source }) {
   // 2026-11-08 (Jack): the later publish held under a draft (hold.js publishGate onHold), or null: the draft's screen says
   // "새 데이터가 들어왔어요. …" instead of its stale line while it waits (heldOn, below).
   const [heldNext, setHeldNext] = useState(null);
+  const [heldTick, setHeldTick] = useState(0);            // bumped when the held publish's own stale check can change
   const router = useRouter();
   const { loc } = router;
   // v19.3c Part E: the first-visit guide — null, { stage: "welcome" } on 홈, or { stage: 1 · 2 · 3 } on 포트폴리오 만들기's
@@ -206,6 +207,15 @@ export function App({ source }) {
         : "; it is tried once more on a return to view at least 10 minutes from now"));
     setDisc((d) => (d === disc ? { status: "fail", older: Date.now() } : d));
   }, [discOld, disc]);
+
+  // The held publish can go stale itself while it waits (review, 2026-11-08): heldHere is worked out again then.
+  useEffect(() => {
+    if (!heldNext) return undefined;
+    const wait = nextFreshCheck(heldNext, Date.now());
+    if (wait == null) return undefined;
+    const id = setTimeout(() => setHeldTick((n) => n + 1), wait);
+    return () => clearTimeout(id);
+  }, [heldNext, heldTick]);
 
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
@@ -376,8 +386,13 @@ export function App({ source }) {
   holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };
   useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);
   // The held publish's line (hold.js heldOn): on 후보 고르기 · 매수 계획 or 가진 종목 넣기 while a later publish waits for this
-  // screen's work. Never with nothing held; gone once it is on screen (onHold(null)). Not while 소개 covers the screen.
-  const heldHere = !!heldNext && !loc.about && !!heldOn(holdCtxRef.current, heldNext);
+  // screen's work, and only when saving or leaving would let it in and it is not stale itself. Never with nothing held;
+  // gone once it is on screen (onHold(null)). Not while 소개 covers the screen. Worked out when the screen, a draft or the
+  // held publish changes (review: not on every render: heldOn can read the whole new data.json), and again when the held
+  // publish's own stale check can change (heldTick, from load.js nextFreshCheck on it).
+  const heldHere = useMemo(() => !!heldNext && !loc.about
+    && !!heldOn({ onBuild: inBuild, onImport: inImport, builder, importer }, heldNext, Date.now()),
+  [heldNext, heldTick, inBuild, inImport, builder, importer, loc.about]);
   // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
   // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
   // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,
@@ -429,26 +444,28 @@ export function App({ source }) {
     <ModeContext.Provider value={{ preview: !!source.preview }}>
       <NavContext.Provider value={nav}>
         <LayoutContext.Provider value={layout}>
-          <HeldContext.Provider value={heldHere}>
-            {wide && <SideMenu tab={tab} about={loc.about} load={load} go={go} onAbout={router.openAbout} onGuide={replayGuide} />}
-            <div data-ui-v2="main-area" style={wide ? { marginLeft: SIDE_W, minWidth: 0 } : undefined}>
-              {wide && <TopBar q={stockQ} onSearch={onSearch} inputRef={searchRef} load={load} />}
-              {loc.about && (
-                <ErrorBoundary name="about" onBack={() => router.back("home")} backLabel={C.app.close}>
-                  <div style={{ ...tall, background: COLOR.page }}><About load={load} onBack={() => router.back("home")} /></div>
-                </ErrorBoundary>
-              )}
-              <div data-ui-v2="screen" data-route={tab + (loc.sub ? "/" + loc.sub : "")} style={{ ...tall, background: COLOR.page, ...(loc.about ? { display: "none" } : {}) }}
-                aria-hidden={loc.about ? true : undefined}>
-                <ErrorBoundary name="app">
+          {wide && <SideMenu tab={tab} about={loc.about} load={load} go={go} onAbout={router.openAbout} onGuide={replayGuide} />}
+          <div data-ui-v2="main-area" style={wide ? { marginLeft: SIDE_W, minWidth: 0 } : undefined}>
+            {wide && <TopBar q={stockQ} onSearch={onSearch} inputRef={searchRef} load={load} />}
+            {loc.about && (
+              <ErrorBoundary name="about" onBack={() => router.back("home")} backLabel={C.app.close}>
+                <div style={{ ...tall, background: COLOR.page }}><About load={load} onBack={() => router.back("home")} /></div>
+              </ErrorBoundary>
+            )}
+            <div data-ui-v2="screen" data-route={tab + (loc.sub ? "/" + loc.sub : "")} style={{ ...tall, background: COLOR.page, ...(loc.about ? { display: "none" } : {}) }}
+              aria-hidden={loc.about ? true : undefined}>
+              <ErrorBoundary name="app">
+                {/* The held publish's line (HeldContext) is for the screen only: the ☰ menu and the PC left menu keep their date
+                    line as it is (Jack has not decided on them, review 2026-11-08). */}
+                <HeldContext.Provider value={heldHere}>
                   <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
-                  {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
-                    tabH={ownBar ? 0 : TAB_H} />}
-                  {!wide && !ownBar && <TabBar value={tab} onChange={go} />}
-                </ErrorBoundary>
-              </div>
+                </HeldContext.Provider>
+                {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
+                  tabH={ownBar ? 0 : TAB_H} />}
+                {!wide && !ownBar && <TabBar value={tab} onChange={go} />}
+              </ErrorBoundary>
             </div>
-          </HeldContext.Provider>
+          </div>
         </LayoutContext.Provider>
       </NavContext.Provider>
     </ModeContext.Provider>

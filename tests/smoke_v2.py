@@ -5269,20 +5269,22 @@ def scene_say_why_2(R, files, width):
         wait_log(logs, "is held while the portfolio builder is on its pick step", page)
         page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.held === '1'; }", arg=SCREEN_DL)
         assert held_parts(page) == {"stale": "1", "held": "1", "lines": [old_date, held], "line": 1}
-        body = page.locator("body").inner_text()
-        assert stale3 not in body and C["app"]["staleLate"] not in body, "멈춤 문구가 남았어요"
-        assert body.count(held) == 1
+        main = page.locator('[data-ui-v2="screen"] [data-ui-v2="date-line"]').first.inner_text()
+        assert stale3 not in main and C["app"]["staleLate"] not in main, "멈춤 문구가 남았어요"
+        assert page.locator("body").inner_text().count(held) == 1
         held_line_ok(page, width, "후보 고르기 · 새 데이터 줄")
         shot2(page, "held-pick", width)
         R.collect(page)
-        # the menu's date line: the date alone (no stale words, no second copy of the line)
+        # the menu's date line (☰ · PC left menu) is as before: the stale words, no line (Jack has not decided on it)
         if wide:
             side = page.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]')
-            assert side.inner_text() == old_date and side.get_attribute("data-held") == "1" and side.locator('[data-ui-v2="held-line"]').count() == 0
+            assert side.inner_text() == f"{old_date} · {stale3}" and side.get_attribute("data-held") is None, side.inner_text()
+            assert side.locator('[data-ui-v2="held-line"]').count() == 0
         else:
             m = open_menu(page)
             mdl = m.locator('[data-ui-v2="menu-date"] [data-ui-v2="date-line"]')
-            assert mdl.inner_text() == old_date and mdl.get_attribute("data-held") == "1" and mdl.locator('[data-ui-v2="held-line"]').count() == 0
+            assert mdl.inner_text() == f"{old_date} · {stale3}" and mdl.get_attribute("data-held") is None, mdl.inner_text()
+            assert mdl.locator('[data-ui-v2="held-line"]').count() == 0
             shot2(page, "held-menu", width)
             R.collect(page)
             m.locator('[data-ui-v2="menu-close"]').click()
@@ -5307,9 +5309,61 @@ def scene_say_why_2(R, files, width):
             assert page.locator('[data-ui-v2="side-date"] [data-ui-v2="date-line"]').get_attribute("data-held") is None
         R.collect(page)
     R.check(page, S, "1 포트폴리오 만들기: 기다리는 발행이 없으면 멈춤 문구 · 후보 고르기 · 매수 계획에서 새 발행이 기다리면 날짜 밑 "
-            "'새 데이터가 들어왔어요. …' (멈춤 문구 없음 · 메뉴의 날짜 줄은 날짜만) · 기준 단계로 가면 새 데이터, 줄도 사라져요", build_line)
+            "'새 데이터가 들어왔어요. …' (멈춤 문구 없음 · 메뉴의 날짜 줄은 예전 그대로) · 기준 단계로 가면 새 데이터, 줄도 사라져요", build_line)
     ctx.close()
     srv.shutdown()
+
+    if not wide:
+        # ── 1C 줄이 약속을 지킬 수 없으면 없어요 (fresh-eyes review): 기다리는 발행이 그 자체로 멈춘 것 · 나가도 들어오지 않을 것 ──
+        site = build_site(stale_files(files, 75, -2, 2))
+        srv, ctx, page, base = R.open(site, width)
+        logs = []
+        page.on("console", lambda m: logs.append(m.text))
+
+        def no_promise():
+            wait_ready(page)
+            to_build_start(page, wide)
+            page.locator('[data-deck="income"]').click()
+            see(page, C["build"]["s1"]["title"])
+            click_next(page)
+            see(page, C["build"]["s3"]["title"])
+            click_next(page)
+            see(page, C["build"]["s4"]["title"])
+            page.get_by_role("button", name="+1,000만").first.click()
+            click_next(page)
+            see(page, C["pick"]["title"])
+            stale_words = {"stale": "1", "held": None, "lines": [f"{old_date} · {stale3}"], "line": 0}
+            # a later publish that is stale itself (published 30 hours ago, its staleAfter 2 hours ago): held, but no line
+            late = stale_files(files, 30, -2, 1)
+            for n in ("data.json", "corp.json"):
+                late[n]["pxDate"] = REFETCH_PX
+            put_files(site, late)
+            back_in_view(page)
+            wait_log(logs, "is held while the portfolio builder is on its pick step", page)
+            page.wait_for_timeout(500)
+            assert held_parts(page) == stale_words and held not in page.locator("body").inner_text()
+            R.collect(page)
+            # a fresh later publish without one of the picks: held, and leaving would not let it in → no line either
+            picked = page.eval_on_selector_all("section[data-market='kr'] [data-cand][data-picked='1']", "els => els.map((e) => e.dataset.cand)")
+            new = refetch_files(files)
+            new["data.json"]["stocks"] = [x for x in new["data.json"]["stocks"] if x["t"] != picked[0]]
+            put_files(site, new)
+            back_in_view(page)                                                    # the stale held one is dropped, the new one fetched
+            wait_log(logs, "is stale itself by now: dropped", page)
+            deadline = time.time() + WAIT / 1000
+            while sum("is held while the portfolio builder is on its pick step" in x for x in logs) < 2 and time.time() < deadline:
+                page.wait_for_timeout(100)
+            assert sum("is held while the portfolio builder is on its pick step" in x for x in logs) == 2, [x for x in logs if "[v2]" in x][-4:]
+            page.wait_for_timeout(500)
+            assert held_parts(page) == stale_words and held not in page.locator("body").inner_text()
+            click_next(page)                                                      # 매수 계획: no line there either
+            see(page, C["plan"]["stocks"])
+            assert held_parts(page) == stale_words
+            R.collect(page)
+        R.check(page, S, "1 줄이 약속을 지킬 수 없으면 없어요: 기다리는 발행이 그 자체로 멈췄거나 · 나가도 들어오지 않으면(고른 후보가 새 발행에 없음) "
+                "멈춤 문구 그대로", no_promise)
+        ctx.close()
+        srv.shutdown()
 
     if not wide:
         # ── 1B 가진 종목 넣기: 종목 넣기 · 기준 · 점검 (멈춤 메모 자리) → 매일 점검 시작하기 ──

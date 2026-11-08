@@ -30,9 +30,10 @@ export const NavContext = createContext({ openMenu: null, menuOpen: false, openS
 export const useNav = () => useContext(NavContext);
 
 // A later publish waits under the draft on screen (Jack, 2026-11-08; app.jsx, hold.js heldOn): true only while 후보 고르기,
-// 매수 계획 or 가진 종목 넣기 is on screen and a newer publish is held for it. The screen's date line (and 점검's stale
-// note) then say "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새 데이터로 바뀌어요." instead of the stale words;
-// the menu's date line just drops the stale words (DateLine brief). False everywhere else and when nothing is held.
+// 매수 계획 or 가진 종목 넣기 is on screen and a newer publish is held for it (and saving or leaving would let it in). The
+// screen's date line (and 점검's stale note) then say "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새 데이터로
+// 바뀌어요." instead of the stale words. app.jsx provides it around the screen only: the ☰ menu and the PC left menu keep
+// their date line as before. False everywhere else and when nothing is held.
 export const HeldContext = createContext(false);
 export const useHeld = () => useContext(HeldContext);
 
@@ -207,21 +208,20 @@ export function ScreenTitle({ children, sub }) {
 // Jack 2026-11-07; n counts from the morning the publish was due when data.json has nextPub, else from the last publish).
 // While a later publish waits under the draft on screen (HeldContext, Jack 2026-11-08), the stale words are not true: the
 // date stays and, on its own line in the same warning colour, "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새
-// 데이터로 바뀌어요." (data-held; data-stale still says whether the data on screen is stale). brief (the menu's date line,
-// beside the screen): the date alone then, in the plain colour.
-export function DateLine({ date, fresh, style, brief = false }) {
+// 데이터로 바뀌어요." (data-held; data-stale still says whether the data on screen is stale).
+export function DateLine({ date, fresh, style }) {
   const wait = useHeld();
   const md = mdText(date);
   if (!md) return null;
   const stale = !!(fresh && fresh.stale);
-  const warn = wait ? !brief : stale;
+  const warn = stale || wait;
   return (
     <div data-ui-v2="date-line" data-stale={stale ? "1" : "0"} data-held={wait ? "1" : undefined}
       style={tx(SIZE.xs, warn ? WEIGHT.bold : WEIGHT.regular, warn ? COLOR.watch : COLOR.text2, { marginTop: SPACE(1), ...style })}>
       <span>{fill(C.app.asOf, { md })}</span>
       {stale && !wait && <span>{" · "}</span>}
       {stale && !wait && <span>{staleText(fresh.days)}</span>}
-      {wait && !brief && <span data-ui-v2="held-line" style={{ display: "block", marginTop: SPACE(1), lineHeight: 1.45, wordBreak: "keep-all" }}>{C.app.heldNew}</span>}
+      {wait && <span data-ui-v2="held-line" style={{ display: "block", marginTop: SPACE(1), lineHeight: 1.45, wordBreak: "keep-all" }}>{C.app.heldNew}</span>}
     </div>
   );
 }

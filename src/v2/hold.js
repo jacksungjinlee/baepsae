@@ -54,19 +54,23 @@ export function holdReason(ctx, next) {
 
 // The line on the screen of a draft (Jack, 2026-11-08, approved: "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새
 // 데이터로 바뀌어요.", in place of the stale line "N일째 갱신이 멈췄어요", which is not true while a later publish waits):
-// a later publish is held (publishGate) and this screen is why. ctx: holdReason's ctx now · next: the held load state.
+// a later publish is held (publishGate) and this screen is why. ctx: holdReason's ctx now · next: the held load state ·
+// now: ms (default: the clock).
 // -> "build" on 포트폴리오 만들기's 후보 고르기 or 매수 계획 (the 샀어요 sheet lives there), "import" on 가진 종목 넣기 (any of
-// its steps), else null: nothing held, another screen, or saving this screen's work would not end the wait (the other
-// draft holds it too: the line would promise what saving here cannot do). Saving ends the draft (기록했어요 → 홈 and 매일
-// 점검 시작하기 start the next one fresh), so the publish goes on screen unless the other draft would still hold it.
-// Leaving keeps the draft: the publish then goes on screen when the draft keeps every stock on the new data (holdReason).
-export function heldOn(ctx, next) {
+// its steps), else null, and the stale words stay as before:
+// - nothing held, or another screen;
+// - leaving this screen would not let it in (fresh-eyes review, 2026-11-08): the line says "저장하거나 나가면", so it shows
+//   only when both are true. Leaving keeps the drafts: holdReason off screen must find nothing (no pick, holding or 꼭 담을
+//   종목 the new data would lose, in either draft). Saving ends this screen's draft (기록했어요 → 홈, 매일 점검 시작하기 start
+//   the next one fresh), so whenever leaving lets it in, saving does too;
+// - the held publish is stale itself by now (staleNow; review): it is not "새 데이터", and a return to view drops it.
+export function heldOn(ctx, next, now) {
   if (!ctx || !next || next.status !== "ok" || !holdReason(ctx, next)) return null;
   const b = ctx.builder;
   const screen = ctx.onBuild && b && STAGE[b.stage] ? "build" : ctx.onImport ? "import" : null;
   if (!screen) return null;
-  const saved = screen === "build" ? { builder: null, importer: ctx.importer } : { builder: ctx.builder, importer: null };
-  return holdReason(saved, next) ? null : screen;
+  if (holdReason({ builder: ctx.builder, importer: ctx.importer }, next)) return null;
+  return staleNow(next, now == null ? Date.now() : now) ? null : screen;
 }
 
 // The disc.json state that goes on screen with a publish (app.jsx put; the merge with v19.3e, where 홈 loads disc.json

@@ -252,8 +252,7 @@ export function MenuSheet({ open, load, onClose, onAbout, onHome, onGuide, tabH 
           <section data-ui-v2="menu-date" style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: `${SPACE(4)}px ${SPACE(4)}px`, marginTop: SPACE(3) }}>
             <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
               <Icon name="calendar" size={20} tone="on" />
-              {/* brief: while a later publish waits under the draft on screen, the date alone (the screen says why) */}
-              <DateLine date={load.data.pxDate} fresh={load.fresh} brief />
+              <DateLine date={load.data.pxDate} fresh={load.fresh} />
             </div>
             {us && <Note>{fill(C.app.usClose, { md: us })}</Note>}
           </section>
@@ -332,7 +331,7 @@ export function SideMenu({ tab, about, load, go, onAbout, onGuide }) {
         <section data-ui-v2="side-date" style={{ background: COLOR.page, borderRadius: RADIUS.md, padding: `${SPACE(3)}px ${SPACE(3)}px` }}>
           <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
             <Icon name="calendar" size={18} tone="on" />
-            <DateLine date={load.data.pxDate} fresh={load.fresh} style={{ marginTop: 0 }} brief />
+            <DateLine date={load.data.pxDate} fresh={load.fresh} style={{ marginTop: 0 }} />
           </div>
           {us && <Note style={{ marginTop: SPACE(1) }}>{fill(C.app.usClose, { md: us })}</Note>}
         </section>
