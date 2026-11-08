@@ -6219,6 +6219,275 @@ def scene_v193d_more(R, files, width=390):
     srv.shutdown()
 
 
+def scene_v193d2(R, files, width):
+    """v19.3d2: 가진 종목 넣기 단계 표시(종목 넣기 · 기준 · 점검) · 수량과 금액 옆의 − / +(읽기 도우미 이름) · 금액으로 넣은 종목과 같은
+    붙여 넣은 줄 · '+ 종목 더하기'(데이터에 없는 종목을 이름과 금액으로) → 점검: 반도체 · 반도체 장비 · 전자부품을 한 묶음(반도체·전자부품)
+    으로 · 2022년 주가가 없는 종목을 이름으로 → 포트폴리오: 내 규칙 정하기(한도 저장 · 처음 값으로 되돌리기 · 범위 밖은 저장할 수 없어요)
+    → 다 판 종목은 '다 팔고 목표 비중만 남아 있어요.'(계획한 n종목 중 … 은 나오지 않아요). R.shots 가 있으면 화면을 찍어 둬요."""
+    S = f"v19.3d2 {width}"
+    wide = width >= 1024
+    data = clone(files)
+    by = {s["t"]: s for s in data["data.json"]["stocks"]}
+    by["000990"].update(ind="semi_eq", indName="반도체 장비")              # 시험 데이터에 없는 두 업종을 한 종목씩
+    by["080220"].update(ind="elec_parts", indName="전자부품")
+    for t in ("005930", "000990", "080220", "005380"):                   # 2022년 추정에 쓰는 betaSE
+        by[t]["betaSE"] = 0.05
+    # 삼성전자우는 2022년 주가가 있지만 쓸 수 있는 베타가 없어요 (betaSE 없음): #83 의 '베타·변동성 자료가 없어요' 줄(비중)로 빠져요.
+    # 2022년 주가가 없는 종목은 이름으로 넣은 '비상장 회사' 하나뿐이에요.
+    by["005935"].pop("betaSE", None)
+    srv, ctx, page, base = R.open(build_site(data), width, device=pc_device(width) if wide else None)
+    stored = lambda: page.evaluate(STORED_JS)
+
+    def shot(name):
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v193d2-{name}-{width}.png"), full_page=True)
+
+    def add(t, mode, val):
+        page.locator('[data-ui-v2="import-search"] input').fill(t)
+        page.locator(f'[data-import-result="{t}"] button').click()
+        row = page.locator(f'[data-import-row="{t}"]')
+        row.wait_for(state="visible")
+        assert row.get_attribute("data-mode") == mode, (t, row.get_attribute("data-mode"))
+        row.locator(f'input[data-ui-v2="import-{mode}"]').fill(val)
+
+    def holdings():
+        wait_ready(page)
+        to_build_start(page, wide)
+        page.locator('[data-ui-v2="start-holdings"]').click()
+        at(page, "portfolio/import")
+        steps = page.locator('[data-ui-v2="import-steps"] li')
+        assert [steps.nth(i).inner_text() for i in range(steps.count())] == C["imp"]["steps"]
+        assert steps.nth(0).get_attribute("aria-current") == "step"
+        for t, q in (("005930", "4"), ("000990", "10"), ("080220", "15"), ("005935", "10")):
+            add(t, "qty", q)
+        row = page.locator('[data-import-row="005930"]')
+        plus, minus = row.locator('[data-ui-v2="import-step"]').nth(1), row.locator('[data-ui-v2="import-step"]').nth(0)
+        assert plus.get_attribute("aria-label") == fillp(C["imp"]["qtyUp"], name="삼성전자")
+        assert minus.get_attribute("aria-label") == fillp(C["imp"]["qtyDown"], name="삼성전자")
+        plus.click()
+        assert row.locator('input[data-ui-v2="import-qty"]').input_value() == "5"
+        minus.click()
+        minus.click()
+        assert row.locator('input[data-ui-v2="import-qty"]').input_value() == "3"
+        plus.click()
+        assert row.locator('input[data-ui-v2="import-qty"]').input_value() == "4"
+        page.locator('[data-ui-v2="import-mode"][data-mode="amount"]').click()
+        add("005380", "amount", "200")
+        arow = page.locator('[data-import-row="005380"]')
+        aplus = arow.locator('[data-ui-v2="import-step"]').nth(1)
+        assert aplus.get_attribute("aria-label") == fillp(C["imp"]["amountUp"], name="현대차")
+        assert arow.locator('[data-ui-v2="import-step"]').nth(0).get_attribute("aria-label") == fillp(C["imp"]["amountDown"], name="현대차")
+        aplus.click()
+        assert arow.locator('input[data-ui-v2="import-amount"]').input_value() == "210"           # 10만원씩
+        arow.locator('[data-ui-v2="import-step"]').nth(0).click()
+        assert arow.locator('input[data-ui-v2="import-amount"]').input_value() == "200"
+        btn = page.locator('[data-ui-v2="import-add-name"] button')
+        assert btn.inner_text() == C["imp"]["addName"]
+        btn.click()
+        nrow = page.locator('[data-import-row="name"]')
+        nrow.wait_for(state="visible")
+        assert not action(page).is_enabled()                              # 이름과 금액이 없으면 아직 점검할 수 없어요
+        # 리뷰: 이름 없이 금액(다섯 자리)만 → 합계 · 고리에서 빠지고, 이름 칸이 표시되고, 버튼 이름은 '종목 …', 다음은 기다려요
+        nrow.locator('input[data-ui-v2="import-amount"]').fill("12345")
+        name_in = nrow.locator('input[data-ui-v2="import-name"]')
+        assert name_in.get_attribute("aria-invalid") == "true" and not action(page).is_enabled()
+        assert nrow.locator('[data-ui-v2="import-value"]').count() == 0
+        assert re.search(r"\bn[0-9a-z]{6,}", page.locator('[data-ui-v2="import-donut"]').inner_text()) is None     # 내부 키가 보이지 않아요
+        word = C["app"]["tabs"]["stocks"]
+        assert nrow.locator('[data-ui-v2="import-step"]').nth(0).get_attribute("aria-label") == fillp(C["imp"]["amountDown"], name=word)
+        assert nrow.locator('[data-ui-v2="import-step"]').nth(1).get_attribute("aria-label") == fillp(C["imp"]["amountUp"], name=word)
+        assert nrow.locator('[data-ui-v2="import-remove"]').get_attribute("aria-label") == fillp(C["build"]["s4"]["removeAria"], name=word)
+        # 다섯 자리 금액이 칸 안에 다 보이고, − 칸 + · 만원 · 빼기가 겹치거나 줄 밖으로 나가지 않아요 (320px 에서도)
+        amt = nrow.locator('input[data-ui-v2="import-amount"]')
+        assert amt.evaluate("e => e.scrollWidth <= e.clientWidth"), "다섯 자리 금액이 잘려요"
+        rb = nrow.bounding_box()
+        boxes = {k: nrow.locator(f'[data-ui-v2="{k}"]').first.bounding_box() for k in ("import-stepper", "import-unit", "import-remove")}
+        for k, b in boxes.items():
+            assert b["x"] >= rb["x"] - 0.5 and b["x"] + b["width"] <= rb["x"] + rb["width"] + 0.5, (k, b, rb)
+        def apart(a, b):
+            return a["x"] + a["width"] <= b["x"] + 0.5 or b["x"] + b["width"] <= a["x"] + 0.5 or a["y"] + a["height"] <= b["y"] + 0.5 or b["y"] + b["height"] <= a["y"] + 0.5
+        assert apart(boxes["import-unit"], boxes["import-remove"]) and apart(boxes["import-stepper"], boxes["import-remove"]) and apart(boxes["import-stepper"], boxes["import-unit"]), boxes
+        for b in nrow.locator('[data-ui-v2="import-step"]').all():
+            bb = b.bounding_box()
+            assert bb["width"] >= 44 - 0.5 and bb["height"] >= 44 - 0.5, bb             # 누르는 곳 44px
+        # 이미 넣은 종목의 코드: 그 종목으로 바꾸지 않고 이름 칸이 표시돼요 (다음은 기다려요)
+        name_in.fill("005930")
+        name_in.press("Tab")
+        assert page.locator('[data-import-row="name"]').count() == 1 and name_in.get_attribute("aria-invalid") == "true" and not action(page).is_enabled()
+        # 데이터에 있는 종목의 코드를 정확히 쓰면, 칸을 떠날 때 그 종목의 줄이 돼요 (금액으로, 쓴 금액 그대로)
+        name_in.fill("000660")
+        name_in.press("Tab")
+        hy = page.locator('[data-import-row="000660"]')
+        hy.wait_for(state="visible")
+        assert page.locator('[data-import-row="name"]').count() == 0 and hy.get_attribute("data-mode") == "amount"
+        assert hy.locator('input[data-ui-v2="import-amount"]').input_value() == "12345"
+        hy.locator('[data-ui-v2="import-remove"]').click()                       # 이 장면의 나머지는 그대로 (빼요)
+        assert page.locator('[data-import-row="000660"]').count() == 0
+        # 리뷰 2: 코드를 쓰고 바로 같은 줄의 금액 칸을 누르면, 줄이 그 종목이 되어도 그 자리에 있고 초점과 쓴 숫자가 남아요
+        btn.click()
+        nrow = page.locator('[data-import-row="name"]')
+        nrow.wait_for(state="visible")
+        nrow.locator('input[data-ui-v2="import-name"]').click()
+        page.keyboard.type("msft")
+        nrow.locator('input[data-ui-v2="import-amount"]').click()
+        page.keyboard.type("300")
+        ms = page.locator('[data-import-row="MSFT"]')
+        ms.wait_for(state="visible")
+        assert page.locator('[data-import-row="name"]').count() == 0 and ms.locator('input[data-ui-v2="import-amount"]').input_value() == "300"
+        assert ms.locator('input[data-ui-v2="import-amount"]').evaluate("e => e === document.activeElement"), "초점이 금액 칸에 없어요"
+        ms.locator('[data-ui-v2="import-remove"]').click()
+        assert page.locator('[data-import-row="MSFT"]').count() == 0
+        btn.click()
+        nrow = page.locator('[data-import-row="name"]')
+        nrow.wait_for(state="visible")
+        R.names = sorted(set(R.names) | {"비상장 회사"}, key=len, reverse=True)   # 사용자가 넣은 이름이에요 (문구 파일 밖)
+        nrow.locator('input[data-ui-v2="import-name"]').fill("비상장 회사")
+        nrow.locator('input[data-ui-v2="import-amount"]').fill("100")
+        assert nrow.locator('[data-ui-v2="import-add-avg"]').count() == 0     # 이름만 넣은 종목은 금액만
+        assert action(page).is_enabled()
+        page.locator('[data-ui-v2="import-mode"][data-mode="paste"]').click()
+        lines = ["현대차 3"]
+        R.names = sorted(set(R.names) | set(lines), key=len, reverse=True)
+        page.locator('[data-ui-v2="paste-panel"] textarea').fill("\n".join(lines))
+        prev = page.locator('[data-ui-v2="paste-preview"]')
+        prev.wait_for(state="visible")
+        assert page.locator('[data-paste-line="1"]').get_attribute("data-st") == "amount"
+        assert fillp(C["imp"]["amountLine"], n=1) in prev.inner_text() and "현대차 3" in prev.inner_text()
+        floor_ok(page, "가진 종목 넣기 (v19.3d2)")
+        no_hscroll(page, width)
+        R.collect(page)
+        shot("holdings")
+        page.locator('[data-ui-v2="import-mode"][data-mode="paste"]').click()     # 붙여 넣기를 닫아요 (넣지 않았어요)
+    R.check(page, S, "단계 표시 · − / +(1주 · 10만원, 읽기 도우미 이름) · 금액으로 넣은 종목과 같은 줄 · '+ 종목 더하기'(이름과 금액)", holdings)
+
+    def report():
+        action(page).click()
+        steps = page.locator('[data-ui-v2="import-steps"] li')
+        assert steps.nth(1).get_attribute("aria-current") == "step"
+        for c in ("value", "value", "div", "div", "stable"):
+            page.locator(f'[data-card="{c}"] [data-ui-v2="card-inc"]').click()
+        action(page).click()
+        page.locator('[data-ui-v2="report"]').wait_for(state="visible")
+        legend = page.locator('[data-ui-v2="ind-legend"]').inner_text()
+        assert C["rpt"]["chipGroup"] in legend and "반도체 장비" not in legend and "전자부품 " not in legend.replace(C["rpt"]["chipGroup"], ""), legend
+        ind = page.locator('[data-ui-v2="report"] [data-ui-v2="pf-rule"][data-rule="ind"]')
+        assert C["rpt"]["chipGroup"] in ind.inner_text(), ind.inner_text()
+        out = page.locator('[data-ui-v2="y2022-out"]')
+        assert out.inner_text() == fillp(C["rpt"]["y2022Out"], n=1, names="비상장 회사"), out.inner_text()
+        total = 4 * by["005930"]["price"] + 10 * by["000990"]["price"] + 15 * by["080220"]["price"] + 10 * by["005935"]["price"] + 2000000 + 1000000
+        share = 10 * by["005935"]["price"] / total * 100                  # 삼성전자우의 비중 (deckcalc.js missingPct 처럼)
+        pct = f"{math.floor(share + 0.5):,}" if share >= 1 else f"{max(share, 0.1):.1f}"
+        part = page.locator('[data-ui-v2="y2022-partial"]')
+        assert part.inner_text() == fillp(C["plan"]["riskPartial"], pct=pct), (part.inner_text(), pct)
+        assert page.locator('[data-ui-v2="report-unscored"]').inner_text() == fillp(C["rpt"]["unscored"], n=2, names="삼성전자우, 비상장 회사")
+        floor_ok(page, "점검 (v19.3d2)")
+        no_hscroll(page, width)
+        R.collect(page)
+        shot("report")
+    R.check(page, S, "점검: 반도체 · 반도체 장비 · 전자부품 = 반도체·전자부품 한 묶음 · 2022년 주가가 없는 종목 이름 · 이름만 넣은 종목도 비중에", report)
+
+    def limits():
+        page.locator('[data-ui-v2="report-start"]').click()
+        at(page, "portfolio")
+        d = stored()
+        named = [r for r in d["decks"][0]["imported"] if "t" not in r]
+        assert named == [{"nk": "비상장 회사", "ccy": "KRW", "amountWon": 1000000, "date": named[0]["date"], "unscored": True}], named
+        card = page.locator('[data-deck-id][data-kind="imported"]')
+        card.wait_for(state="visible")
+        assert C["rpt"]["chipGroup"] in card.locator('[data-ui-v2="pf-rule"][data-rule="ind"]').inner_text()
+        card.locator('[data-ui-v2="pf-rules-edit"] button').click()
+        at(page, "portfolio/rules/" + d["decks"][0]["id"])
+        see(page, C["lim"]["title"])
+        assert page.locator('[data-ui-v2="app-bar"] button').first.get_attribute("aria-label") == C["co"]["back"]     # 단계가 아니에요
+        assert page.locator('[data-ui-v2="store-refused"]').count() == 0
+        see(page, C["lim"]["sub"])
+        stock, ind = page.locator('[data-ui-v2="limit-stock"]'), page.locator('[data-ui-v2="limit-ind"]')
+        assert stock.input_value() == "30" and ind.input_value() == "35"
+        assert stock.get_attribute("aria-label") == fillp(C["pfr"]["stock"], x=30)
+        assert page.locator('[data-ui-v2="limit-line-ind"]').inner_text() == fillp(C["pfr"]["ind"], x=35)
+        R.collect(page)
+        shot("limits")
+        stock.fill("0")                                                     # 범위 밖: 저장할 수 없어요
+        assert stock.get_attribute("aria-invalid") == "true" and page.locator('[data-ui-v2="limits-save"] button').is_disabled()
+        stock.fill("40")
+        ind.fill("50")
+        page.locator('[data-ui-v2="limits-reset"]').click()
+        assert stock.input_value() == "30" and ind.input_value() == "35"   # 처음 값 (저장 전)
+        stock.fill("40")
+        ind.fill("50")
+        page.locator('[data-ui-v2="limits-save"] button').click()
+        at(page, "portfolio")
+        dk = stored()["decks"][0]
+        assert dk["limits"] == {"stock": 40, "ind": 50} and isinstance(dk.get("limitsTs"), int) and dk["limitsTs"] > 0, dk.get("limits")
+        side = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1.limits'))")          # 기록 옆에도 (리뷰 3)
+        assert side == {"v": 1, "decks": {dk["id"]: {"limits": {"stock": 40, "ind": 50}, "ts": dk["limitsTs"]}}}, side
+        card = page.locator('[data-deck-id][data-kind="imported"]')
+        assert fillp(C["pfr"]["stock"], x=40) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
+        assert fillp(C["pfr"]["ind"], x=50) in card.locator('[data-ui-v2="pf-rule"][data-rule="ind"]').inner_text()
+        # 처음 값으로 되돌리기 → 저장: the values go, the time of the 저장 stays (a merge keeps the latest 저장)
+        card.locator('[data-ui-v2="pf-rules-edit"] button').click()
+        assert page.locator('[data-ui-v2="limit-stock"]').input_value() == "40"
+        page.locator('[data-ui-v2="limits-reset"]').click()
+        page.locator('[data-ui-v2="limits-save"] button').click()
+        at(page, "portfolio")
+        dk2 = stored()["decks"][0]
+        assert "limits" not in dk2 and dk2["limitsTs"] >= dk["limitsTs"], dk2.get("limits")
+        card = page.locator('[data-deck-id][data-kind="imported"]')
+        assert fillp(C["pfr"]["stock"], x=30) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
+        # 리뷰 4: 이미 저장된 한도의 시각이 1시간 앞(빨랐던 시계)이면, 다음 저장은 그보다 꼭 1 뒤 (limits.jsx → store.js limitsSaveTime)
+        ahead = page.evaluate("""() => { const d = JSON.parse(localStorage.getItem('baepsae2.v1')); const t = Date.now() + 3600 * 1000;
+          d.decks[0].limitsTs = t; d.decks[0].limits = { stock: 45 }; delete d.wts; localStorage.setItem('baepsae2.v1', JSON.stringify(d)); return t; }""")
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        card = page.locator('[data-deck-id][data-kind="imported"]')
+        card.wait_for(state="visible")
+        card.locator('[data-ui-v2="pf-rules-edit"] button').click()
+        assert page.locator('[data-ui-v2="limit-stock"]').input_value() == "45"
+        page.locator('[data-ui-v2="limit-stock"]').fill("50")
+        page.locator('[data-ui-v2="limits-save"] button').click()
+        at(page, "portfolio")
+        dk3 = stored()["decks"][0]
+        assert dk3["limits"] == {"stock": 50} and dk3["limitsTs"] == ahead + 1, (dk3.get("limits"), dk3.get("limitsTs"), ahead)
+        # a portfolio that is not a 가진 종목 one, or no portfolio: the address opens 포트폴리오
+        page.evaluate("location.hash = '#portfolio/rules/nope'")
+        page.locator('[data-deck-id][data-kind="imported"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="limits"]').count() == 0
+        floor_ok(page, "내 규칙 정하기")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "내 규칙 정하기: 지금 한도 → 범위 밖은 저장 못 함 · 처음 값으로 되돌리기 · 저장 → 규칙이 새 한도로", limits)
+    ctx.close()
+    srv.shutdown()
+
+    # 다 판 종목 (팔았어요 기록은 v19.6a 부터 화면에서: 여기서는 저장 기록으로)
+    pxd = files["data.json"]["pxDate"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    deck = {"id": "dsold", "name": "배당 생활비 포트폴리오", "createdAt": pxd,
+            "holdings": [{"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 10, "rules": band(0.5)},
+                         {"t": "005380", "nk": "현대차", "target": 0.5, "plannedQty": 10, "rules": band(0.5)}],
+            "purchases": [{"t": "005930", "date": pxd, "qty": 10, "price": 225000, "ccy": "KRW"},
+                          {"t": "005380", "date": pxd, "qty": 10, "price": 282000, "ccy": "KRW"}],
+            "sales": [{"t": "005380", "qty": 10, "price": 282000, "date": pxd, "ccy": "KRW"}]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(files), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if wide else None)
+
+    def sold_out():
+        at(page, "portfolio")
+        line = page.locator('[data-sold-out="005380"]')
+        line.wait_for(state="visible")
+        assert C["daily"]["soldOut"] in line.inner_text() and "현대차" in line.inner_text()
+        assert page.locator('[data-ui-v2="rebased-note"]').count() == 0      # '계획한 n종목 중 m종목만 샀어요' 가 아니에요
+        floor_ok(page, "다 판 종목")
+        no_hscroll(page, width)
+        R.collect(page)
+        shot("sold-out")
+    R.check(page, S, "다 판 종목: '다 팔고 목표 비중만 남아 있어요.' · 다시 나눈 목표 비중 안내(계획한 n종목 중 …)는 나오지 않아요", sold_out)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── v19.3e: 홈 (Part H, board Home2) · 회사 페이지 고침 (Part I) · 수락 조건 5 ──
 # Jack (2026-11-08): 새 홈(today.jsx HOME2)과 미국 머리줄(cofmt.js US_HEAD2)을 켰어요. 포트폴리오 규칙 네 가지는 가진 종목 넣기로 만든
 # 포트폴리오에만 써요: 포트폴리오 만들기로 만든 포트폴리오는 맨 위 판정 띠(종목별 규칙 · 비중 띠)로 예전처럼 보여요.
@@ -6693,6 +6962,9 @@ def scene_v193e_home(R, files, width):
         rules = page.locator('[data-ui-v2="home-rules"][data-deck-id="dsemi"]')
         assert rules.count() == 1 and rules.locator('[data-ui-v2="home-rule"][data-state="broken"]').count() >= 1
         assert page.locator('[data-ui-v2="home-conc"][data-deck-id="dsemi"]').count() == 1 and page.locator('[data-ui-v2="home-calm"]').count() == 0
+        conc_lines = page.locator('[data-ui-v2="home-conc"][data-deck-id="dsemi"]').inner_text().split("\n")   # (포트폴리오 이름) · 제목 · 설명
+        conc_title = next((l for l in conc_lines if re.fullmatch(r".+ [\d.]+%", l)), None)
+        assert conc_title and conc_title.startswith(C["rpt"]["chipGroup"] + " "), conc_lines    # v19.3d2 (Jack Q8): 삼성전자 + SK하이닉스 = 반도체·전자부품
         assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text()
         assert page.locator('[data-ui-v2="home-rules-name"]').inner_text() == "반도체 포트폴리오"     # 포트폴리오가 둘: 띠마다 이름
         R.collect(page)
@@ -7109,6 +7381,52 @@ def scene_store_version(R, files, width, seeded):
         assert d["v"] == 2 and d["notes"]["005930"]["text"] == text and len(d["decks"]) == (2 if seeded else 1), d
         R.collect(page)
     R.check(page, S, "가진 종목 넣기 → 매일 점검 시작하기 → 새로 고치지 않고 내 메모 남기기: 저장되고, 거절 줄 없음", run)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_bystock_fit(R, files, width):
+    """v19.3d2 리뷰 2: 점검의 종목별로 보면 — 기준 3 · 4 · 6개에서 페이지는 가로로 넘치지 않고, 이름 칸은 이름에 64px 이상(로고는 그
+    자리가 있을 때만), 표가 카드보다 넓으면 카드 안에서 밀리고 오른쪽 끝이 흐려져 더 있다는 것을 보여 줘요(밀어서 끝에 가면 사라져요)."""
+    S = f"종목별로 보면 {width}"
+    srv, ctx, page, base = R.open(build_site(files), width)
+    sets = (("value", "div", "stable"), ("value", "div", "stable", "growth"), ("value", "div", "stable", "growth", "profit", "lowVol"))
+
+    def run():
+        for cards in sets:
+            page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
+            wait_ready(page)
+            to_build_start(page, False)
+            page.locator('[data-ui-v2="start-holdings"]').click()
+            at(page, "portfolio/import")
+            for t in ("005930", "005380", "000660"):
+                page.locator('[data-ui-v2="import-search"] input').fill(t)
+                page.locator(f'[data-import-result="{t}"] button').click()
+                page.locator(f'[data-import-row="{t}"] input[data-ui-v2="import-qty"]').fill("3")
+            action(page).click()
+            for c in cards:
+                page.locator(f'[data-card="{c}"] [data-ui-v2="card-inc"]').click()
+            action(page).click()
+            page.locator('[data-ui-v2="report"]').wait_for(state="visible")
+            box = page.locator('[data-ui-v2="bystock-scroll"]')
+            box.scroll_into_view_if_needed()
+            page.wait_for_timeout(100)
+            m = box.evaluate("""e => ({ cw: e.clientWidth, sw: e.scrollWidth, logo: e.getAttribute('data-logo'),
+              names: [...e.querySelectorAll('[data-report-row]')].map((r) => { const n = [...r.querySelectorAll('span')].find((x) => getComputedStyle(x).textOverflow === 'ellipsis'); return n ? n.clientWidth : 0; }),
+              marks: e.querySelectorAll('[data-report-row] [data-ui-v2="co-mark"]').length })""")
+            no_hscroll(page, width)
+            assert min(m["names"]) >= 64 - 0.5, (cards, m)                   # 이름에 64px 이상
+            assert (m["logo"] == "1") == (m["cw"] >= 64 + 40 + len(cards) * 56) and (m["marks"] > 0) == (m["logo"] == "1"), (cards, m)
+            more = page.locator('[data-ui-v2="bystock-more"]')
+            if m["sw"] > m["cw"] + 1:                                          # 카드 안에서 밀려요: 오른쪽 끝이 흐려요
+                assert more.count() == 1, (cards, m)
+                box.evaluate("e => { e.scrollLeft = e.scrollWidth; }")
+                page.wait_for_timeout(100)
+                assert more.count() == 0, "끝까지 밀었는데 흐림이 남아요"
+            else:
+                assert more.count() == 0, (cards, m)
+            R.collect(page)
+    R.check(page, S, "기준 3 · 4 · 6개: 페이지 가로 넘침 없음 · 이름 64px 이상 · 로고는 자리가 있을 때만 · 카드 안에서 밀리면 오른쪽 끝 흐림", run)
     ctx.close()
     srv.shutdown()
 
@@ -7673,6 +7991,10 @@ def main():
                    lambda: scene_v193c_offstep(R, files),                                                  # 안내 밖 단계 이동
                    lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
                    lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
+                   lambda: scene_v193d2(R, files, 390), lambda: scene_v193d2(R, files, 1280),           # v19.3d2 단계 · − / + · 이름으로 · 묶음 · 내 규칙 · 다 판 종목
+                   lambda: scene_v193d2(R, files, 320),                                                    # v19.3d2 320px (리뷰: 다섯 자리 금액 · 겹침)
+                   lambda: scene_bystock_fit(R, files, 320), lambda: scene_bystock_fit(R, files, 360),     # v19.3d2 리뷰 2: 종목별로 보면
+                   lambda: scene_bystock_fit(R, files, 390),
                    lambda: scene_v193e_home(R, files, 390), lambda: scene_v193e_home(R, files, 1280),    # v19.3e 새 홈
                    lambda: scene_v193e_home(R, files, 320),
                    lambda: scene_home2_off(R, files),                                                      # 새 홈 비상 스위치를 끈 빌드

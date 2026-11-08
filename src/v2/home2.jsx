@@ -45,7 +45,7 @@ import { MissingNote } from "./tracking.jsx";
 import { statusChips } from "./daily.jsx";
 import { isImported } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
-import { ruleLabel, ruleDetail, brokenLine, limitPct } from "./pfview.jsx";
+import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview.jsx";
 import { usHeld, limitsOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero } from "./today.jsx";
@@ -271,7 +271,7 @@ function Look({ blocks, load, look, go }) {
       {conc.map(({ b, c }) => (
         <LookRow key={b.deck.id} icon="buildings" data={{ "data-ui-v2": "home-conc", "data-deck-id": b.deck.id, "data-w": Math.round(c.w * 1000) / 10 }}
           owner={blocks.length > 1 ? shownName(b.deck.name) : null}
-          title={`${c.name} ${limitPct(c.w, c.limit)}%`} sub={fill(H.concentration, { names: c.names.join(", "), limit: c.limit })} onClick={() => go("portfolio")} />
+          title={`${groupName(c)} ${limitPct(c.w, c.limit)}%`} sub={fill(H.concentration, { names: c.names.join(", "), limit: c.limit })} onClick={() => go("portfolio")} />
       ))}
       {files.map((f) => {
         const s = byT.get(f.t);

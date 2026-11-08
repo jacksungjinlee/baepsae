@@ -145,7 +145,8 @@ def test_concentration_card_is_the_broken_industry_rule():
     got = run("""const [b] = blockOf(impDeck([row('000010', '가나전자', 20), row('000040', '마바물산', 10)]), STOCKS);
       const [c] = blockOf(impDeck([row('000010', '가나전자', 1), row('000020', '가나은행', 1), row('000040', '마바물산', 6)]), STOCKS);
       out = [Hm.concentration(b.st), Hm.concentration(c.st)];""", STOCKS=STOCKS)
-    assert got[0]["name"] == "반도체" and round(got[0]["w"] * 100) == 80 and got[0]["names"] == ["가나전자"] and got[0]["limit"] == 35
+    # v19.3d2 (Jack Q8): 반도체 is in the one chip group of the 한 업종 rule (pf.js CHIP_GROUP; the screens name it 반도체·전자부품)
+    assert got[0]["ind"] == "chips" and got[0]["name"] is None and round(got[0]["w"] * 100) == 80 and got[0]["names"] == ["가나전자"] and got[0]["limit"] == 35
     assert got[1]["name"] == "화학"                                         # 마바물산 30,000원 / 60,000원 = 50% > 35%
 
 
