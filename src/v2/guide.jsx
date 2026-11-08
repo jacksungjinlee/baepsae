@@ -115,6 +115,7 @@ export function Welcome({ load, first, onTry, onBrowse, onImport = null }) {
 const SHADE = "rgba(28, 43, 69, 0.55)";                 // the board's overlay: navy at 55%
 const LIGHT = "#FFE2A8";                                // the board's light ring around what to look at (not apricot)
 const HOLE_PAD = SPACE(1) + 2;
+const RING = 4;                                         // the light ring's width around the lit part (steps 2–3)
 const STEPS_N = 3;
 
 const sameRect = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
@@ -155,6 +156,9 @@ const PULSE_CSS = "@keyframes v2-guide-pulse { 0%, 100% { box-shadow: 0 0 0 4px 
 // below). The button to tap must sit in the gap between them and the bubble, and the lit part stops at their edges.
 // On a short screen (a phone held sideways) where that gap is under a tap's height, the bubble moves to the top; if it
 // still does not fit, the guide ends quietly, as seen.
+// Steps 2–3: the bubble (at the bottom) never covers the lit part and its ring. Where it would (a phone held sideways,
+// the meter stuck at the top), it turns compact: smaller words, 알겠어요 beside them, the same words and buttons. If even
+// that does not fit, the guide ends quietly, as seen (as on step 1).
 export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSkip, onLost, focusAfter = [], keepClear = null }) {
   const { wide } = useLayout();
   const box = useTrack(hole, true);
@@ -162,9 +166,10 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
   const bubble = useRef(null);
   const clear = stage === 1 && ring && keepClear ? keepClear : null;
   const [atTop, setAtTop] = useState(false);
+  const [compact, setCompact] = useState(false);
   const capTop = useTrack(clear ? clear.top : "", !!clear);
   const capBottom = useTrack(clear ? clear.bottom : "", !!clear);
-  const bub = useTrack('[data-ui-v2="guide-bubble"]', !!clear);
+  const bub = useTrack('[data-ui-v2="guide-bubble"]', true);
   const after = useRef(focusAfter);
   after.current = focusAfter;
 
@@ -225,6 +230,16 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
     if (!clear || !atTop) return;
     if (!fitRing(true)) onSkip();                         // nothing fits on this screen: end the guide quietly, as seen
   }, [atTop]);
+  // Steps 2–3: measured before the screen is drawn (and again whenever the lit part or the bubble moves): the bubble's top
+  // must stay below the lit part and its ring, else compact; still no room: end quietly, as seen.
+  useLayoutEffect(() => {
+    if (stage === 1 || !bubble.current) return;
+    const lit = rectOf(document.querySelector(hole));
+    if (!lit) return;
+    if (bubble.current.getBoundingClientRect().top >= lit.y + lit.h + HOLE_PAD + RING + SPACE(1)) return;
+    if (!compact) setCompact(true);
+    else onSkip();
+  }, [stage, box, bub, compact]);
 
   // Esc = 건너뛰기. Tab stays between the bubble's buttons and the button to tap (nothing under the dark part).
   useEffect(() => {
@@ -266,7 +281,7 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
           {block({ left: h.x + h.w, right: 0, top: h.y, height: h.h })}
           <div data-ui-v2="guide-hole" aria-hidden="true" onClick={stage === 2 ? onBackdrop : undefined}
             style={{ position: "fixed", zIndex: 89, left: h.x, top: h.y, width: h.w, height: h.h, borderRadius: RADIUS.lg + 2,
-              boxShadow: `${stage === 1 ? "" : `0 0 0 4px ${LIGHT}, `}0 0 0 200vmax ${SHADE}`, pointerEvents: stage === 2 ? "auto" : "none" }} />
+              boxShadow: `${stage === 1 ? "" : `0 0 0 ${RING}px ${LIGHT}, `}0 0 0 200vmax ${SHADE}`, pointerEvents: stage === 2 ? "auto" : "none" }} />
         </>
       ) : <div data-ui-v2="guide-shade" style={{ position: "fixed", zIndex: 90, inset: 0, background: SHADE }} />}
       {ring && btn && (
@@ -281,9 +296,11 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
       <div style={{ position: "fixed", zIndex: 93, left: wide ? SIDE_W : 0, right: 0, pointerEvents: "none",
         ...(atTop && clear ? { top: 0, padding: `calc(${SPACE(3)}px + env(safe-area-inset-top)) ${SPACE(3)}px 0` }
           : { bottom: 0, padding: `0 ${SPACE(3)}px calc(${SPACE(3) + 2}px + env(safe-area-inset-bottom))` }) }}>
-        <div ref={bubble} data-ui-v2="guide-bubble" data-step={stage} data-at={atTop && clear ? "top" : "bottom"} role="dialog" aria-modal="false" aria-labelledby="v2-guide-title" aria-describedby="v2-guide-body"
+        <div ref={bubble} data-ui-v2="guide-bubble" data-step={stage} data-at={atTop && clear ? "top" : "bottom"} data-compact={compact ? "1" : undefined}
+          role="dialog" aria-modal="false" aria-labelledby="v2-guide-title" aria-describedby="v2-guide-body"
           tabIndex={-1} onClick={stage === 2 ? onBackdrop : undefined}
-          style={{ maxWidth: 520, margin: "0 auto", pointerEvents: "auto", background: COLOR.surface, borderRadius: RADIUS.lg, padding: `${SPACE(4)}px ${SPACE(4)}px ${SPACE(3) + 2}px`,
+          style={{ maxWidth: 520, margin: "0 auto", pointerEvents: "auto", background: COLOR.surface, borderRadius: RADIUS.lg,
+            padding: compact ? `${SPACE(2) + 2}px ${SPACE(3) + 2}px` : `${SPACE(4)}px ${SPACE(4)}px ${SPACE(3) + 2}px`,
             boxShadow: "0 8px 28px rgba(28, 43, 69, 0.35)", outline: "none" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2) }}>
             <span style={{ display: "flex", alignItems: "center", gap: SPACE(1) }}>
@@ -292,16 +309,23 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
               ))}
               <span data-ui-v2="guide-count" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text2, { marginLeft: SPACE(1) + 2 })}>{`${stage}/${STEPS_N}`}</span>
             </span>
+            {/* compact: the button keeps its 44px but takes only the row's height (it reaches into the bubble's own padding) */}
             <button type="button" data-ui-v2="guide-skip" onClick={(e) => { e.stopPropagation(); onSkip(); }}
-              style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", marginRight: -SPACE(2), padding: `0 ${SPACE(2)}px`, ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.guide.skip}</button>
+              style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH, border: "none", background: "none", marginRight: -SPACE(2), padding: `0 ${SPACE(2)}px`,
+                ...(compact ? { marginTop: -(SPACE(2) + 2), marginBottom: -(SPACE(2) + 2) } : {}), ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2) }}>{C.guide.skip}</button>
           </div>
-          <div aria-live="polite">
-            <p id="v2-guide-title" style={tx(SIZE.h3 - 1, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), lineHeight: 1.4, letterSpacing: "-0.02em" })}>{title}</p>
-            <p id="v2-guide-body" style={tx(SIZE.sm - 1, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1) })}>{body}</p>
+          {/* one tree in both layouts (the words' live region is never rebuilt); compact puts 알겠어요 beside the words */}
+          <div style={compact ? { display: "flex", alignItems: "center", gap: SPACE(3) } : undefined}>
+            <div aria-live="polite" style={compact ? { flex: 1, minWidth: 0 } : undefined}>
+              <p id="v2-guide-title" style={tx(compact ? SIZE.sm : SIZE.h3 - 1, WEIGHT.heavy, COLOR.ink, { marginTop: compact ? 2 : SPACE(1), lineHeight: compact ? 1.35 : 1.4, letterSpacing: "-0.02em" })}>{title}</p>
+              <p id="v2-guide-body" style={tx(compact ? SIZE.xs : SIZE.sm - 1, WEIGHT.regular, COLOR.neutral, { marginTop: compact ? 2 : SPACE(1), ...(compact ? { lineHeight: 1.45 } : {}) })}>{body}</p>
+            </div>
+            {action && (
+              <div style={compact ? { flexShrink: 0 } : { marginTop: SPACE(3) }}>
+                <Button onClick={action.onClick} style={{ minHeight: TOUCH, ...(compact ? { width: "auto", whiteSpace: "nowrap" } : {}) }}>{action.label}</Button>
+              </div>
+            )}
           </div>
-          {action && (
-            <div style={{ marginTop: SPACE(3) }}><Button onClick={action.onClick} style={{ minHeight: TOUCH }}>{action.label}</Button></div>
-          )}
         </div>
       </div>
     </>

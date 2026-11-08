@@ -49,7 +49,8 @@
 v19.0b (진지한 화면): 글을 모으는 모든 화면에서 (visual_ok) — 그림이 모두 열려요 · 뱁이 그림은 숫자가 있는 카드와 판정 띠에 없어요
 (소개 페이지는 규칙이 이름으로 허락한 곳) · 아이콘은 Phosphor 두 층에 표의 색만 · 고른 탭 · 고른 줄 · 고른 칩 · 아이콘 · 판정 띠에
 살구색이 없어요. 그리고 판정 띠의 상태 아이콘(할 일 없음 check-circle · 확인할 일 flag, 멈춤은 없음) · 알약 색 · 초점 테두리 남색 ·
-로고(뱁이 마크 + '뱁새' 22px/800) · 덱 짜기 첫 화면 · 빈 내 덱 · 불러오기 실패 · 준비 중의 뱁이 · 기록했어요는 그림 대신 아이콘 칩.
+로고(뱁이 마크 + '뱁새' 22px/800) · 포트폴리오 만들기 첫 화면(v19.3c 시작 화면)에는 뱁이 없음 · 빈 내 덱 · 불러오기 실패 · 준비 중의 뱁이 ·
+기록했어요는 그림 대신 아이콘 칩.
 """
 import argparse
 import datetime as dt
@@ -554,7 +555,7 @@ def scene_normal(R, files, width):
         R.collect(page)
         page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=BACK_BUILD).click()
         at(page, "home")
-    R.check(page, S, "포트폴리오 만들기 첫 화면의 뱁이(날짜 줄 말고 숫자 없음) · 로고 마크 + 워드마크 · 돌아와도 시작 유형 표시 없음 · 초점 테두리 남색 · 뒤로 → 홈", visual_start)
+    R.check(page, S, "포트폴리오 만들기 첫 화면(v19.3c 시작 화면)에 뱁이 없음(템플릿이 점수 · 비중을 보여요) · 로고 마크 + 워드마크 · 돌아와도 시작 유형 표시 없음 · 초점 테두리 남색 · 뒤로 → 홈", visual_start)
 
     def my_deck():
         tab(page, TABS["portfolio"])
@@ -5595,13 +5596,20 @@ def scene_v193c(R, files, width):
 TEXT2_RGB = "rgb(91, 101, 118)"                           # src/ui/tokens.js COLOR.text2 #5B6576
 
 
-def scene_v193c_landscape(R, files, size):
+def scene_v193c_landscape(R, files, size, preview=False):
     """v19.3c 처음 안내 1/3 을 옆으로 눕힌 휴대폰에서: 누를 + 는 위에 붙은 내 점수 칸 아래, 말풍선 위(그 틈이 좁으면 말풍선이 위로)에 있고
-    눌려요 · 밝은 곳은 내 점수 칸과 말풍선을 덮지 않아요 · 창의 높이만 바뀌어도 어두운 곳은 끝까지 눌리지 않아요(그 아래 페이지는 안 눌려요)."""
+    눌려요 · 밝은 곳은 내 점수 칸과 말풍선을 덮지 않아요 · 창의 높이만 바뀌어도 어두운 곳은 끝까지 눌리지 않아요(그 아래 페이지는 안 눌려요).
+    2/3 · 3/3 (2026-11-08 리뷰): 말풍선은 밝힌 내 점수 칸(빛 테두리까지)을 덮지 않아요 — 칸 열 개와 '지금 기준이면 회사 N개가 남아요' 줄이
+    보이고, 말풍선의 글은 12px 이상 · 버튼은 44px 이상, 알겠어요가 화면 안에서 눌려요. preview: 미리 보기(app-preview.html, 내 점수 칸이
+    예시 데이터 줄 아래에 붙어요)."""
     w, h = size
-    S = f"v19.3c 가로 휴대폰 {w}x{h}"
+    S = f"v19.3c 가로 휴대폰 {w}x{h}" + (" 미리 보기" if preview else "")
     dev = {"viewport": {"width": w, "height": h}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
-    srv, ctx, page, base = R.open(build_site(files), w, device=dev, guide_seen=False)
+    site = build_site(files)
+    if preview:
+        shutil.copy(os.path.join(ROOT, "app-preview.html"), site)
+    srv, ctx, page, base = R.open(site, w, device=dev, guide_seen=False, **({"path": "/app-preview.html"} if preview else {}))
+    keep = (lambda p: None) if preview else R.collect      # 미리 보기의 지어낸 종목 이름은 smoke_preview 가 출처를 봐요
 
     def step1_fits():
         wait_ready(page)
@@ -5623,7 +5631,7 @@ def scene_v193c_landscape(R, files, size):
             assert g["hole"]["bottom"] <= g["bubble"]["top"] + 0.5, g
         else:
             assert g["hole"]["top"] >= g["bubble"]["bottom"] - 0.5, g
-        R.collect(page)
+        keep(page)
         page.set_viewport_size({"width": w, "height": h + 300})              # 높이만 바뀌어도: 새로 생긴 아래쪽도 어둡고 눌리지 않아요
         page.wait_for_timeout(200)
         hit = page.evaluate(f"() => {{ const e = document.elementFromPoint(3, {h + 290}); return e ? (e.dataset.uiV2 || e.tagName) : null; }}")
@@ -5633,8 +5641,41 @@ def scene_v193c_landscape(R, files, size):
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()  # 진짜 + 를 누르면 2/3
         bubble(page, 2).locator('[data-ui-v2="guide-skip"]').click()
         guide_gone(page)
-        R.collect(page)
+        keep(page)
     R.check(page, S, "처음 안내 1/3: + 가 내 점수 칸과 말풍선 사이에서 눌려요 · 밝은 곳이 칸 · 말풍선을 덮지 않아요 · 높이만 바뀐 창의 아래쪽도 어둡고 막혀요", step1_fits)
+
+    # 2/3 · 3/3: 말풍선이 밝힌 내 점수 칸을 덮지 않아요 (말풍선 위끝 ≥ 밝은 곳 아래끝 + 빛 테두리 4px) · 칸 열 개와 회사 수 줄의 가운데를
+    # 누르면 말풍선 · 어두운 곳이 아니라 밝힌 칸이에요 · 말풍선은 화면 안 · 글 12px 이상 · 버튼 44px 이상 · 알겠어요가 눌려요
+    def step23_clear():
+        guide_step1(page, False)
+        page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
+        for step in (2, 3):
+            bubble(page, step)
+            page.wait_for_timeout(250)
+            g = page.evaluate("""() => { const r = (e) => { const b = e.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, left: b.left, right: b.right }; };
+                const q = (s) => document.querySelector(s); const bb = q('[data-ui-v2="guide-bubble"]');
+                const spots = [...document.querySelectorAll('[data-ui-v2="meter"] [data-ui-v2="meter-slot"]'), q('[data-ui-v2="meter-count"]')];
+                const hits = spots.map((e) => { const b = e.getBoundingClientRect(); const t = document.elementFromPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2);
+                  if (!t) return null; if (t.closest('[data-ui-v2="guide-bubble"]')) return 'bubble';
+                  return t.closest('[data-ui-v2="meter"]') || t.dataset.uiV2 === 'guide-hole' ? 'lit' : (t.dataset.uiV2 || t.tagName); });
+                const fonts = [...bb.querySelectorAll('*')].filter((e) => [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()))
+                  .map((e) => parseFloat(getComputedStyle(e).fontSize));
+                return { hole: r(q('[data-ui-v2="guide-hole"]')), bubble: r(bb), slots: spots.length - 1, hits, fonts,
+                  buttons: [...bb.querySelectorAll('button')].map((e) => { const b = e.getBoundingClientRect(); return [b.width, b.height]; }) }; }""")
+            assert g["bubble"]["top"] >= g["hole"]["bottom"] + 4 - 0.5, (step, g)        # 빛 테두리(4px)까지 덮지 않아요
+            assert g["bubble"]["top"] >= -0.5 and g["bubble"]["bottom"] <= h + 0.5, (step, g)
+            assert g["slots"] == 10 and all(x == "lit" for x in g["hits"]), (step, g)       # 칸 열 개 · 회사 수 줄이 보여요
+            assert g["fonts"] and min(g["fonts"]) >= 12, (step, g)
+            assert g["buttons"] and all(bw >= 44 - 0.5 and bh >= 44 - 0.5 for bw, bh in g["buttons"]), (step, g)
+            keep(page)
+        done = bubble(page, 3).get_by_role("button", name=C["guide"]["done"], exact=True)
+        box = done.bounding_box()
+        assert box and box["y"] >= 0 and box["y"] + box["height"] <= h + 0.5, box
+        assert page.evaluate("""([x, y]) => { const t = document.elementFromPoint(x, y); return !!t && !!t.closest('[data-ui-v2="guide-bubble"] button[data-ui="button"]'); }""",
+                             [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2])
+        done.click()
+        guide_gone(page)
+    R.check(page, S, "처음 안내 2/3 · 3/3: 말풍선이 밝힌 내 점수 칸(빛 테두리까지)을 덮지 않아요 · 칸 열 개와 회사 수 줄이 보여요 · 글 12px · 버튼 44px · 알겠어요가 눌려요", step23_clear)
     ctx.close()
     srv.shutdown()
 
@@ -7398,6 +7439,8 @@ def main():
                    lambda: scene_v193c_on(R, files, 390), lambda: scene_v193c_on(R, files, 1280),   # v19.3c 두 스위치를 켠 빌드
                    lambda: scene_v193c_narrow(R, files), lambda: scene_v193c_empty(R, files),          # v19.3c 320px · 기준 전의 수 0
                    lambda: scene_v193c_landscape(R, files, (844, 390)), lambda: scene_v193c_landscape(R, files, (568, 320)),   # 가로 휴대폰
+                   lambda: scene_v193c_landscape(R, files, (844, 390), preview=True),                     # 가로 휴대폰 · 미리 보기
+                   lambda: scene_v193c_landscape(R, files, (568, 320), preview=True),
                    lambda: scene_v193c_offstep(R, files),                                                  # 안내 밖 단계 이동
                    lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
                    lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
