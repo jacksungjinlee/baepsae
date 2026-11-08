@@ -334,9 +334,12 @@ export function checkStore(d, today) {
     if (validPerStock(d.assume, (a) => okAssume(a), today)) data.assume = d.assume;
     else problems.push("assume (saved value assumptions): not valid");
   }
+  // guideSeen is this device's flag, not a record (Jack, 2026-11-08): any real date counts as seen, also one after today
+  // (written while the phone's clock was ahead), and never makes the records a problem; only a value that is not a date
+  // is set aside. Records keep their own rule (no date after today).
   if (d.guideSeen != null) {
-    if (pastDate(d.guideSeen, today)) data.guideSeen = d.guideSeen;
-    else problems.push("guideSeen: not a date up to today");
+    if (isDate(d.guideSeen)) data.guideSeen = d.guideSeen;
+    else problems.push("guideSeen: not a date");
   }
   if (d.wts != null) {
     if (typeof d.wts === "string" && /^[0-9a-f]{16}$/.test(d.wts)) data.wts = d.wts;
@@ -579,11 +582,18 @@ const surelyLater = (a, b) => !!(a && b && editOrder(a, b) > 0);
 // (no part = the defaults) to tell two copies' limits apart.
 // A limitsTs more than a day ahead of now (a clock that was fast) counts as no time at all (review 4): every merge, the
 // check of what a copy holds, the side key and 기록 불러오기 then let a believable 저장 outrank it (laterOf: a time wins
-// over none), and a merge writes the limits back without it.
+// over none), and a merge writes the limits back without it. The raw time still travels (ahead): when both sides of a
+// merge are that far ahead (this device's clock is the one set back, review 5), the later of the two stays, with its time
+// (laterLimits), so a clock days slow never loses the last 저장.
+// Known limits (review 5): A — a 저장 made with the clock more than a day fast loses to an older believable copy once the
+// clock is right again (and the same for 기록 불러오기 of a file without limits); B — a time 24–48 h ahead becomes
+// believable again later, and can then silently bring back an older 저장 over a later one stamped by the right clock.
 const LIMITS_AHEAD = 24 * 3600 * 1000;
 const believable = (ts, now = Date.now()) => okTs(ts) && ts <= now + LIMITS_AHEAD;
 const limitsEdit = (d) => (plainObj(d) && (plainObj(d.limits) || d.limitsTs != null)
-  ? { limits: plainObj(d.limits) ? d.limits : null, ts: believable(d.limitsTs) ? d.limitsTs : undefined } : null);
+  ? { limits: plainObj(d.limits) ? d.limits : null, ts: believable(d.limitsTs) ? d.limitsTs : undefined,
+    ...(okTs(d.limitsTs) && !believable(d.limitsTs) ? { ahead: d.limitsTs } : {}) } : null);
+const laterLimits = (a, b) => (a && b && a.ahead && b.ahead ? { ...(b.ahead > a.ahead ? b : a), ts: Math.max(a.ahead, b.ahead) } : laterOf(a, b));
 const limitValues = (l) => canon({ stock: plainObj(l) && l.stock != null ? l.stock : null, ind: plainObj(l) && l.ind != null ? l.ind : null });
 // d with the limits of edit e (null: none)
 const withLimitsEdit = (d, e) => {
@@ -635,7 +645,7 @@ function unionDeck(cur, other) {
   };
   const holdings = [...cur.holdings.map(later), ...other.holdings.filter((h) => !cur.holdings.some((x) => x.t === h.t))];
   let out = { ...other, ...cur, holdings, purchases: unionRecords(cur.purchases, other.purchases, where) || [] };
-  out = withLimitsEdit(out, laterOf(limitsEdit(cur), limitsEdit(other)));
+  out = withLimitsEdit(out, laterLimits(limitsEdit(cur), limitsEdit(other)));
   if (Array.isArray(cur.imported) || Array.isArray(other.imported)) {
     // rows with a code: one per stock, the current copy's wins; rows added by name only: as a multiset
     const ci = cur.imported || [], oi = other.imported || [];
@@ -855,7 +865,9 @@ function restoreMoved(key, cur, raw, today) {
   if (!used.length) return { data: null, notice: false, unmerged };
   const base = normal(cur, today) || cur;
   const changed = canon(merged) !== canon(base);
-  const notice = changed || used.some(([, d]) => droppedFrom(d, merged));
+  // only a portfolio's limitsTs changed (the same limits values, a later time): written back, but nothing to say (review 5)
+  const noTs = (d) => canon({ ...d, decks: (d.decks || []).map((x) => { if (!plainObj(x)) return x; const { limitsTs: _t, ...r } = x; return r; }) });
+  const notice = (changed && noTs(merged) !== noTs(base)) || used.some(([, d]) => droppedFrom(d, merged));
   if (changed) merged = stamped(merged);
   const text = JSON.stringify(merged);
   if (changed) {
@@ -978,6 +990,11 @@ export function setAsideCopies(key) {
 // re-importing that portfolio later from an older file without limits brings its old limits back.
 // A 저장 is stamped later than the limits this tab and the side key already hold for that portfolio (limitsSaveTime), so
 // the user's last 저장 wins even after the clock was set back (it was up to a day fast, then corrected).
+// Known limits (review 5, see limitsEdit): A — a 저장 made with the clock more than a day fast loses to an older
+// believable copy once the clock is right again, and so does 기록 불러오기 of a file without limits; B — a time 24–48 h
+// ahead becomes believable again later and can then silently bring back an older 저장. A clock set days back also sets
+// this key's entries aside (they look more than a day ahead): the records keep their limits, and the next 저장 writes
+// the entry again. These, and the review-3 limit above, are in docs/RUNBOOK.md (Known limits: 기록 and the phone clock).
 export const LIMITS_SUFFIX = ".limits";
 const okLimitsPart = (l) => plainObj(l) && Object.keys(l).every((k) => ["stock", "ind"].includes(k) && Number.isInteger(l[k]) && l[k] >= 1 && l[k] <= 100);
 const SIDE_AHEAD = LIMITS_AHEAD;                         // a time more than a day ahead of now is not believed
@@ -1303,7 +1320,7 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
     const lim = fileLim
       ? (mine.some((d) => limitValues(d.limits) !== limitValues(x.limits)) ? stampLim(fileLim)
         : keepLater(fileLim, ownLim.filter((e) => limitValues(e.limits) === limitValues(x.limits)).map((e) => e.ts)))
-      : ownLim.reduce((a, e) => laterOf(a, e), null);
+      : ownLim.reduce((a, e) => laterLimits(a, e), null);
     const { confirms: _c, ...rest } = x;
     return withLimitsEdit({ ...rest, holdings, ...(confirms.length || Array.isArray(x.confirms) ? { confirms } : {}),
       ...(marks.size ? { removed: [...marks.values()] } : {}) }, lim);

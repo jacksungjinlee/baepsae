@@ -441,6 +441,77 @@ def test_imports_and_merges_never_let_a_fast_clock_time_win():
     assert got["f1"]["importTs"] == got["f1"]["ownTs"]          # the file's time three days ahead is not kept: this device's stays
 
 
+def test_a_slow_clock_keeps_the_last_save_and_imports_count_the_side_key():
+    """v19.3d2 review 5. Slow (r5b): the records hold 20/25 saved 2 h ago, another tab's later 40/45 waits as an ".other."
+    copy, and the app starts with the clock 3 days slow: both times look more than a day ahead, so the later of the two raw
+    times stays (laterLimits): 40/45, before and after the clock is fixed. Notice: a copy that differs only in limitsTs (the
+    same values) is merged quietly, no 합쳤어요. I1b: the records lost their limits (an earlier-app tab dropped them) and the
+    side key holds a 저장 made 1 h ahead: 기록 불러오기 stamps the file's limits just after it, so they stay. A time more
+    than a day ahead on this device is not used to stamp an import; a time exactly a day ahead is still believed."""
+    got = run(LS + """const H = 3600 * 1000, BASE = Date.now(), REAL = Date.now;
+      const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const file = (d) => S.parseImport(S.exportText(d), T);
+      // slow
+      mem.clear();
+      mem.set(K, JSON.stringify({ ...P.withLimits(base, 'dimp', 20, 25, BASE - 2 * H), v: 2 }));
+      mem.set(K + '.other.' + (BASE - H), JSON.stringify({ ...P.withLimits(base, 'dimp', 40, 45, BASE - H), v: 2 }));
+      Date.now = () => REAL() - 72 * H;
+      const slow = S.readStore(K, T);
+      Date.now = REAL;
+      const fixed = S.readStore(K, T);
+      // notice: only limitsTs differs between the records and a copy
+      mem.clear();
+      mem.set(K, JSON.stringify({ ...P.withLimits(base, 'dimp', 20, 25, 1000), v: 2 }));
+      mem.set(K + '.other.' + 5, JSON.stringify({ ...P.withLimits(base, 'dimp', 20, 25, 2000), v: 2 }));
+      const quiet = S.readStore(K, T);
+      const quietStored = limOf(JSON.parse(mem.get(K)));
+      // I1b: records without limits, the side key holds a 저장 1 h ahead; import 50/50 at BASE
+      mem.clear();
+      mem.set(K, JSON.stringify({ ...base, v: 2 }));
+      mem.set(SIDE, JSON.stringify({ v: 1, decks: { dimp: { limits: { stock: 20, ind: 25 }, ts: BASE + H } } }));
+      const m = S.mergeStores(base, file(P.withLimits(base, 'dimp', 50, 50, BASE - 30 * 24 * H)), BASE, S.storedStores(K, T), T);
+      S.writeStore(m, K, T);
+      const i1b = S.readStore(K, T);
+      // an own time three days ahead is not used to stamp the import
+      mem.clear();
+      const farOwn = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 72 * H }] };
+      mem.set(K, JSON.stringify(farOwn));
+      const m2 = S.mergeStores(farOwn, file(P.withLimits(base, 'dimp', 50, 50, BASE - 30 * 24 * H)), BASE, S.storedStores(K, T), T);
+      mem.clear();
+      out = { slow: { lim: limOf(slow.data), restored: slow.restored }, fixed: limOf(fixed.data), quiet: { lim: limOf(quiet.data), restored: quiet.restored, stored: quietStored },
+        i1b: { stamp: limOf(m).ts - (BASE + H), lim: limOf(i1b.data).l, restored: i1b.restored }, far: limOf(m2).ts - BASE,
+        edge: S.limitsSaveTime(K, { id: 'dimp', limitsTs: BASE + 24 * H }, BASE) - BASE };""")
+    H = 3600 * 1000
+    assert got["slow"]["lim"]["l"] == {"stock": 40, "ind": 45}, got["slow"]
+    assert got["fixed"]["l"] == {"stock": 40, "ind": 45}, got["fixed"]
+    assert got["quiet"]["lim"] == {"l": {"stock": 20, "ind": 25}, "ts": 2000} and got["quiet"]["restored"] is False
+    assert got["quiet"]["stored"] == {"l": {"stock": 20, "ind": 25}, "ts": 2000}      # written back with the later time
+    assert got["i1b"] == {"stamp": 1, "lim": {"stock": 50, "ind": 50}, "restored": False}, got["i1b"]
+    assert got["far"] == 0                                  # stamped at the import time, not after a time three days ahead
+    assert got["edge"] == 24 * H + 1                        # exactly a day ahead is still believed
+
+
+def test_a_guide_seen_date_after_today_is_seen_and_never_a_problem():
+    """Jack (2026-11-08): guideSeen is this device's flag, not a record. Written while the phone's clock was ahead, its date
+    can be after today: the records still read with no problem (no "이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요"),
+    the guide counts as seen, and the next write keeps it. A value that is not a date is still set aside, and the records'
+    own dates keep their rule (a purchase dated after today is still a problem)."""
+    got = run(LS + """mem.clear();
+      const recs = { v: 1, decks: [{ id: 'db', name: 'b', createdAt: T, settings: { points: {} }, holdings: [{ t: '000010', nk: 'a', target: 1, rules: [] }],
+        purchases: [{ t: '000010', qty: 1, price: 10000, date: T, ccy: 'KRW' }] }], guideSeen: '2026-11-20' };
+      mem.set(K, JSON.stringify(recs));
+      const r = S.readStore(K, T);
+      const wrote = S.writeStore(S.withGuideSeen(r.data, T), K, T);
+      const later = JSON.parse(mem.get(K)).guideSeen;
+      const tomorrowBuy = { ...recs, decks: [{ ...recs.decks[0], purchases: [{ ...recs.decks[0].purchases[0], date: '2026-11-20' }] }] };
+      out = { locked: r.locked, problems: r.problems, decks: r.data.decks.length, seen: S.guideSeenIn(r.data), wrote, later,
+        notDate: S.checkStore({ v: 1, decks: [], guideSeen: 'x' }, T).problems, buy: S.checkStore(tomorrowBuy, T).problems.length };""")
+    assert got["locked"] is False and got["problems"] == [] and got["decks"] == 1 and got["seen"] is True
+    assert got["wrote"] is True and got["later"] == "2026-11-20"                # kept as it is (already seen)
+    assert got["notDate"] == ["guideSeen: not a date"]
+    assert got["buy"] == 1                                                         # a record dated after today: still a problem
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""
