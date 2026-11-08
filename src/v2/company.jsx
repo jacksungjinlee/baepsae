@@ -29,8 +29,9 @@ import { shownName } from "./legacy.js";
 import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
+import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -173,7 +174,7 @@ function RangeBar({ s }) {
 }
 
 function Header({ load, s }) {
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);                   // v19.1c: none for a stock priced at an earlier close (its date is in closeLine)
   const won = usOf(s) ? wonOfUsd(load, s.price) : null;
   const ind = s.indName && typeof s.indName === "string" ? s.indName : null;
   return (
@@ -203,7 +204,7 @@ function Header({ load, s }) {
 
 // ---------------- 왜 움직였나 line (Part B item 2): 2.0's big-move rule, for any stock ----------------
 function MoveLine({ load, s, held, onWhy }) {
-  const d1 = typeof s.d1 === "number" && Number.isFinite(s.d1) ? s.d1 : null;
+  const d1 = todayD1(s);
   if (d1 == null || Math.abs(d1) < BIG_MOVE) return null;
   const g = peerGroup(s, load.data.stocks);
   const together = g.ok && g.together;
@@ -363,7 +364,7 @@ function Fit({ load, s, store, wide }) {
           {indOk && <Segmented label={F.sheet} value={scope} onChange={setScope} options={[{ value: "market", label: F.market }, { value: "ind", label: F.ind }]} />}
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
-          {priceDate(load, s) && <DateLine date={priceDate(load, s)} fresh={load.fresh} />}
+          {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>
       </BottomSheet>
     </Card>
@@ -539,7 +540,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
         <Header load={load} s={s} />
-        {load.fresh && load.fresh.stale && priceDate(load, s) && <DateLine date={priceDate(load, s)} fresh={load.fresh} />}
+        {load.fresh && load.fresh.stale && lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         <MoveLine load={load} s={s} held={held} onWhy={nav.onWhy} />
         <div ref={mark} aria-hidden="true" />
         {labels ? <CoTabs labels={labels} value={tab || "summary"} onChange={setTab} stickyTop={stickyTop} /> : <span data-ui-v2="co-tabs" data-pending="1" hidden />}

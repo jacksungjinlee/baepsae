@@ -6,7 +6,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { MoneyInput, Amount } from "../ui/components.jsx";
 import { C, fill, p1, wonText } from "./format.js";
-import { Note, tx } from "./ui.jsx";
+import { Note, OwnCloseNote, tx } from "./ui.jsx";
+import { ownCloseGroups } from "./stocklist.js";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, indexSince, addMoney, addMessage, bandOf, plainEdges, withoutAbsent } from "./track.js";
 
@@ -164,6 +165,8 @@ export function AddMoney({ de }) {
           <div data-ui-v2="add-left" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(2) })}>
             {fill(A.left, { leftText: fill(A.leftText, { x: wonText(r.left) }) })}
           </div>
+          {/* v19.1c: a share bought here at a US stock's earlier close (its pxd, carried by the daily check) is named */}
+          <OwnCloseNote groups={ownCloseGroups(r.buys.map((b) => de.holdings.find((x) => x.t === b.t)), null)} />
         </div>
       )}
     </div>

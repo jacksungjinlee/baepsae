@@ -27,7 +27,7 @@ import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
-import { usOf, priceMd, priceDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -370,7 +370,7 @@ export function ValueTab({ load, s, store, onMore }) {
           {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perMed && V.indMed ? fill(V.indMed, { x: nf(round(perMed.med, 1), 1) }) : null} />}
         </Stats>
         {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
-        <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+        <DateLine date={lineDate(load, s)} fresh={load.fresh} />
       </Card>
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {risk.rule !== "na" && C.co.risk[risk.rule] && (
@@ -510,7 +510,7 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
-            <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+            <DateLine date={lineDate(load, s)} fresh={load.fresh} />
           </Card>
         )}
         <Scatter s={s} group={group} />
@@ -583,7 +583,7 @@ export function DivTab({ load, s }) {
           <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
-          <DateLine date={priceDate(load, s)} fresh={load.fresh} />
+          <DateLine date={lineDate(load, s)} fresh={load.fresh} />
         </Card>
       )}
       {(r.yieldPct != null || (po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">

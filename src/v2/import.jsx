@@ -447,7 +447,7 @@ function CardsStep({ load, importer, setImporter, go }) {
       <AppBar onBack={() => go(0)} backLabel={C.build.prevStep} />
       <StepBars step={1} />
       <DateLine date={load.data.pxDate} fresh={load.fresh} />
-      <StepCards st={st} set={set} ds={ds} coach={null} />
+      <StepCards st={st} set={set} ds={ds} load={load} coach={null} />
       <Footer />
       <ActionBar summary={null} action={none ? C.build.pickCardsBtn : C.build.next} disabled={none} onAction={() => go(2)} />
     </Page>
