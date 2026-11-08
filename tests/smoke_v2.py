@@ -35,6 +35,9 @@
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
               늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
+  돌아온 화면 (2026-11-08, 390 · 1280) 멈춘 화면이 다시 보이면 파일을 한 번 받아요: 더 새 발행이면 모든 화면이 새 날짜 · 받지 못함 ·
+              못 읽음 · 섞인 발행이면 멈춤 표시 그대로 · 멈춘 데이터가 아니면 받지 않음 · 돌아올 때마다 한 번만 · 10분 안에는 다시 받지
+              않음 · 첫 불러오기 실패도 한 번 받음 · 후보 고르기 · 매수 계획 · 가진 종목 넣기 위에는 새 데이터가 기다려요
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
@@ -221,6 +224,35 @@ def build_site(files, raw=None, drop=(), app=None):
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
+
+    def do_GET(self):
+        # A scene can hold back the next answer for one file (2026-11-08, 돌아온 화면 disc-slow): a file ".delay-<name>" in the
+        # site holds the seconds; it is used once (removed), the other requests go on meanwhile (a threading server). The
+        # file is read when the request arrives and sent after the wait: the late answer is the file as it was then, even
+        # if the scene writes a newer one meanwhile (round-4 review).
+        name = os.path.basename(self.path.split("?", 1)[0])
+        mark = os.path.join(self.directory, ".delay-" + name)
+        if name and os.path.isfile(mark):
+            try:
+                with open(mark, encoding="utf-8") as fh:
+                    secs = float(fh.read().strip() or "0")
+                os.remove(mark)
+            except (OSError, ValueError):
+                secs = 0
+            try:
+                with open(self.translate_path(self.path), "rb") as fh:
+                    body = fh.read()
+            except OSError:
+                self.send_error(404)
+                return
+            time.sleep(secs)
+            self.send_response(200)
+            self.send_header("Content-Type", self.guess_type(self.path))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache")
@@ -4518,6 +4550,504 @@ def scene_stale_recheck(R, files, width):
         srv.shutdown()
 
 
+# ── 2026-11-08 (Jack, Q9): an old page brought back into view fetches the files once (load.js refetchNewer · returnWatch) ──
+# The page is hidden and shown again by hand (headless Chromium is always visible): visibilityState is shadowed on the
+# document and the events are dispatched; the back-forward cache return is pagehide + pageshow(persisted).
+HIDE_JS = """() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); }"""
+SHOW_JS = "() => { delete document.visibilityState; delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); }"
+BFCACHE_JS = """() => { window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+  window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })); }"""
+REFETCH_PX, REFETCH_MD = "2026-11-02", "11월 2일"                      # a later close than the fixture's 10월 30일
+DATA_FILE_RX = re.compile(r"/(data|corp|macro|disc)\.json$")
+SCREEN_DL = '[data-ui-v2="screen"] [data-ui-v2="date-line"]'           # the screen's own date line (PC: not the left menu's)
+
+
+def refetch_files(files):
+    """A later publish (an hour ago, staleAfter tomorrow): every file carries its publishedAt, prices of 11월 2일."""
+    f = stale_files(files, 1, 30)
+    f["data.json"]["pxDate"] = REFETCH_PX
+    f["corp.json"]["pxDate"] = REFETCH_PX
+    f["disc.json"]["newest"] = REFETCH_PX
+    return f
+
+
+def put_files(site, f, names=None, raw=None):
+    """Writes the files into the running site (the next request gets them)."""
+    for name in names or DATA_FILES:
+        with open(os.path.join(site, name), "w", encoding="utf-8") as fh:
+            fh.write(raw[name] if raw and name in raw else json.dumps(f[name], ensure_ascii=False))
+
+
+def scene_stale_refetch(R, files, width):
+    """돌아온 화면 (Jack, 2026-11-08 Q9 "Old page brought back into view: yes, fetch once"): 멈춤 표시가 있는 화면이 다시 보이면 파일을
+    한 번 받아요. 사이트에 더 새 발행이 있으면 모든 화면이 새 데이터로 (날짜 줄의 새 날짜 · 멈춤 표시와 홈 띠가 사라짐), 받지 못하거나 ·
+    못 읽거나 · 발행이 섞였으면 그대로 (멈춤 표시가 남고 불러오기 실패 문구로 바뀌지 않아요 · console 에 이유). 멈춘 데이터가 아니면
+    받지 않아요. 돌아올 때마다 한 번만 (다시 받지 않음 · 되풀이 없음)."""
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    wide = width >= 1024
+    words3 = fillp(C["app"]["stale"], n=3)
+    old_line = fillp(C["app"]["asOf"], md="10월 30일") + " · " + words3
+    new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
+    for how in ("newer", "bfcache", "offline", "unreadable", "mixed", "disc-retry", "disc-slow", "disc-older", "disc-older-again", "fresh",
+                "failed", "failed-again"):
+        if how.startswith("failed"):                             # review 2026-11-08 (5): the first load failed (data.json missing)
+            scene_failed_refetch(R, files, width, how == "failed-again")
+            continue
+        if how in ("disc-slow", "disc-older", "disc-older-again"):   # delta review: 홈's disc.json late, or older than the new data
+            scene_disc_refetch(R, files, width, how)
+            continue
+        if how == "bfcache":                                     # the 4-day backstop (no staleAfter), on a company's 공시 tab
+            old = clone(files)
+            for n in DATA_FILES:
+                old[n]["publishedAt"] = now_kst(days_ago=6)
+            path = "/app.html?dev=1#stocks/005930/disc"
+        else:
+            old = refetch_files(files) if how == "fresh" else stale_files(files, 75, -2, 2)    # n = 3: '3일째 갱신이 멈췄어요'
+            path = "/app.html?dev=1"
+            if how == "newer":                                   # delta review: the old disc.json's list stopped (listOk false),
+                old["disc.json"]["listOk"] = False               # so 홈 would say 'stale', not 'ok', were it left on screen
+        site = build_site(old, drop=("disc.json",) if how == "disc-retry" else ())     # disc-retry: 홈's disc.json fails at first
+        srv, ctx, page, _ = R.open(site, width, init=init, path=path, device=pc_device(width) if wide else None)
+        asked, logs = [], []
+        page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
+        page.on("console", lambda m: logs.append(m.text))
+
+        def quiet(n):
+            page.wait_for_timeout(1200)
+            assert len(asked) == n, asked[n:]
+
+        def run():
+            if how == "bfcache":
+                ds = page.locator('[data-ui-v2="co-disc"]')
+                page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.state === 'ok'; }")
+                assert ds.get_attribute("data-stale") == "1"                                       # disc.json 6 days old
+                stale_dl = page.locator('[data-ui-v2="date-line"][data-stale="1"]').first
+                stale_dl.wait_for(state="visible")
+                assert stale_dl.inner_text().endswith(" · " + fillp(C["app"]["stale"], n=6)), stale_dl.inner_text()
+            else:
+                wait_ready(page)
+                at(page, "home")
+                dl = page.locator(SCREEN_DL).first
+                dl.wait_for(state="visible")
+                if how == "fresh":
+                    assert dl.get_attribute("data-stale") == "0" and dl.inner_text() == new_line, dl.inner_text()
+                    page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+                else:
+                    assert dl.get_attribute("data-stale") == "1" and dl.inner_text() == old_line, dl.inner_text()
+                    page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
+            R.collect(page)
+            # v19.3e: 홈 loads disc.json itself (a Korean stock is held in DAILY_DECKS), after the first paint: wait for it
+            page.wait_for_function("() => performance.getEntriesByType('resource').some((e) => /\\/disc\\.json$/.test(e.name))")
+            page.wait_for_timeout(300)
+            n0 = len(asked)
+            new = refetch_files(files)
+            if how == "offline":
+                put_files(site, new)
+                page.route("**/data.json", lambda r: r.abort())                                    # the network is gone
+            elif how == "unreadable":
+                text = json.dumps(new["data.json"], ensure_ascii=False)
+                put_files(site, new, raw={"data.json": text[: len(text) // 2]})
+            elif how == "mixed":
+                put_files(site, new, names=["data.json"])                                          # corp.json · macro.json: the old publish
+            else:
+                put_files(site, new)
+            page.evaluate(BFCACHE_JS if how == "bfcache" else HIDE_JS)
+            if how != "bfcache":
+                page.evaluate(SHOW_JS)
+            if how == "fresh":                                                                     # not stale: nothing is fetched
+                quiet(n0)
+                assert page.locator(SCREEN_DL).first.get_attribute("data-stale") == "0"
+                assert not [x for x in logs if "back in view" in x], logs
+                return
+            if how in ("newer", "bfcache", "disc-retry"):
+                if how == "bfcache":
+                    page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.stale === '0'; }")
+                    ds = page.locator('[data-ui-v2="co-disc"]')
+                    assert ds.locator('[data-ui-v2="date-line"]').first.inner_text() == new_line          # the new disc.json (newest 11월 2일)
+                    assert page.locator('[data-ui-v2="date-line"][data-stale="1"]').count() == 0          # the company's stale line is gone
+                    want = ["data.json", "corp.json", "disc.json", "macro.json"]
+                else:
+                    page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+                    dl = page.locator(SCREEN_DL).first
+                    assert dl.inner_text() == new_line, dl.inner_text()                                  # the new date, no stale words
+                    page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")                  # the 홈 band is gone: today's check runs
+                    assert page.locator('[data-ui-v2="today-stale"]').count() == 0
+                    # 홈's filings (v19.3e) from the same publish: newer — disc.json fetched with it (it was on screen);
+                    # disc-retry — it had failed, so it loads again once the new publish is on screen. Checked, current.
+                    page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"home2\"]'); return !!e && e.dataset.disc === 'ok'; }")
+                    want = ["data.json", "corp.json", "macro.json", "disc.json"]
+                    if how == "disc-retry":
+                        wait_log(logs, "had not loaded, not from the publish of", page)
+                        assert asked[n0:][-1] == "disc.json", asked[n0:]                                # after the new publish went on screen
+                got = asked[n0:]
+                assert got[0] == "data.json" and sorted(got) == sorted(want), got                       # each file once, data.json first
+                assert any("is ready for every screen" in x and REFETCH_PX in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
+                assert any("now shows on every screen" in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
+                R.collect(page)
+                n1 = len(asked)
+                page.evaluate(HIDE_JS)                                                              # back again: not stale any more
+                page.evaluate(SHOW_JS)
+                quiet(n1)
+                if how == "newer":                                                                  # every screen reads the new data
+                    for key in ("stocks", "market", "portfolio"):
+                        if wide:
+                            side_tab(page, key)
+                        else:
+                            tab(page, TABS[key])
+                            at(page, key)
+                        line = page.locator(SCREEN_DL).first
+                        line.wait_for(state="visible")
+                        assert line.get_attribute("data-stale") == "0" and line.inner_text() == new_line, (key, line.inner_text())
+                        assert page.locator('[data-ui-v2="date-line"][data-stale="1"]').count() == 0, key
+                        R.collect(page)
+                no_hscroll(page, width)
+                return
+            # offline · unreadable · mixed: the data on screen stays, with its stale line (never the load-failure message)
+            deadline = time.time() + WAIT / 1000
+            while not any("kept the data on screen" in x for x in logs) and time.time() < deadline:
+                page.wait_for_timeout(100)
+            kept = [x for x in logs if "kept the data on screen" in x]
+            reason = {"offline": "data.json: ", "unreadable": "data.json: ", "mixed": "the files are from different publishes"}[how]
+            assert len(kept) == 1 and reason in kept[0], kept
+            quiet(n0 + (4 if how == "mixed" else 1))                                                # one fetch for this return, no retry
+            got = asked[n0:]                                                                        # mixed: 홈's disc.json too (v19.3e)
+            assert sorted(got) == (["corp.json", "data.json", "disc.json", "macro.json"] if how == "mixed" else ["data.json"]), got
+            dl = page.locator(SCREEN_DL).first
+            assert dl.get_attribute("data-stale") == "1" and dl.inner_text() == old_line, dl.inner_text()
+            band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"] h2')
+            assert band.inner_text() == fillp(C["today"]["stale"], n=3), band.inner_text()
+            assert page.locator('[data-ui-v2="load-fail"]').count() == 0 and page.locator('[data-ui-v2="today-hero"]').count() == 0
+            if how == "offline":                                    # back again at once: no fetch within 10 minutes (review 2026-11-08, 2)
+                n2 = len(asked)
+                page.evaluate(HIDE_JS)
+                page.evaluate(SHOW_JS)
+                quiet(n2)
+                assert any("nothing fetched; the last fetch on a return" in x for x in logs), [x for x in logs if "[v2]" in x][-3:]
+            R.collect(page)
+            no_hscroll(page, width)
+        desc = {"newer": "더 새 발행 → 다시 보일 때 data · corp · macro · 홈의 disc 를 한 번씩 받아 모든 화면이 새 날짜(멈춤 표시 · 홈 띠 없음), 또 돌아와도 다시 받지 않음",
+                "bfcache": "4일 규칙 · 공시 탭 · 뒤로 가기 캐시(pageshow)에서 돌아옴 → disc.json 도 같은 발행으로 한 번, 공시 탭 · 회사 날짜 줄이 새것",
+                "offline": "받지 못함 → data.json 한 번만, 멈춤 표시 · 홈 띠 그대로 (실패 문구 아님) · console 에 이유 · 곧바로 또 돌아와도 10분 안에는 받지 않음",
+                "unreadable": "못 읽는 data.json → 한 번만, 멈춤 표시 그대로 (실패 문구 아님) · console 에 이유",
+                "mixed": "data.json 만 새 발행 → 넷 다 받고 아무것도 쓰지 않음 (섞이지 않음) · 멈춤 표시 그대로",
+                "disc-retry": "홈의 disc.json 이 처음에 실패 → 새 발행이 들어온 뒤 한 번 더 받아 홈 공시도 새 발행 (data-disc ok)",
+                "fresh": "멈춘 데이터가 아님 → 다시 보여도 받지 않음"}[how]
+        R.check(page, f"돌아온 화면 {width}", f"{how}: {desc}", run)
+        ctx.close()
+        srv.shutdown()
+
+
+def wait_log(logs, part, page):
+    deadline = time.time() + WAIT / 1000
+    while not any(part in x for x in logs) and time.time() < deadline:
+        page.wait_for_timeout(100)
+    hit = [x for x in logs if part in x]
+    assert hit, (part, [x for x in logs if "[v2]" in x][-4:])
+    return hit
+
+
+def scene_disc_refetch(R, files, width, how):
+    """돌아온 화면 · 홈의 disc.json (델타 리뷰 2026-11-08). 저장한 포트폴리오에 한국 종목이 있어 홈이 disc.json 을 직접 받아요 (v19.3e).
+    disc-slow  첫 disc.json 답이 4초 늦는 사이에 새 발행이 화면에 들어와요 → 늦은 답은 쓰지 않고(console) 다시 받은 것으로 홈 공시 ok.
+    disc-older 시장에서 새 발행이 들어왔는데 사이트에는 아직 예전 disc.json → 홈을 열면 실패 문구 (새 데이터 옆에 예전 공시를 두지 않아요).
+               곧바로 돌아와도 다시 받지 않고, 사이트에 맞는 disc.json 이 생기고 10분이 지난 뒤 돌아오면 한 번 더 받아 홈 공시 ok · 그 뒤로는 받지 않아요.
+    disc-older-again  그 한 번 더도 예전 disc.json → 실패 문구 그대로 · console '마지막' · 30분 뒤 돌아와도 세 번째는 없어요 (리뷰 4차).
+    disc-slow 의 늦은 답은 정말 예전 disc.json 이에요 (목록이 멈춘 파일): 홈 공시는 ok 그대로이고 공시 탭은 새 파일의 날짜예요."""
+    wide = width >= 1024
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
+    old = stale_files(files, 75, -2, 2)
+    old["disc.json"]["listOk"] = False                                      # the old list stopped: 홈 would say 'stale' with it
+    site = build_site(old)
+    again = how == "disc-older-again"
+    if how == "disc-slow":
+        with open(os.path.join(site, ".delay-disc.json"), "w", encoding="utf-8") as fh:
+            fh.write("4")                                                    # the first disc.json answer comes 4 s late
+    srv, base = serve(site)
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    ctx = R.browser.new_context(**screen, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else (R.outside.append(r.request.url), r.abort()))
+    ctx.add_init_script(init)
+    page = ctx.new_page()
+    page.set_default_timeout(WAIT)
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    asked, logs = [], []
+    page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
+    page.on("console", lambda m: logs.append(m.text))
+    now = dt.datetime.now(KST)
+    if how != "disc-slow":
+        page.clock.install(time=now)                                         # the 10 minutes are moved on by hand
+    page.goto(base + "/app.html?dev=1" + ("" if how == "disc-slow" else "#market"), wait_until="domcontentloaded")
+    home_disc = "() => { const e = document.querySelector('[data-ui-v2=\"home2\"]'); return e ? e.dataset.disc : null; }"
+
+    def back():
+        page.evaluate(HIDE_JS)
+        page.evaluate(SHOW_JS)
+
+    def slow():
+        wait_ready(page)
+        at(page, "home")
+        deadline = time.time() + WAIT / 1000
+        while "disc.json" not in asked and time.time() < deadline:            # the first disc.json request is out (held back)
+            page.wait_for_timeout(50)
+        assert asked.count("disc.json") == 1, asked
+        put_files(site, refetch_files(files))
+        back()                                                               # the new publish goes on screen before that answer
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+        assert page.locator(SCREEN_DL).first.inner_text() == new_line
+        page.wait_for_function(home_disc.replace("return e ? e.dataset.disc : null;", "return !!e && e.dataset.disc === 'ok';"))
+        assert asked.count("disc.json") == 2, asked                          # a second request, after the publish went on screen
+        wait_log(logs, "disc.json loaded for data that is no longer on screen: not used", page)   # the late answer (about 4 s)
+        page.wait_for_timeout(300)
+        # the late answer was the old file (its list stopped): it never replaced the new one on screen
+        assert page.evaluate(home_disc) == "ok" and asked.count("disc.json") == 2, (page.evaluate(home_disc), asked)
+        R.collect(page)
+        co_hash(page, "#stocks/005930/disc")
+        page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.state === 'ok'; }")
+        ds = page.locator('[data-ui-v2="co-disc"]')
+        assert ds.get_attribute("data-stale") == "0" and ds.locator('[data-ui-v2="date-line"]').first.inner_text() == new_line, ds.inner_text()
+        assert asked.count("disc.json") == 2, asked
+        R.collect(page)
+        no_hscroll(page, width)
+
+    def older():
+        dl = page.locator(SCREEN_DL).first
+        dl.wait_for(state="visible")
+        at(page, "market")
+        assert dl.get_attribute("data-stale") == "1"
+        assert "disc.json" not in asked, asked                               # 시장 does not load disc.json
+        put_files(site, refetch_files(files), names=["data.json", "corp.json", "macro.json"])   # the site's disc.json: still the old one
+        back()
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+        if wide:
+            side_tab(page, "home")
+        else:
+            tab(page, TABS["home"])
+            at(page, "home")
+        page.wait_for_function(home_disc.replace("return e ? e.dataset.disc : null;", "return !!e && e.dataset.disc === 'fail';"))
+        assert asked.count("disc.json") == 1, asked                          # loaded once, older than the data: not shown
+        wait_log(logs, "older than the data on screen", page)
+        page.locator('[data-ui-v2="home-disc-fail"]').wait_for(state="visible")    # the filings' failure message, never the old list
+        R.collect(page)
+        back()                                                               # at once: no more try yet (10 minutes)
+        page.wait_for_timeout(1000)
+        assert asked.count("disc.json") == 1, asked
+        if not again:
+            put_files(site, refetch_files(files), names=["disc.json"])      # the site serves the matching disc.json now
+        page.clock.set_system_time(now + dt.timedelta(minutes=11))
+        back()                                                               # 11 minutes on: one more try
+        wait_log(logs, "it loads once more", page)
+        if again:                                                            # still the old file: the failure message stays
+            wait_log(logs, "(it was the one more try: no more)", page)
+            page.wait_for_timeout(300)
+            assert page.evaluate(home_disc) == "fail", page.evaluate(home_disc)
+            page.locator('[data-ui-v2="home-disc-fail"]').wait_for(state="visible")
+        else:
+            page.wait_for_function(home_disc.replace("return e ? e.dataset.disc : null;", "return !!e && e.dataset.disc === 'ok';"))
+        assert asked.count("disc.json") == 2, asked
+        page.clock.set_system_time(now + dt.timedelta(minutes=30))
+        back()                                                               # and no more after that
+        page.wait_for_timeout(1000)
+        assert asked.count("disc.json") == 2, asked                          # never a third request
+        assert page.evaluate(home_disc) == ("fail" if again else "ok"), page.evaluate(home_disc)
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, f"돌아온 화면 {width}", (
+        "disc-slow: 홈의 첫 disc.json 답이 늦는 사이 새 발행이 들어옴 → 늦은 답은 쓰지 않고 다시 받은 것으로 홈 공시 ok" if how == "disc-slow" else
+        "disc-older-again: 한 번 더 받아도 예전 disc.json → 실패 문구 그대로 · 30분 뒤 돌아와도 세 번째 요청 없음" if again else
+        "disc-older: 새 발행 뒤 사이트의 disc.json 이 예전 것 → 홈 공시는 실패 문구 · 10분 뒤 돌아오면 한 번 더 받아 ok · 그 뒤로는 받지 않음"),
+        slow if how == "disc-slow" else older)
+    ctx.close()
+    srv.shutdown()
+
+
+# Watches the page from now on: set when at some moment neither the load-failure message nor a date line is on the page
+# (the loading screen, or a blank one).
+GAP_JS = """() => { window.__gap = false; new MutationObserver(() => {
+  if (!document.querySelector('[data-ui-v2="load-fail"], [data-ui-v2="date-line"]')) window.__gap = true; })
+  .observe(document.body, { childList: true, subtree: true }); }"""
+
+
+def scene_failed_refetch(R, files, width, again):
+    """돌아온 화면 · 첫 불러오기 실패 (리뷰 2026-11-08, 5): 불러오기 실패 문구가 있는 화면도 다시 보이면 한 번 받아요 (data · corp · macro,
+    첫 불러오기와 같은 검사). 이번에는 읽히면 실패 문구 대신 새 데이터 (불러오는 화면을 거치지 않아요), 또 실패하면 실패 문구 그대로 ·
+    console 에 이유 · 곧바로 또 돌아와도 10분 안에는 받지 않아요."""
+    wide = width >= 1024
+    site = build_site(stale_files(files, 75, -2, 2), drop=("data.json",))
+    srv, ctx, page, _ = R.open(site, width, device=pc_device(width) if wide else None)
+    asked, logs = [], []
+    page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
+    page.on("console", lambda m: logs.append(m.text))
+    new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
+
+    def run():
+        see(page, LOAD_FAIL)
+        assert page.locator(SCREEN_DL).count() == 0
+        R.collect(page)
+        page.evaluate(GAP_JS)
+        n0 = len(asked)
+        if not again:
+            put_files(site, refetch_files(files))
+        page.evaluate(HIDE_JS)
+        page.evaluate(SHOW_JS)
+        if again:                                                   # data.json still missing: the failure message stays
+            wait_log(logs, "they still cannot be used", page)
+            page.wait_for_timeout(1200)
+            assert sorted(asked[n0:]) == ["corp.json", "data.json", "macro.json"], asked[n0:]
+            assert page.locator('[data-ui-v2="load-fail"]').count() >= 1 and page.locator(SCREEN_DL).count() == 0
+            n1 = len(asked)
+            page.evaluate(HIDE_JS)
+            page.evaluate(SHOW_JS)
+            page.wait_for_timeout(1200)
+            assert len(asked) == n1, asked[n1:]
+            wait_log(logs, "nothing fetched; the last fetch on a return", page)
+        else:
+            page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+            assert page.locator(SCREEN_DL).first.inner_text() == new_line
+            assert page.locator('[data-ui-v2="load-fail"]').count() == 0
+            assert sorted(asked[n0:]) == ["corp.json", "data.json", "macro.json"], asked[n0:]
+            assert wait_log(logs, "replaces the load-failure message", page) and wait_log(logs, "now shows on every screen", page)
+            n1 = len(asked)
+            page.evaluate(HIDE_JS)                                  # fresh now: nothing more
+            page.evaluate(SHOW_JS)
+            page.wait_for_timeout(1200)
+            assert len(asked) == n1, asked[n1:]
+        assert page.evaluate("() => window.__gap") is False, "the loading screen (or a blank one) showed during the fetch"
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, f"돌아온 화면 {width}", ("failed-again: 첫 불러오기 실패 → 다시 보일 때 한 번 받고 또 실패하면 실패 문구 그대로 · 10분 안에는 다시 받지 않음"
+            if again else "failed: 첫 불러오기 실패 → 다시 보일 때 한 번 받아 새 데이터 (불러오는 화면 없이), 또 돌아와도 받지 않음"), run)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_refetch_drafts(R, files, width):
+    """돌아온 화면 · 만들던 것 (리뷰 2026-11-08, 1): 새 데이터는 만들던 것을 바꿀 수 있는 동안 기다려요.
+    A 포트폴리오 만들기의 후보 고르기에서 새 발행에 고른 한국 후보가 없어도 화면은 그대로 (여섯 종목 모두 고른 채로 · 매수 계획도 여섯 줄 ·
+      멈춤 표시 그대로 · 또 돌아와도 받지 않음). 기준 단계로 돌아가면 그때 새 데이터가 들어오고, 후보는 새 데이터로 다시 골라요 (조용히
+      빠지는 종목 없음).
+    C 가진 종목 넣기의 점검에서 새 발행에 넣은 종목이 없어도 점검은 그대로이고, 매일 점검 시작하기는 두 종목을 모두 저장해요. 그다음에 새
+      데이터가 들어와요."""
+    wide = width >= 1024
+    new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
+
+    def opened():
+        site = build_site(stale_files(files, 75, -2, 2))
+        srv, ctx, page, _ = R.open(site, width, device=pc_device(width) if wide else None)
+        asked, logs = [], []
+        page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
+        page.on("console", lambda m: logs.append(m.text))
+        return site, srv, ctx, page, asked, logs
+
+    def back_in_view(page):
+        page.evaluate(HIDE_JS)
+        page.evaluate(SHOW_JS)
+
+    def stale_line(page):
+        dl = page.locator(SCREEN_DL).first
+        dl.wait_for(state="visible")
+        return dl.get_attribute("data-stale") == "1" and dl.inner_text().startswith(fillp(C["app"]["asOf"], md="10월 30일"))
+
+    site, srv, ctx, page, asked, logs = opened()
+
+    def build_hold():
+        wait_ready(page)
+        to_build_start(page, wide)
+        page.locator('[data-deck="income"]').click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        click_next(page)
+        see(page, C["pick"]["title"])
+        picked = page.eval_on_selector_all("[data-cand][data-picked='1']", "els => els.map((e) => e.dataset.cand)")
+        kr = page.eval_on_selector_all("section[data-market='kr'] [data-cand][data-picked='1']", "els => els.map((e) => e.dataset.cand)")
+        assert len(picked) == 6 and kr, picked
+        gone = kr[0]
+        new = refetch_files(files)
+        new["data.json"]["stocks"] = [s for s in new["data.json"]["stocks"] if s["t"] != gone]   # a picked candidate left data.json
+        put_files(site, new)
+        n0 = len(asked)
+        back_in_view(page)
+        wait_log(logs, "is held while the portfolio builder is on its pick step", page)
+        assert sorted(asked[n0:]) == ["corp.json", "data.json", "macro.json"], asked[n0:]
+        now = page.eval_on_selector_all("[data-cand][data-picked='1']", "els => els.map((e) => e.dataset.cand)")
+        assert now == picked and stale_line(page), now                                # nothing changed under the draft
+        n1 = len(asked)
+        back_in_view(page)                                                            # held: nothing more is fetched
+        page.wait_for_timeout(1000)
+        assert len(asked) == n1 and wait_log(logs, "is already waiting to go on screen", page)
+        click_next(page)                                                              # 매수 계획: still the six, still the old data
+        see(page, C["plan"]["stocks"])
+        assert page.locator("[data-row]").count() == 6 and page.locator(f'[data-row="{gone}"]').count() == 1
+        assert stale_line(page)
+        R.collect(page)
+        page.get_by_role("button", name=C["plan"]["back"]).click()
+        see(page, C["pick"]["title"])
+        assert stale_line(page)
+        page.get_by_role("button", name=PICK_BACK).click()                            # back to the 기준 steps: the new data comes in
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+        assert page.locator(SCREEN_DL).first.inner_text() == new_line
+        wait_log(logs, "held until now, now shows on every screen", page)
+        click_next(page)                                                              # the candidates again, from the new data
+        see(page, C["pick"]["title"])
+        again = page.eval_on_selector_all("[data-cand]", "els => els.map((e) => e.dataset.cand)")
+        assert gone not in again and page.locator("[data-cand][data-picked='1']").count() == 6, (gone, again)
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, f"돌아온 화면 {width}", "A 후보 고르기에서 고른 후보가 새 발행에 없음 → 그대로 (여섯 종목 · 매수 계획 여섯 줄 · 멈춤 표시), 기준 단계로 "
+            "돌아가면 새 데이터 · 후보를 새로 골라요 (조용히 빠지는 종목 없음)", build_hold)
+    ctx.close()
+    srv.shutdown()
+
+    site, srv, ctx, page, asked, logs = opened()
+
+    def import_hold():
+        wait_ready(page)
+        to_build_start(page, wide)
+        page.locator('[data-ui-v2="start-holdings"]').click()
+        at(page, "portfolio/import")
+        for t, q in (("005930", "10"), ("000660", "2")):
+            page.locator('[data-ui-v2="import-search"] input').fill(t)
+            page.locator(f'[data-import-result="{t}"] button').click()
+            row = page.locator(f'[data-import-row="{t}"]')
+            row.wait_for(state="visible")
+            row.locator('input[data-ui-v2="import-qty"]').fill(q)
+        action(page).click()
+        see(page, C["build"]["s1"]["title"])
+        for c in ("value", "value", "div", "div", "stable"):
+            page.locator(f'[data-card="{c}"] [data-ui-v2="card-inc"]').click()
+        action(page).click()
+        page.locator('[data-ui-v2="report"]').wait_for(state="visible")
+        assert page.locator('[data-report-row="000660"]').count() == 1
+        new = refetch_files(files)
+        new["data.json"]["stocks"] = [s for s in new["data.json"]["stocks"] if s["t"] != "000660"]    # a holding left data.json
+        put_files(site, new)
+        n0 = len(asked)
+        back_in_view(page)
+        wait_log(logs, "is held while the holdings import is open", page)
+        assert sorted(asked[n0:]) == ["corp.json", "data.json", "macro.json"], asked[n0:]
+        assert page.locator('[data-report-row="000660"]').count() == 1                # 점검 has no date line: its stale note stays
+        assert page.locator('[data-ui-v2="report-stale"]').count() == 1
+        R.collect(page)
+        page.locator('[data-ui-v2="report-start"]').click()                         # 매일 점검 시작하기: saved with both holdings
+        at(page, "portfolio")
+        held = [h["t"] for h in page.evaluate(STORED_JS)["decks"][-1]["holdings"]]
+        assert sorted(held) == ["000660", "005930"], held
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+        assert page.locator(SCREEN_DL).first.inner_text() == new_line                 # then the new data comes in
+        wait_log(logs, "held until now, now shows on every screen", page)
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, f"돌아온 화면 {width}", "C 가진 종목 넣기 점검에서 넣은 종목이 새 발행에 없음 → 점검 그대로 · 매일 점검 시작하기는 두 종목 모두 저장 · "
+            "그다음 새 데이터", import_hold)
+    ctx.close()
+    srv.shutdown()
+
+
 import random  # noqa: E402  (v19.3c: 무작위 점수 열 가지, 씨앗을 정해 늘 같아요)
 
 
@@ -6669,7 +7199,9 @@ def main():
                    lambda: scene_v193e_company(R, files, 320),
                    lambda: scene_store_version(R, files, 390, False), lambda: scene_store_version(R, files, 390, True),   # 기록 판 고침
                    lambda: scene_fix_notes(R, files, 390), lambda: scene_fix_notes(R, files, 1280),             # 2026-11-08 고치는 중 안내
-                   lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True)):
+                   lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True),
+                   lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280),    # 2026-11-08 돌아온 화면은 한 번 받아요
+                   lambda: scene_refetch_drafts(R, files, 390), lambda: scene_refetch_drafts(R, files, 1280)):  # 만들던 것 위에는 기다려요
             try:
                 fn()
             except Exception as e:
