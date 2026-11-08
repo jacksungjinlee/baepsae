@@ -14,6 +14,8 @@ import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
 import { KR_DIV_TREND, exactData, num } from "./engine.js";
+import { epsFixFor } from "./fix.js";
+import { EpsFixNote } from "./fixnote.jsx";
 
 export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
   const st = builder.settings;
@@ -183,7 +185,7 @@ function PlanRow({ x }) {
 
 // ---------------- 내 투자 규칙 ---------------- (rulesFor: deckcalc.js, shared with the daily-check tests)
 
-function RuleList({ rules, name }) {
+function RuleList({ rules, name, s }) {
   const R = C.plan.rules;
   const line = (x) => {
     const src = x.fy ? fill(C.app.reportYear, { year: x.fy }) : null;
@@ -214,6 +216,8 @@ function RuleList({ rules, name }) {
     return rows.length ? <div style={{ marginTop: SPACE(2) }}><div style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{title}</div>{rows}</div> : null;
   };
   const band = rules.find((x) => x.id === "band");
+  // 2026-11-08 (Jack): a Korean ROE shown here (the ROE floor rule) is from the same net income as PER/EPS (fixnote.jsx)
+  const roeShown = !!R.roeLimit && rules.some((x) => x.id === "roeFloor");
   return (
     <div>
       {section("sell", R.sell)}
@@ -224,6 +228,7 @@ function RuleList({ rules, name }) {
           <RuleLine name={fill(R.bandText, { a: p1(band.bands[0] * 100), b: p1(band.bands[1] * 100), c: p1(band.bands[2] * 100) })} />
         </div>
       )}
+      <EpsFixNote show={epsFixFor(s) && roeShown} />
     </div>
   );
 }
@@ -253,7 +258,7 @@ function Rules({ load, rows, st, ds }) {
                 <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
                   {why ? why : <CardScores list={b} />}
                 </div>
-                <RuleList rules={rulesFor(load, x, st, ds)} name={x.s.nk} />
+                <RuleList rules={rulesFor(load, x, st, ds)} name={x.s.nk} s={x.s} />
               </div>
             </Collapsible>
           );

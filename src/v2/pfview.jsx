@@ -18,6 +18,7 @@ import { subjectParticle } from "./track.js";
 import { MissingNote } from "./tracking.jsx";
 import { avgOf } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
+import { IcrOffLine } from "./fixnote.jsx";
 
 const pct = (w) => Math.round(w * 100);
 // v19.3e: a share shown against its limit. Whole %, but with one decimal (two if needed) whenever the whole number would
@@ -81,6 +82,8 @@ export function RuleTile({ r }) {
         <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", lineHeight: 1.4 })}>{ruleLabel(r)}</span>
         {r.state === "unknown" ? <span data-ui-v2="pf-rule-unknown" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{C.pfr.unknown}</span>
           : detail && <span data-ui-v2="pf-rule-detail" style={tx(SIZE.xs, WEIGHT.bold, r.state === "broken" ? COLOR.watch : COLOR.ok, { display: "block", wordBreak: "keep-all" })}>{detail}</span>}
+        {/* 2026-11-08 (Jack): why 재무 경고 0개 could not be checked, when a Korean holding's 이자보상배율 check is off */}
+        <IcrOffLine show={r.id === "warn" && r.state === "unknown" && !!r.icrOff} />
       </span>
     </div>
   );
