@@ -14,7 +14,7 @@
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
 import { mdOf, kstDate, loadCorpOnce } from "./data.js";
-import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, icrOff, warnEpsFixLate, stmtCurOf, warnStmtCur } from "./repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur } from "./repair.js";
 
 export { icrOff };
 export const FIX_EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.eps
@@ -46,11 +46,11 @@ export function EpsFixLine({ corp, cos, show = true, force = false, style, lang 
 // 봐요. 받는 중이거나 받지 못하면 줄이 있어요 (고쳐졌다고 짐작하지 않아요). -> null (모름) | { live, fixed: Set(코드) }
 let CORP_FIX = null;
 // 받은 corp.json 으로 정하는 상태 (순수): live · fixed(epsIn.b "o" · "s") · notWon(재무제표를 원화가 아닌 통화로 공시한 회사, repair.js
-// stmtCurOf — 숫자가 비어 있고 통화 줄이 이유를 말해요: 줄 없음)
+// stmtNotWon, 읽을 수 없는 코드도 — 숫자가 비어 있어요: 줄 없음)
 export function corpFixState(d) {
   const live = epsBasisLive(d);
   const cos = d && Array.isArray(d.companies) ? d.companies : [];
-  return { live, fixed: new Set(live ? cos.filter(epsInFixed).map((c) => c.t) : []), notWon: new Set(cos.filter((c) => stmtCurOf(c)).map((c) => c.t)) };
+  return { live, fixed: new Set(live ? cos.filter(epsInFixed).map((c) => c.t) : []), notWon: new Set(cos.filter(stmtNotWon).map((c) => c.t)) };
 }
 // 그 칸에 줄이 필요한지: 상태를 모르면(받는 중 · 못 받음) 있어요. 아니면 그 칸의 코드 중 하나라도 고쳐지지 않았고 원화 재무제표인 회사가 있을 때.
 export function epsFixNeedLoaded(st, codes) {

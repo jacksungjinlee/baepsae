@@ -52,10 +52,10 @@ export function epsInFixed(co) {
   return !!co && typeof co === "object" && !!co.epsIn && typeof co.epsIn === "object" && EPS_IN_FIXED.includes(co.epsIn.b);
 }
 // corp: corp.json · co: that company's row in it. true = the PER/EPS line shows for this company.
-// Never for a company whose statements are not in won (stmtCurOf, item 4 below): the re-read blanks its EPS and the rest, it
-// has no epsIn, and the currency line says why; the line would otherwise stay forever with a past date.
+// Never for a company whose statements are not in won (stmtNotWon, item 4 below; readable code or not): the re-read blanks its
+// EPS and the rest, it has no epsIn, and the currency line says why; the line would otherwise stay forever with a past date.
 export function epsFixNeeded(corp, co) {
-  return !stmtCurOf(co) && !(epsBasisLive(corp) && epsInFixed(co));
+  return !stmtNotWon(co) && !(epsBasisLive(corp) && epsInFixed(co));
 }
 
 // The net income (억원) and share count (백만주) on which this company's EPS stands, for the report year fy − i (corp.json
@@ -64,24 +64,22 @@ export function epsFixNeeded(corp, co) {
 //   no epsIn (files before the re-read): eps = total net income ÷ common shares, so ni[i] ÷ shm, exactly as before
 //   epsIn.b "o": owners' net income nio3[i] ÷ epsIn.sh (common + listed preferred shares, a count)
 //   epsIn.b "s": ni[i] ÷ epsIn.sh (separate statements: total and owners' profit are the same)
-//   신종자본증권 (v19.1f review 3): for a company whose EPS has its hybrid-capital payouts taken out (epsIn.hyb > 0), the
-//   re-read writes nio3 as the owners' profit after those payouts (receipt nio3Hyb). "o" already reads nio3; "s" reads nio3
-//   too then (ni is before the payouts: a mixed basis). A year nio3 lacks is missing (never ni).
+//   신종자본증권 (v19.1f review 3): when the annual reports have owners' hybrid-capital payouts, the re-read writes nio3 as
+//   the owners' profit after them, with the payouts as the receipt nio3Hyb [fy, fy−1, fy−2]. "o" already reads nio3; "s"
+//   reads nio3 too when that receipt is there (ni is before the payouts: a mixed basis), and a year nio3 lacks is then
+//   missing (never ni). The receipt decides, not epsIn.hyb (that one can come from the latest four quarters alone, when
+//   the pipeline writes no hybrid-net nio3: a leftover nio3 there is not on EPS's basis, e.g. 예림당 ni[2] 181.2 vs nio3[2]
+//   90.1). Fresh-eyes review of the re-read lines, 2026-11-08.
 //   A year missing on that basis (ni null) is just missing data: the cards say what they always say (자료가 없어요 · no
 //   card), as for a file before the re-read (review of PR #89: 13 companies with a 3-year return miss ni[2] today).
 //   epsIn.b "t", any other value, or no share count: { bad: true } — the card shows no numbers, only the PER/EPS line
 //   (never a mixed basis, never a guess).
 // -> { basis: "today" | "o" | "s", ni, sharesM } (ni null = that year is missing) | { bad: true } | null
 const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-// epsIn.hyb: the hybrid-capital payout taken out of EPS (a number, 억원; written only when there was one). Set = above 0.
-export function epsHybCut(e) {
-  const h = e && typeof e === "object" ? e.hyb : null;
-  return typeof h === "number" ? Number.isFinite(h) && h > 0 : !!h;
-}
-// The yearly profit series EPS stands on, after the re-read: "o", or "s" with hybrid payouts taken out -> nio3; "s" -> ni.
+// The yearly profit series EPS stands on, after the re-read: "o", or "s" with the hybrid receipt nio3Hyb -> nio3; "s" -> ni.
 // e: corp.json epsIn (b "o" or "s"). Shared by epsBase and 2.0's 배당성향 (company.js payout).
 export function epsNiSeries(co, e) {
-  return e.b === "o" || (e.b === "s" && epsHybCut(e)) ? co.nio3 : co.ni;
+  return e.b === "o" || (e.b === "s" && Array.isArray(co.nio3Hyb)) ? co.nio3 : co.ni;
 }
 export function epsBase(co, i) {
   if (!co || typeof co !== "object") return null;
@@ -115,17 +113,18 @@ export const epsPeriod = (co) => periodFrom(co, "epsIn");
 export const bpsPeriod = (co) => periodFrom(co, "bpsIn");
 
 // The 이자보상배율 check is switched off for this company (corp.json flWhy.icr "off"; financial companies never carry it).
-// Not for a company whose statements are not in won (stmtCurOf): no signal is computed for it at all, and the currency line
+// Not for a company whose statements are not in won (stmtNotWon): no signal is computed for it at all, and the currency line
 // says why.
 export function icrOff(co) {
-  return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off" && !stmtCurOf(co);
+  return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off" && !stmtNotWon(co);
 }
 
 // ================= After the re-read: the week's notice and statements not in won (Jack, 2026-11-08) =================
 // 3. For a week from the re-read, 2.0's 홈 and 포트폴리오 carry one notice "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요.
 //    일부 규칙의 결과가 바뀔 수 있어요." ({date} = EPS_FIX_DATE as month-day): only while the corp.json on screen carries
-//    epsBasis "owners" AND today (KST, YYYY-MM-DD) is before EPS_FIX_DATE + EPS_NOTICE_DAYS. Before the marker there is
-//    nothing to announce (the per-company line above says it), and from EPS_FIX_DATE + 7 days it goes by itself.
+//    epsBasis "owners" AND today (KST, YYYY-MM-DD) is from EPS_FIX_DATE to before EPS_FIX_DATE + EPS_NOTICE_DAYS. Before the
+//    marker there is nothing to announce (the per-company line above says it); before the date it names it would read
+//    wrong ("11월 10일부터" on the 9th), and from EPS_FIX_DATE + 7 days it goes by itself.
 // 4. The re-read blanks the statement amounts (매출 · 영업이익 · 순이익 · 자본, PER · PBR · EPS · BPS and their receipts) of a
 //    Korean company whose DART statements are not in won, and writes that currency in corp.json stmtCur ("USD"; absent
 //    otherwise; validate_data.py lets through only a three-letter code other than KRW). Where those numbers would be, both
@@ -145,7 +144,7 @@ export function isoPlusDays(iso, n) {
 // corp: the corp.json on screen · todayIso: today in KST. true = the week's notice shows.
 export function epsNoticeOn(corp, todayIso, date = EPS_FIX_DATE) {
   const end = isoPlusDays(date, EPS_NOTICE_DAYS);
-  return epsBasisLive(corp) && !!end && typeof todayIso === "string" && ISO_RX.test(todayIso) && todayIso < end;
+  return epsBasisLive(corp) && !!end && typeof todayIso === "string" && ISO_RX.test(todayIso) && todayIso >= date && todayIso < end;
 }
 
 // The currency of this company's statements when it is not won (corp.json stmtCur), exactly as written: "USD". null when
@@ -158,6 +157,12 @@ const CUR_NOT = ["KRW", "XXX"];
 export function stmtCurOf(co) {
   const c = co && typeof co === "object" ? co.stmtCur : null;
   return typeof c === "string" && CUR_RX.test(c) && !CUR_NOT.includes(c) ? c : null;
+}
+// The statements are not in won: corp.json stmtCur is there and is not "KRW", readable or not ("XXX" too). This decides
+// everything hidden for such a company (empty parts, untrue reasons, the two being-fixed lines); stmtCurOf only decides
+// whether the currency line can be printed (fresh-eyes review, 2026-11-08: an unreadable code must not switch the hiding off).
+export function stmtNotWon(co) {
+  return !!co && typeof co === "object" && co.stmtCur != null && co.stmtCur !== "KRW";
 }
 const warnedCur = new Set();
 // A stmtCur that cannot be shown: warns once per page, place and company. -> true when it warned (tests).

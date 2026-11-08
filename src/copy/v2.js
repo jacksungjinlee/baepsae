@@ -443,7 +443,7 @@ export const C = {
     // 이자보상배율이 꺼진 회사(corp.json flWhy.icr "off")의 재무 경고마다. flWhy.icr 가 "off" 가 아니면 사라져요.
     icr: "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
     // 다시 읽기가 끝난 뒤 한 주: 홈과 포트폴리오 위쪽에 한 줄. 화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이
-    // EPS_FIX_DATE + 7일 전일 때만 (src/repair.js epsNoticeOn). {date} = EPS_FIX_DATE ("11월 10일"). 미리 보기에는 없어요.
+    // EPS_FIX_DATE 부터 그 + 7일 전까지만 (src/repair.js epsNoticeOn). {date} = EPS_FIX_DATE ("11월 10일"). 미리 보기에는 없어요.
     owners: "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
   },
 

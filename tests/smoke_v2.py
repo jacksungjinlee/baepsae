@@ -7766,7 +7766,7 @@ def reread_open(R, site, width, when, init=None, path="/app.html?dev=1#home"):
 def scene_reread_lines(R, files, width, shots=None):
     """다시 읽은 뒤 (Jack 승인 2026-11-08, DeepL 확인):
     - 홈 · 포트폴리오 위쪽(날짜 줄 바로 밑)에 '{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요.' 한 줄:
-      corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE + 7일 전일 때만. 그날 0시부터 · 표시가 없으면 없어요.
+      corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE 부터 그 + 7일 전까지만. 그날 0시부터 · 표시가 없으면 없어요.
     - 재무제표를 원화가 아닌 통화로 공시한 회사(stmtCur): 회사 페이지 요약(한눈에 칸 위) · 실적 탭 · 가치 탭에 '이 회사는 재무제표를 원화가
       아닌 USD로 공시해서, 실적 숫자는 아직 보여 드리지 않아요.' 한 번씩. 배당 탭 · 다른 회사 · 미국 종목에는 없어요.
     12px 이상 · 가로 스크롤 없음. shots: 스크린샷 폴더 (선택)."""

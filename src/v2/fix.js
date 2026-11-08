@@ -3,21 +3,21 @@
 // whole app reads that one way: load.js resolveLoad calls setEpsBasis(corp) once per load (the way engine.setDataShape
 // works), so a screen that only has a held stock (daily.jsx) knows it too. Until a file is loaded the line is on (a fix is
 // never assumed). Pure; no Korean (src/copy/v2.js C.fix).
-import { EPS_FIX_DATE, epsBasisLive, epsInFixed, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, warnStmtCur } from "../repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsInFixed, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur } from "../repair.js";
 import { kstDate } from "../data.js";
 
 export { EPS_FIX_DATE, icrOff };
 
 let live = false;
 let fixed = new Set();        // codes whose epsIn.b is "o" or "s" (only read when live)
-let notWon = new Set();       // codes whose statements are not in won (repair.js stmtCurOf): never the PER/EPS line
+let notWon = new Set();       // codes whose statements are not in won (repair.js stmtNotWon): never the PER/EPS line
 let hidden = false;           // the example page (app-preview.html, fictional data): neither line (PR #89 review)
 // corp: the loaded corp.json (null when it failed). now: ms (tests). preview: the example page (no lines, no warning).
 export function setEpsBasis(corp, { now, preview = false } = {}) {
   hidden = !!preview;
   live = epsBasisLive(corp);
   fixed = new Set(live && Array.isArray(corp.companies) ? corp.companies.filter(epsInFixed).map((c) => c.t) : []);
-  notWon = new Set(corp && Array.isArray(corp.companies) ? corp.companies.filter((c) => stmtCurOf(c)).map((c) => c.t) : []);
+  notWon = new Set(corp && Array.isArray(corp.companies) ? corp.companies.filter(stmtNotWon).map((c) => c.t) : []);
   if (!preview && corp) warnEpsFixLate(corp, kstDate(now == null ? Date.now() : now), "v2");
   return live;
 }
@@ -40,6 +40,8 @@ export const epsNoticeShown = (load, todayIso) => !hidden && !!load && load.stat
 
 // Statements not in won (repair.js stmtCurOf): the currency code for a Korean stock whose corp.json row carries stmtCur,
 // else null (US stocks and funds never: their figures do not come from DART). s: the data.json row · co: its corp.json row.
+// Statements not in won at all (repair.js stmtNotWon, readable code or not): what decides the hiding on the company page.
+export const stmtNotWonFor = (s, co) => !!s && s.cls === "kr" && stmtNotWon(co);
 export function stmtCurFor(s, co) {
   if (!s || s.cls !== "kr" || !co) return null;
   warnStmtCur(co, "v2");

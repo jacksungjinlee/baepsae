@@ -11,7 +11,7 @@ import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, l
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLine, IcrOffLine, StmtCurLine } from "./fixnote.jsx";
-import { epsBase, epsPeriod, stmtCurOf } from "./repair.js";
+import { epsBase, epsPeriod, stmtNotWon } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1075,7 +1075,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
   // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액 · PER · PBR · EPS 가 비어요.
   // 그 이유는 투자지표의 한 줄(StmtCurLine)이 말하고, '적자이거나 데이터가 없어요' 같은 맞지 않는 이유 · 보이지 않는 숫자의 기간 ·
   // 숫자 없이 빈 칸(3개년 실적 흐름 · 주가는 무엇으로 움직였나)은 보이지 않아요. 글을 새로 쓰지 않고 숨기기만 해요.
-  const cur = !!stmtCurOf(c);
+  const cur = stmtNotWon(c);       // 읽을 수 없는 코드("XXX")여도 숨겨요 (통화 줄은 읽을 수 있을 때만: StmtCurLine)
   const volTxt = c.beta == null ? null : c.beta > 1.15 ? "시장보다 출렁임이 큰 편" : c.beta < 0.85 ? "시장보다 출렁임이 작은 편" : "시장과 비슷하게 움직이는 편";
   const payout = c.dps && c.eps && c.eps > 0 ? c.dps / c.eps * 100 : null;
 

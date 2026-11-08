@@ -6,7 +6,7 @@
 // 이자보상배율 check is switched off (corp.json flWhy.icr "off"). Both are 13 px (SIZE.xs). No Korean here: C.fix.
 // After the re-read (src/repair.js items 3 and 4):
 // EpsOwnersNote: "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요." once near the top of 홈
-// and 포트폴리오, while the corp.json on screen carries epsBasis "owners" and today (KST) is before EPS_FIX_DATE + 7 days
+// and 포트폴리오, while the corp.json on screen carries epsBasis "owners" and today (KST) is from EPS_FIX_DATE to before EPS_FIX_DATE + 7 days
 // (fix.js epsNoticeShown). Never on the example page.
 // StmtCurNote: "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요." once where a
 // Korean company's blanked 실적 · 가치 numbers would be (fix.js stmtCurFor: corp.json stmtCur; never for US stocks).

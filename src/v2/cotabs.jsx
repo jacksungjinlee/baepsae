@@ -32,7 +32,7 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor, stmtCurFor } from "./fix.js";
+import { epsFixFor, stmtNotWonFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
 import { EpsFixNote, StmtCurNote } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
@@ -203,7 +203,7 @@ export function EarnTab({ load, s, onMore }) {
   const r = earnKr(co);
   const rows = annualRows(co);
   // statements not in won (corp.json stmtCur): only the currency line; no toggle, year line, 주가 분해 or 자세히 for amounts not shown
-  const cur = !!stmtCurFor(s, co);
+  const cur = stmtNotWonFor(s, co);
   const opts = [{ value: "rev", label: C.pick.checks.rev }, { value: "op", label: C.plan.rules.opProfit }, { value: "ni", label: E.ni }].filter((o) => o.label);
   const m = opts.some((o) => o.value === metric) ? metric : "op";
   const series = rows ? rows.map((x) => ({ year: x.year, v: x[m] })) : null;
@@ -239,7 +239,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
   const E = C.co.earn;
   const co = load.coByT.get(s.t) || null;
   const rows = annualRows(co);
-  const cur = !!stmtCurFor(s, co);        // statements not in won: only the currency line (no table of – )
+  const cur = stmtNotWonFor(s, co);        // statements not in won: only the currency line (no table of – )
   const cols = [[C.pick.checks.rev, "rev"], [C.plan.rules.opProfit, "op"], [E.ni, "ni"]].filter(([l]) => l);
   const margin = (x, k) => (num(x[k]) != null && num(x.rev) > 0 ? pctText((x[k] / x.rev) * 100) : "–");
   return (
@@ -442,7 +442,7 @@ export function ValueTab({ load, s, store, onMore }) {
   const r = valueTile(s, group);
   const per = num(s.per);
   // statements not in won (corp.json stmtCur): no PER · PBR, so no basis line, date line or 자세히 for them
-  const cur = !!stmtCurFor(s, co);
+  const cur = stmtNotWonFor(s, co);
   const perMed = useMemo(() => indMedian(group, (x) => num(x.per)), [group]);
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;

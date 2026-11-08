@@ -3,7 +3,7 @@
 src/fixnote.jsx.
 
 1. 한 주 동안의 안내 (2.0 홈 · 포트폴리오): "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요."
-   화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE + 7일 전일 때만. {date} = EPS_FIX_DATE ("11월 10일").
+   화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE 부터 그 + 7일 전까지만. {date} = EPS_FIX_DATE ("11월 10일").
    표시가 없으면 · 그날부터 · 미리 보기(app-preview.html)에서는 없어요.
 2. 원화가 아닌 재무제표 (corp.json stmtCur, 예: "USD"): "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직
    보여 드리지 않아요." 2.0 회사 페이지(요약의 한눈에 · 실적 탭 · 가치 탭 · 두 자세히 화면)에 한 번씩, 예전 뱁새 기업분석의 투자지표에
@@ -115,16 +115,19 @@ def test_the_week_notice_rule_reads_the_marker_and_the_date():
         live: [P(-1), D0, P(1), P(6), P(7), P(8), P(30)].map((d) => RP.epsNoticeOn(LIVE, d)),
         off: [null, undefined, {}, { epsBasis: 'total' }, { epsBasis: 'Owners' }, [], 'owners'].map((c) => RP.epsNoticeOn(c, P(1))),
         today: [null, '', 'tomorrow', P(1) + 'T00:00', D0.replace(/-/g, '/')].map((d) => RP.epsNoticeOn(LIVE, d)),
-        other: [RP.epsNoticeOn(LIVE, '2026-12-07', '2026-12-01'), RP.epsNoticeOn(LIVE, '2026-12-08', '2026-12-01'), RP.epsNoticeOn(LIVE, D0, 'soon')],
+        other: [RP.epsNoticeOn(LIVE, '2026-12-07', '2026-12-01'), RP.epsNoticeOn(LIVE, '2026-12-08', '2026-12-01'), RP.epsNoticeOn(LIVE, D0, 'soon'),
+          RP.epsNoticeOn(LIVE, '2026-11-30', '2026-12-01'), RP.epsNoticeOn(LIVE, '2026-12-01', '2026-12-01')],
+        named: [RP.epsNoticeOn(LIVE, '2026-11-09', '2026-11-10'), RP.epsNoticeOn(LIVE, '2026-11-10', '2026-11-10')],
       };""")
     y, mo, d = fix_date()
     assert got["days"] == 7 and got["d0"] == f"{y}-{mo}-{d}"
     assert got["plus"] == ["2026-11-16", "2027-01-04", "2028-03-01", "2027-03-02", "2026-11-08", "2026-11-09"]
     assert got["bad"] == [None] * 7                                       # 없는 날짜 · 다른 꼴은 날짜를 만들지 않아요
-    assert got["live"] == [True, True, True, True, False, False, False]    # EPS_FIX_DATE + 7일 전까지만 (그날부터 없어요)
+    assert got["live"] == [False, True, True, True, False, False, False]   # EPS_FIX_DATE 부터 + 7일 전까지만 (그 전날 · 이레째부터 없어요)
     assert got["off"] == [False] * 7                                      # 정확히 epsBasis "owners" 일 때만
     assert got["today"] == [False] * 5                                    # 오늘을 읽을 수 없으면 없어요
-    assert got["other"] == [True, False, False]                           # 날짜는 EPS_FIX_DATE 하나에서 (바뀌면 따라가요)
+    assert got["other"] == [True, False, False, False, True]              # 날짜는 EPS_FIX_DATE 하나에서 (바뀌면 따라가요)
+    assert got["named"] == [False, True]                                  # 표시가 있어도 11-09 에는 '11월 10일부터'라고 하지 않아요
 
 
 # ── 1. 한 주 동안의 안내: 2.0 의 한 줄 ──
@@ -141,7 +144,8 @@ def test_the_week_notice_line_on_2_0_follows_the_load_on_screen():
       FX.setEpsBasis({ epsBasis: 'owners', companies: [] });              // the page-wide flag back on: the load's own preview mark must hide it
       out = {
         text: FN.epsOwnersText(), copy: C2.fix.owners, line: lines(html), marked: marked(html, 'data-ui-v2', 'eps-owners'), px: px(html, 'data-ui-v2', 'eps-owners'),
-        before: lines(note(live(kstMs(P(-1))), kstMs(P(-1)))), last: lines(note(live(last), last)),
+        before: note(live(kstMs(P(-1), '23:59')), kstMs(P(-1), '23:59')), first: lines(note(live(kstMs(D0, '00:00')), kstMs(D0, '00:00'))),
+        last: lines(note(live(last), last)),
         end: note(live(end), end), utc: note(live(endUtcTrap), endUtcTrap), later: note(live(kstMs(P(30))), kstMs(P(30))),
         noMarker: note(none(t0), t0), preview: note(pv, t0), fail: note({ status: 'fail' }, t0), loading: note({ status: 'loading' }, t0), nul: note(null, t0),
         notOk: note({ status: 'loading', corp: { epsBasis: 'owners', companies: [] } }, t0),          // only a load that is on screen counts
@@ -155,7 +159,8 @@ def test_the_week_notice_line_on_2_0_follows_the_load_on_screen():
     assert got["copy"] == OWNERS and got["text"] == want                   # Jack 의 글자 그대로 · 날짜는 월 · 일 ("11월 10일")
     assert got["line"] == [want] and got["marked"] == 1                     # 한 줄
     assert got["px"] and all(p >= 12 for p in got["px"]), got["px"]          # 12px 바닥 (조용한 안내 줄: 13px)
-    assert got["before"] == [want] and got["last"] == [want]                # 표시가 있으면 그날 전에도 · 이레째 밤 23:59 까지
+    assert got["before"] == ""                                              # 표시가 있어도 그날 전(전날 23:59 KST)에는 없어요
+    assert got["first"] == [want] and got["last"] == [want]                 # 그날 0시(KST)부터 · 이레째 밤 23:59 까지
     assert got["end"] == "" and got["utc"] == "" and got["later"] == ""      # 이레가 지나면 (한국 시간 자정부터, UTC 날짜가 아니에요)
     assert got["noMarker"] == "" and got["preview"] == "" and got["fail"] == "" and got["loading"] == "" and got["nul"] == "" and got["notOk"] == ""
     assert got["shown"] == [True, False, False]
@@ -211,12 +216,16 @@ def test_the_currency_code_rule():
       const warned = cos.map((c) => RP.warnStmtCur(c, 'test'));
       const again = cos.map((c) => RP.warnStmtCur(c, 'test'));
       const KR = { t: 'k', cls: 'kr' }, US = { t: 'AAPL', cls: 'us' }, FUND = { t: 'f', cls: 'bond' };
-      out = { of, warned, again, msgs: warns.slice(w0),
+      out = { of, warned, again, msgs: warns.slice(w0), notWon: cos.map(RP.stmtNotWon),
+        notWonFor: [FX.stmtNotWonFor(KR, { stmtCur: 'XXX' }), FX.stmtNotWonFor(US, { stmtCur: 'USD' }), FX.stmtNotWonFor(KR, { stmtCur: 'KRW' })],
         for: [FX.stmtCurFor(KR, { stmtCur: 'USD' }), FX.stmtCurFor(US, { stmtCur: 'USD' }), FX.stmtCurFor(FUND, { stmtCur: 'USD' }), FX.stmtCurFor(KR, {}),
           FX.stmtCurFor(KR, null), FX.stmtCurFor(null, { stmtCur: 'USD' }), FX.stmtCurFor({ t: 'k' }, { stmtCur: 'USD' })],
         text: FN.stmtCurText(KR, { stmtCur: 'USD' }), textUs: FN.stmtCurText(US, { stmtCur: 'USD' }), copy: C2.co.stmtCur, old: OF.FIX_STMT_CUR,
         oldText: OF.stmtCurLineText({ t: 'k', stmtCur: 'EUR' }), oldNone: OF.stmtCurLineText({ t: 'k' }) };""")
     assert got["of"] == ["USD", "JPY", None, None, None, None, None, None, None, None, None, None]   # 세 글자 대문자 코드, KRW 는 아니에요
+    # 숨기는 것은 stmtCur 가 있고 KRW 가 아니면 (읽을 수 없어도): 통화 줄을 쓸 수 있는지(stmtCurOf)와 따로예요 (fresh-eyes 리뷰, 2026-11-08)
+    assert got["notWon"] == [True, True, False, True, True, True, True, False, False, False, False, True], got["notWon"]
+    assert got["notWonFor"] == [True, False, False]                          # 한국 종목만
     assert got["warned"] == [False, False, True, True, True, True, True, False, False, False, False, True]   # 쓸 수 없는 값은 console 에 크게
     assert got["again"] == [False] * 12                                     # 한 번만
     assert all("!!" in m and "stmtCur" in m for m in got["msgs"]), got["msgs"]
@@ -418,58 +427,68 @@ def test_no_interest_paid_company_on_every_screen():
 
 
 
-# ── 신종자본증권 (DART 다시 읽기 v19.1f 리뷰 3): EPS 에서 분배를 뺀 회사는 nio3 이 분배를 뺀 주주 몫 순이익 ──
-# epsIn.hyb (그 기간에 뺀 분배, 억원)가 있으면 "s"(별도 재무제표)도 nio3 을 읽어요 (ni 는 분배 전이라 기준이 섞여요). 그해 nio3 이
-# 없으면 자료가 없는 것 (ni 로 대신하지 않아요). "o" 는 원래 nio3. hyb 가 없거나 0 이면 예전 그대로 ("s" 는 ni).
+# ── 신종자본증권 (DART 다시 읽기 v19.1f 리뷰 3): 사업보고서에 주주 몫 분배가 있으면 nio3 은 분배를 뺀 주주 몫 순이익 ──
+# 파이프라인은 그때만 nio3 을 바꾸고 영수증 nio3Hyb (그해 분배 [fy, fy−1, fy−2])를 남겨요. 그 영수증이 있으면 "s"(별도 재무제표)도 nio3 을
+# 읽어요 (ni 는 분배 전이라 기준이 섞여요). 그해 nio3 이 없으면 자료가 없는 것 (ni 로 대신하지 않아요). 영수증이 없으면 "s" 는 ni 그대로:
+# epsIn.hyb 는 최근 4개 분기에서만 나올 수도 있어서 기준을 정하지 않아요 (fresh-eyes 리뷰, 2026-11-08 · 남은 nio3 은 EPS 기준이 아니에요,
+# 예: 예림당 ni[2] 181.2 · nio3[2] 90.1). "o" 는 원래 nio3.
 def test_hybrid_payouts_put_both_ends_on_the_owners_net_profit():
     sam = fixture("corp.json")
     sam = next(c for c in sam["companies"] if c["t"] == "005930")
     sh = round(sam["shm"] * 1e6) + 815974664
     ni_ttm = 450000.0
     net3 = [round(v - 3000.0, 1) for v in sam["ni"]]                      # 분배를 뺀 순이익 (지어낸 값: 해마다 3,000억)
+    dist3 = [3000.0, 3000.0, 3000.0]
     own3 = [442609.56, 336213.63, 144734.01]
-    def shape(b, hyb=None, nio3=None, **kw):
+    def shape(b, hyb=None, nio3=None, rcpt=None, **kw):
         e = {"ni": ni_ttm, "b": b, "p": "2026.2Q", "sh": sh, **({"hyb": hyb} if hyb is not None else {})}
         out = {**sam, "epsIn": e, "eps": round(ni_ttm * 1e8 / sh), "cash3": [111079.06, 98107.67, 98094.38], **kw}
         if nio3 is not None:
             out["nio3"] = nio3
+        if rcpt is not None:
+            out["nio3Hyb"] = rcpt
         return out
-    shapes = {"sHyb": shape("s", 3000.0, net3), "sNoHyb": shape("s", None, net3), "sHyb0": shape("s", 0, net3), "sHybNeg": shape("s", -5.0, net3),
-              "sHybTrue": shape("s", True, net3), "sHybNoNio3": shape("s", 3000.0, None), "sHybThenMissing": shape("s", 3000.0, net3[:2] + [None]),
-              "oHyb": shape("o", 3000.0, own3), "oNoHyb": shape("o", None, own3)}
+    shapes = {
+        "sRcpt": shape("s", 3000.0, net3, dist3),                        # 영수증 있음: nio3
+        "sRcptNoHyb": shape("s", None, net3, dist3),                     # 영수증이 정해요 (epsIn.hyb 없어도 nio3)
+        "sHybNoRcpt": shape("s", 3000.0, None),                          # 최근 4개 분기에만 분배: 영수증 없음 → ni (흑자 회사에 '자료가 없어요' 아님)
+        "sLeftover": shape("s", None, [442609.56, 336213.63, 90.1], ni=sam["ni"][:2] + [181.2]),   # 영수증 없이 남은 nio3 → ni (예림당 꼴)
+        "sPlain": shape("s"),                                            # 분배 없음: 예전 그대로 ni
+        "sRcptNoNio3": shape("s", 3000.0, None, dist3),                  # 영수증은 있는데 nio3 없음 → 자료가 없어요 (ni 로 대신하지 않아요)
+        "sRcptThenMissing": shape("s", 3000.0, net3[:2] + [None], dist3),
+        "oRcpt": shape("o", 3000.0, own3, dist3), "oNoRcpt": shape("o", None, own3)}
     got = run("""
       B.E.setDataShape({ divCheck: { v: 1 } });
       out = Object.fromEntries(Object.entries(SHAPES).map(([k, co]) => {
         const s = { t: co.t, cls: 'kr', price: co.price, cap: co.cap, dps: 1668.0, dps3a: [1668.0, 1446.0, 1444.0], dyt: 0.74, fy: 2025 };
-        return [k, { cut: RP.epsHybCut(co.epsIn), b0: RP.epsBase(co, 0), b2: RP.epsBase(co, 2), d: B.K.decompose(co), old: OLD.decomposeReturn(co),
+        return [k, { b0: RP.epsBase(co, 0), b2: RP.epsBase(co, 2), d: B.K.decompose(co), old: OLD.decomposeReturn(co),
           g: B.K.impliedGrowth(s, co), past: B.K.pastNiGrowth(co), pay: B.K.payout(s, co) }];
       }));""", SHAPES=shapes)
-    cut = {k: v["cut"] for k, v in got.items()}
-    assert cut == {"sHyb": True, "sNoHyb": False, "sHyb0": False, "sHybNeg": False, "sHybTrue": True, "sHybNoNio3": True, "sHybThenMissing": True,
-                   "oHyb": True, "oNoHyb": False}, cut
-    x = got["sHyb"]                                                          # "s" + 분배: 두 끝 모두 분배를 뺀 순이익 (nio3)
-    assert x["b0"] == {"basis": "s", "ni": net3[0], "sharesM": sh / 1e6} and x["b2"]["ni"] == net3[2], (x["b0"], x["b2"])
-    assert abs(x["d"]["epsThen"] - net3[2] * 1e8 / sh) < 1e-9 and abs(x["old"]["epsThen"] - net3[2] * 1e8 / sh) < 1e-9
-    assert x["g"]["ni0"] == net3[0] and abs(x["pay"]["pct"] - 111079.06 / net3[0] * 100) < 1e-9 and x["pay"]["basis"] == "s"
-    assert got["sHybTrue"]["b2"]["ni"] == net3[2]
-    for k in ("sNoHyb", "sHyb0", "sHybNeg"):                                # 분배가 없으면 예전 그대로: ni
+    for k in ("sRcpt", "sRcptNoHyb"):                                        # 두 끝 모두 분배를 뺀 순이익 (nio3)
+        x = got[k]
+        assert x["b0"] == {"basis": "s", "ni": net3[0], "sharesM": sh / 1e6} and x["b2"]["ni"] == net3[2], (k, x["b0"], x["b2"])
+        assert abs(x["d"]["epsThen"] - net3[2] * 1e8 / sh) < 1e-9 and abs(x["old"]["epsThen"] - net3[2] * 1e8 / sh) < 1e-9, k
+        assert x["g"]["ni0"] == net3[0] and abs(x["pay"]["pct"] - 111079.06 / net3[0] * 100) < 1e-9 and x["pay"]["basis"] == "s", k
+    for k in ("sHybNoRcpt", "sPlain"):                                       # 영수증이 없으면 ni (숫자가 있어요)
         y = got[k]
         assert y["b0"]["ni"] == sam["ni"][0] and y["b2"]["ni"] == sam["ni"][2], (k, y["b0"], y["b2"])
         assert abs(y["d"]["epsThen"] - sam["ni"][2] * 1e8 / sh) < 1e-9 and y["g"]["ni0"] == sam["ni"][0], k
-        assert abs(y["pay"]["pct"] - 111079.06 / sam["ni"][0] * 100) < 1e-9, k
-    # nio3 이 없으면 자료가 없는 것 (ni 로 대신하지 않아요): 늘 하던 대로 '자료가 없어요' · 카드 없음
-    z = got["sHybNoNio3"]
+        assert abs(y["pay"]["pct"] - 111079.06 / sam["ni"][0] * 100) < 1e-9 and y["d"] != {"why": "missing"}, k
+    lo = got["sLeftover"]                                                    # 남은 nio3 (90.1) 이 아니라 ni (181.2)
+    assert lo["b2"]["ni"] == 181.2 and abs(lo["d"]["epsThen"] - 181.2 * 1e8 / sh) < 1e-9, lo["b2"]
+    z = got["sRcptNoNio3"]                                                   # 영수증은 있는데 nio3 이 없으면: 늘 하던 대로 '자료가 없어요' · 카드 없음
     assert z["b0"]["ni"] is None and z["b2"]["ni"] is None and z["d"] == {"why": "missing"} and z["old"] is None and z["pay"] is None, z
     assert z["g"].get("ni0") is None, z["g"]
-    w = got["sHybThenMissing"]
+    w = got["sRcptThenMissing"]
     assert w["b0"]["ni"] == net3[0] and w["b2"]["ni"] is None and w["d"] == {"why": "missing"} and w["old"] is None and w["past"] is None
-    for k in ("oHyb", "oNoHyb"):                                            # "o" 는 원래 nio3 (그대로)
+    for k in ("oRcpt", "oNoRcpt"):                                          # "o" 는 원래 nio3 (그대로)
         assert got[k]["b0"]["ni"] == own3[0] and got[k]["b2"]["ni"] == own3[2] and got[k]["g"]["ni0"] == own3[0], k
 
 
 def test_an_unreadable_currency_code_shows_no_currency_line():
     """파이프라인은 읽을 수 없는 통화 이름에 stmtCur "XXX" (ISO 의 '통화 없음')를 써요. '원화가 아닌 XXX로'라고 말하지 않아요: 통화 줄 없음,
-    console 에 크게 한 번 (숫자는 비어 있는 그대로). 숨기는 것도 통화 줄이 있을 때만이라 예전 화면 그대로예요."""
+    console 에 크게 한 번 (숫자는 비어 있는 그대로). 그래도 원화가 아닌 재무제표라 숨기는 것은 같아요 (fresh-eyes 리뷰, 2026-11-08):
+    '자료가 없어요' 칸 · 맞지 않는 이유 · 빈 칸 · 고치는 중 두 줄 · 성적표의 '적자이거나 재무 데이터가 아직 없어요.'가 없어요."""
     data, corp = fixture("data.json"), fixture("corp.json")
     blank_stmt_cur(data, corp, cur="XXX")
     got = run("""
@@ -483,17 +502,26 @@ def test_an_unreadable_currency_code_shows_no_currency_line():
       const v2warns = warns.slice(w0).filter((m) => m.includes('stmtCur'));
       out = { of: RP.stmtCurOf({ stmtCur: 'XXX' }), v2: marked(pages, 'data-ui-v2', 'stmt-cur'), xxx: lines(pages + old).filter((l) => l.includes('XXX')),
         tiles: [...renderToStaticMarkup(h(CO.Company, { load, store, setStoreData() {}, pad: 0, code: STMT_T, ctab: null, disc: null, nav })).matchAll(/data-ui-v2="co-tile" data-topic="([a-z]+)"/g)].map((m) => m[1]),
-        old: marked(old, 'data-fix', 'stmt-cur'), oldCaption: lines(old).includes('적자이거나 데이터가 없어요'), v2warns, all: warns.slice(w0).filter((m) => m.includes('stmtCur')).length };""",
+        old: marked(old, 'data-fix', 'stmt-cur'), oldCaption: lines(old).includes('적자이거나 데이터가 없어요'), v2warns, all: warns.slice(w0).filter((m) => m.includes('stmtCur')).length,
+        earnSeg: marked(renderToStaticMarkup(h(CO.Company, { load, store, setStoreData() {}, pad: 0, code: STMT_T, ctab: 'earn', disc: null, nav })), 'data-ui', 'segmented'),
+        oldSections: lines(old).filter((l) => l === '3개년 실적 흐름' || l === '주가는 무엇으로 움직였나'), oldFix: marked(old, 'data-fix', 'eps') + marked(old, 'data-fix', 'icr'),
+        card: ['ko', 'en'].map((lang) => lines(renderToStaticMarkup(h(SH.ScoreCard, { c: CORP.companies.find((x) => x.t === STMT_T), sectors: CORP.sectors, corp: CORP,
+          onOpenCorp() {}, onQuickDiag() {}, lang, asOf: { date: CORP.pxDate, publishedAt: CORP.publishedAt } })))),
+        fixFor: FX.epsFixFor({ t: STMT_T, cls: 'kr' }) };""",
               DATA=data, CORP=corp, STMT_T=STMT_T)
     assert got["of"] is None and got["v2"] == 0 and got["old"] == 0 and got["xxx"] == [], got   # 'XXX' 라는 글이 화면에 없어요
-    assert got["tiles"] == ["earn", "value", "div", "risk"] and got["oldCaption"] is True        # 통화 줄이 없으면 숨기지도 않아요 (예전 그대로)
+    assert got["tiles"] == ["div", "risk"] and got["oldCaption"] is False and got["earnSeg"] == 0  # 줄은 없어도 숨기는 것은 같아요
+    assert got["oldSections"] == [] and got["oldFix"] == 0 and got["fixFor"] is False
+    ko, en = got["card"]
+    assert "적자이거나 재무 데이터가 아직 없어요." not in ko and not any("XXX" in l for l in ko), ko
+    assert "Loss-making or no financial data yet." not in en and not any("XXX" in l for l in en), en
     assert len(got["v2warns"]) == 2 and all("!!" in m and '"XXX"' in m for m in got["v2warns"]), got["v2warns"]   # 2.0 · 예전 뱁새 한 번씩
 
 
 
 # ── 원화가 아닌 재무제표 회사에는 고치는 중 두 줄이 없어요 (코디네이터, 2026-11-08) ──
 # 그런 회사는 epsIn 이 없어서 'PER과 EPS는 … {date}에 바뀔 수 있어요.'가 날짜가 지나도 남을 뻔했어요. 숫자는 비어 있고 통화 줄이 이유를
-# 말하니 PER · EPS 줄도, 이자보상배율 줄도 없어요 (2.0 · 예전 뱁새). 읽을 수 없는 코드("XXX" 등)는 stmtCur 가 없는 것과 같아요.
+# 말하니 PER · EPS 줄도, 이자보상배율 줄도 없어요 (2.0 · 예전 뱁새). 읽을 수 없는 코드("XXX")도 원화가 아니라 같아요 (통화 줄만 없어요).
 def test_stmt_cur_companies_never_show_the_being_fixed_lines():
     got = run("""
       const OFF = { flWhy: { icr: 'off' } };
@@ -513,11 +541,11 @@ def test_stmt_cur_companies_never_show_the_being_fixed_lines():
         notWon: [...st.notWon],
         old: [renderToStaticMarkup(h(OF.EpsFixLine, { corp: { companies: COS }, cos: [A] })), lines(renderToStaticMarkup(h(OF.EpsFixLine, { corp: { companies: COS }, cos: [N] }))).length,
           renderToStaticMarkup(h(OF.IcrOffLine, { co: A })), lines(renderToStaticMarkup(h(OF.IcrOffLine, { co: N }))).length] };""")
-    assert got["needNow"] == [False, True, True] and got["needLive"] == [False, True, True], got   # USD: 없음 · XXX 는 없는 것과 같아요
-    assert got["now"] == [False, True, True] and got["live"] == [False, True, True]
+    assert got["needNow"] == [False, False, True] and got["needLive"] == [False, False, True], got  # USD · XXX(읽을 수 없어도 원화가 아니에요): 없음
+    assert got["now"] == [False, False, True] and got["live"] == [False, False, True]
     assert got["any"] == [False, True] and got["noteA"] == "" and got["noteN"] == 1
-    assert got["icr"] == [False, True, True] and got["icrShown"] == [False, True, True]
-    assert got["loaded"] == [False, True, True, False, True] and got["notWon"] == ["000010"]       # 받기 전에는 줄이 있어요 (짐작하지 않아요)
+    assert got["icr"] == [False, False, True] and got["icrShown"] == [False, False, True]
+    assert got["loaded"] == [False, False, True, False, True] and got["notWon"] == ["000010", "000020"]   # 받기 전에는 줄이 있어요 (짐작하지 않아요)
     assert got["old"][0] == "" and got["old"][1] == 1 and got["old"][2] == "" and got["old"][3] == 1
 
 
