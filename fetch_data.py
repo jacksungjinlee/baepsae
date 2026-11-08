@@ -972,6 +972,7 @@ class DartClient:
         self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
         self.entries, self.meta = {}, {}
         self.carried = 0                     # v19.1f: 옛 버전 캐시에서 옮긴 업종 코드 항목 수 (adopt_carry)
+        self.remove_after_save = []          # v19.1f: 새 캐시를 처음 저장한 뒤에 지울 옛 캐시 파일 (그 전에 멈추면 다시 실행이 또 옮겨 써요)
         self._load()
         self.started_empty = not self.entries      # v19.1b: 빈 캐시로 시작 = 전체 DART 실행 (호출 수 어림을 로그로 남겨요)
         # v17.5.3: 정해진 시각 실행은 하루 여러 번이에요. 캐시가 비었거나(없음·읽지 못함·형식이 다름) 처음부터 조회하면
@@ -1019,6 +1020,13 @@ class DartClient:
             with gzip.open(tmp, "wt", encoding="utf-8") as f:
                 json.dump(js, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             os.replace(tmp, self.path)
+            while self.remove_after_save:     # v19.1f: 새 캐시가 저장됐으니 옛 캐시 파일을 지워요 (캐시 폴더에 실려 가지 않게)
+                old = self.remove_after_save.pop()
+                try:
+                    os.remove(old)
+                    log(f"· 새 DART 캐시를 처음 저장해 옛 캐시 파일을 지웠어요 ({old})")
+                except FileNotFoundError:
+                    pass
 
     def _request(self, endpoint, params, timeout):
         """HTTP 응답, 또는 못 받으면 None (get · get_zip 이 같이 써요). 키는 params 에만 넣고 어디에도 남기지 않아요.
@@ -1499,6 +1507,29 @@ _INTEREST_PAID_NAME = re.compile(r"이자(의)?(지급|지출|납부)")
 
 def interest_paid_rows(rows):
     """현금흐름표에서 이자 지급 줄들 (위 규칙, 같은 줄이 두 번 나와도 한 번). (순수 함수)"""
+    by_id, loose = _interest_paid_parts(rows)
+    seen, out = set(), []
+    for r in (by_id or loose):
+        k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def interest_paid_dropped(rows):
+    """코드가 있는 이자 지급 줄이 있어 더하지 않은, 코드 없는 이자 지급 줄 수 (코드 줄과 이름 · 금액(부호 무시)이 같은 줄은 같은 줄이라
+    빼고 셈). 로그만 — 리스 이자처럼 따로 적은 지급이면 이자가 작게 잡혀 이자보상배율이 커 보일 수 있어서 시험 실행에서 재요. (순수 함수)"""
+    by_id, loose = _interest_paid_parts(rows)
+    if not by_id:
+        return 0
+    amt = lambda r: abs(_num(r.get("thstrm_amount")) or 0.0)
+    coded = {(acct_name(r.get("account_nm")), amt(r)) for r in by_id}
+    return len({(acct_name(r.get("account_nm")), amt(r)) for r in loose} - coded)
+
+
+def _interest_paid_parts(rows):
+    """(표준 코드 이자 지급 줄들, 이름으로 고른 코드 없는 이자 지급 줄들) — 규칙은 위 주석."""
     cf = [r for r in rows if (r.get("sj_div") or "").strip() == "CF"]
 
     def received(n):
@@ -1514,13 +1545,7 @@ def interest_paid_rows(rows):
              and _INTEREST_PAID_NAME.search(acct_name(r.get("account_nm")))
              and "미지급" not in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
              and "신종자본" not in acct_name(r.get("account_nm"))]
-    seen, out = set(), []
-    for r in (by_id or loose):
-        k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
-        if k not in seen:
-            seen.add(k)
-            out.append(r)
-    return out
+    return by_id, loose
 
 
 def interest_paid(rows, value):
@@ -1626,7 +1651,8 @@ def parse_dart_list(rows):
     cap = parse_capital(rows)
     if cap:
         out["_cap"] = cap
-    out["_inc"] = {"src": src, **({"old": old_diff} if old_diff else {})}
+    iec_drop = interest_paid_dropped(rows)        # v19.1f: 코드 줄 옆에서 더하지 않은 코드 없는 이자 지급 줄 수 (로그만)
+    out["_inc"] = {"src": src, **({"old": old_diff} if old_diff else {}), **({"iecDrop": iec_drop} if iec_drop else {})}
     return out
 
 
@@ -1788,6 +1814,8 @@ def parse_dart_quarter(rows):
     rev, op, ni, nio = got["rev"], got["op"], got["ni"], got["nio"]
     eqo = owners_equity(rows, lambda r: _num(r.get("thstrm_amount")))
     iec = interest_paid(rows, _ytd)
+    if interest_paid_dropped(rows):
+        _inc_seen("q:iecDrop")                   # v19.1f: 분기·반기도 같은 수를 로그로 (회사 이름은 사업보고서 쪽에서)
     if rev is None and ni is None and eq is None:
         return None
     return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie), "iec": ek(iec),
@@ -1946,6 +1974,12 @@ def income_log(inc_by):
     log(f"{'  !! ' if n_old else '· '}v19.1f 전 이름 규칙과 올해 값이 다른 손익 줄: {n_old:,}"
         + "".join(f" · {INC_KO[k]} {len(v):,}곳 ({', '.join(v[:8])}{'…' if len(v) > 8 else ''})" for k, v in old.items())
         + (" — 표준 코드 줄을 썼어요. 시험 실행에서 값을 확인해요" if n_old else ""))
+    drop = [f"{t} {nk}".strip() + f"({inc['iecDrop']})" for t, (nk, inc, _) in sorted(inc_by.items())
+            if (inc or {}).get("iecDrop")]
+    log(f"{'  !! ' if drop else '· '}코드가 있는 이자 지급 줄 옆에서 더하지 않은 코드 없는 이자 지급 줄이 있는 곳 (사업보고서 · 로그만, "
+        f"규칙은 그대로 — 따로 적은 리스 이자 같은 지급이면 이자보상배율이 커 보일 수 있어요): {len(drop):,}"
+        + (f" ({', '.join(drop[:20])}{'…' if len(drop) > 20 else ''})" if drop else "")
+        + f" · 분기·반기 보고서 {INC_SEEN['q:iecDrop']:,}건 (이번 실행에서 받은 것)")
     log(f"{'  !! ' if none_at_all else '· '}재무제표는 있는데 매출·영업이익·순이익을 하나도 못 읽은 곳: {len(none_at_all):,}"
         + (f" ({', '.join(none_at_all[:15])}{'…' if len(none_at_all) > 15 else ''}) — 재무상태표 값은 남겨요" if none_at_all else ""))
     return none_at_all
@@ -5187,14 +5221,19 @@ def main():
     fin_map, client, ksic = {}, None, {}
     # v19.1b: v2 캐시가 없던 첫 실행은 워크플로가 v1 폴더를 받아요(미국 상세 정보 보관본을 이어 쓰려고). 옛 DART 파일은 읽지 않으니
     # 지워서 v2 캐시에 실려 가지 않게 해요.
-    carry = None
+    carry, keep_v2 = None, None
     for old_name in ("dart-v1.json.gz", "dart-v2.json.gz"):      # v19.1f: v2 파일도 (v3 부터 새로 받아요)
         legacy = os.path.join(os.path.dirname(DART_CACHE_PATH) or ".", old_name)
         if os.path.abspath(legacy) != os.path.abspath(DART_CACHE_PATH) and os.path.exists(legacy):
             if old_name == "dart-v2.json.gz":
-                carry = read_carry(legacy)     # v19.1f: 해석과 상관없는 업종 코드 · 기업코드 목록만 옮겨요 (지우기 전에 읽어요)
+                # v19.1f: 해석과 상관없는 업종 코드 · 기업코드 목록만 옮겨요. v2 파일은 v3 캐시를 처음 저장한 뒤에 지워요 (리뷰 2026-11-08:
+                # 그 전에 실행이 멈추면 다시 실행이 또 옮겨 쓸 수 있게 — 아니면 업종 코드 약 2,400회를 다시 받아요)
+                carry, keep_v2 = read_carry(legacy), legacy
+                log(f"· 옛 DART 캐시 파일 {legacy}: 업종 코드만 옮기고 재무제표·배당 항목은 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)"
+                    " — 새 캐시를 처음 저장하면 지워요")
+                continue
             os.remove(legacy)
-            log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 재무제표·배당 항목은 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
+            log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
     if dart_mode == "off":
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
@@ -5203,6 +5242,11 @@ def main():
             n_carry = adopt_carry(client, carry)
             log(f"· 옛 v2 캐시에서 옮긴 업종 코드 항목 {n_carry:,}건 (읽은 {len(carry[0]):,}건 · 기업코드 목록 "
                 f"{'옮김' if 'corpMap' in carry[1] else '없음'}) — 업종 코드는 보관 기간이 남은 것만 다시 받지 않아요")
+        if keep_v2:
+            client.remove_after_save.append(keep_v2)
+    if keep_v2 and client is None and os.path.exists(keep_v2):
+        os.remove(keep_v2)                # DART 없이 도는 실행: 옮길 곳이 없어 예전처럼 바로 지워요
+        log(f"· 옛 DART 캐시 파일을 지웠어요 ({keep_v2}) — 이번 실행은 DART 를 쓰지 않아요")
         kr, fin_map = ph.run("DART", enrich_with_dart, kr, client, kmeta.get("_prefShares") or {})
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:

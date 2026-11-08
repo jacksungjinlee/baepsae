@@ -582,8 +582,42 @@ def test_industry_codes_and_the_corp_map_carry_over_from_the_v2_cache(tmp_path, 
     assert F.read_carry(str(tmp_path / "none.json.gz")) is None
     import inspect
     src = inspect.getsource(F.main)
-    assert src.find("carry = read_carry(legacy)") < src.find("os.remove(legacy)") < src.find("adopt_carry(client, carry)")
+    i = src.find("carry, keep_v2 = read_carry(legacy), legacy")
+    assert 0 < i < src.find("adopt_carry(client, carry)") < src.find("client.remove_after_save.append(keep_v2)")
     assert "ksic=client.started_empty and not client.carried" in inspect.getsource(F.enrich_with_dart)
+
+
+def test_the_v2_file_is_kept_until_the_v3_cache_has_been_saved_once(tmp_path, monkeypatch):
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)
+    old = tmp_path / "dart-v2.json.gz"
+    write_cache(old, 2, {"C1|company": {"st": "000", "at": "2026-11-01", "d": {"induty": "264"}}})
+    c = F.DartClient("k", today=dt.date(2026, 11, 8), path=str(tmp_path / "dart-v3.json.gz"))
+    F.adopt_carry(c, F.read_carry(str(old)))
+    c.remove_after_save.append(str(old))
+    real_dump = json.dump
+    monkeypatch.setattr(F.json, "dump", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        c.save()                                                           # 첫 저장이 실패하면 (실행이 멈추면)
+    assert old.exists()                                                    # v2 는 남아 다시 실행이 또 옮겨 써요
+    assert F.read_carry(str(old))[0] == {"C1|company": {"st": "000", "at": "2026-11-01", "d": {"induty": "264"}}}
+    monkeypatch.setattr(F.json, "dump", real_dump)
+    c.save()
+    assert not old.exists() and (tmp_path / "dart-v3.json.gz").exists() and c.remove_after_save == []
+    c.save()                                                               # 두 번째 저장은 아무것도 지우지 않아요
+
+
+def test_dropped_uncoded_interest_lines_are_counted_by_name(capsys):
+    base = BS + [r("IS", "매출액", "ifrs-full_Revenue", 1e11),
+                 r("CF", "이자의 지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", -3e9)]
+    lease = base + [r("CF", "리스부채 이자의 지급", NO_ID, -1e9), r("CF", "이자의 지급", NO_ID, 3e9)]   # 같은 이름·금액 줄은 같은 줄
+    out = F.parse_dart_list(lease)
+    assert out["_fin"]["iec"] == 30.0 and out["_inc"]["iecDrop"] == 1        # 규칙은 그대로 (코드 줄만) · 버린 줄 1개를 세요
+    assert "iecDrop" not in F.parse_dart_list(base)["_inc"]
+    assert F.interest_paid_dropped(lease) == 1 and F.interest_paid_dropped(base) == 0
+    F.income_log({"000100": ("가", out["_inc"], True), "000200": ("나", {"src": {"rev": "id"}}, True)})
+    assert "더하지 않은 코드 없는 이자 지급 줄이 있는 곳 (사업보고서 · 로그만" in capsys.readouterr().out
+    F.income_log({"000100": ("가", out["_inc"], True)})
+    assert ": 1 (000100 가(1))" in capsys.readouterr().out
 
 
 def test_ev_adds_minority_interest_and_uses_the_full_listing_for_preferred_caps(monkeypatch):

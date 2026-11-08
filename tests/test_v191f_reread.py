@@ -145,7 +145,7 @@ def test_cash_interest_paid_adds_every_paid_line_as_a_positive_amount():
     assert F.parse_dart_list(NETMARBLE)["_fin"]["iec"] == eok(63673067845)          # 음수로 적힌 수취도 빼요
 
 
-def test_lines_without_a_standard_code_are_added_unless_they_repeat_a_coded_line():
+def test_lines_without_a_standard_code_are_used_only_when_no_coded_interest_paid_line_exists():
     loose = BS + [row("IS", "매출액", "ifrs-full_Revenue", 1e11), row("CF", "이자의 지급", "-표준계정코드 미사용-", -2e9),
                   row("CF", "이자수익의 수취", "-표준계정코드 미사용-", 5e9), row("CF", "신종자본증권 이자 지급", "-표준계정코드 미사용-", 4e9)]
     assert F.parse_dart_list(loose)["_fin"]["iec"] == 20.0
@@ -153,7 +153,7 @@ def test_lines_without_a_standard_code_are_added_unless_they_repeat_a_coded_line
     # 리뷰 2026-11-08: 코드가 있는 이자 지급 줄이 있으면 코드 없는 줄은 더하지 않아요 (같은 지급을 두 번 셀 수 있어서)
     assert F.parse_dart_list(both)["_fin"]["iec"] == 10.0
     same = loose + [row("CF", "이자의 지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", 2e9)]
-    assert F.parse_dart_list(same)["_fin"]["iec"] == 20.0                           # 이름 · 금액(부호 무시)이 같은 줄은 한 번만
+    assert F.parse_dart_list(same)["_fin"]["iec"] == 20.0                           # 코드 줄(20억)만 — 같은 이름의 코드 없는 줄은 안 더해요
     none = BS + [row("IS", "매출액", "ifrs-full_Revenue", 1e11)]
     assert F.parse_dart_list(none)["_fin"]["iec"] is None
 
