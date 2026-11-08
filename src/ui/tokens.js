@@ -60,8 +60,10 @@ export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 
 // 내림에만, 주제 색은 기준과 주제에만, 살구색은 데이터 표시에만 써요.
 export const HOLDING_SHADES = ["#1C2B45", "#3D4B63", "#5A6B87", "#7C889C", "#9AA3B2", "#C9D0DB"];
 // v19.3e (Jack, 2026-11-08): 회사 페이지 그래프의 색. 실적 막대는 남색 · 회청색 단계(최근 해 #1C2B45, 앞선 해 #9AA3B2)로,
-// 파랑은 쓰지 않아요 (한국에서 파랑은 '내림'으로 읽혀요). '이 회사'는 어느 그래프에서나 남색(출렁임 물결 포함)이고, 비교하는 선
-// (시장 · 업종 · 지난 해)은 회청색이에요. 둘 다 위의 색(COLOR.ink · HOLDING_SHADES 다섯째)을 그대로 써요.
+// 파랑은 쓰지 않아요 (한국에서 파랑은 '내림'으로 읽혀요). '이 회사'는 어느 그래프에서나 남색(출렁임 물결 포함)이에요. compare
+// (회청색)는 지금 두 곳에만 써요: 출렁임 물결의 시장 선과 그 범례, 가치 탭의 '지난 2년 실제 이익' 막대. 실적 탭의 업종 중간 막대
+// (HOLDING_SHADES 맨 끝)와 업종 지도의 다른 회사 점(COLOR.text3)은 예전 색 그대로예요. 둘 다 위의 색(COLOR.ink · HOLDING_SHADES
+// 다섯째)을 그대로 써요.
 export const CHART = { mine: COLOR.ink, compare: HOLDING_SHADES[4], latest: COLOR.ink, earlier: HOLDING_SHADES[4] };
 export const holdingShade = (rank) => HOLDING_SHADES[Math.min(HOLDING_SHADES.length - 1, Math.max(0, Math.floor(Number(rank)) || 0))];
 // weights: 종목마다 비중(숫자) → 같은 순서의 색. 비중이 큰 종목부터 진한 색이고, 비중이 같으면 앞에 있는 종목이 먼저예요.

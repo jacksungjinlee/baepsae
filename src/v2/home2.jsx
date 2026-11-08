@@ -216,8 +216,10 @@ function LookRow({ icon, title, sub, onClick, data, owner }) {
 // What 오늘 볼 것 holds today: the concentration cards, the filings rows, and whether "오늘은 할 일이 없어요" shows there.
 // quiet: every 가진 종목 portfolio quiet (home.quietBlock), no card, and, when a Korean stock is held (kr: home.holdsKorean),
 // today's filings checked (disc.json loaded and current): the verdict band at the top may then say it too. A filings load
-// that failed shows the 공시 tab's failure message here (discFail); one still loading or a list that stopped just holds the
-// line back. The preview page has no filings at all (disc "none"): nothing to wait for there.
+// that failed shows the 공시 tab's failure message here (discFail); a list that stopped (the file is old, or that day's
+// DART list did not come in: company.discDate stale) shows the 공시 tab's own date line, "{md} 기준 · {n}일째 갱신이
+// 멈췄어요" (discOld; with no date to show, the failure message); both beside the filings rows' file-text chip. One still
+// loading just holds the line back. The preview page has no filings at all (disc "none"): nothing to wait for there.
 // The filings state for the screen and its tests (data-disc): skip (no Korean stock) · wait · ok · stale · fail · none.
 export function discState(disc, kr) {
   if (!kr) return "skip";
@@ -233,20 +235,31 @@ function lookOf(blocks, held, disc, kr) {
   const heldTs = new Set(blocks.flatMap((b) => b.list.rows.filter((r) => r.t && !r.absent).map((r) => r.t)));
   const files = H.filings && C.co.disc.buys && C.co.disc.sells && H.filingsBoth ? filingRows(disc, heldTs, todayKst(), fresh) : [];
   const ds = discState(disc, kr);
-  const discFail = ds === "fail";
+  const dd = ds === "stale" ? discDate(disc.data) : null;
+  const discOld = dd && dd.date ? dd : null;
+  const discFail = ds === "fail" || (ds === "stale" && !discOld);
   const quiet = (ds === "skip" || ds === "ok" || ds === "none") && imported.every(quietBlock) && !conc.length && !files.length;
   // "오늘은 할 일이 없어요" here: no verdict band (it speaks for itself, as before), at least one 가진 종목 portfolio, all quiet,
   // no card. Never on stale or failed data (no block exists then), never when no rule could be checked (quietBlock), never
   // before the filings were checked when a Korean stock is held.
   const calm = quiet && !held.length && imported.length > 0;
-  return { conc, files, quiet, calm, discFail, ds };
+  return { conc, files, quiet, calm, discFail, discOld, ds };
+}
+
+function DiscNote({ id, date, children }) {
+  return (
+    <Card data-ui-v2={id} data-date={date || undefined} style={{ marginTop: SPACE(2), padding: SPACE(3) + 2, display: "flex", alignItems: "center", gap: SPACE(3) }}>
+      <IconChip name="file-text" size={40} />
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+    </Card>
+  );
 }
 
 function Look({ blocks, load, look, go }) {
   const { openStock } = useNav();
   const H = C.home;
-  const { conc, files, calm, discFail } = look;
-  if (!H.look || (!conc.length && !files.length && !calm && !discFail)) return null;
+  const { conc, files, calm, discFail, discOld } = look;
+  if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
     <section data-ui-v2="home-look" style={{ marginTop: SPACE(5) }}>
@@ -266,8 +279,10 @@ function Look({ blocks, load, look, go }) {
             onClick={openStock && isCompany(s) ? () => openStock(f.t) : undefined} />
         );
       })}
-      {/* the filings did not load: the 공시 tab's own failure message (no picture: this screen has numbers) */}
-      {discFail && <Card data-ui-v2="home-disc-fail" style={{ marginTop: SPACE(2), padding: 0 }}><LoadFail picture={false} /></Card>}
+      {/* the filings did not load: the 공시 tab's own failure message (no picture: this screen has numbers); the list stopped:
+          the 공시 tab's own date line. Each beside the filings rows' chip, so it reads as being about the filings. */}
+      {discFail && <DiscNote id="home-disc-fail"><LoadFail picture={false} inline /></DiscNote>}
+      {discOld && <DiscNote id="home-disc-old" date={discOld.date}><DateLine date={discOld.date} fresh={{ stale: discOld.stale, days: discOld.days }} style={{ marginTop: 0 }} /></DiscNote>}
       {calm && <Card data-ui-v2="home-calm" style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.today.calmEyebrow}</p></Card>}
     </section>
   );
@@ -298,7 +313,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.length) : [];
-  const kr = useMemo(() => holdsKorean(decks), [decks]);
+  const kr = useMemo(() => holdsKorean(decks, ctx && ctx.byT), [decks, ctx]);
   const look = lookOf(blocks, held, disc, kr);
   const many = blocks.length > 1;
   const main = [

@@ -131,7 +131,7 @@ export function App({ source }) {
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
   // v19.3e (Jack, 2026-11-08): also when 홈 opens and a saved portfolio holds a Korean stock (오늘 볼 것's filings rows; a
   // failure shows the same message there). After the first paint (an effect), once per visit for both.
-  const homeKr = useMemo(() => holdsKorean(store.data.decks), [store.data.decks]);
+  const homeKr = useMemo(() => holdsKorean(store.data.decks, load.status === "ok" ? load.byT : null), [store.data.decks, load]);
   const wantDisc = !!loc.code || (loc.tab === "home" && homeKr);
   useEffect(() => {
     if (!wantDisc || disc.status !== "idle") return;

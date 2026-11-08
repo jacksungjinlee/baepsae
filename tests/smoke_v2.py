@@ -5772,6 +5772,7 @@ def scene_v193e_home(R, files, width):
             assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "fail"
             box = page.locator('[data-ui-v2="home-disc-fail"]')
             assert box.locator('[data-ui-v2="load-fail"]').inner_text() == C["app"]["loadFail"]     # 공시 탭의 실패 문구 그대로 (그림 없음)
+            assert box.locator('[data-ui="icon-chip"][data-icon="file-text"]').count() == 1           # 공시 줄의 칩 옆에 (무엇이 실패했는지)
             assert box.locator("img").count() == 0 and page.locator(MASCOT_IN_MAIN).count() == 0
             assert page.locator('[data-ui-v2="home-calm"]').count() == 0
             assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text(), "공시를 확인하지 못했는데 '오늘은 할 일이 없어요'"
@@ -5781,6 +5782,77 @@ def scene_v193e_home(R, files, width):
         R.check(page, S, f"공시 목록 실패 ({who}): 공시 탭과 같은 실패 문구 · '오늘은 할 일이 없어요' 없음", disc_fail)
         ctx.close()
         srv.shutdown()
+
+    # 멈춘 공시 목록 (리뷰 2026-11-08): 파일이 오래됐거나(발행 6일 전) 그날 DART 목록을 받지 못했으면(listOk false) 공시 줄도 '할 일이
+    # 없어요'도 없이 공시 탭의 날짜 줄 그대로 ('{md} 기준 · {n}일째 갱신이 멈췄어요'), 공시 줄의 file-text 칩 옆에
+    kst_now = dt.datetime.now(KST)
+    newest5 = (kst_now - dt.timedelta(days=5)).date()
+    since5 = int((kst_now - dt.datetime.combine(newest5, dt.time(0), KST)).total_seconds() // 86400)
+    for how, upd, newest, days in (("발행 6일 전", {"publishedAt": now_kst(days_ago=6)}, f["disc.json"]["newest"], 6),
+                                   ("그날 목록 실패", {"listOk": False, "newest": newest5.isoformat()}, newest5.isoformat(), since5)):
+        so = clone(f)
+        so["disc.json"].update(upd)
+        srv, ctx, page, base = R.open(build_site(so, app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
+
+        def disc_old(newest=newest, days=days):
+            wait_ready(page)
+            assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "stale"
+            box = page.locator('[data-ui-v2="home-disc-old"]')
+            assert box.get_attribute("data-date") == newest and box.locator('[data-ui="icon-chip"][data-icon="file-text"]').count() == 1
+            line = box.locator('[data-ui-v2="date-line"]')
+            want = fillp(C["app"]["asOf"], md=f"{int(newest[5:7])}월 {int(newest[8:])}일") + " · " + (C["app"]["staleLate"] if days <= 1 else fillp(C["app"]["stale"], n=days))
+            assert line.get_attribute("data-stale") == "1" and line.inner_text() == want, (line.inner_text(), want)
+            assert page.locator('[data-ui-v2="home-filing"], [data-ui-v2="home-calm"], [data-ui-v2="home-disc-fail"]').count() == 0
+            assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text()
+            floor_ok(page, "새 홈 (멈춘 공시 목록)")
+            R.collect(page)
+        R.check(page, S, f"멈춘 공시 목록 ({how}): 공시 탭의 날짜 줄('…일째 갱신이 멈췄어요') · 공시 줄 · '할 일이 없어요' 없음", disc_old)
+        ctx.close()
+        srv.shutdown()
+
+    # 공시 목록을 받는 동안은 '오늘은 할 일이 없어요'가 없어요 (리뷰 2026-11-08): disc.json 응답을 붙잡아 두고 봐요
+    srv, ctx, page, base = R.open(build_site(f, app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
+    held_req = []
+
+    def while_loading():
+        wait_ready(page)                                                      # 처음 열 때 받은 목록은 버리고, 새로 고친 뒤를 봐요
+        page.route("**/disc.json", lambda r: held_req.append(r))
+        page.reload(wait_until="domcontentloaded")
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"home2\"]').dataset.disc === 'wait'")
+        for _ in range(200):                                                 # 첫 화면 뒤에 보내는 요청이 붙잡힐 때까지
+            if held_req:
+                break
+            page.wait_for_timeout(50)
+        assert held_req, "disc.json 요청이 없어요"
+        assert page.locator('[data-ui-v2="home-calm"]').count() == 0 and C["today"]["calmEyebrow"] not in page.locator("body").inner_text()
+        rs = dict(page.locator('[data-ui-v2="home-rule"]').evaluate_all("els => els.map((e) => [e.dataset.rule, e.dataset.state])"))
+        assert [rs[k] for k in ("stock", "ind", "fit")] == ["ok", "ok", "ok"], rs  # 다른 건 다 조용해요: 공시만 기다려요
+        for r in held_req:                                                    # 붙잡아 둔 요청을 이제 보내요 (사이트 안 주소)
+            r.fallback()
+        disc_settled(page)
+        assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "ok"
+        assert page.locator('[data-ui-v2="home-calm"]').inner_text() == C["today"]["calmEyebrow"]   # 받고 나서야
+        R.collect(page)
+    R.check(page, S, "공시 목록을 받는 동안: '오늘은 할 일이 없어요' 없음 → 받은 뒤에 나와요", while_loading)
+    ctx.close()
+    srv.shutdown()
+
+    # 미국 종목만: 공시 목록(disc.json)을 받지 않아요
+    us_only = e_imported(by, pxd, [("AAPL", 2, None)], did="dus")
+    srv, ctx, page, base = R.open(build_site(f, app=app), width, init=e_store([us_only]), path="/app.html?dev=1#home")
+
+    def us_no_disc():
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        page.wait_for_timeout(400)
+        assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "skip"
+        assert not disc_fetched(page), "미국 종목만 가졌는데 disc.json 을 받았어요"
+        assert page.locator('[data-ui-v2="home-disc-fail"], [data-ui-v2="home-disc-old"], [data-ui-v2="home-filing"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "미국 종목만 가진 홈: disc.json 요청 없음", us_no_disc)
+    ctx.close()
+    srv.shutdown()
 
     # 만든 포트폴리오 반반 (삼성전자 · 현대차 1주씩, 오늘 같은 가격, 종목별 규칙은 비중 띠뿐: 할 일 없음) · 그리고 가진 종목 포트폴리오와 함께
     hf = clone(f)

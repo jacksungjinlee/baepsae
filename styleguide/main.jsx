@@ -48,7 +48,8 @@ const SWATCHES = [
 ];
 // tokens.js CHART (v19.3e, Jack 2026-11-08)
 const CHART_SWATCHES = [
-  ["mine", "This company, on every chart (the risk waves too)"], ["compare", "The comparison: market, industry, the past"],
+  ["mine", "This company, on every chart (the risk waves too)"],
+  ["compare", "The comparison, used in two places: the market line of the risk waves (and its key), and the past-earnings bar on the value tab. The industry-median bar and the industry map's other companies keep their own colours"],
   ["latest", "Earnings bars: the latest year"], ["earlier", "Earnings bars: the earlier years"],
 ];
 
@@ -70,7 +71,7 @@ function Tokens() {
         </Card>
       </Block>
 
-      <Block id="chart-colours" name="Chart colours" note="Company page charts (Jack, 2026-11-08): this company is navy on every chart, the comparison is slate. Earnings bars use the navy/slate ramp (latest year navy, earlier years slate), never blue: in Korea blue reads as down.">
+      <Block id="chart-colours" name="Chart colours" note="Company page charts (Jack, 2026-11-08): this company is navy on every chart; the slate comparison is used for the risk waves' market line and the value tab's past-earnings bar. Earnings bars use the navy/slate ramp (latest year navy, earlier years slate), never blue: in Korea blue reads as down.">
         <Card style={{ padding: SPACE(3) }}>
           {CHART_SWATCHES.map(([k, use]) => (
             <div key={k} data-chart-swatch={k} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>

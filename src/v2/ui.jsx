@@ -270,7 +270,16 @@ export function CardScores({ list, style }) {
 
 // picture = false: the screen also shows figures (포트폴리오 with saved records, 시장), so the 뱁이 stays off (CLAUDE.md: never on
 // a screen that shows numbers). The message is the same either way.
-export function LoadFail({ picture = true }) {
+// inline (v19.3e, 홈's 오늘 볼 것): the same message as a line in a row (left-aligned, no padding, no picture), beside the
+// icon chip that says what failed to load.
+export function LoadFail({ picture = true, inline = false }) {
+  if (inline) {
+    return (
+      <div data-ui-v2="load-fail" data-picture="0" data-inline="1" role="alert">
+        <p style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { wordBreak: "keep-all" })}>{C.app.loadFail}</p>
+      </div>
+    );
+  }
   return (
     <div data-ui-v2="load-fail" data-picture={picture ? "1" : "0"} role="alert" style={{ textAlign: "center", padding: `${picture ? SPACE(10) : SPACE(6)}px ${SPACE(4)}px` }}>
       {picture && <Mascot src={IMG.error} alt={C.app.loadFailAlt} size={120} style={{ display: "inline-block" }} />}

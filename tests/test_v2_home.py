@@ -386,12 +386,24 @@ def test_quiet_needs_every_holding_in_the_industry_rule_and_scored():
 
 
 def test_built_weight_on_home_is_the_weight_on_portfolio():
-    """리뷰(2026-11-08) 프로브: 같은 금액 세 종목 중 하나의 비중 규칙을 끈 만든 포트폴리오. 포트폴리오의 비중 규칙 줄(rules.deckWeights:
-    비중 규칙이 있는 종목끼리)은 50.0% · 50.0% 이고, 홈도 같은 숫자를 써요 (전체 셋의 33.3% 가 아니에요). 규칙이 없는 종목은 비중 없음."""
-    got = run("""const d = builtDeck([['000010', '가나전자', 1 / 3, 10, 10000], ['000020', '가나은행', 1 / 3, 5, 20000], ['000040', '마바물산', 1 / 3, 20, 5000]]);
-      d.holdings[2].rules = [];
-      const ctx = ctxOf(STOCKS); const ev = R.evaluateAll([d], ctx); const [b] = Hm.homeBlocks([d], ev, ctx, STOCKS);
-      out = { home: Object.fromEntries(b.list.rows.map((r) => [r.t, r.w])), check: Object.fromEntries(ev.decks[0].holdings.map((x) => [x.t, x.w])),
-        share: P.pfRows(d, ctx).rows.map((r) => Math.round(r.w * 1000) / 10) };""", STOCKS=STOCKS)
-    assert got["share"] == [33.3, 33.3, 33.3]
-    assert got["home"] == got["check"] and got["home"]["000010"] == 0.5 and got["home"]["000020"] == 0.5 and got["home"]["000040"] is None, got
+    """만든 포트폴리오의 홈 비중 (리뷰 2026-11-08 두 번째 · 세 번째): 모든 종목에 비중 규칙이 있으면 매일 점검의 비중(x.w, 포트폴리오의 비중
+    규칙 줄과 같은 숫자). 비중 규칙을 끈 종목이 하나라도 있으면(같은 금액 세 종목 중 하나) 그 포트폴리오의 모든 줄이 전체에 대한
+    비중(33.3% 셋)이에요: 빈칸이 없고, '비중' 아래 숫자가 모두 같은 전체의 몫이에요 (일부끼리의 50.0% 가 아니에요)."""
+    got = run("""const rows = [['000010', '가나전자', 1 / 3, 10, 10000], ['000020', '가나은행', 1 / 3, 5, 20000], ['000040', '마바물산', 1 / 3, 20, 5000]];
+      const one = (off) => { const d = builtDeck(rows); if (off) d.holdings[2].rules = [];
+        const ctx = ctxOf(STOCKS); const ev = R.evaluateAll([d], ctx); const [b] = Hm.homeBlocks([d], ev, ctx, STOCKS);
+        return { home: Object.fromEntries(b.list.rows.map((r) => [r.t, r.w == null ? null : Math.round(r.w * 1000) / 10])),
+          check: Object.fromEntries(ev.decks[0].holdings.map((x) => [x.t, x.w == null ? null : Math.round(x.w * 1000) / 10])) }; };
+      out = { on: one(false), off: one(true) };""", STOCKS=STOCKS)
+    assert got["on"]["home"] == got["on"]["check"] == {"000010": 33.3, "000020": 33.3, "000040": 33.3}, got["on"]      # 모두 켜짐: 매일 점검의 비중
+    assert got["off"]["check"] == {"000010": 50.0, "000020": 50.0, "000040": None}, got["off"]                        # 포트폴리오: 규칙 있는 종목끼리
+    assert got["off"]["home"] == {"000010": 33.3, "000020": 33.3, "000040": 33.3}, got["off"]                          # 홈: 모두 전체에 대한 비중
+
+
+def test_holds_korean_falls_back_to_the_market_in_todays_data():
+    """리뷰(2026-11-08): 저장한 종목에 시장(cls)이 없으면 오늘 데이터의 시장을 봐요."""
+    got = run("""const d = builtDeck([['000010', '가나전자', 1, 10, 8000]]); d.holdings = d.holdings.map(({ cls, ...h }) => h);
+      const u = builtDeck([['AAA', 'Alpha Inc.', 1, 2, 90]]); u.holdings = u.holdings.map(({ cls, ...h }) => h);
+      const byT = ctxOf(STOCKS).byT;
+      out = [Hm.holdsKorean([d]), Hm.holdsKorean([d], byT), Hm.holdsKorean([u], byT), Hm.holdsKorean([d], new Map())];""", STOCKS=STOCKS)
+    assert got == [False, True, False, False]

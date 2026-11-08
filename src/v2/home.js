@@ -86,15 +86,17 @@ function usdCounted(deck, per, ctx) {
 // (de.holdings), so its chips stay as they were.
 // w: a 가진 종목 portfolio's share of everything held, only when every holding has a value today (pf.pfRows). A built
 // portfolio's weight is its daily check's own (rules.deckWeights: the share among the held stocks with a 비중 규칙, x.w), the
-// number its 비중 규칙 line on 포트폴리오 shows (tracking.jsx WeightLine), so the two screens agree; none for a stock
-// without that rule.
+// number its 비중 규칙 line on 포트폴리오 shows (tracking.jsx WeightLine), so the two screens agree. When a held stock of it
+// has no such weight (its 비중 규칙 is off), every row of that portfolio takes its share of the whole instead (pf.pfRows),
+// so no row is blank and every number under "비중" is a share of the same whole.
 export function holdingRows(deck, de, ctx) {
   const v = pfRows(deck, ctx);
   const ev = new Map(((de && de.holdings) || []).map((x) => [x.t, x]));
   const imp = isImported(deck);
+  const own = !imp && v.rows.every((r) => { const x = r.t ? ev.get(r.t) : null; return !!x && num(x.w) != null; });
   const rows = v.rows.map((r, i) => {
     const x = r.t ? ev.get(r.t) : null;
-    const w = imp ? (v.ok ? r.w : null) : x && num(x.w) != null ? x.w : null;
+    const w = own ? x.w : v.ok ? r.w : null;
     return { key: r.key, t: r.t, nk: r.nk, w, d1: !r.absent && r.s ? todayD1(r.s) : null, absent: r.absent, frozen: r.frozen,
       usd: r.usd, i, x: x || null };
   });
@@ -154,14 +156,19 @@ export function filingRows(disc, held, today, fresh) {
 export const filingsChecked = (disc, fresh) => !!(disc && disc.status === "ok" && disc.data && fresh && !fresh.stale);
 
 // Whether a saved portfolio holds a Korean stock today (the filings are about Korean companies): held records (held.js
-// heldQty: 샀어요 · 팔았어요 · 가진 종목) of a stock whose market is 한국 (its saved cls, or for a 가진 종목 row without one,
-// a won listing). decks: store.data.decks.
-export function holdsKorean(decks) {
+// heldQty: 샀어요 · 팔았어요 · 가진 종목) of a stock whose market is 한국: the market saved with the holding, else the one in
+// today's data (byT: load.byT · ctx.byT, when loaded), else for a 가진 종목 row its currency (a won listing).
+// decks: store.data.decks.
+export function holdsKorean(decks, byT = null) {
   for (const d of decks || []) {
     if (!d) continue;
-    const cls = new Map((d.holdings || []).filter((h) => h && h.t).map((h) => [h.t, h.cls]));
-    for (const r of d.imported || []) if (r && r.t && !cls.get(r.t)) cls.set(r.t, r.ccy === "USD" ? "us" : "kr");
-    for (const t of heldQty(d).keys()) if (cls.get(t) === "kr") return true;
+    const cls = new Map((d.holdings || []).filter((h) => h && h.t && h.cls).map((h) => [h.t, h.cls]));
+    const ccy = new Map((d.imported || []).filter((r) => r && r.t && r.ccy).map((r) => [r.t, r.ccy]));
+    for (const t of heldQty(d).keys()) {
+      const s = byT && typeof byT.get === "function" ? byT.get(t) : null;
+      const c = cls.get(t) || (s && s.cls) || (ccy.has(t) ? (ccy.get(t) === "USD" ? "us" : "kr") : null);
+      if (c === "kr") return true;
+    }
   }
   return false;
 }
