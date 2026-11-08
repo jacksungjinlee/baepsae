@@ -1245,6 +1245,8 @@ def scene_rates_fail(R, files):
 SW_MARK = """async () => { const r = await navigator.serviceWorker.getRegistration();
   Object.assign(window, { __oldSW: r && r.active, __swChanges: 0, __swChecks: 0, __swBusy: false, __swErr: null });
   navigator.serviceWorker.addEventListener('controllerchange', () => { window.__swChanges += 1; });
+  if (r) r.addEventListener('updatefound', () => { const w = r.installing;     // 새 워커 설치가 실패하면(redundant) 바로 오류로 남겨요
+    if (w) w.addEventListener('statechange', () => { if (w.state === 'redundant' && !window.__swErr) window.__swErr = 'new worker install failed (redundant)'; }); });
   return !!(r && r.active && navigator.serviceWorker.controller === r.active); }"""
 # 브라우저의 업데이트 확인(registration.update())을 많아야 두 번 시작해요. 첫 확인은 새 sw.js 를 쓰기 전에 이미 시작된 확인(예: 다시
 # 불러오기가 건 확인)에 합쳐져 예전 파일을 읽고 끝날 수 있어요. 두 번째는 그 확인이 끝난 뒤에 시작하니 반드시 새 파일을 읽어요.
