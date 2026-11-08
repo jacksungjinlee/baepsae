@@ -5443,6 +5443,20 @@ def e_store(decks):
     return f"(() => {{ try {{ localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': decks}, ensure_ascii=False))}); }} catch (e) {{}} }})();"
 
 
+def no_claim_pf(page, head, md):
+    """가진 종목 포트폴리오 줄의 규칙 머리(pfview.jsx RulesHead: 포트폴리오 탭 · 스위치를 끈 홈)에서 아무 규칙도 확인하지 못했을 때: 네 칸
+    모두 확인하지 못했어요 · '{date} 종가로 점검했어요' · '내 규칙 {n}개 중 {k}개를 지키고 있어요' · ✓ 없음, '…규칙이 4개 있어요'만."""
+    st = head.locator('[data-ui-v2="pf-rule"]').evaluate_all("els => els.map((e) => e.dataset.rule + ':' + e.dataset.state)")
+    assert st == ["stock:unknown", "ind:unknown", "fit:unknown", "warn:unknown"], st
+    assert head.get_attribute("data-checked") == "0" and head.get_attribute("data-kept") == "0"
+    assert head.locator('[data-ui-v2="pf-checked"], [data-ui-v2="pf-kept"]').count() == 0
+    body = page.locator("body").inner_text()
+    assert fillp(C["pfr"]["checked"], date=md) not in body and C["pfr"]["checked"].split("{date}")[1] not in body, "점검하지 못했는데 '점검했어요'"
+    assert C["pfr"]["kept"].split("{k}")[1] not in body
+    assert head.locator(f'[aria-label="{C["daily"]["ok"]}"]').count() == 0
+    assert head.locator('[data-ui-v2="pf-not-checked"]').inner_text() == fillp(C["daily"]["notChecked"], n=4)
+
+
 def e_imported(by, pxd, rows, did="dimp", name="포트폴리오"):
     """가진 종목 포트폴리오 하나 (store.js kind imported). rows: (t, qty | ('amount', 원), 평균 단가 | None)."""
     imp, hold = [], []
@@ -5633,6 +5647,15 @@ def scene_v193e_home(R, files, width):
         nothing_checked()                                                     # 미국 종목도 있어 네 칸 모두: '점검했어요' · '할 일이 없어요' 없음
         R.collect(page)
     R.check(page, S, "오늘 가격이 없는 종목 + 미국 종목: 포트폴리오 카드는 빠지고 네 규칙 모두 확인하지 못했어요 · '점검했어요' · '오늘은 할 일이 없어요' 없음", no_price)
+
+    def no_price_portfolio():
+        tab(page, TABS["portfolio"]) if width < 1024 else side_tab(page, "portfolio")
+        at(page, "portfolio")
+        head = page.locator(f'[data-deck-id="{deck["id"]}"] [data-ui-v2="pf-head"]')
+        head.wait_for(state="visible")
+        no_claim_pf(page, head, md)
+        R.collect(page)
+    R.check(page, S, "같은 경우 포트폴리오 탭: 네 규칙 모두 확인하지 못했어요 · '{date} 종가로 점검했어요' · '내 규칙 {n}개 중' · ✓ 없음", no_price_portfolio)
     ctx.close()
     srv.shutdown()
 
@@ -5849,6 +5872,26 @@ def scene_home2_off(R, files, width=390):
         R.check(page, S, f"{how}: " + ("v19.3d 의 홈 그대로 (판정 띠 · 포트폴리오 줄 둘, 새 홈 없음)" if how == "정상" else "불러오기 실패 문구, 할 일이 없어요 아님"), run)
         ctx.close()
         srv.shutdown()
+
+    # 오늘 가격이 없는 종목 + 미국 종목: 가진 종목 포트폴리오 줄의 네 규칙 모두 확인하지 못했어요 → '점검했어요' 없음 (pfview RulesHead)
+    nopx = clone(f)
+    for x in nopx["data.json"]["stocks"]:
+        if x["t"] == "000660":
+            x["price"] = None
+    unk = e_imported(by, f["data.json"]["pxDate"], [("005930", 10, 200000), ("000660", 3, None), ("AAPL", 2, 300.0)], did="dunk")
+    srv, ctx, page, base = R.open(build_site(nopx, app=app), width, init=e_store([unk]), path="/app.html?dev=1#home")
+    pxd = f["data.json"]["pxDate"]
+
+    def nothing_checked_old_home():
+        wait_ready(page)
+        head = page.locator('[data-ui-v2="deck-strip"][data-deck-id="dunk"] [data-ui-v2="pf-head"]')
+        head.wait_for(state="visible")
+        no_claim_pf(page, head, f"{int(pxd[5:7])}월 {int(pxd[8:])}일")
+        assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text()
+        R.collect(page)
+    R.check(page, S, "오늘 가격이 없는 종목 + 미국 종목: 네 규칙 모두 확인하지 못했어요 · '{date} 종가로 점검했어요' · ✓ · '할 일이 없어요' 없음", nothing_checked_old_home)
+    ctx.close()
+    srv.shutdown()
 
 
 def div_shape(rule):

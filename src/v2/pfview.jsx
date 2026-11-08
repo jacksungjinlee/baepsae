@@ -94,13 +94,14 @@ export function RuleTiles({ st }) {
   );
 }
 
-// "{date} 종가로 점검했어요" · "내 규칙 {n}개 중 {k}개를 지키고 있어요" · the first broken rule's line · the unchecked count.
+// "{date} 종가로 점검했어요" (only when at least one rule was checked: with every tile 확인하지 못했어요 nothing was) ·
+// "내 규칙 {n}개 중 {k}개를 지키고 있어요" · the first broken rule's line · the unchecked count.
 export function RulesHead({ st, pxDate }) {
   const md = mdText(pxDate);
   const line = brokenLine(st);
   return (
     <div data-ui-v2="pf-head" data-kept={st.kept} data-checked={st.checked} style={{ marginTop: SPACE(3) }}>
-      {md && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.pfr.checked, { date: md })}</div>}
+      {md && st.checked > 0 && <div data-ui-v2="pf-checked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.pfr.checked, { date: md })}</div>}
       {st.checked > 0 && <div data-ui-v2="pf-kept" style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1) })}>{fill(C.pfr.kept, { n: st.checked, k: st.kept })}</div>}
       {line && <div data-ui-v2="pf-broken" style={tx(SIZE.sm, WEIGHT.semi, COLOR.watch, { marginTop: SPACE(1) })}>{line}</div>}
       {st.unchecked > 0 && <Note data-ui-v2="pf-not-checked">{fill(C.daily.notChecked, { n: st.unchecked })}</Note>}
