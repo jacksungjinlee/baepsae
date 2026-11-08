@@ -1524,6 +1524,7 @@ def stmt_cur_problems(c, s):
     if c.get("dcfReady") is not False:
         bad.append(f"{t} corp.dcfReady")
     bad += [f"{t} corp.{k}" for k in ("fl", "flRan", "flSrc", "flWhy") if k in c]   # 리뷰 3: 다른 통화로 만든 재무 신호도 없어야 해요
+    bad += [f"{t} {w}.{k}" for w, src in (("corp", c), ("data", s or {})) for k in ("roe", "qz") if _has_amount(src.get(k))]   # 리뷰 4
     return bad
 
 

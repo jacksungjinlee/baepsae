@@ -111,13 +111,15 @@ def test_statements_in_another_currency_are_marked_and_their_amounts_never_reach
     fins = {"241560": fin, "000100": {"ni": [5.0, None, None], "eq": 9.0, "fs": "OFS"}}
     assert F.blank_non_won([s, other], fins) == ["241560 두산밥캣(USD)"]
     assert "!! 원화가 아닌 재무제표로 낸 국내 회사 1곳: 241560 두산밥캣(USD)" in capsys.readouterr().out
-    assert not any(k in s for k in ("per", "pbr", "eps", "bps")) and s["dps"] == 1700.0 and s["dy"] == 3.3   # 배당 표는 원
+    assert not any(k in s for k in ("per", "pbr", "eps", "bps", "roe")) and s["dps"] == 1700.0 and s["dy"] == 3.3   # 배당 표는 원
     extra = F.fill_multiples([s, other], fins, {})
-    assert "241560" not in extra and "eps" not in s and s["roe"] == 5.6                  # 건너뛰어요 (ROE 는 비율이라 그대로)
+    assert "241560" not in extra and "eps" not in s and "roe" not in s                  # 건너뛰어요 (ROE 도 비워요 · 리뷰 4)
     corp = {c["t"]: c for c in F.build_corp([s, other], fins, "2026-11-08", extra=extra)["companies"]}
     c = corp["241560"]
     assert c["stmtCur"] == "USD" and c["rev"] == [None] * 3 and c["ni"] == [None] * 3 and c["eq"] is None and c["dcfReady"] is False
-    assert all(c.get(k) is None for k in ("per", "pbr", "eps", "bps")) and not any(k in c for k in V.STMT_AMT_KEYS)
+    assert all(c.get(k) is None for k in ("per", "pbr", "eps", "bps", "roe", "qz")) and not any(k in c for k in V.STMT_AMT_KEYS)
+    F.add_percentiles([s, other])                                               # 빈 ROE 는 퀄리티 점수를 매기지 않아요 (오류 없음)
+    assert "qz" not in s
     assert "stmtCur" not in corp["000100"]
 
 
@@ -147,10 +149,11 @@ def test_gate_fails_when_amounts_of_another_currency_reach_the_files(pair):
     got = fails(cur, prev, name)
     assert "000270 corp.per" in got[1] or "000270" in got[1]
     by = {s["t"]: s for s in cur["data"]["stocks"]}
-    c.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None)
-    for k in ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "vz"):
+    c.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None, roe=None)
+    for k in ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "vz", "qz",
+              "fl", "flRan", "flSrc", "flWhy"):
         c.pop(k, None)
-    for k in ("per", "pbr", "eps", "bps", "vz"):
+    for k in ("per", "pbr", "eps", "bps", "vz", "roe", "qz"):
         by["000270"].pop(k, None)
     cur["data"]["incCheck"]["epsB"]["o"] -= 1
     cur["data"]["incCheck"]["epsP"]["ttm" if c.get("bq") else "fy"] -= 1
@@ -216,8 +219,9 @@ def test_statements_in_another_currency_carry_no_financial_signals(pair):
     fin = dict(F.parse_dart_list(rows("008700"))["_fin"], fs="CFS")
     assert fin["iec"] == 0.0 and fin["ni"][0] == 0.0                         # 1,068,247 달러 · 414만 달러를 0.1억으로 반올림하면 0
     s = {"t": "008700", "nk": "아남전자", "cls": "kr", "price": 1126.0, "shr": 77_124_820, "cap": 0.087, "s": "elec", "ind": "elec"}
-    c = F.build_corp([s], {"008700": fin}, "2026-11-08")["companies"][0]
+    c = F.build_corp([dict(s, roe=4.4, qz=55)], {"008700": fin}, "2026-11-08")["companies"][0]   # blank_non_won 전이어도
     assert c["stmtCur"] == "USD" and not any(k in c for k in ("fl", "flRan", "flSrc", "flWhy"))
+    assert c["roe"] is None and c["qz"] is None                                # ROE 와 그 점수도 보여 주지 않아요 (리뷰 4)
     cur, prev = pair
     k = comp(cur, "000270")
     k.update(stmtCur="USD", rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None,
@@ -227,6 +231,8 @@ def test_statements_in_another_currency_carry_no_financial_signals(pair):
     k["flSrc"] = {"icr": "cf", "int0": True}
     got = V.stmt_cur_problems(k, {})
     assert "000270 corp.flSrc" in got and "000270 corp.flRan" not in got
+    k.update(roe=5.6)
+    assert "000270 corp.roe" in V.stmt_cur_problems(k, {}) and "000270 data.roe" in V.stmt_cur_problems(dict(k, roe=None), {"roe": 5.6})
 
 
 def test_currency_codes_are_normalised():

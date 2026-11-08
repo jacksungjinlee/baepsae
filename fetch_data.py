@@ -3325,6 +3325,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
                 # 0.0 · 순이익 414만 달러 → 0.0). 신호를 계산하지 않은 것으로 둬요 — 앱은 아무 말도 하지 않아요
                 for k in ("fl", "flRan", "flSrc", "flWhy"):
                     row.pop(k, None)
+                row.update(roe=None, qz=None)        # 리뷰 4: ROE 와 그 점수도 보여 주지 않아요 (blank_non_won 이 data.json 쪽을 비워요)
         comps.append(row)
 
     sectors = {}
@@ -3759,17 +3760,18 @@ def not_won(s, fin):
 
 def blank_non_won(kr_stocks, fin_map):
     """v19.1f (리뷰 2026-11-08): 원화가 아닌 재무제표로 낸 국내 회사 — 해외 기업처럼 PER·PBR·EPS·BPS 를 비우고 (금액은 build_corp 가
-    비워요) 회사와 통화를 크게 남겨요. 배당(dps · dy)은 배당 표가 '(원)' 단위라 남겨요. 반환: ["코드 이름(통화)", …]."""
+    비워요) 회사와 통화를 크게 남겨요. ROE 도 비워요 (리뷰 4: 앱이 '실적 숫자는 아직 보여 드리지 않아요' 밑에 ROE 를 보여 주지 않게 ·
+    퀄리티 점수 qz 도 그래서 안 매겨요). 배당(dps · dy)은 배당 표가 '(원)' 단위라 남겨요. 반환: ["코드 이름(통화)", …]."""
     hit = []
     for s in kr_stocks:
         cur = stmt_cur_of(fin_map.get(s.get("t")))
         if s.get("cls") != "kr" or is_foreign_issuer(s.get("t")) or not cur:
             continue
-        for k in FOREIGN_BLANK:
+        for k in FOREIGN_BLANK + ("roe",):
             s.pop(k, None)
         hit.append(f"{s['t']} {s.get('nk', '')}({cur})")
     log(f"{'  !! ' if hit else '· '}원화가 아닌 재무제표로 낸 국내 회사 {len(hit)}곳"
-        + (f": {', '.join(sorted(hit))} — 금액·PER·PBR·EPS·BPS 를 비웠어요 (비율·재무 신호·배당은 남겨요)" if hit else ""))
+        + (f": {', '.join(sorted(hit))} — 금액·PER·PBR·EPS·BPS·ROE 를 비웠어요 (재무 신호도 비워요 · 배당은 남겨요)" if hit else ""))
     return hit
 
 

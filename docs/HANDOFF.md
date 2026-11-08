@@ -129,7 +129,8 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   = equity − NCI when the owners' line is missing (`_owners_eq` how `minus`). BPS takes the latest balance sheet that
   gives owners' equity exactly (code → minus → nci0 per balance sheet; the quarter first). Currency codes are
   normalised (`norm_currency`: 원/KRW → none, names → ISO, unknown → "XXX"); `stmtCur` companies carry no `fl`,
-  `flRan`, `flSrc`, `flWhy` (gate-checked). Interest-paid `int0`: corp.json `flSrc.int0 = true`.
+  `flRan`, `flSrc`, `flWhy`, and no `roe` / `qz` in either file (review 4: the app says it doesn't show their numbers
+  yet; gate-checked). For "s" companies the app reads the netted `nio3` only when `nio3Hyb` is a list. Interest-paid `int0`: corp.json `flSrc.int0 = true`.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the
