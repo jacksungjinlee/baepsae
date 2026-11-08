@@ -1004,13 +1004,15 @@ export function readSideLimits(key) {
   return map;
 }
 // The time to stamp a 내 규칙 저장 of portfolio deck with: now, or just after the limits already saved for it (in the records
-// this tab holds, or beside them) when those carry a later time (a clock that was fast and has been corrected).
+// this tab holds, or beside them) when those carry a later time (a clock that was fast and has been corrected). A time
+// more than a day ahead of now is not believed (as beside the records): it is not carried on.
 export function limitsSaveTime(key, deck, now = Date.now()) {
   let t = now;
-  if (plainObj(deck) && okTs(deck.limitsTs)) t = Math.max(t, deck.limitsTs + 1);
+  const near = (x) => okTs(x) && x <= now + SIDE_AHEAD;
+  if (plainObj(deck) && near(deck.limitsTs)) t = Math.max(t, deck.limitsTs + 1);
   try {
     const e = plainObj(deck) ? readSideLimits(key).get(deck.id) : null;
-    if (e) t = Math.max(t, e.ts + 1);
+    if (e && near(e.ts)) t = Math.max(t, e.ts + 1);
   } catch (err) { /* the records' time is enough */ }
   return t;
 }

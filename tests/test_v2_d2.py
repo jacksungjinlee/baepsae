@@ -359,7 +359,9 @@ def test_the_last_save_wins_after_the_clock_is_set_back_and_unreadable_records_k
       mem.clear();
       const ahead = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 48 * H }] };
       S.readStore(K, T); S.writeStore(ahead, K, T); S.readStore(K, T); S.writeStore(S.withNote(ahead, '000010', 'memo', T, BASE), K, T); S.readStore(K, T);
-      out = { k1, k1b, g: { locked: g.locked, wrote: gw, side: gside }, k2: { side: mem.has(SIDE) ? side() : null,
+      mem.clear();
+      const cap = [S.limitsSaveTime(K, { id: 'dimp', limitsTs: BASE + H }, BASE) - BASE, S.limitsSaveTime(K, { id: 'dimp', limitsTs: BASE + 48 * H }, BASE) - BASE];
+      out = { cap, k1, k1b, g: { locked: g.locked, wrote: gw, side: gside }, k2: { side: mem.has(SIDE) ? side() : null,
         aside: [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).length } };""")
     for k in ("k1", "k1b"):
         assert got[k]["lim"] == {"stock": 40, "ind": 45} and got[k]["restored"] is False and got[k]["after"] == 1, (k, got[k])
@@ -367,6 +369,7 @@ def test_the_last_save_wins_after_the_clock_is_set_back_and_unreadable_records_k
     assert got["g"]["locked"] is True and got["g"]["wrote"] is True
     assert got["g"]["side"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": got["g"]["side"]["decks"]["dimp"]["ts"]}}}
     assert got["k2"] == {"side": None, "aside": 0}
+    assert got["cap"] == [3600 * 1000 + 1, 0]          # just after a time an hour ahead; one two days ahead is not carried on
 
 
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
