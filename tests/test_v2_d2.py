@@ -329,6 +329,46 @@ def test_side_key_ties_future_times_and_portfolios_taken_out():
     assert got["locked"] is True and got["keptAside"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": 1000}}}
 
 
+def test_the_last_save_wins_after_the_clock_is_set_back_and_unreadable_records_keep_the_side_key():
+    """v19.3d2 review 3. K1: the clock 1 h (and 23 h) fast → 저장 L1 → clock corrected → 저장 L2: the second 저장 is stamped
+    just after the first (store.js limitsSaveTime), so the next start shows L2, with no 합쳤어요. G1: records this app cannot
+    read (a later version's) are not "taken out" by this tab's first write: the side key keeps them. K2: records whose
+    limits carry a time more than a day ahead are not copied beside them on every write (no new set-aside copy each time)."""
+    got = run(LS + """const H = 3600 * 1000, BASE = Date.now();
+      const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const twoSaves = (fast) => {
+        mem.clear();
+        let d = P.withLimits(base, 'dimp', 20, 25, S.limitsSaveTime(K, base.decks[0], BASE + fast));
+        S.readStore(K, T); S.writeStore(d, K, T);
+        const t1 = d.decks[0].limitsTs;
+        d = P.withLimits(d, 'dimp', 40, 45, S.limitsSaveTime(K, d.decks[0], BASE));      // clock corrected
+        S.writeStore(d, K, T);
+        const r = S.readStore(K, T);
+        return { lim: limOf(r.data).l, restored: r.restored, after: limOf(r.data).ts - t1, side: side().decks.dimp.limits };
+      };
+      const k1 = twoSaves(H), k1b = twoSaves(23 * H);
+      // G1: the stored records are a later version's (unreadable here); this tab writes its own records
+      mem.clear();
+      S.readStore(K, T); S.writeStore(P.withLimits(base, 'dimp', 20, 25, BASE - 5000), K, T);
+      const later = JSON.parse(mem.get(K)); later.v = 3; mem.set(K, JSON.stringify(later));
+      const g = S.readStore(K, T);
+      const gw = S.writeStore({ v: 1, decks: [{ id: 'dn', name: 'n', createdAt: T, settings: { points: {} }, holdings: [{ t: '000010', nk: 'a', target: 1, rules: [] }],
+        purchases: [{ t: '000010', qty: 1, price: 10000, date: T, ccy: 'KRW' }] }] }, K, T);
+      const gside = side();
+      // K2: records whose limits are stamped two days ahead: never copied beside them, nothing set aside on each write
+      mem.clear();
+      const ahead = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 48 * H }] };
+      S.readStore(K, T); S.writeStore(ahead, K, T); S.readStore(K, T); S.writeStore(S.withNote(ahead, '000010', 'memo', T, BASE), K, T); S.readStore(K, T);
+      out = { k1, k1b, g: { locked: g.locked, wrote: gw, side: gside }, k2: { side: mem.has(SIDE) ? side() : null,
+        aside: [...mem.keys()].filter((k) => k.startsWith(K + '.unreadable.')).length } };""")
+    for k in ("k1", "k1b"):
+        assert got[k]["lim"] == {"stock": 40, "ind": 45} and got[k]["restored"] is False and got[k]["after"] == 1, (k, got[k])
+        assert got[k]["side"] == {"stock": 40, "ind": 45}, (k, got[k])
+    assert got["g"]["locked"] is True and got["g"]["wrote"] is True
+    assert got["g"]["side"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": got["g"]["side"]["decks"]["dimp"]["ts"]}}}
+    assert got["k2"] == {"side": None, "aside": 0}
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""

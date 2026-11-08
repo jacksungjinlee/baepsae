@@ -968,6 +968,10 @@ export function setAsideCopies(key) {
 // records leaves the side key too (else re-importing it from an older file would bring back its old limits).
 // Known cost (review 2, S2): 기록 불러오기 in a v19.3d tab writes the file's limits with the file's time (or none), so when
 // the side key holds limits saved later, the next start of this app shows those instead, and says 합쳤어요.
+// Known limit (review 3): a portfolio deleted in a v19.3d tab leaves its entry here (that app never touches this key), so
+// re-importing that portfolio later from an older file without limits brings its old limits back.
+// A 저장 is stamped later than the limits this tab and the side key already hold for that portfolio (limitsSaveTime), so
+// the user's last 저장 wins even after the clock was set back (it was up to a day fast, then corrected).
 export const LIMITS_SUFFIX = ".limits";
 const okLimitsPart = (l) => plainObj(l) && Object.keys(l).every((k) => ["stock", "ind"].includes(k) && Number.isInteger(l[k]) && l[k] >= 1 && l[k] <= 100);
 const SIDE_AHEAD = 24 * 3600 * 1000;                     // a time more than a day ahead of now is not believed
@@ -999,20 +1003,35 @@ export function readSideLimits(key) {
   }
   return map;
 }
+// The time to stamp a 내 규칙 저장 of portfolio deck with: now, or just after the limits already saved for it (in the records
+// this tab holds, or beside them) when those carry a later time (a clock that was fast and has been corrected).
+export function limitsSaveTime(key, deck, now = Date.now()) {
+  let t = now;
+  if (plainObj(deck) && okTs(deck.limitsTs)) t = Math.max(t, deck.limitsTs + 1);
+  try {
+    const e = plainObj(deck) ? readSideLimits(key).get(deck.id) : null;
+    if (e) t = Math.max(t, e.ts + 1);
+  } catch (err) { /* the records' time is enough */ }
+  return t;
+}
 // Ids of the portfolios in text (what this tab last read or wrote) that next no longer holds — readable ones only: a
-// portfolio set aside because it could not be read was not taken out by the user (its text, limits too, is kept aside).
+// portfolio set aside because it could not be read, or records this app cannot read at all (a later version's, after a
+// revert), were not taken out by the user (they are kept aside, limits too).
 function goneIds(text, next, today) {
   let d = null;
   try { d = typeof text === "string" ? JSON.parse(text) : null; } catch (e) { d = null; }
-  if (!plainObj(d) || !Array.isArray(d.decks)) return [];
+  const r = d != null ? checkStore(d, today) : null;
+  if (!r || !r.readable) return [];
   const now = new Set((next.decks || []).filter(plainObj).map((x) => x.id));
-  return d.decks.filter((x) => plainObj(x) && typeof x.id === "string" && !now.has(x.id) && !deckProblem(x, today)).map((x) => x.id);
+  return r.data.decks.filter((x) => plainObj(x) && typeof x.id === "string" && !now.has(x.id)).map((x) => x.id);
 }
 // After a write: the limits it holds, where they were saved later than what the side key holds (a tie keeps the side's);
 // gone: ids of portfolios this write took out (they were in what this tab last read or wrote), whose entries go.
 function keepSideLimits(key, data, gone = []) {
   try {
-    const decks = (data.decks || []).filter((x) => plainObj(x) && x.kind === "imported" && okTs(x.limitsTs));
+    // records whose limits carry a time more than a day ahead are not copied here (they would be set aside on every read)
+    const ahead = Date.now() + SIDE_AHEAD;
+    const decks = (data.decks || []).filter((x) => plainObj(x) && x.kind === "imported" && okTs(x.limitsTs) && x.limitsTs <= ahead);
     if (!decks.length && !gone.length) return;
     const map = readSideLimits(key);
     let changed = false;

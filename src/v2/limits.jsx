@@ -12,7 +12,7 @@ import { C, fill, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, Card, Note, Footer, tx } from "./ui.jsx";
 import { LIMITS, limitsOf, readLimit, withLimits } from "./pf.js";
 import { shownName } from "./legacy.js";
-import { validStore, versionFor } from "./store.js";
+import { validStore, versionFor, limitsSaveTime } from "./store.js";
 
 
 // One limit: its rule as a whole line ("한 종목 40% 이하", the typed value while it is valid, else the saved one), then the field.
@@ -39,7 +39,8 @@ export function Limits({ deck, store, setStoreData, onBack, pad }) {
   const [tried, setTried] = useState(false);              // the refused line only after a 저장 here (app.jsx clears an older one)
   const ok = s != null && i != null;
   const save = () => {
-    const next = ok ? withLimits(store.data, deck.id, s, i, Date.now()) : null;
+    // stamped after the limits already saved for this portfolio (store.js limitsSaveTime): the last 저장 always wins
+    const next = ok ? withLimits(store.data, deck.id, s, i, limitsSaveTime(store.key, deck)) : null;
     if (!next) return;
     setTried(true);
     setStoreData(next);                                  // refused (would not read back): the line shows here, and this stays

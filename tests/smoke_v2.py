@@ -6169,6 +6169,8 @@ def scene_v193e_home(R, files, width):
         rules = page.locator('[data-ui-v2="home-rules"][data-deck-id="dsemi"]')
         assert rules.count() == 1 and rules.locator('[data-ui-v2="home-rule"][data-state="broken"]').count() >= 1
         assert page.locator('[data-ui-v2="home-conc"][data-deck-id="dsemi"]').count() == 1 and page.locator('[data-ui-v2="home-calm"]').count() == 0
+        conc_title = page.locator('[data-ui-v2="home-conc"][data-deck-id="dsemi"]').inner_text().split("\n")[0]
+        assert conc_title.startswith(C["rpt"]["chipGroup"] + " "), conc_title    # v19.3d2 (Jack Q8): 삼성전자 + SK하이닉스 = 반도체·전자부품
         assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text()
         assert page.locator('[data-ui-v2="home-rules-name"]').inner_text() == "반도체 포트폴리오"     # 포트폴리오가 둘: 띠마다 이름
         R.collect(page)
