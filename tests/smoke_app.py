@@ -2543,6 +2543,7 @@ with open(os.path.join(ROOT, "src", "repair.js"), encoding="utf-8") as _f:
 assert len(_FIXD) == 1, _FIXD
 FIX_EPS = f"PER과 EPS는 계산 방법을 고치는 중이라 {int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일에 바뀔 수 있어요."
 FIX_ICR = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요."
+FIX_TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요."   # Jack 2026-11-08 (전달)
 # 영어 화면 (Jack 승인 2026-11-08, DeepL 확인): 같은 규칙, 날짜는 예전 뱁새의 영어 월 · 일 (data.js mdOf "en")
 FIX_EPS_EN = "PER and EPS are being recalculated and may change on " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
                                                                       "Dec"][int(_FIXD[0][1]) - 1] + f" {int(_FIXD[0][2])}."
@@ -2571,7 +2572,7 @@ def scene_fix_notes(R, files, live=False):
         co["fl"] = {"cr": 85}
         sh = round(co["shm"] * 1e6) + 815974664
         co.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
-        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6)})
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "nci": True})   # 소수주주 있음 (2026-11-08)
     else:
         corp.pop("epsBasis", None)
         co.update(fl={"cr": 85}, flWhy={"icr": "off"}, flRan=["cr", "l3", "imp"])     # 재무 신호 하나 · 이자보상배율 꺼짐
@@ -2614,7 +2615,8 @@ def scene_fix_notes(R, files, live=False):
         eps = lines("eps")
         if live:
             assert "이익(EPS) 변화" not in body and "적자 구간이 있어서" not in body, "총 순이익(t)인데 주가 분해 숫자 · 적자 문장이 보여요"
-            assert len(eps) >= 3 and all(t == FIX_EPS for t, _ in eps), eps        # 투자지표 · 주가 분해 · DCF (+ 업종 내 위치)
+            tot = lines("total")                                                   # 다시 읽은 뒤 "t" + nci: 같은 자리에 총 순이익 줄
+            assert not eps and len(tot) >= 3 and all(t == FIX_TOTAL for t, _ in tot), (eps, tot)   # 투자지표 · 주가 분해 · DCF (+ 업종 내 위치)
         else:
             assert len(eps) >= 3, eps
     R.check(page, S, "주가 분해: 두 끝이 같은 기준 (005930)" + (" · 현대차 't'는 숫자 대신 그 줄" if live else ""), split_basis)

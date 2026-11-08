@@ -7878,6 +7878,7 @@ def scene_bystock_fit(R, files, width):
 # ── 2026-11-08 (Jack): DART 다시 읽기 전까지의 두 줄 (src/repair.js · src/v2/fix.js · src/v2/fixnote.jsx) ──
 FIX_EPS_TPL = C["fix"]["eps"]
 FIX_ICR = C["fix"]["icr"]
+FIX_TOTAL = C["fix"]["total"]          # 다시 읽은 뒤 "t" + epsIn.nci (Jack 2026-11-08): 고치는 중 줄 자리에
 with open(os.path.join(ROOT, "src", "repair.js"), encoding="utf-8") as _f:
     _FIXD = re.findall(r'^export const EPS_FIX_DATE = "(\d{4})-(\d{2})-(\d{2})";$', _f.read(), flags=re.M)
 assert len(_FIXD) == 1, _FIXD
@@ -7906,7 +7907,7 @@ def fix_files(files, live):
         coby[FIX_FLAG_KR].update(epsIn={"ni": -8000.0, "b": "o", "p": "2026.2Q", "sh": 234000000}, nio3=[-10728.1, -10187.41, 12371.8],
                                  eps=round(-8000.0 * 1e8 / 234000000))
         hd = coby[FIX_T_KR]
-        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6)})
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "nci": True})   # 소수주주 있음 (2026-11-08)
     else:
         f["corp.json"].pop("epsBasis", None)
         coby[FIX_OFF_KR].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "off"})
@@ -8028,7 +8029,8 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
         card.wait_for(state="visible")
         if live:
             assert card.get_attribute("data-head") == "basis" and card.locator('[data-ui-v2="co-decomp-eq"]').count() == 0, card.inner_text()
-            assert [card.locator('[data-ui-v2="eps-fix"]').nth(i).inner_text() for i in range(card.locator('[data-ui-v2="eps-fix"]').count())] == [FIX_EPS]
+            assert [card.locator('[data-ui-v2="eps-total"]').nth(i).inner_text() for i in range(card.locator('[data-ui-v2="eps-total"]').count())] == [FIX_TOTAL]
+            assert card.locator('[data-ui-v2="eps-fix"]').count() == 0
             assert C["co"]["decomp"]["none"] not in card.inner_text() and C["co"]["tiles"]["na"] not in card.inner_text()
         else:
             assert card.get_attribute("data-head") != "basis"
@@ -8038,10 +8040,10 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
         dcf = page.locator('[data-ui-v2="co-dcf"]')
         if live:
             assert dcf.get_attribute("data-edge") == "basis" and dcf.locator('[data-ui-v2="co-dcf-inputs"]').count() == 0, dcf.inner_text()
-            assert dcf.locator('[data-ui-v2="eps-fix"]').count() == 1
+            assert dcf.locator('[data-ui-v2="eps-total"]').count() == 1 and dcf.locator('[data-ui-v2="eps-fix"]').count() == 0
         else:
             assert dcf.count() == 0 or dcf.get_attribute("data-edge") != "basis"
-        assert page.locator(f'{per_card()} [data-ui-v2="eps-fix"]').count() == 1   # 총 순이익: 줄이 남아요
+        assert page.locator(f'{per_card()} [data-ui-v2="{"eps-total" if live else "eps-fix"}"]').count() == 1   # 총 순이익 + 소수주주: 다시 읽은 뒤 총 순이익 줄
         floor_ok(page, "현대차 가치 탭")
         R.collect(page)
     R.check(page, S, "주가 분해: 두 끝이 같은 기준 (삼성전자)" + (" · 현대차 't'는 숫자 대신 그 줄 (주가 분해 · 지금 가격이 가정하는 것)" if live else " · 현대차도 숫자"), split_basis)
