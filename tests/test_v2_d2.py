@@ -472,6 +472,15 @@ def test_a_slow_clock_keeps_the_last_save_and_imports_count_the_side_key():
       const m = S.mergeStores(base, file(P.withLimits(base, 'dimp', 50, 50, BASE - 30 * 24 * H)), BASE, S.storedStores(K, T), T);
       S.writeStore(m, K, T);
       const i1b = S.readStore(K, T);
+      // I1c: the records hold older limits (an earlier-app merge kept them) and the side key a later 저장 made 1 h ahead:
+      // the import is stamped after the side key's, not after the records' (every copy counts, not the first)
+      mem.clear();
+      const older = P.withLimits(base, 'dimp', 20, 25, BASE - 2 * H);
+      mem.set(K, JSON.stringify({ ...older, v: 2 }));
+      mem.set(SIDE, JSON.stringify({ v: 1, decks: { dimp: { limits: { stock: 30, ind: 35 }, ts: BASE + H } } }));
+      const mc = S.mergeStores(older, file(P.withLimits(base, 'dimp', 50, 50, BASE - 30 * 24 * H)), BASE, S.storedStores(K, T), T);
+      S.writeStore(mc, K, T);
+      const i1c = S.readStore(K, T);
       // an own time three days ahead is not used to stamp the import
       mem.clear();
       const farOwn = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 72 * H }] };
@@ -479,7 +488,8 @@ def test_a_slow_clock_keeps_the_last_save_and_imports_count_the_side_key():
       const m2 = S.mergeStores(farOwn, file(P.withLimits(base, 'dimp', 50, 50, BASE - 30 * 24 * H)), BASE, S.storedStores(K, T), T);
       mem.clear();
       out = { slow: { lim: limOf(slow.data), restored: slow.restored }, fixed: limOf(fixed.data), quiet: { lim: limOf(quiet.data), restored: quiet.restored, stored: quietStored },
-        i1b: { stamp: limOf(m).ts - (BASE + H), lim: limOf(i1b.data).l, restored: i1b.restored }, far: limOf(m2).ts - BASE,
+        i1b: { stamp: limOf(m).ts - (BASE + H), lim: limOf(i1b.data).l, restored: i1b.restored },
+        i1c: { stamp: limOf(mc).ts - (BASE + H), lim: limOf(i1c.data).l, restored: i1c.restored }, far: limOf(m2).ts - BASE,
         edge: S.limitsSaveTime(K, { id: 'dimp', limitsTs: BASE + 24 * H }, BASE) - BASE };""")
     H = 3600 * 1000
     assert got["slow"]["lim"]["l"] == {"stock": 40, "ind": 45}, got["slow"]
@@ -487,6 +497,7 @@ def test_a_slow_clock_keeps_the_last_save_and_imports_count_the_side_key():
     assert got["quiet"]["lim"] == {"l": {"stock": 20, "ind": 25}, "ts": 2000} and got["quiet"]["restored"] is False
     assert got["quiet"]["stored"] == {"l": {"stock": 20, "ind": 25}, "ts": 2000}      # written back with the later time
     assert got["i1b"] == {"stamp": 1, "lim": {"stock": 50, "ind": 50}, "restored": False}, got["i1b"]
+    assert got["i1c"] == {"stamp": 1, "lim": {"stock": 50, "ind": 50}, "restored": False}, got["i1c"]
     assert got["far"] == 0                                  # stamped at the import time, not after a time three days ahead
     assert got["edge"] == 24 * H + 1                        # exactly a day ahead is still believed
 

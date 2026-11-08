@@ -1315,7 +1315,8 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
     const ownLim = mine.map(limitsEdit).filter(Boolean), fileLim = limitsEdit(x);
     // other limits come in as an edit made now, and after the latest believable time this device (or the side key) holds
     // for them (a clock that was fast and has been corrected: the same rule as limitsSaveTime)
-    const ownLatest = Math.max(0, ...ownLim.map((e) => e.ts).filter((t) => believable(t, okTs(ts) ? ts : Date.now())));
+    // (limitsEdit already gives a time more than a day ahead no time: only believable ones count here)
+    const ownLatest = Math.max(0, ...ownLim.map((e) => e.ts).filter(okTs));
     const stampLim = (v) => (okTs(ts) ? { ...v, ts: Math.max(ts, ownLatest ? ownLatest + 1 : 0) } : v);
     const lim = fileLim
       ? (mine.some((d) => limitValues(d.limits) !== limitValues(x.limits)) ? stampLim(fileLim)
