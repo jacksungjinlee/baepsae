@@ -16,18 +16,19 @@
 // 자세히: 가치 (every ratio with receipts that reproduce it, 업종 지도, the calculator) and 실적 (margins, 3-year table).
 // Charts draw this company in navy and its peers in grey (apricot stays for the deck screens' data marks).
 import React, { useMemo, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
-  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round } from "./company.js";
+  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
+import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
 // A yearly rate inside "해마다 {g}%" (the template has the % sign): "22.1", "−3.2".
@@ -66,7 +67,8 @@ function MoreLink({ label, onClick, id }) {
 }
 
 // Three annual bars (oldest first), the latest in navy. values may be negative (a loss bar hangs below the line).
-function Bars({ rows, fmt, aria }) {
+// latest · earlier: the bar colours (the 실적 tab passes tokens.js CHART's navy/slate ramp, Jack 2026-11-08; 배당 as before).
+function Bars({ rows, fmt, aria, latest = COLOR.ink, earlier = COLOR.border }) {
   const vals = rows.map((r) => r.v);
   const mx = Math.max(...vals.map((v) => Math.abs(v)), 1e-9);
   const neg = vals.some((v) => v < 0);
@@ -80,7 +82,7 @@ function Bars({ rows, fmt, aria }) {
           <div key={r.year} data-year={r.year} data-v={r.v} style={{ textAlign: "center", minWidth: 0 }}>
             <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{fmt(r.v)}</div>
             <div aria-hidden="true" style={{ position: "relative", height: H0, marginTop: SPACE(1) }}>
-              <div style={{ position: "absolute", left: "28%", right: "28%", borderRadius: 4, background: last ? COLOR.ink : COLOR.border,
+              <div data-bar={last ? "latest" : "earlier"} style={{ position: "absolute", left: "28%", right: "28%", borderRadius: 4, background: last ? latest : earlier,
                 ...(r.v >= 0 ? { bottom: H0 - base, height: h } : { top: base, height: h }) }} />
               <div style={{ position: "absolute", left: 0, right: 0, top: base, height: 1, background: COLOR.line }} />
             </div>
@@ -204,7 +206,7 @@ export function EarnTab({ load, s, onMore }) {
               <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={eokText(last)} /></span>
               {ch != null && E.yoy && <span style={tx(SIZE.xs, WEIGHT.bold, ch < 0 ? COLOR.down : ch > 0 ? COLOR.up : COLOR.text2)}>{fill(E.yoy, { pct: signedPct(ch) })}</span>}
             </div>
-            <Bars rows={series} fmt={(v) => eokText(v)} />
+            <Bars rows={series} fmt={(v) => eokText(v)} latest={CHART.latest} earlier={CHART.earlier} />
           </>
         )}
         <Src>{yearText(co && co.fy)}</Src>
@@ -256,14 +258,16 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
 }
 
 // ================= 가치 =================
-function Strip({ s, group }) {
+// v19.3e (board CoValue2): inside the "업종 {n}개 회사와 비교" card the strip is titled "업종 안 PBR 위치" (the count is in
+// the card's title); without that title approved, the earlier "업종 {n}개 회사 중 PBR 위치".
+function Strip({ s, group, inCard = false }) {
   const V = C.co.value;
   const st = useMemo(() => pbrStrip(s, group), [s, group]);
   if (!st || !all(V.strip, V.me, V.med, V.axisMax, V.stripAria)) return null;
   const X = (x) => `${(x * 100).toFixed(2)}%`;
   return (
     <div data-ui-v2="co-strip" data-n={st.n} data-med={st.med} style={{ marginTop: SPACE(4) }}>
-      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{fill(V.strip, { n: st.n })}</div>
+      <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{inCard && V.where ? V.where : fill(V.strip, { n: st.n })}</div>
       <div role="img" aria-label={fill(V.stripAria, { ind: s.indName, n: st.n, x: nf(s.pbr, 2), y: nf(st.med, 2) })} style={{ position: "relative", height: SPACE(10), marginTop: SPACE(2) }}>
         <div style={{ position: "absolute", left: 0, right: 0, top: SPACE(5), height: 1, background: COLOR.border }} />
         {st.dots.filter((d) => !d.mine).map((d) => (
@@ -282,52 +286,69 @@ function Strip({ s, group }) {
   );
 }
 
-// 지금 가격이 가정하는 것 (KR): headline, two bars (the implied first-year rate vs the company's revenue growth with its
-// real basis), the reading note, and the inputs as a receipt (start profit with its report year, discount rate, 5년 뒤
-// 성장률); out of range or a loss: the old card's message instead. The old card's defaults (fade on): parity tests.
+// 지금 가격이 가정하는 것 (KR): headline, two bars, the reading note, and the inputs as a receipt (start profit with its
+// report year, discount rate, 5년 뒤 성장률); out of range or a loss: the old card's message instead. The old card's
+// defaults (fade on): parity tests.
+// v19.3e 가치 fix (v19.3 Part I): impliedGrowth grows 순이익, so the second bar is the company's own past 순이익
+// growth (company.pastNiGrowth: the yearly average from ni[2] to ni[0], both above 0), labelled "지난 2년 실제 이익 ·
+// 연평균 {x}% 늘었어요 / 줄었어요" (no minus sign), then "지금 주가가 가정하는 이익 증가는 지난 2년보다 낮아요. / 높아요. /
+// 지난 2년과 비슷해요." (비슷 = within 3 percentage points, on the numbers shown) before the approved note. Never revenue.
+// Without both profits above 0 the comparison is hidden (the bar and the sentence), not the card. At the model's edge
+// only its message shows, as before.
 const pctNum = (v) => nf(v, v % 1 ? 1 : 0);
 export function dcfInputs(r) {
   const D = C.co.dcf;
   if (!D.inputs || r.fy == null || r.ni0 == null || !eokText(r.ni0)) return null;
   return fill(D.inputs, { fy: r.fy, ni: eokText(r.ni0), d: pctNum(r.disc), t: pctNum(r.term) });
 }
+// The past 순이익 line: "연평균 {x}% 늘었어요" / "줄었어요" with x shown without its sign (one decimal, as the first-year rate).
+export function pastNiText(x) {
+  const D = C.co.dcf;
+  if (typeof x !== "number" || !Number.isFinite(x)) return null;
+  const r = round(x, 1);
+  const L = r < 0 ? D.pastDown : D.pastUp;
+  return L ? fill(L, { x: p1(Math.abs(r)) }) : null;
+}
+function DcfBar({ icon, tone, label, value, x, mx, dark, ...rest }) {
+  return (
+    <div {...rest} style={{ display: "flex", alignItems: "center", gap: SPACE(3), marginTop: SPACE(3) }}>
+      <IconChip name={icon} size={32} tone={tone} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), flexWrap: "wrap", ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
+          <span>{label}</span><span style={{ whiteSpace: "nowrap", fontWeight: WEIGHT.heavy }}>{value}</span></div>
+        <div aria-hidden="true" style={{ height: SPACE(2), background: COLOR.line, borderRadius: 999, marginTop: SPACE(1), overflow: "hidden" }}>
+          {/* what today's price assumes navy (this company now), its past 순이익 growth slate (the comparison), never blue */}
+          {x > 0 && <div data-bar={dark ? "mine" : "compare"} style={{ width: `${Math.max(2, (x / mx) * 100)}%`, height: "100%", background: dark ? CHART.mine : CHART.compare, borderRadius: 999 }} />}
+        </div>
+      </div>
+    </div>
+  );
+}
 function Dcf({ load, s, co, a, onTry }) {
   const D = C.co.dcf;
   const r = impliedGrowth(s, co, a);
   if (!D.title || r.why === "us" || r.why === "notReady") return null;
-  const gb = growthBasis(s, co);
-  const glabel = gb === "y2" ? C.pick.receipt.growthKr : gb === "y1" ? C.pick.receipt.growthKr1y : null;
-  const g3 = num(s.g3);
   const msg = r.edge === "low" ? D.low : r.edge === "high" ? D.high : r.why === "loss" ? D.loss : null;
   const g = r.g != null ? round(r.g, 1) : null;
   const head = dcfHeadText(g);                 // 는다 (g >= 0) / 준다 (g < 0, no minus sign): Jack, 2026-11-05
   const inputs = dcfInputs(r);
-  if (g != null && !all(head, D.implied, D.perYear, D.note, inputs)) return null;
+  if (g != null && !all(head, D.impliedNi, D.perYear, D.note, inputs)) return null;
   if (g == null && !msg) return null;
-  const mx = Math.max(Math.abs(g || 0), glabel && g3 != null ? Math.abs(g3) : 0, 1e-9);
-  const bar = (x, dark) => (
-    <div aria-hidden="true" style={{ height: SPACE(2), background: COLOR.line, borderRadius: 999, marginTop: SPACE(1), overflow: "hidden" }}>
-      <div style={{ width: `${Math.max(2, (Math.max(0, x) / mx) * 100)}%`, height: "100%", background: dark ? COLOR.ink : COLOR.border, borderRadius: 999 }} />
-    </div>
-  );
+  const past = g != null ? pastNiGrowth(co) : null;
+  const pastText = past ? pastNiText(past.x) : null;
+  const vs = past && pastText && D.past ? dcfVs(g, past.x) : null;
+  const vsText = vs && D.vs ? D.vs[vs] || null : null;
+  const mx = Math.max(Math.abs(g || 0), vs ? Math.abs(past.x) : 0, 1e-9);
   return (
-    <Card data-ui-v2="co-dcf" data-g={g ?? ""} data-edge={r.edge || r.why || ""} data-disc={a.disc} data-term={a.term}>
+    <Card data-ui-v2="co-dcf" data-g={g ?? ""} data-edge={r.edge || r.why || ""} data-disc={a.disc} data-term={a.term}
+      data-past={vs ? round(past.x, 1) : ""} data-vs={vs || ""}>
       <CardHead icon="scales" tone="value" title={D.title} />
       {g != null ? (
         <>
           <p data-ui-v2="co-dcf-head" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3) })}>{head}</p>
-          <div style={{ marginTop: SPACE(3) }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
-              <span>{D.implied}</span><span style={{ whiteSpace: "nowrap" }}>{fill(D.perYear, { g: rateText(g) })}</span></div>
-            {bar(g, true)}
-            {glabel && g3 != null && (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(3), ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
-                  <span>{glabel}</span><span style={{ whiteSpace: "nowrap" }}>{signedPct(g3)}</span></div>
-                {bar(g3, false)}
-              </>
-            )}
-          </div>
+          <DcfBar data-ui-v2="co-dcf-implied" icon="scales" tone="on" label={D.impliedNi} value={fill(D.perYear, { g: rateText(g) })} x={g} mx={mx} dark />
+          {vs && <DcfBar data-ui-v2="co-dcf-past" icon="trend-up" tone="earn" label={D.past} value={pastText} x={past.x} mx={mx} />}
+          {vsText && <Note data-ui-v2="co-dcf-vs">{vsText}</Note>}
           <Note>{fill(D.note, { t: pctNum(a.term) })}</Note>
           <div data-ui-v2="co-dcf-inputs" style={{ marginTop: SPACE(2), border: `1px dashed ${COLOR.border}`, borderRadius: RADIUS.sm, padding: `${SPACE(2)}px ${SPACE(3)}px`,
             ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>{inputs}</div>
@@ -347,6 +368,35 @@ export function valueBasis(co) {
   return co && Number.isInteger(co.fy) && V.basisY ? fill(V.basisY, { fy: co.fy }) : null;
 }
 
+// "업종 {n}개 회사와 비교": the companies both medians stand on can differ (PBR from the strip's companies, PER only from
+// those with a profit), so the title says the smaller count.
+export const compareN = (pbrN, perMed) => (perMed && perMed.n > 0 ? Math.min(pbrN, perMed.n) : pbrN);
+// One ratio against the industry median (board CoValue2): "PBR · 1.10배 · 업종 1.60배" and a bar each for 이 회사 (navy,
+// the company page's colour for this company) and 업종 (grey). The first two lines keep the label, then the value, as the
+// Stat they replace. A negative PER (a loss) has no bar.
+function CompareRow({ id, label, mine, med, value, sub }) {
+  const mx = Math.max(mine > 0 ? mine : 0, med > 0 ? med : 0, 1e-9);
+  const bar = (name, v, dark) => (
+    <div style={{ display: "grid", gridTemplateColumns: "48px 1fr", alignItems: "center", gap: SPACE(2), marginTop: SPACE(1) }}>
+      <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{name}</span>
+      <div aria-hidden="true" style={{ height: SPACE(2), background: COLOR.line, borderRadius: 999, overflow: "hidden" }}>
+        {v > 0 && <div style={{ width: `${Math.max(2, (v / mx) * 100)}%`, height: "100%", background: dark ? COLOR.ink : HOLDING_SHADES[HOLDING_SHADES.length - 1], borderRadius: 999 }} />}
+      </div>
+    </div>
+  );
+  return (
+    <div data-ui-v2={id} style={{ padding: `${SPACE(3)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap" }}>
+        <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { flex: 1 })}>{label}</span>
+        <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{value}</span>
+        {sub && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{sub}</span>}
+      </div>
+      {bar(C.co.earn.mine, mine, true)}
+      {med != null && bar(C.why.srcInd, med, false)}
+    </div>
+  );
+}
+
 export function ValueTab({ load, s, store, onMore }) {
   const V = C.co.value;
   const co = load.coByT.get(s.t) || null;
@@ -359,19 +409,35 @@ export function ValueTab({ load, s, store, onMore }) {
   const risk = riskTile(s);
   const bandLine = riskBandText(s, risk, true);
   const a = assumeOf(store.data, s.t) || { disc: DCF.disc, term: DCF.term };
+  const st = useMemo(() => pbrStrip(s, group), [s, group]);
+  // v19.3e (board CoValue2): with an industry to compare (a median from 5 or more companies), PBR and PER sit in one card
+  // "업종 {n}개 회사와 비교" with a bar each for 이 회사 and 업종, then the 업종 안 PBR 위치 strip. Otherwise as before.
+  const compare = r.med != null && st && V.compare && V.where && C.co.earn.mine && C.why.srcInd;
+  const pbrSub = r.med != null && V.indMed ? fill(V.indMed, { x: nf(r.med, 2) }) : null;
+  const perSub = perMed && V.indMed ? fill(V.indMed, { x: nf(round(perMed.med, 1), 1) }) : null;
   return (
     <div data-ui-v2="co-value" data-rule={r.rule}>
       <Card>
         {head && <H>{head}</H>}
         {head && sub && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{sub}</p>}
-        {r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
-        <Stats>
-          {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={r.med != null && V.indMed ? fill(V.indMed, { x: nf(r.med, 2) }) : null} />}
-          {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perMed && V.indMed ? fill(V.indMed, { x: nf(round(perMed.med, 1), 1) }) : null} />}
-        </Stats>
+        {!compare && r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
+        {!compare && (
+          <Stats>
+            {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={pbrSub} />}
+            {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perSub} />}
+          </Stats>
+        )}
         {!usOf(s) && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
         <DateLine date={lineDate(load, s)} fresh={load.fresh} />
       </Card>
+      {compare && (
+        <Card data-ui-v2="co-compare" data-n={compareN(st.n, per != null ? perMed : null)}>
+          <CardHead icon="tag" tone="value" title={fill(V.compare, { n: compareN(st.n, per != null ? perMed : null) })} />
+          <CompareRow id="co-pbr" label="PBR" mine={r.pbr} med={r.med} value={timesText(r.pbr, 2)} sub={pbrSub} />
+          {per != null && <CompareRow id="co-per" label="PER" mine={per} med={perMed ? perMed.med : null} value={timesText(per, 1)} sub={perSub} />}
+          <Strip s={s} group={group} inCard />
+        </Card>
+      )}
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {risk.rule !== "na" && C.co.risk[risk.rule] && (
         <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta} data-lo={risk.band ? risk.band.lo : ""} data-hi={risk.band ? risk.band.hi : ""}>
@@ -531,6 +597,15 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
 // show for every comparable stock (divSt same · adj · zero; nc · nd -> 배당을 줘요, no bars). The bars show the years the
 // data has (Part O.3 of the v19.3 spec), at least two.
 // US: Yahoo's yield only (no per-share dividend in the data until v19.2).
+// The payout as won out of 100원 of profit: whole won, one decimal when the whole number would be 0 or 100 (0.3원 is not
+// 0원, 99.6원 is not all of it). -> { x, y } as shown text.
+export function payoutWon(pct) {
+  const w = Math.round(pct);
+  const d = w <= 0 || w >= 100 ? 1 : 0;
+  const x = Math.round(pct * 10 ** d) / 10 ** d;
+  const y = Math.round((100 - x) * 10 ** d) / 10 ** d;
+  return { x: nf(x, d), y: nf(y, d), rest: y > 0 };            // rest false: "나머지 0원" is not said
+}
 const warnedPayout = new Set();
 export function DivTab({ load, s }) {
   const Dv = C.co.div;
@@ -559,6 +634,14 @@ export function DivTab({ load, s }) {
   const bars = years.length >= 2 ? years : null;
   const adjYears = bars && r.adjYears ? r.adjYears.filter((y) => bars.some((b) => b.year === y)) : [];   // earlier bars recalculated
   const line = pm ? (pm.under ? Dv.under1000 : Dv.perYear ? fill(Dv.perYear, { x: manWon(pm.won) }) : null) : null;
+  // v19.3e (board CoDiv2, wording Jack 2026-11-08): the coin picture labelled "100만원어치" with its sentence under it. Korea:
+  // "100만원어치면 지난 1년 배당으로 약 {x}이에요." (the 사업보고서 dividend: the past year). US: the line as before ("1년에 약 {x}"),
+  // because Yahoo's yield is the current dividend rate, not the past year. Below 1,000원 the sentence as before (never "약 0원").
+  const flowText = pm && !pm.under ? (us ? line : Dv.pastYear ? fill(Dv.pastYear, { x: manWon(pm.won) }) : null) : null;
+  const flow = flowText && Dv.coins ? flowText : null;
+  // 이익 중 얼마를 배당으로 줬나요?: the payout as "이익 100원 중 {x}원" and "나머지 {y}원은 회사에 남았어요." (whole won; one
+  // decimal when the whole number would read 0 or 100).
+  const ring = po && po.pct != null && all(Dv.payoutQ, Dv.payoutOf, Dv.payoutRest) ? payoutWon(po.pct) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
       {(head || (showDps && Dv.dps) || us) && <Card data-ui-v2="co-div-head">
@@ -580,17 +663,31 @@ export function DivTab({ load, s }) {
       {pm && all(Dv.million, line, basis) && (
         <Card data-ui-v2="co-million" data-won={pm.won ?? ""} data-under={pm.under ? "1" : ""} data-raw={pm.raw}>
           <CardHead icon="coins" tone="div" title={Dv.million} />
-          <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>
+          {flow ? <CoinFlow label={Dv.coins} sentence={flow} />
+            : <div style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={line} /></div>}
           <Note>{[basis, Dv.noPromise].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>
           <div style={{ marginTop: SPACE(2) }}><StatusChip tone="neutral">{C.plan.preTax}</StatusChip></div>
           <DateLine date={lineDate(load, s)} fresh={load.fresh} />
         </Card>
       )}
-      {(r.yieldPct != null || (po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
+      {ring && (
+        <Card data-ui-v2="co-payout" data-pct={po.pct}>
+          <CardHead icon="chart-pie-slice" tone="div" title={Dv.payoutQ} />
+          <div style={{ display: "flex", alignItems: "center", gap: SPACE(4), marginTop: SPACE(3) }}>
+            <PayoutRing pct={po.pct} label={`${ring.x}%`} />
+            <div style={{ minWidth: 0 }}>
+              <p data-ui-v2="co-payout-of" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(Dv.payoutOf, { x: ring.x })}</p>
+              {ring.rest && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{fill(Dv.payoutRest, { y: ring.y })}</p>}
+              {yearText(po.fy) && <Src>{yearText(po.fy)}</Src>}
+            </div>
+          </div>
+        </Card>
+      )}
+      {(r.yieldPct != null || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
         <Stats>
           {r.yieldPct != null && <Stat data-ui-v2="co-yield" data-y={r.yieldPct} label={C.pick.receipt.yield} value={yieldText(r.yieldPct)}
             sub={us ? Dv.yieldSubUs : fy ? fill(Dv.basisKr, { fy }) : null} />}
-          {po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
+          {!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
       </Card>}

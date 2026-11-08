@@ -41,6 +41,18 @@ export const ICON_TONE = {
 };
 export const TOPICS = ["earn", "value", "div", "risk", "disc"];
 export const TOPIC_CHIP = { earn: "#EAF1FB", value: "#E9F5EE", div: "#FBF4E1", risk: "#F1EDF9", disc: "#E6F4F4" };
+// v19.3e (v19.3 Part I, 보드 CoSummary2 · CoValue2 · CoDiv2, Jack 승인 보드 48판): 회사 페이지의 작은 그림(가치 눈금 · 배당 동전)과
+// 요약 칸 왼쪽 띠(company.jsx)에 쓰는 같은 주제의 진한 색(ink)과 옅은 색(light). 실적 막대와 출렁임 물결은 아래 CHART 색이에요.
+// 실적은 진한 색이 없어요 (Jack, 2026-11-08: 데이터 막대 · 선에는 파랑을 쓰지 않고, 주제 색은 띠 · 칩 · 아이콘 바탕에만): 실적 칸의
+// 왼쪽 띠는 실적의 옅은 주제 색(#B9CDEB, ICON_TONE.earn 바탕)이고 light 는 칩 바탕색(TOPIC_CHIP.earn)이에요.
+// 아이콘 색이 아니에요(아이콘은 위 ICON_TONE 만). 주제 색처럼 좋고 나쁨을 뜻하지 않아요. 살구색 · 가격 빨강 · 파랑 · 회사 로고 색은
+// 없어요.
+export const TOPIC_ART = {
+  earn: { ink: ICON_TONE.earn.fill, light: TOPIC_CHIP.earn },
+  value: { ink: "#4E9A72", light: "#DCEFE3" },
+  div: { ink: "#C59A2E", light: "#F6EACB" },
+  risk: { ink: "#8C78C6", light: "#B9C1CE" },
+};
 export const ICON_CHIP = { bg: COLOR.select, radius: "30%" };   // 아이콘 칩: 크기의 30% 둥글기
 export const SELECTED = { background: COLOR.select };                 // 고른 칩 · 고른 카드 · 탭 알약
 export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 0 ${COLOR.ink}` };   // 고른 줄: 왼쪽 3px 남색 선
@@ -49,6 +61,12 @@ export const SELECTED_ROW = { background: COLOR.select, boxShadow: `inset 3px 0 
 // 가장 옅은 색을 되풀이해요. 회사 로고 · 글자 표시의 색(company.js MARK_COLORS)은 그래프를 칠하지 않아요. 가격 빨강 · 파랑은 오름 ·
 // 내림에만, 주제 색은 기준과 주제에만, 살구색은 데이터 표시에만 써요.
 export const HOLDING_SHADES = ["#1C2B45", "#3D4B63", "#5A6B87", "#7C889C", "#9AA3B2", "#C9D0DB"];
+// v19.3e (Jack, 2026-11-08): 회사 페이지 그래프의 색. 실적 막대는 남색 · 회청색 단계(최근 해 #1C2B45, 앞선 해 #9AA3B2)로,
+// 파랑은 쓰지 않아요 (한국에서 파랑은 '내림'으로 읽혀요). '이 회사'는 어느 그래프에서나 남색(출렁임 물결 포함)이에요. compare
+// (회청색)는 지금 두 곳에만 써요: 출렁임 물결의 시장 선과 그 범례, 가치 탭의 '지난 2년 실제 이익' 막대. 실적 탭의 업종 중간 막대
+// (HOLDING_SHADES 맨 끝)와 업종 지도의 다른 회사 점(COLOR.text3)은 예전 색 그대로예요. 둘 다 위의 색(COLOR.ink · HOLDING_SHADES
+// 다섯째)을 그대로 써요.
+export const CHART = { mine: COLOR.ink, compare: HOLDING_SHADES[4], latest: COLOR.ink, earlier: HOLDING_SHADES[4] };
 export const holdingShade = (rank) => HOLDING_SHADES[Math.min(HOLDING_SHADES.length - 1, Math.max(0, Math.floor(Number(rank)) || 0))];
 // weights: 종목마다 비중(숫자) → 같은 순서의 색. 비중이 큰 종목부터 진한 색이고, 비중이 같으면 앞에 있는 종목이 먼저예요.
 // 비중이 숫자가 아니면(빈칸) 맨 뒤 순위로 봐요 (빈칸을 0 으로 바꿔 순위를 매기지 않아요: 그래도 색은 하나 받아요).

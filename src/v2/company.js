@@ -302,6 +302,17 @@ export function riskTile(s) {
 // ---------------- 재무 경고 신호 (KR): src/v2/warn.js (v19.3d: shared with the portfolio rule) ----------------
 export { WARN_CHECKS, FIN_SUB_SECTORS, FIN_SUB_INDS, warnings } from "./warn.js";
 
+// ---------------- 재무 경고 chips (v19.3e, v19.3 Part I) ----------------
+// One chip per check that ran and passed (in corp.json flRan, no flag), in the board's order (CoSummary2): 3년 연속 적자
+// 아님 · 유동비율 100% 이상 · 자본잠식 없음 · 이자보상배율 1배 이상. A check that did not run (or does not apply, flNa)
+// gets no chip: never a ✓ for something not checked. w: warn.warnings(s, co).
+export const CHIP_ORDER = ["l3", "cr", "imp", "icr"];
+export function warnChips(w) {
+  if (!w || !Array.isArray(w.ran)) return [];
+  const fired = new Set((w.flags || []).map((f) => f.code));
+  return CHIP_ORDER.filter((c) => w.ran.includes(c) && !fired.has(c));
+}
+
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
 export const RANK_CARDS = CARDS.filter((c) => !c.pending).map((c) => c.id);
 // The cards the user picked: the latest saved portfolio's cards with points (CARDS order); none -> the first two.
@@ -457,6 +468,24 @@ export function impliedGrowth(s, co, { disc = DCF.disc, term = DCF.term } = {}) 
   const r = reverseDcf({ price, ni0, sharesM, fade: DCF.fade, disc, term });
   if (!r) return { why: "notReady" };
   return r.edge ? { edge: r.edge, ...inputs } : { g: r.g, ...inputs };
+}
+
+// 지금 가격이 가정하는 것 (v19.3e, v19.3 Part I "가치 fix"): impliedGrowth grows 순이익, so the comparison is the company's
+// own past 순이익 growth, never revenue: the yearly average from the 사업보고서 two years back (corp.json ni[2]) to the
+// latest (ni[0]), both above 0 (else null: the comparison is hidden, not the card). x in % a year, signed.
+export function pastNiGrowth(co) {
+  const ni = co && Array.isArray(co.ni) ? co.ni : null;
+  const a = ni ? num(ni[0]) : null, b = ni ? num(ni[2]) : null;
+  if (!(a > 0) || !(b > 0)) return null;
+  return { x: (Math.sqrt(a / b) - 1) * 100, fy: num(co.fy) };
+}
+// "…지난 2년보다 낮아요." / "…높아요." / "…지난 2년과 비슷해요.": on the numbers as shown (one decimal), 비슷 = within 3
+// percentage points. g: the implied first-year rate · x: pastNiGrowth's x.
+export const DCF_SIMILAR = 3;
+export function dcfVs(g, x) {
+  if (num(g) == null || num(x) == null) return null;
+  const a = round(g, 1), b = round(x, 1);
+  return Math.abs(a - b) <= DCF_SIMILAR + EPS ? "similar" : a < b ? "lower" : "higher";
 }
 
 // Receipts for 가치 자세히: price / BPS = PBR and price / EPS = PER, shown only when the arithmetic gives the number on
