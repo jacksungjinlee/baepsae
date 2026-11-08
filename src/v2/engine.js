@@ -178,6 +178,13 @@ export const hasDivCheck = (d) => !!(d && typeof d === "object" && !Array.isArra
   && !Array.isArray(d.divCheck));
 export function setDataShape(data) { EXACT_DATA = hasDivCheck(data); return EXACT_DATA; }
 export const exactData = () => EXACT_DATA;
+// fn() with the engine reading `data` its own way, then the shape it had before, even if fn throws (hold.js: a check run
+// on fetched data that is not on screen yet, 2026-11-08). -> what fn returns.
+export function withDataShape(data, fn) {
+  const prev = EXACT_DATA;
+  EXACT_DATA = hasDivCheck(data);
+  try { return fn(); } finally { EXACT_DATA = prev; }
+}
 
 // Exact data only. A Korean history is comparable year to year when the split check put every paying year on today's
 // share basis: divSt same (no change), adj (a split or bonus issue, adjusted by its exact factor) or zero (no dividend
@@ -814,6 +821,12 @@ export function annualDividend(rows, fx, coByT = null) {
   }
   return { won, unknown, unchecked };
 }
+
+// say-why (Jack, 2026-11-08): does annualDividend's total include a US stock's dividend? Its 연 배당금 is Yahoo's current
+// dividend rate made into a year (dy x cost), not the past year, and 매수 계획 says so (rpt.divUs) only then: a bought
+// (shares > 0) US company share (cls "us") whose dy is known. A US stock with no dy is counted by `unknown` instead (0원,
+// its own line); bond and gold ETFs (cls bond · metal) are not US stocks.
+export const usDividendCounted = (rows) => rows.some((r) => r.s && r.s.cls === "us" && r.shares > 0 && num(r.s.dy) != null);
 
 // "2022년처럼 떨어지면": market's 2022 won return x beta per stock; cushion ETFs their own 2022 return.
 // Holdings without a figure (no beta) are assumed to move like the rest (the v17.5 rule of the current app): the rate

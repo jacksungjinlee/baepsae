@@ -8,6 +8,10 @@ import { GUIDES, GUIDE_ORDER } from "./guides.jsx";
 import { Ic } from "./icons.jsx";
 import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
+// 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
+// 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
+import { EpsFixLine, IcrOffLine } from "./fixnote.jsx";
+import { epsBase, epsPeriod } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -550,6 +554,8 @@ export function ScreenerView({ data, onOpen, setExplain }) {
               ))}
             </div>
             {rows.length > 100 && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8 }}>상위 100개까지 보여요. 조건을 좁히면 더 정확해져요.</div>}
+            <EpsFixLine corp={data} cos={rows.slice(0, 100).filter((c) => c.per != null || c.roe != null)}
+              show={cs.some((x) => x.k === "per" || x.k === "roe") && rows.slice(0, 100).some((c) => c.per != null || c.roe != null)} />
           </>
         )}
       </Card>
@@ -641,7 +647,7 @@ export function GuideReader({ id, onClose }) {
             ))}
           </div>
         )}
-        <div style={{ fontSize: 10, color: C.faint, marginTop: 16 }}>업종을 이해하기 위한 교육 자료예요. 특정 종목 추천이 아니에요.</div>
+        <div style={{ fontSize: 10, color: C.faint, marginTop: 16 }}>업종을 이해하기 위한 자료예요. 특정 종목 추천이 아니에요.</div>
       </div>
     </div>
   );
@@ -819,6 +825,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
             ))}
           </div>
           {secExcluded.length > 0 && <Sub style={{ marginTop: 8, fontSize: 10.5, color: C.faint }}>표본 부족으로 표시하지 않음: {secExcluded.join(", ")}</Sub>}
+          <EpsFixLine corp={data} cos={comps.filter((c) => secs[c.s] && secs[c.s].opm == null && secs[c.s].roe != null)} show={secRank.some((r) => r.opm == null && r.roe != null)} />
         </Card>
         <Card>
           <H num="04" main="수익성과 주가 수준" sub="ROE × PBR · 원 크기는 시가총액" onWhy={() => setExplain("scatter")} />
@@ -828,6 +835,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
               : <Scatter pts={pbrRoePts} xDomain={[-10, 40]} yDomain={[0, 8]} height={340} zoomable trend={roeTrend}
                   xLabel="ROE (%) — 오른쪽일수록 자본을 잘 굴리는 회사" yLabel="PBR (배) — 위일수록 장부가치 대비 비싼 회사" onPick={onOpen} />}
           </div>
+          <EpsFixLine corp={data} cos={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} show={hasMult && pbrRoePts.length > 0} />
         </Card>
       </div>
 
@@ -856,6 +864,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
               ))}
             </div>
             <Sub style={{ marginTop: 9, fontSize: 10.5, color: C.faint }}>굵은 점: 업종 중간값 · 옅은 막대: 업종의 25~75% 구간 · 점선: 시장 전체 중간값{boxKey === "per" ? " · 적자 기업 제외" : ""}</Sub>
+            <EpsFixLine corp={data} cos={comps.filter((c) => c.per != null && c.per > 0)} show={boxKey === "per"} />
           </>
         )}
       </Card>
@@ -916,6 +925,7 @@ export function SearchView({ data, heldMap, onOpen }) {
           <button onClick={() => setLimit(limit + 30)} style={{ display: "block", width: "100%", background: "none", border: "none", color: C.blue, fontSize: 12.5, fontWeight: 800, padding: "12px", cursor: "pointer", fontFamily: FONT }}>더 보기 ({rows.length - limit}개 남음)</button>
         )}
         {rows.length === 0 && <Sub style={{ padding: "14px 2px" }}>{/[a-zA-Z]{2,}/.test(q) ? '미국 종목은 포트폴리오 탭에서 담을 수 있어요. 기업분석은 한국 공시(DART) 기반이라 국내 상장사만 다뤄요.' : '검색 결과가 없어요. 회사 이름이나 6자리 코드로 찾아보세요.'}</Sub>}
+        <EpsFixLine corp={data} cos={rows.slice(0, limit).filter((c) => c.per != null)} show={rows.slice(0, limit).some((c) => c.per != null)} style={{ margin: "8px 2px 10px" }} />
       </Card>
     </div>
   );
@@ -933,26 +943,34 @@ export function Verdict({ children }) {
 }
 
 // ---- 주가 분해: 주가 배율 = 이익 배율 × 눈높이 배율 (과거 확정치의 항등식) ----
+// 2026-11-08: 3년 전 EPS 는 지금 EPS(c.eps)와 같은 기준이에요 (repair.js epsBase). 다시 읽기 전 파일은 총 순이익 ÷ 보통주(c.ni[2] ÷ c.shm,
+// 예전 그대로), 다시 읽은 뒤에는 지배주주 순이익(nio3[2], 별도 재무제표면 ni[2]) ÷ epsIn.sh(보통주 + 상장 우선주). 같은 기준에 세울 수
+// 없으면 { why: "basis" }: 카드는 숫자 없이 PER · EPS 줄만 보여요.
 export function decomposeReturn(c) {
-  if (c.r36 == null || !c.shm) return null;
+  if (c.r36 == null) return null;
+  const base = epsBase(c, 2);
+  if (base && base.bad) return { why: "basis" };
+  if (!base || !base.sharesM) return null;
   const epsNow = c.eps;
-  const niThen = c.ni && c.ni.length > 2 ? c.ni[2] : null;
+  const niThen = base.ni;
   if (epsNow == null || epsNow <= 0 || niThen == null || niThen <= 0) return null;
-  const epsThen = niThen * 100 / c.shm;            // 억원 → 원/주 (상장주식수 백만주)
+  const epsThen = niThen * 100 / base.sharesM;     // 억원 → 원/주 (주식수 백만주)
   const priceRatio = 1 + c.r36 / 100;
   if (priceRatio <= 0) return null;
   const eF = epsNow / epsThen;                     // 이익 배율
   if (eF <= 0) return null;
   const mF = priceRatio / eF;                      // 눈높이(PER) 배율 = 항등식의 나머지
-  return { eF, mF, priceRatio };
+  return { eF, mF, priceRatio, epsThen };
 }
 
-function DecompCard({ c, setExplain }) {
-  const d = decomposeReturn(c);
+function DecompCard({ c, setExplain, corp }) {
+  const d0 = decomposeReturn(c);
+  const basisBad = !!d0 && d0.why === "basis";     // 두 끝을 같은 기준에 세울 수 없어요: 숫자도 '적자 구간' 문장도 없이 PER · EPS 줄만
+  const d = basisBad ? null : d0;
   const fx = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(2)) + "배";
   let verdict = null, body = null;
   if (d) {
-    const epsThen = c.ni[2] * 100 / c.shm;
+    const epsThen = d.epsThen;
     const priceThen = c.price / d.priceRatio;
     const perThen = priceThen / epsThen;
     const perNow = c.price / c.eps;
@@ -990,7 +1008,7 @@ function DecompCard({ c, setExplain }) {
         </div>
       </>
     );
-  } else {
+  } else if (!basisBad) {
     body = (
       <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
@@ -1007,6 +1025,7 @@ function DecompCard({ c, setExplain }) {
       <H num="04" main="주가는 무엇으로 움직였나" sub="지난 3년 주가 = 이익 변화 × 눈높이 변화" onWhy={() => setExplain("decomp")} />
       {verdict && <Verdict>{verdict}</Verdict>}
       {body}
+      <EpsFixLine corp={corp} cos={[c]} show={!!corp} force={basisBad} />
     </Card>
   );
 }
@@ -1037,6 +1056,13 @@ function MultRow({ label, valTxt, band, sentence, onWhy }) {
       <span style={{ flex: 1, minWidth: 160, fontSize: 11.5, color: C.sub, lineHeight: 1.55 }}>{sentence}</span>
     </div>
   );
+}
+
+// 투자지표 부제의 기간: 다시 읽은 epsIn.p 가 있으면 그것("fy" = 직전 사업보고서, bq 가 있어도), 없으면 예전처럼 bq. 읽을 수 없는 p 면
+// 기간을 말하지 않아요 (틀린 말 대신). (repair.js epsPeriod, PR #89 리뷰)
+export function epsPeriodSub(c) {
+  const pe = epsPeriod(c);
+  return !pe ? "" : pe.fy ? " · 직전 사업보고서" : " · 최근 4개분기 합산(" + pe.y + "." + pe.q + "Q)";
 }
 
 export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain }) {
@@ -1138,7 +1164,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       </Card>
 
       <Card>
-        <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (c.bq ? " · 최근 4개분기 합산(" + c.bq + ")" : " · 직전 사업보고서")} onWhy={() => setExplain("box")} />
+        <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + epsPeriodSub(c)} onWhy={() => setExplain("box")} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, padding: "9px 11px", background: C.bg, border: HAIR, borderRadius: 8, alignItems: "center" }}>
               <button onClick={() => setExplain("factor")} style={{ background: "none", border: "none", padding: 0, fontSize: 10.5, fontWeight: 800, color: C.faint, cursor: "pointer", fontFamily: FONT }}>성향(팩터) ?</button>
@@ -1182,6 +1208,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             ) : <div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>3년 추이 데이터 없음</div>}
             cap={payout == null ? "배당이 없거나 이익 데이터가 없어요" : payout > 100 ? `배당성향 ${payout.toFixed(0)}% — 이익보다 커요` : `배당성향 ${payout.toFixed(0)}% · 3년 주당배당 기준`} />
         </div>
+        <EpsFixLine corp={data} cos={[c]} show={c.per != null || c.roe != null || payout != null} style={{ marginTop: 10 }} />
         <button onClick={() => setExplain("trap")} style={{ marginTop: 14, background: C.apricotSoft, border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 12, fontWeight: 800, color: C.apricotDeep, cursor: "pointer", fontFamily: FONT }}>싼 값이 오래 싼 값으로 남는 이유 →</button>
       </Card>
 
@@ -1284,6 +1311,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
                 {ffRows.filter((r) => r.sent).map((r) => `${r.ko}: ${r.sent}`).join(" · ")}
               </Sub>
               <Sub style={{ fontSize: 10.5, color: C.faint, marginTop: 4 }}>파란 상자: 업종 25~75% 구간 · 파란 선: 중간값 · 주황 점: 이 회사. 낮다고 곧 싸다는 뜻은 아니에요.</Sub>
+              <EpsFixLine corp={data} cos={[c]} show={ffRows.some((r) => r.ko === "PER")} />
             </div>
           )}
         </Card>
@@ -1297,8 +1325,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         </button>
       )}
       {guideOpen && <GuideReader id={c.s} onClose={() => setGuideOpen(false)} />}
-      <DecompCard c={c} setExplain={setExplain} />
-      <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} />
+      <DecompCard c={c} setExplain={setExplain} corp={data} />
+      <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} corp={data} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
         <SiteFooterLine />
@@ -1343,6 +1371,7 @@ function DiscSignals({ c }) {
             </div>
           ))}
           <Sub style={{ fontSize: 10.5, color: C.faint }}>직전 사업보고서 기준이에요. 신호는 위험의 단정이 아니라 확인해볼 항목이에요.</Sub>
+          <IcrOffLine co={c} style={{ marginTop: 0 }} />
         </div>
       )}
       {mine && mine.nps && (
@@ -1454,6 +1483,7 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
           </table>
         </div>
         <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
+        <EpsFixLine corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
       </Card>
     </div>
   );
@@ -1472,10 +1502,16 @@ function Slider({ label, val, setVal, min, max, step, unit }) {
   );
 }
 
-export function DcfCard({ c, sharesM, setExplain }) {
-  const auto = c.dcfReady && c.ni[0] != null && sharesM;
-  const [ni0, setNi0] = useState(auto ? c.ni[0] : "");
-  const [shm, setShm] = useState(sharesM ? Math.round(sharesM * 10) / 10 : "");
+export function DcfCard({ c, sharesM, setExplain, corp }) {
+  // 2026-11-08: 시작 순이익 · 주식 수도 EPS 와 같은 기준 (repair.js epsBase): 다시 읽기 전 파일은 예전 그대로(ni[0] · sharesM), 다시 읽은
+  // 뒤에는 지배주주 순이익(nio3[0], 별도면 ni[0]) · epsIn.sh. 같은 기준이 없으면 채우지 않고(직접 입력) PER · EPS 줄을 보여요.
+  const base = epsBase(c, 0);
+  const basisBad = !!base && !!base.bad;
+  const startNi = basisBad || !base ? null : base.ni;
+  const startSh = basisBad ? null : !base || base.basis === "today" ? sharesM : base.sharesM;
+  const auto = !basisBad && c.dcfReady && startNi != null && startSh;
+  const [ni0, setNi0] = useState(auto ? startNi : "");
+  const [shm, setShm] = useState(startSh ? Math.round(startSh * 10) / 10 : "");
   const [g1, setG1] = useState(clamp(Math.round(c.g3 ?? 10), -10, 25));
   const [fade, setFade] = useState(true);
   const [disc, setDisc] = useState(10);
@@ -1583,6 +1619,8 @@ export function DcfCard({ c, sharesM, setExplain }) {
             </div>
           )}
           {N != null && N <= 0 && <Sub style={{ color: C.coral, fontSize: 11 }}>순이익이 0 이하라 이 단순 모형으로는 계산할 수 없어요. 흑자 전환 가정을 직접 입력해보거나, 이 회사엔 다른 지표가 필요해요.</Sub>}
+          {/* 시작 순이익을 corp.json 에서 채웠을 때 (auto): PER · EPS 와 같은 순이익이에요 */}
+          <EpsFixLine corp={corp} cos={[c]} show={!!corp && !!auto} force={basisBad} style={{ marginTop: 0 }} />
         </div>
       </div>
 

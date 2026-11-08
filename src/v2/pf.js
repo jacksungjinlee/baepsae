@@ -22,6 +22,7 @@ import { R2022 } from "./y2022.js";
 import { heldQty, byAmount, importedUnits } from "./held.js";
 import { dayState } from "./rules.js";
 import { warnings } from "./warn.js";
+import { icrOffShown } from "./fix.js";
 
 export const LIMITS = { stock: 30, ind: 35 };          // Part G defaults (%), editable per portfolio (store.js limits)
 export const LOOSE_TOP = 50;                            // 넉넉하게 has no cut: the grouping and the 내 기준 rule use 50%
@@ -237,12 +238,20 @@ export function pfState(deck, ctx, stocks) {
   if (!view.ok || !stats.cards.length || avgs.some((a) => a == null)) rules.push({ id: "fit", state: "unknown", limit: stats.top });
   else rules.push({ id: "fit", state: avgs.every((a) => a.shown <= stats.top) ? "ok" : "broken", limit: stats.top, avg: stats.avg, cards: stats.cards });
   // 4. 재무 경고 0개 (Korean holdings with every check run; any US holding or missing check makes it unknown)
+  // icrOff (2026-11-08, Jack; say-why audit row 7): an unknown Korean holding whose 이자보상배율 check is switched off
+  // (corp.json flWhy.icr "off"): the tile says why under 확인하지 못했어요.
   const flagged = [], unknown = [];
+  let offN = 0;
   for (const r of view.rows) {
-    const w = warnOf(r.s, r.t && ctx.coByT ? ctx.coByT.get(r.t) || null : null);
-    if (w === "flag") flagged.push(r.nk); else if (w === "unknown") unknown.push(r.nk);
+    const co = r.t && ctx.coByT ? ctx.coByT.get(r.t) || null : null;
+    const w = warnOf(r.s, co);
+    if (w === "flag") flagged.push(r.nk);
+    else if (w === "unknown") {
+      unknown.push(r.nk);
+      if (r.s && r.s.cls === "kr" && icrOffShown(co)) offN += 1;
+    }
   }
-  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown });
+  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0 });
   const kept = rules.filter((x) => x.state === "ok").length;
   const checked = rules.filter((x) => x.state !== "unknown").length;
   return { ok: true, pxDate: ctx.pxDate || null, view, stats, ind, rules, kept, checked, unchecked: rules.length - checked,

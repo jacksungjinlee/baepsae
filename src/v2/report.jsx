@@ -62,7 +62,9 @@ export function Report({ load, deck }) {
       {/* both need every holding's value today (the 가진 종목 넣기 flow only reaches 점검 when they all have one) */}
       {st.view.ok && <Y2022 st={st} load={load} />}
       {st.view.ok && <Dividends st={st} load={load} />}
-      <Sandbox st={st} />
+      {/* keyed by the publish: its weights start again from today's when newer data comes in (2026-11-08, a page brought
+          back into view: app.jsx), never the old weights over the new rows */}
+      <Sandbox key={load.data.publishedAt} st={st} />
     </div>
   );
 }

@@ -28,14 +28,14 @@ def run(body):
         tmp = tempfile.mkdtemp(prefix="baepsae-d2-")
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
-            for name, mod in (("P", "pf.js"), ("S", "store.js"), ("R", "rules.js"), ("RT", "routes.js")):
+            for name, mod in (("P", "pf.js"), ("S", "store.js"), ("R", "rules.js"), ("RT", "routes.js"), ("HD", "hold.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/d2.mjs", "--log-level=warning",
                             "--loader:.js=jsx", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
-    code = ("import { P, S, R, RT } from './d2.mjs';\nconst warns = []; console.warn = (m) => warns.push(String(m));\nconst T = '" + T + "';\n"
+    code = ("import { P, S, R, RT, HD } from './d2.mjs';\nconst warns = []; console.warn = (m) => warns.push(String(m));\nconst T = '" + T + "';\n"
             + HELP + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -370,6 +370,18 @@ def test_the_last_save_wins_after_the_clock_is_set_back_and_unreadable_records_k
     assert got["g"]["side"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 20, "ind": 25}, "ts": got["g"]["side"]["decks"]["dimp"]["ts"]}}}
     assert got["k2"] == {"side": None, "aside": 0}
     assert got["cap"] == [3600 * 1000 + 1, 0]          # just after a time an hour ahead; one two days ahead is not carried on
+
+
+def test_a_new_publish_is_not_held_for_a_row_added_by_name():
+    """Merge with #90 (a page brought back into view switches to a newer publish, held while a draft would lose a holding):
+    a "+ 종목 더하기" row has no code and does not come from the data, so it never holds the new data; a coded row whose stock
+    is gone from the new data still does."""
+    got = run("""const next = { byT: new Map([['000010', { t: '000010' }]]) };
+      const im = (drafts) => ({ step: 0, drafts });
+      const named = { key: 'n1', t: null, name: '비상장 회사', mode: 'amount', amount: '100' };
+      out = [HD.draftsSurvive(im([named]), next), HD.draftsSurvive(im([{ t: '000010' }, named]), next), HD.draftsSurvive(im([{ t: '000020' }, named]), next),
+        HD.holdReason({ onBuild: false, onImport: false, builder: null, importer: im([{ t: '000010' }, named]) }, next)];""")
+    assert got == [True, True, False, None]
 
 
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():

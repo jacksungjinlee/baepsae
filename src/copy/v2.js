@@ -431,6 +431,16 @@ export const C = {
     },
   },
 
+  // DART 다시 읽기 전까지의 두 줄 (src/repair.js, src/v2/fix.js). 예전 뱁새도 같은 글자예요 (src/fixnote.jsx, 시험이 같은지 봐요).
+  fix: {
+    // 한국 PER · EPS, 또는 같은 순이익으로 계산한 숫자(ROE · 지금 가격이 가정하는 것 · 배당성향 · 주가는 무엇으로 움직였나)가 보이는
+    // 칸마다 한 줄. corp.json 에 epsBasis "owners" 가 생기고 그 회사의 epsIn.b 가 "o" · "s" 이면 사라져요 (총 순이익 "t" 는 남아요).
+    // {date} = src/repair.js EPS_FIX_DATE ("11월 9일"). 주가 분해 · 지금 가격이 가정하는 것을 같은 기준에 세울 수 없으면 숫자 대신 이 줄.
+    eps: "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
+    // 이자보상배율이 꺼진 회사(corp.json flWhy.icr "off")의 재무 경고마다. flWhy.icr 가 "off" 가 아니면 사라져요.
+    icr: "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
+  },
+
   // 시장 (v19.0c): 네 칸(각자 내용 날짜) + 예전 뱁새의 두 화면으로 가는 버튼. 국고채 · 원/달러는 하루 변화가 데이터에 없어 수준만.
   market: {
     kospi: "코스피",                                               // chat (2026-11-03: v19.0 계획 질문 2, 시장 네 칸)
@@ -711,6 +721,9 @@ export const C = {
       left: "{n}점 남았어요",
       remain: "지금 기준이면 회사 {n}개가 남아요",
       remainNone: "지금 기준이면 남는 회사가 없어요",
+      // say-why (Jack, 2026-11-08): 내 점수 칸 밑 한 줄. 이 수(engine.meterCount)는 하루 평균 거래대금 바닥(LIQ_FLOOR_EOK) 아래 종목과
+      // 우선주(engine.isPreferred · 미국 우선주·예탁증서)를 빼고 세요
+      remainWhy: "하루 거래대금 5억원 미만 종목과 우선주는 빼고 셌어요.",
       slot: "{card} {n}점",                                        // 칸의 화면 읽기 이름 (그림만 있는 칸)
       pendingCard: "준비 중이에요",
       strictLabel: "얼마나 깐깐하게 고를까요?",                       // 173
