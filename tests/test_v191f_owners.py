@@ -238,3 +238,41 @@ def test_icr_below_one_never_reads_one():
     assert corp(dict(common, op=[3.0, 0, 0], iec=10.0))["fl"]["icr"] == 0.3                   # 0.3 은 0.3 (부동소수 오차로 0.2 가 되지 않게)
     assert corp(dict(common, op=[-4.1, 0, 0], iec=10.0))["fl"]["icr"] == -0.5                 # 내림
     assert "fl" not in corp(dict(common, op=[10.0, 0, 0], iec=10.0))                           # 1.0 이면 경고 아님
+
+
+# ── 9. BPS 의 시점 (리뷰 2026-11-08): 앱의 'PBR 은 그 분기 자본 기준' 줄이 사업보고서 자본일 때 틀리지 않게 ─────────
+@pytest.mark.parametrize("fin, want", [
+    ({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0, "eqo": 8.0}, "fs": "CFS", "bq": "2026.2Q"}, (8.0, "o", "code", "ttm")),
+    ({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS", "bq": "2026.2Q"}, (7.0, "o", "code", "fy")),   # 분기엔 지배주주 자본 없음
+    ({"eq": 9.0, "nciBs": None, "bs2": {"eq": 10.0, "nciBs": None}, "fs": "CFS"}, (10.0, "o", "nci0", "ttm")),
+    ({"eq": 9.0, "nciBs": None, "bs2": {"eq": 10.0}, "fs": "CFS"}, (9.0, "o", "nci0", "fy")),                  # 분기엔 증거 없음
+    ({"eq": 9.0, "bs2": {"eq": 10.0}, "fs": "OFS"}, (10.0, "s", "ofs", "ttm")),
+    ({"eq": 9.0, "fs": "CFS"}, (9.0, "t", "total", "fy")),
+])
+def test_bps_says_which_balance_sheet_it_used(fin, want):
+    assert F.bps_source(fin) == want
+
+
+def test_bps_receipt_carries_its_period_and_the_log_counts_annual_ones(capsys):
+    base = {"nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0}
+    fins = {"000100": {"ni": [5.0, None, None], "nio": 4.0, "eq": 9.0, "eqo": 7.0, "fs": "CFS", "bq": "2026.2Q",
+                       "ttm": {"nio": 4.5, "nioHow": "code"}, "bs2": {"eq": 10.0, "eqo": 8.0}},
+            "000200": {"ni": [5.0, None, None], "nio": 4.0, "eq": 9.0, "eqo": 7.0, "fs": "CFS", "bq": "2026.2Q",
+                       "ttm": {"nio": 4.5, "nioHow": "code"}, "bs2": {"eq": 10.0}}}
+    ext = F.fill_multiples([dict(base, t="000100"), dict(base, t="000200")], fins, {})
+    assert ext["000100"]["bpsIn"]["p"] == "ttm" and ext["000200"]["bpsIn"]["p"] == "fy"
+    assert ext["000100"]["bpsIn"]["eq"] == 8.0 and ext["000200"]["bpsIn"]["eq"] == 7.0
+    assert "TTM(bq) 이 있는데 BPS 는 사업보고서 자본인 곳 1" in capsys.readouterr().out
+
+
+def test_ev_uses_the_balance_sheet_minority_line_when_owners_equity_is_missing(capsys):
+    com = {"t": "000100", "nk": "가", "cls": "kr", "price": 100.0, "cap": 10.0, "shr": 1, "s": "chem"}
+    base = {"rev": [100000.0, None, None], "op": [10.0, None, None], "ni": [1.0] * 3, "dep": 0.0, "bor": 0.0, "cash": 0.0, "eq": 9e4,
+            "fs": "CFS"}
+    corp = lambda fin: F.build_corp([com], {"000100": fin}, "2026-11-08")["companies"][0]
+    assert corp(dict(base, nciBs=1e4))["evR"] == 1.1                      # 비지배지분 1조 (지배주주 자본 줄은 없음)
+    assert corp(dict(base, nciBs=None))["evR"] == 1.0                     # 비지배지분 줄 없음 = 0 (로그에 '못 더한 곳'으로 세지 않아요)
+    out = capsys.readouterr().out
+    assert "비지배지분을 0 으로 둔 곳" not in out
+    corp(base)                                                             # 증거가 없는 예전 항목만 '못 더한 곳'
+    assert "비지배지분을 0 으로 둔 곳 1: 000100 가" in capsys.readouterr().out

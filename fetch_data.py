@@ -3121,8 +3121,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
             if fin.get("fs") != "OFS":
                 pair = next(((_fin(src.get("eq")), _fin(src.get("eqo"))) for src in (_b, fin)
                              if _fin(src.get("eq")) is not None and _fin(src.get("eqo")) is not None), None)
+                bs_nci = next((_fin(src.get("nciBs")) for src in (_b, fin) if "nciBs" in src), "unknown")
                 if pair:
                     nci = pair[0] - pair[1]
+                elif bs_nci != "unknown":
+                    nci = bs_nci or 0.0          # 재무상태표의 비지배지분 줄 (없으면 0 — 비지배지분이 없는 연결)
                 elif _fin(eff["eq"]) is not None and row["s"] not in FIN_SECS:
                     nci_miss.append(f"{s['t']} {s['nk']}")
             ev = co_cap * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0) + (nci if EV_WITH_NCI else 0.0)
@@ -3654,20 +3657,23 @@ def eps_source(fin):
 
 
 def bps_source(fin):
-    """BPS 에 쓸 자본 → (억원, 기준 o·s·t, how) 또는 None: 최신 분기 지배주주 자본 → 연간 지배주주 자본 (how code) → 비지배지분이
-    없는 연결의 자본총계 (재무상태표에 비지배지분 줄이 없거나 0 · how nci0) → 전체 자본 (s: ofs · t: total). (순수 함수)"""
+    """BPS 에 쓸 자본 → (억원, 기준 o·s·t, how, 시점 p) 또는 None: 최신 분기 지배주주 자본 → 연간 지배주주 자본 (how code) → 비지배지분이
+    없는 연결의 자본총계 (재무상태표에 비지배지분 줄이 없거나 0 · how nci0) → 전체 자본 (s: ofs · t: total).
+    p: "ttm" = 최신 분기(bq) 재무상태표(bs2)의 자본 · "fy" = 사업보고서의 자본 (리뷰 2026-11-08: 앱의 'PBR 은 그 분기 자본 기준' 줄이
+    사업보고서 자본일 때 틀리지 않게). (순수 함수)"""
     _b = fin.get("bs2") or {}
     ofs = fin.get("fs") == "OFS"
+    srcs = ((_b, "ttm"), (fin, "fy"))
     if not ofs:
-        for src in (_b, fin):
+        for src, p in srcs:
             if _fin(src.get("eqo")) is not None:
-                return src["eqo"], "o", "code"
-        for src in (_b, fin):
+                return src["eqo"], "o", "code", p
+        for src, p in srcs:
             if "nciBs" in src and _fin(src.get("nciBs")) in (None, 0.0) and _fin(src.get("eq")) is not None:
-                return src["eq"], "o", "nci0"
-    for src in (_b, fin):
+                return src["eq"], "o", "nci0", p
+    for src, p in srcs:
         if _fin(src.get("eq")) is not None:
-            return src["eq"], ("s" if ofs else "t"), ("ofs" if ofs else "total")
+            return src["eq"], ("s" if ofs else "t"), ("ofs" if ofs else "total"), p
     return None
 
 
@@ -3679,7 +3685,7 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
     n = 0
     extra = {}
     cnt = collections.Counter()
-    tot_b, fy_q = [], []
+    tot_b, fy_q, bps_fy_q = [], [], []
     top = {s["t"] for s in sorted((x for x in kr_stocks if x.get("cls") == "kr"), key=lambda x: -(_fin(x.get("cap")) or 0))[:200]}
     for s in kr_stocks:
         fin = fin_map.get(s["t"])
@@ -3704,13 +3710,15 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
             if p == "fy" and fin.get("bq"):
                 fy_q.append(nm)
         if bs_ is not None and bs_[0] > 0 and s.get("bps") is None:
-            eq, b, bhow = bs_
+            eq, b, bhow, bp = bs_
             bps = eq * 1e8 / sh
             s["bps"] = round(bps, 0)
             if s.get("pbr") is None:
                 s["pbr"] = round(price / bps, 2)
-            extra.setdefault(s["t"], {})["bpsIn"] = {"eq": eq, "b": b, "sh": sh, "how": bhow}
+            extra.setdefault(s["t"], {})["bpsIn"] = {"eq": eq, "b": b, "sh": sh, "how": bhow, "p": bp}
             cnt[f"bps:{b}"] += 1
+            if bp == "fy" and fin.get("bq"):
+                bps_fy_q.append(f"{s['t']} {s.get('nk', '')}".strip())
         if s.get("per") is not None or s.get("pbr") is not None:
             n += 1
     n_pref = sum(1 for t, e in extra.items() if "epsIn" in e and pref_shares and pref_shares.get(t[:5]) and PER_SHARE_WITH_PREF)
@@ -3727,6 +3735,9 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
     if fy_q:
         log(f"  !! TTM(bq) 이 있는데 EPS 는 사업보고서 한 해 지배주주 순이익인 곳 {len(fy_q)} (분기 지배주주 줄이 없음 · epsIn.p fy): "
             f"{', '.join(fy_q[:20])}{'…' if len(fy_q) > 20 else ''}")
+    # v19.1f (리뷰 2026-11-08): BPS 도 같은 숫자 — 분기(bq) 표시인데 자본은 사업보고서 것인 곳 (bpsIn.p fy · 앱은 그 기간으로 적어요)
+    log(f"{'  !! ' if bps_fy_q else '· '}TTM(bq) 이 있는데 BPS 는 사업보고서 자본인 곳 {len(bps_fy_q)} (최신 분기 재무상태표에 쓸 자본이 없음 · "
+        f"bpsIn.p fy)" + (f": {', '.join(bps_fy_q[:20])}{'…' if len(bps_fy_q) > 20 else ''}" if bps_fy_q else ""))
     return extra
 
 
@@ -5466,13 +5477,14 @@ def main():
                 f"{'옮김' if 'corpMap' in carry[1] else '없음'}) — 업종 코드는 보관 기간이 남은 것만 다시 받지 않아요")
         if keep_v2:
             client.remove_after_save.append(keep_v2)
-    if keep_v2 and client is None and os.path.exists(keep_v2):
-        os.remove(keep_v2)                # DART 없이 도는 실행: 옮길 곳이 없어 예전처럼 바로 지워요
-        log(f"· 옛 DART 캐시 파일을 지웠어요 ({keep_v2}) — 이번 실행은 DART 를 쓰지 않아요")
         kr, fin_map = ph.run("DART", enrich_with_dart, kr, client, kmeta.get("_prefShares") or {})
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
+    # v19.1f: DART 없이 도는 실행(dart=off · 키 없음)은 옛 v2 파일을 옮길 곳이 없어 예전처럼 바로 지워요 (DART 단계 뒤 · 그 안이 아니에요)
+    if keep_v2 and client is None and os.path.exists(keep_v2):
+        os.remove(keep_v2)
+        log(f"· 옛 DART 캐시 파일을 지웠어요 ({keep_v2}) — 이번 실행은 DART 를 쓰지 않아요")
     blank_foreign_dart(kr)                # v17.5.2: 해외 기업 (점수·corp.json 보다 먼저)
     mult_extra = fill_multiples(kr, fin_map, kmeta.get("_prefShares") or {})     # v19.1f: 지배주주 몫 · 영수증(epsIn·bpsIn)
     # v19.1b: 분할에 안전한 배당 (dps3a·dpsF·divSt·dyt) — 해외 기업 비우기 뒤, 점수(dz)·corp.json 보다 먼저

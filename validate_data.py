@@ -1422,6 +1422,8 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
             if not (isinstance(b, dict) and _isnum(b.get("eq")) and b["eq"] > 0 and b.get("b") in EPS_B
                     and isinstance(b.get("sh"), int) and b["sh"] > 0 and _isnum(c.get("bps"))):
                 bad.append(f"{t}.bpsIn")
+            elif b.get("p") not in EPS_P:      # v19.1f (리뷰 2026-11-08, 더하기만): 자본의 시점 — ttm 최신 분기 · fy 사업보고서
+                bad.append(f"{t}.bpsIn.p")
             elif abs(c["bps"] - b["eq"] * 1e8 / b["sh"]) > 0.5 + 1e-6 * abs(c["bps"]):
                 bad.append(f"{t} bps ≠ 자본 ÷ 주식 수")
         if "nio3" in c and _nums3(c["nio3"]) is None:

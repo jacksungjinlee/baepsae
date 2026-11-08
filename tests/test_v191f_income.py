@@ -236,11 +236,11 @@ def test_eps_source_order():
     assert F.eps_source(dict(base, ttm={"ni": 12.0})) == (12.0, "t", "ttm", "total")         # 지배주주 줄이 없는 연결
     assert F.eps_source(dict(base, fs="OFS", nio=8.0, ttm={"ni": 12.0})) == (12.0, "s", "ttm", "ofs")
     assert F.eps_source({"ni": [float("nan"), None, None]}) is None                        # NaN 은 숫자로 안 써요
-    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o", "code")
-    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s", "ofs")
-    assert F.bps_source({"eq": 9.0, "nciBs": None, "fs": "CFS"}) == (9.0, "o", "nci0")      # 비지배지분 줄 없음
-    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (9.0, "t", "total")       # 비지배지분이 있으면 아니에요
-    assert F.bps_source({"eq": 9.0, "fs": "CFS"}) == (9.0, "t", "total")                     # 증거가 없으면(예전 캐시) 아니에요
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o", "code", "fy")
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s", "ofs", "fy")
+    assert F.bps_source({"eq": 9.0, "nciBs": None, "fs": "CFS"}) == (9.0, "o", "nci0", "fy")    # 비지배지분 줄 없음
+    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (9.0, "t", "total", "fy")     # 비지배지분이 있으면 아니에요
+    assert F.bps_source({"eq": 9.0, "fs": "CFS"}) == (9.0, "t", "total", "fy")                   # 증거가 없으면(예전 캐시) 아니에요
 
 
 def test_share_count_switch(monkeypatch):
@@ -337,7 +337,7 @@ def with_income(files):
         s["eps"] = c["eps"] = round(ni * 1e8 / sh, 0)
         c["epsIn"] = {"ni": ni, "b": "o", "p": "ttm" if c.get("bq") else "fy", "sh": sh}
         c["bps"] = s["bps"] = round(500.0 * 1e8 / sh, 0)
-        c["bpsIn"] = {"eq": 500.0, "b": "o", "sh": sh}
+        c["bpsIn"] = {"eq": 500.0, "b": "o", "sh": sh, "p": "ttm" if c.get("bq") else "fy"}
         if c["t"] == "105560":
             c["rev"] = [None, None, None]
             c["incNa"] = ["rev"]
@@ -469,6 +469,8 @@ def test_must_have_eps_must_match_data_json(pair):
     lambda c: c.update(nio3=[1.0, "x"]),
     lambda c: c.update(incNa=["op"]),
     lambda c: c["epsIn"].update(b="owners"),
+    lambda c: c["bpsIn"].update(p="2026.2Q"),                             # 자본의 시점은 ttm · fy 만 (리뷰 2026-11-08)
+    lambda c: c["bpsIn"].pop("p"),
 ])
 def test_receipt_shape_problems_fail(pair, change):
     cur, prev = pair
