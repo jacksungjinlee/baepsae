@@ -3,13 +3,13 @@
 src/fixnote.jsx.
 
 1. 한 주 동안의 안내 (2.0 홈 · 포트폴리오): "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요."
-   화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE + 7일 전일 때만. {date} = EPS_FIX_DATE ("11월 9일").
+   화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE + 7일 전일 때만. {date} = EPS_FIX_DATE ("11월 10일").
    표시가 없으면 · 그날부터 · 미리 보기(app-preview.html)에서는 없어요.
 2. 원화가 아닌 재무제표 (corp.json stmtCur, 예: "USD"): "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직
    보여 드리지 않아요." 2.0 회사 페이지(요약의 한눈에 · 실적 탭 · 가치 탭 · 두 자세히 화면)에 한 번씩, 예전 뱁새 기업분석의 투자지표에
    한 번. stmtCur 가 없는 회사 · 미국 종목에는 없어요.
 3. 예전 뱁새 영어 화면의 고치는 중 줄: "PER and EPS are being recalculated and may change on {date}." · "Interest coverage isn't
-   checked while we fix how it's calculated." 한국어 줄과 같은 규칙, 날짜는 data.js mdOf(…, "en") ("Nov 9").
+   checked while we fix how it's calculated." 한국어 줄과 같은 규칙, 날짜는 data.js mdOf(…, "en") ("Nov 10").
 화면은 react-dom/server 로 실제 컴포넌트를 그려서 봐요. 브라우저 화면은 tests/smoke_v2.py 장면 '다시 읽은 뒤'가 봐요.
 """
 import json
@@ -152,7 +152,7 @@ def test_the_week_notice_line_on_2_0_follows_the_load_on_screen():
       FX.setEpsBasis({ epsBasis: 'owners', companies: [] });
       out.backOn = lines(note(L1, t0));""")
     want = owners_line()
-    assert got["copy"] == OWNERS and got["text"] == want                   # Jack 의 글자 그대로 · 날짜는 월 · 일 ("11월 9일")
+    assert got["copy"] == OWNERS and got["text"] == want                   # Jack 의 글자 그대로 · 날짜는 월 · 일 ("11월 10일")
     assert got["line"] == [want] and got["marked"] == 1                     # 한 줄
     assert got["px"] and all(p >= 12 for p in got["px"]), got["px"]          # 12px 바닥 (조용한 안내 줄: 13px)
     assert got["before"] == [want] and got["last"] == [want]                # 표시가 있으면 그날 전에도 · 이레째 밤 23:59 까지
@@ -449,7 +449,7 @@ def test_old_app_english_lines_follow_the_korean_rules():
       };""", COFF=c_off)
     y, mo, d = fix_date()
     en_eps, ko_eps = eps_en_line(), EPS_KO.format(date=f"{int(mo)}월 {int(d)}일")
-    assert got["md"] == f"{MON[int(mo) - 1]} {int(d)}"                        # 예전 뱁새의 영어 월 · 일 ("Nov 9")
+    assert got["md"] == f"{MON[int(mo) - 1]} {int(d)}"                        # 예전 뱁새의 영어 월 · 일 ("Nov 10")
     assert got["words"] == [EPS_EN, ICR_EN, en_eps, ICR_EN, ko_eps, ICR_KO, ko_eps]   # Jack 의 글자 그대로 · 기본은 한국어
     # 첫 화면 성적표 (영어): 한국어 줄과 같은 자리 (P/E 줄 밑 · 재무 신호 밑), 한국어 글은 없어요
     en = got["enNow"]

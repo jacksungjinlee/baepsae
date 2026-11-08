@@ -17,7 +17,7 @@ import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor } from "./fix.js";
 
-// The line with its date ("11월 9일"), or null when a word or the date is missing (never a line with an empty slot).
+// The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
   const md = mdText(EPS_FIX_DATE);
   return C.fix.eps && md ? fill(C.fix.eps, { date: md }) : null;
@@ -40,7 +40,7 @@ export function IcrOffLine({ show, style }) {
     : null;
 }
 
-// The week's notice with its date ("11월 9일"), or null when a word or the date is missing.
+// The week's notice with its date ("11월 10일"), or null when a word or the date is missing.
 export function epsOwnersText() {
   const md = mdText(EPS_FIX_DATE);
   return C.fix.owners && md ? fill(C.fix.owners, { date: md }) : null;

@@ -6,7 +6,7 @@
 //               뒤에도 총 순이익("t")인 회사는 남아요).
 //   IcrOffLine  이자보상배율이 꺼진 회사(corp.json flWhy.icr "off")의 재무 신호 밑. flWhy.icr 가 바뀌면 사라져요.
 //   영어 화면 (Jack 승인 2026-11-08, DeepL 확인): 한국어 줄이 보이는 자리와 같은 규칙으로 FIX_EPS_EN · FIX_ICR_EN (lang "en").
-//               날짜는 예전 뱁새의 영어 월 · 일 (data.js mdOf "en": "Nov 9"). 기업분석(src/corp.jsx)은 영어 화면에서도 한국어로만
+//               날짜는 예전 뱁새의 영어 월 · 일 (data.js mdOf "en": "Nov 10"). 기업분석(src/corp.jsx)은 영어 화면에서도 한국어로만
 //               보이는 칸이라 lang 을 넘기지 않아요 (한국어 줄 그대로). 영어 줄은 첫 화면 성적표와 포트폴리오(src/detail.jsx)에서.
 //   StmtCurLine 재무제표를 원화가 아닌 통화로 공시한 한국 회사(corp.json stmtCur, repair.js stmtCurOf): 기업분석 투자지표 칸에 한 번.
 // 글자는 12px 이에요 (2.0 의 12px 바닥과 같게).
@@ -21,7 +21,7 @@ export const FIX_ICR = "이자보상배율은 계산 방법을 고치는 중이�
 export const FIX_EPS_EN = "PER and EPS are being recalculated and may change on {date}.";       // Jack 승인 2026-11-08 (DeepL 확인) — 영어 화면
 export const FIX_ICR_EN = "Interest coverage isn't checked while we fix how it's calculated.";   // Jack 승인 2026-11-08 (DeepL 확인) — 영어 화면
 export const FIX_STMT_CUR = "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 co.stmtCur
-// "11월 9일" · 영어 화면 "Nov 9" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
+// "11월 10일" · 영어 화면 "Nov 10" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
 export function fixEpsText(lang = "ko") {
   const en = lang === "en";
   const md = mdOf(EPS_FIX_DATE, en ? "en" : "ko");
