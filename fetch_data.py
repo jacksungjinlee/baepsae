@@ -2176,6 +2176,8 @@ def compute_ttm(fin, ytd, ytd_prev):
     cur = ytd.get("cur") or ytd_prev.get("cur")
     if cur:
         ttm["cur"] = cur               # v19.1f (리뷰): 분기 재무제표가 원화가 아니면 (not_won)
+    if "nciPl" in ytd:
+        ttm["nciPl"] = ytd["nciPl"]    # (2026-11-08) 최신 분기 누적 비지배지분 순이익 (줄이 없으면 None) — 증거일 뿐, 합산하지 않아요 (eps_nci)
     if ttm["nio"] is not None:     # v19.1f: 세 보고서에서 지배주주 순이익을 어떻게 읽었는지 (다르면 'code+nci0' 처럼)
         hows = {fin.get("nioHow"), ytd.get("nioHow"), ytd_prev.get("nioHow")} - {None}
         if hows:
@@ -3886,7 +3888,8 @@ def eps_source(fin):
 
 def eps_nci(fin, p):
     """EPS 순이익을 가져온 재무제표에 비지배지분(소수주주)이 있는지 — 증거 nciBs · nciPl 중 하나가 0 이 아닌 값이면 True. (순수 함수)
-    p "ttm": 최신 분기(bs2)의 증거 먼저 (그 칸이 없으면 사업보고서) · "fy": 사업보고서. 앱이 '전체 순이익으로 계산했어요' 줄에 써요 (epsIn.nci)."""
+    p "ttm": 최신 분기의 증거 먼저 — 재무상태표(bs2.nciBs) 나 분기 누적 손익(ttm.nciPl) 중 하나라도 0 이 아니면 (두 칸이 다 없으면 사업보고서) ·
+    "fy": 사업보고서. 앱이 '전체 순이익으로 계산했어요' 줄에 써요 (epsIn.nci)."""
     ann = (fin.get("nciBs"), fin.get("nciPl"))
     if p == "ttm":
         _b, _t = fin.get("bs2") or {}, fin.get("ttm") or {}
@@ -4053,8 +4056,9 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
             if s.get("per") is None and eps > 0:
                 s["per"] = round(price / eps, 1)
             extra.setdefault(s["t"], {})["epsIn"] = {"ni": ni, "b": b, "p": p, "sh": sh, "how": how, **({"hyb": cut} if cut else {}),
-                                                     **({"nci": True} if b == "t" and eps_nci(fin, p) else {})}
-            if b == "t":
+                                                     **({"nci": True} if b == "t" and how == "total" and eps_nci(fin, p) else {})}
+            # nci 는 how "total" (지배주주 줄이 없어 전체 순이익) 에만: how "hybrid" 는 지배주주 순이익이 있어요 — 앱의 '따로 공시하지 않아' 줄이 틀려요
+            if b == "t" and how == "total":
                 cnt[f"eps:t:nci:{'y' if eps_nci(fin, p) else 'n'}"] += 1
             if cut:
                 hyb_cut.append(nm)
@@ -4095,7 +4099,7 @@ def fill_multiples(kr_stocks, fin_map, pref_shares=None):
     log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 주식 수 · 주식 수에 상장 우선주 포함 {'켬' if PER_SHARE_WITH_PREF else '끔'}"
         f"(PER_SHARE_WITH_PREF) — 우선주가 있는 회사 {n_pref:,}곳)")
     log(f"· EPS 순이익 기준: 지배주주 TTM {cnt['eps:o:ttm']:,} · 지배주주 연간 {cnt['eps:o:fy']:,} · 별도 TTM {cnt['eps:s:ttm']:,} · "
-        f"별도 연간 {cnt['eps:s:fy']:,} · 연결 전체(지배주주 줄 없음) TTM {cnt['eps:t:ttm']:,} · 연간 {cnt['eps:t:fy']:,} (그중 소수주주 있음 epsIn.nci {cnt['eps:t:nci:y']:,} · 없음 {cnt['eps:t:nci:n']:,}) | BPS 자본 기준: "
+        f"별도 연간 {cnt['eps:s:fy']:,} · 연결 전체(지배주주 줄 없음) TTM {cnt['eps:t:ttm']:,} · 연간 {cnt['eps:t:fy']:,} (그중 how total 에서 소수주주 있음 epsIn.nci {cnt['eps:t:nci:y']:,} · 없음 {cnt['eps:t:nci:n']:,}) | BPS 자본 기준: "
         f"지배주주 {cnt['bps:o']:,} · 별도 {cnt['bps:s']:,} · 연결 전체 {cnt['bps:t']:,}")
     log("· 지배주주 순이익을 읽은 방법 (EPS 가 지배주주인 회사 · TTM 은 세 보고서 방법을 모두 세요): "
         + " · ".join(f"{h} {cnt['how:' + h]:,}" for h in OWN_HOWS))

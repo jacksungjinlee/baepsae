@@ -593,9 +593,33 @@ def test_gate_checks_the_nci_mark_shape(pair):
     cur, prev = pair
     name = "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)"
     c = next(x for x in cur["corp"]["companies"] if isinstance(x.get("epsIn"), dict))
-    c["epsIn"]["b"], c["epsIn"]["nci"] = "t", True
+    c["epsIn"]["b"], c["epsIn"]["how"], c["epsIn"]["nci"] = "t", "total", True
     assert rows_of(check(cur, prev))[name][3] == "PASS"
     c["epsIn"]["b"] = "o"
     assert f"{c['t']}.epsIn.nci" in fails(cur, prev, name)[1]
     c["epsIn"]["b"], c["epsIn"]["nci"] = "t", False
     assert f"{c['t']}.epsIn.nci" in fails(cur, prev, name)[1]
+    c["epsIn"]["nci"], c["epsIn"]["how"] = True, "hybrid"         # 지배주주 순이익이 있는 "t" (신종자본증권): nci 아님
+    assert f"{c['t']}.epsIn.nci" in fails(cur, prev, name)[1]
+
+
+def test_hybrid_total_basis_with_minority_shareholders_has_no_nci():
+    """리뷰 2: eps_source 의 b "t" · how "hybrid" 는 지배주주 순이익이 있어요 (어디 몫인지 모르는 신종자본증권) — 앱의 '지배주주 몫 순이익을
+    따로 공시하지 않아' 줄은 틀려요. nci 는 how "total" 에만."""
+    fin = {"ni": [12.0], "nio": 10.0, "nciBs": 20.0, "nciPl": 2.0, "fs": "CFS", "hyb": {"dist": 1.0, "ok": False}}
+    e = _eps_in(fin)
+    assert e["b"] == "t" and e["how"] == "hybrid" and "nci" not in e
+
+
+def test_ttm_carries_the_quarters_minority_profit_as_evidence():
+    """분기 누적 손익의 비지배지분 순이익(nciPl)도 TTM 증거: 최신 분기 재무상태표에 비지배지분 줄이 없어도 손익에 있으면 nci."""
+    fin = {"rev": [10.0], "ni": [5.0]}
+    q = {"rev": 3.0, "ni": 1.0, "nciPl": 0.4, "nciBs": None}
+    t2 = F.compute_ttm(fin, q, dict(q, nciPl=0.2))
+    assert t2["ttm"]["nciPl"] == 0.4 and t2["bs"]["nciBs"] is None
+    full = {"ni": [5.0, None, None], "eq": 50.0, "fs": "CFS", "nciBs": None, "nciPl": None, "ttm": t2["ttm"], "bs2": t2["bs"]}
+    e = _eps_in(full)
+    assert e["b"] == "t" and e["p"] == "ttm" and e["nci"] is True
+    full["ttm"] = dict(t2["ttm"], nciPl=0.0)
+    assert "nci" not in _eps_in(full)
+    assert "nciPl" not in F.compute_ttm(fin, {"rev": 3.0, "ni": 1.0}, {"rev": 3.0, "ni": 1.0})["ttm"]
