@@ -276,8 +276,8 @@ export function App({ source }) {
     if (onWelcome && (tab !== "home" || loc.sub)) endGuide(true);
   }, [onWelcome, tab, loc.sub, endGuide]);
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
-  // v19.3d2: 내 규칙 정하기 of a portfolio that exists (else 포트폴리오, where the portfolio would be)
-  const rulesDeck = tab === "portfolio" && loc.rules ? store.data.decks.find((d) => d.id === loc.rules) || null : null;
+  // v19.3d2: 내 규칙 정하기 of a 가진 종목 portfolio that exists (else 포트폴리오, where the portfolio would be)
+  const rulesDeck = tab === "portfolio" && loc.rules ? store.data.decks.find((d) => d.id === loc.rules && d.kind === "imported") || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     if (inBuild) {

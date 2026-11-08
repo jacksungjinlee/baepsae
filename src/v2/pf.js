@@ -49,15 +49,20 @@ export function readLimit(v) {
   const n = Number(t);
   return n >= LIMIT_MIN && n <= LIMIT_MAX ? n : null;
 }
-// The records with one portfolio's limits set; a limit equal to its default is not kept (a portfolio at the defaults has
-// no limits part). null when the portfolio or a value is not valid (nothing to save).
-export function withLimits(data, deckId, stock, ind) {
+// The records with one 가진 종목 portfolio's limits set, saved at time ts (ms). A limit equal to its default is not kept;
+// the limits carry ts (saved at the defaults: only ts), so a merge of two copies or a records file keeps the latest 저장,
+// even one that left the values as this tab showed them (another tab may have changed them meanwhile: store.js unionDeck,
+// mergeStores). Without ts (tests), a portfolio with no limits part saved at the defaults gets none. null when the
+// portfolio is not a 가진 종목 one (only those have the rules: a limits part would also make a version-1 store version 2)
+// or a value is not valid: nothing to save.
+export function withLimits(data, deckId, stock, ind, ts) {
   const deck = data && Array.isArray(data.decks) ? data.decks.find((d) => d && d.id === deckId) : null;
   const s = readLimit(stock), i = readLimit(ind);
-  if (!deck || s == null || i == null) return null;
-  const limits = { ...(s !== LIMITS.stock ? { stock: s } : {}), ...(i !== LIMITS.ind ? { ind: i } : {}) };
-  const { limits: _l, ...rest } = deck;
-  const next = Object.keys(limits).length ? { ...rest, limits } : rest;
+  if (!deck || deck.kind !== "imported" || s == null || i == null) return null;
+  const vals = { ...(s !== LIMITS.stock ? { stock: s } : {}), ...(i !== LIMITS.ind ? { ind: i } : {}) };
+  const { limits: had, ...rest } = deck;
+  const at = Number.isSafeInteger(ts) && ts > 0 ? { ts } : {};
+  const next = Object.keys(vals).length || had != null || at.ts ? { ...rest, limits: { ...vals, ...at } } : rest;
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
 }
 export const limitsOf = (deck) => ({ stock: num(deck && deck.limits && deck.limits.stock) ?? LIMITS.stock,

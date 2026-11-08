@@ -5551,10 +5551,25 @@ def scene_v193d2(R, files, width):
         ind.fill("50")
         page.locator('[data-ui-v2="limits-save"] button').click()
         at(page, "portfolio")
-        assert stored()["decks"][0]["limits"] == {"stock": 40, "ind": 50}
+        lim = stored()["decks"][0]["limits"]
+        assert {k: v for k, v in lim.items() if k != "ts"} == {"stock": 40, "ind": 50} and isinstance(lim.get("ts"), int) and lim["ts"] > 0, lim
         card = page.locator('[data-deck-id][data-kind="imported"]')
         assert fillp(C["pfr"]["stock"], x=40) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
         assert fillp(C["pfr"]["ind"], x=50) in card.locator('[data-ui-v2="pf-rule"][data-rule="ind"]').inner_text()
+        # 처음 값으로 되돌리기 → 저장: the values go, the time of the 저장 stays (a merge keeps the latest 저장)
+        card.locator('[data-ui-v2="pf-rules-edit"] button').click()
+        assert page.locator('[data-ui-v2="limit-stock"]').input_value() == "40"
+        page.locator('[data-ui-v2="limits-reset"]').click()
+        page.locator('[data-ui-v2="limits-save"] button').click()
+        at(page, "portfolio")
+        lim2 = stored()["decks"][0]["limits"]
+        assert list(lim2) == ["ts"] and lim2["ts"] >= lim["ts"], lim2
+        card = page.locator('[data-deck-id][data-kind="imported"]')
+        assert fillp(C["pfr"]["stock"], x=30) in card.locator('[data-ui-v2="pf-rule"][data-rule="stock"]').inner_text()
+        # a portfolio that is not a 가진 종목 one, or no portfolio: the address opens 포트폴리오
+        page.evaluate("location.hash = '#portfolio/rules/nope'")
+        page.locator('[data-deck-id][data-kind="imported"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="limits"]').count() == 0
         floor_ok(page, "내 규칙 정하기")
         no_hscroll(page, width)
         R.collect(page)

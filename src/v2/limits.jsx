@@ -3,7 +3,7 @@
 // kept in the portfolio's `limits { stock, ind }` (store.js: whole % 1-100). Address #portfolio/rules/<deck id>.
 // The fields start at the portfolio's current limits; 처음 값으로 되돌리기 puts back 30% and 35% (not saved until 저장).
 // 저장 writes through setStoreData, which never writes records that would not read back (app.jsx: the refused line
-// shows then). A limit equal to its default is not stored (so a portfolio left at the defaults keeps no limits part).
+// shows then). A limit equal to its default is not stored; the limits keep the time they were saved (pf.js withLimits).
 // No 뱁이 (numbers). No Korean here: src/copy/v2.js.
 import React, { useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
@@ -38,7 +38,7 @@ export function Limits({ deck, store, setStoreData, onBack, pad }) {
   const s = readLimit(stock), i = readLimit(ind);
   const ok = s != null && i != null;
   const save = () => {
-    const next = ok ? withLimits(store.data, deck.id, s, i) : null;
+    const next = ok ? withLimits(store.data, deck.id, s, i, Date.now()) : null;
     if (!next) return;
     setStoreData(next);                                  // refused (would not read back): the line shows here, and this stays
     if (validStore({ ...next, v: versionFor(next) }, todayKst())) onBack();
