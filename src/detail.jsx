@@ -1163,10 +1163,10 @@ function AboutLink({ lang = "ko", style }) {
     </a>
   );
 }
-// 고지문 + ' · 소개' 한 줄 (고지문만 있던 푸터의 모양)
+// 고지문 + ' · 소개' 한 줄 (고지문만 있던 푸터의 모양). keep-all: 한국어 낱말 중간에서 줄이 바뀌지 않게 (2026-11-08)
 function SiteFooterLine({ lang = "ko" }) {
   const l = lang === "en" ? "en" : "ko";
-  return <>{T.disclaimer[l]}{" · "}<AboutLink lang={l} /></>;
+  return <span style={{ wordBreak: "keep-all" }}>{T.disclaimer[l]}{" · "}<AboutLink lang={l} /></span>;
 }
 
 // 불러오기 실패 화면 (기업분석·공시·수급·금리·원자재 공통)
@@ -4709,7 +4709,7 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
           </Card>
         );
       })()}
-      <Sub style={{ textAlign: "center", fontSize: 10.5, padding: "0 10px" }}>{t("disclaimer")}</Sub>
+      <Sub style={{ textAlign: "center", fontSize: 10.5, padding: "0 10px" }}><span style={{ wordBreak: "keep-all" }}>{t("disclaimer")}</span></Sub>
     </div>
   );
 }

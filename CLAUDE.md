@@ -150,6 +150,7 @@ claude.ai chat can follow the history. Add the line in the same PR when you can,
 
 - Education, not advice. No 추천, no target prices, no promised returns. Numbers are framed as "what today's price
   assumes", never as forecasts. Footer: 뱁새의 정보는 투자 자문이나 투자 권유가 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다.
+  The product never calls 뱁새 an educational tool, in any language (Jack, 2026-11-08); tests/test_footer.py checks it.
 - Long-only. No leverage, short-selling or speculation features.
 - Cards lead with the conclusion (Verdict line), then evidence. Computed ratios show their inputs ("receipts").
 - Won-first framing for the user's own money; per-share US figures show $ first with 원 small. Beta shown with its

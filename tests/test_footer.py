@@ -66,6 +66,7 @@ def test_no_educational_tool_wording_anywhere_in_src():
 def test_claude_md_footer_is_the_new_line():
     t = read("CLAUDE.md")
     assert f"Footer: {FOOTER_KO}" in t and "Education, not advice." in t
+    assert "The product never calls 뱁새 an educational tool, in any language (Jack, 2026-11-08)" in t
     assert "교육용" not in t
 
 
@@ -82,7 +83,9 @@ def test_new_footer_in_2_0_and_old_app():
 
 
 def test_old_app_footers_all_use_the_one_line():
-    """예전 뱁새의 탭 푸터는 모두 SiteFooterLine (src/detail.jsx T.disclaimer + ' · 소개') 하나를 써요: 문구가 한 곳에만 있어요."""
+    """예전 뱁새의 탭 푸터는 모두 SiteFooterLine (src/detail.jsx T.disclaimer + ' · 소개') 하나를 써요: 문구가 한 곳에만 있어요.
+    그 줄은 keep-all 이라 한국어 낱말 중간에서 줄이 바뀌지 않아요 ('본인에 / 게' 처럼)."""
+    assert '<span style={{ wordBreak: "keep-all" }}>{T.disclaimer[l]}' in read(os.path.join("src", "detail.jsx"))
     for f in ("shell.jsx", "simple.jsx", "corp.jsx", "disc.jsx", "macro.jsx", "info.jsx"):
         src = read(os.path.join("src", f))
         assert "<SiteFooterLine" in src, f
