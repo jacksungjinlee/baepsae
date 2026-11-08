@@ -14,7 +14,7 @@ import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, icrOff, warnEpsFi
 export { icrOff };
 export const FIX_EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.eps
 export const FIX_ICR = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.icr
-// "11월 9일" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
+// "11월 10일" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
 export function fixEpsText() {
   const md = mdOf(EPS_FIX_DATE, "ko");
   return md ? FIX_EPS.replace("{date}", md) : null;
