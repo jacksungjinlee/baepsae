@@ -150,7 +150,8 @@ def test_lines_without_a_standard_code_are_added_unless_they_repeat_a_coded_line
                   row("CF", "이자수익의 수취", "-표준계정코드 미사용-", 5e9), row("CF", "신종자본증권 이자 지급", "-표준계정코드 미사용-", 4e9)]
     assert F.parse_dart_list(loose)["_fin"]["iec"] == 20.0
     both = loose + [row("CF", "이자지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", -1e9)]
-    assert F.parse_dart_list(both)["_fin"]["iec"] == 30.0                           # 코드 없는 줄도 더해요 ('모든 이자 지급 줄')
+    # 리뷰 2026-11-08: 코드가 있는 이자 지급 줄이 있으면 코드 없는 줄은 더하지 않아요 (같은 지급을 두 번 셀 수 있어서)
+    assert F.parse_dart_list(both)["_fin"]["iec"] == 10.0
     same = loose + [row("CF", "이자의 지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", 2e9)]
     assert F.parse_dart_list(same)["_fin"]["iec"] == 20.0                           # 이름 · 금액(부호 무시)이 같은 줄은 한 번만
     none = BS + [row("IS", "매출액", "ifrs-full_Revenue", 1e11)]

@@ -164,6 +164,7 @@ INC_TOP_N = 200            # 손익 줄 채움을 보는 시가총액 상위 국
 INC_TOP_FLOOR = None
 EPS_B = ("o", "s", "t")    # epsIn.b: 지배주주 몫(연결) · 별도 재무제표 · 연결인데 지배주주 줄 없음(전체)
 EPS_P = ("ttm", "fy")      # epsIn.p: 최근 4개 분기 · 사업보고서 한 해
+ICR_WARN_SHARE = 10.0      # 이자보상배율을 돌린 회사 중 경고(1배 미만) 비율이 이보다 크면 경고 (실패 아님 · 2026-11-07 옛 값은 약 25%)
 CORP_FIN_SECS = ("bank", "insure", "broker")   # 업종 그룹(ind)이 없을 때 금융회사로 보는 corp.json 업종 (매출 줄이 없을 수 있어요)
 
 
@@ -1392,6 +1393,10 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
         e, b = c.get("epsIn"), c.get("bpsIn")
         if is_foreign(t) and any(k in c for k in ("epsIn", "bpsIn", "nio3")):
             bad.append(f"{t} 해외 기업 금액")
+        if e is None and not is_foreign(t) and num(c.get("eps")) is not None:
+            bad.append(f"{t} EPS 영수증 없음")                     # 국내 EPS 는 모두 DART 지배주주 몫 계산이에요 (pykrx 값 안 씀)
+        if b is None and not is_foreign(t) and num(c.get("bps")) is not None:
+            bad.append(f"{t} BPS 영수증 없음")
         if e is not None:
             if not (isinstance(e, dict) and _isnum(e.get("ni")) and e.get("b") in EPS_B and e.get("p") in EPS_P
                     and isinstance(e.get("sh"), int) and e["sh"] > 0 and _isnum(c.get("eps"))):
@@ -1409,7 +1414,19 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
         if "incNa" in c and (c["incNa"] != ["rev"] or _first(c.get("rev")) is not None):
             bad.append(f"{t}.incNa")
     rep.add("EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
-            "0 (eps = 순이익 ÷ 주식 수 · bps = 자본 ÷ 주식 수 · 해외 기업은 없음)")
+            "0 (국내 EPS·BPS 는 모두 영수증 · eps = 순이익 ÷ 주식 수 · bps = 자본 ÷ 주식 수 · 해외 기업은 없음)")
+
+    # 4b. 이자보상배율 경고 수와 쓴 이자 (경고만 — 실패하지 않아요): 경고 비율이 ICR_WARN_SHARE 를 넘으면 이자를 잘못 읽은 날일 수 있어요
+    #     (2026-11-07: 금융비용을 이자로 읽어 505곳이 경고였어요)
+    ran = [c for c in comps if "icr" in (c.get("flRan") or [])]
+    warn_n = sum(1 for c in ran if "icr" in (c.get("fl") or {}))
+    src = {k: sum(1 for c in ran if (c.get("flSrc") or {}).get("icr") == k) for k in ("is", "cf")}
+    why = {k: sum(1 for c in comps if (c.get("flWhy") or {}).get("icr") == k) for k in ("ie", "op", "neg", "off")}
+    share = 100.0 * warn_n / len(ran) if ran else 0.0
+    rep.add("이자보상배율 경고 수 · 쓴 이자 (경고만)", True,
+            f"경고 {warn_n:,} / 돌린 {len(ran):,} ({share:.1f}%) · 이자비용 {src['is']:,} · 이자 지급액 {src['cf']:,} · 못 돌린 이유 "
+            + " ".join(f"{k} {v:,}" for k, v in why.items()),
+            f"경고 비율 {ICR_WARN_SHARE:g}% 넘으면 경고", warn=share > ICR_WARN_SHARE)
 
     # 5. 필수 종목 EPS: 지배주주(또는 별도) 순이익으로, 부호가 그 순이익과 같고, 사업보고서 한 해 기준이면 회사가 낸 주당순이익과도 부호가 같음
     bad = []

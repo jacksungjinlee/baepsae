@@ -79,6 +79,15 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   `INC_TOP_FLOOR` to set from the dry run), must-haves have all three lines (FAIL), statements without income lines
   (WARN, named), receipts consistent (FAIL), must-have EPS on owners' profit with matching sign (FAIL), EPS basis
   differences (WARN), incCheck counts = receipts (FAIL).
+- v19.1f review fixes (2026-11-08): '…손실(이익)' names with a positive figure are dropped like '…손실'; uncoded
+  interest-paid lines need '이자(의) 지급·지출·납부' (not 지급이자 · 미지급이자) and are used only when no coded
+  interest-paid line exists; pykrx PER/PBR/EPS/BPS are never used for Korean stocks (every EPS carries `epsIn`);
+  `epsBasis` is "owners" only when every Korean must-have and ≥ 95% of EPS companies use owners'/separate profit,
+  else "mixed" (gate FAIL); the v3 cache starts with the v2 cache's industry codes (`|company`) and corp map
+  (`read_carry` / `adopt_carry`, ~2,400 calls saved); EV adds minority interest (`EV_WITH_NCI`) and takes listed
+  preferred caps from the full listing (`kr_pref_caps`); 이자보상배율 pairs operating profit and interest from the same
+  period (TTM with TTM, else annual with annual · `icr_inputs`); a new WARN-only gate row counts ICR warnings and
+  interest sources.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the

@@ -970,6 +970,7 @@ class DartClient:
         self.down = None             # DART 에 닿지 않아 조회를 멈췄으면 그때의 예외 이름
         self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
         self.entries, self.meta = {}, {}
+        self.carried = 0                     # v19.1f: 옛 버전 캐시에서 옮긴 업종 코드 항목 수 (adopt_carry)
         self._load()
         self.started_empty = not self.entries      # v19.1b: 빈 캐시로 시작 = 전체 DART 실행 (호출 수 어림을 로그로 남겨요)
         # v17.5.3: 정해진 시각 실행은 하루 여러 번이에요. 캐시가 비었거나(없음·읽지 못함·형식이 다름) 처음부터 조회하면
@@ -1158,6 +1159,43 @@ class DartClient:
             raise RuntimeError(f"!! DART {DART_FATAL.get(st, st)} (상태 {st}: {msg}) — 재무지표가 비어 발행하지 않고 중단합니다")
 
 
+CARRY_SUFFIXES = ("|company",)     # 해석(parse)과 상관없는 캐시 항목: 캐시 버전이 바뀌어도 옮겨 써요 (업종 코드 KSIC)
+CARRY_META = ("corpMap", "corpMapAt")
+
+
+def read_carry(path):
+    """옛 버전 DART 캐시 파일에서 해석과 상관없는 항목(CARRY_SUFFIXES · 찾은 것만)과 기업코드 목록(meta)을 읽어요 → (항목, meta)
+    또는 None (읽지 못하면 크게 남기고 None — 그러면 업종 코드도 새로 받아요). v19.1f: v2 → v3 에서 업종 코드 약 2,400회를 아껴요."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            js = json.load(f)
+        ent = {k: e for k, e in (js.get("entries") or {}).items()
+               if k.endswith(CARRY_SUFFIXES) and isinstance(e, dict) and e.get("st") == "000" and e.get("at") and "d" in e}
+        meta = {k: js["meta"][k] for k in CARRY_META if k in (js.get("meta") or {})}
+        return ent, meta
+    except Exception as e:
+        log(f"  !! 옛 DART 캐시({os.path.basename(path)})에서 업종 코드를 옮기지 못했어요({type(e).__name__}: {e}) → 업종 코드도 새로 받아요")
+        return None
+
+
+def adopt_carry(client, carry):
+    """read_carry 결과를 새 캐시에 넣어요 (이미 있는 항목은 그대로). 넣은 항목 수. client.started_empty 는 바꾸지 않아요
+    (재무제표가 없는 캐시라 정해진 시각 실행의 '빈 캐시면 멈춤'과 전체 실행 판단은 그대로)."""
+    if not carry:
+        return 0
+    ent, meta = carry
+    n = 0
+    with client.lock:
+        for k, e in ent.items():
+            if k not in client.entries:
+                client.entries[k] = e
+                n += 1
+        for k, v in meta.items():
+            client.meta.setdefault(k, v)
+    client.carried = n
+    return n
+
+
 def dart_corp_map(client):
     """종목코드 → DART 기업코드. 오늘 못 받으면 캐시에 저장해 둔 목록을 (크게 알리고) 씁니다."""
     try:
@@ -1328,7 +1366,9 @@ INC_NAMES = {
 }
 INC_OLD = {"rev": ("매출액", "수익(매출액)", "영업수익"), "op": ("영업이익", "영업이익(손실)"),     # v19.1f 전 규칙 (비교만)
            "ni": ("당기순이익", "당기순이익(손실)", "연결당기순이익")}
-LOSS_ONLY = tuple(f"{p}순손실" for p in _NI_Q) + ("영업손실",)
+# 이름이 손실(을 먼저)인 줄: '영업손실' · '당기순손실' 과 '영업손실(이익)' · '당기순손실(이익)' — 올해 값이 양수면 부호를 믿을 수 없어 안 써요
+# (리뷰 2026-11-08: '손실(이익)' 이름의 양수 값이 이익으로 발행될 뻔했어요)
+LOSS_ONLY = tuple(f"{p}순손실{x}" for p in _NI_Q for x in ("", "(이익)")) + ("영업손실", "영업손실(이익)")
 EQO_ID = "ifrs-full_EquityAttributableToOwnersOfParent"      # 재무상태표의 지배기업 소유주지분 (BPS)
 INC_SEEN = collections.Counter()        # 이번 실행에서 받은 재무제표만: 찾은 방법 · 부호가 틀려 버린 줄 · 고르지 못한 줄 (실행 로그용)
 _INC_LOCK = threading.Lock()
@@ -1402,11 +1442,15 @@ def owners_equity(rows, value):
 
 # v19.1f (Jack, 2026-11-07): 이자보상배율의 이자. 손익계산서에 '이자비용' 줄이 있으면 그것, 없으면 현금흐름표의 이자 지급 줄을 모두
 # 더한 값(양수로)이에요. 예전에는 '금융비용'(환손실·파생상품 손실까지 든 금융원가)도 이자로 읽었어요 — 2026-11-07 경고 505곳 중 502곳.
-# 이자 지급 줄: 표준 계정 ifrs-full_InterestPaidClassifiedAs…(영업·투자·재무활동)과, 표준 계정이 없는 줄 중 이름에 '이자'와
-# '지급'('지출' · '납부')이 든 줄 (코드가 있는 줄과 이름 · 금액이 같으면 같은 줄로 봐요). 이자의 수취(받은 이자)는 절대 아니에요. 신종자본증권 이자(dart_InterestPaidToHybridBond)는
+# 이자 지급 줄: 표준 계정 ifrs-full_InterestPaidClassifiedAs…(영업·투자·재무활동) 줄 모두. 그런 줄이 하나도 없을 때만 표준 계정이
+# 없는 줄 중 이름이 '이자(의) 지급 · 지출 · 납부'인 줄 ('지급이자' · '미지급이자' 줄은 아니에요 — 리뷰 2026-11-08).
+# 이자의 수취(받은 이자)는 절대 아니에요. 신종자본증권 이자(dart_InterestPaidToHybridBond)는
 # 회계상 자본에 대한 분배라 빼요 (HYBRID_INTEREST — Jack 확인 대기).
 HYBRID_INTEREST = False
 _NO_ID = ("-표준계정코드 미사용-", "")
+
+
+_INTEREST_PAID_NAME = re.compile(r"이자(의)?(지급|지출|납부)")
 
 
 def interest_paid_rows(rows):
@@ -1419,15 +1463,15 @@ def interest_paid_rows(rows):
              and not received(acct_name(r.get("account_nm")))]
     if HYBRID_INTEREST:
         by_id += [r for r in cf if (r.get("account_id") or "").strip() == "dart_InterestPaidToHybridBond"]
+    # 표준 계정이 없는 줄은 이름이 '이자(의) 지급 · 지출 · 납부'일 때만 (리뷰 2026-11-08: '지급이자'는 간접법의 이자비용 조정 줄,
+    # '미지급이자의 증가(감소)'는 운전자본 줄이라 이자 지급이 아니에요). 그리고 코드가 있는 이자 지급 줄이 하나라도 있으면 코드 없는
+    # 줄은 더하지 않아요 (같은 지급을 두 번 셀 수 있어서). 코드 줄이 없을 때만 (예: '차입원가 자본화 이자의 지급') 이름으로.
     loose = [r for r in cf if (r.get("account_id") or "").strip() in _NO_ID
-             and "이자" in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
-             and "신종자본" not in acct_name(r.get("account_nm"))
-             and any(w in acct_name(r.get("account_nm")) for w in ("지급", "지출", "납부"))]
-    # 표준 계정이 없는 줄도 더해요 (예: '차입원가 자본화 이자의 지급'). 다만 코드가 있는 줄과 이름 · 금액이 같으면 같은 줄이라 한 번만
-    amt = lambda r: abs(_num(r.get("thstrm_amount")) or 0.0)       # −X 와 +X 로 적힌 같은 줄도 같은 줄로
-    coded = {(acct_name(r.get("account_nm")), amt(r)) for r in by_id}
+             and _INTEREST_PAID_NAME.search(acct_name(r.get("account_nm")))
+             and "미지급" not in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
+             and "신종자본" not in acct_name(r.get("account_nm"))]
     seen, out = set(), []
-    for r in by_id + [r for r in loose if (acct_name(r.get("account_nm")), amt(r)) not in coded]:
+    for r in (by_id or loose):
         k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
         if k not in seen:
             seen.add(k)
@@ -1491,6 +1535,8 @@ def parse_dart_list(rows):
     got, src, old_diff = {}, {}, []
     for key in ("rev", "op", "ni", "nio"):
         v, how = income_line(rows, key, tri)
+        if v is not None and v[0] is None:
+            how = "blank"           # 줄은 있는데 올해 값이 빈 칸: 로그에서는 '없음'으로 세요 (앞 해 값은 그대로 써요)
         _inc_seen(f"a:{key}:{how}")
         got[key] = v
         if v is not None:
@@ -1694,7 +1740,7 @@ def parse_dart_quarter(rows):
     got = {}
     for key in ("rev", "op", "ni", "nio"):
         got[key], how = income_line(rows, key, _ytd)
-        _inc_seen(f"q:{key}:{how}")
+        _inc_seen(f"q:{key}:{'blank' if got[key] is None and how in ('id', 'name') else how}")
     rev, op, ni, nio = got["rev"], got["op"], got["ni"], got["nio"]
     eqo = owners_equity(rows, lambda r: _num(r.get("thstrm_amount")))
     iec = interest_paid(rows, _ytd)
@@ -1836,7 +1882,7 @@ def income_log(inc_by):
     cnt = collections.Counter()
     old, none_at_all = collections.defaultdict(list), []
     for t, (nk, inc, has_fin) in sorted(inc_by.items()):
-        src = (inc or {}).get("src") or {}
+        src = {k: v for k, v in ((inc or {}).get("src") or {}).items() if v in ("id", "name")}   # 'blank' = 올해 값 없음 → 없음
         for k in INC_KO:
             cnt[f"{k}:{src.get(k) or 'none'}"] += 1
         for k in (inc or {}).get("old") or []:
@@ -1879,7 +1925,7 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
             f"최대 {DART_REDO_PER_RUN:,}건 (v19.1e · 배당 분할 확인용)")
     targets = [s for s in kr_stocks if s["t"] in cmap]
     if client.started_empty or client.mode == "full":
-        est, why = dart_full_estimate(len(targets), ksic=client.started_empty)
+        est, why = dart_full_estimate(len(targets), ksic=client.started_empty and not client.carried)
         loud = est > DART_FULL_TARGET
         log(f"{'  !! ' if loud else '· '}전체 DART 실행 호출 수 어림: 약 {est:,}회 ({why}) · 하루 한도 {DART_DAY_LIMIT:,} · "
             f"목표 {DART_FULL_TARGET:,} 아래" + (" — 목표를 넘어요" if loud else ""))
@@ -2593,6 +2639,9 @@ FIN_SECS = {"bank", "insure", "broker", "holding"}    # EV 계열 멀티플을 �
 # v19.1f (Jack 확인 대기): EV(기업가치)와 P/영업현금흐름의 시가총액 = 보통주 + 같은 회사 상장 우선주 (회사 전체의 값). False 면
 # v19.1f 전처럼 보통주만 (우선주가 있는 회사의 EV 가 작아 보여요 — 삼성전자 약 11%).
 COMPANY_CAP_WITH_PREF = True
+# v19.1f (리뷰 2026-11-08 · Jack 확인 대기): EV 에 비지배지분을 더해요 (EBITDA·매출이 연결 100% 라서 — 한화에어로스페이스 약 7.1조).
+# False 면 v19.1f 전처럼 시가총액 + 차입금 − 현금만.
+EV_WITH_NCI = True
 # v19.1d (Jack, 2026-11-07): 유동비율·이자보상배율은 재무제표에 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과
 # 금융 지주(KB금융·신한지주 …: 업종 그룹이 은행·보험·증권·금융)만 해당 없음(flNa). 그 밖의 지주회사(LG·GS·CJ …)는 이제 돌려요.
 FL_FIN_SECS = {"bank", "insure", "broker"}
@@ -2625,21 +2674,50 @@ def fl_financial(s):
 CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
 
 
-def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
+def icr_inputs(fin):
+    """이자보상배율 입력 → (영업이익, 이자, 출처 is·cf, 기간 ttm·fy, 못 돌린 이유). 영업이익과 이자는 같은 기간끼리만 써요 (v19.1f 리뷰:
+    TTM 영업이익을 연간 이자로 나누지 않게): TTM 영업이익 + TTM 이자, 안 되면 연간 영업이익 + 연간 이자. 이자는 손익계산서
+    이자비용(is), 없거나 음수면 현금흐름표 이자 지급액(cf). 이유: op 그 기간의 영업이익 없음 · ie 이자 줄 없음 · neg 이자가 음수뿐. (순수 함수)"""
+    _t = fin.get("ttm") or {}
+    sets = (("ttm", _t.get("op"), _t.get("ie"), _t.get("iec")),
+            ("fy", (fin.get("op") or [None])[0], fin.get("ie"), fin.get("iec")))
+    neg = has_int = any_op = False
+    for per, op, ie, iec in sets:
+        op, ie, iec = _fin(op), _fin(ie), _fin(iec)
+        has_int = has_int or ie is not None or iec is not None
+        if op is None:
+            continue
+        any_op = True
+        if ie is not None and ie >= 0:
+            return op, ie, "is", per, None
+        if iec is not None and iec >= 0:
+            return op, iec, "cf", per, None
+        neg = neg or ie is not None or iec is not None
+    # 영업이익이 어느 기간에도 없으면 op (이자 줄 탓이 아니에요) · 음수 이자뿐이면 neg · 이자가 영업이익 없는 기간에만 있으면 op · 아니면 ie
+    return None, None, None, None, ("op" if not any_op else "neg" if neg else "op" if has_int else "ie")
+
+
+def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
     flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 네 검사(cr 유동비율 ·
-    icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
+    icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요.
+    v19.1f: pref_caps = kr_pref_caps (목록 파일 전체의 우선주 시가총액, 조원) — 없으면 kr_stocks 안의 우선주로."""
     extra = extra or {}
     comps = []
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
     why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
-    src_n = collections.Counter()                   # v19.1f: 이자보상배율에 쓴 이자 (is 손익계산서 이자비용 · cf 현금흐름표 이자 지급액)
-    # v19.1f: 같은 회사 상장 우선주의 시가총액 (COMPANY_CAP_WITH_PREF 면 EV·P/CF 의 회사 시가총액에 더해요)
-    pref_cap = collections.Counter()
-    for s in kr_stocks:
-        if s.get("cls") == "kr" and is_preferred(s.get("t") or "") and (_fin(s.get("cap")) or 0) > 0:
-            pref_cap[s["t"][:5]] += s["cap"]
+    src_n = collections.Counter()                   # v19.1f: 이자보상배율에 쓴 이자 (is 손익계산서 이자비용 · cf 현금흐름표 이자 지급액) · 기간
+    nci_miss = []                                   # v19.1f: 연결인데 지배주주 자본이 없어 EV 에 비지배지분을 못 더한 회사
+    # v19.1f: 같은 회사 상장 우선주의 시가총액 (COMPANY_CAP_WITH_PREF 면 EV·P/CF 의 회사 시가총액에 더해요). EPS·BPS 주식 수와 같은
+    # 목록(파일 전체)을 써요
+    if pref_caps is not None:
+        pref_cap = collections.Counter(pref_caps)
+    else:
+        pref_cap = collections.Counter()
+        for s in kr_stocks:
+            if s.get("cls") == "kr" and is_preferred(s.get("t") or "") and (_fin(s.get("cap")) or 0) > 0:
+                pref_cap[s["t"][:5]] += s["cap"]
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2696,28 +2774,16 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
-        op0f = eff["op0"]
-        # v19.1f: 이자 = 손익계산서 이자비용(is), 없으면 현금흐름표 이자 지급액(cf). 어느 것을 썼는지 flSrc 에 남겨요
-        # 이자비용이 음수(잘못 적은 값)면 현금흐름표 값으로 · TTM 이자 지급액이 음수(연간과 분기의 줄 이름이 달라서)면 연간 값으로
-        iec_v, ttm_neg = eff["iec"], False
-        if iec_v is not None and iec_v < 0 and _fin(fin.get("iec")) is not None and fin["iec"] >= 0:
-            iec_v, ttm_neg = fin["iec"], True
-        ie_is = eff["ie"]
-        if ie_is is not None and ie_is < 0 and _fin(fin.get("ie")) is not None and fin["ie"] >= 0:
-            ie_is = fin["ie"]                           # TTM 이자비용이 음수면 연간 이자비용 먼저 (그래도 손익계산서 값)
-        if ie_is is not None and (ie_is >= 0 or iec_v is None):
-            ie_v, ie_src = ie_is, "is"
-        elif iec_v is not None:
-            ie_v, ie_src = iec_v, "cf"
-        else:
-            ie_v, ie_src = None, None
-        icr_ok = op0f is not None and ie_v is not None and ie_v >= 0 and not fin_co and not unknown
+        # v19.1f: 이자 = 손익계산서 이자비용(is), 없거나 음수면 현금흐름표 이자 지급액(cf) · 영업이익과 같은 기간 (icr_inputs).
+        # 어느 이자를 썼는지 flSrc 에 남겨요
+        op0f, ie_v, ie_src, ie_per, icr_why = icr_inputs(fin)
+        icr_ok = op0f is not None and ie_v is not None and not fin_co and not unknown
         if icr_ok and not ICR_OFF:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
             row["flSrc"] = {"icr": ie_src}
             src_n[ie_src] += 1
-            src_n["isNeg"] += ie_src == "cf" and ie_is is not None
-            src_n["cfTtmNeg"] += ie_src == "cf" and ttm_neg
+            src_n[ie_per] += 1
+            src_n["fyBack"] += ie_per == "fy" and _fin((fin.get("ttm") or {}).get("op")) is not None   # TTM 이자가 없어 연간끼리
         if icr_ok and not ICR_OFF and ie_v > 0:
             icr = op0f / ie_v
             if icr < 1:
@@ -2738,7 +2804,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
             # off = 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요). 꺼진 동안은 이자 줄이 없는 회사도 off: 어떤 회사엔 '확인한 …
             # 없어요' 카드가, 같은 결과의 다른 회사엔 아무것도 없는 차이가 생기지 않게 (리뷰 2026-11-07)
-            row["flWhy"] = {"icr": "off" if ICR_OFF else "op" if op0f is None else "ie" if ie_v is None else "neg"}
+            row["flWhy"] = {"icr": "off" if ICR_OFF else (icr_why or "op")}
             why_n[row["flWhy"]["icr"]] += 1
         if fin_co:
             row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
@@ -2756,7 +2822,17 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
         if s.get("cap") and fin:
             co_cap = s["cap"] + (pref_cap[s["t"][:5]] if COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) else 0.0)   # 조원
-            ev = co_cap * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0)
+            # v19.1f (리뷰 2026-11-08): EBITDA·매출은 연결 100% 라 EV 에 비지배지분(자본총계 − 지배주주 자본)도 더해요. 같은 시점의
+            # 두 값이 다 있을 때만 (최신 분기 → 연간). 별도 재무제표는 비지배지분이 없어요. 연결인데 지배주주 자본이 없으면 0 으로 두고 로그
+            nci = 0.0
+            if fin.get("fs") != "OFS":
+                pair = next(((_fin(src.get("eq")), _fin(src.get("eqo"))) for src in (_b, fin)
+                             if _fin(src.get("eq")) is not None and _fin(src.get("eqo")) is not None), None)
+                if pair:
+                    nci = pair[0] - pair[1]
+                elif _fin(eff["eq"]) is not None and row["s"] not in FIN_SECS:
+                    nci_miss.append(f"{s['t']} {s['nk']}")
+            ev = co_cap * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0) + (nci if EV_WITH_NCI else 0.0)
             if row["s"] not in FIN_SECS and ev > 0:
                 if ebitda and ebitda > 0:
                     v = ev / ebitda
@@ -2804,10 +2880,15 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
-    log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 (이자비용이 음수라 "
-        f"현금흐름표로 {src_n['isNeg']:,} · TTM 이자 지급액이 음수라 연간 값으로 {src_n['cfTtmNeg']:,}) · 경고 "
+    log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 (기간: TTM "
+        f"{src_n['ttm']:,} · 연간 {src_n['fy']:,}, 그중 TTM 이자가 없어 연간 영업이익·이자끼리 {src_n['fyBack']:,}) · 경고 "
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
         f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
+    n_pc = sum(1 for c in comps if not is_preferred(c["t"]) and pref_cap.get(c["t"][:5]))
+    log(f"· EV 회사 시가총액: 상장 우선주를 더한 회사 {n_pc:,}곳 ({'켬' if COMPANY_CAP_WITH_PREF else '끔'} · COMPANY_CAP_WITH_PREF · "
+        f"우선주 목록 {'파일 전체' if pref_caps is not None else 'data.json 안'}) · 비지배지분 더하기 {'켬' if EV_WITH_NCI else '끔'}"
+        + (f" — 연결인데 지배주주 자본이 없어 비지배지분을 0 으로 둔 곳 {len(nci_miss):,}: {', '.join(nci_miss[:12])}"
+           f"{'…' if len(nci_miss) > 12 else ''}" if nci_miss else ""))
     log(f"{'  !! ' if ICR_OFF else '· '}이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — "
         + (f"잠시 꺼 둠(ICR_OFF · 금융비용으로 계산되던 값이라) {why_n['off']:,} · " if ICR_OFF else "")
         + f"이자비용도 이자 지급액도 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자 음수 {why_n['neg']:,} (corp.json flWhy)")
@@ -2902,6 +2983,7 @@ def fetch_korea(start, today, rf, prev=None):
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
     pref_shares = kr_pref_shares(listing)     # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
+    pref_caps = kr_pref_caps(listing)         # v19.1f: 같은 목록의 우선주 시가총액 (EV 의 회사 시가총액)
     n_pref = sum(1 for c in listing["Code"] if is_preferred(str(c)))
     n_pref_ok = sum(len(v) for v in pref_shares.values())
     log(f"{'  !! ' if n_pref_ok < n_pref else '· '}우선주 상장 주식 수 (배당 분할 확인용): {n_pref_ok:,} / {n_pref:,}종목 · "
@@ -3006,7 +3088,7 @@ def fetch_korea(start, today, rf, prev=None):
                 log(f"  (펀더멘털 {mkt_name} 실패: {e})")
         if frames:
             fundamentals = pd.concat(frames).to_dict("index")
-        log(f"· pykrx 펀더멘털 {len(fundamentals):,}건 (0이어도 정상 — DART 기반 계산으로 대체됩니다)")
+        log(f"· pykrx 펀더멘털 {len(fundamentals):,}건 (0이어도 정상 — PER·PBR·EPS·BPS 는 쓰지 않고 DART 지배주주 몫으로 계산해요 · v19.1f)")
         try:
             fr = pk.get_exhaustion_rates_of_foreign_investment(day, market="ALL")
             col = next((c for c in fr.columns if "지분" in str(c)), None)
@@ -3090,8 +3172,10 @@ def fetch_korea(start, today, rf, prev=None):
             ret.name = "r"
             b, a, bse, bn = beta_fit(ret, bench, rf)
             f = fundamentals.get(code, {})
-            per, pbr = _num(f.get("PER")), _num(f.get("PBR"))
-            eps, bps, dps = _num(f.get("EPS")), _num(f.get("BPS")), _num(f.get("DPS"))
+            # v19.1f (리뷰 2026-11-08): PER·PBR·EPS·BPS 는 pykrx 값을 쓰지 않아요 — 늘 DART 로 계산한 지배주주 몫(fill_multiples ·
+            # 영수증 epsIn·bpsIn). KRX 가 다시 답해도 기준이 섞이지 않게 (pykrx 배당 DPS·DIV 는 예전처럼, DART 가 나중에 덮어써요)
+            per = pbr = eps = bps = None
+            dps = _num(f.get("DPS"))
             dyv = _num(f.get("DIV"))
             sec_txt, prod_txt = desc.get(code, ("", ""))
             mc = _fin(row.get("Marcap"))
@@ -3170,7 +3254,7 @@ def fetch_korea(start, today, rf, prev=None):
             " (넥스트레이드 체결가가 섞인 날)")
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
-            "_prefShares": pref_shares}
+            "_prefShares": pref_shares, "_prefCaps": pref_caps}
     return out, bench, mkt, meta
 
 
@@ -3230,7 +3314,24 @@ def blank_foreign_dart(kr_stocks):
 # 있어요. 회사가 발표하는 기본주당이익과 같은 방식: 삼성전자 2025 지배주주 순이익 44.26조 ÷ 약 67억 주 = 6,605원). False = 보통주만
 # (v19.1f 전: 우선주가 있는 회사의 EPS·BPS 가 커 보여요 — 삼성전자 약 14%).
 PER_SHARE_WITH_PREF = True
-EPS_BASIS = "owners"          # data.json · corp.json 맨 위 epsBasis — 앱의 'PER·EPS 계산 방법을 고치는 중' 줄이 이 표시를 보면 사라져요
+# data.json · corp.json 맨 위 epsBasis — 앱의 'PER·EPS 계산 방법을 고치는 중' 줄이 "owners" 를 보면 사라져요. 이 실행이 정말 주주 몫
+# EPS 를 냈을 때만 "owners" (eps_basis_of): 국내 필수 종목이 모두 지배주주 몫(o) 또는 별도 재무제표(s)이고, EPS 가 있는 회사 중
+# EPS_BASIS_MIN 이상이 o·s. 아니면 "mixed" — 관문이 실패로 막아요 (리뷰 2026-11-08: 상수로 쓰면 거짓 표시가 될 수 있어서).
+EPS_BASIS = "owners"
+EPS_BASIS_MIN = 0.95
+
+
+def eps_basis_of(kr_stocks, mult_extra, must=None):
+    """이 실행의 EPS 기준 → ("owners" | "mixed", 설명). (순수 함수)"""
+    must = DIV_RANK_MUST if must is None else must
+    b = {t: e["epsIn"]["b"] for t, e in mult_extra.items() if "epsIn" in e}
+    have = {s["t"] for s in kr_stocks if s.get("cls") == "kr"}
+    bad_must = [t for t in must if t in have and not is_foreign_issuer(t) and b.get(t) not in ("o", "s")]
+    share = sum(1 for v in b.values() if v in ("o", "s")) / len(b) if b else 0.0
+    ok = not bad_must and bool(b) and share >= EPS_BASIS_MIN
+    why = (f"EPS 있는 회사 {len(b):,}곳 중 지배주주·별도 {share:.1%} (기준 {EPS_BASIS_MIN:.0%})"
+           + (f" · 필수 종목 중 아닌 곳: {', '.join(bad_must)}" if bad_must else ""))
+    return (EPS_BASIS if ok else "mixed"), why
 
 
 def per_share_count(s, pref_shares):
@@ -3559,6 +3660,20 @@ def kr_pref_shares(listing):
         if is_preferred(code) and v and v > 0:
             out.setdefault(code[:5], []).append(v)
     return out
+
+
+def kr_pref_caps(listing):
+    """목록 파일 전체에서 우선주 시가총액 합: {보통주 코드 앞 5자리: 조원}. kr_pref_shares 와 같은 목록이라 EPS·BPS 의 주식 수와
+    EV 의 회사 시가총액이 같은 우선주를 봐요 (v19.1f 리뷰: 상위 2,500개 안의 우선주만 보면 둘이 어긋나요). (순수 함수)"""
+    out = collections.Counter()
+    if listing is None or "Code" not in getattr(listing, "columns", []) or "Marcap" not in listing.columns:
+        return {}
+    for code, mc in zip(listing["Code"].astype(str), listing["Marcap"]):
+        code = code.strip()
+        v = _fin(_num(mc))
+        if is_preferred(code) and v and v > 0:
+            out[code[:5]] += v / 1e12
+    return dict(out)
 
 
 def apply_div_basis(kr_stocks, fin_map, pref_shares):
@@ -4291,15 +4406,22 @@ def main():
     fin_map, client, ksic = {}, None, {}
     # v19.1b: v2 캐시가 없던 첫 실행은 워크플로가 v1 폴더를 받아요(미국 상세 정보 보관본을 이어 쓰려고). 옛 DART 파일은 읽지 않으니
     # 지워서 v2 캐시에 실려 가지 않게 해요.
+    carry = None
     for old_name in ("dart-v1.json.gz", "dart-v2.json.gz"):      # v19.1f: v2 파일도 (v3 부터 새로 받아요)
         legacy = os.path.join(os.path.dirname(DART_CACHE_PATH) or ".", old_name)
         if os.path.abspath(legacy) != os.path.abspath(DART_CACHE_PATH) and os.path.exists(legacy):
+            if old_name == "dart-v2.json.gz":
+                carry = read_carry(legacy)     # v19.1f: 해석과 상관없는 업종 코드 · 기업코드 목록만 옮겨요 (지우기 전에 읽어요)
             os.remove(legacy)
-            log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
+            log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 재무제표·배당 항목은 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
     if dart_mode == "off":
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
         client = DartClient(DART_KEY, mode=dart_mode, today=today)
+        if carry is not None:
+            n_carry = adopt_carry(client, carry)
+            log(f"· 옛 v2 캐시에서 옮긴 업종 코드 항목 {n_carry:,}건 (읽은 {len(carry[0]):,}건 · 기업코드 목록 "
+                f"{'옮김' if 'corpMap' in carry[1] else '없음'}) — 업종 코드는 보관 기간이 남은 것만 다시 받지 않아요")
         kr, fin_map = ph.run("DART", enrich_with_dart, kr, client, kmeta.get("_prefShares") or {})
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
@@ -4312,6 +4434,9 @@ def main():
         corp_extra.setdefault(t, {}).update(e)
     inc_check = income_check(kr, fin_map, mult_extra)
     log(f"· 손익 줄 집계(incCheck): {inc_check}")
+    eps_basis, eps_why = eps_basis_of(kr, mult_extra)
+    log(f"{'· ' if eps_basis == EPS_BASIS else '  !! '}EPS 기준 표시(epsBasis): {eps_basis} — {eps_why}"
+        + ("" if eps_basis == EPS_BASIS else " — 관문에서 실패해 발행하지 않아요 (앱의 '고치는 중' 줄은 그대로)"))
     n_dy = sum(1 for s in kr if s.get("dy") is not None)
     log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
     n_dps = sum(1 for s in kr if s.get("dps") is not None)
@@ -4421,7 +4546,7 @@ def main():
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
-        "epsBasis": EPS_BASIS,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
+        "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "stocks": stocks,
     }
     write_json(OUT, payload)
@@ -4429,8 +4554,8 @@ def main():
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
-    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra)
-    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at, "epsBasis": EPS_BASIS})
+    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra, pref_caps=kmeta.get("_prefCaps"))
+    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at, "epsBasis": eps_basis})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")

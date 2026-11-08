@@ -288,7 +288,8 @@ def test_ev_uses_the_whole_company_market_cap(monkeypatch):
 def test_pipeline_writes_the_eps_basis_marker_and_income_check():
     import inspect
     src = inspect.getsource(F.main)
-    assert '"epsBasis": EPS_BASIS' in src and '"incCheck": inc_check' in src and '"epsBasis": EPS_BASIS})' in src
+    assert '"epsBasis": eps_basis' in src and '"incCheck": inc_check' in src and '"epsBasis": eps_basis})' in src
+    assert src.find("eps_basis, eps_why = eps_basis_of(kr, mult_extra)") < src.find("write_json(OUT, payload)")
     assert F.EPS_BASIS == "owners"
     i = src.find("fill_multiples(kr, fin_map, kmeta.get(\"_prefShares\")")
     assert 0 < i < src.find("income_check(kr, fin_map, mult_extra)") < src.find("write_json(OUT, payload)")
@@ -495,3 +496,143 @@ def test_wrong_income_check_version_fails(pair):
     cur, prev = pair
     cur["data"]["incCheck"]["v"] = 2
     fails(cur, prev, "손익 줄 검사 기록 (incCheck)")
+
+
+# ── 7. 리뷰 고침 (2026-11-08) ─────────────────────────────────
+def test_loss_first_names_with_a_positive_figure_are_dropped():
+    before_op, before_ni = F.INC_SEEN["op:sign"], F.INC_SEEN["ni:sign"]
+    rows_ = BS + [r("CIS", "영업손실(이익)", NO_ID, 5e9), r("CIS", "당기순손실(이익)", NO_ID, 7e9), r("CIS", "매출", NO_ID, 1e11)]
+    fin = F.parse_dart_list(rows_)["_fin"]
+    assert fin["op"] == [None, None, None] and fin["ni"] == [None, None, None] and fin["rev"][0] == 1000.0
+    assert F.INC_SEEN["op:sign"] == before_op + 1 and F.INC_SEEN["ni:sign"] == before_ni + 1
+    ok = F.parse_dart_list(BS + [r("CIS", "영업손실(이익)", NO_ID, -5e9), r("CIS", "반기순손실(이익)", NO_ID, -7e9)])["_fin"]
+    assert ok["op"][0] == -50.0 and ok["ni"][0] == -70.0                     # 음수면 그대로 손실
+    q = F.parse_dart_quarter(BS + [r("IS", "매출액", NO_ID, 1e10, add=3e10), r("IS", "분기순손실(이익)", NO_ID, 1e9, add=2e9)])
+    assert q["ni"] is None
+
+
+def test_interest_paid_names_need_interest_before_paid_and_never_add_to_a_coded_line():
+    base = BS + [r("IS", "매출액", "ifrs-full_Revenue", 1e11)]
+    coded = r("CF", "이자의 지급", "ifrs-full_InterestPaidClassifiedAsOperatingActivities", -3e9)
+    assert F.parse_dart_list(base + [coded, r("CF", "지급이자", NO_ID, 3e9)])["_fin"]["iec"] == 30.0     # 예전엔 60
+    assert F.parse_dart_list(base + [coded, r("CF", "이자의지급", NO_ID, -1e9)])["_fin"]["iec"] == 30.0  # 코드 줄이 있으면 이름 줄은 안 더해요
+    loose = [r("CF", "지급이자", NO_ID, 3e9), r("CF", "미지급이자의 증가(감소)", NO_ID, 1e9), r("CF", "이자지급액의 미지급", NO_ID, 4e9)]
+    assert F.parse_dart_list(base + loose)["_fin"]["iec"] is None                                       # 간접법 조정 · 운전자본 줄
+    ok = [r("CF", "차입원가 자본화 이자의 지급", NO_ID, -2e9), r("CF", "이자 납부", NO_ID, -1e9)]
+    assert F.parse_dart_list(base + ok)["_fin"]["iec"] == 30.0                                          # 코드 줄이 없을 때만 이름으로
+
+
+def test_eps_basis_marker_is_owners_only_when_the_run_really_used_owners_profit():
+    kr = [{"t": t, "cls": "kr"} for t in F.DIV_RANK_MUST] + [{"t": f"{i:05d}0", "cls": "kr"} for i in range(1, 41)]
+    ext = {s["t"]: {"epsIn": {"b": "o" if i % 2 else "s"}} for i, s in enumerate(kr)}
+    assert F.eps_basis_of(kr, ext)[0] == "owners"
+    bad = copy.deepcopy(ext)
+    bad["005930"]["epsIn"]["b"] = "t"                                     # 필수 종목이 전체 순이익
+    basis, why = F.eps_basis_of(kr, bad)
+    assert basis == "mixed" and "005930" in why
+    many = copy.deepcopy(ext)
+    for t in list(many)[10:14]:
+        many[t]["epsIn"]["b"] = "t"                                       # 47곳 중 4곳 = 91.5% < 95%
+    assert F.eps_basis_of(kr, many)[0] == "mixed"
+    assert F.eps_basis_of(kr, {})[0] == "mixed"                           # EPS 를 하나도 못 냈으면 표시하지 않아요
+
+
+def test_pykrx_multiples_are_never_used_for_korean_stocks():
+    import inspect
+    src = inspect.getsource(F.fetch_korea)
+    assert "per = pbr = eps = bps = None" in src and '_num(f.get("PER"))' not in src and '_num(f.get("EPS"))' not in src
+
+
+def test_a_korean_eps_without_its_receipt_fails_the_gate(pair):
+    cur, prev = pair
+    c = comp(cur, "200300")
+    p = c.pop("epsIn")["p"]
+    cur["data"]["incCheck"]["epsB"]["o"] -= 1
+    cur["data"]["incCheck"]["epsP"][p] -= 1
+    assert "EPS 영수증 없음" in fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)")[1]
+
+
+def test_mixed_eps_basis_marker_fails_the_gate(pair):
+    cur, prev = pair
+    cur["data"]["epsBasis"] = cur["corp"]["epsBasis"] = "mixed"
+    fails(cur, prev, "EPS 기준 표시 (epsBasis = owners)")
+
+
+def write_cache(path, v, entries, meta=None):
+    import gzip
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump({"v": v, "meta": meta or {}, "entries": entries}, f)
+
+
+def test_industry_codes_and_the_corp_map_carry_over_from_the_v2_cache(tmp_path, monkeypatch):
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)
+    old = tmp_path / "dart-v2.json.gz"
+    write_cache(old, 2, {"C1|company": {"st": "000", "at": "2026-11-01", "d": {"induty": "264"}},
+                         "C2|company": {"st": "013", "at": "2026-11-01", "d": None},
+                         "C1|2025|11011|CFS": {"st": "000", "at": "2026-11-01", "d": {"debt": 1.0}},
+                         "C1|2025|11011|DIV2": {"st": "000", "at": "2026-11-01", "d": {"dps": 1.0}}},
+                {"corpMap": {"005930": "00126380"}, "corpMapAt": "2026-11-07", "lastFull": "2026-11-06"})
+    carry = F.read_carry(str(old))
+    assert set(carry[0]) == {"C1|company"} and carry[1] == {"corpMap": {"005930": "00126380"}, "corpMapAt": "2026-11-07"}
+    c = F.DartClient("k", today=dt.date(2026, 11, 8), path=str(tmp_path / "dart-v3.json.gz"))
+    assert c.started_empty and F.adopt_carry(c, carry) == 1 and c.carried == 1
+    assert c.started_empty                                                 # 재무제표가 없는 캐시: 전체 실행 판단은 그대로
+    assert c.company("C1") == {"induty": "264"} and not c.status           # 업종 코드는 호출 없이
+    assert "lastFull" not in c.meta and c.meta["corpMap"] == {"005930": "00126380"}
+    assert F.read_carry(str(tmp_path / "none.json.gz")) is None
+    import inspect
+    src = inspect.getsource(F.main)
+    assert src.find("carry = read_carry(legacy)") < src.find("os.remove(legacy)") < src.find("adopt_carry(client, carry)")
+    assert "ksic=client.started_empty and not client.carried" in inspect.getsource(F.enrich_with_dart)
+
+
+def test_ev_adds_minority_interest_and_uses_the_full_listing_for_preferred_caps(monkeypatch):
+    com = {"t": "012450", "nk": "한화에어로스페이스", "cls": "kr", "price": 100.0, "cap": 10.0, "shr": 1, "s": "defense"}
+    fin = {"012450": {"rev": [100000.0, None, None], "op": [10.0, None, None], "ni": [1.0] * 3, "dep": 0.0, "bor": 0.0,
+                      "cash": 0.0, "ocf": 100000.0, "eq": 9e4, "eqo": 5e4, "bs2": {"eq": 3e4, "eqo": 2e4}, "fs": "CFS"}}
+    c = corp_of([com], fin)["012450"]
+    assert c["evR"] == 1.1 and c["pcf"] == 1.0                             # (10조 + 최신 분기 비지배지분 1조) ÷ 10조 · P/CF 엔 안 더해요
+    c = corp_of([com], {"012450": dict(fin["012450"], fs="OFS")})["012450"]
+    assert c["evR"] == 1.0                                                 # 별도 재무제표엔 비지배지분이 없어요
+    monkeypatch.setattr(F, "EV_WITH_NCI", False)
+    assert corp_of([com], fin)["012450"]["evR"] == 1.0
+    monkeypatch.setattr(F, "EV_WITH_NCI", True)
+    out = {x["t"]: x for x in F.build_corp([com], fin, "2026-11-08", pref_caps={"01245": 2.0})["companies"]}
+    assert out["012450"]["evR"] == 1.3                                     # 목록 파일의 우선주 시가총액 2조 (data.json 에 없어도)
+    import pandas as pd
+    listing = pd.DataFrame({"Code": ["005930", "005935", "00680K", "006800"], "Marcap": [1e15, 1.2e14, 5e11, 3e12]})
+    assert F.kr_pref_caps(listing) == {"00593": 120.0, "00680": 0.5}
+
+
+def corp_one(fin, **s):
+    base = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000, "s": "chem", "ind": "chem"}
+    return F.build_corp([dict(base, **s)], {"000100": fin}, "2026-11-10")["companies"][0]
+
+
+def test_icr_never_mixes_ttm_operating_profit_with_annual_interest():
+    fin = {"op": [50.0, None, None], "ie": 10.0, "ttm": {"op": 5.0}}
+    assert F.icr_inputs(fin) == (50.0, 10.0, "is", "fy", None)            # TTM 이자가 없으면 연간끼리 (예전: 5 ÷ 10 = 0.5배 경고)
+    assert F.icr_inputs({"op": [50.0], "ie": 10.0, "ttm": {"op": 5.0, "iec": 2.0}}) == (5.0, 2.0, "cf", "ttm", None)
+    assert F.icr_inputs({"op": [None], "ie": 3.0})[4] == "op"
+    assert F.icr_inputs({"op": [5.0], "ie": -1.0})[4] == "neg"
+    assert F.icr_inputs({"op": [5.0]})[4] == "ie"
+    c = corp_one({"ni": [1.0] * 3, "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, **fin})
+    assert "fl" not in c and c["flSrc"] == {"icr": "is"}
+
+
+def test_icr_warning_row_counts_warnings_and_never_fails(pair):
+    cur, prev = pair
+    comps = cur["corp"]["companies"]
+    for i, c in enumerate(comps[:100]):
+        c.update(flRan=["icr"], flSrc={"icr": "is" if i % 2 else "cf"}, fl={"icr": 0.5} if i < 20 else {})
+    rep = check(cur, prev)
+    row = rows_of(rep)["이자보상배율 경고 수 · 쓴 이자 (경고만)"]
+    assert row[3] == "WARN" and "경고 20 / 돌린 100 (20.0%)" in row[1] and "이자비용 50" in row[1], row
+    assert "이자보상배율 경고 수 · 쓴 이자 (경고만)" not in {x[0] for x in rep.failed}
+
+
+def test_a_coded_line_with_a_blank_current_year_counts_as_not_found_in_the_log(capsys):
+    out = F.parse_dart_list(BS + [r("IS", "매출액", "ifrs-full_Revenue", "", 9e10), r("IS", "영업이익", "dart_OperatingIncomeLoss", 1e9)])
+    assert out["_fin"]["rev"] == [None, 900.0, None] and out["_inc"]["src"]["rev"] == "blank"
+    F.income_log({"000100": ("가", out["_inc"], True)})
+    assert "매출 0 / 0 / 1" in capsys.readouterr().out
