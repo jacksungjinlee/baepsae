@@ -706,6 +706,42 @@ def test_the_app_keeps_disc_json_with_the_publish():
     assert "const gen = discGen.current, pub = discPub.current;" in app and "if (!mine()) return;" in app
     assert "if (r && r.ok && !discFits(r.data, pub)) {" in app
     assert "const wantDisc = !!loc.code || (loc.tab === \"home\" && homeKr);" in app          # v19.3e's own rule, kept
+    # delta review: an older disc.json gets one more try on a return 10 minutes on (reset with each publish put on screen)
+    assert 'setDisc({ status: "fail", older: Date.now() });' in app and "discRetried.current = false;" in app
+    assert "if (!discRetryDue(d, now, discRetried.current)) return;" in app and "discRetried.current = true;" in app
+
+
+def test_an_older_disc_json_is_tried_once_more_ten_minutes_on():
+    """Delta review: after a publish went on screen, a disc.json older than it (the site's CDN still serving the old copy for
+    a few minutes after a deploy, or the phone's offline copy) is not shown; it is tried once more on the first return to
+    view at least 10 minutes later, and only once for each publish put on screen."""
+    got = run("""
+const t0 = at(NOW), gap = LD.REFETCH_GAP_MS;
+const older = { status: 'fail', older: t0 };
+out = {
+  soon: H.discRetryDue(older, t0 + gap - 1, false), due: H.discRetryDue(older, t0 + gap, false), used: H.discRetryDue(older, t0 + gap, true),
+  plainFail: H.discRetryDue({ status: 'fail' }, t0 + gap, false), ok: H.discRetryDue({ status: 'ok', older: t0 }, t0 + gap, false),
+  none: H.discRetryDue(null, t0 + gap, false),
+};""", NOW=NOW)
+    assert got == {"soon": False, "due": True, "used": False, "plainFail": False, "ok": False, "none": False}, got
+
+
+def test_every_return_to_view_is_reported_once_even_without_a_fetch():
+    """returnWatch's onReturn (app.jsx: the one more try of an older disc.json) runs once per return to view, fresh data or
+    not, never for a stray event without a hide, and a throw there is logged and changes nothing."""
+    got = run("""
+let load = loadOf(NEW, NOW), clock = at(NOW);
+const seen = [], log = [];
+const w = LD.returnWatch({ hidden: false, getLoad: () => load, getDisc: () => null, now: () => clock, apply: () => {},
+  refetch: () => { log.push(1); return Promise.resolve({ ok: false }); }, onReturn: (t) => { seen.push(t); if (seen.length === 3) throw new Error('x'); } });
+const a = w.show();                                               // no hide before: not a return
+w.hide(); const b = w.show(); const c = w.show();                 // one return (two events)
+clock += 1000; w.hide(); w.show();
+clock += 1000; w.hide(); w.show();                                // onReturn throws: logged
+out = { a, b, c, seen: seen.map((t) => t - at(NOW)), fetched: log.length, warn: WARN };""", NEW=new_files(), NOW=NOW)
+    assert got["a"] is None and got["b"] is None and got["c"] is None and got["fetched"] == 0, got    # fresh data: nothing fetched
+    assert got["seen"] == [0, 1000, 2000], got
+    assert any("back in view: x" in x for x in got["warn"]), got["warn"]
 
 
 # ── wiring: the live page only ──

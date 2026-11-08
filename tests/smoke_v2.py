@@ -225,6 +225,20 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def do_GET(self):
+        # A scene can hold back the next answer for one file (2026-11-08, 돌아온 화면 disc-slow): a file ".delay-<name>" in the
+        # site holds the seconds; it is used once (removed), the other requests go on meanwhile (a threading server).
+        mark = os.path.join(self.directory, ".delay-" + os.path.basename(self.path.split("?", 1)[0]))
+        if os.path.isfile(mark):
+            try:
+                with open(mark, encoding="utf-8") as fh:
+                    secs = float(fh.read().strip() or "0")
+                os.remove(mark)
+            except (OSError, ValueError):
+                secs = 0
+            time.sleep(secs)
+        super().do_GET()
+
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
@@ -4560,9 +4574,12 @@ def scene_stale_refetch(R, files, width):
     words3 = fillp(C["app"]["stale"], n=3)
     old_line = fillp(C["app"]["asOf"], md="10월 30일") + " · " + words3
     new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
-    for how in ("newer", "bfcache", "offline", "unreadable", "mixed", "disc-retry", "fresh", "failed", "failed-again"):
+    for how in ("newer", "bfcache", "offline", "unreadable", "mixed", "disc-retry", "disc-slow", "disc-older", "fresh", "failed", "failed-again"):
         if how.startswith("failed"):                             # review 2026-11-08 (5): the first load failed (data.json missing)
             scene_failed_refetch(R, files, width, how == "failed-again")
+            continue
+        if how in ("disc-slow", "disc-older"):                   # delta review: 홈's disc.json late, or older than the new data
+            scene_disc_refetch(R, files, width, how)
             continue
         if how == "bfcache":                                     # the 4-day backstop (no staleAfter), on a company's 공시 tab
             old = clone(files)
@@ -4572,6 +4589,8 @@ def scene_stale_refetch(R, files, width):
         else:
             old = refetch_files(files) if how == "fresh" else stale_files(files, 75, -2, 2)    # n = 3: '3일째 갱신이 멈췄어요'
             path = "/app.html?dev=1"
+            if how == "newer":                                   # delta review: the old disc.json's list stopped (listOk false),
+                old["disc.json"]["listOk"] = False               # so 홈 would say 'stale', not 'ok', were it left on screen
         site = build_site(old, drop=("disc.json",) if how == "disc-retry" else ())     # disc-retry: 홈's disc.json fails at first
         srv, ctx, page, _ = R.open(site, width, init=init, path=path, device=pc_device(width) if wide else None)
         asked, logs = [], []
@@ -4710,6 +4729,100 @@ def wait_log(logs, part, page):
     hit = [x for x in logs if part in x]
     assert hit, (part, [x for x in logs if "[v2]" in x][-4:])
     return hit
+
+
+def scene_disc_refetch(R, files, width, how):
+    """돌아온 화면 · 홈의 disc.json (델타 리뷰 2026-11-08). 저장한 포트폴리오에 한국 종목이 있어 홈이 disc.json 을 직접 받아요 (v19.3e).
+    disc-slow  첫 disc.json 답이 4초 늦는 사이에 새 발행이 화면에 들어와요 → 늦은 답은 쓰지 않고(console) 다시 받은 것으로 홈 공시 ok.
+    disc-older 시장에서 새 발행이 들어왔는데 사이트에는 아직 예전 disc.json → 홈을 열면 실패 문구 (새 데이터 옆에 예전 공시를 두지 않아요).
+               곧바로 돌아와도 다시 받지 않고, 사이트에 맞는 disc.json 이 생기고 10분이 지난 뒤 돌아오면 한 번 더 받아 홈 공시 ok · 그 뒤로는 받지 않아요."""
+    wide = width >= 1024
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
+    site = build_site(stale_files(files, 75, -2, 2))
+    if how == "disc-slow":
+        with open(os.path.join(site, ".delay-disc.json"), "w", encoding="utf-8") as fh:
+            fh.write("4")                                                    # the first disc.json answer comes 4 s late
+    srv, base = serve(site)
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    ctx = R.browser.new_context(**screen, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else (R.outside.append(r.request.url), r.abort()))
+    ctx.add_init_script(init)
+    page = ctx.new_page()
+    page.set_default_timeout(WAIT)
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    asked, logs = [], []
+    page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
+    page.on("console", lambda m: logs.append(m.text))
+    now = dt.datetime.now(KST)
+    if how == "disc-older":
+        page.clock.install(time=now)                                         # the 10 minutes are moved on by hand
+    page.goto(base + "/app.html?dev=1" + ("#market" if how == "disc-older" else ""), wait_until="domcontentloaded")
+    home_disc = "() => { const e = document.querySelector('[data-ui-v2=\"home2\"]'); return e ? e.dataset.disc : null; }"
+
+    def back():
+        page.evaluate(HIDE_JS)
+        page.evaluate(SHOW_JS)
+
+    def slow():
+        wait_ready(page)
+        at(page, "home")
+        deadline = time.time() + WAIT / 1000
+        while "disc.json" not in asked and time.time() < deadline:            # the first disc.json request is out (held back)
+            page.wait_for_timeout(50)
+        assert asked.count("disc.json") == 1, asked
+        put_files(site, refetch_files(files))
+        back()                                                               # the new publish goes on screen before that answer
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+        assert page.locator(SCREEN_DL).first.inner_text() == new_line
+        page.wait_for_function(home_disc.replace("return e ? e.dataset.disc : null;", "return !!e && e.dataset.disc === 'ok';"))
+        assert asked.count("disc.json") == 2, asked                          # a second request, after the publish went on screen
+        wait_log(logs, "disc.json loaded for data that is no longer on screen: not used", page)   # the late answer (about 4 s)
+        page.wait_for_timeout(300)
+        assert page.evaluate(home_disc) == "ok" and asked.count("disc.json") == 2, (page.evaluate(home_disc), asked)
+        R.collect(page)
+        no_hscroll(page, width)
+
+    def older():
+        dl = page.locator(SCREEN_DL).first
+        dl.wait_for(state="visible")
+        at(page, "market")
+        assert dl.get_attribute("data-stale") == "1"
+        assert "disc.json" not in asked, asked                               # 시장 does not load disc.json
+        put_files(site, refetch_files(files), names=["data.json", "corp.json", "macro.json"])   # the site's disc.json: still the old one
+        back()
+        page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+        if wide:
+            side_tab(page, "home")
+        else:
+            tab(page, TABS["home"])
+            at(page, "home")
+        page.wait_for_function(home_disc.replace("return e ? e.dataset.disc : null;", "return !!e && e.dataset.disc === 'fail';"))
+        assert asked.count("disc.json") == 1, asked                          # loaded once, older than the data: not shown
+        wait_log(logs, "older than the data on screen", page)
+        page.locator('[data-ui-v2="home-disc-fail"]').wait_for(state="visible")    # the filings' failure message, never the old list
+        R.collect(page)
+        back()                                                               # at once: no more try yet (10 minutes)
+        page.wait_for_timeout(1000)
+        assert asked.count("disc.json") == 1, asked
+        put_files(site, refetch_files(files), names=["disc.json"])          # the site serves the matching disc.json now
+        page.clock.set_system_time(now + dt.timedelta(minutes=11))
+        back()                                                               # 11 minutes on: one more try
+        page.wait_for_function(home_disc.replace("return e ? e.dataset.disc : null;", "return !!e && e.dataset.disc === 'ok';"))
+        assert asked.count("disc.json") == 2, asked
+        wait_log(logs, "it loads once more", page)
+        page.clock.set_system_time(now + dt.timedelta(minutes=30))
+        back()                                                               # and no more after that
+        page.wait_for_timeout(1000)
+        assert asked.count("disc.json") == 2, asked
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, f"돌아온 화면 {width}", (
+        "disc-slow: 홈의 첫 disc.json 답이 늦는 사이 새 발행이 들어옴 → 늦은 답은 쓰지 않고 다시 받은 것으로 홈 공시 ok" if how == "disc-slow" else
+        "disc-older: 새 발행 뒤 사이트의 disc.json 이 예전 것 → 홈 공시는 실패 문구 · 10분 뒤 돌아오면 한 번 더 받아 ok · 그 뒤로는 받지 않음"),
+        slow if how == "disc-slow" else older)
+    ctx.close()
+    srv.shutdown()
 
 
 # Watches the page from now on: set when at some moment neither the load-failure message nor a date line is on the page

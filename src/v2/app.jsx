@@ -15,7 +15,7 @@ import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
 import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
-import { publishGate, discAfter, discFits } from "./hold.js";
+import { publishGate, discAfter, discFits, discRetryDue } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -102,6 +102,7 @@ export function App({ source }) {
   discRef.current = disc;
   const discGen = useRef(0);                              // bumped when a newer publish goes on screen (the disc effect below)
   const discPub = useRef(null);                           // the publishedAt of the data put on screen by a return's fetch
+  const discRetried = useRef(false);                      // the one more try of an older disc.json used (hold.js discRetryDue)
   useEffect(() => {
     if (!liveData) return undefined;
     let on = true, timer = null;
@@ -147,6 +148,7 @@ export function App({ source }) {
         const pub = r.load.data.publishedAt;
         discGen.current += 1;
         discPub.current = pub;
+        discRetried.current = false;
         setDisc((d) => discAfter(d, r.disc, pub));
       },
     });
@@ -162,6 +164,15 @@ export function App({ source }) {
       now: () => Date.now(),
       apply: (r, cur) => gate.apply(r, cur),
       held: (now) => gate.held(now),
+      // a disc.json that was older than the data on screen: one more try, 10 minutes on (hold.js discRetryDue)
+      onReturn: (now) => {
+        const d = discRef.current;
+        if (!discRetryDue(d, now, discRetried.current)) return;
+        discRetried.current = true;
+        console.info("[v2] back in view: disc.json was older than the data on screen " + Math.round((now - d.older) / 60000)
+          + " minutes ago: it loads once more");
+        setDisc((x) => (x === d ? { status: "idle" } : x));
+      },
     });
     const onVis = () => { if (document.visibilityState === "hidden") w.hide(); else w.show(); };
     const onHide = () => w.hide();
@@ -213,8 +224,10 @@ export function App({ source }) {
     source.loadDisc().then((r) => {
       if (!mine()) return;
       if (r && r.ok && !discFits(r.data, pub)) {
-        console.warn("[v2] disc.json not shown: it is from " + r.data.publishedAt + ", older than the data on screen (" + pub + "); the disclosures show the load-failure message");
-        setDisc({ status: "fail" });
+        console.warn("[v2] disc.json not shown: it is from " + r.data.publishedAt + ", older than the data on screen (" + pub
+          + "); the disclosures show the load-failure message" + (discRetried.current ? " (it was the one more try: no more)"
+            : "; it is tried once more on a return to view at least 10 minutes from now"));
+        setDisc({ status: "fail", older: Date.now() });
       } else if (r && r.ok) setDisc({ status: "ok", data: r.data });
       else { console.warn("[v2] disc.json not loaded: " + ((r && r.error) || "unknown") + " (the disclosures tab shows the load-failure message)"); setDisc({ status: "fail" }); }
     }).catch((e) => { if (mine()) { console.warn("[v2] disc.json not loaded: " + ((e && e.message) || e)); setDisc({ status: "fail" }); } });

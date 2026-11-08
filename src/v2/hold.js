@@ -14,7 +14,7 @@
 // over, finished (기록했어요 → 홈, 매일 점검 시작하기), or edited so that nothing would be lost.
 import { deckState } from "./deckcalc.js";
 import { withDataShape } from "./engine.js";
-import { publishText, staleNow } from "./load.js";
+import { publishText, staleNow, REFETCH_GAP_MS } from "./load.js";
 
 const STAGE = { pick: "its pick step", plan: "its plan step" };
 
@@ -69,6 +69,11 @@ export function discAfter(d, fetched, pub) {
 // A disc.json loaded again after a publish went on screen (discAfter) that is older than that publish is not shown beside it
 // (app.jsx: the filings show the load-failure message instead). -> true when it may be shown.
 export const discFits = (data, pub) => !pub || !(Date.parse((data && data.publishedAt) || "") < Date.parse(pub));
+// Such a disc.json (app.jsx keeps { status: "fail", older: the time it came }) is tried once more (delta review): the site
+// may still serve an old copy for a few minutes after a deploy (or the phone its offline copy). On the first return to view
+// at least REFETCH_GAP_MS after it came, and only once for each publish put on screen (retried: app.jsx resets it then).
+export const discRetryDue = (d, now, retried) => !retried && !!d && d.status === "fail" && Number.isFinite(d.older)
+  && Number.isFinite(now) && now - d.older >= REFETCH_GAP_MS;
 
 // The app's side of a return's fetch (app.jsx): a result goes on screen now, or is held while holdReason says so and goes
 // on screen when check() finds nothing holding it any more. Either way it goes on screen only if the data on screen is

@@ -250,18 +250,23 @@ export const publishText = (l) => (l && l.status === "ok"
 // app.jsx feeds the events in; the preview page never sets this up (it fetches nothing).
 //   hidden: the page is hidden now · getLoad(): the load state on screen · getDisc(): the disc.json data on screen or null ·
 //   refetch(load, disc): refetchNewer · apply(result, load): what to do with the result (the load it was fetched for) ·
-//   now(): the time · held(): see above (optional).
+//   now(): the time · held(): see above (optional) · onReturn(now): called once on every return to view, whether or not it
+//   fetches (optional; app.jsx: the one more try of a disc.json that was older than the data on screen).
 // -> { hide(), show() -> the fetch's promise or null when nothing was fetched, stop() }.
-export function returnWatch({ hidden, getLoad, getDisc, refetch, apply, now, held }) {
+export function returnWatch({ hidden, getLoad, getDisc, refetch, apply, now, held, onReturn }) {
   let away = !!hidden, busy = false, off = false, emptyAt = null;
   return {
     hide() { away = true; },
     show() {
       if (!away) return null;
       away = false;
-      if (busy || off) return null;
-      const cur = getLoad();
+      if (off) return null;
       const t = now();
+      if (onReturn) {
+        try { onReturn(t); } catch (e) { console.warn("[v2] back in view: " + errText(e)); }
+      }
+      if (busy) return null;
+      const cur = getLoad();
       if (!dueOnReturn(cur, t)) return null;
       const what = cur.status === "ok" ? "with stale data" : "after a failed load";
       const waiting = held ? held(t) : null;
