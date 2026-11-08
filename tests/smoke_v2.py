@@ -423,9 +423,21 @@ def date_line(page):
     return loc.inner_text()
 
 
+def disc_settled(page):
+    """v19.3e: 홈이 한국 종목을 가지면 공시 목록(disc.json)을 스스로 받아요 (첫 화면 뒤에). 받는 동안('wait')은 '오늘은 할 일이 없어요'를
+    말하지 않으니, 홈의 판정을 보는 검사가 받기 전의 화면을 보지 않게 끝날 때까지 기다려요 (ok · stale · fail · none · skip)."""
+    page.wait_for_function("() => { const h = document.querySelector('[data-ui-v2=\"home2\"]'); return !h || h.dataset.disc !== 'wait'; }")
+
+
+def disc_fetched(page):
+    """이 화면이 disc.json 을 받았는지 (브라우저의 요청 기록)."""
+    return page.evaluate("() => performance.getEntriesByType('resource').some((e) => /\\/disc\\.json(\\?|$)/.test(e.name))")
+
+
 def wait_ready(page):
     page.locator('[data-ui-v2="date-line"], [data-ui-v2="load-fail"]').first.wait_for(state="visible")
     page.locator('[data-ui-v2="screen"][data-route]').wait_for(state="attached")
+    disc_settled(page)
 
 
 def click_next(page):
@@ -1643,6 +1655,7 @@ def scene_today(R, files, width, trend=KR_DIV_TREND):
     def hero(page):
         h = page.locator('[data-ui-v2="today-hero"]')
         h.wait_for(state="visible")
+        disc_settled(page)
         return h
 
     def not_checked(text):
@@ -5695,14 +5708,9 @@ def scene_v193e_home(R, files, width):
     ctx.close()
     srv.shutdown()
     calm["settings"]["points"] = {"large": 3}
-    ff = clone(f)
-    today = dt.datetime.now(KST).strftime("%Y%m%d")
-    ff["disc.json"]["newest"] = dt.datetime.now(KST).strftime("%Y-%m-%d")
-    ff["disc.json"]["insider"] = [{"rc": "20991231000001", "d": today, "t": "005380", "nk": by["005380"]["nk"], "s": "auto", "cap": 1.0, "nm": "가나다",
-                                   "pos": "상무", "q": 300, "r": 0.0, "amt": 1.0}] + ff["disc.json"]["insider"]
-    srv, ctx, page, base = R.open(build_site(ff, app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
+    srv, ctx, page, base = R.open(build_site(f, app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
 
-    def calm_and_filings():
+    def calm_line():
         wait_ready(page)
         page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
         st = page.locator('[data-ui-v2="home-rule"]').evaluate_all("els => els.map((e) => e.dataset.state)")
@@ -5710,29 +5718,69 @@ def scene_v193e_home(R, files, width):
         rs = dict(page.locator('[data-ui-v2="home-rule"]').evaluate_all("els => els.map((e) => [e.dataset.rule, e.dataset.state])"))
         assert [rs[k] for k in ("stock", "ind", "fit")] == ["ok", "ok", "ok"], rs  # 한 종목 · 한 업종 · 내 기준 모두 확인했어요
         assert page.locator('[data-ui-v2="home-checked"]').inner_text() == fillp(C["pfr"]["checked"], date=md)
+        # 한국 종목을 가졌으니 홈이 공시 목록을 스스로 받았고(회사 페이지를 열지 않았어요), 최근 7일 보고는 없어요
+        assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "ok" and disc_fetched(page)
         c = page.locator('[data-ui-v2="home-calm"]')
         assert c.inner_text() == C["today"]["calmEyebrow"]                    # 오늘 볼 것이 비면 '오늘은 할 일이 없어요'
-        assert page.locator('[data-ui-v2="home-filing"]').count() == 0          # 공시 목록을 아직 받지 않았어요 (홈은 따로 받지 않아요)
+        assert page.locator('[data-ui-v2="home-filing"]').count() == 0
         R.collect(page)
-        co_hash(page, "#stocks/005380")                                       # 회사 페이지가 공시 목록을 불러와요
-        page.locator('[data-ui-v2="co-head"]').wait_for(state="visible")
-        page.wait_for_function("() => true")
-        tab(page, TABS["home"]) if width < 1024 else side_tab(page, "home")
-        at(page, "home")
-        row = page.locator('[data-ui-v2="home-filing"]')
-        row.wait_for(state="visible")
-        md2 = f"{int(today[4:6])}월 {int(today[6:])}일"
-        assert row.get_attribute("data-t") == "005380" and row.inner_text().strip() == fillp(C["home"]["filings"], name=by["005380"]["nk"], n=1,
-                                                                                           title=CO["disc"]["buys"], date=md2), row.inner_text()
-        assert page.locator('[data-ui-v2="home-calm"]').count() == 0          # 볼 것이 생기면 '할 일이 없어요'는 빠져요
+    R.check(page, S, "볼 것이 없으면 '오늘은 할 일이 없어요' (홈이 받은 공시 목록에 최근 7일 보고 없음)", calm_line)
+    ctx.close()
+    srv.shutdown()
+
+    # 공시 줄 (Jack, 2026-11-08): 회사 페이지를 열지 않아도 홈이 받아요 · 그 주 보고가 모두 같은 쪽일 때만 방향, 섞이면 '지분 변동 보고'
+    ff = clone(f)
+    now = dt.datetime.now(KST)
+    today, yday = now.strftime("%Y%m%d"), (now - dt.timedelta(days=1)).strftime("%Y%m%d")
+    ff["disc.json"]["newest"] = now.strftime("%Y-%m-%d")
+
+    def ins(rc, d, t, q):
+        return {"rc": rc, "d": d, "t": t, "nk": by[t]["nk"], "s": "auto", "cap": 1.0, "nm": "가나다", "pos": "상무", "q": q, "r": 0.0, "amt": 1.0}
+    ff["disc.json"]["insider"] = [ins("20991231000001", today, "005380", 300), ins("20991231000002", yday, "005380", -100),     # 섞임
+                                  ins("20991231000003", today, "105560", -50),                                                 # 모두 줄임
+                                  ins("20991231000004", yday, "373220", 20), ins("20991231000005", yday, "373220", 5)] + ff["disc.json"]["insider"]   # 모두 늘림
+    srv, ctx, page, base = R.open(build_site(ff, app=app), width, init=e_store([calm]), path="/app.html?dev=1#home")
+
+    def filings():
+        wait_ready(page)
+        rows = page.locator('[data-ui-v2="home-filing"]')
+        rows.first.wait_for(state="visible")
+        assert route(page) == "home" and disc_fetched(page)                    # 회사 페이지를 열지 않았는데 홈에 공시 줄
+        mdx = lambda d: f"{int(d[4:6])}월 {int(d[6:])}일"
+        got = {r.get_attribute("data-t"): r.inner_text().strip() for r in rows.all()}
+        want = {"005380": fillp(C["home"]["filings"], name=by["005380"]["nk"], n=2, title=C["home"]["filingsBoth"], date=mdx(today)),
+                "105560": fillp(C["home"]["filings"], name=by["105560"]["nk"], n=1, title=CO["disc"]["sells"], date=mdx(today)),
+                "373220": fillp(C["home"]["filings"], name=by["373220"]["nk"], n=2, title=CO["disc"]["buys"], date=mdx(yday))}
+        assert got == want, (got, want)
+        assert C["home"]["filingsBoth"] == "지분 변동 보고"
+        assert page.locator('[data-ui-v2="home-calm"]').count() == 0          # 볼 것이 있으면 '할 일이 없어요'는 빠져요
         floor_ok(page, "새 홈 (공시 줄)")
         no_hscroll(page, width)
         R.collect(page)
-        row.click()
+        page.locator('[data-ui-v2="home-filing"][data-t="005380"]').click()
         at(page, "stocks/005380")
-    R.check(page, S, "볼 것이 없으면 '오늘은 할 일이 없어요' · 공시 줄은 회사 페이지가 불러온 최근 7일 보고로만 → 그 회사", calm_and_filings)
+    R.check(page, S, "공시 줄: 회사 페이지를 열지 않아도 홈이 받아요 · 모두 늘림 → 지분을 늘린 보고 · 모두 줄임 → 지분을 줄인 보고 · 섞임 → 지분 변동 보고 → 그 회사", filings)
     ctx.close()
     srv.shutdown()
+
+    # 공시 목록을 받지 못했어요: 공시 탭과 같은 실패 문구 · '오늘은 할 일이 없어요' 없음 (가진 종목만 · 만든 포트폴리오만 둘 다)
+    for who, decks in (("가진 종목", [calm]), ("만든 포트폴리오", [_one_deck("dsam", "반반 포트폴리오", [(*SAMSUNG, 1.0, [], 1, round(by["005930"]["price"]))])["decks"][0]])):
+        srv, ctx, page, base = R.open(build_site(f, drop=("disc.json",), app=app), width, init=e_store(decks), path="/app.html?dev=1#home")
+
+        def disc_fail(who=who):
+            wait_ready(page)
+            assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "fail"
+            box = page.locator('[data-ui-v2="home-disc-fail"]')
+            assert box.locator('[data-ui-v2="load-fail"]').inner_text() == C["app"]["loadFail"]     # 공시 탭의 실패 문구 그대로 (그림 없음)
+            assert box.locator("img").count() == 0 and page.locator(MASCOT_IN_MAIN).count() == 0
+            assert page.locator('[data-ui-v2="home-calm"]').count() == 0
+            assert C["today"]["calmEyebrow"] not in page.locator("body").inner_text(), "공시를 확인하지 못했는데 '오늘은 할 일이 없어요'"
+            if who == "만든 포트폴리오":
+                assert page.locator('[data-ui-v2="today-hero"]').get_attribute("data-state") == "calm"   # 띠는 그대로, 그 한 줄만 빠져요
+            R.collect(page)
+        R.check(page, S, f"공시 목록 실패 ({who}): 공시 탭과 같은 실패 문구 · '오늘은 할 일이 없어요' 없음", disc_fail)
+        ctx.close()
+        srv.shutdown()
 
     # 만든 포트폴리오 반반 (삼성전자 · 현대차 1주씩, 오늘 같은 가격, 종목별 규칙은 비중 띠뿐: 할 일 없음) · 그리고 가진 종목 포트폴리오와 함께
     hf = clone(f)
@@ -5958,6 +6006,38 @@ def scene_v193e_company(R, files, width):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "요약: 칸마다 규칙대로 그림 · 재무 경고 칩 넷 · 오른 날 줄 · 내 포트폴리오의 {x}%", summary)
+
+    navy, slate = rgb("#1C2B45"), rgb("#9AA3B2")          # Jack (2026-11-08): 그대로의 값
+
+    def chart_colours():
+        """그래프 색 (Jack, 2026-11-08): 실적 막대는 최근 해 남색 · 앞선 해 회청색(파랑 없음), '이 회사'는 어느 그래프에서나 남색(출렁임
+        포함) · 비교하는 선은 회청색. 계산된 색으로 봐요."""
+        open_co("005930")
+        tile = page.locator('[data-ui-v2="co-tile"][data-topic="earn"] [data-art="bars"]')
+        tile.wait_for(state="visible")
+        got = tile.locator("[data-v]").evaluate_all("els => els.map((e) => getComputedStyle(e).backgroundColor)")
+        assert got == [slate, slate, navy], got                                # 요약 칸의 실적 막대 (오래된 해 → 최근 해)
+        waves = page.locator('[data-ui-v2="co-tile"][data-topic="risk"] [data-art="waves"]')
+        lines = waves.locator("polyline").evaluate_all("els => els.map((e) => e.dataset.line + ' ' + getComputedStyle(e).stroke)")
+        assert lines == [f"market {slate}", f"mine {navy}"], lines             # 출렁임: 시장 회청색 · 이 회사 남색
+        keys = waves.locator('[data-ui-v2="wave-key"] > span').evaluate_all("els => els.map((e) => getComputedStyle(e).backgroundColor)")
+        assert keys == [navy, slate], keys                                     # 범례도 같은 색 ('이 회사' · '시장')
+        co_open_tab(page, "005930", "earn", "kr")
+        bars = page.locator('[data-ui-v2="co-earn"] [data-ui-v2="bars"] [data-bar]')
+        bars.first.wait_for(state="visible")
+        got = bars.evaluate_all("els => els.map((e) => e.dataset.bar + ' ' + getComputedStyle(e).backgroundColor)")
+        assert got == [f"earlier {slate}", f"earlier {slate}", f"latest {navy}"], got   # 실적 탭의 막대도 같은 단계
+        co_open_tab(page, "005930", "value", "kr")
+        dcf = page.locator('[data-ui-v2="co-dcf"]')
+        dcf.wait_for(state="visible")
+        mine = dcf.locator('[data-ui-v2="co-dcf-implied"] [data-bar]')
+        if mine.count():
+            assert mine.get_attribute("data-bar") == "mine" and mine.evaluate("(e) => getComputedStyle(e).backgroundColor") == navy
+        past = dcf.locator('[data-ui-v2="co-dcf-past"] [data-bar]')
+        if past.count():                                                        # 지난 2년 실제 이익(비교)은 회청색, 파랑 아님
+            assert past.get_attribute("data-bar") == "compare" and past.evaluate("(e) => getComputedStyle(e).backgroundColor") == slate
+        R.collect(page)
+    R.check(page, S, "그래프 색: 실적 막대 남색 · 회청색 단계(요약 칸 · 실적 탭) · 출렁임 이 회사 남색 · 시장 회청색 · 가치의 지난 이익 회청색", chart_colours)
 
     def div_coins():
         for code in (V191B_CUT, "105560", V191B_SPLIT, "AAPL"):

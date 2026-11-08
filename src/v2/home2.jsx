@@ -17,15 +17,18 @@
 //   3. 가진 종목 {n}개 · 비중 · 오늘: mark, name, weight bar in the navy shades by weight (Part C), weight %, today's change
 //      (price red/blue, true minus sign). A 가진 종목 portfolio's bar is drawn against its 한 종목 limit (a full bar = the
 //      limit, as on the board) and its weight reads against that limit (pfview.limitPct: 30.4% is never "30%"). A built
-//      portfolio is never judged by that limit: its full bar is the whole portfolio and its weight has one decimal, as its
-//      비중 규칙 line (daily.jsx WeightLine) and the company page's holding line. A built portfolio also keeps its per-stock
-//      chips (규칙 깨짐 · 확인 필요 · …); its "아직 자동으로 확인하지 못하는 규칙" line is the band's at the top, not per card.
+//      portfolio is never judged by that limit: its full bar is the whole portfolio and its weight is its daily check's own
+//      (home.holdingRows: the share among the stocks with a 비중 규칙), with one decimal, as its 비중 규칙 line on 포트폴리오
+//      (tracking.jsx WeightLine) and the company page's holding line. A built portfolio also keeps its per-stock chips
+//      (규칙 깨짐 · 확인 필요 · …); its "아직 자동으로 확인하지 못하는 규칙" line is the band's at the top, not per card.
 // Then 오늘 볼 것: one concentration card per 가진 종목 portfolio whose 한 업종 rule broke ("{group} {x}%" / "{names} · 내
-// 규칙은 {limit}%까지"), then the filings rows "{name} 공시 {n}건 · {first filing title} · {date}" (home.filingRows: only from
-// a disc.json a company page already loaded in this visit, never from a list that stopped). "오늘은 할 일이 없어요" (Jack,
-// 2026-11-08) only when there is nothing to look at anywhere: no verdict band (it speaks for itself, as before), no card, and
-// every 가진 종목 portfolio quiet (home.quietBlock: checked, nothing broken, 한 종목 · 한 업종 · 내 기준 all checked, value
-// known). Never when no rule could be checked.
+// 규칙은 {limit}%까지"), then the filings rows "{name} 공시 {n}건 · {title} · {date}" (home.filingRows; {title} names a
+// direction only when the week's reports all agree, else "지분 변동 보고"). 홈 loads disc.json itself when a Korean stock is
+// held (app.jsx, once per visit, after the first paint); a load that failed shows the 공시 tab's failure message here, and
+// a list that stopped gives no rows. "오늘은 할 일이 없어요" (Jack, 2026-11-08) only when there is nothing to look at anywhere:
+// no verdict band (it speaks for itself, as before), no card, every 가진 종목 portfolio quiet (home.quietBlock: checked,
+// nothing broken, 한 종목 · 한 업종 · 내 기준 all checked on every holding, value known) and, with a Korean stock held, today's
+// filings checked. Never when no rule could be checked, never while the filings load or after it failed.
 // 시장 한눈에 unchanged. Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
 // exists). Failed: the load-failure message, never "할 일이 없어요". No 뱁이 anywhere here (numbers). The account banner waits
 // for v19.4.
@@ -34,7 +37,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADE
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
 import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, Footer, Note, OwnCloseNote, Cols, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
@@ -47,7 +50,7 @@ import { usHeld, limitsOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero } from "./today.jsx";
 import { discDate } from "./company.js";
-import { filingRows } from "./home.js";
+import { filingRows, filingsChecked, holdsKorean } from "./home.js";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -149,7 +152,8 @@ function HeldCard({ block, onWhy }) {
   const { deck, list } = block;
   const rows = list.rows;
   const shades = holdingShades(rows.map((r) => r.w));
-  // A 가진 종목 portfolio: against its 한 종목 limit. A built portfolio is never judged by it: a full bar is 100%, one decimal.
+  // A 가진 종목 portfolio: against its 한 종목 limit. A built portfolio is never judged by it: a full bar is 100%, one decimal
+  // (its weight is the daily check's, as on 포트폴리오: home.holdingRows).
   const imp = isImported(deck);
   const full = imp ? limitsOf(deck).stock : 100;
   const wText = (w) => (imp ? limitPct(w, full) : p1(w * 100));
@@ -210,26 +214,39 @@ function LookRow({ icon, title, sub, onClick, data, owner }) {
 }
 
 // What 오늘 볼 것 holds today: the concentration cards, the filings rows, and whether "오늘은 할 일이 없어요" shows there.
-// quiet: every 가진 종목 portfolio quiet (home.quietBlock) and no card: the verdict band at the top may then say it too.
-function lookOf(blocks, held, disc) {
+// quiet: every 가진 종목 portfolio quiet (home.quietBlock), no card, and, when a Korean stock is held (kr: home.holdsKorean),
+// today's filings checked (disc.json loaded and current): the verdict band at the top may then say it too. A filings load
+// that failed shows the 공시 tab's failure message here (discFail); one still loading or a list that stopped just holds the
+// line back. The preview page has no filings at all (disc "none"): nothing to wait for there.
+// The filings state for the screen and its tests (data-disc): skip (no Korean stock) · wait · ok · stale · fail · none.
+export function discState(disc, kr) {
+  if (!kr) return "skip";
+  const st = disc ? disc.status : "none";
+  if (st === "ok") return filingsChecked(disc, disc.data ? discDate(disc.data) : null) ? "ok" : "stale";
+  return st === "fail" || st === "none" ? st : "wait";
+}
+function lookOf(blocks, held, disc, kr) {
   const H = C.home;
   const imported = blocks.filter((b) => b.st);
   const conc = imported.map((b) => ({ b, c: concentration(b.st) })).filter((x) => x.c && H.concentration);
   const fresh = disc && disc.status === "ok" && disc.data ? discDate(disc.data) : null;
   const heldTs = new Set(blocks.flatMap((b) => b.list.rows.filter((r) => r.t && !r.absent).map((r) => r.t)));
-  const files = H.filings && C.co.disc.buys && C.co.disc.sells ? filingRows(disc, heldTs, todayKst(), fresh) : [];
-  const quiet = imported.every(quietBlock) && !conc.length && !files.length;
+  const files = H.filings && C.co.disc.buys && C.co.disc.sells && H.filingsBoth ? filingRows(disc, heldTs, todayKst(), fresh) : [];
+  const ds = discState(disc, kr);
+  const discFail = ds === "fail";
+  const quiet = (ds === "skip" || ds === "ok" || ds === "none") && imported.every(quietBlock) && !conc.length && !files.length;
   // "오늘은 할 일이 없어요" here: no verdict band (it speaks for itself, as before), at least one 가진 종목 portfolio, all quiet,
-  // no card. Never on stale or failed data (no block exists then), never when no rule could be checked (quietBlock).
+  // no card. Never on stale or failed data (no block exists then), never when no rule could be checked (quietBlock), never
+  // before the filings were checked when a Korean stock is held.
   const calm = quiet && !held.length && imported.length > 0;
-  return { conc, files, quiet, calm };
+  return { conc, files, quiet, calm, discFail, ds };
 }
 
 function Look({ blocks, load, look, go }) {
   const { openStock } = useNav();
   const H = C.home;
-  const { conc, files, calm } = look;
-  if (!H.look || (!conc.length && !files.length && !calm)) return null;
+  const { conc, files, calm, discFail } = look;
+  if (!H.look || (!conc.length && !files.length && !calm && !discFail)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
     <section data-ui-v2="home-look" style={{ marginTop: SPACE(5) }}>
@@ -242,11 +259,15 @@ function Look({ blocks, load, look, go }) {
       {files.map((f) => {
         const s = byT.get(f.t);
         return (
-          <LookRow key={"f" + f.t} icon="file-text" data={{ "data-ui-v2": "home-filing", "data-t": f.t, "data-n": f.n, "data-date": f.date }}
-            title={fill(H.filings, { name: (s && s.nk) || f.t, n: f.n, title: f.up ? C.co.disc.buys : C.co.disc.sells, date: mdText(f.date) })}
+          <LookRow key={"f" + f.t} icon="file-text" data={{ "data-ui-v2": "home-filing", "data-t": f.t, "data-n": f.n, "data-date": f.date,
+            "data-up": f.up === true ? "1" : f.up === false ? "0" : "" }}
+            title={fill(H.filings, { name: (s && s.nk) || f.t, n: f.n, title: f.up === true ? C.co.disc.buys : f.up === false ? C.co.disc.sells : H.filingsBoth,
+              date: mdText(f.date) })}
             onClick={openStock && isCompany(s) ? () => openStock(f.t) : undefined} />
         );
       })}
+      {/* the filings did not load: the 공시 tab's own failure message (no picture: this screen has numbers) */}
+      {discFail && <Card data-ui-v2="home-disc-fail" style={{ marginTop: SPACE(2), padding: 0 }}><LoadFail picture={false} /></Card>}
       {calm && <Card data-ui-v2="home-calm" style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.today.calmEyebrow}</p></Card>}
     </section>
   );
@@ -277,7 +298,8 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.length) : [];
-  const look = lookOf(blocks, held, disc);
+  const kr = useMemo(() => holdsKorean(decks), [decks]);
+  const look = lookOf(blocks, held, disc, kr);
   const many = blocks.length > 1;
   const main = [
     ...blocks.map((b) => (
@@ -295,7 +317,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   return (
     <Page pad={pad} cols={2}>
       <AppBar />
-      <div data-ui-v2="home2">
+      <div data-ui-v2="home2" data-disc={ev.ok ? look.ds : undefined}>
         {ok && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
         {usDate && <Note>{fill(C.app.usClose, { md: usDate })}</Note>}
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}

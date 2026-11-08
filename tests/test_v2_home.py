@@ -276,7 +276,8 @@ def test_filing_rows_only_from_a_loaded_fresh_list_and_the_last_seven_days():
       out = { ok: Hm.filingRows(disc, held, '2026-11-07', { stale: false }), stale: Hm.filingRows(disc, held, '2026-11-07', { stale: true }),
         none: Hm.filingRows({ status: 'idle' }, held, '2026-11-07', { stale: false }), nofresh: Hm.filingRows(disc, held, '2026-11-07', null),
         edge: Hm.filingRows(disc, held, '2026-11-12', { stale: false }) };""", INS=ins)
-    assert got["ok"] == [{"t": "000010", "n": 2, "date": "2026-11-06", "up": True}, {"t": "000020", "n": 1, "date": "2026-11-04", "up": False}]
+    # 000010: 그 주에 늘린 보고(11-06)와 줄인 보고(11-05)가 섞였어요 → 방향 없음 ('지분 변동 보고', Jack 2026-11-08)
+    assert got["ok"] == [{"t": "000010", "n": 2, "date": "2026-11-06", "up": None}, {"t": "000020", "n": 1, "date": "2026-11-04", "up": False}]
     assert got["stale"] == [] and got["none"] == [] and got["nofresh"] == []     # 멈춘 목록 · 아직 받지 않은 목록: 줄 없음
     assert got["edge"] == [{"t": "000010", "n": 1, "date": "2026-11-06", "up": True}]   # 11-12 기준 7일: 11-06 부터
 
@@ -334,3 +335,63 @@ def test_rate_date_line_shows_when_the_rate_is_from_another_day():
     assert got["other"] == "원화는 11월 6일 환율 1,390.5원으로 바꾼 값이에요."
     assert got["own"] == "원화는 11월 5일 환율 1,390.5원으로 바꾼 값이에요."   # 이전 종가로 값을 매긴 미국 종목: 머리줄 날짜는 11월 4일
     assert got["kr"] is None and got["noDate"] is None and got["noFx"] is None
+
+
+def test_filing_title_names_a_direction_only_when_the_whole_week_agrees():
+    """Jack (2026-11-08): 그 주 보고가 모두 같은 쪽일 때만 방향(늘린 보고 · 줄인 보고), 섞이면 '지분 변동 보고'."""
+    ins = [{"rc": "1", "d": "20261106", "t": "000010", "q": 100}, {"rc": "2", "d": "20261103", "t": "000010", "q": 7},      # 모두 늘림
+           {"rc": "3", "d": "20261105", "t": "000020", "q": -5}, {"rc": "4", "d": "20261102", "t": "000020", "q": -9},      # 모두 줄임
+           {"rc": "5", "d": "20261106", "t": "000040", "q": 3}, {"rc": "6", "d": "20261104", "t": "000040", "q": -2},       # 섞임
+           {"rc": "7", "d": "20261104", "t": "000040", "q": -1}]
+    got = run("""const disc = { status: 'ok', data: { insider: INS } };
+      out = { rows: Hm.filingRows(disc, new Set(['000010', '000020', '000040']), '2026-11-07', { stale: false }), both: C.home.filingsBoth,
+        checked: [Hm.filingsChecked(disc, { stale: false }), Hm.filingsChecked(disc, { stale: true }), Hm.filingsChecked({ status: 'fail' }, null),
+          Hm.filingsChecked({ status: 'loading' }, null)] };""", INS=ins)
+    by = {r["t"]: r for r in got["rows"]}
+    assert by["000010"]["up"] is True and by["000020"]["up"] is False and by["000040"]["up"] is None, got["rows"]
+    assert by["000040"]["n"] == 3 and by["000040"]["date"] == "2026-11-06"
+    assert got["both"] == "지분 변동 보고"
+    assert got["checked"] == [True, False, False, False]                       # 멈춘 목록 · 실패 · 받는 중: 확인한 게 아니에요
+
+
+def test_holds_korean_counts_only_korean_stocks_held_today():
+    """홈이 공시 목록(disc.json)을 받는 조건: 저장한 포트폴리오 어디든 지금 가진 한국 종목이 있을 때 (계획만 하고 사지 않은 종목 · 미국 종목만은 아니에요)."""
+    got = run("""const kr = builtDeck([['000010', '가나전자', 1, 10, 8000]]);
+      const planned = builtDeck([['000010', '가나전자', 1, 0, 0]]);
+      const usOnly = impDeck([row('AAA', 'Alpha Inc.', 2)]);
+      const impKr = impDeck([row('AAA', 'Alpha Inc.', 2), row('000020', '가나은행', 3)]);
+      const noCls = { ...impKr, holdings: [] };
+      const sold = builtDeck([['000010', '가나전자', 1, 10, 8000]], { sales: [{ t: '000010', qty: 10, price: 9000, date: '2026-10-20', ccy: 'KRW' }] });
+      out = [Hm.holdsKorean([kr]), Hm.holdsKorean([planned]), Hm.holdsKorean([usOnly]), Hm.holdsKorean([usOnly, impKr]), Hm.holdsKorean([noCls]),
+        Hm.holdsKorean([sold]), Hm.holdsKorean([]), Hm.holdsKorean(null)];""")
+    assert got == [True, False, False, True, True, False, False, False]
+
+
+def test_quiet_needs_every_holding_in_the_industry_rule_and_scored():
+    """리뷰(2026-11-08) 프로브: 금액만 넣은 '비상장' 20% 줄은 한 업종 · 내 기준 계산에서 빠져요. 두 칸이 ✓ 여도 빠진 종목을 홈이 말하지
+    않으니 '오늘은 할 일이 없어요'가 아니에요. 업종 정보가 없는 종목도 같아요."""
+    nogroup = [dict(s) for s in STOCKS] + [kr("000050", "무업종", 5000.0, ind=None)]
+    got = run("""const even = [row('000010', '가나전자', 10), row('000020', '가나은행', 5), row('000040', '마바물산', 20), row('AAA', 'Alpha Inc.', 1)];
+      const q = (deck, stocks = STOCKS) => { const [b] = blockOf(deck, stocks);
+        return { quiet: Hm.quietBlock(b), st: b.st.rules.map((r) => r.id + ':' + r.state), none: b.st.ind.none.rows.length, unscored: b.st.stats.unscored.length,
+          w: b.st.view.rows.map((r) => Math.round(r.w * 1000) / 10) }; };
+      out = { even: q(impDeck(even)), amount: q(impDeck([...even, { nk: '비상장', amountWon: 100000, date: '2026-10-01' }])),
+        nogroup: q(impDeck([...even, row('000050', '무업종', 20)]), NOGROUP) };""", STOCKS=STOCKS, NOGROUP=nogroup)
+    assert got["even"]["quiet"] is True and got["even"]["none"] == 0 and got["even"]["unscored"] == 0
+    a = got["amount"]
+    assert a["w"][-1] == 20.0 and a["st"][:3] == ["stock:ok", "ind:ok", "fit:ok"], a       # 프로브 그대로: 두 칸 ✓
+    assert a["none"] == 1 and a["unscored"] == 1 and a["quiet"] is False, a                # 그래도 할 일이 없다고 하지 않아요
+    n = got["nogroup"]
+    assert n["none"] == 1 and n["quiet"] is False, n
+
+
+def test_built_weight_on_home_is_the_weight_on_portfolio():
+    """리뷰(2026-11-08) 프로브: 같은 금액 세 종목 중 하나의 비중 규칙을 끈 만든 포트폴리오. 포트폴리오의 비중 규칙 줄(rules.deckWeights:
+    비중 규칙이 있는 종목끼리)은 50.0% · 50.0% 이고, 홈도 같은 숫자를 써요 (전체 셋의 33.3% 가 아니에요). 규칙이 없는 종목은 비중 없음."""
+    got = run("""const d = builtDeck([['000010', '가나전자', 1 / 3, 10, 10000], ['000020', '가나은행', 1 / 3, 5, 20000], ['000040', '마바물산', 1 / 3, 20, 5000]]);
+      d.holdings[2].rules = [];
+      const ctx = ctxOf(STOCKS); const ev = R.evaluateAll([d], ctx); const [b] = Hm.homeBlocks([d], ev, ctx, STOCKS);
+      out = { home: Object.fromEntries(b.list.rows.map((r) => [r.t, r.w])), check: Object.fromEntries(ev.decks[0].holdings.map((x) => [x.t, x.w])),
+        share: P.pfRows(d, ctx).rows.map((r) => Math.round(r.w * 1000) / 10) };""", STOCKS=STOCKS)
+    assert got["share"] == [33.3, 33.3, 33.3]
+    assert got["home"] == got["check"] and got["home"]["000010"] == 0.5 and got["home"]["000020"] == 0.5 and got["home"]["000040"] is None, got

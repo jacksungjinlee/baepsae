@@ -3,7 +3,7 @@
 // 페이지 안내 글은 영어로만 써요. 한국어는 모두 examples.js (= 목업 문구 CSV) 에서 와요.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, NUM, CONTRAST_PAIRS, AVOID_PAIRS, ICON_TONE, contrast } from "../src/ui/tokens.js";
+import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, NUM, CONTRAST_PAIRS, AVOID_PAIRS, ICON_TONE, CHART, contrast } from "../src/ui/tokens.js";
 import { Icon, IconChip, ICON_NAMES, ICON_TONES, ALIAS } from "../src/ui/icons.jsx";
 import {
   StatusChip, HeroBand, Button, StatStrip, ListRow, Segmented, Stepper, MoneyInput, BottomActionBar,
@@ -46,6 +46,11 @@ const SWATCHES = [
   ["watchBg", "Alert hero band background"], ["brokenBg", "Status: broken (white text)"], ["neutral", "Neutral chip (on neutralBg)"],
   ["select", "Selected item and icon chip background"],
 ];
+// tokens.js CHART (v19.3e, Jack 2026-11-08)
+const CHART_SWATCHES = [
+  ["mine", "This company, on every chart (the risk waves too)"], ["compare", "The comparison: market, industry, the past"],
+  ["latest", "Earnings bars: the latest year"], ["earlier", "Earnings bars: the earlier years"],
+];
 
 function Tokens() {
   return (
@@ -60,6 +65,21 @@ function Tokens() {
                 <span style={txt(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{use}</span>
               </span>
               <code style={txt(SIZE.xs, WEIGHT.semi, COLOR.text2, NUM)}>{COLOR[k]}</code>
+            </div>
+          ))}
+        </Card>
+      </Block>
+
+      <Block id="chart-colours" name="Chart colours" note="Company page charts (Jack, 2026-11-08): this company is navy on every chart, the comparison is slate. Earnings bars use the navy/slate ramp (latest year navy, earlier years slate), never blue: in Korea blue reads as down.">
+        <Card style={{ padding: SPACE(3) }}>
+          {CHART_SWATCHES.map(([k, use]) => (
+            <div key={k} data-chart-swatch={k} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
+              <span style={{ width: 36, height: 36, borderRadius: RADIUS.sm, background: CHART[k], border: `1px solid ${COLOR.border}`, flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>
+                <span style={txt(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block" })}>{k}</span>
+                <span style={txt(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{use}</span>
+              </span>
+              <code style={txt(SIZE.xs, WEIGHT.semi, COLOR.text2, NUM)}>{CHART[k]}</code>
             </div>
           ))}
         </Card>

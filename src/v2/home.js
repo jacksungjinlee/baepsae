@@ -82,14 +82,20 @@ function usdCounted(deck, per, ctx) {
 }
 
 // The 가진 종목 rows of one portfolio: [{ key, t, nk, w, d1, absent, frozen, usd, status, bigMove }], largest weight first
-// (rows without a weight keep their order after them). Weights only when every holding has a value today (pf.pfRows).
-// status · bigMove: the built portfolio's own daily check (de.holdings), so its chips stay as they were.
+// (rows without a weight keep their order after them). status · bigMove: the built portfolio's own daily check
+// (de.holdings), so its chips stay as they were.
+// w: a 가진 종목 portfolio's share of everything held, only when every holding has a value today (pf.pfRows). A built
+// portfolio's weight is its daily check's own (rules.deckWeights: the share among the held stocks with a 비중 규칙, x.w), the
+// number its 비중 규칙 line on 포트폴리오 shows (tracking.jsx WeightLine), so the two screens agree; none for a stock
+// without that rule.
 export function holdingRows(deck, de, ctx) {
   const v = pfRows(deck, ctx);
   const ev = new Map(((de && de.holdings) || []).map((x) => [x.t, x]));
+  const imp = isImported(deck);
   const rows = v.rows.map((r, i) => {
     const x = r.t ? ev.get(r.t) : null;
-    return { key: r.key, t: r.t, nk: r.nk, w: v.ok ? r.w : null, d1: !r.absent && r.s ? todayD1(r.s) : null, absent: r.absent, frozen: r.frozen,
+    const w = imp ? (v.ok ? r.w : null) : x && num(x.w) != null ? x.w : null;
+    return { key: r.key, t: r.t, nk: r.nk, w, d1: !r.absent && r.s ? todayD1(r.s) : null, absent: r.absent, frozen: r.frozen,
       usd: r.usd, i, x: x || null };
   });
   rows.sort((a, b) => (b.w ?? -1) - (a.w ?? -1) || a.i - b.i);
@@ -118,29 +124,46 @@ export function homeBlocks(decks, ev, ctx, stocks) {
 }
 
 // ---------------- 오늘 볼 것 · 공시 (Jack, 2026-11-08: "{name} 공시 {n}건 · {first filing title} · {date}") ----------------
-// 홈 loads no filings of its own: disc.json comes in only when a company page has been opened in this visit (app.jsx
-// loadDisc). Rows come from what is loaded, never from a list that stopped (company.discDate stale, or today's list did not
-// come in): then none. One row per held stock with 임원·주요주주 지분 변동 reports dated within the last FILING_DAYS days (KST
-// today included): n = those reports, the newest one first (its date and whether it raised or lowered the stake).
+// 홈 loads disc.json itself, once per visit, when a saved portfolio holds a Korean stock (app.jsx, home.holdsKorean; a
+// company page loads the same file). Rows come from what is loaded, never from a list that stopped (company.discDate stale,
+// or today's list did not come in): then none. One row per held stock with 임원·주요주주 지분 변동 reports dated within the
+// last FILING_DAYS days (KST today included): n = those reports, date = the newest one's, up = the direction only when every
+// one of them agrees (true: all raised the stake, false: all lowered it), else null ("지분 변동 보고", Jack 2026-11-08).
 export const FILING_DAYS = 7;
 const ymdOf = (d) => (typeof d === "string" && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
 const dayNum = (iso) => Date.parse(iso + "T00:00:00Z") / 86400000;
 // disc: app.jsx's { status, data } · held: Set of held codes · today: KST YYYY-MM-DD · fresh: company.discDate(disc.data).
-// -> [{ t, n, date, up }] newest first
+// -> [{ t, n, date, up: true | false | null }] newest first
 export function filingRows(disc, held, today, fresh) {
-  if (!disc || disc.status !== "ok" || !disc.data || !fresh || fresh.stale || !held || !held.size || !today) return [];
+  if (!filingsChecked(disc, fresh) || !held || !held.size || !today) return [];
   const by = new Map();
   for (const x of Array.isArray(disc.data.insider) ? disc.data.insider : []) {
     if (!x || !held.has(x.t) || !Number.isInteger(x.q) || x.q === 0) continue;
     const date = ymdOf(x.d);
     if (!date || date > today || dayNum(today) - dayNum(date) >= FILING_DAYS) continue;
-    const cur = by.get(x.t) || { t: x.t, n: 0, date: null, up: null, rc: "" };
+    const cur = by.get(x.t) || { t: x.t, n: 0, date: null, ups: 0, downs: 0 };
     cur.n += 1;
-    const rc = typeof x.rc === "string" ? x.rc : "";
-    if (cur.date == null || date > cur.date || (date === cur.date && rc > cur.rc)) { cur.date = date; cur.up = x.q > 0; cur.rc = rc; }
+    if (x.q > 0) cur.ups += 1; else cur.downs += 1;
+    if (cur.date == null || date > cur.date) cur.date = date;
     by.set(x.t, cur);
   }
-  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.t < b.t ? -1 : 1)).map(({ rc, ...r }) => r);
+  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.t < b.t ? -1 : 1))
+    .map(({ ups, downs, ...r }) => ({ ...r, up: downs === 0 ? true : ups === 0 ? false : null }));
+}
+// Whether today's filings were checked: disc.json loaded and its list current (not stopped, today's list came in).
+export const filingsChecked = (disc, fresh) => !!(disc && disc.status === "ok" && disc.data && fresh && !fresh.stale);
+
+// Whether a saved portfolio holds a Korean stock today (the filings are about Korean companies): held records (held.js
+// heldQty: 샀어요 · 팔았어요 · 가진 종목) of a stock whose market is 한국 (its saved cls, or for a 가진 종목 row without one,
+// a won listing). decks: store.data.decks.
+export function holdsKorean(decks) {
+  for (const d of decks || []) {
+    if (!d) continue;
+    const cls = new Map((d.holdings || []).filter((h) => h && h.t).map((h) => [h.t, h.cls]));
+    for (const r of d.imported || []) if (r && r.t && !cls.get(r.t)) cls.set(r.t, r.ccy === "USD" ? "us" : "kr");
+    for (const t of heldQty(d).keys()) if (cls.get(t) === "kr") return true;
+  }
+  return false;
 }
 
 // 오늘 볼 것's concentration card: the broken 한 업종 rule of a portfolio (its group, share, companies and limit), or null.
@@ -152,15 +175,23 @@ export function concentration(st) {
 
 // A portfolio made with 가진 종목 넣기 with nothing to look at today ("오늘은 할 일이 없어요" may show, on 오늘 볼 것 or in the
 // band above): its four rules ran on today's data, none broke, the three that judge its weights and ranks (한 종목 · 한 업종 ·
-// 내 기준) were all checked, and its value is known (the money card shows, no held stock missing from today's data). Only
-// 재무 경고 may stay 확인하지 못했어요 (a US holding always leaves it so): the hero names it ("아직 자동으로 확인하지 못하는
-// 규칙이 {n}개 있어요"). A block with no rules (a portfolio made with 포트폴리오 만들기) is never quiet here: its band speaks.
-// block: homeBlocks' { st, money }.
+// 내 기준) were all checked, and on everything it holds: no holding left out of 한 업종 (업종 정보 없음: pf.industryView's
+// none, e.g. a typed-amount row with no ticker) and none left out of 내 기준 (unscored: ETFs, preferred shares, listings
+// outside the universe, a typed-amount row; or a blank on a chosen 기준), since 홈 does not name what was left out. Its
+// value is known too (the money card shows, no held stock missing from today's data). Only 재무 경고 may stay 확인하지
+// 못했어요 (a US holding always leaves it so): the hero names it ("아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요"). A block
+// with no rules (a portfolio made with 포트폴리오 만들기) is never quiet here: its band speaks. block: homeBlocks' { st, money }.
 export const JUDGED_RULES = ["stock", "ind", "fit"];
 export function quietBlock(block) {
   const st = block && block.st, m = block && block.money;
   if (!st || !st.ok || st.broken || !(st.checked > 0) || !Array.isArray(st.rules)) return false;
   if (JUDGED_RULES.some((id) => { const r = st.rules.find((x) => x.id === id); return !r || r.state !== "ok"; })) return false;
+  if (!st.ind || !st.ind.none || st.ind.none.rows.length > 0) return false;                       // 업종 정보 없음
+  if (!st.stats || !Array.isArray(st.stats.unscored) || st.stats.unscored.length > 0) return false;  // 기준 점수를 매길 수 없는 종목
+  for (const r of (st.view && st.view.rows) || []) {                                               // a blank on a chosen 기준
+    const p = st.stats.per && st.stats.per.get(r.key);
+    if (!p || Object.values(p.cells).some((c) => c.st === "blank")) return false;
+  }
   return !!(m && m.ok && !(m.absent && m.absent.length));
 }
 

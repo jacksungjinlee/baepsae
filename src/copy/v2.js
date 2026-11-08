@@ -97,7 +97,8 @@ export const C = {
     cols: "비중 · 오늘",                                            // 그 둘째 조각 (오른쪽 열 이름)
     look: "오늘 볼 것",
     concentration: "{names} · 내 규칙은 {limit}%까지",               // 업종 쏠림 카드의 둘째 줄 (첫 줄은 '{업종} {x}%')
-    filings: "{name} 공시 {n}건 · {title} · {date}",                // chat (2026-11-08: Jack, 디자인 채팅 승인 · DeepL) — 오늘 볼 것의 공시 줄 ({title}: 가장 최근 보고의 이름, co.disc.buys · sells)
+    filings: "{name} 공시 {n}건 · {title} · {date}",                // chat (2026-11-08: Jack, 디자인 채팅 승인 · DeepL) — 오늘 볼 것의 공시 줄 ({title}: 그 주 보고가 모두 같은 쪽이면 co.disc.buys · sells)
+    filingsBoth: "지분 변동 보고",                                    // chat (2026-11-08: Jack) — 그 공시 줄의 {title}: 그 주 보고가 늘린 보고와 줄인 보고로 섞였을 때
   },
 
   // 종목 (v19.0c): 찾기 · 최근 본 종목 · 내 포트폴리오 종목 · 거래대금 상위 종목. 한국 회사는 예전 뱁새의 기업분석으로 가요.

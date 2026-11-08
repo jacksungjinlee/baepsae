@@ -9,23 +9,24 @@
 // - 배당: coin stacks (decoration only: no number in it): three rising, three even, or one (company.divArt).
 // - 출렁임: a schematic, not a price chart. The market line is fixed; the company's swing follows the tile's own rule
 //   (big · similar · small), never a number of its own.
-// Colours: the topic tints of CLAUDE.md and their darker board shades (tokens.js TOPIC_ART), navy for "this company"
-// where a chart compares it with others (the company page's rule), never a logo colour, never price red or blue.
+// Colours: the topic tints of CLAUDE.md and their darker board shades (tokens.js TOPIC_ART) for the scale and the coins;
+// the 실적 bars and the 출렁임 waves use tokens.js CHART (Jack, 2026-11-08): navy for "this company" on every chart, slate
+// for the comparison, the 실적 bars navy (latest year) and slate (earlier years). Never a logo colour, never price red or blue.
 // No Korean here: labels come from src/copy/v2.js through the callers.
 import React from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, TOPIC_ART } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, TOPIC_ART, CHART } from "../ui/tokens.js";
 import { tx } from "./ui.jsx";
 
-// 실적: three bars, the latest in the topic's dark shade.
+// 실적: three bars on the navy/slate ramp (Jack, 2026-11-08): the latest year navy, the earlier years slate; never blue
+// (blue reads as "down" in Korea).
 export function EarnBars({ op }) {
   const v = Array.isArray(op) ? [op[2], op[1], op[0]] : [];
   if (v.length !== 3 || !v.every((x) => typeof x === "number" && Number.isFinite(x) && x > 0)) return null;
   const mx = Math.max(...v);
-  const A = TOPIC_ART.earn;
   return (
     <div data-ui-v2="tile-art" data-art="bars" aria-hidden="true" style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 34, marginTop: SPACE(2) }}>
       {v.map((x, i) => (
-        <span key={i} data-v={x} style={{ width: 12, height: Math.max(4, Math.round((x / mx) * 34)), borderRadius: "3px 3px 1px 1px", background: i === 2 ? A.ink : A.light }} />
+        <span key={i} data-v={x} style={{ width: 12, height: Math.max(4, Math.round((x / mx) * 34)), borderRadius: "3px 3px 1px 1px", background: i === 2 ? CHART.latest : CHART.earlier }} />
       ))}
     </div>
   );
@@ -73,14 +74,14 @@ export function Coins({ width = 92, shape = "even" }) {
   );
 }
 
-// 출렁임: two schematic waves. The market's swing is fixed; the company's follows the tile's rule.
+// 출렁임: two schematic waves. The market's swing is fixed; the company's follows the tile's rule. This company navy, the
+// market (the comparison) slate, as on every chart (Jack, 2026-11-08).
 const SWING = { big: 11, similar: 4.5, small: 1.8 };
 const PATTERN = [0, -1, 1, -0.8, 0.9, -1, 0.85, -0.9, 1, -0.95, 0.8, -0.7, 0.3];
 const wave = (amp) => PATTERN.map((k, i) => `${i * 10},${(17 + k * amp).toFixed(1)}`).join(" ");
 export function Waves({ rule, mine, market }) {
   const amp = SWING[rule];
   if (amp == null) return null;
-  const A = TOPIC_ART.risk;
   const key = (color, label, w) => (
     <span data-ui-v2="wave-key" style={{ display: "inline-flex", alignItems: "center", gap: SPACE(1), whiteSpace: "nowrap" }}>
       <span aria-hidden="true" style={{ width: 12, height: w, borderRadius: 2, background: color, display: "inline-block" }} />{label}
@@ -89,12 +90,12 @@ export function Waves({ rule, mine, market }) {
   return (
     <div data-ui-v2="tile-art" data-art="waves" data-rule={rule} style={{ marginTop: SPACE(2) }}>
       <svg width="100%" height="34" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true" style={{ display: "block" }}>
-        <polyline points={wave(3)} fill="none" stroke={A.light} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-        <polyline points={wave(amp)} fill="none" stroke={A.ink} strokeWidth={2.4} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <polyline data-line="market" points={wave(3)} fill="none" stroke={CHART.compare} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        <polyline data-line="mine" points={wave(amp)} fill="none" stroke={CHART.mine} strokeWidth={2.4} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       {mine && market && (
         <div aria-hidden="true" style={{ display: "flex", flexWrap: "wrap", columnGap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
-          {key(A.ink, mine, 3)}{key(A.light, market, 2)}
+          {key(CHART.mine, mine, 3)}{key(CHART.compare, market, 2)}
         </div>
       )}
     </div>

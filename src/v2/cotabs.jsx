@@ -16,7 +16,7 @@
 // 자세히: 가치 (every ratio with receipts that reproduce it, 업종 지도, the calculator) and 실적 (margins, 3-year table).
 // Charts draw this company in navy and its peers in grey (apricot stays for the deck screens' data marks).
 import React, { useMemo, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_ART, HOLDING_SHADES } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
@@ -67,7 +67,8 @@ function MoreLink({ label, onClick, id }) {
 }
 
 // Three annual bars (oldest first), the latest in navy. values may be negative (a loss bar hangs below the line).
-function Bars({ rows, fmt, aria }) {
+// latest · earlier: the bar colours (the 실적 tab passes tokens.js CHART's navy/slate ramp, Jack 2026-11-08; 배당 as before).
+function Bars({ rows, fmt, aria, latest = COLOR.ink, earlier = COLOR.border }) {
   const vals = rows.map((r) => r.v);
   const mx = Math.max(...vals.map((v) => Math.abs(v)), 1e-9);
   const neg = vals.some((v) => v < 0);
@@ -81,7 +82,7 @@ function Bars({ rows, fmt, aria }) {
           <div key={r.year} data-year={r.year} data-v={r.v} style={{ textAlign: "center", minWidth: 0 }}>
             <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{fmt(r.v)}</div>
             <div aria-hidden="true" style={{ position: "relative", height: H0, marginTop: SPACE(1) }}>
-              <div style={{ position: "absolute", left: "28%", right: "28%", borderRadius: 4, background: last ? COLOR.ink : COLOR.border,
+              <div data-bar={last ? "latest" : "earlier"} style={{ position: "absolute", left: "28%", right: "28%", borderRadius: 4, background: last ? latest : earlier,
                 ...(r.v >= 0 ? { bottom: H0 - base, height: h } : { top: base, height: h }) }} />
               <div style={{ position: "absolute", left: 0, right: 0, top: base, height: 1, background: COLOR.line }} />
             </div>
@@ -205,7 +206,7 @@ export function EarnTab({ load, s, onMore }) {
               <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={eokText(last)} /></span>
               {ch != null && E.yoy && <span style={tx(SIZE.xs, WEIGHT.bold, ch < 0 ? COLOR.down : ch > 0 ? COLOR.up : COLOR.text2)}>{fill(E.yoy, { pct: signedPct(ch) })}</span>}
             </div>
-            <Bars rows={series} fmt={(v) => eokText(v)} />
+            <Bars rows={series} fmt={(v) => eokText(v)} latest={CHART.latest} earlier={CHART.earlier} />
           </>
         )}
         <Src>{yearText(co && co.fy)}</Src>
@@ -316,7 +317,8 @@ function DcfBar({ icon, tone, label, value, x, mx, dark, ...rest }) {
         <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE(2), flexWrap: "wrap", ...tx(SIZE.xs, WEIGHT.semi, COLOR.ink) }}>
           <span>{label}</span><span style={{ whiteSpace: "nowrap", fontWeight: WEIGHT.heavy }}>{value}</span></div>
         <div aria-hidden="true" style={{ height: SPACE(2), background: COLOR.line, borderRadius: 999, marginTop: SPACE(1), overflow: "hidden" }}>
-          {x > 0 && <div style={{ width: `${Math.max(2, (x / mx) * 100)}%`, height: "100%", background: dark ? COLOR.ink : TOPIC_ART.earn.ink, borderRadius: 999 }} />}
+          {/* what today's price assumes navy (this company now), its past 순이익 growth slate (the comparison), never blue */}
+          {x > 0 && <div data-bar={dark ? "mine" : "compare"} style={{ width: `${Math.max(2, (x / mx) * 100)}%`, height: "100%", background: dark ? CHART.mine : CHART.compare, borderRadius: 999 }} />}
         </div>
       </div>
     </div>
