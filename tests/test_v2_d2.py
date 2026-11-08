@@ -523,6 +523,31 @@ def test_a_guide_seen_date_after_today_is_seen_and_never_a_problem():
     assert got["buy"] == 1                                                         # a record dated after today: still a problem
 
 
+def test_two_fast_clock_times_never_beat_a_believable_save_in_one_merge():
+    """v19.3d2 review 6 (5a): the clock was 3 days fast during a 저장 of 20/25 and has been corrected; the records and this
+    tab hold 20/25 stamped 72 h ahead, the side key holds 40/45 saved 1 h ago. 기록 불러오기 of a file without limits for
+    that portfolio keeps the latest believable 저장, 40/45 with its time, whatever the order of the copies (two far-ahead
+    times met first no longer turn into a real time inside the merge). Two far-ahead copies alone still keep the later one,
+    written back with its own time (review 5, r5b slow)."""
+    got = run(LS + """const H = 3600 * 1000, BASE = Date.now();
+      const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const far = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 20, 25, BASE).decks[0], limitsTs: BASE + 72 * H }] };
+      mem.clear();
+      mem.set(K, JSON.stringify(far));
+      mem.set(SIDE, JSON.stringify({ v: 1, decks: { dimp: { limits: { stock: 40, ind: 45 }, ts: BASE - H } } }));
+      const known = S.storedStores(K, T);
+      const fileNo = S.parseImport(S.exportText(base), T);                  // the portfolio without limits
+      const fwd = S.mergeStores(far, fileNo, BASE, known, T), rev = S.mergeStores(far, fileNo, BASE, [...known].reverse(), T);
+      // two far-ahead copies only: the later raw time stays, with its time
+      const far2 = { v: 2, decks: [{ ...P.withLimits(base, 'dimp', 40, 45, BASE).decks[0], limitsTs: BASE + 80 * H }] };
+      const both = [S.mergeTabs(far, far2, T), S.mergeTabs(far2, far, T)].map((d) => limOf(d));
+      mem.clear();
+      out = { fwd: limOf(fwd), rev: limOf(rev), side: BASE - H, both, far2: BASE + 80 * H };""")
+    assert got["fwd"] == {"l": {"stock": 40, "ind": 45}, "ts": got["side"]}, got["fwd"]
+    assert got["rev"] == got["fwd"]                                    # the order of the copies does not matter
+    assert got["both"] == [{"l": {"stock": 40, "ind": 45}, "ts": got["far2"]}] * 2
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""

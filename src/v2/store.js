@@ -583,22 +583,27 @@ const surelyLater = (a, b) => !!(a && b && editOrder(a, b) > 0);
 // A limitsTs more than a day ahead of now (a clock that was fast) counts as no time at all (review 4): every merge, the
 // check of what a copy holds, the side key and 기록 불러오기 then let a believable 저장 outrank it (laterOf: a time wins
 // over none), and a merge writes the limits back without it. The raw time still travels (ahead): when both sides of a
-// merge are that far ahead (this device's clock is the one set back, review 5), the later of the two stays, with its time
-// (laterLimits), so a clock days slow never loses the last 저장.
+// merge are that far ahead (this device's clock is the one set back, review 5), the later of the two stays and is written
+// back with its time (laterLimits: still no time while merging, so a believable 저장 met later in the same merge outranks
+// it whatever the order of the copies, review 6). With the clock set back by more than a day, this keeps the last 저장
+// only when every copy was saved inside that gap: an older 저장 saved before it can win (and the screens say 합쳤어요).
 // Known limits (review 5): A — a 저장 made with the clock more than a day fast loses to an older believable copy once the
 // clock is right again (and the same for 기록 불러오기 of a file without limits); B — a time 24–48 h ahead becomes
-// believable again later, and can then silently bring back an older 저장 over a later one stamped by the right clock.
+// believable again later, and can then silently bring back an older 저장 over a later one stamped by the right clock;
+// C — with the clock set back by more than a day, an older 저장 can win (see above).
 const LIMITS_AHEAD = 24 * 3600 * 1000;
 const believable = (ts, now = Date.now()) => okTs(ts) && ts <= now + LIMITS_AHEAD;
 const limitsEdit = (d) => (plainObj(d) && (plainObj(d.limits) || d.limitsTs != null)
   ? { limits: plainObj(d.limits) ? d.limits : null, ts: believable(d.limitsTs) ? d.limitsTs : undefined,
     ...(okTs(d.limitsTs) && !believable(d.limitsTs) ? { ahead: d.limitsTs } : {}) } : null);
-const laterLimits = (a, b) => (a && b && a.ahead && b.ahead ? { ...(b.ahead > a.ahead ? b : a), ts: Math.max(a.ahead, b.ahead) } : laterOf(a, b));
+const laterLimits = (a, b) => (a && b && a.ahead && b.ahead
+  ? { ...(b.ahead > a.ahead ? b : a), ts: undefined, ahead: Math.max(a.ahead, b.ahead), keep: true } : laterOf(a, b));
 const limitValues = (l) => canon({ stock: plainObj(l) && l.stock != null ? l.stock : null, ind: plainObj(l) && l.ind != null ? l.ind : null });
 // d with the limits of edit e (null: none)
 const withLimitsEdit = (d, e) => {
   const { limits: _l, limitsTs: _t, ...rest } = d;
-  return { ...rest, ...(e && e.limits ? { limits: e.limits } : {}), ...(e && okTs(e.ts) ? { limitsTs: e.ts } : {}) };
+  return { ...rest, ...(e && e.limits ? { limits: e.limits } : {}),
+    ...(e && okTs(e.ts) ? { limitsTs: e.ts } : e && e.keep && okTs(e.ahead) ? { limitsTs: e.ahead } : {}) };
 };
 
 // Two copies of one list of records: everything in the current copy, then what only the other one holds. A record with
