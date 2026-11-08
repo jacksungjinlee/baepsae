@@ -1290,11 +1290,16 @@ export function exportText(d, preview = false, aside = null) {
 }
 
 // The records as stored now (another tab may have written them since this tab read) and the readable copies beside them
-// (".mine", ".other.", ".unreadable."): what 기록 불러오기 checks the file against (mergeStores known).
+// (".mine", ".other.", ".unreadable."), then the limits kept beside them (key + ".limits", as portfolios holding only
+// their limits): what 기록 불러오기 checks the file against (mergeStores known).
 export function storedStores(key, today) {
   const out = [];
   try {
     for (const k of [key, key + MINE, ...backupKeys(key, ".other."), ...backupKeys(key, ".unreadable.")]) { const d = readCopy(k, today); if (d) out.push(d); }
+    // the limits kept beside the records count as this device's too (an earlier-app tab may have dropped them from every
+    // copy): a file whose limits differ from them comes in as an edit made now, and a file with none leaves the latest
+    const side = readSideLimits(key);
+    if (side.size) out.push({ decks: [...side].map(([id, e]) => ({ id, kind: "imported", holdings: [], ...(e.limits ? { limits: e.limits } : {}), limitsTs: e.ts })) });
   } catch (e) { return out; }
   return out;
 }

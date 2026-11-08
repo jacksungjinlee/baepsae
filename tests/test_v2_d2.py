@@ -250,6 +250,34 @@ def test_limits_beside_the_records_come_back_after_an_earlier_app_drops_them():
     assert got["r7"] == {"v": 1, "lim": {"l": None, "ts": None}, "restored": False}
 
 
+def test_a_records_file_counts_the_limits_kept_beside_the_records():
+    """v19.3d2 review 3 (sim6): an earlier-app tab dropped the latest limits from every copy, so only the side key holds them;
+    a records file with other limits is still an edit made now (it wins, and stays at the next start), and a file with no
+    limits leaves the latest ones (from beside the records)."""
+    got = run(LS + """const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      const older = P.withLimits(base, 'dimp', 40, 45, 1000);
+      const file = (d) => S.parseImport(S.exportText(d), T);
+      mem.set(K, JSON.stringify({ ...older, v: 2 }));
+      mem.set(SIDE, JSON.stringify({ v: 1, decks: { dimp: { limits: { stock: 55, ind: 60 }, ts: 2000 } } }));
+      const known = S.storedStores(K, T);
+      const m = S.mergeStores(older, file(older), 5000, known, T);
+      S.writeStore(m, K, T);
+      const sideAfter = side();
+      const after = S.readStore(K, T);
+      // a file without limits: the latest ones (beside the records) stay
+      mem.clear();
+      mem.set(K, JSON.stringify({ ...older, v: 2 }));
+      mem.set(SIDE, JSON.stringify({ v: 1, decks: { dimp: { limits: { stock: 55, ind: 60 }, ts: 2000 } } }));
+      const { limits: _l, limitsTs: _t, ...plain } = older.decks[0];
+      const m2 = S.mergeStores(older, file({ v: 2, decks: [plain] }), 5000, S.storedStores(K, T), T);
+      out = { known: known.length, m: limOf(m), side: sideAfter, after: { lim: limOf(after.data), restored: after.restored }, m2: limOf(m2) };""")
+    assert got["known"] == 2                                               # the records and the side key
+    assert got["m"] == {"l": {"stock": 40, "ind": 45}, "ts": 5000}          # the file's limits, as an edit made now
+    assert got["side"] == {"v": 1, "decks": {"dimp": {"limits": {"stock": 40, "ind": 45}, "ts": 5000}}}
+    assert got["after"] == {"lim": {"l": {"stock": 40, "ind": 45}, "ts": 5000}, "restored": False}
+    assert got["m2"] == {"l": {"stock": 55, "ind": 60}, "ts": 2000}
+
+
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
     never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""
