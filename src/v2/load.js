@@ -3,7 +3,7 @@
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
-import { loadJson, freshness } from "../data.js";
+import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS, daysSince, nextFreshChange } from "../data.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 
@@ -44,6 +44,56 @@ export function loadLogoIndex() {
   return loadJson("./logos/index.json", logoIndexOk);
 }
 
+// v19.1c: console warnings at load about the dates the screens use (never silent): the fallback to the 4-day rule when the
+// file has no staleAfter or one that cannot be read, the day count from publishedAt when nextPub is missing, and the US stocks priced at an earlier close (pxd), with counts. A pxd
+// that cannot be read is its own warning: that stock shows its price with no date and no change. A readable staleAfter says
+// nothing (console.warn only: nothing here writes to stdout, which the Node tests read).
+export function logDates(d) {
+  const sa = d.staleAfter;
+  if (sa == null) console.warn("[v2] data.json staleAfter is missing or null: stale after " + STALE_DAYS + " days from publishedAt");
+  else if (staleAfterTime(sa) == null) console.warn("[v2] data.json staleAfter cannot be read (" + JSON.stringify(sa) + "): stale after " + STALE_DAYS + " days from publishedAt");
+  // A readable staleAfter without a readable nextPub: the warning still shows when staleAfter passes, but its day count n
+  // counts from publishedAt, not from the morning the publish was due (data.js freshness).
+  else if (!(typeof d.nextPub === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.nextPub))) {
+    console.warn("[v2] data.json nextPub is " + (d.nextPub == null ? "missing or null" : "not a YYYY-MM-DD date (" + JSON.stringify(d.nextPub) + ")")
+      + ": once staleAfter passes, the day count of the warning counts from publishedAt, not from the due day");
+  }
+  const r = ownCloseReport(d.stocks, d.usPxDate);
+  const us = d.stocks.filter((s) => s && s.cls === "us").length;
+  if (r.own.length) {
+    console.warn(`[v2] ${r.own.length} of ${us} US stocks at an earlier close than ${d.usPxDate} (pxd, no daily change): `
+      + r.own.slice(0, 30).map(([t, x]) => `${t} ${x}`).join(", ") + (r.own.length > 30 ? ` and ${r.own.length - 30} more` : ""));
+  }
+  // pxd equal to usPxDate: the pipeline never writes it (the field is left out then) and the publication gate refuses it. If it
+  // ever comes, the price is at the US date anyway, so the stock is shown like any other (its d1 is still not read).
+  if (r.same.length) console.warn(`[v2] ${r.same.length} US stocks carry pxd equal to usPxDate (not expected; shown at the US date, no daily change): ${r.same.slice(0, 30).join(", ")}`);
+  if (r.bad.length) console.warn(`[v2] ${r.bad.length} US stocks with a pxd that cannot be read (price shown with no date and no daily change): ${r.bad.slice(0, 30).join(", ")}`);
+  return r;
+}
+
+// v19.1c: the stale check again, without fetching or changing any data: an app opened in the morning and left open must
+// show the warning once staleAfter passes (16:47 on the due day), and the day count n moves at midnight-of-publish. App
+// (app.jsx) calls this when the page is shown again (visibilitychange, focus) and from a timer (nextFreshCheck).
+// -> the same load object when nothing a screen reads changed (no re-render), else a copy with the new fresh and checkedAt
+// (todayCtx / rules.js dayState then run again: the 홈 stale band and the daily check follow, including corp.json's 4-day rule).
+export function refreshFresh(load, now) {
+  if (!load || load.status !== "ok" || load.preview) return load;
+  const t = now == null ? Date.now() : now;
+  const d = load.data;
+  const f = freshness(d.pxDate, d.publishedAt, "ko", t, d.staleAfter, d.nextPub);
+  const o = load.fresh || {};
+  const corpPub = load.corp && load.corp.publishedAt;
+  const sameCorp = daysSince(corpPub, load.checkedAt) === daysSince(corpPub, t);
+  if (f.stale === o.stale && f.days === o.days && f.md === o.md && !!f.due === !!o.due && sameCorp) return load;
+  return { ...load, fresh: f, checkedAt: t };
+}
+// ms until the stale check can give another answer (data.js nextFreshChange: staleAfter, the next day of either publish
+// time, at most an hour), or null (preview, loading, failed: nothing to re-check).
+export function nextFreshCheck(load, now) {
+  if (!load || load.status !== "ok" || load.preview) return null;
+  return nextFreshChange(now, [load.data.publishedAt, load.corp && load.corp.publishedAt], load.data.staleAfter);
+}
+
 // opts.preview: the fictional example data of app-preview.html. It has a fixed publish date, so the stale check
 // (publishedAt more than 4 days old) is switched off there and only there; the page says "예시 데이터" on every screen.
 export function resolveLoad({ data, corp, macro }, now, opts = {}) {
@@ -62,9 +112,14 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   const features = detectFeatures(d, c, m);
   const missing = missingForBuild(features);
   if (missing.length) console.warn("[v2] fields not live yet, deck builder hidden: " + missing.join(", "));
-  const fresh = opts.preview ? { md: null, days: 0, stale: false } : freshness(d.pxDate, d.publishedAt, "ko", now);
+  // v19.1c (Jack, 2026-11-07): stale once data.json's staleAfter has passed (the time the next publish is due, weekends and
+  // market holidays counted by the pipeline); a file without one, or with one that cannot be read, keeps the 4-day rule.
+  // The 4-day rule also stays as a backstop (data.js freshness). The day count n of the warning counts from the morning the
+  // publish was due (nextPub; fresh.due), else from the last publish as before.
+  const fresh = opts.preview ? { md: null, days: 0, stale: false } : freshness(d.pxDate, d.publishedAt, "ko", now, d.staleAfter, d.nextPub);
+  if (!opts.preview) logDates(d);
   const byT = new Map(d.stocks.map((s) => [s.t, s]));
   const coByT = new Map(c.companies.map((x) => [x.t, x]));
   return { status: "ok", data: d, corp: c, macro: m, features, missing, fresh, byT, coByT, preview: !!opts.preview,
-    cushion: opts.cushion || CUSHION_ASSETS, r2022: opts.r2022 || R2022, exact };
+    cushion: opts.cushion || CUSHION_ASSETS, r2022: opts.r2022 || R2022, exact, checkedAt: now == null ? Date.now() : now };
 }

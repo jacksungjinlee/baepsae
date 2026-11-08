@@ -5,7 +5,8 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { StatusChip, Collapsible } from "../ui/components.jsx";
 import { NA, canAdd, cautionContext, cautions, fyOf, isFin, num, marketsOf, CARDS, growthBasis, krDivYield, krYieldToday } from "./engine.js";
 import { C, fill, nf, p1, mdText } from "./format.js";
-import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, Card, ActionBar, CardPic, CardScores, tx, tap } from "./ui.jsx";
+import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, ActionBar, CardPic, CardScores, tx, tap } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
 import { objectParticle } from "./track.js";
 
@@ -41,6 +42,8 @@ export function Pick({ load, builder, setBuilder }) {
       {ds.cands.us && ds.cands.us.length > 0 && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate && (
         <Note style={{ marginTop: 0 }}>{fill(C.app.usClose, { md: mdText(load.data.usPxDate) })}</Note>
       )}
+      {/* v19.1c: a candidate (or a 꼭 담을 종목) priced at an earlier US close (pxd) is named under the date line */}
+      <OwnCloseNote groups={ownCloses(load, [...ds.pinned, ...all.map((c) => c.s)])} style={{ marginTop: 0 }} />
       <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{deckLine}</div>
       <ScreenTitle sub={C.pick.body}>{fill(C.pick.heading, { n: N })}</ScreenTitle>
       {msg && <Note tone="watch" data-ui-v2="pick-limit">{msg}</Note>}

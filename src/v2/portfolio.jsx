@@ -13,8 +13,8 @@
 import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
-import { C, fill, nf, mdText, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
+import { C, fill, nf, mdText, todayKst, todayStaleText } from "./format.js";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
 import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
@@ -22,7 +22,7 @@ import { deckMoney } from "./track.js";
 import { DeckSummary, ByStockHead, WeightLine, AddMoney, MissingNote, PausedNote, plainEdges } from "./tracking.jsx";
 import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
-import { isCompany } from "./stocklist.js";
+import { isCompany, ownCloses } from "./stocklist.js";
 import { heldQty } from "./held.js";
 import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
@@ -105,7 +105,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       )}
       {decks.length === 0 && !store.locked && <IosHint kind="first" />}
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (
-        <Note tone="watch" data-ui-v2="deck-stale">{fill(C.today.stale, { n: ev.days })}</Note>
+        <Note tone="watch" data-ui-v2="deck-stale">{todayStaleText(ev.days)}</Note>
       )}
       {decks.map((d) => {
         if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} />;
@@ -124,6 +124,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
             </div>
             {m.ok && <DeckSummary deck={d} de={de} m={m} load={load} />}
             {m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={d.id} />}
+            {/* v19.1c: the totals and rows include a US stock priced at an earlier close (pxd): named here, beside the missing line */}
+            {de && de.ok && <OwnCloseNote groups={ownCloses(load, de.holdings.filter((x) => !x.absent).map((x) => ctx.byT.get(x.t)))} data-deck-id={d.id} />}
             {m.ok && <ByStockHead plain={plainEdges(de)} paused={paused} />}
             {paused && <PausedNote />}
             {ts.map((t) => {
