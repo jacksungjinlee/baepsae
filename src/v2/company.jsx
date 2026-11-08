@@ -283,13 +283,12 @@ function warnSource(w) {
   return [w.quarter && C.co.warn.quarter ? fill(C.co.warn.quarter, { y: w.quarter.y, q: w.quarter.q }) : null,
     w.fy ? fill(C.app.reportYear, { year: w.fy }) : null].filter(Boolean).join(" · ");
 }
-// v19.3e (Part I): the chips of the checks that ran and passed (company.warnChips). Shared by the "없어요" card and, since
-// 2026-11-08, the card shown while 이자보상배율 is switched off (first: no space above it).
-function WarnChipGrid({ chips, first = false }) {
+// v19.3e (Part I): the chips of the checks that ran and passed (company.warnChips), on the "없어요" card only.
+function WarnChipGrid({ chips }) {
   const W = C.co.warn;
   if (!chips.length) return null;
   return (
-    <div data-ui-v2="co-warn-chips" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(1) + 2, marginTop: first ? 0 : SPACE(3) }}>
+    <div data-ui-v2="co-warn-chips" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(1) + 2, marginTop: SPACE(3) }}>
       {chips.map((c) => (
         <span key={c} data-ui-v2="co-warn-chip" data-check={c} style={{ display: "flex", alignItems: "center", gap: SPACE(1) + 2, padding: `${SPACE(2)}px ${SPACE(2) + 2}px`,
           borderRadius: RADIUS.sm, background: COLOR.heroCalm, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { lineHeight: 1.35 }) }}>
@@ -309,15 +308,12 @@ function Warnings({ load, s, wide }) {
   const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
     if (!w.allRan && !w.partial && off && C.fix.icr) {
-      // v19.3e chips for the checks that ran and passed (never one for 이자보상배율: it did not run), then the line
-      const offChips = warnChips(w).filter((c) => W.chips && W.chips[c]);
+      // The line alone, no chips: v19.3e shows chips only when every check ran ("확인이 덜 돌면 카드도 칩도 없음"), and
+      // 이자보상배율 did not run.
       return (
-        <Card data-ui-v2="co-warn-off" style={{ padding: SPACE(4) }}>
-          <WarnChipGrid chips={offChips} first />
-          <div style={{ display: "flex", gap: SPACE(3), alignItems: "center", marginTop: offChips.length ? SPACE(3) : 0 }}>
-            <IconChip name="info" size={32} tone="risk" />
-            <IcrOffNote show style={{ flex: 1, minWidth: 0, marginTop: 0 }} />
-          </div>
+        <Card data-ui-v2="co-warn-off" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
+          <IconChip name="info" size={32} tone="risk" />
+          <IcrOffNote show style={{ flex: 1, minWidth: 0, marginTop: 0 }} />
         </Card>
       );
     }

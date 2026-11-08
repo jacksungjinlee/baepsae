@@ -301,7 +301,9 @@ function Strip({ s, group, inCard = false }) {
 // report year, discount rate, 5년 뒤 성장률); out of range or a loss: the old card's message instead. The old card's
 // defaults (fade on): parity tests.
 // v19.3e 가치 fix (v19.3 Part I): impliedGrowth grows 순이익, so the second bar is the company's own past 순이익
-// growth (company.pastNiGrowth: the yearly average from ni[2] to ni[0], both above 0), labelled "지난 2년 실제 이익 ·
+// growth (company.pastNiGrowth, on the same basis as EPS via src/repair.js epsBase: owners' profit nio3 when epsIn.b is "o",
+// total ni otherwise, from year [2] to year [0], both above 0; when epsIn.b is "t" the card shows the PER/EPS line instead
+// of numbers, so no bar), labelled "지난 2년 실제 이익 ·
 // 연평균 {x}% 늘었어요 / 줄었어요" (no minus sign), then "지금 주가가 가정하는 이익 증가는 지난 2년보다 낮아요. / 높아요. /
 // 지난 2년과 비슷해요." (비슷 = within 3 percentage points, on the numbers shown) before the approved note. Never revenue.
 // Without both profits above 0 the comparison is hidden (the bar and the sentence), not the card. At the model's edge

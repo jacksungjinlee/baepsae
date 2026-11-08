@@ -6436,7 +6436,7 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
         # v19.3e '지금 주가가 가정하는 이익 증가 / 지난 2년 실제 이익': 지난 2년도 EPS 와 같은 기준 (다시 읽은 뒤 "o" 는 지배주주 순이익)
         dcf = page.locator('[data-ui-v2="co-dcf"]')
         pw = past_want(co)
-        if not live:
+        if not live or pw is not None:
             assert dcf.get_attribute("data-past") and pw is not None, "지난 2년 비교 막대가 없어요 (이 확인이 뜻이 없어요)"
         if dcf.count() and dcf.get_attribute("data-g") and pw is not None and dcf.get_attribute("data-past"):
             assert abs(float(dcf.get_attribute("data-past")) - pw) < 1e-9, (dcf.get_attribute("data-past"), pw)
@@ -6534,14 +6534,9 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
             assert off.count() == 0 and page.locator('[data-ui-v2="icr-off"]').count() == 0
         else:
             off.wait_for(state="visible")
-            assert off.locator('[data-ui-v2="icr-off"]').inner_text() == FIX_ICR, off.inner_text()
-            # v19.3e 칩: 돌았고 걸리지 않은 확인만 (유동비율 · 3년 연속 순손실 · 자본잠식), 이자보상배율 칩은 없고 그 자리에 그 줄
-            want_chips = {c for c in ("l3", "cr", "imp") if (C["co"]["warn"].get("chips") or {}).get(c)}
-            got_chips = {off.locator('[data-ui-v2="co-warn-chip"]').nth(i).get_attribute("data-check") for i in range(off.locator('[data-ui-v2="co-warn-chip"]').count())}
-            assert got_chips == want_chips and "icr" not in got_chips, (got_chips, want_chips)
-            if got_chips:
-                chips_y = off.locator('[data-ui-v2="co-warn-chips"]').bounding_box()["y"]
-                assert off.locator('[data-ui-v2="icr-off"]').bounding_box()["y"] > chips_y          # 칩 밑
+            assert off.inner_text().strip() == FIX_ICR, off.inner_text()
+            # v19.3e: 확인이 덜 돌면 칩도 없음 (이자보상배율이 꺼져 있으면 그 줄만)
+            assert off.locator('[data-ui-v2="co-warn-chip"]').count() == 0 and page.locator('[data-ui-v2="co-warn-chips"]').count() == 0
             assert page.locator('[data-ui-v2="co-warn"]').count() == 0                            # '없어요'라고 말하지 않아요
             assert C["co"]["warn"]["none"] not in page.locator('[data-ui-v2="co-summary"]').inner_text()
             off.scroll_into_view_if_needed()
