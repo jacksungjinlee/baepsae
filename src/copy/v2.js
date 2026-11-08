@@ -701,6 +701,9 @@ export const C = {
       left: "{n}점 남았어요",
       remain: "지금 기준이면 회사 {n}개가 남아요",
       remainNone: "지금 기준이면 남는 회사가 없어요",
+      // say-why (Jack, 2026-11-08): 내 점수 칸 밑 한 줄. 이 수(engine.meterCount)는 하루 평균 거래대금 바닥(LIQ_FLOOR_EOK) 아래 종목과
+      // 우선주(engine.isPreferred · 미국 우선주·예탁증서)를 빼고 세요
+      remainWhy: "하루 거래대금 5억원 미만 종목과 우선주는 빼고 셌어요.",
       slot: "{card} {n}점",                                        // 칸의 화면 읽기 이름 (그림만 있는 칸)
       pendingCard: "준비 중이에요",
       strictLabel: "얼마나 깐깐하게 고를까요?",                       // 173
