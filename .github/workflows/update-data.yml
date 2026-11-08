@@ -172,6 +172,13 @@ jobs:
             echo "!! 정해진 시각 실행은 여기서 멈춰요: 오늘 전체 DART 실행이 아직 없었으면 수동 실행을 한 번 해 주세요."
             exit 1
           fi
+          # v19.1f (리뷰 2026-11-08): 옛 캐시에서 옮겨 온 업종 코드만 든 v3 파일도 빈 캐시예요 (fetch_data.py 의 started_empty 와 같은 규칙 ·
+          # dart_cache_core). 읽지 못해도 0 이라 멈춰요.
+          if ! python -c "import sys, fetch_data as f; n = f.dart_cache_core('.dart-cache/dart-v3.json.gz'); print(f'· DART 캐시의 재무 항목 {n:,}건 (옮겨 온 업종 코드 빼고)'); sys.exit(0 if n > 0 else 1)"; then
+            echo "!! DART 캐시에 재무제표 항목이 없어요 (옛 캐시에서 옮겨 온 업종 코드만 있거나 읽지 못함). 이 캐시로 시작하면 전체 DART 실행이에요."
+            echo "!! 정해진 시각 실행은 여기서 멈춰요: 오늘 전체 DART 실행이 아직 없었으면 수동 실행을 한 번 해 주세요."
+            exit 1
+          fi
           echo "· DART 캐시: ${{ steps.dart_cache.outputs.cache-matched-key }}"
 
       - name: 데이터 수집

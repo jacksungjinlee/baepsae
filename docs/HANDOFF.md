@@ -98,6 +98,25 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
   preferred caps from the full listing (`kr_pref_caps`); 이자보상배율 pairs operating profit and interest from the same
   period (TTM with TTM, else annual with annual · `icr_inputs`); a new WARN-only gate row counts ICR warnings and
   interest sources.
+- v19.1f review 2 (2026-11-08, review of 2d8d8fa + Jack's answers): ROE = owners' profit ÷ owners' equity of the same
+  사업보고서 (`roe_source`, receipt `roeIn {ni, eq, b, p:"fy"}`; always annual because the app labels ROE with the report
+  year and 2.0's ROE-floor rule compares by `fy`; consolidated companies without owners' lines keep the old total ÷ total
+  and are named in the log and a WARN row). Statements filed in another currency (DART row `currency`, e.g. 두산밥캣 USD)
+  are blanked like foreign issuers (`blank_non_won`, build_corp) and marked corp.json `stmtCur` (ISO code; the app's line
+  reads it); dividends stay (the dividend table is in 원). 신종자본증권: owners' distributions in the 자본변동표
+  (`dart_DividendToHybridBond` / `dart_InterestExpenseForHybridBond` at the owners' level) come off EPS/ROE profit and the
+  `dart_HybridBonds` balance off BPS/ROE equity (KB금융 2025: 58,331.6 − 2,023.9 → 15,410원 = the filed basic EPS); when the
+  statements don't say whose hybrid it is, EPS/BPS stay on the total basis (`how: "hybrid"`), never guessed. Receipts
+  `epsFy` (annual EPS on today's shares) and `epsRep` (the statement's basic EPS). Interest paid coded
+  `ifrs-full_FinanceCostsPaid…` counts when named 이자(의) 지급 (LG에너지솔루션). No minority interest → total profit =
+  owners' profit (GMI벤처, 라이온켐텍; '비지배지분부채' is a liability, not NCI). 이자보상배율 warns only when interest was
+  actually paid (이자비용 or 이자 지급액 > 0); zero interest → no warning, `flSrc.int0 = true`. A cache holding only
+  carried industry codes is an empty cache (`dart_core_entries`; the workflow guard calls `dart_cache_core`), and the
+  v2 file is deleted only after the financial fetch finished without a DART stop (`fetch_done`). `INC_TOP_FLOOR` = 98
+  (Jack): top-200 coverage of the latest filed 사업보고서, financial companies left out of 매출. New gate rows (add-only):
+  owners' share recounted from corp.json (≥ 95), data.json = corp.json for EPS·BPS·PER·PBR·ROE, PER/PBR = price ÷
+  receipts, epsIn.sh = bpsIn.sh, stmtCur amounts blank (in the receipt-shape row), ROE receipts; WARN rows for PER >
+  2,000 or PBR > 100, annual EPS vs the statement's basic EPS (sign, or outside 0.67–1.5×), EPS owners but ROE old.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the

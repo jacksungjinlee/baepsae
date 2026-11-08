@@ -1,0 +1,409 @@
+# -*- coding: utf-8 -*-
+"""v19.1f 리뷰 2 (2026-11-08 · 2d8d8fa 리뷰 · Jack 의 답): ROE 기준 · 원화가 아닌 재무제표 · 신종자본증권 · 옮겨 온 업종 코드만 든 캐시 ·
+관문 새 줄 · FinanceCostsPaid 이자 · 비지배지분이 없으면 당기순이익 = 지배주주 순이익 · 낸 이자가 없으면 이자보상배율 경고 없음.
+
+픽스처 tests/fixtures/dart_review_samples.json 은 그날 받은 실제 연결 재무제표 (KB금융 · 포스코퓨처엠 사업보고서와 반기 · GMI벤처 ·
+라이온켐텍 · LG에너지솔루션)의 손익·자본·신종자본증권·이자 지급 줄이에요. (네트워크 없음)"""
+import copy
+import datetime as dt
+import gzip
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+import yaml
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import fetch_data as F  # noqa: E402
+import validate_data as V  # noqa: E402
+from test_v191f_income import check, comp, fails, pair, rows_of  # noqa: E402,F401  (pair 는 pytest 픽스처)
+
+with open(os.path.join(ROOT, "tests", "fixtures", "dart_review_samples.json"), encoding="utf-8") as _f:
+    ST = json.load(_f)["statements"]
+NO_ID = "-표준계정코드 미사용-"
+
+
+def rows(t, y="2025", r="11011"):
+    return copy.deepcopy(ST[f"{t}|{y}|{r}|CFS"]["rows"])
+
+
+def r(sj, nm, aid, a, b=None, c=None, add=None, cur=None, detail=None):
+    out = {"sj_div": sj, "account_nm": nm, "account_id": aid, "thstrm_amount": str(a)}
+    for k, v in (("frmtrm_amount", b), ("bfefrmtrm_amount", c), ("thstrm_add_amount", add), ("currency", cur), ("account_detail", detail)):
+        if v is not None:
+            out[k] = str(v)
+    return out
+
+
+def kb_fin():
+    """KB금융: 2025 사업보고서 + 2026·2025 반기 → TTM (파이프라인과 같은 모양)."""
+    fin = dict(F.parse_dart_list(rows("105560"))["_fin"], fs="CFS", bq="2026.2Q")
+    t2 = F.compute_ttm(fin, F.parse_dart_quarter(rows("105560", "2026", "11012")), F.parse_dart_quarter(rows("105560", "2025", "11012")))
+    fin["ttm"], fin["bs2"] = t2["ttm"], t2["bs"]
+    return fin
+
+
+# ── 1. 신종자본증권 (실제 재무제표) ─────────────────────────────────
+def test_hybrid_capital_is_read_from_the_owners_rows_of_the_real_statements():
+    kb = F.parse_dart_list(rows("105560"))["_fin"]
+    assert kb["hyb"] == {"ok": True, "eq": 43593.9, "dist": 2023.9} and kb["nio"] == 58331.6 and kb["epsRep"] == 15410.0
+    pf = F.parse_dart_list(rows("003670"))["_fin"]
+    assert pf["hyb"] == {"ok": True, "eq": 5993.7, "dist": 280.7} and pf["nio"] == 322.6 and pf["epsRep"] == 51.0
+    # 회사가 낸 기본주당이익과 같은 방식: (지배주주 순이익 − 신종자본증권 분배) ÷ 가중평균 주식 수
+    es = F.eps_source(dict(kb, fs="CFS"))
+    assert es == (56307.7, "o", "fy", "code", 2023.9)
+    assert round(es[0] * 1e8 / 365_400_000) == pytest.approx(15410, rel=0.002)            # KB금융 2025 가중평균 약 3.654억 주
+    assert F.eps_source(dict(pf, fs="CFS"))[0] == 41.9                                    # 322.6 − 280.7 → 기본주당이익 51원 (약 8,200만 주)
+    q = F.parse_dart_quarter(rows("105560", "2026", "11012"))
+    assert q["hyb"] == {"ok": True, "eq": 42067.2, "dist": 868.1}                        # 반기 자본변동표도 같은 줄
+
+
+def test_hybrid_ttm_eps_bps_and_receipts():
+    fin = kb_fin()
+    assert fin["ttm"]["hyb"] == {"ok": True, "dist": 1858.8}                             # 2,023.9 + 868.1 − 1,033.2
+    assert F.eps_source(fin) == (round(62820.6 - 1858.8, 1), "o", "ttm", "code", 1858.8)
+    assert F.bps_source(fin) == (round(608908.4 - 42067.2, 1), "o", "code", "ttm", 42067.2)  # 보통주 자본 (신종자본증권 뺌)
+    s = {"t": "105560", "nk": "KB금융", "cls": "kr", "price": 100000.0, "shr": 360_000_000, "cap": 36.0}
+    extra = F.fill_multiples([s], {"105560": fin}, {})["105560"]
+    assert extra["epsIn"]["hyb"] == 1858.8 and extra["bpsIn"]["hyb"] == 42067.2
+    assert s["eps"] == round((62820.6 - 1858.8) * 1e8 / 360_000_000)
+    assert extra["epsFy"] == round(56307.7 * 1e8 / 360_000_000) and extra["epsRep"] == 15410.0
+
+
+def test_hybrid_capital_that_cannot_be_placed_keeps_the_total_basis():
+    base = [r("BS", "자본총계", "ifrs-full_Equity", 4e12), r("BS", "부채총계", "ifrs-full_Liabilities", 2e12),
+            r("BS", "지배기업 소유주지분", "ifrs-full_EquityAttributableToOwnersOfParent", 4e12),
+            r("BS", "신종자본증권", "dart_HybridBonds", 5e11),
+            r("CIS", "당기순이익", "ifrs-full_ProfitLoss", 1e11),
+            r("CIS", "지배기업 소유주지분", "ifrs-full_ProfitLossAttributableToOwnersOfParent", 1e11)]
+    fin = dict(F.parse_dart_list(base)["_fin"], fs="CFS")
+    assert fin["hyb"] == {"ok": False, "eq": 5000.0, "dist": 0.0}                         # 자본변동표에 어디 몫인지 없음
+    assert F.eps_source(fin) == (1000.0, "t", "fy", "hybrid", 0.0)                       # 추측하지 않아요 → '전체'(앱의 '고치는 중' 줄)
+    assert F.bps_source(fin) == (40000.0, "t", "hybrid", "fy", 0.0)
+    assert F.roe_source(fin) is None
+    placed = base + [r("SCE", "신종자본증권 배당", "dart_DividendToHybridBond", -2e10, detail="자본 [member]|지배기업 소유주지분 [member]")]
+    fin2 = dict(F.parse_dart_list(placed)["_fin"], fs="CFS")
+    assert F.eps_source(fin2) == (800.0, "o", "fy", "code", 200.0) and F.bps_source(fin2)[:2] == (35000.0, "o")
+    minority = base + [r("SCE", "신종자본증권 배당", "dart_DividendToHybridBond", -2e10, detail="자본 [member]|비지배지분 [member]")]
+    assert F.parse_dart_list(minority)["_fin"]["hyb"]["dist"] == 0.0                      # 비지배 몫 분배는 주주 몫에서 빼지 않아요
+
+
+# ── 2. 원화가 아닌 재무제표 ─────────────────────────────────────
+USD = [r("BS", "자본총계", "ifrs-full_Equity", 5.01e9, cur="USD"), r("BS", "부채총계", "ifrs-full_Liabilities", 3e9, cur="USD"),
+       r("CIS", "매출액", "ifrs-full_Revenue", 6.18e9, cur="USD"),
+       r("CIS", "당기순이익", "ifrs-full_ProfitLoss", 2.8e8, cur="USD"),
+       r("CIS", "지배기업 소유주지분", "ifrs-full_ProfitLossAttributableToOwnersOfParent", 2.8e8, cur="USD")]
+
+
+def test_statements_in_another_currency_are_marked_and_their_amounts_never_reach_the_files(capsys):
+    assert F.stmt_currency(USD) == "USD" and F.stmt_currency(rows("105560")) is None   # 실제 재무제표는 KRW
+    fin = dict(F.parse_dart_list(USD)["_fin"], fs="CFS")
+    q = F.parse_dart_quarter([dict(x, thstrm_add_amount=x["thstrm_amount"]) for x in USD])
+    assert fin["cur"] == "USD" and q["cur"] == "USD" and F.compute_ttm(dict(fin, cur=None), q, q)["ttm"]["cur"] == "USD"
+    s = {"t": "241560", "nk": "두산밥캣", "cls": "kr", "price": 51700.0, "shr": 95_856_065, "cap": 4.96, "dps": 1700.0, "dy": 3.3,
+         "per": 14575.8, "pbr": 971.72, "eps": 4.0, "bps": 53.0, "roe": 5.6}
+    other = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0}
+    fins = {"241560": fin, "000100": {"ni": [5.0, None, None], "eq": 9.0, "fs": "OFS"}}
+    assert F.blank_non_won([s, other], fins) == ["241560 두산밥캣(USD)"]
+    assert "!! 원화가 아닌 재무제표로 낸 국내 회사 1곳: 241560 두산밥캣(USD)" in capsys.readouterr().out
+    assert not any(k in s for k in ("per", "pbr", "eps", "bps")) and s["dps"] == 1700.0 and s["dy"] == 3.3   # 배당 표는 원
+    extra = F.fill_multiples([s, other], fins, {})
+    assert "241560" not in extra and "eps" not in s and s["roe"] == 5.6                  # 건너뛰어요 (ROE 는 비율이라 그대로)
+    corp = {c["t"]: c for c in F.build_corp([s, other], fins, "2026-11-08", extra=extra)["companies"]}
+    c = corp["241560"]
+    assert c["stmtCur"] == "USD" and c["rev"] == [None] * 3 and c["ni"] == [None] * 3 and c["eq"] is None and c["dcfReady"] is False
+    assert all(c.get(k) is None for k in ("per", "pbr", "eps", "bps")) and not any(k in c for k in V.STMT_AMT_KEYS)
+    assert "stmtCur" not in corp["000100"]
+
+
+def test_main_blanks_other_currencies_before_the_multiples():
+    import inspect
+    src = inspect.getsource(F.main)
+    assert 0 < src.find("blank_foreign_dart(kr)") < src.find("blank_non_won(kr, fin_map)") < src.find("mult_extra = fill_multiples(")
+
+
+def test_gate_fails_when_amounts_of_another_currency_reach_the_files(pair):
+    cur, prev = pair
+    name = "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)"
+    c = comp(cur, "000270")
+    c["stmtCur"] = "USD"                                                       # 금액이 남은 채로
+    got = fails(cur, prev, name)
+    assert "000270 corp.per" in got[1] or "000270" in got[1]
+    by = {s["t"]: s for s in cur["data"]["stocks"]}
+    c.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None)
+    for k in ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "vz"):
+        c.pop(k, None)
+    for k in ("per", "pbr", "eps", "bps", "vz"):
+        by["000270"].pop(k, None)
+    cur["data"]["incCheck"]["epsB"]["o"] -= 1
+    cur["data"]["incCheck"]["epsP"]["ttm" if c.get("bq") else "fy"] -= 1
+    rep = check(cur, prev)
+    got = rows_of(rep)
+    assert got[name][3] == "PASS", got[name]
+    assert got["원화가 아닌 재무제표로 낸 회사 (stmtCur · 금액은 비움)"][1].startswith("1곳: 000270")
+    by["000270"]["eps"] = 4.0                                                  # data.json 에 하나라도 남으면
+    assert "000270 data.eps" in " ".join(V.stmt_cur_problems(c, by["000270"]))
+    fails(cur, prev, name)
+    by["000270"].pop("eps")
+    c["stmtCur"] = "KRW"                                                       # 원화는 표시하지 않아요
+    fails(cur, prev, name)
+
+
+def test_gate_warns_about_very_high_per_or_pbr(pair):
+    cur, prev = pair
+    s = next(x for x in cur["data"]["stocks"] if x["t"] == "000270")
+    name = "PER 2,000 · PBR 100 넘는 국내 회사 (경고만)"
+    assert rows_of(check(cur, prev))[name][3] == "PASS"
+    s["pbr"] = comp(cur, "000270")["pbr"] = 964.92
+    s["pbr"] = comp(cur, "000270")["pbr"]
+    rep = check(cur, prev)
+    row = rows_of(rep)[name]
+    assert row[3] == "WARN" and "000270" in row[1] and "PBR 964.92" in row[1]
+
+
+# ── 3. ROE 를 EPS 와 같은 기준으로 (사업보고서 한 해) ─────────────────
+def test_roe_is_owners_profit_over_owners_equity_of_the_same_annual_report():
+    lg = dict(F.parse_dart_list(rows("373220"))["_fin"], fs="CFS")
+    assert F.parse_dart_list(rows("373220"))["roe"] == 0.3                             # 예전: 전체 순이익 ÷ 전체 자본
+    assert F.roe_source(lg) == (round(-10728.1 / 202155.5 * 100, 1), -10728.1, 202155.5, "o", "fy")   # 주주 몫은 손실
+    kb = kb_fin()
+    want = round((58331.6 - 2023.9) / (590482.1 - 43593.9) * 100, 1)
+    assert F.roe_source(kb) == (want, 56307.7, round(590482.1 - 43593.9, 1), "o", "fy")   # TTM 이 있어도 사업보고서끼리 (앱의 'fy' 꼬리표)
+    assert F.roe_source({"ni": [5.0, None, None], "eq": 50.0, "fs": "OFS"}) == (10.0, 5.0, 50.0, "s", "fy")
+    assert F.roe_source({"ni": [5.0, None, None], "eq": 50.0, "fs": "CFS"}) is None      # 지배주주 순이익 없는 연결 → 예전 값 그대로
+    assert F.roe_source({"ni": [5.0, None, None], "nio": 4.0, "eq": 50.0, "eqo": -1.0, "fs": "CFS"}) is None   # 주주 몫 자본 ≤ 0
+
+
+def test_fill_multiples_writes_the_roe_receipt_and_keeps_the_old_value_otherwise():
+    a = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0, "roe": 9.9}
+    b = {"t": "000200", "nk": "나", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0, "roe": 7.7}
+    fins = {"000100": {"ni": [5.0, None, None], "nio": 4.0, "eq": 50.0, "eqo": 40.0, "fs": "CFS"},
+            "000200": {"ni": [5.0, None, None], "eq": 50.0, "fs": "CFS"}}
+    extra = F.fill_multiples([a, b], fins, {})
+    assert a["roe"] == 10.0 and extra["000100"]["roeIn"] == {"ni": 4.0, "eq": 40.0, "b": "o", "p": "fy"}
+    assert b["roe"] == 7.7 and "roeIn" not in extra["000200"]
+
+
+def test_roe_moves_counts_what_changes(capsys):
+    kr = [{"t": f"{i:06d}", "nk": str(i), "cls": "kr", "roe": v} for i, v in enumerate([20.0, 12.0, 4.0, 0.3, 30.0, None])]
+    old = {s["t"]: s["roe"] for s in kr}
+    kr[0]["roe"], kr[1]["roe"], kr[3]["roe"], kr[5]["roe"] = 8.0, 12.5, -5.2, 3.0
+    F.add_percentiles(kr)
+    out = F.roe_moves(kr, old)
+    assert len(out["changed"]) == 3 and len(out["big"]) == 2 and out["new"] == 1
+    assert out["sign"] == ["000003 3 +0.3→-5.2"]
+    assert {k: len(v) for k, v in out["line"].items()} == {5.0: 0, 10.0: 1, 15.0: 1}
+    assert [x.split()[0] for x in out["floor"]] == ["000000", "000003"]                # 20 → 8 < 10 · 0.3 → −5.2 < 0
+    assert "!! ROE 기준 (주주 몫 · 사업보고서) 으로 움직인 것: 바뀐 곳 3 (1%p 넘게 2)" in capsys.readouterr().out
+
+
+def test_gate_checks_the_roe_receipt(pair):
+    cur, prev = pair
+    c = comp(cur, "000270")
+    by = {s["t"]: s for s in cur["data"]["stocks"]}
+    name = "ROE 영수증 (roeIn: 주주 몫 ÷ 주주 몫 자본 · 사업보고서)"
+    c["roeIn"] = {"ni": 45.0, "eq": 450.0, "b": "o", "p": "fy"}
+    c["roe"] = by["000270"]["roe"] = 10.0
+    assert rows_of(check(cur, prev))[name][3] == "PASS"
+    c["roe"] = by["000270"]["roe"] = 11.0
+    fails(cur, prev, name)
+    c["roe"] = by["000270"]["roe"] = 10.0
+    c["roeIn"]["p"] = "ttm"                                                    # 사업보고서 한 해만
+    fails(cur, prev, name)
+    c["roeIn"]["p"] = "fy"
+    by["000270"]["roe"] = 9.0                                                  # 두 파일이 다르면
+    fails(cur, prev, "국내 EPS·BPS·PER·PBR·ROE: data.json = corp.json")
+
+
+def test_gate_and_log_name_companies_whose_eps_is_owners_but_roe_is_not(pair, capsys):
+    cur, prev = pair
+    name = "EPS 는 주주 몫인데 ROE 는 예전 값인 회사 (경고만)"
+    assert rows_of(check(cur, prev))[name][3] == "PASS"
+    comp(cur, "000270").pop("roeIn")
+    row = rows_of(check(cur, prev))[name]
+    assert row[3] == "WARN" and "000270" in row[1]
+    s = {"t": "000100", "nk": "가", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0, "roe": 9.9}
+    fin = {"ni": [5.0, None, None], "nio": 4.0, "eq": 50.0, "nciBs": 3.0, "fs": "CFS"}   # 주주 몫 자본이 없는 연결
+    extra = F.fill_multiples([s], {"000100": fin}, {})["000100"]
+    assert extra["epsIn"]["b"] == "o" and "roeIn" not in extra and s["roe"] == 9.9
+    assert "!! EPS 는 주주 몫인데 ROE 는 예전 값(전체 ÷ 전체)인 곳 1: 000100 가" in capsys.readouterr().out
+
+
+# ── 4. 옮겨 온 업종 코드만 든 캐시는 빈 캐시 ───────────────────────────
+def write_cache(path, entries, v=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump({"v": F.DART_CACHE_VERSION if v is None else v, "meta": {}, "entries": entries}, f)
+
+
+KSIC_ONLY = {"C1|company": {"st": "000", "at": "2026-11-08", "d": {"induty": "264"}}}
+WITH_FS = dict(KSIC_ONLY, **{"C1|2025|11011|CFS": {"st": "000", "at": "2026-11-08", "d": {"_fin": {"eq": 1.0}}}})
+
+
+def test_a_cache_with_only_carried_industry_codes_is_an_empty_cache(tmp_path, monkeypatch):
+    p = str(tmp_path / ".dart-cache" / "dart-v3.json.gz")
+    write_cache(p, KSIC_ONLY)
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    assert F.DartClient("k", today=dt.date(2026, 11, 9), path=p).started_empty is True
+    assert F.dart_cache_core(p) == 0
+    monkeypatch.setenv("BAEPSAE_AUTO_RUN", "1")
+    with pytest.raises(RuntimeError, match="DART 캐시가 비어 있어요"):
+        F.DartClient("k", today=dt.date(2026, 11, 9), path=p)                            # 정해진 시각 실행은 DART 호출 전에 멈춰요
+    write_cache(p, WITH_FS)
+    assert F.DartClient("k", today=dt.date(2026, 11, 9), path=p).started_empty is False and F.dart_cache_core(p) == 1
+    write_cache(p, WITH_FS, v=F.DART_CACHE_VERSION - 1)
+    assert F.dart_cache_core(p) == 0 and F.dart_cache_core(str(tmp_path / "none.json.gz")) == 0
+    with open(p, "w") as f:
+        f.write("not gzip")
+    assert F.dart_cache_core(p) == 0
+
+
+def guard_script():
+    with open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8") as f:
+        steps = {s.get("name"): s for s in yaml.safe_load(f)["jobs"]["update"]["steps"]}
+    run = steps["DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)"]["run"]
+    return run.replace("${{ steps.dart_cache.outputs.cache-matched-key }}", "dart-cache-v3-1-1")
+
+
+@pytest.mark.parametrize("entries, code", [(KSIC_ONLY, 1), (WITH_FS, 0), (None, 1)])
+def test_the_workflow_guard_uses_the_same_rule(tmp_path, entries, code):
+    p = str(tmp_path / ".dart-cache" / "dart-v3.json.gz")
+    if entries is not None:
+        write_cache(p, entries)
+    else:
+        os.makedirs(os.path.dirname(p))
+        with open(p, "w") as f:
+            f.write("x")                                                       # 비어 있지 않지만 읽을 수 없는 파일
+    env = dict(os.environ, PYTHONPATH=ROOT)
+    for k in ("DART_API_KEY", "DART_CACHE"):
+        env.pop(k, None)
+    out = subprocess.run(["bash", "-c", guard_script()], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert out.returncode == code, out.stdout + out.stderr
+    if code:
+        assert "재무제표 항목이 없어요" in out.stdout
+
+
+def test_the_v2_file_is_kept_after_mid_run_fatal_or_down_saves(tmp_path, monkeypatch):
+    monkeypatch.delenv("BAEPSAE_AUTO_RUN", raising=False)
+    for stop in ("fatal", "down", None):
+        old = tmp_path / f"dart-v2-{stop}.json.gz"
+        write_cache(str(old), KSIC_ONLY, v=2)
+        c = F.DartClient("k", today=dt.date(2026, 11, 9), path=str(tmp_path / f"v3-{stop}.json.gz"))
+        c.remove_after_save.append(str(old))
+        c.save()                                                               # 중간 저장: 지우지 않아요
+        assert old.exists()
+        if stop == "fatal":
+            c.fatal = ("020", "한도 초과")
+        elif stop == "down":
+            c.down = "ConnectionError"
+        c.fetch_done = True
+        c.save()
+        assert old.exists() == (stop is not None), stop                       # 멈춘 실행은 남겨요 → 다음 실행이 또 옮겨 써요
+
+
+# ── 5. 관문 새 줄 (더하기만) ───────────────────────────────────────
+def test_gate_constants_match_the_pipeline():
+    assert V.EPS_OWNERS_MIN == F.EPS_BASIS_MIN * 100
+    assert V.STMT_AMT_KEYS == ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep")
+
+
+def test_gate_recounts_the_owners_share_from_corp(pair):
+    cur, prev = pair
+    name = "EPS 주주 몫 비율 (corp.json 에서 다시 셈 · o+s)"
+    assert rows_of(check(cur, prev))[name][3] == "PASS"
+    comps = [c for c in cur["corp"]["companies"] if isinstance(c.get("epsIn"), dict)]
+    n_t = len(comps) // 20 + 1                                                 # 5% 넘게 '전체'
+    for c in comps[-n_t:]:
+        c["epsIn"]["b"] = "t"
+    cur["data"]["incCheck"]["epsB"].update(o=len(comps) - n_t, t=n_t)
+    assert fails(cur, prev, name)[1].startswith(f"{V.floor_1(100.0 * (len(comps) - n_t) / len(comps))}%")
+
+
+def test_gate_checks_data_equals_corp_and_per_pbr_from_the_receipts(pair):
+    cur, prev = pair
+    by = {s["t"]: s for s in cur["data"]["stocks"]}
+    same, per_row, sh_row = ("국내 EPS·BPS·PER·PBR·ROE: data.json = corp.json", "PER = 종가 ÷ EPS · PBR = 종가 ÷ BPS (영수증으로)",
+                             "EPS·BPS 영수증의 주식 수가 같음 (epsIn.sh = bpsIn.sh)")
+    got = rows_of(check(cur, prev))
+    assert got[same][3] == got[per_row][3] == got[sh_row][3] == "PASS"
+    c = comp(cur, "000270")
+    by["000270"]["eps"] = c["eps"] + 1
+    assert "000270.eps" in fails(cur, prev, same)[1]
+    by["000270"]["eps"] = c["eps"]
+    keep = c["per"]
+    c["per"] = by["000270"]["per"] = round(keep + 0.2, 1)                     # 반올림보다 큰 차이
+    assert "000270 PER" in fails(cur, prev, per_row)[1]
+    c["per"] = by["000270"]["per"] = None                                      # EPS 가 0 보다 큰데 PER 없음
+    assert "000270 EPS 가 0 보다 큰데 PER 없음" in fails(cur, prev, per_row)[1]
+    c["per"] = by["000270"]["per"] = keep
+    c["pbr"] = by["000270"]["pbr"] = round(c["pbr"] + 0.02, 2)
+    assert "000270 PBR" in fails(cur, prev, per_row)[1]
+    c["pbr"] = by["000270"]["pbr"] = round(c["price"] / (c["bpsIn"]["eq"] * 1e8 / c["bpsIn"]["sh"]), 2)
+    c["bpsIn"]["sh"] += 1
+    fails(cur, prev, sh_row)
+
+
+def test_gate_warns_when_annual_eps_and_the_statement_eps_disagree(pair):
+    cur, prev = pair
+    name = "연간 EPS 와 재무제표 기본주당이익 (부호 · 0.67~1.5배 · 경고만)"
+    c = comp(cur, "000270")
+    c.update(epsFy=4500.0, epsRep=4400.0)
+    row = rows_of(check(cur, prev))[name]
+    assert row[3] == "PASS" and row[1].startswith("다름 0 / 견준 1")
+    c["epsRep"] = 2000.0                                                       # 2.25배
+    rep = check(cur, prev)
+    assert rows_of(rep)[name][3] == "WARN" and "000270" in rows_of(rep)[name][1] and "우리 4,500 · 재무제표 2,000" in rows_of(rep)[name][1]
+    assert not rep.failed
+    c["epsRep"] = -100.0                                                       # 부호
+    assert rows_of(check(cur, prev))[name][3] == "WARN"
+    c["epsRep"] = 0.0                                                          # 재무제표 0 · 우리 4,500 → 부호가 달라요 (배수로는 못 봐요)
+    assert rows_of(check(cur, prev))[name][3] == "WARN"
+    c["epsRep"] = 3000.0                                                       # 1.5배 → 안
+    assert rows_of(check(cur, prev))[name][3] == "PASS"
+
+
+# ── 6. 이자 지급이 FinanceCostsPaid 코드인 줄 (LG에너지솔루션) ──────────────
+def test_interest_paid_coded_as_finance_costs_paid_is_read_when_named_interest():
+    out = F.parse_dart_list(rows("373220"))
+    assert out["_fin"]["iec"] == 8731.5 and out["_inc"]["iecFcp"] == 1                  # 예전엔 이자 줄 없음 (flWhy ie)
+    eq = [r("BS", "자본총계", "ifrs-full_Equity", 4e12), r("CIS", "영업이익", "dart_OperatingIncomeLoss", 1e10)]
+    other = eq + [r("CF", "금융원가의 지급", "ifrs-full_FinanceCostsPaidClassifiedAsFinancingActivities", -3e9)]
+    assert F.parse_dart_list(other)["_fin"]["iec"] is None                               # 이름이 이자 지급이 아니면 (금융원가 전체) 아니에요
+
+
+# ── 7. 비지배지분이 없으면 당기순이익 = 지배주주 순이익 (Jack 2026-11-08) ─────────
+@pytest.mark.parametrize("t, ni", [("019570", [28.5, -2.1, -115.5]), ("171120", [85.0, 88.2, 70.8])])
+def test_no_minority_interest_means_the_whole_profit_is_the_owners(t, ni):
+    out = F.parse_dart_list(rows(t))
+    assert out["_fin"]["ni"] == ni and out["_fin"]["nio3"] == ni and out["_inc"]["src"]["ni"] == "nci0"
+    if t == "019570":                                                          # '비지배지분부채(유동)' 78.9억은 부채 — 비지배지분이 아니에요
+        assert F.nci_lines(rows(t), lambda x: F._num(x.get("thstrm_amount")))[0] == [0.0]
+
+
+# ── 8. 낸 이자가 없으면 이자보상배율 경고 없음 (영업손실이어도 · Jack 2026-11-08) ────
+def test_icr_warns_only_when_interest_was_actually_paid(monkeypatch):
+    monkeypatch.setattr(F, "ICR_OFF", False)
+    assert F.icr_inputs({"op": [-5.0, 0, 0], "ie": 0.0, "iec": 2.0}) == (-5.0, 2.0, "cf", "fy", None)   # 이자비용 0 이어도 낸 이자
+    assert F.icr_inputs({"op": [-5.0, 0, 0], "ie": 0.0, "iec": 0.0}) == (-5.0, 0.0, "is", "fy", None)
+    assert F.icr_inputs({"op": [-5.0, 0, 0], "iec": 0.0}) == (-5.0, 0.0, "cf", "fy", None)
+    base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1000, "s": "chem", "ind": "chem"}
+    full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0}
+    cases = {"000100": dict(full, op=[-5.0, 0, 0], ie=0.0, iec=0.0),      # 영업손실 · 낸 이자 없음
+             "000200": dict(full, op=[-5.0, 0, 0], ie=0.0, iec=2.0),      # 영업손실 · 이자 지급 2
+             "000300": dict(full, op=[5.0, 0, 0], ie=0.0)}                # 영업이익 · 이자 0
+    out = {c["t"]: c for c in F.build_corp([dict(base, t=t, nk=t) for t in cases], cases, "2026-11-08")["companies"]}
+    a, b, c = out["000100"], out["000200"], out["000300"]
+    assert "fl" not in a and a["flSrc"] == {"icr": "is", "int0": True} and "icr" in a["flRan"] and "flWhy" not in a
+    assert b["fl"]["icr"] == -2.5 and b["flSrc"] == {"icr": "cf"}                        # '영업손실이 나서 …' 줄은 그대로
+    assert "fl" not in c and c["flSrc"]["int0"] is True
+
+
+def test_gate_counts_zero_interest_in_the_icr_row(pair):
+    cur, prev = pair
+    c = comp(cur, "000270")
+    c.update(flRan=["cr", "icr", "l3", "imp"], flSrc={"icr": "is", "int0": True})
+    assert "낸 이자 0 1" in rows_of(check(cur, prev))["이자보상배율 경고 수 · 쓴 이자 (경고만)"][1]

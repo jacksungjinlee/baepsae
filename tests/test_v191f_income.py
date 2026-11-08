@@ -231,16 +231,16 @@ def test_separate_statements_use_their_whole_profit():
 def test_eps_source_order():
     base = {"ni": [10.0, None, None], "fs": "CFS"}
     assert F.eps_source(dict(base, nio=8.0, nioHow="code", ttm={"nio": 9.0, "ni": 12.0, "nioHow": "code+nci0"})) == \
-        (9.0, "o", "ttm", "code+nci0")
-    assert F.eps_source(dict(base, nio=8.0, nioHow="alt", ttm={"ni": 12.0})) == (8.0, "o", "fy", "alt")   # 기간보다 주주 몫이 먼저
-    assert F.eps_source(dict(base, ttm={"ni": 12.0})) == (12.0, "t", "ttm", "total")         # 지배주주 줄이 없는 연결
-    assert F.eps_source(dict(base, fs="OFS", nio=8.0, ttm={"ni": 12.0})) == (12.0, "s", "ttm", "ofs")
+        (9.0, "o", "ttm", "code+nci0", 0.0)
+    assert F.eps_source(dict(base, nio=8.0, nioHow="alt", ttm={"ni": 12.0})) == (8.0, "o", "fy", "alt", 0.0)   # 기간보다 주주 몫이 먼저
+    assert F.eps_source(dict(base, ttm={"ni": 12.0})) == (12.0, "t", "ttm", "total", 0.0)         # 지배주주 줄이 없는 연결
+    assert F.eps_source(dict(base, fs="OFS", nio=8.0, ttm={"ni": 12.0})) == (12.0, "s", "ttm", "ofs", 0.0)
     assert F.eps_source({"ni": [float("nan"), None, None]}) is None                        # NaN 은 숫자로 안 써요
-    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o", "code", "fy")
-    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s", "ofs", "fy")
-    assert F.bps_source({"eq": 9.0, "nciBs": None, "fs": "CFS"}) == (9.0, "o", "nci0", "fy")    # 비지배지분 줄 없음
-    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (9.0, "t", "total", "fy")     # 비지배지분이 있으면 아니에요
-    assert F.bps_source({"eq": 9.0, "fs": "CFS"}) == (9.0, "t", "total", "fy")                   # 증거가 없으면(예전 캐시) 아니에요
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS"}) == (7.0, "o", "code", "fy", 0.0)
+    assert F.bps_source({"eq": 9.0, "eqo": 7.0, "fs": "OFS"}) == (9.0, "s", "ofs", "fy", 0.0)
+    assert F.bps_source({"eq": 9.0, "nciBs": None, "fs": "CFS"}) == (9.0, "o", "nci0", "fy", 0.0)    # 비지배지분 줄 없음
+    assert F.bps_source({"eq": 9.0, "nciBs": 0.5, "fs": "CFS"}) == (9.0, "t", "total", "fy", 0.0)     # 비지배지분이 있으면 아니에요
+    assert F.bps_source({"eq": 9.0, "fs": "CFS"}) == (9.0, "t", "total", "fy", 0.0)                   # 증거가 없으면(예전 캐시) 아니에요
 
 
 def test_share_count_switch(monkeypatch):
@@ -321,7 +321,7 @@ NOW = dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST)
 SESSIONS = {"dates": [dt.date(2026, 10, d) for d in (13, 14, 15, 16, 17, 20, 21, 22, 23, 26, 27, 28, 29, 30)], "src": "시험"}
 NEW_ROWS = ("손익 줄 검사 기록 (incCheck)", "EPS 기준 표시 (epsBasis = owners)", "국내 손익 줄 채움 — 시총 상위 200 (매출은 금융회사 빼고)",
             "필수 종목 손익 3줄 (매출·영업이익·순이익)", "재무제표는 있는데 손익 줄을 하나도 못 읽은 회사",
-            "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)", "필수 종목 EPS = 지배주주 순이익 (부호 같음)",
+            "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)", "필수 종목 EPS = 지배주주 순이익 (부호 같음)",
             "EPS 기준이 다른 회사 (상위 200 연결 전체 순이익 · TTM 표시인데 연간)", "incCheck 집계 = corp.json 영수증 수")
 
 
@@ -338,6 +338,11 @@ def with_income(files):
         c["epsIn"] = {"ni": ni, "b": "o", "p": "ttm" if c.get("bq") else "fy", "sh": sh}
         c["bps"] = s["bps"] = round(500.0 * 1e8 / sh, 0)
         c["bpsIn"] = {"eq": 500.0, "b": "o", "sh": sh, "p": "ttm" if c.get("bq") else "fy"}
+        # 리뷰 2026-11-08 새 줄: PER·PBR = 종가 ÷ 영수증 · data.json = corp.json (파이프라인처럼 같은 값)
+        s["per"] = c["per"] = round(s["price"] / (ni * 1e8 / sh), 1)
+        s["pbr"] = c["pbr"] = round(s["price"] / (500.0 * 1e8 / sh), 2)
+        c["roeIn"] = {"ni": ni, "eq": 500.0, "b": "o", "p": "fy"}            # ROE 도 같은 주주 몫 (사업보고서)
+        s["roe"] = c["roe"] = round(ni / 500.0 * 100, 1)
         if c["t"] == "105560":
             c["rev"] = [None, None, None]
             c["incNa"] = ["rev"]
@@ -426,10 +431,15 @@ def test_coverage_is_a_warning_now_and_fails_below_the_floor_once_set(pair, monk
     for c in top:
         c["op"] = [None, 1.0, 1.0]
     name = "국내 손익 줄 채움 — 시총 상위 200 (매출은 금융회사 빼고)"
+    assert V.INC_TOP_FLOOR == 98.0                                         # Jack 승인 2026-11-08
+    assert "영업이익 90.0% (180/200)" in fails(cur, prev, name)[1]          # 98% 미만 → 발행을 막아요
+    for c in top[:17]:
+        c["op"] = [1.0, 1.0, 1.0]
     row = rows_of(check(cur, prev))[name]
-    assert row[3] == "WARN" and "영업이익 90.0% (180/200)" in row[1]
-    monkeypatch.setattr(V, "INC_TOP_FLOOR", 95.0)
-    fails(cur, prev, name)
+    assert row[3] == "WARN" and "영업이익 98.5% (197/200)" in row[1]        # 98% 이상이지만 100% 아님 → 경고 (이름과 함께)
+    top[16]["op"] = [None, 1.0, 1.0]
+    top[15]["op"] = [None, 1.0, 1.0]
+    assert "영업이익 97.5% (195/200)" in fails(cur, prev, name)[1]
     monkeypatch.setattr(V, "INC_TOP_FLOOR", 90.0)
     assert rows_of(check(cur, prev))[name][3] == "WARN"
 
@@ -475,7 +485,7 @@ def test_must_have_eps_must_match_data_json(pair):
 def test_receipt_shape_problems_fail(pair, change):
     cur, prev = pair
     change(comp(cur, "200200"))
-    fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)")
+    fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)")
 
 
 def test_foreign_issuer_with_receipts_fails(pair):
@@ -483,7 +493,7 @@ def test_foreign_issuer_with_receipts_fails(pair):
     c = comp(cur, "200200")
     c["t"] = "950999"
     next(s for s in cur["data"]["stocks"] if s["t"] == "200200")["t"] = "950999"
-    assert "950999" in fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)")[1]
+    assert "950999" in fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)")[1]
 
 
 def test_eps_basis_differences_are_a_named_warning(pair):
@@ -559,7 +569,7 @@ def test_a_korean_eps_without_its_receipt_fails_the_gate(pair):
     p = c.pop("epsIn")["p"]
     cur["data"]["incCheck"]["epsB"]["o"] -= 1
     cur["data"]["incCheck"]["epsP"][p] -= 1
-    assert "EPS 영수증 없음" in fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa)")[1]
+    assert "EPS 영수증 없음" in fails(cur, prev, "EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)")[1]
 
 
 def test_mixed_eps_basis_marker_fails_the_gate(pair):
@@ -594,7 +604,7 @@ def test_industry_codes_and_the_corp_map_carry_over_from_the_v2_cache(tmp_path, 
     src = inspect.getsource(F.main)
     i = src.find("carry, keep_v2 = read_carry(legacy), legacy")
     assert 0 < i < src.find("adopt_carry(client, carry)") < src.find("client.remove_after_save.append(keep_v2)")
-    assert "ksic=client.started_empty and not client.carried" in inspect.getsource(F.enrich_with_dart)
+    assert "ksic=client.started_empty and not has_ksic" in inspect.getsource(F.enrich_with_dart)
 
 
 def test_the_v2_file_is_kept_until_the_v3_cache_has_been_saved_once(tmp_path, monkeypatch):
@@ -604,6 +614,9 @@ def test_the_v2_file_is_kept_until_the_v3_cache_has_been_saved_once(tmp_path, mo
     c = F.DartClient("k", today=dt.date(2026, 11, 8), path=str(tmp_path / "dart-v3.json.gz"))
     F.adopt_carry(c, F.read_carry(str(old)))
     c.remove_after_save.append(str(old))
+    c.save()                                                               # 중간 저장 (재무제표 조회 전): 지우지 않아요 (리뷰 2026-11-08)
+    assert old.exists()
+    c.fetch_done = True                                                    # enrich_with_dart 가 조회를 끝냈어요
     real_dump = json.dump
     monkeypatch.setattr(F.json, "dump", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     with pytest.raises(OSError):

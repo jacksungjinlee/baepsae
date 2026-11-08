@@ -140,7 +140,11 @@ def test_total_profit_is_owners_plus_minority_when_the_total_row_is_missing():
     q = F.parse_dart_quarter(rows("251970", "2026", "11012"))                                 # 펌텍코리아 2026 반기: 당기순이익 줄 없음
     assert q["ni"] == round(q["nio"] + q["nciPl"], 1) and q["nioHow"] == "code"
     only = EQ + [r("CIS", "지배기업 소유주지분", "ifrs-full_ProfitLossAttributableToOwnersOfParent", 5e9)]
-    assert F.parse_dart_list(only)["_fin"]["ni"] == [None, None, None]                       # 비지배 줄이 없으면 만들지 않아요
+    # Jack (2026-11-08): 비지배지분이 없으면 (재무상태표·손익계산서에 비지배 줄이 없거나 0) 당기순이익 = 지배주주 순이익 (nci0)
+    out = F.parse_dart_list(only)
+    assert out["_fin"]["ni"] == [50.0, None, None] and out["_inc"]["src"]["ni"] == "nci0"
+    with_nci = only + [r("BS", "비지배지분", "ifrs-full_NoncontrollingInterests", 3e9)]
+    assert F.parse_dart_list(with_nci)["_fin"]["ni"] == [None, None, None]                   # 비지배지분이 있으면 만들지 않아요
 
 
 # ── 5. 분기·반기도 같은 규칙 → TTM ─────────────────────────────────
@@ -242,12 +246,12 @@ def test_icr_below_one_never_reads_one():
 
 # ── 9. BPS 의 시점 (리뷰 2026-11-08): 앱의 'PBR 은 그 분기 자본 기준' 줄이 사업보고서 자본일 때 틀리지 않게 ─────────
 @pytest.mark.parametrize("fin, want", [
-    ({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0, "eqo": 8.0}, "fs": "CFS", "bq": "2026.2Q"}, (8.0, "o", "code", "ttm")),
-    ({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS", "bq": "2026.2Q"}, (7.0, "o", "code", "fy")),   # 분기엔 지배주주 자본 없음
-    ({"eq": 9.0, "nciBs": None, "bs2": {"eq": 10.0, "nciBs": None}, "fs": "CFS"}, (10.0, "o", "nci0", "ttm")),
-    ({"eq": 9.0, "nciBs": None, "bs2": {"eq": 10.0}, "fs": "CFS"}, (9.0, "o", "nci0", "fy")),                  # 분기엔 증거 없음
-    ({"eq": 9.0, "bs2": {"eq": 10.0}, "fs": "OFS"}, (10.0, "s", "ofs", "ttm")),
-    ({"eq": 9.0, "fs": "CFS"}, (9.0, "t", "total", "fy")),
+    ({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0, "eqo": 8.0}, "fs": "CFS", "bq": "2026.2Q"}, (8.0, "o", "code", "ttm", 0.0)),
+    ({"eq": 9.0, "eqo": 7.0, "bs2": {"eq": 10.0}, "fs": "CFS", "bq": "2026.2Q"}, (7.0, "o", "code", "fy", 0.0)),   # 분기엔 지배주주 자본 없음
+    ({"eq": 9.0, "nciBs": None, "bs2": {"eq": 10.0, "nciBs": None}, "fs": "CFS"}, (10.0, "o", "nci0", "ttm", 0.0)),
+    ({"eq": 9.0, "nciBs": None, "bs2": {"eq": 10.0}, "fs": "CFS"}, (9.0, "o", "nci0", "fy", 0.0)),                  # 분기엔 증거 없음
+    ({"eq": 9.0, "bs2": {"eq": 10.0}, "fs": "OFS"}, (10.0, "s", "ofs", "ttm", 0.0)),
+    ({"eq": 9.0, "fs": "CFS"}, (9.0, "t", "total", "fy", 0.0)),
 ])
 def test_bps_says_which_balance_sheet_it_used(fin, want):
     assert F.bps_source(fin) == want
