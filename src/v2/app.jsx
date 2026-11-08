@@ -14,7 +14,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
 import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine } from "./store.js";
-import { refreshFresh, nextFreshCheck } from "./load.js";
+import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -50,9 +50,11 @@ export class ErrorBoundary extends React.Component {
   }
 }
 
-// source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }> }
+// source: { preview, storeKey, exportPrefix, load: () => Promise<load state>, loadDisc?: () => Promise<{ ok, data, error }>,
+//   refetch?: (load, disc) => Promise<{ ok, load?, disc?, why? }> }
 // loadDisc (v19.1a, live page only): disc.json for a Korean company's 공시 tab, fetched once, the first time a company page
 // opens. The preview page has none (it fetches nothing): its company pages have no 공시 tab.
+// refetch (2026-11-08, live page only): load.js refetchNewer, for a page brought back into view with stale data.
 export function App({ source }) {
   const [load, setLoad] = useState({ status: "loading" });
   const [store, setStore] = useState(() => ({ ...readStore(source.storeKey, todayKst()), key: source.storeKey, exportPrefix: source.exportPrefix,
@@ -85,11 +87,14 @@ export function App({ source }) {
   }, []);
 
   // v19.1c: the stale check again while the page stays open (load.js refreshFresh): when it is shown again and from a timer
-  // that fires just after staleAfter or the next day of a publish (at most an hour apart). Nothing is fetched again: only
+  // that fires just after staleAfter or the next day of a publish (at most an hour apart). Nothing is fetched here: only
   // fresh (and what reads it: the date lines, the 홈 stale band, the daily check) can change. Not on the preview page.
+  // (A page brought back into view with stale data fetches the files once: the effect after this one.)
   const liveData = load.status === "ok" && !load.preview;
   const loadRef = useRef(load);
   loadRef.current = load;
+  const discRef = useRef(disc);
+  discRef.current = disc;
   useEffect(() => {
     if (!liveData) return undefined;
     let on = true, timer = null;
@@ -107,6 +112,44 @@ export function App({ source }) {
       if (timer != null) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onShow);
       window.removeEventListener("focus", check);
+    };
+  }, [liveData]);
+
+  // 2026-11-08 (Jack, Q9: "Old page brought back into view: yes, fetch once. If that fails, show the existing stale or
+  // failed message."): a page brought back into view (visibilitychange to visible after it was hidden, or pageshow from the
+  // back-forward cache) whose data is stale at that moment fetches the files once (load.js returnWatch · refetchNewer).
+  // A later publish, every file from it, replaces the data on every screen at once (and the 공시 tab's disc.json when it is
+  // already shown); anything else leaves the screens as they are, with their stale line, and says why in the console.
+  // Focus alone is not a return. Live page only (the preview has no refetch).
+  useEffect(() => {
+    if (!liveData || !source.refetch) return undefined;
+    const w = returnWatch({
+      hidden: document.visibilityState === "hidden",
+      getLoad: () => loadRef.current,
+      getDisc: () => (discRef.current && discRef.current.status === "ok" ? discRef.current.data : null),
+      refetch: source.refetch,
+      now: () => Date.now(),
+      apply: (r, cur) => {
+        if (!r || !r.ok) return;
+        if (!loadRef.current || loadRef.current.data !== cur.data) {
+          console.warn("[v2] back in view: the data on screen changed while the files were fetched; the fetched files are not used");
+          return;
+        }
+        setLoad(adoptLoad(r.load));
+        if (r.disc) setDisc((d) => (d.status === "ok" ? { status: "ok", data: r.disc } : d));
+      },
+    });
+    const onVis = () => { if (document.visibilityState === "hidden") w.hide(); else w.show(); };
+    const onHide = () => w.hide();
+    const onBack = (e) => { if (e && e.persisted) w.show(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onBack);
+    return () => {
+      w.stop();
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onBack);
     };
   }, [liveData]);
 

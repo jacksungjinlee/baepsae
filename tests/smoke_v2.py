@@ -35,6 +35,8 @@
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
               늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
+  돌아온 화면 (2026-11-08, 390 · 1280) 멈춘 화면이 다시 보이면 파일을 한 번 받아요: 더 새 발행이면 모든 화면이 새 날짜 · 받지 못함 ·
+              못 읽음 · 섞인 발행이면 멈춤 표시 그대로 · 멈춘 데이터가 아니면 받지 않음 · 돌아올 때마다 한 번만
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
@@ -4493,6 +4495,168 @@ def scene_stale_recheck(R, files, width):
         srv.shutdown()
 
 
+# ── 2026-11-08 (Jack, Q9): an old page brought back into view fetches the files once (load.js refetchNewer · returnWatch) ──
+# The page is hidden and shown again by hand (headless Chromium is always visible): visibilityState is shadowed on the
+# document and the events are dispatched; the back-forward cache return is pagehide + pageshow(persisted).
+HIDE_JS = """() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); }"""
+SHOW_JS = "() => { delete document.visibilityState; delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); }"
+BFCACHE_JS = """() => { window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+  window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })); }"""
+REFETCH_PX, REFETCH_MD = "2026-11-02", "11월 2일"                      # a later close than the fixture's 10월 30일
+DATA_FILE_RX = re.compile(r"/(data|corp|macro|disc)\.json$")
+SCREEN_DL = '[data-ui-v2="screen"] [data-ui-v2="date-line"]'           # the screen's own date line (PC: not the left menu's)
+
+
+def refetch_files(files):
+    """A later publish (an hour ago, staleAfter tomorrow): every file carries its publishedAt, prices of 11월 2일."""
+    f = stale_files(files, 1, 30)
+    f["data.json"]["pxDate"] = REFETCH_PX
+    f["corp.json"]["pxDate"] = REFETCH_PX
+    f["disc.json"]["newest"] = REFETCH_PX
+    return f
+
+
+def put_files(site, f, names=None, raw=None):
+    """Writes the files into the running site (the next request gets them)."""
+    for name in names or DATA_FILES:
+        with open(os.path.join(site, name), "w", encoding="utf-8") as fh:
+            fh.write(raw[name] if raw and name in raw else json.dumps(f[name], ensure_ascii=False))
+
+
+def scene_stale_refetch(R, files, width):
+    """돌아온 화면 (Jack, 2026-11-08 Q9 "Old page brought back into view: yes, fetch once"): 멈춤 표시가 있는 화면이 다시 보이면 파일을
+    한 번 받아요. 사이트에 더 새 발행이 있으면 모든 화면이 새 데이터로 (날짜 줄의 새 날짜 · 멈춤 표시와 홈 띠가 사라짐), 받지 못하거나 ·
+    못 읽거나 · 발행이 섞였으면 그대로 (멈춤 표시가 남고 불러오기 실패 문구로 바뀌지 않아요 · console 에 이유). 멈춘 데이터가 아니면
+    받지 않아요. 돌아올 때마다 한 번만 (다시 받지 않음 · 되풀이 없음)."""
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    wide = width >= 1024
+    words3 = fillp(C["app"]["stale"], n=3)
+    old_line = fillp(C["app"]["asOf"], md="10월 30일") + " · " + words3
+    new_line = fillp(C["app"]["asOf"], md=REFETCH_MD)
+    for how in ("newer", "bfcache", "offline", "unreadable", "mixed", "fresh"):
+        if how == "bfcache":                                     # the 4-day backstop (no staleAfter), on a company's 공시 tab
+            old = clone(files)
+            for n in DATA_FILES:
+                old[n]["publishedAt"] = now_kst(days_ago=6)
+            path = "/app.html?dev=1#stocks/005930/disc"
+        else:
+            old = refetch_files(files) if how == "fresh" else stale_files(files, 75, -2, 2)    # n = 3: '3일째 갱신이 멈췄어요'
+            path = "/app.html?dev=1"
+        site = build_site(old)
+        srv, ctx, page, _ = R.open(site, width, init=init, path=path, device=pc_device(width) if wide else None)
+        asked, logs = [], []
+        page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
+        page.on("console", lambda m: logs.append(m.text))
+
+        def quiet(n):
+            page.wait_for_timeout(1200)
+            assert len(asked) == n, asked[n:]
+
+        def run():
+            if how == "bfcache":
+                ds = page.locator('[data-ui-v2="co-disc"]')
+                page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.state === 'ok'; }")
+                assert ds.get_attribute("data-stale") == "1"                                       # disc.json 6 days old
+                stale_dl = page.locator('[data-ui-v2="date-line"][data-stale="1"]').first
+                stale_dl.wait_for(state="visible")
+                assert stale_dl.inner_text().endswith(" · " + fillp(C["app"]["stale"], n=6)), stale_dl.inner_text()
+            else:
+                wait_ready(page)
+                at(page, "home")
+                dl = page.locator(SCREEN_DL).first
+                dl.wait_for(state="visible")
+                if how == "fresh":
+                    assert dl.get_attribute("data-stale") == "0" and dl.inner_text() == new_line, dl.inner_text()
+                    page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+                else:
+                    assert dl.get_attribute("data-stale") == "1" and dl.inner_text() == old_line, dl.inner_text()
+                    page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
+            R.collect(page)
+            n0 = len(asked)
+            new = refetch_files(files)
+            if how == "offline":
+                put_files(site, new)
+                page.route("**/data.json", lambda r: r.abort())                                    # the network is gone
+            elif how == "unreadable":
+                text = json.dumps(new["data.json"], ensure_ascii=False)
+                put_files(site, new, raw={"data.json": text[: len(text) // 2]})
+            elif how == "mixed":
+                put_files(site, new, names=["data.json"])                                          # corp.json · macro.json: the old publish
+            else:
+                put_files(site, new)
+            page.evaluate(BFCACHE_JS if how == "bfcache" else HIDE_JS)
+            if how != "bfcache":
+                page.evaluate(SHOW_JS)
+            if how == "fresh":                                                                     # not stale: nothing is fetched
+                quiet(n0)
+                assert page.locator(SCREEN_DL).first.get_attribute("data-stale") == "0"
+                assert not [x for x in logs if "back in view" in x], logs
+                return
+            if how in ("newer", "bfcache"):
+                if how == "bfcache":
+                    page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"co-disc\"]'); return !!e && e.dataset.stale === '0'; }")
+                    ds = page.locator('[data-ui-v2="co-disc"]')
+                    assert ds.locator('[data-ui-v2="date-line"]').first.inner_text() == new_line          # the new disc.json (newest 11월 2일)
+                    assert page.locator('[data-ui-v2="date-line"][data-stale="1"]').count() == 0          # the company's stale line is gone
+                    want = ["data.json", "corp.json", "disc.json", "macro.json"]
+                else:
+                    page.wait_for_function("(s) => { const e = document.querySelector(s); return !!e && e.dataset.stale === '0'; }", arg=SCREEN_DL)
+                    dl = page.locator(SCREEN_DL).first
+                    assert dl.inner_text() == new_line, dl.inner_text()                                  # the new date, no stale words
+                    page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")                  # the 홈 band is gone: today's check runs
+                    assert page.locator('[data-ui-v2="today-stale"]').count() == 0
+                    want = ["data.json", "corp.json", "macro.json"]
+                got = asked[n0:]
+                assert got[0] == "data.json" and sorted(got) == sorted(want), got                       # each file once, data.json first
+                assert any("now shows on every screen" in x and REFETCH_PX in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
+                R.collect(page)
+                n1 = len(asked)
+                page.evaluate(HIDE_JS)                                                              # back again: not stale any more
+                page.evaluate(SHOW_JS)
+                quiet(n1)
+                if how == "newer":                                                                  # every screen reads the new data
+                    for key in ("stocks", "market", "portfolio"):
+                        if wide:
+                            side_tab(page, key)
+                        else:
+                            tab(page, TABS[key])
+                            at(page, key)
+                        line = page.locator(SCREEN_DL).first
+                        line.wait_for(state="visible")
+                        assert line.get_attribute("data-stale") == "0" and line.inner_text() == new_line, (key, line.inner_text())
+                        assert page.locator('[data-ui-v2="date-line"][data-stale="1"]').count() == 0, key
+                        R.collect(page)
+                no_hscroll(page, width)
+                return
+            # offline · unreadable · mixed: the data on screen stays, with its stale line (never the load-failure message)
+            deadline = time.time() + WAIT / 1000
+            while not any("kept the data on screen" in x for x in logs) and time.time() < deadline:
+                page.wait_for_timeout(100)
+            kept = [x for x in logs if "kept the data on screen" in x]
+            reason = {"offline": "data.json: ", "unreadable": "data.json: ", "mixed": "the files are from different publishes"}[how]
+            assert len(kept) == 1 and reason in kept[0], kept
+            quiet(n0 + (3 if how == "mixed" else 1))                                                # one fetch for this return, no retry
+            got = asked[n0:]
+            assert sorted(got) == (["corp.json", "data.json", "macro.json"] if how == "mixed" else ["data.json"]), got
+            dl = page.locator(SCREEN_DL).first
+            assert dl.get_attribute("data-stale") == "1" and dl.inner_text() == old_line, dl.inner_text()
+            band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"] h2')
+            assert band.inner_text() == fillp(C["today"]["stale"], n=3), band.inner_text()
+            assert page.locator('[data-ui-v2="load-fail"]').count() == 0 and page.locator('[data-ui-v2="today-hero"]').count() == 0
+            R.collect(page)
+            no_hscroll(page, width)
+        desc = {"newer": "더 새 발행 → 다시 보일 때 data · corp · macro 를 한 번씩 받아 모든 화면이 새 날짜(멈춤 표시 · 홈 띠 없음), 또 돌아와도 다시 받지 않음",
+                "bfcache": "4일 규칙 · 공시 탭 · 뒤로 가기 캐시(pageshow)에서 돌아옴 → disc.json 도 같은 발행으로 한 번, 공시 탭 · 회사 날짜 줄이 새것",
+                "offline": "받지 못함 → data.json 한 번만, 멈춤 표시 · 홈 띠 그대로 (실패 문구 아님) · console 에 이유",
+                "unreadable": "못 읽는 data.json → 한 번만, 멈춤 표시 그대로 (실패 문구 아님) · console 에 이유",
+                "mixed": "data.json 만 새 발행 → 셋 다 받고 아무것도 쓰지 않음 (섞이지 않음) · 멈춤 표시 그대로",
+                "fresh": "멈춘 데이터가 아님 → 다시 보여도 받지 않음"}[how]
+        R.check(page, f"돌아온 화면 {width}", f"{how}: {desc}", run)
+        ctx.close()
+        srv.shutdown()
+
+
 import random  # noqa: E402  (v19.3c: 무작위 점수 열 가지, 씨앗을 정해 늘 같아요)
 
 
@@ -5465,7 +5629,8 @@ def main():
                    lambda: scene_v193c_landscape(R, files, (844, 390)), lambda: scene_v193c_landscape(R, files, (568, 320)),   # 가로 휴대폰
                    lambda: scene_v193c_offstep(R, files),                                                  # 안내 밖 단계 이동
                    lambda: scene_v193d(R, files, 390), lambda: scene_v193d(R, files, 1280),           # v19.3d 가진 종목 넣기 → 점검
-                   lambda: scene_v193d_more(R, files)):                                                    # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
+                   lambda: scene_v193d_more(R, files),                                                     # v19.3d 멈춘 데이터 · 379800 · 실패 · 합침
+                   lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280)):   # 2026-11-08 돌아온 화면은 한 번 받아요
             try:
                 fn()
             except Exception as e:
