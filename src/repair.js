@@ -62,19 +62,32 @@ export function epsFixNeeded(corp, co) {
 //   no epsIn (files before the re-read): eps = total net income ÷ common shares, so ni[i] ÷ shm, exactly as before
 //   epsIn.b "o": owners' net income nio3[i] ÷ epsIn.sh (common + listed preferred shares, a count)
 //   epsIn.b "s": ni[i] ÷ epsIn.sh (separate statements: total and owners' profit are the same)
+//   신종자본증권 (v19.1f review 3): for a company whose EPS has its hybrid-capital payouts taken out (epsIn.hyb > 0), the
+//   re-read writes nio3 as the owners' profit after those payouts (receipt nio3Hyb). "o" already reads nio3; "s" reads nio3
+//   too then (ni is before the payouts: a mixed basis). A year nio3 lacks is missing (never ni).
 //   A year missing on that basis (ni null) is just missing data: the cards say what they always say (자료가 없어요 · no
 //   card), as for a file before the re-read (review of PR #89: 13 companies with a 3-year return miss ni[2] today).
 //   epsIn.b "t", any other value, or no share count: { bad: true } — the card shows no numbers, only the PER/EPS line
 //   (never a mixed basis, never a guess).
 // -> { basis: "today" | "o" | "s", ni, sharesM } (ni null = that year is missing) | { bad: true } | null
 const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+// epsIn.hyb: the hybrid-capital payout taken out of EPS (a number, 억원; written only when there was one). Set = above 0.
+export function epsHybCut(e) {
+  const h = e && typeof e === "object" ? e.hyb : null;
+  return typeof h === "number" ? Number.isFinite(h) && h > 0 : !!h;
+}
+// The yearly profit series EPS stands on, after the re-read: "o", or "s" with hybrid payouts taken out -> nio3; "s" -> ni.
+// e: corp.json epsIn (b "o" or "s"). Shared by epsBase and 2.0's 배당성향 (company.js payout).
+export function epsNiSeries(co, e) {
+  return e.b === "o" || (e.b === "s" && epsHybCut(e)) ? co.nio3 : co.ni;
+}
 export function epsBase(co, i) {
   if (!co || typeof co !== "object") return null;
   const at = (arr) => (Array.isArray(arr) ? finite(arr[i]) : null);
   const e = co.epsIn;
   if (e == null) return { basis: "today", ni: at(co.ni), sharesM: finite(co.shm) };
   if (typeof e !== "object" || !(finite(e.sh) > 0) || !EPS_IN_FIXED.includes(e.b)) return { bad: true };
-  return { basis: e.b, ni: at(e.b === "o" ? co.nio3 : co.ni), sharesM: e.sh / 1e6 };
+  return { basis: e.b, ni: at(epsNiSeries(co, e)), sharesM: e.sh / 1e6 };
 }
 
 // The period behind a per-share figure, for its label ("최근 4개 분기" or "사업보고서"). in: corp.json epsIn or bpsIn. When
@@ -132,12 +145,15 @@ export function epsNoticeOn(corp, todayIso, date = EPS_FIX_DATE) {
 }
 
 // The currency of this company's statements when it is not won (corp.json stmtCur), exactly as written: "USD". null when
-// the field is absent, or holds anything but a three-letter upper-case code other than KRW (no line with an odd slot;
-// warnStmtCur says so in the console).
+// the field is absent, or holds anything but a three-letter upper-case code other than KRW and XXX (no line with an odd
+// slot; warnStmtCur says so in the console).
+// "XXX" (ISO 4217 'no currency') is what the pipeline writes for a currency name it cannot read (fetch_data.py
+// norm_currency): unreadable here too, never "원화가 아닌 XXX로".
 const CUR_RX = /^[A-Z]{3}$/;
+const CUR_NOT = ["KRW", "XXX"];
 export function stmtCurOf(co) {
   const c = co && typeof co === "object" ? co.stmtCur : null;
-  return typeof c === "string" && CUR_RX.test(c) && c !== "KRW" ? c : null;
+  return typeof c === "string" && CUR_RX.test(c) && !CUR_NOT.includes(c) ? c : null;
 }
 const warnedCur = new Set();
 // A stmtCur that cannot be shown: warns once per page, place and company. -> true when it warned (tests).
@@ -146,7 +162,7 @@ export function warnStmtCur(co, where) {
   const k = where + "|" + co.t;
   if (warnedCur.has(k)) return false;
   warnedCur.add(k);
-  console.warn(`[${where}] !! ${co.t}: corp.json stmtCur ${JSON.stringify(co.stmtCur)} is not a three-letter currency code other than KRW: `
-    + "its statement amounts may be blank with no reason on screen.");
+  console.warn(`[${where}] !! ${co.t}: corp.json stmtCur ${JSON.stringify(co.stmtCur)} is not a currency code the line can show (three `
+    + "capital letters, not KRW, not XXX = unreadable): no currency line, so its blank statement amounts show with no reason on screen.");
   return true;
 }

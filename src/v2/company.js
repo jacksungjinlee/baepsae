@@ -12,7 +12,7 @@ import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
 import { okCode } from "./routes.js";
-import { epsBase } from "../repair.js";
+import { epsBase, epsNiSeries } from "../repair.js";
 
 export { DCF, dcfPerShare, reverseDcf, okAssume } from "./dcf.js";
 
@@ -274,7 +274,7 @@ export function payout(s, co) {
     const e = co.epsIn && typeof co.epsIn === "object" ? co.epsIn : null;
     const basis = !e ? "today" : e.b === "o" || e.b === "s" ? e.b : "total";
     const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null;
-    const src = basis === "o" ? co.nio3 : co.ni;
+    const src = basis === "o" || basis === "s" ? epsNiSeries(co, e) : co.ni;    // repair.js: "s" with hybrid payouts reads nio3 too
     const ni0 = Array.isArray(src) ? num(src[0]) : null;
     const fy0 = num(co.fy) ?? num(s.fy);
     if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
