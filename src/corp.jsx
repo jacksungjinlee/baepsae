@@ -10,8 +10,8 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine } from "./fixnote.jsx";
-import { epsBase, epsPeriod, stmtNotWon } from "./repair.js";
+import { EpsFixLine, IcrOffLine, StmtCurLine, epsLineKind } from "./fixnote.jsx";
+import { epsBase, epsPeriod, stmtNotWon, stmtCurOf } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -967,6 +967,8 @@ function DecompCard({ c, setExplain, corp }) {
   const d0 = decomposeReturn(c);
   const basisBad = !!d0 && d0.why === "basis";     // 두 끝을 같은 기준에 세울 수 없어요: 숫자도 '적자 구간' 문장도 없이 PER · EPS 줄만
   const d = basisBad ? null : d0;
+  // 다시 읽은 뒤(Jack, 2026-11-08): 숫자를 뺀 칸에 보일 줄이 없으면(소수주주가 없는 총 순이익 회사) 제목만 남은 칸 대신 칸이 없어요
+  if (basisBad && !epsLineKind({ corp, cos: [c], force: true })) return null;
   const fx = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(2)) + "배";
   let verdict = null, body = null;
   if (d) {
@@ -1490,6 +1492,9 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         </div>
         <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
         <EpsFixLine corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
+        {/* 2026-11-08 (Jack): once, when a compared company files its statements in another currency (its numbers are blank):
+            the first such company's currency (repair.js stmtCurOf) */}
+        {cols.some((c) => stmtCurOf(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c))} />}
       </Card>
     </div>
   );

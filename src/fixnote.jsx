@@ -14,7 +14,7 @@
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
 import { mdOf, kstDate, loadCorpOnce } from "./data.js";
-import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur } from "./repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur } from "./repair.js";
 
 export { icrOff };
 export const FIX_EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.eps
@@ -22,6 +22,10 @@ export const FIX_ICR = "이자보상배율은 계산 방법을 고치는 중이�
 export const FIX_EPS_EN = "PER and EPS are being recalculated and may change on {date}.";       // Jack 승인 2026-11-08 (DeepL 확인) — 영어 화면
 export const FIX_ICR_EN = "Interest coverage isn't checked while we fix how it's calculated.";   // Jack 승인 2026-11-08 (DeepL 확인) — 영어 화면
 export const FIX_STMT_CUR = "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 co.stmtCur
+export const FIX_STMT_CUR_EN = "This company files its statements in {currency}, so we don't show its financial figures yet.";   // Jack 승인 2026-11-08 (전달) — 영어 첫 화면 성적표
+// 다시 읽은 뒤: 지배주주 줄이 없고 소수주주가 있는 회사(epsIn.b "t" · nci true)에만, PER · EPS 줄 자리에 (repair.js epsTotalNeeded). 영어 글은
+// 승인되지 않아 영어 화면에는 없어요. 다시 읽은 뒤에는 PER · EPS 줄이 어느 회사에도 없어요 (날짜가 지났어요).
+export const FIX_TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요.";   // Jack 승인 2026-11-08 (전달) — 2.0 fix.total
 // "11월 10일" · 영어 화면 "Nov 10" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
 export function fixEpsText(lang = "ko") {
   const en = lang === "en";
@@ -35,11 +39,19 @@ const LINE = { fontSize: 12, color: C.sub, lineHeight: 1.6, marginTop: 8, wordBr
 // 기업분석 · 첫 화면 성적표: 화면이 읽은 corp.json 과 그 칸에 숫자가 보이는 회사들(cos, corp.json 의 줄)로 정해요 — 그중 하나라도
 // 고쳐지지 않았으면 줄이 있어요. force: 두 끝을 같은 기준에 세울 수 없어 숫자를 빼고 이 줄만 보이는 칸 (repair.js epsBase).
 // lang: "en" on the old app's English screens (첫 화면 성적표 · 포트폴리오); 기업분석 passes none (Korean only).
+// 다시 읽은 뒤(표시가 있으면)는 같은 자리에 총 순이익 줄(FIX_TOTAL): 칸의 회사 중 하나라도 epsTotalNeeded 일 때 (force 도 그 회사여야 해요).
+// -> "eps" | "total" | null: 그 칸에 보일 줄.
+export function epsLineKind({ corp, cos, show = true, force = false }) {
+  if (epsBasisLive(corp)) {
+    return (force || show) && Array.isArray(cos) && cos.some((c) => epsTotalNeeded(corp, c)) ? "total" : null;
+  }
+  return force || (show && (!Array.isArray(cos) || cos.some((c) => epsFixNeeded(corp, c)))) ? "eps" : null;
+}
 export function EpsFixLine({ corp, cos, show = true, force = false, style, lang = "ko" }) {
-  const on = force || (show && (!Array.isArray(cos) || cos.some((c) => epsFixNeeded(corp, c))));
-  useEffect(() => { if (on && !epsBasisLive(corp)) warnEpsFixLate(corp, kstDate(Date.now()), "뱁새"); }, [on, corp]);
-  const text = on ? fixEpsText(lang) : null;
-  return text ? <div data-fix="eps" data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
+  const kind = epsLineKind({ corp, cos, show, force });
+  useEffect(() => { if (kind === "eps") warnEpsFixLate(corp, kstDate(Date.now()), "뱁새"); }, [kind, corp]);
+  const text = kind === "eps" ? fixEpsText(lang) : kind === "total" && lang !== "en" ? FIX_TOTAL : null;
+  return text ? <div data-fix={kind} data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
 }
 
 // 포트폴리오(data.json 으로 그려요): corp.json 을 한 번 받아(data.js loadCorpOnce, 다른 칸과 같이 써요) 표시와 회사마다의 epsIn 을
@@ -50,12 +62,15 @@ let CORP_FIX = null;
 export function corpFixState(d) {
   const live = epsBasisLive(d);
   const cos = d && Array.isArray(d.companies) ? d.companies : [];
-  return { live, fixed: new Set(live ? cos.filter(epsInFixed).map((c) => c.t) : []), notWon: new Set(cos.filter(stmtNotWon).map((c) => c.t)) };
+  return { live, fixed: new Set(live ? cos.filter(epsInFixed).map((c) => c.t) : []), notWon: new Set(cos.filter(stmtNotWon).map((c) => c.t)),
+    total: new Set(live ? cos.filter((c) => epsTotalNci(c) && !stmtNotWon(c)).map((c) => c.t) : []) };
 }
 // 그 칸에 줄이 필요한지: 상태를 모르면(받는 중 · 못 받음) 있어요. 아니면 그 칸의 코드 중 하나라도 고쳐지지 않았고 원화 재무제표인 회사가 있을 때.
 export function epsFixNeedLoaded(st, codes) {
-  return !st || !Array.isArray(codes) || codes.some((t) => !st.notWon.has(t) && !(st.live && st.fixed.has(t)));
+  return !st || !Array.isArray(codes) || (!st.live && codes.some((t) => !st.notWon.has(t)));
 }
+// 다시 읽은 뒤: 그 칸의 코드 중 총 순이익 줄이 필요한 회사가 있을 때 (상태를 모르면 없어요: 그때는 위의 PER · EPS 줄).
+export const epsTotalNeedLoaded = (st, codes) => !!st && st.live && Array.isArray(codes) && codes.some((t) => st.total.has(t));
 export function useEpsFixState(want) {
   const [st, setSt] = useState(CORP_FIX);
   useEffect(() => {
@@ -75,9 +90,9 @@ export function useEpsFixState(want) {
 // codes: 그 칸에 PER · ROE 가 보이는 한국 종목 코드들.
 export function EpsFixLineLoaded({ show = true, codes, style, lang = "ko" }) {
   const st = useEpsFixState(show);
-  const need = epsFixNeedLoaded(st, codes);
-  const text = show && need ? fixEpsText(lang) : null;
-  return text ? <div data-fix="eps" data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
+  const kind = !show ? null : epsFixNeedLoaded(st, codes) ? "eps" : epsTotalNeedLoaded(st, codes) ? "total" : null;
+  const text = kind === "eps" ? fixEpsText(lang) : kind === "total" && lang !== "en" ? FIX_TOTAL : null;
+  return text ? <div data-fix={kind} data-lang={lang === "en" ? "en" : "ko"} style={{ ...LINE, ...style }}>{text}</div> : null;
 }
 
 // co: corp.json 의 그 회사 줄.
@@ -87,10 +102,11 @@ export function IcrOffLine({ co, show = true, style, lang = "ko" }) {
 
 // 기업분석: 재무제표를 원화가 아닌 통화로 공시한 회사의 줄 (repair.js stmtCurOf: corp.json stmtCur 그대로, 예: USD). c: corp.json 의 그 회사 줄.
 // 기업분석은 한국 회사만 보여요 (미국 종목은 corp.json 에 없어요).
-export function stmtCurLineText(c) {
+// lang "en": 영어 첫 화면 성적표 (FIX_STMT_CUR_EN).
+export function stmtCurLineText(c, lang = "ko") {
   warnStmtCur(c, "뱁새");
   const cur = stmtCurOf(c);
-  return cur ? FIX_STMT_CUR.replace("{currency}", cur) : null;
+  return cur ? (lang === "en" ? FIX_STMT_CUR_EN : FIX_STMT_CUR).replace("{currency}", cur) : null;
 }
 export function StmtCurLine({ c, style }) {
   const text = stmtCurLineText(c);

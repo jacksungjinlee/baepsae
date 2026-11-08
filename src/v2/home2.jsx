@@ -51,7 +51,7 @@ import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero } from "./today.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
-import { IcrOffLine, EpsOwnersNote } from "./fixnote.jsx";
+import { IcrOffLine, EpsOwnersNote, StmtCurLine } from "./fixnote.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -100,6 +100,8 @@ function RulesHero({ block, many, narrow }) {
       {/* 2026-11-08 (Jack): why 재무 경고 0개 could not be checked, when a Korean holding's 이자보상배율 check is off (pf.js icrOff);
           under the tiles, in the hero's light grey (a tile is too narrow for the sentence) */}
       <IcrOffLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.icrOff)} style={{ color: "#CBD3DF", marginTop: SPACE(3) }} />
+      {/* and when a Korean holding files its statements in another currency (pf.js stmtCur), the same way */}
+      <StmtCurLine cur={(st.rules.find((x) => x.id === "warn" && x.state === "unknown") || {}).stmtCur} style={{ color: "#CBD3DF", marginTop: SPACE(3) }} />
       {line && <p data-ui-v2="home-broken" style={tx(SIZE.xs, WEIGHT.semi, "#E3E7EE", { marginTop: SPACE(3) })}>{line}</p>}
       {st.unchecked > 0 && <p data-ui-v2="home-not-checked" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF", { marginTop: SPACE(2) })}>{fill(C.daily.notChecked, { n: st.unchecked })}</p>}
     </section>

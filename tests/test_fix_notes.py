@@ -130,9 +130,10 @@ def test_the_eps_line_is_for_korean_stocks_until_the_marker_and_per_company():
         fixed: COS.map(RP.epsInFixed) };""")
     on = [True] * 6 + [False, False, False, True, True, False, False]
     assert got["failed"] == on and got["missing"] == on and got["other"] == on
-    assert got["live"] == [False, False, True, True, True, True] + [False, False, False, False, True, False, False]
+    # 다시 읽은 뒤 (Jack, 2026-11-08): 고치는 중 줄은 어느 회사에도 없어요 (날짜가 지났어요). 총 순이익 줄은 epsIn.nci 가 있는 "t" 만
+    assert got["live"] == [False, False, False, False, False, False] + [False, False, False, False, False, False, False]
     assert got["needNow"] == [True] * 6
-    assert got["needLive"] == [False, False, True, True, True, True]            # o · s 만 고쳐졌어요
+    assert got["needLive"] == [False] * 6
     assert got["fixed"] == [True, True, False, False, False, False]
 
 
@@ -159,7 +160,7 @@ def test_both_apps_say_the_same_approved_words_with_the_month_day_date():
     assert got["v2"] == [eps_line()] and got["v2off"] == ""
     assert got["icr"] == [ICR] and got["icrLine"] == [ICR] and got["icrNo"] == ""
     assert got["old"] == [eps_line()] and got["oldLive"] == "" and got["oldIcr"] == [ICR] and got["oldIcrNo"] == ""
-    assert got["oldT"] == [eps_line()] and got["oldForce"] == [eps_line()]   # 칸의 한 회사라도 총 순이익이면 · 숫자를 뺀 칸은 언제나
+    assert got["oldT"] == [] and got["oldForce"] == []   # 다시 읽은 뒤: 소수주주 표시(nci)가 없는 총 순이익 회사 · 숫자를 뺀 칸에도 없어요
     assert all(px >= 12 for px in got["px"]), got["px"]                      # 12px 바닥 (2.0 은 13px, 예전 뱁새 12px)
 
 
@@ -235,7 +236,7 @@ def test_old_app_score_card_and_company_page_show_the_lines_until_the_marker():
     assert ICR in got["ko"][got["ko"].index("짚고 갈 재무 신호 1개가 있어요"):]                         # 재무 신호 밑
     assert eps_line() not in got["en"] and ICR not in got["en"]               # 영어 화면: Jack 이 영어 글을 승인할 때까지 없어요
     assert eps_line() not in got["fixed"] and ICR not in got["fixed"]         # 다시 읽기가 끝나면 둘 다 없어요 (이 회사 epsIn.b "o")
-    assert eps_line() in got["stillTotal"]                                    # 표시가 있어도 그 회사가 총 순이익이면 줄은 그대로
+    assert eps_line() not in got["stillTotal"]                                # 다시 읽은 뒤에는 epsIn 이 없는 회사도 고치는 중 줄이 없어요
     # 기업분석: 투자지표 · 업종 내 위치 · 주가 분해 · DCF (네 칸에 한 줄씩), 재무 신호 밑에 이자보상배율 한 줄
     assert got["pageNow"] == 4 and got["pageIcr"] == 1, (got["pageNow"], got["pageIcr"])
     assert got["pageFixed"] == 0 and got["pageFixedIcr"] == 0
@@ -334,7 +335,7 @@ def test_old_app_cards_follow_the_same_basis_and_show_the_line_in_place_of_numbe
     assert got["o"]["inputs"][:2] == [js(SAM_NIO3[0]), js(round(sh / 1e6 * 10) / 10)], got["o"]["inputs"]
     assert got["o"]["then"][0] == f"{round(SAM_NIO3[2] * 1e8 / sh):,}", got["o"]["then"]
     # "t": 주가 분해는 숫자 · '적자 구간' 문장 없이 줄만, DCF 는 채우지 않고 줄 — 투자지표 · 업종 내 위치도 줄 (총 순이익이라)
-    assert not got["t"]["split"] and not got["t"]["lossText"] and got["t"]["eps"] == 4, got["t"]
+    assert not got["t"]["split"] and not got["t"]["lossText"] and got["t"]["eps"] == 0, got["t"]      # 다시 읽은 뒤: nci 가 없으면 줄도 없어요
     assert got["t"]["inputs"][:2] == ["", ""], got["t"]["inputs"]
     assert not got["tNow"]["split"] and got["tNow"]["eps"] == 4
 
@@ -457,7 +458,7 @@ def test_old_screener_and_compare_decide_the_line_only_from_rows_with_per_or_roe
       const cmp = (cos) => count(renderToStaticMarkup(h(OLD.CompareView, { data: data(cos), baseT: cos[0].t, onOpen() {}, onBack() {}, setExplain() {} })), EPS);
       out = { scrDash: scr([F, DT]), scrNum: scr([F, NT]), cmpDash: cmp([F, DT]), cmpNum: cmp([F, NT]) };""", F=fixed, DT=dash_t, NT=num_t)
     assert got["scrDash"] == 0 and got["cmpDash"] == 0, got           # '–' 만 있는 총 순이익 회사는 줄을 만들지 않아요
-    assert got["scrNum"] == 1 and got["cmpNum"] == 1, got             # PER 이 보이는 총 순이익 회사가 있으면 줄
+    assert got["scrNum"] == 0 and got["cmpNum"] == 0, got             # 다시 읽은 뒤: nci 가 없는 총 순이익 회사는 줄이 없어요
 
 
 

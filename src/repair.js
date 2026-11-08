@@ -54,8 +54,22 @@ export function epsInFixed(co) {
 // corp: corp.json · co: that company's row in it. true = the PER/EPS line shows for this company.
 // Never for a company whose statements are not in won (stmtNotWon, item 4 below; readable code or not): the re-read blanks its
 // EPS and the rest, it has no epsIn, and the currency line says why; the line would otherwise stay forever with a past date.
+// Once the marker is live (Jack, 2026-11-08) the being-fixed line goes for every company: its date has passed. A company the
+// re-read left on total profit because its statements have no owners' line but do show minority shareholders (epsIn.b "t"
+// with epsIn.nci true, fetch_data.py eps_nci) gets "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체
+// 순이익으로 계산했어요." in the same places instead (epsTotalNeeded). Other "t" companies (no minority shareholders: the
+// owners'-line mismatch guard, or hybrid capital that cannot be placed), companies with no epsIn and foreign issuers show
+// neither line. Before the marker nothing changes.
 export function epsFixNeeded(corp, co) {
-  return !stmtNotWon(co) && !(epsBasisLive(corp) && epsInFixed(co));
+  return !stmtNotWon(co) && !epsBasisLive(corp);
+}
+// epsIn.b "t" with the minority-shareholder mark (pipeline writes nci only as true and only with b "t").
+export function epsTotalNci(co) {
+  return !!co && typeof co === "object" && !!co.epsIn && typeof co.epsIn === "object" && co.epsIn.b === "t" && co.epsIn.nci === true;
+}
+// true = the total-profit line shows for this company (corp: corp.json on screen · co: its row).
+export function epsTotalNeeded(corp, co) {
+  return epsBasisLive(corp) && !stmtNotWon(co) && epsTotalNci(co);
 }
 
 // The net income (억원) and share count (백만주) on which this company's EPS stands, for the report year fy − i (corp.json

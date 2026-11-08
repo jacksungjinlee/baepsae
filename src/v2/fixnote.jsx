@@ -15,7 +15,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind } from "./fix.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -24,9 +24,12 @@ export function epsFixText() {
 }
 
 // Never on the example page (fix.js fixNotesHidden), even where a card would show the line in place of its numbers.
+// Once the corp.json on screen is the re-read (fix.js epsLineKind "total"), the same place shows C.fix.total instead
+// (Jack, 2026-11-08): the caller's show already holds only for a company on total profit with minority shareholders.
 export function EpsFixNote({ show, style }) {
-  const text = show && !fixNotesHidden() ? epsFixText() : null;
-  return text ? <Note data-ui-v2="eps-fix" style={style}>{text}</Note> : null;
+  const kind = show && !fixNotesHidden() ? epsLineKind() : null;
+  const text = kind === "eps" ? epsFixText() : kind === "total" ? C.fix.total || null : null;
+  return text ? <Note data-ui-v2={kind === "total" ? "eps-total" : "eps-fix"} style={style}>{text}</Note> : null;
 }
 
 export function IcrOffNote({ show, style }) {
@@ -38,6 +41,13 @@ export function IcrOffLine({ show, style }) {
   return show && C.fix.icr && !fixNotesHidden()
     ? <span data-ui-v2="icr-off" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{C.fix.icr}</span>
     : null;
+}
+
+// The currency line inside a rule tile (phrasing content), for a code already read (pf.js rule "warn" stmtCur): the
+// reason 재무 경고 0개 could not be checked for a holding whose statements are not in won (Jack, 2026-11-08).
+export function StmtCurLine({ cur, style }) {
+  const text = cur && C.co.stmtCur ? fill(C.co.stmtCur, { currency: cur }) : null;
+  return text ? <span data-ui-v2="stmt-cur" data-cur={cur} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{text}</span> : null;
 }
 
 // The week's notice with its date ("11월 10일"), or null when a word or the date is missing.

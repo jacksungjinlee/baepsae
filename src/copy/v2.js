@@ -446,6 +446,10 @@ export const C = {
     // 다시 읽기가 끝난 뒤 한 주: 홈과 포트폴리오 위쪽에 한 줄. 화면의 corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이
     // EPS_FIX_DATE 부터 그 + 7일 전까지만 (src/repair.js epsNoticeOn). {date} = EPS_FIX_DATE ("11월 10일"). 미리 보기에는 없어요.
     owners: "{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
+
+    // 다시 읽은 뒤(화면의 corp.json 에 epsBasis "owners"): 지배주주 줄이 없고 소수주주가 있는 회사(epsIn.b "t" · epsIn.nci true)에만,
+    // 위 eps 줄이 있던 자리에 (src/repair.js epsTotalNeeded). 다시 읽은 뒤에는 eps 줄이 어느 회사에도 없어요.
+    total: "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요.",   // chat (2026-11-08: Jack 승인, 전달)
   },
 
   // 시장 (v19.0c): 네 칸(각자 내용 날짜) + 예전 뱁새의 두 화면으로 가는 버튼. 국고채 · 원/달러는 하루 변화가 데이터에 없어 수준만.

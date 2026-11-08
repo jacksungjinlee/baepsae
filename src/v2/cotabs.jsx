@@ -32,7 +32,7 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor, stmtNotWonFor } from "./fix.js";
+import { epsFixFor, epsBasisIsLive, stmtNotWonFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
 import { EpsFixNote, StmtCurNote } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
@@ -126,7 +126,10 @@ function Decomp({ co, s }) {
     : pe && pe.fy && D.basisY && d.fyThen ? fill(D.basisY, { fy: d.fyThen, fyNow: d.fyThen + 2 }) : null;
   const msg = d.why === "loss" ? D.none : d.why === "missing" ? C.co.tiles.na : null;
   const noBasis = d.why === "basis";           // 2026-11-08: the two ends share no basis -> no numbers, the PER/EPS line in their place
-  if (!d.head && !msg && !noBasis) return null;
+  // After the re-read (Jack, 2026-11-08) the line in their place is the total-profit line, only for a company with minority
+  // shareholders (fix.js epsFixFor); with no line to show, no card (not a title over nothing)
+  const basisLine = noBasis && (!epsBasisIsLive() || epsFixFor(s));
+  if (!d.head && !msg && !basisLine) return null;
   return (
     <Card data-ui-v2="co-decomp" data-head={d.head || d.why}>
       <CardHead icon="chart-bar" tone="earn" title={D.title} />
@@ -144,7 +147,7 @@ function Decomp({ co, s }) {
         </>
       ) : !d.head && msg ? <Note>{msg}</Note> : null}
       {/* EPS · PER (and the loss reading, from the same net income); not under 자료가 없어요 */}
-      <EpsFixNote show={noBasis || (epsFixFor(s) && (!!d.head || d.why === "loss"))} />
+      <EpsFixNote show={basisLine || (epsFixFor(s) && (!!d.head || d.why === "loss"))} />
     </Card>
   );
 }
@@ -354,6 +357,7 @@ function Dcf({ load, s, co, a, onTry }) {
   if (!D.title || r.why === "us" || r.why === "notReady") return null;
   // 2026-11-08: no start profit on EPS's basis (company.js impliedGrowth "basis"): no numbers, the PER/EPS line in their place
   if (r.why === "basis") {
+    if (epsBasisIsLive() && !epsFixFor(s)) return null;     // after the re-read: no line to put in their place, no card (as 주가 분해)
     return (
       <Card data-ui-v2="co-dcf" data-edge="basis">
         <CardHead icon="scales" tone="value" title={D.title} />
@@ -540,6 +544,7 @@ function Calc({ load, s, store, setStoreData }) {
   const r = impliedGrowth(s, co, a);
   if (usOf(s) || r.why === "notReady" || r.why === "us" || !all(K.title, K.intro, K.disc, K.term, K.result)) return null;
   if (r.why === "basis") {                     // 2026-11-08: as the 가치 tab's card (no numbers, the PER/EPS line)
+    if (epsBasisIsLive() && !epsFixFor(s)) return null;
     return (
       <Card data-ui-v2="co-calc" data-g="" data-edge="basis">
         <CardHead icon="calculator" tone="value" title={K.title} />
@@ -745,7 +750,7 @@ export function DivTab({ load, s }) {
           </div>
           {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
               when the payout still uses total profit after the re-read (basis "total") */}
-          <EpsFixNote show={epsFixFor(s) || po.basis === "total"} />
+          <EpsFixNote show={epsFixFor(s)} />
         </Card>
       )}
       {(r.yieldPct != null || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
@@ -757,7 +762,7 @@ export function DivTab({ load, s }) {
         {us && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
         {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
             when the payout still uses total profit after the re-read (basis "total") */}
-        <EpsFixNote show={!ring && (epsFixFor(s) || (!!po && po.basis === "total")) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
+        <EpsFixNote show={!ring && epsFixFor(s) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
       </Card>}
     </div>
   );

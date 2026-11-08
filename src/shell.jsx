@@ -111,9 +111,9 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
     ? `P/B ${c.pbr}x — ${c.pbr > sec.pbrQ[1] ? "above" : "below"} the industry median of ${sec.pbrQ[1]}x.`
     : `PBR ${c.pbr}배 — 업종 중간 ${sec.pbrQ[1]}배 대비 ${c.pbr > sec.pbrQ[1] ? "높은" : "낮은"} 평가예요.`);
   // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(stmtCur)는 적자도 자료 없음도 아니에요. 한국어
-  // 화면은 승인된 통화 줄(다른 곳과 같은 글), 영어 화면은 영어 글이 승인되지 않아 아무 줄도 없어요 (맞지 않는 문장 대신).
+  // 화면은 승인된 통화 줄(다른 곳과 같은 글), 영어 화면은 승인된 영어 줄 (Jack, 2026-11-08 전달: FIX_STMT_CUR_EN).
   else if (stmtNotWon(c)) {          // 읽을 수 없는 코드("XXX")면 통화 줄 없이 (console 경고), 맞지 않는 문장도 없이
-    const t = !en ? stmtCurLineText(c) : null;
+    const t = stmtCurLineText(c, en ? "en" : "ko");
     if (t) lines.push(<span data-fix="stmt-cur" data-cur={stmtCurOf(c)}>{t}</span>);
   }
   else lines.push(en ? "Loss-making or no financial data yet." : "적자이거나 재무 데이터가 아직 없어요.");

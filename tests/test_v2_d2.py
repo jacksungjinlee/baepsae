@@ -569,3 +569,24 @@ def test_the_limits_address():
       .map((h) => { const r = RT.parseHash(h); return [r.known, r.tab, r.sub, r.rules || null]; });""")
     assert got[0] == [True, "portfolio", "rules/dimp", "dimp"] and got[1] == [True, "portfolio", "rules/d1x-2_y", "d1x-2_y"]
     assert all(g[0] is False for g in got[2:]), got
+
+
+def test_a_copy_that_differs_only_in_the_first_visit_flag_is_merged_quietly():
+    """Jack, 2026-11-08: guideSeen is this device's flag, not a record. A copy that differs from the records only in it
+    (another tab saw the guide) is merged without "다른 창에서 저장한 내용과 기록을 합쳤어요…" (restored false), and the
+    flag is kept. A copy with a real record difference still says it."""
+    got = run(LS + """const base = { v: 2, decks: [deckOf([['000010', 20]])] };
+      mem.clear();
+      mem.set(K, JSON.stringify({ ...P.withLimits(base, 'dimp', 20, 25, 1000), v: 2 }));
+      mem.set(K + '.other.' + 5, JSON.stringify({ ...P.withLimits(base, 'dimp', 20, 25, 1000), v: 2, guideSeen: T }));
+      const quiet = S.readStore(K, T);
+      const stored = JSON.parse(mem.get(K)).guideSeen;
+      mem.clear();
+      mem.set(K, JSON.stringify({ ...P.withLimits(base, 'dimp', 20, 25, 1000), v: 2 }));
+      mem.set(K + '.other.' + 5, JSON.stringify({ ...P.withLimits({ v: 2, decks: [deckOf([['000010', 20], ['000020', 5]])] }, 'dimp', 20, 25, 1000), v: 2, guideSeen: T }));
+      const loud = S.readStore(K, T);
+      mem.clear();
+      out = { quiet: { restored: quiet.restored, seen: quiet.data.guideSeen, stored }, loud: loud.restored };""")
+    assert got["quiet"]["restored"] is False, got
+    assert got["quiet"]["seen"] and got["quiet"]["stored"] == got["quiet"]["seen"], got
+    assert got["loud"] is True, got
