@@ -161,7 +161,7 @@ CORP_NEW_MUST_AMT = ("cash3", "eps3r")
 # filed 유상증자·사채가 설명해 공시 그대로 · nc-mismatch / nc-unexplained 다시 계산하지 않고 배당수익률을 숨김). 이 값들은 fetch_data.py 와
 # 일부러 따로 적어요. 모양이 틀리거나 배율·날짜·숨김이 맞지 않으면 실패. nf · filed · nc-* · 조회 실패 · 스위치 꺼짐은 경고만 (이름을
 # 적어요) — DART 장애가 발행을 막지 않게. divCheck.why 가 없으면 v19.1h 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패.
-DVWHY_KINDS = ("split", "merge", "bonus")   # 액면분할 · 주식병합 · 무상증자
+DVWHY_KINDS = ("split", "merge", "bonus", "reduce")   # 액면분할 · 주식병합 · 무상증자 · 주식병합으로 한 감자
 DVWHY_ST = ("ok", "nf", "filed", "nc-mismatch", "nc-unexplained")
 DVWHY_FX_KINDS = ("rights", "cb", "bw")     # 유상증자 · 전환사채 · 신주인수권부사채
 DVWHY_TOL = 0.005        # 공시 사건 배율의 곱 = 그해 dpsF ± 0.5%
@@ -1362,7 +1362,7 @@ def _dvwhy_events(ev, today):
         r = e.get("r")
         if not _isnum(r) or r <= 0 or not _dvwhy_clean(r) or abs(r - 1) <= DVWHY_SAME + 1e-9:
             return f"깨끗하지 않은 배율 {r}"
-        if (e["k"] == "split" and not r > 1) or (e["k"] == "merge" and not r < 1):
+        if (e["k"] == "split" and not r > 1) or (e["k"] in ("merge", "reduce") and not r < 1):
             return f"{e['k']} 배율 {r:g}"
         if e["k"] == "bonus" and (not _isnum(e.get("x")) or not e["x"] > 0 or abs(r - (1 + e["x"])) > 1e-6):
             return f"무상증자 배율 {r:g} ≠ 1 + {e.get('x')}"

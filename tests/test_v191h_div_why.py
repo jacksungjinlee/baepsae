@@ -180,13 +180,13 @@ def test_bonus_issue_rights_issue_and_capital_reduction_apis():
     pif = fx_json("356860_pifricDecsn.json")["list"]
     ev, bad = F.parse_dvwhy_bonus(pif, pre="fric_")
     assert [(e["d"], e["r"], e["x"], e["rc"]) for e in ev] == [("2026-07-20", 2.0, 1.0, "20260702000142")] and not bad
-    assert F.parse_dvwhy_rights(pif) == [{"k": "rights", "d": "2026-07-02", "rc": "20260702000142"}]
+    assert F.parse_dvwhy_rights(pif) == [{"k": "rights", "d": "2026-07-02", "rc": "20260702000142", "n": 2073000}]
     ev, oth, bad = F.parse_dvwhy_cr(fx_json("060560_crDecsn.json")["list"])   # HC홈센타 2024: 액면가만 500 → 100원
     assert ev == [] and oth == [] and bad == []
     row = {"rcept_no": "20260101000001", "bfcr_tisstk_ostk": "10,000,000", "atcr_tisstk_ostk": "1,000,000", "cr_std": "2026년 02월 03일",
            "cr_mth": "보통주 10주를 1주로 주식병합"}
     ev, oth, bad = F.parse_dvwhy_cr([row])
-    assert ev == [{"k": "merge", "d": "2026-02-03", "r": 0.1, "rc": "20260101000001", "src": "cr"}] and not oth
+    assert ev == [{"k": "reduce", "d": "2026-02-03", "r": 0.1, "rc": "20260101000001", "src": "cr"}] and not oth   # 감자는 액면병합과 따로
     ev, oth, bad = F.parse_dvwhy_cr([{**row, "cr_mth": "자기주식 소각"}])
     assert ev == [] and oth == [{"k": "cr", "d": "2026-02-03", "rc": "20260101000001"}]
     ev, oth, bad = F.parse_dvwhy_cr([{**row, "atcr_tisstk_ostk": "알 수 없음"}])
@@ -210,6 +210,33 @@ def test_withdrawn_decisions_are_dropped():
     out = F.dvwhy_drop_withdrawn(ev, [{"k": "split", "d": "2026-03-01", "rc": "20260301000009"}])
     assert [e["k"] for e in out] == ["bonus"]
     assert F.dvwhy_drop_withdrawn(ev, [{"k": "split", "d": "2026-01-01", "rc": "20260101000009"}]) == ev   # 결정보다 먼저 낸 철회는 그 결정이 아니에요
+    # 비고(rm) '철' = 그 공시 자체가 철회됨 → 그 접수번호의 결정만 빼요
+    assert [e["k"] for e in F.dvwhy_drop_withdrawn(ev, [{"k": "fric", "d": "2026-03-01", "rc": "20260301000001", "self": True}])] == ["split"]
+
+
+def test_a_filing_marked_withdrawn_in_its_remark_is_not_used():
+    """리뷰 6: DART 목록의 비고 rm 에 '철'(본 공시는 철회됨)이 붙은 공시는 이름에 '철회'가 없어도 철회로 봐요."""
+    rows = [{"report_nm": "주식분할결정", "rcept_no": "20260201000001", "rcept_dt": "20260201", "rm": "유철"},
+            {"report_nm": "주요사항보고서(유상증자결정)", "rcept_no": "20260202000002", "rcept_dt": "20260202", "rm": "철"},
+            {"report_nm": "주식병합결정", "rcept_no": "20260203000003", "rcept_dt": "20260203", "rm": "유"}]
+    fl = F.dvwhy_filings(rows)
+    assert fl["docs"] == [("merge", "20260203000003")] and fl["oth"] == []
+    assert [(w["k"], w["self"]) for w in fl["wd"]] == [("split", True), ("rights", True)]
+    # 철회된 분할이 있으면 다른 해의 '찾지 못했지만'을 쓰지 않아요
+    look = {**LOOK, "wd": fl["wd"]}
+    assert F.dvwhy_decide([1.0, 2.0, 2.0], 2025, 1.0, PX, look, "none")["st"] == "nc-mismatch"
+
+
+def test_only_share_decision_withdrawals_and_no_stock_dividends_count():
+    """리뷰 4: 사채 철회처럼 주식 수와 상관없는 철회는 '찾지 못했지만'을 막지 않아요 · 주식배당결정은 이름 붙이지 않는 변화로도 세지 않아요."""
+    rows = [{"report_nm": "주요사항보고서(전환사채권발행결정)(철회)", "rcept_no": "20250301000001", "rcept_dt": "20250301", "rm": ""},
+            {"report_nm": "주식배당결정", "rcept_no": "20250302000002", "rcept_dt": "20250302", "rm": "유"},
+            {"report_nm": "[기재정정]주식배당결정", "rcept_no": "20250303000003", "rcept_dt": "20250303", "rm": "유"}]
+    fl = F.dvwhy_filings(rows)
+    assert fl["oth"] == [] and [w["k"] for w in fl["wd"]] == ["cb"]
+    look = {**LOOK, "oth": fl["oth"], "wd": fl["wd"]}
+    assert F.dvwhy_decide([1.0, 2.0, 2.0], 2025, 1.0, PX, look, "none")["st"] == "nf"
+    assert F.dvwhy_kind("주식배당결정") == ("stockdiv", False)                    # 이름은 알아보지만 쓰지 않아요
 
 
 # ── 2. 판정 (Jack 의 답 2026-11-08) ──────────────────────────
@@ -312,9 +339,12 @@ def test_an_event_after_the_report_while_the_latest_factor_is_one_is_a_contradic
 class SynthClient(FxClient):
     """공시 목록 · API 응답을 직접 주는 가짜 (종목 999990 · 기업코드 C9)."""
 
-    def __init__(self, b001=(), api=None, stk=None, fail=()):
+    DIV_ROW = {"report_nm": "현금ㆍ현물배당결정", "rcept_no": "20260220000009", "rcept_dt": "20260220", "rm": "유"}
+
+    def __init__(self, b001=(), api=None, stk=None, fail=(), i001=None):
         super().__init__(stk=stk, fail=fail)
         self.b001, self.api = list(b001), api or {}
+        self.i001 = [self.DIV_ROW] if i001 is None else list(i001)       # 배당하는 회사는 I001 에 현금배당결정이 있어요
         self.meta["corpMap"] = {"999990": "C9"}
 
     def get(self, endpoint, params, timeout=25):
@@ -323,7 +353,7 @@ class SynthClient(FxClient):
             return None
         self.status["000"] += 1
         if endpoint == "list.json":
-            rows = self.b001 if params["pblntf_detail_ty"] == "B001" else []
+            rows = self.b001 if params["pblntf_detail_ty"] == "B001" else self.i001
             return {"status": "000", "list": rows, "total_page": 1} if rows else {"status": "013"}
         rows = self.api.get(endpoint)
         return {"status": "000", "list": rows} if rows else {"status": "013"}
@@ -418,6 +448,51 @@ def test_a_failed_bond_or_share_report_lookup_is_a_failed_lookup_not_a_hidden_yi
     why = F.DivWhy(c, PX)
     s = copy.deepcopy(S9)
     assert why.check(s, r9()) == r9() and "dvWhy" not in s and why.counts()["failT"] == ["999990"]
+
+
+@pytest.mark.parametrize("case", ["unreadable_amount", "listed_but_013"])
+def test_a_read_gap_in_the_bond_or_rights_amounts_is_a_failed_lookup_not_a_hidden_yield(case):
+    """리뷰 1: 못 읽은 유상증자·사채 주식 수(0 으로 셈)나, 목록에는 있는데 API 가 주지 않는 결정 때문에 덮는 수가 모자라 '설명 못 함'이
+    될 때는 수익률을 숨기지 않아요 — 조회 실패(맞춤 그대로 · failT)로 봐요."""
+    api = ({"piicDecsn.json": [{"rcept_no": "20260302000001", "nstk_ostk_cnt": "알 수 없음"}]} if case == "unreadable_amount" else {})
+    c = SynthClient(b001=[RIGHTS_ROW], api=api, stk={("C9", 2025): stk_rows(5_000_000)})
+    why = F.DivWhy(c, PX)
+    s = copy.deepcopy(S9)
+    assert why.check(s, r9()) == r9() and "dvWhy" not in s
+    assert why.counts()["failT"] == ["999990"] and why.counts()["nc-unexplained"] == 0
+    assert any("다 읽지 못해" in x for x in why.summary())
+    # 못 읽은 것이 있어도 읽은 결정만으로 설명되면 공시 그대로 (filed)
+    api = {"piicDecsn.json": [{"rcept_no": "20260302000001", "nstk_ostk_cnt": "4,800,000"},
+                              {"rcept_no": "20260402000004", "nstk_ostk_cnt": "알 수 없음"}]}
+    c = SynthClient(b001=[RIGHTS_ROW], api=api, stk={("C9", 2025): stk_rows(5_000_000)})
+    s = copy.deepcopy(S9)
+    F.DivWhy(c, PX).check(s, r9())
+    assert s["dvWhy"]["st"] == "filed"
+
+
+def test_an_empty_exchange_list_is_a_failed_lookup_not_a_conclusion():
+    """리뷰 7: 거래소 수시공시(I001) 목록이 비어 있으면(배당하는 회사는 현금배당결정을 내요) 목록이 빠졌을 수 있어 '설명 못 함' ·
+    '찾지 못했지만'으로 결론 내지 않아요 — 조회 실패."""
+    c = SynthClient(i001=[], stk={("C9", 2025): stk_rows(5_000_000)})
+    why = F.DivWhy(c, PX)
+    s = copy.deepcopy(S9)
+    assert why.check(s, r9()) == r9() and "dvWhy" not in s and why.counts()["failT"] == ["999990"]
+    assert not any(e in ("piicDecsn.json", "stockTotqySttus.json") for e, _ in c.calls)
+    c = SynthClient(i001=[], stk={("C9", 2023): stk_rows(2_000_000)})               # 사업보고서 안의 변화 (nf 가 될 뻔)
+    why = F.DivWhy(c, PX)
+    s = copy.deepcopy(S9)
+    assert why.check(s, r9((1.0, 1.0, 5.0))) == r9((1.0, 1.0, 5.0)) and "dvWhy" not in s and why.counts()["failT"] == ["999990"]
+    assert c.entries[f"C9|{F.DVWHY_TAG}"]["d"]["nI"] == 0
+
+
+def test_a_capital_reduction_by_consolidation_is_its_own_kind():
+    """리뷰 8: 주식병합으로 한 감자는 reduce (액면병합 merge 와 따로 — 앱이 '주식병합' 문구로 부르지 않게). 배율 계산은 같아요."""
+    look = {**LOOK, "ev": [{"k": "reduce", "d": "2026-02-03", "r": 0.1, "rc": "20260101000001", "src": "cr"}]}
+    dec = F.dvwhy_decide([0.1, 0.1, 0.1], 2025, 0.1, PX, look, F.dvwhy_after(0.1, 2025, PX, look)[0])
+    assert dec["st"] == "ok" and F.dvwhy_event_out(dec["ev"][0]) == {"k": "reduce", "d": "2026-02-03", "r": 0.1, "rc": "20260101000001"}
+    out = F.dvwhy_drop_withdrawn(look["ev"], [{"k": "cr", "d": "2026-02-10", "rc": "20260210000001"}])
+    assert out == []                                                            # 감자 철회는 그 감자를 빼요
+    assert F.DVWHY_KIND_KO["reduce"] == "감자(주식병합)" and "reduce" in V.DVWHY_KINDS
 
 
 def test_the_after_report_switch_off_keeps_the_old_adjustment():
@@ -548,7 +623,7 @@ def test_a_failed_refetch_keeps_yesterdays_result_for_the_same_factor():
 
 def test_a_cache_run_fetches_only_missing_stocks_and_logs_the_calls(monkeypatch):
     """dart=cache: 이 캐시 항목이 없는 회사만 조회해요 (자본금 다시 읽기처럼). 캐시를 비우거나 판을 바꾸지 않아서 전체 DART 실행이 아니에요."""
-    assert F.DART_CACHE_VERSION == 2 and F.DVWHY_TAG == "divwhy|v1"
+    assert F.DVWHY_TAG == "divwhy|v1"                                         # 캐시 판(DART_CACHE_VERSION)은 그대로 두는 키예요
     c = FxClient()
     why = F.DivWhy(c, PX)
     for t in ("001130", "183300", "084010"):
@@ -922,6 +997,24 @@ def test_a_not_found_reason_that_fits_passes_and_warns(pair):
     assert rows_of(rep)[NEW_ROWS[5]][3] == "WARN" and "공시 없음 1" in rows_of(rep)[NEW_ROWS[5]][1]
 
 
+def test_a_capital_reduction_event_passes_the_gate_and_must_shrink_the_count(pair):
+    """리뷰 8: 관문은 reduce (주식병합으로 한 감자 · 배율 < 1) 를 받아요. 배율이 1 보다 크면 실패."""
+    from test_v191b_data import recount
+    cur, prev = pair
+    s = adj_of(cur)[0]
+    d = s["dps3"][0]
+    s.update(dps3=[d, d, d], dpsF=[1.0, 0.5, 0.5], dps3a=[d, 2 * d, 2 * d],
+             dvWhy={"v": 1, "st": "ok", "ev": [{"k": "reduce", "d": "2025-05-20", "r": 0.5, "rc": "20250425000123"}]})
+    mirror(cur, s)
+    recount(cur)
+    recount_why(cur)
+    rep = check(cur, prev)
+    assert not rep.failed, rep.table()
+    s["dvWhy"]["ev"][0]["r"] = 2.0
+    mirror(cur, s)
+    _fails(cur, prev, NEW_ROWS[2])
+
+
 def test_corp_must_mirror_data(pair):
     cur, prev = pair
     s = adj_of(cur)[0]
@@ -932,7 +1025,7 @@ def test_corp_must_mirror_data(pair):
 
 
 def test_gate_reads_the_numbers_separately_but_agrees_with_the_pipeline():
-    assert V.DVWHY_KINDS == ("split", "merge", "bonus")
+    assert V.DVWHY_KINDS == ("split", "merge", "bonus", "reduce") and set(V.DVWHY_KINDS) == set(F.DVWHY_KIND_KO)
     for r in (2.0, 2.5, 10.0, 0.2, 0.5, 0.1, 1 / 3):
         assert V._dvwhy_clean(r) and F.dvwhy_clean(r)
     for r in (1.6616554, 1.5, 6.0, 1.1):
