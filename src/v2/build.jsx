@@ -6,7 +6,8 @@
 // the card's small picture, name, basis, one plain line, − / five dots + "{n}점" / +) under a sticky 내 점수 meter: ten
 // slots filled with the chosen 기준 pictures, "{n}점 남았어요", and "지금 기준이면 회사 {n}개가 남아요" with the top three
 // companies' marks. The count is the engine's own (engine.meterCount: the length of screen()'s result list, or the pool
-// before any 기준 while no card has points), recomputed on every change, never an estimate. The strictness control stays,
+// before any 기준 while no card has points), recomputed on every change, never an estimate; the words say 회사, so it is
+// counted by company (engine.meterCompanies, Jack 2026-11-08: two share classes of one company count once). The strictness control stays,
 // under the meter. The first-visit guide (guide.jsx) runs its three steps on this screen.
 // The start screen (BuildStart2 · PcStart2): the dark 처음부터 card, 가진 종목으로 시작하기 (opens 가진 종목 넣기), the templates
 // as recipe cards, no 뱁이 (they show points and percentages). RECIPE_START on since Jack's yes (2026-11-08).
@@ -17,7 +18,7 @@ import { Segmented, Stepper, MoneyInput, StatusChip } from "../ui/components.jsx
 import {
   CARDS, DECKS, STRICT, MIX, METHODS, MAX_PCTS, CUSHIONS, EXCLUDE_LIVE, EXCLUDE_PENDING, POINTS_TOTAL, POINTS_MAX, COUNT_RANGE,
   MIN_PER_STOCK_MAN, applyDeck, defaultSettings, activeCards, pointsUsed, strictTop, topOverall, bestCard,
-  marketsOf, canPin, PINNED_MAX, meterCount, mixKr,
+  marketsOf, canPin, PINNED_MAX, meterCount, meterCompanies, mixKr,
 } from "./engine.js";
 import { C, fill, nf, manText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingChip, PendingBlock, Footer, Note, OwnCloseNote, Label, Toggle, ActionBar, TextInput, ChoiceGrid, OldAppNote, Mascot, IMG, PicChip, CardPic, DeckPic, CardScores, PC_PAD, useLayout, useMode, tx, tap } from "./ui.jsx";
@@ -135,8 +136,9 @@ function Steps({ load, builder, setBuilder, onExit, coach, onImport }) {
   // (off) and the clash line above names the limits. "기준을 낮춰 주세요" is only for too few survivors.
   const tooFew = last ? ds.check.block || ds.pre.short : ds.res.survivors === 0;
   const action = noCards ? C.build.pickCardsBtn : tooFew ? C.build.lowerBtn : last ? fill(C.build.seeCands, { shortN: ds.shortN }) : C.build.next;
-  // The same live count as the 내 점수 meter (engine.meterCount; Jack, 2026-11-08): with points the survivors, before any
-  // points the pool before any 기준, never a 0 that the meter above contradicts.
+  // The same live list as the 내 점수 meter (engine.meterCount; Jack, 2026-11-08): with points the survivors, before any
+  // points the pool before any 기준, never a 0 that the meter above contradicts. Counted by stock (종목): the meter's words
+  // say 회사 and count two share classes of one company once (meterCompanies), so the two can differ by those.
   const summary = (
     <span data-ui-v2="match-count"><span>{C.build.matchSummary}</span>{" "}
       <b style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{fill(C.app.count, { count: nf(meterCount(ds.res).n) })}</b></span>
@@ -371,6 +373,9 @@ function Meter({ st, ds, left, strike }) {
   const { wide } = useLayout();
   const { preview } = useMode();
   const m = meterCount(ds.res);
+  // The words say 회사 (Jack, 2026-11-08: one company = one): two share classes of one US company count once
+  // (engine.meterCompanies), here and in the struck-through count before the points. data-n stays the list length.
+  const co = meterCompanies(ds.res);
   const slots = CARDS.filter((c) => !c.pending).flatMap((c) => {
     const n = st.points[c.id] || 0;
     return Array.from({ length: n }, (_, i) => ({ id: c.id, n, first: i === 0 }));
@@ -394,7 +399,7 @@ function Meter({ st, ds, left, strike }) {
           justifyContent: wide ? "start" : "space-between", columnGap: wide ? SPACE(2) : SPACE(1) }}>
           {Array.from({ length: POINTS_TOTAL }, (_, i) => <Slot key={i} slot={slots[i]} />)}
         </div>
-        <p data-ui-v2="meter-count" data-pool={m.pool ? "1" : "0"} data-n={m.n}
+        <p data-ui-v2="meter-count" data-pool={m.pool ? "1" : "0"} data-n={m.n} data-co={co.n}
           style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(2) + 2, minHeight: SPACE(6) })}>
           {top3.length > 0 && (
             <span data-ui-v2="meter-marks" style={{ display: "flex", flexShrink: 0 }}>
@@ -406,10 +411,10 @@ function Meter({ st, ds, left, strike }) {
             </span>
           )}
           <span aria-live="polite">
-            {strike && <><s data-ui-v2="meter-pool" style={{ color: COLOR.text2 }}>{fill(C.app.count, { count: nf(ds.res.pool) })}</s>{" → "}</>}
-            {m.n === 0 ? s1.remainNone : rp ? (
-              <span data-ui="amount">{rp[0]}<b data-ui-v2="meter-n" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{nf(m.n)}</b>{rp[1]}</span>
-            ) : fill(s1.remain, { n: nf(m.n) })}
+            {strike && <><s data-ui-v2="meter-pool" style={{ color: COLOR.text2 }}>{fill(C.app.count, { count: nf(ds.res.poolCo) })}</s>{" → "}</>}
+            {co.n === 0 ? s1.remainNone : rp ? (
+              <span data-ui="amount">{rp[0]}<b data-ui-v2="meter-n" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{nf(co.n)}</b>{rp[1]}</span>
+            ) : fill(s1.remain, { n: nf(co.n) })}
           </span>
         </p>
       </section>
@@ -495,7 +500,7 @@ export function StepCards({ st, set, ds, load, coach }) {
     const id = window.setTimeout(() => coach.go(3), 2500);
     return () => window.clearTimeout(id);
   }, [stage]);
-  const n = meterCount(ds.res).n;
+  const n = meterCompanies(ds.res).n;                       // "회사가 {n}개로 줄었어요": companies, as the meter's line
   const bubble = stage === 1 ? { title: g.s1[0], body: g.s1[1] }
     : stage === 2 ? { title: fill(g.s2[0], { n: nf(n) }), body: top == null ? g.s2Loose : fill(g.s2[1], { top }) }
       : stage === 3 ? { title: fill(g.s3[0], { n: left }), body: g.s3[1] } : null;

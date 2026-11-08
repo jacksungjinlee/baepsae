@@ -16,7 +16,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOPIC_CHIP, HOLDING_SHADES, holding
 import { Icon } from "../ui/icons.jsx";
 import { Amount, Collapsible } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, p1 } from "./format.js";
-import { Card, LoadFail, Note, CardPic, tx } from "./ui.jsx";
+import { Card, LoadFail, Note, CardPic, tx, useHeld } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { CARDS, POINTS_TOTAL } from "./engine.js";
 import { CARD_PICS, dotColor } from "./pictures.js";
@@ -45,6 +45,7 @@ function Section({ icon, title, children, id }) {
 
 // deck: the portfolio record (pf.js importedRecord) the report is about.
 export function Report({ load, deck }) {
+  const held = useHeld();
   // a one-time check: stale data still gives a result, said up front (the 홈 check never shows a ✓ on it)
   const st = useMemo(() => (load.status !== "ok" ? null : pfState(deck, { state: { ok: true }, byT: load.byT, coByT: load.coByT, fx: load.data.fx,
     pxDate: load.data.pxDate }, load.data.stocks)), [deck, load]);
@@ -52,9 +53,15 @@ export function Report({ load, deck }) {
   if (load.status !== "ok") return null;
   const stale = !!(load.fresh && load.fresh.stale);
   if (!st || !st.ok) return <LoadFail picture={false} />;
+  // A later publish waits for this screen (HeldContext, Jack 2026-11-08): its line in place of the stale note (the date of
+  // the result stays in the line under the headline: rpt.dates).
   return (
     <div data-ui-v2="report">
-      {stale && <Note tone="watch" data-ui-v2="report-stale">{fill(C.rpt.stale, { n: load.fresh.days, date: mdText(load.data.pxDate) })}</Note>}
+      {(stale || held) && (
+        <Note tone="watch" data-ui-v2="report-stale" data-held={held ? "1" : undefined}>
+          {held ? C.app.heldNew : fill(C.rpt.stale, { n: load.fresh.days, date: mdText(load.data.pxDate) })}
+        </Note>
+      )}
       <Headline st={st} deck={deck} load={load} />
       <Whole st={st} />
       <ByStock st={st} />
@@ -323,7 +330,10 @@ function Dividends({ st, load }) {
     <Section id="report-div" icon="coins" title={C.plan.div}>
       <div data-ui-v2="report-div-total" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}><Amount text={fill(C.app.about, { x: wonText(d.won) })} /></div>
       <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.rpt.divNote}</p>
-      {d.us && <Note>{C.rpt.divUs}</Note>}
+      {/* say-why (Jack, 2026-11-08): only when a US stock with a known dividend is in the total (pf.dividendYear us), and
+          the US stocks with no dividend data named apart (usGone), never twice with the 0원 line */}
+      {d.us && <Note data-ui-v2="report-div-us">{C.rpt.divUs}</Note>}
+      {d.usGone > 0 && <Note data-ui-v2="report-div-us-gone">{fill(C.rpt.divUsGone, { n: d.usGone })}</Note>}
       {d.unknown > 0 && <Note>{fill(C.plan.divUnknown, { n: d.unknown })}</Note>}
       {d.unchecked.length > 0 && <Note>{fill(C.plan.divUnchecked, { n: d.unchecked.length, names: d.unchecked.map((x) => x.nk).join(", ") })}</Note>}
     </Section>

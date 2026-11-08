@@ -29,6 +29,13 @@ export const useMode = () => useContext(ModeContext);
 export const NavContext = createContext({ openMenu: null, menuOpen: false, openStock: null, goHome: null });
 export const useNav = () => useContext(NavContext);
 
+// A later publish waits under the draft on screen (Jack, 2026-11-08; app.jsx, hold.js heldOn): true only while 후보 고르기,
+// 매수 계획 or 가진 종목 넣기 is on screen and a newer publish is held for it. The screen's date line (and 점검's stale
+// note) then say "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새 데이터로 바뀌어요." instead of the stale words;
+// the menu's date line just drops the stale words (DateLine brief). False everywhere else and when nothing is held.
+export const HeldContext = createContext(false);
+export const useHeld = () => useContext(HeldContext);
+
 // PC layout (v19.0d, Layout C PC step 1). From 1024 px wide: a 240 px left menu (nav.jsx SideMenu) with the four tabs,
 // the menu links and the data-date box, and a top bar with the search field (nav.jsx TopBar); no bottom tab bar, no ☰.
 // 홈 and 시장 use two columns (content up to 1000 px), every other screen one column (up to 720 px). Fixed bars (the
@@ -198,15 +205,23 @@ export function ScreenTitle({ children, sub }) {
 // "10월 30일 기준" — the content date. Publication late (data.js freshness: staleAfter passed, or more than 4 days since
 // the publish): in warning colour "· 갱신이 늦어지고 있어요" when n <= 1, "· N일째 갱신이 멈췄어요" from n = 2 (format.staleText,
 // Jack 2026-11-07; n counts from the morning the publish was due when data.json has nextPub, else from the last publish).
-export function DateLine({ date, fresh, style }) {
+// While a later publish waits under the draft on screen (HeldContext, Jack 2026-11-08), the stale words are not true: the
+// date stays and, on its own line in the same warning colour, "새 데이터가 들어왔어요. 이 화면을 저장하거나 나가면 새
+// 데이터로 바뀌어요." (data-held; data-stale still says whether the data on screen is stale). brief (the menu's date line,
+// beside the screen): the date alone then, in the plain colour.
+export function DateLine({ date, fresh, style, brief = false }) {
+  const wait = useHeld();
   const md = mdText(date);
   if (!md) return null;
   const stale = !!(fresh && fresh.stale);
+  const warn = wait ? !brief : stale;
   return (
-    <div data-ui-v2="date-line" data-stale={stale ? "1" : "0"} style={tx(SIZE.xs, stale ? WEIGHT.bold : WEIGHT.regular, stale ? COLOR.watch : COLOR.text2, { marginTop: SPACE(1), ...style })}>
+    <div data-ui-v2="date-line" data-stale={stale ? "1" : "0"} data-held={wait ? "1" : undefined}
+      style={tx(SIZE.xs, warn ? WEIGHT.bold : WEIGHT.regular, warn ? COLOR.watch : COLOR.text2, { marginTop: SPACE(1), ...style })}>
       <span>{fill(C.app.asOf, { md })}</span>
-      {stale && <span>{" · "}</span>}
-      {stale && <span>{staleText(fresh.days)}</span>}
+      {stale && !wait && <span>{" · "}</span>}
+      {stale && !wait && <span>{staleText(fresh.days)}</span>}
+      {wait && !brief && <span data-ui-v2="held-line" style={{ display: "block", marginTop: SPACE(1), lineHeight: 1.45, wordBreak: "keep-all" }}>{C.app.heldNew}</span>}
     </div>
   );
 }
