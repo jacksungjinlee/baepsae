@@ -86,7 +86,8 @@ function StepStrip() {
 }
 
 // first: no portfolio saved (the iPhone hint is the first-visit one, as on today's landing). A replay from the menu by
-// someone with portfolios shows the same welcome without it.
+// someone with portfolios shows the same welcome without it. Without data the welcome is never kept on screen (app.jsx
+// closes it, so 홈 shows its load-failure message as without the guide).
 // onImport (v19.3d): the second button, 가진 종목 넣기 (Part F); left out when there is nowhere to go (no data).
 export function Welcome({ load, first, onTry, onBrowse, onImport = null }) {
   const { wide } = useLayout();

@@ -923,7 +923,7 @@ def scene_refused(R, files, width, how):
         see(page, LOAD_FAIL)
         assert page.locator("[data-deck]").count() == 0, "불러오지 못했는데 덱 짜기가 열려요"
         R.collect(page)
-    R.check(page, f"{how} {width}", "불러오기 실패 문구 (오늘 · 내 덱(저장한 덱 없음, 뱁이 그대로) · 덱 짜기), 예시 데이터 없음", run)
+    R.check(page, f"{how} {width}", "불러오기 실패 문구 (오늘 · 내 덱(저장한 덱 없음, 뱁이 그대로) · 덱 짜기), 예시 데이터 없음 · 처음 안내를 이미 본 방문자", run)
     ctx.close()
     srv.shutdown()
 
@@ -2127,14 +2127,12 @@ OTHER_KEYS = """() => { const o = {}; for (let i = 0; i < localStorage.length; i
 STORED = "JSON.parse(localStorage.getItem('baepsae2.v1') || 'null')"
 
 
-def stored_records(page):
-    """저장된 기록 그대로, 이 기기의 '처음 안내를 봤어요' 표시(guideSeen: 본 날)만 떼어 내고요. 그 표시는 기록 파일로 옮겨 다니지 않아요
-    (store.js: a flag of this device). 표시가 있으면 날짜인지 확인해요 (v19.3c 처음 안내가 첫 방문에 저절로 떠요, Jack 2026-11-08)."""
+def stored_records(page, seen):
+    """저장된 기록에서 이 기기의 '처음 안내를 봤어요' 표시(guideSeen: 본 날)를 뺀 나머지. 그 표시는 기록 파일로 옮겨 다니지 않아요
+    (store.js: a flag of this device). 표시는 꼭 있어야 하고 seen 과 같아야 해요 (v19.3c 처음 안내가 첫 방문에 저절로 떠요, Jack 2026-11-08)."""
     d = page.evaluate(STORED)
-    if isinstance(d, dict) and "guideSeen" in d:
-        seen = d.pop("guideSeen")
-        assert isinstance(seen, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", seen), seen
-    return d
+    assert isinstance(d, dict) and d.get("guideSeen") == seen, (d or {}).get("guideSeen") if isinstance(d, dict) else d
+    return {k: v for k, v in d.items() if k != "guideSeen"}
 # 받은 파일의 주소(Blob URL)를 언제 지우는지 기록해요: 바로(1초 안에) 지우면 iOS 사파리가 받다가 실패할 수 있어요 (v18.4.1, 60초 뒤)
 REVOKE_SPY = """() => { if (window.__revoked) return; window.__revoked = []; const orig = URL.revokeObjectURL.bind(URL);
   URL.revokeObjectURL = (u) => { window.__revoked.push(u); return orig(u); }; }"""
@@ -2288,7 +2286,9 @@ def _iphone_records(R, files, device, tmp):
         imp.set_input_files(keep["path"])
         page.locator("[data-deck-id]").first.wait_for(state="visible")
         assert page.locator('[data-ui-v2="import-bad"]').count() == 0
-        assert stored_records(page) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
+        keep["seen"] = (page.evaluate(STORED) or {}).get("guideSeen")         # 처음 안내를 본 날: 앱이 옛 칸에서 읽어 온 오늘(한국 날짜)
+        assert keep["seen"] == dt.datetime.now(KST).strftime("%Y-%m-%d"), keep["seen"]
+        assert stored_records(page, keep["seen"]) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
         assert page.evaluate(OTHER_KEYS) == others, "기록 말고 다른 저장 값이 바뀌었어요"
         page.locator("[data-holding][data-status]").first.wait_for(state="visible")
         page.locator('[data-ui-v2="deck-value"]').wait_for(state="visible")
@@ -2299,7 +2299,7 @@ def _iphone_records(R, files, device, tmp):
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
         page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
-        assert main_text(page) == keep["today"] and stored_records(page) == keep["file"], "새로 고침 뒤에 기록이 달라요"
+        assert main_text(page) == keep["today"] and stored_records(page, keep["seen"]) == keep["file"], "새로 고침 뒤에 기록이 달라요"
         R.collect(page)
     R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
 
@@ -2307,7 +2307,7 @@ def _iphone_records(R, files, device, tmp):
         open_deck_tab(page)
         imp.set_input_files(keep["path"])
         page.wait_for_timeout(1000)                                   # 불러오기는 바로 끝나요 (바뀌는 게 없어야 해서 기다려서 봐요)
-        assert page.locator("[data-deck-id]").count() == 1 and stored_records(page) == keep["file"], "같은 파일을 두 번 불러 덱이 늘었어요"
+        assert page.locator("[data-deck-id]").count() == 1 and stored_records(page, keep["seen"]) == keep["file"], "같은 파일을 두 번 불러 덱이 늘었어요"
         assert page.locator('[data-ui-v2="import-bad"]').count() == 0
     R.check(page, S, "같은 파일을 한 번 더 불러와도 덱이 늘지 않아요", twice)
 
@@ -2319,7 +2319,7 @@ def _iphone_records(R, files, device, tmp):
         box = page.locator('[data-ui-v2="import-bad"]')
         box.wait_for(state="visible")
         assert box.get_attribute("data-why") == "preview" and box.inner_text() == C["store"]["otherKind"], box.inner_text()
-        assert page.locator("[data-deck-id]").count() == 1 and stored_records(page) == keep["file"], "막힌 파일이 기록을 바꿨어요"
+        assert page.locator("[data-deck-id]").count() == 1 and stored_records(page, keep["seen"]) == keep["file"], "막힌 파일이 기록을 바꿨어요"
         R.collect(page)
     R.check(page, S, f"미리 보기에서 만든 기록 파일 → '{C['store']['otherKind']}' (기록은 그대로)", preview_file)
     ctx.close()
@@ -3068,13 +3068,14 @@ def scene_pc_edge(R, files):
 
 def scene_hint(R, files, devices):
     """아이폰 홈 화면 안내는 아이폰 사파리에서만 (문구는 승인 대기: 그동안은 숨은 자리 표시). 안드로이드 · 홈 화면 앱 안에서는 없어요.
-    첫 방문(포트폴리오 전)은 홈과 빈 포트폴리오, 포트폴리오가 있으면 포트폴리오의 기록 칸."""
+    첫 방문(포트폴리오 전)은 홈과 빈 포트폴리오, 포트폴리오가 있으면 포트폴리오의 기록 칸. 모두 처음 안내를 이미 본 방문자예요
+    (Runner.open guide_seen). 처음 안내가 저절로 뜬 첫 방문의 안내 자리는 scene_v193c_first 가 봐요."""
     store, _ = missing_store(files)
-    for name, dev, saved, want in (("아이폰 사파리 · 첫 방문", devices["iPhone 13"], None, {"home": ["first"], "portfolio": ["first"]}),
+    for name, dev, saved, want in (("아이폰 사파리 · 첫 방문(처음 안내를 이미 본 방문자)", devices["iPhone 13"], None, {"home": ["first"], "portfolio": ["first"]}),
                                     ("아이폰 사파리 · 포트폴리오 있음", devices["iPhone 13"], store, {"home": [], "portfolio": ["move"]}),
                                     ("아이폰 홈 화면 앱 · 포트폴리오 있음", {**devices["iPhone 13"], "user_agent": standalone_ua(devices["iPhone 13"]["user_agent"])}, store,
                                      {"home": [], "portfolio": []}),
-                                    ("안드로이드 크롬 · 첫 방문", devices["Pixel 5"], None, {"home": [], "portfolio": []})):
+                                    ("안드로이드 크롬 · 첫 방문(처음 안내를 이미 본 방문자)", devices["Pixel 5"], None, {"home": [], "portfolio": []})):
         dev = {k: v for k, v in dev.items() if k != "default_browser_type"}
         init = STANDALONE_INIT if "홈 화면 앱" in name else ""
         if saved:
@@ -4511,8 +4512,9 @@ import random  # noqa: E402  (v19.3c: 무작위 점수 열 가지, 씨앗을 정
 
 
 # ── v19.3c: 포트폴리오 만들기의 기준 카드 · 내 점수 · 처음 안내 (docs/tasks/v19.3-portfolio-pictures-accounts.md Part D · E · N.3) ──
-# 두 스위치(코드의 값을 읽어요): RECIPE_START (새 시작 화면) · GUIDE_FIRST_VISIT (첫 방문에 저절로 뜨는 처음 안내). 꺼져 있는 동안에도
-# 그 화면을 시험하려고, 두 스위치를 켜고 임시 폴더에 빌드한 app.html (v193c_on_app) 로 한 장면을 더 돌려요 (커밋하지 않아요).
+# 두 스위치(코드의 값을 읽어요): RECIPE_START (새 시작 화면) · GUIDE_FIRST_VISIT (첫 방문에 저절로 뜨는 처음 안내). 둘 다 켜져 있어요
+# (Jack, 2026-11-08). v193c_on_app 은 두 스위치를 켜고 임시 폴더에 다시 빌드한 app.html 로 한 장면을 더 돌려요 (커밋하지 않아요; 지금은
+# 커밋한 app.html 과 같은 페이지예요). 처음 안내를 보는 장면 말고는 모두 처음 안내를 이미 본 방문자로 열어요 (Runner.open guide_seen).
 def _flag(rel, name):
     with open(os.path.join(ROOT, *rel.split("/")), encoding="utf-8") as fh:
         got = re.findall(rf"^export const {name} = (true|false);$", fh.read(), flags=re.M)
@@ -4668,14 +4670,11 @@ def scene_v193c(R, files, width):
     def first_screen():
         wait_ready(page)
         at(page, "home")
-        if GUIDE_FIRST_VISIT:                                              # 스위치가 켜져 있으면 첫 방문 홈 대신 반기는 화면
-            page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="visible")
-        else:                                                              # 꺼져 있으면 첫 방문 홈 그대로 (반기는 화면 없음)
-            page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
-            assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0
+        assert GUIDE_FIRST_VISIT                                           # 켜져 있어요 (Jack, 2026-11-08): 첫 방문 홈 대신 반기는 화면
+        page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="visible")
         assert seen() is None
         R.collect(page)
-    R.check(page, S, "첫 화면: 처음 안내 스위치를 따라요 (꺼져 있으면 첫 방문 홈 그대로)", first_screen)
+    R.check(page, S, "첫 화면: 처음 안내가 저절로 떠요 (첫 방문 홈 대신 반기는 화면)", first_screen)
 
     def welcome():
         if GUIDE_FIRST_VISIT:
@@ -5067,10 +5066,90 @@ def scene_v193c_empty(R, files, width=390):
     srv.shutdown()
 
 
+def scene_v193c_first(R, files, devices):
+    """v19.3c 첫 방문, 처음 안내가 저절로 뜨는 지금 (처음 안내를 본 적 없는 방문자):
+    (a) data.json 이 없으면(404) 반기는 화면 없이 첫 방문 홈이 main 그대로 · 불러오기 실패 문구가 아래 탭 막대 위에 보여요 · '본 적 있음'은
+        남지 않아요 · 메뉴의 처음 안내 다시 보기도 반기는 화면 없이 같은 화면 (320 × 568).
+    (b) 아이폰 사파리 첫 방문(390 × 664): 반기는 화면과 아이폰 홈 화면 안내(첫 방문 꼴)가 같이 있어요.
+    (c) 저장한 것 없이 baepsae.html 을 그냥 열면 2.0 의 반기는 화면으로 와요, 페이지 오류 0건."""
+    S = "v19.3c 첫 방문"
+    errs0 = len(R.errors)
+    dev = {"viewport": {"width": 320, "height": 568}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
+    srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), 320, device=dev, guide_seen=False)
+    old_key = "() => { try { return localStorage.getItem('baepsae2.v1.guideSeen'); } catch (e) { return 'error'; } }"
+
+    def failed_data():
+        wait_ready(page)
+        at(page, "home")
+        page.wait_for_timeout(500)
+        assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0, "데이터를 못 읽었는데 반기는 화면이 떠요"
+        page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")    # 첫 방문 홈 (main 그대로)
+        msg = page.locator('[data-ui-v2="load-fail"] p')
+        msg.wait_for(state="visible")
+        assert msg.inner_text() == C["app"]["loadFail"]
+        bar = page.locator('nav[data-ui="bottom-tab-bar"]').bounding_box()
+        mb = msg.bounding_box()
+        assert mb["y"] + mb["height"] <= bar["y"] + 0.5, (mb, bar)        # 아래 탭 막대에 가리지 않아요 (스크롤 없이)
+        assert page.evaluate(SEEN_JS) is None and page.evaluate(old_key) is None, "보지 않은 안내가 '본 적 있음'으로 남았어요"
+        R.collect(page)
+        m = open_menu(page)                                                # 처음 안내 다시 보기: 데이터가 없으면 반기는 화면 없이 그대로
+        m.locator('[data-ui-v2="menu-item"][data-item="guide"]').click()
+        at(page, "home")
+        page.wait_for_timeout(500)
+        assert page.locator('[data-ui-v2="guide-welcome"]').count() == 0
+        page.locator('[data-ui-v2="load-fail"] p').wait_for(state="visible")
+        assert page.evaluate(SEEN_JS) is None and page.evaluate(old_key) is None
+        R.collect(page)
+    R.check(page, S, "(a) data.json 없음 · 320×568: 반기는 화면 없이 첫 방문 홈, 불러오기 실패 문구가 탭 막대 위에 보여요 · '본 적 있음' 없음 · 메뉴에서 다시 보기도 같아요",
+            failed_data)
+    ctx.close()
+    srv.shutdown()
+
+    iph = {k: v for k, v in devices["iPhone 13"].items() if k != "default_browser_type"}
+    srv, ctx, page, base = R.open(build_site(files), iph["viewport"]["width"], device=iph, guide_seen=False)
+
+    def iphone_first():
+        wait_ready(page)
+        at(page, "home")
+        page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="visible")
+        hint = page.locator('[data-ui-v2="ios-hint"]')
+        assert hint.evaluate_all("(els) => els.map((e) => e.dataset.kind)") == ["first"]
+        if C["hint"]["first"]:
+            assert C["hint"]["first"] in hint.inner_text()
+        R.collect(page)
+    R.check(page, S, "(b) 아이폰 사파리 첫 방문: 반기는 화면 + 아이폰 홈 화면 안내(첫 방문 꼴)", iphone_first)
+    ctx.close()
+    srv.shutdown()
+
+    # (c) 는 실제 주소처럼 ?dev=1 없이 열어요: 그래서 app.html 이 자기 페이지뷰(GoatCounter)를 부르는데, 그건 smoke_launch.py 가 보는 일이라
+    # 여기서는 바깥 요청을 조용히 막기만 하는 따로 된 문맥으로 열어요 (Runner 의 '다른 사이트 요청' 목록에 넣지 않게).
+    srv, cvbase = serve(build_site(files))
+    ctx = R.browser.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(cvbase) else r.abort())
+    page = ctx.new_page()
+    page.set_default_timeout(WAIT)
+    cv_errors = []
+    page.on("pageerror", lambda e: cv_errors.append(str(e)))
+    page.goto(cvbase + "/baepsae.html", wait_until="domcontentloaded")
+
+    def cv_link():
+        page.wait_for_url("**/app.html**")
+        wait_ready(page)
+        at(page, "home")
+        page.locator('[data-ui-v2="guide-welcome"]').wait_for(state="visible")
+        assert "/app.html" in page.url and "from=app" not in page.url, page.url
+        R.collect(page)
+        assert not cv_errors and len(R.errors) == errs0, (cv_errors, R.errors[errs0:])
+    R.check(page, S, "(c) 저장한 것 없이 baepsae.html → 2.0 의 반기는 화면, 페이지 오류 0건", cv_link)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v193c_on(R, files, width):
     """v19.3c 두 스위치를 켠 빌드(커밋하지 않는 임시 빌드): 첫 방문 홈 대신 반기는 화면이 저절로 → 그냥 둘러볼게요 → 첫 방문 홈 · 다시 열어도
-    안 떠요. 새 시작 화면(BuildStart2 · PcStart2): 처음부터 카드(그림 다섯 · 기준 카드 고르기) · 가진 종목 카드(준비 중이에요, 버튼 없음) ·
-    템플릿 여덟 개가 재료 줄(그림 · 이름 · 점 다섯, 큰 점수부터, 셋까지 + '+ {n}개 더') · 깐깐한 기준 · 한미 반반 표시 · 뱁이 없음."""
+    안 떠요. 새 시작 화면(BuildStart2 · PcStart2): 처음부터 카드(그림 다섯 · 기준 카드 고르기) · 가진 종목으로 시작하기(가진 종목 넣기를
+    열어요, v19.3d) · 템플릿 여덟 개가 재료 줄(그림 · 이름 · 점 다섯, 큰 점수부터, 셋까지 + '+ {n}개 더') · 깐깐한 기준 · 한미 반반 표시 ·
+    뱁이 없음."""
     S = f"v19.3c 스위치 켠 빌드 {width}"
     wide = width >= 1024
     srv, ctx, page, base = R.open(build_site(files, app=v193c_on_app()), width, device=pc_device(width) if wide else None, guide_seen=False)
@@ -5492,6 +5571,11 @@ def main():
             except Exception as e:
                 R.results.append(("[PC] 장면 실행", False, str(e).splitlines()[0][:200]))
                 print(f"  FAIL  [PC] 장면 실행: {e}", flush=True)
+        try:                                                     # v19.3c 첫 방문(데이터 없음 · 아이폰 사파리 · baepsae.html)
+            scene_v193c_first(R, files, p.devices)
+        except Exception as e:
+            R.results.append(("[v19.3c 첫 방문] 장면 실행", False, str(e).splitlines()[0][:200]))
+            print(f"  FAIL  [v19.3c 첫 방문] 장면 실행: {e}", flush=True)
         try:                                                     # 아이폰 13 화면(390×664) 하나로만
             scene_iphone_records(R, files, p.devices["iPhone 13"])
         except Exception as e:

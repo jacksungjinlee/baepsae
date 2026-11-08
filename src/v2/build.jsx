@@ -30,9 +30,8 @@ import { deckState, defaultPicks, pickItems, computePlan, pinnable, aboutWon, cu
 import { Pick } from "./pick.jsx";
 import { Plan, Y2022Amount } from "./plan.jsx";
 
-// Off until Jack says yes to the smoke-test edits it needs (v19.3c PR): today's tests check the start screen's 뱁이 and a
-// one-column PC page, and the new start screen has neither (its recipe cards show points and percentages, so the 뱁이 must
-// go: CLAUDE.md). Off, the start screen is exactly as before.
+// On since Jack's yes (2026-11-08): the start screen with the recipe cards (StepStart2). It shows points and percentages,
+// so it has no 뱁이 (CLAUDE.md). Off, the earlier start screen (StepStart, with the 뱁이) comes back.
 export const RECIPE_START = true;
 
 export const STEPS = ["start", "cards", "exclude", "terms"];

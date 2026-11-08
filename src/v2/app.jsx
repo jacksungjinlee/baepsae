@@ -269,6 +269,12 @@ export function App({ source }) {
   useEffect(() => {
     if (onWelcome && (tab !== "home" || loc.sub)) endGuide(true);
   }, [onWelcome, tab, loc.sub, endGuide]);
+  // No data (Part E: "if … data load failed, skip the guide silently and show the normal screen"): the welcome closes
+  // without a word and is not marked seen, whether it opened on its own or from 처음 안내 다시 보기, so 홈 shows its
+  // load-failure message exactly as without the guide (the first-visit landing on a first visit).
+  useEffect(() => {
+    if (onWelcome && load.status === "fail") setGuide(null);
+  }, [onWelcome, load.status]);
   const inWhy = tab === "home" && loc.sub === "why" && !!why;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
