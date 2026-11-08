@@ -90,7 +90,8 @@ def test_the_four_rules_on_a_portfolio():
     assert got["ok"] and all(w == 20.0 for _, w in got["w"])
     stock, ind, fit, warn = got["rules"]
     assert stock["state"] == "ok" and stock["limit"] == 30 and round(stock["max"]["w"] * 100) == 20
-    assert ind["state"] == "broken" and ind["top"]["name"] == "반도체" and round(ind["top"]["w"] * 100) == 60     # 가나전자 · 다라화학 · 가나전자우
+    # v19.3d2 (Jack Q8): 반도체 is in the one chip group here (pf.js CHIP_GROUP; the screens name it 반도체·전자부품)
+    assert ind["state"] == "broken" and ind["top"]["ind"] == "chips" and ind["top"]["name"] is None and round(ind["top"]["w"] * 100) == 60     # 가나전자 · 다라화학 · 가나전자우
     assert set(ind["top"]["names"]) == {"가나전자", "다라화학", "가나전자우"}
     assert fit["state"] == "ok" and fit["limit"] == 30
     assert got["avg"] == {"value": {"x": 15, "shown": 15}, "stable": {"x": pytest.approx(20 / 3), "shown": 7}}     # 은행은 재무 안정 '해당 없음'
@@ -265,7 +266,8 @@ def test_sandbox_squarify_and_the_warning_checks():
 def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holding_is_not_unbought():
     """v19.3d review: until v19.6a's lot maths, a built portfolio with a sale has no 원금, return or KOSPI comparison (null,
     never 9 of 10 shares sold counted as −40.9%), and a holding sold down to 0 is sold out, not "planned, never bought"
-    (the other targets are rebased over what is held, and rebased says so: never a wrong 비중 줄이기 for the stock left)."""
+    (the other targets are rebased over what is held: never a wrong 비중 줄이기 for the stock left). v19.3d2 (Jack): the rebased
+    note is not about a sold-out holding (that one shows "다 팔고 목표 비중만 남아 있어요."), so rebased stays false."""
     got = run("""const ctx = ctxOf(STOCKS, CORPS);
       const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
       const deck = { id: 'db', name: 'b', holdings: [{ t: '000010', nk: '가나전자', target: 0.5, rules: band(0.5) }, { t: '000040', nk: '마바물산', target: 0.5, rules: band(0.5) }],
@@ -286,7 +288,7 @@ def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holdi
     assert got["lotsN"] == 1
     e = got["e"]
     assert e["unheld"] == [] and e["soldOut"] == ["000040"] and [x["t"] for x in e["holdings"]] == ["000010"]
-    assert e["rebased"] is True and e["bandPlanned"] == 2 and e["bandHeld"] == 1                 # 리뷰 3차 6: 다시 나눈 걸 말해요
+    assert e["rebased"] is False and e["bandPlanned"] == 1 and e["bandHeld"] == 1               # v19.3d2: 다 판 종목은 '계획한 n종목 중' 이 아니에요
     band = [r for r in e["holdings"][0]["rules"] if r["id"] == "band"][0]
     assert band["result"] == "ok" and band["band"] is None and abs(band["target"] - 1) < 1e-12   # 남은 1주 = 목표 100%: 줄이라는 말 없음
     assert got["k"] == [True, {"ok": False, "why": "lots"}]
