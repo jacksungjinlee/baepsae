@@ -2,24 +2,30 @@
 // At the top, as before, the verdict band of the portfolios made with 포트폴리오 만들기 (today.jsx Hero: 오늘 확인할 일 with
 // the answers, or the calm band, its big moves and the "아직 자동으로 확인하지 못하는 규칙" line; also the stale band and the
 // load-failure message). Those portfolios keep their own per-stock rules and bands and are never judged by the four
-// portfolio rules (Jack, 2026-11-08).
+// portfolio rules (Jack, 2026-11-08). The calm band's "오늘은 할 일이 없어요" also needs every 가진 종목 portfolio quiet
+// (home.quietBlock) and nothing on 오늘 볼 것 (Hero's quiet), so it never sits above a broken or unchecked rule or a card.
 // Per portfolio that holds something today (the same portfolios 홈 showed before, in store order; home.js):
-//   1. only for a portfolio made with 가진 종목 넣기, the hero (navy): "{date} 종가로 점검했어요", "내 규칙 {n}개 중 {k}개를 지키고 있어요" (n = the rules that could be
-//      checked), four rule tiles with ✓, ! or "확인하지 못했어요", the first broken concentration rule as one sentence and
-//      "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" for the rules that could not be checked. With two or more portfolios
-//      each hero starts with its portfolio's name (user text) so the heroes can be told apart.
+//   1. only for a portfolio made with 가진 종목 넣기, the hero (navy): "{date} 종가로 점검했어요" (only when at least one rule
+//      could be checked), "내 규칙 {n}개 중 {k}개를 지키고 있어요" (n = the rules that could be checked), four rule tiles with
+//      ✓, ! or "확인하지 못했어요", the first broken concentration rule as one sentence and "아직 자동으로 확인하지 못하는
+//      규칙이 {n}개 있어요" for the rules that could not be checked. With two or more portfolios each hero starts with its
+//      portfolio's name (user text) so the heroes can be told apart.
 //   2. the portfolio card: value, "오늘 {±amount} ({±%})", "산 가격보다 {±amount} ({±%}) · 평균 단가를 넣은 {n}종목 기준"
 //      (only holdings with a 평균 단가, and only when there is one), "미국 종목은 달러로 계산한 수익을 오늘 환율로 바꿨어요."
 //      when a dollar 평균 단가 was converted at today's rate; the price date at the top right. No chart (Part H: until daily
 //      price history exists).
-//   3. 가진 종목 {n}개 · 비중 · 오늘: mark, name, weight bar in the navy shades by weight (Part C; a full bar = the 한 종목
-//      limit, as on the board), weight %, today's change (price red/blue, true minus sign). A built portfolio keeps its
-//      per-stock chips (규칙 깨짐 · 확인 필요 · …) and its "아직 자동으로 확인하지 못하는 규칙" line for per-stock rules.
+//   3. 가진 종목 {n}개 · 비중 · 오늘: mark, name, weight bar in the navy shades by weight (Part C), weight %, today's change
+//      (price red/blue, true minus sign). A 가진 종목 portfolio's bar is drawn against its 한 종목 limit (a full bar = the
+//      limit, as on the board) and its weight reads against that limit (pfview.limitPct: 30.4% is never "30%"). A built
+//      portfolio is never judged by that limit: its full bar is the whole portfolio and its weight has one decimal, as its
+//      비중 규칙 line (daily.jsx WeightLine) and the company page's holding line. A built portfolio also keeps its per-stock
+//      chips (규칙 깨짐 · 확인 필요 · …); its "아직 자동으로 확인하지 못하는 규칙" line is the band's at the top, not per card.
 // Then 오늘 볼 것: one concentration card per 가진 종목 portfolio whose 한 업종 rule broke ("{group} {x}%" / "{names} · 내
 // 규칙은 {limit}%까지"), then the filings rows "{name} 공시 {n}건 · {first filing title} · {date}" (home.filingRows: only from
-// a disc.json a company page already loaded in this visit, never from a list that stopped). When there is nothing to look at
-// anywhere (no verdict band, no card, no broken portfolio rule): "오늘은 할 일이 없어요" (Jack, 2026-11-08). With a verdict band
-// the band speaks for itself, as before (its "오늘은 할 일이 없어요" only when every holding is 할 일 없음).
+// a disc.json a company page already loaded in this visit, never from a list that stopped). "오늘은 할 일이 없어요" (Jack,
+// 2026-11-08) only when there is nothing to look at anywhere: no verdict band (it speaks for itself, as before), no card, and
+// every 가진 종목 portfolio quiet (home.quietBlock: checked, nothing broken, 한 종목 · 한 업종 · 내 기준 all checked, value
+// known). Never when no rule could be checked.
 // 시장 한눈에 unchanged. Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
 // exists). Failed: the load-failure message, never "할 일이 없어요". No 뱁이 anywhere here (numbers). The account banner waits
 // for v19.4.
@@ -27,7 +33,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
-import { C, fill, mdText, wonText, todayKst } from "./format.js";
+import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, Card, AppBar, DateLine, Footer, Note, OwnCloseNote, Cols, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
@@ -38,7 +44,7 @@ import { isImported } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 import { ruleLabel, ruleDetail, brokenLine, limitPct } from "./pfview.jsx";
 import { usHeld, limitsOf } from "./pf.js";
-import { homeBlocks, concentration, barOf } from "./home.js";
+import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero } from "./today.jsx";
 import { discDate } from "./company.js";
 import { filingRows } from "./home.js";
@@ -80,7 +86,8 @@ function RulesHero({ block, many, narrow }) {
     <section data-ui-v2="home-rules" data-deck-id={deck.id} data-kept={st.kept} data-checked={st.checked}
       style={{ marginTop: SPACE(4), background: COLOR.ink, color: COLOR.surface, borderRadius: RADIUS.lg + 2, padding: SPACE(4) + 2 }}>
       {many && <p data-ui-v2="home-rules-name" style={tx(SIZE.xs, WEIGHT.bold, COLOR.surface, { marginBottom: SPACE(1) })}>{shownName(deck.name)}</p>}
-      {md && <p style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF")}>{fill(C.pfr.checked, { date: md })}</p>}
+      {/* "{date} 종가로 점검했어요" only when at least one rule was checked: with every tile 확인하지 못했어요 nothing was */}
+      {md && st.checked > 0 && <p data-ui-v2="home-checked" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF")}>{fill(C.pfr.checked, { date: md })}</p>}
       {st.checked > 0 && <h2 data-ui-v2="home-kept" style={tx(21, WEIGHT.heavy, COLOR.surface, { marginTop: SPACE(1) + 2, lineHeight: 1.35, letterSpacing: "-0.02em", wordBreak: "keep-all" })}>
         {fill(C.pfr.kept, { n: st.checked, k: st.kept })}</h2>}
       <div style={{ marginTop: SPACE(3) + 2, display: "grid", gridTemplateColumns: `repeat(${narrow ? 2 : 4}, minmax(0, 1fr))`, gap: SPACE(1) + 2 }}>
@@ -142,11 +149,14 @@ function HeldCard({ block, onWhy }) {
   const { deck, list } = block;
   const rows = list.rows;
   const shades = holdingShades(rows.map((r) => r.w));
-  const limit = limitsOf(deck).stock;
+  // A 가진 종목 portfolio: against its 한 종목 limit. A built portfolio is never judged by it: a full bar is 100%, one decimal.
+  const imp = isImported(deck);
+  const full = imp ? limitsOf(deck).stock : 100;
+  const wText = (w) => (imp ? limitPct(w, full) : p1(w * 100));
   const H = C.home;
   if (!H.held) return null;
   return (
-    <Card data-ui-v2="home-held" data-deck-id={deck.id} style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
+    <Card data-ui-v2="home-held" data-deck-id={deck.id} data-kind={imp ? "imported" : "built"} data-full={full} style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: SPACE(2), marginBottom: 2 }}>
         <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{fill(H.held, { n: rows.length })}</h3>
         {H.cols && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{H.cols}</span>}
@@ -165,10 +175,10 @@ function HeldCard({ block, onWhy }) {
               {r.w != null && (
                 <span style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(1) }}>
                   <span aria-hidden="true" style={{ flex: 1, height: 6, borderRadius: 3, background: COLOR.line, position: "relative", overflow: "hidden" }}>
-                    <span data-ui-v2="home-bar" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(barOf(r.w, limit) * 100).toFixed(1)}%`, borderRadius: 3,
+                    <span data-ui-v2="home-bar" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(barOf(r.w, full) * 100).toFixed(1)}%`, borderRadius: 3,
                       background: shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1] }} />
                   </span>
-                  <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { minWidth: 36, textAlign: "right", whiteSpace: "nowrap" })}>{limitPct(r.w, limit)}%</span>
+                  <span data-ui-v2="home-weight" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { minWidth: 36, textAlign: "right", whiteSpace: "nowrap" })}>{wText(r.w)}%</span>
                 </span>
               )}
               {chips && <span style={{ display: "flex", marginTop: SPACE(1) }}>{chips}</span>}
@@ -199,17 +209,26 @@ function LookRow({ icon, title, sub, onClick, data, owner }) {
   );
 }
 
-function Look({ blocks, load, held, disc, go }) {
-  const { openStock } = useNav();
+// What 오늘 볼 것 holds today: the concentration cards, the filings rows, and whether "오늘은 할 일이 없어요" shows there.
+// quiet: every 가진 종목 portfolio quiet (home.quietBlock) and no card: the verdict band at the top may then say it too.
+function lookOf(blocks, held, disc) {
   const H = C.home;
   const imported = blocks.filter((b) => b.st);
   const conc = imported.map((b) => ({ b, c: concentration(b.st) })).filter((x) => x.c && H.concentration);
   const fresh = disc && disc.status === "ok" && disc.data ? discDate(disc.data) : null;
   const heldTs = new Set(blocks.flatMap((b) => b.list.rows.filter((r) => r.t && !r.absent).map((r) => r.t)));
   const files = H.filings && C.co.disc.buys && C.co.disc.sells ? filingRows(disc, heldTs, todayKst(), fresh) : [];
-  // Nothing anywhere: no verdict band (it speaks for itself, as before), no card, and every 가진 종목 portfolio checked with no
-  // broken rule. Never on stale or failed data (no block exists then).
-  const calm = !held.length && !conc.length && !files.length && imported.length > 0 && imported.every((b) => b.st.ok && !b.st.broken);
+  const quiet = imported.every(quietBlock) && !conc.length && !files.length;
+  // "오늘은 할 일이 없어요" here: no verdict band (it speaks for itself, as before), at least one 가진 종목 portfolio, all quiet,
+  // no card. Never on stale or failed data (no block exists then), never when no rule could be checked (quietBlock).
+  const calm = quiet && !held.length && imported.length > 0;
+  return { conc, files, quiet, calm };
+}
+
+function Look({ blocks, load, look, go }) {
+  const { openStock } = useNav();
+  const H = C.home;
+  const { conc, files, calm } = look;
   if (!H.look || (!conc.length && !files.length && !calm)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
@@ -258,6 +277,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.length) : [];
+  const look = lookOf(blocks, held, disc);
   const many = blocks.length > 1;
   const main = [
     ...blocks.map((b) => (
@@ -267,7 +287,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         <HeldCard block={b} onWhy={onWhy} />
       </div>
     )),
-    ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} held={held} disc={disc} go={go} />,
+    ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} look={look} go={go} />,
     ev.ok && !blocks.length && (
       <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
     ),
@@ -281,7 +301,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
-        <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
+        <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} quiet={look.quiet} />
         <Cols main={main} side={ok && <MarketGlance load={load} go={go} />} />
       </div>
       <Footer />

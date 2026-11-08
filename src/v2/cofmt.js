@@ -50,6 +50,15 @@ export function wonLineUsd(load, usd) {
   if (!C.co.usWon || !(typeof fx === "number" && fx > 0) || !(typeof usd === "number" && Number.isFinite(usd))) return null;
   return fill(C.co.usWon, { won: fill(C.app.won, { n: nf(Math.round((usd * fx) / 100) * 100) }), fx: nf(Math.round(fx * 10) / 10, 1) });
 }
+// The rate's own date under a US price, "원화는 {md} 환율 {fx}원으로 바꾼 값이에요.", or null. Without US_HEAD2 (or without
+// its one line) always, as before. With it, whenever the rate is from another day than the price date the header shows
+// (closeLine: the US close, or the stock's own earlier close), so the won amount never reads as that day's rate.
+export function fxDateLine(load, s) {
+  const fx = load.data.fx, md = mdText(load.data.fxDate);
+  if (!usOf(s) || !C.co.fxWon || !md || !(typeof fx === "number" && fx > 0) || !(typeof s.price === "number" && Number.isFinite(s.price))) return null;
+  if (US_HEAD2 && wonLineUsd(load, s.price) && md === priceMd(load, s)) return null;
+  return fill(C.co.fxWon, { md, fx: nf(Math.round(fx * 10) / 10, 1) });
+}
 // The US 실적 figure says what it is (Jack, 2026-11-05): Yahoo's revenueGrowth is the latest quarter's revenue against the
 // same quarter a year before, never a yearly or 3-year rate. "최근 분기 매출, 1년 전보다 +16.4%" (pending: null until then, and
 // the number is left out with it, so it never shows without this label). g: a finite number, else null.

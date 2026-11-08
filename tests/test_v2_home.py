@@ -29,7 +29,7 @@ def run(body, **data):
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
             for name, mod in (("Hm", "home.js"), ("P", "pf.js"), ("T", "track.js"), ("R", "rules.js"), ("K", "company.js"), ("W", "warn.js"),
-                              ("X", "cotabs.jsx"), ("V", "pfview.jsx"), ("A", "coart.jsx"), ("Co", "company.jsx")):
+                              ("X", "cotabs.jsx"), ("V", "pfview.jsx"), ("A", "coart.jsx"), ("Co", "company.jsx"), ("F", "cofmt.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
             f.write(f"export {{ C }} from {json.dumps(os.path.join(ROOT, 'src', 'copy', 'v2.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
@@ -39,7 +39,7 @@ def run(body, **data):
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
     pre = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
-    code = ("import { Hm, P, T, R, K, W, X, V, A, Co, C } from './home.mjs';\nconst warns = []; console.warn = (m) => warns.push(String(m));\n" + pre + HELP
+    code = ("import { Hm, P, T, R, K, W, X, V, A, Co, F, C } from './home.mjs';\nconst warns = []; console.warn = (m) => warns.push(String(m));\n" + pre + HELP
             + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -208,10 +208,22 @@ def test_tile_pictures_follow_the_tile_rule_only():
 
 
 def test_dividend_tile_coins_follow_its_rule():
-    """배당 칸의 동전 그림: 늘렸어요(streak · raised)만 올라가는 더미, 늘지 않은 지급(steady · pays · noPrev)은 같은 높이,
-    줄였어요(cut) · 배당이 없어요 · 자료가 없어요는 그림 없음 (현대차의 '배당을 줄였어요' 옆에 올라가는 더미가 없게)."""
+    """배당 칸의 동전 그림: 늘렸어요(streak · raised)만 올라가는 더미, 작년과 비슷하게(steady)는 같은 높이 셋, 해마다 비교하지 않은
+    지급(pays: 미국 · 추세 꺼짐, noPrev: 작년 기록 없음)은 더미 하나(3년 내내 같았다고 그리지 않게), 줄였어요(cut) · 배당이 없어요 ·
+    자료가 없어요는 그림 없음 (현대차의 '배당을 줄였어요' 옆에 올라가는 더미가 없게)."""
     got = run("""out = ['streak', 'raised', 'steady', 'pays', 'noPrev', 'cut', 'none', 'na'].map((r) => Co.divArt(r));""")
-    assert got == [{"kind": "coins", "shape": "rising"}] * 2 + [{"kind": "coins", "shape": "even"}] * 3 + [None] * 3
+    assert got == ([{"kind": "coins", "shape": "rising"}] * 2 + [{"kind": "coins", "shape": "even"}] + [{"kind": "coins", "shape": "one"}] * 2
+                   + [None] * 3)
+
+
+def test_coin_picture_draws_one_stack_for_one_and_three_for_the_others():
+    """동전 그림의 더미 수: one 은 하나, even · rising 은 셋 (그림 안 더미 = 같은 x 의 동전들)."""
+    got = run("""const walk = (n, acc) => { if (Array.isArray(n)) n.forEach((x) => walk(x, acc));
+        else if (n && typeof n === 'object' && n.props) { if (n.type === 'ellipse') acc.push(n.props.cx); walk(n.props.children, acc); } return acc; };
+      const stacks = (shape) => { const el = A.Coins({ shape }); const cx = walk(el, []);
+        return { shape: el.props['data-shape'], xs: new Set(cx).size, coins: cx.length }; };
+      out = ['one', 'even', 'rising'].map(stacks);""")
+    assert got == [{"shape": "one", "xs": 1, "coins": 3}, {"shape": "even", "xs": 3, "coins": 9}, {"shape": "rising", "xs": 3, "coins": 9}]
 
 
 def test_holding_line_matches_the_rest_of_the_page():
@@ -272,3 +284,53 @@ def test_filing_rows_only_from_a_loaded_fresh_list_and_the_last_seven_days():
 def test_dividend_picture_wording_is_past_based_for_korea():
     got = run("""out = [C.co.div.coins, C.co.div.pastYear, C.co.div.year === undefined, C.co.tiles.scale];""")
     assert got == ["100만원어치", "100만원어치면 지난 1년 배당으로 약 {x}이에요.", True, {"cheap": "싸게", "dear": "비싸게"}]
+
+
+def test_nothing_to_do_needs_every_judged_rule_checked_and_a_known_value():
+    """'오늘은 할 일이 없어요'(home.quietBlock): 가진 종목 포트폴리오가 오늘 데이터로 점검됐고, 깨진 규칙이 없고, 한 종목 · 한 업종 ·
+    내 기준이 모두 확인됐고, 평가 금액을 알 때만. 재무 경고만은 확인하지 못했어요여도 돼요(미국 종목). 아무 규칙도 확인하지 못했으면
+    (오늘 가격이 없는 종목 · 오늘 데이터에서 빠진 종목 + 미국 종목) 절대 아니에요. 만든 포트폴리오(규칙 넷 없음)는 여기서 조용하지 않아요."""
+    nopx = [dict(s) for s in STOCKS]
+    nopx[1]["price"] = None
+    got = run("""const even = [row('000010', '가나전자', 10), row('000020', '가나은행', 5), row('000040', '마바물산', 20), row('AAA', 'Alpha Inc.', 1)];
+      const q = (deck, stocks = STOCKS) => { const [b] = blockOf(deck, stocks); return { quiet: Hm.quietBlock(b),
+        st: b.st.rules.map((r) => r.id + ':' + r.state), checked: b.st.checked, money: b.money.ok, absent: b.money.absent.length }; };
+      const built = blockOf(builtDeck([['000010', '가나전자', 0.5, 10, 8000], ['000020', '가나은행', 0.5, 5, 18000]]), STOCKS)[0];
+      out = { even: q(impDeck(even)), broken: q(impDeck([row('000010', '가나전자', 100), ...even.slice(1)])),
+        noCards: q(impDeck(even, { settings: { points: {}, strict: 'normal' } })),
+        noPrice: q(impDeck(even), NOPX), gone: q(impDeck([...even, row('000099', '없는회사', 3)])),
+        built: Hm.quietBlock(built), none: [Hm.quietBlock(null), Hm.quietBlock({ st: { ok: false, why: 'stale' }, money: { ok: true, absent: [] } })] };""",
+              STOCKS=STOCKS, NOPX=nopx)
+    e = got["even"]
+    assert e["st"][:3] == ["stock:ok", "ind:ok", "fit:ok"] and e["st"][3] == "warn:unknown" and e["money"] and e["quiet"] is True, e
+    assert got["broken"]["st"][0] == "stock:broken" and got["broken"]["quiet"] is False
+    assert "fit:unknown" in got["noCards"]["st"] and got["noCards"]["quiet"] is False           # 고른 기준이 없으면 내 기준을 확인하지 못했어요
+    n = got["noPrice"]                                                                       # 오늘 가격이 없는 종목 + 미국 종목: 네 칸 모두 확인하지 못했어요
+    assert n["st"] == ["stock:unknown", "ind:unknown", "fit:unknown", "warn:unknown"] and n["checked"] == 0 and not n["money"] and n["quiet"] is False, n
+    g = got["gone"]                                                                          # 오늘 데이터에서 빠진 종목: 값은 나머지로, 규칙은 확인하지 못했어요
+    assert g["checked"] == 0 and g["absent"] == 1 and g["quiet"] is False, g
+    assert got["built"] is False and got["none"] == [False, False]
+
+
+def test_built_portfolio_bars_are_never_drawn_against_the_stock_limit():
+    """만든 포트폴리오는 한 종목 30% 규칙으로 판정하지 않아요 (Jack, 2026-11-08): 홈의 막대는 전체(100%)에 대한 비중이에요. 반반이면
+    두 막대가 절반씩이고, 가득 찬 막대 둘이 아니에요. 가진 종목 포트폴리오는 그대로 한 종목 한계에 대한 길이."""
+    got = run("""const b = blockOf(builtDeck([['000010', '가나전자', 0.5, 10, 8000], ['000020', '가나은행', 0.5, 5, 18000]]), STOCKS)[0];
+      out = { w: b.list.rows.map((r) => r.w), built: b.list.rows.map((r) => Hm.barOf(r.w, 100)), imp: b.list.rows.map((r) => Hm.barOf(r.w, 30)) };""",
+              STOCKS=STOCKS)
+    assert got["w"] == [0.5, 0.5] and got["built"] == [0.5, 0.5] and got["imp"] == [1, 1]
+
+
+def test_rate_date_line_shows_when_the_rate_is_from_another_day():
+    """미국 머리줄(US_HEAD2)은 '약 {won} · 환율 {fx}원' 한 줄. 환율 날짜가 머리줄의 가격 날짜와 다르면 '원화는 {md} 환율 {fx}원으로
+    바꾼 값이에요.'를 그대로 보여 줘요 (그 날짜의 환율로 읽히지 않게). 같은 날이면 없어요. 한국 종목은 없어요."""
+    got = run("""const us = { t: 'AAA', cls: 'us', ccy: 'USD', price: 100 };
+      const ld = (fxDate, extra = {}) => ({ data: { pxDate: '2026-11-06', usPxDate: '2026-11-05', fxDate, fx: 1390.46, ...extra } });
+      out = { head2: F.US_HEAD2, same: F.fxDateLine(ld('2026-11-05'), us), other: F.fxDateLine(ld('2026-11-06'), us),
+        own: F.fxDateLine(ld('2026-11-05'), { ...us, pxd: '2026-11-04' }), kr: F.fxDateLine(ld('2026-11-05'), { t: '000010', cls: 'kr', price: 1000 }),
+        noDate: F.fxDateLine(ld(null), us), noFx: F.fxDateLine(ld('2026-11-06', { fx: null }), us) };""")
+    assert got["head2"] is True                                              # 켜진 상태를 시험해요 (꺼지면 늘 보여요: 예전 그대로)
+    assert got["same"] is None
+    assert got["other"] == "원화는 11월 6일 환율 1,390.5원으로 바꾼 값이에요."
+    assert got["own"] == "원화는 11월 5일 환율 1,390.5원으로 바꾼 값이에요."   # 이전 종가로 값을 매긴 미국 종목: 머리줄 날짜는 11월 4일
+    assert got["kr"] is None and got["noDate"] is None and got["noFx"] is None

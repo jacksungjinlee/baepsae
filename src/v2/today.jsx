@@ -14,7 +14,8 @@
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
 //   할 일 없음          green band "매도 조건에 걸린 종목이 없어요": only when nothing is 규칙 깨짐 or 확인 필요. The
 //                      eyebrow "오늘은 할 일이 없어요" only when every holding is 할 일 없음 (REDESIGN 2.1: steps 1-3 all
-//                      clear, so no 지켜봐요 and no weight outside its band).
+//                      clear, so no 지켜봐요 and no weight outside its band) and, on the new 홈 (HOME2), nothing else
+//                      on the screen needs a look (Hero's quiet).
 // Counts are of distinct stocks: a stock held in two portfolios is one stock to look at (its lines still show per
 // portfolio, since each one keeps its own answers).
 // Every verdict band carries "아직 자동으로 확인하지 못하는 규칙이 {n}개 있어요" whenever any rule is not checked, so a
@@ -131,7 +132,11 @@ export function BigMoves({ items, load, onWhy }) {
   );
 }
 
-export function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
+// quiet (v19.3e, 홈 with HOME2): false when a portfolio made with 가진 종목 넣기 is not quiet (home.quietBlock: a broken rule,
+// 한 종목 · 한 업종 · 내 기준 not all checked, or its value unknown) or 오늘 볼 것 has a card (home2.jsx lookOf): the calm band
+// then drops "오늘은 할 일이 없어요" (the rest of the band is about the built portfolios' own rules and stays). Default true:
+// 홈 without HOME2 as before.
+export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) {
   if (!ev.ok) {
     if (ev.why === "loading") return null;
     if (ev.why === "stale") {
@@ -174,7 +179,7 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy }) {
   const allD1 = all.every(({ x }) => x.d1 != null);
   return (
     <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
-      <HeroBand tone="calm" eyebrow={allNone ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
+      <HeroBand tone="calm" eyebrow={allNone && quiet ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
         body={lines([bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
         inset={bigs.length ? <BigMoves items={bigs} load={load} onWhy={onWhy} /> : null} />
     </div>

@@ -150,7 +150,23 @@ export function concentration(st) {
   return { deckId: null, name: r.top.name, w: r.top.w, names: r.top.names || [], limit: r.limit };
 }
 
-// The weight bar's length: the share of the portfolio against the 한 종목 limit (board Home2: a full bar = the limit).
+// A portfolio made with 가진 종목 넣기 with nothing to look at today ("오늘은 할 일이 없어요" may show, on 오늘 볼 것 or in the
+// band above): its four rules ran on today's data, none broke, the three that judge its weights and ranks (한 종목 · 한 업종 ·
+// 내 기준) were all checked, and its value is known (the money card shows, no held stock missing from today's data). Only
+// 재무 경고 may stay 확인하지 못했어요 (a US holding always leaves it so): the hero names it ("아직 자동으로 확인하지 못하는
+// 규칙이 {n}개 있어요"). A block with no rules (a portfolio made with 포트폴리오 만들기) is never quiet here: its band speaks.
+// block: homeBlocks' { st, money }.
+export const JUDGED_RULES = ["stock", "ind", "fit"];
+export function quietBlock(block) {
+  const st = block && block.st, m = block && block.money;
+  if (!st || !st.ok || st.broken || !(st.checked > 0) || !Array.isArray(st.rules)) return false;
+  if (JUDGED_RULES.some((id) => { const r = st.rules.find((x) => x.id === id); return !r || r.state !== "ok"; })) return false;
+  return !!(m && m.ok && !(m.absent && m.absent.length));
+}
+
+// The weight bar's length: the share of the portfolio against a full bar. A portfolio made with 가진 종목 넣기: the 한 종목
+// limit (board Home2: a full bar = the limit). A portfolio made with 포트폴리오 만들기 is never judged by that rule
+// (Jack, 2026-11-08): its full bar is the whole portfolio (barOf(w, 100)), so a bar never hints at a limit it does not have.
 export const barOf = (w, limit) => (num(w) != null && num(limit) > 0 ? Math.min(1, Math.max(0, (w * 100) / limit)) : 0);
 // A weight in whole % (at least one decimal under 1%, so a small holding never reads 0%).
 export const weightPct = (w) => { const p = w * 100; return p > 0 && p < 0.95 ? Math.round(p * 10) / 10 : Math.round(p); };

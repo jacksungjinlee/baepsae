@@ -4,8 +4,9 @@
 // own rule already says (company.js), on the same numbers, so a picture never says more than the words beside it:
 // - 실적: the three 사업보고서 operating profits, oldest first, only when all three are above 0 (a loss has no bar).
 // - 가치: the PBR against the industry median: the median sits in the middle, the company at 50% × PBR ÷ median
-//   (clamped to the ends). No 싸게 · 비싸게 words under it: those are not approved yet (v19.3e report).
-// - 배당: three coin stacks (decoration only: no number in it).
+//   (clamped to the ends). The ends read 싸게 · 비싸게 (approved, Jack 2026-11-08) only with the median marker and the line
+//   that names the comparison (company.jsx passes them only then).
+// - 배당: coin stacks (decoration only: no number in it): three rising, three even, or one (company.divArt).
 // - 출렁임: a schematic, not a price chart. The market line is fixed; the company's swing follows the tile's own rule
 //   (big · similar · small), never a number of its own.
 // Colours: the topic tints of CLAUDE.md and their darker board shades (tokens.js TOPIC_ART), navy for "this company"
@@ -56,16 +57,18 @@ export function ValueScale({ pbr, med, ends = null }) {
   );
 }
 
-// 배당: three coin stacks (board CoSummary2), a decoration with no number. shape "rising" (늘렸어요: 2 · 3 · 4 coins, as the
-// board) or "even" (a payer with no rise: 3 · 3 · 3). company.divArt picks it from the tile's rule.
+// 배당: coin stacks (board CoSummary2), a decoration with no number. shape "rising" (늘렸어요: 2 · 3 · 4 coins, as the
+// board), "even" (작년과 비슷하게: 3 · 3 · 3) or "one" (a payer whose years are not compared: a single stack of 3, so no
+// history is implied). company.divArt picks it from the tile's rule.
+const COIN_SHAPES = ["rising", "even", "one"];
 export function Coins({ width = 92, shape = "even" }) {
   const A = TOPIC_ART.div;
   const stack = (cx, n) => Array.from({ length: n }, (_, i) => (
     <ellipse key={cx + "-" + i} cx={cx} cy={30 - i * 5} rx={8} ry={3} fill={i % 2 ? A.light : A.ink} stroke={A.ink} strokeWidth={0.9} />
   ));
   return (
-    <svg data-ui-v2="tile-art" data-art="coins" data-shape={shape === "rising" ? "rising" : "even"} width={width} height={Math.round((width * 34) / 66)} viewBox="0 0 66 34" aria-hidden="true" style={{ display: "block", marginTop: SPACE(2) }}>
-      {shape === "rising" ? <>{stack(14, 2)}{stack(34, 3)}{stack(54, 4)}</> : <>{stack(14, 3)}{stack(34, 3)}{stack(54, 3)}</>}
+    <svg data-ui-v2="tile-art" data-art="coins" data-shape={COIN_SHAPES.includes(shape) ? shape : "even"} width={width} height={Math.round((width * 34) / 66)} viewBox="0 0 66 34" aria-hidden="true" style={{ display: "block", marginTop: SPACE(2) }}>
+      {shape === "rising" ? <>{stack(14, 2)}{stack(34, 3)}{stack(54, 4)}</> : shape === "one" ? stack(14, 3) : <>{stack(14, 3)}{stack(34, 3)}{stack(54, 3)}</>}
     </svg>
   );
 }

@@ -38,7 +38,7 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
+import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
 export const TOPIC_ICON = { earn: "trend-up", value: "tag", div: "coins", risk: "umbrella", disc: "file-text" };
@@ -108,11 +108,14 @@ export function tileViews(load, s) {
   return out;
 }
 
-// The 배당 tile's coins say no more than its phrase: rising stacks only for 늘렸어요 (streak · raised), equal stacks for a
-// payer with no rise (steady · pays · noPrev), no picture for 줄였어요 (cut), 배당이 없어요 (none) or 자료가 없어요 (na).
+// The 배당 tile's coins say no more than its phrase: rising stacks only for 늘렸어요 (streak · raised), equal stacks for
+// 작년과 비슷하게 (steady: the years compared paid alike), one stack for a payer whose years are not compared (pays: the US,
+// or Korea without the trend; noPrev: no record of last year), so no picture implies a history the data does not show.
+// No picture for 줄였어요 (cut), 배당이 없어요 (none) or 자료가 없어요 (na).
 export function divArt(rule) {
   if (rule === "streak" || rule === "raised") return { kind: "coins", shape: "rising" };
-  if (rule === "steady" || rule === "pays" || rule === "noPrev") return { kind: "coins", shape: "even" };
+  if (rule === "steady") return { kind: "coins", shape: "even" };
+  if (rule === "pays" || rule === "noPrev") return { kind: "coins", shape: "one" };
   return null;
 }
 
@@ -227,9 +230,9 @@ function Header({ load, s }) {
         {closeLine(load, s) && <span data-ui-v2="co-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{closeLine(load, s)}</span>}
       </div>
       {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{(US_HEAD2 && wonLineUsd(load, s.price)) || won}</div>}
-      {won && !(US_HEAD2 && wonLineUsd(load, s.price)) && C.co.fxWon && mdText(load.data.fxDate) && (
-        <div data-ui-v2="co-fx" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fill(C.co.fxWon, { md: mdText(load.data.fxDate), fx: nf(Math.round(load.data.fx * 10) / 10, 1) })}</div>
-      )}
+      {/* The rate's own date (cofmt.fxDateLine): always without US_HEAD2; with it, whenever the rate is from another day than
+          the price date in the header, so the won line never reads as that day's rate */}
+      {won && fxDateLine(load, s) && <div data-ui-v2="co-fx" data-fx-date={load.data.fxDate} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fxDateLine(load, s)}</div>}
       <RangeBar s={s} />
     </section>
   );
