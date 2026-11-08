@@ -10,7 +10,7 @@ import { C, fill, mdText } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden } from "./fix.js";
 
-// The line with its date ("11월 9일"), or null when a word or the date is missing (never a line with an empty slot).
+// The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
   const md = mdText(EPS_FIX_DATE);
   return C.fix.eps && md ? fill(C.fix.eps, { date: md }) : null;
