@@ -78,7 +78,7 @@ export function epsBase(co, i) {
 
 // The period behind a per-share figure, for its label ("최근 4개 분기" or "사업보고서"). in: corp.json epsIn or bpsIn. When
 // the re-read wrote one with p, p decides ("fy" = the 사업보고서; "ttm" = the latest four quarters to this company's bq, which
-// is what the pipeline writes (fetch_data.py, validate_data.py EPS_P); "YYYY.QQ" = the latest four quarters to that quarter);
+// is what the DART re-read writes for epsIn and bpsIn; "YYYY.QQ" = the latest four quarters to that quarter);
 // otherwise corp.json bq (the TTM quarter, as before) or the 사업보고서. -> { fy: true } | { y, q } | null (a p that
 // cannot be read, or "ttm" without a readable bq: no label rather than a wrong one).
 const Q_RX = /^(\d{4})\.([1-4])Q$/;
