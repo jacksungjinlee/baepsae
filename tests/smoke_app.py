@@ -30,6 +30,8 @@
               JSON 저장 → 새 브라우저에서 불러와도 그대로 · 직접 입력 기록이 없는 예전 저장본 · 파일은 오늘 값 (console 에 바꾼 개수) ·
               (v18.6.1) '새로 시작하기' · 읽을 설정이 없는 파일은 기본값 + 오늘 값 (앞 포트폴리오의 설정을 잇지 않아요)
   미국 날짜   (v19.1c) 앞선 종가의 미국 종목(pxd): 배너 · 종목 고르기 · 주문 메모 · CSV · JSON(priceDate)에 '{티커} 가격은 {날짜} 종가예요.' (KO · EN)
+  고치는중    (2026-11-08) 기업분석 · 첫 화면 성적표의 한국 PER · EPS 칸마다 'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.',
+              재무 신호 밑에 '이자보상배율은 …' (이자보상배율이 꺼진 회사) · 영어 화면엔 없음 · corp.json 에 epsBasis "owners" 면 없음
   늦음        (v19.1c) staleAfter 가 지나면 '갱신이 늦어지고 있어요'(발행 뒤 하루 이내) · '3일째 갱신이 멈췄어요', 전이면 조용 (KO · EN) ·
               열어 둔 화면도 시계가 staleAfter 를 지나면 새로 고침 없이 경고 (타이머 · 다시 보일 때) · 기업분석 · 첫 화면 성적표(corp.json)도
               data.json 과 같은 발행이면 그 staleAfter 로 (다른 발행이면 4일 규칙) · staleAfter 없음 · 못 읽는 pxd 는 console 에 개수와 함께
@@ -44,6 +46,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -2534,11 +2537,114 @@ def scene_corp_stale_after(R, files):
     ctx.close(); srv.shutdown()
 
 
+# ── 2026-11-08 (Jack): DART 다시 읽기 전까지의 두 줄 (src/repair.js · src/fixnote.jsx) ──
+with open(os.path.join(ROOT, "src", "repair.js"), encoding="utf-8") as _f:
+    _FIXD = re.findall(r'^export const EPS_FIX_DATE = "(\d{4})-(\d{2})-(\d{2})";$', _f.read(), flags=re.M)
+assert len(_FIXD) == 1, _FIXD
+FIX_EPS = f"PER과 EPS는 계산 방법을 고치는 중이라 {int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일에 바뀔 수 있어요."
+FIX_ICR = "이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요."
+FIX_LINES = """(kind) => [...document.querySelectorAll('[data-fix="' + kind + '"]')].filter((e) => e.getBoundingClientRect().height > 0)
+  .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
+
+
+def scene_fix_notes(R, files, live=False):
+    """예전 뱁새: 기업분석 · 첫 화면 성적표의 한국 PER · EPS (와 같은 순이익으로 계산한 숫자) 칸마다
+    'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.' (12px 이상, 한국어 화면에서만), 이자보상배율이 꺼진 회사의 재무 신호
+    밑에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.'. live: corp.json 에 epsBasis "owners" 가 있고
+    그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 없어요 (총 순이익 "t" 인 회사에는 남아요)."""
+    S = "고치는 중 안내 " + ("끝" if live else "지금")
+    f = json.loads(json.dumps(files, allow_nan=True))
+    corp = f["corp.json"]
+    co = next(c for c in corp["companies"] if c.get("t") == "005930")
+    hd = next(c for c in corp["companies"] if c.get("t") == "005380")
+    if live:
+        # 다시 읽은 발행의 모양 (지어낸 값): 삼성전자는 지배주주 순이익("o"), 현대차는 지배주주 줄이 없는 총 순이익("t")
+        corp["epsBasis"] = "owners"
+        for c in corp["companies"]:
+            if (c.get("flWhy") or {}).get("icr") == "off":
+                c.pop("flWhy")
+                c["flRan"] = sorted(set(c.get("flRan") or []) | {"icr"})
+        co["fl"] = {"cr": 85}
+        sh = round(co["shm"] * 1e6) + 815974664
+        co.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6)})
+    else:
+        corp.pop("epsBasis", None)
+        co.update(fl={"cr": 85}, flWhy={"icr": "off"}, flRan=["cr", "l3", "imp"])     # 재무 신호 하나 · 이자보상배율 꺼짐
+    srv, ctx, page, base = R.open(build_site(f))
+
+    def lines(kind):
+        return page.evaluate(FIX_LINES, kind)
+
+    def corp_page():
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        see(page, "짚고 갈 것")                                                    # 재무 신호 카드
+        eps, icr = lines("eps"), lines("icr")
+        if live:
+            assert not eps and not icr, (eps, icr)
+            return
+        # 투자지표 · 업종 내 위치 · 주가 분해 · DCF: 카드마다 한 줄 (줄마다가 아니에요)
+        assert len(eps) >= 3 and all(t == FIX_EPS for t, _ in eps), eps
+        assert [t for t, _ in icr] == [FIX_ICR], icr
+        assert all(px >= 12 for _, px in eps + icr), eps + icr
+        body = page.locator("body").inner_text()
+        assert body.index("PER") < body.index(FIX_EPS), "줄이 숫자보다 위에 있어요"
+    R.check(page, S, "기업분석 005930: 투자지표 · 업종 내 위치 · 주가 분해 · DCF 에 한 줄씩 · 재무 신호 밑에 이자보상배율 줄 (12px 이상)"
+            + (" — 다시 읽기 뒤에는 없음" if live else ""), corp_page)
+
+    def split_basis():
+        """주가는 무엇으로 움직였나: 3년 전 EPS 도 지금 EPS 와 같은 기준 (지금: 총 순이익 ÷ 보통주 · 다시 읽은 뒤: 지배주주 순이익 ÷ 보통주 +
+        우선주). 현대차가 다시 읽은 뒤 총 순이익("t")이면 숫자 대신 그 줄."""
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "이익(EPS) 변화")
+        then = co["nio3"][2] * 1e8 / co["epsIn"]["sh"] if live else co["ni"][2] * 100 / co["shm"]
+        see(page, f"{round(then):,}원 → {round(co['eps']):,}원")
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005380", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        see(page, "지난 3년 주가 = 이익 변화 × 눈높이 변화")
+        body = page.locator("body").inner_text()
+        eps = lines("eps")
+        if live:
+            assert "이익(EPS) 변화" not in body and "적자 구간이 있어서" not in body, "총 순이익(t)인데 주가 분해 숫자 · 적자 문장이 보여요"
+            assert len(eps) >= 3 and all(t == FIX_EPS for t, _ in eps), eps        # 투자지표 · 주가 분해 · DCF (+ 업종 내 위치)
+        else:
+            assert len(eps) >= 3, eps
+    R.check(page, S, "주가 분해: 두 끝이 같은 기준 (005930)" + (" · 현대차 't'는 숫자 대신 그 줄" if live else ""), split_basis)
+
+    def gate_card(lang):
+        def run():
+            page.goto("about:blank")
+            page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+            if lang == "en":
+                page.get_by_role("button", name="EN", exact=True).first.click()
+                box = page.get_by_placeholder("Search a KRX stock — name or 6-digit code")
+            else:
+                box = page.get_by_placeholder("궁금한 종목이 있나요? — 이름 또는 코드")
+            box.fill("005930")
+            page.locator("button", has_text="005930").first.wait_for(state="visible", timeout=WAIT)
+            page.locator("button", has_text="005930").first.click()
+            see(page, "A summary of facts" if lang == "en" else "사실의 요약일 뿐")
+            eps, icr = lines("eps"), lines("icr")
+            if live or lang == "en":
+                assert not eps and not icr, (lang, eps, icr)                     # 영어 화면: Jack 이 영어 글을 승인할 때까지 없어요
+            else:
+                assert [t for t, _ in eps] == [FIX_EPS] and [t for t, _ in icr] == [FIX_ICR], (eps, icr)
+                assert all(px >= 12 for _, px in eps + icr), eps + icr
+        return run
+    R.check(page, S, "첫 화면 성적표 005930 (한국어): PER 줄 밑 · 재무 신호 밑" + (" — 없음" if live else ""), gate_card("ko"))
+    R.check(page, S, "첫 화면 성적표 005930 (영어): 두 줄 다 없음", gate_card("en"))
+    ctx.close(); srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중)")
     args = ap.parse_args()
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
@@ -2564,7 +2670,8 @@ def main():
                   ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
                   ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh)),
                   ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
-                  ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh))]
+                  ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
+                  ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True))]   # 2026-11-08
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

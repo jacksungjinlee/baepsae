@@ -6,6 +6,7 @@
 import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS, daysSince, nextFreshChange } from "../data.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
+import { setEpsBasis } from "./fix.js";
 
 // publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
 // like any other format problem (the load-failure message), never treated as fresh.
@@ -110,6 +111,8 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   // whole app reads this one file one way; a file without it keeps the earlier behaviour. The console line with the
   // counts is company.jsx logSplitGuard (once per load, in the browser).
   const exact = setDataShape(d);
+  // 2026-11-08 (Jack): the PER/EPS line shows until corp.json carries epsBasis "owners" (src/repair.js, src/v2/fix.js)
+  setEpsBasis(c, { now, preview: !!opts.preview });
   const features = detectFeatures(d, c, m);
   const missing = missingForBuild(features);
   if (missing.length) console.warn("[v2] fields not live yet, deck builder hidden: " + missing.join(", "));
