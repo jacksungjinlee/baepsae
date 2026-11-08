@@ -1163,8 +1163,9 @@ def won_value(text):
     return int(m.group(1).replace(",", ""))
 
 
-def to_plan(page):
-    """배당 생활비 → 다음 → 다음 → 1,000만원 → 후보 고르기(미리 고른 6종목) → 매수 계획. → [(종목, 주식 수)] 화면 순서대로"""
+def to_plan(page, mix=None):
+    """배당 생활비 → 다음 → 다음 → 1,000만원 → 후보 고르기(미리 고른 6종목) → 매수 계획. → [(종목, 주식 수)] 화면 순서대로
+    mix: 조건 단계의 한국 : 미국 버튼 이름 (예: '한국만'). 없으면 그 템플릿의 비율 그대로."""
     wait_ready(page)
     start_build(page)
     page.locator('[data-deck="income"]').click()
@@ -1173,6 +1174,9 @@ def to_plan(page):
     see(page, C["build"]["s3"]["title"])
     click_next(page)
     see(page, C["build"]["s4"]["title"])
+    if mix:
+        page.get_by_role("radio", name=mix, exact=True).click()
+        assert page.get_by_role("radio", name=mix, exact=True).get_attribute("aria-checked") == "true", mix
     page.get_by_role("button", name="+1,000만").first.click()
     page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
     click_next(page)
@@ -1267,6 +1271,87 @@ def scene_plan_dividend(R, files, width):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "한국 배당 종목 모두 → 이름이 모두 나오고 카드 안에서 줄을 바꿔요 (가로 스크롤 없음) · 미국 종목은 그대로", all_guarded)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── say-why 두 줄 (Jack, 2026-11-08) ──
+def scene_say_why(R, files, width):
+    """기준 단계: 내 점수 칸 바로 밑에 '하루 거래대금 5억원 미만 종목과 우선주는 빼고 셌어요.' (점수를 주기 전에도 · 준 뒤에도. 위에 붙는
+    칸 안이 아니라 그 밑이라 칸의 높이는 그대로예요) · 12px 이상 · 가로 스크롤 없음. 매수 계획 · 연 배당금: 미국 종목을 산 계획에만
+    점검과 같은 줄(같은 키 rpt.divUs) '미국 종목은 최근 배당을 1년치로 환산한 값이에요.' 가 '세전 금액이에요' 바로 밑에, 한국만이면 없어요."""
+    S = f"say-why {width}"
+    by = {s["t"]: s for s in files["data.json"]["stocks"]}
+    why = C["build"]["s1"]["remainWhy"]
+    srv, ctx, page, _ = R.open(build_site(files), width)
+
+    def line_geo():
+        return page.evaluate("""() => { const l = document.querySelector('[data-ui-v2="meter-why"]'); const b = l.getBoundingClientRect();
+            return { bar: document.querySelector('[data-ui-v2="meter-bar"]').getBoundingClientRect().bottom, top: b.top, left: b.left,
+              right: b.right, size: parseFloat(getComputedStyle(l).fontSize), inBar: !!l.closest('[data-ui-v2="meter-bar"]'),
+              prev: l.previousElementSibling && l.previousElementSibling.dataset.uiV2, next: l.nextElementSibling && l.nextElementSibling.textContent }; }""")
+
+    def meter_line():
+        wait_ready(page)
+        start_build(page)
+        page.locator('[data-deck="blank"]').click()
+        see(page, C["build"]["s1"]["title"])
+        assert meter(page)["pool"]                                         # 점수 전: 기준 전의 수
+        line = page.locator('[data-ui-v2="meter-why"]')
+        line.wait_for(state="visible")
+        assert why == "하루 거래대금 5억원 미만 종목과 우선주는 빼고 셌어요." and line.inner_text().strip() == why, line.inner_text()
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(100)
+        g = line_geo()
+        assert not g["inBar"] and g["prev"] == "meter-bar", g                     # 위에 붙는 칸 안이 아니라 바로 밑
+        assert g["bar"] - 0.5 <= g["top"] <= g["bar"] + 12, g
+        assert C["build"]["s1"]["strictLabel"] in (g["next"] or ""), g           # 그다음은 그대로 깐깐함 칸
+        assert g["size"] >= 12 and g["left"] >= 0 and g["right"] <= width + 0.5, g
+        page.locator('[data-card="profit"] [data-ui-v2="card-inc"]').click()       # 점수를 준 뒤: 수는 엔진의 목록, 줄은 그대로
+        m = meter(page)
+        assert not m["pool"] and line.is_visible() and line.inner_text().strip() == why, m
+        assert page.locator('[data-ui-v2="meter-why"]').count() == 1
+        floor_ok(page, "기준 단계 say-why")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "기준 단계: 내 점수 칸 바로 밑(칸 밖)에 '하루 거래대금 5억원 미만 종목과 우선주는 빼고 셌어요.' · 점수 전 · 후 · 12px 이상", meter_line)
+    ctx.close()
+    srv.shutdown()
+
+    def div_us(rows):
+        el = page.locator('[data-ui-v2="plan-summary"] [data-ui-v2="div-us"]')
+        info = page.evaluate("""(t) => { const pre = [...document.querySelectorAll('[data-ui-v2="plan-summary"] div')].find((e) => e.textContent === t);
+            const n = pre && pre.nextElementSibling; return { pre: !!pre, next: n ? (n.dataset.uiV2 || '') : null,
+              size: n && n.dataset.uiV2 === 'div-us' ? parseFloat(getComputedStyle(n).fontSize) : null }; }""", C["plan"]["preTax"])
+        return el, info
+
+    srv, ctx, page, _ = R.open(build_site(files), width)
+
+    def us_plan():
+        rows = to_plan(page)
+        us = [t for t, n in rows if n > 0 and by[t]["cls"] == "us" and by[t].get("dy") is not None]
+        assert us, rows                                                    # 이 계획에는 배당을 아는 미국 종목이 있어요
+        el, info = div_us(rows)
+        assert el.count() == 1 and el.is_visible() and el.inner_text().strip() == C["rpt"]["divUs"], el.all_inner_texts()
+        assert C["rpt"]["divUs"] == "미국 종목은 최근 배당을 1년치로 환산한 값이에요."
+        assert info["pre"] and info["next"] == "div-us" and info["size"] >= 12, info     # '세전 금액이에요' 바로 밑
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "매수 계획 · 연 배당금: 미국 종목을 사면 '세전 금액이에요' 밑에 '미국 종목은 최근 배당을 1년치로 환산한 값이에요.'", us_plan)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, _ = R.open(build_site(files), width)
+
+    def kr_plan():
+        rows = to_plan(page, mix=C["build"]["s4"]["mix"]["kr"])
+        assert rows and all(by[t]["cls"] == "kr" for t, n in rows), rows   # 한국만: 미국 종목이 없어요
+        el, info = div_us(rows)
+        assert el.count() == 0 and info["pre"] and info["next"] != "div-us", (el.all_inner_texts(), info)
+        assert C["rpt"]["divUs"] not in page.locator("body").inner_text()
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "매수 계획 · 연 배당금: 한국만이면 미국 배당 줄이 없어요 ('세전 금액이에요'는 그대로)", kr_plan)
     ctx.close()
     srv.shutdown()
 
@@ -6359,6 +6444,7 @@ def main():
                       lambda: scene_old_app(R, files, width, "{not json", False),
                       lambda: scene_daily(R, files, width), lambda: scene_today(R, files, width),
                       lambda: scene_plan_dividend(R, files, width),
+                      lambda: scene_say_why(R, files, width),           # say-why 두 줄 (Jack, 2026-11-08): 내 점수 칸 밑 · 미국 배당
                       # 한국 배당 추세 스위치의 반대 상태 (커밋하지 않는 임시 빌드): 두 상태를 모두 화면에서 시험해요
                       lambda: scene_daily(R, files, width, trend=not KR_DIV_TREND), lambda: scene_today(R, files, width, trend=not KR_DIV_TREND),
                       lambda: scene_about(R, files, width), lambda: scene_routes(R, files, width),

@@ -641,7 +641,7 @@ export function GuideReader({ id, onClose }) {
             ))}
           </div>
         )}
-        <div style={{ fontSize: 10, color: C.faint, marginTop: 16 }}>업종을 이해하기 위한 교육 자료예요. 특정 종목 추천이 아니에요.</div>
+        <div style={{ fontSize: 10, color: C.faint, marginTop: 16 }}>업종을 이해하기 위한 자료예요. 특정 종목 추천이 아니에요.</div>
       </div>
     </div>
   );
