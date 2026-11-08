@@ -6,7 +6,8 @@
   python tests/smoke_launch.py --shots DIR     # 화면 스크린샷
 
 - '/' (index.html) → app.html 로 가요 (예전처럼 baepsae.html 이 아니에요)
-- 저장한 포트폴리오가 없는 방문자는 첫 방문 홈(포트폴리오 만들기)부터, 있는 방문자는 홈(오늘의 판정)부터 봐요 (v19.0c: #home)
+- 저장한 포트폴리오가 없는 방문자는 첫 방문 홈(포트폴리오 만들기)부터, 있는 방문자는 홈(오늘의 판정)부터 봐요 (v19.0c: #home).
+  모두 처음 안내를 이미 본 방문자예요 (v19.3c: 처음 안내가 저절로 뜨는 첫 방문은 tests/smoke_v2.py scene_v193c · scene_v193c_first)
 - ☰ 메뉴에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요. 종목 탭의 한국 회사는 (v19.1a) 2.0 회사 페이지(#stocks/코드)로
 - v19.0c 전에 저장한 기본 이름('배당 생활비 덱')은 화면에서만 새 이름('배당 생활비 포트폴리오'), 저장본은 그대로
 - 지금 앱 푸터의 '소개'(v19.0)를 누르면 2.0 의 소개 페이지(app.html#about)가 열리고, 소개의 뒤로(닫기)는 지금 앱으로 돌아가요
@@ -133,6 +134,7 @@ def cv_link(browser, check, errors):
     def context(local=None, live=False):
         # GoatCounter 의 개발 표시(baepsae_dev)를 심지 않아요: 로컬 주소에서 세지 않는 것을 그대로 보려고요 (요청은 모두 여기서 막아요)
         ctx = browser.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")             # v19.3c: 처음 안내를 이미 본 방문자 (Jack, 2026-11-08)
         ctx.expose_binding("__cvSeen", lambda src, w: seen.append(w))
         ctx.add_init_script(CV_SEEN)
         if local:                                                    # 처음 한 번만 심어요 (앱이 바꾼 것을 다시 덮지 않게)
@@ -384,6 +386,7 @@ def cv_link(browser, check, errors):
         threading.Thread(target=s2.serve_forever, daemon=True).start()
         b2 = f"http://127.0.0.1:{s2.server_address[1]}"
         c = browser.new_context(viewport={"width": 390, "height": 780}, locale="ko-KR", service_workers="allow")
+        c.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")               # v19.3c: 처음 안내를 이미 본 방문자
         c.route(lambda u: not u.startswith(b2), lambda r: r.abort())
         c.add_init_script("(() => { try { localStorage.setItem('baepsae_dev', '1'); } catch (e) {} })();")
         p1 = new_page(c)
@@ -463,6 +466,7 @@ def main():
                 def context(saved=False):
                     ctx = browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR",
                                               service_workers="block")
+                    ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")   # v19.3c: 처음 안내를 이미 본 방문자
 
                     def route(r):
                         if r.request.url.startswith(base):
@@ -528,7 +532,7 @@ def main():
                     page.go_back()                          # 휴대폰 뒤로 → 홈
                     page.wait_for_url(APP_URL)
                     page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
-                check(W + "저장한 포트폴리오가 없는 방문자 → 첫 방문 홈 → 포트폴리오 만들기 → 뒤로 → 홈", no_deck_lands_on_home, page, tag)
+                check(W + "저장한 포트폴리오가 없는 방문자(처음 안내를 이미 본) → 첫 방문 홈 → 포트폴리오 만들기 → 뒤로 → 홈", no_deck_lands_on_home, page, tag)
 
                 def stocks_open_company():
                     # v19.1a: 종목 탭의 한국 회사는 2.0 회사 페이지로 (#stocks/코드). 예전 뱁새의 기업분석으로 가지 않아요
