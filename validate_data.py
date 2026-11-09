@@ -1309,14 +1309,18 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
             f"{BETA_SE_WILD_MAX:g}% 이하")
 
     # 9. 재무 경고 검사 기록: 모든 기업에 flRan, 켜진 경고는 실제로 돌린 검사여야 해요
+    # (2026-11-09, Jack 의 답 필요 · PR 의 '안전 규칙 변경'): 원화가 아닌 재무제표(stmtCur) 회사는 재무 신호를 계산하지 않아 flRan 이 없어요 —
+    # 'EPS·BPS 영수증 모양' 줄(stmt_cur_problems)이 그 회사에 fl·flRan·flSrc·flWhy 가 하나도 없고 통화 코드가 맞는지를 따로 봐요.
     bad = []
     for c in comps:
+        if "stmtCur" in c:
+            continue
         ran, na, fl = c.get("flRan"), c.get("flNa", []), c.get("fl") or {}
         if not isinstance(ran, list) or not isinstance(na, list) or not set(ran) | set(na) <= set(FL_KEYS) \
                 or len(set(ran)) != len(ran) or set(ran) & set(na) or not set(fl) <= set(ran):
             bad.append(c.get("t"))
     rep.add("재무 경고 검사 기록 (flRan, 국내 기업 모두)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
-            f"0 ({'·'.join(FL_KEYS)} 중 · 켜진 경고는 flRan 안)")
+            f"0 ({'·'.join(FL_KEYS)} 중 · 켜진 경고는 flRan 안 · stmtCur 회사는 신호 없음을 영수증 모양 줄이 봐요)")
 
     # 10. 새 금액 칸 모양: 숫자 3개 · 총액은 0 이상 · 해외 기업(9…)은 총액·주당순이익을 싣지 않고 배당은 0 또는 빈 칸
     bad = []

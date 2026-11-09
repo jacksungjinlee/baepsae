@@ -3763,17 +3763,25 @@ def not_won(s, fin):
 def blank_non_won(kr_stocks, fin_map):
     """v19.1f (리뷰 2026-11-08): 원화가 아닌 재무제표로 낸 국내 회사 — 해외 기업처럼 PER·PBR·EPS·BPS 를 비우고 (금액은 build_corp 가
     비워요) 회사와 통화를 크게 남겨요. ROE 도 비워요 (리뷰 4: 앱이 '실적 숫자는 아직 보여 드리지 않아요' 밑에 ROE 를 보여 주지 않게 ·
-    퀄리티 점수 qz 도 그래서 안 매겨요). 배당(dps · dy)은 배당 표가 '(원)' 단위라 남겨요. 반환: ["코드 이름(통화)", …]."""
-    hit = []
+    퀄리티 점수 qz 도 그래서 안 매겨요). 배당(dps · dy)은 배당 표가 '(원)' 단위라 남겨요. 반환: ["코드 이름(통화)", …].
+    해외 기업(9…)도 재무제표 통화가 원화가 아니면 ROE 를 비워요 (2026-11-09 시험 실행: build_corp 는 stmtCur 회사의 corp.json roe·qz 를
+    비우는데 data.json 에는 해외 기업 19곳의 roe·qz 가 남아 관문의 두 줄이 어긋났어요 — 두 파일이 같게). 나머지는 blank_foreign_dart 가 해요."""
+    hit, fr = [], []
     for s in kr_stocks:
         cur = stmt_cur_of(fin_map.get(s.get("t")))
-        if s.get("cls") != "kr" or is_foreign_issuer(s.get("t")) or not cur:
+        if s.get("cls") != "kr" or not cur:
+            continue
+        if is_foreign_issuer(s.get("t")):
+            s.pop("roe", None)
+            fr.append(s["t"])
             continue
         for k in FOREIGN_BLANK + ("roe",):
             s.pop(k, None)
         hit.append(f"{s['t']} {s.get('nk', '')}({cur})")
     log(f"{'  !! ' if hit else '· '}원화가 아닌 재무제표로 낸 국내 회사 {len(hit)}곳"
         + (f": {', '.join(sorted(hit))} — 금액·PER·PBR·EPS·BPS·ROE 를 비웠어요 (재무 신호도 비워요 · 배당은 남겨요)" if hit else ""))
+    if fr:
+        log(f"  !! 원화가 아닌 재무제표로 낸 해외 기업 {len(fr)}곳: ROE 도 비웠어요 (corp.json 과 같게 · 퀄리티 점수 없음)")
     return hit
 
 

@@ -623,3 +623,25 @@ def test_ttm_carries_the_quarters_minority_profit_as_evidence():
     full["ttm"] = dict(t2["ttm"], nciPl=0.0)
     assert "nci" not in _eps_in(full)
     assert "nciPl" not in F.compute_ttm(fin, {"rev": 3.0, "ni": 1.0}, {"rev": 3.0, "ni": 1.0})["ttm"]
+
+
+
+# ── 2026-11-09 full DART dry run (run 42536189571): the gate's three FAIL rows ──
+def test_foreign_issuers_with_statements_in_another_currency_carry_no_roe_in_either_file(capsys):
+    """원인 1 (영수증 모양 38 · 두 파일 같은 값 19): build_corp 는 stmtCur 회사의 corp.json roe·qz 를 비우는데, blank_non_won 이 해외 기업(9…)을
+    건너뛰어 data.json 에 해외 기업 19곳의 roe 와 그 점수 qz 가 남았어요 (예: 950160 코오롱티슈진 roe −303.2)."""
+    fin = dict(F.parse_dart_list(USD)["_fin"], fs="CFS")
+    s = {"t": "950160", "nk": "코오롱티슈진", "cls": "kr", "price": 30000.0, "shr": 1000, "cap": 1.0, "roe": -303.2}
+    plain = {"t": "950250", "nk": "테라뷰", "cls": "kr", "price": 1000.0, "shr": 1000, "cap": 1.0, "roe": 3.0}
+    fins = {"950160": fin, "950250": {"ni": [5.0, None, None], "eq": 9.0, "fs": "CFS"}}
+    F.blank_foreign_dart([s, plain])
+    assert F.blank_non_won([s, plain], fins) == []                                  # 국내 회사 목록에는 없어요
+    assert "!! 원화가 아닌 재무제표로 낸 해외 기업 1곳" in capsys.readouterr().out
+    assert "roe" not in s and plain["roe"] == 3.0                                    # stmtCur 가 없는 해외 기업은 그대로
+    extra = F.fill_multiples([s, plain], fins, {})
+    F.add_percentiles([s, plain])
+    assert "roe" not in s and "qz" not in s
+    corp = {c["t"]: c for c in F.build_corp([s, plain], fins, "2026-11-09", extra=extra)["companies"]}
+    c = corp["950160"]
+    assert c["stmtCur"] == "USD" and not V.stmt_cur_problems(c, s)
+    assert all(V.num(s.get(k)) == V.num(c.get(k)) for k in ("eps", "bps", "per", "pbr", "roe"))

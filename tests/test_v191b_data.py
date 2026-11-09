@@ -999,3 +999,19 @@ def test_divcheck_counts_must_match_the_stocks(pair, key):
     cur, prev = pair
     cur["data"]["divCheck"][key] += 1
     _fails(cur, prev, "divCheck 집계 = 종목 수")
+
+
+def test_flran_row_leaves_statements_in_another_currency_to_the_receipt_row(pair):
+    """2026-11-09 full DART dry run (run 42536189571), flRan 21: stmtCur 회사(해외 기업 19 · 두산밥캣 · 아남전자)는 재무 신호를 계산하지
+    않아 flRan 이 없어요. flRan 줄은 그 회사를 건너뛰고, 신호가 하나도 없는지는 영수증 모양 줄(stmt_cur_problems)이 봐요. stmtCur 가 없는
+    회사는 예전처럼 flRan 이 있어야 해요."""
+    cur, prev = pair
+    name = "재무 경고 검사 기록 (flRan, 국내 기업 모두)"
+    c = cur["corp"]["companies"][3]
+    for k in ("fl", "flRan", "flSrc", "flWhy", "flNa"):
+        c.pop(k, None)
+    _fails(cur, prev, name)                                                          # stmtCur 없이 flRan 이 없으면 실패 (그대로)
+    c["stmtCur"] = "USD"
+    assert name not in {r[0] for r in check(cur, prev).failed}
+    c["flRan"] = ["cr"]                                                              # stmtCur 회사에 신호가 남으면 영수증 줄이 잡아요
+    assert f"{c['t']} corp.flRan" in V.stmt_cur_problems(c, {})
