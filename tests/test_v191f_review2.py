@@ -220,7 +220,7 @@ def test_statements_in_another_currency_carry_no_financial_signals(pair):
     assert fin["iec"] == 0.0 and fin["ni"][0] == 0.0                         # 1,068,247 달러 · 414만 달러를 0.1억으로 반올림하면 0
     s = {"t": "008700", "nk": "아남전자", "cls": "kr", "price": 1126.0, "shr": 77_124_820, "cap": 0.087, "s": "elec", "ind": "elec"}
     c = F.build_corp([dict(s, roe=4.4, qz=55)], {"008700": fin}, "2026-11-08")["companies"][0]   # blank_non_won 전이어도
-    assert c["stmtCur"] == "USD" and not any(k in c for k in ("fl", "flRan", "flSrc", "flWhy"))
+    assert c["stmtCur"] == "USD" and not any(k in c for k in ("fl", "flSrc", "flWhy")) and c["flRan"] == []   # 돌린 검사 없음
     assert c["roe"] is None and c["qz"] is None                                # ROE 와 그 점수도 보여 주지 않아요 (리뷰 4)
     cur, prev = pair
     k = comp(cur, "000270")
@@ -231,6 +231,9 @@ def test_statements_in_another_currency_carry_no_financial_signals(pair):
     k["flSrc"] = {"icr": "cf", "int0": True}
     got = V.stmt_cur_problems(k, {})
     assert "000270 corp.flSrc" in got and "000270 corp.flRan" not in got
+    k["flRan"] = []                                                            # 돌린 검사 없음: 괜찮아요
+    assert "000270 corp.flRan" not in V.stmt_cur_problems(k, {})
+    k.pop("flRan")
     k.update(roe=5.6)
     assert "000270 corp.roe" in V.stmt_cur_problems(k, {}) and "000270 data.roe" in V.stmt_cur_problems(dict(k, roe=None), {"roe": 5.6})
 

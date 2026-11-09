@@ -3327,6 +3327,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
                 # 0.0 · 순이익 414만 달러 → 0.0). 신호를 계산하지 않은 것으로 둬요 — 앱은 아무 말도 하지 않아요
                 for k in ("fl", "flRan", "flSrc", "flWhy"):
                     row.pop(k, None)
+                row["flRan"] = []                    # (2026-11-09) 돌린 검사 없음 — 관문의 '재무 경고 검사 기록' 줄은 목록을 바라요
                 row.update(roe=None, qz=None)        # 리뷰 4: ROE 와 그 점수도 보여 주지 않아요 (blank_non_won 이 data.json 쪽을 비워요)
         comps.append(row)
 
