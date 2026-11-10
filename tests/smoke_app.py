@@ -1202,14 +1202,19 @@ def scene_beta_return(R, files):
 
 def scene_foreign_issuer(R, files):
     """해외 기업(종목코드 9…): 파이프라인이 외화일 수 있는 DART 금액을 비우면(v17.5.2), 기업분석의 재무 흐름 자리에
-    Jack 이 정한 줄 "외화로 작성된 재무제표라 아직 보여 드리지 않아요." 가 보여요 (2026-11-03). 국내 기업의 빈 칸 문구는 그대로예요."""
+    Jack 이 정한 줄 "외화로 작성된 재무제표라 아직 보여 드리지 않아요." 가 보여요 (2026-11-03). 국내 기업의 빈 칸 문구는 그대로예요.
+    재무제표 통화(stmtCur)가 붙은 해외 기업(다시 읽은 데이터, 2026-11-10)은 그 줄 대신 통화 줄을 보여요 (#97)."""
     f = json.loads(json.dumps(files, allow_nan=True))
     names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
     cos = [c for c in f["corp.json"]["companies"] if str(c.get("t", "")).startswith("9") and len(str(c["t"])) == 6 and names.get(c["t"])]
     assert cos, "시험할 해외 기업(9…)이 데이터에 없어요"
-    co = cos[0]
+    # 2026-11-10 (DART 다시 읽기 뒤): 해외 기업 대부분은 재무제표 통화(stmtCur, 예: USD)가 붙고, 그러면 '외화로…' 줄 대신 통화 줄을
+    # 보여요(#97). 이 줄은 통화 표시가 없는 해외 기업으로 봐요 (없으면 복사본에서 표시를 빼요). 통화 표시가 있는 쪽은 아래에서 따로 봐요.
+    co = next((c for c in cos if not c.get("stmtCur")), cos[0])
+    co.pop("stmtCur", None)
+    cur = next((c for c in cos if c is not co and re.fullmatch(r"[A-Z]{3}", str(c.get("stmtCur") or "")) and c["stmtCur"] not in ("KRW", "XXX")), None)   # 앱의 stmtCurOf 와 같은 규칙
     co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
-    srv, ctx, page, _ = R.open(build_site(f))
+    srv, ctx, page, base = R.open(build_site(f))
 
     def run():
         search(page, co["t"], co["t"])
@@ -1219,6 +1224,22 @@ def scene_foreign_issuer(R, files):
         body = page.locator("body").inner_text()
         assert "파이프라인이 사업보고서를 못 찾은 종목이에요" not in body and "NaN" not in body, "해외 기업에 국내용 빈 칸 문구 또는 NaN"
     R.check(page, "해외 기업", f"{co['t']} {names[co['t']]}: 재무 흐름 자리에 '외화로 작성된 재무제표라…'", run)
+
+    def run_cur():
+        line = f"이 회사는 재무제표를 원화가 아닌 {cur['stmtCur']}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        search(page, cur["t"], cur["t"])
+        page.locator("button", has_text=cur["t"]).first.click()
+        page.get_by_text("기업분석에서 자세히 보기", exact=True).first.click()
+        see(page, line)
+        body = page.locator("body").inner_text()
+        assert "외화로 작성된 재무제표라" not in body and "파이프라인이 사업보고서를 못 찾은 종목이에요" not in body and "NaN" not in body, \
+            "통화 표시가 있는 해외 기업에 '외화로…' 줄 · 국내용 빈 칸 문구 · NaN"
+    if cur:
+        R.check(page, "해외 기업", f"{cur['t']} {names[cur['t']]}: 재무제표 통화({cur['stmtCur']})가 있으면 통화 줄, '외화로…' 줄 없음", run_cur)
+    else:
+        print("  SKIP  [해외 기업] 재무제표 통화(stmtCur)가 붙은 해외 기업이 이 데이터에 없어요 — 통화 줄 확인은 다시 읽은 데이터에서만 돌아요")
     ctx.close(); srv.shutdown()
 
 
@@ -2600,12 +2621,15 @@ def scene_fix_notes(R, files, live=False):
             + (" — 다시 읽기 뒤에는 없음" if live else ""), corp_page)
 
     def split_basis():
-        """주가는 무엇으로 움직였나: 3년 전 EPS 도 지금 EPS 와 같은 기준 (지금: 총 순이익 ÷ 보통주 · 다시 읽은 뒤: 지배주주 순이익 ÷ 보통주 +
+        """주가는 무엇으로 움직였나: 3년 전 EPS 도 지금 EPS 와 같은 기준 (영수증 없는 예전 데이터: 총 순이익 ÷ 보통주 · 영수증(epsIn "o")이 있으면: 지배주주 순이익 ÷ 보통주 +
         우선주). 현대차가 다시 읽은 뒤 총 순이익("t")이면 숫자 대신 그 줄."""
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
         see(page, "이익(EPS) 변화")
-        then = co["nio3"][2] * 1e8 / co["epsIn"]["sh"] if live else co["ni"][2] * 100 / co["shm"]
+        # 3년 전 EPS 의 기준은 데이터의 영수증을 따라요 (2026-11-10): 다시 읽은 데이터(epsIn "o")면 지배주주 순이익 ÷ 영수증 주식 수 —
+        # 표지(epsBasis)를 뺀 '지금' 장면도 앱은 같은 기준으로 두 끝을 맞춰요. 영수증이 없는 예전 데이터만 총 순이익 ÷ 보통주예요.
+        own = live or (isinstance(co.get("epsIn"), dict) and co["epsIn"].get("b") == "o")
+        then = co["nio3"][2] * 1e8 / co["epsIn"]["sh"] if own else co["ni"][2] * 100 / co["shm"]
         see(page, f"{round(then):,}원 → {round(co['eps']):,}원")
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005380", wait_until="domcontentloaded")
