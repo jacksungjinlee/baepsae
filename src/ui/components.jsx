@@ -275,7 +275,8 @@ export function BottomActionBar({ summary, action, onAction, fixed = false }) {
 // 바깥(어두운 곳)을 눌렀다 뗄 때만 닫혀요 — 시트 안에서 끌다가 바깥에서 놓으면 닫히지 않아요.
 // 화면이 낮으면(가로 화면, 키보드) 시트 안이 스크롤돼요. 제목과 닫기 버튼은 위에 붙어 있어요.
 // inline: 스타일 페이지에서 겹치지 않고 제자리에 보여 줄 때만 써요
-// shift: 시트를 오른쪽으로 미는 폭(px). PC 화면(v19.0d)에서 왼쪽 메뉴 폭만큼 밀어 본문 가운데에 놓아요. 어두운 바탕은 화면 전체예요.
+// shift: 시트를 오른쪽으로 미는 폭(px). PC 화면(v19.0d)에서 왼쪽 메뉴 폭만큼 밀어 본문 가운데에 놓아요. 어두운 바탕도 왼쪽 메뉴 오른쪽부터예요:
+// 시트가 열린 동안에도 왼쪽 메뉴는 한 번에 눌려요 (Jack, 11월 10일: 기록했어요 뒤 왼쪽 메뉴 포트폴리오가 첫 클릭에 안 열렸어요).
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
 export function BottomSheet({ open, title, onClose, closeLabel, children, inline = false, shift = 0 }) {
   const panelRef = useRef(null);
@@ -328,8 +329,8 @@ export function BottomSheet({ open, title, onClose, closeLabel, children, inline
     <div data-ui="bottom-sheet"
       onPointerDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget; }}
       onClick={(e) => { if (downOnBackdrop.current && e.target === e.currentTarget) onClose(); downOnBackdrop.current = false; }}
-      style={{ position: "fixed", inset: 0, background: "rgba(28,43,69,0.45)", zIndex: 90, display: "flex", alignItems: "flex-end", justifyContent: "center",
-        ...(shift ? { paddingLeft: shift } : {}) }}>
+      style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: shift || 0, background: "rgba(28,43,69,0.45)", zIndex: 90, display: "flex",
+        alignItems: "flex-end", justifyContent: "center" }}>
       {panel}
     </div>
   );

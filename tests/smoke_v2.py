@@ -3080,6 +3080,31 @@ def scene_pc(R, files):
         page.keyboard.press("Escape")
         panel.wait_for(state="detached")
     R.check(page, S, "포트폴리오 만들기(왼쪽 메뉴, 뱁이 176px) · 아래 버튼 띠는 왼쪽 메뉴 오른쪽 · 금액 칸에서 '/' 그대로 · 샀어요 시트는 본문 가운데, 열린 동안 '/' 그대로", bars)
+
+    def side_menu_over_sheet():
+        # 2026-11-10 (Jack: PC 에서 새로 만든 포트폴리오가 왼쪽 메뉴 포트폴리오에서 안 보여요): 시트의 어두운 바탕이 왼쪽 메뉴를 덮어
+        # 첫 클릭은 시트만 닫고 매수 계획에 남았어요. 이제 바탕은 왼쪽 메뉴 오른쪽부터 → 기록했어요가 열린 채로 포트폴리오 한 번이면 새 포트폴리오.
+        before = len(page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1') || '{\"decks\":[]}')")["decks"])
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        page.locator('[data-ui-v2="record-done"]').wait_for(state="visible")
+        dim = page.locator('[data-ui="bottom-sheet"]:not([data-inline])').bounding_box()
+        assert abs(dim["x"] - 240) < 1 and abs(dim["x"] + dim["width"] - PC_W) < 1, dim      # 어두운 바탕: 왼쪽 메뉴(240px) 오른쪽만
+        panel = page.locator('[data-ui="bottom-sheet"] [role="dialog"]').bounding_box()
+        assert abs(panel["x"] + panel["width"] / 2 - (240 + (PC_W - 240) / 2)) < 1, panel  # 시트는 그대로 본문 가운데
+        stored = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"]
+        assert len(stored) == before + 1, (before, len(stored))
+        new = stored[-1]
+        side = page.locator('[data-ui-v2="side-tabs"] button').filter(has_text=TABS["portfolio"]).first
+        side.click(timeout=5000)                                           # 한 번: 시트에 가로막히지 않아요
+        at(page, "portfolio")
+        assert page.locator('[data-ui="bottom-sheet"]').count() == 0
+        card = page.locator(f'[data-deck-id="{new["id"]}"]:has(h3)')        # 방금 만든 포트폴리오가 보여요 (카드만, 이른 종가 줄 말고)
+        card.wait_for(state="visible")
+        assert new["name"] in card.inner_text(), (new["name"], card.inner_text()[:200])
+        R.collect(page)
+    R.check(page, S, "기록했어요가 열린 채로 왼쪽 메뉴 포트폴리오 한 번 → 방금 만든 포트폴리오 (어두운 바탕은 왼쪽 메뉴 오른쪽만)", side_menu_over_sheet)
     ctx.close()
     srv.shutdown()
 
