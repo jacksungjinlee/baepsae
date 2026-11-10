@@ -22,6 +22,7 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
 임계값은 2026-10-17 발행본(DART 정상 마지막 날)에 맞춰 정했어요. 안전 규칙이라 함부로 낮추지 않습니다.
 """
 import argparse
+import collections
 import csv
 import datetime as dt
 import io
@@ -155,6 +156,45 @@ DATA_NEW_MUST = ("betaSE", "betaN")
 CORP_NEW_MUST = ("flRan",)
 CORP_MIRROR = ("divSt", "dps3a", "dpsF", "dyt", "dz")
 CORP_NEW_MUST_AMT = ("cash3", "eps3r")
+# v19.1f (2026-11-08 · 새 줄만, 늦추는 줄 없음): 손익 줄 (매출·영업이익·순이익)과 EPS 기준 (지배주주 몫). data.json 에 incCheck 가
+# 있으면(v19.1f 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1f 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데
+# 빠졌으면 실패. 2026-11-08 발행본(재읽기 전): 시총 상위 200 매출 88.4% · 영업이익 93.0% · 순이익 90.5%, 한화에어로스페이스 매출 없음.
+INC_TOP_N = 200            # 손익 줄 채움을 보는 시가총액 상위 국내 회사 수 (보통주 · 해외 기업과 펀드 빼고 · 사업보고서 연도 fy 있는 곳)
+# 손익 줄 채움 실패 기준 (%): 98% approved by Jack 2026-11-08 on condition of an April back-test; no April data exists; off (WARN only) until Jack decides.
+# (98% 는 4월 데이터로 막지 않았는지 확인하는 조건으로 승인했는데, 저장소에 4월 데이터가 없어요 — Jack 이 정할 때까지 꺼 둠 · 경고만.)
+# 켜면 시총 상위 200 의 매출·영업이익·순이익 중 하나라도 INC_TOP_FLOOR 미만일 때 발행을 막아요 (지금은 100% 가 아니면 경고만 · 빠진 회사
+# 이름과 함께). 켜는 건 INC_TOP_FLOOR = INC_TOP_FLOOR_APPROVED 한 줄이에요. 2026-11-08 재읽기 시험 실행: 매출 100.0% · 영업이익 100.0% ·
+# 순이익 99.5%.
+#  - '올해' = 회사마다 가장 최근에 낸 사업보고서의 해 (corp.json fy · rev/op/ni 의 첫 칸). 달력의 해가 아니에요 — 새 사업보고서를 아직
+#    안 낸 회사는 그 전 해 보고서로 세요 (파이프라인이 그 해 → 전 해 순서로 읽어요).
+#  - 금융회사(은행·보험·증권·금융 지주)는 매출 요구에서 빼요 (영업수익을 매출로 세지 않아요): 재무제표에 매출 한 줄이 없고 (은행은
+#    이자수익·수수료수익, 보험은 보험수익) 파이프라인이 영업수익을 만들어 읽지 않아서, 빼는 쪽이 지금 데이터로 정확해요. 영업이익·순이익은 세요.
+INC_TOP_FLOOR_APPROVED = 98.0
+INC_TOP_FLOOR = None
+EPS_B = ("o", "s", "t")    # epsIn.b: 지배주주 몫(연결) · 별도 재무제표 · 연결인데 지배주주 줄 없음(전체)
+EPS_P = ("ttm", "fy")      # epsIn.p: 최근 4개 분기 · 사업보고서 한 해
+ICR_WARN_SHARE = 10.0      # 이자보상배율을 돌린 회사 중 경고(1배 미만) 비율이 이보다 크면 경고 (실패 아님 · 2026-11-07 옛 값은 약 25%)
+CORP_FIN_SECS = ("bank", "insure", "broker")   # 업종 그룹(ind)이 없을 때 금융회사로 보는 corp.json 업종 (매출 줄이 없을 수 있어요)
+# v19.1f (리뷰 2026-11-08 · 새 줄만, 늦추는 줄 없음): 파이프라인과 따로 적어요 (같은 실수를 같이 하지 않게 · 값이 같은지는 테스트가 봐요)
+EPS_OWNERS_MIN = 95.0      # EPS 영수증 중 주주 몫(o) · 별도(s) 비율(%)이 이보다 낮으면 실패 (fetch_data EPS_BASIS_MIN 0.95 와 같아요)
+PER_TOL, PBR_TOL = 0.06, 0.006   # PER 은 소수 첫째 · PBR 은 둘째 자리 반올림이라 (영수증으로 다시 나눈 값과의 차이)
+PBR_WARN = 100.0          # 국내 PBR 이 이보다 크면 경고 (단위·통화가 틀렸을 수 있어요 — 아남전자 USD 를 원으로 읽어 PBR 964.92). PER 은 이익이
+                          # 아주 작은 회사가 날마다 걸려서 (지엘팜텍 5,319.9 · 레인보우로보틱스 4,385.5) 보지 않아요 (리뷰 3)
+EPS_REP_BAND = (0.67, 1.5)   # 사업보고서 한 해 EPS ÷ 재무제표 기본주당이익이 이 밖이거나 부호가 다르면 경고 (평균 주식 수가 달라 조금은 달라요)
+STMT_AMT_KEYS = ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep")
+# v19.1h (새 줄만 · Jack 의 답 2026-11-08 · PR 의 '안전 규칙 변경'): 배당 맞춤 이유 (data.json 종목의 dvWhy · divCheck.why).
+# 주식 수가 바뀌어 배당을 다시 계산하려 한 국내 종목마다 DART 결정 공시로 찾은 결론이에요 (ok 다시 계산 · nf 공시 없이 다시 계산 ·
+# filed 유상증자·사채가 설명해 공시 그대로 · nc-mismatch / nc-unexplained 다시 계산하지 않고 배당수익률을 숨김). 이 값들은 fetch_data.py 와
+# 일부러 따로 적어요. 모양이 틀리거나 배율·날짜·숨김이 맞지 않으면 실패. nf · filed · nc-* · 조회 실패 · 스위치 꺼짐은 경고만 (이름을
+# 적어요) — DART 장애가 발행을 막지 않게. divCheck.why 가 없으면 v19.1h 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패.
+DVWHY_KINDS = ("split", "merge", "bonus", "reduce")   # 액면분할 · 주식병합 · 무상증자 · 주식병합으로 한 감자
+DVWHY_ST = ("ok", "nf", "filed", "nc-mismatch", "nc-unexplained")
+DVWHY_FX_KINDS = ("rights", "cb", "bw")     # 유상증자 · 전환사채 · 신주인수권부사채
+DVWHY_TOL = 0.005        # 공시 사건 배율의 곱 = 그해 dpsF ± 0.5%
+DVWHY_CLEAN_TOL = 1e-4   # 사건 하나의 배율은 깨끗한 분할 배율(SPLIT_FACTORS · 역수)과 이만큼 안
+DVWHY_SAME = 0.10        # 10% 이하 변화는 이름 붙이지 않아요 · filed 의 여유 (fetch_data.SHARE_SAME 과 같은 값)
+DVWHY_CB_FLOOR = 0.7     # 전환·행사가액의 하한 (발행 때의 70%) → 사채가 만드는 주식 수는 많아야 1/0.7 배
+DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 말보다 이만큼 앞부터
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -761,7 +801,9 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
     check_v191b(rep, data, kr, us, by, comps, pdata)
+    check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
+    check_v191f(rep, data, corp, kr, by, comps, pdata)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1301,6 +1343,535 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
                dyt=sum(1 for s in kr if num(s.get("dyt")) is not None))
     off = [f"{k} {dc.get(k)}≠{v}" for k, v in got.items() if dc.get(k) != v]
     rep.add("divCheck 집계 = 종목 수", not off, "맞음" if not off else " · ".join(off[:4]), "같아야 함")
+
+
+def _first(v):
+    return num(v[0]) if isinstance(v, list) and v else None
+
+
+def _sign(x):
+    return (x > 0) - (x < 0)
+
+
+def is_fin_co(s, c):
+    """금융회사인지 (매출 줄이 재무제표에 없을 수 있어요): 업종 그룹이 있으면 그것으로, 없으면 corp.json 업종으로. (파이프라인과 따로)"""
+    ind = (s or {}).get("ind")
+    return ind in FIN_INDS if ind else (c or {}).get("s") in CORP_FIN_SECS
+
+
+def check_v191f(rep, data, corp, kr, by, comps, pdata):
+    """v19.1f 새 줄: 손익 줄 채움 · 필수 종목 손익 3줄 · 재무제표는 있는데 손익 줄이 없는 회사 · EPS 기준(지배주주 몫)과 영수증."""
+    ic = data.get("incCheck")
+    if not isinstance(ic, dict):
+        had = isinstance((pdata or {}).get("incCheck"), dict)
+        rep.add("손익 줄 검사 기록 (incCheck)", not had,
+                "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1f 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1f 전 데이터만 경고)", warn=not had)
+        return
+    rep.add("손익 줄 검사 기록 (incCheck)", ic.get("v") == 1, f"v{ic.get('v')}", "v1")
+    corp_basis = (corp or {}).get("epsBasis")
+    rep.add("EPS 기준 표시 (epsBasis = owners)", data.get("epsBasis") == "owners" and corp_basis == "owners",
+            f"data {data.get('epsBasis')} · corp {corp_basis}", "둘 다 owners (재읽기가 돈 발행본 — 앱의 '고치는 중' 줄이 이걸 봐요)")
+    cby = {c.get("t"): c for c in comps}
+    must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr" and not is_foreign(t)]
+
+    # 1. 시가총액 상위 200 (보통주 · 해외 기업과 펀드 빼고 · fy 있는 회사)의 최근 사업보고서(fy) 매출(금융회사 빼고) · 영업이익 · 순이익 채움
+    pool = [s for s in kr if not is_pref(s.get("t")) and not is_foreign(s.get("t")) and not s.get("etf") and not s.get("fund")
+            and s.get("t") not in KR_FUND_SET and isinstance((cby.get(s.get("t")) or {}).get("fy"), int)]
+    top = sorted(pool, key=lambda s: -(num(s.get("cap")) or 0))[:INC_TOP_N]
+    parts, miss_all, worst = [], [], 100.0
+    for k, ko in (("rev", "매출"), ("op", "영업이익"), ("ni", "순이익")):
+        base = [s for s in top if not (k == "rev" and is_fin_co(s, cby.get(s["t"])))]
+        miss = [s for s in base if _first(cby[s["t"]].get(k)) is None]
+        share = 100.0 * (len(base) - len(miss)) / len(base) if base else 0.0
+        worst = min(worst, share)
+        parts.append(f"{ko} {floor_1(share)}% ({len(base) - len(miss)}/{len(base)})")
+        miss_all += [f"{s['t']} {s.get('nk', '')} {ko}" for s in miss]
+    floor = INC_TOP_FLOOR
+    rep.add(f"국내 손익 줄 채움 — 시총 상위 {INC_TOP_N} (매출은 금융회사 빼고)", bool(top) and (floor is None or worst >= floor),
+            " · ".join(parts),
+            (f"{floor:g}% 미만 실패 · 100% 아니면 경고" if floor is not None
+             else f"100% 아니면 경고 (실패 기준 {INC_TOP_FLOOR_APPROVED:g}% 는 Jack 승인 · 4월 확인 조건 · 4월 데이터 없음 → Jack 이 정할 때까지 꺼 둠)"),
+            warn=worst < 100.0)
+    if miss_all:
+        rep.detail(f"시총 상위 {INC_TOP_N} 중 최근 사업보고서 손익 줄이 빈 회사", miss_all)
+
+    # 2. 필수 종목은 손익 3줄 (금융회사는 매출 빼고)
+    bad = []
+    for t in must_kr:
+        c = cby.get(t) or {}
+        for k, ko in (("rev", "매출"), ("op", "영업이익"), ("ni", "순이익")):
+            if k == "rev" and is_fin_co(by.get(t), c):
+                continue
+            if _first(c.get(k)) is None:
+                bad.append(f"{t} {by[t].get('nk', '')} {ko}")
+    rep.add("필수 종목 손익 3줄 (매출·영업이익·순이익)", not bad, "모두 있음" if not bad else "없음: " + ", ".join(bad),
+            ",".join(must_kr) + " (금융회사는 매출 빼고)")
+
+    # 3. 재무제표(자본·부채)는 있는데 매출·영업이익·순이익이 모두 빈 회사 — 경고 (이름과 함께)
+    noinc = [f"{c.get('t')} {c.get('nk', '')}" for c in comps if not is_foreign(c.get("t")) and isinstance(c.get("fy"), int)
+             and (num(c.get("eq")) is not None or num(c.get("debt")) is not None)
+             and all(_first(c.get(k)) is None for k in ("rev", "op", "ni"))]
+    rep.add("재무제표는 있는데 손익 줄을 하나도 못 읽은 회사", True, f"{len(noinc)}곳" + (f": {', '.join(noinc[:6])}…" if len(noinc) > 6
+            else f": {', '.join(noinc)}" if noinc else ""), "0 (있으면 경고)", warn=bool(noinc))
+    if noinc:
+        rep.detail("재무제표는 있는데 손익 줄을 못 읽은 회사", noinc)
+
+    # 4. 영수증 모양: epsIn · bpsIn · nio3 · incNa. 해외 기업(9…)은 금액 영수증을 싣지 않아요
+    bad = []
+    for c in comps:
+        t = c.get("t")
+        e, b = c.get("epsIn"), c.get("bpsIn")
+        if is_foreign(t) and any(k in c for k in ("epsIn", "bpsIn", "nio3")):
+            bad.append(f"{t} 해외 기업 금액")
+        if e is None and not is_foreign(t) and num(c.get("eps")) is not None:
+            bad.append(f"{t} EPS 영수증 없음")                     # 국내 EPS 는 모두 DART 지배주주 몫 계산이에요 (pykrx 값 안 씀)
+        if b is None and not is_foreign(t) and num(c.get("bps")) is not None:
+            bad.append(f"{t} BPS 영수증 없음")
+        if e is not None:
+            if not (isinstance(e, dict) and _isnum(e.get("ni")) and e.get("b") in EPS_B and e.get("p") in EPS_P
+                    and isinstance(e.get("sh"), int) and e["sh"] > 0 and _isnum(c.get("eps"))):
+                bad.append(f"{t}.epsIn")
+            elif "nci" in e and not (e["nci"] is True and e.get("b") == "t" and e.get("how") == "total"):   # (2026-11-08, 더하기만): 소수주주가 있는 '전체' 회사 표시
+                bad.append(f"{t}.epsIn.nci")
+            elif abs(c["eps"] - e["ni"] * 1e8 / e["sh"]) > 0.5 + 1e-6 * abs(c["eps"]):
+                bad.append(f"{t} eps ≠ ni ÷ 주식 수")
+        if b is not None:
+            if not (isinstance(b, dict) and _isnum(b.get("eq")) and b["eq"] > 0 and b.get("b") in EPS_B
+                    and isinstance(b.get("sh"), int) and b["sh"] > 0 and _isnum(c.get("bps"))):
+                bad.append(f"{t}.bpsIn")
+            elif b.get("p") not in EPS_P:      # v19.1f (리뷰 2026-11-08, 더하기만): 자본의 시점 — ttm 최신 분기 · fy 사업보고서
+                bad.append(f"{t}.bpsIn.p")
+            elif abs(c["bps"] - b["eq"] * 1e8 / b["sh"]) > 0.5 + 1e-6 * abs(c["bps"]):
+                bad.append(f"{t} bps ≠ 자본 ÷ 주식 수")
+        if "nio3" in c and _nums3(c["nio3"]) is None:
+            bad.append(f"{t}.nio3")
+        if "nio3Hyb" in c and (_nums3(c["nio3Hyb"]) is None or "nio3" not in c):   # 리뷰 3: 신종자본증권 분배를 뺀 nio3 의 영수증
+            bad.append(f"{t}.nio3Hyb")
+        if "incNa" in c and (c["incNa"] != ["rev"] or _first(c.get("rev")) is not None):
+            bad.append(f"{t}.incNa")
+        if "stmtCur" in c:                 # v19.1f (리뷰 · Jack 2026-11-08, 더하기만): 원화가 아닌 재무제표는 금액이 모두 빈 칸
+            bad += stmt_cur_problems(c, by.get(t))
+    rep.add("EPS·BPS 영수증 모양 (epsIn·bpsIn·nio3·incNa·stmtCur)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
+            "0 (국내 EPS·BPS 는 모두 영수증 · eps = 순이익 ÷ 주식 수 · bps = 자본 ÷ 주식 수 · 해외 기업과 원화가 아닌 재무제표(stmtCur)는 "
+            "금액 없음)")
+
+    # 4b. 이자보상배율 경고 수와 쓴 이자 (경고만 — 실패하지 않아요): 경고 비율이 ICR_WARN_SHARE 를 넘으면 이자를 잘못 읽은 날일 수 있어요
+    #     (2026-11-07: 금융비용을 이자로 읽어 505곳이 경고였어요)
+    ran = [c for c in comps if "icr" in (c.get("flRan") or [])]
+    warn_n = sum(1 for c in ran if "icr" in (c.get("fl") or {}))
+    src = {k: sum(1 for c in ran if (c.get("flSrc") or {}).get("icr") == k) for k in ("is", "cf")}
+    why = {k: sum(1 for c in comps if (c.get("flWhy") or {}).get("icr") == k) for k in ("ie", "op", "neg", "off")}
+    int0 = sum(1 for c in ran if (c.get("flSrc") or {}).get("int0") is True)   # v19.1f (Jack 2026-11-08): 낸 이자 0 — 경고 없음
+    share = 100.0 * warn_n / len(ran) if ran else 0.0
+    rep.add("이자보상배율 경고 수 · 쓴 이자 (경고만)", True,
+            f"경고 {warn_n:,} / 돌린 {len(ran):,} ({share:.1f}%) · 이자비용 {src['is']:,} · 이자 지급액 {src['cf']:,} · 못 돌린 이유 "
+            + " ".join(f"{k} {v:,}" for k, v in why.items()) + f" · 낸 이자 0 {int0:,}",
+            f"경고 비율 {ICR_WARN_SHARE:g}% 넘으면 경고", warn=share > ICR_WARN_SHARE)
+
+    # 5. 필수 종목 EPS: 지배주주(또는 별도) 순이익으로, 부호가 그 순이익과 같고, 사업보고서 한 해 기준이면 회사가 낸 주당순이익과도 부호가 같음
+    bad = []
+    for t in must_kr:
+        s, c = by.get(t) or {}, cby.get(t) or {}
+        e, eps = c.get("epsIn"), num(c.get("eps"))
+        if eps is None or not isinstance(e, dict) or not _isnum(e.get("ni")):
+            bad.append(f"{t} EPS·영수증 없음")
+            continue
+        if e.get("b") not in ("o", "s"):
+            bad.append(f"{t} 전체 순이익(지배주주 아님)")
+        if _sign(eps) != _sign(e["ni"]):
+            bad.append(f"{t} 부호 다름 (EPS {eps:,.0f} · 순이익 {e['ni']:,.1f}억)")
+        r0 = _first(c.get("eps3r"))
+        if e.get("p") == "fy" and r0 is not None and _sign(r0) != _sign(eps):
+            bad.append(f"{t} 회사 발표 EPS({r0:,.0f})와 부호 다름")
+        if num(s.get("eps")) != eps:
+            bad.append(f"{t} data.json eps ≠ corp.json")
+    rep.add("필수 종목 EPS = 지배주주 순이익 (부호 같음)", not bad, "모두 맞음" if not bad else " · ".join(bad[:4]),
+            ",".join(must_kr) + " (epsIn.b o·s · 부호 = 순이익 · 연간이면 회사 발표 EPS 와도)")
+
+    # 6. EPS 기준 경고: 시총 상위 200 중 연결인데 전체 순이익(b t) · TTM(bq) 표시인데 사업보고서 한 해(p fy)
+    tops = {s["t"] for s in top}
+    tb = [f"{c['t']} {c.get('nk', '')}" for c in comps if c.get("t") in tops and (c.get("epsIn") or {}).get("b") == "t"]
+    fq = [f"{c['t']} {c.get('nk', '')}" for c in comps if c.get("bq") and (c.get("epsIn") or {}).get("p") == "fy"]
+    rep.add("EPS 기준이 다른 회사 (상위 200 연결 전체 순이익 · TTM 표시인데 연간)", True,
+            f"전체 순이익 {len(tb)} · TTM 표시인데 연간 {len(fq)}", "0 · 0 (있으면 경고)", warn=bool(tb or fq))
+    if tb or fq:
+        rep.detail("EPS 기준이 다른 회사", [f"{x} 전체 순이익" for x in tb] + [f"{x} 연간" for x in fq])
+
+    # 7. incCheck 집계 = corp.json 영수증 수 (이 칸이 낡거나 다른 실행 것이면 잡아요)
+    eb = {k: sum(1 for c in comps if (c.get("epsIn") or {}).get("b") == k) for k in EPS_B}
+    ep = {k: sum(1 for c in comps if (c.get("epsIn") or {}).get("p") == k) for k in EPS_P}
+    off = [f"epsB.{k} {(ic.get('epsB') or {}).get(k)}≠{v}" for k, v in eb.items() if (ic.get("epsB") or {}).get(k) != v]
+    off += [f"epsP.{k} {(ic.get('epsP') or {}).get(k)}≠{v}" for k, v in ep.items() if (ic.get("epsP") or {}).get(k) != v]
+    rep.add("incCheck 집계 = corp.json 영수증 수", not off, "맞음" if not off else " · ".join(off[:4]), "같아야 함")
+    check_v191f_review(rep, data, corp, kr, by, comps)
+
+
+def _has_amount(v):
+    """금액 칸이 차 있는지: 목록이면 숫자가 하나라도, dict(영수증)면 있으면, 아니면 숫자면."""
+    if isinstance(v, list):
+        return any(num(x) is not None for x in v)
+    return isinstance(v, dict) or num(v) is not None
+
+
+def stmt_cur_problems(c, s):
+    """stmtCur 가 있는 corp.json 회사(c)와 data.json 종목(s)의 문제 목록: 통화 코드가 세 글자 대문자이고 KRW 가 아니어야 하고, 금액
+    (매출·이익·자본 · EV 배수 · 영수증 · PER·PBR·EPS·BPS · 가치 점수)이 두 파일 모두 비어 있고 DCF 입력이 꺼져 있어야 해요."""
+    t, sc = c.get("t"), c.get("stmtCur")
+    bad = []
+    if not (isinstance(sc, str) and re.fullmatch(r"[A-Z]{3}", sc) and sc != "KRW"):
+        bad.append(f"{t}.stmtCur {sc!r}")
+    bad += [f"{t} corp.{k}" for k in FOREIGN_BLANK + FOREIGN_BLANK_CORP + FOREIGN_BLANK_LISTS + STMT_AMT_KEYS if _has_amount(c.get(k))]
+    bad += [f"{t} data.{k}" for k in FOREIGN_BLANK if _has_amount((s or {}).get(k))]
+    if c.get("dcfReady") is not False:
+        bad.append(f"{t} corp.dcfReady")
+    bad += [f"{t} corp.{k}" for k in ("fl", "flSrc", "flWhy") if k in c]   # 리뷰 3: 다른 통화로 만든 재무 신호도 없어야 해요
+    if "flRan" in c and c["flRan"] != []:          # (2026-11-09) 돌린 검사 없음 = flRan [] (재무 경고 검사 기록 줄이 목록을 바라요)
+        bad.append(f"{t} corp.flRan")
+    bad += [f"{t} {w}.{k}" for w, src in (("corp", c), ("data", s or {})) for k in ("roe", "qz") if _has_amount(src.get(k))]   # 리뷰 4
+    return bad
+
+
+def check_v191f_review(rep, data, corp, kr, by, comps):
+    """v19.1f 리뷰 (2026-11-08) 새 줄 — 더하기만: EPS 주주 몫 비율 · 두 파일 같은 값 · PER·PBR = 종가 ÷ 영수증 · 주식 수 같음 ·
+    원화가 아닌 재무제표 · PER·PBR 너무 큼 · 연간 EPS 와 재무제표 주당이익 · ROE 영수증."""
+    cby = {c.get("t"): c for c in comps}
+    kr_c = [c for c in comps if not is_foreign(c.get("t"))]
+
+    # 8. 주주 몫 EPS 비율을 corp.json 에서 다시 세요 (epsBasis 표시만 믿지 않게)
+    eb = [(c.get("epsIn") or {}).get("b") for c in comps if isinstance(c.get("epsIn"), dict)]
+    share = 100.0 * sum(1 for b in eb if b in ("o", "s")) / len(eb) if eb else 0.0
+    rep.add("EPS 주주 몫 비율 (corp.json 에서 다시 셈 · o+s)", bool(eb) and share >= EPS_OWNERS_MIN,
+            f"{floor_1(share)}% ({sum(1 for b in eb if b in ('o', 's')):,}/{len(eb):,})", f"{EPS_OWNERS_MIN:g}% 이상")
+
+    # 9. data.json 과 corp.json 의 EPS·BPS·PER·PBR·ROE 가 같아요 (국내 모두)
+    bad = []
+    for c in comps:
+        s = by.get(c.get("t"))
+        if not s:
+            continue
+        bad += [f"{c['t']}.{k}" for k in ("eps", "bps", "per", "pbr", "roe") if num(s.get(k)) != num(c.get(k))]
+    rep.add("국내 EPS·BPS·PER·PBR·ROE: data.json = corp.json", not bad, f"어긋남 {len(bad)}" + (f" (예: {', '.join(bad[:3])})" if bad else ""),
+            "0")
+
+    # 10. PER = 종가 ÷ EPS · PBR = 종가 ÷ BPS (영수증의 순이익·자본 ÷ 주식 수로 다시 나눠요) · EPS 가 0 이하면 PER 없음 · 두 영수증의 주식 수 같음
+    bad, sh_bad = [], []
+    for c in kr_c:
+        t, price = c.get("t"), num(c.get("price"))
+        e, b = c.get("epsIn"), c.get("bpsIn")
+        per, pbr = num(c.get("per")), num(c.get("pbr"))
+        e_ok = isinstance(e, dict) and _isnum(e.get("ni")) and isinstance(e.get("sh"), int) and e["sh"] > 0
+        b_ok = isinstance(b, dict) and _isnum(b.get("eq")) and isinstance(b.get("sh"), int) and b["sh"] > 0
+        if per is not None:
+            ex = e["ni"] * 1e8 / e["sh"] if e_ok else None
+            if ex is None or ex <= 0 or price is None:
+                bad.append(f"{t} PER 인데 EPS 영수증이 없거나 0 이하")
+            elif abs(per - price / ex) > PER_TOL + 1e-6 * per:
+                bad.append(f"{t} PER {per:,.1f} ≠ {price / ex:,.1f}")
+        elif e_ok and e["ni"] > 0 and price:
+            bad.append(f"{t} EPS 가 0 보다 큰데 PER 없음")
+        if pbr is not None:
+            bx = b["eq"] * 1e8 / b["sh"] if b_ok else None
+            if bx is None or bx <= 0 or price is None:
+                bad.append(f"{t} PBR 인데 BPS 영수증이 없거나 0 이하")
+            elif abs(pbr - price / bx) > PBR_TOL + 1e-6 * pbr:
+                bad.append(f"{t} PBR {pbr:,.2f} ≠ {price / bx:,.2f}")
+        if e_ok and b_ok and e["sh"] != b["sh"]:
+            sh_bad.append(f"{t} {e['sh']:,}≠{b['sh']:,}")
+    rep.add("PER = 종가 ÷ EPS · PBR = 종가 ÷ BPS (영수증으로)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
+            f"0 (반올림 PER ±{PER_TOL:g} · PBR ±{PBR_TOL:g})")
+    rep.add("EPS·BPS 영수증의 주식 수가 같음 (epsIn.sh = bpsIn.sh)", not sh_bad,
+            f"어긋남 {len(sh_bad)}" + (f" (예: {sh_bad[0]})" if sh_bad else ""), "0")
+
+    # 11. 원화가 아닌 재무제표로 낸 국내 회사 (stmtCur) — 이름만 (금액이 남았는지는 '영수증 모양' 줄이 실패로 봐요)
+    cur = [f"{c.get('t')} {c.get('nk', '')}({c.get('stmtCur')})" for c in comps if "stmtCur" in c]
+    rep.add("원화가 아닌 재무제표로 낸 회사 (stmtCur · 금액은 비움)", True, f"{len(cur)}곳" + (f": {', '.join(cur[:6])}" if cur else ""),
+            "알림 (금액이 남으면 '영수증 모양' 줄이 실패)")
+
+    # 12. PBR 이 너무 큰 국내 회사 (경고만 — 단위·통화가 틀렸을 수 있어요)
+    big = []
+    for s in kr:
+        if is_foreign(s.get("t")):
+            continue
+        pbr = num(s.get("pbr"))
+        if pbr is not None and pbr > PBR_WARN:
+            big.append(f"{s['t']} {s.get('nk', '')} PBR {pbr:,.2f}")
+    rep.add(f"PBR {PBR_WARN:g} 넘는 국내 회사 (경고만)", True, f"{len(big)}곳" + (f": {', '.join(big[:4])}" if big else ""),
+            "0 (있으면 경고 · 단위나 통화를 확인)", warn=bool(big))
+    if big:
+        rep.detail(f"PBR {PBR_WARN:g} 넘는 국내 회사", big)
+
+    # 13. 사업보고서 한 해 EPS (epsFy · 오늘 주식 수) 와 재무제표의 기본주당이익 (epsRep) — 부호가 다르거나 0.67~1.5배 밖이면 경고
+    lo, hi = EPS_REP_BAND
+    n_cmp, off = 0, []
+    for c in kr_c:
+        a, r = c.get("epsFy"), c.get("epsRep")
+        if not (_isnum(a) and _isnum(r)):
+            continue
+        n_cmp += 1
+        if _sign(a) != _sign(r) or (r != 0 and not lo <= a / r <= hi):
+            off.append(f"{c['t']} {c.get('nk', '')} 우리 {a:,.0f} · 재무제표 {r:,.0f}")
+    rep.add(f"연간 EPS 와 재무제표 기본주당이익 (부호 · {lo:g}~{hi:g}배 · 경고만)", True, f"다름 {len(off)} / 견준 {n_cmp:,}"
+            + (f" (예: {off[0]})" if off else ""), "0 (있으면 경고 · 주식 수 변화·신종자본증권·지배주주 줄을 확인)", warn=bool(off))
+    if off:
+        rep.detail("연간 EPS 가 재무제표 기본주당이익과 다른 회사", off)
+
+    # 14. ROE 영수증 (roeIn): 주주 몫 순이익 ÷ 주주 몫 자본 (사업보고서 한 해) — 모양과 값
+    bad = []
+    for c in kr_c:
+        ri = c.get("roeIn")
+        if ri is None:
+            continue
+        t = c.get("t")
+        if not (isinstance(ri, dict) and _isnum(ri.get("ni")) and _isnum(ri.get("eq")) and ri["eq"] > 0 and ri.get("b") in ("o", "s")
+                and ri.get("p") == "fy" and _isnum(c.get("roe"))):
+            bad.append(f"{t}.roeIn")
+        elif abs(c["roe"] - ri["ni"] / ri["eq"] * 100) > 0.05 + 1e-9 * abs(c["roe"]):
+            bad.append(f"{t} roe ≠ 순이익 ÷ 자본")
+    rep.add("ROE 영수증 (roeIn: 주주 몫 ÷ 주주 몫 자본 · 사업보고서)", not bad, f"어긋남 {len(bad)}" + (f" (예: {bad[0]})" if bad else ""),
+            "0")
+    # 15. EPS 는 주주 몫(o·s)인데 ROE 영수증이 없는 곳 (ROE 는 예전처럼 전체 ÷ 전체 — 앱의 '고치는 중' 줄은 EPS 기준으로 사라져요) — 경고만
+    gap = [f"{c['t']} {c.get('nk', '')}" for c in kr_c if (c.get("epsIn") or {}).get("b") in ("o", "s") and "roeIn" not in c
+           and num(c.get("roe")) is not None]
+    rep.add("EPS 는 주주 몫인데 ROE 는 예전 값인 회사 (경고만)", True, f"{len(gap)}곳" + (f": {', '.join(gap[:4])}" if gap else ""),
+            "0 (있으면 경고)", warn=bool(gap))
+    if gap:
+        rep.detail("EPS 는 주주 몫인데 ROE 는 예전 값인 회사", gap)
+
+
+def _dvwhy_clean(r):
+    """사건 하나의 배율이 깨끗한 분할 배율이나 그 역수인지 (±DVWHY_CLEAN_TOL)."""
+    return any(abs(r / c - 1) <= DVWHY_CLEAN_TOL for k in SPLIT_FACTORS for c in (float(k), 1.0 / k))
+
+
+def _real_day(x):
+    """YYYY-MM-DD 이고 있는 날짜면 그 날짜, 아니면 None."""
+    if not isinstance(x, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", x):
+        return None
+    try:
+        return dt.date.fromisoformat(x)
+    except ValueError:
+        return None
+
+
+def _rc_ok(rc, today):
+    """DART 접수번호: 14자리이고 앞 8자리가 2000-01-01 ~ 오늘의 날짜."""
+    rd = _real_day(f"{rc[:4]}-{rc[4:6]}-{rc[6:8]}") if isinstance(rc, str) and re.fullmatch(r"\d{14}", rc) else None
+    return rd is not None and dt.date(2000, 1, 1) <= rd <= today
+
+
+def _posint(x):
+    return isinstance(x, int) and not isinstance(x, bool) and x > 0
+
+
+def dvwhy_adj_years(s):
+    """배당을 다시 계산한 해 (dpsF 가 1 이 아닌 숫자인 해) 의 번호 [0 당기 · 1 전기 · 2 전전기]."""
+    f3 = _nums3(s.get("dpsF"))
+    return [i for i in range(3) if f3[i] is not None and f3[i] != 1] if f3 else []
+
+
+def _dvwhy_events(ev, today):
+    """사건 목록의 모양 문제 → 이유 또는 None."""
+    if not isinstance(ev, list) or not ev:
+        return "사건 목록 (비었거나 목록이 아님)"
+    prev = None
+    for e in ev:
+        if not isinstance(e, dict) or e.get("k") not in DVWHY_KINDS:
+            return "사건 종류"
+        if set(e) != ({"k", "d", "r", "rc", "x"} if e["k"] == "bonus" else {"k", "d", "r", "rc"}):
+            return f"사건 칸 {sorted(e)}"
+        r = e.get("r")
+        if not _isnum(r) or r <= 0 or not _dvwhy_clean(r) or abs(r - 1) <= DVWHY_SAME + 1e-9:
+            return f"깨끗하지 않은 배율 {r}"
+        if (e["k"] == "split" and not r > 1) or (e["k"] in ("merge", "reduce") and not r < 1):
+            return f"{e['k']} 배율 {r:g}"
+        if e["k"] == "bonus" and (not _isnum(e.get("x")) or not e["x"] > 0 or abs(r - (1 + e["x"])) > 1e-6):
+            return f"무상증자 배율 {r:g} ≠ 1 + {e.get('x')}"
+        if _real_day(e.get("d")) is None:
+            return f"날짜 {e.get('d')}"
+        if not _rc_ok(e.get("rc"), today):
+            return f"접수번호 {e.get('rc')}"
+        if prev is not None and (e["d"], e["rc"]) < prev:
+            return "사건 순서 (오래된 것부터)"
+        prev = (e["d"], e["rc"])
+    return None
+
+
+def _dvwhy_ratio(ev, fy, f3, adj, px):
+    """사건의 곱 = 다시 계산한 해마다 dpsF (그해 12월 31일 뒤 ~ pxDate) · 사건은 가장 오래된 해 12월 31일 뒤 ~ pxDate 안 ·
+    당기 배율이 1 이면 그 뒤 사건 없음 → 이유 또는 None."""
+    start = dt.date(fy - max(adj), 12, 31)
+    out = [e for e in ev if not start < _real_day(e["d"]) <= px]
+    if out:
+        return f"날짜 {out[0]['d']} 가 {start} 뒤 ~ {px} 밖"
+    for i in adj:
+        cut = dt.date(fy - i, 12, 31)
+        prod = math.prod(e["r"] for e in ev if cut < _real_day(e["d"]) <= px)
+        if abs(prod / f3[i] - 1) > DVWHY_TOL:
+            return f"{fy - i}년 배율 {f3[i]:g} ≠ 사건의 곱 {prod:.4g}"
+    if f3[0] == 1 and any(dt.date(fy, 12, 31) < _real_day(e["d"]) for e in ev):    # 당기 배율 1 = 사업보고서 뒤 사건 없음
+        return f"{fy}년 배율 1 인데 그 뒤 사건이 있어요"
+    return None
+
+
+def dvwhy_problems(s, px, today):
+    """한 종목의 dvWhy → (모양 문제, 배율·날짜 문제) — 없으면 None. (v19.1h)
+    ok    사건 목록(깨끗한 배율 · 10% 넘는 변화 · 분할 > 1 · 병합 < 1 · 무상증자 = 1 + x · 날짜 · 접수번호 · 오래된 것부터) · 다시 계산한
+          해가 있고, 해마다 그해 12월 31일 뒤 ~ pxDate 사건의 곱 = dpsF ± 0.5%.
+    nf    a · b 양의 정수 · a ≠ b · b = 오늘 상장 주식 수(shr) · b ÷ a 가 가장 오래된 다시 계산한 해 dpsF ± 10%.
+    filed a · b · fx(유상증자 · 전환사채 · 신주인수권부사채: 공시일 · 주식 수 · 접수번호) · b = shr · a < b ≤ a + 덮는 수 + a 의 10% ·
+          당기 배율 1 (또는 당기 배당 없음) · 남은 다시 계산한 해는 사업보고서 안 사건(ev)으로 설명돼요.
+    nc-*  칸은 v · st 만 · 다시 계산한 해가 없고 배당한 해는 모두 비교 불가(배당수익률이 숨겨져요)."""
+    w = s.get("dvWhy")
+    if not isinstance(w, dict) or w.get("v") != 1 or isinstance(w.get("v"), bool) or w.get("st") not in DVWHY_ST:
+        return "칸 모양 (v · st)", None
+    st, fy, f3, adj = w["st"], s.get("fy"), _nums3(s.get("dpsF")), dvwhy_adj_years(s)
+    keys = {"ok": ({"v", "st", "ev"}, set()), "nf": ({"v", "st", "a", "b"}, set()), "filed": ({"v", "st", "a", "b", "fx"}, {"ev"}),
+            "nc-mismatch": ({"v", "st"}, set()), "nc-unexplained": ({"v", "st"}, set())}[st]
+    if not keys[0] <= set(w) <= keys[0] | keys[1]:
+        return f"{st} 칸 {sorted(w)}", None
+    if not isinstance(fy, int) or isinstance(fy, bool) or not 2000 <= fy <= today.year or f3 is None or px is None:
+        return None, "사업보고서 연도 · dpsF · pxDate 없음"
+    d3 = _nums3(s.get("dps3")) or [None] * 3
+    if st.startswith("nc-"):
+        shown = [i for i in range(3) if (d3[i] or 0) > 0 and f3[i] is not None]
+        if adj or shown or s.get("divSt") not in ("nc", "nd"):
+            return None, f"{st} 인데 다시 계산했거나 배당한 해의 배율이 남았어요 (배당수익률을 숨겨야 해요)"
+        return None, None
+    if st in ("ok", "nf") and not adj:
+        return None, f"{st} 인데 다시 계산한 해가 없어요"
+    if st == "ok":
+        bad = _dvwhy_events(w["ev"], today)
+        return (bad, None) if bad else (None, _dvwhy_ratio(w["ev"], fy, f3, adj, px))
+    a, b = w.get("a"), w.get("b")
+    if not _posint(a) or not _posint(b) or a == b:
+        return f"{st} 의 a · b (양의 정수 · a ≠ b)", None
+    shr = num(s.get("shr"))
+    if shr is None or b != shr:
+        return None, f"b {b} ≠ 오늘 상장 주식 수 {s.get('shr')}"
+    if st == "nf":
+        old = max(adj)
+        if abs((b / a) / f3[old] - 1) > DVWHY_SAME:
+            return None, f"b ÷ a = {b / a:.3f} 가 {fy - old}년 배율 {f3[old]:g} 와 달라요"
+        return None, None
+    fx = w.get("fx")                                                        # filed
+    if not isinstance(fx, list) or not fx:
+        return "filed 의 fx (비었거나 목록이 아님)", None
+    lo_r = dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_LOOKBACK_DAYS)
+    cover = 0.0
+    for x in fx:
+        if not isinstance(x, dict) or set(x) != {"k", "d", "n", "rc"} or x.get("k") not in DVWHY_FX_KINDS or not _posint(x.get("n")) \
+                or _real_day(x.get("d")) is None or not _rc_ok(x.get("rc"), today):
+            return f"filed 의 fx 칸 {x}", None
+        d = _real_day(x["d"])
+        if d > px or (x["k"] == "rights" and d <= lo_r) or d < dt.date(fy - 2, 1, 1):
+            return None, f"fx 날짜 {x['d']} 가 기간 밖"
+        cover += x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR
+    if not a < b <= a + cover + DVWHY_SAME * a:
+        return None, f"늘어난 주식 수 {b - a:,} 를 공시({cover:,.0f})가 설명하지 못해요"
+    if f3[0] not in (1, None) or (f3[0] is None and (d3[0] or 0) > 0):
+        return None, "filed 인데 당기 배당이 공시 그대로가 아니에요"
+    if adj:
+        bad = _dvwhy_events(w.get("ev"), today)
+        if bad:
+            return bad, None
+        if any(_real_day(e["d"]) > dt.date(fy, 12, 31) for e in w["ev"]):
+            return None, "filed 의 사건은 사업보고서 안이어야 해요"
+        return None, _dvwhy_ratio(w["ev"], fy, f3, adj, px)
+    if "ev" in w:
+        return "filed 인데 다시 계산한 해 없이 사건이 있어요", None
+    return None, None
+
+
+def check_v191h(rep, data, kr, by, comps, pdata, today):
+    """v19.1h 새 줄 (Jack 의 답 2026-11-08): 배당 맞춤 이유 (dvWhy · divCheck.why)."""
+    dc = data.get("divCheck")
+    if not isinstance(dc, dict):
+        return                                    # v19.1b 전 데이터 — '배당 분할 확인 기록' 줄이 알려요
+    why = dc.get("why")
+    name = "배당 맞춤 이유 기록 (divCheck.why)"
+    if not isinstance(why, dict):
+        had = isinstance(((pdata or {}).get("divCheck") or {}).get("why"), dict)
+        rep.add(name, not had, "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1h 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1h 전 데이터만 경고)", warn=not had)
+        return
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    com = [s for s in kr if not is_pref(s.get("t"))]
+    kr_t = {s.get("t") for s in kr}
+    has = [s for s in kr if "dvWhy" in s]
+    adj = {s["t"] for s in com if dvwhy_adj_years(s)}
+    st_of = {s["t"]: s["dvWhy"].get("st") for s in has if isinstance(s.get("dvWhy"), dict) and s["dvWhy"].get("st") in DVWHY_ST}
+    st_n = collections.Counter(st_of.values())
+
+    # 1. 기록: v1 · 결론마다 종목 수 = dvWhy 가 그 결론인 종목 · 줄이 없는 종목(failT 조회 실패 · keptT 스위치가 꺼져 맞춤 그대로)은
+    #    그 수만큼, 실제 종목이고, dvWhy 가 없고, 다시 계산한 해가 있어요
+    bad = []
+    if why.get("v") != 1:
+        bad.append(f"v{why.get('v')}")
+    for k in DVWHY_ST + ("fail", "kept"):
+        if not isinstance(why.get(k), int) or isinstance(why.get(k), bool) or why[k] < 0:
+            bad.append(f"{k} {why.get(k)}")
+    for k in DVWHY_ST:
+        if why.get(k) != st_n.get(k, 0):
+            bad.append(f"{k} {why.get(k)}≠{st_n.get(k, 0)}")
+    for k in ("fail", "kept"):
+        lst = why.get(k + "T")
+        if not isinstance(lst, list) or not all(isinstance(t, str) for t in lst) or len(set(lst)) != len(lst) \
+                or len(lst) != why.get(k) or any(t not in kr_t for t in lst):
+            bad.append(f"{k}T")
+        elif any("dvWhy" in by[t] or t not in adj for t in lst):
+            bad.append(f"{k}T 인데 dvWhy 가 있거나 다시 계산한 해가 없음")
+    rep.add(name, not bad, "맞음" if not bad else " · ".join(bad[:4]),
+            "v1 · 결론마다 수 = dvWhy 종목 · failT·keptT = 그 수의 줄 없는 종목")
+
+    # 2. 칸: 다시 계산한 해가 있는 보통주는 dvWhy(ok · nf · filed)가 있거나 조회 실패(failT) · 스위치 꺼짐(keptT)으로 적혀 있어요.
+    #    ok · nf 는 다시 계산한 해가 있는 종목에만, nc-* 는 다시 계산한 해가 없는 종목에만. 이유 없이 빠지거나 엉뚱하면 실패
+    known = set(why.get("failT") or []) | set(why.get("keptT") or [])
+    miss = sorted(t for t in adj if "dvWhy" not in by[t] and t not in known)
+    extra = sorted(s["t"] for s in has if is_pref(s["t"]) or (st_of.get(s["t"]) in ("ok", "nf") and s["t"] not in adj)
+                   or (str(st_of.get(s["t"])).startswith("nc-") and s["t"] in adj))
+    left = sorted(t for t in adj if "dvWhy" not in by[t] and t in known)
+    rep.add("배당 맞춤 이유 칸 (dvWhy · 다시 계산한 해가 있는 종목)", not extra and not miss,
+            f"엉뚱한 종목 {len(extra)} · 이유 없이 빠짐 {len(miss)}" + (f" (예: {(extra + miss)[0]})" if extra or miss else "")
+            + f" · 조회 실패·스위치 꺼짐으로 빠짐 {len(left)}",
+            "0 · 0 (조회 실패는 경고 줄이 이름을 적어요)")
+
+    # 3·4. 모양 · 배율과 날짜
+    shape, ratio = [], []
+    for s in has:
+        a, b = dvwhy_problems(s, px, today)
+        if a:
+            shape.append(f"{s['t']} {a}")
+        if b:
+            ratio.append(f"{s['t']} {b}")
+    rep.add("배당 맞춤 이유 모양 (사건 · 배율 · 날짜 · 접수번호 · a·b · fx)", not shape,
+            f"어긋남 {len(shape)}" + (f" (예: {shape[0]})" if shape else ""),
+            "0 (결론별 칸 · 분할·병합·무상증자 · 10% 넘는 깨끗한 배율 · 접수번호 14자리)")
+    rep.add("배당 맞춤 이유 = 배율 (사건의 곱 = dpsF · 숨긴 수익률 · 날짜는 그 사이)", not ratio,
+            f"어긋남 {len(ratio)}" + (f" (예: {ratio[0]})" if ratio else ""),
+            f"0 (해마다 사건의 곱 = dpsF ± {DVWHY_TOL:.1%} · nf·filed 는 b = shr · filed 는 늘어난 수를 공시가 덮음 · nc-* 는 배율 없음)")
+
+    # 5. corp.json 의 dvWhy 는 data.json 과 같아요 (없으면 둘 다 없음)
+    off = [c.get("t") for c in comps if c.get("dvWhy") != (by.get(c.get("t")) or {}).get("dvWhy")]
+    rep.add("corp.json dvWhy = data.json", not off, f"다름 {len(off)}" + (f" (예: {off[0]})" if off else ""), "0")
+
+    # 6. 경고만 (발행은 막지 않아요): 공시를 찾지 못함(nf) · 공시된 배당 그대로(filed) · 수익률을 숨김(nc-mismatch · nc-unexplained) ·
+    #    조회 실패(이유 줄 없음 · 맞춤 그대로) · 스위치 꺼짐. Jack 이 하나하나 볼 수 있게 이름을 적어요
+    def nm(t):
+        return f"{t} {(by.get(t) or {}).get('nk') or ''}".strip()
+    groups = [("공시 없음", sorted(t for t, st in st_of.items() if st == "nf")),
+              ("공시된 배당 그대로", sorted(t for t, st in st_of.items() if st == "filed")),
+              ("공시와 달라 수익률 숨김", sorted(t for t, st in st_of.items() if st == "nc-mismatch")),
+              ("설명 못 해 수익률 숨김", sorted(t for t, st in st_of.items() if st == "nc-unexplained")),
+              ("조회 실패", [t for t in why.get("failT") or [] if isinstance(t, str)]),
+              ("스위치 꺼짐", [t for t in why.get("keptT") or [] if isinstance(t, str)])]
+    named = [(g, ts) for g, ts in groups if ts]
+    for g, ts in named:
+        rep.detail(f"배당 맞춤 이유 {g}", [nm(t) for t in ts])
+    rep.add("배당 맞춤 이유 경고 (공시 없음 · 공시 그대로 · 수익률 숨김 · 조회 실패)", True,
+            "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
+                                               for g, ts in named),
+            f"있으면 경고 (발행은 막지 않아요) · 이유 확인 {why.get('ok')}", warn=bool(named))
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

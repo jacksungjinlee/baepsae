@@ -53,8 +53,84 @@ Korean dividends, β error band, `flRan`, DART cache v2. New fields:
 - v19.1d (B7 pipeline PR): 유동비율 and 이자보상배율 run for every company whose statements have the lines, except
   financial companies (banks, insurers, brokers and financial holding companies by industry group → `flNa`).
   corp.json `flWhy` = `{"icr": "ie" | "op" | "neg" | "off"}` says why 이자보상배율 didn't run for a non-financial company: no
-  이자비용/금융비용 line on the income statement, no operating profit, a negative figure, or switched off (`ICR_OFF`,
-  Jack 2026-11-07, until the v19.1f interest re-read: every non-financial company gets "off" and the app says nothing).
+  interest line found, no operating profit, a negative figure, or switched off (`ICR_OFF`, Jack 2026-11-07, held until the
+  v19.1f interest re-read: every non-financial company gets "off" and the app says nothing).
+- v19.1f (interest re-read, DART cache v3): 이자보상배율 uses the income statement's 이자비용, or else the sum of the
+  cash-flow statement's interest-paid lines (`ifrs-full_InterestPaidClassifiedAs…`, as positive amounts; never interest
+  received; 신종자본증권 distributions left out while `HYBRID_INTEREST` is False). 금융비용/금융원가 are no longer read as
+  interest. corp.json `flSrc` = `{"icr": "is" | "cf"}` when the check ran; `ICR_OFF` is False again, and flWhy "ie" now
+  means neither line exists. Cache v2 → v3 means an empty cache: the branch dry run is one day's full-DART run and
+  main's first run after the merge is the next day's.
+- v19.1f income lines (2026-11-08 audit: 261 companies missing a line DART has): 매출 · 영업이익 · 순이익 · 지배주주 순이익
+  are matched on income-statement rows (IS/CIS) by DART's standard code first (`ifrs-full_Revenue`,
+  `dart_OperatingIncomeLoss` then `ifrs-full_ProfitLossFromOperatingActivities`, `ifrs-full_ProfitLoss`,
+  `ifrs-full_ProfitLossAttributableToOwnersOfParent`), then by cleaned names (numbering, spaces, note refs removed; 매출,
+  영업손익, 영업손실, 당기순손익, 연결반기순이익 …). IS beats CIS; several coded rows with different values → the one named like a
+  total, else none (logged). A loss-only name with a positive figure is dropped. Owners' equity uses
+  `ifrs-full_EquityAttributableToOwnersOfParent`. A statement without income lines keeps its balance-sheet values.
+  Quarters use the same statement kind (CFS/OFS) as the annual report. Financial companies have no revenue line:
+  corp.json `incNa: ["rev"]`.
+- v19.1f EPS/BPS: EPS = owners' net income (TTM, else the annual figure; separate statements use their whole profit) ÷
+  (common + listed preferred shares, `PER_SHARE_WITH_PREF`); BPS = owners' equity ÷ the same shares. EV and P/CF use the
+  company market cap (common + listed preferreds, `COMPANY_CAP_WITH_PREF`). corp.json receipts `epsIn {ni, b, p, sh}`,
+  `bpsIn {eq, b, sh}`, `nio3` (owners' net income, 3 years); `ni` stays the statement's total net income. data.json and
+  corp.json carry `epsBasis: "owners"` (the app's temporary "PER과 EPS는 계산 방법을 고치는 중" line hides when it appears) and
+  data.json `incCheck`. New gate rows (add-only): incCheck/epsBasis present, top-200 income-line coverage (WARN; FAIL floor
+  `INC_TOP_FLOOR` to set from the dry run), must-haves have all three lines (FAIL), statements without income lines
+  (WARN, named), receipts consistent (FAIL), must-have EPS on owners' profit with matching sign (FAIL), EPS basis
+  differences (WARN), incCheck counts = receipts (FAIL).
+- v19.1f owners' profit rules (after the 2026-11-08 branch dry run: 160 consolidated companies fell back to total
+  profit, 93.2% owners/separate): owners' profit is read in order `code` (ProfitLossAttributableToOwnersOfParent) ·
+  `alt` (…OrdinaryEquityHoldersOfParentEntity) · `cont` (continuing + discontinued owners' lines; continuing alone only
+  without discontinued operations) · `sum` (an uncoded 지배… line that + the NCI profit line, or 0, equals total profit
+  within ±1,000원) · `minus` (total − NCI profit) · `nci0` (no NCI line in the balance sheet or income statement, or
+  exactly 0, and owners' equity absent or equal to total equity → owners = total). Evidence `nciBs`/`nciPl` is stored
+  for annual and quarterly reports; `epsIn.how` / `bpsIn.how` say how each figure was read (`ofs` for separate
+  statements, `total` when it stays on total profit). Total profit with no ProfitLoss row = owners' + NCI lines. A
+  `dart=cache` run re-reads once only the consolidated entries saved before these rules without owners' or total profit
+  (`OWN_REDO_TAG`, inside the per-run cap). 이자보상배율 below 1 is rounded down to one decimal (never "1.0").
+- v19.1f review fixes (2026-11-08): '…손실(이익)' names with a positive figure are dropped like '…손실'; uncoded
+  interest-paid lines need '이자(의) 지급·지출·납부' (not 지급이자 · 미지급이자) and are used only when no coded
+  interest-paid line exists; pykrx PER/PBR/EPS/BPS are never used for Korean stocks (every EPS carries `epsIn`);
+  `epsBasis` is "owners" only when every Korean must-have and ≥ 95% of EPS companies use owners'/separate profit,
+  else "mixed" (gate FAIL); the v3 cache starts with the v2 cache's industry codes (`|company`) and corp map
+  (`read_carry` / `adopt_carry`, ~2,400 calls saved); EV adds minority interest (`EV_WITH_NCI`) and takes listed
+  preferred caps from the full listing (`kr_pref_caps`); 이자보상배율 pairs operating profit and interest from the same
+  period (TTM with TTM, else annual with annual · `icr_inputs`); a new WARN-only gate row counts ICR warnings and
+  interest sources.
+- v19.1f review 2 (2026-11-08, review of 2d8d8fa + Jack's answers): ROE = owners' profit ÷ owners' equity of the same
+  사업보고서 (`roe_source`, receipt `roeIn {ni, eq, b, p:"fy"}`; always annual because the app labels ROE with the report
+  year and 2.0's ROE-floor rule compares by `fy`; consolidated companies without owners' lines keep the old total ÷ total
+  and are named in the log and a WARN row). Statements filed in another currency (DART row `currency`, e.g. 두산밥캣 USD)
+  are blanked like foreign issuers (`blank_non_won`, build_corp) and marked corp.json `stmtCur` (ISO code; the companion app
+  PR claude/reread-lines reads it); dividends stay (the dividend table is in 원). 신종자본증권: owners' distributions in the 자본변동표
+  (`dart_DividendToHybridBond` / `dart_InterestExpenseForHybridBond` at the owners' level) come off EPS/ROE profit and the
+  `dart_HybridBonds` balance off BPS/ROE equity (KB금융 2025: 58,331.6 − 2,023.9 → 15,410원 = the filed basic EPS); when the
+  statements don't say whose hybrid it is, EPS/BPS stay on the total basis (`how: "hybrid"`), never guessed. Receipts
+  `epsFy` (annual EPS on today's shares) and `epsRep` (the statement's basic EPS). Interest paid coded
+  `ifrs-full_FinanceCostsPaid…` counts when named 이자(의) 지급 (LG에너지솔루션). No minority interest → total profit =
+  owners' profit (GMI벤처, 라이온켐텍; '비지배지분부채' is a liability, not NCI). 이자보상배율 warns only when interest was
+  actually paid (이자비용 or 이자 지급액 > 0); zero interest → no warning, `flSrc.int0 = true`. A cache holding only
+  carried industry codes is an empty cache (`dart_core_entries`; the workflow guard calls `dart_cache_core`), and the
+  v2 file is deleted only after the financial fetch finished without a DART stop (`fetch_done`). Top-200 coverage block:
+  98% approved by Jack 2026-11-08 on condition of an April back-test; no April data exists (first corp.json
+  2026-08-15); off (WARN only) until Jack decides (`INC_TOP_FLOOR` None, `INC_TOP_FLOOR_APPROVED` 98; latest filed
+  사업보고서, financial companies left out of 매출). 아남전자 also files in USD (2025 revenue 151M dollars). New gate rows (add-only):
+  owners' share recounted from corp.json (≥ 95), data.json = corp.json for EPS·BPS·PER·PBR·ROE, PER/PBR = price ÷
+  receipts, epsIn.sh = bpsIn.sh, stmtCur amounts blank (in the receipt-shape row), ROE receipts; WARN rows for PBR >
+  100 (PER > 2,000 dropped: tiny-profit companies fired daily), annual EPS vs the statement's basic EPS (sign, or
+  outside 0.67–1.5×), EPS owners but ROE old.
+- v19.1f review 3 (delta review of 67750e2): corp.json `nio3` for hybrid companies is the owners' profit after
+  신종자본증권 payouts (`hybrid_net_series`, receipt `nio3Hyb` = [당기, 전기, 전전기] payouts from the 자본변동표; a year whose
+  자본변동표 column is absent is null → 자료가 없어요), so src/repair.js epsBase is on the EPS basis for "o"; for "s"
+  (separate statements with hybrid) the same net series is written to `nio3`, and the app must read it instead of `ni`
+  (or show {bad:true}) — companion app PR. Separate statements (or consolidated without NCI and without an owners
+  split in the 자본변동표) treat the hybrid as owners' and take the payout from the top 자본변동표 column. Owners' equity
+  = equity − NCI when the owners' line is missing (`_owners_eq` how `minus`). BPS takes the latest balance sheet that
+  gives owners' equity exactly (code → minus → nci0 per balance sheet; the quarter first). Currency codes are
+  normalised (`norm_currency`: 원/KRW → none, names → ISO, unknown → "XXX"); `stmtCur` companies carry no `fl`,
+  `flRan`, `flSrc`, `flWhy`, and no `roe` / `qz` in either file (review 4: the app says it doesn't show their numbers
+  yet; gate-checked). For "s" companies the app reads the netted `nio3` only when `nio3Hyb` is a list. Interest-paid `int0`: corp.json `flSrc.int0 = true`.
 - How the factor is found (exact data only): shares that got the dividend = 현금배당금총액 ÷ 주당 배당금 (preferred
   shares counted from the KRX listing); issued-share ceiling = 자본금 ÷ 액면가. Today's factor must be the only clean
   candidate (1, 2, 2.5, 3, 4, 5, 10, 20, 25, 50, 100 or inverse) between those two bounds; earlier years compare the

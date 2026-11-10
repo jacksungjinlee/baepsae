@@ -1,0 +1,48 @@
+{
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20240424000002",
+"corp_cls": "K",
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"bddd": "2024년 04월 04일",
+"od_a_at_t": "1",
+"od_a_at_b": "-",
+"adt_a_atn": "참석",
+"nstk_ostk_cnt": "9,430,000",
+"nstk_estk_cnt": "-",
+"fv_ps": "100",
+"bfic_tisstk_ostk": "9,860,000",
+"bfic_tisstk_estk": "-",
+"nstk_asstd": "2024년 04월 19일",
+"nstk_ascnt_ps_ostk": "1",
+"nstk_ascnt_ps_estk": "-",
+"nstk_dividrk": "2024년 01월 01일",
+"nstk_dlprd": "-",
+"nstk_lstprd": "2024년 05월 13일"
+},
+{
+"rcept_no": "20250414001687",
+"corp_cls": "K",
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"bddd": "2025년 04월 14일",
+"od_a_at_t": "-",
+"od_a_at_b": "-",
+"adt_a_atn": "불참",
+"nstk_ostk_cnt": "1,843,905",
+"nstk_estk_cnt": "-",
+"fv_ps": "100",
+"bfic_tisstk_ostk": "19,290,000",
+"bfic_tisstk_estk": "-",
+"nstk_asstd": "2025년 04월 29일",
+"nstk_ascnt_ps_ostk": "0.1",
+"nstk_ascnt_ps_estk": "-",
+"nstk_dividrk": "2025년 01월 01일",
+"nstk_dlprd": "-",
+"nstk_lstprd": "2025년 05월 23일"
+}
+]
+}

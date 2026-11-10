@@ -453,11 +453,11 @@ def test_the_reason_icr_did_not_run_is_written_only_for_non_financial_companies(
             assert "icr" not in c["flRan"] and "icr" not in c.get("flNa", []), c["t"]
 
 
-def test_icr_is_off_everywhere_until_the_interest_re_read():
+def test_icr_is_off_everywhere_until_the_interest_re_read(monkeypatch):
     """Jack (2026-11-07): 이자보상배율은 잠시 모든 회사에서 꺼요 — 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요.
     금융회사가 아니면 모두 flWhy.icr "off"(앱은 아무 말도 하지 않아요 · 이자 줄이 없는 회사의 '확인한 … 없어요' 카드도 쉬어요),
     금융회사는 그대로 해당 없음."""
-    assert F.ICR_OFF is True
+    monkeypatch.setattr(F, "ICR_OFF", True)        # v19.1f 가 다시 켰어요 — 끄는 스위치가 여전히 끄는지 확인
     base = {"cls": "kr", "price": 1000.0, "cap": 1.0, "shr": 1_000_000}
     full = {"ni": [1.0, 1.0, 1.0], "ca": 3.0, "cl": 1.0, "cs": 1.0, "eq": 5.0, "op": [-9.0, 0, 0], "ie": 1.0}
     rows = [dict(base, t="000100", nk="적자", s="chem", ind="chem"), dict(base, t="000200", nk="줄 없음", s="chem", ind="chem"),
@@ -498,22 +498,23 @@ def test_flran_lists_the_checks_that_actually_ran(monkeypatch):
 
 
 # ── 5. DART 캐시 v2 · 호출 수 어림 ────────────────────────
-def test_dart_cache_is_version_two_in_the_pipeline_and_the_workflow():
-    assert F.DART_CACHE_VERSION == 2 and F.DART_CACHE_PATH.endswith("dart-v2.json.gz")
+def test_dart_cache_is_version_three_in_the_pipeline_and_the_workflow():
+    """v19.1b 에 v2, v19.1f 에 v3 (이자비용 · 현금흐름표 이자 지급액 · 손익 줄 이름을 새로 읽어요)."""
+    assert F.DART_CACHE_VERSION == 3 and F.DART_CACHE_PATH.endswith("dart-v3.json.gz")
     with open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8") as f:
         text = f.read()
-    assert "dart-v1.json.gz" not in text
+    assert "dart-v1.json.gz" not in text and "dart-v2.json.gz" not in text
     steps = {s.get("name"): s for s in yaml.safe_load(text)["jobs"]["update"]["steps"]}
-    # v2 를 먼저 찾고, 없을 때만 v1 폴더(미국 상세 정보 보관본을 이어 쓰려고)를 받아요 (리뷰 2). 저장은 언제나 v2 로
-    assert steps["DART 캐시 불러오기"]["with"]["restore-keys"].split() == ["dart-cache-v2-", "dart-cache-v1-"]
-    assert steps["DART 캐시 불러오기"]["with"]["key"].startswith("dart-cache-v2-")
-    assert steps["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v2-")
-    # 정해진 시각 실행의 빈 캐시 확인은 v2 파일을 봐요: v1 폴더만 받은 실행도 그대로 멈춰요 (전체 DART 실행은 사람이 하루 한 번)
+    # v3 를 먼저 찾고, 없을 때만 v2 폴더(미국 상세 정보 보관본을 이어 쓰려고)를 받아요 (리뷰 2). 저장은 언제나 v3 로
+    assert steps["DART 캐시 불러오기"]["with"]["restore-keys"].split() == ["dart-cache-v3-", "dart-cache-v2-"]
+    assert steps["DART 캐시 불러오기"]["with"]["key"].startswith("dart-cache-v3-")
+    assert steps["DART 캐시 저장"]["with"]["key"].startswith("dart-cache-v3-")
+    # 정해진 시각 실행의 빈 캐시 확인은 v3 파일을 봐요: v2 폴더만 받은 실행도 그대로 멈춰요 (전체 DART 실행은 사람이 하루 한 번)
     guard = steps["DART 캐시 확인 (정해진 시각 실행은 빈 캐시로 시작하지 않아요)"]["run"]
     assert "! -s .dart-cache/" + os.path.basename(F.DART_CACHE_PATH) in guard and "exit 1" in guard
     import inspect
-    src = inspect.getsource(F.main)                       # 받은 v1 폴더의 옛 DART 파일은 지워서 v2 캐시에 실려 가지 않게
-    assert '"dart-v1.json.gz"' in src and src.find("os.remove(legacy)") < src.find("DartClient(DART_KEY")
+    src = inspect.getsource(F.main)                       # 받은 옛 폴더의 v1 · v2 DART 파일은 지워서 v3 캐시에 실려 가지 않게
+    assert '"dart-v1.json.gz", "dart-v2.json.gz"' in src and src.find("os.remove(legacy)") < src.find("DartClient(DART_KEY")
 
 
 def test_full_refresh_call_estimate_stays_under_the_target():
@@ -998,3 +999,21 @@ def test_divcheck_counts_must_match_the_stocks(pair, key):
     cur, prev = pair
     cur["data"]["divCheck"][key] += 1
     _fails(cur, prev, "divCheck 집계 = 종목 수")
+
+
+def test_flran_row_leaves_statements_in_another_currency_to_the_receipt_row(pair):
+    """2026-11-09 full DART dry run (run 42536189571), flRan 21: stmtCur 회사(해외 기업 19 · 두산밥캣 · 아남전자)는 재무 신호를 계산하지
+    않아요 — build_corp 가 flRan [] (돌린 검사 없음)를 써서 이 줄을 그대로 통과하고, 남은 신호는 영수증 모양 줄(stmt_cur_problems)이 잡아요.
+    flRan 이 없는 회사는 stmtCur 가 있어도 없어도 예전처럼 실패해요 (이 줄은 바뀌지 않았어요)."""
+    cur, prev = pair
+    name = "재무 경고 검사 기록 (flRan, 국내 기업 모두)"
+    c = cur["corp"]["companies"][3]
+    for k in ("fl", "flRan", "flSrc", "flWhy", "flNa"):
+        c.pop(k, None)
+    _fails(cur, prev, name)                                                          # stmtCur 없이 flRan 이 없으면 실패 (그대로)
+    c["stmtCur"] = "USD"
+    _fails(cur, prev, name)                                                          # stmtCur 가 있어도 flRan 이 없으면 실패
+    c["flRan"] = []
+    assert name not in {r[0] for r in check(cur, prev).failed} and f"{c['t']} corp.flRan" not in V.stmt_cur_problems(c, {})
+    c["flRan"] = ["cr"]                                                              # stmtCur 회사에 신호가 남으면 영수증 줄이 잡아요
+    assert f"{c['t']} corp.flRan" in V.stmt_cur_problems(c, {})

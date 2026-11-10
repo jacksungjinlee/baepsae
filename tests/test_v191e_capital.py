@@ -120,7 +120,8 @@ def test_common_share_capital_still_compares_earlier_years():
 def test_a_bank_statement_keeps_its_capital_without_revenue_lines():
     rows = [bs("자본금", 2385057000000, 2384843000000, 2384361000000), bs("자본총계", 6.5e12), bs("부채총계", 6e13)]
     out = F.parse_dart_list(rows)                                                   # 카카오뱅크: 매출·영업이익·순이익 줄이 없어요
-    assert "_fin" not in out and out["debt"] is not None
+    # v19.1f (2026-11-08): 손익 줄이 없어도 재무상태표 값은 남겨요 (예전엔 _fin 을 통째로 버렸어요) — 손익 칸은 빈 칸 그대로
+    assert out["_fin"]["eq"] == 65000.0 and out["_fin"]["rev"] == [None, None, None] and out["debt"] is not None
     assert out["_cap"]["cs3"] == [23850.57, 23848.43, 23843.61]
 
 

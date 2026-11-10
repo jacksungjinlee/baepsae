@@ -1,0 +1,27 @@
+{
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20251222000129",
+"corp_cls": "Y",
+"corp_code": "00113225",
+"corp_name": "대한제강",
+"bddd": "2025년 12월 22일",
+"od_a_at_t": "1",
+"od_a_at_b": "-",
+"adt_a_atn": "참석",
+"nstk_ostk_cnt": "11,457,199",
+"nstk_estk_cnt": "-",
+"fv_ps": "1,000",
+"bfic_tisstk_ostk": "22,914,397",
+"bfic_tisstk_estk": "-",
+"nstk_asstd": "2026년 01월 06일",
+"nstk_ascnt_ps_ostk": "0.6616554",
+"nstk_ascnt_ps_estk": "-",
+"nstk_dividrk": "2026년 01월 01일",
+"nstk_dlprd": "-",
+"nstk_lstprd": "2026년 01월 26일"
+}
+]
+}

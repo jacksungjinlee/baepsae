@@ -54,6 +54,7 @@ import zipfile
 import datetime as dt
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from html import unescape as html_unescape
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -889,9 +890,12 @@ def add_percentiles(stocks):
 #   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
 # v19.1b: v1 → v2. 배당 표(alotMatter)의 현금배당금총액·주당순이익·액면가와 재무제표의 3년 자본금을 새로 담아요.
 # 예전 항목에는 이 값이 없어서 캐시를 통째로 새로 받아요 (파일 이름도 바꿔서 v1 파일을 잘못 읽을 일이 없게 · 워크플로 키 dart-cache-v2-).
-DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v2.json.gz")
+# v19.1f: v2 → v3. 손익계산서의 이자비용 · 현금흐름표의 이자 지급액 · 손익 줄 이름(영업손실 …)을 새로 읽어요. 예전 재무제표 항목은
+# 이 값이 없고 '금융비용'을 이자로 담고 있어서 통째로 새로 받아요 (파일 이름도 바꿔서 v2 파일을 잘못 읽을 일이 없게 · 워크플로 키 dart-cache-v3-).
+# 빈 v3 캐시로 시작하는 실행은 그날의 전체 DART 실행이에요 (이틀: 브랜치 시험 실행 하루, main 첫 실행 다음 날).
+DART_CACHE_PATH = os.environ.get("DART_CACHE", ".dart-cache/dart-v3.json.gz")
 COMPANY_TTL_DAYS = 180   # 기업개황(업종 코드) 보관 기간
-DART_CACHE_VERSION = 2   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
+DART_CACHE_VERSION = 3   # parse_dart_* 의 결과 모양이나 해석이 바뀌면 올려요 (캐시는 '해석된 값'을 담아서)
 # v19.1b: 캐시 없이 처음부터 받는 '전체 DART 실행'의 호출 수 어림 (하루 한도 약 20,000회 · 목표 16,000회 아래).
 # 2026-11-01 전체 실행(41319552163): 재무·배당·분기 11,588회 / 2,418곳 = 기업당 4.8회. 업종 코드(company.json)는 그 뒤에 생겨
 # 빈 캐시면 기업당 1회 더. 공시는 최대 목록 30쪽 + 내부자 상세 1,200회(DISC_CALL_CAP) + 국민연금 200회 = 1,430회.
@@ -905,6 +909,13 @@ DART_REVALIDATE_PER_RUN = 300
 # 캐시를 통째로 버리지 않고(전체 DART 실행), 자본금을 못 읽은 채 저장된 사업보고서 항목만 한 번 다시 받아요. 실행당 이만큼까지.
 DART_REDO_PER_RUN = 800
 CAP_REDO_TAG = "cap1"      # 이 표시가 있는 항목은 새 해석으로 읽은 것 (다시 받지 않아요)
+# v19.1f (2026-11-08 시험 실행 뒤): 지배주주 순이익 규칙(owners_profit)을 바꿔서, 연결 재무제표 항목 중 지배주주 순이익이나 당기순이익
+# 없이 저장된 것만 한 번 다시 받아요 (사업보고서 needs_owners · 분기·반기 needs_owners_q · 별도는 아님). 캐시를 비우지 않아서 전체 DART
+# 실행이 아니에요. 2026-11-08 브랜치 시험 실행의 캐시 기준 약 600건 (사업보고서 약 175 · 분기·반기 약 420) — 실행당 DART_REDO_PER_RUN 안.
+# main 의 첫 실행은 빈 캐시라 어차피 전부 새로 읽어요 (그때 붙는 표시가 own1).
+OWN_REDO_TAG = "own1"
+RP_MARK_TAGS = (CAP_REDO_TAG,)             # 항목에 rp 로 남기는 표시 (own1 은 nciBs 칸이 그 표시예요)
+REDO_LABEL = {CAP_REDO_TAG: "자본금", OWN_REDO_TAG: "지배주주 줄"}
 DART_RETRY_DAYS = 7
 REPRT_KO = {"11011": "연간", "11013": "1Q", "11012": "2Q", "11014": "3Q"}
 Q_NEWEST_FIRST = ("11014", "11012", "11013")
@@ -963,17 +974,24 @@ class DartClient:
         self.redone = 0                       # 다시 받아 새 해석으로 저장한 수
         self.redo_kept = 0                    # 응답이 000 이 아니어서 예전 항목을 그대로 둔 수 (DART_RETRY_DAYS 뒤에 다시)
         self.redo_failed = 0                  # 연결 문제·해석 오류로 못 한 수 (다음 실행에 다시)
+        self.redo_tags = collections.Counter()    # v19.1f: 표시마다 다시 받기 시도 수 (실행당 한도는 함께 써요)
+        self.redone_tags = collections.Counter()  # v19.1f: 표시마다 새로 읽은 수
         self.net_streak = 0          # 연달아 난 네트워크 예외 수 (서버가 답하면 0)
         self.down = None             # DART 에 닿지 않아 조회를 멈췄으면 그때의 예외 이름
         self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
         self.entries, self.meta = {}, {}
+        self.carried = 0                     # v19.1f: 옛 버전 캐시에서 옮긴 업종 코드 항목 수 (adopt_carry)
+        self.remove_after_save = []          # v19.1f: 새 캐시를 처음 저장한 뒤에 지울 옛 캐시 파일 (그 전에 멈추면 다시 실행이 또 옮겨 써요)
+        self.fetch_done = False              # v19.1f (리뷰): 재무제표 조회를 끝냈는지 — 그 뒤 저장에서만 옛 캐시 파일을 지워요
         self._load()
-        self.started_empty = not self.entries      # v19.1b: 빈 캐시로 시작 = 전체 DART 실행 (호출 수 어림을 로그로 남겨요)
+        # v19.1b: 빈 캐시로 시작 = 전체 DART 실행 (호출 수 어림을 로그로 남겨요). v19.1f (리뷰 2026-11-08): 옛 캐시에서 옮겨 온 업종 코드
+        # (CARRY_SUFFIXES)만 있는 캐시도 빈 캐시예요 — 옮겨 쓴 첫 실행이 멈춘 뒤 저장한 v3 파일로 다음 실행이 또 전체 실행이 되지 않게
+        self.started_empty = dart_core_entries(self.entries) == 0
         # v17.5.3: 정해진 시각 실행은 하루 여러 번이에요. 캐시가 비었거나(없음·읽지 못함·형식이 다름) 처음부터 조회하면
         # 그게 그날의 전체 DART 실행이 돼요 — 하루 한 번, 사람이(또는 Claude 가 규칙대로) 수동으로만 해요 (CLAUDE.md).
         # v17.5.5: 바깥 타이머(cron-job.org) 실행도 같아요 — 워크플로가 BAEPSAE_AUTO_RUN=1 을 넘겨요
         auto = os.environ.get("GITHUB_EVENT_NAME") == "schedule" or os.environ.get("BAEPSAE_AUTO_RUN") == "1"
-        if auto and mode != "off" and not self.entries:
+        if auto and mode != "off" and self.started_empty:
             raise RuntimeError("!! 정해진 시각 실행인데 DART 캐시가 비어 있어요 (없음·읽지 못함·형식이 다름). 처음부터 조회하는 "
                                "전체 DART 실행은 하루 한 번 수동으로만 해요 — DART 호출 전에 멈춰요")
         if mode == "full":
@@ -1003,6 +1021,9 @@ class DartClient:
             log(f"  !! DART 캐시를 읽지 못해 처음부터 조회해요: {e}")
 
     def save(self):
+        """캐시를 파일에 써요. 옛 캐시 파일(remove_after_save)은 재무제표 조회를 끝낸 뒤(fetch_done — enrich_with_dart 끝)의 저장에서만
+        지워요. 중간 저장 · DART 가 멈춘(fatal · down) 실행의 저장은 지우지 않아요 (리뷰 2026-11-08: 덜 찬 v3 캐시만 남고 v2 가 사라지면
+        다음 실행이 업종 코드 약 2,400회를 다시 받아요)."""
         if not self.path:
             return
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
@@ -1014,9 +1035,17 @@ class DartClient:
             with gzip.open(tmp, "wt", encoding="utf-8") as f:
                 json.dump(js, f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             os.replace(tmp, self.path)
+            while self.fetch_done and self.remove_after_save and not (self.fatal or self.down):
+                # v19.1f: 새 캐시가 저장됐으니 옛 캐시 파일을 지워요 (캐시 폴더에 실려 가지 않게)
+                old = self.remove_after_save.pop()
+                try:
+                    os.remove(old)
+                    log(f"· 새 DART 캐시를 처음 저장해 옛 캐시 파일을 지웠어요 ({old})")
+                except FileNotFoundError:
+                    pass
 
-    def get(self, endpoint, params, timeout=25):
-        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요.
+    def _request(self, endpoint, params, timeout):
+        """HTTP 응답, 또는 못 받으면 None (get · get_zip 이 같이 써요). 키는 params 에만 넣고 어디에도 남기지 않아요.
         v17.5.2: 네트워크 예외가 DART_DOWN_AFTER 번 연달아 나면 그 뒤로는 바로 None (보관본을 써요 · 로그와 summary 에 크게 남아요)."""
         if self.fatal:
             return None
@@ -1042,6 +1071,49 @@ class DartClient:
             return None
         with self.lock:
             self.net_streak = 0          # 서버가 답했어요 (상태 코드·내용과 상관없이 연결은 돼요)
+        return r
+
+    def get_zip(self, endpoint, params, timeout=40):
+        """v19.1h: zip 으로 오는 응답(공시 원문 document.xml) → {파일 이름: 내용 bytes}, 또는 실패하면 None.
+        받은 zip 은 상태 '000' 으로 세요. zip 대신 오류(JSON·XML)가 오면 그 상태 코드를 세고 None — 한도 초과·키 오류는 get 처럼
+        fatal 로 남아 실행이 멈춰요."""
+        r = self._request(endpoint, params, timeout)
+        if r is None:
+            return None
+        data = r.content or b""
+        if data[:2] == b"PK":
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(data))
+                files = {n: zf.read(n) for n in zf.namelist()}
+            except Exception:
+                with self.lock:
+                    self.status["예외"] += 1
+                return None
+            with self.lock:
+                self.status["000"] += 1
+            return files
+        st, msg = None, ""
+        try:
+            j = r.json()
+            st, msg = str(j.get("status")), str(j.get("message") or "")
+        except Exception:
+            m = re.search(rb"<status>\s*(\d+)\s*</status>", data)
+            st = m.group(1).decode() if m else None
+        with self.lock:
+            if st is None:
+                self.status["예외"] += 1
+                return None
+            self.status[st] += 1
+            if st in DART_FATAL and not self.fatal:
+                self.fatal = (st, msg)
+        return None
+
+    def get(self, endpoint, params, timeout=25):
+        """JSON 응답, 또는 실패하면 None. 상태 코드는 모두 집계해요.
+        v17.5.2: 네트워크 예외가 DART_DOWN_AFTER 번 연달아 나면 그 뒤로는 바로 None (보관본을 써요 · 로그와 summary 에 크게 남아요)."""
+        r = self._request(endpoint, params, timeout)
+        if r is None:
+            return None
         try:
             j = r.json()
         except Exception:
@@ -1059,7 +1131,10 @@ class DartClient:
         """캐시를 거쳐 보고서 하나를 조회합니다. 찾으면 parse 결과, 없으면 None.
         v19.1e: redo = (표시, 판정 함수). 해석을 고친 뒤, 찾은 보고서(000)로 저장된 항목이 이 표시 없이 판정 함수에 걸리면 (예: 자본금을
         못 읽은 사업보고서) 한 번 다시 받아 새 해석으로 저장해요 (표시를 붙여서 다시 받지 않아요). 실행당 DART_REDO_PER_RUN 건까지.
-        다시 받은 응답이 000 이 아니면 예전 항목을 그대로 둬요 (찾은 보고서를 '없음'으로 바꾸지 않게)."""
+        다시 받은 응답이 000 이 아니면 예전 항목을 그대로 둬요 (찾은 보고서를 '없음'으로 바꾸지 않게).
+        v19.1f: redo 는 (표시, 판정 함수) 목록도 돼요 (먼저 걸리는 것 하나로 다시 받아요). 새로 받은 항목에는 RP_MARK_TAGS 의 표시만
+        붙여요 (cap1). own1 은 표시가 필요 없어요: 새 해석은 nciBs 칸을 늘 쓰고, 판정 함수가 그 칸이 없는 항목만 골라요."""
+        redos = [redo] if redo and isinstance(redo[0], str) else list(redo or [])
         key = f"{corp}|{year}|{reprt}|{tag}"
         with self.lock:
             e = self.entries.get(key)
@@ -1070,10 +1145,14 @@ class DartClient:
             if reval:
                 self.revalidate_left -= 1
                 self.revalidated += 1
-            rd = bool(redo and not reval and e and e["st"] == "000" and self.mode != "full" and redo_due(e, redo, self.today)
-                      and self.redo_left > 0 and not self.down and not self.fatal)
+            rd_tag = None
+            if redos and not reval and e and e["st"] == "000" and self.mode != "full" and self.redo_left > 0 \
+                    and not self.down and not self.fatal:
+                rd_tag = next((t for t, f in redos if redo_due(e, (t, f), self.today)), None)
+            rd = rd_tag is not None
             if rd:
                 self.redo_left -= 1
+                self.redo_tags[rd_tag] += 1
         due = dart_entry_due(None if self.mode == "full" else e, year, reprt, self.today, revalidate=reval or rd)
         if not due:
             with self.lock:
@@ -1107,10 +1186,13 @@ class DartClient:
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         with self.lock:
             self.entries[key] = {"st": st, "at": self.today.isoformat(), "d": d}
-            if redo and st == "000":
-                self.entries[key]["rp"] = redo[0]     # 새 해석으로 읽었어요
+            if redos and st == "000":
+                mark = next((t for t, _ in redos if t in RP_MARK_TAGS), None)
+                if mark:
+                    self.entries[key]["rp"] = mark     # 새 해석으로 읽었어요 (own1 은 표시 없이 nciBs 칸으로 알아봐요)
             if rd:
                 self.redone += 1
+                self.redone_tags[rd_tag] += 1
         return copy.deepcopy(d)
 
     def company(self, corp, ttl_days=None):
@@ -1137,10 +1219,10 @@ class DartClient:
     def summary(self):
         st = ", ".join(f"{k} {v:,}" for k, v in sorted(self.status.items()))
         extra = f" · 재확인 {self.revalidated:,}건" if self.revalidated else ""
-        tried = DART_REDO_PER_RUN - self.redo_left
-        if tried:
-            extra += (f" · 자본금 다시 읽기 {tried:,}건 시도 (실행당 최대 {DART_REDO_PER_RUN:,}): 새로 읽음 {self.redone:,}"
-                      + (f" · !! 찾은 보고서가 없다고 해 예전 값을 둔 {self.redo_kept:,}" if self.redo_kept else "")
+        if self.redo_tags:
+            extra += "".join(f" · {REDO_LABEL.get(t, t)} 다시 읽기 {n:,}건 시도 (실행당 최대 {DART_REDO_PER_RUN:,}): "
+                             f"새로 읽음 {self.redone_tags[t]:,}" for t, n in self.redo_tags.items())
+            extra += ((f" · !! 찾은 보고서가 없다고 해 예전 값을 둔 {self.redo_kept:,}" if self.redo_kept else "")
                       + (f" · !! 연결 문제·해석 오류 {self.redo_failed:,}" if self.redo_failed else ""))
         if self.parse_errors:
             extra += " · !! 해석 오류 " + ", ".join(f"{k} {v}" for k, v in self.parse_errors.items())
@@ -1153,6 +1235,61 @@ class DartClient:
         if self.fatal:
             st, msg = self.fatal
             raise RuntimeError(f"!! DART {DART_FATAL.get(st, st)} (상태 {st}: {msg}) — 재무지표가 비어 발행하지 않고 중단합니다")
+
+
+CARRY_SUFFIXES = ("|company",)     # 해석(parse)과 상관없는 캐시 항목: 캐시 버전이 바뀌어도 옮겨 써요 (업종 코드 KSIC)
+CARRY_META = ("corpMap", "corpMapAt")
+
+
+def dart_core_entries(entries):
+    """캐시 항목 중 옛 캐시에서 옮겨 온 종류(CARRY_SUFFIXES · 업종 코드)가 아닌 것의 수. 0 이면 '빈 캐시'예요 (전체 DART 실행). (순수 함수)"""
+    return sum(1 for k in (entries or {}) if not k.endswith(CARRY_SUFFIXES))
+
+
+def dart_cache_core(path=None):
+    """v19.1f (리뷰): 캐시 파일의 dart_core_entries — 워크플로의 'DART 캐시 확인' 단계가 정해진 시각 실행 전에 불러요. 파일이 없거나
+    읽지 못하거나 버전이 다르면 0 (DartClient._load 가 처음부터 조회하는 경우와 같아요)."""
+    try:
+        with gzip.open(path or DART_CACHE_PATH, "rt", encoding="utf-8") as f:
+            js = json.load(f)
+    except Exception:
+        return 0
+    if not isinstance(js, dict) or js.get("v") != DART_CACHE_VERSION or not isinstance(js.get("entries"), dict):
+        return 0
+    return dart_core_entries(js["entries"])
+
+
+def read_carry(path):
+    """옛 버전 DART 캐시 파일에서 해석과 상관없는 항목(CARRY_SUFFIXES · 찾은 것만)과 기업코드 목록(meta)을 읽어요 → (항목, meta)
+    또는 None (읽지 못하면 크게 남기고 None — 그러면 업종 코드도 새로 받아요). v19.1f: v2 → v3 에서 업종 코드 약 2,400회를 아껴요."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            js = json.load(f)
+        ent = {k: e for k, e in (js.get("entries") or {}).items()
+               if k.endswith(CARRY_SUFFIXES) and isinstance(e, dict) and e.get("st") == "000" and e.get("at") and "d" in e}
+        meta = {k: js["meta"][k] for k in CARRY_META if k in (js.get("meta") or {})}
+        return ent, meta
+    except Exception as e:
+        log(f"  !! 옛 DART 캐시({os.path.basename(path)})에서 업종 코드를 옮기지 못했어요({type(e).__name__}: {e}) → 업종 코드도 새로 받아요")
+        return None
+
+
+def adopt_carry(client, carry):
+    """read_carry 결과를 새 캐시에 넣어요 (이미 있는 항목은 그대로). 넣은 항목 수. client.started_empty 는 바꾸지 않아요
+    (재무제표가 없는 캐시라 정해진 시각 실행의 '빈 캐시면 멈춤'과 전체 실행 판단은 그대로)."""
+    if not carry:
+        return 0
+    ent, meta = carry
+    n = 0
+    with client.lock:
+        for k, e in ent.items():
+            if k not in client.entries:
+                client.entries[k] = e
+                n += 1
+        for k, v in meta.items():
+            client.meta.setdefault(k, v)
+    client.carried = n
+    return n
 
 
 def dart_corp_map(client):
@@ -1286,6 +1423,39 @@ def redo_due(e, redo, today):
     return not t or (today - dt.date.fromisoformat(t)).days >= DART_RETRY_DAYS
 
 
+def needs_owners(d):
+    """연결 사업보고서 항목이 v19.1f 손익 줄 해석(_inc 가 있음)으로, 지배주주 규칙(owners_profit · nciBs 칸) 전에, 지배주주 순이익이나
+    올해 당기순이익 없이 저장됐는지 (OWN_REDO_TAG). 새 해석은 nciBs 칸을 늘 써서 다시 걸리지 않아요. (순수 함수)"""
+    fin = d.get("_fin") if isinstance(d, dict) else None
+    return (isinstance(fin, dict) and "_inc" in d and "nciBs" not in fin
+            and (fin.get("nio") is None or (fin.get("ni") or [None])[0] is None))
+
+
+def needs_owners_q(d):
+    """연결 분기·반기 항목이 v19.1f 해석(iec 칸이 있음)으로, 지배주주 규칙 전에(nciBs 칸이 없음), 지배주주 순이익이나 당기순이익 없이
+    저장됐는지 (OWN_REDO_TAG). (순수 함수)"""
+    return (isinstance(d, dict) and "iec" in d and "nciBs" not in d
+            and (d.get("nio") is None or d.get("ni") is None))
+
+
+def _never(d):
+    return False
+
+
+def owners_backlog(entries, today):
+    """지배주주 규칙으로 다시 받을 연결 항목 수 → (사업보고서, 분기·반기). 캐시에 있는 것 전부 — 실행에서는 쓰는 항목만 받아요. (순수 함수)"""
+    a = q = 0
+    for k, e in entries.items():
+        parts = k.split("|")
+        if len(parts) != 4 or parts[3] != "CFS":
+            continue
+        if parts[2] == "11011" and redo_due(e, (OWN_REDO_TAG, needs_owners), today):
+            a += 1
+        elif parts[2] in Q_NEWEST_FIRST and redo_due(e, (OWN_REDO_TAG, needs_owners_q), today):
+            q += 1
+    return a, q
+
+
 def capital_backlog(entries, years, today):
     """자본금 없이 저장돼 다시 받을 사업보고서 항목 수 (그 해들의 연결·별도). (순수 함수)"""
     tails = tuple(f"|{y}|11011|{fs}" for y in years for fs in ("CFS", "OFS"))
@@ -1297,13 +1467,391 @@ def needs_capital(d):
     return isinstance(d, dict) and "_cap" not in d and not (d.get("_fin") or {}).get("cs3")
 
 
+# v19.1f (Jack, 2026-11-07 · 2026-11-08): 손익계산서의 매출·영업이익·순이익·지배주주 순이익을 DART 표준 계정 코드로 먼저 찾아요.
+# 2026-11-08 감사: 이름이 정확히 같은 줄만 찾던 규칙 때문에 261곳의 손익 줄이 빠졌어요 (앞 번호 'Ⅴ.영업이익' · 'I. 영업수익',
+# 다른 이름 '매출' · '영업손익' · '영업손실' · '당기순손익' · '매출및지분법손익'). DART 의 정규화된 주요 계정(fnlttMultiAcnt)은
+# 표준 계정 코드 줄의 값과 같았어요 (24개 재무제표 · 0건 다름). 그래서:
+#   1. 손익계산서(IS · CIS) 줄 중 표준 코드가 INC_IDS 인 줄 (코드 순서대로: 영업이익은 dart_OperatingIncomeLoss 먼저)
+#   2. 그 코드의 줄이 하나도 없을 때만 이름: 앞 번호 · 띄어쓰기 · 주석 번호를 뺀 이름이 INC_NAMES (지배주주 순이익은 표준 코드가
+#      없는 줄만 — 포괄손익계산서의 '지배기업의 소유주' 줄은 이름이 같아도 총포괄손익이에요. 그 줄은 표준 코드가 달라요)
+# 같은 코드의 줄이 손익계산서(IS)와 포괄손익계산서(CIS)에 다 있으면 IS 줄 (CIS 는 순이익을 한 번 더 적어요). 같은 표에 값이 다른
+# 줄이 여럿이면 이름이 INC_NAMES 인 줄이 하나일 때만 그 줄, 아니면 쓰지 않아요 (제품별 매출 같은 아랫줄일 수 있어서 · 로그).
+# 금액은 표준 계정의 부호를 그대로 써요: 손실이면 음수. 이름이 손실뿐인 줄('영업손실' · '당기순손실')의 올해 값이 양수면 잘못 적은
+# 것으로 보고 쓰지 않아요 (로그).
+# 금융회사(은행 · 보험 · 일부 증권)는 매출 줄이 재무제표에 없어요 (KB금융 · 삼성생명 · 삼성증권). 지어내지 않고 빈 칸으로 두고,
+# corp.json incNa 에 '그 회사엔 없는 줄'로 적어요 (앱이 나중에 이유를 말할 수 있게 · build_corp).
+INC_IDS = {
+    "rev": ("ifrs-full_Revenue",),
+    "op": ("dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"),
+    "ni": ("ifrs-full_ProfitLoss",),
+    "nio": ("ifrs-full_ProfitLossAttributableToOwnersOfParent",),
+}
+_NI_Q = ("당기", "분기", "반기", "연결당기", "연결분기", "연결반기")
+INC_NAMES = {
+    "rev": ("매출액", "수익(매출액)", "영업수익", "매출", "매출액(영업수익)", "영업수익(매출액)", "매출및지분법손익",
+            "매출액및지분법손익"),
+    "op": ("영업이익", "영업이익(손실)", "영업손실", "영업손익", "영업손실(이익)", "영업순손익", "영업손익(손실)"),
+    "ni": tuple(f"{p}{s}" for p in _NI_Q for s in ("순이익", "순이익(손실)", "순손실", "순손익", "순손실(이익)")),
+}
+INC_OLD = {"rev": ("매출액", "수익(매출액)", "영업수익"), "op": ("영업이익", "영업이익(손실)"),     # v19.1f 전 규칙 (비교만)
+           "ni": ("당기순이익", "당기순이익(손실)", "연결당기순이익")}
+# 이름이 손실(을 먼저)인 줄: '영업손실' · '당기순손실' 과 '영업손실(이익)' · '당기순손실(이익)' — 올해 값이 양수면 부호를 믿을 수 없어 안 써요
+# (리뷰 2026-11-08: '손실(이익)' 이름의 양수 값이 이익으로 발행될 뻔했어요)
+LOSS_ONLY = tuple(f"{p}순손실{x}" for p in _NI_Q for x in ("", "(이익)")) + ("영업손실", "영업손실(이익)")
+EQO_ID = "ifrs-full_EquityAttributableToOwnersOfParent"      # 재무상태표의 지배기업 소유주지분 (BPS)
+INC_SEEN = collections.Counter()        # 이번 실행에서 받은 재무제표만: 찾은 방법 · 부호가 틀려 버린 줄 · 고르지 못한 줄 (실행 로그용)
+_INC_LOCK = threading.Lock()
+
+
+def _inc_seen(tag):
+    with _INC_LOCK:
+        INC_SEEN[tag] += 1
+
+
+def _nio_name_ok(n):
+    """표준 코드가 없는 줄의 이름이 지배주주 순이익인지 (포괄손익 · 계속/중단영업 · 비지배 줄은 아니에요). (순수 함수)"""
+    return ("지배" in n and "비지배" not in n and any(w in n for w in ("순이익", "순손익", "순손실"))
+            and not any(w in n for w in ("포괄", "계속", "중단")))
+
+
+def _inc_name_ok(key, n):
+    return _nio_name_ok(n) if key == "nio" else n in INC_NAMES[key]
+
+
+def income_line(rows, key, value):
+    """손익 항목 하나(key: rev · op · ni · nio)를 손익계산서에서 찾아요 → (value(row), 'id' | 'name') 또는 (None, 이유).
+    이유: None 줄 없음 · 'many' 값이 다른 줄이 여럿이라 못 고름 · 'sign' 이름이 손실뿐인데 올해 값이 양수. (순수 함수)"""
+    inc = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
+
+    def cur(r):
+        v = value(r)
+        return v[0] if isinstance(v, list) else v
+
+    def pick(cands, how):
+        grp = [r for r in cands if (r.get("sj_div") or "").strip() == "IS"] or cands
+        grp = [r for r in grp if cur(r) is not None] or grp
+        by_v = {}
+        for r in grp:
+            by_v.setdefault(cur(r), r)              # 값이 같은 줄은 한 줄로
+        if len(by_v) > 1:
+            by_v = {k: r for k, r in by_v.items() if _inc_name_ok(key, acct_name(r.get("account_nm")))}
+            if len(by_v) != 1:
+                _inc_seen(f"{key}:many")
+                return None, "many"
+        r = next(iter(by_v.values()))
+        c = cur(r)
+        if acct_name(r.get("account_nm")) in LOSS_ONLY and c is not None and c > 0:
+            _inc_seen(f"{key}:sign")
+            return None, "sign"
+        return value(r), how
+
+    for aid in INC_IDS[key]:
+        coded = [r for r in inc if (r.get("account_id") or "").strip() == aid]
+        if coded:
+            return pick(coded, "id")
+    named = [r for r in inc if _inc_name_ok(key, acct_name(r.get("account_nm")))
+             and (key != "nio" or (r.get("account_id") or "").strip() in _NO_ID)]
+    if named:
+        return pick(named, "name")
+    return None, None
+
+
+def owners_equity(rows, value):
+    """재무상태표의 지배기업 소유주지분: 표준 코드 줄, 없으면 예전 이름 규칙(재무상태표만). (순수 함수)"""
+    bs = [r for r in rows if (r.get("sj_div") or "").strip() in ("BS", "")]
+    for r in bs:
+        if (r.get("account_id") or "").strip() == EQO_ID:
+            return value(r)
+    for r in bs:
+        nm = (r.get("account_nm") or "").replace(" ", "")
+        if "지배기업" in nm and "자본" in nm and "비지배" not in nm:
+            return value(r)
+    return None
+
+
+# v19.1f (2026-11-08 시험 실행 뒤 · 코디네이터): 지배주주 순이익을 이 순서로 읽어요. 연결 재무제표 160곳이 지배주주 줄을 못 읽어 EPS 가
+# 전체 순이익이었어요 (2,351곳 중 93.2% 만 지배주주·별도). 원인을 실제 재무제표 160개로 나눠 보니 70곳은 비지배지분 줄이 아예 없고,
+# 25곳은 0, 35곳은 표준 코드 없는 지배주주 줄, 11곳은 다른 코드(계속영업 · OrdinaryEquityHolders)였어요. 각 단계는 확인할 수 있는 값이에요:
+#   code   ifrs-full_ProfitLossAttributableToOwnersOfParent (지금까지처럼)
+#   alt    ifrs-full_ProfitLossAttributableToOrdinaryEquityHoldersOfParentEntity
+#   cont   계속영업 지배주주 + 중단영업 지배주주 (중단영업이 없는 회사만 계속영업 줄 하나로)
+#   sum    표준 코드 없는 '지배…' 줄 (비지배 · 포괄 · 공동지배 · 관계기업 줄 빼고) 중 그 값 + 비지배지분 순이익(없으면 0) = 당기순이익
+#          (±OWN_SUM_TOL 원) 인 줄 하나 — 같은 이름의 순이익 줄과 포괄이익 줄 중 순이익 줄을 골라요
+#   minus  당기순이익 − 비지배지분 순이익 (둘 다 재무제표에 적힌 줄)
+#   nci0   비지배지분이 없음: 재무상태표·손익계산서에 비지배지분 줄이 없거나 정확히 0 이고, 지배주주 자본 줄이 없거나 자본총계와 같음
+#          → 당기순이익 전체가 주주 몫 (IFRS 는 비지배지분이 있으면 두 표에 따로 적게 해요 · IAS 1.54(q) · 81B)
+# 증거는 nciBs (재무상태표 비지배지분) · nciPl (비지배지분 순이익) 로 남겨요 (줄이 없으면 None). 어느 단계도 아니면 '전체'(epsIn.b t).
+OWN_ALT_ID = "ifrs-full_ProfitLossAttributableToOrdinaryEquityHoldersOfParentEntity"
+OWN_CONT_ID = "ifrs-full_IncomeFromContinuingOperationsAttributableToOwnersOfParent"
+OWN_DISC_ID = "ifrs-full_IncomeFromDiscontinuedOperationsAttributableToOwnersOfParent"
+DISC_IDS = ("ifrs-full_ProfitLossFromDiscontinuedOperations", OWN_DISC_ID)
+NCI_PL_ID = "ifrs-full_ProfitLossAttributableToNoncontrollingInterests"
+NCI_BS_ID = "ifrs-full_NoncontrollingInterests"
+OWN_SUM_TOL = 1000.0           # 원 — 지배주주 줄 + 비지배지분 줄 = 당기순이익 확인의 여유
+_OWN_NAME_BAD = ("비지배", "포괄", "공동지배", "관계기업")
+OWN_HOWS = ("code", "alt", "cont", "sum", "minus", "nci0")
+
+
+def _cur(v):
+    return v[0] if isinstance(v, list) else v
+
+
+def _plus(a, b, sign=1.0):
+    """a + sign × b, 칸마다 (연간 3년 목록이나 숫자 하나). 한쪽이 None 이면 None. (순수 함수)"""
+    if isinstance(a, list):
+        return [None if x is None or y is None else x + sign * y for x, y in zip(a, b)]
+    return None if a is None or b is None else a + sign * b
+
+
+def _coded_one(inc, aid, value):
+    """손익계산서에서 표준 코드 aid 의 줄 하나의 값 (IS 먼저 · 값이 같은 줄은 한 줄로 · 값이 다른 줄이 여럿이면 None). (순수 함수)"""
+    rows = [r for r in inc if (r.get("account_id") or "").strip() == aid]
+    rows = [r for r in rows if (r.get("sj_div") or "").strip() == "IS"] or rows
+    vals = {}
+    for r in rows:
+        vals.setdefault(_cur(value(r)), r)
+    if len(vals) > 1:
+        vals = {k: r for k, r in vals.items() if k is not None}
+    return value(next(iter(vals.values()))) if len(vals) == 1 else None
+
+
+def nci_lines(rows, value):
+    """비지배지분 증거 → (재무상태표 비지배지분 올해 값 목록, 비지배지분 순이익 후보 값 목록[value 꼴]). 줄이 없으면 빈 목록.
+    재무상태표: 코드 ifrs-full_NoncontrollingInterests 또는 코드 없는 '비지배…' 줄 (v19.1f 리뷰: '비지배지분부채'처럼 부채 줄은 아니에요 —
+    GMI벤처 '비지배지분부채(유동)' 78.9억은 자본이 아니라 부채예요). 순이익: 코드 줄(하나), 없으면 코드 없는 '비지배…' 줄 중 포괄이
+    아닌 것. (순수 함수)"""
+    bs = [r for r in rows if (r.get("sj_div") or "").strip() == "BS"]
+    inc = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
+    bs_v = [_num(r.get("thstrm_amount")) for r in bs if (r.get("account_id") or "").strip() == NCI_BS_ID
+            or ((r.get("account_id") or "").strip() in _NO_ID and acct_name(r.get("account_nm")).startswith("비지배")
+                and "부채" not in acct_name(r.get("account_nm")))]
+    coded = [r for r in inc if (r.get("account_id") or "").strip() == NCI_PL_ID]
+    if coded:                         # 코드 줄이 있으면 그 줄들만 (IS 먼저 · 값이 다르면 여럿 그대로 → minus 는 안 쓰고 nci0 도 아님)
+        return bs_v, [value(r) for r in ([r for r in coded if (r.get("sj_div") or "").strip() == "IS"] or coded)]
+    loose = [value(r) for r in inc if (r.get("account_id") or "").strip() in _NO_ID
+             and "비지배" in acct_name(r.get("account_nm")) and "포괄" not in acct_name(r.get("account_nm"))]
+    return bs_v, loose
+
+
+def owners_profit(rows, value, total, eq=None, eqo=None):
+    """지배주주 순이익 (위 순서) → (value 꼴의 값, how) 또는 (None, None). total = 당기순이익 (value 꼴) · eq · eqo = 재무상태표
+    자본총계 · 지배주주 자본(원). (순수 함수)"""
+    inc = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
+    for aid, how in ((INC_IDS["nio"][0], "code"), (OWN_ALT_ID, "alt")):
+        v = _coded_one(inc, aid, value)
+        if v is not None:
+            return v, how
+    cont = _coded_one(inc, OWN_CONT_ID, value)
+    if cont is not None:
+        disc_own = _coded_one(inc, OWN_DISC_ID, value)
+        disc_any = any((_num(r.get(k)) or 0) != 0 for r in inc if (r.get("account_id") or "").strip() in DISC_IDS
+                       for k in ("thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount", "thstrm_add_amount"))
+        if disc_own is not None:
+            zero = [0.0 if x is None else x for x in disc_own] if isinstance(disc_own, list) else (disc_own or 0.0)
+            return _plus(cont, zero), "cont"
+        if not disc_any:
+            return cont, "cont"
+    t0 = _cur(total) if total is not None else None
+    bs_v, pl = nci_lines(rows, value)
+    if t0 is not None:
+        cands = [r for r in inc if (r.get("account_id") or "").strip() in _NO_ID and "지배" in acct_name(r.get("account_nm"))
+                 and not any(w in acct_name(r.get("account_nm")) for w in _OWN_NAME_BAD)]
+        nci0s = [_cur(x) or 0.0 for x in pl] or [0.0]
+        hit = {}
+        for r in cands:
+            o = _cur(value(r))
+            if o is not None and any(abs(o + n - t0) <= OWN_SUM_TOL for n in nci0s):
+                hit.setdefault(o, r)
+        if len(hit) == 1:
+            return value(next(iter(hit.values()))), "sum"
+        pl_one = {(_cur(x) if _cur(x) is not None else None): x for x in pl}
+        if len(pl_one) == 1 and None not in pl_one:
+            return _plus(total, next(iter(pl_one.values())), -1.0), "minus"
+        no_nci = all(x in (None, 0) for x in bs_v) and all(_cur(x) in (None, 0) for x in pl)
+        # 지배주주 몫 줄이 따로 있는데 당기순이익과 맞지 않으면 (비지배지분을 적지 않았을 뿐일 수 있어서) nci0 로 보지 않아요
+        split_shown = any(_cur(value(r)) is not None and abs(_cur(value(r)) - t0) > OWN_SUM_TOL for r in cands)
+        if no_nci and not split_shown and (eqo is None or eq is None or abs(eq - eqo) < 0.5):
+            return total, "nci0"
+    return None, None
+
+
+def no_nci(rows, value, eq=None, eqo=None):
+    """비지배지분이 없다는 증거: 재무상태표·손익계산서에 비지배지분 줄이 없거나 정확히 0, 지배주주 자본 줄이 없거나 자본총계와 같음. (순수 함수)"""
+    bs_v, pl = nci_lines(rows, value)
+    return (all(x in (None, 0) for x in bs_v) and all(_cur(x) in (None, 0) for x in pl)
+            and (eqo is None or eq is None or abs(eq - eqo) < 0.5))
+
+
+# v19.1f (리뷰 2026-11-08): 원화가 아닌 재무제표. DART 줄마다 currency 가 있어요 — 두산밥캣(241560)은 USD 로 내서 매출 61.8억 · EPS 4원 ·
+# PER 14,575.8 로 보였어요. 원화가 아니면 금액을 해외 기업(blank_foreign_dart)처럼 비워요 (비율 roe · opm · debt · g3 와 재무 신호는 남겨요).
+_CUR_NAMES = {"원": "KRW", "WON": "KRW", "₩": "KRW", "KRW": "KRW", "달러": "USD", "미국달러": "USD", "US$": "USD", "$": "USD",
+              "엔": "JPY", "엔화": "JPY", "위안": "CNY", "위안화": "CNY", "유로": "EUR", "€": "EUR"}
+
+
+def norm_currency(x):
+    """DART currency 칸 → ISO 4217 세 글자 대문자 (원화는 'KRW'), 빈 칸이면 None. 알 수 없는 글자면 'XXX' (ISO 의 '통화 없음' — 원화로
+    믿지 않고 금액을 비워요 · 리뷰 3: 관문이 철자 때문에 실패하지 않게). (순수 함수)"""
+    t = re.sub(r"\s+", "", str(x or "")).upper()
+    if not t:
+        return None
+    t = _CUR_NAMES.get(t, t)
+    return t if re.fullmatch(r"[A-Z]{3}", t) else "XXX"
+
+
+def stmt_currency(rows):
+    """재무제표의 통화가 원화가 아니면 그 통화 코드 (ISO 세 글자 · 예: 'USD'), 원화거나 적혀 있지 않으면 None. (순수 함수)"""
+    curs = {norm_currency(r.get("currency")) for r in rows or []} - {None}
+    other = sorted(curs - {"KRW"})
+    return other[0] if other else None
+
+
+# v19.1f (리뷰 2026-11-08): 신종자본증권. 지배주주 순이익과 자본에는 신종자본증권 몫이 들어 있어요 (포스코퓨처엠 EPS 363 vs 회사 발표 51 ·
+# BPS 에 신종자본증권 5,994억). K-IFRS 기본주당이익은 신종자본증권 분배금을 빼고, 보통주 자본은 신종자본증권을 빼요. 재무제표 줄로 정확히:
+#   분배금  자본변동표(SCE)의 dart_DividendToHybridBond · dart_InterestExpenseForHybridBond 중 '지배기업 몫' 칸 (account_detail 이 두
+#           마디이고 둘째가 지배…: 예 '자본|지배기업주주지분') — 그 기간에 주주 몫 신종자본증권에 나간 분배 (없으면 0)
+#   자본    재무상태표 dart_HybridBonds — 자본변동표에 '지배기업 몫|…|신종자본증권' 칸이 있거나 지배기업 몫 분배가 있을 때만 주주 몫으로 봐요
+# 어디 몫인지 알 수 없으면(재무상태표에만 있고 자본변동표에 표시가 없음) 빼지 않고 hyb 'unplaced' 로 남겨 EPS 를 '전체'(t)로 둬요 (추측 안 함).
+HYB_EQ_ID = "dart_HybridBonds"
+HYB_DIST_IDS = ("dart_DividendToHybridBond", "dart_InterestExpenseForHybridBond")
+
+
+def _detail(r):
+    return [x.strip() for x in (r.get("account_detail") or "").split("|") if x.strip()]
+
+
+def _owners_part(parts):
+    return len(parts) >= 2 and "지배" in parts[1] and "비지배" not in parts[1]
+
+
+_SCE_COLS = ("thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount")
+
+
+def hybrid_info(rows):
+    """신종자본증권 → None (없음) 또는 {"ok": 주주 몫인지 알 수 있음, "eq": 재무상태표 신종자본증권(원), "dist": 그 기간 주주 몫 분배(원),
+    "dist3": [당기, 전기, 전전기] 주주 몫 분배 (원 · 자본변동표에 그 해 칸이 아예 없으면 None — 모름)}. (순수 함수)
+    v19.1f (리뷰 3): 자본변동표에 지배·비지배로 나눈 칸이 없고 재무상태표에 비지배지분도 없으면 (별도 재무제표 · 비지배지분이 없는
+    연결) 자본 전체가 주주 몫이에요 — 분배는 맨 위(마디가 가장 적은) 칸, 신종자본증권도 주주 몫으로 봐요 (자본변동표가 아예 없으면
+    분배를 몰라서 ok 가 아니에요)."""
+    eqh = next((_num(r.get("thstrm_amount")) for r in rows if (r.get("sj_div") or "").strip() == "BS"
+                and (r.get("account_id") or "").strip() == HYB_EQ_ID), None)
+    sce = [r for r in rows if (r.get("sj_div") or "").strip() == "SCE"]
+    split = any(len(_detail(r)) >= 2 and "지배" in _detail(r)[1] for r in sce)
+    hyb_ids = [r for r in sce if (r.get("account_id") or "").strip() in HYB_DIST_IDS]
+    if split:
+        dist_rows = [r for r in hyb_ids if len(_detail(r)) == 2 and _owners_part(_detail(r))]
+        marker = any(_owners_part(_detail(r)) and len(_detail(r)) >= 3 and "신종자본" in _detail(r)[-1] for r in sce)
+    else:
+        bs_nci = nci_lines(rows, lambda r: _num(r.get("thstrm_amount")))[0]
+        whole = all(x in (None, 0) for x in bs_nci) and not any("비지배" in seg for r in sce for seg in _detail(r))
+        top = min((len(_detail(r)) for r in hyb_ids), default=0)
+        dist_rows = [r for r in hyb_ids if len(_detail(r)) == top] if whole else []
+        marker = whole and bool(eqh) and bool(sce)      # 자본변동표가 없으면 분배를 몰라요 → 어디 몫인지 모름과 같게 (추측 안 함)
+    if not dist_rows and not eqh:
+        return None
+    shown = [any(_num(r.get(col)) is not None for r in sce) for col in _SCE_COLS]   # 자본변동표에 그 해 칸이 있는지
+    by_id = {}
+    for r in dist_rows:
+        by_id.setdefault((r.get("account_id") or "").strip(), r)
+    dist3 = []
+    for i, col in enumerate(_SCE_COLS):
+        if i and not shown[i]:
+            dist3.append(None)
+        else:
+            dist3.append(sum(abs(_num(r.get(col)) or 0.0) for r in by_id.values()))
+    return {"ok": bool(marker or dist_rows), "eq": eqh or 0.0, "dist": dist3[0], "dist3": dist3}
+
+
+def reported_eps(rows):
+    """재무제표에 회사가 적은 기본주당이익 (원, 올해) — 우리 EPS 와 견주는 관문 경고용. 없으면 None. (순수 함수)"""
+    inc = [r for r in rows if (r.get("sj_div") or "").strip() in ("IS", "CIS")]
+    v = _coded_one(inc, "ifrs-full_BasicEarningsLossPerShare", lambda r: _num(r.get("thstrm_amount")))
+    return v
+
+
+def nci_evidence(rows, value):
+    """저장할 증거 (nciBs, nciPl): 재무상태표 비지배지분 · 비지배지분 순이익의 올해 값 (원). 줄이 없으면 None, 여럿이면 첫 값. (순수 함수)"""
+    bs_v, pl = nci_lines(rows, value)
+    return (next((x for x in bs_v if x is not None), None) if bs_v else None,
+            next((_cur(x) for x in pl if _cur(x) is not None), None) if pl else None)
+
+
+# v19.1f (Jack, 2026-11-07): 이자보상배율의 이자. 손익계산서에 '이자비용' 줄이 있으면 그것, 없으면 현금흐름표의 이자 지급 줄을 모두
+# 더한 값(양수로)이에요. 예전에는 '금융비용'(환손실·파생상품 손실까지 든 금융원가)도 이자로 읽었어요 — 2026-11-07 경고 505곳 중 502곳.
+# 이자 지급 줄: 표준 계정 ifrs-full_InterestPaidClassifiedAs…(영업·투자·재무활동) 줄 모두. 그런 줄이 하나도 없을 때만 표준 계정이
+# 없는 줄 중 이름이 '이자(의) 지급 · 지출 · 납부'인 줄 ('지급이자' · '미지급이자' 줄은 아니에요 — 리뷰 2026-11-08).
+# 이자의 수취(받은 이자)는 절대 아니에요. 신종자본증권 이자(dart_InterestPaidToHybridBond)는
+# 회계상 자본에 대한 분배라 빼요 (HYBRID_INTEREST — Jack 확인 대기).
+HYBRID_INTEREST = False
+_NO_ID = ("-표준계정코드 미사용-", "")
+
+
+_INTEREST_PAID_NAME = re.compile(r"이자(의)?(지급|지출|납부)")
+
+
+def interest_paid_rows(rows):
+    """현금흐름표에서 이자 지급 줄들 (위 규칙, 같은 줄이 두 번 나와도 한 번). (순수 함수)"""
+    by_id, loose = _interest_paid_parts(rows)
+    seen, out = set(), []
+    for r in (by_id or loose):
+        k = ((r.get("account_id") or "").strip(), acct_name(r.get("account_nm")), r.get("thstrm_amount"))
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def interest_paid_dropped(rows):
+    """코드가 있는 이자 지급 줄이 있어 더하지 않은, 코드 없는 이자 지급 줄 수 (코드 줄과 이름 · 금액(부호 무시)이 같은 줄은 같은 줄이라
+    빼고 셈). 로그만 — 리스 이자처럼 따로 적은 지급이면 이자가 작게 잡혀 이자보상배율이 커 보일 수 있어서 시험 실행에서 재요. (순수 함수)"""
+    by_id, loose = _interest_paid_parts(rows)
+    if not by_id:
+        return 0
+    amt = lambda r: abs(_num(r.get("thstrm_amount")) or 0.0)
+    coded = {(acct_name(r.get("account_nm")), amt(r)) for r in by_id}
+    return len({(acct_name(r.get("account_nm")), amt(r)) for r in loose} - coded)
+
+
+def _interest_paid_parts(rows):
+    """(표준 코드 이자 지급 줄들, 이름으로 고른 코드 없는 이자 지급 줄들) — 규칙은 위 주석."""
+    cf = [r for r in rows if (r.get("sj_div") or "").strip() == "CF"]
+
+    def received(n):
+        return any(w in n for w in ("수취", "수입", "수령", "수익", "받은"))
+    # v19.1f (리뷰 2026-11-08): ifrs-full_FinanceCostsPaidClassifiedAs… 도 이름이 '이자(의) 지급…'이면 이자 지급 (LG에너지솔루션
+    # 2025 '이자의 지급' 8,731.5억이 이 코드라 이자 줄 없음(flWhy ie)으로 보였어요). 이름이 이자 지급이 아니면 (금융원가 전체) 안 써요
+    by_id = [r for r in cf if ((r.get("account_id") or "").strip().startswith("ifrs-full_InterestPaid")
+                               or ((r.get("account_id") or "").strip().startswith("ifrs-full_FinanceCostsPaid")
+                                   and _INTEREST_PAID_NAME.search(acct_name(r.get("account_nm")))))
+             and not received(acct_name(r.get("account_nm")))]
+    if HYBRID_INTEREST:
+        by_id += [r for r in cf if (r.get("account_id") or "").strip() == "dart_InterestPaidToHybridBond"]
+    # 표준 계정이 없는 줄은 이름이 '이자(의) 지급 · 지출 · 납부'일 때만 (리뷰 2026-11-08: '지급이자'는 간접법의 이자비용 조정 줄,
+    # '미지급이자의 증가(감소)'는 운전자본 줄이라 이자 지급이 아니에요). 그리고 코드가 있는 이자 지급 줄이 하나라도 있으면 코드 없는
+    # 줄은 더하지 않아요 (같은 지급을 두 번 셀 수 있어서). 코드 줄이 없을 때만 (예: '차입원가 자본화 이자의 지급') 이름으로.
+    loose = [r for r in cf if (r.get("account_id") or "").strip() in _NO_ID
+             and _INTEREST_PAID_NAME.search(acct_name(r.get("account_nm")))
+             and "미지급" not in acct_name(r.get("account_nm")) and not received(acct_name(r.get("account_nm")))
+             and "신종자본" not in acct_name(r.get("account_nm"))]
+    return by_id, loose
+
+
+def interest_paid(rows, value):
+    """이자 지급 줄들의 합 (양수) → 원, 줄이 없거나 값이 하나도 없으면 None. value(row) 는 그 줄의 값. (순수 함수)"""
+    vals = [value(r) for r in interest_paid_rows(rows)]
+    vals = [abs(v) for v in vals if v is not None]
+    return sum(vals) if vals else None
+
+
 def parse_dart_list(rows):
     """fnlttSinglAcntAll 응답의 계정 목록에서 3개년 주요 항목을 뽑습니다. (순수 함수 — 테스트 가능)
-    v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital)."""
+    v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital).
+    v19.1f: 매출·영업이익·순이익·지배주주 순이익은 표준 계정 코드 먼저, 없으면 이름 (income_line). 손익 줄을 못 읽어도 재무상태표
+    값(자본 · 부채 · 현금 …)은 버리지 않아요 (2026-11-08 전엔 _fin 을 통째로 버렸어요: 카카오뱅크). 지배기업 소유주지분(eqo)도
+    표준 코드로. _inc = {"src": 줄마다 찾은 방법, "old": v19.1f 전 이름 규칙과 올해 값이 다른 줄} — enrich_with_dart 가 로그로 세고 지워요.
+    이자는 '이자비용'(ie)과 현금흐름표 이자 지급액(iec)."""
     def tri(row):
         return [_num(row.get("thstrm_amount")), _num(row.get("frmtrm_amount")), _num(row.get("bfefrmtrm_amount"))]
-    rev = op = ni = None
-    eq = li = nio = eqo = cash = ocf = ca = cl = cs = ie = None
+    eq = li = cash = ocf = ca = cl = cs = ie = None
     cs3 = ss3 = None
     bor, has_bor = 0.0, False
     dep, has_dep = 0.0, False
@@ -1311,18 +1859,8 @@ def parse_dart_list(rows):
     for row in rows:
         nm = (row.get("account_nm") or "").replace(" ", "")
         sj = (row.get("sj_div") or "").strip()
-        if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None:
-            rev = tri(row)
-        elif nm in ("영업이익", "영업이익(손실)") and op is None:
-            op = tri(row)
-        elif nm in ("당기순이익", "당기순이익(손실)", "연결당기순이익") and ni is None:
-            ni = tri(row)
-        elif "지배기업" in nm and "당기순이익" in nm and "비지배" not in nm and nio is None:
-            nio = _num(row.get("thstrm_amount"))
-        elif nm == "자본총계" and eq is None:
+        if nm == "자본총계" and eq is None:
             eq = _num(row.get("thstrm_amount"))
-        elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None:
-            eqo = _num(row.get("thstrm_amount"))
         elif nm in BORROW and sj in ("BS", ""):
             v = _num(row.get("thstrm_amount"))
             if v and v > 0:
@@ -1339,8 +1877,8 @@ def parse_dart_list(rows):
             cs3 = tri(row)            # v19.1b: 3년 자본금 — 액면가로 나누면 그해 말 발행 주식 수의 상한 (배당 분할 확인)
         elif nm == "자본잉여금" and sj in ("BS", "") and ss3 is None:
             ss3 = tri(row)            # v19.1b: 3년 자본잉여금 — 무상증자(늘지 않음)와 유상증자(주식발행초과금으로 늚)를 가려요
-        elif nm in ("이자비용", "금융비용") and sj in ("IS", "CIS", "") and ie is None:
-            ie = _num(row.get("thstrm_amount"))
+        elif acct_name(nm) == "이자비용" and sj in ("IS", "CIS") and ie is None:
+            ie = _num(row.get("thstrm_amount"))       # v19.1f: 손익계산서의 이자비용만 (금융비용 · 금융원가는 이자가 아니에요)
         elif sj == "CF" and nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
             ocf = _num(row.get("thstrm_amount"))
         elif sj == "CF" and nm in ("감가상각비", "유형자산감가상각비", "무형자산상각비", "사용권자산상각비", "투자부동산감가상각비"):
@@ -1350,6 +1888,41 @@ def parse_dart_list(rows):
                 has_dep = True
         elif nm == "부채총계" and li is None:
             li = _num(row.get("thstrm_amount"))
+    got, src, old_diff = {}, {}, []
+    for key in ("rev", "op", "ni"):
+        v, how = income_line(rows, key, tri)
+        if v is not None and v[0] is None:
+            how = "blank"           # 줄은 있는데 올해 값이 빈 칸: 로그에서는 '없음'으로 세요 (앞 해 값은 그대로 써요)
+        got[key] = v
+        if v is not None:
+            src[key] = how
+    eqo = owners_equity(rows, lambda r: _num(r.get("thstrm_amount")))
+    # v19.1f: 지배주주 순이익 (owners_profit 의 순서) · 당기순이익 줄이 없으면 지배주주 + 비지배지분 줄 (둘 다 적힌 줄)
+    nio3, nio_how = owners_profit(rows, tri, got["ni"], eq, eqo)
+    if got["ni"] is None and nio3 is not None:
+        pl = {_cur(x): x for x in nci_lines(rows, tri)[1]}
+        if len(pl) == 1 and None not in pl:
+            got["ni"], src["ni"] = _plus(nio3, next(iter(pl.values()))), "parts"
+        elif no_nci(rows, tri, eq, eqo):              # 비지배 순이익 줄이 없거나 값이 비었거나 0
+            got["ni"], src["ni"] = list(nio3), "nci0"     # v19.1f (리뷰): 비지배지분이 없으면 당기순이익 = 지배주주 순이익 (GMI벤처 · 라이온켐텍)
+    if nio3 is not None and nio3[0] is None:
+        nio_how_log = "blank"
+    else:
+        nio_how_log = nio_how
+    if nio3 is not None:
+        src["nio"] = nio_how if nio3[0] is not None else "blank"
+    for key in ("rev", "op", "ni"):
+        _inc_seen(f"a:{key}:{src.get(key)}")
+        if key in INC_OLD:          # v19.1f 전 규칙(이름이 똑같은 첫 줄, 어느 표든)이 읽던 값과 다르면 남겨요 (시험 실행에서 확인)
+            o = next((tri(r) for r in rows if (r.get("account_nm") or "").replace(" ", "") in INC_OLD[key]), None)
+            v = got[key]
+            if o is not None and o[0] is not None and (v is None or v[0] != o[0]):
+                old_diff.append(key)
+    _inc_seen(f"a:nio:{nio_how_log}")
+    nci_bs, nci_pl = nci_evidence(rows, tri)
+    rev, op, ni = got["rev"], got["op"], got["ni"]
+    nio = nio3[0] if nio3 else None
+    iec = interest_paid(rows, lambda r: _num(r.get("thstrm_amount")))
     rev = rev or [None, None, None]; op = op or [None, None, None]; ni = ni or [None, None, None]
 
     out = {}
@@ -1370,16 +1943,34 @@ def parse_dart_list(rows):
            "eq": ek(eq), "li": ek(li), "nio": ek(nio), "eqo": ek(eqo),
            "bor": ek(bor) if has_bor else None, "cash": ek(cash), "ocf": ek(ocf),
            "dep": ek(dep) if has_dep else None,
-           "ca": ek(ca), "cl": ek(cl), "cs": ek(cs), "ie": ek(ie)}
+           "ca": ek(ca), "cl": ek(cl), "cs": ek(cs), "ie": ek(ie), "iec": ek(iec)}
     if cs3 and any(v is not None for v in cs3):
         fin["cs3"] = [round(v / 1e8, 4) if v is not None else None for v in cs3]     # 억원 · 1만원 단위까지 (주식 수 계산용)
     if ss3 and any(v is not None for v in ss3):
         fin["ss3"] = [round(v / 1e8, 4) if v is not None else None for v in ss3]
-    if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a):
+    if nio3 and any(v is not None for v in nio3):
+        fin["nio3"] = [ek(x) for x in nio3]       # v19.1f: 지배주주 순이익 3년 (연결) — corp.json nio3
+        fin["nioHow"] = nio_how                   # v19.1f: 어떻게 읽었는지 (OWN_HOWS) — epsIn.how
+    fin["nciBs"], fin["nciPl"] = ek(nci_bs), ek(nci_pl)   # v19.1f: 비지배지분 증거 (줄이 없으면 None) — nci0 · BPS
+    cur = stmt_currency(rows)
+    if cur:
+        fin["cur"] = cur                          # v19.1f (리뷰): 원화가 아닌 재무제표 — 금액을 비워요 (not_won)
+    hyb = hybrid_info(rows)
+    if hyb:                                       # v19.1f (리뷰): 신종자본증권 — 주주 몫 분배 · 자본 (EPS · BPS · ROE 에서 빼요)
+        fin["hyb"] = {"ok": hyb["ok"], "eq": ek(hyb["eq"]), "dist": ek(hyb["dist"]), "dist3": [ek(x) for x in hyb["dist3"]]}
+    rep = reported_eps(rows)
+    if rep is not None:
+        fin["epsRep"] = rep                       # v19.1f (리뷰): 재무제표의 기본주당이익 (원) — 관문 경고용
+    # v19.1f: 손익 줄이 없어도 자본·부채가 있으면 재무상태표 값은 남겨요 (자본금만 있는 표는 예전처럼 '못 찾음')
+    if any(v is not None for a in (fin["rev"], fin["op"], fin["ni"]) for v in a) or eq is not None or li is not None:
         out["_fin"] = fin
     cap = parse_capital(rows)
     if cap:
         out["_cap"] = cap
+    iec_drop = interest_paid_dropped(rows)        # v19.1f: 코드 줄 옆에서 더하지 않은 코드 없는 이자 지급 줄 수 (로그만)
+    iec_fcp = int(any((r.get("account_id") or "").strip().startswith("ifrs-full_FinanceCostsPaid") for r in interest_paid_rows(rows)))
+    out["_inc"] = {"src": src, **({"old": old_diff} if old_diff else {}), **({"iecDrop": iec_drop} if iec_drop else {}),
+                   **({"iecFcp": 1} if iec_fcp else {})}      # v19.1f (리뷰): 이자 지급을 FinanceCostsPaid 코드 줄로 읽음 (로그만)
     return out
 
 
@@ -1504,10 +2095,13 @@ def _ytd(row):
 
 
 def parse_dart_quarter(rows):
-    """분기·반기 보고서에서 손익/현금흐름 누적값과 시점 재무상태를 뽑습니다."""
+    """분기·반기 보고서에서 손익/현금흐름 누적값과 시점 재무상태를 뽑습니다.
+    v19.1f: 매출·영업이익·순이익·지배주주 순이익은 사업보고서와 같은 규칙 (income_line: 표준 코드 먼저 · '연결반기순이익' 같은
+    이름도). 지배기업 소유주지분(eqo)도 표준 코드로. 손익 줄을 못 읽어도 자본·부채 값이 있으면 돌려줘요 (그 분기는 TTM 을 못 만들어
+    다음 분기로 넘어가요 — 연결이 없다고 별도로 넘어가 둘을 섞지 않게)."""
     ek = lambda w: round(w / 1e8, 1) if w is not None else None
-    rev = op = ni = nio = ocf = ie = None
-    eq = eqo = cash = ca = cl = cs = None
+    ocf = ie = None
+    eq = cash = ca = cl = cs = None
     bor, has_bor = 0.0, False
     dep, has_dep = 0.0, False
     BORROW = {"단기차입금", "장기차입금", "사채", "유동성장기부채", "유동성장기차입금", "단기사채", "전환사채", "리스부채"}
@@ -1515,11 +2109,7 @@ def parse_dart_quarter(rows):
         nm = (row.get("account_nm") or "").replace(" ", "")
         sj = (row.get("sj_div") or "").strip()
         if sj in ("IS", "CIS"):
-            if nm in ("매출액", "수익(매출액)", "영업수익") and rev is None: rev = _ytd(row)
-            elif nm == "영업이익" and op is None: op = _ytd(row)
-            elif nm in ("당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익") and ni is None: ni = _ytd(row)
-            elif "지배기업" in nm and ("순이익" in nm or "당기순이익" in nm) and "비지배" not in nm and nio is None: nio = _ytd(row)
-            elif nm in ("이자비용", "금융비용") and ie is None: ie = _ytd(row)
+            if acct_name(nm) == "이자비용" and ie is None: ie = _ytd(row)     # v19.1f: 이자비용만 (금융비용은 이자가 아니에요)
         elif sj == "CF":
             if nm in ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름") and ocf is None:
                 ocf = _ytd(row)
@@ -1529,19 +2119,40 @@ def parse_dart_quarter(rows):
         elif sj in ("BS", ""):
             v = _num(row.get("thstrm_amount"))
             if nm == "자본총계" and eq is None: eq = v
-            elif "지배기업" in nm and "자본" in nm and "비지배" not in nm and eqo is None: eqo = v
             elif nm in BORROW:
                 if v and v > 0: bor += v; has_bor = True
             elif nm in ("현금및현금성자산", "현금및현금성자산등", "기말현금및현금성자산") and cash is None: cash = v
             elif nm == "유동자산" and ca is None: ca = v
             elif nm == "유동부채" and cl is None: cl = v
             elif nm == "자본금" and cs is None: cs = v
-    if rev is None and ni is None:
+    got = {}
+    for key in ("rev", "op", "ni"):
+        got[key], how = income_line(rows, key, _ytd)
+        _inc_seen(f"q:{key}:{'blank' if got[key] is None and how in ('id', 'name') else how}")
+    eqo = owners_equity(rows, lambda r: _num(r.get("thstrm_amount")))
+    # v19.1f: 지배주주 순이익은 사업보고서와 같은 순서 (owners_profit) · 당기순이익 줄이 없으면 지배주주 + 비지배지분 줄
+    nio, nio_how = owners_profit(rows, _ytd, got["ni"], eq, eqo)
+    if got["ni"] is None and nio is not None:
+        pl = {x: x for x in nci_lines(rows, _ytd)[1]}
+        if len(pl) == 1 and None not in pl:
+            got["ni"] = nio + next(iter(pl))
+        elif no_nci(rows, _ytd, eq, eqo):
+            got["ni"] = nio                       # v19.1f (리뷰): 비지배지분이 없으면 당기순이익 = 지배주주 순이익
+    _inc_seen(f"q:nio:{nio_how}")
+    nci_bs, nci_pl = nci_evidence(rows, _ytd)
+    rev, op, ni = got["rev"], got["op"], got["ni"]
+    iec = interest_paid(rows, _ytd)
+    if interest_paid_dropped(rows):
+        _inc_seen("q:iecDrop")                   # v19.1f: 분기·반기도 같은 수를 로그로 (회사 이름은 사업보고서 쪽에서)
+    if rev is None and ni is None and eq is None:
         return None
-    return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie),
+    return {"rev": ek(rev), "op": ek(op), "ni": ek(ni), "nio": ek(nio), "ocf": ek(ocf), "ie": ek(ie), "iec": ek(iec),
             "dep": ek(dep) if has_dep else None,
             "eq": ek(eq), "eqo": ek(eqo), "bor": ek(bor) if has_bor else None, "cash": ek(cash),
-            "ca": ek(ca), "cl": ek(cl), "cs": ek(cs)}
+            "ca": ek(ca), "cl": ek(cl), "cs": ek(cs),
+            "nioHow": nio_how if nio is not None else None, "nciBs": ek(nci_bs), "nciPl": ek(nci_pl),
+            **({"cur": stmt_currency(rows)} if stmt_currency(rows) else {}),
+            **({"hyb": {"ok": h["ok"], "eq": ek(h["eq"]), "dist": ek(h["dist"])}} if (h := hybrid_info(rows)) else {})}
 
 
 def compute_ttm(fin, ytd, ytd_prev):
@@ -1558,21 +2169,42 @@ def compute_ttm(fin, ytd, ytd_prev):
            "nio": flow(fin.get("nio"), ytd.get("nio"), ytd_prev.get("nio")),
            "ocf": flow(fin.get("ocf"), ytd.get("ocf"), ytd_prev.get("ocf")),
            "dep": flow(fin.get("dep"), ytd.get("dep"), ytd_prev.get("dep")),
-           "ie": flow(fin.get("ie"), ytd.get("ie"), ytd_prev.get("ie"))}
+           "ie": flow(fin.get("ie"), ytd.get("ie"), ytd_prev.get("ie")),
+           "iec": flow(fin.get("iec"), ytd.get("iec"), ytd_prev.get("iec"))}     # v19.1f: 현금흐름표 이자 지급액
     if ttm["rev"] is None and ttm["ni"] is None:
         return None
+    cur = ytd.get("cur") or ytd_prev.get("cur")
+    if cur:
+        ttm["cur"] = cur               # v19.1f (리뷰): 분기 재무제표가 원화가 아니면 (not_won)
+    if "nciPl" in ytd:
+        ttm["nciPl"] = ytd["nciPl"]    # (2026-11-08) 최신 분기 누적 비지배지분 순이익 (줄이 없으면 None) — 증거일 뿐, 합산하지 않아요 (eps_nci)
+    if ttm["nio"] is not None:     # v19.1f: 세 보고서에서 지배주주 순이익을 어떻게 읽었는지 (다르면 'code+nci0' 처럼)
+        hows = {fin.get("nioHow"), ytd.get("nioHow"), ytd_prev.get("nioHow")} - {None}
+        if hows:
+            ttm["nioHow"] = "+".join(sorted(hows))
+    hs = [x.get("hyb") for x in (fin, ytd, ytd_prev)]
+    if any(hs):                    # v19.1f (리뷰): 신종자본증권 분배 TTM (그 보고서에 신종자본증권이 없으면 0) · 셋 다 어디 몫인지 알아야 ok
+        d = [(h or {}).get("dist") or 0.0 for h in hs]
+        ttm["hyb"] = {"ok": all((h or {}).get("ok", True) for h in hs), "dist": round(d[0] + d[1] - d[2], 1)}
     bs = {k: ytd.get(k) for k in ("eq", "eqo", "bor", "cash", "ca", "cl", "cs") if ytd.get(k) is not None}
+    if "nciBs" in ytd:
+        bs["nciBs"] = ytd["nciBs"]  # v19.1f: 최신 분기 비지배지분 (줄이 없으면 None) — BPS 의 nci0
+    if ytd.get("hyb"):
+        bs["hyb"] = ytd["hyb"]      # v19.1f (리뷰): 최신 분기 신종자본증권 (BPS 에서 빼요)
     return {"ttm": ttm, "bs": bs}
 
 
 def dart_financials(client, corp_code, year):
     """연결(없으면 별도) 사업보고서에서 주요 지표 + 3개년 원값.
     v19.1e: 자본금(_cap)만 읽힌 연결 재무제표는 예전처럼 '못 찾음'으로 보고 별도로 넘어가요 (어느 재무제표를 쓰는지 바뀌지 않게).
-    자본금 없이 저장된 예전 항목은 한 번 다시 받아요 (needs_capital · CAP_REDO_TAG)."""
+    자본금 없이 저장된 예전 항목은 한 번 다시 받아요 (needs_capital · CAP_REDO_TAG).
+    v19.1f: _fin.fs = 쓴 재무제표 (CFS 연결 · OFS 별도) — 분기 TTM 은 같은 종류만 써요 (dart_quarter), EPS 기준(fill_multiples)."""
     for fs in ("CFS", "OFS"):
         d = client.report("fnlttSinglAcntAll.json", corp_code, year, "11011", fs, parse_dart_list, {"fs_div": fs},
-                          redo=(CAP_REDO_TAG, needs_capital))
-        if d and any(k != "_cap" for k in d):
+                          redo=[(CAP_REDO_TAG, needs_capital), (OWN_REDO_TAG, needs_owners if fs == "CFS" else _never)])
+        if d and any(k not in ("_cap", "_inc") for k in d):
+            if isinstance(d.get("_fin"), dict):
+                d["_fin"]["fs"] = fs
             return d
     return {}
 
@@ -1630,10 +2262,13 @@ def dart_dividend(client, corp_code, year):
     return client.report("alotMatter.json", corp_code, year, "11011", "DIV2", parse_dart_dividend) or {}
 
 
-def dart_quarter(client, corp_code, year, reprt):
-    """분기·반기 보고서의 누적값 (연결 우선, 없으면 별도)."""
-    for fs in ("CFS", "OFS"):
-        d = client.report("fnlttSinglAcntAll.json", corp_code, year, reprt, fs, parse_dart_quarter, {"fs_div": fs})
+def dart_quarter(client, corp_code, year, reprt, fs=None):
+    """분기·반기 보고서의 누적값 (연결 우선, 없으면 별도).
+    v19.1f: fs 를 주면 그 재무제표만 (사업보고서와 같은 종류 — 연결 연간에 별도 분기를 섞은 TTM 을 만들지 않게. 별도만 내는 회사는
+    없는 연결 분기를 묻지 않아 호출도 줄어요)."""
+    for fs in ((fs,) if fs in ("CFS", "OFS") else ("CFS", "OFS")):
+        d = client.report("fnlttSinglAcntAll.json", corp_code, year, reprt, fs, parse_dart_quarter, {"fs_div": fs},
+                          redo=[(OWN_REDO_TAG, needs_owners_q if fs == "CFS" else _never)])
         if d:
             return d
     return None
@@ -1647,15 +2282,59 @@ def pick_current_quarter(shares):
     return None
 
 
-def dart_full_estimate(n_companies, ksic=True):
+def dart_full_estimate(n_companies, ksic=True, divwhy=0):
     """v19.1b: 처음부터 받는 전체 DART 실행의 호출 수 어림 → (합계, 설명). (순수 함수)
     재무·배당·분기 기업당 4.8회(지난 전체 실행의 평균) + 업종 코드 기업당 1회(캐시가 비었을 때) + 기업코드 목록 1회 + 공시 최대 1,430회.
+    v19.1h: divwhy = 배당 맞춤 이유(결정 공시) 어림 호출 수 (맞춘 회사 × 3 · 파이프라인은 DVWHY_EST_STOCKS × DVWHY_PER_STOCK 을 넘겨요).
     상한이 아니라 어림이에요 — 실제 호출 수는 실행 끝에 남기고, 목표(16,000)를 넘으면 크게 알려요."""
     main_ = math.ceil(n_companies * DART_PER_COMPANY)
     ks = n_companies if ksic else 0
-    total = main_ + ks + 1 + DART_DISC_MAX
-    why = (f"재무·배당·분기 {main_:,} + 업종 코드 {ks:,} + 기업코드 목록 1 + 공시 최대 {DART_DISC_MAX:,}")
+    total = main_ + ks + 1 + DART_DISC_MAX + divwhy
+    why = (f"재무·배당·분기 {main_:,} + 업종 코드 {ks:,} + 기업코드 목록 1 + 공시 최대 {DART_DISC_MAX:,}"
+           + (f" + 배당 맞춤 이유 약 {divwhy:,}" if divwhy else ""))
     return total, why
+
+
+INC_KO = {"rev": "매출", "op": "영업이익", "ni": "순이익", "nio": "지배주주 순이익"}
+
+
+def income_log(inc_by):
+    """v19.1f: 손익 줄을 어떻게 읽었는지 크게 남겨요 (사업보고서는 캐시에서 온 것까지 회사마다 · 받은 재무제표의 부호·여러 줄 수).
+    inc_by = {코드: (이름, _inc, 재무제표 값 있음)}. 반환: 재무제표는 있는데 손익 줄을 하나도 못 읽은 회사 ["코드 이름", …]."""
+    n = len(inc_by)
+    cnt = collections.Counter()
+    old, none_at_all = collections.defaultdict(list), []
+    for t, (nk, inc, has_fin) in sorted(inc_by.items()):
+        src = {k: v for k, v in ((inc or {}).get("src") or {}).items() if v in ("id", "name")}   # 'blank' = 올해 값 없음 → 없음
+        for k in INC_KO:
+            cnt[f"{k}:{src.get(k) or 'none'}"] += 1
+        for k in (inc or {}).get("old") or []:
+            old[k].append(f"{t} {nk}".strip())
+        if has_fin and not any(k in src for k in ("rev", "op", "ni")):
+            none_at_all.append(f"{t} {nk}".strip())
+    log(f"· 손익 줄 (사업보고서 {n:,}곳 · 표준 코드 / 이름 / 없음): "
+        + " · ".join(f"{INC_KO[k]} {cnt[k + ':id']:,} / {cnt[k + ':name']:,} / {cnt[k + ':none']:,}" for k in INC_KO))
+    sign = {p: sum(v for k, v in INC_SEEN.items() if k.startswith(p) and k.endswith(":sign")) for p in ("a:", "q:")}
+    many = {p: sum(v for k, v in INC_SEEN.items() if k.startswith(p) and k.endswith(":many")) for p in ("a:", "q:")}
+    loud = any(sign.values()) or any(many.values())
+    log(f"{'  !! ' if loud else '· '}손익 줄을 쓰지 않은 경우 (이번 실행에서 받은 재무제표 · 사업보고서 / 분기·반기): 이름이 손실인데 "
+        f"올해 값이 양수 {sign['a:']:,} / {sign['q:']:,} · 값이 다른 같은 코드 줄이 여럿 {many['a:']:,} / {many['q:']:,}")
+    n_old = sum(len(v) for v in old.values())
+    log(f"{'  !! ' if n_old else '· '}v19.1f 전 이름 규칙과 올해 값이 다른 손익 줄: {n_old:,}"
+        + "".join(f" · {INC_KO[k]} {len(v):,}곳 ({', '.join(v[:8])}{'…' if len(v) > 8 else ''})" for k, v in old.items())
+        + (" — 표준 코드 줄을 썼어요. 시험 실행에서 값을 확인해요" if n_old else ""))
+    drop = [f"{t} {nk}".strip() + f"({inc['iecDrop']})" for t, (nk, inc, _) in sorted(inc_by.items())
+            if (inc or {}).get("iecDrop")]
+    log(f"{'  !! ' if drop else '· '}코드가 있는 이자 지급 줄 옆에서 더하지 않은 코드 없는 이자 지급 줄이 있는 곳 (사업보고서 · 로그만, "
+        f"규칙은 그대로 — 따로 적은 리스 이자 같은 지급이면 이자보상배율이 커 보일 수 있어요): {len(drop):,}"
+        + (f" ({', '.join(drop[:20])}{'…' if len(drop) > 20 else ''})" if drop else "")
+        + f" · 분기·반기 보고서 {INC_SEEN['q:iecDrop']:,}건 (이번 실행에서 받은 것)")
+    fcp = [f"{t} {nk}".strip() for t, (nk, inc, _) in sorted(inc_by.items()) if (inc or {}).get("iecFcp")]
+    log(f"· 이자 지급을 ifrs-full_FinanceCostsPaid… 코드의 '이자(의) 지급' 줄로 읽은 곳 (사업보고서 · 리뷰 2026-11-08 — 예전엔 이자 줄 없음 ie): "
+        f"{len(fcp):,}" + (f" ({', '.join(fcp[:20])}{'…' if len(fcp) > 20 else ''})" if fcp else ""))
+    log(f"{'  !! ' if none_at_all else '· '}재무제표는 있는데 매출·영업이익·순이익을 하나도 못 읽은 곳: {len(none_at_all):,}"
+        + (f" ({', '.join(none_at_all[:15])}{'…' if len(none_at_all) > 15 else ''}) — 재무상태표 값은 남겨요" if none_at_all else ""))
+    return none_at_all
 
 
 def enrich_with_dart(kr_stocks, client, pref_shares=None):
@@ -1663,6 +2342,7 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
     v19.1g: pref_shares (kr_pref_shares) 로 상장 우선주 수를 알아요 — 배당 받은 종류가 더 많은 회사만 주식의 총수 현황을 받아요."""
     fin_map = {}
     stk_n = collections.Counter()
+    inc_by = {}                            # v19.1f: {코드: (이름, 손익 줄 _inc, 재무제표 값 있음)} — 로그용
     today = client.today
     old = [k for k in client.entries if k.endswith("|DIV")]
     for k in old:                       # v17.5.1: 옛 해석('-' = 모름)으로 저장된 배당 항목은 버려요 (DIV2 로 다시 받아요)
@@ -1675,9 +2355,17 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
     if backlog0:
         log(f"· DART 자본금 다시 읽기 대상: 자본금 없이 저장된 {year - 1}~{year}년 사업보고서 {backlog0:,}건 — 이번 실행에서 쓰는 것 중 "
             f"최대 {DART_REDO_PER_RUN:,}건 (v19.1e · 배당 분할 확인용)")
+    own0 = owners_backlog(client.entries, today) if client.mode != "full" else (0, 0)
+    if sum(own0):
+        loud = sum(own0) > DART_REDO_PER_RUN
+        log(f"{'  !! ' if loud else '· '}DART 지배주주 줄 다시 읽기 대상 (v19.1f · 캐시에 있는 연결 항목): 사업보고서 {own0[0]:,} · "
+            f"분기·반기 {own0[1]:,} = {sum(own0):,}건 — 이번 실행에서 쓰는 것만, 자본금 다시 읽기와 합쳐 최대 {DART_REDO_PER_RUN:,}건"
+            + (" (한도를 넘어 다음 실행이 이어받아요)" if loud else ""))
     targets = [s for s in kr_stocks if s["t"] in cmap]
     if client.started_empty or client.mode == "full":
-        est, why = dart_full_estimate(len(targets), ksic=client.started_empty)
+        has_ksic = any(k.endswith(CARRY_SUFFIXES) for k in client.entries)   # 옮겨 왔거나 지난 실행이 받은 업종 코드
+        est, why = dart_full_estimate(len(targets), ksic=client.started_empty and not has_ksic,
+                                      divwhy=DVWHY_EST_STOCKS * DVWHY_PER_STOCK)
         loud = est > DART_FULL_TARGET
         log(f"{'  !! ' if loud else '· '}전체 DART 실행 호출 수 어림: 약 {est:,}회 ({why}) · 하루 한도 {DART_DAY_LIMIT:,} · "
             f"목표 {DART_FULL_TARGET:,} 아래" + (" — 목표를 넘어요" if loud else ""))
@@ -1740,6 +2428,10 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
         cap = f.pop("_cap", None) if f else None
         if cap:
             s["_cap"] = cap               # v19.1e: 분할 확인용 자본금 — apply_div_basis 가 쓰고 지워요 (파일에 나가지 않아요)
+        inc = f.pop("_inc", None) if f else None
+        if inc is not None:
+            with client.lock:
+                inc_by[s["t"]] = (s.get("nk") or "", inc, "_fin" in f)   # v19.1f: 손익 줄을 찾은 방법 (로그만 · 파일에 나가지 않아요)
         if f or any(div.get(k) is not None for k in ("dps", "dps3", "dy")):   # 분할 확인용 값(bas)만으로는 fy 를 달지 않아요
             s["fy"] = yr          # v17.5.1: op·debt·roe·dps·dps3 가 나온 사업보고서의 연도 (bq 는 TTM 분기만 뜻해요)
         if f:
@@ -1752,10 +2444,10 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
                 qy_c = yr + 1
                 order_c = order if qy_c == qy else [r for r in Q_NEWEST_FIRST if report_period_end(qy_c, r) < today]
                 for r in order_c:
-                    ytd = dart_quarter(client, corp, qy_c, r)
+                    ytd = dart_quarter(client, corp, qy_c, r, fs=fin.get("fs"))
                     if not ytd:
                         continue
-                    t2 = compute_ttm(fin, ytd, dart_quarter(client, corp, yr, r))
+                    t2 = compute_ttm(fin, ytd, dart_quarter(client, corp, yr, r, fs=fin.get("fs")))
                     if t2:
                         fin["ttm"], fin["bs2"], fin["bq"] = t2["ttm"], t2["bs"], f"{qy_c}.{REPRT_KO[r]}"
                         break
@@ -1777,8 +2469,10 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
 
     with ThreadPoolExecutor(max_workers=5) as ex:
         list(ex.map(one, targets))
+    client.fetch_done = True              # v19.1f (리뷰): 재무제표 조회를 끝냈어요 — 이 저장부터 (멈추지 않았으면) 옛 캐시 파일을 지워요
     client.save()
     log(f"· DART: {client.summary()}")
+    income_log(inc_by)
     if stk_n:
         log(f"{'  !! ' if stk_n['none'] else '· '}상장되지 않은 우선주가 배당을 받은 회사: {sum(stk_n.values()):,}곳 — 주식의 총수 현황 "
             f"받음 {stk_n['got']:,} · 못 받음(보통주 줄을 못 찾음 · 보고서 없음) {stk_n['none']:,}")
@@ -1788,6 +2482,13 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
         log(f"{'  !! ' if capped else '· '}DART 자본금 다시 읽기: 대상 {backlog0:,}건 중 남은 {left:,}건"
             + (f" — 실행당 한도({DART_REDO_PER_RUN:,})에 닿았어요. 다음 실행에서 이어서 받아요" if capped
                else " (이번 실행에서 쓰지 않은 항목 · 며칠 뒤 다시 해 볼 항목)" if left else ""))
+    if sum(own0):
+        left = owners_backlog(client.entries, today)
+        capped = client.redo_left <= 0
+        log(f"{'  !! ' if capped else '· '}DART 지배주주 줄 다시 읽기: 대상 {sum(own0):,}건 중 이번에 받은 {client.redo_tags[OWN_REDO_TAG]:,}건 "
+            f"(새로 읽음 {client.redone_tags[OWN_REDO_TAG]:,}) · 캐시에 남은 {sum(left):,}건"
+            + (f" — 실행당 한도({DART_REDO_PER_RUN:,})에 닿았어요. 다음 실행에서 이어서 받아요" if capped
+               else " (이번 실행에서 쓰지 않은 항목 · 찾은 보고서가 없다는 답이면 며칠 뒤 다시)" if sum(left) else ""))
     try:
         log(f"· DART 캐시 저장: {len(client.entries):,}건 · {os.path.getsize(client.path) / 1e6:.1f}MB ({client.path})")
     except OSError as e:
@@ -2383,6 +3084,12 @@ def _median(vals):
 
 
 FIN_SECS = {"bank", "insure", "broker", "holding"}    # EV 계열 멀티플을 빼는 업종 (그대로)
+# v19.1f (Jack 승인 2026-11-08): EV(기업가치)와 P/영업현금흐름의 시가총액 = 보통주 + 같은 회사 상장 우선주 (회사 전체의 값). False 면
+# v19.1f 전처럼 보통주만 (우선주가 있는 회사의 EV 가 작아 보여요 — 삼성전자 약 11%).
+COMPANY_CAP_WITH_PREF = True
+# v19.1f (리뷰 2026-11-08 · Jack 승인 2026-11-08): EV 에 비지배지분을 더해요 (EBITDA·매출이 연결 100% 라서 — 한화에어로스페이스 약 7.1조).
+# False 면 v19.1f 전처럼 시가총액 + 차입금 − 현금만.
+EV_WITH_NCI = True
 # v19.1d (Jack, 2026-11-07): 유동비율·이자보상배율은 재무제표에 필요한 줄이 있으면 업종과 상관없이 돌려요. 은행·보험·증권과
 # 금융 지주(KB금융·신한지주 …: 업종 그룹이 은행·보험·증권·금융)만 해당 없음(flNa). 그 밖의 지주회사(LG·GS·CJ …)는 이제 돌려요.
 FL_FIN_SECS = {"bank", "insure", "broker"}
@@ -2393,7 +3100,8 @@ FL_FIN_HOLDINGS = ("105560", "055550", "086790", "316140", "138930", "139130", "
 # 파생상품 손실까지 든 '금융비용'으로 계산됐어요 (두산에너빌리티 0.65배 → 실제 이자 지급액으로는 약 2.0배). 이자비용, 없으면
 # 현금흐름표의 이자 지급액으로 다시 읽는 PR(v19.1f, 전체 DART 다시 읽기)이 이 스위치를 끄고 바른 값으로 다시 켜요.
 # 꺼져 있으면 숫자도, 그 확인에 기대는 '경고 신호는 없어요'도 없어요 (flRan 에 icr 없음 · flWhy.icr "off" — 앱은 아무 말도 안 해요).
-ICR_OFF = True
+# v19.1f: 다시 켜요. 이자는 손익계산서의 '이자비용'(flSrc.icr "is"), 없으면 현금흐름표의 이자 지급액(flSrc.icr "cf").
+ICR_OFF = False
 
 
 def fl_unknown_holding(s):
@@ -2411,18 +3119,59 @@ def fl_financial(s):
     return (s.get("s") or "etc") in FL_FIN_SECS
 
 
-CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN")   # v19.1b: data.json 종목에서 그대로 옮기는 칸
+CORP_DIV_KEYS = ("dps3a", "dpsF", "divSt", "dyt", "dz", "betaSE", "betaN", "dvWhy")   # v19.1b: data.json 종목에서 그대로 옮기는 칸 (v19.1h dvWhy)
 
 
-def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
+def icr_inputs(fin):
+    """이자보상배율 입력 → (영업이익, 이자, 출처 is·cf, 기간 ttm·fy, 못 돌린 이유). 영업이익과 이자는 같은 기간끼리만 써요 (v19.1f 리뷰:
+    TTM 영업이익을 연간 이자로 나누지 않게): TTM 영업이익 + TTM 이자, 안 되면 연간 영업이익 + 연간 이자. 이자는 손익계산서
+    이자비용(is), 없거나 음수면 현금흐름표 이자 지급액(cf). 이유: op 그 기간의 영업이익 없음 · ie 이자 줄 없음 · neg 이자가 음수뿐. (순수 함수)
+    v19.1f (Jack 2026-11-08): 낸 이자가 있을 때만 경고할 수 있어요 — 이자비용이 0 보다 크면 is, 아니면 이자 지급액이 0 보다 크면 cf
+    (이자비용 줄이 0 이어도 현금흐름표에 낸 이자가 있으면 그걸로). 둘 다 0 이면 이자 0 (그 줄의 출처 · is 먼저) — build_corp 는 돌렸지만
+    경고하지 않고 flSrc.int0 = true 를 남겨요 (영업손실이어도: 낼 이자가 없어요)."""
+    _t = fin.get("ttm") or {}
+    sets = (("ttm", _t.get("op"), _t.get("ie"), _t.get("iec")),
+            ("fy", (fin.get("op") or [None])[0], fin.get("ie"), fin.get("iec")))
+    neg = has_int = any_op = False
+    for per, op, ie, iec in sets:
+        op, ie, iec = _fin(op), _fin(ie), _fin(iec)
+        has_int = has_int or ie is not None or iec is not None
+        if op is None:
+            continue
+        any_op = True
+        if ie is not None and ie > 0:
+            return op, ie, "is", per, None
+        if iec is not None and iec > 0:
+            return op, iec, "cf", per, None
+        if ie == 0 or iec == 0:
+            return op, 0.0, ("is" if ie == 0 else "cf"), per, None
+        neg = neg or ie is not None or iec is not None
+    # 영업이익이 어느 기간에도 없으면 op (이자 줄 탓이 아니에요) · 음수 이자뿐이면 neg · 이자가 영업이익 없는 기간에만 있으면 op · 아니면 ie
+    return None, None, None, None, ("op" if not any_op else "neg" if neg else "op" if has_int else "ie")
+
+
+def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
     flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 네 검사(cr 유동비율 ·
-    icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요."""
+    icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요.
+    v19.1f: pref_caps = kr_pref_caps (목록 파일 전체의 우선주 시가총액, 조원) — 없으면 kr_stocks 안의 우선주로."""
     extra = extra or {}
     comps = []
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
     why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
+    zero_n = collections.Counter()                  # v19.1f (Jack 2026-11-08): 돌렸지만 낸 이자가 0 인 곳 (flSrc.int0) · 영업손실 · 영업이익
+    src_n = collections.Counter()                   # v19.1f: 이자보상배율에 쓴 이자 (is 손익계산서 이자비용 · cf 현금흐름표 이자 지급액) · 기간
+    nci_miss = []                                   # v19.1f: 연결인데 지배주주 자본이 없어 EV 에 비지배지분을 못 더한 회사
+    # v19.1f: 같은 회사 상장 우선주의 시가총액 (COMPANY_CAP_WITH_PREF 면 EV·P/CF 의 회사 시가총액에 더해요). EPS·BPS 주식 수와 같은
+    # 목록(파일 전체)을 써요
+    if pref_caps is not None:
+        pref_cap = collections.Counter(pref_caps)
+    else:
+        pref_cap = collections.Counter()
+        for s in kr_stocks:
+            if s.get("cls") == "kr" and is_preferred(s.get("t") or "") and (_fin(s.get("cap")) or 0) > 0:
+                pref_cap[s["t"][:5]] += s["cap"]
     for s in kr_stocks:
         if s.get("cls") != "kr" or not s.get("price"):
             continue
@@ -2453,6 +3202,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "ocf": _t.get("ocf") if _t.get("ocf") is not None else fin.get("ocf"),
             "dep": _t.get("dep") if _t.get("dep") is not None else fin.get("dep"),
             "ie": _t.get("ie") if _t.get("ie") is not None else fin.get("ie"),
+            "iec": _t.get("iec") if _t.get("iec") is not None else fin.get("iec"),
             "eq": _b.get("eq") if _b.get("eq") is not None else fin.get("eq"),
             "cs": _b.get("cs") if _b.get("cs") is not None else fin.get("cs"),
             "ca": _b.get("ca") if _b.get("ca") is not None else fin.get("ca"),
@@ -2462,6 +3212,10 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         }
         if fin.get("bq"):
             row["bq"] = fin["bq"]
+        if fin.get("nio3"):
+            row["nio3"] = fin["nio3"]                      # v19.1f: 지배주주 순이익 3년 (연결 · 억원). ni 는 전체 순이익 그대로
+        if fin and fl_financial(s) and rev[0] is None:
+            row["incNa"] = ["rev"]                         # v19.1f: 금융회사 재무제표엔 매출 줄이 없어요 (지어내지 않음 · 앱이 이유를 말할 수 있게)
 
         # 재무 건전성 신호 (해당할 때만 필드 존재 — 판단이 아니라 사실 표시)
         fl, ran = {}, []
@@ -2474,14 +3228,27 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             cr = eff["ca"] / eff["cl"] * 100
             if cr < 100:
                 fl["cr"] = round(cr, 0)
-        op0f = eff["op0"]
-        icr_ok = op0f is not None and eff["ie"] is not None and eff["ie"] >= 0 and not fin_co and not unknown
+        # v19.1f: 이자 = 손익계산서 이자비용(is), 없거나 음수면 현금흐름표 이자 지급액(cf) · 영업이익과 같은 기간 (icr_inputs).
+        # 어느 이자를 썼는지 flSrc 에 남겨요
+        op0f, ie_v, ie_src, ie_per, icr_why = icr_inputs(fin)
+        icr_ok = op0f is not None and ie_v is not None and not fin_co and not unknown
         if icr_ok and not ICR_OFF:
             ran.append("icr")                                # 이자비용 0 도 돌린 거예요 (갚을 이자가 없으면 경고가 날 수 없어요)
-        if icr_ok and not ICR_OFF and eff["ie"] > 0:
-            icr = op0f / eff["ie"]
+            row["flSrc"] = {"icr": ie_src}
+            src_n[ie_src] += 1
+            src_n[ie_per] += 1
+            src_n["fyBack"] += ie_per == "fy" and _fin((fin.get("ttm") or {}).get("op")) is not None   # TTM 이자가 없어 연간끼리
+        if icr_ok and not ICR_OFF and ie_v == 0:
+            # v19.1f (Jack 2026-11-08): 낸 이자가 없으면 경고하지 않아요 (영업손실이어도) — 이유를 flSrc.int0 로 남겨 앱이 알 수 있게.
+            # icr 는 flRan 에 있어요 (돌렸어요 · flWhy 는 '못 돌린 이유'만이라 쓰지 않아요). flSrc.icr 는 0 이었던 줄 (is · cf)
+            row["flSrc"]["int0"] = True
+            zero_n["loss" if op0f < 0 else "profit"] += 1
+        if icr_ok and not ICR_OFF and ie_v > 0:
+            icr = op0f / ie_v
             if icr < 1:
-                fl["icr"] = round(icr, 2)
+                # v19.1f (코디네이터 2026-11-08): 1 미만이라 경고한 값은 '1.0'으로 보이면 안 돼요 (대창솔루션 0.995 → 예전 1.0).
+                # 소수 한 자리로 내림 (0.99 → 0.9 · −0.41 → −0.5)
+                fl["icr"] = math.floor(icr * 10 + 1e-9) / 10
         if all(v is not None for v in ni):
             ran.append("l3")
         if all(v is not None and v < 0 for v in ni):
@@ -2494,11 +3261,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             row["fl"] = fl
         row["flRan"] = ran                                   # v19.1b: 입력이 다 있어 실제로 돌린 검사 (경고가 없어도 남아요)
         if not fin_co and not unknown and "icr" not in ran:
-            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(재무제표에 이자비용·금융비용 줄이 없음)일 때만
+            # v19.1d (Jack, 2026-11-07): 이자보상배율을 못 돌린 이유. 앱은 'ie'(v19.1f: 손익계산서 이자비용도, 현금흐름표 이자 지급액도 없음)일 때만
             # '재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요'라고 말해요. op = 영업이익이 없음 · neg = 이자비용이 음수 ·
             # off = 잠시 꺼 둠 (ICR_OFF — 앱은 아무 말도 하지 않아요). 꺼진 동안은 이자 줄이 없는 회사도 off: 어떤 회사엔 '확인한 …
             # 없어요' 카드가, 같은 결과의 다른 회사엔 아무것도 없는 차이가 생기지 않게 (리뷰 2026-11-07)
-            row["flWhy"] = {"icr": "off" if ICR_OFF else "op" if op0f is None else "ie" if eff["ie"] is None else "neg"}
+            row["flWhy"] = {"icr": "off" if ICR_OFF else (icr_why or "op")}
             why_n[row["flWhy"]["icr"]] += 1
         if fin_co:
             row["flNa"] = ["cr", "icr"]                      # 금융회사(금융 지주 포함)는 유동비율·이자보상배율이 해당 없어요
@@ -2515,7 +3282,21 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
         op0 = eff["op0"]
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
         if s.get("cap") and fin:
-            ev = s["cap"] * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0)
+            co_cap = s["cap"] + (pref_cap[s["t"][:5]] if COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) else 0.0)   # 조원
+            # v19.1f (리뷰 2026-11-08): EBITDA·매출은 연결 100% 라 EV 에 비지배지분(자본총계 − 지배주주 자본)도 더해요. 같은 시점의
+            # 두 값이 다 있을 때만 (최신 분기 → 연간). 별도 재무제표는 비지배지분이 없어요. 연결인데 지배주주 자본이 없으면 0 으로 두고 로그
+            nci = 0.0
+            if fin.get("fs") != "OFS":
+                pair = next(((_fin(src.get("eq")), _fin(src.get("eqo"))) for src in (_b, fin)
+                             if _fin(src.get("eq")) is not None and _fin(src.get("eqo")) is not None), None)
+                bs_nci = next((_fin(src.get("nciBs")) for src in (_b, fin) if "nciBs" in src), "unknown")
+                if pair:
+                    nci = pair[0] - pair[1]
+                elif bs_nci != "unknown":
+                    nci = bs_nci or 0.0          # 재무상태표의 비지배지분 줄 (없으면 0 — 비지배지분이 없는 연결)
+                elif _fin(eff["eq"]) is not None and row["s"] not in FIN_SECS:
+                    nci_miss.append(f"{s['t']} {s['nk']}")
+            ev = co_cap * 1e4 + (_fin(eff["bor"]) or 0.0) - (_fin(eff["cash"]) or 0.0) + (nci if EV_WITH_NCI else 0.0)
             if row["s"] not in FIN_SECS and ev > 0:
                 if ebitda and ebitda > 0:
                     v = ev / ebitda
@@ -2527,16 +3308,27 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
                         row["evR"] = round(v, 2)
             ocf = eff["ocf"]
             if ocf and ocf > 0:
-                v = s["cap"] * 1e4 / ocf
+                v = co_cap * 1e4 / ocf
                 if 0 < v < 200:
                     row["pcf"] = round(v, 1)
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
         row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
-        if is_foreign_issuer(s["t"]):
+        if not_won(s, fin):
             # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어 비워요 (blank_foreign_dart 참고). 위에서 만든 fl 신호는 비율·부호라 남겨요.
-            row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
-            for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB"):     # v19.1b: 배당 총액·주당순이익도 금액
+            # v19.1f (리뷰 2026-11-08): 재무제표 통화가 원화가 아닌 국내 회사도 같게 (두산밥캣 USD) · stmtCur 에 통화를 남겨요 (관문이 봐요)
+            row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False,
+                       **{k: None for k in FOREIGN_BLANK})                                  # blank_* 가 이미 비웠어도 한 번 더
+            for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn",
+                      "roeIn", "epsFy", "epsRep"):                                          # v19.1f: 지배주주 순이익·영수증도
                 row.pop(k, None)
+            if stmt_cur_of(fin):
+                row["stmtCur"] = stmt_cur_of(fin)
+                # v19.1f (리뷰 3): 다른 통화의 재무 신호는 0.1억으로 반올림한 값이라 믿을 수 없어요 (아남전자 이자 지급 1,068,247 달러 →
+                # 0.0 · 순이익 414만 달러 → 0.0). 신호를 계산하지 않은 것으로 둬요 — 앱은 아무 말도 하지 않아요
+                for k in ("fl", "flRan", "flSrc", "flWhy"):
+                    row.pop(k, None)
+                row["flRan"] = []                    # (2026-11-09) 돌린 검사 없음 — 관문의 '재무 경고 검사 기록' 줄은 목록을 바라요
+                row.update(roe=None, qz=None)        # 리뷰 4: ROE 와 그 점수도 보여 주지 않아요 (blank_non_won 이 data.json 쪽을 비워요)
         comps.append(row)
 
     sectors = {}
@@ -2563,9 +3355,20 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None):
             "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
             "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
         }
+    log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 (기간: TTM "
+        f"{src_n['ttm']:,} · 연간 {src_n['fy']:,}, 그중 TTM 이자가 없어 연간 영업이익·이자끼리 {src_n['fyBack']:,}) · 경고 "
+        f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
+        f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
+    n_pc = sum(1 for c in comps if not is_preferred(c["t"]) and pref_cap.get(c["t"][:5]))
+    log(f"· EV 회사 시가총액: 상장 우선주를 더한 회사 {n_pc:,}곳 ({'켬' if COMPANY_CAP_WITH_PREF else '끔'} · COMPANY_CAP_WITH_PREF · "
+        f"우선주 목록 {'파일 전체' if pref_caps is not None else 'data.json 안'}) · 비지배지분 더하기 {'켬' if EV_WITH_NCI else '끔'}"
+        + (f" — 연결인데 지배주주 자본이 없어 비지배지분을 0 으로 둔 곳 {len(nci_miss):,}: {', '.join(nci_miss[:12])}"
+           f"{'…' if len(nci_miss) > 12 else ''}" if nci_miss else ""))
     log(f"{'  !! ' if ICR_OFF else '· '}이자보상배율을 못 돌린 기업 (금융 빼고): {sum(why_n.values()):,}곳 — "
         + (f"잠시 꺼 둠(ICR_OFF · 금융비용으로 계산되던 값이라) {why_n['off']:,} · " if ICR_OFF else "")
-        + f"이자비용·금융비용 줄 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자비용 음수 {why_n['neg']:,} (corp.json flWhy)")
+        + f"이자비용도 이자 지급액도 없음 {why_n['ie']:,} · 영업이익 없음 {why_n['op']:,} · 이자 음수 {why_n['neg']:,} (corp.json flWhy)")
+    log(f"· 이자보상배율: 돌렸지만 낸 이자가 0 이라 경고하지 않은 곳 {sum(zero_n.values()):,} (영업손실 {zero_n['loss']:,} · 영업이익 "
+        f"{zero_n['profit']:,} · corp.json flSrc.int0 — 이자비용·이자 지급액이 0 보다 클 때만 경고해요)")
     both = [h for h in hold_log if h[2] and h[3]]
     miss = [h for h in hold_log if not (h[2] and h[3])]
     log(f"· 지주회사(금융 빼고) 재무 경고: {len(hold_log)}곳 중 유동비율 {sum(h[2] for h in hold_log)} · 이자보상배율 "
@@ -2657,6 +3460,7 @@ def fetch_korea(start, today, rf, prev=None):
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
     pref_shares = kr_pref_shares(listing)     # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
+    pref_caps = kr_pref_caps(listing)         # v19.1f: 같은 목록의 우선주 시가총액 (EV 의 회사 시가총액)
     n_pref = sum(1 for c in listing["Code"] if is_preferred(str(c)))
     n_pref_ok = sum(len(v) for v in pref_shares.values())
     log(f"{'  !! ' if n_pref_ok < n_pref else '· '}우선주 상장 주식 수 (배당 분할 확인용): {n_pref_ok:,} / {n_pref:,}종목 · "
@@ -2761,7 +3565,7 @@ def fetch_korea(start, today, rf, prev=None):
                 log(f"  (펀더멘털 {mkt_name} 실패: {e})")
         if frames:
             fundamentals = pd.concat(frames).to_dict("index")
-        log(f"· pykrx 펀더멘털 {len(fundamentals):,}건 (0이어도 정상 — DART 기반 계산으로 대체됩니다)")
+        log(f"· pykrx 펀더멘털 {len(fundamentals):,}건 (0이어도 정상 — PER·PBR·EPS·BPS 는 쓰지 않고 DART 지배주주 몫으로 계산해요 · v19.1f)")
         try:
             fr = pk.get_exhaustion_rates_of_foreign_investment(day, market="ALL")
             col = next((c for c in fr.columns if "지분" in str(c)), None)
@@ -2845,8 +3649,10 @@ def fetch_korea(start, today, rf, prev=None):
             ret.name = "r"
             b, a, bse, bn = beta_fit(ret, bench, rf)
             f = fundamentals.get(code, {})
-            per, pbr = _num(f.get("PER")), _num(f.get("PBR"))
-            eps, bps, dps = _num(f.get("EPS")), _num(f.get("BPS")), _num(f.get("DPS"))
+            # v19.1f (리뷰 2026-11-08): PER·PBR·EPS·BPS 는 pykrx 값을 쓰지 않아요 — 늘 DART 로 계산한 지배주주 몫(fill_multiples ·
+            # 영수증 epsIn·bpsIn). KRX 가 다시 답해도 기준이 섞이지 않게 (pykrx 배당 DPS·DIV 는 예전처럼, DART 가 나중에 덮어써요)
+            per = pbr = eps = bps = None
+            dps = _num(f.get("DPS"))
             dyv = _num(f.get("DIV"))
             sec_txt, prod_txt = desc.get(code, ("", ""))
             mc = _fin(row.get("Marcap"))
@@ -2925,7 +3731,7 @@ def fetch_korea(start, today, rf, prev=None):
             " (넥스트레이드 체결가가 섞인 날)")
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
-            "_prefShares": pref_shares}
+            "_prefShares": pref_shares, "_prefCaps": pref_caps}
     return out, bench, mkt, meta
 
 
@@ -2942,6 +3748,42 @@ FOREIGN_BLANK_NONZERO = ("dps", "dy")              # 0 이 아니면 비워요 (
 def is_foreign_issuer(code):
     """KRX 해외 기업 종목코드인지: 6자리이고 9로 시작 (900xxx 중국 등 · 950xxx 미국·일본 등). (순수 함수)"""
     return isinstance(code, str) and len(code) == 6 and code[0] == "9"
+
+
+def stmt_cur_of(fin):
+    """이 회사가 쓴 재무제표(사업보고서 · TTM 분기)가 원화가 아니면 그 통화, 아니면 None. (순수 함수)"""
+    fin = fin or {}
+    return fin.get("cur") or (fin.get("ttm") or {}).get("cur")
+
+
+def not_won(s, fin):
+    """금액을 원으로 믿을 수 없는 회사: 해외 기업(9…) 이거나 재무제표 통화가 원화가 아님 (v19.1f · 두산밥캣 USD). (순수 함수)"""
+    return is_foreign_issuer(s.get("t")) or bool(stmt_cur_of(fin))
+
+
+def blank_non_won(kr_stocks, fin_map):
+    """v19.1f (리뷰 2026-11-08): 원화가 아닌 재무제표로 낸 국내 회사 — 해외 기업처럼 PER·PBR·EPS·BPS 를 비우고 (금액은 build_corp 가
+    비워요) 회사와 통화를 크게 남겨요. ROE 도 비워요 (리뷰 4: 앱이 '실적 숫자는 아직 보여 드리지 않아요' 밑에 ROE 를 보여 주지 않게 ·
+    퀄리티 점수 qz 도 그래서 안 매겨요). 배당(dps · dy)은 배당 표가 '(원)' 단위라 남겨요. 반환: ["코드 이름(통화)", …].
+    해외 기업(9…)도 재무제표 통화가 원화가 아니면 ROE 를 비워요 (2026-11-09 시험 실행: build_corp 는 stmtCur 회사의 corp.json roe·qz 를
+    비우는데 data.json 에는 해외 기업 19곳의 roe·qz 가 남아 관문의 두 줄이 어긋났어요 — 두 파일이 같게). 나머지는 blank_foreign_dart 가 해요."""
+    hit, fr = [], []
+    for s in kr_stocks:
+        cur = stmt_cur_of(fin_map.get(s.get("t")))
+        if s.get("cls") != "kr" or not cur:
+            continue
+        if is_foreign_issuer(s.get("t")):
+            s.pop("roe", None)
+            fr.append(s["t"])
+            continue
+        for k in FOREIGN_BLANK + ("roe",):
+            s.pop(k, None)
+        hit.append(f"{s['t']} {s.get('nk', '')}({cur})")
+    log(f"{'  !! ' if hit else '· '}원화가 아닌 재무제표로 낸 국내 회사 {len(hit)}곳"
+        + (f": {', '.join(sorted(hit))} — 금액·PER·PBR·EPS·BPS·ROE 를 비웠어요 (재무 신호도 비워요 · 배당은 남겨요)" if hit else ""))
+    if fr:
+        log(f"  !! 원화가 아닌 재무제표로 낸 해외 기업 {len(fr)}곳: ROE 도 비웠어요 (corp.json 과 같게 · 퀄리티 점수 없음)")
+    return hit
 
 
 def blank_foreign_dart(kr_stocks):
@@ -2971,40 +3813,338 @@ def blank_foreign_dart(kr_stocks):
     return hit
 
 
-def fill_multiples(kr_stocks, fin_map):
-    """DART 재무(순이익·자본) + 상장주식수로 EPS/BPS/PER/PBR을 직접 계산합니다.
+# v19.1f (2026-11-08): EPS·BPS 의 기준. 2026-11-08 감사에서 연결 재무제표 30곳 중 23곳이 지배주주 순이익 줄을 못 읽어 EPS·PER 이
+# 비지배지분까지 든 '전체' 순이익으로 계산됐어요 (LG에너지솔루션 EPS +345 · PER 977, 주주 몫은 손실 −1조 728억 · 회사 발표 EPS −4,585).
+# 지배기업 소유주지분(자본)도 대부분 못 읽어 BPS·PBR 이 전체 자본이었어요 (한화에어로스페이스 16.8조 vs 주주 몫 9.7조).
+# 이제 EPS 는 주주 몫(지배주주) 순이익, BPS 는 주주 몫 자본으로 계산하고, 어느 값을 썼는지 corp.json epsIn · bpsIn 에 남겨요 (영수증).
+#   epsIn = {"ni": 억원, "b": 기준, "p": 기간, "sh": 주식 수}   bpsIn = {"eq": 억원, "b": 기준, "sh": 주식 수}
+#   b: "o" 연결 재무제표의 지배주주 몫 · "s" 별도 재무제표 (비지배지분이 없어 전체 = 주주 몫) · "t" 연결인데 지배주주 줄이 없어
+#      전체 값을 쓴 경우 (로그 · 관문 경고)
+#   p: "ttm" 최근 4개 분기 (corp.json bq) · "fy" 사업보고서 한 해 (TTM 지배주주 순이익을 만들 수 없을 때 — 관문이 bq 와 함께 경고)
+# 순서: TTM 지배주주 → 연간 지배주주 → (별도 재무제표 · 지배주주 줄 없는 연결) TTM 전체 → 연간 전체. 연결에서 기간보다 기준을 먼저
+# 지켜요: EPS 는 정의상 주주 몫이에요 (전체 순이익이면 비지배지분이 큰 회사의 PER 이 크게 틀려요).
+# 주식 수 (PER_SHARE_WITH_PREF — Jack 승인 2026-11-08): True = 보통주 + 같은 회사 상장 우선주 (지배주주 순이익·자본은 우선주 몫까지 들어
+# 있어요. 회사가 발표하는 기본주당이익과 같은 방식: 삼성전자 2025 지배주주 순이익 44.26조 ÷ 약 67억 주 = 6,605원). False = 보통주만
+# (v19.1f 전: 우선주가 있는 회사의 EPS·BPS 가 커 보여요 — 삼성전자 약 14%).
+PER_SHARE_WITH_PREF = True
+# data.json · corp.json 맨 위 epsBasis — 앱의 'PER·EPS 계산 방법을 고치는 중' 줄이 "owners" 를 보면 사라져요. 이 실행이 정말 주주 몫
+# EPS 를 냈을 때만 "owners" (eps_basis_of): 국내 필수 종목이 모두 지배주주 몫(o) 또는 별도 재무제표(s)이고, EPS 가 있는 회사 중
+# EPS_BASIS_MIN 이상이 o·s. 아니면 "mixed" — 관문이 실패로 막아요 (리뷰 2026-11-08: 상수로 쓰면 거짓 표시가 될 수 있어서).
+EPS_BASIS = "owners"
+EPS_BASIS_MIN = 0.95
+
+
+def eps_basis_of(kr_stocks, mult_extra, must=None):
+    """이 실행의 EPS 기준 → ("owners" | "mixed", 설명). (순수 함수)"""
+    must = DIV_RANK_MUST if must is None else must
+    b = {t: e["epsIn"]["b"] for t, e in mult_extra.items() if "epsIn" in e}
+    have = {s["t"] for s in kr_stocks if s.get("cls") == "kr"}
+    bad_must = [t for t in must if t in have and not is_foreign_issuer(t) and b.get(t) not in ("o", "s")]
+    share = sum(1 for v in b.values() if v in ("o", "s")) / len(b) if b else 0.0
+    ok = not bad_must and bool(b) and share >= EPS_BASIS_MIN
+    why = (f"EPS 있는 회사 {len(b):,}곳 중 지배주주·별도 {share:.1%} (기준 {EPS_BASIS_MIN:.0%})"
+           + (f" · 필수 종목 중 아닌 곳: {', '.join(bad_must)}" if bad_must else ""))
+    return (EPS_BASIS if ok else "mixed"), why
+
+
+def per_share_count(s, pref_shares):
+    """EPS·BPS 를 나눌 주식 수: 보통주(shr) + (PER_SHARE_WITH_PREF 면) 같은 회사 상장 우선주. (순수 함수)"""
+    shr = _fin(s.get("shr"))
+    if not shr or shr <= 0:
+        return None
+    pref = sum(p for p in (_fin(x) for x in (pref_shares or {}).get(s["t"][:5], ())) if p and p > 0) if PER_SHARE_WITH_PREF else 0
+    return int(round(shr + pref))
+
+
+def _hyb_cut(h):
+    """신종자본증권 dict → (뺄 값 억원, 어디 몫인지 알 수 없음). 없으면 (0, False). (순수 함수)"""
+    if not h:
+        return 0.0, False
+    return (_fin(h.get("dist")) or 0.0), not h.get("ok", True)
+
+
+def eps_source(fin):
+    """EPS 에 쓸 순이익 → (억원, 기준 o·s·t, 기간 ttm·fy, how, 뺀 신종자본증권 분배 억원) 또는 None. 위 순서. how: o 는 지배주주 순이익을
+    읽은 방법 (owners_profit 의 code · alt · cont · sum · minus · nci0 — TTM 은 세 보고서의 방법을 '+' 로), s 는 ofs, t 는 total.
+    v19.1f (리뷰 2026-11-08): o · s 는 그 기간의 주주 몫 신종자본증권 분배를 빼요 (K-IFRS 기본주당이익과 같은 방식). 어디 몫인지 알 수 없는
+    신종자본증권이 있으면 빼지 않고 기준을 t (how hybrid) 로 둬요 — 앱의 '고치는 중' 줄이 남아요. (순수 함수)"""
+    _t = fin.get("ttm") or {}
+    ofs = fin.get("fs") == "OFS"
+    picks = []
+    if not ofs:
+        if _fin(_t.get("nio")) is not None:
+            picks.append((_t["nio"], "o", "ttm", _t.get("nioHow") or fin.get("nioHow") or "code", _t.get("hyb")))
+        elif _fin(fin.get("nio")) is not None:
+            picks.append((fin["nio"], "o", "fy", fin.get("nioHow") or "code", fin.get("hyb")))
+    if not picks:
+        b, how = ("s", "ofs") if ofs else ("t", "total")
+        if _fin(_t.get("ni")) is not None:
+            picks.append((_t["ni"], b, "ttm", how, _t.get("hyb")))
+        else:
+            ni0 = _fin((fin.get("ni") or [None])[0])
+            if ni0 is not None:
+                picks.append((ni0, b, "fy", how, fin.get("hyb")))
+    if not picks:
+        return None
+    ni, b, p, how, h = picks[0]
+    if b == "t":
+        return ni, b, p, how, 0.0
+    cut, unplaced = _hyb_cut(h)
+    if unplaced:
+        return ni, "t", p, "hybrid", 0.0
+    return round(ni - cut, 1), b, p, how, cut
+
+
+def eps_nci(fin, p):
+    """EPS 순이익을 가져온 재무제표에 비지배지분(소수주주)이 있는지 — 증거 nciBs · nciPl 중 하나가 0 이 아닌 값이면 True. (순수 함수)
+    p "ttm": 최신 분기의 증거 먼저 — 재무상태표(bs2.nciBs) 나 분기 누적 손익(ttm.nciPl) 중 하나라도 0 이 아니면 (두 칸이 다 없으면 사업보고서) ·
+    "fy": 사업보고서. 앱이 '전체 순이익으로 계산했어요' 줄에 써요 (epsIn.nci)."""
+    ann = (fin.get("nciBs"), fin.get("nciPl"))
+    if p == "ttm":
+        _b, _t = fin.get("bs2") or {}, fin.get("ttm") or {}
+        if "nciBs" in _b or "nciPl" in _t:
+            ann = (_b.get("nciBs"), _t.get("nciPl"))
+    return any(_fin(v) not in (None, 0.0) for v in ann)
+
+
+def _owners_eq(src, ofs):
+    """재무상태표 하나(src: bs2 또는 사업보고서)의 주주 몫 자본 → (억원, 기준, how) 또는 None. (순수 함수)
+    연결: 지배주주 자본 줄(code) → 그 줄이 없고 비지배지분 줄이 있으면 자본총계 − 비지배지분 (minus · 리뷰 3: DH오토넥스 ·
+    삼기에너지솔루션즈) → 비지배지분 줄이 없거나 0 이면 자본총계 (nci0)."""
+    if not ofs:
+        if _fin(src.get("eqo")) is not None:
+            return src["eqo"], "o", "code"
+        if "nciBs" in src and _fin(src.get("eq")) is not None:
+            nci = _fin(src.get("nciBs"))
+            if nci in (None, 0.0):
+                return src["eq"], "o", "nci0"
+            return round(src["eq"] - nci, 1), "o", "minus"
+        return None
+    return (src["eq"], "s", "ofs") if _fin(src.get("eq")) is not None else None
+
+
+def bps_source(fin):
+    """BPS 에 쓸 자본 → (억원, 기준 o·s·t, how, 시점 p, 뺀 신종자본증권 억원) 또는 None. 순서는 재무상태표마다예요 — 최신 분기(bs2)
+    먼저, 없으면 사업보고서 — 그 재무상태표로 주주 몫 자본을 정확히 알 수 있으면 그 값 (_owners_eq: 지배주주 자본 줄 code → 자본총계 −
+    비지배지분 minus → 비지배지분이 없는 연결의 자본총계 nci0). 셋 다 정확한 값이라 시점을 먼저 지켜요 (리뷰 3: 최신 분기로 정확히 알 수
+    있는데 사업보고서 값을 쓰면 PBR 이 낡아요). 어느 재무상태표로도 안 되면 전체 자본 (s: ofs · t: total).
+    p: "ttm" = 최신 분기(bq) 재무상태표(bs2)의 자본 · "fy" = 사업보고서의 자본 (리뷰 2026-11-08: 앱의 'PBR 은 그 분기 자본 기준' 줄이
+    사업보고서 자본일 때 틀리지 않게). v19.1f (리뷰): o · s 는 그 재무상태표의 주주 몫 신종자본증권을 빼요 (보통주 자본) · 어디 몫인지
+    모르면 빼지 않고 t (how hybrid). (순수 함수)"""
+    _b = fin.get("bs2") or {}
+    ofs = fin.get("fs") == "OFS"
+    for src, p in ((_b, "ttm"), (fin, "fy")):
+        got = _owners_eq(src, ofs)
+        if got:
+            eq, b, how = got
+            h = src.get("hyb")
+            if h and not h.get("ok", True):
+                return eq, "t", "hybrid", p, 0.0
+            cut = (_fin((h or {}).get("eq")) or 0.0)
+            return round(eq - cut, 1), b, how, p, cut
+    for src, p in ((_b, "ttm"), (fin, "fy")):
+        if _fin(src.get("eq")) is not None:
+            return src["eq"], ("s" if ofs else "t"), ("ofs" if ofs else "total"), p, 0.0
+    return None
+
+
+def annual_only(fin):
+    """사업보고서 값만 남긴 재무 dict (TTM ttm · 최신 분기 재무상태표 bs2 를 뺌). (순수 함수)"""
+    return {k: v for k, v in (fin or {}).items() if k not in ("ttm", "bs2")}
+
+
+def hybrid_net_series(fin, b):
+    """v19.1f (리뷰 3): 신종자본증권 분배를 뺀 3년 주주 몫 순이익 [fy, fy−1, fy−2] (억원) — 그 해 분배를 모르면(자본변동표에 그 해 칸이
+    없음) None ('자료가 없어요'). EPS 기준 b 가 o 면 nio3, s(별도)면 ni 에서 빼요. 사업보고서에 주주 몫 신종자본증권이 없거나 (hyb 없음 ·
+    어디 몫인지 모름) 세 해 모두 분배가 0 이면 None (그대로 둬요). (순수 함수)"""
+    h = fin.get("hyb") or {}
+    d3 = h.get("dist3")
+    if b not in ("o", "s") or not h.get("ok", True) or not isinstance(d3, list) or len(d3) != 3:
+        return None
+    if all(x == 0 for x in d3):
+        return None
+    base = fin.get("nio3") if b == "o" else fin.get("ni")
+    if not isinstance(base, list) or len(base) != 3:
+        return None
+    return [round(v - d, 1) if (_fin(v) is not None and _fin(d) is not None) else None for v, d in zip(base, d3)]
+
+
+def roe_source(fin):
+    """v19.1f (리뷰 2026-11-08): ROE 를 EPS 와 같은 기준(주주 몫)으로 → (%, 순이익 억원, 자본 억원, 기준 o·s, 기간 "fy") 또는 None.
+    순이익은 EPS 와 같은 순서·규칙 (eps_source: 지배주주 → 별도 · 신종자본증권 분배를 뺌), 자본은 같은 재무상태표의 주주 몫 자본
+    (bps_source 규칙 · 신종자본증권 뺌). 기간은 늘 사업보고서 한 해끼리 — 앱이 ROE 를 '○○년 사업보고서 기준'으로 적고 2.0 의 ROE 하한
+    규칙도 그 해(fy)로 비교해서예요 (TTM 이면 꼬리표가 틀려요). 지배주주 순이익이 없는 연결(t)·주주 몫 자본이 없거나 0 이하면 None —
+    예전 값(parse_dart_list: 연결 전체 순이익 ÷ 전체 자본, 같은 사업보고서)을 그대로 둬요. (순수 함수)"""
+    fy = annual_only(fin)
+    es = eps_source(fy)
+    if es is None or es[1] == "t":
+        return None
+    bs = bps_source(fy)
+    if bs is None or bs[1] != es[1] or bs[3] != "fy" or bs[0] <= 0:
+        return None
+    return round(es[0] / bs[0] * 100, 1), es[0], bs[0], es[1], "fy"
+
+
+ROE_RULE_LINES = (5.0, 10.0, 15.0)     # 'ROE ≥ x%' 규칙이 갈리는지 세는 선 (로그만 · Jack 2026-11-08)
+
+
+def roe_moves(kr_stocks, old_roe):
+    """v19.1f (리뷰 · Jack 2026-11-08): ROE 기준을 바꿔 움직인 것. (순수 함수 · 로그용)
+    old_roe = {코드: fill_multiples 전 roe}. 셈: 1%p 넘게 바뀐 곳 · 부호가 바뀐 곳 · 퀄리티 점수(qz — add_percentiles 와 같게 예전 ROE 로
+    한 번 더 매겨 견줘요) 바뀐 곳과 5점 이상 · 'ROE ≥ 5 · 10 · 15%' 의 답이 바뀐 곳 · 2.0 ROE 하한(예전 ROE 로 산 사람의 하한
+    roeFloorFor = max(0, floor(roe/2)) · roe > 0 일 때만)보다 새 ROE 가 낮아진 곳."""
+    kr = [s for s in kr_stocks if s.get("cls") == "kr"]
+    old = add_percentiles([{"cls": "kr", "roe": old_roe.get(s["t"])} for s in kr])
+    out = {"changed": [], "big": [], "sign": [], "qz": 0, "qz5": [], "floor": [], "new": 0, "gone": 0,
+           "line": {x: [] for x in ROE_RULE_LINES}}
+    for s, o in zip(kr, old):
+        a, b = _fin(old_roe.get(s["t"])), _fin(s.get("roe"))
+        nm = f"{s['t']} {s.get('nk', '')}".strip()
+        if a is None and b is not None:
+            out["new"] += 1
+        elif a is not None and b is None:
+            out["gone"] += 1
+        elif a is not None and abs(a - b) >= 0.05:
+            out["changed"].append(nm)
+            if abs(a - b) > 1.0:
+                out["big"].append(f"{nm} {a:+.1f}→{b:+.1f}")
+            if (a > 0) != (b > 0):
+                out["sign"].append(f"{nm} {a:+.1f}→{b:+.1f}")
+            if a > 0 and b < max(0, math.floor(a / 2)):
+                out["floor"].append(f"{nm} {a:.1f}→{b:.1f}")
+            for x in ROE_RULE_LINES:
+                if (a >= x) != (b >= x):
+                    out["line"][x].append(f"{nm} {a:.1f}→{b:.1f}")
+        if s.get("qz") != o.get("qz"):
+            out["qz"] += 1
+            if s.get("qz") is not None and o.get("qz") is not None and abs(s["qz"] - o["qz"]) >= 5:
+                out["qz5"].append(f"{nm} {o['qz']}→{s['qz']}")
+    log(f"{'  !! ' if out['floor'] else '· '}ROE 기준 (주주 몫 · 사업보고서) 으로 움직인 것: 바뀐 곳 {len(out['changed']):,} (1%p 넘게 "
+        f"{len(out['big']):,}) · 부호가 바뀐 곳 {len(out['sign'])} · 새로 생김 {out['new']} · 빠짐 {out['gone']} · 퀄리티 점수(qz) 바뀐 곳 "
+        f"{out['qz']:,} (5점 이상 {len(out['qz5']):,}) · 'ROE ≥ x%' 답이 바뀐 곳 "
+        + " · ".join(f"{x:g}% {len(v)}" for x, v in out["line"].items())
+        + f" · 2.0 ROE 하한(예전 ROE 의 절반) 아래로 내려간 곳 {len(out['floor'])}"
+        + (f": {', '.join(out['floor'][:12])}{'…' if len(out['floor']) > 12 else ''}" if out["floor"] else ""))
+    if out["sign"]:
+        log(f"  · ROE 부호가 바뀐 곳: {', '.join(out['sign'][:20])}{'…' if len(out['sign']) > 20 else ''}")
+    if out["big"]:
+        log(f"  · ROE 가 1%p 넘게 바뀐 곳 (앞 20): {', '.join(out['big'][:20])}{'…' if len(out['big']) > 20 else ''}")
+    return out
+
+
+def fill_multiples(kr_stocks, fin_map, pref_shares=None):
+    """DART 재무(순이익·자본) + 주식 수로 EPS/BPS/PER/PBR을 직접 계산합니다.
     pykrx는 KRX 로그인이 필요해져 CI에서 동작하지 않으므로, 있으면 쓰고 없으면 이 값으로 채웁니다.
-    순이익·자본은 지배주주 귀속분을 우선 사용합니다."""
+    v19.1f: 순이익·자본은 지배주주 몫 (eps_source · bps_source), 주식 수는 per_share_count. 반환: {코드: {"epsIn", "bpsIn"}} —
+    corp.json 에 싣는 영수증 (이 함수가 채운 값만)."""
     n = 0
+    extra = {}
+    cnt = collections.Counter()
+    tot_b, fy_q, bps_fy_q, hyb_cut, hyb_t, roe_n, roe_gap, hyb_net = [], [], [], [], [], collections.Counter(), [], []
+    top = {s["t"] for s in sorted((x for x in kr_stocks if x.get("cls") == "kr"), key=lambda x: -(_fin(x.get("cap")) or 0))[:200]}
     for s in kr_stocks:
         fin = fin_map.get(s["t"])
-        shr = s.get("shr")
         price = s.get("price")
-        if not fin or not shr or not price or is_foreign_issuer(s["t"]):     # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어요
+        sh = per_share_count(s, pref_shares)
+        if fin and not not_won(s, fin):
+            rs = roe_source(fin)
+            if rs is not None:                     # v19.1f (리뷰): ROE 도 EPS 와 같은 기준 (주주 몫 ÷ 주주 몫 자본 · 사업보고서 한 해)
+                s["roe"] = rs[0]
+                extra.setdefault(s["t"], {})["roeIn"] = {"ni": rs[1], "eq": rs[2], "b": rs[3], "p": rs[4]}
+                roe_n[rs[3]] += 1
+            else:
+                roe_n["old"] += 1
+        if not fin or not sh or not price or not_won(s, fin):     # v17.5.2 · v19.1f: 금액이 원화가 아닐 수 있으면 건너뛰어요
             continue
-        _t = fin.get("ttm") or {}
-        _b = fin.get("bs2") or {}
-        ni = (_t.get("nio") if _t.get("nio") is not None else
-              (_t.get("ni") if _t.get("ni") is not None else
-               (fin.get("nio") if fin.get("nio") is not None else (fin.get("ni") or [None])[0])))
-        eq = (_b.get("eqo") if _b.get("eqo") is not None else
-              (_b.get("eq") if _b.get("eq") is not None else
-               (fin.get("eqo") if fin.get("eqo") is not None else fin.get("eq"))))
-        if ni is not None:
-            eps = ni * 1e8 / shr
-            if s.get("eps") is None:
-                s["eps"] = round(eps, 0)
+        es, bs_ = eps_source(fin), bps_source(fin)
+        nm = f"{s['t']} {s.get('nk', '')}".strip()
+        if es is not None and s.get("eps") is None:
+            ni, b, p, how, cut = es
+            eps = ni * 1e8 / sh
+            s["eps"] = round(eps, 0)
             if s.get("per") is None and eps > 0:
                 s["per"] = round(price / eps, 1)
-        if eq and eq > 0:
-            bps = eq * 1e8 / shr
-            if s.get("bps") is None:
-                s["bps"] = round(bps, 0)
+            extra.setdefault(s["t"], {})["epsIn"] = {"ni": ni, "b": b, "p": p, "sh": sh, "how": how, **({"hyb": cut} if cut else {}),
+                                                     **({"nci": True} if b == "t" and how == "total" and eps_nci(fin, p) else {})}
+            # nci 는 how "total" (지배주주 줄이 없어 전체 순이익) 에만: how "hybrid" 는 지배주주 순이익이 있어요 — 앱의 '따로 공시하지 않아' 줄이 틀려요
+            if b == "t" and how == "total":
+                cnt[f"eps:t:nci:{'y' if eps_nci(fin, p) else 'n'}"] += 1
+            if cut:
+                hyb_cut.append(nm)
+            if how == "hybrid":
+                hyb_t.append(nm)
+            cnt[f"eps:{b}:{p}"] += 1
+            if b in ("o", "s") and "roeIn" not in extra[s["t"]] and _fin(s.get("roe")) is not None:
+                roe_gap.append(nm)          # EPS 는 주주 몫인데 ROE 는 예전 값 (사업보고서에 주주 몫 자본·순이익이 없음) — 앱의 '고치는 중' 줄은 사라져요
+            # v19.1f (리뷰): 사업보고서 한 해 EPS (같은 주식 수) 와 재무제표의 기본주당이익 — 관문이 견줘요 (경고만)
+            fy = eps_source(annual_only(fin))
+            if fy and fy[1] in ("o", "s"):
+                extra[s["t"]]["epsFy"] = round(fy[0] * 1e8 / sh, 0)
+            if _fin(fin.get("epsRep")) is not None:
+                extra[s["t"]]["epsRep"] = fin["epsRep"]
+            net = hybrid_net_series(fin, b)
+            if net is not None:             # v19.1f (리뷰 3): 역DCF · 주가 분해가 EPS 와 같은 순이익을 쓰게 (src/repair.js epsBase)
+                extra[s["t"]]["nio3"], extra[s["t"]]["nio3Hyb"] = net, fin["hyb"]["dist3"]
+                hyb_net.append(nm)
+            for h in how.split("+"):
+                cnt[f"how:{h}"] += 1
+            if b == "t" and s["t"] in top:
+                tot_b.append(nm)
+            if p == "fy" and fin.get("bq"):
+                fy_q.append(nm)
+        if bs_ is not None and bs_[0] > 0 and s.get("bps") is None:
+            eq, b, bhow, bp, bcut = bs_
+            bps = eq * 1e8 / sh
+            s["bps"] = round(bps, 0)
             if s.get("pbr") is None:
                 s["pbr"] = round(price / bps, 2)
+            extra.setdefault(s["t"], {})["bpsIn"] = {"eq": eq, "b": b, "sh": sh, "how": bhow, "p": bp, **({"hyb": bcut} if bcut else {})}
+            cnt[f"bps:{b}"] += 1
+            if bp == "fy" and fin.get("bq"):
+                bps_fy_q.append(f"{s['t']} {s.get('nk', '')}".strip())
         if s.get("per") is not None or s.get("pbr") is not None:
             n += 1
-    log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 상장주식수 기반)")
+    n_pref = sum(1 for t, e in extra.items() if "epsIn" in e and pref_shares and pref_shares.get(t[:5]) and PER_SHARE_WITH_PREF)
+    log(f"· 멀티플 직접 계산: {n:,}건 (DART 재무 × 주식 수 · 주식 수에 상장 우선주 포함 {'켬' if PER_SHARE_WITH_PREF else '끔'}"
+        f"(PER_SHARE_WITH_PREF) — 우선주가 있는 회사 {n_pref:,}곳)")
+    log(f"· EPS 순이익 기준: 지배주주 TTM {cnt['eps:o:ttm']:,} · 지배주주 연간 {cnt['eps:o:fy']:,} · 별도 TTM {cnt['eps:s:ttm']:,} · "
+        f"별도 연간 {cnt['eps:s:fy']:,} · 연결 전체(지배주주 줄 없음) TTM {cnt['eps:t:ttm']:,} · 연간 {cnt['eps:t:fy']:,} (그중 how total 에서 소수주주 있음 epsIn.nci {cnt['eps:t:nci:y']:,} · 없음 {cnt['eps:t:nci:n']:,}) | BPS 자본 기준: "
+        f"지배주주 {cnt['bps:o']:,} · 별도 {cnt['bps:s']:,} · 연결 전체 {cnt['bps:t']:,}")
+    log("· 지배주주 순이익을 읽은 방법 (EPS 가 지배주주인 회사 · TTM 은 세 보고서 방법을 모두 세요): "
+        + " · ".join(f"{h} {cnt['how:' + h]:,}" for h in OWN_HOWS))
+    if tot_b:
+        log(f"  !! 시가총액 상위 200곳 중 연결인데 지배주주 순이익 줄이 없어 전체 순이익으로 EPS 를 낸 곳 {len(tot_b)}: "
+            f"{', '.join(tot_b[:20])}{'…' if len(tot_b) > 20 else ''}")
+    if fy_q:
+        log(f"  !! TTM(bq) 이 있는데 EPS 는 사업보고서 한 해 지배주주 순이익인 곳 {len(fy_q)} (분기 지배주주 줄이 없음 · epsIn.p fy): "
+            f"{', '.join(fy_q[:20])}{'…' if len(fy_q) > 20 else ''}")
+    log(f"· ROE 기준 (EPS 와 같은 주주 몫 · 사업보고서 한 해 · roeIn): 지배주주 {roe_n['o']:,} · 별도 {roe_n['s']:,} · 예전 그대로 "
+        f"{roe_n['old']:,} (지배주주 순이익이나 주주 몫 자본이 없는 연결 — 전체 순이익 ÷ 전체 자본)")
+    log(f"{'  !! ' if roe_gap else '· '}EPS 는 주주 몫인데 ROE 는 예전 값(전체 ÷ 전체)인 곳 {len(roe_gap)}"
+        + (f": {', '.join(roe_gap[:20])}{'…' if len(roe_gap) > 20 else ''}" if roe_gap else ""))
+    log(f"{'  !! ' if hyb_t else '· '}신종자본증권: 주주 몫 분배를 EPS 에서 뺀 곳 {len(hyb_cut)}"
+        + (f" ({', '.join(hyb_cut[:12])}{'…' if len(hyb_cut) > 12 else ''})" if hyb_cut else "")
+        + f" · 어디 몫인지 알 수 없어 '전체'(t)로 둔 곳 {len(hyb_t)}" + (f": {', '.join(hyb_t[:12])}" if hyb_t else "")
+        + f" · corp.json nio3 를 분배를 뺀 값으로 쓴 곳 {len(hyb_net)} (nio3Hyb · 별도 재무제표(s)면 ni 대신 이 nio3 가 EPS 기준)")
+    # v19.1f (리뷰 2026-11-08): BPS 도 같은 숫자 — 분기(bq) 표시인데 자본은 사업보고서 것인 곳 (bpsIn.p fy · 앱은 그 기간으로 적어요)
+    log(f"{'  !! ' if bps_fy_q else '· '}TTM(bq) 이 있는데 BPS 는 사업보고서 자본인 곳 {len(bps_fy_q)} (최신 분기 재무상태표에 쓸 자본이 없음 · "
+        f"bpsIn.p fy)" + (f": {', '.join(bps_fy_q[:20])}{'…' if len(bps_fy_q) > 20 else ''}" if bps_fy_q else ""))
+    return extra
+
+
+def income_check(kr_stocks, fin_map, mult_extra):
+    """v19.1f: data.json incCheck — 관문이 corp.json 과 맞춰 보는 집계. (순수 함수)
+    stmts 재무제표를 읽은 회사 · noInc 그중 매출·영업이익·순이익이 모두 빈 곳 · finNoRev 매출 줄이 없는 금융회사(incNa) ·
+    eps 기준·기간별 수 (epsIn)."""
+    kr = [s for s in kr_stocks if s.get("cls") == "kr" and s["t"] in fin_map and not is_foreign_issuer(s["t"])]
+    def blank(fin, k):
+        return (fin.get(k) or [None])[0] is None
+    no_inc = [s["t"] for s in kr if all(blank(fin_map[s["t"]], k) for k in ("rev", "op", "ni"))]
+    fin_no_rev = [s["t"] for s in kr if fl_financial(s) and blank(fin_map[s["t"]], "rev")]
+    eb = collections.Counter(e["epsIn"]["b"] for e in mult_extra.values() if "epsIn" in e)
+    ep = collections.Counter(e["epsIn"]["p"] for e in mult_extra.values() if "epsIn" in e)
+    return {"v": 1, "stmts": len(kr), "noInc": len(no_inc), "finNoRev": len(fin_no_rev),
+            "epsB": {k: eb[k] for k in ("o", "s", "t")}, "epsP": {k: ep[k] for k in ("ttm", "fy")}}
 
 
 # ────────────────────────────────────────────────────────────
@@ -3227,9 +4367,743 @@ def kr_pref_shares(listing):
     return out
 
 
-def apply_div_basis(kr_stocks, fin_map, pref_shares):
+def kr_pref_caps(listing):
+    """목록 파일 전체에서 우선주 시가총액 합: {보통주 코드 앞 5자리: 조원}. kr_pref_shares 와 같은 목록이라 EPS·BPS 의 주식 수와
+    EV 의 회사 시가총액이 같은 우선주를 봐요 (v19.1f 리뷰: 상위 2,500개 안의 우선주만 보면 둘이 어긋나요). (순수 함수)"""
+    out = collections.Counter()
+    if listing is None or "Code" not in getattr(listing, "columns", []) or "Marcap" not in listing.columns:
+        return {}
+    for code, mc in zip(listing["Code"].astype(str), listing["Marcap"]):
+        code = code.strip()
+        v = _fin(_num(mc))
+        if is_preferred(code) and v and v > 0:
+            out[code[:5]] += v / 1e12
+    return dict(out)
+
+
+# ────────────────────────────────────────────────────────────
+# v19.1h: 배당 맞춤 이유 (dvWhy) — Jack, 2026-11-08 (네 가지 답도 같은 날: 아래 판정이 그 답이에요)
+# ────────────────────────────────────────────────────────────
+# 배당 막대를 오늘 주식 수 기준으로 다시 계산한 해(dpsF ≠ 1)가 있는 국내 종목마다, 주식 수가 바뀐 이유 · 날짜 · 배율을 DART 의
+# 결정 공시에서 찾아요 (앱의 막대 아래 줄은 다음 PR). 조사: 2026-11-08 (맞춘 63곳 모두 결정 공시가 이유·날짜·배율을 줘요.
+# 사업보고서의 '증자(감자) 현황'은 액면분할·병합을 거의 적지 않아 18곳뿐이라 쓰지 않아요).
+#   목록    list.json — 회사 · (사업보고서 연도 − 2)년 1월 1일 ~ 오늘 · 거래소 수시공시(I001) + 주요사항보고서(B001) · 최종 정정본만
+#           (last_reprt_at=Y: 정정한 공시는 마지막 판만 와요 — 영화금속 4:1 → 5:1 처럼 정정이 숫자를 바꿔요)
+#   무상증자 fricDecsn.json · 유무상증자 pifricDecsn.json · 감자 crDecsn.json (구조화된 API · 최종 정정본)
+#   액면분할 · 주식병합  주식분할결정 · 주식병합결정 공시 원문(document.xml) — API 가 없어요. 거래소의 정해진 양식이라
+#           '1주당 가액 전 · 후'와 '신주의 효력발생일'을 읽어요 (배율은 액면가로: 첫 공시의 주식 총수가 틀린 일이 있었어요)
+#   유상증자 · 전환사채 · 신주인수권부사채  piicDecsn · cvbdIsDecsn · bdwtIsDecsn — 사업보고서 뒤 변화에 분할·병합·무상증자 공시가
+#           없을 때만 받아요 (늘어난 주식 수를 그 결정들이 덮는지 봐요)
+#   빼는 것 종속회사·자회사 공시 · 철회한 결정 · 액면가만 바꾼 감자(주식 수 그대로) · 10% 이하 변화(주식배당 · 작은 무상증자 —
+#           파이프라인의 SHARE_SAME 과 같은 기준이라 이름에도 곱에도 넣지 않아요)
+#   날짜    법적 날짜 (Jack 답 4): 분할·병합 = 신주의 효력발생일 · 무상증자 = 신주배정기준일 · 감자 = 감자기준일. 그해 12월 31일 뒤부터
+#           pxDate 까지의 사건이 그해 배율(dpsF)을 만들어요.
+# 판정 → dvWhy.st (절대 짐작하지 않아요):
+#   ok              이름 붙일 사건(10% 넘게 바뀐 분할 · 병합 · 무상증자)의 곱이 다시 계산한 해마다 dpsF ± 0.5% → 다시 계산 · 이유 줄.
+#                   사건이 둘 이상이면 오래된 것부터 모두 (Jack 답 3 · 코미코: 앱이 Jack 의 두 문장을 하나로 이어요)
+#   nf              사업보고서 안의 변화(액면가·자본잉여금 확인을 지난 것)인데 결정 공시가 없음 → 다시 계산 · '이유는 찾지 못했지만' 줄
+#                   (그해 말 발행 주식 수 a → 오늘 상장 주식 수 b, 주식의 총수 현황)
+#   filed           사업보고서 뒤의 변화에 분할·병합·무상증자 공시가 없고, 유상증자 · 전환사채 · 신주인수권부사채 공시가 늘어난 주식 수를
+#                   설명함 → 다시 계산하지 않고 공시된 배당 그대로 · 수익률은 보통처럼 (Jack 답 2)
+#   nc-mismatch     공시가 배율과 다름 (곱이 다름 · 깨끗하지 않은 배율 · 사건 없이 유상증자·합병 · 당기 배율 1 인데 그 뒤 사건 · 사건이
+#                   섞여 말함) → 다시 계산하지 않고 배당수익률도 숨겨요 (Jack 답 1 · 2026-11-08: 대한제강 · 대동금속 · 티엘비)
+#   nc-unexplained  사업보고서 뒤의 변화를 아무 공시도 설명하지 못함 → 다시 계산하지 않고 배당수익률도 숨겨요 (Jack 답 2)
+#   nc-* 의 앱 줄 (Jack 2026-11-08 승인, 앱 PR 에서): "주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요."
+#   조회 실패 (DART 오류 · 시간 초과 · 한도 · 공시를 읽지 못함) → dvWhy 없음 · 어제 결과(dpsF · fy 가 같을 때) 또는 줄 없음 (맞춤은
+#   그대로). '찾지 못했지만' · '확인하지 못해' 줄은 조회가 끝난 경우에만 써요.
+# 캐시: DART 캐시의 '{기업코드}|divwhy|v1' — 그 회사의 dpsF 나 사업보고서 연도가 바뀌면 다시 받아요 (90일 지나면 재확인 한도 안에서).
+# 호출: 다시 계산한 회사만, 회사당 약 3회 (목록 2 + 결정 1~2). 보관된 캐시(dart=cache)에서는 빠진 회사만 받아요 — 캐시를 비우지 않아서
+# 전체 DART 실행이 아니에요 (자본금 다시 읽기와 같은 방식). 빈 캐시의 전체 실행에서는 약 DVWHY_EST_STOCKS × 3 회가 더해져요.
+DVWHY_TAG = "divwhy|v1"          # 캐시 키 '{기업코드}|divwhy|v1' — 해석이 바뀌면 v2 로 (그 항목만 다시 받아요)
+DVWHY_TOL = 0.005                # 공시 사건 배율의 곱 = dpsF ± 0.5%
+DVWHY_CLEAN_TOL = 1e-4           # 사건 하나의 배율은 정확한 값이에요 (액면가의 비 · 1 + 1주당 신주 수) — 깨끗한 배율과 이만큼 안
+# Jack 의 답 (2026-11-08) 그대로 켜져 있어요. 끄면 예전처럼 다시 계산하고 줄만 없어요 (divCheck.why.keptT 에 이름이 남아요).
+DVWHY_STOP_ON_MISMATCH = True          # 답 1: 공시가 배율과 다르면 다시 계산하지 않고 수익률도 숨겨요 (nc-mismatch)
+DVWHY_STOP_ON_NF_AFTER_REPORT = True   # 답 2: 사업보고서 뒤 변화에 분할·병합·무상증자 공시가 없으면 다시 계산하지 않아요 (filed · nc-unexplained)
+DVWHY_ST = ("ok", "nf", "filed", "nc-mismatch", "nc-unexplained")
+DVWHY_FILED_SLACK = SHARE_SAME   # filed: 늘어난 주식 수 ≤ 결정들이 덮는 수 + 사업보고서 말 주식 수의 10% (스톡옵션 · 작은 발행)
+DVWHY_CB_FLOOR = 0.7             # 전환·행사가액은 발행 때의 70% 밑으로 못 내려가요 → 사채가 만드는 주식 수는 많아야 발행 때의 1/0.7 배
+DVWHY_PER_RUN = 150              # 한 실행에서 새로 조회하는 회사 수 상한 (넘으면 다음 실행이 이어받아요 · 그동안 줄 없음)
+DVWHY_MAX_PAGES = 5              # 목록 한 종류당 100건짜리 쪽 수 상한 (넘으면 다 보지 못해 조회 실패로 봐요)
+DVWHY_OTHER_LOOKBACK_DAYS = 183  # 유상증자·합병 같은 결정은 공시일로 놓아요 — 그해 말보다 이만큼 앞의 공시까지 그 사이에 있는 것으로 봐요
+DVWHY_EST_STOCKS = 80            # 전체 DART 실행 어림: 맞춘 회사 약 80곳 × DVWHY_PER_STOCK 회
+DVWHY_PER_STOCK = 3
+DVWHY_NAMES = (                  # 공시 이름(띄어쓰기 · 앞의 [기재정정] 빼고)에 든 말 → 종류. 위에서부터 먼저 맞는 것.
+    ("주식분할결정", "split"), ("주식병합결정", "merge"), ("유무상증자결정", "pifric"), ("무상증자결정", "fric"),
+    ("유상증자결정", "rights"), ("감자결정", "cr"), ("합병결정", "merger"), ("회사분할결정", "spin"),
+    ("포괄적교환", "exchange"), ("포괄적이전", "exchange"), ("주식교환", "exchange"), ("주식이전", "exchange"),
+    ("주식배당결정", "stockdiv"), ("신주인수권부사채권발행결정", "bw"), ("전환사채권발행결정", "cb"))
+DVWHY_OTHER_KO = {"rights": "유상증자", "merger": "합병", "spin": "회사분할", "exchange": "주식교환·이전", "stockdiv": "주식배당",
+                  "cr": "감자", "cb": "전환사채", "bw": "신주인수권부사채"}
+DVWHY_KIND_KO = {"split": "액면분할", "merge": "주식병합", "bonus": "무상증자", "reduce": "감자(주식병합)"}
+_RCPT = re.compile(r"^\d{14}$")
+
+
+def _kdate(x):
+    """'2026년 01월 06일' · '2026-01-06' · '2026.01.06' · '20260106' → '2026-01-06' (있는 날짜만), 아니면 None. (순수 함수)"""
+    s = str(x or "")
+    m = (re.search(r"(20\d\d)\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})", s)
+         or re.fullmatch(r"\s*(20\d\d)(\d\d)(\d\d)\s*", s))
+    if not m:
+        return None
+    try:
+        return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat()
+    except ValueError:
+        return None
+
+
+def _rc_date(rc):
+    """접수번호(14자리) 앞 8자리의 날짜, 아니면 None."""
+    return _kdate(rc[:8]) if isinstance(rc, str) and _RCPT.match(rc) else None
+
+
+def dvwhy_clean(r):
+    """사건 하나의 배율이 깨끗한 분할 배율(2 · 2.5 · … · 100)이나 그 역수인지 (±DVWHY_CLEAN_TOL). (순수 함수)"""
+    r = _fin(r)
+    return r is not None and r > 0 and any(abs(r / c - 1) <= DVWHY_CLEAN_TOL for c in DIV_FACTORS if c != 1.0)
+
+
+def dvwhy_named(r):
+    """이름 붙일 만큼(10% 넘게) 주식 수를 바꾼 사건인지. 10% 이하(1.1 · 0.9 포함)는 파이프라인처럼 '그대로' — 1.1 − 1 이 부동소수점으로
+    0.1 보다 아주 조금 커서 경계에 작은 여유를 둬요 (아이퀘스트 2025 무상증자 0.1주). (순수 함수)"""
+    r = _fin(r)
+    return r is not None and r > 0 and abs(r - 1) > SHARE_SAME + 1e-9
+
+
+def dvwhy_kind(report_nm):
+    """공시 이름 → (종류, 철회인지) 또는 (None, False). 종속회사·자회사 공시와 '결정'이 아닌 공시(거래정지·권리락 안내)는 None. (순수 함수)"""
+    full = re.sub(r"\s+", "", str(report_nm or ""))
+    nm = re.sub(r"^(\[[^\]]*\])+", "", full)
+    if "종속회사" in nm or "자회사" in nm or "결정" not in nm:
+        return None, False
+    for word, kind in DVWHY_NAMES:
+        if word in nm:
+            return kind, "철회" in full
+    return None, False
+
+
+def dvwhy_filings(rows):
+    """list.json 의 줄들 → {"docs": [(종류, 접수번호)], "api": {fric · pifric · cr}, "oth": [{k, d, rc}], "wd": [{k, d, rc, self}]}.
+    docs 는 주식분할결정·주식병합결정 (원문을 읽어요), oth 는 이름 붙이지 않는 주식 수 변화 결정(유상증자 · 합병 …, 날짜는 공시일),
+    wd 는 철회: 이름에 '철회'가 든 공시(그보다 먼저 낸 같은 종류 결정을 철회) 또는 비고(rm)에 '철'이 붙은 공시(DART: 본 공시는 철회됨 —
+    그 공시 자체, self). 주식배당결정은 빼요 (10% 이하 변화가 대부분이고 파이프라인도 그만큼은 '그대로'로 봐요). 같은 접수번호는 한 번만.
+    (순수 함수)"""
+    out = {"docs": [], "api": set(), "oth": [], "wd": []}
+    seen = set()
+    for it in sorted(rows or [], key=lambda x: str(x.get("rcept_no") or "")):
+        rc = str(it.get("rcept_no") or "").strip()
+        if not _RCPT.match(rc) or rc in seen:
+            continue
+        seen.add(rc)
+        kind, wd = dvwhy_kind(it.get("report_nm"))
+        if not kind or kind == "stockdiv":
+            continue
+        d = _kdate(it.get("rcept_dt")) or _rc_date(rc)
+        if wd or "철" in str(it.get("rm") or ""):
+            out["wd"].append({"k": kind, "d": d, "rc": rc, "self": not wd})
+        elif kind in ("split", "merge"):
+            out["docs"].append((kind, rc))
+        elif kind in ("fric", "pifric", "cr"):
+            out["api"].add(kind)
+        else:
+            out["oth"].append({"k": kind, "d": d, "rc": rc})
+    out["api"] = sorted(out["api"])
+    return out
+
+
+def _dash_none(v):
+    """'-' · 빈 칸이면 '없음'(True), 숫자면 그 값, 다른 글자면 None(읽지 못함)."""
+    s = str(v if v is not None else "").strip()
+    if s in DASHES or s == "":
+        return True
+    return _num(s)
+
+
+def parse_dvwhy_bonus(rows, pre=""):
+    """fricDecsn (pre="") · pifricDecsn (pre="fric_") → (사건들, 읽지 못한 것들). 보통주에 주는 무상증자만 (우선주만 받는 결정은 빼요).
+    r = 1 + 보통주 1주당 신주 수 · d = 신주배정기준일 · rc = 그 결정의 (최종 정정본) 접수번호. (순수 함수)"""
+    ev, bad = [], []
+    for row in rows or []:
+        rc = str(row.get("rcept_no") or "").strip()
+        x = _dash_none(row.get(pre + "nstk_ascnt_ps_ostk"))
+        if x is True:
+            continue                                   # 보통주 신주 없음 (우선주만)
+        d = _kdate(row.get(pre + "nstk_asstd"))
+        if not _RCPT.match(rc) or x is None or not x > 0 or d is None:
+            bad.append({"rc": rc, "why": "무상증자 결정을 읽지 못함"})
+            continue
+        ev.append({"k": "bonus", "d": d, "r": round(1 + x, 7), "x": x, "rc": rc, "src": "pifric" if pre else "fric"})
+    return ev, bad
+
+
+def parse_dvwhy_rights(rows):
+    """pifricDecsn 의 유상증자 몫 → 이름 붙이지 않는 주식 수 변화 (날짜 = 공시일 · n = 보통주 신주 수, 읽지 못하면 없음). (순수 함수)"""
+    out = []
+    for row in rows or []:
+        rc = str(row.get("rcept_no") or "").strip()
+        n = _dash_none(row.get("piic_nstk_ostk_cnt"))
+        if n is True or (n is not None and n <= 0):
+            continue
+        out.append({"k": "rights", "d": _rc_date(rc), "rc": rc, **({"n": int(round(n))} if n is not None else {})})
+    return out
+
+
+def parse_dvwhy_cr(rows):
+    """crDecsn → (사건들, 이름 붙이지 않는 변화, 읽지 못한 것들). 주식 수가 그대로면(액면가만 감액) 주식 수 변화가 아니에요.
+    감자 방법이 주식병합이면 '주식병합으로 한 감자' 사건 reduce (r = 감자 뒤 ÷ 전 보통주 수, d = 감자기준일 — 액면병합 merge 와 따로 둬서
+    앱이 따로 다룰 수 있게 · 승인된 문구는 아직 없어요), 아니면(소각 등) 이름 붙이지 않는 변화. (순수 함수)"""
+    ev, oth, bad = [], [], []
+    for row in rows or []:
+        rc = str(row.get("rcept_no") or "").strip()
+        b, a = _dash_none(row.get("bfcr_tisstk_ostk")), _dash_none(row.get("atcr_tisstk_ostk"))
+        if b is True and a is True:
+            continue                                   # 보통주 감자 없음
+        d = _kdate(row.get("cr_std"))
+        if not _RCPT.match(rc) or not isinstance(b, float) or not isinstance(a, float) or b <= 0 or a <= 0:
+            bad.append({"rc": rc, "why": "감자 결정의 주식 수를 읽지 못함"})
+            continue
+        if abs(a / b - 1) < 1e-9:
+            continue                                   # 액면가만 감액 (HC홈센타 2024)
+        if "병합" in re.sub(r"\s+", "", str(row.get("cr_mth") or "")) and d:
+            ev.append({"k": "reduce", "d": d, "r": round(a / b, 7), "rc": rc, "src": "cr"})
+        else:
+            oth.append({"k": "cr", "d": d or _rc_date(rc), "rc": rc})
+    return ev, oth, bad
+
+
+def dvwhy_doc_text(files, rc):
+    """document.xml 의 zip 안 파일들 → 본문 글자 (그 접수번호의 본 파일, 없으면 가장 큰 파일). 못 읽으면 None."""
+    if not files:
+        return None
+    name = next((n for n in files if n.rsplit("/", 1)[-1].split(".")[0] == rc), None) or max(files, key=lambda n: len(files[n]))
+    raw = files[name]
+    for enc in ("utf-8", "cp949", "euc-kr"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            pass
+    return None
+
+
+def _doc_cells(text):
+    body = text[text.find("<body"):] if "<body" in text else text
+    body = re.sub(r"<(style|STYLE|script|SCRIPT)[\s\S]*?</(style|STYLE|script|SCRIPT)>", " ", body)
+    cells = re.findall(r"<t[dhDH][^>]*>([\s\S]*?)</t[dhDH]>", body)
+    out = []
+    for c in cells:
+        s = html_unescape(re.sub(r"<[^>]+>", " ", c)).replace("&cr;", " ")
+        out.append(re.sub(r"\s+", " ", s).strip())
+    return out
+
+
+def parse_dvwhy_doc(text, kind, rc):
+    """주식분할결정 · 주식병합결정 원문 → (사건, None) 또는 (None, 읽지 못한 이유). (순수 함수)
+    정정 공시는 맨 앞에 정정 전·후 표가 있고 그 뒤에 고친 양식 전체가 와서, 각 칸의 마지막 것을 읽어요 (조사: 60개 원문 모두 읽음).
+    배율은 액면가로(분할 = 전 ÷ 후 > 1 · 병합 < 1). 발행주식총수(보통주)가 있으면 그 비가 배율 ± 10% 여야 해요 (병합 때 자기주식 소각
+    · 단주 처리로 조금 달라요 — SK증권 2.1%)."""
+    if not text:
+        return None, "원문 없음"
+    tk = _doc_cells(text)
+    ns = [re.sub(r"\s+", "", s) for s in tk]
+
+    def last(pred):
+        idx = [i for i, s in enumerate(ns) if pred(s)]
+        return idx[-1] if idx else None
+
+    def val(i, k):
+        return _num(tk[i + k]) if i is not None and i + k < len(tk) else None
+    i = last(lambda s: s.startswith("1주당가액"))
+    pb, pa = val(i, 1), val(i, 2)
+    j = last(lambda s: s.startswith("보통주식"))
+    sb, sa = val(j, 1), val(j, 2)
+    k = last(lambda s: s.startswith("신주의효력발생일") or s == "효력발생일")
+    d = _kdate(tk[k + 1]) if k is not None and k + 1 < len(tk) else None
+    if not (pb and pa and pb > 0 and pa > 0):
+        return None, "1주당 가액을 읽지 못함"
+    if d is None:
+        return None, "효력발생일을 읽지 못함"
+    r = pb / pa
+    if (kind == "split") != (r > 1) or abs(r - 1) < 1e-9:
+        return None, f"{DVWHY_KIND_KO[kind]}인데 액면가 {pb:g} → {pa:g}"
+    if sb and sa and sb > 0 and sa > 0 and abs((sa / sb) / r - 1) > SHARE_SAME:
+        return None, f"주식 수 비 {sa / sb:.3f} 가 액면가 비 {r:g} 와 달라요"
+    return {"k": kind, "d": d, "r": round(r, 7), "rc": rc, "src": "doc"}, None
+
+
+DVWHY_WD_KINDS = ("split", "merge", "fric", "pifric", "cr")   # 이 결정의 철회만 '찾지 못했다'고 하지 않을 이유가 돼요
+
+
+def dvwhy_drop_withdrawn(ev, wd):
+    """철회된 결정을 빼요: 비고 '철'(self)은 그 접수번호의 결정, 이름의 '철회'는 같은 종류(무상·유무상 → 무상증자 · 감자 → 주식병합으로
+    한 감자)의 결정 중 철회보다 먼저 낸 가장 늦은 것. (순수 함수)"""
+    same = {"split": ("split",), "merge": ("merge",), "fric": ("bonus",), "pifric": ("bonus",), "cr": ("reduce",)}
+    ev = list(ev)
+    for w in sorted(wd or [], key=lambda x: x["rc"]):
+        if w.get("self"):
+            ev = [e for e in ev if e["rc"] != w["rc"]]
+            continue
+        ks = same.get(w["k"])
+        cand = [e for e in ev if ks and e["k"] in ks and e["rc"] <= w["rc"]]
+        if cand:
+            ev.remove(max(cand, key=lambda e: e["rc"]))
+    return ev
+
+
+def dvwhy_fetch(client, corp, fy, today):
+    """한 회사의 주식 수를 바꾼 결정 공시 → ({"ev", "oth", "wd", "bad"}, None) 또는 (None, 실패 이유 — 다음 실행에 다시).
+    ev 이름 붙일 수 있는 사건(분할 · 병합 · 무상증자) · oth 이름 붙이지 않는 변화 · wd 철회 · bad 읽지 못한 공시(있으면 줄 없음)."""
+    bgn, end = dt.date(fy - 2, 1, 1).strftime("%Y%m%d"), today.strftime("%Y%m%d")
+    rows, n_i = [], 0
+    for ty in ("I001", "B001"):
+        page = 1
+        while True:
+            j = client.get("list.json", {"corp_code": corp, "bgn_de": bgn, "end_de": end, "pblntf_detail_ty": ty,
+                                         "last_reprt_at": "Y", "page_count": "100", "page_no": str(page)})
+            if j is None:
+                return None, f"공시 목록({ty}) 조회 실패"
+            st = str(j.get("status"))
+            if st == "013":
+                break
+            if st != "000":
+                return None, f"공시 목록({ty}) 상태 {st}"
+            rows += j.get("list") or []
+            n_i += len(j.get("list") or []) if ty == "I001" else 0
+            pages = int(_fin(j.get("total_page")) or 1)
+            if page >= pages:
+                break
+            if page >= DVWHY_MAX_PAGES:
+                return None, f"공시 목록({ty})이 {pages}쪽이라 다 보지 못함 (상한 {DVWHY_MAX_PAGES}쪽)"
+            page += 1
+    fl = dvwhy_filings(rows)
+    ev, oth, bad = [], list(fl["oth"]), []
+    for kind in fl["api"]:
+        ep = {"fric": "fricDecsn.json", "pifric": "pifricDecsn.json", "cr": "crDecsn.json"}[kind]
+        j = client.get(ep, {"corp_code": corp, "bgn_de": bgn, "end_de": end})
+        if j is None:
+            return None, f"{ep} 조회 실패"
+        st = str(j.get("status"))
+        if st not in ("000", "013"):
+            return None, f"{ep} 상태 {st}"
+        rows_k = j.get("list") or [] if st == "000" else []
+        if kind == "cr":
+            e2, o2, b2 = parse_dvwhy_cr(rows_k)
+            ev, oth, bad = ev + e2, oth + o2, bad + b2
+        else:
+            e2, b2 = parse_dvwhy_bonus(rows_k, pre="fric_" if kind == "pifric" else "")
+            ev, bad = ev + e2, bad + b2
+            if kind == "pifric":
+                oth += parse_dvwhy_rights(rows_k)
+        if st == "013":
+            bad.append({"rc": "", "why": f"목록에는 있는데 {ep} 가 결정을 주지 않음"})
+    for kind, rc in fl["docs"]:
+        files = client.get_zip("document.xml", {"rcept_no": rc})
+        if files is None:
+            return None, f"공시 원문 {rc} 조회 실패"
+        e, why = parse_dvwhy_doc(dvwhy_doc_text(files, rc), kind, rc)
+        if e:
+            ev.append(e)
+        else:
+            bad.append({"rc": rc, "why": why})
+    ev = dvwhy_drop_withdrawn(ev, fl["wd"])
+    wd_rc = {w["rc"] for w in fl["wd"] if w.get("self")}
+    oth = [o for o in oth if o["rc"] not in wd_rc]                 # 철회된 유상증자 몫은 세지 않아요
+    # nI: 거래소 수시공시(I001) 줄 수. 배당하는 회사는 3년 안에 현금배당결정을 I001 로 내요 — 0 이면 목록이 빠졌을 수 있어
+    # '공시 없음'으로 결론 내지 않아요 (조회 실패로 봐요)
+    return {"ev": sorted(ev, key=lambda e: (e["d"], e["rc"])), "oth": oth, "wd": fl["wd"], "bad": bad, "nI": n_i}, None
+
+
+DVWHY_FX_EP = {"rights": ("piicDecsn.json", "nstk_ostk_cnt"), "cb": ("cvbdIsDecsn.json", "cvisstk_cnt"),
+               "bw": ("bdwtIsDecsn.json", "nstk_isstk_cnt")}
+
+
+def parse_dvwhy_fx(rows, kind):
+    """유상증자(piicDecsn) · 전환사채(cvbdIsDecsn) · 신주인수권부사채(bdwtIsDecsn) 발행 결정 → (fx [{k, d, n, rc}], 못 읽은 것).
+    n = 보통주 신주 수 (유상증자) · 전환·행사로 발행할 주식 수 (발행 때 가액 기준) · d = 공시일(접수번호). '-' 는 보통주 없음이라 빼고,
+    읽지 못한 값은 세지 않아요 (덮을 수 있는 주식 수만 줄어서 '설명함'이 되기 어려워질 뿐이에요 — 조심하는 쪽). (순수 함수)"""
+    key = DVWHY_FX_EP[kind][1]
+    fx, bad = [], []
+    for row in rows or []:
+        rc = str(row.get("rcept_no") or "").strip()
+        n = _dash_none(row.get(key))
+        if n is True:
+            continue
+        if not _RCPT.match(rc) or n is None or not n > 0:
+            bad.append({"rc": rc, "why": f"{DVWHY_OTHER_KO[kind]} 주식 수를 읽지 못함"})
+            continue
+        fx.append({"k": kind, "d": _rc_date(rc), "n": int(round(n)), "rc": rc})
+    return fx, bad
+
+
+def dvwhy_fetch_fx(client, corp, fy, today, oth):
+    """목록에 있는 유상증자 · 전환사채 · 신주인수권부사채 결정의 주식 수 → ((fx, 못 읽은 것), None) 또는 (None, 실패 이유).
+    사업보고서 뒤 변화에 이름 붙일 공시가 없을 때만 불러요 (종류마다 1회). 유무상증자의 유상 몫은 이미 주식 수가 있어 그대로 써요.
+    목록에는 있는데 API 가 결정을 주지 않으면(013) '못 읽은 것'으로 남겨요 — 덮는 수가 모자라 '설명 못 함'이 되면 조회 실패로 봐요."""
+    bgn, end = dt.date(fy - 2, 1, 1).strftime("%Y%m%d"), today.strftime("%Y%m%d")
+    fx = [{"k": o["k"], "d": o["d"], "n": o["n"], "rc": o["rc"]} for o in oth or [] if o.get("k") in DVWHY_FX_EP and o.get("n")]
+    bad = []
+    for kind in sorted({o["k"] for o in oth or [] if o.get("k") in DVWHY_FX_EP and not o.get("n")}):
+        ep = DVWHY_FX_EP[kind][0]
+        j = client.get(ep, {"corp_code": corp, "bgn_de": bgn, "end_de": end})
+        if j is None:
+            return None, f"{ep} 조회 실패"
+        st = str(j.get("status"))
+        if st not in ("000", "013"):
+            return None, f"{ep} 상태 {st}"
+        f2, b2 = parse_dvwhy_fx((j.get("list") or []) if st == "000" else [], kind)
+        if st == "013":
+            b2 = b2 + [{"rc": "", "why": f"목록에는 {DVWHY_OTHER_KO[kind]} 결정이 있는데 {ep} 가 주지 않음"}]
+        fx, bad = fx + f2, bad + b2
+    return (sorted(fx, key=lambda x: (x["d"] or "", x["rc"])), bad), None
+
+
+def dvwhy_cover(fx, fy, px):
+    """사업보고서 말 뒤 늘어날 수 있는 보통주 수의 위 끝 → (주식 수, 쓴 결정들). 유상증자는 그해 말 반년 앞 ~ px 에 낸 결정의 신주,
+    전환사채 · 신주인수권부사채는 목록 기간(fy−2 년 1월 1일 ~ px)의 결정이 만들 수 있는 주식 ÷ 0.7 (전환·행사가액은 발행 때의 70% 밑으로
+    내려갈 수 없어요 — 증권의 발행 및 공시 등에 관한 규정 5-23조). (순수 함수)"""
+    px = px.isoformat() if isinstance(px, dt.date) else str(px)
+    lo = (dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_OTHER_LOOKBACK_DAYS)).isoformat()
+    used = [x for x in fx or [] if x.get("d") and x["d"] <= px and (x["k"] != "rights" or x["d"] > lo)]
+    return sum(x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR for x in used), used
+
+
+def dvwhy_filed_ok(a, b, fx, fy, px):
+    """사업보고서 말 발행 주식 수 a → 오늘 b 로 늘어난 만큼을 유상증자 · 전환사채 · 신주인수권부사채가 설명하는지 → (맞는지, 쓴 결정들).
+    늘어난 수 ≤ 덮을 수 있는 수 + a 의 10% (스톡옵션 · 작은 발행). 줄었거나 설명할 결정이 없으면 아니에요. (순수 함수)"""
+    a, b = _fin(a), _fin(b)
+    cover, used = dvwhy_cover(fx, fy, px)
+    ok = bool(used) and a is not None and b is not None and a > 0 and b > a and b - a <= cover + DVWHY_FILED_SLACK * a
+    return ok, used
+
+
+def _ev_desc(evs):
+    return " · ".join(f"{DVWHY_KIND_KO.get(e['k'], e['k'])} ×{e['r']:g} ({e['d']})" for e in evs)
+
+
+def dvwhy_after(f0, fy, px, look):
+    """사업보고서 뒤(fy 년 12월 31일 뒤 ~ px) 판정 → (none · ok · mismatch · noname, 설명). (순수 함수)
+    none = 당기 배율 1 이고 그 뒤 사건 없음 · ok = 이름 붙일 사건의 곱 = 당기 배율 f0 · noname = f0 ≠ 1 인데 분할·병합·무상증자 공시가
+    없음 · mismatch = 곱이 다르거나 깨끗하지 않은 배율이거나, 당기 배율 1 인데 그 뒤 사건이 있음 (새 주식이 아직 상장 전이거나 날짜를
+    잘못 읽은 것 — 믿지 않아요)."""
+    px = px.isoformat() if isinstance(px, dt.date) else str(px)
+    after = [e for e in look.get("ev") or [] if f"{fy}-12-31" < e["d"] <= px and dvwhy_named(e["r"])]
+    f0 = _fin(f0)
+    if f0 is None or f0 == 1.0:
+        return ("mismatch", f"{fy}년 배율은 1 인데 그 뒤 공시 {_ev_desc(after)}") if after else ("none", "")
+    if not after:
+        return "noname", f"사업보고서 뒤 ×{f0:g} 인데 분할·병합·무상증자 공시가 없음"
+    prod = math.prod(e["r"] for e in after)
+    if any(not dvwhy_clean(e["r"]) for e in after):
+        return "mismatch", f"사업보고서 뒤 ×{f0:g} — 공시 {_ev_desc(after)}: 깨끗하지 않은 배율"
+    if abs(prod / f0 - 1) > DVWHY_TOL:
+        return "mismatch", f"사업보고서 뒤 ×{f0:g} — 공시 {_ev_desc(after)} = ×{prod:.4g}"
+    return "ok", ""
+
+
+def dvwhy_years(F, fy, f0, px, look, after, lookback=DVWHY_OTHER_LOOKBACK_DAYS):
+    """사업보고서 뒤 판정(after: none · ok · filed)이 정해진 뒤 해마다 → [None 또는 {"v", "ev", "f", "why"}] (dpsF 가 1 이거나 빈 해는 None).
+    v ok (사건의 곱 = 그해 배율 f) · plain (filed 라 그해는 다시 계산하지 않음, f = 1) · mm (공시와 다름) · nf (사업보고서 안의 변화에 공시
+    없음) · nd (filed 옆의 사업보고서 안 변화에 공시 없음 — 조용히 맞추지 않아요). none · ok 는 그해 12월 31일 뒤 ~ px 의 사건으로 그해 dpsF 를,
+    filed 는 사업보고서 뒤를 1 로 놓고 그해 12월 31일 뒤 ~ fy 년 12월 31일 사건으로 dpsF ÷ f0 를 설명해야 해요. 10% 이하 변화는 빼요. (순수 함수)"""
+    px = px.isoformat() if isinstance(px, dt.date) else str(px)
+    out = [None] * 3
+    for i in range(3):
+        f = _fin(F[i]) if i < len(F) else None
+        if f is None or f == 1.0:
+            continue
+        base, hi = (f / f0, f"{fy}-12-31") if after == "filed" else (f, px)
+        if after == "filed" and abs(base - 1) <= DVWHY_TOL:
+            out[i] = {"v": "plain", "ev": [], "f": 1.0, "why": ""}
+            continue
+        start = dt.date(fy - i, 12, 31)
+        named = [e for e in look.get("ev") or [] if start.isoformat() < e["d"] <= hi and dvwhy_named(e["r"])]
+        if named:
+            prod = math.prod(e["r"] for e in named)
+            if any(not dvwhy_clean(e["r"]) for e in named):
+                out[i] = {"v": "mm", "ev": named, "why": f"{fy - i}년 ×{base:g} — 공시 {_ev_desc(named)}: 깨끗하지 않은 배율"}
+            elif abs(prod / base - 1) <= DVWHY_TOL:
+                out[i] = {"v": "ok", "ev": named, "f": round(base, 6), "why": ""}
+            else:
+                out[i] = {"v": "mm", "ev": named, "why": f"{fy - i}년 ×{base:g} — 공시 {_ev_desc(named)} = ×{prod:.4g}"}
+            continue
+        o0 = (start - dt.timedelta(days=lookback)).isoformat()
+        oth = [o for o in look.get("oth") or [] if o.get("k") not in ("cb", "bw")     # 사채 발행은 그 자체로 주식 수를 바꾸지 않아요
+               and (not o.get("d") or o0 < o["d"] <= hi)]                           # 날짜를 모르면 그 사이에 있다고 봐요
+        if oth:
+            out[i] = {"v": "mm", "ev": [], "why": f"{fy - i}년 ×{base:g} — 이름 붙일 공시 없이 "
+                      + " · ".join(f"{DVWHY_OTHER_KO.get(o['k'], o['k'])}({o['d']})" for o in oth)}
+        elif any(w.get("k") in DVWHY_WD_KINDS for w in look.get("wd") or []):     # 분할·병합·무상증자·감자의 철회만 (사채 철회는 상관없어요)
+            out[i] = {"v": "mm", "ev": [], "why": f"{fy - i}년 ×{base:g} — 철회한 분할·병합·무상증자·감자 결정이 있어 '찾지 못했다'고 하지 않아요"}
+        elif after == "filed":
+            out[i] = {"v": "nd", "ev": [], "why": f"{fy - i}년 ×{base:g} — 사업보고서 안의 변화에 공시가 없어 맞추지 않아요"}
+        else:
+            out[i] = {"v": "nf", "ev": [], "why": f"{fy - i}년 ×{base:g} — 사업보고서 안의 변화인데 결정 공시가 없음"}
+    return out
+
+
+def dvwhy_decide(F, fy, f0, px, look, after, stop_mm=None):
+    """종목 하나의 결론 (after = dvwhy_after 결과, noname 은 호출하는 쪽이 filed · unexplained 로 정해서). (순수 함수)
+    → {"st": ok · nf · filed · nc-mismatch · nc-unexplained · None(스위치가 꺼져 맞춤 그대로 · 줄 없음), "fac": {해: 새 배율},
+       "dem": {해: nc · nd}, "hide": nc · nd · None (배당한 모든 해를 비교 불가로 — 수익률을 숨겨요), "ev", "old", "why": [설명]}"""
+    stop_mm = DVWHY_STOP_ON_MISMATCH if stop_mm is None else stop_mm
+    out = {"st": None, "fac": {}, "dem": {}, "hide": None, "ev": [], "old": None, "why": []}
+    if after == "unexplained":
+        return {**out, "st": "nc-unexplained", "hide": "nd"}
+    if after not in ("none", "ok", "filed"):            # mismatch
+        return {**out, "st": "nc-mismatch" if stop_mm else None, "hide": "nc" if stop_mm else None}
+    yr = dvwhy_years(F, fy, f0, px, look, after)
+    v = {i: y["v"] for i, y in enumerate(yr) if y}
+    out["why"] = [y["why"] for y in yr if y and y["v"] in ("mm", "nd")]
+    kinds = set(v.values())
+    if after != "filed" and kinds == {"ok", "nf"}:      # 어떤 해는 공시로 설명되는데 다른 해는 공시 없음 — 섞여 말하면 믿지 않아요
+        kinds = {"mm"}
+        out["why"] = [y["why"] + " (다른 해는 공시로 설명돼요)" for y in yr if y and y["v"] == "nf"]
+    if "mm" in kinds:
+        return {**out, "st": "nc-mismatch" if stop_mm else None, "hide": "nc" if stop_mm else None}
+    oks = [i for i, x in v.items() if x == "ok"]
+    out["old"] = max(oks) if oks else (max(v) if v else None)
+    out["ev"] = yr[max(oks)]["ev"] if oks else []
+    if after == "filed":                                # 사업보고서 뒤는 1 (공시된 배당 그대로) · 사업보고서 안 변화는 공시로 확인한 것만
+        out["fac"] = {i: yr[i]["f"] for i, x in v.items() if x in ("ok", "plain")}
+        out["dem"] = {i: "nd" for i, x in v.items() if x == "nd"}
+        return {**out, "st": "filed"}
+    return {**out, "st": "ok" if kinds == {"ok"} else "nf"}
+
+
+def dvwhy_apply(r, dps3, dec):
+    """dvwhy_decide 의 결론을 div_basis 결과 r 에 (새 배율 · 맞추지 않은 해 · 수익률 숨김) 넣고 divSt 를 다시 정해요. (순수 함수)"""
+    if not (dec["fac"] or dec["dem"] or dec["hide"]):
+        return r
+    r = {**r, "dps3a": list(r["dps3a"]), "dpsF": list(r["dpsF"]), "st3": list(r["st3"])}
+    d3 = _three(dps3)
+    for i, f in dec["fac"].items():
+        r["dpsF"][i] = round(f, 6)
+        r["dps3a"][i] = round(d3[i] / r["dpsF"][i], 2)
+        r["st3"][i] = "same" if r["dpsF"][i] == 1.0 else "adj"
+    for i, st in dec["dem"].items():
+        r["dps3a"][i], r["dpsF"][i], r["st3"][i] = None, None, st
+    if dec["hide"]:
+        for i in range(3):
+            if r["st3"][i] in ("same", "adj"):
+                r["dps3a"][i], r["dpsF"][i], r["st3"][i] = None, None, dec["hide"]
+    paid = [x for x in r["st3"] if x in ("same", "adj", "nc", "nd")]
+    if paid:
+        r["divSt"] = next(x for x in ("nc", "nd", "adj", "same") if x in paid)
+    return r
+
+
+def dvwhy_event_out(e):
+    """발행하는 사건 하나: k · d · r (· 무상증자는 x) · rc."""
+    o = {"k": e["k"], "d": e["d"], "r": round(e["r"], 6)}
+    if e["k"] == "bonus":
+        o["x"] = e["x"]
+    o["rc"] = e["rc"]
+    return o
+
+
+class DivWhy:
+    """v19.1h: apply_div_basis 가 다시 계산한 해가 있는 종목마다 불러요 (check). 결론을 dvWhy.st 로 달고(ok · nf · filed · nc-mismatch ·
+    nc-unexplained), 그에 맞게 배율을 고쳐요. client 가 없으면(DART 꺼짐 · 키 없음) 모두 조회 실패로 세요 (줄 없음 · 맞춤은 그대로)."""
+
+    def __init__(self, client, px_date, cmap=None, stop_mm=None, stop_nfa=None):
+        self.client, self.px = client, px_date
+        self.cmap = cmap if cmap is not None else (((client.meta.get("corpMap") if client else None)) or {})
+        self.stop_mm = DVWHY_STOP_ON_MISMATCH if stop_mm is None else stop_mm
+        self.stop_nfa = DVWHY_STOP_ON_NF_AFTER_REPORT if stop_nfa is None else stop_nfa
+        self.n = collections.Counter()
+        self.t = {k: [] for k in DVWHY_ST + ("fail", "kept")}
+        self.notes = []                 # 크게 남길 줄 (공시와 다름 · 설명 못 함 · 공시 없음 · 조회 실패)
+        self.ok_ex = []                 # 이유를 확인한 종목 (로그에 몇 개)
+        self.fetch_left = DVWHY_PER_RUN
+        self.calls0 = sum(client.status.values()) if client else 0
+
+    def _fail(self, s, why):
+        self.t["fail"].append(s["t"])
+        self.notes.append(f"조회 실패 {s['t']} {s.get('nk', '')}: {why} → 이유 줄 없음 (맞춤은 그대로)")
+
+    def _look(self, corp, fy, F, tag=""):
+        """캐시를 거친 조회 → (look, 어떻게) 또는 (None, 실패 이유)."""
+        c = self.client
+        key = f"{corp}|{DVWHY_TAG}"
+        with c.lock:
+            e = c.entries.get(key)
+        d = (e or {}).get("d") if (e or {}).get("st") == "000" else None
+        same = bool(d) and d.get("fy") == fy and d.get("F") == F
+        if same and c.mode != "full":
+            age = (c.today - dt.date.fromisoformat(e["at"])).days
+            redo = bool(d.get("bad")) and age >= DART_RETRY_DAYS
+            with c.lock:
+                reval = (not redo and age > DART_REVALIDATE_DAYS and c.revalidate_left > 0 and not c.down and not c.fatal)
+                if reval:
+                    c.revalidate_left -= 1
+                    c.revalidated += 1
+            if not redo and not reval:
+                self.n["cache"] += 1
+                return d, "cache"
+        if self.fetch_left <= 0:
+            if same:
+                self.n["cache"] += 1
+                return d, "cache"
+            return None, f"이번 실행의 새 조회 한도({DVWHY_PER_RUN}곳)에 닿음 — 다음 실행에서 받아요"
+        self.fetch_left -= 1
+        look, why = dvwhy_fetch(c, corp, fy, c.today)
+        if look is None:
+            if same:
+                self.n["stale"] += 1         # 어제(같은 dpsF · fy) 결과를 그대로 써요
+                self.notes.append(f"다시 조회 실패 {tag or corp}: {why} → 같은 배율·사업보고서 연도로 확인한 지난 결과를 써요")
+                return d, "kept"
+            return None, why
+        self.n["fetched"] += 1
+        d = {"fy": fy, "F": list(F), "end": c.today.isoformat(), **look}
+        with c.lock:
+            c.entries[key] = {"st": "000", "at": c.today.isoformat(), "d": d}
+        return d, "fetched"                  # 캐시 항목과 같은 dict — 나중에 붙이는 주식 수(fx)도 함께 저장돼요
+
+    def _fx(self, corp, fy, look):
+        """유상증자 · 전환사채 · 신주인수권부사채의 주식 수 (캐시 항목에 붙여 둬요) → (fx, 못 읽은 것, None) 또는 (None, None, 실패 이유)."""
+        if "fx" in look:
+            return look["fx"], look.get("fxBad") or [], None
+        got, why = dvwhy_fetch_fx(self.client, corp, fy, self.client.today, look.get("oth"))
+        if got is None:
+            return None, None, why
+        fx, bad = got
+        look["fx"], look["fxBad"] = fx, bad          # 캐시 항목의 d 와 같은 dict 라 함께 저장돼요
+        return fx, bad, None
+
+    def check(self, s, r):
+        """div_basis 결과 r → 결론에 맞게 고친 r. s 에 dvWhy 를 달아요 (조회가 끝났을 때만)."""
+        F = [_fin(f) for f in r["dpsF"]]   # NaN 이 캐시·파일에 들어가지 않게 (div_basis 는 늘 유한한 값이지만)
+        if not any(f is not None and f != 1.0 for f in F):
+            return r
+        self.n["adj"] += 1
+        t, fy = s["t"], s.get("fy")
+        corp = self.cmap.get(t)
+        if self.client is None:
+            self._fail(s, "DART 꺼짐 · 키 없음")
+            return r
+        if not corp or not isinstance(fy, int):
+            self._fail(s, "DART 기업코드 또는 사업보고서 연도 없음")
+            return r
+        tag = f"{t} {s.get('nk', '')}".strip()
+        look, how = self._look(corp, fy, F, tag)
+        if look is None:
+            self._fail(s, how)
+            return r
+        if look.get("bad"):
+            self._fail(s, "공시를 읽지 못함: " + " · ".join(f"{b.get('rc') or '-'} {b.get('why')}" for b in look["bad"][:3]))
+            return r
+        f0 = _fin(r.get("f0"))
+        after, why_after = dvwhy_after(f0, fy, self.px, look)
+        a = b = None
+        used = []
+        if after == "noname":
+            if not self.stop_nfa:
+                self.t["kept"].append(t)
+                self.notes.append(f"설명 못 함 {tag}: {why_after} → 맞춤은 그대로, 이유 줄 없음 (스위치 꺼짐)")
+                return r
+            if look.get("nI") == 0:
+                self._fail(s, "거래소 수시공시 목록이 비어 있어요 (배당하는 회사는 현금배당결정을 내요) — '설명 못 함'으로 결론 내지 않아요")
+                return r
+            fx, fx_bad, why = self._fx(corp, fy, look)
+            if fx is None:
+                self._fail(s, why)
+                return r
+            stk = dart_shares(self.client, corp, fy)
+            a, b = _fin((stk or {}).get("cmi")), _fin(s.get("shr"))
+            if not a or a <= 0 or not b or b <= 0:
+                self._fail(s, f"{fy}년 말 발행 주식 수(주식의 총수 현황)를 받지 못함")
+                return r
+            ok, used = dvwhy_filed_ok(a, b, fx, fy, self.px)
+            if not ok and fx_bad:                # 못 읽은 결정이 덮었을 수도 있어요 — 수익률을 숨기지 않고 조회 실패로
+                self._fail(s, "유상증자·사채 결정의 주식 수를 다 읽지 못해 설명하는지 알 수 없음: "
+                           + " · ".join(f"{x['rc'] or '-'} {x['why']}" for x in fx_bad[:3]))
+                return r
+            after = "filed" if ok else "unexplained"
+            if not ok:
+                cover, _ = dvwhy_cover(fx, fy, self.px)
+                why_after += f" · 발행 주식 수 {a:,.0f} → {b:,.0f}, 유상증자·전환사채·신주인수권부사채로 덮을 수 있는 수 {cover:,.0f}"
+        dec = dvwhy_decide(F, fy, f0, self.px, look, after, self.stop_mm)
+        if dec["st"] is None:                    # 공시와 다른데 스위치가 꺼져 있음
+            self.t["kept"].append(t)
+            self.notes.append(f"공시와 다름 {tag}: " + " / ".join([why_after] if why_after else dec["why"])
+                              + " → 맞춤은 그대로, 이유 줄 없음 (스위치 꺼짐)")
+            return r
+        st = dec["st"]
+        if st == "nf":
+            if look.get("nI") == 0:
+                self._fail(s, "거래소 수시공시 목록이 비어 있어요 (배당하는 회사는 현금배당결정을 내요) — '찾지 못했지만'으로 결론 내지 않아요")
+                return r
+            stk = dart_shares(self.client, corp, fy - dec["old"])
+            a, b = _fin((stk or {}).get("cmi")), _fin(s.get("shr"))
+            f_old = F[dec["old"]]
+            if not a or a <= 0 or not b or b <= 0:
+                self._fail(s, f"{fy - dec['old']}년 말 발행 주식 수(주식의 총수 현황)를 받지 못함")
+                return r
+            if round(a) == round(b) or abs((b / a) / f_old - 1) > SHARE_SAME:
+                dec = dvwhy_decide(F, fy, f0, self.px, look, "mismatch", self.stop_mm)
+                dec["why"] = [f"공시가 없고 발행 주식 수 {a:,.0f} → {b:,.0f} (×{b / a:.3f})가 ×{f_old:g} 와 달라요"]
+                st = dec["st"]
+                if st is None:
+                    self.t["kept"].append(t)
+                    self.notes.append(f"공시와 다름 {tag}: {dec['why'][0]} → 맞춤은 그대로, 이유 줄 없음 (스위치 꺼짐)")
+                    return r
+        r = dvwhy_apply(r, s.get("dps3"), dec)
+        self.t[st].append(t)
+        if st == "ok":
+            s["dvWhy"] = {"v": 1, "st": "ok", "ev": [dvwhy_event_out(e) for e in dec["ev"]]}
+            self.ok_ex.append(f"{tag} " + _ev_desc(dec["ev"]))
+            self.n["joined"] += len(dec["ev"]) > 1      # 사건 둘 이상 (코미코) — 앱이 Jack 의 두 문장을 이어요
+        elif st == "nf":
+            s["dvWhy"] = {"v": 1, "st": "nf", "a": int(round(a)), "b": int(round(b))}
+            self.notes.append(f"공시 없음 {tag}: {fy - dec['old']}년 말 {a:,.0f}주 → 오늘 {b:,.0f}주 ('이유는 찾지 못했지만' 줄 · 다시 계산)")
+        elif st == "filed":
+            s["dvWhy"] = {"v": 1, "st": "filed", "a": int(round(a)), "b": int(round(b)),
+                          "fx": [{"k": x["k"], "d": x["d"], "n": x["n"], "rc": x["rc"]} for x in used]}
+            if dec["ev"]:
+                s["dvWhy"]["ev"] = [dvwhy_event_out(e) for e in dec["ev"]]
+            self.notes.append(f"공시된 배당 그대로 {tag}: {fy}년 말 {a:,.0f}주 → 오늘 {b:,.0f}주를 "
+                              + " · ".join(f"{DVWHY_OTHER_KO[x['k']]}({x['d']} · {x['n']:,}주)" for x in used)
+                              + "가 설명해요 → 다시 계산하지 않아요 (수익률은 보통처럼)" + (" / " + " / ".join(dec["why"]) if dec["why"] else ""))
+        else:
+            s["dvWhy"] = {"v": 1, "st": st}
+            self.notes.append(f"{'공시와 다름' if st == 'nc-mismatch' else '설명 못 함'} {tag}: "
+                              + " / ".join(([why_after] if why_after else []) + dec["why"])
+                              + " → 다시 계산하지 않고 배당수익률도 보여 주지 않아요")
+        return r
+
+    def counts(self):
+        """data.json divCheck.why — 관문이 종목과 맞춰 봐요. st 마다 종목 수, 줄이 없는 종목(조회 실패 · 스위치가 꺼져 맞춤 그대로)은 이름도."""
+        out = {"v": 1}
+        for k in DVWHY_ST + ("fail", "kept"):
+            out[k] = len(set(self.t[k]))
+        for k in ("fail", "kept"):
+            out[k + "T"] = sorted(set(self.t[k]))
+        return out
+
+    def summary(self):
+        calls = (sum(self.client.status.values()) - self.calls0) if self.client else 0
+        c = self.counts()
+        joined = self.n["joined"]
+        loud = any(c[k] for k in ("nf", "filed", "nc-mismatch", "nc-unexplained", "fail", "kept"))
+        line = (f"{'  !! ' if loud else '· '}배당 맞춤 이유 (DART 결정 공시): 다시 계산한 해가 있는 종목 {self.n['adj']:,} — 이유 확인 {c['ok']:,}"
+                f" (사건 둘 이상 {joined:,}) · 공시 없음('이유는 찾지 못했지만') {c['nf']:,} · 공시된 배당 그대로(유상증자·사채) {c['filed']:,}"
+                f" · 수익률 숨김: 공시와 다름 {c['nc-mismatch']:,} · 설명 못 함 {c['nc-unexplained']:,} · 조회 실패(줄 없음) {c['fail']:,}"
+                + (f" · 스위치 꺼져 맞춤 그대로 {c['kept']:,}" if c["kept"] else "")
+                + f" | 조회 {self.n['fetched']:,}곳 · 보관본 {self.n['cache']:,}곳"
+                + (f" · 실패해 지난 결과 {self.n['stale']:,}곳" if self.n["stale"] else "")
+                + f" · 이번 DART 호출 {calls:,}회"
+                + (" (전체 DART 실행의 일부 · 어림에 들어 있어요)"
+                   if self.client and (self.client.mode == "full" or getattr(self.client, "started_empty", False))
+                   else " (보관된 캐시에 빠진 회사만 — 전체 DART 실행이 아니에요)"))
+        ok = (["· 이유 확인 예: " + " / ".join(self.ok_ex[:8]) + (f" … 외 {len(self.ok_ex) - 8}곳" if len(self.ok_ex) > 8 else "")]
+              if self.ok_ex else [])
+        return [line] + ok + [f"  !! {x}" for x in self.notes]
+
+
+def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
     """v19.1b: 국내 종목마다 dps3a·dpsF·divSt·dyt 를 붙이고, corp.json 에 실을 원값(총액·주당순이익)을 돌려줘요.
-    분할 확인용 임시 칸(_bas)은 여기서 지워요 (파일에 나가지 않게). 반환: (집계 dict, {코드: corp.json 추가 칸})."""
+    분할 확인용 임시 칸(_bas)은 여기서 지워요 (파일에 나가지 않게). 반환: (집계 dict, {코드: corp.json 추가 칸}).
+    v19.1h: why (DivWhy) 가 있으면 맞춘 해가 있는 종목마다 DART 결정 공시로 이유를 확인해요 — 공시와 다른 해는 수익률·순위를 매기기
+    전에 맞추지 않은 것으로 바꿔요(그래서 아래 집계·dyt 가 바꾼 뒤의 값). 집계에 why 칸이 생겨요."""
     cnt = collections.Counter()
     extra, adj_ex, nc_ex, nd_ex, big = {}, [], [], [], []
     srcs = collections.Counter()                 # v19.1e: 분할 확인에 쓴 자본금 줄 (배당 종목만)
@@ -3237,6 +5111,7 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
         bas = s.pop("_bas", None)
         cap = s.pop("_cap", None)
         stk = s.pop("_stk", None)
+        s.pop("dvWhy", None)          # v19.1h: 이번 실행에서 확인한 것만
         if s.get("cls") != "kr":
             continue
         t = s["t"]
@@ -3260,6 +5135,8 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
         if r["divSt"] is None:
             cnt["noDps"] += 1
             continue
+        if why is not None:
+            r = why.check(s, r)       # v19.1h: 공시와 다른 해는 여기서 맞추지 않은 것으로 (dyt · 순위보다 먼저)
         s["dps3a"], s["dpsF"], s["divSt"] = r["dps3a"], r["dpsF"], r["divSt"]
         cnt[r["divSt"]] += 1
         price = _fin(s.get("price"))
@@ -3320,6 +5197,10 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares):
         + (f" · 믿지 않아 비운 값(수익률 30% 초과·음수 총액) {len(big)}: {', '.join(big[:5])}" if big else ""))
     counts = {"v": 1, **{k: cnt[k] for k in DIV_STATUS}, "noDps": cnt["noDps"], "pref": cnt["pref"],
               "payers": cnt["payers"], "dyt": cnt["dyt"]}
+    if why is not None:
+        for line in why.summary():
+            log(line)
+        counts["why"] = why.counts()  # v19.1h: 관문이 종목의 dvWhy 와 맞춰 봐요
     return counts, extra
 
 
@@ -3892,6 +5773,13 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "divSt": "same 그대로 · adj 분할·무상증자를 맞춤 · nc 비교 불가(어중간한 주식 수 변화) · nd 알 수 없음 · zero 3년 배당 없음",
          "dyt": "% (한국 · 오늘 종가 기준 배당수익률 = dps3a[0] ÷ price · 확인 못 한 종목은 빈 칸 · dz 는 이 값의 시장 내 백분위)",
          "betaSE": "베타의 표준오차 (일별 수익률 회귀) · betaN 은 쓴 일별 수익률 수",
+         "dvWhy": ("한국 · 주식 수가 바뀌어 배당을 다시 계산하려 한 종목의 결론 (DART 결정 공시) · st ok = 다시 계산, 사건 ev [k split 액면분할 · "
+                   "merge 주식병합 · bonus 무상증자 · reduce 주식병합으로 한 감자, d 법적 날짜(효력발생일 · 신주배정기준일 · 감자기준일), "
+                   "r 그 사건의 주식 수 배율, x 1주당 신주 수(무상증자), "
+                   "rc 공시 접수번호, 오래된 것부터] · nf = 다시 계산, 공시를 찾지 못함 (a 그해 말 발행 주식 수 → b 오늘 상장 주식 수) · "
+                   "filed = 유상증자·전환사채·신주인수권부사채(fx [k rights · cb · bw, d 공시일, n 주식 수, rc])가 a → b 를 설명해 공시된 배당 "
+                   "그대로 · nc-mismatch = 공시가 배율과 달라, nc-unexplained = 공시로 설명하지 못해 다시 계산하지 않고 배당수익률도 숨김 · "
+                   "조회하지 못했으면 칸이 없어요 (divCheck.why.failT)"),
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
@@ -3957,22 +5845,57 @@ def main():
     fin_map, client, ksic = {}, None, {}
     # v19.1b: v2 캐시가 없던 첫 실행은 워크플로가 v1 폴더를 받아요(미국 상세 정보 보관본을 이어 쓰려고). 옛 DART 파일은 읽지 않으니
     # 지워서 v2 캐시에 실려 가지 않게 해요.
-    legacy = os.path.join(os.path.dirname(DART_CACHE_PATH) or ".", "dart-v1.json.gz")
-    if os.path.abspath(legacy) != os.path.abspath(DART_CACHE_PATH) and os.path.exists(legacy):
-        os.remove(legacy)
-        log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
+    carry, keep_v2 = None, None
+    for old_name in ("dart-v1.json.gz", "dart-v2.json.gz"):      # v19.1f: v2 파일도 (v3 부터 새로 받아요)
+        legacy = os.path.join(os.path.dirname(DART_CACHE_PATH) or ".", old_name)
+        if os.path.abspath(legacy) != os.path.abspath(DART_CACHE_PATH) and os.path.exists(legacy):
+            if old_name == "dart-v2.json.gz":
+                # v19.1f: 해석과 상관없는 업종 코드 · 기업코드 목록만 옮겨요. v2 파일은 v3 캐시를 처음 저장한 뒤에 지워요 (리뷰 2026-11-08:
+                # 그 전에 실행이 멈추면 다시 실행이 또 옮겨 쓸 수 있게 — 아니면 업종 코드 약 2,400회를 다시 받아요)
+                carry, keep_v2 = read_carry(legacy), legacy
+                log(f"· 옛 DART 캐시 파일 {legacy}: 업종 코드만 옮기고 재무제표·배당 항목은 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)"
+                    " — 새 캐시를 처음 저장하면 지워요")
+                continue
+            os.remove(legacy)
+            log(f"· 옛 DART 캐시 파일을 지웠어요 ({legacy}) — 읽지 않아요 (v{DART_CACHE_VERSION} 부터 새로 받아요)")
     if dart_mode == "off":
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
         client = DartClient(DART_KEY, mode=dart_mode, today=today)
+        if carry is not None:
+            n_carry = adopt_carry(client, carry)
+            log(f"· 옛 v2 캐시에서 옮긴 업종 코드 항목 {n_carry:,}건 (읽은 {len(carry[0]):,}건 · 기업코드 목록 "
+                f"{'옮김' if 'corpMap' in carry[1] else '없음'}) — 업종 코드는 보관 기간이 남은 것만 다시 받지 않아요")
+        if keep_v2:
+            client.remove_after_save.append(keep_v2)
         kr, fin_map = ph.run("DART", enrich_with_dart, kr, client, kmeta.get("_prefShares") or {})
         ksic = ph.run("업종 코드", fetch_ksic, kr, client)
     else:
         log("  !! DART_API_KEY 없음 → 재무지표·공시를 못 받아요 (검증에서 실패 처리돼요)")
+    # v19.1f: DART 없이 도는 실행(dart=off · 키 없음)은 옛 v2 파일을 옮길 곳이 없어 예전처럼 바로 지워요 (DART 단계 뒤 · 그 안이 아니에요)
+    if keep_v2 and client is None and os.path.exists(keep_v2):
+        os.remove(keep_v2)
+        log(f"· 옛 DART 캐시 파일을 지웠어요 ({keep_v2}) — 이번 실행은 DART 를 쓰지 않아요")
     blank_foreign_dart(kr)                # v17.5.2: 해외 기업 (점수·corp.json 보다 먼저)
-    fill_multiples(kr, fin_map)
+    blank_non_won(kr, fin_map)            # v19.1f (리뷰): 원화가 아닌 재무제표 (두산밥캣 USD) — 같은 자리
+    roe_before = {s["t"]: s.get("roe") for s in kr if s.get("cls") == "kr"}   # v19.1f (리뷰): ROE 기준을 바꿔 움직인 것을 세요 (roe_moves)
+    mult_extra = fill_multiples(kr, fin_map, kmeta.get("_prefShares") or {})     # v19.1f: 지배주주 몫 · 영수증(epsIn·bpsIn·roeIn)
     # v19.1b: 분할에 안전한 배당 (dps3a·dpsF·divSt·dyt) — 해외 기업 비우기 뒤, 점수(dz)·corp.json 보다 먼저
-    div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {})
+    # v19.1h: 맞춘 해가 있는 종목은 DART 결정 공시로 이유를 확인해요 (dvWhy · 공시와 다른 해는 맞추지 않아요). DART 가 꺼졌으면 조회 실패로 세요
+    why = DivWhy(client, px_date)
+    div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {}, why=why)
+    if client:
+        try:
+            client.save()                 # 새로 받은 공시 확인이 뒤 단계 실패로 사라지지 않게
+        except Exception as e:
+            log(f"  !! DART 캐시 저장 실패(배당 맞춤 이유 뒤): {e}")
+    for t, e in mult_extra.items():
+        corp_extra.setdefault(t, {}).update(e)
+    inc_check = income_check(kr, fin_map, mult_extra)
+    log(f"· 손익 줄 집계(incCheck): {inc_check}")
+    eps_basis, eps_why = eps_basis_of(kr, mult_extra)
+    log(f"{'· ' if eps_basis == EPS_BASIS else '  !! '}EPS 기준 표시(epsBasis): {eps_basis} — {eps_why}"
+        + ("" if eps_basis == EPS_BASIS else " — 관문에서 실패해 발행하지 않아요 (앱의 '고치는 중' 줄은 그대로)"))
     n_dy = sum(1 for s in kr if s.get("dy") is not None)
     log(f"· 배당수익률 아는 종목: {n_dy:,} / {len(kr):,} (모르는 종목은 0% 가 아니라 빈 칸 → 앱에 '–')")
     n_dps = sum(1 for s in kr if s.get("dps") is not None)
@@ -4046,6 +5969,7 @@ def main():
     # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리)
     add_percentiles(kr)
     add_percentiles(us)
+    roe_moves(kr, roe_before)             # v19.1f (리뷰): 로그만 — 퀄리티 점수(qz) · 2.0 ROE 하한이 얼마나 움직였는지
     # v19.1b: 배당 순위(dz)는 확인한 배당으로만 매겨요. 필수 종목은 꼭 들어 있어야 해요 (CLAUDE.md: 빈 칸일 수 있는 값으로
     # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). 빠지면 여기서 이유와 함께 크게 남겨요. 관문의 '필수 종목 배당 순위'
     # 줄은 1곳이면 경고(종목·이유), 2곳 이상이면 실패로 발행을 막아요 (Jack 2026-11-05: 배당 자료 구멍 하나가 사이트를 멈추지 않게).
@@ -4081,6 +6005,8 @@ def main():
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
+        "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
+        "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "stocks": stocks,
     }
     write_json(OUT, payload)
@@ -4088,8 +6014,8 @@ def main():
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
-    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra)
-    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at})
+    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra, pref_caps=kmeta.get("_prefCaps"))
+    corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at, "epsBasis": eps_basis})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")

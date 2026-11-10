@@ -1,0 +1,43 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 3,
+"total_page": 1,
+"list": [
+{
+"corp_code": "00191287",
+"corp_name": "대동금속",
+"stock_code": "020400",
+"corp_cls": "K",
+"report_nm": "[기재정정]타법인주식및출자증권취득결정              ",
+"rcept_no": "20260826900339",
+"flr_nm": "대동금속",
+"rcept_dt": "20260826",
+"rm": "코"
+},
+{
+"corp_code": "00191287",
+"corp_name": "대동금속",
+"stock_code": "020400",
+"corp_cls": "K",
+"report_nm": "증권발행결과(자율공시)              ",
+"rcept_no": "20260826900342",
+"flr_nm": "대동금속",
+"rcept_dt": "20260826",
+"rm": "코"
+},
+{
+"corp_code": "00191287",
+"corp_name": "대동금속",
+"stock_code": "020400",
+"corp_cls": "K",
+"report_nm": "주식소각결정              ",
+"rcept_no": "20260707900173",
+"flr_nm": "대동금속",
+"rcept_dt": "20260707",
+"rm": "코"
+}
+]
+}

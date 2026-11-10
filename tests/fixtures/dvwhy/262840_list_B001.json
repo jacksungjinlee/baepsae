@@ -1,0 +1,131 @@
+{
+"status": "000",
+"message": "정상",
+"page_no": 1,
+"page_count": 100,
+"total_count": 11,
+"total_page": 1,
+"list": [
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득결정)",
+"rcept_no": "20260929000135",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20260929",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20260126000287",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20260126",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20250930000613",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20250930",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(유형자산양도결정)",
+"rcept_no": "20250804000065",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20250804",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(무상증자결정)",
+"rcept_no": "20250414001687",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20250414",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(유형자산양수결정)",
+"rcept_no": "20241210000551",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20241210",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+"rcept_no": "20240923000047",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20240923",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(자기주식처분결정)",
+"rcept_no": "20240426000904",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20240426",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "[기재정정]주요사항보고서(무상증자결정)",
+"rcept_no": "20240424000002",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20240424",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(자기주식처분결정)",
+"rcept_no": "20240214001444",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20240214",
+"rm": ""
+},
+{
+"corp_code": "01146822",
+"corp_name": "아이퀘스트",
+"stock_code": "262840",
+"corp_cls": "K",
+"report_nm": "주요사항보고서(교환사채권발행결정)",
+"rcept_no": "20240214001426",
+"flr_nm": "아이퀘스트",
+"rcept_dt": "20240214",
+"rm": ""
+}
+]
+}
