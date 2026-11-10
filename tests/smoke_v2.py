@@ -3100,7 +3100,7 @@ def scene_pc(R, files):
         side.click(timeout=5000)                                           # 한 번: 시트에 가로막히지 않아요
         at(page, "portfolio")
         assert page.locator('[data-ui="bottom-sheet"]').count() == 0
-        card = page.locator(f'[data-deck-id="{new["id"]}"]')                # 방금 만든 포트폴리오가 보여요
+        card = page.locator(f'[data-deck-id="{new["id"]}"]:has(h3)')        # 방금 만든 포트폴리오가 보여요 (카드만, 이른 종가 줄 말고)
         card.wait_for(state="visible")
         assert new["name"] in card.inner_text(), (new["name"], card.inner_text()[:200])
         R.collect(page)
