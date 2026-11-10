@@ -47,7 +47,7 @@ export const buildInProgress = (b) => !!b && (b.stage !== "steps" || pointsUsed(
 
 // coach (v19.3c Part E): the first-visit guide's step while it runs ({ stage: 1 · 2 · 3, go, done, skip, lost }), else null.
 // onImport (v19.3d): opens 가진 종목 넣기 (Part F) from the start step.
-export function Build({ load, builder, setBuilder, onExit, store, setStoreData, goToday, coach = null, onImport = null }) {
+export function Build({ load, builder, setBuilder, onExit, store, setStoreData, goToday, goPortfolio, coach = null, onImport = null }) {
   if (load.status !== "ok" || load.missing.length) {
     return (
       <Page>
@@ -61,7 +61,7 @@ export function Build({ load, builder, setBuilder, onExit, store, setStoreData, 
     );
   }
   if (builder.stage === "pick") return <Pick load={load} builder={builder} setBuilder={setBuilder} />;
-  if (builder.stage === "plan") return <Plan load={load} builder={builder} setBuilder={setBuilder} store={store} setStoreData={setStoreData} goToday={goToday} />;
+  if (builder.stage === "plan") return <Plan load={load} builder={builder} setBuilder={setBuilder} store={store} setStoreData={setStoreData} goToday={goToday} goPortfolio={goPortfolio} />;
   return <Steps load={load} builder={builder} setBuilder={setBuilder} onExit={onExit} coach={coach} onImport={onImport} />;
 }
 

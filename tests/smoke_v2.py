@@ -885,9 +885,17 @@ def scene_normal(R, files, width):
         page.get_by_role("button", name=C["plan"]["save"]).click()
         done_body(page, n - 1)
         R.collect(page)
+        new = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"][-1]
         page.get_by_role("button", name=C["app"]["close"]).click()
-        see(page, C["plan"]["stocks"])
-    R.check(page, S, "샀어요에서 한 종목을 0주로 → 기록했어요는 실제로 산 종목 수만 점검한다고 말해요", partial_buy)
+        # Jack, 11-10: 기록한 계획은 끝이에요 — 기록했어요를 닫으면 포트폴리오(방금 만든 포트폴리오), 다음 포트폴리오 만들기는 처음부터라서
+        # 같은 계획을 샀어요로 두 번 기록할 수 없어요 (예전: 닫으면 그 매수 계획으로 돌아갔어요)
+        at(page, "portfolio")
+        page.locator(f'[data-deck-id="{new["id"]}"]:has(h3)').wait_for(state="visible")
+        start_build(page)
+        see(page, C["build"]["s0"]["title"])
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "기록한 매수 계획이 다시 열렸어요"
+        from_blank()                                                       # 다음 확인(지킬 수 없는 설정)이 쓸 매수 계획을 처음부터 다시 만들어요
+    R.check(page, S, "샀어요에서 한 종목을 0주로 → 기록했어요는 실제로 산 종목 수만 점검한다고 말해요 · 닫으면 포트폴리오, 다시 만들기는 처음부터", partial_buy)
 
     def infeasible():
         page.get_by_role("button", name=C["plan"]["back"]).click()
@@ -3105,6 +3113,50 @@ def scene_pc(R, files):
         assert new["name"] in card.inner_text(), (new["name"], card.inner_text()[:200])
         R.collect(page)
     R.check(page, S, "기록했어요가 열린 채로 왼쪽 메뉴 포트폴리오 한 번 → 방금 만든 포트폴리오 (어두운 바탕은 왼쪽 메뉴 오른쪽만)", side_menu_over_sheet)
+
+    def fresh_after_record():
+        # Jack, 11-10: 기록한 계획은 끝이에요 — 기록한 뒤 포트폴리오 만들기로 다시 가면(뒤로 · 왼쪽 메뉴) 처음 화면이고, 같은 계획의
+        # 샀어요는 없어요 (같은 포트폴리오를 두 번 기록하지 않아요)
+        page.go_back()                                                     # 왼쪽 메뉴로 떠난 뒤 뒤로: 그 주소(#portfolio/build)로 돌아와도
+        at(page, "portfolio/build")
+        see(page, C["build"]["s0"]["title"])
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "뒤로 돌아오니 기록한 매수 계획이 다시 열렸어요"
+        page.locator('[data-ui-v2="side-tabs"] button').filter(has_text=TABS["portfolio"]).first.click()
+        at(page, "portfolio")
+        page.locator('[data-ui-v2="side-build"]').click()                  # 왼쪽 메뉴의 포트폴리오 만들기도 처음 화면
+        at(page, "portfolio/build")
+        see(page, C["build"]["s0"]["title"])
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "포트폴리오 만들기에 기록한 매수 계획이 다시 열렸어요"
+        R.collect(page)
+    R.check(page, S, "기록한 뒤 포트폴리오 만들기(뒤로 · 왼쪽 메뉴)는 처음 화면 — 기록한 계획의 샀어요는 다시 없어요", fresh_after_record)
+
+    def side_build_over_done():
+        # 기록했어요가 열린 채로 왼쪽 메뉴의 포트폴리오 만들기(같은 주소): 시트는 닫히고 처음 화면, 포트폴리오는 하나만 늘어요 (리뷰 2026-11-10)
+        page.locator('[data-deck="income"]').first.click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
+        click_next(page)
+        see(page, C["pick"]["title"])
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        before = len(page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"])
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        page.locator('[data-ui-v2="record-done"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="side-build"]').click(timeout=5000)
+        see(page, C["build"]["s0"]["title"])
+        assert page.locator('[data-ui="bottom-sheet"]').count() == 0, "기록했어요 시트가 남아 있어요"
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "기록한 매수 계획의 샀어요가 남아 있어요"
+        after = len(page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"])
+        assert after == before + 1, (before, after)
+        R.collect(page)
+    R.check(page, S, "기록했어요가 열린 채로 왼쪽 메뉴 포트폴리오 만들기 → 시트 닫히고 처음 화면, 포트폴리오는 하나만 늘어요", side_build_over_done)
     ctx.close()
     srv.shutdown()
 
