@@ -885,9 +885,17 @@ def scene_normal(R, files, width):
         page.get_by_role("button", name=C["plan"]["save"]).click()
         done_body(page, n - 1)
         R.collect(page)
+        new = page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"][-1]
         page.get_by_role("button", name=C["app"]["close"]).click()
-        see(page, C["plan"]["stocks"])
-    R.check(page, S, "샀어요에서 한 종목을 0주로 → 기록했어요는 실제로 산 종목 수만 점검한다고 말해요", partial_buy)
+        # Jack, 11-10: 기록한 계획은 끝이에요 — 기록했어요를 닫으면 포트폴리오(방금 만든 포트폴리오), 다음 포트폴리오 만들기는 처음부터라서
+        # 같은 계획을 샀어요로 두 번 기록할 수 없어요 (예전: 닫으면 그 매수 계획으로 돌아갔어요)
+        at(page, "portfolio")
+        page.locator(f'[data-deck-id="{new["id"]}"]:has(h3)').wait_for(state="visible")
+        start_build(page)
+        see(page, C["build"]["s0"]["title"])
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "기록한 매수 계획이 다시 열렸어요"
+        from_blank()                                                       # 다음 확인(지킬 수 없는 설정)이 쓸 매수 계획을 처음부터 다시 만들어요
+    R.check(page, S, "샀어요에서 한 종목을 0주로 → 기록했어요는 실제로 산 종목 수만 점검한다고 말해요 · 닫으면 포트폴리오, 다시 만들기는 처음부터", partial_buy)
 
     def infeasible():
         page.get_by_role("button", name=C["plan"]["back"]).click()
