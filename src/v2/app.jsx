@@ -314,7 +314,8 @@ export function App({ source }) {
 
   // go(id): a tab ("home" · "portfolio" · "stocks" · "market") or "build" (포트폴리오 만들기, under 포트폴리오)
   const go = useCallback((id) => {
-    if (id === "build") { router.go("portfolio", "build"); return; }
+    // Jack, 11월 10일: 포트폴리오 만들기 after a recorded plan starts fresh (also when it is already open under 기록했어요).
+    if (id === "build") { setBuilder((b) => (b.recorded ? newBuilder() : b)); router.go("portfolio", "build"); return; }
     router.go(id);
   }, [router.go]);
   const goHome = useCallback(() => go("home"), [go]);            // v19.5 Part B: the 뱁새 logo opens 홈 (or scrolls it to the top)
@@ -335,6 +336,8 @@ export function App({ source }) {
   }), [loc.code, loc.ctab, router.back, router.replaceRoute, router.go, openWhy]);
   // 기록했어요 -> 홈: the finished build is replaced by 홈, and the next 포트폴리오 만들기 starts fresh.
   const doneToHome = useCallback(() => { setBuilder(newBuilder()); router.replaceRoute("home"); }, [router.replaceRoute]);
+  // Jack, 11월 10일: 기록했어요 closed -> 포트폴리오 (the new portfolio); the finished build is replaced the same way as for 홈.
+  const doneToPortfolio = useCallback(() => { setBuilder(newBuilder()); router.replaceRoute("portfolio"); }, [router.replaceRoute]);
 
   // v19.3c Part E. seen = remember it (건너뛰기, Esc, 알겠어요, 그냥 둘러볼게요, leaving the steps); a guide that could not run
   // (no data) ends without it.
@@ -385,6 +388,9 @@ export function App({ source }) {
   const inBuild = tab === "portfolio" && loc.sub === "build";
   const inImport = tab === "portfolio" && loc.sub === "import";
   const ownBar = inBuild || inImport;                     // screens with their own bottom bar: no tab bar
+  // Jack, 11월 10일: leaving 포트폴리오 만들기 any way after a recorded plan (left menu, tabs, back, 소개) ends it: the next visit
+  // starts fresh, so the same plan can't be recorded twice.
+  useEffect(() => { if (!inBuild && builder.recorded) setBuilder(newBuilder()); }, [inBuild, builder.recorded]);
   // A later publish held under a draft (hold.js) goes on screen once the user leaves it or the draft no longer needs it.
   holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };
   useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);
@@ -427,7 +433,7 @@ export function App({ source }) {
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     if (inBuild) {
-      return <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => router.back("portfolio")} goToday={doneToHome}
+      return <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => router.back("portfolio")} goToday={doneToHome} goPortfolio={doneToPortfolio}
         store={store} setStoreData={setStoreData} coach={builder.step === 1 && builder.stage === "steps" ? coach : null} onImport={openImport} />;
     }
     if (inImport) {

@@ -17,7 +17,7 @@ import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
 import { EpsFixNote } from "./fixnote.jsx";
 
-export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }) {
+export function Plan({ load, builder, setBuilder, store, setStoreData, goToday, goPortfolio }) {
   const st = builder.settings;
   const ds = useMemo(() => deckState(load, st), [load, st]);
   const items = pickItems(ds, builder.picks);
@@ -66,8 +66,13 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday }
         <ActionBar summary={fill(C.plan.left, { leftText: wonText(plan.left) })} action={C.plan.bought} onAction={() => setSheet("form")} />
       )}
       {ok && (
-        <RecordSheet open={!!sheet} stage={sheet} onClose={() => setSheet(null)} load={load} st={st} plan={plan} ds={ds}
-          store={store} setStoreData={setStoreData} onDone={() => setSheet("done")} goToday={() => { setSheet(null); goToday(); }} />
+        <RecordSheet open={!!sheet} stage={sheet} load={load} st={st} plan={plan} ds={ds}
+          // Jack, 11월 10일: a recorded plan is finished. 기록했어요 closed any way (닫기 · Esc · outside) opens 포트폴리오 with the
+          // new portfolio and the next 포트폴리오 만들기 starts fresh (app.jsx doneToPortfolio), so 샀어요 never records the same plan
+          // twice. The 샀어요 form itself still closes back to the plan.
+          onClose={() => { if (sheet === "done") { setSheet(null); goPortfolio(); } else setSheet(null); }}
+          store={store} setStoreData={setStoreData} onDone={() => { setBuilder((b) => ({ ...b, recorded: true })); setSheet("done"); }}
+          goToday={() => { setSheet(null); goToday(); }} />
       )}
     </Page>
   );
