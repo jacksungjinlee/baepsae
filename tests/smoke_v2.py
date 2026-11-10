@@ -7878,6 +7878,7 @@ def scene_bystock_fit(R, files, width):
 # ── 2026-11-08 (Jack): DART 다시 읽기 전까지의 두 줄 (src/repair.js · src/v2/fix.js · src/v2/fixnote.jsx) ──
 FIX_EPS_TPL = C["fix"]["eps"]
 FIX_ICR = C["fix"]["icr"]
+FIX_TOTAL = C["fix"]["total"]          # 다시 읽은 뒤 "t" + epsIn.nci (Jack 2026-11-08): 고치는 중 줄 자리에
 with open(os.path.join(ROOT, "src", "repair.js"), encoding="utf-8") as _f:
     _FIXD = re.findall(r'^export const EPS_FIX_DATE = "(\d{4})-(\d{2})-(\d{2})";$', _f.read(), flags=re.M)
 assert len(_FIXD) == 1, _FIXD
@@ -7906,7 +7907,7 @@ def fix_files(files, live):
         coby[FIX_FLAG_KR].update(epsIn={"ni": -8000.0, "b": "o", "p": "2026.2Q", "sh": 234000000}, nio3=[-10728.1, -10187.41, 12371.8],
                                  eps=round(-8000.0 * 1e8 / 234000000))
         hd = coby[FIX_T_KR]
-        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6)})
+        hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "how": "total", "nci": True})   # 소수주주 있음 (2026-11-08)
     else:
         f["corp.json"].pop("epsBasis", None)
         coby[FIX_OFF_KR].update(flRan=["cr", "l3", "imp"], flWhy={"icr": "off"})
@@ -8028,7 +8029,8 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
         card.wait_for(state="visible")
         if live:
             assert card.get_attribute("data-head") == "basis" and card.locator('[data-ui-v2="co-decomp-eq"]').count() == 0, card.inner_text()
-            assert [card.locator('[data-ui-v2="eps-fix"]').nth(i).inner_text() for i in range(card.locator('[data-ui-v2="eps-fix"]').count())] == [FIX_EPS]
+            assert [card.locator('[data-ui-v2="eps-total"]').nth(i).inner_text() for i in range(card.locator('[data-ui-v2="eps-total"]').count())] == [FIX_TOTAL]
+            assert card.locator('[data-ui-v2="eps-fix"]').count() == 0
             assert C["co"]["decomp"]["none"] not in card.inner_text() and C["co"]["tiles"]["na"] not in card.inner_text()
         else:
             assert card.get_attribute("data-head") != "basis"
@@ -8038,10 +8040,10 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
         dcf = page.locator('[data-ui-v2="co-dcf"]')
         if live:
             assert dcf.get_attribute("data-edge") == "basis" and dcf.locator('[data-ui-v2="co-dcf-inputs"]').count() == 0, dcf.inner_text()
-            assert dcf.locator('[data-ui-v2="eps-fix"]').count() == 1
+            assert dcf.locator('[data-ui-v2="eps-total"]').count() == 1 and dcf.locator('[data-ui-v2="eps-fix"]').count() == 0
         else:
             assert dcf.count() == 0 or dcf.get_attribute("data-edge") != "basis"
-        assert page.locator(f'{per_card()} [data-ui-v2="eps-fix"]').count() == 1   # 총 순이익: 줄이 남아요
+        assert page.locator(f'{per_card()} [data-ui-v2="{"eps-total" if live else "eps-fix"}"]').count() == 1   # 총 순이익 + 소수주주: 다시 읽은 뒤 총 순이익 줄
         floor_ok(page, "현대차 가치 탭")
         R.collect(page)
     R.check(page, S, "주가 분해: 두 끝이 같은 기준 (삼성전자)" + (" · 현대차 't'는 숫자 대신 그 줄 (주가 분해 · 지금 가격이 가정하는 것)" if live else " · 현대차도 숫자"), split_basis)
@@ -8152,6 +8154,235 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
     srv.shutdown()
 
 
+# ── 2026-11-08 (Jack): DART 다시 읽기가 끝난 뒤 (src/repair.js 3 · 4, src/v2/fixnote.jsx EpsOwnersNote · StmtCurNote) ──
+OWNERS_LINE = C["fix"]["owners"].replace("{date}", f"{int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일")
+STMT_T = "241560"              # 두산밥캣: 재무제표를 달러로 공시해요 → 다시 읽은 발행에서 금액이 비고 stmtCur "USD"
+STMT_LINE = C["co"]["stmtCur"].replace("{currency}", "USD")
+
+
+def reread_files(files, when, marker=True):
+    """다시 읽은 발행의 모양 (지어낸 값, fix_files live 와 같아요) + 두산밥캣의 원화가 아닌 재무제표 (fetch_data.py v19.1f 처럼 금액 ·
+    영수증 · PER · PBR · EPS · BPS 를 비우고 stmtCur "USD"; 배당은 원화 표라 남아요). 모든 파일이 when 한 시간 전에 발행된 것으로.
+    marker False: epsBasis 가 없는 발행 (안내가 없어야 해요)."""
+    f = fix_files(files, True)
+    if not marker:
+        f["corp.json"].pop("epsBasis", None)
+    co = next(c for c in f["corp.json"]["companies"] if c["t"] == STMT_T)
+    co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None,
+              stmtCur="USD")
+    for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep"):
+        co.pop(k, None)
+    s = next(x for x in f["data.json"]["stocks"] if x["t"] == STMT_T)
+    s.update(per=None, pbr=None, eps=None, bps=None, vz=None)
+    # 이자를 내지 않은 회사 (v19.1f flSrc.int0, Jack 2026-11-08): 삼성전자를 그렇게 (지어낸 값) — 확인은 돌았고 경고 없음
+    sam = next(c for c in f["corp.json"]["companies"] if c["t"] == FIX_OFF_KR)
+    assert sam.get("flRan") == ["cr", "icr", "l3", "imp"] and not sam.get("fl"), (sam.get("flRan"), sam.get("fl"))
+    sam["flSrc"] = {"icr": "is", "int0": True}
+    pub = (when - dt.timedelta(hours=1)).isoformat(timespec="seconds")
+    for name in DATA_FILES:
+        f[name]["publishedAt"] = pub
+    return f
+
+
+def reread_open(R, site, width, when, init=None, path="/app.html?dev=1#home"):
+    """R.open 과 같지만 페이지의 시계를 when (한국 시간)에 맞춘 뒤 열어요 (Playwright clock: 시간은 그때부터 흘러요). 안내는 오늘 날짜를
+    읽으니까요. 처음 안내는 본 것으로 · 다른 사이트 요청은 막고 적어요."""
+    srv, base = serve(site)
+    screen = pc_device(width) if width >= 1024 else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    ctx = R.browser.new_context(**screen, locale="ko-KR", service_workers="block")
+
+    def route(r):
+        if r.request.url.startswith(base):
+            r.continue_()
+        else:
+            R.outside.append(r.request.url)
+            r.abort()
+    ctx.route("**/*", route)
+    ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")
+    if init:
+        ctx.add_init_script(init)
+    page = ctx.new_page()
+    page.set_default_timeout(WAIT)
+    page.on("pageerror", lambda e: R.errors.append(str(e)))
+    page.clock.install(time=when)
+    page.goto(base + path, wait_until="domcontentloaded")
+    return srv, ctx, page, base
+
+
+def scene_reread_lines(R, files, width, shots=None):
+    """다시 읽은 뒤 (Jack 승인 2026-11-08, DeepL 확인):
+    - 홈 · 포트폴리오 위쪽(날짜 줄 바로 밑)에 '{date}부터 EPS와 ROE를 지배주주 몫으로 계산해요. 일부 규칙의 결과가 바뀔 수 있어요.' 한 줄:
+      corp.json 에 epsBasis "owners" 가 있고 오늘(한국 시간)이 EPS_FIX_DATE 부터 그 + 7일 전까지만. 그날 0시부터 · 표시가 없으면 없어요.
+    - 재무제표를 원화가 아닌 통화로 공시한 회사(stmtCur): 회사 페이지 요약(한눈에 칸 위) · 실적 탭 · 가치 탭에 '이 회사는 재무제표를 원화가
+      아닌 USD로 공시해서, 실적 숫자는 아직 보여 드리지 않아요.' 한 번씩. 배당 탭 · 다른 회사 · 미국 종목에는 없어요.
+    12px 이상 · 가로 스크롤 없음. shots: 스크린샷 폴더 (선택)."""
+    S = f"다시 읽은 뒤 {width}"
+    y, mo, d = (int(x) for x in _FIXD[0])
+    day0 = dt.datetime(y, mo, d, 12, 0, tzinfo=KST)
+    when = day0 + dt.timedelta(days=1)                         # 다시 읽은 다음 날 낮 (한 주 안)
+    fx = reread_files(files, when)
+    fx_corp = fx["corp.json"]
+    srv, ctx, page, base = reread_open(R, build_site(fx), width, when, init=fix_store())
+
+    def shot(name, full=False):
+        if shots:
+            os.makedirs(shots, exist_ok=True)
+            page.screenshot(path=os.path.join(shots, name), full_page=full)
+
+    def notice(screen, first_sel):
+        loc = page.locator('[data-ui-v2="eps-owners"]')
+        loc.first.wait_for(state="visible")
+        assert loc.count() == 1, [loc.nth(i).inner_text() for i in range(loc.count())]          # 한 줄
+        assert loc.inner_text().strip() == OWNERS_LINE, loc.inner_text()
+        dl = page.locator('[data-ui-v2="screen"] [data-ui-v2="date-line"]').first.bounding_box()     # PC: 왼쪽 메뉴에도 날짜 줄이 있어요
+        box = loc.bounding_box()
+        first = page.locator(first_sel).first.bounding_box()
+        assert dl["y"] < box["y"] < first["y"], (screen, dl, box, first)                           # 날짜 줄 밑 · 첫 카드 위
+        fs = loc.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)")
+        assert fs >= 12, fs
+        floor_ok(page, screen)
+        no_hscroll(page, width)
+        R.collect(page)
+
+    def home():
+        at(page, "home")
+        page.locator('[data-ui-v2="home2"]').wait_for(state="visible")
+        notice("홈", '[data-ui-v2="home-block"]')
+        shot(f"reread-home-{width}.png")
+    R.check(page, S, "홈: 날짜 줄 밑에 한 주 동안의 안내 한 줄", home)
+
+    def portfolio():
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dfix"]').first.wait_for(state="visible")
+        notice("포트폴리오", '[data-deck-id="dfix"]')
+        shot(f"reread-portfolio-{width}.png")
+    R.check(page, S, "포트폴리오: 날짜 줄 밑에 한 주 동안의 안내 한 줄", portfolio)
+
+    def stmt_cur():
+        def cur_lines():
+            loc = page.locator('[data-ui-v2="stmt-cur"]')
+            return [(loc.nth(i).inner_text().strip(), loc.nth(i).get_attribute("data-cur")) for i in range(loc.count())]
+        co_hash(page, f"#stocks/{STMT_T}")
+        page.locator('[data-ui-v2="co-summary"]').wait_for(state="visible")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        assert cur_lines() == [(STMT_LINE, "USD")], cur_lines()                                  # 요약: 한 번
+        assert tiles.locator('[data-ui-v2="stmt-cur"]').count() == 1, "한눈에 칸 안이 아니에요"
+        line_y = page.locator('[data-ui-v2="stmt-cur"]').bounding_box()["y"]
+        assert line_y < page.locator('[data-ui-v2="co-tile"]').first.bounding_box()["y"]        # 비어 있는 칸들 위
+        # '자료가 없어요' 뿐인 실적 · 가치 칸은 없어요 (숨기기만): 배당 · 출렁임 칸만, 그 위에 이유 한 줄
+        topics = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => e.dataset.topic)")
+        assert topics == ["div", "risk"], topics
+        assert C["co"]["tiles"]["na"] not in tiles.inner_text(), tiles.inner_text()
+        assert page.locator('[data-ui-v2="stmt-cur"]').evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, "원화가 아닌 재무제표 요약")
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+        if shots:
+            tiles.scroll_into_view_if_needed()
+            page.evaluate("() => window.scrollBy(0, -120)")
+            shot(f"reread-stmtcur-summary-{width}.png")
+        for ctab, inside in (("earn", '[data-ui-v2="co-earn"]'), ("value", '[data-ui-v2="co-value"]'), ("div", None)):
+            co_hash(page, f"#stocks/{STMT_T}/{ctab}")
+            page.wait_for_function("(t) => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === t", arg=ctab)
+            if inside:
+                page.locator(inside).wait_for(state="visible")
+                assert cur_lines() == [(STMT_LINE, "USD")], (ctab, cur_lines())                  # 실적 · 가치 탭: 한 번
+                assert page.locator(f'{inside} [data-ui-v2="stmt-cur"]').count() == 1, ctab
+                co_fy = next(x for x in fx_corp["companies"] if x["t"] == STMT_T)["fy"]
+                year = fillp(C["app"]["reportYear"], year=co_fy)
+                if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신, 통화 줄만
+                    assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui-v2="bars"]').count() == 0
+                    assert page.locator('[data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
+                    assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
+                    assert year not in page.locator('[data-ui-v2="co-earn"]').inner_text()
+                    assert page.locator('[data-ui-v2="co-earn"] > *').count() == 1, "실적 탭에 통화 줄 카드 말고 다른 것이 있어요"
+                else:                                                                           # PBR · PER 대신, 그 기준 · 날짜 줄 없이
+                    assert page.locator('[data-ui-v2="co-pbr"]').count() == 0 and page.locator('[data-ui-v2="co-per"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-value-basis"]').count() == 0 and page.locator('[data-ui-v2="co-value-more"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() == 0
+                    assert page.locator('[data-ui-v2="co-risk"]').count() == 1                    # 출렁임은 그대로
+                if shots:
+                    shot(f"reread-stmtcur-{ctab}-{width}.png")
+            else:
+                page.locator('[data-ui-v2="co-div"]').first.wait_for(state="visible")
+                assert cur_lines() == [], cur_lines()                                           # 배당 탭: 원화 표라 그대로
+            floor_ok(page, f"원화가 아닌 재무제표 {ctab}")
+            no_hscroll(page, width)
+            R.collect(page)
+        co_hash(page, "#stocks/005930/earn")                                                      # 다른 회사는 그대로 (숨김은 stmtCur 로만)
+        page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
+        assert page.locator('[data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
+        co_hash(page, "#stocks/005930/value")
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-value-basis"]').count() == 1 and page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() >= 1
+        for code in ("005930", "AAPL"):                                                          # stmtCur 없는 회사 · 미국 종목: 없어요
+            for ctab in (None, "earn", "value"):
+                co_hash(page, f"#stocks/{code}" + (f"/{ctab}" if ctab else ""))
+                page.wait_for_function("(t) => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === t", arg=ctab or "summary")
+                page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"]').first.wait_for(state="visible")
+                assert cur_lines() == [], (code, ctab, cur_lines())
+        R.collect(page)
+    R.check(page, S, f"{STMT_T} 원화가 아닌 재무제표: 요약 · 실적 · 가치에 한 번씩 (배당 · 삼성전자 · AAPL 에는 없음) · '자료가 없어요' 칸 · "
+            "고르기 · 보이지 않는 숫자의 기준 줄 · 자세히 링크 없음", stmt_cur)
+
+    def no_interest():
+        """이자를 내지 않은 회사(flSrc.int0): '재무 경고 신호는 없어요'와 칩 셋, '이자보상배율 1배 이상' 칩은 없어요. 가진 종목 규칙 칸 ·
+        새 홈의 '재무 경고 0개'는 ✓ 그대로 (회사 페이지와 같은 말)."""
+        co_hash(page, f"#stocks/{FIX_OFF_KR}")
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"]')
+        card.wait_for(state="visible")
+        chips = card.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.check)")
+        assert chips == ["l3", "cr", "imp"], chips
+        assert "이자보상배율" not in page.locator('[data-ui-v2="co-summary"]').inner_text()
+        floor_ok(page, "이자를 내지 않은 회사의 재무 경고")
+        R.collect(page)
+        page.evaluate("() => { location.hash = '#home'; }")
+        at(page, "home")
+        tile = page.locator('[data-ui-v2="home-rules"][data-deck-id="dfix"] [data-ui-v2="home-rule"][data-rule="warn"]')
+        tile.wait_for(state="visible")
+        assert tile.get_attribute("data-state") == "ok", tile.get_attribute("data-state")
+        R.collect(page)
+    R.check(page, S, f"{FIX_OFF_KR} 이자를 내지 않은 회사(flSrc.int0): 칩 셋, 이자보상배율 칩 없음 · 새 홈 '재무 경고 0개' ✓ 그대로", no_interest)
+    ctx.close()
+    srv.shutdown()
+
+    # 이레째 0시 (한국 시간)부터 · 표시가 없는 발행에서는 없어요
+    for label, at_time, marker in (("이레가 지난 뒤(그날 0시)", dt.datetime(y, mo, d, 0, 0, tzinfo=KST) + dt.timedelta(days=7), True),
+                                   ("표시(epsBasis) 없는 발행", when, False)):
+        srv, ctx, page, base = reread_open(R, build_site(reread_files(files, at_time, marker)), width, at_time, init=fix_store())
+
+        def gone():
+            at(page, "home")
+            page.locator('[data-ui-v2="home-block"]').first.wait_for(state="visible")
+            assert page.locator('[data-ui-v2="screen"] [data-ui-v2="date-line"]').count() >= 1
+            assert page.locator('[data-ui-v2="eps-owners"]').count() == 0, page.locator('[data-ui-v2="eps-owners"]').inner_text()
+            page.evaluate("() => { location.hash = '#portfolio'; }")
+            at(page, "portfolio")
+            page.locator('[data-deck-id="dfix"]').first.wait_for(state="visible")
+            assert page.locator('[data-ui-v2="eps-owners"]').count() == 0
+            R.collect(page)
+        R.check(page, S, f"{label}: 홈 · 포트폴리오에 안내 없음", gone)
+        ctx.close()
+        srv.shutdown()
+
+    if width < 1024:                                           # 첫 방문 홈 (뱁이가 있는 화면): 안내의 날짜는 숫자가 아니에요 (v19.0b 규칙)
+        srv, ctx, page, base = reread_open(R, build_site(reread_files(files, when)), width, when)
+
+        def first_visit():
+            at(page, "home")
+            page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+            loc = page.locator('[data-ui-v2="eps-owners"]')
+            assert loc.count() == 1 and loc.inner_text().strip() == OWNERS_LINE, loc.count()
+            visual_ok(page)
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, "첫 방문 홈: 안내 한 줄 · 뱁이 화면 규칙 그대로", first_visit)
+        ctx.close()
+        srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -8219,6 +8450,7 @@ def main():
                    lambda: scene_store_version(R, files, 390, False), lambda: scene_store_version(R, files, 390, True),   # 기록 판 고침
                    lambda: scene_fix_notes(R, files, 390), lambda: scene_fix_notes(R, files, 1280),             # 2026-11-08 고치는 중 안내
                    lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True),
+                   lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur
                    lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280),    # 2026-11-08 돌아온 화면은 한 번 받아요
                    lambda: scene_refetch_drafts(R, files, 390), lambda: scene_refetch_drafts(R, files, 1280),   # 만들던 것 위에는 기다려요
                    lambda: scene_say_why_2(R, files, 1280)):                                                # say-why 2: PC 의 새 데이터 줄 · 홈 공시

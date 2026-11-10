@@ -23,6 +23,7 @@ import { Icon } from "../ui/icons.jsx";
 import { Button } from "../ui/components.jsx";
 import { C } from "./format.js";
 import { Card, DateLine, LoadFail, Mascot, IMG, SIDE_W, useLayout, tx, tap } from "./ui.jsx";
+import { EpsOwnersNote } from "./fixnote.jsx";
 import { IosHint } from "./hint.jsx";
 import { CARD_PICS, TOPIC_DOT, DOT_EMPTY } from "./pictures.js";
 import { guideSeenIn } from "./store.js";
@@ -94,6 +95,7 @@ export function Welcome({ load, first, onTry, onBrowse, onImport = null }) {
   return (
     <>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      <EpsOwnersNote load={load} />
       <Card data-ui-v2="guide-welcome" style={{ textAlign: "center", marginTop: SPACE(4), padding: `${SPACE(6)}px ${SPACE(5)}px ${SPACE(5)}px`,
         ...(wide ? { maxWidth: 520 } : {}) }}>
         <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={132} style={{ display: "block", margin: "0 auto" }} />

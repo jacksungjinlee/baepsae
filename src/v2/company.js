@@ -12,7 +12,7 @@ import { STALE_DAYS } from "../data.js";
 import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
 import { okCode } from "./routes.js";
-import { epsBase } from "../repair.js";
+import { epsBase, epsNiSeries } from "../repair.js";
 
 export { DCF, dcfPerShare, reverseDcf, okAssume } from "./dcf.js";
 
@@ -274,7 +274,7 @@ export function payout(s, co) {
     const e = co.epsIn && typeof co.epsIn === "object" ? co.epsIn : null;
     const basis = !e ? "today" : e.b === "o" || e.b === "s" ? e.b : "total";
     const cash = Array.isArray(co.cash3) ? num(co.cash3[0]) : null;
-    const src = basis === "o" ? co.nio3 : co.ni;
+    const src = basis === "o" || basis === "s" ? epsNiSeries(co, e) : co.ni;    // repair.js: "s" with hybrid payouts reads nio3 too
     const ni0 = Array.isArray(src) ? num(src[0]) : null;
     const fy0 = num(co.fy) ?? num(s.fy);
     if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
@@ -317,11 +317,13 @@ export { WARN_CHECKS, FIN_SUB_SECTORS, FIN_SUB_INDS, warnings } from "./warn.js"
 // One chip per check that ran and passed (in corp.json flRan, no flag), in the board's order (CoSummary2): 3년 연속 적자
 // 아님 · 유동비율 100% 이상 · 자본잠식 없음 · 이자보상배율 1배 이상. A check that did not run (or does not apply, flNa)
 // gets no chip: never a ✓ for something not checked. w: warn.warnings(s, co).
+// A company that paid no interest (w.int0, corp.json flSrc.int0): no 이자보상배율 chip either. "이자보상배율 1배 이상" would be
+// false (there is no ratio without interest); the other chips stay.
 export const CHIP_ORDER = ["l3", "cr", "imp", "icr"];
 export function warnChips(w) {
   if (!w || !Array.isArray(w.ran)) return [];
   const fired = new Set((w.flags || []).map((f) => f.code));
-  return CHIP_ORDER.filter((c) => w.ran.includes(c) && !fired.has(c));
+  return CHIP_ORDER.filter((c) => w.ran.includes(c) && !fired.has(c) && !(c === "icr" && w.int0));
 }
 
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
