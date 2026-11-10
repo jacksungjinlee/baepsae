@@ -3129,6 +3129,34 @@ def scene_pc(R, files):
         assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "포트폴리오 만들기에 기록한 매수 계획이 다시 열렸어요"
         R.collect(page)
     R.check(page, S, "기록한 뒤 포트폴리오 만들기(뒤로 · 왼쪽 메뉴)는 처음 화면 — 기록한 계획의 샀어요는 다시 없어요", fresh_after_record)
+
+    def side_build_over_done():
+        # 기록했어요가 열린 채로 왼쪽 메뉴의 포트폴리오 만들기(같은 주소): 시트는 닫히고 처음 화면, 포트폴리오는 하나만 늘어요 (리뷰 2026-11-10)
+        page.locator('[data-deck="income"]').first.click()
+        see(page, C["build"]["s1"]["title"])
+        click_next(page)
+        see(page, C["build"]["s3"]["title"])
+        click_next(page)
+        see(page, C["build"]["s4"]["title"])
+        page.get_by_role("button", name="+1,000만").first.click()
+        page.locator('[data-ui-v2="y2022-methods"]').get_by_text("약 ").first.wait_for(state="visible")
+        click_next(page)
+        see(page, C["pick"]["title"])
+        click_next(page)
+        see(page, C["plan"]["stocks"])
+        before = len(page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"])
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        page.locator('[data-ui-v2="record-done"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="side-build"]').click(timeout=5000)
+        see(page, C["build"]["s0"]["title"])
+        assert page.locator('[data-ui="bottom-sheet"]').count() == 0, "기록했어요 시트가 남아 있어요"
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "기록한 매수 계획의 샀어요가 남아 있어요"
+        after = len(page.evaluate("JSON.parse(localStorage.getItem('baepsae2.v1'))")["decks"])
+        assert after == before + 1, (before, after)
+        R.collect(page)
+    R.check(page, S, "기록했어요가 열린 채로 왼쪽 메뉴 포트폴리오 만들기 → 시트 닫히고 처음 화면, 포트폴리오는 하나만 늘어요", side_build_over_done)
     ctx.close()
     srv.shutdown()
 

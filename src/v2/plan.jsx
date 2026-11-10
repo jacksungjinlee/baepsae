@@ -62,7 +62,7 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday, 
       {ok && <Rules load={load} rows={plan.rows} st={st} ds={ds} />}
       {ok && <DeckWarnings rows={plan.rows} st={st} />}
       <Footer />
-      {ok && plan.spent > 0 && (
+      {ok && plan.spent > 0 && !builder.recorded && (   // a recorded plan never offers 샀어요 again (Jack, 11월 10일)
         <ActionBar summary={fill(C.plan.left, { leftText: wonText(plan.left) })} action={C.plan.bought} onAction={() => setSheet("form")} />
       )}
       {ok && (

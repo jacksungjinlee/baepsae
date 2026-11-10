@@ -11,7 +11,8 @@
 //   they were) would lose a stock with the new data: a pick that is no longer a candidate, a holding of 가진 종목 넣기
 //   (at any of its steps) that is no longer in data.json, or 포트폴리오 만들기 no longer ready on the new data.
 // The draft ends the wait when it changes: back to the 기준 steps (the picks are drawn again from the new data), started
-// over, finished (기록했어요 → 홈, 매일 점검 시작하기), or edited so that nothing would be lost.
+// over, finished (기록했어요 → 홈 or → 포트폴리오, leaving 포트폴리오 만들기 after recording, 매일 점검 시작하기), or edited so that
+// nothing would be lost.
 import { deckState } from "./deckcalc.js";
 import { withDataShape } from "./engine.js";
 import { publishText, staleNow, REFETCH_GAP_MS } from "./load.js";
@@ -62,7 +63,7 @@ export function holdReason(ctx, next) {
 // - nothing held, or another screen;
 // - leaving this screen would not let it in (fresh-eyes review, 2026-11-08): the line says "저장하거나 나가면", so it shows
 //   only when both are true. Leaving keeps the drafts: holdReason off screen must find nothing (no pick, holding or 꼭 담을
-//   종목 the new data would lose, in either draft). Saving ends this screen's draft (기록했어요 → 홈, 매일 점검 시작하기 start
+//   종목 the new data would lose, in either draft). Saving ends this screen's draft (기록했어요 → 홈 or → 포트폴리오, 매일 점검 시작하기 start
 //   the next one fresh), so whenever leaving lets it in, saving does too;
 // - the held publish is stale itself by now (staleNow; review): it is not "새 데이터", and a return to view drops it.
 export function heldOn(ctx, next, now) {
