@@ -3113,6 +3113,22 @@ def scene_pc(R, files):
         assert new["name"] in card.inner_text(), (new["name"], card.inner_text()[:200])
         R.collect(page)
     R.check(page, S, "기록했어요가 열린 채로 왼쪽 메뉴 포트폴리오 한 번 → 방금 만든 포트폴리오 (어두운 바탕은 왼쪽 메뉴 오른쪽만)", side_menu_over_sheet)
+
+    def fresh_after_record():
+        # Jack, 11-10: 기록한 계획은 끝이에요 — 기록한 뒤 포트폴리오 만들기로 다시 가면(뒤로 · 왼쪽 메뉴) 처음 화면이고, 같은 계획의
+        # 샀어요는 없어요 (같은 포트폴리오를 두 번 기록하지 않아요)
+        page.go_back()                                                     # 왼쪽 메뉴로 떠난 뒤 뒤로: 그 주소(#portfolio/build)로 돌아와도
+        at(page, "portfolio/build")
+        see(page, C["build"]["s0"]["title"])
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "뒤로 돌아오니 기록한 매수 계획이 다시 열렸어요"
+        page.locator('[data-ui-v2="side-tabs"] button').filter(has_text=TABS["portfolio"]).first.click()
+        at(page, "portfolio")
+        page.locator('[data-ui-v2="side-build"]').click()                  # 왼쪽 메뉴의 포트폴리오 만들기도 처음 화면
+        at(page, "portfolio/build")
+        see(page, C["build"]["s0"]["title"])
+        assert page.get_by_role("button", name=C["plan"]["bought"]).count() == 0, "포트폴리오 만들기에 기록한 매수 계획이 다시 열렸어요"
+        R.collect(page)
+    R.check(page, S, "기록한 뒤 포트폴리오 만들기(뒤로 · 왼쪽 메뉴)는 처음 화면 — 기록한 계획의 샀어요는 다시 없어요", fresh_after_record)
     ctx.close()
     srv.shutdown()
 
