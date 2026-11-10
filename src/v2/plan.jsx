@@ -228,7 +228,7 @@ function RuleList({ rules, name, s }) {
           <RuleLine name={fill(R.bandText, { a: p1(band.bands[0] * 100), b: p1(band.bands[1] * 100), c: p1(band.bands[2] * 100) })} />
         </div>
       )}
-      <EpsFixNote show={epsFixFor(s) && roeShown} />
+      <EpsFixNote s={s} show={epsFixFor(s) && roeShown} />
     </div>
   );
 }

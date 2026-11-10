@@ -2296,10 +2296,10 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
               </div>
             </div>
           )}
-          {/* 2026-11-08 (Jack): 한국 종목의 ROE · PER (칸 · 성적표 · 같은 업종 표) 밑에 한 줄, 한국어 화면에서만 */}
-          <EpsFixLineLoaded show={lang === "ko" && clsOf(s) === "kr" && !s.custom
+          {/* 2026-11-08 (Jack): 한국 종목의 ROE · PER (칸 · 성적표 · 같은 업종 표) 밑에 한 줄 — 영어 화면은 영어 줄 (Jack 승인 2026-11-08) */}
+          <EpsFixLineLoaded show={clsOf(s) === "kr" && !s.custom
             && (s.per != null || x.roe != null || peers.some((p) => p.per != null || (p.x && p.x.roe != null)))}
-            codes={[s.t, ...peers.filter((p) => p.t !== s.t && clsOf(p) === "kr" && (p.per != null || (p.x && p.x.roe != null))).map((p) => p.t)]} />
+            codes={[s.t, ...peers.filter((p) => p.t !== s.t && clsOf(p) === "kr" && (p.per != null || (p.x && p.x.roe != null))).map((p) => p.t)]} one={s.t} lang={lang} />
           <button onClick={() => setEditing(!editing)} style={{ marginTop: 8, background: "none", border: "none", color: C.faint, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: FONT }}>{t("editData")}</button>
           {editing && (
             <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, background: C.bg, borderRadius: 12, padding: 10 }}>
@@ -2575,7 +2575,7 @@ function MetricsPanel({ lang, t, metrics, profile, setExplain, mode }) {
           </button>
         ))}
       </div>
-      <EpsFixLineLoaded show={lang === "ko" && !!metrics.perKr && metrics.perKr.length > 0 && shown.some(([id]) => id === "per")} codes={metrics.perKr} />
+      <EpsFixLineLoaded show={!!metrics.perKr && metrics.perKr.length > 0 && shown.some(([id]) => id === "per")} codes={metrics.perKr} lang={lang} />
       <div style={{ marginTop: 9, background: C.blueSoft, borderRadius: 12, padding: "9px 12px", fontSize: 12, fontWeight: 700, color: C.blueDeep, lineHeight: 1.6 }}>
         {lang === "ko"
           ? <>지금 예산 기준: 보통 해 <b>±{fmtMw(metrics.total * metrics.volP / 100, lang)}</b> 출렁{SHOW_ER && <> · 기대 <b>+{fmtMw(metrics.total * metrics.expRet / 100, lang)}/년</b></>}</>

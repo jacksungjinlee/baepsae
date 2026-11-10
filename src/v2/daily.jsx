@@ -107,7 +107,7 @@ export function StatusLines({ x, names, onConfirm }) {
       <DividendAnswers x={x} onConfirm={onConfirm} />
       {views.map(([r, v], i) => <Line key={i} code={r.code} level={r.level} {...v} first={i === 0 && !x.divDrops.length} />)}
       {/* 2026-11-08 (Jack): a Korean ROE is from the same net income as PER/EPS (fixnote.jsx) */}
-      <EpsFixNote show={epsFixFor(x) && views.some(([r]) => r.code === "roeUnder")} />
+      <EpsFixNote s={x} show={epsFixFor(x) && views.some(([r]) => r.code === "roeUnder")} />
     </div>
   );
 }
@@ -171,7 +171,7 @@ export function HoldingRules({ x, names }) {
             note={bandMiss ? fill(C.daily.missing, { item: bandMiss }) : null} />
         </div>
       )}
-      <EpsFixNote show={epsFixFor(x) && roeShown} />
+      <EpsFixNote s={x} show={epsFixFor(x) && roeShown} />
     </div>
   );
 }

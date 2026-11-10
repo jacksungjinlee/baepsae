@@ -48,5 +48,9 @@ export function warnings(s, co) {
   const icrFlag = flags.find((f) => f.code === "icr");
   const icrCf = !!icrFlag && !(icrFlag.x < 0 || Object.is(icrFlag.x, -0)) && !!co.flSrc && typeof co.flSrc === "object" &&
     co.flSrc.icr === "cf";
-  return { allRan, partial, icrCf, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
+  // The DART re-read (v19.1f, Jack 2026-11-08): a company that paid no interest is never warned about 이자보상배율 (there is
+  // no interest to cover, even with an operating loss). The check ran (icr stays in flRan, no flag) and corp.json flSrc.int0
+  // is true. "재무 경고 0개" stays true for it, but nothing may claim its 이자보상배율 is 1배 이상 (company.warnChips).
+  const int0 = !!co.flSrc && typeof co.flSrc === "object" && co.flSrc.int0 === true;
+  return { allRan, partial, icrCf, int0, ran, na, sub, flags, fy: num(co.fy), quarter: q ? { y: Number(q[1]), q: Number(q[2]) } : null };
 }

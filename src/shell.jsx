@@ -7,7 +7,8 @@ import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, loadCorpOnce, krGrowthScoreLine, loadDataPublishFor, corpStaleArgs } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
-import { EpsFixLine, IcrOffLine } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, stmtCurLineText } from "./fixnote.jsx";
+import { stmtCurOf, stmtNotWon } from "./repair.js";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
@@ -102,13 +103,19 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
   // 줄었으면 '감소했어요' · 'shrank' 옆에 마이너스 부호 없이, 보이는 숫자가 0.0 이면 '거의 변하지 않았어요' (data.js krGrowthScoreLine).
   const growthLine = krGrowthScoreLine(c.g3, c.rev, en);
   const lines = [];
-  const perShown = c.per != null && !!sec.perQ;     // the PER line below (2026-11-08: then the PER/EPS line, Korean screen only)
+  const perShown = c.per != null && !!sec.perQ;     // the PER line below (2026-11-08: then the PER/EPS line, in English on the English screen)
   if (c.per != null && sec.perQ) lines.push(en
     ? `P/E ${c.per}x vs. industry median ${sec.perQ[1]}x — ${c.per > sec.perQ[1] ? "priced above peers; worth asking what justifies the premium." : "priced below peers; could be cheap, or the market doubts the growth."}`
     : `PER ${c.per}배 — 업종 중간 ${sec.perQ[1]}배보다 ${c.per > sec.perQ[1] ? "높아요. 시장의 기대가 큰 만큼 근거를 물을 자리예요." : "낮아요. 싸다는 뜻일 수도, 시장이 의심한다는 뜻일 수도 있어요."}`);
   else if (c.pbr != null && sec.pbrQ) lines.push(en
     ? `P/B ${c.pbr}x — ${c.pbr > sec.pbrQ[1] ? "above" : "below"} the industry median of ${sec.pbrQ[1]}x.`
     : `PBR ${c.pbr}배 — 업종 중간 ${sec.pbrQ[1]}배 대비 ${c.pbr > sec.pbrQ[1] ? "높은" : "낮은"} 평가예요.`);
+  // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(stmtCur)는 적자도 자료 없음도 아니에요. 한국어
+  // 화면은 승인된 통화 줄(다른 곳과 같은 글), 영어 화면은 승인된 영어 줄 (Jack, 2026-11-08 전달: FIX_STMT_CUR_EN).
+  else if (stmtNotWon(c)) {          // 읽을 수 없는 코드("XXX")면 통화 줄 없이 (console 경고), 맞지 않는 문장도 없이
+    const t = stmtCurLineText(c, en ? "en" : "ko");
+    if (t) lines.push(<span data-fix="stmt-cur" data-cur={stmtCurOf(c)}>{t}</span>);
+  }
   else lines.push(en ? "Loss-making or no financial data yet." : "적자이거나 재무 데이터가 아직 없어요.");
   if (c.r3 != null && c.r3 >= 15 && niYoY != null && niYoY <= 5) lines.push(en
     ? `Up +${c.r3}% in 3 months while annual earnings stayed flat — the move may be sentiment, not fundamentals.`
@@ -128,9 +135,9 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
       </div>
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 6 }}>
         {lines.map((l, i) => <div key={i} style={{ fontSize: 12, color: C.ink, lineHeight: 1.6 }}>{l}</div>)}
-        <EpsFixLine corp={corp} cos={[c]} show={!en && perShown} style={{ marginTop: 0 }} />
+        <EpsFixLine corp={corp} cos={[c]} show={perShown} lang={lang} style={{ marginTop: 0 }} />
         {flagN > 0 && <div style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>{en ? `${flagN} financial caution flag${flagN > 1 ? "s" : ""} to review` : `짚고 갈 재무 신호 ${flagN}개가 있어요`}</div>}
-        <IcrOffLine co={c} show={!en && flagN > 0} style={{ marginTop: 0 }} />
+        <IcrOffLine co={c} show={flagN > 0} lang={lang} style={{ marginTop: 0 }} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 7, marginTop: 12 }}>
         <button onClick={() => { gcEvent("gate-diag"); onQuickDiag(c.t); }}

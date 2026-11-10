@@ -15,7 +15,7 @@ import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
 import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
-import { publishGate, discAfter, discFits, discRetryDue } from "./hold.js";
+import { publishGate, discAfter, discFits, discRetryDue, heldOn, discBehind } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
 import { Home } from "./today.jsx";
 import { Why } from "./why.jsx";
@@ -29,7 +29,7 @@ import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
-import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
+import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
 
 // A rendering error never leaves a blank page: the approved load-failure message is shown instead.
@@ -67,6 +67,10 @@ export function App({ source }) {
   const [importer, setImporter] = useState(newImporter);   // v19.3d 가진 종목 넣기 (#portfolio/import): kept while the user moves around
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 홈 (Part E)
   const [disc, setDisc] = useState(() => ({ status: source.loadDisc ? "idle" : "none" }));   // v19.1a 공시 tab (disc.json)
+  // 2026-11-08 (Jack): the later publish held under a draft (hold.js publishGate onHold), or null: the draft's screen says
+  // "새 데이터가 들어왔어요. …" instead of its stale line while it waits (heldOn, below).
+  const [heldNext, setHeldNext] = useState(null);
+  const [heldTick, setHeldTick] = useState(0);            // bumped when the held publish's own stale check can change
   const router = useRouter();
   const { loc } = router;
   // v19.3c Part E: the first-visit guide — null, { stage: "welcome" } on 홈, or { stage: 1 · 2 · 3 } on 포트폴리오 만들기's
@@ -141,6 +145,7 @@ export function App({ source }) {
     gateRef.current = publishGate({
       getLoad: () => loadRef.current,
       ctx: () => holdCtxRef.current,
+      onHold: (l) => setHeldNext(l),
       put: (r) => {
         // its stale check as of now, not as of the fetch (a publish held for days must not show as fresh: round-2 review)
         setLoad(refreshFresh(adoptLoad(r.load), Date.now()));
@@ -188,6 +193,30 @@ export function App({ source }) {
       window.removeEventListener("pageshow", onBack);
     };
   }, [watchable]);
+
+  // #90 review follow-up (2026-11-08): on every load, not only after a return's fetch, a disc.json from an older publish
+  // than the data on screen that would read as current (hold.js discBehind: the site's CDN just after a deploy, or the
+  // phone's offline copy) is not shown: the screens get the load-failure message at once (discView), and the state becomes
+  // the failure with its one more try 10 minutes on (discRetryDue), as after a fetch. Also when the data arrives after it
+  // (a company page opened by its address loads disc.json while the data is still loading).
+  const discOld = disc.status === "ok" && discBehind(disc.data, load);
+  const discView = useMemo(() => (discOld ? { status: "fail" } : disc), [discOld, disc]);
+  useEffect(() => {
+    if (!discOld) return;
+    console.warn("[v2] disc.json not shown: it is from " + disc.data.publishedAt + ", older than the data on screen (" + load.data.publishedAt
+      + "); the disclosures show the load-failure message" + (discRetried.current ? " (it was the one more try: no more)"
+        : "; it is tried once more on a return to view at least 10 minutes from now"));
+    setDisc((d) => (d === disc ? { status: "fail", older: Date.now() } : d));
+  }, [discOld, disc]);
+
+  // The held publish can go stale itself while it waits (review, 2026-11-08): heldHere is worked out again then.
+  useEffect(() => {
+    if (!heldNext) return undefined;
+    const wait = nextFreshCheck(heldNext, Date.now());
+    if (wait == null) return undefined;
+    const id = setTimeout(() => setHeldTick((n) => n + 1), wait);
+    return () => clearTimeout(id);
+  }, [heldNext, heldTick]);
 
   // v19.1a: the interim dividend split guard's count, once the data is in (company.jsx logSplitGuard; no silent hiding).
   useEffect(() => { logSplitGuard(load); }, [load]);
@@ -359,6 +388,14 @@ export function App({ source }) {
   // A later publish held under a draft (hold.js) goes on screen once the user leaves it or the draft no longer needs it.
   holdCtxRef.current = { onBuild: inBuild, onImport: inImport, builder, importer };
   useEffect(() => { gateRef.current.check(); }, [inBuild, inImport, builder, importer]);
+  // The held publish's line (hold.js heldOn): on 후보 고르기 · 매수 계획 or 가진 종목 넣기 while a later publish waits for this
+  // screen's work, and only when saving or leaving would let it in and it is not stale itself. Never with nothing held;
+  // gone once it is on screen (onHold(null)). Not while 소개 covers the screen. Worked out when the screen, a draft or the
+  // held publish changes (review: not on every render: heldOn can read the whole new data.json), and again when the held
+  // publish's own stale check can change (heldTick, from load.js nextFreshCheck on it).
+  const heldHere = useMemo(() => !!heldNext && !loc.about
+    && !!heldOn({ onBuild: inBuild, onImport: inImport, builder, importer }, heldNext, Date.now()),
+  [heldNext, heldTick, inBuild, inImport, builder, importer, loc.about]);
   // The steps live on the 기준 step: leaving 포트폴리오 만들기 (the phone's back, a tab, 소개) ends the guide as seen. With no
   // 배당 card to light (the data failed to load, or 포트폴리오 만들기 is not ready) it ends quietly.
   // The same when 포트폴리오 만들기 leaves its 기준 step by a way the overlay does not cover (a screen reader's 다음,
@@ -404,11 +441,11 @@ export function App({ source }) {
         onRules={(id) => router.go("portfolio", "rules/" + id)} />;
     }
     if (tab === "stocks" && loc.code && !loc.about) {
-      return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={disc} nav={coNav} />;
+      return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;
     }
     if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={disc} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={discView} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
@@ -430,7 +467,11 @@ export function App({ source }) {
             <div data-ui-v2="screen" data-route={tab + (loc.sub ? "/" + loc.sub : "")} style={{ ...tall, background: COLOR.page, ...(loc.about ? { display: "none" } : {}) }}
               aria-hidden={loc.about ? true : undefined}>
               <ErrorBoundary name="app">
-                <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
+                {/* The held publish's line (HeldContext) is for the screen only: the ☰ menu and the PC left menu keep their date
+                    line as it is (Jack has not decided on them, review 2026-11-08). */}
+                <HeldContext.Provider value={heldHere}>
+                  <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
+                </HeldContext.Provider>
                 {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
                   tabH={ownBar ? 0 : TAB_H} />}
                 {!wide && !ownBar && <TabBar value={tab} onChange={go} />}

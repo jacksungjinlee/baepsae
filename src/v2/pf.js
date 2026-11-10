@@ -22,7 +22,7 @@ import { R2022 } from "./y2022.js";
 import { heldQty, byAmount, importedUnits } from "./held.js";
 import { dayState } from "./rules.js";
 import { warnings } from "./warn.js";
-import { icrOffShown } from "./fix.js";
+import { icrOffShown, stmtCurFor } from "./fix.js";
 
 export const LIMITS = { stock: 30, ind: 35 };          // Part G defaults (%), editable per portfolio (store.js limits)
 export const LOOSE_TOP = 50;                            // 넉넉하게 has no cut: the grouping and the 내 기준 rule use 50%
@@ -240,8 +240,10 @@ export function pfState(deck, ctx, stocks) {
   // 4. 재무 경고 0개 (Korean holdings with every check run; any US holding or missing check makes it unknown)
   // icrOff (2026-11-08, Jack; say-why audit row 7): an unknown Korean holding whose 이자보상배율 check is switched off
   // (corp.json flWhy.icr "off"): the tile says why under 확인하지 못했어요.
+  // stmtCur (2026-11-08, Jack): an unknown Korean holding whose statements are not in won (corp.json stmtCur, readable code):
+  // the tile says why with the approved currency line (the first such code; fix.js stmtCurFor).
   const flagged = [], unknown = [];
-  let offN = 0;
+  let offN = 0, cur = null;
   for (const r of view.rows) {
     const co = r.t && ctx.coByT ? ctx.coByT.get(r.t) || null : null;
     const w = warnOf(r.s, co);
@@ -249,9 +251,10 @@ export function pfState(deck, ctx, stocks) {
     else if (w === "unknown") {
       unknown.push(r.nk);
       if (r.s && r.s.cls === "kr" && icrOffShown(co)) offN += 1;
+      if (!cur) cur = stmtCurFor(r.s, co);
     }
   }
-  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0 });
+  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0, stmtCur: cur });
   const kept = rules.filter((x) => x.state === "ok").length;
   const checked = rules.filter((x) => x.state !== "unknown").length;
   return { ok: true, pxDate: ctx.pxDate || null, view, stats, ind, rules, kept, checked, unchecked: rules.length - checked,
@@ -361,12 +364,19 @@ export function range2022(view, R = R2022) {
 
 // ---------------- 1년 배당 (Part G 6) ----------------
 // engine.annualDividend over the held quantities (Korea: the PR #49 rules; US: Yahoo's current dividend rate × value).
-// A stock added by name only has no data: it counts as unknown. -> { won, unknown, unchecked, us }
+// A stock added by name only has no data: it counts as unknown. -> { won, unknown, unchecked, us, usGone }
+// say-why (Jack, 2026-11-08): us (rpt.divUs, "미국 종목은 최근 배당을 1년치로 환산한 값이에요.") only when a US holding whose
+// dividend is known is in the total (매수 계획's rule, engine.usDividendCounted), never for a US holding whose dividend is
+// unknown. A US holding here is a dollar-priced one (usdOf, as everywhere in 점검: 379800 is cls "us" but a won-priced KRX
+// fund). usGone: the US holdings with no dividend data (no dy: annualDividend leaves them out, 0원), named by their own
+// line (rpt.divUsGone); unknown no longer counts them, so the 0원 line (plan.divUnknown) never names one twice.
 export function dividendYear(view, fx, coByT) {
   const rows = view.rows.filter((r) => r.s && r.qty > 0 && r.value > 0).map((r) => ({ s: r.s, shares: r.qty, cost: r.value }));
   const d = annualDividend(rows, fx, coByT);
   const extra = view.rows.filter((r) => !r.s || !(r.value > 0)).length;
-  return { ...d, unknown: d.unknown + extra, us: rows.some((r) => usdOf(r.s)) };
+  const usd = rows.filter((r) => usdOf(r.s) && r.s.cls !== "kr");
+  const usGone = usd.filter((r) => num(r.s.dy) == null).length;
+  return { ...d, unknown: d.unknown - usGone + extra, us: usd.some((r) => num(r.s.dy) != null), usGone };
 }
 
 // ---------------- 비중을 바꿔 보면 (Part G 7) ----------------

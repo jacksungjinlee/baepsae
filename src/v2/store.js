@@ -870,8 +870,13 @@ function restoreMoved(key, cur, raw, today) {
   if (!used.length) return { data: null, notice: false, unmerged };
   const base = normal(cur, today) || cur;
   const changed = canon(merged) !== canon(base);
-  // only a portfolio's limitsTs changed (the same limits values, a later time): written back, but nothing to say (review 5)
-  const noTs = (d) => canon({ ...d, decks: (d.decks || []).map((x) => { if (!plainObj(x)) return x; const { limitsTs: _t, ...r } = x; return r; }) });
+  // only a portfolio's limitsTs changed (the same limits values, a later time): written back, but nothing to say (review 5).
+  // The same for the first-visit flag guideSeen (Jack, 2026-11-08): this device's flag, not a record — a copy that differs
+  // only in it is merged quietly (never "다른 창에서 저장한 내용과 기록을 합쳤어요…").
+  const noTs = (d) => {
+    const { guideSeen: _g, ...top } = d;
+    return canon({ ...top, decks: (d.decks || []).map((x) => { if (!plainObj(x)) return x; const { limitsTs: _t, ...r } = x; return r; }) });
+  };
   const notice = (changed && noTs(merged) !== noTs(base)) || used.some(([, d]) => droppedFrom(d, merged));
   if (changed) merged = stamped(merged);
   const text = JSON.stringify(merged);
