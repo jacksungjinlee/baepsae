@@ -259,14 +259,10 @@ jobs:
           # 관문을 통과한 바로 그 네 파일로 봐요 (영수증이 없거나 다르면 멈춰요)
           sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"
           # 셋 다 끝까지 돌려 모든 결과를 보여 주고, 하나라도 실패면 빨갛게 끝나요 (영수증 없음 → 발행 없음)
-          # [임시 · 시험용 커밋 — 되돌려요] 관문이 본 적 없는 고장 난 복사본(삼성전자를 뺀 data.json)으로 검사해요: 화면 검사가 막아야 해요
-          mkdir -p "$RUNNER_TEMP/broken"
-          cp data.json corp.json disc.json macro.json "$RUNNER_TEMP/broken/"
-          python3 -c "import json,os; p=os.path.join(os.environ['RUNNER_TEMP'],'broken','data.json'); d=json.load(open(p,encoding='utf-8')); d['stocks']=[s for s in d['stocks'] if s.get('t')!='005930']; json.dump(d,open(p,'w',encoding='utf-8'),ensure_ascii=False)"
           failed=()
           for t in real_data_check smoke_launch smoke_app; do
             echo "::group::$t"
-            if python "tests/$t.py" --data "$RUNNER_TEMP/broken" 2>&1 | tee "$RUNNER_TEMP/screen-$t.log"; then ok=통과; else ok=실패; failed+=("$t"); fi
+            if python "tests/$t.py" --data . 2>&1 | tee "$RUNNER_TEMP/screen-$t.log"; then ok=통과; else ok=실패; failed+=("$t"); fi
             echo "::endgroup::"
             line="· $t: $ok · $(sed -n -E '/^[0-9]+ \/ [0-9]+ 통과$/p' "$RUNNER_TEMP/screen-$t.log" | tail -1)"
             echo "$line"
