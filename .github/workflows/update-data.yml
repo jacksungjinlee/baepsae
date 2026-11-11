@@ -248,11 +248,12 @@ jobs:
           cache: npm
 
       # smoke_launch 가 화면 문구를 읽을 때 esbuild(node_modules)를 써요 → CI 와 같은 설치 (package-lock.json · requirements-dev.txt 그대로).
-      # npm · pip 는 보관본을 먼저 써요 (--prefer-offline · 위 setup-python 의 pip 보관본).
+      # npm · pip 는 보관본을 먼저 써요 (--prefer-offline · 위 setup-python 의 pip 보관본). npm 패키지의 설치 스크립트는 돌리지 않아요
+      # (--ignore-scripts: 이 job 은 저장소에 쓸 수 있어서, 남의 설치 스크립트를 돌릴 일을 줄여요. esbuild 는 스크립트 없이도 돌아요).
       - name: 화면 검사 도구 설치 (package-lock.json · requirements-dev.txt 그대로)
         timeout-minutes: 10
         run: |
-          npm ci --prefer-offline
+          npm ci --prefer-offline --ignore-scripts
           pip install -r requirements-dev.txt
 
       # 열쇠의 v1: 보관본이 망가졌으면 이 숫자를 올려 새로 받아요 (docs/RUNBOOK.md)

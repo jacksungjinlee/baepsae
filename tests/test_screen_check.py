@@ -27,7 +27,8 @@ LIVE = ("data.json", "corp.json", "disc.json", "macro.json")
 SCREEN = "발행 전 화면 검사 (오늘 데이터 · 헤드리스 크롬)"
 GATE = "발행 관문 (validate_data.py)"
 TOOLS = ("real_data_check", "smoke_launch", "smoke_app")
-CACHE_KEY = "playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}"
+# 보관본 열쇠: 판 숫자(v1, v2 …)는 올릴 수 있어요 (보관본이 망가졌을 때 — docs/RUNBOOK.md). 다만 모든 곳이 같은 열쇠여야 해요.
+CACHE_KEY = re.compile(r"playwright-v\d+-ubuntu-24\.04-\$\{\{ hashFiles\('requirements-dev\.txt'\) \}\}")
 TOOLS_STEP = "화면 검사 도구 설치 (package-lock.json · requirements-dev.txt 그대로)"
 BROWSER_STEP = "브라우저 · 한글 글꼴 준비 (보관본 그대로 · 없을 때만 내려받기 · apt 없음)"
 FONT_SHA = "3090ccde0442bb347aa7685d9ba8b17436a60682df6e8f92a9a670de14056e22"
@@ -212,6 +213,7 @@ def test_publishing_steps_stop_before_writing_anything_without_the_screen_receip
 
 # ── 브라우저: 보관본에서, apt 없이 ──
 def test_daily_run_and_ci_get_the_browser_from_the_cache_and_never_use_apt():
+    keys = set()
     for name in ("update-data.yml", "ci.yml"):
         wf = load(name)
         with open(os.path.join(WF, name), encoding="utf-8") as f:
@@ -226,8 +228,8 @@ def test_daily_run_and_ci_get_the_browser_from_the_cache_and_never_use_apt():
             st = j["steps"]
             caches = [s for s in st if s.get("uses", "").startswith("actions/cache") and s["with"]["path"] == "~/.cache/ms-playwright"]
             for c in caches:
-                assert c["with"] == {"path": "~/.cache/ms-playwright", "key": CACHE_KEY}, (name, k)   # 같은 보관본을 나눠 써요
-                assert "restore-keys" not in c["with"]                        # 다른 판의 브라우저를 받아 쓰지 않아요
+                assert set(c["with"]) == {"path", "key"} and CACHE_KEY.fullmatch(c["with"]["key"]), (name, k)   # restore-keys 없음: 다른 판의 브라우저를 받아 쓰지 않아요
+                keys.add(c["with"]["key"])
             if name == "ci.yml":                                              # CI: 한 단계 (job 이 성공으로 끝나면 보관 · 단계의 if 는 CI 에서 못 써요)
                 assert [c["uses"] for c in caches] == ["actions/cache@v6"], (name, k)
             else:                                                             # 매일 실행: 꺼내기 → 준비 → (없던 실행만) 검사 전에 보관
@@ -238,6 +240,7 @@ def test_daily_run_and_ci_get_the_browser_from_the_cache_and_never_use_apt():
             assert lines[-2:] == ["python -m playwright install chromium", "bash tests/fonts/install.sh"], (name, k)   # 브라우저, 그리고 한글 글꼴
             if name != "ci.yml":
                 assert installs[0] < st.index(caches[1]) < names(st).index(SCREEN)                  # 검사가 실패해도 브라우저는 이미 보관돼 있어요
+    assert len(keys) == 1, keys                                               # 매일 실행과 CI 의 모든 곳이 같은 보관본을 나눠 써요
     # 보관본 열쇠는 Playwright 판이 바뀌면 바뀌어요: 판은 requirements-dev.txt 에 정확한 숫자로
     with open(os.path.join(ROOT, "requirements-dev.txt"), encoding="utf-8") as f:
         assert re.search(r"^playwright==\d+\.\d+\.\d+$", f.read(), re.M)
@@ -251,7 +254,10 @@ def test_daily_run_installs_the_same_tools_as_ci():
     assert node(update_steps())["node-version"] == node(load("ci.yml")["jobs"]["checks"]["steps"])["node-version"]
     assert node(update_steps())["cache"] == "npm"                              # npm 보관본 먼저 (--prefer-offline)
     lines = [ln.strip() for ln in step(TOOLS_STEP)["run"].strip().splitlines()]
-    assert lines == ["npm ci --prefer-offline", "pip install -r requirements-dev.txt"]
+    # --ignore-scripts: 저장소에 쓸 수 있는 job 에서는 npm 패키지의 설치 스크립트를 돌리지 않아요 (esbuild 는 없어도 돌아요)
+    assert lines == ["npm ci --prefer-offline --ignore-scripts", "pip install -r requirements-dev.txt"]
+    for j in ("checks", "smoke_app", "smoke_v2", "smoke_rest"):               # CI 도 npm 보관본을 써요 (main 의 CI 가 보관본을 채워 둬요)
+        assert node(load("ci.yml")["jobs"][j]["steps"])["cache"] == "npm", j
     py = next(s for s in update_steps() if s.get("uses", "").startswith("actions/setup-python"))["with"]
     assert py["cache"] == "pip" and py["cache-dependency-path"].split() == ["requirements.txt", "requirements-dev.txt"]
     # 세 검사 스크립트가 node_modules 를 쓰는지: 쓰는 것이 하나라도 있으면 npm ci 가 꼭 있어야 해요 (지금: copytrace.py 의 esbuild)
@@ -288,7 +294,8 @@ def test_test_font_is_the_pinned_file_and_installs_without_a_download(tmp_path):
     with open(bad / "PretendardVariable.ttf", "ab") as f:
         f.write(b"x")
     r = subprocess.run(["bash", str(bad / "install.sh")], env={"PATH": os.environ["PATH"], "HOME": str(tmp_path / "h2")}, capture_output=True, text=True)
-    assert r.returncode != 0
+    assert r.returncode != 0 and "FAILED" in r.stdout + r.stderr, r.stdout + r.stderr          # sha256 이 달라서 멈춘 거예요
+    assert not (tmp_path / "h2" / ".local" / "share" / "fonts" / "baepsae-tests").exists()       # 깔기 전에 멈춰요
 
 
 # ── tests/real_data_check.py ──
@@ -388,22 +395,21 @@ def test_real_data_check_passes_on_the_repository_data_when_it_is_there():
 
 
 # ── tests/smoke_launch.py --data · tests/smoke_app.py --data: 그 폴더의 파일만 ──
+# 여기서는 --data 의 행동만 봐요 (옵션 없이 돌 때의 데이터는 이 테스트가 정하지 않아요: #104 가 고정 데이터로 옮겨요).
+def stopped_before_any_check(r, path):
+    """실패로 끝났고, 검사 줄(PASS · 통과)이 하나도 없고, 못 읽은 그 파일의 경로를 말해요."""
+    out = r.stdout + r.stderr
+    return r.returncode != 0 and "PASS" not in r.stdout and "통과" not in r.stdout and path in out
+
+
 def test_smoke_launch_data_option_reads_only_that_folder(tmp_path):
-    with open(os.path.join(ROOT, "tests", "smoke_launch.py"), encoding="utf-8") as f:
-        src = f.read()
-    assert 'variants = ("repo",) if args.data else ("fixtures", "repo")' in src      # 옵션이 없으면 예전 그대로 두 데이터 모두
-    assert "shutil.copy(os.path.join(DATA_DIR, f), d)" in src and "DATA_DIR = ROOT" in src
-    # 저장소의 파일은 옵션이 없을 때만 읽어요 (use_root): --data 면 그 폴더만
-    assert src.count("real_data_missing()") == 1 and "def use_root():" in src
-    assert "    if args.data:\n        use_data(args.data)\n    else:\n        use_root()\n" in src
     pytest.importorskip("playwright.sync_api")
     if not os.path.exists(os.path.join(ROOT, "node_modules", ".bin", "esbuild")):
         pytest.skip("node_modules 가 없어요 (npm ci 전) — smoke_launch 는 시작할 수 없어요")
     script = os.path.join(ROOT, "tests", "smoke_launch.py")
-    # 폴더에 파일이 없으면 브라우저를 열기 전에 멈춰요 (저장소의 파일로 조용히 바꾸지 않아요): 그 폴더의 data.json 을 못 찾았다는 오류
+    # 폴더에 파일이 없으면 브라우저를 열기 전에 멈춰요 (저장소의 파일 · 고정 시험 데이터로 조용히 바꾸지 않아요)
     r = subprocess.run([sys.executable, script, "--data", str(tmp_path)], capture_output=True, text=True)
-    assert r.returncode != 0 and "PASS" not in r.stdout, r.stdout + r.stderr[-400:]
-    assert "FileNotFoundError" in r.stderr and os.path.join(str(tmp_path), "data.json") in r.stderr, r.stderr[-400:]
+    assert stopped_before_any_check(r, os.path.join(str(tmp_path), "data.json")), r.stdout + r.stderr[-400:]
     # 2.0 이 쓰는 항목이 빠진 데이터('준비 중' · '불러오지 못했어요' 화면이 뜰 데이터)는 발행 전 검사에서 통과가 아니에요
     d = fixture_dir(tmp_path, lambda f: [s.pop("d1", None) for s in f["data.json"]["stocks"]])
     r = subprocess.run([sys.executable, script, "--data", d], capture_output=True, text=True)
@@ -415,5 +421,4 @@ def test_smoke_app_data_option_reads_only_that_folder(tmp_path):
     고정 시험 데이터)로 조용히 바꾸지 않고, 브라우저를 열기 전에 멈춰요. (#104 가 기본 데이터를 고정본으로 바꿔도 --data 는 그대로여야 해요.)"""
     pytest.importorskip("playwright.sync_api")
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "smoke_app.py"), "--data", str(tmp_path)], capture_output=True, text=True)
-    assert r.returncode != 0 and "PASS" not in r.stdout and "통과" not in r.stdout, r.stdout + r.stderr[-400:]
-    assert "FileNotFoundError" in r.stderr and os.path.join(str(tmp_path), "data.json") in r.stderr, r.stderr[-400:]
+    assert stopped_before_any_check(r, os.path.join(str(tmp_path), "data.json")), r.stdout + r.stderr[-400:]

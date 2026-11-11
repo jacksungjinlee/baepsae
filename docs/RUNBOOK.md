@@ -28,21 +28,25 @@ serve the `docs/` folder (two of its files must answer "not found").
   - `tests/smoke_launch.py --data .`: 2.0 on the four files exactly as they will be published (first visit, the
     portfolio builder, a Korean company page, a saved portfolio, the way into the old app);
   - all of `tests/smoke_app.py --data .`: the old app's checks on today's stocks and numbers. These scenes first set
-    the publish time and due dates to "just now", so they do not check the dates users will see; the gate checks those.
+    the publish time and due dates to "just now" (and fill in a missing price date or built-in fund row), so they do
+    not check the dates users will see; the gate checks those.
 
   If any of the three fails, the run ends red and publishes nothing, exactly like a gate failure: yesterday's data stays
   up. Nothing retries inside the run; the next scheduled start is the retry. The run's summary page has a "발행 전 화면
   검사" section with the three results. Each step has a time limit (10, 10 and 30 minutes); running over is a failure.
+  A normal check takes about 3 minutes.
   - The check comes after the DART cache is saved, so a held publish never turns the next start into a full-DART run.
   - The browser comes from GitHub's cache (`playwright-v1-ubuntu-24.04-…`), never from Ubuntu's package server. A run
     that finds no cache downloads it from Playwright's server and saves it before the check starts. The Korean font
     the tests need is a file in the repo (`tests/fonts`). If the browser cannot start, the publish is held.
-  - If the cached browser itself is broken (the step "브라우저 · 한글 글꼴 준비" fails, or no scene can open a page):
-    raise `v1` to `v2` in the cache key in `update-data.yml` and `ci.yml` (a small PR), so a fresh copy is downloaded.
-  - `smoke_app` relies on a few stocks being in the data that the gate's must-have list does not name: 두산밥캣
-    (241560) in `corp.json`, Apple, Microsoft and Nvidia, and at least one foreign company with a 9xxxxx code. If one
-    of them leaves the data, the check fails and publishing is held until the test is changed in a PR (Jack's yes).
-    Never skip the check to get the data out.
+  - If the cached browser itself is broken (no scene can open a page although the install step passed): raise `v1`
+    to `v2` in the cache key, in all five places (`update-data.yml` twice, `ci.yml` four times; a small PR), so a fresh
+    copy is downloaded. The tests accept any version number as long as every place uses the same one, so no test edit
+    is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's font setup changed:
+    fix `tests/fonts/install.sh` in a PR.
+  - `smoke_app` relies on two things in the data that the gate does not guarantee: 두산밥캣 (241560) in `corp.json`
+    and at least one foreign company with a 9xxxxx code. If one of them leaves the data, the check fails and
+    publishing is held until the test is changed in a PR (Jack's yes). Never skip the check to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.

@@ -10,9 +10,11 @@ mkdir -p "$dest"
 cp "$here/PretendardVariable.ttf" "$dest/"
 fc-cache -f "$dest"
 got="$(fc-match -f '%{file}' 'Pretendard Variable')"
+fam="$(fc-match -f '%{family}' 'Pretendard Variable')"
 ko="$(fc-list ':charset=AC00' file | grep -c 'baepsae-tests/PretendardVariable.ttf' || true)"
-echo "· 한글 글꼴: 'Pretendard Variable' → $got · 한글(가)을 가진 글꼴 파일로 인식 $ko"
-if [ "$got" != "$dest/PretendardVariable.ttf" ] || [ "$ko" -lt 1 ]; then
+echo "· 한글 글꼴: 'Pretendard Variable' → $got ($fam) · 한글(가)을 가진 글꼴 파일로 인식 $ko"
+# 'Pretendard Variable' 을 찾으면 Pretendard 가 나와야 하고 (이 기계에 같은 글꼴이 이미 깔려 있어도 괜찮아요), 방금 깐 파일이 한글 글꼴로 잡혀야 해요
+if [[ "$fam" != *"Pretendard Variable"* ]] || [ "$ko" -lt 1 ]; then
   echo "!! 시험용 한글 글꼴(Pretendard)이 깔리지 않았어요 → 화면 검사를 믿을 수 없어요"
   exit 1
 fi

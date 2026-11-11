@@ -7,4 +7,4 @@ Pretendard from a CDN, and the tests block every outside address, so its Korean 
 CI used to get fallback fonts from Ubuntu's package server (apt, `playwright install --with-deps`); that server's outage
 on 2026-11-11 stopped CI for hours. tests/fonts/install.sh puts this file where the browser finds it, with no download.
 This is the same font the site serves (fonts/pretendard, as woff2 pieces) — browsers only take system fonts as ttf/otf.
-The site does not publish or load this file.
+No page loads this file. The site deploy leaves tests/ out (tools/assemble_site.py, since PR #105).
