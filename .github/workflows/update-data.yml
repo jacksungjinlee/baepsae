@@ -140,6 +140,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          # 2026-11-12: 발행 전 화면 검사 도구(requirements-dev.txt)도 같은 보관본에서 (CI 와 같은 설정)
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: 라이브러리 설치
         run: |
@@ -228,6 +232,83 @@ jobs:
           # v17.6: 여기까지 왔으면 PASS 예요 (실패하면 위 줄에서 단계가 멈춰요). 통과한 네 파일의 영수증 — 커밋 단계가 확인해요.
           sha256sum data.json corp.json disc.json macro.json > "$RUNNER_TEMP/gate-pass.sha256"
 
+      # ── 발행 전 화면 검사 (Jack 2026-11-11) ──
+      # 관문(숫자 검사)을 통과한 오늘 데이터로 앱을 진짜 브라우저에서 열어 봐요. 실패하면 이 실행은 발행하지 않아요: 관문이 실패한 날과
+      # 같은 모습이에요 (빨간 실행 · 사이트에는 어제 데이터 그대로). 다시 시도해서 빨강을 초록으로 바꾸지 않아요 — 다음 정해진 시각 실행이 다시 해요.
+      # 시험 실행(dry_run)에서도 돌아요 (발행만 하지 않아요).
+      # 이 단계들은 'DART 캐시 저장' 뒤에 있어요: 여기서 멈춰도 오늘 받은 DART 결과는 이미 보관돼서, 다음 실행은 그 보관본으로 시작해요
+      # (전체 DART 실행이 되지 않아요).
+      # 브라우저는 보관본(actions/cache)에서 꺼내요. 실행 중에 Ubuntu 패키지 서버(apt)를 쓰지 않아요 (--with-deps 없음): 2026-11-11 밤 그 서버
+      # 장애로 CI 가 몇 시간 멈췄어요. 보관본이 없는 실행은 Playwright 의 서버에서 받아, 검사를 시작하기 전에 보관해요 (검사가 실패해도 남아요).
+      # 한글 글꼴은 저장소의 파일(tests/fonts)로 깔아요. 브라우저가 뜨지 않거나 도구 · 글꼴이 준비되지 않으면 검사가 실패하고, 발행하지
+      # 않아요 (검사 없이 발행하는 길은 없어요). 단계마다 시간 한도가 있어요: 한도를 넘는 것도 실패예요 (멈춘 채로 다음 실행을 막지 않게).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.22.0"
+          cache: npm
+
+      # smoke_launch 가 화면 문구를 읽을 때 esbuild(node_modules)를 써요 → CI 와 같은 설치 (package-lock.json · requirements-dev.txt 그대로).
+      # npm · pip 는 보관본을 먼저 써요 (--prefer-offline · 위 setup-python 의 pip 보관본). npm 패키지의 설치 스크립트는 돌리지 않아요
+      # (--ignore-scripts: 이 job 은 저장소에 쓸 수 있어서, 남의 설치 스크립트를 돌릴 일을 줄여요. esbuild 는 스크립트 없이도 돌아요).
+      - name: 화면 검사 도구 설치 (package-lock.json · requirements-dev.txt 그대로)
+        timeout-minutes: 10
+        run: |
+          npm ci --prefer-offline --ignore-scripts
+          pip install -r requirements-dev.txt
+
+      # 열쇠의 v1: 보관본이 망가졌으면 이 숫자를 올려 새로 받아요 (docs/RUNBOOK.md)
+      - name: 브라우저 보관본 불러오기
+        id: browser_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+
+      - name: 브라우저 · 한글 글꼴 준비 (보관본 그대로 · 없을 때만 내려받기 · apt 없음)
+        timeout-minutes: 10
+        run: |
+          python -m playwright install chromium
+          bash tests/fonts/install.sh
+
+      # 방금 받은 브라우저를 검사 전에 보관해요 (보관본이 없던 실행에서만). 검사 결과와 상관없이 다음 실행이 다시 받지 않게요.
+      - name: 브라우저 보관
+        if: steps.browser_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+
+      - name: 발행 전 화면 검사 (오늘 데이터 · 헤드리스 크롬)
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          # 관문을 통과한 바로 그 네 파일로 봐요 (영수증이 없거나 다르면 멈춰요)
+          sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"
+          # 셋 다 끝까지 돌려 모든 결과를 보여 주고, 하나라도 실패면 빨갛게 끝나요 (영수증 없음 → 발행 없음)
+          failed=()
+          for t in real_data_check smoke_launch smoke_app; do
+            echo "::group::$t"
+            if python "tests/$t.py" --data . 2>&1 | tee "$RUNNER_TEMP/screen-$t.log"; then ok=통과; else ok=실패; failed+=("$t"); fi
+            echo "::endgroup::"
+            count="$(sed -n -E '/^[0-9]+ \/ [0-9]+ 통과$/p' "$RUNNER_TEMP/screen-$t.log" | tail -1)"
+            line="· $t: $ok · ${count:-끝까지 돌지 못했어요 (결과 줄 없음)}"
+            echo "$line"
+            echo "$line" >> "$RUNNER_TEMP/screen-summary.txt"
+          done
+          {
+            echo "### 뱁새 발행 전 화면 검사 — $([ "${#failed[@]}" -eq 0 ] && echo PASS || echo FAIL)"
+            echo
+            cat "$RUNNER_TEMP/screen-summary.txt"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error title=발행 전 화면 검사 실패::${failed[*]} → 이 실행은 발행하지 않아요 (사이트에는 직전 데이터가 그대로 있어요)"
+            exit 1
+          fi
+          # 검사가 네 파일을 건드리지 않았는지 다시 보고, 통과 영수증을 남겨요 — 커밋 단계와 data 브랜치 단계가 확인해요
+          sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"
+          sha256sum data.json corp.json disc.json macro.json > "$RUNNER_TEMP/screen-pass.sha256"
+
       - name: 커밋 & 푸시
         if: ${{ !inputs.dry_run }}
         run: |
@@ -237,6 +318,8 @@ jobs:
           fi
           # v17.6: 관문을 통과한 바로 그 네 파일인지 영수증으로 확인해요 (없거나 다르면 멈춰요)
           sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"
+          # 2026-11-11: 발행 전 화면 검사도 통과한 네 파일인지 (영수증이 없거나 다르면 멈춰요)
+          sha256sum --quiet --strict -c "$RUNNER_TEMP/screen-pass.sha256"
           git config user.name  "baepsae-bot"
           git config user.email "actions@github.com"
           git add data.json corp.json disc.json macro.json
@@ -254,4 +337,6 @@ jobs:
             echo "!! 데이터는 main 에서만 올려요 (지금: $GITHUB_REF_NAME)"
             exit 1
           fi
+          # 2026-11-11: 발행 전 화면 검사도 통과한 네 파일인지 (영수증이 없거나 다르면 멈춰요)
+          sha256sum --quiet --strict -c "$RUNNER_TEMP/screen-pass.sha256"
           bash tools/push_data_branch.sh "$RUNNER_TEMP/gate-pass.sha256"

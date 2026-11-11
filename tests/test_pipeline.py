@@ -756,8 +756,10 @@ def test_workflow_pins_runner_and_current_action_majors():
     text, wf = load_workflow()
     assert wf["jobs"]["update"]["runs-on"] == "ubuntu-24.04"      # ubuntu-latest 가 몰래 바뀌지 않게
     uses = [s["uses"] for s in wf["jobs"]["update"]["steps"] if "uses" in s]
+    # 2026-11-12 (Jack): 발행 전 화면 검사가 node(setup-node)와 브라우저 보관본(cache restore · save 한 쌍 더)을 써요 (tests/test_screen_check.py)
     assert sorted(uses) == sorted(["actions/checkout@v7", "actions/setup-python@v7", "actions/cache/restore@v6",
-                                   "actions/cache/save@v6", "actions/upload-artifact@v7"])
+                                   "actions/cache/save@v6", "actions/upload-artifact@v7",
+                                   "actions/setup-node@v7", "actions/cache/restore@v6", "actions/cache/save@v6"])
 
 
 # ── 배당: 모르면 빈 칸, 배당이 없으면 0 (PR #4 리뷰 3번 · v17.5.1 추가 6) ──────────

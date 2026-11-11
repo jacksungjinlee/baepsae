@@ -30,6 +30,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22.22.0"
+          cache: npm
 
       - uses: actions/setup-python@v7
         with:
@@ -39,12 +40,21 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      # 브라우저는 보관본에서 (매일 실행의 '발행 전 화면 검사'와 같은 보관본). 실행 중에 Ubuntu 패키지 서버(apt)를 쓰지 않아요.
+      # 보관본이 없으면 아래에서 Playwright 의 서버에서 받고, 이 job 이 성공으로 끝나면 보관해요. 한글 글꼴은 저장소의 파일(tests/fonts)로.
+      - name: 브라우저 보관본 불러오기
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+
       - name: 라이브러리 설치 (package-lock.json · requirements-dev.txt 그대로)
         run: |
           npm ci
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
+          bash tests/fonts/install.sh
 
       # 커밋한 페이지가 지금 src/ 로 빌드한 것과 한 글자도 다르지 않아야 해요 (v17.6 Part 3b 에서 배포가 빌드를 맡으면 없애요)
       - name: 빌드 · 커밋한 페이지 = 소스
@@ -75,6 +85,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22.22.0"
+          cache: npm
 
       - uses: actions/setup-python@v7
         with:
@@ -84,12 +95,21 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      # 브라우저는 보관본에서 (매일 실행의 '발행 전 화면 검사'와 같은 보관본). 실행 중에 Ubuntu 패키지 서버(apt)를 쓰지 않아요.
+      # 보관본이 없으면 아래에서 Playwright 의 서버에서 받고, 이 job 이 성공으로 끝나면 보관해요. 한글 글꼴은 저장소의 파일(tests/fonts)로.
+      - name: 브라우저 보관본 불러오기
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+
       - name: 라이브러리 설치 (package-lock.json · requirements-dev.txt 그대로)
         run: |
           npm ci
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
+          bash tests/fonts/install.sh
 
       - name: 스모크 테스트 smoke_app (헤드리스 크롬 · 휴대폰 크기)
         run: python tests/smoke_app.py --part "${{ matrix.part }}"
@@ -105,6 +125,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22.22.0"
+          cache: npm
 
       - uses: actions/setup-python@v7
         with:
@@ -114,12 +135,21 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      # 브라우저는 보관본에서 (매일 실행의 '발행 전 화면 검사'와 같은 보관본). 실행 중에 Ubuntu 패키지 서버(apt)를 쓰지 않아요.
+      # 보관본이 없으면 아래에서 Playwright 의 서버에서 받고, 이 job 이 성공으로 끝나면 보관해요. 한글 글꼴은 저장소의 파일(tests/fonts)로.
+      - name: 브라우저 보관본 불러오기
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+
       - name: 라이브러리 설치 (package-lock.json · requirements-dev.txt 그대로)
         run: |
           npm ci
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
+          bash tests/fonts/install.sh
 
       - name: 스모크 테스트 smoke_v2 (헤드리스 크롬 · 휴대폰 크기)
         run: python tests/smoke_v2.py
@@ -134,6 +164,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22.22.0"
+          cache: npm
 
       - uses: actions/setup-python@v7
         with:
@@ -143,12 +174,21 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      # 브라우저는 보관본에서 (매일 실행의 '발행 전 화면 검사'와 같은 보관본). 실행 중에 Ubuntu 패키지 서버(apt)를 쓰지 않아요.
+      # 보관본이 없으면 아래에서 Playwright 의 서버에서 받고, 이 job 이 성공으로 끝나면 보관해요. 한글 글꼴은 저장소의 파일(tests/fonts)로.
+      - name: 브라우저 보관본 불러오기
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+
       - name: 라이브러리 설치 (package-lock.json · requirements-dev.txt 그대로)
         run: |
           npm ci
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
+          bash tests/fonts/install.sh
 
       # 하나씩 돌려요 (동시에 돌리면 화면 전환을 기다리는 검사가 가끔 흔들렸어요, 2026-11-05).
       # 하나가 실패해도 나머지를 끝까지 돌려 모든 결과를 보여 주고, 하나라도 실패면 빨갛게 끝나요.

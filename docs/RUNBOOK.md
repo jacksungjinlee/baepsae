@@ -21,6 +21,32 @@ serve the `docs/` folder (two of its files must answer "not found").
 - **Users still see the last good data, with its date.** The publication gate refuses to publish anything that fails
   its checks, so a failed run leaves yesterday's numbers in place, labelled with yesterday's date. The app itself shows a
   warning ("N일째 갱신이 멈췄어요") once publishing has stopped for more than 4 days.
+- **The screen check (since 2026-11-12).** After the gate passes and before anything is published, the daily run opens
+  the apps in a real browser on today's data:
+  - `tests/real_data_check.py`: the four files read cleanly, today's data has every field 2.0 needs, and the two apps
+    agree on the growth basis for every Korean stock;
+  - `tests/smoke_launch.py --data .`: 2.0 on the four files exactly as they will be published (first visit, the
+    portfolio builder, a Korean company page, a saved portfolio, the way into the old app);
+  - all of `tests/smoke_app.py --data .`: the old app's checks on today's stocks and numbers. These scenes first set
+    the publish time and due dates to "just now" (and fill in a missing price date or built-in fund row), so they do
+    not check the dates users will see; the gate checks those.
+
+  If any of the three fails, the run ends red and publishes nothing, exactly like a gate failure: yesterday's data stays
+  up. Nothing retries inside the run; the next scheduled start is the retry. The run's summary page has a "발행 전 화면
+  검사" section with the three results. Each step has a time limit (10, 10 and 30 minutes); running over is a failure.
+  A normal check takes about 3 minutes.
+  - The check comes after the DART cache is saved, so a held publish never turns the next start into a full-DART run.
+  - The browser comes from GitHub's cache (`playwright-v1-ubuntu-24.04-…`), never from Ubuntu's package server. A run
+    that finds no cache downloads it from Playwright's server and saves it before the check starts. The Korean font
+    the tests need is a file in the repo (`tests/fonts`). If the browser cannot start, the publish is held.
+  - If the cached browser itself is broken (no scene can open a page although the install step passed): raise `v1`
+    to `v2` in the cache key, in all five places (`update-data.yml` twice, `ci.yml` four times; a small PR), so a fresh
+    copy is downloaded. The tests accept any version number as long as every place uses the same one, so no test edit
+    is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's font setup changed:
+    fix `tests/fonts/install.sh` in a PR.
+  - `smoke_app` relies on two things in the data that the gate does not guarantee: 두산밥캣 (241560) in `corp.json`
+    and at least one foreign company with a 9xxxxx code. If one of them leaves the data, the check fails and
+    publishing is held until the test is changed in a PR (Jack's yes). Never skip the check to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
@@ -58,14 +84,18 @@ tells you what happened in plain words.
 
 - **`main`** holds the code. Every pull request must pass the `ci` check (build, all tests, phone-size smoke tests).
 - **`data`** is a branch that holds only the four data files (`data.json`, `corp.json`, `disc.json`, `macro.json`). Only
-  the daily run writes to it, and only after the publication gate passed: the gate leaves a fingerprint (sha256) of the
-  four files it checked, and the upload refuses any file that doesn't match. It never force-pushes.
+  the daily run writes to it, and only after the publication gate and (since 2026-11-12) the screen check passed: each
+  leaves a fingerprint (sha256) of the four files it checked, and the upload refuses any file that doesn't match either
+  one. It never force-pushes.
   The first daily run after v17.6 creates the branch by itself.
 - **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
   folder it is about to publish, and only then publishes. It runs after every merge to `main` and after every daily run
   that published new data. Settings → Pages → Source has been **GitHub Actions** since 2026-11-06. Never switch it back
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
+  Since 2026-11-12 Deploy also leaves out the development folders and files the site never reads (`tests/`, `tools/`,
+  `data/`, `styleguide/` and the build and pipeline files at the top; the two lists are in `tools/assemble_site.py`) and
+  refuses to publish if one gets in. A branch deploy would serve them again, including the test data under `tests/`.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
 - **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
   whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of

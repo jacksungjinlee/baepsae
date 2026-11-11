@@ -3,7 +3,7 @@
 PR 의 CI 결과가 그날 아침 발행에 흔들리지 않게요. 여기서 확인하는 것:
 
 - 고정 데이터는 tests/fixtures/snapshot/snap_*.json — 사이트가 읽는 data.json · corp.json · disc.json · macro.json 과 이름이 달라요.
-- 배포는 tests/ 를 사이트에 올리지 않아요 (tools/assemble_site.py). 앱 · 서비스워커 · 빌드한 페이지는 그 파일을 부르지 않아요.
+- 배포는 tests/ 를 사이트에 올리지 않아요 (tools/assemble_site.py · tests/test_site_files.py, PR #105). 앱 · 서비스워커 · 빌드한 페이지는 그 파일을 부르지 않아요.
 - 고정 데이터는 작고(600KB 이하), 자기 설명(snap_meta.json)과 맞아요. 시험의 시계는 그 데이터를 발행한 날 정오(한국 시간)예요.
 - smoke_app.py 는 고정 데이터일 때 진짜 시계를 읽지 않아요 (now_dt 한 곳만).
 """
@@ -52,30 +52,6 @@ def test_deploy_never_publishes_tests_or_the_snapshot():
     assert real and not [p for p in real if p.split("/", 1)[0].lower() == "tests"]
     assert not [p for p in real if os.path.basename(p).startswith("snap_")]
     assert "baepsae.html" in real and "app.html" in real and "sw.js" in real                          # 사이트 파일은 그대로
-
-
-def test_deploy_stops_if_tests_gets_in_anyway(tmp_path, monkeypatch):
-    """규칙이 깨져 tests/ 가 사이트 폴더에 들어가면 조용히 올리지 않고 멈춰요 (docs/ 와 같은 방식)."""
-    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
-           "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    work = tmp_path / "work"
-    git = lambda *a: subprocess.run(["git", *a], cwd=work, check=True, capture_output=True, env=env)
-    subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True, capture_output=True, env=env)
-    for f in LIVE:
-        (work / f).write_text("{}")
-    (work / "baepsae.html").write_text("x")
-    (work / "tests" / "fixtures" / "snapshot").mkdir(parents=True)
-    (work / "tests" / "fixtures" / "snapshot" / "snap_data.json").write_text("{}")
-    git("add", "-A"); git("commit", "-q", "-m", "main")
-    out = tmp_path / "_site"
-    AS.assemble(str(work), str(out), "HEAD")
-    got = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file())
-    assert got == sorted(["baepsae.html", *LIVE])                                                     # tests/ 는 없어요
-    monkeypatch.setattr(AS, "site_files", lambda paths: [p for p in paths if p not in LIVE])
-    with pytest.raises(SystemExit, match="tests/ 가 들어갔어요"):
-        AS.assemble(str(work), str(tmp_path / "_site2"), "HEAD")
 
 
 def test_the_app_never_asks_for_the_snapshot():
