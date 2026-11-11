@@ -73,6 +73,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
 from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table, copy_pictures, text_floor  # noqa: E402
 import tmpdirs  # noqa: E402
+from testclock import TestClock, drift_ok  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
@@ -184,32 +185,20 @@ def mascot_img(loc, src, px, alt):
     assert img.get_attribute("alt") == alt and alt, (src, img.get_attribute("alt"), alt)     # Jack 이 승인한 alt (2026-11-04)
 
 
-# 2026-11-11 (Jack): 시험의 시계는 정해진 날 정오에서 시작해요. 진짜 날짜 · 시각을 읽으면 그날그날 · 시각마다 결과가 달라질 수 있어요
-# (예: 23:15~23:20 KST 에 돌리면 '시계를 45분 뒤로' 장면이 자정을 넘겨 실패했어요 — 앱은 규칙대로였고 시험만 틀렸어요).
-# 이 파일의 모든 '지금'은 now_dt() 예요: CLOCK 에서 시작해 평소처럼 흘러요 (멈춰 있으면 '방금 더 새로 발행한 파일'을 만드는 장면이
-# 앞 파일과 같은 시각이 돼요). 모든 브라우저 창의 날짜 · 시각도 같은 만큼 옮겨져 같이 흘러요 (Runner.new_context · DATE_SHIM).
-# 정오에서 시작하니 한 번 도는 10여 분과 시계를 몇 십 분 옮기는 장면이 날짜를 넘지 않아요. 날짜를 직접 정하는 장면(다시 읽은 날 안내)은
-# 자기 날짜를 써요.
-CLOCK = dt.datetime(2026, 11, 12, 12, 0, tzinfo=KST)
-_SHIFT = CLOCK.timestamp() - time.time()          # 시험의 시계 = 진짜 시계 + _SHIFT 초 (이 실행을 시작한 순간이 CLOCK)
-
-# 브라우저 창의 Date 만 _SHIFT 만큼 옮겨요. 타이머 · performance 는 그대로예요: Playwright 의 clock.install 은 performance 도
-# 바꿔서, 받은 파일을 performance 기록으로 확인하는 검사(disc_fetched 등)가 아무것도 보지 못해요.
-DATE_SHIM = """(() => {
-  const RealDate = Date, shift = %d;
-  function TestDate(...a) {
-    if (!new.target) return new RealDate(RealDate.now() + shift).toString();
-    return a.length ? new RealDate(...a) : new RealDate(RealDate.now() + shift);
-  }
-  Object.setPrototypeOf(TestDate, RealDate);
-  TestDate.prototype = RealDate.prototype;
-  TestDate.now = () => RealDate.now() + shift;
-  window.Date = TestDate;
-})();"""
+# 2026-11-11 (Jack): 이 파일의 모든 '지금'은 now_dt() — 시험의 시계예요 (tests/testclock.py). main() 이 CLOCK 에서 시작시키고,
+# 그 뒤로는 평소처럼 흘러요. 모든 브라우저 창의 날짜 · 시각도 같은 만큼 옮겨져요 (Runner.new_context).
+# 진짜 날짜 · 시각을 읽으면 그날그날 · 시각마다 결과가 달라질 수 있어요 (예: 23:15~23:20 KST 에 돌리면 '시계를 45분 뒤로' 장면이
+# 자정을 넘겨 실패했어요 — 앱은 규칙대로였고 시험만 틀렸어요).
+# 07:00 KST 에서 시작해요: 한 번 도는 10여 분과 시계를 45분까지 옮기는 장면이 한국 날짜도 UTC 날짜도 넘지 않고(08:05 쯤까지),
+# 한국 날짜와 UTC 날짜가 서로 달라요 (UTC 로는 전날 22시) — '오늘'을 UTC 날짜로 잘못 읽는 코드가 여기서 드러나요.
+# 지난 날짜예요 (진짜 시계가 우연히 이 시각과 겹쳐 '창의 시계' 검사가 눈감는 날이 없게). 날짜를 직접 정하는 장면은 자기 날짜를 써요.
+# 다른 테스트가 이 파일의 도우미만 빌려 쓸 때(main 을 돌리지 않음)는 시계를 시작하지 않아요: 그때의 '지금'은 진짜 시계예요.
+CLOCK = dt.datetime(2026, 11, 11, 7, 0, tzinfo=KST)
+TC = TestClock()
 
 
 def now_dt():
-    return dt.datetime.fromtimestamp(time.time() + _SHIFT, KST)
+    return TC.now()
 
 
 def now_kst(days_ago=0):
@@ -308,16 +297,16 @@ class Runner:
         self.names = sorted({n for n in names if n and HANGUL.search(n)}, key=len, reverse=True)
 
     def new_context(self, clock=True, **kw):
-        """브라우저 창 하나. 창의 날짜 · 시각은 시험의 시계(now_dt)와 같아요 (DATE_SHIM). clock=False 는 그 장면이 Playwright 의
+        """브라우저 창 하나. 창의 날짜 · 시각은 시험의 시계(now_dt)와 같아요 (testclock.DATE_SHIM). clock=False 는 그 장면이 Playwright 의
         페이지 시계를 직접 설치할 때만 (설치한 뒤 saw_clock(page, 그 시각) 으로 알려요)."""
         ctx = self.browser.new_context(**kw)
         if clock:
-            ctx.add_init_script(DATE_SHIM % round(_SHIFT * 1000))
+            TC.install(ctx)
         return ctx
 
     def saw_clock(self, page, base=None):
         """그 창의 시계가 (base 가 없으면 지금의 now_dt 에서, 있으면 그 시각에서) 시작했는지: 차이(초)를 모아 끝에서 봐요."""
-        self.clock_drift.append(page.evaluate("Date.now()") / 1000 - (base or now_dt()).timestamp())
+        self.clock_drift.append(TC.drift(page, base))
 
     def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1", device=None, guide_seen=True):
         srv, base = serve(site)
@@ -8511,6 +8500,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
     args = ap.parse_args()
+    TC.start_at(CLOCK)                                                      # 시험의 시계: 지금 이 순간이 CLOCK (그 뒤로는 흘러요)
     files = read_fixtures()
     names = set()
     for s in files["data.json"]["stocks"]:
@@ -8607,9 +8597,9 @@ def main():
     R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
     R.results.append(("다른 사이트 요청 0건 (글꼴·통계·CDN 없음)", not R.outside, ", ".join(sorted(set(R.outside)))[:300]))
     # 2026-11-11: 모든 창의 브라우저 시계가 시험의 시계(now_dt)나 그 장면이 정한 날에서 시작했는지 (진짜 시계로 돈 창이 하나도 없어요)
-    drift_ok = bool(R.clock_drift) and all(-2 <= d < 600 for d in R.clock_drift)
-    R.results.append((f"브라우저 시계는 시험의 날 {CLOCK.date().isoformat()} (또는 장면이 정한 날)에서 시작 (연 창 {len(R.clock_drift)}개)", drift_ok,
-                      "" if drift_ok else f"어긋남(초): {[round(d) for d in R.clock_drift if not 0 <= d < 600][:5]}"))
+    clock_ok = TC.started and bool(R.clock_drift) and all(drift_ok(d) for d in R.clock_drift)
+    R.results.append((f"브라우저 시계는 시험의 날 {CLOCK.date().isoformat()} (또는 장면이 정한 날)에서 시작 (연 창 {len(R.clock_drift)}개)", clock_ok,
+                      "" if clock_ok else f"어긋남(초): {[round(d) for d in R.clock_drift if not drift_ok(d)][:5]}"))
     w = max(len(n) for n, _, _ in R.results)
     print("\n뱁이가 나온 화면 (그림 | 화면 | 걸린 숫자 | 숫자가 아닌 이유: 예외 칸 · 날짜 · 종목 수):")
     print("\n".join(placements_table()))

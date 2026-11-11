@@ -118,13 +118,10 @@ V175_FORMAT = "pxDate·publishedAt (v17.5 형식)"
 FIXED = "tests/fixtures/v2/"          # 머지 문 테스트가 읽는 고정 시험 데이터 (2026-11-11 부터 · 그날의 발행 파일은 매일 실행이 봐요)
 
 
-def real_data_missing(data=None, corp=None, macro=None):
-    """저장소의 실제 데이터(data·corp·macro.json)에 2.0 이 쓰는 v17.5 형식·v17.5.1 항목 중 빠진 것. smoke_launch.py 도 써요.
+def real_data_missing(data, corp, macro):
+    """넘겨받은 데이터(data·corp·macro.json 의 내용)에 2.0 이 쓰는 v17.5 형식·v17.5.1 항목 중 빠진 것. smoke_launch.py ·
+    real_data_check.py 도 써요. (2026-11-11: 인자를 꼭 받아요 — 인자 없이 부르면 저장소의 그날 파일을 읽던 길을 없앴어요.)
     Jack(2026-11-02): ind · d1 · val20 · fy · etf 가 사이트에 올라오기 전에는 메인 주소를 2.0 으로 돌리지 않아요."""
-    import json
-    data = data if data is not None else json.loads(read("data.json"))
-    corp = corp if corp is not None else json.loads(read("corp.json"))
-    macro = macro if macro is not None else json.loads(read("macro.json"))
     kr = [s for s in data.get("stocks", []) if s.get("cls") == "kr"]
 
     def number(v):

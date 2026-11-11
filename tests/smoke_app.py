@@ -58,6 +58,7 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tmpdirs  # noqa: E402
+from testclock import TestClock, drift_ok  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og-v19.png", "icon-192.png", "icon-512.png"]
@@ -96,13 +97,15 @@ SMALLEST = """(args) => { const [need, also] = args; let best = null;
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
-# 2026-11-11 (Jack): 시험의 '지금'. 고정 데이터(tests/fixtures/snapshot)로 돌 때는 그 데이터를 발행한 날에 멈춘 시각이고
-# (브라우저 시계도 같은 시각에서 시작해요 — Runner.new_context), --data 로 실제 파일을 줄 때는 진짜 지금이에요.
-CLOCK = None
+# 2026-11-11 (Jack): 시험의 '지금' = 시험의 시계 (tests/testclock.py). 고정 데이터(tests/fixtures/snapshot)로 돌 때는 main() 이 그 데이터를
+# 발행한 날의 정해진 시각(snap_meta.json 의 now)에서 시작시키고, 그 뒤로는 평소처럼 흘러요 — 모든 브라우저 창의 날짜 · 시각도 같이요
+# (Runner.new_context). --data 로 실제 파일을 줄 때는 시계를 시작하지 않아요: 그때의 '지금'은 진짜 지금이에요.
+CLOCK = None          # 고정 데이터일 때 시험의 시계가 시작하는 순간 (main 이 정해요)
+TC = TestClock()
 
 
 def now_dt():
-    return CLOCK or dt.datetime.now(KST)
+    return TC.now()
 
 
 def now_kst(days_ago=0):
@@ -172,15 +175,38 @@ class Runner:
     def __init__(self, browser, shots):
         self.browser, self.shots = browser, shots
         self.results, self.errors, self.console = [], [], []
-        self.clock_drift = []          # 고정 데이터일 때: 창을 열 때마다 (브라우저 시계 − 멈춘 시각) 초
+        self.clock_drift = []          # 고정 데이터일 때: 창마다 (그 창의 시계 − 시험의 시계) 초
+        self.windows, self.measured = [], set()      # 연 창 모두 · 그중 시계를 잰 창
 
     def new_context(self, clock=True, **kw):
-        """브라우저 창 하나. 고정 데이터로 돌 때는 브라우저 시계가 그 데이터를 발행한 날(CLOCK)에서 시작해 평소처럼 흘러요
-        (clock=False: 장면이 직접 시계를 놓을 때)."""
+        """브라우저 창 하나. 고정 데이터로 돌 때는 창의 날짜 · 시각이 시험의 시계와 같아요 (testclock.DATE_SHIM · 타이머는 진짜 그대로).
+        창을 닫을 때 그 창의 시계를 재서, 끝에서 모든 창이 시험의 시계로 돌았는지 봐요.
+        clock=False: 장면이 Playwright 의 페이지 시계를 직접 설치할 때만 — 설치한 뒤 saw_clock(page, 그 시각) 으로 알려요."""
         ctx = self.browser.new_context(**kw)
-        if clock and CLOCK is not None:
-            ctx.clock.install(time=CLOCK)
+        self.windows.append(ctx)
+        if clock:
+            TC.install(ctx)
+            close = ctx.close
+
+            def close_after_reading_the_clock(*a, **k):
+                self.read_clock(ctx)
+                return close(*a, **k)
+            ctx.close = close_after_reading_the_clock
         return ctx
+
+    def read_clock(self, ctx):
+        """그 창에 열려 있는 페이지들의 시계를 재요 (시험의 시계를 쓰는 창만 · 한 번만)."""
+        if not TC.started or id(ctx) in self.measured:
+            return
+        for page in ctx.pages:
+            self.clock_drift.append(TC.drift(page))
+            self.measured.add(id(ctx))
+
+    def saw_clock(self, page, base):
+        """clock=False 인 창: 장면이 설치한 페이지 시계가 base 에서 시작했는지."""
+        if TC.started:
+            self.clock_drift.append(TC.drift(page, base))
+            self.measured.add(id(page.context))
 
     def open(self, site, sw=False, local=None, once=False):
         srv, base = serve(site)
@@ -197,8 +223,6 @@ class Runner:
         page.on("pageerror", lambda e: self.errors.append(str(e)))
         page.on("console", lambda m: self.console.append((m.type, m.text)))
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
-        if CLOCK is not None:
-            self.clock_drift.append(page.evaluate("Date.now()") / 1000 - CLOCK.timestamp())
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -2501,6 +2525,7 @@ def scene_stale_recheck(R, files):
         page = ctx.new_page()
         page.on("pageerror", lambda e: R.errors.append(str(e)))
         page.clock.install(time=now)
+        R.saw_clock(page, now)
         fetched = []
         page.on("request", lambda r: fetched.append(r.url) if r.url.endswith("data.json") else None)
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
@@ -2799,8 +2824,9 @@ def main():
     global CLOCK
     if args.data is None:
         files, CLOCK = read_snapshot()
+        TC.start_at(CLOCK)                                      # 시험의 시계: 지금 이 순간이 CLOCK (그 뒤로는 흘러요)
     else:
-        files, CLOCK = read_data(args.data), None
+        files, CLOCK = read_data(args.data), None               # 실제 파일: 시계를 시작하지 않아요 (진짜 지금)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
     fresh = upgrade(json.loads(json.dumps(files, allow_nan=True)))
     for name in DATA_FILES:
@@ -2828,11 +2854,17 @@ def main():
                 print(f"  FAIL  [{key}] 장면 실행: {e}", flush=True)
         if not ran:
             R.results.append(("돌린 장면이 있어요", False, f"--part {args.part} · --only {args.only} 로 고른 장면이 없어요"))
-        if CLOCK is not None:
-            # 브라우저 시계가 정말 고정 데이터의 발행일에서 시작했는지 (창마다 · 0초 ~ 10분 뒤). 진짜 오늘 날짜가 새어 들어오면 여기서 걸려요.
-            ok = bool(R.clock_drift) and all(0 <= d < 600 for d in R.clock_drift)
-            R.results.append((f"브라우저 시계는 고정 데이터의 발행일 {CLOCK.date().isoformat()} (연 창 {len(R.clock_drift)}개)", ok,
-                              "" if ok else f"어긋남(초): {[round(d) for d in R.clock_drift if not 0 <= d < 600][:5]}"))
+        if TC.started:
+            # 모든 창의 시계가 시험의 시계였는지 (진짜 오늘 날짜로 돈 창이 하나라도 있으면 여기서 걸려요). 닫을 때 잰 창 + 아직 열린 창.
+            for ctx in R.windows:
+                try:
+                    R.read_clock(ctx)
+                except Exception:
+                    pass                                        # 이미 닫힌 창 (닫을 때 쟀어요 — 못 쟀으면 아래 '잰 창' 수에서 걸려요)
+            not_read = len(R.windows) - len(R.measured)
+            ok = bool(R.windows) and not_read == 0 and all(drift_ok(d) for d in R.clock_drift)
+            R.results.append((f"브라우저 시계는 고정 데이터의 발행일 {CLOCK.date().isoformat()} (연 창 {len(R.windows)}개 모두)", ok,
+                              "" if ok else f"시계를 재지 못한 창 {not_read}개 · 어긋남(초): {[round(d) for d in R.clock_drift if not drift_ok(d)][:5]}"))
         R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
         browser.close()
 

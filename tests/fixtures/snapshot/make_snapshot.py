@@ -88,8 +88,9 @@ def main():
         "what": "tests/smoke_app.py 의 고정 데이터: 하루치 실제 발행 파일을 줄인 사본 (값은 그대로, 목록만 줄임). make_snapshot.py 로 만들어요.",
         "source": args.source,
         "publishedAt": data["publishedAt"], "pxDate": data["pxDate"],
-        # 시험이 브라우저 시계를 멈춰 두는 시각: 발행한 날 정오 (한국 시간). 날짜가 흘러도 시험 결과가 바뀌지 않게요.
-        "now": pub.replace(hour=12, minute=0, second=0, microsecond=0).isoformat(timespec="seconds"),
+        # 시험의 시계가 시작하는 순간: 발행한 날 07:00 (한국 시간). 날짜가 흘러도 시험 결과가 바뀌지 않게요. 07:00 이라 한국 날짜와
+        # UTC 날짜가 달라요 (UTC 로는 전날 22시): '오늘'을 UTC 날짜로 잘못 읽는 코드가 드러나요. 한 번 도는 동안 어느 쪽 날짜도 넘지 않아요.
+        "now": pub.replace(hour=7, minute=0, second=0, microsecond=0).isoformat(timespec="seconds"),
         "rule": {"keepKr": KEEP_KR, "keepUs": KEEP_US},
         "kept": {"stocks": len(data["stocks"]), "companies": len(corp["companies"]), "insider": len(disc["insider"]), "nps": len(disc["nps"])},
         "published": full,

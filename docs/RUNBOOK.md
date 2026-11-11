@@ -47,6 +47,19 @@ serve the `docs/` folder (two of its files must answer "not found").
   - `smoke_app` relies on two things in the data that the gate does not guarantee: 두산밥캣 (241560) in `corp.json`
     and at least one foreign company with a 9xxxxx code. If one of them leaves the data, the check fails and
     publishing is held until the test is changed in a PR (Jack's yes). Never skip the check to get the data out.
+  - Known limit of one check: if a run started by hand in the evening has `smoke_app` reach its 늦음 scene between about
+    23:15 and 23:20 KST, the "화면이 다시 보일 때" check fails with "2일째 갱신이 멈췄어요" although the app is right (the
+    scene's due date and its clock jump fall on either side of midnight). Scheduled starts never run at that hour. If it
+    happens, it is the test and not the data: start the run again.
+- **CI runs on fixed data (since #104).** A pull request's checks no longer read the day's files: `smoke_app` uses a
+  trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 470 KB), `smoke_v2` and `smoke_launch` use the
+  2.0 test data (`tests/fixtures/v2`), and `smoke_app` and `smoke_v2` run on a test clock that starts at 07:00 KST on a
+  fixed day (`tests/testclock.py`). So a pull request's code meets today's real data only in the daily run above, or when
+  the three commands are run by hand: `python tests/real_data_check.py --data .`, `python tests/smoke_launch.py --data .`
+  and `python tests/smoke_app.py --data .`.
+  To refresh the snapshot from a newer publish (only when a new field or a new kind of stock must be in it): run
+  `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
+  `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.

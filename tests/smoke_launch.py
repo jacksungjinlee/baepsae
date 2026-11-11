@@ -98,8 +98,7 @@ def site(variant):
         for f in DATA:
             with open(os.path.join(FIXTURES, f), encoding="utf-8") as fh:
                 j = json.load(fh)
-            if f != "disc.json":                                     # (예전 그대로: data · corp · macro 의 발행 시각을 방금으로)
-                j["publishedAt"] = now
+            j["publishedAt"] = now                                   # 네 파일 모두 (smoke_v2 와 같이): 공시 목록도 '방금 받은 것'
             with open(os.path.join(d, f), "w", encoding="utf-8") as fh:
                 json.dump(j, fh, ensure_ascii=False)
     else:                                                            # --data DIR: 그 폴더의 파일을 한 글자도 바꾸지 않고
@@ -460,9 +459,9 @@ def main():
     ap.add_argument("--shots", default=None)
     ap.add_argument("--data", default=None, help="이 폴더의 진짜 data/corp/macro/disc.json 만으로 (고정 데이터 장면은 돌리지 않아요)")
     args = ap.parse_args()
-    if args.data:
+    if args.data is not None:                                        # (--data "" 처럼 빈 값도 진짜 데이터 쪽: 조용히 고정 데이터로 가지 않아요)
         use_data(args.data)
-    variants = ("repo",) if args.data else ("fixtures",)
+    variants = ("repo",) if args.data is not None else ("fixtures",)
     results, errors, outside = [], [], []
 
     def check(label, fn, page, tag):
@@ -486,7 +485,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path())
-        if not args.data:                                           # CV 링크 장면은 고정 데이터로 봐요 (--data 는 진짜 데이터 장면만)
+        if args.data is None:                                       # CV 링크 장면은 고정 데이터로 봐요 (--data 는 진짜 데이터 장면만)
             cv_link(browser, check, errors)
         for variant in variants:
             root = site(variant)
@@ -659,7 +658,7 @@ def main():
     results.append(("페이지 오류 0건 (index.html · app.html · baepsae.html)", not errors, "; ".join(errors)[:300]))
     results.append(("app.html 에서 다른 사이트 요청 0건", not outside, ", ".join(sorted(set(outside)))[:300]))
     w = max(len(n) for n, _, _ in results)
-    print("\n메인 주소(Part F) 스모크 테스트 결과" + (f" · 데이터: {DATA_DIR}" if args.data else ""))
+    print("\n메인 주소(Part F) 스모크 테스트 결과" + (f" · 데이터: {DATA_DIR}" if args.data is not None else ""))
     for name, good, msg in results:
         print(f"  {'PASS' if good else 'FAIL'}  {name.ljust(w)}  {msg}")
     bad = [r for r in results if not r[1]]
