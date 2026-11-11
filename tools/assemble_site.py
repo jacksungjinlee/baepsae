@@ -4,9 +4,11 @@
   python3 tools/assemble_site.py OUT DATA_REF [LOGOS_REF]
 
 - main 의 파일: git 이 관리하는 파일 전부 (지금 'main 브랜치에서 배포'가 보여 주는 것과 같게), 점(.)으로 시작하는 것
-  (.github · .gitignore …)과 docs/ 는 빼요. 작업 폴더에서 복사하니 방금 빌드한 페이지(빌드 표시가 달린 것)가 들어가요.
+  (.github · .gitignore …)과 docs/ · tests/ 는 빼요. 작업 폴더에서 복사하니 방금 빌드한 페이지(빌드 표시가 달린 것)가 들어가요.
 - docs/ 를 빼는 이유 (Jack 2026-11-06): 설계 자료의 Adobe Stock 그림은 라이선스상 따로 내려받는 파일로 내놓으면 안 돼요
   (docs/design/v19.3/LICENSES.md). 사이트 페이지는 docs/ 의 파일을 쓰지 않아요.
+- tests/ 를 빼는 이유 (Jack 2026-11-11): 시험용 데이터(tests/fixtures 의 고정 데이터 snap_*.json 등)는 사이트의 데이터가 아니에요.
+  사이트에 올라가면 진짜 data.json 과 헷갈릴 수 있어요. 사이트 페이지는 tests/ 의 파일을 쓰지 않아요 (tests/test_snapshot.py).
 - 데이터: data.json · corp.json · disc.json · macro.json 은 main 의 것을 쓰지 않고 DATA_REF(data 브랜치)에서만 가져와요.
   하나라도 없거나 비었으면 멈춰요 (main 의 파일로 조용히 바꾸지 않아요). 검사(validate_data.py --live)는 이 다음 단계예요.
 - 회사 로고 (v19.3a): logos/ 는 LOGOS_REF(logos 브랜치)에서만 가져와요. main 에 logos/ 가 있으면 그건 올리지 않아요.
@@ -28,6 +30,7 @@ LOGOS = "logos"
 
 DATA_FILES = ("data.json", "corp.json", "disc.json", "macro.json")
 EXCLUDED_DIR = "docs"            # Jack 2026-11-06: docs/ 는 사이트에 올리지 않아요 (Adobe Stock 그림 라이선스)
+TESTS_DIR = "tests"              # Jack 2026-11-11: tests/ 도 올리지 않아요 (시험용 데이터는 사이트의 데이터가 아니에요)
 
 
 def tracked(root):
@@ -40,8 +43,13 @@ def in_excluded(p):
     return p.split("/", 1)[0].lower() == EXCLUDED_DIR
 
 
+def in_tests(p):
+    """맨 위 폴더가 tests 인 경로 (대소문자만 다른 것도)."""
+    return p.split("/", 1)[0].lower() == TESTS_DIR
+
+
 def site_files(paths):
-    """올릴 main 파일: 점으로 시작하는 경로 조각이 하나도 없고, 데이터 네 파일도 docs/ 아래 파일도 아닌 것."""
+    """올릴 main 파일: 점으로 시작하는 경로 조각이 하나도 없고, 데이터 네 파일도 docs/ · tests/ 아래 파일도 아닌 것."""
     keep = []
     for p in paths:
         if any(part.startswith(".") for part in p.split("/")):
@@ -49,6 +57,8 @@ def site_files(paths):
         if p in DATA_FILES:
             continue
         if in_excluded(p):                                # 설계 자료 (Adobe 그림 포함)는 사이트에 올리지 않아요
+            continue
+        if in_tests(p):                                   # 시험 코드 · 시험용 데이터는 사이트에 올리지 않아요
             continue
         keep.append(p)
     return keep
@@ -181,8 +191,11 @@ def assemble(root, out, data_ref, logos_ref=None):
         sizes[f] = len(r.stdout)
     if any(in_excluded(n) for n in os.listdir(out)):              # 위 규칙이 깨지면 조용히 올리지 않고 멈춰요
         raise SystemExit(f"!! 사이트 폴더에 {EXCLUDED_DIR}/ 가 들어갔어요 → 배포하지 않아요 (Adobe 그림은 따로 내려받는 파일이 되면 안 돼요)")
+    if any(in_tests(n) for n in os.listdir(out)):                 # 같은 뜻: 시험용 데이터가 사이트에 올라가면 안 돼요
+        raise SystemExit(f"!! 사이트 폴더에 {TESTS_DIR}/ 가 들어갔어요 → 배포하지 않아요 (시험용 데이터는 사이트의 데이터가 아니에요)")
     skipped = sum(1 for p in tracked(root) if in_excluded(p))
     print(f"· {EXCLUDED_DIR}/ 의 파일 {skipped}개는 올리지 않아요 (설계 자료)")
+    print(f"· {TESTS_DIR}/ 의 파일 {sum(1 for p in tracked(root) if in_tests(p))}개는 올리지 않아요 (시험 코드 · 시험용 데이터)")
     sha = subprocess.run(["git", "rev-parse", "--short", data_ref], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
     print(f"· 사이트 폴더 {out}: main 파일 {len(files)}개 + {data_ref} ({sha}) 의 데이터 네 파일 "
           + " · ".join(f"{k} {v // 1024:,}KB" for k, v in sizes.items()))

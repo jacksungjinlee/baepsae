@@ -1,0 +1,29 @@
+{
+ "what": "tests/smoke_app.py 의 고정 데이터: 하루치 실제 발행 파일을 줄인 사본 (값은 그대로, 목록만 줄임). make_snapshot.py 로 만들어요.",
+ "source": "main 3ff1ce2 · 데이터 갱신 2026-11-11",
+ "publishedAt": "2026-11-11T06:40:55+09:00",
+ "pxDate": "2026-11-10",
+ "now": "2026-11-11T12:00:00+09:00",
+ "rule": {
+  "keepKr": 120,
+  "keepUs": 50
+ },
+ "kept": {
+  "stocks": 248,
+  "companies": 146,
+  "insider": 459,
+  "nps": 25
+ },
+ "published": {
+  "stocks": 3259,
+  "companies": 2473,
+  "insider": 3253,
+  "nps": 52
+ },
+ "bytes": {
+  "snap_data.json": 203795,
+  "snap_corp.json": 149960,
+  "snap_disc.json": 76886,
+  "snap_macro.json": 39565
+ }
+}
