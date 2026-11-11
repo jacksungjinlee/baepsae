@@ -103,16 +103,19 @@ def test_preview_is_not_reachable_from_the_main_address():
 
 
 def test_main_address_only_points_to_2_0_when_the_real_fields_are_live():
-    """머지 문(리뷰 제안): 메인 주소가 app.html 로 가려면 저장소의 실제 데이터가 v17.5 형식이고 v17.5.1 항목이 있어야 해요.
+    """머지 문(리뷰 제안): 메인 주소가 app.html 로 가려면 데이터가 v17.5 형식이고 v17.5.1 항목이 있어야 해요.
     없으면 첫 방문자 모두가 '데이터를 불러오지 못했어요'(옛 형식)나 '준비 중'(항목 없음)만 보게 돼요.
-    매일 실행이 v17.5.1 데이터를 발행하기 전에는 이 테스트가 실패해서, 메인 주소 전환을 머지할 수 없어요."""
+    2026-11-11 (Jack): 여기서는 고정 시험 데이터(tests/fixtures/v2)로 봐요 — PR 의 CI 가 그날 발행 파일에 흔들리지 않게.
+    그날의 진짜 데이터로는 매일 실행이 발행하기 전에 같은 함수로 봐요 (tests/real_data_check.py · 빠진 항목이 있으면 발행하지 않아요)."""
     if "./app.html" not in read("index.html"):
         return
-    missing = real_data_missing()
-    assert not missing, "메인 주소를 2.0 으로 돌리기 전에 실제 데이터에 필요한 항목: " + ", ".join(missing)
+    import json
+    missing = real_data_missing(json.loads(read(FIXED + "data.json")), json.loads(read(FIXED + "corp.json")), json.loads(read(FIXED + "macro.json")))
+    assert not missing, "메인 주소를 2.0 으로 돌리기 전에 데이터에 필요한 항목: " + ", ".join(missing)
 
 
 V175_FORMAT = "pxDate·publishedAt (v17.5 형식)"
+FIXED = "tests/fixtures/v2/"          # 머지 문 테스트가 읽는 고정 시험 데이터 (2026-11-11 부터 · 그날의 발행 파일은 매일 실행이 봐요)
 
 
 def real_data_missing(data=None, corp=None, macro=None):
@@ -199,20 +202,21 @@ def test_merge_gate_names_each_missing_field():
 
 
 def test_merge_gate_is_wired_to_the_repo_files(monkeypatch):
-    """머지 문 테스트 자체가 저장소 파일을 읽고 막는지: d1 만 빠진 데이터면 실패, v17.5.1 데이터면 통과."""
+    """머지 문 테스트 자체가 그 파일을 읽고 막는지: d1 만 빠진 데이터면 실패, v17.5.1 데이터면 통과.
+    (2026-11-11: 머지 문 테스트가 읽는 파일이 저장소의 그날 파일에서 고정 시험 데이터로 바뀌어, 여기서 바꿔 끼우는 파일 이름도 따라왔어요.)"""
     import json
     import pytest
     real = read
     files = {}
     for n in ("data.json", "corp.json", "macro.json"):
         with open(os.path.join(ROOT, "tests", "fixtures", "v2", n), encoding="utf-8") as f:
-            files[n] = f.read()
+            files[FIXED + n] = f.read()
     monkeypatch.setitem(globals(), "read", lambda p: files.get(p) or real(p))
     test_main_address_only_points_to_2_0_when_the_real_fields_are_live()          # 항목이 다 있으면 통과
-    d = json.loads(files["data.json"])
+    d = json.loads(files[FIXED + "data.json"])
     for s in d["stocks"]:
         if s.get("cls") == "kr":
             s.pop("d1", None)
-    files["data.json"] = json.dumps(d, ensure_ascii=False)
+    files[FIXED + "data.json"] = json.dumps(d, ensure_ascii=False)
     with pytest.raises(AssertionError, match="d1"):
         test_main_address_only_points_to_2_0_when_the_real_fields_are_live()

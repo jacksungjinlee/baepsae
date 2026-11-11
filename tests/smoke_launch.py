@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """메인 주소 = 뱁새 2.0 (v18.3 Part F) 스모크 테스트: 저장소 맨 위를 그대로 띄우고 '/' 부터 열어봐요. 320 · 390px.
 
-  python tests/smoke_launch.py                 # 두 데이터로: 저장소의 지금 파일 · tests/fixtures/v2 (v17.5.1 필드가 들어온 뒤의 모습)
+  python tests/smoke_launch.py                 # 고정 시험 데이터(tests/fixtures/v2)로 — 그날의 발행 파일은 읽지 않아요 (Jack 2026-11-11)
   python tests/smoke_launch.py --shots DIR     # 화면 스크린샷
   python tests/smoke_launch.py --data DIR      # DIR 의 진짜 data/corp/macro/disc.json 만으로 (매일 실행의 발행 전 화면 검사 · Jack 2026-11-11)
 
@@ -12,8 +12,9 @@
 - ☰ 메뉴에 '예전 뱁새 보기'가 있고, 누르면 지금 앱(baepsae.html)이 열려요. 종목 탭의 한국 회사는 (v19.1a) 2.0 회사 페이지(#stocks/코드)로
 - v19.0c 전에 저장한 기본 이름('배당 생활비 덱')은 화면에서만 새 이름('배당 생활비 포트폴리오'), 저장본은 그대로
 - 지금 앱 푸터의 '소개'(v19.0)를 누르면 2.0 의 소개 페이지(app.html#about)가 열리고, 소개의 뒤로(닫기)는 지금 앱으로 돌아가요
-- 저장소의 지금 데이터로도 열어봐요. 첫 화면은 그 데이터의 단계에 맞아야 해요 (예시 데이터를 실제처럼 보이지 않음):
-  v17.5 형식 전 → '불러오지 못했어요' · v17.5 형식인데 v17.5.1 항목 없음 → 덱 짜기는 '준비 중'만 · 항목이 다 있으면 덱 짜기가 열려요
+- --data DIR (매일 실행의 '발행 전 화면 검사'): 그 폴더의 진짜 데이터로 같은 장면을 봐요 (고정 데이터 장면 · CV 링크 장면은 빼고).
+  데이터는 2.0 이 쓰는 항목을 다 가진 것이어야 해요 (아니면 브라우저를 열기 전에 실패). 2026-11-11 까지는 옵션 없이도 저장소의
+  그날 파일로 한 번 더 돌았어요 — 그 장면들이 이제 여기로 옮겨 왔어요 (PR 의 CI 가 그날 발행에 흔들리지 않게).
 - 페이지 오류 0건, app.html 에서 다른 사이트 요청 0건 (GoatCounter 는 시험에서 꺼요: ?dev=1 과 같은 localStorage 표시)
 - CV 링크 (Jack, 2026-11-05; v17.5.1 데이터 · 390px 에서 한 번): baepsae.html 을 2.0 표시(?from=app)도 # 도 없이 열면 app.html 로 가요.
   예전 뱁새는 붙지도 그려지지도 않고(#root 없음 · paint 없음 · 데이터 요청 없음), 기록이 하나만 늘어요(뒤로 → 온 곳).
@@ -54,8 +55,9 @@ def repo_state(missing):
     return "old" if V175_FORMAT in missing else ("fields" if missing else "live")
 
 
-DATA_DIR = ROOT                                                # --data DIR 이면 그 폴더 (아래 use_data)
-REPO_STATE = REPO_LABEL = None                                 # main() 이 정해요: 옵션이 없으면 저장소의 파일로 (use_root), --data 면 그 폴더로
+FIXTURES = os.path.join(ROOT, "tests", "fixtures", "v2")       # 옵션 없이 돌 때의 데이터 (고정)
+DATA_DIR = None                                                # --data DIR 일 때만 (아래 use_data): 진짜 데이터
+REPO_STATE = REPO_LABEL = None                                 # --data 일 때만 use_data 가 정해요
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
 SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og-v19.png", "icon-192.png", "icon-512.png",
@@ -67,15 +69,8 @@ SAVED = {"v": 1, "decks": [{"id": "dlaunch", "name": "배당 생활비 덱", "cr
                             "purchases": [{"t": "005930", "date": "2026-10-31", "qty": 4, "price": 225000, "ccy": "KRW"}]}]}
 
 
-def use_root():
-    """옵션 없이: 저장소의 지금 파일로 (예전 그대로). 그 데이터의 단계에 맞는 첫 화면을 봐요."""
-    global REPO_STATE, REPO_LABEL
-    REPO_STATE = repo_state(real_data_missing())
-    REPO_LABEL = REPO_LABELS[REPO_STATE]
-
-
 def use_data(dir_):
-    """--data DIR: '저장소의 지금 데이터' 자리에 DIR 의 네 파일만 써요 (저장소의 파일은 읽지 않아요).
+    """--data DIR: 고정 시험 데이터 대신 DIR 의 진짜 네 파일만 써요 (매일 실행의 발행 전 화면 검사).
     발행 전 검사라서 데이터는 2.0 이 쓰는 항목을 다 가진 단계('live')여야 해요: 아니면 브라우저를 열기 전에 멈춰요
     ('불러오지 못했어요' · '준비 중' 화면이 맞게 뜨는 것을 '통과'로 치지 않아요)."""
     global DATA_DIR, REPO_STATE, REPO_LABEL
@@ -98,16 +93,18 @@ def site(variant):
         shutil.copy(os.path.join(ROOT, f), d)
     shutil.copytree(os.path.join(ROOT, "fonts"), os.path.join(d, "fonts"))
     copy_pictures(d)                                                 # v19.3b: 기준 · 템플릿 그림
-    for f in DATA:
-        shutil.copy(os.path.join(DATA_DIR, f), d)                   # 지금 저장소의 파일 (지금 앱이 쓰는 것) · --data 면 그 폴더의 파일
-    if variant == "fixtures":                                        # 월요일 모습: v17.5 형식 + v17.5.1 필드
+    if variant == "fixtures":                                        # 고정 시험 데이터 네 파일 (v17.5 형식 + v17.5.1 필드) · 발행 시각만 '방금'
         now = dt.datetime.now(KST).isoformat(timespec="seconds")
-        for f in ("data.json", "corp.json", "macro.json"):
-            with open(os.path.join(ROOT, "tests", "fixtures", "v2", f), encoding="utf-8") as fh:
+        for f in DATA:
+            with open(os.path.join(FIXTURES, f), encoding="utf-8") as fh:
                 j = json.load(fh)
-            j["publishedAt"] = now
+            if f != "disc.json":                                     # (예전 그대로: data · corp · macro 의 발행 시각을 방금으로)
+                j["publishedAt"] = now
             with open(os.path.join(d, f), "w", encoding="utf-8") as fh:
                 json.dump(j, fh, ensure_ascii=False)
+    else:                                                            # --data DIR: 그 폴더의 파일을 한 글자도 바꾸지 않고
+        for f in DATA:
+            shutil.copy(os.path.join(DATA_DIR, f), d)
     return d
 
 
@@ -465,9 +462,7 @@ def main():
     args = ap.parse_args()
     if args.data:
         use_data(args.data)
-    else:
-        use_root()
-    variants = ("repo",) if args.data else ("fixtures", "repo")
+    variants = ("repo",) if args.data else ("fixtures",)
     results, errors, outside = [], [], []
 
     def check(label, fn, page, tag):
