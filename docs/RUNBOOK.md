@@ -21,6 +21,14 @@ serve the `docs/` folder (two of its files must answer "not found").
 - **Users still see the last good data, with its date.** The publication gate refuses to publish anything that fails
   its checks, so a failed run leaves yesterday's numbers in place, labelled with yesterday's date. The app itself shows a
   warning ("N일째 갱신이 멈췄어요") once publishing has stopped for more than 4 days.
+- **The screen check (since 2026-11-12).** After the gate passes, the daily run opens both apps in a real browser on
+  the data it is about to publish (`tests/real_data_check.py`, `tests/smoke_launch.py --data .` and all of
+  `tests/smoke_app.py --data .`). If any check fails, the run ends red and publishes nothing, exactly like a gate
+  failure: yesterday's data stays up. Nothing retries inside the run; the next scheduled start is the retry. The run's
+  summary page has a "발행 전 화면 검사" section with the three results. The check comes after the DART cache is saved, so
+  a held publish never turns the next start into a full-DART run. The browser comes from GitHub's cache
+  (`playwright-ubuntu-24.04-…`), never from Ubuntu's package server; if the cache is missing it is downloaded once from
+  Playwright's server, and if the browser still cannot start the publish is held.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.

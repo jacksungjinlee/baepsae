@@ -86,7 +86,9 @@ def test_only_the_daily_run_can_write_to_the_repository(name):
 # ── CI ──
 # 2026-11-11 (Jack): 한 기계 16분이 20분 한도에 걸려 검사를 여러 job(기계)으로 나눴어요. 검사 내용은 그대로, 마지막 job 'ci' 가 관문이에요.
 SMOKES = sorted(os.path.basename(f)[:-3] for f in os.listdir(os.path.join(ROOT, "tests")) if re.fullmatch(r"smoke_\w+\.py", f))
-SETUP_NEEDS = ("npm ci", "pip install -r requirements-dev.txt", "playwright install --with-deps chromium")
+# 2026-11-12 (Jack): 브라우저는 보관본에서, apt 없이 (--with-deps 를 뺐어요 — 2026-11-11 밤 Ubuntu 패키지 서버 장애로 CI 가 멈췄어요).
+# 보관본 단계와 'apt 없음'은 tests/test_screen_check.py 가 봐요.
+SETUP_NEEDS = ("npm ci", "pip install -r requirements-dev.txt", "python -m playwright install chromium")
 
 
 def job_run(j):
