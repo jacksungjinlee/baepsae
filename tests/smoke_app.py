@@ -189,17 +189,27 @@ class Runner:
             close = ctx.close
 
             def close_after_reading_the_clock(*a, **k):
-                self.read_clock(ctx)
-                return close(*a, **k)
+                try:
+                    self.read_clock(ctx)                    # 못 재도 장면을 실패시키지 않아요: 끝의 '잰 창 수' 검사가 잡아요
+                except Exception:
+                    pass
+                finally:
+                    return close(*a, **k)                   # 창은 언제나 닫아요
             ctx.close = close_after_reading_the_clock
         return ctx
 
     def read_clock(self, ctx):
-        """그 창에 열려 있는 페이지들의 시계를 재요 (시험의 시계를 쓰는 창만 · 한 번만)."""
+        """그 창에 열려 있는 페이지들의 시계를 재요 (시험의 시계를 쓰는 창만 · 한 번만). 페이지가 막 이동하는 중이면 다 열릴 때까지
+        기다렸다가 한 번 더 재요."""
         if not TC.started or id(ctx) in self.measured:
             return
         for page in ctx.pages:
-            self.clock_drift.append(TC.drift(page))
+            try:
+                d = TC.drift(page)
+            except Exception:
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+                d = TC.drift(page)
+            self.clock_drift.append(d)
             self.measured.add(id(ctx))
 
     def saw_clock(self, page, base):
@@ -223,6 +233,7 @@ class Runner:
         page.on("pageerror", lambda e: self.errors.append(str(e)))
         page.on("console", lambda m: self.console.append((m.type, m.text)))
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        self.read_clock(ctx)                                   # 대부분의 창은 여기서 (연 직후) 재요. 직접 여는 창은 닫을 때 재요
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):

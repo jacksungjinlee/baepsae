@@ -6,7 +6,9 @@
   Playwright 의 clock.install 은 타이머와 performance 도 바꿔서, 앱이 평소와 다른 타이머로 돌고 받은 파일을 performance 기록으로
   확인하는 검사가 아무것도 보지 못해요. (시계를 손으로 옮기는 장면만 Playwright 의 페이지 시계를 직접 써요.)
 - 시작하지 않은 시계(start_at 을 부르지 않음)는 진짜 시계예요: 실제 데이터로 돌 때(--data)와 다른 테스트가 도우미만 빌려 쓸 때.
-- 옮겨지지 않는 것 (지금 앱은 쓰지 않아요): 날짜 없이 부르는 Intl.DateTimeFormat().format() · 워커 · document.lastModified.
+- 옮겨지지 않는 것 (지금 앱은 쓰지 않아요): 날짜 없이 부르는 Intl.DateTimeFormat().format() · 워커(서비스워커 포함) ·
+  document.lastModified · File.lastModified · 어떤 날짜의 .constructor 로 만든 새 날짜 · class X extends Date.
+- 여기서는 Playwright 의 시계 설치를 쓰지 않아요 (tests/test_snapshot.py 가 확인해요).
 """
 import datetime as dt
 import time

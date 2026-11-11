@@ -4,9 +4,9 @@ PR 의 CI 결과가 그날 아침 발행에 흔들리지 않게요. 여기서 �
 
 - 고정 데이터는 tests/fixtures/snapshot/snap_*.json — 사이트가 읽는 data.json · corp.json · disc.json · macro.json 과 이름이 달라요.
 - 배포는 tests/ 를 사이트에 올리지 않아요 (tools/assemble_site.py · tests/test_site_files.py, PR #105). 앱 · 서비스워커 · 빌드한 페이지는 그 파일을 부르지 않아요.
-- 고정 데이터는 작고(600KB 이하), 자기 설명(snap_meta.json)과 맞아요. 시험의 시계는 그 데이터를 발행한 날 정오(한국 시간)예요.
+- 고정 데이터는 작고(600KB 이하), 자기 설명(snap_meta.json)과 맞아요. 시험의 시계는 그 데이터를 발행한 날 07:00(한국 시간)에서 시작해요.
 - smoke_app.py 는 고정 데이터일 때 진짜 시계를 읽지 않아요 (now_dt 한 곳만).
-- smoke_v2.py 는 정해진 날 정오에서 시작해 흐르는 시험의 시계로 돌아요 (파이썬 쪽도, 모든 브라우저 창도). smoke_launch.py 와
+- smoke_v2.py 는 정해진 날 07:00 에서 시작해 흐르는 시험의 시계로 돌아요 (파이썬 쪽도, 모든 브라우저 창도). smoke_launch.py 와
   2.0 항목 검사 · 매출 성장 기준 비교는 고정 시험 데이터로 봐요 — 그날의 진짜 데이터로는 매일 실행이 발행 전에 봐요 (PR #106).
 """
 import datetime as dt
@@ -124,7 +124,7 @@ def src_of(name):
 
 
 def test_smoke_v2_never_reads_the_real_clock():
-    """smoke_v2 의 '지금'은 now_dt() 하나: 정해진 날 정오에서 시작해 흘러요. 진짜 날짜 · 시각을 읽는 곳이 없어요
+    """smoke_v2 의 '지금'은 now_dt() 하나: 정해진 날 07:00 에서 시작해 흘러요. 진짜 날짜 · 시각을 읽는 곳이 없어요
     (기다리는 시간을 재는 time.time · time.monotonic 은 날짜가 아니에요)."""
     src = src_of("smoke_v2.py")
     assert not re.search(r"datetime\.now\(|date\.today\(|utcnow\(|time\.localtime\(|time\.strftime\(|time\.gmtime\(", src)
@@ -161,7 +161,7 @@ def test_smoke_launch_without_data_option_reads_only_fixed_data():
     assert "real_data_missing()" not in src and "def use_root" not in src
     assert 'variants = ("repo",) if args.data is not None else ("fixtures",)' in src
     assert "if args.data:" not in src and "if not args.data:" not in src       # 빈 값(--data "")이 조용히 고정 데이터로 가지 않아요
-    assert 'j["publishedAt"] = now ' in src and 'if f != "disc.json"' not in src   # 네 파일 모두 방금 발행한 것으로
+    assert 'j["publishedAt"] = now' in src and 'if f != "disc.json"' not in src    # 네 파일 모두 방금 발행한 것으로
     assert "DATA_DIR = None" in src and 'FIXTURES = os.path.join(ROOT, "tests", "fixtures", "v2")' in src
     assert src.count("os.path.join(DATA_DIR, f)") == 1 and src.count("os.path.join(FIXTURES, f)") == 1
     for f in LIVE:
@@ -199,35 +199,53 @@ def test_test_clock_is_the_real_clock_until_started_and_then_runs_from_the_start
         assert not testclock.drift_ok(off), off
 
 
-def test_test_clock_moves_only_the_date_in_a_browser_window():
+def test_test_clock_moves_only_the_date_in_a_browser_window(tmp_path):
     """창에서는 Date 만 옮겨요: 타이머와 performance 기록(받은 파일 목록)은 진짜 그대로. 시작하지 않은 시계는 아무것도 바꾸지 않아요."""
     pw = pytest.importorskip("playwright.sync_api")
+    import functools
+    import http.server
+    import threading
+    import time
     import testclock
+    assert "clock.install" not in src_of("testclock.py").split('"""', 2)[2]   # Playwright 의 시계 설치(타이머 · performance 까지 바꿈)를 쓰지 않아요
+    (tmp_path / "index.html").write_text("<script src='a.js'></script><p>x</p>")
+    (tmp_path / "a.js").write_text("window.loaded = 1;")
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(tmp_path)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
     start = dt.datetime(2026, 11, 11, 7, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))
-    with pw.sync_playwright() as p:
-        b = p.chromium.launch(executable_path=smoke_app.chromium_path())
-        tc = testclock.TestClock()
-        tc.start_at(start)
-        ctx = b.new_context()
-        tc.install(ctx)
-        page = ctx.new_page()
-        page.goto("data:text/html,<img src='data:image/gif;base64,R0lGODlhAQABAAAAACw='>")
-        assert testclock.drift_ok(tc.drift(page)) and abs(tc.drift(page)) < 2
-        got = page.evaluate("""async () => {
-          const t0 = performance.now(); await new Promise((r) => setTimeout(r, 30)); const waited = performance.now() - t0;
-          return { iso: new Date().toISOString(), plain: typeof Date(), inst: new Date() instanceof Date, parsed: new Date('2026-11-02').toISOString(),
-                   utc: Date.UTC(2026, 0, 1), local: new Date(2026, 0, 2).getDate(), waited, hasPerf: typeof performance.getEntriesByType === 'function' };
-        }""")
-        assert got["iso"].startswith("2026-11-10T22:0"), got                  # 07:00 KST = UTC 로는 전날 22:00
-        assert got["plain"] == "string" and got["inst"] is True and got["parsed"] == "2026-11-02T00:00:00.000Z"
-        assert got["utc"] == 1767225600000 and got["local"] == 2 and 20 <= got["waited"] < 2000 and got["hasPerf"] is True
-        plain = b.new_context()                                               # 시작하지 않은 시계: 진짜 날짜 그대로
-        testclock.TestClock().install(plain)
-        page2 = plain.new_page()
-        page2.goto("data:text/html,<p>x</p>")
-        assert abs(page2.evaluate("Date.now()") / 1000 - __import__("time").time()) < 5
-        assert not testclock.drift_ok(tc.drift(page2))                        # 진짜 시계의 창은 '어긋남'으로 잡혀요
-        b.close()
+    try:
+        with pw.sync_playwright() as p:
+            b = p.chromium.launch(executable_path=smoke_app.chromium_path())
+            tc = testclock.TestClock()
+            tc.start_at(start)
+            ctx = b.new_context()
+            tc.install(ctx)
+            page = ctx.new_page()
+            page.goto(base + "/index.html")
+            assert testclock.drift_ok(tc.drift(page)) and abs(tc.drift(page)) < 2
+            got = page.evaluate("""async () => {
+              const t0 = performance.now(); await new Promise((r) => setTimeout(r, 30)); const waited = performance.now() - t0;
+              return { iso: new Date().toISOString(), plain: typeof Date(), inst: new Date() instanceof Date, parsed: new Date('2026-11-02').toISOString(),
+                       utc: Date.UTC(2026, 0, 1), local: new Date(2026, 0, 2).getDate(), waited,
+                       fetched: performance.getEntriesByType('resource').map((e) => e.name.split('/').pop()) };
+            }""")
+            assert got["iso"].startswith("2026-11-10T22:0"), got              # 07:00 KST = UTC 로는 전날 22:00
+            assert got["plain"] == "string" and got["inst"] is True and got["parsed"] == "2026-11-02T00:00:00.000Z"
+            assert got["utc"] == 1767225600000 and got["local"] == 2 and 20 <= got["waited"] < 2000
+            assert "a.js" in got["fetched"], got                              # performance 기록은 진짜 그대로 (받은 파일이 보여요)
+            plain = b.new_context()                                           # 시작하지 않은 시계: 진짜 날짜 그대로
+            testclock.TestClock().install(plain)
+            page2 = plain.new_page()
+            page2.goto(base + "/index.html")
+            assert abs(page2.evaluate("Date.now()") / 1000 - time.time()) < 5
+            assert not testclock.drift_ok(tc.drift(page2))                    # 진짜 시계의 창은 '어긋남'으로 잡혀요
+            b.close()
+    finally:
+        srv.shutdown()
 
 
 # ── 고정해 둔 진짜 발행본으로도: 머지 전에 진짜 데이터의 모양을 한 번 더 봐요 (날마다 바뀌지 않는 진짜 데이터) ──
@@ -257,8 +275,8 @@ def test_every_stock_smoke_app_names_is_in_the_snapshot():
     src = src_of("smoke_app.py")
     have = {s["t"] for s in snap("snap_data.json")["stocks"]}
     made_up = {"999990", "999991", "999997", "999998", "999999"}             # 시험이 지어낸 종목 코드 (데이터에 없어야 해요)
-    named = set(re.findall(r'"(\d{6})"', src))
-    assert len(named) >= 12 and not (made_up & have)
+    named = set(re.findall(r'"(\d{6})"', src)) | set(re.findall(r'"(0\d{7})"', src))        # 6자리 종목코드 · 8자리(금현물 04020000)
+    assert len(named) >= 13 and "04020000" in named and not (made_up & have)
     assert named - made_up <= have, sorted(named - made_up - have)
     for t in ("AAPL", "MSFT", "NVDA"):
         assert f'"{t}"' in src and t in have, t
