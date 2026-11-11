@@ -6,6 +6,8 @@ PR 의 CI 결과가 그날 아침 발행에 흔들리지 않게요. 여기서 �
 - 배포는 tests/ 를 사이트에 올리지 않아요 (tools/assemble_site.py · tests/test_site_files.py, PR #105). 앱 · 서비스워커 · 빌드한 페이지는 그 파일을 부르지 않아요.
 - 고정 데이터는 작고(600KB 이하), 자기 설명(snap_meta.json)과 맞아요. 시험의 시계는 그 데이터를 발행한 날 정오(한국 시간)예요.
 - smoke_app.py 는 고정 데이터일 때 진짜 시계를 읽지 않아요 (now_dt 한 곳만).
+- smoke_v2.py 는 정해진 날 정오에서 시작해 흐르는 시험의 시계로 돌아요 (파이썬 쪽도, 모든 브라우저 창도). smoke_launch.py 와
+  2.0 항목 검사 · 매출 성장 기준 비교는 고정 시험 데이터로 봐요 — 그날의 진짜 데이터로는 매일 실행이 발행 전에 봐요 (PR #106).
 """
 import datetime as dt
 import glob
@@ -98,3 +100,64 @@ def test_smoke_app_reads_the_real_clock_in_one_place_only():
     assert not re.search(r"date\.today\(|utcnow\(|time\.localtime\(|time\.strftime\(", src)
     assert "browser.new_context(" in src and src.count("browser.new_context(") == 1                  # 창은 Runner.new_context 로만 (시계가 붙어요)
     assert 'ap.add_argument("--data", default=None' in src and "files, CLOCK = read_snapshot()" in src
+
+
+# ── smoke_v2 · smoke_launch (2026-11-11, Jack): 진짜 시계 · 그날의 발행 파일을 읽지 않아요 ──
+def src_of(name):
+    with open(os.path.join(ROOT, "tests", name), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_smoke_v2_never_reads_the_real_clock():
+    """smoke_v2 의 '지금'은 now_dt() 하나: 정해진 날 정오에서 시작해 흘러요. 진짜 날짜 · 시각을 읽는 곳이 없어요
+    (기다리는 시간을 재는 time.time · time.monotonic 은 날짜가 아니에요)."""
+    src = src_of("smoke_v2.py")
+    assert not re.search(r"datetime\.now\(|date\.today\(|utcnow\(|time\.localtime\(|time\.strftime\(|time\.gmtime\(", src)
+    # 진짜 시계는 한 곳에서만, 시험의 시계와의 차이(_SHIFT)를 잴 때 써요: now_dt = 진짜 시계 + _SHIFT
+    assert "CLOCK = dt.datetime(" in src and src.count("time.time() + _SHIFT") == 1 and "_SHIFT = CLOCK.timestamp() - time.time()" in src
+    m = re.search(r"CLOCK = dt\.datetime\((\d+), (\d+), (\d+), (\d+), (\d+), tzinfo=KST\)", src)
+    assert m and (int(m.group(4)), int(m.group(5))) == (12, 0)              # 정오: 한 번 도는 동안 · 시계를 옮기는 장면이 날짜를 넘지 않아요
+
+
+def test_smoke_v2_every_window_gets_the_test_clock():
+    """창은 Runner.new_context 로만 열어요 (그 창의 시계가 now_dt() 에서 시작). clock=False 인 곳은 그 장면이 페이지 시계를 직접
+    설치하고 (page.clock.install) 곧바로 saw_clock 으로 알려요 — 끝의 '브라우저 시계' 검사가 모든 창을 세요."""
+    src = src_of("smoke_v2.py")
+    assert src.count("browser.new_context(") == 1 and "ctx = self.browser.new_context(**kw)" in src
+    assert "ctx.add_init_script(DATE_SHIM % round(_SHIFT * 1000))" in src and "window.Date = TestDate;" in src
+    assert "ctx.clock.install" not in src                                     # 창 전체에 Playwright 시계를 깔지 않아요 (performance 기록을 지워요)
+    lines = src.splitlines()
+    own = [i for i, ln in enumerate(lines) if "new_context(clock=" in ln and "def new_context" not in ln]
+    assert len(own) == 4, own                                                 # 페이지 시계를 직접 다루는 장면 넷
+    for i in own:
+        after = "\n".join(lines[i:i + 22])
+        assert "page.clock.install(time=" in after and "saw_clock(page, " in after, lines[i].strip()
+    opened = len(re.findall(r"\.new_page\(\)", src))
+    told = len(re.findall(r"saw_clock\(page", src))
+    assert told >= 6 and "self.saw_clock(page)" in src, (opened, told)       # R.open (대부분의 창) + 직접 여는 다섯 곳
+    assert "drift_ok = bool(R.clock_drift) and all(-2 <= d < 600 for d in R.clock_drift)" in src
+
+
+def test_smoke_launch_without_data_option_reads_only_fixed_data():
+    """옵션 없이 돌면 고정 시험 데이터(tests/fixtures/v2)만 써요: 저장소의 그날 파일을 읽는 길이 없어요. 진짜 데이터는 --data 로만."""
+    src = src_of("smoke_launch.py")
+    assert "real_data_missing()" not in src and "def use_root" not in src
+    assert 'variants = ("repo",) if args.data else ("fixtures",)' in src
+    assert "DATA_DIR = None" in src and 'FIXTURES = os.path.join(ROOT, "tests", "fixtures", "v2")' in src
+    assert src.count("os.path.join(DATA_DIR, f)") == 1 and src.count("os.path.join(FIXTURES, f)") == 1
+    for f in LIVE:
+        assert os.path.isfile(os.path.join(ROOT, "tests", "fixtures", "v2", f)), f
+
+
+def test_pytest_checks_that_moved_to_fixed_data_do_not_read_the_daily_files():
+    """2.0 항목 검사(test_launch)와 매출 성장 기준 비교(test_app_data)는 고정 데이터로 봐요. 그날의 진짜 데이터로는 매일 실행이
+    발행 전에 같은 검사를 돌려요 (tests/real_data_check.py — update-data.yml 의 '발행 전 화면 검사')."""
+    launch, app = src_of("test_launch.py"), src_of("test_app_data.py")
+    body = launch.split("def test_main_address_only_points_to_2_0_when_the_real_fields_are_live():", 1)[1].split("\ndef ", 1)[0]
+    assert "real_data_missing()" not in body and body.count("read(FIXED + ") == 3
+    growth = app.split("def test_korean_growth_basis_matches_2_0_on_todays_data():", 1)[1].split("\n@pytest", 1)[0]
+    assert 'compare("./tests/fixtures/v2/data.json", "./tests/fixtures/v2/corp.json")' in growth and '"./data.json"' not in growth
+    wf = open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8").read()
+    assert "for t in real_data_check smoke_launch smoke_app; do" in wf and 'python "tests/$t.py" --data .' in wf
+    rc = src_of("real_data_check.py")
+    assert "real_data_missing(" in rc and "D.krGrowthBasis(s.g3, k ? k.rev : null), b = E.growthBasis(s, k || null)" in rc

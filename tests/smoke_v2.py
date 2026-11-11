@@ -184,8 +184,36 @@ def mascot_img(loc, src, px, alt):
     assert img.get_attribute("alt") == alt and alt, (src, img.get_attribute("alt"), alt)     # Jack 이 승인한 alt (2026-11-04)
 
 
+# 2026-11-11 (Jack): 시험의 시계는 정해진 날 정오에서 시작해요. 진짜 날짜 · 시각을 읽으면 그날그날 · 시각마다 결과가 달라질 수 있어요
+# (예: 23:15~23:20 KST 에 돌리면 '시계를 45분 뒤로' 장면이 자정을 넘겨 실패했어요 — 앱은 규칙대로였고 시험만 틀렸어요).
+# 이 파일의 모든 '지금'은 now_dt() 예요: CLOCK 에서 시작해 평소처럼 흘러요 (멈춰 있으면 '방금 더 새로 발행한 파일'을 만드는 장면이
+# 앞 파일과 같은 시각이 돼요). 모든 브라우저 창의 날짜 · 시각도 같은 만큼 옮겨져 같이 흘러요 (Runner.new_context · DATE_SHIM).
+# 정오에서 시작하니 한 번 도는 10여 분과 시계를 몇 십 분 옮기는 장면이 날짜를 넘지 않아요. 날짜를 직접 정하는 장면(다시 읽은 날 안내)은
+# 자기 날짜를 써요.
+CLOCK = dt.datetime(2026, 11, 12, 12, 0, tzinfo=KST)
+_SHIFT = CLOCK.timestamp() - time.time()          # 시험의 시계 = 진짜 시계 + _SHIFT 초 (이 실행을 시작한 순간이 CLOCK)
+
+# 브라우저 창의 Date 만 _SHIFT 만큼 옮겨요. 타이머 · performance 는 그대로예요: Playwright 의 clock.install 은 performance 도
+# 바꿔서, 받은 파일을 performance 기록으로 확인하는 검사(disc_fetched 등)가 아무것도 보지 못해요.
+DATE_SHIM = """(() => {
+  const RealDate = Date, shift = %d;
+  function TestDate(...a) {
+    if (!new.target) return new RealDate(RealDate.now() + shift).toString();
+    return a.length ? new RealDate(...a) : new RealDate(RealDate.now() + shift);
+  }
+  Object.setPrototypeOf(TestDate, RealDate);
+  TestDate.prototype = RealDate.prototype;
+  TestDate.now = () => RealDate.now() + shift;
+  window.Date = TestDate;
+})();"""
+
+
+def now_dt():
+    return dt.datetime.fromtimestamp(time.time() + _SHIFT, KST)
+
+
 def now_kst(days_ago=0):
-    return (dt.datetime.now(KST) - dt.timedelta(days=days_ago)).isoformat(timespec="seconds")
+    return (now_dt() - dt.timedelta(days=days_ago)).isoformat(timespec="seconds")
 
 
 def read_fixtures():
@@ -275,14 +303,27 @@ class Runner:
     def __init__(self, browser, shots, names):
         self.browser, self.shots = browser, shots
         self.results, self.errors, self.outside = [], [], []
+        self.clock_drift = []          # 창을 열 때마다 (브라우저 시계 − 그 창이 시작해야 하는 시각) 초 — 끝에서 모두 0 이상 10분 미만인지 봐요
         self.texts = set()
         self.names = sorted({n for n in names if n and HANGUL.search(n)}, key=len, reverse=True)
+
+    def new_context(self, clock=True, **kw):
+        """브라우저 창 하나. 창의 날짜 · 시각은 시험의 시계(now_dt)와 같아요 (DATE_SHIM). clock=False 는 그 장면이 Playwright 의
+        페이지 시계를 직접 설치할 때만 (설치한 뒤 saw_clock(page, 그 시각) 으로 알려요)."""
+        ctx = self.browser.new_context(**kw)
+        if clock:
+            ctx.add_init_script(DATE_SHIM % round(_SHIFT * 1000))
+        return ctx
+
+    def saw_clock(self, page, base=None):
+        """그 창의 시계가 (base 가 없으면 지금의 now_dt 에서, 있으면 그 시각에서) 시작했는지: 차이(초)를 모아 끝에서 봐요."""
+        self.clock_drift.append(page.evaluate("Date.now()") / 1000 - (base or now_dt()).timestamp())
 
     def open(self, site, width, init=None, accept_downloads=False, path="/app.html?dev=1", device=None, guide_seen=True):
         srv, base = serve(site)
         # device: Playwright 의 기기 설명(사용자 에이전트 · 화면 · 터치)을 그대로 입혀요. 없으면 휴대폰 폭 width × 780.
         screen = dict(device) if device else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
-        ctx = self.browser.new_context(**screen, locale="ko-KR", service_workers="block", accept_downloads=accept_downloads)
+        ctx = self.new_context(**screen, locale="ko-KR", service_workers="block", accept_downloads=accept_downloads)
 
         def route(r):
             if r.request.url.startswith(base):
@@ -304,6 +345,7 @@ class Runner:
         page.set_default_timeout(WAIT)
         page.on("pageerror", lambda e: self.errors.append(str(e)))
         page.goto(base + path, wait_until="domcontentloaded")
+        self.saw_clock(page)
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -2451,7 +2493,7 @@ def _iphone_records(R, files, device, tmp):
         page.locator("[data-deck-id]").first.wait_for(state="visible")
         assert page.locator('[data-ui-v2="import-bad"]').count() == 0
         keep["seen"] = (page.evaluate(STORED) or {}).get("guideSeen")         # 처음 안내를 본 날: 앱이 옛 칸에서 읽어 온 오늘(한국 날짜)
-        assert keep["seen"] == dt.datetime.now(KST).strftime("%Y-%m-%d"), keep["seen"]
+        assert keep["seen"] == now_dt().strftime("%Y-%m-%d"), keep["seen"]
         assert stored_records(page, keep["seen"]) == keep["file"], "불러온 기록이 파일과 달라요 (덱 · 종목 · 산 기록 · 규칙)"
         assert page.evaluate(OTHER_KEYS) == others, "기록 말고 다른 저장 값이 바뀌었어요"
         page.locator("[data-holding][data-status]").first.wait_for(state="visible")
@@ -3909,7 +3951,7 @@ def scene_company(R, files, width):
     def disc_stale():
         # 리뷰: 오늘 공시 목록을 못 받은 파일(listOk false, 가장 최근 공시 10월 20일) → 멈춤 표시, 오늘 날짜를 내용 날짜로 쓰지 않아요
         g = clone(f)
-        g["disc.json"].update(listOk=False, newest="2026-10-20", asOf=dt.datetime.now(KST).date().isoformat())
+        g["disc.json"].update(listOk=False, newest="2026-10-20", asOf=now_dt().date().isoformat())
         # 접수번호가 없는 줄(파이프라인의 대신 열쇠 '날짜|이름')은 링크가 없어요 (이름으로 찾는 링크도 없어요)
         kr_rows = [x for x in g["disc.json"]["insider"] if x["t"] == "005930"]
         kr_rows[0]["rc"] = kr_rows[0]["d"] + "|" + kr_rows[0]["nm"]
@@ -3921,7 +3963,7 @@ def scene_company(R, files, width):
             line = ds.locator('[data-ui-v2="date-line"]').first
             assert line.get_attribute("data-stale") == "1" and line.inner_text().startswith(fillp(C["app"]["asOf"], md="10월 20일")), line.inner_text()
             assert fillp(C["app"]["stale"], n="").strip() in line.inner_text() or "갱신이 멈췄어요" in line.inner_text()
-            today = dt.datetime.now(KST)
+            today = now_dt()
             assert f"{today.month}월 {today.day}일 기준" not in ds.inner_text()
             if CO["disc"]["buy"] and CO["disc"]["sell"]:
                 shown = sorted(kr_rows, key=lambda x: x["d"], reverse=True)[:10]
@@ -4648,7 +4690,7 @@ def stale_files(files, hours_ago, after_hours, due_days_ago=0, due_at=None):
     nextPub(발행 예정일) = 오늘(한국)에서 due_days_ago 일 전 — 늦음 경고의 n 은 그 아침부터 세요 (Jack, 2026-11-07). due_at: 그 시각의
     한국 날짜 (시계를 돌리는 장면: 경고가 뜨는 때의 날짜라서 자정을 넘겨도 n = 1)."""
     f = daily_files(files)
-    now = dt.datetime.now(KST)
+    now = now_dt()
     for n in DATA_FILES:
         f[n]["publishedAt"] = (now - dt.timedelta(hours=hours_ago)).isoformat(timespec="seconds")
     f["data.json"]["nextPub"] = due_at.date().isoformat() if due_at else (now.date() - dt.timedelta(days=due_days_ago)).isoformat()
@@ -4713,16 +4755,17 @@ def scene_stale_recheck(R, files, width):
     돌려 (Playwright clock) 타이머로 한 번, 시계만 옮기고 화면이 다시 보일 때(visibilitychange)로 한 번 봐요. 데이터는 다시 받지 않아요."""
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
     for how in ("timer", "visible"):
-        now = dt.datetime.now(KST)
+        now = now_dt()
         f = stale_files(files, 2, 0.5, due_at=now + dt.timedelta(minutes=40))     # 발행 2시간 전 · staleAfter 30분 뒤 · 예정일 = 그때의 날짜
         srv, base = serve(build_site(f))
-        ctx = R.browser.new_context(viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx = R.new_context(clock=False, viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
         ctx.add_init_script(init)
         page = ctx.new_page()
         page.set_default_timeout(WAIT)
         page.on("pageerror", lambda e: R.errors.append(str(e)))
         page.clock.install(time=now)
+        R.saw_clock(page, now)
         fetched = []
         page.on("request", lambda r: fetched.append(r.url) if r.url.endswith(".json") else None)
         page.goto(base + "/app.html?dev=1", wait_until="domcontentloaded")
@@ -4967,7 +5010,7 @@ def scene_disc_refetch(R, files, width, how):
             fh.write("4")                                                    # the first disc.json answer comes 4 s late
     srv, base = serve(site)
     screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
-    ctx = R.browser.new_context(**screen, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(clock=(how == "disc-slow"), **screen, locale="ko-KR", service_workers="block")   # disc-slow 만 창의 시계 (나머지는 아래에서 페이지 시계)
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else (R.outside.append(r.request.url), r.abort()))
     ctx.add_init_script(init)
     page = ctx.new_page()
@@ -4976,9 +5019,10 @@ def scene_disc_refetch(R, files, width, how):
     asked, logs = [], []
     page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
     page.on("console", lambda m: logs.append(m.text))
-    now = dt.datetime.now(KST)
+    now = now_dt()
     if how != "disc-slow":
         page.clock.install(time=now)                                         # the 10 minutes are moved on by hand
+    R.saw_clock(page, now)
     page.goto(base + "/app.html?dev=1" + ("" if how == "disc-slow" else "#market"), wait_until="domcontentloaded")
     home_disc = "() => { const e = document.querySelector('[data-ui-v2=\"home2\"]'); return e ? e.dataset.disc : null; }"
 
@@ -5271,7 +5315,7 @@ def open_clock(R, site, width, init=None, path="/app.html?dev=1"):
     wide = width >= 1024
     srv, base = serve(site)
     screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
-    ctx = R.browser.new_context(**screen, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(clock=False, **screen, locale="ko-KR", service_workers="block")
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else (R.outside.append(r.request.url), r.abort()))
     ctx.add_init_script("try { localStorage.setItem('baepsae2.v1.guideSeen', '1'); } catch (e) {}")
     if init:
@@ -5282,8 +5326,9 @@ def open_clock(R, site, width, init=None, path="/app.html?dev=1"):
     asked, logs = [], []
     page.on("request", lambda r: asked.append(DATA_FILE_RX.search(r.url).group(0)[1:]) if DATA_FILE_RX.search(r.url) else None)
     page.on("console", lambda m: logs.append(m.text))
-    now = dt.datetime.now(KST)
+    now = now_dt()
     page.clock.install(time=now)
+    R.saw_clock(page, now)
     return srv, ctx, page, base, asked, logs, now
 
 
@@ -6349,13 +6394,14 @@ def scene_v193c_first(R, files, devices):
     # (c) 는 실제 주소처럼 ?dev=1 없이 열어요: 그래서 app.html 이 자기 페이지뷰(GoatCounter)를 부르는데, 그건 smoke_launch.py 가 보는 일이라
     # 여기서는 바깥 요청을 조용히 막기만 하는 따로 된 문맥으로 열어요 (Runner 의 '다른 사이트 요청' 목록에 넣지 않게).
     srv, cvbase = serve(build_site(files))
-    ctx = R.browser.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(cvbase) else r.abort())
     page = ctx.new_page()
     page.set_default_timeout(WAIT)
     cv_errors = []
     page.on("pageerror", lambda e: cv_errors.append(str(e)))
     page.goto(cvbase + "/baepsae.html", wait_until="domcontentloaded")
+    R.saw_clock(page)
 
     def cv_link():
         page.wait_for_url("**/app.html**")
@@ -7301,7 +7347,7 @@ def scene_v193e_home(R, files, width):
 
     # 공시 줄 (Jack, 2026-11-08): 회사 페이지를 열지 않아도 홈이 받아요 · 그 주 보고가 모두 같은 쪽일 때만 방향, 섞이면 '지분 변동 보고'
     ff = clone(f)
-    now = dt.datetime.now(KST)
+    now = now_dt()
     today, yday = now.strftime("%Y%m%d"), (now - dt.timedelta(days=1)).strftime("%Y%m%d")
     ff["disc.json"]["newest"] = now.strftime("%Y-%m-%d")
 
@@ -7374,7 +7420,7 @@ def scene_v193e_home(R, files, width):
 
     # 멈춘 공시 목록 (리뷰 2026-11-08): 파일이 오래됐거나(발행 6일 전) 그날 DART 목록을 받지 못했으면(listOk false) 공시 줄도 '할 일이
     # 없어요'도 없이 공시 탭의 날짜 줄 그대로 ('{md} 기준 · {n}일째 갱신이 멈췄어요'), 공시 줄의 file-text 칩 옆에
-    kst_now = dt.datetime.now(KST)
+    kst_now = now_dt()
     newest5 = (kst_now - dt.timedelta(days=5)).date()
     since5 = int((kst_now - dt.datetime.combine(newest5, dt.time(0), KST)).total_seconds() // 86400)
     for how, upd, newest, days in (("발행 6일 전", {"publishedAt": now_kst(days_ago=6)}, f["disc.json"]["newest"], 6),
@@ -8266,7 +8312,7 @@ def reread_open(R, site, width, when, init=None, path="/app.html?dev=1#home"):
     읽으니까요. 처음 안내는 본 것으로 · 다른 사이트 요청은 막고 적어요."""
     srv, base = serve(site)
     screen = pc_device(width) if width >= 1024 else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
-    ctx = R.browser.new_context(**screen, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(clock=False, **screen, locale="ko-KR", service_workers="block")     # 이 장면은 자기 날짜(when)로 페이지 시계를 설치해요
 
     def route(r):
         if r.request.url.startswith(base):
@@ -8282,6 +8328,7 @@ def reread_open(R, site, width, when, init=None, path="/app.html?dev=1#home"):
     page.set_default_timeout(WAIT)
     page.on("pageerror", lambda e: R.errors.append(str(e)))
     page.clock.install(time=when)
+    R.saw_clock(page, when)
     page.goto(base + path, wait_until="domcontentloaded")
     return srv, ctx, page, base
 
@@ -8559,6 +8606,10 @@ def main():
     R.results.append((f"보이는 한국어 {len(ko)}가지 모두 src/copy/v2.js 또는 데이터 이름에서 왔어요", len(ko) > 120 and not stray, str(stray[:8])))
     R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
     R.results.append(("다른 사이트 요청 0건 (글꼴·통계·CDN 없음)", not R.outside, ", ".join(sorted(set(R.outside)))[:300]))
+    # 2026-11-11: 모든 창의 브라우저 시계가 시험의 시계(now_dt)나 그 장면이 정한 날에서 시작했는지 (진짜 시계로 돈 창이 하나도 없어요)
+    drift_ok = bool(R.clock_drift) and all(-2 <= d < 600 for d in R.clock_drift)
+    R.results.append((f"브라우저 시계는 시험의 날 {CLOCK.date().isoformat()} (또는 장면이 정한 날)에서 시작 (연 창 {len(R.clock_drift)}개)", drift_ok,
+                      "" if drift_ok else f"어긋남(초): {[round(d) for d in R.clock_drift if not 0 <= d < 600][:5]}"))
     w = max(len(n) for n, _, _ in R.results)
     print("\n뱁이가 나온 화면 (그림 | 화면 | 걸린 숫자 | 숫자가 아닌 이유: 예외 칸 · 날짜 · 종목 수):")
     print("\n".join(placements_table()))
