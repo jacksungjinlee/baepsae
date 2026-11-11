@@ -386,12 +386,14 @@ def test_real_data_check_never_skips_a_check_it_cannot_run(tmp_path):
     assert RC.main(["--data", d]) == 1
 
 
-def test_real_data_check_passes_on_the_repository_data_when_it_is_there():
-    """main 에 오늘 data.json · corp.json · macro.json 이 있는 동안은 그 파일로 스크립트를 처음부터 끝까지 돌려요 (매일 실행이 부르는 그대로)."""
-    if not all(os.path.exists(os.path.join(ROOT, f)) for f in ("data.json", "corp.json", "macro.json")) or NODE is None:
-        pytest.skip("저장소에 오늘 데이터가 없거나 node 가 없어요")
-    r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "real_data_check.py"), "--data", ROOT], capture_output=True, text=True)
-    assert r.returncode == 0 and "3 / 3 통과" in r.stdout, r.stdout + r.stderr
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_real_data_check_passes_end_to_end_on_good_data(tmp_path, monkeypatch, capsys):
+    """스크립트를 처음부터 끝까지: 좋은 데이터면 3 / 3 통과로 exit 0. 그날의 발행 파일이 아니라 고정 시험 데이터로 봐요
+    (종목 수 기준만 그 데이터에 맞게 낮춰요) — 진짜 데이터로는 매일 실행과 브랜치 시험 실행이 돌려요."""
+    monkeypatch.setattr(RC, "GROWTH_MIN", 300)
+    assert RC.main(["--data", fixture_dir(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "3 / 3 통과" in out and "FAIL" not in out, out
 
 
 # ── tests/smoke_launch.py --data · tests/smoke_app.py --data: 그 폴더의 파일만 ──
