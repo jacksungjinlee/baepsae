@@ -93,6 +93,9 @@ tells you what happened in plain words.
   that published new data. Settings → Pages → Source has been **GitHub Actions** since 2026-11-06. Never switch it back
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
+  Since 2026-11-12 Deploy also leaves out the development folders and files the site never reads (`tests/`, `tools/`,
+  `data/`, `styleguide/` and the build and pipeline files at the top; the two lists are in `tools/assemble_site.py`) and
+  refuses to publish if one gets in. A branch deploy would serve them again, including the test data under `tests/`.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
 - **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
   whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of
