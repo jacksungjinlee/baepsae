@@ -120,7 +120,8 @@ def test_ci_runs_build_tests_and_smoke_on_every_pr():
         assert py["with"]["python-version"] == "3.11", k                                     # 매일 실행과 같은 파이썬
         for need in SETUP_NEEDS:
             assert need in job_run(j), (k, need)
-        assert (j.get("strategy") or {}).get("fail-fast", False) is False, k                  # 하나가 실패해도 나머지는 끝까지
+        if "strategy" in j:
+            assert j["strategy"].get("fail-fast") is False, k                                # 하나가 실패해도 나머지는 끝까지 (적어 둬야 해요)
     nodes = {next(s for s in j["steps"] if s.get("uses", "").startswith("actions/setup-node"))["with"]["node-version"]
              for j in work_jobs(wf).values()}
     assert len(nodes) == 1, nodes
@@ -149,17 +150,33 @@ def test_ci_every_smoke_script_and_every_smoke_app_part_runs():
             ran += loop.group(1).split()
     assert sorted(ran) == SMOKES, ran                                                         # 다섯 모두 · 각각 한 번
     app = wf["jobs"]["smoke_app"]
+    assert set(app["strategy"]["matrix"]) == {"part"}                                        # include · exclude 로 몫을 빼지 못해요
     parts = app["strategy"]["matrix"]["part"]
     m = len(parts)
     assert parts == [f"{n}/{m}" for n in range(1, m + 1)], parts                              # 1/M … M/M 빠짐 · 겹침 없이
     assert app["strategy"]["fail-fast"] is False
-    assert job_run(app).count('python tests/smoke_app.py --part "${{ matrix.part }}"') == 1
+    runs = [s["run"].strip() for k, j in work_jobs(wf).items() for s in j["steps"] if "smoke_" in (s.get("run") or "")]
+    assert 'python tests/smoke_app.py --part "${{ matrix.part }}"' in runs                    # 정확히 이 명령 (--only 같은 것을 붙이지 못해요)
+    assert "python tests/smoke_v2.py" in runs
     others = [k for k, j in work_jobs(wf).items() if k != "smoke_app" and "smoke_app" in job_run(j)]
     assert not others, others                                                                 # smoke_app 은 몫으로만 (두 번 돌지 않아요)
     rest = next(s for s in wf["jobs"]["smoke_rest"]["steps"] if s.get("name", "").startswith("스모크"))["run"]
     assert 'if python "tests/$t.py"; then' in rest and "exit 1" in rest
     for t in ("smoke_preview", "smoke_styleguide", "smoke_launch"):
         assert t in rest.split("for t in ", 1)[1].split(";", 1)[0], t
+
+
+def test_ci_nothing_can_quietly_skip_a_job_or_step():
+    """검사 단계를 조용히 건너뛰게 하는 것은 없어요: 단계의 if 없음, job 의 if 는 관문의 always() 뿐, 관문 단계는 name · env · run 만,
+    matrix 가 있는 job 은 fail-fast: false 를 적어 둬요 (GitHub 기본값은 true)."""
+    wf = load("ci.yml")
+    for k, j in wf["jobs"].items():
+        assert "if" not in j or (k == "ci" and j["if"] == "always()"), k
+        for s in j.get("steps", []):
+            assert "if" not in s, (k, s.get("name") or s.get("uses"))
+        if "strategy" in j:
+            assert j["strategy"].get("fail-fast") is False, k
+    assert set(wf["jobs"]["ci"]["steps"][0]) <= {"name", "env", "run"}
 
 
 def test_ci_every_job_has_a_limit_of_20_minutes_or_less():

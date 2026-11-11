@@ -2741,7 +2741,7 @@ def parse_part(text):
 
 
 def part_of(scenes, part):
-    """2026-11-10 (Jack): CI 를 여러 기계로 나눠요. 순서로 나눠요 — i 번째 장면은 (i % M) + 1 번째 몫. 그래서 모든 장면이 정확히 한 몫에
+    """2026-11-11 (Jack): CI 를 여러 기계로 나눠요. 순서로 나눠요 — i 번째 장면은 (i % M) + 1 번째 몫. 그래서 모든 장면이 정확히 한 몫에
     들어가고, 새 장면은 저절로 어느 한 몫에 들어가요 (tests/test_smoke_parts.py 가 확인해요). part None 이면 전부."""
     if part is None:
         return list(scenes)
@@ -2774,14 +2774,18 @@ def main():
         browser = p.chromium.launch(executable_path=chromium_path())
         R = Runner(browser, args.shots)
         scenes = part_of(scene_list(R, fresh, full), args.part)
+        ran = 0
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue
+            ran += 1
             try:
                 fn()
             except Exception as e:
                 R.results.append((f"[{key}] 장면 실행", False, str(e).splitlines()[0][:160]))
                 print(f"  FAIL  [{key}] 장면 실행: {e}", flush=True)
+        if not ran:
+            R.results.append(("돌린 장면이 있어요", False, f"--part {args.part} · --only {args.only} 로 고른 장면이 없어요"))
         R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
         browser.close()
 

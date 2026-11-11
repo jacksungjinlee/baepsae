@@ -18,7 +18,9 @@ def scenes():
 
 def ci_parts():
     with open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
-        return yaml.safe_load(f)["jobs"]["smoke_app"]["strategy"]["matrix"]["part"]
+        matrix = yaml.safe_load(f)["jobs"]["smoke_app"]["strategy"]["matrix"]
+    assert set(matrix) == {"part"}, matrix                    # include · exclude 없이 몫 목록 그대로
+    return matrix["part"]
 
 
 @pytest.mark.parametrize("m", [1, 2, 3, 4, 5, 6])
