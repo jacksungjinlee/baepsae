@@ -364,6 +364,7 @@ def scene_normal(R, files, full):
 
 
 def scene_stale(R, files):
+    raise AssertionError("임시: CI 가 빨갛게 끝나는지 보려고 일부러 실패시켜요 (PR #103 · 곧 되돌려요)")
     f = json.loads(json.dumps(files, allow_nan=True))
     for name in DATA_FILES:
         f[name]["publishedAt"] = now_kst(days_ago=6)
