@@ -3,7 +3,7 @@
 
   python3 tools/assemble_site.py OUT DATA_REF [LOGOS_REF]
 
-- main 의 파일: git 이 관리하는 파일 전부 (지금 'main 브랜치에서 배포'가 보여 주는 것과 같게), 점(.)으로 시작하는 것
+- main 의 파일: git 이 관리하는 파일 가운데 사이트가 쓰는 것. 점(.)으로 시작하는 것
   (.github · .gitignore …)과 docs/, 그리고 사이트가 읽지 않는 개발용 폴더 · 파일(NOT_SITE_DIRS · NOT_SITE_FILES)은 빼요. 작업 폴더에서 복사하니 방금 빌드한 페이지(빌드 표시가 달린 것)가 들어가요.
 - docs/ 를 빼는 이유 (Jack 2026-11-06): 설계 자료의 Adobe Stock 그림은 라이선스상 따로 내려받는 파일로 내놓으면 안 돼요
   (docs/design/v19.3/LICENSES.md). 사이트 페이지는 docs/ 의 파일을 쓰지 않아요.
@@ -50,10 +50,20 @@ def in_excluded(p):
     return p.split("/", 1)[0].lower() == EXCLUDED_DIR
 
 
+_NOT_SITE_FILES_LOWER = tuple(f.lower() for f in NOT_SITE_FILES)
+
+
 def not_site(p):
-    """사이트가 읽지 않는 개발용 경로: 맨 위 폴더가 NOT_SITE_DIRS (대소문자만 다른 것도) 이거나, 맨 위 파일이 NOT_SITE_FILES."""
+    """사이트가 읽지 않는 개발용 경로: 맨 위 폴더가 NOT_SITE_DIRS 이거나, 맨 위 파일이 NOT_SITE_FILES.
+    둘 다 대소문자만 다른 것도 (Tests/ · readme.md) — Pages 는 대소문자를 가려서 그대로 올려 버려요."""
     top, _, rest = p.partition("/")
-    return top.lower() in NOT_SITE_DIRS if rest else p in NOT_SITE_FILES
+    return top.lower() in NOT_SITE_DIRS if rest else p.lower() in _NOT_SITE_FILES_LOWER
+
+
+def not_site_entry(folder, name):
+    """사이트 폴더 맨 위의 항목 하나가 개발용인지 (not_site 와 같은 규칙: 폴더는 폴더 목록으로, 파일은 파일 목록으로)."""
+    full = os.path.join(folder, name)
+    return not_site(name + "/x") if os.path.isdir(full) else not_site(name)
 
 
 def site_files(paths):
@@ -199,11 +209,10 @@ def assemble(root, out, data_ref, logos_ref=None):
         sizes[f] = len(r.stdout)
     if any(in_excluded(n) for n in os.listdir(out)):              # 위 규칙이 깨지면 조용히 올리지 않고 멈춰요
         raise SystemExit(f"!! 사이트 폴더에 {EXCLUDED_DIR}/ 가 들어갔어요 → 배포하지 않아요 (Adobe 그림은 따로 내려받는 파일이 되면 안 돼요)")
-    got_in = sorted(n for n in os.listdir(out)                    # 같은 뜻: 개발용 폴더 · 파일이 들어가면 조용히 올리지 않고 멈춰요
-                    if (n.lower() in NOT_SITE_DIRS and os.path.isdir(os.path.join(out, n))) or n in NOT_SITE_FILES)
+    got_in = sorted(n for n in os.listdir(out) if not_site_entry(out, n))   # 같은 뜻: 개발용 폴더 · 파일이 들어가면 조용히 올리지 않고 멈춰요
     if got_in:
         raise SystemExit(f"!! 사이트 폴더에 개발용 폴더 · 파일이 들어갔어요: {', '.join(got_in)} → 배포하지 않아요 "
-                         "(시험용 데이터가 사이트의 데이터와 헷갈리면 안 돼요)")
+                         "(사이트가 읽지 않는 것들이에요. 시험용 데이터는 사이트의 데이터와 헷갈리면 안 돼요)")
     skipped = sum(1 for p in tracked(root) if in_excluded(p))
     print(f"· {EXCLUDED_DIR}/ 의 파일 {skipped}개는 올리지 않아요 (설계 자료)")
     dev = [p for p in tracked(root) if not_site(p)]
