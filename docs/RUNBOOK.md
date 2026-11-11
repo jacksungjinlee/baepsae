@@ -21,14 +21,28 @@ serve the `docs/` folder (two of its files must answer "not found").
 - **Users still see the last good data, with its date.** The publication gate refuses to publish anything that fails
   its checks, so a failed run leaves yesterday's numbers in place, labelled with yesterday's date. The app itself shows a
   warning ("N일째 갱신이 멈췄어요") once publishing has stopped for more than 4 days.
-- **The screen check (since 2026-11-12).** After the gate passes, the daily run opens both apps in a real browser on
-  the data it is about to publish (`tests/real_data_check.py`, `tests/smoke_launch.py --data .` and all of
-  `tests/smoke_app.py --data .`). If any check fails, the run ends red and publishes nothing, exactly like a gate
-  failure: yesterday's data stays up. Nothing retries inside the run; the next scheduled start is the retry. The run's
-  summary page has a "발행 전 화면 검사" section with the three results. The check comes after the DART cache is saved, so
-  a held publish never turns the next start into a full-DART run. The browser comes from GitHub's cache
-  (`playwright-ubuntu-24.04-…`), never from Ubuntu's package server; if the cache is missing it is downloaded once from
-  Playwright's server, and if the browser still cannot start the publish is held.
+- **The screen check (since 2026-11-12).** After the gate passes and before anything is published, the daily run opens
+  the apps in a real browser on today's data:
+  - `tests/real_data_check.py`: the four files read cleanly, today's data has every field 2.0 needs, and the two apps
+    agree on the growth basis for every Korean stock;
+  - `tests/smoke_launch.py --data .`: 2.0 on the four files exactly as they will be published (first visit, the
+    portfolio builder, a Korean company page, a saved portfolio, the way into the old app);
+  - all of `tests/smoke_app.py --data .`: the old app's checks on today's stocks and numbers. These scenes first set
+    the publish time and due dates to "just now", so they do not check the dates users will see; the gate checks those.
+
+  If any of the three fails, the run ends red and publishes nothing, exactly like a gate failure: yesterday's data stays
+  up. Nothing retries inside the run; the next scheduled start is the retry. The run's summary page has a "발행 전 화면
+  검사" section with the three results. Each step has a time limit (10, 10 and 30 minutes); running over is a failure.
+  - The check comes after the DART cache is saved, so a held publish never turns the next start into a full-DART run.
+  - The browser comes from GitHub's cache (`playwright-v1-ubuntu-24.04-…`), never from Ubuntu's package server. A run
+    that finds no cache downloads it from Playwright's server and saves it before the check starts. The Korean font
+    the tests need is a file in the repo (`tests/fonts`). If the browser cannot start, the publish is held.
+  - If the cached browser itself is broken (the step "브라우저 · 한글 글꼴 준비" fails, or no scene can open a page):
+    raise `v1` to `v2` in the cache key in `update-data.yml` and `ci.yml` (a small PR), so a fresh copy is downloaded.
+  - `smoke_app` relies on a few stocks being in the data that the gate's must-have list does not name: 두산밥캣
+    (241560) in `corp.json`, Apple, Microsoft and Nvidia, and at least one foreign company with a 9xxxxx code. If one
+    of them leaves the data, the check fails and publishing is held until the test is changed in a PR (Jack's yes).
+    Never skip the check to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
@@ -66,8 +80,9 @@ tells you what happened in plain words.
 
 - **`main`** holds the code. Every pull request must pass the `ci` check (build, all tests, phone-size smoke tests).
 - **`data`** is a branch that holds only the four data files (`data.json`, `corp.json`, `disc.json`, `macro.json`). Only
-  the daily run writes to it, and only after the publication gate passed: the gate leaves a fingerprint (sha256) of the
-  four files it checked, and the upload refuses any file that doesn't match. It never force-pushes.
+  the daily run writes to it, and only after the publication gate and (since 2026-11-12) the screen check passed: each
+  leaves a fingerprint (sha256) of the four files it checked, and the upload refuses any file that doesn't match either
+  one. It never force-pushes.
   The first daily run after v17.6 creates the branch by itself.
 - **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
   folder it is about to publish, and only then publishes. It runs after every merge to `main` and after every daily run

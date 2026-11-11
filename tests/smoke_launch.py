@@ -55,8 +55,7 @@ def repo_state(missing):
 
 
 DATA_DIR = ROOT                                                # --data DIR 이면 그 폴더 (아래 use_data)
-REPO_STATE = repo_state(real_data_missing())
-REPO_LABEL = REPO_LABELS[REPO_STATE]
+REPO_STATE = REPO_LABEL = None                                 # main() 이 정해요: 옵션이 없으면 저장소의 파일로 (use_root), --data 면 그 폴더로
 WAIT = 15000
 KST = dt.timezone(dt.timedelta(hours=9))
 SITE = ["index.html", "app.html", "baepsae.html", "sw.js", "manifest.webmanifest", "og-v19.png", "icon-192.png", "icon-512.png",
@@ -68,16 +67,28 @@ SAVED = {"v": 1, "decks": [{"id": "dlaunch", "name": "배당 생활비 덱", "cr
                             "purchases": [{"t": "005930", "date": "2026-10-31", "qty": 4, "price": 225000, "ccy": "KRW"}]}]}
 
 
+def use_root():
+    """옵션 없이: 저장소의 지금 파일로 (예전 그대로). 그 데이터의 단계에 맞는 첫 화면을 봐요."""
+    global REPO_STATE, REPO_LABEL
+    REPO_STATE = repo_state(real_data_missing())
+    REPO_LABEL = REPO_LABELS[REPO_STATE]
+
+
 def use_data(dir_):
-    """--data DIR: '저장소의 지금 데이터' 자리에 DIR 의 네 파일을 써요 (첫 화면이 맞아야 하는 단계도 그 데이터로 다시 판단)."""
+    """--data DIR: '저장소의 지금 데이터' 자리에 DIR 의 네 파일만 써요 (저장소의 파일은 읽지 않아요).
+    발행 전 검사라서 데이터는 2.0 이 쓰는 항목을 다 가진 단계('live')여야 해요: 아니면 브라우저를 열기 전에 멈춰요
+    ('불러오지 못했어요' · '준비 중' 화면이 맞게 뜨는 것을 '통과'로 치지 않아요)."""
     global DATA_DIR, REPO_STATE, REPO_LABEL
     dir_ = os.path.abspath(dir_)
     read = {}
     for f in DATA:
         with open(os.path.join(dir_, f), encoding="utf-8") as fh:   # 없거나 읽히지 않으면 여기서 멈춰요 (조용히 저장소 파일로 바꾸지 않아요)
             read[f] = json.load(fh)
+    missing = real_data_missing(read["data.json"], read["corp.json"], read["macro.json"])
+    if missing:
+        raise SystemExit(f"!! --data {dir_}: 2.0 이 쓰는 항목이 빠진 데이터예요 ({', '.join(missing)}) → 발행 전 검사는 실패예요")
     DATA_DIR = dir_
-    REPO_STATE = repo_state(real_data_missing(read["data.json"], read["corp.json"], read["macro.json"]))
+    REPO_STATE = repo_state(missing)
     REPO_LABEL = REPO_LABELS[REPO_STATE]
 
 
@@ -454,6 +465,8 @@ def main():
     args = ap.parse_args()
     if args.data:
         use_data(args.data)
+    else:
+        use_root()
     variants = ("repo",) if args.data else ("fixtures", "repo")
     results, errors, outside = [], [], []
 

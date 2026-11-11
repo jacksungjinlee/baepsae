@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """발행 전 확인: 오늘 받은 진짜 데이터로 보는 검사 (브라우저 없이). 매일 실행(update-data.yml)의 '발행 전 화면 검사' 단계가 돌려요.
 
-  python tests/real_data_check.py --data DIR      # DIR 의 data.json · corp.json · macro.json
+  python tests/real_data_check.py --data DIR      # DIR 의 data.json · corp.json · disc.json · macro.json
 
 Jack 2026-11-11: 스모크 테스트와 pytest 가 고정된 시험 데이터로 옮겨 가도, 진짜 데이터로만 볼 수 있는 검사는 발행을 막는 자리에서
 계속 돌아야 해요. 하나라도 실패하면 exit 1 → 그 실행은 발행하지 않아요 (어제 데이터가 그대로 남아요).
@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 from test_launch import real_data_missing  # noqa: E402
 
-NEEDS = ("data.json", "corp.json", "macro.json")
+NEEDS = ("data.json", "corp.json", "disc.json", "macro.json")     # 발행하는 네 파일 모두 (NaN · Infinity 가 있으면 브라우저가 파일을 통째로 못 읽어요)
 GROWTH_MIN = 1000          # 비교한 한국 종목이 이보다 적으면 비교 자체가 비어 있는 거예요 (test_app_data.py 와 같은 숫자)
 
 # test_app_data.py test_korean_growth_basis_matches_2_0_on_todays_data 의 compare 와 같은 코드 (경로만 인자로 받아요)
@@ -93,8 +93,8 @@ def run_all(dir_, node=None):
     try:
         files = load(dir_)
     except ValueError as e:
-        return [("데이터 파일 읽기 (data · corp · macro)", False, str(e))]
-    rows.append(("데이터 파일 읽기 (data · corp · macro)", True, "세 파일 모두 읽힘 · NaN 없음"))
+        return [("데이터 파일 읽기 (data · corp · disc · macro)", False, str(e))]
+    rows.append(("데이터 파일 읽기 (data · corp · disc · macro)", True, "네 파일 모두 읽힘 · NaN 없음"))
     try:
         rows.append(("2.0 이 쓰는 항목", *check_fields(files)))
     except Exception as e:                                   # 모양이 달라 검사 자체가 죽어도 '실패'로 남겨요
@@ -108,7 +108,7 @@ def run_all(dir_, node=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="data.json · corp.json · macro.json 이 있는 폴더")
+    ap.add_argument("--data", required=True, help="data.json · corp.json · disc.json · macro.json 이 있는 폴더")
     args = ap.parse_args(argv)
     dir_ = os.path.abspath(args.data)
     rows = run_all(dir_)
