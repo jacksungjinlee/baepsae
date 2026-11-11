@@ -3,10 +3,13 @@
 
   python3 tools/assemble_site.py OUT DATA_REF [LOGOS_REF]
 
-- main 의 파일: git 이 관리하는 파일 전부 (지금 'main 브랜치에서 배포'가 보여 주는 것과 같게), 점(.)으로 시작하는 것
-  (.github · .gitignore …)과 docs/ 는 빼요. 작업 폴더에서 복사하니 방금 빌드한 페이지(빌드 표시가 달린 것)가 들어가요.
+- main 의 파일: git 이 관리하는 파일 가운데 사이트가 쓰는 것. 점(.)으로 시작하는 것
+  (.github · .gitignore …)과 docs/, 그리고 사이트가 읽지 않는 개발용 폴더 · 파일(NOT_SITE_DIRS · NOT_SITE_FILES)은 빼요. 작업 폴더에서 복사하니 방금 빌드한 페이지(빌드 표시가 달린 것)가 들어가요.
 - docs/ 를 빼는 이유 (Jack 2026-11-06): 설계 자료의 Adobe Stock 그림은 라이선스상 따로 내려받는 파일로 내놓으면 안 돼요
   (docs/design/v19.3/LICENSES.md). 사이트 페이지는 docs/ 의 파일을 쓰지 않아요.
+- 개발용 폴더 · 파일을 빼는 이유 (Jack 2026-11-11): tests/ 의 시험용 데이터(예: tests/fixtures/v2/data.json)가 사이트에 올라가
+  진짜 data.json 과 헷갈릴 수 있었어요. 사이트 페이지 · 서비스워커 · 매니페스트는 이 폴더 · 파일을 부르지 않아요 (tests/test_site_files.py).
+  새로 뺄 것이 생기면 아래 두 목록에 더해요. 사이트가 읽는 파일은 여기에 넣지 않아요.
 - 데이터: data.json · corp.json · disc.json · macro.json 은 main 의 것을 쓰지 않고 DATA_REF(data 브랜치)에서만 가져와요.
   하나라도 없거나 비었으면 멈춰요 (main 의 파일로 조용히 바꾸지 않아요). 검사(validate_data.py --live)는 이 다음 단계예요.
 - 회사 로고 (v19.3a): logos/ 는 LOGOS_REF(logos 브랜치)에서만 가져와요. main 에 logos/ 가 있으면 그건 올리지 않아요.
@@ -28,6 +31,13 @@ LOGOS = "logos"
 
 DATA_FILES = ("data.json", "corp.json", "disc.json", "macro.json")
 EXCLUDED_DIR = "docs"            # Jack 2026-11-06: docs/ 는 사이트에 올리지 않아요 (Adobe Stock 그림 라이선스)
+# Jack 2026-11-11: 사이트가 읽지 않는 개발용 폴더 · 파일. tests/ = 시험 코드와 시험용 데이터 · tools/ = 빌드 · 배포 도구 ·
+# data/ = 파이프라인이 읽는 표(csv; 사이트의 data.json 과 다른 것) · styleguide/ = styleguide.html 의 소스.
+NOT_SITE_DIRS = ("tests", "tools", "data", "styleguide")
+NOT_SITE_FILES = ("CLAUDE.md", "README.md", "template.html",
+                  "fetch_data.py", "validate_data.py", "watchdog.py", "already_published.py",
+                  "build.sh", "build-app.sh", "build-styleguide.sh",
+                  "package.json", "package-lock.json", "requirements.txt", "requirements-dev.txt")
 
 
 def tracked(root):
@@ -40,8 +50,24 @@ def in_excluded(p):
     return p.split("/", 1)[0].lower() == EXCLUDED_DIR
 
 
+_NOT_SITE_FILES_LOWER = tuple(f.lower() for f in NOT_SITE_FILES)
+
+
+def not_site(p):
+    """사이트가 읽지 않는 개발용 경로: 맨 위 폴더가 NOT_SITE_DIRS 이거나, 맨 위 파일이 NOT_SITE_FILES.
+    둘 다 대소문자만 다른 것도 (Tests/ · readme.md) — Pages 는 대소문자를 가려서 그대로 올려 버려요."""
+    top, _, rest = p.partition("/")
+    return top.lower() in NOT_SITE_DIRS if rest else p.lower() in _NOT_SITE_FILES_LOWER
+
+
+def not_site_entry(folder, name):
+    """사이트 폴더 맨 위의 항목 하나가 개발용인지 (not_site 와 같은 규칙: 폴더는 폴더 목록으로, 파일은 파일 목록으로)."""
+    full = os.path.join(folder, name)
+    return not_site(name + "/x") if os.path.isdir(full) else not_site(name)
+
+
 def site_files(paths):
-    """올릴 main 파일: 점으로 시작하는 경로 조각이 하나도 없고, 데이터 네 파일도 docs/ 아래 파일도 아닌 것."""
+    """올릴 main 파일: 점으로 시작하는 경로 조각이 하나도 없고, 데이터 네 파일도 docs/ 아래 파일도 개발용 폴더 · 파일도 아닌 것."""
     keep = []
     for p in paths:
         if any(part.startswith(".") for part in p.split("/")):
@@ -49,6 +75,8 @@ def site_files(paths):
         if p in DATA_FILES:
             continue
         if in_excluded(p):                                # 설계 자료 (Adobe 그림 포함)는 사이트에 올리지 않아요
+            continue
+        if not_site(p):                                   # 시험 · 도구 · 파이프라인 파일은 사이트에 올리지 않아요
             continue
         keep.append(p)
     return keep
@@ -181,8 +209,15 @@ def assemble(root, out, data_ref, logos_ref=None):
         sizes[f] = len(r.stdout)
     if any(in_excluded(n) for n in os.listdir(out)):              # 위 규칙이 깨지면 조용히 올리지 않고 멈춰요
         raise SystemExit(f"!! 사이트 폴더에 {EXCLUDED_DIR}/ 가 들어갔어요 → 배포하지 않아요 (Adobe 그림은 따로 내려받는 파일이 되면 안 돼요)")
+    got_in = sorted(n for n in os.listdir(out) if not_site_entry(out, n))   # 같은 뜻: 개발용 폴더 · 파일이 들어가면 조용히 올리지 않고 멈춰요
+    if got_in:
+        raise SystemExit(f"!! 사이트 폴더에 개발용 폴더 · 파일이 들어갔어요: {', '.join(got_in)} → 배포하지 않아요 "
+                         "(사이트가 읽지 않는 것들이에요. 시험용 데이터는 사이트의 데이터와 헷갈리면 안 돼요)")
     skipped = sum(1 for p in tracked(root) if in_excluded(p))
     print(f"· {EXCLUDED_DIR}/ 의 파일 {skipped}개는 올리지 않아요 (설계 자료)")
+    dev = [p for p in tracked(root) if not_site(p)]
+    print(f"· 개발용 폴더 · 파일 {len(dev)}개는 올리지 않아요 ({' · '.join(d + '/' for d in NOT_SITE_DIRS)} · 맨 위 파일 "
+          f"{sum(1 for p in dev if '/' not in p)}개)")
     sha = subprocess.run(["git", "rev-parse", "--short", data_ref], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
     print(f"· 사이트 폴더 {out}: main 파일 {len(files)}개 + {data_ref} ({sha}) 의 데이터 네 파일 "
           + " · ".join(f"{k} {v // 1024:,}KB" for k, v in sizes.items()))
