@@ -2716,12 +2716,48 @@ def scene_stmt_cur(R, files):
     ctx.close(); srv.shutdown()
 
 
+def scene_list(R, fresh, full):
+    """모든 장면을 순서대로 (이름, 함수). 함수는 부를 때만 돌아요 — 목록을 만드는 것만으로는 아무것도 하지 않아요 (--part 시험)."""
+    return [("정상", lambda: scene_normal(R, fresh, full)), ("멈춤", lambda: scene_stale(R, fresh)),
+            ("NaN", lambda: scene_nan(R, fresh)),
+            ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
+            ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
+            ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("빠진", lambda: scene_missing_all(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
+            ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)), ("바로가기", lambda: scene_deep_links(R, fresh)),
+            ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
+            ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh)),
+            ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
+            ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
+            ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True)),   # 2026-11-08
+            ("다시읽음", lambda: scene_stmt_cur(R, fresh))]                                                                 # 2026-11-08 stmtCur
+
+
+def parse_part(text):
+    """'N/M' -> (N, M), 1 <= N <= M. 다른 모양은 ValueError (잘못 적은 CI 가 장면 없이 '통과'하지 않게)."""
+    m = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", str(text or ""))
+    if not m or int(m.group(1)) > int(m.group(2)):
+        raise ValueError(f"--part 는 N/M (1 <= N <= M) 이어야 해요: {text!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def part_of(scenes, part):
+    """2026-11-10 (Jack): CI 를 여러 기계로 나눠요. 순서로 나눠요 — i 번째 장면은 (i % M) + 1 번째 몫. 그래서 모든 장면이 정확히 한 몫에
+    들어가고, 새 장면은 저절로 어느 한 몫에 들어가요 (tests/test_smoke_parts.py 가 확인해요). part None 이면 전부."""
+    if part is None:
+        return list(scenes)
+    n, m = parse_part(part)
+    return [s for i, s in enumerate(scenes) if i % m == n - 1]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
+    ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
     ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음)")
     args = ap.parse_args()
+    if args.part is not None:
+        parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
     fresh = upgrade(json.loads(json.dumps(files, allow_nan=True)))
@@ -2737,18 +2773,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chromium_path())
         R = Runner(browser, args.shots)
-        scenes = [("정상", lambda: scene_normal(R, fresh, full)), ("멈춤", lambda: scene_stale(R, fresh)),
-                  ("NaN", lambda: scene_nan(R, fresh)),
-                  ("corp", lambda: scene_corp_fail(R, fresh, "깨짐")), ("corp", lambda: scene_corp_fail(R, fresh, "404")),
-                  ("data", lambda: scene_no_data(R, fresh)), ("금", lambda: scene_gold_holding(R, fresh)),
-                  ("금", lambda: scene_gold_estimate(R, fresh)), ("금리", lambda: scene_rates_fail(R, fresh)), ("위험값", lambda: scene_no_risk_holding(R, fresh)), ("B안", lambda: scene_option_b(R, fresh)), ("해외", lambda: scene_foreign_issuer(R, fresh)), ("B안", lambda: scene_simple_no_forecast(R, fresh)), ("빠진", lambda: scene_missing_holding(R, fresh)), ("빠진", lambda: scene_missing_all(R, fresh)), ("베타", lambda: scene_beta_return(R, fresh)),
-                  ("서비스워커", lambda: scene_service_worker(R, fresh)), ("2.0링크", lambda: scene_v2_link(R, fresh)), ("바로가기", lambda: scene_deep_links(R, fresh)),
-                  ("파일", lambda: scene_json_import(R, fresh)), ("파일", lambda: scene_ghost_holding(R, fresh)),
-                  ("파일", lambda: scene_import_while_loading(R, fresh)), ("자동", lambda: scene_auto_settings(R, fresh)), ("저장본", lambda: scene_broken_slot(R, fresh)),
-                  ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
-                  ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
-                  ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True)),   # 2026-11-08
-                  ("다시읽음", lambda: scene_stmt_cur(R, fresh))]                                                                 # 2026-11-08 stmtCur
+        scenes = part_of(scene_list(R, fresh, full), args.part)
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue
@@ -2761,7 +2786,8 @@ def main():
         browser.close()
 
     w = max(len(n) for n, _, _ in R.results)
-    print(f"\n뱁새 스모크 테스트 결과 · 데이터: {os.path.abspath(args.data)}" + ("" if full else " (국고채 커브 없는 데이터)"))
+    print(f"\n뱁새 스모크 테스트 결과 · 데이터: {os.path.abspath(args.data)}" + ("" if full else " (국고채 커브 없는 데이터)")
+          + (f" · 장면 몫 {args.part} ({len(scenes)}개)" if args.part else ""))
     for name, ok, msg in R.results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name.ljust(w)}  {msg}")
     bad = [r for r in R.results if not r[1]]

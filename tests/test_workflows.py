@@ -43,12 +43,12 @@ def all_steps(wf):
             yield job, s
 
 
-def assert_no_hidden_failure(wf, allow_always=()):
-    """continue-on-error 없음 · `|| true` 없음 · always() 는 허락한 단계(캐시 저장)에만."""
+def assert_no_hidden_failure(wf, allow_always=(), allow_always_jobs=()):
+    """continue-on-error 없음 · `|| true` 없음 · always() 는 허락한 단계(캐시 저장)와 허락한 job(CI 의 결과 관문 'ci')에만."""
     for job, j in wf["jobs"].items():
         assert "continue-on-error" not in j, job
         if "if" in j:
-            assert "always()" not in str(j["if"]), job
+            assert "always()" not in str(j["if"]) or job in allow_always_jobs, job
     for job, s in all_steps(wf):
         n = s.get("name") or s.get("uses")
         assert "continue-on-error" not in s, n
@@ -67,7 +67,10 @@ def test_the_four_workflows_exist_and_nothing_else():
 
 @pytest.mark.parametrize("name", ALL)
 def test_no_workflow_hides_a_failure(name):
-    assert_no_hidden_failure(load(name), allow_always=("DART 캐시 저장",) if name == "update-data.yml" else ())
+    # 2026-11-11 (Jack): CI 의 마지막 job 'ci' 만 always() — 다른 job 이 실패 · 취소돼도 돌아서 빨갛게 보고하는 관문이에요
+    # (그 job 이 하는 일은 결과 읽기뿐: test_ci_gate_is_named_ci_and_needs_every_job · test_ci_gate_fails_unless_every_job_succeeded).
+    assert_no_hidden_failure(load(name), allow_always=("DART 캐시 저장",) if name == "update-data.yml" else (),
+                             allow_always_jobs=("ci",) if name == "ci.yml" else ())
 
 
 @pytest.mark.parametrize("name", ["ci.yml", "deploy.yml", "watchdog.yml", "logo-dev-check.yml", "logo-dev-fetch.yml"])
@@ -81,41 +84,122 @@ def test_only_the_daily_run_can_write_to_the_repository(name):
 
 
 # ── CI ──
+# 2026-11-11 (Jack): 한 기계 16분이 20분 한도에 걸려 검사를 여러 job(기계)으로 나눴어요. 검사 내용은 그대로, 마지막 job 'ci' 가 관문이에요.
+SMOKES = sorted(os.path.basename(f)[:-3] for f in os.listdir(os.path.join(ROOT, "tests")) if re.fullmatch(r"smoke_\w+\.py", f))
+SETUP_NEEDS = ("npm ci", "pip install -r requirements-dev.txt", "playwright install --with-deps chromium")
+
+
+def job_run(j):
+    return "\n".join(s.get("run") or "" for s in j.get("steps", []))
+
+
+def work_jobs(wf):
+    return {k: j for k, j in wf["jobs"].items() if k != "ci"}
+
+
+def gate_script():
+    return load("ci.yml")["jobs"]["ci"]["steps"][0]["run"]
+
+
 def test_ci_runs_build_tests_and_smoke_on_every_pr():
     wf = load("ci.yml")
     on = wf[True]
     assert on["pull_request"] in (None, {}) and on["push"] == {"branches": ["main"]}       # 모든 PR · main
-    assert list(wf["jobs"]) == ["ci"] and wf["jobs"]["ci"]["name"] == "ci"                    # 보호 규칙이 찾는 이름
-    st = steps(wf, "ci")
-    node = next(s for s in st if s.get("uses", "").startswith("actions/setup-node"))
-    assert re.fullmatch(r"\d+\.\d+\.\d+", node["with"]["node-version"])
-    py = next(s for s in st if s.get("uses", "").startswith("actions/setup-python"))
-    assert py["with"]["python-version"] == "3.11"                                              # 매일 실행과 같은 파이썬
-    run = "\n".join(s.get("run") or "" for s in st)
-    for need in ("npm ci", "pip install -r requirements-dev.txt", "playwright install --with-deps chromium",
-                 "bash build.sh", "bash build-app.sh", "bash build-styleguide.sh",
+    run_all = "\n".join(job_run(j) for j in wf["jobs"].values())
+    for need in ("bash build.sh", "bash build-app.sh", "bash build-styleguide.sh",
                  "git diff --exit-code --stat -- baepsae.html app.html app-preview.html styleguide.html",
                  "python -m pytest tests/", "python tests/check_text.py"):
-        assert need in run, need
-    assert "npm install" not in run
-    smoke = next(s for s in st if s.get("name", "").startswith("스모크"))["run"]
-    for t in ("smoke_app", "smoke_v2", "smoke_preview", "smoke_styleguide", "smoke_launch"):
-        assert t in smoke, t
-    assert 'if python "tests/$t.py"; then' in smoke and "exit 1" in smoke
-    assert wf["jobs"]["ci"]["timeout-minutes"] <= 20
+        assert need in job_run(wf["jobs"]["checks"]), need                                 # 빌드 = 소스 · pytest · 글자 점검은 한 job 에
+    assert "npm install" not in run_all
+    for k, j in work_jobs(wf).items():                                                       # 모든 기계가 같은 도구 · 같은 설치
+        st = j["steps"]
+        assert st[0].get("uses", "").startswith("actions/checkout"), k
+        node = next(s for s in st if s.get("uses", "").startswith("actions/setup-node"))
+        assert re.fullmatch(r"\d+\.\d+\.\d+", node["with"]["node-version"]), k
+        py = next(s for s in st if s.get("uses", "").startswith("actions/setup-python"))
+        assert py["with"]["python-version"] == "3.11", k                                     # 매일 실행과 같은 파이썬
+        for need in SETUP_NEEDS:
+            assert need in job_run(j), (k, need)
+        assert (j.get("strategy") or {}).get("fail-fast", False) is False, k                  # 하나가 실패해도 나머지는 끝까지
+    nodes = {next(s for s in j["steps"] if s.get("uses", "").startswith("actions/setup-node"))["with"]["node-version"]
+             for j in work_jobs(wf).values()}
+    assert len(nodes) == 1, nodes
+
+
+def test_ci_gate_is_named_ci_and_needs_every_job():
+    wf = load("ci.yml")
+    g = wf["jobs"]["ci"]
+    assert g["name"] == "ci" and [k for k, j in wf["jobs"].items() if j.get("name") == "ci"] == ["ci"]   # 보호 규칙이 찾는 이름은 하나
+    assert sorted(g["needs"]) == sorted(work_jobs(wf)) and len(work_jobs(wf)) >= 2
+    assert g["if"] == "always()"                                                             # 실패 · 취소 뒤에도 돌아서 빨갛게 보고
+    assert len(g["steps"]) == 1 and "uses" not in g["steps"][0]                             # 결과 읽기뿐: 체크아웃 · 설치 · 발행 없음
+    assert g["steps"][0]["env"] == {"NEEDS_JSON": "${{ toJSON(needs) }}"}
+    assert "strategy" not in g
+
+
+def test_ci_every_smoke_script_and_every_smoke_app_part_runs():
+    wf = load("ci.yml")
+    assert SMOKES == ["smoke_app", "smoke_launch", "smoke_preview", "smoke_styleguide", "smoke_v2"], SMOKES
+    ran = []
+    for j in work_jobs(wf).values():
+        r = job_run(j)
+        ran += re.findall(r"python tests/(smoke_\w+)\.py", r)
+        loop = re.search(r"for t in ([^;\n]+);", r)
+        if loop and 'python "tests/$t.py"' in r:
+            ran += loop.group(1).split()
+    assert sorted(ran) == SMOKES, ran                                                         # 다섯 모두 · 각각 한 번
+    app = wf["jobs"]["smoke_app"]
+    parts = app["strategy"]["matrix"]["part"]
+    m = len(parts)
+    assert parts == [f"{n}/{m}" for n in range(1, m + 1)], parts                              # 1/M … M/M 빠짐 · 겹침 없이
+    assert app["strategy"]["fail-fast"] is False
+    assert job_run(app).count('python tests/smoke_app.py --part "${{ matrix.part }}"') == 1
+    others = [k for k, j in work_jobs(wf).items() if k != "smoke_app" and "smoke_app" in job_run(j)]
+    assert not others, others                                                                 # smoke_app 은 몫으로만 (두 번 돌지 않아요)
+    rest = next(s for s in wf["jobs"]["smoke_rest"]["steps"] if s.get("name", "").startswith("스모크"))["run"]
+    assert 'if python "tests/$t.py"; then' in rest and "exit 1" in rest
+    for t in ("smoke_preview", "smoke_styleguide", "smoke_launch"):
+        assert t in rest.split("for t in ", 1)[1].split(";", 1)[0], t
+
+
+def test_ci_every_job_has_a_limit_of_20_minutes_or_less():
+    for k, j in load("ci.yml")["jobs"].items():
+        assert isinstance(j.get("timeout-minutes"), int) and 0 < j["timeout-minutes"] <= 20, k
 
 
 def test_ci_smoke_step_really_fails_when_one_smoke_test_fails(tmp_path):
-    """스모크 단계의 bash 를 그대로 돌려요: 다섯 중 하나만 실패해도 단계가 실패하고, 나머지도 끝까지 돌아요."""
-    smoke = next(s for s in steps(load("ci.yml"), "ci") if s.get("name", "").startswith("스모크"))["run"]
+    """나머지 스모크 셋의 bash 를 그대로 돌려요: 셋 중 하나만 실패해도 단계가 실패하고, 나머지도 끝까지 돌아요."""
+    smoke = next(s for s in steps(load("ci.yml"), "smoke_rest") if s.get("name", "").startswith("스모크"))["run"]
     (tmp_path / "tests").mkdir()
-    for t in ("smoke_app", "smoke_v2", "smoke_preview", "smoke_styleguide", "smoke_launch"):
+    for t in ("smoke_preview", "smoke_styleguide", "smoke_launch"):
         (tmp_path / "tests" / f"{t}.py").write_text(f"import sys\nprint('{t} 끝')\nsys.exit({1 if t == 'smoke_preview' else 0})\n")
     env = {"PATH": os.environ["PATH"]}
     r = subprocess.run(["bash", "-e", "-c", smoke], cwd=tmp_path, capture_output=True, text=True, env=env)
     assert r.returncode == 1 and "스모크 테스트 실패: smoke_preview" in r.stdout and "smoke_launch 끝" in r.stdout
     (tmp_path / "tests" / "smoke_preview.py").write_text("print('ok')\n")
     assert subprocess.run(["bash", "-e", "-c", smoke], cwd=tmp_path, capture_output=True, text=True, env=env).returncode == 0
+
+
+@pytest.mark.parametrize("results, ok", [
+    ({"checks": "success", "smoke_app": "success", "smoke_v2": "success", "smoke_rest": "success"}, True),
+    ({"checks": "success", "smoke_app": "failure", "smoke_v2": "success", "smoke_rest": "success"}, False),
+    ({"checks": "success", "smoke_app": "success", "smoke_v2": "cancelled", "smoke_rest": "success"}, False),
+    ({"checks": "skipped", "smoke_app": "success", "smoke_v2": "success", "smoke_rest": "success"}, False),
+    ({"checks": "success", "smoke_app": "success", "smoke_v2": "success", "smoke_rest": None}, False),
+    ({}, False),
+])
+def test_ci_gate_fails_unless_every_job_succeeded(tmp_path, results, ok):
+    """관문 단계의 bash 를 그대로 돌려요 (GitHub 처럼 needs 를 JSON 으로): 성공만 통과, 실패 · 취소 · 건너뜀 · 빈 결과는 실패."""
+    needs = {k: {"result": v, "outputs": {}} for k, v in results.items()}
+    env = {"PATH": os.environ["PATH"], "NEEDS_JSON": json.dumps(needs)}
+    r = subprocess.run(["bash", "-e", "-c", gate_script()], cwd=tmp_path, capture_output=True, text=True, env=env)
+    assert (r.returncode == 0) is ok, (results, r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("raw", ["", "not json", "[]", "null"])
+def test_ci_gate_fails_when_it_cannot_read_the_results(tmp_path, raw):
+    env = {"PATH": os.environ["PATH"], "NEEDS_JSON": raw}
+    assert subprocess.run(["bash", "-e", "-c", gate_script()], cwd=tmp_path, capture_output=True, text=True, env=env).returncode == 1
 
 
 def test_build_tools_are_pinned_exactly_and_match_the_lock_file():
