@@ -5770,8 +5770,6 @@ SPLIT_OVERRIDES = {
     ("DD", "2019-06-03"): (1 / 3, "1:3 주식병합 (2019-06-01 Corteva 분사 직후 효력, 06-03 부터 거래 · DuPont SEC 10-Q 2019) — 야후는 분사 조정과 합쳐 189:400"),
     ("HON", "2026-06-29"): (0.5, "1:2 주식병합 (2026-06-29 00:02 뉴욕 효력, 그날부터 새 기준 거래 · Honeywell 8-K 2026-06-05 · 같은 날 Honeywell "
                                  "Aerospace(HONA) 분사) — 야후는 분사 조정과 합쳐 1907:2000"),
-    ("GMAB", "2018-05-01"): (None, "빼요: 미국 상장(ADS · Nasdaq 2019-07-18 첫 거래, Genmab 424B4) 전의 사건이라 미국 기록이 그 전 날짜일 수 없어요 "
-                                   "(FERG 2018 과 같은 규칙) — 야후 5:1"),
     ("WTW", "2016-01-05"): (1 / 2.649, "Willis 주식 2.6490주 → 1주 병합 (2016-01-04 Towers Watson 합병 직후 · WTW SEC 10-K 2016) — 야후 151:400"),
     ("TRI", "2018-11-27"): (0.9079, "자본 환급(주당 4.45달러)과 함께 한 주식 병합 1주 → 0.9079주 (2018-11-27 부터 새 기준 거래 · Thomson Reuters 발표 2018-11-26) — 야후에 없음"),
     ("TRI", "2023-06-23"): (0.963957, "자본 환급과 함께 한 주식 병합 1주 → 0.963957주 (2023-06-23 효력 · Thomson Reuters 발표 2023-06-22) — 야후 963:1000"),
@@ -5782,8 +5780,9 @@ SPLIT_OVERRIDES = {
     ("CBSH", "2022-12-01"): (1.05, "5% 주식배당 (기준일 2022-12-02 · 지급 12-16 · 회사 발표 · FY2022 10-K) — 야후에 없음"),
     ("CBSH", "2023-12-01"): (1.05, "5% 주식배당 (기준일 2023-12-04 · 지급 12-19 · 회사 발표) — 야후에 없음"),
 }
-# 미국 상장 전 사건은 넣지 않아요 (미국 기록이 그 전 날짜일 수 없어요): FERG 2018-06-11 18:19 병합 (NYSE 2021-03-08 부터 · 그 전 OTC ADR 은
-# 다른 증권 · 야후 값이 깨끗하지 않아 원래 빠져요) · GMAB 2018-05-01 (위 None 줄).
+# FERG 2018-06-11 18:19 병합은 넣지 않아요: 그때 미국에서 거래되던 것은 NYSE 주식(2021-03-08 부터)과 다른 증권(OTC ADR · 2021-03-08 종료)이라
+# 미국 FERG 기록이 그 전 날짜일 수 없어요 (야후 값도 깨끗하지 않아 원래 빠져요). GMAB 2018-05-01 5:1 (야후 · 시드)은 둬요: Nasdaq ADS(2019-07-18)는
+# 그 전부터 OTC 에서 GMXAY 로 거래되던 같은 ADR 프로그램이라, 2018년 5월 전 보유자의 기록도 같은 증권이에요 (#117 리뷰 4 N-4).
 SPLIT_SEED_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "us_splits_seed.csv")
 SPLIT_SEED_CODES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "us_splits_seed_codes.txt")
 SPLIT_BACKFILL_MAX = 20          # 시드에도 지난 발행본에도 없는 종목의 2016년부터 이력은 한 실행에 이만큼만 읽어요 (나머지는 gap · 다음 실행)
@@ -5918,7 +5917,8 @@ def load_split_seed(path=None, codes_path=None):
 
 def fetch_split_history(codes, today, download=None, sleep=time.sleep):
     """2016-01-01 ~ 오늘 일봉(actions=True)을 이 종목들만 받아 분할을 읽어요 — 종목마다 요청 한 번. 시드에도 지난 발행본에도 없는 종목만
-    (보통 0 개 · 한 실행에 SPLIT_BACKFILL_MAX 개까지). 받지 못한 종목은 쉬었다가 한 번 더 (천천히). -> (목록, info) — us_splits 와 같아요."""
+    (목록에 들고 나는 종목 때문에 하루 몇 개 · 한 실행에 SPLIT_BACKFILL_MAX 개까지). 받지 못한 종목은 쉬었다가 한 번 더 (천천히).
+    -> (목록, info) — us_splits 와 같아요."""
     codes = sorted(codes)
     if not codes:
         return [], {"noCol": [], "future": [], "bad": [], "spin": []}
@@ -6557,7 +6557,7 @@ def main():
     us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
                                                           kr_codes=frozenset(s["t"] for s in kr), dups=dups)
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
-    # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (보통 0 개).
+    # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
