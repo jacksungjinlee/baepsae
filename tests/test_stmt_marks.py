@@ -21,18 +21,19 @@ from test_validate import check, failed_names  # noqa: E402
 
 NAME = "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음 (stmtCur)"
 USD = ["241560", "008700", "900070", "950160", "950210"]          # 직전에 표시가 있던 회사 (시험용 코드)
+FOREIGN = ["900070", "950160", "950210", "900110", "900120"]       # 9… 외국 기업만 (금액은 코드 규칙으로 비워요 — 비율 규칙만 봐요)
 
 
-def companies(marked, also=()):
-    """표시가 있는 회사(marked: {코드: 통화}) + 표시 없는 회사(also)."""
+def companies(marked, also=(), amounts=True):
+    """표시가 있는 회사(marked: {코드: 통화}) + 표시 없는 회사(also, amounts 면 매출 금액이 차 있어요)."""
     out = [{"t": t, "nk": "회사" + t, "stmtCur": cur} for t, cur in marked.items()]
-    return out + [{"t": t, "nk": "회사" + t, "rev": [1.0, 2.0, 3.0]} for t in also]
+    return out + [{"t": t, "nk": "회사" + t, **({"rev": [1.0, 2.0, 3.0]} if amounts else {})} for t in also]
 
 
-def run(prev_marked, cur_marked, cur_unmarked=(), prev_extra=None):
+def run(prev_marked, cur_marked, cur_unmarked=(), prev_extra=None, amounts=True):
     rep = V.Report()
     prev = {"corp": {"companies": companies(prev_marked)}} if prev_extra is None else prev_extra
-    V.check_stmt_marks(rep, companies(cur_marked, cur_unmarked), prev)
+    V.check_stmt_marks(rep, companies(cur_marked, cur_unmarked, amounts), prev)
     row = next(r for r in rep.rows if r[0] == NAME)
     return row, rep
 
@@ -61,22 +62,54 @@ def test_marks_vanishing_fails():
 
 @pytest.mark.parametrize("lost, fail", [(0, False), (1, False), (2, False), (3, True), (4, True), (5, True)])
 def test_more_than_half_lost_fails_and_any_loss_warns(lost, fail):
-    prev = {t: "USD" for t in USD}
-    cur = {t: "USD" for t in USD[lost:]}
-    row, rep = run(prev, cur, cur_unmarked=USD[:lost])
+    """비율 규칙 (외국 기업만): 셋 이상 남아 있는데 절반 넘게 사라지면 실패, 그보다 적으면 경고."""
+    prev = {t: "USD" for t in FOREIGN}
+    cur = {t: "USD" for t in FOREIGN[lost:]}
+    row, rep = run(prev, cur, cur_unmarked=FOREIGN[:lost])
     assert is_fail(rep) is fail, (lost, rep.table())
     assert is_warn(rep) is (lost > 0 and not fail), (lost, rep.table())
 
 
 def test_exactly_half_is_a_warning_not_a_failure():
-    prev = {t: "USD" for t in USD[:4]}
-    row, rep = run(prev, {t: "USD" for t in USD[2:4]}, cur_unmarked=USD[:2])
+    prev = {t: "USD" for t in FOREIGN[:4]}
+    row, rep = run(prev, {t: "USD" for t in FOREIGN[2:4]}, cur_unmarked=FOREIGN[:2])
     assert not is_fail(rep) and is_warn(rep)
 
 
-def test_few_marks_never_fail():
-    """직전에 표시된 회사가 셋 미만이면 모두 사라져도 경고만 (회사 하나 · 둘이 모두의 발행을 막지 않게)."""
-    row, rep = run({"241560": "USD", "008700": "USD"}, {}, cur_unmarked=["241560", "008700"])
+def test_few_foreign_marks_never_fail():
+    """외국 기업 표시가 셋 미만이면 모두 사라져도 경고만 (금액은 코드 규칙으로 비워져요)."""
+    row, rep = run({"900070": "USD", "950160": "CNY"}, {}, cur_unmarked=["900070", "950160"])
+    assert not is_fail(rep) and is_warn(rep), rep.table()
+
+
+@pytest.mark.parametrize("code", ["241560", "008700"])
+def test_a_korean_company_losing_its_mark_with_amounts_fails_alone(code):
+    """J2 (a), Jack 2026-11-12: 어제 달러 표시가 있던 국내 회사가 오늘 표시를 잃고 금액이 차 있으면 — 하나뿐이어도 — 실패.
+    달러 금액이 원으로 나가는 바로 그 경우예요. 이름 목록이 아니라 직전 발행과 비교해요."""
+    others = {t: "USD" for t in FOREIGN}
+    row, rep = run({code: "USD", **others}, others, cur_unmarked=[code])
+    assert is_fail(rep), rep.table()
+    assert f"(그중 금액이 찬 국내 회사 1): {code} 회사{code} (금액 있음)" in row[1], row[1]
+
+
+def test_a_korean_company_losing_its_mark_without_amounts_only_warns():
+    """금액 칸이 비어 있으면 원으로 잘못 나갈 숫자가 없어요: 경고만 (그날 한 번)."""
+    others = {t: "USD" for t in FOREIGN}
+    row, rep = run({"241560": "USD", **others}, others, cur_unmarked=["241560"], amounts=False)
+    assert not is_fail(rep) and is_warn(rep), rep.table()
+
+
+def test_a_korean_company_never_marked_does_not_count():
+    """직전에도 표시가 없던 국내 회사는 비교 대상이 아니에요 (고정 이름 목록을 쓰지 않아요)."""
+    others = {t: "USD" for t in FOREIGN}
+    row, rep = run(others, others, cur_unmarked=["241560"])
+    assert not is_fail(rep) and not is_warn(rep), rep.table()
+
+
+def test_a_foreign_company_losing_its_mark_with_amounts_only_warns_when_few():
+    """9… 외국 기업은 금액을 코드 규칙(FOREIGN_BLANK 줄)이 따로 막아요: 하나가 표시를 잃으면 경고."""
+    others = {t: "USD" for t in FOREIGN[1:]}
+    row, rep = run({FOREIGN[0]: "USD", **others}, others, cur_unmarked=[FOREIGN[0]])
     assert not is_fail(rep) and is_warn(rep), rep.table()
 
 

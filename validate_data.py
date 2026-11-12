@@ -1520,11 +1520,14 @@ def _stmt_marked(c):
 
 def check_stmt_marks(rep, comps, prev):
     """2026-11-12 (Jack, 더하기만): 직전 발행에서 원화가 아닌 재무제표 표시(stmtCur)가 있던 회사가 오늘도 목록에 있는데 표시가 사라졌는지.
-    오늘도 목록에 있는 회사가 STMT_MARK_MIN 곳 이상이고 그 절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날 — 달러 금액이 원으로
-    나가요), 하나라도 사라지면 경고 (회사가 통화를 바꿨을 수도 있어요). 직전 corp.json 이 없거나 못 읽었으면 실패 (비교할 수 없어요).
+    실패: (1) 국내 회사(9… 가 아닌)가 직전 발행에는 표시가 있었는데 오늘 표시가 사라졌고 금액 칸이 차 있으면 — 달러 금액이 원으로 나가는 바로
+    그 경우예요 (Jack, 2026-11-12: 이름 목록이 아니라 직전 발행과 비교해서). 회사가 정말 원화로 바꿨다면 Jack 의 yes 로 예외를 한 줄 더해요.
+    (2) 오늘도 목록에 있는 회사가 STMT_MARK_MIN 곳 이상이고 그 절반 넘게 사라지면 (DART 통화 칸을 못 읽은 날). (3) 직전 corp.json 이 없거나
+    못 읽었으면 (비교할 수 없어요). 그 밖에 하나라도 사라지면 경고 (금액이 비어 있는 회사 · 9… 외국 기업은 금액을 코드 규칙으로 비워요).
     경고는 그날 한 번만 떠요: 경고로 발행되면 다음 날 비교 대상(직전 발행)에서 그 회사의 표시가 이미 빠져 있어요 (docs/RUNBOOK.md)."""
     name = "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음 (stmtCur)"
-    rule = (f"오늘도 목록에 있는 회사가 {STMT_MARK_MIN}곳 이상이고 그 절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날) · "
+    rule = ("국내 회사가 표시를 잃고 금액이 차 있으면 실패 · "
+            f"오늘도 목록에 있는 회사가 {STMT_MARK_MIN}곳 이상이고 그 절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날) · "
             "하나라도 사라지면 경고 · 직전 corp.json 이 없으면 실패")
     if prev is None:
         rep.skip(name, "직전 발행본이 없어요 ('직전 발행본 읽기' 줄이 실패해요)")
@@ -1543,7 +1546,6 @@ def check_stmt_marks(rep, comps, prev):
     marked = list(dict.fromkeys(c.get("t") for c in pcorp["companies"] if _stmt_marked(c) and c.get("t") is not None))
     still = [t for t in marked if t in today]
     lost = [t for t in still if not _stmt_marked(today[t])]
-    fail = len(still) >= STMT_MARK_MIN and 2 * len(lost) > len(still)
     gone_many = len(marked) >= STMT_MARK_MIN and 2 * len(still) < len(marked)   # 표시된 회사가 한꺼번에 목록에서 빠졌어요
 
     def has_amt(t):
@@ -1551,11 +1553,15 @@ def check_stmt_marks(rep, comps, prev):
 
     def label(t):
         return f"{t} {today[t].get('nk') or ''}{' (금액 있음)' if has_amt(t) else ''}".strip()
-    # 해로운 것부터: 금액이 찬 국내 회사(9… 가 아닌) — 외국 기업은 코드 규칙으로 금액을 비우는 줄이 따로 있어요
+    # 해로운 것: 금액이 찬 국내 회사(9… 가 아닌) — 외국 기업은 코드 규칙으로 금액을 비우는 줄이 따로 있어요. 맨 앞에 적어요
+    harmful = [t for t in lost if not is_foreign(t) and has_amt(t)]
+    fail = bool(harmful) or (len(still) >= STMT_MARK_MIN and 2 * len(lost) > len(still))
     lost.sort(key=lambda t: (is_foreign(t), not has_amt(t)))
     if lost:
         rep.detail("표시가 사라진 회사 (stmtCur)", [label(t) for t in lost])
     value = f"직전 {len(marked)}곳 · 오늘도 목록에 {len(still)}곳 · 표시가 사라짐 {len(lost)}"
+    if harmful:
+        value += f" (그중 금액이 찬 국내 회사 {len(harmful)})"
     if lost:
         value += f": {', '.join(label(t) for t in lost[:4])}{' …' if len(lost) > 4 else ''}"
     elif gone_many:

@@ -54,9 +54,12 @@ serve the `docs/` folder (two of its files must answer "not found").
       market:** DART's currency reading was probably lost, and then a company that files in dollars (두산밥캣,
       아남전자) is published with its dollar amounts read as won. Since 2026-11-12 the gate compares the marks with
       the previous publication (row "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음"):
-      - **It fails** when, of the marked companies still listed, at least 3 remain and more than half lost the mark
-        (the "DART's currency reading was lost" day), and when the previous `corp.json` cannot be read or was not
-        given. A failure is sticky: the comparison stays with the last good publication, so every later run fails
+      - **It fails** when a Korean company (code not starting with 9) had the mark in the previous publication, lost it
+        today, and has amounts filled — the exact case where dollar amounts would be shown as won (Jack, 2026-11-12;
+        judged against the previous publication, not a list of names). If a company really switched to reporting in
+        won, add a one-line exception with Jack's yes. It also fails when, of the marked companies still listed, at
+        least 3 remain and more than half lost the mark (the "DART's currency reading was lost" day), and when the
+        previous `corp.json` cannot be read or was not given. A failure is sticky: the comparison stays with the last good publication, so every later run fails
         until the pipeline is fixed. `--bootstrap` is not the fix (it skips the comparison and makes the bad day the
         new baseline).
       - **It warns**, naming the companies (domestic ones with amounts first), when any marked company lost its mark,
