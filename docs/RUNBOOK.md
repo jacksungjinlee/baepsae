@@ -201,12 +201,17 @@ tells you what happened in plain words.
   - "· 토큰 확인됨: GitHub 이 받아 줬어요" — normal.
   - "!! GITHUB_TOKEN 이 이 단계의 환경에 없어요" or "… 공백이 있어요" — the workflow file lost the step's `env`; nothing
     was published. Fix the workflow in a PR.
-  - "!! 토큰으로 원격 저장소(origin)를 세 번 다 읽지 못했어요" — GitHub refused the token or was unreachable three times;
-    nothing was pushed by that step. Rerun the workflow once GitHub is up. If "커밋 & 푸시" passed and "data 브랜치에
-    올리기" failed, `main` has the day's data and the site doesn't yet; the next run (or a rerun) uploads it.
-  - If a publish fails right after #113 merged: revert #113 as a whole (never only `persist-credentials`, which would
-    leave two auth headers). A run created before the revert merged fails at the missing script and publishes nothing;
-    the first run created after the revert publishes normally.
+  - "!! 토큰으로 원격 저장소(origin)를 세 번 다 읽지 못했어요" — nothing was pushed by that step. Read git's own error
+    line just above it: "Authentication failed" or 403 is a token problem (revert, below); "Could not resolve",
+    "unable to access" or a timeout is the network (don't revert; the next scheduled run or a rerun publishes). If
+    "커밋 & 푸시" passed and "data 브랜치에 올리기" failed, `main` has the day's data and the site doesn't yet; the next
+    run (or a rerun) uploads it.
+  - A scheduled run uses the workflow file of the commit it was created on but checks out the latest `main`, so the
+    first run that proves #113 is one created after its merge commit (its "커밋 & 푸시" log shows "토큰 확인됨").
+  - If a publish fails with a token problem right after #113 merged: revert #113 as a whole (never only
+    `persist-credentials`, which would leave two auth headers), but keep `tools/git_token_auth.sh` in the revert for a
+    day, so a run created before the revert (new workflow, latest `main`) still finds it. The first run created after
+    the revert publishes normally; a manual run on `main` with dart=cache is not a full-DART run.
   The data-collection and gate steps still receive the token for read-only GitHub API calls, so a tampered tool in the
   same job could still reach it: this narrows the exposure, it does not close it. Splitting a read-only job from the
   publishing job is the follow-up.

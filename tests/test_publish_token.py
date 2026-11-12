@@ -9,6 +9,7 @@
 - 토큰은 '커밋 & 푸시' · 'data 브랜치에 올리기' 두 단계의 환경에만 (API 를 읽는 데이터 수집 · 관문 단계는 예전 그대로 자기 환경으로)
 - 두 단계는 영수증 확인 뒤, git 으로 무엇을 쓰기 전에 tools/git_token_auth.sh 를 불러요 (토큰을 찍지 않고, 안 되면 멈춰요)
 """
+import base64
 import json
 import os
 import re
@@ -120,7 +121,9 @@ def test_token_script_sets_the_header_checks_it_and_never_prints_the_token(tmp_p
     assert lines[0] == f"git config --local http.https://github.com/.extraheader AUTHORIZATION: basic {want}"   # checkout 이 하던 것과 같은 설정
     assert lines[1] == "git ls-remote --exit-code origin refs/heads/main" and len(lines) == 2                # 받아들여지는지 읽기로 확인 · 그 밖의 git 일은 없음
     out = r.stdout + r.stderr
-    assert TOKEN not in out and want not in out and "토큰 확인됨" in out                                         # 토큰도, 그 base64 도 찍지 않아요
+    # 토큰은 어디에도 찍지 않아요. base64 값은 GitHub 이 가리도록 '::add-mask::' 줄에만 (checkout 과 같아요)
+    assert TOKEN not in out and "토큰 확인됨" in out
+    assert [ln for ln in out.splitlines() if want in ln] == [f"::add-mask::{want}"], out
 
 
 def test_token_script_stops_without_a_token_or_when_github_refuses_it(tmp_path):
@@ -133,9 +136,19 @@ def test_token_script_stops_without_a_token_or_when_github_refuses_it(tmp_path):
         assert r.returncode != 0 and did == "" and TOKEN not in r.stdout + r.stderr, repr(blank)
     r, did = run_script(tmp_path, {**fake_git(tmp_path, ls_remote_ok=False), "GITHUB_TOKEN": TOKEN})   # GitHub 이 거절 (세 번)
     assert r.returncode != 0 and "세 번 다 읽지 못했어요 → 푸시하지 않아요" in r.stdout and TOKEN not in r.stdout + r.stderr
+    assert "Authentication failed" in r.stdout                                # 토큰 문제와 네트워크를 가리는 법을 알려 줘요
+    want = base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
+    assert [ln for ln in (r.stdout + r.stderr).splitlines() if want in ln] == [f"::add-mask::{want}"]
     assert did.count("git ls-remote") == 3 and (tmp_path / "slept.txt").read_text().split() == ["5", "10"]
     src = open(SCRIPT, encoding="utf-8").read()
-    assert "set -euo pipefail" in src and "set -x" not in src and not re.search(r"echo[^\n]*\$(GITHUB_TOKEN|basic)", src)
+    assert "set -euo pipefail" in src and "set -x" not in src and "GIT_TERMINAL_PROMPT=0" in src
+    # 정적 검사: 토큰 · base64 를 화면 · 실행 요약 · 설정 목록으로 내보내는 줄이 없어요 (add-mask 한 줄만 예외)
+    for ln in src.splitlines():
+        code = ln.split("#", 1)[0]
+        if "::add-mask::" in code:
+            continue
+        assert not re.search(r"(echo|printf)[^\n]*\$\{?(GITHUB_TOKEN|basic)\b", code) or "base64" in code, ln
+        assert "GITHUB_STEP_SUMMARY" not in code and "config --list" not in code and "config -l" not in code, ln
 
 
 @pytest.mark.parametrize("fails,ok", [(1, True), (2, True), (3, False)])
