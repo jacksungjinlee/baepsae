@@ -118,20 +118,21 @@ def fake_bin(tmp_path, fail=()):
                   f'echo "$*" >> "{tmp_path}/calls.txt"\n'
                   f'for f in {" ".join(fail) or "__none__"}; do if [ "$name" = "$f" ]; then echo "  FAIL  x"; echo "1 / 2 통과"; exit 1; fi; done\n'
                   'if [ -n "$TOUCH" ] && [ "$name" = "$TOUCH" ]; then echo " " >> data.json; fi\n'
+                  'if [ -n "$UNSEEN" ] && [ "$name" = "smoke_app" ]; then echo "!! 확인 못 함  $UNSEEN"; fi\n'
                   'echo "2 / 2 통과"\n')
     py.chmod(py.stat().st_mode | stat.S_IEXEC)
     return bin_
 
 
-def run_screen(tmp_path, fail=(), gate_receipt=True, touch=""):
+def run_screen(tmp_path, fail=(), gate_receipt=True, touch="", unseen=""):
     for f in LIVE:
         (tmp_path / f).write_text("{}")
-    for f in ("calls.txt", "screen-pass.sha256", "screen-summary.txt", "summary.md", "gate-pass.sha256"):
+    for f in ("calls.txt", "screen-pass.sha256", "screen-summary.txt", "screen-unseen.txt", "summary.md", "gate-pass.sha256"):
         if (tmp_path / f).exists():
             (tmp_path / f).unlink()
     bin_ = fake_bin(tmp_path, fail)
     env = {"PATH": f"{bin_}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
-           "TOUCH": touch}
+           "TOUCH": touch, "UNSEEN": unseen}
     if gate_receipt:
         subprocess.run("sha256sum data.json corp.json disc.json macro.json > gate-pass.sha256", shell=True, cwd=tmp_path, check=True)
     r = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step(SCREEN)["run"]], cwd=tmp_path, env=env,
@@ -424,3 +425,115 @@ def test_smoke_app_data_option_reads_only_that_folder(tmp_path):
     pytest.importorskip("playwright.sync_api")
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "smoke_app.py"), "--data", str(tmp_path)], capture_output=True, text=True)
     assert stopped_before_any_check(r, os.path.join(str(tmp_path), "data.json")), r.stdout + r.stderr[-400:]
+
+
+# ── 2026-11-12 (Jack): 화면 검사는 회사 하나에 매이지 않아요 — 회사 하나가 목록에서 빠졌다고 모두의 데이터 발행이 멈추면 안 돼요 ──
+import smoke_app as SA  # noqa: E402
+
+
+class FakeRunner:
+    """브라우저 없는 Runner: 장면이 브라우저를 열려 하면 바로 알 수 있어요."""
+    def __init__(self):
+        self.results, self.errors, self.console, self.unseen = [], [], [], []
+
+    def open(self, *a, **kw):
+        raise RuntimeError("브라우저를 열었어요")
+
+
+def tiny_files(corp):
+    """장면이 회사를 고를 때 보는 것만 담은 데이터: 목록(data.json stocks)과 회사(corp.json companies)."""
+    return {"data.json": {"stocks": [{"t": c["t"], "nk": "회사" + c["t"]} for c in corp] + [{"t": "005930", "nk": "삼성전자"}]},
+            "corp.json": {"companies": [dict(c) for c in corp] + [{"t": "005930"}, {"t": "777777", "stmtCur": "USD"}]},   # 777777: 목록에 없는 회사
+            "disc.json": {}, "macro.json": {}}
+
+
+def test_smoke_app_picks_companies_by_rule_not_by_name():
+    f = tiny_files([{"t": "950160", "stmtCur": "USD"}, {"t": "241560", "stmtCur": "USD"}, {"t": "900110", "stmtCur": "CNY"}, {"t": "008700", "stmtCur": "JPY"},
+                    {"t": "950250"}, {"t": "000020", "stmtCur": "KRW"}, {"t": "000040", "stmtCur": "XXX"}, {"t": "000050", "stmtCur": "usd"},
+                    {"t": "90001", "stmtCur": "USD"}, {"t": "9500001"}])
+    # 원화가 아닌 통화로 공시: 데이터의 표시(stmtCur, 앱과 같은 규칙)만 봐요. 국내 코드 먼저, 그다음 종목코드 순. 목록에 없는 회사는 못 열어요.
+    assert [c["t"] for c in SA.non_won_companies(f)] == ["008700", "241560", "90001", "900110", "950160"]
+    # 해외 기업: 9로 시작하는 여섯 자리 (통화 표시가 있든 없든)
+    assert [c["t"] for c in SA.foreign_companies(f)] == ["900110", "950160", "950250"]
+    assert [SA.stmt_cur_of({"stmtCur": v}) for v in ("USD", "KRW", "XXX", "usd", "US", "", None, 3)] == ["USD", None, None, None, None, None, None, None]
+    assert SA.stmt_cur_line("JPY") == "이 회사는 재무제표를 원화가 아닌 JPY로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+    # 장면이 회사를 이름(종목코드)으로 고르지 않아요: 설명 글 밖에는 두산밥캣의 코드가 없어요
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    assert '"241560"' not in src and "corp=241560" not in src and "'241560'" not in src
+    a, b = src.index("def scene_stmt_cur("), src.index("def scene_foreign_issuer(")
+    assert "non_won_companies(f)" in src[a:a + 2500] and "foreign_companies(f)" in src[b:b + 1500]
+
+
+@pytest.mark.parametrize("scene, corp, said", [
+    ("scene_stmt_cur", [{"t": "950250"}, {"t": "000020", "stmtCur": "KRW"}], "원화가 아닌 통화로 공시한다고 표시된 회사"),
+    ("scene_foreign_issuer", [{"t": "241560", "stmtCur": "USD"}], "해외 기업(종목코드 9…)"),
+])
+def test_smoke_app_scene_with_no_such_company_today(monkeypatch, capsys, scene, corp, said):
+    """오늘 데이터에 그 장면이 볼 회사가 하나도 없을 때. 실제 데이터(--data): 크게 알리고 통과 — 발행을 막지 않아요. 그 밖(CI): 실패."""
+    f = tiny_files(corp)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(SA, "REAL_DATA", True)
+    R = FakeRunner()
+    getattr(SA, scene)(R, f)                                                 # 브라우저를 열지 않고 돌아와요
+    out = capsys.readouterr().out
+    assert len(R.results) == 1 and R.results[0][1] is True and "확인 못 함" in R.results[0][0], R.results
+    assert len(R.unseen) == 1 and said in R.unseen[0]
+    loud = [ln for ln in out.splitlines() if ln.startswith("!! 확인 못 함")]
+    assert len(loud) == 1 and said in loud[0] and "오늘 확인하지 못했어요" in loud[0], out
+    assert sum(ln.startswith("::warning title=발행 전 화면 검사 · 확인 못 한 장면::") for ln in out.splitlines()) == 1
+    # 고정 데이터 · 저장소 데이터로 돌 때는 실패로 남아요 (조용히 건너뛰면 그 장면은 아무도 안 본 게 돼요)
+    monkeypatch.setattr(SA, "REAL_DATA", False)
+    R = FakeRunner()
+    getattr(SA, scene)(R, f)
+    out = capsys.readouterr().out
+    assert len(R.results) == 1 and R.results[0][1] is False and said in R.results[0][2] and not R.unseen, R.results
+    assert "  FAIL  " in out and "::warning" not in out and "!! 확인 못 함" not in out
+
+
+def test_smoke_app_is_lenient_about_a_missing_company_only_with_the_data_option(monkeypatch):
+    """'해당 회사 없음 → 통과'는 --data DIR 로 돌 때만 켜져요 (매일 실행). 옵션 없이 돌면(CI) 꺼져 있어요."""
+    class Stop(Exception):
+        pass
+
+    def stop(*a):
+        raise Stop(a)
+    for reader in ("read_data", "read_snapshot"):               # 데이터를 읽는 순간 멈춰요 (read_snapshot: #104 의 고정 데이터 읽기)
+        monkeypatch.setattr(SA, reader, stop, raising=False)
+    for argv, want in ((["smoke_app.py", "--data", "/somewhere"], True), (["smoke_app.py"], False), (["smoke_app.py", "--part", "1/2"], False)):
+        monkeypatch.setattr(SA, "REAL_DATA", not want)
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(Stop):
+            SA.main()
+        assert SA.REAL_DATA is want, argv
+
+
+def test_screen_step_puts_an_unseen_scene_in_the_summary_and_still_publishes(tmp_path):
+    msg = "[다시 읽은 뒤] 오늘 데이터에 재무제표를 원화가 아닌 통화로 공시한다고 표시된 회사(stmtCur)가 하나도 없어요"
+    r, calls, rec = run_screen(tmp_path, unseen=msg)
+    assert r.returncode == 0 and rec.exists(), (r.stdout, r.stderr)          # 회사 하나가 없다고 발행을 막지 않아요
+    summary = (tmp_path / "summary.md").read_text()
+    assert "### 뱁새 발행 전 화면 검사 — PASS" in summary and "확인하지 못한 장면" in summary and f"· {msg}" in summary, summary
+    r, calls, rec = run_screen(tmp_path)                                     # 그런 장면이 없으면 그 문단도 없어요
+    assert "확인하지 못한 장면" not in (tmp_path / "summary.md").read_text()
+
+
+def test_browser_steps_get_no_secret_and_every_action_is_an_official_one_pinned_by_major():
+    """Jack, 2026-11-12: 화면 검사와 그 준비 단계의 환경에는 비밀 값이 없어요. 두 워크플로의 action 은 모두 GitHub 공식(actions/…)이고
+    다른 것들과 같은 방식(@v숫자)으로 고정돼 있어요."""
+    st = update_steps()
+    n = names(st)
+    job = load("update-data.yml")["jobs"]["update"]
+    wf = load("update-data.yml")
+    for env in (wf.get("env") or {}, job.get("env") or {}):                  # 워크플로 · job 전체에 걸리는 환경에 비밀 값이 없어요
+        assert not re.search(r"secrets\.|github\.token|GITHUB_TOKEN", json.dumps(env)), env
+    for s in st[n.index(GATE) + 1:n.index("커밋 & 푸시")]:
+        name = s.get("name") or s.get("uses")
+        assert "env" not in s, name                                          # 단계의 환경을 따로 주지 않아요
+        assert not re.search(r"secrets\.|github\.token|GITHUB_TOKEN|DART_API_KEY|ECOS_API_KEY", json.dumps(s, ensure_ascii=False)), name
+    with_secret = [s.get("name") for s in st if re.search(r"secrets\.", json.dumps(s.get("env") or {}))]
+    assert with_secret == ["데이터 수집"]                                      # DART · ECOS 열쇠를 받는 단계는 데이터 수집 하나뿐
+    ci_text = open(os.path.join(WF, "ci.yml"), encoding="utf-8").read()
+    assert "secrets." not in ci_text and "github.token" not in ci_text and "GITHUB_TOKEN" not in ci_text
+    for name in ("update-data.yml", "ci.yml"):
+        uses = re.findall(r"^\s*(?:- )?uses:\s*(\S+)", open(os.path.join(WF, name), encoding="utf-8").read(), re.M)
+        assert uses and all(re.fullmatch(r"actions/[a-z-]+(?:/[a-z-]+)?@v\d+", u) for u in uses), (name, uses)

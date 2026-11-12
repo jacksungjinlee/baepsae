@@ -44,13 +44,12 @@ serve the `docs/` folder (two of its files must answer "not found").
     copy is downloaded. The tests accept any version number as long as every place uses the same one, so no test edit
     is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's font setup changed:
     fix `tests/fonts/install.sh` in a PR.
-  - `smoke_app` relies on two things in the data that the gate does not guarantee: 두산밥캣 (241560) in `corp.json`
-    and at least one foreign company with a 9xxxxx code. If one of them leaves the data, the check fails and
-    publishing is held until the test is changed in a PR (Jack's yes). Never skip the check to get the data out.
-  - Known limit of one check: if a run started by hand in the evening has `smoke_app` reach its 늦음 scene between about
-    23:15 and 23:20 KST, the "화면이 다시 보일 때" check fails with "2일째 갱신이 멈췄어요" although the app is right (the
-    scene's due date and its clock jump fall on either side of midnight). Scheduled starts never run at that hour. If it
-    happens, it is the test and not the data: start the run again.
+  - `smoke_app` does not depend on any one company beyond the gate's must-have list (Jack, 11-12). Two scenes need a
+    kind of company and pick it by rule: any company the data marks as reporting in a currency other than won
+    (`stmtCur`), and any foreign company with a 9xxxxx code. If today's data has none, the run log says so loudly
+    (`!! 확인 못 함`, a warning on the run page and a paragraph in the step summary), the scene counts as passed and
+    the data is published; CI still checks those scenes on its own data, where a missing company is a failure.
+    A company leaving the market never holds the data back. Never skip the check itself to get the data out.
 - **CI runs on fixed data (since #104).** A pull request's checks no longer read the day's files: `smoke_app` uses a
   trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 470 KB), `smoke_v2` and `smoke_launch` use the
   2.0 test data (`tests/fixtures/v2`), and `smoke_app` and `smoke_v2` run on a test clock that starts at 07:00 KST on a
