@@ -2556,9 +2556,13 @@ def _iphone_records(R, files, device, tmp):
     dev = {k: v for k, v in device.items() if k != "default_browser_type"}
     width = dev["viewport"]["width"]
     site = os.path.join(tmp, "site")
+    day = (dt.date.fromisoformat(files["data.json"]["pxDate"]) - dt.timedelta(days=2)).isoformat()   # 오늘이 아닌 산 날
+    # v19.6a (A.1): a US purchase dated in the past saves the rate of its own date from macro.json fxHist (before: the data's
+    # current rate, the wrong day's). The scene's files carry that day's close (1325.5, not the data's fx).
+    files = clone(files)
+    files["macro.json"]["fxHist"] = {"asOf": files["data.json"]["fxDate"], "rows": [[day, 1325.5], [files["data.json"]["fxDate"], files["data.json"]["fx"]]]}
     shutil.move(build_site(files), site)
     by = {x["t"]: x for x in files["data.json"]["stocks"]}
-    day = (dt.date.fromisoformat(files["data.json"]["pxDate"]) - dt.timedelta(days=2)).isoformat()   # 오늘이 아닌 산 날
     keep = {}
 
     def main_text(page):
@@ -2626,7 +2630,7 @@ def _iphone_records(R, files, device, tmp):
         ps = {p["t"]: p for p in stored["decks"][0]["purchases"]}
         assert len(stored["decks"]) == 1 and len(ps) == len(tickers) and all(p["date"] == day for p in ps.values()), stored
         assert all((ps[t]["qty"], ps[t]["price"]) == q for t, q in want.items()), (want, ps)
-        assert ps[us]["ccy"] == "USD" and ps[us]["fx"] == files["data.json"]["fx"] and ps[kr]["ccy"] == "KRW", (ps[us], ps[kr])
+        assert ps[us]["ccy"] == "USD" and ps[us]["fx"] == 1325.5 and ps[kr]["ccy"] == "KRW", (ps[us], ps[kr])   # 산 날의 환율 (v19.6a)
         assert all(h.get("rules") for h in stored["decks"][0]["holdings"]), "규칙이 저장되지 않았어요"
         open_today_tab(page)
         keep["today"] = main_text(page)
