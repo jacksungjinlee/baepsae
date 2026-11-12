@@ -2961,8 +2961,15 @@ def main():
         scenes = part_of(scene_list(R, fresh, full), args.part)
         ran = 0
         if REAL_DATA:       # 장면들 앞에서 한 번 (실패 줄이 하나로, 이유와 함께): 예시 가격으로 보일 내장 종목이 한도 이내인지
-            R.check(None, "오늘 데이터", f"예전 뱁새의 내장 종목 가운데 오늘 데이터에 없거나 값이 빈 종목이 {EXAMPLE_MAX}개 이하 · 금 환산 표시는 금현물만",
-                    lambda: within_example_cap(fresh))
+            def cap():
+                try:
+                    within_example_cap(fresh)
+                except AssertionError as e:                     # 결과 줄은 160자에서 잘려요: 이름과 할 일이 다 보이게 전체를 따로 찍어요
+                    print(f"\n!! 한도 초과  {e}\n", flush=True)
+                    if os.environ.get("GITHUB_ACTIONS") == "true":
+                        print(f"::error title=발행 전 화면 검사 · 내장 종목 한도::{e}", flush=True)
+                    raise
+            R.check(None, "오늘 데이터", f"예전 뱁새의 내장 종목 가운데 오늘 데이터에 없거나 값이 빈 종목이 {EXAMPLE_MAX}개 이하 · 금 환산 표시는 금현물만", cap)
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue

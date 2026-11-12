@@ -646,6 +646,7 @@ def test_banner_check_follows_the_data_only_with_real_data(SA, monkeypatch, caps
     # 한도 검사는 실제 데이터로 돌 때 장면들 앞에서 한 번 (실패 줄 하나) — CI 의 검사 목록은 그대로
     src0 = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
     assert src0.count("within_example_cap(fresh)") == 1 and "        if REAL_DATA:       # 장면들 앞에서 한 번" in src0
+    assert '::error title=발행 전 화면 검사 · 내장 종목 한도::{e}' in src0 and '!! 한도 초과  {e}' in src0   # 잘리지 않은 전체 이유도 찍어요
     assert src0.index("within_example_cap(fresh)") < src0.index("        for key, fn in scenes:")
     # 내장 종목 목록을 덜 읽거나 더 읽으면 불러오는 순간 멈춰요 (종목코드 수 = 이름 수)
     assert 'len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\\bnk:\\s*\\"", _block))' in src0
