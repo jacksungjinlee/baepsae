@@ -64,6 +64,9 @@ import requests
 # v19.1b: 배당 순위·수익률 확인 비율의 관문 기준과 '빠진 이유' 문구는 관문 파일 한곳에 있어요. 파이프라인 로그는 그걸 그대로
 # 읽어 관문과 같은 선·같은 말로 알려요 (관문은 이 파일을 읽지 않아요 — 계산은 따로)
 from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason
+# v19.6a: 환율 이력(fxHist)과 주식 분할(splits)의 기준도 관문 파일에 있어요 (검사 코드는 따로 · 같은 선만 읽어요)
+from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST_GAP_MAX, FX_HIST_JUMP, SPLIT_R,
+                           SPLIT_SIMPLE_MAX, SPLIT_YEARS)
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -104,6 +107,16 @@ KR_FUND_INDUSTRY = "신탁업 및 집합투자업"     # 이 업종의 새 종�
 KR_INDEX = "KS11"
 US_INDEX = "^GSPC"
 FX_TICKER = "USDKRW=X"
+# v19.6a (docs/tasks/v19.6-records-alerts-dark.md Part I.1): macro.json fxHist = 2016-01-01 부터의 원/달러 일별 종가.
+# 최근 부분은 이 실행의 환율 시계열(fx · data.json fx 와 같은 것)을 그대로 쓰고, 그 앞(2016 ~)만 야후에서 한 번 더 받아요.
+FX_HIST_TRIES = 2          # 야후 2016년부터 받기: 실패하면 쉬었다가 한 번 더
+FX_HIST_PAUSE = 15         # 초
+FX_HIST_KEEP_DAYS = 10     # 지난 발행본의 fxHist 를 앞부분으로 이어 쓰는 건 그 마지막 날이 이 실행의 환율 날짜와 10일 안일 때만
+#                            (설·추석 연휴와 미국 휴일이 겹쳐 발행이 며칠 쉬는 때 + 하루 실패까지는 덮고, 그보다 오래된 파일로 계속
+#                            이어 붙여 긴 고장을 덮지 않게 — 그때는 싣지 않고 관문이 경고해요)
+FX_HIST_AGREE = 0.005      # 앞부분의 출처와 이 실행의 환율이 겹치는 날 값의 차이 상한 (0.5%) — 다르면 이어 붙이지 않아요
+FX_HIST_AGREE_MIN = 20     # 겹치는 날이 이만큼은 있어야 이어 붙여요 (같은 시계열인지 확인할 수 있게)
+FX_HIST_AGREE_SKIP = 5     # 앞부분 출처의 마지막 5줄은 비교에서 빼요 (그날 아침의 덜 끝난 봉이 다음 날 바뀌어요)
 
 # ────────────────────────────────────────────────────────────
 # 업종 매핑 — KRX 업종분류(한글) → 뱁새 업종 키
@@ -5623,8 +5636,10 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     spx_krw = (spx * fx.reindex(spx.index).ffill()).dropna()
     us_vol_krw = ann_vol(spx_krw.pct_change().dropna().values)
 
+    # v19.6a: actions=True 는 요청을 늘리지 않아요 (야후 응답에 분할·배당 사건이 늘 들어 있고, 이 값은 그 칸을 버리지 않을 뿐) —
+    # 종가(Close)는 그대로예요. 분할 칸(Stock Splits)으로 data.json splits 를 만들어요 (us_splits).
     data = yf.download(syms, start=start, end=end_x, progress=False,
-                       auto_adjust=True, group_by="ticker", threads=True)
+                       auto_adjust=True, group_by="ticker", threads=True, actions=True)
 
     out, dropped, bad_bar = [], [], []
     for sym in syms:
@@ -5717,9 +5732,292 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     if no_d1:   # 발행 관문이 98% 아래면 막고 전부 적어요 — 여기서는 앞의 30개 (Jack, 2026-11-07). 괄호 = 그 종목의 자기 가격 날짜(pxd)
         log(f"  !! 미국 d1 없는 종목 {len(no_d1):,}개 (마지막 봉이 미국 기준일 {us_px_date} 이 아님 — 거래 정지이거나 야후가 봉을 "
             f"빠뜨림 · 가격은 괄호 날짜의 종가로 나가요): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
+    # v19.6a (A.6): 주식 분할 — 위 다운로드의 분할 칸에서, 목록에 남은 종목만 (새 요청 없음)
+    try:
+        splits, sinfo = us_splits(data, [r["t"] for r in out], today)
+    except Exception as e:
+        splits, sinfo = None, {"err": f"{type(e).__name__}: {e}"}
+    log_us_splits(splits, sinfo, len(out), today)
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
-            "usLeftOut": {**left_out, "badBar": bad_bar}}   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
+            "usLeftOut": {**left_out, "badBar": bad_bar},   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
+            # v19.6a: None = 분할을 읽다 멈춤 · splitsNoCol = 분할 칸이 없던 종목 (둘 다 main 이 지난 발행본으로 이어요)
+            "splits": splits, "splitsNoCol": list(sinfo.get("noCol") or [])}
     return out, bench, fx, fx_last, us_vol_krw, meta
+
+
+def split_window_from(today, years=SPLIT_YEARS):
+    """주식 분할 목록의 첫날: 오늘(KST) − years 년 (2월 29일은 28일로). (순수 함수)"""
+    return (pd.Timestamp(today) - pd.DateOffset(years=years)).date()
+
+
+def split_is_clean(r, top=SPLIT_SIMPLE_MAX):
+    """배율이 '깨끗한' 분수인지: 어떤 q ≤ top 에 대해 r × q 가 정수(10:1 · 3:2 · 21:20 주식배당)이거나 q ÷ r 가 정수(1:15 병합). (순수 함수)
+    야후는 분사(spin-off)도 분할 칸에 가격 조정 배율로 적어요 (GE 2024-04-02 1253:1000 = 1.253 · GE 버노바 분사) — 주식 수가 바뀐 게
+    아니라서 넣으면 앱에서 GE 100주가 125.3주로 보여요. 그런 값은 기약분수의 분자·분모가 둘 다 커요. 관문의 simple_ratio 와 같은 규칙."""
+    if r is None or not (r > 0):
+        return False
+    for q in range(1, top + 1):
+        for x in (r * q, q / r):
+            if abs(x - round(x)) <= 1e-6 * max(1.0, x) and round(x) >= 1:
+                return True
+    return False
+
+
+def us_splits(data, codes, today, years=SPLIT_YEARS):
+    """v19.6a (A.6): 미국 주식 분할 [[티커, 날짜, 배율], …] — 시세를 받은 다운로드(actions=True)의 'Stock Splits' 칸에서. (순수 함수)
+    날짜 = 야후의 분할 날짜 (미국 현지 날짜 · 새 주식 수로 거래가 시작된 날 · 앱은 이 날짜 앞의 기록을 맞춰요: held.js splitFactor
+    `date < s.date`). 배율 = 옛 1주가 새로 몇 주인지 (야후 numerator ÷ denominator: 10:1 분할 10 · 1:10 병합 0.1 · 앱과 같은 방향).
+    최근 years 년(split_window_from)만, 오늘(KST) 뒤 날짜는 넣지 않아요 (세어서 알려요). 배율이 앱이 읽는 범위(SPLIT_R) 밖이거나
+    1 이면 넣지 않고(bad), 깨끗한 분수가 아니면(split_is_clean — 야후가 분사를 적은 것) 넣지 않고(spin) 이름을 남겨요.
+    분할 칸이 없는 종목은 noCol 에 모아요 (그 종목의 분할은 모름 — 빈 목록과 달라요 · main 이 지난 발행본으로 이어요).
+    -> (목록, {"noCol": [...], "future": [...], "bad": [...], "spin": [...], "old": 수})"""
+    lo = split_window_from(today, years)
+    info = {"noCol": [], "future": [], "bad": [], "spin": [], "old": 0}
+    multi = isinstance(getattr(data, "columns", None), pd.MultiIndex)
+    out = []
+    for t in codes:
+        try:
+            col = data[t]["Stock Splits"] if multi else None
+        except KeyError:
+            col = None
+        if col is None:
+            info["noCol"].append(t)
+            continue
+        for ts, v in col.items():
+            r = _fin(v)
+            if r is None or r == 0:          # 0 = 그날 분할 없음 (야후 칸의 기본값)
+                continue
+            d = pd.Timestamp(ts).date()
+            if d < lo:
+                info["old"] += 1
+                continue
+            if not (SPLIT_R[0] <= r <= SPLIT_R[1]) or r == 1:
+                info["bad"].append(f"{t} {d} ×{r:g}")
+                continue
+            if not split_is_clean(r):
+                info["spin"].append(f"{t} {d} ×{r:g}")
+                continue
+            if d > today:
+                info["future"].append(f"{t} {d} ×{r:g}")
+                continue
+            out.append([t, d.isoformat(), round(r, 10)])
+    out.sort(key=lambda x: (x[0], x[1]))
+    return out, info
+
+
+def split_ratio_text(r):
+    """로그용 배율: 10 → '10:1 분할' · 0.1 → '1:10 병합'. (순수 함수)"""
+    return f"{r:g}:1 분할" if r > 1 else f"1:{1 / r:g} 병합"
+
+
+def log_us_splits(splits, info, n_us, today):
+    if splits is None:
+        log(f"  !! 미국 주식 분할(splits)을 읽지 못했어요: {info.get('err')} → 지난 발행본의 목록을 이어 써요 (main · 관문이 경고해요)")
+        return
+    recent = sorted(splits, key=lambda x: x[1])[-5:]
+    log(f"· 미국 주식 분할(splits, 야후 · {split_window_from(today)} ~ {today}): {len(splits):,}건 / {n_us:,}종목"
+        + (" · 최근: " + " · ".join(f"{t} {d} {split_ratio_text(r)}" for t, d, r in reversed(recent)) if recent else ""))
+    nc = info.get("noCol") or []
+    if nc:
+        log(f"  !! 분할 칸이 없는 미국 종목 {len(nc):,}개 — 이 종목들의 분할은 지난 발행본의 목록을 이어 써요 (main · 관문이 경고해요): "
+            f"{', '.join(nc[:10])}{'…' if len(nc) > 10 else ''}")
+    if info.get("spin"):
+        log(f"  !! 야후가 분할 칸에 적은 분사·가격 조정 {len(info['spin'])}건은 넣지 않았어요 (깨끗한 분수가 아니에요 — 주식 수가 바뀐 게 "
+            f"아니에요): {', '.join(info['spin'])}")
+    if info.get("future"):
+        log(f"  !! 오늘({today}) 뒤 날짜의 분할 {len(info['future'])}건은 넣지 않았어요: {', '.join(info['future'][:10])}")
+    if info.get("bad"):
+        log(f"  !! 배율이 이상한 분할 {len(info['bad'])}건은 넣지 않았어요 (1 이거나 {SPLIT_R[0]:g}~{SPLIT_R[1]:g} 밖): "
+            f"{', '.join(info['bad'][:10])}")
+
+
+def kept_splits(prev, codes, today, years=SPLIT_YEARS):
+    """v19.6a: 이번 실행이 분할 칸을 읽지 못했을 때 지난 발행본(data.json)의 splits 를 이어 써요 — 오늘 목록에 있는 종목, 최근 years 년,
+    오늘(KST)까지, 모양이 맞는 줄만. 지난 발행본에 목록이 없으면 None. (순수 함수)"""
+    raw = (prev or {}).get("splits")
+    if not isinstance(raw, list):
+        return None
+    lo = split_window_from(today, years).isoformat()
+    out = []
+    for x in raw:
+        if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and isinstance(x[1], str)):
+            continue
+        r = _fin(x[2])
+        try:
+            d = dt.date.fromisoformat(x[1])
+        except ValueError:
+            continue
+        if (x[0] in codes and r is not None and SPLIT_R[0] <= r <= SPLIT_R[1] and r != 1 and split_is_clean(r)
+                and lo <= d.isoformat() and d <= today):
+            out.append([x[0], d.isoformat(), r])
+    return sorted(out, key=lambda x: (x[0], x[1]))
+
+
+def merge_splits(fresh, no_col, prev, us_codes, today):
+    """v19.6a: 이번 실행의 분할 목록과 지난 발행본을 합쳐 data.json splits 를 정해요. (순수 함수)
+      fresh None (읽다 멈춤)       → 지난 발행본의 목록 (오늘 미국 목록의 종목만) · 출처 kept · 지난 목록도 없으면 쓰지 않아요 (None)
+      분할 칸이 없던 종목(no_col) → 그 종목만 지난 발행본의 분할로 · 출처 kept (지난 목록이 없으면 그 종목은 모름 → 출처 part)
+      그 밖                       → 이번 실행 그대로 · 출처 yahoo
+    -> (목록 또는 None, 출처 yahoo | kept | part | None, 설명)"""
+    if fresh is None:
+        kept = kept_splits(prev, set(us_codes), today)
+        if kept is None:
+            return None, None, "지난 발행본에도 목록이 없어 data.json 에 splits 를 쓰지 않아요"
+        return kept, "kept", f"지난 발행본의 목록 {len(kept):,}건을 그대로 써요 (오늘 새로 생긴 분할은 빠졌을 수 있어요)"
+    if not no_col:
+        return fresh, "yahoo", ""
+    kept = kept_splits(prev, set(no_col), today)
+    if kept is None:
+        return fresh, "part", f"분할 칸이 없던 {len(no_col):,}종목은 지난 발행본에도 목록이 없어 모름: {', '.join(sorted(no_col)[:10])}"
+    return (sorted(fresh + kept, key=lambda x: (x[0], x[1])), "kept",
+            f"분할 칸이 없던 {len(no_col):,}종목은 지난 발행본의 분할 {len(kept):,}건으로 이어 써요: {', '.join(sorted(no_col)[:10])}")
+
+
+# ────────────────────────────────────────────────────────────
+# v19.6a: macro.json fxHist — 원/달러 일별 종가 2016-01-01 ~ 이 실행의 환율 날짜 (Part I.1)
+# ────────────────────────────────────────────────────────────
+def fx_hist_rows(ser):
+    """pd.Series → ([[날짜, 소수 첫째 자리 값], …], 버린 줄 수). NaN·무한·0 이하는 버려요. 같은 날짜가 두 번이면 뒤의 것 (fx_last 와
+    같은 쪽). 날짜 순서로. (순수 함수)"""
+    by, bad = {}, 0
+    for ts, v in ser.items():
+        x = _fin(v)
+        if x is None or x <= 0:
+            bad += 1
+            continue
+        d = pd.Timestamp(ts).date().isoformat()
+        if d in by:
+            bad += 1
+        by[d] = round(x, 1)
+    return [[d, by[d]] for d in sorted(by)], bad
+
+
+def fx_hist_problems(rows):
+    """이어 붙인 fxHist 줄이 앱이 믿고 쓸 수 있는 모양인지 (관문과 같은 기준 · 코드는 따로). -> 문제 목록 (빈 목록 = 괜찮음). (순수 함수)"""
+    if not rows:
+        return ["줄이 없어요"]
+    probs = []
+    if rows[0][0] > FX_HIST_FIRST_BY:
+        probs.append(f"첫날 {rows[0][0]} (≤ {FX_HIST_FIRST_BY} 이어야 해요 — 앞이 잘린 이력)")
+    if rows[0][0] < FX_HIST_FROM:
+        probs.append(f"첫날 {rows[0][0]} 가 {FX_HIST_FROM} 앞이에요")
+    out = [f"{d} {v:g}" for d, v in rows if not (FX_LO < v < FX_HI)]
+    if out:
+        probs.append(f"범위({FX_LO}~{FX_HI}) 밖 {len(out)}줄: {', '.join(out[:3])}")
+    for (d0, v0), (d1, v1) in zip(rows, rows[1:]):
+        gap = (dt.date.fromisoformat(d1) - dt.date.fromisoformat(d0)).days
+        if gap <= 0:
+            probs.append(f"날짜 순서 {d0} → {d1}")
+        elif gap > FX_HIST_GAP_MAX:
+            probs.append(f"{d0} → {d1} {gap}일 비어요 (≤ {FX_HIST_GAP_MAX}일)")
+        if v0 > 0 and abs(v1 / v0 - 1) * 100 > FX_HIST_JUMP:
+            probs.append(f"{d0} → {d1} {v0:g} → {v1:g} (하루 {FX_HIST_JUMP:g}% 넘게)")
+    return probs
+
+
+def fx_hist_build(recent, older):
+    """recent: 이 실행의 환율 시계열 (fetch_us 의 fx — 그 환율 날짜까지 잘린 것, data.json fx 의 출처) · older: 그보다 긴 시계열(야후
+    2016~) 또는 지난 발행본 fxHist 의 줄로 만든 시계열. 앞부분(2016-01-01 ~ recent 의 첫날 전)은 older 에서, 나머지는 recent 그대로.
+    겹치는 날(older 의 마지막 FX_HIST_AGREE_SKIP 줄 빼고)이 FX_HIST_AGREE_MIN 일 이상이고 값이 FX_HIST_AGREE 안에서 같아야 이어 붙여요.
+    -> ({"asOf", "rows"} 또는 None, 설명). (순수 함수)"""
+    rec, bad_r = fx_hist_rows(recent)
+    if not rec:
+        return None, "이 실행의 환율 시계열이 비었어요"
+    if bad_r:
+        return None, f"이 실행의 환율 시계열에 깨진 값·겹친 날짜 {bad_r}줄"
+    old, bad_o = fx_hist_rows(older)
+    first = rec[0][0]
+    before = [r for r in old if FX_HIST_FROM <= r[0] < first]
+    recd = dict(map(tuple, rec))
+    common = [(d, v) for d, v in old[:max(0, len(old) - FX_HIST_AGREE_SKIP)] if d in recd]
+    if len(common) < FX_HIST_AGREE_MIN:
+        return None, f"이 실행의 환율과 겹치는 날이 {len(common)}일뿐이에요 (≥ {FX_HIST_AGREE_MIN}일)"
+    worst = max(abs(v / recd[d] - 1) for d, v in common)
+    if worst > FX_HIST_AGREE:
+        return None, f"이 실행의 환율과 겹치는 날 값이 달라요 (최대 {worst:.2%} · ≤ {FX_HIST_AGREE:.1%})"
+    rows = before + rec
+    probs = fx_hist_problems(rows)
+    if probs:
+        return None, " · ".join(probs[:3]) + (f" 외 {len(probs) - 3}개" if len(probs) > 3 else "")
+    return ({"asOf": rows[-1][0], "rows": rows},
+            f"앞부분 {len(before):,}줄 + 이 실행의 환율 {len(rec):,}줄 · 겹치는 {len(common):,}일 최대 차이 {worst:.3%}"
+            + (f" · 버린 값 {bad_o}줄" if bad_o else ""))
+
+
+def _rows_series(rows):
+    """[[날짜, 값], …] → pd.Series (모양이 틀린 줄은 빼요 — fx_hist_rows 가 세지 않으니 여기서 셉니다). -> (시계열, 뺀 줄 수)"""
+    idx, vals, bad = [], [], 0
+    for r in rows if isinstance(rows, list) else []:
+        try:
+            d = pd.Timestamp(dt.date.fromisoformat(str(r[0])))
+            v = float(r[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            bad += 1
+            continue
+        idx.append(d)
+        vals.append(v)
+    return pd.Series(vals, index=pd.DatetimeIndex(idx), dtype=float), bad
+
+
+def fetch_fx_hist(fx, today, prev_macro, download=None, sleep=time.sleep):
+    """v19.6a Part I.1: macro.json fxHist ({asOf, rows: [[날짜, 종가], …]}). 순서대로 (출처를 크게 남겨요):
+      1. 야후 USDKRW=X 2016-01-01 부터 (요청 한 번 · 실패하면 FX_HIST_PAUSE 초 쉬고 한 번 더) → 앞부분 + 이 실행의 환율
+      2. 지난 발행본(macro.json)의 fxHist — 그 마지막 날이 이 실행의 환율 날짜와 FX_HIST_KEEP_DAYS 일 안일 때만 → 앞부분 + 이 실행의 환율
+      3. 없음: 싣지 않아요 (앱은 지난 날짜의 미국 종목 기록을 받지 않고 승인된 줄로 알려요 · 관문이 경고해요). 만들어 내지 않아요.
+    최근 부분은 언제나 이 실행의 환율 시계열 fx (그 환율 날짜까지 잘린 것)라 asOf = data.json fxDate, 마지막 값 = data.json fx 예요.
+    오늘(KST)의 덜 끝난 봉은 들어가지 않아요 (fx 가 이미 잘렸고, 앞부분은 fx 의 첫날 전 줄만 써요).
+    -> (fxHist 또는 None, 출처 "yahoo" | "kept" | None)"""
+    if download is None:
+        import yfinance as yf
+        download = yf.download
+    fx_date = fx.index[-1].date()
+    tried = []
+    ser, why = None, "?"
+    for i in range(FX_HIST_TRIES):
+        try:
+            raw = download(FX_TICKER, start=dt.date.fromisoformat(FX_HIST_FROM), end=today + dt.timedelta(days=1),
+                           progress=False, auto_adjust=True)
+            got = _yf_close(raw)
+            if len(got):
+                ser = cut_at(got, fx_date)
+                break
+            why = "빈 응답"
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e)[:120]}"
+        if i + 1 < FX_HIST_TRIES:
+            log(f"  !! 환율 이력: 야후 {FX_TICKER} {FX_HIST_FROM}부터 받기 실패 ({why}) — {FX_HIST_PAUSE}초 뒤 다시")
+            sleep(FX_HIST_PAUSE)
+    if ser is not None:
+        hist, how = fx_hist_build(fx, ser)
+        if hist:
+            log(f"· 환율 이력(fxHist, 야후 {FX_TICKER}): {hist['rows'][0][0]} ~ {hist['asOf']} · {len(hist['rows']):,}일 · {how} · "
+                f"마지막 {hist['rows'][-1][1]:,.1f} (= data.json fx) · 약 {len(json.dumps(hist, separators=(',', ':'))) / 1024:.0f}KB")
+            return hist, "yahoo"
+        tried.append(f"야후 {FX_HIST_FROM}부터: {how}")
+    else:
+        tried.append(f"야후 {FX_HIST_FROM}부터 받기 {FX_HIST_TRIES}번 실패: {why}")
+    ph = (prev_macro or {}).get("fxHist") if isinstance(prev_macro, dict) else None
+    if not isinstance(ph, dict) or not ph.get("rows"):
+        tried.append("지난 발행본에 fxHist 없음")
+    else:
+        try:
+            p_asof = dt.date.fromisoformat(str(ph.get("asOf")))
+        except ValueError:
+            p_asof = None
+        if p_asof is None or (fx_date - p_asof).days > FX_HIST_KEEP_DAYS or p_asof > fx_date:
+            tried.append(f"지난 발행본 fxHist 기준 {ph.get('asOf')} 가 환율 날짜 {fx_date} 와 {FX_HIST_KEEP_DAYS}일 안이 아니에요")
+        else:
+            pser, pbad = _rows_series(ph["rows"])
+            hist, how = fx_hist_build(fx, pser)
+            if hist:
+                log(f"  !! 환율 이력(fxHist): {' · '.join(tried)} → 지난 발행본(기준 {p_asof})의 앞부분을 이어 써요: "
+                    f"{hist['rows'][0][0]} ~ {hist['asOf']} · {len(hist['rows']):,}일 · {how}"
+                    + (f" · 모양이 틀린 줄 {pbad}개 뺌" if pbad else "") + " (관문이 경고해요)")
+                return hist, "kept"
+            tried.append(f"지난 발행본(기준 {p_asof}): {how}")
+    log(f"  !! 환율 이력(fxHist)을 만들지 못했어요: {' · '.join(tried)} → macro.json 에 싣지 않아요 "
+        "(앱은 지난 날짜의 미국 종목 기록을 받지 않고 그렇게 알려요 · 관문이 경고해요)")
+    return None, None
 
 
 # ────────────────────────────────────────────────────────────
@@ -5786,7 +6084,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "pxd": "미국 종목의 자기 가격 날짜 (그 종목의 마지막 봉이 usPxDate 가 아닐 때만 · 가격·d1 은 이 날짜 기준, d1 은 빈 칸)",
          "nextPub": "다음 발행 예정일 (한국 날짜 · data/market_holidays.csv 기준 한국·미국 중 먼저 오는 다음 거래일의 다음 날)",
          "staleAfter": "이 시각(한국 시간)이 지나도 새 파일이 없으면 앱이 '갱신이 멈췄어요'를 보여요 (예정일 마지막 정해진 실행 + 2시간)",
-         "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분"}
+         "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분",
+         "splits": ("최근 3년 주식 분할 [종목 코드, 날짜, 배율] · 미국만 (야후 · 날짜는 미국 현지 날짜, 새 주식 수로 거래가 시작된 날) · "
+                    "배율 = 옛 1주가 새로 몇 주인지 (4:1 분할 4 · 1:10 병합 0.1) · 한국 종목은 아직 들어 있지 않아요 · "
+                    "야후가 분할 칸에 적은 분사 조정(1253:1000 같은 배율)은 넣지 않아요 · "
+                    "splitsSrc: yahoo = 이번 실행 · kept = 일부나 전부를 지난 발행본에서 이어 씀 · part = 일부 종목은 모름")}
 IDX_YEARS = 3
 
 
@@ -5905,6 +6207,11 @@ def main():
 
     us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
                                                           kr_codes=frozenset(s["t"] for s in kr), dups=dups)
+    # v19.6a (A.6): 주식 분할. 이번 다운로드에서 읽지 못한 몫은 지난 발행본의 목록을 이어 써요 (오늘 목록의 종목 · 최근 3년만 ·
+    # data.json splitsSrc kept · part → 관문이 경고). 아무것도 없으면 칸을 쓰지 않아요 (빈 목록 = '분할 없음'과 다르니까요).
+    splits, splits_src, why = merge_splits(umeta.get("splits"), umeta.get("splitsNoCol") or [], prev, [s["t"] for s in us], today)
+    if splits_src != "yahoo":
+        log(f"  !! 주식 분할(splits): {why} (관문이 경고해요)")
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
 
@@ -6009,6 +6316,9 @@ def main():
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "stocks": stocks,
     }
+    if splits is not None:                   # v19.6a (A.6): [[코드, 날짜, 배율], …] 최근 3년 · splitsSrc yahoo | kept | part
+        payload["splits"] = splits
+        payload["splitsSrc"] = splits_src
     write_json(OUT, payload)
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
@@ -6020,8 +6330,22 @@ def main():
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")
 
+    prev_macro = read_prev_data(OUT_MACRO)       # v19.6a: 지난 발행본의 fxHist (아래에서 덮어쓰기 전에)
     macro = ph.run("금리·원자재", fetch_macro, start, today, fx)
     macro["publishedAt"] = published_at
+    # v19.6a Part I.1: 원/달러 일별 종가 2016 ~ 이 실행의 환율 날짜 (asOf = data.json fxDate). 못 만들면 싣지 않아요 (관문 경고).
+    try:
+        fx_hist, fx_hist_src = ph.run("환율 이력", fetch_fx_hist, fx, today, prev_macro)
+    except Exception as e:
+        fx_hist, fx_hist_src = None, None
+        log(f"  !! 환율 이력(fxHist)을 만들다 멈췄어요 ({type(e).__name__}: {e}) → macro.json 에 싣지 않아요 (관문이 경고해요)")
+    if fx_hist is not None:
+        if fx_hist["asOf"] != umeta["fxDate"] or fx_hist["rows"][-1][1] != round(fx_last, 1):
+            log(f"  !! 환율 이력의 끝({fx_hist['asOf']} {fx_hist['rows'][-1][1]}) ≠ data.json 의 환율({umeta['fxDate']} "
+                f"{round(fx_last, 1)}) → 싣지 않아요 (관문이 경고해요)")
+        else:
+            macro["fxHist"] = fx_hist
+            macro["fxHistSrc"] = fx_hist_src
     # v17.5.1: KOSPI·S&P500 일별 종가 3년 (각자 기준일까지) — 2.0 의 '내 덱 vs KOSPI'
     ih = {}
     for name, ser in (("KOSPI", kmeta.get("_index")), ("SP500", umeta.get("_index"))):
