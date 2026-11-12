@@ -10,7 +10,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 **Working cadence (Jack, 2026-11-07 evening — replaces the "work lean" note below where they differ):** ship faster;
 Jack is fine with more of his plan being used.
 - Two lanes in parallel. **Data lane:** B7, 자본금, unlisted preferred, the full re-read — DART-limited, as planned.
-  **App lane:** v19.3b first, in a separate worktree with helper agents at Extra high; it never waits for the data lane.
+  **App lane:** v19.3b first, in a separate worktree (helpers' models and effort: `CLAUDE.md` rule 7); it never waits
+  for the data lane.
 - At most two app PRs open at once, each with its own fresh-eyes review, CI and live check.
 - App order: v19.3b, then v19.6a + v19.7a if v19.3 Part F.1's imported-holdings shape folds into the same store
   version (one migration); otherwise v19.3c → v19.3d first and v19.6a + v19.7a right after. Then the rest in this
@@ -23,8 +24,8 @@ Jack is fine with more of his plan being used.
 - Every evening: one short list — what users can see now that they couldn't this morning, and the next three items
   with rough dates.
 
-Jack is near his weekly usage limit (2026-11-04): work lean. One fresh-eyes review per PR (a second only for
-pipeline or safety-rule changes). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
+Jack is near his weekly usage limit (2026-11-04): work lean. Fresh-eyes reviewers and rounds: `CLAUDE.md` rule 7 (Jack,
+2026-11-12; it replaced "one review per PR, a second only for pipeline or safety-rule changes"). Fix every blocker and real bug it finds (CLAUDE.md); small points (style,
 nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04).
 Decide engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions,
 in one short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
