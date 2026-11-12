@@ -19,39 +19,57 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 // A new USD record saves the won-per-dollar rate of its own date: today's from data.json fx (as 샀어요 always did), a past
 // date's from macro.json fxHist ({ asOf, rows: [[date, close], ...] }, USD/KRW closes since 2016): the close on that date,
 // or the last close before it. Never another day's rate:
-//   - a date before 2016 (or before fxHist's first close) is saved without a rate (Part I.1: left out of won totals, the
-//     existing noFx line says so);
+//   - a date before 2016-01-01 is saved without a rate and marked noFx (Part I.1: left out of won totals, the existing noFx
+//     line says so; never costed at the portfolio's planFx: lots.purchaseRate);
+//   - today: data.json fx, only while the data is fresh (the same check as below: stale data's fx is an older day's);
 //   - a past date after fxHist's last close: only when fxHist ends on data.json's own FX date and the data is not stale
-//     (then no close has been published since, so the last close is that day's rate); else not saved yet (the approved
-//     "환율 정보를 불러오지 못해 …" line);
-//   - no fxHist, or one that cannot be read: a past-dated USD record is not saved yet (the same line).
-// env: { today, fx, fxDate, fxHist, stale }. -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why }
+//     (then no close has been published since, so the last close is that day's rate);
+//   - no fxHist, one that cannot be read, or a date from 2016 on that it does not reach: not saved yet.
+// env: { today, fx, fxDate, fxHist, stale }.
+// -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
+//    past-date line does not fit) | "past" (a past date: "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
 export const FX_FROM = "2016-01-01";
 export function rateFor(date, env) {
   const e = env || {};
   if (!realDate(date)) return { ok: false, why: "date" };
   if (date < FX_FROM) return { ok: true, fx: null, before: true };
-  if (date === e.today) return pos(e.fx) ? { ok: true, fx: e.fx } : { ok: false, why: "noToday" };
+  if (date === e.today) return pos(e.fx) && !e.stale ? { ok: true, fx: e.fx } : { ok: false, why: "today" };
   const rows = validRows(e.fxHist);
-  if (!rows || typeof e.fxHist.asOf !== "string" || e.fxHist.asOf !== rows[rows.length - 1][0]) return { ok: false, why: "noHist" };
-  if (date < rows[0][0]) return { ok: true, fx: null, before: true };
+  if (!rows || typeof e.fxHist.asOf !== "string" || e.fxHist.asOf !== rows[rows.length - 1][0]) return { ok: false, why: "past" };
+  if (date < rows[0][0]) return { ok: false, why: "past" };
   const last = rows[rows.length - 1];
   if (date > last[0]) {
     if (last[0] === e.fxDate && !e.stale && !(e.today && date > e.today)) return { ok: true, fx: last[1] };
-    return { ok: false, why: "old" };
+    return { ok: false, why: "past" };
   }
   let lo = 0, hi = rows.length - 1, hit = null;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     if (rows[mid][0] <= date) { hit = rows[mid]; lo = mid + 1; } else hi = mid - 1;
   }
-  return hit ? { ok: true, fx: hit[1] } : { ok: true, fx: null, before: true };
+  return hit ? { ok: true, fx: hit[1] } : { ok: false, why: "past" };
 }
+// The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).
+const ratePart = (r) => (pos(r.fx) ? { fx: r.fx } : r.before ? { noFx: true } : {});
 // The env rateFor reads, from the app's load state (data.json, macro.json) and today's date.
 export function rateEnv(load, today) {
   const ok = load && load.status === "ok";
   return { today, fx: ok ? load.data.fx : null, fxDate: ok ? load.data.fxDate || null : null, fxHist: ok && load.macro ? load.macro.fxHist || null : null,
     stale: !!(ok && load.fresh && load.fresh.stale) };
+}
+
+// ---------------- the currency of a stock's records ----------------
+// One source for the form's label and the record it saves (review: a 원 form must never save dollars): the stock's own
+// records in this portfolio (its records, its imported row, then its history entries), else today's data row.
+export function recordCcy(deck, t, s) {
+  const own = (list) => (Array.isArray(list) ? list : list ? [list] : []).find((r) => r && r.t === t && (r.ccy === "KRW" || r.ccy === "USD"));
+  for (const k of ["purchases", "imported", "sales", "divs"]) { const r = own(deck && deck[k]); if (r) return r.ccy; }
+  for (const e of (deck && deck.history) || []) {
+    if (!e || e.t !== t) continue;
+    for (const k of ["purchases", "imported", "sales", "divs"]) { const r = own(e[k]); if (r) return r.ccy; }
+  }
+  if (s && (s.cls === "kr" || s.cls === "us")) return s.ccy === "USD" ? "USD" : "KRW";
+  return null;
 }
 
 // ---------------- what a portfolio holds of one stock ----------------
@@ -87,71 +105,69 @@ const decimals = (x, d) => Math.abs(x * 10 ** d - Math.round(x * 10 ** d)) < 1e-
 
 // A sale of stock t (in the stock's currency; Korea whole shares unless imported by amount).
 // input: { qty, price, date, amountWon (by amount only) } as typed; s: the stock's data row (its close is the default price).
-// -> { ok: true, rec, proceedsWon, ... } | { ok: false, why: "input" | "tooMany" | "tooEarly" | "rate" | "noPrice" }
+// -> { ok: true, rec } | { ok: false, why: "input" | "tooMany" | "tooEarly" | "rate" | "noPrice", field?, rate? }
+//   field: the field to mark ("qty" · "price" · "date" · "amount"); rate: rateFor's why ("today" · "past") for the line
 export function checkSale(deck, t, input, s, env) {
   const st = stockState(deck, t);
-  const usd = st.ccy === "USD" || (s && s.ccy === "USD");
+  const usd = recordCcy(deck, t, s) === "USD";
   const ccy = usd ? "USD" : "KRW";
   const date = input.date || env.today;
-  if (!realDate(date) || date > env.today) return { ok: false, why: "input" };
-  if (st.first && date < st.first) return { ok: false, why: "tooEarly" };
+  if (!realDate(date) || date > env.today) return { ok: false, why: "input", field: "date" };
+  if (st.first && date < st.first) return { ok: false, why: "tooEarly", field: "date" };
   let qty, price;
   const r = usd ? rateFor(date, env) : { ok: true, fx: null };
   if (st.byAmount) {
     // a holding put in by amount has no real share count: it is sold all at once, by 판 금액 (won)
     const amt = typed(input.amountWon);
-    if (!(pos(amt) && Number.isInteger(amt))) return { ok: false, why: "input" };
-    if (!(st.held > 0)) return { ok: false, why: "tooMany" };
-    if (!r.ok) return { ok: false, why: "rate" };
-    if (usd && !pos(r.fx)) return { ok: false, why: "rate" };
+    if (!(pos(amt) && Number.isInteger(amt))) return { ok: false, why: "input", field: "amount" };
+    if (!(st.held > 0)) return { ok: false, why: "tooMany", field: "amount" };
+    // the won amount becomes a dollar price at the sale date's rate: without one (also before 2016) it cannot be saved
+    if (!r.ok || (usd && !pos(r.fx))) return { ok: false, why: "rate", field: "date", rate: r.ok ? "past" : r.why };
     qty = st.held / UNIT;
     price = usd ? amt / r.fx / qty : amt / qty;
   } else {
     const q = typed(input.qty);
-    if (!(pos(q) && (usd ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input" };
+    if (!(pos(q) && (usd ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input", field: "qty" };
     const p = typed(input.price);
-    if (Number.isNaN(p) || (p != null && !pos(p)) || (usd && p != null && !decimals(p, 4))) return { ok: false, why: "input" };
+    if (Number.isNaN(p) || (p != null && !pos(p)) || (usd && p != null && !decimals(p, 4))) return { ok: false, why: "input", field: "price" };
     price = p == null ? (s && pos(s.price) ? s.price : null) : p;
-    if (!pos(price)) return { ok: false, why: "noPrice" };
+    if (!pos(price)) return { ok: false, why: "noPrice", field: "price" };
     qty = q;
-    if (!r.ok) return { ok: false, why: "rate" };
+    if (!r.ok) return { ok: false, why: "rate", field: "date", rate: r.why };
   }
-  const rec = { id: recordId(), t, qty, price, date, ccy, ...(usd && pos(r.fx) ? { fx: r.fx } : {}) };
-  const sales = [...(deck.sales || []), rec];
-  if (belowZero({ ...deck, sales, splits: splitsToStore(deck, t) || deck.splits })) return { ok: false, why: "tooMany" };
+  const rec = { id: recordId(), t, qty, price, date, ccy, ...(usd ? ratePart(r) : {}) };
+  const next = { ...deck, sales: [...(deck.sales || []), rec] };
+  if (belowZero({ ...next, splits: splitsToStore(next, t) || deck.splits })) return { ok: false, why: "tooMany", field: "qty" };
   return { ok: true, rec };
 }
 
 // One more purchase (샀어요 on an existing portfolio): whole shares (required), price blank -> the latest close.
 export function checkPurchase(deck, t, input, s, env) {
-  const st = stockState(deck, t);
-  const usd = st.ccy ? st.ccy === "USD" : !!(s && s.ccy === "USD");
+  const usd = recordCcy(deck, t, s) === "USD";
   const date = input.date || env.today;
-  if (!realDate(date) || date > env.today) return { ok: false, why: "input" };
+  if (!realDate(date) || date > env.today) return { ok: false, why: "input", field: "date" };
   const q = typed(input.qty);
-  if (!(pos(q) && Number.isInteger(q))) return { ok: false, why: "input" };
+  if (!(pos(q) && Number.isInteger(q))) return { ok: false, why: "input", field: "qty" };
   const p = typed(input.price);
-  if (Number.isNaN(p) || (p != null && !pos(p))) return { ok: false, why: "input" };
+  if (Number.isNaN(p) || (p != null && !pos(p))) return { ok: false, why: "input", field: "price" };
   const price = p == null ? (s && pos(s.price) ? s.price : null) : p;
-  if (!pos(price)) return { ok: false, why: "noPrice" };
+  if (!pos(price)) return { ok: false, why: "noPrice", field: "price" };
   const r = usd ? rateFor(date, env) : { ok: true, fx: null };
-  if (!r.ok) return { ok: false, why: "rate" };
-  return { ok: true, rec: { id: recordId(), t, date, qty: q, price, ccy: usd ? "USD" : "KRW", ...(usd && pos(r.fx) ? { fx: r.fx } : {}) } };
+  if (!r.ok) return { ok: false, why: "rate", field: "date", rate: r.why };
+  return { ok: true, rec: { id: recordId(), t, date, qty: q, price, ccy: usd ? "USD" : "KRW", ...(usd ? ratePart(r) : {}) } };
 }
 
 // A dividend received (after tax, as the brokerage deposit shows it): Korea whole won, US dollars with up to 2 decimals.
+// Its currency is the stock's own records' (recordCcy: the same source as the form's label), also for a stock taken out.
 export function checkDiv(deck, t, input, s, env) {
-  const st = stockState(deck, t);
-  const hist = (deck.history || []).filter((e) => e && e.t === t).slice(-1)[0];
-  const ccy = st.ccy || (hist && ((hist.purchases || [])[0] || (hist.sales || [])[0] || hist.imported || {}).ccy) || (s && s.ccy === "USD" ? "USD" : "KRW");
-  const usd = ccy === "USD";
+  const usd = recordCcy(deck, t, s) === "USD";
   const date = input.date || env.today;
-  if (!realDate(date) || date > env.today) return { ok: false, why: "input" };
   const a = typed(input.amount);
-  if (!(pos(a) && (usd ? decimals(a, 2) : Number.isInteger(a)))) return { ok: false, why: "input" };
+  if (!(pos(a) && (usd ? decimals(a, 2) : Number.isInteger(a)))) return { ok: false, why: "input", field: "amount" };
+  if (!realDate(date) || date > env.today) return { ok: false, why: "input", field: "date" };
   const r = usd ? rateFor(date, env) : { ok: true, fx: null };
-  if (!r.ok) return { ok: false, why: "rate" };
-  return { ok: true, rec: { id: recordId(), t, amount: a, ccy: usd ? "USD" : "KRW", date, ...(usd && pos(r.fx) ? { fx: r.fx } : {}) } };
+  if (!r.ok) return { ok: false, why: "rate", field: "date", rate: r.why };
+  return { ok: true, rec: { id: recordId(), t, amount: a, ccy: usd ? "USD" : "KRW", date, ...(usd ? ratePart(r) : {}) } };
 }
 
 // ---------------- the store with one record more ----------------
@@ -164,7 +180,6 @@ export function withRecord(data, deckId, kind, rec, today) {
   if (!deck || !rec || !["purchases", "sales", "divs"].includes(kind)) return null;
   const t = rec.t;
   const holds = (deck.holdings || []).some((h) => h && h.t === t);
-  const sp = splitsToStore(deck, t);
   let next;
   if (holds) next = { ...deck, [kind]: [...(deck[kind] || []), rec] };
   else if (kind === "divs") {
@@ -172,6 +187,8 @@ export function withRecord(data, deckId, kind, rec, today) {
     if (i == null) return null;
     next = { ...deck, history: deck.history.map((e, j) => (j === i ? { ...e, divs: [...(e.divs || []), rec] } : e)) };
   } else return null;
+  // only a split this stock's records now need (records on both sides of it: lots.splitsToStore), never with every record
+  const sp = splitsToStore(next, t);
   if (sp) next.splits = sp;
   const p = deckProblem(stripView(next), today);
   if (p) { console.warn("[v2] record not saved: " + problemText(next, p)); return null; }

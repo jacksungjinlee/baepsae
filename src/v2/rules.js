@@ -343,7 +343,16 @@ function reasonsOf(results, unit = false) {
   return out.sort((a, b) => LEVEL[a.level] - LEVEL[b.level]);
 }
 
-// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, d1, pxd, bigMove, noNewMoney }
+// v19.6a, waiting for Jack (round-1 review A): a holding sold down to 0 and kept (남겨 두기).
+//   false (what ships, v19.3d2 Jack 2026-11-08): it is left out of the band rules ("다 팔고 목표 비중만 남아 있어요."), the
+//     other targets are rebased over what is held.
+//   true (spec v19.6 A.1): it counts as held with 0 shares for the band rules, so it can show as below its band (먼저 사요)
+//     and 추가로 넣을 돈 can buy it back.
+// ctx.soldOutBands: set only by tests and the smoke test's other-state build, to check both states.
+export const SOLD_OUT_BANDS = false;
+
+// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, px, d1, pxd, bigMove, noNewMoney }
+//   px (v19.6a): today's won price of one share (for 추가로 넣을 돈 when 0 shares are held: SOLD_OUT_BANDS)
 //   pxd (v19.1c): the stock's own price date when it is priced at an earlier close than the US date (data.json pxd), else
 //   null; its d1 is then null (engine.todayD1), so it is never a 큰 움직임 and the screens name it in their notes.
 export function evaluateHolding(h, deck, ctx, weights, qty) {
@@ -374,6 +383,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     target: band && band.result !== "missing" && band.result !== "paused" ? band.target : null,
     planTarget: band ? band.planTarget : num(h.target),
     value: (weights.ok || weights.paused) && weights.value && weights.value.has(h.t) ? weights.value.get(h.t) : null,
+    px: weights.px && weights.px.has(h.t) ? weights.px.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     d1, pxd, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,     // a note only: never changes the status
     noNewMoney: NO_NEW_MONEY.includes(status),
@@ -399,30 +409,33 @@ export function evaluateDeck(deck, ctx) {
       todo: 0, notChecked: 0, notCheckedIds: [], bigMoves: [], weights: { ok: false, missing: [] }, absent: [], unheld: [], bandPlanned: 0, bandHeld: 0,
       rebased: false };
   }
+  // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
+  // it is not in unheld (v19.6 A.1). SOLD_OUT_BANDS off (what ships): the other targets are rebased over what is held
+  // (kept in the target sum at weight 0 instead, every stock still held would read as over its target and get a wrong
+  // 비중 줄이기 instruction), and the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") is not about it: v19.3d2 (Jack)
+  // shows "다 팔고 목표 비중만 남아 있어요." for the sold-out holding instead (soldOut), so bandPlanned leaves it out.
+  // SOLD_OUT_BANDS on (spec A.1): a sold-out holding with a band rule and a price today is held with 0 shares for the bands.
+  const units = heldUnits(deck);
+  const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
+  const zeroIn = typeof ctx.soldOutBands === "boolean" ? ctx.soldOutBands : SOLD_OUT_BANDS;
+  const banded = zeroIn ? new Map([...held, ...(deck.holdings || []).filter((h) => h && soldOut.includes(h.t) && bandRuleOf(h) && ctx.byT.has(h.t)).map((h) => [h.t, 0])]) : held;
   const targets = new Map();
   for (const h of deck.holdings || []) {
-    const b = h && held.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
+    const b = h && banded.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;
     if (b) targets.set(h.t, num(b.target));
   }
   const absent = [...held.keys()].filter((t) => !ctx.byT.has(t));
   // With a held stock missing from today's data, the weights wait for all held stocks (with or without a band rule).
-  const weights = absent.length ? pausedWeights(held, ctx, absent) : deckWeights(held, ctx, targets);
+  const weights = absent.length ? pausedWeights(banded, ctx, absent) : deckWeights(banded, ctx, targets);
   if (weights.ok) weights.planW = planWeights(deck, targets);
-  // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
-  // it is not in unheld (v19.6 A.1). The other targets are rebased over what is held (kept in the target sum at weight 0
-  // instead, every stock still held would read as over its target and get a wrong 비중 줄이기 instruction), but the
-  // rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") is not about it: v19.3d2 (Jack) shows "다 팔고 목표 비중만 남아
-  // 있어요." for the sold-out holding instead (soldOut), so bandPlanned leaves it out.
-  const units = heldUnits(deck);
-  const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
-  const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h) && !soldOut.includes(h.t)).map((h) => h.t)).size;
+  const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h) && (zeroIn ? banded.has(h.t) || !soldOut.includes(h.t) : !soldOut.includes(h.t))).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
   for (const h of deck.holdings || []) {
     if (!h || seen.has(h.t)) continue;
     seen.add(h.t);
-    if (!held.has(h.t)) { if (!soldOut.includes(h.t)) unheld.push(h.t); continue; }
-    holdings.push(evaluateHolding(h, deck, ctx, weights, held.get(h.t)));
+    if (!banded.has(h.t)) { if (!soldOut.includes(h.t)) unheld.push(h.t); continue; }
+    holdings.push(evaluateHolding(h, deck, ctx, weights, banded.get(h.t)));
   }
   const counts = zeroCounts();
   let notChecked = 0;

@@ -113,8 +113,16 @@ function purchaseProblem(p, i, today, holds, part = "purchases") {
   // Part E: a US purchase carries the won-per-dollar rate the plan used (for 원금 in won). Optional, so earlier records
   // still read; when present it must be a positive number on a USD purchase.
   if (p.fx != null && !(p.ccy === "USD" && isPos(p.fx))) return bad(part, i, p.t, "exchange rate only on a USD record, above 0");
+  if (noFxProblem(p)) return bad(part, i, p.t, noFxProblem(p));
   if (!holds(p.t)) return bad(part, i, p.t, "no holding with this code");
   return null;
+}
+// v19.6a (A.1, Part I.1): noFx: true marks a USD record saved deliberately without a rate (dated before 2016, before the
+// rate history): it is left out of won totals (the noFx line), never costed at the portfolio's planFx. A USD purchase
+// without fx and without this mark was saved before Part E and keeps the planFx saved with it (the same moment's rate).
+function noFxProblem(r) {
+  if (r.noFx == null) return null;
+  return r.noFx === true && r.ccy === "USD" && r.fx == null ? null : "noFx is true, on a USD record without a rate, only";
 }
 
 // 평균 단가 (optional): as typed, in the stock's currency, above 0.
@@ -158,6 +166,7 @@ function saleProblem(s, i, today, holds, byAmountT, part = "sales") {
   if (!pastDate(s.date, today)) return bad(part, i, s.t, "date must be a real date, not after today");
   if (!CCY.includes(s.ccy)) return bad(part, i, s.t, "currency must be KRW or USD");
   if (s.fx != null && !(s.ccy === "USD" && isPos(s.fx))) return bad(part, i, s.t, "exchange rate only on a USD record, above 0");
+  if (noFxProblem(s)) return bad(part, i, s.t, noFxProblem(s));
   if (!holds(s.t)) return bad(part, i, s.t, "no holding with this code");
   return null;
 }
@@ -168,6 +177,7 @@ function divProblem(x, i, today, holds, part = "divs") {
   if (!CCY.includes(x.ccy)) return bad(part, i, x.t, "currency must be KRW or USD");
   if (!pastDate(x.date, today)) return bad(part, i, x.t, "date must be a real date, not after today");
   if (x.fx != null && !(x.ccy === "USD" && isPos(x.fx))) return bad(part, i, x.t, "exchange rate only on a USD record, above 0");
+  if (noFxProblem(x)) return bad(part, i, x.t, noFxProblem(x));
   if (!holds(x.t)) return bad(part, i, x.t, "no holding with this code");
   return null;
 }
@@ -343,7 +353,7 @@ export function checkStore(d, today) {
   for (const x of d.decks) {
     let p = deckProblem(x, today);
     if (!p && ids.has(x.id)) p = bad("id", null, null, "the same id twice");
-    if (!p && d.v === BASE_VERSION && V2_DECK_PARTS.some((k) => x[k] != null)) p = bad("version", null, null, "a version-2 part in a version-1 store");
+    if (!p && d.v === BASE_VERSION && V2_DECK_PARTS.some((k) => k !== "splits" && x[k] != null)) p = bad("version", null, null, "a version-2 part in a version-1 store");
     if (p) { problems.push(problemText(x, p)); continue; }
     ids.add(x.id);
     decks.push(x);

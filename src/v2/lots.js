@@ -23,8 +23,9 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const EPS_U = 1e-6;                                         // units: a float sum this close to 0 is 0
 
 // The won-per-dollar rate a USD purchase was saved with: its own fx, else the portfolio's planFx (Part C: the same data.json
-// rate, saved at the same moment). null: none.
-export const purchaseRate = (p, planFx) => (p && p.ccy === "USD" ? (pos(p.fx) ? p.fx : pos(planFx) ? planFx : null) : 1);
+// rate, saved at the same moment, by 샀어요 before Part E saved a rate on each purchase). null: none. v19.6a: a record
+// marked noFx (saved on purpose without a rate: dated before 2016) never takes planFx, which is another day's rate.
+export const purchaseRate = (p, planFx) => (p && p.ccy === "USD" ? (pos(p.fx) ? p.fx : p.noFx !== true && pos(planFx) ? planFx : null) : 1);
 
 // ---------------- data.json splits (A.6) ----------------
 // data.json `splits`: [[code, date, ratio], ...] (last 3 years; ratio = new shares per old share). Malformed entries are left
@@ -75,16 +76,39 @@ export function stocksOf(d) {
   for (const e of (d && d.history) || []) if (e && typeof e.t === "string") out.add(e.t);
   return [...out];
 }
-// The splits a new record of stock t should be stored with (store.js splits): what the screens applied to that stock
-// (the portfolio's stored ones and data.json's), so the stored records read back exactly as they were shown.
+// The splits the store needs for stock t after a new record (store.js splits): a split of data.json that the screens
+// applied to t is stored only when t's records now lie on both sides of it (a record dated before it whose quantity is
+// counted after it: without the split the store's own check would read them at different share bases). Records all on
+// one side read the same with or without it, so nothing is stored then (round-1 review: never with every new record).
+// deck: the portfolio with the new record in it. -> the full splits list to store, or null when nothing is added.
 export function splitsToStore(deck, t) {
   const have = Array.isArray(deck && deck.splits) ? deck.splits : [];
-  const add = (deck && Array.isArray(deck[VIEW_SPLITS]) ? deck[VIEW_SPLITS] : []).filter((s) => s.t === t && !have.some((y) => y && y.t === s.t && y.date === s.date));
-  return add.length ? [...have, ...add.map((s) => ({ t: s.t, date: s.date, r: s.r }))] : null;
+  const view = (deck && Array.isArray(deck[VIEW_SPLITS]) ? deck[VIEW_SPLITS] : []).filter((s) => s.t === t && !have.some((y) => y && y.t === s.t && y.date === s.date));
+  if (!view.length) return null;
+  const dates = [];
+  const add = (list) => { for (const r of Array.isArray(list) ? list : list ? [list] : []) if (r && r.t === t) dates.push(splitDateOf(r, deck)); };
+  for (const k of ["imported", "purchases", "sales"]) add(deck[k]);
+  for (const e of deck.history || []) if (e && e.t === t) { add(e.imported); add(e.purchases); add(e.sales); }
+  const need = view.filter((s) => dates.some((d) => d && d < s.date) && dates.some((d) => d && d >= s.date));
+  return need.length ? [...have, ...need.map((s) => ({ t: s.t, date: s.date, r: s.r }))] : null;
 }
-// The splits applied to stock t in this portfolio, oldest first: [{ date, r }] (the record sheet's lines, Appendix 1).
+// The stored splits data.json does not list (any more): said loudly once each (round-1 review). data.json lists the last
+// 3 years, so an older stored split is expected to be missing from it; the line says so. -> [{ id, t, date }]
+export function storedNotInData(data, splits) {
+  const out = [];
+  for (const d of (data && data.decks) || []) for (const s of Array.isArray(d && d.splits) ? d.splits : []) {
+    if (s && !(splits || []).some((x) => x.t === s.t && x.date === s.date && x.r === s.r)) out.push({ id: d.id, t: s.t, date: s.date, r: s.r });
+  }
+  return out;
+}
+// The splits that changed a record of stock t in this portfolio (a record dated before the split), oldest first:
+// [{ date, r }] (the record sheet's lines, Appendix 1). A split after every record, or before every record, changed nothing.
 export function splitsFor(deck, t) {
-  return splitsOf(deck).get(t) || [];
+  const dates = [];
+  const add = (list) => { for (const r of Array.isArray(list) ? list : list ? [list] : []) if (r && r.t === t) dates.push(splitDateOf(r, deck)); };
+  for (const k of ["imported", "purchases", "sales"]) add(deck && deck[k]);
+  for (const e of (deck && deck.history) || []) if (e && e.t === t) { add(e.imported); add(e.purchases); add(e.sales); }
+  return (splitsOf(deck).get(t) || []).filter((s) => dates.some((d) => d && d < s.date));
 }
 
 // ---------------- one stock's ledger ----------------
@@ -350,22 +374,33 @@ export function recordSets(deck) {
 }
 
 // ---------------- 내 수익 (A.5) for one portfolio ----------------
+// Two owner decisions wait (round-1 review B, C); each is one switch, the default is what ships now:
+//   RETURNS_PARTIAL false (all or nothing per stock): a stock counts in all three rows and in the money put in, or not
+//     at all (one basis for the rows and 수익률, "평균 단가를 넣은 종목 기준"). true: every part that is known counts
+//     (dividends always, every computable sale gain, the unrealized part when its cost is known); 수익률 then only when no
+//     stock was counted in part (partial: true says so, the screen leaves 수익률 out).
+//   RETURNS_EXACT false (만원 rule, roundRows): rows in 만원 when every non-zero row is at least 1만원, else 원. true: always
+//     exact 원 ("18만 8,000원" once app.manWon is approved), as on the board.
+export const RETURNS_PARTIAL = false;
+export const RETURNS_EXACT = false;
 // q: { pxOf(t) -> today's price in the stock's currency | null, fx: today's rate, absent: Set of codes missing from today's
-// data }. The screen's basis is "평균 단가를 넣은 종목 기준" (Appendix 1): a stock is counted only when all its money is known,
-// and then in all three rows and in the money put in, so the rows and 수익률 share one basis. Every stock left out is named,
+// data }. opts: { partial } (tests: both states of RETURNS_PARTIAL). Every stock left out (in full or in part) is named,
 // never counted as 0:
-//   noAvg   a lot has no 평균 단가 (an imported row without one)
+//   noAvg   a lot has no 평균 단가 (an imported row without one), or a sale's gain could not be computed for that reason
 //   noFx    a USD record has no rate (a purchase from before Part C, or a record dated before 2016: the existing noFx line,
 //           which also says 원금 and 수익률 were not computed, so cost is null then)
-//   absent  a held stock missing from today's data (the existing missing-stock line)
-//   noPrice a held stock in the data without a price today (no numbers at all: as deckMoney)
+//   absent  a held stock missing from today's data; noPrice a held stock in the data without a price today: both left out
+//           and named on screen with the approved missing-stock line (round-1 review: never console only)
 // Rows: held (가진 종목, unrealized), sold (판 종목, realized; a stock taken out keeps them, A.3), divs (받은 배당, after tax).
 // cost (산 금액 전체): the won cost of every lot of the counted stocks, shares sold later included; a stock taken out counts
 // with the cost its sales removed (its unsold shares left with their cost, A.3); dollar-only lots at today's rate ([Q11]).
 // soldOut: sales whose gain could not be computed (the approved "수익을 계산하지 못한 판 기록 {n}건" line).
-export function returnsOf(deck, q) {
+// usdOnly: a held dollar-only lot was counted at today's rate (the approved usdToday line); usdOnlySold: a counted sale took
+// its gain from a dollar-only lot at the sale date's rate (the approved rec.usdOnly line).
+export function returnsOf(deck, q, opts = {}) {
+  const partial = typeof opts.partial === "boolean" ? opts.partial : RETURNS_PARTIAL;
   const out = { held: 0, sold: 0, divs: 0, cost: 0, n: 0, noAvg: [], noFx: [], absent: [], noPrice: [], soldOut: 0,
-    heldAny: false, soldAny: false, divAny: false, usdOnly: false, ledgers: [] };
+    heldAny: false, soldAny: false, divAny: false, usdOnly: false, usdOnlySold: false, partial: false, ledgers: [] };
   const name = (k, t) => { if (!out[k].includes(t)) out[k].push(t); };
   for (const set of recordSets(deck)) {
     const L = ledger(set.recs, set.t, set.ctx);
@@ -373,45 +408,51 @@ export function returnsOf(deck, q) {
     if (!L.lots.length && !L.sales.length && !L.divs.length && !L.putIn.unknown && !(L.putIn.won > 0)) continue;   // planned, never bought
     const usdRate = L.ccy === "USD" ? (pos(q.fx) ? q.fx : null) : 1;
     for (const s of L.sales) if (s.gain == null) out.soldOut += 1;
-    let why = null;
-    if (L.putIn.noRate || L.sales.some((s) => s.why === "noRate") || L.divs.some((d) => d.won == null)) why = "noFx";
-    else if (L.putIn.unknown || L.sales.some((s) => s.gain == null)) why = "noAvg";
-    let held = 0, usdOnly = false;
-    if (!why && !set.history && L.held > 0) {
-      if (q.absent && q.absent.has(set.t)) why = "absent";
+    // what is known of this stock, part by part
+    const lost = [];                                       // why a part is unknown: "noFx" · "noAvg" · "absent" · "noPrice"
+    if (L.putIn.noRate || L.sales.some((s) => s.why === "noRate") || L.divs.some((d) => d.won == null)) lost.push("noFx");
+    if (L.putIn.unknown && !L.putIn.noRate) lost.push("noAvg");
+    if (L.sales.some((s) => s.gain == null && s.why !== "noRate")) lost.push("noAvg");
+    let held = null, heldUsdOnly = false;
+    if (!set.history && L.held > 0) {
+      if (q.absent && q.absent.has(set.t)) lost.push("absent");
       else {
         const v = openValue(L, q.pxOf(set.t), q.fx);
-        if (v.value == null) why = L.ccy === "USD" && !pos(q.fx) ? "noFx" : "noPrice";
-        else if (v.gain == null) why = v.unknown === "noRate" ? "noFx" : "noAvg";
-        else { held = v.gain; usdOnly = v.usdOnly; }
+        if (v.value == null) lost.push(L.ccy === "USD" && !pos(q.fx) ? "noFx" : "noPrice");
+        else if (v.gain == null) lost.push(v.unknown === "noRate" ? "noFx" : "noAvg");
+        else { held = v.gain; heldUsdOnly = v.usdOnly; }
       }
     }
     let cost = null;
-    if (!why) {
-      if (set.history) cost = L.removedWon == null ? null : L.removedWon + (L.removedUsdOwn > 0 ? (usdRate ? L.removedUsdOwn * usdRate : NaN) : 0);
-      else cost = L.putIn.won + (L.putIn.usdOnlyOwn > 0 ? (usdRate ? L.putIn.usdOnlyOwn * usdRate : NaN) : 0);
-      if (cost == null) why = "noAvg";
-      else if (!isNum(cost)) why = "noFx";
-    }
-    if (why) { name(why, set.t); continue; }
-    out.n += 1;
-    out.cost += cost;
-    if (!set.history && L.held > 0) { out.held += held; out.heldAny = true; }
-    for (const s of L.sales) { out.sold += s.gain; out.soldAny = true; if (s.usdOnly) usdOnly = true; }
-    for (const d of L.divs) { out.divs += d.won; out.divAny = true; }
-    if (usdOnly) out.usdOnly = true;
+    if (set.history) cost = L.removedWon == null ? null : L.removedWon + (L.removedUsdOwn > 0 ? (usdRate ? L.removedUsdOwn * usdRate : NaN) : 0);
+    else cost = L.putIn.unknown ? null : L.putIn.won + (L.putIn.usdOnlyOwn > 0 ? (usdRate ? L.putIn.usdOnlyOwn * usdRate : NaN) : 0);
+    if (cost != null && !isNum(cost)) { lost.push("noFx"); cost = null; }
+    if (cost == null && !lost.length) lost.push("noAvg");
+    for (const k of lost) name(k, set.t);
+    if (lost.length && !partial) continue;                // all or nothing: the whole stock leaves (named above)
+    if (lost.length) out.partial = true;
+    // partial (or nothing lost): every known part counts
+    if (cost != null && !lost.length) { out.cost += cost; out.n += 1; }
+    if (held != null && !set.history && L.held > 0) { out.held += held; out.heldAny = true; if (heldUsdOnly) out.usdOnly = true; }
+    for (const s of L.sales) if (s.gain != null) { out.sold += s.gain; out.soldAny = true; if (s.usdOnly) out.usdOnlySold = true; }
+    for (const d of L.divs) if (d.won != null) { out.divs += d.won; out.divAny = true; }
   }
-  if (out.noFx.length) out.cost = null;
+  if (out.noFx.length || out.partial) out.cost = null;     // 수익률 only on one basis
   return out;
 }
 
 // ---------------- rounding rows so they add up on screen (A.5) ----------------
-// Round each row to the unit the screen shows (만원 when every non-zero row is at least 1만원, else 원), then the total is
-// the sum of the rounded rows: the screen adds up exactly. -> { unit, rows: [rounded], total }
-export function roundRows(values) {
+// Round each row to the unit the screen shows (만원 when every non-zero row is at least 1만원, else 원; RETURNS_EXACT or
+// opts.exact: always 원), then the total is the sum of the rounded rows: the screen adds up exactly. 수익률 is never taken
+// from these rounded rows (15,000원 x 3 shows as 2만원 x 3; the return is 45,000 / cost, not 60,000 / cost).
+// -> { unit, rows: [rounded], total }
+export function roundRows(values, opts = {}) {
+  const exact = typeof opts.exact === "boolean" ? opts.exact : RETURNS_EXACT;
   const nz = values.filter((v) => isNum(v) && Math.round(v) !== 0);
-  const unit = nz.length && nz.every((v) => Math.abs(v) >= 10000) ? 10000 : 1;
+  const unit = !exact && nz.length && nz.every((v) => Math.abs(v) >= 10000) ? 10000 : 1;
   const rows = values.map((v) => (isNum(v) ? Math.round(v / unit) * unit : null));
   const total = rows.reduce((a, v) => a + (v || 0), 0);
   return { unit, rows: rows.map((v) => (v === 0 ? 0 : v)), total: total === 0 ? 0 : total };
 }
+// 수익률 of 내 수익 from the exact sums (never the rounded rows), in %, or null without the money put in.
+export const returnsPct = (r) => (r && r.cost != null && r.cost > 0 ? ((r.held + r.sold + r.divs) / r.cost) * 100 : null);

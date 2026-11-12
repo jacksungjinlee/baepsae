@@ -27,7 +27,8 @@ const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.war
 export function purchaseWon(p, planFx) {
   if (!p || !(Number.isInteger(p.qty) && p.qty > 0) || !(num(p.price) > 0)) return null;
   if (p.ccy === "KRW") return p.qty * p.price;
-  if (p.ccy === "USD") { const fx = num(p.fx) > 0 ? p.fx : num(planFx) > 0 ? planFx : null; return fx ? p.qty * p.price * fx : null; }
+  // v19.6a: a purchase marked noFx (saved on purpose without a rate, before 2016) never takes planFx (another day's rate)
+  if (p.ccy === "USD") { const fx = num(p.fx) > 0 ? p.fx : p.noFx !== true && num(planFx) > 0 ? planFx : null; return fx ? p.qty * p.price * fx : null; }
   return null;
 }
 
@@ -54,11 +55,13 @@ function builtMoney(deck, de, ctx) {
   // the missing stocks are named even when the totals cannot be made (never silent)
   const noPrice = () => ({ ok: false, why: "price", ...(gone.size ? { absent: absentOf() } : {}) });
   if (!de.weights || !(de.weights.ok || de.weights.paused)) return noPrice();
-  const held = new Set(de.holdings.filter((x) => !gone.has(x.t)).map((x) => x.t));
+  // a sold-out holding the band rules count with 0 shares (rules.SOLD_OUT_BANDS) holds no money: not in the totals
+  const zero = new Set(de.holdings.filter((x) => x.qty === 0).map((x) => x.t));
+  const held = new Set(de.holdings.filter((x) => !gone.has(x.t) && !zero.has(x.t)).map((x) => x.t));
   const per = {};
   let value = 0;
   for (const x of de.holdings) {
-    if (gone.has(x.t)) continue;
+    if (gone.has(x.t) || zero.has(x.t)) continue;
     const s = ctx.byT.get(x.t);
     const px = s ? priceWon(s, ctx.fx) : null;
     if (!(px > 0) || !(x.qty > 0)) return noPrice();
@@ -238,7 +241,8 @@ export function addMoney(de, amountWon) {
   for (const x of de.holdings) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
   for (const x of de.holdings) {
     const target = num(x.target), value = num(x.value), w = num(x.w);
-    const px = x.qty > 0 && value > 0 ? value / x.qty : null;
+    // a sold-out holding counted with 0 shares (rules.SOLD_OUT_BANDS) is bought back at today's price
+    const px = x.qty > 0 && value > 0 ? value / x.qty : x.qty === 0 && num(x.px) > 0 ? x.px : null;
     const hi = highEdge(x, target);
     if (NO_NEW_MONEY.includes(x.status)) { skipped.push({ t: x.t, why: x.status }); continue; }
     if (!(target > 0) || hi == null) { skipped.push({ t: x.t, why: "target" }); continue; }
