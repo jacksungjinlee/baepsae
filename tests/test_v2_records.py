@@ -26,14 +26,12 @@ _B = {}
 
 
 def _old_sources(tmp):
-    """main 의 v19.3d store.js · held.js (분할을 모르는 예전 앱) — git 에서 읽어 임시 폴더에 둬요."""
+    """main 의 v19.3d store.js · held.js (분할을 모르는 예전 앱, 7b5c895) — tests/fixtures/old_client_7b5c895 에 둔 그 파일들이에요
+    (CI 는 git 기록을 얕게 받아서 git show 로는 읽을 수 없어요). 임시 폴더로 옮겨 그대로 써요."""
     d = os.path.join(tmp, "old")
     os.makedirs(d, exist_ok=True)
     for f in ("store.js", "held.js", "dcf.js"):
-        r = subprocess.run(["git", "show", f"7b5c895:src/v2/{f}"], cwd=ROOT, capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr
-        with open(os.path.join(d, f), "w", encoding="utf-8") as fh:
-            fh.write(r.stdout)
+        shutil.copy(os.path.join(ROOT, "tests", "fixtures", "old_client_7b5c895", f), os.path.join(d, f))
     return os.path.join(d, "store.js")
 
 
