@@ -250,8 +250,8 @@ def test_stock_split_reads_earlier_records_at_the_new_basis_and_the_store_accept
     assert got["viewProblem"] is not None                                                     # 저장 검사는 저장된 분할만 읽어요 (화면용은 저장 안 됨)
     assert got["storedProblem"] is None and got["gain"] == 40 * 120 * 1300 - 10 * 400 * 1300
     assert got["written"] is False                                                            # 화면용 분할은 JSON 에 안 나가요
-    assert got["oneSide"] is None                                                             # 기록이 모두 분할 전이면 저장할 분할 없음
-    assert got["toStore"] == [{"t": "AAA", "date": "2026-09-01", "r": 4}]                    # 분할 앞뒤에 기록이 있을 때만
+    assert got["oneSide"] == [{"t": "AAA", "date": "2026-09-01", "r": 4}]                    # 리뷰 2차: 분할 전 기록이 하나라도 있으면 저장 (산 뒤 그대로 둔 사람도)
+    assert got["toStore"] == [{"t": "AAA", "date": "2026-09-01", "r": 4}]
     assert got["future"] is True and got["merge"] == 10000                                     # 앞날 분할은 적용 안 함 · 10:1 병합 → 1주
 
 
@@ -371,3 +371,64 @@ def test_sold_out_band_switch_both_states():
     assert on["hs"] == [["000010", 10, "high"], ["000020", 0, "low"]] and on["soldOut"] == ["000020"] and on["unheld"] == []
     assert off["m"] == [True, 10000, 10000] and on["m"] == [True, 10000, 10000]              # 0주 종목은 돈이 없어요
     assert off["add"] == [["000010", 10]] and on["add"] and on["add"][0][0] == "000020"     # 켜면 다시 사는 쪽으로
+
+
+# ── v19.6a 리뷰 2차 (2026-11-13) ──
+def test_the_same_split_dated_a_few_days_apart_applies_once():
+    got = run("""const d = { ...built([['000010', 'a', 1]], { purchases: [buy('000010', 1, 1000, '2026-08-01'), buy('000010', 1, 100, '2026-10-01')] }),
+        splits: [{ t: '000010', date: '2026-09-01', r: 10 }] };
+      const view = L.withDataSplits({ v: 2, decks: [d] }, [{ t: '000010', date: '2026-09-03', r: 10 }], '2026-11-06').decks[0];
+      const far = L.withDataSplits({ v: 2, decks: [d] }, [{ t: '000010', date: '2026-09-20', r: 10 }], '2026-11-06').decks[0];
+      const other = L.withDataSplits({ v: 2, decks: [d] }, [{ t: '000010', date: '2026-09-03', r: 2 }], '2026-11-06').decks[0];
+      out = { near: H.heldUnits(view).get('000010'), far: H.heldUnits(far).get('000010'), other: H.heldUnits(other).get('000010'),
+        notStored: L.splitsToStore(view, '000010'), log: L.storedNotInData({ decks: [d] }, [{ t: '000010', date: '2026-09-03', r: 10 }]) };""")
+    assert got["near"] == 110000                                                              # 11주 (1 × 10 + 1), 101주가 아니에요
+    assert got["far"] == 1010000 and got["other"] == 210000                                   # 8일 넘게 · 다른 비율은 다른 분할
+    assert got["notStored"] is None and got["log"] == []                                      # 같은 분할은 다시 저장하지도, 없다고 말하지도 않아요
+
+
+def test_rateless_usd_sale_and_dividend_never_take_plan_fx():
+    """M10 · M11: a USD sale or dividend without its own rate is not costed at the portfolio's planFx."""
+    got = run("""const d = built([['AAA', 'A', 1]], { purchases: [buy('AAA', 2, 100, '2026-10-01', { fx: 1300 })],
+        sales: [sell('AAA', 1, 120, '2026-10-02')], divs: [div('AAA', 2, '2026-10-03', { noFx: true }), div('AAA', 3, '2026-10-05')] });   // planFx 1,300 이 있어도
+      const Lg = L.ledger(d, 'AAA');
+      out = { sale: [Lg.sales[0].proceedsWon, Lg.sales[0].gain, Lg.sales[0].why], divs: Lg.divs.map((x) => x.won) };""")
+    assert got["sale"] == [None, None, "noRate"] and got["divs"] == [None, None]
+
+
+def test_splits_store_needs_a_record_strictly_before_the_split_day():
+    """M4: a record dated on the split day is already at the new basis: nothing to store. A dividend dated before the split
+    counts while the stock is held."""
+    got = run("""const sp = [{ t: 'AAA', date: '2026-09-01', r: 4 }];
+      const on = L.withDataSplits({ v: 2, decks: [built([['AAA', 'A', 1]], { purchases: [buy('AAA', 1, 100, '2026-09-01', { fx: 1300 })] })] }, sp, '2026-11-06').decks[0];
+      const divHeld = L.withDataSplits({ v: 2, decks: [built([['AAA', 'A', 1]], { purchases: [buy('AAA', 1, 100, '2026-09-01', { fx: 1300 })],
+        divs: [div('AAA', 1, '2026-08-20', { fx: 1300 })] })] }, sp, '2026-11-06').decks[0];
+      const ws = L.withStoredSplits({ v: 2, decks: [divHeld, on] });
+      out = { on: L.splitsToStore(on, 'AAA'), div: L.splitsToStore(divHeld, 'AAA'), added: ws.added, same: L.withStoredSplits({ v: 2, decks: [on] }).data.decks[0] === on };""")
+    assert got["on"] is None and got["div"] == [{"t": "AAA", "date": "2026-09-01", "r": 4}]
+    assert got["added"] == [{"id": "d", "t": "AAA", "date": "2026-09-01", "r": 4}] and got["same"] is True
+
+
+def test_fx_card_leaves_out_a_stock_with_any_rateless_lot():
+    got = run("""const d = built([['AAA', 'A', 0.5], ['BBB', 'B', 0.5]], { planFx: undefined,
+        purchases: [buy('AAA', 1, 100, '2026-10-01', { fx: 1300 }), buy('AAA', 1, 100, '2015-06-01', { noFx: true }), buy('BBB', 1, 100, '2026-10-01', { fx: 1300 })] });
+      delete d.planFx;
+      const f = L.fxSplit([L.ledger(d, 'AAA'), L.ledger(d, 'BBB')], () => 120, 1400);
+      out = { n: f.n, noRate: f.noRate, price: f.price, rate: f.rate };""")
+    assert got["n"] == 1 and got["noRate"] == ["AAA"] and got["price"] == 20 * 1300 and got["rate"] == 120 * 100   # AAA 통째로 빠지고 BBB 만
+
+
+def test_round_rows_rounds_halves_the_same_way_on_both_sides():
+    got = run("""out = [L.roundRows([15000, -15000, 25000]), L.roundRows([-0.5, 0.5, 2], { exact: true })];""")
+    assert got[0] == {"unit": 10000, "rows": [20000, -20000, 30000], "total": 30000}
+    assert got[1]["rows"] == [-1, 1, 2]
+
+
+def test_sold_out_band_switch_on_with_no_price_today_does_not_stop_the_rest():
+    got = run("""const stocks = [kr('000010', 1000), { ...kr('000020', null), price: null }];
+      const d = built([['000010', 'a', 0.5], ['000020', 'b', 0.5]], { purchases: [buy('000010', 10, 1000, '2026-10-01'), buy('000020', 10, 1000, '2026-10-01')],
+        sales: [sell('000020', 10, 1000, '2026-10-10')] });
+      const ctx = { ...ctxOf(stocks), soldOutBands: true };
+      const e = R.evaluateDeck(d, ctx); const m = T.deckMoney(d, e, ctx);
+      out = { w: e.weights.ok, hs: e.holdings.map((x) => [x.t, x.qty]), m: [m.ok, m.value, m.cost] };""")
+    assert got["w"] is True and got["hs"] == [["000010", 10]] and got["m"] == [True, 10000, 10000]

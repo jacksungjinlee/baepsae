@@ -93,7 +93,7 @@ def test_the_rate_of_a_records_date_never_another_days():
       noToday: Rc.rateFor(T, env({ fx: null })), staleToday: Rc.rateFor(T, env({ stale: true })), bad: Rc.rateFor('2026-02-30', env()) };""")
     assert got["today"] == {"ok": True, "fx": 1401.1}                                        # 오늘: data.json fx
     assert got["onDay"] == {"ok": True, "fx": 1375.2} and got["weekend"] == {"ok": True, "fx": 1338.0} and got["last"] == {"ok": True, "fx": 1390.4}
-    assert got["gapFresh"] == {"ok": True, "fx": 1390.4}                                     # 새 데이터 · fxHist 끝 = fx 날짜: 그 사이 새 종가 없음
+    assert got["gapFresh"] == {"ok": False, "why": "past"}                                   # 리뷰 2차: fxHist 마지막 날 뒤의 지난 날짜는 거절 (오늘만 data.json fx)
     assert got["gapStale"] == {"ok": False, "why": "past"} and got["gapOtherDate"] == {"ok": False, "why": "past"}
     assert got["noHist"] == {"ok": False, "why": "past"} and got["badHist"]["ok"] is False and got["asOfOff"]["ok"] is False
     assert got["pre2016"] == {"ok": True, "fx": None, "before": True}                           # 2016 전: 환율 없이 (noFx 표시)
@@ -320,7 +320,7 @@ def test_csv_quotes_a_leading_tab_or_cr_and_marks_them_as_text():
     assert got == "'\t탭,B,2026-10-02,\"=\"\"005930\"\"\",\"'\r삼성\",10,200000,KRW,,2000000"   # 탭: ' 만 · CR: ' + 따옴표
 
 
-def test_splits_go_into_the_store_only_when_records_lie_on_both_sides():
+def test_splits_go_into_the_store_when_a_saved_record_is_dated_before_them():
     got = run("""const sp = [{ t: 'AAPL', date: '2026-09-01', r: 4 }];
       const base = deckOf({ purchases: [{ id: 'p1aaaaaa', t: 'AAPL', qty: 10, price: 400, date: '2026-08-01', ccy: 'USD', fx: 1300 }], holdings: [{ t: 'AAPL', nk: 'Apple Inc.', target: 1, rules: band(1) }] });
       const view = L.withDataSplits({ v: 2, decks: [base] }, sp, T);
@@ -332,7 +332,8 @@ def test_splits_go_into_the_store_only_when_records_lie_on_both_sides():
       out = { after: after.decks[0].splits || null, beforeOnly: beforeOnly.decks[0].splits || null, allAfter: after2.decks[0].splits || null,
         missing: L.storedNotInData({ decks: [{ id: 'd1', splits: sp }] }, []), there: L.storedNotInData({ decks: [{ id: 'd1', splits: sp }] }, sp) };""")
     assert got["after"] == [{"t": "AAPL", "date": "2026-09-01", "r": 4}]
-    assert got["beforeOnly"] is None and got["allAfter"] is None                                # 한쪽에만 기록이 있으면 저장하지 않아요
+    assert got["beforeOnly"] == got["after"]                                                   # 리뷰 2차: 분할 전 기록이 있으면 저장 (산 뒤 그대로 둔 사람도)
+    assert got["allAfter"] is None                                                             # 모든 기록이 분할 뒤면 저장할 것이 없어요
     assert got["missing"] == [{"id": "d1", "t": "AAPL", "date": "2026-09-01", "r": 4}] and got["there"] == []
 
 
@@ -355,3 +356,23 @@ def test_an_earlier_app_tab_that_retags_v1_keeps_the_splits_part_readable():
     assert got["rawV"] == 1 and got["rawSplits"] == [{"t": "AAPL", "date": "2026-09-01", "r": 4}]   # 예전 앱: v1 로 적고 splits 는 그대로 둬요
     assert got["locked"] is False and got["decks"] == ["d1"] and got["splits"] == got["rawSplits"] and got["note"] is True
     assert got["held"] == 440000 and got["again"] is True and got["v"] == 2                     # 10주 × 4 + 4주 · 다음 저장은 다시 v2
+
+
+# ── v19.6a 리뷰 2차 (2026-11-13) ──
+def test_forms_refuse_a_year_before_2000_and_an_absurd_quantity():
+    got = run("""const d = deckOf();
+      out = { buy: Rc.checkPurchase(d, '005930', { qty: '1', date: '1999-12-31' }, S5930, env()), sell: Rc.checkSale(d, '005930', { qty: '1', date: '1926-11-06' }, S5930, env()),
+        div: Rc.checkDiv(d, '005930', { amount: '100', date: '1999-01-01' }, S5930, env()), qty: Rc.checkPurchase(d, '005930', { qty: '1000000001', date: T }, S5930, env()),
+        ok2000: Rc.checkPurchase(d, '005930', { qty: '1', price: '1000', date: '2000-01-01' }, S5930, env()).ok };""")
+    for k in ("buy", "sell", "div"):
+        assert got[k]["why"] == "input" and got[k]["field"] == "date", (k, got[k])
+    assert got["qty"]["why"] == "input" and got["qty"]["field"] == "qty" and got["ok2000"] is True
+
+
+def test_a_pre_2016_us_sale_of_a_holding_put_in_by_amount_is_refused():
+    """M34: a by-amount sale turns 판 금액 into a dollar price at the sale date's rate; before 2016 there is none."""
+    got = run("""const d = { id: 'i', name: 'i', createdAt: '2015-01-02', kind: 'imported', settings: { points: {} }, holdings: [{ t: 'AAPL', nk: 'Apple Inc.', cls: 'us' }],
+        purchases: [], imported: [{ t: 'AAPL', nk: 'Apple Inc.', ccy: 'USD', amountWon: 1300000, close: 325, fx: 1300, date: '2015-01-02' }] };
+      const r = Rc.checkSale(d, 'AAPL', { amountWon: '1500000', date: '2015-06-01' }, SAAPL, env());
+      out = [r.ok, r.why, r.field];""")
+    assert got == [False, "rate", "date"]
