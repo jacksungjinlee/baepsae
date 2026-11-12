@@ -44,20 +44,24 @@ export function dataSplits(data) {
 // VIEW_SPLITS: a Symbol key, never written). Portfolios without one are the same objects. A split dated after today is not
 // applied (a pipeline that lists one early must not move anyone's shares).
 export function withDataSplits(data, splits, today = null) {
-  if (!data || !Array.isArray(data.decks) || !splits || !splits.length) return data;
+  if (!data || !Array.isArray(data.decks)) return data;
   const byT = new Map();
-  for (const s of splits) {
+  for (const s of splits || []) {
     if (today && s.date > today) continue;
     if (!byT.has(s.t)) byT.set(s.t, []);
     byT.get(s.t).push(s);
   }
-  if (!byT.size) return data;
   let changed = false;
   const decks = data.decks.map((d) => {
     if (!d || typeof d !== "object") return d;
-    const ts = new Set(stocksOf(d));
-    const mine = [...ts].flatMap((t) => byT.get(t) || []);
-    if (!mine.length) return d;
+    const mine = stocksOf(d).flatMap((t) => byT.get(t) || []);
+    if (!mine.length) {
+      // an earlier copy's splits (the data changed since): taken off, never carried on
+      if (!d[VIEW_SPLITS]) return d;
+      changed = true;
+      const { [VIEW_SPLITS]: _v, ...rest } = d;
+      return rest;
+    }
     changed = true;
     return { ...d, [VIEW_SPLITS]: mine };
   });

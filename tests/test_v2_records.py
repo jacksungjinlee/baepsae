@@ -43,7 +43,7 @@ def run(body):
         entry = os.path.join(tmp, "entry.js")
         old = _old_sources(tmp)
         with open(entry, "w", encoding="utf-8") as f:
-            for name, mod in (("S", "store.js"), ("H", "held.js"), ("L", "lots.js"), ("Rc", "records.js"), ("Csv", "csv.js")):
+            for name, mod in (("S", "store.js"), ("H", "held.js"), ("L", "lots.js"), ("Rc", "records.js"), ("Csv", "csv.js"), ("Rt", "routes.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
             f.write(f"export * as Old from {json.dumps(old)};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
@@ -51,7 +51,7 @@ def run(body):
                             "--loader:.js=jsx", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
-    code = ("import { S, H, L, Rc, Csv, Old } from './rec.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
+    code = ("import { S, H, L, Rc, Csv, Old, Rt } from './rec.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -251,3 +251,12 @@ def test_an_earlier_app_tab_never_counts_sold_shares_and_never_loses_the_records
     assert got["wrote"] is True and got["aside"] >= 1                                          # 쓰기 전에 읽지 못한 기록을 따로 보관
     assert got["decks"] == ["d1", "d2"] and got["restored"] is True                          # 새 앱이 되돌려 합치고 한 번 알려요
     assert got["sales"] == 1 and got["splits"] == [{"t": "AAPL", "date": "2026-09-01", "r": 4}] and got["note"] is True and got["held"] == 0
+
+
+def test_the_returns_address_names_one_portfolio():
+    got = run("""out = Object.fromEntries(['#portfolio/returns/d1', '#portfolio/returns/d_1-x', '#portfolio/returns/', '#portfolio/returns/a b',
+      '#portfolio/returns', '#home/returns/d1'].map((h) => [h, Rt.parseHash(h)]));""")
+    assert got["#portfolio/returns/d1"] == {"tab": "portfolio", "sub": "returns/d1", "about": False, "known": True, "returns": "d1"}
+    assert got["#portfolio/returns/d_1-x"]["returns"] == "d_1-x"
+    for h in ("#portfolio/returns/", "#portfolio/returns/a b", "#portfolio/returns", "#home/returns/d1"):
+        assert got[h] == {"tab": "home", "sub": None, "about": False, "known": False}, h            # 모르는 주소 → #home
