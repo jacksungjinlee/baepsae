@@ -58,10 +58,12 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    - **Fresh-eyes review** — what it found and what you fixed.
    - **After merge** — what you will run and check yourself, and anything Jack should look at on his phone, or "없음".
 6. One version per PR. Small and reviewable beats big.
-7. Effort: Jack's main sessions run at Extra high. Every helper agent that writes or judges anything (code, Korean text,
-   specs, reviews, data or pipeline logic) also runs at Extra high, set explicitly. Only helpers doing work with no
-   judgement in it (running tests, taking screenshots, collecting data, searching files) run at medium. When unsure, use
-   Extra high.
+7. Models (Jack, 2026-11-12): build on Opus 5.5 at Extra high. Fresh-eyes review: PRs that touch the data pipeline,
+   validate_data.py, the publish or deploy workflows, or money calculations get two independent reviewers in round 1
+   (Opus 5.5 at Extra high and Fable 5.2 at High, neither seeing the other); later rounds use Fable 5.2 at High alone.
+   Other PRs get one Opus 5.5 Extra high reviewer, and a third round only if round 2 found a blocker. Audits of past
+   work: a Fable 5.2 High helper with one narrow target, when Jack asks. Helpers with no judgement in them stay at
+   medium.
 
 ## GitHub process — you own it (Jack's standing rule, 2026-10-31)
 
