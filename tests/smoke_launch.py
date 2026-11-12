@@ -322,8 +322,9 @@ def cv_link(browser, check, errors):
             p2.wait_for_url(re.compile(r"/app\.html#"))
             p2.locator('[data-ui-v2="app-bar"]').first.wait_for(state="visible")
         # 2.0 의 어느 링크도 표시(?from=app) 없이 예전 뱁새로 가지 않아요 · 한국 회사 줄은 예전 뱁새로 가는 링크가 아니에요 (v19.1a)
-        tab_link("stocks", '[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').wait_for(state="visible")
-        assert p2.locator('[data-ui-v2="popular-list"] [data-ui-v2="stock-row"] a').count() == 0
+        # v19.5b: 종목 탭의 목록은 종목 순위 (처음엔 한국 · 시가총액; 예전 거래대금 상위 종목 한국 목록 대신)
+        tab_link("stocks", '[data-ui-v2="rank"][data-mk="kr"] [data-ui-v2="rank-row"][data-cls="kr"]').wait_for(state="visible")
+        assert p2.locator('[data-ui-v2="rank-row"] a').count() == 0
         hrefs = p2.evaluate("() => [...document.querySelectorAll('a[href*=\"baepsae.html\"]')].map((a) => a.getAttribute('href'))")
         assert all(h.startswith("./baepsae.html?from=app") for h in hrefs), hrefs
         p2.close()
@@ -538,7 +539,7 @@ def main():
                     if state == "old":                      # v17.5 형식 전 데이터는 받지 않아요
                         page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")
                     else:
-                        page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
+                        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")     # v19.5b: 종목 순위 (예전: 거래대금 상위 종목)
                     sw = page.evaluate("document.documentElement.scrollWidth")
                     assert sw <= width, f"가로 스크롤 {sw}"
                     assert not DECK_WORD.search(page.locator("body").inner_text())
@@ -574,10 +575,11 @@ def main():
                     if (REPO_STATE if variant != "fixtures" else "live") == "old":
                         page.get_by_text(C["app"]["loadFail"]).wait_for(state="visible")
                         return
-                    row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+                    # v19.5b: 종목 순위의 한국 목록 (처음엔 시가총액, 예전 거래대금 상위 종목 대신). 줄의 첫 글은 순위라 이름은 그 칸에서
+                    row = page.locator('[data-ui-v2="rank"][data-mk="kr"] [role="list"] [data-ui-v2="rank-row"][data-cls="kr"]').first
                     row.wait_for(state="visible")
                     t = row.get_attribute("data-t")
-                    nk = [x for x in row.inner_text().split("\n") if x.strip()][0]          # 이름 (첫 글자 표시는 CSS 라 글이 아니에요)
+                    nk = row.locator('[data-ui-v2="rank-name"]').inner_text()               # 이름 (첫 글자 표시는 CSS 라 글이 아니에요)
                     assert row.locator("a").count() == 0, "한국 회사 줄이 예전 뱁새로 가는 링크예요"
                     box = row.locator("button").bounding_box()                               # 누르는 곳 44px 이상, 화면 안
                     assert box and box["height"] >= 44 and box["x"] + box["width"] <= width, box
