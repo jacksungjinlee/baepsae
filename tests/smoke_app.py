@@ -230,10 +230,15 @@ def none_today(R, scene, what, hint=""):
 # ── 오늘 데이터 때문에 '예시 가격 · 금 환산' 배너가 떠야 하는 날 (리뷰 2026-11-12) ─────────────────
 # 예전 뱁새에는 내장 종목 75개가 있어요 (src/detail.jsx BASE_STOCKS). 그 가운데 하나라도 오늘 데이터에 없거나 가격 · 베타 · 변동성이
 # 비었으면 앱은 "일부 종목은 최신 시세가 아니라 예시 가격이에요" 배너를 보여 줘요 (src/data.js mergeStocks) — 그게 맞는 화면이에요.
-# 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문은 75개 가운데 19개만 보장해요.
+# 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
+# 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
 # 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
 #   · 실제 데이터(--data DIR): 오늘 데이터로 앱과 같은 규칙을 계산해, 떠야 하면 그 줄이 정확히 떠 있는지 봐요 (크게 알려요).
-#   · 그 밖(CI · 내 컴퓨터): 예전 그대로 — 배너가 하나라도 있으면 실패 (고정 데이터에는 그런 종목이 없어야 해요).
+#     다만 EXAMPLE_MAX 개까지만이에요: 한두 종목은 시장의 일이지만, 여러 종목이 한꺼번에 비면 파이프라인이 고장 난 날이에요
+#     (예: 미국 종목의 베타가 통째로 빔 — 관문에는 미국 베타 · 변동성 채움 기준이 없어요). 그날은 실패 → 발행하지 않아요.
+#   · 그 밖(CI · 내 컴퓨터): 예전 그대로 — 배너가 하나라도 있으면 실패 (고정 데이터에는 그런 종목이 없어야 해요). 그리고 이 계산이
+#     '없음'이라고 하는지도 봐요: 내장 종목 목록을 잘못 읽으면 CI 에서 먼저 드러나요 (매일 실행에서 처음 드러나면 발행이 멈춰요).
+EXAMPLE_MAX = 3
 with open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8") as _f:
     _src = _f.read()
 BASE_TICKERS = re.findall(r'\bt:\s*"([^"]+)"', _src[_src.index("const BASE_STOCKS = ["):_src.index("\n];", _src.index("const BASE_STOCKS = ["))])
@@ -265,15 +270,22 @@ def example_price_stocks(f):
 
 def banner_due(R, scene, f):
     """이 데이터라서 떠야 하는 배너 줄의 첫머리 목록 (앱이 그리는 순서). 실제 데이터일 때만 — 떠야 하면 실행 기록에 크게 남겨요.
-    CI · 내 컴퓨터에서는 언제나 [] (예전 그대로 '배너 없음'을 요구해요)."""
-    if not REAL_DATA:
-        return []
+    CI · 내 컴퓨터에서는 언제나 [] (예전 그대로 '배너 없음'을 요구해요) — 데이터에 그런 종목이 있으면 그 자리에서 실패예요.
+    실제 데이터라도 예시 가격 종목이 EXAMPLE_MAX 개를 넘으면 실패예요 (한꺼번에 여러 종목 = 파이프라인을 의심)."""
     examples, est = example_price_stocks(f)
+    names = f"{', '.join(examples[:8])}{' …' if len(examples) > 8 else ''}"
+    if not REAL_DATA:
+        assert not examples and not est, (f"이 데이터에는 '예시 가격 · 금 환산' 안내가 뜨는 종목이 있어요 (예시 {len(examples)}: {names} · 금 환산 {len(est)}) — "
+                                          "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
+        return []
+    assert len(examples) <= EXAMPLE_MAX, (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names}) — {EXAMPLE_MAX}개를 넘으면 "
+                                          "종목 사정이 아니라 파이프라인 고장으로 봐요 (예: 미국 종목 베타가 통째로 빔). 발행하지 않아요")
     due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
     if due:
-        why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({', '.join(examples[:8])}{' …' if len(examples) > 8 else ''})" if examples else "",
+        why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
                                     f"금 환산 추정 {', '.join(est)}" if est else "") if x)
-        msg = f"오늘 데이터: {why} → 예전 뱁새가 '예시 가격 · 금 환산' 안내를 보여 주는 날이에요 (그 안내가 맞게 뜨는지 확인해요)"
+        msg = (f"오늘 데이터: {why} → 예전 뱁새가 '예시 가격 · 금 환산' 안내를 보여 주는 날이에요 (그 안내가 맞게 뜨는지 확인해요). "
+               f"상장폐지 · 하루 빈 값이면 괜찮지만, 어제는 없던 일이 여러 종목에 생겼다면 파이프라인을 의심하세요 ({EXAMPLE_MAX}개를 넘으면 발행하지 않아요)")
         if msg not in R.notes:
             R.notes.append(msg)
             print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
@@ -728,6 +740,13 @@ def scene_option_b(R, files):
     secs = {stocks[t].get("s") for t, _ in hold}
     assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"
     stocks[hold[0][0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
+    # 나머지 셋은 배당 정보가 있는 것으로 (리뷰 2026-11-12): 관문은 필수 종목 하나의 배당 자료가 빈 날을 경고로만 통과시켜요
+    # (Jack 2026-11-05). 그날 이 장면이 '2개'를 보고 실패하면 배당 자료 구멍 하나가 모두의 발행을 막아요. 여기서 보는 것은
+    # '빈 종목이 있으면 그 수를 알린다'예요 — 빈 종목은 위에서 만든 그 하나로 고정해요.
+    for t, _ in hold[1:]:
+        if not isinstance(stocks[t].get("dy"), (int, float)):
+            print(f"  · [B안] {t} 의 배당수익률(dy)이 이 데이터에 비어 있어요 → 이 장면의 복사본에서만 1.0 으로 채워요", flush=True)
+            stocks[t]["dy"] = 1.0
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
                "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
     old = {"d": "2026-10-01", "inv": 5000000, "beta": 0.9, "vol": 30.0, "exp": 8.0, "unpaid": 30.0, "sec": 50.0,
@@ -2466,7 +2485,8 @@ def scene_own_close(R, files):
         see(page, "보통 해 ±")
         page.wait_for_timeout(300)
         due = banner_due(R, S, f)           # 실제 데이터에서만: 오늘 데이터라서 떠야 하는 줄 (평소 · CI 는 [] → 배너 없음)
-        assert banner_is(page, due) and page.locator("[data-own-close]").count() == 0
+        assert banner_is(page, due) and page.locator("[data-own-close]").count() == 0, \
+            "한국 종목만 담은 포트폴리오: 배너가 " + (f"오늘 데이터라서 떠야 하는 줄({due})과 달라요" if due else "보여요 (없어야 해요)") + " 또는 미국 종목 날짜 줄이 있어요"
         home(page)
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("미국 날짜 시험", exact=False).first.click()
@@ -2848,7 +2868,7 @@ def scene_stmt_cur(R, files):
         assert not hits, hits
         assert "직전 사업보고서" not in body and "최근 4개분기" not in body, "보이지 않는 PER 의 기간이 남아 있어요"
         at = body.index("투자지표")                                  # 회사 이름에 'PER' 이 들어 있어도 되게, 제목 뒤에서부터 찾아요
-        assert at < body.index(LINE, at) < body.index("PER", at)
+        assert at < body.index(LINE, at) < body.index("PER", at), "통화 줄이 투자지표 제목과 PER 사이에 있지 않아요"
         assert "업종 내 위치" in body and "가정으로 계산하는 가치" in body
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")

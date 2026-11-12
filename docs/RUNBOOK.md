@@ -54,10 +54,18 @@ serve the `docs/` folder (two of its files must answer "not found").
       market:** DART's currency reading was probably lost, and then a company that files in dollars (두산밥캣,
       아남전자) is published with its dollar amounts read as won. The gate has no failing row for that today. Check
       those companies' numbers on the site.
-    - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees 19 of them. When one
-      of the others is missing from the day's data, or has a blank price, beta or volatility, or when the gold price
-      is an estimate, the old app correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then
-      requires exactly that notice (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
+    - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees that 17 of them are in
+      the data, and guarantees a beta and volatility for none of the US ones. When a built-in stock is missing from
+      the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
+      correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
+      (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
+      **Up to 3 such stocks; with more the check fails and nothing is published**, because many at once is the
+      pipeline (for example every US beta blank), not the market. Then fix the pipeline; do not raise the number.
+    - One scene needs three must-have stocks (005930, 005380, 105560) to have a dividend yield; the gate lets one
+      must-have stock without dividend data through with a warning (Jack, 11-05), so the scene fills a blank one in
+      its own copy and says so in the log.
+    - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default: the 09:13 morning check
+      reads them and reports them to Jack.
     - Without `--data` (CI) none of this applies: a missing company or any such notice is a failure, as before.
     - Never skip the check itself to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks

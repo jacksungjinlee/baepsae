@@ -607,10 +607,20 @@ def test_banner_check_follows_the_data_only_with_real_data(SA, monkeypatch, caps
     gone = {"data.json": {"stocks": [s for s in full if s["t"] != "247540"]}}
     gold = {"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] == "04020000" else s for s in full if s["t"] != "TSLA"]}}
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    # CI · 내 컴퓨터: 언제나 '배너 없음'을 요구해요 (예전 그대로) — 알림도 없어요
+    # CI · 내 컴퓨터: 언제나 '배너 없음'을 요구해요 (예전 그대로) — 알림도 없어요. 데이터에 그런 종목이 있으면 그 자리에서 실패:
+    # 고정 데이터에는 없어야 하고, 없는데도 있다고 하면 내장 종목 목록을 잘못 읽은 것 (CI 에서 먼저 드러나요)
     monkeypatch.setattr(SA, "REAL_DATA", False)
     R = FakeRunner()
-    assert SA.banner_due(R, "정상", gone) == [] and SA.banner_due(R, "정상", gold) == [] and not R.notes and capsys.readouterr().out == ""
+    assert SA.banner_due(R, "정상", {"data.json": {"stocks": full}}) == []
+    for bad in (gone, gold):
+        with pytest.raises(AssertionError, match="고정 데이터에는 없어야 해요"):
+            SA.banner_due(R, "정상", bad)
+    assert not R.notes and capsys.readouterr().out == ""
+    monkeypatch.setattr(SA, "BASE_TICKERS", SA.BASE_TICKERS + ["ZZZZ"])     # 목록을 잘못 읽은 날: 데이터는 멀쩡해도 CI 가 실패
+    with pytest.raises(AssertionError, match="ZZZZ"):
+        SA.banner_due(R, "정상", {"data.json": {"stocks": full}})
+    monkeypatch.undo()
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     # 실제 데이터: 모두 있으면 [], 빠진 종목이 있으면 '예시 가격' 줄, 금 환산이면 그 줄도 (앱이 그리는 순서) — 한 번만 크게 알려요
     monkeypatch.setattr(SA, "REAL_DATA", True)
     assert SA.banner_due(R, "정상", {"data.json": {"stocks": full}}) == [] and not R.notes
@@ -618,6 +628,17 @@ def test_banner_check_follows_the_data_only_with_real_data(SA, monkeypatch, caps
     out = capsys.readouterr().out
     assert len(R.notes) == 1 and "247540" in R.notes[0] and out.count("!! 알림  [정상]") == 1 and out.count("::warning title=발행 전 화면 검사 · 예시 가격 안내가 뜨는 날::") == 1
     assert SA.banner_due(R, "정상", gold) == [SA.NONLIVE, SA.GOLD_EST] and "TSLA" in R.notes[1] and "04020000" in R.notes[1]
+    assert "파이프라인을 의심하세요" in R.notes[0]
+    # 한도: 예시 가격 종목이 EXAMPLE_MAX 개까지는 안내를 확인하고 통과, 넘으면 실패 (여러 종목이 한꺼번에 = 파이프라인 고장 → 발행 없음)
+    assert SA.EXAMPLE_MAX == 3
+    us = [t for t in SA.BASE_TICKERS if t.isalpha()]
+    blank = lambda n: {"data.json": {"stocks": [ok(s["t"], beta=None) if s["t"] in us[:n] else s for s in full]}}
+    assert SA.banner_due(R, "정상", blank(3)) == [SA.NONLIVE]
+    with pytest.raises(AssertionError, match="파이프라인 고장으로 봐요"):
+        SA.banner_due(R, "정상", blank(4))
+    with pytest.raises(AssertionError, match="발행하지 않아요"):
+        SA.banner_due(R, "정상", blank(len(us)))                              # 미국 종목 베타가 통째로 빈 날
+    assert SA.banner_due(R, "정상", {"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] == "04020000" else s for s in blank(3)["data.json"]["stocks"]]}}) == [SA.NONLIVE, SA.GOLD_EST]
     # 배너 줄 비교: 떠야 하는 줄이 정확히, 그 순서로 — 없어야 하면 배너 자체가 없어야 해요
     full_line = SA.NONLIVE + " (샘플)."
     assert SA.banner_is(FakePage([]), []) and not SA.banner_is(FakePage([full_line]), [])
@@ -628,7 +649,22 @@ def test_banner_check_follows_the_data_only_with_real_data(SA, monkeypatch, caps
     assert SA.banner_is(FakePage(["AAPL …", "MSFT …"]), [], extra=2) and not SA.banner_is(FakePage(["AAPL …", "MSFT …", "셋째"]), [], extra=2)
     # 세 곳의 검사가 이 규칙을 써요 (정상 · 미국 자기 날짜 둘)
     src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
-    assert src.count("assert banner_is(page, due") == 3 and src.count("due = banner_due(R, S, f") == 2
+    assert src.count("assert banner_is(page, due") == 3
+    assert src.count("due = banner_due(R, S, files)") == 1 and src.count("due = banner_due(R, S, f)") == 1   # 각 장면이 자기가 띄운 데이터로
+    assert 'assert page.get_by_text(NONLIVE).count() == (1 if NONLIVE in due else 0)' in src
+    assert 'at < body.index(LINE, at) < body.index("PER", at)' in src         # 회사 이름에 PER 이 있어도 되게, 제목 뒤에서부터
+
+
+def test_dividend_count_scene_does_not_depend_on_other_stocks_dividend_data(SA):
+    """B안 장면은 '배당 정보가 없는 종목 1개' 알림을 봐요. 관문은 필수 종목 하나의 배당 자료가 빈 날을 경고로 통과시키므로 (Jack 2026-11-05),
+    장면은 자기가 비운 한 종목 말고 나머지 셋의 빈 배당을 복사본에서 채워요 — 그 수가 언제나 1 이게."""
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    a = src.index("def scene_option_b(")
+    body = src[a:src.index("\ndef ", a + 1)]
+    i, j = body.index('stocks[hold[0][0]]["dy"] = None'), body.index("for t, _ in hold[1:]:")
+    assert i < j < body.index("profile = {")
+    assert 'if not isinstance(stocks[t].get("dy"), (int, float)):' in body[j:j + 400] and 'stocks[t]["dy"] = 1.0' in body[j:j + 400]
+    assert "files = json.loads(json.dumps(files))" in body[:i]                # 복사본에서만 (다른 장면 · 원본 데이터는 그대로)
 
 
 def test_screen_step_puts_an_unseen_scene_in_the_summary_and_still_publishes(tmp_path):
