@@ -316,6 +316,46 @@ def test_theme_css_switches_every_token_and_only_dark_puts_baepi_on_a_chip():
     assert len(holders) == 2 and all(sel.strip().endswith(('[data-theme="dark"]', ":root:not([data-theme])")) for sel, _ in holders), holders
     assert all(body == "color:var(--bs-text3);opacity:1" for _, body in holders)
     assert ratio(t["P"]["dark"]["text3"], t["P"]["dark"]["surface"]) >= 4.5 and ratio("#757575", t["P"]["dark"]["surface"]) < 4.5
+    # round-2 review: the device-setting fallback (no data-theme: the head script never ran) applies only on a dark device, so its
+    # rules — the dark values, the 뱁이 chip, the placeholder colour — sit inside @media (prefers-color-scheme: dark); the rules for
+    # the chosen dark mode sit outside it. Moved the other way, a light device without the script would get the chip.
+    media, outside = media_split(css, "@media (prefers-color-scheme: dark)")
+    auto_rules = [(sel, body) for sel, body in rules_of(media)]
+    assert [sel for sel, _ in auto_rules] == [':root:not([data-theme])', ':root:not([data-theme]) img[src*="baepi-"]',
+                                              ':root:not([data-theme]) img[src*="baepi-mark"]', ':root:not([data-theme]) ::placeholder'], auto_rules
+    out_rules = rules_of(outside)
+    assert not [sel for sel, _ in out_rules if ":not([data-theme])" in sel], out_rules
+    dark_sels = [sel for sel, _ in out_rules if sel.startswith(':root[data-theme="dark"]')]
+    assert dark_sels == [':root[data-theme="dark"]', ':root[data-theme="dark"] img[src*="baepi-"]',
+                         ':root[data-theme="dark"] img[src*="baepi-mark"]', ':root[data-theme="dark"] ::placeholder'], dark_sels
+    assert [sel for sel, _ in out_rules if "baepi" in sel or "placeholder" in sel] == dark_sels[1:]
+
+
+def media_split(css, at):
+    """(the text inside the one `at{...}` block, the css without it). Braces counted, so nested rules stay inside."""
+    assert css.count(at + "{") == 1, at
+    i = css.index(at + "{") + len(at) + 1
+    depth, j = 1, i
+    while depth:
+        depth += {"{": 1, "}": -1}.get(css[j], 0)
+        j += 1
+    return css[i:j - 1], css[:i - len(at) - 1] + css[j:]
+
+
+def rules_of(css):
+    """[(selector, body)] of plain rules (no @ blocks inside)."""
+    assert "@" not in css, css[:80]
+    return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
+def test_media_split_catches_a_rule_moved_out_of_the_media_block():
+    css = tokens()["css"]
+    chip = ':root:not([data-theme]) img[src*="baepi-"]{'
+    body = css.split(chip, 1)[1].split("}", 1)[0]
+    moved = css.replace(chip + body + "}", "", 1) + chip + body + "}"             # the reviewer's mutation: the chip rule after the block
+    media, outside = media_split(moved, "@media (prefers-color-scheme: dark)")
+    assert any(":not([data-theme])" in sel for sel, _ in rules_of(outside))
+    assert chip[:-1] not in [sel for sel, _ in rules_of(media)]
 
 
 # ── no fixed colour left in 2.0 ──
@@ -338,9 +378,16 @@ COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}(?![0-9a-zA-Z_])|\b(?:rgba?|hsla?)\([^)]*
 NAMED = re.compile(r"""["'`](?:white|black|red|blue|green|gray|grey|silver|navy|orange|yellow|purple|pink|brown|beige|ivory|gold)["'`]""", re.I)
 
 
-# Hex digits glued to a token: `${COLOR.surface}00` (an alpha suffix) or COLOR.surface + "cc". A token is a CSS variable, so this
-# makes an invalid colour (and it was a fixed alpha anyway): use transparent, or a token of its own.
-SUFFIX = re.compile(r"""\$\{[^{}]*\}[0-9a-fA-F]{2}(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z_])|[\w.\]]+\s*\+\s*["'`][0-9a-fA-F]{2}(?:[0-9a-fA-F]{2})?["'`]""")
+# Hex digits glued to a token, as an alpha suffix: `${COLOR.surface}00`, COLOR.surface + "cc", `${COLOR.x}` + "cc", (COLOR.x) + "cc",
+# `${COLOR.x}${"cc"}`, COLOR.x.concat("cc"). A token is a CSS variable, so this makes an invalid colour (and it was a fixed alpha
+# anyway): use transparent, or a token of its own.
+_HEX2 = r"""["'`]\s*[0-9a-fA-F]{2}(?:[0-9a-fA-F]{2})?\s*["'`]"""
+SUFFIX = re.compile("|".join([
+    r"\$\{[^{}]*\}[0-9a-fA-F]{2}(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z_])",       # `${COLOR.x}cc`
+    r"\$\{[^{}]*\}\$\{\s*" + _HEX2 + r"\s*\}",                              # `${COLOR.x}${"cc"}`
+    r"[\w.\])`]\s*\+\s*" + _HEX2,                                            # COLOR.x + "cc", (COLOR.x) + "cc", `${COLOR.x}` + "cc"
+    r"\.concat\(\s*" + _HEX2,                                                  # COLOR.x.concat("cc")
+]))
 
 
 def v2_sources():
@@ -393,7 +440,9 @@ def test_the_colour_check_catches_fixed_colours():
     for bad in ['style={{ color: "#1C2B45" }}', "background: 'rgba(28,43,69,0.45)'", "fill: '#fff'", 'color: "white"',
                 "boxShadow: `0 0 0 1px hsl(0 0% 50%)`", "background: 'rgb(255 255 255)'",
                 "background: `linear-gradient(to right, ${COLOR.surface}00, ${COLOR.surface})`", "color: `${A.ink}cc`",
-                "background: COLOR.surface + 'cc'", 'border: `1px solid ${COLOR.ink}80`']:
+                "background: COLOR.surface + 'cc'", 'border: `1px solid ${COLOR.ink}80`',
+                'color: `${COLOR.ink}` + "cc"', 'color: (COLOR.ink) + "cc"', 'color: `${COLOR.ink}${"cc"}`', 'color: COLOR.ink.concat("cc")',
+                "color: (COLOR.ink)+'80cc'", 'color: COLOR.ink.concat( "80" )']:
         assert colour_hits({"src/v2/today.jsx": real["src/v2/today.jsx"] + bad})[0], bad
     for ok in ["location.hash = '#portfolio'", "x.t + '#1'", "COLOR.ink", 'background: "transparent"', "borderColor: 'currentColor'",
                "`${SPACE(2)}px ${SPACE(3)}px`", "`${n}px`", "`linear-gradient(${COLOR.surface}, transparent)`", "`${p1(x)}%`"]:
@@ -481,11 +530,13 @@ def test_any_csp_on_app_html_allows_the_head_script():
 
 
 def csp_metas(html):
-    """The content of every <meta http-equiv="Content-Security-Policy"> tag, whatever the attribute order or quote style."""
+    """The content of every <meta http-equiv="Content-Security-Policy"> tag, whatever the attribute order or quote style (double,
+    single or none)."""
     out = []
     for tag in re.findall(r"<meta\b[^>]*>", html, flags=re.I):
-        attrs = {k.lower(): v1 if v1 is not None and q == '"' else v2 for k, q, v1, v2 in
-                 [(m.group(1), m.group(2)[0], m.group(3), m.group(4)) for m in re.finditer(r"""([\w-]+)\s*=\s*("([^"]*)"|'([^']*)')""", tag)]}
+        attrs = {}
+        for m in re.finditer(r"""([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""", tag):
+            attrs[m.group(1).lower()] = next(v for v in m.groups()[1:] if v is not None)
         if attrs.get("http-equiv", "").lower() == "content-security-policy":
             out.append(attrs.get("content", ""))
     return out
@@ -494,9 +545,12 @@ def csp_metas(html):
 def test_csp_reader_finds_any_spelling():
     h = "'sha256-abc='"
     for tag in (f'<meta http-equiv="Content-Security-Policy" content="script-src {h}">', f"<meta content=\"script-src {h}\" http-equiv='content-security-policy'>",
-                f"<META HTTP-EQUIV='Content-Security-Policy' CONTENT=\"default-src 'self'; script-src {h}\">"):
+                f"<META HTTP-EQUIV='Content-Security-Policy' CONTENT=\"default-src 'self'; script-src {h}\">",
+                f"<meta http-equiv=Content-Security-Policy content=\"script-src {h}\">",
+                f"<meta content=\"script-src {h}\" http-equiv=content-security-policy>"):
         assert [c for c in csp_metas("<head>" + tag + "</head>") if h in c], tag
-    assert csp_metas('<meta name="theme-color" content="#F5F3EF">') == []
+    assert csp_metas('<meta name="theme-color" content="#F5F3EF">') == [] and csp_metas("<meta name=theme-color content=#F5F3EF>") == []
+    assert csp_metas("<meta http-equiv=Content-Security-Policy content=script-src>") == ["script-src"]
 
 
 def test_mode_choice_is_its_own_key_and_never_part_of_the_records():

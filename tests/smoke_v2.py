@@ -4351,8 +4351,10 @@ def scene_dark(R, files, width):
         with page.expect_download() as dl:
             page.get_by_role("button", name=C["store"]["export"]).click()
         with open(dl.value.path(), encoding="utf-8") as fh:
-            exported = json.load(fh)
+            text = fh.read()
+        exported = json.loads(text)
         assert exported["decks"] and exported == json.loads(records), "내보낸 파일이 저장한 기록과 달라요 (화면 모드가 끼었나요?)"
+        assert "theme" not in text and THEME_KEY not in text, text[:200]           # 화면 모드는 파일 어디에도 없어요
         R.collect(page)
     R.check(page, S, "화면 모드: 자동(기본) · 밝게 · 어둡게 · 안내 줄 · 44px · 고르면 바로 · 새로고침해도 그대로 · 첫 화면부터 그 색 · "
             "theme-color 도 · 자동은 기기를 따라 그 자리에서 · 기록 그대로 · 내보낸 파일에 없음", switch)
