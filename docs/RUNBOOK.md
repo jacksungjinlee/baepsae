@@ -44,9 +44,12 @@ serve the `docs/` folder (two of its files must answer "not found").
     copy is downloaded. The tests accept any version number as long as every place uses the same one, so no test edit
     is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's font setup changed:
     fix `tests/fonts/install.sh` in a PR.
-  - `smoke_app` relies on two things in the data that the gate does not guarantee: 두산밥캣 (241560) in `corp.json`
-    and at least one foreign company with a 9xxxxx code. If one of them leaves the data, the check fails and
-    publishing is held until the test is changed in a PR (Jack's yes). Never skip the check to get the data out.
+  - `smoke_app` does not depend on any one company beyond the gate's must-have list (Jack, 11-12). Two scenes need a
+    kind of company and pick it by rule: any company the data marks as reporting in a currency other than won
+    (`stmtCur`), and any foreign company with a 9xxxxx code. If today's data has none, the run log says so loudly
+    (`!! 확인 못 함`, a warning on the run page and a paragraph in the step summary), the scene counts as passed and
+    the data is published; CI still checks those scenes on its own data, where a missing company is a failure.
+    A company leaving the market never holds the data back. Never skip the check itself to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.

@@ -146,6 +146,7 @@ class Runner:
     def __init__(self, browser, shots):
         self.browser, self.shots = browser, shots
         self.results, self.errors, self.console = [], [], []
+        self.unseen = []        # 오늘 데이터에 볼 회사가 없어 확인하지 못한 장면 (실제 데이터로 돌 때만 — none_today)
 
     def open(self, site, sw=False, local=None, once=False):
         srv, base = serve(site)
@@ -178,6 +179,50 @@ class Runner:
                 except Exception:
                     pass
         print(f"  {'PASS' if self.results[-1][1] else 'FAIL'}  {label}", flush=True)
+
+
+# ── 오늘 데이터에 장면이 볼 회사가 하나도 없을 때 (Jack, 2026-11-12) ─────────────────
+# 회사 하나가 상장폐지되거나 표시가 바뀌었다고 모두의 데이터 발행이 멈추면 안 돼요. 그래서 장면은 회사를 이름으로 고르지 않고 규칙으로 골라요
+# (non_won_companies · foreign_companies). 규칙에 맞는 회사가 오늘 데이터에 하나도 없으면:
+#   · 실제 데이터(--data DIR, 발행 전 화면 검사): 실행 기록에 크게 알리고 그 장면은 통과로 둬요. 결과 줄과 맨 끝 요약에 '확인 못 함'으로 남아요.
+#   · 그 밖(CI · 내 컴퓨터): 실패예요 — 그 장면을 실제로 확인하는 곳이 거기뿐이라, 조용히 건너뛰면 아무도 안 본 게 돼요.
+REAL_DATA = False      # main() 이 --data DIR 을 받았을 때만 True
+
+
+def stmt_cur_of(c):
+    """재무제표 통화 표시 (앱의 stmtCurOf 와 같은 규칙): 세 글자 대문자이고 KRW · XXX 가 아니면 그 통화, 아니면 None."""
+    cur = str(c.get("stmtCur") or "")
+    return cur if re.fullmatch(r"[A-Z]{3}", cur) and cur not in ("KRW", "XXX") else None
+
+
+def listed_companies(f):
+    """corp.json 의 회사 가운데 data.json 목록에 이름이 있는 것 (검색해서 열 수 있는 회사). 종목코드 순."""
+    names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
+    return sorted((c for c in f["corp.json"]["companies"] if names.get(c.get("t"))), key=lambda c: str(c["t"]))
+
+
+def non_won_companies(f):
+    """데이터가 '재무제표를 원화가 아닌 통화로 공시'라고 표시한 회사 모두 (stmtCur). 국내 코드(9로 시작하지 않는 것)가 먼저, 그다음 종목코드 순."""
+    return sorted((c for c in listed_companies(f) if stmt_cur_of(c)), key=lambda c: (str(c["t"]).startswith("9"), str(c["t"])))
+
+
+def foreign_companies(f):
+    """해외 기업 모두: 종목코드가 9로 시작하는 여섯 자리. 종목코드 순."""
+    return [c for c in listed_companies(f) if str(c["t"]).startswith("9") and len(str(c["t"])) == 6]
+
+
+def none_today(R, scene, what):
+    """장면이 볼 회사(what)가 데이터에 하나도 없어요. 실제 데이터면 크게 알리고 통과(확인 못 함으로 기록), 아니면 실패로 기록해요."""
+    if not REAL_DATA:
+        R.results.append((f"[{scene}] 볼 회사가 데이터에 있어요", False, f"{what} 데이터에 없어요 — 이 장면을 확인할 수 없어요"))
+        print(f"  FAIL  {R.results[-1][0]}: {R.results[-1][2]}", flush=True)
+        return
+    msg = f"오늘 데이터에 {what} 하나도 없어요 → 이 장면은 오늘 확인하지 못했어요 (고정 데이터로 도는 CI 가 확인해요)"
+    R.unseen.append(f"[{scene}] {msg}")
+    R.results.append((f"[{scene}] 확인 못 함 (오늘 데이터에 해당 회사 없음)", True, msg))
+    print(f"\n!! 확인 못 함  [{scene}] {msg}\n", flush=True)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title=발행 전 화면 검사 · 확인 못 한 장면::[{scene}] {msg}", flush=True)
 
 
 # ── 화면 조작 ───────────────────────────────────────────────
@@ -1206,13 +1251,14 @@ def scene_foreign_issuer(R, files):
     재무제표 통화(stmtCur)가 붙은 해외 기업(다시 읽은 데이터, 2026-11-10)은 그 줄 대신 통화 줄을 보여요 (#97)."""
     f = json.loads(json.dumps(files, allow_nan=True))
     names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
-    cos = [c for c in f["corp.json"]["companies"] if str(c.get("t", "")).startswith("9") and len(str(c["t"])) == 6 and names.get(c["t"])]
-    assert cos, "시험할 해외 기업(9…)이 데이터에 없어요"
+    cos = foreign_companies(f)                                # 어느 회사든: 종목코드 9… 여섯 자리 (이름으로 고르지 않아요)
+    if not cos:
+        return none_today(R, "해외 기업", "해외 기업(종목코드 9…)이")
     # 2026-11-10 (DART 다시 읽기 뒤): 해외 기업 대부분은 재무제표 통화(stmtCur, 예: USD)가 붙고, 그러면 '외화로…' 줄 대신 통화 줄을
     # 보여요(#97). 이 줄은 통화 표시가 없는 해외 기업으로 봐요 (없으면 복사본에서 표시를 빼요). 통화 표시가 있는 쪽은 아래에서 따로 봐요.
     co = next((c for c in cos if not c.get("stmtCur")), cos[0])
     co.pop("stmtCur", None)
-    cur = next((c for c in cos if c is not co and re.fullmatch(r"[A-Z]{3}", str(c.get("stmtCur") or "")) and c["stmtCur"] not in ("KRW", "XXX")), None)   # 앱의 stmtCurOf 와 같은 규칙
+    cur = next((c for c in cos if c is not co and stmt_cur_of(c)), None)
     co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
     srv, ctx, page, base = R.open(build_site(f))
 
@@ -1238,8 +1284,8 @@ def scene_foreign_issuer(R, files):
             "통화 표시가 있는 해외 기업에 '외화로…' 줄 · 국내용 빈 칸 문구 · NaN"
     if cur:
         R.check(page, "해외 기업", f"{cur['t']} {names[cur['t']]}: 재무제표 통화({cur['stmtCur']})가 있으면 통화 줄, '외화로…' 줄 없음", run_cur)
-    else:
-        print("  SKIP  [해외 기업] 재무제표 통화(stmtCur)가 붙은 해외 기업이 이 데이터에 없어요 — 통화 줄 확인은 다시 읽은 데이터에서만 돌아요")
+    else:                                                     # 예전에는 조용한 SKIP 이었어요 → 실제 데이터면 크게 알리고, 아니면 실패
+        none_today(R, "해외 기업", "재무제표 통화(stmtCur)가 붙은 둘째 해외 기업이")
     ctx.close(); srv.shutdown()
 
 
@@ -2674,7 +2720,10 @@ def scene_fix_notes(R, files, live=False):
 
 
 # ── 2026-11-08 (Jack): DART 다시 읽기 뒤, 재무제표를 원화가 아닌 통화로 공시한 회사 (corp.json stmtCur · src/fixnote.jsx StmtCurLine) ──
-STMT_CUR_LINE = "이 회사는 재무제표를 원화가 아닌 USD로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+def stmt_cur_line(cur):
+    return f"이 회사는 재무제표를 원화가 아닌 {cur}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+
+
 # 칸 설명 · 제목은 한 줄 그대로, 문장 속 말은 들어 있기만 해도 걸려요
 STMT_UNTRUE_LINES = ["적자이거나 데이터가 없어요", "데이터가 없어요", "차입금·상각비 데이터 부족", "현금흐름 데이터가 없어요", "배당이 없거나 이익 데이터가 없어요",
                      "3개년 실적 흐름", "주가는 무엇으로 움직였나"]
@@ -2682,37 +2731,43 @@ STMT_UNTRUE_PARTS = ["파이프라인이 사업보고서를 못 찾은 종목이
 
 
 def scene_stmt_cur(R, files):
-    """기업분석 241560 (두산밥캣, 달러 재무제표): 다시 읽은 발행처럼 금액 · PER · PBR · EPS 를 비우고 stmtCur "USD". 투자지표 제목 밑에 통화 줄
+    """기업분석, 데이터가 '원화가 아닌 통화로 공시'라고 표시한 회사 (어느 회사든 — non_won_companies 의 첫 회사. 2026-11-12 까지는 두산밥캣
+    241560 을 이름으로 골랐어요): 다시 읽은 발행처럼 금액 · PER · PBR · EPS 를 비워요 (표시된 통화는 그대로). 투자지표 제목 밑에 통화 줄
     한 번 (12px 이상), 맞지 않는 이유('적자이거나 데이터가 없어요' …) · 보이지 않는 PER 의 기간 · 숫자 없는 3개년 실적 흐름과 주가 분해는
     없어요. 업종 내 위치 · 가정으로 계산하는 가치는 그대로. 삼성전자는 예전 그대로."""
     S = "다시 읽은 뒤"
     f = json.loads(json.dumps(files, allow_nan=True))
-    co = next(c for c in f["corp.json"]["companies"] if c.get("t") == "241560")
-    co.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None, stmtCur="USD")
+    cands = non_won_companies(f)
+    if not cands:
+        return none_today(R, S, "재무제표를 원화가 아닌 통화로 공시한다고 표시된 회사(stmtCur)가")
+    co = cands[0]
+    T, CUR = co["t"], stmt_cur_of(co)
+    LINE = stmt_cur_line(CUR)
+    co.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None)
     for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep"):
         co.pop(k, None)
     srv, ctx, page, base = R.open(build_site(f))
 
     def corp_page():
         page.goto("about:blank")
-        page.goto(base + "/baepsae.html?dev=1&from=app#corp=241560", wait_until="domcontentloaded")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={T}", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         got = page.evaluate("""() => [...document.querySelectorAll('[data-fix="stmt-cur"]')].filter((e) => e.getBoundingClientRect().height > 0)
           .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize), e.dataset.cur])""")
-        assert got == [[STMT_CUR_LINE, got[0][1], "USD"]] and got[0][1] >= 12, got
+        assert got and got == [[LINE, got[0][1], CUR]] and got[0][1] >= 12, got
         body = page.locator("body").inner_text()
         lines = [x.strip() for x in body.split("\n")]
         hits = [u for u in STMT_UNTRUE_LINES if u in lines] + [u for u in STMT_UNTRUE_PARTS if u in body]
         assert not hits, hits
         assert "직전 사업보고서" not in body and "최근 4개분기" not in body, "보이지 않는 PER 의 기간이 남아 있어요"
-        assert body.index("투자지표") < body.index(STMT_CUR_LINE) < body.index("PER")
+        assert body.index("투자지표") < body.index(LINE) < body.index("PER")
         assert "업종 내 위치" in body and "가정으로 계산하는 가치" in body
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
         see(page, "3개년 실적 흐름")
         see(page, "주가는 무엇으로 움직였나")
         assert page.locator('[data-fix="stmt-cur"]').count() == 0
-    R.check(page, S, "기업분석 241560 (stmtCur USD): 투자지표 밑 통화 줄 한 번 · 맞지 않는 이유와 빈 칸 없음 · 005930 은 그대로", corp_page)
+    R.check(page, S, f"기업분석 {T} (stmtCur {CUR}): 투자지표 밑 통화 줄 한 번 · 맞지 않는 이유와 빈 칸 없음 · 005930 은 그대로", corp_page)
     ctx.close(); srv.shutdown()
 
 
@@ -2751,13 +2806,17 @@ def part_of(scenes, part):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
+    ap.add_argument("--data", default=None, help="data/corp/disc/macro.json 이 있는 폴더 (하루치 실제 데이터 — 발행 전 화면 검사). 없으면 저장소의 파일")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
     ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요
+    global REAL_DATA
+    REAL_DATA = args.data is not None                           # 실제 데이터일 때만 '해당 회사 없음'을 크게 알리고 통과 (none_today)
+    if args.data is None:
+        args.data = ROOT
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
     fresh = upgrade(json.loads(json.dumps(files, allow_nan=True)))
@@ -2795,6 +2854,10 @@ def main():
     for name, ok, msg in R.results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name.ljust(w)}  {msg}")
     bad = [r for r in R.results if not r[1]]
+    if R.unseen:
+        print(f"\n!! 오늘 데이터에 해당 회사가 없어 확인하지 못한 장면 {len(R.unseen)}개 (통과로 셌어요):")
+        for u in R.unseen:
+            print(f"   · {u}")
     print(f"\n{len(R.results) - len(bad)} / {len(R.results)} 통과")
     return 1 if bad else 0
 
