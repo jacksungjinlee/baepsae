@@ -16,6 +16,7 @@
 //   a USD purchase without any rate (records from before Part C): no won cost (the existing noFx line)
 // Nothing here is rounded: the screens round once, and the rows they add up (내 수익) are rounded before they are added.
 import { UNIT, toUnits, okUnits, importedUnits, splitsOf, splitFactor, splitDateOf, VIEW_SPLITS, okSplit, sameSplit, heldUnits } from "./held.js";
+import { deckProblem, problemText } from "./store.js";
 
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
 const pos = (x) => isNum(x) && x > 0;
@@ -28,17 +29,61 @@ const EPS_U = 1e-6;                                         // units: a float su
 export const purchaseRate = (p, planFx) => (p && p.ccy === "USD" ? (pos(p.fx) ? p.fx : p.noFx !== true && pos(planFx) ? planFx : null) : 1);
 
 // ---------------- data.json splits (A.6) ----------------
-// data.json `splits`: [[code, date, ratio], ...] (last 3 years; ratio = new shares per old share). Malformed entries are left
-// out (counted, so the screens' console says so). -> { list: [{ t, date, r }], bad }
+// data.json `splits`: [[code, date, ratio], ...] (every US split since 2016-01-01, data.json splitsFrom; a row once published
+// is carried forward for good; ratio = new shares per old share; the date is the first US trading day on the new count, so a
+// record dated that day is already at the new count). Malformed entries are left out (counted, so the screens' console says
+// so). A split an "out" row of splitsInfo.fixed names is left out too (the pipeline already drops it; this is the backstop).
+// -> { list: [{ t, date, r }], bad, out }
 export function dataSplits(data) {
   const raw = data && Array.isArray(data.splits) ? data.splits : [];
+  const outs = outSplits(data);
   const list = [];
-  let bad = 0;
+  let bad = 0, out = 0;
   for (const x of raw) {
     const s = Array.isArray(x) && x.length === 3 ? { t: x[0], date: x[1], r: x[2] } : null;
-    if (s && okSplit(s)) list.push(s); else bad++;
+    if (!(s && okSplit(s))) { bad++; continue; }
+    if (outs.some((o) => o.t === s.t && o.date === s.date)) { out++; continue; }
+    list.push(s);
   }
-  return { list, bad };
+  return { list, bad, out };
+}
+// data.json splitsInfo.fixed (#117): the pipeline's override rows [code, date, ratio | null, source]. A row with ratio null
+// ("out") says that split was wrong: never apply it, and take it out of a portfolio that stored it (withoutOutSplits).
+// -> [{ t, date }] (rows that are not [code, date, null, …] are not "out" rows and are ignored here)
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+export function outSplits(data) {
+  const info = data && data.splitsInfo && typeof data.splitsInfo === "object" && !Array.isArray(data.splitsInfo) ? data.splitsInfo : null;
+  const rows = info && Array.isArray(info.fixed) ? info.fixed : [];
+  return rows.filter((x) => Array.isArray(x) && x.length >= 3 && typeof x[0] === "string" && x[0] && typeof x[1] === "string" && DAY.test(x[1]) && x[2] === null)
+    .map((x) => ({ t: x[0], date: x[1] }));
+}
+// The store without every stored split an "out" row names (the same stock and the same date: an "out" row for a wrong date
+// sits beside the right date's own row, so nothing near it is matched). A portfolio whose records would no longer read back
+// without that split (a sale of the post-split count: store.deckProblem) keeps it, so no record is ever lost or refused;
+// those are returned as kept, for the console. -> { data (the same object when nothing changes), removed, kept }:
+// removed / kept = [{ id, t, date, r }]
+export function withoutOutSplits(data, outs, today = null) {
+  const removed = [], kept = [];
+  if (!data || !Array.isArray(data.decks) || !outs || !outs.length) return { data, removed, kept };
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!d || !Array.isArray(d.splits) || !d.splits.length) return d;
+    const hit = d.splits.filter((s) => s && outs.some((o) => o.t === s.t && o.date === s.date));
+    if (!hit.length) return d;
+    const { [VIEW_SPLITS]: _v, ...plain } = d;
+    const rest = d.splits.filter((s) => !hit.includes(s));
+    const next = { ...plain, ...(rest.length ? { splits: rest } : {}) };
+    if (!rest.length) delete next.splits;
+    const p = deckProblem(next, today);
+    if (p) {
+      for (const s of hit) kept.push({ id: d.id, t: s.t, date: s.date, r: s.r, why: problemText(next, p) });
+      return d;
+    }
+    for (const s of hit) removed.push({ id: d.id, t: s.t, date: s.date, r: s.r });
+    changed = true;
+    return d[VIEW_SPLITS] ? { ...next, [VIEW_SPLITS]: d[VIEW_SPLITS] } : next;
+  });
+  return { data: changed ? { ...data, decks } : data, removed, kept };
 }
 
 // The store with data.json's splits put on an in-memory copy of every portfolio that has records of a split stock (held.js
@@ -122,8 +167,9 @@ export function withStoredSplits(data) {
   });
   return { data: changed ? { ...data, decks } : data, added };
 }
-// The stored splits data.json does not list (any more): said loudly once each (round-1 review). data.json lists the last
-// 3 years, so an older stored split is expected to be missing from it; the line says so. -> [{ id, t, date }]
+// The stored splits data.json does not list: said loudly once each (round-1 review). data.json lists every split since 2016
+// and carries a published row forward for good (#117), so a stored split it does not list is one the pipeline took out (an
+// "out" row: withoutOutSplits removes it where the records allow), or one stored from an older file. -> [{ id, t, date }]
 export function storedNotInData(data, splits) {
   const out = [];
   for (const d of (data && data.decks) || []) for (const s of Array.isArray(d && d.splits) ? d.splits : []) {

@@ -71,6 +71,8 @@ export function splitsOf(recs) {
   return m;
 }
 // The factor a record of stock t dated `date` is read with: the product of r over its splits dated after it (1: none).
+// Dates on both sides are US trading dates (#117 RUNBOOK): a split's date is the first US trading day on the new count, and a
+// record's is the trading date the user typed, so a record dated on the split day is already at the new count (factor 1).
 export function splitFactor(splits, t, date) {
   const l = splits && splits.get(t);
   if (!l || !date) return 1;

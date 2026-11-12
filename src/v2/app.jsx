@@ -28,7 +28,7 @@ import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
-import { dataSplits, withDataSplits, storedNotInData, withStoredSplits } from "./lots.js";
+import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -440,6 +440,7 @@ export function App({ source }) {
     if (load.status !== "ok") return [];
     const r = dataSplits(load.data);
     if (r.bad) console.warn(`[v2] data.json splits: ${r.bad} entr${r.bad === 1 ? "y" : "ies"} not read (not [code, date, ratio]); left out`);
+    if (r.out) console.warn(`[v2] data.json splits: ${r.out} entr${r.out === 1 ? "y" : "ies"} named by an "out" row of splitsInfo.fixed; not applied`);
     return r.list;
   }, [load]);
   const view = useMemo(() => {
@@ -447,7 +448,8 @@ export function App({ source }) {
     return data === store.data ? store : { ...store, data };
   }, [store, splitList]);
   // a split the records keep (store.js splits) that today's data.json does not list: said loudly, once each (it stays in use:
-  // the records were saved with it). data.json lists the last 3 years of splits, so an older one is expected to be missing.
+  // the records were saved with it). data.json lists every split since 2016 and keeps a published one for good, so this is a
+  // split the pipeline took out ("out" rows: the effect below removes it where the records allow) or one from an older file.
   const splitsSaid = useRef(new Set());
   useEffect(() => {
     if (load.status !== "ok") return;
@@ -455,7 +457,7 @@ export function App({ source }) {
       const k = `${x.id}|${x.t}|${x.date}|${x.r}`;
       if (splitsSaid.current.has(k)) continue;
       splitsSaid.current.add(k);
-      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is not in today's data.json splits (it lists the last 3 years); the records still read with it`);
+      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is not in today's data.json splits; the records still read with it`);
     }
   }, [store.data, splitList, load.status]);
   // round-2 review: a data.json split that a saved record already lies before is stored with the records at once (not only
@@ -468,6 +470,23 @@ export function App({ source }) {
     console.info("[v2] stock splits stored with the records they apply to: " + r.added.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
     setStoreData(r.data);
   }, [view, load.status]);
+  // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong: a portfolio that stored it drops it,
+  // when its records still read back without it (lots.withoutOutSplits); one whose records need it keeps it, said loudly
+  // once (never a record lost or refused). Only when the records can be written.
+  const outSaid = useRef(new Set());
+  useEffect(() => {
+    if (load.status !== "ok" || !store.writable || store.locked) return;
+    const r = withoutOutSplits(store.data, outSplits(load.data), todayKst());
+    for (const x of r.kept) {
+      const k = `${x.id}|${x.t}|${x.date}`;
+      if (outSaid.current.has(k)) continue;
+      outSaid.current.add(k);
+      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is marked out by data.json splitsInfo.fixed, but the records need it (${x.why}); it is kept`);
+    }
+    if (!r.removed.length) return;
+    console.warn("[v2] stored stock splits taken out (data.json splitsInfo.fixed marks them wrong): " + r.removed.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
+    setStoreData(r.data);
+  }, [store.data, load]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;

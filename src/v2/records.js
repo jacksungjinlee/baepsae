@@ -16,15 +16,20 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T00:00:00Z").toISOString().slice(0, 10) === x;
 
 // ---------------- the exchange rate of a record's date (A.1, Part I.1) ----------------
-// A new USD record saves the won-per-dollar rate of its own date: today's from data.json fx (as 샀어요 always did), a past
-// date's from macro.json fxHist ({ asOf, rows: [[date, close], ...] }, USD/KRW closes since 2016): the close on that date,
-// or the last close before it. Never another day's rate:
+// A record's date is the US trading date of the purchase, sale or dividend, as the user typed it (#117 RUNBOOK: "which date a
+// record uses"). A new USD record saves the won-per-dollar rate of that date: today's from data.json fx (as 샀어요 always
+// did), a past date's from macro.json fxHist ({ asOf, final, rows: [[date, rate], ...] }, since 2016; under the default
+// source ecos_close row D is the Seoul close on Korean business day D): that date's row, or the last row before it (a
+// weekend or a Korean holiday). Contract (#117): the rows speak only for dates on or before asOf. Never another day's rate:
 //   - a date before 2016-01-01 is saved without a rate and marked noFx (Part I.1: left out of won totals, the existing noFx
 //     line says so; never costed at the portfolio's planFx: lots.purchaseRate);
 //   - today: data.json fx, only while the data is fresh (stale data's fx is an older day's);
 //   - a past date after fxHist's last close: not saved yet (round-2 review, spec A.1: only a today-dated record takes
 //     data.json fx; the next publish's fxHist will have that day);
-//   - no fxHist, one that cannot be read, or a date from 2016 on that it does not reach: not saved yet.
+//   - no fxHist, one that cannot be read, or a date from 2016 on that it does not reach (under ECOS, 2016-01-01 to 01-03 come
+//     before the first row 2016-01-04: no row on or before them): not saved yet;
+//   - final false (yahoo_next at the 06:40 publish: its last row is the run's live rate, not the day's): a date whose rate
+//     would be that last row is not saved yet either; the next publish has it final.
 // env: { today, fx, fxDate, fxHist, stale }.
 // -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
 //    past-date line does not fit) | "past" (a past date: "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
@@ -43,6 +48,7 @@ export function rateFor(date, env) {
     const mid = (lo + hi) >> 1;
     if (rows[mid][0] <= date) { hit = rows[mid]; lo = mid + 1; } else hi = mid - 1;
   }
+  if (hit && e.fxHist.final === false && hit === rows[rows.length - 1]) return { ok: false, why: "past" };   // not a final rate yet
   return hit ? { ok: true, fx: hit[1] } : { ok: false, why: "past" };
 }
 // The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).
