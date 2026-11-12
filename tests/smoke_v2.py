@@ -11007,7 +11007,18 @@ def v197a_store2(by, pxd):
     six = {"id": "dsix", "name": "여섯 종목 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
            "settings": {"points": {"value": 3}, "strict": "normal", "maxPct": 30, "amountMan": 1000},
            "holdings": [hold(t, 1 / 6) for t in seven[:6]], "purchases": []}
-    return {"v": 2, "decks": [cush, one, six], "guideSeen": pxd}
+    # round-2: five at 20% under a 20% cap, one held (the D2 line in 빼기 names the saved stocks it counts while a 담기 waits)
+    cap = {"id": "dcap", "name": "최대 비중 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+           "settings": {"points": {"value": 3}, "strict": "normal", "maxPct": 20, "amountMan": 1000},
+           "holdings": [hold(t, 0.2) for t in seven[:5]],
+           "purchases": [{"id": "p1cccccc", "t": "005930", "date": "2026-10-01", "qty": 10, "price": 200000, "ccy": "KRW"}]}
+    # round-2 B-2: AMD bought 2 on 09-01, a stored 1:2 on 10-05 (1 share today): 팔고 빼기 dated before the split sells 2
+    spl = {"id": "dsplit", "name": "분할 포트폴리오", "createdAt": "2026-09-01", "planFx": 1300,
+           "settings": {"points": {"value": 3}, "strict": "normal", "maxPct": 100, "amountMan": 1000},
+           "holdings": [hold("AMD", 0.5, cls="us"), hold("005930", 0.5)],
+           "purchases": [{"id": "p1dddddd", "t": "AMD", "date": "2026-09-01", "qty": 2, "price": 160.0, "ccy": "USD", "fx": 1300}],
+           "splits": [{"t": "AMD", "date": "2026-10-05", "r": 0.5}]}
+    return {"v": 2, "decks": [cush, one, six, cap, spl], "guideSeen": pxd}
 
 
 def scene_v197a(R, files, width):
@@ -11025,6 +11036,9 @@ def scene_v197a(R, files, width):
     for x in data["data.json"]["stocks"]:
         if x["t"] == "MSFT":
             x["pxd"] = "2026-10-29"                     # round-1 nit: the 담기 sheet's date line for a US stock is its own close date
+    # round-2 B-2: a US sale dated in the past takes that day's rate (macro.json fxHist, as #117 publishes it)
+    data["macro.json"]["fxHist"] = {"asOf": data["data.json"]["fxDate"], "final": True,
+                                    "rows": [["2016-01-04", 1172.5], ["2026-09-01", 1300.0], ["2026-10-01", 1310.0], [data["data.json"]["fxDate"], data["data.json"]["fx"]]]}
     pxd = data["data.json"]["pxDate"]
     fx = data["data.json"]["fx"]
     today = now_dt().date().isoformat()
@@ -11407,7 +11421,7 @@ def scene_v197a(R, files, width):
         dr = page.locator('[data-ui-v2="edit-drop"]')
         dr.wait_for(state="visible")
         assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == E_["leave"]
-        assert dr.locator("button").all_inner_texts() == [C["app"]["close"], E_["leaveGo"] or E_["title"]]
+        assert dr.locator("button").all_inner_texts() == [C["app"]["close"], E_["leaveGo"] or C["app"]["tabs"]["portfolio"]]   # 나가기 시트와 같은 이름
         check_page("다른 포트폴리오의 종목 바꾸기", "edit-drop")
         dr.locator("button", has_text=C["app"]["close"]).click()
         dr.wait_for(state="detached")
@@ -11415,17 +11429,73 @@ def scene_v197a(R, files, width):
         page.locator('[data-deck-id="done1"] [data-ui-v2="edit-open"]').click()                         # 같은 포트폴리오: 묻지 않고 그대로
         at(page, "portfolio/edit/done1")
         assert pcts() == {"005930": 50, "000660": 50}
+        # round-2 B-4: another portfolio's address (typed, or the browser's back) asks too: the waiting editor stays
+        page.evaluate("location.hash = '#portfolio/edit/dcush'")
+        page.locator('[data-ui-v2="edit-drop"]').wait_for(state="visible")
+        at(page, "portfolio/edit/done1")
+        assert pcts() == {"005930": 50, "000660": 50}
+        check_page("다른 포트폴리오 주소", "edit-drop-url")
+        page.locator('[data-ui-v2="edit-drop"] button', has_text=C["app"]["close"]).click()
+        page.locator('[data-ui-v2="edit-drop"]').wait_for(state="detached")
+        assert route(page) == "portfolio/edit/done1" and pcts() == {"005930": 50, "000660": 50}
         if wide:
             side_tab(page, "portfolio")
         else:
             tab(page, TABS["portfolio"])
             at(page, "portfolio")
         page.locator('[data-deck-id="dcush"] [data-ui-v2="edit-open"]').click()
-        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"] or E_["title"]).click()
+        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"] or C["app"]["tabs"]["portfolio"]).click()
         at(page, "portfolio/edit/dcush")
         assert pcts()["005930"] == 10
-        assert [len(d["holdings"]) for d in stored()["decks"]] == [9, 1, 6]                             # 아무것도 저장하지 않았어요
-    R.check(page, S, "저장된 마지막 종목은 팔고 빼기 꺼짐(담기가 기다려도) · 다른 포트폴리오의 종목 바꾸기는 먼저 물어요", last_one)
+        assert [len(d["holdings"]) for d in stored()["decks"]] == [9, 1, 6, 5, 2]                       # 아무것도 저장하지 않았어요
+    R.check(page, S, "저장된 마지막 종목은 팔고 빼기 꺼짐(담기가 기다려도) · 다른 포트폴리오의 종목 바꾸기는 먼저 물어요(버튼 · 주소)", last_one)
+
+    def cap_names():
+        go_edit("dcap")
+        page.locator('[data-ui-v2="edit-by-name"]').click()
+        page.locator('[data-ui-v2="find-sheet"] input').fill("SK하이닉스")
+        page.locator('[data-find="000660"]').click()
+        sh = page.locator('[data-ui-v2="add-sheet"][data-t="000660"]')
+        sh.wait_for(state="visible")
+        sh.locator("button", has_text=C["build"]["s4"]["add"]).last.click()
+        sh.wait_for(state="detached")
+        row("005930").locator('[data-ui-v2="edit-remove"]').click()
+        rs = page.locator('[data-ui-v2="rm-sheet"][data-t="005930"]')
+        rs.wait_for(state="visible")
+        low = rs.locator('[data-ui-v2="rm-cap-low"]')
+        assert fillp(E_["capLow"], n=4, x=20) in low.inner_text()                                  # 저장된 종목 넷 (기다리는 담기는 빼고)
+        assert rs.locator('[data-ui-v2="rm-stored"]').inner_text() == " · ".join(by[t]["nk"] for t in ("005380", "105560", "010120", "035420"))
+        check_page("빼기 · 저장된 종목 기준", "remove-cap-stored")
+        page.keyboard.press("Escape")
+        rs.wait_for(state="detached")
+    R.check(page, S, "빼기의 D2 줄은 저장된 종목을 세고(담기가 기다려도) 그 종목들의 이름을 보여요", cap_names)
+
+    def split_sell():
+        # dcap's 담기 still waits: its address asks first; 포트폴리오 (the discard button) drops it and opens dsplit
+        page.evaluate("location.hash = '#portfolio/edit/dsplit'")
+        page.locator('[data-ui-v2="edit-drop"]').wait_for(state="visible")
+        assert route(page) == "portfolio/edit/dcap"
+        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"] or C["app"]["tabs"]["portfolio"]).click()
+        at(page, "portfolio/edit/dsplit")
+        page.locator('[data-ui-v2="edit"][data-deck-id="dsplit"] [data-ui-v2="edit-list"]').wait_for(state="visible")
+        row("AMD").locator('[data-ui-v2="edit-remove"]').click()
+        rs = page.locator('[data-ui-v2="rm-sheet"][data-t="AMD"]')
+        rs.wait_for(state="visible")
+        rs.locator("button", has_text=RM["sell"]).click()
+        form = page.locator('[data-ui-v2="rec-form"][data-kind="sell"]')
+        form.wait_for(state="visible")
+        qty = form.locator("input").first
+        assert qty.input_value() == "1" and not qty.is_editable()                                 # 오늘: 1주 (1:2 뒤)
+        form.locator('input[type="date"]').fill("2026-10-02")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"rec-form\"] input').value === '2'")   # 분할 전 날짜: 2주
+        check_page("팔고 빼기 · 분할 전 날짜", "sell-split")
+        form.locator("button", has_text=C["plan"]["save"]).click()
+        form.wait_for(state="detached")
+        row("AMD").wait_for(state="detached")
+        d = [x for x in stored()["decks"] if x["id"] == "dsplit"][0]
+        assert [h["t"] for h in d["holdings"]] == ["005930"] and d["history"][0]["t"] == "AMD"
+        assert d["history"][0]["sales"][0]["qty"] == 2 and d["history"][0]["sales"][0]["date"] == "2026-10-02"
+    R.check(page, S, "팔고 빼기의 잠긴 수량은 고른 날짜의 주식 수(분할 전 2주 · 뒤 1주) → 가진 것을 정확히 팔고 빼요", split_sell)
     ctx.close()
     srv.shutdown()
 
