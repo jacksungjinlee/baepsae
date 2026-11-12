@@ -4,16 +4,17 @@
 // in 미국 종목 수익, 어디서 왔나. A part that cannot be computed is left out and named (lots.returnsOf), never counted as 0.
 // Nothing is computed from stale or failed data (the screen's own stale line or the load-failure message says so); the
 // records file (기록 내려받기) works whatever the data. No 뱁이 (the screen shows money). No Korean here: src/copy/v2.js.
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, CHART } from "../ui/tokens.js";
 import { Amount, priceColor } from "../ui/components.jsx";
 import { IconChip, Icon } from "../ui/icons.jsx";
-import { C, fill, nf, mdText, todayKst, todayStaleText, wonText, unitWon, plus } from "./format.js";
-import { Page, Card, AppBar, LoadFail, Footer, Note, tx, tap } from "./ui.jsx";
+import { C, fill, nf, mdText, todayKst, todayStaleText, unitWon, plus, exactWon } from "./format.js";
+import { Page, Card, AppBar, LoadFail, Footer, Note, OwnCloseNote, tx, tap } from "./ui.jsx";
+import { ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { todayCtx } from "./rules.js";
 import { signedPct } from "./deckcalc.js";
-import { returnsOf, roundRows, fxSplit } from "./lots.js";
+import { returnsOf, roundRows, fxSplit, returnsPct } from "./lots.js";
 import { missingNames } from "./tracking.jsx";
 import { recordsCsv, csvName, downloadCsv } from "./csv.js";
 
@@ -39,11 +40,19 @@ function Row({ icon, tone, name, sub, value, unit, first, id }) {
 }
 
 // The records file (one CSV of every portfolio), from the store as it is.
+// A download that could not start says so on screen (round-1 review): the proposed ret.csvFail, until then nothing but the
+// console line (no approved line says a download failed).
 function CsvRow({ store }) {
+  const [failed, setFailed] = useState(false);
   const save = () => {
     const today = todayKst();
-    const text = recordsCsv(store.data, C.csv.head, C.csv.kinds, (d) => shownName(d.name));
-    if (downloadCsv(text, csvName(store.exportPrefix || "baepsae-records", today))) console.info("[v2] records CSV saved: " + csvName(store.exportPrefix || "baepsae-records", today));
+    const name = csvName(store.exportPrefix || "baepsae-records", today);
+    let ok = false;
+    try { ok = downloadCsv(recordsCsv(store.data, C.csv.head, C.csv.kinds, (d) => shownName(d.name)), name); } catch (e) {
+      console.warn("[v2] records CSV not made: " + ((e && e.message) || e));
+    }
+    if (ok) console.info("[v2] records CSV saved: " + name);
+    setFailed(!ok);
   };
   return (
     <Card data-ui-v2="ret-csv" style={{ padding: 0 }}>
@@ -53,6 +62,7 @@ function CsvRow({ store }) {
         <span style={tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0, wordBreak: "keep-all" })}>{C.ret.csv}</span>
         <Icon name="chevronRight" size={18} tone="on" />
       </button>
+      {failed && C.ret.csvFail && <div style={{ padding: `0 ${SPACE(4)}px ${SPACE(3)}px` }}><Note tone="watch" data-ui-v2="ret-csv-fail">{C.ret.csvFail}</Note></div>}
     </Card>
   );
 }
@@ -115,8 +125,10 @@ export function Returns({ deck, load, store, pad, onBack }) {
     return { pxOf, fx: ctx.fx, absent };
   }, [live, ctx, deck]);
   const r = useMemo(() => (q ? returnsOf(deck, q) : null), [deck, q]);
-  const fx = useMemo(() => (r && q ? fxSplit(r.ledgers.filter((L) => !q.absent.has(L.t)), q.pxOf, q.fx) : null), [r, q]);
-  const names = (ts) => ts.map((t) => { const h = (deck.holdings || []).find((x) => x.t === t) || (deck.history || []).find((x) => x.t === t); return h ? (h.cls === "us" ? t : h.nk) : t; });
+  const gone = r ? new Set([...r.absent, ...r.noPrice]) : new Set();
+  const fx = useMemo(() => (r && q ? fxSplit(r.ledgers.filter((L) => !gone.has(L.t)), q.pxOf, q.fx) : null), [r, q]);
+  const holdingOf = (t) => (deck.holdings || []).find((x) => x.t === t) || (deck.history || []).find((x) => x.t === t);
+  const names = (ts) => ts.map((t) => { const h = holdingOf(t); return h ? (h.cls === "us" ? t : h.nk) : t; });
   // the rows: a row with records that could all not be computed shows "–" (never 0); a row with nothing in it is 0원
   const heldOpen = r ? r.ledgers.some((L) => L.held > 0) : false;
   const has = (k) => (deck[k] || []).length > 0 || (deck.history || []).some((e) => e && (e[k] || []).length > 0);
@@ -125,16 +137,21 @@ export function Returns({ deck, load, store, pad, onBack }) {
   if (r) {
     if (r.noAvg.length) warnOnce(`[v2] ${deck.id}: returns leave out ${r.noAvg.join(", ")} (no average price)`);
     if (r.noFx.length) warnOnce(`[v2] ${deck.id}: returns leave out ${r.noFx.join(", ")} (a USD record without a rate): money put in and return not computed`);
-    if (r.noPrice.length) warnOnce(`[v2] ${deck.id}: returns show no numbers (no price today for ${r.noPrice.join(", ")})`);
+    if (r.noPrice.length) warnOnce(`[v2] ${deck.id}: returns leave out ${r.noPrice.join(", ")} (no price today)`);
     if (r.soldOut) warnOnce(`[v2] ${deck.id}: returns leave out ${r.soldOut} sale(s) whose gain could not be computed`);
   }
-  const showNums = !!(r && !r.noPrice.length);
   const total = rr ? rr.total : 0;
-  // 수익률 and its receipt line, together (CLAUDE.md: a computed ratio shows its inputs), only with the money put in known.
-  // The approved receipt reads "… 산 금액 전체 {cost}로 …", and {cost} always ends in 원, which takes 으로: the corrected line
-  // (ret.receiptFix, proposed) waits for Jack, and until then neither 수익률 nor its receipt is shown.
-  const pct = showNums && r.cost != null && r.cost > 0 && C.ret.receiptFix ? (total / r.cost) * 100 : null;
+  // 수익률 and its receipt line, together (CLAUDE.md: a computed ratio shows its inputs), only with the money put in known,
+  // from the exact sums (lots.returnsPct, never the rounded rows); the receipt shows those exact amounts, so it gives back
+  // the same %. The approved receipt reads "… 산 금액 전체 {cost}로 …", and {cost} always ends in 원, which takes 으로: the
+  // corrected line (ret.receiptFix, proposed) waits for Jack, and until then neither 수익률 nor its receipt is shown.
+  const pct = r && C.ret.receiptFix ? returnsPct(r) : null;
+  const exact = r ? r.held + r.sold + r.divs : 0;
   const md = ok ? mdText(load.data.pxDate) : null;
+  // held stocks left out today: missing from today's data, or in it without a price (the approved missing-stock line; the
+  // proposed ret.noPrice for the second kind once Jack approves it)
+  const missing = r ? (C.ret.noPrice ? r.absent : [...r.absent, ...r.noPrice]) : [];
+  const usHeld = r ? r.ledgers.filter((L) => L.ccy === "USD" && L.held > 0 && !gone.has(L.t)).map((L) => ctx.byT.get(L.t)).filter(Boolean) : [];
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={C.app.tabs.portfolio} />
@@ -144,11 +161,11 @@ export function Returns({ deck, load, store, pad, onBack }) {
         <p data-ui-v2="ret-deck" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{shownName(deck.name)}</p>
         {load.status === "fail" && <LoadFail picture={false} />}
         {ok && !ctx.state.ok && <Note tone="watch" data-ui-v2="ret-stale">{todayStaleText(ctx.state.days)}</Note>}
-        {showNums && (
+        {r && (
           <>
-            <div data-ui-v2="ret-total" data-v={total} style={{ marginTop: SPACE(2) }}>
+            <div data-ui-v2="ret-total" data-v={total} data-exact={Math.round(exact)} style={{ marginTop: SPACE(2) }}>
               <span style={tx(34, WEIGHT.heavy, priceColor(total, true), { letterSpacing: "-0.02em", lineHeight: 1.2 })}><Amount text={plus(unitWon(total, rr.unit), total)} /></span>
-              {pct != null && <span data-ui-v2="ret-pct" style={tx(SIZE.sm, WEIGHT.bold, COLOR.text2, { display: "block" })}>{fill(C.ret.ret, { pct: signedPct(pct) })}</span>}
+              {pct != null && <span data-ui-v2="ret-pct" data-pct={Math.round(pct * 1000) / 1000} style={tx(SIZE.sm, WEIGHT.bold, COLOR.text2, { display: "block" })}>{fill(C.ret.ret, { pct: signedPct(pct) })}</span>}
             </div>
             <Card data-ui-v2="ret-rows" style={{ padding: `${SPACE(1) + 2}px ${SPACE(4)}px` }}>
               <Row id="held" icon="deck" tone="earn" name={C.ret.held} sub={C.ret.heldSub} value={rr.rows[0]} unit={rr.unit} first />
@@ -156,13 +173,17 @@ export function Returns({ deck, load, store, pad, onBack }) {
               <Row id="divs" icon="coins" tone="div" name={C.ret.divs} sub={C.ret.divsSub} value={rr.rows[2]} unit={rr.unit} />
             </Card>
             {pct != null && (
-              <Note data-ui-v2="ret-receipt">{fill(C.ret.receiptFix, { gain: unitWon(total, rr.unit), cost: wonText(r.cost) })}</Note>
+              <Note data-ui-v2="ret-receipt">{fill(C.ret.receiptFix, { gain: exactWon(exact), cost: exactWon(r.cost) })}</Note>
             )}
             {r.soldOut > 0 && <Note data-ui-v2="ret-sold-left">{fill(C.ret.soldLeftOut, { n: r.soldOut })}</Note>}
             {r.noFx.length > 0 && C.deck.noFx && <Note data-ui-v2="ret-no-fx">{C.deck.noFx}</Note>}
             {r.noAvg.length > 0 && C.ret.noAvg && <Note data-ui-v2="ret-no-avg">{fill(C.ret.noAvg, { n: r.noAvg.length, names: names(r.noAvg).join(", ") })}</Note>}
-            {r.absent.length > 0 && <Note tone="watch" data-ui-v2="ret-missing">{fill(C.missing.line, { n: r.absent.length, names: missingNames(r.absent.map((t) => ({ t, nk: names([t])[0], cls: ((deck.holdings || []).find((h) => h.t === t) || {}).cls, cost: null }))) })}</Note>}
+            {missing.length > 0 && <Note tone="watch" data-ui-v2="ret-missing">{fill(C.missing.line, { n: missing.length, names: missingNames(missing.map((t) => ({ t, nk: names([t])[0], cls: (holdingOf(t) || {}).cls, cost: null }))) })}</Note>}
+            {C.ret.noPrice && r.noPrice.length > 0 && <Note tone="watch" data-ui-v2="ret-no-price">{C.ret.noPrice}</Note>}
             {r.usdOnly && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
+            {r.usdOnlySold && <Note data-ui-v2="usd-sold">{C.rec.usdOnly}</Note>}
+            {/* v19.1c (#82): a held US stock priced at an earlier close than the US date is named, as everywhere else */}
+            <OwnCloseNote groups={ownCloses(load, usHeld)} data-ui-v2="ret-own-close" />
             {fx && (!fx.empty || fx.leftOut.length > 0) && <FxCard fx={fx} today={q.fx} />}
           </>
         )}

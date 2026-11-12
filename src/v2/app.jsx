@@ -28,7 +28,7 @@ import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
-import { dataSplits, withDataSplits } from "./lots.js";
+import { dataSplits, withDataSplits, storedNotInData } from "./lots.js";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -446,6 +446,18 @@ export function App({ source }) {
     const data = withDataSplits(store.data, splitList, todayKst());
     return data === store.data ? store : { ...store, data };
   }, [store, splitList]);
+  // a split the records keep (store.js splits) that today's data.json does not list: said loudly, once each (it stays in use:
+  // the records were saved with it). data.json lists the last 3 years of splits, so an older one is expected to be missing.
+  const splitsSaid = useRef(new Set());
+  useEffect(() => {
+    if (load.status !== "ok") return;
+    for (const x of storedNotInData(store.data, splitList)) {
+      const k = `${x.id}|${x.t}|${x.date}|${x.r}`;
+      if (splitsSaid.current.has(k)) continue;
+      splitsSaid.current.add(k);
+      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is not in today's data.json splits (it lists the last 3 years); the records still read with it`);
+    }
+  }, [store.data, splitList, load.status]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;

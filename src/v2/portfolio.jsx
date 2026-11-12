@@ -174,9 +174,13 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
             {de && de.ok && (de.soldOut || []).map((t) => {
               const nk = (d.holdings.find((x) => x.t === t) || { nk: t }).nk;
               const rec = record(d.id, t, nk);
+              // rules.SOLD_OUT_BANDS on (spec A.1, waiting for Jack): the band rules read it with 0 shares, so its chips and
+              // weight line show; off (what ships): no status, the approved sold-out line only
+              const zx = de.holdings.find((y) => y.t === t) || null;
               return (
                 <div key={t} data-sold-out={t}>
-                  <HoldingRow t={t} title={nk} sub={C.daily.soldOut} x={null} names={names}
+                  <HoldingRow t={t} title={nk} sub={C.daily.soldOut} x={zx} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)}
+                    extra={zx && m.ok ? <WeightLine x={zx} /> : null}
                     action={rec ? <div data-ui-v2="row-actions" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}><RecordButton name={nk} onClick={rec} /></div> : null} />
                 </div>
               );
