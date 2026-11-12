@@ -22,7 +22,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"R": "src/repair.js", "FX": "src/v2/fix.js", "FN": "src/v2/fixnote.jsx", "E": "src/v2/engine.js", "K": "src/v2/company.js",
         "CO": "src/v2/company.jsx", "CT": "src/v2/cotabs.jsx", "CP": "src/copy/v2.js", "RU": "src/v2/rules.js", "OF": "src/fixnote.jsx",
-        "OLD": "src/corp.jsx", "SH": "src/shell.jsx", "DT": "src/detail.jsx"}
+        "OLD": "src/corp.jsx", "SH": "src/shell.jsx", "DT": "src/detail.jsx", "DL": "src/v2/daily.jsx"}
 LINE = "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요."
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 UNIT_T = "028260"                 # 시험 데이터의 삼성물산 (배당을 줘요) — tests/smoke_v2.py 의 장면과 같은 회사
@@ -69,7 +69,7 @@ def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react';\n"
             "import fs from 'fs';\n"
-            "const { R, FX, FN, E, K, CO, CT, CP, RU, OF, OLD, SH, DT } = B; const C2 = CP.C;\n"
+            "const { R, FX, FN, E, K, CO, CT, CP, RU, OF, OLD, SH, DT, DL } = B; const C2 = CP.C;\n"
             "const warns = []; console.warn = (m) => warns.push(String(m));\n"
             "const ent = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#x27;/g, \"'\").replace(/&amp;/g, '&');\n"
             "const text = (html) => ent(html.replace(/<!--.*?-->/g, '').replace(/<[^>]+>/g, '\\n'));\n"
@@ -253,6 +253,51 @@ def test_old_app_peer_check_shows_a_dash_for_a_blank_roe_or_debt_never_a_level()
         full: chips({ t: 'Q', s: 'retail', per: 9, x: { roe: 20, debt: 50 } }) };""", UNIT_T=UNIT_T)
     assert got["blank"] == ["chkTitle", "chkProfit", "—", "chkSafety", "—", "chkValue", "—", "chkNote"], got["blank"]
     assert got["full"] == ["chkTitle", "chkProfit", "좋은 편", "chkSafety", "좋은 편", "chkValue", "낮은 편", "chkNote"], got["full"]
+
+
+def test_daily_check_says_why_once_for_a_held_flagged_company_never_that_the_data_was_not_received():
+    """내 기준 점검 (리뷰 #116): 부채비율 · ROE · 영업이익 규칙이 공시 단위 확인으로 빈 칸이면 확인 필요 (지켰다 · 어겼다가 아니에요), 이유는
+    승인된 줄 한 번 — "{item} 자료를 받지 못해 확인이 필요해요" 가 아니에요. 다른 회사의 빠진 값은 예전 그대로."""
+    got = run("""
+      const rules = [
+        { id: 'debtCeiling', kind: 'keep', check: 'checked', input: 'debt', since: 2024, limit: 100 },
+        { id: 'roeFloor', kind: 'keep', check: 'checked', input: 'roe', since: 2024, floor: 3 },
+        { id: 'opDecline', kind: 'keep', check: 'checked', input: 'op', since: 2024 },
+      ];
+      const ctx = { byT: LOAD.byT, coByT: LOAD.coByT, usPxDate: DATA.usPxDate };
+      const weights = { ok: false, missing: [] };
+      const ev = (t) => RU.evaluateHolding({ t, nk: t, cls: 'kr', rules }, { holdings: [] }, ctx, weights, 10);
+      const x = ev(UNIT_T);
+      const names = new Map();
+      const views = x.reasons.map((r) => DL.reasonView(r, x, names)).filter(Boolean).map((v) => v.pieces.join(' '));
+      const book = text(renderToStaticMarkup(h(DL.HoldingRules, { x, names })));
+      // 다른 회사: 같은 칸을 지워서 '빠진 값' (공시 단위 확인 아님)
+      const s2 = { ...LOAD.byT.get('005930') }; delete s2.debt; delete s2.roe;
+      const ctx2 = { ...ctx, byT: new Map([...LOAD.byT, ['005930', s2]]) };
+      const y = RU.evaluateHolding({ t: '005930', nk: '삼성전자', cls: 'kr', rules: rules.slice(0, 2) }, { holdings: [] }, ctx2, weights, 10);
+      out = { status: x.status, unit: x.unit, reasons: x.reasons.map((r) => [r.code, !!r.unit]), results: x.rules.map((r) => r.result),
+        views, n: book.split(LINE).length - 1, lost: book.includes('자료를 받지 못해'),
+        other: y.reasons.map((r) => DL.reasonView(r, y, names)).filter(Boolean).map((v) => v.pieces.join(' ')), otherUnit: y.unit };""", UNIT_T=UNIT_T)
+    assert got["unit"] is True and got["status"] == "check"
+    assert got["results"] == ["missing", "missing", "missing"]
+    assert got["reasons"] == [["missing", True]]                      # 세 규칙에 이유 하나
+    assert got["views"] == [LINE] and got["n"] == 1 and not got["lost"]
+    assert got["otherUnit"] is False and all("자료를 받지 못해" in v for v in got["other"]) and len(got["other"]) == 2
+
+
+def test_old_app_peer_medians_leave_blanks_out():
+    got = run("""
+      const t = (k) => k;
+      const chips = (s, peers) => text(renderToStaticMarkup(h(DT.MiniCheck, { s, peers, lang: 'ko', t }))).split('\\n').map((x) => x.trim()).filter(Boolean);
+      const peer = (i, debt) => ({ t: 'P' + i, per: 10, x: { roe: 10, debt } });
+      const s = { t: 'Q', s: 'retail', per: 9, x: { roe: 10, debt: 90 } };
+      out = {
+        // 부채비율이 있는 업종 회사: 100 · 100 · 100 (중간 100) + 빈 칸 셋 — 예전엔 빈 칸을 0 으로 세 중간값 0 → 90% 가 '아쉬운 편'
+        withBlanks: chips(s, [peer(1, 100), peer(2, 100), peer(3, 100), peer(4, null), peer(5, null), peer(6, null)]),
+        fewPeers: chips(s, [peer(1, 100), peer(2, 100), peer(3, null), peer(4, null)]),
+      };""")
+    assert got["withBlanks"][4] == "좋은 편", got                      # 90% ≤ 중간 100% (빈 칸은 세지 않아요)
+    assert got["fewPeers"][4] == "—", got                            # 부채비율이 있는 업종 회사가 3곳 미만
 
 
 # ── 문구 ──

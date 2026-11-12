@@ -34,6 +34,7 @@ CO, ST = FIX["companies"], FIX["statements"]
 PX = {"250030": (9200.0, 3786533, 0.035), "002880": (3130.0, 9354799, 0.029), "040610": (2725.0, 17043598, 0.046),
       "109960": (1655.0, 15132233, 0.025)}
 BAD, REAL = ("250030", "002880"), ("040610", "109960")
+ALL4 = ["scale", "is", "cf", "eps"]   # 두 반기보고서: 재무상태표 · 손익 · 현금흐름 지난해 칸 · 기본주당이익 모두 1,000배 (자산=부채+자본은 맞아요)
 FILED = {"data": ("per", "pbr", "eps", "bps", "roe", "debt", "opm", "g3", "vz", "qz")}
 
 
@@ -61,7 +62,7 @@ def company(t, annual=None, q=None, qp=None):
     fin["fs"] = CO[t]["fs"]
     t2 = F.compute_ttm(fin, F.parse_dart_quarter(q if q is not None else rows(t, 2026, "11012")),
                        F.parse_dart_quarter(qp if qp is not None else rows(t, 2025, "11012")))
-    fin["ttm"], fin["bs2"], fin["bsP"], fin["bq"] = t2["ttm"], t2["bs"], t2["bsP"], "2026.2Q"
+    fin["ttm"], fin["bs2"], fin["bsP"], fin["qChk"], fin["bq"] = t2["ttm"], t2["bs"], t2["bsP"], t2["chk"], "2026.2Q"
     price, shr, cap = PX[t]
     s = {"t": t, "nk": CO[t]["name"], "cls": "kr", "price": price, "shr": shr, "cap": cap, "fy": 2025, "vol": 30.0, "mom": 1.0,
          "dps": 0.0, "dps3": [0.0, 0.0, 0.0], "dy": 0.0}
@@ -85,7 +86,7 @@ def test_the_real_half_year_reports_in_the_wrong_unit_are_caught():
     for t in BAD:
         _, fin = company(t)
         u = F.unit_check(fin)
-        assert u["why"] == ["scale"], (t, u)
+        assert u["why"] == ["scale", "is", "cf"], (t, u)                 # 손익 · 현금흐름표의 지난해 칸도 1,000배 (주식 수를 안 주면 eps 는 안 봐요)
         assert 1000 <= u["scale"]["q"] <= 1500, u            # 최신 분기(2026 반기)가 사업보고서의 약 1,000배 (진짜 변화 × 1,000)
         assert 0.5 < u["scale"]["qp"] < 2, u                  # 지난해 같은 분기(2025 반기)는 맞아요
         assert u["bal"] == {"fy": 0.0, "q": 0.0, "qp": 0.0}   # 보고서 전체가 같은 배율이라 자산 = 부채 + 자본 은 맞아요
@@ -114,11 +115,11 @@ def test_end_to_end_the_flagged_companies_lose_every_statement_number_and_the_re
     kr, fm, extra, corp, guard = run_all([company(t) for t in BAD + REAL])
     by = {s["t"]: s for s in kr}
     cby = {c["t"]: c for c in corp["companies"]}
-    assert guard["hit"] == {"250030": ["scale"], "002880": ["scale"]}
+    assert guard["hit"] == {"250030": ALL4, "002880": ALL4}
     assert [x.split(" ")[0] for x in guard["real"]] == ["040610", "109960"]
     for t in BAD:
         s, c = by[t], cby[t]
-        assert s["unitChk"] == ["scale"] and c["unitChk"] == ["scale"]
+        assert s["unitChk"] == ALL4 and c["unitChk"] == ALL4
         for k in FILED["data"]:
             assert k not in s, (t, k)                                       # 빈 칸 (0 이 아니에요)
             assert c.get(k) is None, (t, k)
@@ -135,7 +136,7 @@ def test_end_to_end_the_flagged_companies_lose_every_statement_number_and_the_re
     # 진짜 값: SG&G BPS = 주주 몫 자본 5,085.1억 ÷ 17,043,598주 · PBR 0.09
     assert by["040610"]["bps"] == round(5085.1e8 / 17043598) and by["040610"]["pbr"] == 0.09
     out = capsys.readouterr().out
-    assert "!! 공시 단위 확인: 2곳 비움 (자산≠부채+자본 0 · 보고서 사이 배율 2)" in out
+    assert "!! 공시 단위 확인: 2곳 비움 (자산≠부채+자본 0 · 보고서 사이 배율 2 · 손익계산서 지난해 칸 2 · 현금흐름표 지난해 칸 2 · 기본주당이익 2 · 자본금 ÷ 액면가 0)" in out
     assert "!! 공시 단위: 250030 진코스텍 [보고서 사이 배율" in out and "비운 값: per 0.0, pbr 0.0, eps 777,569.0" in out
     assert "PBR 0.1 미만인데 공시 단위 확인을 통과한 회사 2곳" in out and "040610 SG&G (PBR 0.09" in out and "109960 앱토크롬 (PBR 0.07" in out
     # 파일로 쓸 수 있어요 (NaN · Infinity 없음)
@@ -158,10 +159,10 @@ def test_a_1000_times_quarter_is_caught_and_so_is_a_1000000_times_one_and_an_ann
     t = "040610"
     for k in (1000, 1e6):
         _, fin = company(t, q=scaled(rows(t, 2026, "11012"), k))
-        assert F.unit_check(fin)["why"] == ["scale"], k
+        assert F.unit_check(fin)["why"] == ["scale", "is", "cf"], k
     _, fin = company(t, qp=scaled(rows(t, 2025, "11012"), 1000))             # 지난해 같은 분기가 틀려도
     u = F.unit_check(fin)
-    assert u["why"] == ["scale"] and u["scale"]["qp"] > 100 and u["scale"]["q"] < 2
+    assert u["why"] == ["scale", "is", "cf"] and u["scale"]["qp"] > 100 and u["scale"]["q"] < 2
     _, fin = company(t, annual=scaled(rows(t, 2025, "11011"), 1000))         # 사업보고서가 1,000배면 분기가 1/1,000
     u = F.unit_check(fin)
     assert u["why"] == ["scale"] and u["scale"]["q"] < 0.01
@@ -207,7 +208,7 @@ def test_statements_saved_before_the_totals_were_read_are_not_checkable_but_stil
     for src in (fin, fin["bs2"], fin["bsP"]):
         src.pop("bal", None)                                                   # 예전 캐시 항목처럼
     u = F.unit_check(fin)
-    assert u["bal"] == {"fy": None, "q": None, "qp": None} and u["why"] == ["scale"]
+    assert u["bal"] == {"fy": None, "q": None, "qp": None} and u["why"] == ["scale", "is", "cf"]
     assert F.unit_check({})["why"] == [] and F.unit_check({"eq": 100.0})["scale"] == {}
 
 
@@ -230,7 +231,7 @@ def test_parsers_keep_the_totals_and_compute_ttm_hands_over_last_years_quarter()
 def test_the_guard_runs_where_main_needs_it():
     src = inspect.getsource(F.main)
     i = src.find("mult_extra = fill_multiples(")
-    j = src.find("unit_guard(kr, fin_map, mult_extra)")
+    j = src.find("unit_guard(kr, fin_map, mult_extra, kmeta")
     assert 0 < i < j < src.find("income_check(kr, fin_map, mult_extra)") < src.find("add_percentiles(kr)") < src.find("build_corp(kr,")
     assert j < src.find("eps_basis_of(kr, mult_extra)")
 
@@ -254,11 +255,123 @@ def test_enrich_keeps_last_years_quarter_for_the_check(tmp_path, monkeypatch):
     kr, fm = F.enrich_with_dart(kr, c, {})
     fin = fm[t]
     assert fin["bq"] == "2026.2Q" and fin["bsP"]["eq"] == 60.0 and "bal" in fin["bs2"] and "bal" in fin
-    assert F.unit_check(fin)["why"] == ["scale"]
+    assert F.unit_check(fin)["why"] == ["scale", "is", "cf"]
     # 캐시에 저장된 해석(새 칸 bal 포함)으로 다음 실행도 같은 판단
     with gzip.open(str(tmp_path / "c.json.gz"), "rt", encoding="utf-8") as f:
         ent = json.load(f)["entries"]
     assert ent[f"{corp_code}|2026|11012|OFS"]["d"]["bal"][0] == 60392733970000.0
+
+
+# ── 2b. 리뷰 #116: 손익 · 현금흐름표 · 기준값 (기본주당이익 · 자본금 ÷ 액면가) · 경계값 ──────────────
+def only(rs, k, sjs, per_share=False):
+    """한 보고서에서 sjs 표의 금액만 k 배 (주당 금액 줄은 그대로 — 진짜 단위 오류처럼)."""
+    out = []
+    for x in rs:
+        x = dict(x)
+        if (x.get("sj_div") or "").strip() in sjs and (per_share or "PerShare" not in (x.get("account_id") or "")):
+            for c in ("thstrm_amount", "thstrm_add_amount", "frmtrm_amount", "frmtrm_add_amount", "bfefrmtrm_amount"):
+                v = F._num(x.get(c))
+                if v is not None:
+                    x[c] = str(v * k)
+        out.append(x)
+    return out
+
+
+def sh_of(t):
+    return PX[t][1]
+
+
+def test_the_scale_line_is_pinned_at_100():
+    a = {"eq": 100.0}
+    for r, flagged in ((14.4, False), (0.08, False), (99.0, False), (100.0, True), (0.0099, True), (1000.0, True)):
+        u = F.unit_check({"eq": 100.0, "bs2": {"eq": 100.0 * r}})
+        assert ("scale" in u["why"]) is flagged, (r, u)
+    assert F.UNIT_SCALE_MAX == 100.0 and F.UNIT_ANCHOR_MAX == 300.0 and F.UNIT_EPS_MIN == 10.0
+    # 2026-11-12 발행본에서 가장 먼 진짜 회사 두 곳 (주주 몫 자본 · 최신 분기 ÷ 사업보고서): 큐로셀 14.4배 · 비트맥스 0.08배
+    assert F.unit_check({"eq": 50.3, "bs2": {"eq": 725.2}})["why"] == []
+    assert F.unit_check({"eq": 106.1, "bs2": {"eq": 8.9}})["why"] == []
+
+
+def test_an_income_statement_alone_in_the_wrong_unit_is_caught():
+    """재무상태표는 맞고 손익계산서만 1,000배 (주당 금액은 그대로): 지난해 칸(is)과 기본주당이익(eps)이 잡아요."""
+    t = "040610"
+    s, fin = company(t, q=only(rows(t, 2026, "11012"), 1000, ("IS", "CIS")))
+    u = F.unit_check(fin, sh_of(t))
+    assert "scale" not in u["why"] and "bs" not in u["why"]
+    assert "is" in u["why"] and "eps" in u["why"], u
+    assert 900 < u["flows"]["is"] < 1100 and u["eps"]["q"] > 300
+
+
+def test_a_cash_flow_statement_alone_in_the_wrong_unit_is_caught():
+    t = "040610"
+    _, fin = company(t, q=only(rows(t, 2026, "11012"), 1000, ("CF",)))
+    u = F.unit_check(fin, sh_of(t))
+    assert u["why"] == ["cf"], u
+
+
+def test_last_years_quarter_in_the_wrong_unit_is_caught_by_the_columns_and_the_eps():
+    t = "040610"
+    _, fin = company(t, qp=only(rows(t, 2025, "11012"), 1000, ("IS", "CIS", "CF")))
+    u = F.unit_check(fin, sh_of(t))
+    assert {"is", "cf", "eps"} <= set(u["why"]) and u["flows"]["is"] < 0.01 and u["eps"]["qp"] > 300, u
+
+
+def test_an_annual_only_company_is_checked_by_the_reported_eps():
+    """분기 보고서가 없는 회사 (3~5월 · 사업보고서만): 보고서 사이 배율은 못 보지만 사업보고서의 기본주당이익으로 잡아요."""
+    t = "040610"
+    fin = F.parse_dart_list(only(rows(t, 2025, "11011"), 1000, ("BS", "IS", "CIS", "CF")))["_fin"]
+    fin["fs"] = "CFS"
+    u = F.unit_check(fin, sh_of(t))
+    assert u["scale"] == {} and u["why"] == ["eps"] and u["eps"]["fy"] > 300, u
+    good = F.parse_dart_list(rows(t, 2025, "11011"))["_fin"]
+    good["fs"] = "CFS"
+    assert F.unit_check(good, sh_of(t))["why"] == [] and 0.5 < F.unit_check(good, sh_of(t))["eps"]["fy"] < 3
+
+
+def test_the_eps_anchor_needs_a_real_eps_and_the_same_sign():
+    fin = {"nio": 100.0, "ni": [100.0, 0, 0], "eq": 1000.0, "fs": "CFS"}
+    sh = 1_000_000                                    # 100억 ÷ 100만주 = 10,000원
+    for rep_eps, flagged in ((10000, False), (40, False), (30, True), (5, False), (-10000, False), (None, False)):
+        u = F.unit_check(dict(fin, epsRep=rep_eps), sh)
+        assert ("eps" in u["why"]) is flagged, (rep_eps, u)       # 5원 미만(바닥 10원) · 부호가 다르면 견주지 않아요
+
+
+def test_the_capital_anchor():
+    t = "040610"
+    s, fin = company(t)
+    s["_bas"] = {"par3": [1000.0, 1000.0, 1000.0]}
+    s["_cap"] = {"cs3": [170.43598, 170.43598, 170.43598], "k": "all", "src": "total"}     # 자본금 170.4억 ÷ 1,000원 = 17,043,598주 (SG&G)
+    assert F.cap_ratio(s, fin) == pytest.approx(1.0)
+    s["_cap"]["cs3"][0] = 170435.98                                                      # 재무상태표가 1,000배
+    assert F.cap_ratio(s, fin) == pytest.approx(1000.0) and "cap" in F.unit_check(fin, sh_of(t), F.cap_ratio(s, fin))["why"]
+    assert F.cap_ratio(dict(s, _cap={**s["_cap"], "src": "paid"}), fin) is None           # 납입자본(주식발행초과금 섞임)은 안 봐요
+    assert F.cap_ratio(dict(s, _bas={"par3": [None, 1000.0, 1000.0]}), fin) is None       # 액면가를 모르면 (무액면주식)
+    s["_cap"]["cs3"][0] = 170.43598 * 14.6                                               # 감자 1/14.6 (앱토크롬처럼) — 300배 안
+    assert "cap" not in F.unit_check(fin, sh_of(t), F.cap_ratio(s, fin))["why"]
+
+
+def test_coverage_is_counted_and_loud_while_most_statements_are_unchecked(capsys):
+    cos = [company(t) for t in BAD + REAL]
+    for _, fin in cos[2:]:
+        for src in (fin, fin["bs2"], fin["bsP"]):
+            src.pop("bal", None)                                                         # 두 곳은 예전 캐시처럼
+    kr = [s for s, _ in cos]
+    fm = {s["t"]: fin for s, fin in cos}
+    extra = F.fill_multiples(kr, fm, {})
+    g = F.unit_guard(kr, fm, extra)
+    assert g["cover"] == {"v": 1, "companies": 4, "checked": 2, "unchecked": 2, "noScale": 0, "anchor": 4, "eps": 4, "cap": 0,
+                          "flows": 4, "hit": 2}
+    out = capsys.readouterr().out
+    assert "· 공시 단위 확인이 본 회사 4곳" in out                                          # 반반이면 아직 크게 알리지 않아요
+    cos[1][1].pop("bal")
+    g = F.unit_guard([cos[1][0]], {cos[1][0]["t"]: cos[1][1]}, {})
+    assert g["cover"]["unchecked"] == 1 and "  !! 공시 단위 확인이 본 회사 1곳" in capsys.readouterr().out
+
+
+def test_main_writes_the_coverage_for_the_gate():
+    src = inspect.getsource(F.main)
+    assert '"unitChkCover": unit_cover' in src and "unit_cover = unit_guard(" in src
+    assert "unitChkCover" in F.UNITS
 
 
 # ── 3. 관문 ────────────────────────────────────────────────────
@@ -419,6 +532,38 @@ def test_the_checked_list_names_its_filings():
     assert V.PBR_LOW_CHECKED["040610"]["eq"] == 5085.1 and V.PBR_LOW_CHECKED["109960"]["eq"] == 3617.6   # 2026-11-12 발행본 bpsIn.eq
     runbook = open(os.path.join(ROOT, "docs", "RUNBOOK.md"), encoding="utf-8").read()
     assert "PBR_LOW_CHECKED" in runbook
+
+
+PER_ROW = "PER 0.1 미만 국내 회사 (unitChk 없음 · 경고만)"
+
+
+def test_gate_warns_by_name_about_per_under_0_1_that_was_not_flagged(pair):
+    cur, prev = pair
+    plain(cur)
+    assert rows_of(check(cur, prev))[PER_ROW][1] == "0곳"
+    s = next(x for x in cur["data"]["stocks"] if x["t"] == "200010")
+    c = comp(cur, "200010")
+    c["epsIn"]["ni"] = round(s["price"] / 0.02 * c["epsIn"]["sh"] / 1e8, 1)             # 손익계산서만 1,000배처럼: PER 0.0
+    c["eps"] = s["eps"] = round(c["epsIn"]["ni"] * 1e8 / c["epsIn"]["sh"])
+    c["per"] = s["per"] = round(s["price"] / c["eps"], 1)
+    rep = check(cur, prev)
+    row = rows_of(rep)[PER_ROW]
+    assert row[3] == "WARN" and row[1].startswith("1곳: 200010") and "PER 0.1" not in row[1] and f"PER {s['per']:.1f}" in row[1], row
+    assert not rep.failed, rep.table()
+    flag(cur, "200010")
+    assert rows_of(check(cur, prev))[PER_ROW][1] == "0곳"                              # 걸린 회사는 실패 줄이 봐요
+
+
+def test_gate_shows_the_coverage_in_the_value_and_never_fails_on_it(pair):
+    cur, prev = pair
+    plain(cur)
+    row = rows_of(check(cur, prev))[UNIT_ROW]
+    assert row[3] == "PASS" and row[1].endswith("확인 범위 기록(unitChkCover) 없음"), row
+    cur["data"]["unitChkCover"] = {"v": 1, "companies": 2400, "checked": 30, "unchecked": 2370, "noScale": 145, "anchor": 2128,
+                                   "eps": 2128, "cap": 2300, "flows": 0, "hit": 0}
+    row = rows_of(check(cur, prev))[UNIT_ROW]
+    assert row[3] == "PASS" and "본 회사 2400 (자산=부채+자본 모두 봄 30 · 못 본 재무제표 있음 2370 · 분기 비교 없음 145 · 기본주당이익·자본금으로 봄 2128 · " \
+        "지난해 칸으로 봄 0)" in row[1], row
 
 
 def test_gate_and_pipeline_keep_their_lists_apart_but_in_step():

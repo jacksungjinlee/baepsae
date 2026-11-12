@@ -262,18 +262,21 @@ equity moves further (a new report, a capital change), the warning names it agai
 someone looks again. The row's value always says how many were passed over quietly ("확인된 회사 N곳 조용히 넘김"), and the
 gate's summary lists them.
 
-To add a company, Claude:
-1. Opens the company's latest filed statements on DART (the report the pipeline used, corp.json `bq`, and the latest
-   사업보고서) and checks that the unit printed over the statements is the unit of the numbers, that total assets =
+To add a company (each entry, and the list itself, needs Jack's yes first: an entry exempts one company from a warning,
+so it is a safety-rule change under CLAUDE.md; the two entries of 2026-11-13 wait for his answer):
+1. Claude opens the company's latest filed statements on DART (the report the pipeline used, corp.json `bq`, and the
+   latest 사업보고서) and checks that the unit printed over the statements is the unit of the numbers, that total assets =
    liabilities + equity, and that the report's previous year-end column equals the 사업보고서's figures.
-2. Adds one entry: the stock code → `date` (the KST day of the check), `eq` (today's corp.json `bpsIn.eq`) and `why` (the
-   name, why the PBR is low, and the filings' receipt numbers as `rcept` followed by the 14 digits).
-3. Opens a PR as usual (tests, fresh-eyes review). `tests/test_unit_guard.py` checks every entry names a filing.
+2. Claude asks Jack in one line, with that evidence: "Quiet the low-PBR warning for {name}? (filings {rcept}: …)".
+3. On his yes, one entry: the stock code → `date` (the KST day of the check), `eq` (today's corp.json `bpsIn.eq`) and
+   `why` (the name, why the PBR is low, and the filings' receipt numbers as `rcept` followed by the 14 digits). Then a PR as
+   usual (tests, fresh-eyes review, his yes recorded under **안전 규칙 변경**). `tests/test_unit_guard.py` checks every entry
+   names a filing.
 
-Jack's yes is never needed for this list: it only quiets a warning for a company whose filings were checked. Every FAIL
-row is unchanged, the unit check still blanks a flagged company's numbers whatever the list says, and a listed company
-whose equity moves by more than 20% is named again. Remove an entry when the company's PBR is back above 0.1 for good, or
-if a later check finds its filing wrong.
+The list only quiets that warning: every FAIL row is unchanged, the unit check still blanks a flagged company's numbers
+whatever the list says, and a listed company whose equity moves by more than 20% is named again. Remove an entry when the
+company's PBR is back above 0.1 for good, or if a later check finds its filing wrong. The PER warning ("PER 0.1 미만 국내
+회사") has no such list.
 
 ## Roll back
 

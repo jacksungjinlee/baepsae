@@ -219,7 +219,9 @@ DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 �
 # 적고 숫자는 원이라 DART 금액이 1,000배 → PER·PBR 0.0 · 가치 점수 100). 파이프라인(fetch_data.unit_guard)이 걸린 회사에 unitChk(이유 목록)를
 # 달고 재무제표로 만든 숫자를 비워요. 관문: unitChk 회사에 비운 칸이 남으면 실패 · unitChk 없이 PBR 이 UNIT_PBR_LOOK 미만인 국내 회사는
 # 이름과 함께 경고 (사람이 공시를 확인해요). 파이프라인과 따로 적어요 (같은 실수를 같이 하지 않게).
-UNIT_WHY = ("bs", "scale")                  # bs 자산 ≠ 부채 + 자본 · scale 보고서 사이 배율 (100배 이상 · 1/100 이하)
+UNIT_WHY = ("bs", "scale", "is", "cf", "eps", "cap")   # bs 자산 ≠ 부채 + 자본 · scale 보고서 사이 배율 · is · cf 분기 보고서의 지난해 칸 ·
+#                                                         eps 재무제표의 기본주당이익 · cap 자본금 ÷ 액면가 (fetch_data.unit_check)
+UNIT_PER_LOOK = 0.1                         # 리뷰 #116: PER 도 같은 경고 줄 (손익계산서만 단위가 틀리면 PBR 은 멀쩡해요) — 확인 목록은 아직 없어요
 UNIT_BLANK_DATA = ("per", "pbr", "eps", "bps", "roe", "debt", "opm", "g3", "vz", "qz")       # data.json 종목 · corp.json 회사 모두
 UNIT_BLANK_CORP = ("eq", "evE", "evR", "pcf", "nio3", "nio3Hyb", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "fl", "flSrc", "flWhy")
 UNIT_BLANK_LISTS = ("rev", "op", "ni")      # corp.json 3개년 금액
@@ -227,7 +229,8 @@ UNIT_PBR_LOOK = 0.1
 # PBR 이 UNIT_PBR_LOOK 미만이지만 사람이 공시를 보고 확인한 회사 (docs/RUNBOOK.md '확인한 낮은 PBR 회사'). 경고 줄은 매일 아침 확인(09:13)이
 # Jack 에게 알려서, 확인된 회사를 날마다 다시 부르지 않게 해요. 그 회사의 지금 주주 몫 자본(corp.json bpsIn.eq, 억원)이 확인한 값의
 # ±PBR_LOW_BAND 안이고 unitChk 가 없을 때만 조용히 넘겨요 (값 칸에 '확인된 회사 N곳 조용히 넘김'으로 수를 남겨요). 밖이거나 목록에 없는
-# 회사는 예전처럼 이름과 함께 경고. 실패 줄과는 상관없어요 (이 목록은 경고만 조용히 해요).
+# 회사는 예전처럼 이름과 함께 경고. 실패 줄과는 상관없어요 (이 목록은 경고만 조용히 해요). 목록과 회사마다 Jack 의 승인이 필요해요 (회사 하나를
+# 경고에서 빼는 일이라 안전 규칙 변경 · RUNBOOK) — 아래 두 곳은 2026-11-13 승인 요청 중이에요.
 PBR_LOW_CHECKED = {
     "040610": {"date": "2026-11-13", "eq": 5085.1,
                "why": "SG&G · 관계기업투자 5,007억 · 공시 rcept 20260814001690 (2026 반기, 단위 원) · 20260319000627 (2025 사업보고서) 확인"},
@@ -868,7 +871,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
-    check_unit(rep, kr, by, comps)
+    check_unit(rep, data, kr, by, comps)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1880,7 +1883,7 @@ def unit_problems(s, c):
     return bad
 
 
-def check_unit(rep, kr, by, comps):
+def check_unit(rep, data, kr, by, comps):
     """공시 단위 확인 (2026-11-13 · 새 줄만): 걸린 회사(unitChk)는 숫자를 모두 비웠는지 (실패) · unitChk 없이 PBR 이 아주 낮은 국내 회사 (경고)."""
     cby = {c.get("t"): c for c in comps}
     hit = [s for s in kr if "unitChk" in s]
@@ -1891,8 +1894,14 @@ def check_unit(rep, kr, by, comps):
         if "unitChk" in c and "unitChk" not in (by.get(c.get("t")) or {}):
             bad.append(f"{c.get('t')} corp.json 에만 unitChk")
     names = [f"{s['t']} {s.get('nk', '')} ({'·'.join(map(str, s.get('unitChk') or []))})" for s in hit]
+    # 리뷰 #116: 확인이 몇 곳을 어떤 방법으로 봤는지 (data.json unitChkCover) — 값 칸에만 (실패 기준은 그대로)
+    cov = data.get("unitChkCover") if isinstance(data.get("unitChkCover"), dict) else None
+    cov_txt = (f" · 본 회사 {cov.get('companies')} (자산=부채+자본 모두 봄 {cov.get('checked')} · 못 본 재무제표 있음 {cov.get('unchecked')} · "
+               f"분기 비교 없음 {cov.get('noScale')} · 기본주당이익·자본금으로 봄 {cov.get('anchor')} · 지난해 칸으로 봄 {cov.get('flows')})"
+               if cov else " · 확인 범위 기록(unitChkCover) 없음")
     rep.add("공시 단위 확인 회사의 숫자 비움 (unitChk)", not bad,
-            f"{len(hit)}곳 · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:3])})" if bad else "") + (f" — {', '.join(names[:4])}" if names else ""),
+            f"{len(hit)}곳 · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:3])})" if bad else "") + (f" — {', '.join(names[:4])}" if names else "")
+            + cov_txt,
             "0 (unitChk 회사는 PER·PBR·EPS·BPS·ROE·부채비율·영업이익률·성장률·점수·3년 실적·자본·EV 배수·영수증·재무 경고 빈 칸 · 두 파일 같게)")
     if names:
         rep.detail("공시 단위 확인으로 숫자를 비운 회사", names)
@@ -1916,6 +1925,12 @@ def check_unit(rep, kr, by, comps):
         rep.detail(f"PBR {UNIT_PBR_LOOK:g} 미만인데 공시 단위 확인을 통과한 국내 회사", low)
     if quiet:
         rep.detail(f"PBR {UNIT_PBR_LOOK:g} 미만 · 사람이 공시를 확인해 조용히 넘긴 회사 (PBR_LOW_CHECKED)", quiet)
+    lowp = [f"{s['t']} {s.get('nk', '')} PER {num(s.get('per')):.1f}" for s in kr
+            if not is_foreign(s.get("t")) and "unitChk" not in s and num(s.get("per")) is not None and 0 <= num(s.get("per")) < UNIT_PER_LOOK]
+    rep.add(f"PER {UNIT_PER_LOOK:g} 미만 국내 회사 (unitChk 없음 · 경고만)", True, f"{len(lowp)}곳" + (f": {', '.join(lowp[:4])}" if lowp else ""),
+            "0 (있으면 경고 · 손익계산서의 단위를 사람이 확인)", warn=bool(lowp))
+    if lowp:
+        rep.detail(f"PER {UNIT_PER_LOOK:g} 미만인데 공시 단위 확인을 통과한 국내 회사", lowp)
 
 
 def _dvwhy_clean(r):
