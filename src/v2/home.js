@@ -12,8 +12,8 @@
 // - 산 가격보다 counts only holdings with a 평균 단가 (Part H, acceptance 5): an imported row's typed 평균 단가 or 샀어요
 //   records (they count as one). A holding without one is left out of both sides, never filled in. The money put in is
 //   the 포트폴리오 tab's own (track.js deckMoney: built portfolios at the rate saved with each purchase, imported ones in
-//   their own currency, US at today's rate with usdToday set so the screen says so). A built portfolio with a sale waits
-//   for the lot maths (v19.6a), exactly as on 포트폴리오: no line.
+//   their own currency, US at today's rate with usdToday set so the screen says so). v19.6a: after a sale the money is the
+//   remaining cost of the open lots (lots.js, moving average), exactly as on 포트폴리오.
 // - 오늘 is the change between the last two official closes of every holding still in today's data (engine.todayD1: a US
 //   stock priced at an earlier close, v19.1c pxd, has no change today). Left out (null) when
 //   any of them has no change, a holding is valued by a typed amount only (it does not move), or a US listing is held
@@ -21,7 +21,7 @@
 //   already keeps for built portfolios.
 import { num, todayD1 } from "./engine.js";
 import { pfRows, pfState, isImported, CHIP_GROUP } from "./pf.js";
-import { deckMoney, deckDayChange, lotsPending } from "./track.js";
+import { deckMoney, deckDayChange } from "./track.js";
 import { heldQty } from "./held.js";
 
 const EPS = 1e-9;
@@ -66,8 +66,7 @@ export function homeMoney(deck, de, ctx) {
     const pct = deckDayChange(de);
     if (pct != null && Number.isFinite(pct) && pct > -100) day = { pct, amount: m.value - m.value / (1 + pct / 100) };
   }
-  // A built portfolio with a sale or an imported row: 원금 waits for v19.6a (track.deckMoney leaves every cost out).
-  const gain = !isImported(deck) && lotsPending(deck) ? null : gainOf(m.per, isImported(deck) && m.usdToday && usdCounted(deck, m.per, ctx));
+  const gain = gainOf(m.per, isImported(deck) && m.usdToday && usdCounted(deck, m.per, ctx));
   return { ok: true, value: m.value, day, gain, absent: m.absent || [] };
 }
 

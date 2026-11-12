@@ -264,8 +264,10 @@ def test_sandbox_squarify_and_the_warning_checks():
     assert [m for m, _ in got["warn"]] == ["clear", "clear", "unknown", "flag", "unknown", "unknown"]
 
 def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holding_is_not_unbought():
-    """v19.3d review: until v19.6a's lot maths, a built portfolio with a sale has no 원금, return or KOSPI comparison (null,
-    never 9 of 10 shares sold counted as −40.9%), and a holding sold down to 0 is sold out, not "planned, never bought"
+    """v19.3d review → v19.6a (Jack's yes needed: the expectation changed with the lot maths): a built portfolio with a sale
+    has the remaining cost of its open lots as 원금 (moving average: 9 of 10 shares sold leaves 1/10 of the cost, never 9 of 10
+    shares sold counted as −40.9%), and the KOSPI comparison over the same money with the sales (A.5 [Q4]). Before v19.6a:
+    no 원금, return or KOSPI comparison (null) and a "lot maths" console line. A holding sold down to 0 is sold out, not "planned, never bought"
     (the other targets are rebased over what is held: never a wrong 비중 줄이기 for the stock left). v19.3d2 (Jack): the rebased
     note is not about a sold-out holding (that one shows "다 팔고 목표 비중만 남아 있어요."), so rebased stays false."""
     got = run("""const ctx = ctxOf(STOCKS, CORPS);
@@ -276,20 +278,25 @@ def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holdi
       const ev = (d) => R.evaluateDeck(d, ctx);
       const idx = { asOf: '2026-11-06', rows: [['2026-09-30', 100], ['2026-11-06', 110]] };
       const w0 = warns.length; T.deckMoney(sold, ev(sold), ctx); const lotWarns = warns.slice(w0);
-      out = { lotWarns, plain: T.deckMoney(deck, ev(deck), ctx), sold: T.deckMoney(sold, ev(sold), ctx), e: ev(sold), k: [T.indexSince(deck, idx, '2026-11-06').ok, T.indexSince(sold, idx, '2026-11-06')],
+      out = { lotWarns, plain: T.deckMoney(deck, ev(deck), ctx), sold: T.deckMoney(sold, ev(sold), ctx), e: ev(sold), k: [T.indexSince(deck, idx, '2026-11-06').ok, T.indexSince(sold, idx, '2026-11-06'),
+          T.indexSince(sold, idx, '2026-11-06', (t) => (t === '000010' ? 10000 : null))],
         imp: S.deckProblem({ ...deck, imported: [{ t: '000010', nk: '가나전자', ccy: 'KRW', qty: 1 }] }, '2026-11-07') };
       out.lotsN = warns.filter((w) => w.includes('lot maths')).length;""", STOCKS=STOCKS, CORPS=CORPS)
     assert got["plain"]["cost"] == 200000 and got["plain"]["ret"] == 0
     s = got["sold"]
-    assert s["ok"] and s["value"] == 10000 and s["cost"] is None and s["gain"] is None and s["ret"] is None and s["lots"] is True
-    assert all(r["cost"] is None and r["ret"] is None for r in s["per"].values())
-    assert got["lotWarns"] == ["[v2] db: 2 sale(s) and 0 imported row(s) on a built portfolio: money put in, return and the KOSPI comparison"
-                               " left out until the lot maths (v19.6a)"]                     # 리뷰 3차 7: 콘솔에 한 번, 개수와 함께
-    assert got["lotsN"] == 1
+    # v19.6a: 남은 1주의 원금 = 10주 원금의 1/10 (이동평균), 수익 0 (before: cost/gain/ret None, lots True)
+    assert s["ok"] and s["value"] == 10000 and s["cost"] == 10000 and s["gain"] == 0 and s["ret"] == 0 and "lots" not in s
+    assert s["per"]["000010"]["cost"] == 10000 and s["per"]["000010"]["ret"] == 0 and list(s["per"]) == ["000010"]
+    assert got["lotWarns"] == [] and got["lotsN"] == 0                                       # before: one "lot maths" line
     e = got["e"]
     assert e["unheld"] == [] and e["soldOut"] == ["000040"] and [x["t"] for x in e["holdings"]] == ["000010"]
     assert e["rebased"] is False and e["bandPlanned"] == 1 and e["bandHeld"] == 1               # v19.3d2: 다 판 종목은 '계획한 n종목 중' 이 아니에요
     band = [r for r in e["holdings"][0]["rules"] if r["id"] == "band"][0]
     assert band["result"] == "ok" and band["band"] is None and abs(band["target"] - 1) < 1e-12   # 남은 1주 = 목표 100%: 줄이라는 말 없음
-    assert got["k"] == [True, {"ok": False, "why": "lots"}]
+    # v19.6a [Q4] (before: {"ok": False, "why": "lots"}): 코스피는 산 날 전 종가(9/30 = 100)에 20만원어치, 판 날 전 종가(100)에
+    # 판 비율만큼 팔고(10만 + 9만), 남은 100단위 × 110 = 1만 1,000 → (11,000 + 190,000) / 200,000 − 1 = 0.5%
+    # 내 포트폴리오 = (지금 1만 + 판 돈 9만 + 9만) / 20만 − 1 = −5% (가진 종목 값이 없으면 null)
+    k1, k2 = got["k"][1], got["k"][2]
+    assert got["k"][0] is True and k1["ok"] and abs(k1["ret"] - 0.005) < 1e-12 and k1["mine"] is None
+    assert k2["ok"] and abs(k2["ret"] - 0.005) < 1e-12 and abs(k2["mine"] + 0.05) < 1e-12 and k2["start"] == "2026-10-01"
     assert got["imp"]["part"] == "imported" and "imported portfolio" in got["imp"]["why"]     # 만든 포트폴리오에는 가져온 줄이 없어요

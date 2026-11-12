@@ -28,6 +28,11 @@
 //   history  [{ t, nk, out, cls?, imported?, purchases?, sales?, divs? }] records of a stock taken out of the portfolio
 //            (v19.6 A.3): they need no matching holding, and a later dividend of that stock goes into its entry.
 //   limits   { stock?, ind? } the two concentration rules' limits in % (defaults 30 and 35, pf.js), when the user changed them.
+//   splits   [{ t, date, r }] (v19.6a, A.6): the stock splits this portfolio's records are read with (held.js): from date on,
+//            one old share of t is r new ones; records dated before it stay as typed and are read at the new basis. The app
+//            stores a split (from data.json splits) together with a record of that stock, so the store's own check (no sale
+//            below 0 shares) reads the records exactly as the screens do and a sale of the new share count is never refused.
+//            One per stock and date.
 //   limitsTs when 내 규칙 정하기 last saved them (v19.3d2; ms, with or without a limits part: a 저장 at the defaults leaves
 //            none), so two copies and a records file keep the later limits. Beside limits, not in it: v19.3d (#83) reads
 //            limits strictly and passes portfolio keys it does not know, so a revert still reads every portfolio.
@@ -59,7 +64,7 @@
 // aside with a console message naming it (portfolio, part, row, stock, reason), the other portfolios stay readable, and
 // the first write keeps the stored text under a backup key, so nothing is ever lost.
 import { okAssume } from "./dcf.js";
-import { okUnits, belowZero, importedUnits, UNIT } from "./held.js";
+import { okUnits, belowZero, importedUnits, UNIT, okSplit } from "./held.js";
 
 export const STORE_KEY = "baepsae2.v1";
 export const PREVIEW_STORE_KEY = "baepsae2.preview.v1";
@@ -90,7 +95,7 @@ const CCY = ["KRW", "USD"];
 const okTs = (x) => Number.isSafeInteger(x) && x > 0;                 // a time in ms (Date.now())
 
 // The version-2-only parts of a portfolio (any of them present makes the store v2).
-export const V2_DECK_PARTS = ["kind", "imported", "sales", "divs", "history", "limits", "limitsTs"];
+export const V2_DECK_PARTS = ["kind", "imported", "sales", "divs", "history", "limits", "limitsTs", "splits"];
 export const hasV2Parts = (d) => !!(d && Array.isArray(d.decks) && d.decks.some((x) => plainObj(x) && V2_DECK_PARTS.some((k) => x[k] != null)));
 export const versionFor = (d) => (hasV2Parts(d) ? STORE_VERSION : BASE_VERSION);
 
@@ -213,12 +218,12 @@ function recordsProblem(x, today, holds, prefix = "") {
   for (let i = 0; i < (lists.divs || []).length; i++) { const p = divProblem(lists.divs[i], i, today, holds, prefix + "divs"); if (p) return p; }
   const ip = idsProblem(lists, prefix);
   if (ip) return ip;
-  const low = belowZero({ imported: imp, purchases: lists.purchases || [], sales: lists.sales || [] });
+  const low = belowZero({ imported: imp, purchases: lists.purchases || [], sales: lists.sales || [], splits: x.splits, createdAt: x.createdAt });
   if (low) return bad(prefix + "sales", null, low.t, `sold more than held (${low.date || "undated"})`);
   return null;
 }
 
-function historyProblem(hs, today) {
+function historyProblem(hs, today, splits = null, createdAt = null) {
   if (!Array.isArray(hs)) return bad("history", null, null, "not a list");
   for (let i = 0; i < hs.length; i++) {
     const h = hs[i];
@@ -229,7 +234,7 @@ function historyProblem(hs, today) {
     if (h.ts != null && !okTs(h.ts)) return bad("history", i, h.t, "time taken out (ts) is not valid");
     for (const k of ["purchases", "sales", "divs"]) if (h[k] != null && !Array.isArray(h[k])) return bad("history", i, h.t, k + " is not a list");
     if (h.imported != null && !plainObj(h.imported)) return bad("history", i, h.t, "imported is not one row");
-    const recs = { purchases: h.purchases || [], sales: h.sales || [], divs: h.divs || [], imported: h.imported ? [h.imported] : [] };
+    const recs = { purchases: h.purchases || [], sales: h.sales || [], divs: h.divs || [], imported: h.imported ? [h.imported] : [], splits, createdAt };
     const p = recordsProblem(recs, today, (t) => t === h.t, `history[${i + 1}].`);
     if (p) return p;
   }
@@ -245,6 +250,23 @@ function settingsProblem(s) {
     if (!isStr(id, 40) || !(Number.isInteger(v) && v >= 0 && v <= 100)) return bad("settings", null, null, `points for ${id} are not a whole number`);
   }
   if (s.strict != null && !isStr(s.strict, 40)) return bad("settings", null, null, "strictness is not a name");
+  return null;
+}
+
+// v19.6a: the stock splits a portfolio stores (see the top of this file). A split may name a stock the portfolio no longer
+// holds (its records moved into history); its date is a real date (data.json lists splits up to 3 years back; one dated
+// after today is not a record of the user's and is refused like any other future date).
+function splitsProblem(l, today) {
+  if (!Array.isArray(l)) return bad("splits", null, null, "not a list");
+  const seen = new Set();
+  for (let i = 0; i < l.length; i++) {
+    const s = l[i];
+    if (!plainObj(s) || !okStockCode(s.t) || !okSplit(s) || !isDate(s.date) || (today && s.date > today) || Object.keys(s).some((k) => !["t", "date", "r"].includes(k))) {
+      return bad("splits", i, s && s.t, "not a split (code, date, ratio above 0 and not 1)");
+    }
+    if (seen.has(s.t + "|" + s.date)) return bad("splits", i, s.t, "the same split twice");
+    seen.add(s.t + "|" + s.date);
+  }
   return null;
 }
 
@@ -274,6 +296,7 @@ export function deckProblem(x, today) {
     }
   }
   const holds = (t) => x.holdings.some((h) => h.t === t);
+  if (x.splits != null) { const p = splitsProblem(x.splits, today); if (p) return p; }
   if (x.kind != null && x.kind !== "imported") return bad("kind", null, null, "unknown kind");
   if (x.imported != null && x.kind !== "imported") return bad("imported", null, null, "imported rows belong to an imported portfolio only");
   if (x.kind === "imported") {
@@ -283,7 +306,7 @@ export function deckProblem(x, today) {
   }
   const rp = recordsProblem(x, today, holds);
   if (rp) return rp;
-  if (x.history != null) { const p = historyProblem(x.history, today); if (p) return p; }
+  if (x.history != null) { const p = historyProblem(x.history, today, x.splits, x.createdAt); if (p) return p; }
   if (x.limits != null) {
     if (!plainObj(x.limits)) return bad("limits", null, null, "not an object");
     for (const k of Object.keys(x.limits)) {
@@ -658,6 +681,11 @@ function unionDeck(cur, other) {
     out.imported = [...ci, ...oi.filter((r) => r.t != null && !ci.some((y) => y.t === r.t)), ...named.slice(ci.filter((r) => r.t == null).length)];
   }
   for (const k of ["sales", "divs", "history"]) { const u = unionRecords(cur[k], other[k], where); if (u) out[k] = u; }
+  // v19.6a splits: one per stock and date, the current copy's wins (both came from the same data.json, so they agree)
+  if (Array.isArray(cur.splits) || Array.isArray(other.splits)) {
+    const cs = Array.isArray(cur.splits) ? cur.splits : [];
+    out.splits = [...cs, ...(Array.isArray(other.splits) ? other.splits : []).filter((s) => !cs.some((y) => plainObj(y) && plainObj(s) && y.t === s.t && y.date === s.date))];
+  }
   // the same stock taken out in both copies (on another day): one entry, the current copy's
   if (Array.isArray(out.history)) {
     const mine = new Set((cur.history || []).map(entryKey)), n = (cur.history || []).length;

@@ -36,14 +36,59 @@ export function importedUnits(r) {
 // An imported row valued by amount (금액으로 넣기): its share count is derived, so it can only be sold all at once (v19.6 A.2).
 export const byAmount = (r) => !!r && r.qty == null && r.amountWon != null;
 
+// ---------------- stock splits (v19.6a, docs/tasks/v19.6-records-alerts-dark.md A.6) ----------------
+// A split { t, date, r }: from `date` on, one old share of t is r new shares (4 for a 4:1 split, 0.1 for a 10:1 주식병합).
+// Records stay as typed; a record dated before the split is read at the new basis (quantity x r, price / r; its money is
+// the same). Two sources:
+//   recs.splits          the splits a portfolio stored with its records (store.js validates the store with these only, so a
+//                        sale of the new share count is never refused: the app stores the split with the record that needs it);
+//   recs[VIEW_SPLITS]    data.json's splits for that portfolio's stocks, put on an in-memory copy of the portfolio for the
+//                        screens (lots.js withDataSplits). A Symbol key: JSON.stringify and the store's checks never see it,
+//                        so it is never written.
+// The same split in both counts once. An imported row without a date counts as typed on the day the portfolio was made
+// (recs.createdAt): a split after that day applies to it, one before it does not (the user typed the new share count).
+export const VIEW_SPLITS = Symbol("data.json splits for the screens");
+const SPLIT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const okSplit = (s) => !!s && typeof s === "object" && typeof s.t === "string" && s.t.length > 0 && typeof s.date === "string" && SPLIT_DATE.test(s.date)
+  && isNum(s.r) && s.r > 0 && s.r !== 1 && s.r <= 1000 && s.r >= 0.001;
+// Every split of the record set, one per (stock, date), oldest first. Map t -> [{ date, r }].
+export function splitsOf(recs) {
+  const m = new Map();
+  const seen = new Set();
+  for (const s of [...(recs && Array.isArray(recs.splits) ? recs.splits : []), ...(recs && Array.isArray(recs[VIEW_SPLITS]) ? recs[VIEW_SPLITS] : [])]) {
+    if (!okSplit(s) || seen.has(s.t + "|" + s.date)) continue;
+    seen.add(s.t + "|" + s.date);
+    if (!m.has(s.t)) m.set(s.t, []);
+    m.get(s.t).push({ date: s.date, r: s.r });
+  }
+  for (const l of m.values()) l.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return m;
+}
+// The factor a record of stock t dated `date` is read with: the product of r over its splits dated after it (1: none).
+export function splitFactor(splits, t, date) {
+  const l = splits && splits.get(t);
+  if (!l || !date) return 1;
+  let f = 1;
+  for (const s of l) if (date < s.date) f *= s.r;
+  return f;
+}
+// The date a record counts from for splits: its own, or (an undated imported row) the day the portfolio was made.
+export const splitDateOf = (r, recs) => (r && typeof r.date === "string" && r.date ? r.date
+  : recs && typeof recs.createdAt === "string" ? recs.createdAt : "");
+const scaled = (u, f) => (u == null ? null : f === 1 ? u : (okU(Math.round(u * f)) ? Math.round(u * f) : null));
+
 // The events of one record set ({ imported, purchases, sales }: a portfolio or one history entry), oldest first:
 // undated imported rows first, then by date; on one date imported, then purchases, then sales.
+// v19.6a: units at today's share basis (splits above).
 function events(recs, t) {
   const out = [];
+  const sp = splitsOf(recs);
   const add = (list, kind, units) => {
     for (const r of Array.isArray(list) ? list : []) {
       if (!r || typeof r.t !== "string" || (t != null && r.t !== t)) continue;
-      const u = units(r);
+      const u0 = units(r);
+      if (u0 == null) continue;
+      const u = scaled(u0, splitFactor(sp, r.t, splitDateOf(r, recs)));
       if (u == null) continue;
       out.push({ t: r.t, date: typeof r.date === "string" ? r.date : "", kind, u });
     }
