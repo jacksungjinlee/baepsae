@@ -3511,11 +3511,16 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
     rows = rank_ts(page)
     nums = page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()
     L = C["rank"]["line"]
-    report = mk == "kr" and (chip in ("mine", "div") or (chip == "crit" and crit in ("value", "profit", "stable", "growth")))
+    # 사업보고서 숫자 목록만 '{year}년 사업보고서 기준' (가치는 최근 분기 자본이라 아니에요), 그리고 보이는 줄이 모두 그 한 해일 때만
+    report = mk == "kr" and (chip == "div" or (chip == "crit" and crit in ("profit", "stable", "growth"))
+                             or (chip == "mine" and any(RANK_SETTINGS["points"].get(c) for c in ("profit", "stable", "growth", "div"))))
+    years = {by_t(stocks)[t].get("fy") if by_t(stocks)[t].get("fy") is not None else (coby.get(t) or {}).get("fy") for t in rows} if report else set()
     if mk == "us":
         assert date == "10월 30일 종가 (미국 시간)", date
+    elif report and len(years) == 1 and None not in years:
+        assert date == f"10월 30일 종가 · {years.pop()}년 사업보고서 기준", (chip, crit, date)
     else:
-        assert (RANK_REPORT.match(date) if report else date == "10월 30일 종가"), (chip, crit, date)
+        assert date == "10월 30일 종가", (chip, crit, date, years)
     assert 0 < len(rows) <= 10, (chip, rows)
     if chip in ("cap", "val", "surge", "crit"):
         want = rank_expect(stocks, mk, chip, crit)[:10]
@@ -3666,13 +3671,12 @@ def scene_rank(R, files, width):
         rank_wait(page, "data-pause", "focus")
         page.evaluate("() => document.activeElement.blur()")
         rank_wait(page, "data-moving", "1")
-        win.dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True, "bubbles": True})     # 손가락이 닿은 동안
-        rank_wait(page, "data-pause", "touch")
-        page.evaluate("() => window.dispatchEvent(new PointerEvent('pointercancel', { pointerType: 'touch' }))")   # 쪽을 끌어 올려도 손가락은 아직
-        page.wait_for_timeout(200)
-        assert win.get_attribute("data-pause") == "touch"
-        page.evaluate("() => window.dispatchEvent(new Event('touchend'))")
-        rank_wait(page, "data-moving", "1")
+        for end in ("new PointerEvent('pointerup', { pointerType: 'touch' })", "new PointerEvent('pointercancel', { pointerType: 'touch' })",
+                    "new Event('touchend')", "new Event('touchcancel')"):          # 손가락이 닿은 동안 멈추고, 어떻게 끝나든 다시 움직여요
+            win.dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
+            rank_wait(page, "data-pause", "touch")
+            page.evaluate("(e) => window.dispatchEvent(eval(e))", end)
+            rank_wait(page, "data-moving", "1")
         page.evaluate("() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); }")
         rank_wait(page, "data-pause", "hidden")                                # 탭이 숨으면
         page.evaluate("() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); }")
@@ -3795,6 +3799,116 @@ def scene_rank_still(R, files, width):
         srv.shutdown()
 
 
+def scene_rank_r1(R, files, width):
+    """v19.5b 리뷰 1차: 오래 누른 뒤 떼면 회사가 열리지 않아요(짧게 누르면 열려요) · 키보드로 간 줄은 창 안에 보이고 테두리가 있어요, 나오면 창이
+    맨 위로 · 오늘 거래대금이 없는 파일은 거래 급증 칩 없음(빈 줄 문구 아님) · 목록이 하나도 없는 시장은 빈 칸 대신 불러오기 실패 문구 ·
+    '0.0%' 는 빨강 · 파랑이 아니에요 · 미국 업종 안 회사는 같은 회사 한 줄(줄의 n 은 그대로) · 업종 안에서는 전체 보기 없음."""
+    S = f"종목 순위 리뷰 {width}"
+    f = clone(files)
+    by = by_t(f["data.json"]["stocks"])
+    by["005930"]["d1"], by["000660"]["d1"] = 0.04, -0.04                       # 둘 다 '0.0%'
+    srv, ctx, page, base = R.open(build_site(f), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def hold_and_tap():
+        wait_ready(page)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.scroll_into_view_if_needed()
+        rank_wait(page, "data-moving", "1")
+        row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').first
+        box = row.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()                                                       # 마우스: 600ms 누르고 떼면 열리지 않아요
+        page.wait_for_timeout(600)
+        page.mouse.up()
+        page.wait_for_timeout(400)
+        assert route(page) == "home", route(page)
+        btn = row.locator("button")                                             # 손가락: 500ms 누른 뒤 뗀 click 도 그래요
+        btn.dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
+        rank_wait(page, "data-pause", "touch")
+        page.wait_for_timeout(500)
+        btn.dispatch_event("pointerup", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
+        btn.dispatch_event("click")
+        page.wait_for_timeout(300)
+        assert route(page) == "home", route(page)
+        t = row.get_attribute("data-t")
+        btn.click()                                                             # 짧게 누르면 그 회사로
+        at(page, f"stocks/{t}")
+        page.go_back()
+        at(page, "home")
+        R.collect(page)
+    R.check(page, S, "오래 누른 뒤 떼면 회사가 열리지 않아요 (마우스 600ms · 손가락 500ms) · 짧게 누르면 열려요", hold_and_tap)
+
+    def keyboard():
+        page.mouse.move(2, 2)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.scroll_into_view_if_needed()
+        win.focus()
+        for _ in range(7):                                                       # 창 → 1 … 7번째 줄 (Tab)
+            page.keyboard.press("Tab")
+        active = page.evaluate("() => { const r = document.activeElement.closest('[data-ui-v2=\"rank-row\"]'); return r ? r.dataset.rank : null; }")
+        assert active == "7", active
+        rank_wait(page, "data-kb", "1")
+        page.wait_for_timeout(300)
+        assert page.locator('[data-ui-v2="rank-track"]').evaluate("(e) => getComputedStyle(e).animationName") == "none"
+        w, b = win.bounding_box(), page.evaluate("() => { const r = document.activeElement.getBoundingClientRect(); return { y: r.y, h: r.height }; }")
+        assert w["y"] - 0.5 <= b["y"] and b["y"] + b["h"] <= w["y"] + w["height"] + 0.5, (w, b)      # 고른 줄이 창 안에 보여요
+        ring = page.evaluate("() => { const s = getComputedStyle(document.activeElement); return [s.outlineStyle, s.outlineWidth, s.outlineColor]; }")
+        assert ring == ["solid", "2px", NAVY_RGB], ring
+        assert win.evaluate("(e) => e.scrollTop") > 0
+        page.evaluate("() => document.activeElement.blur()")
+        page.wait_for_function("() => { const w = document.querySelector('[data-ui-v2=\"rank-window\"]'); return w && w.scrollTop === 0 && !w.dataset.kb; }")
+        rank_wait(page, "data-moving", "1")                                      # 다시 #1 부터 움직여요
+        R.collect(page)
+    R.check(page, S, "키보드: 7번째 줄로 가면 줄이 멈춰 제자리 · 그 줄이 창 안에 보이고 남색 테두리 · 나오면 창이 맨 위로, 다시 움직여요", keyboard)
+
+    def zero_and_group():
+        rank_chip(page, "cap")
+        for t in ("005930", "000660"):                                          # '0.0%' 는 회색 (빨강 · 파랑 아님)
+            ch = page.locator(RANK_LIST + f' [data-ui-v2="rank-row"][data-t="{t}"] [data-ui-v2="rank-change"]')
+            assert ch.inner_text() == "0.0%" and ch.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", (t, ch.inner_text())
+        rank_market(page, "us")
+        rank_chip(page, "ind")
+        row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"][data-ind="platform"]')
+        n, k, avg = int(row.get_attribute("data-n")), int(row.get_attribute("data-k")), float(row.get_attribute("data-avg"))
+        row.locator("button").click()
+        page.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
+        ts = rank_ts(page)
+        assert "GOOGL" in ts and "GOOG" not in ts and n == 15, (ts, n)           # 같은 회사는 한 줄 · n 은 왜 움직였나 그대로
+        assert fillp(C["rank"]["up" if avg >= 0 else "down"], n=n, k=k) in page.locator('[data-ui-v2="rank-group"]').inner_text()
+        assert page.locator('[data-ui-v2="rank-all"]').count() == 0              # 업종 안에서는 전체 보기 없음 (돌아가기가 업종 목록으로)
+        R.collect(page)
+        page.locator('[data-ui-v2="rank-back"]').click()
+        page.locator('[data-ui-v2="rank-all"]').wait_for(state="visible")
+        rank_market(page, "kr")
+    R.check(page, S, "'0.0%' 는 회색 · 미국 업종 안 회사는 회사마다 한 줄(GOOGL 만, n 15 그대로) · 업종 안에서는 전체 보기 없음", zero_and_group)
+    ctx.close()
+    srv.shutdown()
+
+    f2 = clone(files)                       # 오늘 거래대금(val)이 없는 파일 · 미국은 모두 5억 미만이고 오늘 변화도 없음 (업종별 등락도 없음)
+    for x in f2["data.json"]["stocks"]:
+        if x["cls"] == "kr":
+            x.pop("val", None)
+        elif x["cls"] == "us":
+            x["val"], x["d1"] = 1.0, None
+    srv, ctx, page, base = R.open(build_site(f2), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def no_figures():
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
+        assert "surge" not in chips and "val" not in chips, chips                # '오늘은 … 없어요' 가 아니라 칩이 없어요 (빈 줄 문구 승인 전)
+        assert C["rank"]["surgeNone"] not in page.locator("body").inner_text()
+        rank_market(page, "us")
+        assert page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').count() == 0
+        fail = page.locator('[data-ui-v2="rank"] [data-ui-v2="rank-fail"] [data-ui-v2="load-fail"]')
+        assert fail.inner_text() == LOAD_FAIL and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-empty"], [data-ui-v2="rank-foot"]').count() == 0
+        R.collect(page)
+        rank_market(page, "kr")
+    R.check(page, S, "오늘 거래대금이 없는 파일: 거래 급증 · 거래대금 칩 없음 · 목록이 하나도 없는 시장(미국)은 빈 칸 대신 불러오기 실패 문구", no_figures)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_rank_pc(R, files):
     """PC (1280): 다시 온 방문자의 홈 오른쪽 칸, 시장 한눈에 밑에 종목 순위 · 창에 7줄(58px) · 움직여요 · 가로 스크롤 없음 · 전체 보기 → 종목 탭."""
     S = f"종목 순위 PC {PC_W}"
@@ -3811,6 +3925,14 @@ def scene_rank_pc(R, files):
         win.scroll_into_view_if_needed()
         rank_wait(page, "data-moving", "1")
         assert page.locator(MASCOT_IN_MAIN).count() == 0
+        chips = rank.locator('[data-ui-v2="rank-chips"]')                   # PC: 칩 줄은 옆으로 밀지 않고 여러 줄로
+        assert chips.evaluate("(e) => [getComputedStyle(e).flexWrap, e.scrollWidth <= e.clientWidth]") == ["wrap", True]
+        ys = {round(b["y"]) for b in (c.bounding_box() for c in chips.locator('[data-ui-v2="rank-chip"]').all())}
+        assert len(ys) >= 2, ys
+        side = page.locator('[data-ui-v2="col-side"]').bounding_box()
+        for c in chips.locator('[data-ui-v2="rank-chip"]').all():
+            b = c.bounding_box()
+            assert side["x"] - 0.5 <= b["x"] and b["x"] + b["width"] <= side["x"] + side["width"] + 0.5, (b, side)
         for w in (1024, 1280, 1440):
             page.set_viewport_size({"width": w, "height": PC_H})
             page.wait_for_timeout(100)
@@ -3826,7 +3948,7 @@ def scene_rank_pc(R, files):
         y = full.bounding_box()["y"]
         assert bar["y"] + bar["height"] - 1 <= y < PC_H / 2, (bar, y)            # 위 막대에 가리지 않고 화면 안
         R.collect(page)
-    R.check(page, S, "PC: 오른쪽 칸 시장 한눈에 밑 · 창 7줄 · 움직임 · 1024–1440px 가로 스크롤 없음 · 전체 보기 → 종목 탭(위 막대 밑)", side)
+    R.check(page, S, "PC: 오른쪽 칸 시장 한눈에 밑 · 창 7줄 · 움직임 · 칩은 여러 줄(칸 안) · 1024–1440px 가로 스크롤 없음 · 전체 보기 → 종목 탭(위 막대 밑)", side)
     ctx.close()
     srv.shutdown()
 
@@ -9049,7 +9171,8 @@ def main():
                       lambda: scene_stale_after(R, files, width),     # v19.1c: 늦음 경고 시각 (staleAfter)
                       lambda: scene_stale_recheck(R, files, width),   # v19.1c: 열어 둔 화면도 staleAfter 가 지나면 경고
                       lambda: scene_rank(R, files, width),             # v19.5b 홈 · 종목 순위: 칩마다 목록 · 움직임 · 전체 보기
-                      lambda: scene_rank_still(R, files, width)]       # v19.5b: 움직임 줄이기 · 멈춘 데이터 · 내 기준 칩 · 불러오기 실패
+                      lambda: scene_rank_still(R, files, width),       # v19.5b: 움직임 줄이기 · 멈춘 데이터 · 내 기준 칩 · 불러오기 실패
+                      lambda: scene_rank_r1(R, files, width)]          # v19.5b 리뷰 1차: 오래 누름 · 키보드 · 빈 목록 · 0.0% · 미국 업종
             for fn in scenes:
                 try:
                     fn()

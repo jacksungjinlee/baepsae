@@ -4,7 +4,7 @@
 - 주소(src/v2/routes.js): #home · #portfolio · #stocks · #market · #about · #portfolio/build · #home/why, 없는 주소는 #home
 - 예전 뱁새 바로가기(src/deeplink.js): #macro · #disc · #corp=코드 · #info=glossary|sources 만, 나머지는 아무것도 안 해요
 - 거래대금 (v19.5b: 종목 순위의 거래대금 칩, ranks.js — 그 전의 거래대금 상위 종목 stocklist.popularLists 를 대신해요): 한국 · 미국 따로,
-  거래대금(val) 큰 순, 펀드 빼고, 목록마다 날짜 (나머지 목록 규칙은 tests/test_v2_ranks.py)
+  거래대금(val) 큰 순, 펀드 빼고 (나머지 목록 규칙은 tests/test_v2_ranks.py, 목록의 날짜는 tests/smoke_v2.py)
 - 시장 네 칸(marketTiles): 코스피 · S&P 500 은 마지막 두 종가로 변화, 국고채 3년 · 원/달러는 수준만 (변화를 지어내지 않아요),
   칸마다 자기 날짜, 값이나 날짜가 없으면 값도 없음('–')
 - 찾기(searchStocks) · 내 포트폴리오 종목(myStocks) · 예전에 저장한 기본 이름(legacy.js, 보여 줄 때만) · 포트폴리오에서 빼기
@@ -95,7 +95,8 @@ def test_the_old_app_reads_only_its_own_deep_links():
 def test_trading_value_chip_splits_by_market_ranks_by_trading_value_without_funds():
     """예전 시험(test_popular_lists_are_split_by_market_in_the_pipelines_order_without_funds)이 본 것을 칩 판으로 그대로 봐요:
     한국 · 미국 따로, 거래대금 큰 순(파이프라인의 popular 순서와 같은 기준: 한국 그날 거래대금, 미국 야후 평균), 펀드 빼고, 목록에 없는
-    코드는 상관없고, 불러오지 못했으면 없음. 날짜는 시장마다 따로 (pxDate · usPxDate: 화면의 '{date} 종가' 와 '(미국 시간)')."""
+    코드는 상관없고, 불러오지 못했으면 없음. 목록마다 따로인 날짜('{date} 종가' · '{date} 종가 (미국 시간)')는 순수 함수가 아니라 화면이
+    정해서, 여기가 아니라 브라우저 시험이 봐요 (tests/smoke_v2.py scene_stocks · scene_us_date)."""
     stocks = [st("000660", "SK하이닉스", val=43010.5, val20=30000.0), st("005930", "삼성전자", val=32901.3, val20=30000.0),
               st("069500", "KODEX 200", etf=True, val=99999.0, val20=99999.0), st("000270", "기아", val=1500.0, val20=1400.0),
               st("NVDA", "NVIDIA Corporation", "us", val=272813.8), st("SPY", "SPDR S&P 500", "us", etf=True, val=999999.0),
