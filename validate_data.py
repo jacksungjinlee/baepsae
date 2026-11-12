@@ -1165,7 +1165,12 @@ def _tickers(ts):
 
 def check_us_fcur_more(rep, data, us, pdata):
     """#114 리뷰 (더하기만): ① 재무제표 통화를 모르는 회사(data.json usFcurUnknown) — 경고만, 이름을 남겨요. ② 직전 발행본에서 fcur 가 있던
-    미국 종목이 오늘도 목록에 있는데 fcur 가 없으면: PER · PBR · 배당수익률이 있으면 실패(틀린 숫자가 다시 나가는 경우), 없으면 경고."""
+    미국 종목이 오늘도 목록에 있는데 fcur 가 없으면 (코디네이터 결정 2026-11-13 — 야후가 달러로 바뀌었다고 하면 발행을 막지 않아요):
+      · 야후가 이제 달러 재무제표라고 함 (usFcurUnknown 이 있고 그 안에 없음 · 오늘 상세 정보가 붙음 = 이름이 티커가 아님) → 경고, 숫자가
+        있든 없든 ('숫자를 확인하세요')
+      · 오늘 통화 정보가 없음 (usFcurUnknown 안 · 그 칸이 없는 발행 · 상세 정보 없음) 인데 PER · PBR · 배당수익률이 있음 → 실패. 파이프라인은
+        예전 통화를 그대로 쓰니(us_info_merge) 일어날 수 없는 일이라, 실패는 무언가 고장 났다는 뜻이에요
+      · 통화 정보가 없고 숫자도 없음 → 경고"""
     unk = data.get("usFcurUnknown")
     if isinstance(unk, list):
         rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, f"{len(unk)}곳" + (f": {_tickers(unk)}" if unk else ""),
@@ -1185,14 +1190,24 @@ def check_us_fcur_more(rep, data, us, pdata):
         return
     had = {s.get("t") for s in us_stocks(pdata) if s.get("fcur")}
     lost = [s for s in us if s.get("t") in had and not s.get("fcur")]
-    wrong = [s["t"] for s in lost if any(s.get(k) is not None for k in US_FCUR_BLANK[:3])]
-    names = [s["t"] for s in lost]
-    rep.add("어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음", not wrong,
-            f"{len(names)}곳" + ((f" (PER·PBR·배당 있음 {len(wrong)}곳)" if wrong else "") + f": {_tickers(wrong + [t for t in names if t not in wrong])}"
-                                  if names else ""),
-            "없어야 함 (PER·PBR·배당이 다시 나가면 실패 · 숫자 없으면 경고)", warn=bool(names) and not wrong)
-    if names:
-        rep.detail("어제 fcur 가 있었는데 오늘 없는 미국 종목 (앞쪽이 숫자가 다시 나간 종목)", wrong + [t for t in names if t not in wrong])
+    unk_set = set(unk) if isinstance(unk, list) else None
+    has_num = lambda s: any(s.get(k) is not None for k in US_FCUR_BLANK[:3])          # noqa: E731
+    said_usd = lambda s: unk_set is not None and s.get("t") not in unk_set and bool(s.get("nk")) and s.get("nk") != s.get("t")   # noqa: E731
+    usd = [s["t"] for s in lost if said_usd(s)]
+    broken = [s["t"] for s in lost if not said_usd(s) and has_num(s)]
+    quiet = [s["t"] for s in lost if not said_usd(s) and not has_num(s)]
+    parts = [f"통화 정보 없이 숫자 있음 {len(broken)}곳: {_tickers(broken)}" if broken else None,
+             f"달러로 바뀜 {len(usd)}곳 (야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요): {_tickers(usd)}" if usd else None,
+             f"통화 정보 · 숫자 없음 {len(quiet)}곳: {_tickers(quiet)}" if quiet else None]
+    rep.add("어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음", not broken,
+            f"{len(lost)}곳" + "".join(f" · {x}" for x in parts if x),
+            "없어야 함 (통화 정보 없이 PER·PBR·배당이 다시 나가면 실패 · 야후가 달러라고 하거나 숫자가 없으면 경고)",
+            warn=bool(lost) and not broken)
+    for title, ts in (("어제 fcur 가 있었는데 오늘 통화 정보 없이 PER·PBR·배당이 나간 미국 종목 (고장)", broken),
+                      ("어제 fcur 가 있었는데 야후가 이제 달러 재무제표라고 하는 미국 종목 (숫자를 확인하세요)", usd),
+                      ("어제 fcur 가 있었는데 오늘 통화 정보도 숫자도 없는 미국 종목", quiet)):
+        if ts:
+            rep.detail(title, ts)
 
 
 def is_foreign(code):

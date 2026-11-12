@@ -120,6 +120,19 @@ serve the `docs/` folder (two of its files must answer "not found").
   script refuses a day on which a built-in stock of the old app is missing or blank, or gold is an estimate): run
   `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
   `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.
+- **US companies whose financial statements are not in dollars (since #114).** The daily run marks them `fcur` (Yahoo's
+  financialCurrency, 27 on 2026-11-12) and blanks their PER, PBR and dividend yield (a 0% stays only when Yahoo clearly
+  shows no dividend in the last 12 months). Four gate rows:
+  - "미국 재무제표 통화가 달러가 아닌 회사: … 빈 칸" and "미국 PBR 0 근처라 비운 종목: …" fail if a blanked number is back:
+    a pipeline bug, never the market. Fix the code; never loosen the row.
+  - "미국 재무제표 통화를 모르는 회사 (경고만)" names companies whose currency Yahoo did not give (FISV on 11-12). They are
+    not blanked; usually Yahoo answers again the next day. Look at their PBR on the site if the same name stays for days.
+  - "어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음": **fails** only when such a company has no currency information
+    today and its PER, PBR or yield is back. The run keeps the last known currency when Yahoo leaves it out, so a failure
+    means something broke (the US info cache was lost, or the merge stopped working): fix it, don't loosen the row.
+    It **warns** with "야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요" when Yahoo now says the company reports in dollars
+    (numbers or not; the publish goes out): open the company on the site and compare its PBR and PER with the company's
+    own report; if they look wrong, tell Jack. It also warns when a company has neither a currency nor numbers.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.

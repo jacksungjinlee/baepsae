@@ -525,18 +525,42 @@ def test_gate_warns_on_unknown_currency_and_never_fails():
     assert rows[UNK][3] == "PASS" and "기록 없음" in rows[UNK][1]
 
 
-def test_gate_fails_when_yesterdays_currency_vanishes_with_numbers_back():
+def test_lost_currency_row_cases():
+    """어제 fcur 가 있던 종목이 오늘 fcur 없이 목록에 있을 때 (코디네이터 결정 2026-11-13):
+    통화 정보가 없는데 PER · PBR · 배당이 있으면 실패 (고장) · 야후가 이제 달러라고 하면 숫자가 있든 없든 경고 · 정보도 숫자도 없으면 경고."""
     prev = {"stocks": [us_row("TSM", fcur="TWD"), us_row("KSPI", fcur="KZT"), us_row("ERIC", fcur="SEK"), us_row("GONE", fcur="EUR")]}
-    today_ok = [us_row("TSM", fcur="TWD"), us_row("KSPI", fcur="KZT"), us_row("ERIC", fcur="SEK")]          # GONE 은 목록에서 빠짐
-    rows, _ = more_rows({"usFcurUnknown": []}, today_ok, prev)
+    named = lambda t, **kw: us_row(t, nk=f"{t} Corp", **kw)     # noqa: E731 — 오늘 상세 정보가 붙은 종목 (이름이 티커가 아님)
+    # 1. 그대로 (GONE 은 목록에서 빠짐): 통과
+    rows, _ = more_rows({"usFcurUnknown": []}, [named("TSM", fcur="TWD"), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
     assert rows[LOST][3] == "PASS" and rows[LOST][1] == "0곳"
-    lost_quiet = [us_row("TSM", fcur="TWD"), us_row("KSPI"), us_row("ERIC", fcur="SEK")]                     # 통화가 빠졌지만 숫자 없음
-    rows, rep = more_rows({"usFcurUnknown": ["KSPI"]}, lost_quiet, prev)
-    assert rows[LOST][3] == "WARN" and rows[LOST][1] == "1곳: KSPI"
-    back = [us_row("TSM", per=26.8, pbr=78.88, dy=0.94), us_row("KSPI", pbr=0.01), us_row("ERIC")]            # 틀린 숫자가 다시 나감
-    rows, rep = more_rows({"usFcurUnknown": ["TSM", "KSPI", "ERIC"]}, back, prev)
-    assert rows[LOST][3] == "FAIL" and rows[LOST][1] == "3곳 (PER·PBR·배당 있음 2곳): TSM, KSPI, ERIC", rows[LOST]
-    assert ("어제 fcur 가 있었는데 오늘 없는 미국 종목 (앞쪽이 숫자가 다시 나간 종목)", ["TSM", "KSPI", "ERIC"]) in rep.details
+    # 2. 통화 정보 없음 (usFcurUnknown 안) · 숫자 없음: 경고
+    rows, rep = more_rows({"usFcurUnknown": ["KSPI"]}, [named("TSM", fcur="TWD"), named("KSPI"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "WARN" and rows[LOST][1] == "1곳 · 통화 정보 · 숫자 없음 1곳: KSPI", rows[LOST]
+    # 3. 통화 정보 없음 · 숫자 다시 나감: 실패
+    rows, rep = more_rows({"usFcurUnknown": ["TSM"]}, [named("TSM", per=26.8, pbr=78.88, dy=0.94), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "FAIL" and rows[LOST][1] == "1곳 · 통화 정보 없이 숫자 있음 1곳: TSM", rows[LOST]
+    assert ("어제 fcur 가 있었는데 오늘 통화 정보 없이 PER·PBR·배당이 나간 미국 종목 (고장)", ["TSM"]) in rep.details
+    # 4. 야후가 이제 달러라고 함 (usFcurUnknown 밖 · 상세 정보 있음) · 숫자 다시 나감: 실패가 아니라 경고
+    rows, rep = more_rows({"usFcurUnknown": []}, [named("TSM", per=26.8, pbr=24.0, dy=0.94), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "WARN", rows[LOST]
+    assert rows[LOST][1] == "1곳 · 달러로 바뀜 1곳 (야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요): TSM"
+    assert ("어제 fcur 가 있었는데 야후가 이제 달러 재무제표라고 하는 미국 종목 (숫자를 확인하세요)", ["TSM"]) in rep.details
+    # 5. 달러로 바뀜 · 숫자 없음: 경고 (같은 문구)
+    rows, _ = more_rows({"usFcurUnknown": []}, [named("TSM"), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "WARN" and "달러로 바뀜 1곳" in rows[LOST][1]
+    # 6. 오늘 발행에 usFcurUnknown 칸이 없음 (모름) · 숫자 있음: 실패
+    rows, _ = more_rows({}, [named("TSM", pbr=78.88), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "FAIL", rows[LOST]
+    # 7. 상세 정보가 붙지 않은 종목 (이름 = 티커): 숫자 있으면 실패 · 없으면 경고 (달러라고 한 적이 없어요)
+    rows, _ = more_rows({"usFcurUnknown": []}, [us_row("TSM", nk="TSM", pbr=78.88), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "FAIL"
+    rows, _ = more_rows({"usFcurUnknown": []}, [us_row("TSM", nk="TSM"), named("KSPI", fcur="KZT"), named("ERIC", fcur="SEK")], prev)
+    assert rows[LOST][3] == "WARN" and rows[LOST][1] == "1곳 · 통화 정보 · 숫자 없음 1곳: TSM"
+    # 8. 셋이 섞이면: 실패 하나가 줄을 실패로, 값에는 셋 모두 (실패 쪽이 먼저)
+    rows, rep = more_rows({"usFcurUnknown": ["KSPI", "ERIC"]}, [named("TSM", pbr=24.0), named("KSPI", pbr=0.01), named("ERIC")], prev)
+    assert rows[LOST][3] == "FAIL"
+    assert rows[LOST][1] == ("3곳 · 통화 정보 없이 숫자 있음 1곳: KSPI · 달러로 바뀜 1곳 (야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요): TSM"
+                             " · 통화 정보 · 숫자 없음 1곳: ERIC"), rows[LOST]
 
 
 def test_new_rows_inside_run_checks():
@@ -545,13 +569,18 @@ def test_new_rows_inside_run_checks():
     cus = {s["t"]: s for s in cur["data"]["stocks"]}
     pus[0]["fcur"] = "TWD"                                               # 어제는 통화가 있었는데 오늘은 없고 PBR 이 있어요
     cus[pus[0]["t"]]["pbr"] = 78.88
-    assert "fcur" not in cus[pus[0]["t"]]
-    cur["data"]["usFcurUnknown"] = [pus[0]["t"]]
-    rep = V.run_checks(cur, prev, final, dt.date(2026, 10, 31), count_between=lambda a, b: 1,
-                       sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
-                       now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
-    rows = {r[0]: r for r in rep.rows}
+    assert "fcur" not in cus[pus[0]["t"]] and cus[pus[0]["t"]]["nk"] != pus[0]["t"]
+    run = lambda: V.run_checks(cur, prev, final, dt.date(2026, 10, 31), count_between=lambda a, b: 1,   # noqa: E731
+                               sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
+                               now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
+    cur["data"]["usFcurUnknown"] = [pus[0]["t"]]                         # 통화 정보 없음 + 숫자: 실패 (발행을 막아요)
+    rows = {r[0]: r for r in run().rows}
     assert rows[LOST][3] == "FAIL" and rows[UNK][3] == "WARN", (rows[LOST], rows[UNK])
+    cur["data"]["usFcurUnknown"] = []                                    # 야후가 이제 달러라고 함 + 숫자: 경고 (발행은 나가요)
+    rep = run()
+    rows = {r[0]: r for r in rep.rows}
+    assert rows[LOST][3] == "WARN" and "야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요" in rows[LOST][1] and rows[UNK][3] == "PASS"
+    assert LOST not in {r[0] for r in rep.failed}
     live = V.run_checks(cur, None, final, dt.date(2026, 10, 31), mode="live", count_between=lambda a, b: 1,
                         sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
                         now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
