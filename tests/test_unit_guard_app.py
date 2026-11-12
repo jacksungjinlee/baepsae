@@ -310,3 +310,68 @@ def test_copy_line_is_jacks_and_recorded_as_approved():
     for f in ("app.html", "baepsae.html"):
         with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
             assert LINE in fh.read(), f                                   # 빌드한 두 페이지에 들어 있어요 (빌드를 다시 했어요)
+
+
+# ── 리뷰 #118 ──
+def test_the_growth_card_is_one_of_the_blanked_cards():
+    """N1: 내 기준과 맞는 정도의 그 줄은 가치 · 수익성 · 안정성 · 성장 카드에서 (성장 하나만 비어도)."""
+    got = run("""
+      const s = LOAD.byT.get(UNIT_T), co = LOAD.coByT.get(UNIT_T);
+      out = { cards: FX.UNIT_CARDS, growth: FX.unitRowsBlank(s, co, [{ id: 'growth', blank: true }]),
+        each: ['value', 'profit', 'stable', 'growth', 'div', 'lowVol', 'large'].map((id) => FX.unitRowsBlank(s, co, [{ id, blank: true }])),
+        notBlank: FX.unitRowsBlank(s, co, [{ id: 'growth', blank: false }]) };""", UNIT_T=UNIT_T)
+    assert got["cards"] == ["value", "profit", "stable", "growth"]
+    assert got["growth"] is True and got["each"] == [True, True, True, True, False, False, False] and got["notBlank"] is False
+
+
+STMT_LINE = "이 회사는 재무제표를 원화가 아닌 USD로 공시해서"
+
+
+def test_a_company_with_both_marks_shows_only_the_unit_line():
+    """N7: stmtCur 와 unitChk 가 둘 다 있으면 단위 줄만 (비운 숫자를 설명해요) — 2.0 회사 페이지 · 탭 · 자세히, 예전 뱁새 기업분석 · 기업 비교 ·
+    첫 화면 성적표. 통화만 있는 회사는 예전처럼 통화 줄."""
+    got = run("""
+      const log0 = console.info; console.info = () => {};                          // 회사 페이지의 안내 로그는 빼요 (결과 JSON 만)
+      const c = CORP.companies.find((x) => x.t === UNIT_T);
+      const nav = { setTab() {}, more() {}, back() {}, onWhy() {} };
+      const store = { data: { v: 2, decks: [] }, writable: false, key: 'baepsae2.v1', preview: false };
+      const page = (code, ctab) => renderToStaticMarkup(h(CO.Company, { load: LOAD, store, setStoreData() {}, pad: 0, code, ctab, disc: null, nav }));
+      const tabs = [null, 'earn', 'value', 'earn-more', 'value-more'];
+      const alone = tabs.map((ctab) => count(page(UNIT_T, ctab), LINE));          // unitChk 만일 때 (영역마다 한 번)
+      c.stmtCur = 'USD';                                                         // 두 표시 (시험 데이터의 삼성물산)
+      const both = tabs.map((ctab) => page(UNIT_T, ctab));
+      const view = renderToStaticMarkup(h(OLD.CompanyView, { data: CORP, t: UNIT_T, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} }));
+      const card = (lang) => text(renderToStaticMarkup(h(SH.ScoreCard, { c, sectors: CORP.sectors, onOpenCorp() {}, onQuickDiag() {}, lang,
+        asOf: { date: CORP.pxDate, publishedAt: CORP.publishedAt } })));
+      out = {
+        alone, unit: both.map((x) => count(x, LINE)), cur: both.map((x) => (x.match(/data-ui-v2="stmt-cur"/g) || []).length),
+        text: [FN.stmtCurText(LOAD.byT.get(UNIT_T), c), FN.unitChkText(LOAD.byT.get(UNIT_T), c)],
+        old: [count(view, LINE), /data-fix="stmt-cur"/.test(view)],
+        oldLine: renderToStaticMarkup(h(OF.StmtCurLine, { c })),
+        ko: card('ko'), en: card('en'),
+      };
+      c.stmtCur = 'USD'; delete c.unitChk;                                       // 통화만: 예전 그대로
+      const s = LOAD.byT.get(UNIT_T); const keep = s.unitChk; delete s.unitChk;
+      out.onlyCur = [FN.stmtCurText(s, c), /data-ui-v2="stmt-cur"/.test(page(UNIT_T, 'value')), /data-fix="stmt-cur"/.test(renderToStaticMarkup(h(OF.StmtCurLine, { c })))];
+      s.unitChk = keep; c.unitChk = keep; delete c.stmtCur; console.info = log0;""", UNIT_T=UNIT_T)
+    assert got["unit"] == got["alone"] and got["unit"][1:] == [1, 1, 1, 1] and got["unit"][0] >= 1, got
+    assert got["cur"] == [0, 0, 0, 0, 0], got["cur"]
+    assert got["text"][0] is None and got["text"][1] == LINE
+    assert got["old"] == [1, False] and got["oldLine"] == ""
+    assert got["ko"].count(LINE) == 1 and STMT_LINE not in got["ko"]
+    assert LINE not in got["en"] and "Loss-making or no financial data yet." not in got["en"]        # 영어: 단위 줄은 승인되지 않아 통화 줄(승인된 영어)이 있으면 그것
+    assert "files its statements in USD" in got["en"]
+    assert got["onlyCur"][0] and got["onlyCur"][0].startswith(STMT_LINE) and got["onlyCur"][1] and got["onlyCur"][2]
+
+
+def test_the_compare_table_names_a_currency_only_company_not_the_held_one():
+    got = run("""
+      const a = CORP.companies.find((x) => x.t === UNIT_T);
+      const b = CORP.companies.filter((x) => x.s === a.s && x.t !== UNIT_T).sort((x, y) => (y.cap || 0) - (x.cap || 0))[0];   // 비교 표의 첫 회사
+      a.stmtCur = 'USD'; b.stmtCur = 'JPY';
+      const log0 = console.info; console.info = () => {};
+      const html = renderToStaticMarkup(h(OLD.CompareView, { data: CORP, baseT: UNIT_T, onBack() {}, onOpen() {}, setExplain() {} }));
+      console.info = log0;
+      out = { unit: count(html, LINE), cur: [...html.matchAll(/data-fix="stmt-cur" data-cur="([A-Z]+)"/g)].map((m) => m[1]) };
+      delete a.stmtCur; delete b.stmtCur;""", UNIT_T=UNIT_T)
+    assert got["unit"] == 1 and got["cur"] == ["JPY"], got

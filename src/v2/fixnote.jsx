@@ -76,8 +76,10 @@ export function EpsOwnersNote({ load, now, style }) {
   return text ? <Note data-ui-v2="eps-owners" style={style}>{text}</Note> : null;
 }
 
-// The currency line for this company, or null (no stmtCur, a US stock, or the words not there).
+// The currency line for this company, or null (no stmtCur, a US stock, or the words not there). Not for a company the unit
+// check holds (unitChk): its blanks are explained by the unit line beside it, once (review #118 N7: never both lines).
 export function stmtCurText(s, co) {
+  if (unitHeldFor(s, co)) return null;
   const cur = stmtCurFor(s, co);
   return cur && C.co.stmtCur ? fill(C.co.stmtCur, { currency: cur }) : null;
 }

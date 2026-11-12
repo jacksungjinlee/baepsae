@@ -1496,7 +1496,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         <EpsFixLine many corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
         {/* 2026-11-08 (Jack): once, when a compared company files its statements in another currency (its numbers are blank):
             the first such company's currency (repair.js stmtCurOf) */}
-        {cols.some((c) => stmtCurOf(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c))} />}
+        {/* 리뷰 #118 N7: 단위 확인에 걸린 회사는 통화 줄이 아니라 아래 단위 줄로 */}
+        {cols.some((c) => stmtCurOf(c) && !unitHeld(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c) && !unitHeld(c))} />}
         {/* 2026-11-13 (Jack): once, when a compared company's numbers were blanked by the unit check (corp.json unitChk) */}
         {cols.some(unitHeld) && <UnitChkLine c={cols.find(unitHeld)} />}
       </Card>

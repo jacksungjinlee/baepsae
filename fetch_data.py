@@ -4253,7 +4253,10 @@ def income_check(kr_stocks, fin_map, mult_extra):
 #          회사(3~5월 · 사업보고서만 있는 회사)도 봐요. 300 배: 2026-11-12 발행본 2,128곳에서 진짜 회사는 0.010배(송우인포텍 · 합병 뒤
 #          주식 수) ~ 48배(아이에이 · 병합) — 주식 수 변화예요. 단위를 잘못 적으면 1,000 · 1,000,000 배예요.
 #   cap    자본금 ÷ 액면가(배당 표 · 원) = 그해 말 발행 주식 수의 상한이 오늘 주식 수의 UNIT_ANCHOR_MAX 배 이상이거나 1/… 이하 (납입자본으로
-#          읽은 자본금은 주식발행초과금이 섞여 빼요). 사업보고서 재무상태표의 단위를 봐요.
+#          읽은 자본금은 주식발행초과금이 섞여 빼요). 사업보고서 재무상태표의 단위를 봐요. 액면가가 없거나 0 · '-' 인 회사(무액면주식)는 안 봐요.
+#   eps · cap 은 금액이 원일 때만 (리뷰 #118): 재무제표를 원화가 아닌 통화로 낸 회사(not_won — stmtCur · 해외 기업 9…)는 금액(달러 등)과
+#          원으로 적힌 액면가 · 주식 수를 맞대면 안 돼요 (두산밥캣 · 아남전자: 자본금 0.4억 달러 ÷ 500원 → 0.0009배로 잘못 걸렸어요).
+#          그런 회사는 bs · scale · is · cf (같은 통화끼리의 비) 만 봐요. 몇 곳인지 unitChkCover.notWon.
 # 걸린 회사는 재무제표로 만든 숫자를 모두 비워요 (0 이 아니라 빈 칸 · 어느 재무제표가 맞는지 이 확인만으로는 알 수 없어서): data.json ·
 # corp.json 의 UNIT_BLANK, corp.json 의 3개년 금액 · 자본 · UNIT_BLANK_CORP (영수증 · EV 배수 · 재무 경고) · DCF 입력. 가치(vz) · 퀄리티(qz)
 # 점수는 add_percentiles 가 빈 칸을 빼고 매겨요 (다른 회사의 순위도 그 회사 없이). 배당(배당 표 — 금액마다 단위가 적힌 별도 표, 원)은 남겨요.
@@ -4320,7 +4323,10 @@ def _median_ratio(pairs, floor=0.0):
 
 def cap_ratio(s, fin, pref_shares=None):
     """자본금 ÷ 액면가(그해 말 발행 주식 수의 상한) ÷ 오늘 주식 수 (cap 기준값) 또는 None. 자본금은 parse_capital(_cap) — 없으면 재무제표의
-    '자본금'(cs3) — 이고 납입자본(src paid)은 빼요. 액면가는 배당 표(_bas par3, 원). 보통주만의 자본금이면 보통주 수와. (순수 함수)"""
+    '자본금'(cs3) — 이고 납입자본(src paid)은 빼요. 액면가는 배당 표(_bas par3, 원) — 없거나 0 · '-' (무액면주식)면 None. 보통주만의 자본금이면
+    보통주 수와. 원화가 아닌 재무제표(not_won)면 None (리뷰 #118 — 달러 자본금 ÷ 원 액면가). (순수 함수)"""
+    if not_won(s, fin):
+        return None
     cap = s.get("_cap") if isinstance(s.get("_cap"), dict) else None
     if cap and cap.get("src") == "paid":
         return None
@@ -4394,11 +4400,12 @@ def _unit_ev(u):
 
 def unit_guard(kr_stocks, fin_map, mult_extra, pref_shares=None):
     """공시 단위 확인 (위 설명) — fill_multiples 뒤, 점수(add_percentiles)·corp.json(build_corp)·incCheck 보다 먼저.
-    걸린 회사: data.json 종목의 UNIT_BLANK 를 지우고 unitChk = 이유 목록 · mult_extra 의 영수증(UNIT_EXTRA_KEYS)을 지우고 ·
-    fin_map 값에 unitChk 를 달아요 (build_corp 가 corp.json 금액을 비워요). 반환: {"hit": {코드: 이유}, "real": [PBR 이 낮지만 맞는 회사],
+    걸린 회사: data.json 종목의 UNIT_BLANK 를 지우고 unitChk = 이유 목록 · mult_extra 의 영수증(UNIT_EXTRA_KEYS)을 지워요 (build_corp 가 종목의
+    unitChk 를 보고 corp.json 금액을 비워요 — 표시는 종목 한 곳에만). 반환: {"hit": {코드: 이유}, "real": [PBR 이 낮지만 맞는 회사],
     "bal": 확인한 재무제표 수 Counter, "cover": data.json unitChkCover}. 로그는 크게, 이름과 함께.
     unitChkCover (회사 수): checked 읽은 재무제표 모두 자산 = 부채 + 자본 을 봄 · unchecked 자산총계 없이 저장된 재무제표가 있음 · noScale 분기
-    보고서가 없어 보고서 사이 배율을 못 봄 · anchor 기본주당이익이나 자본금 ÷ 액면가로 봄 · flows 손익 · 현금흐름 지난해 칸으로 봄."""
+    보고서가 없어 보고서 사이 배율을 못 봄 · anchor 기본주당이익이나 자본금 ÷ 액면가로 봄 · flows 손익 · 현금흐름 지난해 칸으로 봄 · notWon
+    원화가 아닌 재무제표라 기준값(eps · cap)을 보지 않음 (리뷰 #118)."""
     hit, real, cnt, names = {}, [], collections.Counter(), []
     for s in kr_stocks:
         if s.get("cls") != "kr":
@@ -4406,7 +4413,9 @@ def unit_guard(kr_stocks, fin_map, mult_extra, pref_shares=None):
         t, fin = s["t"], fin_map.get(s["t"])
         if not fin:
             continue
-        u = unit_check(fin, per_share_count(s, pref_shares), cap_ratio(s, fin, pref_shares))
+        won = not not_won(s, fin)          # 리뷰 #118: 원화가 아닌 재무제표는 기준값(eps · cap)을 보지 않아요
+        u = unit_check(fin, per_share_count(s, pref_shares) if won else None, cap_ratio(s, fin, pref_shares) if won else None)
+        cnt["cov:notWon"] += not won
         for k, v in u["bal"].items():
             cnt[f"{k}:{'none' if v is None else 'ok' if v == 0 else 'off'}"] += 1
         cnt["cov:n"] += 1
@@ -4422,7 +4431,6 @@ def unit_guard(kr_stocks, fin_map, mult_extra, pref_shares=None):
             for k in UNIT_BLANK:
                 s.pop(k, None)
             s["unitChk"] = list(u["why"])
-            fin["unitChk"] = list(u["why"])
             e = mult_extra.get(t)
             if e is not None:
                 for k in UNIT_EXTRA_KEYS:
@@ -4446,13 +4454,13 @@ def unit_guard(kr_stocks, fin_map, mult_extra, pref_shares=None):
         f"어긋남 {cnt['qp:off']} · 확인 못 함 {cnt['qp:none']:,} (확인 못 함 = 자산총계를 읽기 전(2026-11-13)에 캐시에 저장된 재무제표)")
     cover = {"v": 1, "companies": cnt["cov:n"], "checked": cnt["cov:checked"], "unchecked": cnt["cov:unchecked"],
              "noScale": cnt["cov:noScale"], "anchor": cnt["cov:anchor"], "eps": cnt["cov:eps"], "cap": cnt["cov:cap"],
-             "flows": cnt["cov:flows"], "hit": len(hit)}
+             "flows": cnt["cov:flows"], "notWon": cnt["cov:notWon"], "hit": len(hit)}
     thin = cover["unchecked"] > cover["checked"]
     log(f"{'  !! ' if thin else '· '}공시 단위 확인이 본 회사 {cover['companies']:,}곳: 자산=부채+자본을 모든 재무제표에서 봄 {cover['checked']:,} · "
         f"못 본 재무제표가 있음 {cover['unchecked']:,}" + (" (대부분 아직 못 봐요 — 자산총계를 읽기 전(2026-11-13)에 캐시에 저장됐어요 · 90일 "
         "재확인으로 채워져요)" if thin else "") + f" · 분기 보고서가 없어 보고서 사이 배율을 못 봄 {cover['noScale']:,} · 기본주당이익으로 봄 "
         f"{cover['eps']:,} · 자본금 ÷ 액면가로 봄 {cover['cap']:,} · 둘 중 하나 {cover['anchor']:,} · 손익·현금흐름 지난해 칸으로 봄 {cover['flows']:,} "
-        "(data.json unitChkCover)")
+        f"· 원화가 아닌 재무제표라 기준값을 보지 않음 {cover['notWon']:,} (data.json unitChkCover)")
     log(f"{'  !! ' if real else '· '}PBR {UNIT_PBR_LOOK:g} 미만인데 공시 단위 확인을 통과한 회사 {len(real)}곳 (비우지 않았어요 · 확인해 보세요)"
         + (": " + "; ".join(real) if real else ""))
     return {"hit": hit, "real": real, "bal": cnt, "cover": cover}
@@ -6346,11 +6354,12 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "unitChk": ("한국 · 공시 단위 확인에 걸린 회사의 이유 목록 (bs = 읽은 재무제표의 자산 ≠ 부채 + 자본 · scale = 분기 보고서의 재무상태표가 "
                      "사업보고서 것의 100배 이상이거나 1/100 이하 · is · cf = 분기 보고서의 지난해 칸이 지난해 같은 분기 보고서의 손익 · 현금흐름과 "
                      "100배 넘게 다름 · eps = 순이익 ÷ 주식 수가 재무제표의 기본주당이익과 300배 넘게 다름 · cap = 자본금 ÷ 액면가가 주식 수와 "
-                     "300배 넘게 다름 — 단위를 잘못 적은 보고서) · 이 회사는 per·pbr·eps·bps·roe·debt·opm·g3 와 "
+                     "300배 넘게 다름 · eps · cap 은 원화 재무제표만 — 단위를 잘못 적은 보고서) · 이 회사는 per·pbr·eps·bps·roe·debt·opm·g3 와 "
                      "가치·퀄리티 점수가 빈 칸이고, corp.json 도 같은 칸과 3년 실적·자본·EV 배수·영수증·재무 경고가 빈 칸 (배당은 그대로) · "
                      "칸이 없으면 확인을 통과했거나 재무제표가 없어요"),
          "unitChkCover": ("공시 단위 확인이 본 한국 회사 수: companies · checked 모든 재무제표에서 자산 = 부채 + 자본 · unchecked 자산총계 없이 "
-                          "저장된 재무제표가 있음 · noScale 분기 보고서가 없음 · eps · cap · anchor 기준값으로 봄 · flows 지난해 칸으로 봄 · hit 걸린 곳"),
+                          "저장된 재무제표가 있음 · noScale 분기 보고서가 없음 · eps · cap · anchor 기준값으로 봄 · flows 지난해 칸으로 봄 · notWon 원화가 "
+                          "아닌 재무제표라 기준값을 보지 않음 · hit 걸린 곳 (data.json unitChk 종목 수와 같아요)"),
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",

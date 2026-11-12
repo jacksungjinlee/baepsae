@@ -202,7 +202,11 @@ export function warnStmtCur(co, where) {
 // (fetch_data.py unit_guard) checks every Korean company on every run and, for one that fails, blanks every number built on its
 // statements (PER · PBR · EPS · BPS · ROE · 부채비율 · 영업이익률 · 매출 증가율 · the 3-year amounts · equity · EV multiples · receipts ·
 // 재무 경고, and the 가치 · 퀄리티 scores) and marks it with unitChk, a list of reasons ("bs" assets ≠ liabilities + equity ·
-// "scale" a quarterly report 100 times or more off the 사업보고서), in data.json and corp.json. Dividends stay (a separate table).
+// "scale" a quarterly report's balance sheet 100 times or more off the 사업보고서 · "is" / "cf" its previous-period income or
+// cash-flow column 100 times or more off last year's same-quarter report · "eps" profit ÷ shares 300 times or more off the report's
+// own 기본주당이익 · "cap" 자본금 ÷ 액면가 300 times or more off the share count; eps and cap only for statements in won), in
+// data.json and corp.json. Dividends stay (a separate table). Such a company shows the unit line, never the currency line too
+// (review #118 N7: a company with both stmtCur and unitChk).
 // Where those numbers would be, both apps say "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요." once per section
 // (2.0: src/copy/v2.js co.unitChk; the old app: src/fixnote.jsx FIX_UNIT). Such a company never gets the being-fixed, total-profit
 // or 이자보상배율 lines above: the numbers they would explain are not shown. row: a data.json stock or a corp.json company.

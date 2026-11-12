@@ -120,7 +120,8 @@ export function stmtCurLineText(c, lang = "ko") {
 export function UnitChkLine({ c, style }) {
   return unitHeld(c) ? <div data-fix="unit-chk" style={{ ...LINE, ...style }}>{FIX_UNIT}</div> : null;
 }
+// 리뷰 #118 N7: 공시 단위 확인에 걸린 회사(unitChk)면 통화 줄 대신 단위 줄(UnitChkLine)만 — 두 줄을 겹쳐 보이지 않아요.
 export function StmtCurLine({ c, style }) {
-  const text = stmtCurLineText(c);
+  const text = unitHeld(c) ? null : stmtCurLineText(c);
   return text ? <div data-fix="stmt-cur" data-cur={stmtCurOf(c)} style={{ ...LINE, ...style }}>{text}</div> : null;
 }
