@@ -17,6 +17,7 @@ import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
 import {
   stockState, checkSale, checkPurchase, checkDiv, withRecord, withoutRecord, recordsOf, salePreview, soldOutNow, rateEnv, typed, decksFor, recordCcy,
+  closeIsDefault,
 } from "./records.js";
 
 const usdText = (v) => "$" + nf(v, 2);
@@ -175,6 +176,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const [fail, setFail] = useState(false);
   const set = (k) => (x) => setV((o) => ({ ...o, [k]: x }));
   const byAmount = kind === "sell" && st.byAmount;
+  const closeOk = kind === "div" || closeIsDefault(deck, t, v.date, today);   // today's close can stand in for an empty price
   const check = useMemo(() => {
     if (kind === "sell") return checkSale(deck, t, { qty: v.qty, price: v.price, date: v.date, amountWon: v.amount }, s, env);
     if (kind === "buy") return checkPurchase(deck, t, v, s, env);
@@ -219,7 +221,9 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
             {head && <div data-ui-v2="rec-head" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { wordBreak: "keep-all" })}>{head}</div>}
           </div>
         </div>
-        {kind !== "div" && !byAmount && md && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3), wordBreak: "keep-all" })}>{fill(C.rec.buyBody, { md })}</p>}
+        {/* round-3: with a split between the chosen date and today, today's close is on another share basis: no default price
+            (the price is required, records.closeIsDefault), so neither this line nor the close as the placeholder */}
+        {kind !== "div" && !byAmount && md && closeOk && <p data-ui-v2="rec-close-line" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3), wordBreak: "keep-all" })}>{fill(C.rec.buyBody, { md })}</p>}
         {byAmount && <p data-ui-v2="rec-by-amount" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3), wordBreak: "keep-all" })}>{C.rec.byAmount}</p>}
         {kind === "div" ? (
           <>
@@ -233,7 +237,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
             <TextInput label={C.plan.qty} inputMode={usd && kind === "sell" ? "decimal" : "numeric"} value={v.qty} onChange={set("qty")}
               invalid={bad("qty")} />
             <TextInput label={kind === "sell" ? (usd ? C.rec.sellPriceUsd : C.rec.sellPriceWon) : (usd ? C.plan.priceUsd : C.plan.priceWon)} inputMode="decimal"
-              placeholder={s && s.price > 0 ? (usd ? nf(s.price, 2) : nf(s.price)) : undefined} value={v.price} onChange={set("price")} invalid={bad("price")} />
+              placeholder={s && s.price > 0 && closeOk ? (usd ? nf(s.price, 2) : nf(s.price)) : undefined} value={v.price} onChange={set("price")} invalid={bad("price")} />
           </>
         )}
         <TextInput label={kind === "sell" ? C.rec.sellDate : kind === "buy" ? C.plan.date : C.rec.divDate} type="date" value={v.date} onChange={set("date")} max={today}

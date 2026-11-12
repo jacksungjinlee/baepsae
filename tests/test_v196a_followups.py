@@ -199,3 +199,29 @@ def test_the_nearest_corrected_row_is_the_one_moved_to():
       const r = fix(store, data);
       out = { to: r.moved.map((x) => x.to), splits: r.data.decks[0].splits };""")
     assert got["to"] == ["2018-05-09"] and got["splits"] == [{"t": "GMAB", "date": "2018-05-09", "r": 5}]
+
+
+def test_no_default_close_across_a_split():
+    """[round 3] an empty price takes today's close only when no split (stored, or data.json's on the view copy) falls between
+    the record's date and today: AMD (a stored 1:2 on 10-05) sold on 10-02 and HON (data.json's 1:2 on 06-29) bought on 06-26
+    need a typed price (noPrice, the price field: the existing required-field line); on or after the split day, or with a
+    typed price, as before."""
+    got = run("""const US = { ...env(), fxHist: { asOf: '2026-11-12', final: true, rows: [['2016-01-04', 1187.7], ['2026-06-26', 1370], ['2026-06-29', 1372], ['2026-09-01', 1300],
+        ['2026-10-02', 1310], ['2026-10-05', 1312], ['2026-11-12', 1330.7]] } };
+      const row = (t, price) => ({ t, nk: t, cls: 'us', ccy: 'USD', price });
+      const dk = (t, buys, splits = []) => ({ id: 'd', name: 'd', createdAt: '2026-01-02', planFx: 1300, holdings: [{ t, nk: t, target: 1, rules: band(1) }],
+        purchases: buys, splits });
+      const amd = dk('AMD', [{ id: 'p1aaaaaa', t: 'AMD', qty: 2, price: 160, date: '2026-09-01', ccy: 'USD', fx: 1300 }], [{ t: 'AMD', date: '2026-10-05', r: 0.5 }]);
+      const hon0 = dk('HON', [{ id: 'p2aaaaaa', t: 'HON', qty: 2, price: 200, date: '2026-01-02', ccy: 'USD', fx: 1450 }]);
+      const hon = L.withDataSplits({ v: 2, decks: [hon0] }, [{ t: 'HON', date: '2026-06-29', r: 0.5 }], T).decks[0];
+      const sale = (d, date, price = '') => { const r = Rc.checkSale(d, 'AMD', { qty: '1', price, date }, row('AMD', 504.8), US); return r.ok ? r.rec.price : [r.why, r.field]; };
+      const buy = (d, date, price = '') => { const r = Rc.checkPurchase(d, 'HON', { qty: '1', price, date }, row('HON', 230), US); return r.ok ? r.rec.price : [r.why, r.field]; };
+      out = { amdBefore: sale(amd, '2026-10-02'), amdTyped: sale(amd, '2026-10-02', '250'), amdOn: sale(amd, '2026-10-05'), amdAfter: sale(amd, '2026-11-12'),
+        honBefore: buy(hon, '2026-06-26'), honTyped: buy(hon, '2026-06-26', '201.5'), honOn: buy(hon, '2026-06-29'), honNoSplit: buy(hon0, '2026-06-26'),
+        def: [Rc.closeIsDefault(amd, 'AMD', '2026-10-04', T), Rc.closeIsDefault(amd, 'AMD', '2026-10-05', T), Rc.closeIsDefault(amd, 'MSFT', '2026-01-02', T),
+              Rc.closeIsDefault(hon, 'HON', '', T)] };""")
+    assert got["amdBefore"] == ["noPrice", "price"] and got["amdTyped"] == 250                      # 분할 전 날짜: 가격을 적어야 해요
+    assert got["amdOn"] == 504.8 and got["amdAfter"] == 504.8                                       # 분할 날 · 뒤: 오늘 종가
+    assert got["honBefore"] == ["noPrice", "price"] and got["honTyped"] == 201.5 and got["honOn"] == 230
+    assert got["honNoSplit"] == 230                                                                 # 분할이 없으면 예전처럼
+    assert got["def"] == [False, True, True, True]                                                  # 빈 날짜 = 오늘

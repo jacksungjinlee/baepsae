@@ -14,6 +14,7 @@ import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
 import { rateFor, rateEnv, DATE_FROM } from "./records.js";
+import { dataSplits, splitSince } from "./lots.js";
 import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
 import { EpsFixNote } from "./fixnote.jsx";
@@ -327,14 +328,21 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const [savedN, setSavedN] = useState(0);        // distinct stocks actually recorded (quantity > 0): 기록했어요's {n}
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
   const today = todayKst();
+  // round-3: a data.json split between the chosen date and today puts today's close on another share basis: that row's price
+  // must be typed (no default, no close as the placeholder; the sheet's "비워 두면 … 종가로 기록돼요" line is hidden then)
+  const splits = useMemo(() => dataSplits(load.data).list, [load]);
+  const needP = (t) => splitSince(splits, t, date || today, today);
   const parsed = rows.map((x) => {
     const v = vals[x.t] || {};
     const qs = v.qty != null ? String(v.qty).replace(/,/g, "").trim() : "";
     const ps = v.price != null ? String(v.price).replace(/,/g, "").trim() : "";
     const q = qs === "" ? x.shares : /^\d+$/.test(qs) ? Number(qs) : NaN;          // whole shares only
-    const p = ps === "" ? x.s.price : /^\d+(\.\d+)?$/.test(ps) ? Number(ps) : NaN;
-    return { x, q, p, badQ: !(Number.isInteger(q) && q >= 0), badP: !(Number.isFinite(p) && p > 0) };
+    const p = ps === "" ? (needP(x.t) ? null : x.s.price) : /^\d+(\.\d+)?$/.test(ps) ? Number(ps) : NaN;
+    // a row not bought (0 shares) needs no price; a typed one must still be a price
+    const badP = q === 0 && ps === "" ? false : !(Number.isFinite(p) && p > 0);
+    return { x, q, p, badQ: !(Number.isInteger(q) && q >= 0), badP };
   });
+  const anyNeedP = rows.some((x) => needP(x.t));
   // v19.6a round-2 review: a year before 2000 is a typo (records.js DATE_FROM): refused with the same line
   const badDate = date !== "" && !(/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today && date >= DATE_FROM);
   const save = () => {
@@ -381,7 +389,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     <BottomSheet open title={P.sheetTitle} onClose={onClose} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
       {preview && <SheetSample />}
       <div data-ui-v2="record-form" aria-label={P.boughtAria}>
-        <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.sheetBody, { md: mdText(load.data.pxDate) })}</p>
+        {!anyNeedP && <p data-ui-v2="plan-close-line" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.sheetBody, { md: mdText(load.data.pxDate) })}</p>}
         <TextInput label={P.date} type="date" value={date} onChange={(v) => { setDate(v); setNoRate(null); }} max={today} invalid={tried && badDate} />
         {rows.map((x) => (
           <div key={x.t} data-record={x.t} style={{ marginTop: SPACE(4), paddingTop: SPACE(2), borderTop: `1px solid ${COLOR.line}` }}>
@@ -390,7 +398,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE(2) }}>
               <TextInput label={P.qty} inputMode="numeric" placeholder={nf(x.shares)} value={(vals[x.t] || {}).qty || ""} onChange={(v) => setV(x.t, "qty", v)}
                 invalid={tried && parsed.find((r) => r.x.t === x.t).badQ} />
-              <TextInput label={x.s.cls === "us" ? P.priceUsd : P.priceWon} inputMode="decimal" placeholder={x.s.cls === "us" ? nf(x.s.price, 2) : nf(x.s.price)}
+              <TextInput label={x.s.cls === "us" ? P.priceUsd : P.priceWon} inputMode="decimal" placeholder={needP(x.t) ? undefined : x.s.cls === "us" ? nf(x.s.price, 2) : nf(x.s.price)}
                 value={(vals[x.t] || {}).price || ""} onChange={(v) => setV(x.t, "price", v)} invalid={tried && parsed.find((r) => r.x.t === x.t).badP} />
             </div>
           </div>

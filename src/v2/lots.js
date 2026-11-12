@@ -29,6 +29,14 @@ const EPS_U = 1e-6;                                         // units: a float su
 export const purchaseRate = (p, planFx) => (p && p.ccy === "USD" ? (pos(p.fx) ? p.fx : p.noFx !== true && pos(planFx) ? planFx : null) : 1);
 
 // ---------------- data.json splits (A.6) ----------------
+// Does a split of stock t fall after `date` and on or before today (a record dated `date` is read at another share basis
+// than today's close)? Then today's close is never that record's default price: the price must be typed (round-3 review:
+// a sale dated before AMD's 1:2 took today's post-split close for pre-split shares, "산 가격보다 +217.9%"). splits: the
+// splits as the screens apply them ([{ t, date, r }]: a portfolio's stored ones and data.json's).
+export function splitSince(splits, t, date, today = null) {
+  return typeof date === "string" && !!date && (splits || []).some((s) => s && s.t === t && typeof s.date === "string" && s.date > date && (!today || s.date <= today));
+}
+
 // data.json `splits`: [[code, date, ratio], ...] (every US split since 2016-01-01, data.json splitsFrom; a row once published
 // is carried forward for good; ratio = new shares per old share; the date is the first US trading day on the new count, so a
 // record dated that day is already at the new count). Malformed entries are left out (counted, so the screens' console says

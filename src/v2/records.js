@@ -7,7 +7,7 @@
 // { ok: false, why } the screen turns into an approved line. Nothing is saved that the store's own check would refuse.
 import { recordId, deckProblem, problemText } from "./store.js";
 import { belowZero, heldUnits, UNIT, toUnits, okUnits, byAmount, VIEW_SPLITS } from "./held.js";
-import { ledger, splitsToStore, purchaseRate } from "./lots.js";
+import { ledger, splitsToStore, purchaseRate, splitSince } from "./lots.js";
 import { validRows } from "./track.js";
 
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
@@ -111,8 +111,14 @@ export const DATE_FROM = "2000-01-01";
 export const QTY_MAX = 1e9;
 const badDate = (date, today) => !realDate(date) || date < DATE_FROM || date > today;
 
+// Is today's close the default price of a record of t dated `date`? Not when a split (stored, or data.json's on the view copy)
+// falls between that date and today: its share basis differs (round-3 review). Then the price is required.
+export const closeIsDefault = (deck, t, date, today) =>
+  !splitSince([...((deck && deck.splits) || []), ...((deck && deck[VIEW_SPLITS]) || [])], t, date || today, today);
+
 // A sale of stock t (in the stock's currency; Korea whole shares unless imported by amount).
-// input: { qty, price, date, amountWon (by amount only) } as typed; s: the stock's data row (its close is the default price).
+// input: { qty, price, date, amountWon (by amount only) } as typed; s: the stock's data row (its close is the default price,
+// unless a split falls between the sale date and today: closeIsDefault).
 // -> { ok: true, rec } | { ok: false, why: "input" | "tooMany" | "tooEarly" | "rate" | "noPrice", field?, rate? }
 //   field: the field to mark ("qty" · "price" · "date" · "amount"); rate: rateFor's why ("today" · "past") for the line
 export function checkSale(deck, t, input, s, env) {
@@ -138,7 +144,7 @@ export function checkSale(deck, t, input, s, env) {
     if (!(pos(q) && q <= QTY_MAX && (usd ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input", field: "qty" };
     const p = typed(input.price);
     if (Number.isNaN(p) || (p != null && !pos(p)) || (usd && p != null && !decimals(p, 4))) return { ok: false, why: "input", field: "price" };
-    price = p == null ? (s && pos(s.price) ? s.price : null) : p;
+    price = p == null ? (s && pos(s.price) && closeIsDefault(deck, t, date, env.today) ? s.price : null) : p;
     if (!pos(price)) return { ok: false, why: "noPrice", field: "price" };
     qty = q;
     if (!r.ok) return { ok: false, why: "rate", field: "date", rate: r.why };
@@ -149,7 +155,8 @@ export function checkSale(deck, t, input, s, env) {
   return { ok: true, rec };
 }
 
-// One more purchase (샀어요 on an existing portfolio): whole shares (required), price blank -> the latest close.
+// One more purchase (샀어요 on an existing portfolio): whole shares (required), price blank -> the latest close (unless a split
+// falls between the purchase date and today: then the price is required, closeIsDefault).
 export function checkPurchase(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
   const date = input.date || env.today;
@@ -158,7 +165,7 @@ export function checkPurchase(deck, t, input, s, env) {
   if (!(pos(q) && q <= QTY_MAX && Number.isInteger(q))) return { ok: false, why: "input", field: "qty" };
   const p = typed(input.price);
   if (Number.isNaN(p) || (p != null && !pos(p))) return { ok: false, why: "input", field: "price" };
-  const price = p == null ? (s && pos(s.price) ? s.price : null) : p;
+  const price = p == null ? (s && pos(s.price) && closeIsDefault(deck, t, date, env.today) ? s.price : null) : p;
   if (!pos(price)) return { ok: false, why: "noPrice", field: "price" };
   const r = usd ? rateFor(date, env) : { ok: true, fx: null };
   if (!r.ok) return { ok: false, why: "rate", field: "date", rate: r.why };
