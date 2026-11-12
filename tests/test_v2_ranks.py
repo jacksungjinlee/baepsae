@@ -321,12 +321,19 @@ def test_surge_with_no_figures_is_not_none_today():
     assert got["noVal"] == {"state": "nodata", "n": 0, "of": 2} and got["us"] is None     # 숫자가 없으면 '오늘은 없어요'가 아니에요
 
 
-def test_a_market_with_nothing_over_the_floor_has_no_data_at_all():
-    got = run("""const ld = loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks: STOCKS });
-out = { us: K.chipState(ld, 'us', null), kr: K.chipState(ld, 'kr', null) };""", STOCKS=[st("000010"), st("AAA", "us", val=1.0), st("BBB", "us", val=None)])
-    assert got["us"]["base"] == 0 and got["kr"]["base"] == 1, got                  # 화면: 칩 없이 불러오기 실패 문구 (smoke scene_rank_r1)
-    assert got["us"]["cap"] == "nodata" and set(got["us"]["crit"].values()) == {"nodata"}
-    assert got["us"]["ind"] == "none"                                               # 업종별 등락은 거래대금 기준 전의 종목으로 (왜 움직였나와 같은 셈): 5곳이 안 돼요
+def test_a_market_with_stocks_but_nothing_over_the_floor_says_why_and_only_no_stocks_is_a_load_failure():
+    """v19.5b 리뷰 3차: 종목은 있는데 거래대금 기준을 넘는 종목이 없으면 칩은 그대로 두고 이유 한 줄 (기준값이 모두 비면 '데이터 없음',
+    값은 있는데 모두 5억 미만이면 '들어갈 종목 없음'). 불러오기 실패 문구는 그 시장에 종목이 하나도 없을 때만 (uni 0)."""
+    got = run("""const ld = (stocks) => loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks });
+out = { under: K.chipState(ld(STOCKS), 'us', null), kr: K.chipState(ld(STOCKS), 'kr', null),
+  blank: K.chipState(ld([STOCKS[0], STOCKS[2]]), 'us', { settings: { points: { value: 3 }, exclude: {} } }),
+  none: K.chipState(ld([STOCKS[0]]), 'us', null) };""", STOCKS=[st("000010"), st("AAA", "us", val=1.0), st("BBB", "us", val=None)])
+    u, b, n = got["under"], got["blank"], got["none"]
+    assert u["base"] == 0 and u["uni"] == 2 and got["kr"]["base"] == 1, got
+    assert u["cap"] == u["val"] == u["div"] == "none" and set(u["crit"].values()) == {"none"} and u["surge"] is None and u["mine"] is None, u
+    assert u["ind"] == "none"                                                       # 업종별 등락은 거래대금 기준 전의 종목으로 (왜 움직였나와 같은 셈): 5곳이 안 돼요
+    assert b["uni"] == 1 and b["cap"] == "nodata" and b["mine"] == "nodata" and set(b["crit"].values()) == {"nodata"}, b   # 기준값(val)이 모두 비었어요
+    assert n["uni"] == 0 and n["base"] == 0, n                                      # 종목이 없는 시장: 화면은 불러오기 실패 문구 (smoke scene_rank_r1)
 
 
 # ── 업종 안 회사: 같은 회사의 두 종류 주식은 한 줄 · 줄의 n · k 는 peerGroup 그대로 ──
@@ -463,26 +470,32 @@ out = { us: ts(K.critList(STOCKS, 'us', 'value')), kr: ts(K.critList(STOCKS, 'kr
 
 def test_us_value_guard_removes_exactly_eric_and_kspi_from_the_2026_11_11_figures():
     """2026-11-11 발행본(미국 740종목)의 PER · ROE · PBR 에서 보조 장치에 걸리는 종목: 그날의 숫자를 옮겨 적은 표로 확인해요."""
-    near = {"AES": (6.0, 8.7, 1.86), "AGNC": (5.9, 17.4, 1.14), "ERIC": (17.1, 18.1, 0.35), "KSPI": (7.9, 44.8, 0.01),
-            "NTES": (17.0, 20.4, 15.63), "TSM": (26.8, 41.9, 78.88), "OMC": (10.9, 30.3, 3.92)}
-    stocks = [st(t, "us", per=a, roe=b, pbr=c) for t, (a, b, c) in near.items()]
-    got = run("out = ts(K.critList(STOCKS, 'us', 'value')).sort();", STOCKS=stocks)
-    assert sorted(set(near) - set(got)) == ["ERIC", "KSPI"], got
+    # 그날의 숫자 그대로 (OMC · AGNC 는 1/4 경계 가까이: 89.8 × 9.9 ÷ 100 ÷ 4 = 2.22 < 2.44, 424.0 × 0.9 ÷ 100 ÷ 4 = 0.954 < 1.12)
+    near = {"AES": (6.0, 8.7, 1.86), "AGNC": (424.0, 0.9, 1.12), "ERIC": (17.1, 18.1, 0.35), "KSPI": (7.9, 44.8, 0.01),
+            "NTES": (17.0, 20.4, 15.63), "TSM": (26.8, 41.9, 78.88), "OMC": (89.8, 9.9, 2.44)}
+    # 경계: PER × ROE ÷ 100 = 4.0 → 1/4 = 1.0. 0.99 빠짐 · 1.0 남음 (< 이지 <= 가 아니에요) · 1.01 남음. US_PBR_LOW 가 3 이면 1.01 이,
+    # 5 이면 0.99 가 결과를 바꿔요
+    edge = {"EDGE-": (10.0, 40.0, 0.99), "EDGE0": (10.0, 40.0, 1.0), "EDGE+": (10.0, 40.0, 1.01)}
+    stocks = [st(t, "us", per=a, roe=b, pbr=c) for t, (a, b, c) in {**near, **edge}.items()]
+    got = run("out = { kept: ts(K.critList(STOCKS, 'us', 'value')).sort(), low: K.US_PBR_LOW };", STOCKS=stocks)
+    assert sorted(set(near) | set(edge)) and sorted((set(near) | set(edge)) - set(got["kept"])) == ["EDGE-", "ERIC", "KSPI"], got
+    assert got["low"] == 4
 
 
 def test_empty_lists_say_whether_the_data_is_missing_or_nothing_qualifies():
-    stocks = [st("000010", dyt=40.0, pbr=-1.0, debt=None, ind="bank", d1=0.5, g3=None, roe=10.0, vol=20.0, vz=50, opm=-1.0),
-              st("000020", dyt=None, pbr=0.0, debt=30.0, ind="bank", d1=0.3, val=None, roe=12.0, vol=25.0, vz=40, opm=-2.0),
+    stocks = [st("000010", dyt=40.0, pbr=-1.0, debt=None, ind="bank", d1=0.5, g3=None, roe=10.0, vol=20.0, vz=50, lz=60, opm=-1.0),
+              st("000020", dyt=None, pbr=0.0, debt=30.0, ind="bank", d1=0.3, val=None, roe=12.0, vol=25.0, vz=40, lz=70, opm=-2.0),
               st("AAA", "us", dy=None, pbr=1.0, d1=None)]
     got = run("""const ld = (corp) => loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks: STOCKS }, corp);
 const deck = (points, exclude = {}) => ({ settings: { points, exclude } });
 E.setDataShape({ divCheck: { v: 1 } });
 const a = K.chipState(ld([{ t: '000010', rev: [1, 1, 1], eq: 500 }]), 'kr', deck({ value: 3 }, { loss: true }));
 E.setDataShape({});
-const b = K.chipState(ld([]), 'kr', deck({ value: 3 }));
+const b = K.chipState(ld([]), 'kr', deck({ lowVol: 3 }));
 const c = K.chipState(ld([]), 'kr', deck({ lowVol: 3, trend: 2 }));
+const g = K.chipState(ld([]), 'kr', deck({ value: 3 }));
 const u = K.chipState(ld([]), 'us', null);
-out = { a, b, c, u };""", STOCKS=stocks)
+out = { a, b, c, u, g };""", STOCKS=stocks)
     a, b, c, u = got["a"], got["b"], got["c"], got["u"]
     assert a["div"] == "none" and b["div"] == "nodata", (a["div"], b["div"])         # 확인한 배당이 0–30% 밖뿐 → 들어갈 종목 없음 · 확인 전 파일 → 데이터 없음
     assert a["crit"]["value"] == "none" and a["crit"]["stable"] == "none", a["crit"]  # PBR 이 0 이하뿐 · 금융회사뿐 (해당 없음)
@@ -490,6 +503,7 @@ out = { a, b, c, u };""", STOCKS=stocks)
     assert b["crit"]["profit"] == "nodata", b["crit"]                               # corp.json 이 없으면 한국 수익성의 자본을 확인할 수 없어요
     assert a["val"] == "rows" and a["surge"] == "none" and a["ind"] == "none", a     # 업종에 5곳이 안 돼요
     assert a["mine"] == "none" and b["mine"] == "rows" and c["mine"] == "nodata", (a["mine"], b["mine"], c["mine"])   # 빼기로 다 빠짐 · 추세(mom) 숫자가 없음
+    assert got["g"]["mine"] == "none", got["g"]["mine"]                             # 가치에 점수: PBR 0 이하 행은 가치의 보조 장치대로 빠져요 (리뷰 3차)
     assert u["base"] == 1 and u["div"] == "nodata" and u["ind"] == "nodata" and u["surge"] is None, u
 
 
@@ -522,3 +536,36 @@ out = { kr: ts(K.critList(STOCKS, 'kr', 'value')), us: ts(K.critList(STOCKS, 'us
     assert got["st"] == "none", got["st"]                                          # 숫자는 있는데 들어갈 종목이 없어요
     kr = next(l for l in got["logs"] if "(kr)" in l)
     assert "pbrNotAbove0 2: 000030, 000040" in kr and "pbrRoundsTo0 1: 000010 영영사" in kr, got["logs"]
+
+
+
+def test_mine_with_value_points_leaves_out_the_rows_the_value_guards_leave_out():
+    """v19.5b 리뷰 3차: 내 기준은 파이프라인의 vz(PBR 백분위)로 순위를 매겨서, 가치에 점수가 있으면 가치 목록의 보조 장치가 빼는 행(PBR 0 이하 ·
+    한국 0.00 · 미국 J4)이 맨 위에 올 수 있어요. 그 행은 내 기준에서도 빼고 콘솔에 이름을 남겨요. 가치에 점수가 없으면 그대로."""
+    stocks = [st("ERIC", "us", per=17.1, roe=18.1, pbr=0.35, vz=99, cap=46.0), st("BRK-B", "us", nk="Berkshire", per=15.0, roe=10.0, pbr=0.0, vz=100, cap=1000.0),
+              st("AAA", "us", per=10.0, roe=10.0, pbr=1.2, vz=80, cap=5.0), st("250030", nk="진코스텍", pbr=0.0, vz=100, cap=0.2),
+              st("000010", pbr=0.004, vz=99, cap=0.3), st("000020", pbr=0.5, vz=70, cap=1.0), st("000030", pbr=0.9, vz=40, cap=2.0)]
+    got = run("""const logs = []; console.info = (m) => logs.push(String(m));
+const S = (points) => ({ points, exclude: {} });
+out = { us: ts(K.mineList(STOCKS, 'us', S({ value: 5 }))), kr: ts(K.mineList(STOCKS, 'kr', S({ value: 5 }))),
+  usHas: K.mineHasRows(STOCKS.slice(0, 2), 'us', S({ value: 5 })), plain: ts(K.mineList(STOCKS, 'kr', S({ value: 0, lowVol: 0, large: 3 }))),
+  pct: K.mineList(STOCKS, 'us', S({ value: 5 })).map((r) => r.pct), logs: logs.filter((l) => l.includes('value guards')) };""", STOCKS=stocks)
+    assert got["us"] == ["AAA"], got["us"]                                           # ERIC (J4) · BRK-B (PBR 0) 빠짐
+    assert got["kr"] == ["000020", "000030"], got["kr"]                              # 진코스텍 (0.00) · 0.004 빠짐
+    assert got["usHas"] is False                                                     # 가벼운 검사도 같아요 (남는 행 없음)
+    assert "250030" in got["plain"] and "000010" in got["plain"], got["plain"]       # 가치에 점수가 없으면 빼지 않아요
+    assert got["pct"] == [100], got["pct"]                                           # '상위 x%' 는 점수를 매길 수 있는 모든 종목 중 (v19.7 [B3]): 빠진 둘도 셈에 있어요
+    us = next(l for l in got["logs"] if "(us)" in l)
+    assert "2: ERIC ERIC, BRK-B Berkshire" in us or "2: BRK-B Berkshire, ERIC ERIC" in us, got["logs"]
+
+
+def test_quarter_line_only_when_every_row_is_on_the_latest_quarter():
+    """v19.5b 리뷰 3차: '각 회사의 최근 분기 재무제표 기준' 은 보이는 줄이 모두 분기 자본으로 계산한 PBR 일 때만 (corp.json bpsIn.p 가 'fy' 가
+    아님). 연말(사업보고서) 자본인 회사가 하나라도 있거나 bpsIn 이 없는 회사가 있으면 종가 날짜만."""
+    got = run("""const row = (t) => ({ s: { t, cls: 'kr' } });
+const co = new Map([['000010', { bpsIn: { p: 'ttm' } }], ['000020', { bpsIn: { p: 'ttm' } }], ['000030', { bpsIn: { p: 'fy' } }], ['000040', {}]]);
+out = { all: K.quarterBasis([row('000010'), row('000020')], co), fy: K.quarterBasis([row('000010'), row('000030')], co),
+  gap: K.quarterBasis([row('000010'), row('000040')], co), none: K.quarterBasis([], co), noCorp: K.quarterBasis([row('000010')], null) };""")
+    assert got["all"] == {"quarter": True, "fy": 0, "missing": 0}
+    assert got["fy"] == {"quarter": False, "fy": 1, "missing": 0} and got["gap"] == {"quarter": False, "fy": 0, "missing": 1}
+    assert got["none"]["quarter"] is False and got["noCorp"]["quarter"] is False

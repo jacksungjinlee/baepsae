@@ -168,6 +168,10 @@ export const C = {
     groupLine: "시가총액이 큰 회사부터 보여 드려요.",                   // 그 회사 목록 위 한 줄
     indUp: "많이 오른 업종",                                          // 홈의 업종별 등락: 평균이 오른 업종 다섯 (높은 순)
     indDown: "많이 내린 업종",                                        // 홈의 업종별 등락: 평균이 내린 업종 다섯 (낮은 순)
+    // v19.5b 리뷰 3차 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.5b. null 인 동안은 승인된 basis.g3Us 그대로
+    p: {
+      basisG3Us: null,   // 제안: "전년 동기 대비 분기 매출 증가율 높은 순" — 미국 성장 줄의 {basis} (지금 문구는 괄호가 겹쳐요: "…순서(… (전년 동기 대비))예요.")
+    },
   },
 
   // 회사 페이지 (v19.1a, docs/tasks/v19.1-company-page.md Parts A-F): #stocks/<코드>. 요약(네 칸) → 탭(실적 · 가치 · 배당 · 공시) →

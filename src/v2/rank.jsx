@@ -32,7 +32,7 @@ import { eokText, signedPct } from "./deckcalc.js";
 import { yieldText } from "./cofmt.js";
 import { num, todayD1, sameCompany } from "./engine.js";
 import { RANK_TOP, RANK_FULL, CRIT, rankRows, pointsDeck, chipsFor, shownChip, groupWord, groupList, indParts,
-  chipState, dateBasis, oneReportYear, readPick, savePick, RANK_KEY, PREVIEW_RANK_KEY } from "./ranks.js";
+  chipState, dateBasis, oneReportYear, quarterBasis, readPick, savePick, RANK_KEY, PREVIEW_RANK_KEY } from "./ranks.js";
 
 export const ROW_H = 58;                 // px per row (board)
 const PART_H = 34;                       // px: the label over each part of 업종별 등락 (많이 오른 업종 · 많이 내린 업종)
@@ -183,23 +183,31 @@ const signed = (v) => signedPct(v);
 // 기준별 row numbers (Jack, 2026-11-12): PBR to two decimals as on the company page; Korea 부채비율, US 차입금비율 (Yahoo
 // debtToEquity: total debt ÷ equity × 100); 추세 "1년 {x}"; 성장 one measure per market (KR the 2-year average, US the latest
 // quarter against the same quarter a year before).
+// A row number in two parts (v19.5b review 3): the label (the words before {x}) on its own small line above the value, so a
+// long label ("매출 연평균", "차입금비율") never squeezes the company name. -> { label, value }; label null for a bare number.
+function labelled(tpl, x) {
+  const i = tpl.indexOf("{x}");
+  const label = i > 0 ? tpl.slice(0, i).trim() : "";
+  return { label: label || null, value: fill(label ? tpl.slice(i) : tpl, { x }) };
+}
 function critNumber(id, s) {
   const N = C.rank.num;
   switch (id) {
-    case "value": return fill(N.pbr, { x: nf(s.pbr, 2) });
-    case "profit": return fill(N.roe, { x: p1(s.roe) });
-    case "stable": return s.cls === "kr" ? fill(N.debt, { x: nf(Math.round(s.debt)) }) : fill(N.debtUs, { x: p1(s.debt) });
-    case "lowVol": return fill(N.vol, { x: p1(s.vol) });
-    case "trend": return fill(N.trend, { x: signed(s.mom) });
-    case "growth": return fill(s.cls === "kr" ? N.g3Kr : N.g3Us, { x: signed(s.g3) });
-    default: return "";
+    case "value": return labelled(N.pbr, nf(s.pbr, 2));
+    case "profit": return labelled(N.roe, p1(s.roe));
+    case "stable": return s.cls === "kr" ? labelled(N.debt, nf(Math.round(s.debt))) : labelled(N.debtUs, p1(s.debt));
+    case "lowVol": return labelled(N.vol, p1(s.vol));
+    case "trend": return labelled(N.trend, signed(s.mom));
+    case "growth": return labelled(s.cls === "kr" ? N.g3Kr : N.g3Us, signed(s.g3));
+    default: return { label: null, value: "" };
   }
 }
 // The {basis} of the 기준별 line: the card's basis line (build.cards), 성장 the market's own measure, and on the Korean 성장 and
 // 수익성 lists the minimum size they keep (" · 매출 100억원 이상" / " · 자본 100억원 이상": ranks.MIN_EOK). The US lists have
 // no minimum yet (no US revenue or equity figure in the data), so their line names none.
 function critBasis(id, mk) {
-  const b = id === "growth" ? (mk === "kr" ? C.rank.basis.g3Kr : C.rank.basis.g3Us) : C.build.cards[id].basis;
+  // US 성장: the approved basis until the owner approves the proposal without nested brackets (rank.p.basisG3Us, pending doc)
+  const b = id === "growth" ? (mk === "kr" ? C.rank.basis.g3Kr : C.rank.p.basisG3Us || C.rank.basis.g3Us) : C.build.cards[id].basis;
   const f = mk === "kr" && (id === "growth" || id === "profit") ? C.rank.floor[id] : null;
   return f ? `${b} · ${f}` : b;
 }
@@ -207,17 +215,26 @@ function critBasis(id, mk) {
 // data.json), 거래 급증 "평소의 {x}배", 기준별 the card's own value, 내 기준 "상위 {x}%", 배당수익률 the yield.
 function rowNumber(chip, crit, r) {
   const s = r.s;
+  const bare = (v) => ({ label: null, value: v || "" });
   switch (chip) {
-    case "cap": case "group": return eokText(num(s.cap) * 10000) || "";
-    case "val": return eokText(r.v) || "";
-    case "surge": return fill(C.rank.surgeX, { x: nf(r.v, 1) });
+    case "cap": case "group": return bare(eokText(num(s.cap) * 10000));
+    case "val": return bare(eokText(r.v));
+    case "surge": return labelled(C.rank.surgeX, nf(r.v, 1));
     case "crit": return critNumber(crit, s);
-    case "mine": return r.pct != null ? fill(C.rank.mineX, { x: r.pct }) : "";
-    case "div": return yieldText(r.v);
-    default: return "";
+    case "mine": return r.pct != null ? labelled(C.rank.mineX, r.pct) : bare("");
+    case "div": return bare(yieldText(r.v));
+    default: return bare("");
   }
 }
 
+// The quarter line left out (ranks.quarterBasis): the console says why, once per market, chip and reason.
+const quarterWarned = new Set();
+function noteQuarter(mk, chip, qb) {
+  const k = `${mk}:${chip}:${qb.fy}:${qb.missing}`;
+  if (quarterWarned.has(k)) return;
+  quarterWarned.add(k);
+  console.info(`[v2] rank card (${mk} ${chip}): no quarter line on the date line: ${qb.fy} row(s) with a year-end PBR (bpsIn p fy), ${qb.missing} without bpsIn`);
+}
 // The report year of the rows on screen (KR): only when every row was read from the same 사업보고서 year (ranks.oneReportYear);
 // rows from two years, or a row without one, leave the year out (the close date only), and the console says why.
 const yearWarned = new Set();
@@ -233,20 +250,36 @@ function reportYear(load, rows) {
 }
 
 // ---------------- rows ----------------
-const rowStyle = { ...tap, display: "flex", alignItems: "center", gap: 11, width: "100%", height: ROW_H, padding: "0 14px", border: "none",
-  borderBottom: `1px solid ${COLOR.line}`, background: "none", textAlign: "left", boxSizing: "border-box" };
-const rankNo = (i) => <span data-ui-v2="rank-no" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text3, { width: 18, textAlign: "center", flexShrink: 0 })}>{i + 1}</span>;
+// tight: under 360 px wide (v19.5b review 3) the row's gaps, side padding, number column and logo are a little smaller, so the
+// company name keeps room at 320 px (the smoke test holds every row's name at least NAME_MIN_320 wide there).
+const rowStyle = (tight) => ({ ...tap, display: "flex", alignItems: "center", gap: tight ? 8 : 11, width: "100%", height: ROW_H,
+  padding: tight ? "0 10px" : "0 14px", border: "none", borderBottom: `1px solid ${COLOR.line}`, background: "none", textAlign: "left",
+  boxSizing: "border-box" });
+const rankNo = (i, tight) => <span data-ui-v2="rank-no" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text3, { width: tight ? 15 : 18, textAlign: "center", flexShrink: 0 })}>{i + 1}</span>;
+function useTight() {
+  const q = "(max-width: 359px)";
+  const get = () => { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
+  const [t, setT] = useState(get);
+  useEffect(() => {
+    let m;
+    try { m = window.matchMedia(q); } catch (e) { return undefined; }
+    const on = () => setT(m.matches);
+    if (m.addEventListener) m.addEventListener("change", on); else m.addListener(on);
+    return () => { if (m.removeEventListener) m.removeEventListener("change", on); else m.removeListener(on); };
+  }, []);
+  return t;
+}
 
 // noInd: the companies of one opened group (their industry is the group's, named above the list): US tickers only.
-function StockRow({ i, r, number, copy, onTap, noInd = false }) {
+function StockRow({ i, r, number, copy, onTap, noInd = false, tight = false }) {
   const s = r.s;
   const d1 = todayD1(s);
   const sub = s.cls === "us" ? [s.t, noInd ? null : s.indName].filter(Boolean).join(" · ") : noInd ? "" : s.indName || "";
   return (
     <div data-ui-v2="rank-row" data-t={s.t} data-cls={s.cls} data-rank={i + 1} data-v={r.v != null ? r.v : undefined} role={copy ? undefined : "listitem"}>
-      <button type="button" onClick={onTap} tabIndex={copy ? -1 : undefined} style={rowStyle}>
-        {rankNo(i)}
-        <CoMark t={s.t} name={s.nk} size={34} />
+      <button type="button" onClick={onTap} tabIndex={copy ? -1 : undefined} style={rowStyle(tight)}>
+        {rankNo(i, tight)}
+        <CoMark t={s.t} name={s.nk} size={tight ? 30 : 34} />
         <span style={{ flex: 1, minWidth: 0 }}>
           <span data-ui-v2="rank-name" style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.35 })}>{s.nk}</span>
           <span style={{ display: "flex", alignItems: "center", gap: SPACE(1) + 2, minWidth: 0, marginTop: 1 }}>
@@ -258,7 +291,12 @@ function StockRow({ i, r, number, copy, onTap, noInd = false }) {
           </span>
         </span>
         <span style={{ textAlign: "right", flexShrink: 0 }}>
-          <span data-ui-v2="rank-num" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block", whiteSpace: "nowrap", lineHeight: 1.35 })}>{number}</span>
+          {/* a labelled number stays one approved string ("매출 연평균 +346.1%"): the label drawn as a small line above the value,
+              the space between them kept (data-ui="amount": read as one piece, as build.jsx does for its bold numbers) */}
+          <span data-ui-v2="rank-num" data-ui={number.label ? "amount" : undefined} style={tx(tight ? 13 : SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block", whiteSpace: "nowrap", lineHeight: 1.35 })}>
+            {number.label && <span data-ui-v2="rank-num-label" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { display: "block", lineHeight: 1.2 })}>{number.label}</span>}
+            {number.label ? " " : null}{number.value}
+          </span>
           {d1 != null && <span data-ui-v2="rank-change" style={tx(SIZE.xs, WEIGHT.bold, changeColor(d1), { display: "block", whiteSpace: "nowrap", lineHeight: 1.35, marginTop: 1 })}>{signed(d1)}</span>}
         </span>
       </button>
@@ -268,7 +306,7 @@ function StockRow({ i, r, number, copy, onTap, noInd = false }) {
 
 // 업종별 등락: the group's three largest companies overlapped (one mark per company: a second share class of the same company
 // is skipped), "{n}개 중 {k}개 오름 / 내림", the average change today (price red · blue). A tap opens its companies.
-function GroupRow({ i, g, copy, onOpen }) {
+function GroupRow({ i, g, copy, onOpen, tight = false }) {
   const w = groupWord(g);
   const marks = [];
   for (const s of g.members) {
@@ -277,8 +315,8 @@ function GroupRow({ i, g, copy, onOpen }) {
   }
   return (
     <div data-ui-v2="rank-row" data-ind={g.ind} data-rank={i + 1} data-n={g.n} data-k={w.k} data-avg={Math.round(g.avg * 1000) / 1000} role={copy ? undefined : "listitem"}>
-      <button type="button" onClick={onOpen} tabIndex={copy ? -1 : undefined} style={rowStyle}>
-        {rankNo(i)}
+      <button type="button" onClick={onOpen} tabIndex={copy ? -1 : undefined} style={rowStyle(tight)}>
+        {rankNo(i, tight)}
         <span aria-hidden="true" style={{ display: "flex", width: 62, flexShrink: 0 }}>
           {marks.map((s, j) => (
             <span key={s.t} style={{ marginLeft: j ? -9 : 0, borderRadius: 9, boxShadow: `0 0 0 2px ${COLOR.surface}`, display: "flex" }}><CoMark t={s.t} name={s.nk} size={26} /></span>
@@ -314,6 +352,7 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const own = useStockTap();
   const tp = tapper || own;
   const reduced = useReducedMotion();
+  const tight = useTight();
   const titleId = useId();
   const headRef = useRef(null);
   const boxRef = useRef(null);
@@ -329,19 +368,20 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   // what each chip has: cheap scans (ranks.chipState); only the chosen chip's list is worked out (below)
   const st = useMemo(() => (ok ? chipState(load, mk, deck) : null), [ok, load, mk, deck]);
   // Every chip that applies is offered, and an empty one says why in place of the list (Jack, 2026-11-12: the data is missing, or
-  // nothing qualifies). A market with no stock over the trading-value floor at all has no chip: the load-failure message stands in.
-  const chips = st && st.base > 0 ? chipsFor(mk, !!deck) : [];
+  // nothing qualifies). Only a market with no stock at all has no chip: the load-failure message stands in (v19.5b review 3).
+  const chips = st && (st.base > 0 || st.uni > 0) ? chipsFor(mk, !!deck) : [];
   const critShown = CRIT.map((c) => c.id);
   const chip = chips.length ? shownChip(pick.chip, chips) : null;
   const crit = critShown.includes(pick.crit) ? pick.crit : critShown[0];
   const state = !st || !chip ? null : chip === "crit" ? st.crit[crit] : st[chip];
   useEffect(() => {
     if (!st) return;
-    if (!st.base) console.warn(`[v2] rank card (${mk}): no stock over the trading-value floor: the load-failure message stands in for the list`);
+    if (!st.base && !st.uni) console.warn(`[v2] rank card (${mk}): no stock in the data: the load-failure message stands in for the list`);
+    else if (!st.base) console.warn(`[v2] rank card (${mk}): ${st.uni} stocks but none over the trading-value floor (${state === "none" ? "all under 5 eok won" : "no floor value"})`);
     else if (state === "nodata") console.warn(`[v2] rank card (${mk}): ${chip}${chip === "crit" ? " " + crit : ""}: the data this list needs is missing`
       + (chip === "surge" && st.surgeOf ? ` (no stock of ${st.surgeOf.of} over the floor has both val and val20)` : ""));
     else if (state === "none") console.info(`[v2] rank card (${mk}): ${chip}${chip === "crit" ? " " + crit : ""}: no stock qualifies today`);
-  }, [mk, chip, crit, state, st ? st.base : -1]);
+  }, [mk, chip, crit, state, st ? st.base : -1, st ? st.uni : -1]);
   const cur = useMemo(() => (ok && chip && state === "rows" ? rankRows(load, mk, chip, chip === "crit" ? crit : null, deck) : null),
     [ok, load, mk, chip, crit, deck, state]);
   const groups = chip === "ind" && cur ? cur.rows : null;
@@ -394,7 +434,11 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   // the latest quarter's equity) and on a 내 기준 whose only statement card with points is 가치; else nothing.
   const basis = dateBasis(mk, chip, crit, deck ? deck.settings.points : null);
   const year = basis === "report" && !opened && top.length ? reportYear(load, top) : null;
-  const quarter = basis === "quarter" && !opened && top.length > 0;
+  // the quarter line only when every row shown has its PBR on the latest quarter's equity (ranks.quarterBasis), else the close
+  // date only, and the console says why
+  const qb = basis === "quarter" && !opened && top.length > 0 ? quarterBasis(top, load.coByT) : null;
+  const quarter = !!(qb && qb.quarter);
+  if (qb && !qb.quarter) noteQuarter(mk, chip, qb);
   const md = dated ? mdText(dateIso) : null;
   const lines = !chip ? [] : opened ? [C.rank.groupLine]
     : chip === "val" ? [mk === "us" ? C.rank.line.valUs : C.rank.line.val]
@@ -403,22 +447,25 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
           : [C.rank.line[chip]].filter(Boolean);
   // the line in place of an empty list (Jack, 2026-11-12): the data is missing, or nothing qualifies (거래 급증: its own approved
   // line). Never an empty white box: a list that should have rows and has none falls to the load-failure message.
-  const emptyText = state === "nodata" ? C.rank.emptyData : state === "none" ? (chip === "surge" ? C.rank.surgeNone : C.rank.emptyNone) : null;
+  // 업종별 등락 on 홈 with groups but none above or below 0.0% (both parts empty): nothing qualifies
+  const emptyText = state === "nodata" ? C.rank.emptyData : state === "none" ? (chip === "surge" ? C.rank.surgeNone : C.rank.emptyNone)
+    : parts && !top.length ? C.rank.emptyNone : null;
   const tapOf = (s) => tp.props({ t: s.t, cls: s.cls, s }).onTap;
   // cut: a still window shows its first `fit` rows (both parts of 업종별 등락 stay whole)
   const cut = !parts && (still === "reduced" || still === "stale");
   const shownRows = cut ? top.slice(0, fit) : top;
   const stockList = (copy) => shownRows.map((r, i) => (kind === "ind"
-    ? <GroupRow key={r.ind} i={i} g={r} copy={copy} onOpen={() => setGroup(r.ind)} />
-    : <StockRow key={r.s.t} i={i} r={r} copy={copy} number={rowNumber(kind, crit, r)} onTap={tapOf(r.s)} noInd={kind === "group"} />));
-  // the list(s): one list, or the two labelled parts of 업종별 등락 (each its own list, named by its label)
+    ? <GroupRow key={r.ind} i={i} g={r} copy={copy} tight={tight} onOpen={() => setGroup(r.ind)} />
+    : <StockRow key={r.s.t} i={i} r={r} copy={copy} tight={tight} number={rowNumber(kind, crit, r)} onTap={tapOf(r.s)} noInd={kind === "group"} />));
+  // the list(s): one list, or the two labelled parts of 업종별 등락 (each its own list, named by its visible label through
+  // aria-labelledby, so a screen reader hears the name once: v19.5b review 3)
   const lists = (copy) => (partList ? partList.map(([k, gs, label]) => (
     <div key={k} data-ui-v2="rank-part" data-part={k}>
-      <p data-ui-v2="rank-part-label" aria-hidden={copy ? "true" : undefined}
-        style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text2, { height: PART_H, display: "flex", alignItems: "flex-end", padding: "0 14px 6px",
+      <p data-ui-v2="rank-part-label" id={copy ? undefined : `${titleId}-${k}`}
+        style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text2, { height: PART_H, display: "flex", alignItems: "flex-end", padding: tight ? "0 10px 6px" : "0 14px 6px",
           boxSizing: "border-box", borderBottom: `1px solid ${COLOR.line}` })}>{label}</p>
-      <div role={copy ? undefined : "list"} aria-label={copy ? undefined : label}>
-        {gs.map((g, i) => <GroupRow key={g.ind} i={i} g={g} copy={copy} onOpen={() => setGroup(g.ind)} />)}
+      <div role={copy ? undefined : "list"} aria-labelledby={copy ? undefined : `${titleId}-${k}`}>
+        {gs.map((g, i) => <GroupRow key={g.ind} i={i} g={g} copy={copy} tight={tight} onOpen={() => setGroup(g.ind)} />)}
       </div>
     </div>
   )) : <div role={copy ? undefined : "list"} aria-labelledby={copy ? undefined : titleId}>{stockList(copy)}</div>);

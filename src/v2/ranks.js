@@ -289,7 +289,27 @@ function mineRows(stocks, mk, settings) {
   const res = screen(stocks, st);
   const m = res.markets[mk];
   const pcts = criteriaPct(stocks, mk, settings.points);
-  return oneEach(ranked((m ? m.survivors : []).map((x) => ({ s: x.s, v: x.total, pct: pcts.has(x.t) ? pcts.get(x.t) : null })), 1));
+  const guard = usesValue(settings.points);
+  if (guard) noteMineValue(stocks, mk);
+  return oneEach(ranked((m ? m.survivors : []).filter((x) => !(guard && valueGuarded(x.s, mk)))
+    .map((x) => ({ s: x.s, v: x.total, pct: pcts.has(x.t) ? pcts.get(x.t) : null })), 1));
+}
+// 내 기준 with points on 가치 ranks by the pipeline's vz (the PBR percentile), which still ranks a PBR the 가치 list's own guards
+// leave out (PBR ≤ 0, a Korean PBR that rounds to 0.00, the US J4 guard: BRK-B, ERIC, KSPI, 진코스텍 on 2026-11-11) as the
+// cheapest. Until the pipeline blanks those vz, such a 내 기준 leaves the same rows out (v19.5b review 3); the console names
+// them once per file and market. Their "상위 {x}%" is still among all scorable stocks (criteriaPct, v19.7 Part D [B3]).
+const VALUE_GUARDS = new Set(["pbrNotAbove0", "pbrRoundsTo0", "pbrFarUnder"]);
+const usesValue = (points) => num(points && points.value) > 0;
+const valueGuarded = (s, mk) => VALUE_GUARDS.has(critOut(critOf("value"), s, mk, null));
+const mineNoted = new WeakMap();
+function noteMineValue(stocks, mk) {
+  if (!Array.isArray(stocks)) return;
+  let m = mineNoted.get(stocks);
+  if (!m) { m = new Set(); mineNoted.set(stocks, m); }
+  if (m.has(mk)) return;
+  m.add(mk);
+  const out = rankBase(stocks, mk).filter((s) => valueGuarded(s, mk)).map((s) => `${s.t} ${s.nk || ""}`.trim());
+  if (out.length) console.info(`[v2] rank lists (${mk}): the mine list with points on value leaves out the rows the value guards leave out, ${out.length}: ${out.join(", ")}`);
 }
 // Whether a 내 기준 list rests on a report number (KR date line): any card with points among REPORT_CARDS.
 export const mineUsesReport = (points) => activeCards(points || {}).some((c) => REPORT_CARDS.includes(c.id));
@@ -424,8 +444,10 @@ export function mineHasRows(stocks, mk, settings) {
   const active = activeCards(points);
   if (!active.length) return false;
   const ex = (settings && settings.exclude) || {};
+  const guard = usesValue(points);
   return rankBase(stocks, mk).some((s) => {
     if (exclusionsHit(s).some((k) => ex[k])) return false;
+    if (guard && valueGuarded(s, mk)) return false;
     let real = false;
     for (const c of active) {
       const raw = cardRaw(s, c);
@@ -466,16 +488,27 @@ function indState(stocks, mk) {
   if (indHasGroups(stocks, mk)) return "rows";
   return universe(stocks || [], mk).some((s) => todayD1(s) != null) ? "none" : "nodata";
 }
-// -> { base: the number of stocks over the floor (0: the market has no data at all, the card shows the load-failure message),
-//      cap, val, div, ind, mine (null without a portfolio with points), surge (null under 미국), crit: { [card]: state } }
+// -> { uni: the market's stocks (engine.universe; 0: no data at all, the card shows the load-failure message), base: those over
+//      the trading-value floor, cap, val, div, ind, mine (null without a portfolio with points), surge (null under 미국),
+//      crit: { [card]: state } }. A market with stocks but none over the floor (v19.5b review 3): every list but 업종별 등락
+//      (peerGroup's own set, no floor) says "nodata" when no stock has a floor value (val20 · val) and "none" when they are
+//      all under 5억.
 export function chipState(load, mk, deck = null) {
   if (!load || load.status !== "ok") return null;
   const stocks = load.data.stocks;
   const base = rankBase(stocks, mk);
+  const uni = base.length ? null : universe(stocks, mk);
   if (mk === "kr") mustMissing(stocks);
-  const has = (f) => (base.some((s) => num(s[f]) != null) ? "rows" : "nodata");
   const ss = surgeState(stocks, mk);
+  const ind = indState(stocks, mk);
+  if (!base.length) {
+    const why = uni.some((s) => liquidity(s) != null) ? "none" : "nodata";
+    return { uni: uni.length, base: 0, cap: why, val: why, surge: ss ? why : null, surgeOf: ss,
+      crit: Object.fromEntries(CRIT.map((c) => [c.id, why])), mine: deck ? why : null, div: why, ind };
+  }
+  const has = (f) => (base.some((s) => num(s[f]) != null) ? "rows" : "nodata");
   return {
+    uni: null,
     base: base.length,
     cap: has("cap"),
     val: has("val"),
@@ -484,7 +517,7 @@ export function chipState(load, mk, deck = null) {
     crit: Object.fromEntries(CRIT.map((c) => [c.id, critState(stocks, mk, c.id, load.coByT || null)])),
     mine: deck ? mineState(stocks, mk, deck.settings) : null,
     div: divState(base, mk),
-    ind: indState(stocks, mk),
+    ind,
   };
 }
 
@@ -518,6 +551,19 @@ export function oneReportYear(rows, coByT = null) {
   }
   const ys = [...years].sort();
   return { year: ys.length === 1 && !missing ? ys[0] : null, years: ys, missing };
+}
+
+// The quarter line ("각 회사의 최근 분기 재무제표 기준") only when every row shown has a PBR on the latest quarter's equity:
+// corp.json bpsIn with p other than "fy" (about 100 Korean companies have only the 사업보고서 year-end equity, p "fy", e.g.
+// 삼성에피스홀딩스 · 한화엔진; a company without bpsIn is not known to be quarterly). v19.5b review 3, the oneReportYear approach.
+// -> { quarter: bool, fy: rows on a year-end basis, missing: rows without bpsIn }
+export function quarterBasis(rows, coByT = null) {
+  let fy = 0, missing = 0;
+  for (const r of rows || []) {
+    const b = coByT ? (coByT.get(r.s.t) || {}).bpsIn : null;
+    if (!b) missing++; else if (b.p === "fy") fy++;
+  }
+  return { quarter: !!(rows && rows.length) && !fy && !missing, fy, missing };
 }
 
 // ---------------- must-haves ----------------

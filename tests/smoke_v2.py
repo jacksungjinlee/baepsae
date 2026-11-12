@@ -509,6 +509,7 @@ def wait_ready(page):
 
 
 # ── v19.5b 홈 · 종목 순위 (src/v2/rank.jsx · ranks.js): 화면을 읽는 도우미와, 파이썬으로 따로 센 기대 목록 ──
+NAME_MIN_320 = 120                                             # 320px 화면에서 종목 순위 줄의 회사 이름 칸 (px) 은 이 이상 (v19.5b 리뷰 3차)
 RANK_LIST = '[data-ui-v2="rank-window"] [role="list"]'          # 움직이는 창의 첫 벌 (화면 읽기 프로그램이 읽는 목록) · 멈춘 목록은 이것 하나
 
 
@@ -3579,7 +3580,8 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
     date = rank.locator('[data-ui-v2="rank-date"]').inner_text()
     line = "\n".join(rank.locator('[data-ui-v2="rank-line"] p').all_inner_texts())
     rows = rank_ts(page)
-    nums = page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()
+    # 숫자의 이름표(예: '매출 연평균')는 숫자 위 작은 한 줄 (리뷰 3차): 글을 견줄 때는 한 줄로 이어 읽어요
+    nums = [" ".join(n.split()) for n in page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()]
     L = C["rank"]["line"]
     # 날짜 줄 (Jack, 2026-11-12): 사업보고서 숫자 목록은 '{year}년 사업보고서 기준' (보이는 줄이 모두 그 한 해일 때만), 가치(최근 분기 자본으로
     # 계산한 PBR)와 기준 점수가 재무제표 카드 중 가치에만 있는 내 기준은 '각 회사의 최근 분기 재무제표 기준', 나머지는 종가 날짜만
@@ -3587,6 +3589,8 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
     report = mk == "kr" and (chip == "div" or (chip == "crit" and crit in ("profit", "stable", "growth"))
                              or (chip == "mine" and any(pts.get(c) for c in ("profit", "stable", "growth", "div"))))
     quarter = mk == "kr" and not report and ((chip == "crit" and crit == "value") or (chip == "mine" and bool(pts.get("value"))))
+    # 분기 줄은 보이는 줄이 모두 분기 자본으로 계산한 PBR 일 때만 (corp.json bpsIn.p 가 'fy' 가 아님, 리뷰 3차)
+    quarter = quarter and all(((coby.get(t) or {}).get("bpsIn") or {}).get("p") not in (None, "fy") for t in rows)
     years = {by_t(stocks)[t].get("fy") if by_t(stocks)[t].get("fy") is not None else (coby.get(t) or {}).get("fy") for t in rows} if report else set()
     if mk == "us":
         assert date == "10월 30일 종가 (미국 시간)", date
@@ -3597,7 +3601,8 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
     else:
         assert date == "10월 30일 종가", (chip, crit, date, years)
     if chip == "crit":                                                                 # 기준별 줄: 성장은 시장마다 한 잣대, 한국 성장 · 수익성은 최소 크기까지
-        basis = C["rank"]["basis"]["g3Kr" if mk == "kr" else "g3Us"] if crit == "growth" else C["build"]["cards"][crit]["basis"]
+        basis = (C["rank"]["basis"]["g3Kr"] if mk == "kr" else C["rank"]["p"]["basisG3Us"] or C["rank"]["basis"]["g3Us"]) if crit == "growth" \
+            else C["build"]["cards"][crit]["basis"]
         if mk == "kr" and crit in ("growth", "profit"):
             basis += " · " + C["rank"]["floor"][crit]
         assert line == fillp(L["crit"], card=C["build"]["cards"][crit]["name"], basis=basis), line
@@ -3624,6 +3629,11 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
         assert pct == sorted(pct) and line == L["mine"], (pct, line)                  # 점수가 높은 순서 = '상위' 숫자가 작은 순서
         assert all(by_t(stocks)[t] in rank_base(stocks, mk) for t in rows)
         assert not any(isnum(by_t(stocks)[t].get("opm")) and by_t(stocks)[t]["opm"] < 0 for t in rows), "적자 회사 빼기가 안 됐어요"
+        if pts.get("value"):                                                       # 가치에 점수: 가치 목록의 보조 장치가 빼는 행은 내 기준에서도 빠져요 (리뷰 3차)
+            def guarded(x):
+                v, per, roe = x.get("pbr"), x.get("per"), x.get("roe")
+                return isnum(v) and (v <= 0 or (mk == "kr" and v < 0.005) or (mk == "us" and isnum(per) and per > 0 and isnum(roe) and roe > 0 and v < per * roe / 100 / 4))
+            assert not any(guarded(by_t(stocks)[t]) for t in rows), [t for t in rows if guarded(by_t(stocks)[t])]
     elif chip == "div":
         vs = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => Number(e.dataset.v))")
         assert vs == sorted(vs, reverse=True) and all(re.fullmatch(RANK_NUM["div"], n) for n in nums), (vs, nums)
@@ -3667,6 +3677,9 @@ def scene_rank(R, files, width):
     30개, 제목에 초점) · 뱁이 없음 · 가로 스크롤 없음."""
     S = f"종목 순위 {width}"
     f, surge_big, surge_small = rank_files(files)
+    for c in f["corp.json"]["companies"]:                                         # 분기 자본 PBR (bpsIn.p 'ttm'): 가치의 분기 줄이 나와요
+        if c["t"][:1].isdigit() and not c.get("bpsIn"):
+            c["bpsIn"] = {"p": "ttm"}
     stocks = f["data.json"]["stocks"]
     coby = {c["t"]: c for c in f["corp.json"]["companies"]}
     srv, ctx, page, base = R.open(build_site(f), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
@@ -3697,6 +3710,9 @@ def scene_rank(R, files, width):
                         row, on = page.locator('[data-ui-v2="rank-crit"]').bounding_box(), page.locator(f'[data-ui-v2="rank-crit"] [data-chip="{crit}"]').bounding_box()
                         assert on["x"] >= row["x"] - 0.5 and on["x"] + on["width"] <= row["x"] + row["width"] + 0.5, (crit, row, on)   # 고른 기준이 줄 안에
                     got = rank_check_list(page, stocks, coby, mk, chip, crit)
+                    if width == 320:                                               # 회사 이름 칸이 숫자에 밀리지 않아요 (리뷰 3차: '라…' 한 글자)
+                        ws = page.locator(RANK_LIST + ' [data-ui-v2="rank-name"]').evaluate_all("(els) => els.map((e) => e.getBoundingClientRect().width)")
+                        assert not ws or min(ws) >= NAME_MIN_320, (mk, chip, crit, ws)
                     if chip == "div" and mk == "kr":
                         assert got == C["rank"]["emptyData"], got                       # 이 파일에는 분할 확인(divCheck)이 없어요
                     if chip == "surge":
@@ -4066,10 +4082,13 @@ def scene_rank_r1(R, files, width):
     ctx.close()
     srv.shutdown()
 
-    f2 = clone(files)                     # 오늘 거래대금(val)이 없는 파일 · 미국은 모두 5억 미만이고 오늘 변화도 없음 (업종별 등락도 없음)
+    # 오늘 거래대금(val)이 없는 파일 · 한국은 모든 종목이 오늘 +0.01% (업종 평균이 모두 '0.0%') · 미국은 모두 5억 미만이고 오늘 변화도 없음
+    f2 = clone(files)
     for x in f2["data.json"]["stocks"]:
         if x["cls"] == "kr":
             x.pop("val", None)
+            if isnum(x.get("d1")):
+                x["d1"] = 0.01
         elif x["cls"] == "us":
             x["val"], x["d1"] = 1.0, None
     srv, ctx, page, base = R.open(build_site(f2), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
@@ -4084,6 +4103,32 @@ def scene_rank_r1(R, files, width):
             assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyData"], c
             assert page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-foot"]').count() == 0
         assert C["rank"]["surgeNone"] not in page.locator("body").inner_text()   # 숫자가 없는 날은 '오늘은 … 없어요' 가 아니에요
+        rank_chip(page, "ind")                                                   # 업종이 모두 '0.0%': 두 부분이 다 비어 '지금은 … 없어요' (리뷰 3차)
+        assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyNone"]
+        assert page.locator('[data-ui-v2="rank-fail"], [data-ui-v2="rank-window"]').count() == 0
+        rank_chip(page, "cap")
+        rank_market(page, "us")                                                  # 종목은 있는데 모두 5억 미만: 칩은 그대로, '지금은 … 없어요' (리뷰 3차)
+        chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
+        assert chips == ["cap", "val", "crit", "mine", "div", "ind"], chips
+        assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyNone"] and page.locator('[data-ui-v2="rank-fail"]').count() == 0
+        rank_chip(page, "ind")                                                   # 미국은 오늘 변화가 없어요: 데이터 없음
+        assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyData"]
+        R.collect(page)
+        rank_chip(page, "cap")
+        rank_market(page, "kr")
+    R.check(page, S, "오늘 거래대금이 없는 파일: 거래대금 · 거래 급증은 '필요한 데이터가 아직 없어 …' · 업종이 모두 0.0% 면 '지금은 … 없어요' · 5억 미만뿐인 시장(미국)도 칩은 그대로", no_figures)
+    ctx.close()
+    srv.shutdown()
+
+    f3 = clone(files)                     # 미국 종목이 하나도 없는 파일: 미국은 칩 없이 불러오기 실패 문구 (그 시장에 데이터가 아예 없을 때만)
+    f3["data.json"]["stocks"] = [x for x in f3["data.json"]["stocks"] if x["cls"] != "us"]
+    srv, ctx, page, base = R.open(build_site(f3), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def no_market():
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        rank_chip(page, "crit", "value")                                         # 시험 데이터에는 bpsIn 이 없어요: 분기 줄 없이 종가 날짜만 (리뷰 3차)
+        assert page.locator('[data-ui-v2="rank-date"]').inner_text() == "10월 30일 종가", page.locator('[data-ui-v2="rank-date"]').inner_text()
         rank_chip(page, "cap")
         rank_market(page, "us")
         assert page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').count() == 0
@@ -4091,7 +4136,7 @@ def scene_rank_r1(R, files, width):
         assert fail.inner_text() == LOAD_FAIL and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-empty"], [data-ui-v2="rank-foot"]').count() == 0
         R.collect(page)
         rank_market(page, "kr")
-    R.check(page, S, "오늘 거래대금이 없는 파일: 거래대금 · 거래 급증은 '필요한 데이터가 아직 없어 …' · 거래대금 기준을 넘는 종목이 없는 시장(미국)은 칩 없이 불러오기 실패 문구", no_figures)
+    R.check(page, S, "미국 종목이 없는 파일: 미국은 칩 없이 불러오기 실패 문구 · 분기 자본이 확인되지 않은 한국 가치는 종가 날짜만", no_market)
     ctx.close()
     srv.shutdown()
 
