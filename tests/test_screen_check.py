@@ -633,12 +633,22 @@ def test_banner_check_follows_the_data_only_with_real_data(SA, monkeypatch, caps
     assert SA.EXAMPLE_MAX == 3
     us = [t for t in SA.BASE_TICKERS if t.isalpha()]
     blank = lambda n: {"data.json": {"stocks": [ok(s["t"], beta=None) if s["t"] in us[:n] else s for s in full]}}
-    assert SA.banner_due(R, "정상", blank(3)) == [SA.NONLIVE]
-    with pytest.raises(AssertionError, match="파이프라인 고장으로 봐요"):
-        SA.banner_due(R, "정상", blank(4))
+    gold3 = {"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] == SA.GOLD_SPOT else s for s in blank(3)["data.json"]["stocks"]]}}
+    for fine in ({"data.json": {"stocks": full}}, gone, gold, blank(3), gold3):
+        SA.within_example_cap(fine)                                           # 한도 이내: 통과 (안내가 맞게 뜨는지는 장면이 봐요)
+    assert SA.banner_due(R, "정상", blank(3)) == [SA.NONLIVE] and SA.banner_due(R, "정상", gold3) == [SA.NONLIVE, SA.GOLD_EST]
+    with pytest.raises(AssertionError, match="파이프라인 고장으로 봐요.*아주 떠난 회사인지.*BASE_STOCKS"):
+        SA.within_example_cap(blank(4))
     with pytest.raises(AssertionError, match="발행하지 않아요"):
-        SA.banner_due(R, "정상", blank(len(us)))                              # 미국 종목 베타가 통째로 빈 날
-    assert SA.banner_due(R, "정상", {"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] == "04020000" else s for s in blank(3)["data.json"]["stocks"]]}}) == [SA.NONLIVE, SA.GOLD_EST]
+        SA.within_example_cap(blank(len(us)))                                 # 미국 종목 베타가 통째로 빈 날
+    with pytest.raises(AssertionError, match="금현물.*말고 다른 종목"):          # 금 환산 표시는 금현물에만
+        SA.within_example_cap({"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] in ("TSLA", SA.GOLD_SPOT) else s for s in full]}})
+    # 한도 검사는 실제 데이터로 돌 때 장면들 앞에서 한 번 (실패 줄 하나) — CI 의 검사 목록은 그대로
+    src0 = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    assert src0.count("within_example_cap(fresh)") == 1 and "        if REAL_DATA:       # 장면들 앞에서 한 번" in src0
+    assert src0.index("within_example_cap(fresh)") < src0.index("        for key, fn in scenes:")
+    # 내장 종목 목록을 덜 읽거나 더 읽으면 불러오는 순간 멈춰요 (종목코드 수 = 이름 수)
+    assert 'len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\\bnk:\\s*\\"", _block))' in src0
     # 배너 줄 비교: 떠야 하는 줄이 정확히, 그 순서로 — 없어야 하면 배너 자체가 없어야 해요
     full_line = SA.NONLIVE + " (샘플)."
     assert SA.banner_is(FakePage([]), []) and not SA.banner_is(FakePage([full_line]), [])

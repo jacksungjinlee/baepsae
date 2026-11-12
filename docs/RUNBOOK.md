@@ -59,13 +59,20 @@ serve the `docs/` folder (two of its files must answer "not found").
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
       correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
       (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
-      **Up to 3 such stocks; with more the check fails and nothing is published**, because many at once is the
-      pipeline (for example every US beta blank), not the market. Then fix the pipeline; do not raise the number.
+      **Up to 3 such stocks; with more the check fails and nothing is published** (one clear line at the top of the
+      result: "내장 종목 N개가 …"), because many at once is the pipeline (for example every US beta blank), not the
+      market. The number counts every built-in stock that is missing today, not only new ones, so:
+      - when a built-in company has left the market for good (delisted, merged), remove it from `BASE_STOCKS` in a
+        small PR (an old-app change: rebuild, Jack's yes). Until then it shows as `!! 알림` every morning and uses up
+        one of the three;
+      - if the check fails, first look at the names: long-gone companies mean the list needs that PR; several fresh
+        blanks at once mean the pipeline. Do not raise the number.
     - One scene needs three must-have stocks (005930, 005380, 105560) to have a dividend yield; the gate lets one
       must-have stock without dividend data through with a warning (Jack, 11-05), so the scene fills a blank one in
       its own copy and says so in the log.
-    - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default: the 09:13 morning check
-      reads them and reports them to Jack.
+    - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default. The 09:13 morning check
+      must report them to Jack: its instructions are extended for the warnings titled "발행 전 화면 검사 …" as an
+      after-merge step of #106 (until that is done, nothing reads them).
     - Without `--data` (CI) none of this applies: a missing company or any such notice is a failure, as before.
     - Never skip the check itself to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks

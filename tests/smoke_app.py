@@ -236,13 +236,20 @@ def none_today(R, scene, what, hint=""):
 #   · 실제 데이터(--data DIR): 오늘 데이터로 앱과 같은 규칙을 계산해, 떠야 하면 그 줄이 정확히 떠 있는지 봐요 (크게 알려요).
 #     다만 EXAMPLE_MAX 개까지만이에요: 한두 종목은 시장의 일이지만, 여러 종목이 한꺼번에 비면 파이프라인이 고장 난 날이에요
 #     (예: 미국 종목의 베타가 통째로 빔 — 관문에는 미국 베타 · 변동성 채움 기준이 없어요). 그날은 실패 → 발행하지 않아요.
+#     이 한도는 장면들 앞의 검사 하나(within_example_cap)가 봐요 — 실패 줄이 하나로, 이유와 함께 나오게요.
+#     주의: 이 수는 '오늘 없는 내장 종목 전부'예요 (어제와 비교하지 않아요). 아주 떠난 회사는 날마다 세어지니, 떠난 것이 확실하면
+#     내장 목록(src/detail.jsx BASE_STOCKS)에서 빼는 작은 PR 이 필요해요 (docs/RUNBOOK.md).
 #   · 그 밖(CI · 내 컴퓨터): 예전 그대로 — 배너가 하나라도 있으면 실패 (고정 데이터에는 그런 종목이 없어야 해요). 그리고 이 계산이
 #     '없음'이라고 하는지도 봐요: 내장 종목 목록을 잘못 읽으면 CI 에서 먼저 드러나요 (매일 실행에서 처음 드러나면 발행이 멈춰요).
 EXAMPLE_MAX = 3
 with open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8") as _f:
     _src = _f.read()
 BASE_TICKERS = re.findall(r'\bt:\s*"([^"]+)"', _src[_src.index("const BASE_STOCKS = ["):_src.index("\n];", _src.index("const BASE_STOCKS = ["))])
-assert len(BASE_TICKERS) >= 60 and "005930" in BASE_TICKERS, "src/detail.jsx 의 내장 종목 목록을 읽지 못했어요"
+_block = _src[_src.index("const BASE_STOCKS = ["):_src.index("\n];", _src.index("const BASE_STOCKS = ["))]
+# 목록을 덜 읽거나 더 읽지 않았는지: 종목마다 한글 이름(nk)이 하나씩 있어요 — 그 수와 같아야 해요
+assert len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\bnk:\s*\"", _block)) >= 60 and "005930" in BASE_TICKERS, \
+    "src/detail.jsx 의 내장 종목 목록을 읽지 못했어요 (종목코드 수와 이름 수가 달라요)"
+GOLD_SPOT = "04020000"          # 금현물: 국제 금값 환산(est)은 이 종목에만 붙어요 (fetch_data.py)
 
 
 def example_price_stocks(f):
@@ -268,24 +275,35 @@ def example_price_stocks(f):
     return sorted(set(examples) | set(by_t)), sorted(est)
 
 
+def within_example_cap(f):
+    """실제 데이터로 돌 때 장면들 앞에서 한 번: 예시 가격으로 보이는 내장 종목이 EXAMPLE_MAX 개 이하이고, 금 환산 표시는 금현물에만 있어요.
+    넘으면 실패 → 발행하지 않아요 (여러 종목이 한꺼번에 = 파이프라인 고장으로 봐요)."""
+    examples, est = example_price_stocks(f)
+    names = f"{', '.join(examples[:12])}{' …' if len(examples) > 12 else ''}"
+    assert len(examples) <= EXAMPLE_MAX, (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names}) — {EXAMPLE_MAX}개를 넘으면 "
+                                          "종목 사정이 아니라 파이프라인 고장으로 봐요 (예: 미국 종목 베타가 통째로 빔) → 발행하지 않아요. "
+                                          "먼저 볼 것: 이 종목들이 상장폐지 · 합병으로 아주 떠난 회사인지 — 그렇다면 고칠 것은 파이프라인이 아니라 "
+                                          "내장 목록(src/detail.jsx BASE_STOCKS)이에요 (작은 PR). 한도 숫자는 올리지 않아요")
+    assert set(est) <= {GOLD_SPOT}, f"금 환산 표시(est)가 금현물({GOLD_SPOT}) 말고 다른 종목에도 붙어 있어요: {est} — 파이프라인을 확인하세요"
+
+
 def banner_due(R, scene, f):
     """이 데이터라서 떠야 하는 배너 줄의 첫머리 목록 (앱이 그리는 순서). 실제 데이터일 때만 — 떠야 하면 실행 기록에 크게 남겨요.
     CI · 내 컴퓨터에서는 언제나 [] (예전 그대로 '배너 없음'을 요구해요) — 데이터에 그런 종목이 있으면 그 자리에서 실패예요.
-    실제 데이터라도 예시 가격 종목이 EXAMPLE_MAX 개를 넘으면 실패예요 (한꺼번에 여러 종목 = 파이프라인을 의심)."""
+    (실제 데이터에서 종목 수의 한도는 within_example_cap 이 따로 봐요.)"""
     examples, est = example_price_stocks(f)
     names = f"{', '.join(examples[:8])}{' …' if len(examples) > 8 else ''}"
     if not REAL_DATA:
         assert not examples and not est, (f"이 데이터에는 '예시 가격 · 금 환산' 안내가 뜨는 종목이 있어요 (예시 {len(examples)}: {names} · 금 환산 {len(est)}) — "
                                           "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
         return []
-    assert len(examples) <= EXAMPLE_MAX, (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names}) — {EXAMPLE_MAX}개를 넘으면 "
-                                          "종목 사정이 아니라 파이프라인 고장으로 봐요 (예: 미국 종목 베타가 통째로 빔). 발행하지 않아요")
     due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
     if due:
         why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
                                     f"금 환산 추정 {', '.join(est)}" if est else "") if x)
         msg = (f"오늘 데이터: {why} → 예전 뱁새가 '예시 가격 · 금 환산' 안내를 보여 주는 날이에요 (그 안내가 맞게 뜨는지 확인해요). "
-               f"상장폐지 · 하루 빈 값이면 괜찮지만, 어제는 없던 일이 여러 종목에 생겼다면 파이프라인을 의심하세요 ({EXAMPLE_MAX}개를 넘으면 발행하지 않아요)")
+               f"아주 떠난 회사(상장폐지 · 합병)라면 내장 목록(src/detail.jsx BASE_STOCKS)에서 빼는 PR 이 필요해요 — 날마다 세어져요. "
+               f"여러 종목이 한꺼번에 비었다면 파이프라인을 의심하세요 ({EXAMPLE_MAX}개를 넘으면 발행하지 않아요)")
         if msg not in R.notes:
             R.notes.append(msg)
             print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
@@ -2942,6 +2960,9 @@ def main():
         R = Runner(browser, args.shots)
         scenes = part_of(scene_list(R, fresh, full), args.part)
         ran = 0
+        if REAL_DATA:       # 장면들 앞에서 한 번 (실패 줄이 하나로, 이유와 함께): 예시 가격으로 보일 내장 종목이 한도 이내인지
+            R.check(None, "오늘 데이터", f"예전 뱁새의 내장 종목 가운데 오늘 데이터에 없거나 값이 빈 종목이 {EXAMPLE_MAX}개 이하 · 금 환산 표시는 금현물만",
+                    lambda: within_example_cap(fresh))
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue
