@@ -17,13 +17,23 @@ npx esbuild src/v2/main.jsx "${COMMON[@]}" --outfile=dist/app.js
 npx esbuild src/v2/main-preview.jsx "${COMMON[@]}" --outfile=dist/app-preview.js
 npx esbuild src/copy/v2.js --bundle --format=cjs --platform=node --charset=utf8 --log-level=warning --outfile=dist/copy-v2.cjs
 TITLE=$(node -e 'const a = require("./dist/copy-v2.cjs").C.app; process.stdout.write(JSON.stringify([a.title, a.previewTitle.replace("{title}", a.title).replace("{sample}", a.sample)]))')
+# v19.6d (어두운 화면): the colour sheet (both palettes as CSS variables, src/ui/tokens.js themeCss) and the head script that
+# applies the stored 화면 모드 before the first paint (src/v2/theme.js themeHeadScript), from the same source as the app.
+npx esbuild src/v2/theme.js --bundle --format=cjs --platform=node --charset=utf8 --minify-whitespace --log-level=warning --outfile=dist/theme-v2.cjs
+node -e 'const t = require("./dist/theme-v2.cjs"); process.stdout.write(JSON.stringify({ css: t.themeCss(), js: t.themeHeadScript() }))' > dist/theme-v2.json
 TITLE="$TITLE" OUT="$OUT" python3 - << 'PY'
-import json, os
+import base64, hashlib, json, os
 tpl = open("src/v2/template.html", encoding="utf-8").read()
 title, preview_title = json.loads(os.environ["TITLE"])   # the preview's tab says 예시 데이터 too
 out = os.environ["OUT"]
-for m in ("/*BUNDLE*/", "/*TITLE*/", "/*SW*/", "/*HEAD*/"):
+for m in ("/*BUNDLE*/", "/*TITLE*/", "/*SW*/", "/*HEAD*/", "/*THEME_CSS*/", "/*THEME_JS*/"):
     assert tpl.count(m) == 1, f"template needs exactly one {m}"
+theme = json.load(open("dist/theme-v2.json", encoding="utf-8"))
+assert theme["css"].startswith(":root{--bs-") and '[data-theme="dark"]' in theme["css"] and "<" not in theme["css"], "theme css"
+assert "</script" not in theme["js"] and "data-theme" in theme["js"] and "baepsae-theme" in theme["js"], "theme head script"
+tpl = tpl.replace("/*THEME_CSS*/", theme["css"]).replace("/*THEME_JS*/", theme["js"])
+# The head script's hash, for the Content-Security-Policy v19.4 adds (v19.3 Part O): inline scripts are allowed by hash.
+print("theme head script: 'sha256-" + base64.b64encode(hashlib.sha256(theme["js"].encode("utf-8")).digest()).decode() + "'")
 # The current app's approved <head> text (description, og:*, twitter:*) and GoatCounter snippet, taken from
 # template.html as they are (that file stays byte-identical), for the live page only.
 import re
