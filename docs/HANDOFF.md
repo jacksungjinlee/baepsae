@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 00:30 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 01:10 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -29,6 +29,18 @@ just stops blocking screen work.
 - Updates, short, in this shape: 1. Problems (if any). 2. Live since last update: what users see now. 3. In progress,
   one line per PR. 4. Questions, with the recommended answer first, all in one place. 5. Once a day: a table of every
   approved board (v19.3, v19.5, v19.6, v19.7) marked live, partly live or not started.
+- **Jack's answers, 2026-11-13 (second message):**
+  - Track B order: v19.5b → v19.6a → v19.7a → v19.6f (right after v19.7a; if v19.6f isn't in review by Dec 1 it
+    jumps the queue; it must merge by Dec 10) → v19.7b; v19.6d (dark) as soon as v19.5b is in; then the rest of
+    v19.6, with v19.6h last (needs v19.4). Each spec's Status line says what is live and what is next.
+  - New screens use the shared colour tokens only, never fixed colours, so dark mode covers them.
+  - The Korean PBRs under 0.1 are wrong numbers users see now, so they are Track A, beside the currency fix: scan every
+    Korean company for the DART unit error (any PBR under 0.1, or assets ≠ liabilities + equity), check SG&G and
+    앱토크롬 against their filings, hide every number built on faulty amounts with "공시 자료의 단위를 확인하고 있어서
+    이 숫자를 잠시 비워 두었어요.", then repair the reading. v19.5b gets its own Korean 가치 guard (a PBR that rounds
+    to 0.00 is never real) so it doesn't wait for that fix.
+  - Only the currency fix and the token fix need a real publish of their own. #107, #111 and the deploy check merge as
+    soon as their test runs and reviews are green, after the first real publish of 11-13.
 - Open (asked Jack 11-13): whether the 11-07 notes below (at most two open app PRs; at most two question messages a
   day; the evening list) still hold next to this instruction, and where v19.4 goes (v19.6h waits for it).
 
