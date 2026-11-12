@@ -202,6 +202,22 @@ DVWHY_CLEAN_TOL = 1e-4   # 사건 하나의 배율은 깨끗한 분할 배율(SP
 DVWHY_SAME = 0.10        # 10% 이하 변화는 이름 붙이지 않아요 · filed 의 여유 (fetch_data.SHARE_SAME 과 같은 값)
 DVWHY_CB_FLOOR = 0.7     # 전환·행사가액의 하한 (발행 때의 70%) → 사채가 만드는 주식 수는 많아야 1/0.7 배
 DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 말보다 이만큼 앞부터
+# v19.6a (새 줄만 · 늦추는 줄 없음 · docs/tasks/v19.6-records-alerts-dark.md Part I.1 · A.6): macro.json fxHist (원/달러 일별 종가 2016~)
+# 와 data.json splits (최근 3년 주식 분할). 앱(v19.6a)은 새 미국 기록에 그 날짜의 환율을 저장하고(fxHist), 분할 전 기록을 새 주식 수로
+# 맞춰 읽어요(splits). 둘 다 사용자 기록에 영구히 남는 값이라 모양이 틀리면 실패. 없으면 경고 (fxHist 가 없으면 앱이 지난 날짜의 미국
+# 기록을 받지 않고 승인된 줄로 알려요 — 틀린 숫자가 아니에요) — 단 splits 는 직전 발행본에 있었는데 빠지면 실패 (분할 전 기록이 옛 주식
+# 수로 보여요). 파이프라인(fetch_data.py)은 아래 기준값을 읽어 같은 선으로 판단해요 (검사 코드는 따로).
+FX_HIST_FROM = "2016-01-01"     # 앱이 환율을 찾는 첫날 (src/v2/records.js FX_FROM) — 그 전 날짜의 미국 기록은 환율 없이 저장돼요
+FX_HIST_FIRST_BY = "2016-01-08" # 첫 줄은 2016년 첫 주 안이어야 해요 (앞이 잘린 이력이면 2016년 뒤 날짜의 기록이 환율 없이 저장돼요)
+FX_HIST_GAP_MAX = 7             # 줄 사이 달력 날짜 상한 — 야후 USDKRW=X 2016-01 ~ 2026-11: 주말 3일, 가장 긴 것 5일 (2025 부활절)
+FX_HIST_JUMP = 10.0             # 줄 사이 변화 상한 (%) — 2016-01 ~ 2026-11 에서 가장 큰 날 3.4%. 넘으면 깨진 값
+FX_HIST_LAST_TOL = 0.05         # 마지막 값 = data.json fx (둘 다 소수 첫째 자리) — 반올림 반 칸 안
+SPLIT_YEARS = 3                 # splits 는 최근 3년 (A.6)
+SPLIT_R = (0.001, 1000.0)       # 앱(src/v2/held.js okSplit)이 읽는 배율 범위 — 밖이면 앱이 그 줄을 버려요 (배율 1 도)
+SPLIT_SIMPLE_MAX = 20           # 배율은 기약분수 p/q 에서 min(p, q) ≤ 20 인 '깨끗한' 값만 (10:1 · 1:15 · 3:2 · 105:100 = 21:20 주식배당).
+#                                 야후는 분사(spin-off)도 분할 칸에 1253:1000 (GE · GE 버노바 분사) 같은 가격 조정 배율로 적어요 — 주식 수가
+#                                 바뀐 게 아니라서 앱이 쓰면 사용자 주식 수가 늘어 보여요 (2026-11-13 야후: GE 1253:1000 · MMM · WDC 1323:1000 · HON …)
+SPLIT_NEW_OLD_DAYS = 7          # 어제 목록에 없던 분할이 이보다 오래된 날짜로 새로 나오면 경고 (어제도 있던 종목만)
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -813,6 +829,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
+    check_v196a(rep, data, macro, by, pdata, mode, today)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -901,6 +918,191 @@ def check_v191c(rep, cur, us, mode, today):
             else (f"{len(own)}종목: " + ", ".join(own[:US_D1_SHOW]) + (f" 외 {len(own) - US_D1_SHOW}개" if len(own) > US_D1_SHOW else "")
                   if own else "없음 (모두 미국 기준일 종가)"),
             f"d1 이 없는 미국 종목은 pxd < {usd} · d1 이 있으면 pxd 없음")
+
+
+def _iso_day(s):
+    """'YYYY-MM-DD' 로 적힌 진짜 날짜면 date, 아니면 None (2026-02-30 · '2026-1-5' · 숫자는 None)."""
+    if not isinstance(s, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        return None
+    try:
+        return dt.date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def json_num(x):
+    """JSON 숫자(정수·실수, 참/거짓 아님, 유한)면 float, 아니면 None — 앱은 글자 "1180.5" 를 숫자로 읽지 않아요 (typeof number)."""
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else None
+
+
+def years_before(d, n):
+    """d 의 n 년 전 같은 날 (2월 29일은 28일로 — fetch_data.split_window_from 과 같은 규칙, 코드는 따로)."""
+    try:
+        return d.replace(year=d.year - n)
+    except ValueError:
+        return d.replace(year=d.year - n, day=28)
+
+
+def simple_ratio(r, top=None):
+    """배율이 기약분수 p/q 로 min(p, q) ≤ top 인지 (분할·병합·주식배당은 그래요 · 야후가 분사를 적은 1253:1000 같은 값은 아니에요).
+    fetch_data.split_is_clean 과 같은 규칙, 코드는 따로: p/q 를 분수로 바로 찾아요."""
+    from fractions import Fraction
+    top = SPLIT_SIMPLE_MAX if top is None else top
+    if r is None or not (r > 0):
+        return False
+    f = Fraction(r).limit_denominator(10 ** 6)
+    return abs(float(f) - r) <= 1e-9 * max(1.0, r) and min(f.numerator, f.denominator) <= top
+
+
+def _split_map(raw):
+    """splits 목록 → {(코드, 날짜): 배율} (모양이 맞는 줄만 · 직전 발행본 비교용)."""
+    out = {}
+    for x in raw if isinstance(raw, list) else []:
+        if isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and _iso_day(x[1]) and json_num(x[2]) is not None:
+            out[(x[0], x[1])] = json_num(x[2])
+    return out
+
+
+def check_v196a(rep, data, macro, by, pdata, mode, today):
+    """v19.6a (Part I.1 · A.6): macro.json fxHist 와 data.json splits. 세 줄."""
+    # 1. 환율 이력 — 앱이 새 미국 기록에 그 날짜의 환율로 저장해요 (records.js rateFor: 그날 종가, 없으면 그 전 마지막 종가).
+    #    asOf 가 마지막 줄과 다르면 앱이 통째로 안 써요 · 마지막 날이 data.json fxDate 가 아니면 그 뒤 날짜를 못 받아요.
+    name = "환율 이력 (fxHist)"
+    th = (f"{FX_HIST_FROM} 부터 (첫 줄 ≤ {FX_HIST_FIRST_BY}) · 날짜 차례대로 · 줄 사이 ≤ {FX_HIST_GAP_MAX}일 · 줄 사이 변화 ≤ {FX_HIST_JUMP:g}% · "
+          f"{FX_LO}~{FX_HI} · asOf = 마지막 날 = data.json fxDate < 오늘 · 마지막 값 = data.json fx ± {FX_HIST_LAST_TOL:g} "
+          "(없거나 지난 발행본에서 이었으면 경고)")
+    fh = macro.get("fxHist")
+    src = macro.get("fxHistSrc")
+    if fh is None:
+        rep.add(name, True, "없음 — 앱은 지난 날짜의 미국 종목 기록을 받지 않고 그렇게 알려요", th, warn=True)
+    else:
+        probs, ds, vs, bad = [], [], [], 0
+        rows = fh.get("rows") if isinstance(fh, dict) else None
+        if not isinstance(rows, list) or not rows:
+            probs.append("rows 가 비었거나 목록이 아니에요")
+            rows = []
+        for r in rows:
+            two = isinstance(r, list) and len(r) == 2
+            d, v = (_iso_day(r[0]), json_num(r[1])) if two else (None, None)
+            if d is None or v is None or v <= 0:
+                bad += 1
+                continue
+            ds.append(d)
+            vs.append(v)
+        if bad:
+            probs.append(f"모양이 틀린 줄 {bad:,}개")
+        if ds and not bad:
+            if ds[0] < day(FX_HIST_FROM) or ds[0] > day(FX_HIST_FIRST_BY):
+                probs.append(f"첫날 {ds[0]}")
+            order = [f"{a}→{b}" for a, b in zip(ds, ds[1:]) if b <= a]
+            if order:
+                probs.append(f"날짜 차례·겹침 {len(order)}곳 ({order[0]})")
+            gaps = [f"{a}→{b} {(b - a).days}일" for a, b in zip(ds, ds[1:]) if (b - a).days > FX_HIST_GAP_MAX]
+            if gaps:
+                probs.append(f"빈 날 {len(gaps)}곳 ({', '.join(gaps[:2])})")
+            jumps = [f"{a} {x:g}→{y:g}" for a, b, x, y in zip(ds, ds[1:], vs, vs[1:]) if abs(y / x - 1) * 100 > FX_HIST_JUMP]
+            if jumps:
+                probs.append(f"큰 변화 {len(jumps)}곳 ({', '.join(jumps[:2])})")
+            out = [f"{d} {v:g}" for d, v in zip(ds, vs) if not (FX_LO < v < FX_HI)]
+            if out:
+                probs.append(f"범위 밖 {len(out)}줄 ({', '.join(out[:2])})")
+            if _iso_day(fh.get("asOf")) != ds[-1]:
+                probs.append(f"asOf {fh.get('asOf')} ≠ 마지막 날 {ds[-1]}")
+            fxd = day(data.get("fxDate")) if is_day(data.get("fxDate")) else None
+            if ds[-1] != fxd:
+                probs.append(f"마지막 날 {ds[-1]} ≠ data.json fxDate {data.get('fxDate')}")
+            if ds[-1] >= today:
+                probs.append(f"마지막 날 {ds[-1]} 가 오늘({today}) 이후 (덜 끝난 봉)")
+            fx = num(data.get("fx"))
+            if fx is None or abs(vs[-1] - fx) > FX_HIST_LAST_TOL:
+                probs.append(f"마지막 값 {vs[-1]:g} ≠ data.json fx {data.get('fx')}")
+        if probs:
+            rep.add(name, False, " · ".join(probs)[:200], th)
+        else:
+            kept = src != "yahoo"
+            rep.add(name, True, f"{ds[0]} ~ {ds[-1]} · {len(ds):,}일 · 마지막 {vs[-1]:,.1f} = fx · 출처 {src}"
+                    + (" (지난 발행본의 앞부분을 이어 썼어요 — 야후 2016년부터 받기 실패)" if src == "kept" else "" if not kept else " (출처 표시 없음)"),
+                    th, warn=kept)
+
+    # 2. 주식 분할 — 앱이 분할 날짜 앞의 기록을 새 주식 수로 맞춰 읽어요 (held.js splitFactor). 배율·날짜가 틀리면 사용자의 주식 수가 틀려 보이고,
+    #    기록할 때 포트폴리오에 저장돼 남아요 (lots.js splitsToStore). 미국 기준일 뒤 날짜는 막지 않고 경고만: 야후가 그 분할로 종가를 이미
+    #    맞춘 뒤라 목록에 있어야 맞지만, 경계의 날이라 사람이 한 번 봐요.
+    name = "주식 분할 목록 (splits)"
+    th = (f"[코드, 날짜, 배율] · 오늘 목록의 종목 · 날짜 ≤ 오늘(KST) · 배율 {SPLIT_R[0]:g}~{SPLIT_R[1]:g}, 1 아님, 기약분수 p/q 의 "
+          f"min(p, q) ≤ {SPLIT_SIMPLE_MAX} · 같은 종목·날짜 한 번 "
+          "(없거나 · 지난 발행본에서 이었거나 · 미국 기준일 뒤 날짜면 경고 · 직전 발행본에 있었는데 빠지면 실패)")
+    sp = data.get("splits")
+    cur = {}
+    if sp is None:
+        had = bool(pdata) and "splits" in pdata
+        rep.add(name, not had, "없음" + (" — 직전 발행본에는 있었어요: 분할 전 기록이 옛 주식 수로 보여요" if had
+                                        else " — 앱은 분할 전 기록을 맞추지 못해요"), th, warn=True)
+    else:
+        probs, late = [], []
+        usd = day(data.get("usPxDate")) if is_day(data.get("usPxDate")) else None
+        if not isinstance(sp, list):
+            probs.append("목록이 아니에요")
+            sp = []
+        for x in sp:
+            shape = isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and bool(x[0])
+            d, r = (_iso_day(x[1]), json_num(x[2])) if shape else (None, None)
+            if d is None or r is None:
+                probs.append(f"모양 {json.dumps(x, ensure_ascii=False)[:30]}")
+                continue
+            t = x[0]
+            if not (SPLIT_R[0] <= r <= SPLIT_R[1]) or r == 1:
+                probs.append(f"{t} {d} 배율 {r:g}")
+            elif not simple_ratio(r):
+                probs.append(f"{t} {d} 배율 {r:g} (깨끗한 분수가 아니에요 — 분사 조정?)")
+            if d > today:
+                probs.append(f"{t} {d} 오늘 뒤")
+            if t not in by:
+                probs.append(f"{t} 오늘 목록에 없음")
+            if (t, x[1]) in cur:
+                probs.append(f"{t} {d} 두 번")
+            cur[(t, x[1])] = r
+            if usd and d > usd and (by.get(t) or {}).get("cls") == "us":
+                late.append(f"{t} {d}")
+        src = data.get("splitsSrc")
+        if probs:
+            rep.add(name, False, f"{len(probs)}곳: " + " · ".join(probs[:5]), th)
+        else:
+            newest = sorted(cur.items(), key=lambda kv: kv[0][1])[-3:]
+            rep.add(name, True, f"{len(cur):,}건" + (" · 최근 " + " · ".join(f"{t} {d} ×{r:g}" for (t, d), r in reversed(newest)) if newest else "")
+                    + f" · 출처 {src}" + (" (지난 발행본의 목록을 이어 썼어요)" if src == "kept" else "")
+                    + (f" · 미국 기준일 {usd} 뒤 날짜: {', '.join(late)}" if late else ""), th, warn=src != "yahoo" or bool(late))
+
+    # 3. 직전 발행본과 비교 — 경고만. 앱은 사용자가 그 종목을 기록하면 그때 쓴 분할을 포트폴리오에 저장해 계속 써요 (lots.js splitsToStore):
+    #    어제 목록의 분할이 사라지거나 배율이 바뀌면, 이미 기록한 사람은 어제 값으로, 새 사람은 오늘 값으로 보게 돼요. 관문은 어느 쪽이
+    #    고친 값인지 알 수 없고(야후가 잘못을 고친 날일 수도), 막으면 그날의 가격까지 모두 묶여요 — 그래서 막지 않고 이름을 남겨 아침
+    #    점검이 사람에게 알려요. 어제 없던 분할이 오래된 날짜(7일 넘게 전)로 새로 나오는 것도 같은 이유로 경고해요 (어제도 목록에 있던 종목만 ·
+    #    새로 들어온 종목은 빼요). 3년이 지나 빠진 분할은 정상이에요.
+    name = "주식 분할 목록 변화 (직전 발행본과)"
+    th = "직전 발행본의 분할이 사라지거나(3년 지나 빠진 것 빼고) 배율이 바뀌거나, 어제도 있던 종목에 7일 넘게 지난 분할이 새로 생기면 경고"
+    if mode != "publish" or not pdata:
+        return                      # 사이트 점검(live) · bootstrap 은 비교 줄을 두지 않아요 (다른 '변화' 줄과 같아요)
+    if not isinstance(pdata.get("splits"), list):
+        rep.skip(name, "직전 발행본에 splits 가 없어요 (첫 발행)")
+    elif not isinstance(data.get("splits"), list):
+        rep.skip(name, "이번 파일에 splits 목록이 없어요 (위 줄)")
+    else:
+        prev = _split_map(pdata.get("splits"))
+        lo = years_before(today, SPLIT_YEARS).isoformat()
+        pcodes = {s.get("t") for s in pdata.get("stocks") or []}
+        gone = [f"{t} {d} ×{r:g}" + ("" if t in by else " (종목이 오늘 목록에 없음)")
+                for (t, d), r in sorted(prev.items()) if (t, d) not in cur and d >= lo]
+        changed = [f"{t} {d} ×{r:g}→×{cur[(t, d)]:g}" for (t, d), r in sorted(prev.items())
+                   if (t, d) in cur and abs(cur[(t, d)] / r - 1) > 1e-9]
+        old_new = [f"{t} {d} ×{r:g}" for (t, d), r in sorted(cur.items())
+                   if (t, d) not in prev and t in pcodes and d < (today - dt.timedelta(days=SPLIT_NEW_OLD_DAYS)).isoformat()]
+        parts = [f"사라짐 {len(gone)}: {', '.join(gone[:3])}" if gone else "",
+                 f"배율 바뀜 {len(changed)}: {', '.join(changed[:3])}" if changed else "",
+                 f"지난 날짜로 새로 {len(old_new)}: {', '.join(old_new[:3])}" if old_new else ""]
+        parts = [p for p in parts if p]
+        rep.add(name, True, " · ".join(parts) if parts else f"그대로 (어제 {len(prev):,}건 → 오늘 {len(cur):,}건)", th, warn=bool(parts))
+        if gone or changed or old_new:
+            rep.detail("주식 분할 목록 변화 (직전 발행본과)", [f"사라짐 {x}" for x in gone] + [f"배율 바뀜 {x}" for x in changed]
+                       + [f"지난 날짜로 새로 {x}" for x in old_new])
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
