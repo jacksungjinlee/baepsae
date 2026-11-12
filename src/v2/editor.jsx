@@ -93,10 +93,10 @@ function Stepper({ name, pct, onDown, onUp, downOff, upOff }) {
 // One holding of the edited list: logo, name, "지금 {qty}주 · {industry}", the stepper and 빼기 (on a phone the two go on a
 // line of their own under the name, so a 320 px screen keeps every target 44 px wide and the name readable).
 function Row({ r, qty, ind, x, cap, rows, onStep, onRemove, capHit, only }) {
-  const limits = E.stepLimits(rows, r.t, cap);
+  const limits = E.stepLimits(rows, r.t, cap, E.storedPct(r));
   const downOff = E.stepped(rows, r.t, -1, cap, E.storedPct(r)) == null;
   const upOff = E.stepped(rows, r.t, 1, cap, E.storedPct(r)) == null;
-  const atCap = cap != null && upOff && r.pct >= Math.min(cap, limits.hi) - 1e-9 && limits.hi === cap;
+  const atCap = cap != null && upOff && limits.byCap && r.pct >= limits.hi - 1e-9;
   const controls = (
     <div style={{ display: "flex", alignItems: "center", gap: SPACE(1), flexShrink: 0, marginLeft: "auto" }}>
       <Stepper name={r.nk} pct={r.pct} downOff={downOff} upOff={upOff} onDown={() => onStep(r.t, -1)} onUp={() => onStep(r.t, 1)} />

@@ -509,7 +509,7 @@ def test_the_1_percent_floor_and_the_stepper_limits():
         at98: E.stepped(E.editRows(d, E.stepDraft(E.emptyDraft(), '000010', 98)), '000010', 1, null, 33),
         at1: E.stepped(E.editRows(d, E.stepDraft(E.emptyDraft(), '000010', 1)), '000010', -1, null, 33) };""")
     assert got["min"] == 1 and got["rows"] == [98, 1, 1]                                       # 나머지는 1% 아래로 가지 않아요
-    assert got["lim"] == {"lo": 1, "hi": 98} and got["capLim"] == {"lo": 1, "hi": 40}
+    assert got["lim"] == {"lo": 1, "hi": 98, "byCap": False} and got["capLim"] == {"lo": 1, "hi": 40, "byCap": True}
     assert got["at98"] is None and got["at1"] is None
 
 
@@ -609,3 +609,16 @@ def test_a_zero_target_row_does_not_leave_the_fix_short():
       out = { pcts: rows.map((r) => r.pct), sum: E.sumPct(rows), pcts2: rows2.map((r) => r.pct), sum2: E.sumPct(rows2) };""")
     assert got["pcts"] == [30, 30, 30, 10] and got["sum"] == 100                 # 0% 줄이 남은 몫을 받아요 (최대 비중 안, D2 줄 없이 100%)
     assert got["pcts2"] == [25.5, 30, 30, 14.5] and abs(got["sum2"] - 100) < 1e-9
+
+
+def test_a_holding_above_the_cap_steps_back_to_its_own_value_never_higher():
+    """[S3] a 채권·금 cushion stored at 30% under a 10% cap: − then + gives back 30 (not stuck at 29), + at 30 stays off."""
+    got = run("""const d = deck4({}, 5, 0.175, 10);
+      d.holdings[4] = { ...d.holdings[4], kind: 'cushion', target: 0.3, rules: band(0.3) };
+      const rows = E.editRows(d, E.emptyDraft());
+      const st = E.storedPct(rows[4]);
+      const down = E.stepped(rows, '000050', -1, 10, st);
+      const back = E.stepped(E.editRows(d, E.stepDraft(E.emptyDraft(), '000050', down)), '000050', 1, 10, st);
+      out = { st, down, back, more: E.stepped(rows, '000050', 1, 10, st), lim: E.stepLimits(rows, '000050', 10, st), other: E.stepLimits(rows, '000010', 10, 17.5) };""")
+    assert got["st"] == 30 and got["down"] == 29 and got["back"] == 30 and got["more"] is None
+    assert got["lim"] == {"lo": 1, "hi": 30, "byCap": True} and got["other"] == {"lo": 1, "hi": 17.5, "byCap": True}

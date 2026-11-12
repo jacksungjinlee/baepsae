@@ -105,11 +105,14 @@ export function pending(deck, draft) {
   return (deck.holdings || []).some((h) => h && num(draft.over[h.t]) != null && Math.abs(draft.over[h.t] - pctOf(h)) > TGT_TOL * 100);
 }
 
-// The stepper's limits for one row: min 1%, max the cap (when set) and what the other rows leave at 1% each.
-export function stepLimits(rows, t, cap) {
+// The stepper's limits for one row: min 1%, max the cap (when set) and what the other rows leave at 1% each. A holding stored
+// above the cap (a 채권·금 cushion) may go back up to its own stored value, never higher (round-1 S3: − then + returns to it).
+// byCap: the max is the cap's (the row then says why it cannot go higher, [C2]).
+export function stepLimits(rows, t, cap, stored = null) {
   const n = rows.length;
-  const hi = Math.min(cap != null ? cap : 100, 100 - (n - 1) * MIN_PCT);
-  return { lo: MIN_PCT, hi };
+  const room = 100 - (n - 1) * MIN_PCT;
+  const top = cap != null ? Math.max(cap, num(stored) != null ? stored : 0) : 100;
+  return { lo: MIN_PCT, hi: Math.min(top, room), byCap: cap != null && top <= room };
 }
 // One step: to the next whole % that way (a non-whole value goes to its floor or ceiling), stopping on the stored value when
 // the step would pass it (so − then + gives back exactly what was saved), and on the limits. stored: the holding's stored
@@ -117,7 +120,7 @@ export function stepLimits(rows, t, cap) {
 export function stepped(rows, t, dir, cap, stored = null) {
   const r = rows.find((x) => x.t === t);
   if (!r) return null;
-  const { lo, hi } = stepLimits(rows, t, cap);
+  const { lo, hi } = stepLimits(rows, t, cap, stored);
   const cur = r.pct;
   if (dir > 0 ? cur >= hi - TGT_TOL : cur <= lo + TGT_TOL) return null;
   let next = whole(cur) ? Math.round(cur) + dir : dir > 0 ? Math.ceil(cur) : Math.floor(cur);
