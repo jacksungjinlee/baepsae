@@ -28,7 +28,7 @@ import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
-import { dataSplits, withDataSplits, storedNotInData } from "./lots.js";
+import { dataSplits, withDataSplits, storedNotInData, withStoredSplits } from "./lots.js";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -458,6 +458,16 @@ export function App({ source }) {
       console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is not in today's data.json splits (it lists the last 3 years); the records still read with it`);
     }
   }, [store.data, splitList, load.status]);
+  // round-2 review: a data.json split that a saved record already lies before is stored with the records at once (not only
+  // with the next record), so a buy-and-hold portfolio keeps it even after data.json stops listing it. Nothing a user sees
+  // changes (the screens already read the records with it); only when the records can be written, and said once.
+  useEffect(() => {
+    if (load.status !== "ok" || !store.writable || store.locked) return;
+    const r = withStoredSplits(view.data);
+    if (!r.added.length) return;
+    console.info("[v2] stock splits stored with the records they apply to: " + r.added.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
+    setStoreData(r.data);
+  }, [view, load.status]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;

@@ -21,9 +21,9 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 // or the last close before it. Never another day's rate:
 //   - a date before 2016-01-01 is saved without a rate and marked noFx (Part I.1: left out of won totals, the existing noFx
 //     line says so; never costed at the portfolio's planFx: lots.purchaseRate);
-//   - today: data.json fx, only while the data is fresh (the same check as below: stale data's fx is an older day's);
-//   - a past date after fxHist's last close: only when fxHist ends on data.json's own FX date and the data is not stale
-//     (then no close has been published since, so the last close is that day's rate);
+//   - today: data.json fx, only while the data is fresh (stale data's fx is an older day's);
+//   - a past date after fxHist's last close: not saved yet (round-2 review, spec A.1: only a today-dated record takes
+//     data.json fx; the next publish's fxHist will have that day);
 //   - no fxHist, one that cannot be read, or a date from 2016 on that it does not reach: not saved yet.
 // env: { today, fx, fxDate, fxHist, stale }.
 // -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
@@ -37,11 +37,7 @@ export function rateFor(date, env) {
   const rows = validRows(e.fxHist);
   if (!rows || typeof e.fxHist.asOf !== "string" || e.fxHist.asOf !== rows[rows.length - 1][0]) return { ok: false, why: "past" };
   if (date < rows[0][0]) return { ok: false, why: "past" };
-  const last = rows[rows.length - 1];
-  if (date > last[0]) {
-    if (last[0] === e.fxDate && !e.stale && !(e.today && date > e.today)) return { ok: true, fx: last[1] };
-    return { ok: false, why: "past" };
-  }
+  if (date > rows[rows.length - 1][0]) return { ok: false, why: "past" };
   let lo = 0, hi = rows.length - 1, hit = null;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -102,6 +98,11 @@ export function typed(v) {
   return /^\d+(\.\d+)?$/.test(s) ? Number(s) : NaN;
 }
 const decimals = (x, d) => Math.abs(x * 10 ** d - Math.round(x * 10 ** d)) < 1e-6;
+// Round-2 review: a date before 2000 (a typo'd year) and an absurd quantity are refused at the form, field marked, before
+// the store would refuse them with the storage line.
+export const DATE_FROM = "2000-01-01";
+export const QTY_MAX = 1e9;
+const badDate = (date, today) => !realDate(date) || date < DATE_FROM || date > today;
 
 // A sale of stock t (in the stock's currency; Korea whole shares unless imported by amount).
 // input: { qty, price, date, amountWon (by amount only) } as typed; s: the stock's data row (its close is the default price).
@@ -112,7 +113,7 @@ export function checkSale(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
   const ccy = usd ? "USD" : "KRW";
   const date = input.date || env.today;
-  if (!realDate(date) || date > env.today) return { ok: false, why: "input", field: "date" };
+  if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   if (st.first && date < st.first) return { ok: false, why: "tooEarly", field: "date" };
   let qty, price;
   const r = usd ? rateFor(date, env) : { ok: true, fx: null };
@@ -127,7 +128,7 @@ export function checkSale(deck, t, input, s, env) {
     price = usd ? amt / r.fx / qty : amt / qty;
   } else {
     const q = typed(input.qty);
-    if (!(pos(q) && (usd ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input", field: "qty" };
+    if (!(pos(q) && q <= QTY_MAX && (usd ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input", field: "qty" };
     const p = typed(input.price);
     if (Number.isNaN(p) || (p != null && !pos(p)) || (usd && p != null && !decimals(p, 4))) return { ok: false, why: "input", field: "price" };
     price = p == null ? (s && pos(s.price) ? s.price : null) : p;
@@ -145,9 +146,9 @@ export function checkSale(deck, t, input, s, env) {
 export function checkPurchase(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
   const date = input.date || env.today;
-  if (!realDate(date) || date > env.today) return { ok: false, why: "input", field: "date" };
+  if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   const q = typed(input.qty);
-  if (!(pos(q) && Number.isInteger(q))) return { ok: false, why: "input", field: "qty" };
+  if (!(pos(q) && q <= QTY_MAX && Number.isInteger(q))) return { ok: false, why: "input", field: "qty" };
   const p = typed(input.price);
   if (Number.isNaN(p) || (p != null && !pos(p))) return { ok: false, why: "input", field: "price" };
   const price = p == null ? (s && pos(s.price) ? s.price : null) : p;
@@ -164,7 +165,7 @@ export function checkDiv(deck, t, input, s, env) {
   const date = input.date || env.today;
   const a = typed(input.amount);
   if (!(pos(a) && (usd ? decimals(a, 2) : Number.isInteger(a)))) return { ok: false, why: "input", field: "amount" };
-  if (!realDate(date) || date > env.today) return { ok: false, why: "input", field: "date" };
+  if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   const r = usd ? rateFor(date, env) : { ok: true, fx: null };
   if (!r.ok) return { ok: false, why: "rate", field: "date", rate: r.why };
   return { ok: true, rec: { id: recordId(), t, amount: a, ccy: usd ? "USD" : "KRW", date, ...(usd ? ratePart(r) : {}) } };

@@ -15,7 +15,7 @@
 //   a lot with no cost (an imported row without 평균 단가): no gain for a sale that touches it, never a guess
 //   a USD purchase without any rate (records from before Part C): no won cost (the existing noFx line)
 // Nothing here is rounded: the screens round once, and the rows they add up (내 수익) are rounded before they are added.
-import { UNIT, toUnits, okUnits, importedUnits, splitsOf, splitFactor, splitDateOf, VIEW_SPLITS, okSplit } from "./held.js";
+import { UNIT, toUnits, okUnits, importedUnits, splitsOf, splitFactor, splitDateOf, VIEW_SPLITS, okSplit, sameSplit, heldUnits } from "./held.js";
 
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
 const pos = (x) => isNum(x) && x > 0;
@@ -76,28 +76,58 @@ export function stocksOf(d) {
   for (const e of (d && d.history) || []) if (e && typeof e.t === "string") out.add(e.t);
   return [...out];
 }
-// The splits the store needs for stock t after a new record (store.js splits): a split of data.json that the screens
-// applied to t is stored only when t's records now lie on both sides of it (a record dated before it whose quantity is
-// counted after it: without the split the store's own check would read them at different share bases). Records all on
-// one side read the same with or without it, so nothing is stored then (round-1 review: never with every new record).
-// deck: the portfolio with the new record in it. -> the full splits list to store, or null when nothing is added.
+// The splits the store keeps for stock t (store.js splits): a split of data.json that the screens apply to t is stored as
+// soon as a saved record of t is dated before it (a purchase, an imported row or a sale; a dividend too while the stock is
+// held). Round-2 review: a buy-and-hold user keeps the split even if data.json later stops listing it (it lists 3 years);
+// the store's own check then reads the records exactly as the screens do. A record dated on the split day is already at
+// the new basis and needs nothing. The same split stored a few days apart is one split (held.sameSplit).
+// deck: the portfolio as it is (with a new record, when one is being saved). -> the full list to store, or null.
 export function splitsToStore(deck, t) {
   const have = Array.isArray(deck && deck.splits) ? deck.splits : [];
-  const view = (deck && Array.isArray(deck[VIEW_SPLITS]) ? deck[VIEW_SPLITS] : []).filter((s) => s.t === t && !have.some((y) => y && y.t === s.t && y.date === s.date));
+  const view = (deck && Array.isArray(deck[VIEW_SPLITS]) ? deck[VIEW_SPLITS] : [])
+    .filter((s) => s.t === t && !have.some((y) => y && ((y.t === s.t && y.date === s.date) || sameSplit(y, s))));
   if (!view.length) return null;
+  const dates = recordDates(deck, t, true);
+  const need = view.filter((s) => dates.some((d) => d && d < s.date));
+  return need.length ? [...have, ...need.map((s) => ({ t: s.t, date: s.date, r: s.r }))] : null;
+}
+// The dates of stock t's saved records in this portfolio and its history (an undated imported row: the day the portfolio was
+// made). divs: also its dividends while the stock is held.
+function recordDates(deck, t, divs = false) {
   const dates = [];
   const add = (list) => { for (const r of Array.isArray(list) ? list : list ? [list] : []) if (r && r.t === t) dates.push(splitDateOf(r, deck)); };
-  for (const k of ["imported", "purchases", "sales"]) add(deck[k]);
-  for (const e of deck.history || []) if (e && e.t === t) { add(e.imported); add(e.purchases); add(e.sales); }
-  const need = view.filter((s) => dates.some((d) => d && d < s.date) && dates.some((d) => d && d >= s.date));
-  return need.length ? [...have, ...need.map((s) => ({ t: s.t, date: s.date, r: s.r }))] : null;
+  for (const k of ["imported", "purchases", "sales"]) add(deck && deck[k]);
+  for (const e of (deck && deck.history) || []) if (e && e.t === t) { add(e.imported); add(e.purchases); add(e.sales); }
+  if (divs && deck && (heldUnits(deck).get(t) || 0) > 0) add(deck.divs);
+  return dates;
+}
+// The store with every split its records need stored (splitsToStore for each stock with a data.json split), or the same
+// object when nothing is missing. The app saves it once when data.json brings a split (round-2 review: without waiting for
+// a new record). -> { data, added: [{ id, t, date, r }] }
+export function withStoredSplits(data) {
+  if (!data || !Array.isArray(data.decks)) return { data, added: [] };
+  const added = [];
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!d || !Array.isArray(d[VIEW_SPLITS]) || !d[VIEW_SPLITS].length) return d;
+    let next = d;
+    for (const t of [...new Set(d[VIEW_SPLITS].map((s) => s.t))]) {
+      const sp = splitsToStore(next, t);
+      if (!sp) continue;
+      for (const s of sp.slice((next.splits || []).length)) added.push({ id: d.id, t: s.t, date: s.date, r: s.r });
+      next = { ...next, splits: sp };
+    }
+    if (next !== d) changed = true;
+    return next;
+  });
+  return { data: changed ? { ...data, decks } : data, added };
 }
 // The stored splits data.json does not list (any more): said loudly once each (round-1 review). data.json lists the last
 // 3 years, so an older stored split is expected to be missing from it; the line says so. -> [{ id, t, date }]
 export function storedNotInData(data, splits) {
   const out = [];
   for (const d of (data && data.decks) || []) for (const s of Array.isArray(d && d.splits) ? d.splits : []) {
-    if (s && !(splits || []).some((x) => x.t === s.t && x.date === s.date && x.r === s.r)) out.push({ id: d.id, t: s.t, date: s.date, r: s.r });
+    if (s && !(splits || []).some((x) => (x.t === s.t && x.date === s.date && x.r === s.r) || sameSplit(x, s))) out.push({ id: d.id, t: s.t, date: s.date, r: s.r });
   }
   return out;
 }
@@ -250,10 +280,12 @@ export function fxSplit(ledgers, pxOf, fx) {
     if (L.ccy !== "USD" || !(L.held > 0)) continue;
     const px = pxOf(L.t);
     if (!pos(px)) continue;
+    // round-2 review: a stock with any lot that has no rate at all (a purchase saved before Part C without one, or marked
+    // noFx) is left out whole, as 내 수익's three rows leave it out (the noFx line names it): never half of it here
+    if (L.lots.some((l) => !l.usdOnly && (!pos(l.rate) || l.own == null || l.won == null))) { out.noRate.push(L.t); continue; }
     let counted = false;
     for (const l of L.lots) {
       if (l.usdOnly) { if (!out.leftOut.includes(L.t)) out.leftOut.push(L.t); continue; }
-      if (!pos(l.rate) || l.own == null || l.won == null) { if (!out.noRate.includes(L.t)) out.noRate.push(L.t); continue; }
       const q = l.u / UNIT, lotPx = l.own / q;
       out.price += (px - lotPx) * q * l.rate;
       out.rate += px * q * (fx - l.rate);
@@ -450,7 +482,9 @@ export function roundRows(values, opts = {}) {
   const exact = typeof opts.exact === "boolean" ? opts.exact : RETURNS_EXACT;
   const nz = values.filter((v) => isNum(v) && Math.round(v) !== 0);
   const unit = !exact && nz.length && nz.every((v) => Math.abs(v) >= 10000) ? 10000 : 1;
-  const rows = values.map((v) => (isNum(v) ? Math.round(v / unit) * unit : null));
+  // half rounds away from zero on both sides (Math.round would take −15,000 to −1만 but +15,000 to +2만)
+  const rnd = (x) => Math.sign(x) * Math.round(Math.abs(x));
+  const rows = values.map((v) => (isNum(v) ? rnd(v / unit) * unit : null));
   const total = rows.reduce((a, v) => a + (v || 0), 0);
   return { unit, rows: rows.map((v) => (v === 0 ? 0 : v)), total: total === 0 ? 0 : total };
 }

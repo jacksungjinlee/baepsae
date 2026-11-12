@@ -418,7 +418,9 @@ export function evaluateDeck(deck, ctx) {
   const units = heldUnits(deck);
   const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
   const zeroIn = typeof ctx.soldOutBands === "boolean" ? ctx.soldOutBands : SOLD_OUT_BANDS;
-  const banded = zeroIn ? new Map([...held, ...(deck.holdings || []).filter((h) => h && soldOut.includes(h.t) && bandRuleOf(h) && ctx.byT.has(h.t)).map((h) => [h.t, 0])]) : held;
+  // only one with a price today: a 0-share holding without one must not stop the weights (or the money totals) of the rest
+  const banded = zeroIn ? new Map([...held, ...(deck.holdings || []).filter((h) => h && soldOut.includes(h.t) && bandRuleOf(h)
+    && ctx.byT.has(h.t) && priceWon(ctx.byT.get(h.t), ctx.fx) > 0).map((h) => [h.t, 0])]) : held;
   const targets = new Map();
   for (const h of deck.holdings || []) {
     const b = h && banded.has(h.t) && !targets.has(h.t) ? bandRuleOf(h) : null;

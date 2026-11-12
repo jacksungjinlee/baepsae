@@ -126,7 +126,8 @@ export function Returns({ deck, load, store, pad, onBack }) {
   }, [live, ctx, deck]);
   const r = useMemo(() => (q ? returnsOf(deck, q) : null), [deck, q]);
   const gone = r ? new Set([...r.absent, ...r.noPrice]) : new Set();
-  const fx = useMemo(() => (r && q ? fxSplit(r.ledgers.filter((L) => !gone.has(L.t)), q.pxOf, q.fx) : null), [r, q]);
+  // the stocks the rows leave out for a missing rate (noFx) stay out of the card too (round-2 review); the noFx line names them
+  const fx = useMemo(() => (r && q ? fxSplit(r.ledgers.filter((L) => !gone.has(L.t) && !r.noFx.includes(L.t)), q.pxOf, q.fx) : null), [r, q]);
   const holdingOf = (t) => (deck.holdings || []).find((x) => x.t === t) || (deck.history || []).find((x) => x.t === t);
   const names = (ts) => ts.map((t) => { const h = holdingOf(t); return h ? (h.cls === "us" ? t : h.nk) : t; });
   // the rows: a row with records that could all not be computed shows "–" (never 0); a row with nothing in it is 0원
@@ -141,6 +142,7 @@ export function Returns({ deck, load, store, pad, onBack }) {
     if (r.soldOut) warnOnce(`[v2] ${deck.id}: returns leave out ${r.soldOut} sale(s) whose gain could not be computed`);
   }
   const total = rr ? rr.total : 0;
+  const none = !!rr && rr.rows.every((v) => v == null);          // every row is "–": the headline too, never "0원"
   // 수익률 and its receipt line, together (CLAUDE.md: a computed ratio shows its inputs), only with the money put in known,
   // from the exact sums (lots.returnsPct, never the rounded rows); the receipt shows those exact amounts, so it gives back
   // the same %. The approved receipt reads "… 산 금액 전체 {cost}로 …", and {cost} always ends in 원, which takes 으로: the
@@ -164,7 +166,8 @@ export function Returns({ deck, load, store, pad, onBack }) {
         {r && (
           <>
             <div data-ui-v2="ret-total" data-v={total} data-exact={Math.round(exact)} style={{ marginTop: SPACE(2) }}>
-              <span style={tx(34, WEIGHT.heavy, priceColor(total, true), { letterSpacing: "-0.02em", lineHeight: 1.2 })}><Amount text={plus(unitWon(total, rr.unit), total)} /></span>
+              <span style={tx(34, WEIGHT.heavy, none ? COLOR.text2 : priceColor(total, true), { letterSpacing: "-0.02em", lineHeight: 1.2 })}>
+                {none ? "–" : <Amount text={plus(unitWon(total, rr.unit), total)} />}</span>
               {pct != null && <span data-ui-v2="ret-pct" data-pct={Math.round(pct * 1000) / 1000} style={tx(SIZE.sm, WEIGHT.bold, COLOR.text2, { display: "block" })}>{fill(C.ret.ret, { pct: signedPct(pct) })}</span>}
             </div>
             <Card data-ui-v2="ret-rows" style={{ padding: `${SPACE(1) + 2}px ${SPACE(4)}px` }}>

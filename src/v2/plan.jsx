@@ -13,7 +13,7 @@ import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
-import { rateFor, rateEnv } from "./records.js";
+import { rateFor, rateEnv, DATE_FROM } from "./records.js";
 import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
 import { EpsFixNote } from "./fixnote.jsx";
@@ -335,7 +335,8 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     const p = ps === "" ? x.s.price : /^\d+(\.\d+)?$/.test(ps) ? Number(ps) : NaN;
     return { x, q, p, badQ: !(Number.isInteger(q) && q >= 0), badP: !(Number.isFinite(p) && p > 0) };
   });
-  const badDate = date !== "" && !(/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today);
+  // v19.6a round-2 review: a year before 2000 is a typo (records.js DATE_FROM): refused with the same line
+  const badDate = date !== "" && !(/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today && date >= DATE_FROM);
   const save = () => {
     if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
     const day = date || today;
@@ -381,7 +382,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
       {preview && <SheetSample />}
       <div data-ui-v2="record-form" aria-label={P.boughtAria}>
         <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.sheetBody, { md: mdText(load.data.pxDate) })}</p>
-        <TextInput label={P.date} type="date" value={date} onChange={setDate} max={today} invalid={tried && badDate} />
+        <TextInput label={P.date} type="date" value={date} onChange={(v) => { setDate(v); setNoRate(null); }} max={today} invalid={tried && badDate} />
         {rows.map((x) => (
           <div key={x.t} data-record={x.t} style={{ marginTop: SPACE(4), paddingTop: SPACE(2), borderTop: `1px solid ${COLOR.line}` }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{x.s.nk}</div>

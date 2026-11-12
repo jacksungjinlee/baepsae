@@ -45,19 +45,25 @@ export const byAmount = (r) => !!r && r.qty == null && r.amountWon != null;
 //   recs[VIEW_SPLITS]    data.json's splits for that portfolio's stocks, put on an in-memory copy of the portfolio for the
 //                        screens (lots.js withDataSplits). A Symbol key: JSON.stringify and the store's checks never see it,
 //                        so it is never written.
-// The same split in both counts once. An imported row without a date counts as typed on the day the portfolio was made
+// The same split in both counts once: the same stock and ratio within SAME_SPLIT_DAYS days is one split (round-2 review:
+// a stored split and data.json's dated a few days apart, e.g. the decision day and the effective day, must never apply
+// twice: 101 shares instead of 11). The first one met wins (the stored one). An imported row without a date counts as typed on the day the portfolio was made
 // (recs.createdAt): a split after that day applies to it, one before it does not (the user typed the new share count).
 export const VIEW_SPLITS = Symbol("data.json splits for the screens");
 const SPLIT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const SAME_SPLIT_DAYS = 7;
+const dayNo = (d) => Date.parse(d + "T00:00:00Z") / 86400000;
+// Are a and b the same split (the same stock and ratio, dated at most SAME_SPLIT_DAYS days apart)?
+export const sameSplit = (a, b) => !!a && !!b && a.t === b.t && Math.abs(a.r - b.r) < 1e-9 && Math.abs(dayNo(a.date) - dayNo(b.date)) <= SAME_SPLIT_DAYS;
 export const okSplit = (s) => !!s && typeof s === "object" && typeof s.t === "string" && s.t.length > 0 && typeof s.date === "string" && SPLIT_DATE.test(s.date)
   && isNum(s.r) && s.r > 0 && s.r !== 1 && s.r <= 1000 && s.r >= 0.001;
 // Every split of the record set, one per (stock, date), oldest first. Map t -> [{ date, r }].
 export function splitsOf(recs) {
   const m = new Map();
-  const seen = new Set();
+  const kept = [];
   for (const s of [...(recs && Array.isArray(recs.splits) ? recs.splits : []), ...(recs && Array.isArray(recs[VIEW_SPLITS]) ? recs[VIEW_SPLITS] : [])]) {
-    if (!okSplit(s) || seen.has(s.t + "|" + s.date)) continue;
-    seen.add(s.t + "|" + s.date);
+    if (!okSplit(s) || kept.some((k) => (k.t === s.t && k.date === s.date) || sameSplit(k, s))) continue;
+    kept.push(s);
     if (!m.has(s.t)) m.set(s.t, []);
     m.get(s.t).push({ date: s.date, r: s.r });
   }

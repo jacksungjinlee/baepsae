@@ -205,7 +205,9 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const rateLine = rateNo === "past" ? C.rec.noPastRate : rateNo === "today" ? (C.rec.noTodayRate || (days != null ? staleText(days) : null)) : null;
   // a holding put in by amount has no share count of its own: no "지금 N주 …" head line (the by-amount line explains the form)
   const head = kind === "sell" && !byAmount ? (st.avg ? fill(C.rec.head, { qty: qtyText(st.qty), price: ownMoney(st.avg.avg, st.avg.ccy) }) : fill(C.rec.heldQty, { qty: qtyText(st.qty) })) : null;
-  const badLine = kind === "div" || byAmount ? C.rec.badAmount || C.plan.badInput : C.plan.badInput;
+  // the dividend and by-amount forms have no 수량 · 가격: until rec.badAmount is approved no line there (the wrong field is
+  // already amber), never "날짜·수량·가격을 다시 확인해 주세요" (round-2 review)
+  const badLine = kind === "div" || byAmount ? C.rec.badAmount : C.plan.badInput;
   return (
     <BottomSheet open title={title} onClose={close} closeLabel={C.app.close} shift={shift}>
       {sample}
@@ -240,7 +242,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         {rateLine && <Note tone="watch" data-ui-v2="rec-no-rate" data-why={rateNo}>{rateLine}</Note>}
         {why === "tooMany" && <Note tone="watch" data-ui-v2="rec-too-many">{C.rec.tooMany}</Note>}
         {why === "tooEarly" && <Note tone="watch" data-ui-v2="rec-too-early">{C.rec.tooEarly}</Note>}
-        {(why === "input" || why === "noPrice") && <Note tone="watch" data-ui-v2="bad-input">{badLine}</Note>}
+        {(why === "input" || why === "noPrice") && badLine && <Note tone="watch" data-ui-v2="bad-input">{badLine}</Note>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={submit}>{C.plan.save}</Button></div>
       </div>
