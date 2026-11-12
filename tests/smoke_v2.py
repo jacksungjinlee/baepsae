@@ -10991,6 +10991,25 @@ def v197a_store(pxd):
     return {"v": 2, "decks": [built, imported], "guideSeen": pxd}
 
 
+def v197a_store2(by, pxd):
+    """round-1: 안전자산 above the cap (S4 · its label), the last stored stock (B1), six at 1/6 (S3)."""
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    hold = lambda t, w, kind="core", cls="kr": {"t": t, "nk": by[t]["nk"], "cls": cls, "ind": by[t].get("ind"), "kind": kind, "target": w, "setAt": "2026-10-01",
+                                                "plannedQty": max(1, round(w * 1e7 / by[t]["price"])), "planPx": by[t]["price"], "rules": [{"id": "audit", "kind": "sell", "check": "pending"}, *band(w)]}
+    seven = ["005930", "005380", "105560", "010120", "035420", "051910", "068270"]
+    cush = {"id": "dcush", "name": "안전자산 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "settings": {"points": {"value": 3}, "strict": "normal", "maxPct": 10, "amountMan": 1000},
+            "holdings": [hold(t, 0.1) for t in seven] + [hold("114260", 0.15, "cushion", "bond"), hold("132030", 0.15, "cushion", "metal")], "purchases": []}
+    one = {"id": "done1", "name": "한 종목 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+           "settings": {"points": {"value": 3}, "strict": "normal", "maxPct": 100, "amountMan": 1000},
+           "holdings": [{**hold("005930", 1.0), "plannedQty": 50, "planPx": 200000}],
+           "purchases": [{"id": "p1bbbbbb", "t": "005930", "date": "2026-10-01", "qty": 10, "price": 200000, "ccy": "KRW"}]}
+    six = {"id": "dsix", "name": "여섯 종목 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+           "settings": {"points": {"value": 3}, "strict": "normal", "maxPct": 30, "amountMan": 1000},
+           "holdings": [hold(t, 1 / 6) for t in seven[:6]], "purchases": []}
+    return {"v": 2, "decks": [cush, one, six], "guideSeen": pxd}
+
+
 def scene_v197a(R, files, width):
     """v19.7a 종목 바꾸기 · 빼기 · 이름으로 찾기 (390 · 320 · 1280): 만든 포트폴리오에만 '종목 바꾸기' (가진 종목 포트폴리오에는 없음) ·
     업종 비중 막대 · 목표 비중 줄('지금 {qty}주 · {industry}', − / +, 빼기, 44px) · 규칙 깨짐 줄 · 최대 비중에서 + → 그 줄의 이유 ·
@@ -11003,6 +11022,9 @@ def scene_v197a(R, files, width):
     S = f"v19.7a {width}"
     wide = width >= 1024
     data = clone(files)
+    for x in data["data.json"]["stocks"]:
+        if x["t"] == "MSFT":
+            x["pxd"] = "2026-10-29"                     # round-1 nit: the 담기 sheet's date line for a US stock is its own close date
     pxd = data["data.json"]["pxDate"]
     fx = data["data.json"]["fx"]
     today = now_dt().date().isoformat()
@@ -11061,7 +11083,9 @@ def scene_v197a(R, files, width):
     R.check(page, S, "만든 포트폴리오에만 종목 바꾸기 · 업종 비중 · 목표 비중 줄 · 규칙 깨짐 줄 · 44px · 합계 100%", opens)
 
     def cap_and_d2():
-        row("005930").locator('[data-ui-v2="edit-up"]').click()                                   # 최대 비중 20% 에서 +
+        up = row("005930").locator('[data-ui-v2="edit-up"]')
+        assert up.get_attribute("aria-disabled") == "true"                                          # 최대 비중에서 + 는 aria-disabled (누르면 이유 줄)
+        up.click(force=True)                                                                        # 최대 비중 20% 에서 +
         m = row("005930").locator('[data-ui-v2="edit-max"]')
         m.wait_for(state="visible")
         assert m.inner_text() == fillp(E_["max"], x=20) and pcts()["005930"] == 20
@@ -11077,6 +11101,12 @@ def scene_v197a(R, files, width):
         assert sh.locator("[data-reason]").all_inner_texts() == [RM["reasons"][k] for k in ("thesis", "rule", "better", "other")]
         assert sh.locator('[aria-checked="true"]').count() == 0                                      # 규칙이 안 깨졌으면 미리 고르지 않아요
         sh.locator('[data-reason="other"]').click()
+        # 이유 칩: 화살표로 옮기며 골라요 (radio group) · 한 칩만 탭 순서에
+        page.keyboard.press("ArrowRight")
+        assert sh.locator('[aria-checked="true"]').get_attribute("data-reason") == "thesis"
+        page.keyboard.press("ArrowLeft")
+        assert sh.locator('[aria-checked="true"]').get_attribute("data-reason") == "other"
+        assert sh.locator('[data-reason][tabindex="0"]').get_attribute("data-reason") == "other"
         check_page("빼기 (지분 없음)", "remove-planned")
         sh.locator("button", has_text=C["rec"]["remove"]).last.click()
         sh.wait_for(state="detached")
@@ -11112,7 +11142,7 @@ def scene_v197a(R, files, width):
         fs.locator('[data-find="000660"]').click()
         sh = page.locator('[data-ui-v2="add-sheet"][data-t="000660"]')
         sh.wait_for(state="visible")
-        assert sh.get_attribute("data-kind") == "core"
+        assert sh.get_attribute("data-kind") == "pinned" and sh.get_attribute("data-scored") == "1"   # 이름으로 고른 종목: 꼭 담을 종목 (점수는 있어요)
         fit = sh.locator('[data-ui-v2="add-fit"]')
         n = int(fit.get_attribute("data-fit"))
         assert 1 <= n <= 100 and fit.inner_text() == f"{C['rpt']['mine']} {fillp(C['build']['s1']['topPct'], pct=n)}", fit.inner_text()
@@ -11128,18 +11158,36 @@ def scene_v197a(R, files, width):
         assert pcts() == {"005930": 20, "005380": 20, "105560": 20, "AAPL": 20, "000660": 20} and sum_() == 100
         assert row("000660").get_attribute("data-added") == "1"
         assert row("000660").locator('[data-ui-v2="edit-row-sub"]').inner_text() == fillp(E_["row"], qty="0", industry=by["000660"]["indName"])
+        # 기다리는 담기 줄의 빼기: 가진 적이 없어 이유 칩이 없어요 (닫고 그대로 둬요)
+        row("000660").locator('[data-ui-v2="edit-remove"]').click()
+        rs = page.locator('[data-ui-v2="rm-sheet"][data-t="000660"]')
+        rs.wait_for(state="visible")
+        assert rs.locator("[data-reason]").count() == 0 and rs.locator("button").all_inner_texts() == [C["rec"]["remove"]]
+        check_page("담을 종목 빼기", "remove-added")
+        page.keyboard.press("Escape")
+        rs.wait_for(state="detached")
         # ETF: 점수를 매길 수 없어 직접 추가 (담지 않고 닫아요)
         page.locator('[data-ui-v2="edit-by-name"]').click()
         page.locator('[data-ui-v2="find-sheet"] input').fill("SCHD")
         page.locator('[data-find="SCHD"]').click()
         sh2 = page.locator('[data-ui-v2="add-sheet"][data-t="SCHD"]')
         sh2.wait_for(state="visible")
-        assert sh2.get_attribute("data-kind") == "pinned" and sh2.locator('[data-ui-v2="add-manual"]').inner_text() == C["pick"]["manual"]
+        assert sh2.get_attribute("data-kind") == "pinned" and sh2.get_attribute("data-scored") == "0" and sh2.locator('[data-ui-v2="add-manual"]').inner_text() == C["pick"]["manual"]
         assert sh2.locator('[data-ui-v2="add-manual-note"]').inner_text() == C["pick"]["manualNote"] and sh2.locator('[data-ui-v2="add-fit"]').count() == 0
         check_page("담기 (직접 추가)", "add-manual")
         page.keyboard.press("Escape")
         sh2.wait_for(state="detached")
         assert row("SCHD").count() == 0
+        # 미국 종목: 날짜 줄은 그 종목의 미국 종가 날짜 (10월 29일)
+        page.locator('[data-ui-v2="edit-by-name"]').click()
+        page.locator('[data-ui-v2="find-sheet"] input').fill("MSFT")
+        page.locator('[data-find="MSFT"]').click()
+        sh3 = page.locator('[data-ui-v2="add-sheet"][data-t="MSFT"]')
+        sh3.wait_for(state="visible")
+        assert sh3.locator('[data-ui-v2="date-line"] span').first.inner_text() == fillp(C["app"]["asOf"], md=mdtext("2026-10-29"))
+        check_page("담기 (미국 종목)", "add-us")
+        page.keyboard.press("Escape")
+        sh3.wait_for(state="detached")
     R.check(page, S, "이름으로 찾기(담은 종목 빼고 · 없으면 그 줄) → 담기: 내 기준 상위 x% · 기본 20% · 바뀐 뒤 업종 비중 · ETF 는 직접 추가", find_add)
 
     def fix():
@@ -11172,7 +11220,9 @@ def scene_v197a(R, files, width):
         sh.locator("button", has_text=RM["sell"]).click()
         form = page.locator('[data-ui-v2="rec-form"][data-kind="sell"]')
         form.wait_for(state="visible")
-        assert form.locator("input").first.input_value() == "10"                                     # 가진 수량 모두
+        qty = form.locator("input").first
+        assert qty.input_value() == "10" and qty.get_attribute("readonly") is not None and not qty.is_editable()   # 가진 수량 모두, 고칠 수 없어요
+        form.locator('input[type="date"]').fill("2026-10-12")
         check_page("팔고 빼기 · 판 내용 기록", "sell-out")
         form.locator("button", has_text=C["plan"]["save"]).click()
         form.wait_for(state="detached")
@@ -11182,7 +11232,8 @@ def scene_v197a(R, files, width):
         assert [h["target"] for h in d["holdings"]] == [0.25] * 4 and d["settings"]["maxPct"] == 25     # 기다리던 최대 비중 25% 도 함께
         e = d["history"][0]
         assert e["t"] == "005930" and e["reason"] == "rule" and e["out"] == today and e["sales"][0]["qty"] == 10 and e["sales"][0]["price"] == by["005930"]["price"]
-        assert [c["kind"] for c in d["changes"]] == ["remove", "targets"] and d["changes"][0]["reason"] == "rule"
+        assert e["sales"][0]["date"] == "2026-10-12"
+        assert [c["kind"] for c in d["changes"]] == ["remove"] and d["changes"][0]["reason"] == "rule"         # 한 줄 (나눠 준 비중은 그 줄의 일부)
         assert pcts() == {"005380": 25, "105560": 25, "AAPL": 25, "000660": 25} and sum_() == 100
         check_page("팔고 뺀 뒤", "after-sell")
     R.check(page, S, "지분 있는 종목 빼기: 머리줄 · 규칙이 깨졌어요 미리 고름 · 팔고 빼기 → 가진 수량 채운 팔았어요 → 한 번에 저장(최대 비중 25% 도)", sell_out)
@@ -11197,11 +11248,14 @@ def scene_v197a(R, files, width):
             b = [r for r in h["rules"] if r["id"] == "band"][0]
             assert b["target"] == 0.25 and [round(x, 6) for x in b["bands"]] == [0.1875, 0.3125, 0.35]
         sk = d["holdings"][3]
-        assert sk["planPx"] == by["000660"]["price"] and sk["plannedQty"] == round(0.25 * 1e7 / by["000660"]["price"]) and sk["setAt"] == today and sk["kind"] == "core"
+        assert sk["planPx"] == by["000660"]["price"] and sk["plannedQty"] == round(0.25 * 1e7 / by["000660"]["price"]) and sk["setAt"] == today and sk["kind"] == "pinned"
+        assert sk["reasons"] == [{"code": "pinned"}]
         assert any(r["id"] == "band" and r["target"] == 0.25 for r in sk["rules"]) and any(r["id"] == "divCut" for r in sk["rules"])
         assert not any(c["t"] == "010120" for c in d.get("history", []))                               # 기록 없는 종목: history 없이 빠져요
-        assert [(c["kind"], c.get("t"), c.get("reason")) for c in d["changes"]] == [("remove", "005930", "rule"), ("targets", None, None), ("remove", "010120", "other"),
+        # 줄마다 한 번: 남은 목표는 팔고 뺀 뒤 저장된 25% 그대로라 '목표 비중 바꿈' 은 없어요 (− 로 바꾼 19% 는 그 사이 나눠 준 비중에 묻혔어요)
+        assert [(c["kind"], c.get("t"), c.get("reason")) for c in d["changes"]] == [("remove", "005930", "rule"), ("remove", "010120", "other"),
                                                                                       ("add", "000660", None)], d["changes"]
+        assert all(isinstance(c.get("id"), str) and c["id"] for c in d["changes"])
         assert page.locator('[data-deck-id="dbuilt"] [data-holding="005930"]').count() == 0
         # 코스피와 비교 = 손으로 (기록을 따라가요: 산 돈은 산 날 전 종가의 코스피를 사고, 판 삼성전자 10주는 판 날 전 종가로 그만큼 팔아요;
         # 내 포트폴리오 = (지금 가치 + 판 돈) ÷ 넣은 돈 − 1, 배당은 양쪽 모두 빼요)
@@ -11210,7 +11264,9 @@ def scene_v197a(R, files, width):
         end = krows[-1][1]
         lots = [7 * 280000, 13 * 150000, 4 * 300 * 1300]
         money = sum(lots) + 10 * 200000
-        k_val = sum(c / before("2026-10-01") * end for c in lots) + 10 * 200000 / before("2026-10-01") * before(today)
+        k_val = sum(c / before("2026-10-01") * end for c in lots) + 10 * 200000 / before("2026-10-01") * before("2026-10-12")
+        k_held = sum(c / before("2026-10-01") * end for c in lots) + 10 * 200000 / before("2026-10-01") * end           # 팔지 않았다면
+        assert signed_pct((k_val / money - 1) * 100) != signed_pct((k_held / money - 1) * 100)                   # 이 시험이 판 종목과 가진 종목을 가려요
         value = 7 * by["005380"]["price"] + 13 * by["105560"]["price"] + 4 * by["AAPL"]["price"] * fx
         mine = (value + 10 * by["005930"]["price"]) / money - 1
         card = page.locator('[data-deck-id="dbuilt"]')
@@ -11247,13 +11303,14 @@ def scene_v197a(R, files, width):
         lv = page.locator('[data-ui-v2="edit-leave"]')
         lv.wait_for(state="visible")
         assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == E_["leave"]
-        assert lv.locator("button").all_inner_texts() == [E_["leaveGo"] or C["app"]["tabs"]["portfolio"], C["app"]["close"]]
+        want = [E_["leaveGo"], C["app"]["close"]] if E_["leaveGo"] else [C["app"]["close"], C["app"]["tabs"]["portfolio"]]   # 승인 전: 닫기(머물기)가 먼저
+        assert lv.locator("button").all_inner_texts() == want
         check_page("나갈까요?", "leave")
-        lv.locator("button").nth(1).click()
+        lv.locator("button", has_text=C["app"]["close"]).click()
         lv.wait_for(state="detached")
         assert pcts()["005380"] == 24
         page.locator('[data-ui-v2="app-bar"] button').first.click()
-        page.locator('[data-ui-v2="edit-leave"] button').first.click()
+        page.locator('[data-ui-v2="edit-leave"] button', has_text=E_["leaveGo"] or C["app"]["tabs"]["portfolio"]).click()
         at(page, "portfolio")
         assert deck()["holdings"][0]["target"] == 0.25
         open_edit()
@@ -11278,8 +11335,97 @@ def scene_v197a(R, files, width):
         assert d["settings"]["maxPct"] == 34 and [h["t"] for h in d["holdings"]] == ["005380", "AAPL", "000660"]
         kb = [e for e in d["history"] if e["t"] == "105560"][0]
         assert kb["reason"] == "thesis" and kb["divs"][0]["amount"] == 3000 and len(kb["purchases"]) == 1      # 배당 기록은 내 수익에 남아요
-        assert [c["kind"] for c in d["changes"]][-2:] == ["remove", "targets"]
+        assert [c["kind"] for c in d["changes"]] == ["remove", "remove", "add", "remove"]                      # 빼기는 한 줄 (올린 최대 비중도 그 줄의 일부)
     R.check(page, S, "나갈까요? (닫기 → 그대로 · 나가기 → 버림) · 기록 없이 빼기(이유) → 3종목 D2 → 34% · 배당 기록은 history 로", leave_and_d2_again)
+    ctx.close()
+    srv.shutdown()
+
+    # round-1: 안전자산 above the cap (S4 · its label) · the last stored stock (B1) · six at 1/6 (S3) · another portfolio's 종목 바꾸기 asks
+    seed2 = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+             f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v197a_store2(by, pxd), ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed2, path="/app.html?dev=1#portfolio/edit/dcush", device=device)
+    stored = lambda: page.evaluate(STORED_JS)
+
+    def go_edit(deck_id):
+        page.evaluate(f"location.hash = '#portfolio/edit/{deck_id}'")
+        at(page, f"portfolio/edit/{deck_id}")
+        page.locator(f'[data-ui-v2="edit"][data-deck-id="{deck_id}"] [data-ui-v2="edit-list"]').wait_for(state="visible")
+
+    def cushion():
+        page.locator('[data-ui-v2="edit-list"]').wait_for(state="visible")
+        assert sum_() == 100 and page.locator('[data-ui-v2="edit-sum"]').get_attribute("data-ok") == "1"
+        assert page.locator('[data-ui-v2="edit-cap-low"]').count() == 0 and save_btn().is_enabled()    # 7 × 10 + 30 = 100: D2 줄 없음
+        lab = C["build"]["s4"]["cushionLabel"]
+        assert row("114260").locator('[data-ui-v2="edit-row-sub"]').inner_text() == fillp(E_["row"], qty="0", industry=lab)
+        part = page.locator('[data-ui-v2="edit-ind-part"][data-ind="cushion"]')
+        assert part.evaluate("(x) => x.textContent") == f"{lab} 30%", part.evaluate("(x) => x.textContent")
+        assert C["rpt"]["noInd"] not in page.locator('[data-ui-v2="edit-ind"]').inner_text()
+        # 안전자산 줄: − 뒤 + 는 저장된 15% 로 돌아와요 (그 위로는 안 가요)
+        row("114260").locator('[data-ui-v2="edit-down"]').click()
+        assert pcts()["114260"] == 14
+        row("114260").locator('[data-ui-v2="edit-up"]').click()
+        assert pcts()["114260"] == 15 and sum_() == 100 and row("114260").locator('[data-ui-v2="edit-up"]').get_attribute("aria-disabled") == "true"
+        check_page("안전자산 · 최대 비중 위", "edit-cushion")
+    R.check(page, S, "안전자산이 최대 비중 위: 합계 100% · D2 줄 없음 · 저장 켜짐 · 안전자산 (채권·금) 이름 · − 뒤 + 는 저장된 값", cushion)
+
+    def sixths():
+        go_edit("dsix")
+        shown = page.locator('[data-ui-v2="edit-pct"]').all_inner_texts()
+        assert shown == ["16.7%"] * 6 and sum_() == 100, shown                                         # 17% 여섯 개가 아니에요
+        row("005930").locator('[data-ui-v2="edit-down"]').click()
+        assert row("005930").locator('[data-ui-v2="edit-pct"]').inner_text() == "16%" and page.locator('[data-ui-v2="edit-sum"]').get_attribute("data-ok") == "0"
+        row("005930").locator('[data-ui-v2="edit-up"]').click()
+        assert row("005930").locator('[data-ui-v2="edit-pct"]').inner_text() == "16.7%" and sum_() == 100 and save_btn().is_enabled()
+        check_page("16.7% 여섯 종목", "edit-sixths")
+    R.check(page, S, "1/6 씩: 16.7% 로 보여요 · − 뒤 + 는 저장된 값 그대로 (합계 100%)", sixths)
+
+    def last_one():
+        go_edit("done1")
+        page.locator('[data-ui-v2="edit-by-name"]').click()
+        page.locator('[data-ui-v2="find-sheet"] input').fill("SK하이닉스")
+        page.locator('[data-find="000660"]').click()
+        sh = page.locator('[data-ui-v2="add-sheet"][data-t="000660"]')
+        sh.wait_for(state="visible")
+        sh.locator("button", has_text=C["build"]["s4"]["add"]).last.click()
+        sh.wait_for(state="detached")
+        assert pcts() == {"005930": 50, "000660": 50}
+        row("005930").locator('[data-ui-v2="edit-remove"]').click()
+        rs = page.locator('[data-ui-v2="rm-sheet"][data-t="005930"]')
+        rs.wait_for(state="visible")
+        assert rs.locator('[data-ui-v2="rm-last"]').inner_text() == RM["last"]                          # 저장된 종목은 이것 하나: 팔고 빼기 꺼짐
+        assert not rs.locator("button", has_text=RM["sell"]).is_enabled()
+        check_page("빼기 (저장된 마지막 종목)", "remove-last")
+        page.keyboard.press("Escape")
+        rs.wait_for(state="detached")
+        # 담기가 기다리는 채로 다른 포트폴리오의 종목 바꾸기: 먼저 물어요
+        if wide:
+            side_tab(page, "portfolio")
+        else:
+            tab(page, TABS["portfolio"])
+            at(page, "portfolio")
+        page.locator('[data-deck-id="dcush"] [data-ui-v2="edit-open"]').click()
+        dr = page.locator('[data-ui-v2="edit-drop"]')
+        dr.wait_for(state="visible")
+        assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == E_["leave"]
+        assert dr.locator("button").all_inner_texts() == [C["app"]["close"], E_["leaveGo"] or E_["title"]]
+        check_page("다른 포트폴리오의 종목 바꾸기", "edit-drop")
+        dr.locator("button", has_text=C["app"]["close"]).click()
+        dr.wait_for(state="detached")
+        assert route(page) == "portfolio"
+        page.locator('[data-deck-id="done1"] [data-ui-v2="edit-open"]').click()                         # 같은 포트폴리오: 묻지 않고 그대로
+        at(page, "portfolio/edit/done1")
+        assert pcts() == {"005930": 50, "000660": 50}
+        if wide:
+            side_tab(page, "portfolio")
+        else:
+            tab(page, TABS["portfolio"])
+            at(page, "portfolio")
+        page.locator('[data-deck-id="dcush"] [data-ui-v2="edit-open"]').click()
+        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"] or E_["title"]).click()
+        at(page, "portfolio/edit/dcush")
+        assert pcts()["005930"] == 10
+        assert [len(d["holdings"]) for d in stored()["decks"]] == [9, 1, 6]                             # 아무것도 저장하지 않았어요
+    R.check(page, S, "저장된 마지막 종목은 팔고 빼기 꺼짐(담기가 기다려도) · 다른 포트폴리오의 종목 바꾸기는 먼저 물어요", last_one)
     ctx.close()
     srv.shutdown()
 
