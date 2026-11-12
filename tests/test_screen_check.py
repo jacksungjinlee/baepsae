@@ -182,13 +182,15 @@ def publish_env(tmp_path, receipts):
     git.chmod(git.stat().st_mode | stat.S_IEXEC)
     (tmp_path / "tools").mkdir(exist_ok=True)
     (tmp_path / "tools" / "push_data_branch.sh").write_text(f'echo "push_data_branch $*" >> "{tmp_path}/did.txt"\n')
+    # 2026-11-12: 발행 단계는 푸시 직전에 토큰을 git 에 알려요 (진짜 tools/git_token_auth.sh 를 가짜 git 으로 돌려요)
+    shutil.copy(os.path.join(ROOT, "tools", "git_token_auth.sh"), tmp_path / "tools" / "git_token_auth.sh")
     for f in ("did.txt", "gate-pass.sha256", "screen-pass.sha256"):
         if (tmp_path / f).exists():
             (tmp_path / f).unlink()
     for name in receipts:
         subprocess.run(f"sha256sum data.json corp.json disc.json macro.json > {name}", shell=True, cwd=tmp_path, check=True)
     return {"PATH": f"{bin_}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "GITHUB_REF": "refs/heads/main",
-            "GITHUB_REF_NAME": "main", "TZ": "Asia/Seoul"}
+            "GITHUB_REF_NAME": "main", "TZ": "Asia/Seoul", "GITHUB_TOKEN": "test-token-not-real"}
 
 
 @pytest.mark.parametrize("name", ["커밋 & 푸시", "data 브랜치에 올리기"])
