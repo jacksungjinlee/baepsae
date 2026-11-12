@@ -11203,6 +11203,19 @@ def scene_v197a(R, files, width):
         assert [(c["kind"], c.get("t"), c.get("reason")) for c in d["changes"]] == [("remove", "005930", "rule"), ("targets", None, None), ("remove", "010120", "other"),
                                                                                       ("add", "000660", None)], d["changes"]
         assert page.locator('[data-deck-id="dbuilt"] [data-holding="005930"]').count() == 0
+        # 코스피와 비교 = 손으로 (기록을 따라가요: 산 돈은 산 날 전 종가의 코스피를 사고, 판 삼성전자 10주는 판 날 전 종가로 그만큼 팔아요;
+        # 내 포트폴리오 = (지금 가치 + 판 돈) ÷ 넣은 돈 − 1, 배당은 양쪽 모두 빼요)
+        krows = data["macro.json"]["idxHist"]["KOSPI"]["rows"]
+        before = lambda day: [r for r in krows if r[0] < day][-1][1]
+        end = krows[-1][1]
+        lots = [7 * 280000, 13 * 150000, 4 * 300 * 1300]
+        money = sum(lots) + 10 * 200000
+        k_val = sum(c / before("2026-10-01") * end for c in lots) + 10 * 200000 / before("2026-10-01") * before(today)
+        value = 7 * by["005380"]["price"] + 13 * by["105560"]["price"] + 4 * by["AAPL"]["price"] * fx
+        mine = (value + 10 * by["005930"]["price"]) / money - 1
+        card = page.locator('[data-deck-id="dbuilt"]')
+        assert card.locator('[data-ui-v2="vs-mine"]').inner_text() == fillp(C["deck"]["vsMine"], pct=signed_pct(mine * 100))
+        assert card.locator('[data-ui-v2="vs-index"]').inner_text() == fillp(C["deck"]["vsKospi"], pct=signed_pct((k_val / money - 1) * 100))
         check_page("저장한 뒤 포트폴리오", "saved")
         # 내 수익 = 손으로: 판 종목 10주 × (종가 − 200,000) · 가진 종목 현대차 · KB금융 · AAPL · 받은 배당 3,000
         page.locator('[data-deck-id="dbuilt"] [data-ui-v2="returns-link"]').click()
