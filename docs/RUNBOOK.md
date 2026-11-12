@@ -316,6 +316,24 @@ on 2026-11-13:
   "공시 단위 확인: N곳 비움" with the marked stocks, then look at what `main` does between `unit_guard` and writing
   data.json.
 
+## Companies read with a corrected unit (gate warning "공시 단위를 고쳐 읽은 회사")
+
+When a Korean company files a quarterly report with the wrong unit printed over the numbers (천원 over numbers in 원, so
+every amount is 1,000 times too big), the pipeline (`fetch_data.py` `unit_fix_quarter`) divides that report only if it
+can prove the factor for each statement separately: the balance sheet by the report's own previous year-end column against
+the 사업보고서, the income statement and the cash-flow statement by the report's own previous-year column against last
+year's same-quarter report. Then the divided numbers must agree with a figure the unit cannot touch: profit ÷ the report's
+own basic EPS, or 자본금 ÷ 액면가, within 1/8 to 8 times today's share count. It never divides when last year's report or
+the 사업보고서 is the odd one out. Anything it cannot prove is left as filed, and the unit check (`unit_guard`) blanks
+the company's numbers as before. A divided company carries corp.json `unitFix` (the report and the factor per statement).
+
+The gate fails a malformed `unitFix` (factors other than 1,000 or 1,000,000, a bad report name, or `unitFix` together with
+`unitChk`), and warns by name about every company read with a corrected unit, every day, so a person opens that filing on
+DART. A company goes on the list `UNIT_FIX_CHECKED` in `validate_data.py` only with Jack's yes (same steps as the low-PBR
+list above: Claude checks the filing, asks Jack in one line with the evidence, and on his yes adds the stock code →
+`unitFix` (exactly the record in corp.json), `date` and `why` with the filing's `rcept`). An entry stays quiet only while
+the record is the same; a new report divided, or a different factor, is named again. The list is empty today.
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses

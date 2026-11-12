@@ -243,6 +243,13 @@ PBR_LOW_CHECKED = {
                "why": "앱토크롬 · 기타 비유동 금융자산 2,155억 · 공시 rcept 20260813001440 (2026 반기, 단위 원) · 20260320000910 (2025 사업보고서) 확인"},
 }
 PBR_LOW_BAND = 0.20
+# 공시 단위 고침 (리뷰 #116 R3 · 새 줄만): 파이프라인(fetch_data.unit_fix_quarter)이 단위를 잘못 적은 분기 보고서를 표마다 나눠 쓴 회사 —
+# corp.json unitFix [{rep "2026.2Q", bs · is · cf: 1000 · 1000000}]. 모양이 틀리거나 공시 단위 확인(unitChk)과 같이 있으면 실패, 고친 회사는 이름 ·
+# 보고서 · 배수와 함께 경고 (사람이 공시를 보게). UNIT_FIX_CHECKED 에 같은 보고서 · 배수로 적힌 회사만 조용히 — 목록과 회사마다 Jack 의 승인이
+# 필요해요 (RUNBOOK "Companies read with a corrected unit" · 비어 있어요).
+UNIT_FIX_K = (1000, 1000000)
+UNIT_FIX_PARTS = ("bs", "is", "cf")
+UNIT_FIX_CHECKED = {}
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -1935,6 +1942,7 @@ def check_unit(rep, data, kr, by, comps, pdata=None):
         rep.detail(f"PBR {UNIT_PBR_LOOK:g} 미만인데 공시 단위 확인을 통과한 국내 회사", low)
     if quiet:
         rep.detail(f"PBR {UNIT_PBR_LOOK:g} 미만 · 사람이 공시를 확인해 조용히 넘긴 회사 (PBR_LOW_CHECKED)", quiet)
+    check_unit_fix(rep, kr, by, comps)
     lowp = [f"{s['t']} {s.get('nk', '')} PER {num(s.get('per')):.1f}" for s in kr
             if not is_foreign(s.get("t")) and "unitChk" not in s and num(s.get("per")) is not None and 0 <= num(s.get("per")) < UNIT_PER_LOOK]
     rep.add(f"PER {UNIT_PER_LOOK:g} 미만 국내 회사 (unitChk 없음 · 경고만)", True, f"{len(lowp)}곳" + (f": {', '.join(lowp[:4])}" if lowp else ""),
@@ -1987,6 +1995,44 @@ def check_unit_moved(rep, hit, pdata):
         rep.detail("공시 단위 확인에 새로 걸린 회사 (숫자를 새로 비웠어요)", new)
     if gone:
         rep.detail("공시 단위 확인이 풀린 회사 (직전 발행본에는 걸려 있었어요)", gone)
+
+
+def unit_fix_problems(c):
+    """corp.json 회사의 unitFix 문제 목록: [{rep: "YYYY.nQ", bs · is · cf 중 하나 이상: 1000 · 1000000}] 꼴 · bq 가 있어야 · unitChk 와 같이 있으면
+    안 돼요 (걸린 회사는 고친 숫자도 비워요)."""
+    t, u = c.get("t"), c.get("unitFix")
+    bad = []
+    if not (isinstance(u, list) and u):
+        return [f"{t}.unitFix {u!r}"]
+    for x in u:
+        parts = {k: v for k, v in (x or {}).items() if k != "rep"} if isinstance(x, dict) else None
+        if not (isinstance(x, dict) and isinstance(x.get("rep"), str) and re.fullmatch(r"\d{4}\.[1-4]Q", x["rep"]) and parts
+                and set(parts) <= set(UNIT_FIX_PARTS) and all(v in UNIT_FIX_K for v in parts.values())):
+            bad.append(f"{t}.unitFix {x!r}")
+    if "unitChk" in c:
+        bad.append(f"{t} unitFix 와 unitChk 가 같이 있어요")
+    if not c.get("bq"):
+        bad.append(f"{t} unitFix 인데 bq 없음")
+    return bad
+
+
+def check_unit_fix(rep, kr, by, comps):
+    """공시 단위 고침 (리뷰 #116 R3 · 새 줄만): unitFix 모양 (실패) · 고친 회사 목록 (경고, UNIT_FIX_CHECKED 의 같은 기록은 조용히)."""
+    fixed = [c for c in comps if "unitFix" in c]
+    bad = [p for c in fixed for p in unit_fix_problems(c)]
+    rep.add("공시 단위 고침 기록 모양 (unitFix)", not bad, f"{len(fixed)}곳 · 어긋남 {len(bad)}" + (f" (예: {', '.join(bad[:3])})" if bad else ""),
+            "0 ([{rep, bs·is·cf: 1000 · 1000000}] · unitChk 회사에는 없음)")
+    loud, quiet = [], []
+    for c in fixed:
+        desc = "; ".join(f"{x.get('rep')} " + " · ".join(f"{k} ÷{num(v):,.0f}" if num(v) is not None else f"{k} {v!r}" for k, v in x.items() if k != "rep") for x in c["unitFix"]
+                         if isinstance(x, dict))
+        nm = f"{c.get('t')} {c.get('nk', '')} ({desc})"
+        ck = UNIT_FIX_CHECKED.get(c.get("t"))
+        (quiet if ck and ck.get("unitFix") == c["unitFix"] else loud).append(nm)
+    rep.add("공시 단위를 고쳐 읽은 회사 (unitFix · 경고만)", True, f"{len(loud)}곳" + (f": {', '.join(loud[:4])}" if loud else "")
+            + (f" · 확인된 회사 {len(quiet)}곳 조용히 넘김" if quiet else ""), "0 (있으면 경고 · 그 보고서의 단위를 사람이 확인)", warn=bool(loud))
+    if loud:
+        rep.detail("공시 단위를 고쳐 읽은 회사 (그 보고서의 지난해 칸으로 증명 · 나눈 뒤 기준값과 맞음)", loud)
 
 
 def _dvwhy_clean(r):

@@ -243,9 +243,13 @@ def test_the_guard_runs_where_main_needs_it():
     assert j < src.find("eps_basis_of(kr, mult_extra)")
 
 
-def test_enrich_keeps_last_years_quarter_for_the_check(tmp_path, monkeypatch):
-    """enrich_with_dart (가짜 DART · 진코스텍의 실제 응답) 이 fin 에 bsP 를 남기고, 그 fin 으로 걸려요."""
+@pytest.mark.parametrize("repair", [False, True])
+def test_enrich_keeps_last_years_quarter_for_the_check(tmp_path, monkeypatch, repair):
+    """enrich_with_dart (가짜 DART · 진코스텍의 실제 응답) 이 fin 에 bsP 를 남기고, 그 fin 으로 걸려요 — 공시 단위 고침(unit_fix_quarter)을
+    끄면 안전망이 걸고, 켜면 표마다 증명해 나눈 숫자가 안전망을 지나요."""
     t, corp_code = "250030", CO["250030"]["corp"]
+    if not repair:
+        monkeypatch.setattr(F, "unit_fix_quarter", lambda client, corp, fin, year, reprt, q, prev, s=None, pref_shares=None, unit_log=None: q)
 
     def get(self, endpoint, params, timeout=25):
         key = f"{t}|{params.get('bsns_year')}|{params.get('reprt_code')}|{params.get('fs_div')}"
@@ -262,7 +266,10 @@ def test_enrich_keeps_last_years_quarter_for_the_check(tmp_path, monkeypatch):
     kr, fm = F.enrich_with_dart(kr, c, {})
     fin = fm[t]
     assert fin["bq"] == "2026.2Q" and fin["bsP"]["eq"] == 60.0 and "bal" in fin["bs2"] and "bal" in fin
-    assert F.unit_check(fin)["why"] == ["scale", "is", "cf"]
+    if repair:
+        assert F.unit_check(fin)["why"] == [] and fin["bs2"]["eq"] == 264.2 and fin["unitFix"][0]["rep"] == "2026.2Q"
+    else:
+        assert F.unit_check(fin)["why"] == ["scale", "is", "cf"] and "unitFix" not in fin
     # 캐시에 저장된 해석(새 칸 bal 포함)으로 다음 실행도 같은 판단
     with gzip.open(str(tmp_path / "c.json.gz"), "rt", encoding="utf-8") as f:
         ent = json.load(f)["entries"]

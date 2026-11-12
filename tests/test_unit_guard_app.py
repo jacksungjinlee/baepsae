@@ -414,3 +414,32 @@ def test_the_home_hero_says_the_unit_line_once_under_the_tiles():
     assert got["on"] == LINE and got["off"] == "" and got["noWords"] == ""
     src = open(os.path.join(ROOT, "src", "v2", "home2.jsx"), encoding="utf-8").read()
     assert '<UnitChkLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.unit)}' in src
+
+
+# ── 공시 단위 고침 (리뷰 #116 R5): 고쳐 읽은 회사에 한 줄 — 문구는 Jack 승인 대기 (co.unitFix null) ──
+FIX_PROPOSAL = "공시에 단위가 잘못 적혀 있어서 바로잡아 계산했어요."
+
+
+def test_the_unit_fix_line_is_parked_and_shows_only_for_a_repaired_company_once_worded():
+    got = run("""
+      FX.setEpsBasis(CORP);
+      const fixT = '005930';
+      const coFix = { ...LOAD.coByT.get(fixT), unitFix: [{ rep: '2026.2Q', bs: 1000, is: 1000, cf: 1000 }] };
+      const load = { ...LOAD, coByT: new Map([...LOAD.coByT, [fixT, coFix]]) };
+      const tab = (T, L, code) => renderToStaticMarkup(h(T, { load: L, s: L.byT.get(code), store: STORE, setStoreData() {}, onMore() {}, pad: 0,
+        onBack() {}, backLabel: '' }));
+      const ui = (x) => (x.match(/data-ui-v2="unit-fix"/g) || []).length;
+      out = { parked: C2.co.unitFix, now: ui(tab(CT.ValueMore, load, fixT)) };
+      C2.co.unitFix = PROPOSAL;
+      const on = tab(CT.ValueMore, load, fixT);
+      out.on = [ui(on), count(on, PROPOSAL)];
+      out.plain = ui(tab(CT.ValueMore, LOAD, fixT));                                            // unitFix 없는 회사
+      out.empty = ui(tab(CT.ValueMore, { ...LOAD, coByT: new Map([...LOAD.coByT, [fixT, { ...coFix, unitFix: [] }]]) }, fixT));
+      out.held = ui(tab(CT.ValueMore, LOAD, UNIT_T));                                           // 숫자를 비운 회사: 영수증 카드가 없어요
+      out.tabs = [CT.ValueTab, CT.EarnTab, CT.DivTab].map((T) => ui(tab(T, load, fixT)));      // 가치 자세히 한 곳에만
+      C2.co.unitFix = null;""", UNIT_T=UNIT_T, PROPOSAL=FIX_PROPOSAL)
+    assert got["parked"] is None and got["now"] == 0                             # 승인 전: 줄 없음
+    assert got["on"] == [1, 1]
+    assert got["plain"] == 0 and got["empty"] == 0 and got["held"] == 0 and got["tabs"] == [0, 0, 0]
+    pend = open(os.path.join(ROOT, "docs", "tasks", "v18.3-new-strings-pending.md"), encoding="utf-8").read()
+    assert f"| `co.unitFix` | {FIX_PROPOSAL} |" in pend
