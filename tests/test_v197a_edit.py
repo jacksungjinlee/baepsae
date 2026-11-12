@@ -360,3 +360,15 @@ def test_no_literal_colour_in_new_v197a_files(path):
     assert r.returncode == 0, r.stderr
     hits = HEX.findall(r.stdout) + FUNC.findall(r.stdout) + NAMED.findall(r.stdout)
     assert not hits, f"{path}: 색을 직접 썼어요 {hits[:5]} (src/ui/tokens.js 의 토큰으로)"
+
+
+def test_a_removal_outside_the_edit_screen_is_logged_too():
+    """v19.6a's 포트폴리오에서도 뺄까요? → 빼기 and the missing stock's 포트폴리오에서 빼기 take the stock out exactly as before
+    (store.withoutHolding: records into history, a removal mark) and add one change-log line, without a reason."""
+    got = run("""const d = deck4({ sales: [{ id: 's1aaaaaa', t: '000020', qty: 25, price: 120000, date: '2026-11-01', ccy: 'KRW' }] });
+      const a = E.withRemoval({ v: 1, decks: [d] }, 'd1', '000020', T, env.ts);
+      const b = S.withoutHolding({ v: 1, decks: [d] }, 'd1', '000020', T, env.ts);
+      const { changes, ...rest } = a.decks[0];
+      out = { changes, same: JSON.stringify(rest) === JSON.stringify(b.decks[0]), valid: S.validStore(a, T), none: E.withRemoval({ v: 1, decks: [d] }, 'd1', 'XXXX', T, env.ts) };""")
+    assert got["changes"] == [{"at": "2026-11-12", "kind": "remove", "t": "000020", "nk": "종목2"}] and got["same"] is True and got["valid"] is True
+    assert got["none"] is None

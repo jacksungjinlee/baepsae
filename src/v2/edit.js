@@ -292,7 +292,9 @@ export function retarget(deck, h, target, fxToday = null) {
 // a: the draft add { t, nk, cls, ind, kind, s }; load: today's data (coByT for the rule book).
 export function newHolding(deck, a, target, load, today, ts) {
   const st = { points: (deck.settings && deck.settings.points) || {} };
-  const s = a.s;
+  // today's row when the data on screen has it (a newer publish may have come in since the sheet was opened), else the
+  // row as it was picked
+  const s = (load && load.byT && typeof load.byT.get === "function" && load.byT.get(a.t)) || a.s;
   const rules = rulesFor(load, { s, kind: a.kind, targetW: target }, st);
   const h = { t: a.t, nk: a.nk, ...(a.cls ? { cls: a.cls } : {}), ind: hasGroup(s) ? s.ind : null, kind: a.kind, target, setAt: today, ts,
     ...(num(s.price) > 0 ? { planPx: s.price } : {}), rules };
@@ -319,6 +321,13 @@ function takeOut(data, deckId, t, reason, today, ts) {
   const next = withoutHolding(data, deckId, t, today, ts, why);
   if (!next) return null;
   return { data: next, change: { at: today, kind: "remove", t, nk: h.nk, ...(why ? { reason: why } : {}) } };
+}
+// 포트폴리오에서 빼기 outside 종목 바꾸기 (v19.6a's 포트폴리오에서도 뺄까요? → 빼기, and a stock missing from today's data): the same
+// store.withoutHolding, logged in the change log too ("{date} · {name} 뺌"). -> the store, or null (nothing to remove).
+export function withRemoval(data, deckId, t, today, ts) {
+  const x = takeOut(data, deckId, t, null, today, ts);
+  if (!x) return null;
+  return putDeck(x.data, withChanges(findDeck(x.data, deckId), [x.change]));
 }
 // Every stored holding of deck whose target in `pcts` (Map t -> %) differs from its own: retargeted. -> { deck, changed }
 function applyTargets(deck, pcts, fxToday) {

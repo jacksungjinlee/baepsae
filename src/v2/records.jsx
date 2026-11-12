@@ -11,7 +11,8 @@ import { C, fill, nf, mdText, todayKst, exactWon, plus, recDate } from "./format
 import { Note, TextInput, SampleLabel, tx, useMode, useLayout, SIDE_W } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
-import { writeStore, withoutHolding } from "./store.js";
+import { writeStore } from "./store.js";
+import { withRemoval } from "./edit.js";
 import { priceDate } from "./cofmt.js";
 import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
@@ -301,7 +302,8 @@ function FullSale({ flow, setFlow, store, setStoreData, deck, close, shift, samp
   const [q, body] = firstSentence(C.rec.fullSale);
   const [fail, setFail] = useState(false);
   const remove = () => {
-    const next = withoutHolding(store.data, deck.id, flow.t, todayKst(), Date.now());   // the sale and dividend records move to history (A.3)
+    // the sale and dividend records move to history (A.3); v19.7a: logged in the portfolio's change log
+    const next = withRemoval(store.data, deck.id, flow.t, todayKst(), Date.now());
     if (!save(store, setStoreData, next)) { setFail(true); return; }
     console.info(`[v2] ${deck.id}: ${flow.t} taken out after a full sale (its sale and dividend records stay in the returns)`);
     close();

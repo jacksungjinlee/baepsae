@@ -15,7 +15,8 @@ import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, tap, useNav } from "./ui.jsx";
-import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
+import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
+import { withRemoval } from "./edit.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
@@ -91,7 +92,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 포트폴리오에서 빼기: only the stock missing from today's data, only from this portfolio, only when tapped.
   const onRemove = (deckId, t) => {
-    const next = withoutHolding(store.data, deckId, t, todayKst(), Date.now());   // with a removal mark (two tabs)
+    const next = withRemoval(store.data, deckId, t, todayKst(), Date.now());   // with a removal mark (two tabs); v19.7a: logged
     if (next) { console.warn(`[v2] ${deckId}: ${t} removed from the portfolio (user tapped remove; it was not in today's data)`); setStoreData(next); }
     else console.warn("[v2] remove refused: " + JSON.stringify({ deckId, t }));
   };
