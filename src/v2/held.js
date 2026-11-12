@@ -47,11 +47,12 @@ export const byAmount = (r) => !!r && r.qty == null && r.amountWon != null;
 //                        so it is never written.
 // The same split in both counts once: the same stock and ratio within SAME_SPLIT_DAYS days is one split (round-2 review:
 // a stored split and data.json's dated a few days apart, e.g. the decision day and the effective day, must never apply
-// twice: 101 shares instead of 11). The first one met wins (the stored one). An imported row without a date counts as typed on the day the portfolio was made
+// twice: 101 shares instead of 11). SAME_SPLIT_DAYS is the pipeline's same-event window (fetch_data.py
+// SPLIT_SAME_EVENT_DAYS, #117: 10 days), round-2 review A1. The first one met wins (the stored one). An imported row without a date counts as typed on the day the portfolio was made
 // (recs.createdAt): a split after that day applies to it, one before it does not (the user typed the new share count).
 export const VIEW_SPLITS = Symbol("data.json splits for the screens");
 const SPLIT_DATE = /^\d{4}-\d{2}-\d{2}$/;
-export const SAME_SPLIT_DAYS = 7;
+export const SAME_SPLIT_DAYS = 10;
 const dayNo = (d) => Date.parse(d + "T00:00:00Z") / 86400000;
 // Are a and b the same split (the same stock and ratio, dated at most SAME_SPLIT_DAYS days apart)?
 export const sameSplit = (a, b) => !!a && !!b && a.t === b.t && Math.abs(a.r - b.r) < 1e-9 && Math.abs(dayNo(a.date) - dayNo(b.date)) <= SAME_SPLIT_DAYS;

@@ -68,7 +68,7 @@ globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), se
   get length() { return mem.size; }, key: (i) => [...mem.keys()][i] ?? null };
 console.warn = (m) => warns.push(String(m)); console.info = () => {};
 const K = 'baepsae2.v1', T = '2026-11-06';
-const HIST = { asOf: '2026-11-05', rows: [['2016-01-04', 1172.5], ['2026-10-30', 1338.0], ['2026-11-03', 1375.2], ['2026-11-05', 1390.4]] };
+const HIST = { asOf: '2026-11-05', final: true, rows: [['2016-01-04', 1172.5], ['2026-10-30', 1338.0], ['2026-11-03', 1375.2], ['2026-11-05', 1390.4]] };
 const env = (o = {}) => ({ today: T, fx: 1401.1, fxDate: '2026-11-05', fxHist: HIST, stale: false, ...o });
 const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
 const deckOf = (extra = {}) => ({ id: 'd1', name: '배당 생활비 포트폴리오', createdAt: '2026-10-01', planFx: 1300,

@@ -29,6 +29,7 @@ import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
+import { UNIT } from "./held.js";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -470,23 +471,30 @@ export function App({ source }) {
     console.info("[v2] stock splits stored with the records they apply to: " + r.added.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
     setStoreData(r.data);
   }, [view, load.status]);
-  // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong: a portfolio that stored it drops it,
-  // when its records still read back without it (lots.withoutOutSplits); one whose records need it keeps it, said loudly
-  // once (never a record lost or refused). Only when the records can be written.
+  // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong. Each stored split it names is taken
+  // out when the records read back without it, moved to data.json's corrected date (same stock and ratio) when they read
+  // back with that, and otherwise kept, said loudly once (lots.withoutOutSplits: never a record lost or refused). A share
+  // count that changes is said too (the proposed rec.splitFixed line waits for Jack; until then only the console). Only
+  // when the records can be written.
   const outSaid = useRef(new Set());
   useEffect(() => {
     if (load.status !== "ok" || !store.writable || store.locked) return;
-    const r = withoutOutSplits(store.data, outSplits(load.data), todayKst());
+    const r = withoutOutSplits(store.data, outSplits(load.data), todayKst(), splitList);
     for (const x of r.kept) {
       const k = `${x.id}|${x.t}|${x.date}`;
       if (outSaid.current.has(k)) continue;
       outSaid.current.add(k);
-      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is marked out by data.json splitsInfo.fixed, but the records need it (${x.why}); it is kept`);
+      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is marked out by data.json splitsInfo.fixed, but the records need it (${x.why}); it is kept`
+        + (x.also ? `; data.json also lists ${x.t} x${x.r} on ${x.also.join(", ")}, which these records may then count twice` : ""));
     }
-    if (!r.removed.length) return;
-    console.warn("[v2] stored stock splits taken out (data.json splitsInfo.fixed marks them wrong): " + r.removed.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
+    if (!r.removed.length && !r.moved.length) return;
+    const count = (h) => (h && h.before !== h.after ? `, ${h.t} shares ${h.before / UNIT} -> ${h.after / UNIT}` : "");
+    if (r.removed.length) console.warn("[v2] stored stock splits taken out (data.json splitsInfo.fixed marks them wrong): "
+      + r.removed.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}${count(x.held)}`).join("; "));
+    if (r.moved.length) console.warn("[v2] stored stock splits moved to data.json's corrected date: "
+      + r.moved.map((x) => `${x.id} ${x.t} ${x.date} -> ${x.to} x${x.r}${count(x.held)}`).join("; "));
     setStoreData(r.data);
-  }, [store.data, load]);
+  }, [store.data, load, splitList]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;

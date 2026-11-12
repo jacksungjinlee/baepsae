@@ -28,8 +28,9 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 //     data.json fx; the next publish's fxHist will have that day);
 //   - no fxHist, one that cannot be read, or a date from 2016 on that it does not reach (under ECOS, 2016-01-01 to 01-03 come
 //     before the first row 2016-01-04: no row on or before them): not saved yet;
-//   - final false (yahoo_next at the 06:40 publish: its last row is the run's live rate, not the day's): a date whose rate
-//     would be that last row is not saved yet either; the next publish has it final.
+//   - final not true (yahoo_next at the 06:40 publish says false: its last row is the run's live rate, not the day's; a
+//     missing or odd flag counts as not final, round-2 review): a date whose rate would be that last row is not saved yet
+//     either; the next publish has it final.
 // env: { today, fx, fxDate, fxHist, stale }.
 // -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
 //    past-date line does not fit) | "past" (a past date: "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
@@ -48,7 +49,7 @@ export function rateFor(date, env) {
     const mid = (lo + hi) >> 1;
     if (rows[mid][0] <= date) { hit = rows[mid]; lo = mid + 1; } else hi = mid - 1;
   }
-  if (hit && e.fxHist.final === false && hit === rows[rows.length - 1]) return { ok: false, why: "past" };   // not a final rate yet
+  if (hit && e.fxHist.final !== true && hit === rows[rows.length - 1]) return { ok: false, why: "past" };   // final only when it says so
   return hit ? { ok: true, fx: hit[1] } : { ok: false, why: "past" };
 }
 // The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).

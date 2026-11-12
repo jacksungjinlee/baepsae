@@ -583,6 +583,21 @@ the gate's "공시 단위 확인 회사 바뀜" warning names it when that happe
   data commits count as activity; on the 1st of every month the watchdog also switches both scheduled workflows back on
   through GitHub's API. If GitHub Actions stops completely, healthchecks.io is the alarm.
 
+## Known limits: stock splits in 기록 (v19.6a)
+
+A portfolio stores a split from data.json's `splits` as soon as a saved record of that stock is dated before it, and keeps
+it for good.
+
+- **A ratio correction does not reach a stored split.** A fixed row with a new ratio (splitsInfo.fixed) changes what the
+  screens apply from data.json, but a split already stored in a user's records keeps the ratio it was stored with. Only
+  an "out" row (ratio `None`) reaches stored splits: the app takes that stored split out, or moves it to data.json's
+  corrected date of the same stock and ratio, whenever the records still read back; otherwise it keeps it and says so in
+  the console.
+- **A wrong date corrected more than 10 days away, with a record between the two dates that needs the old one.** The
+  stored split stays at the old date (the records need it) and data.json's corrected row is applied too, so those
+  records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)
+  the two are one split and only the stored one applies.
+
 ## Known limits: 기록 and the phone clock
 
 뱁새 2.0 keeps each 가진 종목 portfolio's 내 규칙 limits (한 종목 · 한 업종) with the time they were saved, and also keeps a

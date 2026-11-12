@@ -383,7 +383,7 @@ def test_the_same_split_dated_a_few_days_apart_applies_once():
       out = { near: H.heldUnits(view).get('000010'), far: H.heldUnits(far).get('000010'), other: H.heldUnits(other).get('000010'),
         notStored: L.splitsToStore(view, '000010'), log: L.storedNotInData({ decks: [d] }, [{ t: '000010', date: '2026-09-03', r: 10 }]) };""")
     assert got["near"] == 110000                                                              # 11주 (1 × 10 + 1), 101주가 아니에요
-    assert got["far"] == 1010000 and got["other"] == 210000                                   # 8일 넘게 · 다른 비율은 다른 분할
+    assert got["far"] == 1010000 and got["other"] == 210000                                   # 10일 넘게 (19일) · 다른 비율은 다른 분할
     assert got["notStored"] is None and got["log"] == []                                      # 같은 분할은 다시 저장하지도, 없다고 말하지도 않아요
 
 

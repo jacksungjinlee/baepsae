@@ -57,33 +57,70 @@ export function outSplits(data) {
   return rows.filter((x) => Array.isArray(x) && x.length >= 3 && typeof x[0] === "string" && x[0] && typeof x[1] === "string" && DAY.test(x[1]) && x[2] === null)
     .map((x) => ({ t: x[0], date: x[1] }));
 }
-// The store without every stored split an "out" row names (the same stock and the same date: an "out" row for a wrong date
-// sits beside the right date's own row, so nothing near it is matched). A portfolio whose records would no longer read back
-// without that split (a sale of the post-split count: store.deckProblem) keeps it, so no record is ever lost or refused;
-// those are returned as kept, for the console. -> { data (the same object when nothing changes), removed, kept }:
-// removed / kept = [{ id, t, date, r }]
-export function withoutOutSplits(data, outs, today = null) {
-  const removed = [], kept = [];
-  if (!data || !Array.isArray(data.decks) || !outs || !outs.length) return { data, removed, kept };
+// The store with every stored split an "out" row names taken out or moved, one split at a time (round-2 review A2: each
+// stored split on its own, never all or nothing per portfolio). An "out" row names a wrong split by stock and date (#117
+// RUNBOOK: a wrong date gets an "out" row for that date plus a row for the right one, at any distance), so only that exact
+// stored split is touched. For each one, in this order:
+//   removed  the records read back without it (store.deckProblem: no sale below 0) — taken out;
+//   moved    they do not, but they do with data.json's split of the same stock and ratio stored in its place (the
+//            corrected date: the nearest such row, A1) — the stored split moves there. That reads every record exactly
+//            as data.json does: the moved split is one the screens already apply from data.json, so it is never counted
+//            twice (held.sameSplit, and the stored one wins);
+//   kept     neither (a record between the two dates needs the old one) — the stored split stays and, within the
+//            pipeline's same-event window (held.SAME_SPLIT_DAYS), data.json's row for it is not applied on top
+//            (sameSplit: the stored one wins). Said loudly; a same-ratio row further away is named in `also`, as it may be
+//            the same event counted twice (a known limit, logged).
+// No record is ever lost or refused. dataList: data.json's splits as read (dataSplits(data).list). A share count a removal
+// or a move changes is reported (`held`: { t, before, after } in units, as the screens count them), for the console.
+// -> { data (the same object when nothing changes), removed, moved, kept }: removed / kept = [{ id, t, date, r, why?, also? }],
+//    moved = [{ id, t, date, r, to }]; removed and moved also carry held.
+export function withoutOutSplits(data, outs, today = null, dataList = []) {
+  const removed = [], moved = [], kept = [];
+  if (!data || !Array.isArray(data.decks) || !outs || !outs.length) return { data, removed, moved, kept };
   let changed = false;
   const decks = data.decks.map((d) => {
     if (!d || !Array.isArray(d.splits) || !d.splits.length) return d;
-    const hit = d.splits.filter((s) => s && outs.some((o) => o.t === s.t && o.date === s.date));
-    if (!hit.length) return d;
+    const hits = d.splits.filter((s) => s && outs.some((o) => o.t === s.t && o.date === s.date));
+    if (!hits.length) return d;
     const { [VIEW_SPLITS]: _v, ...plain } = d;
-    const rest = d.splits.filter((s) => !hit.includes(s));
-    const next = { ...plain, ...(rest.length ? { splits: rest } : {}) };
-    if (!rest.length) delete next.splits;
-    const p = deckProblem(next, today);
-    if (p) {
-      for (const s of hit) kept.push({ id: d.id, t: s.t, date: s.date, r: s.r, why: problemText(next, p) });
-      return d;
+    let next = plain;
+    const withSplits = (deck, list) => { const out = { ...deck, splits: list }; if (!list.length) delete out.splits; return out; };
+    // the share count the screens show: the stored splits with data.json's on top (withDataSplits)
+    const view = (dataList || []).filter((x) => x && (!today || x.date <= today));
+    const heldOf = (deck, t) => heldUnits({ ...deck, [VIEW_SPLITS]: view.filter((x) => x.t === t) }).get(t) || 0;
+    for (const s of hits) {
+      const rest = next.splits.filter((x) => x !== s);
+      const trial = withSplits(next, rest);
+      const before = heldOf(next, s.t);
+      if (!deckProblem(trial, today)) {
+        removed.push({ id: d.id, t: s.t, date: s.date, r: s.r, held: { t: s.t, before, after: heldOf(trial, s.t) } });
+        next = trial;
+        continue;
+      }
+      // the corrected date: data.json's splits of the same stock and ratio (never one an "out" row names, never after today),
+      // nearest first, that the records read back with
+      const day = (x) => Date.parse(x + "T00:00:00Z") / 86400000;
+      const cands = (dataList || []).filter((x) => x && x.t === s.t && Math.abs(x.r - s.r) < 1e-9 && x.date !== s.date && (!today || x.date <= today)
+        && !outs.some((o) => o.t === x.t && o.date === x.date) && !rest.some((y) => y && y.t === x.t && y.date === x.date))
+        .sort((a, b) => Math.abs(day(a.date) - day(s.date)) - Math.abs(day(b.date) - day(s.date)) || (a.date < b.date ? -1 : 1));
+      let done = false;
+      for (const c of cands) {
+        const t2 = withSplits(next, [...rest, { t: c.t, date: c.date, r: c.r }]);
+        if (deckProblem(t2, today)) continue;
+        moved.push({ id: d.id, t: s.t, date: s.date, r: s.r, to: c.date, held: { t: s.t, before, after: heldOf(t2, s.t) } });
+        next = t2;
+        done = true;
+        break;
+      }
+      if (done) continue;
+      const also = cands.filter((c) => !sameSplit(c, s)).map((c) => c.date);
+      kept.push({ id: d.id, t: s.t, date: s.date, r: s.r, why: problemText(trial, deckProblem(trial, today)), ...(also.length ? { also } : {}) });
     }
-    for (const s of hit) removed.push({ id: d.id, t: s.t, date: s.date, r: s.r });
+    if (next === plain) return d;
     changed = true;
     return d[VIEW_SPLITS] ? { ...next, [VIEW_SPLITS]: d[VIEW_SPLITS] } : next;
   });
-  return { data: changed ? { ...data, decks } : data, removed, kept };
+  return { data: changed ? { ...data, decks } : data, removed, moved, kept };
 }
 
 // The store with data.json's splits put on an in-memory copy of every portfolio that has records of a split stock (held.js

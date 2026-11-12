@@ -6,7 +6,8 @@
 - a record dated with no fxHist row on or before it (2016-01-01..03 under ECOS) is refused, never another day's rate
 - rows speak only for dates on or before asOf: any later date refused, except today (fresh data.json fx); an ecos_next
   file whose asOf is the business day before fxDate gives nothing for fxDate
-- final false (yahoo_next at the 06:40 publish): a date whose rate would be the unfinished last row is refused
+- final not true (yahoo_next at the 06:40 publish says false; a missing flag is not final either): a date whose rate would be
+  the unfinished last row is refused
 - dates are US trading dates: a record dated on a split's date is already at the new count
 """
 import json
@@ -81,9 +82,11 @@ def test_rows_speak_only_up_to_as_of_and_today_uses_fresh_fx():
 def test_an_unfinished_last_row_is_not_a_rate():
     got = run("""const yh = { asOf: '2026-11-12', final: false, rows: [['2026-11-10', 1335.0], ['2026-11-11', 1333.6], ['2026-11-12', 1338.3]] };
       out = { last: Rc.rateFor('2026-11-12', env({ fxHist: yh })), before: Rc.rateFor('2026-11-11', env({ fxHist: yh })),
-        finalLast: Rc.rateFor('2026-11-12', env({ fxHist: { ...yh, final: true } })), today: Rc.rateFor(T, env({ fxHist: yh })) };""")
+        finalLast: Rc.rateFor('2026-11-12', env({ fxHist: { ...yh, final: true } })), today: Rc.rateFor(T, env({ fxHist: yh })),
+        odd: [undefined, null, 'true', 1].map((f) => Rc.rateFor('2026-11-12', env({ fxHist: { ...yh, final: f } }))) };""")
     assert got["last"] == {"ok": False, "why": "past"} and got["before"] == {"ok": True, "fx": 1333.6}
     assert got["finalLast"] == {"ok": True, "fx": 1338.3} and got["today"] == {"ok": True, "fx": 1338.3}
+    assert got["odd"] == [{"ok": False, "why": "past"}] * 4                                         # final 은 true 일 때만 (round-2)
 
 
 def test_out_rows_are_never_applied_and_a_stored_one_leaves_when_the_records_allow():
@@ -99,7 +102,7 @@ def test_out_rows_are_never_applied_and_a_stored_one_leaves_when_the_records_all
         freeSplits: r.data.decks[0].splits, needsSame: r.data.decks[1] === needs, valid: S.validStore(r.data, T),
         heldFree: H.heldUnits(r.data.decks[0]).get('GMAB') / 10000, none: L.withoutOutSplits(store, [], T).data === store };""")
     assert got["list"] == ["AAPL"] and got["out"] == 1 and got["outs"] == [{"t": "GMAB", "date": "2018-05-01"}]
-    assert got["removed"] == [{"id": "free", "t": "GMAB", "date": "2018-05-01", "r": 5}]
+    assert got["removed"] == [{"id": "free", "t": "GMAB", "date": "2018-05-01", "r": 5, "held": {"t": "GMAB", "before": 1000000, "after": 200000}}]
     assert got["freeSplits"] == [{"t": "GMAB", "date": "2018-05-08", "r": 2}]                       # only the named date (not the one a week on)
     assert got["heldFree"] == 20                                                                       # 10 × 2 (the 05-08 split only)
     assert got["kept"] == [["needs", "GMAB", "2018-05-01"]] and got["needsSame"] is True               # its 60-share sale needs the split
@@ -113,3 +116,76 @@ def test_a_record_on_the_split_day_is_already_at_the_new_count():
         splits: [{ t: 'AAPL', date: '2020-08-31', r: 4 }] };
       out = H.heldUnits(d).get('AAPL') / 10000;""")
     assert got == 8                                                                                    # 1 × 4 (before) + 4 (on the day, new count)
+
+
+# ---------------- round-2 review: a wrong-date split, one split at a time, the pipeline's 10-day window ----------------
+GMAB = """const deckG = (id, purchases, sales, splits, more = {}) => ({ id, name: id, createdAt: '2018-01-02', planFx: 1300,
+        holdings: [{ t: 'GMAB', nk: 'Genmab', target: 1, rules: band(1) }], purchases, sales, splits, ...more });
+      const Sx = (id, t, qty, date) => ({ id, t, qty, price: 10, date, ccy: 'USD', fx: 1100 });
+      // what the screens count: the stored splits with data.json's on top (app.jsx view)
+      const shown = (store, data, i = 0, t = 'GMAB') => H.heldUnits(L.withDataSplits(store, L.dataSplits(data).list, T).decks[i]).get(t) / 10000;
+      const fix = (store, data) => L.withoutOutSplits(store, L.outSplits(data), T, L.dataSplits(data).list);
+"""
+
+
+def test_a_wrong_date_split_a_sale_needs_moves_to_the_corrected_date():
+    """[A1] stored 2018-05-01 x5 (wrong date); data.json: an "out" row for 05-01 and the corrected 05-20 x5 (the reviewer's
+    case, 19 days on: #117's RUNBOOK puts no limit on how far a corrected date is) or 05-09 x5 (within 10 days). Bought 10
+    before, sold 40 after: the stored split moves to the corrected date and the screens read 10, never 210."""
+    got = run(GMAB + """const out = (d) => ({ splits: [['GMAB', d, 5]], splitsInfo: { fixed: [['GMAB', '2018-05-01', null, 'wrong date']] } });
+      const res = {};
+      for (const d of ['2018-05-20', '2018-05-09']) {
+        const store = { v: 2, decks: [deckG('x1', [P('p1aaaaaa', 10, '2018-04-02')], [Sx('s1aaaaaa', 'GMAB', 40, '2018-06-01')], [{ t: 'GMAB', date: '2018-05-01', r: 5 }])] };
+        const r = fix(store, out(d));
+        res[d] = { before: shown(store, out(d)), moved: r.moved, removed: r.removed.length, kept: r.kept.length, splits: r.data.decks[0].splits,
+          after: shown(r.data, out(d)), valid: S.validStore(r.data, T), again: fix(r.data, out(d)).data === r.data };
+      }
+      out = res;""".replace("const out = (d)", "const outD = (d)").replace("out(d)", "outD(d)"))
+    far, near = got["2018-05-20"], got["2018-05-09"]
+    assert far["before"] == 210                                                                       # the bug: both splits applied
+    assert far["moved"] == [{"id": "x1", "t": "GMAB", "date": "2018-05-01", "r": 5, "to": "2018-05-20", "held": {"t": "GMAB", "before": 2100000, "after": 100000}}]
+    assert far["splits"] == [{"t": "GMAB", "date": "2018-05-20", "r": 5}] and far["after"] == 10 and far["valid"] is True and far["again"] is True
+    assert far["removed"] == 0 and far["kept"] == 0
+    assert near["before"] == 10 and near["after"] == 10 and near["splits"] == [{"t": "GMAB", "date": "2018-05-09", "r": 5}]   # 10 days: one split even before
+    assert near["moved"][0]["held"] == {"t": "GMAB", "before": 100000, "after": 100000}
+
+
+def test_a_record_between_the_two_dates_keeps_the_old_date_and_the_new_row_is_not_applied():
+    """[A1] the sale (40) is dated 05-05, between the wrong 05-01 and the corrected 05-09: it needs the old date. The stored
+    split stays at 05-01 and the corrected row (within the 10-day window) is not applied on top (10, not 50 x 5 − 40).
+    A corrected row further than 10 days away is a known limit (RUNBOOK): kept, both apply (50, not 10), and the console
+    names it (also)."""
+    got = run(GMAB + """const outD = (d) => ({ splits: [['GMAB', d, 5]], splitsInfo: { fixed: [['GMAB', '2018-05-01', null, 'wrong date']] } });
+      const mk = () => ({ v: 2, decks: [deckG('x2', [P('p1aaaaaa', 10, '2018-04-02')], [Sx('s1aaaaaa', 'GMAB', 40, '2018-05-05')], [{ t: 'GMAB', date: '2018-05-01', r: 5 }])] });
+      const near = fix(mk(), outD('2018-05-09')), far = fix(mk(), outD('2018-05-20'));
+      out = { near: { kept: near.kept, moved: near.moved.length, same: near.data.decks[0].splits, shown: shown(near.data, outD('2018-05-09')) },
+        far: { kept: far.kept.map((k) => [k.t, k.date, k.also]), shown: shown(far.data, outD('2018-05-20')) } };""")
+    k = got["near"]["kept"]
+    assert len(k) == 1 and k[0]["t"] == "GMAB" and k[0]["date"] == "2018-05-01" and "GMAB" in k[0]["why"] and "also" not in k[0]
+    assert got["near"]["moved"] == 0 and got["near"]["same"] == [{"t": "GMAB", "date": "2018-05-01", "r": 5}] and got["near"]["shown"] == 10
+    assert got["far"]["kept"] == [["GMAB", "2018-05-01", ["2018-05-20"]]] and got["far"]["shown"] == 50     # 10 x 25 − 40 x 5: known limit, named in the console
+
+
+def test_each_stored_split_is_decided_on_its_own():
+    """[A2] two "out" splits in one portfolio: GMAB's is needed (a sale of the post-split count), AAA's is not. AAA's leaves
+    (11 shares, not 21), GMAB's stays, and the reason names GMAB."""
+    got = run(GMAB + """const data = { splits: [], splitsInfo: { fixed: [['GMAB', '2018-05-01', null, 'x'], ['AAA', '2019-05-01', null, 'x']] } };
+      const d = { id: 'x2', name: 'x2', createdAt: '2018-01-02', planFx: 1300,
+        holdings: [{ t: 'GMAB', nk: 'Genmab', target: 0.5, rules: band(0.5) }, { t: 'AAA', nk: 'AAA', target: 0.5, rules: band(0.5) }],
+        purchases: [P('p1aaaaaa', 10, '2018-04-02'), { ...P('p2aaaaaa', 10, '2019-04-02'), t: 'AAA' }, { ...P('p3aaaaaa', 1, '2019-06-02'), t: 'AAA' }],
+        sales: [Sx('s1aaaaaa', 'GMAB', 40, '2018-06-01')], splits: [{ t: 'GMAB', date: '2018-05-01', r: 5 }, { t: 'AAA', date: '2019-05-01', r: 2 }] };
+      const store = { v: 2, decks: [d] };
+      const r = fix(store, data);
+      out = { removed: r.removed.map((x) => [x.t, x.held]), kept: r.kept.map((x) => [x.t, x.why]), splits: r.data.decks[0].splits,
+        aaa: H.heldUnits(r.data.decks[0]).get('AAA') / 10000, gmab: H.heldUnits(r.data.decks[0]).get('GMAB') / 10000, valid: S.validStore(r.data, T) };""")
+    assert got["removed"] == [["AAA", {"t": "AAA", "before": 210000, "after": 110000}]] and got["aaa"] == 11
+    assert len(got["kept"]) == 1 and got["kept"][0][0] == "GMAB" and "GMAB" in got["kept"][0][1] and "AAA" not in got["kept"][0][1]
+    assert got["splits"] == [{"t": "GMAB", "date": "2018-05-01", "r": 5}] and got["gmab"] == 10 and got["valid"] is True
+
+
+def test_the_same_split_window_is_the_pipelines_10_days():
+    got = run("""const d = (date) => ({ id: 'w', name: 'w', createdAt: '2026-08-01', planFx: 1300, holdings: [{ t: 'NVDA', nk: 'NVIDIA', target: 1, rules: band(1) }],
+        purchases: [{ ...P('p1aaaaaa', 1, '2026-08-03'), t: 'NVDA' }], splits: [{ t: 'NVDA', date: '2026-09-01', r: 10 }] });
+      const seen = (date) => H.heldUnits(L.withDataSplits({ v: 2, decks: [d()] }, [{ t: 'NVDA', date, r: 10 }], T).decks[0]).get('NVDA') / 10000;
+      out = { days: H.SAME_SPLIT_DAYS, ten: seen('2026-09-11'), eleven: seen('2026-09-12') };""")
+    assert got == {"days": 10, "ten": 10, "eleven": 100}                                           # fetch_data.py SPLIT_SAME_EVENT_DAYS
