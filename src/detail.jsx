@@ -14,11 +14,15 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
-import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish } from "./data.js";
+import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish, kstDate } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLineLoaded } from "./fixnote.jsx";
+
+// 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
+// 공유 카드 · 점검 기록 · 주문 메모와 내보낸 파일 · 저장 목록에 어제 날짜가 찍혔어요. CLAUDE.md: 날짜는 모두 한국 시간.
+const todayKst = () => kstDate(Date.now());
 
 // 공유 카드: 오늘 데이터에 있는 종목만. 빠진 종목이 있으면 카드에도 같은 안내 줄을 넣어요 (note, v18.5).
 // cashMw 는 metrics.cash (빠진 종목의 돈은 들어 있지 않아요).
@@ -61,7 +65,7 @@ function makeCardData(allHoldings, stocksById, cashMw, score, lang) {
   const note = missingLine(lang, miss);
   // 카드에 두 줄로 안 들어가면 그리는 쪽(sharecard.js)이 이름을 줄인 문장을 차례로 써 봐요
   const noteAlts = miss.slice(1).map((_, i) => missingLine(lang, miss, miss.length - 1 - i));
-  return { score, buckets, top, note, noteAlts, dateStr: new Date().toISOString().slice(0, 10) };
+  return { score, buckets, top, note, noteAlts, dateStr: todayKst() };
 }
 
 function ShareCardModal({ card, onClose, lang }) {
@@ -4241,7 +4245,7 @@ function Section({ title, sub, open, onToggle, children }) {
 
 function CheckinCard({ lang, t, metrics, profile, checkins, onSave }) {
   const snap = {
-    d: new Date().toISOString().slice(0, 10), inv: metrics.invested, beta: metrics.beta, vol: metrics.volP,
+    d: todayKst(), inv: metrics.invested, beta: metrics.beta, vol: metrics.volP,
     exp: metrics.expRet, unpaid: 100 - metrics.r2, sec: metrics.maxSectorW,
     secKey: metrics.maxSectorKey, top3: metrics.top3, n: metrics.rows.filter((r) => r.mw > 0).length,
   };
@@ -4410,7 +4414,7 @@ function ExportView({ lang, t, metrics, profile, holdings, stocksById, settings,
     const pk = s ? priceKrw(s, settings) : 0;
     return { ...r, s, shares: pk > 0 ? Math.floor(r.won / pk) : 0 };
   });
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = todayKst();
   // 메모의 '예산' = 계산에 든 금액(종목 + 현금) + 오늘 데이터에 없어 뺀 금액 → 입력한 예산과 같아요 (예산을 넘겼으면 담은 금액 전부)
   const budgetShown = metrics.budgetAll || metrics.total;
   const buildJson = () => JSON.stringify({ app: "Baepsae 뱁새 v12", slot: slotName, date: stamp,
@@ -4924,7 +4928,7 @@ function AppInner({ seed, lang: langProp }) {
     };
     await store.set(KEY_SLOT(id), JSON.stringify(payload));
     const m = await computeMetricsForSave();
-    const next = [{ id, name, updated: new Date().toISOString().slice(0, 10), p: m }, ...(await readSlots()).filter((s) => s.id !== id)].slice(0, MAX_SLOTS);
+    const next = [{ id, name, updated: todayKst(), p: m }, ...(await readSlots()).filter((s) => s.id !== id)].slice(0, MAX_SLOTS);
     await writeSlots(next);
     setSlots(next);
   };
