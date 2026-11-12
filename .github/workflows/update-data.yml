@@ -116,23 +116,6 @@ jobs:
           ref: ${{ (github.event_name == 'schedule' || inputs.timer) && 'main' || '' }}
           persist-credentials: false
 
-      # TEMP (will be reverted): prove on a real runner that the token handling works, then stop before any data work.
-      - name: TEMP 토큰 확인 (되돌릴 커밋)
-        env:
-          PROBE_TOKEN: ${{ github.token }}
-        run: |
-          export GIT_TERMINAL_PROMPT=0
-          echo "1) stored header after checkout:"; git config --local --get-all http.https://github.com/.extraheader && { echo "!! a token is stored"; exit 1; } || echo "   none (ok)"
-          git config --local --get-regexp 'credential|includeif|extraheader' || echo "   no credential settings (ok)"
-          echo "2) push --dry-run without a token:"; if git push --dry-run origin HEAD:refs/heads/zz-token-probe 2>&1 | tail -2; then echo "   (see above)"; fi
-          if git push --dry-run origin HEAD:refs/heads/zz-token-probe > /dev/null 2>&1; then echo "!! push works without a token"; exit 1; else echo "   refused (ok)"; fi
-          echo "3) ls-remote with a wrong token:"; if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' wrong-token | base64 | tr -d '\n')" ls-remote --exit-code origin refs/heads/main > /dev/null 2>&1; then echo "!! a wrong token is accepted"; exit 1; else echo "   refused (ok)"; fi
-          echo "4) the script with the real token:"; GITHUB_TOKEN="$PROBE_TOKEN" bash tools/git_token_auth.sh
-          echo "5) push --dry-run with the token (creates nothing):"; git push --dry-run origin HEAD:refs/heads/zz-token-probe 2>&1 | tail -3
-          git push --dry-run origin HEAD:refs/heads/zz-token-probe > /dev/null 2>&1 && echo "   accepted (ok)"
-          git config --local --unset-all http.https://github.com/.extraheader
-          echo "TEMP probe finished: stopping this run on purpose before any data work"; exit 1
-
       - name: 입력 확인
         run: |
           echo "· 브랜치 $GITHUB_REF_NAME · 시험 실행 ${DRY_RUN:-false} · DART $DART_MODE · bootstrap ${BOOTSTRAP:-false} · 비교 커밋 ${PREV_REF:-HEAD} · selftest $SELFTEST · 표본 $SAMPLE_KR"
