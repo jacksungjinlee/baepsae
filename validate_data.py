@@ -803,12 +803,12 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
     check_foreign(rep, kr, comps)
+    if rel:
+        check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
     check_v191b(rep, data, kr, us, by, comps, pdata)
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
-    if rel:
-        check_stmt_marks(rep, comps, prev)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1513,40 +1513,54 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
 
 
 def _stmt_marked(c):
-    """원화가 아닌 재무제표 표시가 있는지 (값이 무엇이든 stmtCur 칸이 있고 KRW 가 아니면 — 'XXX' 처럼 읽을 수 없는 통화도 표시예요)."""
-    return isinstance(c, dict) and "stmtCur" in c and c.get("stmtCur") != "KRW"
+    """원화가 아닌 재무제표 표시가 있는지 — 앱과 같은 규칙 (src/repair.js stmtNotWon: stmtCur 가 null 이 아니고 KRW 가 아니면).
+    'XXX' 처럼 읽을 수 없는 통화도 표시예요."""
+    return isinstance(c, dict) and c.get("stmtCur") is not None and c.get("stmtCur") != "KRW"
 
 
 def check_stmt_marks(rep, comps, prev):
     """2026-11-12 (Jack, 더하기만): 직전 발행에서 원화가 아닌 재무제표 표시(stmtCur)가 있던 회사가 오늘도 목록에 있는데 표시가 사라졌는지.
-    절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날 — 달러 금액이 원으로 나가요), 하나라도 사라지면 경고 (회사가 통화를 바꿨을 수도 있어요).
-    직전 corp.json 을 못 읽었으면 실패 (비교할 수 없어요)."""
+    오늘도 목록에 있는 회사가 STMT_MARK_MIN 곳 이상이고 그 절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날 — 달러 금액이 원으로
+    나가요), 하나라도 사라지면 경고 (회사가 통화를 바꿨을 수도 있어요). 직전 corp.json 이 없거나 못 읽었으면 실패 (비교할 수 없어요).
+    경고는 그날 한 번만 떠요: 경고로 발행되면 다음 날 비교 대상(직전 발행)에서 그 회사의 표시가 이미 빠져 있어요 (docs/RUNBOOK.md)."""
     name = "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음 (stmtCur)"
-    rule = f"절반 넘게 사라지면 실패 (직전에 {STMT_MARK_MIN}곳 이상일 때 · DART 통화 칸을 못 읽은 날) · 하나라도 사라지면 경고"
-    prev = prev or {}
+    rule = (f"오늘도 목록에 있는 회사가 {STMT_MARK_MIN}곳 이상이고 그 절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날) · "
+            "하나라도 사라지면 경고 · 직전 corp.json 이 없으면 실패")
+    if prev is None:
+        rep.skip(name, "직전 발행본이 없어요 ('직전 발행본 읽기' 줄이 실패해요)")
+        return
     if prev.get("corpError"):
-        rep.add(name, False, f"직전 corp.json 을 읽지 못했어요: {prev['corpError'][:120]}", rule)
+        rep.add(name, False, f"직전 corp.json 을 읽지 못했어요: {prev['corpError'][:160]}", rule)
         return
     pcorp = prev.get("corp")
-    if not isinstance(pcorp, dict):
-        rep.skip(name, "직전 corp.json 이 주어지지 않았어요 (관문 밖에서 부른 경우)")
+    if not isinstance(pcorp, dict) or not isinstance(pcorp.get("companies"), list):
+        rep.add(name, False, "직전 corp.json 이 없거나 회사 목록이 없어요 (비교할 수 없어요)", rule)
         return
-    today = {c.get("t"): c for c in comps if isinstance(c, dict)}
-    marked = [c.get("t") for c in (pcorp.get("companies") or []) if _stmt_marked(c) and c.get("t")]
+    today = {}
+    for c in comps:                                 # 같은 코드가 두 번 있으면 앞의 것 (앱의 .find 와 같아요)
+        if isinstance(c, dict) and c.get("t") is not None and c.get("t") not in today:
+            today[c.get("t")] = c
+    marked = list(dict.fromkeys(c.get("t") for c in pcorp["companies"] if _stmt_marked(c) and c.get("t") is not None))
     still = [t for t in marked if t in today]
     lost = [t for t in still if not _stmt_marked(today[t])]
     fail = len(still) >= STMT_MARK_MIN and 2 * len(lost) > len(still)
+    gone_many = len(marked) >= STMT_MARK_MIN and 2 * len(still) < len(marked)   # 표시된 회사가 한꺼번에 목록에서 빠졌어요
+
+    def has_amt(t):
+        return any(_has_amount(today[t].get(k)) for k in FOREIGN_BLANK_LISTS + FOREIGN_BLANK_CORP + FOREIGN_BLANK + STMT_AMT_KEYS)
 
     def label(t):
-        c = today[t]
-        amt = any(_has_amount(c.get(k)) for k in FOREIGN_BLANK_LISTS + FOREIGN_BLANK_CORP + FOREIGN_BLANK)
-        return f"{t} {c.get('nk', '')}{' (금액 있음)' if amt else ''}".strip()
+        return f"{t} {today[t].get('nk') or ''}{' (금액 있음)' if has_amt(t) else ''}".strip()
+    # 해로운 것부터: 금액이 찬 국내 회사(9… 가 아닌) — 외국 기업은 코드 규칙으로 금액을 비우는 줄이 따로 있어요
+    lost.sort(key=lambda t: (is_foreign(t), not has_amt(t)))
     if lost:
         rep.detail("표시가 사라진 회사 (stmtCur)", [label(t) for t in lost])
-    rep.add(name, not fail,
-            f"직전 {len(marked)}곳 · 오늘도 목록에 {len(still)}곳 · 표시가 사라짐 {len(lost)}"
-            + (f": {', '.join(label(t) for t in lost[:4])}{' …' if len(lost) > 4 else ''}" if lost else ""),
-            rule, warn=bool(lost) and not fail)
+    value = f"직전 {len(marked)}곳 · 오늘도 목록에 {len(still)}곳 · 표시가 사라짐 {len(lost)}"
+    if lost:
+        value += f": {', '.join(label(t) for t in lost[:4])}{' …' if len(lost) > 4 else ''}"
+    elif gone_many:
+        value += " (직전에 표시된 회사의 절반 넘게 오늘 목록에 없어요)"
+    rep.add(name, not fail, value, rule, warn=(bool(lost) or gone_many) and not fail)
 
 
 def _has_amount(v):
@@ -1934,7 +1948,8 @@ def load_git(ref, files=FILES):
 
 
 def load_prev(prev_dir, prev_ref):
-    """직전 발행본은 비교에 쓰는 data.json 만 엄격하게 읽어요 (corp·disc·macro 는 비교에 안 써요)."""
+    """직전 발행본의 data.json 을 엄격하게 읽어요. corp.json 은 표시(stmtCur) 비교에만 따로 느슨하게 읽어요 (load_prev_corp) ·
+    disc·macro 는 비교에 안 써요."""
     if prev_dir:
         with open(os.path.join(prev_dir, "data.json"), encoding="utf-8") as fh:
             return {"data": strict_loads(fh.read(), "data.json")}
@@ -1947,8 +1962,10 @@ def load_prev_corp(prev_dir, prev_ref):
     if prev_dir:
         with open(os.path.join(prev_dir, "corp.json"), encoding="utf-8") as fh:
             return json.loads(fh.read())
-    text = subprocess.run(["git", "show", f"{prev_ref}:corp.json"], capture_output=True, text=True, check=True).stdout
-    return json.loads(text)
+    r = subprocess.run(["git", "show", f"{prev_ref}:corp.json"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git show {prev_ref}:corp.json → {r.returncode}: {(r.stderr or '').strip()[:160]}")
+    return json.loads(r.stdout)
 
 
 def _annotate_error(text):

@@ -7,6 +7,7 @@ DART 의 통화 칸을 못 읽은 날에는 corp.json 의 stmtCur 표시가 통�
 import copy
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -97,12 +98,65 @@ def test_any_currency_other_than_won_is_a_mark_and_won_is_not():
     assert not is_fail(rep) and not is_warn(rep) and "직전 0곳" in rep.table()
 
 
-def test_unreadable_previous_corp_fails_and_a_missing_one_is_skipped():
+def test_unreadable_or_missing_previous_corp_fails():
     row, rep = run({}, {}, prev_extra={"corpError": "FileNotFoundError: corp.json"})
     assert is_fail(rep) and "직전 corp.json 을 읽지 못했어요" in rep.table()
+    for prev in ({"data": {}}, {"data": {}, "corp": []}, {"data": {}, "corp": {"companies": None}}):
+        rep = V.Report()                                                # 관문이 직전 corp 를 넘기지 않은 경우 (배선이 끊긴 날)
+        V.check_stmt_marks(rep, companies({"241560": "USD"}), prev)
+        assert is_fail(rep), prev
     rep = V.Report()
-    V.check_stmt_marks(rep, companies({"241560": "USD"}), {"data": {}})  # 관문 밖에서 직전 corp 없이 부른 경우
+    V.check_stmt_marks(rep, companies({"241560": "USD"}), None)         # 직전 발행본 자체가 없음: '직전 발행본 읽기' 줄이 실패해요
     assert not is_fail(rep) and NAME in rep.table()
+
+
+@pytest.mark.parametrize("marked, still, lost, want", [
+    (6, 3, 2, "fail"),        # 오늘도 목록에 있는 3곳 중 2곳 → 실패 (세는 기준은 '오늘도 목록에 있는' 수)
+    (21, 2, 2, "warn"),       # 21곳 중 19곳이 목록에서 빠지고 남은 2곳이 사라짐 → 경고 (셋 미만)
+    (3, 3, 2, "fail"),
+    (4, 4, 2, "warn"),
+])
+def test_the_minimum_counts_companies_still_listed(marked, still, lost, want):
+    codes = [f"9{i:05d}" for i in range(marked)]
+    cur_marked = {t: "USD" for t in codes[lost:still]}
+    row, rep = run({t: "USD" for t in codes}, cur_marked, cur_unmarked=codes[:lost])
+    assert (is_fail(rep), is_warn(rep)) == (want == "fail", want == "warn"), rep.table()
+
+
+def test_many_marked_companies_gone_from_the_list_warns():
+    """직전에 표시된 회사의 절반 넘게 오늘 목록에 없으면 (회사 코드 모양이 바뀐 날 등) 조용히 통과하지 않아요."""
+    row, rep = run({t: "USD" for t in USD}, {t: "USD" for t in USD[:2]})
+    assert not is_fail(rep) and is_warn(rep) and "절반 넘게 오늘 목록에 없어요" in rep.table()
+
+
+def test_marks_follow_the_apps_rule():
+    """앱(src/repair.js stmtNotWon)과 같아요: null 은 표시가 아니고, 빈 글자 · 읽을 수 없는 코드는 표시예요."""
+    assert not V._stmt_marked({"t": "1", "stmtCur": None}) and not V._stmt_marked({"t": "1"})
+    assert not V._stmt_marked({"t": "1", "stmtCur": "KRW"})
+    assert V._stmt_marked({"t": "1", "stmtCur": ""}) and V._stmt_marked({"t": "1", "stmtCur": "XXX"})
+    rep = V.Report()                                                    # USD → null 은 사라진 거예요
+    V.check_stmt_marks(rep, [{"t": "241560", "nk": "두산밥캣", "stmtCur": None}], {"corp": {"companies": companies({"241560": "USD"})}})
+    assert is_warn(rep) and "표시가 사라짐 1" in rep.table()
+
+
+def test_labels_name_harmful_companies_first_and_only_mark_real_amounts():
+    prev = {t: "USD" for t in ["900110", "900120", "900130", "900140", "900150", "008700", "241560"]}
+    cur = [{"t": t, "nk": f"외국{t}"} for t in ["900110", "900120", "900130", "900140", "900150"]]
+    cur += [{"t": "008700", "nk": "아남전자", "rev": [1.0, 2.0, 3.0]}, {"t": "241560", "nk": None}]
+    rep = V.Report()
+    V.check_stmt_marks(rep, cur, {"corp": {"companies": companies(prev)}})
+    value = next(r for r in rep.rows if r[0] == NAME)[1]
+    assert value.split(": ", 1)[1].startswith("008700 아남전자 (금액 있음), 241560")   # 금액이 찬 국내 회사가 맨 앞
+    assert "241560 (금액 있음)" not in value and "None" not in value                  # 금액 없으면 표시 없음 · 이름 null 은 빈칸
+    assert rep.details and rep.details[0][0] == "표시가 사라진 회사 (stmtCur)" and len(rep.details[0][1]) == 7
+
+
+def test_duplicate_codes_use_the_first_row_like_the_app():
+    marks = {t: "USD" for t in USD[:3]}
+    cur = companies(marks) + [{"t": USD[0], "nk": "중복"}]              # 뒤에 표시 없는 같은 코드 → 앱은 앞의 것을 써요
+    rep = V.Report()
+    V.check_stmt_marks(rep, cur, {"corp": {"companies": companies(marks) + companies({USD[0]: "USD"})}})
+    assert not is_fail(rep) and not is_warn(rep) and "직전 3곳" in rep.table(), rep.table()
 
 
 def test_the_gate_runs_the_row_only_against_a_previous_publication():
@@ -118,14 +172,63 @@ def test_the_gate_runs_the_row_only_against_a_previous_publication():
     assert NAME not in rep.table()
 
 
-def test_previous_corp_is_read_loosely_and_main_records_why_it_could_not(tmp_path):
+def test_previous_corp_is_read_loosely_from_a_folder(tmp_path):
     (tmp_path / "corp.json").write_text('{"companies":[{"t":"241560","stmtCur":"USD","per":NaN}]}', encoding="utf-8")
     got = V.load_prev_corp(str(tmp_path), None)                         # 직전 파일의 NaN 이 오늘 발행을 막지 않아요
     assert got["companies"][0]["stmtCur"] == "USD"
     with pytest.raises(FileNotFoundError):
         V.load_prev_corp(str(tmp_path / "없음"), None)
-    src = open(os.path.join(ROOT, "validate_data.py"), encoding="utf-8").read()
-    i = src.index("def _main(")
-    body = src[i:]
-    assert 'prev["corp"] = load_prev_corp(a.prev_dir, a.prev_ref)' in body and 'prev["corpError"] = ' in body
-    assert body.index('prev["corp"] = load_prev_corp') < body.index("special = None")      # 검사 전에 읽어요
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                        "GIT_COMMITTER_EMAIL": "t@t"})
+
+
+def test_previous_corp_is_read_from_git_the_way_the_daily_run_does(tmp_path, monkeypatch):
+    """매일 실행은 --prev-ref HEAD (기본값): git show HEAD:corp.json. data.json 이 아니라 corp.json 을 읽어요."""
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "data.json").write_text('{"stocks":[]}', encoding="utf-8")
+    (tmp_path / "corp.json").write_text('{"companies":[{"t":"241560","stmtCur":"USD"}]}', encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "x")
+    monkeypatch.chdir(tmp_path)
+    assert V.load_prev_corp(None, "HEAD") == {"companies": [{"t": "241560", "stmtCur": "USD"}]}
+    _git(tmp_path, "rm", "-q", "corp.json")
+    _git(tmp_path, "commit", "-q", "-m", "y")
+    with pytest.raises(RuntimeError) as e:                              # 못 읽으면 git 의 말까지 남겨요 (빈 {} 로 넘어가지 않아요)
+        V.load_prev_corp(None, "HEAD")
+    assert "HEAD:corp.json" in str(e.value) and "exist" in str(e.value)
+
+
+def test_main_hands_the_previous_corp_to_the_row(tmp_path, monkeypatch, capsys):
+    """관문 실행(_main) 그대로: 직전 corp.json 이 있으면 비교하고, 없으면 실패하고 1 로 끝나요 (건너뛰지 않아요)."""
+    cur, prev, _ = good_pair()
+    for c in cur["corp"]["companies"][:4] + prev["corp"]["companies"][:4]:
+        c["stmtCur"] = "USD"
+    pdir = tmp_path / "prev"
+    pdir.mkdir()
+    for k in ("data", "corp"):
+        (pdir / f"{k}.json").write_text(json.dumps(prev[k], ensure_ascii=False), encoding="utf-8")
+    seen = []
+
+    def only_this_row(c, p, final, today, **k):                         # 다른 줄은 다른 시험들이 봐요: 넘겨받은 직전 본만 확인
+        seen.append(p)
+        rep = V.Report()
+        V.check_stmt_marks(rep, c["corp"]["companies"], p)
+        return rep
+    monkeypatch.setattr(V, "load_dir", lambda d: cur)
+    monkeypatch.setattr(V, "latest_final", lambda *a, **k: (None, None, "시험"))
+    monkeypatch.setattr(V, "http_kospi_sessions", lambda: {"dates": [], "src": "시험"})
+    monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
+    monkeypatch.setattr(V, "run_checks", only_this_row)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert V.main(["--dir", "unused", "--prev-dir", str(pdir), "--today", "2026-10-31"]) == 0
+    assert seen[-1]["corp"]["companies"][0]["stmtCur"] == "USD"
+    assert "직전 4곳 · 오늘도 목록에 4곳 · 표시가 사라짐 0" in capsys.readouterr().out
+    (pdir / "corp.json").unlink()
+    assert V.main(["--dir", "unused", "--prev-dir", str(pdir), "--today", "2026-10-31"]) == 1
+    out = capsys.readouterr().out
+    assert "!! 직전 corp.json 을 읽을 수 없어요" in out and "직전 corp.json 을 읽지 못했어요: FileNotFoundError" in out

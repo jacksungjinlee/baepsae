@@ -52,10 +52,21 @@ serve the `docs/` folder (two of its files must answer "not found").
       says so: `!! 확인 못 함` in the log, a warning on the run page, a paragraph in the step summary.
     - **If the `stmtCur` line appears although yesterday's data had such companies, suspect the pipeline, not the
       market:** DART's currency reading was probably lost, and then a company that files in dollars (두산밥캣,
-      아남전자) is published with its dollar amounts read as won. Since 2026-11-12 the gate fails when more than half of
-      the companies marked in the previous publication (and still listed) lose the mark, and warns, naming them, when
-      any of them does (row "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음"). On a warning, check those
-      companies' numbers on the site.
+      아남전자) is published with its dollar amounts read as won. Since 2026-11-12 the gate compares the marks with
+      the previous publication (row "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음"):
+      - **It fails** when, of the marked companies still listed, at least 3 remain and more than half lost the mark
+        (the "DART's currency reading was lost" day), and when the previous `corp.json` cannot be read or was not
+        given. A failure is sticky: the comparison stays with the last good publication, so every later run fails
+        until the pipeline is fixed. `--bootstrap` is not the fix (it skips the comparison and makes the bad day the
+        new baseline).
+      - **It warns**, naming the companies (domestic ones with amounts first), when any marked company lost its mark,
+        or when more than half of the marked companies are gone from today's list. **The warning appears on that one
+        run only:** once it publishes, the next run compares with a file that no longer has the mark. So act on it the
+        same morning: open the named companies on the site, and if dollar amounts show as won, revert or fix the
+        pipeline and start a run by hand.
+      - Branch dry runs with DART off fail this row too, like the other DART rows (expected).
+      - When the gate's "previous publication" moves off `main` (v17.6 3b), the new source must include `corp.json`,
+        or every run fails on this row (loudly, but it holds the publish).
     - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees that 17 of them are in
       the data, and guarantees a beta and volatility for none of the US ones. When a built-in stock is missing from
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
