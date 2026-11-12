@@ -4203,6 +4203,7 @@ def scene_rank_pc(R, files):
 
 # ── v19.6d 어두운 화면 (docs/tasks/v19.6-records-alerts-dark.md Part D) ──
 THEME_KEY = "baepsae-theme"
+SEGMENTED = '[data-ui="segmented"]:not([data-ui-v2="theme-mode"] *)'           # 고르기 묶음, 화면 모드 스위치는 빼고
 PAGE_RGB = {"light": "rgb(245, 243, 239)", "dark": "rgb(16, 21, 30)"}           # tokens.js page (= the theme-color meta)
 META = {"light": "#F5F3EF", "dark": "#10151E"}
 INK_RGB = {"light": "rgb(28, 43, 69)", "dark": "rgb(232, 236, 242)"}
@@ -4217,6 +4218,28 @@ FIRST_PAINT = """(() => {
   mo.observe(document, { childList: true, subtree: true });
   requestAnimationFrame(() => { window.__v2paint.frame = look(); });
 })();"""
+# The placeholder colour of an input as drawn, the browser's own placeholder colour (an input in a shadow root, which the page's
+# colour sheet does not reach) and the first background behind the input that is not transparent.
+PLACEHOLDER_JS = """(e) => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const probe = document.createElement('input'); probe.placeholder = 'x'; host.attachShadow({ mode: 'open' }).appendChild(probe);
+  const browser = getComputedStyle(probe, '::placeholder').color; host.remove();
+  let bg = 'rgba(0, 0, 0, 0)', n = e;
+  while (n && n.nodeType === 1) { const b = getComputedStyle(n).backgroundColor; if (b !== 'rgba(0, 0, 0, 0)' && b !== 'transparent') { bg = b; break; } n = n.parentElement; }
+  return { mine: getComputedStyle(e, '::placeholder').color, browser, bg };
+}"""
+TEXT3_DARK_RGB, SURFACE_DARK_RGB = "rgb(142, 153, 170)", "rgb(26, 34, 49)"        # tokens.js PALETTE.dark text3 #8E99AA, surface #1A2231
+
+
+def rgb_ratio(a, b):
+    def lum(c):
+        v = [int(x) / 255 for x in re.findall(r"\d+", c)[:3]]
+        v = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+    x, y = lum(a), lum(b)
+    return (max(x, y) + 0.05) / (min(x, y) + 0.05)
+
+
 # Storage that refuses everything (a private window with site data blocked): reading the choice throws too.
 NO_STORAGE = """(() => { for (const m of ['getItem', 'setItem', 'removeItem']) Storage.prototype[m] = function () { throw new Error('blocked'); }; })();"""
 
@@ -4328,11 +4351,34 @@ def scene_dark(R, files, width):
         with page.expect_download() as dl:
             page.get_by_role("button", name=C["store"]["export"]).click()
         with open(dl.value.path(), encoding="utf-8") as fh:
-            text = fh.read()
-        assert "theme" not in text and THEME_KEY not in text and json.loads(text)["decks"], text[:200]
+            exported = json.load(fh)
+        assert exported["decks"] and exported == json.loads(records), "내보낸 파일이 저장한 기록과 달라요 (화면 모드가 끼었나요?)"
         R.collect(page)
     R.check(page, S, "화면 모드: 자동(기본) · 밝게 · 어둡게 · 안내 줄 · 44px · 고르면 바로 · 새로고침해도 그대로 · 첫 화면부터 그 색 · "
             "theme-color 도 · 자동은 기기를 따라 그 자리에서 · 기록 그대로 · 내보낸 파일에 없음", switch)
+    ctx.close()
+    srv.shutdown()
+
+    # 입력칸의 안내 글(placeholder): 어두운 화면에서는 text3 (브라우저의 회색은 어두운 바탕 위 3.5:1), 밝은 화면은 브라우저 그대로
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "light"}, path="/app.html?dev=1#stocks")
+
+    def placeholder():
+        wait_ready(page)
+        box = page.locator('[data-ui-v2="top-search"] input' if pc else '[data-ui-v2="stock-search"] input').first
+        box.wait_for(state="visible")
+        assert box.get_attribute("placeholder")
+        light = box.evaluate(PLACEHOLDER_JS)
+        assert light["mine"] == light["browser"], light                  # 밝은 화면: 바꾸지 않았어요
+        pick_mode(page, width, "dark")
+        if not pc:
+            page.locator('[data-ui-v2="menu-close"]').click()
+        dark = box.evaluate(PLACEHOLDER_JS)
+        assert dark["mine"] == TEXT3_DARK_RGB and dark["bg"] == SURFACE_DARK_RGB, dark
+        assert rgb_ratio(dark["mine"], dark["bg"]) >= 4.5, (dark, rgb_ratio(dark["mine"], dark["bg"]))
+        assert rgb_ratio(dark["browser"], dark["bg"]) < 4.5, dark                # 그래서 바꿨어요 (브라우저 회색은 미달)
+        pick_mode(page, width, "light")
+        assert box.evaluate(PLACEHOLDER_JS) == light
+    R.check(page, S, "입력칸 안내 글: 어두운 화면에서 text3 (4.5:1 이상) · 밝은 화면은 브라우저 그대로", placeholder)
     ctx.close()
     srv.shutdown()
 
@@ -9481,8 +9527,8 @@ def scene_reread_lines(R, files, width, shots=None):
                 year = fillp(C["app"]["reportYear"], year=co_fy)
                 if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신, 통화 줄만
                     assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui-v2="bars"]').count() == 0
-                    # v19.6d: on the company page (PC's left menu now has the 화면 모드 switch, a segmented control too)
-                    assert page.locator('[data-ui-v2="company"] [data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
+                    # v19.6d: any on the page but the 화면 모드 switch (PC's left menu has it, a segmented control too)
+                    assert page.locator(SEGMENTED).count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
                     assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
                     assert year not in page.locator('[data-ui-v2="co-earn"]').inner_text()
                     assert page.locator('[data-ui-v2="co-earn"] > *').count() == 1, "실적 탭에 통화 줄 카드 말고 다른 것이 있어요"
@@ -9501,7 +9547,7 @@ def scene_reread_lines(R, files, width, shots=None):
             R.collect(page)
         co_hash(page, "#stocks/005930/earn")                                                      # 다른 회사는 그대로 (숨김은 stmtCur 로만)
         page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
-        assert page.locator('[data-ui-v2="company"] [data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
+        assert page.locator(SEGMENTED).count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
         co_hash(page, "#stocks/005930/value")
         page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="co-value-basis"]').count() == 1 and page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() >= 1

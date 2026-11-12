@@ -141,6 +141,64 @@ def test_every_token_has_a_light_and_a_dark_value_and_is_a_css_variable():
     assert set(t["COLOR"]) <= set(light) and all(t["COLOR"][k] == f"var(--bs-{k}, {light[k]})" for k in t["COLOR"])
 
 
+# Every light value, word for word as it stood in v19.5b (023785a) before it became a token: the file and the literal it
+# replaced. A light value that changes (or a new token without its v19.5b source written here) fails the test below.
+LIGHT_V195B = {
+    # src/ui/tokens.js COLOR (v18.1 table)
+    "ink": "#1C2B45", "text2": "#5B6576", "text3": "#6B7280", "page": "#F5F3EF", "surface": "#FFFFFF", "line": "#F0EDE8", "border": "#E8E4DE",
+    "apricot": "#C97757", "apricotText": "#A9542F", "heroCalm": "#EDF4EF", "heroAlert": "#FBF1EA", "up": "#D6303F", "down": "#2563EB",
+    "upOnPage": "#B4232F", "ok": "#1F7A4D", "okBg": "#E7F4EC", "watch": "#8A5A00", "watchBg": "#FFF3D6", "broken": "#FFFFFF",
+    "brokenBg": "#1C2B45", "neutral": "#3D4B63", "neutralBg": "#EEF0F4", "select": "#F2F0EB",
+    # the roles split out of them: COLOR.ink as a background, COLOR.surface as text on navy
+    "primary": "#1C2B45", "onPrimary": "#FFFFFF",
+    "onPrimary2": "#E3E7EE",                 # src/v2/home2.jsx (rule tile label, broken line)
+    "onPrimary3": "#CBD3DF",                 # src/v2/home2.jsx (date, 확인하지 못했어요, notes) and src/v2/build.jsx (처음부터 card body)
+    "highlight": "#FFE2A8", "highlightBg": "#FFE2A8",   # src/v2/home2.jsx (detail, '!' badge), src/v2/guide.jsx LIGHT
+    "edge": "#D9D4CC",                       # src/v2/build.jsx (empty meter slot), src/v2/guide.jsx (step dots)
+    "edgeStrong": "#C9C2B8",                 # src/v2/build.jsx (−/+ ring), src/v2/report.jsx (empty dot)
+    "chipEdge": "#E3DED6", "winEdge": "#ECE8E1", "track": "#ECE8E1",   # src/v2/rank.jsx CHIP_LINE, WIN_LINE (edge and switch background)
+    # overlays: src/ui/components.jsx (sheet scrim, bar shadow), src/v2/guide.jsx (SHADE, bubble), src/v2/build.jsx (Fan)
+    "scrim": "rgba(28,43,69,0.45)", "shadow": "rgba(28,43,69,0.10)", "guide": "rgba(28, 43, 69, 0.55)", "pop": "rgba(28, 43, 69, 0.35)",
+    "lift": "rgba(0, 0, 0, 0.25)",
+    # src/ui/tokens.js ICON_TONE
+    "icon-on-line": "#1C2B45", "icon-on-fill": "#CBD3DF", "icon-off-line": "#6B7280", "icon-off-fill": "#E3E6EB",
+    "icon-ok-line": "#1F7A4D", "icon-ok-fill": "#CDEBD9", "icon-onNavy-line": "#FFFFFF", "icon-onNavy-fill": "#5A6B87",
+    "icon-earn-line": "#1C2B45", "icon-earn-fill": "#B9CDEB", "icon-value-line": "#1C2B45", "icon-value-fill": "#BFE0CC",
+    "icon-div-line": "#1C2B45", "icon-div-fill": "#EBD49A", "icon-risk-line": "#1C2B45", "icon-risk-fill": "#D3C8EC",
+    "icon-disc-line": "#1C2B45", "icon-disc-fill": "#B5DDDD",
+    # src/ui/tokens.js TOPIC_CHIP and TOPIC_ART (earn: ICON_TONE.earn.fill and TOPIC_CHIP.earn)
+    "chip-earn": "#EAF1FB", "chip-value": "#E9F5EE", "chip-div": "#FBF4E1", "chip-risk": "#F1EDF9", "chip-disc": "#E6F4F4",
+    "art-earn-ink": "#B9CDEB", "art-earn-light": "#EAF1FB", "art-value-ink": "#4E9A72", "art-value-light": "#DCEFE3",
+    "art-div-ink": "#C59A2E", "art-div-light": "#F6EACB", "art-risk-ink": "#8C78C6", "art-risk-light": "#B9C1CE",
+    # src/v2/pictures.js TOPIC_DOT and dotColor's fallback; src/v2/build.jsx the start screen's example dots
+    "dot-value": "#4E9A72", "dot-div": "#C59A2E", "dot-earn": "#6E93CF", "dot-risk": "#8C78C6", "dot-disc": "#3E9A9A",
+    "dot-none": "#5A6B87", "dot-plain": "#7C889C",
+    # src/ui/tokens.js HOLDING_SHADES, and src/v2/report.jsx textOn's pick on each (white, navy or black: the first at 4.5:1)
+    "shade-0": "#1C2B45", "shade-1": "#3D4B63", "shade-2": "#5A6B87", "shade-3": "#7C889C", "shade-4": "#9AA3B2", "shade-5": "#C9D0DB",
+    "shade-text-0": "#FFFFFF", "shade-text-1": "#FFFFFF", "shade-text-2": "#FFFFFF", "shade-text-3": "#000000",
+    "shade-text-4": "#1C2B45", "shade-text-5": "#1C2B45",
+    # src/ui/tokens.js CHART.compare (HOLDING_SHADES[4]); src/v2/coart.jsx the value scale's grey end; src/v2/report.jsx 2022 bars
+    "chart-compare": "#9AA3B2", "chart-scale-mid": "#E3E7EE", "chart-scale-end": "#B9C1CE", "chart-mine-est": "#5A6B87",
+}
+
+
+def rgba_of(c):
+    """'#RRGGBB' or 'rgba(r, g, b, a)' → (r, g, b, a) so spacing and '0.10' vs '0.1' do not matter, the colour does."""
+    if c.startswith("#"):
+        return tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) + (1.0,)
+    r, g, b, a = re.fullmatch(r"rgba\(([^)]*)\)", c.replace(" ", "")).group(1).split(",")
+    return (int(r), int(g), int(b), float(a))
+
+
+def test_every_light_value_is_the_v19_5b_value():
+    """Round-1 review: not only COLOR — every light value (≈90 tokens) is the literal v19.5b drew, so the light screen stays as it was."""
+    light = tokens()["P"]["light"]
+    assert sorted(light) == sorted(LIGHT_V195B), (sorted(set(light) - set(LIGHT_V195B)), sorted(set(LIGHT_V195B) - set(light)))
+    wrong = {k: (light[k], v) for k, v in LIGHT_V195B.items() if rgba_of(light[k]) != rgba_of(v)}
+    assert not wrong, f"밝은 화면의 색이 v19.5b 와 달라요: {wrong}"
+    assert len(LIGHT_V195B) >= 90
+
+
 def test_light_values_are_unchanged_and_dark_values_follow_part_d():
     t = tokens()
     light, dark = t["P"]["light"], t["P"]["dark"]
@@ -253,6 +311,11 @@ def test_theme_css_switches_every_token_and_only_dark_puts_baepi_on_a_chip():
     assert len(chips) == 2 and all(sel.strip().endswith(('[data-theme="dark"]', ":root:not([data-theme])")) for sel, _ in chips), chips
     assert all(f"background:{t['MASCOT']}" in body and "filter" not in body for _, body in chips)
     assert "filter" not in css and "invert" not in css and "mix-blend" not in css                       # 뱁이 is never recoloured
+    # round-1 review: placeholder text takes text3 in dark only (the browser's grey is 3.5:1 there); the light screen keeps it
+    holders = re.findall(r'([^{}]*)::placeholder\{([^}]*)\}', css)
+    assert len(holders) == 2 and all(sel.strip().endswith(('[data-theme="dark"]', ":root:not([data-theme])")) for sel, _ in holders), holders
+    assert all(body == "color:var(--bs-text3);opacity:1" for _, body in holders)
+    assert ratio(t["P"]["dark"]["text3"], t["P"]["dark"]["surface"]) >= 4.5 and ratio("#757575", t["P"]["dark"]["surface"]) < 4.5
 
 
 # ── no fixed colour left in 2.0 ──
@@ -275,6 +338,11 @@ COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}(?![0-9a-zA-Z_])|\b(?:rgba?|hsla?)\([^)]*
 NAMED = re.compile(r"""["'`](?:white|black|red|blue|green|gray|grey|silver|navy|orange|yellow|purple|pink|brown|beige|ivory|gold)["'`]""", re.I)
 
 
+# Hex digits glued to a token: `${COLOR.surface}00` (an alpha suffix) or COLOR.surface + "cc". A token is a CSS variable, so this
+# makes an invalid colour (and it was a fixed alpha anyway): use transparent, or a token of its own.
+SUFFIX = re.compile(r"""\$\{[^{}]*\}[0-9a-fA-F]{2}(?:[0-9a-fA-F]{2})?(?![0-9a-zA-Z_])|[\w.\]]+\s*\+\s*["'`][0-9a-fA-F]{2}(?:[0-9a-fA-F]{2})?["'`]""")
+
+
 def v2_sources():
     out = []
     for d in ("src/v2", "src/ui"):
@@ -294,7 +362,7 @@ def colour_hits(sources):
     for f, code in sources.items():
         if f in ALLOWED_FILES:
             continue
-        hits = COLOUR.findall(code) + [m.strip("\"'`") for m in NAMED.findall(code)]
+        hits = COLOUR.findall(code) + [m.strip("\"'`") for m in NAMED.findall(code)] + SUFFIX.findall(code)
         for h in hits:
             key = (f, h)
             if key in ALLOWED:
@@ -323,9 +391,12 @@ def test_the_colour_check_catches_fixed_colours():
     real = {"src/v2/today.jsx": minified("src/v2/today.jsx")}
     assert colour_hits(real)[0] == []
     for bad in ['style={{ color: "#1C2B45" }}', "background: 'rgba(28,43,69,0.45)'", "fill: '#fff'", 'color: "white"',
-                "boxShadow: `0 0 0 1px hsl(0 0% 50%)`", "background: 'rgb(255 255 255)'"]:
+                "boxShadow: `0 0 0 1px hsl(0 0% 50%)`", "background: 'rgb(255 255 255)'",
+                "background: `linear-gradient(to right, ${COLOR.surface}00, ${COLOR.surface})`", "color: `${A.ink}cc`",
+                "background: COLOR.surface + 'cc'", 'border: `1px solid ${COLOR.ink}80`']:
         assert colour_hits({"src/v2/today.jsx": real["src/v2/today.jsx"] + bad})[0], bad
-    for ok in ["location.hash = '#portfolio'", "x.t + '#1'", "COLOR.ink", 'background: "transparent"', "borderColor: 'currentColor'"]:
+    for ok in ["location.hash = '#portfolio'", "x.t + '#1'", "COLOR.ink", 'background: "transparent"', "borderColor: 'currentColor'",
+               "`${SPACE(2)}px ${SPACE(3)}px`", "`${n}px`", "`linear-gradient(${COLOR.surface}, transparent)`", "`${p1(x)}%`"]:
         assert not colour_hits({"src/v2/x.jsx": ok})[0], ok
     # an allowed literal in another file is caught too
     assert colour_hits({"src/v2/today.jsx": 'color: "#FFFFFF"'})[0] == [("src/v2/today.jsx", "#FFFFFF")]
@@ -404,9 +475,28 @@ def test_any_csp_on_app_html_allows_the_head_script():
     for page in ("app.html", "app-preview.html"):
         html = built(page)
         h = "'sha256-" + base64.b64encode(hashlib.sha256(head_script(html).encode("utf-8")).digest()).decode() + "'"
-        for csp in re.findall(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)"', html, flags=re.I):
+        for csp in csp_metas(html):
             script_src = next((d for d in csp.split(";") if d.strip().startswith("script-src")), "")
             assert h in script_src or "'unsafe-inline'" in script_src, (page, script_src)
+
+
+def csp_metas(html):
+    """The content of every <meta http-equiv="Content-Security-Policy"> tag, whatever the attribute order or quote style."""
+    out = []
+    for tag in re.findall(r"<meta\b[^>]*>", html, flags=re.I):
+        attrs = {k.lower(): v1 if v1 is not None and q == '"' else v2 for k, q, v1, v2 in
+                 [(m.group(1), m.group(2)[0], m.group(3), m.group(4)) for m in re.finditer(r"""([\w-]+)\s*=\s*("([^"]*)"|'([^']*)')""", tag)]}
+        if attrs.get("http-equiv", "").lower() == "content-security-policy":
+            out.append(attrs.get("content", ""))
+    return out
+
+
+def test_csp_reader_finds_any_spelling():
+    h = "'sha256-abc='"
+    for tag in (f'<meta http-equiv="Content-Security-Policy" content="script-src {h}">', f"<meta content=\"script-src {h}\" http-equiv='content-security-policy'>",
+                f"<META HTTP-EQUIV='Content-Security-Policy' CONTENT=\"default-src 'self'; script-src {h}\">"):
+        assert [c for c in csp_metas("<head>" + tag + "</head>") if h in c], tag
+    assert csp_metas('<meta name="theme-color" content="#F5F3EF">') == []
 
 
 def test_mode_choice_is_its_own_key_and_never_part_of_the_records():

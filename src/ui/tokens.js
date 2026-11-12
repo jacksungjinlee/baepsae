@@ -235,15 +235,17 @@ export function contrast(fg, bg) {
 // script never ran (no data-theme), the device setting decides (prefers-color-scheme), so 자동 still works. color-scheme
 // follows, so the browser's own parts (scroll bars, form controls) match. Icons: the two layers of every Phosphor icon
 // take their tone's colour from a rule (it outranks the SVG fill attributes, which keep the light values). 뱁이 pictures
-// sit on a light chip in dark mode only.
+// sit on a light chip in dark mode only. Placeholder text in fields: the browser's own grey reads 3.5:1 on the dark surface,
+// so in dark mode it takes text3 (5.5:1); the light screen keeps the browser's grey as before.
 const decl = (p) => Object.entries(p).map(([k, v]) => `--bs-${k}:${v}`).join(";");
 export function themeCss() {
   const dark = `${decl(DARK)};color-scheme:dark`;
   const icons = Object.keys(ICON_TONE).map((t) => `svg[data-tone="${t}"]>[data-layer="fill"]{fill:var(--bs-icon-${t}-fill)}`
     + `svg[data-tone="${t}"]>[data-layer="line"]{fill:var(--bs-icon-${t}-line)}`).join("");
-  const mascot = (root) => `${root} img[src*="baepi-"]{background:${MASCOT_CHIP};border-radius:22%;padding:4px}`
-    + `${root} img[src*="baepi-mark"]{border-radius:50%;padding:2px}`;
+  const darkOnly = (root) => `${root} img[src*="baepi-"]{background:${MASCOT_CHIP};border-radius:22%;padding:4px}`
+    + `${root} img[src*="baepi-mark"]{border-radius:50%;padding:2px}`
+    + `${root} ::placeholder{color:var(--bs-text3);opacity:1}`;
   return `:root{${decl(LIGHT)};color-scheme:light}:root[data-theme="dark"]{${dark}}`
-    + `@media (prefers-color-scheme: dark){:root:not([data-theme]){${dark}}${mascot(":root:not([data-theme])")}}`
-    + icons + mascot(':root[data-theme="dark"]');
+    + `@media (prefers-color-scheme: dark){:root:not([data-theme]){${dark}}${darkOnly(":root:not([data-theme])")}}`
+    + icons + darkOnly(':root[data-theme="dark"]');
 }
