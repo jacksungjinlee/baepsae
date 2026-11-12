@@ -112,16 +112,18 @@ def test_the_reason_line_never_shows_a_raw_code_or_sits_beside_a_number():
 def test_the_note_component_reads_the_copy_and_stays_out_without_a_name():
     got = run("""
       const s = { t: 'TSM', cls: 'us', fcur: 'TWD' };
-      const before = renderToStaticMarkup(h(FN.FcurNote, { s }));           // 승인 전: 이름이 null → 아무것도 그리지 않아요
-      const keep = C2.co.curName.TWD;
-      C2.co.curName.TWD = '대만 달러';                                         // 승인된 뒤의 모양 (이 시험 안에서만)
+      const keep = C2.co.curName.TWD;                                         // 이 시험 안에서만 바꾸고 되돌려요 (승인 전이든 뒤든)
+      C2.co.curName.TWD = null;                                               // 승인 전의 모양: 이름이 null → 아무것도 그리지 않아요
+      const before = renderToStaticMarkup(h(FN.FcurNote, { s }));
+      C2.co.curName.TWD = '대만 달러';                                         // 승인된 뒤의 모양
       const after = renderToStaticMarkup(h(FN.FcurNote, { s }));
       const kr = renderToStaticMarkup(h(FN.FcurNote, { s: { t: '005930', cls: 'kr', fcur: 'TWD' } }));
+      const none = renderToStaticMarkup(h(FN.FcurNote, { s: { t: 'X', cls: 'us', fcur: 'MYR' } }));      // 문구 파일에 없는 통화
       C2.co.curName.TWD = keep;
-      out = { before, after: text(after), cur: /data-cur="TWD"/.test(after), ui: /data-ui-v2="fcur"/.test(after), kr, keep };""")
-    assert got["before"] == "" and got["keep"] is None
+      out = { before, after: text(after), cur: /data-cur="TWD"/.test(after), ui: /data-ui-v2="fcur"/.test(after), kr, none };""")
+    assert got["before"] == ""
     assert got["after"] == "주가는 달러, 재무제표는 대만 달러 기준이라 이 숫자는 계산하지 않았어요." and got["cur"] and got["ui"]
-    assert got["kr"] == ""
+    assert got["kr"] == "" and got["none"] == ""
 
 
 # ── 엔진: 빈 칸은 빈 칸 (0 도 해당 없음도 아니에요) ──
@@ -154,13 +156,14 @@ def test_build_engine_leaves_the_blanked_companies_out_only_where_they_are_blank
 
 
 def test_company_page_tiles_without_the_line_keep_the_usual_blank():
-    """이름이 승인되기 전(지금): 가치 · 배당 칸은 다른 빈 숫자와 같은 '자료가 없어요' (줄도 날 코드도 없어요)."""
+    """이름이 없는 통화 (문구 파일에 없는 MYR · 승인 전의 이름도 같은 길): 가치 · 배당 칸은 다른 빈 숫자와 같은 '자료가 없어요'
+    (줄도 날 코드도 없어요)."""
     got = run("""
       const s = STOCKS.find((x) => x.t === 'TSM');
       const load = { status: 'ok', data: { stocks: STOCKS, usPxDate: '2026-11-11', pxDate: '2026-11-12', fx: 1338 }, coByT: new Map(), byT: new Map(STOCKS.map((x) => [x.t, x])) };
       const v = CO.tileViews(load, s);
       out = { topics: v.map((x) => [x.topic, x.rule, x.phrase, x.number]), line: FN.fcurNoteText(s) };""",
-        STOCKS=[us("TSM", fcur="TWD")] + [us(f"U{i}", pbr=1.0 + i) for i in range(6)])
+        STOCKS=[us("TSM", fcur="MYR")] + [us(f"U{i}", pbr=1.0 + i) for i in range(6)])
     t = {x[0]: x for x in got["topics"]}
     assert t["value"][1] == "na" and t["value"][3] is None and t["div"][1] == "na" and t["div"][3] is None
     assert got["line"] is None
@@ -174,6 +177,7 @@ def test_copy_line_and_names():
     assert names and all(re.fullmatch(r"[A-Z]{3}", k) and k != "USD" for k in names), names
     assert all(v is None or (isinstance(v, str) and re.search("[가-힣]", v)) for v in names.values()), names
     assert set(TODAY_CODES) <= set(names), set(TODAY_CODES) - set(names)   # 오늘 나온 통화는 모두 자리가 있어요
+    assert "MYR" not in names                                           # 이름 없는 통화의 시험(위 · smoke_v2)이 쓰는 코드
     doc = open(os.path.join(ROOT, "docs", "tasks", "v18.3-new-strings-pending.md"), encoding="utf-8").read()
     src = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
     for k, v in names.items():
