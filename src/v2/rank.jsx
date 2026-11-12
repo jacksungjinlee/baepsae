@@ -26,20 +26,25 @@ import { ownCloses } from "./stocklist.js";
 import { CARD_PICS } from "./pictures.js";
 import { eokText, signedPct } from "./deckcalc.js";
 import { yieldText } from "./cofmt.js";
-import { num, todayD1, fyOf, sameCompany } from "./engine.js";
-import { RANK_TOP, RANK_FULL, CRIT, critOf, RANK_CHIPS, rankRows, pointsDeck, mineUsesReport, chipsFor, shownChip, groupWord,
-  groupList, indGroups, readPick, savePick, RANK_KEY, PREVIEW_RANK_KEY } from "./ranks.js";
+import { num, todayD1, sameCompany } from "./engine.js";
+import { RANK_TOP, RANK_FULL, CRIT, RANK_CHIPS, rankRows, pointsDeck, chipsFor, shownChip, groupWord, groupList,
+  chipState, listReport, oneReportYear, readPick, savePick, RANK_KEY, PREVIEW_RANK_KEY } from "./ranks.js";
 
 export const ROW_H = 58;                 // px per row (board)
 export const ROLL_S = 32;                // seconds per loop
 export const SHOWN = { phone: 5, pc: 7 };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Focus rings: a row inside the clipped window draws its ring inside its own box (the window would cut one drawn outside), and the
+// window itself (a stop for the keyboard) gets the app's navy ring (template.html draws it for buttons and links only).
 const ROLL_CSS = "@keyframes v2-rank-roll { 0%, 7% { transform: translateY(0); } 100% { transform: translateY(-50%); } }"
+  + ' [data-ui-v2="rank-row"] > button:focus-visible { outline: 2px solid #1C2B45; outline-offset: -3px; border-radius: 12px; }'
+  + ' [data-ui-v2="rank-window"]:focus-visible { outline: 2px solid #1C2B45; outline-offset: 2px; }'
   + ` [data-ui-v2="rank-track"][data-roll="1"] { animation: v2-rank-roll ${ROLL_S}s linear infinite; will-change: transform; }`
   + " @media (prefers-reduced-motion: reduce) { [data-ui-v2=\"rank-track\"] { animation: none !important; } }";
 const CHIP_LINE = "#E3DED6";             // board: the unselected chip's edge
 const WIN_LINE = "#ECE8E1";              // board: the window's edge and the switch's background
-const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
+// Price red · blue from the value as shown (one decimal): a change that reads "0.0%" is neutral, never red or blue.
+const changeColor = (v) => { const r = Math.round(v * 10); return r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2; };
 
 // ---------------- the choice, shared by 홈 and the 종목 tab and remembered on this device ----------------
 const shared = { key: null, pick: null, jump: false, listeners: new Set() };
@@ -80,11 +85,18 @@ function useReducedMotion() {
 }
 
 // Why a moving window is not moving right now (null: it moves): touch · hover · focus · offscreen · hidden.
+// A press that held the list for longer than HOLD_MS (to read it) and is let go on a row does not open that row: only a short tap
+// does (v19.5b review). Keyboard focus on a row (focus-visible) also lays the rows out still (kb: the animation is off and the
+// focused row is scrolled into view inside the window); when focus leaves, the window scrolls back to the top and the loop
+// starts again with #1.
+export const HOLD_MS = 400;
 function useRoll(on) {
   const [el, ref] = useState(null);                 // the window element (a callback ref: a new window gets observed too)
   const [hover, setHover] = useState(false);
-  const [held, setHeld] = useState(null);          // null, or the pointer type that holds it ("touch" waits for the finger)
+  const [held, setHeld] = useState(null);          // null, or the pointer type that holds it
   const [focus, setFocus] = useState(false);
+  const [kb, setKb] = useState(false);             // a row has keyboard focus
+  const press = useRef(null);                      // the last press: { at, up } (performance.now)
   const [seen, setSeen] = useState(() => typeof IntersectionObserver !== "function");
   const [shown, setShown] = useState(() => { try { return document.visibilityState !== "hidden"; } catch (e) { return true; } });
   useEffect(() => {
@@ -100,29 +112,55 @@ function useRoll(on) {
   }, []);
   useEffect(() => {
     if (!held) return undefined;
-    // A finger that starts scrolling the page cancels its pointer but is still down: a touch lets go on touchend.
-    const ends = held === "touch" ? ["touchend", "touchcancel"] : ["pointerup", "pointercancel"];
+    // The press ends however it ends: let go (pointerup, touchend), or taken over by the browser to scroll the page
+    // (pointercancel, touchcancel).
+    const ends = ["pointerup", "pointercancel", "touchend", "touchcancel"];
     const up = () => setHeld(null);
     ends.forEach((t) => window.addEventListener(t, up));
     return () => ends.forEach((t) => window.removeEventListener(t, up));
   }, [held]);
-  useEffect(() => { if (!on) { setHover(false); setHeld(null); setFocus(false); } }, [on]);
+  useEffect(() => { if (!on) { setHover(false); setHeld(null); setFocus(false); setKb(false); } }, [on]);
   // A focused row that leaves the page (a tapped 업종 row opens its companies) fires no blur: after every render the focus
   // state follows where focus really is, so the list never stays stopped for a focus that is gone.
   useEffect(() => {
     let inside = false;
     try { inside = !!el && !!document.activeElement && el.contains(document.activeElement); } catch (e) { inside = false; }
     if (focus !== inside) setFocus(inside);
+    if (!inside && kb) { setKb(false); if (el) el.scrollTop = 0; }
   });
   const why = !on ? "off" : held ? "touch" : hover ? "hover" : focus ? "focus" : !seen ? "offscreen" : !shown ? "hidden" : null;
   const handlers = {
     onPointerEnter: (e) => { if (e.pointerType === "mouse") setHover(true); },
     onPointerLeave: (e) => { if (e.pointerType === "mouse") setHover(false); },
-    onPointerDown: (e) => setHeld(e.pointerType === "touch" ? "touch" : e.pointerType || "mouse"),
-    onFocus: () => setFocus(true),
-    onBlur: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setFocus(false); },
+    onPointerDown: (e) => {
+      press.current = { at: performance.now(), up: null };
+      setHeld(e.pointerType === "touch" ? "touch" : e.pointerType || "mouse");
+    },
+    onPointerUp: () => { if (press.current) press.current.up = performance.now(); },
+    // the click that follows a long press is swallowed before it reaches the row (keyboard clicks have no press: never)
+    onClickCapture: (e) => {
+      const p = press.current;
+      press.current = null;
+      if (p && p.up != null && p.up - p.at > HOLD_MS && performance.now() - p.up < 1000) { e.preventDefault(); e.stopPropagation(); }
+    },
+    onFocus: (e) => {
+      setFocus(true);
+      let visible = false;
+      try { visible = e.target !== e.currentTarget && e.target.matches(":focus-visible"); } catch (x) { visible = false; }
+      if (visible) {
+        setKb(true);
+        const row = e.target;
+        requestAnimationFrame(() => { try { row.scrollIntoView({ block: "nearest" }); } catch (x) { /* ignore */ } });
+      }
+    },
+    onBlur: (e) => {
+      if (e.currentTarget.contains(e.relatedTarget)) return;
+      setFocus(false);
+      setKb(false);
+      e.currentTarget.scrollTop = 0;
+    },
   };
-  return { ref, why, handlers };
+  return { ref, why, kb, handlers };
 }
 
 // ---------------- numbers ----------------
@@ -156,22 +194,18 @@ function rowNumber(chip, crit, r) {
   }
 }
 
-// The year of the report numbers on screen (KR): the year most of the shown rows were read from (fyOf), the later one on a
-// tie. null when none has one. The console names the rows of another year.
+// The report year of the rows on screen (KR): only when every row was read from the same 사업보고서 year (ranks.oneReportYear);
+// rows from two years, or a row without one, leave the year out (the close date only), and the console says why.
 const yearWarned = new Set();
 function reportYear(load, rows) {
-  const ys = rows.map((r) => fyOf(r.s, load.coByT ? load.coByT.get(r.s.t) : null)).filter((y) => y != null);
-  if (!ys.length) return null;
-  const n = new Map();
-  ys.forEach((y) => n.set(y, (n.get(y) || 0) + 1));
-  const year = [...n.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
-  const other = rows.filter((r) => { const y = fyOf(r.s, load.coByT ? load.coByT.get(r.s.t) : null); return y != null && y !== year; });
-  const k = year + ":" + other.map((r) => r.s.t).join(",");
-  if (other.length && !yearWarned.has(k)) {
+  const r = oneReportYear(rows, load.coByT);
+  const k = r.years.join(",") + ":" + r.missing;
+  if (r.year == null && rows.length && !yearWarned.has(k)) {
     yearWarned.add(k);
-    console.info(`[v2] rank card: the date line names the ${year} report; ${other.length} row(s) are from another year: ${other.map((r) => r.s.t).join(", ")}`);
+    console.info(`[v2] rank card: no report year on the date line: the rows are from ${r.years.join(" and ") || "no"} report year(s)`
+      + (r.missing ? `, ${r.missing} without one` : ""));
   }
-  return year;
+  return r.year;
 }
 
 // ---------------- rows ----------------
@@ -231,7 +265,7 @@ function GroupRow({ i, g, copy, onOpen }) {
           <span data-ui-v2="rank-count" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block", whiteSpace: "nowrap", lineHeight: 1.35, marginTop: 1 })}>
             {fill(w.up ? C.rank.up : C.rank.down, { n: g.n, k: w.k })}</span>
         </span>
-        <span data-ui-v2="rank-num" style={tx(SIZE.sm, WEIGHT.heavy, changeColor(Math.round(g.avg * 10)), { flexShrink: 0, whiteSpace: "nowrap" })}>{signed(g.avg)}</span>
+        <span data-ui-v2="rank-num" style={tx(SIZE.sm, WEIGHT.heavy, changeColor(g.avg), { flexShrink: 0, whiteSpace: "nowrap" })}>{signed(g.avg)}</span>
       </button>
     </div>
   );
@@ -268,26 +302,26 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const decks = store && store.data ? store.data.decks : null;
   const deck = useMemo(() => pointsDeck(decks), [decks]);
   const mk = pick.mk;
-  // every list of this market (cheap except 내 기준: one engine screen), to know which chips have rows
-  const all = useMemo(() => {
-    if (!ok) return null;
-    const o = {};
-    for (const c of RANK_CHIPS) if (c !== "crit") o[c] = rankRows(load, mk, c, null, deck);
-    o.crit = Object.fromEntries(CRIT.map((c) => [c.id, rankRows(load, mk, "crit", c.id)]));
-    return o;
-  }, [ok, load, mk, deck]);
+  // which chips have rows: cheap scans (ranks.chipState); only the chosen chip's list is worked out (below)
+  const st = useMemo(() => (ok ? chipState(load, mk, deck) : null), [ok, load, mk, deck]);
   const emptyLine = C.rank.p.empty;
-  const critShown = all ? CRIT.map((c) => c.id).filter((id) => emptyLine || (all.crit[id] && all.crit[id].rows.length)) : [];
-  const empty = !all ? [] : RANK_CHIPS.filter((c) => c !== "surge" && !emptyLine
-    && (c === "crit" ? !critShown.length : all[c] && !all[c].rows.length));
+  const critShown = st ? CRIT.map((c) => c.id).filter((id) => emptyLine || st.crit[id]) : [];
+  // 거래 급증 without today's figures (no stock with both val and val20) is not "none today": like any other empty list, the chip is
+  // not offered (or shows the empty-list line once approved), never the approved "오늘은 … 없어요".
+  const surgeNoData = !!(st && st.surge && st.surge.state === "nodata");
+  const empty = !st ? [] : RANK_CHIPS.filter((c) => !emptyLine && (c === "surge" ? surgeNoData : c === "crit" ? !critShown.length
+    : c === "mine" ? st.mine === false : st[c] === false));
   const chips = chipsFor(mk, !!deck, empty);
-  const chip = shownChip(pick.chip, chips);
+  const chip = chips.length ? shownChip(pick.chip, chips) : null;
   const crit = critShown.includes(pick.crit) ? pick.crit : critShown[0] || pick.crit;
   useEffect(() => {
+    if (!st) return;
+    if (surgeNoData) console.warn(`[v2] rank card: no stock of ${st.surge.of} over the floor has both val and val20 today: the surge chip is ${emptyLine ? "shown empty" : "not offered"}`);
     if (empty.length) console.warn(`[v2] rank card (${mk}): no rows today for ${empty.join(", ")}: chip(s) not offered until an empty-list line is approved (rank.p.empty)`);
-  }, [mk, empty.join(",")]);
-  const cur = !all ? null : chip === "crit" ? all.crit[crit] : all[chip];
-  const groups = chip === "ind" && ok ? indGroups(load.data.stocks, mk) : null;
+    if (!chips.length) console.warn(`[v2] rank card (${mk}): no list has a row: the load-failure message stands in for the list`);
+  }, [mk, empty.join(","), surgeNoData, chips.length]);
+  const cur = useMemo(() => (ok && chip ? rankRows(load, mk, chip, chip === "crit" ? crit : null, deck) : null), [ok, load, mk, chip, crit, deck]);
+  const groups = chip === "ind" && cur ? cur.rows : null;
   const opened = group && groups ? groups.find((g) => g.ind === group) || null : null;
   const rows = !cur ? [] : opened ? groupList(load.data.stocks, mk, opened.ind) : cur.rows;
   const kind = opened ? "group" : cur ? (cur.kind === "ind" ? "ind" : chip) : chip;
@@ -301,9 +335,10 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const roll = useRoll(ok && dated && !still && top.length > 0);
   const moving = roll.why == null;
 
-  // the chosen chip in view inside its row (never the page), and the chosen 기준 in the 기준별 row
-  useEffect(() => { inView(chipRow.current, chipRefs.current[chip]); }, [chip, mk, chips.length]);
-  useEffect(() => { if (chip === "crit") inView(critRow.current, chipRefs.current["crit:" + crit]); }, [chip, crit, mk]);
+  // the chosen chip in view inside its row (never the page), and the chosen 기준 in the 기준별 row. Only where a row scrolls (the
+  // phone) and only for a chip that is not the row's first: reading the layout on 홈's first paint made its longest task longer.
+  useEffect(() => { if (!wide && chips.indexOf(chip) > 0) inView(chipRow.current, chipRefs.current[chip]); }, [chip, mk, chips.length, wide]);
+  useEffect(() => { if (!wide && chip === "crit" && critShown.indexOf(crit) > 0) inView(critRow.current, chipRefs.current["crit:" + crit]); }, [chip, crit, mk, wide]);
   // 전체 보기 landed here: this card in view, focus on its title
   useEffect(() => {
     if (!full || !ok || !takeJump()) return;
@@ -318,15 +353,19 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
 
   if (!ok) return null;
   const choose = (next) => { setGroup(null); setPick({ ...pick, ...next }); };
-  const report = mk === "kr" && (chip === "div" || (chip === "crit" && critOf(crit) && critOf(crit).report)
-    || (chip === "mine" && deck && mineUsesReport(deck.settings.points)));
+  // "{year}년 사업보고서 기준" only on lists of 사업보고서 numbers (ranks.listReport: never 가치, whose PBR uses the latest
+  // quarter) and only when every row shown is from that one year (reportYear)
+  const report = listReport(mk, chip, crit, deck ? deck.settings.points : null);
   const year = report && !opened ? reportYear(load, top) : null;
   const md = dated ? mdText(dateIso) : null;
-  const lines = opened ? [C.rank.p.groupLine].filter(Boolean)
+  const lines = !chip ? [] : opened ? [C.rank.p.groupLine].filter(Boolean)
     : chip === "val" ? [mk === "us" ? C.rank.line.valUs : C.rank.line.val]
       : chip === "crit" ? [fill(C.rank.line.crit, { card: C.build.cards[crit].name, basis: C.build.cards[crit].basis })]
         : chip === "div" ? [C.rank.line.div, mk === "us" ? C.rpt.divUs : null].filter(Boolean)
-          : [C.rank.line[chip]];
+          : [C.rank.line[chip]].filter(Boolean);
+  // the line in place of an empty list: 거래 급증's approved one, or the empty-list line once approved; nothing else (never an
+  // empty white box: without a line, the load-failure message stands in, as when the market has no list at all)
+  const emptyText = chip === "surge" ? C.rank.surgeNone : C.rank.p.empty;
   const tapOf = (s) => tp.props({ t: s.t, cls: s.cls, s }).onTap;
   const body = (copy) => top.map((r, i) => (kind === "ind"
     ? <GroupRow key={r.ind} i={i} g={r} copy={copy} onOpen={() => setGroup(r.ind)} />
@@ -335,10 +374,10 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const listKey = [mk, chip, crit, openedId || "", top.length].join("|");
   const win = { position: "relative", borderRadius: 16, background: COLOR.surface, boxShadow: `inset 0 0 0 1px ${WIN_LINE}`, overflow: "hidden" };
   const usRows = kind === "ind" ? [] : top.map((r) => r.s);
-  // The chip rows scroll sideways. On the phone they run to the screen's edges (the board); on PC they stay inside the card's
-  // column (a narrow right column would otherwise spill chips into the gap beside it).
-  const chipRowStyle = { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "thin",
-    ...(wide ? {} : { marginLeft: -SPACE(4), marginRight: -SPACE(4), paddingLeft: SPACE(4), paddingRight: SPACE(4) }) };
+  // The chip rows: on the phone one row that scrolls sideways and runs to the screen's edges (the board); on PC (no sideways
+  // swipe with a mouse wheel) they wrap onto more lines inside the card's column.
+  const chipRowStyle = wide ? { display: "flex", flexWrap: "wrap", gap: 6 }
+    : { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "thin", marginLeft: -SPACE(4), marginRight: -SPACE(4), paddingLeft: SPACE(4), paddingRight: SPACE(4) };
   return (
     <section ref={boxRef} data-ui-v2="rank" data-mk={mk} data-chip={chip} data-crit={chip === "crit" ? crit : undefined} data-full={full ? "1" : undefined}
       data-group={openedId || undefined} aria-labelledby={titleId} style={{ marginTop: SPACE(5), scrollMarginTop: wide ? SPACE(20) : SPACE(3) }}>
@@ -373,10 +412,10 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
         </div>
       )}
       {!lines.length && <div style={{ height: SPACE(2) }} />}
-      {!dated ? <div style={win}><LoadFail picture={false} /></div>
+      {!dated || !chips.length || (!top.length && !emptyText) ? <div data-ui-v2="rank-fail" style={win}><LoadFail picture={false} /></div>
         : !top.length ? (
           <div data-ui-v2="rank-empty" style={{ ...win, padding: `${SPACE(5)}px ${SPACE(4)}px` }}>
-            <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { wordBreak: "keep-all" })}>{chip === "surge" ? C.rank.surgeNone : C.rank.p.empty}</p>
+            <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { wordBreak: "keep-all" })}>{emptyText}</p>
           </div>
         ) : still ? (
           <div ref={roll.ref} data-ui-v2="rank-window" data-moving="0" data-still={still} data-rows={shownRows.length} style={win}>
@@ -384,9 +423,10 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
           </div>
         ) : (
           <div ref={roll.ref} data-ui-v2="rank-window" data-moving={moving ? "1" : "0"} data-pause={roll.why || undefined} data-rows={fit}
-            role="group" aria-label={C.rank.listAria} tabIndex={0} {...roll.handlers}
+            data-kb={roll.kb ? "1" : undefined} role="group" aria-label={C.rank.listAria} tabIndex={0} {...roll.handlers}
             style={{ ...win, height: fit * ROW_H, touchAction: "pan-y" }}>
-            <div key={listKey} data-ui-v2="rank-track" data-roll="1" style={{ animationPlayState: moving ? "running" : "paused" }}>
+            {/* keyboard focus on a row: the rows lie still at their places (no transform) so the focused one can be scrolled to */}
+            <div key={listKey} data-ui-v2="rank-track" data-roll="1" style={{ animationPlayState: moving ? "running" : "paused", ...(roll.kb ? { animation: "none" } : {}) }}>
               <div role="list" aria-labelledby={titleId}>{body(false)}</div>
               <div data-ui-v2="rank-copy" aria-hidden="true">{body(true)}</div>
             </div>
@@ -398,10 +438,11 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
         )}
       {/* v19.1c: a US stock priced at an earlier close (pxd) among the rows: named once under the list */}
       <OwnCloseNote groups={ownCloses(load, usRows)} data-market={mk} />
-      {!full && dated && top.length > 0 && (
+      {!full && dated && top.length > 0 && chips.length > 0 && (
         <div data-ui-v2="rank-foot" style={{ marginTop: SPACE(1), display: "flex", justifyContent: "space-between", alignItems: "center", gap: SPACE(2) }}>
           {!still ? <span data-ui-v2="rank-hint" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{C.rank.hint}</span> : <span />}
-          {go && (
+          {/* not inside an opened 업종: its back control returns to the groups, and the 종목 tab opens on the groups */}
+          {go && !opened && (
             <button type="button" data-ui-v2="rank-all" onClick={() => { askJump(); go("stocks"); }}
               style={{ ...tap, minHeight: TOUCH, border: "none", background: "none", ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap" }) }}>{C.rank.all}</button>
           )}
@@ -464,7 +505,8 @@ function GroupHead({ g, backRef, onBack }) {
         <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{g.name || g.ind}</span>
         <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
           <span>{fill(w.up ? C.rank.up : C.rank.down, { n: g.n, k: w.k })}</span>{" · "}
-          <span style={{ color: g.avg > 0 ? COLOR.upOnPage : g.avg < 0 ? COLOR.down : COLOR.text2, fontWeight: WEIGHT.bold }}>{signed(g.avg)}</span>
+          <span data-ui-v2="rank-group-avg" style={{ color: Math.round(g.avg * 10) > 0 ? COLOR.upOnPage : Math.round(g.avg * 10) < 0 ? COLOR.down : COLOR.text2,
+            fontWeight: WEIGHT.bold }}>{signed(g.avg)}</span>
         </span>
       </span>
     </div>
