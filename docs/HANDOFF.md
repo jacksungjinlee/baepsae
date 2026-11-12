@@ -5,10 +5,94 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-07 22:00 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 07:10 KST — read this first)
 
-**Working cadence (Jack, 2026-11-07 evening — replaces the "work lean" note below where they differ):** ship faster;
-Jack is fine with more of his plan being used.
+**Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
+just stops blocking screen work.
+- Correction in the same message (Jack): "Correction to the last message: v19.5b doesn't wait for the currency fix. J4
+  keeps the wrong PBRs off the 홈 list, so merge v19.5b as soon as its own checks are green." So PR #120 (v19.5b)
+  does not wait for #114: it merges after #107 (Jack, 2026-11-12: "Do it before v19.5b"), once its own checks are
+  green. Its own 가치 guards (PBR ≤ 0, a Korean PBR that rounds to 0.00, the US 4× rule; built in its third round)
+  also keep those rows out of 내 기준.
+- Two tracks side by side. **Track A, data and pipeline** (the currency fix, the token fix, the gate rows, the item 4
+  report): these merge one per real publish, as already agreed. **Track B, screens:** start now and keep it moving
+  while Track A waits for publishes. Order: v19.5b, then v19.7 (portfolio editing: add and remove stocks, record
+  sales, find stocks, which Jack asked for on 11-07), then v19.6a, then the rest of v19.6 as its dependencies allow,
+  with dark mode as soon as it can go. (Final order: his second message, below. The merged v19.7 spec makes v19.7a
+  wait for v19.6a's store v2 and sales, so v19.6a is built first; told Jack 11-13.) A safety fix jumps ahead of
+  screen work only when users are seeing wrong numbers right now or the site could break. Otherwise screens go first.
+- Keep Track B fast: (1) ask Korean wording questions before you build, not during — at the start of each version
+  send every new line from the spec and boards, plus every small string you'll need, in one 「새 문구」 table with
+  proposed wording, and build while the answer comes back; (2) follow the boards; for details neither the spec nor
+  the board covers (spacing, order, small states), match the approved screens already live and list them in the PR
+  under "Choices I made"; ask only when a choice changes what a user can do or read; (3) don't sit idle: while a PR
+  waits for CI, review or an answer, prepare the next one on its own branch; (4) note unrelated problems in the
+  update instead of fixing them, unless they're wrong numbers users see or something that could break the site;
+  (5) target: at least one change users can see goes live every day.
+- After each screen merge: besides the live check, tell Jack exactly where to look on his phone (tab, what to tap,
+  what he should see).
+- Updates, short, in this shape: 1. Problems (if any). 2. Live since last update: what users see now. 3. In progress,
+  one line per PR. 4. Questions, with the recommended answer first, all in one place. 5. Once a day: a table of every
+  approved board (v19.3, v19.5, v19.6, v19.7) marked live, partly live or not started.
+- **Jack's answers, 2026-11-13 (second message):**
+  - Track B order. Jack: "Both yes: v19.6a before v19.7a, and v19.6f right after v19.7a. If v19.6f isn't in
+    review by Dec 1, it jumps the queue." The rest is Claude's list from the 00:06 KST update, sent under his "don't
+    wait for an answer to the list": v19.5b → v19.6a → v19.7a → v19.6f → v19.7b; v19.6d (dark) as soon as v19.5b
+    is in; then v19.6c, v19.6b, v19.6e, v19.6g, and v19.6h last (needs v19.4). v19.6f must merge by Dec 10, 2026,
+    or it waits for Nov 2027 (the v19.6 spec's build order). Each spec's Status line says what is live and what is
+    next (Jack: "Fix the Status lines … so a fresh session never starts from the wrong task").
+  - New screens use the shared colour tokens only, never fixed colours, so dark mode covers them.
+  - The Korean PBRs under 0.1 are wrong numbers users see now, so they are Track A, beside the currency fix: scan every
+    Korean company for the DART unit error (any PBR under 0.1, or assets ≠ liabilities + equity), check SG&G and
+    앱토크롬 against their filings, hide every number built on faulty amounts with "공시 자료의 단위를 확인하고 있어서
+    이 숫자를 잠시 비워 두었어요.", then repair the reading. v19.5b gets its own Korean 가치 guard (a PBR that rounds
+    to 0.00 is never real) so it doesn't wait for that fix.
+  - Only the currency fix and the token fix need a real publish of their own. #107, #111 and #115 (the deploy check)
+    merge as soon as their test runs and reviews are green, after the first real publish of 11-13.
+- **Jack's answers, 2026-11-13 (third message), on the currency fix (#114) and more:**
+  - Currency names approved, with 일본 엔화, 중국 위안화 and 남아공 랜드. #114 ships hiding PER, PBR and the yield
+    for the 27 non-dollar filers.
+  - **Next, within days:** bring all three back for them, all 27 PBRs included, from whole-company totals: market value
+    ÷ equity (PBR) and ÷ net income (PER), with equity and income converted at that day's rate. That fixes currencies,
+    share classes and ADR ratios together. Prove it against today's correct figures before showing anything.
+  - 0% yield only where the source clearly shows no dividends in the last 12 months; a blank field stays hidden.
+  - A US PBR that rounds to 0.00 (BRK-B: share classes) is blank, with its own line: "자료상 PBR이 0에 가깝게 나와서
+    확인하는 동안 비워 두었어요."
+  - The 17 가치 verdicts that change when the 27 PBRs leave the industry medians are corrections. Industry comparisons
+    use the median, with the company count in the receipt ("업종 {n}개 회사와 비교"); keep it that way.
+  - v19.5b's one existing-test edit (the 아이폰 기록 옮기기 scene waits for 홈 to load) is approved, provided its wait
+    has a time limit that fails the test.
+  - Split the daily run into a read-only job and a publishing job, after the currency fix, the Korean unit fix and
+    the token fix.
+- **Queue now (2026-11-13 07:10 KST; every merging PR updates this):**
+  - Done: the first real publish with #106's screen check (11-13 06:40 KST run 43312517381, 11-12 data) published
+    cleanly: gate PASS with 6 known warnings, the three screen checks green, Deploy and Watchdog green, live site
+    checked (both apps, 11월 12일).
+  - Track A: #107 and #111 (gate rows) merge now, one after the other. #115 (the deploy check) waits for Jack's answer
+    on its same-code rule. #114 (currency fix): final branch dry run after 08:30 KST, then merge and its own publish
+    (a `dart=cache` run), before #113 (Jack, 11-12: "after tomorrow's first real publish, and before the token fix");
+    then #113 (token fix) with its own publish, watched to the end and reverted at once if the push fails (Jack, 11-12).
+    #118 (Korean unit guard; reviews done; branch dry run next), then #116 (its repair, builds on #118; reviews done).
+    #117 (fxHist and US splits; reviews done; branch dry run next; its default FX source `ecos_close` waits for Jack,
+    and its new FAIL rows need his yes) must be live before v19.6a merges. Then the follow-up that brings back PER, PBR
+    and yield for the 27 filers; the item 4 report, then the dates-and-time-zones audit (Jack, 11-12); the job split
+    after #114, the Korean unit fix (#118 and #116) and #113.
+  - Track B: #120 v19.5b merges right after #107 (Jack, 11-12: "Do it before v19.5b"; it does not wait for #114,
+    above) → #119 v19.6a (after #117 is live and after v19.5b; round-2 fixes in progress; reviews done) → v19.7a
+    (branch `claude/v19.7a-edit`; reviews done, round-2 fixes in progress; its plan-total question waits for Jack; no PR
+    yet) → v19.6f → v19.7b; #121 v19.6d dark (reviews done; stacked on #120, retargeted to `main` after it) as
+    soon as v19.5b is in.
+  - Practice (Claude's, not a `CLAUDE.md` rule): a PR that finishes or starts a part of a spec also updates that
+    spec's Status line in the same PR.
+- Open (asked Jack 11-13): whether the 11-07 notes below (at most two open app PRs; at most two question messages a
+  day; the evening list) still hold next to this instruction; where v19.4 goes (v19.6h waits for it); and the
+  CLAUDE.md line for "Choices I made" (his Track B point 2 differs from CLAUDE.md's ask-first rule; until he
+  answers, CLAUDE.md's rule applies).
+
+**Working cadence (Jack, 2026-11-07 evening — replaces the "work lean" note below where they differ). Since 11-13:
+its two lanes and its app order are replaced by the 11-13 block above; its open-PR limit, question limit and
+evening list are under question ("Open", above) and still apply until Jack answers; the test-exception bullet stands.**
+Ship faster; Jack is fine with more of his plan being used.
 - Two lanes in parallel. **Data lane:** B7, 자본금, unlisted preferred, the full re-read — DART-limited, as planned.
   **App lane:** v19.3b first, in a separate worktree (helpers' models and effort: `CLAUDE.md` rule 7); it never waits
   for the data lane.
@@ -25,12 +109,12 @@ Jack is fine with more of his plan being used.
   with rough dates.
 
 Jack is near his weekly usage limit (2026-11-04): work lean. Fresh-eyes reviewers and rounds: `CLAUDE.md` rule 7 (Jack,
-2026-11-12; it replaced "One fresh-eyes review per PR (a second only for pipeline or safety-rule changes)"). Until Jack
-answers whether changes to `tests/` and the CI workflow count as pipeline changes (asked 2026-11-12), they keep the
-two-reviewer round 1. Fix every blocker and real bug the reviewers find (CLAUDE.md); small points (style,
-nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04).
-Decide engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions,
-in one short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
+2026-11-12; it replaced "One fresh-eyes review per PR (a second only for pipeline or safety-rule changes)"), with
+Jack's answers on the details in the same rule. Fix every blocker and real bug the reviewers find (CLAUDE.md); small
+points (style, nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack,
+2026-11-04). Decide engineering details yourself and list them in the PR; bring Jack only Korean wording and real
+product decisions. (Replaced since 2026-11-13 by the update shape at the top of § 0: "in one short message per PR"
+and "Reports 5–10 lines".) Push every branch after each step. Update this section before stopping.
 
 **`baepsae.html` is permanent (Jack, 2026-11-05; CLAUDE.md product rules):** the address is on Jack's CV and recruiters
 have it. Never delete or rename it. Since PR #42 a plain visit (no `?from=app` marker, no `#`) goes straight to 2.0
@@ -38,6 +122,11 @@ have it. Never delete or rename it. Since PR #42 a plain visit (no `?from=app` m
 every 2.0 link into the old app carries the marker (`src/links.js` `OLD_APP`), and old shared links with a `#` still
 open the old app. When the old app retires, `baepsae.html` stays as a permanent redirect to 2.0 — and the old app
 retires only once every tool worth keeping lives in 2.0 and old-app portfolios can be carried into 2.0 first.
+
+**History (2026-11-04 – 11-08), kept for its details.** From here to the end of § 0, anything that says "not
+merged", "waits for", "no PR yet" or "Next" is out of date: what merged is in `docs/CHANGELOG.md`, and the queue is
+the 2026-11-13 block at the top of § 0. Still current reference: the morning-run fallback, the outside timer and the
+scheduled tasks.
 
 **v19.1b (data for the app, branch `claude/v19.1b-data`, PR #50, not merged — Jack's top priority 2026-11-05).** Split-safe
 Korean dividends, β error band, `flRan`, DART cache v2. New fields:

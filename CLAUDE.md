@@ -2,7 +2,8 @@
 
 Standing rules for every Claude Code session in this repo. Read this file fully before doing anything.
 Then read, in order: `docs/HANDOFF.md` (full context), `docs/BAEPSAE_VOICE.md` (before writing ANY Korean UI text),
-and the current task in `docs/tasks/`: the lowest version number whose Status line is not DONE.
+and the current task: `docs/HANDOFF.md` § 0 names the work queue and each item's spec in `docs/tasks/` (Jack,
+2026-11-13; each spec's Status line says what is live and what is next).
 
 ## What this is
 
@@ -49,7 +50,8 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
 4. Before merging (or asking Jack, when § GitHub process says to ask):
    - all tests pass (CI green once v17.6 lands);
    - a **fresh-eyes review**: spawn a subagent that did not write the change, give it the diff, the task spec and this
-     file, and ask it to find bugs and rule violations. Fix what it finds and summarize it in the PR.
+     file, and ask it to find bugs and rule violations. Fix what it finds and summarize it in the PR. (A revert PR
+     that only undoes a bad merge: rule 7, green CI and the other merge checks first, its review afterwards.)
 5. Every PR description contains, in this order:
    - **What changed** — plain English, 3–8 bullets, written for Jack.
    - **「새 문구」** — every new or changed user-facing Korean string, verbatim (before → after). "없음" if none.
@@ -64,6 +66,17 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    Other PRs get one Opus 5.5 Extra high reviewer, and a third round only if round 2 found a blocker. Audits of past
    work: a Fable 5.2 High helper with one narrow target, when Jack asks. Helpers with no judgement in them stay at
    medium.
+   Jack's answers on the details (2026-11-12):
+   - Helpers that write or judge something but don't build or review (Korean text drafts, judging screenshots,
+     diagnosing a failed run) run on Opus 5.5 at Extra high, set explicitly. When unsure, Extra high. (Audits keep
+     their own line above.)
+   - On pipeline PRs (the two-reviewer kind above), the Fable rounds stop at the first round with no blocker. On
+     other PRs, if round 3 still finds a blocker, stop and ask Jack.
+   - Changes to the test scripts the daily run uses (and the test helpers they import), and to the CI workflow, are
+     reviewed like pipeline PRs: two reviewers in round 1, then Fable 5.2 at High alone (nothing else about them
+     changes). Other test-only changes get one reviewer.
+   - A revert PR that only undoes a bad merge merges once CI is green and the other merge checks pass, without
+     waiting for its review, which comes afterwards (Jack: "(e) still needs green CI").
 
 ## GitHub process — you own it (Jack's standing rule, 2026-10-31)
 
@@ -74,7 +87,7 @@ setting to change (where it is and what to click), never just "go to GitHub".
 **Merge on your own only when ALL of these are true:**
 - `bash build.sh`, `pytest tests/` and the phone-size smoke test (`python tests/smoke_app.py`) pass — and, once v17.6
   lands, the GitHub `ci` check is green;
-- the fresh-eyes subagent review is done and its findings are fixed;
+- the fresh-eyes subagent review is done and its findings are fixed (a revert PR that only undoes a bad merge: rule 7);
 - for pipeline changes: a green `dry_run` on your branch, with the validation summary in the PR;
 - for changes to anything the site serves (for example `src/`, the built pages, `index.html`, `sw.js`, the manifest)
   or to the real-data check scripts and the test helpers they import: the daily run's three checks pass on a fresh
@@ -112,13 +125,16 @@ setting to change (where it is and what to click), never just "go to GitHub".
    DART rule above.
 2. Check the live site yourself (https://jacksungjinlee.github.io/baepsae/): search 005930 and 현대차, open every tab,
    check the dates.
-3. If anything is wrong, revert the merge right away (a revert PR that you merge), tell Jack what happened, then fix
-   forward in a new PR.
+3. If anything is wrong, revert the merge right away (a revert PR that you merge once CI is green and the other merge
+   checks pass; its review comes afterwards, rule 7), tell Jack what happened, then fix forward in a new PR.
 4. Send Jack a 3–6 line plain-English summary: what changed for users, what you checked, anything he should look at
    on his phone.
 
 **Keep `docs/CHANGELOG.md`:** one line per merge — KST date, PR number, plain-English summary — so Jack and his
 claude.ai chat can follow the history. Add the line in the same PR when you can, otherwise right after the merge.
+
+**Keep `docs/HANDOFF.md` § 0 current (Jack, 2026-11-13):** "update § 0 in the same PR as every merge": what is live
+after it merges and what comes next.
 
 ## Testing — before every PR
 
