@@ -33,6 +33,11 @@
 //            stores a split (from data.json splits) together with a record of that stock, so the store's own check (no sale
 //            below 0 shares) reads the records exactly as the screens do and a sale of the new share count is never refused.
 //            One per stock and date.
+//   changes  [{ at, kind, t?, nk?, reason? }] the change log of 종목 바꾸기 (v19.7a, Part A): at the date (KST), kind "add" ·
+//            "remove" · "targets" (a later version's kind is kept, not shown), t / nk the stock, reason the 빼기 chip (thesis ·
+//            rule · better · other). At most CHANGES_MAX (the newest), checked here; not a version-2-only part (the earlier
+//            apps keep a portfolio's fields they do not know). A history entry (above) may carry reason too (v19.7a, Part B:
+//            the same chip; out is the spec's removedAt, the day it was taken out).
 //   limitsTs when 내 규칙 정하기 last saved them (v19.3d2; ms, with or without a limits part: a 저장 at the defaults leaves
 //            none), so two copies and a records file keep the later limits. Beside limits, not in it: v19.3d (#83) reads
 //            limits strictly and passes portfolio keys it does not know, so a revert still reads every portfolio.
@@ -242,6 +247,7 @@ function historyProblem(hs, today, splits = null, createdAt = null) {
     if (!pastDate(h.out, today)) return bad("history", i, h.t, "date taken out must be a real date, not after today");
     if (h.cls != null && !isStr(h.cls, 10)) return bad("history", i, h.t, "market is not valid");
     if (h.ts != null && !okTs(h.ts)) return bad("history", i, h.t, "time taken out (ts) is not valid");
+    if (h.reason != null && !isStr(h.reason, 20)) return bad("history", i, h.t, "reason is not a short name");   // v19.7a
     for (const k of ["purchases", "sales", "divs"]) if (h[k] != null && !Array.isArray(h[k])) return bad("history", i, h.t, k + " is not a list");
     if (h.imported != null && !plainObj(h.imported)) return bad("history", i, h.t, "imported is not one row");
     const recs = { purchases: h.purchases || [], sales: h.sales || [], divs: h.divs || [], imported: h.imported ? [h.imported] : [], splits, createdAt };
@@ -276,6 +282,22 @@ function splitsProblem(l, today) {
     }
     if (seen.has(s.t + "|" + s.date)) return bad("splits", i, s.t, "the same split twice");
     seen.add(s.t + "|" + s.date);
+  }
+  return null;
+}
+
+// v19.7a: the change log (see the top of this file). A kind or reason this version does not know is a short name, kept and
+// not shown (so a later version's entry never sets a portfolio aside).
+export const CHANGES_MAX = 200;
+function changesProblem(l, today) {
+  if (!Array.isArray(l)) return bad("changes", null, null, "not a list");
+  if (l.length > CHANGES_MAX) return bad("changes", null, null, `more than ${CHANGES_MAX} entries`);
+  for (let i = 0; i < l.length; i++) {
+    const c = l[i];
+    if (!plainObj(c) || !pastDate(c.at, today) || !isStr(c.kind, 20)) return bad("changes", i, c && c.t, "not a change (date not after today, kind)");
+    if ((c.t != null && !okStockCode(c.t)) || (c.nk != null && !isStr(c.nk, 120)) || (c.reason != null && !isStr(c.reason, 20))) {
+      return bad("changes", i, c.t, "stock code, name or reason is not valid");
+    }
   }
   return null;
 }
@@ -324,6 +346,7 @@ export function deckProblem(x, today) {
     }
   }
   if (x.limitsTs != null && !okTs(x.limitsTs)) return bad("limitsTs", null, null, "not a time");
+  if (x.changes != null) { const p = changesProblem(x.changes, today); if (p) return p; }
   if (x.confirms != null) {
     if (!Array.isArray(x.confirms)) return bad("confirms", null, null, "not a list");
     for (let i = 0; i < x.confirms.length; i++) {
@@ -483,7 +506,8 @@ export function withConfirm(data, deckId, item, answer, today, ts = null) {
 // away (내 수익 keeps its realized gains and dividends); with none, the old behaviour stays.
 // With today's date the portfolio also keeps a removal mark { t, at, ts } (removed), so another tab's older copy that
 // still holds the stock does not bring it back when the two are merged.
-export function withoutHolding(data, deckId, t, today = null, ts = null) {
+// v19.7a: reason (빼기's chip: thesis · rule · better · other) goes on the history entry it makes.
+export function withoutHolding(data, deckId, t, today = null, ts = null, reason = null) {
   const deck = data && Array.isArray(data.decks) ? data.decks.find((d) => d && d.id === deckId) : null;
   if (!deck || typeof t !== "string" || !deck.holdings.some((h) => h && h.t === t)) return null;
   const of = (list) => (Array.isArray(list) ? list.filter((r) => r && r.t === t) : []);
@@ -503,7 +527,7 @@ export function withoutHolding(data, deckId, t, today = null, ts = null) {
     const imp = of(deck.imported)[0];
     const out = isDate(today) ? today : [...sales, ...divs].reduce((a, r) => (r.date > a ? r.date : a), "0000-00-00");
     next.history = [...(Array.isArray(deck.history) ? deck.history : []), { t, nk: h.nk, out, ...(isDate(today) ? { ts: okTs(ts) ? ts : Date.now() } : {}), ...(h.cls ? { cls: h.cls } : {}),
-      ...(imp ? { imported: imp } : {}), purchases: of(deck.purchases), sales, divs }];
+      ...(imp ? { imported: imp } : {}), purchases: of(deck.purchases), sales, divs, ...(isStr(reason, 20) ? { reason } : {}) }];
   }
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
 }
@@ -691,6 +715,12 @@ function unionDeck(cur, other) {
     out.imported = [...ci, ...oi.filter((r) => r.t != null && !ci.some((y) => y.t === r.t)), ...named.slice(ci.filter((r) => r.t == null).length)];
   }
   for (const k of ["sales", "divs", "history"]) { const u = unionRecords(cur[k], other[k], where); if (u) out[k] = u; }
+  // v19.7a change log: every entry either copy holds (as a multiset), oldest first, the newest CHANGES_MAX kept
+  if (Array.isArray(cur.changes) || Array.isArray(other.changes)) {
+    const all = (unionRecords(cur.changes, other.changes, where) || []).map((c, i) => [c, i])
+      .sort((a, b) => (plainObj(a[0]) && plainObj(b[0]) && a[0].at !== b[0].at ? (a[0].at < b[0].at ? -1 : 1) : a[1] - b[1])).map(([c]) => c);
+    out.changes = all.slice(Math.max(0, all.length - CHANGES_MAX));
+  }
   // v19.6a splits: one per stock and date, the current copy's wins (both came from the same data.json, so they agree)
   if (Array.isArray(cur.splits) || Array.isArray(other.splits)) {
     const cs = Array.isArray(cur.splits) ? cur.splits : [];
