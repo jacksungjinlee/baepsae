@@ -1842,6 +1842,24 @@ def interest_paid(rows, value):
     return sum(vals) if vals else None
 
 
+_BAL_LINES = (("ifrs-full_Assets", "자산총계"), ("ifrs-full_Liabilities", "부채총계"), ("ifrs-full_Equity", "자본총계"))
+
+
+def balance_totals(rows, col="thstrm_amount"):
+    """(2026-11-13) 재무상태표의 [자산총계, 부채총계, 자본총계] (원 · 응답 그대로) — 셋 중 하나라도 없으면 None. 표준 코드 줄 먼저, 없으면
+    이름 (띄어쓰기 빼고). 공시 단위 확인(unit_check)의 '자산 = 부채 + 자본' 에만 써요. (순수 함수)"""
+    bs = [r for r in rows or [] if (r.get("sj_div") or "").strip() in ("BS", "")]
+    out = []
+    for aid, nm in _BAL_LINES:
+        row = (next((r for r in bs if (r.get("account_id") or "").strip() == aid), None)
+               or next((r for r in bs if (r.get("account_nm") or "").replace(" ", "") == nm), None))
+        v = _num(row.get(col)) if row else None
+        if v is None:
+            return None
+        out.append(v)
+    return out
+
+
 def parse_dart_list(rows):
     """fnlttSinglAcntAll 응답의 계정 목록에서 3개년 주요 항목을 뽑습니다. (순수 함수 — 테스트 가능)
     v19.1e: 배당 분할 확인용 자본금은 손익 줄과 상관없이 _cap 에 담아요 (parse_capital).
@@ -1948,6 +1966,9 @@ def parse_dart_list(rows):
         fin["cs3"] = [round(v / 1e8, 4) if v is not None else None for v in cs3]     # 억원 · 1만원 단위까지 (주식 수 계산용)
     if ss3 and any(v is not None for v in ss3):
         fin["ss3"] = [round(v / 1e8, 4) if v is not None else None for v in ss3]
+    bal = balance_totals(rows)
+    if bal:
+        fin["bal"] = bal                          # (2026-11-13) 자산·부채·자본총계 (원) — 공시 단위 확인 (unit_check · 캐시에 없으면 '확인 못 함')
     if nio3 and any(v is not None for v in nio3):
         fin["nio3"] = [ek(x) for x in nio3]       # v19.1f: 지배주주 순이익 3년 (연결) — corp.json nio3
         fin["nioHow"] = nio_how                   # v19.1f: 어떻게 읽었는지 (OWN_HOWS) — epsIn.how
@@ -2152,6 +2173,7 @@ def parse_dart_quarter(rows):
             "ca": ek(ca), "cl": ek(cl), "cs": ek(cs),
             "nioHow": nio_how if nio is not None else None, "nciBs": ek(nci_bs), "nciPl": ek(nci_pl),
             **({"cur": stmt_currency(rows)} if stmt_currency(rows) else {}),
+            **({"bal": b} if (b := balance_totals(rows)) else {}),        # (2026-11-13) 자산·부채·자본총계 (원) — 공시 단위 확인
             **({"hyb": {"ok": h["ok"], "eq": ek(h["eq"]), "dist": ek(h["dist"])}} if (h := hybrid_info(rows)) else {})}
 
 
@@ -2191,7 +2213,11 @@ def compute_ttm(fin, ytd, ytd_prev):
         bs["nciBs"] = ytd["nciBs"]  # v19.1f: 최신 분기 비지배지분 (줄이 없으면 None) — BPS 의 nci0
     if ytd.get("hyb"):
         bs["hyb"] = ytd["hyb"]      # v19.1f (리뷰): 최신 분기 신종자본증권 (BPS 에서 빼요)
-    return {"ttm": ttm, "bs": bs}
+    if ytd.get("bal"):
+        bs["bal"] = ytd["bal"]      # (2026-11-13) 최신 분기 자산·부채·자본총계 (원) — 공시 단위 확인
+    # (2026-11-13) 지난해 같은 분기의 재무상태표: TTM 에 그 보고서의 누적 손익을 빼서 써요 — 단위가 틀렸는지 같이 봐요 (unit_check · 다른 데엔 안 써요)
+    bsp = {k: ytd_prev.get(k) for k in UNIT_SCALE_KEYS + ("bal",) if ytd_prev.get(k) is not None}
+    return {"ttm": ttm, "bs": bs, "bsP": bsp}
 
 
 def dart_financials(client, corp_code, year):
@@ -2450,6 +2476,7 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
                     t2 = compute_ttm(fin, ytd, dart_quarter(client, corp, yr, r, fs=fin.get("fs")))
                     if t2:
                         fin["ttm"], fin["bs2"], fin["bq"] = t2["ttm"], t2["bs"], f"{qy_c}.{REPRT_KO[r]}"
+                        fin["bsP"] = t2["bsP"]          # (2026-11-13) 지난해 같은 분기 재무상태표 — 공시 단위 확인만 (unit_check)
                         break
                 if not fin.get("bq") and yr == year and not order:
                     # 봄(사업보고서 제출 뒤 ~ 1분기 보고서 70% 전)과 연초에는 사업보고서 자체가 '최근 4개 분기'예요
@@ -3313,6 +3340,14 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
                     row["pcf"] = round(v, 1)
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
         row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
+        if s.get("unitChk"):
+            # (2026-11-13) 공시 단위 확인에 걸린 회사 (unit_guard): 재무제표로 만든 금액·배수·영수증·재무 경고를 모두 비워요. 배당(별도 배당 표)은 남겨요
+            row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False,
+                       vz=None, qz=None, **{k: None for k in UNIT_BLANK})
+            for k in UNIT_BLANK_CORP:
+                row.pop(k, None)
+            row["flRan"] = []                        # 돌린 검사 없음 (앱은 '경고 신호는 없어요'라고 말하지 않아요)
+            row["unitChk"] = list(s["unitChk"])
         if not_won(s, fin):
             # v17.5.2: 해외 기업 금액은 원화가 아닐 수 있어 비워요 (blank_foreign_dart 참고). 위에서 만든 fl 신호는 비율·부호라 남겨요.
             # v19.1f (리뷰 2026-11-08): 재무제표 통화가 원화가 아닌 국내 회사도 같게 (두산밥캣 USD) · stmtCur 에 통화를 남겨요 (관문이 봐요)
@@ -4145,6 +4180,135 @@ def income_check(kr_stocks, fin_map, mult_extra):
     ep = collections.Counter(e["epsIn"]["p"] for e in mult_extra.values() if "epsIn" in e)
     return {"v": 1, "stmts": len(kr), "noInc": len(no_inc), "finNoRev": len(fin_no_rev),
             "epsB": {k: eb[k] for k in ("o", "s", "t")}, "epsP": {k: ep[k] for k in ("ttm", "fy")}}
+
+
+# ────────────────────────────────────────────────────────────
+# 공시 단위 확인 (Jack, 2026-11-13): 단위를 잘못 적은 재무제표
+# ────────────────────────────────────────────────────────────
+# 2026-11-12 발행본에서 진코스텍(250030)과 디와이에이(002880)의 PER·PBR 이 0.0, 가치 점수가 100 이었어요. 두 회사의 2026 반기보고서는
+# 재무제표 표 머리에 '(단위 : 천원)'이라 적었지만 숫자는 원이었고 (같은 보고서의 요약재무정보는 원·백만원), DART 자료(OpenDART)는 그 보고서의
+# 모든 금액을 정확히 1,000배로 담고 있어요 (그 보고서의 2025-12-31 칸 = 2025 사업보고서 값 × 1,000). API 에는 단위 칸이 없어요 (금액은
+# 언제나 원). 보고서 전체가 같은 배율이라 그 보고서 안에서는 자산 = 부채 + 자본 이 그대로 맞아요. 그래서 실행마다 국내 회사 모두를 두 가지로
+# 봐요 (캐시에 있는 값으로 · DART 호출 없이):
+#   bs     자산 ≠ 부채 + 자본: 읽은 재무제표(사업보고서 · 최신 분기 · 지난해 같은 분기) 중 하나라도 |자산 − (부채 + 자본)| 이
+#          max(자산 × UNIT_BAL_REL, UNIT_BAL_ABS 원) 보다 커요. 맞는 재무제표는 원 단위까지 맞아요 (2025 사업보고서·반기 753개 모두 차이 0) —
+#          천원·백만원으로 낸 표는 총계마다 따로 반올림해 몇 단위 어긋날 수 있어 300만원까지 봐줘요. 한 줄(한 표)만 단위가 틀리면 99.9% 넘게
+#          어긋나요. 자산총계는 2026-11-13 부터 읽어요 (balance_totals → bal): 그 전에 캐시에 저장된 재무제표는 '확인 못 함'으로 세요
+#          (90일 재확인 · 다시 읽기로 채워져요).
+#   scale  보고서 사이 배율: TTM 에 쓴 분기 보고서(최신 분기 bs2 · 지난해 같은 분기 bsP)의 재무상태표가 사업보고서 것의 UNIT_SCALE_MAX 배
+#          이상이거나 1/UNIT_SCALE_MAX 이하. 자본총계 · 유동자산 · 유동부채 · 자본금 · 현금 중 두 보고서 모두 양수인 칸들의 배율 중앙값이에요
+#          (한 칸의 진짜 큰 변화 — 자본잠식에서 증자한 회사 — 로 걸리지 않게). 2026-11-12 발행본 2,234곳의 최신 분기 주주 몫 자본 ÷
+#          사업보고서 것: 진짜 회사는 0.08~14.4배, 두 회사는 1,390 · 1,405배. 천원·백만원을 원으로 읽으면 1,000 · 1,000,000배예요.
+# 걸린 회사는 재무제표로 만든 숫자를 모두 비워요 (0 이 아니라 빈 칸 · 어느 재무제표가 맞는지 이 확인만으로는 알 수 없어서): data.json ·
+# corp.json 의 UNIT_BLANK, corp.json 의 3개년 금액 · 자본 · UNIT_BLANK_CORP (영수증 · EV 배수 · 재무 경고) · DCF 입력. 가치(vz) · 퀄리티(qz)
+# 점수는 add_percentiles 가 빈 칸을 빼고 매겨요 (다른 회사의 순위도 그 회사 없이). 배당(배당 표 — 금액마다 단위가 적힌 별도 표, 원)은 남겨요.
+# 두 파일의 unitChk = 걸린 이유 목록 (UNIT_WHY) — 앱이 "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요." 를 보여요.
+# PBR 이 UNIT_PBR_LOOK 미만인데 둘 다 아니면 비우지 않고 회사 이름과 증거를 로그로 남겨요 (관문은 그런 회사를 경고로 적어요).
+UNIT_BAL_REL = 0.001             # 자산의 0.1%
+UNIT_BAL_ABS = 3e6               # 원 (천원·백만원 표의 반올림)
+UNIT_SCALE_MAX = 100.0           # 보고서 사이 배율 (이 배 이상 · 이 분의 1 이하면 단위가 다른 보고서)
+UNIT_SCALE_KEYS = ("eq", "ca", "cl", "cs", "cash")
+UNIT_PBR_LOOK = 0.1              # 이보다 낮은 PBR 은 걸리지 않았어도 이름을 남겨요
+UNIT_WHY = ("bs", "scale")
+UNIT_BLANK = ("per", "pbr", "eps", "bps", "roe", "debt", "opm", "g3")      # data.json 종목 · corp.json 회사 모두 빈 칸
+UNIT_BLANK_CORP = ("evE", "evR", "pcf", "bq", "nio3", "nio3Hyb", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "fl", "flSrc", "flWhy")
+UNIT_EXTRA_KEYS = ("epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "nio3", "nio3Hyb")    # fill_multiples 의 영수증 (corp.json 으로 가요)
+UNIT_KO = {"bs": "자산≠부채+자본", "scale": "보고서 사이 배율"}
+UNIT_SRC_KO = {"fy": "사업보고서", "q": "최신 분기", "qp": "지난해 같은 분기"}
+
+
+def bal_off(bal):
+    """[자산, 부채, 자본] (원) → 맞으면 0.0, 맞지 않으면 어긋난 비율 (|자산 − (부채 + 자본)| ÷ |자산|, 자산이 0 이면 1.0), 모르면 None. (순수 함수)"""
+    if not isinstance(bal, (list, tuple)) or len(bal) != 3 or any(_fin(x) is None for x in bal):
+        return None
+    a, li, e = (float(x) for x in bal)
+    gap = abs(a - (li + e))
+    if gap <= max(abs(a) * UNIT_BAL_REL, UNIT_BAL_ABS):
+        return 0.0
+    return gap / abs(a) if a else 1.0
+
+
+def stmt_scale(q, a, keys=UNIT_SCALE_KEYS):
+    """재무상태표 q 가 a 의 몇 배인지 (억원 칸들) — 두 쪽 모두 양수인 칸의 배율 중앙값 (로그로), 칸이 없으면 None. (순수 함수)"""
+    logs = sorted(math.log10(q[k] / a[k]) for k in keys
+                  if (_fin((q or {}).get(k)) or 0.0) > 0 and (_fin((a or {}).get(k)) or 0.0) > 0)
+    if not logs:
+        return None
+    m = len(logs) // 2
+    return 10 ** (logs[m] if len(logs) % 2 else (logs[m - 1] + logs[m]) / 2)
+
+
+def unit_check(fin):
+    """회사 하나의 재무(fin_map 값) → {"why": [UNIT_WHY…], "bal": {보고서: bal_off}, "scale": {보고서: 배율}}. (순수 함수)
+    보고서: fy 사업보고서(fin) · q 최신 분기(bs2) · qp 지난해 같은 분기(bsP). 그 보고서가 없으면 칸이 없어요 · 값을 모르면 None."""
+    fin = fin or {}
+    srcs = {"fy": fin, "q": fin.get("bs2") or {}, "qp": fin.get("bsP") or {}}
+    bal = {k: bal_off(v.get("bal")) for k, v in srcs.items() if v}
+    scale = {k: stmt_scale(srcs[k], fin) for k in ("q", "qp") if srcs[k]}
+    why = []
+    if any(x for x in bal.values()):
+        why.append("bs")
+    if any(x is not None and (x >= UNIT_SCALE_MAX or x <= 1.0 / UNIT_SCALE_MAX) for x in scale.values()):
+        why.append("scale")
+    return {"why": why, "bal": bal, "scale": scale}
+
+
+def _unit_ev(u):
+    """unit_check 결과 → 로그 한 조각 ('최신 분기 배율 1,405배 · 사업보고서 자산=부채+자본 맞음 …')."""
+    bits = [f"{UNIT_SRC_KO[k]} 배율 {v:,.2f}배" if v < 10 else f"{UNIT_SRC_KO[k]} 배율 {v:,.0f}배"
+            for k, v in u["scale"].items() if v is not None]
+    bal = u["bal"]
+    for k, v in bal.items():
+        bits.append(f"{UNIT_SRC_KO[k]} 자산=부채+자본 " + ("확인 못 함(예전 캐시)" if v is None else "맞음" if v == 0 else f"{v:.1%} 어긋남"))
+    return " · ".join(bits) or "확인할 재무제표 없음"
+
+
+def unit_guard(kr_stocks, fin_map, mult_extra):
+    """공시 단위 확인 (위 설명) — fill_multiples 뒤, 점수(add_percentiles)·corp.json(build_corp)·incCheck 보다 먼저.
+    걸린 회사: data.json 종목의 UNIT_BLANK 를 지우고 unitChk = 이유 목록 · mult_extra 의 영수증(UNIT_EXTRA_KEYS)을 지우고 ·
+    fin_map 값에 unitChk 를 달아요 (build_corp 가 corp.json 금액을 비워요). 반환: {"hit": {코드: 이유}, "real": [PBR 이 낮지만 맞는 회사],
+    "bal": 확인한 재무제표 수 Counter}. 로그는 크게, 이름과 함께."""
+    hit, real, cnt, names = {}, [], collections.Counter(), []
+    for s in kr_stocks:
+        if s.get("cls") != "kr":
+            continue
+        t, fin = s["t"], fin_map.get(s["t"])
+        if not fin:
+            continue
+        u = unit_check(fin)
+        for k, v in u["bal"].items():
+            cnt[f"{k}:{'none' if v is None else 'ok' if v == 0 else 'off'}"] += 1
+        nm = f"{t} {s.get('nk', '')}".strip()
+        if u["why"]:
+            was = {k: s.get(k) for k in UNIT_BLANK if s.get(k) is not None}
+            for k in UNIT_BLANK:
+                s.pop(k, None)
+            s["unitChk"] = list(u["why"])
+            fin["unitChk"] = list(u["why"])
+            e = mult_extra.get(t)
+            if e is not None:
+                for k in UNIT_EXTRA_KEYS:
+                    e.pop(k, None)
+                if not e:
+                    mult_extra.pop(t)
+            hit[t] = list(u["why"])
+            for w in u["why"]:
+                cnt[f"why:{w}"] += 1
+            names.append(f"{nm} [{'·'.join(UNIT_KO[w] for w in u['why'])} — {_unit_ev(u)}] 비운 값: "
+                         + (", ".join(f"{k} {v:,}" for k, v in was.items()) or "없음"))
+        elif _fin(s.get("pbr")) is not None and s["pbr"] < UNIT_PBR_LOOK:
+            real.append(f"{nm} (PBR {s['pbr']:.2f} · {_unit_ev(u)})")
+    log(f"{'  !! ' if hit else '· '}공시 단위 확인: {len(hit)}곳 비움 (자산≠부채+자본 {cnt['why:bs']} · 보고서 사이 배율 {cnt['why:scale']})"
+        + (" — PER·PBR·EPS·BPS·ROE·부채비율·영업이익률·매출 성장률 · 3년 실적 · 자본 · EV 배수 · 재무 경고 · 영수증을 비웠어요 "
+           "(가치·퀄리티 점수는 이 회사 없이 매겨요 · 배당은 남겨요)" if hit else ""))
+    for x in names:
+        log(f"  !! 공시 단위: {x}")
+    log(f"· 공시 단위 — 자산=부채+자본 확인: 사업보고서 맞음 {cnt['fy:ok']:,} · 어긋남 {cnt['fy:off']} · 확인 못 함 {cnt['fy:none']:,} | "
+        f"최신 분기 맞음 {cnt['q:ok']:,} · 어긋남 {cnt['q:off']} · 확인 못 함 {cnt['q:none']:,} | 지난해 같은 분기 맞음 {cnt['qp:ok']:,} · "
+        f"어긋남 {cnt['qp:off']} · 확인 못 함 {cnt['qp:none']:,} (확인 못 함 = 자산총계를 읽기 전(2026-11-13)에 캐시에 저장된 재무제표)")
+    log(f"{'  !! ' if real else '· '}PBR {UNIT_PBR_LOOK:g} 미만인데 공시 단위 확인을 통과한 회사 {len(real)}곳 (비우지 않았어요 · 확인해 보세요)"
+        + (": " + "; ".join(real) if real else ""))
+    return {"hit": hit, "real": real, "bal": cnt}
 
 
 # ────────────────────────────────────────────────────────────
@@ -6032,6 +6196,10 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "filed = 유상증자·전환사채·신주인수권부사채(fx [k rights · cb · bw, d 공시일, n 주식 수, rc])가 a → b 를 설명해 공시된 배당 "
                    "그대로 · nc-mismatch = 공시가 배율과 달라, nc-unexplained = 공시로 설명하지 못해 다시 계산하지 않고 배당수익률도 숨김 · "
                    "조회하지 못했으면 칸이 없어요 (divCheck.why.failT)"),
+         "unitChk": ("한국 · 공시 단위 확인에 걸린 회사의 이유 목록 (bs = 읽은 재무제표의 자산 ≠ 부채 + 자본 · scale = 분기 보고서의 재무상태표가 "
+                     "사업보고서 것의 100배 이상이거나 1/100 이하 — 단위를 잘못 적은 보고서) · 이 회사는 per·pbr·eps·bps·roe·debt·opm·g3 와 "
+                     "가치·퀄리티 점수가 빈 칸이고, corp.json 도 같은 칸과 3년 실적·자본·EV 배수·영수증·재무 경고가 빈 칸 (배당은 그대로) · "
+                     "칸이 없으면 확인을 통과했거나 재무제표가 없어요"),
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
@@ -6137,6 +6305,7 @@ def main():
     blank_non_won(kr, fin_map)            # v19.1f (리뷰): 원화가 아닌 재무제표 (두산밥캣 USD) — 같은 자리
     roe_before = {s["t"]: s.get("roe") for s in kr if s.get("cls") == "kr"}   # v19.1f (리뷰): ROE 기준을 바꿔 움직인 것을 세요 (roe_moves)
     mult_extra = fill_multiples(kr, fin_map, kmeta.get("_prefShares") or {})     # v19.1f: 지배주주 몫 · 영수증(epsIn·bpsIn·roeIn)
+    unit_guard(kr, fin_map, mult_extra)   # (2026-11-13) 공시 단위 확인 — 단위가 틀린 재무제표로 만든 숫자를 비워요 (점수·incCheck·corp.json 보다 먼저)
     # v19.1b: 분할에 안전한 배당 (dps3a·dpsF·divSt·dyt) — 해외 기업 비우기 뒤, 점수(dz)·corp.json 보다 먼저
     # v19.1h: 맞춘 해가 있는 종목은 DART 결정 공시로 이유를 확인해요 (dvWhy · 공시와 다른 해는 맞추지 않아요). DART 가 꺼졌으면 조회 실패로 세요
     why = DivWhy(client, px_date)
