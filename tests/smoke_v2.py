@@ -38,6 +38,8 @@
   돌아온 화면 (2026-11-08, 390 · 1280) 멈춘 화면이 다시 보이면 파일을 한 번 받아요: 더 새 발행이면 모든 화면이 새 날짜 · 받지 못함 ·
               못 읽음 · 섞인 발행이면 멈춤 표시 그대로 · 멈춘 데이터가 아니면 받지 않음 · 돌아올 때마다 한 번만 · 10분 안에는 다시 받지
               않음 · 첫 불러오기 실패도 한 번 받음 · 후보 고르기 · 매수 계획 · 가진 종목 넣기 위에는 새 데이터가 기다려요
+  재무제표 통화 (Jack, 2026-11-12) 재무제표가 달러가 아닌 미국 회사(fcur): PER · PBR · 배당수익률 자리에 '주가는 달러, 재무제표는 {통화}
+              기준이라 이 숫자는 계산하지 않았어요.' 한 번씩 (요약 · 내 기준 · 시트 · 가치 · 자세히 · 배당), 통화 이름이 없으면 줄 없이 빈 칸만
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
@@ -9378,6 +9380,194 @@ def scene_reread_lines(R, files, width, shots=None):
         srv.shutdown()
 
 
+# ── Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사 (data.json fcur · src/v2/fcur.js · fixnote.jsx FcurNote) ──
+FCUR_T, FCUR_CODE = "TSM", "TWD"           # 시험 데이터의 TSMC 를 대만 달러 재무제표로 (파이프라인이 PER · PBR · 배당수익률 · 가치 점수를 비운 모양)
+FCUR_NONAME = "MYR"                        # 문구 파일에 이름이 없는 통화 (말레이시아 링깃): 줄 없이 빈 칸만, 날 코드도 없이
+FCUR_PENDING = re.compile(r'^(\s+)([A-Z]{3}): null,(\s+// 제안 \(Jack 승인 대기\) "([^"]+)")$', re.M)
+_FCUR = {}
+
+
+def fcur_files(files, code=FCUR_CODE):
+    f = clone(files)
+    s = next(x for x in f["data.json"]["stocks"] if x["t"] == FCUR_T)
+    assert s["cls"] == "us" and s.get("pbr") and s.get("per"), s                     # 시험 데이터: PBR · PER 이 있던 회사
+    s["fcur"] = code
+    for k in ("per", "pbr", "dy", "vz"):
+        s.pop(k, None)
+    return f
+
+
+def fcur_proposals():
+    """src/copy/v2.js co.curName 의 승인 대기 제안 {코드: 이름} (주석의 따옴표 안). 승인되어 값이 들어간 코드는 없어요."""
+    with open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8") as fh:
+        block = fh.read().split("    curName: {", 1)[1].split("\n    },", 1)[0]
+    return {m.group(2): m.group(4) for m in FCUR_PENDING.finditer(block)}
+
+
+def fcur_named_app():
+    """app.html 을 co.curName 의 승인 대기 이름을 모두 넣고(제안 그대로) 임시 폴더에 빌드해요 (커밋하지 않아요, 폴더는 바로 지워요). 이름이
+    승인되기 전에도 이유 줄이 들어갈 자리를 화면에서 시험하려고요. 이미 승인된 이름은 그대로 두어요."""
+    if "html" not in _FCUR:
+        tmp = tmpdirs.make("baepsae-fcur-")
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+            os.makedirs(os.path.join(tmp, "tools"))
+            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+            p = os.path.join(tmp, "src", "copy", "v2.js")
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+            head, rest = src.split("    curName: {", 1)
+            block, tail = rest.split("\n    },", 1)
+            block, n = FCUR_PENDING.subn(lambda m: f'{m.group(1)}{m.group(2)}: {json.dumps(m.group(4), ensure_ascii=False)},{m.group(3)}', block)
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(head + "    curName: {" + block + "\n    }," + tail)
+            out = os.path.join(tmp, "out")
+            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+            assert r.returncode == 0, r.stdout + r.stderr
+            with open(os.path.join(out, "app.html"), encoding="utf-8") as fh:
+                html = fh.read()
+            if n:
+                with open(os.path.join(ROOT, "app.html"), encoding="utf-8") as fh:
+                    assert html != fh.read(), "이름을 넣어 빌드했는데 app.html 이 같아요"
+            _FCUR["html"] = html
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _FCUR["html"]
+
+
+def scene_us_fcur(R, files, width, named):
+    """재무제표 통화가 달러가 아닌 미국 회사 (Jack, 2026-11-12: '주가는 달러, 재무제표는 {통화} 기준이라 이 숫자는 계산하지 않았어요.').
+    시험 데이터의 TSM 을 fcur "TWD" 로, PER · PBR · 배당수익률 · 가치 점수를 비운 모양(파이프라인과 같아요)으로 바꿔요.
+    named (통화 이름이 있는 빌드: 승인 대기 제안을 넣은 임시 빌드, 이름이 승인되면 커밋한 빌드와 같아요):
+      요약 — 한눈에 칸 위에 줄 한 번 ('대만 달러'), 가치 · 배당 칸은 없어요('자료가 없어요'뿐인 칸) · 실적 · 출렁임 칸은 그대로 ·
+      내 기준과 맞는 정도의 가치 · 배당 줄은 '–' 이고 그 밑에 줄 한 번 · 기준 카드 8개 시트에도 한 번 ·
+      가치 탭 — 줄 한 번, PBR · PER · 비교 · 날짜 줄 · 자세히 링크 없음, 출렁임 카드는 그대로 · 가치 자세히 — 줄 한 번, 배수 목록 없음 ·
+      배당 탭 — 줄 한 번, '자료가 없어요' · 배당수익률 · 100만원어치 없음 · 실적 탭 · AAPL · 삼성전자 — 줄 없음.
+    not named (커밋한 빌드, 문구 파일에 이름이 없는 통화 MYR — 이름이 승인되기 전의 TWD 도 같은 길): 줄도 'MYR' 글자도 없고, 가치 · 배당 칸은
+      다른 빈 숫자처럼 '자료가 없어요' · console 에 코드.
+    모두 12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"미국 재무제표 통화 {width}" + (" · 이름 있는 빌드" if named else " · 이름 없는 통화")
+    code = FCUR_CODE if named else FCUR_NONAME
+    assert FCUR_NONAME not in (CO["curName"] or {}) and FCUR_NONAME not in fcur_proposals(), "이름 없는 통화로 고른 코드에 이름이 생겼어요"
+    cur_name = (CO["curName"] or {}).get(FCUR_CODE) or fcur_proposals().get(FCUR_CODE) if named else None
+    want = fillp(CO["fcur"], currency=cur_name) if cur_name else None
+    assert not named or want, "이름 있는 빌드인데 대만 달러 이름이 없어요"
+    wide = width >= 1024
+    site = build_site(fcur_files(files, code), app=fcur_named_app() if named else None)
+    srv, ctx, page, base = R.open(site, width, path="/app.html?dev=1#home", device=pc_device(width) if wide else None)
+    logs = []
+    page.on("console", lambda m: logs.append(m.text))
+    wait_ready(page)
+    lines = lambda sel="": page.locator(f'{sel} [data-ui-v2="fcur"]'.strip())   # noqa: E731
+
+    def common(where):
+        assert code not in page.locator("body").inner_text(), f"{where}: 통화 코드가 그대로 보여요"
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def summary():
+        co_hash(page, f"#stocks/{FCUR_T}")
+        page.locator('[data-ui-v2="co-summary"]').wait_for(state="visible")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        tiles.wait_for(state="visible")
+        topics = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => e.dataset.topic)")
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        fit.wait_for(state="visible")
+        rows = {r.get_attribute("data-card"): r for r in fit.locator('[data-ui-v2="rank-row"]').all()}
+        assert set(rows) >= {"value", "div"}, list(rows)                         # 고른 기준이 없으면 가치 · 배당 카드 먼저
+        for c in ("value", "div"):
+            assert rows[c].get_attribute("data-side") == "blank" and rows[c].inner_text().strip().endswith("–"), rows[c].inner_text()
+        if named:
+            assert lines().count() == 2, [lines().nth(i).inner_text() for i in range(lines().count())]   # 칸 위 · 내 기준 밑
+            loc = tiles.locator('[data-ui-v2="fcur"]')
+            assert loc.count() == 1 and loc.inner_text().strip() == want and loc.get_attribute("data-cur") == code, loc.inner_text()
+            assert loc.bounding_box()["y"] < tiles.locator('[data-ui-v2="co-tile"]').first.bounding_box()["y"]   # 칸들 위
+            assert topics == ["earn", "risk"], topics                              # '자료가 없어요'뿐인 가치 · 배당 칸은 빼요
+            f1 = fit.locator('[data-ui-v2="fcur"]')
+            assert f1.count() == 1 and f1.inner_text().strip() == want
+            assert f1.bounding_box()["y"] > rows["div"].bounding_box()["y"]       # 줄들 밑
+            assert loc.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        else:
+            assert lines().count() == 0
+            assert topics == ["earn", "value", "div", "risk"], topics             # 이름 승인 전: 다른 빈 숫자와 같은 칸
+            for c in ("value", "div"):
+                t = tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{c}"]')
+                assert t.get_attribute("data-rule") == "na" and t.locator('[data-ui-v2="tile-number"]').count() == 0, c
+                assert CO["tiles"]["na"] in t.inner_text(), t.inner_text()
+            assert any(f"statement currency {code}" in x and "co.curName" in x for x in logs), logs[-5:]
+        common("요약")
+        if shots_dir := R.shots:
+            tiles.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(shots_dir, f"fcur-summary-{width}-{'named' if named else 'pending'}.png"))
+        fit.get_by_role("button", name=CO["fit"]["all"]).click()
+        sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+        sheet.wait_for(state="visible")
+        assert sheet.locator('[data-ui-v2="fcur"]').count() == (1 if named else 0)
+        srow = {r.get_attribute("data-card"): r.get_attribute("data-side") for r in sheet.locator('[data-ui-v2="rank-row"]').all()}
+        assert srow.get("value") == "blank" and srow.get("div") == "blank" and srow.get("growth") in ("top", "bottom"), srow
+        common("기준 카드 시트")
+        page.keyboard.press("Escape")
+        sheet.wait_for(state="detached")
+    R.check(page, S, f"{FCUR_T} 요약: " + ("한눈에 칸 위 · 내 기준 밑 · 시트에 줄 한 번씩, 가치 · 배당 칸 없음" if named
+                                            else f"{code}: 줄 없음 · 가치 · 배당 칸은 '자료가 없어요' · console 에 코드") + " · 가치 · 배당 순위는 '–'", summary)
+
+    def tabs():
+        co_hash(page, f"#stocks/{FCUR_T}/value")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === 'value'")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        for sel in ("co-pbr", "co-per", "co-compare", "co-strip"):
+            assert page.locator(f'[data-ui-v2="{sel}"]').count() == 0, sel
+        assert page.locator('[data-ui-v2="co-risk"]').count() == 1                 # 출렁임은 그대로 (가격으로 만든 값)
+        if named:
+            assert lines('[data-ui-v2="co-value"]').count() == 1 and lines().count() == 1
+            assert lines().inner_text().strip() == want
+            assert val.locator('[data-ui-v2="date-line"]').count() == 0 and page.locator('[data-ui-v2="co-value-more"]').count() == 0
+        else:
+            assert lines().count() == 0
+        common("가치 탭")
+        if named:
+            co_hash(page, f"#stocks/{FCUR_T}/value-more")
+            more = page.locator('[data-ui-v2="co-value-more"]')
+            more.wait_for(state="visible")
+            assert lines('[data-ui-v2="co-value-more"]').count() == 1 and page.locator('[data-ui-v2="co-ratios"]').count() == 0
+            common("가치 자세히")
+        co_hash(page, f"#stocks/{FCUR_T}/div")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === 'div'")
+        div = page.locator('[data-ui-v2="co-div"]')
+        div.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-yield"]').count() == 0 and page.locator('[data-ui-v2="co-million"]').count() == 0
+        if named:
+            assert lines('[data-ui-v2="co-div"]').count() == 1 and lines().count() == 1 and lines().inner_text().strip() == want
+            assert CO["tiles"]["na"] not in div.inner_text(), div.inner_text()
+        else:
+            assert lines().count() == 0 and CO["tiles"]["na"] in div.inner_text(), div.inner_text()
+        common("배당 탭")
+        co_hash(page, f"#stocks/{FCUR_T}/earn")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === 'earn'")
+        page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
+        assert lines().count() == 0                                               # 실적(ROE · 영업이익률 · 매출)은 그대로
+        common("실적 탭")
+        for code in ("AAPL", "005930"):                                           # fcur 없는 회사: 줄 없음, PBR 그대로
+            for ctab in (None, "value", "div"):
+                co_hash(page, f"#stocks/{code}" + (f"/{ctab}" if ctab else ""))
+                page.wait_for_function("(t) => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === t", arg=ctab or "summary")
+                page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+                assert lines().count() == 0, (code, ctab)
+            co_hash(page, f"#stocks/{code}/value")
+            page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+            assert page.locator('[data-ui-v2="co-pbr"]').count() == 1, code
+        R.collect(page)
+    R.check(page, S, f"{FCUR_T} 가치 · 배당 탭" + (" · 가치 자세히: 줄 한 번씩, PBR · PER · 배당수익률 · 날짜 줄 · 자세히 링크 없음" if named
+                                                 else ": 줄 없음 · 숫자 없음") + " · 실적 탭 · AAPL · 삼성전자에는 줄 없음", tabs)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -9453,7 +9643,9 @@ def main():
                    lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280),    # 2026-11-08 돌아온 화면은 한 번 받아요
                    lambda: scene_refetch_drafts(R, files, 390), lambda: scene_refetch_drafts(R, files, 1280),   # 만들던 것 위에는 기다려요
                    lambda: scene_say_why_2(R, files, 1280),                                                 # say-why 2: PC 의 새 데이터 줄 · 홈 공시
-                   lambda: scene_rank_pc(R, files)):                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
+                   lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
+                   lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
+                   lambda: scene_us_fcur(R, files, 1280, True)):
             try:
                 fn()
             except Exception as e:

@@ -192,6 +192,46 @@ export const C = {
     // DART 다시 읽기 뒤: 재무제표를 원화가 아닌 통화로 공시한 한국 회사(corp.json stmtCur, 예: "USD")는 금액이 비어요. 그 숫자가
     // 있을 자리에 한 번씩: 요약의 한눈에 칸 · 실적 탭 · 가치 탭 (자세히 화면도). {currency} = stmtCur 그대로. 미국 종목에는 없어요.
     stmtCur: "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
+    // Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사 (data.json fcur, 예: "TWD"). 파이프라인이 달러 주가 ÷ 그 통화 금액일 수 있는
+    // PER · PBR · 배당수익률(과 가치 점수)을 비워요. 그 숫자가 있을 자리에 한 번씩: 요약의 한눈에 칸 · 가치 탭 · 배당 탭 · 내 기준과 맞는
+    // 정도(카드와 시트) · 가치 자세히. {currency} = 아래 curName 의 한국어 이름 (src/v2/fcur.js). 이름이 없는 코드는 줄 없이 빈 칸만.
+    fcur: "주가는 달러, 재무제표는 {currency} 기준이라 이 숫자는 계산하지 않았어요.",   // chat (Jack, 2026-11-12: 그대로. Jack 의 자리 이름 {통화})
+    // 통화 코드(ISO 4217) → 한국어 이름. 모두 Jack 의 승인을 기다려요 (docs/tasks/v18.3-new-strings-pending.md § 통화 이름): 승인 전에는
+    // null 이라 위 줄이 나오지 않고 숫자만 비어 있어요. "제안" 이 제안한 이름이에요. 2026-11-12 에 나온 통화: BRL CAD CNY DKK EUR HKD JPY
+    // KZT SEK TWD VND (미국 773종목 중 27곳).
+    curName: {
+      EUR: null,   // 제안 (Jack 승인 대기) "유로"
+      GBP: null,   // 제안 (Jack 승인 대기) "영국 파운드"
+      JPY: null,   // 제안 (Jack 승인 대기) "일본 엔"
+      CNY: null,   // 제안 (Jack 승인 대기) "중국 위안"
+      HKD: null,   // 제안 (Jack 승인 대기) "홍콩 달러"
+      TWD: null,   // 제안 (Jack 승인 대기) "대만 달러"
+      KRW: null,   // 제안 (Jack 승인 대기) "원화"
+      CAD: null,   // 제안 (Jack 승인 대기) "캐나다 달러"
+      AUD: null,   // 제안 (Jack 승인 대기) "호주 달러"
+      NZD: null,   // 제안 (Jack 승인 대기) "뉴질랜드 달러"
+      CHF: null,   // 제안 (Jack 승인 대기) "스위스 프랑"
+      SEK: null,   // 제안 (Jack 승인 대기) "스웨덴 크로나"
+      NOK: null,   // 제안 (Jack 승인 대기) "노르웨이 크로네"
+      DKK: null,   // 제안 (Jack 승인 대기) "덴마크 크로네"
+      BRL: null,   // 제안 (Jack 승인 대기) "브라질 헤알"
+      MXN: null,   // 제안 (Jack 승인 대기) "멕시코 페소"
+      INR: null,   // 제안 (Jack 승인 대기) "인도 루피"
+      ILS: null,   // 제안 (Jack 승인 대기) "이스라엘 셰켈"
+      KZT: null,   // 제안 (Jack 승인 대기) "카자흐스탄 텡게"
+      ZAR: null,   // 제안 (Jack 승인 대기) "남아프리카공화국 랜드"
+      ARS: null,   // 제안 (Jack 승인 대기) "아르헨티나 페소"
+      CLP: null,   // 제안 (Jack 승인 대기) "칠레 페소"
+      COP: null,   // 제안 (Jack 승인 대기) "콜롬비아 페소"
+      PEN: null,   // 제안 (Jack 승인 대기) "페루 솔"
+      TRY: null,   // 제안 (Jack 승인 대기) "튀르키예 리라"
+      SGD: null,   // 제안 (Jack 승인 대기) "싱가포르 달러"
+      IDR: null,   // 제안 (Jack 승인 대기) "인도네시아 루피아"
+      PHP: null,   // 제안 (Jack 승인 대기) "필리핀 페소"
+      THB: null,   // 제안 (Jack 승인 대기) "태국 바트"
+      PLN: null,   // 제안 (Jack 승인 대기) "폴란드 즈워티"
+      VND: null,   // 제안 (Jack 승인 대기) "베트남 동"
+    },
     tabs: {
       summary: "요약",  // chat (2026-11-05: PR #36 「새 문구」 그대로) — 첫 탭
       earn: "실적",     // chat (2026-11-05: PR #36 「새 문구」 그대로) — 탭

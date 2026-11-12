@@ -39,7 +39,8 @@ import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { icrOffShown, stmtNotWonFor } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote } from "./fixnote.jsx";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, fcurNoteText } from "./fixnote.jsx";
+import { fcurRowsBlank } from "./fcur.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
@@ -179,10 +180,16 @@ export function logSplitGuard(load) {
 // Statements not in won (corp.json stmtCur): the 실적 and 가치 tiles could only say 자료가 없어요, which is not why their numbers
 // are missing; they are left out and the currency line above the tiles says why (Jack's line, once).
 const AMOUNT_TILES = ["earn", "value"];
+// US statements not in dollars (data.json fcur, Jack 2026-11-12): the 가치 and 배당 tiles could only say 자료가 없어요 (PBR and
+// the yield are blanked); with the reason line on screen they are left out and the line says why, once above the tiles. With no
+// line (no Korean name for the currency yet) they stay as they are: the same blank as any missing number.
+const FCUR_TILES = ["value", "div"];
 function Tiles({ load, s, onTab, tabsOn }) {
   const cur = stmtNotWonFor(s, load.coByT.get(s.t) || null);
-  const views = useMemo(() => tileViews(load, s).filter((v) => !(cur && AMOUNT_TILES.includes(v.topic))), [load, s, cur]);
-  if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
+  const fc = !!fcurNoteText(s);
+  const views = useMemo(() => tileViews(load, s).filter((v) => !(cur && AMOUNT_TILES.includes(v.topic)) && !(fc && FCUR_TILES.includes(v.topic))),
+    [load, s, cur, fc]);
+  if (!views.length && !fc) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
   const md = priceMd(load, s);
   const src = usOf(s) && C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null;     // US: the source of every tile number
   const tabOf = { earn: "earn", value: "value", div: "div", risk: "value" };
@@ -191,6 +198,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
       {T().title && <h3 style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { margin: `0 ${SPACE(1)}px ${SPACE(2)}px` })}>{T().title}</h3>}
       {/* statements not in won (corp.json stmtCur): the 실적 · 가치 tiles have no numbers; the reason once, before them */}
       <StmtCurNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
+      {/* US statements not in dollars (data.json fcur): no PBR · PER · yield; the reason once, before the tiles */}
+      <FcurNote s={s} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
         {views.map((v) => <Tile key={v.topic} v={v} onOpen={tabsOn ? () => onTab(tabOf[v.topic]) : undefined} />)}
       </div>
@@ -439,6 +448,8 @@ function Fit({ load, s, store, wide }) {
         <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{F.title}</h3>
       </div>
       <div style={{ marginTop: SPACE(2) }}>{mine.ids.map((id) => <RankRow key={id} id={id} r={m.get(id)} />)}</div>
+      {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
+      {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
       {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
@@ -449,6 +460,7 @@ function Fit({ load, s, store, wide }) {
         <div data-ui-v2="co-fit-sheet" data-scope={cur === ind ? "ind" : "market"}>
           {indOk && <Segmented label={F.sheet} value={scope} onChange={setScope} options={[{ value: "market", label: F.market }, { value: "ind", label: F.ind }]} />}
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
+          {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
           {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>

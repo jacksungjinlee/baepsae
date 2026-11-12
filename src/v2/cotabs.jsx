@@ -19,6 +19,10 @@
 //   and its calculator, 배당성향, 주가는 무엇으로 움직였나) ends with the PER/EPS line until the DART re-read (fixnote.jsx).
 // After the re-read (Jack, 2026-11-08): a Korean company whose statements are not in won (corp.json stmtCur) has its amounts
 //   blanked; the 실적 and 가치 tabs and their 자세히 screens say why once, where those numbers would be (fixnote.jsx StmtCurNote).
+// A US company whose statements are not in dollars (data.json fcur, Jack 2026-11-12) has PER · PBR · 배당수익률 blanked: the
+//   가치 tab, 가치 자세히 and the 배당 tab say why once where they would be (fixnote.jsx FcurNote), and drop the date line and the
+//   자세히 link of numbers not shown. Without a Korean name for the currency there is no line and the screens stay as for any
+//   missing number (src/v2/fcur.js).
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -34,7 +38,7 @@ import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor, epsBasisCardGone, stmtNotWonFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote } from "./fixnote.jsx";
+import { EpsFixNote, StmtCurNote, FcurNote, fcurNoteText } from "./fixnote.jsx";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -451,6 +455,8 @@ export function ValueTab({ load, s, store, onMore }) {
   const per = num(s.per);
   // statements not in won (corp.json stmtCur): no PER · PBR, so no basis line, date line or 자세히 for them
   const cur = stmtNotWonFor(s, co);
+  // US statements not in dollars (data.json fcur) with the reason line on screen: the same (no PER · PBR to date or detail)
+  const fc = !!fcurNoteText(s);
   const perMed = useMemo(() => indMedian(group, (x) => num(x.per)), [group]);
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;
@@ -470,8 +476,10 @@ export function ValueTab({ load, s, store, onMore }) {
         {head && sub && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{sub}</p>}
         {/* statements not in won (corp.json stmtCur): no PBR · PER; the reason where they would be */}
         <StmtCurNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
+        {/* US statements not in dollars (data.json fcur): no PBR · PER; the reason where they would be */}
+        <FcurNote s={s} style={head ? undefined : { marginTop: 0 }} />
         {!compare && r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
-        {!compare && !cur && (
+        {!compare && !cur && !fc && (
           <Stats>
             {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={pbrSub} />}
             {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perSub} />}
@@ -479,7 +487,7 @@ export function ValueTab({ load, s, store, onMore }) {
         )}
         {!usOf(s) && !cur && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
         <EpsFixNote s={s} show={epsFixFor(s) && per != null && !compare} />
-        {!cur && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
+        {!cur && !fc && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
       </Card>
       {compare && (
         <Card data-ui-v2="co-compare" data-n={compareN(st.co, per != null ? perCo(perMed) : null)}>
@@ -499,7 +507,7 @@ export function ValueTab({ load, s, store, onMore }) {
           {bandLine && riskBandNote(risk) && <Note>{riskBandNote(risk)}</Note>}
         </Card>
       )}
-      {!cur && C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
+      {!cur && !fc && C.co.valueMore.title && <MoreLink id="co-value-more" label={V.more} onClick={onMore} />}
     </div>
   );
 }
@@ -637,6 +645,8 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
         {V.title && <ScreenTitle sub={V.intro || undefined}>{fill(V.title, { name: s.nk })}</ScreenTitle>}
         {/* statements not in won (corp.json stmtCur): no ratios to list; the reason where they would be */}
         <StmtCurNote s={s} co={co} />
+        {/* US statements not in dollars (data.json fcur): no PBR · PER to list; the reason where they would be */}
+        <FcurNote s={s} />
         {rows.length > 0 && V.ratios && (
           <Card data-ui-v2="co-ratios">
             <CardHead icon="tag" tone="value" title={V.ratios} />
@@ -679,9 +689,11 @@ export function DivTab({ load, s }) {
   const co = load.coByT.get(s.t) || null;
   const us = usOf(s);
   const r = us ? divUs(s) : divKr(s, co);
+  // US statements not in dollars (data.json fcur): the yield was not computed; the reason line instead of 자료가 없어요
+  const fc = us && !!fcurNoteText(s);
   // na (the per-share figures disagree with the report's yield, or are missing): the tile's own phrase, never an empty card
   // KR payer (trend off): the tile's own phrase 배당을 줘요 (Jack, 2026-11-05); US keeps 배당을 주는 회사예요
-  const head = r.rule === "na" ? C.co.tiles.na : r.rule === "noPrev" ? C.co.tiles.div.noPrev
+  const head = fc ? null : r.rule === "na" ? C.co.tiles.na : r.rule === "noPrev" ? C.co.tiles.div.noPrev
     : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null)
     : r.rule === "pays" ? (us ? Dv.head.pays : C.co.tiles.div.pays) : Dv.head[r.rule];
   const md = priceMd(load, s);
@@ -713,6 +725,7 @@ export function DivTab({ load, s }) {
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
       {(head || (showDps && Dv.dps) || us) && <Card data-ui-v2="co-div-head">
         {head && <H>{head}</H>}
+        {fc && <FcurNote s={s} style={{ marginTop: 0 }} />}
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>
