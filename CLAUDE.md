@@ -49,7 +49,8 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
 4. Before merging (or asking Jack, when § GitHub process says to ask):
    - all tests pass (CI green once v17.6 lands);
    - a **fresh-eyes review**: spawn a subagent that did not write the change, give it the diff, the task spec and this
-     file, and ask it to find bugs and rule violations. Fix what it finds and summarize it in the PR.
+     file, and ask it to find bugs and rule violations. Fix what it finds and summarize it in the PR. (A revert PR
+     that only undoes a bad merge: rule 7, green CI first, review afterwards.)
 5. Every PR description contains, in this order:
    - **What changed** — plain English, 3–8 bullets, written for Jack.
    - **「새 문구」** — every new or changed user-facing Korean string, verbatim (before → after). "없음" if none.
@@ -65,13 +66,15 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    work: a Fable 5.2 High helper with one narrow target, when Jack asks. Helpers with no judgement in them stay at
    medium.
    Jack's answers on the details (2026-11-12):
-   - Helpers that write or judge something but neither build nor review a PR (Korean text drafts, screenshot or data
-     checks, diagnosing a failed run) run on Opus 5.5 at Extra high, set explicitly. When unsure, Extra high.
-   - On PRs with two reviewers in round 1, the later Fable rounds stop at the first round with no blocker. On other
-     PRs, if round 3 still finds a blocker, stop and ask Jack.
-   - Changes to the test scripts the daily run executes, and to the CI workflow, count as pipeline changes (two
-     reviewers in round 1). Other test-only changes get one reviewer.
-   - A revert PR that only undoes a bad merge is merged as soon as CI is green, and reviewed afterwards.
+   - Helpers that write or judge something but don't build or review (Korean text drafts, screenshot checks,
+     diagnosing a failed run) run on Opus 5.5 at Extra high, set explicitly. When unsure, Extra high. (Audits keep
+     their own line above.)
+   - On pipeline PRs (the two-reviewer kind above), the Fable rounds stop at the first round with no blocker. On
+     other PRs, if round 3 still finds a blocker, stop and ask Jack.
+   - Changes to the test scripts the daily run executes, and to the CI workflow, get the two-reviewer round 1, as
+     pipeline PRs do (nothing else about them changes). Other test-only changes get one reviewer.
+   - A revert PR that only undoes a bad merge is merged as soon as CI is green, and reviewed afterwards (Jack: "(e)
+     still needs green CI").
 
 ## GitHub process — you own it (Jack's standing rule, 2026-10-31)
 
@@ -82,7 +85,7 @@ setting to change (where it is and what to click), never just "go to GitHub".
 **Merge on your own only when ALL of these are true:**
 - `bash build.sh`, `pytest tests/` and the phone-size smoke test (`python tests/smoke_app.py`) pass — and, once v17.6
   lands, the GitHub `ci` check is green;
-- the fresh-eyes subagent review is done and its findings are fixed;
+- the fresh-eyes subagent review is done and its findings are fixed (a revert PR that only undoes a bad merge: rule 7);
 - for pipeline changes: a green `dry_run` on your branch, with the validation summary in the PR;
 - for changes to anything the site serves (for example `src/`, the built pages, `index.html`, `sw.js`, the manifest)
   or to the real-data check scripts and the test helpers they import: the daily run's three checks pass on a fresh

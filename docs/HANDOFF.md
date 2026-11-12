@@ -5,26 +5,32 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-07 22:00 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 00:30 KST — read this first)
 
-**Standing instruction (Jack, 2026-11-13) — speed up what users can see; replaces the cadence notes below where they
-differ.** Safety work stays as careful as it is; it just stops blocking screen work.
-- Two tracks side by side. **Track A, data and pipeline** (currency fix, token fix, gate rows, item 4 report): these
-  merge one per real publish. **Track B, screens:** v19.5b, then v19.7 (portfolio editing: add and remove stocks,
-  record sales, find stocks), then v19.6a, then the rest of v19.6 as its dependencies allow, dark mode as soon as it
-  can go. Screens never wait for Track A; a safety fix jumps ahead only when users see wrong numbers right now or the
-  site could break.
-- Keep Track B fast: at the start of each version send one 「새 문구」 table (every new line from the spec and boards
-  plus every small string, with proposed wording) and build while the answer comes back; follow the boards, and for
-  details neither spec nor board covers match the approved live screens and list them in the PR under "Choices I
-  made" (ask only when a choice changes what a user can do or read); never sit idle (prepare the next PR on its own
-  branch); note unrelated problems in the update instead of fixing them (unless wrong numbers or a breaking site);
-  target at least one user-visible change live every day.
+**Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
+just stops blocking screen work.
+- Two tracks side by side. **Track A, data and pipeline** (the currency fix, the token fix, the gate rows, the item 4
+  report): these merge one per real publish, as already agreed. **Track B, screens:** start now and keep it moving
+  while Track A waits for publishes. Order: v19.5b, then v19.7 (portfolio editing: add and remove stocks, record
+  sales, find stocks, which Jack asked for on 11-07), then v19.6a, then the rest of v19.6 as its dependencies allow,
+  with dark mode as soon as it can go. (The merged v19.7 spec makes v19.7a wait for v19.6a's store v2 and sales, so
+  v19.6a is built first; told Jack 11-13.) A safety fix jumps ahead of screen work only when users are seeing wrong
+  numbers right now or the site could break. Otherwise screens go first.
+- Keep Track B fast: (1) ask Korean wording questions before you build, not during — at the start of each version
+  send every new line from the spec and boards, plus every small string you'll need, in one 「새 문구」 table with
+  proposed wording, and build while the answer comes back; (2) follow the boards; for details neither the spec nor
+  the board covers (spacing, order, small states), match the approved screens already live and list them in the PR
+  under "Choices I made"; ask only when a choice changes what a user can do or read; (3) don't sit idle: while a PR
+  waits for CI, review or an answer, prepare the next one on its own branch; (4) note unrelated problems in the
+  update instead of fixing them, unless they're wrong numbers users see or something that could break the site;
+  (5) target: at least one change users can see goes live every day.
 - After each screen merge: besides the live check, tell Jack exactly where to look on his phone (tab, what to tap,
   what he should see).
-- Updates, short, in this shape: 1. Problems. 2. Live since last update. 3. In progress, one line per PR. 4. Questions,
-  recommended answer first, all in one place. 5. Once a day: a table of every approved board (v19.3, v19.5, v19.6,
-  v19.7) marked live, partly live or not started.
+- Updates, short, in this shape: 1. Problems (if any). 2. Live since last update: what users see now. 3. In progress,
+  one line per PR. 4. Questions, with the recommended answer first, all in one place. 5. Once a day: a table of every
+  approved board (v19.3, v19.5, v19.6, v19.7) marked live, partly live or not started.
+- Open (asked Jack 11-13): whether the 11-07 notes below (at most two open app PRs; at most two question messages a
+  day; the evening list) still hold next to this instruction, and where v19.4 goes (v19.6h waits for it).
 
 **Working cadence (Jack, 2026-11-07 evening — replaces the "work lean" note below where they differ):** ship faster;
 Jack is fine with more of his plan being used.
