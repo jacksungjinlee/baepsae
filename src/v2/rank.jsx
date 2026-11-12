@@ -237,6 +237,16 @@ function GroupRow({ i, g, copy, onOpen }) {
   );
 }
 
+// A chip scrolled into view inside its own scrolling row (the page itself never scrolls for it).
+function inView(row, el) {
+  if (!row || !el) return;
+  try {
+    const r = row.getBoundingClientRect(), e = el.getBoundingClientRect(), pad = SPACE(4);
+    if (e.left < r.left + pad) row.scrollLeft += e.left - r.left - pad;
+    else if (e.right > r.right - pad) row.scrollLeft += e.right - r.right + pad;
+  } catch (x) { /* ignore */ }
+}
+
 // ---------------- the card ----------------
 // load · store: the app's. full: the 종목 tab's still list of 30 (no motion, no 전체 보기). go: the app's tab move (홈 only).
 // tapper: the 종목 tab's useStockTap (one 최근 본 종목 list for the whole tab).
@@ -251,6 +261,7 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const boxRef = useRef(null);
   const chipRow = useRef(null);
   const chipRefs = useRef({});
+  const critRow = useRef(null);
   const backRef = useRef(null);
   const [group, setGroup] = useState(null);
   const ok = !!load && load.status === "ok";
@@ -290,16 +301,9 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const roll = useRoll(ok && dated && !still && top.length > 0);
   const moving = roll.why == null;
 
-  // the chosen chip in view inside its row (never the page)
-  useEffect(() => {
-    const row = chipRow.current, el = chipRefs.current[chip];
-    if (!row || !el) return;
-    try {
-      const r = row.getBoundingClientRect(), e = el.getBoundingClientRect(), pad = SPACE(4);
-      if (e.left < r.left + pad) row.scrollLeft += e.left - r.left - pad;
-      else if (e.right > r.right - pad) row.scrollLeft += e.right - r.right + pad;
-    } catch (e) { /* ignore */ }
-  }, [chip, mk, chips.length]);
+  // the chosen chip in view inside its row (never the page), and the chosen 기준 in the 기준별 row
+  useEffect(() => { inView(chipRow.current, chipRefs.current[chip]); }, [chip, mk, chips.length]);
+  useEffect(() => { if (chip === "crit") inView(critRow.current, chipRefs.current["crit:" + crit]); }, [chip, crit, mk]);
   // 전체 보기 landed here: this card in view, focus on its title
   useEffect(() => {
     if (!full || !ok || !takeJump()) return;
@@ -321,7 +325,7 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const lines = opened ? [C.rank.p.groupLine].filter(Boolean)
     : chip === "val" ? [mk === "us" ? C.rank.line.valUs : C.rank.line.val]
       : chip === "crit" ? [fill(C.rank.line.crit, { card: C.build.cards[crit].name, basis: C.build.cards[crit].basis })]
-        : chip === "div" ? [C.rank.line.div, mk === "us" ? C.rank.line.divUs : null].filter(Boolean)
+        : chip === "div" ? [C.rank.line.div, mk === "us" ? C.rpt.divUs : null].filter(Boolean)
           : [C.rank.line[chip]];
   const tapOf = (s) => tp.props({ t: s.t, cls: s.cls, s }).onTap;
   const body = (copy) => top.map((r, i) => (kind === "ind"
@@ -352,10 +356,11 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
         ))}
       </div>
       {chip === "crit" && (
-        <div data-ui-v2="rank-crit" role="group" aria-label={C.rank.chips.crit}
+        <div ref={critRow} data-ui-v2="rank-crit" role="group" aria-label={C.rank.chips.crit}
           style={{ margin: `${SPACE(2)}px -${SPACE(4)}px 0`, padding: `0 ${SPACE(4)}px`, display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "thin" }}>
           {critShown.map((id) => (
-            <Chip key={id} id={id} on={id === crit} pic={CARD_PICS[id]} onClick={() => choose({ crit: id })}>{C.build.cards[id].name}</Chip>
+            <Chip key={id} id={id} on={id === crit} pic={CARD_PICS[id]} refOf={(el) => { chipRefs.current["crit:" + id] = el; }}
+              onClick={() => choose({ crit: id })}>{C.build.cards[id].name}</Chip>
           ))}
         </div>
       )}

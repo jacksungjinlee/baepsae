@@ -113,7 +113,8 @@ export const C = {
   },
 
   // 홈 · 종목 순위 (v19.5b, docs/tasks/v19.5-home-lists-and-icon.md Part A, 보드 HomeMovers2 · 2b · 2c): 한국 · 미국 스위치는
-  // pick.market, 기준별의 이름과 순서 줄은 build.cards 를 그대로 써요. 아래는 Appendix 1 그대로 — chat (2026-11-06: Jack 이 v19.5 를
+  // pick.market, 기준별의 이름과 순서 줄은 build.cards, 배당수익률의 미국 줄(Appendix 1 '배당수익률 US line')은 같은 문구인 rpt.divUs 를
+  // 그대로 써요 (같은 문구를 두 벌 두지 않아요: tests/test_say_why.py). 아래는 Appendix 1 그대로 — chat (2026-11-06: Jack 이 v19.5 를
   // 넘기며 승인, "{date} 종가 (미국 시간)" 은 2026-11-07). Appendix 1 의 {기준} 자리는 fill() 이 읽는 {card} 로 적었어요.
   rank: {
     title: "종목 순위",
@@ -128,7 +129,6 @@ export const C = {
       crit: "{card} 카드와 같은 순서({basis})예요.",                  // {card}: build.cards[id].name · {basis}: build.cards[id].basis
       mine: "내 포트폴리오에 준 기준 점수로 고른 순서예요.",
       div: "오늘 주가로 계산한 배당수익률이 높은 순서예요.",
-      divUs: "미국 종목은 최근 배당을 1년치로 환산한 값이에요.",          // 미국에서만, div 줄 다음
       ind: "업종마다 오늘 평균 등락률이에요. 많이 오른 업종부터 보여 드려요.",
     },
     surgeX: "평소의 {x}배",                                         // 거래 급증 줄의 숫자

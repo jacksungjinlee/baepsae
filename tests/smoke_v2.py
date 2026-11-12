@@ -3536,7 +3536,7 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
     elif chip == "div":
         vs = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => Number(e.dataset.v))")
         assert vs == sorted(vs, reverse=True) and all(re.fullmatch(RANK_NUM["div"], n) for n in nums), (vs, nums)
-        assert line == L["div"] + ("\n" + L["divUs"] if mk == "us" else ""), line
+        assert line == L["div"] + ("\n" + C["rpt"]["divUs"] if mk == "us" else ""), line       # 미국 줄은 같은 문구의 rpt.divUs
         for t in rows:
             s = by_t(stocks)[t]
             assert s in rank_base(stocks, mk) and isnum(s.get("dyt" if mk == "kr" else "dy")), t
@@ -3591,6 +3591,8 @@ def scene_rank(R, files, width):
                         crits = page.locator('[data-ui-v2="rank-crit"] [data-ui-v2="rank-chip"]')
                         assert crits.evaluate_all("(els) => els.map((e) => e.dataset.chip)") == list(RANK_CRIT)
                         assert crits.locator("img").evaluate_all("(els) => els.map((e) => e.getAttribute('src'))") == [f"pictures/{CARD_TABLE_PICS[c]}.webp" for c in RANK_CRIT]
+                        row, on = page.locator('[data-ui-v2="rank-crit"]').bounding_box(), page.locator(f'[data-ui-v2="rank-crit"] [data-chip="{crit}"]').bounding_box()
+                        assert on["x"] >= row["x"] - 0.5 and on["x"] + on["width"] <= row["x"] + row["width"] + 0.5, (crit, row, on)   # 고른 기준이 줄 안에
                     rank_check_list(page, stocks, coby, mk, chip, crit)
                     if chip == "surge":
                         assert surge_big in rank_ts(page) and surge_small not in rank_ts(page), rank_ts(page)
