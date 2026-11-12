@@ -76,15 +76,20 @@ serve the `docs/` folder (two of its files must answer "not found").
     - Without `--data` (CI) none of this applies: a missing company or any such notice is a failure, as before.
     - Never skip the check itself to get the data out.
 - **CI runs on fixed data (since #104).** A pull request's checks no longer read the day's files: `smoke_app` uses a
-  trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 395 KB; its few filing rows carry made-up people's names), `smoke_v2` and `smoke_launch` use the
+  trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 395 KB; its seven insider-trade rows are made up except for company and date), `smoke_v2` and `smoke_launch` use the
   2.0 test data (`tests/fixtures/v2`), and `smoke_app` and `smoke_v2` run on a test clock that starts at 07:00 KST on a
   fixed day (`tests/testclock.py`). So a pull request's code meets today's real data only in the daily run above, or when
   the three commands are run by hand: `python tests/real_data_check.py --data DIR`, `python tests/smoke_launch.py --data DIR`
   and `python tests/smoke_app.py --data DIR`. `CLAUDE.md` requires that before merging any PR that changes what the
-  browser runs (a stopgap until the deploy runs them itself): put a fresh copy of the four files in a folder outside the
-  checkout (`git fetch origin main`, then `git show origin/main:data.json > DIR/data.json` and so on), run the three
-  commands and paste their result lines into the PR.
-  To refresh the snapshot from a newer publish (only when a new field or a new kind of stock must be in it): run
+  site serves, or the check scripts and their helpers (a stopgap until the deploy runs them itself): put a fresh copy of
+  the four files the site serves in a folder outside the checkout (`git fetch origin data`, then
+  `git show origin/data:data.json > DIR/data.json` and so on for corp, disc and macro; never copy them over the
+  checkout's own files), run the three commands and paste their result lines and the data's date (`pxDate`) into the
+  PR. If one fails, run the same three on `main`'s code with the same folder: if `main` fails too it is not the PR;
+  tell Jack and treat it as a data problem (the daily run's screen check would hold the next publish for the same
+  reason).
+  To refresh the snapshot from a newer publish (only when a new field or a new kind of stock must be in it; the
+  script refuses a day on which a built-in stock of the old app is missing or blank, or gold is an estimate): run
   `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
   `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks

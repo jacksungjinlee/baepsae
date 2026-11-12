@@ -74,11 +74,13 @@ setting to change (where it is and what to click), never just "go to GitHub".
   lands, the GitHub `ci` check is green;
 - the fresh-eyes subagent review is done and its findings are fixed;
 - for pipeline changes: a green `dry_run` on your branch, with the validation summary in the PR;
-- for changes to what the browser runs (`src/`, the built pages, `sw.js`) or to the real-data check scripts: the daily
-  run's three checks pass on a fresh copy of the four data files from `main`, with their result lines in the PR
-  (`python tests/real_data_check.py --data DIR`, `python tests/smoke_launch.py --data DIR`,
-  `python tests/smoke_app.py --data DIR`). CI uses fixed data since #104, so this is where a PR meets today's data
-  (Jack, 2026-11-12: a stopgap until the deploy runs these checks itself);
+- for changes to anything the site serves (`src/`, the built pages, `index.html`, `sw.js`, the manifest) or to the
+  real-data check scripts and the test helpers they import: the daily run's three checks pass on a fresh copy of the
+  four data files the site serves now (the `data` branch), kept in a folder outside the checkout, with their result
+  lines and the data's date in the PR (`python tests/real_data_check.py --data DIR`,
+  `python tests/smoke_launch.py --data DIR`, `python tests/smoke_app.py --data DIR`). CI uses fixed data since #104, so
+  this is where a PR meets real data. If one fails for a reason that is not the PR's (it fails on `main`'s code too),
+  don't merge around it: tell Jack. (Jack, 2026-11-12: a stopgap until the deploy runs these checks itself);
 - no safety rule is loosened.
 
 **Ask Jack first, in this chat, with a short yes/no question in plain words** (never send him to GitHub), when a change:

@@ -75,7 +75,7 @@ def test_snapshot_is_small_and_matches_its_own_description():
     meta = snap("snap_meta.json")
     data, corp, disc = snap("snap_data.json"), snap("snap_corp.json"), snap("snap_disc.json")
     sizes = {n: os.path.getsize(os.path.join(SNAP, n)) for n in NAMES if n.startswith("snap_") and n != "snap_meta.json"}
-    assert sizes == meta["bytes"] and sum(sizes.values()) <= MAX_BYTES, sizes                         # 작게 (지금 47만 바이트)
+    assert sizes == meta["bytes"] and sum(sizes.values()) <= MAX_BYTES, sizes                         # 작게 (지금 39만 5천 바이트)
     assert meta["kept"] == {"stocks": len(data["stocks"]), "companies": len(corp["companies"]),
                             "insider": len(disc["insider"]), "nps": len(disc["nps"])}
     assert all(meta["kept"][k] <= meta["published"][k] for k in meta["kept"])
@@ -282,26 +282,57 @@ def test_every_stock_smoke_app_names_is_in_the_snapshot():
         assert f'"{t}"' in src and t in have, t
 
 
-# ── 2026-11-12 (Jack): 공시 줄은 시험이 쓰는 만큼만, 사람 이름은 지어낸 것으로 ──
-def test_snapshot_filing_rows_are_few_and_carry_no_real_names():
+# ── 2026-11-12 (Jack): 공시 줄은 조금만, 사람에 관한 값은 모두 지어낸 것으로 ──
+def test_snapshot_filing_rows_are_few_and_made_up():
+    """임원 거래 줄: 회사와 날짜만 발행 그대로, 이름 · 직위 · 접수번호 · 수량 · 비율 · 금액은 지어낸 값 (실제 사람의 실제 거래를 가리키지 않게).
+    시험은 이 줄들의 내용을 보지 않아요 — 목록이 그려지는지만 (페이지 오류 0건) 봐요."""
     sys.path.insert(0, SNAP)
     import make_snapshot as MS
     disc, meta, data = snap("snap_disc.json"), snap("snap_meta.json"), snap("snap_data.json")
     ins, nps = disc["insider"], disc["nps"]
-    # 임원 · 주요주주 줄: tests/smoke_app.py 가 이름을 부르는 종목만, 종목마다 INSIDER_PER 줄까지
     named = MS.quoted_tickers({s["t"] for s in data["stocks"]}, [os.path.join(ROOT, "tests", "smoke_app.py")])
     per = {}
     for x in ins:
         per[x["t"]] = per.get(x["t"], 0) + 1
     assert ins and set(per) <= named and max(per.values()) <= MS.INSIDER_PER == meta["rule"]["insiderPerStock"], per
-    assert {"005930", "005380"} <= set(per)                                   # 삼성전자 · 현대차의 기업분석에 내부자 줄이 보여요
     assert 0 < len(nps) <= MS.NPS_ROWS == meta["rule"]["npsRows"]
-    # 사람 이름(nm)은 글자표에서 뽑은 지어낸 세 글자, 접수번호(rc)는 날짜 + 9 + 순번 (실제 접수번호 모양이 아니에요)
+    by_t = {s["t"]: s for s in data["stocks"]}
     for i, x in enumerate(ins):
-        assert re.fullmatch(f"[{MS.SYL}]{{3}}", x["nm"]), x
-        assert x["rc"] == f"{x['d']}9{i + 1:05d}", x
+        assert re.fullmatch(f"[{MS.SYL}]{{3}}", x["nm"]) and x["nm"] == MS.made_up_name(i), x
+        assert x["pos"] == "임원" and x["rc"] == f"TEST-{i + 1:04d}" and not re.fullmatch(r"\d{14}", x["rc"]), x   # 접수번호 모양(숫자 14자리)이 아니에요
+        assert abs(x["q"]) == (i + 1) * 100 and x["r"] == 0.0 and x["amt"] == round(0.1 * (i + 1), 1), x
+        assert x["nk"] == by_t[x["t"]]["nk"] and re.fullmatch(r"\d{8}", x["d"]), x                              # 회사 · 날짜는 그대로
+    assert {x["q"] > 0 for x in ins} == {True, False}                         # 산 줄 · 판 줄이 다 있어요
+    assert set(ins[0]) == {"rc", "d", "t", "nk", "s", "cap", "nm", "pos", "q", "r", "amt"}   # 줄의 모양은 발행 파일 그대로
     assert len({MS.made_up_name(i) for i in range(196)}) == 196             # 지어낸 이름끼리는 겹치지 않아요
-    assert "실제 이름은 하나도 없어요" in meta["madeUp"]
-    assert not any("nm" in x for x in nps)                                   # 국민연금 줄에는 사람 이름이 없어요
-    # 사람 이름이 들어갈 수 있는 곳은 거기뿐: 다른 세 파일은 줄이기만 한 사본이에요 (회사 이름 · 숫자)
-    assert "insider" not in snap("snap_data.json") and "insider" not in snap("snap_corp.json") and "insider" not in snap("snap_macro.json")
+    assert "nm · pos · rc · q · r · amt" in meta["madeUp"]
+    assert not any("nm" in x for x in nps)                                   # 국민연금 줄에는 사람이 없어요 (회사 · 보유 비율)
+
+
+def test_snapshot_shows_no_example_price_notice():
+    """CI 의 예전 뱁새 검사는 '예시 가격 · 금 환산' 안내가 없는 데이터를 요구해요 (smoke_app.banner_due). 고정 데이터에는 내장 종목 75개가
+    모두 있고 가격 · 베타 · 변동성이 차 있어야 해요 — make_snapshot.py 도 그렇지 않은 날의 발행으로는 만들기를 거부해요."""
+    files, _ = smoke_app.read_snapshot()
+    assert smoke_app.example_price_stocks(files) == ([], [])
+    assert smoke_app.example_price_stocks(smoke_app.upgrade(json.loads(json.dumps(files)))) == ([], [])
+    src = src_of(os.path.join("fixtures", "snapshot", "make_snapshot.py"))
+    assert "이 발행으로는 고정 데이터를 만들 수 없어요" in src and 'for k in ("price", "beta", "vol")' in src
+    sys.path.insert(0, SNAP)
+    import make_snapshot as MS
+    have = {"BRK-B", "KO", "005930"}                                          # 표기만 다른 티커(BRK.B)는 같은 종목 · 대소문자는 구별
+    assert MS.norm("BRK.B") == MS.norm("BRK-B") and MS.norm("ko") != MS.norm("KO")
+    assert have == {t for t in have if MS.norm(t) in {MS.norm(q) for q in ("BRK.B", "KO", "005930", "ko")}}
+
+
+def test_runner_keeps_its_lists_through_the_clock_check():
+    """리뷰 2026-11-12: 병합 실수로 Runner 의 '확인 못 함 · 알림' 목록이 saw_clock 안에서 만들어졌어요 — 그 장면이 돌지 않는 실행은
+    끝에서 죽고(CI 의 장면 몫 2/2), 돌 때마다 목록이 비워졌어요. 진짜 Runner 로 봐요 (가짜 Runner 는 이 실수를 가려요)."""
+    R = smoke_app.Runner(None, None)
+    assert R.unseen == [] and R.notes == [] and R.results == []
+    R.unseen.append("u"); R.notes.append("n")
+    R.saw_clock(None, None)                                                   # 시계를 시작하지 않은 실행: 아무것도 하지 않아요
+    assert R.unseen == ["u"] and R.notes == ["n"]
+    src = src_of("smoke_app.py")
+    a = src.index("class Runner:")
+    init = src[src.index("    def __init__(self, browser, shots):", a):src.index("    def new_context(", a)]
+    assert "self.unseen = []" in init and "self.notes = []" in init and src.count("self.unseen = []") == 1 and src.count("self.notes = []") == 1

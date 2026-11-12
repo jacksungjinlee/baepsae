@@ -177,6 +177,8 @@ class Runner:
         self.results, self.errors, self.console = [], [], []
         self.clock_drift = []          # 고정 데이터일 때: 창마다 (그 창의 시계 − 시험의 시계) 초
         self.windows, self.measured = [], set()      # 연 창 모두 · 그중 시계를 잰 창
+        self.unseen = []        # 오늘 데이터에 볼 회사가 없어 확인하지 못한 장면 (실제 데이터로 돌 때만 — none_today)
+        self.notes = []         # 오늘 데이터라서 다르게 확인한 것 (실제 데이터로 돌 때만 — banner_due)
 
     def new_context(self, clock=True, **kw):
         """브라우저 창 하나. 고정 데이터로 돌 때는 창의 날짜 · 시각이 시험의 시계와 같아요 (testclock.DATE_SHIM · 타이머는 진짜 그대로).
@@ -217,8 +219,6 @@ class Runner:
         if TC.started:
             self.clock_drift.append(TC.drift(page, base))
             self.measured.add(id(page.context))
-        self.unseen = []        # 오늘 데이터에 볼 회사가 없어 확인하지 못한 장면 (실제 데이터로 돌 때만 — none_today)
-        self.notes = []         # 오늘 데이터라서 다르게 확인한 것 (실제 데이터로 돌 때만 — banner_due)
 
     def open(self, site, sw=False, local=None, once=False):
         srv, base = serve(site)
@@ -2681,11 +2681,12 @@ def scene_stale_recheck(R, files):
         f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=2)).isoformat(timespec="seconds")
         f["data.json"]["nextPub"] = now.date().isoformat()
         f["data.json"]["staleAfter"] = (now + dt.timedelta(minutes=30)).isoformat(timespec="seconds")
-        # 예정일 = 경고를 읽는 바로 그 순간의 날짜 (자정을 넘겨도 n = 1). 2026-11-12 (Jack): 예전에는 두 경우 모두 40분 뒤의 날짜였는데,
-        # '화면이 다시 보일 때'는 시계를 45분 옮겨요 — 23:15~23:20 에 돌면 예정일은 오늘, 읽는 때는 내일이 되어 앱이 규칙대로
-        # '2일째 갱신이 멈췄어요'라고 했고(앱이 맞아요: n = 예정일부터 센 날 + 1, data.js freshness) 시험만 틀렸어요.
+        # 예정일 = 경고를 읽는 때보다 조금(9분) 뒤의 날짜 (자정을 넘겨도 n = 1: 앱은 n 을 1 아래로 내리지 않아요, data.js freshness).
+        # 2026-11-12 (Jack): 예전에는 두 경우 모두 40분 뒤의 날짜였는데, '화면이 다시 보일 때'는 시계를 45분 옮겨요 — 23:15~23:20 에 돌면
+        # 예정일은 오늘, 읽는 때는 내일이 되어 앱이 규칙대로 '2일째 갱신이 멈췄어요'라고 했어요 (앱이 맞고 시험이 틀렸어요).
+        # 9분의 여유: 페이지 시계는 화면이 뜨는 동안에도 흘러서, 타이머 쪽은 31분 + 몇 초 뒤에 읽어요 (타이머 쪽 예정일은 예전과 같은 40분 뒤).
         jump = dt.timedelta(minutes=31 if how == "timer" else 45)
-        f["data.json"]["nextPub"] = (now + jump).date().isoformat()
+        f["data.json"]["nextPub"] = (now + jump + dt.timedelta(minutes=9)).date().isoformat()
         srv, base = serve(build_site(f))
         ctx = R.new_context(clock=False, viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())

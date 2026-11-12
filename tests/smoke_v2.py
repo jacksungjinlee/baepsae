@@ -4745,10 +4745,11 @@ def scene_stale_recheck(R, files, width):
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
     for how in ("timer", "visible"):
         now = now_dt()
-        # 예정일 = 경고를 읽는 바로 그 순간의 날짜 (타이머: 31분 뒤 · 화면이 다시 보일 때: 45분 뒤). 2026-11-12 (Jack): 예전에는 둘 다
+        # 예정일 = 경고를 읽는 때(타이머: 31분 뒤 · 화면이 다시 보일 때: 45분 뒤)보다 9분 뒤의 날짜. 2026-11-12 (Jack): 예전에는 둘 다
         # 40분 뒤의 날짜라, 23:15~23:20 에 돌면 45분 뒤는 다음 날이 되어 앱이 규칙대로 '2일째 갱신이 멈췄어요'라고 했어요 (앱이 맞고 시험이 틀림).
+        # 9분의 여유: 페이지 시계는 화면이 뜨는 동안에도 흘러요 (타이머 쪽 예정일은 예전과 같은 40분 뒤 · 앱은 n 을 1 아래로 내리지 않아요).
         jump = dt.timedelta(minutes=31 if how == "timer" else 45)
-        f = stale_files(files, 2, 0.5, due_at=now + jump)                         # 발행 2시간 전 · staleAfter 30분 뒤
+        f = stale_files(files, 2, 0.5, due_at=now + jump + dt.timedelta(minutes=9))   # 발행 2시간 전 · staleAfter 30분 뒤
         srv, base = serve(build_site(f))
         ctx = R.new_context(clock=False, viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
