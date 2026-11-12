@@ -29,7 +29,8 @@ import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
 import { Editor } from "./editor.jsx";
-import { emptyDraft } from "./edit.js";
+import { emptyDraft, pending as editPending } from "./edit.js";
+import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
@@ -516,7 +517,13 @@ export function App({ source }) {
     const cur = e && e.deckId === editId ? e.draft : emptyDraft();
     return { deckId: editId, draft: typeof f === "function" ? f(cur) : f };
   }), [editId]);
-  const openEdit = useCallback((id) => router.go("portfolio", "edit/" + id), [router.go]);
+  // round-1 nit: opening another portfolio's 종목 바꾸기 while one portfolio's edits wait asks first (they would be dropped)
+  const [askDrop, setAskDrop] = useState(null);
+  const openEdit = useCallback((id) => {
+    const waiting = editor && editor.deckId !== id ? view.data.decks.find((d) => d.id === editor.deckId) : null;
+    if (waiting && editPending(waiting, editor.draft)) { setAskDrop(id); return; }
+    router.go("portfolio", "edit/" + id);
+  }, [router.go, editor, view]);
   const leaveEdit = useCallback(() => { setEditor(null); router.back("portfolio"); }, [router.back]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
@@ -572,6 +579,15 @@ export function App({ source }) {
                 <HeldContext.Provider value={heldHere}>
                   <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
                 </HeldContext.Provider>
+                {askDrop && (
+                  <BottomSheet open title={C.edit.leave} onClose={() => setAskDrop(null)} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
+                    <div data-ui-v2="edit-drop" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
+                      <Button onClick={() => setAskDrop(null)} style={{ flex: 1 }}>{C.app.close}</Button>
+                      <Button kind="secondary" onClick={() => { const id = askDrop; setAskDrop(null); setEditor(null); router.go("portfolio", "edit/" + id); }}
+                        style={{ flex: 1 }}>{C.edit.leaveGo || C.edit.title}</Button>
+                    </div>
+                  </BottomSheet>
+                )}
                 {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
                   tabH={ownBar ? 0 : TAB_H} theme={theme} />}
                 {!wide && !ownBar && <TabBar value={tab} onChange={go} />}

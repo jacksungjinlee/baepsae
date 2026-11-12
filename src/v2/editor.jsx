@@ -12,6 +12,7 @@ import { Icon } from "../ui/icons.jsx";
 import { Button, BottomSheet, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, todayKst, recDate } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useLayout, useMode, SIDE_W, SampleLabel } from "./ui.jsx";
+import { priceDate } from "./cofmt.js";
 import { CoMark } from "./logo.jsx";
 import { writeStore } from "./store.js";
 import { evaluateDeck, todayCtx } from "./rules.js";
@@ -67,7 +68,7 @@ function IndBar({ parts }) {
           <span key={p.key || "none"} data-ui-v2="edit-ind-part" data-ind={p.key} data-pct={Math.round(p.pct * 100) / 100}
             style={{ ...tx(SIZE.xs, WEIGHT.regular, COLOR.neutral), display: "inline-flex", alignItems: "center", gap: 5, margin: `${SPACE(2)}px ${SPACE(3)}px 0 0` }}>
             <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: 3, background: shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1], flexShrink: 0 }} />
-            {p.name || C.rpt.noInd} <b style={{ color: COLOR.ink }}>{pctText(p.pct)}%</b>
+            {p.cushion ? C.build.s4.cushionLabel : p.name || C.rpt.noInd} <b style={{ color: COLOR.ink }}>{pctText(p.pct)}%</b>
           </span>
         ))}
       </div>
@@ -75,16 +76,16 @@ function IndBar({ parts }) {
   );
 }
 
-// − 25% +: 44 px each way. + at its limit looks dimmed but stays a working button: tapped at the cap, the row says why it
-// cannot go higher (spec [C2]).
+// − 25% +: 44 px each way. + at its limit is aria-disabled and dimmed but still answers a tap: at the cap, the row then says
+// why it cannot go higher (spec [C2]); the value and that line are read out when they change (aria-live).
 function Stepper({ name, pct, onDown, onUp, downOff, upOff }) {
   const btn = (off) => ({ ...tap, width: TOUCH, height: TOUCH, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center",
     opacity: off ? 0.4 : 1, cursor: off ? "default" : "pointer", flexShrink: 0, ...tx(SIZE.h3, WEIGHT.semi, COLOR.text2, { lineHeight: 1 }) });
   return (
     <span data-ui-v2="edit-stepper" style={{ display: "inline-flex", alignItems: "center", background: COLOR.page, borderRadius: RADIUS.sm, flexShrink: 0 }}>
       <button type="button" data-ui-v2="edit-down" aria-label={downLabel(name)} disabled={downOff} onClick={onDown} style={btn(downOff)}><span aria-hidden="true">{"\u2212"}</span></button>
-      <b data-ui-v2="edit-pct" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { minWidth: SPACE(11), textAlign: "center" })}>{pctText(pct)}%</b>
-      <button type="button" data-ui-v2="edit-up" aria-label={upLabel(name)} onClick={onUp} style={btn(upOff)}><span aria-hidden="true">+</span></button>
+      <b data-ui-v2="edit-pct" aria-live="polite" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { minWidth: SPACE(11), textAlign: "center" })}>{pctText(pct)}%</b>
+      <button type="button" data-ui-v2="edit-up" aria-label={upLabel(name)} aria-disabled={upOff ? "true" : undefined} onClick={onUp} style={btn(upOff)}><span aria-hidden="true">+</span></button>
     </span>
   );
 }
@@ -93,8 +94,8 @@ function Stepper({ name, pct, onDown, onUp, downOff, upOff }) {
 // line of their own under the name, so a 320 px screen keeps every target 44 px wide and the name readable).
 function Row({ r, qty, ind, x, cap, rows, onStep, onRemove, capHit, only }) {
   const limits = E.stepLimits(rows, r.t, cap);
-  const downOff = E.stepped(rows, r.t, -1, cap) == null;
-  const upOff = E.stepped(rows, r.t, 1, cap) == null;
+  const downOff = E.stepped(rows, r.t, -1, cap, E.storedPct(r)) == null;
+  const upOff = E.stepped(rows, r.t, 1, cap, E.storedPct(r)) == null;
   const atCap = cap != null && upOff && r.pct >= Math.min(cap, limits.hi) - 1e-9 && limits.hi === cap;
   const controls = (
     <div style={{ display: "flex", alignItems: "center", gap: SPACE(1), flexShrink: 0, marginLeft: "auto" }}>
@@ -112,12 +113,12 @@ function Row({ r, qty, ind, x, cap, rows, onStep, onRemove, capHit, only }) {
         <div style={{ flex: "1 1 120px", minWidth: 0 }}>
           <div style={tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{r.nk}</div>
           <div data-ui-v2="edit-row-sub" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2, wordBreak: "keep-all" })}>
-            {fill(C.edit.row, { qty: qtyText(qty), industry: ind || C.rpt.noInd })}</div>
+            {fill(C.edit.row, { qty: qtyText(qty), industry: ind === E.CUSHION ? C.build.s4.cushionLabel : ind || C.rpt.noInd })}</div>
         </div>
         {controls}
       </div>
       <BrokenLine x={x} />
-      {capHit === r.t && atCap && <Note data-ui-v2="edit-max">{fill(C.edit.max, { x: cap })}</Note>}
+      <div aria-live="polite">{capHit === r.t && atCap && <Note data-ui-v2="edit-max">{fill(C.edit.max, { x: cap })}</Note>}</div>
       {only && <Note data-ui-v2="edit-last">{C.rm.last}</Note>}
     </div>
   );
@@ -139,14 +140,38 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const names = useMemo(() => (ok ? E.indNames(load.data.stocks) : new Map()), [load, ok]);
   const back = () => (E.pending(deck, draft) ? setSheet({ kind: "leave" }) : onLeave());
   const writable = store.writable && !store.locked;
+  const shift = wide ? SIDE_W : 0;
+  // "바꾼 내용을 저장하지 않고 나갈까요?": until 나가기 (edit.leaveGo) is approved, staying (닫기) is the main button and leaving is the
+  // second one, under the back button's own approved label (round-1 S5)
+  const leaveSheet = sheet && sheet.kind === "leave" && (
+    <BottomSheet open title={C.edit.leave} onClose={() => setSheet(null)} closeLabel={C.app.close} shift={shift}>
+      <div data-ui-v2="edit-leave" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
+        {C.edit.leaveGo ? (
+          <>
+            <Button data-go="leave" onClick={() => { setSheet(null); onLeave(); }} style={{ flex: 1 }}>{C.edit.leaveGo}</Button>
+            <Button kind="secondary" onClick={() => setSheet(null)} style={{ flex: 1 }}>{C.app.close}</Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={() => setSheet(null)} style={{ flex: 1 }}>{C.app.close}</Button>
+            <Button kind="secondary" onClick={() => { setSheet(null); onLeave(); }} style={{ flex: 1 }}>{C.app.tabs.portfolio}</Button>
+          </>
+        )}
+      </div>
+    </BottomSheet>
+  );
   if (!ok) {
+    // the load-failure screen: its back button asks too before a waiting edit is dropped (round-1 nit)
     return (
-      <Page pad={pad}>
-        <AppBar onBack={onLeave} backLabel={C.app.tabs.portfolio} />
-        <ScreenTitle sub={C.edit.sub}>{C.edit.title}</ScreenTitle>
-        {load.status === "fail" && <LoadFail picture={false} />}
-        <Footer />
-      </Page>
+      <>
+        <Page pad={pad}>
+          <AppBar onBack={back} backLabel={C.app.tabs.portfolio} />
+          <ScreenTitle sub={C.edit.sub}>{C.edit.title}</ScreenTitle>
+          {load.status === "fail" && <LoadFail picture={false} />}
+          <Footer />
+        </Page>
+        {leaveSheet}
+      </>
     );
   }
   const rows = E.editRows(deck, draft);
@@ -159,7 +184,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const held = (t) => E.heldShares(deck, t);
   const set = (f) => { setFail(null); setCapHit(null); setDraft(f); };
   const onStep = (t, dir) => {
-    const p = E.stepped(rows, t, dir, cap);
+    const p = E.stepped(rows, t, dir, cap, E.storedPct(rows.find((r) => r.t === t)));
     if (p == null) { if (dir > 0) setCapHit(t); return; }
     set((d) => E.stepDraft(E.rebaseDraft(deck, d), t, p));
   };
@@ -180,9 +205,10 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   // draft then shares the stock's own target out the same way, so with nothing else waiting it equals what was stored.
   const sellOut = (t, nk, reason, raise) => {
     setSheet(null);
-    const up = raise != null ? raise : draft.maxPct != null && draft.maxPct !== E.capOf(deck) ? draft.maxPct : null;
+    const up = raise != null ? raise : E.sellCheck(deck, draft, t).up;
     const before = deck;
-    setFlow({ stage: "sell", deckId: deck.id, t, nk, prefill: { qty: held(t) },
+    // every held share, locked (round-1 B2: a smaller sale would drop the unsold shares from 내 수익; that is 팔았어요's job)
+    setFlow({ stage: "sell", deckId: deck.id, t, nk, prefill: { qty: held(t) }, lockQty: true,
       finish: (next) => E.sellAndRemove(next, deck.id, t, { reason, raise: up, load, today: todayKst(), ts: Date.now() }),
       after: () => {
         setFail(null);
@@ -196,7 +222,6 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const removeNow = (t, reason) => { setSheet(null); set((d) => E.removeDraft(deck, E.rebaseDraft(deck, d), t, reason)); };
   const logs = C.edit.log ? E.changeList(deck) : [];
   const nameOf = (c) => c.nk || ((deck.holdings || []).find((h) => h.t === c.t) || {}).nk || c.t;
-  const shift = wide ? SIDE_W : 0;
   const cur = sheet && sheet.kind === "remove" ? rows.find((r) => r.t === sheet.t) || null : null;
   return (
     <>
@@ -272,36 +297,65 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
         <Footer />
       </Page>
       {/* the sheets sit outside Page: Page's wrapper changes at the PC width (1024 px), and what is typed must survive it */}
-      {cur && <RemoveSheet key={cur.t} deck={deck} row={cur} x={xOf(cur.t)} rows={rows} cap={cap} shift={shift} onClose={() => setSheet(null)}
+      {cur && <RemoveSheet key={cur.t} deck={deck} draft={draft} row={cur} x={xOf(cur.t)} shift={shift} writable={writable} onClose={() => setSheet(null)}
         onSell={sellOut} onRemove={removeNow} />}
       {sheet && sheet.kind === "find" && <FindSheet load={load} rows={rows} draft={draft} shift={shift} onClose={() => setSheet(null)}
         onPick={(s) => setSheet({ kind: "add", s })} />}
       {sheet && sheet.kind === "add" && <AddSheet deck={deck} draft={draft} s={sheet.s} load={load} cap={cap} shift={shift} onClose={() => setSheet(null)}
         onAdd={(add, pct) => { setSheet(null); setCapHit(null); set((d) => E.addDraft(deck, E.rebaseDraft(deck, d), add, pct)); }} />}
-      {sheet && sheet.kind === "leave" && (
-        <BottomSheet open title={C.edit.leave} onClose={() => setSheet(null)} closeLabel={C.app.close} shift={shift}>
-          <div data-ui-v2="edit-leave" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
-            <Button onClick={() => { setSheet(null); onLeave(); }} style={{ flex: 1 }}>{C.edit.leaveGo || C.app.tabs.portfolio}</Button>
-            <Button kind="secondary" onClick={() => setSheet(null)} style={{ flex: 1 }}>{C.app.close}</Button>
-          </div>
-        </BottomSheet>
-      )}
+      {leaveSheet}
       <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </>
   );
 }
 
+// 왜 빼나요? (선택): four chips, one choice or none. A radio group the keyboard can use: arrows move and choose, Space or Enter
+// on the chosen one clears it (the choice is optional); one chip is in the tab order.
+function Reasons({ value, onChange, q, opt }) {
+  const refs = React.useRef([]);
+  const at = Math.max(0, E.REASONS.indexOf(value));
+  const key = (e, i) => {
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const j = (i + step + E.REASONS.length) % E.REASONS.length;
+    onChange(E.REASONS[j]);
+    const el = refs.current[j];
+    if (el) el.focus();
+  };
+  return (
+    <>
+      <p style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { margin: `${SPACE(4)}px 0 ${SPACE(2)}px` })}>
+        {q}{opt && <span style={{ fontWeight: WEIGHT.regular, color: COLOR.text3 }}>{" "}{opt}</span>}
+      </p>
+      <div role="radiogroup" aria-label={C.rm.why} data-ui-v2="rm-reasons" style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2) }}>
+        {E.REASONS.map((k, i) => {
+          const on = value === k;
+          return (
+            <button key={k} ref={(el) => { refs.current[i] = el; }} type="button" role="radio" aria-checked={on ? "true" : "false"} data-reason={k}
+              tabIndex={i === at ? 0 : -1} onKeyDown={(e) => key(e, i)} onClick={() => onChange(on ? null : k)}
+              style={{ ...tap, minHeight: TOUCH, padding: `0 ${SPACE(3) + 2}px`, borderRadius: TOUCH / 2, border: on ? `1.5px solid ${COLOR.ink}` : `1.5px solid ${COLOR.border}`,
+                background: on ? COLOR.ink : COLOR.surface, ...tx(SIZE.xs, WEIGHT.bold, on ? COLOR.surface : COLOR.ink, { wordBreak: "keep-all" }) }}>{C.rm.reasons[k]}</button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 // ---------------- 빼기 (Part B) ----------------
-function RemoveSheet({ deck, row, x, rows, cap, shift, onClose, onSell, onRemove }) {
+function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, onRemove }) {
   const { preview } = useMode();
   const st = row.h ? stockState(deck, row.t) : null;
   const held = !!st && st.held > 0;
   const broken = !!brokenPieces(x);
   const [reason, setReason] = useState(broken ? "rule" : null);
   const [raise, setRaise] = useState(null);
-  const n = rows.length - 1;
-  const chk = E.capCheck(n, cap);
-  const blocked = held && chk.low && raise == null;
+  // 팔고 빼기 saves to the stored portfolio at once: its last-holding rule and D2 read the stored holdings left (round-1 B1)
+  const sc = E.sellCheck(deck, draft, row.t);
+  const chk = { low: sc.low, y: sc.y };
+  const n = sc.n, cap = sc.cap;
+  const blocked = held && (sc.last || !writable || (chk.low && raise == null));
   const title = fill(objectParticle(row.nk) === "eul" ? C.rm.title : C.rm.titleReul, { name: row.nk });
   const head = held ? (st.avg ? fill(C.rec.head, { qty: qtyText(st.qty), price: ownMoney(st.avg.avg, st.avg.ccy) }) : fill(C.rec.heldQty, { qty: qtyText(st.qty) })) : null;
   const records = !!row.h && ["sales", "divs"].some((k) => (deck[k] || []).some((r) => r && r.t === row.t));
@@ -319,20 +373,10 @@ function RemoveSheet({ deck, row, x, rows, cap, shift, onClose, onSell, onRemove
           </div>
         </div>
         <BrokenLine x={x} boxed />
-        <p style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { margin: `${SPACE(4)}px 0 ${SPACE(2)}px` })}>
-          {q}{opt && <span style={{ fontWeight: WEIGHT.regular, color: COLOR.text3 }}>{" "}{opt}</span>}
-        </p>
-        <div role="radiogroup" aria-label={C.rm.why} data-ui-v2="rm-reasons" style={{ display: "flex", flexWrap: "wrap", gap: SPACE(2) }}>
-          {E.REASONS.map((k) => {
-            const on = reason === k;
-            return (
-              <button key={k} type="button" role="radio" aria-checked={on ? "true" : "false"} data-reason={k} onClick={() => setReason(on ? null : k)}
-                style={{ ...tap, minHeight: TOUCH, padding: `0 ${SPACE(3) + 2}px`, borderRadius: TOUCH / 2, border: on ? `1.5px solid ${COLOR.ink}` : `1.5px solid ${COLOR.border}`,
-                  background: on ? COLOR.ink : COLOR.surface, ...tx(SIZE.xs, WEIGHT.bold, on ? COLOR.surface : COLOR.ink, { wordBreak: "keep-all" }) }}>{C.rm.reasons[k]}</button>
-            );
-          })}
-        </div>
-        {held && chk.low && raise == null && (
+        {/* a 담기 row waiting to be saved has no reason to give (it was never held): no chips (round-1 nit) */}
+        {!row.add && <Reasons value={reason} onChange={setReason} q={q} opt={opt} />}
+        {held && sc.last && <Note data-ui-v2="rm-last">{C.rm.last}</Note>}
+        {held && !sc.last && chk.low && raise == null && (
           <div data-ui-v2="rm-cap-low" style={{ marginTop: SPACE(3) }}>
             <Note tone="watch">{fill(C.edit.capLow, { n, x: cap })}</Note>
             <div style={{ marginTop: SPACE(2) }}><Button kind="secondary" onClick={() => setRaise(chk.y)}>{fill(C.edit.capRaise, { y: chk.y })}</Button></div>
@@ -365,7 +409,8 @@ function FindSheet({ load, rows, draft, shift, onClose, onPick }) {
         <label style={{ display: "flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH + SPACE(1), background: COLOR.surface,
           border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.md, padding: `0 ${SPACE(3)}px` }}>
           <Icon name="search" size={20} tone="off" />
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value.slice(0, 40))} aria-label={C.stocks.search} placeholder={C.stocks.search}
+          {/* type text, not search: no browser-drawn clear button (its own colour, under 44 px; round-1 nit) */}
+          <input type="text" value={q} onChange={(e) => setQ(e.target.value.slice(0, 40))} aria-label={C.stocks.search} placeholder={C.stocks.search}
             enterKeyHint="search" autoComplete="off" data-ui-v2="find-input"
             style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "none", minHeight: TOUCH, ...tx(SIZE.body, WEIGHT.semi, COLOR.ink) }} />
         </label>
@@ -404,7 +449,9 @@ function AddSheet({ deck, draft, s, load, cap, shift, onClose, onAdd }) {
   const mk = s.cls === "us" ? "us" : "kr";
   const fit = hasPoints ? criteriaPct(load.data.stocks, mk, points).get(s.t) : undefined;
   const scored = typeof fit === "number";
-  const add = { t: s.t, nk: s.nk, cls: s.cls === "us" || s.cls === "kr" ? s.cls : null, ind: s.ind || null, kind: scored ? "core" : "pinned", s };
+  // by name, as the build step's 꼭 담을 종목: kind "pinned" (its rules and reasons, edit.newHolding); the chip says 직접 추가 only
+  // when the portfolio's 기준 cannot score it (spec Part C)
+  const add = { t: s.t, nk: s.nk, cls: s.cls === "us" || s.cls === "kr" ? s.cls : null, ind: s.ind || null, kind: "pinned", s };
   const rows = E.editRows(deck, draft);
   const n = rows.length;
   const [pct, setPct] = useState(() => E.addDefault(n, cap));
@@ -423,8 +470,9 @@ function AddSheet({ deck, draft, s, load, cap, shift, onClose, onAdd }) {
   return (
     <BottomSheet open title={C.build.s4.add} onClose={onClose} closeLabel={C.app.close} shift={shift}>
       {preview && <div style={{ marginBottom: SPACE(2) }}><SampleLabel /></div>}
-      <div data-ui-v2="add-sheet" data-t={s.t} data-kind={add.kind}>
-        <DateLine date={load.data.pxDate} fresh={load.fresh} style={{ marginTop: 0 }} />
+      <div data-ui-v2="add-sheet" data-t={s.t} data-kind={add.kind} data-scored={scored ? "1" : "0"}>
+        {/* the stock's own close date (a US stock: its US close, as on its company page; round-1 nit) */}
+        <DateLine date={priceDate(load, s)} fresh={load.fresh} style={{ marginTop: 0 }} />
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(3), marginTop: SPACE(2) }}>
           <CoMark s={s} t={s.t} name={s.nk} size={SPACE(11)} />
           <div style={{ minWidth: 0 }}>

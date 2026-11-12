@@ -473,14 +473,15 @@ export function ChoiceGrid({ options, value, onChange, label, min = 96 }) {
   );
 }
 
-export function TextInput({ label, value, onChange, inputMode, placeholder, type = "text", ariaLabel, invalid, max }) {
+// readOnly (v19.7a 팔고 빼기: every held share, round-1 B2): shown, not typed into, on the page colour.
+export function TextInput({ label, value, onChange, inputMode, placeholder, type = "text", ariaLabel, invalid, max, readOnly = false }) {
   return (
     <label style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", marginTop: SPACE(3) })}>
       {label}
       <input type={type} value={value} inputMode={inputMode} placeholder={placeholder} aria-label={ariaLabel} onChange={(e) => onChange(e.target.value)}
-        aria-invalid={invalid ? "true" : undefined} max={max}
+        aria-invalid={invalid ? "true" : undefined} max={max} readOnly={readOnly || undefined}
         style={{ display: "block", width: "100%", marginTop: SPACE(1), minHeight: TOUCH, border: invalid ? `2px solid ${COLOR.watch}` : `1px solid ${COLOR.border}`, borderRadius: RADIUS.sm,
-          padding: `0 ${SPACE(3)}px`, background: COLOR.surface, ...tx(SIZE.body, WEIGHT.semi, COLOR.ink) }} />
+          padding: `0 ${SPACE(3)}px`, background: readOnly ? COLOR.page : COLOR.surface, ...tx(SIZE.body, WEIGHT.semi, COLOR.ink) }} />
     </label>
   );
 }

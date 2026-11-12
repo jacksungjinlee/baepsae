@@ -247,8 +247,8 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
           <TextInput label={C.rec.sellAmount} inputMode="numeric" value={v.amount} onChange={set("amount")} invalid={bad("amount")} />
         ) : (
           <>
-            <TextInput label={C.plan.qty} inputMode={usd && kind === "sell" ? "decimal" : "numeric"} value={v.qty} onChange={set("qty")}
-              invalid={bad("qty")} />
+            <TextInput label={C.plan.qty} inputMode={usd && kind === "sell" ? "decimal" : "numeric"} value={v.qty} onChange={flow.lockQty ? () => {} : set("qty")}
+              invalid={bad("qty")} readOnly={!!flow.lockQty} />
             <TextInput label={kind === "sell" ? (usd ? C.rec.sellPriceUsd : C.rec.sellPriceWon) : (usd ? C.plan.priceUsd : C.plan.priceWon)} inputMode="decimal"
               placeholder={s && s.price > 0 && closeOk ? (usd ? nf(s.price, 2) : nf(s.price)) : undefined} value={v.price} onChange={set("price")} invalid={bad("price")} />
           </>
@@ -301,7 +301,10 @@ function SaleResult({ prev, usd }) {
 function FullSale({ flow, setFlow, store, setStoreData, deck, close, shift, sample }) {
   const [q, body] = firstSentence(C.rec.fullSale);
   const [fail, setFail] = useState(false);
+  // v19.7a round-1 nit: a portfolio keeps at least one stock (Part B), here too
+  const only = !(deck.holdings || []).some((h) => h && h.t !== flow.t);
   const remove = () => {
+    if (only) return;
     // the sale and dividend records move to history (A.3); v19.7a: logged in the portfolio's change log
     const next = withRemoval(store.data, deck.id, flow.t, todayKst(), Date.now());
     if (!save(store, setStoreData, next)) { setFail(true); return; }
@@ -314,8 +317,9 @@ function FullSale({ flow, setFlow, store, setStoreData, deck, close, shift, samp
       <div data-ui-v2="rec-full">
         {body && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { wordBreak: "keep-all" })}>{body}</p>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
+        {only && <Note data-ui-v2="rec-full-last">{C.rm.last}</Note>}
         <div style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(4) }}>
-          <Button onClick={remove} style={{ flex: 1 }}>{C.rec.remove}</Button>
+          <Button onClick={remove} disabled={only} style={{ flex: 1 }}>{C.rec.remove}</Button>
           <Button kind="secondary" onClick={() => setFlow({ ...flow, stage: "list", saved: true })} style={{ flex: 1 }}>{C.rec.keep}</Button>
         </div>
       </div>
