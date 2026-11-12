@@ -189,7 +189,8 @@ only in cron-job.org (never in a chat, the repo or a log).
 **v17.6 (started 2026-11-05 01:30 KST): PR #34, parts 1 (watchdog), 2 (CI), 3a (deploy + `data` branch), 4
 (`docs/RUNBOOK.md`). Waits for Jack's "merge".** New: `.github/workflows/ci.yml` (job `ci`), `deploy.yml` ("Deploy"),
 `watchdog.yml` ("Watchdog") + `watchdog.py`; `tools/push_data_branch.sh` (the daily run's new last step
-`data 브랜치에 올리기`: the same four files to the `data` branch, only with the gate's sha256 receipt, never forced; the
+`data 브랜치에 올리기`: the same four files to the `data` branch, only with the gate's sha256 receipt (and, since
+2026-11-12, the screen check's receipt — the browser check between the gate and the commit, `docs/RUNBOOK.md`), never forced; the
 first live run after the merge creates the branch), `tools/assemble_site.py`, `tools/build_tag.py` (build tag only when
 Deploy builds). `already_published.py` reads the `data` branch (falls back to `main` only while it doesn't exist). The
 daily run still commits to `main` as before (3a). Deploy's automatic triggers act only once Pages → Source is "GitHub

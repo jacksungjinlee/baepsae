@@ -146,6 +146,8 @@ class Runner:
     def __init__(self, browser, shots):
         self.browser, self.shots = browser, shots
         self.results, self.errors, self.console = [], [], []
+        self.unseen = []        # 오늘 데이터에 볼 회사가 없어 확인하지 못한 장면 (실제 데이터로 돌 때만 — none_today)
+        self.notes = []         # 오늘 데이터라서 다르게 확인한 것 (실제 데이터로 돌 때만 — banner_due)
 
     def open(self, site, sw=False, local=None, once=False):
         srv, base = serve(site)
@@ -178,6 +180,144 @@ class Runner:
                 except Exception:
                     pass
         print(f"  {'PASS' if self.results[-1][1] else 'FAIL'}  {label}", flush=True)
+
+
+# ── 오늘 데이터에 장면이 볼 회사가 하나도 없을 때 (Jack, 2026-11-12) ─────────────────
+# 회사 하나가 상장폐지되거나 표시가 바뀌었다고 모두의 데이터 발행이 멈추면 안 돼요. 그래서 장면은 회사를 이름으로 고르지 않고 규칙으로 골라요
+# (non_won_companies · foreign_companies). 규칙에 맞는 회사가 오늘 데이터에 하나도 없으면:
+#   · 실제 데이터(--data DIR, 발행 전 화면 검사): 실행 기록에 크게 알리고 그 장면은 통과로 둬요. 결과 줄과 맨 끝 요약에 '확인 못 함'으로 남아요.
+#   · 그 밖(CI · 내 컴퓨터): 실패예요 — 그 장면을 실제로 확인하는 곳이 거기뿐이라, 조용히 건너뛰면 아무도 안 본 게 돼요.
+REAL_DATA = False      # main() 이 --data DIR 을 받았을 때만 True
+
+
+def stmt_cur_of(c):
+    """재무제표 통화 표시 (앱의 stmtCurOf 와 같은 규칙): 세 글자 대문자이고 KRW · XXX 가 아니면 그 통화, 아니면 None."""
+    cur = str(c.get("stmtCur") or "")
+    return cur if re.fullmatch(r"[A-Z]{3}", cur) and cur not in ("KRW", "XXX") else None
+
+
+def listed_companies(f):
+    """corp.json 의 회사 가운데 data.json 목록에 이름이 있는 것 (검색해서 열 수 있는 회사). 종목코드 순."""
+    names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
+    return sorted((c for c in f["corp.json"]["companies"] if names.get(c.get("t"))), key=lambda c: str(c["t"]))
+
+
+def non_won_companies(f):
+    """데이터가 '재무제표를 원화가 아닌 통화로 공시'라고 표시한 회사 모두 (stmtCur). 국내 코드(9로 시작하지 않는 것)가 먼저, 그다음 종목코드 순."""
+    return sorted((c for c in listed_companies(f) if stmt_cur_of(c)), key=lambda c: (str(c["t"]).startswith("9"), str(c["t"])))
+
+
+def foreign_companies(f):
+    """해외 기업 모두: 종목코드가 9로 시작하는 여섯 자리. 종목코드 순."""
+    return [c for c in listed_companies(f) if str(c["t"]).startswith("9") and len(str(c["t"])) == 6]
+
+
+def none_today(R, scene, what, hint=""):
+    """장면이 볼 회사(what)가 데이터에 하나도 없어요. 실제 데이터면 크게 알리고 통과(확인 못 함으로 기록), 아니면 실패로 기록해요.
+    hint: 알림 끝에 덧붙일 말 (무엇을 의심해야 하는지)."""
+    if not REAL_DATA:
+        R.results.append((f"[{scene}] 볼 회사가 데이터에 있어요", False, f"{what} 데이터에 없어요 — 이 장면을 확인할 수 없어요"))
+        print(f"  FAIL  {R.results[-1][0]}: {R.results[-1][2]}", flush=True)
+        return
+    msg = f"오늘 데이터에 {what} 하나도 없어요 → 이 장면은 오늘 확인하지 못했어요 (CI 는 자기 데이터로 확인해요)" + (" " + hint if hint else "")
+    R.unseen.append(f"[{scene}] {msg}")
+    R.results.append((f"[{scene}] 확인 못 함 (오늘 데이터에 해당 회사 없음)", True, msg))
+    print(f"\n!! 확인 못 함  [{scene}] {msg}\n", flush=True)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title=발행 전 화면 검사 · 확인 못 한 장면::[{scene}] {msg}", flush=True)
+
+
+# ── 오늘 데이터 때문에 '예시 가격 · 금 환산' 배너가 떠야 하는 날 (리뷰 2026-11-12) ─────────────────
+# 예전 뱁새에는 내장 종목 75개가 있어요 (src/detail.jsx BASE_STOCKS). 그 가운데 하나라도 오늘 데이터에 없거나 가격 · 베타 · 변동성이
+# 비었으면 앱은 "일부 종목은 최신 시세가 아니라 예시 가격이에요" 배너를 보여 줘요 (src/data.js mergeStocks) — 그게 맞는 화면이에요.
+# 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
+# 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
+# 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
+#   · 실제 데이터(--data DIR): 오늘 데이터로 앱과 같은 규칙을 계산해, 떠야 하면 그 줄이 정확히 떠 있는지 봐요 (크게 알려요).
+#     다만 EXAMPLE_MAX 개까지만이에요: 한두 종목은 시장의 일이지만, 여러 종목이 한꺼번에 비면 파이프라인이 고장 난 날이에요
+#     (예: 미국 종목의 베타가 통째로 빔 — 관문에는 미국 베타 · 변동성 채움 기준이 없어요). 그날은 실패 → 발행하지 않아요.
+#     이 한도는 장면들 앞의 검사 하나(within_example_cap)가 봐요 — 실패 줄이 하나로, 이유와 함께 나오게요.
+#     주의: 이 수는 '오늘 없는 내장 종목 전부'예요 (어제와 비교하지 않아요). 아주 떠난 회사는 날마다 세어지니, 떠난 것이 확실하면
+#     내장 목록(src/detail.jsx BASE_STOCKS)에서 빼는 작은 PR 이 필요해요 (docs/RUNBOOK.md).
+#   · 그 밖(CI · 내 컴퓨터): 예전 그대로 — 배너가 하나라도 있으면 실패 (고정 데이터에는 그런 종목이 없어야 해요). 그리고 이 계산이
+#     '없음'이라고 하는지도 봐요: 내장 종목 목록을 잘못 읽으면 CI 에서 먼저 드러나요 (매일 실행에서 처음 드러나면 발행이 멈춰요).
+EXAMPLE_MAX = 3
+with open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8") as _f:
+    _src = _f.read()
+BASE_TICKERS = re.findall(r'\bt:\s*"([^"]+)"', _src[_src.index("const BASE_STOCKS = ["):_src.index("\n];", _src.index("const BASE_STOCKS = ["))])
+_block = _src[_src.index("const BASE_STOCKS = ["):_src.index("\n];", _src.index("const BASE_STOCKS = ["))]
+# 목록을 덜 읽거나 더 읽지 않았는지: 종목마다 한글 이름(nk)이 하나씩 있어요 — 그 수와 같아야 해요
+assert len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\bnk:\s*\"", _block)) >= 60 and "005930" in BASE_TICKERS, \
+    "src/detail.jsx 의 내장 종목 목록을 읽지 못했어요 (종목코드 수와 이름 수가 달라요)"
+GOLD_SPOT = "04020000"          # 금현물: 국제 금값 환산(est)은 이 종목에만 붙어요 (fetch_data.py)
+
+
+def example_price_stocks(f):
+    """앱의 mergeStocks 와 같은 규칙. 돌려줌 (examples, est):
+    examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격 · 베타 · 변동성이 빈 것 (금 환산은 빼고) → '예시 가격' 줄
+    est = 국제 금값 환산 표시(est)가 붙은 내장 종목 → '금현물은 … 추정치예요' 줄.  (미국 티커는 점 · 하이픈을 무시하고 맞춰요: BRK.B = BRK-B)"""
+    norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
+    by_t = {t: t for t in BASE_TICKERS}
+    by_norm = {norm(t): t for t in BASE_TICKERS}
+    examples, est = [], []
+    for L in f["data.json"]["stocks"]:
+        b = by_t.get(L.get("t")) or by_norm.get(norm(L.get("t")))
+        price = L.get("price")
+        if b:
+            partial = price is None or L.get("beta") is None or L.get("vol") is None
+            if L.get("est"):
+                est.append(b)
+            elif partial:
+                examples.append(b)
+            by_t.pop(b, None); by_norm.pop(norm(b), None)
+        elif isinstance(price, (int, float)) and price > 0 and L.get("est"):
+            examples.append(str(L.get("t")))       # 내장 목록 밖 종목의 est: 앱은 '실시간 아님'으로만 표시해요 (금 환산 줄이 아니라 예시 가격 줄)
+    return sorted(set(examples) | set(by_t)), sorted(est)
+
+
+def within_example_cap(f):
+    """실제 데이터로 돌 때 장면들 앞에서 한 번: 예시 가격으로 보이는 내장 종목이 EXAMPLE_MAX 개 이하이고, 금 환산 표시는 금현물에만 있어요.
+    넘으면 실패 → 발행하지 않아요 (여러 종목이 한꺼번에 = 파이프라인 고장으로 봐요)."""
+    examples, est = example_price_stocks(f)
+    names = f"{', '.join(examples[:12])}{' …' if len(examples) > 12 else ''}"
+    assert len(examples) <= EXAMPLE_MAX, (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names}) — {EXAMPLE_MAX}개를 넘으면 "
+                                          "종목 사정이 아니라 파이프라인 고장으로 봐요 (예: 미국 종목 베타가 통째로 빔) → 발행하지 않아요. "
+                                          "먼저 볼 것: 이 종목들이 상장폐지 · 합병으로 아주 떠난 회사인지 — 그렇다면 고칠 것은 파이프라인이 아니라 "
+                                          "내장 목록(src/detail.jsx BASE_STOCKS)이에요 (작은 PR). 한도 숫자는 올리지 않아요")
+    assert set(est) <= {GOLD_SPOT}, f"금 환산 표시(est)가 금현물({GOLD_SPOT}) 말고 다른 종목에도 붙어 있어요: {est} — 파이프라인을 확인하세요"
+
+
+def banner_due(R, scene, f):
+    """이 데이터라서 떠야 하는 배너 줄의 첫머리 목록 (앱이 그리는 순서). 실제 데이터일 때만 — 떠야 하면 실행 기록에 크게 남겨요.
+    CI · 내 컴퓨터에서는 언제나 [] (예전 그대로 '배너 없음'을 요구해요) — 데이터에 그런 종목이 있으면 그 자리에서 실패예요.
+    (실제 데이터에서 종목 수의 한도는 within_example_cap 이 따로 봐요.)"""
+    examples, est = example_price_stocks(f)
+    names = f"{', '.join(examples[:8])}{' …' if len(examples) > 8 else ''}"
+    if not REAL_DATA:
+        assert not examples and not est, (f"이 데이터에는 '예시 가격 · 금 환산' 안내가 뜨는 종목이 있어요 (예시 {len(examples)}: {names} · 금 환산 {len(est)}) — "
+                                          "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
+        return []
+    due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
+    if due:
+        why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
+                                    f"금 환산 추정 {', '.join(est)}" if est else "") if x)
+        msg = (f"오늘 데이터: {why} → 예전 뱁새가 '예시 가격 · 금 환산' 안내를 보여 주는 날이에요 (그 안내가 맞게 뜨는지 확인해요). "
+               f"아주 떠난 회사(상장폐지 · 합병)라면 내장 목록(src/detail.jsx BASE_STOCKS)에서 빼는 PR 이 필요해요 — 날마다 세어져요. "
+               f"여러 종목이 한꺼번에 비었다면 파이프라인을 의심하세요 ({EXAMPLE_MAX}개를 넘으면 발행하지 않아요)")
+        if msg not in R.notes:
+            R.notes.append(msg)
+            print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=발행 전 화면 검사 · 예시 가격 안내가 뜨는 날::{msg}", flush=True)
+    return due
+
+
+def banner_is(page, due, extra=0):
+    """배너 줄이 due 그대로인지 (due 가 비면 배너 자체가 없어야 해요). extra = 그 밖에 떠 있어야 하는 줄 수 (예: 미국 종목의 날짜 줄)."""
+    if not due and not extra:
+        return page.locator(".nonLiveBanner").count() == 0
+    got = [x.strip() for x in page.locator(".nonLiveBanner > div").all_inner_texts()]
+    return len(got) == len(due) + extra and all(g.startswith(d) for g, d in zip(got, due))
 
 
 # ── 화면 조작 ───────────────────────────────────────────────
@@ -324,7 +464,8 @@ def scene_normal(R, files, full):
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.locator(".dateBadge", has_text="기준").first.wait_for(state="visible", timeout=WAIT)  # data.json 을 읽었을 때만
         page.wait_for_timeout(300)
-        assert page.locator(".nonLiveBanner").count() == 0, "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요"
+        due = banner_due(R, S, files)       # 실제 데이터에서만: 오늘 데이터라서 떠야 하는 줄 (평소 · CI 는 [] → 배너 없음)
+        assert banner_is(page, due), ("오늘 데이터라서 떠야 하는 배너 줄이 달라요: " + str(due) if due else "실시간 데이터인데 '최신 시세가 아니에요' 배너가 보여요")
         see(page, OFFICIAL)          # "가격은 {M월 D일} 공식 종가예요. 다른 수치는 추정치예요."
         about_footer(page)           # 차근차근 만들기 푸터: 캐치프레이즈 · 고지문 · 소개 (만든 사람 줄 없음)
         assert "철새처럼 옮겨 다니지 않는 투자" in page.locator("body").inner_text()
@@ -617,6 +758,13 @@ def scene_option_b(R, files):
     secs = {stocks[t].get("s") for t, _ in hold}
     assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"
     stocks[hold[0][0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
+    # 나머지 셋은 배당 정보가 있는 것으로 (리뷰 2026-11-12): 관문은 필수 종목 하나의 배당 자료가 빈 날을 경고로만 통과시켜요
+    # (Jack 2026-11-05). 그날 이 장면이 '2개'를 보고 실패하면 배당 자료 구멍 하나가 모두의 발행을 막아요. 여기서 보는 것은
+    # '빈 종목이 있으면 그 수를 알린다'예요 — 빈 종목은 위에서 만든 그 하나로 고정해요.
+    for t, _ in hold[1:]:
+        if not isinstance(stocks[t].get("dy"), (int, float)):
+            print(f"  · [B안] {t} 의 배당수익률(dy)이 이 데이터에 비어 있어요 → 이 장면의 복사본에서만 1.0 으로 채워요", flush=True)
+            stocks[t]["dy"] = 1.0
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
                "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
     old = {"d": "2026-10-01", "inv": 5000000, "beta": 0.9, "vol": 30.0, "exp": 8.0, "unpaid": 30.0, "sec": 50.0,
@@ -1206,13 +1354,14 @@ def scene_foreign_issuer(R, files):
     재무제표 통화(stmtCur)가 붙은 해외 기업(다시 읽은 데이터, 2026-11-10)은 그 줄 대신 통화 줄을 보여요 (#97)."""
     f = json.loads(json.dumps(files, allow_nan=True))
     names = {s.get("t"): s.get("nk") for s in f["data.json"]["stocks"]}
-    cos = [c for c in f["corp.json"]["companies"] if str(c.get("t", "")).startswith("9") and len(str(c["t"])) == 6 and names.get(c["t"])]
-    assert cos, "시험할 해외 기업(9…)이 데이터에 없어요"
+    cos = foreign_companies(f)                                # 어느 회사든: 종목코드 9… 여섯 자리 (이름으로 고르지 않아요)
+    if not cos:
+        return none_today(R, "해외 기업", "해외 기업(종목코드 9…)이")
     # 2026-11-10 (DART 다시 읽기 뒤): 해외 기업 대부분은 재무제표 통화(stmtCur, 예: USD)가 붙고, 그러면 '외화로…' 줄 대신 통화 줄을
     # 보여요(#97). 이 줄은 통화 표시가 없는 해외 기업으로 봐요 (없으면 복사본에서 표시를 빼요). 통화 표시가 있는 쪽은 아래에서 따로 봐요.
     co = next((c for c in cos if not c.get("stmtCur")), cos[0])
     co.pop("stmtCur", None)
-    cur = next((c for c in cos if c is not co and re.fullmatch(r"[A-Z]{3}", str(c.get("stmtCur") or "")) and c["stmtCur"] not in ("KRW", "XXX")), None)   # 앱의 stmtCurOf 와 같은 규칙
+    cur = next((c for c in cos if c is not co and stmt_cur_of(c)), None)
     co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False)
     srv, ctx, page, base = R.open(build_site(f))
 
@@ -1238,8 +1387,8 @@ def scene_foreign_issuer(R, files):
             "통화 표시가 있는 해외 기업에 '외화로…' 줄 · 국내용 빈 칸 문구 · NaN"
     if cur:
         R.check(page, "해외 기업", f"{cur['t']} {names[cur['t']]}: 재무제표 통화({cur['stmtCur']})가 있으면 통화 줄, '외화로…' 줄 없음", run_cur)
-    else:
-        print("  SKIP  [해외 기업] 재무제표 통화(stmtCur)가 붙은 해외 기업이 이 데이터에 없어요 — 통화 줄 확인은 다시 읽은 데이터에서만 돌아요")
+    else:                                                     # 예전에는 조용한 SKIP 이었어요 → 실제 데이터면 크게 알리고, 아니면 실패
+        none_today(R, "해외 기업", "재무제표 통화(stmtCur)가 붙은 둘째 해외 기업이")
     ctx.close(); srv.shutdown()
 
 
@@ -2353,13 +2502,16 @@ def scene_own_close(R, files):
         page.get_by_text("한국만 시험", exact=False).first.click()            # 한국 종목만: 배너 없음
         see(page, "보통 해 ±")
         page.wait_for_timeout(300)
-        assert page.locator(".nonLiveBanner").count() == 0 and page.locator("[data-own-close]").count() == 0
+        due = banner_due(R, S, f)           # 실제 데이터에서만: 오늘 데이터라서 떠야 하는 줄 (평소 · CI 는 [] → 배너 없음)
+        assert banner_is(page, due) and page.locator("[data-own-close]").count() == 0, \
+            "한국 종목만 담은 포트폴리오: 배너가 " + (f"오늘 데이터라서 떠야 하는 줄({due})과 달라요" if due else "보여요 (없어야 해요)") + " 또는 미국 종목 날짜 줄이 있어요"
         home(page)
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("미국 날짜 시험", exact=False).first.click()
         see(page, "보통 해 ±")
         assert banner_lines() == want["ko"], banner_lines()                   # 보유(삼성전자 · MSFT · AAPL · NVDA) 중 앞선 종가의 미국 종목
-        assert page.get_by_text(NONLIVE).count() == 0, "실시간 데이터인데 '예시 가격' 배너 문장"
+        assert page.get_by_text(NONLIVE).count() == (1 if NONLIVE in due else 0), "실시간 데이터인데 '예시 가격' 배너 문장"
+        assert banner_is(page, due, extra=len(want["ko"])), "배너에 미국 종목의 날짜 줄 말고 다른 줄이 있어요"
         box = page.get_by_placeholder("종목명·코드 검색")
         box.fill("AAPL")                                                      # 종목 고르기: 보이는 줄에 앞선 종가 종목이 있으면 목록 위에
         note = page.locator(".ownCloseNote")
@@ -2674,7 +2826,10 @@ def scene_fix_notes(R, files, live=False):
 
 
 # ── 2026-11-08 (Jack): DART 다시 읽기 뒤, 재무제표를 원화가 아닌 통화로 공시한 회사 (corp.json stmtCur · src/fixnote.jsx StmtCurLine) ──
-STMT_CUR_LINE = "이 회사는 재무제표를 원화가 아닌 USD로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+def stmt_cur_line(cur):
+    return f"이 회사는 재무제표를 원화가 아닌 {cur}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요."
+
+
 # 칸 설명 · 제목은 한 줄 그대로, 문장 속 말은 들어 있기만 해도 걸려요
 STMT_UNTRUE_LINES = ["적자이거나 데이터가 없어요", "데이터가 없어요", "차입금·상각비 데이터 부족", "현금흐름 데이터가 없어요", "배당이 없거나 이익 데이터가 없어요",
                      "3개년 실적 흐름", "주가는 무엇으로 움직였나"]
@@ -2682,37 +2837,63 @@ STMT_UNTRUE_PARTS = ["파이프라인이 사업보고서를 못 찾은 종목이
 
 
 def scene_stmt_cur(R, files):
-    """기업분석 241560 (두산밥캣, 달러 재무제표): 다시 읽은 발행처럼 금액 · PER · PBR · EPS 를 비우고 stmtCur "USD". 투자지표 제목 밑에 통화 줄
+    """기업분석, 데이터가 '원화가 아닌 통화로 공시'라고 표시한 회사 (어느 회사든 — non_won_companies 의 첫 회사. 2026-11-12 까지는 두산밥캣
+    241560 을 이름으로 골랐어요): 다시 읽은 발행처럼 금액 · PER · PBR · EPS 를 비워요 (표시된 통화는 그대로). 투자지표 제목 밑에 통화 줄
     한 번 (12px 이상), 맞지 않는 이유('적자이거나 데이터가 없어요' …) · 보이지 않는 PER 의 기간 · 숫자 없는 3개년 실적 흐름과 주가 분해는
     없어요. 업종 내 위치 · 가정으로 계산하는 가치는 그대로. 삼성전자는 예전 그대로."""
     S = "다시 읽은 뒤"
     f = json.loads(json.dumps(files, allow_nan=True))
-    co = next(c for c in f["corp.json"]["companies"] if c.get("t") == "241560")
-    co.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None, stmtCur="USD")
+    cands = non_won_companies(f)
+    if not cands:
+        # 21곳이 하루에 다 사라질 리는 없어요: 표시가 통째로 없으면 파이프라인이 통화를 못 읽었을 가능성이 커요 (그러면 달러 금액이
+        # 원으로 나가요). 그래서 알림에 그렇게 적어요 — 이 장면은 그걸 막지 못해요 (관문의 일).
+        odd = [str(c.get("t")) for c in listed_companies(f) if c.get("stmtCur") and c.get("stmtCur") != "KRW" and not stmt_cur_of(c)]
+        none_today(R, S, "재무제표를 원화가 아닌 통화로 공시한다고 표시된 회사(stmtCur)가",
+                   hint=(f"· 표시는 있지만 읽을 수 없는 회사 {len(odd)}곳 ({', '.join(odd[:5])}) " if odd else "")
+                   + "· 어제까지 그런 회사가 있었다면 파이프라인이 통화를 못 읽은 것일 수 있어요: 달러로 공시하는 회사(두산밥캣 등)의 금액이 원으로 나가지 않았는지 확인하세요")
+        if not REAL_DATA:
+            return
+        # 삼성전자 쪽 절반은 그런 회사가 없어도 볼 수 있어요: 통화 줄 없음 · 3개년 실적 흐름 · 주가 분해 그대로
+        srv, ctx, page, base = R.open(build_site(f))
+
+        def samsung_only():
+            page.goto("about:blank")
+            page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+            see(page, "3개년 실적 흐름")
+            see(page, "주가는 무엇으로 움직였나")
+            assert page.locator('[data-fix="stmt-cur"]').count() == 0
+        R.check(page, S, "기업분석 005930: 통화 줄 없음 · 3개년 실적 흐름 · 주가 분해 그대로 (원화가 아닌 회사는 오늘 데이터에 없음)", samsung_only)
+        ctx.close(); srv.shutdown()
+        return
+    co = cands[0]
+    T, CUR = co["t"], stmt_cur_of(co)
+    LINE = stmt_cur_line(CUR)
+    co.update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None)
     for k in ("evE", "evR", "pcf", "bq", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep"):
         co.pop(k, None)
     srv, ctx, page, base = R.open(build_site(f))
 
     def corp_page():
         page.goto("about:blank")
-        page.goto(base + "/baepsae.html?dev=1&from=app#corp=241560", wait_until="domcontentloaded")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={T}", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         got = page.evaluate("""() => [...document.querySelectorAll('[data-fix="stmt-cur"]')].filter((e) => e.getBoundingClientRect().height > 0)
           .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize), e.dataset.cur])""")
-        assert got == [[STMT_CUR_LINE, got[0][1], "USD"]] and got[0][1] >= 12, got
+        assert got and got == [[LINE, got[0][1], CUR]] and got[0][1] >= 12, got
         body = page.locator("body").inner_text()
         lines = [x.strip() for x in body.split("\n")]
         hits = [u for u in STMT_UNTRUE_LINES if u in lines] + [u for u in STMT_UNTRUE_PARTS if u in body]
         assert not hits, hits
         assert "직전 사업보고서" not in body and "최근 4개분기" not in body, "보이지 않는 PER 의 기간이 남아 있어요"
-        assert body.index("투자지표") < body.index(STMT_CUR_LINE) < body.index("PER")
+        at = body.index("투자지표")                                  # 회사 이름에 'PER' 이 들어 있어도 되게, 제목 뒤에서부터 찾아요
+        assert at < body.index(LINE, at) < body.index("PER", at), "통화 줄이 투자지표 제목과 PER 사이에 있지 않아요"
         assert "업종 내 위치" in body and "가정으로 계산하는 가치" in body
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
         see(page, "3개년 실적 흐름")
         see(page, "주가는 무엇으로 움직였나")
         assert page.locator('[data-fix="stmt-cur"]').count() == 0
-    R.check(page, S, "기업분석 241560 (stmtCur USD): 투자지표 밑 통화 줄 한 번 · 맞지 않는 이유와 빈 칸 없음 · 005930 은 그대로", corp_page)
+    R.check(page, S, f"기업분석 {T} (stmtCur {CUR}): 투자지표 밑 통화 줄 한 번 · 맞지 않는 이유와 빈 칸 없음 · 005930 은 그대로", corp_page)
     ctx.close(); srv.shutdown()
 
 
@@ -2751,13 +2932,17 @@ def part_of(scenes, part):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=ROOT, help="data/corp/disc/macro.json 이 있는 폴더")
+    ap.add_argument("--data", default=None, help="data/corp/disc/macro.json 이 있는 폴더 (하루치 실제 데이터 — 발행 전 화면 검사). 없으면 저장소의 파일")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
     ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요
+    global REAL_DATA
+    REAL_DATA = args.data is not None                           # 실제 데이터일 때만 '해당 회사 없음'을 크게 알리고 통과 (none_today)
+    if args.data is None:
+        args.data = ROOT
     files = read_data(args.data)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
     fresh = upgrade(json.loads(json.dumps(files, allow_nan=True)))
@@ -2775,6 +2960,16 @@ def main():
         R = Runner(browser, args.shots)
         scenes = part_of(scene_list(R, fresh, full), args.part)
         ran = 0
+        if REAL_DATA:       # 장면들 앞에서 한 번 (실패 줄이 하나로, 이유와 함께): 예시 가격으로 보일 내장 종목이 한도 이내인지
+            def cap():
+                try:
+                    within_example_cap(fresh)
+                except AssertionError as e:                     # 결과 줄은 160자에서 잘려요: 이름과 할 일이 다 보이게 전체를 따로 찍어요
+                    print(f"\n!! 한도 초과  {e}\n", flush=True)
+                    if os.environ.get("GITHUB_ACTIONS") == "true":
+                        print(f"::error title=발행 전 화면 검사 · 내장 종목 한도::{e}", flush=True)
+                    raise
+            R.check(None, "오늘 데이터", f"예전 뱁새의 내장 종목 가운데 오늘 데이터에 없거나 값이 빈 종목이 {EXAMPLE_MAX}개 이하 · 금 환산 표시는 금현물만", cap)
         for key, fn in scenes:
             if args.only and key != args.only:
                 continue
@@ -2795,6 +2990,14 @@ def main():
     for name, ok, msg in R.results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name.ljust(w)}  {msg}")
     bad = [r for r in R.results if not r[1]]
+    if R.unseen:
+        print(f"\n!! 오늘 데이터에 해당 회사가 없어 확인하지 못한 장면 {len(R.unseen)}개 (통과로 셌어요):")
+        for u in R.unseen:
+            print(f"   · {u}")
+    if R.notes:
+        print(f"\n!! 오늘 데이터라서 다르게 확인한 것 {len(R.notes)}개:")
+        for u in R.notes:
+            print(f"   · {u}")
     print(f"\n{len(R.results) - len(bad)} / {len(R.results)} 통과")
     return 1 if bad else 0
 

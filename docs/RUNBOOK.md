@@ -21,6 +21,60 @@ serve the `docs/` folder (two of its files must answer "not found").
 - **Users still see the last good data, with its date.** The publication gate refuses to publish anything that fails
   its checks, so a failed run leaves yesterday's numbers in place, labelled with yesterday's date. The app itself shows a
   warning ("N일째 갱신이 멈췄어요") once publishing has stopped for more than 4 days.
+- **The screen check (since 2026-11-12).** After the gate passes and before anything is published, the daily run opens
+  the apps in a real browser on today's data:
+  - `tests/real_data_check.py`: the four files read cleanly, today's data has every field 2.0 needs, and the two apps
+    agree on the growth basis for every Korean stock;
+  - `tests/smoke_launch.py --data .`: 2.0 on the four files exactly as they will be published (first visit, the
+    portfolio builder, a Korean company page, a saved portfolio, the way into the old app);
+  - all of `tests/smoke_app.py --data .`: the old app's checks on today's stocks and numbers. These scenes first set
+    the publish time and due dates to "just now" (and fill in a missing price date or built-in fund row), so they do
+    not check the dates users will see; the gate checks those.
+
+  If any of the three fails, the run ends red and publishes nothing, exactly like a gate failure: yesterday's data stays
+  up. Nothing retries inside the run; the next scheduled start is the retry. The run's summary page has a "발행 전 화면
+  검사" section with the three results. Each step has a time limit (10, 10 and 30 minutes); running over is a failure.
+  A normal check takes about 3 minutes.
+  - The check comes after the DART cache is saved, so a held publish never turns the next start into a full-DART run.
+  - The browser comes from GitHub's cache (`playwright-v1-ubuntu-24.04-…`), never from Ubuntu's package server. A run
+    that finds no cache downloads it from Playwright's server and saves it before the check starts. The Korean font
+    the tests need is a file in the repo (`tests/fonts`). If the browser cannot start, the publish is held.
+  - If the cached browser itself is broken (no scene can open a page although the install step passed): raise `v1`
+    to `v2` in the cache key, in all six places (`update-data.yml` twice, `ci.yml` four times; a small PR), so a fresh
+    copy is downloaded. The tests accept any version number as long as every place uses the same one, so no test edit
+    is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's font setup changed:
+    fix `tests/fonts/install.sh` in a PR.
+  - A company leaving the market must never hold the data back (Jack, 11-12), so `smoke_app` on real data
+    (`--data`) follows the day's data in three places:
+    - Two scenes need a kind of company and pick it by rule: any company the data marks as reporting in a currency
+      other than won (`stmtCur`), and foreign companies with a 9xxxxx code (one for the "외화로…" line, a second one
+      with a currency mark for the currency line). If today's data has none, the scene counts as passed and the run
+      says so: `!! 확인 못 함` in the log, a warning on the run page, a paragraph in the step summary.
+    - **If the `stmtCur` line appears although yesterday's data had such companies, suspect the pipeline, not the
+      market:** DART's currency reading was probably lost, and then a company that files in dollars (두산밥캣,
+      아남전자) is published with its dollar amounts read as won. The gate has no failing row for that today. Check
+      those companies' numbers on the site.
+    - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees that 17 of them are in
+      the data, and guarantees a beta and volatility for none of the US ones. When a built-in stock is missing from
+      the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
+      correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
+      (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
+      **Up to 3 such stocks; with more the check fails and nothing is published** (one clear line at the top of the
+      result: "내장 종목 N개가 …"), because many at once is the pipeline (for example every US beta blank), not the
+      market. The number counts every built-in stock that is missing today, not only new ones, so:
+      - when a built-in company has left the market for good (delisted, merged), remove it from `BASE_STOCKS` in a
+        small PR (an old-app change: rebuild, Jack's yes). Until then it shows as `!! 알림` every morning and uses up
+        one of the three;
+      - if the check fails, first look at the names: long-gone companies mean the list needs that PR; several fresh
+        blanks at once mean the pipeline. Do not raise the number.
+    - One scene needs three must-have stocks (005930, 005380, 105560) to have a dividend yield; the gate lets one
+      must-have stock without dividend data through with a warning (Jack, 11-05), so the scene fills a blank one in
+      its own copy and says so in the log.
+    - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default. The 09:13 morning check
+      must report them to Jack: its instructions are extended for the warnings titled "발행 전 화면 검사 …" as an
+      after-merge step of #106 (until that is done, nothing reads them).
+    - Without `--data` (CI) none of this applies: a missing company or any such notice is a failure, as before.
+    - Never skip the check itself to get the data out.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
@@ -58,8 +112,9 @@ tells you what happened in plain words.
 
 - **`main`** holds the code. Every pull request must pass the `ci` check (build, all tests, phone-size smoke tests).
 - **`data`** is a branch that holds only the four data files (`data.json`, `corp.json`, `disc.json`, `macro.json`). Only
-  the daily run writes to it, and only after the publication gate passed: the gate leaves a fingerprint (sha256) of the
-  four files it checked, and the upload refuses any file that doesn't match. It never force-pushes.
+  the daily run writes to it, and only after the publication gate and (since 2026-11-12) the screen check passed: each
+  leaves a fingerprint (sha256) of the four files it checked, and the upload refuses any file that doesn't match either
+  one. It never force-pushes.
   The first daily run after v17.6 creates the branch by itself.
 - **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
   folder it is about to publish, and only then publishes. It runs after every merge to `main` and after every daily run
