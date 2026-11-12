@@ -183,7 +183,7 @@ def test_no_ecos_key_is_a_failure_not_a_guess(monkeypatch):
 def test_unknown_source_is_refused():
     with pytest.raises(ValueError):
         F.fetch_fx_hist(run_fx(), 1333.3, TODAY, None, source="yahoo")
-    assert F.FX_HIST_SOURCE == "ecos_next" and F.FX_HIST_SOURCE in V.FX_HIST_SOURCES       # Jack 의 답을 기다리는 동안 (#117 리뷰 2)
+    assert F.FX_HIST_SOURCE == "ecos_close" and F.FX_HIST_SOURCE in V.FX_HIST_SOURCES      # Jack 의 답을 기다리는 동안 (#117 리뷰 3 권고)
     assert V.FX_HIST_SOURCES == ("ecos_next", "ecos_close", "ecos", "yahoo_next") and V.FX_HIST_REL == 0.10
 
 
@@ -811,7 +811,7 @@ def test_seed_file_is_committed_and_reviewed():
     assert rows[("NVDA", "2021-07-20")] == 4.0 and rows[("TSLA", "2022-08-25")] == 3.0 and rows[("CBSH", "2018-11-29")] == 1.05
     assert rows[("GSAT", "2025-02-11")] == 1 / 15 and ("GE", "2024-04-02") not in rows and ("RYAAY", "2024-09-30") not in rows
     assert all(F.split_is_clean(r) and V.simple_ratio(r) for r in rows.values())
-    assert not set(F.SPLIT_OVERRIDES) & set(rows)                       # 고정 표의 줄은 시드에 없어요 (한 곳)
+    assert set(F.SPLIT_OVERRIDES) & set(rows) == {("GMAB", "2018-05-01")}     # 고정 표의 줄은 시드에 없어요 — 시드 줄을 빼는 None 줄만
 
 
 @pytest.mark.parametrize("line, codes", [
@@ -960,7 +960,8 @@ def test_override_table_pins():
     assert {k: v[0] for k, v in F.SPLIT_OVERRIDES.items()} == {
         ("RYAAY", "2024-09-30"): 2.5, ("HLT", "2017-01-04"): 1 / 3, ("DD", "2019-06-03"): 1 / 3, ("WTW", "2016-01-05"): 1 / 2.649,
         ("TRI", "2018-11-27"): 0.9079, ("TRI", "2023-06-23"): 0.963957, ("CBSH", "2016-11-30"): 1.05, ("CBSH", "2017-11-29"): 1.05,
-        ("CBSH", "2019-12-02"): 1.05, ("CBSH", "2022-12-01"): 1.05, ("CBSH", "2023-12-01"): 1.05}
+        ("CBSH", "2019-12-02"): 1.05, ("CBSH", "2022-12-01"): 1.05, ("CBSH", "2023-12-01"): 1.05, ("HON", "2026-06-29"): 0.5,
+        ("GMAB", "2018-05-01"): None}
     assert not any(t == "FERG" for t, _ in F.SPLIT_OVERRIDES)            # 2018 엔 미국 상장이 아니었어요
 
 
@@ -994,3 +995,168 @@ def test_gate_fixed_row_for_a_stock_that_left_the_list_is_not_a_failure():
     cur["data"]["splitsInfo"]["fixed"].append(["GONEX", "2019-01-02", 2.0, "시험: 목록에서 빠진 종목의 고정 줄 (근거)"])
     r = row(check(cur, prev, final), SPL)
     assert r[3] != "FAIL", r
+
+
+# ── #117 리뷰 3 ──────────────────────────────────────────
+AAON_SEED = ({("AAON", "2023-08-17"): 1.5, **SEED[0]}, SEED[1] | {"AAON"}, SEED[2])
+
+
+def test_seed_rows_of_an_unlisted_stock_wait_until_it_joins(monkeypatch):
+    Log(monkeypatch)
+    monkeypatch.setattr(F, "MUST_SPLITS", ())
+    us = ["NVDA", "TSLA", "AAPL", "WMT"]                                   # AAON 은 오늘 목록에 없어요 (10-30 ~ 11-11 의 여러 날처럼)
+    f = F.splits_fields(None, us, [], [], START, TODAY, seed=AAON_SEED)
+    assert not any(x[0] == "AAON" for x in f["splits"])
+    prev = dict(f, stocks=[{"t": t, "cls": "us"} for t in us])
+    f2 = F.splits_fields(prev, us + ["AAON"], [], [], START, TODAY + dt.timedelta(days=1), seed=AAON_SEED)    # 다시 든 날 나타나요
+    assert ["AAON", "2023-08-17", 1.5] in f2["splits"]
+    prev2 = dict(f2, stocks=[{"t": t, "cls": "us"} for t in us + ["AAON"]])
+    f3 = F.splits_fields(prev2, us, [], [], START, TODAY + dt.timedelta(days=2), seed=AAON_SEED)               # 또 빠져도 실은 줄은 남아요
+    assert ["AAON", "2023-08-17", 1.5] in f3["splits"]
+
+
+def test_gate_first_publish_with_an_unlisted_seed_stock_passes(monkeypatch):
+    Log(monkeypatch)
+    cur, prev, final = pair(prev_splits=False)
+    us = [s["t"] for s in cur["data"]["stocks"] if s.get("cls") == "us" and not s.get("fund")]
+    seed = ({**{(t, d): r for t, d, r in V.MUST_SPLITS if (t, d) not in F.SPLIT_OVERRIDES}, ("AAON", "2023-08-17"): 1.5},
+            set(us) | {"AAON"}, dt.date(2026, 10, 30))
+    recent = sorted([t, d, r] for (t, d), r in seed[0].items() if d >= START.isoformat())      # 야후가 오늘 다운로드에서 보여 주는 줄
+    f = F.splits_fields(prev["data"], us, [x for x in recent if x[0] in us], [], START, TODAY, seed=seed)
+    assert f and not any(x[0] == "AAON" for x in f["splits"])
+    cur["data"].update(f)
+    rep = check(cur, prev, final)
+    assert row(rep, SPL)[3] == "PASS" and row(rep, SPC)[3] == "SKIP", rep.table()
+    # 다음 날 AAON 이 목록에 들어요: 그 줄이 새로 나타나고 관문은 통과 (목록에 있는 종목의 새 줄)
+    nxt, _, _ = pair(prev_splits=False)
+    nxt["data"]["stocks"].append(dict(next(s for s in nxt["data"]["stocks"] if s["t"] == "MSFT"), t="AAON"))
+    prev_day = {"data": dict(cur["data"])}
+    f2 = F.splits_fields(cur["data"], us + ["AAON"], recent, [], START, TODAY, seed=seed)
+    assert ["AAON", "2023-08-17", 1.5] in f2["splits"]
+    nxt["data"].update(f2)
+    rep = check(nxt, prev_day, final)
+    assert row(rep, SPL)[3] == "PASS" and row(rep, SPC)[3] in ("PASS", "WARN") and not rep.failed, rep.table()
+
+
+@pytest.mark.parametrize("recent, no_col", [(None, []), ([], ["NVDA", "TSLA", "AAPL", "WMT"])])
+def test_first_publish_with_nothing_read_leaves_splits_out(monkeypatch, recent, no_col):
+    log = Log(monkeypatch)
+    monkeypatch.setattr(F, "MUST_SPLITS", ())
+    assert F.splits_fields(None, ["NVDA", "TSLA", "AAPL", "WMT"], recent, no_col, START, TODAY, seed=SEED) == {}
+    assert log.has("하나도 읽지 못해 splits 를 쓰지 않아요")
+
+
+@pytest.mark.parametrize("gap, same", [(10, True), (11, False)])
+def test_same_event_window_boundary(monkeypatch, gap, same):
+    Log(monkeypatch)
+    d = (dt.date(2026, 10, 15) + dt.timedelta(days=gap)).isoformat()
+    prev = prev_data([["QQQ", "2026-10-15", 2.0]], us=("QQQ",))
+    sp = F.merge_splits(prev, None, ["QQQ"], [["QQQ", d, 2.0]], NONE, START, [], NONE, [], TODAY)
+    assert (["QQQ", d, 2.0] in sp["splits"]) is (not same)
+
+
+def test_yahoo_listing_the_same_split_on_two_dates_is_reported(monkeypatch):
+    log = Log(monkeypatch)
+    prev = prev_data([["QQQ", "2026-10-15", 2.0]], us=("QQQ",))
+    sp = F.merge_splits(prev, None, ["QQQ"], [["QQQ", "2026-10-15", 2.0], ["QQQ", "2026-10-16", 2.0]], NONE, START, [], NONE, [], TODAY)
+    assert sp["splits"] == [["QQQ", "2026-10-15", 2.0]] and sp["info"]["diff"] == [["QQQ", "2026-10-15", 2.0, 2.0, "2026-10-16"]]
+    assert log.has("두 날짜에 적었어요", "QQQ 2026-10-15 · 2026-10-16")
+
+
+def test_a_wrong_date_fixed_with_an_out_row_is_not_hidden(monkeypatch):
+    Log(monkeypatch)
+    monkeypatch.setattr(F, "SPLIT_OVERRIDES", {("QQQ", "2026-10-15"): (None, "시험: 날짜가 틀렸어요 — 10-16 이 맞아요 (근거)")})
+    prev = prev_data([["QQQ", "2026-10-15", 2.0]], us=("QQQ",))
+    sp = F.merge_splits(prev, None, ["QQQ"], [["QQQ", "2026-10-16", 2.0]], NONE, START, [], NONE, [], TODAY)
+    assert sp["splits"] == [["QQQ", "2026-10-16", 2.0]] and sp["info"]["diff"] == []
+
+
+def test_backfill_order_new_joiners_first_and_failures_rotate(monkeypatch):
+    Log(monkeypatch)
+    monkeypatch.setattr(F, "MUST_SPLITS", ())
+    bad = [f"B{i:02d}" for i in range(50)]                    # 어제부터 계속 실패하는 50 종목 (gap)
+    new = [f"N{i}" for i in range(5)]
+    prev = {"splits": [], "splitsFrom": "2016-01-01", "stocks": [{"t": t, "cls": "us"} for t in list(SEED[1]) + bad],
+            "splitsInfo": {"gap": bad}}
+    asked = []
+
+    def hist(codes, today):
+        asked.append(list(codes))
+        return [], {"noCol": [c for c in codes if c.startswith("B")], "future": [], "bad": [], "spin": []}
+    f = F.splits_fields(prev, list(SEED[1]) + bad + new, [], [], START, TODAY, seed=SEED, history=hist)
+    assert asked[0][:5] == new and asked[0][5:] == bad[:15]            # 새 종목 먼저 · 어제 gap 은 그 순서대로
+    assert f["splitsInfo"]["gap"] == bad[15:] + bad[:15]             # 이번에 묻지 않은 종목이 다음 실행의 앞으로
+
+
+def test_kept_fx_history_is_dropped_only_when_fx_moved_more_than_10_percent(monkeypatch):
+    Log(monkeypatch)
+    pm = prev_macro(fresh="2026-10-29")
+    assert F.kept_fx_hist(pm, "ecos", run_fx(), 1333.3, TODAY)[0] is not None
+    h, why = F.kept_fx_hist(pm, "ecos", run_fx(), 1500.0, TODAY)
+    assert h is None and "10%" in why
+
+
+def test_published_rows_beat_the_seed_and_the_belt_checks_ratios(monkeypatch):
+    log = Log(monkeypatch)
+    prev = prev_data([["NVDA", "2024-06-10", 10.0]], us=("NVDA",))
+    seed = ({("NVDA", "2024-06-10"): 20.0}, {"NVDA"}, dt.date(2026, 10, 30))
+    sp = F.merge_splits(prev, seed, ["NVDA"], [], NONE, START, [], NONE, [], TODAY)
+    assert sp["splits"] == [["NVDA", "2024-06-10", 10.0]]
+    monkeypatch.setattr(F, "MUST_SPLITS", (("NVDA", "2024-06-10", 10.0),))
+    assert F.splits_fields(None, ["NVDA"], [["NVDA", "2024-06-10", 20.0]], [], START, TODAY, seed=({}, {"NVDA"}, dt.date(2026, 10, 30))) == {}
+    assert log.has("꼭 있어야 할 분할이 빠져")
+
+
+def test_gate_warns_when_past_fx_rows_change_against_yesterday():
+    cur, prev, final = pair(src="ecos")
+    prev["macro"].update(fxHist={**_hist(cur), "rows": [list(r) for r in _hist(cur)["rows"][:-1]], "asOf": _hist(cur)["rows"][-2][0]},
+                         fxHistSrc="ecos", fxHistFresh="2026-10-30")
+    assert row(check(cur, prev, final), FXH)[3] == "PASS"                   # 어제보다 한 줄 늘었을 뿐
+    for i in (100, 200, 300, 400, 500, 600):
+        _hist(cur)["rows"][i][1] += 1.0
+    r = row(check(cur, prev, final), FXH)
+    assert r[3] == "WARN" and "지난 줄이 어제와 달라요 6: " + _hist(cur)["rows"][100][0] in r[1], r
+    cur, prev, final = pair(src="ecos")
+    prev["macro"].update(fxHist={**_hist(cur), "rows": _hist(cur)["rows"] + [["2026-11-02", 1333.0]], "asOf": "2026-11-02"}, fxHistSrc="ecos")
+    r = row(check(cur, prev, final), FXH)
+    assert r[3] == "WARN" and "asOf 2026-10-30 가 어제 2026-11-02 보다 앞이에요" in r[1], r
+    prev["macro"].update(fxHistSrc="ecos_next")
+    assert "출처가 어제 'ecos_next' 에서 바뀌었어요" in row(check(cur, prev, final), FXH)[1]
+
+
+def test_gate_ignores_yesterdays_unfinished_yahoo_row():
+    cur, prev, final = pair(src="yahoo_next")
+    prow = [list(r) for r in _hist(cur)["rows"]]
+    prow[-1][1] += 3.0                                                      # 어제 아침의 끝나지 않은 마지막 값은 오늘 바뀌어요
+    prev["macro"].update(fxHist={"asOf": prow[-1][0], "final": False, "rows": prow}, fxHistSrc="yahoo_next")
+    assert row(check(cur, prev, final), FXH)[3] == "PASS"
+
+
+def test_prev_macro_is_read_leniently(tmp_path):
+    cur, prev, final = pair()
+    for name in ("data",):
+        (tmp_path / f"{name}.json").write_text(__import__("json").dumps(prev[name], ensure_ascii=False), encoding="utf-8")
+    got = V.load_prev(str(tmp_path), None)
+    assert set(got) == {"data"}                                             # macro.json 이 없어도 그대로 (그 비교만 없이)
+    (tmp_path / "macro.json").write_text("{ broken", encoding="utf-8")
+    assert set(V.load_prev(str(tmp_path), None)) == {"data"}
+    (tmp_path / "macro.json").write_text(__import__("json").dumps({"fxHist": None}), encoding="utf-8")
+    assert set(V.load_prev(str(tmp_path), None)) == {"data", "macro"}
+
+
+def test_prev_macro_is_read_from_git_too(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    run = lambda *a: subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)     # noqa: E731
+    run("init", "-q")
+    run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "0")
+    (tmp_path / "data.json").write_text(json.dumps({"asOf": "2026-10-30"}), encoding="utf-8")
+    run("add", "data.json")
+    run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "1")
+    monkeypatch.chdir(tmp_path)
+    assert set(V.load_prev(None, "HEAD")) == {"data"}                     # macro.json 이 없는 발행본
+    (tmp_path / "macro.json").write_text(json.dumps({"fxHistSrc": "ecos_close"}), encoding="utf-8")
+    run("add", "macro.json")
+    run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "2")
+    got = V.load_prev(None, "HEAD")
+    assert set(got) == {"data", "macro"} and got["macro"]["fxHistSrc"] == "ecos_close"
