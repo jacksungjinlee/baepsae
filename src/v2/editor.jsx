@@ -202,7 +202,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   };
   // 팔고 빼기: the sale sheet; its save takes the stock out with the reason in the same write, its stored target shared out
   // under this portfolio's cap as edited (the sheet's D2 button, or a raise already waiting in the draft, saved with it). The
-  // draft then shares the stock's own target out the same way, so with nothing else waiting it equals what was stored.
+  // draft then follows the saved portfolio (edit.draftAfterSale): with nothing else waiting it is what was stored.
   const sellOut = (t, nk, reason, raise) => {
     setSheet(null);
     const up = raise != null ? raise : E.sellCheck(deck, draft, t).up;
@@ -210,13 +210,11 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
     // every held share, locked (round-1 B2: a smaller sale would drop the unsold shares from 내 수익; that is 팔았어요's job)
     setFlow({ stage: "sell", deckId: deck.id, t, nk, prefill: { qty: held(t) }, lockQty: true,
       finish: (next) => E.sellAndRemove(next, deck.id, t, { reason, raise: up, load, today: todayKst(), ts: Date.now() }),
-      after: () => {
+      after: (next) => {
         setFail(null);
-        setDraft((d) => {
-          const b = E.rebaseDraft(before, d);
-          const x = E.removeDraft(before, up != null ? { ...b, maxPct: up } : b, t, null);
-          return { ...x, removed: (x.removed || []).filter((r) => r.t !== t), maxPct: up != null ? null : x.maxPct };
-        });
+        // round 3: what still waits, rebased onto the portfolio as the sale saved it (edit.draftAfterSale)
+        const saved = next && Array.isArray(next.decks) ? next.decks.find((d) => d && d.id === before.id) || null : null;
+        setDraft((d) => E.draftAfterSale(before, saved, E.rebaseDraft(before, d), t));
       } });
   };
   const removeNow = (t, reason) => { setSheet(null); set((d) => E.removeDraft(deck, E.rebaseDraft(deck, d), t, reason)); };

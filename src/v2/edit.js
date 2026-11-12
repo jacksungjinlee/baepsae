@@ -184,9 +184,11 @@ function wholeShares(items, vals, need) {
 // D2 button). anchor: the row that keeps its value (the one just changed, or the stock being added); cap: whole % or null.
 // -> Map t -> whole % for every row (the anchor too: it takes what the others cannot when they are all at their bounds).
 // The sum is 100 whenever the cap allows it (capCheck); otherwise every row sits at its bound and the sum stays below 100.
-// A row's ceiling: 100 without a cap; else the cap, or more when the row's stored target (or its value now) is above it —
-// the same top as the stepper's (stepLimits): a holding saved above the cap goes back up to it, never higher.
-export const ceilingOf = (r, cap) => (cap == null ? 100 : Math.max(cap, num(r && r.pct) || 0, num(storedPct(r)) || 0));
+// A row's ceiling: 100 without a cap; else the cap, or the row's STORED target when that is above it — the same top as the
+// stepper's (stepLimits): a holding saved above the cap goes back up to it, never higher. Never the row's value in the draft
+// (round-3: a draft value left above both, e.g. 55.26% against a saved 55% after 팔고 빼기 while other edits wait, would
+// otherwise be kept as its own ceiling); a 담기 row's ceiling is the cap.
+export const ceilingOf = (r, cap) => (cap == null ? 100 : Math.max(cap, num(storedPct(r)) || 0));
 export function rebalance(rows, anchor, cap) {
   const a = anchor ? rows.find((r) => r.t === anchor) || null : null;
   const others = rows.filter((r) => r !== a);
@@ -511,6 +513,23 @@ export function rebaseDraft(deck, draft) {
   const over = Object.fromEntries(Object.entries(draft.over || {}).filter(([t]) => has(t) || (draft.adds || []).some((a) => a.t === t)));
   return { ...draft, over, removed: (draft.removed || []).filter((r) => has(r.t)), adds: (draft.adds || []).filter((a) => !has(a.t)),
     last: draft.last && (has(draft.last) || (draft.adds || []).some((a) => a.t === draft.last)) ? draft.last : null };
+}
+
+// The draft after 팔고 빼기 saved (round 3): what still waits, rebased onto the stored portfolio as the sale left it (the sold
+// stock gone, its target shared out, a raise saved), never onto the portfolio before the sale: a share-out there could keep a
+// value above the new saved target and the cap (55.26% against a saved 55%). A target in the draft that only repeated the old
+// saved one is no edit and goes; when edits still wait, they are shared out to 100% again under the new ceilings (fixDraft,
+// the row just changed kept), as the old share-out of the sold stock's target did. Nothing else waiting: the saved portfolio.
+// before / after: the portfolio before and after the sale's write; t: the stock sold.
+export function draftAfterSale(before, after, draft, t) {
+  if (!after) return emptyDraft();
+  const oldPct = (u) => { const h = ((before && before.holdings) || []).find((x) => x && x.t === u); return h ? pctOf(h) : null; };
+  const isAdd = (u) => (draft.adds || []).some((a) => a.t === u);
+  const over = Object.fromEntries(Object.entries(draft.over || {})
+    .filter(([u, p]) => u !== t && (isAdd(u) || oldPct(u) == null || Math.abs(p - oldPct(u)) > TGT_TOL * 100)));
+  const x = rebaseDraft(after, { ...draft, over, adds: (draft.adds || []).filter((a) => a.t !== t), removed: (draft.removed || []).filter((r) => r.t !== t),
+    maxPct: null, last: draft.last === t ? null : draft.last });
+  return pending(after, x) ? fixDraft(after, x) : x;
 }
 
 // ---------------- the change log on screen ----------------

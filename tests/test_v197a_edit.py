@@ -804,3 +804,45 @@ def test_price_won_goes_by_the_currency():
           return Math.round(m.w.get('379800') * 1e6) / 1e6; })() };""")
     assert got["k"] == 22680 and got["aapl"] == 270 * 1400 and got["bare"] == 270 * 1400 and got["kr"] == 100000 and got["krw"] == 5 and got["nofx"] is None
     assert got["w"] == 0.5                                                                        # 10 × 22,680 = 226,800 원: 반반 (× 1,400 이면 99.9%)
+
+
+def test_a_share_out_never_raises_a_holding_above_the_cap_or_its_stored_target():
+    """[round 3] the ceiling is max(cap, the STORED target), never the value in the draft: a draft value left above both (the
+    fuzz's 55.26% against a saved 55% after 팔고 빼기 while a removal waits) is brought down, and the draft after 팔고 빼기
+    follows the portfolio as the sale saved it (draftAfterSale), so no row is above max(cap, its stored target)."""
+    got = run("""// the fuzz's first case: 000010 (no target), 000020 55.26%, 000030 42.11% under a 20% cap; 000010 waits to be taken out
+      const w = [null, 21 / 38, 16 / 38];
+      const d = deck4({}, 3, 0.25, 20);
+      d.holdings = d.holdings.map((h, i) => { const { target, ...rest } = h; return w[i] == null ? { ...rest, rules: [pend('audit')] } : { ...rest, target: w[i], rules: [pend('audit'), ...band(w[i])] }; });
+      d.purchases = [d.purchases[1], d.purchases[2]];
+      let dr = E.removeDraft(d, E.emptyDraft(), '000010', null);
+      const sc = E.sellCheck(d, dr, '000030');
+      const after = sellAll({ v: 2, decks: [d] }, '000030', 25);
+      const sr = E.sellAndRemove(after, 'd1', '000030', { reason: null, raise: sc.y, load, today: T, ts: env.ts });
+      const nd = sr.data.decks[0];
+      const nx = E.draftAfterSale(d, nd, E.rebaseDraft(d, dr), '000030');
+      const rows = E.editRows(nd, nx), cap = E.capOf(nd, nx);
+      // the ceiling ignores a draft value: a row the draft holds above max(cap, stored) is brought down by any share-out
+      const high = E.editRows(nd, { ...E.emptyDraft(), over: { '000020': 70 } });
+      const fixed = E.editRows(nd, E.fixDraft(nd, { ...E.emptyDraft(), over: { '000020': 70 } }));
+      // nothing else waiting: the draft after the sale is the saved portfolio
+      const five = deck4({}, 5, 0.2, 50);
+      const s5 = E.sellAndRemove(sellAll({ v: 2, decks: [five] }, '000010', 20), 'd1', '000010', { reason: null, raise: null, load, today: T, ts: env.ts });
+      const plain = E.draftAfterSale(five, s5.data.decks[0], E.emptyDraft(), '000010');
+      // edits still waiting (000020 stepped to 30, the rest shared out): after the sale they are shared out to 100% again under
+      // the new ceilings, the row just changed kept
+      const f2 = deck4({}, 5, 0.2, 50);
+      const w2 = E.fixDraft(f2, E.stepDraft(E.emptyDraft(), '000020', 30));
+      const s2 = E.sellAndRemove(sellAll({ v: 2, decks: [f2] }, '000030', 20), 'd1', '000030', { reason: null, raise: null, load, today: T, ts: env.ts });
+      const a2 = E.editRows(s2.data.decks[0], E.draftAfterSale(f2, s2.data.decks[0], E.rebaseDraft(f2, w2), '000030'));
+      out = { stored: nd.holdings.map((h) => [h.t, Math.round(h.target * 1e6) / 1e6]), max: nd.settings.maxPct,
+        rows: rows.map((r) => [r.t, r.pct, E.storedPct(r)]), cap, above: rows.filter((r) => cap != null && r.pct > Math.max(cap, E.storedPct(r) || 0) + 1e-9).length,
+        ceil: E.ceilingOf(high[1], 50), fixed: fixed.map((r) => [r.t, r.pct]), plain: E.pending(s5.data.decks[0], plain),
+        waiting: [E.editRows(f2, w2).map((r) => r.pct), a2.map((r) => [r.t, r.pct]), E.sumPct(a2)] };""")
+    assert got["max"] == 50 and got["stored"] == [["000010", 0.45], ["000020", 0.55]]
+    assert got["above"] == 0, got["rows"]                                                      # 55.26 이 남지 않아요
+    assert abs(got["ceil"] - 55) < 1e-9                                                        # 초안의 70 은 천장이 아니에요
+    assert dict(got["fixed"])["000020"] <= 55 + 1e-9 and abs(sum(p for _, p in got["fixed"]) - 100) < 1e-9
+    assert got["plain"] is False
+    before, rows, total = got["waiting"]
+    assert before == [18, 30, 18, 17, 17] and dict(rows)["000020"] == 30 and total == 100 and all(p <= 50 for _, p in rows)
