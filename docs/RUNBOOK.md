@@ -97,52 +97,89 @@ serve the `docs/` folder (two of its files must answer "not found").
 - **The deploy check (since #NNN, Jack 2026-11-12).** Every deploy that changes code (a merge to `main`, or Actions →
   Deploy → Run workflow) runs the daily run's three checks before anything is uploaded: on the four data files it is
   about to publish, exactly as they are in the folder it uploads, with the code it has just built (steps "배포 전 화면
-  검사 …" in Deploy, `tools/deploy_check.py`). The deploy that follows a daily publish skips them only when nothing
-  but the four data files changed between the commit that daily run checked and the commit being deployed (the daily
-  run ran the same three checks on those files with that code just before publishing); if that can't be shown, it
-  runs them too. The same `--data` rules as the daily run apply (`!! 확인 못 함` and `!! 알림` lines pass and are
-  listed in the run's summary).
+  검사 …" in Deploy, `tools/deploy_check.py`). The same `--data` rules as the daily run apply (`!! 확인 못 함` and
+  `!! 알림` lines pass and are listed in the run's summary and as yellow warnings).
+  - **The deploy after a daily publish** skips the checks only when both of these hold: every commit between the commit
+    that daily run checked and the commit being deployed changed nothing but the four data files (a file renamed into
+    one of them counts as code), and the four files it uploads are exactly the ones in the `data` commit that run made
+    (by `baepsae-bot`, during that run). That run already checked those files with that code just before publishing.
+    If either can't be shown, it runs the checks like a code deploy.
   - **All three pass:** it publishes as before. A code deploy takes about 3 to 4 minutes longer than before (the daily
     run's same check takes about 3 minutes, almost all of it `smoke_app`).
-  - **One fails:** it finds the code the site serves now (the build mark `baepsae-build` in the live pages; it builds
-    that commit again in a separate folder, and the rebuilt pages must match the live ones byte for byte) and runs the
-    failed checks again with that code on the same files. This takes up to about 3 more minutes (less when
-    `smoke_app` passed), so about 7 minutes in all. Then, check by check:
-    - **Blocked deploy** (the new code fails a check that the live code passes): the Deploy run ends red before
-      anything is uploaded, so users keep the site exactly as it was. The run page shows a red line "배포 막음 · 배포 전
-      화면 검사" naming the check with both results (for example `smoke_app: 새 코드 141 / 145 통과 · 지금 사이트 코드
-      145 / 145 통과`), and its summary says "뱁새 배포 전 화면 검사 — 막음". The watchdog opens (or comments on) the
-      뱁새 데이터 경보 issue about 10 minutes later, because the last deploy failed.
-      **What to do:** `main` is now ahead of the site, and the next daily run checks its new data with `main`'s code,
-      so it will probably hold that morning's publish too. Revert the merge at once (a revert PR, merged), then fix
-      forward in a new PR. If the failing line looks like a one-off (a single timing scene), run Deploy once more first;
-      if it fails again, revert. Never skip or loosen a check to get a deploy out.
-    - **"Live fails too"** (the code the site serves now fails the same check on the same files): that is not the new
-      code's doing (usually the data, the clock or the machine), so the deploy goes ahead (a fix for a data problem
-      must be able to go live) and Jack is told: the 뱁새 데이터 경보 issue is opened, or commented on if one is
-      already open, with the first line **[배포 화면 검사]**, both runs' failing lines and the label `deploy-check`,
-      and the run shows a yellow warning "배포 · 지금 사이트 코드도 실패". The watchdog does not close an issue that
-      has the `deploy-check` label (it doesn't run these browser checks, so it can't say they are fixed). The label
-      comes off by itself when a later deploy passes all three: a code deploy, or the deploy after the next daily
-      publish (that run checked its files with the same code). The watchdog then closes the issue at its next check.
-      **What to do:** as for any alert (paste the issue into a Claude Code session). While the label is on, merge only
-      the fix: the comparison is per check, not per scene, so another change that breaks a different scene of the same
-      failing check would also go live.
-    - **Live code unknown** (the live pages can't be fetched, have no build mark or different ones, the commit can't
-      be fetched or built, the rebuilt pages differ from the live ones, or the live code's check stops before its
-      result line): blocked, as above, with the reason after "지금 사이트의 코드를 알 수 없어요".
-  - The comparison is check by check: if only the new code fails one check, the deploy is blocked even when another
-    check fails on both. A check that stops before its result line counts as failed for the new code, and as "unknown"
-    (never as "fails too") for the live code, so a broken test tool can't wave a deploy through.
+  - **One fails:** it finds the code the site serves now (the build mark `baepsae-build` in the live pages), fetches
+    that commit into a separate scratch repository (never into the checkout), builds it in a separate folder without
+    running any package install scripts, and the rebuilt pages must match the live ones byte for byte. Then it runs
+    the failed checks again with that code on the same files. This takes up to about 3 more minutes (less when
+    `smoke_app` passed), so about 7 minutes in all. Then it compares **line by line** (a "check" is one result line,
+    about 162 of them across the three scripts):
+
+    | New code | Live code, same files | Result |
+    |---|---|---|
+    | passes | (not run) | publish |
+    | fails a line | passes that line, or passes the whole script | **blocked** |
+    | fails some lines | fails every one of them too | **published, Jack told** |
+    | stops before its result line | runs to its result line | **blocked** |
+    | fails | can't be found, fetched, built or matched, or stops before its result line, or its lines can't be read | **blocked** (unknown) |
+
+    The lines a block is about (the ones only the new code fails) come first in the red line and the summary.
+    `smoke_launch` stopping on purpose because the data lacks a field 2.0 needs counts as one failing line on both
+    sides, not as a stop, so a fix for that data can still go live.
+    **Same code:** when every file except the four data files is the same in the live commit and the new one (a manual
+    deploy, or a data deploy that had to run the checks), a difference can only be a flaky scene or the clock. The
+    deploy then runs the blocked script once more with the new code: if it passes, it publishes; if it fails again, it
+    publishes and tells Jack. It never blocks the same code against itself, so a flaky scene can't hold the morning data.
+    - **Blocked deploy:** the Deploy run ends red before anything is uploaded, so users keep the site exactly as it was.
+      The run page shows a red line "배포 막음 · 배포 전 화면 검사" naming the script, both results and the lines only the
+      new code fails (for example `smoke_app: 새 코드 141 / 145 통과 · 지금 사이트 코드 145 / 145 통과`), and its
+      summary says "뱁새 배포 전 화면 검사 — 막음". The watchdog opens (or comments on) the 뱁새 데이터 경보 issue about
+      10 minutes later, because the last deploy failed.
+      **What to do after a merge:** `main` is now ahead of the site, and the next daily run checks its new data with
+      `main`'s code, so it will probably hold that morning's publish too. If the failing line looks like a one-off (a
+      single timing scene), start Actions → Deploy → Run workflow once; if it fails again, revert the merge at once (a
+      revert PR, merged), then fix forward in a new PR.
+      **What to do when the blocked deploy came after a daily publish** (the code changed during that run, or its files
+      couldn't be matched, so the checks ran): that day's new data is on the `data` branch but not on the site, so users
+      see yesterday's numbers with yesterday's date. Revert or fix forward fast, then start Actions → Deploy → Run
+      workflow to put the data out.
+      **The revert's own deploy can be blocked too** (the old code fails a line the code being reverted passes). Start
+      Actions → Deploy → Run workflow once more; if it is blocked again, fix forward in a new PR instead of reverting
+      further.
+      Never skip or loosen a check to get a deploy out.
+    - **"Live fails too":** the new code fails only lines the code the site serves now also fails on the same files.
+      That is not the new code's doing (usually the data, the clock or the machine), so the deploy goes ahead (a fix for
+      a data problem must be able to go live) and Jack is told: before the upload, the 뱁새 데이터 경보 issue gets the
+      label `deploy-check` and a post whose first line is **[배포 화면 검사]**, saying the new code is being put up and
+      listing each failing line once (a new issue if none is open). The run shows a yellow warning "배포 · 지금 사이트
+      코드도 실패" and no red lines. If the upload then fails, the site stays as it was and the watchdog reports the
+      failed deploy; the label stays right either way, because the live code fails those lines too.
+      The watchdog does not close an issue that has the `deploy-check` label (it doesn't run these browser checks, so
+      it can't say they are fixed). The label comes off by itself when a later deploy passes all three: a code deploy,
+      or the deploy after the next daily publish (that run checked its files with the same code). The watchdog then
+      closes the issue at its next check. If the issue can't be opened (GitHub trouble), nothing is uploaded: a deploy
+      over a failing check always tells Jack. Start Actions → Deploy → Run workflow again later.
+      This is also what happens when the data is so broken that neither code can load it (both fail the same lines):
+      Jack's rule publishes and tells him. The gate (`validate_data.py --live`) still runs first and blocks data that
+      fails it.
+      **What to do:** as for any alert (paste the issue into a Claude Code session).
+    - **Live code unknown:** blocked, with the reason after "지금 사이트의 코드를 알 수 없어요" (the live site was
+      unreachable, a page had no build mark, the commit couldn't be fetched, the rebuild differed, or the live run
+      stopped early). This is not the new code's fault and needs no revert: once the live site answers again, start
+      Actions → Deploy → Run workflow. If it stays unknown, look at the reason in the run log.
+    - **The check machinery itself is down** (for example the browser can't be downloaded or started): every script
+      stops before its result line with both codes, so every code deploy is blocked, reverts included. Fix the
+      machinery first (the cache key, `tests/fonts/install.sh`, a pinned version; see the screen check above), then
+      start Actions → Deploy → Run workflow. Data deploys that can skip the checks are not affected.
+  - Always start a new run with **Actions → Deploy → Run workflow**. "Re-run" on an old run uses that run's old
+    workflow file, which may not have this check at all.
   - Both runs use this deploy's Python tools, browser and font; only the app code and the check scripts differ.
-  - If the "live fails too" issue can't be opened (GitHub trouble), nothing is uploaded: a deploy over a failing check
-    always tells Jack. Run Deploy again later.
+  - The deploy's checkout keeps no token in the working folder. Only the three steps that call the GitHub API (the gate,
+    "필요한지", "결과") get the token; the three checks, their tools and the browser never see it.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
-- An issue (or comment) whose first line starts with **[배포 화면 검사]** comes from a deploy: new code went live although
-  a real-data check fails, because the code the site served before fails the same check on the same files ("The deploy
-  check" above). Users may see what the check caught: look at it soon.
+- An issue (or comment) whose first line starts with **[배포 화면 검사]** comes from a deploy: new code was put up although
+  real-data check lines fail, because the code the site served before fails the same lines on the same files ("The
+  deploy check" above). Users may see what the check caught: look at it soon.
 - The same test also sends healthchecks.io one failure signal, so Jack gets a "down" email, then rechecks the real site
   and, if it is fine, sends the normal signal ("up" email, usually within a minute) and closes the [시험] issue. A "down"
   email with no "up" email after it means the recheck found a real problem.
