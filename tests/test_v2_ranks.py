@@ -507,3 +507,18 @@ def test_industry_parts_rose_and_fell_five_each_by_the_shown_value():
 out = { up: p.up.map((g) => g.ind), down: p.down.map((g) => g.ind), few: [few.up.length, few.down.length], d: down.up.map((g) => g.ind) };""", G=groups)
     assert got["up"] == ["g0", "g1", "g2", "g3", "g4"] and got["down"] == ["g14", "g13", "g12", "g11", "g10"], got
     assert got["few"] == [3, 0] and got["d"] == [], got                            # '0.0%' 인 업종(g7 · g8)은 어느 쪽에도 없어요
+
+
+def test_korean_value_guard_leaves_out_a_pbr_that_rounds_to_0_00():
+    """Jack, 2026-11-13: 한국 가치 목록에서 0.00 으로 반올림되는 PBR(0.005 미만)은 진짜 값이 아니라서 빼요 (PBR 0 이하는 원래대로 빠져요).
+    콘솔은 코드와 이름을 수와 함께 말해요. 다른 기준은 없어요 (0.07 · 0.09 는 그대로)."""
+    stocks = [st("000010", nk="영영사", pbr=0.004, cap=1.0), st("000020", nk="영영오", pbr=0.005, cap=2.0), st("000030", pbr=0.0, cap=3.0),
+              st("000040", pbr=-0.3, cap=4.0), st("000050", nk="앱토크롬꼴", pbr=0.07, cap=5.0), st("AAA", "us", pbr=0.004, cap=1.0)]
+    got = run("""const logs = []; console.info = (m) => logs.push(String(m));
+out = { kr: ts(K.critList(STOCKS, 'kr', 'value')), us: ts(K.critList(STOCKS, 'us', 'value')), min: K.KR_PBR_MIN,
+  st: K.critState([STOCKS[0]], 'kr', 'value'), logs: logs.filter((l) => l.includes('value list')) };""", STOCKS=stocks)
+    assert got["kr"] == ["000020", "000050"], got["kr"]                             # 0.004 빠짐 · 0.005 남음 · 0 이하 빠짐 · 0.07 남음
+    assert got["us"] == ["AAA"] and got["min"] == 0.005, got                       # 미국은 이 기준 없이 (미국은 J4 보조 장치)
+    assert got["st"] == "none", got["st"]                                          # 숫자는 있는데 들어갈 종목이 없어요
+    kr = next(l for l in got["logs"] if "(kr)" in l)
+    assert "pbrNotAbove0 2: 000030, 000040" in kr and "pbrRoundsTo0 1: 000010 영영사" in kr, got["logs"]

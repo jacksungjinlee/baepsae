@@ -53,6 +53,8 @@ const EPS = 1e-9;
 // US 가치 backup guard (Jack, 2026-11-12, J4): a US PBR far below what the company's own PER and ROE imply (PER > 0, ROE > 0
 // and PBR < PER × ROE ÷ 100 ÷ US_PBR_LOW) is a book value in another currency than the price (Yahoo: KSPI, ERIC on
 // 2026-11-11), so that row is left out. One-sided: a PBR far above is left in. The console names every row 가치 leaves out.
+// Korean 가치 guard (Jack, 2026-11-13): a PBR that rounds to 0.00 (under KR_PBR_MIN, after the PBR ≤ 0 rule) is never a real
+// valuation, so that row is left out too; the console names those rows (code and name) with a count. No other threshold.
 export const CRIT = [
   { id: "value", field: "pbr", dir: -1, report: false, pos: true },
   { id: "profit", field: "roe", dir: 1, report: true },
@@ -67,6 +69,7 @@ export const critOf = (id) => CRIT.find((c) => c.id === id) || null;
 export const REPORT_CARDS = ["profit", "stable", "growth", "div"];
 export const MIN_EOK = 100;            // 성장 (KR base-year revenue) · 수익성 (KR equity): at least 100억원 (corp.json 억원)
 export const US_PBR_LOW = 4;           // the US 가치 guard: PBR under a quarter of PER × ROE ÷ 100
+export const KR_PBR_MIN = 0.005;       // the Korean 가치 guard: a PBR under this rounds to 0.00
 
 const capOf = (s) => { const c = num(s && s.cap); return c == null ? -Infinity : c; };
 const byCode = (a, b) => (a.s.t < b.s.t ? -1 : a.s.t > b.s.t ? 1 : 0);
@@ -140,6 +143,7 @@ function critOut(c, s, mk, coByT) {
   if (v == null) return "blank";
   if (c.finNA && isFin(s)) return "fin";
   if (c.pos && !(v > 0)) return "pbrNotAbove0";
+  if (c.id === "value" && mk === "kr" && v < KR_PBR_MIN) return "pbrRoundsTo0";
   if (c.id === "value" && mk === "us") {
     const per = num(s.per), roe = num(s.roe);
     if (per > 0 && roe > 0 && v < (per * roe) / 100 / US_PBR_LOW) return "pbrFarUnder";
@@ -173,7 +177,7 @@ function noteCrit(stocks, mk, c, coByT) {
   const why = {};
   for (const s of rankBase(stocks, mk)) {
     const r = critOut(c, s, mk, coByT);
-    if (r && r !== "blank" && r !== "fin") (why[r] = why[r] || []).push(s.t);
+    if (r && r !== "blank" && r !== "fin") (why[r] = why[r] || []).push(r === "pbrRoundsTo0" ? `${s.t} ${s.nk || ""}`.trim() : s.t);
   }
   const parts = Object.entries(why).map(([r, ts]) => (c.id === "value" ? `${r} ${ts.length}: ${ts.join(", ")}` : `${r} ${ts.length}`));
   if (parts.length) console.info(`[v2] rank lists (${mk}): the ${c.id} list leaves out ${parts.join("; ")}`);

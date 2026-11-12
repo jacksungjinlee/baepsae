@@ -596,6 +596,8 @@ def rank_expect(stocks, cls, chip, crit=None, coby=None):
             v = None if crit == "stable" and has_group(s) and s.get("ind") in FIN_INDS else s.get(f)
             if crit == "value" and not (isnum(v) and v > 0):
                 v = None
+            if crit == "value" and cls == "kr" and isnum(v) and v < 0.005:              # 한국 가치: 0.00 으로 반올림되는 PBR 도 빼요 (Jack, 2026-11-13)
+                v = None
             if crit == "value" and cls == "us" and isnum(v) and isnum(s.get("per")) and s["per"] > 0 and isnum(s.get("roe")) and s["roe"] > 0 \
                     and v < s["per"] * s["roe"] / 100 / 4:
                 v = None
