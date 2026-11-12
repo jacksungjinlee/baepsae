@@ -25,8 +25,15 @@ export function fcurOf(s) {
 }
 
 // Does this stock carry one of the blanked numbers anyway? (The pipeline and the gate make sure it does not; a stock that
-// did would show it, so the screens never put the reason line next to a number.)
-export const fcurLeftover = (s) => !!fcurOf(s) && FCUR_FIELDS.some((k) => num(s[k]) != null);
+// did would show it, so the screens never put the reason line next to a number.) A 0% yield is not one: it means "no
+// dividend" in any currency (the pipeline keeps it only when its switch US_FCUR_KEEP_ZERO_DY says so, and the gate agrees).
+export const fcurLeftover = (s) => !!fcurOf(s) && FCUR_FIELDS.some((k) => num(s[k]) != null && !(k === "dy" && s[k] === 0));
+// The screens' one question (#114 review: keyed on the data, never on whether the reason line has words): were this stock's
+// PER and PBR blanked because its statements are not in dollars? Then its PBR · PER show as "–" under their labels, with no
+// date line or 자세히 link for them, and the reason line right under them when the currency has a Korean name.
+export const fcurBlank = (s) => !!fcurOf(s) && !fcurLeftover(s);
+// The same for the dividend yield: blanked (no 0% kept), so 배당수익률 shows "–" with the line under it.
+export const fcurDyBlank = (s) => fcurBlank(s) && num(s.dy) == null;
 
 const warned = new Set();
 // The Korean name of an ISO code from names (the copy's co.curName), else null with one console warning per code.
@@ -62,3 +69,11 @@ export function fcurText(s, line, names) {
 // A section of 내 기준과 맞는 정도 shows the line when one of its rows is blank because of this (a 가치 or 배당 row, no rank).
 // rows: company.cardRanks(...).rows (or the ones on screen).
 export const fcurRowsBlank = (s, rows) => !!fcurOf(s) && (rows || []).some((r) => r && FCUR_CARDS.includes(r.id) && r.blank);
+
+// ---------------- PBR that rounds to 0.00 (Jack, 2026-11-13) ----------------
+// data.json pbrZero (fetch_data.py us_info_cuts): Yahoo's PBR for a US stock rounds to 0.00 (BRK-B 0.0011: share classes, not a
+// currency), so the pipeline blanks it and the 가치 score. Never for a currency stock (its own line already says why). The screens
+// show PBR "–" with the line "자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요." (copy co.pbrZero) right under it, the same
+// places as the currency line; PER and the yield are untouched.
+export const pbrZeroOf = (s) => !!s && s.cls === "us" && s.pbrZero === true && !fcurOf(s) && num(s.pbr) == null;
+export const pbrZeroRowsBlank = (s, rows) => pbrZeroOf(s) && (rows || []).some((r) => r && r.id === "value" && r.blank);

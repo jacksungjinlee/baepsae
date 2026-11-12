@@ -91,7 +91,7 @@ def test_the_reason_line_never_shows_a_raw_code_or_sits_beside_a_number():
         FC.fcurText({ t: 'KSPI', cls: 'us', fcur: 'KZT' }, LINE, N),
         FC.fcurText({ t: 'X', cls: 'us', fcur: 'SEK' }, LINE, N),                 // 이름 없음 → 줄 없음 (SEK 를 쓰지 않아요)
         FC.fcurText({ t: 'TSM', cls: 'us', fcur: 'TWD', pbr: 78.88 }, LINE, N),   // 숫자가 남아 있으면 줄 없음
-        FC.fcurText({ t: 'TSM', cls: 'us', fcur: 'TWD', dy: 0 }, LINE, N),
+        FC.fcurText({ t: 'TSM', cls: 'us', fcur: 'TWD', dy: 0 }, LINE, N),          // 0% (배당 없음) 는 남은 숫자가 아니에요
         FC.fcurText({ t: 'AAPL', cls: 'us' }, LINE, N),
         FC.fcurText({ t: 'TSM', cls: 'us', fcur: 'TWD' }, null, N),
         FC.fcurText({ t: 'TSM', cls: 'us', fcur: 'TWD' }, '이 숫자는 계산하지 않았어요.', N),
@@ -104,7 +104,7 @@ def test_the_reason_line_never_shows_a_raw_code_or_sits_beside_a_number():
       ];""", LINE=LINE)
     assert got[0] == "주가는 달러, 재무제표는 대만 달러 기준이라 이 숫자는 계산하지 않았어요."
     assert got[1] == "주가는 달러, 재무제표는 카자흐스탄 텡게 기준이라 이 숫자는 계산하지 않았어요."
-    assert got[2:8] == [None] * 6
+    assert got[2:4] == [None, None] and got[4] == got[0] and got[5:8] == [None] * 3
     assert got[8:14] == [True, False, False, True, False, False]
     assert got[14] == ["per", "pbr", "dy"] and got[15] == ["value", "div"]
 
@@ -155,18 +155,32 @@ def test_build_engine_leaves_the_blanked_companies_out_only_where_they_are_blank
     assert got["dividend"] == {"won": 0, "unknown": 1, "unchecked": []}                 # 1년 배당: 모름 (0% 로 세지 않아요)
 
 
-def test_company_page_tiles_without_the_line_keep_the_usual_blank():
-    """이름이 없는 통화 (문구 파일에 없는 MYR · 승인 전의 이름도 같은 길): 가치 · 배당 칸은 다른 빈 숫자와 같은 '자료가 없어요'
-    (줄도 날 코드도 없어요)."""
+def test_tiles_and_hiding_are_keyed_on_the_data_not_on_the_line():
+    """#114 리뷰: 이름이 있든 없든(MYR 은 문구 파일에 없어요) 같은 화면 — 가치 · 배당 칸은 '–' 와 'PBR –' · '배당수익률 –' (규칙 fcur,
+    그림 · 날짜 없음), 실적 · 출렁임 다음에 와요. 줄만 이름이 있을 때 (TWD). PBR 이 0.00 으로 반올림된 종목(pbrZero)은 가치 칸만 (규칙 pbr0),
+    배당은 그대로. 0% 를 남긴 통화 회사는 배당 칸이 평소대로."""
     got = run("""
-      const s = STOCKS.find((x) => x.t === 'TSM');
       const load = { status: 'ok', data: { stocks: STOCKS, usPxDate: '2026-11-11', pxDate: '2026-11-12', fx: 1338 }, coByT: new Map(), byT: new Map(STOCKS.map((x) => [x.t, x])) };
-      const v = CO.tileViews(load, s);
-      out = { topics: v.map((x) => [x.topic, x.rule, x.phrase, x.number]), line: FN.fcurNoteText(s) };""",
-        STOCKS=[us("TSM", fcur="MYR")] + [us(f"U{i}", pbr=1.0 + i) for i in range(6)])
-    t = {x[0]: x for x in got["topics"]}
-    assert t["value"][1] == "na" and t["value"][3] is None and t["div"][1] == "na" and t["div"][3] is None
-    assert got["line"] is None
+      const view = (t) => { const s = STOCKS.find((x) => x.t === t); return { order: CO.orderTiles(CO.tileViews(load, s)).map((x) => [x.topic, x.rule, x.phrase, x.number, x.basis, x.art]),
+        line: FN.fcurNoteText(s), blank: FC.fcurBlank(s), dy: FC.fcurDyBlank(s), p0: FC.pbrZeroOf(s) }; };
+      out = { myr: view('M'), twd: view('T'), zero: view('Z'), brk: view('BRK-B'), aapl: view('AAPL'), left: view('L') };""",
+        STOCKS=[us("M", fcur="MYR"), us("T", fcur="TWD"), us("Z", fcur="CNY", dy=0.0), us("BRK-B", pbrZero=True, per=15.0, dy=0.0),
+                us("L", fcur="TWD", pbr=78.88), us("AAPL", pbr=40.0, dy=0.4)] + [us(f"U{i}", pbr=1.0 + i, dy=1.0) for i in range(6)])
+    for k in ("myr", "twd"):
+        o = got[k]
+        assert [x[:4] for x in o["order"][2:]] == [["value", "fcur", "–", "PBR –"], ["div", "fcur", "–", "배당수익률 –"]], o["order"]
+        assert [x[0] for x in o["order"][:2]] == ["earn", "risk"] and all(x[4] is None and x[5] is None for x in o["order"][2:])
+        assert o["blank"] is True and o["dy"] is True and o["p0"] is False
+    assert got["myr"]["line"] is None
+    assert got["twd"]["line"] == "주가는 달러, 재무제표는 대만 달러 기준이라 이 숫자는 계산하지 않았어요."
+    z = got["zero"]                                                         # 0% (배당 없음) 를 남긴 회사: 배당 칸은 평소대로
+    assert [x[0] for x in z["order"]] == ["earn", "div", "risk", "value"] and z["order"][1][1] == "none" and z["dy"] is False
+    assert z["blank"] is True and z["line"] == "주가는 달러, 재무제표는 중국 위안화 기준이라 이 숫자는 계산하지 않았어요."
+    b = got["brk"]
+    assert [x[:2] for x in b["order"]] == [["earn", "up"], ["div", "none"], ["risk", b["order"][2][1]], ["value", "pbr0"]] and b["p0"] is True
+    assert b["order"][3][3] == "PBR –" and b["blank"] is False and b["line"] is None
+    assert got["left"]["blank"] is False and got["left"]["line"] is None and got["left"]["order"][1][0] == "value"   # 숫자가 남으면 평소대로
+    assert all(x[1] not in ("fcur", "pbr0") for x in got["aapl"]["order"])
 
 
 # ── 문구 ──
@@ -187,3 +201,35 @@ def test_copy_line_and_names():
             assert f"| `co.curName.{k}` | {m.group(1)} |" in doc, k
     appr = open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8").read()
     assert f"| `co.fcur` | {LINE} | Jack, 2026-11-12" in appr
+
+
+def test_pbr_zero_line_and_rows():
+    got = run("""
+      const s = { t: 'BRK-B', cls: 'us', pbrZero: true, per: 15 };
+      out = {
+        of: [FC.pbrZeroOf(s), FC.pbrZeroOf({ ...s, pbr: 0.01 }), FC.pbrZeroOf({ ...s, fcur: 'TWD' }), FC.pbrZeroOf({ ...s, cls: 'kr' }),
+          FC.pbrZeroOf({ t: 'X', cls: 'us' }), FC.pbrZeroOf({ ...s, pbrZero: 1 })],
+        rows: [FC.pbrZeroRowsBlank(s, [{ id: 'value', blank: true }]), FC.pbrZeroRowsBlank(s, [{ id: 'div', blank: true }])],
+        note: text(renderToStaticMarkup(h(FN.PbrZeroNote, { s }))), none: renderToStaticMarkup(h(FN.PbrZeroNote, { s: { t: 'A', cls: 'us' } })),
+        ui: /data-ui-v2="pbr-zero"/.test(renderToStaticMarkup(h(FN.PbrZeroNote, { s }))),
+      };""")
+    assert got["of"] == [True, False, False, False, False, False] and got["rows"] == [True, False]
+    assert got["note"] == "자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요." and got["none"] == "" and got["ui"]
+
+
+def test_a_zero_yield_is_not_a_leftover():
+    got = run("""out = [FC.fcurLeftover({ cls: 'us', fcur: 'CNY', dy: 0 }), FC.fcurLeftover({ cls: 'us', fcur: 'CNY', dy: 0.1 }),
+      FC.fcurDyBlank({ cls: 'us', fcur: 'CNY', dy: 0 }), FC.fcurDyBlank({ cls: 'us', fcur: 'CNY' }), FC.fcurBlank({ cls: 'us', fcur: 'CNY', dy: 0 })];""")
+    assert got == [False, True, False, True, True]
+
+
+def test_approved_names_and_lines_word_for_word():
+    got = run("out = { names: C2.co.curName, pz: C2.co.pbrZero };")
+    n = got["names"]
+    assert all(isinstance(v, str) and v for v in n.values()), n                 # Jack, 2026-11-13: 모두 승인
+    assert n["JPY"] == "일본 엔화" and n["CNY"] == "중국 위안화" and n["ZAR"] == "남아공 랜드" and n["SEK"] == "스웨덴 크로나" and n["KRW"] == "원화"
+    assert got["pz"] == "자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요."
+    appr = open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8").read()
+    assert f"| `co.pbrZero` | {got['pz']} | Jack, 2026-11-13" in appr
+    for k, v in n.items():
+        assert f"| `co.curName.{k}` | {v} | Jack, 2026-11-13" in appr, k

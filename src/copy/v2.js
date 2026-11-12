@@ -193,44 +193,47 @@ export const C = {
     // 있을 자리에 한 번씩: 요약의 한눈에 칸 · 실적 탭 · 가치 탭 (자세히 화면도). {currency} = stmtCur 그대로. 미국 종목에는 없어요.
     stmtCur: "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요.",   // chat (2026-11-08: Jack 승인, DeepL 확인)
     // Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사 (data.json fcur, 예: "TWD"). 파이프라인이 달러 주가 ÷ 그 통화 금액일 수 있는
-    // PER · PBR · 배당수익률(과 가치 점수)을 비워요. 그 숫자가 있을 자리에 한 번씩: 요약의 한눈에 칸 · 가치 탭 · 배당 탭 · 내 기준과 맞는
-    // 정도(카드와 시트) · 가치 자세히. {currency} = 아래 curName 의 한국어 이름 (src/v2/fcur.js). 이름이 없는 코드는 줄 없이 빈 칸만.
+    // PER · PBR · 배당수익률(과 가치 점수)을 비워요. 화면은 그 이름을 "–" 로 남기고 바로 밑에 한 번씩: 요약의 가치 · 배당 칸 밑 · 내 기준과 맞는
+    // 정도(카드와 시트) · 가치 탭 · 가치 자세히 · 배당 탭 (자리는 PR #114 의 것, 문장은 Jack 의 것). {currency} = 아래 curName 의 한국어 이름.
     fcur: "주가는 달러, 재무제표는 {currency} 기준이라 이 숫자는 계산하지 않았어요.",   // chat (Jack, 2026-11-12: 그대로. Jack 의 자리 이름 {통화})
-    // 통화 코드(ISO 4217) → 한국어 이름. 모두 Jack 의 승인을 기다려요 (docs/tasks/v18.3-new-strings-pending.md § 통화 이름): 승인 전에는
-    // null 이라 위 줄이 나오지 않고 숫자만 비어 있어요. "제안" 이 제안한 이름이에요. 2026-11-12 에 나온 통화: BRL CAD CNY DKK EUR HKD JPY
-    // KZT SEK TWD VND (미국 773종목 중 27곳).
+    // Jack, 2026-11-13: PBR 이 0.00 으로 반올림돼 파이프라인이 비운 미국 종목 (data.json pbrZero, 예: BRK-B — 주식 종류 문제이지 통화 문제가
+    // 아니에요). PBR 이 있을 자리에 한 번씩, 위 통화 줄과 같은 자리 규칙 (한눈에 가치 칸 · 가치 탭 · 가치 자세히 · 내 기준의 가치 줄).
+    pbrZero: "자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요.",   // chat (Jack, 2026-11-13: 그대로)
+    // 통화 코드(ISO 4217) → 한국어 이름 (src/v2/fcur.js 가 읽어요). Jack, 2026-11-13: 제안대로 승인, 일본 엔화 · 중국 위안화 · 남아공 랜드만
+    // 그의 말로. 여기 없는 코드는 줄 없이 '–' 만 (console 에 코드). 2026-11-12 에 나온 통화: BRL CAD CNY DKK EUR HKD JPY KZT SEK TWD VND
+    // (미국 773종목 중 27곳).
     curName: {
-      EUR: null,   // 제안 (Jack 승인 대기) "유로"
-      GBP: null,   // 제안 (Jack 승인 대기) "영국 파운드"
-      JPY: null,   // 제안 (Jack 승인 대기) "일본 엔"
-      CNY: null,   // 제안 (Jack 승인 대기) "중국 위안"
-      HKD: null,   // 제안 (Jack 승인 대기) "홍콩 달러"
-      TWD: null,   // 제안 (Jack 승인 대기) "대만 달러"
-      KRW: null,   // 제안 (Jack 승인 대기) "원화"
-      CAD: null,   // 제안 (Jack 승인 대기) "캐나다 달러"
-      AUD: null,   // 제안 (Jack 승인 대기) "호주 달러"
-      NZD: null,   // 제안 (Jack 승인 대기) "뉴질랜드 달러"
-      CHF: null,   // 제안 (Jack 승인 대기) "스위스 프랑"
-      SEK: null,   // 제안 (Jack 승인 대기) "스웨덴 크로나"
-      NOK: null,   // 제안 (Jack 승인 대기) "노르웨이 크로네"
-      DKK: null,   // 제안 (Jack 승인 대기) "덴마크 크로네"
-      BRL: null,   // 제안 (Jack 승인 대기) "브라질 헤알"
-      MXN: null,   // 제안 (Jack 승인 대기) "멕시코 페소"
-      INR: null,   // 제안 (Jack 승인 대기) "인도 루피"
-      ILS: null,   // 제안 (Jack 승인 대기) "이스라엘 셰켈"
-      KZT: null,   // 제안 (Jack 승인 대기) "카자흐스탄 텡게"
-      ZAR: null,   // 제안 (Jack 승인 대기) "남아프리카공화국 랜드"
-      ARS: null,   // 제안 (Jack 승인 대기) "아르헨티나 페소"
-      CLP: null,   // 제안 (Jack 승인 대기) "칠레 페소"
-      COP: null,   // 제안 (Jack 승인 대기) "콜롬비아 페소"
-      PEN: null,   // 제안 (Jack 승인 대기) "페루 솔"
-      TRY: null,   // 제안 (Jack 승인 대기) "튀르키예 리라"
-      SGD: null,   // 제안 (Jack 승인 대기) "싱가포르 달러"
-      IDR: null,   // 제안 (Jack 승인 대기) "인도네시아 루피아"
-      PHP: null,   // 제안 (Jack 승인 대기) "필리핀 페소"
-      THB: null,   // 제안 (Jack 승인 대기) "태국 바트"
-      PLN: null,   // 제안 (Jack 승인 대기) "폴란드 즈워티"
-      VND: null,   // 제안 (Jack 승인 대기) "베트남 동"
+      EUR: "유로",   // chat (Jack, 2026-11-13)
+      GBP: "영국 파운드",   // chat (Jack, 2026-11-13)
+      JPY: "일본 엔화",   // chat (Jack, 2026-11-13)
+      CNY: "중국 위안화",   // chat (Jack, 2026-11-13)
+      HKD: "홍콩 달러",   // chat (Jack, 2026-11-13)
+      TWD: "대만 달러",   // chat (Jack, 2026-11-13)
+      KRW: "원화",   // chat (Jack, 2026-11-13)
+      CAD: "캐나다 달러",   // chat (Jack, 2026-11-13)
+      AUD: "호주 달러",   // chat (Jack, 2026-11-13)
+      NZD: "뉴질랜드 달러",   // chat (Jack, 2026-11-13)
+      CHF: "스위스 프랑",   // chat (Jack, 2026-11-13)
+      SEK: "스웨덴 크로나",   // chat (Jack, 2026-11-13)
+      NOK: "노르웨이 크로네",   // chat (Jack, 2026-11-13)
+      DKK: "덴마크 크로네",   // chat (Jack, 2026-11-13)
+      BRL: "브라질 헤알",   // chat (Jack, 2026-11-13)
+      MXN: "멕시코 페소",   // chat (Jack, 2026-11-13)
+      INR: "인도 루피",   // chat (Jack, 2026-11-13)
+      ILS: "이스라엘 셰켈",   // chat (Jack, 2026-11-13)
+      KZT: "카자흐스탄 텡게",   // chat (Jack, 2026-11-13)
+      ZAR: "남아공 랜드",   // chat (Jack, 2026-11-13)
+      ARS: "아르헨티나 페소",   // chat (Jack, 2026-11-13)
+      CLP: "칠레 페소",   // chat (Jack, 2026-11-13)
+      COP: "콜롬비아 페소",   // chat (Jack, 2026-11-13)
+      PEN: "페루 솔",   // chat (Jack, 2026-11-13)
+      TRY: "튀르키예 리라",   // chat (Jack, 2026-11-13)
+      SGD: "싱가포르 달러",   // chat (Jack, 2026-11-13)
+      IDR: "인도네시아 루피아",   // chat (Jack, 2026-11-13)
+      PHP: "필리핀 페소",   // chat (Jack, 2026-11-13)
+      THB: "태국 바트",   // chat (Jack, 2026-11-13)
+      PLN: "폴란드 즈워티",   // chat (Jack, 2026-11-13)
+      VND: "베트남 동",   // chat (Jack, 2026-11-13)
     },
     tabs: {
       summary: "요약",  // chat (2026-11-05: PR #36 「새 문구」 그대로) — 첫 탭

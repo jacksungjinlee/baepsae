@@ -39,8 +39,8 @@ import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { icrOffShown, stmtNotWonFor } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, fcurNoteText } from "./fixnote.jsx";
-import { fcurRowsBlank } from "./fcur.js";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote } from "./fixnote.jsx";
+import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
@@ -87,13 +87,20 @@ export function tileViews(load, s) {
     const number = r.pct != null && T().opChange ? fill(T().opChange, { pct: signedPct(r.pct) }) : r.amount != null && T().opAmount && eokText(r.amount) ? fill(T().opAmount, { x: eokText(r.amount) }) : null;
     add("earn", T().label.earn, r, r.rule === "na" ? na : T().earnKr[r.rule], number, { op: r.op }, { kind: "bars", op: r.op });
   }
-  {
+  // US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles stay, as "–" with their number's label
+  // ("PBR –", "배당수익률 –") and no picture, date or verdict; Tiles puts them last and the reason line right under them.
+  // A PBR that rounds to 0.00 (data.json pbrZero, Jack 2026-11-13): the 가치 tile the same way, rule "pbr0" and its own line.
+  const blankTile = (topic, label, rule = "fcur") => out.push({ topic, label: T().label[topic], phrase: "–", number: `${label} –`, rule, data: {}, basis: null, art: null });
+  if (fcurBlank(s) && T().label.value) blankTile("value", "PBR");
+  else if (pbrZeroOf(s) && T().label.value) blankTile("value", "PBR", "pbr0");
+  else {
     const r = valueTile(s, group);
     const number = r.med != null && T().pbr ? fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) }) : r.pbr != null ? `PBR ${timesText(r.pbr, 2)}` : null;
     add("value", T().label.value, r, r.rule === "na" ? na : T().value[r.rule], number, { pbr: r.pbr, med: r.med, n: r.n },
       r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med, ends: !!(number && T().pbr && number === fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) })) } : null);
   }
-  {
+  if (fcurDyBlank(s) && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield);
+  else {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
@@ -180,16 +187,18 @@ export function logSplitGuard(load) {
 // Statements not in won (corp.json stmtCur): the 실적 and 가치 tiles could only say 자료가 없어요, which is not why their numbers
 // are missing; they are left out and the currency line above the tiles says why (Jack's line, once).
 const AMOUNT_TILES = ["earn", "value"];
-// US statements not in dollars (data.json fcur, Jack 2026-11-12): the 가치 and 배당 tiles could only say 자료가 없어요 (PBR and
-// the yield are blanked); with the reason line on screen they are left out and the line says why, once above the tiles. With no
-// line (no Korean name for the currency yet) they stay as they are: the same blank as any missing number.
-const FCUR_TILES = ["value", "div"];
+// US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles show "–" with their label (tileViews
+// rule "fcur"); they go last (실적 · 출렁임, then 가치 · 배당), so the reason line sits right under them, once. Keyed on the
+// data: the same tiles while the currency's name waits for Jack, only without the line.
+// The tiles in screen order: tiles held at "–" (rule fcur · pbr0) after the others, each group in its own order. (pure; tests)
+export function orderTiles(views) {
+  const held = (x) => x.rule === "fcur" || x.rule === "pbr0";
+  return [...views.filter((x) => !held(x)), ...views.filter(held)];
+}
 function Tiles({ load, s, onTab, tabsOn }) {
   const cur = stmtNotWonFor(s, load.coByT.get(s.t) || null);
-  const fc = !!fcurNoteText(s);
-  const views = useMemo(() => tileViews(load, s).filter((v) => !(cur && AMOUNT_TILES.includes(v.topic)) && !(fc && FCUR_TILES.includes(v.topic))),
-    [load, s, cur, fc]);
-  if (!views.length && !fc) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
+  const views = useMemo(() => orderTiles(tileViews(load, s).filter((x) => !(cur && AMOUNT_TILES.includes(x.topic)))), [load, s, cur]);
+  if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
   const md = priceMd(load, s);
   const src = usOf(s) && C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null;     // US: the source of every tile number
   const tabOf = { earn: "earn", value: "value", div: "div", risk: "value" };
@@ -198,11 +207,13 @@ function Tiles({ load, s, onTab, tabsOn }) {
       {T().title && <h3 style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { margin: `0 ${SPACE(1)}px ${SPACE(2)}px` })}>{T().title}</h3>}
       {/* statements not in won (corp.json stmtCur): the 실적 · 가치 tiles have no numbers; the reason once, before them */}
       <StmtCurNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
-      {/* US statements not in dollars (data.json fcur): no PBR · PER · yield; the reason once, before the tiles */}
-      <FcurNote s={s} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
         {views.map((v) => <Tile key={v.topic} v={v} onOpen={tabsOn ? () => onTab(tabOf[v.topic]) : undefined} />)}
       </div>
+      {/* US statements not in dollars (data.json fcur): the reason once, right under the 가치 · 배당 tiles showing – */}
+      {views.some((v) => v.rule === "fcur") && <FcurNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
+      {/* a PBR that rounds to 0.00 (data.json pbrZero): its own line, right under the 가치 tile showing – */}
+      {views.some((v) => v.rule === "pbr0") && <PbrZeroNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
     </section>
   );
@@ -450,6 +461,7 @@ function Fit({ load, s, store, wide }) {
       <div style={{ marginTop: SPACE(2) }}>{mine.ids.map((id) => <RankRow key={id} id={id} r={m.get(id)} />)}</div>
       {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
+      {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
       {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
@@ -461,6 +473,7 @@ function Fit({ load, s, store, wide }) {
           {indOk && <Segmented label={F.sheet} value={scope} onChange={setScope} options={[{ value: "market", label: F.market }, { value: "ind", label: F.ind }]} />}
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
+          {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
           {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>
