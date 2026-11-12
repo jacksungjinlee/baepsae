@@ -51,11 +51,14 @@ serve the `docs/` folder (two of its files must answer "not found").
     the data is published; CI still checks those scenes on its own data, where a missing company is a failure.
     A company leaving the market never holds the data back. Never skip the check itself to get the data out.
 - **CI runs on fixed data (since #104).** A pull request's checks no longer read the day's files: `smoke_app` uses a
-  trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 470 KB), `smoke_v2` and `smoke_launch` use the
+  trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 395 KB; its few filing rows carry made-up people's names), `smoke_v2` and `smoke_launch` use the
   2.0 test data (`tests/fixtures/v2`), and `smoke_app` and `smoke_v2` run on a test clock that starts at 07:00 KST on a
   fixed day (`tests/testclock.py`). So a pull request's code meets today's real data only in the daily run above, or when
-  the three commands are run by hand: `python tests/real_data_check.py --data .`, `python tests/smoke_launch.py --data .`
-  and `python tests/smoke_app.py --data .`.
+  the three commands are run by hand: `python tests/real_data_check.py --data DIR`, `python tests/smoke_launch.py --data DIR`
+  and `python tests/smoke_app.py --data DIR`. `CLAUDE.md` requires that before merging any PR that changes what the
+  browser runs (a stopgap until the deploy runs them itself): put a fresh copy of the four files in a folder outside the
+  checkout (`git fetch origin main`, then `git show origin/main:data.json > DIR/data.json` and so on), run the three
+  commands and paste their result lines into the PR.
   To refresh the snapshot from a newer publish (only when a new field or a new kind of stock must be in it): run
   `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
   `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.

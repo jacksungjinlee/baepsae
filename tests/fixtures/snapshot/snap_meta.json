@@ -1,18 +1,21 @@
 {
- "what": "tests/smoke_app.py 의 고정 데이터: 하루치 실제 발행 파일을 줄인 사본 (값은 그대로, 목록만 줄임). make_snapshot.py 로 만들어요.",
+ "what": "tests/smoke_app.py 의 고정 데이터: 하루치 실제 발행 파일을 줄인 사본 (목록만 줄임 · 값은 그대로, 단 공시 줄의 사람 이름과 접수번호는 지어낸 것). make_snapshot.py 로 만들어요.",
+ "madeUp": "snap_disc.json insider 의 nm (보고한 사람 이름) · rc (접수번호) — 실제 이름은 하나도 없어요",
  "source": "main 3ff1ce2 · 데이터 갱신 2026-11-11",
  "publishedAt": "2026-11-11T06:40:55+09:00",
  "pxDate": "2026-11-10",
  "now": "2026-11-11T07:00:00+09:00",
  "rule": {
   "keepKr": 120,
-  "keepUs": 50
+  "keepUs": 50,
+  "insiderPerStock": 2,
+  "npsRows": 5
  },
  "kept": {
   "stocks": 248,
   "companies": 146,
-  "insider": 459,
-  "nps": 25
+  "insider": 7,
+  "nps": 5
  },
  "published": {
   "stocks": 3259,
@@ -23,7 +26,7 @@
  "bytes": {
   "snap_data.json": 203795,
   "snap_corp.json": 149960,
-  "snap_disc.json": 76886,
+  "snap_disc.json": 1695,
   "snap_macro.json": 39565
  }
 }

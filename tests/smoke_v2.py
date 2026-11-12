@@ -4745,7 +4745,10 @@ def scene_stale_recheck(R, files, width):
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
     for how in ("timer", "visible"):
         now = now_dt()
-        f = stale_files(files, 2, 0.5, due_at=now + dt.timedelta(minutes=40))     # 발행 2시간 전 · staleAfter 30분 뒤 · 예정일 = 그때의 날짜
+        # 예정일 = 경고를 읽는 바로 그 순간의 날짜 (타이머: 31분 뒤 · 화면이 다시 보일 때: 45분 뒤). 2026-11-12 (Jack): 예전에는 둘 다
+        # 40분 뒤의 날짜라, 23:15~23:20 에 돌면 45분 뒤는 다음 날이 되어 앱이 규칙대로 '2일째 갱신이 멈췄어요'라고 했어요 (앱이 맞고 시험이 틀림).
+        jump = dt.timedelta(minutes=31 if how == "timer" else 45)
+        f = stale_files(files, 2, 0.5, due_at=now + jump)                         # 발행 2시간 전 · staleAfter 30분 뒤
         srv, base = serve(build_site(f))
         ctx = R.new_context(clock=False, viewport={"width": width, "height": 780}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
@@ -4768,7 +4771,7 @@ def scene_stale_recheck(R, files, width):
             if how == "timer":
                 page.clock.fast_forward("31:00")                                  # staleAfter 를 지나 타이머가 돌아요
             else:
-                page.clock.set_system_time(now + dt.timedelta(minutes=45))        # 타이머는 돌지 않고 시계만
+                page.clock.set_system_time(now + jump)                            # 타이머는 돌지 않고 시계만
                 page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
             page.wait_for_function("() => { const e = document.querySelector('[data-ui-v2=\"date-line\"]'); return !!e && e.dataset.stale === '1'; }")
             assert dl.inner_text().endswith(" · " + C["app"]["staleLate"]), dl.inner_text()          # 발행 2시간 뒤: n = 0 → 늦어지고 있어요

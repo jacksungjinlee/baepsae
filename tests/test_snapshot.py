@@ -280,3 +280,28 @@ def test_every_stock_smoke_app_names_is_in_the_snapshot():
     assert named - made_up <= have, sorted(named - made_up - have)
     for t in ("AAPL", "MSFT", "NVDA"):
         assert f'"{t}"' in src and t in have, t
+
+
+# ── 2026-11-12 (Jack): 공시 줄은 시험이 쓰는 만큼만, 사람 이름은 지어낸 것으로 ──
+def test_snapshot_filing_rows_are_few_and_carry_no_real_names():
+    sys.path.insert(0, SNAP)
+    import make_snapshot as MS
+    disc, meta, data = snap("snap_disc.json"), snap("snap_meta.json"), snap("snap_data.json")
+    ins, nps = disc["insider"], disc["nps"]
+    # 임원 · 주요주주 줄: tests/smoke_app.py 가 이름을 부르는 종목만, 종목마다 INSIDER_PER 줄까지
+    named = MS.quoted_tickers({s["t"] for s in data["stocks"]}, [os.path.join(ROOT, "tests", "smoke_app.py")])
+    per = {}
+    for x in ins:
+        per[x["t"]] = per.get(x["t"], 0) + 1
+    assert ins and set(per) <= named and max(per.values()) <= MS.INSIDER_PER == meta["rule"]["insiderPerStock"], per
+    assert {"005930", "005380"} <= set(per)                                   # 삼성전자 · 현대차의 기업분석에 내부자 줄이 보여요
+    assert 0 < len(nps) <= MS.NPS_ROWS == meta["rule"]["npsRows"]
+    # 사람 이름(nm)은 글자표에서 뽑은 지어낸 세 글자, 접수번호(rc)는 날짜 + 9 + 순번 (실제 접수번호 모양이 아니에요)
+    for i, x in enumerate(ins):
+        assert re.fullmatch(f"[{MS.SYL}]{{3}}", x["nm"]), x
+        assert x["rc"] == f"{x['d']}9{i + 1:05d}", x
+    assert len({MS.made_up_name(i) for i in range(196)}) == 196             # 지어낸 이름끼리는 겹치지 않아요
+    assert "실제 이름은 하나도 없어요" in meta["madeUp"]
+    assert not any("nm" in x for x in nps)                                   # 국민연금 줄에는 사람 이름이 없어요
+    # 사람 이름이 들어갈 수 있는 곳은 거기뿐: 다른 세 파일은 줄이기만 한 사본이에요 (회사 이름 · 숫자)
+    assert "insider" not in snap("snap_data.json") and "insider" not in snap("snap_corp.json") and "insider" not in snap("snap_macro.json")

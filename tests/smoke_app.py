@@ -2575,7 +2575,11 @@ def scene_stale_recheck(R, files):
         f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=2)).isoformat(timespec="seconds")
         f["data.json"]["nextPub"] = now.date().isoformat()
         f["data.json"]["staleAfter"] = (now + dt.timedelta(minutes=30)).isoformat(timespec="seconds")
-        f["data.json"]["nextPub"] = (now + dt.timedelta(minutes=40)).date().isoformat()     # 경고가 뜨는 때의 날짜 (자정을 넘겨도 n = 1)
+        # 예정일 = 경고를 읽는 바로 그 순간의 날짜 (자정을 넘겨도 n = 1). 2026-11-12 (Jack): 예전에는 두 경우 모두 40분 뒤의 날짜였는데,
+        # '화면이 다시 보일 때'는 시계를 45분 옮겨요 — 23:15~23:20 에 돌면 예정일은 오늘, 읽는 때는 내일이 되어 앱이 규칙대로
+        # '2일째 갱신이 멈췄어요'라고 했고(앱이 맞아요: n = 예정일부터 센 날 + 1, data.js freshness) 시험만 틀렸어요.
+        jump = dt.timedelta(minutes=31 if how == "timer" else 45)
+        f["data.json"]["nextPub"] = (now + jump).date().isoformat()
         srv, base = serve(build_site(f))
         ctx = R.new_context(clock=False, viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
@@ -2596,7 +2600,7 @@ def scene_stale_recheck(R, files):
             if how == "timer":
                 page.clock.fast_forward("31:00")
             else:
-                page.clock.set_system_time(now + dt.timedelta(minutes=45))
+                page.clock.set_system_time(now + jump)
                 page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
             poll(page, "(() => { const b = document.querySelector('.dateBadge'); return b ? b.dataset.stale : null; })()", lambda v: v == "1",
                  "시계가 staleAfter 를 지났는데 경고가 뜨지 않았어요")
