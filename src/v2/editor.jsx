@@ -355,6 +355,7 @@ function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, on
   const sc = E.sellCheck(deck, draft, row.t);
   const chk = { low: sc.low, y: sc.y };
   const n = sc.n, cap = sc.cap;
+  const pendingRows = (draft.adds || []).length > 0 || (draft.removed || []).length > 0;
   const blocked = held && (sc.last || !writable || (chk.low && raise == null));
   const title = fill(objectParticle(row.nk) === "eul" ? C.rm.title : C.rm.titleReul, { name: row.nk });
   const head = held ? (st.avg ? fill(C.rec.head, { qty: qtyText(st.qty), price: ownMoney(st.avg.avg, st.avg.ccy) }) : fill(C.rec.heldQty, { qty: qtyText(st.qty) })) : null;
@@ -379,6 +380,9 @@ function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, on
         {held && !sc.last && chk.low && raise == null && (
           <div data-ui-v2="rm-cap-low" style={{ marginTop: SPACE(3) }}>
             <Note tone="watch">{fill(C.edit.capLow, { n, x: cap })}</Note>
+            {/* round-2: the line counts the SAVED stocks left (팔고 빼기 saves at once); while 담기 or 빼기 wait, the list above shows
+                others, so the {n} stocks it means are named (their names, no new words) */}
+            {pendingRows && <p data-ui-v2="rm-stored" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(1)}px ${SPACE(1)}px 0`, wordBreak: "keep-all" })}>{sc.names.join(" · ")}</p>}
             <div style={{ marginTop: SPACE(2) }}><Button kind="secondary" onClick={() => setRaise(chk.y)}>{fill(C.edit.capRaise, { y: chk.y })}</Button></div>
           </div>
         )}

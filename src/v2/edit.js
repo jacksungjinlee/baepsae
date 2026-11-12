@@ -36,7 +36,7 @@ import { BANDS, num, hasGroup } from "./engine.js";
 import { usdOf, marketKey } from "./pf.js";
 import { rulesFor } from "./deckcalc.js";
 import { withoutHolding, deckProblem, problemText, versionFor, recordId, CHANGES_MAX } from "./store.js";
-import { heldUnits, UNIT, VIEW_SPLITS } from "./held.js";
+import { heldUnits, UNIT, VIEW_SPLITS, splitsOf, splitFactor } from "./held.js";
 
 export const MIN_PCT = 1;                        // a holding stays at 1% or more (빼기 is how a holding leaves)
 export const REASONS = ["thesis", "rule", "better", "other"];
@@ -66,13 +66,13 @@ export function capCheck(n, x) {
 }
 
 // [D2] on the rows (round-1 S4: the spec's intent rather than its literal n × x, owner to confirm): the targets cannot reach
-// 100% when every row at its own ceiling — the cap, or the row's own % when it is already above the cap (a 채권·금 cushion the
-// share-out never pushes higher, ceilingOf) — adds up to less than 100. y as the spec says: 100 ÷ n rounded up (capCheck).
-// -> { low, y }
+// 100% when every row at its own ceiling — the cap, or the row's own STORED % when that is above the cap (a 채권·금 cushion
+// the share-out never pushes past what was saved, ceilingOf; round-2: stepping it 15 → 14 does not open D2) — adds up to
+// less than 100. y as the spec says: 100 ÷ n rounded up (capCheck). -> { low, y }
 export function d2Of(rows, cap) {
   const { y } = capCheck(rows.length, cap);
   if (y == null) return { low: false, y: null };
-  const room = rows.reduce((a, r) => a + ceilingOf(num(r.pct) || 0, cap), 0);
+  const room = rows.reduce((a, r) => a + ceilingOf(r, cap), 0);
   return { low: room < 100 - SUM_TOL, y };
 }
 
@@ -184,11 +184,13 @@ function wholeShares(items, vals, need) {
 // D2 button). anchor: the row that keeps its value (the one just changed, or the stock being added); cap: whole % or null.
 // -> Map t -> whole % for every row (the anchor too: it takes what the others cannot when they are all at their bounds).
 // The sum is 100 whenever the cap allows it (capCheck); otherwise every row sits at its bound and the sum stays below 100.
-export const ceilingOf = (pct, cap) => (cap == null ? 100 : Math.max(cap, pct));
+// A row's ceiling: 100 without a cap; else the cap, or more when the row's stored target (or its value now) is above it —
+// the same top as the stepper's (stepLimits): a holding saved above the cap goes back up to it, never higher.
+export const ceilingOf = (r, cap) => (cap == null ? 100 : Math.max(cap, num(r && r.pct) || 0, num(storedPct(r)) || 0));
 export function rebalance(rows, anchor, cap) {
   const a = anchor ? rows.find((r) => r.t === anchor) || null : null;
   const others = rows.filter((r) => r !== a);
-  const hiOf = (r) => ceilingOf(r.pct, cap);
+  const hiOf = (r) => ceilingOf(r, cap);
   const items = others.map((r) => ({ t: r.t, w: r.pct, lo: MIN_PCT, hi: hiOf(r) }));
   let aPct = a ? a.pct : 0;
   if (a) aPct = Math.max(MIN_PCT, Math.min(hiOf(a), aPct));
@@ -299,6 +301,22 @@ export function indOf(row, byT, names) {
 
 // Shares held now (held.js: imported + purchases − sales), as a number of shares.
 export const heldShares = (deck, t) => (heldUnits(deck).get(t) || 0) / UNIT;
+// 팔고 빼기's locked quantity for a sale dated `date` (round-2 B-2): every share held, counted on that date's share basis —
+// a record dated before a split is read × r (held.js splitFactor, stored splits and data.json's), so a sale before HON's
+// 1:2 of 2026-06-29 sells 2 old shares for today's 1, and one before NVDA's 10:1 sells 1/10 of today's count. The quantity
+// is the one whose units, read the way held.js reads a sale, are exactly the holding (the nearest unit that does). null:
+// nothing held, no date, or no such quantity (an odd ratio): 팔고 빼기 then refuses rather than leave a share behind.
+export function sellAllQty(deck, t, date) {
+  const u = heldUnits(deck).get(t) || 0;
+  if (!(u > 0) || typeof date !== "string" || !date) return null;
+  const f = splitFactor(splitsOf(deck), t, date);
+  const q0 = Math.round(u / f);
+  for (const d of [0, -1, 1, -2, 2]) {
+    const q = q0 + d;
+    if (q > 0 && Math.round(-q * f) === -u) return q / UNIT;
+  }
+  return null;
+}
 
 // ---------------- saving ----------------
 // The plan's whole amount in won (targets are shares of it): settings.amountMan, else what the plan's own numbers imply
@@ -450,18 +468,21 @@ export function applyEdit(data, deckId, draft, env) {
 // first, round-1 B1) · "gone" · "store".
 export function sellAndRemove(afterSale, deckId, t, opts) {
   const { reason, raise = null, load, today, ts } = opts;
+  // every refusal is said in the console with its reason (CLAUDE.md: no silent failure; the screen keeps the form)
+  const no = (why, more = "") => { console.warn(`[v2] ${deckId}: sell and remove ${t} refused (${why})${more}; nothing saved`); return { ok: false, why }; };
   const before = findDeck(afterSale, deckId);
-  if (!before) return { ok: false, why: "gone" };
-  if ((heldUnits(before).get(t) || 0) > 0) return { ok: false, why: "partial" };
-  if (!(before.holdings || []).some((h) => h && h.t !== t)) return { ok: false, why: "last" };
+  if (!before) return no("gone");
+  const left = heldUnits(before).get(t) || 0;
+  if (left > 0) return no("partial", `: ${left / UNIT} shares would stay after the sale`);
+  if (!(before.holdings || []).some((h) => h && h.t !== t)) return no("last");
   const x = takeOut(afterSale, deckId, t, reason, today, ts);
-  if (!x) return { ok: false, why: "gone" };
+  if (!x) return no("gone");
   let deck = findDeck(x.data, deckId);
   const cap = raise != null ? raise : capOf(deck);
   const rows = editRows(deck, emptyDraft());
   const shared = rebalance(rows, null, cap);
   // the targets left must add up to 100% (round-1 B1: under the cap they cannot, and 팔고 빼기 waits for the D2 raise)
-  if (!sumOk([...shared.values()].reduce((a, v) => a + v, 0))) return { ok: false, why: "sum" };
+  if (!sumOk([...shared.values()].reduce((a, v) => a + v, 0))) return no("sum", ": the stocks left cannot reach 100% under the cap");
   const tg = applyTargets(deck, shared, load && load.data ? load.data.fx : null, load && load.byT);
   deck = tg.deck;
   if (raise != null && raise !== capOf(deck)) deck = { ...deck, settings: { ...(deck.settings || {}), maxPct: raise } };
@@ -473,14 +494,15 @@ export function sellAndRemove(afterSale, deckId, t, opts) {
 // 팔고 빼기 writes to the stored portfolio at once (round-1 B1), so its checks read what that write will touch: the stored
 // holdings left after the sale (a pending 담기 row is not stored yet and does not count; a pending removal still is, until 바꾼
 // 내용 저장), at the cap the write will use (a raise already waiting in the draft is saved with it). The edited list must
-// keep a stock too. -> { last (no stock would be left: 팔고 빼기 is off), low, y (D2 on the stored rows), cap, up }
+// keep a stock too. -> { last (no stock would be left: 팔고 빼기 is off), low, y (D2 on the stored rows), n, names (the stored
+// stocks left, as the sheet's "{n}개뿐이라" counts them), cap, up }
 export function sellCheck(deck, draft, t) {
   const stored = editRows(deck, emptyDraft()).filter((r) => r.t !== t);
   const left = editRows(deck, draft).filter((r) => r.t !== t).length;
   const up = draft && draft.maxPct != null && draft.maxPct !== capOf(deck) ? draft.maxPct : null;
   const cap = up != null ? up : capOf(deck);
   const d2 = d2Of(stored, cap);
-  return { last: !stored.length || !left, low: d2.low, y: d2.y, n: stored.length, cap, up };
+  return { last: !stored.length || !left, low: d2.low, y: d2.y, n: stored.length, names: stored.map((r) => r.nk || r.t), cap, up };
 }
 // The draft after the store changed under it (팔고 빼기 saved): edits of holdings that are gone are dropped; the rest stay.
 export function rebaseDraft(deck, draft) {

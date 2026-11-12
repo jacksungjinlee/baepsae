@@ -376,10 +376,16 @@ export function cardRaw(s, card) {
 // KR: 20-day average (val20); US: the 3-month average (val). Both 억원. null = unknown.
 export const liquidity = (s) => (s.cls === "kr" ? num(s.val20) : num(s.val));
 
+// A price in won: a dollar price times fx. Dollars by the row's currency (ccy "USD", the rule pf.js usdOf and the old app
+// use), never by cls alone (round-2 review, Z1): 379800 KODEX 미국S&P500 is cls "us" but priced in won on KRX. Every row of
+// data.json gives a US price its ccy; a row with no currency at all (a hand-made or older file) falls back to its market,
+// except a KRX code (six digits), which is always won. On today's data this changes 379800 only.
+const KRX_CODE = /^\d{6}$/;
+export const isUsdPrice = (s) => !!s && (s.ccy != null ? s.ccy === "USD" : s.cls === "us" && !KRX_CODE.test(String(s.t || "")));
 export function priceWon(s, fx) {
   const p = num(s.price);
   if (p == null) return null;
-  if (s.cls === "us") return num(fx) != null ? p * fx : null;
+  if (isUsdPrice(s)) return num(fx) != null ? p * fx : null;
   return p;
 }
 

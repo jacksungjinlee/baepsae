@@ -734,7 +734,11 @@ function unionDeck(cur, other) {
   // v19.7a round-1 S1: the target set (each holding's target, plannedQty and band rule, and settings.maxPct) is one edit:
   // the copy whose set was saved later (targetsTs; a time more than a day ahead counts as none) gives it whole, for every
   // holding it has; a copy without a time is older than one with. Holdings added or taken out follow their own rules above
-  // and below (removal marks, history), so the sum stays the later edit's.
+  // and below (removal marks, history). When only one copy changed targets, the sum is that edit's. When BOTH changed
+  // targets and also added or took out different stocks, the later set covers only the holdings it has, so the targets can
+  // add up to more or less than 100% (round-2 B-1, a known limit, RUNBOOK): no record is lost, the 합쳤어요 line shows,
+  // 종목 바꾸기 opens at that 합계 with 합계를 100%로 맞추기, and the daily check reads each target over the held ones' sum
+  // (rules.js ref = target / targetSum), so the sum alone flags nothing. Never renormalised here.
   const tc = believable(cur.targetsTs) ? cur.targetsTs : null, to = believable(other.targetsTs) ? other.targetsTs : null;
   if (to != null && !(tc != null && tc >= to)) {
     const oh = new Map((other.holdings || []).filter(plainObj).map((h) => [h.t, h]));

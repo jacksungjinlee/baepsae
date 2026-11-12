@@ -12,7 +12,7 @@ import { Note, TextInput, SampleLabel, tx, useMode, useLayout, SIDE_W } from "./
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
 import { writeStore } from "./store.js";
-import { withRemoval } from "./edit.js";
+import { withRemoval, sellAllQty } from "./edit.js";
 import { priceDate } from "./cofmt.js";
 import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
@@ -175,23 +175,29 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";              // the same source the saved record's currency comes from
   const env = rateEnv(load, today);
-  // v19.7a 팔고 빼기: the sale form opens with every held share filled in (flow.prefill.qty)
+  // v19.7a 팔고 빼기: the sale form opens with every held share filled in (flow.prefill.qty; with flow.lockQty it then follows
+  // the date, below)
   const [v, setV] = useState({ qty: flow.prefill && flow.prefill.qty != null ? String(flow.prefill.qty) : "", price: "", date: today, amount: "" });
   const [tried, setTried] = useState(false);
   const [fail, setFail] = useState(false);
   const set = (k) => (x) => setV((o) => ({ ...o, [k]: x }));
   const byAmount = kind === "sell" && st.byAmount;
   const closeOk = kind === "div" || closeIsDefault(deck, t, v.date, today);   // today's close can stand in for an empty price
+  // v19.7a 팔고 빼기 (flow.lockQty): the quantity is every share held, on the chosen date's share basis (round-2 B-2: a sale
+  // dated before a split sells the pre-split count), so the sale takes out exactly the holding; it follows the date field
+  const lockedQty = kind === "sell" && flow.lockQty ? sellAllQty(deck, t, v.date) : null;
+  const qty = kind === "sell" && flow.lockQty ? (lockedQty != null ? String(lockedQty) : "") : v.qty;
   const check = useMemo(() => {
-    if (kind === "sell") return checkSale(deck, t, { qty: v.qty, price: v.price, date: v.date, amountWon: v.amount }, s, env);
+    if (kind === "sell") return checkSale(deck, t, { qty, price: v.price, date: v.date, amountWon: v.amount }, s, env);
     if (kind === "buy") return checkPurchase(deck, t, v, s, env);
     return checkDiv(deck, t, v, s, env);
-  }, [kind, deck, t, v, s, env.fx, env.fxHist, env.stale]);
+  }, [kind, deck, t, v, qty, s, env.fx, env.fxHist, env.stale]);
   // the result card (팔았어요): live from what is typed, before anything is saved
   const prev = kind === "sell" && check.ok ? salePreview(deck, check.rec) : null;
   const md = s ? mdText(priceDate(load, s)) : null;
   const submit = () => {
     setTried(true);
+    if (kind === "sell" && flow.lockQty && lockedQty == null) console.warn(`[v2] ${deck.id}: sell and remove ${t}: no whole-unit quantity sells every share on ${v.date}; not saved`);
     if (!check.ok) return;
     const list = kind === "buy" ? "purchases" : kind === "sell" ? "sales" : "divs";
     let next = withRecord(store.data, deck.id, list, check.rec, today);
@@ -247,7 +253,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
           <TextInput label={C.rec.sellAmount} inputMode="numeric" value={v.amount} onChange={set("amount")} invalid={bad("amount")} />
         ) : (
           <>
-            <TextInput label={C.plan.qty} inputMode={usd && kind === "sell" ? "decimal" : "numeric"} value={v.qty} onChange={flow.lockQty ? () => {} : set("qty")}
+            <TextInput label={C.plan.qty} inputMode={usd && kind === "sell" ? "decimal" : "numeric"} value={qty} onChange={flow.lockQty ? () => {} : set("qty")}
               invalid={bad("qty")} readOnly={!!flow.lockQty} />
             <TextInput label={kind === "sell" ? (usd ? C.rec.sellPriceUsd : C.rec.sellPriceWon) : (usd ? C.plan.priceUsd : C.plan.priceWon)} inputMode="decimal"
               placeholder={s && s.price > 0 && closeOk ? (usd ? nf(s.price, 2) : nf(s.price)) : undefined} value={v.price} onChange={set("price")} invalid={bad("price")} />

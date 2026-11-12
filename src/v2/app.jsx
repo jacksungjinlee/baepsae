@@ -519,11 +519,22 @@ export function App({ source }) {
   }), [editId]);
   // round-1 nit: opening another portfolio's 종목 바꾸기 while one portfolio's edits wait asks first (they would be dropped)
   const [askDrop, setAskDrop] = useState(null);
+  const waitingFor = (id) => {
+    const w = editor && editor.deckId !== id ? view.data.decks.find((d) => d.id === editor.deckId && !isImported(d)) || null : null;
+    return w && editPending(w, editor.draft) ? w : null;
+  };
   const openEdit = useCallback((id) => {
-    const waiting = editor && editor.deckId !== id ? view.data.decks.find((d) => d.id === editor.deckId) : null;
-    if (waiting && editPending(waiting, editor.draft)) { setAskDrop(id); return; }
+    if (waitingFor(id)) { setAskDrop(id); return; }
     router.go("portfolio", "edit/" + id);
   }, [router.go, editor, view]);
+  // round-2 B-4: the same question when another portfolio's 종목 바꾸기 is reached by its address or the browser's back button.
+  // The waiting editor stays on screen (held below), its address comes back, and the sheet asks; nothing is dropped unasked.
+  const heldEdit = editId ? waitingFor(editId) : null;
+  useEffect(() => {
+    if (!heldEdit) return;
+    setAskDrop(editId);
+    router.replaceRoute("portfolio", "edit/" + heldEdit.id);
+  }, [heldEdit, editId]);
   const leaveEdit = useCallback(() => { setEditor(null); router.back("portfolio"); }, [router.back]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
@@ -539,6 +550,11 @@ export function App({ source }) {
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
     if (returnsDeck) return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (heldEdit) {
+      // another portfolio's address while this one's edits wait: this one stays (the effect above puts its address back and asks)
+      return <Editor key={heldEdit.id} deck={heldEdit} load={load} store={store} setStoreData={setStoreData} draft={editor.draft} setDraft={() => {}} pad={pad}
+        onLeave={leaveEdit} onSaved={leaveEdit} />;
+    }
     if (editDeck) {
       return <Editor key={editDeck.id} deck={editDeck} load={load} store={store} setStoreData={setStoreData} draft={editDraft} setDraft={setEditDraft} pad={pad}
         onLeave={leaveEdit} onSaved={leaveEdit} />;
@@ -583,8 +599,10 @@ export function App({ source }) {
                   <BottomSheet open title={C.edit.leave} onClose={() => setAskDrop(null)} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
                     <div data-ui-v2="edit-drop" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
                       <Button onClick={() => setAskDrop(null)} style={{ flex: 1 }}>{C.app.close}</Button>
+                      {/* the leave sheet's discard button and label (round-2 B-4): 나가기 once approved, until then 포트폴리오. No approved
+                          line names the other portfolio yet. */}
                       <Button kind="secondary" onClick={() => { const id = askDrop; setAskDrop(null); setEditor(null); router.go("portfolio", "edit/" + id); }}
-                        style={{ flex: 1 }}>{C.edit.leaveGo || C.edit.title}</Button>
+                        style={{ flex: 1 }}>{C.edit.leaveGo || C.app.tabs.portfolio}</Button>
                     </div>
                   </BottomSheet>
                 )}

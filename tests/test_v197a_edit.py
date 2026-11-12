@@ -419,7 +419,8 @@ def test_sell_and_remove_refuses_a_partial_sale():
 def test_two_tabs_the_later_target_set_wins_whole():
     """[S1] each save that sets targets stamps targetsTs; when two copies merge, the later set (every holding's target,
     plannedQty and band rule, and settings.maxPct) wins whole, whichever copy wrote last. Holdings added or taken out follow
-    their own merge rules (removal marks, history), so the sum stays the later edit's."""
+    their own merge rules (removal marks, history). Here only tab A changed targets, so the sum is A's; when both tabs changed
+    targets of different holding sets it is not (test_two_tabs_that_both_changed_targets_store_another_sum_safely)."""
     got = run("""const base = (cap = 50) => ({ v: 1, decks: [deck4({}, 4, 0.25, cap)] });
       const stale = (data) => ({ v: 2, decks: [{ ...data.decks[0], divs: [{ id: 'v1aaaaaa', t: '000030', amount: 5000, ccy: 'KRW', date: T }] }] });
       const both = (a, b) => [S.mergeTabs(a, b, T), S.mergeTabs(b, a, T)].map((m) => ({ sum: sumT(m.decks[0]), max: m.decks[0].settings.maxPct, t: tgts(m.decks[0]),
@@ -655,3 +656,150 @@ def test_d2_counts_a_holding_already_above_the_cap():
     assert got["sell"]["low"] is True and got["sell"]["y"] == 13 and got["sellTen"]["low"] is False
     assert got["none"] == {"low": False, "y": None}
     assert got["plain"] == [{"low": True, "y": 25}, {"low": False, "y": 20}]                   # 안전자산이 없으면 n × x 그대로
+
+
+# ---------------- round-2 review ----------------
+TABS2 = """const later = { ...env, ts: env.ts + 60000 };
+      const base = (cap = 50) => ({ v: 1, decks: [deck4({}, 4, 0.25, cap)] });
+      const hy = { t: '000660', nk: 'SK하이닉스', cls: 'kr', ind: 'semi', kind: 'pinned', s: { t: '000660', nk: 'SK하이닉스', cls: 'kr', price: 200000, ind: 'semi', indName: '반도체' } };
+      const finite = (x) => (typeof x === 'number' ? Number.isFinite(x) : Array.isArray(x) ? x.every(finite) : x && typeof x === 'object' ? Object.values(x).every(finite) : true);
+      const recIds = (d) => [...(d.purchases || []).map((p) => p.id), ...(d.sales || []).map((p) => p.id), ...(d.divs || []).map((p) => p.id),
+        ...(d.history || []).flatMap((e) => [...(e.purchases || []), ...(e.sales || []), ...(e.divs || [])].map((p) => p.id))].sort();
+      // the next start after two tabs wrote: the one that wrote last is the store, the other's copy is kept aside (.other.)
+      const meet = (first, last) => { mem.clear(); mem.set(K + '.other.1700000000000', JSON.stringify(first)); mem.set(K, JSON.stringify(last)); return S.readStore(K, T); };
+      const norm = (d) => { const s = d.holdings.reduce((a, h) => a + h.target, 0);
+        return { ...d, holdings: d.holdings.map((h) => ({ ...h, target: h.target / s, rules: h.rules.map((r) => (r.id === 'band' ? E.bandRule(h.target / s) : r)) })) }; };
+      const daily = (d) => { const e = Ru.evaluateDeck(d, ctxOf()); return e.holdings.map((x) => [x.t, x.status, (x.rules.find((r) => r.id === 'band') || {}).bands?.map((b) => Math.round(b * 1e9) / 1e9)]); };
+"""
+
+
+def test_two_tabs_that_both_changed_targets_store_another_sum_safely():
+    """[B-1] a known limit (RUNBOOK): both tabs changed targets and added or took out different stocks, so the later set
+    covers only its own holdings and the targets add up to more or less than 100%. Never renormalised; for each case and
+    both write orders: no record is lost, no NaN, the 합쳤어요 line (restored), 종목 바꾸기 opens off 100% and its button
+    (합계를 100%로 맞추기, or D2 when the cap needs it) reaches 100, and the daily check reads the same as with the targets scaled
+    to 100% (each target over the held ones' sum), so the sum alone flags nothing."""
+    got = run(TABS2 + """const cases = {};
+      { const b0 = base(), d0 = b0.decks[0];
+        cases.addStep = [E.applyEdit(b0, 'd1', E.addDraft(d0, E.emptyDraft(), addSam(), 20), env).data, E.applyEdit(b0, 'd1', E.stepDraft(E.stepDraft(E.emptyDraft(), '000010', 30), '000020', 20), later).data]; }
+      { const b0 = base(), d0 = b0.decks[0];
+        cases.removeStep = [E.applyEdit(b0, 'd1', E.removeDraft(d0, E.emptyDraft(), '000040', 'thesis'), env).data, E.applyEdit(b0, 'd1', E.stepDraft(E.stepDraft(E.emptyDraft(), '000010', 30), '000020', 20), later).data]; }
+      { const b0 = base(), d0 = b0.decks[0];
+        cases.sellAdd = [E.sellAndRemove(sellAll(b0, '000010', 25), 'd1', '000010', { reason: null, raise: null, load, today: T, ts: env.ts }).data, E.applyEdit(b0, 'd1', E.addDraft(d0, E.emptyDraft(), addSam(), 20), later).data]; }
+      { const b0 = base(), d0 = b0.decks[0];
+        cases.addAdd = [E.applyEdit(b0, 'd1', E.addDraft(d0, E.emptyDraft(), addSam(), 20), env).data, E.applyEdit(b0, 'd1', E.addDraft(d0, E.emptyDraft(), hy, 20), later).data]; }
+      const res = {};
+      for (const [k, [a, b]] of Object.entries(cases)) {
+        for (const [order, x, y] of [['bLast', a, b], ['aLast', b, a]]) {
+          const r = meet(x, y);
+          const d = r.data.decks[0];
+          const rows = E.editRows(d, E.emptyDraft()), cap = E.capOf(d), d2 = E.d2Of(rows, cap);
+          const fixed = E.editRows(d, d2.low ? E.raiseDraft(d, E.emptyDraft()) : E.fixDraft(d, E.emptyDraft()));
+          // every record either copy holds, except the purchases of a stock one tab took out with 기록 없이 빼기 (they leave with it
+          // by the user's choice; its sales and dividends would be in history)
+          const out_ = new Set((d.removed || []).map((m) => m.t));
+          const gonePurchases = new Set([a, b].flatMap((x) => (x.decks[0].purchases || []).filter((p) => out_.has(p.t)).map((p) => p.id)));
+          const want = [...new Set([...recIds(a.decks[0]), ...recIds(b.decks[0])])].filter((id) => !gonePurchases.has(id) || recIds(d).includes(id)).sort();
+          res[k + ':' + order] = { restored: r.restored, problems: r.problems.length, locked: r.locked, sum: Math.round(E.sumPct(rows) * 1e6) / 1e6, ok: E.sumOk(E.sumPct(rows)),
+            fixed: Math.round(E.sumPct(fixed) * 1e6) / 1e6, d2: d2.low, finite: finite(r.data), recs: JSON.stringify(recIds(d)) === JSON.stringify(want),
+            daily: JSON.stringify(daily(d)) === JSON.stringify(daily(norm(d))), held: daily(d).length };
+        }
+      }
+      out = res;""")
+    sums = {}
+    for k, v in got.items():
+        assert v["restored"] is True and v["problems"] == 0 and v["locked"] is False, (k, v)       # 합쳤어요 · 따로 두지 않아요
+        assert v["finite"] is True and v["recs"] is True, (k, v)                                    # NaN 없음 · 기록은 모두 그대로
+        assert v["fixed"] == 100, (k, v)                                                            # 맞추기(또는 D2)로 100%
+        assert v["daily"] is True and v["held"] >= 3, (k, v)                                        # 합계만으로는 아무것도 걸리지 않아요
+        sums[k] = v["sum"]
+    off = {k: s for k, s in sums.items() if s != 100}
+    assert off, sums                                                                                # 알려진 한계: 100% 가 아닌 경우가 있어요
+    for k, s in off.items():
+        assert got[k]["ok"] is False                                                                # 열면 합계가 주황(저장 꺼짐) · 맞추기 버튼
+
+
+def test_the_sell_and_remove_quantity_follows_the_sale_date_across_a_split():
+    """[B-2] the locked quantity is every share held, on the chosen date's share basis: HON (1:2 on 2026-06-29) bought 2 on
+    2026-01-02 sells 2 when dated 06-26 and 1 when dated 07-01; NVDA (10:1 on 2024-06-10) bought 5 sells 5 before and 50
+    after. Each takes out exactly the holding. A refusal is said in the console (the old prefill: today's count)."""
+    got = run("""const US = { today: T, fx: 1400, fxDate: T, stale: false, fxHist: { asOf: T, final: true, rows: [['2016-01-04', 1100], ['2024-06-03', 1380], ['2024-06-07', 1375],
+        ['2024-06-12', 1378], ['2026-01-02', 1450], ['2026-06-26', 1370], ['2026-07-01', 1375], [T, 1400]] } };
+      const row = (t, price) => ({ t, nk: t, cls: 'us', ccy: 'USD', price, ind: 'semi', indName: '반도체' });
+      const dk = (t, qty, date, split) => ({ id: 'd1', name: 'x', createdAt: '2024-01-02', planFx: 1300, settings: { points: { value: 3 }, maxPct: 100, amountMan: 1000 },
+        holdings: [{ t, nk: t, cls: 'us', kind: 'core', target: 0.5, setAt: '2024-01-02', rules: [...band(0.5)] }, { t: '000010', nk: '종목1', cls: 'kr', kind: 'core', target: 0.5, setAt: '2024-01-02', rules: [...band(0.5)] }],
+        purchases: [{ id: 'p1aaaaaa', t, qty, price: 100, date, ccy: 'USD', fx: 1300 }, { id: 'p2aaaaaa', t: '000010', qty: 10, price: 100000, date, ccy: 'KRW' }], splits: [split] });
+      const go = (d, t, date) => { const q = E.sellAllQty(d, t, date);
+        const c = Rc.checkSale(d, t, { qty: String(q), price: '200', date }, row(t, 200), US);
+        if (!c.ok) return { q, why: c.why };
+        const r = E.sellAndRemove(Rc.withRecord({ v: 2, decks: [d] }, 'd1', 'sales', c.rec, T), 'd1', t, { reason: null, raise: null, load, today: T, ts: env.ts });
+        return { q, ok: r.ok, why: r.why, held: r.ok ? r.data.decks[0].holdings.map((h) => h.t) : null, sold: r.ok ? r.data.decks[0].history[0].sales[0].qty : null }; };
+      const hon = dk('HON', 2, '2026-01-02', { t: 'HON', date: '2026-06-29', r: 0.5 });
+      const nv = dk('NVDA', 5, '2024-06-03', { t: 'NVDA', date: '2024-06-10', r: 10 });
+      // the old prefill (today's count) dated before the split
+      const oldHon = (() => { const c = Rc.checkSale(hon, 'HON', { qty: '1', price: '200', date: '2026-06-26' }, row('HON', 200), US);
+        const n = warns.length; const r = E.sellAndRemove(Rc.withRecord({ v: 2, decks: [hon] }, 'd1', 'sales', c.rec, T), 'd1', 'HON', { reason: null, raise: null, load, today: T, ts: env.ts });
+        return { ok: r.ok, why: r.why, warned: warns.slice(n).some((w) => w.includes('refused (partial)') && w.includes('HON')) }; })();
+      const oldNv = Rc.checkSale(nv, 'NVDA', { qty: '50', price: '200', date: '2024-06-07' }, row('NVDA', 200), US);
+      out = { now: [E.heldShares(hon, 'HON'), E.heldShares(nv, 'NVDA')], hon: [go(hon, 'HON', '2026-06-26'), go(hon, 'HON', '2026-07-01')],
+        nv: [go(nv, 'NVDA', '2024-06-07'), go(nv, 'NVDA', '2024-06-12')], oldHon, oldNv: { ok: oldNv.ok, why: oldNv.why }, none: [E.sellAllQty(hon, 'XXX', T), E.sellAllQty(hon, 'HON', '')] };""")
+    assert got["now"] == [1, 50]
+    assert got["hon"] == [{"q": 2, "ok": True, "held": ["000010"], "sold": 2}, {"q": 1, "ok": True, "held": ["000010"], "sold": 1}]
+    assert got["nv"] == [{"q": 5, "ok": True, "held": ["000010"], "sold": 5}, {"q": 50, "ok": True, "held": ["000010"], "sold": 50}]
+    assert got["oldHon"] == {"ok": False, "why": "partial", "warned": True}                      # 예전: 조용히 거절 → 이제 console 에 이유
+    assert got["oldNv"]["ok"] is False                                                           # 예전: 고칠 수 없는 칸에 '너무 많아요'
+    assert got["none"] == [None, None]
+
+
+def test_round_2_pins_stamps_raise_import_and_lost_set():
+    """[B-3] 팔고 빼기 stamps targetsTs · sellCheck counts a cap raise waiting in the draft · a records file's other target
+    set comes in stamped with the import time (a copy with an older set never takes it back) · a target set that lost is
+    reported (restored), even when nothing else differs."""
+    got = run(TABS2 + """const five = deck4({}, 5, 0.2, 20);
+      const sr = E.sellAndRemove(sellAll({ v: 1, decks: [five] }, '000010', 20), 'd1', '000010', { reason: null, raise: 25, load, today: T, ts: env.ts + 5 });
+      const waiting = E.sellCheck(five, { ...E.emptyDraft(), maxPct: 25 }, '000010'), plain = E.sellCheck(five, E.emptyDraft(), '000010');
+      // a records file with another target set (10 / 40 / 25 / 25, stamped 1000) over this device's (25s, stamped 2000)
+      const mine = { v: 2, decks: [{ ...deck4(), targetsTs: 2000 }] };
+      const other = { v: 2, decks: [{ ...deck4(), holdings: deck4().holdings.map((h, i) => ({ ...h, target: [0.1, 0.4, 0.25, 0.25][i], rules: [pend('audit'), ...band([0.1, 0.4, 0.25, 0.25][i])] })), targetsTs: 1000 }] };
+      const inc = S.parseImport(S.exportText(other), T);
+      const im = S.mergeStores(mine, inc, 1762900000000, [mine], T);
+      const back = S.mergeTabs(mine, im, T);
+      const same = S.mergeStores(mine, S.parseImport(S.exportText(mine), T), 1762900000000, [mine], T);
+      // the lost set alone: two copies that differ only in their stamped target sets
+      const lost = meet(other, mine), kept = meet(mine, mine);
+      out = { srTs: sr.ok && sr.data.decks[0].targetsTs, waiting: [waiting.cap, waiting.up, waiting.low], plain: [plain.cap, plain.up, plain.low],
+        im: [im.decks[0].targetsTs, im.decks[0].holdings.map((h) => h.target)], back: back.decks[0].holdings.map((h) => h.target), sameTs: same.decks[0].targetsTs,
+        lost: [lost.restored, lost.data.decks[0].holdings.map((h) => h.target)], kept: kept.restored, names: plain.names };""")
+    assert got["srTs"] == 1762900000005
+    assert got["waiting"] == [25, 25, False] and got["plain"] == [20, None, True]
+    assert got["im"] == [1762900000000, [0.1, 0.4, 0.25, 0.25]] and got["back"] == [0.1, 0.4, 0.25, 0.25]
+    assert got["sameTs"] == 2000                                                                 # 같은 목표: 새 시각을 찍지 않아요
+    assert got["lost"] == [True, [0.25, 0.25, 0.25, 0.25]] and got["kept"] is False
+    assert got["names"] == ["종목2", "종목3", "종목4", "종목5"]
+
+
+def test_d2_reads_a_cushion_s_stored_value():
+    """[round-2 nit] 7 × 10% + 15% + 15% under a 10% cap: stepping a cushion 15 → 14 shows no D2 (its ceiling is its stored
+    15%, as the stepper's); 합계를 100%로 맞추기 then puts it back to 15."""
+    got = run("""const d = deck4({}, 9, 0.1, 10);
+      d.holdings = d.holdings.map((h, i) => (i < 7 ? h : { ...h, kind: 'cushion', target: 0.15, rules: band(0.15) }));
+      const dr = E.stepDraft(E.emptyDraft(), '000080', 14);
+      const rows = E.editRows(d, dr);
+      const fixed = E.editRows(d, E.fixDraft(d, dr));
+      out = { sum: E.sumPct(rows), d2: E.d2Of(rows, 10), fixed: fixed.map((r) => r.pct), fsum: E.sumPct(fixed), ceil: E.ceilingOf(rows[7], 10) };""")
+    assert got["sum"] == 99 and got["d2"] == {"low": False, "y": 12} and got["ceil"] == 15
+    assert got["fixed"] == [10] * 7 + [15, 15] and got["fsum"] == 100
+
+
+def test_price_won_goes_by_the_currency():
+    """[round-2 nit, Z1] engine.priceWon: dollars by the row's currency, never by cls alone: 379800 (cls "us", priced in won on
+    KRX, no ccy) is valued in won; a US row with ccy USD × fx; a row with no currency at all falls back to its market, except a
+    six-digit KRX code."""
+    got = run("""const k = { t: '379800', cls: 'us', price: 22680, etf: true, fund: true };
+      out = { k: En.priceWon(k, 1400), aapl: En.priceWon({ t: 'AAPL', cls: 'us', ccy: 'USD', price: 270 }, 1400), bare: En.priceWon({ t: 'AAPL', cls: 'us', price: 270 }, 1400),
+        kr: En.priceWon({ t: '005930', cls: 'kr', price: 100000 }, 1400), krw: En.priceWon({ t: 'X', cls: 'us', ccy: 'KRW', price: 5 }, 1400),
+        nofx: En.priceWon({ t: 'AAPL', cls: 'us', ccy: 'USD', price: 270 }, null),
+        w: (() => { const m = Ru.deckWeights(new Map([['379800', 10], ['005930', 1]]), { byT: new Map([['379800', k], ['005930', { t: '005930', cls: 'kr', price: 226800 }]]), fx: 1400 }, null);
+          return Math.round(m.w.get('379800') * 1e6) / 1e6; })() };""")
+    assert got["k"] == 22680 and got["aapl"] == 270 * 1400 and got["bare"] == 270 * 1400 and got["kr"] == 100000 and got["krw"] == 5 and got["nofx"] is None
+    assert got["w"] == 0.5                                                                        # 10 × 22,680 = 226,800 원: 반반 (× 1,400 이면 99.9%)

@@ -645,6 +645,16 @@ Two gate rows read `krSeries`:
   data commits count as activity; on the 1st of every month the watchdog also switches both scheduled workflows back on
   through GitHub's API. If GitHub Actions stops completely, healthchecks.io is the alarm.
 
+## Known limits: 종목 바꾸기 in two tabs (v19.7a)
+
+Each 바꾼 내용 저장 (and 팔고 빼기) saves the portfolio's targets as one set with its time; when two copies of the records
+meet, the later set wins whole. One case still leaves the targets adding up to more or less than 100%: **both tabs changed
+targets and also added or took out different stocks** (for example 담기 in one tab and − / + in the other gives 120%;
+기록 없이 빼기 in one and − / + in the other, 75%; 팔고 빼기 in one and 담기 in the other, 80% or 120%; 담기 of two
+different stocks, 120%). Nothing is renormalised behind the user's back. No record is lost, the 합쳤어요 line shows, and
+종목 바꾸기 then opens at that 합계 (in the watch colour) with 합계를 100%로 맞추기. Until then the daily check reads each
+target over the sum of the held stocks' targets, so the sum alone puts no stock out of its band.
+
 ## Known limits: stock splits in 기록 (v19.6a)
 
 A portfolio stores a split from data.json's `splits` as soon as a saved record of that stock is dated before it, and keeps
