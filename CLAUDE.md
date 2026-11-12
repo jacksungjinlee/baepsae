@@ -74,9 +74,9 @@ setting to change (where it is and what to click), never just "go to GitHub".
   lands, the GitHub `ci` check is green;
 - the fresh-eyes subagent review is done and its findings are fixed;
 - for pipeline changes: a green `dry_run` on your branch, with the validation summary in the PR;
-- for changes to anything the site serves (`src/`, the built pages, `index.html`, `sw.js`, the manifest) or to the
-  real-data check scripts and the test helpers they import: the daily run's three checks pass on a fresh copy of the
-  four data files the site serves now (the `data` branch), kept in a folder outside the checkout, with their result
+- for changes to anything the site serves (for example `src/`, the built pages, `index.html`, `sw.js`, the manifest)
+  or to the real-data check scripts and the test helpers they import: the daily run's three checks pass on a fresh
+  copy of the four data files the site serves now (the `data` branch), kept in a folder outside the checkout, with their result
   lines and the data's date in the PR (`python tests/real_data_check.py --data DIR`,
   `python tests/smoke_launch.py --data DIR`, `python tests/smoke_app.py --data DIR`). CI uses fixed data since #104, so
   this is where a PR meets real data. If one fails for a reason that is not the PR's (it fails on `main`'s code too),
