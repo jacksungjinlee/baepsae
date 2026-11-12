@@ -144,8 +144,8 @@ export function About({ load, onBack }) {
           <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {a.principles.items.map((it, i) => (
               <li key={it.title} style={{ display: "flex", gap: SPACE(3), padding: `${SPACE(3)}px 0`, ...(i ? rowLine : {}) }}>
-                <span data-ui-v2="about-principle-n" aria-hidden="true" style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: COLOR.ink, flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, WEIGHT.heavy, COLOR.surface) }}>{i + 1}</span>
+                <span data-ui-v2="about-principle-n" aria-hidden="true" style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: COLOR.primary, flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, WEIGHT.heavy, COLOR.onPrimary) }}>{i + 1}</span>
                 <div style={{ minWidth: 0 }}>
                   <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{it.title}</p>
                   <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1), lineHeight: 1.6 })}>{it.body}</p>
@@ -198,7 +198,7 @@ export function About({ load, onBack }) {
           <p style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{m.langs.value}</p>
           <a data-ui-v2="about-linkedin" href={C.about.linkedInUrl} target="_blank" rel="noopener"
             style={{ marginTop: SPACE(4), display: "inline-flex", alignItems: "center", minHeight: TOUCH, padding: `0 ${SPACE(4)}px`,
-              borderRadius: RADIUS.sm, background: COLOR.ink, textDecoration: "none", ...tx(SIZE.sm, WEIGHT.bold, COLOR.surface) }}>{m.linkedIn}</a>
+              borderRadius: RADIUS.sm, background: COLOR.primary, textDecoration: "none", ...tx(SIZE.sm, WEIGHT.bold, COLOR.onPrimary) }}>{m.linkedIn}</a>
         </Card>
       </div>
       <Footer />

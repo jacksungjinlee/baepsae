@@ -64,8 +64,8 @@ function Check({ n, title, children, ...rest }) {
   return (
     <Card {...rest}>
       <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
-        <span aria-hidden="true" style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: COLOR.ink, flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, WEIGHT.heavy, COLOR.surface) }}>{n}</span>
+        <span aria-hidden="true" style={{ width: SPACE(7), height: SPACE(7), borderRadius: 999, background: COLOR.primary, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, WEIGHT.heavy, COLOR.onPrimary) }}>{n}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           {title && <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.4 })}>{title}</h3>}
           {children}
