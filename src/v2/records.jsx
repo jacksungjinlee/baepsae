@@ -174,7 +174,8 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";              // the same source the saved record's currency comes from
   const env = rateEnv(load, today);
-  const [v, setV] = useState({ qty: "", price: "", date: today, amount: "" });
+  // v19.7a 팔고 빼기: the sale form opens with every held share filled in (flow.prefill.qty)
+  const [v, setV] = useState({ qty: flow.prefill && flow.prefill.qty != null ? String(flow.prefill.qty) : "", price: "", date: today, amount: "" });
   const [tried, setTried] = useState(false);
   const [fail, setFail] = useState(false);
   const set = (k) => (x) => setV((o) => ({ ...o, [k]: x }));
@@ -192,9 +193,17 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
     setTried(true);
     if (!check.ok) return;
     const list = kind === "buy" ? "purchases" : kind === "sell" ? "sales" : "divs";
-    const next = withRecord(store.data, deck.id, list, check.rec, today);
+    let next = withRecord(store.data, deck.id, list, check.rec, today);
+    // v19.7a 팔고 빼기 [B4]: what the sale belongs to (the stock taken out, its target shared out) is saved with it, in one
+    // write (flow.finish: edit.sellAndRemove). Refused -> nothing is saved (the proposed edit.saveFail, else the console).
+    if (next && flow.finish) {
+      const r = flow.finish(next);
+      if (!r || !r.ok) { setFail("refused"); return; }
+      next = r.data;
+    }
     if (!save(store, setStoreData, next)) { setFail(true); return; }
     setFail(false);
+    if (flow.finish) { if (flow.after) flow.after(next); setFlow(null); return; }
     const nd = next.decks.find((d) => d.id === deck.id);
     if (kind === "sell" && soldOutNow(nd, t)) setFlow({ ...flow, stage: "full" });
     else setFlow({ ...flow, stage: "list", saved: true });
@@ -252,7 +261,8 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         {why === "tooMany" && <Note tone="watch" data-ui-v2="rec-too-many">{C.rec.tooMany}</Note>}
         {why === "tooEarly" && <Note tone="watch" data-ui-v2="rec-too-early">{C.rec.tooEarly}</Note>}
         {(why === "input" || why === "noPrice") && badLine && <Note tone="watch" data-ui-v2="bad-input">{badLine}</Note>}
-        {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
+        {fail === true && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
+        {fail === "refused" && C.edit.saveFail && <Note tone="watch" data-ui-v2="edit-save-fail">{C.edit.saveFail}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={submit}>{C.plan.save}</Button></div>
       </div>
     </BottomSheet>

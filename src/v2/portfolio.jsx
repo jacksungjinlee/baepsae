@@ -51,6 +51,15 @@ export function ReturnsLink({ onClick }) {
   );
 }
 
+// 종목 바꾸기 (v19.7a): a small secondary button beside the portfolio's holdings title.
+function EditButton({ onClick }) {
+  return (
+    <Button kind="secondary" onClick={onClick} style={{ width: "auto", flexShrink: 0, padding: `0 ${SPACE(3)}px`, minHeight: TOUCH, ...tx(SIZE.xs, WEIGHT.bold, COLOR.ink) }}>
+      <span data-ui-v2="edit-open">{C.edit.title}</span>
+    </Button>
+  );
+}
+
 // 포트폴리오에서 빼기 (the old app's label): a small secondary button under the missing stock's row.
 function RemoveButton({ onClick }) {
   return (
@@ -63,7 +72,8 @@ function RemoveButton({ onClick }) {
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 
 // onImport (v19.3d): opens 가진 종목 넣기.
-export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null, onRules = null, onReturns = null }) {
+// onEdit (v19.7a): opens 종목 바꾸기 of a portfolio made with 포트폴리오 만들기 (#portfolio/edit/<id>).
+export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null, onRules = null, onReturns = null, onEdit = null }) {
   const { openStock } = useNav();
   const [flow, setFlow] = useState(null);                // v19.6a: the record sheet (records.jsx)
   const canRecord = load.status === "ok" && store.writable && !store.locked;
@@ -143,9 +153,13 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         return (
           <Card key={d.id} data-deck-id={d.id}>
             <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{shownName(d.name)}</h3>
-            <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>
-              <span>{fill(C.deck.mine, { n: ts.length })}</span>
-              {start && mdText(start) && <><span>{" · "}</span><span data-ui-v2="deck-start">{fill(C.deck.start, { md: mdText(start) })}</span></>}
+            <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(1) }}>
+              <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { flex: 1, minWidth: 0 })}>
+                <span>{fill(C.deck.mine, { n: ts.length })}</span>
+                {start && mdText(start) && <><span>{" · "}</span><span data-ui-v2="deck-start">{fill(C.deck.start, { md: mdText(start) })}</span></>}
+              </div>
+              {/* v19.7a: 종목 바꾸기 next to the holdings title (records that can be written, today's data loaded: 담기 reads it) */}
+              {onEdit && canRecord && <EditButton onClick={() => onEdit(d.id)} />}
             </div>
             {m.ok && <DeckSummary deck={d} de={de} m={m} load={load} />}
             {m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={d.id} />}

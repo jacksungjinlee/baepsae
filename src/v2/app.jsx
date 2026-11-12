@@ -28,6 +28,9 @@ import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
+import { Editor } from "./editor.jsx";
+import { emptyDraft } from "./edit.js";
+import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
 import { companySub, CO_MORE } from "./routes.js";
@@ -68,6 +71,9 @@ export function App({ source }) {
     preview: !!source.preview }));
   const [builder, setBuilder] = useState(newBuilder);
   const [importer, setImporter] = useState(newImporter);   // v19.3d 가진 종목 넣기 (#portfolio/import): kept while the user moves around
+  // v19.7a 종목 바꾸기 (#portfolio/edit/<id>): the edits waiting for 바꾼 내용 저장, { deckId, draft } (edit.js). Kept while the user
+  // moves to another tab and back (as 포트폴리오 만들기 and 가진 종목 넣기 keep theirs); dropped by 나가기 and by a save.
+  const [editor, setEditor] = useState(null);
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 홈 (Part E)
   const [disc, setDisc] = useState(() => ({ status: source.loadDisc ? "idle" : "none" }));   // v19.1a 공시 tab (disc.json)
   // 2026-11-08 (Jack): the later publish held under a draft (hold.js publishGate onHold), or null: the draft's screen says
@@ -502,6 +508,16 @@ export function App({ source }) {
   }, [store.data, load, splitList]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
+  // v19.7a: 종목 바꾸기 of a portfolio made with 포트폴리오 만들기 that exists (else 포트폴리오)
+  const editDeck = tab === "portfolio" && loc.edit ? view.data.decks.find((d) => d.id === loc.edit && !isImported(d)) || null : null;
+  const editId = editDeck ? editDeck.id : null;
+  const editDraft = editor && editor.deckId === editId ? editor.draft : emptyDraft();
+  const setEditDraft = useCallback((f) => setEditor((e) => {
+    const cur = e && e.deckId === editId ? e.draft : emptyDraft();
+    return { deckId: editId, draft: typeof f === "function" ? f(cur) : f };
+  }), [editId]);
+  const openEdit = useCallback((id) => router.go("portfolio", "edit/" + id), [router.go]);
+  const leaveEdit = useCallback(() => { setEditor(null); router.back("portfolio"); }, [router.back]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     const store = view;
@@ -516,9 +532,13 @@ export function App({ source }) {
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
     if (returnsDeck) return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (editDeck) {
+      return <Editor key={editDeck.id} deck={editDeck} load={load} store={store} setStoreData={setStoreData} draft={editDraft} setDraft={setEditDraft} pad={pad}
+        onLeave={leaveEdit} onSaved={leaveEdit} />;
+    }
     if (tab === "portfolio") {
       return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
-        onRules={(id) => router.go("portfolio", "rules/" + id)} onReturns={(id) => router.go("portfolio", "returns/" + id)} />;
+        onRules={(id) => router.go("portfolio", "rules/" + id)} onReturns={(id) => router.go("portfolio", "returns/" + id)} onEdit={openEdit} />;
     }
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;
