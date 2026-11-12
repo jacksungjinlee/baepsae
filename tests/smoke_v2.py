@@ -9481,7 +9481,8 @@ def scene_reread_lines(R, files, width, shots=None):
                 year = fillp(C["app"]["reportYear"], year=co_fy)
                 if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신, 통화 줄만
                     assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui-v2="bars"]').count() == 0
-                    assert page.locator('[data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
+                    # v19.6d: on the company page (PC's left menu now has the 화면 모드 switch, a segmented control too)
+                    assert page.locator('[data-ui-v2="company"] [data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
                     assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
                     assert year not in page.locator('[data-ui-v2="co-earn"]').inner_text()
                     assert page.locator('[data-ui-v2="co-earn"] > *').count() == 1, "실적 탭에 통화 줄 카드 말고 다른 것이 있어요"
@@ -9500,7 +9501,7 @@ def scene_reread_lines(R, files, width, shots=None):
             R.collect(page)
         co_hash(page, "#stocks/005930/earn")                                                      # 다른 회사는 그대로 (숨김은 stmtCur 로만)
         page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
-        assert page.locator('[data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
+        assert page.locator('[data-ui-v2="company"] [data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
         co_hash(page, "#stocks/005930/value")
         page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="co-value-basis"]').count() == 1 and page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() >= 1
