@@ -2,7 +2,8 @@
 
 Standing rules for every Claude Code session in this repo. Read this file fully before doing anything.
 Then read, in order: `docs/HANDOFF.md` (full context), `docs/BAEPSAE_VOICE.md` (before writing ANY Korean UI text),
-and the current task in `docs/tasks/`: the lowest version number whose Status line is not DONE.
+and the current task: `docs/HANDOFF.md` § 0 names the work queue and each item's spec in `docs/tasks/` (Jack,
+2026-11-13; each spec's Status line says what is live and what is next).
 
 ## What this is
 
@@ -130,6 +131,9 @@ setting to change (where it is and what to click), never just "go to GitHub".
 
 **Keep `docs/CHANGELOG.md`:** one line per merge — KST date, PR number, plain-English summary — so Jack and his
 claude.ai chat can follow the history. Add the line in the same PR when you can, otherwise right after the merge.
+
+**Keep `docs/HANDOFF.md` § 0 current (Jack, 2026-11-13):** every PR updates § 0 in the same PR — what is live after
+it merges and what comes next — and, when it finishes or starts a part of a spec, that spec's Status line.
 
 ## Testing — before every PR
 

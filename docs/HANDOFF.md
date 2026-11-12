@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 01:10 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 01:45 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -41,6 +41,20 @@ just stops blocking screen work.
     to 0.00 is never real) so it doesn't wait for that fix.
   - Only the currency fix and the token fix need a real publish of their own. #107, #111 and the deploy check merge as
     soon as their test runs and reviews are green, after the first real publish of 11-13.
+- **Jack's answers, 2026-11-13 (third message), on the currency fix (#114) and more:**
+  - Currency names approved, with 일본 엔화, 중국 위안화 and 남아공 랜드. #114 ships hiding PER, PBR and the yield
+    for the 27 non-dollar filers.
+  - **Next, within days:** bring all three back for them, all 27 PBRs included, from whole-company totals: market value
+    ÷ equity (PBR) and ÷ net income (PER), with equity and income converted at that day's rate. That fixes currencies,
+    share classes and ADR ratios together. Prove it against today's correct figures before showing anything.
+  - 0% yield only where the source clearly shows no dividends in the last 12 months; a blank field stays hidden.
+  - A US PBR that rounds to 0.00 (BRK-B: share classes) is blank, with its own line: "자료상 PBR이 0에 가깝게 나와서
+    확인하는 동안 비워 두었어요."
+  - The 17 가치 verdicts that change when the 27 PBRs leave the industry medians are corrections. Industry comparisons
+    use the median, with the company count in the receipt ("업종 {n}개 회사와 비교"); keep it that way.
+  - v19.5b's one existing-test edit is approved, provided its wait has a time limit that fails the test.
+  - Split the daily run into a read-only job and a publishing job, after the currency fix, the Korean unit fix and
+    the token fix.
 - Open (asked Jack 11-13): whether the 11-07 notes below (at most two open app PRs; at most two question messages a
   day; the evening list) still hold next to this instruction, and where v19.4 goes (v19.6h waits for it).
 
