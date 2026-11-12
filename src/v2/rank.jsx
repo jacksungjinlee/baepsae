@@ -335,6 +335,10 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const listKey = [mk, chip, crit, openedId || "", top.length].join("|");
   const win = { position: "relative", borderRadius: 16, background: COLOR.surface, boxShadow: `inset 0 0 0 1px ${WIN_LINE}`, overflow: "hidden" };
   const usRows = kind === "ind" ? [] : top.map((r) => r.s);
+  // The chip rows scroll sideways. On the phone they run to the screen's edges (the board); on PC they stay inside the card's
+  // column (a narrow right column would otherwise spill chips into the gap beside it).
+  const chipRowStyle = { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "thin",
+    ...(wide ? {} : { marginLeft: -SPACE(4), marginRight: -SPACE(4), paddingLeft: SPACE(4), paddingRight: SPACE(4) }) };
   return (
     <section ref={boxRef} data-ui-v2="rank" data-mk={mk} data-chip={chip} data-crit={chip === "crit" ? crit : undefined} data-full={full ? "1" : undefined}
       data-group={openedId || undefined} aria-labelledby={titleId} style={{ marginTop: SPACE(5), scrollMarginTop: wide ? SPACE(20) : SPACE(3) }}>
@@ -349,15 +353,13 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
         )}
       </div>
       <MarketSwitch mk={mk} label={titleId} onChange={(m) => choose({ mk: m })} />
-      <div ref={chipRow} data-ui-v2="rank-chips" role="group" aria-labelledby={titleId}
-        style={{ margin: `${SPACE(2) + 2}px -${SPACE(4)}px 0`, padding: `0 ${SPACE(4)}px`, display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "thin" }}>
+      <div ref={chipRow} data-ui-v2="rank-chips" role="group" aria-labelledby={titleId} style={{ ...chipRowStyle, marginTop: SPACE(2) + 2 }}>
         {chips.map((c) => (
           <Chip key={c} id={c} on={c === chip} refOf={(el) => { chipRefs.current[c] = el; }} onClick={() => choose({ chip: c })}>{C.rank.chips[c]}</Chip>
         ))}
       </div>
       {chip === "crit" && (
-        <div ref={critRow} data-ui-v2="rank-crit" role="group" aria-label={C.rank.chips.crit}
-          style={{ margin: `${SPACE(2)}px -${SPACE(4)}px 0`, padding: `0 ${SPACE(4)}px`, display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "thin" }}>
+        <div ref={critRow} data-ui-v2="rank-crit" role="group" aria-label={C.rank.chips.crit} style={{ ...chipRowStyle, marginTop: SPACE(2) }}>
           {critShown.map((id) => (
             <Chip key={id} id={id} on={id === crit} pic={CARD_PICS[id]} refOf={(el) => { chipRefs.current["crit:" + id] = el; }}
               onClick={() => choose({ crit: id })}>{C.build.cards[id].name}</Chip>
