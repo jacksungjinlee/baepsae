@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""2026-11-12 (Jack): 매일 실행의 쓰기 토큰은 발행하는 두 단계만 알아요.
+"""2026-11-12 (Jack): 매일 실행의 쓰기 토큰을 git 은 발행하는 두 단계에서만 알아요.
 
-예전에는 actions/checkout 이 토큰을 작업 폴더(.git/config)에 남겨, 그 뒤의 모든 단계가 읽을 수 있었어요 — 데이터 수집 도구,
-화면 검사 도구(npm · pip 패키지), 브라우저까지. 변조된 도구 하나가 그 토큰으로 관문을 거치지 않고 main · data 에 푸시할 수 있었어요.
+예전에는 actions/checkout 이 토큰을 작업 폴더(.git/config)에 남겨, 그 뒤의 모든 단계가 파일로 읽을 수 있었어요 — 화면 검사
+도구(npm · pip 패키지), 브라우저까지. 변조된 도구 하나가 그 토큰으로 관문을 거치지 않고 main · data 에 푸시할 수 있었어요.
+줄인 것이지 막은 것은 아니에요: 데이터 수집 · 관문 단계는 GitHub API 를 읽으려고 아직 환경으로 토큰을 받아요 (다음 일: 읽기 전용
+작업과 발행 작업 나누기).
 - 두 checkout 모두 persist-credentials: false
 - 토큰은 '커밋 & 푸시' · 'data 브랜치에 올리기' 두 단계의 환경에만 (API 를 읽는 데이터 수집 · 관문 단계는 예전 그대로 자기 환경으로)
 - 두 단계는 영수증 확인 뒤, git 으로 무엇을 쓰기 전에 tools/git_token_auth.sh 를 불러요 (토큰을 찍지 않고, 안 되면 멈춰요)
 """
+import json
 import os
 import re
 import stat
@@ -45,7 +48,7 @@ def test_only_the_two_publishing_steps_hand_the_token_to_git():
     st = jobs()["update"]["steps"]
     names = [name_of(s) for s in st]
     i_main, i_data = names.index(PUBLISH[0]), names.index(PUBLISH[1])
-    assert i_main < i_data == len(st) - 1
+    assert i_data == i_main + 1 == len(st) - 1          # 둘은 붙어 있고 마지막 — 그 사이에 토큰이 git 설정에 있는 채로 도는 단계가 없어요
     for s in st:
         run, env = s.get("run") or "", s.get("env") or {}
         if name_of(s) in PUBLISH:
@@ -62,20 +65,43 @@ def test_only_the_two_publishing_steps_hand_the_token_to_git():
     # 토큰을 환경으로 받는 단계: 발행 둘 + GitHub API 를 읽는 둘 (데이터 수집 · 관문) — 그 사이의 화면 검사 단계들은 없음
     with_token = [name_of(s) for s in st if "GITHUB_TOKEN" in (s.get("env") or {})]
     assert with_token == ["데이터 수집", "발행 관문 (validate_data.py)", *PUBLISH]
+    # 그 넷 밖의 어떤 단계도 어떤 이름으로든 토큰을 받지 않아요 (env 이름을 바꾸거나 run 안에 바로 써도 걸려요)
+    allowed = {"데이터 수집", "발행 관문 (validate_data.py)", *PUBLISH}
+    pat = re.compile(r"github\.token|secrets\.GITHUB_TOKEN|GITHUB_TOKEN|GH_TOKEN|x-access-token|extraheader")
+    for s in st:
+        if name_of(s) not in allowed:
+            assert not pat.search(json.dumps(s, ensure_ascii=False)), name_of(s)
+    # 작업 · 워크플로 전체의 env 로도 주지 않아요 (그러면 모든 단계가 받아요)
+    with open(WF, encoding="utf-8") as f:
+        whole = yaml.safe_load(f)
+    for scope in (whole.get("env") or {}, jobs()["update"].get("env") or {}, jobs()["check"].get("env") or {}):
+        assert not pat.search(json.dumps(scope, ensure_ascii=False)), scope
     # 읽기만 하는 check job 에는 토큰도 푸시도 없어요
     text = yaml.safe_dump(jobs()["check"], allow_unicode=True)
     assert "GITHUB_TOKEN" not in text and "github.token" not in text and "git push" not in text
 
 
-def fake_git(tmp_path, ls_remote_ok=True):
+def fake_git(tmp_path, ls_remote_ok=True, fail_first=0):
+    """가짜 git: 부른 것을 did.txt 에 적어요. ls-remote 는 처음 fail_first 번 실패해요 (ls_remote_ok=False 면 늘 실패).
+    가짜 sleep 도 둬요 (기다린 초를 slept.txt 에 적고 바로 끝나요)."""
     bin_ = tmp_path / "bin"
     bin_.mkdir(exist_ok=True)
     g = bin_ / "git"
     g.write_text("#!/bin/bash\n"
                  f'echo "git $*" >> "{tmp_path}/did.txt"\n'
-                 f'if [ "$1" = "ls-remote" ]; then exit {0 if ls_remote_ok else 2}; fi\n'
+                 'if [ "$1" = "ls-remote" ]; then\n'
+                 f'  n=$(cat "{tmp_path}/lsr.txt" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "{tmp_path}/lsr.txt"\n'
+                 f'  if [ {0 if ls_remote_ok else 1} = 1 ] || [ $n -le {fail_first} ]; then exit 2; fi\n'
+                 "  exit 0\n"
+                 "fi\n"
                  "exit 0\n")
     g.chmod(g.stat().st_mode | stat.S_IEXEC)
+    sl = bin_ / "sleep"
+    sl.write_text(f'#!/bin/bash\necho "$1" >> "{tmp_path}/slept.txt"\n')
+    sl.chmod(sl.stat().st_mode | stat.S_IEXEC)
+    for f in ("did.txt", "lsr.txt", "slept.txt"):
+        if (tmp_path / f).exists():
+            (tmp_path / f).unlink()
     return {"PATH": f"{bin_}:{os.environ['PATH']}"}
 
 
@@ -94,7 +120,7 @@ def test_token_script_sets_the_header_checks_it_and_never_prints_the_token(tmp_p
     assert lines[0] == f"git config --local http.https://github.com/.extraheader AUTHORIZATION: basic {want}"   # checkout 이 하던 것과 같은 설정
     assert lines[1] == "git ls-remote --exit-code origin refs/heads/main" and len(lines) == 2                # 받아들여지는지 읽기로 확인 · 그 밖의 git 일은 없음
     out = r.stdout + r.stderr
-    assert TOKEN not in out and want not in out and "푸시 권한 준비됨" in out                                    # 토큰도, 그 base64 도 찍지 않아요
+    assert TOKEN not in out and want not in out and "토큰 확인됨" in out                                         # 토큰도, 그 base64 도 찍지 않아요
 
 
 def test_token_script_stops_without_a_token_or_when_github_refuses_it(tmp_path):
@@ -102,10 +128,23 @@ def test_token_script_stops_without_a_token_or_when_github_refuses_it(tmp_path):
     assert r.returncode != 0 and did == "" and "GITHUB_TOKEN 이 이 단계의 환경에 없어요" in r.stdout
     r, did = run_script(tmp_path, {**fake_git(tmp_path), "GITHUB_TOKEN": ""})
     assert r.returncode != 0 and did == ""
-    r, did = run_script(tmp_path, {**fake_git(tmp_path, ls_remote_ok=False), "GITHUB_TOKEN": TOKEN})   # GitHub 이 거절
-    assert r.returncode != 0 and "읽지 못했어요 → 푸시하지 않아요" in r.stdout and TOKEN not in r.stdout + r.stderr
+    for blank in ("   ", "\t", f"{TOKEN} ", f"{TOKEN}\n"):                     # 공백만 · 공백이 섞인 토큰: git 을 건드리지 않아요
+        r, did = run_script(tmp_path, {**fake_git(tmp_path), "GITHUB_TOKEN": blank})
+        assert r.returncode != 0 and did == "" and TOKEN not in r.stdout + r.stderr, repr(blank)
+    r, did = run_script(tmp_path, {**fake_git(tmp_path, ls_remote_ok=False), "GITHUB_TOKEN": TOKEN})   # GitHub 이 거절 (세 번)
+    assert r.returncode != 0 and "세 번 다 읽지 못했어요 → 푸시하지 않아요" in r.stdout and TOKEN not in r.stdout + r.stderr
+    assert did.count("git ls-remote") == 3 and (tmp_path / "slept.txt").read_text().split() == ["5", "10"]
     src = open(SCRIPT, encoding="utf-8").read()
     assert "set -euo pipefail" in src and "set -x" not in src and not re.search(r"echo[^\n]*\$(GITHUB_TOKEN|basic)", src)
+
+
+@pytest.mark.parametrize("fails,ok", [(1, True), (2, True), (3, False)])
+def test_token_check_retries_a_network_blip(tmp_path, fails, ok):
+    """잠깐 끊긴 네트워크로 발행이 멈추지 않게 세 번까지 읽어 봐요 (5초 · 10초 쉬고). 세 번 다 안 되면 멈춰요."""
+    r, did = run_script(tmp_path, {**fake_git(tmp_path, fail_first=fails), "GITHUB_TOKEN": TOKEN})
+    assert (r.returncode == 0) is ok, r.stdout
+    assert did.count("git ls-remote") == min(fails + 1, 3)
+    assert ("토큰 확인됨" in r.stdout) is ok and TOKEN not in r.stdout + r.stderr
 
 
 @pytest.mark.parametrize("name", PUBLISH)
