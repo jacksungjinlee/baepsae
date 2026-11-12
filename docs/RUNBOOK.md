@@ -122,14 +122,26 @@ serve the `docs/` folder (two of its files must answer "not found").
   `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.
 - **US companies whose financial statements are not in dollars (since #114).** The daily run marks them `fcur` (Yahoo's
   financialCurrency, 27 on 2026-11-12) and blanks their PER, PBR and dividend yield (a 0% stays only when Yahoo clearly
-  shows no dividend in the last 12 months). Four gate rows:
+  shows no dividend in the last 12 months). When Yahoo answers with only part of a company's details (no currency, sector
+  or description), the run keeps the last known values from the US info cache (only from the same company, or from an
+  entry at most 14 days old) and **the next run asks again**: such an answer is never kept as fresh for 3 days. Five
+  gate rows:
   - "미국 재무제표 통화가 달러가 아닌 회사: … 빈 칸" and "미국 PBR 0 근처라 비운 종목: …" fail if a blanked number is back:
     a pipeline bug, never the market. Fix the code; never loosen the row.
   - "미국 재무제표 통화를 모르는 회사 (경고만)" names companies whose currency Yahoo did not give (FISV on 11-12). They are
-    not blanked; usually Yahoo answers again the next day. Look at their PBR on the site if the same name stays for days.
+    not blanked; the next run asks Yahoo again. Look at their PBR on the site if the same name stays for days.
+  - "미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)" names the stocks whose details were filled from the cache
+    today, with their share of all US stocks. The "미국 설명 채움" row cannot see a bad Yahoo day any more (the cache fills
+    the gaps), so this row is where it shows. A few names: nothing to do, the next run asks again. Many (more than about
+    10%, or the same names day after day): Yahoo is answering badly; tell Jack before the cached details grow old.
   - "어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음": **fails** only when such a company has no currency information
     today and its PER, PBR or yield is back. The run keeps the last known currency when Yahoo leaves it out, so a failure
-    means something broke (the US info cache was lost, or the merge stopped working): fix it, don't loosen the row.
+    means something broke. What to check, in the run log: did the US info cache come back ("미국 상세 정보 보관본 N곳" near
+    the usual ~770; "보관본 없음" means the cache was lost), and the lines "야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀"
+    and "일부만 온 야후 응답 … 다음 실행에서 다시 물어봐요". If the cache was lost, Yahoo left the currency out on a day with
+    nothing to fall back on: the next scheduled run asks again, and it usually publishes. If the cache is there and the
+    row still fails, the merge is broken: fix the code in a PR. Never get around it with a bootstrap run (`--bootstrap`
+    skips the comparison with yesterday and would publish the wrong numbers) or by loosening the row.
     It **warns** with "야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요" when Yahoo now says the company reports in dollars
     (numbers or not; the publish goes out): open the company on the site and compare its PBR and PER with the company's
     own report; if they look wrong, tell Jack. It also warns when a company has neither a currency nor numbers.

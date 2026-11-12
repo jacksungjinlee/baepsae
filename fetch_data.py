@@ -5305,6 +5305,7 @@ US_INFO_SCHEMA = 3
 # 업종 · 설명이 없는). 재무제표 통화를 잃으면 TSMC PBR 78.88 같은 값이 다시 나가요. 숫자 칸(PER · PBR · 배당 · 시가총액 …)은 절대 옛 값을
 # 쓰지 않아요: 이 목록에 넣지 마세요.
 US_INFO_STICKY = ("financialCurrency", "currency", "shortName", "longName", "quoteType", "sector", "industry", "longBusinessSummary")
+US_INFO_STICKY_DAYS = 14  # 이보다 오래된 예전 항목은 이름이 같을 때만 설명 칸을 채워요 (#114 리뷰 2)
 US_PBR_MIN = 0.005       # 이보다 작은 PBR 은 0.00 으로 반올림돼요 — 진짜일 수 없어 빈 칸 (BRK-B 0.0011, 2026-11-12 · Jack 2026-11-13 한국 규칙과 같은 뜻)
 
 # Jack, 2026-11-12: 미국에 상장된 외국 회사 중 재무제표를 달러가 아닌 통화로 내는 곳 (야후 financialCurrency: 대만 TWD · 카자흐스탄 KZT ·
@@ -5704,28 +5705,53 @@ def us_no_dividend_12m(info, today):
     return True
 
 
-def us_info_merge(new, prev):
+def _us_name_key(x):
+    """회사 이름 비교용: 소문자 · 글자와 숫자만 (기호 · 띄어쓰기 무시). (순수 함수)"""
+    return re.sub(r"[^0-9a-z]+", " ", str(x or "").lower()).strip()
+
+
+def us_info_merge(new, prev, today=None):
     """오늘 받은 info(new, US_INFO_KEYS 만 · None 없음)에 빠진 설명 칸(US_INFO_STICKY)을 예전 보관본 항목(prev)의 값으로 채워요. 숫자 칸은
-    채우지 않아요. (순수 함수) → (합친 info, 예전 값을 쓴 칸 목록)"""
+    채우지 않아요. 예전 항목이 같은 회사(이름이 같음, _us_name_key)이거나 US_INFO_STICKY_DAYS 일 안일 때만 채워요 — 티커를 다른 회사가 물려받은
+    오래된 항목의 통화 · 업종을 쓰지 않게 (#114 리뷰 2). (순수 함수) → (합친 info, 예전 값을 쓴 칸 목록, 예전 항목의 나이(일) 또는 None)"""
     old = ((prev or {}).get("info") or {}) if isinstance(prev, dict) else {}
+    age = None
+    if isinstance(prev, dict) and today is not None:
+        try:
+            age = (today - dt.date.fromisoformat(prev.get("at"))).days
+        except Exception:
+            age = None
+    names_new = {_us_name_key(new.get(k)) for k in ("shortName", "longName")} - {""}
+    names_old = {_us_name_key(old.get(k)) for k in ("shortName", "longName")} - {""}
+    if not (names_new & names_old or (age is not None and 0 <= age <= US_INFO_STICKY_DAYS)):
+        return dict(new), [], age
     out, kept = dict(new), []
     for k in US_INFO_STICKY:
         if out.get(k) is None and old.get(k) is not None:
             out[k] = old[k]
             kept.append(k)
-    return out, kept
+    return out, kept, age
+
+
+def us_info_partial(merged, kept, etf=False):
+    """일부만 온 응답인지 (#114 리뷰 2): 예전 값으로 채운 칸이 있거나, 회사 주식(ETF · 펀드가 아님)인데 재무제표 통화가 없음. 그런 항목은
+    오늘 받은 것으로 3일 동안 두지 않고 다음 실행에서 다시 물어봐요 (us_info_due · 항목의 "due"). (순수 함수)"""
+    if kept:
+        return True
+    company = not etf and (merged or {}).get("quoteType") not in ("ETF", "MUTUALFUND")
+    return company and (merged or {}).get("financialCurrency") is None
 
 
 def us_info_due(entry, today):
     """이 보관본 항목을 오늘 다시 받아야 하는지: 없음 · 받은 지 US_INFO_FRESH_DAYS 일 이상 · 예전 모양(k 가 US_INFO_SCHEMA 가 아님 —
-    financialCurrency 를 담기 전). (순수 함수)"""
+    financialCurrency 를 담기 전) · 지난번 응답이 일부만 왔음("due", us_info_partial). (순수 함수)"""
     if not entry:
         return True
     try:
         a = (today - dt.date.fromisoformat(entry["at"])).days
     except Exception:
         return True
-    return a >= US_INFO_FRESH_DAYS or entry.get("k") != US_INFO_SCHEMA
+    return a >= US_INFO_FRESH_DAYS or entry.get("k") != US_INFO_SCHEMA or bool(entry.get("due"))
 
 
 def us_fcur_summary(us, infos, no_info=frozenset()):
@@ -5856,13 +5882,17 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
         if not (info.get("shortName") or info.get("longName")):
             return False
         new = {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}
-        merged, kept = us_info_merge(new, cache.get(rec["t"]))       # #114 리뷰: 시세만 담은 응답이 통화 · 업종 · 설명을 지우지 않게
+        merged, kept, kage = us_info_merge(new, cache.get(rec["t"]), today)   # #114 리뷰: 시세만 담은 응답이 통화 · 업종 · 설명을 지우지 않게
         if kept:
-            sticky[rec["t"]] = kept
-        cache[rec["t"]] = {"at": tday, "px": rec.get("price"), "k": US_INFO_SCHEMA, "info": merged}
+            sticky[rec["t"]] = (kept, kage)
+        entry = {"at": tday, "px": rec.get("price"), "k": US_INFO_SCHEMA, "info": merged}
+        if us_info_partial(merged, kept, rec.get("etf") is True):
+            entry["due"] = True                                       # #114 리뷰 2: 일부만 온 응답 — 다음 실행에서 다시 물어봐요
+            partial.add(rec["t"])
+        cache[rec["t"]] = entry
         return True
 
-    sticky = {}
+    sticky, partial = {}, set()
     need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
     old_shape = sum(1 for r in out if cache.get(r["t"]) and cache[r["t"]].get("k") != US_INFO_SCHEMA)
     if old_shape:
@@ -5890,14 +5920,20 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
             reused += 1
     save_us_info(cache)
     if sticky:
-        fc_kept = sorted(t for t, ks in sticky.items() if "financialCurrency" in ks)
-        other = sorted(t for t, ks in sticky.items() if any(k != "financialCurrency" for k in ks))
+        fc_kept = sorted(t for t, (ks, _a) in sticky.items() if "financialCurrency" in ks)
+        other = sorted(t for t, (ks, _a) in sticky.items() if any(k != "financialCurrency" for k in ks))
+        ages = [a for _ks, a in sticky.values() if a is not None]
+        oldest = f" · 가장 오래된 예전 값 {max(ages)}일 전" if ages else ""
         if fc_kept:
-            log(f"  !! 야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀: {len(fc_kept)}곳 ({', '.join(fc_kept[:30])}"
+            log(f"  !! 야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀: {len(fc_kept)}곳{oldest} ({', '.join(fc_kept[:30])}"
                 + (f" 외 {len(fc_kept) - 30}곳" if len(fc_kept) > 30 else "") + ")")
         if other:
-            log(f"  !! 야후 응답에 빠진 설명 칸(이름 · 종류 · 업종 · 설명 · 가격 통화)을 예전 값으로 씀: {len(other)}곳 ({', '.join(other[:30])}"
+            log(f"  !! 야후 응답에 빠진 설명 칸(이름 · 종류 · 업종 · 설명 · 가격 통화)을 예전 값으로 씀: {len(other)}곳{oldest} ({', '.join(other[:30])}"
                 + (f" 외 {len(other) - 30}곳" if len(other) > 30 else "") + ")")
+    if partial:
+        ps = sorted(partial)
+        log(f"  !! 일부만 온 야후 응답(예전 값으로 채움 · 또는 회사인데 재무제표 통화 없음) {len(ps)}곳 → 다음 실행에서 다시 물어봐요: "
+            + ", ".join(ps[:30]) + (f" 외 {len(ps) - 30}곳" if len(ps) > 30 else ""))
     cut_t = {}
     for rec in out:
         e = cache.get(rec["t"])
@@ -5933,7 +5969,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
             f"빠뜨림 · 가격은 괄호 날짜의 종가로 나가요): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
             "usLeftOut": {**left_out, "badBar": bad_bar},   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
-            "usFcurUnknown": fsum["unknown"]}               # #114 리뷰: 재무제표 통화를 모르는 회사 (관문이 경고로 이름을 남겨요)
+            "usFcurUnknown": fsum["unknown"],               # #114 리뷰: 재무제표 통화를 모르는 회사 (관문이 경고로 이름을 남겨요)
+            "usInfoPartial": sorted(t for t in sticky if t in {r["t"] for r in out})}   # #114 리뷰 2: 오늘 응답이 일부만 와 예전 설명 칸을 쓴 종목
     return out, bench, fx, fx_last, us_vol_krw, meta
 
 
@@ -6005,7 +6042,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "fcur": "미국 종목의 재무제표 통화 (ISO 코드, 달러가 아닐 때만 · 야후 financialCurrency). 이 종목은 per · pbr · vz 가 빈 칸이고, dy 는 "
                  "지난 12개월 배당이 없다고 야후가 분명히 말할 때만 0 이에요",
          "pbrZero": "true = 미국 종목의 PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 (vz 도 없음 · 재무제표 통화 문제가 아니에요)",
-         "usFcurUnknown": "재무제표 통화를 모르는 미국 회사 주식의 티커 (야후가 financialCurrency 를 주지 않음 · 비우지 않았어요)"}
+         "usFcurUnknown": "재무제표 통화를 모르는 미국 회사 주식의 티커 (야후가 financialCurrency 를 주지 않음 · 비우지 않았어요)",
+         "usInfoPartial": "오늘 야후 응답이 일부만 와서 이름 · 업종 · 설명 · 재무제표 통화 같은 설명 칸을 예전 값으로 채운 미국 종목의 티커 (다음 실행이 다시 물어요)"}
 IDX_YEARS = 3
 
 
@@ -6224,6 +6262,7 @@ def main():
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "usFcurUnknown": umeta["usFcurUnknown"],   # #114: 재무제표 통화를 모르는 미국 회사 (비우지 않았어요 — 관문이 경고해요)
+        "usInfoPartial": umeta["usInfoPartial"],   # #114 리뷰 2: 오늘 야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (관문이 경고해요)
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요

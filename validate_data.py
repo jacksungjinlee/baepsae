@@ -1179,6 +1179,18 @@ def check_us_fcur_more(rep, data, us, pdata):
             rep.detail("재무제표 통화를 모르는 미국 회사 (usFcurUnknown)", unk)
     else:
         rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
+    # #114 리뷰 2: 야후 응답이 일부만 와 이름 · 업종 · 설명 · 재무제표 통화를 예전 값으로 채운 종목 (data.json usInfoPartial). 예전 값이 '미국 설명
+    # 채움' 줄을 채워 주니, 나쁜 야후 날이 그 줄에 보이지 않아요 — 그래서 이 줄이 이름을 남겨요. 경고만 (다음 실행이 다시 물어요).
+    part = data.get("usInfoPartial")
+    if isinstance(part, list):
+        n_us = len(us) or 1
+        rep.add("미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)", True,
+                f"{len(part)}곳 ({100.0 * len(part) / n_us:.1f}%)" + (f": {_tickers(part)}" if part else ""),
+                "없어야 함 (있으면 경고 · 다음 실행이 다시 물어요)", warn=bool(part))
+        if part:
+            rep.detail("야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (usInfoPartial)", part)
+    else:
+        rep.add("미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
     # Jack, 2026-11-13: PBR 이 0.00 으로 반올림돼 비운 종목(pbrZero) — PBR · 가치 점수가 비어 있어야 해요 (true 말고 다른 값도 실패)
     pz = [s for s in us if "pbrZero" in s]
     badz = [f"{s.get('t')}.pbrZero {s.get('pbrZero')!r}" for s in pz if s.get("pbrZero") is not True]

@@ -222,7 +222,7 @@ def test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows(tmp_
     assert back["TSM"]["info"]["financialCurrency"] == "TWD"
     calls.clear()                                                      # 다음 날: 다시 받지 않아요
     us2, *_ = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
-    assert calls == [] and {r["t"]: r.get("fcur") for r in us2}["TSM"] == "TWD"
+    assert calls == ["FISV"] and {r["t"]: r.get("fcur") for r in us2}["TSM"] == "TWD"   # 통화 없는 회사 응답만 다시 물어요 (#114 리뷰 2)
     json.dumps(us, allow_nan=False)
 
 
@@ -308,15 +308,17 @@ def test_merge_keeps_only_descriptive_fields():
                                                 "longBusinessSummary": "Makes chips.", "priceToBook": 76.7, "trailingPE": 26.0,
                                                 "dividendYield": 0.9, "marketCap": 2e12, "quoteType": "EQUITY", "currency": "USD"}}
     new = {"shortName": "TSMC", "trailingPE": 25.0, "marketCap": 2.1e12}          # 시세만 담은 응답
-    got, kept = F.us_info_merge(new, prev)
+    got, kept, age = F.us_info_merge(new, prev, dt.date(2026, 11, 12))
+    assert age == 1
     assert got["financialCurrency"] == "TWD" and got["sector"] == "Technology" and got["longBusinessSummary"] == "Makes chips."
     assert got["trailingPE"] == 25.0 and got["marketCap"] == 2.1e12
     assert "priceToBook" not in got and "dividendYield" not in got                # 숫자는 옛 값을 쓰지 않아요
     assert set(kept) == {"financialCurrency", "sector", "industry", "longBusinessSummary", "quoteType", "currency"}
     assert set(F.US_INFO_STICKY).isdisjoint({"trailingPE", "priceToBook", "dividendYield", "marketCap", "averageVolume", "returnOnEquity",
                                              "operatingMargins", "revenueGrowth", "debtToEquity", "totalRevenue"})
-    assert F.us_info_merge({"shortName": "X", "financialCurrency": "USD"}, prev)[0]["financialCurrency"] == "USD"   # 새 값이 이겨요
-    assert F.us_info_merge(new, None) == (new, []) and F.us_info_merge(new, {"at": "x"}) == (new, [])
+    assert F.us_info_merge({"shortName": "X", "financialCurrency": "USD"}, prev, dt.date(2026, 11, 12))[0]["financialCurrency"] == "USD"   # 새 값이 이겨요
+    assert F.us_info_merge(new, None, dt.date(2026, 11, 12)) == (new, [], None)
+    assert F.us_info_merge(new, {"at": "x"}, dt.date(2026, 11, 12)) == (new, [], None)
 
 
 def test_quote_only_response_keeps_the_currency(tmp_path, monkeypatch):
@@ -332,7 +334,7 @@ def test_quote_only_response_keeps_the_currency(tmp_path, monkeypatch):
     by = {r["t"]: r for r in us}
     assert by["TSM"]["fcur"] == "TWD" and not any(k in by["TSM"] for k in ("per", "pbr", "dy"))
     assert by["TSM"]["de"] == "Makes chips." and by["TSM"]["s"] == F.map_sector_us("Technology", "Semiconductors")
-    assert any(x.startswith("  !! 야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀: 1곳 (TSM)") for x in lines), lines
+    assert any(x.startswith("  !! 야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀: 1곳 · 가장 오래된 예전 값 7일 전 (TSM)") for x in lines), lines
     assert any("설명 칸" in x and "TSM" in x for x in lines), lines
     back = F.load_us_info(path)["TSM"]
     assert back["at"] == "2026-11-12" and back["info"]["financialCurrency"] == "TWD" and back["info"]["trailingPE"] == full["trailingPE"]
@@ -585,3 +587,98 @@ def test_new_rows_inside_run_checks():
                         sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
                         now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
     assert LOST not in {r[0] for r in live.rows} and UNK in {r[0] for r in live.rows}   # 사이트 점검: 절대 기준만
+
+
+
+# ── #114 리뷰 2 ──────────────────────────────────────────
+def test_merge_only_from_the_same_company_or_a_recent_entry():
+    """N1: 예전 항목이 같은 회사(이름이 같음)이거나 14일 안일 때만 채워요. 40일 된 다른 회사 항목(티커를 물려받은 회사)은 쓰지 않아요."""
+    today = dt.date(2026, 11, 12)
+    other_old = {"at": "2026-10-03", "k": 3, "info": {"shortName": "Old Corp Ltd", "financialCurrency": "TWD", "sector": "Industrials"}}
+    new = {"shortName": "New Company Inc.", "trailingPE": 10.0}
+    assert F.us_info_merge(new, other_old, today) == (new, [], 40)                     # 40일 · 다른 회사: 채우지 않아요
+    same_old = {**other_old, "info": {**other_old["info"], "shortName": "NEW COMPANY, INC"}}
+    got, kept, age = F.us_info_merge(new, same_old, today)                              # 40일이어도 같은 회사(기호 · 대소문자 무시)
+    assert age == 40 and got["financialCurrency"] == "TWD" and set(kept) == {"financialCurrency", "sector"}
+    recent_other = {**other_old, "at": "2026-11-02"}
+    got, kept, age = F.us_info_merge(new, recent_other, today)                          # 10일 안이면 이름이 달라도 (그 사이 이름만 바뀐 회사)
+    assert age == 10 and got["financialCurrency"] == "TWD"
+    assert F.us_info_merge(new, other_old, None)[1] == []                               # 날짜를 모르면 이름으로만
+
+
+def test_partial_answers_are_due_again_and_listed(tmp_path, monkeypatch):
+    """S1 · S2: 일부만 온 응답(예전 값으로 채움 · 회사인데 통화 없음)은 오늘 받은 것으로 3일 두지 않고 다음 실행에서 다시 물어요.
+    예전 값으로 채운 종목은 data.json usInfoPartial 에 남아요 (관문이 경고). 다 온 응답 · ETF 는 그렇지 않아요."""
+    assert F.us_info_partial({"quoteType": "EQUITY"}, []) is True                       # 회사인데 통화 없음
+    assert F.us_info_partial({"quoteType": "EQUITY", "financialCurrency": "USD"}, []) is False
+    assert F.us_info_partial({"quoteType": "ETF"}, []) is False and F.us_info_partial({}, [], etf=True) is False
+    assert F.us_info_partial({"financialCurrency": "TWD"}, ["sector"]) is True           # 예전 값으로 채움
+    assert F.us_info_due({"at": "2026-11-12", "k": F.US_INFO_SCHEMA, "due": True}, dt.date(2026, 11, 12)) is True
+    syms = ["TSM", "AAPL", "SPY"]
+    full = info("TWD")
+    quote_only = {k: full[k] for k in ("shortName", "trailingPE", "priceToBook", "dividendYield", "marketCap", "averageVolume")}
+    old = {"TSM": {"at": "2026-11-05", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": full},
+           "AAPL": {"at": "2026-11-05", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": info("USD", shortName="Apple Inc.")},
+           "SPY": {"at": "2026-11-05", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": {"shortName": "SPDR S&P 500", "quoteType": "ETF"}}}
+    infos = {"TSM": quote_only, "AAPL": info("USD", shortName="Apple Inc."), "SPY": {"shortName": "SPDR S&P 500", "quoteType": "ETF"}}
+    calls, lines, path = _setup_fetch(tmp_path, monkeypatch, syms, infos, old)
+    today = dt.date(2026, 11, 12)
+    us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+    assert sorted(calls) == ["AAPL", "SPY", "TSM"]                                       # 7일 전 항목: 모두 받을 날
+    back = F.load_us_info(path)
+    assert back["TSM"].get("due") is True and "due" not in back["AAPL"] and "due" not in back["SPY"]
+    assert meta["usInfoPartial"] == ["TSM"]
+    assert any("일부만 온 야후 응답" in x and "다음 실행에서 다시 물어봐요" in x and x.endswith("TSM") for x in lines), lines
+    assert any("예전 값을 그대로 씀: 1곳 · 가장 오래된 예전 값 7일 전" in x for x in lines), lines
+    calls.clear()
+    infos["TSM"] = full                                                                  # 다음 실행: TSM 만 다시 묻고, 다 오면 끝
+    us2, *_rest, meta2 = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+    assert calls == ["TSM"] and "due" not in F.load_us_info(path)["TSM"] and meta2["usInfoPartial"] == []
+    calls.clear()
+    F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+    assert calls == []
+
+
+def test_partial_gate_row():
+    PART = "미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)"
+    us = [us_row(f"U{i}") for i in range(20)]
+    rows, rep = more_rows({"usFcurUnknown": [], "usInfoPartial": ["U0", "U1"]}, us, None)
+    assert rows[PART][3] == "WARN" and rows[PART][1] == "2곳 (10.0%): U0, U1", rows[PART]
+    assert ("야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (usInfoPartial)", ["U0", "U1"]) in rep.details
+    many = [f"U{i}" for i in range(12)]
+    rows, _ = more_rows({"usFcurUnknown": [], "usInfoPartial": many}, us, None)
+    assert rows[PART][3] == "WARN" and rows[PART][1].startswith("12곳 (60.0%): U0, U1") and rows[PART][1].endswith("U9 외 2곳")
+    rows, _ = more_rows({"usFcurUnknown": [], "usInfoPartial": []}, us, None)
+    assert rows[PART][3] == "PASS" and rows[PART][1] == "0곳 (0.0%)"
+    rows, _ = more_rows({"usFcurUnknown": []}, us, None)
+    assert rows[PART][3] == "PASS" and "기록 없음" in rows[PART][1]                       # 이 칸 전 발행본: 통과 (실패 없음)
+
+
+def test_fetch_us_passes_today_so_a_clear_zero_yield_is_kept(tmp_path, monkeypatch):
+    """N4 ①: 실제 실행(fetch_us)이 apply_us_info 에 today 를 넘겨야 0% 를 남겨요 (today 가 없으면 늘 비어요)."""
+    syms = ["PDD", "BABA"]
+    infos = {"PDD": info("CNY", shortName="PDD Holdings", quoteType="EQUITY", **NO_DIV),
+             "BABA": info("CNY", shortName="Alibaba", quoteType="EQUITY", dividendYield=1.03, dividendRate=1.05, trailingAnnualDividendRate=7.2)}
+    calls, lines, path = _setup_fetch(tmp_path, monkeypatch, syms, infos, today=dt.date(2026, 11, 13))
+    us, *_ = F.fetch_us(dt.date(2026, 11, 13) - dt.timedelta(days=500), dt.date(2026, 11, 13), 0.03)
+    by = {r["t"]: r for r in us}
+    assert by["PDD"]["dy"] == 0.0 and by["PDD"]["fcur"] == "CNY" and "dy" not in by["BABA"]
+    assert any("배당수익률 0% 를 남긴 회사" in x and "1곳 (PDD)" in x for x in lines), lines
+
+
+def test_lost_currency_row_reacts_to_a_returned_yield_alone():
+    """N4 ②: 통화 정보 없이 배당수익률만 다시 나가도 실패예요 (PER · PBR 이 없어도)."""
+    prev = {"stocks": [us_row("TSM", fcur="TWD")]}
+    rows, _ = more_rows({"usFcurUnknown": ["TSM"]}, [us_row("TSM", nk="TSM Corp", dy=0.94)], prev)
+    assert rows[LOST][3] == "FAIL" and rows[LOST][1] == "1곳 · 통화 정보 없이 숫자 있음 1곳: TSM"
+
+
+def test_pbr_cut_uses_todays_price():
+    """N4 ③: 0.00 으로 반올림되는지는 오늘 가격에 맞춘 PBR 로 봐요 (받은 날 가격이 아니에요)."""
+    r = rec("X", 50.0)                                                    # 받은 날 100 → 오늘 50: PBR 0.006 → 0.003 → 빈 칸
+    F.apply_us_info(r, info("USD", priceToBook=0.006), 100.0, FX)
+    assert "pbr" not in r and r["pbrZero"] is True
+    r2 = rec("Y", 200.0)                                                  # 받은 날 100 → 오늘 200: PBR 0.004 → 0.008 → 0.01
+    F.apply_us_info(r2, info("USD", priceToBook=0.004), 100.0, FX)
+    assert r2["pbr"] == 0.01 and "pbrZero" not in r2
+    assert F.us_info_cuts({"priceToBook": 0.006}, 0.5) == ["pbr"] and F.us_info_cuts({"priceToBook": 0.004}, 2.0) == []
