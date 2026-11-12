@@ -51,7 +51,7 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    - all tests pass (CI green once v17.6 lands);
    - a **fresh-eyes review**: spawn a subagent that did not write the change, give it the diff, the task spec and this
      file, and ask it to find bugs and rule violations. Fix what it finds and summarize it in the PR. (A revert PR
-     that only undoes a bad merge: rule 7, green CI first, review afterwards.)
+     that only undoes a bad merge: rule 7, green CI and the other merge checks first, its review afterwards.)
 5. Every PR description contains, in this order:
    - **What changed** — plain English, 3–8 bullets, written for Jack.
    - **「새 문구」** — every new or changed user-facing Korean string, verbatim (before → after). "없음" if none.
@@ -67,15 +67,16 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    work: a Fable 5.2 High helper with one narrow target, when Jack asks. Helpers with no judgement in them stay at
    medium.
    Jack's answers on the details (2026-11-12):
-   - Helpers that write or judge something but don't build or review (Korean text drafts, screenshot checks,
+   - Helpers that write or judge something but don't build or review (Korean text drafts, judging screenshots,
      diagnosing a failed run) run on Opus 5.5 at Extra high, set explicitly. When unsure, Extra high. (Audits keep
      their own line above.)
    - On pipeline PRs (the two-reviewer kind above), the Fable rounds stop at the first round with no blocker. On
      other PRs, if round 3 still finds a blocker, stop and ask Jack.
-   - Changes to the test scripts the daily run executes, and to the CI workflow, get the two-reviewer round 1, as
-     pipeline PRs do (nothing else about them changes). Other test-only changes get one reviewer.
-   - A revert PR that only undoes a bad merge is merged as soon as CI is green, and reviewed afterwards (Jack: "(e)
-     still needs green CI").
+   - Changes to the test scripts the daily run uses (and the test helpers they import), and to the CI workflow, are
+     reviewed like pipeline PRs: two reviewers in round 1, then Fable 5.2 at High alone (nothing else about them
+     changes). Other test-only changes get one reviewer.
+   - A revert PR that only undoes a bad merge merges once CI is green and the other merge checks pass, without
+     waiting for its review, which comes afterwards (Jack: "(e) still needs green CI").
 
 ## GitHub process — you own it (Jack's standing rule, 2026-10-31)
 
@@ -124,16 +125,16 @@ setting to change (where it is and what to click), never just "go to GitHub".
    DART rule above.
 2. Check the live site yourself (https://jacksungjinlee.github.io/baepsae/): search 005930 and 현대차, open every tab,
    check the dates.
-3. If anything is wrong, revert the merge right away (a revert PR that you merge once CI is green; its review comes
-   afterwards, rule 7), tell Jack what happened, then fix forward in a new PR.
+3. If anything is wrong, revert the merge right away (a revert PR that you merge once CI is green and the other merge
+   checks pass; its review comes afterwards, rule 7), tell Jack what happened, then fix forward in a new PR.
 4. Send Jack a 3–6 line plain-English summary: what changed for users, what you checked, anything he should look at
    on his phone.
 
 **Keep `docs/CHANGELOG.md`:** one line per merge — KST date, PR number, plain-English summary — so Jack and his
 claude.ai chat can follow the history. Add the line in the same PR when you can, otherwise right after the merge.
 
-**Keep `docs/HANDOFF.md` § 0 current (Jack, 2026-11-13):** every PR updates § 0 in the same PR — what is live after
-it merges and what comes next — and, when it finishes or starts a part of a spec, that spec's Status line.
+**Keep `docs/HANDOFF.md` § 0 current (Jack, 2026-11-13):** "update § 0 in the same PR as every merge": what is live
+after it merges and what comes next.
 
 ## Testing — before every PR
 
