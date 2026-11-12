@@ -76,11 +76,13 @@ serve the `docs/` folder (two of its files must answer "not found").
       the data, and guarantees a beta and volatility for none of the US ones one by one. Since 2026-11-13 the gate
       fails when fewer than 95% of all US stocks have a beta, or a volatility, and warns below 97% (rows "미국 beta 채움"
       and "미국 vol 채움", the Korean rule; their change rows mirror the Korean ones and never fail before the floor
-      does). Below 97% the gate lists the blank stocks ("미국 beta 빈 종목"). Read the names: if they are new
-      listings (less than 250 trading days of prices, so the pipeline leaves beta and volatility blank by design), tell
-      Jack before the share reaches 95%; do not lower the floor. If they are long-listed names, suspect the pipeline.
-      A Yahoo outage drops tickers from the list rather than blanking them, so it shows up in "미국 종목 수 변화", not
-      here. When a built-in stock is missing from
+      does). Below 97% the row's value names the first 10 blank stocks (so the 09:13 check sees them) and the
+      log and step summary list them all ("미국 beta 빈 종목"). Read the names: if they are new listings (less than 250
+      trading days of prices, so the pipeline leaves beta and volatility blank by design), tell Jack before the share
+      reaches 95%; do not lower the floor. If they are long-listed names, suspect the pipeline, with one standing
+      exception: ABVX has a beta but no volatility (its volatility is above the pipeline's 300% cap). A Yahoo outage
+      drops tickers from the list rather than blanking them, so these rows don't see it; "미국 종목 수 변화" catches
+      it only when more than 15% of US stocks go missing, and a smaller outage shows in no gate row. When a built-in stock is missing from
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
       correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
       (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
