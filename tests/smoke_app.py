@@ -2975,6 +2975,91 @@ def scene_stmt_cur(R, files):
     ctx.close(); srv.shutdown()
 
 
+def scene_kst_dates(R, files):
+    """2026-11-12 (Jack: 예전 뱁새 날짜 고치기 PR 에 yes): 예전 뱁새가 적는 오늘 날짜 네 곳 — 점검 기록(③ '지금 상태 기록'), 저장 목록의
+    'updated', 공유 카드('{날짜} · 뱁새에서 만듦'), 내보내기(파일 이름 · JSON 의 date · 주문 메모 첫 줄) — 는 한국 날짜예요.
+    예전에는 UTC 날짜(new Date().toISOString())라 한국 00:00~09:00 에는 어제 날짜가 찍혔어요. 고정 데이터의 시험 시계는 한국 07:00
+    (UTC 로는 전날 22:00) 에서 시작해서, UTC 날짜를 쓰면 이 장면이 실패해요. 실제 데이터(--data, 진짜 시계)에서도 같은 것을 봐요
+    (그때는 두 날짜가 같은 시각일 수 있어 구별은 못 하지만, 한국 날짜와 다르면 실패해요)."""
+    stocks = {s.get("t") for s in files["data.json"]["stocks"]}
+    hold = [("005930", 300), ("000660", 100)]
+    assert {t for t, _ in hold} <= stocks, "시험할 종목(삼성전자 · SK하이닉스)이 데이터에 없어요"
+    profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
+               "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile, "checkins": [],
+            "holdings": [{"t": t, "mw": mw} for t, mw in hold]}
+    local = slot_local([("skst", "날짜 시험", slot)])
+    srv, ctx, page, _ = R.open(build_site(files), local=local)
+    S = "한국 날짜"
+
+    def kst_days():
+        """지금의 한국 날짜 (자정을 넘는 순간을 위해 앞뒤 두 번 읽어 둘 다 받아요)."""
+        return {now_dt().date().isoformat()}
+
+    def stage(label):
+        page.get_by_role("button", name=label, exact=False).first.click()
+
+    def clock_is_telling():
+        now = now_dt()
+        utc = now.astimezone(dt.timezone.utc).date()
+        assert now.date() != utc, f"시험 시계가 한국 {now:%H:%M} 이라 UTC 날짜와 같아요 — 이 장면이 두 날짜를 구별하지 못해요"
+    if not REAL_DATA:                                           # 진짜 시계(--data)에서는 낮이면 두 날짜가 같아요: 구별은 고정 데이터에서
+        R.check(page, S, "시험 시계: 한국 날짜와 UTC 날짜가 다른 시각 (고정 데이터)", clock_is_telling)
+
+    def saved_list():
+        want = kst_days()
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("날짜 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        raw = poll(page, "localStorage.getItem('baepsae_v10_slots')",
+                   lambda v: bool(v) and any(x.get("id") == "skst" and x.get("updated") for x in json.loads(v)),
+                   "앱이 저장 목록에 날짜를 적지 않았어요")
+        want |= kst_days()
+        got = next(x for x in json.loads(raw) if x.get("id") == "skst")["updated"]
+        assert got in want, f"저장 목록 날짜 {got} ≠ 한국 날짜 {sorted(want)}"
+    R.check(page, S, "저장 목록(자동 저장)의 날짜 = 한국 날짜", saved_list)
+
+    def checkin():
+        stage("③ 진단")
+        want = kst_days()
+        page.get_by_role("button", name="지금 상태 기록").first.click()
+        st = poll(page, "localStorage.getItem('baepsae_v10_slot_skst')",
+                  lambda v: bool(v) and len(json.loads(v).get("checkins") or []) == 1, "점검 기록이 저장되지 않았어요")
+        want |= kst_days()
+        got = json.loads(st)["checkins"][0]["d"]
+        assert got in want, f"점검 기록 날짜 {got} ≠ 한국 날짜 {sorted(want)}"
+    R.check(page, S, "③ '지금 상태 기록' 의 날짜 = 한국 날짜", checkin)
+
+    def export():
+        stage("④ 내보내기")
+        see(page, "예상 세금")
+        want = kst_days()
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
+        with open(dl.value.path(), encoding="utf-8") as fh:
+            j = json.load(fh)
+        name = dl.value.suggested_filename
+        page.evaluate("""() => { window.__memo = null; const w = (x) => { window.__memo = x; return Promise.resolve(); };
+            try { navigator.clipboard.writeText = w; } catch (e) {}
+            if (!navigator.clipboard || navigator.clipboard.writeText !== w) Object.defineProperty(navigator, 'clipboard', { value: { writeText: w }, configurable: true }); }""")
+        page.get_by_role("button", name="텍스트 복사 (주문 메모)").click()
+        memo = poll(page, "window.__memo", bool, "주문 메모가 복사되지 않았어요")
+        page.evaluate("""() => { window.__drawn = []; const P = CanvasRenderingContext2D.prototype, f = P.fillText;
+            P.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
+        page.get_by_role("button", name="포트폴리오 카드 만들기 (이미지 공유)").click()
+        drawn = poll(page, "window.__drawn", lambda d: d and any("뱁새에서 만듦" in x for x in d), "공유 카드를 그리지 않았어요")
+        page.get_by_role("button", name="닫기", exact=True).first.click()
+        want |= kst_days()
+        assert j.get("date") in want, f"JSON 의 date {j.get('date')} ≠ 한국 날짜 {sorted(want)}"
+        assert any(name == f"baepsae-portfolio-{d}.json" for d in want), f"JSON 파일 이름 {name} 의 날짜가 한국 날짜가 아니에요"
+        first = memo.splitlines()[0]
+        assert any(first.endswith(" " + d) and "주문 메모" in first for d in want), f"주문 메모 첫 줄 {first!r}"
+        card = next(x for x in drawn if "뱁새에서 만듦" in x)
+        assert any(card == f"{d} · 뱁새에서 만듦" for d in want), f"공유 카드 날짜 줄 {card!r}"
+    R.check(page, S, "④ 내보내기: JSON 파일 이름 · JSON date · 주문 메모 첫 줄 · 공유 카드 날짜 줄 = 한국 날짜", export)
+    ctx.close(); srv.shutdown()
+
+
 def scene_list(R, fresh, full):
     """모든 장면을 순서대로 (이름, 함수). 함수는 부를 때만 돌아요 — 목록을 만드는 것만으로는 아무것도 하지 않아요 (--part 시험)."""
     return [("정상", lambda: scene_normal(R, fresh, full)), ("멈춤", lambda: scene_stale(R, fresh)),
@@ -2988,7 +3073,8 @@ def scene_list(R, fresh, full):
             ("미국날짜", lambda: scene_own_close(R, fresh)), ("늦음", lambda: scene_stale_after(R, fresh)),   # v19.1c
             ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
             ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True)),   # 2026-11-08
-            ("다시읽음", lambda: scene_stmt_cur(R, fresh))]                                                                 # 2026-11-08 stmtCur
+            ("다시읽음", lambda: scene_stmt_cur(R, fresh)),                                                                 # 2026-11-08 stmtCur
+            ("날짜", lambda: scene_kst_dates(R, fresh))]                                                                    # 2026-11-12 한국 날짜
 
 
 def parse_part(text):
@@ -3014,7 +3100,7 @@ def main():
                     "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요
