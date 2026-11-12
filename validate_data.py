@@ -209,8 +209,8 @@ DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 �
 # 바뀌면 실패 (분할 전 기록의 주식 수가 바뀌어 보여요). 파이프라인(fetch_data.py)은 아래 기준값을 읽어 같은 선으로 판단해요 (검사 코드는 따로).
 FX_HIST_FROM = "2016-01-01"     # 앱이 환율을 찾는 첫날 (src/v2/records.js FX_FROM) — 그 전 날짜의 미국 기록은 환율 없이 저장돼요
 FX_HIST_FIRST_BY = "2016-01-08" # 첫 줄은 2016년 첫 주 안이어야 해요 (앞이 잘린 이력이면 2016년 뒤 날짜의 기록이 환율 없이 저장돼요)
-FX_HIST_SOURCES = ("ecos_next", "ecos_close", "ecos", "yahoo_next")   # fetch_data.FX_HIST_SOURCE (Jack 의 답을 기다려요): 다음 날 매매기준율 ·
-#                                 15:30 종가 · 그날 매매기준율 (ECOS) · 야후 다음 봉 시가 — 무엇을 뜻하는지는 fetch_data.py 와 RUNBOOK
+FX_HIST_SOURCES = ("ecos_next", "ecos_close", "ecos", "yahoo_next")   # fetch_data.FX_HIST_SOURCE (Jack 의 답을 기다려요 · 지금 ecos_close):
+#                                 다음 날 매매기준율 · 15:30 종가 · 그날 매매기준율 (ECOS) · 야후 다음 봉 시가 — 무엇을 뜻하는지는 fetch_data.py 와 RUNBOOK
 # 약속 (모든 출처): fxHist 의 줄은 asOf 와 그 전 날짜에만 말해요. 앱은 asOf 뒤 날짜를 받지 않아요 — 오늘만 예외 (신선한 data.json fx).
 FX_HIST_ECOS = ("ecos_next", "ecos_close", "ecos")
 FX_HIST_GAP_MAX = {"ecos_next": 14, "ecos_close": 14, "ecos": 14, "yahoo_next": 7}   # 줄 사이 달력 날짜 상한. ECOS (한국 영업일)
@@ -846,7 +846,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
-    check_v196a(rep, data, macro, by, pdata, mode, today)
+    check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1009,6 +1009,32 @@ def _us_codes(d):
     return {s.get("t") for s in (d or {}).get("stocks") or [] if s.get("cls") == "us" and not s.get("fund")}
 
 
+def _fx_hist_vs_yesterday(ds, vs, src, pmacro):
+    """v19.6a (#117 리뷰 3 N7 · 경고만): 어제 발행본의 fxHist 와 비교 — 지난 줄(어제 마지막까지, 어제 마지막 줄이 끝나지 않은 값이면 그 전까지)이
+    바뀌었거나 빠졌으면, asOf 가 어제보다 앞이면, 출처가 바뀌었으면. 사용자 기록에 저장된 환율은 바뀌지 않지만 같은 날짜의 새 기록이 다른 값을
+    받게 돼요. -> 경고 글 목록."""
+    pfh = pmacro.get("fxHist") if isinstance(pmacro, dict) else None
+    if not isinstance(pfh, dict) or not isinstance(pfh.get("rows"), list):
+        return []
+    if pmacro.get("fxHistSrc") != src:
+        return [f"출처가 어제 {pmacro.get('fxHistSrc')!r} 에서 바뀌었어요 (같은 날짜의 값이 달라져요)"]
+    prev = {}
+    for r in pfh["rows"]:
+        if isinstance(r, list) and len(r) == 2 and _iso_day(r[0]) and (json_num(r[1]) or 0) > 0:
+            prev[r[0]] = json_num(r[1])
+    if not prev:
+        return []
+    keys = sorted(prev)
+    cut = keys[-2] if pfh.get("final") is False and len(keys) > 1 else keys[-1]
+    cur = {d.isoformat(): v for d, v in zip(ds, vs)}
+    changed = [d for d in keys if d <= cut and (d not in cur or abs(cur[d] - prev[d]) > 1e-9)]
+    out = [f"지난 줄이 어제와 달라요 {len(changed)}: {', '.join(changed[:5])}"] if changed else []
+    p_as_of = _iso_day(pfh.get("asOf"))
+    if p_as_of and ds and ds[-1] < p_as_of:
+        out.append(f"asOf {ds[-1]} 가 어제 {p_as_of} 보다 앞이에요")
+    return out
+
+
 def _ecos_tail_min(run_day, src):
     """휴장일 표(data/market_holidays.csv)로 본 ECOS fxHist 의 마지막 날 하한: ecos · ecos_close = 발행일 전 마지막 한국 영업일 (그날 아침
     고시 · 그날 15:30 마감은 다음 날 아침에 있어요), ecos_next = 그 전 영업일 (다음 날 매매기준율이 있어야 줄이 생겨요). 표가 덮지 못하거나
@@ -1029,7 +1055,7 @@ def _ecos_tail_min(run_day, src):
     return prev_bd(m) if src == "ecos_next" else m
 
 
-def check_v196a(rep, data, macro, by, pdata, mode, today):
+def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
     """v19.6a (Part I.1 · A.6): macro.json fxHist 와 data.json splits. 세 줄."""
     run_day = _iso_day(data.get("asOf")) or today          # 발행일 (이 실행의 한국 날짜)
     # 1. 환율 이력 — 앱이 새 미국 기록에 그 날짜의 환율로 저장해요 (records.js rateFor: 그날 줄, 없으면 그 전 마지막 줄). 약속: 줄은 asOf 와 그 전
@@ -1100,6 +1126,7 @@ def check_v196a(rep, data, macro, by, pdata, mode, today):
             elif fresh < run_day:
                 warns.append(f"출처를 {fresh} 뒤로 새로 읽지 못해 지난 발행본의 이력을 그대로 뒀어요 ({(run_day - fresh).days}일째 · "
                              "asOf 뒤 날짜는 앱이 받지 않아요)")
+            warns += _fx_hist_vs_yesterday(ds, vs, src, pmacro)
             if src in FX_HIST_ECOS:
                 want = _ecos_tail_min(run_day, src)
                 if want is not None and ds[-1] < want:
@@ -2325,12 +2352,24 @@ def load_git(ref, files=FILES):
 
 
 def load_prev(prev_dir, prev_ref):
-    """직전 발행본의 data.json 을 엄격하게 읽어요. corp.json 은 표시(stmtCur) 비교에만 따로 느슨하게 읽어요 (load_prev_corp) ·
-    disc·macro 는 비교에 안 써요."""
+    """직전 발행본의 data.json 을 엄격하게 읽어요. corp.json 은 표시(stmtCur) 비교에만 따로 느슨하게 읽어요 (load_prev_corp).
+    v19.6a: macro.json 은 환율 이력 비교(경고만)에만 써서, 읽지 못하면 없이 해요 (그 때문에 관문이 멈추거나 다른 줄이 바뀌지
+    않아요). disc 는 비교에 안 써요."""
     if prev_dir:
         with open(os.path.join(prev_dir, "data.json"), encoding="utf-8") as fh:
-            return {"data": strict_loads(fh.read(), "data.json")}
-    return load_git(prev_ref, files=("data.json",))
+            out = {"data": strict_loads(fh.read(), "data.json")}
+        try:
+            with open(os.path.join(prev_dir, "macro.json"), encoding="utf-8") as fh:
+                out["macro"] = strict_loads(fh.read(), "macro.json")
+        except Exception:
+            pass
+        return out
+    out = load_git(prev_ref, files=("data.json",))
+    try:
+        out.update(load_git(prev_ref, files=("macro.json",)))
+    except Exception:
+        pass
+    return out
 
 
 def load_prev_corp(prev_dir, prev_ref):
