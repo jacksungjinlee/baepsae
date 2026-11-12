@@ -400,6 +400,7 @@ def test_sell_and_remove_reads_the_stored_portfolio_not_the_draft():
     assert got["r1"] == {"ok": False, "why": "last"}
     s5 = got["sc5"]
     assert got["draftSum"] == 100 and s5["n"] == 4 and s5["low"] is True and s5["y"] == 25 and s5["last"] is False
+    assert s5["names"] == ["종목2", "종목3", "종목4", "종목5"]                                       # 저장된 종목만 (기다리는 삼성전자는 빼고, round-2)
     assert got["no"] == {"ok": False, "why": "sum"}                                              # 올리기 전에는 저장하지 않아요
     assert got["yes"] == {"valid": True, "sum": 1, "max": 25, "held": ["000020", "000030", "000040", "000050"], "sales": 1}
     assert got["sc2"]["last"] is True and got["sc2b"]["last"] is False and got["sc2b"]["n"] == 1
