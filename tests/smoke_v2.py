@@ -10074,6 +10074,130 @@ def v196a_store(pxd):
     return {"v": 2, "decks": [built, imported], "guideSeen": pxd}
 
 
+def scene_v196a_split_price(R, files, width=390):
+    """v19.6a round 3: a split between the record's date and today puts today's close on another share basis, so an empty
+    price has no default there. 팔았어요 AMD (a stored 1:2 on 10-05) dated 10-02 and 샀어요 NVDA (data.json's 10:1 on 10-10)
+    dated 10-01: the '가격을 비워 두면 … 종가로 기록돼요' line and the close as the placeholder are gone, an empty price is refused
+    with the existing line (price field marked, nothing saved), a typed price saves. On today's date both are back. 매수 계획's
+    샀어요 (every US stock split on 10-20): dated 10-15, the sheet's line is gone and the US rows need a price."""
+    S = f"v19.6a split price {width}"
+    data = v196a_files(files)
+    d = data["data.json"]
+    d["splits"] = d["splits"] + [["NVDA", "2026-10-10", 10]]
+    by = {x["t"]: x for x in d["stocks"]}
+    pxd = d["pxDate"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    deck = {"id": "dsp", "name": "배당 생활비 포트폴리오", "createdAt": "2026-08-01", "planFx": 1300,
+            "holdings": [{"t": "AMD", "nk": by["AMD"]["nk"], "cls": "us", "target": 0.5, "rules": band(0.5)},
+                         {"t": "NVDA", "nk": by["NVDA"]["nk"], "cls": "us", "target": 0.5, "rules": band(0.5)}],
+            "purchases": [{"id": "p1aaaaaa", "t": "AMD", "qty": 2, "price": 160.0, "date": "2026-09-01", "ccy": "USD", "fx": 1300},
+                          {"id": "p2aaaaaa", "t": "NVDA", "qty": 1, "price": 1500.0, "date": "2026-09-01", "ccy": "USD", "fx": 1300}],
+            "splits": [{"t": "AMD", "date": "2026-10-05", "r": 0.5}]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio")
+    stored = lambda: page.evaluate(STORED_JS)
+    R_ = C["rec"]
+    form = lambda: page.locator('[data-ui-v2="rec-form"]')
+    price_in = lambda: form().locator("input").nth(1)
+
+    def open_form(t, label):
+        at(page, "portfolio")
+        page.locator(f'[data-holding="{t}"] [data-ui-v2="row-actions"] button').first.click()
+        page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="rec-actions"] button', has_text=label).click()
+        form().wait_for(state="visible")
+
+    def check_page(where, name):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v196a-{name}-{width}.png"))
+
+    def sale_amd():
+        open_form("AMD", R_["sell"])
+        assert form().locator('[data-ui-v2="rec-close-line"]').count() == 1                     # 오늘 날짜: 종가 줄 · 자리 글자
+        assert price_in().get_attribute("placeholder") == f"{by['AMD']['price']:,.2f}"
+        form().locator('input[type="date"]').fill("2026-10-02")                                  # 1:2 (10-05) 전
+        form().locator('[data-ui-v2="rec-close-line"]').wait_for(state="detached")
+        assert not price_in().get_attribute("placeholder")
+        form().locator("input").first.fill("2")
+        form().locator("button", has_text=C["plan"]["save"]).click()
+        form().locator('[data-ui-v2="bad-input"]').wait_for(state="visible")
+        assert form().locator('[data-ui-v2="bad-input"]').inner_text() == C["plan"]["badInput"] and price_in().get_attribute("aria-invalid") == "true"
+        assert not stored()["decks"][0].get("sales")                                              # 저장 안 함
+        check_page("팔았어요 · 분할 전 날짜", "sell-split-price")
+        price_in().fill("250")
+        form().locator("button", has_text=C["plan"]["save"]).click()
+        page.wait_for_function("() => (JSON.parse(localStorage.getItem('baepsae2.v1')).decks[0].sales || []).length === 1")
+        sale = stored()["decks"][0]["sales"][0]
+        assert sale["price"] == 250 and sale["qty"] == 2 and sale["date"] == "2026-10-02"
+        page.locator('[data-ui-v2="rec-full"] button', has_text=R_["keep"]).click()             # 다 팔았어요: 남겨 두기
+        page.locator('[data-ui="bottom-sheet"]').get_by_role("button", name=C["app"]["close"]).first.click()
+        page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+    R.check(page, S, "팔았어요 AMD: 분할 전 날짜면 '가격을 비워 두면 …' 줄 · 자리 글자 없음 · 빈 가격은 거절(가격 칸) · 적으면 저장", sale_amd)
+
+    def buy_nvda():
+        open_form("NVDA", C["plan"]["bought"])
+        assert form().locator('[data-ui-v2="rec-close-line"]').count() == 1
+        form().locator('input[type="date"]').fill("2026-10-01")                                  # data.json 10:1 (10-10) 전
+        form().locator('[data-ui-v2="rec-close-line"]').wait_for(state="detached")
+        assert not price_in().get_attribute("placeholder")
+        form().locator("input").first.fill("1")
+        form().locator("button", has_text=C["plan"]["save"]).click()
+        form().locator('[data-ui-v2="bad-input"]').wait_for(state="visible")
+        assert price_in().get_attribute("aria-invalid") == "true" and len(stored()["decks"][0]["purchases"]) == 2
+        price_in().fill("180")
+        form().locator("button", has_text=C["plan"]["save"]).click()
+        page.wait_for_function("() => JSON.parse(localStorage.getItem('baepsae2.v1')).decks[0].purchases.length === 3")
+        p = stored()["decks"][0]["purchases"][-1]
+        assert p["t"] == "NVDA" and p["price"] == 180 and p["date"] == "2026-10-01"
+    R.check(page, S, "샀어요 NVDA (data.json 분할): 분할 전 날짜면 줄 · 자리 글자 없음 · 빈 가격 거절 · 적으면 저장", buy_nvda)
+    ctx.close()
+    srv.shutdown()
+
+    # 매수 계획의 샀어요: 계획의 미국 종목이 모두 10-20 에 나뉘었다고 하면, 10-15 로 적을 때 미국 줄은 가격을 적어야 해요
+    plan = v196a_files(files)
+    plan["data.json"]["splits"] = [[x["t"], "2026-10-20", 2] for x in plan["data.json"]["stocks"] if x.get("cls") == "us" and x.get("ccy") == "USD"]
+    seed2 = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+             f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v196a_store(pxd), ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(plan), width, init=seed2, path="/app.html?dev=1#portfolio")
+    pby = {x["t"]: x for x in plan["data.json"]["stocks"]}
+
+    def plan_sheet():
+        at(page, "portfolio")
+        rows = to_plan(page)
+        us = [t for t, _ in rows if pby.get(t, {}).get("ccy") == "USD"]
+        assert us, rows
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        sheet = page.locator('[data-ui-v2="record-form"]')
+        assert sheet.locator('[data-ui-v2="plan-close-line"]').count() == 1                     # 오늘: '비워 두면 … 종가로 기록돼요'
+        sheet.locator('input[type="date"]').fill("2026-10-15")
+        sheet.locator('[data-ui-v2="plan-close-line"]').wait_for(state="detached")
+        for t in us:
+            assert not sheet.locator(f'[data-record="{t}"] input').nth(1).get_attribute("placeholder"), t
+        n = len(stored()["decks"])
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        sheet.locator('[data-ui-v2="bad-input"]').wait_for(state="visible")
+        assert all(sheet.locator(f'[data-record="{t}"] input').nth(1).get_attribute("aria-invalid") == "true" for t in us)
+        assert len(stored()["decks"]) == n                                                        # 저장 안 함
+        check_page("매수 계획 · 분할 전 날짜", "plan-split-price")
+        for t in us:
+            sheet.locator(f'[data-record="{t}"] input').nth(1).fill("100")
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        page.locator('[data-ui-v2="record-done"]').wait_for(state="visible")
+        new = [x for x in stored()["decks"] if x["id"] not in ("dbuilt", "dimp")][0]
+        for t in us:
+            p = [x for x in new["purchases"] if x["t"] == t][0]
+            assert p["price"] == 100 and p["date"] == "2026-10-15", p
+    R.check(page, S, "매수 계획의 샀어요: 분할 전 날짜면 '비워 두면 …' 줄 없음 · 미국 줄은 가격을 적어야 저장", plan_sheet)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v196a_outs(R, files, width=390):
     """v19.6a round 2 (A3): the app's wiring of data.json splitsInfo.fixed "out" rows (app.jsx · lots.withoutOutSplits).
     dfree: NVDA 4 shares and a stored 2:1 split the data marks out → taken out: 8 → 4, one console line, nothing again on
@@ -10608,7 +10732,8 @@ def main():
                    lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280),                 # v19.6d 어두운 화면
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
-                   lambda: scene_v196a_outs(R, files, 390)):                                                # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
+                   lambda: scene_v196a_outs(R, files, 390),                                                 # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
+                   lambda: scene_v196a_split_price(R, files, 390)):                                         # v19.6a 리뷰 3차: 분할 사이의 빈 가격
             try:
                 fn()
             except Exception as e:
