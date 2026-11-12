@@ -367,7 +367,7 @@ def test_coverage_is_counted_and_loud_while_most_statements_are_unchecked(capsys
     extra = F.fill_multiples(kr, fm, {})
     g = F.unit_guard(kr, fm, extra)
     assert g["cover"] == {"v": 1, "companies": 4, "checked": 2, "unchecked": 2, "noScale": 0, "anchor": 4, "eps": 4, "cap": 0,
-                          "flows": 4, "notWon": 0, "hit": 2}
+                          "flows": 4, "notWon": 0, "parLow": 0, "hit": 2}
     out = capsys.readouterr().out
     assert "· 공시 단위 확인이 본 회사 4곳" in out                                          # 반반이면 아직 크게 알리지 않아요
     cos[1][1].pop("bal")
@@ -406,6 +406,54 @@ def test_usd_filers_are_not_flagged_by_the_won_anchors(capsys):
     # 해외 기업(9…)도: 통화를 모르는 원 재무제표처럼 보여도 기준값은 보지 않아요
     s, fin = usd_filer("900290", "GRT", 92751685, 0.431, 3.1, 60.0, 3.0, cur=None)
     assert F.not_won(s, fin) and F.unit_guard([s], {s["t"]: fin}, {})["hit"] == {}
+
+
+def test_a_non_won_company_with_a_real_eps_is_not_eps_checked():
+    """리뷰 #118 3차 S-A: 기본주당이익이 10 이상인 원화가 아닌 회사(JTC 모양 · 엔화 · 해외 기업, 그리고 엔화로 내는 국내 회사)도 기준값을
+    보지 않아요 — 봤다면 1/1,000 로 걸렸을 값이에요."""
+    cos = []
+    for t, nk, cur in (("950170", "JTC 모양", "JPY"), ("200000", "엔화 국내", "JPY")):
+        s = {"t": t, "nk": nk, "cls": "kr", "price": 10000.0, "shr": 46721440, "cap": 0.5}
+        fin = {"cur": cur, "fs": "CFS", "eq": 100.0, "eqo": 100.0, "nio": 10.0, "ni": [10.0, 9.0, 8.0], "epsRep": 21000.0,
+               "bal": [2e10, 1e10, 1e10]}                                          # 10억 엔 ÷ 4,672만 주 = 21엔 ≠ 21,000 (1,000배)
+        assert F.unit_check(fin, F.per_share_count(s, {}))["why"] == ["eps"]          # 원 기준으로 견주면 걸려요
+        cos.append((s, fin))
+    g = F.unit_guard([s for s, _ in cos], {s["t"]: f for s, f in cos}, {})
+    assert g["hit"] == {} and g["cover"]["eps"] == 0 and g["cover"]["anchor"] == 0 and g["cover"]["notWon"] == 2
+
+
+@pytest.mark.parametrize("typed", ["5.000", "0.5", "5"])
+def test_a_hand_typed_par_under_100_won_is_not_compared(typed, capsys):
+    """리뷰 #118 3차 S-B: 한국 상장사 액면가는 100원 아래가 없어요. 배당 표에 '5.000' · '0.5' · '5' 처럼 적혀 있으면 (5,000원 · 500원을 잘못 적은
+    값) 자본금 ÷ 액면가가 1,000배 넘게 보여 맞는 회사가 비워져요 → 견주지 않고 몇 곳인지 로그에 남겨요."""
+    bas = F.parse_dart_basis([{"se": "주당액면가액(원)", "stock_knd": "", "thstrm": typed, "frmtrm": typed, "lwfr": typed}])
+    s, fin = usd_filer("200000", "액면가 오기", 95856065, 431.0, 3100.0, 6000.0, 300.0, cur=None)   # 자본금 431억 ÷ 500원 ≈ 오늘 주식 수
+    s["_bas"] = bas
+    assert 0 < F.par_raw(s) < 100 and F.par_value(s) is None and F.cap_ratio(s, fin) is None
+    g = F.unit_guard([s], {s["t"]: fin}, {})
+    assert g["hit"] == {} and g["cover"]["parLow"] == 1 and g["cover"]["cap"] == 0
+    assert f"!! 배당 표의 액면가가 100원 미만이라 자본금 ÷ 액면가를 보지 않은 회사 1곳 (손으로 적다 틀린 값 같아요): 200000 액면가 오기 {float(typed):g}원" \
+        in capsys.readouterr().out
+    s["_bas"] = {"par3": [100.0] * 3}                                                          # 100원부터는 봐요
+    assert F.par_value(s) == 100.0 and F.cap_ratio(s, fin) is not None
+    assert F.UNIT_PAR_MIN == 100.0
+
+
+def test_the_anchor_limit_is_300_not_100():
+    """리뷰 #118 3차 N-a: 기준값(eps · cap)은 300배부터 (보고서 사이 배율 100배와 따로)."""
+    fin = {"nio": 100.0, "ni": [100.0, 0, 0], "eq": 1000.0, "fs": "CFS"}
+    for r, flagged in ((150.0, False), (299.0, False), (300.0, True), (1 / 150, False), (1 / 300, True)):
+        assert ("cap" in F.unit_check(fin, None, r)["why"]) is flagged, r
+        u = F.unit_check(dict(fin, epsRep=10000.0 / r), 1_000_000)                            # 비 = 10,000원 ÷ 기본주당이익
+        assert ("eps" in u["why"]) is flagged, (r, u["eps"])
+
+
+def test_a_malformed_cache_entry_stops_the_run_and_names_the_company():
+    """리뷰 #118 3차 N-e: unit_guard 는 감싸서 넘기지 않아요 — 이상한 항목이면 그 회사 이름과 함께 실행을 멈춰요."""
+    s, fin = company("040610")
+    fin["bs2"] = "oops"
+    with pytest.raises(RuntimeError, match="공시 단위 확인: 040610 SG&G 의 재무제표 캐시 항목을 읽지 못했어요"):
+        F.unit_guard([s], {"040610": fin}, {})
 
 
 def test_a_won_company_at_1000_times_is_still_flagged_by_the_capital_anchor():
@@ -701,6 +749,19 @@ def test_gate_fails_when_the_records_count_differs_from_the_flagged_stocks(pair,
     plain(cur)
     cur["data"]["unitChkCover"] = dict(cover(), hit=hit)
     fails(cur, prev, HIT_ROW)
+
+
+def test_gate_fails_a_record_without_a_version_and_a_true_count(pair):
+    """리뷰 #118 3차 N-a: 기록에 v 가 없으면 실패 · 걸린 종목 1곳에 hit: true 도 실패 (True 는 1 이 아니에요)."""
+    cur, prev = pair
+    plain(cur)
+    cur["data"]["unitChkCover"] = {k: v for k, v in cover().items() if k != "v"}
+    row = fails(cur, prev, COV_ROW)
+    assert row[1].startswith("vNone"), row
+    flag(cur, "200000")
+    cur["data"]["unitChkCover"] = dict(cover(), hit=True)
+    row = fails(cur, prev, HIT_ROW)
+    assert row[1] == "기록 True · data.json 1곳", row
 
 
 def test_gate_counts_the_flagged_stocks_for_the_record(pair):

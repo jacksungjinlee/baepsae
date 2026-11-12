@@ -22,7 +22,7 @@ import { R2022 } from "./y2022.js";
 import { heldQty, byAmount, importedUnits } from "./held.js";
 import { dayState } from "./rules.js";
 import { warnings } from "./warn.js";
-import { icrOffShown, stmtCurFor } from "./fix.js";
+import { icrOffShown, stmtCurFor, unitHeldFor } from "./fix.js";
 
 export const LIMITS = { stock: 30, ind: 35 };          // Part G defaults (%), editable per portfolio (store.js limits)
 export const LOOSE_TOP = 50;                            // 넉넉하게 has no cut: the grouping and the 내 기준 rule use 50%
@@ -241,7 +241,9 @@ export function pfState(deck, ctx, stocks) {
   // icrOff (2026-11-08, Jack; say-why audit row 7): an unknown Korean holding whose 이자보상배율 check is switched off
   // (corp.json flWhy.icr "off"): the tile says why under 확인하지 못했어요.
   // stmtCur (2026-11-08, Jack): an unknown Korean holding whose statements are not in won (corp.json stmtCur, readable code):
-  // the tile says why with the approved currency line (the first such code; fix.js stmtCurFor).
+  // the tile says why with the approved currency line (the first such code; fix.js stmtCurFor). Not for a holding the unit
+  // check holds (unitChk): the currency is not why its numbers are blank (review #118 N7/N-b, the same precedence as the
+  // company page); another holding's currency still shows.
   const flagged = [], unknown = [];
   let offN = 0, cur = null;
   for (const r of view.rows) {
@@ -251,7 +253,7 @@ export function pfState(deck, ctx, stocks) {
     else if (w === "unknown") {
       unknown.push(r.nk);
       if (r.s && r.s.cls === "kr" && icrOffShown(co)) offN += 1;
-      if (!cur) cur = stmtCurFor(r.s, co);
+      if (!cur && !unitHeldFor(r.s, co)) cur = stmtCurFor(r.s, co);
     }
   }
   rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0, stmtCur: cur });

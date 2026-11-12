@@ -22,7 +22,8 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"R": "src/repair.js", "FX": "src/v2/fix.js", "FN": "src/v2/fixnote.jsx", "E": "src/v2/engine.js", "K": "src/v2/company.js",
         "CO": "src/v2/company.jsx", "CT": "src/v2/cotabs.jsx", "CP": "src/copy/v2.js", "RU": "src/v2/rules.js", "OF": "src/fixnote.jsx",
-        "OLD": "src/corp.jsx", "SH": "src/shell.jsx", "DT": "src/detail.jsx", "DL": "src/v2/daily.jsx"}
+        "OLD": "src/corp.jsx", "SH": "src/shell.jsx", "DT": "src/detail.jsx", "DL": "src/v2/daily.jsx", "P": "src/v2/pf.js",
+        "PV": "src/v2/pfview.jsx"}
 LINE = "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요."
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 UNIT_T = "028260"                 # 시험 데이터의 삼성물산 (배당을 줘요) — tests/smoke_v2.py 의 장면과 같은 회사
@@ -69,7 +70,7 @@ def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react';\n"
             "import fs from 'fs';\n"
-            "const { R, FX, FN, E, K, CO, CT, CP, RU, OF, OLD, SH, DT, DL } = B; const C2 = CP.C;\n"
+            "const { R, FX, FN, E, K, CO, CT, CP, RU, OF, OLD, SH, DT, DL, P, PV } = B; const C2 = CP.C;\n"
             "const warns = []; console.warn = (m) => warns.push(String(m));\n"
             "const ent = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#x27;/g, \"'\").replace(/&amp;/g, '&');\n"
             "const text = (html) => ent(html.replace(/<!--.*?-->/g, '').replace(/<[^>]+>/g, '\\n'));\n"
@@ -375,3 +376,25 @@ def test_the_compare_table_names_a_currency_only_company_not_the_held_one():
       out = { unit: count(html, LINE), cur: [...html.matchAll(/data-fix="stmt-cur" data-cur="([A-Z]+)"/g)].map((m) => m[1]) };
       delete a.stmtCur; delete b.stmtCur;""", UNIT_T=UNIT_T)
     assert got["unit"] == 1 and got["cur"] == ["JPY"], got
+
+
+def test_the_holdings_warning_tile_never_gives_the_currency_reason_for_a_held_company():
+    """리뷰 #118 3차 N-b: 홈 · 포트폴리오의 '재무 경고 0개' 칸도 같은 순서 — 단위 확인에 걸린 회사(unitChk)면 통화 줄을 그 회사 이유로 쓰지 않아요.
+    다른 가진 종목의 통화는 그대로 보여요."""
+    got = run("""
+      const STOCKS = [{ t: '241560', nk: '두산밥캣', cls: 'kr', price: 48500.0, val20: 50.0, ind: 'mach', indName: '기계', fy: 2025, unitChk: ['scale'] },
+        { t: '008700', nk: '아남전자', cls: 'kr', price: 1500.0, val20: 50.0, ind: 'elec', indName: '전자', fy: 2025 }];
+      const ctxOf = (corps) => ({ state: { ok: true }, byT: new Map(STOCKS.map((s) => [s.t, s])), coByT: new Map(corps.map((c) => [c.t, c])), fx: 1000, pxDate: '2026-11-06' });
+      const deckOf = (ts) => { const rows = ts.map((t) => ({ t, nk: t, ccy: 'KRW', qty: 1 }));
+        return { id: 'd', name: 'p', kind: 'imported', settings: { points: { value: 3 }, strict: 'normal' },
+          holdings: rows.map((r) => ({ t: r.t, nk: r.nk, cls: 'kr' })), purchases: [], imported: rows }; };
+      const warn = (ts, corps) => { const r = P.pfState(deckOf(ts), ctxOf(corps), STOCKS).rules.find((x) => x.id === 'warn');
+        return { state: r.state, cur: r.stmtCur, curLine: /data-ui-v2="stmt-cur"/.test(renderToStaticMarkup(h(PV.RuleTile, { r }))) }; };
+      const held = { t: '241560', fy: 2025, stmtCur: 'USD', unitChk: ['scale'], flRan: [] };
+      const usd = { t: '008700', fy: 2025, stmtCur: 'USD' };
+      out = { both: warn(['241560'], [held]), other: warn(['241560', '008700'], [held, usd]) };
+      delete STOCKS[0].unitChk;
+      out.plain = warn(['241560'], [{ ...held, unitChk: undefined }]);""")
+    assert got["both"] == {"state": "unknown", "cur": None, "curLine": False}, got
+    assert got["other"]["cur"] == "USD" and got["other"]["curLine"]                     # 아남전자의 통화는 그대로
+    assert got["plain"]["cur"] == "USD" and got["plain"]["curLine"]                     # 단위 확인이 없으면 예전 그대로
