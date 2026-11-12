@@ -49,6 +49,7 @@ FINAL_AFTER = dt.timedelta(minutes=30)    # 마감 30분 뒤 커밋부터 최종
 SPECIAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "krx_special_sessions.csv")
 # v19.1c (Jack, 2026-11-07): 휴장일 표 · 다음 발행 예정일 · 늦음 경고 시각. fetch_data.py 와 같은 표를 따로 읽고 따로 계산해요.
 HOLIDAYS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_holidays.csv")
+SPLIT_SEED_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "us_splits_seed.csv")   # v19.6a: 검토해 커밋한 분할 (fetch_data 와 같은 파일, 읽는 코드는 따로)
 HOL_COLS = ["date", "market", "name", "source"]
 LAST_RETRY = dt.time(14, 47)              # update-data.yml 의 그날 마지막 정해진 시각 실행 (월~토 14:47 KST)
 STALE_GRACE_H = 2                         # GitHub 정해진 시각 실행이 늦게 시작하는 시간 + 실행 시간
@@ -997,6 +998,27 @@ def _fixed_map(info):
     return out, bad
 
 
+def load_split_seed_rows(path=None):
+    """data/us_splits_seed.csv (code,date,ratio,yahoo · # 줄은 설명) → {(코드, 날짜): 배율}. 이 파일의 코드로 따로 읽어요 (fetch_data.load_split_seed 와
+    같은 파일). '정수가 아닌 새 배율' 경고에서 이미 검토한 줄을 빼는 데만 써요 — 읽지 못하면 한 줄 남기고 빈 표 (그날은 그 줄들도 경고해요)."""
+    path = path or SPLIT_SEED_CSV
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [ln for ln in f.read().splitlines() if ln.strip() and not ln.startswith("#")]
+        if not lines or lines[0].strip() != "code,date,ratio,yahoo":
+            raise ValueError("머리줄이 code,date,ratio,yahoo 가 아니에요")
+        for ln in lines[1:]:
+            t, d, r = ln.split(",")[:3]
+            if not _iso_day(d.strip()) or not (float(r) > 0):
+                raise ValueError(f"줄 {ln[:40]}")
+            out[(t.strip(), d.strip())] = float(r)
+    except Exception as e:
+        print(f"· 분할 시드({os.path.basename(path)})를 읽지 못해 '정수가 아닌 새 배율' 경고에서 검토한 줄을 빼지 못해요: {type(e).__name__}: {str(e)[:100]}")
+        return {}
+    return out
+
+
 def _diff_text(x):
     """splitsInfo.diff 한 줄 [코드, 날짜, 실은 배율, 야후 배율 또는 null, (야후 날짜)] → 글자 (모양이 틀리면 그대로)."""
     if not (isinstance(x, list) and len(x) in (4, 5) and json_num(x[2]) and (x[3] is None or json_num(x[3]))):
@@ -1276,7 +1298,11 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
         elif not same_ratio(cur[(t, d)], r):
             (changed_ok if f not in ("-", None) and same_ratio(cur[(t, d)], f) else changed).append(f"{t} {d} ×{r:g}→×{cur[(t, d)]:g}")
     new = [(k, r) for k, r in sorted(cur.items()) if k not in prev_map]
-    odd = [f"{t} {d} ×{r:g}" for (t, d), r in new if not whole_ratio(r)]
+    # 정수가 아닌 배율의 새 줄은 사람이 한 번 봐요 — 단 이미 검토한 줄은 빼요: 커밋한 시드(data/us_splits_seed.csv)의 줄이나 고정 표의 줄이 같은 배율로
+    # 나온 것 (그 종목이 목록에 다시 들 때 · AAON 3:2). 야후에서 새로 온 줄만 경고해요 (#117 · 아침 점검이 매번 노랗지 않게).
+    seed = load_split_seed_rows()
+    reviewed = lambda t, d, r: same_ratio(seed.get((t, d)), r) or same_ratio(fixed.get((t, d)), r)     # noqa: E731
+    odd = [f"{t} {d} ×{r:g}" for (t, d), r in new if not whole_ratio(r) and not reviewed(t, d, r)]
     old_new = [f"{t} {d} ×{r:g}" for (t, d), r in new if t in pcov and d < (run_day - dt.timedelta(days=SPLIT_NEW_OLD_DAYS)).isoformat()]
     fails = ([f"사라짐 {len(dropped)}: {', '.join(dropped[:3])}"] if dropped else []) + \
             ([f"배율 바뀜 {len(changed)}: {', '.join(changed[:3])}"] if changed else [])

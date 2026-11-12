@@ -285,8 +285,9 @@ tells you what happened in plain words.
     list (later days only list it under "확인할 것"), and for a split dated after the US price date.
   - **주식 분할 목록 변화 (직전 발행본과)** fails when a split from yesterday's file is gone or its ratio changed (the
     pipeline must never do that; an "out" row or a new ratio in the override table only warns). It warns for a new split
-    whose ratio is not a whole number or one over a whole number (3:2, 21:20 …: a person checks it against the
-    company's notice and, if it is a spin-off, adds an "out" row) and for a split dated more than 7 days ago that appears
+    from Yahoo whose ratio is not a whole number or one over a whole number (3:2, 21:20 …: a person checks it against the
+    company's notice and, if it is a spin-off, adds an "out" row); rows already reviewed, from the committed seed or the
+    override table with the same ratio, do not warn when their stock rejoins the list (AAON 3:2) and for a split dated more than 7 days ago that appears
     for a stock whose history was already read.
 - **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
   Pro on 2026-11-06 and checked by eye. Deploy copies it into the site; if the branch is missing or fails its check,

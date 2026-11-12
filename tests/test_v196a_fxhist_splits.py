@@ -1264,3 +1264,34 @@ def test_gate_split_source_is_named_once():
     cur["data"]["splitsSrc"] = "part"
     r = row(check(cur, prev, final), SPL)
     assert r[3] == "WARN" and r[1].count("출처 part") == 1 and "일부 종목을 오늘 읽지 못함" in r[1], r
+
+
+# ── 검토한 줄은 '정수가 아닌 새 배율' 경고에서 빼요 ─────────────────────
+def test_gate_reviewed_rows_do_not_warn_when_their_stock_joins():
+    # 시드의 AAON 2023-08-17 3:2 · 고정 표의 CBSH 2016-11-30 5% 주식배당: 그 종목이 오늘 목록에 다시 들어 새 줄로 나와도 경고하지 않아요
+    cur, prev, final = pair()
+    assert V.load_split_seed_rows()[("AAON", "2023-08-17")] == 1.5
+    cur["data"]["splits"] += [["AAON", "2023-08-17", 1.5], ["CBSH", "2016-11-30", 1.05]]
+    for t in ("AAON", "CBSH"):
+        cur["data"]["stocks"].append(dict(next(s for s in cur["data"]["stocks"] if s["t"] == "MSFT"), t=t))
+    r = row(check(cur, prev, final), SPC)
+    assert r[3] == "PASS" and "정수 아닌 배율" not in r[1], r
+
+
+def test_gate_fresh_yahoo_rows_with_a_non_whole_ratio_still_warn():
+    cur, prev, final = pair()
+    cur["data"]["splits"] += [["U0003", "2026-10-29", 1.5],      # 시드에도 고정 표에도 없는 새 3:2
+                              ["AAON", "2023-08-17", 1.25]]      # 시드에 있지만 배율이 달라요 → 검토한 줄이 아니에요
+    cur["data"]["stocks"].append(dict(next(s for s in cur["data"]["stocks"] if s["t"] == "MSFT"), t="AAON"))
+    r = row(check(cur, prev, final), SPC)
+    assert r[3] == "WARN" and "새 줄 정수 아닌 배율 2: AAON 2023-08-17 ×1.25, U0003 2026-10-29 ×1.5" in r[1], r
+
+
+def test_gate_without_a_readable_seed_still_warns(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(V, "SPLIT_SEED_CSV", str(tmp_path / "missing.csv"))
+    cur, prev, final = pair()
+    cur["data"]["splits"].append(["AAON", "2023-08-17", 1.5])
+    cur["data"]["stocks"].append(dict(next(s for s in cur["data"]["stocks"] if s["t"] == "MSFT"), t="AAON"))
+    r = row(check(cur, prev, final), SPC)
+    assert r[3] == "WARN" and "AAON 2023-08-17 ×1.5" in r[1], r
+    assert "분할 시드(missing.csv)를 읽지 못해" in capsys.readouterr().out
