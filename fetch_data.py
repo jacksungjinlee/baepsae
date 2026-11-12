@@ -4438,9 +4438,17 @@ def _unit_ev(u):
 # 금액이 정확히 1,000배 (백만원이면 1,000,000배)예요. 고치는 건 올해 분기 보고서(TTM 의 최신 분기)뿐이고, 표마다 따로 증명해요:
 #   재무상태표  그 보고서의 지난해 말 칸(bal0)이 사업보고서의 자산총계 · 자본총계의 정확히 k 배 (bs_factor · 원 단위까지 · 캐시의 사업보고서에
 #               총계가 없으면 자본총계 · 부채총계를 억원 반올림까지, 자본이 1억 이상일 때만)
-#   손익계산서  그 보고서의 지난해 같은 기간 누적 칸(p0 매출 · 순이익)이 지난해 같은 분기 보고서의 누적 값의 정확히 k 배 (flow_factor)
+#   손익계산서  그 보고서의 지난해 같은 기간 누적 칸(p0 매출 · 순이익)이 지난해 같은 분기 보고서의 누적 값의 k 배 (flow_factor · 금액은
+#               억원 소수 한 자리라 반올림이 설명할 수 있는 0.05억 + 0.2% 안 · 지난해 값이 1억 미만인 줄은 증거로 세지 않아요)
 #   현금흐름표  같은 방법으로 영업현금흐름
 # k 는 1 (그 표는 맞음) · 1,000 · 1,000,000 중 하나예요. 금액이 있는데 증명이 안 되는 표가 하나라도 있으면 고치지 않아요 (unit_guard 가 비워요).
+# 1 로 '증명'된 표도 믿지 않아요 (리뷰 #116 2차 S1): 지난해 같은 분기 보고서도 같은 표가 1,000배면 그 표는 1배로 보이거든요. 그래서 무엇이든
+# 나눌 때는 표마다 기준값이 있어야 해요 — 손익계산서는 (나누든 1 이든) 기본주당이익 기준값이 맞아야 하고 (기준값이 없으면 같은 배수로 나눈
+# 재무상태표의 자본금 기준값에 기대요), 현금흐름표는 기준값이 맞은 표와 같은 배수일 때만, 재무상태표는 1 이거나 기준값이 맞을 때만
+# (재무상태표의 1 은 사업보고서 칸과 원 단위까지 같은 증명이라 안전망의 '보고서 사이 배율'이 그대로 봐요). 계산할 수 있는 기준값이 하나라도
+# 어긋나면 고치지 않아요 (다른 기준값으로 덮지 않아요 · 리뷰 #116 2차 N3). 원화가 아닌 재무제표는 기준값을 보지 않아요 (#118 과 같게) → 고치지 않아요.
+# 신종자본증권 분배(자본변동표)는 증명할 칸이 없어 나눈 보고서에서는 비워요 → EPS · BPS 는 '어디 몫인지 알 수 없는 신종자본증권'과 같은 기준
+# (전체 · how hybrid)으로 돌아가요 (리뷰 #116 2차 N1). 재무상태표의 신종자본증권 금액은 재무상태표 배수로 나눠요.
 # 어느 쪽이 틀렸는지: 지난해 같은 분기 보고서도 사업보고서와 UNIT_SCALE_MAX 배 넘게 다르면 사업보고서 쪽이 다른 단위일 수 있어 고치지 않아요
 # (리뷰 #116 B1 — 사업보고서가 ÷1,000 이면 맞는 분기를 나누게 돼요). 지난해 같은 분기 보고서의 지난해 말 칸이 사업보고서의 전기 칸(balP ·
 # 같은 날)과 UNIT_SCALE_MAX 배 넘게 달라도 고치지 않아요. 나눈 뒤에는 공시 단위와 상관없는 기준값과 맞아야 해요: 손익계산서를 나눴으면
@@ -4448,8 +4456,13 @@ def _unit_ev(u):
 # 오늘 주식 수의 1/UNIT_FIX_BAND ~ UNIT_FIX_BAND 배 안. 8 배: 맞게 나눈 두 회사는 0.73 배(진코스텍) · 5.0 배(디와이에이 · 6월 뒤 주식 병합)이고,
 # 잘못 나누면 진짜 비의 1/1,000 이라 진짜 비가 50 배 이하인 회사(2026-11-12 발행본 2,128곳 중 2곳 빼고)는 1/20 아래로 떨어져요.
 # 현금흐름표만 다른 배수면(손익 · 재무상태표의 배수와 다르면) 기준값이 없어 고치지 않아요. 사업보고서 쪽이 틀린 경우는 고치지 않고 비우기만.
+# 알려진 한계: 회사가 그 반기보고서를 끝내 고쳐 내지 않으면, 이듬해 같은 분기(2027.2Q)가 최신일 때 그 보고서는 '지난해 같은 분기'가 돼서
+# 두 분기 규칙으로 고치지 않고 안전망이 다시 비워요 (docs/RUNBOOK.md).
 UNIT_FACTORS = (1000.0, 1e6)
 UNIT_FIX_BAND = 8.0
+UNIT_FLOW_ABS = 0.05     # 억원 — 소수 한 자리로 반올림한 값끼리라 반올림만으로 생기는 차이의 최대 (지난해 값 쪽)
+UNIT_FLOW_REL = 0.002    # 0.2% — 그 위로 허용하는 차이
+UNIT_FLOW_MIN = 1.0      # 억원 — 지난해 값이 이보다 작은 줄은 증거로 세지 않아요 (반올림 0.05억이 5% 넘게 돼요 · 리뷰 #116 2차 N2)
 UNIT_Q_BS = ("eq", "eqo", "bor", "cash", "ca", "cl", "cs", "nciBs")    # 재무상태표 칸 (억원)
 UNIT_Q_IS = ("rev", "op", "ni", "nio", "ie", "nciPl")                  # 손익계산서 칸 (누적 · 억원)
 UNIT_Q_CF = ("ocf", "iec", "dep")                                      # 현금흐름표 칸 (누적 · 억원)
@@ -4479,12 +4492,14 @@ def bs_factor(q0, ref=None, eq=None, li=None):
 
 def flow_factor(pairs):
     """손익 · 현금흐름표의 배수: [(그 보고서의 지난해 칸, 지난해 같은 분기 보고서의 값)] (억원 · 소수 한 자리) 이 모두 같은 k 배인지 → 1 · 1,000 ·
-    1,000,000, 아니면 None. 지난해 값이 ±0.1억 미만이거나 없는 쌍은 빼요 · 쓸 쌍이 없으면 None. (순수 함수)"""
-    use = [(float(a), float(b)) for a, b in pairs if _fin(a) is not None and _fin(b) is not None and abs(b) >= 0.1]
+    1,000,000, 아니면 None. 차이는 UNIT_FLOW_ABS (두 값을 따로 0.1억으로 반올림해서 생길 수 있는 최대) + UNIT_FLOW_REL × |지난해 값| 까지.
+    지난해 값이 UNIT_FLOW_MIN(1억) 미만이거나 없는 쌍은 증거로 세지 않아요 (그만한 값에서는 반올림 차이가 5% 를 넘어 증명이 약해요) · 쓸 쌍이
+    없으면 None. (순수 함수)"""
+    use = [(float(a), float(b)) for a, b in pairs if _fin(a) is not None and _fin(b) is not None and abs(b) >= UNIT_FLOW_MIN]
     if not use:
         return None
     for k in (1.0,) + UNIT_FACTORS:
-        if all(abs(a / k - b) <= 0.1 + 0.002 * abs(b) for a, b in use):
+        if all(abs(a / k - b) <= UNIT_FLOW_ABS + 1e-9 + UNIT_FLOW_REL * abs(b) for a, b in use):
             return k
     return None
 
@@ -4495,7 +4510,8 @@ def _has(q, keys):
 
 def scale_quarter(q, kb=1.0, ki=1.0, kc=1.0):
     """분기 해석 결과 q 의 금액을 표마다 나눈 새 dict (억원 칸은 소수 한 자리로 다시 반올림 · bal · bal0 은 원 그대로 나눠요) — unitFix =
-    {bs · is · cf: 나눈 배수 (1 이 아닌 것만)}. (순수 함수)"""
+    {bs · is · cf: 나눈 배수 (1 이 아닌 것만)}. 신종자본증권: 재무상태표 금액(eq)은 kb 로 나누고, 자본변동표의 분배(dist · 0 이 아니면)는 비우고
+    ok False (unproven) 로 둬요. (순수 함수)"""
     out = dict(q)
     for keys, k in ((UNIT_Q_BS, kb), (UNIT_Q_IS, ki), (UNIT_Q_CF, kc)):
         if k == 1:
@@ -4516,9 +4532,11 @@ def scale_quarter(q, kb=1.0, ki=1.0, kc=1.0):
         out["p0"] = p0
     if isinstance(q.get("hyb"), dict):
         h = dict(q["hyb"])
-        for key, k in (("eq", kb), ("dist", ki)):
-            if k != 1 and _fin(h.get(key)) is not None:
-                h[key] = round(h[key] / k, 1)
+        if kb != 1 and _fin(h.get("eq")) is not None:
+            h["eq"] = round(h["eq"] / kb, 1)                 # 재무상태표의 신종자본증권 (재무상태표 배수로 증명)
+        if (kb, ki, kc) != (1, 1, 1) and _fin(h.get("dist")) not in (None, 0.0):
+            # 자본변동표의 분배는 증명할 칸이 없어요 (리뷰 #116 2차 N1): 비우고 '어디 몫인지 알 수 없음'으로 → EPS · BPS 는 전체 기준 (how hybrid)
+            h.update(dist=None, ok=False, unproven=True)
         out["hyb"] = h
     out["unitFix"] = {name: int(k) for name, k in (("bs", kb), ("is", ki), ("cf", kc)) if k != 1}     # corp.json 에 1000 · 1000000 (정수)
     return out
@@ -4526,6 +4544,28 @@ def scale_quarter(q, kb=1.0, ki=1.0, kc=1.0):
 
 def _in_band(r):
     return r is not None and 1.0 / UNIT_FIX_BAND <= r <= UNIT_FIX_BAND
+
+
+def unit_anchor_eps(fin, q, ki, shares):
+    """기본주당이익 기준값: 손익계산서를 ki 로 나눈 누적 주주 몫 순이익 (연결은 지배주주 nio · 별도는 ni) ÷ 그 보고서의 누적 기본주당이익 (원 ·
+    단위를 잘못 적어도 그대로) = 그 기간의 평균 주식 수가 오늘 주식 수의 1/UNIT_FIX_BAND ~ UNIT_FIX_BAND 배 안이면 "ok", 밖이면 "fail", 볼 수
+    없으면 "none" (주식 수 없음 · 기본주당이익 줄 없음 · |기본주당이익| < UNIT_EPS_MIN · 순이익과 부호가 다름). ki 가 1 이어도 봐요. (순수 함수)"""
+    prof = q.get("nio") if fin.get("fs") != "OFS" and _fin(q.get("nio")) is not None else q.get("ni")
+    eps = _fin(q.get("epsYtd"))
+    if not shares or _fin(prof) is None or eps is None or abs(eps) < UNIT_EPS_MIN:
+        return "none"
+    r = _ratio(prof / ki * 1e8 / eps, shares)
+    return "none" if r is None else "ok" if _in_band(r) else "fail"
+
+
+def unit_anchor_cap(s, q, kb, shares):
+    """자본금 ÷ 액면가 기준값: 재무상태표를 kb 로 나눈 그 보고서의 자본금 ÷ 액면가(배당 표 · 원) = 발행 주식 수의 상한이 오늘 주식 수의
+    1/UNIT_FIX_BAND ~ UNIT_FIX_BAND 배 안이면 "ok", 밖이면 "fail", 볼 수 없으면 "none" (주식 수 · 액면가(무액면 · 0 · '-') · 자본금 없음). (순수 함수)"""
+    par = _fin((((s.get("_bas") or {}).get("par3")) or [None])[0])
+    cs = _fin(q.get("cs"))
+    if not shares or not par or par <= 0 or not cs or cs <= 0:
+        return "none"
+    return "ok" if _in_band(_ratio(cs / kb * 1e8 / par, shares)) else "fail"
 
 
 def unit_fix_plan(fin, q, prev, s=None, pref_shares=None):
@@ -4562,24 +4602,22 @@ def unit_fix_plan(fin, q, prev, s=None, pref_shares=None):
     if kb == ki == kc == 1.0:
         return ("left", "지난해 칸으로는 모든 표가 1배예요 (다른 까닭 · 고치지 않아요)")
     s = s or {}
-    shares = per_share_count(s, pref_shares) if s.get("shr") else None
-    eps_ok = cap_ok = False
-    if ki != 1 and shares:
-        prof = q.get("nio") if fin.get("fs") != "OFS" and _fin(q.get("nio")) is not None else q.get("ni")
-        eps = q.get("epsYtd")
-        if _fin(prof) is not None and _fin(eps) is not None and abs(eps) >= UNIT_EPS_MIN:
-            eps_ok = _in_band(_ratio(prof / ki * 1e8 / eps, shares))
-    if kb != 1 and shares:
-        par = _fin((((s.get("_bas") or {}).get("par3")) or [None])[0])
-        cs = _fin(q.get("cs"))
-        if par and par > 0 and cs and cs > 0:
-            cap_ok = _in_band(_ratio(cs / kb * 1e8 / par, shares))
-    ok_is = ki == 1 or eps_ok or (cap_ok and kb == ki)
-    ok_bs = kb == 1 or cap_ok or (eps_ok and ki == kb)
-    ok_cf = kc == 1 or (kc == ki and ki != 1 and ok_is) or (kc == kb and kb != 1 and ok_bs)
+    won = not not_won(s, fin)       # #118: 원화가 아닌 재무제표는 원으로 적힌 액면가 · 주식 수와 견주지 않아요 → 기준값 없음
+    shares = per_share_count(s, pref_shares) if won and s.get("shr") else None
+    eps_st, cap_st = unit_anchor_eps(fin, q, ki, shares), unit_anchor_cap(s, q, kb, shares)
+    if "fail" in (eps_st, cap_st):
+        bad = [n for n, st in (("기본주당이익", eps_st), ("자본금 ÷ 액면가", cap_st)) if st == "fail"]
+        return ("left", f"나눈 뒤 {'·'.join(bad)} 기준값이 오늘 주식 수와 맞지 않아요")
+    is_anch = eps_st == "ok" or (eps_st == "none" and ki == kb and cap_st == "ok")
+    bs_anch = cap_st == "ok" or (eps_st == "ok" and kb == ki)
+    has_is, has_bs, has_cf = _has(q, UNIT_Q_IS), _has(q, UNIT_Q_BS), _has(q, UNIT_Q_CF)
+    ok_is = not has_is or is_anch
+    ok_bs = not has_bs or kb == 1 or bs_anch
+    ok_cf = not has_cf or (kc == ki and has_is and is_anch) or (kc == kb and has_bs and bs_anch)
     if not (ok_is and ok_bs and ok_cf):
         bad = [n for n, ok in (("손익계산서", ok_is), ("재무상태표", ok_bs), ("현금흐름표", ok_cf)) if not ok]
-        return ("left", f"나눈 뒤 {'·'.join(bad)}가 기준값(기본주당이익 · 자본금 ÷ 액면가 대비 오늘 주식 수)과 맞지 않거나 기준값이 없어요")
+        return ("left", f"{'·'.join(bad)}에 기준값(기본주당이익 · 자본금 ÷ 액면가 대비 오늘 주식 수)이 없거나 기준값이 있는 표와 배수가 달라요"
+                + ("" if won else " — 원화가 아닌 재무제표라 기준값을 보지 않아요"))
     return ("fix", kb, ki, kc)
 
 

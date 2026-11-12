@@ -322,17 +322,28 @@ When a Korean company files a quarterly report with the wrong unit printed over 
 every amount is 1,000 times too big), the pipeline (`fetch_data.py` `unit_fix_quarter`) divides that report only if it
 can prove the factor for each statement separately: the balance sheet by the report's own previous year-end column against
 the 사업보고서, the income statement and the cash-flow statement by the report's own previous-year column against last
-year's same-quarter report. Then the divided numbers must agree with a figure the unit cannot touch: profit ÷ the report's
-own basic EPS, or 자본금 ÷ 액면가, within 1/8 to 8 times today's share count. It never divides when last year's report or
-the 사업보고서 is the odd one out. Anything it cannot prove is left as filed, and the unit check (`unit_guard`) blanks
-the company's numbers as before. A divided company carries corp.json `unitFix` (the report and the factor per statement).
+year's same-quarter report. Then every statement must agree with a figure the unit cannot touch, including a statement
+"proven" at 1 (last year's report can be wrong in the same statement): the income statement through profit ÷ the
+report's own basic EPS, the balance sheet through 자본금 ÷ 액면가 (or the income statement's anchor at the same factor),
+the cash-flow statement only at the factor of an anchored statement — each within 1/8 to 8 times today's share count. Any
+anchor that can be computed and disagrees stops the repair. It never divides when last year's report or the 사업보고서 is
+the odd one out, nor statements not in won (no anchor there). Anything it cannot prove is left as filed, and the unit check
+(`unit_guard`) blanks the company's numbers as before. In a divided report the hybrid-securities distribution (자본변동표)
+cannot be proven, so it is blanked and EPS and BPS use the "hybrid not placed" basis, as for any such company. A divided
+company carries corp.json `unitFix` (the report and the factor per statement).
 
-The gate fails a malformed `unitFix` (factors other than 1,000 or 1,000,000, a bad report name, or `unitFix` together with
+The gate fails a malformed `unitFix` (not a list, factors other than 1,000 or 1,000,000, a bad report name, a report other
+than the company's `bq`, or `unitFix` together with
 `unitChk`), and warns by name about every company read with a corrected unit, every day, so a person opens that filing on
 DART. A company goes on the list `UNIT_FIX_CHECKED` in `validate_data.py` only with Jack's yes (same steps as the low-PBR
 list above: Claude checks the filing, asks Jack in one line with the evidence, and on his yes adds the stock code →
 `unitFix` (exactly the record in corp.json), `date` and `why` with the filing's `rcept`). An entry stays quiet only while
 the record is the same; a new report divided, or a different factor, is named again. The list is empty today.
+
+Known limit: the pipeline only ever divides this year's latest quarterly report. If a company never refiles the faulty
+report (for example 진코스텍's 2026 반기보고서), a year later (2027.2Q as the latest quarter) that report becomes "last
+year's same quarter", nothing divides it, and the unit check blanks the company again until the next quarter is the latest;
+the gate's "공시 단위 확인 회사 바뀜" warning names it when that happens.
 
 ## Roll back
 

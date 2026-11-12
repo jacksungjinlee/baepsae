@@ -1998,17 +1998,20 @@ def check_unit_moved(rep, hit, pdata):
 
 
 def unit_fix_problems(c):
-    """corp.json 회사의 unitFix 문제 목록: [{rep: "YYYY.nQ", bs · is · cf 중 하나 이상: 1000 · 1000000}] 꼴 · bq 가 있어야 · unitChk 와 같이 있으면
-    안 돼요 (걸린 회사는 고친 숫자도 비워요)."""
+    """corp.json 회사의 unitFix 문제 목록: [{rep: "YYYY.nQ", bs · is · cf 중 하나 이상: 1000 · 1000000}] 꼴 (목록이 아니거나 비었으면 · 숫자 · None
+    도 '모양이 잘못됨') · rep 은 bq (TTM 의 최신 분기 — 파이프라인이 고치는 유일한 보고서)와 같아야 · unitChk 와 같이 있으면 안 돼요 (걸린 회사는
+    고친 숫자도 비워요). 리뷰 #116 2차 N4: 이상한 값으로 관문이 멈추지 않고 실패 줄이 돼요."""
     t, u = c.get("t"), c.get("unitFix")
     bad = []
     if not (isinstance(u, list) and u):
-        return [f"{t}.unitFix {u!r}"]
+        return [f"{t} unitFix 모양이 잘못됨 ({u!r})"]
     for x in u:
         parts = {k: v for k, v in (x or {}).items() if k != "rep"} if isinstance(x, dict) else None
         if not (isinstance(x, dict) and isinstance(x.get("rep"), str) and re.fullmatch(r"\d{4}\.[1-4]Q", x["rep"]) and parts
                 and set(parts) <= set(UNIT_FIX_PARTS) and all(v in UNIT_FIX_K for v in parts.values())):
-            bad.append(f"{t}.unitFix {x!r}")
+            bad.append(f"{t} unitFix 모양이 잘못됨 ({x!r})")
+        elif x["rep"] != c.get("bq"):
+            bad.append(f"{t} unitFix 보고서 {x['rep']} ≠ bq {c.get('bq')!r} (고친 보고서는 TTM 의 최신 분기여야 해요)")
     if "unitChk" in c:
         bad.append(f"{t} unitFix 와 unitChk 가 같이 있어요")
     if not c.get("bq"):
@@ -2024,8 +2027,9 @@ def check_unit_fix(rep, kr, by, comps):
             "0 ([{rep, bs·is·cf: 1000 · 1000000}] · unitChk 회사에는 없음)")
     loud, quiet = [], []
     for c in fixed:
-        desc = "; ".join(f"{x.get('rep')} " + " · ".join(f"{k} ÷{num(v):,.0f}" if num(v) is not None else f"{k} {v!r}" for k, v in x.items() if k != "rep") for x in c["unitFix"]
-                         if isinstance(x, dict))
+        uf = c["unitFix"] if isinstance(c["unitFix"], list) else []          # 모양이 틀린 값은 위 실패 줄이 말해요 (여기서 멈추지 않게)
+        desc = "; ".join(f"{x.get('rep')} " + " · ".join(f"{k} ÷{num(v):,.0f}" if num(v) is not None else f"{k} {v!r}" for k, v in x.items() if k != "rep")
+                         for x in uf if isinstance(x, dict)) or repr(c["unitFix"])
         nm = f"{c.get('t')} {c.get('nk', '')} ({desc})"
         ck = UNIT_FIX_CHECKED.get(c.get("t"))
         (quiet if ck and ck.get("unitFix") == c["unitFix"] else loud).append(nm)
