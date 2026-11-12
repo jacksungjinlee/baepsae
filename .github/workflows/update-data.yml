@@ -122,8 +122,6 @@ jobs:
           PROBE_TOKEN: ${{ github.token }}
         run: |
           export GIT_TERMINAL_PROMPT=0
-          echo "0) credential files left by checkout in RUNNER_TEMP ($RUNNER_TEMP):"; ls -la "$RUNNER_TEMP" | grep -i "cred" && echo "!! a credentials file is still there" || echo "   none (ok)"
-          grep -rIl "AUTHORIZATION" "$RUNNER_TEMP" "$GITHUB_WORKSPACE/.git/config" "$HOME/.gitconfig" 2>/dev/null && echo "!! a file holds an auth header" || echo "   no file with an auth header in RUNNER_TEMP, .git/config, ~/.gitconfig (ok)"
           echo "1) stored header after checkout:"; git config --local --get-all http.https://github.com/.extraheader && { echo "!! a token is stored"; exit 1; } || echo "   none (ok)"
           git config --local --get-regexp 'credential|includeif|extraheader' || echo "   no credential settings (ok)"
           echo "2) push --dry-run without a token:"; if git push --dry-run origin HEAD:refs/heads/zz-token-probe 2>&1 | tail -2; then echo "   (see above)"; fi
