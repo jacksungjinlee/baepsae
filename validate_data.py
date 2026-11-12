@@ -122,6 +122,9 @@ DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄�
 US_PREF_DROP_MAX = 10    # 우선주·예탁증서로 보고 미국 목록에서 뺀 종목 수 상한 (data.json usLeftOut.preferred) — 그날 3개 (STRC·GOOGM·GOOGN).
 #                          파이프라인은 티커·이름·야후 종류로만 판단해요 (Jack, 2026-11-03). 많으면 그 규칙이 진짜 회사를 잡은 날이에요.
 # v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드 9…)은 DART 금액이 원화가 아닐 수 있어 비워야 해요 (2026-11-03 발행본 20곳, 코오롱티슈진 PBR 9,085)
+# 2026-11-12 (Jack): 원화가 아닌 재무제표 표시(corp.json stmtCur)가 직전 발행보다 절반 넘게 사라지면 실패 — DART 의 통화 칸을
+# 못 읽은 날이에요. 그러면 달러로 공시하는 국내 회사(두산밥캣 등)의 금액이 원으로 읽혀 경고 없이 나가요. 하나라도 사라지면 경고.
+STMT_MARK_MIN = 3        # 직전 발행에 표시된 회사(오늘도 목록에 있는)가 이만큼 있을 때만 '절반' 비교 (적으면 경고만)
 FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json 모두 빈 칸 (vz 는 PBR 로 매긴 점수)
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
@@ -804,6 +807,8 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
+    if rel:
+        check_stmt_marks(rep, comps, prev)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1507,6 +1512,43 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
     check_v191f_review(rep, data, corp, kr, by, comps)
 
 
+def _stmt_marked(c):
+    """원화가 아닌 재무제표 표시가 있는지 (값이 무엇이든 stmtCur 칸이 있고 KRW 가 아니면 — 'XXX' 처럼 읽을 수 없는 통화도 표시예요)."""
+    return isinstance(c, dict) and "stmtCur" in c and c.get("stmtCur") != "KRW"
+
+
+def check_stmt_marks(rep, comps, prev):
+    """2026-11-12 (Jack, 더하기만): 직전 발행에서 원화가 아닌 재무제표 표시(stmtCur)가 있던 회사가 오늘도 목록에 있는데 표시가 사라졌는지.
+    절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날 — 달러 금액이 원으로 나가요), 하나라도 사라지면 경고 (회사가 통화를 바꿨을 수도 있어요).
+    직전 corp.json 을 못 읽었으면 실패 (비교할 수 없어요)."""
+    name = "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음 (stmtCur)"
+    rule = f"절반 넘게 사라지면 실패 (직전에 {STMT_MARK_MIN}곳 이상일 때 · DART 통화 칸을 못 읽은 날) · 하나라도 사라지면 경고"
+    prev = prev or {}
+    if prev.get("corpError"):
+        rep.add(name, False, f"직전 corp.json 을 읽지 못했어요: {prev['corpError'][:120]}", rule)
+        return
+    pcorp = prev.get("corp")
+    if not isinstance(pcorp, dict):
+        rep.skip(name, "직전 corp.json 이 주어지지 않았어요 (관문 밖에서 부른 경우)")
+        return
+    today = {c.get("t"): c for c in comps if isinstance(c, dict)}
+    marked = [c.get("t") for c in (pcorp.get("companies") or []) if _stmt_marked(c) and c.get("t")]
+    still = [t for t in marked if t in today]
+    lost = [t for t in still if not _stmt_marked(today[t])]
+    fail = len(still) >= STMT_MARK_MIN and 2 * len(lost) > len(still)
+
+    def label(t):
+        c = today[t]
+        amt = any(_has_amount(c.get(k)) for k in FOREIGN_BLANK_LISTS + FOREIGN_BLANK_CORP + FOREIGN_BLANK)
+        return f"{t} {c.get('nk', '')}{' (금액 있음)' if amt else ''}".strip()
+    if lost:
+        rep.detail("표시가 사라진 회사 (stmtCur)", [label(t) for t in lost])
+    rep.add(name, not fail,
+            f"직전 {len(marked)}곳 · 오늘도 목록에 {len(still)}곳 · 표시가 사라짐 {len(lost)}"
+            + (f": {', '.join(label(t) for t in lost[:4])}{' …' if len(lost) > 4 else ''}" if lost else ""),
+            rule, warn=bool(lost) and not fail)
+
+
 def _has_amount(v):
     """금액 칸이 차 있는지: 목록이면 숫자가 하나라도, dict(영수증)면 있으면, 아니면 숫자면."""
     if isinstance(v, list):
@@ -1899,6 +1941,16 @@ def load_prev(prev_dir, prev_ref):
     return load_git(prev_ref, files=("data.json",))
 
 
+def load_prev_corp(prev_dir, prev_ref):
+    """직전 발행본의 corp.json — 원화가 아닌 재무제표 표시(stmtCur) 비교에만 써요 (check_stmt_marks). 비교에 필요한 칸만 보니 느슨하게
+    읽어요 (NaN 이 있어도 읽혀요): 직전 발행본의 다른 문제로 오늘 발행이 막히지 않게요 (load_prev 와 같은 생각)."""
+    if prev_dir:
+        with open(os.path.join(prev_dir, "corp.json"), encoding="utf-8") as fh:
+            return json.loads(fh.read())
+    text = subprocess.run(["git", "show", f"{prev_ref}:corp.json"], capture_output=True, text=True, check=True).stdout
+    return json.loads(text)
+
+
 def _annotate_error(text):
     """GitHub Actions 안에서만: 관문이 표를 만들기 전에 멈춘 이유도 알림(::error::)으로 남겨요 (매일 아침 점검이 읽어요)."""
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -1951,6 +2003,13 @@ def _main(argv=None):
             print(f"· 직전 발행본: {a.prev_dir or a.prev_ref} (pxDate {prev['data'].get('pxDate')} · asOf {prev['data'].get('asOf')})")
         except Exception as e:
             print(f"!! 직전 발행본을 읽을 수 없어요 ({a.prev_dir or a.prev_ref}): {str(e)[:200]}")
+        if prev is not None:
+            try:
+                prev["corp"] = load_prev_corp(a.prev_dir, a.prev_ref)
+                print(f"· 직전 corp.json: 원화가 아닌 재무제표 표시 {sum(1 for c in prev['corp'].get('companies') or [] if _stmt_marked(c))}곳")
+            except Exception as e:
+                prev["corpError"] = f"{type(e).__name__}: {str(e)[:200]}"
+                print(f"!! 직전 corp.json 을 읽을 수 없어요 ({a.prev_dir or a.prev_ref}): {prev['corpError']}")
 
     special = None
     try:
