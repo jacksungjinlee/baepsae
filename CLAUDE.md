@@ -64,6 +64,14 @@ Every rule below exists to prevent one of them. In Oct 2026 both happened for a 
    Other PRs get one Opus 5.5 Extra high reviewer, and a third round only if round 2 found a blocker. Audits of past
    work: a Fable 5.2 High helper with one narrow target, when Jack asks. Helpers with no judgement in them stay at
    medium.
+   Jack's answers on the details (2026-11-12):
+   - Helpers that write or judge something but neither build nor review a PR (Korean text drafts, screenshot or data
+     checks, diagnosing a failed run) run on Opus 5.5 at Extra high, set explicitly. When unsure, Extra high.
+   - On PRs with two reviewers in round 1, the later Fable rounds stop at the first round with no blocker. On other
+     PRs, if round 3 still finds a blocker, stop and ask Jack.
+   - Changes to the test scripts the daily run executes, and to the CI workflow, count as pipeline changes (two
+     reviewers in round 1). Other test-only changes get one reviewer.
+   - A revert PR that only undoes a bad merge is merged as soon as CI is green, and reviewed afterwards.
 
 ## GitHub process — you own it (Jack's standing rule, 2026-10-31)
 
@@ -112,8 +120,8 @@ setting to change (where it is and what to click), never just "go to GitHub".
    DART rule above.
 2. Check the live site yourself (https://jacksungjinlee.github.io/baepsae/): search 005930 and 현대차, open every tab,
    check the dates.
-3. If anything is wrong, revert the merge right away (a revert PR that you merge), tell Jack what happened, then fix
-   forward in a new PR.
+3. If anything is wrong, revert the merge right away (a revert PR that you merge once CI is green; its review comes
+   afterwards, rule 7), tell Jack what happened, then fix forward in a new PR.
 4. Send Jack a 3–6 line plain-English summary: what changed for users, what you checked, anything he should look at
    on his phone.
 

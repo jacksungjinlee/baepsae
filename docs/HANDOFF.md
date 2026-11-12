@@ -25,9 +25,8 @@ Jack is fine with more of his plan being used.
   with rough dates.
 
 Jack is near his weekly usage limit (2026-11-04): work lean. Fresh-eyes reviewers and rounds: `CLAUDE.md` rule 7 (Jack,
-2026-11-12; it replaced "One fresh-eyes review per PR (a second only for pipeline or safety-rule changes)"). Until Jack
-answers whether changes to `tests/` and the CI workflow count as pipeline changes (asked 2026-11-12), they keep the
-two-reviewer round 1. Fix every blocker and real bug the reviewers find (CLAUDE.md); small points (style,
+2026-11-12; it replaced "One fresh-eyes review per PR (a second only for pipeline or safety-rule changes)"), with
+Jack's answers on the details in the same rule. Fix every blocker and real bug the reviewers find (CLAUDE.md); small points (style,
 nice-to-have, unreachable edge cases) go into the PR as follow-ups instead of another fix round (Jack, 2026-11-04).
 Decide engineering details yourself and list them in the PR; bring Jack only Korean wording and real product decisions,
 in one short message per PR. Reports 5–10 lines. Push every branch after each step. Update this section before stopping.
