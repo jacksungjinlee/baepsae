@@ -137,9 +137,12 @@ def test_only_the_steps_that_call_the_github_api_get_the_token():
     assert "secrets." not in open(os.path.join(WF, "deploy.yml"), encoding="utf-8").read()
 
 
-def test_live_code_installs_without_package_scripts():
+def test_live_code_and_the_main_build_install_without_package_scripts():
     src = open(TOOL, encoding="utf-8").read()
     assert '["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"]' in src and src.count('"npm", "ci"') == 1
+    runs = [s.get("run") or "" for s in build_steps()]
+    npm = [ln.strip() for r in runs for ln in r.splitlines() if ln.strip().startswith("npm ")]
+    assert npm == ["npm ci --ignore-scripts"]                                                 # 배포의 빌드도 설치 스크립트 없이 (결과는 같아요)
 
 
 def test_deploy_gets_the_browser_and_tools_the_same_way_as_the_daily_run():
@@ -244,7 +247,8 @@ def test_failing_lines_are_read_from_the_final_table_by_name():
             ("페이지 오류 0건 (모든 장면)", True, "")]
     r = DC.parse_run(1, smoke_out(rows, notes=("!! 오늘 데이터라서 다르게 확인한 것 1개:",)))
     assert r["outcome"] == DC.FAIL and r["detail"] == "2 / 4 통과"
-    assert r["fails"] == ["[정상] 30초 진단 열림 (KO)", "[B안] 첫 화면: 30초 진단 소개에 '건강 점수' 없음"]   # 이름만 · 끝의 시간 표시는 빼고
+    assert r["fails"] == ["[정상] 30초 진단 열림 (KO)", "[B안] 첫 화면: 30초 진단 소개에 '건강 점수' 없음 (1.2s)"]   # 이름만 (설명 빼고)
+    assert r["raw"][0][0] == "[정상] 30초 진단 열림 (KO)" and r["raw"][0][1].endswith("보이지 않아요")
     r = DC.parse_run(1, rdc_out([("데이터 파일 읽기 (data · corp · disc · macro)", True, "네 파일"),
                                  ("2.0 이 쓰는 항목", False, "빠진 항목: d1"),
                                  ("매출 성장 기준: 예전 뱁새 = 2.0", False, "한국 종목 0개 비교 · 다른 종목 0개")]))
@@ -259,7 +263,31 @@ def test_failing_lines_are_read_from_the_final_table_by_name():
     # 표 안에서 설명이 줄을 넘겨도(이어진 줄) 줄 수는 맞아요
     wrapped = smoke_out(rows)
     wrapped.insert(len(wrapped) - 3, "    at Object.<anonymous> (app.js:1:2)")
-    assert DC.parse_run(1, wrapped)["fails"] == ["[정상] 30초 진단 열림 (KO)", "[B안] 첫 화면: 30초 진단 소개에 '건강 점수' 없음"]
+    assert DC.parse_run(1, wrapped)["fails"] == ["[정상] 30초 진단 열림 (KO)", "[B안] 첫 화면: 30초 진단 소개에 '건강 점수' 없음 (1.2s)"]
+
+
+def test_names_are_never_cut_or_merged_and_collisions_make_the_table_unreadable():
+    """리뷰 2회차: 이름 안의 두 칸 빈칸에서 자르지 않아요 · 끝의 숫자를 지우지 않아요 ('(45분)' 과 '(90분)' 은 다른 줄) · 실패한 줄의
+    이름이 표의 다른 줄과 겹치거나 이름을 가를 수 없으면 읽지 못함(→ 막음)."""
+    rows = [("[A]  두 칸 이름", False, "깨짐"), ("[A]", True, ""), ("[늦음] 발행 뒤 (45분)", False, "x"), ("[늦음] 발행 뒤 (90분)", True, "")]
+    r = DC.parse_run(1, smoke_out(rows))
+    assert r["fails"] == ["[A] 두 칸 이름", "[늦음] 발행 뒤 (45분)"], r                     # 잘리지 않고 ('[A]' 와 겹치지 않고) · 45분 ≠ 90분
+    live = DC.parse_run(1, smoke_out([("[A]  두 칸 이름", True, ""), ("[A]", False, "x"), ("[늦음] 발행 뒤 (45분)", True, ""),
+                                      ("[늦음] 발행 뒤 (90분)", False, "y")]))
+    got, rows_ = DC.decide(with_(smoke_app=r), {"smoke_app": live})
+    assert got == "block" and rows_[2]["new_only"] == ["[A] 두 칸 이름", "[늦음] 발행 뒤 (45분)"]
+    dup = [("[정상] 같은 이름", False, "깨짐"), ("[정상] 같은 이름", True, ""), ("[정상] 다른", True, "")]
+    assert DC.parse_run(1, smoke_out(dup))["fails"] is None                                   # 실패한 이름이 다른 줄과 겹침
+    one = [("[A]  두 칸", False, "깨짐")]                                                       # 줄 하나 · 이름 안 두 칸: 이름 끝이 둘 → 모름
+    assert DC.parse_run(1, smoke_out(one))["fails"] is None
+    lead = [("[A] 하나", False, "  빈칸으로 시작하는 설명"), ("[B] 둘", True, "")]
+    assert DC.parse_run(1, smoke_out(lead))["fails"] is None
+    rdc = rdc_out([("2.0 이 쓰는 항목", False, "빠진 항목:  d1"), ("매출 성장 기준", True, "ok")])     # '이름: 설명' 표에 두 칸 빈칸
+    assert DC.parse_run(1, rdc)["fails"] is None
+    rdc_dup = rdc_out([("매출 성장 기준: 2년", False, "x"), ("매출 성장 기준: 1년", True, "y")])        # ': ' 앞이 겹침
+    assert DC.parse_run(1, rdc_dup)["fails"] is None
+    got, _ = DC.decide(with_(smoke_app=DC.parse_run(1, smoke_out(dup))), {"smoke_app": DC.parse_run(1, smoke_out(dup))})
+    assert got == "block"
 
 
 def test_smoke_launch_stopping_on_missing_2_0_fields_is_a_failing_line_not_a_crash():
@@ -327,9 +355,9 @@ def test_same_code_is_never_blocked_against_itself():
     live = {"smoke_app": res(DC.PASS)}
     assert DC.decide(new, live, same=True)[0] == "block"                                      # 다시 돌리기 전
     got, rows = DC.decide(new, live, same=True, again={"smoke_app": res(DC.PASS)})
-    assert got == "pass" and "흔들림" in rows[2]["text"]
+    assert got == "pass" and "흔들린" in rows[2]["text"]
     got, rows = DC.decide(new, live, same=True, again={"smoke_app": res(DC.FAIL, ["a"])})
-    assert got == "alert" and "같은 코드" in rows[2]["text"]
+    assert got == "alert" and "같은 코드" in rows[2]["text"] and rows[2]["kind"] == "same" and "두 번 실패" in rows[2]["text"]
     got, _ = DC.decide(new, {"smoke_app": res(DC.CRASH)}, same=True, again={"smoke_app": res(DC.FAIL, ["a"])})
     assert got == "alert"
     assert DC.decide(new, live, same=False, again={"smoke_app": res(DC.PASS)})[0] == "block"  # 다른 코드면 다시 돌리지 않아요
@@ -559,7 +587,7 @@ def test_live_code_is_built_apart_without_install_scripts_and_must_match_the_ser
         DC.prepare_live(LIVE, {**served, "baepsae.html": page(LIVE) + b" "}, str(tmp_path))
 
 
-def make_repo(path, files):
+def make_repo(path, files):  # noqa: D401
     path.mkdir()
     git_(path, "init", "-q", "-b", "main")
     for k, v in files.items():
@@ -574,7 +602,7 @@ def make_repo(path, files):
 def test_live_commit_is_fetched_into_a_throwaway_repo_and_never_into_the_checkout(tmp_path, monkeypatch):
     """저장소(ROOT)에 없는 커밋은 RUNNER_TEMP 의 빈 저장소에만 받아요. ROOT 의 기록은 그대로 (얕게 잘리지 않아요)."""
     origin = tmp_path / "origin"
-    make_repo(origin, {"app.html": "1", "data.json": "{}"})
+    make_repo(origin, {"app.html": "1", "data.json": "{}", "package-lock.json": "{}"})
     git_(origin, "config", "uploadpack.allowReachableSHA1InWant", "true")
     root = tmp_path / "root"
     git_(tmp_path, "clone", "-q", f"file://{origin}", str(root))                               # 기록이 다 있는 clone
@@ -598,6 +626,20 @@ def test_live_commit_is_fetched_into_a_throwaway_repo_and_never_into_the_checkou
     git_(root, "commit", "-q", "-am", "데이터")
     assert DC.same_code(str(root), old)                                                       # 데이터만 바뀐 커밋 = 같은 코드
     assert not DC.same_code(got, new)                                                         # app.html 이 다름
+    # 데이터 네 파일(맨 위의 그 이름) 말고는 무엇이 달라도 다른 코드: 다른 .json · 더한 파일 · 뺀 파일 · 시험 데이터의 data.json
+    base = git_(root, "rev-parse", "HEAD")
+    for change in (lambda: (root / "package-lock.json").write_text('{"v": 2}'),
+                   lambda: (root / "new.js").write_text("x"),
+                   lambda: (root / "app.html").unlink(),
+                   lambda: ((root / "tests" / "fixtures" / "v2").mkdir(parents=True, exist_ok=True),
+                            (root / "tests" / "fixtures" / "v2" / "data.json").write_text("{}"))):
+        git_(root, "reset", "-q", "--hard", base)
+        git_(root, "clean", "-qfd")
+        change()
+        git_(root, "add", "-A")
+        git_(root, "commit", "-q", "-m", "바꿈")
+        assert not DC.same_code(str(root), base), change
+    git_(root, "reset", "-q", "--hard", base)
 
 
 def test_a_failing_live_step_is_unknown(tmp_path, monkeypatch):
@@ -750,6 +792,53 @@ def test_pages_checked_must_be_the_pages_uploaded(tmp_path, monkeypatch):
     assert not (tmp_path / "rt" / DC.RECEIPT_FILE).exists()
 
 
+def test_a_hung_script_is_stopped_at_its_own_limit_and_counts_as_stopped(tmp_path, monkeypatch):
+    """한 스크립트가 멈춰 버리면 단계 한도까지 기다리지 않고 그 스크립트만 멈춰요 → '결과 줄 전에 멈춤' (새 코드면 실패 → 비교 · 지금 코드면 알 수 없음)."""
+    import time as _t
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "slow.py").write_text("import time, sys\nprint('시작', flush=True)\ntime.sleep(60)\nprint('1 / 1 통과')\n")
+    monkeypatch.setattr(DC, "SCRIPT_TIMEOUT", 1)
+    t0 = _t.time()
+    r = DC.run_check("slow", str(tmp_path), "/data")
+    assert _t.time() - t0 < 30 and r["outcome"] == DC.CRASH and "시간 한도" in r["detail"] and r["fails"] is None
+    assert DC.SCRIPT_TIMEOUT == 1 and 0 < DC.SCRIPT_TIMEOUT * 3 < 45 * 60
+    monkeypatch.undo()
+    assert DC.SCRIPT_TIMEOUT == 20 * 60                                                       # 세 스크립트 + 비교가 단계 한도(45분) 안에서 결정을 남기게
+
+
+def test_same_code_alert_says_so_and_names_the_lines(tmp_path, monkeypatch, capsys):
+    """리뷰 2회차 S1: 같은 코드에서 새 실행이 두 번 실패하고 지금 코드 실행은 통과했으면 '지금 사이트 코드도 실패'라고 하지 않아요."""
+    rc, dec, rec, ran, _ = orchestrate(tmp_path, monkeypatch, new={"smoke_app": (F, ["[늦음 시각] 자정 직전"])}, live={}, same=True,
+                                       again={"smoke_app": (F, ["[늦음 시각] 자정 직전"])})
+    out = capsys.readouterr().out
+    assert rc == 0 and dec["result"] == "alert"
+    warn = [ln for ln in out.splitlines() if ln.startswith("::warning title=배포 · ")]
+    assert len(warn) == 1 and warn[0].startswith("::warning title=배포 · 같은 코드인데 두 번 실패::smoke_app")
+    assert "[늦음 시각] 자정 직전" in warn[0] and "흔들리거나 시계" in warn[0] and "같은 줄에 실패" not in warn[0]
+    summ = (tmp_path / "rt" / "summary.md").read_text()
+    assert "— 같은 코드인데 두 번 실패 · 올리고 알려요" in summ and "올림 (같은 코드 · 두 번 실패)" in summ and "지금 코드도 실패" not in summ
+    net = Net()
+    monkeypatch.setenv("GITHUB_RUN_ID", "77")
+    assert DC.cmd_report(str(tmp_path / "_site"), net=net) == 0
+    first = net.issues[-1]["body"].splitlines()[0]
+    assert first.startswith(DC.MARK) and "같은 코드인데 새 실행이 두 번 실패했어요 ([늦음 시각] 자정 직전)" in first
+    assert "도 같은 데이터에서 같은 줄에 실패" not in first and "흔들리거나 시계" in first
+    assert "(같은 코드 · 두 번 실패) [늦음 시각] 자정 직전" in net.issues[-1]["body"]
+
+
+def test_a_block_still_shows_the_lines_the_live_code_fails_too(tmp_path, monkeypatch, capsys):
+    """리뷰 2회차 S2: 막는 실행에서도 지금 사이트 코드도 실패하는 줄은 경고로 보여요 (J6: 지금 코드도 실패하면 그때마다 알려요)."""
+    rc, dec, rec, _, _ = orchestrate(tmp_path, monkeypatch, new={"smoke_app": (F, ["옛 줄", "새 줄"]), "real_data_check": (F, ["r"])},
+                                     live={"smoke_app": (F, ["옛 줄"]), "real_data_check": (F, ["r"])})
+    out = capsys.readouterr().out
+    assert rc == 1 and dec["result"] == "block"
+    assert "::warning title=배포 · 지금 사이트 코드도 실패하는 줄::smoke_app: 두 코드 모두 실패: 옛 줄" in out
+    assert any(ln.startswith("::warning title=배포 · 지금 사이트 코드도 실패::real_data_check") for ln in out.splitlines())
+    assert any(ln.startswith("::error title=배포 막음 · 배포 전 화면 검사::smoke_app") and "새 줄" in ln for ln in out.splitlines())
+    summ = (tmp_path / "rt" / "summary.md").read_text()
+    assert "두 코드 모두 실패: `옛 줄`" in summ and "새 코드만 실패: `새 줄`" in summ
+
+
 # ── 결과 단계: 영수증 · 경보 이슈 ──
 def report(tmp_path, monkeypatch, dec, net, receipt=True, change=None):
     rt = tmp_path / "rt"
@@ -809,7 +898,8 @@ def test_alert_opens_one_data_alert_issue_whose_first_line_says_the_case(tmp_pat
 def test_alert_issue_shows_each_failing_line_once_with_its_message(tmp_path, monkeypatch):
     dec = decision("alert", rows=[DC._row("smoke_app", "alert", "새 코드 143 / 145 통과 · 지금 사이트 코드도 143 / 145 통과", (),
                                           ["[정상] 첫 화면이 열림", "[EN] 성적표"])])
-    dec["checks"] = {"smoke_app": {"new": {"raw": ["[정상] 첫 화면이 열림        안 보여요", "[EN] 성적표                 글자가 달라요"]}}}
+    dec["checks"] = {"smoke_app": {"new": {"raw": [["[정상] 첫 화면이 열림", "[정상] 첫 화면이 열림        안 보여요"],
+                                                    ["[EN] 성적표", "[EN] 성적표                 글자가 달라요"]]}}}
     net = Net()
     assert report(tmp_path, monkeypatch, dec, net) == 0
     body = net.issues[-1]["body"]

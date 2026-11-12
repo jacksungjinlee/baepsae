@@ -127,12 +127,16 @@ serve the `docs/` folder (two of its files must answer "not found").
     **Same code:** when every file except the four data files is the same in the live commit and the new one (a manual
     deploy, or a data deploy that had to run the checks), a difference can only be a flaky scene or the clock. The
     deploy then runs the blocked script once more with the new code: if it passes, it publishes; if it fails again, it
-    publishes and tells Jack. It never blocks the same code against itself, so a flaky scene can't hold the morning data.
+    publishes and tells Jack, saying exactly that ("같은 코드인데 두 번 실패", with the lines; not "the live code fails
+    too"). It never blocks the same code against itself, so a flaky scene can't hold the morning data.
+    Each script has its own 20-minute limit inside the step; one that hangs is stopped and counts as stopping before its
+    result line.
     - **Blocked deploy:** the Deploy run ends red before anything is uploaded, so users keep the site exactly as it was.
       The run page shows a red line "배포 막음 · 배포 전 화면 검사" naming the script, both results and the lines only the
       new code fails (for example `smoke_app: 새 코드 141 / 145 통과 · 지금 사이트 코드 145 / 145 통과`), and its
-      summary says "뱁새 배포 전 화면 검사 — 막음". The watchdog opens (or comments on) the 뱁새 데이터 경보 issue about
-      10 minutes later, because the last deploy failed.
+      summary says "뱁새 배포 전 화면 검사 — 막음". Lines that the live code fails too are shown as yellow warnings
+      "배포 · 지금 사이트 코드도 실패하는 줄" in the same run. The watchdog opens (or comments on) the 뱁새 데이터 경보
+      issue about 10 minutes later, because the last deploy failed.
       **What to do after a merge:** `main` is now ahead of the site, and the next daily run checks its new data with
       `main`'s code, so it will probably hold that morning's publish too. If the failing line looks like a one-off (a
       single timing scene), start Actions → Deploy → Run workflow once; if it fails again, revert the merge at once (a
@@ -173,7 +177,9 @@ serve the `docs/` folder (two of its files must answer "not found").
     workflow file, which may not have this check at all.
   - Both runs use this deploy's Python tools, browser and font; only the app code and the check scripts differ.
   - The deploy's checkout keeps no token in the working folder. Only the three steps that call the GitHub API (the gate,
-    "필요한지", "결과") get the token; the three checks, their tools and the browser never see it.
+    "필요한지", "결과") get the token; the three checks, their tools and the browser never see it. npm packages are
+    installed without their install scripts, for the site build and the live rebuild alike (the built pages are the
+    same byte for byte).
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
