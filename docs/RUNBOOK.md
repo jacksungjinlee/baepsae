@@ -249,7 +249,9 @@ tells you what happened in plain words.
     with an override row); those warnings are
     repeated every day until someone settles them with an override row. That also covers a ticker reused by another
     company: the old company's splits stay listed and warn until an "out" row removes them.
-    `splitsAsOf` is the last day the run read Yahoo itself; `splitsInfo` also holds `noCol` (stocks it could not read
+    `splitsAsOf` is the last day the run read Yahoo itself; it renews when the split column of even one stock was read
+    today, so the 5-day FAIL cannot fire during a near-total partial outage: then the warning gives the number of
+    stocks not read (`noCol`), which is the thing to watch; `splitsInfo` also holds `noCol` (stocks it could not read
     today), `fixed` (the override table in effect) and `fixedKept` (override rows deleted from the code; see below). On a
     first publish (yesterday's file has no list) the run leaves `splits` out if any of the ten known splits is missing
     or if it could not read Yahoo's split column at all (gate warning "없음"), so a bad first day never blocks the publish.
@@ -259,9 +261,10 @@ tells you what happened in plain words.
     RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
     spin-off day); WTW 2016-01-05 (2.649 → 1) and TRI 2018-11-27 (×0.9079) and 2023-06-23 (×0.963957) share
     consolidations; HON 2026-06-29 1:2 (a reverse split on the Honeywell Aerospace spin-off day, Honeywell 8-K
-    2026-06-05; Yahoo writes 1907:2000); CBSH's 5% stock dividends Yahoo misses (2016, 2017, 2019, 2022, 2023). Events
-    before a stock's US listing are left out, because no US record can predate it: FERG 2018 (NYSE from 2021-03-08) and
-    GMAB 2018-05-01 (an "out" row; Nasdaq ADS from 2019-07-18).
+    2026-06-05; Yahoo writes 1907:2000); CBSH's 5% stock dividends Yahoo misses (2016, 2017, 2019, 2022, 2023). FERG's 2018
+    consolidation is left out: the US-traded security then was a different one (FERG is on the NYSE only from 2021-03-08),
+    so no FERG record can predate it. GMAB's 2018-05-01 5:1 stays (from Yahoo, in the seed): the Nasdaq ADSs (2019) come from
+    the same ADR program that traded over the counter as GMXAY before, so an earlier holder's record is the same security.
   - **To correct a split** (in a small PR): a split that should not be there gets an "out" row (ratio `None`) with its
     source; a wrong ratio gets an override row with the right ratio; a wrong date needs an "out" row for the wrong date
     plus a new row for the right one (if Yahoo already shows the right date, the "out" row alone is enough: the new date
