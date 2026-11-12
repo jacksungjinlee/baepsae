@@ -179,7 +179,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const sum = E.sumPct(rows);
   const good = E.sumOk(sum);
   const shown = E.sumShown(sum);
-  const d2 = E.capCheck(rows.length, cap);
+  const d2 = E.d2Of(rows, cap);
   const bar = E.indBar(rows, load.byT, names);
   const held = (t) => E.heldShares(deck, t);
   const set = (f) => { setFail(null); setCapHit(null); setDraft(f); };

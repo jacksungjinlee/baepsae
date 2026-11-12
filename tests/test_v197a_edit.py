@@ -622,3 +622,36 @@ def test_a_holding_above_the_cap_steps_back_to_its_own_value_never_higher():
       out = { st, down, back, more: E.stepped(rows, '000050', 1, 10, st), lim: E.stepLimits(rows, '000050', 10, st), other: E.stepLimits(rows, '000010', 10, 17.5) };""")
     assert got["st"] == 30 and got["down"] == 29 and got["back"] == 30 and got["more"] is None
     assert got["lim"] == {"lo": 1, "hi": 30, "byCap": True} and got["other"] == {"lo": 1, "hi": 17.5, "byCap": True}
+
+
+def test_d2_counts_a_holding_already_above_the_cap():
+    """[S4] D2 shows when every row at its own ceiling (the cap, or its own % when already above it) adds up to less than
+    100 — the spec's intent; its literal n × x < 100 ignored a 채권·금 cushion above the cap. Both reviewers' case: a 10% cap,
+    seven stocks at 10% and 안전자산 30% (two at 15%): 합계 100%, no D2 line, save on. y stays 100 ÷ n rounded up."""
+    got = run("""const mk = (stocks, w, cush) => { const n = stocks + cush.length; const d = deck4({}, n, w, 10);
+        d.holdings = d.holdings.map((h, i) => (i < stocks ? h : { ...h, kind: 'cushion', target: cush[i - stocks], rules: band(cush[i - stocks]) }));
+        return d; };
+      const nine = mk(7, 0.1, [0.15, 0.15]);
+      const rows9 = E.editRows(nine, E.emptyDraft());
+      // after one stock is taken out: 6 x 10 + 30 = 90 -> D2 is true now (y = 13), and the raise reaches 100
+      const dr = E.removeDraft(nine, E.emptyDraft(), '000010', null);
+      const rows8 = E.editRows(nine, dr);
+      const raised = E.editRows(nine, E.raiseDraft(nine, dr));
+      // eight stocks at 8.75% + 30%: one taken out, the seven left reach 10% each: 100 without a raise
+      const ten = mk(8, 0.0875, [0.15, 0.15]);
+      const dr10 = E.removeDraft(ten, E.emptyDraft(), '000010', null);
+      const rows10 = E.editRows(ten, dr10);
+      out = { sum9: E.sumPct(rows9), d9: E.d2Of(rows9, 10), lit9: E.capCheck(9, 10), save9: E.applyEdit({ v: 1, decks: [nine] }, 'd1', E.stepDraft(E.stepDraft(E.emptyDraft(), '000010', 9), '000020', 10), env),
+        d8: E.d2Of(rows8, 10), sum8: E.sumPct(rows8), raised: raised.map((r) => r.pct), rsum: E.sumPct(raised),
+        d10: E.d2Of(rows10, 10), sum10: E.sumPct(rows10), pcts10: rows10.map((r) => r.pct),
+        sell: E.sellCheck(nine, E.emptyDraft(), '000010'), sellTen: E.sellCheck(ten, E.emptyDraft(), '000010'),
+        none: E.d2Of(rows9, null), plain: (() => { const f = deck4({}, 5, 0.2, 20);
+          return [E.d2Of(E.editRows(f, E.removeDraft(f, E.emptyDraft(), '000050', null)), 20), E.d2Of(E.editRows(f, E.emptyDraft()), 20)]; })() };""")
+    assert got["sum9"] == 100 and got["d9"] == {"low": False, "y": 12} and got["lit9"]["low"] is True   # 9 × 10 = 90 < 100 이지만 닿아요
+    assert got["save9"]["ok"] is False and got["save9"]["why"] == "sum"                         # (stepping only one: 99%, the fix button's job)
+    assert got["d8"] == {"low": True, "y": 13} and got["sum8"] == 90
+    assert sorted(got["raised"][:6]) == [11, 11, 12, 12, 12, 12] and got["raised"][6:] == [15, 15] and got["rsum"] == 100
+    assert got["d10"] == {"low": False, "y": 12} and got["sum10"] == 100 and got["pcts10"] == [10] * 7 + [15, 15]
+    assert got["sell"]["low"] is True and got["sell"]["y"] == 13 and got["sellTen"]["low"] is False
+    assert got["none"] == {"low": False, "y": None}
+    assert got["plain"] == [{"low": True, "y": 25}, {"low": False, "y": 20}]                   # 안전자산이 없으면 n × x 그대로

@@ -65,6 +65,17 @@ export function capCheck(n, x) {
   return { low: n * x < 100, y };
 }
 
+// [D2] on the rows (round-1 S4: the spec's intent rather than its literal n × x, owner to confirm): the targets cannot reach
+// 100% when every row at its own ceiling — the cap, or the row's own % when it is already above the cap (a 채권·금 cushion the
+// share-out never pushes higher, ceilingOf) — adds up to less than 100. y as the spec says: 100 ÷ n rounded up (capCheck).
+// -> { low, y }
+export function d2Of(rows, cap) {
+  const { y } = capCheck(rows.length, cap);
+  if (y == null) return { low: false, y: null };
+  const room = rows.reduce((a, r) => a + ceilingOf(num(r.pct) || 0, cap), 0);
+  return { low: room < 100 - SUM_TOL, y };
+}
+
 // ---------------- the edited list ----------------
 // Stored holdings (minus pending removals) with their targets (the draft's first), then pending adds.
 // -> [{ t, nk, h (stored holding) | null, add (draft add) | null, pct, cls }]
@@ -209,8 +220,8 @@ export function fixDraft(deck, draft, cap = capOf(deck, draft)) {
 }
 // [D2] 최대 비중을 {y}%로 올리기: the new cap (pending), then the share-out under it.
 export function raiseDraft(deck, draft) {
-  const n = editRows(deck, draft).length;
-  const { y } = capCheck(n, capOf(deck, draft));
+  const rows = editRows(deck, draft);
+  const { y } = capCheck(rows.length, capOf(deck, draft));
   if (y == null) return draft;
   return fixDraft(deck, { ...draft, maxPct: y }, y);
 }
@@ -468,7 +479,7 @@ export function sellCheck(deck, draft, t) {
   const left = editRows(deck, draft).filter((r) => r.t !== t).length;
   const up = draft && draft.maxPct != null && draft.maxPct !== capOf(deck) ? draft.maxPct : null;
   const cap = up != null ? up : capOf(deck);
-  const d2 = capCheck(stored.length, cap);
+  const d2 = d2Of(stored, cap);
   return { last: !stored.length || !left, low: d2.low, y: d2.y, n: stored.length, cap, up };
 }
 // The draft after the store changed under it (팔고 빼기 saved): edits of holdings that are gone are dropped; the rest stay.
