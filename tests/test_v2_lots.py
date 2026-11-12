@@ -242,7 +242,7 @@ def test_stock_split_reads_earlier_records_at_the_new_basis_and_the_store_accept
       const Lg = L.ledger(stored, 'AAA');
       out = { rawLow: H.belowZero(raw), viewLow: H.belowZero(view), rawProblem: S.deckProblem(raw, '2026-11-06'), viewProblem: S.deckProblem(view, '2026-11-06'),
         storedProblem: S.deckProblem(stored, '2026-11-06'), heldView: H.heldUnits(viewHeld).get('AAA'), avgView: P.avgOf(viewHeld, 'AAA'),
-        gain: Lg.sales[0].gain, written: JSON.stringify(view).includes('splits'), toStore: L.splitsToStore(viewHeld, 'AAA'),
+        gain: Lg.sales[0].gain, written: JSON.stringify(view).includes('splits'), oneSide: L.splitsToStore(viewHeld, 'AAA'), toStore: L.splitsToStore(view, 'AAA'),
         future: L.withDataSplits({ v: 2, decks: [d] }, [{ t: 'AAA', date: '2026-12-01', r: 4 }], '2026-11-06').decks[0] === d,
         merge: H.heldUnits({ ...d, splits: [{ t: 'AAA', date: '2026-09-01', r: 0.1 }] }).get('AAA') };""")
     assert got["rawLow"] == {"t": "AAA", "date": "2026-10-01"}                                 # 분할을 모르면 40주 판매는 0 아래
@@ -250,7 +250,8 @@ def test_stock_split_reads_earlier_records_at_the_new_basis_and_the_store_accept
     assert got["viewProblem"] is not None                                                     # 저장 검사는 저장된 분할만 읽어요 (화면용은 저장 안 됨)
     assert got["storedProblem"] is None and got["gain"] == 40 * 120 * 1300 - 10 * 400 * 1300
     assert got["written"] is False                                                            # 화면용 분할은 JSON 에 안 나가요
-    assert got["toStore"] == [{"t": "AAA", "date": "2026-09-01", "r": 4}]
+    assert got["oneSide"] is None                                                             # 기록이 모두 분할 전이면 저장할 분할 없음
+    assert got["toStore"] == [{"t": "AAA", "date": "2026-09-01", "r": 4}]                    # 분할 앞뒤에 기록이 있을 때만
     assert got["future"] is True and got["merge"] == 10000                                     # 앞날 분할은 적용 안 함 · 10:1 병합 → 1주
 
 
@@ -284,3 +285,89 @@ def test_held_quantity_after_a_sale_in_every_calculation():
     assert got["add"] == [["000010", 5]]                                                      # 판 뒤 4주 기준으로 모자란 종목만 (일부 팔아요 종목은 건너뜀)
     assert got["rows"] == [["000010", 4, 0.286], ["000020", 10, 0.714]]
     assert got["home"]["cost"] == 14000 and got["home"]["n"] == 2
+
+
+# ── v19.6a 리뷰 1차 (2026-11-13) ──
+def test_a_new_rateless_us_purchase_never_takes_plan_fx_but_an_old_one_still_does():
+    """Never another day's rate: a USD purchase saved without fx by v19.6a is marked noFx (dated before 2016) and is left out
+    of won totals (noFx); one saved before Part E without fx (no mark) keeps the planFx saved with it, as before."""
+    got = run("""const old = built([['AAA', 'A', 1]], { purchases: [buy('AAA', 2, 100, '2026-10-01')] });             // 예전 샀어요: fx 없음, planFx 1,300
+      const neu = built([['AAA', 'A', 1]], { purchases: [buy('AAA', 2, 100, '2015-06-01', { noFx: true })] });   // 새 기록: 2016 전, 표시
+      const q = { pxOf: () => 110, fx: 1400, absent: new Set() };
+      const Lo = L.ledger(old, 'AAA'), Ln = L.ledger(neu, 'AAA');
+      const ro = L.returnsOf(old, q), rn = L.returnsOf(neu, q);
+      out = { lo: [Lo.lots[0].won, Lo.lots[0].rate, Lo.putIn.noRate], ln: [Ln.lots[0].won, Ln.lots[0].rate, Ln.putIn.noRate],
+        ro: [ro.cost, ro.noFx, ro.held], rn: [rn.cost, rn.noFx, rn.n], pw: [T.purchaseWon(old.purchases[0], 1300), T.purchaseWon(neu.purchases[0], 1300)],
+        p: [S.deckProblem(neu, '2026-11-06'), S.deckProblem(built([['AAA', 'A', 1]], { purchases: [buy('AAA', 2, 100, '2015-06-01', { noFx: true, fx: 1100 })] }), '2026-11-06'),
+          S.deckProblem(built([['000010', 'a', 1]], { purchases: [buy('000010', 2, 100, '2015-06-01', { noFx: true })] }), '2026-11-06')] };""")
+    assert got["lo"] == [260000, 1300, False] and got["ro"] == [260000, [], 2 * 110 * 1400 - 260000]   # 예전 기록은 그대로 planFx
+    assert got["ln"] == [None, None, True] and got["rn"] == [None, ["AAA"], 0]                 # 새 기록은 원화 합계에서 빠지고 noFx 줄
+    assert got["pw"] == [260000, None]
+    assert got["p"][0] is None and "noFx" in got["p"][1]["why"] and "noFx" in got["p"][2]["why"]   # 표시는 환율 없는 미국 기록에만
+
+
+def test_same_date_purchases_come_before_sales_in_the_ledger():
+    got = run("""const d = built([['000010', 'a', 1]], { purchases: [buy('000010', 10, 100, '2026-10-01')], sales: [sell('000010', 10, 120, '2026-10-01')] });
+      const s = L.ledger(d, '000010').sales[0];
+      out = [s.over, s.gain, s.why, H.belowZero(d)];""")
+    assert got == [False, 200, None, None]                                                    # 같은 날: 산 것 먼저, 그다음 판 것
+
+
+def test_split_boundary_a_record_dated_on_the_split_day_is_already_at_the_new_basis():
+    got = run("""const sp = [{ t: '000010', date: '2026-09-01', r: 4 }];
+      const on = { ...built([['000010', 'a', 1]], { purchases: [buy('000010', 10, 100, '2026-09-01')] }), splits: sp };
+      const before = { ...built([['000010', 'a', 1]], { purchases: [buy('000010', 10, 100, '2026-08-31')] }), splits: sp };
+      out = { on: H.heldUnits(on).get('000010'), before: H.heldUnits(before).get('000010'), f: [H.splitFactor(H.splitsOf(on), '000010', '2026-09-01'),
+        H.splitFactor(H.splitsOf(on), '000010', '2026-08-31')], lines: [L.splitsFor(on, '000010'), L.splitsFor(before, '000010')] };""")
+    assert got["on"] == 100000 and got["before"] == 400000 and got["f"] == [1, 4]
+    assert got["lines"] == [[], [{"date": "2026-09-01", "r": 4}]]                             # 분할 줄은 기록을 바꾼 분할만
+
+
+def test_returns_percent_comes_from_the_exact_sums_not_the_rounded_rows():
+    got = run("""out = { rr: L.roundRows([15000, 15000, 15000]), pct: L.returnsPct({ held: 15000, sold: 15000, divs: 15000, cost: 100000 }),
+      exact: L.roundRows([15000, 15000, 15000], { exact: true }), none: L.returnsPct({ held: 1, sold: 0, divs: 0, cost: null }),
+      sw: [L.RETURNS_EXACT, L.RETURNS_PARTIAL] };""")
+    assert got["rr"] == {"unit": 10000, "rows": [20000, 20000, 20000], "total": 60000}         # 화면의 줄은 2만원씩 (합 6만원)
+    assert abs(got["pct"] - 45.0) < 1e-12                                                      # 수익률은 45.0%, 60% 가 아니에요
+    assert got["exact"] == {"unit": 1, "rows": [15000, 15000, 15000], "total": 45000}          # 스위치 C (정확한 원): 4만 5,000원
+    assert got["none"] is None and got["sw"] == [False, False]                                # 기본값: 만원 규칙 · 종목 통째로
+
+
+def test_a_fully_sold_stock_without_an_average_price_is_left_out_and_named():
+    got = run("""const d = { id: 'i', name: 'i', createdAt: '2026-10-01', kind: 'imported', settings: { points: {} },
+        holdings: [{ t: '000010', nk: 'a', cls: 'kr' }, { t: '000020', nk: 'b', cls: 'kr' }], purchases: [],
+        imported: [{ t: '000010', nk: 'a', ccy: 'KRW', qty: 10 }, { t: '000020', nk: 'b', ccy: 'KRW', qty: 1, avg: 900 }],
+        sales: [sell('000010', 10, 1200, '2026-10-10')], divs: [div('000010', 300, '2026-10-12')] };
+      const q = { pxOf: () => 1000, fx: 1400, absent: new Set() };
+      const all = L.returnsOf(d, q), part = L.returnsOf(d, q, { partial: true });
+      out = { all: { ...all, ledgers: undefined }, part: { ...part, ledgers: undefined } };""")
+    a = got["all"]
+    assert a["noAvg"] == ["000010"] and a["soldOut"] == 1 and a["sold"] == 0 and a["divs"] == 0 and a["held"] == 100 and a["cost"] == 900
+    p = got["part"]                                                                           # 스위치 B (알려진 것은 모두): 배당은 세고 수익률은 없음
+    assert p["noAvg"] == ["000010"] and p["divs"] == 300 and p["sold"] == 0 and p["held"] == 100 and p["partial"] is True and p["cost"] is None
+
+
+def test_returns_name_a_held_stock_without_a_price_and_keep_the_rest():
+    got = run("""const d = built([['000010', 'a', 0.5], ['000020', 'b', 0.5]], { purchases: [buy('000010', 1, 1000, '2026-10-01'), buy('000020', 1, 1000, '2026-10-01')],
+        divs: [div('000020', 50, '2026-10-02')] });
+      const r = L.returnsOf(d, { pxOf: (t) => (t === '000010' ? 1100 : null), fx: 1400, absent: new Set() });
+      out = { ...r, ledgers: undefined };""")
+    assert got["noPrice"] == ["000020"] and got["held"] == 100 and got["divs"] == 0 and got["cost"] == 1000   # 가격 없는 종목만 빠지고 이름이 나와요
+
+
+def test_sold_out_band_switch_both_states():
+    """Round-1 review A (Jack decides): off (what ships) the sold-out holding is left out of the bands; on (spec A.1) it is
+    held with 0 shares, shows below its band (먼저 사요) and 추가로 넣을 돈 buys it back; the money totals hold no money for it."""
+    got = run("""const stocks = [kr('000010', 1000), kr('000020', 1000)];
+      const d = built([['000010', 'a', 0.5], ['000020', 'b', 0.5]], { purchases: [buy('000010', 10, 1000, '2026-10-01'), buy('000020', 10, 1000, '2026-10-01')],
+        sales: [sell('000020', 10, 1000, '2026-10-10')] });
+      const run1 = (on) => { const ctx = { ...ctxOf(stocks), soldOutBands: on }; const e = R.evaluateDeck(d, ctx); const m = T.deckMoney(d, e, ctx);
+        return { hs: e.holdings.map((x) => [x.t, x.qty, x.status]), soldOut: e.soldOut, unheld: e.unheld, m: [m.ok, m.value, m.cost],
+          add: T.addMoney(e, 10000).buys.map((b) => [b.t, b.shares]) }; };
+      out = { off: run1(false), on: run1(true), def: R.SOLD_OUT_BANDS };""")
+    assert got["def"] is False
+    off, on = got["off"], got["on"]
+    assert off["hs"] == [["000010", 10, "none"]] and off["soldOut"] == ["000020"] and off["unheld"] == []
+    assert on["hs"] == [["000010", 10, "high"], ["000020", 0, "low"]] and on["soldOut"] == ["000020"] and on["unheld"] == []
+    assert off["m"] == [True, 10000, 10000] and on["m"] == [True, 10000, 10000]              # 0주 종목은 돈이 없어요
+    assert off["add"] == [["000010", 10]] and on["add"] and on["add"][0][0] == "000020"     # 켜면 다시 사는 쪽으로

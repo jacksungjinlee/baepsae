@@ -89,19 +89,22 @@ def test_the_rate_of_a_records_date_never_another_days():
       gapOtherDate: Rc.rateFor('2026-11-06', env({ today: '2026-11-07', fxDate: '2026-11-06' })),
       noHist: Rc.rateFor('2026-11-03', env({ fxHist: null })), badHist: Rc.rateFor('2026-11-03', env({ fxHist: { asOf: '2026-11-05', rows: [['2026-11-05', 0]] } })),
       asOfOff: Rc.rateFor('2026-11-03', env({ fxHist: { ...HIST, asOf: '2026-11-04' } })),
-      pre2016: Rc.rateFor('2015-12-30', env()), beforeFirst: Rc.rateFor('2016-01-02', env()), noToday: Rc.rateFor(T, env({ fx: null })), bad: Rc.rateFor('2026-02-30', env()) };""")
+      pre2016: Rc.rateFor('2015-12-31', env()), first2016: Rc.rateFor('2016-01-01', env()), beforeFirst: Rc.rateFor('2016-01-02', env()),
+      noToday: Rc.rateFor(T, env({ fx: null })), staleToday: Rc.rateFor(T, env({ stale: true })), bad: Rc.rateFor('2026-02-30', env()) };""")
     assert got["today"] == {"ok": True, "fx": 1401.1}                                        # 오늘: data.json fx
     assert got["onDay"] == {"ok": True, "fx": 1375.2} and got["weekend"] == {"ok": True, "fx": 1338.0} and got["last"] == {"ok": True, "fx": 1390.4}
     assert got["gapFresh"] == {"ok": True, "fx": 1390.4}                                     # 새 데이터 · fxHist 끝 = fx 날짜: 그 사이 새 종가 없음
-    assert got["gapStale"] == {"ok": False, "why": "old"} and got["gapOtherDate"] == {"ok": False, "why": "old"}
-    assert got["noHist"]["ok"] is False and got["badHist"]["ok"] is False and got["asOfOff"]["ok"] is False
-    assert got["pre2016"] == {"ok": True, "fx": None, "before": True} and got["beforeFirst"] == {"ok": True, "fx": None, "before": True}
-    assert got["noToday"]["ok"] is False and got["bad"] == {"ok": False, "why": "date"}
+    assert got["gapStale"] == {"ok": False, "why": "past"} and got["gapOtherDate"] == {"ok": False, "why": "past"}
+    assert got["noHist"] == {"ok": False, "why": "past"} and got["badHist"]["ok"] is False and got["asOfOff"]["ok"] is False
+    assert got["pre2016"] == {"ok": True, "fx": None, "before": True}                           # 2016 전: 환율 없이 (noFx 표시)
+    assert got["first2016"] == {"ok": False, "why": "past"} and got["beforeFirst"] == {"ok": False, "why": "past"}   # 2016 부터 fxHist 가 닿지 않으면 거절
+    assert got["noToday"] == {"ok": False, "why": "today"} and got["bad"] == {"ok": False, "why": "date"}
+    assert got["staleToday"] == {"ok": False, "why": "today"}                                  # 멈춘 데이터의 fx 는 다른 날의 환율
 
 
 def test_sale_checks_too_many_too_early_whole_shares_and_past_us_dates():
     got = run("""const d = deckOf({ sales: [{ id: 's1aaaaaa', t: '005930', qty: 4, price: 210000, date: '2026-10-20', ccy: 'KRW' }] });
-      const c = (t, i, s, e = env()) => { const r = Rc.checkSale(d, t, i, s, e); return r.ok ? { ok: true, rec: { ...r.rec, id: undefined } } : r; };
+      const c = (t, i, s, e = env()) => { const r = Rc.checkSale(d, t, i, s, e); return r.ok ? { ok: true, rec: { ...r.rec, id: undefined } } : { ok: false, why: r.why, field: r.field }; };
       out = { ok: c('005930', { qty: '6', price: '', date: T }, S5930), many: c('005930', { qty: '7', date: T }, S5930),
         early: c('005930', { qty: '1', date: '2026-10-01' }, S5930), frac: c('005930', { qty: '1.5', date: T }, S5930), past: c('005930', { qty: '7', date: '2026-10-19' }, S5930),
         between: c('005930', { qty: '7', date: '2026-10-21' }, S5930),
@@ -109,14 +112,14 @@ def test_sale_checks_too_many_too_early_whole_shares_and_past_us_dates():
         usNoHist: c('AAPL', { qty: '1', date: '2026-11-03' }, SAAPL, env({ fxHist: null })), usDecimals: c('AAPL', { qty: '0.00001', date: T }, SAAPL),
         future: c('005930', { qty: '1', date: '2026-11-07' }, S5930), word: c('005930', { qty: 'abc', date: T }, S5930) };""")
     assert got["ok"] == {"ok": True, "rec": {"t": "005930", "qty": 6, "price": 225000, "date": "2026-11-06", "ccy": "KRW"}}   # 가격 빈칸 → 마지막 종가
-    assert got["many"] == {"ok": False, "why": "tooMany"} and got["early"] == {"ok": False, "why": "tooEarly"}
-    assert got["frac"] == {"ok": False, "why": "input"} and got["usDecimals"] == {"ok": False, "why": "input"}
-    assert got["past"] == {"ok": False, "why": "tooMany"}                                     # 10/19 에 7주를 팔면 10/20 의 4주가 0 아래
-    assert got["between"] == {"ok": False, "why": "tooMany"}
+    assert got["many"] == {"ok": False, "why": "tooMany", "field": "qty"} and got["early"] == {"ok": False, "why": "tooEarly", "field": "date"}
+    assert got["frac"] == {"ok": False, "why": "input", "field": "qty"} and got["usDecimals"] == {"ok": False, "why": "input", "field": "qty"}
+    assert got["past"] == {"ok": False, "why": "tooMany", "field": "qty"}                      # 10/19 에 7주를 팔면 10/20 의 4주가 0 아래
+    assert got["between"] == {"ok": False, "why": "tooMany", "field": "qty"}
     assert got["usToday"] == {"ok": True, "rec": {"t": "AAPL", "qty": 0.5, "price": 350.25, "date": "2026-11-06", "ccy": "USD", "fx": 1401.1}}
     assert got["usPast"]["ok"] and got["usPast"]["rec"]["fx"] == 1375.2 and got["usPast"]["rec"]["price"] == 344.63
-    assert got["usNoHist"] == {"ok": False, "why": "rate"}                                   # 지난 날짜의 미국 기록: 환율이 없으면 저장 안 함
-    assert got["future"] == {"ok": False, "why": "input"} and got["word"] == {"ok": False, "why": "input"}
+    assert got["usNoHist"] == {"ok": False, "why": "rate", "field": "date"}                  # 지난 날짜의 미국 기록: 환율이 없으면 저장 안 함
+    assert got["future"] == {"ok": False, "why": "input", "field": "date"} and got["word"] == {"ok": False, "why": "input", "field": "qty"}
 
 
 def test_a_holding_put_in_by_amount_is_sold_all_at_once_by_its_amount():
@@ -127,7 +130,7 @@ def test_a_holding_put_in_by_amount_is_sold_all_at_once_by_its_amount():
       out = { r: r.ok ? { qty: r.rec.qty, money: Math.round(r.rec.qty * r.rec.price) } : r, bad: Rc.checkSale(d, '005930', { amountWon: '', date: T }, S5930, env()),
         st: Rc.stockState(d, '005930').byAmount, valid: next && S.validStore(next, T), out: next && Rc.soldOutNow(next.decks[0], '005930') };""")
     assert got["r"] == {"qty": 3.3333, "money": 1200000} and got["st"] is True                # 가진 3.3333주(금액 ÷ 그날 종가) 모두, 판 금액 그대로
-    assert got["bad"] == {"ok": False, "why": "input"} and got["valid"] is True and got["out"] is True
+    assert got["bad"]["why"] == "input" and got["bad"]["field"] == "amount" and got["valid"] is True and got["out"] is True
 
 
 def test_records_go_in_with_the_split_they_need_and_a_dividend_after_removal_goes_into_history():
@@ -220,12 +223,14 @@ def test_store_splits_part_is_checked_merged_and_set_aside_per_portfolio():
       const future = { ...deckOf(), id: 'd4', splits: [{ t: 'AAPL', date: '2026-12-01', r: 4 }] };
       const chk = S.checkStore({ v: 2, decks: [good, bad, twice, future] }, T);
       const v1 = S.checkStore({ v: 1, decks: [good] }, T);
+      const v1sales = S.checkStore({ v: 1, decks: [{ ...good, sales: [] }] }, T);
       const a = deckOf({ splits: [{ t: 'AAPL', date: '2026-09-01', r: 4 }] }), b = deckOf({ splits: [{ t: '005930', date: '2026-08-01', r: 2 }] });
       const m = S.mergeTabs({ v: 2, decks: [b] }, { v: 2, decks: [a] }, T);
-      out = { kept: chk.data.decks.map((d) => d.id), problems: chk.problems.length, v1: v1.problems[0], merged: m && m.decks[0].splits,
+      out = { kept: chk.data.decks.map((d) => d.id), problems: chk.problems.length, v1: v1.problems, v1sales: v1sales.problems[0], merged: m && m.decks[0].splits,
         ver: S.versionFor({ decks: [good] }), parts: S.V2_DECK_PARTS.includes('splits') };""")
     assert got["kept"] == ["d1"] and got["problems"] == 3                                    # 나쁜 분할이 있는 포트폴리오만 따로
-    assert "version-2 part in a version-1 store" in got["v1"] and got["ver"] == 2 and got["parts"] is True
+    # a v1 store holding only splits (the v19.3d app re-tags v1 and keeps the key) reads; any other v2 part still does not
+    assert got["v1"] == [] and "version-2 part in a version-1 store" in got["v1sales"] and got["ver"] == 2 and got["parts"] is True
     assert got["merged"] == [{"t": "AAPL", "date": "2026-09-01", "r": 4}, {"t": "005930", "date": "2026-08-01", "r": 2}]
 
 
@@ -260,3 +265,93 @@ def test_the_returns_address_names_one_portfolio():
     assert got["#portfolio/returns/d_1-x"]["returns"] == "d_1-x"
     for h in ("#portfolio/returns/", "#portfolio/returns/a b", "#portfolio/returns", "#home/returns/d1"):
         assert got[h] == {"tab": "home", "sub": None, "about": False, "known": False}, h            # 모르는 주소 → #home
+
+
+# ── v19.6a 리뷰 1차 (2026-11-13) ──
+def test_new_records_before_2016_carry_no_rate_and_the_csv_leaves_won_blank():
+    got = run("""const d = deckOf();
+      const p = Rc.checkPurchase(d, 'AAPL', { qty: '1', price: '100', date: '2015-12-31' }, SAAPL, env());
+      const s = Rc.checkSale(d, 'AAPL', { qty: '1', price: '100', date: '2015-12-31' }, SAAPL, env());
+      const v = Rc.checkDiv(d, 'AAPL', { amount: '1.5', date: '2015-12-31' }, SAAPL, env());
+      const next = Rc.withRecord({ v: 2, decks: [d] }, 'd1', 'purchases', p.rec, T);
+      const csv = Csv.recordsCsv(next, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'], { buy: 'B', sell: 'S', div: 'D', imp: 'I' });
+      out = { p: { ...p.rec, id: undefined }, s: s.why, v: { ...v.rec, id: undefined }, valid: S.validStore(next, T), line: csv.split('\\r\\n').find((x) => x.includes('2015-12-31')) };""")
+    assert got["p"] == {"t": "AAPL", "date": "2015-12-31", "qty": 1, "price": 100, "ccy": "USD", "noFx": True}
+    assert got["v"] == {"t": "AAPL", "amount": 1.5, "ccy": "USD", "date": "2015-12-31", "noFx": True}
+    assert got["s"] == "tooEarly" and got["valid"] is True
+    assert got["line"] == '배당 생활비 포트폴리오,B,2015-12-31,"=""AAPL""",Apple Inc.,1,100,USD,,'   # 환율 · 원화 금액 빈칸 (planFx 1,300 이 아니에요)
+
+
+def test_a_dividend_of_a_stock_taken_out_uses_its_own_records_currency():
+    """Round-1 review (Opus S6): the form's label and the saved record's currency come from one source, the stock's own
+    records (history included), never today's data alone: typing 50,000 in a 원 form never saves $50,000."""
+    got = run("""const us = { ...deckOf(), holdings: [{ t: '005930', nk: '삼성전자', target: 1, rules: band(1) }], purchases: [deckOf().purchases[0]],
+        history: [{ t: 'AAPL', nk: 'Apple Inc.', out: '2026-10-20', purchases: [deckOf().purchases[1]], sales: [{ t: 'AAPL', qty: 3, price: 310, date: '2026-10-19', ccy: 'USD', fx: 1350 }], divs: [] }] };
+      const krData = { t: 'AAPL', cls: 'kr', price: 1 };                                 // a data row that would say 원
+      out = { ccy: [Rc.recordCcy(us, 'AAPL', krData), Rc.recordCcy(us, 'AAPL', null), Rc.recordCcy(us, '005930', SAAPL), Rc.recordCcy({ decks: [] }, 'XX', null)],
+        div: Rc.checkDiv(us, 'AAPL', { amount: '50000', date: T }, krData, env()), cents: Rc.checkDiv(us, 'AAPL', { amount: '1.25', date: T }, krData, env()).rec.ccy };""")
+    assert got["ccy"] == ["USD", "USD", "KRW", None]
+    assert got["div"]["ok"] and got["div"]["rec"]["ccy"] == "USD" and got["div"]["rec"]["fx"] == 1401.1 and got["cents"] == "USD"
+
+
+def test_a_us_holding_put_in_by_amount_sells_at_the_sale_dates_rate():
+    got = run("""const d = { id: 'i', name: 'i', createdAt: '2026-10-01', kind: 'imported', settings: { points: {} }, holdings: [{ t: 'AAPL', nk: 'Apple Inc.', cls: 'us' }],
+        purchases: [], imported: [{ t: 'AAPL', nk: 'Apple Inc.', ccy: 'USD', amountWon: 1300000, close: 325, fx: 1300, date: '2026-10-01' }] };
+      const r = Rc.checkSale(d, 'AAPL', { amountWon: '1500000', date: '2026-11-03' }, SAAPL, env());
+      const noRate = Rc.checkSale(d, 'AAPL', { amountWon: '1500000', date: '2026-11-03' }, SAAPL, env({ fxHist: null }));
+      out = { fx: r.rec.fx, qty: r.rec.qty, won: Math.round(r.rec.qty * r.rec.price * r.rec.fx * 1000) / 1000, noRate: [noRate.why, noRate.field, noRate.rate] };""")
+    assert got["fx"] == 1375.2 and got["qty"] == 3.0769 and got["won"] == 1500000             # 판 날(11/3) 환율, 판 금액 그대로 (130만원 ÷ ($325 × 1,300))
+    assert got["noRate"] == ["rate", "date", "past"]
+
+
+def test_delete_refusal_inside_a_history_entry():
+    got = run("""const d = { ...deckOf(), holdings: [{ t: '005930', nk: '삼성전자', target: 1, rules: band(1) }], purchases: [deckOf().purchases[0]],
+        history: [{ t: 'AAPL', nk: 'Apple Inc.', out: '2026-10-20', purchases: [{ t: 'AAPL', qty: 3, price: 300, date: '2026-10-02', ccy: 'USD', fx: 1300 }],
+          sales: [{ t: 'AAPL', qty: 3, price: 310, date: '2026-10-19', ccy: 'USD', fx: 1350 }], divs: [{ t: 'AAPL', amount: 1, date: '2026-10-25', ccy: 'USD', fx: 1360 }] }] };
+      const data = { v: 2, decks: [d] };
+      const items = Rc.recordsOf(d, 'AAPL');
+      out = { buy: Rc.withoutRecord(data, 'd1', items.find((x) => x.kind === 'buy'), T), div: Rc.withoutRecord(data, 'd1', items.find((x) => x.kind === 'div'), T).ok };""")
+    assert got["buy"] == {"ok": False, "why": "below"} and got["div"] is True
+
+
+def test_csv_quotes_a_leading_tab_or_cr_and_marks_them_as_text():
+    got = run("""const d = { ...deckOf({ name: '\\t탭' }), holdings: [{ t: '005930', nk: '\\r삼성', target: 1 }], purchases: [deckOf().purchases[0]] };
+      out = Csv.recordsCsv({ decks: [d] }, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'], { buy: 'B', sell: 'S', div: 'D', imp: 'I' }).split('\\r\\n')[1];""")
+    assert got == "'\t탭,B,2026-10-02,\"=\"\"005930\"\"\",\"'\r삼성\",10,200000,KRW,,2000000"   # 탭: ' 만 · CR: ' + 따옴표
+
+
+def test_splits_go_into_the_store_only_when_records_lie_on_both_sides():
+    got = run("""const sp = [{ t: 'AAPL', date: '2026-09-01', r: 4 }];
+      const base = deckOf({ purchases: [{ id: 'p1aaaaaa', t: 'AAPL', qty: 10, price: 400, date: '2026-08-01', ccy: 'USD', fx: 1300 }], holdings: [{ t: 'AAPL', nk: 'Apple Inc.', target: 1, rules: band(1) }] });
+      const view = L.withDataSplits({ v: 2, decks: [base] }, sp, T);
+      const after = Rc.withRecord(view, 'd1', 'purchases', { id: 'p2aaaaaa', t: 'AAPL', qty: 1, price: 100, date: '2026-10-01', ccy: 'USD', fx: 1350 }, T);
+      const beforeOnly = Rc.withRecord(view, 'd1', 'purchases', { id: 'p3aaaaaa', t: 'AAPL', qty: 1, price: 400, date: '2026-08-15', ccy: 'USD', fx: 1320 }, T);
+      const allAfter = L.withDataSplits({ v: 2, decks: [deckOf({ purchases: [{ id: 'p1aaaaaa', t: 'AAPL', qty: 10, price: 100, date: '2026-10-01', ccy: 'USD', fx: 1300 }],
+        holdings: [{ t: 'AAPL', nk: 'Apple Inc.', target: 1, rules: band(1) }] })] }, sp, T);
+      const after2 = Rc.withRecord(allAfter, 'd1', 'divs', { id: 'v1aaaaaa', t: 'AAPL', amount: 1, date: '2026-10-02', ccy: 'USD', fx: 1350 }, T);
+      out = { after: after.decks[0].splits || null, beforeOnly: beforeOnly.decks[0].splits || null, allAfter: after2.decks[0].splits || null,
+        missing: L.storedNotInData({ decks: [{ id: 'd1', splits: sp }] }, []), there: L.storedNotInData({ decks: [{ id: 'd1', splits: sp }] }, sp) };""")
+    assert got["after"] == [{"t": "AAPL", "date": "2026-09-01", "r": 4}]
+    assert got["beforeOnly"] is None and got["allAfter"] is None                                # 한쪽에만 기록이 있으면 저장하지 않아요
+    assert got["missing"] == [{"id": "d1", "t": "AAPL", "date": "2026-09-01", "r": 4}] and got["there"] == []
+
+
+def test_an_earlier_app_tab_that_retags_v1_keeps_the_splits_part_readable():
+    """Round-1 review (Fable S1): the v19.3d app tags a store v1 when its only v2 part is one it does not know (splits) and
+    keeps the key. This app reads it (not locked), with nothing lost, and its next write tags it v2 again."""
+    got = run("""const d = deckOf({ purchases: [{ id: 'p1aaaaaa', t: 'AAPL', qty: 10, price: 400, date: '2026-08-01', ccy: 'USD', fx: 1300 },
+          { id: 'p2aaaaaa', t: 'AAPL', qty: 4, price: 100, date: '2026-10-01', ccy: 'USD', fx: 1350 }],
+        holdings: [{ t: 'AAPL', nk: 'Apple Inc.', target: 1, rules: band(1) }], splits: [{ t: 'AAPL', date: '2026-09-01', r: 4 }] });
+      S.writeStore({ v: 2, decks: [d] }, K, T);
+      const oldRead = Old.readStore(K, T);
+      const wrote = Old.writeStore({ ...oldRead.data, notes: { '005930': { text: '메모', at: T } } }, K, T);
+      const raw = JSON.parse(mem.get(K));
+      const back = S.readStore(K, T);
+      const again = S.writeStore(back.data, K, T);
+      out = { oldDecks: oldRead.data.decks.map((x) => x.id), oldLocked: oldRead.locked, wrote, rawV: raw.v, rawSplits: raw.decks[0].splits, locked: back.locked,
+        decks: back.data.decks.map((x) => x.id), splits: back.data.decks[0].splits, note: !!(back.data.notes || {})['005930'], held: H.heldUnits(back.data.decks[0]).get('AAPL'),
+        again, v: JSON.parse(mem.get(K)).v };""")
+    assert got["oldDecks"] == ["d1"] and got["oldLocked"] is False and got["wrote"] is True
+    assert got["rawV"] == 1 and got["rawSplits"] == [{"t": "AAPL", "date": "2026-09-01", "r": 4}]   # 예전 앱: v1 로 적고 splits 는 그대로 둬요
+    assert got["locked"] is False and got["decks"] == ["d1"] and got["splits"] == got["rawSplits"] and got["note"] is True
+    assert got["held"] == 440000 and got["again"] is True and got["v"] == 2                     # 10주 × 4 + 4주 · 다음 저장은 다시 v2

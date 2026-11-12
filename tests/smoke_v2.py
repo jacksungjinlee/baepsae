@@ -10103,7 +10103,7 @@ def scene_v196a(R, files, width):
         page.locator(sel_row).locator('[data-ui-v2="row-actions"] button').first.click()
         page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
 
-    def action(name):
+    def act(name):
         page.locator('[data-ui-v2="rec-actions"] button', has_text=name).click()
         page.locator('[data-ui-v2="rec-form"]').wait_for(state="visible")
 
@@ -10140,6 +10140,9 @@ def scene_v196a(R, files, width):
         sheet('[data-holding="005380"]')
         sp = page.locator('[data-ui-v2="rec-split"]')
         assert sp.count() == 1 and sp.inner_text() == fillp(R_["split"], date=mdtext("2026-10-15"), r="2"), sp.inner_text()
+        # 리뷰 1차: 세 버튼 중 어느 것도 두 줄로 접히지 않아요 (320px 에서는 2 + 1)
+        hs = page.locator('[data-ui-v2="rec-actions"] button').evaluate_all("(bs) => bs.map((b) => b.getBoundingClientRect().height)")
+        assert len(hs) == 3 and max(hs) < 50, hs
         assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == fillp(R_["title"], name="현대차")
         check_page("기록 시트", "sheet-split")
         close_sheet()
@@ -10149,7 +10152,7 @@ def scene_v196a(R, files, width):
         sheet('[data-deck-id="dbuilt"] [data-holding="005930"]')
         lst = page.locator('[data-ui-v2="rec-list"] li')
         assert [lst.nth(i).get_attribute("data-rec") for i in range(lst.count())] == ["div", "buy"]
-        action(R_["sell"])
+        act(R_["sell"])
         head = page.locator('[data-ui-v2="rec-head"]').inner_text()
         assert head == fillp(R_["head"], qty="10", price="200,000원"), head
         fill_form("11", "240000", today)
@@ -10188,7 +10191,7 @@ def scene_v196a(R, files, width):
 
     def sell_split_keep():
         sheet('[data-deck-id="dbuilt"] [data-holding="005380"]')
-        action(R_["sell"])
+        act(R_["sell"])
         fill_form("10", "", today)                                                     # 분할 뒤 수량 10주, 가격 빈칸 → 종가
         save()
         page.locator('[data-ui-v2="rec-full"]').wait_for(state="visible")
@@ -10210,7 +10213,7 @@ def scene_v196a(R, files, width):
 
     def sell_us_past():
         sheet('[data-deck-id="dbuilt"] [data-holding="AAPL"]')
-        action(R_["sell"])
+        act(R_["sell"])
         assert page.locator('[data-ui-v2="rec-head"]').inner_text() == fillp(R_["head"], qty="4", price="$305.00")
         fill_form("2", "", "2026-10-20")
         res = page.locator('[data-ui-v2="rec-proceeds"]')
@@ -10248,13 +10251,15 @@ def scene_v196a(R, files, width):
 
     def divs_again():
         sheet('[data-deck-id="dbuilt"] [data-holding="005930"]')
-        action(R_["div"])
+        act(R_["div"])
         labels = page.locator('[data-ui-v2="rec-form"] label').all_inner_texts()
         assert labels[0].startswith(R_["divWon"]) and labels[1].startswith(R_["divDate"]), labels
         assert R_["divHint"] in page.locator('[data-ui-v2="rec-form"]').inner_text()
         fill_form("abc", today)
         save()
         page.locator('[data-ui-v2="bad-input"]').wait_for(state="visible")
+        inv = page.locator('[data-ui-v2="rec-form"] input').evaluate_all("(xs) => xs.map((x) => x.getAttribute('aria-invalid'))")
+        assert inv == ["true", None], inv                                              # 금액만 빨갛게, 날짜는 그대로 (리뷰 1차)
         assert page.locator('[data-ui-v2="bad-input"]').inner_text() == (R_["badAmount"] or C["plan"]["badInput"])
         check_page("배당 받았어요", "div-bad")
         fill_form("3610", "2026-10-25")
@@ -10267,8 +10272,9 @@ def scene_v196a(R, files, width):
     def imported_flows():
         # 금액으로 넣은 종목: 판 금액으로 한 번에 모두 → 남겨 두기 → 0주 줄 · SK하이닉스: 다 팔고 빼기
         sheet('[data-pf-holding="035420"]')
-        action(R_["sell"])
+        act(R_["sell"])
         assert page.locator('[data-ui-v2="rec-by-amount"]').inner_text() == R_["byAmount"]
+        assert page.locator('[data-ui-v2="rec-head"]').count() == 0                     # 금액으로 넣은 종목: 지어낸 주식 수의 머리줄 없음
         labels = page.locator('[data-ui-v2="rec-form"] label').all_inner_texts()
         assert labels[0].startswith(R_["sellAmount"] or R_["proceeds"]), labels
         check_page("금액으로 넣은 종목", "sell-by-amount")
@@ -10284,7 +10290,7 @@ def scene_v196a(R, files, width):
         s = deck(1)["sales"][-1]
         assert s["t"] == "035420" and round(s["qty"] * s["price"]) == 1200000
         sheet('[data-pf-holding="000660"]')
-        action(R_["sell"])
+        act(R_["sell"])
         assert page.locator('[data-ui-v2="rec-head"]').inner_text() == fillp(R_["head"], qty="3", price="1,200,000원")
         fill_form("3", "", today)
         save()
@@ -10317,7 +10323,7 @@ def scene_v196a(R, files, width):
         page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="rec-actions"] button').all_inner_texts() == [R_["div"]]
         check_page("뺀 종목의 기록", "history-sheet")
-        action(R_["div"])
+        act(R_["div"])
         fill_form("5000", today)
         save()
         page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
@@ -10391,7 +10397,7 @@ def scene_v196a(R, files, width):
         at(page, "portfolio")
         page.locator('[data-deck-id="dbuilt"] [data-holding="AAPL"]').wait_for(state="visible")
         sheet('[data-deck-id="dbuilt"] [data-holding="AAPL"]')
-        action(R_["sell"])
+        act(R_["sell"])
         fill_form("1", "", "2026-10-20")
         page.locator('[data-ui-v2="rec-no-rate"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="rec-no-rate"]').inner_text() == R_["noPastRate"]
@@ -10407,6 +10413,27 @@ def scene_v196a(R, files, width):
         check_page("환율 없음", "no-past-rate")
         close_sheet()
     R.check(page, S, "fxHist 없음: 지난 날짜의 미국 판매는 '환율 정보를 불러오지 못해 …' · 저장 안 함 · 오늘은 저장", no_rate)
+    ctx.close()
+    srv.shutdown()
+
+    # 리뷰 1차 (오늘 쓰는 macro.json 모양, fxHist 없음): 매수 계획의 샀어요를 지난 날짜로 하면 승인된 거절 줄 · 아무것도 저장하지 않아요
+    srv, ctx, page, base = R.open(build_site(nofx), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if wide else None)
+
+    def plan_past_no_rate():
+        at(page, "portfolio")
+        rows = to_plan(page)
+        assert any(by.get(t, {}).get("cls") == "us" for t, _ in rows), rows             # 계획에 미국 종목이 있어요
+        action(page).click()
+        see(page, C["plan"]["sheetTitle"])
+        sheet = page.locator('[data-ui-v2="record-form"]')
+        sheet.locator('input[type="date"]').fill((dt.date.fromisoformat(pxd) - dt.timedelta(days=2)).isoformat())
+        page.get_by_role("button", name=C["plan"]["save"]).click()
+        line = page.locator('[data-ui-v2="record-form"] [data-ui-v2="rec-no-rate"]')
+        line.wait_for(state="visible")
+        assert line.inner_text() == R_["noPastRate"] and line.get_attribute("data-why") == "past"
+        assert len(stored()["decks"]) == 2 and page.locator('[data-ui-v2="record-done"]').count() == 0   # 저장 안 함
+        check_page("매수 계획 · 환율 없음", "plan-no-rate")
+    R.check(page, S, "fxHist 없음: 매수 계획의 샀어요를 지난 날짜로 → '환율 정보를 불러오지 못해 …' · 저장 안 함", plan_past_no_rate)
     ctx.close()
     srv.shutdown()
     stale = v196a_files(files)
