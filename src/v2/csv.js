@@ -31,6 +31,7 @@ export const codeCell = (t) => (typeof t === "string" && /^[0-9A-Za-z][0-9A-Za-z
 // A number written plainly: no thousands separators, no exponent, at most `d` decimals (trailing zeros dropped).
 export function plain(x, d = 4) {
   if (!isNum(x)) return "";
+  if (Math.abs(x) >= 1e21) return BigInt(Math.round(x)).toString();       // toFixed writes an exponent from 1e21
   const s = x.toFixed(d);
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }

@@ -716,6 +716,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
     } catch (e) { /* ignore */ }
   }, [tab]);
   return (
+    <>
     <Page pad={pad}>
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
@@ -742,7 +743,9 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
         </TabBoundary>
       </div>
       <Footer />
-      <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </Page>
+    {/* outside Page: its wrapper changes at the PC width, and a half-typed record must survive that */}
+    <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
+    </>
   );
 }

@@ -9,7 +9,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, CHART } from "../ui/tokens.j
 import { Amount, priceColor } from "../ui/components.jsx";
 import { IconChip, Icon } from "../ui/icons.jsx";
 import { C, fill, nf, mdText, todayKst, todayStaleText, wonText, unitWon, plus } from "./format.js";
-import { Page, Card, AppBar, LoadFail, Footer, Note, tx } from "./ui.jsx";
+import { Page, Card, AppBar, LoadFail, Footer, Note, tx, tap } from "./ui.jsx";
 import { shownName } from "./legacy.js";
 import { todayCtx } from "./rules.js";
 import { signedPct } from "./deckcalc.js";
@@ -47,8 +47,8 @@ function CsvRow({ store }) {
   };
   return (
     <Card data-ui-v2="ret-csv" style={{ padding: 0 }}>
-      <button type="button" onClick={save} style={{ width: "100%", minHeight: TOUCH + SPACE(4), display: "flex", alignItems: "center", gap: SPACE(3),
-        border: "none", background: "none", cursor: "pointer", padding: `${SPACE(3)}px ${SPACE(4)}px`, textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
+      <button type="button" onClick={save} style={{ ...tap, width: "100%", minHeight: TOUCH + SPACE(4), display: "flex", alignItems: "center", gap: SPACE(3),
+        border: "none", background: "none", padding: `${SPACE(3)}px ${SPACE(4)}px`, textAlign: "left" }}>
         <IconChip name="download-simple" size={38} />
         <span style={tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0, wordBreak: "keep-all" })}>{C.ret.csv}</span>
         <Icon name="chevronRight" size={18} tone="on" />

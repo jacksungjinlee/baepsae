@@ -14,7 +14,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst, todayStaleText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, tap, useNav } from "./ui.jsx";
 import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, withoutHolding } from "./store.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
@@ -43,8 +43,8 @@ export const hasRecords = (d) => !!d && ["purchases", "sales", "divs", "imported
 export function ReturnsLink({ onClick }) {
   return (
     <button type="button" data-ui-v2="returns-link" onClick={onClick}
-      style={{ width: "100%", minHeight: TOUCH, marginTop: SPACE(3), display: "flex", alignItems: "center", gap: SPACE(2), border: "none", borderTop: `1px solid ${COLOR.line}`,
-        background: "none", cursor: "pointer", padding: `${SPACE(2)}px 0 0`, textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
+      style={{ ...tap, width: "100%", minHeight: TOUCH, marginTop: SPACE(3), display: "flex", alignItems: "center", gap: SPACE(2), border: "none", borderTop: `1px solid ${COLOR.line}`,
+        background: "none", padding: `${SPACE(2)}px 0 0`, textAlign: "left" }}>
       <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1 })}>{C.ret.title}</span>
       <Icon name="chevronRight" size={18} tone="on" />
     </button>
@@ -108,7 +108,10 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
     setImportBad(false);
     setStoreData(mergeStores(store.data, inc, Date.now(), storedStores(store.key, todayKst()), todayKst()));   // what the file brings back is an edit made now
   };
+  // The record sheet sits outside Page: Page's wrapper changes at the PC width (1024 px), and a half-typed record must
+  // survive a window resized or a tablet turned across it.
   return (
+    <>
     <Page pad={pad}>
       <AppBar />
       <ScreenTitle>{C.deck.title}</ScreenTitle>
@@ -217,8 +220,9 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         {decks.length > 0 && <IosHint kind="move" />}
       </Card>
       <Footer />
-      <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </Page>
+    <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
+    </>
   );
 }
 
