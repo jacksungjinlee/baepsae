@@ -38,8 +38,8 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { icrOffShown, stmtNotWonFor } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote } from "./fixnote.jsx";
+import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank } from "./fix.js";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
@@ -185,7 +185,8 @@ export function logSplitGuard(load) {
 }
 
 // Statements not in won (corp.json stmtCur): the 실적 and 가치 tiles could only say 자료가 없어요, which is not why their numbers
-// are missing; they are left out and the currency line above the tiles says why (Jack's line, once).
+// are missing; they are left out and the currency line above the tiles says why (Jack's line, once). The same for a company
+// whose statement numbers the unit check blanked (unitChk, Jack 2026-11-13): its line, once, above the tiles.
 const AMOUNT_TILES = ["earn", "value"];
 // US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles show "–" with their label (tileViews
 // rule "fcur"); they go last (실적 · 출렁임, then 가치 · 배당), so the reason line sits right under them, once. Keyed on the
@@ -196,7 +197,7 @@ export function orderTiles(views) {
   return [...views.filter((x) => !held(x)), ...views.filter(held)];
 }
 function Tiles({ load, s, onTab, tabsOn }) {
-  const cur = stmtNotWonFor(s, load.coByT.get(s.t) || null);
+  const cur = stmtNotWonFor(s, load.coByT.get(s.t) || null) || unitHeldFor(s, load.coByT.get(s.t) || null);
   const views = useMemo(() => orderTiles(tileViews(load, s).filter((x) => !(cur && AMOUNT_TILES.includes(x.topic)))), [load, s, cur]);
   if (!views.length) return <span data-ui-v2="co-tiles" data-pending="1" hidden />;
   const md = priceMd(load, s);
@@ -205,6 +206,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
   return (
     <section data-ui-v2="co-tiles" style={{ marginTop: SPACE(4) }}>
       {T().title && <h3 style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { margin: `0 ${SPACE(1)}px ${SPACE(2)}px` })}>{T().title}</h3>}
+      {/* the unit check (unitChk): the 실적 · 가치 tiles have no numbers; the reason once, before them */}
+      <UnitChkNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       {/* statements not in won (corp.json stmtCur): the 실적 · 가치 tiles have no numbers; the reason once, before them */}
       <StmtCurNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
@@ -328,6 +331,16 @@ function Warnings({ load, s, wide }) {
   const [open, setOpen] = useState(false);
   const w = useMemo(() => warnings(s, load.coByT.get(s.t) || null), [load, s]);
   const W = C.co.warn;
+  // 공시 단위 확인 (Jack, 2026-11-13): no 재무 경고 is computed from statements read in the wrong unit (corp.json flRan []); the line
+  // where the card would be, never "경고 신호는 없어요"
+  if (unitHeldFor(s, load.coByT.get(s.t) || null) && C.co.unitChk) {
+    return (
+      <Card data-ui-v2="co-warn-unit" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
+        <IconChip name="info" size={32} tone="risk" />
+        <UnitChkNote s={s} co={load.coByT.get(s.t) || null} style={{ flex: 1, minWidth: 0, marginTop: 0 }} />
+      </Card>
+    );
+  }
   // 2026-11-08 (Jack; say-why audit rows 1 and 6): 이자보상배율 is switched off until the DART re-read (corp.json flWhy.icr
   // "off"). Under the list when a warning fired; when nothing can be claimed, the line alone where the card would be
   // (no '없어요' head: the existing rule allows "확인한 …" only for flWhy.icr "ie"). Goes by itself when flWhy.icr changes.
@@ -452,6 +465,7 @@ function Fit({ load, s, store, wide }) {
   const indOk = !ind.few && ind.rows.length > 0 && all(F.market, F.ind);
   const cur = scope === "ind" && indOk ? ind : mk;
   const cm = byId(cur);
+  const co = load.coByT.get(s.t) || null;           // 공시 단위 확인 (unitChk): the line under rows left blank by it
   return (
     <Card data-ui-v2="co-fit">
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
@@ -462,6 +476,7 @@ function Fit({ load, s, store, wide }) {
       {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
       {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
+      {unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
       {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
@@ -474,6 +489,7 @@ function Fit({ load, s, store, wide }) {
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
           {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
+          {unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
           {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>

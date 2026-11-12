@@ -10,11 +10,13 @@
 //               보이는 칸이라 lang 을 넘기지 않아요 (한국어 줄 그대로). 영어 줄은 첫 화면 성적표와 포트폴리오(src/detail.jsx)에서.
 //   StmtCurLine 재무제표를 원화가 아닌 통화로 공시한 한국 회사(corp.json stmtCur, repair.js stmtCurOf): 기업분석 투자지표 칸에 한 번,
 //               첫 화면 성적표(한국어)에서는 '적자이거나 재무 데이터가 아직 없어요.' 자리에. 그런 회사에는 위의 두 줄이 없어요.
+//   UnitChkLine 공시 단위 확인에 걸린 한국 회사(corp.json unitChk, repair.js unitHeld — Jack 2026-11-13): 재무제표로 만든 숫자가 비어요.
+//               StmtCurLine 과 같은 자리에 한 번 (한국어만 · 영어 글은 승인되지 않아 영어 성적표에는 줄이 없어요). 위의 두 줄도 없어요.
 // 글자는 12px 이에요 (2.0 의 12px 바닥과 같게).
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
 import { mdOf, kstDate, loadCorpOnce } from "./data.js";
-import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, epsTotalSide, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur } from "./repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, epsTotalSide, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld } from "./repair.js";
 
 export { icrOff };
 export const FIX_EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.eps
@@ -26,6 +28,7 @@ export const FIX_STMT_CUR_EN = "This company files its statements in {currency},
 // 다시 읽은 뒤: 지배주주 줄이 없고 소수주주가 있는 회사(epsIn.b "t" · nci true)에만, PER · EPS 줄 자리에 (repair.js epsTotalNeeded). 영어 글은
 // 승인되지 않아 영어 화면에는 없어요. 다시 읽은 뒤에는 PER · EPS 줄이 어느 회사에도 없어요 (날짜가 지났어요).
 export const FIX_TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요.";   // Jack 승인 2026-11-08 (전달) — 2.0 fix.total
+export const FIX_UNIT = "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요.";   // Jack 승인 2026-11-13 — 2.0 co.unitChk (한국어만)
 // "11월 10일" · 영어 화면 "Nov 10" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
 export function fixEpsText(lang = "ko") {
   const en = lang === "en";
@@ -60,11 +63,12 @@ export function EpsFixLine({ corp, cos, show = true, force = false, many = false
 // 봐요. 받는 중이거나 받지 못하면 줄이 있어요 (고쳐졌다고 짐작하지 않아요). -> null (모름) | { live, fixed: Set(코드) }
 let CORP_FIX = null;
 // 받은 corp.json 으로 정하는 상태 (순수): live · fixed(epsIn.b "o" · "s") · notWon(재무제표를 원화가 아닌 통화로 공시한 회사, repair.js
-// stmtNotWon, 읽을 수 없는 코드도 — 숫자가 비어 있어요: 줄 없음)
+// stmtNotWon, 읽을 수 없는 코드도 — 숫자가 비어 있어요: 줄 없음 · 2026-11-13: 공시 단위 확인에 걸린 회사(unitHeld)도 같아요)
 export function corpFixState(d) {
   const live = epsBasisLive(d);
   const cos = d && Array.isArray(d.companies) ? d.companies : [];
-  return { live, fixed: new Set(live ? cos.filter((c) => epsInFixed(c) || epsTotalSide(c)).map((c) => c.t) : []), notWon: new Set(cos.filter(stmtNotWon).map((c) => c.t)),
+  return { live, fixed: new Set(live ? cos.filter((c) => epsInFixed(c) || epsTotalSide(c)).map((c) => c.t) : []),
+    notWon: new Set(cos.filter((c) => stmtNotWon(c) || unitHeld(c)).map((c) => c.t)),
     total: new Set(live ? cos.filter((c) => epsTotalNci(c) && !stmtNotWon(c)).map((c) => c.t) : []) };
 }
 // 그 칸에 줄이 필요한지: 상태를 모르면(받는 중 · 못 받음) 있어요. 아니면 그 칸의 코드 중 하나라도 고쳐지지 않았고 원화 재무제표인 회사가 있을 때.
@@ -111,6 +115,10 @@ export function stmtCurLineText(c, lang = "ko") {
   warnStmtCur(c, "뱁새");
   const cur = stmtCurOf(c);
   return cur ? (lang === "en" ? FIX_STMT_CUR_EN : FIX_STMT_CUR).replace("{currency}", cur) : null;
+}
+// 공시 단위 확인 (Jack, 2026-11-13): c 는 corp.json 의 그 회사 줄. 기업분석은 한국어 화면이라 lang 이 없어요.
+export function UnitChkLine({ c, style }) {
+  return unitHeld(c) ? <div data-fix="unit-chk" style={{ ...LINE, ...style }}>{FIX_UNIT}</div> : null;
 }
 export function StmtCurLine({ c, style }) {
   const text = stmtCurLineText(c);
