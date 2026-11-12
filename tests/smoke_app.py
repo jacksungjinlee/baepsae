@@ -40,6 +40,9 @@
   못 읽는 저장본 (v18.6.2) JSON 이 깨졌거나 · 내용이 없거나 · 종목 목록이 없거나 · 읽다가 · 옮기다 오류가 난 저장본은 열지 않아요:
               첫 화면 그대로(언어 · 세금도), 저장된 글은 그대로(자동 저장으로 덮지 않음), console 에 저장본 id 와 진짜 이유 ·
               종목만 있는 저장본은 앞 포트폴리오의 것 없이 기본값으로 열림 · 멀쩡한 저장본은 그대로 열림
+  다시읽음    (2026-11-08) 원화가 아닌 재무제표(stmtCur) 회사: 기업분석에 통화 줄 한 번 · 금액 칸은 비움 · 9… 외국 기업도 같음
+  날짜        (2026-11-12) 예전 뱁새가 적는 오늘 날짜는 한국 날짜: 저장 목록 · 점검 기록 · 공유 카드(줄 · PNG 이름) · 내보내기(JSON · CSV
+              파일 이름 · JSON date · 주문 메모 첫 줄). 고정 데이터의 시계는 한국 07:00 (UTC 로는 전날)이라 UTC 날짜면 실패해요
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
@@ -2993,7 +2996,7 @@ def scene_kst_dates(R, files):
     S = "한국 날짜"
 
     def kst_days():
-        """지금의 한국 날짜 (자정을 넘는 순간을 위해 앞뒤 두 번 읽어 둘 다 받아요)."""
+        """지금의 한국 날짜 하나. 부르는 쪽이 앱이 날짜를 정하기 전과 확인할 때 두 번 읽어 둘 다 받아요 (자정을 넘는 순간)."""
         return {now_dt().date().isoformat()}
 
     def stage(label):
@@ -3020,8 +3023,8 @@ def scene_kst_dates(R, files):
     R.check(page, S, "저장 목록(자동 저장)의 날짜 = 한국 날짜", saved_list)
 
     def checkin():
+        want = kst_days()                                       # 점검 카드는 그려질 때 날짜를 정해요: 그 전에 읽어요
         stage("③ 진단")
-        want = kst_days()
         page.get_by_role("button", name="지금 상태 기록").first.click()
         st = poll(page, "localStorage.getItem('baepsae_v10_slot_skst')",
                   lambda v: bool(v) and len(json.loads(v).get("checkins") or []) == 1, "점검 기록이 저장되지 않았어요")
@@ -3031,14 +3034,17 @@ def scene_kst_dates(R, files):
     R.check(page, S, "③ '지금 상태 기록' 의 날짜 = 한국 날짜", checkin)
 
     def export():
+        want = kst_days()                                       # 내보내기 화면은 그려질 때 날짜를 정해요: 그 전에 읽어요
         stage("④ 내보내기")
         see(page, "예상 세금")
-        want = kst_days()
         with page.expect_download() as dl:
             page.get_by_role("button", name="JSON 저장 (백업·공유)").click()
         with open(dl.value.path(), encoding="utf-8") as fh:
             j = json.load(fh)
         name = dl.value.suggested_filename
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="CSV 저장 (주문표)").click()
+        csv_name = dl.value.suggested_filename
         page.evaluate("""() => { window.__memo = null; const w = (x) => { window.__memo = x; return Promise.resolve(); };
             try { navigator.clipboard.writeText = w; } catch (e) {}
             if (!navigator.clipboard || navigator.clipboard.writeText !== w) Object.defineProperty(navigator, 'clipboard', { value: { writeText: w }, configurable: true }); }""")
@@ -3048,15 +3054,20 @@ def scene_kst_dates(R, files):
             P.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
         page.get_by_role("button", name="포트폴리오 카드 만들기 (이미지 공유)").click()
         drawn = poll(page, "window.__drawn", lambda d: d and any("뱁새에서 만듦" in x for x in d), "공유 카드를 그리지 않았어요")
+        with page.expect_download() as dl:
+            page.get_by_role("button", name="이미지 저장", exact=True).click()
+        png_name = dl.value.suggested_filename
         page.get_by_role("button", name="닫기", exact=True).first.click()
         want |= kst_days()
         assert j.get("date") in want, f"JSON 의 date {j.get('date')} ≠ 한국 날짜 {sorted(want)}"
         assert any(name == f"baepsae-portfolio-{d}.json" for d in want), f"JSON 파일 이름 {name} 의 날짜가 한국 날짜가 아니에요"
+        assert any(csv_name == f"baepsae-orders-{d}.csv" for d in want), f"CSV 파일 이름 {csv_name} 의 날짜가 한국 날짜가 아니에요"
+        assert any(png_name == f"baepsae-portfolio-{d}.png" for d in want), f"공유 카드 이미지 이름 {png_name} 의 날짜가 한국 날짜가 아니에요"
         first = memo.splitlines()[0]
         assert any(first.endswith(" " + d) and "주문 메모" in first for d in want), f"주문 메모 첫 줄 {first!r}"
         card = next(x for x in drawn if "뱁새에서 만듦" in x)
         assert any(card == f"{d} · 뱁새에서 만듦" for d in want), f"공유 카드 날짜 줄 {card!r}"
-    R.check(page, S, "④ 내보내기: JSON 파일 이름 · JSON date · 주문 메모 첫 줄 · 공유 카드 날짜 줄 = 한국 날짜", export)
+    R.check(page, S, "④ 내보내기: JSON · CSV · 공유 카드 이미지 파일 이름 · JSON date · 주문 메모 첫 줄 · 공유 카드 날짜 줄 = 한국 날짜", export)
     ctx.close(); srv.shutdown()
 
 

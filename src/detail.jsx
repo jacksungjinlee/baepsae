@@ -20,13 +20,13 @@ import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLineLoaded } from "./fixnote.jsx";
 
-// 공유 카드: 오늘 데이터에 있는 종목만. 빠진 종목이 있으면 카드에도 같은 안내 줄을 넣어요 (note, v18.5).
-// cashMw 는 metrics.cash (빠진 종목의 돈은 들어 있지 않아요).
-// 오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록에서 빼요 — 담기 화면과 같아요 (v18.4.1).
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
 // 공유 카드 · 점검 기록 · 주문 메모와 내보낸 파일 · 저장 목록에 어제 날짜가 찍혔어요. CLAUDE.md: 날짜는 모두 한국 시간.
 const todayKst = () => kstDate(Date.now());
 
+// 공유 카드: 오늘 데이터에 있는 종목만. 빠진 종목이 있으면 카드에도 같은 안내 줄을 넣어요 (note, v18.5).
+// cashMw 는 metrics.cash (빠진 종목의 돈은 들어 있지 않아요).
+// 오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록에서 빼요 — 담기 화면과 같아요 (v18.4.1).
 const listedHoldings = (holdings, stocksById) => holdings.filter((h) => h && !!stocksById[h.t]);
 // 그래도 「JSON 저장」 백업에서는 빼지 않아요 (저장본에서 지우지 않는다는 규칙, Jack): 저장본이 아는 것만 쓰고, 가격 · 베타 · 비중은
 // 지어내지 않고 null, notInData: true. 위험 수치(metrics)에는 들어가지 않아요. 불러오면 목록에 없는 종목으로 이름과 함께 남아요.
