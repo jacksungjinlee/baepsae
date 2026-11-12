@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 05:20 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 07:10 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -64,19 +64,24 @@ just stops blocking screen work.
     has a time limit that fails the test.
   - Split the daily run into a read-only job and a publishing job, after the currency fix, the Korean unit fix and
     the token fix.
-- **Queue now (2026-11-13 05:20 KST; every merging PR updates this):**
-  - Track A: #107 and #111 (gate rows), and #115 (the deploy check), merge once green, after this morning's first real
-    publish (the 06:40 KST outside-timer run). #114 (currency fix) goes live after that publish and before #113 (Jack,
-    11-12: "after tomorrow's first real publish, and before the token fix"); then #113 (token fix) with its own publish,
-    watched to the end and reverted at once if the push fails (Jack, 11-12). #118 (Korean unit guard; reviews done,
-    branch dry run next), then #116 (its repair, builds on #118; reviews done). #117 (fxHist and US splits; reviews
-    done; its default FX source `ecos_close` waits for Jack, and its new FAIL rows need his yes) must be live before
-    v19.6a merges. Then the follow-up that brings back PER, PBR and yield for the 27 filers; the item 4 report, then the
-    dates-and-time-zones audit (Jack, 11-12); the job split after #114, the Korean unit fix (#118 and #116) and #113.
-  - Track B: #120 v19.5b (after #107; Jack, 11-12: "Do it before v19.5b"; it does not wait for #114, above) → #119
-    v19.6a (after #117 is live and after v19.5b; follow-up fixes in progress) → v19.7a (branch `claude/v19.7a-edit`;
-    round-1 review done, fixes in progress; no PR yet) → v19.6f → v19.7b; v19.6d dark (branch `claude/v19.6d-dark`;
-    built, review running, no PR yet) as soon as v19.5b is in.
+- **Queue now (2026-11-13 07:10 KST; every merging PR updates this):**
+  - Done: the first real publish with #106's screen check (11-13 06:40 KST run 43312517381, 11-12 data) published
+    cleanly: gate PASS with 6 known warnings, the three screen checks green, Deploy and Watchdog green, live site
+    checked (both apps, 11월 12일).
+  - Track A: #107 and #111 (gate rows) merge now, one after the other. #115 (the deploy check) waits for Jack's answer
+    on its same-code rule. #114 (currency fix): final branch dry run after 08:30 KST, then merge and its own publish
+    (a `dart=cache` run), before #113 (Jack, 11-12: "after tomorrow's first real publish, and before the token fix");
+    then #113 (token fix) with its own publish, watched to the end and reverted at once if the push fails (Jack, 11-12).
+    #118 (Korean unit guard; reviews done; branch dry run next), then #116 (its repair, builds on #118; reviews done).
+    #117 (fxHist and US splits; reviews done; branch dry run next; its default FX source `ecos_close` waits for Jack,
+    and its new FAIL rows need his yes) must be live before v19.6a merges. Then the follow-up that brings back PER, PBR
+    and yield for the 27 filers; the item 4 report, then the dates-and-time-zones audit (Jack, 11-12); the job split
+    after #114, the Korean unit fix (#118 and #116) and #113.
+  - Track B: #120 v19.5b merges right after #107 (Jack, 11-12: "Do it before v19.5b"; it does not wait for #114,
+    above) → #119 v19.6a (after #117 is live and after v19.5b; round-2 fixes in progress; reviews done) → v19.7a
+    (branch `claude/v19.7a-edit`; reviews done, round-2 fixes in progress; its plan-total question waits for Jack; no PR
+    yet) → v19.6f → v19.7b; #121 v19.6d dark (reviews done; stacked on #120, retargeted to `main` after it) as
+    soon as v19.5b is in.
   - Practice (Claude's, not a `CLAUDE.md` rule): a PR that finishes or starts a part of a spec also updates that
     spec's Status line in the same PR.
 - Open (asked Jack 11-13): whether the 11-07 notes below (at most two open app PRs; at most two question messages a
