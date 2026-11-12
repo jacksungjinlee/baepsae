@@ -4560,10 +4560,11 @@ def unit_anchor_eps(fin, q, ki, shares):
 
 def unit_anchor_cap(s, q, kb, shares):
     """자본금 ÷ 액면가 기준값: 재무상태표를 kb 로 나눈 그 보고서의 자본금 ÷ 액면가(배당 표 · 원) = 발행 주식 수의 상한이 오늘 주식 수의
-    1/UNIT_FIX_BAND ~ UNIT_FIX_BAND 배 안이면 "ok", 밖이면 "fail", 볼 수 없으면 "none" (주식 수 · 액면가(무액면 · 0 · '-') · 자본금 없음). (순수 함수)"""
-    par = _fin((((s.get("_bas") or {}).get("par3")) or [None])[0])
+    1/UNIT_FIX_BAND ~ UNIT_FIX_BAND 배 안이면 "ok", 밖이면 "fail", 볼 수 없으면 "none" (주식 수 · 자본금 없음 · 액면가는 안전망과 같은 par_value:
+    무액면 · 0 · '-' · 100원 미만(손으로 적다 틀린 '5.000' 같은 값 — #118 3차 S-B)이면 볼 수 없음). (순수 함수)"""
+    par = par_value(s)
     cs = _fin(q.get("cs"))
-    if not shares or not par or par <= 0 or not cs or cs <= 0:
+    if not shares or not par or not cs or cs <= 0:
         return "none"
     return "ok" if _in_band(_ratio(cs / kb * 1e8 / par, shares)) else "fail"
 

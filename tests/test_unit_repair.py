@@ -351,6 +351,11 @@ def test_the_anchors_need_shares_won_and_a_real_eps():
     s["t"] = "900100"                                                                       # 해외 기업도
     assert F.unit_fix_plan(fin, q, pv, s)[0] == "left"
     assert F.unit_anchor_eps(fin, q, 1000.0, None) == "none" and F.unit_anchor_cap({"_bas": {"par3": [0.0] * 3}}, q, 1000.0, 2e6) == "none"
+    # #118 3차 S-B 와 같게: 100원 미만으로 적힌 액면가('5.000' → 5원)는 기준값이 아니에요 — 어긋남으로 세어 맞는 회사를 비우지 않아요
+    assert F.unit_anchor_cap({"_bas": {"par3": [5.0] * 3}}, q, 1000.0, 2e6) == "none"
+    assert plan(1000, 1000, 1000, par=5.0) == ("fix", 1000.0, 1000.0, 1000.0)                # 기본주당이익으로 고쳐요
+    assert plan(1000, 1000, 1000, par=5.0, eps=None)[0] == "left"                          # 기준값이 없어요
+    assert plan(1000, 1000, 1000, par=100.0 * 50)[0] == "left"                              # 100원 이상이면 견줘요 (50배 어긋남 → 고치지 않음)
 
 
 def test_the_eps_anchor_uses_owners_profit_and_the_preferred_shares():
