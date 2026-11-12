@@ -5292,7 +5292,27 @@ US_INFO_FRESH_DAYS = 3
 US_INFO_MAX_AGE_DAYS = 14
 US_INFO_KEYS = ("shortName", "longName", "quoteType", "sector", "industry", "longBusinessSummary", "trailingPE", "priceToBook",
                 "returnOnEquity", "operatingMargins", "revenueGrowth", "debtToEquity", "dividendYield",
-                "marketCap", "averageVolume")
+                "marketCap", "averageVolume", "financialCurrency", "currency")
+# 보관본 항목의 모양 (Jack, 2026-11-12: 재무제표 통화). 2 = financialCurrency · currency 를 담기 시작한 모양. 이 표시("k")가 없는 예전 항목은
+# 받은 지 3일이 안 됐어도 다음 실행에서 한 번 다시 받아요 (그 실행은 미국 종목 약 770곳을 모두 다시 받아요 — 보관본이 빈 날과 같은 호출 수).
+# 다시 받지 못하면 14일 안의 예전 항목을 그대로 쓰고, 그 종목은 '재무제표 통화를 모르는 회사'로 크게 남아요 (비우지 않아요).
+# 파일 이름(us-info-v1)은 그대로예요: 이름을 바꾸면 다시 받지 못한 날 이름·업종·설명까지 모두 잃어요.
+US_INFO_SCHEMA = 2
+
+# Jack, 2026-11-12: 미국에 상장된 외국 회사 중 재무제표를 달러가 아닌 통화로 내는 곳 (야후 financialCurrency: 대만 TWD · 카자흐스탄 KZT ·
+# 스웨덴 SEK …). 야후의 priceToBook · trailingPE 는 달러 주가를 그 통화의 금액으로 나눈 값일 수 있어요 (2026-11-12 발행: Kaspi.kz PBR
+# 0.01 (실제 약 3.5) · 에릭슨 0.35 (약 3.1) · TSMC 78.88 (약 11)). 환산을 짐작하지 않고 비워요 (None — 0 이 아니에요): 달러 주가(또는
+# 달러 시가총액)를 재무제표 통화 금액으로 나누는 값 PER · PBR · 배당수익률. 배당수익률은 Jack 이 이름으로 정했어요: 야후 수익률이 달러
+# 배당으로 맞는 회사도, 0% 도 비워요. 가치 점수(vz)는 PBR 이 비면 add_percentiles 가 매기지 않고, 다른 미국 종목의 가치 순위는 이
+# 회사들 없이 매겨요. 남기는 값 (칸마다 확인, 2026-11-12 미국 773종목):
+#   · 같은 통화끼리 나눈 비율 — ROE(returnOnEquity) · 영업이익률(operatingMargins) · 매출 증가율(revenueGrowth) · 차입금 비율(debtToEquity)
+#   · 가격만으로 만든 값 — 베타 · 변동성 · 알파 · 샤프 · 낙폭 · 12개월 수익률 · 52주 범위 · d1 (그리고 그 점수 mz · lz)
+#   · 시가총액(marketCap)과 그 점수 pz · 거래대금 — 야후 marketCap 은 달러 주가 × 주식 수예요 (27곳 모두 marketCap = 주가 ×
+#     impliedSharesOutstanding, 차이 0.1% 안). averageVolume 은 주식 수라 × 달러 주가.
+# data.json fcur = 그 통화의 ISO 코드 (앱이 '주가는 달러, 재무제표는 {통화} 기준이라 이 숫자는 계산하지 않았어요.' 줄을 붙이고, 관문이
+# 그 칸들이 비었는지 봐요). 야후가 financialCurrency 를 주지 않으면 비우지 않고 그 종목과 수를 크게 남겨요 (fetch_us).
+US_FCUR_BLANK = ("per", "pbr", "dy")
+US_QUOTE_CUR = "USD"     # 미국 종목의 가격 통화 (fetch_us 의 ccy)
 
 
 def load_us_info(path=None):
@@ -5558,11 +5578,26 @@ def cut_words(text, n):
     return (cut[:sp] if sp > n * 0.6 else t[:n]).rstrip(" ,;:-")
 
 
+def us_fin_currency(info):
+    """야후 financialCurrency → ISO 세 글자 대문자 (norm_currency: 'twd' → 'TWD', 읽을 수 없는 글자 → 'XXX' — 달러로 믿지 않아요).
+    없거나 글자가 아니면(NaN 포함) None = 모름. (순수 함수)"""
+    x = (info or {}).get("financialCurrency")
+    if not isinstance(x, str) or not x.strip():
+        return None
+    return norm_currency(x)
+
+
 def apply_us_info(rec, info, px_then, fx):
-    """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)"""
+    """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)
+    재무제표 통화가 달러가 아니면(us_fin_currency) rec["fcur"] 에 그 코드를 쓰고 PER · PBR · 배당수익률(US_FCUR_BLANK)을 비워요."""
     nm = info.get("shortName") or info.get("longName")
     if not nm:
         return False
+    fc = us_fin_currency(info)
+    for k in ("fcur",) + US_FCUR_BLANK:          # 같은 rec 에 두 번 붙여도 예전 값이 남지 않게
+        rec.pop(k, None)
+    if fc and fc != US_QUOTE_CUR:
+        rec["fcur"] = fc
     rec["nk"] = rec["ne"] = str(nm)
     rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
     if info.get("industry"):
@@ -5574,6 +5609,8 @@ def apply_us_info(rec, info, px_then, fx):
             ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
             ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
     for key, src, lo, hi, scale in spec:
+        if key in US_FCUR_BLANK and rec.get("fcur"):
+            continue                                # 재무제표 통화가 달러가 아님: 달러 주가 ÷ 그 통화 금액일 수 있어 비워요
         v = _fin(info.get(src))
         if v is None:
             continue
@@ -5585,7 +5622,7 @@ def apply_us_info(rec, info, px_then, fx):
     # yfinance 1.x 의 dividendYield 는 이미 % 예요 (0.41 = 0.41%). 예전처럼 1 미만에 100을 곱하면
     # 애플 0.31% 가 31% 가 돼요 (2026-10 발행본에서 확인). 30% 넘는 값은 믿지 않아요.
     dyv = _fin(info.get("dividendYield"))
-    if dyv is not None and 0 <= dyv / k < 30:
+    if dyv is not None and 0 <= dyv / k < 30 and not rec.get("fcur"):
         rec["dy"] = round(dyv / k, 2)
     mc = _fin(info.get("marketCap"))
     cap, val = us_cap_val(mc * k if mc else None, info.get("averageVolume"), rec.get("price"), fx)
@@ -5597,6 +5634,57 @@ def apply_us_info(rec, info, px_then, fx):
     if summ:
         rec["de"] = cut_words(str(summ), 400)
     return True
+
+
+def us_info_due(entry, today):
+    """이 보관본 항목을 오늘 다시 받아야 하는지: 없음 · 받은 지 US_INFO_FRESH_DAYS 일 이상 · 예전 모양(k 가 US_INFO_SCHEMA 가 아님 —
+    financialCurrency 를 담기 전). (순수 함수)"""
+    if not entry:
+        return True
+    try:
+        a = (today - dt.date.fromisoformat(entry["at"])).days
+    except Exception:
+        return True
+    return a >= US_INFO_FRESH_DAYS or entry.get("k") != US_INFO_SCHEMA
+
+
+def us_fcur_summary(us, infos, no_info=frozenset()):
+    """미국 회사 주식(ETF·펀드 빼고) 중 재무제표 통화가 달러가 아닌 곳(fcur)과 통화를 모르는 곳. (순수 함수)
+    us: 발행할 미국 목록 (apply_us_info 를 지난 rec) · infos: 티커 → 야후 info · no_info: 상세 정보를 붙이지 못한 티커 (셀 것이 없어요).
+    반환 {"hit": [(티커, 통화)], "byCur": {통화: 곳}, "cut": {칸: 야후 값이 있던 곳}, "unknown": [티커]}.
+    cut 은 야후가 그 칸의 값을 준 곳 수예요 (비우지 않았다면 실렸을 값: 범위 밖 값도 세요)."""
+    src = {"per": "trailingPE", "pbr": "priceToBook", "dy": "dividendYield"}
+    hit, unknown, cut = [], [], {k: 0 for k in US_FCUR_BLANK}
+    for r in us:
+        if r.get("etf") is True or r.get("fund") or r.get("t") in no_info:
+            continue
+        info = infos.get(r["t"]) or {}
+        if r.get("fcur"):
+            hit.append((r["t"], r["fcur"]))
+            for k in US_FCUR_BLANK:
+                cut[k] += _fin(info.get(src[k])) is not None
+        elif us_fin_currency(info) is None:
+            unknown.append(r["t"])
+    by = collections.Counter(c for _, c in hit)
+    return {"hit": sorted(hit), "byCur": dict(sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))), "cut": cut, "unknown": sorted(unknown)}
+
+
+def log_us_fcur(sm):
+    """us_fcur_summary 결과를 크게 남겨요 (CLAUDE.md: 비운 값은 수와 함께)."""
+    names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
+    if sm["hit"]:
+        log(f"· 미국 재무제표 통화가 달러가 아닌 회사: {len(sm['hit'])}곳 (통화별 " + " · ".join(f"{c} {n}" for c, n in sm["byCur"].items())
+            + ") — " + "·".join(names[k] for k in US_FCUR_BLANK) + " 비움 (야후 값이 있던 곳: "
+            + " · ".join(f"{names[k]} {sm['cut'][k]}" for k in US_FCUR_BLANK) + " · 가치 점수 vz 도 없음): "
+            + ", ".join(f"{t}({c})" for t, c in sm["hit"]))
+    else:
+        log("· 미국 재무제표 통화가 달러가 아닌 회사: 없음")
+    u = sm["unknown"]
+    if u:
+        log(f"  !! 미국 재무제표 통화를 모르는 회사 {len(u)}곳 (야후가 financialCurrency 를 주지 않았거나 예전 보관본) — 비우지 않았어요: "
+            + ", ".join(u[:40]) + (f" 외 {len(u) - 40}곳" if len(u) > 40 else ""))
+    else:
+        log("· 미국 재무제표 통화를 모르는 회사: 없음")
 
 
 def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
@@ -5672,11 +5760,15 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
             return False
         if not (info.get("shortName") or info.get("longName")):
             return False
-        cache[rec["t"]] = {"at": tday, "px": rec.get("price"),
+        cache[rec["t"]] = {"at": tday, "px": rec.get("price"), "k": US_INFO_SCHEMA,
                            "info": {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}}
         return True
 
-    need = [r for r in out if age(r["t"]) is None or age(r["t"]) >= US_INFO_FRESH_DAYS]
+    need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
+    old_shape = sum(1 for r in out if cache.get(r["t"]) and cache[r["t"]].get("k") != US_INFO_SCHEMA)
+    if old_shape:
+        log(f"  !! 미국 상세 정보 보관본 중 재무제표 통화(financialCurrency)를 담기 전 모양 {old_shape:,}곳 → 받은 지 3일이 안 됐어도 오늘 "
+            f"다시 받아요 (한 번만 · 오늘 받을 곳 모두 {len(need):,}곳)")
     failed = need
     for pause, workers in ((0, 10), (20, 3), (60, 1)):   # 야후가 잠깐 막을 때가 많아서, 쉬었다가 더 천천히 다시
         if not failed:
@@ -5710,6 +5802,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     infos = {r["t"]: {**((cache.get(r["t"]) or {}).get("info") or {}), "listName": list_names.get(r["t"])} for r in out}
     out, left_out = clean_us_list(out, kr_codes, dups or {}, infos)   # ETF 표시가 끝난 뒤에 (ETF·펀드는 우선주로 보지 않아요)
     no_info = set(missing)
+    log_us_fcur(us_fcur_summary(out, infos, no_info))                 # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 회사 (빈 칸은 apply_us_info)
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")

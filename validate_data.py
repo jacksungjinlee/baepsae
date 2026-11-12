@@ -137,6 +137,10 @@ FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json �
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
 FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp.json 3개년 금액
+# Jack, 2026-11-12 (새 줄, 더하기만): 미국 상장 회사 중 재무제표 통화가 달러가 아닌 곳 (data.json fcur = 야후 financialCurrency 의 ISO 코드,
+# fetch_data.py US_FCUR_BLANK). 달러 주가 ÷ 그 통화 금액일 수 있는 PER · PBR · 배당수익률과 PBR 로 매긴 가치 점수가 빈 칸이어야 해요
+# (0 도 남은 칸으로 봐요). fcur 가 있는 회사끼리의 일관성만 봐요 — 야후가 financialCurrency 를 주지 않아 fcur 가 없으면 이 줄은 실패하지 않아요.
+US_FCUR_BLANK = ("per", "pbr", "dy", "vz")
 # v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
 # data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
@@ -830,6 +834,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
+    check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
     check_foreign(rep, kr, comps)
     if rel:
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
@@ -1126,6 +1131,26 @@ def check_v1752(rep, data, kr, us, pdata):
         for k in DIV_COVER_KEYS:
             v, pv = coverage(kr, k), coverage(pkr, k)
             rep.add(f"국내 {k} 채움 변화", v >= pv - DIV_COVER_DROP, f"{pv:.1f} → {v:.1f}", f"{DIV_COVER_DROP:g}점 넘게 줄면 실패")
+
+
+def check_us_fcur(rep, us):
+    """Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사(fcur)는 PER · PBR · 배당수익률 · 가치 점수가 비어 있어야 해요. fcur 는 세 글자
+    대문자이고 USD 가 아니어야 해요 (XXX = 파이프라인이 읽지 못한 통화 · 그래도 비워요). 값: fcur 회사 수 (통화별) · 남은 칸."""
+    bad, by = [], collections.Counter()
+    for s in us:
+        if "fcur" not in s:
+            continue
+        t, fc = s.get("t"), s.get("fcur")
+        if not (isinstance(fc, str) and re.fullmatch(r"[A-Z]{3}", fc) and fc != "USD"):
+            bad.append(f"{t}.fcur {fc!r}")
+            continue
+        by[fc] += 1
+        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None]
+    n = sum(by.values())
+    rep.add("미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸", not bad,
+            f"{n}곳" + (f" ({' · '.join(f'{c} {k}' for c, k in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))})" if by else "")
+            + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else ""),
+            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨) · fcur 는 USD 가 아닌 세 글자")
 
 
 def is_foreign(code):
