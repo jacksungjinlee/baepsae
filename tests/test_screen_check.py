@@ -190,7 +190,7 @@ def publish_env(tmp_path, receipts):
     for name in receipts:
         subprocess.run(f"sha256sum data.json corp.json disc.json macro.json > {name}", shell=True, cwd=tmp_path, check=True)
     return {"PATH": f"{bin_}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "GITHUB_REF": "refs/heads/main",
-            "GITHUB_REF_NAME": "main", "TZ": "Asia/Seoul", "GITHUB_TOKEN": "test-token-not-real"}
+            "GITHUB_REF_NAME": "main", "TZ": "Asia/Seoul", "GITHUB_TOKEN": "test-token-not-real", "GITHUB_ACTIONS": "true"}
 
 
 @pytest.mark.parametrize("name", ["커밋 & 푸시", "data 브랜치에 올리기"])

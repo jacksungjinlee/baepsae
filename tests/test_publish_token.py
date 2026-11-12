@@ -82,7 +82,7 @@ def test_only_the_two_publishing_steps_hand_the_token_to_git():
     assert "GITHUB_TOKEN" not in text and "github.token" not in text and "git push" not in text
 
 
-def fake_git(tmp_path, ls_remote_ok=True, fail_first=0):
+def fake_git(tmp_path, ls_remote_ok=True, fail_first=0, config_ok=True):
     """가짜 git: 부른 것을 did.txt 에 적어요. ls-remote 는 처음 fail_first 번 실패해요 (ls_remote_ok=False 면 늘 실패).
     가짜 sleep 도 둬요 (기다린 초를 slept.txt 에 적고 바로 끝나요)."""
     bin_ = tmp_path / "bin"
@@ -90,9 +90,13 @@ def fake_git(tmp_path, ls_remote_ok=True, fail_first=0):
     g = bin_ / "git"
     g.write_text("#!/bin/bash\n"
                  f'echo "git $*" >> "{tmp_path}/did.txt"\n'
+                 f'echo "$GIT_TERMINAL_PROMPT" >> "{tmp_path}/prompt.txt"\n'
+                 f'if [ "$1" = "config" ] && [ {1 if config_ok else 0} = 0 ]; then echo "error: could not lock config file" >&2; exit 255; fi\n'
                  'if [ "$1" = "ls-remote" ]; then\n'
                  f'  n=$(cat "{tmp_path}/lsr.txt" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "{tmp_path}/lsr.txt"\n'
-                 f'  if [ {0 if ls_remote_ok else 1} = 1 ] || [ $n -le {fail_first} ]; then exit 2; fi\n'
+                 f'  if [ {0 if ls_remote_ok else 1} = 1 ] || [ $n -le {fail_first} ]; then\n'
+                 "    echo \"fatal: could not read Username for 'https://github.com': terminal prompts disabled\" >&2; exit 128\n"
+                 "  fi\n"
                  "  exit 0\n"
                  "fi\n"
                  "exit 0\n")
@@ -100,10 +104,10 @@ def fake_git(tmp_path, ls_remote_ok=True, fail_first=0):
     sl = bin_ / "sleep"
     sl.write_text(f'#!/bin/bash\necho "$1" >> "{tmp_path}/slept.txt"\n')
     sl.chmod(sl.stat().st_mode | stat.S_IEXEC)
-    for f in ("did.txt", "lsr.txt", "slept.txt"):
+    for f in ("did.txt", "lsr.txt", "slept.txt", "prompt.txt"):
         if (tmp_path / f).exists():
             (tmp_path / f).unlink()
-    return {"PATH": f"{bin_}:{os.environ['PATH']}"}
+    return {"PATH": f"{bin_}:{os.environ['PATH']}", "GITHUB_ACTIONS": "true"}
 
 
 def run_script(tmp_path, env):
@@ -136,7 +140,9 @@ def test_token_script_stops_without_a_token_or_when_github_refuses_it(tmp_path):
         assert r.returncode != 0 and did == "" and TOKEN not in r.stdout + r.stderr, repr(blank)
     r, did = run_script(tmp_path, {**fake_git(tmp_path, ls_remote_ok=False), "GITHUB_TOKEN": TOKEN})   # GitHub 이 거절 (세 번)
     assert r.returncode != 0 and "세 번 다 읽지 못했어요 → 푸시하지 않아요" in r.stdout and TOKEN not in r.stdout + r.stderr
-    assert "Authentication failed" in r.stdout                                # 토큰 문제와 네트워크를 가리는 법을 알려 줘요
+    # 토큰 문제와 네트워크를 가리는 법: git 이 실제로 찍는 줄 이름으로 (401 이면 'could not read Username …')
+    assert "could not read Username" in r.stdout and "Could not resolve host" in r.stdout
+    assert "could not read Username for 'https://github.com': terminal prompts disabled" in r.stderr   # git 의 오류 줄은 그대로 보여요
     want = base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
     assert [ln for ln in (r.stdout + r.stderr).splitlines() if want in ln] == [f"::add-mask::{want}"]
     assert did.count("git ls-remote") == 3 and (tmp_path / "slept.txt").read_text().split() == ["5", "10"]
@@ -161,7 +167,7 @@ def test_token_check_retries_a_network_blip(tmp_path, fails, ok):
 
 
 @pytest.mark.parametrize("name", PUBLISH)
-def test_publishing_step_sets_the_token_only_after_both_receipts(tmp_path, name):
+def test_publishing_step_sets_the_token_only_after_the_receipt_checks(tmp_path, name):
     """영수증이 없으면 토큰을 git 에 알리지도 않아요. 있으면 토큰 설정이 git 의 첫 일이에요."""
     import shutil
     import sys
@@ -181,3 +187,49 @@ def test_publishing_step_sets_the_token_only_after_both_receipts(tmp_path, name)
     env.pop("GITHUB_TOKEN")                                                  # 토큰이 환경에 없으면 아무것도 쓰지 않고 멈춰요
     r = subprocess.run(["bash", "-e", "-c", run], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert r.returncode != 0 and not (tmp_path / "did.txt").exists()
+
+
+def test_token_script_runs_only_on_a_github_actions_runner(tmp_path):
+    """실행기 밖에서는 '::add-mask::' 가 값을 가리지 못하고 그냥 찍어요 — 그래서 아예 돌지 않아요 (git 도 건드리지 않아요)."""
+    env = {**fake_git(tmp_path), "GITHUB_TOKEN": TOKEN}
+    for actions in (None, "", "false", "1"):
+        e = dict(env)
+        if actions is None:
+            e.pop("GITHUB_ACTIONS")
+        else:
+            e["GITHUB_ACTIONS"] = actions
+        r, did = run_script(tmp_path, e)
+        want = base64.b64encode(f"x-access-token:{TOKEN}".encode()).decode()
+        assert r.returncode != 0 and did == "" and "GitHub Actions 밖에서는" in r.stdout, repr(actions)
+        assert want not in r.stdout + r.stderr and TOKEN not in r.stdout + r.stderr
+
+
+def test_a_long_token_gives_one_mask_line_and_one_header(tmp_path):
+    """base64 는 76자에서 줄을 바꿔요 — 줄바꿈을 지우지 않으면 앞부분만 가려지고 헤더가 깨져요."""
+    long_token = "ghs_" + "A1b2C3d4" * 40                                   # 324자
+    r, did = run_script(tmp_path, {**fake_git(tmp_path), "GITHUB_TOKEN": long_token})
+    want = base64.b64encode(f"x-access-token:{long_token}".encode()).decode()
+    assert r.returncode == 0, r.stdout
+    assert [ln for ln in r.stdout.splitlines() if ln.startswith("::add-mask::")] == [f"::add-mask::{want}"]
+    cfg = [ln for ln in did.splitlines() if ln.startswith("git config")]
+    assert cfg == [f"git config --local http.https://github.com/.extraheader AUTHORIZATION: basic {want}"]
+
+
+def test_token_script_stops_when_git_config_fails_and_never_prompts(tmp_path):
+    """설정을 못 쓰면 읽기 확인도 하지 않고 멈춰요 (set -e). git 은 언제나 사용자 이름을 묻지 않게 (GIT_TERMINAL_PROMPT=0)."""
+    r, did = run_script(tmp_path, {**fake_git(tmp_path, config_ok=False), "GITHUB_TOKEN": TOKEN})
+    assert r.returncode != 0 and "ls-remote" not in did and "토큰 확인됨" not in r.stdout
+    r, did = run_script(tmp_path, {**fake_git(tmp_path, fail_first=1), "GITHUB_TOKEN": TOKEN})
+    assert r.returncode == 0
+    assert set((tmp_path / "prompt.txt").read_text().split()) == {"0"}
+
+
+def test_check_job_is_read_only_and_no_publishing_step_force_pushes():
+    """읽기만 하는 check job 은 쓰기 권한이 없어요. 발행 단계는 강제 푸시를 하지 않아요 (push_data_branch.sh 도)."""
+    assert jobs()["check"].get("permissions") == {"contents": "read"}
+    st = {name_of(s): s for s in jobs()["update"]["steps"]}
+    for name in PUBLISH:
+        run = st[name].get("run") or ""
+        assert not re.search(r"git push[^\n]*(--force|\s-f\b|\+)", run), name
+    src = open(os.path.join(ROOT, "tools", "push_data_branch.sh"), encoding="utf-8").read()
+    assert not re.search(r"git push[^\n]*(--force|\s-f\b)", src)
