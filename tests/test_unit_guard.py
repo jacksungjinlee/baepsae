@@ -15,6 +15,7 @@ import inspect
 import json
 import math
 import os
+import re
 import sys
 
 import pytest
@@ -357,6 +358,67 @@ def test_gate_warns_by_name_about_low_pbr_companies_that_were_not_flagged(pair):
     assert not rep.failed, rep.table()                                # 경고만 (발행은 막지 않아요)
     flag(cur, "200010")                                               # 걸린 회사는 경고 목록에 없어요
     assert rows_of(check(cur, prev))[LOW_ROW][3] == "PASS"
+
+
+def low_pbr(cur, t, pbr=0.09):
+    """한 가짜 회사를 PBR 0.09 로 (자본을 늘려 · PBR = 종가 ÷ 영수증이 맞게) → 그 회사의 bpsIn.eq."""
+    s = next(x for x in cur["data"]["stocks"] if x["t"] == t)
+    c = comp(cur, t)
+    c["bpsIn"]["eq"] = round(s["price"] / pbr * c["bpsIn"]["sh"] / 1e8, 1)
+    c["bps"] = s["bps"] = round(c["bpsIn"]["eq"] * 1e8 / c["bpsIn"]["sh"])
+    c["pbr"] = s["pbr"] = round(s["price"] / c["bps"], 2)
+    assert s["pbr"] < 0.1
+    return c["bpsIn"]["eq"]
+
+
+def test_gate_stays_quiet_for_a_checked_company_while_its_equity_stays_in_the_band(pair, monkeypatch):
+    cur, prev = pair
+    plain(cur)
+    eq = low_pbr(cur, "200010")
+    monkeypatch.setattr(V, "PBR_LOW_CHECKED", {"200010": {"date": "2026-11-13", "eq": eq, "why": "시험 · 공시 rcept 20260814001690 확인"}})
+    rep = check(cur, prev)
+    row = rows_of(rep)[LOW_ROW]
+    assert row[3] == "PASS" and row[1] == "0곳 · 확인된 회사 1곳 조용히 넘김", row        # 목록 + 자본이 그대로 → 경고 없음, 수는 남겨요
+    assert any(t.startswith("PBR 0.1 미만 · 사람이 공시를 확인해 조용히 넘긴 회사") and "200010" in " ".join(x) for t, x in rep.details)
+    monkeypatch.setattr(V, "PBR_LOW_CHECKED", {"200010": {"date": "2026-11-13", "eq": round(eq * 1.19, 1), "why": "시험"}})
+    assert rows_of(check(cur, prev))[LOW_ROW][3] == "PASS"                              # ±20% 안 (19%)
+    assert not check(cur, prev).failed
+
+
+def test_gate_warns_when_a_checked_companys_equity_moved_or_the_company_is_not_listed(pair, monkeypatch):
+    cur, prev = pair
+    plain(cur)
+    eq = low_pbr(cur, "200010")
+    low_pbr(cur, "200020")
+    monkeypatch.setattr(V, "PBR_LOW_CHECKED", {"200010": {"date": "2026-11-13", "eq": round(eq / 1.25, 1), "why": "시험"}})   # 자본이 25% 움직였어요
+    row = rows_of(check(cur, prev))[LOW_ROW]
+    assert row[3] == "WARN" and row[1].startswith("2곳: 200010") and "확인한 자본" in row[1] and "200020" in row[1], row
+    assert "조용히 넘김" not in row[1]
+    monkeypatch.setattr(V, "PBR_LOW_CHECKED", {"200010": {"date": "2026-11-13", "eq": eq, "why": "시험"}})
+    row = rows_of(check(cur, prev))[LOW_ROW]
+    assert row[3] == "WARN" and row[1].startswith("1곳: 200020") and row[1].endswith("확인된 회사 1곳 조용히 넘김"), row   # 목록에 없는 회사는 그대로 경고
+    monkeypatch.setattr(V, "PBR_LOW_CHECKED", {"200020": {"date": "2026-11-13", "eq": 1.0, "why": "시험"}})          # 다른 회사의 자본 (밴드 밖)
+    assert rows_of(check(cur, prev))[LOW_ROW][1].startswith("2곳:")
+
+
+def test_checked_company_with_unitchk_is_never_on_the_quiet_list(pair, monkeypatch):
+    cur, prev = pair
+    plain(cur)
+    eq = low_pbr(cur, "200010")
+    monkeypatch.setattr(V, "PBR_LOW_CHECKED", {"200010": {"date": "2026-11-13", "eq": eq, "why": "시험"}})
+    flag(cur, "200010")                                                                 # 걸렸으면 실패 줄이 봐요 (조용히 넘기지 않아요)
+    got = rows_of(check(cur, prev))
+    assert got[LOW_ROW][1] == "0곳" and got[UNIT_ROW][3] == "PASS" and got[UNIT_ROW][1].startswith("1곳")
+
+
+def test_the_checked_list_names_its_filings():
+    assert set(V.PBR_LOW_CHECKED) == {"040610", "109960"} and V.PBR_LOW_BAND == 0.20
+    for t, ck in V.PBR_LOW_CHECKED.items():
+        assert dt.date.fromisoformat(ck["date"]) and ck["eq"] > 0, t
+        assert re.search(r"rcept \d{14}", ck["why"]), t                                  # 확인한 공시의 접수번호
+    assert V.PBR_LOW_CHECKED["040610"]["eq"] == 5085.1 and V.PBR_LOW_CHECKED["109960"]["eq"] == 3617.6   # 2026-11-12 발행본 bpsIn.eq
+    runbook = open(os.path.join(ROOT, "docs", "RUNBOOK.md"), encoding="utf-8").read()
+    assert "PBR_LOW_CHECKED" in runbook
 
 
 def test_gate_and_pipeline_keep_their_lists_apart_but_in_step():

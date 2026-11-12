@@ -251,6 +251,30 @@ Open a new Claude Code Cloud session and paste (replace N with the issue number,
 Claude reads the run logs, fixes the cause by the CLAUDE.md rules (fix the data or the code, never loosen a check), and
 tells you what happened in plain words.
 
+## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
+
+The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check
+(`fetch_data.py` `unit_guard`, corp.json `unitChk`) did not flag: a PBR that low can mean a filing read in the wrong unit
+(진코스텍 and 디와이에이, 2026-11-13). The 09:13 check reports every warning, so a company a person has already checked goes
+on the list `PBR_LOW_CHECKED` in `validate_data.py` and is not named again. It stays quiet only while its owners' equity
+(corp.json `bpsIn.eq`, 억원) is within ±20% (`PBR_LOW_BAND`) of the value written there and it has no `unitChk`; if the
+equity moves further (a new report, a capital change), the warning names it again, with the old and new equity, so
+someone looks again. The row's value always says how many were passed over quietly ("확인된 회사 N곳 조용히 넘김"), and the
+gate's summary lists them.
+
+To add a company, Claude:
+1. Opens the company's latest filed statements on DART (the report the pipeline used, corp.json `bq`, and the latest
+   사업보고서) and checks that the unit printed over the statements is the unit of the numbers, that total assets =
+   liabilities + equity, and that the report's previous year-end column equals the 사업보고서's figures.
+2. Adds one entry: the stock code → `date` (the KST day of the check), `eq` (today's corp.json `bpsIn.eq`) and `why` (the
+   name, why the PBR is low, and the filings' receipt numbers as `rcept` followed by the 14 digits).
+3. Opens a PR as usual (tests, fresh-eyes review). `tests/test_unit_guard.py` checks every entry names a filing.
+
+Jack's yes is never needed for this list: it only quiets a warning for a company whose filings were checked. Every FAIL
+row is unchanged, the unit check still blanks a flagged company's numbers whatever the list says, and a listed company
+whose equity moves by more than 20% is named again. Remove an entry when the company's PBR is back above 0.1 for good, or
+if a later check finds its filing wrong.
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses

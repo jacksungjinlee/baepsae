@@ -224,6 +224,17 @@ UNIT_BLANK_DATA = ("per", "pbr", "eps", "bps", "roe", "debt", "opm", "g3", "vz",
 UNIT_BLANK_CORP = ("eq", "evE", "evR", "pcf", "nio3", "nio3Hyb", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "fl", "flSrc", "flWhy")
 UNIT_BLANK_LISTS = ("rev", "op", "ni")      # corp.json 3개년 금액
 UNIT_PBR_LOOK = 0.1
+# PBR 이 UNIT_PBR_LOOK 미만이지만 사람이 공시를 보고 확인한 회사 (docs/RUNBOOK.md '확인한 낮은 PBR 회사'). 경고 줄은 매일 아침 확인(09:13)이
+# Jack 에게 알려서, 확인된 회사를 날마다 다시 부르지 않게 해요. 그 회사의 지금 주주 몫 자본(corp.json bpsIn.eq, 억원)이 확인한 값의
+# ±PBR_LOW_BAND 안이고 unitChk 가 없을 때만 조용히 넘겨요 (값 칸에 '확인된 회사 N곳 조용히 넘김'으로 수를 남겨요). 밖이거나 목록에 없는
+# 회사는 예전처럼 이름과 함께 경고. 실패 줄과는 상관없어요 (이 목록은 경고만 조용히 해요).
+PBR_LOW_CHECKED = {
+    "040610": {"date": "2026-11-13", "eq": 5085.1,
+               "why": "SG&G · 관계기업투자 5,007억 · 공시 rcept 20260814001690 (2026 반기, 단위 원) · 20260319000627 (2025 사업보고서) 확인"},
+    "109960": {"date": "2026-11-13", "eq": 3617.6,
+               "why": "앱토크롬 · 기타 비유동 금융자산 2,155억 · 공시 rcept 20260813001440 (2026 반기, 단위 원) · 20260320000910 (2025 사업보고서) 확인"},
+}
+PBR_LOW_BAND = 0.20
 
 
 # ── 결과 표 ─────────────────────────────────────────────────
@@ -1885,12 +1896,26 @@ def check_unit(rep, kr, by, comps):
             "0 (unitChk 회사는 PER·PBR·EPS·BPS·ROE·부채비율·영업이익률·성장률·점수·3년 실적·자본·EV 배수·영수증·재무 경고 빈 칸 · 두 파일 같게)")
     if names:
         rep.detail("공시 단위 확인으로 숫자를 비운 회사", names)
-    low = [f"{s['t']} {s.get('nk', '')} PBR {num(s.get('pbr')):.2f}" for s in kr
-           if not is_foreign(s.get("t")) and "unitChk" not in s and num(s.get("pbr")) is not None and num(s.get("pbr")) < UNIT_PBR_LOOK]
-    rep.add(f"PBR {UNIT_PBR_LOOK:g} 미만 국내 회사 (unitChk 없음 · 경고만)", True, f"{len(low)}곳" + (f": {', '.join(low[:4])}" if low else ""),
-            "0 (있으면 경고 · 공시의 단위를 사람이 확인)", warn=bool(low))
+    low, quiet = [], []
+    for s in kr:
+        if is_foreign(s.get("t")) or "unitChk" in s or num(s.get("pbr")) is None or num(s.get("pbr")) >= UNIT_PBR_LOOK:
+            continue
+        nm = f"{s['t']} {s.get('nk', '')} PBR {num(s.get('pbr')):.2f}"
+        ck = PBR_LOW_CHECKED.get(s.get("t"))
+        eq = num(((cby.get(s.get("t")) or {}).get("bpsIn") or {}).get("eq"))
+        if ck and eq is not None and num(ck.get("eq")) and abs(eq / ck["eq"] - 1) <= PBR_LOW_BAND:
+            quiet.append(f"{nm} (자본 {eq:,.1f}억 · 확인 {ck['date']} {ck['eq']:,.1f}억)")
+        elif ck:
+            low.append(f"{nm} (확인한 자본 {ck['eq']:,.1f}억 → 지금 " + (f"{eq:,.1f}억" if eq is not None else "없음") + ")")
+        else:
+            low.append(nm)
+    rep.add(f"PBR {UNIT_PBR_LOOK:g} 미만 국내 회사 (unitChk 없음 · 경고만)", True,
+            f"{len(low)}곳" + (f": {', '.join(low[:4])}" if low else "") + (f" · 확인된 회사 {len(quiet)}곳 조용히 넘김" if quiet else ""),
+            f"0 (있으면 경고 · 공시의 단위를 사람이 확인 · 확인된 회사(PBR_LOW_CHECKED)는 자본이 ±{PBR_LOW_BAND:.0%} 안이면 조용히)", warn=bool(low))
     if low:
         rep.detail(f"PBR {UNIT_PBR_LOOK:g} 미만인데 공시 단위 확인을 통과한 국내 회사", low)
+    if quiet:
+        rep.detail(f"PBR {UNIT_PBR_LOOK:g} 미만 · 사람이 공시를 확인해 조용히 넘긴 회사 (PBR_LOW_CHECKED)", quiet)
 
 
 def _dvwhy_clean(r):
