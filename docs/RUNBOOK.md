@@ -73,7 +73,9 @@ serve the `docs/` folder (two of its files must answer "not found").
       - When the gate's "previous publication" moves off `main` (v17.6 3b), the new source must include `corp.json`,
         or every run fails on this row (loudly, but it holds the publish).
     - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees that 17 of them are in
-      the data, and guarantees a beta and volatility for none of the US ones. When a built-in stock is missing from
+      the data, and guarantees a beta and volatility for none of the US ones one by one (since 2026-11-12 it fails when
+      fewer than 95% of all US stocks have a beta, or a volatility, the same rule as for Korean stocks — rows "미국
+      beta 채움" and "미국 vol 채움"). When a built-in stock is missing from
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
       correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
       (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.

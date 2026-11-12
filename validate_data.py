@@ -68,6 +68,9 @@ FUNDS = ("069500", "379800", "04020000", "132030", "144600")
 COVER_KR = {"price": 99, "cap": 99, "beta": 95, "vol": 95, "pbr": 85, "roe": 80, "per": 50,
             "vz": 85, "qz": 85, "mz": 85, "pz": 85, "lz": 85}
 COVER_US = {"이름": 90, "설명": 90}
+# 2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내와 같은 95%. 없으면 그날 미국 베타가 모두 빠져도 통과했어요
+# (예전 뱁새는 내장 2025년 값을 대신 보여 줘요). 지난 32번 발행에서 97.7~98.4% 였어요.
+COVER_US_RISK = {"beta": 95, "vol": 95}
 BONDS_EXPECTED = 8       # 8 정상 · 7 경고 · 6 이하 실패 (Jack 결정, 2026-10-31)
 KR_MIN, US_MIN = 2300, 500
 KR_REL, US_REL = 0.10, 0.15
@@ -612,6 +615,16 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
+def check_us_risk_cover(rep, us, pdata):
+    """2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내 줄과 같은 규칙 (95% 아래면 실패 · 직전보다 10점 넘게 줄면 실패)."""
+    for k, lo in COVER_US_RISK.items():
+        v = coverage(us, k)
+        rep.pct(f"미국 {k} 채움", v, lo)
+        if pdata:
+            pv = coverage(us_stocks(pdata), k)
+            rep.add(f"미국 {k} 채움 변화", v >= pv - 10, f"{pv:.1f} → {v:.1f}", "10점 넘게 줄면 실패")
+
+
 def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
                special=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
@@ -765,6 +778,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         if pdata:
             pv = us_coverage(us_stocks(pdata))[k]
             rep.add(f"미국 {k} 채움 변화", uc[k] >= pv - 10, f"{pv:.1f} → {uc[k]:.1f}", "10점 넘게 줄면 실패")
+    check_us_risk_cover(rep, us, pdata)
 
     # 가격 움직임
     if pdata and ppx and px and count_between is not None:
