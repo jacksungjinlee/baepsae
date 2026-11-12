@@ -2560,7 +2560,7 @@ def _iphone_records(R, files, device, tmp):
     # v19.6a (A.1): a US purchase dated in the past saves the rate of its own date from macro.json fxHist (before: the data's
     # current rate, the wrong day's). The scene's files carry that day's close (1325.5, not the data's fx).
     files = clone(files)
-    files["macro.json"]["fxHist"] = {"asOf": files["data.json"]["fxDate"], "rows": [[day, 1325.5], [files["data.json"]["fxDate"], files["data.json"]["fx"]]]}
+    files["macro.json"]["fxHist"] = {"asOf": files["data.json"]["fxDate"], "final": True, "rows": [[day, 1325.5], [files["data.json"]["fxDate"], files["data.json"]["fx"]]]}
     shutil.move(build_site(files), site)
     by = {x["t"]: x for x in files["data.json"]["stocks"]}
     keep = {}
@@ -10049,7 +10049,7 @@ def v196a_files(files, fx_hist=True, splits=True):
     if splits:
         d["splits"] = [["005380", "2026-10-15", 2], ["XXXX", "bad", 0]]                      # 현대차 2:1 (시험용) · 못 읽는 항목 하나
     if fx_hist:
-        data["macro.json"]["fxHist"] = {"asOf": d["fxDate"], "rows": [["2016-01-04", 1172.5], ["2026-10-01", 1300.0], ["2026-10-20", 1350.0], [d["fxDate"], d["fx"]]]}
+        data["macro.json"]["fxHist"] = {"asOf": d["fxDate"], "final": True, "rows": [["2016-01-04", 1172.5], ["2026-10-01", 1300.0], ["2026-10-20", 1350.0], [d["fxDate"], d["fx"]]]}
     return data
 
 
@@ -10072,6 +10072,72 @@ def v196a_store(pxd):
                                                 {"t": "035420", "nk": "NAVER", "ccy": "KRW", "amountWon": 1000000, "close": 172300, "date": pxd},
                                                 {"t": "005930", "nk": "삼성전자", "ccy": "KRW", "qty": 1, "avg": 210000}]}
     return {"v": 2, "decks": [built, imported], "guideSeen": pxd}
+
+
+def scene_v196a_outs(R, files, width=390):
+    """v19.6a round 2 (A3): the app's wiring of data.json splitsInfo.fixed "out" rows (app.jsx · lots.withoutOutSplits).
+    dfree: NVDA 4 shares and a stored 2:1 split the data marks out → taken out: 8 → 4, one console line, nothing again on
+    reload · dneed: MSFT 2 shares, the same out split, a sale of 3 after it → kept (the sale needs it), a console warning ·
+    dswap: AMZN 10 shares, a stored 5:1 split on a wrong date (out) and data.json's corrected date 19 days on, a sale of 40
+    after both → the stored split moves to the corrected date: 10 shares (210 before: both applied)."""
+    S = f"v19.6a splits {width}"
+    data = v196a_files(files)
+    d = data["data.json"]
+    d["splits"] = d["splits"] + [["AMZN", "2026-09-20", 5]]
+    d["splitsInfo"] = {"fixed": [["NVDA", "2026-09-15", None, "test"], ["MSFT", "2026-09-15", None, "test"], ["AMZN", "2026-09-01", None, "test"]]}
+    pxd = d["pxDate"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    usd = lambda i, t, q, px, day: {"id": i, "t": t, "qty": q, "price": px, "date": day, "ccy": "USD", "fx": 1300}
+    deck = lambda i, t, nk, buys, sells, split: {"id": i, "name": i, "createdAt": "2026-08-01", "planFx": 1300,
+                                                "holdings": [{"t": t, "nk": nk, "cls": "us", "target": 1, "rules": band(1)}],
+                                                "purchases": buys, "sales": sells, "splits": [split]}
+    store = {"v": 2, "guideSeen": pxd, "decks": [
+        deck("dfree", "NVDA", "NVIDIA Corporation", [usd("p1aaaaaa", "NVDA", 4, 150.0, "2026-09-01")], [], {"t": "NVDA", "date": "2026-09-15", "r": 2}),
+        deck("dneed", "MSFT", "Microsoft Corporation", [usd("p2aaaaaa", "MSFT", 2, 480.0, "2026-09-01")], [usd("s2aaaaaa", "MSFT", 3, 500.0, "2026-10-01")],
+             {"t": "MSFT", "date": "2026-09-15", "r": 2}),
+        deck("dswap", "AMZN", "Amazon.com, Inc.", [usd("p3aaaaaa", "AMZN", 10, 900.0, "2026-08-03")], [usd("s3aaaaaa", "AMZN", 40, 200.0, "2026-10-01")],
+             {"t": "AMZN", "date": "2026-09-01", "r": 5})]}
+    # console.warn / info kept in sessionStorage from the first load on (the effects run before a listener could be attached)
+    seed = ("(() => { const keep = (f) => function (...a) { try { const l = JSON.parse(sessionStorage.getItem('logs') || '[]'); l.push(a.join(' '));"
+            " sessionStorage.setItem('logs', JSON.stringify(l)); } catch (e) {} return f.apply(this, a); };"
+            " console.warn = keep(console.warn); console.info = keep(console.info);"
+            " if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio")
+    stored = lambda: page.evaluate(STORED_JS)
+    logs = lambda: page.evaluate("() => JSON.parse(sessionStorage.getItem('logs') || '[]')")
+    by_id = lambda: {x["id"]: x for x in stored()["decks"]}
+
+    def outs():
+        at(page, "portfolio")
+        page.wait_for_function("() => { const s = JSON.parse(localStorage.getItem('baepsae2.v1')); return s.decks.every((d) => !(d.splits || []).some((x) => x.t !== 'MSFT' && x.date !== '2026-09-20')); }")
+        x = by_id()
+        assert "splits" not in x["dfree"]                                                       # 빠졌어요
+        assert x["dneed"]["splits"] == [{"t": "MSFT", "date": "2026-09-15", "r": 2}]             # 판 기록이 필요해 남아요
+        assert x["dswap"]["splits"] == [{"t": "AMZN", "date": "2026-09-20", "r": 5}]             # 바른 날짜로 옮겨요
+        page.locator('[data-deck-id="dfree"] [data-holding="NVDA"]').wait_for(state="visible")
+        for dk, t, q in (("dfree", "NVDA", "4주"), ("dneed", "MSFT", "1주"), ("dswap", "AMZN", "10주")):
+            txt = page.locator(f'[data-deck-id="{dk}"] [data-holding="{t}"]').inner_text()
+            assert q in txt, (dk, txt)
+        L = logs()
+        took = [l for l in L if "stored stock splits taken out" in l or "stored stock splits moved" in l]
+        assert any("dfree NVDA 2026-09-15 x2, NVDA shares 8 -> 4" in l for l in took), took
+        assert any("dswap AMZN 2026-09-01" in l and "AMZN shares 210 -> 10" in l for l in took), took
+        assert any("dneed: the stored split of MSFT on 2026-09-15" in l and "it is kept" in l for l in L), L
+        n = len(took)
+        page.reload(wait_until="domcontentloaded")
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dfree"] [data-holding="NVDA"]').wait_for(state="visible")
+        page.wait_for_timeout(300)
+        took2 = [l for l in logs() if "stored stock splits taken out" in l or "stored stock splits moved" in l]
+        assert len(took2) == n, took2                                                          # 다시 열어도 또 빼지 않아요
+        assert "splits" not in by_id()["dfree"]
+        assert page.locator("[data-deck-id]").count() == 3                                     # 다시 읽어도 세 포트폴리오 모두 (따로 두지 않아요)
+        floor_ok(page, "포트폴리오 (분할 고침)")
+        R.collect(page)
+    R.check(page, S, "out 줄: 필요 없는 저장 분할은 빠지고(8 → 4, console 한 줄, 다시 열어도 한 번) · 판 기록이 필요하면 남고(경고) · 바른 날짜로 옮겨요(210 → 10)", outs)
+    ctx.close()
+    srv.shutdown()
 
 
 def scene_v196a(R, files, width):
@@ -10541,7 +10607,8 @@ def main():
                    lambda: scene_us_fcur(R, files, 1280, True),
                    lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280),                 # v19.6d 어두운 화면
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
-                   lambda: scene_v196a(R, files, 1280)):                                                    # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
+                   lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
+                   lambda: scene_v196a_outs(R, files, 390)):                                                # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
             try:
                 fn()
             except Exception as e:
