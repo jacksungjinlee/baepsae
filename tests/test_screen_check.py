@@ -119,12 +119,13 @@ def fake_bin(tmp_path, fail=()):
                   f'for f in {" ".join(fail) or "__none__"}; do if [ "$name" = "$f" ]; then echo "  FAIL  x"; echo "1 / 2 통과"; exit 1; fi; done\n'
                   'if [ -n "$TOUCH" ] && [ "$name" = "$TOUCH" ]; then echo " " >> data.json; fi\n'
                   'if [ -n "$UNSEEN" ] && [ "$name" = "smoke_app" ]; then echo "!! 확인 못 함  $UNSEEN"; fi\n'
+                  'if [ -n "$NOTICE" ] && [ "$name" = "smoke_app" ]; then echo "!! 알림  $NOTICE"; fi\n'
                   'echo "2 / 2 통과"\n')
     py.chmod(py.stat().st_mode | stat.S_IEXEC)
     return bin_
 
 
-def run_screen(tmp_path, fail=(), gate_receipt=True, touch="", unseen=""):
+def run_screen(tmp_path, fail=(), gate_receipt=True, touch="", unseen="", notice=""):
     for f in LIVE:
         (tmp_path / f).write_text("{}")
     for f in ("calls.txt", "screen-pass.sha256", "screen-summary.txt", "screen-unseen.txt", "summary.md", "gate-pass.sha256"):
@@ -132,7 +133,7 @@ def run_screen(tmp_path, fail=(), gate_receipt=True, touch="", unseen=""):
             (tmp_path / f).unlink()
     bin_ = fake_bin(tmp_path, fail)
     env = {"PATH": f"{bin_}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
-           "TOUCH": touch, "UNSEEN": unseen}
+           "TOUCH": touch, "UNSEEN": unseen, "NOTICE": notice}
     if gate_receipt:
         subprocess.run("sha256sum data.json corp.json disc.json macro.json > gate-pass.sha256", shell=True, cwd=tmp_path, check=True)
     r = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step(SCREEN)["run"]], cwd=tmp_path, env=env,
@@ -428,26 +429,41 @@ def test_smoke_app_data_option_reads_only_that_folder(tmp_path):
 
 
 # ── 2026-11-12 (Jack): 화면 검사는 회사 하나에 매이지 않아요 — 회사 하나가 목록에서 빠졌다고 모두의 데이터 발행이 멈추면 안 돼요 ──
-import smoke_app as SA  # noqa: E402
+@pytest.fixture
+def SA():
+    """tests/smoke_app.py (Playwright 가 있어야 불러올 수 있어요 — 불러올 때 데이터 파일은 읽지 않아요)."""
+    pytest.importorskip("playwright.sync_api")
+    import smoke_app
+    return smoke_app
+
+
+class Stub:
+    """아무 일도 하지 않는 창 · 서버 · 페이지."""
+    def __getattr__(self, name):
+        return lambda *a, **k: None
 
 
 class FakeRunner:
-    """브라우저 없는 Runner: 장면이 브라우저를 열려 하면 바로 알 수 있어요."""
+    """브라우저 없는 Runner: 창을 연 횟수와 장면이 등록한 검사 이름만 적어요 (검사 함수는 돌리지 않아요)."""
     def __init__(self):
-        self.results, self.errors, self.console, self.unseen = [], [], [], []
+        self.results, self.errors, self.console, self.unseen, self.notes, self.opened = [], [], [], [], [], 0
 
     def open(self, *a, **kw):
-        raise RuntimeError("브라우저를 열었어요")
+        self.opened += 1
+        return Stub(), Stub(), Stub(), "http://127.0.0.1:0"
+
+    def check(self, page, scene, name, fn):
+        self.results.append((f"[{scene}] {name}", True, "등록만"))
 
 
-def tiny_files(corp):
+def tiny_files(corp, stocks=()):
     """장면이 회사를 고를 때 보는 것만 담은 데이터: 목록(data.json stocks)과 회사(corp.json companies)."""
-    return {"data.json": {"stocks": [{"t": c["t"], "nk": "회사" + c["t"]} for c in corp] + [{"t": "005930", "nk": "삼성전자"}]},
+    return {"data.json": {"stocks": [{"t": c["t"], "nk": "회사" + c["t"]} for c in corp] + [{"t": "005930", "nk": "삼성전자"}] + list(stocks)},
             "corp.json": {"companies": [dict(c) for c in corp] + [{"t": "005930"}, {"t": "777777", "stmtCur": "USD"}]},   # 777777: 목록에 없는 회사
             "disc.json": {}, "macro.json": {}}
 
 
-def test_smoke_app_picks_companies_by_rule_not_by_name():
+def test_smoke_app_picks_companies_by_rule_not_by_name(SA):
     f = tiny_files([{"t": "950160", "stmtCur": "USD"}, {"t": "241560", "stmtCur": "USD"}, {"t": "900110", "stmtCur": "CNY"}, {"t": "008700", "stmtCur": "JPY"},
                     {"t": "950250"}, {"t": "000020", "stmtCur": "KRW"}, {"t": "000040", "stmtCur": "XXX"}, {"t": "000050", "stmtCur": "usd"},
                     {"t": "90001", "stmtCur": "USD"}, {"t": "9500001"}])
@@ -461,36 +477,59 @@ def test_smoke_app_picks_companies_by_rule_not_by_name():
     src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
     assert '"241560"' not in src and "corp=241560" not in src and "'241560'" not in src
     a, b = src.index("def scene_stmt_cur("), src.index("def scene_foreign_issuer(")
-    assert "non_won_companies(f)" in src[a:a + 2500] and "foreign_companies(f)" in src[b:b + 1500]
+    body = src[a:src.index("\ndef ", a + 1)]
+    assert "non_won_companies(f)" in body and "foreign_companies(f)" in src[b:b + 1500]
+    # 통화 줄은 고른 회사의 통화를 따라요 (USD 로 못 박지 않아요)
+    assert "LINE = stmt_cur_line(CUR)" in body and "T, CUR = co[\"t\"], stmt_cur_of(co)" in body and '"USD"' not in body
 
 
-@pytest.mark.parametrize("scene, corp, said", [
-    ("scene_stmt_cur", [{"t": "950250"}, {"t": "000020", "stmtCur": "KRW"}], "원화가 아닌 통화로 공시한다고 표시된 회사"),
-    ("scene_foreign_issuer", [{"t": "241560", "stmtCur": "USD"}], "해외 기업(종목코드 9…)"),
+def test_smoke_app_stmt_cur_scene_follows_the_first_company_the_data_marks(SA, monkeypatch):
+    monkeypatch.setattr(SA, "build_site", lambda f: "site")
+    monkeypatch.setattr(SA, "REAL_DATA", True)
+    R = FakeRunner()
+    SA.scene_stmt_cur(R, tiny_files([{"t": "900110", "stmtCur": "CNY"}, {"t": "950170", "stmtCur": "JPY"}]))
+    assert R.opened == 1 and len(R.results) == 1 and "기업분석 900110 (stmtCur CNY)" in R.results[0][0] and not R.unseen, R.results
+    R = FakeRunner()
+    SA.scene_stmt_cur(R, tiny_files([{"t": "900110", "stmtCur": "CNY"}, {"t": "008700", "stmtCur": "JPY"}]))
+    assert "기업분석 008700 (stmtCur JPY)" in R.results[0][0]                 # 국내 코드가 먼저
+
+
+@pytest.mark.parametrize("scene, corp, said, still", [
+    ("scene_stmt_cur", [{"t": "950250"}, {"t": "000020", "stmtCur": "KRW"}, {"t": "000040", "stmtCur": "XXX"}],
+     "원화가 아닌 통화로 공시한다고 표시된 회사", "기업분석 005930"),                     # 삼성전자 쪽 절반은 그래도 봐요
+    ("scene_foreign_issuer", [{"t": "241560", "stmtCur": "USD"}], "해외 기업(종목코드 9…)", None),
+    ("scene_foreign_issuer", [{"t": "950250"}], "재무제표 통화(stmtCur)가 붙은 둘째 해외 기업", "950250"),   # 하나뿐: 첫 줄은 보고, 둘째 회사만 없음
+    ("scene_foreign_issuer", [{"t": "900110", "stmtCur": "CNY"}], "재무제표 통화(stmtCur)가 붙은 둘째 해외 기업", "900110"),
 ])
-def test_smoke_app_scene_with_no_such_company_today(monkeypatch, capsys, scene, corp, said):
+def test_smoke_app_scene_with_no_such_company_today(SA, monkeypatch, capsys, scene, corp, said, still):
     """오늘 데이터에 그 장면이 볼 회사가 하나도 없을 때. 실제 데이터(--data): 크게 알리고 통과 — 발행을 막지 않아요. 그 밖(CI): 실패."""
-    f = tiny_files(corp)
+    monkeypatch.setattr(SA, "build_site", lambda f: "site")
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setattr(SA, "REAL_DATA", True)
     R = FakeRunner()
-    getattr(SA, scene)(R, f)                                                 # 브라우저를 열지 않고 돌아와요
+    getattr(SA, scene)(R, tiny_files(corp))
     out = capsys.readouterr().out
-    assert len(R.results) == 1 and R.results[0][1] is True and "확인 못 함" in R.results[0][0], R.results
+    unseen = [r for r in R.results if "확인 못 함" in r[0]]
+    assert len(unseen) == 1 and unseen[0][1] is True and all(r[1] for r in R.results), R.results
     assert len(R.unseen) == 1 and said in R.unseen[0]
+    assert (R.opened, [r[0] for r in R.results if r is not unseen[0] and still in r[0]].__len__()) == (1, 1) if still else R.opened == 0, R.results
     loud = [ln for ln in out.splitlines() if ln.startswith("!! 확인 못 함")]
     assert len(loud) == 1 and said in loud[0] and "오늘 확인하지 못했어요" in loud[0], out
     assert sum(ln.startswith("::warning title=발행 전 화면 검사 · 확인 못 한 장면::") for ln in out.splitlines()) == 1
+    if scene == "scene_stmt_cur":                                             # 무엇을 의심해야 하는지 (통화를 못 읽은 파이프라인) · 읽을 수 없는 표시의 수
+        assert "파이프라인이 통화를 못 읽은 것일 수 있어요" in loud[0] and "읽을 수 없는 회사 1곳 (000040)" in loud[0], loud[0]
+    assert "고정 데이터" not in out                                           # #104 전에는 CI 도 그날 데이터로 돌아요: 없는 것을 약속하지 않아요
     # 고정 데이터 · 저장소 데이터로 돌 때는 실패로 남아요 (조용히 건너뛰면 그 장면은 아무도 안 본 게 돼요)
     monkeypatch.setattr(SA, "REAL_DATA", False)
     R = FakeRunner()
-    getattr(SA, scene)(R, f)
+    getattr(SA, scene)(R, tiny_files(corp))
     out = capsys.readouterr().out
-    assert len(R.results) == 1 and R.results[0][1] is False and said in R.results[0][2] and not R.unseen, R.results
+    bad = [r for r in R.results if not r[1]]
+    assert len(bad) == 1 and said in bad[0][2] and not R.unseen, R.results
     assert "  FAIL  " in out and "::warning" not in out and "!! 확인 못 함" not in out
 
 
-def test_smoke_app_is_lenient_about_a_missing_company_only_with_the_data_option(monkeypatch):
+def test_smoke_app_is_lenient_about_a_missing_company_only_with_the_data_option(SA, monkeypatch):
     """'해당 회사 없음 → 통과'는 --data DIR 로 돌 때만 켜져요 (매일 실행). 옵션 없이 돌면(CI) 꺼져 있어요."""
     class Stop(Exception):
         pass
@@ -507,14 +546,148 @@ def test_smoke_app_is_lenient_about_a_missing_company_only_with_the_data_option(
         assert SA.REAL_DATA is want, argv
 
 
+# ── 내장 종목이 오늘 데이터에 없거나 값이 빈 날 · 금 환산인 날: 앱이 안내를 보여 주는 게 맞아요 (리뷰 2026-11-12) ──
+MERGE_JS = r"""
+import fs from 'fs';
+import { pathToFileURL } from 'url';
+const { mergeStocks } = await import(pathToFileURL(process.argv[3]).href);
+const { base, cases } = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const out = cases.map((live) => {
+  const m = mergeStocks(base.map((t) => ({ t, nk: t, price: 1, beta: 1, vol: 1 })), live);
+  return { examples: m.filter((s) => s.live === false && !s.est).map((s) => s.t).sort(), est: m.filter((s) => s.est).map((s) => s.t).sort() };
+});
+console.log(JSON.stringify(out));
+"""
+
+
+def banner_cases(SA):
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}
+    full = [ok(t) for t in SA.BASE_TICKERS]
+    drop = lambda *gone: [s for s in full if s["t"] not in gone]
+    swap = lambda t, **kw: [ok(t, **kw) if s["t"] == t else s for s in full]
+    return [full,                                                             # 모두 있음 → 안내 없음
+            drop("247540"), drop("247540", "TSLA"),                           # 상장폐지 · 빠짐
+            swap("TSLA", beta=None), swap("005930", vol=None), swap("AAPL", price=None),   # 값이 빈 하루
+            swap("04020000", est=True), swap("04020000", est=True, beta=None),            # 금 환산 (값이 비어도 금 환산 줄만)
+            [s for s in full if s["t"] != "BRK.B"] + [ok("BRK-B")],                       # 표기만 다른 티커는 같은 종목
+            full + [ok("999990")], full + [ok("999991", beta=None)],                      # 내장 목록 밖 종목은 안내와 무관
+            full + [ok("999992", est=True)], full + [{"t": "999993", "price": None, "est": True}],
+            drop("247540") + [ok("04020000", est=True)]]                                  # (중복 줄: 앱과 같은 순서로 맞추는지)
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_example_price_rule_is_the_apps_own(SA, tmp_path):
+    """smoke_app.example_price_stocks 는 앱의 mergeStocks 와 같은 답을 내요 (앱의 코드를 node 로 돌려 비교)."""
+    cases = banner_cases(SA)
+    (tmp_path / "in.json").write_text(json.dumps({"base": SA.BASE_TICKERS, "cases": cases}), encoding="utf-8")
+    (tmp_path / "probe.mjs").write_text(MERGE_JS, encoding="utf-8")
+    r = subprocess.run([NODE, str(tmp_path / "probe.mjs"), str(tmp_path / "in.json"), os.path.join(ROOT, "src", "data.js")],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    app = json.loads(r.stdout)
+    mine = [dict(zip(("examples", "est"), SA.example_price_stocks({"data.json": {"stocks": live}}))) for live in cases]
+    assert mine == app
+    assert app[0] == {"examples": [], "est": []} and app[1]["examples"] == ["247540"] and app[3]["examples"] == ["TSLA"] and app[6]["est"] == ["04020000"]
+    assert app[11] == {"examples": ["999992"], "est": []}                     # 내장 목록 밖 종목의 est 는 '예시 가격' 쪽 (앱이 그래요)
+    assert len(SA.BASE_TICKERS) == len(set(SA.BASE_TICKERS)) >= 60
+
+
+class FakePage:
+    def __init__(self, lines):
+        self.lines = lines
+
+    def locator(self, sel):
+        lines = self.lines if sel == ".nonLiveBanner > div" else (["x"] if self.lines else [])
+        return type("L", (), {"count": lambda s: len(lines), "all_inner_texts": lambda s: list(lines)})()
+
+
+def test_banner_check_follows_the_data_only_with_real_data(SA, monkeypatch, capsys):
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}
+    full = [ok(t) for t in SA.BASE_TICKERS]
+    gone = {"data.json": {"stocks": [s for s in full if s["t"] != "247540"]}}
+    gold = {"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] == "04020000" else s for s in full if s["t"] != "TSLA"]}}
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    # CI · 내 컴퓨터: 언제나 '배너 없음'을 요구해요 (예전 그대로) — 알림도 없어요. 데이터에 그런 종목이 있으면 그 자리에서 실패:
+    # 고정 데이터에는 없어야 하고, 없는데도 있다고 하면 내장 종목 목록을 잘못 읽은 것 (CI 에서 먼저 드러나요)
+    monkeypatch.setattr(SA, "REAL_DATA", False)
+    R = FakeRunner()
+    assert SA.banner_due(R, "정상", {"data.json": {"stocks": full}}) == []
+    for bad in (gone, gold):
+        with pytest.raises(AssertionError, match="고정 데이터에는 없어야 해요"):
+            SA.banner_due(R, "정상", bad)
+    assert not R.notes and capsys.readouterr().out == ""
+    monkeypatch.setattr(SA, "BASE_TICKERS", SA.BASE_TICKERS + ["ZZZZ"])     # 목록을 잘못 읽은 날: 데이터는 멀쩡해도 CI 가 실패
+    with pytest.raises(AssertionError, match="ZZZZ"):
+        SA.banner_due(R, "정상", {"data.json": {"stocks": full}})
+    monkeypatch.undo()
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    # 실제 데이터: 모두 있으면 [], 빠진 종목이 있으면 '예시 가격' 줄, 금 환산이면 그 줄도 (앱이 그리는 순서) — 한 번만 크게 알려요
+    monkeypatch.setattr(SA, "REAL_DATA", True)
+    assert SA.banner_due(R, "정상", {"data.json": {"stocks": full}}) == [] and not R.notes
+    assert SA.banner_due(R, "정상", gone) == [SA.NONLIVE] and SA.banner_due(R, "미국 자기 날짜", gone) == [SA.NONLIVE]
+    out = capsys.readouterr().out
+    assert len(R.notes) == 1 and "247540" in R.notes[0] and out.count("!! 알림  [정상]") == 1 and out.count("::warning title=발행 전 화면 검사 · 예시 가격 안내가 뜨는 날::") == 1
+    assert SA.banner_due(R, "정상", gold) == [SA.NONLIVE, SA.GOLD_EST] and "TSLA" in R.notes[1] and "04020000" in R.notes[1]
+    assert "파이프라인을 의심하세요" in R.notes[0]
+    # 한도: 예시 가격 종목이 EXAMPLE_MAX 개까지는 안내를 확인하고 통과, 넘으면 실패 (여러 종목이 한꺼번에 = 파이프라인 고장 → 발행 없음)
+    assert SA.EXAMPLE_MAX == 3
+    us = [t for t in SA.BASE_TICKERS if t.isalpha()]
+    blank = lambda n: {"data.json": {"stocks": [ok(s["t"], beta=None) if s["t"] in us[:n] else s for s in full]}}
+    gold3 = {"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] == SA.GOLD_SPOT else s for s in blank(3)["data.json"]["stocks"]]}}
+    for fine in ({"data.json": {"stocks": full}}, gone, gold, blank(3), gold3):
+        SA.within_example_cap(fine)                                           # 한도 이내: 통과 (안내가 맞게 뜨는지는 장면이 봐요)
+    assert SA.banner_due(R, "정상", blank(3)) == [SA.NONLIVE] and SA.banner_due(R, "정상", gold3) == [SA.NONLIVE, SA.GOLD_EST]
+    with pytest.raises(AssertionError, match="파이프라인 고장으로 봐요.*아주 떠난 회사인지.*BASE_STOCKS"):
+        SA.within_example_cap(blank(4))
+    with pytest.raises(AssertionError, match="발행하지 않아요"):
+        SA.within_example_cap(blank(len(us)))                                 # 미국 종목 베타가 통째로 빈 날
+    with pytest.raises(AssertionError, match="금현물.*말고 다른 종목"):          # 금 환산 표시는 금현물에만
+        SA.within_example_cap({"data.json": {"stocks": [ok(s["t"], est=True) if s["t"] in ("TSLA", SA.GOLD_SPOT) else s for s in full]}})
+    # 한도 검사는 실제 데이터로 돌 때 장면들 앞에서 한 번 (실패 줄 하나) — CI 의 검사 목록은 그대로
+    src0 = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    assert src0.count("within_example_cap(fresh)") == 1 and "        if REAL_DATA:       # 장면들 앞에서 한 번" in src0
+    assert '::error title=발행 전 화면 검사 · 내장 종목 한도::{e}' in src0 and '!! 한도 초과  {e}' in src0   # 잘리지 않은 전체 이유도 찍어요
+    assert src0.index("within_example_cap(fresh)") < src0.index("        for key, fn in scenes:")
+    # 내장 종목 목록을 덜 읽거나 더 읽으면 불러오는 순간 멈춰요 (종목코드 수 = 이름 수)
+    assert 'len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\\bnk:\\s*\\"", _block))' in src0
+    # 배너 줄 비교: 떠야 하는 줄이 정확히, 그 순서로 — 없어야 하면 배너 자체가 없어야 해요
+    full_line = SA.NONLIVE + " (샘플)."
+    assert SA.banner_is(FakePage([]), []) and not SA.banner_is(FakePage([full_line]), [])
+    assert SA.banner_is(FakePage([full_line]), [SA.NONLIVE]) and not SA.banner_is(FakePage([]), [SA.NONLIVE])
+    assert not SA.banner_is(FakePage([full_line, "다른 줄"]), [SA.NONLIVE]) and not SA.banner_is(FakePage([SA.GOLD_EST + "."]), [SA.NONLIVE])
+    assert SA.banner_is(FakePage([full_line, SA.GOLD_EST + "."]), [SA.NONLIVE, SA.GOLD_EST]) and not SA.banner_is(FakePage([SA.GOLD_EST + ".", full_line]), [SA.NONLIVE, SA.GOLD_EST])
+    assert SA.banner_is(FakePage([full_line, "AAPL …", "MSFT …"]), [SA.NONLIVE], extra=2) and not SA.banner_is(FakePage([full_line, "AAPL …"]), [SA.NONLIVE], extra=2)
+    assert SA.banner_is(FakePage(["AAPL …", "MSFT …"]), [], extra=2) and not SA.banner_is(FakePage(["AAPL …", "MSFT …", "셋째"]), [], extra=2)
+    # 세 곳의 검사가 이 규칙을 써요 (정상 · 미국 자기 날짜 둘)
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    assert src.count("assert banner_is(page, due") == 3
+    assert src.count("due = banner_due(R, S, files)") == 1 and src.count("due = banner_due(R, S, f)") == 1   # 각 장면이 자기가 띄운 데이터로
+    assert 'assert page.get_by_text(NONLIVE).count() == (1 if NONLIVE in due else 0)' in src
+    assert 'at < body.index(LINE, at) < body.index("PER", at)' in src         # 회사 이름에 PER 이 있어도 되게, 제목 뒤에서부터
+
+
+def test_dividend_count_scene_does_not_depend_on_other_stocks_dividend_data(SA):
+    """B안 장면은 '배당 정보가 없는 종목 1개' 알림을 봐요. 관문은 필수 종목 하나의 배당 자료가 빈 날을 경고로 통과시키므로 (Jack 2026-11-05),
+    장면은 자기가 비운 한 종목 말고 나머지 셋의 빈 배당을 복사본에서 채워요 — 그 수가 언제나 1 이게."""
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    a = src.index("def scene_option_b(")
+    body = src[a:src.index("\ndef ", a + 1)]
+    i, j = body.index('stocks[hold[0][0]]["dy"] = None'), body.index("for t, _ in hold[1:]:")
+    assert i < j < body.index("profile = {")
+    assert 'if not isinstance(stocks[t].get("dy"), (int, float)):' in body[j:j + 400] and 'stocks[t]["dy"] = 1.0' in body[j:j + 400]
+    assert "files = json.loads(json.dumps(files))" in body[:i]                # 복사본에서만 (다른 장면 · 원본 데이터는 그대로)
+
+
 def test_screen_step_puts_an_unseen_scene_in_the_summary_and_still_publishes(tmp_path):
     msg = "[다시 읽은 뒤] 오늘 데이터에 재무제표를 원화가 아닌 통화로 공시한다고 표시된 회사(stmtCur)가 하나도 없어요"
     r, calls, rec = run_screen(tmp_path, unseen=msg)
     assert r.returncode == 0 and rec.exists(), (r.stdout, r.stderr)          # 회사 하나가 없다고 발행을 막지 않아요
     summary = (tmp_path / "summary.md").read_text()
-    assert "### 뱁새 발행 전 화면 검사 — PASS" in summary and "확인하지 못한 장면" in summary and f"· {msg}" in summary, summary
+    assert "### 뱁새 발행 전 화면 검사 — PASS" in summary and "확인하지 못했거나 다르게 확인한 장면" in summary and f"· 확인 못 함: {msg}" in summary, summary
+    r, calls, rec = run_screen(tmp_path, unseen=msg, notice="[정상] 오늘 데이터: 내장 종목 1개")   # '알림' 줄도 요약에
+    assert r.returncode == 0 and rec.exists() and "· 알림: [정상] 오늘 데이터: 내장 종목 1개" in (tmp_path / "summary.md").read_text()
     r, calls, rec = run_screen(tmp_path)                                     # 그런 장면이 없으면 그 문단도 없어요
-    assert "확인하지 못한 장면" not in (tmp_path / "summary.md").read_text()
+    assert "다르게 확인한 장면" not in (tmp_path / "summary.md").read_text()
 
 
 def test_browser_steps_get_no_secret_and_every_action_is_an_official_one_pinned_by_major():
