@@ -316,7 +316,7 @@ def test_snapshot_shows_no_example_price_notice():
     assert smoke_app.example_price_stocks(files) == ([], [])
     assert smoke_app.example_price_stocks(smoke_app.upgrade(json.loads(json.dumps(files)))) == ([], [])
     src = src_of(os.path.join("fixtures", "snapshot", "make_snapshot.py"))
-    assert "이 발행으로는 고정 데이터를 만들 수 없어요" in src and 'for k in ("price", "beta", "vol")' in src
+    assert "이 발행으로는 고정 데이터를 만들 수 없어요" in src and "smoke_app.example_price_stocks(shape)" in src   # 검사와 같은 규칙을 불러 써요
     sys.path.insert(0, SNAP)
     import make_snapshot as MS
     have = {"BRK-B", "KO", "005930"}                                          # 표기만 다른 티커(BRK.B)는 같은 종목 · 대소문자는 구별

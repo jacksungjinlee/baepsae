@@ -4677,7 +4677,7 @@ def scene_v193b(R, files, width):
 def stale_files(files, hours_ago, after_hours, due_days_ago=0, due_at=None):
     """발행 hours_ago 시간 전 · staleAfter 는 지금에서 after_hours 시간 뒤(음수면 이미 지남). 매일 점검 덱과 같이 써요.
     nextPub(발행 예정일) = 오늘(한국)에서 due_days_ago 일 전 — 늦음 경고의 n 은 그 아침부터 세요 (Jack, 2026-11-07). due_at: 그 시각의
-    한국 날짜 (시계를 돌리는 장면: 경고가 뜨는 때의 날짜라서 자정을 넘겨도 n = 1)."""
+    한국 날짜 (시계를 돌리는 장면: 경고를 읽는 때보다 조금 뒤의 시각을 줘요 — 그 날짜라서 자정을 넘겨도 n = 1)."""
     f = daily_files(files)
     now = now_dt()
     for n in DATA_FILES:

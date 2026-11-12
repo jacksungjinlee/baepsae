@@ -124,11 +124,14 @@ def main():
         "지어낸 이름 · 접수번호가 실제 것과 겹쳐요"
     # CI 의 예전 뱁새 검사는 '예시 가격 · 금 환산' 안내가 없는 데이터를 요구해요 (tests/smoke_app.py banner_due): 내장 종목이 모두 있고
     # 가격 · 베타 · 변동성이 차 있어야 하고, 금 환산 표시가 없어야 해요. 그렇지 않은 날의 발행으로는 고정 데이터를 만들지 않아요.
-    base = re.findall(r'\bt:\s*"([^"]+)"', (lambda t: t[t.index("const BASE_STOCKS = ["):t.index("\n];", t.index("const BASE_STOCKS = ["))])(
-        open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()))
-    have = {norm(x["t"]): x for x in data["stocks"]}
-    bad = [t for t in base if norm(t) not in have or any(have[norm(t)].get(k) is None for k in ("price", "beta", "vol")) or have[norm(t)].get("est")]
-    assert len(base) >= 60 and not bad, f"이 발행으로는 고정 데이터를 만들 수 없어요: 내장 종목이 없거나 값이 비었거나 금 환산이에요 {bad} (다른 날의 발행을 쓰세요)"
+    # 검사와 같은 규칙을 그대로 불러 써요 (베껴 두면 어긋나요): smoke_app.example_price_stocks — upgrade() 로 채운 뒤의 모양으로도.
+    import sys
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    import smoke_app
+    for shape in (files, smoke_app.upgrade(json.loads(json.dumps(files)))):
+        examples, est = smoke_app.example_price_stocks(shape)
+        assert not examples and not est, (f"이 발행으로는 고정 데이터를 만들 수 없어요: 내장 종목이 없거나 값이 비었어요 {examples} · "
+                                          f"금 환산 표시 {est} (다른 날의 발행을 쓰세요)")
     sizes = {NAMES[n]: write(n, files[n]) for n in NAMES}
     pub = dt.datetime.fromisoformat(data["publishedAt"])
     meta = {

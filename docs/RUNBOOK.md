@@ -86,8 +86,9 @@ serve the `docs/` folder (two of its files must answer "not found").
   `git show origin/data:data.json > DIR/data.json` and so on for corp, disc and macro; never copy them over the
   checkout's own files), run the three commands and paste their result lines and the data's date (`pxDate`) into the
   PR. If one fails, run the same three on `main`'s code with the same folder: if `main` fails too it is not the PR;
-  tell Jack and treat it as a data problem (the daily run's screen check would hold the next publish for the same
-  reason).
+  tell Jack. The served files already passed these checks when they were published, so look first at what differs
+  from that run: the hour (one old-app scene, "늦음 시각 · 주말 뒤", fails if it happens to run in the last seconds
+  before midnight KST; run it again), the machine (fonts, node), or code merged since.
   To refresh the snapshot from a newer publish (only when a new field or a new kind of stock must be in it; the
   script refuses a day on which a built-in stock of the old app is missing or blank, or gold is an estimate): run
   `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
