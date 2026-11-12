@@ -108,17 +108,19 @@ KR_INDEX = "KS11"
 US_INDEX = "^GSPC"
 FX_TICKER = "USDKRW=X"
 # v19.6a (docs/tasks/v19.6-records-alerts-dark.md Part I.1): macro.json fxHist = 2016-01-01 부터의 원/달러 일별 환율. 출처 스위치 (Jack 의
-# 답을 기다려요 · #117 리뷰 2 2026-11-13 까지 "ecos_next"). 미국 D 하루 끝(야후 다음 봉 시가)과의 차이 2016-01 ~ 2026-11, 미국 거래일 2,727일:
-#   "ecos_next"  ECOS 매매기준율, 줄 D = D 다음에 고시된 값 (= D 하루 서울 거래의 평균) · 중앙값 0.27% · 99% 1.46% · 1% 넘는 날 5.0%
-#                — 마지막 고시일엔 아직 줄이 없어 아침 발행마다 미국 거래일 하루쯤(평균 1.08일)을 아직 받지 못해요
-#   "ecos_close" ECOS 서울 외환시장 15:30 종가 (731Y003 · 0000003), 줄 D = D 의 종가 · 0.25% · 1.44% · 3.5% · 아침 발행에 늦는 날 거의 없음
-#   "ecos"       ECOS 매매기준율, 줄 D = D 에 고시된 값 (전 영업일 서울 거래) · 0.42% · 2.19% · 14.9% — 미국 D 의 끝보다 하루 반쯤 늦어요
+# 답을 기다려요 · #117 리뷰 3 의 권고로 "ecos_close"). 기록 날짜 = 사용자가 적은 미국 거래일 D. 미국 D 하루 끝(야후 다음 봉 시가)과의 차이,
+# 2016-01 ~ 2026-11 미국 거래일 2,727일 (중앙값 · 99% · 1% 넘는 날) · 아침 06:40 발행에서 어젯밤(D) 기록을 바로 받는 비율:
+#   "ecos_close" ECOS 서울 외환시장 15:30 종가 (731Y003 · 0000003), 줄 D = D 의 종가 · 0.25% · 1.44% · 3.5% · 다음 날 아침 94.5%
+#   "ecos_next"  ECOS 매매기준율, 줄 D = D 다음에 고시된 값 (= D 하루 서울 거래의 평균) · 0.27% · 1.46% · 5.0% · 다음 날 아침 0%
+#                (마지막 고시일엔 아직 줄이 없어 평균 1.59일 더 기다려요 · 금요일 밤 매수는 화요일 아침에야)
+#   "ecos"       ECOS 매매기준율, 줄 D = D 에 고시된 값 (전 영업일 서울 거래) · 0.42% · 2.19% · 14.9% · 다음 날 아침 94.7%
 #   "yahoo_next" 야후 USDKRW=X, 줄 D = D 다음 봉의 시가 (런던 자정 = 한국 다음 날 08:00~09:00) — 비교 기준 그 자체 · 마지막 줄은 아침
 #                발행 때 아직 끝나지 않은 값 (final 거짓) · 야후 일봉의 한 날짜 튐(2021-03-02 · 2022-12-01 · 2024-11-08)이 하루 앞당겨 들어와요
-# ECOS 출처는 한국 영업일마다 한 줄이고 끝난 값이에요 (final 참). 약속 (모든 출처): 줄은 asOf 와 그 전 날짜에만 말해요 — 앱은 asOf 뒤 날짜를
-# 받지 않아요 (오늘만 신선한 data.json fx). 날짜에 줄이 없으면 그 전 마지막 줄 (주말 · 한국 휴일). 그 전 줄도 없는 날(ECOS 는 2016-01-01 ~ 03)은
-# 앱이 받지 않아요.
-FX_HIST_SOURCE = "ecos_next"
+# ECOS 출처는 한국 영업일마다 한 줄이고 끝난 값이에요 (final 참). 15:30 종가는 그날 밤 ECOS 에 올라와요 (다음 날 02:00 KST 쯤엔 있었어요 ·
+# 정확한 시각은 몰라요): 아침 실행 때 아직 없으면 이력이 한 영업일 앞에서 끝나고, 관문이 휴장일 표로 보고 경고해요 (앱은 그날 기록을 하루 뒤 받아요).
+# 약속 (모든 출처): 줄은 asOf 와 그 전 날짜에만 말해요 — 앱은 asOf 뒤 날짜를 받지 않아요 (오늘만 신선한 data.json fx). 날짜에 줄이 없으면 그 전
+# 마지막 줄 (주말 · 한국 휴일). 그 전 줄도 없는 날(ECOS 는 2016-01-01 ~ 03)은 앱이 받지 않아요.
+FX_HIST_SOURCE = "ecos_close"
 ECOS_FX_ITEMS = {"mbr": ("731Y001", "0000001"),     # 3.1.1.1 주요국 통화의 대원화환율 · 원/미국달러(매매기준율) — 1964 년부터
                  "close": ("731Y003", "0000003")}   # 3.1.1.3 원/달러(종가 15:30) — 1990 년부터 · 2026 년엔 한국 휴일 몇 날에도 줄이 있어요
 LONDON = ZoneInfo("Europe/London")  # 야후 USDKRW=X 일봉의 날짜 = 런던 날짜
@@ -5766,6 +5768,10 @@ SPLIT_OVERRIDES = {
     ("RYAAY", "2024-09-30"): (2.5, "ADS 비율 변경: 1 ADS = 보통주 5주 → 2주, ADS 1개마다 1.5개를 더 받음 (Ryanair SEC 6-K 2024-08-15) — 야후 2499:1000"),
     ("HLT", "2017-01-04"): (1 / 3, "1:3 주식병합 (2017-01-03 효력, 01-04 부터 새 기준 거래 · Hilton SEC 10-K 2017) — 야후는 같은 날 분사(PK · HGV) 조정과 합쳐 250:513"),
     ("DD", "2019-06-03"): (1 / 3, "1:3 주식병합 (2019-06-01 Corteva 분사 직후 효력, 06-03 부터 거래 · DuPont SEC 10-Q 2019) — 야후는 분사 조정과 합쳐 189:400"),
+    ("HON", "2026-06-29"): (0.5, "1:2 주식병합 (2026-06-29 00:02 뉴욕 효력, 그날부터 새 기준 거래 · Honeywell 8-K 2026-06-05 · 같은 날 Honeywell "
+                                 "Aerospace(HONA) 분사) — 야후는 분사 조정과 합쳐 1907:2000"),
+    ("GMAB", "2018-05-01"): (None, "빼요: 미국 상장(ADS · Nasdaq 2019-07-18 첫 거래, Genmab 424B4) 전의 사건이라 미국 기록이 그 전 날짜일 수 없어요 "
+                                   "(FERG 2018 과 같은 규칙) — 야후 5:1"),
     ("WTW", "2016-01-05"): (1 / 2.649, "Willis 주식 2.6490주 → 1주 병합 (2016-01-04 Towers Watson 합병 직후 · WTW SEC 10-K 2016) — 야후 151:400"),
     ("TRI", "2018-11-27"): (0.9079, "자본 환급(주당 4.45달러)과 함께 한 주식 병합 1주 → 0.9079주 (2018-11-27 부터 새 기준 거래 · Thomson Reuters 발표 2018-11-26) — 야후에 없음"),
     ("TRI", "2023-06-23"): (0.963957, "자본 환급과 함께 한 주식 병합 1주 → 0.963957주 (2023-06-23 효력 · Thomson Reuters 발표 2023-06-22) — 야후 963:1000"),
@@ -5776,7 +5782,8 @@ SPLIT_OVERRIDES = {
     ("CBSH", "2022-12-01"): (1.05, "5% 주식배당 (기준일 2022-12-02 · 지급 12-16 · 회사 발표 · FY2022 10-K) — 야후에 없음"),
     ("CBSH", "2023-12-01"): (1.05, "5% 주식배당 (기준일 2023-12-04 · 지급 12-19 · 회사 발표) — 야후에 없음"),
 }
-# FERG 2018-06-11 18:19 병합은 넣지 않아요: 그때 미국 상장이 아니었어요 (NYSE 2021-03-08 부터 · 그 전 OTC ADR 은 다른 증권).
+# 미국 상장 전 사건은 넣지 않아요 (미국 기록이 그 전 날짜일 수 없어요): FERG 2018-06-11 18:19 병합 (NYSE 2021-03-08 부터 · 그 전 OTC ADR 은
+# 다른 증권 · 야후 값이 깨끗하지 않아 원래 빠져요) · GMAB 2018-05-01 (위 None 줄).
 SPLIT_SEED_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "us_splits_seed.csv")
 SPLIT_SEED_CODES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "us_splits_seed_codes.txt")
 SPLIT_BACKFILL_MAX = 20          # 시드에도 지난 발행본에도 없는 종목의 2016년부터 이력은 한 실행에 이만큼만 읽어요 (나머지는 gap · 다음 실행)
@@ -5983,8 +5990,10 @@ def merge_splits(prev, seed, us_codes, recent, recent_info, recent_from, hist, h
     us = set(us_codes)
     recent_ok = (us - set((recent_info or {}).get("noCol") or [])) if recent is not None else set()
     hist_ok = (set(need) - set((hist_info or {}).get("noCol") or [])) if hist is not None else set()
-    base = dict(seed_rows)
-    base.update(carried)                    # 지난 발행본이 시드보다 앞서요 (한 번 실은 값)
+    # 시드는 오늘 목록에 있는 종목의 줄만 (#117 리뷰 3: 목록에서 잠깐 빠진 종목의 시드 줄이 '새 줄'로 관문에서 실패했어요 — 그 종목이 다시 들면 그날
+    # 나타나요). 한 번 실은 줄(carried)은 종목이 빠져도 그대로 · 같은 종목·날짜면 실은 값이 시드보다 앞서요.
+    base = {k: v for k, v in seed_rows.items() if k[0] in us}
+    base.update(carried)
     fresh, overlap, conflict = {}, 0, []
     for lst in (hist or [], recent or []):
         for t, d, r in lst:
@@ -5998,9 +6007,11 @@ def merge_splits(prev, seed, us_codes, recent, recent_info, recent_from, hist, h
     table = {k: v for k, v in prev_fixed.items() if k not in SPLIT_OVERRIDES}
     fixed_kept = sorted([t, d] for t, d in table)
     table.update(SPLIT_OVERRIDES)
-    out, diff, moved_seen = dict(base), [], set()
+    out, diff, moved_seen, both = dict(base), [], set(), []
     by_t = {}
     for (t, d), r in base.items():
+        if (t, d) in table and table[(t, d)][0] is None:
+            continue                         # 고정 표가 빼는 줄은 '같은 사건' 찾기에 쓰지 않아요 (날짜를 고치는 'out + 새 줄'이 하루 숨지 않게)
         by_t.setdefault(t, []).append((d, r))
     for (t, d), r in sorted(fresh.items()):
         if (t, d) in table:
@@ -6014,8 +6025,9 @@ def merge_splits(prev, seed, us_codes, recent, recent_info, recent_from, hist, h
         if near:
             bd, br = near[0]
             moved_seen.add((t, bd))
-            if (t, bd) not in fresh:
-                diff.append([t, bd, br, r, d])          # 야후가 날짜를 옮겼어요 — 실은 날짜를 그대로
+            diff.append([t, bd, br, r, d])              # 야후가 날짜를 옮겼거나(실은 날짜만 둬요) 같은 배율을 두 날짜에 적었어요 (둘째는 넣지 않아요)
+            if (t, bd) in fresh:
+                both.append(f"{t} {bd} · {d} ×{r:g}")
             continue
         out[(t, d)] = r
     for (t, d), r in sorted(base.items()):
@@ -6037,7 +6049,7 @@ def merge_splits(prev, seed, us_codes, recent, recent_info, recent_from, hist, h
         elif t in us or any(k[0] == t for k in base):
             out[(t, d)] = r
     read = recent_ok | hist_ok
-    gap = sorted(set(need) - hist_ok)
+    gap = [c for c in need if c not in hist_ok]            # 순서 그대로 (splits_fields: 이번에 묻지 않은 종목 먼저, 실패한 종목 뒤)
     unread = sorted(us - read)
     if not read:
         src, as_of = "kept", prev_as_of
@@ -6058,6 +6070,9 @@ def merge_splits(prev, seed, us_codes, recent, recent_info, recent_from, hist, h
         log(f"  !! 야후와 다른 분할 {len(diff)}건 — 실은 값을 그대로 둬요 (관문이 경고해요 · 사람이 확인해 고정 표로 정리): "
             + ", ".join(f"{x[0]} {x[1]} ×{x[2]:g}→" + ("없음" if x[3] is None else f"×{x[3]:g}") + (f" ({x[4]})" if len(x) == 5 else "")
                         for x in diff[:10]))
+    if both:
+        log(f"  !! 야후가 같은 배율의 분할을 {SPLIT_SAME_EVENT_DAYS}일 안의 두 날짜에 적었어요 {len(both)}건 — 둘째는 넣지 않고 diff 에 적어요 "
+            f"(진짜 두 번이면 고정 표에 넣어요): {', '.join(both)}")
     if fixed_kept:
         log(f"  !! 고정 표에서 지운 줄 {len(fixed_kept)}개를 지난 발행본에서 이어 둬요 (빼려면 배율을 None 으로): "
             + ", ".join(f"{t} {d}" for t, d in fixed_kept))
@@ -6082,12 +6097,15 @@ def splits_fields(prev, us_codes, recent, recent_no_col, recent_from, today, see
     seed_rows, seed_codes, seed_end = seed
     if seed_end is not None and seed_end >= recent_from - dt.timedelta(days=1):
         covered = covered | seed_codes      # 시드가 오늘 다운로드의 첫날까지 덮을 때만
-    need_all = sorted(set(us_codes) - covered)
+    # 읽을 차례: 새로 목록에 든 종목 먼저, 어제 gap 은 그 순서대로 뒤에 (계속 실패하는 종목이 다른 종목을 막지 않게 · #117 리뷰 3 N1)
+    want = set(us_codes) - covered
+    prev_gap = [c for c in (((prev or {}).get("splitsInfo") or {}).get("gap") or []) if c in want] if isinstance(prev, dict) else []
+    need_all = sorted(want - set(prev_gap)) + prev_gap
     need = need_all[:SPLIT_BACKFILL_MAX]
     hist, hinfo = [], {"noCol": []}
     if need:
-        log(f"· 주식 분할: {SPLITS_FROM} 부터의 이력이 없는 종목 {len(need_all):,}개 중 {len(need):,}개를 읽어요 (야후 요청 {len(need):,}번): "
-            f"{', '.join(need[:10])}" + ("…" if len(need) > 10 else "")
+        log(f"· 주식 분할: {SPLITS_FROM} 부터의 이력이 없는 종목 {len(need_all):,}개 중 {len(need):,}개를 읽어요 (야후 요청 {len(need):,}번 · 다시 받기 "
+            f"포함 많아야 {2 * len(need):,}번): {', '.join(need[:10])}" + ("…" if len(need) > 10 else "")
             + (f" — 나머지 {len(need_all) - len(need):,}개는 다음 실행에서 (splitsInfo.gap)" if len(need_all) > len(need) else ""))
         try:
             hist, hinfo = (history or fetch_split_history)(need, today)
@@ -6098,10 +6116,14 @@ def splits_fields(prev, us_codes, recent, recent_no_col, recent_from, today, see
                 "읽어요 (splitsInfo.gap · 관문이 경고해요)")
     if hist is not None:                    # 이번에 묻지 않은 종목(상한 밖)은 읽지 않은 것 → gap (다음 실행)
         hinfo = dict(hinfo, noCol=list(hinfo.get("noCol") or []) + need_all[len(need):])
-    sp = merge_splits(prev, seed, us_codes, recent, {"noCol": list(recent_no_col or [])}, recent_from, hist, hinfo, need_all, today)
+    order = need_all[len(need):] + need     # gap 순서: 이번에 묻지 않은 종목 먼저, 이번에 실패한 종목 뒤
+    sp = merge_splits(prev, seed, us_codes, recent, {"noCol": list(recent_no_col or [])}, recent_from, hist, hinfo, order, today)
+    had = isinstance((prev or {}).get("splits"), list)
+    if not had and sp["src"] == "kept":
+        log("  !! 주식 분할: 첫 발행인데 오늘 야후에서 분할을 하나도 읽지 못해 splits 를 쓰지 않아요 (관문 경고 '없음' · 발행은 막지 않아요)")
+        return {}
     if sp["splits"] is None:
         return {}
-    had = isinstance((prev or {}).get("splits"), list)
     have = {(x[0], x[1]): x[2] for x in sp["splits"]}
     miss = [f"{t} {d}" for t, d, r in MUST_SPLITS if not _same_r(have.get((t, d)), r)]
     if miss and not had:
@@ -6249,6 +6271,8 @@ def kept_fx_hist(prev_macro, source, fx, fx_last, today):
     """지난 발행본(macro.json)의 fxHist 를 그대로 둘 수 있는지: 같은 출처 · fxHistFresh 가 날짜 · 줄이 지금 기준을 다 통과 · 마지막 값이 이
     실행의 환율과 FX_HIST_REL 안 (야후는 마지막 날 ≤ 이 실행의 환율 날짜). 며칠이 지나도 둬요 (#117 리뷰 2, N4): 줄은 asOf 와 그 전 날짜에
     대해 여전히 맞는 값이고 앱은 asOf 뒤 날짜를 받지 않으니, 빼면 2019년 기록까지 막힐 뿐 틀린 숫자를 막지 않아요 — 관문이 날마다 경고해요.
+    단 하나, 마지막 값이 이 실행의 환율과 FX_HIST_REL(10%) 넘게 달라지면 버려요 (관문이 그 이력을 실패로 막을 것이라서) — ECOS 가 오래 멈춘 동안
+    환율이 10% 넘게 움직였을 때뿐이에요 (그때는 지난 날짜의 미국 기록을 하루 이틀 받지 못해요).
     -> (fxHist, fxHistFresh) 또는 (None, 이유). 이어 써도 fxHistFresh 는 그대로예요. (순수 함수)"""
     pm = prev_macro if isinstance(prev_macro, dict) else {}
     ph, psrc = pm.get("fxHist"), pm.get("fxHistSrc")
