@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """앱 스모크 테스트 — 사이트를 로컬에서 띄우고 헤드리스 크롬(휴대폰 크기 390×844)으로 눌러봐요.
 
-  python tests/smoke_app.py                 # 저장소에 있는 JSON 으로
-  python tests/smoke_app.py --data DIR      # DIR 의 data/corp/disc/macro.json 으로
+  python tests/smoke_app.py                 # 고정 데이터로 (tests/fixtures/snapshot: 하루치 실제 발행을 줄인 사본), 시계는 그 발행일에
+                                            # 멈춘 데서 시작 — CI 는 이쪽이에요. 그날 아침 발행이 무엇이든 결과가 같아요 (Jack, 2026-11-11)
+  python tests/smoke_app.py --data DIR      # DIR 의 data/corp/disc/macro.json 으로, 진짜 시계로 (오늘 발행한 파일을 직접 볼 때: --data .)
+  python tests/smoke_app.py --part N/M      # 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)
 
 장면(시나리오)마다 새 브라우저를 열고, 데이터 사본을 일부러 망가뜨려 맞는 문구가 나오는지 봐요.
   정상        첫 화면 검색(삼성전자·현대차), 모든 탭, 30초 진단·차근차근(KO·EN), 기준 날짜
@@ -56,11 +58,13 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tmpdirs  # noqa: E402
+from testclock import TestClock, drift_ok  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE_FILES = (["baepsae.html", "index.html", "manifest.webmanifest", "sw.js", "og-v19.png", "icon-192.png", "icon-512.png"]
               + [f"baepi-{i}.png" for i in range(1, 10)])
 DATA_FILES = ["data.json", "corp.json", "disc.json", "macro.json"]
+SNAP_DIR = os.path.join(ROOT, "tests", "fixtures", "snapshot")        # 고정 데이터 (snap_*.json): 그날그날의 발행에 흔들리지 않게
 WAIT = 20000  # ms
 LOAD_FAIL = "데이터를 불러오지 못했어요"
 NONLIVE = "일부 종목은 최신 시세가 아니라 예시 가격이에요"          # 일부만 내장 예시 가격
@@ -93,8 +97,19 @@ SMALLEST = """(args) => { const [need, also] = args; let best = null;
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
+# 2026-11-11 (Jack): 시험의 '지금' = 시험의 시계 (tests/testclock.py). 고정 데이터(tests/fixtures/snapshot)로 돌 때는 main() 이 그 데이터를
+# 발행한 날의 정해진 시각(snap_meta.json 의 now)에서 시작시키고, 그 뒤로는 평소처럼 흘러요 — 모든 브라우저 창의 날짜 · 시각도 같이요
+# (Runner.new_context). --data 로 실제 파일을 줄 때는 시계를 시작하지 않아요: 그때의 '지금'은 진짜 지금이에요.
+CLOCK = None          # 고정 데이터일 때 시험의 시계가 시작하는 순간 (main 이 정해요)
+TC = TestClock()
+
+
+def now_dt():
+    return TC.now()
+
+
 def now_kst(days_ago=0):
-    return (dt.datetime.now(KST) - dt.timedelta(days=days_ago)).isoformat(timespec="seconds")
+    return (now_dt() - dt.timedelta(days=days_ago)).isoformat(timespec="seconds")
 
 
 def read_data(data_dir):
@@ -103,6 +118,20 @@ def read_data(data_dir):
         with open(os.path.join(data_dir, f), encoding="utf-8") as fh:
             out[f] = json.load(fh)   # 파이썬은 NaN 을 읽어줘요 (원본이 망가져 있어도 사본을 만들 수 있게)
     return out
+
+
+def read_snapshot():
+    """고정 데이터: 하루치 실제 발행 파일을 줄인 사본 (tests/fixtures/snapshot/snap_*.json · make_snapshot.py).
+    -> ({사이트의 파일 이름: 객체}, 그 데이터를 발행한 날의 멈춘 시각)"""
+    out = {}
+    for f in DATA_FILES:
+        with open(os.path.join(SNAP_DIR, "snap_" + f), encoding="utf-8") as fh:
+            out[f] = json.load(fh)
+    with open(os.path.join(SNAP_DIR, "snap_meta.json"), encoding="utf-8") as fh:
+        now = dt.datetime.fromisoformat(json.load(fh)["now"])
+    assert now.utcoffset() == dt.timedelta(hours=9), now          # 한국 시간으로 적혀 있어야 해요
+    assert now.date() == dt.datetime.fromisoformat(out["data.json"]["publishedAt"]).date(), (now, out["data.json"]["publishedAt"])
+    return out, now
 
 
 def build_site(files, raw=None, drop=()):
@@ -146,15 +175,57 @@ class Runner:
     def __init__(self, browser, shots):
         self.browser, self.shots = browser, shots
         self.results, self.errors, self.console = [], [], []
+        self.clock_drift = []          # 고정 데이터일 때: 창마다 (그 창의 시계 − 시험의 시계) 초
+        self.windows, self.measured = [], set()      # 연 창 모두 · 그중 시계를 잰 창
         self.unseen = []        # 오늘 데이터에 볼 회사가 없어 확인하지 못한 장면 (실제 데이터로 돌 때만 — none_today)
         self.notes = []         # 오늘 데이터라서 다르게 확인한 것 (실제 데이터로 돌 때만 — banner_due)
+
+    def new_context(self, clock=True, **kw):
+        """브라우저 창 하나. 고정 데이터로 돌 때는 창의 날짜 · 시각이 시험의 시계와 같아요 (testclock.DATE_SHIM · 타이머는 진짜 그대로).
+        창을 닫을 때 그 창의 시계를 재서, 끝에서 모든 창이 시험의 시계로 돌았는지 봐요.
+        clock=False: 장면이 Playwright 의 페이지 시계를 직접 설치할 때만 — 설치한 뒤 saw_clock(page, 그 시각) 으로 알려요."""
+        ctx = self.browser.new_context(**kw)
+        self.windows.append(ctx)
+        if clock:
+            TC.install(ctx)
+            close = ctx.close
+
+            def close_after_reading_the_clock(*a, **k):
+                try:
+                    self.read_clock(ctx)                    # 못 재도 장면을 실패시키지 않아요: 끝의 '잰 창 수' 검사가 잡아요
+                except Exception:
+                    pass
+                finally:
+                    return close(*a, **k)                   # 창은 언제나 닫아요
+            ctx.close = close_after_reading_the_clock
+        return ctx
+
+    def read_clock(self, ctx):
+        """그 창에 열려 있는 페이지들의 시계를 재요 (시험의 시계를 쓰는 창만 · 한 번만). 페이지가 막 이동하는 중이면 다 열릴 때까지
+        기다렸다가 한 번 더 재요."""
+        if not TC.started or id(ctx) in self.measured:
+            return
+        for page in ctx.pages:
+            try:
+                d = TC.drift(page)
+            except Exception:
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+                d = TC.drift(page)
+            self.clock_drift.append(d)
+            self.measured.add(id(ctx))
+
+    def saw_clock(self, page, base):
+        """clock=False 인 창: 장면이 설치한 페이지 시계가 base 에서 시작했는지."""
+        if TC.started:
+            self.clock_drift.append(TC.drift(page, base))
+            self.measured.add(id(page.context))
 
     def open(self, site, sw=False, local=None, once=False):
         srv, base = serve(site)
         # is_mobile 을 켜면 기업분석 화면이 폭 390px 보다 넓어(약 530px) 크롬이 화면을 축소하고,
         # 그러면 탭 클릭 좌표가 어긋나요. 그래서 크기만 휴대폰(390×844)으로 맞춥니다.
-        ctx = self.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR",
-                                       service_workers="allow" if sw else "block")
+        ctx = self.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR",
+                               service_workers="allow" if sw else "block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
         if local:
             # once=True: 처음 열 때만 심어요 (다시 불러와도 앱이 저장한 값을 덮어쓰지 않게 — 저장본이 남는지 볼 때)
@@ -164,6 +235,7 @@ class Runner:
         page.on("pageerror", lambda e: self.errors.append(str(e)))
         page.on("console", lambda m: self.console.append((m.type, m.text)))
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        self.read_clock(ctx)                                   # 대부분의 창은 여기서 (연 직후) 재요. 직접 여는 창은 닫을 때 재요
         return srv, ctx, page, base
 
     def check(self, page, scene, name, fn):
@@ -1596,7 +1668,7 @@ def _json_import(R, files, tmp):
     ctx.close()
 
     # 새 브라우저 문맥: 저장소가 비어 있어요 (다른 기기 · 다른 브라우저에서 여는 것과 같아요)
-    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
     page = ctx.new_page()
     page.on("pageerror", lambda e: R.errors.append(str(e)))
@@ -1854,7 +1926,7 @@ def scene_ghost_holding(R, files):
     R.check(page, S, "JSON 저장: 없는 종목도 백업에 (종목코드 · 이름 · 금액 · notInData, 나머지 null) · CSV 주문표에는 없음 · NaN 없음", backup)
     ctx.close()
 
-    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
     ctx.add_init_script("(() => { try { localStorage.setItem('baepsae_v9_seen', '1'); } catch (e) {} })();")
     page = ctx.new_page()
@@ -1951,7 +2023,7 @@ def _import_while_loading(R, files, tmp):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(SlowData, directory=site))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
-    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
     ctx.add_init_script("(() => { try { localStorage.setItem('baepsae_v9_seen', '1'); } catch (e) {} })();")
     page = ctx.new_page()
@@ -1988,7 +2060,7 @@ def _import_while_loading(R, files, tmp):
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}]}
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "skeep", "name": "그대로 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_skeep": json.dumps(slot, ensure_ascii=False)}
-    ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+    ctx = R.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
     ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
     ctx.add_init_script("(() => { try { if (!sessionStorage.getItem('seeded')) { const kv = %s; for (const k in kv) localStorage.setItem(k, kv[k]);"
                         " sessionStorage.setItem('seeded', '1'); } } catch (e) {} })();" % json.dumps(local, ensure_ascii=False))
@@ -2412,7 +2484,7 @@ def scene_v2_link(R, files):
         shutil.copy(os.path.join(ROOT, f), site)                 # 그 2.0 이 보여 주는 그림 (v19.0b)
     srv, base = serve(site)
     for w in (320, 390):
-        ctx = R.browser.new_context(viewport={"width": w, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx = R.new_context(viewport={"width": w, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
         page = ctx.new_page()
         page.on("pageerror", lambda e: R.errors.append(str(e)))
@@ -2568,7 +2640,7 @@ def scene_stale_after(R, files):
                                                          ("주말 뒤", 75, -0.1, 0, "갱신이 늦어지고 있어요", "update is running late"),
                                                          ("조용", 75, 5, 0, None, None)):
         f = json.loads(json.dumps(files, allow_nan=True))
-        now = dt.datetime.now(KST)
+        now = now_dt()
         f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=hours)).isoformat(timespec="seconds")
         f["data.json"]["nextPub"] = (now.date() - dt.timedelta(days=due)).isoformat()
         f["data.json"]["staleAfter"] = (now + dt.timedelta(hours=after)).isoformat(timespec="seconds")
@@ -2605,17 +2677,23 @@ def scene_stale_recheck(R, files):
     타이머로 · 시계만 옮기고 화면이 다시 보일 때). data.json 은 다시 받지 않아요."""
     for how in ("timer", "visible"):
         f = json.loads(json.dumps(files, allow_nan=True))
-        now = dt.datetime.now(KST)
+        now = now_dt()
         f["data.json"]["publishedAt"] = (now - dt.timedelta(hours=2)).isoformat(timespec="seconds")
         f["data.json"]["nextPub"] = now.date().isoformat()
         f["data.json"]["staleAfter"] = (now + dt.timedelta(minutes=30)).isoformat(timespec="seconds")
-        f["data.json"]["nextPub"] = (now + dt.timedelta(minutes=40)).date().isoformat()     # 경고가 뜨는 때의 날짜 (자정을 넘겨도 n = 1)
+        # 예정일 = 경고를 읽는 때보다 조금(9분) 뒤의 날짜 (자정을 넘겨도 n = 1: 앱은 n 을 1 아래로 내리지 않아요, data.js freshness).
+        # 2026-11-12 (Jack): 예전에는 두 경우 모두 40분 뒤의 날짜였는데, '화면이 다시 보일 때'는 시계를 45분 옮겨요 — 23:15~23:20 에 돌면
+        # 예정일은 오늘, 읽는 때는 내일이 되어 앱이 규칙대로 '2일째 갱신이 멈췄어요'라고 했어요 (앱이 맞고 시험이 틀렸어요).
+        # 9분의 여유: 페이지 시계는 화면이 뜨는 동안에도 흘러서, 타이머 쪽은 31분 + 몇 초 뒤에 읽어요 (타이머 쪽 예정일은 예전과 같은 40분 뒤).
+        jump = dt.timedelta(minutes=31 if how == "timer" else 45)
+        f["data.json"]["nextPub"] = (now + jump + dt.timedelta(minutes=9)).date().isoformat()
         srv, base = serve(build_site(f))
-        ctx = R.browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
+        ctx = R.new_context(clock=False, viewport={"width": 390, "height": 844}, device_scale_factor=2, locale="ko-KR", service_workers="block")
         ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(base) else r.abort())
         page = ctx.new_page()
         page.on("pageerror", lambda e: R.errors.append(str(e)))
         page.clock.install(time=now)
+        R.saw_clock(page, now)
         fetched = []
         page.on("request", lambda r: fetched.append(r.url) if r.url.endswith("data.json") else None)
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
@@ -2629,7 +2707,7 @@ def scene_stale_recheck(R, files):
             if how == "timer":
                 page.clock.fast_forward("31:00")
             else:
-                page.clock.set_system_time(now + dt.timedelta(minutes=45))
+                page.clock.set_system_time(now + jump)
                 page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
             poll(page, "(() => { const b = document.querySelector('.dateBadge'); return b ? b.dataset.stale : null; })()", lambda v: v == "1",
                  "시계가 staleAfter 를 지났는데 경고가 뜨지 않았어요")
@@ -2646,7 +2724,7 @@ def scene_corp_stale_after(R, files):
     data.json 의 staleAfter · nextPub 을 써요: 예정일 당일 staleAfter 가 지나면 '갱신이 늦어지고 있어요', 전이면 조용. 다른 발행이면
     예전 4일 규칙(발행 뒤 하루는 조용) · console 에 이유. 그리고 data.json 에 staleAfter 가 없고 pxd 를 못 읽는 미국 종목이 있으면
     포트폴리오가 console 에 개수와 함께 남겨요 (조용한 대체 없음)."""
-    now = dt.datetime.now(KST)
+    now = now_dt()
     pub = (now - dt.timedelta(hours=30)).isoformat(timespec="seconds")
     other = (now - dt.timedelta(hours=31)).isoformat(timespec="seconds")
     for label, after, corp_pub, words in (("지남", -1, pub, "갱신이 늦어지고 있어요"), ("전", 5, pub, None), ("다른 발행", -1, other, None)):
@@ -2932,18 +3010,21 @@ def part_of(scenes, part):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=None, help="data/corp/disc/macro.json 이 있는 폴더 (하루치 실제 데이터 — 발행 전 화면 검사). 없으면 저장소의 파일")
+    ap.add_argument("--data", default=None, help="data/corp/disc/macro.json 이 있는 폴더 (실제 발행 파일을 진짜 시계로). 주지 않으면 "
+                    "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
     ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요
-    global REAL_DATA
+    global CLOCK, REAL_DATA
     REAL_DATA = args.data is not None                           # 실제 데이터일 때만 '해당 회사 없음'을 크게 알리고 통과 (none_today)
     if args.data is None:
-        args.data = ROOT
-    files = read_data(args.data)
+        files, CLOCK = read_snapshot()
+        TC.start_at(CLOCK)                                      # 시험의 시계: 지금 이 순간이 CLOCK (그 뒤로는 흘러요)
+    else:
+        files, CLOCK = read_data(args.data), None               # 실제 파일: 시계를 시작하지 않아요 (진짜 지금)
     # 정상 장면은 '방금 발행된' 것으로 맞춰요 (원본이 며칠 지난 파일이어도 멈춤 경고가 끼지 않게)
     fresh = upgrade(json.loads(json.dumps(files, allow_nan=True)))
     for name in DATA_FILES:
@@ -2951,8 +3032,8 @@ def main():
     # v19.1c: data.json 의 staleAfter(다음 발행이 와 있어야 하는 시각)도 '방금 발행'에 맞춰요. 원본 파일의 것이 이미 지났으면 정상 장면에
     # 늦음 경고가 끼어요. 늦음 장면들(멈춤 · 늦음)은 각자 자기 값을 넣어요.
     if "staleAfter" in fresh["data.json"]:
-        fresh["data.json"]["staleAfter"] = (dt.datetime.now(KST) + dt.timedelta(days=2)).isoformat(timespec="seconds")
-        fresh["data.json"]["nextPub"] = (dt.datetime.now(KST) + dt.timedelta(days=2)).date().isoformat()
+        fresh["data.json"]["staleAfter"] = (now_dt() + dt.timedelta(days=2)).isoformat(timespec="seconds")
+        fresh["data.json"]["nextPub"] = (now_dt() + dt.timedelta(days=2)).date().isoformat()
     full = bool((fresh["macro.json"].get("curve") or {}).get("date"))   # 국고채 커브가 있는 데이터면 커브까지 확인
 
     with sync_playwright() as p:
@@ -2981,11 +3062,24 @@ def main():
                 print(f"  FAIL  [{key}] 장면 실행: {e}", flush=True)
         if not ran:
             R.results.append(("돌린 장면이 있어요", False, f"--part {args.part} · --only {args.only} 로 고른 장면이 없어요"))
+        if TC.started:
+            # 모든 창의 시계가 시험의 시계였는지 (진짜 오늘 날짜로 돈 창이 하나라도 있으면 여기서 걸려요). 닫을 때 잰 창 + 아직 열린 창.
+            for ctx in R.windows:
+                try:
+                    R.read_clock(ctx)
+                except Exception:
+                    pass                                        # 이미 닫힌 창 (닫을 때 쟀어요 — 못 쟀으면 아래 '잰 창' 수에서 걸려요)
+            not_read = len(R.windows) - len(R.measured)
+            ok = bool(R.windows) and not_read == 0 and all(drift_ok(d) for d in R.clock_drift)
+            R.results.append((f"브라우저 시계는 고정 데이터의 발행일 {CLOCK.date().isoformat()} (연 창 {len(R.windows)}개 모두)", ok,
+                              "" if ok else f"시계를 재지 못한 창 {not_read}개 · 어긋남(초): {[round(d) for d in R.clock_drift if not drift_ok(d)][:5]}"))
         R.results.append(("페이지 오류 0건 (모든 장면)", not R.errors, "; ".join(R.errors)[:300]))
         browser.close()
 
     w = max(len(n) for n, _, _ in R.results)
-    print(f"\n뱁새 스모크 테스트 결과 · 데이터: {os.path.abspath(args.data)}" + ("" if full else " (국고채 커브 없는 데이터)")
+    src = (f"고정 데이터 tests/fixtures/snapshot · 시계 {CLOCK.isoformat(timespec='minutes')} 에서 시작" if args.data is None
+           else os.path.abspath(args.data))
+    print(f"\n뱁새 스모크 테스트 결과 · 데이터: {src}" + ("" if full else " (국고채 커브 없는 데이터)")
           + (f" · 장면 몫 {args.part} ({len(scenes)}개)" if args.part else ""))
     for name, ok, msg in R.results:
         print(f"  {'PASS' if ok else 'FAIL'}  {name.ljust(w)}  {msg}")

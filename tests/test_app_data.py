@@ -621,8 +621,9 @@ def test_revenue_growth_is_labelled_by_how_it_was_calculated():
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 def test_korean_growth_basis_matches_2_0_on_todays_data():
     """예전 뱁새의 data.js krGrowthBasis 는 2.0 의 engine.growthBasis 와 같은 규칙이에요. 저장소에 고정된 2.0 시험 데이터
-    (tests/fixtures/v2: 실제 발행본의 한국 종목 331개)로 언제나 보고, main 에 오늘 data.json · corp.json 이 있는 동안
-    (v17.6 3b 가 main 에서 빼기 전까지)은 그 모든 한국 종목으로도 봐요."""
+    (tests/fixtures/v2: 실제 발행본의 한국 종목 331개)로 봐요. 2026-11-11 (Jack): 그날의 data.json · corp.json 은 여기서 읽지 않아요
+    (PR 의 CI 가 그날 발행에 흔들리지 않게) — 그날의 모든 한국 종목으로는 매일 실행이 발행하기 전에 같은 계산으로 봐요
+    (tests/real_data_check.py · 다른 종목이 하나라도 있으면 발행하지 않아요)."""
     def compare(d_path, c_path):
         code = ("import * as D from './src/data.js'; import * as E from './src/v2/engine.js'; import fs from 'fs';"
                 f"const d = JSON.parse(fs.readFileSync({json.dumps(d_path)}, 'utf8')); const c = JSON.parse(fs.readFileSync({json.dumps(c_path)}, 'utf8'));"
@@ -636,12 +637,6 @@ def test_korean_growth_basis_matches_2_0_on_todays_data():
         return json.loads(r.stdout)
     got = compare("./tests/fixtures/v2/data.json", "./tests/fixtures/v2/corp.json")
     assert got["n"] >= 300 and got["diff"] == [] and got["y2"] > got["y1"] >= 0, got
-    if os.path.exists(os.path.join(ROOT, "data.json")) and os.path.exists(os.path.join(ROOT, "corp.json")):
-        got = compare("./data.json", "./corp.json")
-        assert got["n"] > 1000 and got["diff"] == [], got
-        assert got["y2"] > got["y1"] >= 0, got
-    else:
-        print("main 에 data.json · corp.json 이 없어요 (v17.6 3b 뒤): 고정된 시험 데이터로만 봤어요")
     edge = run_js("console.log(JSON.stringify([D.krGrowthBasis(41.4, [200, 150, 100]), D.krGrowthBasis(33.3, [200, 150, null]),"
                   " D.krGrowthBasis(10, [200, 150, 100]), D.krGrowthBasis(null, [1, 1, 1]), D.krGrowthBasis(5, null)]));")
     assert edge == ["y2", "y1", None, None, None], edge
