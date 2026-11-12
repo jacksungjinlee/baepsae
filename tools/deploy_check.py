@@ -42,8 +42,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,9 +62,9 @@ RESULT_RE = re.compile(r"(\d+) / (\d+) 통과")
 ROW_RE = re.compile(r"  (PASS|FAIL)  (.*)")
 # smoke_launch 가 2.0 이 쓰는 항목이 빠진 데이터에서 브라우저를 열기 전에 일부러 멈출 때의 줄 (tests/smoke_launch.py use_data)
 STOP_RE = re.compile(r"!! --data .*: 2\.0 이 쓰는 항목이 빠진 데이터예요 \((.*)\)")
-TIMING_RE = re.compile(r"\s*\(\s*\d+(?:\.\d+)?\s*(?:ms|s|초|분)\s*\)$")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 PASS, FAIL, CRASH = "pass", "fail", "crash"
+SCRIPT_TIMEOUT = 20 * 60             # 검사 스크립트 하나의 시간 한도 (넘으면 멈추고 '결과 줄 전에 멈춤'으로 쳐요)
 MAX_COMMITS = 20                    # 데이터 실행 뒤 커밋이 이보다 많으면 하나하나 보지 않고 검사해요
 BOT = "baepsae-bot"                 # tools/push_data_branch.sh 가 data 브랜치 커밋에 쓰는 이름
 DATA_REF = "refs/remotes/origin/data"
@@ -259,39 +261,47 @@ def cmd_skip():
 
 
 # ── 2. 검사 돌리기와 결과 읽기 ─────────────────────────────────
-def label_of(text):
-    """결과 표 한 줄의 이름 (설명 빼고, 띄어쓰기 · 끝의 시간 표시는 맞춰서).
-    smoke 표: 이름을 폭에 맞춰 늘인 뒤 두 칸 띄고 설명 · real_data_check: '이름: 설명'."""
-    m = re.search(r" {2,}", text)
-    name = text[:m.start()] if m else text.split(": ", 1)[0]
-    return TIMING_RE.sub("", " ".join(name.split()))
+def row_names(texts):
+    """결과 표의 줄들(PASS/FAIL 뒤의 글) → 줄 이름들, 또는 None (읽지 못함).
+    smoke 표: 이름을 가장 긴 이름의 폭에 맞춰 늘인 뒤 두 칸 띄고 설명이에요 → 모든 줄에 공통인 '두 칸 이상의 빈칸이 끝나는 곳'이
+    정확히 하나여야 하고, 그 앞이 이름이에요 (이름 안의 두 칸 빈칸에서 자르지 않아요). real_data_check 표: 어느 줄에도 두 칸 빈칸이
+    없고 '이름: 설명'. 그 밖은 읽지 못함."""
+    ends = [{m.end() for m in re.finditer(r" {2,}", t)} for t in texts]
+    common = set.intersection(*ends) if ends else set()
+    if len(common) == 1:
+        w = next(iter(common)) - 2
+        return [" ".join(t[:w].split()) for t in texts]
+    if not common and not any(ends):
+        return [" ".join(t.split(": ", 1)[0].split()) for t in texts]
+    return None
 
 
 def table(lines, n, total):
-    """결과 줄 바로 앞의 결과 표 → (실패한 줄 이름들, 실패한 줄 그대로). 표의 줄 수가 total 이 아니거나 FAIL 이 total-n 이 아니면
-    (None, …) — 읽지 못함. 표와 결과 줄 사이의 알림(!! …)은 건너뛰고, 표 위의 머리줄 · 표 안의 이어진 줄은 세지 않아요."""
+    """결과 줄 바로 앞의 결과 표 → (실패한 줄 이름들 또는 None, [[이름, 실패한 줄 그대로] …]). 읽지 못함(None): 표의 줄 수가 total 이
+    아님 · FAIL 이 total-n 이 아님 · 이름을 가를 수 없음 · 실패한 줄의 이름이 표의 다른 줄과 겹침. 표와 결과 줄 사이의 알림(!! …)은
+    건너뛰고, 표 위의 머리줄 · 표 안의 이어진 줄은 세지 않아요."""
     i = len(lines) - 1
     while i >= 0 and not ROW_RE.fullmatch(lines[i]):
         i -= 1
     rows = []
     while i >= 0 and lines[i].strip():
         if ROW_RE.fullmatch(lines[i]):
-            rows.append(lines[i])
+            rows.append(ROW_RE.fullmatch(lines[i]).groups())
         i -= 1
-    fails = [ROW_RE.fullmatch(r).group(2) for r in reversed(rows) if ROW_RE.fullmatch(r).group(1) == "FAIL"]
-    raw = [f.strip()[:300] for f in fails]
-    if len(rows) != total or len(fails) != total - n:
-        return None, raw
-    out = []
-    for f in fails:
-        lab = label_of(f)
-        if lab not in out:
-            out.append(lab)
-    return out, raw
+    rows.reverse()
+    texts = [t for _, t in rows]
+    names = row_names(texts) if rows else []
+    fails = [k for k, (st, _) in enumerate(rows) if st == "FAIL"]
+    pairs = [[names[k] if names else None, texts[k].strip()[:300]] for k in fails]
+    if len(rows) != total or len(fails) != total - n or names is None:
+        return None, pairs
+    if any(names.count(names[k]) > 1 for k in fails):       # 같은 이름의 줄이 둘: 어느 줄이 실패했는지 맞춰 볼 수 없어요
+        return None, pairs
+    return [names[k] for k in fails], pairs
 
 
 def parse_run(rc, lines):
-    """한 검사 실행 → {outcome PASS|FAIL|CRASH, detail, fails (실패한 줄 이름 · 읽지 못하면 None), raw (실패한 줄 그대로)}."""
+    """한 검사 실행 → {outcome PASS|FAIL|CRASH, detail, fails (실패한 줄 이름 · 읽지 못하면 None), raw ([이름, 실패한 줄 그대로])}."""
     idx = None
     for i, ln in enumerate(lines):
         if RESULT_RE.fullmatch(ln.rstrip("\r\n")):
@@ -301,7 +311,7 @@ def parse_run(rc, lines):
         if stop and rc not in (0, None):            # 2.0 이 쓰는 항목이 빠진 데이터: 브라우저를 열기 전에 일부러 멈춤 = 실패 줄 하나
             lab = f"[데이터] 2.0 이 쓰는 항목이 빠진 데이터 ({stop.group(1)})"
             return {"outcome": FAIL, "detail": f"검사 전에 멈춤 — 2.0 이 쓰는 항목이 빠졌어요 ({stop.group(1)})",
-                    "fails": [lab], "raw": [lab]}
+                    "fails": [lab], "raw": [[lab, lab]]}
         return {"outcome": CRASH, "detail": f"끝까지 돌지 못했어요 (결과 줄 없음 · 종료 코드 {rc})", "fails": None, "raw": []}
     m = RESULT_RE.fullmatch(lines[idx].rstrip("\r\n"))
     n, total = int(m.group(1)), int(m.group(2))
@@ -329,19 +339,37 @@ def run_check(name, root, data, live=False):
     env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
     env.pop("GITHUB_ACTIONS", None)
     say(f"::group::{name} · {label}")
-    lines, rc = [], None
+    lines, rc, late = [], None, []
     try:
         p = subprocess.Popen(cmd, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, encoding="utf-8", errors="replace")
-        for ln in p.stdout:
-            print(ln, end="", flush=True)
-            lines.append(ln.rstrip("\n"))
-        rc = p.wait()
+                             text=True, encoding="utf-8", errors="replace", start_new_session=True)
+
+        def stop():                                 # 시간 한도: 스크립트와 그 브라우저 · 서버까지 (프로세스 그룹째) 멈춰요
+            late.append(True)
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        timer = threading.Timer(SCRIPT_TIMEOUT, stop)
+        timer.start()
+        try:
+            for ln in p.stdout:
+                print(ln, end="", flush=True)
+                lines.append(ln.rstrip("\n"))
+            rc = p.wait()
+        finally:
+            timer.cancel()
+        if late:
+            lines.append(f"!! 시간 한도({SCRIPT_TIMEOUT // 60}분)를 넘겨 멈췄어요")
+            say(lines[-1])
+            rc = None
     except OSError as e:
         lines.append(f"!! 시작하지 못했어요: {e}")
         say(lines[-1])
     say("::endgroup::")
     r = parse_run(rc, lines)
+    if late:
+        r = {"outcome": CRASH, "detail": f"시간 한도({SCRIPT_TIMEOUT // 60}분)를 넘겨 멈췄어요 (결과 줄 전에 멈춤)", "fails": None, "raw": []}
     r["unseen"] = [ln.strip() for ln in lines if ln.startswith(("!! 확인 못 함", "!! 알림"))][:10]
     out = {PASS: "통과", FAIL: "실패", CRASH: "끝까지 돌지 못함"}[r["outcome"]]
     say(f"· {name} ({label}): {out} · {r['detail']}" + ("" if r["fails"] is not None else " · 실패한 줄을 읽지 못했어요"))
@@ -496,8 +524,9 @@ def prepare_live(sha, served, tmp):
 
 
 # ── 4. 결정 ─────────────────────────────────────────────────
-def _row(t, verdict, text, new_only=(), both=()):
-    return {"check": t, "verdict": verdict, "text": text, "new_only": list(new_only), "both": list(both)}
+def _row(t, verdict, text, new_only=(), both=(), kind=None):
+    """kind: 올리고 알리는 줄의 까닭 — "live" (지금 사이트 코드도 같은 줄에 실패) · "same" (같은 코드인데 새 실행이 두 번 실패)."""
+    return {"check": t, "verdict": verdict, "text": text, "new_only": list(new_only), "both": list(both), "kind": kind}
 
 
 def decide(new, live, unknown=None, same=False, again=None):
@@ -533,14 +562,16 @@ def decide(new, live, unknown=None, same=False, again=None):
                            only, common)
             else:
                 row = _row(t, "alert", f"새 코드 {n['detail']} · 지금 사이트 코드도 {lv['detail']} (새 코드가 실패한 줄 {len(nf)}개를 "
-                                       "지금 코드도 모두 실패)", (), common)
+                                       "지금 코드도 모두 실패)", (), common, kind="live")
         if row["verdict"] == "block" and same and live is not None and again is not None and t in again:
             a = again[t]
             if a["outcome"] == PASS:
-                row = _row(t, "ok", f"같은 코드 · 처음엔 {n['detail']}, 한 번 더 돌리니 {a['detail']} (흔들림으로 봐요)")
+                row = _row(t, "ok", f"같은 코드 · 처음엔 {n['detail']}, 한 번 더 돌리니 {a['detail']} (한 번 흔들린 것으로 봐요)")
             else:
-                row = _row(t, "alert", f"같은 코드(지금 사이트와 데이터 말고는 같아요)라 막지 않아요 — 흔들림이나 시계 탓이에요: "
-                                       f"{row['text']} · 한 번 더 돌려도 {a['detail']}", row["new_only"], row["both"])
+                lv_said = "알 수 없음" if lv is None else lv["detail"]
+                row = _row(t, "alert", f"같은 코드(지금 사이트와 데이터 네 파일 말고는 같아요)인데 새 실행이 두 번 실패했어요 — 처음 "
+                                       f"{n['detail']} · 한 번 더 {a['detail']} · 지금 사이트 코드로 돌린 실행 {lv_said}. 흔들리거나 시계에 따라 "
+                                       "달라지는 장면일 가능성이 커요. 같은 코드라 막지 않아요", row["new_only"], row["both"], kind="same")
         rows.append(row)
     verdicts = {r["verdict"] for r in rows}
     return ("block" if "block" in verdicts else "alert" if "alert" in verdicts else "pass"), rows
@@ -593,20 +624,44 @@ def cmd_check(site, net=None, run=run_check, find=find_live, prepare=prepare_liv
     return finish(tmp, site, d, before, rows)
 
 
+VERDICT_WORD = {("ok", None): "통과", ("alert", "live"): "올림 (지금 코드도 실패)", ("alert", "same"): "올림 (같은 코드 · 두 번 실패)",
+                ("block", None): "막음"}
+
+
+def alert_title(rows):
+    kinds = {r.get("kind") for r in rows if r["verdict"] == "alert"}
+    words = (["지금 사이트 코드도 실패"] if "live" in kinds else []) + (["같은 코드인데 두 번 실패"] if "same" in kinds else [])
+    return " · ".join(words + ["올리고 알려요"])
+
+
+def _names(xs, k=5):
+    return " · ".join(xs[:k]) + (" …" if len(xs) > k else "")
+
+
+def live_fails_warning(r, live):
+    return (f"{r['check']}: 새 코드와 지금 사이트의 코드({str(live)[:7]})가 같은 데이터에서 같은 줄에 실패해요 ({_names(r['both'])}). "
+            "데이터 쪽 문제로 보고 올려요 — 경보 이슈로 알려요.")
+
+
+def same_code_warning(r, live):
+    return (f"{r['check']}: 지금 사이트의 코드({str(live)[:7]})와 데이터 말고는 같은 코드인데, 새 실행이 두 번 실패했어요 ({_names(r['new_only'])}). "
+            "흔들리거나 시계에 따라 달라지는 장면일 가능성이 커요. 같은 코드라 막지 않고 올려요 — 경보 이슈로 알려요.")
+
+
 def finish(tmp, site, d, before, rows):
     """결정을 적고 (요약 · 알림), 올려도 되면 영수증을 써요. 막으면 exit 1."""
     result, head, live = d["result"], d["head"], d.get("live")
     d["rows"] = rows
     with open(os.path.join(tmp, DECISION_FILE), "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
-    title = {"pass": "PASS · 올려요", "skipped": "건너뜀 · 올려요", "alert": "지금 사이트 코드도 실패 · 올리고 알려요",
+    title = {"pass": "PASS · 올려요", "skipped": "건너뜀 · 올려요", "alert": alert_title(rows),
              "block": "막음 · 올리지 않아요 (사이트는 그대로)"}[result]
     lines = [f"### 뱁새 배포 전 화면 검사 — {title}", "",
              f"새 코드 {head[:7]} · 데이터: 올릴 폴더의 네 파일 (한국 종가 {d.get('px')}) · {d.get('why')}", ""]
     for r in rows:
-        lines.append(f"- **{r['check']}**: {'통과' if r['verdict'] == 'ok' else '올림 (지금 코드도 실패)' if r['verdict'] == 'alert' else '막음'}"
-                     f" · {r['text']}")
-        lines += [f"  - 새 코드만 실패: `{x}`" for x in r["new_only"][:15]]
+        lines.append(f"- **{r['check']}**: {VERDICT_WORD.get((r['verdict'], r.get('kind')), r['verdict'])} · {r['text']}")
+        only_word = "같은 코드로 두 번 실패 (지금 코드 실행은 아님)" if r.get("kind") == "same" else "새 코드만 실패"
+        lines += [f"  - {only_word}: `{x}`" for x in r["new_only"][:15]]
         lines += [f"  - 두 코드 모두 실패: `{x}`" for x in r["both"][:15]]
     if d.get("unknown"):
         lines += ["", f"지금 사이트의 코드를 알 수 없어요: {d['unknown']}"]
@@ -620,6 +675,13 @@ def finish(tmp, site, d, before, rows):
             say(f"    새 코드만 실패: {x}")
     for u in unseen:                                # 검사 스크립트의 알림을 껐으니, 그 경고는 여기서 (매일 실행과 같은 뜻)
         say(f"::warning title=배포 전 화면 검사 · 오늘 데이터라서 다르게 확인한 장면::{esc(u)}")
+    for r in rows:                                  # 지금 사이트 코드도 실패하는 줄은 막든 올리든 늘 보여요 (J6: 그때마다 Jack 에게)
+        if r["verdict"] == "alert" and r.get("kind") == "same":
+            say(f"::warning title=배포 · 같은 코드인데 두 번 실패::{esc(same_code_warning(r, live))}")
+        elif r["verdict"] == "alert":
+            say(f"::warning title=배포 · 지금 사이트 코드도 실패::{esc(live_fails_warning(r, live))}")
+        elif r["verdict"] == "block" and r["both"]:
+            say(f"::warning title=배포 · 지금 사이트 코드도 실패하는 줄::{esc(r['check'] + ': 두 코드 모두 실패: ' + ' · '.join(r['both'][:5]) + (' …' if len(r['both']) > 5 else '') + ' (이 줄들은 지금 사이트에서도 실패해요)')}")
     if result == "block":
         for r in rows:
             if r["verdict"] == "block":
@@ -631,9 +693,6 @@ def finish(tmp, site, d, before, rows):
         raise SystemExit("!! 올릴 폴더가 바뀌었어요 → 올리지 않아요")
     with open(os.path.join(tmp, RECEIPT_FILE), "w", encoding="utf-8") as f:
         f.write(before)
-    if result == "alert":
-        bad = ", ".join(r["check"] for r in rows if r["verdict"] == "alert")
-        say(f"::warning title=배포 · 지금 사이트 코드도 실패::{esc(bad + ': 새 코드와 지금 사이트의 코드(' + str(live)[:7] + ')가 같은 데이터에서 같은 검사 줄에 실패해요. 데이터 쪽 문제로 보고 올려요 — 경보 이슈로 알려요.')}")
     say(f"· 배포 전 화면 검사: {title}")
     return 0
 
@@ -657,19 +716,28 @@ def check_lines(d):
         if r["verdict"] == "ok":
             continue
         out.append(f"- **{r['check']}**: {r['text']}")
-        raw = (((d.get("checks") or {}).get(r["check"]) or {}).get("new") or {}).get("raw") or (r["new_only"] + r["both"])
-        if raw:                                     # 새 코드의 실패 줄을 설명과 함께 한 번씩 (새 코드만 실패한 줄은 표시)
-            out += [f"  <details><summary>실패한 줄 {len(raw)}개</summary>", "", "  ```"]
-            out += [f"  {'(새 코드만) ' if label_of(x) in r['new_only'] else ''}{x[:300]}" for x in raw[:30]] + ["  ```", "  </details>"]
+        pairs = (((d.get("checks") or {}).get(r["check"]) or {}).get("new") or {}).get("raw") or [[x, x] for x in r["new_only"] + r["both"]]
+        mark = "(같은 코드 · 두 번 실패) " if r.get("kind") == "same" else "(새 코드만) "
+        if pairs:                                   # 새 코드의 실패 줄을 설명과 함께 한 번씩 (새 코드만 · 두 번 실패한 줄은 표시)
+            out += [f"  <details><summary>실패한 줄 {len(pairs)}개</summary>", "", "  ```"]
+            out += [f"  {mark if name in r['new_only'] else ''}{text[:300]}" for name, text in pairs[:30]] + ["  ```", "  </details>"]
     return out
 
 
 def alert_text(d, run_url, number, first):
     head, live = d["head"][:7], str(d.get("live"))[:7]
-    k = sum(1 for r in d.get("rows") or [] if r["verdict"] == "alert")
+    rows = [r for r in d.get("rows") or [] if r["verdict"] == "alert"]
+    k_live = sum(1 for r in rows if r.get("kind") != "same")
+    k_same = sum(1 for r in rows if r.get("kind") == "same")
+    why = []
+    if k_live:
+        why.append(f"{k_live}개는 지금 사이트에 있는 코드({live})도 같은 데이터에서 같은 줄에 실패해서 새 코드 탓이 아니라고 봤어요")
+    if k_same:
+        same_lines = _names([x for r in rows if r.get("kind") == "same" for x in r["new_only"]])
+        why.append(f"{k_same}개는 지금 사이트의 코드({live})와 데이터 말고는 같은 코드인데 새 실행이 두 번 실패했어요 ({same_lines}) — "
+                   "흔들리거나 시계에 따라 달라지는 장면일 가능성이 커서, 같은 코드를 막지 않았어요")
     lines = [f"{MARK} 새 코드({head})를 지금 사이트에 올리고 있어요. 지금 사이트의 데이터(한국 종가 {d.get('px')} 기준)로 화면 검사 "
-             f"{k}개가 실패하는데, 지금 사이트에 있는 코드({live})도 같은 데이터에서 같은 검사 줄에 실패해서 새 코드 탓이 아니라고 보고 "
-             "막지 않았어요.", "",
+             f"{len(rows)}개가 실패해요: " + " · ".join(why) + ".", "",
              f"{W.MENTION} 뱁새 배포가 문제를 찾았어요.", "",
              "**지금 사용자에게 보이는 것:** 지금 데이터예요 (이 배포가 끝나면 새 코드로). 검사가 실패한 장면은 사용자 화면에서도 틀리게 "
              "보일 수 있어요. 바로 봐 주세요. 올리기가 실패하면 사이트는 그대로이고, 감시가 따로 알려요.", "",
