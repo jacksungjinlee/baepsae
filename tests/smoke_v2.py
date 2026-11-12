@@ -2473,6 +2473,51 @@ def standalone_ua(ua):
     return re.sub(r" Safari/\S+$", "", re.sub(r" Version/\S+", "", ua))
 
 
+HOME_SETTLE_S = 15                      # 홈이 공시(disc.json)를 다 받기까지 기다리는 한도 (초): 넘으면 그 검사는 실패해요
+
+
+def home_settled(page, limit_s=HOME_SETTLE_S):
+    """홈(저장한 덱이 있는 오늘 화면)이 다 그려질 때까지: today-hero 가 보이고, 홈이 따로 받는 공시(disc.json)가 끝난 뒤(disc_settled).
+    받는 동안은 '오늘은 할 일이 없어요' 줄이 아직 없어서, 두 화면의 글을 견주기 전에 기다려요 (Jack, 2026-11-13: 시간 한도가 있고, 넘으면
+    실패). 한도 안에 끝나지 않으면 이유를 말하며 실패해요 — 견주기로 넘어가지 않아요. (앱의 disc.json 한도는 60초: load.REFETCH_TIMEOUT_MS)"""
+    ms = int(limit_s * 1000)
+    page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible", timeout=ms)
+    try:
+        disc_settled(page, timeout=ms)
+    except PWTimeout:
+        raise AssertionError(f"홈의 공시(disc.json)가 {limit_s}초 안에 끝나지 않았어요 (data-disc 'wait'): 화면 글을 견주지 않고 멈춰요") from None
+
+
+def scene_home_settled_limit(R, files):
+    """home_settled 의 시간 한도: disc.json 이 끝내 오지 않는 사이트에서 한도(15초) 안에 이유를 말하며 실패하고, 견주기로 넘어가지 않아요."""
+    S = "홈 공시 기다림 한도"
+    srv, ctx, page, base = R.open(build_site(files), 390, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+    held = []
+    page.route("**/disc.json", lambda r: held.append(r))                       # 대답하지 않는 disc.json (검사가 끝날 때까지 붙잡아 둬요)
+
+    def never():
+        page.reload(wait_until="domcontentloaded")                              # R.open 이 이미 연 첫 화면의 disc.json 은 길을 막기 전이라 다시 열어요
+        # (wait_ready 는 쓰지 않아요: 그것도 공시가 끝나기를 15초까지 기다려요. 여기서는 home_settled 의 한도만 봐요)
+        t0 = time.monotonic()
+        try:
+            home_settled(page)
+            got = None
+        except AssertionError as e:
+            got = str(e)
+        took = time.monotonic() - t0
+        assert got and "disc.json" in got and f"{HOME_SETTLE_S}초" in got, got
+        assert HOME_SETTLE_S - 1 <= took <= HOME_SETTLE_S + 5, took                # 한도에서 멈춰요 (끝없이 기다리지 않아요)
+        assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "wait"
+    R.check(page, S, f"disc.json 이 오지 않으면 home_settled 는 {HOME_SETTLE_S}초 한도에서 이유를 말하며 실패해요 (아이폰 기록 옮기기의 화면 견주기 앞)", never)
+    for r in held:                                                              # 붙잡아 둔 요청은 닫기 전에 끊어요 (닫을 때 소음이 없게)
+        try:
+            r.abort()
+        except Exception:
+            pass
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_iphone_records(R, files, device):
     """아이폰: 사파리에서 쓴 기록을 홈 화면 앱으로 옮기는 길 (Jack 2026-11-04: 아이폰 계획이 이 길에 기대요).
     iOS 에서 홈 화면에 추가한 앱은 사파리와 저장소를 같이 쓰지 않고 따로 써요. 그래서 옮기는 길은 '기록 내보내기 → 파일 → 기록 불러오기' 하나예요.
@@ -2521,11 +2566,6 @@ def _iphone_records(R, files, device, tmp):
     def open_deck_tab(page):
         tab(page, C["app"]["tabs"]["portfolio"])
         see(page, C["store"]["export"])
-
-    def home_settled(page):
-        """홈은 공시(disc.json)를 첫 화면 뒤에 따로 받아요: 받는 동안은 '오늘은 할 일이 없어요' 줄이 아직 없어서, 다 받은 뒤(disc_settled)에 글을 견줘요."""
-        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
-        disc_settled(page)
 
     def first_diff(a, b):
         """두 화면 글이 처음 다른 줄 (실패 메시지에 붙여요)."""
@@ -9384,6 +9424,11 @@ def main():
         except Exception as e:
             R.results.append(("[아이폰] 장면 실행", False, str(e).splitlines()[0][:200]))
             print(f"  FAIL  [아이폰] 장면 실행: {e}", flush=True)
+        try:                                                     # 위 장면이 쓰는 home_settled 의 시간 한도 (Jack, 2026-11-13)
+            scene_home_settled_limit(R, files)
+        except Exception as e:
+            R.results.append(("[홈 공시 기다림 한도] 장면 실행", False, str(e).splitlines()[0][:200]))
+            print(f"  FAIL  [홈 공시 기다림 한도] 장면 실행: {e}", flush=True)
         try:                                                     # v19.0c: 아이폰 홈 화면 안내 (아이폰 사파리에서만)
             scene_hint(R, files, p.devices)
         except Exception as e:
