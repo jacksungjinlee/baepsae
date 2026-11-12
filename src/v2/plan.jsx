@@ -13,6 +13,7 @@ import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
+import { rateFor, rateEnv } from "./records.js";
 import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
 import { EpsFixNote } from "./fixnote.jsx";
@@ -322,6 +323,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const [vals, setVals] = useState({});
   const [fail, setFail] = useState(false);
   const [tried, setTried] = useState(false);
+  const [noRate, setNoRate] = useState(false);    // v19.6a: a past date whose exchange rate is not in the data yet (US rows)
   const [savedN, setSavedN] = useState(0);        // distinct stocks actually recorded (quantity > 0): 기록했어요's {n}
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
   const today = todayKst();
@@ -337,8 +339,14 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const save = () => {
     if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
     const day = date || today;
-    // A US purchase keeps the exchange rate the plan used (data.json fx), so 포트폴리오 can show 원금 in won (Part E).
-    const fx = typeof load.data.fx === "number" && Number.isFinite(load.data.fx) && load.data.fx > 0 ? load.data.fx : null;
+    // A US purchase keeps the exchange rate of its own date (v19.6a A.1: today's data.json fx, as before, or a past date's
+    // close from macro.json fxHist), so 포트폴리오 can show 원금 in won (Part E). A past date whose rate the data does not
+    // have yet is not saved (never another day's rate): the approved "환율 정보를 불러오지 못해 …" line says so.
+    const usRows = parsed.filter((r) => r.q > 0 && r.x.s.cls === "us");
+    const rate = usRows.length ? rateFor(day, rateEnv(load, today)) : { ok: true, fx: null };
+    if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(true); setTried(true); return; }
+    setNoRate(false);
+    const fx = usRows.length && typeof rate.fx === "number" && rate.fx > 0 ? rate.fx : null;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
       ? { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : {}) }
       : { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));   // id: two tabs' copies merge by it
@@ -387,6 +395,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
         ))}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         {tried && (badDate || parsed.some((r) => r.badQ || r.badP)) && <Note tone="watch" data-ui-v2="bad-input">{P.badInput}</Note>}
+        {noRate && <Note tone="watch" data-ui-v2="rec-no-rate">{C.rec.noPastRate}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={save}>{P.save}</Button></div>
       </div>
     </BottomSheet>

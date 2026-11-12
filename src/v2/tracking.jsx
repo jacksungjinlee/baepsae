@@ -22,8 +22,11 @@ const BAND = ["low", "high", "trim"];
 // The two comparison boxes wait for the approved name of the first one (deck.vsMine).
 export function DeckSummary({ deck, de, m, load }) {
   const idx = load.macro && load.macro.idxHist ? load.macro.idxHist.KOSPI : null;
-  const k = useMemo(() => (m.cost != null && idx ? indexSince(withoutAbsent(deck, de), idx, load.data.pxDate) : { ok: false, why: idx ? "cost" : "noIndex" }),
-    [deck, de, idx, load, m.cost]);
+  // v19.6a [Q4]: with sales, 내 포트폴리오 = (value now + sale money) / all money put in − 1 (lots.kospiMirror), the same money
+  // KOSPI is measured on; with no sale it equals the return above. Each held stock's value is the daily check's own.
+  const k = useMemo(() => (m.cost != null && idx ? indexSince(withoutAbsent(deck, de), idx, load.data.pxDate, (t) => (m.per[t] ? m.per[t].value : null))
+    : { ok: false, why: idx ? "cost" : "noIndex" }), [deck, de, idx, load, m.cost, m.per]);
+  const hasDivs = (deck.divs || []).length > 0 || (deck.history || []).some((e) => e && (e.divs || []).length > 0);
   useEffect(() => {
     if (m.noFx.length) warnOnce(`[v2] ${deck.id}: US purchases without an exchange rate (${m.noFx.join(", ")}): money put in and return left out`);
     if (m.cost != null && !k.ok) warnOnce(`[v2] ${deck.id}: KOSPI comparison left out (${k.why})`);
@@ -41,13 +44,14 @@ export function DeckSummary({ deck, de, m, load }) {
       {k.ok && C.deck.vsMine && (
         <div data-ui-v2="vs-kospi" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(2), marginTop: SPACE(3) }}>
           <div data-ui-v2="vs-mine" style={{ background: COLOR.page, borderRadius: 12, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>
-            {fill(C.deck.vsMine, { pct: signedPct(m.ret * 100) })}
+            {fill(C.deck.vsMine, { pct: signedPct((k.mine != null ? k.mine : m.ret) * 100) })}
           </div>
           <div data-ui-v2="vs-index" style={{ background: COLOR.page, borderRadius: 12, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.text2) }}>
             {fill(C.deck.vsKospi, { pct: signedPct(k.ret * 100) })}
           </div>
         </div>
       )}
+      {k.ok && C.deck.vsMine && hasDivs && C.deck.vsNoDiv && <Note data-ui-v2="vs-no-div">{C.deck.vsNoDiv}</Note>}
     </div>
   );
 }

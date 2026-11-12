@@ -27,6 +27,8 @@ import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
+import { Returns } from "./returns.jsx";
+import { dataSplits, withDataSplits } from "./lots.js";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -431,8 +433,24 @@ export function App({ source }) {
   // entering 내 규칙 정하기: a refusal left from another screen does not show there (only a refused 저장 of this screen)
   const rulesId = rulesDeck ? rulesDeck.id : null;
   useEffect(() => { if (rulesId) setStore((s) => (s.refused ? { ...s, refused: false } : s)); }, [rulesId]);
+  // v19.6a (A.6): data.json's stock splits, put on an in-memory copy of each portfolio that has records of a split stock
+  // (held.js VIEW_SPLITS: never written), so every screen reads its records at today's share basis. A record saved for
+  // that stock stores the split with it (records.js withRecord), so the stored records read back the same.
+  const splitList = useMemo(() => {
+    if (load.status !== "ok") return [];
+    const r = dataSplits(load.data);
+    if (r.bad) console.warn(`[v2] data.json splits: ${r.bad} entr${r.bad === 1 ? "y" : "ies"} not read (not [code, date, ratio]); left out`);
+    return r.list;
+  }, [load]);
+  const view = useMemo(() => {
+    const data = withDataSplits(store.data, splitList, todayKst());
+    return data === store.data ? store : { ...store, data };
+  }, [store, splitList]);
+  // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
+  const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
+    const store = view;
     if (inBuild) {
       return <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => router.back("portfolio")} goToday={doneToHome} goPortfolio={doneToPortfolio}
         store={store} setStoreData={setStoreData} coach={builder.step === 1 && builder.stage === "steps" ? coach : null} onImport={openImport} />;
@@ -443,9 +461,10 @@ export function App({ source }) {
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (returnsDeck) return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
     if (tab === "portfolio") {
       return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
-        onRules={(id) => router.go("portfolio", "rules/" + id)} />;
+        onRules={(id) => router.go("portfolio", "rules/" + id)} onReturns={(id) => router.go("portfolio", "returns/" + id)} />;
     }
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;

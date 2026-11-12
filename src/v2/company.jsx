@@ -41,6 +41,8 @@ import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotab
 import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank } from "./fix.js";
 import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
+import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
+import { decksFor } from "./records.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
@@ -529,8 +531,9 @@ export function holdLine(h, single) {
   if (single && C.co.hold.mine) return fill(C.co.hold.mine, { x: v });
   return C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: `${v}%` }) : shownName(name);
 }
-function Holdings({ held, single }) {
-  if (!held.length) return null;
+// action (v19.6a): the 기록 button, under the rows.
+function Holdings({ held, single, action = null }) {
+  if (!held.length) return action ? <Card data-ui-v2="co-held" data-empty="1" style={{ padding: `${SPACE(3)}px ${SPACE(4)}px` }}>{action}</Card> : null;
   return (
     <Card data-ui-v2="co-held" style={{ padding: `${SPACE(2)}px ${SPACE(4)}px` }}>
       {held.map(({ deckId, name, x, imported }) => {
@@ -560,6 +563,7 @@ function Holdings({ held, single }) {
           </div>
         );
       })}
+      {action && <div style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>{action}</div>}
     </Card>
   );
 }
@@ -688,6 +692,10 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
 
 function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held, heldAll, preview, wide, backLabel }) {
   const discShown = !usOf(s) && !preview && disc && disc.status !== "none";
+  // v19.6a: 기록 when a portfolio has the stock (held, sold out, planned, or taken out: then 배당 받았어요 only); two or more
+  // portfolios ask which one first (records.jsx)
+  const [flow, setFlow] = useState(null);
+  const canRecord = store.writable && !store.locked && decksFor(store.data, s.t).length > 0;
   const labels = tabLabels(s, discShown);
   // A tab opens from its address even while its name waits for Jack (no tab bar then, so nothing links to it); 공시 only
   // where it exists (Korea, live page).
@@ -722,7 +730,8 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
             <Tiles load={load} s={s} onTab={setTab} tabsOn={!!labels} />
             <Warnings load={load} s={s} wide={wide} />
             <Fit load={load} s={s} store={store} wide={wide} />
-            <Holdings held={heldAll} single={store.data.decks.length === 1} />
+            <Holdings held={heldAll} single={store.data.decks.length === 1}
+              action={canRecord ? <div data-ui-v2="co-record"><RecordButton name={s.nk} onClick={() => setFlow(companyFlow(store.data, s.t, s.nk))} /></div> : null} />
             <Memo s={s} store={store} setStoreData={setStoreData} held={held} />
           </div>
         )}
@@ -733,6 +742,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
         </TabBoundary>
       </div>
       <Footer />
+      <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </Page>
   );
 }

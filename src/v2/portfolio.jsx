@@ -11,7 +11,7 @@
 // "빠진 종목이 다시 들어오거나 직접 뺄 때까지 비중은 점검하지 않아요." Names saved before v19.0c show their new form
 // (legacy.js); the saved record keeps its name. iPhone Safari (not the home-screen app): a note on moving the records.
 import React, { useMemo, useRef, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, useNav } from "./ui.jsx";
@@ -24,16 +24,31 @@ import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { heldQty } from "./held.js";
-import { pfState, isImported, usHeld } from "./pf.js";
+import { pfState, isImported, usHeld, avgOf } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
+import { RecordButton, RecordFlow, startFlow } from "./records.jsx";
+import { Icon } from "../ui/icons.jsx";
 
-// The held quantity (held.js: the one rule every screen uses) and the 평균 단가 of the 샀어요 records.
+// The held quantity (held.js: the one rule every screen uses) and the 평균 단가 (v19.6a: the moving average of the lots,
+// pf.avgOf, so a sale never changes it and a purchase after a sale averages with what is left).
 function avgCost(deck, t) {
-  const ps = deck.purchases.filter((p) => p.t === t && p.qty > 0);
-  const q = ps.reduce((a, p) => a + p.qty, 0);
   const held = heldQty(deck).get(t) || 0;
-  return q > 0 && held > 0 ? { qty: held, avg: ps.reduce((a, p) => a + p.qty * p.price, 0) / q, ccy: ps[0].ccy } : null;
+  const a = held > 0 ? avgOf(deck, t) : null;
+  return a ? { qty: held, avg: a.avg, ccy: a.ccy } : null;
+}
+// v19.6a: a portfolio with any record (a purchase, a sale, a dividend, an imported row, a stock taken out) has a 내 수익.
+export const hasRecords = (d) => !!d && ["purchases", "sales", "divs", "imported", "history"].some((k) => Array.isArray(d[k]) && d[k].length > 0);
+// "내 수익 ›": the link to that portfolio's 내 수익 (#portfolio/returns/<id>), the board's chevron row.
+export function ReturnsLink({ onClick }) {
+  return (
+    <button type="button" data-ui-v2="returns-link" onClick={onClick}
+      style={{ width: "100%", minHeight: TOUCH, marginTop: SPACE(3), display: "flex", alignItems: "center", gap: SPACE(2), border: "none", borderTop: `1px solid ${COLOR.line}`,
+        background: "none", cursor: "pointer", padding: `${SPACE(2)}px 0 0`, textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
+      <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { flex: 1 })}>{C.ret.title}</span>
+      <Icon name="chevronRight" size={18} tone="on" />
+    </button>
+  );
 }
 
 // 포트폴리오에서 빼기 (the old app's label): a small secondary button under the missing stock's row.
@@ -48,8 +63,11 @@ function RemoveButton({ onClick }) {
 const money = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
 
 // onImport (v19.3d): opens 가진 종목 넣기.
-export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null, onRules = null }) {
+export function Portfolio({ load, store, setStoreData, pad, go, onImport: openImport = null, onRules = null, onReturns = null }) {
   const { openStock } = useNav();
+  const [flow, setFlow] = useState(null);                // v19.6a: the record sheet (records.jsx)
+  const canRecord = load.status === "ok" && store.writable && !store.locked;
+  const record = (deckId, t, nk) => (canRecord ? () => setFlow(startFlow([deckId], t, nk)) : null);
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
   const decks = store.data.decks;
@@ -111,7 +129,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         <Note tone="watch" data-ui-v2="deck-stale">{todayStaleText(ev.days)}</Note>
       )}
       {decks.map((d) => {
-        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null} />;
+        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null}
+          onRecord={canRecord ? (t, nk) => setFlow(startFlow([d.id], t, nk)) : null} onReturns={onReturns && hasRecords(d) ? () => onReturns(d.id) : null} />;
         const ts = [...heldQty(d).keys()];
         const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
         const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
@@ -137,21 +156,34 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
               const x = de && de.ok ? de.holdings.find((y) => y.t === t) || null : null;
               const ret = m.ok && m.per[t] && m.per[t].ret != null ? m.per[t].ret * 100 : null;
               const gone = !!(x && x.absent);
+              const rec = record(d.id, t, h.nk);
               return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
                 onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
-                extra={!gone && m.ok && x ? <WeightLine x={x} /> : null} action={gone ? <RemoveButton onClick={() => onRemove(d.id, t)} /> : null} />;
+                extra={!gone && m.ok && x ? <WeightLine x={x} /> : null}
+                action={gone || rec ? (
+                  <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
+                    {rec && <RecordButton name={h.nk} onClick={rec} />}
+                    {gone && <RemoveButton onClick={() => onRemove(d.id, t)} />}
+                  </div>
+                ) : null} />;
             })}
-            {de && de.ok && (de.soldOut || []).map((t) => (
-              <div key={t} data-sold-out={t}>
-                <HoldingRow t={t} title={(d.holdings.find((x) => x.t === t) || { nk: t }).nk} sub={C.daily.soldOut} x={null} names={names} />
-              </div>
-            ))}
+            {de && de.ok && (de.soldOut || []).map((t) => {
+              const nk = (d.holdings.find((x) => x.t === t) || { nk: t }).nk;
+              const rec = record(d.id, t, nk);
+              return (
+                <div key={t} data-sold-out={t}>
+                  <HoldingRow t={t} title={nk} sub={C.daily.soldOut} x={null} names={names}
+                    action={rec ? <div data-ui-v2="row-actions" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}><RecordButton name={nk} onClick={rec} /></div> : null} />
+                </div>
+              );
+            })}
             {de && de.ok && de.rebased && C.daily.rebasedNote && (
               <Note data-ui-v2="rebased-note">{fill(C.daily.rebasedNote, { n: de.bandPlanned, m: de.bandHeld })}</Note>
             )}
             {de && de.ok && de.notChecked > 0 && <Note data-ui-v2="not-checked">{fill(C.daily.notChecked, { n: de.notChecked })}</Note>}
             {m.ok && <AddMoney de={de} />}
+            {onReturns && hasRecords(d) && <ReturnsLink onClick={() => onReturns(d.id)} />}
           </Card>
         );
       })}
@@ -185,15 +217,17 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         {decks.length > 0 && <IosHint kind="move" />}
       </Card>
       <Footer />
+      <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </Page>
   );
 }
 
 // v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기. Its four portfolio rules instead of 확인 필요 for every stock;
 // on stale or failed data no number and no rule (the screen's own line says why).
-function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules }) {
+function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules, onRecord, onReturns }) {
   const de = ev.ok ? ev.decks.find((x) => x.id === deck.id) : null;
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} />;
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord}
+    footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} />;
 }
