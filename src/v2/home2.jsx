@@ -29,7 +29,7 @@
 // no verdict band (it speaks for itself, as before), no card, every 가진 종목 portfolio quiet (home.quietBlock: checked,
 // nothing broken, 한 종목 · 한 업종 · 내 기준 all checked on every holding, value known) and, with a Korean stock held, today's
 // filings checked. Never when no rule could be checked, never while the filings load or after it failed.
-// 시장 한눈에 unchanged. Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
+// 시장 한눈에 unchanged; 종목 순위 under it (v19.5b, rank.jsx: phone after 시장 한눈에, PC the right column). Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
 // exists). Failed: the load-failure message, never "할 일이 없어요". No 뱁이 anywhere here (numbers). The account banner waits
 // for v19.4.
 import React, { useMemo } from "react";
@@ -49,6 +49,7 @@ import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview
 import { usHeld, limitsOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero } from "./today.jsx";
+import { RankCard } from "./rank.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
 import { IcrOffLine, EpsOwnersNote, StmtCurLine } from "./fixnote.jsx";
@@ -347,7 +348,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
         <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} quiet={look.quiet} />
-        <Cols main={main} side={ok && <MarketGlance load={load} go={go} />} />
+        <Cols main={main} side={ok && [<MarketGlance key="glance" load={load} go={go} />, <RankCard key="rank" load={load} store={store} go={go} />]} />
       </div>
       <Footer />
     </Page>
