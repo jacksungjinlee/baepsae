@@ -122,9 +122,13 @@ DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄�
 US_PREF_DROP_MAX = 10    # 우선주·예탁증서로 보고 미국 목록에서 뺀 종목 수 상한 (data.json usLeftOut.preferred) — 그날 3개 (STRC·GOOGM·GOOGN).
 #                          파이프라인은 티커·이름·야후 종류로만 판단해요 (Jack, 2026-11-03). 많으면 그 규칙이 진짜 회사를 잡은 날이에요.
 # v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드 9…)은 DART 금액이 원화가 아닐 수 있어 비워야 해요 (2026-11-03 발행본 20곳, 코오롱티슈진 PBR 9,085)
-# 2026-11-12 (Jack): 원화가 아닌 재무제표 표시(corp.json stmtCur)가 직전 발행보다 절반 넘게 사라지면 실패 — DART 의 통화 칸을
-# 못 읽은 날이에요. 그러면 달러로 공시하는 국내 회사(두산밥캣 등)의 금액이 원으로 읽혀 경고 없이 나가요. 하나라도 사라지면 경고.
-STMT_MARK_MIN = 3        # 직전 발행에 표시된 회사(오늘도 목록에 있는)가 이만큼 있을 때만 '절반' 비교 (적으면 경고만)
+# 2026-11-12 (Jack): 원화가 아닌 재무제표 표시(corp.json stmtCur)를 직전 발행과 비교해요 (check_stmt_marks). 실패: 어제 표시가 있던
+# 국내 회사(9… 가 아닌)가 오늘 표시를 잃고 금액이 차 있으면 (하나뿐이어도 — 달러 금액이 원으로 나가는 경우), 또는 절반 넘게 사라지면
+# (DART 통화 칸을 못 읽은 날). 그 밖의 사라짐 · 국내 회사가 목록에서 빠진 날은 경고.
+STMT_MARK_MIN = 3        # 직전 발행에 표시된 회사(오늘도 목록에 있는)가 이만큼 있을 때만 '절반' 비교
+# 정말 원화로 바꿔 공시하는 국내 회사: {코드: "날짜 · 근거 (Jack 의 yes)"}. 여기 있는 회사는 표시를 잃어도 실패가 아니라 경고예요.
+# 비어 있는 게 정상이에요 — 한 줄 더하는 것은 Jack 의 yes 가 있어야 해요 (tests/test_stmt_marks.py 가 지켜봐요).
+STMT_WON_SWITCH = {}
 FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json 모두 빈 칸 (vz 는 PBR 로 매긴 점수)
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
@@ -1518,6 +1522,9 @@ def _stmt_marked(c):
     return isinstance(c, dict) and c.get("stmtCur") is not None and c.get("stmtCur") != "KRW"
 
 
+STMT_AMOUNT_FIELDS = FOREIGN_BLANK_LISTS + FOREIGN_BLANK_CORP + FOREIGN_BLANK + STMT_AMT_KEYS   # 표시가 없으면 원으로 읽히는 금액 칸
+
+
 def check_stmt_marks(rep, comps, prev):
     """2026-11-12 (Jack, 더하기만): 직전 발행에서 원화가 아닌 재무제표 표시(stmtCur)가 있던 회사가 오늘도 목록에 있는데 표시가 사라졌는지.
     실패: (1) 국내 회사(9… 가 아닌)가 직전 발행에는 표시가 있었는데 오늘 표시가 사라졌고 금액 칸이 차 있으면 — 달러 금액이 원으로 나가는 바로
@@ -1539,22 +1546,24 @@ def check_stmt_marks(rep, comps, prev):
     if not isinstance(pcorp, dict) or not isinstance(pcorp.get("companies"), list):
         rep.add(name, False, "직전 corp.json 이 없거나 회사 목록이 없어요 (비교할 수 없어요)", rule)
         return
-    today = {}
-    for c in comps:                                 # 같은 코드가 두 번 있으면 앞의 것 (앱의 .find 와 같아요)
-        if isinstance(c, dict) and c.get("t") is not None and c.get("t") not in today:
-            today[c.get("t")] = c
+    rows = {}                                       # 코드 → 오늘의 줄들 (같은 코드가 두 번이면 둘 다: 예전 앱은 앞의 것, 2.0 은 뒤의 것을 써요)
+    for c in comps:
+        if isinstance(c, dict) and c.get("t") is not None:
+            rows.setdefault(c.get("t"), []).append(c)
     marked = list(dict.fromkeys(c.get("t") for c in pcorp["companies"] if _stmt_marked(c) and c.get("t") is not None))
-    still = [t for t in marked if t in today]
-    lost = [t for t in still if not _stmt_marked(today[t])]
+    still = [t for t in marked if t in rows]
+    lost = [t for t in still if not all(_stmt_marked(c) for c in rows[t])]   # 한 줄이라도 표시가 없으면 사라진 거예요
+    gone_kr = [t for t in marked if t not in rows and not is_foreign(t)]     # 국내 회사가 오늘 목록에 없음: 다음 날 다시 확인
     gone_many = len(marked) >= STMT_MARK_MIN and 2 * len(still) < len(marked)   # 표시된 회사가 한꺼번에 목록에서 빠졌어요
 
     def has_amt(t):
-        return any(_has_amount(today[t].get(k)) for k in FOREIGN_BLANK_LISTS + FOREIGN_BLANK_CORP + FOREIGN_BLANK + STMT_AMT_KEYS)
+        return any(_has_amount(c.get(k)) for c in rows[t] for k in STMT_AMOUNT_FIELDS)
 
     def label(t):
-        return f"{t} {today[t].get('nk') or ''}{' (금액 있음)' if has_amt(t) else ''}".strip()
+        nk = next((c.get("nk") for c in rows[t] if c.get("nk")), None)
+        return " ".join(x for x in (t, nk, "(금액 있음)" if has_amt(t) else None) if x)
     # 해로운 것: 금액이 찬 국내 회사(9… 가 아닌) — 외국 기업은 코드 규칙으로 금액을 비우는 줄이 따로 있어요. 맨 앞에 적어요
-    harmful = [t for t in lost if not is_foreign(t) and has_amt(t)]
+    harmful = [t for t in lost if not is_foreign(t) and has_amt(t) and t not in STMT_WON_SWITCH]
     fail = bool(harmful) or (len(still) >= STMT_MARK_MIN and 2 * len(lost) > len(still))
     lost.sort(key=lambda t: (is_foreign(t), not has_amt(t)))
     if lost:
@@ -1566,7 +1575,9 @@ def check_stmt_marks(rep, comps, prev):
         value += f": {', '.join(label(t) for t in lost[:4])}{' …' if len(lost) > 4 else ''}"
     elif gone_many:
         value += " (직전에 표시된 회사의 절반 넘게 오늘 목록에 없어요)"
-    rep.add(name, not fail, value, rule, warn=(bool(lost) or gone_many) and not fail)
+    if gone_kr:
+        value += f" · 오늘 목록에 없는 국내 회사: {', '.join(gone_kr[:4])}{' …' if len(gone_kr) > 4 else ''} (다음 발행에서 다시 확인)"
+    rep.add(name, not fail, value, rule, warn=(bool(lost) or gone_many or bool(gone_kr)) and not fail)
 
 
 def _has_amount(v):

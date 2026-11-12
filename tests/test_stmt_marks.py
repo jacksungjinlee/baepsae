@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """2026-11-12 (Jack): 관문 줄 '원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음 (stmtCur)' — 더하기만.
 
-DART 의 통화 칸을 못 읽은 날에는 corp.json 의 stmtCur 표시가 통째로 사라지고, 달러로 공시하는 국내 회사(두산밥캣 등)의 금액이
-원으로 읽혀 경고 없이 사용자에게 가요. 직전 발행에서 표시가 있던 회사(오늘도 목록에 있는) 중 절반 넘게 사라지면 실패,
-하나라도 사라지면 경고(회사가 통화를 바꿨을 수도 있어요 — 회사 하나가 모두의 발행을 막지 않게)."""
+DART 의 통화 칸을 못 읽은 날에는 corp.json 의 stmtCur 표시가 사라지고, 달러로 공시하는 국내 회사(두산밥캣 등)의 금액이 원으로 읽혀
+경고 없이 사용자에게 가요. 실패: 어제 표시가 있던 국내 회사(9… 가 아닌)가 오늘 표시를 잃고 금액이 차 있으면 — 하나뿐이어도
+(Jack 의 J2 (a), 2026-11-12: 이름 목록이 아니라 직전 발행과 비교해서) — 또는 오늘도 목록에 있는 회사가 셋 이상인데 절반 넘게 사라지면.
+그 밖의 사라짐(금액이 빈 회사 · 9… 외국 기업)과 국내 회사가 목록에서 빠진 날은 경고."""
 import copy
 import json
 import os
@@ -113,12 +114,20 @@ def test_a_foreign_company_losing_its_mark_with_amounts_only_warns_when_few():
     assert not is_fail(rep) and is_warn(rep), rep.table()
 
 
-def test_a_company_that_left_the_market_is_not_counted():
-    prev = {t: "USD" for t in USD}
-    row, rep = run(prev, {t: "USD" for t in USD[2:]})                  # 두 곳이 오늘 목록에 없음 (상장폐지)
+def test_a_foreign_company_that_left_the_market_is_not_counted():
+    prev = {t: "USD" for t in FOREIGN}
+    row, rep = run(prev, {t: "USD" for t in FOREIGN[2:]})              # 외국 기업 두 곳이 오늘 목록에 없음 (상장폐지)
     assert not is_fail(rep) and not is_warn(rep) and "오늘도 목록에 3곳 · 표시가 사라짐 0" in rep.table()
-    row, rep = run(prev, {}, cur_unmarked=USD[2:])                     # 남은 세 곳 모두 표시가 사라짐 → 실패
+    row, rep = run(prev, {}, cur_unmarked=FOREIGN[2:])                 # 남은 세 곳 모두 표시가 사라짐 → 실패
     assert is_fail(rep)
+
+
+def test_a_korean_company_missing_from_todays_list_warns_for_a_next_day_check():
+    """국내 회사가 오늘 목록에 없으면 경고 (다음 날 금액이 표시 없이 돌아오면 비교할 어제가 없어요 — 리뷰 2회차)."""
+    others = {t: "USD" for t in FOREIGN}
+    row, rep = run({"241560": "USD", **others}, others)
+    assert not is_fail(rep) and is_warn(rep), rep.table()
+    assert "오늘 목록에 없는 국내 회사: 241560 (다음 발행에서 다시 확인)" in row[1], row[1]
 
 
 def test_any_currency_other_than_won_is_a_mark_and_won_is_not():
@@ -140,7 +149,7 @@ def test_unreadable_or_missing_previous_corp_fails():
         assert is_fail(rep), prev
     rep = V.Report()
     V.check_stmt_marks(rep, companies({"241560": "USD"}), None)         # 직전 발행본 자체가 없음: '직전 발행본 읽기' 줄이 실패해요
-    assert not is_fail(rep) and NAME in rep.table()
+    assert (NAME, "—") == next(r for r in rep.rows if r[0] == NAME)[:2] and next(r for r in rep.rows if r[0] == NAME)[3] == "SKIP"
 
 
 @pytest.mark.parametrize("marked, still, lost, want", [
@@ -180,16 +189,61 @@ def test_labels_name_harmful_companies_first_and_only_mark_real_amounts():
     V.check_stmt_marks(rep, cur, {"corp": {"companies": companies(prev)}})
     value = next(r for r in rep.rows if r[0] == NAME)[1]
     assert value.split(": ", 1)[1].startswith("008700 아남전자 (금액 있음), 241560")   # 금액이 찬 국내 회사가 맨 앞
-    assert "241560 (금액 있음)" not in value and "None" not in value                  # 금액 없으면 표시 없음 · 이름 null 은 빈칸
+    assert "241560 (금액 있음)" not in value and "None" not in value and "  " not in value   # 금액 없으면 표시 없음 · 이름 null 은 빈칸
+    assert "241560" in rep.details[0][1]                                             # 이름도 금액도 없으면 코드만
     assert rep.details and rep.details[0][0] == "표시가 사라진 회사 (stmtCur)" and len(rep.details[0][1]) == 7
 
 
-def test_duplicate_codes_use_the_first_row_like_the_app():
+@pytest.mark.parametrize("unmarked_last", [True, False])
+def test_a_duplicate_row_without_the_mark_counts_as_lost(unmarked_last):
+    """같은 코드가 두 줄이면 예전 앱은 앞의 것, 2.0 은 뒤의 것을 써요: 한 줄이라도 표시가 없으면 사라진 거예요."""
     marks = {t: "USD" for t in USD[:3]}
-    cur = companies(marks) + [{"t": USD[0], "nk": "중복"}]              # 뒤에 표시 없는 같은 코드 → 앱은 앞의 것을 써요
+    dup = {"t": USD[0], "nk": "중복", "rev": [1.0, 2.0, 3.0]}
+    cur = companies(marks) + [dup] if unmarked_last else [dup] + companies(marks)
     rep = V.Report()
     V.check_stmt_marks(rep, cur, {"corp": {"companies": companies(marks) + companies({USD[0]: "USD"})}})
-    assert not is_fail(rep) and not is_warn(rep) and "직전 3곳" in rep.table(), rep.table()
+    assert is_fail(rep) and "직전 3곳" in rep.table(), rep.table()          # 국내 회사 + 금액 → 실패
+
+
+@pytest.mark.parametrize("code", ["241560", "005930", "123450"])
+def test_one_korean_company_alone_fails_whatever_its_code(code):
+    """J2 (a) 의 두 조건: 하나뿐이어도 (다른 표시 회사가 없어도), 그리고 이름 목록이 아니라 어떤 국내 코드든."""
+    row, rep = run({code: "USD"}, {}, cur_unmarked=[code])
+    assert is_fail(rep), rep.table()
+
+
+@pytest.mark.parametrize("field", list(V.STMT_AMOUNT_FIELDS))
+def test_every_amount_field_counts_as_filled(field):
+    """금액 칸 하나만 차 있어도 실패 (원으로 읽히는 칸 모두)."""
+    rep = V.Report()
+    cur = [{"t": "241560", "nk": "두산밥캣", field: [1.0, 2.0, 3.0] if field in V.FOREIGN_BLANK_LISTS + ("cash3", "eps3r", "epsNi3", "nio3") else 1.0}]
+    V.check_stmt_marks(rep, cur, {"corp": {"companies": companies({"241560": "USD"})}})
+    assert is_fail(rep), (field, rep.table())
+
+
+def test_a_real_switch_to_won_is_an_exception_only_with_jacks_yes(monkeypatch):
+    """정말 원화로 바꾼 회사는 STMT_WON_SWITCH 에 한 줄 (Jack 의 yes) — 그러면 경고만. 지금은 비어 있어요."""
+    assert V.STMT_WON_SWITCH == {}
+    monkeypatch.setitem(V.STMT_WON_SWITCH, "241560", "2026-12-01 · 시험")
+    row, rep = run({"241560": "USD"}, {}, cur_unmarked=["241560"])
+    assert not is_fail(rep) and is_warn(rep), rep.table()
+
+
+@pytest.mark.parametrize("still, warn", [(3, False), (2, True)])
+def test_mass_departure_boundary(still, warn):
+    """직전 6곳 중 오늘 목록에 셋이면 절반이라 조용, 둘이면 절반 넘게 빠져 경고."""
+    prev = {f"9{i:05d}": "USD" for i in range(6)}
+    cur = dict(list(prev.items())[:still])
+    row, rep = run(prev, cur)
+    assert is_warn(rep) is warn and not is_fail(rep), rep.table()
+
+
+def test_the_row_sits_right_after_the_foreign_issuer_row():
+    """경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)."""
+    cur, prev, final = good_pair()
+    names = [r[0] for r in check(cur, prev, final).rows]
+    i = names.index(NAME)
+    assert names[i - 1] == "해외 기업(9…) 원화 아닐 수 있는 금액 비움", names[i - 3:i + 1]
 
 
 def test_the_gate_runs_the_row_only_against_a_previous_publication():

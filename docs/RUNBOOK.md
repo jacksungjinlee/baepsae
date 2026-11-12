@@ -57,14 +57,16 @@ serve the `docs/` folder (two of its files must answer "not found").
       - **It fails** when a Korean company (code not starting with 9) had the mark in the previous publication, lost it
         today, and has amounts filled — the exact case where dollar amounts would be shown as won (Jack, 2026-11-12;
         judged against the previous publication, not a list of names). If a company really switched to reporting in
-        won, add a one-line exception with Jack's yes. It also fails when, of the marked companies still listed, at
+        won, add it to `STMT_WON_SWITCH` in `validate_data.py` (one line, with Jack's yes); it then only warns. It also fails when, of the marked companies still listed, at
         least 3 remain and more than half lost the mark (the "DART's currency reading was lost" day), and when the
         previous `corp.json` cannot be read or was not given. A failure is sticky: the comparison stays with the last good publication, so every later run fails
         until the pipeline is fixed. `--bootstrap` is not the fix (it skips the comparison and makes the bad day the
         new baseline).
       - **It warns**, naming the companies (domestic ones with amounts first), when any marked company lost its mark,
         or when more than half of the marked companies are gone from today's list. **The warning appears on that one
-        run only:** once it publishes, the next run compares with a file that no longer has the mark. So act on it the
+        run only:** once it publishes, the next run compares with a file that no longer has the mark. The same holds
+        when a Korean marked company is missing from the day's list (also a warning, "오늘 목록에 없는 국내 회사"): check
+        that company again after the next publish, because a day later its amounts could come back without the mark. So act on it the
         same morning: open the named companies on the site, and if dollar amounts show as won, revert or fix the
         pipeline and start a run by hand.
       - Branch dry runs with DART off fail this row too, like the other DART rows (expected).
