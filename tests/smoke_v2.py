@@ -4201,6 +4201,195 @@ def scene_rank_pc(R, files):
     srv.shutdown()
 
 
+# ── v19.6d 어두운 화면 (docs/tasks/v19.6-records-alerts-dark.md Part D) ──
+THEME_KEY = "baepsae-theme"
+PAGE_RGB = {"light": "rgb(245, 243, 239)", "dark": "rgb(16, 21, 30)"}           # tokens.js page (= the theme-color meta)
+META = {"light": "#F5F3EF", "dark": "#10151E"}
+INK_RGB = {"light": "rgb(28, 43, 69)", "dark": "rgb(232, 236, 242)"}
+MASCOT_CHIP_RGB = "rgb(245, 243, 239)"
+# The first paint: when <body> arrives (the head, its colour sheet and its small script are done) and at the first frame, the
+# page's colour is recorded. If the mode were applied later (by the app), the first paint would flash the light page.
+FIRST_PAINT = """(() => {
+  const look = () => [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.documentElement).backgroundColor,
+    (document.querySelector('meta[name="theme-color"]') || {}).content || null];
+  window.__v2paint = { body: null, frame: null };
+  const mo = new MutationObserver(() => { if (document.body && !window.__v2paint.body) { window.__v2paint.body = look(); mo.disconnect(); } });
+  mo.observe(document, { childList: true, subtree: true });
+  requestAnimationFrame(() => { window.__v2paint.frame = look(); });
+})();"""
+# Storage that refuses everything (a private window with site data blocked): reading the choice throws too.
+NO_STORAGE = """(() => { for (const m of ['getItem', 'setItem', 'removeItem']) Storage.prototype[m] = function () { throw new Error('blocked'); }; })();"""
+
+
+def theme_now(page):
+    return page.evaluate("""() => [document.documentElement.dataset.theme, document.documentElement.dataset.themeMode,
+        document.querySelector('meta[name="theme-color"]').content, getComputedStyle(document.body).backgroundColor,
+        getComputedStyle(document.documentElement).colorScheme]""")
+
+
+def stored_mode(page):
+    return page.evaluate(f"() => {{ try {{ return localStorage.getItem('{THEME_KEY}'); }} catch (e) {{ return 'blocked'; }} }}")
+
+
+def mode_switch(page, width):
+    """The 화면 모드 switch: in the ☰ menu on the phone, in the left menu on PC. Returns its locator (opens the menu on the phone)."""
+    if width < 1024 and page.locator('[data-ui-v2="menu"]').count() == 0:
+        open_menu(page)
+    sw = page.locator('[data-ui-v2="theme-mode"]')
+    sw.wait_for(state="visible")
+    return sw
+
+
+def pick_mode(page, width, mode):
+    sw = mode_switch(page, width)
+    sw.get_by_role("radio", name=C["menu"]["mode"][mode], exact=True).click()
+    page.wait_for_function("(m) => document.documentElement.dataset.themeMode === m", arg=mode)
+
+
+def scene_dark(R, files, width):
+    """v19.6d: 화면 모드 자동 · 밝게 · 어둡게 (☰ 메뉴, PC 는 왼쪽 메뉴). 자동은 기기를 따라 바로 바뀌고, 고른 것은 이 기기에만(새로고침해도
+    그대로) · 기록은 그대로 · 내보낸 파일에 없어요. 첫 화면부터 그 색(번쩍임 없음) · 브라우저 막대 색(theme-color)도 따라가요.
+    저장소가 막히면 자동(오류 없음). 어두운 화면: 아이콘은 어두운 표 · 뱁이는 밝은 칩 위 · 불러오기 실패 문구."""
+    S = f"어두운 화면 {width}"
+    pc = width >= 1024
+    screen = (pc_device(width) if pc else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2})
+    f = daily_files(files)
+    d = f["data.json"]
+    by = {s["t"]: s for s in d["stocks"]}
+    deck = e_imported(by, d["pxDate"], [("005930", 10, 200000), ("000660", 3, None), ("AAPL", 2, 300.0)])
+    srv, ctx, page, base = R.open(build_site(f), width, device={**screen, "color_scheme": "light"}, init=e_store([deck]) + FIRST_PAINT,
+                                  accept_downloads=True, path="/app.html?dev=1#home")
+    M = C["menu"]["mode"]
+
+    def switch():
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        assert theme_now(page) == ["light", "auto", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        assert stored_mode(page) is None
+        records = page.evaluate("() => localStorage.getItem('baepsae2.v1')")
+        sw = mode_switch(page, width)
+        assert sw.locator('[role="radiogroup"]').get_attribute("aria-label") == M["title"]
+        radios = sw.get_by_role("radio")
+        assert radios.all_inner_texts() == [M["auto"], M["light"], M["dark"]], radios.all_inner_texts()
+        assert [radios.nth(i).get_attribute("aria-checked") for i in range(3)] == ["true", "false", "false"]
+        for i in range(3):                                                    # 누르는 곳 44px 이상
+            box = radios.nth(i).bounding_box()
+            assert box["height"] >= 44 - 0.5 and box["width"] >= 44 - 0.5, box
+        assert M["title"] in sw.inner_text() and M["hint"] in sw.inner_text()
+        if not pc:                                                            # 메뉴 줄 아래, 데이터 날짜 위
+            order = page.evaluate("""() => ['menu-item', 'theme-mode', 'menu-date'].map((k) => { const e = document.querySelector(`[data-ui-v2="${k}"]`);
+                return e ? e.getBoundingClientRect().top : null; })""")
+            assert order[0] < order[1] < order[2], order
+        R.collect(page)
+        pick_mode(page, width, "dark")
+        assert theme_now(page) == ["dark", "dark", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        assert stored_mode(page) == "dark"
+        assert page.evaluate("() => getComputedStyle(document.querySelector('h1, h2, h3')).color") == INK_RGB["dark"]
+        R.collect(page)                                                       # 어두운 표의 아이콘 · 뱁이 칩 · 12px · 살구색 (visualcheck)
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records, "화면 모드를 바꾸니 기록이 바뀌었어요"
+        # 새로고침: 첫 화면부터 어두운 색 (번쩍임 없음) · 고른 것 그대로
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        paint = page.evaluate("() => window.__v2paint")
+        assert paint["body"] == ["dark", PAGE_RGB["dark"], META["dark"]], paint
+        assert paint["frame"] is None or paint["frame"] == ["dark", PAGE_RGB["dark"], META["dark"]], paint
+        assert theme_now(page)[:3] == ["dark", "dark", META["dark"]]
+        assert mode_switch(page, width).get_by_role("radio", name=M["dark"], exact=True).get_attribute("aria-checked") == "true"
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records
+        # 밝게: 기기가 어두워도 밝게, 새로고침해도
+        pick_mode(page, width, "light")
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_timeout(200)
+        assert theme_now(page) == ["light", "light", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["light", PAGE_RGB["light"], META["light"]]
+        # 자동: 저장한 값이 없어지고, 기기를 따라 그 자리에서 바뀌어요 (새로고침 없이)
+        pick_mode(page, width, "auto")
+        assert stored_mode(page) is None
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'dark'")
+        assert theme_now(page) == ["dark", "auto", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        page.emulate_media(color_scheme="light")
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'light'")
+        assert theme_now(page) == ["light", "auto", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'dark'")
+        assert theme_now(page)[2] == META["dark"]
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records
+        # 내보낸 기록 파일에는 화면 모드가 없어요
+        pick_mode(page, width, "dark")
+        if not pc:
+            page.locator('[data-ui-v2="menu-close"]').click()
+        tab(page, TABS["portfolio"]) if not pc else side_tab(page, "portfolio")
+        at(page, "portfolio")
+        with page.expect_download() as dl:
+            page.get_by_role("button", name=C["store"]["export"]).click()
+        with open(dl.value.path(), encoding="utf-8") as fh:
+            text = fh.read()
+        assert "theme" not in text and THEME_KEY not in text and json.loads(text)["decks"], text[:200]
+        R.collect(page)
+    R.check(page, S, "화면 모드: 자동(기본) · 밝게 · 어둡게 · 안내 줄 · 44px · 고르면 바로 · 새로고침해도 그대로 · 첫 화면부터 그 색 · "
+            "theme-color 도 · 자동은 기기를 따라 그 자리에서 · 기록 그대로 · 내보낸 파일에 없음", switch)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장소가 막힌 기기: 자동(기기를 따라), 오류 없음. 고르면 이번 방문 동안만
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "dark"}, init=NO_STORAGE + FIRST_PAINT)
+
+    def blocked():
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert theme_now(page) == ["dark", "auto", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        sw = mode_switch(page, width)
+        assert sw.get_by_role("radio", name=M["auto"], exact=True).get_attribute("aria-checked") == "true"
+        pick_mode(page, width, "light")
+        assert theme_now(page)[:3] == ["light", "light", META["light"]]
+        R.collect(page)
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert theme_now(page)[:2] == ["dark", "auto"], theme_now(page)
+    R.check(page, S, "저장소가 막히면 자동(기기 따라 어둡게) · 오류 없음 · 고른 것은 이번 방문 동안만", blocked)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장한 값이 엉뚱하면 자동
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "light"},
+                                  init=f"try {{ localStorage.setItem('{THEME_KEY}', 'purple'); }} catch (e) {{}}")
+
+    def junk():
+        wait_ready(page)
+        assert theme_now(page)[:2] == ["light", "auto"], theme_now(page)
+    R.check(page, S, "저장한 값이 엉뚱하면 자동", junk)
+    ctx.close()
+    srv.shutdown()
+
+    # 불러오기 실패 (데이터 파일 없음) 를 어두운 화면에서: 문구 · 어두운 page · 뱁이는 밝은 칩 위
+    srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), width, device={**screen, "color_scheme": "light"},
+                                  init=f"try {{ localStorage.setItem('{THEME_KEY}', 'dark'); }} catch (e) {{}}" + FIRST_PAINT)
+
+    def fail():
+        see(page, LOAD_FAIL)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert theme_now(page)[:4] == ["dark", "dark", META["dark"], PAGE_RGB["dark"]]
+        msg = page.get_by_text(LOAD_FAIL).first
+        assert msg.evaluate("(e) => getComputedStyle(e).color") == INK_RGB["dark"]
+        R.collect(page)
+        tab(page, TABS["market"]) if not pc else side_tab(page, "market")
+        at(page, "market")
+        see(page, LOAD_FAIL)
+        img = page.locator('[data-ui-v2="load-fail"] img[src^="baepi-"]').first
+        img.wait_for(state="visible")
+        assert img.evaluate("(e) => getComputedStyle(e).backgroundColor") == MASCOT_CHIP_RGB
+        assert img.evaluate("(e) => getComputedStyle(e).filter") == "none"           # 뱁이는 다시 칠하지 않아요
+        R.collect(page)
+    R.check(page, S, "불러오기 실패 문구를 어두운 화면에서 (첫 화면부터 어두운 색 · 뱁이는 밝은 칩 위)", fail)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_hint(R, files, devices):
     """아이폰 홈 화면 안내는 아이폰 사파리에서만 (문구는 승인 대기: 그동안은 숨은 자리 표시). 안드로이드 · 홈 화면 앱 안에서는 없어요.
     첫 방문(포트폴리오 전)은 홈과 빈 포트폴리오, 포트폴리오가 있으면 포트폴리오의 기록 칸. 모두 처음 안내를 이미 본 방문자예요
@@ -9710,7 +9899,8 @@ def main():
                    lambda: scene_say_why_2(R, files, 1280),                                                 # say-why 2: PC 의 새 데이터 줄 · 홈 공시
                    lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
                    lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
-                   lambda: scene_us_fcur(R, files, 1280, True)):
+                   lambda: scene_us_fcur(R, files, 1280, True),
+                   lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280)):                 # v19.6d 어두운 화면
             try:
                 fn()
             except Exception as e:

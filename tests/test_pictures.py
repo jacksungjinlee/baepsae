@@ -118,7 +118,7 @@ def test_every_criterion_and_visible_template_has_its_picture_on_its_tint():
     used = {x["src"] for grp in (v["cards"], v["decks"], v["start"]) for x in grp.values()}
     assert used == {f"pictures/{n}" for n in webps()}, "쓰지 않는 그림이 있거나, 없는 그림을 불러요"
     assert len({x["src"] for x in v["cards"].values()}) == 10                            # 기준마다 다른 그림
-    tok = node_value("src/ui/tokens.js", "M.TOPIC_CHIP")
+    tok = node_value("src/ui/tokens.js", "Object.fromEntries(Object.entries(M.TOPIC_CHIP).map(([k, v]) => [k, M.valueOf(v)]))")   # v19.6d: light values
     assert tok == TOPIC_CHIP
     # 칩 · 그림 크기는 보드의 격자 (그림이 칩 가운데, 칩보다 작아요)
     assert v["sizes"] == {"row": {"chip": 32, "pic": 24}, "fit": {"chip": 40, "pic": 28}, "card": {"chip": 48, "pic": 32},
@@ -222,9 +222,10 @@ def test_no_font_size_under_12px_in_2_0_code():
 # ── Part C ──
 
 def test_holding_shades_are_navy_by_weight_rank():
-    v = node_value("src/ui/tokens.js", "{ shades: M.HOLDING_SHADES, one: [0, 1, 5, 6, 9, -1].map(M.holdingShade),"
-                   " a: M.holdingShades([0.1, 0.3, 0.2]), b: M.holdingShades([0.2, null, 0.2, 0.5]),"
-                   " c: M.holdingShades([7, 6, 5, 4, 3, 2, 1, 0.5]), none: M.holdingShades([]) }")
+    # v19.6d: the shades are CSS variables; L reads each one's light value (the dark ones: tests/test_v196d_dark.py)
+    v = node_value("src/ui/tokens.js", "(() => { const L = (a) => a.map((x) => M.valueOf(x)); return { shades: L(M.HOLDING_SHADES), one: L([0, 1, 5, 6, 9, -1].map(M.holdingShade)),"
+                   " a: L(M.holdingShades([0.1, 0.3, 0.2])), b: L(M.holdingShades([0.2, null, 0.2, 0.5])),"
+                   " c: L(M.holdingShades([7, 6, 5, 4, 3, 2, 1, 0.5])), none: L(M.holdingShades([])) }; })()")
     S = ["#1C2B45", "#3D4B63", "#5A6B87", "#7C889C", "#9AA3B2", "#C9D0DB"]
     assert v["shades"] == S                                                               # Part C 의 여섯 가지, 진한 것부터
     assert v["one"] == [S[0], S[1], S[5], S[5], S[5], S[0]]                                # 일곱 번째부터 가장 옅은 색

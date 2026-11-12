@@ -72,15 +72,29 @@ def mascot_digit_problems(items):
 
 # 살구색(src/ui/tokens.js 의 apricot · apricotText · heroAlert): 데이터 표시에만, 고른 것 · 아이콘 · 알림 띠 · 초점 테두리에는 없어요
 # 계산된 색에서 살구색 세 값을 찾아요: rgb(…) 이든 투명도가 붙은 rgba(…, 0.8) 이든
-APRICOT_RGB = re.compile(r"\(\s*(?:201,\s*119,\s*87|169,\s*84,\s*47|251,\s*241,\s*234)\s*[,)]")
+# v19.6d: the dark screen's apricot (#E08E6A) and apricot text (#F0A27F) too. (The dark heroAlert is the dark watchBg, a
+# status colour, so it is not in this list.)
+APRICOT_RGB = re.compile(r"\(\s*(?:201,\s*119,\s*87|169,\s*84,\s*47|251,\s*241,\s*234|224,\s*142,\s*106|240,\s*162,\s*127)\s*[,)]")
 NAVY_RGB = "rgb(28, 43, 69)"
 SELECT_RGB = "rgb(242, 240, 235)"
 # 아이콘 색 표 (docs/tasks/v19.0-layout-c.md Part B): (바탕 층, 선 층) — on · off · ok · 남색 위
 # + v19.1 Part H 주제 색 (Jack 승인 2026-11-05): 실적 · 가치 · 배당 · 출렁임·위험 · 공시 — 선은 남색, 바탕만 주제 색. 그 밖은 없어요.
 ICON_PAIRS = {("#CBD3DF", "#1C2B45"), ("#E3E6EB", "#6B7280"), ("#CDEBD9", "#1F7A4D"), ("#5A6B87", "#FFFFFF"),
               ("#B9CDEB", "#1C2B45"), ("#BFE0CC", "#1C2B45"), ("#EBD49A", "#1C2B45"), ("#D3C8EC", "#1C2B45"), ("#B5DDDD", "#1C2B45")}
+# v19.6d (docs/tasks/v19.6-records-alerts-dark.md Part D): the dark screen's icon table — the same icons, painted by the page's
+# colour sheet over their fill attributes (which keep the light table above). (fill layer, line layer) per tone, in the same order.
+ICON_PAIRS_DARK = {("#4A5872", "#E8ECF2"), ("#2E384A", "#8E99AA"), ("#2E5A44", "#6FD39F"), ("#4A5F87", "#FFFFFF"),
+                   ("#3B5480", "#E8ECF2"), ("#2F6047", "#E8ECF2"), ("#6B5A2A", "#E8ECF2"), ("#4C4275", "#E8ECF2"), ("#2C6464", "#E8ECF2")}
+
+
+def _rgb(h):
+    return "rgb(%d, %d, %d)" % tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+
+ICON_RGB = {"light": {(_rgb(a), _rgb(b)) for a, b in ICON_PAIRS}, "dark": {(_rgb(a), _rgb(b)) for a, b in ICON_PAIRS_DARK}}
 VISUAL = r"""(exempt) => {
-  const out = { verdictImg: [], badImg: [], icons: [], styles: [], imgs: 0, placements: [] };
+  const out = { verdictImg: [], badImg: [], icons: [], styles: [], imgs: 0, placements: [], theme: document.documentElement.dataset.theme || 'light',
+    painted: [], mascotChip: [] };
   const shown = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   // 한 화면의 보이는 글 중 숫자가 있는 조각마다 [글, 감싼 예외 칸] (판단은 파이썬의 mascot_digit_problems)
   const digitsOn = (root, skipDialogs) => {
@@ -118,7 +132,11 @@ VISUAL = r"""(exempt) => {
     const ok = svg.getAttribute('viewBox') === '0 0 256 256' && k.length === 2 && k.every((x) => x.tagName === 'path')
       && k[0].dataset.layer === 'fill' && k[1].dataset.layer === 'line' && !svg.querySelector('[stroke]') && !svg.hasAttribute('stroke');
     out.icons.push([svg.dataset.icon, ok, k[0] ? k[0].getAttribute('fill') : '', k[1] ? k[1].getAttribute('fill') : '']);
+    // v19.6d: the colours actually painted (the page's colour sheet paints the two layers for the screen mode in use)
+    if (k.length === 2 && shown(svg)) out.painted.push([svg.dataset.icon, getComputedStyle(k[0]).fill, getComputedStyle(k[1]).fill]);
   }
+  // v19.6d: on the dark screen every 뱁이 picture sits on the light chip (#F5F3EF); on the light screen there is no chip
+  for (const img of document.querySelectorAll('img[src*="baepi-"]')) if (shown(img)) out.mascotChip.push([img.getAttribute('src'), getComputedStyle(img).backgroundColor]);
   const sel = ['[data-selected="1"]', '[aria-current="page"]', '[aria-current="true"]', '[role="radio"][aria-checked="true"]',
     '[data-ui-part="tab-pill"]', 'nav[data-ui="bottom-tab-bar"] path', '[data-ui="icon-chip"]', '[data-ui="icon-chip"] path',
     '[data-ui="state-icon"]', '[data-ui="state-icon"] path', '[data-ui="hero-band"]', '[data-ui="hero-band"] [data-ui-part="pill"]',
@@ -145,6 +163,15 @@ def visual_problems(v):
     icons = [i for i in v["icons"] if not i[1] or (i[2], i[3]) not in ICON_PAIRS]
     if icons:
         bad.append(("Phosphor 두 층 · 표의 색이 아닌 아이콘", icons[:4]))
+    # v19.6d: the painted colours are the table of the screen mode in use (light: the same as the attributes; dark: Part D)
+    theme = v.get("theme", "light")
+    painted = [i for i in v.get("painted", []) if (i[1], i[2]) not in ICON_RGB.get(theme, set())]
+    if painted:
+        bad.append((f"그려진 아이콘 색이 {theme} 표가 아니에요", painted[:4]))
+    chip = "rgb(245, 243, 239)" if theme == "dark" else "rgba(0, 0, 0, 0)"
+    mascot = [m for m in v.get("mascotChip", []) if m[1] != chip]
+    if mascot:
+        bad.append(("뱁이 칩 (어두운 화면에서만 밝은 칩)", mascot[:4]))
     apricot = [x for x in v["styles"] if APRICOT_RGB.search(x[1])]
     if apricot:
         bad.append(("살구색", apricot[:4]))
