@@ -11220,6 +11220,16 @@ def scene_v197a(R, files, width):
         open_edit()
         assert pcts() == {"005380": 25, "105560": 25, "AAPL": 25, "000660": 25}                        # 기다리던 것 없이 새로
         row("005380").locator('[data-ui-v2="edit-down"]').click()
+        # 다른 탭으로 갔다 와도 바꾸던 것은 그대로 (저장 전: 포트폴리오 만들기 · 가진 종목 넣기처럼 앱이 들고 있어요)
+        if wide:
+            side_tab(page, "home")
+            side_tab(page, "portfolio")
+        else:
+            tab(page, TABS["home"])
+            at(page, "home")
+            tab(page, TABS["portfolio"])
+        open_edit()
+        assert pcts()["005380"] == 24 and deck()["holdings"][0]["target"] == 0.25
         page.locator('[data-ui-v2="app-bar"] button').first.click()                                    # 뒤로 → 나갈까요?
         lv = page.locator('[data-ui-v2="edit-leave"]')
         lv.wait_for(state="visible")
