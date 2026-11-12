@@ -1011,7 +1011,7 @@ def _us_codes(d):
 
 def _fx_hist_vs_yesterday(ds, vs, src, pmacro):
     """v19.6a (#117 리뷰 3 N7 · 경고만): 어제 발행본의 fxHist 와 비교 — 지난 줄(어제 마지막까지, 어제 마지막 줄이 끝나지 않은 값이면 그 전까지)이
-    바뀌었거나 빠졌으면, asOf 가 어제보다 앞이면, 출처가 바뀌었으면. 사용자 기록에 저장된 환율은 바뀌지 않지만 같은 날짜의 새 기록이 다른 값을
+    바뀌었거나 빠졌으면, 어제 마지막 날 앞에 어제 없던 줄이 끼어들었으면, asOf 가 어제보다 앞이면, 출처가 바뀌었으면. 사용자 기록에 저장된 환율은 바뀌지 않지만 같은 날짜의 새 기록이 다른 값을
     받게 돼요. -> 경고 글 목록."""
     pfh = pmacro.get("fxHist") if isinstance(pmacro, dict) else None
     if not isinstance(pfh, dict) or not isinstance(pfh.get("rows"), list):
@@ -1028,7 +1028,10 @@ def _fx_hist_vs_yesterday(ds, vs, src, pmacro):
     cut = keys[-2] if pfh.get("final") is False and len(keys) > 1 else keys[-1]
     cur = {d.isoformat(): v for d, v in zip(ds, vs)}
     changed = [d for d in keys if d <= cut and (d not in cur or abs(cur[d] - prev[d]) > 1e-9)]
+    added = [d for d in sorted(cur) if d < keys[-1] and d not in prev]      # 어제 마지막 날 앞에 새로 끼어든 줄
     out = [f"지난 줄이 어제와 달라요 {len(changed)}: {', '.join(changed[:5])}"] if changed else []
+    if added:
+        out.append(f"어제 없던 지난 줄이 생겼어요 {len(added)}: {', '.join(added[:5])}")
     p_as_of = _iso_day(pfh.get("asOf"))
     if p_as_of and ds and ds[-1] < p_as_of:
         out.append(f"asOf {ds[-1]} 가 어제 {p_as_of} 보다 앞이에요")
@@ -1214,8 +1217,8 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
         elif as_of < run_day:
             warns.append(f"야후에서 마지막으로 새로 읽은 날 {as_of}")
         src = data.get("splitsSrc")
-        if src != "yahoo":
-            warns.append(f"출처 {src}")
+        if src != "yahoo":                      # 값 칸에 '출처 …' 가 이미 있어요 — 경고 이유만 적어요 (#117 리뷰 4 N-7)
+            warns.append({"kept": "오늘 새로 읽지 못해 지난 발행본 그대로", "part": "일부 종목을 오늘 읽지 못함"}.get(src, "출처 표시가 이상해요"))
         gap = info.get("gap") if isinstance(info.get("gap"), list) else []
         if gap:
             warns.append(f"2016년부터의 분할을 아직 읽지 못한 종목 {len(gap)}: {', '.join(map(str, gap[:5]))}")
@@ -2361,14 +2364,14 @@ def load_prev(prev_dir, prev_ref):
         try:
             with open(os.path.join(prev_dir, "macro.json"), encoding="utf-8") as fh:
                 out["macro"] = strict_loads(fh.read(), "macro.json")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"· 직전 발행본의 macro.json 을 읽지 못해 환율 이력 비교(경고 줄) 없이 해요: {type(e).__name__}: {str(e)[:120]}")
         return out
     out = load_git(prev_ref, files=("data.json",))
     try:
         out.update(load_git(prev_ref, files=("macro.json",)))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"· 직전 발행본의 macro.json 을 읽지 못해 환율 이력 비교(경고 줄) 없이 해요: {type(e).__name__}: {str(e)[:120]}")
     return out
 
 
