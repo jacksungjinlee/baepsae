@@ -3,7 +3,7 @@
 // 페이지 안내 글은 영어로만 써요. 한국어는 모두 examples.js (= 목업 문구 CSV) 에서 와요.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, NUM, CONTRAST_PAIRS, AVOID_PAIRS, ICON_TONE, CHART, contrast } from "../src/ui/tokens.js";
+import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, NUM, CONTRAST_PAIRS, AVOID_PAIRS, AVOID_PAIRS_DARK, ICON_TONE, CHART, PALETTE, tokenName, contrast } from "../src/ui/tokens.js";
 import { Icon, IconChip, ICON_NAMES, ICON_TONES, ALIAS } from "../src/ui/icons.jsx";
 import {
   StatusChip, HeroBand, Button, StatStrip, ListRow, Segmented, Stepper, MoneyInput, BottomActionBar,
@@ -37,7 +37,8 @@ const State = ({ label, children }) => (
 
 // ── Part 1: 토큰 ──
 const SWATCHES = [
-  ["ink", "Main text, primary buttons"], ["text2", "Secondary text"], ["text3", "Small labels, on white only"],
+  ["ink", "Main text, lines and marks"], ["primary", "Navy as a background: primary buttons, the home rules band, chosen chips"],
+  ["onPrimary", "Text on primary"], ["text2", "Secondary text"], ["text3", "Small labels, on white only"],
   ["page", "Page background"], ["surface", "Sections"], ["line", "Hairlines"], ["border", "Control borders"],
   ["apricot", "Data marks only: target line, rank numbers, factor dots, my portfolio in charts"], ["apricotText", "Apricot text (data labels)"],
   ["heroCalm", "Hero: nothing to do"], ["heroAlert", "Not used since v19.0b: alerts use watch and broken"],
@@ -53,6 +54,9 @@ const CHART_SWATCHES = [
   ["latest", "Earnings bars: the latest year"], ["earlier", "Earnings bars: the earlier years"],
 ];
 
+// v19.6d: tokens are CSS variables ("var(--bs-name, light)"); the page shows each token's light and dark values.
+const both = (name) => `${PALETTE.light[name]} · dark ${PALETTE.dark[name]}`;
+
 function Tokens() {
   return (
     <>
@@ -65,7 +69,7 @@ function Tokens() {
                 <span style={txt(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block" })}>{k}</span>
                 <span style={txt(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{use}</span>
               </span>
-              <code style={txt(SIZE.xs, WEIGHT.semi, COLOR.text2, NUM)}>{COLOR[k]}</code>
+              <code style={txt(SIZE.xs, WEIGHT.semi, COLOR.text2, NUM)}>{both(k)}</code>
             </div>
           ))}
         </Card>
@@ -80,28 +84,36 @@ function Tokens() {
                 <span style={txt(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block" })}>{k}</span>
                 <span style={txt(SIZE.xxs, WEIGHT.regular, COLOR.text3)}>{use}</span>
               </span>
-              <code style={txt(SIZE.xs, WEIGHT.semi, COLOR.text2, NUM)}>{CHART[k]}</code>
+              <code style={txt(SIZE.xs, WEIGHT.semi, COLOR.text2, NUM)}>{both(tokenName(CHART[k]))}</code>
             </div>
           ))}
         </Card>
       </Block>
 
-      <Block id="contrast" name="Contrast pairs" note="Every text and background pair used. Each must be at least 4.5 : 1.">
+      <Block id="contrast" name="Contrast pairs" note="Every text and background pair used. Each must be at least 4.5 : 1, in the light and the dark screen.">
         <Card style={{ padding: SPACE(3) }}>
           {CONTRAST_PAIRS.map(([fg, bg]) => {
-            const r = contrast(COLOR[fg], COLOR[bg]);
+            const r = contrast(PALETTE.light[fg], PALETTE.light[bg]);
+            const d = contrast(PALETTE.dark[fg], PALETTE.dark[bg]);
             return (
-              <div key={fg + bg} data-pair={`${fg}/${bg}`} data-ratio={r.toFixed(2)} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
+              <div key={fg + bg} data-pair={`${fg}/${bg}`} data-ratio={r.toFixed(2)} data-ratio-dark={d.toFixed(2)} style={{ display: "flex", alignItems: "center", gap: SPACE(3), padding: `${SPACE(2)}px 0`, borderBottom: `1px solid ${COLOR.line}` }}>
                 <span style={{ background: COLOR[bg], color: COLOR[fg], borderRadius: SPACE(2), padding: `${SPACE(1)}px ${SPACE(3)}px`, border: `1px solid ${COLOR.border}`, ...txt(SIZE.sm, WEIGHT.bold, COLOR[fg], NUM) }}>{EX.typeNumber}</span>
                 <span style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2, { flex: 1 })}>{fg} on {bg}</span>
                 <span style={txt(SIZE.xs, WEIGHT.heavy, r >= 4.5 ? COLOR.ok : COLOR.ink, NUM)}>{r.toFixed(2)} : 1</span>
+                <span style={txt(SIZE.xs, WEIGHT.heavy, d >= 4.5 ? COLOR.ok : COLOR.ink, NUM)}>dark {d.toFixed(2)} : 1</span>
               </div>
             );
           })}
           <div style={txt(SIZE.xs, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(3) })}>Not used (below 4.5 : 1)</div>
           {AVOID_PAIRS.map(([fg, bg]) => (
             <div key={fg + bg} data-avoid={`${fg}/${bg}`} style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2, NUM)}>
-              {fg} on {bg}: {contrast(COLOR[fg], COLOR[bg]).toFixed(2)} : 1
+              {fg} on {bg}: {contrast(PALETTE.light[fg], PALETTE.light[bg]).toFixed(2)} : 1
+            </div>
+          ))}
+          <div style={txt(SIZE.xs, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(3) })}>Not used either (below 4.5 : 1 in the dark screen)</div>
+          {AVOID_PAIRS_DARK.map(([fg, bg]) => (
+            <div key={fg + bg} data-avoid-dark={`${fg}/${bg}`} style={txt(SIZE.xs, WEIGHT.regular, COLOR.text2, NUM)}>
+              {fg} on {bg}: dark {contrast(PALETTE.dark[fg], PALETTE.dark[bg]).toFixed(2)} : 1
             </div>
           ))}
         </Card>
@@ -155,14 +167,14 @@ function Tokens() {
         </Card>
         <Card data-icon-tones style={{ display: "flex", flexWrap: "wrap", gap: SPACE(4), alignItems: "center" }}>
           {ICON_TONES.map((t) => (
-            <div key={t} style={{ display: "flex", alignItems: "center", gap: SPACE(2), padding: SPACE(2), borderRadius: RADIUS.sm, background: t === "onNavy" ? COLOR.ink : COLOR.surface }}>
+            <div key={t} style={{ display: "flex", alignItems: "center", gap: SPACE(2), padding: SPACE(2), borderRadius: RADIUS.sm, background: t === "onNavy" ? COLOR.primary : COLOR.surface }}>
               <Icon name="check-circle" tone={t} />
-              <code style={txt(SIZE.xxs, WEIGHT.semi, t === "onNavy" ? COLOR.surface : COLOR.text2)}>{t} {ICON_TONE[t].line} / {ICON_TONE[t].fill}</code>
+              <code style={txt(SIZE.xxs, WEIGHT.semi, t === "onNavy" ? COLOR.onPrimary : COLOR.text2)}>{t} {ICON_TONE[t].line} / {ICON_TONE[t].fill}</code>
             </div>
           ))}
           <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
             <IconChip name="clipboard-text" size={36} />
-            <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text2)}>chip {COLOR.select}, radius 30%</code>
+            <code style={txt(SIZE.xxs, WEIGHT.semi, COLOR.text2)}>chip {PALETTE.light.select}, radius 30%</code>
           </div>
         </Card>
       </Block>

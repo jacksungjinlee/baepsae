@@ -17,10 +17,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
-import { BottomTabBar } from "../ui/components.jsx";
+import { BottomTabBar, Segmented } from "../ui/components.jsx";
 import { C, fill, mdText } from "./format.js";
 import { DateLine, Note, IMG, SampleLabel, SIDE_W, PC_PAD, PcFrame, HomeLink, tx, tap, useMode } from "./ui.jsx";
 import { TABS, OLD_APP, OLD_LINKS, ABOUT_ROUTE, CO_MORE, parseHash, hashOf } from "./routes.js";
+import { THEME_KEY, MODES, readMode, saveMode, applyMode, onDeviceChange } from "./theme.js";
 
 const isMore = (ctab) => CO_MORE.includes(ctab);
 
@@ -179,6 +180,45 @@ export function useRouter() {
   return { loc, lastTab: lastTab.current, focusBefore, go, openAbout, replaceRoute, back, openMenu, closeMenu };
 }
 
+// ---------------- 화면 모드 (v19.6d, v19.6 Part D) ----------------
+// [mode, choose]: the stored choice (자동 · 밝게 · 어둡게, src/v2/theme.js) and how to change it. Applies the mode on every
+// change; under 자동 it follows the device live (prefers-color-scheme change). Another tab of this site changing the choice
+// is followed too (storage event). The records are never touched: the choice has its own storage key.
+export function useThemeMode() {
+  const [mode, setMode] = useState(readMode);
+  useEffect(() => {
+    applyMode(mode);
+    return mode === "auto" ? onDeviceChange(() => applyMode("auto")) : undefined;
+  }, [mode]);
+  useEffect(() => {
+    const on = (e) => { if (e.key === THEME_KEY || e.key === null) setMode(readMode()); };
+    window.addEventListener("storage", on);
+    return () => window.removeEventListener("storage", on);
+  }, []);
+  const choose = useCallback((m) => {
+    if (!MODES.includes(m)) return;
+    saveMode(m);
+    setMode(m);
+  }, []);
+  return [mode, choose];
+}
+
+// The switch: heading, 자동 · 밝게 · 어둡게 (radios: arrow keys move), and the hint under it. side: the PC left menu's
+// smaller heading.
+function ThemeSwitch({ theme, side }) {
+  const M = C.menu.mode;
+  if (!theme || !M || !M.title) return null;
+  const [mode, choose] = theme;
+  return (
+    <div data-ui-v2="theme-mode" data-mode={mode}>
+      <div style={side ? tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginBottom: SPACE(1), padding: `0 ${SPACE(1)}px` })
+        : tx(SIZE.body, WEIGHT.semi, COLOR.ink, { marginBottom: SPACE(2) })}>{M.title}</div>
+      <Segmented label={M.title} value={mode} onChange={choose} options={MODES.map((m) => ({ value: m, label: M[m] }))} />
+      <Note style={side ? { marginTop: SPACE(1), padding: `0 ${SPACE(1)}px` } : undefined}>{M.hint}</Note>
+    </div>
+  );
+}
+
 // The bottom tab bar: icon + label for the four tabs (board NavC).
 export function TabBar({ value, onChange }) {
   const tabs = TABS.map((id) => ({ id, label: C.app.tabs[id], icon: TAB_ICON[id] }));
@@ -205,7 +245,8 @@ function MenuRow({ icon, label, href, onClick, id, first }) {
 // 예전 뱁새 보기, then the data-date box ("{md} 기준", the US close date when it differs). Escape and the close button close
 // it; focus moves into it on open and back to the ☰ button on close. The preview page shows 소개, 처음 안내 다시 보기 and
 // the data date only. v19.3c (Part E, board Menu2): 처음 안내 다시 보기 (onGuide) replays the first-visit guide on 홈.
-export function MenuSheet({ open, load, onClose, onAbout, onHome, onGuide, tabH }) {
+// v19.6d: 화면 모드 (theme: [mode, choose] from useThemeMode) between the menu lines and the data date.
+export function MenuSheet({ open, load, onClose, onAbout, onHome, onGuide, tabH, theme }) {
   const { preview } = useMode();
   const panel = useRef(null);
   const opener = useRef(null);
@@ -248,6 +289,11 @@ export function MenuSheet({ open, load, onClose, onAbout, onHome, onGuide, tabH 
           {onGuide && <MenuRow id="guide" icon="flag" label={C.menu.guide} onClick={onGuide} />}
           {!preview && <MenuRow id="old-app" icon="clock-counter-clockwise" label={C.app.oldApp} href={OLD_APP} />}
         </section>
+        {theme && (
+          <section data-ui-v2="menu-theme" style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: SPACE(4), marginTop: SPACE(3) }}>
+            <ThemeSwitch theme={theme} />
+          </section>
+        )}
         {ok && (
           <section data-ui-v2="menu-date" style={{ background: COLOR.surface, borderRadius: RADIUS.lg, padding: `${SPACE(4)}px ${SPACE(4)}px`, marginTop: SPACE(3) }}>
             <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
@@ -299,7 +345,8 @@ function SideLink({ id, icon, label, href, onClick, on }) {
 
 // tab: the tab on screen (none while 소개 is open); about: 소개 is open; go(id): a tab or "build"; onAbout: open 소개;
 // onGuide: 처음 안내 다시 보기 (v19.3c Part E, Part O.2: just before 예전 뱁새 보기; the preview page: right after 소개).
-export function SideMenu({ tab, about, load, go, onAbout, onGuide }) {
+// theme (v19.6d): [mode, choose] for 화면 모드, at the bottom under the links.
+export function SideMenu({ tab, about, load, go, onAbout, onGuide, theme }) {
   const { preview } = useMode();
   const ok = load.status === "ok";
   const us = ok && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
@@ -343,6 +390,7 @@ export function SideMenu({ tab, about, load, go, onAbout, onGuide }) {
         {onGuide && <SideLink id="guide" icon="flag" label={C.menu.guide} onClick={onGuide} />}
         {!preview && <SideLink id="old-app" icon="clock-counter-clockwise" label={C.app.oldApp} href={OLD_APP} />}
       </div>
+      {theme && <div data-ui-v2="side-theme" style={{ marginTop: SPACE(3), padding: `0 ${SPACE(1)}px` }}><ThemeSwitch theme={theme} side /></div>}
     </aside>
   );
 }
