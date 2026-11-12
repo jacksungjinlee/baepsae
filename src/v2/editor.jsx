@@ -169,10 +169,10 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
     if (!E.pending(deck, draft)) { onSaved(); return; }
     const today = todayKst();
     const r = E.applyEdit(store.data, deck.id, draft, { load, today, ts: Date.now() });
-    if (!r.ok) { console.warn("[v2] 종목 바꾸기 not saved: " + r.why); setFail("refused"); return; }
+    if (!r.ok) { console.warn("[v2] portfolio edit not saved: " + r.why); setFail("refused"); return; }
     if (!writeStore(r.data, store.key, today)) { setFail("storage"); return; }
     setStoreData(r.data, true);
-    console.info(`[v2] ${deck.id}: 종목 바꾸기 saved (${(draft.adds || []).length} added, ${(draft.removed || []).length} taken out)`);
+    console.info(`[v2] ${deck.id}: portfolio edit saved (${(draft.adds || []).length} added, ${(draft.removed || []).length} taken out)`);
     onSaved();
   };
   // 팔고 빼기: the sale sheet; its save takes the stock out with the reason in the same write, its stored target shared out
