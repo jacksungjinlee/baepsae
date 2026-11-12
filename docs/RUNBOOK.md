@@ -52,8 +52,10 @@ serve the `docs/` folder (two of its files must answer "not found").
       says so: `!! 확인 못 함` in the log, a warning on the run page, a paragraph in the step summary.
     - **If the `stmtCur` line appears although yesterday's data had such companies, suspect the pipeline, not the
       market:** DART's currency reading was probably lost, and then a company that files in dollars (두산밥캣,
-      아남전자) is published with its dollar amounts read as won. The gate has no failing row for that today. Check
-      those companies' numbers on the site.
+      아남전자) is published with its dollar amounts read as won. Since 2026-11-12 the gate fails when more than half of
+      the companies marked in the previous publication (and still listed) lose the mark, and warns, naming them, when
+      any of them does (row "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음"). On a warning, check those
+      companies' numbers on the site.
     - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees that 17 of them are in
       the data, and guarantees a beta and volatility for none of the US ones. When a built-in stock is missing from
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
