@@ -30,6 +30,9 @@ import validate_data as V  # noqa: E402
 from fixture_data import good_pair  # noqa: E402
 
 ROW = "미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸"
+UNK = "미국 재무제표 통화를 모르는 회사 (경고만)"
+LOST = "어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음"
+PBR0 = "미국 PBR 0 근처라 비운 종목: PBR·가치 점수 빈 칸"
 FX = 1338.3
 
 
@@ -85,7 +88,7 @@ def test_unreadable_currency_is_not_trusted_as_dollars():
 def test_zero_yield_is_blanked_too_and_a_second_apply_leaves_nothing_behind():
     r = rec("CAE", 28.06)
     F.apply_us_info(r, info("CAD", dividendYield=0.0, trailingPE=43.8, priceToBook=2.39), px_then=28.06, fx=FX)
-    assert r["fcur"] == "CAD" and "dy" not in r                      # Jack: 배당수익률은 0% 도 비워요
+    assert r["fcur"] == "CAD" and "dy" not in r                      # 12개월 배당 없음의 근거가 없으면 0% 도 비워요
     r2 = rec()
     F.apply_us_info(r2, info("USD"), px_then=401.98, fx=FX)
     assert r2["dy"] == 0.91
@@ -117,11 +120,12 @@ def test_percentiles_never_rank_the_blanked_companies():
 # ── 보관본 다시 받기 ───────────────────────────────────────
 def test_cache_entries_of_the_old_shape_are_due_once():
     today = dt.date(2026, 11, 13)
-    assert F.US_INFO_SCHEMA == 2 and {"financialCurrency", "currency"} <= set(F.US_INFO_KEYS)
+    assert F.US_INFO_SCHEMA == 3 and {"financialCurrency", "currency", "totalRevenue"} <= set(F.US_INFO_KEYS)
     assert F.us_info_due(None, today) is True
     assert F.us_info_due({"at": "2026-11-12", "k": F.US_INFO_SCHEMA, "info": {}}, today) is False
     assert F.us_info_due({"at": "2026-11-12", "info": {}}, today) is True          # 예전 모양: 다시 받아요
     assert F.us_info_due({"at": "2026-11-12", "k": 1, "info": {}}, today) is True
+    assert F.us_info_due({"at": "2026-11-12", "k": 2, "info": {}}, today) is True          # 2 = totalRevenue 전 모양
     assert F.us_info_due({"at": "2026-11-10", "k": F.US_INFO_SCHEMA, "info": {}}, today) is True   # 3일 (예전 규칙 그대로)
     assert F.us_info_due({"at": "nope", "k": F.US_INFO_SCHEMA}, today) is True
 
@@ -152,7 +156,8 @@ def test_summary_counts_and_unknown_list():
         F.log = orig
     assert lines[0].startswith("· 미국 재무제표 통화가 달러가 아닌 회사: 3곳 (통화별 EUR 1 · KZT 1 · TWD 1) — PER·PBR·배당수익률 비움")
     assert "ASML(EUR), KSPI(KZT), TSM(TWD)" in lines[0]
-    assert lines[1].startswith("  !! 미국 재무제표 통화를 모르는 회사 1곳") and lines[1].endswith("FISV")
+    assert lines[1] == "· 그중 배당수익률 0% 를 남긴 회사 (야후가 지난 12개월 배당 없음을 분명히 말함 · Jack 2026-11-13): 0곳"
+    assert lines[2].startswith("  !! 미국 재무제표 통화를 모르는 회사 1곳") and lines[2].endswith("FISV")
 
 
 # ── fetch_us: 보관본 다시 받기와 빈 칸이 발행 목록까지 ───────────────
@@ -175,6 +180,8 @@ def _fake_yf(syms, infos, calls, start, end):
 
         def get_info(self):
             calls.append(self.t)
+            if infos[self.t] is None:                                   # 야후가 거절 (예외)
+                raise RuntimeError("401 Unauthorized")
             return dict(infos[self.t])
     return types.SimpleNamespace(download=download, Ticker=Ticker)
 
@@ -200,7 +207,7 @@ def test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows(tmp_
     monkeypatch.setattr(F, "log", lines.append)
     us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
     assert sorted(calls) == ["FISV", "KSPI", "TSM"]                    # 예전 모양 셋만 (AAPL 은 새 모양 · 어제 받음)
-    assert any("재무제표 통화(financialCurrency)를 담기 전 모양 3곳" in x for x in lines), lines
+    assert any("예전 모양" in x and "3곳" in x and "받은 날과 상관없이" in x for x in lines), lines
     by = {r["t"]: r for r in us}
     assert by["TSM"]["fcur"] == "TWD" and by["KSPI"]["fcur"] == "KZT"
     for t in ("TSM", "KSPI"):
@@ -241,7 +248,7 @@ def test_gate_passes_blanked_companies_and_shows_the_count():
     assert value == "4곳 (EUR 2 · KZT 1 · TWD 1) · 남은 칸 0"
 
 
-@pytest.mark.parametrize("k,v", [("per", 26.1), ("pbr", 78.88), ("dy", 0.94), ("dy", 0.0), ("vz", 0), ("pbr", 0)])
+@pytest.mark.parametrize("k,v", [("per", 26.1), ("pbr", 78.88), ("dy", 0.94), ("dy", 0.01), ("vz", 0), ("pbr", 0)])   # 0% 는 스위치 시험이 봐요
 def test_gate_fails_when_a_blanked_number_is_left(k, v):
     name, value, _, st = gate_row([us_row("TSM", fcur="TWD", **{k: v}), us_row("KSPI", fcur="KZT")])
     assert st == "FAIL" and f"TSM.{k}" in value and value.startswith("2곳 (KZT 1 · TWD 1) · 남은 칸 1"), value
@@ -278,3 +285,274 @@ def test_gate_row_runs_inside_run_checks_on_the_us_list():
     rows = [r for r in rep.rows if r[0] == ROW]
     assert len(rows) == 1 and rows[0][3] == "FAIL" and f"{us[1]['t']}.pbr" in rows[0][1], rows
     assert rows[0][1].startswith("2곳 (SEK 1 · TWD 1)")
+
+
+
+# ── #114 리뷰 ────────────────────────────────────────────
+def _setup_fetch(tmp_path, monkeypatch, syms, infos, old=None, today=dt.date(2026, 11, 12)):
+    calls, lines = [], []
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(syms, infos, calls, today - dt.timedelta(days=500), today))
+    monkeypatch.setattr(F, "us_tickers", lambda names: list(syms))
+    monkeypatch.setattr(F, "us_last_complete_day", lambda now=None: today - dt.timedelta(days=1))
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    path = str(tmp_path / "us-info.json.gz")
+    monkeypatch.setattr(F, "US_INFO_PATH", path)
+    if old:
+        F.save_us_info(old, path)
+    monkeypatch.setattr(F, "log", lines.append)
+    return calls, lines, path
+
+
+def test_merge_keeps_only_descriptive_fields():
+    prev = {"at": "2026-11-11", "k": 3, "info": {"financialCurrency": "TWD", "sector": "Technology", "industry": "Semiconductors",
+                                                "longBusinessSummary": "Makes chips.", "priceToBook": 76.7, "trailingPE": 26.0,
+                                                "dividendYield": 0.9, "marketCap": 2e12, "quoteType": "EQUITY", "currency": "USD"}}
+    new = {"shortName": "TSMC", "trailingPE": 25.0, "marketCap": 2.1e12}          # 시세만 담은 응답
+    got, kept = F.us_info_merge(new, prev)
+    assert got["financialCurrency"] == "TWD" and got["sector"] == "Technology" and got["longBusinessSummary"] == "Makes chips."
+    assert got["trailingPE"] == 25.0 and got["marketCap"] == 2.1e12
+    assert "priceToBook" not in got and "dividendYield" not in got                # 숫자는 옛 값을 쓰지 않아요
+    assert set(kept) == {"financialCurrency", "sector", "industry", "longBusinessSummary", "quoteType", "currency"}
+    assert set(F.US_INFO_STICKY).isdisjoint({"trailingPE", "priceToBook", "dividendYield", "marketCap", "averageVolume", "returnOnEquity",
+                                             "operatingMargins", "revenueGrowth", "debtToEquity", "totalRevenue"})
+    assert F.us_info_merge({"shortName": "X", "financialCurrency": "USD"}, prev)[0]["financialCurrency"] == "USD"   # 새 값이 이겨요
+    assert F.us_info_merge(new, None) == (new, []) and F.us_info_merge(new, {"at": "x"}) == (new, [])
+
+
+def test_quote_only_response_keeps_the_currency(tmp_path, monkeypatch):
+    """시세만 담은 응답(이름은 있는데 financialCurrency · 업종 · 설명이 없음)이 와도 TSM 은 TWD 그대로 — PBR 78 이 다시 나가지 않아요."""
+    syms = ["TSM", "AAPL"]
+    full = info("TWD")
+    quote_only = {k: full[k] for k in ("shortName", "trailingPE", "priceToBook", "dividendYield", "marketCap", "averageVolume")}
+    old = {"TSM": {"at": "2026-11-05", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": full},              # 7일 전 · 새 모양
+           "AAPL": {"at": "2026-11-11", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": info("USD", shortName="Apple Inc.")}}
+    calls, lines, path = _setup_fetch(tmp_path, monkeypatch, syms, {"TSM": quote_only, "AAPL": info("USD")}, old)
+    us, *_rest, meta = F.fetch_us(dt.date(2026, 11, 12) - dt.timedelta(days=500), dt.date(2026, 11, 12), 0.03)
+    assert calls == ["TSM"]
+    by = {r["t"]: r for r in us}
+    assert by["TSM"]["fcur"] == "TWD" and not any(k in by["TSM"] for k in ("per", "pbr", "dy"))
+    assert by["TSM"]["de"] == "Makes chips." and by["TSM"]["s"] == F.map_sector_us("Technology", "Semiconductors")
+    assert any(x.startswith("  !! 야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀: 1곳 (TSM)") for x in lines), lines
+    assert any("설명 칸" in x and "TSM" in x for x in lines), lines
+    back = F.load_us_info(path)["TSM"]
+    assert back["at"] == "2026-11-12" and back["info"]["financialCurrency"] == "TWD" and back["info"]["trailingPE"] == full["trailingPE"]
+    assert meta["usFcurUnknown"] == []
+
+
+def test_refused_refetch_of_an_old_entry_is_counted_unknown_and_retried(tmp_path, monkeypatch):
+    """예전 모양 항목(k 없음 · 통화 칸 없음)을 다시 받지 못하면: 이름 · 업종은 예전 항목 그대로, 통화를 모르는 회사로 세고 (data.json
+    usFcurUnknown), 비우지 않아요. 다음 실행이 또 받아요."""
+    syms = ["TSM", "AAPL"]
+    old_info = {k: v for k, v in info("TWD").items() if k not in ("financialCurrency", "currency")}
+    old = {"TSM": {"at": "2026-11-11", "px": 100.0, "info": old_info},
+           "AAPL": {"at": "2026-11-11", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": info("USD", shortName="Apple Inc.")}}
+    infos = {"TSM": None, "AAPL": info("USD")}
+    calls, lines, path = _setup_fetch(tmp_path, monkeypatch, syms, infos, old)
+    us, *_rest, meta = F.fetch_us(dt.date(2026, 11, 12) - dt.timedelta(days=500), dt.date(2026, 11, 12), 0.03)
+    assert calls == ["TSM", "TSM", "TSM"]                                  # 세 번 (쉬었다가 더 천천히) 모두 거절
+    by = {r["t"]: r for r in us}
+    assert by["TSM"]["nk"] == "Taiwan Semiconductor Manufactur" and "fcur" not in by["TSM"] and by["TSM"]["pbr"] > 0
+    assert meta["usFcurUnknown"] == ["TSM"]
+    assert any("통화를 모르는 회사 1곳" in x and x.endswith("TSM") for x in lines), lines
+    assert "k" not in F.load_us_info(path)["TSM"]                        # 예전 항목 그대로 → 다음 실행이 다시 받아요
+    calls.clear()
+    infos["TSM"] = info("TWD")
+    us2, *_rest, meta2 = F.fetch_us(dt.date(2026, 11, 12) - dt.timedelta(days=500), dt.date(2026, 11, 12), 0.03)
+    assert calls == ["TSM"] and {r["t"]: r.get("fcur") for r in us2}["TSM"] == "TWD" and meta2["usFcurUnknown"] == []
+
+
+def test_pbr_that_rounds_to_zero_and_margin_without_revenue_are_blank(tmp_path, monkeypatch):
+    r = rec("BRK-B", 500.0)
+    F.apply_us_info(r, info("USD", shortName="Berkshire", priceToBook=0.0011), 500.0, FX)
+    assert "pbr" not in r and r["per"] > 0                               # 0.00 으로 반올림 → 빈 칸 (0 이 아니에요)
+    r2 = rec("X", 500.0)
+    F.apply_us_info(r2, info("USD", priceToBook=0.0049), 500.0, FX)
+    assert "pbr" not in r2
+    r3 = rec("Y", 500.0)
+    F.apply_us_info(r3, info("USD", priceToBook=0.005), 500.0, FX)
+    assert r3["pbr"] == 0.01                                             # 0.005 이상은 그대로 (0.01 로 반올림)
+    for rev, want in ((None, None), (0, None), (1.2e9, 0.0)):
+        r4 = rec("ERIC", 10.0)
+        i = info("USD", operatingMargins=0.0)
+        if rev is not None:
+            i["totalRevenue"] = rev
+        F.apply_us_info(r4, i, 10.0, FX)
+        assert r4.get("opm") == want, (rev, r4.get("opm"))                # 매출이 없을 때만 빈 칸 · 매출이 있으면 0.0% 는 진짜
+    r5 = rec("BIO", 10.0)
+    F.apply_us_info(r5, info("USD", operatingMargins=-3.2), 10.0, FX)    # 매출 없음 + 0 이 아닌 값: 그대로 (범위 밖이면 예전처럼 빈 칸)
+    assert r5["opm"] == -320.0
+    us = [r, rec("U1", 10.0), rec("U2", 10.0)]
+    for x, pb in zip(us[1:], (1.0, 2.0)):
+        F.apply_us_info(x, info("USD", priceToBook=pb), 10.0, FX)
+    F.add_percentiles(us)
+    assert "vz" not in us[0] and us[1]["vz"] == 50 and us[2]["vz"] == 0
+    assert F.us_info_cuts({"priceToBook": 0.0011}) == ["pbr"] and F.us_info_cuts({"priceToBook": 0.0}) == []
+    assert F.us_info_cuts({"operatingMargins": 0.0, "totalRevenue": 0}) == ["opm"] and F.us_info_cuts({"operatingMargins": 0.0, "totalRevenue": 5}) == []
+    # fetch_us 가 티커와 함께 크게 남겨요
+    syms = ["BRK-B", "ERIC", "AAPL"]
+    infos = {"BRK-B": info("USD", shortName="Berkshire", priceToBook=0.0011), "ERIC": info("SEK", shortName="Ericsson", operatingMargins=0.0),
+             "AAPL": info("USD", shortName="Apple")}
+    calls, lines, path = _setup_fetch(tmp_path, monkeypatch, syms, infos)
+    usx, *_ = F.fetch_us(dt.date(2026, 11, 12) - dt.timedelta(days=500), dt.date(2026, 11, 12), 0.03)
+    by = {x["t"]: x for x in usx}
+    assert "pbr" not in by["BRK-B"] and "opm" not in by["ERIC"] and by["AAPL"]["opm"] > 0
+    assert any(x.startswith("  !! 미국 PBR 이 0.00 으로 반올림돼") and x.endswith("1곳 (BRK-B)") for x in lines), lines
+    assert any(x.startswith("  !! 미국 영업이익률이 정확히 0 인데 매출") and x.endswith("1곳 (ERIC)") for x in lines), lines
+    assert not any("_cut" in k or k.startswith("_") and k != "_yind" for x in usx for k in x)
+    json.dumps(usx, allow_nan=False)
+
+
+NO_DIV = {"dividendYield": 0.0, "trailingAnnualDividendRate": 0.0}         # 2026-11-13 의 PDD · LI · ABVX … (dividendRate 없음)
+TODAY = dt.date(2026, 11, 13)
+
+
+def epoch(d):
+    return int(dt.datetime(d.year, d.month, d.day, tzinfo=dt.timezone.utc).timestamp())
+
+
+def test_no_dividend_evidence_must_be_clear():
+    """Jack, 2026-11-13: 0% 는 자료가 지난 12개월 배당 없음을 분명히 말할 때만. 근거: dividendYield 0 · trailingAnnualDividendRate 0 ·
+    dividendRate 없음 · 배당 날짜(lastDividendDate · exDividendDate)가 없거나 365일보다 오래됨. 하나라도 불분명하면 False."""
+    ok = F.us_no_dividend_12m
+    assert ok(NO_DIV, TODAY) is True                                        # PDD · LI · ABVX · ASND · BIDU · PAYP · VFS
+    assert ok({**NO_DIV, "lastDividendDate": epoch(dt.date(2022, 6, 2)), "exDividendDate": epoch(dt.date(2022, 6, 2))}, TODAY) is True   # BNTX
+    assert ok({**NO_DIV, "lastDividendDate": epoch(dt.date(2025, 3, 17))}, TODAY) is True   # TCOM: 20개월 전이 마지막
+    assert ok({**NO_DIV, "lastDividendDate": epoch(dt.date(2026, 9, 10))}, TODAY) is False  # 12개월 안에 배당 (KSPI 모양)
+    assert ok({**NO_DIV, "exDividendDate": epoch(dt.date(2026, 12, 10))}, TODAY) is False   # 앞으로 올 배당 기준일
+    assert ok({**NO_DIV, "lastDividendDate": epoch(TODAY - dt.timedelta(days=364))}, TODAY) is False
+    assert ok({**NO_DIV, "lastDividendDate": epoch(TODAY - dt.timedelta(days=366))}, TODAY) is True
+    assert ok({**NO_DIV, "dividendRate": 5.74}, TODAY) is False             # KSPI: 지난 12개월 합은 0 인데 배당률은 있어요
+    assert ok({"dividendYield": 0.0}, TODAY) is False                       # 12개월 합 칸이 없음 → 불분명
+    assert ok({**NO_DIV, "dividendYield": None}, TODAY) is False
+    assert ok({**NO_DIV, "dividendYield": 0.4}, TODAY) is False
+    assert ok({**NO_DIV, "trailingAnnualDividendRate": 0.3}, TODAY) is False
+    assert ok({**NO_DIV, "lastDividendDate": "soon"}, TODAY) is False
+    assert ok(NO_DIV, None) is False and ok(None, TODAY) is False
+
+
+@pytest.mark.parametrize("keep", [False, True])
+def test_zero_yield_switch_pipeline_and_gate_agree(keep, monkeypatch):
+    monkeypatch.setattr(F, "US_FCUR_KEEP_ZERO_DY", keep)
+    monkeypatch.setattr(V, "US_FCUR_KEEP_ZERO_DY", keep)
+    assert V.US_FCUR_KEEP_ZERO_DY is keep and F.US_FCUR_KEEP_ZERO_DY is keep
+    r = rec("CAE", 28.0)
+    F.apply_us_info(r, info("CAD", **NO_DIV, lastDividendDate=epoch(dt.date(2020, 3, 12))), 28.0, FX, today=TODAY)
+    unclear = rec("Q", 28.0)
+    F.apply_us_info(unclear, info("CAD", dividendYield=0.0), 28.0, FX, today=TODAY)     # 12개월 합 칸 없음
+    no_day = rec("N", 28.0)
+    F.apply_us_info(no_day, info("CAD", **NO_DIV), 28.0, FX)                            # 날짜를 모르면 비워요
+    r2 = rec("TSM")
+    F.apply_us_info(r2, info("TWD"), 401.98, FX, today=TODAY)              # 0 이 아닌 배당수익률은 어느 쪽이든 빈 칸
+    assert ("dy" in r) is keep and (r.get("dy") == 0.0 if keep else True) and "dy" not in r2
+    assert "dy" not in unclear and "dy" not in no_day
+    assert not any(k in r for k in ("per", "pbr"))
+    _, value, _, st = gate_row([us_row("CAE", fcur="CAD", dy=0.0), us_row("TSM", fcur="TWD")])
+    assert st == ("PASS" if keep else "FAIL"), value
+    _, value, _, st = gate_row([us_row("TSM", fcur="TWD", dy=0.94)])
+    assert st == "FAIL"                                                  # 0 이 아닌 값은 언제나 실패
+
+
+def test_the_shipped_switch_keeps_only_clear_zero_yields():
+    assert V.US_FCUR_KEEP_ZERO_DY is True and F.US_FCUR_KEEP_ZERO_DY is True     # Jack, 2026-11-13
+    r = rec("PDD", 77.0)
+    F.apply_us_info(r, info("CNY", **NO_DIV), 77.0, FX, today=TODAY)
+    assert r["dy"] == 0.0 and r["fcur"] == "CNY" and not any(k in r for k in ("per", "pbr"))
+    sm = F.us_fcur_summary([r], {"PDD": info("CNY", **NO_DIV)})
+    assert sm["zeroDy"] == ["PDD"] and sm["cut"]["dy"] == 0
+
+
+def test_pbr_zero_is_marked_but_not_for_currency_companies():
+    r = rec("BRK-B", 500.0)
+    F.apply_us_info(r, info("USD", shortName="Berkshire", priceToBook=0.0011), 500.0, FX)
+    assert r["pbrZero"] is True and "pbr" not in r and "fcur" not in r
+    r2 = rec("TINY", 10.0)
+    F.apply_us_info(r2, info("TWD", priceToBook=0.001), 10.0, FX)          # 통화 줄이 이미 말해요
+    assert "pbrZero" not in r2 and r2["fcur"] == "TWD"
+    F.apply_us_info(r, info("USD", shortName="Berkshire", priceToBook=1.5), 500.0, FX)
+    assert "pbrZero" not in r and r["pbr"] == 1.5                          # 다시 붙이면 표시가 남지 않아요
+    rows, _ = more_rows({"usFcurUnknown": []}, [us_row("BRK-B", pbrZero=True)], None)
+    assert rows[PBR0][3] == "PASS" and rows[PBR0][1] == "1곳: BRK-B · 남은 칸 0"
+    for bad in ({"pbrZero": True, "pbr": 0.0}, {"pbrZero": True, "vz": 100}, {"pbrZero": 1}):
+        rows, _ = more_rows({"usFcurUnknown": []}, [us_row("BRK-B", **bad)], None)
+        assert rows[PBR0][3] == "FAIL", (bad, rows[PBR0])
+    rows, _ = more_rows({"usFcurUnknown": []}, [us_row("AAPL", pbr=40.0)], None)
+    assert rows[PBR0][3] == "PASS" and rows[PBR0][1] == "0곳 · 남은 칸 0"
+
+
+def test_summary_counts_etfs_with_a_currency_and_logs_quote_currency():
+    us = []
+    for t, fc, etf, qc in (("TSM", "TWD", False, "USD"), ("EWT", "TWD", True, "USD"), ("SPY", None, True, "USD"), ("ODD", "USD", False, "EUR")):
+        r = rec(t)
+        F.apply_us_info(r, info(fc, currency=qc) if fc else info(currency=qc), 401.98, FX)
+        r["etf"] = etf
+        us.append(r)
+    infos = {"TSM": info("TWD"), "EWT": info("TWD"), "SPY": info(), "ODD": info("USD", currency="EUR")}
+    sm = F.us_fcur_summary(us, infos)
+    assert sm["hit"] == [("EWT", "TWD"), ("TSM", "TWD")] and sm["unknown"] == [] and sm["quoteCur"] == [("ODD", "EUR")]
+    rep = V.Report()
+    V.check_us_fcur(rep, us)
+    assert rep.rows[0][1].startswith("2곳 (TWD 2)")                       # 파이프라인 로그와 관문이 같은 수를 세요
+    lines = []
+    orig = F.log
+    try:
+        F.log = lines.append
+        F.log_us_fcur(sm)
+    finally:
+        F.log = orig
+    assert lines[0].startswith("· 미국 재무제표 통화가 달러가 아닌 회사: 2곳")
+    assert any(x.startswith("  !! 야후가 가격 통화(currency)를 달러가 아니라고 한 미국 종목 1곳") and "ODD(EUR)" in x for x in lines), lines
+    assert "dy" in us[3] and "fcur" not in us[3]                          # 가격 통화로는 비우지 않아요
+
+
+
+
+def more_rows(data, us, pdata):
+    rep = V.Report()
+    V.check_us_fcur_more(rep, data, us, pdata)
+    return {r[0]: r for r in rep.rows}, rep
+
+
+def test_gate_warns_on_unknown_currency_and_never_fails():
+    rows, rep = more_rows({"usFcurUnknown": ["FISV"]}, [], None)
+    assert rows[UNK][3] == "WARN" and rows[UNK][1] == "1곳: FISV" and LOST not in rows
+    assert rep.details == [("재무제표 통화를 모르는 미국 회사 (usFcurUnknown)", ["FISV"])]
+    many = [f"T{i:02d}" for i in range(13)]
+    rows, _ = more_rows({"usFcurUnknown": many}, [], None)
+    assert rows[UNK][3] == "WARN" and rows[UNK][1].endswith("T09 외 3곳")
+    rows, _ = more_rows({"usFcurUnknown": []}, [], None)
+    assert rows[UNK][3] == "PASS" and rows[UNK][1] == "0곳"
+    rows, _ = more_rows({}, [], None)                                     # 이 칸 전 발행본 (오늘의 사이트): 통과
+    assert rows[UNK][3] == "PASS" and "기록 없음" in rows[UNK][1]
+
+
+def test_gate_fails_when_yesterdays_currency_vanishes_with_numbers_back():
+    prev = {"stocks": [us_row("TSM", fcur="TWD"), us_row("KSPI", fcur="KZT"), us_row("ERIC", fcur="SEK"), us_row("GONE", fcur="EUR")]}
+    today_ok = [us_row("TSM", fcur="TWD"), us_row("KSPI", fcur="KZT"), us_row("ERIC", fcur="SEK")]          # GONE 은 목록에서 빠짐
+    rows, _ = more_rows({"usFcurUnknown": []}, today_ok, prev)
+    assert rows[LOST][3] == "PASS" and rows[LOST][1] == "0곳"
+    lost_quiet = [us_row("TSM", fcur="TWD"), us_row("KSPI"), us_row("ERIC", fcur="SEK")]                     # 통화가 빠졌지만 숫자 없음
+    rows, rep = more_rows({"usFcurUnknown": ["KSPI"]}, lost_quiet, prev)
+    assert rows[LOST][3] == "WARN" and rows[LOST][1] == "1곳: KSPI"
+    back = [us_row("TSM", per=26.8, pbr=78.88, dy=0.94), us_row("KSPI", pbr=0.01), us_row("ERIC")]            # 틀린 숫자가 다시 나감
+    rows, rep = more_rows({"usFcurUnknown": ["TSM", "KSPI", "ERIC"]}, back, prev)
+    assert rows[LOST][3] == "FAIL" and rows[LOST][1] == "3곳 (PER·PBR·배당 있음 2곳): TSM, KSPI, ERIC", rows[LOST]
+    assert ("어제 fcur 가 있었는데 오늘 없는 미국 종목 (앞쪽이 숫자가 다시 나간 종목)", ["TSM", "KSPI", "ERIC"]) in rep.details
+
+
+def test_new_rows_inside_run_checks():
+    cur, prev, final = good_pair()
+    pus = [s for s in prev["data"]["stocks"] if s.get("cls") == "us" and not s.get("etf")]
+    cus = {s["t"]: s for s in cur["data"]["stocks"]}
+    pus[0]["fcur"] = "TWD"                                               # 어제는 통화가 있었는데 오늘은 없고 PBR 이 있어요
+    cus[pus[0]["t"]]["pbr"] = 78.88
+    assert "fcur" not in cus[pus[0]["t"]]
+    cur["data"]["usFcurUnknown"] = [pus[0]["t"]]
+    rep = V.run_checks(cur, prev, final, dt.date(2026, 10, 31), count_between=lambda a, b: 1,
+                       sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
+                       now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
+    rows = {r[0]: r for r in rep.rows}
+    assert rows[LOST][3] == "FAIL" and rows[UNK][3] == "WARN", (rows[LOST], rows[UNK])
+    live = V.run_checks(cur, None, final, dt.date(2026, 10, 31), mode="live", count_between=lambda a, b: 1,
+                        sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
+                        now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
+    assert LOST not in {r[0] for r in live.rows} and UNK in {r[0] for r in live.rows}   # 사이트 점검: 절대 기준만

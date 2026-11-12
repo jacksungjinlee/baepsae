@@ -141,6 +141,11 @@ FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp
 # fetch_data.py US_FCUR_BLANK). 달러 주가 ÷ 그 통화 금액일 수 있는 PER · PBR · 배당수익률과 PBR 로 매긴 가치 점수가 빈 칸이어야 해요
 # (0 도 남은 칸으로 봐요). fcur 가 있는 회사끼리의 일관성만 봐요 — 야후가 financialCurrency 를 주지 않아 fcur 가 없으면 이 줄은 실패하지 않아요.
 US_FCUR_BLANK = ("per", "pbr", "dy", "vz")
+# 배당수익률 0% (배당 없음)를 fcur 회사에도 남길지 — 파이프라인(fetch_data.py)이 이 값을 가져다 써요 (하나의 스위치). Jack, 2026-11-13: 남겨요,
+# 단 야후 자료가 지난 12개월 배당 없음을 분명히 말할 때만 (fetch_data.py us_no_dividend_12m · 아니면 빈 칸). 관문은 그래서 0 만은 받아요
+# (0 이 아닌 배당수익률은 언제나 실패). False 로 바꾸면 0% 도 늘 비우고 관문도 0 을 남은 칸으로 봐요.
+US_FCUR_KEEP_ZERO_DY = True
+US_FCUR_SHOW = 10        # 관문 값 칸에 적는 티커 수 (나머지는 rep.detail 에 모두)
 # v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
 # data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
@@ -835,6 +840,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
     check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
+    check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
     check_foreign(rep, kr, comps)
     if rel:
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
@@ -1145,12 +1151,48 @@ def check_us_fcur(rep, us):
             bad.append(f"{t}.fcur {fc!r}")
             continue
         by[fc] += 1
-        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None]
+        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None and not (k == "dy" and US_FCUR_KEEP_ZERO_DY and s.get(k) == 0)]
     n = sum(by.values())
     rep.add("미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸", not bad,
             f"{n}곳" + (f" ({' · '.join(f'{c} {k}' for c, k in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))})" if by else "")
             + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else ""),
-            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨) · fcur 는 USD 가 아닌 세 글자")
+            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨" + (", 배당 0% 는 됨" if US_FCUR_KEEP_ZERO_DY else "") + ") · fcur 는 USD 가 아닌 세 글자")
+
+
+def _tickers(ts):
+    return ", ".join(map(str, ts[:US_FCUR_SHOW])) + (f" 외 {len(ts) - US_FCUR_SHOW}곳" if len(ts) > US_FCUR_SHOW else "")
+
+
+def check_us_fcur_more(rep, data, us, pdata):
+    """#114 리뷰 (더하기만): ① 재무제표 통화를 모르는 회사(data.json usFcurUnknown) — 경고만, 이름을 남겨요. ② 직전 발행본에서 fcur 가 있던
+    미국 종목이 오늘도 목록에 있는데 fcur 가 없으면: PER · PBR · 배당수익률이 있으면 실패(틀린 숫자가 다시 나가는 경우), 없으면 경고."""
+    unk = data.get("usFcurUnknown")
+    if isinstance(unk, list):
+        rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, f"{len(unk)}곳" + (f": {_tickers(unk)}" if unk else ""),
+                "없어야 함 (있으면 경고 · 비우지 않았어요)", warn=bool(unk))
+        if unk:
+            rep.detail("재무제표 통화를 모르는 미국 회사 (usFcurUnknown)", unk)
+    else:
+        rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
+    # Jack, 2026-11-13: PBR 이 0.00 으로 반올림돼 비운 종목(pbrZero) — PBR · 가치 점수가 비어 있어야 해요 (true 말고 다른 값도 실패)
+    pz = [s for s in us if "pbrZero" in s]
+    badz = [f"{s.get('t')}.pbrZero {s.get('pbrZero')!r}" for s in pz if s.get("pbrZero") is not True]
+    badz += [f"{s.get('t')}.{k}" for s in pz if s.get("pbrZero") is True for k in ("pbr", "vz") if s.get(k) is not None]
+    rep.add("미국 PBR 0 근처라 비운 종목: PBR·가치 점수 빈 칸", not badz,
+            f"{len(pz)}곳" + (f": {_tickers([s.get('t') for s in pz])}" if pz else "") + f" · 남은 칸 {len(badz)}" + (f" (예: {', '.join(badz[:4])})" if badz else ""),
+            "pbrZero 종목은 pbr · vz 없음")
+    if not pdata:
+        return
+    had = {s.get("t") for s in us_stocks(pdata) if s.get("fcur")}
+    lost = [s for s in us if s.get("t") in had and not s.get("fcur")]
+    wrong = [s["t"] for s in lost if any(s.get(k) is not None for k in US_FCUR_BLANK[:3])]
+    names = [s["t"] for s in lost]
+    rep.add("어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음", not wrong,
+            f"{len(names)}곳" + ((f" (PER·PBR·배당 있음 {len(wrong)}곳)" if wrong else "") + f": {_tickers(wrong + [t for t in names if t not in wrong])}"
+                                  if names else ""),
+            "없어야 함 (PER·PBR·배당이 다시 나가면 실패 · 숫자 없으면 경고)", warn=bool(names) and not wrong)
+    if names:
+        rep.detail("어제 fcur 가 있었는데 오늘 없는 미국 종목 (앞쪽이 숫자가 다시 나간 종목)", wrong + [t for t in names if t not in wrong])
 
 
 def is_foreign(code):
