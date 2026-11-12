@@ -11488,13 +11488,16 @@ def scene_v197a(R, files, width):
         assert qty.input_value() == "1" and not qty.is_editable()                                 # 오늘: 1주 (1:2 뒤)
         form.locator('input[type="date"]').fill("2026-10-02")
         page.wait_for_function("() => document.querySelector('[data-ui-v2=\"rec-form\"] input').value === '2'")   # 분할 전 날짜: 2주
+        # v19.6a round 3: a split between the sale date and today: no default price (the close line is hidden; the price is typed)
+        assert form.locator('[data-ui-v2="rec-close-line"]').count() == 0
+        form.locator("input").nth(1).fill("250")
         check_page("팔고 빼기 · 분할 전 날짜", "sell-split")
         form.locator("button", has_text=C["plan"]["save"]).click()
         form.wait_for(state="detached")
         row("AMD").wait_for(state="detached")
         d = [x for x in stored()["decks"] if x["id"] == "dsplit"][0]
         assert [h["t"] for h in d["holdings"]] == ["005930"] and d["history"][0]["t"] == "AMD"
-        assert d["history"][0]["sales"][0]["qty"] == 2 and d["history"][0]["sales"][0]["date"] == "2026-10-02"
+        assert d["history"][0]["sales"][0]["qty"] == 2 and d["history"][0]["sales"][0]["date"] == "2026-10-02" and d["history"][0]["sales"][0]["price"] == 250
     R.check(page, S, "팔고 빼기의 잠긴 수량은 고른 날짜의 주식 수(분할 전 2주 · 뒤 1주) → 가진 것을 정확히 팔고 빼요", split_sell)
     ctx.close()
     srv.shutdown()
