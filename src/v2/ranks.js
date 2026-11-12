@@ -83,7 +83,8 @@ export function oneEach(rows) {
 }
 
 // The stocks of one market a list may show: the build universe over the trading-value floor (see the top of this file). The
-// console says once per loaded file and market how many the floor left out, and why (no floor value, or under 5억).
+// console says once per loaded file and market how many the floor left out, and why (no floor value, or under 5억): at info
+// level, and as a warning when a stock had no floor value (blank figures are a data problem; under 5억 is the rule working).
 const baseMemo = new WeakMap();
 export function rankBase(stocks, mk) {
   if (!Array.isArray(stocks)) return [];
@@ -98,7 +99,7 @@ export function rankBase(stocks, mk) {
       if (l < LIQ_FLOOR_EOK) { under++; return false; }
       return true;
     });
-    console.warn(`[v2] rank lists (${mk}): ${m[mk].length} of ${uni.length} stocks over the trading-value floor; left out ${blank} with no `
+    console[blank > 0 ? "warn" : "info"](`[v2] rank lists (${mk}): ${m[mk].length} of ${uni.length} stocks over the trading-value floor; left out ${blank} with no `
       + `${mk === "kr" ? "val20" : "val"} and ${under} under ${LIQ_FLOOR_EOK} eok won`);
   }
   return m[mk];

@@ -2505,9 +2505,20 @@ def _iphone_records(R, files, device, tmp):
         tab(page, C["app"]["tabs"]["portfolio"])
         see(page, C["store"]["export"])
 
+    def home_settled(page):
+        """홈은 공시(disc.json)를 첫 화면 뒤에 따로 받아요: 받는 동안은 '오늘은 할 일이 없어요' 줄이 아직 없어서, 다 받은 뒤(disc_settled)에 글을 견줘요."""
+        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+        disc_settled(page)
+
+    def first_diff(a, b):
+        """두 화면 글이 처음 다른 줄 (실패 메시지에 붙여요)."""
+        la, lb = a.splitlines(), b.splitlines()
+        i = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y), min(len(la), len(lb)))
+        return f"{i + 1}번째 줄: {la[i] if i < len(la) else '(끝)'!r} → {lb[i] if i < len(lb) else '(끝)'!r}"
+
     def open_today_tab(page):
         tab(page, C["app"]["tabs"]["home"])
-        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+        home_settled(page)
 
     srv, ctx, page, _ = R.open(site, width, accept_downloads=True, device=dev)
 
@@ -2608,11 +2619,13 @@ def _iphone_records(R, files, device, tmp):
         assert main_text(page) == keep["deck"], "포트폴리오 화면이 사파리에서 본 것과 달라요"
         assert hint_kinds(page) == [], "홈 화면 앱 안에서 홈 화면 안내가 보여요"
         open_today_tab(page)
-        assert main_text(page) == keep["today"], "오늘 화면이 사파리에서 본 것과 달라요"
+        t = main_text(page)
+        assert t == keep["today"], "오늘 화면이 사파리에서 본 것과 달라요 · " + first_diff(keep["today"], t)
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
-        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
-        assert main_text(page) == keep["today"] and stored_records(page, keep["seen"]) == keep["file"], "새로 고침 뒤에 기록이 달라요"
+        home_settled(page)                                                    # 저장한 덱이 있으면 오늘부터
+        t = main_text(page)
+        assert t == keep["today"] and stored_records(page, keep["seen"]) == keep["file"], "새로 고침 뒤에 기록이 달라요 · " + first_diff(keep["today"], t)
         R.collect(page)
     R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
 
@@ -3642,8 +3655,8 @@ def scene_rank(R, files, width):
             rank_wait(page, "data-pause", "offscreen")                         # 화면 밖: 멈춤 (IntersectionObserver)
         win.scroll_into_view_if_needed()
         rank_wait(page, "data-moving", "1")
-        assert win.get_attribute("aria-label") == C["rank"]["listAria"] and win.get_attribute("tabindex") == "0"
-        assert win.get_attribute("data-rows") == "5" and abs(win.bounding_box()["height"] - 5 * 58) < 1
+        assert win.get_attribute("aria-label") == C["rank"]["listAria"] and win.get_attribute("tabindex") == "0", (win.get_attribute("aria-label"), win.get_attribute("tabindex"))
+        assert win.get_attribute("data-rows") == "5" and abs(win.bounding_box()["height"] - 5 * 58) < 1, (win.get_attribute("data-rows"), win.bounding_box())
         track = page.locator('[data-ui-v2="rank-track"]')
         anim = track.evaluate("(e) => { const s = getComputedStyle(e); return [s.animationName, s.animationDuration, s.animationTimingFunction, s.animationIterationCount, s.animationPlayState]; }")
         assert anim == ["v2-rank-roll", "32s", "linear", "infinite", "running"], anim
@@ -3651,20 +3664,21 @@ def scene_rank(R, files, width):
             for (const r of rules) if (r.type === CSSRule.KEYFRAMES_RULE && r.name === 'v2-rank-roll') return [...r.cssRules].map((k) => [k.keyText, k.style.transform]); } return null; }""")
         assert frames == [["0%, 7%", "translateY(0px)"], ["100%", "translateY(-50%)"]], frames
         copy = page.locator('[data-ui-v2="rank-copy"]')                       # 두 벌: 둘째는 aria-hidden, 그 버튼은 Tab 으로 가지 않아요
-        assert copy.get_attribute("aria-hidden") == "true" and copy.locator("button").count() == 10
-        assert copy.locator("button").evaluate_all("(els) => els.every((b) => b.tabIndex === -1)")
+        assert copy.get_attribute("aria-hidden") == "true" and copy.locator("button").count() == 10, ("copy", copy.get_attribute("aria-hidden"), copy.locator("button").count())
+        assert copy.locator("button").evaluate_all("(els) => els.every((b) => b.tabIndex === -1)"), "copy buttons reachable by Tab"
         lst = page.locator(RANK_LIST)
-        assert lst.count() == 1 and lst.locator('[role="listitem"]').count() == 10 and lst.locator("button").evaluate_all("(els) => els.every((b) => b.tabIndex === 0)")
-        assert page.locator('[data-ui-v2="rank-hint"]').inner_text() == C["rank"]["hint"] and page.locator('[data-ui-v2="rank-all"]').inner_text() == C["rank"]["all"]
+        assert lst.count() == 1 and lst.locator('[role="listitem"]').count() == 10 and lst.locator("button").evaluate_all("(els) => els.every((b) => b.tabIndex === 0)"), ("list", lst.count())
+        assert page.locator('[data-ui-v2="rank-hint"]').inner_text() == C["rank"]["hint"] and page.locator('[data-ui-v2="rank-all"]').inner_text() == C["rank"]["all"], "hint / all"
         y0 = rank_ty(page)
         page.wait_for_timeout(3200)                                            # 7% (약 2.2초) 멈춘 뒤 위로
         y1 = rank_ty(page)
         assert y1 < y0 - 1, (y0, y1)
         win.hover()                                                            # 마우스를 올린 동안
         rank_wait(page, "data-pause", "hover")
-        assert track.evaluate("(e) => getComputedStyle(e).animationPlayState") == "paused"
+        assert track.evaluate("(e) => getComputedStyle(e).animationPlayState") == "paused", (track.evaluate("(e) => getComputedStyle(e).animationPlayState"), win.get_attribute("data-kb"))
         a = rank_ty(page); page.wait_for_timeout(500)
-        assert rank_ty(page) == a
+        b = rank_ty(page)
+        assert b == a, ("moved while hovered", a, b, win.get_attribute("data-pause"))
         page.mouse.move(2, 2)
         rank_wait(page, "data-moving", "1")
         win.focus()                                                            # 초점
@@ -3812,17 +3826,26 @@ def scene_rank_r1(R, files, width):
     def hold_and_tap():
         wait_ready(page)
         win = page.locator('[data-ui-v2="rank-window"]')
+        for ms in (450, 700):                                                   # 마우스는 천천히 눌러도 그 회사로 (마우스를 올리면 이미 멈춰 있어요)
+            win.scroll_into_view_if_needed()
+            rank_wait(page, "data-moving", "1")
+            box = win.bounding_box()
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2     # 창 가운데의 줄
+            page.mouse.move(x, y)
+            rank_wait(page, "data-pause", "hover")
+            t = page.evaluate("([x, y]) => { const r = document.elementFromPoint(x, y).closest('[data-ui-v2=\"rank-row\"]'); return r && r.dataset.t; }", [x, y])
+            assert t, "창 가운데에 종목 줄이 없어요"
+            page.mouse.down()
+            page.wait_for_timeout(ms)
+            page.mouse.up()
+            at(page, f"stocks/{t}")
+            page.go_back()
+            at(page, "home")
+            page.mouse.move(2, 2)
         win.scroll_into_view_if_needed()
         rank_wait(page, "data-moving", "1")
         row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').first
-        box = row.bounding_box()
-        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-        page.mouse.down()                                                       # 마우스: 600ms 누르고 떼면 열리지 않아요
-        page.wait_for_timeout(600)
-        page.mouse.up()
-        page.wait_for_timeout(400)
-        assert route(page) == "home", route(page)
-        btn = row.locator("button")                                             # 손가락: 500ms 누른 뒤 뗀 click 도 그래요
+        btn = row.locator("button")                                             # 손가락: 500ms 누른 뒤 뗀 click 은 열리지 않아요
         btn.dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
         rank_wait(page, "data-pause", "touch")
         page.wait_for_timeout(500)
@@ -3836,7 +3859,7 @@ def scene_rank_r1(R, files, width):
         page.go_back()
         at(page, "home")
         R.collect(page)
-    R.check(page, S, "오래 누른 뒤 떼면 회사가 열리지 않아요 (마우스 600ms · 손가락 500ms) · 짧게 누르면 열려요", hold_and_tap)
+    R.check(page, S, "마우스는 천천히 눌러도(450 · 700ms) 그 회사가 열려요 · 손가락으로 500ms 누른 뒤 뗀 click 은 열리지 않아요 · 짧게 누르면 열려요", hold_and_tap)
 
     def keyboard():
         page.mouse.move(2, 2)
@@ -3848,6 +3871,7 @@ def scene_rank_r1(R, files, width):
         active = page.evaluate("() => { const r = document.activeElement.closest('[data-ui-v2=\"rank-row\"]'); return r ? r.dataset.rank : null; }")
         assert active == "7", active
         rank_wait(page, "data-kb", "1")
+        assert win.get_attribute("data-pause") == "focus" and win.get_attribute("data-moving") == "0", win.get_attribute("data-pause")   # 키보드 초점은 그대로 멈춰요
         page.wait_for_timeout(300)
         assert page.locator('[data-ui-v2="rank-track"]').evaluate("(e) => getComputedStyle(e).animationName") == "none"
         w, b = win.bounding_box(), page.evaluate("() => { const r = document.activeElement.getBoundingClientRect(); return { y: r.y, h: r.height }; }")
@@ -3870,8 +3894,13 @@ def scene_rank_r1(R, files, width):
         rank_chip(page, "ind")
         row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"][data-ind="platform"]')
         n, k, avg = int(row.get_attribute("data-n")), int(row.get_attribute("data-k")), float(row.get_attribute("data-avg"))
+        assert -0.05 < avg < 0, avg                                             # 시험 데이터: 평균 -0.03 → '0.0%'
+        num = row.locator('[data-ui-v2="rank-num"]')                            # 업종 줄의 '0.0%' 도 회색
+        assert num.inner_text() == "0.0%" and num.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", num.inner_text()
         row.locator("button").click()
         page.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
+        head = page.locator('[data-ui-v2="rank-group-avg"]')                    # 연 업종 머리의 '0.0%' 도 회색 (빨강 · 파랑 아님)
+        assert head.inner_text() == "0.0%" and head.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", head.inner_text()
         ts = rank_ts(page)
         assert "GOOGL" in ts and "GOOG" not in ts and n == 15, (ts, n)           # 같은 회사는 한 줄 · n 은 왜 움직였나 그대로
         assert fillp(C["rank"]["up" if avg >= 0 else "down"], n=n, k=k) in page.locator('[data-ui-v2="rank-group"]').inner_text()
@@ -3880,11 +3909,64 @@ def scene_rank_r1(R, files, width):
         page.locator('[data-ui-v2="rank-back"]').click()
         page.locator('[data-ui-v2="rank-all"]').wait_for(state="visible")
         rank_market(page, "kr")
-    R.check(page, S, "'0.0%' 는 회색 · 미국 업종 안 회사는 회사마다 한 줄(GOOGL 만, n 15 그대로) · 업종 안에서는 전체 보기 없음", zero_and_group)
+    R.check(page, S, "'0.0%' 는 회색(줄 · 연 업종 머리) · 미국 업종 안 회사는 회사마다 한 줄(GOOGL 만, n 15 그대로) · 업종 안에서는 전체 보기 없음", zero_and_group)
+
+    def chip_after_market():
+        page.set_viewport_size({"width": 360, "height": 780})                  # 칩 줄이 옆으로 밀리는 폭
+        try:
+            rank_market(page, "kr")
+            rank_chip(page, "ind")                                              # 줄 끝으로 밀었다가
+            rank_chip(page, "surge")
+            rank_market(page, "us")                                             # 미국에는 거래 급증이 없어서 첫 칩(시가총액)으로
+            assert page.locator('[data-ui-v2="rank"]').get_attribute("data-chip") == "cap"
+            page.wait_for_function("""() => { const row = document.querySelector('[data-ui-v2="rank-chips"]');
+                const c = row && row.querySelector('[data-chip="cap"]'); if (!c) return false;
+                const r = row.getBoundingClientRect(), b = c.getBoundingClientRect(); return b.left >= r.left - 0.5 && b.right <= r.right + 0.5; }""",
+                                   timeout=3000)                                # 고른 칩(첫 칩이어도)이 칩 줄의 보이는 칸 안에
+        finally:
+            page.set_viewport_size({"width": width, "height": 780})
+        rank_market(page, "kr")
+        rank_chip(page, "cap")
+    R.check(page, S, "시장을 바꿔 고른 칩이 첫 칩(시가총액)으로 돌아가도 칩 줄 안에 보여요 (360px: 업종별 등락 → 거래 급증 → 미국)", chip_after_market)
     ctx.close()
     srv.shutdown()
 
-    f2 = clone(files)                       # 오늘 거래대금(val)이 없는 파일 · 미국은 모두 5억 미만이고 오늘 변화도 없음 (업종별 등락도 없음)
+    # 진짜 손가락(터치 화면, CDP 터치): 브라우저가 누른 줄에 초점을 줘요. 오래 누른 뒤 떼면 열리지 않고, 그 초점도 남지 않아 1초 안에 다시
+    # 움직여요 · 짧게 누르면 그 회사로
+    touch = {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
+    srv, ctx, page, base = R.open(build_site(f), width, device=touch, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def finger():
+        wait_ready(page)
+        cdp = ctx.new_cdp_session(page)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.scroll_into_view_if_needed()
+        rank_wait(page, "data-moving", "1")
+        box = win.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        under = "([x, y]) => { const r = document.elementFromPoint(x, y).closest('[data-ui-v2=\"rank-row\"]'); return r && r.dataset.t; }"
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        rank_wait(page, "data-pause", "touch")
+        page.wait_for_timeout(700)                                              # 오래 눌러 읽고
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        rank_wait(page, "data-moving", "1", timeout=1000)                      # 떼면 1초 안에 다시 움직여요 (누른 줄의 초점 때문에 멈춰 있지 않아요)
+        inside = page.evaluate("() => { const w = document.querySelector('[data-ui-v2=\"rank-window\"]'); return !!w && w.contains(document.activeElement); }")
+        assert not inside, "오래 누른 줄에 초점이 남았어요"
+        page.wait_for_timeout(300)
+        assert route(page) == "home", route(page)                               # 그 줄의 회사는 열리지 않아요
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        rank_wait(page, "data-pause", "touch")
+        t = page.evaluate(under, [x, y])
+        assert t, "창 가운데에 종목 줄이 없어요"
+        page.wait_for_timeout(60)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        at(page, f"stocks/{t}")                                                 # 짧게 누르면 그 회사로
+        R.collect(page)
+    R.check(page, S, "손가락(터치 화면): 오래(700ms) 누른 뒤 떼면 회사가 열리지 않고 1초 안에 다시 움직여요(줄에 초점이 남지 않아요) · 짧게 누르면 열려요", finger)
+    ctx.close()
+    srv.shutdown()
+
+    f2 = clone(files)                     # 오늘 거래대금(val)이 없는 파일 · 미국은 모두 5억 미만이고 오늘 변화도 없음 (업종별 등락도 없음)
     for x in f2["data.json"]["stocks"]:
         if x["cls"] == "kr":
             x.pop("val", None)

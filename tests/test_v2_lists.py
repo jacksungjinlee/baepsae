@@ -103,7 +103,8 @@ def test_trading_value_chip_splits_by_market_ranks_by_trading_value_without_fund
               st("AAPL", "Apple Inc.", "us", val=204369.6)]
     data = {"pxDate": "2026-11-02", "usPxDate": "2026-10-31", "stocks": stocks,
             "popular": ["000660", "069500", "005930", "GONE", "000270", "SPY", "NVDA", "AAPL"]}
-    got = run("""const ld = loadOf(DATA);
+    got = run("""console.info = (...a) => console.error(...a);   // ranks.js 의 기준 알림(info)은 stderr 로: stdout 은 결과 JSON 만
+const ld = loadOf(DATA);
 out = { kr: K.rankRows(ld, 'kr', 'val').rows.map((r) => r.s.t), us: K.rankRows(ld, 'us', 'val').rows.map((r) => r.s.t),
   noPopular: K.rankRows(loadOf({ ...DATA, popular: undefined }), 'kr', 'val').rows.map((r) => r.s.t), fail: K.rankRows({ status: 'fail' }, 'kr', 'val'),
   top: [K.RANK_TOP, K.RANK_FULL] };""", DATA=data)

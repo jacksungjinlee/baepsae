@@ -85,10 +85,12 @@ function useReducedMotion() {
 }
 
 // Why a moving window is not moving right now (null: it moves): touch · hover · focus · offscreen · hidden.
-// A press that held the list for longer than HOLD_MS (to read it) and is let go on a row does not open that row: only a short tap
-// does (v19.5b review). Keyboard focus on a row (focus-visible) also lays the rows out still (kb: the animation is off and the
-// focused row is scrolled into view inside the window); when focus leaves, the window scrolls back to the top and the loop
-// starts again with #1.
+// A finger (or pen) press that held the list for longer than HOLD_MS (to read it) and is let go on a row does not open that row:
+// only a short tap does (v19.5b review). The browser has already put focus on the pressed row by then, so the swallowed click
+// also takes that focus away: the list moves again as soon as the finger is up, not only after a tap elsewhere. A mouse is not
+// held to this: hover already stops the list under it, so any mouse click, slow or quick, opens the row. Keyboard focus on a row
+// (focus-visible) also lays the rows out still (kb: the animation is off and the focused row is scrolled into view inside the
+// window); when focus leaves, the window scrolls back to the top and the loop starts again with #1.
 export const HOLD_MS = 400;
 function useRoll(on) {
   const [el, ref] = useState(null);                 // the window element (a callback ref: a new window gets observed too)
@@ -96,7 +98,7 @@ function useRoll(on) {
   const [held, setHeld] = useState(null);          // null, or the pointer type that holds it
   const [focus, setFocus] = useState(false);
   const [kb, setKb] = useState(false);             // a row has keyboard focus
-  const press = useRef(null);                      // the last press: { at, up } (performance.now)
+  const press = useRef(null);                      // the last press: { at, up } (performance.now), type (pointerType)
   const [seen, setSeen] = useState(() => typeof IntersectionObserver !== "function");
   const [shown, setShown] = useState(() => { try { return document.visibilityState !== "hidden"; } catch (e) { return true; } });
   useEffect(() => {
@@ -133,15 +135,23 @@ function useRoll(on) {
     onPointerEnter: (e) => { if (e.pointerType === "mouse") setHover(true); },
     onPointerLeave: (e) => { if (e.pointerType === "mouse") setHover(false); },
     onPointerDown: (e) => {
-      press.current = { at: performance.now(), up: null };
+      press.current = { at: performance.now(), up: null, type: e.pointerType || "mouse" };
       setHeld(e.pointerType === "touch" ? "touch" : e.pointerType || "mouse");
     },
     onPointerUp: () => { if (press.current) press.current.up = performance.now(); },
-    // the click that follows a long press is swallowed before it reaches the row (keyboard clicks have no press: never)
+    // the click that follows a long finger or pen press is swallowed before it reaches the row, and the focus that press gave the
+    // row is taken away (blur: the window's onBlur below resets it). Keyboard clicks have no press and mouse clicks are never
+    // swallowed, so keyboard focus is never touched here.
     onClickCapture: (e) => {
       const p = press.current;
       press.current = null;
-      if (p && p.up != null && p.up - p.at > HOLD_MS && performance.now() - p.up < 1000) { e.preventDefault(); e.stopPropagation(); }
+      if (p && p.type !== "mouse" && p.up != null && p.up - p.at > HOLD_MS && performance.now() - p.up < 1000) {
+        e.preventDefault();
+        e.stopPropagation();
+        let a = null;
+        try { a = document.activeElement; } catch (x) { a = null; }
+        if (a && e.currentTarget.contains(a) && typeof a.blur === "function") a.blur();
+      }
     },
     onFocus: (e) => {
       setFocus(true);
@@ -335,10 +345,19 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const roll = useRoll(ok && dated && !still && top.length > 0);
   const moving = roll.why == null;
 
-  // the chosen chip in view inside its row (never the page), and the chosen 기준 in the 기준별 row. Only where a row scrolls (the
-  // phone) and only for a chip that is not the row's first: reading the layout on 홈's first paint made its longest task longer.
-  useEffect(() => { if (!wide && chips.indexOf(chip) > 0) inView(chipRow.current, chipRefs.current[chip]); }, [chip, mk, chips.length, wide]);
-  useEffect(() => { if (!wide && chip === "crit" && critShown.indexOf(crit) > 0) inView(critRow.current, chipRefs.current["crit:" + crit]); }, [chip, crit, mk, wide]);
+  // the chosen chip in view inside its row (never the page), and the chosen 기준 in the 기준별 row; only where a row scrolls (the
+  // phone). A row's first paint skips its first chip: a new row starts at its left end, so that chip is already in view, and
+  // reading the layout there made 홈's longest task longer. After that, every change (a chip, a market whose chip falls back to
+  // the first, a 기준) brings the chosen one into view, wherever the row was scrolled to.
+  const rowsSeen = useRef(new WeakSet());
+  const keepInView = (row, el, i) => {
+    if (wide || !row) return;
+    const first = !rowsSeen.current.has(row);
+    rowsSeen.current.add(row);
+    if (!(first && i <= 0)) inView(row, el);
+  };
+  useEffect(() => { keepInView(chipRow.current, chipRefs.current[chip], chips.indexOf(chip)); }, [chip, mk, chips.length, wide]);
+  useEffect(() => { if (chip === "crit") keepInView(critRow.current, chipRefs.current["crit:" + crit], critShown.indexOf(crit)); }, [chip, crit, mk, wide]);
   // 전체 보기 landed here: this card in view, focus on its title
   useEffect(() => {
     if (!full || !ok || !takeJump()) return;

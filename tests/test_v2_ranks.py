@@ -374,6 +374,17 @@ out = { base: base.map((s) => s.t), miss, logs };""", STOCKS=stocks)
     assert any("must-have Korean companies missing" in l and "000660, 005380" in l for l in got["logs"]), got["logs"]
 
 
+def test_the_floor_log_is_a_warning_only_when_a_floor_value_is_blank():
+    """거래대금 기준이 뺀 종목 수는 평소 info 로 알리고, 기준값(val20 · val)이 빈 종목이 있을 때만 warn 이에요 (5억 미만은 규칙대로라서)."""
+    stocks = [st("005930", cap=900.0), st("000010", val20=3.0), st("000020", val20=None), st("AAA", "us"), st("BBB", "us", val=2.0)]
+    got = run("""const info = [], warn = []; console.info = (m) => info.push(String(m)); console.warn = (m) => warn.push(String(m));
+K.rankBase(STOCKS, 'us'); K.rankBase(STOCKS, 'kr');
+out = { info: info.filter((l) => l.includes('trading-value floor')), warn: warn.filter((l) => l.includes('trading-value floor')) };""",
+              STOCKS=stocks)
+    assert len(got["info"]) == 1 and got["info"][0].startswith("[v2] rank lists (us): 1 of 2") and "left out 0 with no val and 1 under 5" in got["info"][0], got
+    assert len(got["warn"]) == 1 and got["warn"][0].startswith("[v2] rank lists (kr): 1 of 3") and "left out 1 with no val20 and 1 under 5" in got["warn"][0], got
+
+
 def test_industry_groups_on_real_shaped_data_match_why_it_moved_exactly():
     """indGroups 는 업종마다 그 업종 종목만 peerGroup 에 넘겨요(빠르게): 파일 전체를 넘긴 peerGroup 과 n · 오름 · 내림 · 평균이 똑같아요."""
     got = run("""const fs = await import('fs'); const DATA = JSON.parse(fs.readFileSync(PATH, 'utf8'));
