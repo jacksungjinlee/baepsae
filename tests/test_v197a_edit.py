@@ -28,46 +28,29 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 _B = {}
-V196A = "0a41deb"        # v19.6a (this branch's base, not merged yet): the app a tab may still run when v19.7a ships
-MAIN = "7b5c895"         # main when v19.6a branched (v19.3d2)
-V195B = "94eea80"        # v19.5b (claude/v19.5b-rankings): ranks.js criteriaPct
-
-
-def _git(rev, path):
-    r = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=ROOT, capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else None
-
-
-def _old(tmp, rev, name):
-    d = os.path.join(tmp, name)
-    os.makedirs(d, exist_ok=True)
-    for f in ("store.js", "held.js", "dcf.js"):
-        body = _git(rev, f"src/v2/{f}")
-        assert body is not None, (rev, f)
-        with open(os.path.join(d, f), "w", encoding="utf-8") as fh:
-            fh.write(body)
-    return os.path.join(d, "store.js")
+FIX = os.path.join(ROOT, "tests", "fixtures")
+# Committed copies (no test may depend on git history: CI checks out shallow), each with a header line saying where it came from:
+OLD6 = os.path.join(FIX, "old_client_v196a", "store.js")    # v19.6a (claude/v19.6a-records 0d749bc): the app a tab may still run when v19.7a ships
+OLDM = os.path.join(FIX, "old_client_7b5c895", "store.js")  # main when v19.6a branched (v19.3d2)
+RANKS = os.path.join(FIX, "v195b_ranks", "ranks.js")         # v19.5b (claude/v19.5b-rankings 94eea80): ranks.js criteriaPct
 
 
 def run(body):
     if "p" not in _B:
         tmp = tempfile.mkdtemp(prefix="baepsae-edit-")
         entry = os.path.join(tmp, "entry.js")
-        old6, oldm = _old(tmp, V196A, "old6"), _old(tmp, MAIN, "oldm")
-        ranks = _git(V195B, "src/v2/ranks.js")
+        with open(RANKS, encoding="utf-8") as fh:
+            ranks = fh.read()
         with open(entry, "w", encoding="utf-8") as f:
             for name, mod in (("S", "store.js"), ("H", "held.js"), ("E", "edit.js"), ("Rc", "records.js"), ("Ru", "rules.js"), ("Dc", "deckcalc.js"),
                               ("F", "fitpct.js"), ("Rt", "routes.js"), ("En", "engine.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
-            f.write(f"export * as Old6 from {json.dumps(old6)};\nexport * as OldM from {json.dumps(oldm)};\n")
-            if ranks:
-                # v19.5b's ranks.js, its imports pointed at this checkout's modules (engine · track · warn are the same files)
-                src = re.sub(r'from "\./([a-z0-9]+\.js)"', lambda m: "from " + json.dumps(os.path.join(ROOT, "src", "v2", m.group(1))), ranks)
-                with open(os.path.join(tmp, "ranks.js"), "w", encoding="utf-8") as fh:
-                    fh.write(src)
-                f.write(f"export * as Rk from {json.dumps(os.path.join(tmp, 'ranks.js'))};\n")
-            else:
-                f.write("export const Rk = null;\n")
+            f.write(f"export * as Old6 from {json.dumps(OLD6)};\nexport * as OldM from {json.dumps(OLDM)};\n")
+            # v19.5b's ranks.js, its imports pointed at this checkout's modules (engine · track · warn are the same files)
+            src = re.sub(r'from "\./([a-z0-9]+\.js)"', lambda m: "from " + json.dumps(os.path.join(ROOT, "src", "v2", m.group(1))), ranks)
+            with open(os.path.join(tmp, "ranks.js"), "w", encoding="utf-8") as fh:
+                fh.write(src)
+            f.write(f"export * as Rk from {json.dumps(os.path.join(tmp, 'ranks.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/edit.mjs", "--log-level=error",
                             "--loader:.js=jsx", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
@@ -331,7 +314,7 @@ def test_the_edit_address_names_one_portfolio():
 
 
 def test_criteria_pct_is_v195b_s_one_number_per_stock():
-    got = run("""if (!Rk) { out = null; } else {
+    got = run("""{
         const fix = JSON.parse(require('fs').readFileSync(%s, 'utf8'));
         const res = {};
         for (const [mk, pts] of [['kr', { value: 3, div: 2 }], ['us', { profit: 2, lowVol: 1 }], ['kr', { stable: 1, growth: 3, trend: 2 }]]) {
@@ -339,8 +322,6 @@ def test_criteria_pct_is_v195b_s_one_number_per_stock():
           res[mk + JSON.stringify(pts)] = { n: a.size, same: a.size === b.size && [...a].every(([t, v]) => b.get(t) === v), min: Math.min(...a.values()), max: Math.max(...a.values()) };
         }
         out = res; }""".replace("require('fs')", "(await import('fs'))") % json.dumps(os.path.join(ROOT, "tests", "fixtures", "v2", "data.json")))
-    if got is None:
-        pytest.skip("v19.5b 의 ranks.js 를 git 에서 읽지 못했어요")
     for k, v in got.items():
         assert v["n"] > 20 and v["same"] is True and v["min"] >= 1 and v["max"] <= 100, (k, v)
 
