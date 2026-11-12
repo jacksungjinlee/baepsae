@@ -189,3 +189,13 @@ def test_the_same_split_window_is_the_pipelines_10_days():
       const seen = (date) => H.heldUnits(L.withDataSplits({ v: 2, decks: [d()] }, [{ t: 'NVDA', date, r: 10 }], T).decks[0]).get('NVDA') / 10000;
       out = { days: H.SAME_SPLIT_DAYS, ten: seen('2026-09-11'), eleven: seen('2026-09-12') };""")
     assert got == {"days": 10, "ten": 10, "eleven": 100}                                           # fetch_data.py SPLIT_SAME_EVENT_DAYS
+
+
+def test_the_nearest_corrected_row_is_the_one_moved_to():
+    """[A1] two rows of the same stock and ratio both read the records back (the sale is after both): the stored split moves
+    to the nearer one, the corrected date, never a later event of the same ratio."""
+    got = run(GMAB + """const data = { splits: [['GMAB', '2018-05-09', 5], ['GMAB', '2019-05-01', 5]], splitsInfo: { fixed: [['GMAB', '2018-05-01', null, 'wrong date']] } };
+      const store = { v: 2, decks: [deckG('x5', [P('p1aaaaaa', 10, '2018-04-02')], [Sx('s1aaaaaa', 'GMAB', 40, '2019-06-03')], [{ t: 'GMAB', date: '2018-05-01', r: 5 }])] };
+      const r = fix(store, data);
+      out = { to: r.moved.map((x) => x.to), splits: r.data.decks[0].splits };""")
+    assert got["to"] == ["2018-05-09"] and got["splits"] == [{"t": "GMAB", "date": "2018-05-09", "r": 5}]
