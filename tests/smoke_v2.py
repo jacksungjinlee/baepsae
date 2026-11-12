@@ -3676,6 +3676,9 @@ def scene_rank(R, files, width):
         win.hover()                                                            # 마우스를 올린 동안
         rank_wait(page, "data-pause", "hover")
         assert track.evaluate("(e) => getComputedStyle(e).animationPlayState") == "paused", (track.evaluate("(e) => getComputedStyle(e).animationPlayState"), win.get_attribute("data-kb"))
+        # 멈춤은 다음 프레임에 걸려요 (Web Animations: 멈추는 동안 pending 이고 그 사이 현재 시각이 한 프레임 더 흘러요). 멈춤이 걸린 뒤에 위치를 봐요
+        page.wait_for_function("() => { const t = document.querySelector('[data-ui-v2=\"rank-track\"]'); const a = t && t.getAnimations()[0];"
+                               " return !!a && a.playState === 'paused' && !a.pending; }")
         a = rank_ty(page); page.wait_for_timeout(500)
         b = rank_ty(page)
         assert b == a, ("moved while hovered", a, b, win.get_attribute("data-pause"))
