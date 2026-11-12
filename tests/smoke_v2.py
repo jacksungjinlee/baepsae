@@ -10416,8 +10416,24 @@ def scene_v196a(R, files, width):
     ctx.close()
     srv.shutdown()
 
-    # 리뷰 1차 (오늘 쓰는 macro.json 모양, fxHist 없음): 매수 계획의 샀어요를 지난 날짜로 하면 승인된 거절 줄 · 아무것도 저장하지 않아요
-    srv, ctx, page, base = R.open(build_site(nofx), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if wide else None)
+    stale = v196a_files(files)
+    for f in DATA_FILES:
+        stale[f]["publishedAt"] = now_kst(6)
+    srv, ctx, page, base = R.open(build_site(stale), width, init=seed, path="/app.html?dev=1#portfolio/returns/dbuilt", device=pc_device(width) if wide else None)
+
+    def stale_returns():
+        page.locator('[data-ui-v2="ret-stale"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="ret-total"]').count() == 0 and page.locator('[data-ui-v2="ret-csv"]').count() == 1
+        check_page("내 수익 (멈춘 데이터)", "returns-stale")
+    R.check(page, S, "멈춘 데이터: 내 수익은 멈춤 줄만(숫자 없음) · 기록 내려받기는 그대로", stale_returns)
+    ctx.close()
+    srv.shutdown()
+
+    # 리뷰 1차 (오늘 쓰는 macro.json 모양, fxHist 없음): 매수 계획의 샀어요를 지난 날짜로 하면 승인된 거절 줄 · 아무것도 저장하지 않아요.
+    # 휴대폰 폭에서만 (to_plan 은 아래 탭 막대로 가요: 같은 화면 · 같은 저장 규칙이라 PC 는 다른 장면이 봐요)
+    if wide:
+        return
+    srv, ctx, page, base = R.open(build_site(nofx), width, init=seed, path="/app.html?dev=1#portfolio")
 
     def plan_past_no_rate():
         at(page, "portfolio")
@@ -10436,19 +10452,6 @@ def scene_v196a(R, files, width):
     R.check(page, S, "fxHist 없음: 매수 계획의 샀어요를 지난 날짜로 → '환율 정보를 불러오지 못해 …' · 저장 안 함", plan_past_no_rate)
     ctx.close()
     srv.shutdown()
-    stale = v196a_files(files)
-    for f in DATA_FILES:
-        stale[f]["publishedAt"] = now_kst(6)
-    srv, ctx, page, base = R.open(build_site(stale), width, init=seed, path="/app.html?dev=1#portfolio/returns/dbuilt", device=pc_device(width) if wide else None)
-
-    def stale_returns():
-        page.locator('[data-ui-v2="ret-stale"]').wait_for(state="visible")
-        assert page.locator('[data-ui-v2="ret-total"]').count() == 0 and page.locator('[data-ui-v2="ret-csv"]').count() == 1
-        check_page("내 수익 (멈춘 데이터)", "returns-stale")
-    R.check(page, S, "멈춘 데이터: 내 수익은 멈춤 줄만(숫자 없음) · 기록 내려받기는 그대로", stale_returns)
-    ctx.close()
-    srv.shutdown()
-
 
 def mdtext(iso):
     m = int(iso[5:7]); d = int(iso[8:10])
