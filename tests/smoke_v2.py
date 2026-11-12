@@ -10038,6 +10038,392 @@ def scene_us_fcur(R, files, width, named):
     srv.shutdown()
 
 
+# ── v19.6a: 팔았어요 · 배당 받았어요 · 내 수익 · 기록 내려받기 (docs/tasks/v19.6-records-alerts-dark.md Part A, boards Records2 · Returns2) ──
+def v196a_files(files, fx_hist=True, splits=True):
+    data = clone(files)
+    d = data["data.json"]
+    if splits:
+        d["splits"] = [["005380", "2026-10-15", 2], ["XXXX", "bad", 0]]                      # 현대차 2:1 (시험용) · 못 읽는 항목 하나
+    if fx_hist:
+        data["macro.json"]["fxHist"] = {"asOf": d["fxDate"], "rows": [["2016-01-04", 1172.5], ["2026-10-01", 1300.0], ["2026-10-20", 1350.0], [d["fxDate"], d["fx"]]]}
+    return data
+
+
+def v196a_store(pxd):
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    built = {"id": "dbuilt", "name": "배당 생활비 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+             "holdings": [{"t": "005930", "nk": "삼성전자", "target": 0.4, "plannedQty": 10, "rules": band(0.4)},
+                          {"t": "005380", "nk": "현대차", "target": 0.3, "plannedQty": 5, "rules": band(0.3)},
+                          {"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 0.3, "plannedQty": 3, "rules": band(0.3)}],
+             "purchases": [{"id": "p1aaaaaa", "t": "005930", "date": "2026-10-01", "qty": 10, "price": 200000, "ccy": "KRW"},
+                           {"id": "p2aaaaaa", "t": "005380", "date": "2026-10-01", "qty": 5, "price": 250000, "ccy": "KRW"},
+                           {"id": "p3aaaaaa", "t": "AAPL", "date": "2026-10-01", "qty": 3, "price": 300.0, "ccy": "USD", "fx": 1300},
+                           {"id": "p4aaaaaa", "t": "AAPL", "date": "2026-10-15", "qty": 1, "price": 320.0, "ccy": "USD", "fx": 1350}],
+             "divs": [{"id": "v1aaaaaa", "t": "005930", "amount": 3610, "ccy": "KRW", "date": "2026-10-25"}]}
+    imported = {"id": "dimp", "name": "가진 종목 포트폴리오", "createdAt": "2026-10-02", "kind": "imported", "settings": {"points": {"value": 3}, "strict": "normal"},
+                "holdings": [{"t": "000660", "nk": "SK하이닉스", "cls": "kr"}, {"t": "MSFT", "nk": "Microsoft Corporation", "cls": "us"},
+                             {"t": "035420", "nk": "NAVER", "cls": "kr"}, {"t": "005930", "nk": "삼성전자", "cls": "kr"}],
+                "purchases": [], "imported": [{"t": "000660", "nk": "SK하이닉스", "ccy": "KRW", "qty": 3, "avg": 1200000},
+                                                {"t": "MSFT", "nk": "Microsoft Corporation", "ccy": "USD", "qty": 2, "avg": 480},
+                                                {"t": "035420", "nk": "NAVER", "ccy": "KRW", "amountWon": 1000000, "close": 172300, "date": pxd},
+                                                {"t": "005930", "nk": "삼성전자", "ccy": "KRW", "qty": 1, "avg": 210000}]}
+    return {"v": 2, "decks": [built, imported], "guideSeen": pxd}
+
+
+def scene_v196a(R, files, width):
+    """v19.6a (390 · 320 · 1280): every holding row has 기록 → '{name} 기록' sheet with 샀어요 · 팔았어요 · 배당 받았어요 above the
+    stock's records · 팔았어요: 가진 수량보다 많이(거절) · 처음 산 날보다 앞선 날짜(거절) · 판 금액 · 산 가격보다 · 이동평균 note ·
+    a split stock (data.json splits, 현대차 2:1) reads at the new basis with the split line, and a sale of the new count is
+    saved with the split in the store · a full sale asks 포트폴리오에서도 뺄까요? → 남겨 두기 (다 판 종목, 기록 stays) and 빼기
+    (records into history; 배당 받았어요 still works from the company page) · a past-dated US sale takes the rate of its date
+    (macro.json fxHist) · 지우기 + confirm, refused when a later sale would be bigger than the shares held · 내 수익: rows add up,
+    the headline is their sum, 미국 종목 수익 어디서 왔나 (주가 + 환율 = total) · 기록 내려받기 CSV (BOM, header, code cells) ·
+    a holding put in by amount sells only all at once, by 판 금액 · without fxHist a past-dated US record is not saved (the
+    approved line) · stale data: 내 수익 shows the stale line and no number · no 12px text, no sideways scroll, approved words only."""
+    S = f"v19.6a {width}"
+    wide = width >= 1024
+    data = v196a_files(files)
+    pxd = data["data.json"]["pxDate"]
+    fx = data["data.json"]["fx"]
+    today = now_dt().date().isoformat()
+    by = {s["t"]: s for s in data["data.json"]["stocks"]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v196a_store(pxd), ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if wide else None,
+                                  accept_downloads=True)
+    stored = lambda: page.evaluate(STORED_JS)
+    deck = lambda i: stored()["decks"][i]
+    R_ = C["rec"]
+
+    def sheet(sel_row):
+        page.locator(sel_row).locator('[data-ui-v2="row-actions"] button').first.click()
+        page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
+
+    def action(name):
+        page.locator('[data-ui-v2="rec-actions"] button', has_text=name).click()
+        page.locator('[data-ui-v2="rec-form"]').wait_for(state="visible")
+
+    def fill_form(*vals):
+        inputs = page.locator('[data-ui-v2="rec-form"] input')
+        for i, v in enumerate(vals):
+            if v is not None:
+                inputs.nth(i).fill(v)
+
+    def save():
+        page.locator('[data-ui-v2="rec-form"] button', has_text=C["plan"]["save"]).click()
+
+    def close_sheet():
+        page.keyboard.press("Escape")
+        page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+
+    def check_page(where, name=None):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        R.collect(page)
+        if name and R.shots:                                                       # --shots: every new screen and state
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v196a-{name}-{width}.png"), full_page=True)
+
+    def rows_and_split():
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dbuilt"] [data-holding="005930"]').wait_for(state="visible")
+        check_page("포트폴리오", "portfolio")
+        btns = page.locator('[data-ui-v2="row-actions"] button', has_text=R_["button"])
+        assert btns.count() == 3 + 4, btns.count()                                  # 만든 포트폴리오 3종목 + 가진 종목 4종목
+        assert page.get_by_role("button", name=fillp(R_["title"], name="삼성전자")).count() == 2   # 이름: '{name} 기록'
+        hy = page.locator('[data-holding="005380"]').inner_text()
+        assert "10주" in hy and "125,000원" in hy, hy                                  # 2:1 분할: 5주 × 2, 250,000원 ÷ 2
+        sheet('[data-holding="005380"]')
+        sp = page.locator('[data-ui-v2="rec-split"]')
+        assert sp.count() == 1 and sp.inner_text() == fillp(R_["split"], date=mdtext("2026-10-15"), r="2"), sp.inner_text()
+        assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == fillp(R_["title"], name="현대차")
+        check_page("기록 시트", "sheet-split")
+        close_sheet()
+    R.check(page, S, "줄마다 기록 · '{name} 기록' · 분할(현대차 2:1)을 새 기준으로 읽고 분할 줄", rows_and_split)
+
+    def sell_kr():
+        sheet('[data-deck-id="dbuilt"] [data-holding="005930"]')
+        lst = page.locator('[data-ui-v2="rec-list"] li')
+        assert [lst.nth(i).get_attribute("data-rec") for i in range(lst.count())] == ["div", "buy"]
+        action(R_["sell"])
+        head = page.locator('[data-ui-v2="rec-head"]').inner_text()
+        assert head == fillp(R_["head"], qty="10", price="200,000원"), head
+        fill_form("11", "240000", today)
+        save()
+        page.locator('[data-ui-v2="rec-too-many"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-too-many"]').inner_text() == R_["tooMany"]
+        check_page("많이 팔기", "sell-too-many")
+        fill_form("3", None, "2026-09-01")
+        save()
+        page.locator('[data-ui-v2="rec-too-early"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-too-early"]').inner_text() == R_["tooEarly"]
+        check_page("앞선 날짜", "sell-too-early")
+        fill_form(None, None, today)
+        if wide:                                                                       # PC 폭 경계(1024px)를 넘나들어도 쓰던 기록은 그대로
+            page.set_viewport_size({"width": 900, "height": PC_H})
+            page.wait_for_timeout(200)
+            vals = [page.locator('[data-ui-v2="rec-form"] input').nth(i).input_value() for i in range(3)]
+            page.set_viewport_size({"width": width, "height": PC_H})
+            assert vals == ["3", "240000", today], vals
+        res = page.locator('[data-ui-v2="rec-result"]')
+        res.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-proceeds"]').inner_text() == "72만원"
+        gain = page.locator('[data-ui-v2="rec-gain"]')
+        assert gain.get_attribute("data-gain") == "120000" and gain.inner_text() == "+12만원 (+20.0%)", gain.inner_text()
+        assert page.locator('[data-ui-v2="rec-result-note"]').inner_text() == R_["note"]
+        check_page("팔았어요", "sell-result")
+        save()
+        page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-list"] li').first.inner_text().startswith(mdtext(today) + " · " + C["csv"]["kinds"]["sell"] + " · 3주")
+        sales = deck(0)["sales"]
+        assert len(sales) == 1 and sales[0]["qty"] == 3 and sales[0]["price"] == 240000 and sales[0]["date"] == today and sales[0]["ccy"] == "KRW" and sales[0]["id"]
+        close_sheet()
+        sub = page.locator('[data-deck-id="dbuilt"] [data-holding="005930"]').inner_text()
+        assert "7주 · 평균 단가 200,000원" in sub, sub                                   # 이동평균: 판 뒤에도 평균 단가 그대로
+    R.check(page, S, "팔았어요: 많이(거절) · 앞선 날짜(거절) · 판 금액 72만원 · 산 가격보다 +12만원 (+20.0%) · 평균 단가 그대로", sell_kr)
+
+    def sell_split_keep():
+        sheet('[data-deck-id="dbuilt"] [data-holding="005380"]')
+        action(R_["sell"])
+        fill_form("10", "", today)                                                     # 분할 뒤 수량 10주, 가격 빈칸 → 종가
+        save()
+        page.locator('[data-ui-v2="rec-full"]').wait_for(state="visible")
+        q, body = R_["fullSale"].split("? ", 1)
+        assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == q + "?" and page.locator('[data-ui-v2="rec-full"] p').first.inner_text() == body
+        check_page("포트폴리오에서도 뺄까요?", "full-sale")
+        page.locator('[data-ui-v2="rec-full"] button', has_text=R_["keep"]).click()
+        page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
+        acts = page.locator('[data-ui-v2="rec-actions"] button').all_inner_texts()
+        assert acts == [C["plan"]["bought"], R_["div"]], acts                         # 다 판 종목: 팔았어요는 없어요
+        close_sheet()
+        d0 = deck(0)
+        assert d0["splits"] == [{"t": "005380", "date": "2026-10-15", "r": 2}] and d0["sales"][-1]["qty"] == 10 and d0["sales"][-1]["price"] == by["005380"]["price"]
+        so = page.locator('[data-sold-out="005380"]')
+        so.wait_for(state="visible")
+        assert C["daily"]["soldOut"] in so.inner_text() and so.locator("button", has_text=R_["button"]).count() == 1
+        check_page("다 판 종목", "sold-out-kept")
+    R.check(page, S, "분할 뒤 수량 10주를 팔면 저장(분할도 함께) · 다 팔면 뺄까요? → 남겨 두기 → 다 판 종목에 기록", sell_split_keep)
+
+    def sell_us_past():
+        sheet('[data-deck-id="dbuilt"] [data-holding="AAPL"]')
+        action(R_["sell"])
+        assert page.locator('[data-ui-v2="rec-head"]').inner_text() == fillp(R_["head"], qty="4", price="$305.00")
+        fill_form("2", "", "2026-10-20")
+        res = page.locator('[data-ui-v2="rec-proceeds"]')
+        res.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-proceeds-usd"]').inner_text() == "$" + f"{2 * by['AAPL']['price']:,.2f}"
+        check_page("미국 판매", "sell-us")
+        save()
+        page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
+        s = deck(0)["sales"][-1]
+        assert s["t"] == "AAPL" and s["fx"] == 1350.0 and s["date"] == "2026-10-20" and s["ccy"] == "USD"   # 그날 환율 (fxHist)
+        close_sheet()
+    R.check(page, S, "지난 날짜의 미국 판매: fxHist 의 그날 환율 1,350원으로 저장 · 원화 먼저, 달러는 작게", sell_us_past)
+
+    def delete():
+        sheet('[data-deck-id="dbuilt"] [data-holding="005930"]')
+        buy = page.locator('[data-ui-v2="rec-list"] li[data-rec="buy"]')
+        buy.locator("button").click()
+        ask = page.locator('[data-ui-v2="rec-del-ask"]')
+        ask.wait_for(state="visible")
+        check_page("지울까요?", "delete-ask")
+        assert ask.locator("p").inner_text() == R_["delAsk"]
+        assert ask.locator("button").all_inner_texts() == [R_["del"], R_["cancel"] or C["app"]["close"]]
+        ask.locator("button").first.click()
+        page.locator('[data-ui-v2="rec-del-refused"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-del-refused"]').inner_text() == R_["delRefused"]
+        check_page("지우기 거절", "delete-refused")
+        assert len(deck(0)["purchases"]) == 4                                           # 거절: 아무것도 지우지 않아요
+        page.locator('[data-ui-v2="rec-list"] li[data-rec="div"] button').click()
+        page.locator('[data-ui-v2="rec-del-ask"] button').first.click()
+        page.locator('[data-ui-v2="rec-list"] li[data-rec="div"]').wait_for(state="detached")
+        assert deck(0)["divs"] == []
+        check_page("지우기")
+        close_sheet()
+    R.check(page, S, "지우기: 묻고 · 뒤의 판매보다 적어지면 거절(아무것도 안 지움) · 배당 기록은 지워져요", delete)
+
+    def divs_again():
+        sheet('[data-deck-id="dbuilt"] [data-holding="005930"]')
+        action(R_["div"])
+        labels = page.locator('[data-ui-v2="rec-form"] label').all_inner_texts()
+        assert labels[0].startswith(R_["divWon"]) and labels[1].startswith(R_["divDate"]), labels
+        assert R_["divHint"] in page.locator('[data-ui-v2="rec-form"]').inner_text()
+        fill_form("abc", today)
+        save()
+        page.locator('[data-ui-v2="bad-input"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="bad-input"]').inner_text() == (R_["badAmount"] or C["plan"]["badInput"])
+        check_page("배당 받았어요", "div-bad")
+        fill_form("3610", "2026-10-25")
+        save()
+        page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
+        assert [(x["amount"], x["date"]) for x in deck(0)["divs"]] == [(3610, "2026-10-25")]
+        close_sheet()
+    R.check(page, S, "배당 받았어요: 받은 금액 (원, 세금 뗀 뒤) · 받은 날짜 · 안내 줄 · 잘못 넣으면 거절 · 저장", divs_again)
+
+    def imported_flows():
+        # 금액으로 넣은 종목: 판 금액으로 한 번에 모두 → 남겨 두기 → 0주 줄 · SK하이닉스: 다 팔고 빼기
+        sheet('[data-pf-holding="035420"]')
+        action(R_["sell"])
+        assert page.locator('[data-ui-v2="rec-by-amount"]').inner_text() == R_["byAmount"]
+        labels = page.locator('[data-ui-v2="rec-form"] label').all_inner_texts()
+        assert labels[0].startswith(R_["sellAmount"] or R_["proceeds"]), labels
+        check_page("금액으로 넣은 종목", "sell-by-amount")
+        fill_form("1200000", today)
+        save()
+        page.locator('[data-ui-v2="rec-full"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="rec-full"] button', has_text=R_["keep"]).click()
+        page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
+        close_sheet()
+        zero = page.locator('[data-deck-id="dimp"] [data-sold-out="035420"]')
+        zero.wait_for(state="visible")
+        assert "0주" in zero.inner_text() and zero.locator("button", has_text=R_["button"]).count() == 1
+        s = deck(1)["sales"][-1]
+        assert s["t"] == "035420" and round(s["qty"] * s["price"]) == 1200000
+        sheet('[data-pf-holding="000660"]')
+        action(R_["sell"])
+        assert page.locator('[data-ui-v2="rec-head"]').inner_text() == fillp(R_["head"], qty="3", price="1,200,000원")
+        fill_form("3", "", today)
+        save()
+        page.locator('[data-ui-v2="rec-full"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="rec-full"] button', has_text=R_["remove"]).click()
+        page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+        d1 = deck(1)
+        assert not any(h["t"] == "000660" for h in d1["holdings"]) and [e["t"] for e in d1["history"]] == ["000660"]
+        assert d1["history"][0]["sales"][0]["qty"] == 3
+        check_page("가진 종목: 0주 줄", "portfolio-after")
+    R.check(page, S, "금액으로 넣은 종목은 판 금액으로 한 번에 · 남겨 두기 → 0주 줄 · 다 팔고 빼기 → 기록은 history 로", imported_flows)
+
+    def company():
+        page.evaluate("location.hash = '#stocks/005930'")
+        page.locator('[data-ui-v2="co-record"] button').wait_for(state="visible")
+        page.locator('[data-ui-v2="co-record"]').scroll_into_view_if_needed()
+        check_page("회사 페이지의 기록", "company")
+        page.locator('[data-ui-v2="co-record"] button').click()
+        page.locator('[data-ui-v2="rec-which"]').wait_for(state="visible")
+        assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == R_["which"]
+        assert page.locator('[data-ui-v2="rec-which"] button').all_inner_texts() == ["배당 생활비 포트폴리오", "가진 종목 포트폴리오"]
+        check_page("어느 포트폴리오에 기록할까요?", "which")
+        page.locator('[data-ui-v2="rec-which"] button').nth(1).click()
+        page.locator('[data-ui-v2="rec-sheet"][data-deck-id="dimp"]').wait_for(state="visible")
+        close_sheet()
+        # 뺀 종목(history): 회사 페이지에서 배당 받았어요만
+        page.evaluate("location.hash = '#stocks/000660'")
+        page.locator('[data-ui-v2="co-record"] button').wait_for(state="visible")
+        page.locator('[data-ui-v2="co-record"] button').click()
+        page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-actions"] button').all_inner_texts() == [R_["div"]]
+        check_page("뺀 종목의 기록", "history-sheet")
+        action(R_["div"])
+        fill_form("5000", today)
+        save()
+        page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
+        assert deck(1)["history"][0]["divs"][0]["amount"] == 5000
+        close_sheet()
+        page.evaluate("location.hash = '#portfolio'")
+        at(page, "portfolio")
+    R.check(page, S, "회사 페이지의 기록: 두 포트폴리오면 어느 포트폴리오에 · 뺀 종목은 배당 받았어요만 (history 로)", company)
+
+    def returns():
+        page.locator('[data-deck-id="dbuilt"] [data-ui-v2="returns-link"]').click()
+        at(page, "portfolio/returns/dbuilt")
+        page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="ret-date"]').inner_text() == fillp(C["ret"]["date"], date=mdtext(pxd))
+        # 손으로 계산: 삼성전자 10주 200,000 → 3주 240,000 판매(+120,000), 남은 7주 × 225,000 − 1,400,000 · 현대차 5주 250,000 (2:1 → 10주
+        # 125,000) 10주 × 종가 판매 · AAPL 3주 $300 × 1,300 + 1주 $320 × 1,350 → 10/20 2주 판매($종가 × 1,350), 남은 2주 × 오늘 · 배당 3,610
+        p30, p38, pa = by["005930"]["price"], by["005380"]["price"], by["AAPL"]["price"]
+        cost_a = 3 * 300 * 1300 + 320 * 1350
+        held = (7 * p30 - 1400000) + (2 * pa * fx - cost_a / 2)
+        sold = 3 * 40000 + (10 * p38 - 1250000) + (2 * pa * 1350 - cost_a / 2)
+        divs = 3610
+        rows = [round(held), round(sold), divs]
+        got = [int(page.locator(f'[data-ui-v2="ret-row"][data-row="{k}"]').get_attribute("data-v")) for k in ("held", "sold", "divs")]
+        assert got == rows, (got, rows)
+        assert int(page.locator('[data-ui-v2="ret-total"]').get_attribute("data-v")) == sum(rows)   # 머리 금액 = 세 줄의 합
+        # 미국 종목 수익, 어디서 왔나: 남은 묶음 1.5주(1,300) · 0.5주(1,350)
+        price_part = (pa - 300) * 1.5 * 1300 + (pa - 320) * 0.5 * 1350
+        rate_part = pa * 1.5 * (fx - 1300) + pa * 0.5 * (fx - 1350)
+        unit = 10000 if all(abs(v) >= 10000 for v in (price_part, rate_part)) else 1
+        r2 = [round(price_part / unit) * unit, round(rate_part / unit) * unit]
+        card = page.locator('[data-ui-v2="ret-fx"]')
+        assert [int(card.get_attribute("data-price")), int(card.get_attribute("data-rate")), int(card.get_attribute("data-total"))] == r2 + [sum(r2)]
+        assert abs(price_part + rate_part - (2 * pa * fx - cost_a / 2)) < 1e-6
+        line = page.locator('[data-ui-v2="ret-fx-line"]').inner_text()
+        assert line == fillp(C["ret"]["rateAvg"], a=f"{round(cost_a / 2 / 610):,}", b=f"{round(fx):,}"), line
+        assert page.locator('[data-ui-v2="ret-fx-bar"]').count() == (1 if min(r2) >= 0 else 0)
+        rcpt = page.locator('[data-ui-v2="ret-receipt"]')
+        assert rcpt.count() == (1 if C["ret"]["receiptFix"] else 0) and page.locator('[data-ui-v2="ret-pct"]').count() == rcpt.count()
+        check_page("내 수익", "returns")
+        with page.expect_download() as dl:
+            page.locator('[data-ui-v2="ret-csv"] button').click()
+        assert dl.value.suggested_filename == f"baepsae-records-{today}.csv", dl.value.suggested_filename
+        with open(dl.value.path(), "rb") as fh:
+            raw = fh.read()
+        assert raw.startswith(b"\xef\xbb\xbf") and raw.endswith(b"\r\n")
+        lines = raw.decode("utf-8-sig").split("\r\n")
+        assert lines[0] == ",".join(C["csv"]["head"])
+        st = stored()
+        n = sum(len(d.get(k, [])) for d in st["decks"] for k in ("purchases", "sales", "divs", "imported"))
+        n += sum(len(e.get("purchases", [])) + len(e.get("sales", [])) + len(e.get("divs", [])) + (1 if e.get("imported") else 0)
+                 for d in st["decks"] for e in d.get("history", []))
+        assert len(lines) == n + 2, (len(lines), n)
+        assert any(',"=""005930""",' in x for x in lines) and any(x.startswith("가진 종목 포트폴리오,가진 종목,") for x in lines)
+        page.locator('[data-ui-v2="app-bar"] button').first.click()
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dimp"] [data-ui-v2="returns-link"]').click()
+        at(page, "portfolio/returns/dimp")
+        page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="ret-fx"][data-empty="1"] [data-ui-v2="ret-fx-left"]').inner_text() == C["ret"]["fxLeftOut"]   # MSFT: 달러 평균 단가만
+        assert page.locator('[data-ui-v2="usd-today"]').count() == 1
+        check_page("내 수익 (가진 종목)", "returns-imported")
+    R.check(page, S, "내 수익: 세 줄 = 손으로 계산 · 머리 금액 = 합 · 주가 + 환율 · 평균 환율 줄 · CSV(BOM · 머리줄 · 줄 수 · 코드)", returns)
+    ctx.close()
+    srv.shutdown()
+
+    # fxHist 가 없으면 지난 날짜의 미국 기록은 저장하지 않아요 · 멈춘 데이터의 내 수익 · 불러오기 실패
+    nofx = v196a_files(files, fx_hist=False)
+    srv, ctx, page, base = R.open(build_site(nofx), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if wide else None)
+
+    def no_rate():
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dbuilt"] [data-holding="AAPL"]').wait_for(state="visible")
+        sheet('[data-deck-id="dbuilt"] [data-holding="AAPL"]')
+        action(R_["sell"])
+        fill_form("1", "", "2026-10-20")
+        page.locator('[data-ui-v2="rec-no-rate"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-no-rate"]').inner_text() == R_["noPastRate"]
+        check_page("환율 없음 줄", "no-past-rate-line")
+        save()
+        page.wait_for_timeout(200)
+        assert not stored()["decks"][0].get("sales")                                       # 다른 날 환율로 저장하지 않아요
+        fill_form(None, None, today)                                                       # 오늘은 data.json fx
+        assert page.locator('[data-ui-v2="rec-no-rate"]').count() == 0
+        save()
+        page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
+        assert stored()["decks"][0]["sales"][0]["fx"] == fx
+        check_page("환율 없음", "no-past-rate")
+        close_sheet()
+    R.check(page, S, "fxHist 없음: 지난 날짜의 미국 판매는 '환율 정보를 불러오지 못해 …' · 저장 안 함 · 오늘은 저장", no_rate)
+    ctx.close()
+    srv.shutdown()
+    stale = v196a_files(files)
+    for f in DATA_FILES:
+        stale[f]["publishedAt"] = now_kst(6)
+    srv, ctx, page, base = R.open(build_site(stale), width, init=seed, path="/app.html?dev=1#portfolio/returns/dbuilt", device=pc_device(width) if wide else None)
+
+    def stale_returns():
+        page.locator('[data-ui-v2="ret-stale"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="ret-total"]').count() == 0 and page.locator('[data-ui-v2="ret-csv"]').count() == 1
+        check_page("내 수익 (멈춘 데이터)", "returns-stale")
+    R.check(page, S, "멈춘 데이터: 내 수익은 멈춤 줄만(숫자 없음) · 기록 내려받기는 그대로", stale_returns)
+    ctx.close()
+    srv.shutdown()
+
+
+def mdtext(iso):
+    m = int(iso[5:7]); d = int(iso[8:10])
+    return fillp(C["app"]["md"], m=m, d=d)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -10117,7 +10503,9 @@ def main():
                    lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
                    lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
                    lambda: scene_us_fcur(R, files, 1280, True),
-                   lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280)):                 # v19.6d 어두운 화면
+                   lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280),                 # v19.6d 어두운 화면
+                   lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
+                   lambda: scene_v196a(R, files, 1280)):                                                    # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
             try:
                 fn()
             except Exception as e:
