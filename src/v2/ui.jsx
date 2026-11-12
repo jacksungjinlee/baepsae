@@ -71,6 +71,29 @@ export function useWide() {
   }, []);
   return wide;
 }
+// true from ROOMY_MIN (1200 px) wide: room for 종목 순위 in 홈's right column (Jack, 2026-11-12: from 1024 to 1199 px it sits at the
+// end of the main column instead). Follows the window as it is resized.
+export const ROOMY_MIN = 1200;
+export function useRoomy() {
+  const q = `(min-width: ${ROOMY_MIN}px)`;
+  const now = () => { try { return window.matchMedia ? window.matchMedia(q).matches : window.innerWidth >= ROOMY_MIN; } catch (e) { return false; } };
+  const [roomy, setRoomy] = useState(now);
+  useEffect(() => {
+    const on = () => setRoomy(now());
+    let mq = null;
+    try { mq = window.matchMedia ? window.matchMedia(q) : null; } catch (e) { mq = null; }
+    if (mq && mq.addEventListener) mq.addEventListener("change", on);
+    else if (mq && mq.addListener) mq.addListener(on);
+    else window.addEventListener("resize", on);
+    on();
+    return () => {
+      if (mq && mq.removeEventListener) mq.removeEventListener("change", on);
+      else if (mq && mq.removeListener) mq.removeListener(on);
+      else window.removeEventListener("resize", on);
+    };
+  }, []);
+  return roomy;
+}
 export const LayoutContext = createContext({ wide: false });
 export const useLayout = () => useContext(LayoutContext);
 // Which column of Cols a piece sits in on PC: "main", "side" (the narrow one) or "full" (it stands alone). null elsewhere.

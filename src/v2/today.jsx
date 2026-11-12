@@ -30,7 +30,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
 import { shownName } from "./legacy.js";
@@ -302,6 +302,11 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   const imported = ev.ok ? decks.filter(isImported) : [];
   const us = held.some((de) => de.holdings.some((x) => x.cls === "us")) || (ev.ok && decks.some((d) => usHeld(d, load)));   // v19.3d: 가진 종목 too
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
+  // 종목 순위: PC from 1200 px in the right column under 시장 한눈에; from 1024 to 1199 px at the end of the main column (Jack, 2026-11-12)
+  const { wide } = useLayout();
+  const roomy = useRoomy();
+  const rankInMain = wide && !roomy;
+  const rankCard = ok && <RankCard key="rank" load={load} store={store} go={go} />;
   if (welcome) {
     return (
       <Page pad={pad} cols={2}>
@@ -337,7 +342,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
         ev.ok && !held.length && !imported.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),
-      ]} side={ok && [<MarketGlance key="glance" load={load} go={go} />, <RankCard key="rank" load={load} store={store} go={go} />]} />
+        rankInMain && rankCard,
+      ]} side={ok && [<MarketGlance key="glance" load={load} go={go} />, !rankInMain && rankCard]} />
       <Footer />
     </Page>
   );

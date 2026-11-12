@@ -140,8 +140,11 @@ def test_each_criterion_ranks_by_its_named_value_in_the_cards_direction():
               st("000030", cap=3.0, pbr=0.5, roe=None, debt=80.0, vol=25.0, mom=90.0, g3=None),
               st("000040", cap=4.0, pbr=0.0, roe=12.0, debt=None, vol=None, mom=None, g3=1.0),
               st("000050", cap=5.0, pbr=-0.4, roe=-3.0, debt=0.0, vol=40.0, mom=1.0, g3=-10.0)]
-    got = run("""out = Object.fromEntries(K.CRIT.map((c) => [c.id, ts(K.critList(STOCKS, 'kr', c.id))])); out.none = K.critList(STOCKS, 'kr', 'div');""",
-              STOCKS=stocks)
+    # 성장 · 수익성의 기준은 모두 통과: 매출은 그 g3 가 2년 연평균이 되게 (전전기 120억원), 자본 500억원
+    corp = [{"t": x["t"], "rev": [round(120.0 * (1 + (x.get("g3") or 0) / 100) ** 2, 1), 150.0, 120.0], "eq": 500.0} for x in stocks]
+    got = run("""const CO = new Map(CORP.map((c) => [c.t, c]));
+out = Object.fromEntries(K.CRIT.map((c) => [c.id, ts(K.critList(STOCKS, 'kr', c.id, CO))])); out.none = K.critList(STOCKS, 'kr', 'div');""",
+              STOCKS=stocks, CORP=corp)
     assert got["value"] == ["000020", "000030", "000010"], got["value"]           # PBR 낮은 순 · 같은 0.5 는 시가총액 큰 순 · 0 이하는 빠짐
     assert got["profit"] == ["000020", "000040", "000010", "000050"], got["profit"]   # ROE 높은 순 · 빈 칸 빠짐
     assert got["stable"] == ["000050", "000010", "000030"], got["stable"]         # 부채 낮은 순 · 은행(000020)은 해당 없음 → 빠짐
@@ -198,12 +201,12 @@ out = { order: tot.map(([t]) => t), pct: tot.map(([t]) => pc.get(t)), list: ts(K
 
 
 def test_chips_in_jacks_order_with_surge_korea_only_and_mine_only_with_points():
-    got = run("""out = { kr: K.chipsFor('kr', true), us: K.chipsFor('us', true), noMine: K.chipsFor('kr', false), empty: K.chipsFor('us', false, ['div']),
+    got = run("""out = { kr: K.chipsFor('kr', true), us: K.chipsFor('us', true), noMine: K.chipsFor('kr', false), usNoMine: K.chipsFor('us', false),
   shown: [K.shownChip('surge', K.chipsFor('us', true)), K.shownChip('mine', K.chipsFor('kr', false)), K.shownChip('ind', K.chipsFor('kr', true))] };""")
     assert got["kr"] == ["cap", "val", "surge", "crit", "mine", "div", "ind"]
     assert got["us"] == ["cap", "val", "crit", "mine", "div", "ind"]
     assert got["noMine"] == ["cap", "val", "surge", "crit", "div", "ind"]
-    assert got["empty"] == ["cap", "val", "crit", "ind"]
+    assert got["usNoMine"] == ["cap", "val", "crit", "div", "ind"]                     # 목록이 비어도 칩은 그대로 (Jack, 2026-11-12: 빈 목록은 이유를 말해요)
     assert got["shown"] == ["cap", "cap", "ind"]                                          # 없는 칩을 골라 뒀으면 첫 칩
 
 
@@ -284,22 +287,25 @@ def test_cheap_chip_checks_agree_with_the_lists():
     decks = {"none": None, "value": {"settings": {"points": {"value": 3}, "exclude": {}}},
              "loss-out": {"settings": {"points": {"value": 3}, "exclude": {"loss": True}}},
              "stable-fin": {"settings": {"points": {"stable": 5}, "exclude": {}}}}
+    corps = {"full": [{"t": f"0001{i}0", "rev": [153.0, 151.5, 150.0] if i else [51.0, 50.5, 50.0], "eq": 500.0 if i != 2 else 80.0} for i in range(5)],
+             "sparse": [], "empty": []}
     got = run("""E.setDataShape({ divCheck: { v: 1 } });
 out = {};
+const STATES = ['rows', 'none', 'nodata'];
 for (const [name, stocks] of Object.entries(CASES)) {
-  const ld = loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks });
+  const ld = loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks }, CORPS[name]);
   for (const mk of ['kr', 'us']) for (const [dn, deck] of Object.entries(DECKS)) {
     const s = K.chipState(ld, mk, deck);
     const has = (chip, crit = null) => { const r = K.rankRows(ld, mk, chip, crit, deck); return r ? r.rows.length > 0 : null; };
     const bad = [];
-    for (const c of ['cap', 'val', 'div', 'ind']) if (s[c] !== has(c)) bad.push(c);
-    for (const c of K.CRIT) if (s.crit[c.id] !== has('crit', c.id)) bad.push('crit:' + c.id);
-    if ((s.mine === null) !== (deck === null) || (deck && s.mine !== has('mine'))) bad.push('mine');
-    if (mk === 'us' ? s.surge !== null : (s.surge.state === 'rows') !== has('surge')) bad.push('surge');
+    for (const c of ['cap', 'val', 'div', 'ind']) if (!STATES.includes(s[c]) || (s[c] === 'rows') !== has(c)) bad.push(c);
+    for (const c of K.CRIT) if (!STATES.includes(s.crit[c.id]) || (s.crit[c.id] === 'rows') !== has('crit', c.id)) bad.push('crit:' + c.id);
+    if ((s.mine === null) !== (deck === null) || (deck && (!STATES.includes(s.mine) || (s.mine === 'rows') !== has('mine')))) bad.push('mine');
+    if (mk === 'us' ? s.surge !== null : (s.surge === 'rows') !== has('surge')) bad.push('surge');
     out[name + '/' + mk + '/' + dn] = bad;
   }
 }
-E.setDataShape({});""", CASES=cases, DECKS=decks)
+E.setDataShape({});""", CASES=cases, DECKS=decks, CORPS=corps)
     assert all(v == [] for v in got.values()), {k: v for k, v in got.items() if v}
     assert len(got) == 24
 
@@ -315,13 +321,12 @@ def test_surge_with_no_figures_is_not_none_today():
     assert got["noVal"] == {"state": "nodata", "n": 0, "of": 2} and got["us"] is None     # 숫자가 없으면 '오늘은 없어요'가 아니에요
 
 
-def test_a_market_with_no_list_offers_no_chip():
+def test_a_market_with_nothing_over_the_floor_has_no_data_at_all():
     got = run("""const ld = loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks: STOCKS });
-const s = K.chipState(ld, 'us', null);
-const empty = K.RANK_CHIPS.filter((c) => (c === 'crit' ? !Object.values(s.crit).some(Boolean) : c === 'surge' ? false : s[c] === false));
-out = { s, chips: K.chipsFor('us', false, empty) };""", STOCKS=[st("000010"), st("AAA", "us", val=1.0), st("BBB", "us", val=None)])
-    assert got["chips"] == [], got                                                  # 화면은 빈 칸 대신 불러오기 실패 문구 (smoke)
-    assert got["s"]["cap"] is False and got["s"]["ind"] is False and not any(got["s"]["crit"].values())
+out = { us: K.chipState(ld, 'us', null), kr: K.chipState(ld, 'kr', null) };""", STOCKS=[st("000010"), st("AAA", "us", val=1.0), st("BBB", "us", val=None)])
+    assert got["us"]["base"] == 0 and got["kr"]["base"] == 1, got                  # 화면: 칩 없이 불러오기 실패 문구 (smoke scene_rank_r1)
+    assert got["us"]["cap"] == "nodata" and set(got["us"]["crit"].values()) == {"nodata"}
+    assert got["us"]["ind"] == "none"                                               # 업종별 등락은 거래대금 기준 전의 종목으로 (왜 움직였나와 같은 셈): 5곳이 안 돼요
 
 
 # ── 업종 안 회사: 같은 회사의 두 종류 주식은 한 줄 · 줄의 n · k 는 peerGroup 그대로 ──
@@ -350,7 +355,7 @@ out = {
   gap: K.oneReportYear([row('000010', 2025), row('000020', null)]),
   corp: K.oneReportYear([row('000010', null)], new Map([['000010', { fy: 2025 }]])),
   none: K.oneReportYear([]) };""")
-    # 가치는 PBR 이 최근 분기 자본이라 사업보고서 연도를 말하지 않아요. 내 기준도 가치만이면 같아요
+    # 가치는 PBR 이 최근 분기 자본이라 사업보고서 연도를 말하지 않아요(날짜 줄은 '각 회사의 최근 분기 재무제표 기준', dateBasis). 내 기준도 가치만이면 같아요
     assert got["kinds"] == [False, True, True, True, False, False, True, False, False, False, False], got["kinds"]
     assert got["mine"] == [False, True, False, True], got["mine"]
     assert got["one"] == {"year": 2025, "years": [2025], "missing": 0}
@@ -406,3 +411,99 @@ out = { must: K.MUST_KR, top: K.capList(DATA.stocks, 'kr').slice(0, 3).map((r) =
               PATH=os.path.join(ROOT, "tests", "fixtures", "v2", "data.json"))      # 실제 실행본에서 뽑은 시험 데이터
     assert got["must"] == list(validate_data.MUST)
     assert got["top"][0] == "005930" and got["miss"] == [], got
+
+
+# ── Jack 의 결정 (2026-11-12): 성장은 시장마다 한 잣대 · 최소 크기 · 미국 가치 보조 장치 · 빈 목록의 두 이유 · 날짜 줄 · 업종 두 부분 ──
+def test_korean_growth_is_the_two_year_average_on_a_base_of_100_eok_and_profit_needs_100_eok_equity():
+    stocks = [st("000010", g3=50.0, roe=40.0, cap=1.0), st("000020", g3=40.0, roe=30.0, cap=2.0), st("000030", g3=30.0, roe=20.0, cap=3.0),
+              st("000040", g3=20.0, roe=10.0, cap=4.0), st("000050", g3=10.0, roe=5.0, cap=5.0), st("000060", g3=5.0, roe=4.0, cap=6.0),
+              st("AAA", "us", g3=60.0, roe=90.0), st("BBB", "us", g3=1.0, roe=2.0)]
+    # 매출은 g3 와 맞게 (engine.growthBasis 가 2년 · 1년을 가려요)
+    corp = [{"t": "000010", "rev": [225.0, 200.0, 100.0], "roeIn": {"eq": 100.0}, "eq": 99.0},     # 2년 연평균 50% · 딱 100억원: 둘 다 들어가요 (자본은 ROE 의 자본)
+            {"t": "000020", "rev": [280.0, 200.0, None], "eq": 5000.0},                          # 전전기 없음: 1년 성장 40% → 성장 목록에서 빠짐
+            {"t": "000030", "rev": [168.9, 150.0, 99.9], "roeIn": {"eq": 57.3}, "eq": 407.3},     # 2년 30% 지만 바탕 매출 99.9억 · ROE 자본 57.3억 (JW신약 꼴)
+            {"t": "000040", "rev": [300.0, 250.0, -5.0], "eq": 150.0},                           # 전전기 음수: 1년 성장 20% · roeIn 없으면 eq
+            {"t": "000050", "rev": [None, None, None], "eq": None}]                               # 외화 재무제표처럼 금액 없음 · 000060: corp 없음
+    got = run("""const CO = new Map(CORP.map((c) => [c.t, c])); const logs = []; console.info = (m) => logs.push(String(m));
+out = { g: ts(K.critList(STOCKS, 'kr', 'growth', CO)), p: ts(K.critList(STOCKS, 'kr', 'profit', CO)),
+  gNoCorp: ts(K.critList(STOCKS, 'kr', 'growth')), us: [ts(K.critList(STOCKS, 'us', 'growth', CO)), ts(K.critList(STOCKS, 'us', 'profit'))],
+  st: [K.critState(STOCKS, 'kr', 'growth', CO), K.critState(STOCKS, 'kr', 'growth', null), K.critState(STOCKS, 'kr', 'growth', new Map())],
+  min: K.MIN_EOK, logs };""", STOCKS=stocks, CORP=corp)
+    assert got["g"] == ["000010"], got["g"]
+    assert got["p"] == ["000010", "000020", "000040"], got["p"]                    # 000030: ROE 의 자본 57.3억 · 000050: 자본 없음 · 000060: corp 없음
+    assert got["gNoCorp"] == [] and got["st"] == ["rows", "nodata", "nodata"], got   # corp.json 없이는 기준을 확인할 수 없어요: 데이터 없음
+    assert got["us"] == [["AAA", "BBB"], ["AAA", "BBB"]]                            # 미국은 최소 크기 없이 (데이터에 미국 매출 · 자본 금액이 아직 없어요)
+    assert got["min"] == 100
+    gl = [l for l in got["logs"] if "growth list" in l and "(kr)" in l]
+    assert len(gl) == 2 and gl[0].endswith("leaves out oneYear 2; smallBase 1; noRevenue 2") and gl[1].endswith("noRevenue 6"), gl   # corp 와 함께 · 없이, 한 번씩
+
+
+def test_the_floor_copy_says_the_same_100_eok_as_the_code():
+    copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
+    assert 'growth: "매출 100억원 이상"' in copy and 'profit: "자본 100억원 이상"' in copy
+    assert "export const MIN_EOK = 100;" in open(os.path.join(ROOT, "src", "v2", "ranks.js"), encoding="utf-8").read()
+
+
+def test_us_value_guard_is_one_sided_and_pbr_at_or_below_0_leaves_both_markets():
+    # 2026-11-11 발행본의 숫자 그대로: ERIC · KSPI 는 PBR 이 PER × ROE ÷ 100 의 1/4 보다 작아요. TSM (PBR 이 훨씬 큼) · NTES 는 남아요
+    stocks = [st("ERIC", "us", per=17.1, roe=18.1, pbr=0.35, cap=46.09), st("KSPI", "us", per=7.9, roe=44.8, pbr=0.01, cap=22.745),
+              st("TSM", "us", per=26.8, roe=41.9, pbr=78.88, cap=2869.0), st("NTES", "us", per=17.0, roe=20.4, pbr=15.63, cap=104.6),
+              st("AES", "us", per=6.0, roe=8.7, pbr=1.86, cap=14.2), st("LOSS", "us", per=None, roe=-5.0, pbr=0.2, cap=1.0),
+              st("NEG", "us", per=10.0, roe=10.0, pbr=-0.5, cap=1.0), st("ZERO", "us", per=10.0, roe=10.0, pbr=0.0, cap=1.0),
+              st("000010", pbr=0.0, cap=1.0), st("000020", pbr=-1.2, cap=2.0), st("000030", pbr=0.01, per=50.0, roe=40.0, cap=3.0)]
+    got = run("""const logs = []; console.info = (m) => logs.push(String(m));
+out = { us: ts(K.critList(STOCKS, 'us', 'value')), kr: ts(K.critList(STOCKS, 'kr', 'value')), logs: logs.filter((l) => l.includes('value list')) };""",
+              STOCKS=stocks)
+    assert got["us"] == ["LOSS", "AES", "NTES", "TSM"], got["us"]                    # PER · ROE 가 없거나 음수면 확인할 수 없어 그대로
+    assert got["kr"] == ["000030"], got["kr"]                                      # 한국은 보조 장치 없이 (DART 영수증), PBR 0 이하만 빠져요
+    us = next(l for l in got["logs"] if "(us)" in l)
+    assert "pbrFarUnder 2: ERIC, KSPI" in us and "pbrNotAbove0 2: NEG, ZERO" in us, got["logs"]
+    assert any("(kr)" in l and "pbrNotAbove0 2: 000010, 000020" in l for l in got["logs"]), got["logs"]
+
+
+def test_us_value_guard_removes_exactly_eric_and_kspi_from_the_2026_11_11_figures():
+    """2026-11-11 발행본(미국 740종목)의 PER · ROE · PBR 에서 보조 장치에 걸리는 종목: 그날의 숫자를 옮겨 적은 표로 확인해요."""
+    near = {"AES": (6.0, 8.7, 1.86), "AGNC": (5.9, 17.4, 1.14), "ERIC": (17.1, 18.1, 0.35), "KSPI": (7.9, 44.8, 0.01),
+            "NTES": (17.0, 20.4, 15.63), "TSM": (26.8, 41.9, 78.88), "OMC": (10.9, 30.3, 3.92)}
+    stocks = [st(t, "us", per=a, roe=b, pbr=c) for t, (a, b, c) in near.items()]
+    got = run("out = ts(K.critList(STOCKS, 'us', 'value')).sort();", STOCKS=stocks)
+    assert sorted(set(near) - set(got)) == ["ERIC", "KSPI"], got
+
+
+def test_empty_lists_say_whether_the_data_is_missing_or_nothing_qualifies():
+    stocks = [st("000010", dyt=40.0, pbr=-1.0, debt=None, ind="bank", d1=0.5, g3=None, roe=10.0, vol=20.0, vz=50, opm=-1.0),
+              st("000020", dyt=None, pbr=0.0, debt=30.0, ind="bank", d1=0.3, val=None, roe=12.0, vol=25.0, vz=40, opm=-2.0),
+              st("AAA", "us", dy=None, pbr=1.0, d1=None)]
+    got = run("""const ld = (corp) => loadOf({ pxDate: '2026-11-11', usPxDate: '2026-11-11', stocks: STOCKS }, corp);
+const deck = (points, exclude = {}) => ({ settings: { points, exclude } });
+E.setDataShape({ divCheck: { v: 1 } });
+const a = K.chipState(ld([{ t: '000010', rev: [1, 1, 1], eq: 500 }]), 'kr', deck({ value: 3 }, { loss: true }));
+E.setDataShape({});
+const b = K.chipState(ld([]), 'kr', deck({ value: 3 }));
+const c = K.chipState(ld([]), 'kr', deck({ lowVol: 3, trend: 2 }));
+const u = K.chipState(ld([]), 'us', null);
+out = { a, b, c, u };""", STOCKS=stocks)
+    a, b, c, u = got["a"], got["b"], got["c"], got["u"]
+    assert a["div"] == "none" and b["div"] == "nodata", (a["div"], b["div"])         # 확인한 배당이 0–30% 밖뿐 → 들어갈 종목 없음 · 확인 전 파일 → 데이터 없음
+    assert a["crit"]["value"] == "none" and a["crit"]["stable"] == "none", a["crit"]  # PBR 이 0 이하뿐 · 금융회사뿐 (해당 없음)
+    assert a["crit"]["growth"] == "nodata" and a["crit"]["profit"] == "rows" and a["crit"]["lowVol"] == "rows", a["crit"]
+    assert b["crit"]["profit"] == "nodata", b["crit"]                               # corp.json 이 없으면 한국 수익성의 자본을 확인할 수 없어요
+    assert a["val"] == "rows" and a["surge"] == "none" and a["ind"] == "none", a     # 업종에 5곳이 안 돼요
+    assert a["mine"] == "none" and b["mine"] == "rows" and c["mine"] == "nodata", (a["mine"], b["mine"], c["mine"])   # 빼기로 다 빠짐 · 추세(mom) 숫자가 없음
+    assert u["base"] == 1 and u["div"] == "nodata" and u["ind"] == "nodata" and u["surge"] is None, u
+
+
+def test_date_basis_quarter_for_value_and_a_value_only_mine():
+    got = run("""const b = (chip, crit, pts) => K.dateBasis('kr', chip, crit, pts);
+out = [b('crit', 'value'), b('crit', 'profit'), b('crit', 'stable'), b('crit', 'growth'), b('crit', 'lowVol'), b('crit', 'trend'), b('div'), b('cap'),
+  b('ind'), b('mine', null, { value: 5 }), b('mine', null, { value: 3, profit: 2 }), b('mine', null, { value: 2, lowVol: 4 }),
+  b('mine', null, { lowVol: 4, trend: 1 }), b('mine', null, { div: 1 }), K.dateBasis('us', 'crit', 'value'), K.dateBasis('us', 'div')];""")
+    assert got == ["quarter", "report", "report", "report", None, None, "report", None, None, "quarter", "report", "quarter", None, "report", None, None], got
+
+
+def test_industry_parts_rose_and_fell_five_each_by_the_shown_value():
+    groups = [{"ind": f"g{i}", "avg": a} for i, a in enumerate([3.1, 2.0, 1.5, 0.9, 0.6, 0.4, 0.06, 0.04, -0.04, -0.06, -0.3, -1.0, -2.2, -2.5, -4.0])]
+    got = run("""const p = K.indParts(G, 5), few = K.indParts(G.slice(0, 3), 5), down = K.indParts(G.slice(7), 5);
+out = { up: p.up.map((g) => g.ind), down: p.down.map((g) => g.ind), few: [few.up.length, few.down.length], d: down.up.map((g) => g.ind) };""", G=groups)
+    assert got["up"] == ["g0", "g1", "g2", "g3", "g4"] and got["down"] == ["g14", "g13", "g12", "g11", "g10"], got
+    assert got["few"] == [3, 0] and got["d"] == [], got                            # '0.0%' 인 업종(g7 · g8)은 어느 쪽에도 없어요

@@ -13,7 +13,7 @@
 // 업종별 등락 is the exception to the floor: its average must be exactly 왜 움직였나's 업종 평균 (track.peerGroup), so it
 // uses peerGroup's own set (the universe with a change today) and never a second calculation.
 import { CARDS, NA, num, universe, liquidity, LIQ_FLOOR_EOK, isFin, hasGroup, todayD1, dytOf, okDy, exactData,
-  screen, percentileScores, cardRaw, activeCards, sameCompany, exclusionsHit, fyOf } from "./engine.js";
+  screen, percentileScores, cardRaw, activeCards, sameCompany, exclusionsHit, fyOf, growthBasis } from "./engine.js";
 import { peerGroup, GROUP_MIN } from "./track.js";
 import { warnings } from "./warn.js";
 
@@ -35,6 +35,13 @@ const EPS = 1e-9;
 //   추세 (mz = percentile of mom)         → mom, higher first        "최근 1년 수익률 높은 순" (mom = the last close ÷ the close
 //                                                                     252 trading days before − 1, fetch_data.perf_stats)
 //   성장 (g3)                             → g3, higher first         "매출 증가율 높은 순"
+// v19.5b decisions (Jack, 2026-11-12): one measure per market and a minimum size on the two report lists:
+//   성장 KR: only a 2-year average (engine.growthBasis "y2", the rule the 후보 고르기 and company-page labels use: a g3 that is a
+//            1-year change, or whose basis cannot be told from corp.json's rounded revenue, leaves the list). The base year's
+//            revenue (rev[2], the year before last, 억원) must be at least MIN_EOK (100억원).
+//   성장 US: g3 is Yahoo's revenueGrowth (the latest quarter against the same quarter a year before), as the pipeline keeps it.
+//   수익성 KR: the equity the ROE is computed on (corp.json roeIn.eq, else eq when the ROE has no receipt) at least MIN_EOK.
+//   US 수익성 · 성장 have no minimum yet: data.json has no US revenue or equity figure (the pipeline can add one).
 // The pipeline's vz · lz · mz are rounded percentiles of exactly these fields (fetch_data.add_percentiles), so the order is the
 // card's and the ties are gone. A test keeps this table in step with engine.CARDS.
 // report: the card's number comes from the 사업보고서 (fy), so a Korean list of it may say "{year}년 사업보고서 기준" (rank.jsx).
@@ -43,6 +50,9 @@ const EPS = 1e-9;
 // pos (가치 only): a PBR of 0 or below is not a valuation (a negative book value, or a figure that rounds to 0 because one of
 // its inputs is off: 진코스텍 and BRK-B on 2026-11-11), so it is left out like a blank instead of heading the list as the
 // cheapest stock. The 가치 card itself still ranks them first (engine.cardRaw reads vz): a pipeline follow-up.
+// US 가치 backup guard (Jack, 2026-11-12, J4): a US PBR far below what the company's own PER and ROE imply (PER > 0, ROE > 0
+// and PBR < PER × ROE ÷ 100 ÷ US_PBR_LOW) is a book value in another currency than the price (Yahoo: KSPI, ERIC on
+// 2026-11-11), so that row is left out. One-sided: a PBR far above is left in. The console names every row 가치 leaves out.
 export const CRIT = [
   { id: "value", field: "pbr", dir: -1, report: false, pos: true },
   { id: "profit", field: "roe", dir: 1, report: true },
@@ -55,6 +65,8 @@ export const critOf = (id) => CRIT.find((c) => c.id === id) || null;
 // The cards a 내 기준 date line counts as report-based (KR: "{date} 종가 · {year}년 사업보고서 기준"). 배당 (dyt = the 사업보고서
 // dividend ÷ today's close) is too; 가치 (latest-quarter equity, see above) · 낮은 변동성 · 추세 · 대형주 are not.
 export const REPORT_CARDS = ["profit", "stable", "growth", "div"];
+export const MIN_EOK = 100;            // 성장 (KR base-year revenue) · 수익성 (KR equity): at least 100억원 (corp.json 억원)
+export const US_PBR_LOW = 4;           // the US 가치 guard: PBR under a quarter of PER × ROE ÷ 100
 
 const capOf = (s) => { const c = num(s && s.cap); return c == null ? -Infinity : c; };
 const byCode = (a, b) => (a.s.t < b.s.t ? -1 : a.s.t > b.s.t ? 1 : 0);
@@ -119,15 +131,68 @@ export function surgeList(stocks, mk) {
     return { s, v: x != null && x >= SURGE_X - EPS && cap != null && cap >= SURGE_CAP_JO - EPS ? x : null };
   }), 1);
 }
-// 4. 기준별: one card of CRIT (see the table above). null for an unknown card.
-const critValue = (c, s) => {
-  const v = c.finNA && isFin(s) ? null : num(s[c.field]);
-  return c.pos && !(v > 0) ? null : v;
-};
-export function critList(stocks, mk, id) {
+// 4. 기준별: one card of CRIT (see the table above). null for an unknown card. coByT (corp.json by code) is needed for the Korean
+//    성장 and 수익성 lists (their basis and minimum size); without it those lists have no row.
+const fin = (x) => typeof x === "number" && Number.isFinite(x);
+// -> the reason a stock of the base is left out of card c's list, or null when it is in (critValue then is its number)
+function critOut(c, s, mk, coByT) {
+  const v = num(s[c.field]);
+  if (v == null) return "blank";
+  if (c.finNA && isFin(s)) return "fin";
+  if (c.pos && !(v > 0)) return "pbrNotAbove0";
+  if (c.id === "value" && mk === "us") {
+    const per = num(s.per), roe = num(s.roe);
+    if (per > 0 && roe > 0 && v < (per * roe) / 100 / US_PBR_LOW) return "pbrFarUnder";
+  }
+  if (mk === "kr" && (c.id === "growth" || c.id === "profit")) {
+    const co = coByT ? coByT.get(s.t) || null : null;
+    if (c.id === "growth") {
+      const rev = co && Array.isArray(co.rev) ? co.rev : null;
+      if (!rev || !rev.some(fin)) return "noRevenue";
+      const b = growthBasis(s, co);
+      if (b !== "y2") return b === "y1" ? "oneYear" : "basisUnclear";
+      if (!(rev[2] >= MIN_EOK)) return "smallBase";
+    } else {
+      const eq = co && co.roeIn && fin(co.roeIn.eq) ? co.roeIn.eq : co && fin(co.eq) ? co.eq : null;
+      if (eq == null) return "noEquity";
+      if (eq < MIN_EOK) return "smallEquity";
+    }
+  }
+  return null;
+}
+const critValue = (c, s, mk, coByT) => (critOut(c, s, mk, coByT) ? null : num(s[c.field]));
+// The console names, once per loaded file, market and card, what the list leaves out besides blanks: counts, and the tickers of
+// the 가치 rules (PBR at or below 0, the US guard).
+const critNoted = new WeakMap();
+function noteCrit(stocks, mk, c, coByT) {
+  let m = critNoted.get(stocks);
+  if (!m) { m = new Set(); critNoted.set(stocks, m); }
+  const k = mk + "|" + c.id + "|" + (coByT ? 1 : 0);
+  if (m.has(k)) return;
+  m.add(k);
+  const why = {};
+  for (const s of rankBase(stocks, mk)) {
+    const r = critOut(c, s, mk, coByT);
+    if (r && r !== "blank" && r !== "fin") (why[r] = why[r] || []).push(s.t);
+  }
+  const parts = Object.entries(why).map(([r, ts]) => (c.id === "value" ? `${r} ${ts.length}: ${ts.join(", ")}` : `${r} ${ts.length}`));
+  if (parts.length) console.info(`[v2] rank lists (${mk}): the ${c.id} list leaves out ${parts.join("; ")}`);
+}
+export function critList(stocks, mk, id, coByT = null) {
   const c = critOf(id);
   if (!c) return null;
-  return oneEach(ranked(rankBase(stocks, mk).map((s) => ({ s, v: critValue(c, s) })), c.dir));
+  if (Array.isArray(stocks)) noteCrit(stocks, mk, c, coByT);
+  return oneEach(ranked(rankBase(stocks, mk).map((s) => ({ s, v: critValue(c, s, mk, coByT) })), c.dir));
+}
+// "rows" (a row), "none" (the card's figure is there but no stock qualifies) or "nodata" (no stock of the base has the figure, or
+// a Korean 성장 · 수익성 list has no corp.json to check its basis and size against).
+export function critState(stocks, mk, id, coByT = null) {
+  const c = critOf(id);
+  if (!c) return null;
+  const base = rankBase(stocks, mk);
+  if (base.some((s) => !critOut(c, s, mk, coByT))) return "rows";
+  if (mk === "kr" && (id === "growth" || id === "profit") && !(coByT && coByT.size)) return "nodata";
+  return base.some((s) => num(s[c.field]) != null) ? "none" : "nodata";
 }
 // 6. 배당수익률. Korea: only the verified today's-close yield (engine.dytOf: data.json dyt, 0–30%; a file without the split
 //    check (no divCheck) has none, so the list is empty and the screen says why in the console). US: Yahoo's yield as the
@@ -260,6 +325,15 @@ export function indGroups(stocks, mk) {
   m[mk] = out;
   return out;
 }
+// 업종별 등락 on 홈 (Jack, 2026-11-12): two parts, "많이 오른 업종" (the highest averages first) and "많이 내린 업종" (the lowest
+// first), at most n each. A group is in a part only when its average, as shown (one decimal), is above or below 0: a group that
+// reads "0.0%" neither rose nor fell, and a falling group is never called one that rose a lot. -> { up: [...], down: [...] }
+// (the 종목 tab's 전체 보기 shows every group, highest first: indGroups itself).
+export function indParts(groups, n = 5) {
+  const gs = Array.isArray(groups) ? groups : [];
+  const r = (g) => Math.round(g.avg * 10);
+  return { up: gs.filter((g) => r(g) > 0).slice(0, n), down: gs.filter((g) => r(g) < 0).reverse().slice(0, n) };
+}
 // The line under a group: "{n}개 중 {k}개 오름" when the average is 0 or up (k = companies up today), "{n}개 중 {k}개 내림"
 // when it is down (k = companies down today). -> { up, k }
 export const groupWord = (g) => (g.avg >= 0 ? { up: true, k: g.rose } : { up: false, k: g.fell });
@@ -298,11 +372,11 @@ export function savePick(p, key = RANK_KEY) {
   }
 }
 
-// The chips shown for a market: all seven in order, without 거래 급증 under 미국 and without 내 기준 when no portfolio has 기준
-// points (mine false). empty: chips whose list has no row at all and no approved empty line (rank.jsx passes them), left out
-// too (never an empty box).
-export function chipsFor(mk, mine, empty = []) {
-  return RANK_CHIPS.filter((c) => !(c === "surge" && mk !== "kr") && !(c === "mine" && !mine) && !empty.includes(c));
+// The chips shown for a market: all seven in order, without the two that do not apply: 거래 급증 under 미국 (no day's value or
+// 20-day average) and 내 기준 when no portfolio has 기준 points (mine false). A chip whose list is empty stays (Jack, 2026-11-12):
+// the card says why in place of the list (chipState: the data is missing, or nothing qualifies).
+export function chipsFor(mk, mine) {
+  return RANK_CHIPS.filter((c) => !(c === "surge" && mk !== "kr") && !(c === "mine" && !mine));
 }
 // The chip shown for a choice: the chosen one when it is offered, else the first chip.
 export const shownChip = (chip, chips) => (chips.includes(chip) ? chip : chips[0]);
@@ -316,7 +390,7 @@ export function rankRows(load, mk, chip, crit, deck = null) {
     case "cap": return { kind: "stock", rows: capList(stocks, mk) };
     case "val": return { kind: "stock", rows: valList(stocks, mk) };
     case "surge": { const r = surgeList(stocks, mk); return r ? { kind: "stock", rows: r } : null; }
-    case "crit": { const r = critList(stocks, mk, crit); return r ? { kind: "stock", rows: r } : null; }
+    case "crit": { const r = critList(stocks, mk, crit, load.coByT || null); return r ? { kind: "stock", rows: r } : null; }
     case "mine": { const r = deck ? mineList(stocks, mk, deck.settings) : null; return r ? { kind: "stock", rows: r } : null; }
     case "div": return { kind: "stock", rows: divList(stocks, mk, load.coByT) };
     case "ind": return { kind: "ind", rows: indGroups(stocks, mk) };
@@ -324,12 +398,13 @@ export function rankRows(load, mk, chip, crit, deck = null) {
   }
 }
 
-// ---------------- which chips have rows (cheap checks: no ranking, no engine screen, no 업종 scan) ----------------
+// ---------------- what each chip has (cheap checks: no ranking, no engine screen, no 업종 scan) ----------------
 // The card works out only the chosen chip's list (v19.5b review: every list at once made 홈's last long task ~500 ms at 4x CPU
-// throttle). Whether the other chips have any row is decided by these scans over the market's stocks, each exactly as wide as its
-// list (a unit test holds each check equal to its list being non-empty).
-// 거래 급증: "rows" (at least one), "none" (today's figures are there and nobody qualifies: the approved empty line) or "nodata"
-// (no stock over the floor has both val and val20: the chip is not offered, the console says so with the count). null under 미국.
+// throttle). What every chip has is decided by these scans over the market's stocks, each exactly as wide as its list (a unit
+// test holds "rows" equal to the list being non-empty). Each is "rows", "none" (the list's figures are there but no stock
+// qualifies: "지금은 이 순위에 들어갈 종목이 없어요.", 거래 급증 its own approved line) or "nodata" (no stock of the market has the
+// figure the list needs: "필요한 데이터가 아직 없어 이 순위를 보여 드릴 수 없어요."); Jack, 2026-11-12.
+// 거래 급증: "nodata" when no stock over the floor has both val and val20 (the console says so with the count). null under 미국.
 export function surgeState(stocks, mk) {
   if (mk !== "kr") return null;
   const base = rankBase(stocks, mk);
@@ -367,33 +442,67 @@ export function indHasGroups(stocks, mk) {
   }
   return false;
 }
-// -> { cap, val, div, ind: bool, surge: surgeState | null, crit: { [card]: bool }, mine: bool | null (no portfolio) }
+// 내 기준: "rows", "nodata" when a card with points has no figure for any stock of the market (e.g. 배당 on a file without the
+// split check), else "none" (the 빼기 switches or the blanks leave nobody).
+export function mineState(stocks, mk, settings) {
+  if (mineHasRows(stocks, mk, settings)) return "rows";
+  const base = rankBase(stocks, mk);
+  const active = activeCards((settings && settings.points) || {});
+  const bare = active.some((c) => !base.some((s) => { const raw = cardRaw(s, c); return raw != null && raw !== NA; }));
+  return bare || !active.length ? "nodata" : "none";
+}
+// 배당수익률: "nodata" when the market has no yield figure at all (Korea: a file without the split check has no verified yield).
+function divState(base, mk) {
+  if (base.some((s) => divValue(s, mk) != null)) return "rows";
+  if (mk === "kr" && !exactData()) return "nodata";
+  return base.some((s) => num(mk === "kr" ? s.dyt : s.dy) != null) ? "none" : "nodata";
+}
+// 업종별 등락: "nodata" when no stock of the market has a change today, "none" when no group has GROUP_MIN of them.
+function indState(stocks, mk) {
+  if (indHasGroups(stocks, mk)) return "rows";
+  return universe(stocks || [], mk).some((s) => todayD1(s) != null) ? "none" : "nodata";
+}
+// -> { base: the number of stocks over the floor (0: the market has no data at all, the card shows the load-failure message),
+//      cap, val, div, ind, mine (null without a portfolio with points), surge (null under 미국), crit: { [card]: state } }
 export function chipState(load, mk, deck = null) {
   if (!load || load.status !== "ok") return null;
   const stocks = load.data.stocks;
   const base = rankBase(stocks, mk);
   if (mk === "kr") mustMissing(stocks);
+  const has = (f) => (base.some((s) => num(s[f]) != null) ? "rows" : "nodata");
+  const ss = surgeState(stocks, mk);
   return {
-    cap: base.some((s) => num(s.cap) != null),
-    val: base.some((s) => num(s.val) != null),
-    surge: surgeState(stocks, mk),
-    crit: Object.fromEntries(CRIT.map((c) => [c.id, base.some((s) => critValue(c, s) != null)])),
-    mine: deck ? mineHasRows(stocks, mk, deck.settings) : null,
-    div: base.some((s) => divValue(s, mk) != null),
-    ind: indHasGroups(stocks, mk),
+    base: base.length,
+    cap: has("cap"),
+    val: has("val"),
+    surge: ss ? ss.state : null,
+    surgeOf: ss,
+    crit: Object.fromEntries(CRIT.map((c) => [c.id, critState(stocks, mk, c.id, load.coByT || null)])),
+    mine: deck ? mineState(stocks, mk, deck.settings) : null,
+    div: divState(base, mk),
+    ind: indState(stocks, mk),
   };
 }
 
-// ---------------- the date line's report year ----------------
-// Whether a list rests on 사업보고서 numbers (KR only): 배당수익률, 기준별 수익성 · 재무 안정 · 성장, 내 기준 with points on one of
-// those cards. Its date line may add "{year}년 사업보고서 기준" (app.reportYear) only when it is true for every row shown.
-export function listReport(mk, chip, crit, points = null) {
-  if (mk !== "kr") return false;
-  if (chip === "div") return true;
-  if (chip === "crit") return !!(critOf(crit) && critOf(crit).report);
-  if (chip === "mine") return mineUsesReport(points);
-  return false;
+// ---------------- the date line's basis (KR) ----------------
+// What a Korean list's date line adds after "{date} 종가" (Jack, 2026-11-12):
+//   "report":  "{year}년 사업보고서 기준" (app.reportYear), only when it is true for every row shown (oneReportYear), else
+//              nothing: 배당수익률, 기준별 수익성 · 재무 안정 · 성장, and 내 기준 with points on one of those cards (with or
+//              without 가치: when its other statement cards have points too, the year line, or nothing when the rows' years differ).
+//   "quarter": "각 회사의 최근 분기 재무제표 기준" (rank.quarter): 기준별 가치 (PBR = today's close ÷ the latest quarter's
+//              equity, corp.json bpsIn · bq), and 내 기준 when 가치 is its only statement card with points.
+//   null:      nothing (prices only: 시가총액 · 거래대금 · 거래 급증 · 낮은 변동성 · 추세 · 업종별 등락; every US list).
+export function dateBasis(mk, chip, crit, points = null) {
+  if (mk !== "kr") return null;
+  if (chip === "div") return "report";
+  if (chip === "crit") return crit === "value" ? "quarter" : critOf(crit) && critOf(crit).report ? "report" : null;
+  if (chip === "mine") {
+    if (mineUsesReport(points)) return "report";
+    return activeCards(points || {}).some((c) => c.id === "value") ? "quarter" : null;
+  }
+  return null;
 }
+export const listReport = (mk, chip, crit, points = null) => dateBasis(mk, chip, crit, points) === "report";
 // The one report year of the rows shown (fyOf: data.json fy, else corp.json fy), or null when a row has none or the rows span two
 // years (then the line shows the close date only; the console names the years). -> { year, years: [sorted distinct], missing }
 export function oneReportYear(rows, coByT = null) {

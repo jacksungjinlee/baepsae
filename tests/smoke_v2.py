@@ -579,9 +579,10 @@ def _same_co(a, b):
     return None not in sh and abs(sh[0] - sh[1]) <= 0.005 * max(sh)
 
 
-def rank_expect(stocks, cls, chip, crit=None):
+def rank_expect(stocks, cls, chip, crit=None, coby=None):
     """시가총액 · 거래대금 · 거래 급증 · 기준별 목록을 파이썬으로 (src/v2/ranks.js 를 믿지 않고): 빈 칸은 빼고, 같은 값은 시가총액 큰 순,
-    미국의 같은 회사 두 종류 주식은 위의 하나만."""
+    미국의 같은 회사 두 종류 주식은 위의 하나만. Jack 2026-11-12: 가치는 PBR 0 이하 · 미국은 PBR < PER × ROE ÷ 100 ÷ 4 를 빼요,
+    한국 성장은 2년 연평균(corp rev 당기 · 전전기 0 초과)이고 전전기 매출 100억원 이상, 한국 수익성은 ROE 의 자본(roeIn.eq, 없으면 eq) 100억원 이상."""
     rows = []
     for s in rank_base(stocks, cls):
         if chip in ("cap", "val"):
@@ -595,6 +596,20 @@ def rank_expect(stocks, cls, chip, crit=None):
             v = None if crit == "stable" and has_group(s) and s.get("ind") in FIN_INDS else s.get(f)
             if crit == "value" and not (isnum(v) and v > 0):
                 v = None
+            if crit == "value" and cls == "us" and isnum(v) and isnum(s.get("per")) and s["per"] > 0 and isnum(s.get("roe")) and s["roe"] > 0 \
+                    and v < s["per"] * s["roe"] / 100 / 4:
+                v = None
+            if cls == "kr" and crit in ("growth", "profit") and isnum(v):
+                co = (coby or {}).get(s["t"]) or {}
+                if crit == "growth":
+                    rev = (list(co.get("rev") or []) + [None, None, None])[:3]
+                    if not (isnum(rev[0]) and rev[0] > 0 and isnum(rev[2]) and rev[2] > 0 and rev[2] >= 100):
+                        v = None
+                else:
+                    eq = (co.get("roeIn") or {}).get("eq")
+                    eq = eq if isnum(eq) else co.get("eq")
+                    if not (isnum(eq) and eq >= 100):
+                        v = None
         if isnum(v):
             rows.append((v, s))
     d = RANK_CRIT[crit][1] if chip == "crit" else 1
@@ -3484,9 +3499,9 @@ RANK_NUM = {"cap": r"[\d,]+(\.\d)?(조|억)원", "val": r"[\d,]+(\.\d)?(조|억)
             "value": re.escape(C["rank"]["num"]["pbr"]).replace(r"\{x\}", r"\d+\.\d\d"), "profit": re.escape(C["rank"]["num"]["roe"]).replace(r"\{x\}", r"-?[\d,]+\.\d"),
             "stable-kr": re.escape(C["rank"]["num"]["debt"]).replace(r"\{x\}", r"[\d,]+"), "lowVol": re.escape(C["rank"]["num"]["vol"]).replace(r"\{x\}", r"[\d,]+\.\d"),
             "mine": re.escape(C["rank"]["mineX"]).replace(r"\{x\}", r"\d+"), "div": r"[\d,]+\.\d+%"}
-for _k, _key, _n in (("stable-us", "debtUs", r"[\d,]+\.\d"), ("trend", "trend", r"[+−]?[\d,]+\.\d%"), ("growth", "growth", r"[+−]?[\d,]+\.\d%")):
-    _p = C["rank"]["p"][_key]                                                          # 제안: 승인 전(null)에는 숫자만
-    RANK_NUM[_k] = re.escape(_p).replace(r"\{x\}", _n) if _p else (_n + "%" if _k == "stable-us" else _n)
+for _k, _key, _n in (("stable-us", "debtUs", r"[\d,]+\.\d"), ("trend", "trend", r"[+−]?[\d,]+\.\d%"), ("growth-kr", "g3Kr", r"[+−]?[\d,]+\.\d%"),
+                     ("growth-us", "g3Us", r"[+−]?[\d,]+\.\d%")):
+    RANK_NUM[_k] = re.escape(C["rank"]["num"][_key]).replace(r"\{x\}", _n)          # Jack, 2026-11-12 승인
 
 
 def rank_files(files):
@@ -3524,26 +3539,42 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
     rows = rank_ts(page)
     nums = page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()
     L = C["rank"]["line"]
-    # 사업보고서 숫자 목록만 '{year}년 사업보고서 기준' (가치는 최근 분기 자본이라 아니에요), 그리고 보이는 줄이 모두 그 한 해일 때만
+    # 날짜 줄 (Jack, 2026-11-12): 사업보고서 숫자 목록은 '{year}년 사업보고서 기준' (보이는 줄이 모두 그 한 해일 때만), 가치(최근 분기 자본으로
+    # 계산한 PBR)와 기준 점수가 재무제표 카드 중 가치에만 있는 내 기준은 '각 회사의 최근 분기 재무제표 기준', 나머지는 종가 날짜만
+    pts = RANK_SETTINGS["points"]
     report = mk == "kr" and (chip == "div" or (chip == "crit" and crit in ("profit", "stable", "growth"))
-                             or (chip == "mine" and any(RANK_SETTINGS["points"].get(c) for c in ("profit", "stable", "growth", "div"))))
+                             or (chip == "mine" and any(pts.get(c) for c in ("profit", "stable", "growth", "div"))))
+    quarter = mk == "kr" and not report and ((chip == "crit" and crit == "value") or (chip == "mine" and bool(pts.get("value"))))
     years = {by_t(stocks)[t].get("fy") if by_t(stocks)[t].get("fy") is not None else (coby.get(t) or {}).get("fy") for t in rows} if report else set()
     if mk == "us":
         assert date == "10월 30일 종가 (미국 시간)", date
-    elif report and len(years) == 1 and None not in years:
+    elif report and rows and len(years) == 1 and None not in years:
         assert date == f"10월 30일 종가 · {years.pop()}년 사업보고서 기준", (chip, crit, date)
+    elif quarter and rows:
+        assert date == "10월 30일 종가 · " + C["rank"]["quarter"], (chip, crit, date)
     else:
         assert date == "10월 30일 종가", (chip, crit, date, years)
+    if chip == "crit":                                                                 # 기준별 줄: 성장은 시장마다 한 잣대, 한국 성장 · 수익성은 최소 크기까지
+        basis = C["rank"]["basis"]["g3Kr" if mk == "kr" else "g3Us"] if crit == "growth" else C["build"]["cards"][crit]["basis"]
+        if mk == "kr" and crit in ("growth", "profit"):
+            basis += " · " + C["rank"]["floor"][crit]
+        assert line == fillp(L["crit"], card=C["build"]["cards"][crit]["name"], basis=basis), line
+    empty = page.locator('[data-ui-v2="rank-empty"]')
+    if empty.count():                                                                  # 빈 목록: 이유 한 줄 (데이터 없음 · 들어갈 종목 없음), 칩은 그대로
+        assert not rows and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-foot"]').count() == 0, rows
+        text = empty.inner_text()
+        assert text in (C["rank"]["emptyData"], C["rank"]["emptyNone"], C["rank"]["surgeNone"]), text
+        if chip in ("cap", "val", "surge", "crit"):
+            assert rank_expect(stocks, mk, chip, crit, coby) == [], (chip, crit)
+        return text
     assert 0 < len(rows) <= 10, (chip, rows)
     if chip in ("cap", "val", "surge", "crit"):
-        want = rank_expect(stocks, mk, chip, crit)[:10]
+        want = rank_expect(stocks, mk, chip, crit, coby)[:10]
         assert rows == want, (mk, chip, crit, rows, want)
         key = crit if chip == "crit" else chip
-        key = f"stable-{mk}" if key == "stable" else key
+        key = f"{key}-{mk}" if key in ("stable", "growth") else key
         assert all(re.fullmatch(RANK_NUM[key], n) for n in nums), (mk, chip, crit, nums)
-        if chip == "crit":
-            assert line == fillp(L["crit"], card=C["build"]["cards"][crit]["name"], basis=C["build"]["cards"][crit]["basis"]), line
-        else:
+        if chip != "crit":
             assert line == (L["valUs"] if chip == "val" and mk == "us" else L[chip]), line
     elif chip == "mine":
         assert all(re.fullmatch(RANK_NUM["mine"], n) for n in nums), nums
@@ -3566,10 +3597,20 @@ def rank_check_list(page, stocks, coby, mk, chip, crit=None):
             if warn:
                 assert row.locator('[data-ui-v2="rank-warn"]').inner_text() == C["rank"]["warn"]
     elif chip == "ind":
-        want = ind_expect(stocks, mk)[:10]
-        assert rows == [x[0] for x in want], (rows, want)
+        # 홈 (Jack, 2026-11-12): 많이 오른 업종 다섯(높은 순) · 많이 내린 업종 다섯(낮은 순), 보이는 평균(소수 한 자리)이 0 위 · 아래인 업종만
+        groups = ind_expect(stocks, mk)
+        r10 = lambda a: math.floor(a * 10 + 0.5)
+        up = [x for x in groups if r10(x[2]) > 0][:5]
+        down = [x for x in reversed(groups) if r10(x[2]) < 0][:5]
+        want = up + down
+        assert rows == [x[0] for x in want], (rows, [x[0] for x in want])
+        labels = page.locator('[data-ui-v2="rank-window"] [data-ui-v2="rank-part"]:not([data-ui-v2="rank-copy"] *) [data-ui-v2="rank-part-label"]').all_inner_texts()
+        assert labels == [C["rank"]["indUp"]] * bool(up) + [C["rank"]["indDown"]] * bool(down), labels
+        ranks = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => Number(e.dataset.rank))")
+        assert ranks == list(range(1, len(up) + 1)) + list(range(1, len(down) + 1)), ranks   # 부분마다 1부터
         for (ind, n, avg, _), r in zip(want, page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').all()):
-            assert int(r.get_attribute("data-n")) == n and abs(float(r.get_attribute("data-avg")) - round(avg, 3)) < 1e-9, (ind, n, avg)
+            # data-avg 는 평균을 소수 셋째 자리로 반올림한 값 (JS Math.round: .5 는 위로, 파이썬 round 와 다를 수 있어요): 그 반올림 폭 안
+            assert int(r.get_attribute("data-n")) == n and abs(float(r.get_attribute("data-avg")) - avg) <= 0.0005 + 1e-9, (ind, n, avg)
             members = [s for s in stocks if in_universe(s, mk) and not (mk == "us" and us_pref(s)) and s.get("ind") == ind and isnum(s.get("d1"))]
             up, down = sum(1 for s in members if s["d1"] > 0), sum(1 for s in members if s["d1"] < 0)
             text = r.locator('[data-ui-v2="rank-count"]').inner_text()
@@ -3598,9 +3639,11 @@ def scene_rank(R, files, width):
         for mk in ("kr", "us"):
             rank_market(page, mk)
             chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
-            empty_kr_div = C["rank"]["p"]["empty"] is None                      # 확인한 배당(dyt)이 없는 파일: 한국 배당 칩은 빈 줄 문구가 승인될 때까지 없어요
-            want = [c for c in ("cap", "val", "surge", "crit", "mine", "div", "ind") if not (c == "surge" and mk == "us") and not (c == "div" and mk == "kr" and empty_kr_div)]
+            # 목록이 비어도 칩은 그대로 (Jack, 2026-11-12): 확인한 배당(dyt)이 없는 이 파일의 한국 배당수익률은 '필요한 데이터가 아직 없어 …'
+            want = [c for c in ("cap", "val", "surge", "crit", "mine", "div", "ind") if not (c == "surge" and mk == "us")]
             assert chips == want, (mk, chips)
+            hs = page.locator('[data-ui-v2="rank-chip"], [data-ui-v2="rank-market"] button').evaluate_all("(els) => els.map((e) => e.getBoundingClientRect().height)")
+            assert hs and min(hs) >= 44 - 0.5, hs                                   # 칩과 한국/미국은 누르는 곳 44px 이상 (Jack, 2026-11-12)
             assert page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').all_inner_texts() == [C["rank"]["chips"][c] for c in want]
             for chip in want:
                 for crit in (list(RANK_CRIT) if chip == "crit" else [None]):
@@ -3611,7 +3654,9 @@ def scene_rank(R, files, width):
                         assert crits.locator("img").evaluate_all("(els) => els.map((e) => e.getAttribute('src'))") == [f"pictures/{CARD_TABLE_PICS[c]}.webp" for c in RANK_CRIT]
                         row, on = page.locator('[data-ui-v2="rank-crit"]').bounding_box(), page.locator(f'[data-ui-v2="rank-crit"] [data-chip="{crit}"]').bounding_box()
                         assert on["x"] >= row["x"] - 0.5 and on["x"] + on["width"] <= row["x"] + row["width"] + 0.5, (crit, row, on)   # 고른 기준이 줄 안에
-                    rank_check_list(page, stocks, coby, mk, chip, crit)
+                    got = rank_check_list(page, stocks, coby, mk, chip, crit)
+                    if chip == "div" and mk == "kr":
+                        assert got == C["rank"]["emptyData"], got                       # 이 파일에는 분할 확인(divCheck)이 없어요
                     if chip == "surge":
                         assert surge_big in rank_ts(page) and surge_small not in rank_ts(page), rank_ts(page)
                     R.collect(page)
@@ -3636,7 +3681,8 @@ def scene_rank(R, files, width):
         nums = page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()
         assert all(re.fullmatch(RANK_NUM["cap"], n) for n in nums[: sum(1 for s in members[:10] if isnum(s.get("cap")))]), nums
         back = page.locator('[data-ui-v2="rank-back"]')
-        assert back.get_attribute("aria-label") == (None if C["rank"]["p"]["groupBack"] else C["co"]["back"])
+        assert back.get_attribute("aria-label") is None and back.inner_text() == C["rank"]["groupBack"]       # '업종 목록으로' (Jack, 2026-11-12)
+        assert page.locator('[data-ui-v2="rank-line"]').inner_text() == C["rank"]["groupLine"]
         assert page.evaluate("() => document.activeElement && document.activeElement.dataset.uiV2") == "rank-back"     # 연 목록의 돌아가기에 초점
         R.collect(page)
         back.click()
@@ -3895,24 +3941,33 @@ def scene_rank_r1(R, files, width):
             assert ch.inner_text() == "0.0%" and ch.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", (t, ch.inner_text())
         rank_market(page, "us")
         rank_chip(page, "ind")
-        row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"][data-ind="platform"]')
+        assert page.locator(RANK_LIST + ' [data-ui-v2="rank-row"][data-ind="platform"]').count() == 0   # 평균 '0.0%' 인 업종은 홈의 두 부분 어디에도 없어요
+        page.locator(RANK_LIST + ' [data-ui-v2="rank-row"] button').first.click()
+        page.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rank-all"]').count() == 0              # 업종 안에서는 전체 보기 없음 (돌아가기가 업종 목록으로)
+        page.locator('[data-ui-v2="rank-back"]').click()
+        page.locator('[data-ui-v2="rank-all"]').click()                         # 전체 보기: 종목 탭에 모든 업종 (높은 순)
+        full = page.locator('[data-ui-v2="rank"][data-full="1"]')
+        full.wait_for(state="visible")
+        row = full.locator('[data-ui-v2="rank-row"][data-ind="platform"]')
         n, k, avg = int(row.get_attribute("data-n")), int(row.get_attribute("data-k")), float(row.get_attribute("data-avg"))
         assert -0.05 < avg < 0, avg                                             # 시험 데이터: 평균 -0.03 → '0.0%'
         num = row.locator('[data-ui-v2="rank-num"]')                            # 업종 줄의 '0.0%' 도 회색
         assert num.inner_text() == "0.0%" and num.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", num.inner_text()
         row.locator("button").click()
-        page.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
-        head = page.locator('[data-ui-v2="rank-group-avg"]')                    # 연 업종 머리의 '0.0%' 도 회색 (빨강 · 파랑 아님)
+        full.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
+        head = full.locator('[data-ui-v2="rank-group-avg"]')                    # 연 업종 머리의 '0.0%' 도 회색 (빨강 · 파랑 아님)
         assert head.inner_text() == "0.0%" and head.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", head.inner_text()
-        ts = rank_ts(page)
+        ts = full.locator('[data-ui-v2="rank-window"] [role="list"] [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
         assert "GOOGL" in ts and "GOOG" not in ts and n == 15, (ts, n)           # 같은 회사는 한 줄 · n 은 왜 움직였나 그대로
-        assert fillp(C["rank"]["up" if avg >= 0 else "down"], n=n, k=k) in page.locator('[data-ui-v2="rank-group"]').inner_text()
-        assert page.locator('[data-ui-v2="rank-all"]').count() == 0              # 업종 안에서는 전체 보기 없음 (돌아가기가 업종 목록으로)
+        assert fillp(C["rank"]["up" if avg >= 0 else "down"], n=n, k=k) in full.locator('[data-ui-v2="rank-group"]').inner_text()
         R.collect(page)
-        page.locator('[data-ui-v2="rank-back"]').click()
-        page.locator('[data-ui-v2="rank-all"]').wait_for(state="visible")
+        full.locator('[data-ui-v2="rank-back"]').click()
+        page.go_back()
+        at(page, "home")
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
         rank_market(page, "kr")
-    R.check(page, S, "'0.0%' 는 회색(줄 · 연 업종 머리) · 미국 업종 안 회사는 회사마다 한 줄(GOOGL 만, n 15 그대로) · 업종 안에서는 전체 보기 없음", zero_and_group)
+    R.check(page, S, "'0.0%' 는 회색(줄 · 연 업종 머리, 전체 보기의 업종) · 미국 업종 안 회사는 회사마다 한 줄(GOOGL 만, n 15 그대로) · 업종 안에서는 전체 보기 없음", zero_and_group)
 
     def chip_after_market():
         page.set_viewport_size({"width": 360, "height": 780})                  # 칩 줄이 옆으로 밀리는 폭
@@ -3981,15 +4036,20 @@ def scene_rank_r1(R, files, width):
         wait_ready(page)
         page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
         chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
-        assert "surge" not in chips and "val" not in chips, chips                # '오늘은 … 없어요' 가 아니라 칩이 없어요 (빈 줄 문구 승인 전)
-        assert C["rank"]["surgeNone"] not in page.locator("body").inner_text()
+        assert "surge" in chips and "val" in chips, chips                        # 칩은 그대로, 목록 대신 '필요한 데이터가 아직 없어 …' (Jack, 2026-11-12)
+        for c in ("val", "surge"):
+            rank_chip(page, c)
+            assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyData"], c
+            assert page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-foot"]').count() == 0
+        assert C["rank"]["surgeNone"] not in page.locator("body").inner_text()   # 숫자가 없는 날은 '오늘은 … 없어요' 가 아니에요
+        rank_chip(page, "cap")
         rank_market(page, "us")
         assert page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').count() == 0
         fail = page.locator('[data-ui-v2="rank"] [data-ui-v2="rank-fail"] [data-ui-v2="load-fail"]')
         assert fail.inner_text() == LOAD_FAIL and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-empty"], [data-ui-v2="rank-foot"]').count() == 0
         R.collect(page)
         rank_market(page, "kr")
-    R.check(page, S, "오늘 거래대금이 없는 파일: 거래 급증 · 거래대금 칩 없음 · 목록이 하나도 없는 시장(미국)은 빈 칸 대신 불러오기 실패 문구", no_figures)
+    R.check(page, S, "오늘 거래대금이 없는 파일: 거래대금 · 거래 급증은 '필요한 데이터가 아직 없어 …' · 거래대금 기준을 넘는 종목이 없는 시장(미국)은 칩 없이 불러오기 실패 문구", no_figures)
     ctx.close()
     srv.shutdown()
 
@@ -4018,6 +4078,19 @@ def scene_rank_pc(R, files):
         for c in chips.locator('[data-ui-v2="rank-chip"]').all():
             b = c.bounding_box()
             assert side["x"] - 0.5 <= b["x"] and b["x"] + b["width"] <= side["x"] + side["width"] + 0.5, (b, side)
+        # Jack, 2026-11-12: '누르고 있으면 멈춰요' 는 휴대폰에서만 (PC 는 마우스를 올리면 멈춰요) · 칩과 한국/미국은 44px 이상
+        assert rank.locator('[data-ui-v2="rank-hint"]').count() == 0 and rank.locator('[data-ui-v2="rank-all"]').count() == 1
+        hs = rank.locator('[data-ui-v2="rank-chip"], [data-ui-v2="rank-market"] button').evaluate_all("(els) => els.map((e) => e.getBoundingClientRect().height)")
+        assert hs and min(hs) >= 44 - 0.5, hs
+        # 1200px 아래(1024–1199)에서는 종목 순위가 오른쪽 칸이 아니라 왼쪽(넓은) 칸 끝으로 (Jack, 2026-11-12)
+        page.set_viewport_size({"width": 1100, "height": PC_H})
+        page.locator('[data-ui-v2="col-main"] [data-ui-v2="rank"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="col-side"] [data-ui-v2="rank"]').count() == 0
+        assert page.locator('[data-ui-v2="col-side"] [data-ui-v2="market-glance"]').count() == 1
+        last = page.locator('[data-ui-v2="col-main"] > *').last
+        assert last.get_attribute("data-ui-v2") == "rank", last.get_attribute("data-ui-v2")
+        page.set_viewport_size({"width": PC_W, "height": PC_H})
+        rank.wait_for(state="visible")
         for w in (1024, 1280, 1440):
             page.set_viewport_size({"width": w, "height": PC_H})
             page.wait_for_timeout(100)
@@ -4033,7 +4106,7 @@ def scene_rank_pc(R, files):
         y = full.bounding_box()["y"]
         assert bar["y"] + bar["height"] - 1 <= y < PC_H / 2, (bar, y)            # 위 막대에 가리지 않고 화면 안
         R.collect(page)
-    R.check(page, S, "PC: 오른쪽 칸 시장 한눈에 밑 · 창 7줄 · 움직임 · 칩은 여러 줄(칸 안) · 1024–1440px 가로 스크롤 없음 · 전체 보기 → 종목 탭(위 막대 밑)", side)
+    R.check(page, S, "PC: 오른쪽 칸 시장 한눈에 밑 · 창 7줄 · 움직임 · 칩은 여러 줄(칸 안) · 멈춤 안내 없음 · 칩 44px · 1100px 은 왼쪽 칸 끝 · 1024–1440px 가로 스크롤 없음 · 전체 보기 → 종목 탭(위 막대 밑)", side)
     ctx.close()
     srv.shutdown()
 
