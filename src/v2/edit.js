@@ -24,8 +24,10 @@
 // [B1]/[C3] Saving a changed target: every planPx stays; the holding's plannedQty is recomputed from the new target at its
 // own planPx and its band rule is regenerated from the new target (engine BANDS). Every other rule of every holding stays as
 // it is. plannedQty is a whole number (store.js refuses any other, in this app and every earlier one), Math.round of
-// target × the plan's amount ÷ the price: rules.planWeights divides by the plan's total, so that rounding can move an
-// untouched holding's band edges a little (round-1 review B3: reported to Jack, not changed here). A holding added with
+// target × the plan's amount ÷ the price. That rounding changes the plan's total, which used to move an untouched holding's
+// band edges a little (round-1 review B3). Jack, 2026-11-13: every save of a target set also writes each holding's plan
+// weight next to it (planW, withPlanW below), and the band rule reads that first (rules.planWeights), so an untouched
+// holding's band does not move. An earlier app's tab ignores planW and keeps reading plannedQty as before. A holding added with
 // 담기 gets planPx = today's official close and a plannedQty from its target, the rule book and reasons the build step gives
 // a stock picked by name (꼭 담을 종목: kind "pinned", deckcalc.rulesFor with this portfolio's points), setAt today.
 // Currency (round-1 Z1): a holding is in dollars when its data row is (pf.usdOf: ccy "USD") or it has a USD purchase, never
@@ -348,6 +350,75 @@ export function plannedFor(deck, h, target, fxToday = null, s = null) {
   return Number.isSafeInteger(q) && q >= 0 ? q : null;
 }
 export const bandRule = (target) => ({ id: "band", kind: "band", check: "checked", target, bands: BANDS.map((b) => b * target) });
+
+// ---------------- the plan's weight stored next to each holding (planW; Jack, 2026-11-13) ----------------
+// Each holding's weight in the plan, as rules.planWeights reads it today: the stored planW when every holding has one, else
+// the plan's own value (plannedQty × planPx, a dollar holding at the plan's rate: the same product, with the same test for
+// dollars, as rules.planWeights). -> Map t -> number, or { why } when a holding's cannot be known (no plannedQty, no planPx,
+// a dollar holding without the plan's rate): nothing is stored then and the bands keep reading plannedQty.
+const okW = (x) => typeof x === "number" && Number.isFinite(x) && x >= 0;
+export function planBase(deck) {
+  const hs = ((deck && deck.holdings) || []).filter((h) => h && typeof h.t === "string");
+  if (!hs.length) return { why: "no holdings" };
+  if (hs.every((h) => okW(h.planW))) return new Map(hs.map((h) => [h.t, h.planW]));
+  const fx = num(deck.planFx);
+  const out = new Map();
+  for (const h of hs) {
+    const q = h.plannedQty, px = num(h.planPx), usd = usdHolding(deck, h, null);
+    if (!Number.isInteger(q) || q < 0) return { why: `${h.t} has no planned share count` };
+    if (!(px > 0)) return { why: `${h.t} has no plan price` };
+    if (usd && !(fx > 0)) return { why: `${h.t} is in dollars and the plan has no exchange rate` };
+    out.set(h.t, q * px * (usd ? fx : 1));
+  }
+  return out;
+}
+// `total` shared out in proportion to the weights ws (all 0 or more, not all 0): whole numbers by the largest remainder when
+// total is a whole number (a plan in won: every sum then stays exact), else floats with the last one taking the exact rest.
+function shareTotal(total, ws) {
+  const sum = ws.reduce((a, w) => a + w, 0);
+  const raw = ws.map((w) => (total * w) / sum);
+  if (Number.isSafeInteger(total)) {
+    const out = raw.map((v) => Math.floor(v + 1e-9));
+    let left = total - out.reduce((a, v) => a + v, 0);
+    const order = raw.map((v, i) => [v - Math.floor(v + 1e-9), i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+    for (let j = 0; left !== 0; j = (j + 1) % order.length) {
+      const i = order[j][1];
+      if (left > 0) { out[i] += 1; left -= 1; } else if (out[i] > 0) { out[i] -= 1; left += 1; }
+    }
+    return out;
+  }
+  const head = raw.slice(0, -1);
+  return [...head, Math.max(0, total - head.reduce((a, v) => a + v, 0))];
+}
+// The holdings a save of a target set leaves, each with its planW. before: the portfolio as it was before the edit (a stock
+// the edit took out is still in it); holdings: the list after the edit; changed: the codes whose target the edit set
+// (retargeted or added). A holding that was there and was not changed keeps its weight (planBase: its stored planW, or its
+// plan value the first time), bit for bit; the changed ones share what is left of the plan's total — what they had, plus a
+// taken-out stock's — in proportion to their new targets. So the total never changes and an untouched holding's share of
+// it, the band rule's planW, is the same number after the save. Changed stocks that had no weight between them (0 planned
+// shares each) share 0. When the weights cannot be known (planBase) or shared, no holding keeps a planW (never some with and
+// some without) and the console says why.
+export function withPlanW(before, holdings, changed) {
+  const strip = (why) => {
+    console.warn(`[v2] ${before && before.id}: plan weights (planW) not stored (${why}); the weight bands keep reading the planned share counts, `
+      + "so a stock whose target was not changed can see its band edges move a little");
+    return holdings.map((h) => { if (!h || h.planW == null) return h; const { planW: _w, ...rest } = h; return rest; });
+  };
+  const base = planBase(before);
+  if (!(base instanceof Map)) return strip(base.why);
+  const total = [...base.values()].reduce((a, b) => a + b, 0);
+  const keeps = (h) => !!h && base.has(h.t) && !changed.has(h.t);
+  const move = holdings.filter((h) => h && !keeps(h));
+  const left = total - holdings.filter(keeps).reduce((a, h) => a + base.get(h.t), 0);
+  const rest = left < 0 && left > -1e-9 * total ? 0 : left;                  // a dollar plan's sums are floats: the last bits of 0
+  const ws = move.map((h) => (num(h.target) > 0 ? h.target : 0));
+  if (!(total > 0)) return strip("the plan's total is 0");
+  if (move.length && (rest < 0 || !ws.some((w) => w > 0))) return strip("the changed stocks' share of the plan could not be worked out");
+  const shares = move.length ? shareTotal(rest, ws) : [];
+  if (shares.some((v) => !okW(v))) return strip("a share could not be computed");
+  const got = new Map(move.map((h, i) => [h.t, shares[i]]));
+  return holdings.map((h) => (h ? { ...h, planW: keeps(h) ? base.get(h.t) : got.get(h.t) } : h));
+}
 // A holding with a new target: its band rule regenerated (in place, or added when it had none), its plannedQty recomputed.
 export function retarget(deck, h, target, fxToday = null, s = null) {
   const rules = Array.isArray(h.rules) ? h.rules : [];
@@ -401,17 +472,18 @@ export function withRemoval(data, deckId, t, today, ts) {
   if (!x) return null;
   return putDeck(x.data, withChanges(findDeck(x.data, deckId), [x.change]));
 }
-// Every stored holding of deck whose target in `pcts` (Map t -> %) differs from its own: retargeted. -> { deck, changed }
+// Every stored holding of deck whose target in `pcts` (Map t -> %) differs from its own: retargeted.
+// -> { deck, changed (how many), ts (their codes, for withPlanW) }
 function applyTargets(deck, pcts, fxToday, byT = null) {
-  let changed = 0;
+  const ts = new Set();
   const holdings = deck.holdings.map((h) => {
     if (!h || !pcts.has(h.t)) return h;
     const p = pcts.get(h.t);
     if (!(num(p) > 0) || Math.abs(p - pctOf(h)) <= TGT_TOL * 100) return h;
-    changed++;
+    ts.add(h.t);
     return retarget(deck, h, p / 100, fxToday, (byT && typeof byT.get === "function" && byT.get(h.t)) || null);
   });
-  return { deck: { ...deck, holdings }, changed };
+  return { deck: { ...deck, holdings }, changed: ts.size, ts };
 }
 const check = (deck, today) => {
   const p = deckProblem(stripView(deck), today);
@@ -430,6 +502,7 @@ export function applyEdit(data, deckId, draft, env) {
   if (!sumOk(sumPct(rows))) return { ok: false, why: "sum" };
   const pcts = new Map(rows.map((r) => [r.t, r.pct]));
   const changes = [];
+  const before = deck;                                                       // for withPlanW: the plan as it was, taken-out stocks included
   let cur = data;
   for (const r of draft.removed || []) {
     const x = takeOut(cur, deckId, r.t, r.reason, today, ts);
@@ -451,6 +524,10 @@ export function applyEdit(data, deckId, draft, env) {
     if (!(num(p) > 0)) return { ok: false, why: "sum" };
     deck = { ...deck, holdings: [...deck.holdings, newHolding(deck, a, p / 100, load, today, ts)] };
     changes.push({ at: today, kind: "add", t: a.t, nk: a.nk });
+  }
+  // the plan's weights follow the target set (Jack, 2026-11-13): an untouched holding keeps its own
+  if (tg.changed || (draft.adds || []).length || (draft.removed || []).length) {
+    deck = { ...deck, holdings: withPlanW(before, deck.holdings, new Set([...tg.ts, ...(draft.adds || []).map((a) => a.t)])) };
   }
   const capMoved = draft.maxPct != null && draft.maxPct !== capOf(deck);
   if (capMoved) deck = { ...deck, settings: { ...(deck.settings || {}), maxPct: draft.maxPct } };
@@ -486,7 +563,7 @@ export function sellAndRemove(afterSale, deckId, t, opts) {
   // the targets left must add up to 100% (round-1 B1: under the cap they cannot, and 팔고 빼기 waits for the D2 raise)
   if (!sumOk([...shared.values()].reduce((a, v) => a + v, 0))) return no("sum", ": the stocks left cannot reach 100% under the cap");
   const tg = applyTargets(deck, shared, load && load.data ? load.data.fx : null, load && load.byT);
-  deck = tg.deck;
+  deck = { ...tg.deck, holdings: withPlanW(before, tg.deck.holdings, tg.ts) };   // the sold stock's plan weight goes to the ones its target went to
   if (raise != null && raise !== capOf(deck)) deck = { ...deck, settings: { ...(deck.settings || {}), maxPct: raise } };
   deck = withChanges({ ...deck, targetsTs: ts }, [x.change]);              // one line: the removal (its share-out is part of it)
   if (!check(deck, today)) return { ok: false, why: "store" };

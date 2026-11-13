@@ -694,17 +694,18 @@ const inEntry = (e, r) => ["purchases", "sales", "divs"].some((k) => (e[k] || []
 // A history entry by its records (the day it was taken out aside: two tabs may take the same stock out on two days).
 const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases: e.purchases || [], sales: e.sales || [], divs: e.divs || [] });
 
-// A holding with the target set of another copy's same holding o: its target, plannedQty and band rule (o's; none when o has
-// none). Every other field stays this copy's.
+// A holding with the target set of another copy's same holding o: its target, plannedQty, plan weight (planW, v19.7a: Jack
+// 2026-11-13) and band rule (o's; none when o has none). Every other field stays this copy's.
 function withTargetSet(h, o) {
-  const { target: _t, plannedQty: _q, ...rest } = h;
+  const { target: _t, plannedQty: _q, planW: _w, ...rest } = h;
   const band = Array.isArray(o.rules) ? o.rules.find((r) => plainObj(r) && r.id === "band") : null;
   const rules = Array.isArray(h.rules) ? h.rules.filter((r) => !(plainObj(r) && r.id === "band")) : [];
   return { ...rest, ...(o.target != null ? { target: o.target } : {}), ...(o.plannedQty != null ? { plannedQty: o.plannedQty } : {}),
-    ...(Array.isArray(h.rules) || band ? { rules: band ? [...rules, band] : rules } : {}) };
+    ...(o.planW != null ? { planW: o.planW } : {}), ...(Array.isArray(h.rules) || band ? { rules: band ? [...rules, band] : rules } : {}) };
 }
 const targetSet = (d) => canon({ m: plainObj(d.settings) ? d.settings.maxPct ?? null : null,
-  h: (d.holdings || []).filter(plainObj).map((h) => [h.t, h.target ?? null, h.plannedQty ?? null, (Array.isArray(h.rules) ? h.rules : []).find((r) => plainObj(r) && r.id === "band") || null]) });
+  h: (d.holdings || []).filter(plainObj).map((h) => [h.t, h.target ?? null, h.plannedQty ?? null, (Array.isArray(h.rules) ? h.rules : []).find((r) => plainObj(r) && r.id === "band") || null,
+    h.planW ?? null]) });
 
 // One portfolio both copies hold, both changed: the current copy leads (its name, settings, kind; its limits unless the
 // other copy's were saved later, laterOf: 내 규칙 정하기 is an edit like a 메모) and every

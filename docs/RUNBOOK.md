@@ -655,6 +655,29 @@ different stocks, 120%). Nothing is renormalised behind the user's back. No reco
 종목 바꾸기 then opens at that 합계 (in the watch colour) with 합계를 100%로 맞추기. Until then the daily check reads each
 target over the sum of the held stocks' targets, so the sum alone puts no stock out of its band.
 
+## Known limits: plan weights in 종목 바꾸기 (v19.7a, `planW`)
+
+Every save of a target set (바꾼 내용 저장, 팔고 빼기) writes each holding's plan weight next to it (`planW`). A holding whose
+target was not changed keeps its number; the changed ones share between them what they had. The weight bands read it
+first, so changing some targets does not move the bands of the stocks you did not touch (Jack, 2026-11-13). Before, the
+bands were read from whole planned share counts (`plannedQty`), and rounding the changed stocks' counts could move an
+untouched band by up to about a point.
+
+- **A tab of an earlier app** (opened before this version) ignores `planW` and keeps reading `plannedQty`, which is still
+  saved as a whole number. In that tab an untouched band can show slightly different edges, as before. Nothing is set
+  aside, and the earlier app keeps `planW` when it writes.
+- **A portfolio never saved by 종목 바꾸기** has no `planW` and is read exactly as before.
+- **`planW` is all or nothing.** If only some of the held stocks have one (two copies met through an earlier app, a
+  hand-made file), the bands read `plannedQty` and the console says so. If the plan cannot be read when saving (a holding
+  without a plan price, a dollar holding without the plan's exchange rate), no `planW` is stored and the console says why.
+- **Targets are read over the stocks actually held.** When one changed stock is held and the other was never bought, the
+  held stocks' targets add up to a different number, so every held stock's band moves. That is the existing rule for a
+  plan only partly bought, not rounding.
+- **The first save of an older portfolio** (plan read from `plannedQty` before, from `planW` after) leaves an untouched band
+  the same to the last digit when the old sum of the held targets was a clean number; when that sum's last bit was off
+  (the old lines keep it as it was), the edges can differ by about 2e-16. Later saves are identical to the last digit for
+  a plan in won; a plan with a dollar stock stays within about 2e-16.
+
 ## Known limits: stock splits in 기록 (v19.6a)
 
 A portfolio stores a split from data.json's `splits` as soon as a saved record of that stock is dated before it, and keeps

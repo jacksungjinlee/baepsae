@@ -158,11 +158,35 @@ function pausedWeights(held, ctx, absent) {
 // US and no plan rate (legacy decks never have one): g = 0 for the whole deck (null), the strict direction, because the
 //   rate at plan time is unknown. A holding without plannedQty (a hand-made file): g = 0 for that holding (planW =
 //   its ref); the others share what is left in proportion to their planned values.
+// v19.7a (Jack, 2026-11-13): a plan weight stored next to each holding (holding.planW) comes first. 종목 바꾸기 writes it on
+//   every holding when it saves a target set (edit.withPlanW): a holding whose target was not touched keeps its number, and
+//   the ones that changed share between them what they had. So an untouched holding's gap no longer moves with the
+//   whole-share rounding of somebody else's new plannedQty (which changed the plan's total: round-1 review B3). Only the
+//   ratios matter; the first save writes the plan's own value (plannedQty x planPx in won), so the numbers below are the
+//   same ones as before for every holding it did not change. Read only when every one of these holdings has one (a number,
+//   0 or more, not all 0). Otherwise the plan is read from plannedQty exactly as before (a portfolio saved before this, or
+//   by an earlier app, has none), and a portfolio where only some of them have one says so once in the console.
+//   The Map it returns then says so (stored: true): evalBand takes the held targets' sum to 12 decimals for such a portfolio.
+const okPlanW = (x) => typeof x === "number" && Number.isFinite(x) && x >= 0;
+const planWarned = new Set();
 export function planWeights(deck, targets) {
   const targetSum = [...targets.values()].reduce((a, b) => a + b, 0);
   const hs = [];
   for (const h of (deck && deck.holdings) || []) if (h && targets.has(h.t) && !hs.some((x) => x.t === h.t)) hs.push(h);
   if (!hs.length || !(targetSum > 0)) return null;
+  const withW = hs.filter((h) => okPlanW(h.planW)).length;
+  if (withW === hs.length) {
+    const sum = hs.reduce((a, h) => a + h.planW, 0);
+    if (sum > 0) { const out = new Map(hs.map((h) => [h.t, h.planW / sum])); out.stored = true; return out; }
+  }
+  if (hs.some((h) => h.planW != null)) {
+    const key = `${deck.id}|${withW}/${hs.length}`;
+    if (!planWarned.has(key)) {
+      planWarned.add(key);
+      console.warn(`[v2] ${deck.id}: stored plan weights (planW) not used: ${withW} of ${hs.length} held stocks have a usable one`
+        + (withW === hs.length ? " and they add up to 0" : "") + "; the weight bands read the planned share counts (plannedQty) instead");
+    }
+  }
   const buys = ((deck && deck.purchases) || []).filter((p) => p && p.qty > 0 && num(p.price) > 0);
   const usd = (h) => h.cls === "us" || buys.some((p) => p.t === h.t && p.ccy === "USD");
   const legacy = hs.some((h) => !(num(h.planPx) > 0));
@@ -286,7 +310,11 @@ function evalBand(r, h, weights) {
   if (weights.paused && !weights.absent.includes(h.t) && weights.px.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "paused" };
   if (weights.paused) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.px.has(h.t) ? weights.missing : [...new Set([...weights.missing, h.t])] };
   if (!weights.ok || !weights.w.has(h.t)) return { ...out, target: planTarget, bands: planBands, result: "missing", missingPrice: weights.missing || [] };
-  const k = weights.targetSum > 0 ? weights.targetSum : 1;
+  // the held targets' sum as added up (as it always was). With stored plan weights (v19.7a) it is taken to 12 decimals: adding
+  // the same targets up again after other stocks' targets changed can differ in the float's last bit, which would move an
+  // untouched band in its last digit. A portfolio without stored weights keeps the sum exactly as before.
+  const k0 = weights.targetSum > 0 ? weights.targetSum : 1;
+  const k = weights.planW && weights.planW.stored ? Math.round(k0 * 1e12) / 1e12 || k0 : k0;
   const ref = planTarget / k, refBands = planBands.map((b) => b / k);
   const planW = weights.planW ? weights.planW.get(h.t) : null;
   const gap = planW != null ? planW - ref : 0;
