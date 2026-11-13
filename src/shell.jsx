@@ -7,8 +7,8 @@ import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, loadCorpOnce, krGrowthScoreLine, loadDataPublishFor, corpStaleArgs } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
-import { EpsFixLine, IcrOffLine, stmtCurLineText } from "./fixnote.jsx";
-import { stmtCurOf, stmtNotWon } from "./repair.js";
+import { EpsFixLine, IcrOffLine, stmtCurLineText, FIX_UNIT } from "./fixnote.jsx";
+import { stmtCurOf, stmtNotWon, unitHeld } from "./repair.js";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
 import DiscApp from "./disc.jsx";
@@ -112,9 +112,17 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
     : `PBR ${c.pbr}배 — 업종 중간 ${sec.pbrQ[1]}배 대비 ${c.pbr > sec.pbrQ[1] ? "높은" : "낮은"} 평가예요.`);
   // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(stmtCur)는 적자도 자료 없음도 아니에요. 한국어
   // 화면은 승인된 통화 줄(다른 곳과 같은 글), 영어 화면은 승인된 영어 줄 (Jack, 2026-11-08 전달: FIX_STMT_CUR_EN).
+  // 리뷰 #118 N7: 공시 단위 확인에 걸린 회사(unitChk)는 통화 줄보다 단위 줄이 먼저예요 (비운 숫자를 설명해요 · 두 줄을 겹치지 않아요).
+  // 영어 화면은 단위 줄이 승인되지 않아 통화 줄(승인된 영어)이 있으면 그것을, 없으면 줄 없이.
+  else if (unitHeld(c) && !en) lines.push(<span data-fix="unit-chk">{FIX_UNIT}</span>);
   else if (stmtNotWon(c)) {          // 읽을 수 없는 코드("XXX")면 통화 줄 없이 (console 경고), 맞지 않는 문장도 없이
     const t = stmtCurLineText(c, en ? "en" : "ko");
     if (t) lines.push(<span data-fix="stmt-cur" data-cur={stmtCurOf(c)}>{t}</span>);
+  }
+  // 2026-11-13 (Jack): 공시 단위 확인에 걸린 회사(unitChk)도 적자도 자료 없음도 아니에요. 한국어 화면은 승인된 줄, 영어 화면은 영어 글이
+  // 승인되지 않아 줄 없이 (맞지 않는 문장도 없이)
+  else if (unitHeld(c)) {
+    // 영어 화면: 승인된 영어 줄이 없어 줄 없이 (맞지 않는 문장도 없이)
   }
   else lines.push(en ? "Loss-making or no financial data yet." : "적자이거나 재무 데이터가 아직 없어요.");
   if (c.r3 != null && c.r3 >= 15 && niYoY != null && niYoY <= 5) lines.push(en

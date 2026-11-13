@@ -251,6 +251,71 @@ Open a new Claude Code Cloud session and paste (replace N with the issue number,
 Claude reads the run logs, fixes the cause by the CLAUDE.md rules (fix the data or the code, never loosen a check), and
 tells you what happened in plain words.
 
+## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
+
+The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check
+(`fetch_data.py` `unit_guard`, corp.json `unitChk`) did not flag: a PBR that low can mean a filing read in the wrong unit
+(진코스텍 and 디와이에이, 2026-11-13). The 09:13 check reports every warning, so a company a person has already checked goes
+on the list `PBR_LOW_CHECKED` in `validate_data.py` and is not named again. It stays quiet only while its owners' equity
+(corp.json `bpsIn.eq`, 억원) is within ±20% (`PBR_LOW_BAND`) of the value written there and it has no `unitChk`; if the
+equity moves further (a new report, a capital change), the warning names it again, with the old and new equity, so
+someone looks again. The row's value always says how many were passed over quietly ("확인된 회사 N곳 조용히 넘김"), and the
+gate's summary lists them.
+
+To add a company (each entry, and the list itself, needs Jack's yes first: an entry exempts one company from a warning,
+so it is a safety-rule change under CLAUDE.md; the list and its two entries, SG&G and 앱토크롬: Jack's yes, 2026-11-13):
+1. Claude opens the company's latest filed statements on DART (the report the pipeline used, corp.json `bq`, and the
+   latest 사업보고서) and checks that the unit printed over the statements is the unit of the numbers, that total assets =
+   liabilities + equity, and that the report's previous year-end column equals the 사업보고서's figures.
+2. Claude asks Jack in one line, with that evidence: "Quiet the low-PBR warning for {name}? (filings {rcept}: …)".
+3. On his yes, one entry: the stock code → `date` (the KST day of the check), `eq` (today's corp.json `bpsIn.eq`), `why`
+   (the name, why the PBR is low, and the filings' receipt numbers as `rcept` followed by the 14 digits) and `yes` ("Jack's
+   yes, " and the KST day he said it). Then a PR as usual (tests, fresh-eyes review, his yes recorded under **안전 규칙
+   변경**). `tests/test_unit_guard.py` checks every entry names a filing and carries his yes.
+
+The list only quiets that warning: every FAIL row is unchanged, the unit check still blanks a flagged company's numbers
+whatever the list says, and a listed company whose equity moves by more than 20% is named again. Remove an entry when the
+company's PBR is back above 0.1 for good, or if a later check finds its filing wrong. The PER warning ("PER 0.1 미만 국내
+회사") has no such list.
+
+## Unit-check gate rows (공시 단위 확인)
+
+The pipeline (`fetch_data.py` `unit_guard`) blanks every number built on a Korean company's statements when they look read
+in the wrong unit, and marks the company `unitChk` (data.json and corp.json). The run log names each one on its own line
+("!! 공시 단위: {code} {name} [reasons — evidence] 비운 값: …"). Four gate rows watch it; Jack said yes to the three FAIL rows
+on 2026-11-13:
+
+- **WARN "공시 단위 확인 회사 바뀜 (unitChk · 경고만)"**: a company is newly flagged (its numbers are now blank) or cleared
+  since the previous publish (20 or more newly flagged also fails the next row). For a newly named company, Claude opens
+  the filing the pipeline used (corp.json `bq`, or the latest 사업보고서) on DART and checks the unit printed over the
+  statements against the numbers, and the report's previous year-end column against the 사업보고서. If the filing is wrong,
+  nothing to do: the company stays blank until it refiles, and the line on its page says why. If the filing is right and
+  the check is wrong, the reasons in the log line say which check fired; the fix is in the code or the data (a PR, with
+  tests), never a looser threshold (a safety rule: ask Jack). There is no list that clears a company by hand. A cleared
+  company needs nothing unless the reason is surprising (DART down clears everyone: other rows fail that run anyway).
+- **FAIL "공시 단위 확인에 새로 걸린 회사 수 (20곳 이상이면 실패)"** (Jack, 2026-11-13): 20 or more Korean companies newly
+  flagged in one publish, compared with the previous publish (cleared companies don't count; no previous publish, no
+  FAIL). Real filing mistakes come one or two at a time, so this means our reading probably broke (a parser change, a
+  change in DART's amounts or units, a bad cache), not 20 companies misfiling at once. The site keeps yesterday's data.
+  First read the run's "!! 공시 단위:" lines: if they share one reason or one kind of report, fix that in the code (a PR,
+  with tests) and run again. Never raise the number of 20 without Jack.
+  It keeps failing until it is fixed: a failed run publishes nothing, so the next run compares with the same previous
+  publish and counts the same companies as new. There is no way to wave it through; if the 20 turn out to be real,
+  unrelated filing mistakes (never seen: the whole flagged population was 2 on 2026-11-13), tell Jack with the list.
+  The first publish after #118 counts every flagged company as new (the previous file has no flags). Watch the
+  first runs on a new reporting quarter (2026 Q3 reports: deadline 2026-11-16), when the income, cash-flow and
+  quarter-EPS checks first see about 2,200 new reports in one publish.
+- **FAIL "공시 단위 확인 기록 (unitChkCover)"**: the previous publish had the check's record and this run's data.json does
+  not (or it is not version 1). The pipeline writes it on every run whatever DART or the cache does, so this means the
+  code that runs the check or writes the record is missing: first check which commit the run used and that
+  `fetch_data.py` `main` still calls `unit_guard` and writes `"unitChkCover"`. When the record's shape changes on purpose,
+  bump `v` and change `validate_data.py` `check_unit_ran` in the same PR (the gate accepts only the version it knows, so
+  an unchecked shape never passes).
+- **FAIL "unitChkCover.hit = unitChk 종목 수"**: the number of companies the check flagged differs from the stocks marked
+  in data.json, so something after the check added, dropped or changed stocks or marks. First compare the run log's
+  "공시 단위 확인: N곳 비움" with the marked stocks, then look at what `main` does between `unit_guard` and writing
+  data.json.
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
