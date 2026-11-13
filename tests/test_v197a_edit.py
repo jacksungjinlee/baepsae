@@ -1425,3 +1425,82 @@ def test_one_stored_weight_cannot_put_a_band_edge_below_0_and_bad_weights_are_wo
     text = got["text"]
     assert text[0] is True and all(isinstance(x, int) for x in text[1]) and sum(text[1]) == sum(got["plan"])
     assert any("not kept" in m and "not a usable number" in m for m in text[2]), text[2]
+
+
+# ---------------- review (2026-11-13): S1 two pools · N4 an unusable planV ----------------
+def test_a_mixed_save_that_keeps_the_held_total_moves_no_untouched_held_band():
+    """Review S1 (the reviewer's case and a fuzz). A save that changes held and never-bought stocks together, while the held
+    stocks' targets keep their total, used to share the plan weight as one pool, so an untouched held stock's 더 안 사요 edge
+    moved (44.05% → 42.82%). Now the changed held stocks share only what they had (the never-bought ones share the rest), so
+    every untouched held band stays the same to the last digit, and every changed held stock still reads exactly as a
+    brand-new plan (planV). 400 random portfolios (two stocks never bought), each saved twice: weight moved among held stocks,
+    then a mixed save (two held, two never bought, the held total unchanged). A save whose held total changes still moves
+    them by the existing rule; such saves are not compared."""
+    got = run(FINAL + """// the reviewer's case
+      const sp = [{ t: '000010', w: 0.20, px: 10000 }, { t: '000020', w: 0.30, px: 1300000 }, { t: '000030', w: 0.10, px: 10000 },
+        { t: '000040', w: 0.20, px: 10000, q: 0 }, { t: '000050', w: 0.20, px: 10000, q: 0 }];
+      const d0 = { ...mkD(sp, 1000), settings: { points: { value: 3 }, maxPct: 60, amountMan: 1000 } }, cx = ctxS(sp);
+      const s1 = E.applyEdit({ v: 2, decks: [d0] }, 'd1', steps([['000020', 29], ['000030', 11]]), envS(sp)).data;
+      const s2 = E.applyEdit(s1, 'd1', steps([['000020', 24], ['000030', 16], ['000040', 15], ['000050', 25]]), { ...envS(sp), ts: env.ts + 1000 }).data;
+      const u = (s) => bandsOf(Ru.evaluateDeck(s.decks[0], cx))['000010'];
+      const res = { case: [JSON.stringify(u(s1)) === JSON.stringify(u(s2)), u(s2).bands.map(pct)], total: [s1, s2].map((s) => s.decks[0].holdings.reduce((a, h) => a + h.planW, 0)) };
+      // the fuzz
+      let seed = 1113; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+      const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+      const st = { cases: 0, compared: 0, moved: 0, changed: 0, notFresh: 0, statusDiff: 0, bad: [] };
+      for (let c = 0; c < 400; c++) {
+        const n = ri(5, 8); let left = 100; const w = [];
+        for (let i = 0; i < n - 1; i++) { const v = ri(6, Math.max(6, Math.min(30, left - 6 * (n - 1 - i)))); w.push(v); left -= v; }
+        w.push(left);
+        const specs = w.map((v, i) => ({ t: CODES[i], w: v / 100, px: ri(10, 3000) * 100, ...(i >= n - 2 ? { q: 0 } : {}) }));
+        const d = { ...mkD(specs, [300, 1000, 3000][ri(0, 2)]), settings: { points: { value: 3 }, maxPct: 100, amountMan: 1000 } };
+        const ctx = { state: { ok: true }, byT: new Map(specs.map((x) => [x.t, stock(x.t, Math.round(x.px * (0.8 + 0.4 * rnd())))])), coByT: new Map(), fx: 1400, pxDate: T };
+        const en = { load: { status: 'ok', data: { fx: 1400, stocks: [] }, coByT: new Map(), byT: new Map(specs.map((x) => [x.t, stock(x.t, x.px)])) }, today: T, ts: env.ts + c * 10 };
+        const pc = (t) => Math.round(d.holdings.find((h) => h.t === t).target * 100);
+        const a = CODES[0], b = CODES[1], cN = CODES[n - 2], dN = CODES[n - 1];
+        const k = Math.min(3, pc(a) - 1), m = Math.min(3, pc(cN) - 1);
+        const r1 = E.applyEdit({ v: 2, decks: [d] }, 'd1', steps([[a, pc(a) - k], [b, pc(b) + k]]), en);
+        if (!r1.ok) { st.bad.push(['first', c, r1.why]); continue; }
+        const pc1 = (t) => Math.round(r1.data.decks[0].holdings.find((h) => h.t === t).target * 100);
+        const r2 = E.applyEdit(r1.data, 'd1', steps([[a, pc1(a) + k], [b, pc1(b) - k], [cN, pc1(cN) - m], [dN, pc1(dN) + m]]), { ...en, ts: en.ts + 5 });
+        if (!r2.ok) { st.bad.push(['mixed', c, r2.why]); continue; }
+        st.cases++;
+        const B = r1.data.decks[0], A = r2.data.decks[0];
+        const b0 = bandsOf(Ru.evaluateDeck(B, ctx)), b1 = bandsOf(Ru.evaluateDeck(A, ctx)), fresh = bandsOf(Ru.evaluateDeck(noW(A), ctx));
+        for (const t of Object.keys(b0)) {
+          if ([a, b].includes(t)) { st.changed++; const x = b1[t], f = fresh[t];
+            if (x.status !== f.status || x.bands.some((v, i) => Math.abs(v - f.bands[i]) > 1e-12)) st.notFresh++; continue; }
+          st.compared++;
+          if (JSON.stringify(b0[t]) !== JSON.stringify(b1[t])) { st.moved++; if (st.bad.length < 5) st.bad.push(['moved', c, t, b0[t].bands, b1[t].bands]); }
+          if (b0[t].status !== b1[t].status) st.statusDiff++;
+        }
+        if (A.holdings.reduce((x, h) => x + h.planW, 0) !== B.holdings.reduce((x, h) => x + h.planW, 0)) st.bad.push(['total', c]);
+      }
+      res.fuzz = st;
+      out = res;""")
+    assert got["case"][0] is True and got["case"][1] == [25.0, 44.05, 49.05], got["case"]          # 44.05% 그대로 (전에는 42.82%)
+    assert got["total"][0] == got["total"][1]
+    f = got["fuzz"]
+    assert f["bad"] == [] and f["cases"] >= 380 and f["compared"] >= 900 and f["changed"] >= 700, f
+    assert f["moved"] == 0 and f["statusDiff"] == 0 and f["notFresh"] == 0, f
+
+
+def test_an_unusable_planv_is_left_out_and_said_once():
+    """Review N4: a planV that cannot be used (a string, a negative number, NaN, one above twice the plan's total) is left out:
+    that stock reads its own planned shares against the stored weights (as before planV), every other stock reads as it
+    did, the stored weights stay in use, and the console names it once."""
+    got = run(PLANW + """const s1 = E.applyEdit({ v: 1, decks: [deck7()] }, 'd7', steps([['000010', 15], ['000020', 25]]), env).data, d1 = s1.decks[0];
+      const tg = new Map(d1.holdings.map((h) => [h.t, h.target]));
+      const good = Ru.planWeights(d1, tg), noV = Ru.planWeights({ ...d1, id: 'nov', holdings: d1.holdings.map(({ planV, ...h }) => h) }, tg);
+      const res = {};
+      for (const [k, v] of [['text', 'x'], ['neg', -1], ['nan', NaN], ['huge', 1e12]]) {
+        const bad = { ...d1, id: 'v-' + k, holdings: d1.holdings.map((h) => (h.t === '000010' ? { ...h, planV: v } : h)) };
+        const w0 = warns.length, a = Ru.planWeights(bad, tg), again = Ru.planWeights(bad, tg), said = warns.slice(w0);
+        res[k] = { stored: a.stored === true, mine: a.get('000010') === noV.get('000010'), others: [...a.keys()].filter((t) => t !== '000010').every((t) => a.get(t) === good.get(t)),
+          said: said.length, what: said[0] || '' };
+      }
+      out = { hasV: d1.holdings[0].planV != null, res };""")
+    assert got["hasV"] is True
+    for k, x in got["res"].items():
+        assert x["stored"] is True and x["mine"] is True and x["others"] is True, (k, x)        # 그 종목만 계획 수량으로, 나머지는 그대로
+        assert x["said"] == 1 and "planV" in x["what"] and "000010" in x["what"], (k, x)

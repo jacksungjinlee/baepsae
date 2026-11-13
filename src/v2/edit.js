@@ -413,9 +413,10 @@ function shareTotal(total, ws) {
 // the edit took out is still in it); holdings: the list after the edit; changed: the codes whose target the edit set
 // (retargeted or added). A holding that was there and was not changed keeps its weight (planBase: its stored planW, or its
 // plan value when it had none), bit for bit; the changed ones share what is left of the plan's total — what they had, plus a
-// taken-out stock's — in proportion to their new targets. So the total never changes, and the band rule, which measures
-// every holding's whole planned shares against that total (rules.planWeights), reads an untouched holding the same after
-// the save. Changed stocks that had no weight between them (0 planned shares each) share 0.
+// taken-out stock's — in proportion to their new targets, in two pools: the held ones and the ones not held (review S1,
+// below). So the total never changes, and the band rule, which measures every holding's whole planned shares against the
+// held stocks' weights (rules.planWeights), reads an untouched held holding the same after any save that keeps the held
+// stocks' targets at the same total. Changed stocks that had no weight between them (0 planned shares each) share 0.
 // Every outcome that is not the plain one is said in the console:
 // - the first save of a portfolio whose plan cannot be read for some holding (no plannedQty or planPx, a dollar holding
 //   without the plan's rate): no holding gets a planW, and the bands keep reading plannedQty as before;
@@ -454,9 +455,26 @@ function planWOf(before, holdings, changed) {
   const ws = move.map((h) => (num(h.target) > 0 ? h.target : 0));
   if (!(total > 0)) return strip("the plan's total is 0");
   if (move.length && (rest < 0 || !ws.some((w) => w > 0))) return strip("the changed stocks' share of the plan could not be worked out");
-  const shares = move.length ? shareTotal(rest, ws) : [];
+  // Review S1 (2026-11-13): two pools, so that no untouched held band moves while the held stocks' targets keep their total.
+  // The changed stocks held before the save share what they had together with a held stock the save took out, scaled by how
+  // their targets changed together (exactly what they had when the held targets keep their sum); the changed stocks not held
+  // (never bought, added) share the rest. A pool with no stock to take it goes to the other one.
+  const held = heldQty(before);
+  const moveH = move.filter((h) => held.has(h.t)), moveN = move.filter((h) => !held.has(h.t));
+  const tBefore = (t) => { const o = ((before && before.holdings) || []).find((x) => x && x.t === t); return o && num(o.target) > 0 ? o.target : 0; };
+  const goneH = ((before && before.holdings) || []).filter((h) => h && base.has(h.t) && held.has(h.t) && !holdings.some((x) => x && x.t === h.t));
+  const fromH = [...moveH, ...goneH].reduce((a, h) => a + (base.get(h.t) || 0), 0);
+  const tOld = [...moveH, ...goneH].reduce((a, h) => a + tBefore(h.t), 0);
+  const wsH = moveH.map((h) => (num(h.target) > 0 ? h.target : 0)), wsN = moveN.map((h) => (num(h.target) > 0 ? h.target : 0));
+  const tNew = wsH.reduce((a, w) => a + w, 0);
+  let pH = !moveN.length || !wsN.some((w) => w > 0) ? rest : !moveH.length || !(tNew > 0) ? 0
+    : Math.abs(tNew - tOld) <= 1e-9 ? fromH : tOld > 0 ? fromH * (tNew / tOld) : rest;
+  pH = Math.min(rest, Math.max(0, Number.isSafeInteger(rest) ? Math.round(pH) : pH));
+  const pool = (amount, ws) => (ws.some((w) => w > 0) ? shareTotal(amount, ws) : ws.map(() => 0));   // a pool's stocks all at 0%: 0 each
+  const sharesH = pool(pH, wsH), sharesN = pool(rest - pH, wsN);
+  const shares = [...sharesH, ...sharesN];
   if (shares.some((v) => !okW(v))) return strip("a share could not be computed");
-  const got = new Map(move.map((h, i) => [h.t, shares[i]]));
+  const got = new Map([...moveH.map((h, i) => [h.t, sharesH[i]]), ...moveN.map((h, i) => [h.t, sharesN[i]])]);
   return holdings.map((h) => {
     if (!h) return h;
     if (keeps(h)) return { ...h, planW: base.get(h.t) };

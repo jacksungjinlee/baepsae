@@ -659,7 +659,8 @@ target over the sum of the held stocks' targets, so the sum alone puts no stock 
 
 Every save of a target set (바꾼 내용 저장, 팔고 빼기) writes each holding's plan weight next to it (`planW`). A holding whose
 target was not changed keeps its number; the changed ones share between them what they had, so the weights always add up
-to the same total. The weight bands measure against that total, so changing some targets does not move the bands of the
+to the same total. They share it in two pools (review S1): the changed stocks you hold share what they had (with a held
+stock taken out), scaled by how their targets changed together; the changed stocks you never bought share the rest. The weight bands measure against that total, so changing some targets does not move the bands of the
 stocks you did not touch (Jack, 2026-11-13). Before, the total was the planned share counts (`plannedQty`) added up
 again, and rounding the changed stocks' counts could move an untouched band by up to about a point.
 
@@ -675,9 +676,11 @@ targets, prices and amount — 142 calmer (a hidden warning: 더 안 사요 at 7
 says 일부 팔아요) and 81 stricter (45 extra 먼저 사요, 14 extra 일부 팔아요), with edges up to 19 points off (55 with one held
 stock). So each save also stores, on every held stock whose target it changed, `planV`: the weight that brand-new plan gives
 it (read from the planned share counts, as before planW) times the stored weights' total over the held stocks. The band
-rule reads `planV` over that total, so the stock reads exactly as the brand-new plan does at that save (the same 800 × 3
-again, and 7 more seeds: 0 differ, 0 calmer, 0 new 일부 팔아요 or 먼저 사요; edges within 2.2e-16), and a later save that
-does not change it leaves it where it is. Stocks the save did not change keep their own reading (no `planV`, or the one
+rule reads `planV` over that total, so the stock reads exactly as the brand-new plan does at that save, until what you
+hold changes (the same 800 × 3 again, and 7 more seeds: 0 differ, 0 calmer, 0 new 일부 팔아요 or 먼저 사요; edges within
+2.2e-16), and a later save that does not change it leaves it where it is. After a purchase of a stock never bought, or a
+sale down to 0, every reading moves with what is held (that comes with measuring against the held stocks' weights), so
+it drifts from what a brand-new plan would say by the rounding of the stocks involved. Stocks the save did not change keep their own reading (no `planV`, or the one
 they had), so their bands still do not move.
 
 - **A tab of an earlier app** (opened before this version) ignores `planW` and keeps reading `plannedQty`, which is still
@@ -694,9 +697,11 @@ they had), so their bands still do not move.
   every one out again from the plan and says so.
 - **The first save of a portfolio whose plan cannot be read** (a holding without a plan price, a dollar holding without
   the plan's exchange rate) stores no `planW` and the console says why; its bands behave as before this change.
-- **Targets are read over the stocks actually held.** When one changed stock is held and the other was never bought, the
-  held stocks' targets add up to a different number, so every held stock's band moves. That is the existing rule for a
-  plan only partly bought, not rounding.
+- **Targets are read over the stocks actually held.** When a save moves weight between a stock you hold and one you never
+  bought, the held stocks' targets add up to a different number, so every held stock's band moves. That is the existing
+  rule for a plan only partly bought, not rounding. A save that changes held and never-bought stocks while the held
+  stocks' targets keep their total (weight moved among held stocks, and among never-bought ones) moves no untouched held
+  band (review S1: a fuzz of 400 such saves, 0 moved).
 - **How exact "does not move" is.** A plan in won, any save after the first: the same to the last digit. The first save
   of an older portfolio (plan read from `plannedQty` before, from `planW` after): the same to the last digit when the old
   sum of the held targets was a clean number, else within about 2e-16 (the old lines keep that sum as it was). A plan
