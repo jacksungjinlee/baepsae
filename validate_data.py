@@ -1982,7 +1982,7 @@ def check_unit_moved(rep, hit, pdata):
     rep.add(name, True, f"새로 {len(new)}곳{few(new)} · 풀림 {len(gone)}곳{few(gone)}",
             "0 (바뀌면 경고 · 새로 걸린 회사는 숫자가 비어요 — 그 공시를 사람이 확인)", warn=bool(new or gone))
     rep.add(many, len(new) < UNIT_NEW_FLAGS_FAIL, f"새로 {len(new)}곳",
-            f"{UNIT_NEW_FLAGS_FAIL}곳 미만 (Jack 2026-11-13 — 넘으면 우리 읽기가 깨졌을 수 있어요 · 실행 로그의 '!! 공시 단위:' 줄을 보세요)")
+            f"{UNIT_NEW_FLAGS_FAIL}곳 미만 (Jack 2026-11-13 — 그 이상이면 우리 읽기가 깨졌을 수 있어요 · 실행 로그의 '!! 공시 단위:' 줄을 보세요)")
     if new:
         rep.detail("공시 단위 확인에 새로 걸린 회사 (숫자를 새로 비웠어요)", new)
     if gone:

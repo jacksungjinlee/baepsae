@@ -299,6 +299,12 @@ on 2026-11-13:
   change in DART's amounts or units, a bad cache), not 20 companies misfiling at once. The site keeps yesterday's data.
   First read the run's "!! 공시 단위:" lines: if they share one reason or one kind of report, fix that in the code (a PR,
   with tests) and run again. Never raise the number of 20 without Jack.
+  It keeps failing until it is fixed: a failed run publishes nothing, so the next run compares with the same previous
+  publish and counts the same companies as new. There is no way to wave it through; if the 20 turn out to be real,
+  unrelated filing mistakes (never seen: the whole flagged population was 2 on 2026-11-13), tell Jack with the list.
+  The first publish after #118 counts every flagged company as new (the previous file has no flags). Watch the
+  first runs on a new reporting quarter (2026 Q3 reports: deadline 2026-11-16), when the income, cash-flow and
+  quarter-EPS checks first see about 2,200 new reports in one publish.
 - **FAIL "공시 단위 확인 기록 (unitChkCover)"**: the previous publish had the check's record and this run's data.json does
   not (or it is not version 1). The pipeline writes it on every run whatever DART or the cache does, so this means the
   code that runs the check or writes the record is missing: first check which commit the run used and that
