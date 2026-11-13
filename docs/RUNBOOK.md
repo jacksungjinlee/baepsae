@@ -605,21 +605,27 @@ A US record takes the exchange rate of the date typed (the US date, as the line 
 history (`macro.json` `fxHist`) carries a day only once that day's Seoul close has been published as final.
 
 - **Typed with last night's US date** (for example a purchase at 02:00 KST on the 13th, US date the 12th): the record is
-  refused with "환율 정보를 불러오지 못해 지금은 지난 날짜의 미국 종목 기록을 저장할 수 없어요. 잠시 뒤에 다시 해 주세요." until the
-  morning publish carries the 12th. That is a wait of hours, not the "잠시 뒤" the line says.
+  refused until the morning publish carries the 12th, a wait of hours. The form says so in its own line (Jack,
+  2026-11-13): "이 날짜의 환율이 아직 없어요. 보통 다음 날 아침에 들어오니, 그때 다시 저장해 주세요." It shows for a dollar
+  record dated a past day after the history's last day; what was typed stays in the form. Any other missing past rate (no
+  history, a date before its first row, an unfinished last row) keeps "환율 정보를 불러오지 못해 지금은 지난 날짜의 미국 종목
+  기록을 저장할 수 없어요. 잠시 뒤에 다시 해 주세요."
 - **Typed with the Korean date** (today) the same record saves at once, at the current rate (data.json `fx`).
 - Nothing is ever saved at another day's rate, and rates already saved never change.
 
 ## Known limits: a holding sold down to 0 and kept (v19.6a, `rules.SOLD_OUT_BANDS`)
 
-One switch with three values decides how the weight bands read such a holding. It ships as `"own"` until Jack answers.
+One switch with three values decides how the weight bands read such a holding. It ships as `"own"` (Jack, 2026-11-13).
 
 - `"off"` (live before v19.6a): the holding has no status; the others are read over what is held.
 - `"spec"` (spec A.1 to the letter): it counts as 0 shares for everyone's bands. In a small or concentrated portfolio the
   other holdings then read above their bands (three equal stocks: both others 일부 팔아요).
-- `"own"`: it reads 먼저 사요 on its own band over the whole plan, and 추가로 넣을 돈 buys it back first by the plan's own
-  targets; every other holding reads exactly as under `"off"`. 홈 does not say "오늘은 할 일이 없어요" while such a holding
-  waits (먼저 사요 is not 할 일 없음).
+- `"own"`: it is read on its own weight band only, over the whole plan (먼저 사요 or 할 일 없음; its other rules are not
+  read, so never 규칙 깨짐 or 확인 필요 for 0 shares), and 추가로 넣을 돈 buys it back first by the plan's own targets; when
+  those goals cannot buy it back, the money goes where `"off"` puts it. Every other holding reads exactly as under `"off"`.
+  With nothing held at all, the holdings read as under `"off"`. 홈 lists only the stocks held, so it keeps "오늘은 할 일이
+  없어요"; under the sold-out row on 포트폴리오 and on its company page, once: "다 판 종목이에요. 다시 살 계획이 없으면
+  계획에서 빼 주세요." (Jack, 2026-11-13).
 
 ## Known limits: 기록 and the phone clock
 

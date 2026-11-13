@@ -72,7 +72,7 @@ def test_rows_speak_only_up_to_as_of_and_today_uses_fresh_fx():
       out = { after: Rc.rateFor('2026-11-12', env({ fxHist: next })), onAsOf: Rc.rateFor('2026-11-11', env({ fxHist: next })),
         today: Rc.rateFor(T, env({ fxHist: next })), staleToday: Rc.rateFor(T, env({ fxHist: next, stale: true })),
         afterEcos: Rc.rateFor('2026-11-12', env({ today: '2026-11-14' })), badAsOf: Rc.rateFor('2026-11-11', env({ fxHist: { ...ECOS, asOf: '2026-11-13' } })) };""")
-    assert got["after"] == {"ok": False, "why": "past"}                                               # never 11-11's row for 11-12
+    assert got["after"] == {"ok": False, "why": "notYet"}                                             # never 11-11's row for 11-12 (Jack 11-13: its own line)
     assert got["onAsOf"] == {"ok": True, "fx": 1336.7}
     assert got["today"] == {"ok": True, "fx": 1338.3} and got["staleToday"] == {"ok": False, "why": "today"}
     assert got["afterEcos"] == {"ok": True, "fx": 1330.7}                                             # 11-12 is asOf: its own row

@@ -182,6 +182,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
                   <HoldingRow t={t} title={nk} sub={C.daily.soldOut} x={zx} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)}
                     extra={zx && m.ok ? <WeightLine x={zx} /> : null}
                     action={rec ? <div data-ui-v2="row-actions" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}><RecordButton name={nk} onClick={rec} /></div> : null} />
+                  {/* Jack, 2026-11-13: a stock sold out and kept is still in the plan; one line says what to do about it */}
+                  {C.daily.soldOutKept && <Note data-ui-v2="sold-out-kept">{C.daily.soldOutKept}</Note>}
                 </div>
               );
             })}

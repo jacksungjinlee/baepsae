@@ -25,7 +25,8 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 //     line says so; never costed at the portfolio's planFx: lots.purchaseRate);
 //   - today: data.json fx, only while the data is fresh (stale data's fx is an older day's);
 //   - a past date after fxHist's last close: not saved yet (round-2 review, spec A.1: only a today-dated record takes
-//     data.json fx; the next publish's fxHist will have that day);
+//     data.json fx; the next publish's fxHist will have that day). Its own reason, "notYet" (Jack, 2026-11-13: its own
+//     line, "이 날짜의 환율이 아직 없어요. …"), when the history itself can be read;
 //   - no fxHist, one that cannot be read, or a date from 2016 on that it does not reach (under ECOS, 2016-01-01 to 01-03 come
 //     before the first row 2016-01-04: no row on or before them): not saved yet;
 //   - final not true (yahoo_next at the 06:40 publish says false: its last row is the run's live rate, not the day's; a
@@ -33,7 +34,8 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 //     either; the next publish has it final.
 // env: { today, fx, fxDate, fxHist, stale }.
 // -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
-//    past-date line does not fit) | "past" (a past date: "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
+//    past-date line does not fit) | "notYet" (a past date after the history's last day) | "past" (any other past date:
+//    "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
 export const FX_FROM = "2016-01-01";
 export function rateFor(date, env) {
   const e = env || {};
@@ -43,7 +45,7 @@ export function rateFor(date, env) {
   const rows = validRows(e.fxHist);
   if (!rows || typeof e.fxHist.asOf !== "string" || e.fxHist.asOf !== rows[rows.length - 1][0]) return { ok: false, why: "past" };
   if (date < rows[0][0]) return { ok: false, why: "past" };
-  if (date > rows[rows.length - 1][0]) return { ok: false, why: "past" };
+  if (date > rows[rows.length - 1][0]) return { ok: false, why: "notYet" };
   let lo = 0, hi = rows.length - 1, hit = null;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -120,7 +122,7 @@ export const closeIsDefault = (deck, t, date, today) =>
 // input: { qty, price, date, amountWon (by amount only) } as typed; s: the stock's data row (its close is the default price,
 // unless a split falls between the sale date and today: closeIsDefault).
 // -> { ok: true, rec } | { ok: false, why: "input" | "tooMany" | "tooEarly" | "rate" | "noPrice", field?, rate? }
-//   field: the field to mark ("qty" · "price" · "date" · "amount"); rate: rateFor's why ("today" · "past") for the line
+//   field: the field to mark ("qty" · "price" · "date" · "amount"); rate: rateFor's why ("today" · "notYet" · "past") for the line
 export function checkSale(deck, t, input, s, env) {
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";

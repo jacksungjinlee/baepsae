@@ -6,8 +6,10 @@
 - each key is read by the screen code (no line is approved and then shown nowhere), and the "until it is approved" fallbacks
   are gone (닫기 for 취소, 판 금액 for 판 금액 (원), the composed 지우기 name)
 - exact amounts read "18만 8,000원" (app.manWon) and another year's date "2025년 3월 6일" (app.ymd)
-- switches: A a sold-out kept holding is read at 0 shares on its own band ("own", until Jack answers the final review's
-  question) · B all or nothing per stock · C exact amounts always
+- switches: A a sold-out kept holding is read at 0 shares on its own band ("own", Jack's choice on 2026-11-13) · B all or
+  nothing per stock · C exact amounts always
+- Jack's two evening lines (2026-11-13): daily.soldOutKept under a sold-out kept holding, rec.rateNotYet for a US record
+  dated after the published exchange-rate history
 - 내 수익's receipt takes the headline (the sum of the rows as shown) as its {gain}, so the two agree to the 원
 (what the screens show is checked in tests/smoke_v2.py scene_v196a and scene_v196a_outs)
 """
@@ -117,14 +119,14 @@ def run(body):
         tmp = tempfile.mkdtemp(prefix="baepsae-appr-")
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
-            for name, mod in (("F", "format.js"), ("L", "lots.js"), ("R", "rules.js")):
+            for name, mod in (("F", "format.js"), ("L", "lots.js"), ("R", "rules.js"), ("Rc", "records.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/appr.mjs", "--log-level=warning",
                             "--loader:.js=jsx", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
-    code = "import { F, L, R } from './appr.mjs';\nlet out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));"
+    code = "import { F, L, R, Rc } from './appr.mjs';\nlet out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));"
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -150,7 +152,7 @@ def test_exact_amounts_and_another_years_date_read_as_approved():
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 def test_the_three_switches_are_as_jack_chose():
     got = run("""out = { a: R.SOLD_OUT_BANDS, b: L.RETURNS_PARTIAL, c: L.RETURNS_EXACT, rows: L.roundRows([843217.4, 380000.4, -52000.4]) };""")
-    # A (마지막 리뷰 S1): 세 값 중 "own" — 다 팔고 남겨 둔 종목은 0주로 제 선에서 읽고(먼저 사요), 남은 종목은 예전 그대로. Jack 의 답을 기다려요
+    # A (마지막 리뷰 S1): 세 값 중 "own" — 다 팔고 남겨 둔 종목은 0주로 제 선에서 읽고(먼저 사요), 남은 종목은 예전 그대로 (Jack 11-13)
     assert got["a"] == "own"
     assert got["b"] is False                                         # B: 종목 통째로 (이름 줄 ret.noAvg 와 함께)
     assert got["c"] is True                                          # C: 늘 정확한 금액
@@ -165,3 +167,62 @@ def test_the_receipt_names_the_headline_amount():
     ret = read("src/v2/returns.jsx")
     assert "gain: exactWon(rr.unit === 1 ? total : exact)" in ret
     assert "<Amount text={plus(unitWon(total, rr.unit), total)} />" in ret   # the headline shows the same `total`
+
+
+# ---------------- Jack's evening answers (2026-11-13): two more lines ----------------
+EVENING = {
+    "daily.soldOutKept": "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요.",
+    "rec.rateNotYet": "이 날짜의 환율이 아직 없어요. 보통 다음 날 아침에 들어오니, 그때 다시 저장해 주세요.",
+}
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_the_two_evening_lines_are_approved_recorded_and_shown_only_where_they_belong():
+    c = copy()
+    chat = CT.chat_approved()
+    doc = read("docs/tasks/v18.3-approved-in-chat.md")
+    pending = read("docs/tasks/v18.3-new-strings-pending.md")
+    for key, text in EVENING.items():
+        assert at(c, key) == text and chat.get(key) == text, key
+        row = [l for l in doc.splitlines() if l.startswith(f"| `{key}` |")]
+        assert len(row) == 1 and row[0].split("|")[3].strip().startswith("Jack, 2026-11-13"), key
+        assert f"`{key}` |" not in pending, key
+    # the sold-out line: inside 포트폴리오's sold-out rows only (after them come the portfolio's notes), and on the company page
+    # only for a built portfolio's 0-share row; never on 홈
+    pf = read("src/v2/portfolio.jsx")
+    block = pf.split("(de.soldOut || []).map(", 1)[1].split("de.rebased", 1)[0]
+    assert pf.count("C.daily.soldOutKept}") == 1 and "C.daily.soldOutKept}" in block
+    co = read("src/v2/company.jsx")
+    assert co.count("C.daily.soldOutKept}") == 1 and "{!imported && x.qty === 0 && C.daily.soldOutKept && (" in co
+    for f in ("home2.jsx", "today.jsx", "home.js", "pfview.jsx"):
+        assert "soldOutKept" not in read("src/v2/" + f), f
+    # the rate line: the record forms and 매수 계획's 샀어요, only for the "notYet" refusal
+    assert 'rateNo === "notYet" ? C.rec.rateNotYet' in read("src/v2/records.jsx")
+    assert '{noRate === "notYet" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="notYet">{C.rec.rateNotYet}</Note>}' in read("src/v2/plan.jsx")
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_only_a_us_date_after_the_published_history_is_not_yet():
+    """rec.rateNotYet (Jack, 2026-11-13) answers one case: a US record dated a past day after the last day of a history that
+    can be read (last night's US date before the morning publish). Every other refusal keeps its line: no history, a history
+    whose asOf is not its last row, a date before its first row, an unfinished last row ("past"); today on stale data
+    ("today"). A Korean record never needs a rate. The three record checks pass the reason on (the form keeps what was
+    typed: nothing is cleared on a refusal)."""
+    got = run("""const H = { asOf: '2026-11-11', final: true, rows: [['2016-01-04', 1187.7], ['2026-11-10', 1335.0], ['2026-11-11', 1333.6]] };
+      const env = (o = {}) => ({ today: '2026-11-13', fx: 1338.3, fxDate: '2026-11-13', fxHist: H, stale: false, ...o });
+      const r = (d, o) => Rc.rateFor(d, env(o)).why || 'ok';
+      const deck = { id: 'd', name: 'p', createdAt: '2026-09-01', planFx: 1300, holdings: [{ t: 'AAPL', nk: 'Apple', cls: 'us', target: 0.5 }, { t: '005930', nk: '삼성전자', cls: 'kr', target: 0.5 }],
+        purchases: [{ id: 'p1aaaaaa', t: 'AAPL', qty: 3, price: 300, date: '2026-10-02', ccy: 'USD', fx: 1300 }, { id: 'p2aaaaaa', t: '005930', qty: 10, price: 200000, date: '2026-10-02', ccy: 'KRW' }] };
+      const US = { t: 'AAPL', nk: 'Apple', cls: 'us', ccy: 'USD', price: 310 }, KR = { t: '005930', nk: '삼성전자', cls: 'kr', price: 210000 };
+      const why = (c) => (c.ok ? 'ok' : c.why + ':' + (c.rate || ''));
+      out = { after: r('2026-11-12'), onLast: r('2026-11-11'), today: r('2026-11-13'), staleToday: r('2026-11-13', { stale: true }), staleAfter: r('2026-11-12', { stale: true }),
+        noHist: r('2026-11-12', { fxHist: null }), asOf: r('2026-11-12', { fxHist: { ...H, asOf: '2026-11-12' } }), first: r('2016-01-02'),
+        unfinished: r('2026-11-11', { fxHist: { ...H, final: false } }),
+        sale: why(Rc.checkSale(deck, 'AAPL', { qty: '1', price: '310', date: '2026-11-12' }, US, env())),
+        buy: why(Rc.checkPurchase(deck, 'AAPL', { qty: '1', price: '310', date: '2026-11-12' }, US, env())),
+        div: why(Rc.checkDiv(deck, 'AAPL', { amount: '1.5', date: '2026-11-12' }, US, env())),
+        kr: why(Rc.checkPurchase(deck, '005930', { qty: '1', price: '210000', date: '2026-11-12' }, KR, env())) };""")
+    assert got["after"] == "notYet" and got["staleAfter"] == "notYet"
+    assert got["onLast"] == "ok" and got["today"] == "ok" and got["staleToday"] == "today"
+    assert got["noHist"] == got["asOf"] == got["first"] == got["unfinished"] == "past"
+    assert got["sale"] == got["buy"] == got["div"] == "rate:notYet" and got["kr"] == "ok"

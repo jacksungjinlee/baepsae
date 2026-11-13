@@ -354,7 +354,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     // data: records.jsx's today line). A date before 2016 is saved without a rate and marked noFx (never costed at planFx).
     const usRows = parsed.filter((r) => r.q > 0 && r.x.s.cls === "us");
     const rate = usRows.length ? rateFor(day, rateEnv(load, today)) : { ok: true, fx: null };
-    if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(rate.why === "today" ? "today" : "past"); setTried(true); return; }
+    if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(rate.why === "today" || rate.why === "notYet" ? rate.why : "past"); setTried(true); return; }
     setNoRate(null);
     const fx = usRows.length && typeof rate.fx === "number" && rate.fx > 0 ? rate.fx : null;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
@@ -407,6 +407,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
         {tried && (badDate || parsed.some((r) => r.badQ || r.badP)) && <Note tone="watch" data-ui-v2="bad-input">{P.badInput}</Note>}
         {noRate === "past" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="past">{C.rec.noPastRate}</Note>}
         {noRate === "today" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="today">{C.rec.noTodayRate}</Note>}
+        {noRate === "notYet" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="notYet">{C.rec.rateNotYet}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={save}>{P.save}</Button></div>
       </div>
     </BottomSheet>

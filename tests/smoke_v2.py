@@ -10299,9 +10299,12 @@ def scene_v196a_outs(R, files, width=390):
 
 
 def scene_v196a_sold_out(R, files, width=390):
-    """v19.6a final review S1 (rules.SOLD_OUT_BANDS "own", the default): three stocks at a third each, one sold out and kept
-    (남겨 두기). The two left keep their reading (할 일 없음: nobody is told 일부 팔아요 or 더 안 사요 because of the sale), the
-    sold-out one reads 먼저 사요 on its own target, and 추가로 넣을 돈 300만원 buys only that one back."""
+    """v19.6a final review S1 (rules.SOLD_OUT_BANDS "own", Jack's choice on 11-13): three stocks at a third each, one sold out
+    and kept (남겨 두기). The two left keep their reading (할 일 없음: nobody is told 일부 팔아요 or 더 안 사요 because of the sale),
+    the sold-out one reads 먼저 사요 on its own target, and 추가로 넣을 돈 300만원 buys only that one back. Under the sold-out
+    row, once, Jack's line "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." (also on its company page's 내 포트폴리오
+    row); never under a held stock, never for a stock planned and never bought (a second portfolio holds one of each), never
+    on 홈, which keeps "오늘은 할 일이 없어요"."""
     S = f"v19.6a 다 판 종목 {width}"
     data = v196a_files(files, splits=False)
     by = {x["t"]: x for x in data["data.json"]["stocks"]}
@@ -10312,9 +10315,14 @@ def scene_v196a_sold_out(R, files, width=390):
             "holdings": [{"t": t, "nk": by[t]["nk"], "target": 1 / 3, "plannedQty": q, "planPx": by[t]["price"], "rules": band(1 / 3)} for t, q in plan],
             "purchases": [{"id": f"p{i}aaaaaa", "t": t, "date": "2026-10-01", "qty": q, "price": by[t]["price"], "ccy": "KRW"} for i, (t, q) in enumerate(plan)],
             "sales": [{"id": "s1aaaaaa", "t": "105560", "qty": 21, "price": by["105560"]["price"], "date": "2026-10-20", "ccy": "KRW"}]}
+    # a second portfolio: 000660 held, 035420 planned and never bought (no line for either)
+    other = {"id": "d4", "name": "배당 생활비 포트폴리오", "createdAt": "2026-10-01",
+             "holdings": [{"t": t, "nk": by[t]["nk"], "target": 0.5, "plannedQty": q, "planPx": by[t]["price"], "rules": band(0.5)} for t, q in (("000660", 2), ("035420", 20))],
+             "purchases": [{"id": "p9aaaaaa", "t": "000660", "date": "2026-10-01", "qty": 2, "price": by["000660"]["price"], "ccy": "KRW"}]}
     seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
-            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
-    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio")
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck, other], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if width >= 1024 else None)
+    KEPT = C["daily"]["soldOutKept"]
 
     def three():
         at(page, "portfolio")
@@ -10324,6 +10332,11 @@ def scene_v196a_sold_out(R, files, width=390):
         assert st == {"005930": "none", "005380": "none", "105560": "low"}, st             # 남은 둘은 그대로, 다 판 종목만 먼저 사요
         so = card.locator('[data-sold-out="105560"]')
         assert C["daily"]["soldOut"] in so.inner_text() and C["daily"]["band"]["low"] in so.inner_text()
+        # Jack 11-13: the line once, under the sold-out row only (not under the held stocks, not in the other portfolio)
+        assert KEPT == "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요."
+        assert so.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and so.locator('[data-ui-v2="sold-out-kept"]').inner_text() == KEPT
+        assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and page.locator("body").inner_text().count(KEPT) == 1
+        assert page.locator('[data-deck-id="d4"] [data-holding="000660"]').count() == 1 and page.locator('[data-deck-id="d4"] [data-ui-v2="sold-out-kept"]').count() == 0
         add = card.locator('[data-ui-v2="add-money"]')
         for _ in range(3):
             add.get_by_role("button", name="+100만").click()
@@ -10344,13 +10357,25 @@ def scene_v196a_sold_out(R, files, width=390):
         h.wait_for(state="visible")
         disc_settled(page)
         assert h.get_attribute("data-state") == "calm", h.get_attribute("data-state")
-        assert page.locator('[data-home-holding="105560"]').count() == 0 and page.locator('[data-home-holding]').count() == 2
+        assert page.locator('[data-home-holding="105560"]').count() == 0
+        assert page.locator('[data-ui-v2="home-block"][data-deck-id="d3"] [data-home-holding]').count() == 2
+        assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 0 and KEPT not in page.locator("body").inner_text()   # 홈에는 없어요
         txt = h.inner_text()
         assert C["daily"]["sellNow"] not in txt and "매도 조건에 걸렸어요" not in txt and C["today"]["calmTitle"].split("\n")[0] in txt, txt
         if page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") in ("ok", "none", "skip"):
             assert txt.startswith(C["today"]["calmEyebrow"]), txt                           # '오늘은 할 일이 없어요' 그대로
         R.collect(page)
-    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음", three)
+        # 회사 페이지: 다 판 종목의 내 포트폴리오 줄 밑에 한 번 · 가진 종목과 사지 않은 종목에는 없어요
+        for t, n in (("105560", 1), ("005930", 0), ("035420", 0)):
+            page.evaluate(f"() => {{ location.hash = '#stocks/{t}'; }}")
+            at(page, f"stocks/{t}")
+            page.locator('[data-ui-v2="co-held"]').first.wait_for(state="visible")
+            if n:
+                row = page.locator('[data-ui-v2="co-held-row"][data-deck-id="d3"]')
+                assert row.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and row.locator('[data-ui-v2="sold-out-kept"]').inner_text() == KEPT
+            assert page.locator('[data-ui-v2="sold-out-kept"]').count() == n and page.locator("body").inner_text().count(KEPT) == n, (t, n)
+            R.collect(page)
+    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음 · '다 판 종목이에요. …' 는 다 판 종목 줄 밑에만 한 번 (포트폴리오 · 회사 페이지)", three)
     ctx.close()
     srv.shutdown()
 
@@ -10745,6 +10770,37 @@ def scene_v196a(R, files, width):
     ctx.close()
     srv.shutdown()
 
+    # Jack 11-13: 환율 기록(fxHist)이 아직 닿지 않은 지난 날짜 (어젯밤의 미국 날짜, 아침 발행 전) — 제 줄 (rec.rateNotYet)
+    late = v196a_files(files)
+    last = (dt.date.fromisoformat(today) - dt.timedelta(days=4)).isoformat()
+    late["macro.json"]["fxHist"] = {"asOf": last, "final": True, "rows": [["2016-01-04", 1172.5], ["2026-10-01", 1300.0], [last, 1350.0]]}
+    srv, ctx, page, base = R.open(build_site(late), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if wide else None)
+
+    def not_yet_rate():
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dbuilt"] [data-holding="AAPL"]').wait_for(state="visible")
+        sheet('[data-deck-id="dbuilt"] [data-holding="AAPL"]')
+        act(R_["sell"])
+        day = (dt.date.fromisoformat(today) - dt.timedelta(days=2)).isoformat()      # 환율 기록의 마지막 날 뒤, 오늘 전
+        fill_form("1", "320", day)
+        line = page.locator('[data-ui-v2="rec-form"] [data-ui-v2="rec-no-rate"]')
+        line.wait_for(state="visible")
+        assert line.get_attribute("data-why") == "notYet"
+        assert line.inner_text() == "이 날짜의 환율이 아직 없어요. 보통 다음 날 아침에 들어오니, 그때 다시 저장해 주세요." == R_["rateNotYet"]
+        assert R_["noPastRate"] not in page.locator('[data-ui-v2="rec-form"]').inner_text()
+        save()
+        page.wait_for_timeout(200)
+        assert not stored()["decks"][0].get("sales") and page.locator('[data-ui-v2="rec-saved"]').count() == 0   # 저장 안 함
+        vals = page.locator('[data-ui-v2="rec-form"] input').evaluate_all("els => els.map((e) => e.value)")
+        assert vals[:3] == ["1", "320", day], vals                                   # 적은 것은 그대로 남아요
+        check_page("환율 아직 없음", "rate-not-yet")
+        fill_form(None, None, today)                                                 # 오늘은 오늘 환율이 있어요: 줄 없음
+        assert page.locator('[data-ui-v2="rec-no-rate"]').count() == 0
+        close_sheet()
+    R.check(page, S, "환율 기록이 아직 닿지 않은 지난 날짜의 미국 판매: '이 날짜의 환율이 아직 없어요. …' · 저장 안 함 · 적은 값은 그대로 · 오늘 날짜면 줄 없음", not_yet_rate)
+    ctx.close()
+    srv.shutdown()
+
     stale = v196a_files(files)
     for f in DATA_FILES:
         stale[f]["publishedAt"] = now_kst(6)
@@ -10892,6 +10948,7 @@ def main():
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
                    lambda: scene_v196a_outs(R, files, 390),                                                 # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
                    lambda: scene_v196a_sold_out(R, files, 390),                                             # v19.6a 마지막 리뷰 S1: 다 팔고 남겨 둔 종목 ("own")
+                   lambda: scene_v196a_sold_out(R, files, 1280),                                            # 같은 장면, PC (Jack 11-13: 다 판 종목 줄)
                    lambda: scene_v196a_split_price(R, files, 390)):                                         # v19.6a 리뷰 3차: 분할 사이의 빈 가격
             try:
                 fn()

@@ -343,14 +343,14 @@ function reasonsOf(results, unit = false) {
   return out.sort((a, b) => LEVEL[a.level] - LEVEL[b.level]);
 }
 
-// v19.6a: a holding sold down to 0 and kept (남겨 두기). Three ways to read it, one switch (final review S1; Jack decides):
+// v19.6a: a holding sold down to 0 and kept (남겨 두기). Three ways to read it, one switch (final review S1; Jack chose "own" on 2026-11-13):
 //   "off"   what was live before v19.6a (v19.3d2, Jack 2026-11-08): it is left out of the band rules ("다 팔고 목표 비중만 남아
 //           있어요."), the other targets are rebased over what is held.
 //   "spec"  spec v19.6 A.1 to the letter: it counts as held with 0 shares and every band is read over the whole plan. It can
 //           show as below its band (먼저 사요) and 추가로 넣을 돈 buys it back — but in a small or concentrated portfolio the
 //           OTHER holdings then read above their bands (three equal stocks, one sold out and kept: the two left sit at 50%
 //           against an edge of 46.7% and read 일부 팔아요), the false sell instruction "off" was chosen to avoid.
-//   "own"   (what ships until Jack answers) the sold-out holding is read at 0 shares against its own band over the whole
+//   "own"   (what ships, Jack 2026-11-13) the sold-out holding is read at 0 shares against its own band over the whole
 //           plan, so it reads 먼저 사요 and 추가로 넣을 돈 buys it back first, while every other holding keeps the "off"
 //           reading (rebased over what is held): the sale gives no other holding a new 일부 팔아요 or 더 안 사요.
 // ctx.soldOutBands ("off" · "spec" · "own"): set only by tests, to check all three.

@@ -204,8 +204,10 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const bad = (f) => !!why && check.field === f;            // only the field the refusal is about turns amber
   // a US record without the rate of its date: said as soon as the date is typed (the record can't be saved yet). A past date:
   // the approved "환율 정보를 불러오지 못해 … 지난 날짜의 …" line. Today (stale data: its rate is an older day's): rec.noTodayRate.
+  // A past date after the published history's last day (last night's US date before the morning publish): rec.rateNotYet.
+  // The form keeps what was typed (nothing is cleared on a refusal).
   const rateNo = !check.ok && check.why === "rate" ? check.rate : null;
-  const rateLine = rateNo === "past" ? C.rec.noPastRate : rateNo === "today" ? C.rec.noTodayRate : null;
+  const rateLine = rateNo === "past" ? C.rec.noPastRate : rateNo === "today" ? C.rec.noTodayRate : rateNo === "notYet" ? C.rec.rateNotYet : null;
   // a holding put in by amount has no share count of its own: no "지금 N주 …" head line (the by-amount line explains the form)
   const head = kind === "sell" && !byAmount ? (st.avg ? fill(C.rec.head, { qty: qtyText(st.qty), price: ownMoney(st.avg.avg, st.avg.ccy) }) : fill(C.rec.heldQty, { qty: qtyText(st.qty) })) : null;
   // the dividend and by-amount forms have no 수량 · 가격: their own line (rec.badAmount), never "날짜·수량·가격을 다시 확인해

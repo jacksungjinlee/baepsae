@@ -560,6 +560,10 @@ function Holdings({ held, single, action = null }) {
                 {chips || <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span>}
               </div>
             )}
+            {/* Jack, 2026-11-13: this portfolio sold the stock out and kept it in the plan (0 shares, rules.SOLD_OUT_BANDS) */}
+            {!imported && x.qty === 0 && C.daily.soldOutKept && (
+              <p data-ui-v2="sold-out-kept" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), paddingLeft: 36 + SPACE(3), wordBreak: "keep-all" })}>{C.daily.soldOutKept}</p>
+            )}
           </div>
         );
       })}

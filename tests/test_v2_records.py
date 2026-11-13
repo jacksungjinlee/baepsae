@@ -91,8 +91,8 @@ def test_the_rate_of_a_records_date_never_another_days():
       noToday: Rc.rateFor(T, env({ fx: null })), staleToday: Rc.rateFor(T, env({ stale: true })), bad: Rc.rateFor('2026-02-30', env()) };""")
     assert got["today"] == {"ok": True, "fx": 1401.1}                                        # 오늘: data.json fx
     assert got["onDay"] == {"ok": True, "fx": 1375.2} and got["weekend"] == {"ok": True, "fx": 1338.0} and got["last"] == {"ok": True, "fx": 1390.4}
-    assert got["gapFresh"] == {"ok": False, "why": "past"}                                   # 리뷰 2차: fxHist 마지막 날 뒤의 지난 날짜는 거절 (오늘만 data.json fx)
-    assert got["gapStale"] == {"ok": False, "why": "past"} and got["gapOtherDate"] == {"ok": False, "why": "past"}
+    assert got["gapFresh"] == {"ok": False, "why": "notYet"}                                 # 리뷰 2차: fxHist 마지막 날 뒤의 지난 날짜는 거절 (오늘만 data.json fx) · 제 줄 (Jack 11-13)
+    assert got["gapStale"] == {"ok": False, "why": "notYet"} and got["gapOtherDate"] == {"ok": False, "why": "notYet"}
     assert got["noHist"] == {"ok": False, "why": "past"} and got["badHist"]["ok"] is False and got["asOfOff"]["ok"] is False
     assert got["pre2016"] == {"ok": True, "fx": None, "before": True}                           # 2016 전: 환율 없이 (noFx 표시)
     assert got["first2016"] == {"ok": False, "why": "past"} and got["beforeFirst"] == {"ok": False, "why": "past"}   # 2016 부터 fxHist 가 닿지 않으면 거절
