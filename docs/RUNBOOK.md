@@ -447,8 +447,8 @@ the gate's "공시 단위 확인 회사 바뀜" warning names it when that happe
     - `yahoo_next`: Yahoo's next-bar open, London midnight at the end of D (08:00 or 09:00 KST the next morning); at the
       06:40 KST publish the last row is the run's live `fx` and `final` is false.
     A weekend or Korean holiday uses the last row before it.
-  - The source is one switch in `fetch_data.py`, `FX_HIST_SOURCE`, waiting for Jack's choice; the default is
-    `ecos_close` (#117 round 3). Measured against the end of the US trading day D (Yahoo's next-bar open), 2,727 US
+  - The source is one switch in `fetch_data.py`, `FX_HIST_SOURCE`: `ecos_close` (Jack's choice, 2026-11-13). Never
+    change it without Jack: rates already saved in users' records would then mix two bases. Measured against the end of the US trading day D (Yahoo's next-bar open), 2,727 US
     trading days 2016-01 → 2026-11; the 06:40 publish columns cover every Tue–Sat publish 2016-02 → 2026-11:
 
     | Option | Median (record dated D) | p90 | p99 | Max | Days over 1% | Median if the user types the Korean date (D+1) | Yesterday's US session saveable at the next 06:40 publish | Extra wait otherwise (mean · max days) | US days not saveable at a 06:40 publish (mean · max) |
@@ -496,7 +496,7 @@ the gate's "공시 단위 확인 회사 바뀜" warning names it when that happe
     repeated every day until someone settles them with an override row. That also covers a ticker reused by another
     company: the old company's splits stay listed and warn until an "out" row removes them.
     `splitsAsOf` is the last day the run read Yahoo itself; it renews when the split column of even one stock was read
-    today, so the 5-day FAIL cannot fire during a near-total partial outage: then the warning gives the number of
+    today, so the 6-day loud warning does not fire during a near-total partial outage: then the warning gives the number of
     stocks not read (`noCol`), which is the thing to watch; `splitsInfo` also holds `noCol` (stocks it could not read
     today), `fixed` (the override table in effect) and `fixedKept` (override rows deleted from the code; see below). On a
     first publish (yesterday's file has no list) the run leaves `splits` out if any of the ten known splits is missing
