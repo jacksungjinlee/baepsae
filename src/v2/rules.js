@@ -364,26 +364,33 @@ const SOLD_OUT_MODES = ["off", "spec", "own"];
 export function evaluateHolding(h, deck, ctx, weights, qty) {
   const s = ctx.byT.get(h.t) || null;
   const co = ctx.coByT.get(h.t) || null;
-  // v19.6a (verification B1): a holding sold out and kept, read with 0 shares ("spec" · "own"), is read on its weight band
-  // only: it can be 먼저 사요 or 할 일 없음, never 규칙 깨짐, 지켜봐요 or 확인 필요 for shares nobody holds. Its other rules are
-  // not read (not 준비 중 either: they are not in "아직 자동으로 확인하지 못하는 규칙").
-  const book = qty === 0 ? [bandRuleOf(h)].filter(Boolean) : Array.isArray(h.rules) ? h.rules : [];
   // ctx.krDivTrend: set only by tests, to check both states of the switch; todayCtx leaves it out (the switch applies)
   const trend = typeof ctx.krDivTrend === "boolean" ? ctx.krDivTrend : KR_DIV_TREND;
+  // v19.6a (verification B1): a holding sold out and kept, read with 0 shares ("spec" · "own"), is read on its weight band
+  // only: it can be 먼저 사요 or 할 일 없음, never 규칙 깨짐, 지켜봐요 or 확인 필요 for shares nobody holds, and its other rules are
+  // not shown or counted (not 준비 중 either: they are not in "아직 자동으로 확인하지 못하는 규칙"). Those rules are read for one
+  // thing only: the app never tells the user to buy back a stock that fails its own rules. When one of them reads 규칙 깨짐
+  // (a sell condition fired, e.g. a dividend cut the user confirmed), the band is not read either: 할 일 없음, no 먼저 사요, no
+  // target (추가로 넣을 돈 skips it and buys what "off" buys); soldOutBroken says so.
+  const zero = qty === 0;
+  const full = Array.isArray(h.rules) ? h.rules : [];
+  const soldOutBroken = zero && reasonsOf(full.filter((r) => !(r && r.id === "band")).map((r) => evalRule(r, h, s, co, deck, weights, trend)))
+    .some((x) => x.level === "broken");
+  const book = zero ? (soldOutBroken ? [] : [bandRuleOf(h)].filter(Boolean)) : full;
   const rules = book.map((r) => evalRule(r, h, s, co, deck, weights, trend));
   // 공시 단위 확인: a Korean stock whose statement numbers the pipeline blanked (data.json or corp.json unitChk)
   const unit = !!s && s.cls === "kr" && (unitHeld(s) || unitHeld(co));
   const reasons = reasonsOf(rules, unit);
   // No rule that could be checked at all (an empty or malformed book, only possible in a hand-made file): nothing was
   // checked, so never 할 일 없음.
-  if (!rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
+  if (!soldOutBroken && !rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
   const pxd = ownCloseDate(s, ctx.usPxDate);
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
-    t: h.t, nk: h.nk, cls: h.cls || (s && s.cls) || null, kind: h.kind || null, qty,
+    t: h.t, nk: h.nk, cls: h.cls || (s && s.cls) || null, kind: h.kind || null, qty, ...(zero ? { soldOutBroken } : {}),
     status, reasons, rules, unit,
     // every dividend drop after purchase with its answer (null / "cut" / "notCut"): the screen keeps both answers open
     divDrops: div ? div.drops : [],
