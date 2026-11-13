@@ -49,6 +49,7 @@ FINAL_AFTER = dt.timedelta(minutes=30)    # 마감 30분 뒤 커밋부터 최종
 SPECIAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "krx_special_sessions.csv")
 # v19.1c (Jack, 2026-11-07): 휴장일 표 · 다음 발행 예정일 · 늦음 경고 시각. fetch_data.py 와 같은 표를 따로 읽고 따로 계산해요.
 HOLIDAYS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_holidays.csv")
+SPLIT_SEED_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "us_splits_seed.csv")   # v19.6a: 검토해 커밋한 분할 (fetch_data 와 같은 파일, 읽는 코드는 따로)
 HOL_COLS = ["date", "market", "name", "source"]
 LAST_RETRY = dt.time(14, 47)              # update-data.yml 의 그날 마지막 정해진 시각 실행 (월~토 14:47 KST)
 STALE_GRACE_H = 2                         # GitHub 정해진 시각 실행이 늦게 시작하는 시간 + 실행 시간
@@ -215,6 +216,40 @@ DVWHY_CLEAN_TOL = 1e-4   # 사건 하나의 배율은 깨끗한 분할 배율(SP
 DVWHY_SAME = 0.10        # 10% 이하 변화는 이름 붙이지 않아요 · filed 의 여유 (fetch_data.SHARE_SAME 과 같은 값)
 DVWHY_CB_FLOOR = 0.7     # 전환·행사가액의 하한 (발행 때의 70%) → 사채가 만드는 주식 수는 많아야 1/0.7 배
 DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 말보다 이만큼 앞부터
+# v19.6a (새 줄만 · 늦추는 줄 없음 · docs/tasks/v19.6-records-alerts-dark.md Part I.1 · A.6): macro.json fxHist (원/달러 일별 환율 2016~)
+# 와 data.json splits (2016 년부터의 미국 주식 분할). 앱(v19.6a)은 새 미국 기록에 그 날짜의 환율을 저장하고(fxHist), 분할 전 기록을 새 주식
+# 수로 맞춰 읽어요(splits). 둘 다 사용자 기록에 영구히 남는 값이라 모양이 틀리면 실패. fxHist 가 없으면 경고 (앱이 지난 날짜의 미국 기록을
+# 받지 않고 승인된 줄로 알려요 — 틀린 숫자가 아니에요). splits 는 직전 발행본에 있었는데 빠지거나, 한 번 실은 분할이 사라지거나 배율이
+# 바뀌면 실패 (분할 전 기록의 주식 수가 바뀌어 보여요). 파이프라인(fetch_data.py)은 아래 기준값을 읽어 같은 선으로 판단해요 (검사 코드는 따로).
+FX_HIST_FROM = "2016-01-01"     # 앱이 환율을 찾는 첫날 (src/v2/records.js FX_FROM) — 그 전 날짜의 미국 기록은 환율 없이 저장돼요
+FX_HIST_FIRST_BY = "2016-01-08" # 첫 줄은 2016년 첫 주 안이어야 해요 (앞이 잘린 이력이면 2016년 뒤 날짜의 기록이 환율 없이 저장돼요)
+FX_HIST_SOURCES = ("ecos_next", "ecos_close", "ecos", "yahoo_next")   # fetch_data.FX_HIST_SOURCE (Jack 의 선택 2026-11-13: ecos_close):
+#                                 다음 날 매매기준율 · 15:30 종가 · 그날 매매기준율 (ECOS) · 야후 다음 봉 시가 — 무엇을 뜻하는지는 fetch_data.py 와 RUNBOOK
+# 약속 (모든 출처): fxHist 의 줄은 asOf 와 그 전 날짜에만 말해요. 앱은 asOf 뒤 날짜를 받지 않아요 — 오늘만 예외 (신선한 data.json fx).
+FX_HIST_ECOS = ("ecos_next", "ecos_close", "ecos")
+FX_HIST_GAP_MAX = {"ecos_next": 14, "ecos_close": 14, "ecos": 14, "yahoo_next": 7}   # 줄 사이 달력 날짜 상한. ECOS (한국 영업일)
+#                                 2016-01 ~ 2026-11 가장 긴 것 11일 (2017-09-29 → 10-10 추석 연휴) · 야후 (런던 거래일) 가장 긴 것 5일 (2025 부활절)
+FX_HIST_JUMP = 10.0             # 줄 사이 변화 상한 (%) — 2016-01 ~ 2026-11 가장 큰 날: ECOS 3.42% (2020-03-20) · 야후 3.4%. 넘으면 깨진 값
+FX_HIST_REL = 0.10              # 마지막 줄 값 ↔ data.json fx 차이 상한 (10%). 출처·시각이 달라 같지 않아요 (ECOS ↔ 야후 미국 하루 끝: 중앙값
+#                                 0.25~0.42% · 가장 큰 날 4.35%). 이 줄은 엉뚱한 시계열(다른 통화 · 오래 멈춘 값)을 잡는 줄이고, 단위가 틀린 값
+#                                 (100엔 · 위안 · 역수)은 범위 900~2,000 이 잡아요 — 5% 로 두면 큰 날 하나에 발행 전체가 막힐 수 있어요 (#117 리뷰 2)
+FX_HIST_ECOS_TAIL = 14          # 휴장일 표가 덮지 못하는 날: ECOS 이력의 마지막 날이 발행일보다 이만큼 넘게 오래면 경고. 표가 덮으면 영업일로 봐요
+#                                 (ecos · ecos_close: 발행일 전 마지막 한국 영업일 · ecos_next: 그 전 영업일 — 그보다 앞이면 경고)
+SPLITS_FROM = "2016-01-01"      # splits 는 2016-01-01 부터 (fxHist 와 같은 첫날 · data.json splitsFrom) — 앱은 그 전 날짜의 기록을 맞추지 못해요
+SPLIT_R = (0.001, 1000.0)       # 앱(src/v2/held.js okSplit)이 읽는 배율 범위 — 밖이면 앱이 그 줄을 버려요 (배율 1 도)
+SPLIT_SIMPLE_MAX = 20           # 배율은 기약분수 p/q 에서 min(p, q) ≤ 20 인 '깨끗한' 값만 (10:1 · 1:15 · 3:2 · 105:100 = 21:20 주식배당).
+#                                 야후는 분사(spin-off)도 분할 칸에 1253:1000 (GE · GE 버노바 분사) 같은 가격 조정 배율로 적어요 — 주식 수가
+#                                 바뀐 게 아니라서 앱이 쓰면 사용자 주식 수가 늘어 보여요. 깨끗하지 않은 진짜 사건(병합 + 분사를 한 날 한 HLT ·
+#                                 RYAAY ADS 비율 변경 …)은 파이프라인의 고정 표(fetch_data.SPLIT_OVERRIDES)로 넣고 splitsInfo.fixed 에 실어요
+SPLIT_CLEAN_TOL = 1e-9          # 깨끗한 분수와의 차이 허용 (배율 × 이 값 · 파이프라인도 이 값을 읽어요)
+SPLIT_FRESH_MAX_DAYS = 5        # splitsAsOf (야후에서 마지막으로 새로 읽은 날) 가 발행일보다 이만큼 넘게 오래면 큰 경고 — 실패 아님
+                                # (Jack, 2026-11-13: 작은 출처 장애가 모두의 데이터 발행을 막으면 안 돼요). 없거나 오늘 뒤면 실패.
+SPLIT_NEW_OLD_DAYS = 7          # 어제 목록에 없던 분할이 이보다 오래된 날짜로 새로 나오면 경고 (어제 2016 년부터 읽은 종목만)
+SPLIT_NEAR_DAYS = 30            # 한 종목에 분할이 이 기간 안에 둘이면 경고 (야후가 같은 분할의 날짜를 옮겨 적었을 수 있어요 · QQQ 10-15/10-16)
+# 꼭 있어야 할 분할 (야후 날짜 · 2026-11-13 확인): 2016 년부터의 이력을 읽지 못하면 실패해요
+MUST_SPLITS = (("AAPL", "2020-08-31", 4.0), ("TSLA", "2020-08-31", 5.0), ("TSLA", "2022-08-25", 3.0), ("NVDA", "2021-07-20", 4.0),
+               ("NVDA", "2024-06-10", 10.0), ("AMZN", "2022-06-06", 20.0), ("GOOGL", "2022-07-18", 20.0), ("WMT", "2024-02-26", 3.0),
+               ("CMG", "2024-06-26", 50.0), ("HLT", "2017-01-04", 1 / 3))
 # 공시 단위 확인 (Jack 2026-11-13 · 새 줄만, 늦추는 줄 없음): 단위를 잘못 적은 재무제표 (진코스텍 · 디와이에이 2026 반기보고서 — '천원'이라
 # 적고 숫자는 원이라 DART 금액이 1,000배 → PER·PBR 0.0 · 가치 점수 100). 파이프라인(fetch_data.unit_guard)이 걸린 회사에 unitChk(이유 목록)를
 # 달고 재무제표로 만든 숫자를 비워요. 관문: unitChk 회사에 비운 칸이 남으면 실패 · unitChk 없이 PBR 이 UNIT_PBR_LOOK 미만인 국내 회사는
@@ -883,6 +918,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
+    check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_unit(rep, data, kr, by, comps, pdata)
 
     # 경고만
@@ -972,6 +1008,391 @@ def check_v191c(rep, cur, us, mode, today):
             else (f"{len(own)}종목: " + ", ".join(own[:US_D1_SHOW]) + (f" 외 {len(own) - US_D1_SHOW}개" if len(own) > US_D1_SHOW else "")
                   if own else "없음 (모두 미국 기준일 종가)"),
             f"d1 이 없는 미국 종목은 pxd < {usd} · d1 이 있으면 pxd 없음")
+
+
+def _iso_day(s):
+    """'YYYY-MM-DD' 로 적힌 진짜 날짜면 date, 아니면 None (2026-02-30 · '2026-1-5' · 숫자는 None)."""
+    if not isinstance(s, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        return None
+    try:
+        return dt.date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def json_num(x):
+    """JSON 숫자(정수·실수, 참/거짓 아님, 유한)면 float, 아니면 None — 앱은 글자 "1180.5" 를 숫자로 읽지 않아요 (typeof number)."""
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else None
+
+
+def simple_ratio(r, top=None):
+    """배율이 기약분수 p/q 로 min(p, q) ≤ top 인지 (분할·병합·주식배당은 그래요 · 야후가 분사를 적은 1253:1000 같은 값은 아니에요).
+    fetch_data.split_is_clean 과 같은 규칙 · 같은 허용치(SPLIT_CLEAN_TOL), 코드는 따로: p/q 를 분수로 바로 찾아요."""
+    from fractions import Fraction
+    top = SPLIT_SIMPLE_MAX if top is None else top
+    if r is None or not (r > 0):
+        return False
+    f = Fraction(r).limit_denominator(10 ** 6)
+    return abs(float(f) - r) <= SPLIT_CLEAN_TOL * max(1.0, r) and min(f.numerator, f.denominator) <= top
+
+
+def whole_ratio(r):
+    """정수(2:1 · 10:1)이거나 1/정수(1:5 병합)인 배율 — 아니면(3:2 · 21:20 …) 새로 생길 때 사람이 한 번 봐요."""
+    if r is None or not (r > 0):
+        return False
+    x = r if r >= 1 else 1 / r
+    return abs(x - round(x)) <= SPLIT_CLEAN_TOL * max(1.0, x)
+
+
+def same_ratio(a, b):
+    return a is not None and b is not None and abs(a - b) <= SPLIT_CLEAN_TOL * max(1.0, abs(a), abs(b))
+
+
+def _split_map(raw):
+    """splits 목록 → {(코드, 날짜): 배율} (모양이 맞고 배율 > 0 인 줄만 · 직전 발행본 비교용)."""
+    out = {}
+    for x in raw if isinstance(raw, list) else []:
+        if isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and _iso_day(x[1]) and (json_num(x[2]) or 0) > 0:
+            out[(x[0], x[1])] = json_num(x[2])
+    return out
+
+
+def _fixed_map(info):
+    """splitsInfo.fixed ([[코드, 날짜, 배율 또는 null, 근거]]) → ({(코드, 날짜): 배율 또는 None}, 모양이 틀린 줄 수)."""
+    out, bad = {}, 0
+    for x in (info.get("fixed") if isinstance(info, dict) else None) or []:
+        ok = (isinstance(x, list) and len(x) == 4 and isinstance(x[0], str) and _iso_day(x[1]) and isinstance(x[3], str) and x[3]
+              and (x[2] is None or (json_num(x[2]) or 0) > 0))
+        if ok:
+            out[(x[0], x[1])] = json_num(x[2]) if x[2] is not None else None
+        else:
+            bad += 1
+    return out, bad
+
+
+def load_split_seed_rows(path=None):
+    """data/us_splits_seed.csv (code,date,ratio,yahoo · # 줄은 설명) → {(코드, 날짜): 배율}. 이 파일의 코드로 따로 읽어요 (fetch_data.load_split_seed 와
+    같은 파일). '정수가 아닌 새 배율' 경고에서 이미 검토한 줄을 빼는 데만 써요 — 읽지 못하면 한 줄 남기고 빈 표 (그날은 그 줄들도 경고해요)."""
+    path = path or SPLIT_SEED_CSV
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [ln for ln in f.read().splitlines() if ln.strip() and not ln.startswith("#")]
+        if not lines or lines[0].strip() != "code,date,ratio,yahoo":
+            raise ValueError("머리줄이 code,date,ratio,yahoo 가 아니에요")
+        for ln in lines[1:]:
+            t, d, r = ln.split(",")[:3]
+            if not _iso_day(d.strip()) or not (float(r) > 0):
+                raise ValueError(f"줄 {ln[:40]}")
+            out[(t.strip(), d.strip())] = float(r)
+    except Exception as e:
+        print(f"· 분할 시드({os.path.basename(path)})를 읽지 못해 '정수가 아닌 새 배율' 경고에서 검토한 줄을 빼지 못해요: {type(e).__name__}: {str(e)[:100]}")
+        return {}
+    return out
+
+
+def _diff_text(x):
+    """splitsInfo.diff 한 줄 [코드, 날짜, 실은 배율, 야후 배율 또는 null, (야후 날짜)] → 글자 (모양이 틀리면 그대로)."""
+    if not (isinstance(x, list) and len(x) in (4, 5) and json_num(x[2]) and (x[3] is None or json_num(x[3]))):
+        return json.dumps(x, ensure_ascii=False)[:40]
+    return (f"{x[0]} {x[1]} ×{x[2]:g}→" + ("없음" if x[3] is None else f"×{x[3]:g}")
+            + (f" ({x[4]})" if len(x) == 5 and x[4] else ""))
+
+
+def _us_codes(d):
+    return {s.get("t") for s in (d or {}).get("stocks") or [] if s.get("cls") == "us" and not s.get("fund")}
+
+
+def _fx_hist_vs_yesterday(ds, vs, src, pmacro):
+    """v19.6a (#117 리뷰 3 N7 · 경고만): 어제 발행본의 fxHist 와 비교 — 지난 줄(어제 마지막까지, 어제 마지막 줄이 끝나지 않은 값이면 그 전까지)이
+    바뀌었거나 빠졌으면, 어제 마지막 날 앞에 어제 없던 줄이 끼어들었으면, asOf 가 어제보다 앞이면, 출처가 바뀌었으면. 사용자 기록에 저장된 환율은 바뀌지 않지만 같은 날짜의 새 기록이 다른 값을
+    받게 돼요. -> 경고 글 목록."""
+    pfh = pmacro.get("fxHist") if isinstance(pmacro, dict) else None
+    if not isinstance(pfh, dict) or not isinstance(pfh.get("rows"), list):
+        return []
+    if pmacro.get("fxHistSrc") != src:
+        return [f"출처가 어제 {pmacro.get('fxHistSrc')!r} 에서 바뀌었어요 (같은 날짜의 값이 달라져요)"]
+    prev = {}
+    for r in pfh["rows"]:
+        if isinstance(r, list) and len(r) == 2 and _iso_day(r[0]) and (json_num(r[1]) or 0) > 0:
+            prev[r[0]] = json_num(r[1])
+    if not prev:
+        return []
+    keys = sorted(prev)
+    cut = keys[-2] if pfh.get("final") is False and len(keys) > 1 else keys[-1]
+    cur = {d.isoformat(): v for d, v in zip(ds, vs)}
+    changed = [d for d in keys if d <= cut and (d not in cur or abs(cur[d] - prev[d]) > 1e-9)]
+    added = [d for d in sorted(cur) if d < keys[-1] and d not in prev]      # 어제 마지막 날 앞에 새로 끼어든 줄
+    out = [f"지난 줄이 어제와 달라요 {len(changed)}: {', '.join(changed[:5])}"] if changed else []
+    if added:
+        out.append(f"어제 없던 지난 줄이 생겼어요 {len(added)}: {', '.join(added[:5])}")
+    p_as_of = _iso_day(pfh.get("asOf"))
+    if p_as_of and ds and ds[-1] < p_as_of:
+        out.append(f"asOf {ds[-1]} 가 어제 {p_as_of} 보다 앞이에요")
+    return out
+
+
+def _ecos_tail_min(run_day, src):
+    """휴장일 표(data/market_holidays.csv)로 본 ECOS fxHist 의 마지막 날 하한: ecos · ecos_close = 발행일 전 마지막 한국 영업일 (그날 아침
+    고시 · 그날 15:30 마감은 다음 날 아침에 있어요), ecos_next = 그 전 영업일 (다음 날 매매기준율이 있어야 줄이 생겨요). 표가 덮지 못하거나
+    읽지 못하면 None (그때는 FX_HIST_ECOS_TAIL 일 기준)."""
+    try:
+        hol, end = load_holidays()
+    except Exception:
+        return None
+    if not (hol["start"] <= run_day - dt.timedelta(days=20) and run_day <= end):
+        return None
+
+    def prev_bd(d):
+        d -= dt.timedelta(days=1)
+        while d.weekday() >= 5 or d in hol["KR"]:
+            d -= dt.timedelta(days=1)
+        return d
+    m = prev_bd(run_day)
+    return prev_bd(m) if src == "ecos_next" else m
+
+
+def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
+    """v19.6a (Part I.1 · A.6): macro.json fxHist 와 data.json splits. 세 줄."""
+    run_day = _iso_day(data.get("asOf")) or today          # 발행일 (이 실행의 한국 날짜)
+    # 1. 환율 이력 — 앱이 새 미국 기록에 그 날짜의 환율로 저장해요 (records.js rateFor: 그날 줄, 없으면 그 전 마지막 줄). 약속: 줄은 asOf 와 그 전
+    #    날짜에만 말해요 (앱은 asOf 뒤 날짜를 받지 않아요 — 오늘만 신선한 data.json fx). asOf 가 마지막 줄과 다르면 앱이 통째로 안 써요.
+    #    final = 마지막 줄이 끝난 값인지 (ECOS 출처는 늘 참 · 야후는 런던 자정이 지났는지). fxHistFresh = 출처에서 마지막으로 새로 읽은 날 —
+    #    그보다 뒤 발행은 지난 발행본을 그대로 둔 것이라 경고 (줄은 그 날짜들에 대해 여전히 맞아요 · 앱은 asOf 뒤를 받지 않아요).
+    name = "환율 이력 (fxHist)"
+    th = (f"{FX_HIST_FROM} 부터 (첫 줄 ≤ {FX_HIST_FIRST_BY}) · 날짜 차례대로 · 줄 사이 ≤ {FX_HIST_GAP_MAX['ecos_next']}일(ECOS)/"
+          f"{FX_HIST_GAP_MAX['yahoo_next']}일(야후) · 줄 사이 변화 ≤ {FX_HIST_JUMP:g}% · {FX_LO}~{FX_HI} · asOf = 마지막 날 ≤ 오늘(ecos · ecos_close)"
+          f"/< 오늘(ecos_next · 야후) · 야후는 = fxDate · 마지막 값 = data.json fx ± {FX_HIST_REL:.0%} · final 참/거짓 · fxHistFresh ≤ 발행일 "
+          "(없거나 · 출처 표시가 없거나 · 지난 발행본을 그대로 뒀거나 · ECOS 마지막 날이 늦으면 경고)")
+    fh = macro.get("fxHist")
+    src = macro.get("fxHistSrc")
+    if fh is None:
+        rep.add(name, True, "없음 — 앱은 지난 날짜의 미국 종목 기록을 받지 않고 그렇게 알려요", th, warn=True)
+    else:
+        probs, warns, ds, vs, bad = [], [], [], [], 0
+        if src not in FX_HIST_SOURCES:
+            warns.append(f"출처 표시 {src!r}")
+        gap_max = FX_HIST_GAP_MAX.get(src, max(FX_HIST_GAP_MAX.values()))
+        rows = fh.get("rows") if isinstance(fh, dict) else None
+        if not isinstance(rows, list) or not rows:
+            probs.append("rows 가 비었거나 목록이 아니에요")
+            rows = []
+        for r in rows:
+            two = isinstance(r, list) and len(r) == 2
+            d, v = (_iso_day(r[0]), json_num(r[1])) if two else (None, None)
+            if d is None or v is None or v <= 0:
+                bad += 1
+                continue
+            ds.append(d)
+            vs.append(v)
+        if bad:
+            probs.append(f"모양이 틀린 줄 {bad:,}개")
+        if isinstance(fh, dict) and not isinstance(fh.get("final"), bool):
+            probs.append(f"final {fh.get('final')!r} (참/거짓이어야 해요)")
+        if ds and not bad:
+            if ds[0] < day(FX_HIST_FROM) or ds[0] > day(FX_HIST_FIRST_BY):
+                probs.append(f"첫날 {ds[0]}")
+            order = [f"{a}→{b}" for a, b in zip(ds, ds[1:]) if b <= a]
+            if order:
+                probs.append(f"날짜 차례·겹침 {len(order)}곳 ({order[0]})")
+            gaps = [f"{a}→{b} {(b - a).days}일" for a, b in zip(ds, ds[1:]) if (b - a).days > gap_max]
+            if gaps:
+                probs.append(f"빈 날 {len(gaps)}곳 ({', '.join(gaps[:2])})")
+            jumps = [f"{a} {x:g}→{y:g}" for a, b, x, y in zip(ds, ds[1:], vs, vs[1:]) if abs(y / x - 1) * 100 > FX_HIST_JUMP]
+            if jumps:
+                probs.append(f"큰 변화 {len(jumps)}곳 ({', '.join(jumps[:2])})")
+            out = [f"{d} {v:g}" for d, v in zip(ds, vs) if not (FX_LO < v < FX_HI)]
+            if out:
+                probs.append(f"범위 밖 {len(out)}줄 ({', '.join(out[:2])})")
+            if _iso_day(fh.get("asOf")) != ds[-1]:
+                probs.append(f"asOf {fh.get('asOf')} ≠ 마지막 날 {ds[-1]}")
+            same_day_ok = src in ("ecos", "ecos_close")          # 그날 고시·마감된 끝난 값이라 오늘 줄이 있을 수 있어요
+            if ds[-1] > today or (not same_day_ok and ds[-1] >= today):
+                probs.append(f"마지막 날 {ds[-1]} 가 오늘({today}) " + ("뒤" if ds[-1] > today else "(아직 없어야 할 줄)"))
+            fxd = _iso_day(data.get("fxDate"))
+            fresh = _iso_day(macro.get("fxHistFresh"))
+            if src == "yahoo_next" and (fxd is None or ds[-1] > fxd or (fresh == run_day and ds[-1] != fxd)):
+                probs.append(f"마지막 날 {ds[-1]} ≠ data.json fxDate {data.get('fxDate')}")
+            fx = num(data.get("fx"))
+            if fx is None or abs(vs[-1] / fx - 1) > FX_HIST_REL:
+                probs.append(f"마지막 값 {vs[-1]:g} 이 data.json fx {data.get('fx')} 와 {FX_HIST_REL:.0%} 넘게 달라요")
+            if fresh is None:
+                warns.append(f"fxHistFresh {macro.get('fxHistFresh')!r}")
+            elif fresh > run_day:
+                probs.append(f"fxHistFresh {fresh} 가 발행일 {run_day} 뒤예요")
+            elif fresh < run_day:
+                warns.append(f"출처를 {fresh} 뒤로 새로 읽지 못해 지난 발행본의 이력을 그대로 뒀어요 ({(run_day - fresh).days}일째 · "
+                             "asOf 뒤 날짜는 앱이 받지 않아요)")
+            warns += _fx_hist_vs_yesterday(ds, vs, src, pmacro)
+            if src in FX_HIST_ECOS:
+                want = _ecos_tail_min(run_day, src)
+                if want is not None and ds[-1] < want:
+                    warns.append(f"ECOS 마지막 날 {ds[-1]} (휴장일 표로 보면 {want} 까지 있어야 해요)")
+                elif want is None and (run_day - ds[-1]).days > FX_HIST_ECOS_TAIL:
+                    warns.append(f"ECOS 마지막 날 {ds[-1]} 이 {FX_HIST_ECOS_TAIL}일 넘게 전이에요")
+        if probs:
+            rep.add(name, False, " · ".join(probs)[:200], th)
+        else:
+            rep.add(name, True, f"{ds[0]} ~ {ds[-1]} · {len(ds):,}일 · 마지막 {vs[-1]:,.1f}"
+                    + ("" if fh.get("final") else " (아직 끝나지 않은 값)") + f" · fx {num(data.get('fx')):,.1f} · 출처 {src}"
+                    + (" · " + " · ".join(warns) if warns else ""), th, warn=bool(warns))
+
+    # 2. 주식 분할 — 앱이 분할 날짜 앞의 기록을 새 주식 수로 맞춰 읽어요 (held.js splitFactor). 배율·날짜가 틀리면 사용자의 주식 수가 틀려 보이고,
+    #    한 종목의 기록이 분할 앞뒤에 걸치면 그 분할이 포트폴리오에 저장돼 남아요 (lots.js splitsToStore). 직전 발행본에서 이어 온 줄
+    #    (어제도 있던 줄)은 종목이 오늘 목록에서 빠져도 남아요 (그 종목을 가진 사람이 있어요) — 그런 줄은 경고만, 새 줄은 실패.
+    name = "주식 분할 목록 (splits)"
+    th = (f"[코드, 날짜, 배율] · splitsFrom = {SPLITS_FROM} · {SPLITS_FROM} ≤ 날짜 ≤ 오늘 · 배율 {SPLIT_R[0]:g}~{SPLIT_R[1]:g}, 1 아님, 기약분수 "
+          f"p/q 의 min(p, q) ≤ {SPLIT_SIMPLE_MAX} (splitsInfo.fixed 의 줄은 그 배율 그대로) · 같은 종목·날짜 한 번 · 새 줄은 오늘 목록의 종목 · "
+          f"꼭 있어야 할 분할 {len(MUST_SPLITS)}건 · splitsAsOf 있고 오늘 뒤 아님 ({SPLIT_FRESH_MAX_DAYS}일 넘게 오래면 큰 경고 · 없음 · 지난 발행본에서 이음 · 읽지 못한 종목 · "
+          f"야후와 다름 · 지운 고정 줄 · {SPLIT_NEAR_DAYS}일 안에 둘 · 오늘 목록에서 빠짐(첫날) · 미국 기준일 뒤 날짜면 경고 · "
+          "직전 발행본에 있었는데 빠지면 실패)")
+    sp = data.get("splits")
+    prev_map = _split_map(pdata.get("splits")) if mode == "publish" and pdata and isinstance(pdata.get("splits"), list) else None
+    cur = {}
+    info = data.get("splitsInfo")
+    fixed, fbad = _fixed_map(info)
+    if sp is None:
+        had = bool(pdata) and "splits" in pdata
+        rep.add(name, not had, "없음" + (" — 직전 발행본에는 있었어요: 분할 전 기록이 옛 주식 수로 보여요" if had
+                                        else " — 앱은 분할 전 기록을 맞추지 못해요"), th, warn=True)
+    else:
+        probs, warns, late, gone_code, gone_today = [], [], [], [], []
+        usd = _iso_day(data.get("usPxDate"))
+        if data.get("splitsFrom") != SPLITS_FROM:
+            probs.append(f"splitsFrom {data.get('splitsFrom')!r}")
+        if not isinstance(info, dict):
+            warns.append("splitsInfo 없음")
+            info = {}
+        if fbad:
+            probs.append(f"splitsInfo.fixed 모양이 틀린 줄 {fbad}개")
+        if not isinstance(sp, list):
+            probs.append("목록이 아니에요")
+            sp = []
+        for x in sp:
+            shape = isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and bool(x[0])
+            d, r = (_iso_day(x[1]), json_num(x[2])) if shape else (None, None)
+            if d is None or r is None:
+                probs.append(f"모양 {json.dumps(x, ensure_ascii=False)[:30]}")
+                continue
+            t, k = x[0], (x[0], x[1])
+            fx_r = fixed.get(k, "-")
+            if fx_r is None:
+                probs.append(f"{t} {d} 고정 표에서 뺀 줄인데 있어요")
+            elif fx_r != "-":
+                if not same_ratio(r, fx_r):
+                    probs.append(f"{t} {d} 배율 {r:g} ≠ 고정 표 {fx_r:g}")
+            elif not (SPLIT_R[0] <= r <= SPLIT_R[1]) or r == 1:
+                probs.append(f"{t} {d} 배율 {r:g}")
+            elif not simple_ratio(r):
+                probs.append(f"{t} {d} 배율 {r:g} (깨끗한 분수가 아니에요 — 분사 조정?)")
+            if d > today:
+                probs.append(f"{t} {d} 오늘 뒤")
+            if d < day(SPLITS_FROM):
+                probs.append(f"{t} {d} {SPLITS_FROM} 앞")
+            if t not in by:
+                fixed_row = fx_r not in ("-", None) and same_ratio(r, fx_r)
+                if mode == "publish" and (prev_map is None or k not in prev_map) and not fixed_row:
+                    probs.append(f"{t} 오늘 목록에 없음 (새 줄)")
+                elif mode == "publish" and pdata and t in {s.get("t") for s in pdata.get("stocks") or []}:
+                    gone_today.append(f"{t} {d}")         # 오늘 처음 목록에서 빠진 종목 (경고 · 다음 날부터는 확인 목록에만)
+                else:
+                    gone_code.append(f"{t} {d}")
+            if k in cur:
+                probs.append(f"{t} {d} 두 번")
+            cur[k] = r
+            if usd and d > usd and (by.get(t) or {}).get("cls") == "us":
+                late.append(f"{t} {d}")
+        miss = [f"{t} {d} ×{r:g}" for t, d, r in MUST_SPLITS if not same_ratio(cur.get((t, d)), r)]
+        if miss:
+            probs.append(f"꼭 있어야 할 분할 없음: {', '.join(miss)}")
+        as_of = _iso_day(data.get("splitsAsOf"))
+        if as_of is None or as_of > run_day:
+            probs.append(f"splitsAsOf {data.get('splitsAsOf')!r} (있어야 하고 발행일 {run_day} 뒤면 안 돼요)")
+        elif (run_day - as_of).days > SPLIT_FRESH_MAX_DAYS:      # 큰 경고 (Jack, 2026-11-13) — 발행은 해요. 그동안 새 분할은 목록에 없어요
+            warns.insert(0, f"!! 야후 분할을 {(run_day - as_of).days}일째 새로 읽지 못했어요 (마지막 {as_of}): 그 뒤 새 분할은 목록에 없어요")
+            print(f"!! 주식 분할: 야후 분할을 {(run_day - as_of).days}일째 새로 읽지 못했어요 (splitsAsOf {as_of}, 발행일 {run_day}) "
+                  "— 발행은 막지 않아요 (Jack, 2026-11-13). 야후가 돌아오는지 확인하세요 (RUNBOOK '주식 분할').", flush=True)
+        elif as_of < run_day:
+            warns.append(f"야후에서 마지막으로 새로 읽은 날 {as_of}")
+        src = data.get("splitsSrc")
+        if src != "yahoo":                      # 값 칸에 '출처 …' 가 이미 있어요 — 경고 이유만 적어요 (#117 리뷰 4 N-7)
+            warns.append({"kept": "오늘 새로 읽지 못해 지난 발행본 그대로", "part": "일부 종목을 오늘 읽지 못함"}.get(src, "출처 표시가 이상해요"))
+        gap = info.get("gap") if isinstance(info.get("gap"), list) else []
+        if gap:
+            warns.append(f"2016년부터의 분할을 아직 읽지 못한 종목 {len(gap)}: {', '.join(map(str, gap[:5]))}")
+        if (json_num(info.get("noCol")) or 0) > 0:
+            warns.append(f"오늘 분할 칸을 읽지 못한 종목 {int(json_num(info.get('noCol')))}")
+        diff = info.get("diff") if isinstance(info.get("diff"), list) else []
+        if diff:
+            warns.append(f"야후와 다름(실은 값 그대로) {len(diff)}: " + ", ".join(_diff_text(x) for x in diff[:3]))
+        kept_fixed = info.get("fixedKept") if isinstance(info.get("fixedKept"), list) else []
+        if kept_fixed:
+            warns.append(f"고정 표에서 지운 줄을 지난 발행본에서 이어 둠 {len(kept_fixed)}: "
+                         + ", ".join(" ".join(map(str, x)) for x in kept_fixed[:3]) + " (빼려면 배율을 None 으로)")
+        by_t = {}
+        for (t, d), r in sorted(cur.items()):
+            by_t.setdefault(t, []).append(d)
+        near = [f"{t} {a}·{b}" for t, l in by_t.items() for a, b in zip(l, l[1:])
+                if (day(b) - day(a)).days <= SPLIT_NEAR_DAYS]
+        if near:
+            warns.append(f"{SPLIT_NEAR_DAYS}일 안에 분할이 둘 {len(near)}: {', '.join(near[:3])} (같은 분할이 두 번?)")
+        if gone_today:
+            warns.append(f"오늘 목록에서 빠진 종목의 분할(이어 둠) {len(gone_today)}: {', '.join(gone_today[:3])}")
+        if late:
+            warns.append(f"미국 기준일 {usd} 뒤 날짜: {', '.join(late)}")
+        if probs:
+            rep.add(name, False, f"{len(probs)}곳: " + " · ".join(probs[:5]), th)
+        else:
+            newest = sorted(cur.items(), key=lambda kv: kv[0][1])[-3:]
+            rep.add(name, True, f"{len(cur):,}건 ({SPLITS_FROM} ~)" + (" · 최근 " + " · ".join(f"{t} {d} ×{r:g}" for (t, d), r in reversed(newest))
+                                                                     if newest else "")
+                    + f" · 고정 표 {len(fixed)}줄 · 출처 {src}" + (" · " + " · ".join(warns) if warns else ""), th, warn=bool(warns))
+        if diff or gap or gone_code or gone_today:
+            rep.detail("주식 분할 목록 (splits) 확인할 것", [f"야후와 다름 {_diff_text(x)}" for x in diff] + [f"아직 못 읽음 {t}" for t in gap]
+                       + [f"목록에 없는 종목 {x}" for x in gone_today + gone_code])
+
+    # 3. 직전 발행본과 비교 (발행 때만). 한 번 실은 분할은 빼지 않아요: 사라지거나 배율이 바뀌면 실패 (고정 표가 뺐거나 고친 줄은 경고).
+    #    파이프라인은 야후가 어제의 분할을 빼거나 배율을 바꾸면 어제 값을 그대로 두고 splitsInfo.diff 에 적어요 (위 줄이 경고).
+    #    새 줄 중 정수·1/정수가 아닌 배율(3:2 · 21:20 …)과, 어제 2016년부터 읽은 종목에 오래된 날짜로 새로 생긴 줄은 경고 (사람이 한 번 봐요).
+    name = "주식 분할 목록 변화 (직전 발행본과)"
+    th = ("어제 분할이 사라지거나 배율이 바뀌면 실패 (고정 표가 뺐거나 고친 줄은 경고) · 새 줄의 배율이 정수·1/정수가 아니거나, 어제 읽은 종목에 "
+          f"{SPLIT_NEW_OLD_DAYS}일 넘게 지난 분할이 새로 생기면 경고")
+    if mode != "publish" or not pdata:
+        return                      # 사이트 점검(live) · bootstrap 은 비교 줄을 두지 않아요 (다른 '변화' 줄과 같아요)
+    if prev_map is None:
+        rep.skip(name, "직전 발행본에 splits 가 없어요 (첫 발행)")
+        return
+    if not isinstance(data.get("splits"), list):
+        rep.skip(name, "이번 파일에 splits 목록이 없어요 (위 줄)")
+        return
+    pcov = (_us_codes(pdata) - set((pdata.get("splitsInfo") or {}).get("gap") or [])) if pdata.get("splitsFrom") == SPLITS_FROM else set()
+    dropped, dropped_ok, changed, changed_ok = [], [], [], []
+    for (t, d), r in sorted(prev_map.items()):
+        f = fixed.get((t, d), "-")
+        if (t, d) not in cur:
+            (dropped_ok if f is None else dropped).append(f"{t} {d} ×{r:g}")
+        elif not same_ratio(cur[(t, d)], r):
+            (changed_ok if f not in ("-", None) and same_ratio(cur[(t, d)], f) else changed).append(f"{t} {d} ×{r:g}→×{cur[(t, d)]:g}")
+    new = [(k, r) for k, r in sorted(cur.items()) if k not in prev_map]
+    # 정수가 아닌 배율의 새 줄은 사람이 한 번 봐요 — 단 이미 검토한 줄은 빼요: 커밋한 시드(data/us_splits_seed.csv)의 줄이나 고정 표의 줄이 같은 배율로
+    # 나온 것 (그 종목이 목록에 다시 들 때 · AAON 3:2). 야후에서 새로 온 줄만 경고해요 (#117 · 아침 점검이 매번 노랗지 않게).
+    seed = load_split_seed_rows()
+    reviewed = lambda t, d, r: same_ratio(seed.get((t, d)), r) or same_ratio(fixed.get((t, d)), r)     # noqa: E731
+    odd = [f"{t} {d} ×{r:g}" for (t, d), r in new if not whole_ratio(r) and not reviewed(t, d, r)]
+    old_new = [f"{t} {d} ×{r:g}" for (t, d), r in new if t in pcov and d < (run_day - dt.timedelta(days=SPLIT_NEW_OLD_DAYS)).isoformat()]
+    fails = ([f"사라짐 {len(dropped)}: {', '.join(dropped[:3])}"] if dropped else []) + \
+            ([f"배율 바뀜 {len(changed)}: {', '.join(changed[:3])}"] if changed else [])
+    warns = ([f"고정 표가 뺌 {len(dropped_ok)}: {', '.join(dropped_ok[:3])}"] if dropped_ok else []) + \
+            ([f"고정 표가 고침 {len(changed_ok)}: {', '.join(changed_ok[:3])}"] if changed_ok else []) + \
+            ([f"새 줄 정수 아닌 배율 {len(odd)}: {', '.join(odd[:3])}"] if odd else []) + \
+            ([f"지난 날짜로 새로 {len(old_new)}: {', '.join(old_new[:3])}"] if old_new else [])
+    parts = fails + warns
+    rep.add(name, not fails, " · ".join(parts) if parts else f"그대로 (어제 {len(prev_map):,}건 → 오늘 {len(cur):,}건 · 새 {len(new)}건)", th,
+            warn=bool(warns))
+    if parts:
+        rep.detail("주식 분할 목록 변화 (직전 발행본과)", [f"사라짐 {x}" for x in dropped] + [f"배율 바뀜 {x}" for x in changed]
+                   + [f"고정 표가 뺌 {x}" for x in dropped_ok] + [f"고정 표가 고침 {x}" for x in changed_ok]
+                   + [f"새 줄 정수 아닌 배율 {x}" for x in odd] + [f"지난 날짜로 새로 {x}" for x in old_new])
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
@@ -2292,12 +2713,24 @@ def load_git(ref, files=FILES):
 
 
 def load_prev(prev_dir, prev_ref):
-    """직전 발행본의 data.json 을 엄격하게 읽어요. corp.json 은 표시(stmtCur) 비교에만 따로 느슨하게 읽어요 (load_prev_corp) ·
-    disc·macro 는 비교에 안 써요."""
+    """직전 발행본의 data.json 을 엄격하게 읽어요. corp.json 은 표시(stmtCur) 비교에만 따로 느슨하게 읽어요 (load_prev_corp).
+    v19.6a: macro.json 은 환율 이력 비교(경고만)에만 써서, 읽지 못하면 없이 해요 (그 때문에 관문이 멈추거나 다른 줄이 바뀌지
+    않아요). disc 는 비교에 안 써요."""
     if prev_dir:
         with open(os.path.join(prev_dir, "data.json"), encoding="utf-8") as fh:
-            return {"data": strict_loads(fh.read(), "data.json")}
-    return load_git(prev_ref, files=("data.json",))
+            out = {"data": strict_loads(fh.read(), "data.json")}
+        try:
+            with open(os.path.join(prev_dir, "macro.json"), encoding="utf-8") as fh:
+                out["macro"] = strict_loads(fh.read(), "macro.json")
+        except Exception as e:
+            print(f"· 직전 발행본의 macro.json 을 읽지 못해 환율 이력 비교(경고 줄) 없이 해요: {type(e).__name__}: {str(e)[:120]}")
+        return out
+    out = load_git(prev_ref, files=("data.json",))
+    try:
+        out.update(load_git(prev_ref, files=("macro.json",)))
+    except Exception as e:
+        print(f"· 직전 발행본의 macro.json 을 읽지 못해 환율 이력 비교(경고 줄) 없이 해요: {type(e).__name__}: {str(e)[:120]}")
+    return out
 
 
 def load_prev_corp(prev_dir, prev_ref):

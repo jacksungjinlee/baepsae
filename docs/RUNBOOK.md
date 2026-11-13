@@ -428,6 +428,118 @@ the gate's "공시 단위 확인 회사 바뀜" warning names it when that happe
     (the published file was computed with the old table) until the next publish.
   - The 2027 KR rows 노동절 대체 휴일 (5/3) and 제헌절 대체 휴일 (7/19) follow the 2026 law changes and still need KRX's
     own notice.
+- **Exchange-rate history and stock splits** (v19.6a data, for 2.0's 팔았어요 · 배당 받았어요; three gate rows, stricter only):
+  - `macro.json` `fxHist` = `{asOf, final, rows: [[date, rate], …]}` from 2016, plus `fxHistSrc` (where the rows come from) and
+    `fxHistFresh` (the last day the run read that source itself). A US record dated in the past saves the rate of its own
+    date: that date's row, or the last row before it (a weekend or Korean holiday uses the last row before). **Contract,
+    for every source: rows speak only for dates on or before `asOf`. The app refuses any later date, except today, which
+    uses `data.json` `fx` when the data is fresh.** A date with no row on or before it is refused too (under ECOS:
+    2016-01-01 to 01-03, before its first business day).
+  - **Which date a record uses (for the app):** the US trading date of the purchase, sale or dividend, as the user typed
+    it. Row D of each source means:
+    - `ecos_close`: the Seoul 15:30 close on Korean business day D (ECOS 731Y003 · 0000003). ECOS posts it during the
+      night (it was there by about 02:00 KST the next day; the exact time is not published). If the 06:40 run finds it
+      missing, the history simply ends one business day earlier, the gate warns (holiday-table check below), and that
+      date can be saved a day later.
+    - `ecos_next`: the 매매기준율 published on the next Korean business day after D (= the average of D's own Seoul
+      trading; ECOS 731Y001 · 0000001). The newest one has no row yet, so `asOf` is the business day before it.
+    - `ecos`: the 매매기준율 published on D (the average of the previous business day's trading).
+    - `yahoo_next`: Yahoo's next-bar open, London midnight at the end of D (08:00 or 09:00 KST the next morning); at the
+      06:40 KST publish the last row is the run's live `fx` and `final` is false.
+    A weekend or Korean holiday uses the last row before it.
+  - The source is one switch in `fetch_data.py`, `FX_HIST_SOURCE`: `ecos_close` (Jack's choice, 2026-11-13). Never
+    change it without Jack: rates already saved in users' records would then mix two bases. Measured against the end of the US trading day D (Yahoo's next-bar open), 2,727 US
+    trading days 2016-01 → 2026-11; the 06:40 publish columns cover every Tue–Sat publish 2016-02 → 2026-11:
+
+    | Option | Median (record dated D) | p90 | p99 | Max | Days over 1% | Median if the user types the Korean date (D+1) | Yesterday's US session saveable at the next 06:40 publish | Extra wait otherwise (mean · max days) | US days not saveable at a 06:40 publish (mean · max) |
+    |---|---|---|---|---|---|---|---|---|---|
+    | `ecos_close` | 0.25% | 0.69% | 1.44% | 3.05% | 3.5% | 0.25% | 94.5% | 0.12 · 8 | 0.08 · 6 |
+    | `ecos_next` | 0.27% | 0.77% | 1.46% | 3.80% | 5.0% | 0.19% | 0.0% (a Friday-night buy waits until Tuesday) | 1.59 · 11 | 1.10 · 7 |
+    | `ecos` | 0.42% | 1.17% | 2.19% | 4.35% | 14.9% | 0.29% | 94.7% | 0.11 · 8 | 0.08 · 6 |
+    | `yahoo_next` | (the yardstick) | | | | | | yes, but the last row is unfinished | | 0 |
+
+    The worst publish for every ECOS option was 2017-10-10, after the long Chuseok holiday. ECOS rows are final
+    (`final` true). Yahoo's daily series also has one-day spikes (2021-03-02, 2022-12-01, 2024-11-08) that ECOS does not.
+  - If the source cannot be read, the run keeps yesterday's `fxHist` exactly as it was, as long as it came from the same
+    source (sources are never mixed), however many days pass: its rows are still right for their dates and the app
+    refuses dates after `asOf`, so dropping it would only refuse a 2019 purchase too. `fxHistFresh` does not move while
+    kept. The one exception: if today's `fx` has moved more than 10% from the kept history's last value (only possible in
+    a long ECOS outage), the history is left out, because the gate would otherwise block the publish. The gate row **환율 이력 (fxHist)** warns every day it is kept (with the number of days), when `fxHist` is
+    missing (the app then refuses past-dated US records with its approved line, "환율 정보를 불러오지 못해 …", so nothing
+    wrong is shown), when `fxHistSrc` is missing or unknown, and when ECOS's last row is older than the Korean holiday
+    table says it should be (the business day before the publish, or the one before that for `ecos_next`; 14 days when
+    the table does not cover the date). It also warns when a past row changed against yesterday's file (the first five
+    dates are named), when `asOf` moved backwards, or when the source changed. **FAIL** means the history is broken: out of order, a gap of more than 14 days
+    for ECOS or 7 for Yahoo, a jump of more than 10% between two rows, a value outside 900–2,000, not starting in the first
+    week of 2016, `asOf` not the last row, a last row after today (or on today for `ecos_next` and Yahoo), a Yahoo history
+    that does not end on `fxDate`, a last value more than 10% from `fx` (the two come from different sources and times;
+    unit or currency mistakes are caught by the 900–2,000 range), `final` not true/false, or `fxHistFresh` after the
+    publish date. Every rate saved from it stays in users' records, so never loosen the row; ask Claude to find the cause.
+  - `data.json` `splits` lists every US stock split since 2016-01-01 (`splitsFrom`), `[code, date, ratio]` (ratio = new
+    shares per old share; the date is the first US trading day on the new count, or the ex-date for a stock dividend).
+    It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone
+    added it to the override table. Where the rows come from, every run:
+    - the committed seed `data/us_splits_seed.csv` (129 Yahoo splits 2016-01-01 → 2026-11-12, read once on 2026-11-13 and
+      reviewed) with `data/us_splits_seed_codes.txt` (the 773 stocks it covers);
+    - yesterday's file (every row is carried forward, also for stocks that left the list);
+    - what Yahoo shows in the day's regular price download (about three years back, no extra calls);
+    - for a stock in neither the seed nor yesterday's file, its history since 2016 (one call per stock, at most 20 stocks
+      a run, so at most 40 requests with the one retry; new stocks first, then yesterday's `gap` in order, so a stock
+      that keeps failing never blocks the others). Stocks leave and rejoin the US list most days, so expect a few such
+      calls a day (about 3–6), not zero. There is no 773-call download on `main`.
+    A seed row only appears while its stock is in the day's US list (a seed stock that is out today, like AAON on several
+    days in late October, gets its rows the day it rejoins); once published, a row stays even when the stock leaves.
+    A split, once published, is never taken out. If Yahoo drops it, changes its ratio, moves its date by up to 10 days
+    (same ratio), or lists the same ratio again on a second date within 10 days, the published row stays, the second
+    date is not added, and the case is listed in `splitsInfo.diff` (gate warning; if both are real, add the second
+    with an override row); those warnings are
+    repeated every day until someone settles them with an override row. That also covers a ticker reused by another
+    company: the old company's splits stay listed and warn until an "out" row removes them.
+    `splitsAsOf` is the last day the run read Yahoo itself; it renews when the split column of even one stock was read
+    today, so the 6-day loud warning does not fire during a near-total partial outage: then the warning gives the number of
+    stocks not read (`noCol`), which is the thing to watch; `splitsInfo` also holds `noCol` (stocks it could not read
+    today), `fixed` (the override table in effect) and `fixedKept` (override rows deleted from the code; see below). On a
+    first publish (yesterday's file has no list) the run leaves `splits` out if any of the ten known splits is missing
+    or if it could not read Yahoo's split column at all (gate warning "없음"), so a bad first day never blocks the publish.
+  - Yahoo also writes spin-offs as "splits" with ratios like 1253:1000 (GE, GE Vernova); those are not share-count
+    changes, so only clean ratios are kept (the reduced fraction has a side of 20 or less: 10:1, 1:15, 3:2, 21:20).
+    Real events Yahoo writes wrongly or leaves out are in `SPLIT_OVERRIDES` in `fetch_data.py`, each with its source:
+    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
+    spin-off day); WTW 2016-01-05 (2.649 → 1) and TRI 2018-11-27 (×0.9079) and 2023-06-23 (×0.963957) share
+    consolidations; HON 2026-06-29 1:2 (a reverse split on the Honeywell Aerospace spin-off day, Honeywell 8-K
+    2026-06-05; Yahoo writes 1907:2000); CBSH's 5% stock dividends Yahoo misses (2016, 2017, 2019, 2022, 2023). FERG's 2018
+    consolidation is left out: the US-traded security then was a different one (FERG is on the NYSE only from 2021-03-08),
+    so no FERG record can predate it. GMAB's 2018-05-01 5:1 stays (from Yahoo, in the seed): the Nasdaq ADSs (2019) come from
+    the same ADR program that traded over the counter as GMXAY before, so an earlier holder's record is the same security.
+  - **To correct a split** (in a small PR): a split that should not be there gets an "out" row (ratio `None`) with its
+    source; a wrong ratio gets an override row with the right ratio; a wrong date needs an "out" row for the wrong date
+    plus a new row for the right one (if Yahoo already shows the right date, the "out" row alone is enough: the new date
+    appears the same day). Never delete an override row: a deleted row stays in effect (taken from yesterday's
+    file, listed in `fixedKept`, gate warning) until it is changed to `None` or a new ratio, so the published list never
+    jumps by accident. "Out" rows are published in `splitsInfo.fixed`, so the app can remove a split it stored.
+  - 2.0 reads the list for every record (a record dated before a split counts at the new share count) and stores a split
+    in a portfolio only when that stock's records lie on both sides of it; a stored split then stays even if the list
+    changes later.
+  - **주식 분할 목록 (splits)** fails on a broken list (shape, a ratio of 1 or outside 0.001–1000 or not clean unless the
+    override table gives exactly that ratio, a date before 2016 or after today, the same stock and date twice, a new row
+    whose stock is not in today's data unless it is an override row, a row the table says to take out, `splitsFrom` not
+    2016-01-01), when one of the ten known splits is missing (AAPL 2020, TSLA 2020 and 2022, NVDA 2021 and 2024, AMZN
+    2022, GOOGL 2022, WMT 2024, CMG 2024, HLT 2017), when `splitsAsOf` is missing or after the publish date, and
+    when the list is missing although yesterday's file had one. When `splitsAsOf` is more than 5 days before the publish
+    date it does not stop the publish (Jack, 2026-11-13: a minor source outage must never hold back everyone's data): the
+    row turns into a loud warning that starts with "!!", and the run log prints a "!! 주식 분할:" line. What it means:
+    Yahoo's split column has been unreadable for 6 days or more, so a split from those days is not in the list yet and
+    a user's records around it would show the old share count. Check whether Yahoo is back; if a real split happened in
+    the gap, add it to the override table by hand. It warns when the list is missing on a first day, when
+    part was taken over from yesterday (`splitsSrc` kept or part), on any `gap`, `noCol`, `diff` or `fixedKept`, when one
+    stock has two splits within 30 days (Yahoo may have written one split twice), on the day a stock first leaves the
+    list (later days only list it under "확인할 것"), and for a split dated after the US price date.
+  - **주식 분할 목록 변화 (직전 발행본과)** fails when a split from yesterday's file is gone or its ratio changed (the
+    pipeline must never do that; an "out" row or a new ratio in the override table only warns). It warns for a new split
+    from Yahoo whose ratio is not a whole number or one over a whole number (3:2, 21:20 …: a person checks it against the
+    company's notice and, if it is a spin-off, adds an "out" row); rows already reviewed, from the committed seed or the
+    override table with the same ratio, do not warn when their stock rejoins the list (AAON 3:2) and for a split dated more than 7 days ago that appears
+    for a stock whose history was already read.
 - **`logos`** is a branch that holds only `logos/` (company logo pictures plus `index.json`), made once from logo.dev
   Pro on 2026-11-06 and checked by eye. Deploy copies it into the site; if the branch is missing or fails its check,
   Deploy warns and publishes without logos (every company shows its coloured letter mark). Logos never go on `main`.

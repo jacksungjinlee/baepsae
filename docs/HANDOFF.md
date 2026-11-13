@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 16:59 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 17:29 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -119,7 +119,7 @@ just stops blocking screen work.
   - Next update to Jack: a table of every visible change he has asked for since 11-07, each live / ready / not started,
     with where to look on the phone. Found 11-13: only the 우선주 count line under 내 점수 is live; the per-stock lines
     for 우선주 without figures, suspended and no-trade stocks were left as "later" on 11-08 and never built.
-- **Queue now (2026-11-13 16:59 KST; every merging PR updates this):**
+- **Queue now (2026-11-13 17:29 KST; every merging PR updates this):**
   - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
     check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
     check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
@@ -131,8 +131,15 @@ just stops blocking screen work.
   - #118 (Korean unit guard) is merged: 진코스텍 and 디와이에이 are blanked with Jack's line; the gate fails when 20
     or more companies are newly flagged in one publish (RUNBOOK). Watch the first publishes on 2026 Q3 reports
     (deadline 11-16).
-  - #116 (the repair; this PR) is merged: those two companies' reports are read ÷1,000 when every statement proves it,
-    and 가치 자세히 says so in Jack's line. Then #117 (fxHist and US splits), after a fresh green branch dry run.
+  - #116 (the repair) is merged and published (11-13 evening): those two companies' reports are read ÷1,000 when every
+    statement proves it, and 가치 자세히 says so in Jack's line.
+  - #117 (fxHist and US splits; this PR) is merged: macro.json carries the won-per-dollar rate for every day since
+    2016 (Bank of Korea 15:30 close, Jack's choice) and data.json every US split since 2016. Nothing users see changes
+    until #119. Yahoo's split column unread for 6+ days is a loud warning, never a held publish (Jack, 11-13).
+  - A branch dry run restores its own branch's newest cache first: a branch whose last run was before #114 has US
+    details without the currency field, refetches about 777 of them, and can fail #114's currency row when Yahoo
+    refuses some. Rerun once (the saved cache is then fresh). Follow-up after Wednesday: carry the currency over from
+    the previous publish in that case.
   - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → missing US stocks → v19.7b → v19.6f (in review by
     Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
