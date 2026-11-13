@@ -1,25 +1,28 @@
-// 종목 tab (v19.0c, board CStock): search, 최근 본 종목, 내 포트폴리오 종목 and 거래대금 상위 종목 (Korean and US lists).
+// 종목 tab (v19.0c, board CStock): search, 최근 본 종목, 내 포트폴리오 종목 and 종목 순위 (v19.5b, rank.jsx: 홈's card as a
+// still list of 30 with the same choice, where 홈's 전체 보기 lands; it replaced the two 거래대금 상위 종목 lists, whose order is
+// now the 거래대금 chip).
 // v19.1a: tapping a Korean or US company opens its 2.0 company page (#stocks/<code>, company.jsx), on the live page and
 // the preview alike; tapping a fund (not a company) shows a line under its row (co.fundNote once approved; until then the
 // line it showed before, stocks.krOnly), and nothing else. Nothing here links into the old app any more. Each row carries the company mark (logo.jsx).
-// No 뱁이 here (the lists show today's changes). StockRow and PopularLists are reused on 홈.
+// No 뱁이 here (the lists show today's changes). useStockTap is reused by 홈's 종목 순위 (rank.jsx).
 // PC (v19.0d): the search field is the top bar's (nav.jsx TopBar, its words come in as q), so this screen shows no field
-// of its own; the results, lists and taps are the same. PopularLists on PC puts 한국 and 미국 side by side.
+// of its own; the results, lists and taps are the same.
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
-import { Icon, IconChip } from "../ui/icons.jsx";
+import { Icon } from "../ui/icons.jsx";
 import { C, fill, mdText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, tx, tap, useMode, useLayout, useNav } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, tx, tap, useMode, useNav } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { signedPct } from "./deckcalc.js";
 import { todayD1 } from "./engine.js";
-import { isCompany, popularLists, searchStocks, myStocks, ownCloses } from "./stocklist.js";
+import { isCompany, searchStocks, myStocks, ownCloses } from "./stocklist.js";
+import { RankCard } from "./rank.jsx";
 import { readRecent, addRecent, RECENT_KEY, PREVIEW_RECENT_KEY } from "./recent.js";
 
 const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
 
 // One stock: a first-letter badge, the name (US: the ticker under it; Korean: the code, unless plain), today's change.
-// plain: no numbers at all (홈's first visit, which shows a 뱁이). onTap / note / expands: from useStockTap (see below).
+// plain: no numbers at all (not used since v19.5b's 홈 shows 종목 순위). onTap / note / expands: from useStockTap (see below).
 export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, expands = false }) {
   const nk = name || (s && s.nk) || t;
   const d1 = todayD1(s);                   // v19.1c: no change for a stock priced at an earlier close (the list's note names it)
@@ -69,46 +72,6 @@ export function useStockTap() {
   return { recent, props };
 }
 
-// 거래대금 상위 종목: two lists (한국 · 미국), each with its own date. plain: names only (홈's first visit).
-// PC: the two lists side by side.
-export function PopularLists({ load, plain = false, tapper }) {
-  const lists = useMemo(() => popularLists(load), [load]);
-  const own = useStockTap();
-  const { wide } = useLayout();
-  const tp = tapper || own;
-  if (!lists || (!lists.kr.length && !lists.us.length)) return null;
-  const part = (key, items, date) => items.length > 0 && (
-    <div data-ui-v2="popular-list" data-market={key} style={{ marginTop: SPACE(3), minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: SPACE(2) }}>
-        <span style={tx(SIZE.xs, WEIGHT.heavy, COLOR.ink)}>{C.pick.market[key]}</span>
-        <span data-ui-v2="list-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.asOf, { md: mdText(date) })}</span>
-      </div>
-      {items.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} plain={plain} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
-      {/* v19.1c: a listed US stock priced at an earlier close (pxd). Names only (plain, the first-visit home): no note */}
-      {!plain && <OwnCloseNote groups={ownCloses(load, items)} data-market={key} />}
-    </div>
-  );
-  return (
-    <Card data-ui-v2="popular">
-      <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
-        <IconChip name="chart-bar" size={32} />
-        <h3 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink)}>{C.home.popular}</h3>
-      </div>
-      {wide ? (
-        <div data-ui-v2="popular-cols" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", columnGap: SPACE(8), alignItems: "start" }}>
-          {part("kr", lists.kr, lists.krDate)}
-          {part("us", lists.us, lists.usDate)}
-        </div>
-      ) : (
-        <>
-          {part("kr", lists.kr, lists.krDate)}
-          {part("us", lists.us, lists.usDate)}
-        </>
-      )}
-    </Card>
-  );
-}
-
 // q: the PC top bar's search words (null on the phone, where this screen has its own field). ownQ / setOwnQ: the phone
 // field's words, kept by the app shell (v19.1a: a company page and back keep them); without them the field keeps its own.
 export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ }) {
@@ -124,11 +87,11 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
   const recent = ok ? tp.recent.map((t) => load.byT.get(t)).filter(Boolean) : [];
   const typing = q.trim().length > 0;
   // US prices are at their own close date: say so when it differs from the Korean one and a US row is on screen
-  // (as 홈 and 포트폴리오 do). The 거래대금 lists carry their own dates.
+  // (as 홈 and 포트폴리오 do). 종목 순위 carries its own date.
   const usShown = (typing ? results : [...recent, ...mine.map((x) => x.s || x)]).some((s) => s && s.cls === "us");
   const usDate = ok && usShown && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // v19.1c: the shown rows (search results, or recent and my stocks) with a US stock priced at an earlier close (pxd):
-  // named under the date line. The trading-value lists carry their own note.
+  // named under the date line. 종목 순위 carries its own note.
   const own = ok ? ownCloses(load, typing ? results : [...recent, ...mine.map((x) => x.s)]) : [];
   return (
     <Page pad={pad}>
@@ -165,7 +128,7 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
           {mine.map((x) => <StockRow key={x.t} s={x.s} name={x.nk} t={x.t} cls={x.cls} {...tp.props(x)} />)}
         </Card>
       )}
-      {!typing && ok && <PopularLists load={load} tapper={tp} />}
+      {!typing && ok && <RankCard load={load} store={store} full tapper={tp} />}
       <Footer />
     </Page>
   );
