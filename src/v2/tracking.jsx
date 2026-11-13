@@ -31,8 +31,8 @@ export function DeckSummary({ deck, de, m, load }) {
   // the two boxes only on the same basis (round-1 review): without 내 포트폴리오 on the KOSPI basis (a held stock's value
   // unknown, k.mine null) neither box shows; the return above (원금 basis) is never put beside 코스피.
   const both = k.ok && k.mine != null;
-  // the note under them (proposals, Jack): after a sale "판 금액은 더하고 배당은 빼고 비교했어요." (deck.vsSold), with
-  // dividends only "배당은 빼고 비교했어요." (deck.vsNoDiv); nothing until approved
+  // the note under them (Jack, 2026-11-13): after a sale deck.vsSold ("판 금액까지 넣어서 비교했어요. 배당은 넣지 않았어요."),
+  // with dividends only deck.vsNoDiv ("배당은 빼고 비교했어요.")
   const vsNote = both && hasSales ? C.deck.vsSold : both && hasDivs ? C.deck.vsNoDiv : null;
   useEffect(() => {
     if (m.noFx.length) warnOnce(`[v2] ${deck.id}: US purchases without an exchange rate (${m.noFx.join(", ")}): money put in and return left out`);

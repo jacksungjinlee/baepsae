@@ -7,7 +7,7 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Button, BottomSheet, priceColor } from "../ui/components.jsx";
-import { C, fill, nf, mdText, todayKst, exactWon, plus, recDate, staleText } from "./format.js";
+import { C, fill, nf, mdText, todayKst, exactWon, plus, recDate } from "./format.js";
 import { Note, TextInput, SampleLabel, tx, useMode, useLayout, SIDE_W } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
@@ -112,6 +112,9 @@ function RecordList({ flow, setFlow, store, setStoreData, deck, close, shift, sa
         </div>
         {flow.saved && <Note data-ui-v2="rec-saved">{C.plan.done}</Note>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
+        {/* a split correction in data.json changed this stock's share count during this visit (app.jsx: an "out" row took a
+            stored split out or moved it to the corrected date) */}
+        {store.splitFixed && store.splitFixed.has(`${deck.id}|${t}`) && <Note data-ui-v2="rec-split-fixed">{C.rec.splitFixed}</Note>}
         {splits.map((s) => (
           <Note key={s.date} data-ui-v2="rec-split">{s.r >= 1 ? fill(C.rec.split, { date: recDate(s.date, today), r: ratioText(s.r) })
             : fill(C.rec.merge, { date: recDate(s.date, today), r: ratioText(1 / s.r) })}</Note>
@@ -133,7 +136,7 @@ function RecordList({ flow, setFlow, store, setStoreData, deck, close, shift, sa
                       <Button kind="quiet" onClick={() => { setAsk(it.key); setRefused(null); }} style={{ width: "auto", padding: `0 ${SPACE(2)}px`, position: "relative", ...tx(SIZE.sm, WEIGHT.bold, COLOR.text2) }}>
                         <span aria-hidden="true">{C.rec.del}</span>
                         <span style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>
-                          {fill(C.rec.delAriaNew || C.rec.delAria, { date: date || "", kind: kindText(it.kind) }).trim()}</span>
+                          {fill(C.rec.delAriaNew, { date: date || "", kind: kindText(it.kind) }).trim()}</span>
                       </Button>
                     )}
                   </div>
@@ -142,13 +145,13 @@ function RecordList({ flow, setFlow, store, setStoreData, deck, close, shift, sa
                       <p style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { wordBreak: "keep-all" })}>{C.rec.delAsk}</p>
                       <div style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
                         <Button onClick={() => del(it)} style={{ flex: 1 }}>{C.rec.del}</Button>
-                        <Button kind="secondary" onClick={() => setAsk(null)} style={{ flex: 1 }}>{C.rec.cancel || C.app.close}</Button>
+                        <Button kind="secondary" onClick={() => setAsk(null)} style={{ flex: 1 }}>{C.rec.cancel}</Button>
                       </div>
                     </div>
                   )}
-                  {/* below: the approved refusal. gone (the record changed meanwhile) or store (it would not read back): the
-                      proposed rec.delFail, nothing until it is approved (never the 날짜·수량·가격 line, which is about typing) */}
-                  {refused && refused.key === it.key && (refused.why === "below" || C.rec.delFail) && (
+                  {/* below: the approved refusal. gone (the record changed meanwhile) or store (it would not read back):
+                      rec.delFail (never the 날짜·수량·가격 line, which is about typing) */}
+                  {refused && refused.key === it.key && (
                     <Note tone="watch" data-ui-v2="rec-del-refused" data-why={refused.why}>{refused.why === "below" ? C.rec.delRefused : C.rec.delFail}</Note>
                   )}
                 </li>
@@ -200,15 +203,13 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const why = tried && !check.ok ? check.why : null;
   const bad = (f) => !!why && check.field === f;            // only the field the refusal is about turns amber
   // a US record without the rate of its date: said as soon as the date is typed (the record can't be saved yet). A past date:
-  // the approved "환율 정보를 불러오지 못해 … 지난 날짜의 …" line. Today (stale data: its rate is an older day's): the proposed
-  // rec.noTodayRate, until then the stale words of the date line ("{n}일째 갱신이 멈췄어요"), which say why.
+  // the approved "환율 정보를 불러오지 못해 … 지난 날짜의 …" line. Today (stale data: its rate is an older day's): rec.noTodayRate.
   const rateNo = !check.ok && check.why === "rate" ? check.rate : null;
-  const days = load.fresh && load.fresh.stale ? load.fresh.days : null;
-  const rateLine = rateNo === "past" ? C.rec.noPastRate : rateNo === "today" ? (C.rec.noTodayRate || (days != null ? staleText(days) : null)) : null;
+  const rateLine = rateNo === "past" ? C.rec.noPastRate : rateNo === "today" ? C.rec.noTodayRate : null;
   // a holding put in by amount has no share count of its own: no "지금 N주 …" head line (the by-amount line explains the form)
   const head = kind === "sell" && !byAmount ? (st.avg ? fill(C.rec.head, { qty: qtyText(st.qty), price: ownMoney(st.avg.avg, st.avg.ccy) }) : fill(C.rec.heldQty, { qty: qtyText(st.qty) })) : null;
-  // the dividend and by-amount forms have no 수량 · 가격: until rec.badAmount is approved no line there (the wrong field is
-  // already amber), never "날짜·수량·가격을 다시 확인해 주세요" (round-2 review)
+  // the dividend and by-amount forms have no 수량 · 가격: their own line (rec.badAmount), never "날짜·수량·가격을 다시 확인해
+  // 주세요" (round-2 review)
   const badLine = kind === "div" || byAmount ? C.rec.badAmount : C.plan.badInput;
   return (
     <BottomSheet open title={title} onClose={close} closeLabel={C.app.close} shift={shift}>
@@ -231,7 +232,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
             <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.rec.divHint}</p>
           </>
         ) : byAmount ? (
-          <TextInput label={C.rec.sellAmount || C.rec.proceeds} inputMode="numeric" value={v.amount} onChange={set("amount")} invalid={bad("amount")} />
+          <TextInput label={C.rec.sellAmount} inputMode="numeric" value={v.amount} onChange={set("amount")} invalid={bad("amount")} />
         ) : (
           <>
             <TextInput label={C.plan.qty} inputMode={usd && kind === "sell" ? "decimal" : "numeric"} value={v.qty} onChange={set("qty")}
@@ -242,6 +243,8 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         )}
         <TextInput label={kind === "sell" ? C.rec.sellDate : kind === "buy" ? C.plan.date : C.rec.divDate} type="date" value={v.date} onChange={set("date")} max={today}
           invalid={bad("date") || (!!rateNo && !!rateLine)} />
+        {/* a US record's date is the US trading date (#117 RUNBOOK), which can be the day before the Korean date */}
+        {usd && <p data-ui-v2="rec-us-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{C.rec.usDateHint}</p>}
         {kind === "sell" && prev && <SaleResult prev={prev} usd={usd} />}
         {rateLine && <Note tone="watch" data-ui-v2="rec-no-rate" data-why={rateNo}>{rateLine}</Note>}
         {why === "tooMany" && <Note tone="watch" data-ui-v2="rec-too-many">{C.rec.tooMany}</Note>}

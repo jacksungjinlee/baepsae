@@ -7613,6 +7613,17 @@ def won_text(won):
     return f"{round(a):,}원"
 
 
+def exact_won(won):
+    """format.js exactWon: 원 단위까지. 만으로 떨어지면 '143만원', 아니면 '18만 8,000원' (app.manWon), 1만원 아래는 '8,000원'. 빼기는 U+2212."""
+    r = int(math.floor(abs(won) + 0.5))
+    neg = "\u2212" if won < 0 and r > 0 else ""
+    if r >= 10000 and r % 10000 == 0:
+        return neg + fillp(C["app"]["man"], n=f"{r // 10000:,}")
+    if r >= 10000:
+        return neg + fillp(C["app"]["manWon"], a=f"{r // 10000:,}", b=f"{r % 10000:,}")
+    return neg + fillp(C["app"]["won"], n=f"{r:,}")
+
+
 def card_raw(s, card):
     """engine.cardRaw (가치 · 배당 · 재무 안정): None = 빈칸, 'na' = 해당 없음 (금융회사의 재무 안정)."""
     if card == "stable" and s.get("ind") in FIN_INDS:
@@ -10248,6 +10259,25 @@ def scene_v196a_outs(R, files, width=390):
         assert any("dfree NVDA 2026-09-15 x2, NVDA shares 8 -> 4" in l for l in took), took
         assert any("dswap AMZN 2026-09-01" in l and "AMZN shares 210 -> 10" in l for l in took), took
         assert any("dneed: the stored split of MSFT on 2026-09-15" in l and "it is kept" in l for l in L), L
+        # rec.splitFixed (Jack, 2026-11-13): 주식 수가 바뀐 종목의 기록 위에 한 줄, 그 방문 동안만. 남겨 둔 분할(수가 그대로)에는 없어요
+        def fixed_line(dk, t, look=False):
+            page.locator(f'[data-deck-id="{dk}"] [data-holding="{t}"] [data-ui-v2="row-actions"] button').first.click()
+            page.locator(f'[data-ui-v2="rec-sheet"][data-deck-id="{dk}"]').wait_for(state="visible")
+            line = page.locator('[data-ui-v2="rec-sheet"] [data-ui-v2="rec-split-fixed"]')
+            out = line.inner_text() if line.count() else None
+            if look:
+                floor_ok(page, "기록 시트 (분할 고침 줄)")
+                no_hscroll(page, width)
+                R.collect(page)
+                if R.shots:
+                    os.makedirs(R.shots, exist_ok=True)
+                    page.screenshot(path=os.path.join(R.shots, f"v196a-split-fixed-{width}.png"))
+            page.keyboard.press("Escape")
+            page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+            return out
+        assert fixed_line("dfree", "NVDA", look=True) == "주식 분할 정보가 바뀌어서 주식 수를 다시 계산했어요." == C["rec"]["splitFixed"]
+        assert fixed_line("dswap", "AMZN") == C["rec"]["splitFixed"]
+        assert fixed_line("dneed", "MSFT") is None
         n = len(took)
         page.reload(wait_until="domcontentloaded")
         at(page, "portfolio")
@@ -10255,11 +10285,12 @@ def scene_v196a_outs(R, files, width=390):
         page.wait_for_timeout(300)
         took2 = [l for l in logs() if "stored stock splits taken out" in l or "stored stock splits moved" in l]
         assert len(took2) == n, took2                                                          # 다시 열어도 또 빼지 않아요
+        assert fixed_line("dfree", "NVDA") is None                                             # 다시 열면 그 줄도 없어요 (수가 바뀐 방문에만)
         assert "splits" not in by_id()["dfree"]
         assert page.locator("[data-deck-id]").count() == 3                                     # 다시 읽어도 세 포트폴리오 모두 (따로 두지 않아요)
         floor_ok(page, "포트폴리오 (분할 고침)")
         R.collect(page)
-    R.check(page, S, "out 줄: 필요 없는 저장 분할은 빠지고(8 → 4, console 한 줄, 다시 열어도 한 번) · 판 기록이 필요하면 남고(경고) · 바른 날짜로 옮겨요(210 → 10)", outs)
+    R.check(page, S, "out 줄: 필요 없는 저장 분할은 빠지고(8 → 4, console 한 줄, 다시 열어도 한 번) · 판 기록이 필요하면 남고(경고) · 바른 날짜로 옮겨요(210 → 10) · 수가 바뀐 종목의 기록 위에 '주식 분할 정보가 바뀌어서 …'", outs)
     ctx.close()
     srv.shutdown()
 
@@ -10325,6 +10356,9 @@ def scene_v196a(R, files, width):
         btns = page.locator('[data-ui-v2="row-actions"] button', has_text=R_["button"])
         assert btns.count() == 3 + 4, btns.count()                                  # 만든 포트폴리오 3종목 + 가진 종목 4종목
         assert page.get_by_role("button", name=fillp(R_["title"], name="삼성전자")).count() == 2   # 이름: '{name} 기록'
+        # 배당 기록만 있는 포트폴리오: 내 포트폴리오 · 코스피 칸 밑에 '배당은 빼고 비교했어요.' (Jack, 2026-11-13)
+        note = page.locator('[data-deck-id="dbuilt"] [data-ui-v2="vs-note"]')
+        assert note.count() == 1 and note.get_attribute("data-why") == "divs" and note.inner_text() == "배당은 빼고 비교했어요." == C["deck"]["vsNoDiv"]
         hy = page.locator('[data-holding="005380"]').inner_text()
         assert "10주" in hy and "125,000원" in hy, hy                                  # 2:1 분할: 5주 × 2, 250,000원 ÷ 2
         sheet('[data-holding="005380"]')
@@ -10345,6 +10379,7 @@ def scene_v196a(R, files, width):
         act(R_["sell"])
         head = page.locator('[data-ui-v2="rec-head"]').inner_text()
         assert head == fillp(R_["head"], qty="10", price="200,000원"), head
+        assert page.locator('[data-ui-v2="rec-us-date"]').count() == 0                  # 한국 종목: 미국 날짜 안내 없음
         fill_form("11", "240000", today)
         save()
         page.locator('[data-ui-v2="rec-too-many"]').wait_for(state="visible")
@@ -10377,6 +10412,10 @@ def scene_v196a(R, files, width):
         close_sheet()
         sub = page.locator('[data-deck-id="dbuilt"] [data-holding="005930"]').inner_text()
         assert "7주 · 평균 단가 200,000원" in sub, sub                                   # 이동평균: 판 뒤에도 평균 단가 그대로
+        # 판 기록이 생기면 같은 자리의 줄이 바뀌어요 (Jack, 2026-11-13)
+        note = page.locator('[data-deck-id="dbuilt"] [data-ui-v2="vs-note"]')
+        assert note.count() == 1 and note.get_attribute("data-why") == "sold", note.count()
+        assert note.inner_text() == "판 금액까지 넣어서 비교했어요. 배당은 넣지 않았어요." == C["deck"]["vsSold"]
     R.check(page, S, "팔았어요: 많이(거절) · 앞선 날짜(거절) · 판 금액 72만원 · 산 가격보다 +12만원 (+20.0%) · 평균 단가 그대로", sell_kr)
 
     def sell_split_keep():
@@ -10409,23 +10448,44 @@ def scene_v196a(R, files, width):
         res = page.locator('[data-ui-v2="rec-proceeds"]')
         res.wait_for(state="visible")
         assert page.locator('[data-ui-v2="rec-proceeds-usd"]').inner_text() == "$" + f"{2 * by['AAPL']['price']:,.2f}"
+        # 정확한 금액 (app.manWon '{a}만 {b}원', Jack 2026-11-13): 2주 × 종가 × 1,350원
+        won = 2 * by["AAPL"]["price"] * 1350
+        assert round(won) % 10000 != 0 and res.inner_text() == exact_won(won) and "만 " in res.inner_text(), (res.inner_text(), won)
+        # 미국 종목만: 날짜 칸 바로 밑에 '미국 주식은 미국 현지 날짜로 적어 주세요.'
+        hint = page.locator('[data-ui-v2="rec-form"] [data-ui-v2="rec-us-date"]')
+        assert hint.count() == 1 and hint.inner_text() == "미국 주식은 미국 현지 날짜로 적어 주세요." == R_["usDateHint"]
+        assert hint.evaluate("(el) => !!el.previousElementSibling && !!el.previousElementSibling.querySelector('input[type=date]')")
         check_page("미국 판매", "sell-us")
         save()
         page.locator('[data-ui-v2="rec-saved"]').wait_for(state="visible")
         s = deck(0)["sales"][-1]
         assert s["t"] == "AAPL" and s["fx"] == 1350.0 and s["date"] == "2026-10-20" and s["ccy"] == "USD"   # 그날 환율 (fxHist)
         close_sheet()
-    R.check(page, S, "지난 날짜의 미국 판매: fxHist 의 그날 환율 1,350원으로 저장 · 원화 먼저, 달러는 작게", sell_us_past)
+    R.check(page, S, "지난 날짜의 미국 판매: fxHist 의 그날 환율 1,350원으로 저장 · 원화 먼저, 달러는 작게 · '18만 8,000원' 꼴 · 미국 날짜 안내", sell_us_past)
+
+    def us_date_hint():
+        for t, kind, n in (("AAPL", C["plan"]["bought"], 1), ("AAPL", R_["div"], 1), ("005930", C["plan"]["bought"], 0), ("005930", R_["div"], 0)):
+            sheet(f'[data-deck-id="dbuilt"] [data-holding="{t}"]')
+            act(kind)
+            hint = page.locator('[data-ui-v2="rec-form"] [data-ui-v2="rec-us-date"]')
+            assert hint.count() == n, (t, kind, hint.count())
+            if n:
+                assert hint.inner_text() == R_["usDateHint"]
+                assert hint.evaluate("(el) => !!el.previousElementSibling && !!el.previousElementSibling.querySelector('input[type=date]')")
+            close_sheet()
+    R.check(page, S, "미국 날짜 안내: 미국 종목의 샀어요 · 배당 받았어요 날짜 칸 밑에만, 한국 종목에는 없어요", us_date_hint)
 
     def delete():
         sheet('[data-deck-id="dbuilt"] [data-holding="005930"]')
         buy = page.locator('[data-ui-v2="rec-list"] li[data-rec="buy"]')
+        # 지우기 버튼의 이름(읽기 도우미): '{date} {kind} 기록 지우기' (Jack, 2026-11-13)
+        assert buy.get_by_role("button", name=fillp(R_["delAriaNew"], date=mdtext("2026-10-01"), kind=C["csv"]["kinds"]["buy"]), exact=True).count() == 1
         buy.locator("button").click()
         ask = page.locator('[data-ui-v2="rec-del-ask"]')
         ask.wait_for(state="visible")
         check_page("지울까요?", "delete-ask")
         assert ask.locator("p").inner_text() == R_["delAsk"]
-        assert ask.locator("button").all_inner_texts() == [R_["del"], R_["cancel"] or C["app"]["close"]]
+        assert R_["cancel"] == "취소" and ask.locator("button").all_inner_texts() == [R_["del"], "취소"]   # 둘째 버튼: 취소 (닫기가 아니에요)
         ask.locator("button").first.click()
         page.locator('[data-ui-v2="rec-del-refused"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="rec-del-refused"]').inner_text() == R_["delRefused"]
@@ -10450,9 +10510,9 @@ def scene_v196a(R, files, width):
         page.locator('[data-ui-v2="rec-form"] input[aria-invalid="true"]').wait_for(state="visible")
         inv = page.locator('[data-ui-v2="rec-form"] input').evaluate_all("(xs) => xs.map((x) => x.getAttribute('aria-invalid'))")
         assert inv == ["true", None], inv                                              # 금액만 빨갛게, 날짜는 그대로 (리뷰 1차)
-        # 리뷰 2차: 수량 · 가격이 없는 양식에는 rec.badAmount 가 승인되기 전 줄이 없어요 ('날짜·수량·가격 …'은 안 나와요)
+        # 리뷰 2차: 수량 · 가격이 없는 양식에는 제 줄 (rec.badAmount, Jack 2026-11-13). '날짜·수량·가격 …'은 안 나와요
         bad = page.locator('[data-ui-v2="bad-input"]')
-        assert (bad.inner_text() == R_["badAmount"]) if R_["badAmount"] else bad.count() == 0
+        assert bad.count() == 1 and bad.inner_text() == "날짜·금액을 다시 확인해 주세요" == R_["badAmount"]
         check_page("배당 받았어요", "div-bad")
         fill_form("3610", "2026-10-25")
         save()
@@ -10468,7 +10528,7 @@ def scene_v196a(R, files, width):
         assert page.locator('[data-ui-v2="rec-by-amount"]').inner_text() == R_["byAmount"]
         assert page.locator('[data-ui-v2="rec-head"]').count() == 0                     # 금액으로 넣은 종목: 지어낸 주식 수의 머리줄 없음
         labels = page.locator('[data-ui-v2="rec-form"] label').all_inner_texts()
-        assert labels[0].startswith(R_["sellAmount"] or R_["proceeds"]), labels
+        assert R_["sellAmount"] == "판 금액 (원)" and labels[0].startswith(R_["sellAmount"]), labels
         check_page("금액으로 넣은 종목", "sell-by-amount")
         fill_form("1200000", today)
         save()
@@ -10552,8 +10612,21 @@ def scene_v196a(R, files, width):
         line = page.locator('[data-ui-v2="ret-fx-line"]').inner_text()
         assert line == fillp(C["ret"]["rateAvg"], a=f"{round(cost_a / 2 / 610):,}", b=f"{round(fx):,}"), line
         assert page.locator('[data-ui-v2="ret-fx-bar"]').count() == (1 if min(r2) >= 0 else 0)
+        # 머리 금액 · 세 줄 · 주가 + 환율: 모두 정확한 금액 ('{a}만 {b}원'). 영수증의 {gain} 은 머리 금액과 같은 숫자예요 (Jack, 2026-11-13)
+        signed = lambda v: ("+" if v > 0 else "") + exact_won(v)
+        total = sum(rows)
+        assert page.locator('[data-ui-v2="ret-total"] > span').first.inner_text() == signed(total), page.locator('[data-ui-v2="ret-total"]').inner_text()
+        for k, v in zip(("held", "sold", "divs"), rows):
+            assert page.locator(f'[data-ui-v2="ret-row"][data-row="{k}"]').inner_text().split("\n")[-1] == signed(v), (k, v)
+        assert any(abs(v) >= 10000 and abs(v) % 10000 for v in rows + [total])            # 이 장면에 '몇만 몇천원' 꼴이 실제로 있어요
+        assert page.locator('[data-ui-v2="ret-fx-total"]').inner_text() == signed(sum(r2))
+        cost = 10 * 200000 + 5 * 250000 + cost_a                                       # 산 금액 전체: 뒤에 판 주식도 포함
         rcpt = page.locator('[data-ui-v2="ret-receipt"]')
-        assert rcpt.count() == (1 if C["ret"]["receiptFix"] else 0) and page.locator('[data-ui-v2="ret-pct"]').count() == rcpt.count()
+        assert rcpt.count() == 1 and rcpt.inner_text() == fillp(C["ret"]["receiptFix"], gain=exact_won(total), cost=exact_won(cost)), rcpt.inner_text()
+        assert page.locator('[data-ui-v2="ret-no-avg"]').count() == 0                     # 뺀 종목이 없으면 이름 줄도 없어요
+        assert "으로 나눈 값이에요." in rcpt.inner_text() and exact_won(cost) == "485만 2,000원"
+        pct = page.locator('[data-ui-v2="ret-pct"]')
+        assert pct.count() == 1 and pct.inner_text() == fillp(C["ret"]["ret"], pct=signed_pct((held + sold + divs) / cost * 100)), pct.inner_text()
         check_page("내 수익", "returns")
         with page.expect_download() as dl:
             page.locator('[data-ui-v2="ret-csv"] button').click()
@@ -10576,6 +10649,10 @@ def scene_v196a(R, files, width):
         page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="ret-fx"][data-empty="1"] [data-ui-v2="ret-fx-left"]').inner_text() == C["ret"]["fxLeftOut"]   # MSFT: 달러 평균 단가만
         assert page.locator('[data-ui-v2="usd-today"]').count() == 1
+        # 평균 단가가 없어 뺀 종목은 이름을 밝혀요 (ret.noAvg, Jack 2026-11-13: 종목 통째로 + 이름 줄). 금액으로 넣은 NAVER 를 다 판 기록
+        na = page.locator('[data-ui-v2="ret-no-avg"]')
+        assert na.count() == 1 and na.inner_text() == fillp(C["ret"]["noAvg"], n=1, names="NAVER") == "평균 단가가 없는 종목 1개(NAVER)는 빼고 계산했어요."
+        assert page.locator('[data-ui-v2="ret-receipt"]').count() == 1 and page.locator('[data-ui-v2="ret-pct"]').count() == 1
         check_page("내 수익 (가진 종목)", "returns-imported")
     R.check(page, S, "내 수익: 세 줄 = 손으로 계산 · 머리 금액 = 합 · 주가 + 환율 · 평균 환율 줄 · CSV(BOM · 머리줄 · 줄 수 · 코드)", returns)
     ctx.close()
@@ -10618,6 +10695,27 @@ def scene_v196a(R, files, width):
         assert page.locator('[data-ui-v2="ret-total"]').count() == 0 and page.locator('[data-ui-v2="ret-csv"]').count() == 1
         check_page("내 수익 (멈춘 데이터)", "returns-stale")
     R.check(page, S, "멈춘 데이터: 내 수익은 멈춤 줄만(숫자 없음) · 기록 내려받기는 그대로", stale_returns)
+
+    def stale_today_rate():
+        # 멈춘 데이터의 환율은 지난 날 것이라 오늘 날짜의 미국 기록은 저장하지 않아요: 제 줄 (rec.noTodayRate, Jack 2026-11-13)
+        page.evaluate("location.hash = '#portfolio'")
+        at(page, "portfolio")
+        btn = page.locator('[data-deck-id="dbuilt"]').get_by_role("button", name=fillp(R_["title"], name="Apple Inc."), exact=True)
+        btn.wait_for(state="visible")                                                      # 멈춘 날에도 기록 버튼은 있어요 (점검 줄은 없어요)
+        btn.click()
+        page.locator('[data-ui-v2="rec-sheet"]').wait_for(state="visible")
+        act(C["plan"]["bought"])
+        fill_form("1", "300", None)                                                        # 날짜는 오늘 그대로
+        line = page.locator('[data-ui-v2="rec-form"] [data-ui-v2="rec-no-rate"]')
+        line.wait_for(state="visible")
+        assert line.get_attribute("data-why") == "today"
+        assert line.inner_text() == "오늘 환율 정보가 아직 없어 지금은 미국 종목 기록을 저장할 수 없어요. 잠시 뒤에 다시 해 주세요." == R_["noTodayRate"]
+        save()
+        page.wait_for_timeout(200)
+        assert len(stored()["decks"][0]["purchases"]) == 4 and page.locator('[data-ui-v2="rec-saved"]').count() == 0   # 저장 안 함
+        check_page("오늘 환율 없음", "no-today-rate")
+        close_sheet()
+    R.check(page, S, "멈춘 데이터: 오늘 날짜의 미국 기록은 '오늘 환율 정보가 아직 없어 …' · 저장 안 함", stale_today_rate)
     ctx.close()
     srv.shutdown()
 

@@ -444,10 +444,13 @@ export function App({ source }) {
     if (r.out) console.warn(`[v2] data.json splits: ${r.out} entr${r.out === 1 ? "y" : "ies"} named by an "out" row of splitsInfo.fixed; not applied`);
     return r.list;
   }, [load]);
+  // "portfolio id|code" of each stock whose share count a split correction changed during this visit (the "out" effect below):
+  // that stock's record sheet says so (rec.splitFixed). Not stored: the line is for the visit the count changed in.
+  const [splitFixed, setSplitFixed] = useState(() => new Set());
   const view = useMemo(() => {
     const data = withDataSplits(store.data, splitList, todayKst());
-    return data === store.data ? store : { ...store, data };
-  }, [store, splitList]);
+    return data === store.data && !splitFixed.size ? store : { ...store, data, splitFixed };
+  }, [store, splitList, splitFixed]);
   // a split the records keep (store.js splits) that today's data.json does not list: said loudly, once each (it stays in use:
   // the records were saved with it). data.json lists every split since 2016 and keeps a published one for good, so this is a
   // split the pipeline took out ("out" rows: the effect below removes it where the records allow) or one from an older file.
@@ -474,8 +477,8 @@ export function App({ source }) {
   // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong. Each stored split it names is taken
   // out when the records read back without it, moved to data.json's corrected date (same stock and ratio) when they read
   // back with that, and otherwise kept, said loudly once (lots.withoutOutSplits: never a record lost or refused). A share
-  // count that changes is said too (the proposed rec.splitFixed line waits for Jack; until then only the console). Only
-  // when the records can be written.
+  // count that changes is said in the console and, for the rest of this visit, above that stock's records (rec.splitFixed,
+  // Jack 2026-11-13). Only when the records can be written.
   const outSaid = useRef(new Set());
   useEffect(() => {
     if (load.status !== "ok" || !store.writable || store.locked) return;
@@ -493,6 +496,8 @@ export function App({ source }) {
       + r.removed.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}${count(x.held)}`).join("; "));
     if (r.moved.length) console.warn("[v2] stored stock splits moved to data.json's corrected date: "
       + r.moved.map((x) => `${x.id} ${x.t} ${x.date} -> ${x.to} x${x.r}${count(x.held)}`).join("; "));
+    const fixed = [...r.removed, ...r.moved].filter((x) => x.held && x.held.before !== x.held.after).map((x) => `${x.id}|${x.t}`);
+    if (fixed.length) setSplitFixed((old) => new Set([...old, ...fixed]));
     setStoreData(r.data);
   }, [store.data, load, splitList]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)

@@ -7,7 +7,7 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
-import { C, fill, nf, p1, mdText, wonText, todayKst, staleText } from "./format.js";
+import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
 import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate } from "./cofmt.js";
@@ -406,9 +406,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         {tried && (badDate || parsed.some((r) => r.badQ || r.badP)) && <Note tone="watch" data-ui-v2="bad-input">{P.badInput}</Note>}
         {noRate === "past" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="past">{C.rec.noPastRate}</Note>}
-        {noRate === "today" && (C.rec.noTodayRate || (load.fresh && load.fresh.stale)) && (
-          <Note tone="watch" data-ui-v2="rec-no-rate" data-why="today">{C.rec.noTodayRate || staleText(load.fresh.days)}</Note>
-        )}
+        {noRate === "today" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="today">{C.rec.noTodayRate}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={save}>{P.save}</Button></div>
       </div>
     </BottomSheet>

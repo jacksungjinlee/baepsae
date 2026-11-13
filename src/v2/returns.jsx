@@ -40,8 +40,7 @@ function Row({ icon, tone, name, sub, value, unit, first, id }) {
 }
 
 // The records file (one CSV of every portfolio), from the store as it is.
-// A download that could not start says so on screen (round-1 review): the proposed ret.csvFail, until then nothing but the
-// console line (no approved line says a download failed).
+// A download that could not start says so on screen (round-1 review: ret.csvFail), and the console says why.
 function CsvRow({ store }) {
   const [failed, setFailed] = useState(false);
   const save = () => {
@@ -62,7 +61,7 @@ function CsvRow({ store }) {
         <span style={tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { flex: 1, minWidth: 0, wordBreak: "keep-all" })}>{C.ret.csv}</span>
         <Icon name="chevronRight" size={18} tone="on" />
       </button>
-      {failed && C.ret.csvFail && <div style={{ padding: `0 ${SPACE(4)}px ${SPACE(3)}px` }}><Note tone="watch" data-ui-v2="ret-csv-fail">{C.ret.csvFail}</Note></div>}
+      {failed && <div style={{ padding: `0 ${SPACE(4)}px ${SPACE(3)}px` }}><Note tone="watch" data-ui-v2="ret-csv-fail">{C.ret.csvFail}</Note></div>}
     </Card>
   );
 }
@@ -144,15 +143,15 @@ export function Returns({ deck, load, store, pad, onBack }) {
   const total = rr ? rr.total : 0;
   const none = !!rr && rr.rows.every((v) => v == null);          // every row is "–": the headline too, never "0원"
   // 수익률 and its receipt line, together (CLAUDE.md: a computed ratio shows its inputs), only with the money put in known,
-  // from the exact sums (lots.returnsPct, never the rounded rows); the receipt shows those exact amounts, so it gives back
-  // the same %. The approved receipt reads "… 산 금액 전체 {cost}로 …", and {cost} always ends in 원, which takes 으로: the
-  // corrected line (ret.receiptFix, proposed) waits for Jack, and until then neither 수익률 nor its receipt is shown.
-  const pct = r && C.ret.receiptFix ? returnsPct(r) : null;
+  // from the exact sums (lots.returnsPct). The receipt's {gain} is the headline itself (Jack, 2026-11-13: exact amounts
+  // always, so the receipt and the headline agree): the sum of the three rows as shown, each to the 원. The line is
+  // ret.receiptFix ("… {cost}으로 …": {cost} always ends in 원), not the Appendix 1 "{cost}로".
+  const pct = r ? returnsPct(r) : null;
   const exact = r ? r.held + r.sold + r.divs : 0;
   const md = ok ? mdText(load.data.pxDate) : null;
-  // held stocks left out today: missing from today's data, or in it without a price (the approved missing-stock line; the
-  // proposed ret.noPrice for the second kind once Jack approves it)
-  const missing = r ? (C.ret.noPrice ? r.absent : [...r.absent, ...r.noPrice]) : [];
+  // held stocks left out today: missing from today's data (the approved missing-stock line names them); in it without a
+  // price: ret.noPrice
+  const missing = r ? r.absent : [];
   const usHeld = r ? r.ledgers.filter((L) => L.ccy === "USD" && L.held > 0 && !gone.has(L.t)).map((L) => ctx.byT.get(L.t)).filter(Boolean) : [];
   return (
     <Page pad={pad}>
@@ -176,13 +175,13 @@ export function Returns({ deck, load, store, pad, onBack }) {
               <Row id="divs" icon="coins" tone="div" name={C.ret.divs} sub={C.ret.divsSub} value={rr.rows[2]} unit={rr.unit} />
             </Card>
             {pct != null && (
-              <Note data-ui-v2="ret-receipt">{fill(C.ret.receiptFix, { gain: exactWon(exact), cost: exactWon(r.cost) })}</Note>
+              <Note data-ui-v2="ret-receipt">{fill(C.ret.receiptFix, { gain: exactWon(rr.unit === 1 ? total : exact), cost: exactWon(r.cost) })}</Note>
             )}
             {r.soldOut > 0 && <Note data-ui-v2="ret-sold-left">{fill(C.ret.soldLeftOut, { n: r.soldOut })}</Note>}
             {r.noFx.length > 0 && C.deck.noFx && <Note data-ui-v2="ret-no-fx">{C.deck.noFx}</Note>}
-            {r.noAvg.length > 0 && C.ret.noAvg && <Note data-ui-v2="ret-no-avg">{fill(C.ret.noAvg, { n: r.noAvg.length, names: names(r.noAvg).join(", ") })}</Note>}
+            {r.noAvg.length > 0 && <Note data-ui-v2="ret-no-avg">{fill(C.ret.noAvg, { n: r.noAvg.length, names: names(r.noAvg).join(", ") })}</Note>}
             {missing.length > 0 && <Note tone="watch" data-ui-v2="ret-missing">{fill(C.missing.line, { n: missing.length, names: missingNames(missing.map((t) => ({ t, nk: names([t])[0], cls: (holdingOf(t) || {}).cls, cost: null }))) })}</Note>}
-            {C.ret.noPrice && r.noPrice.length > 0 && <Note tone="watch" data-ui-v2="ret-no-price">{C.ret.noPrice}</Note>}
+            {r.noPrice.length > 0 && <Note tone="watch" data-ui-v2="ret-no-price">{C.ret.noPrice}</Note>}
             {r.usdOnly && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
             {r.usdOnlySold && <Note data-ui-v2="usd-sold">{C.rec.usdOnly}</Note>}
             {/* v19.1c (#82): a held US stock priced at an earlier close than the US date is named, as everywhere else */}

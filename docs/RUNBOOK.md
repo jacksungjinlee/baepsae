@@ -592,7 +592,8 @@ it for good.
   screens apply from data.json, but a split already stored in a user's records keeps the ratio it was stored with. Only
   an "out" row (ratio `None`) reaches stored splits: the app takes that stored split out, or moves it to data.json's
   corrected date of the same stock and ratio, whenever the records still read back; otherwise it keeps it and says so in
-  the console.
+  the console. When taking out or moving a split changes a stock's share count, that stock's 기록 sheet says "주식 분할
+  정보가 바뀌어서 주식 수를 다시 계산했어요." for the rest of that visit (the console names the count before and after).
 - **A wrong date corrected more than 10 days away, with a record between the two dates that needs the old one.** The
   stored split stays at the old date (the records need it) and data.json's corrected row is applied too, so those
   records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)

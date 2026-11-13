@@ -22,25 +22,25 @@ export function wonText(won) {
 
 export const manText = (man) => fill(C.app.man, { n: nf(man) });
 
-// v19.6a: an exact won amount (rounded to 1원): a whole 만 as "143만원", else "18만 8,000원" (app.manWon, proposed) — until
-// that is approved, "188,000원" (the approved "{n}원" with every digit). Below 1만원: "8,000원".
+// v19.6a: an exact won amount (rounded to 1원): a whole 만 as "143만원", else "18만 8,000원" (app.manWon, Jack 2026-11-13).
+// Below 1만원: "8,000원".
 export function exactWon(won) {
   const r = Math.round(Math.abs(won));
   const neg = won < 0 && r > 0;
   if (r >= 10000 && r % 10000 === 0) return signed(fill(C.app.man, { n: nf(r / 10000) }), neg);
-  if (r >= 10000 && C.app.manWon) return signed(fill(C.app.manWon, { a: nf(Math.floor(r / 10000)), b: nf(r % 10000) }), neg);
+  if (r >= 10000) return signed(fill(C.app.manWon, { a: nf(Math.floor(r / 10000)), b: nf(r % 10000) }), neg);
   return signed(fill(C.app.won, { n: nf(r) }), neg);
 }
 // A won amount rounded to `unit` (10000: 만원 style, 1: exact), as lots.roundRows chose for a set of rows that must add up.
 export const unitWon = (won, unit) => (unit >= 10000 && Math.round(Math.abs(won) / 10000) > 0 ? signed(fill(C.app.man, { n: nf(Math.round(Math.abs(won) / 10000)) }), won < 0 && Math.round(Math.abs(won) / 10000) > 0) : exactWon(won));
 // "+" in front of a positive amount (the true minus sign comes from signed()).
 export const plus = (text, v) => (v > 0 ? "+" + text : text);
-// A record's date: "11월 6일" in this year (CSV 4), "{y}년 {m}월 {d}일" in another (app.ymd, proposed; until then 2025-03-06).
+// A record's date: "11월 6일" in this year (CSV 4), "2025년 3월 6일" in another (app.ymd, Jack 2026-11-13).
 export function recDate(iso, today) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
   if (!m) return null;
   if (today && String(today).slice(0, 4) === m[1]) return mdText(iso);
-  return C.app.ymd ? fill(C.app.ymd, { y: m[1], m: Number(m[2]), d: Number(m[3]) }) : iso;
+  return fill(C.app.ymd, { y: m[1], m: Number(m[2]), d: Number(m[3]) });
 }
 
 // v19.1c (Jack, 2026-11-07, design chat): wherever a list or a total includes a US stock priced at an earlier close
