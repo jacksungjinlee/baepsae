@@ -85,3 +85,20 @@ def test_the_names_the_log_and_the_refusal_line_have_no_waiting_branch():
     assert line in ed and line in rec                                # 종목 바꾸기 · 팔고 빼기의 팔았어요 양식
     for src in (ed, rec):
         assert "C.edit.saveFail &&" not in src and "C.edit.log ?" not in src and "C.edit.down ?" not in src and "C.edit.up ?" not in src
+
+
+def test_the_sold_out_line_opens_that_stocks_빼기_sheet():
+    """Jack, 2026-11-13 (J4): the line "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." (v19.6a, daily.soldOutKept) is
+    itself the link, with no new words: on 포트폴리오 (where 종목 바꾸기 opens: data loaded, records writable) and on the company
+    page it opens 종목 바꾸기 of that portfolio with that stock's 빼기 sheet already open. An address reached while another
+    portfolio's edits wait still asks first; 닫기 there drops the request. (smoke_v2 scene_v196a_sold_out: tapping it from both
+    screens opens the sheet; 빼기 and 바꾼 내용 저장 leave no 0주 row and no line.)"""
+    pf, co, app, ed = read("src/v2/portfolio.jsx"), read("src/v2/company.jsx"), read("src/v2/app.jsx"), read("src/v2/editor.jsx")
+    block = pf.split("(de.soldOut || []).map(", 1)[1].split("de.rebased", 1)[0]
+    assert "{onEdit && canRecord" in block and 'data-ui-v2="sold-out-remove" onClick={() => onEdit(d.id, t)}' in block
+    assert 'data-ui-v2="sold-out-remove" onClick={() => onRemove(deckId, x.t)}' in co
+    assert "onRemove={nav.removeFrom && store.writable && !store.locked ? nav.removeFrom : null}" in co
+    assert "removeFrom: (deckId, t) => { setEditRm({ deckId, t }); router.go(\"portfolio\", \"edit/\" + deckId); }" in app
+    assert "setEditRm(rmT ? { deckId: id, t: rmT } : null);" in app and "onClick={() => { setAskDrop(null); setEditRm(null); }}" in app
+    assert "startRemove={editRm && editRm.deckId === editDeck.id ? editRm.t : null} onStarted={() => setEditRm(null)}" in app
+    assert 'useState(() => (startRemove ? { kind: "remove", t: startRemove } : null))' in ed

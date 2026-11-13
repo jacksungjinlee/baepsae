@@ -6,7 +6,7 @@
 // "바꾼 내용을 저장하지 않고 나갈까요?" when anything is waiting. Stale data: everything still works, with the date line's stale
 // words (the 규칙 깨짐 lines need fresh data and are left out then). Failed data: the load-failure message instead of the
 // list. No 뱁이 (the screen shows weights and scores). No Korean here: src/copy/v2.js.
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Button, BottomSheet, StatusChip } from "../ui/components.jsx";
@@ -126,11 +126,14 @@ function Row({ r, qty, ind, x, cap, rows, onStep, onRemove, capHit, only }) {
 
 // deck: the stored portfolio (the app's view of it); draft / setDraft: the edits waiting (app.jsx). onLeave: back to
 // 포트폴리오 (the draft dropped); onSaved: after 바꾼 내용 저장.
-export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, pad, onLeave, onSaved }) {
+// startRemove (Jack 2026-11-13, J4): a stock whose 빼기 sheet opens with the screen (the "다 판 종목이에요. …" line on 포트폴리오
+// and on the company page); onStarted: called once it has opened.
+export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, pad, onLeave, onSaved, startRemove = null, onStarted = null }) {
   const { wide } = useLayout();
   const ok = load.status === "ok";
   const draft = useMemo(() => E.rebaseDraft(deck, raw), [deck, raw]);
-  const [sheet, setSheet] = useState(null);              // { kind: "remove", t } | { kind: "find" } | { kind: "add", s } | { kind: "leave" }
+  const [sheet, setSheet] = useState(() => (startRemove ? { kind: "remove", t: startRemove } : null));   // { kind: "remove", t } | { kind: "find" } | { kind: "add", s } | { kind: "leave" }
+  useEffect(() => { if (startRemove && onStarted) onStarted(); }, []);
   const [flow, setFlow] = useState(null);                // 팔고 빼기: v19.6a's 팔았어요 sheet (records.jsx RecordFlow)
   const [capHit, setCapHit] = useState(null);
   const [fail, setFail] = useState(null);                // "storage" | "refused"

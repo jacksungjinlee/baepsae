@@ -10459,7 +10459,36 @@ def scene_v196a_sold_out(R, files, width=390):
                 assert row.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and row.locator('[data-ui-v2="sold-out-kept"]').inner_text() == KEPT
             assert page.locator('[data-ui-v2="sold-out-kept"]').count() == n and page.locator("body").inner_text().count(KEPT) == n, (t, n)
             R.collect(page)
-    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음 · '다 판 종목이에요. …' 는 다 판 종목 줄 밑에만 한 번 (포트폴리오 · 회사 페이지)", three)
+        # v19.7a (Jack 11-13, J4): the line itself opens 종목 바꾸기 with that stock's 빼기 sheet — from the company page …
+        page.evaluate("() => { location.hash = '#stocks/105560'; }")
+        at(page, "stocks/105560")
+        page.locator('[data-ui-v2="co-held-row"][data-deck-id="d3"] [data-ui-v2="sold-out-remove"]').click()
+        at(page, "portfolio/edit/d3")
+        rs = page.locator('[data-ui-v2="rm-sheet"][data-t="105560"]')
+        rs.wait_for(state="visible")
+        assert rs.get_attribute("data-held") == "0" and rs.locator("button:not([data-reason])").all_inner_texts() == [C["rec"]["remove"]]
+        R.collect(page)
+        page.keyboard.press("Escape")
+        rs.wait_for(state="detached")
+        # … and from 포트폴리오, then 빼기 and 바꾼 내용 저장: no 0주 row and no line any more
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        page.locator('[data-deck-id="d3"] [data-sold-out="105560"] [data-ui-v2="sold-out-remove"]').click()
+        at(page, "portfolio/edit/d3")
+        rs.wait_for(state="visible")
+        rs.locator("button", has_text=C["rec"]["remove"]).last.click()
+        rs.wait_for(state="detached")
+        low = page.locator('[data-ui-v2="edit-cap-low"] button')
+        if low.count():
+            low.click()
+        save = page.get_by_role("button", name=C["edit"]["save"])
+        save.click()
+        at(page, "portfolio")
+        page.locator('[data-deck-id="d3"] [data-holding="005930"]').wait_for(state="visible")
+        assert page.locator('[data-sold-out="105560"]').count() == 0 and page.locator('[data-ui-v2="sold-out-kept"]').count() == 0
+        assert KEPT not in page.locator("body").inner_text()
+        R.collect(page)
+    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음 · '다 판 종목이에요. …' 는 다 판 종목 줄 밑에만 한 번 (포트폴리오 · 회사 페이지) · 그 줄을 누르면 종목 바꾸기의 그 종목 빼기 (v19.7a) → 빼고 저장하면 0주 줄도 그 줄도 없어요", three)
     ctx.close()
     srv.shutdown()
 

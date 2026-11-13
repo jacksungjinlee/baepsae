@@ -339,11 +339,15 @@ export function App({ source }) {
   const openWhy = useCallback((deckId, t) => { setWhy({ deckId, t }); router.go("home", "why"); }, [router.go]);
   // v19.1a: any company tapped anywhere in 2.0 opens its company page (#stocks/<code>, one history entry).
   const openStock = useCallback((t) => router.go("stocks", companySub(t)), [router.go]);
+  // Jack 2026-11-13 (J4): the "다 판 종목이에요. …" line opens 종목 바꾸기 of that portfolio with that stock's 빼기 sheet open.
+  // editRm: { deckId, t } until that editor has opened it (an address reached while other edits wait still asks first).
+  const [editRm, setEditRm] = useState(null);
   const coNav = useMemo(() => ({
     back: () => (loc.ctab === "value-more" || loc.ctab === "earn-more" ? router.back("stocks", companySub(loc.code, loc.ctab.replace("-more", ""))) : router.back("stocks")),
     setTab: (ctab) => router.replaceRoute("stocks", companySub(loc.code, ctab)),
     more: (ctab) => router.go("stocks", companySub(loc.code, ctab)),
     onWhy: openWhy,
+    removeFrom: (deckId, t) => { setEditRm({ deckId, t }); router.go("portfolio", "edit/" + deckId); },
   }), [loc.code, loc.ctab, router.back, router.replaceRoute, router.go, openWhy]);
   // 기록했어요 -> 홈: the finished build is replaced by 홈, and the next 포트폴리오 만들기 starts fresh.
   const doneToHome = useCallback(() => { setBuilder(newBuilder()); router.replaceRoute("home"); }, [router.replaceRoute]);
@@ -523,7 +527,8 @@ export function App({ source }) {
     const w = editor && editor.deckId !== id ? view.data.decks.find((d) => d.id === editor.deckId && !isImported(d)) || null : null;
     return w && editPending(w, editor.draft) ? w : null;
   };
-  const openEdit = useCallback((id) => {
+  const openEdit = useCallback((id, rmT = null) => {
+    setEditRm(rmT ? { deckId: id, t: rmT } : null);
     if (waitingFor(id)) { setAskDrop(id); return; }
     router.go("portfolio", "edit/" + id);
   }, [router.go, editor, view]);
@@ -557,7 +562,7 @@ export function App({ source }) {
     }
     if (editDeck) {
       return <Editor key={editDeck.id} deck={editDeck} load={load} store={store} setStoreData={setStoreData} draft={editDraft} setDraft={setEditDraft} pad={pad}
-        onLeave={leaveEdit} onSaved={leaveEdit} />;
+        onLeave={leaveEdit} onSaved={leaveEdit} startRemove={editRm && editRm.deckId === editDeck.id ? editRm.t : null} onStarted={() => setEditRm(null)} />;
     }
     if (tab === "portfolio") {
       return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
@@ -598,7 +603,7 @@ export function App({ source }) {
                 {askDrop && (
                   <BottomSheet open title={C.edit.leave} onClose={() => setAskDrop(null)} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
                     <div data-ui-v2="edit-drop" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
-                      <Button onClick={() => setAskDrop(null)} style={{ flex: 1 }}>{C.app.close}</Button>
+                      <Button onClick={() => { setAskDrop(null); setEditRm(null); }} style={{ flex: 1 }}>{C.app.close}</Button>
                       {/* the leave sheet's discard button and label (round-2 B-4): 나가기 (Jack, 2026-11-13). No approved line names
                           the other portfolio yet. */}
                       <Button kind="secondary" onClick={() => { const id = askDrop; setAskDrop(null); setEditor(null); router.go("portfolio", "edit/" + id); }}
