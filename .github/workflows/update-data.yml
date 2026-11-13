@@ -76,6 +76,8 @@ jobs:
       skip: ${{ steps.already.outputs.skip }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false   # 토큰을 작업 폴더에 남기지 않아요 (이 job 은 읽기만 해요)
 
       - name: 아침 데이터가 이미 발행됐는지 · 미국 종가 확정 전이면 기다리기 (정해진 시각 · 바깥 타이머 실행만)
         id: already
@@ -106,9 +108,14 @@ jobs:
     steps:
       # 정해진 시각 실행은 만들어질 때의 커밋에 묶여 있어요. 기다리는 동안 다른 실행이 발행했을 수 있어서 지금의 main 을 받아요
       # (관문의 '직전 발행본' 비교와 커밋 단계가 최신 main 위에서 돌게). 수동 실행은 기본값(그 실행의 커밋) 그대로예요.
+      # 2026-11-12 (Jack): checkout 은 이 작업의 쓰기 토큰을 파일로 남기지 않아요 (예전에는 .git/config 가 가리키는 자격 증명
+      # 파일에 남겨서, 뒤의 모든 단계 — 화면 검사 도구 · 브라우저까지 — 가 읽을 수 있었어요). git 은 발행하는 두 단계에서만 토큰을 받아요
+      # (tools/git_token_auth.sh). 데이터 수집과 관문 단계는 GitHub API 를 읽으려고 아직 자기 환경으로 토큰을 받아요 — 줄인 것이지
+      # 막은 것은 아니에요 (읽기 전용 작업과 발행 작업을 나누는 것은 다음 일). 공개 저장소라 그 전의 git 읽기(fetch)는 토큰 없이 돼요.
       - uses: actions/checkout@v7
         with:
           ref: ${{ (github.event_name == 'schedule' || inputs.timer) && 'main' || '' }}
+          persist-credentials: false
 
       - name: 입력 확인
         run: |
@@ -319,6 +326,8 @@ jobs:
 
       - name: 커밋 & 푸시
         if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}   # 푸시에만 써요 (tools/git_token_auth.sh) — 이 단계 전에는 git 이 토큰을 몰라요 (작업 폴더에 없어요)
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "!! 데이터 커밋은 main 에서만 해요 (지금: $GITHUB_REF_NAME)"
@@ -328,6 +337,7 @@ jobs:
           sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"
           # 2026-11-11: 발행 전 화면 검사도 통과한 네 파일인지 (영수증이 없거나 다르면 멈춰요)
           sha256sum --quiet --strict -c "$RUNNER_TEMP/screen-pass.sha256"
+          bash tools/git_token_auth.sh
           git config user.name  "baepsae-bot"
           git config user.email "actions@github.com"
           git add data.json corp.json disc.json macro.json
@@ -340,6 +350,8 @@ jobs:
       # (매일 09:13 점검은 위 '커밋 & 푸시' 단계로 발행한 실행을 찾아요 — 그 이름은 그대로예요.)
       - name: data 브랜치에 올리기
         if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}   # 푸시에만 써요 (tools/git_token_auth.sh)
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "!! 데이터는 main 에서만 올려요 (지금: $GITHUB_REF_NAME)"
@@ -347,4 +359,5 @@ jobs:
           fi
           # 2026-11-11: 발행 전 화면 검사도 통과한 네 파일인지 (영수증이 없거나 다르면 멈춰요)
           sha256sum --quiet --strict -c "$RUNNER_TEMP/screen-pass.sha256"
+          bash tools/git_token_auth.sh
           bash tools/push_data_branch.sh "$RUNNER_TEMP/gate-pass.sha256"

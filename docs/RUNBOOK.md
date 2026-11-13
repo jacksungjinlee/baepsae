@@ -288,6 +288,31 @@ tells you what happened in plain words.
   `data/`, `styleguide/` and the build and pipeline files at the top; the two lists are in `tools/assemble_site.py`) and
   refuses to publish if one gets in. A branch deploy would serve them again, including the test data under `tests/`.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- **The write token (since 2026-11-13, #113).** The daily run's checkouts no longer leave GitHub's write token in a file
+  every later step could read (the credentials file the checkout's git settings point to). git gets it only in the two
+  publishing steps ("커밋 & 푸시", "data 브랜치에 올리기"), through `tools/git_token_auth.sh`, after the step's receipt
+  checks (the data step's gate fingerprint is checked again inside `push_data_branch.sh`). The script runs only on a
+  GitHub Actions runner. Its log lines:
+  - "· 토큰 확인됨: GitHub 이 받아 줬어요" — normal.
+  - "!! GITHUB_TOKEN 이 이 단계의 환경에 없어요" (the workflow file lost the step's `env`) or "… 공백이 있어요" (a broken
+    token value); that step pushed nothing. Fix the workflow in a PR.
+  - "!! 토큰으로 원격 저장소(origin)를 세 번 다 읽지 못했어요" — nothing was pushed by that step. Read git's own error
+    line just above it. A token problem shows "could not read Username" / "terminal prompts disabled", "Authentication
+    failed", "error: 401" or "error: 403" (revert, below). The network or a GitHub outage shows "Could not resolve
+    host", "Failed to connect", "timed out", the 60-second limit, or "error: 5xx" (don't revert; the next scheduled run
+    or a rerun publishes). "unable to access" appears in both, so read the rest of that line. If
+    "커밋 & 푸시" passed and "data 브랜치에 올리기" failed, `main` has the day's data and the site doesn't yet; the next
+    run (or a rerun) uploads it.
+  - A scheduled run uses the workflow file of the commit it was created on but checks out the latest `main`, so the
+    first run that proves #113 is one created after its merge commit (its "커밋 & 푸시" log shows "토큰 확인됨").
+  - If a publish fails with a token problem right after #113 merged: revert #113 as a whole (never only
+    `persist-credentials`, which would leave two auth headers), but keep `tools/git_token_auth.sh` in the revert for a
+    day, so a run created before the revert (new workflow, latest `main`) still finds it. The first run created after
+    the revert publishes normally; a manual run on `main` with dart=cache is not a full-DART run as long as the DART
+    cache exists (check "DART 캐시: dart-cache-v3-…" in its log).
+  The data-collection and gate steps still receive the token for read-only GitHub API calls, so a tampered tool in the
+  same job could still reach it: this narrows the exposure, it does not close it. Splitting a read-only job from the
+  publishing job is the follow-up.
 - **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
   whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of
   the two markets' next trading days, plus one day) and `staleAfter` (that day's last scheduled start, 14:47 KST, plus 2
