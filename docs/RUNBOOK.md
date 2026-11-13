@@ -278,8 +278,13 @@ tells you what happened in plain words.
     override table gives exactly that ratio, a date before 2016 or after today, the same stock and date twice, a new row
     whose stock is not in today's data unless it is an override row, a row the table says to take out, `splitsFrom` not
     2016-01-01), when one of the ten known splits is missing (AAPL 2020, TSLA 2020 and 2022, NVDA 2021 and 2024, AMZN
-    2022, GOOGL 2022, WMT 2024, CMG 2024, HLT 2017), when `splitsAsOf` is more than 5 days before the publish date, and
-    when the list is missing although yesterday's file had one. It warns when the list is missing on a first day, when
+    2022, GOOGL 2022, WMT 2024, CMG 2024, HLT 2017), when `splitsAsOf` is missing or after the publish date, and
+    when the list is missing although yesterday's file had one. When `splitsAsOf` is more than 5 days before the publish
+    date it does not stop the publish (Jack, 2026-11-13: a minor source outage must never hold back everyone's data): the
+    row turns into a loud warning that starts with "!!", and the run log prints a "!! 주식 분할:" line. What it means:
+    Yahoo's split column has been unreadable for 6 days or more, so a split from those days is not in the list yet and
+    a user's records around it would show the old share count. Check whether Yahoo is back; if a real split happened in
+    the gap, add it to the override table by hand. It warns when the list is missing on a first day, when
     part was taken over from yesterday (`splitsSrc` kept or part), on any `gap`, `noCol`, `diff` or `fixedKept`, when one
     stock has two splits within 30 days (Yahoo may have written one split twice), on the day a stock first leaves the
     list (later days only list it under "확인할 것"), and for a split dated after the US price date.

@@ -601,7 +601,6 @@ def test_gate_missing_splits_warns_but_fails_when_yesterday_had_them():
     (lambda d: d["splits"].append(["ZZZZ", "2025-01-06", 2.0]), "오늘 목록에 없음 (새 줄)"),
     (lambda d: d["splits"].append(["NVDA", "2024-06-10", 10.0]), "두 번"),
     (lambda d: d.update(splitsFrom="2023-10-31"), "splitsFrom"),
-    (lambda d: d.update(splitsAsOf="2026-10-25"), "splitsAsOf"),
     (lambda d: d.update(splitsAsOf=None), "splitsAsOf"),
     (lambda d: d.update(splitsAsOf="2026-11-01"), "splitsAsOf"),
     (lambda d: d.update(splits=[x for x in d["splits"] if x[0] != "TSLA"]), "꼭 있어야 할 분할 없음: TSLA 2020-08-31 ×5"),
@@ -616,6 +615,21 @@ def test_gate_malformed_splits_fail(hurt, said):
     hurt(cur["data"])
     r = row(check(cur, prev, final), SPL)
     assert r[3] == "FAIL" and said in r[1], r
+
+
+def test_gate_stale_split_read_is_a_loud_warning_not_a_held_publish(capsys):
+    """Jack, 2026-11-13: 야후 분할 칸을 6일 넘게 못 읽어도 발행은 해요 (작은 출처 장애가 모두의 데이터를 막으면 안 돼요) — 큰 경고와 '!!' 로그.
+    없거나 오늘 뒤인 splitsAsOf 는 여전히 실패 (위 표)."""
+    cur, prev, final = pair()
+    cur["data"].update(splitsSrc="kept", splitsAsOf="2026-10-25")          # 발행일 2026-10-31 의 6일 전
+    r = row(check(cur, prev, final), SPL)
+    assert r[3] == "WARN" and "!! 야후 분할을 6일째 새로 읽지 못했어요 (마지막 2026-10-25)" in r[1], r
+    assert "!! 주식 분할: 야후 분할을 6일째 새로 읽지 못했어요" in capsys.readouterr().out
+    cur, prev, final = pair()
+    cur["data"].update(splitsSrc="kept", splitsAsOf="2026-10-26")          # 5일 전: 보통 경고 (전과 같아요)
+    r = row(check(cur, prev, final), SPL)
+    assert r[3] == "WARN" and "야후에서 마지막으로 새로 읽은 날 2026-10-26" in r[1] and "!!" not in r[1], r
+    assert "!! 주식 분할" not in capsys.readouterr().out
 
 
 def test_gate_fixed_table_lets_an_unclean_true_event_through():

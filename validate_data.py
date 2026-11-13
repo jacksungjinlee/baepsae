@@ -229,7 +229,8 @@ SPLIT_SIMPLE_MAX = 20           # 배율은 기약분수 p/q 에서 min(p, q) �
 #                                 바뀐 게 아니라서 앱이 쓰면 사용자 주식 수가 늘어 보여요. 깨끗하지 않은 진짜 사건(병합 + 분사를 한 날 한 HLT ·
 #                                 RYAAY ADS 비율 변경 …)은 파이프라인의 고정 표(fetch_data.SPLIT_OVERRIDES)로 넣고 splitsInfo.fixed 에 실어요
 SPLIT_CLEAN_TOL = 1e-9          # 깨끗한 분수와의 차이 허용 (배율 × 이 값 · 파이프라인도 이 값을 읽어요)
-SPLIT_FRESH_MAX_DAYS = 5        # splitsAsOf (야후에서 마지막으로 새로 읽은 날) 가 발행일보다 이만큼 넘게 오래면 실패
+SPLIT_FRESH_MAX_DAYS = 5        # splitsAsOf (야후에서 마지막으로 새로 읽은 날) 가 발행일보다 이만큼 넘게 오래면 큰 경고 — 실패 아님
+                                # (Jack, 2026-11-13: 작은 출처 장애가 모두의 데이터 발행을 막으면 안 돼요). 없거나 오늘 뒤면 실패.
 SPLIT_NEW_OLD_DAYS = 7          # 어제 목록에 없던 분할이 이보다 오래된 날짜로 새로 나오면 경고 (어제 2016 년부터 읽은 종목만)
 SPLIT_NEAR_DAYS = 30            # 한 종목에 분할이 이 기간 안에 둘이면 경고 (야후가 같은 분할의 날짜를 옮겨 적었을 수 있어요 · QQQ 10-15/10-16)
 # 꼭 있어야 할 분할 (야후 날짜 · 2026-11-13 확인): 2016 년부터의 이력을 읽지 못하면 실패해요
@@ -1171,7 +1172,7 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
     name = "주식 분할 목록 (splits)"
     th = (f"[코드, 날짜, 배율] · splitsFrom = {SPLITS_FROM} · {SPLITS_FROM} ≤ 날짜 ≤ 오늘 · 배율 {SPLIT_R[0]:g}~{SPLIT_R[1]:g}, 1 아님, 기약분수 "
           f"p/q 의 min(p, q) ≤ {SPLIT_SIMPLE_MAX} (splitsInfo.fixed 의 줄은 그 배율 그대로) · 같은 종목·날짜 한 번 · 새 줄은 오늘 목록의 종목 · "
-          f"꼭 있어야 할 분할 {len(MUST_SPLITS)}건 · splitsAsOf ≤ {SPLIT_FRESH_MAX_DAYS}일 (없음 · 지난 발행본에서 이음 · 읽지 못한 종목 · "
+          f"꼭 있어야 할 분할 {len(MUST_SPLITS)}건 · splitsAsOf 있고 오늘 뒤 아님 ({SPLIT_FRESH_MAX_DAYS}일 넘게 오래면 큰 경고 · 없음 · 지난 발행본에서 이음 · 읽지 못한 종목 · "
           f"야후와 다름 · 지운 고정 줄 · {SPLIT_NEAR_DAYS}일 안에 둘 · 오늘 목록에서 빠짐(첫날) · 미국 기준일 뒤 날짜면 경고 · "
           "직전 발행본에 있었는데 빠지면 실패)")
     sp = data.get("splits")
@@ -1234,8 +1235,12 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
         if miss:
             probs.append(f"꼭 있어야 할 분할 없음: {', '.join(miss)}")
         as_of = _iso_day(data.get("splitsAsOf"))
-        if as_of is None or as_of > run_day or (run_day - as_of).days > SPLIT_FRESH_MAX_DAYS:
-            probs.append(f"splitsAsOf {data.get('splitsAsOf')!r} (발행일 {run_day} 의 {SPLIT_FRESH_MAX_DAYS}일 안이어야 해요)")
+        if as_of is None or as_of > run_day:
+            probs.append(f"splitsAsOf {data.get('splitsAsOf')!r} (있어야 하고 발행일 {run_day} 뒤면 안 돼요)")
+        elif (run_day - as_of).days > SPLIT_FRESH_MAX_DAYS:      # 큰 경고 (Jack, 2026-11-13) — 발행은 해요. 그동안 새 분할은 목록에 없어요
+            warns.insert(0, f"!! 야후 분할을 {(run_day - as_of).days}일째 새로 읽지 못했어요 (마지막 {as_of}): 그 뒤 새 분할은 목록에 없어요")
+            print(f"!! 주식 분할: 야후 분할을 {(run_day - as_of).days}일째 새로 읽지 못했어요 (splitsAsOf {as_of}, 발행일 {run_day}) "
+                  "— 발행은 막지 않아요 (Jack, 2026-11-13). 야후가 돌아오는지 확인하세요 (RUNBOOK '주식 분할').", flush=True)
         elif as_of < run_day:
             warns.append(f"야후에서 마지막으로 새로 읽은 날 {as_of}")
         src = data.get("splitsSrc")
