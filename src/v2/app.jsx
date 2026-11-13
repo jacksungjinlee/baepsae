@@ -599,10 +599,10 @@ export function App({ source }) {
                   <BottomSheet open title={C.edit.leave} onClose={() => setAskDrop(null)} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
                     <div data-ui-v2="edit-drop" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
                       <Button onClick={() => setAskDrop(null)} style={{ flex: 1 }}>{C.app.close}</Button>
-                      {/* the leave sheet's discard button and label (round-2 B-4): 나가기 once approved, until then 포트폴리오. No approved
-                          line names the other portfolio yet. */}
+                      {/* the leave sheet's discard button and label (round-2 B-4): 나가기 (Jack, 2026-11-13). No approved line names
+                          the other portfolio yet. */}
                       <Button kind="secondary" onClick={() => { const id = askDrop; setAskDrop(null); setEditor(null); router.go("portfolio", "edit/" + id); }}
-                        style={{ flex: 1 }}>{C.edit.leaveGo || C.app.tabs.portfolio}</Button>
+                        style={{ flex: 1 }}>{C.edit.leaveGo}</Button>
                     </div>
                   </BottomSheet>
                 )}

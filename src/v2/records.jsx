@@ -202,7 +202,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
     const list = kind === "buy" ? "purchases" : kind === "sell" ? "sales" : "divs";
     let next = withRecord(store.data, deck.id, list, check.rec, today);
     // v19.7a 팔고 빼기 [B4]: what the sale belongs to (the stock taken out, its target shared out) is saved with it, in one
-    // write (flow.finish: edit.sellAndRemove). Refused -> nothing is saved (the proposed edit.saveFail, else the console).
+    // write (flow.finish: edit.sellAndRemove). Refused -> nothing is saved (edit.saveFail says so; the console says why).
     if (next && flow.finish) {
       const r = flow.finish(next);
       if (!r || !r.ok) { setFail("refused"); return; }
@@ -269,7 +269,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         {why === "tooEarly" && <Note tone="watch" data-ui-v2="rec-too-early">{C.rec.tooEarly}</Note>}
         {(why === "input" || why === "noPrice") && badLine && <Note tone="watch" data-ui-v2="bad-input">{badLine}</Note>}
         {fail === true && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
-        {fail === "refused" && C.edit.saveFail && <Note tone="watch" data-ui-v2="edit-save-fail">{C.edit.saveFail}</Note>}
+        {fail === "refused" && <Note tone="watch" data-ui-v2="edit-save-fail">{C.edit.saveFail}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button onClick={submit}>{C.plan.save}</Button></div>
       </div>
     </BottomSheet>

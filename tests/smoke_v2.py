@@ -11092,7 +11092,11 @@ def scene_v197a(R, files, width):
         sizes = page.locator('[data-ui-v2="edit-list"] button').evaluate_all("(bs) => bs.map((b) => { const r = b.getBoundingClientRect(); return [r.width, r.height]; })")
         assert sizes and all(w >= 44 and h >= 44 for w, h in sizes), sizes                         # 누르는 곳 44px
         assert save_btn().is_enabled() and page.locator('[data-ui-v2="edit-save-note"]').inner_text() == E_["saveNote"]
-        assert page.get_by_role("button", name=(fillp(E_["up"], name="현대차") if E_["up"] else f"현대차 · {E_['targets']} +")).count() == 1
+        # − / + 의 이름(읽기 도우미): '{name} 목표 비중 줄이기 / 늘리기' (Jack, 2026-11-13)
+        assert E_["down"] == "{name} 목표 비중 줄이기" and E_["up"] == "{name} 목표 비중 늘리기"
+        assert page.get_by_role("button", name="현대차 목표 비중 줄이기", exact=True).count() == 1
+        assert page.get_by_role("button", name="현대차 목표 비중 늘리기", exact=True).count() == 1
+        assert page.locator('[data-ui-v2="edit-log"]').count() == 0                                   # 아직 바꾼 것이 없으면 바꾼 기록 칸도 없어요
         check_page("종목 바꾸기", "edit")
     R.check(page, S, "만든 포트폴리오에만 종목 바꾸기 · 업종 비중 · 목표 비중 줄 · 규칙 깨짐 줄 · 44px · 합계 100%", opens)
 
@@ -11302,6 +11306,17 @@ def scene_v197a(R, files, width):
     def leave_and_d2_again():
         open_edit()
         assert pcts() == {"005380": 25, "105560": 25, "AAPL": 25, "000660": 25}                        # 기다리던 것 없이 새로
+        # 바꾼 기록 (Jack, 2026-11-13): 종목 바꾸기 맨 아래, 새 것부터. 뺀 줄에는 이유까지
+        log = page.locator('[data-ui-v2="edit-log"]')
+        assert log.count() == 1 and log.locator("h3").inner_text() == "바꾼 기록" == E_["log"]
+        md = mdtext(today)
+        want_log = [fillp(E_["logAdd"], date=md, name=by["000660"]["nk"]),
+                    fillp(E_["logRemove"], date=md, name=by["010120"]["nk"], reason=RM["reasons"]["other"]),
+                    fillp(E_["logRemove"], date=md, name=by["005930"]["nk"], reason=RM["reasons"]["rule"])]
+        assert log.locator("li").all_inner_texts() == want_log, log.locator("li").all_inner_texts()
+        assert log.bounding_box()["y"] > save_btn().bounding_box()["y"]                                # 저장 버튼 아래, 화면의 마지막 칸
+        log.scroll_into_view_if_needed()
+        check_page("바꾼 기록", "edit-log")
         row("005380").locator('[data-ui-v2="edit-down"]').click()
         # 다른 탭으로 갔다 와도 바꾸던 것은 그대로 (저장 전: 포트폴리오 만들기 · 가진 종목 넣기처럼 앱이 들고 있어요)
         if wide:
@@ -11317,14 +11332,13 @@ def scene_v197a(R, files, width):
         lv = page.locator('[data-ui-v2="edit-leave"]')
         lv.wait_for(state="visible")
         assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == E_["leave"]
-        want = [E_["leaveGo"], C["app"]["close"]] if E_["leaveGo"] else [C["app"]["close"], C["app"]["tabs"]["portfolio"]]   # 승인 전: 닫기(머물기)가 먼저
-        assert lv.locator("button").all_inner_texts() == want
+        assert E_["leaveGo"] == "나가기" and lv.locator("button").all_inner_texts() == [C["app"]["close"], "나가기"]   # 닫기(머물기)가 먼저, 둘째가 나가기 (Jack, 2026-11-13)
         check_page("나갈까요?", "leave")
         lv.locator("button", has_text=C["app"]["close"]).click()
         lv.wait_for(state="detached")
         assert pcts()["005380"] == 24
         page.locator('[data-ui-v2="app-bar"] button').first.click()
-        page.locator('[data-ui-v2="edit-leave"] button', has_text=E_["leaveGo"] or C["app"]["tabs"]["portfolio"]).click()
+        page.locator('[data-ui-v2="edit-leave"] button', has_text=E_["leaveGo"]).click()
         at(page, "portfolio")
         assert deck()["holdings"][0]["target"] == 0.25
         open_edit()
@@ -11421,7 +11435,7 @@ def scene_v197a(R, files, width):
         dr = page.locator('[data-ui-v2="edit-drop"]')
         dr.wait_for(state="visible")
         assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == E_["leave"]
-        assert dr.locator("button").all_inner_texts() == [C["app"]["close"], E_["leaveGo"] or C["app"]["tabs"]["portfolio"]]   # 나가기 시트와 같은 이름
+        assert dr.locator("button").all_inner_texts() == [C["app"]["close"], "나가기"]                  # 나가기 시트와 같은 단추 (닫기 · 나가기)
         check_page("다른 포트폴리오의 종목 바꾸기", "edit-drop")
         dr.locator("button", has_text=C["app"]["close"]).click()
         dr.wait_for(state="detached")
@@ -11444,7 +11458,7 @@ def scene_v197a(R, files, width):
             tab(page, TABS["portfolio"])
             at(page, "portfolio")
         page.locator('[data-deck-id="dcush"] [data-ui-v2="edit-open"]').click()
-        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"] or C["app"]["tabs"]["portfolio"]).click()
+        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"]).click()
         at(page, "portfolio/edit/dcush")
         assert pcts()["005930"] == 10
         assert [len(d["holdings"]) for d in stored()["decks"]] == [9, 1, 6, 5, 2]                       # 아무것도 저장하지 않았어요
@@ -11475,7 +11489,7 @@ def scene_v197a(R, files, width):
         page.evaluate("location.hash = '#portfolio/edit/dsplit'")
         page.locator('[data-ui-v2="edit-drop"]').wait_for(state="visible")
         assert route(page) == "portfolio/edit/dcap"
-        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"] or C["app"]["tabs"]["portfolio"]).click()
+        page.locator('[data-ui-v2="edit-drop"] button', has_text=E_["leaveGo"]).click()
         at(page, "portfolio/edit/dsplit")
         page.locator('[data-ui-v2="edit"][data-deck-id="dsplit"] [data-ui-v2="edit-list"]').wait_for(state="visible")
         row("AMD").locator('[data-ui-v2="edit-remove"]').click()

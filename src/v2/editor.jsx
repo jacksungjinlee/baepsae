@@ -31,9 +31,9 @@ const pctText = (p) => { const x = E.pctShown(p); return nf(x.n, x.d); };
 const won = (v) => nf(Math.round(v));
 // "왜 빼나요? (선택)": the question, and its "(선택)" in the board's lighter weight
 const splitWhy = (t) => { const m = /^(.*?)\s*(\([^)]*\))$/.exec(String(t || "")); return m ? [m[1], m[2]] : [t, ""]; };
-// the accessible names of − and + (the proposed lines, until then the approved pieces with the sign)
-const downLabel = (name) => (C.edit.down ? fill(C.edit.down, { name }) : `${name} · ${C.edit.targets} −`);
-const upLabel = (name) => (C.edit.up ? fill(C.edit.up, { name }) : `${name} · ${C.edit.targets} +`);
+// the accessible names of − and + (Jack, 2026-11-13)
+const downLabel = (name) => fill(C.edit.down, { name });
+const upLabel = (name) => fill(C.edit.up, { name });
 
 // The 규칙 깨짐 line of a holding whose sell condition fired today: the words the 포트폴리오 screen uses for that rule.
 function brokenPieces(x) {
@@ -141,22 +141,13 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const back = () => (E.pending(deck, draft) ? setSheet({ kind: "leave" }) : onLeave());
   const writable = store.writable && !store.locked;
   const shift = wide ? SIDE_W : 0;
-  // "바꾼 내용을 저장하지 않고 나갈까요?": until 나가기 (edit.leaveGo) is approved, staying (닫기) is the main button and leaving is the
-  // second one, under the back button's own approved label (round-1 S5)
+  // "바꾼 내용을 저장하지 않고 나갈까요?": staying (닫기) is the main button and leaving (나가기, edit.leaveGo: Jack 2026-11-13) the
+  // second one (round-1 S5: nothing is dropped by the button under the thumb)
   const leaveSheet = sheet && sheet.kind === "leave" && (
     <BottomSheet open title={C.edit.leave} onClose={() => setSheet(null)} closeLabel={C.app.close} shift={shift}>
       <div data-ui-v2="edit-leave" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
-        {C.edit.leaveGo ? (
-          <>
-            <Button data-go="leave" onClick={() => { setSheet(null); onLeave(); }} style={{ flex: 1 }}>{C.edit.leaveGo}</Button>
-            <Button kind="secondary" onClick={() => setSheet(null)} style={{ flex: 1 }}>{C.app.close}</Button>
-          </>
-        ) : (
-          <>
-            <Button onClick={() => setSheet(null)} style={{ flex: 1 }}>{C.app.close}</Button>
-            <Button kind="secondary" onClick={() => { setSheet(null); onLeave(); }} style={{ flex: 1 }}>{C.app.tabs.portfolio}</Button>
-          </>
-        )}
+        <Button onClick={() => setSheet(null)} style={{ flex: 1 }}>{C.app.close}</Button>
+        <Button kind="secondary" data-go="leave" onClick={() => { setSheet(null); onLeave(); }} style={{ flex: 1 }}>{C.edit.leaveGo}</Button>
       </div>
     </BottomSheet>
   );
@@ -218,7 +209,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
       } });
   };
   const removeNow = (t, reason) => { setSheet(null); set((d) => E.removeDraft(deck, E.rebaseDraft(deck, d), t, reason)); };
-  const logs = C.edit.log ? E.changeList(deck) : [];
+  const logs = E.changeList(deck);                       // 바꾼 기록, at the bottom of this screen (Jack, 2026-11-13)
   const nameOf = (c) => c.nk || ((deck.holdings || []).find((h) => h.t === c.t) || {}).nk || c.t;
   const cur = sheet && sheet.kind === "remove" ? rows.find((r) => r.t === sheet.t) || null : null;
   return (
@@ -276,7 +267,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
           </div>
           <p data-ui-v2="edit-save-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px ${SPACE(1)}px 0`, wordBreak: "keep-all" })}>{C.edit.saveNote}</p>
           {fail === "storage" && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
-          {fail === "refused" && C.edit.saveFail && <Note tone="watch" data-ui-v2="edit-save-fail">{C.edit.saveFail}</Note>}
+          {fail === "refused" && <Note tone="watch" data-ui-v2="edit-save-fail">{C.edit.saveFail}</Note>}
           {logs.length > 0 && (
             <Card data-ui-v2="edit-log">
               <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.edit.log}</h3>
