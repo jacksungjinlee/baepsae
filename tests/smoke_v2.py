@@ -11279,10 +11279,13 @@ def scene_v197a(R, files, width):
         d = deck()
         assert [h["t"] for h in d["holdings"]] == ["005380", "105560", "010120", "AAPL"]               # 판 기록 · 빼기 · 나눠 줌만 저장 (LS 빼기 · 담기는 기다려요)
         assert [h["target"] for h in d["holdings"]] == [0.25] * 4 and d["settings"]["maxPct"] == 25     # 기다리던 최대 비중 25% 도 함께
-        # planW (Jack, 2026-11-13): 목표를 저장할 때마다 종목마다 계획 비중도 함께. 모두 25% 로 바뀌었으니 넷이 같아요
-        pw = [h.get("planW") for h in d["holdings"]]
-        assert all(isinstance(x, (int, float)) and x > 0 for x in pw) and max(pw) - min(pw) <= 1e-6 * max(pw), pw
-        plan_total["v"] = sum(pw)
+        # planW (Jack, 2026-11-13): 목표를 저장할 때마다 종목마다 계획 비중도 함께. 가진 셋은 모두 25% 로 바뀌었으니 셋이 같고, 산 적
+        # 없는 LS(010120)는 나머지를 받아요 (리뷰 S1: 가진 종목과 산 적 없는 종목은 따로 나눠요)
+        pw = {h["t"]: h.get("planW") for h in d["holdings"]}
+        held3 = [pw[t] for t in ("005380", "105560", "AAPL")]
+        assert all(isinstance(x, (int, float)) and x > 0 for x in pw.values()) and max(held3) - min(held3) <= 1e-6 * max(held3), pw
+        plan_total["v"] = sum(pw.values())
+        plan_total["held"] = held3
         e = d["history"][0]
         assert e["t"] == "005930" and e["reason"] == "rule" and e["out"] == today and e["sales"][0]["qty"] == 10 and e["sales"][0]["price"] == by["005930"]["price"]
         assert e["sales"][0]["date"] == "2026-10-12"
@@ -11304,7 +11307,8 @@ def scene_v197a(R, files, width):
         assert sk["planPx"] == by["000660"]["price"] and sk["plannedQty"] == round(0.25 * 1e7 / by["000660"]["price"]) and sk["setAt"] == today and sk["kind"] == "pinned"
         assert sk["reasons"] == [{"code": "pinned"}]
         pw2 = [h.get("planW") for h in d["holdings"]]                                                # 담은 종목도 제 몫을 받아요 (계획의 합은 그대로)
-        assert all(isinstance(x, (int, float)) and x > 0 for x in pw2) and max(pw2) - min(pw2) <= 1e-6 * max(pw2) and abs(sum(pw2) / plan_total["v"] - 1) < 1e-9, (plan_total, pw2)
+        # 가진 셋의 목표는 그대로라 계획 비중도 그대로, 담은 SK하이닉스는 뺀 LS 의 몫을 받아요
+        assert pw2[:3] == plan_total["held"] and pw2[3] > 0 and abs(sum(pw2) / plan_total["v"] - 1) < 1e-9, (plan_total, pw2)
         assert any(r["id"] == "band" and r["target"] == 0.25 for r in sk["rules"]) and any(r["id"] == "divCut" for r in sk["rules"])
         assert not any(c["t"] == "010120" for c in d.get("history", []))                               # 기록 없는 종목: history 없이 빠져요
         # 줄마다 한 번: 남은 목표는 팔고 뺀 뒤 저장된 25% 그대로라 '목표 비중 바꿈' 은 없어요 (− 로 바꾼 19% 는 그 사이 나눠 준 비중에 묻혔어요)
