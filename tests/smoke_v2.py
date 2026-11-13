@@ -9468,7 +9468,8 @@ def scene_unit_chk(R, files, width, shots=None):
             assert lines_in() == [UNIT_LINE], (ctab, lines_in())                                          # 한 번
             assert len(lines_in(inside)) == 1, ctab
             if ctab == "earn":
-                assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui="segmented"]').count() == 0
+                # v19.6d: any picker on the page but the 화면 모드 switch (PC's left menu has it, a segmented control too)
+                assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator(SEGMENTED).count() == 0
                 assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
             elif ctab == "value":
                 for k in ("co-pbr", "co-per", "co-compare", "co-dcf", "co-value-basis", "co-value-more"):
