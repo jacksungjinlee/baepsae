@@ -9394,6 +9394,8 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
 # ── 공시 단위 확인 (Jack, 2026-11-13 · src/repair.js 5 · src/v2/fixnote.jsx UnitChkNote) ──
 UNIT_T = "028260"                 # 시험 데이터의 삼성물산을 단위가 틀린 재무제표로 숫자를 비운 회사로 (배당은 남아요)
 UNIT_LINE = C["co"]["unitChk"]
+FIX_T = "005930"                  # 시험 데이터의 삼성전자를 공시 단위를 고쳐 읽은 회사로 (corp.json unitFix · 숫자는 그대로)
+FIX_LINE = C["co"]["unitFix"]     # Jack 2026-11-13 (Q13): 가치 자세히에만
 
 
 def unit_files(files):
@@ -9421,7 +9423,9 @@ def scene_unit_chk(R, files, width, shots=None):
             "imported": [{"t": UNIT_T, "nk": "삼성물산", "ccy": "KRW", "qty": 10}]}
     init = ("(() => { try { if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', "
             + json.dumps(json.dumps({"v": 2, "decks": [deck]}, ensure_ascii=False)) + "); } catch (e) {} })();")
-    srv, ctx, page, base = R.open(build_site(unit_files(files)), width, init=init)
+    site = unit_files(files)
+    next(c for c in site["corp.json"]["companies"] if c["t"] == FIX_T)["unitFix"] = [{"rep": "2026.2Q", "bs": 1000, "is": 1000, "cf": 1000}]
+    srv, ctx, page, base = R.open(build_site(site), width, init=init)
     page.locator('[data-ui-v2="date-line"], [data-ui-v2="load-fail"]').first.wait_for(state="visible")
 
     def lines_in(sel=None):
@@ -9518,6 +9522,35 @@ def scene_unit_chk(R, files, width, shots=None):
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, f"{UNIT_T} 을 가진 포트폴리오: '재무 경고 0개' 칸 밑에 그 줄 한 번", holdings_tile)
+
+    def fixed():
+        """Jack 2026-11-13 (Q13): 공시 단위를 고쳐 읽은 회사(corp.json unitFix)는 가치 자세히의 영수증 카드 안에만 그 줄 한 번 (12px 이상).
+        그 회사의 다른 탭 · 고쳐 읽지 않은 회사 · 미국 종목 · 숫자를 비운 회사에는 없어요."""
+        fix = '[data-ui-v2="unit-fix"]'
+        more = '[data-ui-v2="co-value-more"][data-t="{}"]'
+        assert FIX_LINE == "공시에 단위가 잘못 적혀 있어서 바로잡아 계산했어요.", FIX_LINE
+        co_hash(page, f"#stocks/{FIX_T}/value-more")
+        page.locator(more.format(FIX_T)).wait_for(state="visible")
+        line = page.locator(fix)
+        assert line.count() == 1 and line.inner_text().strip() == FIX_LINE, line.count()
+        assert page.locator('[data-ui-v2="co-ratios"] ' + fix).count() == 1
+        assert line.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, "공시 단위 고침 가치 자세히")
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+        for ctab in (None, "earn", "value", "div"):                                                      # 그 회사의 다른 탭
+            co_hash(page, f"#stocks/{FIX_T}" + (f"/{ctab}" if ctab else ""))
+            page.wait_for_function("([t, tab]) => { const e = document.querySelector('[data-ui-v2=\"company\"]');"
+                                   " return !!e && e.dataset.t === t && e.dataset.tab === tab; }", arg=[FIX_T, ctab or "summary"])
+            page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+            assert page.locator(fix).count() == 0, ctab
+        for code in ("000660", "AAPL", UNIT_T):                                                          # 다른 회사의 가치 자세히
+            co_hash(page, f"#stocks/{code}/value-more")
+            page.locator(more.format(code)).wait_for(state="visible")
+            assert page.locator(fix).count() == 0, code
+        R.collect(page)
+    R.check(page, S, f"고쳐 읽은 회사 ({FIX_T}): 가치 자세히의 영수증 카드에만 그 줄 한 번 · 다른 탭과 다른 회사에는 없음", fixed)
     ctx.close()
     srv.shutdown()
 
