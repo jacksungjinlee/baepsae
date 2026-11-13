@@ -62,7 +62,10 @@ def build(px_date="2026-10-30", us_date="2026-10-30", seed=7, n_kr=2400, n_us=60
     us_t = ["AAPL", "MSFT", "NVDA", "BRK-B", "SPY", "QQQ"] + [f"U{i:04d}" for i in range(n_us - 6)]
     us = [{"t": t, "nk": f"US Corp {i}", "ne": f"US Corp {i}", "cls": "us", "price": round(rnd.uniform(5, 900) * (1 + price_shift), 2),
            "cap": round(rnd.uniform(1, 5000), 3), "val": round(rnd.uniform(1, 90000), 1), "de": "A company.", "fxu": True,
-           "d1": round(rnd.uniform(-5, 5), 2), "etf": t in ("SPY", "QQQ")}
+           "d1": round(rnd.uniform(-5, 5), 2), "etf": t in ("SPY", "QQQ"),
+           # 2026-11-12: 관문의 미국 beta·vol 채움 줄 (실제 발행처럼 다 차 있어요 — 베타가 있으면 표준오차·관측 수도).
+           # 난수를 쓰지 않아 다른 값은 그대로예요.
+           "beta": round(0.6 + (i % 13) * 0.1, 2), "vol": round(18.0 + (i % 40), 1), "betaSE": 0.05, "betaN": 740}
           for i, t in enumerate(us_t)]
     for i, s in enumerate(us):
         if not s["etf"]:

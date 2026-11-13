@@ -68,6 +68,10 @@ FUNDS = ("069500", "379800", "04020000", "132030", "144600")
 COVER_KR = {"price": 99, "cap": 99, "beta": 95, "vol": 95, "pbr": 85, "roe": 80, "per": 50,
             "vz": 85, "qz": 85, "mz": 85, "pz": 85, "lz": 85}
 COVER_US = {"이름": 90, "설명": 90}
+# 2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내와 같은 95% (97% 아래 경고). 지금까지는 관문에 미국 줄이 없어,
+# 일부만 빠진 날(예: 10%, 예전 앱 내장 종목은 셋 이하)은 그대로 발행됐어요 (#106 화면 검사는 내장 종목이 셋 넘게 빠질 때만 막아요).
+# 7-29 이후 발행 70번: 베타 97.69~99.09% · 변동성 97.56~98.96%. 빈 칸은 대부분 상장 1년(250거래일) 안 된 회사예요 (MIN_DAYS) — 경고면 이름을 보세요.
+COVER_US_RISK = {"beta": 95, "vol": 95}
 BONDS_EXPECTED = 8       # 8 정상 · 7 경고 · 6 이하 실패 (Jack 결정, 2026-10-31)
 KR_MIN, US_MIN = 2300, 500
 KR_REL, US_REL = 0.10, 0.15
@@ -612,6 +616,25 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
+def check_us_risk_cover(rep, us, pdata):
+    """2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내 줄과 같은 규칙 (95% 아래면 실패, 97% 아래면 경고 · 직전보다 10점
+    넘게 줄면 실패). 값 칸에 빈 칸 수, 97% 아래면 빈 종목 앞 10개(US_D1_SHOW, 아침 점검 알림에도 보이게)와 로그·실행 요약에 전부를
+    적어요: 새로 상장한 회사(이력 250거래일 미만)인지 파이프라인 문제인지 바로 보이게 (docs/RUNBOOK.md). 변화 줄은 국내 줄과 맞춘 것이라 바닥 95% 보다 먼저 걸리지는 않아요."""
+    for k, lo in COVER_US_RISK.items():
+        v = coverage(us, k)
+        blank = [str(s.get("t")) for s in us if num(s.get(k)) is None]
+        named = bool(blank) and v < lo + NEAR       # 경고·실패일 때: 아침 점검은 알림(이름: 값)만 읽으니 값 칸에도 앞의 몇 개를 적어요
+        shown = ", ".join(blank[:US_D1_SHOW]) + (f" 외 {len(blank) - US_D1_SHOW:,}개" if len(blank) > US_D1_SHOW else "")
+        rep.add(f"미국 {k} 채움", v >= lo,
+                f"{floor_1(v)}% (빈 칸 {len(blank)} / {len(us):,})" + (f" · 빈 종목: {shown}" if named else ""),
+                f"≥ {lo}% ({lo + NEAR:g}% 아래 경고)", warn=v < lo + NEAR and v < 100.0)
+        if named:
+            rep.detail(f"미국 {k} 빈 종목", blank)
+        if pdata:
+            pv = coverage(us_stocks(pdata), k)
+            rep.add(f"미국 {k} 채움 변화", v >= pv - 10, f"{pv:.1f} → {v:.1f}", "10점 넘게 줄면 실패")
+
+
 def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
                special=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
@@ -765,6 +788,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         if pdata:
             pv = us_coverage(us_stocks(pdata))[k]
             rep.add(f"미국 {k} 채움 변화", uc[k] >= pv - 10, f"{pv:.1f} → {uc[k]:.1f}", "10점 넘게 줄면 실패")
+    check_us_risk_cover(rep, us, pdata)
 
     # 가격 움직임
     if pdata and ppx and px and count_between is not None:
