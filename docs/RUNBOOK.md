@@ -658,25 +658,36 @@ target over the sum of the held stocks' targets, so the sum alone puts no stock 
 ## Known limits: plan weights in 종목 바꾸기 (v19.7a, `planW`)
 
 Every save of a target set (바꾼 내용 저장, 팔고 빼기) writes each holding's plan weight next to it (`planW`). A holding whose
-target was not changed keeps its number; the changed ones share between them what they had. The weight bands read it
-first, so changing some targets does not move the bands of the stocks you did not touch (Jack, 2026-11-13). Before, the
-bands were read from whole planned share counts (`plannedQty`), and rounding the changed stocks' counts could move an
-untouched band by up to about a point.
+target was not changed keeps its number; the changed ones share between them what they had, so the weights always add up
+to the same total. The weight bands measure against that total, so changing some targets does not move the bands of the
+stocks you did not touch (Jack, 2026-11-13). Before, the total was the planned share counts (`plannedQty`) added up
+again, and rounding the changed stocks' counts could move an untouched band by up to about a point.
+
+**The whole-share allowance stays (final review S2).** A stock's band is still widened by the gap between its whole
+planned shares and its target: `plannedQty × planPx` over the stored total, minus the target. So a stock whose single share
+is large against the plan (1 share = 27% in a plan that gives it 20%) reads 할 일 없음 after its target is changed too, as
+a brand-new plan with the same targets, prices and total would. When a new `plannedQty` changes what the planned values
+add up to (550만 → 555만), the edited portfolio keeps the total it had (550만): its edges then sit a fraction of a point
+from a from-scratch plan's (32.02% against 31.78% in the review's example). The allowance only ever widens a band.
 
 - **A tab of an earlier app** (opened before this version) ignores `planW` and keeps reading `plannedQty`, which is still
   saved as a whole number. In that tab an untouched band can show slightly different edges, as before. Nothing is set
   aside, and the earlier app keeps `planW` when it writes.
 - **A portfolio never saved by 종목 바꾸기** has no `planW` and is read exactly as before.
-- **`planW` is all or nothing.** If only some of the held stocks have one (two copies met through an earlier app, a
-  hand-made file), the bands read `plannedQty` and the console says so. If the plan cannot be read when saving (a holding
-  without a plan price, a dollar holding without the plan's exchange rate), no `planW` is stored and the console says why.
+- **`planW` is read only when every held stock has a usable one.** If only some do (two copies met through an earlier
+  app, a hand-made file), the bands read `plannedQty` and the console says so. A value that cannot be used (not a number,
+  negative, or more than 1,000 × the plan's total) counts as missing, never as a reason to set the portfolio aside. The
+  next save keeps every stored `planW` that exists and works out only the missing ones, with a console line.
+- **The first save of a portfolio whose plan cannot be read** (a holding without a plan price, a dollar holding without
+  the plan's exchange rate) stores no `planW` and the console says why; its bands behave as before this change.
 - **Targets are read over the stocks actually held.** When one changed stock is held and the other was never bought, the
   held stocks' targets add up to a different number, so every held stock's band moves. That is the existing rule for a
   plan only partly bought, not rounding.
-- **The first save of an older portfolio** (plan read from `plannedQty` before, from `planW` after) leaves an untouched band
-  the same to the last digit when the old sum of the held targets was a clean number; when that sum's last bit was off
-  (the old lines keep it as it was), the edges can differ by about 2e-16. Later saves are identical to the last digit for
-  a plan in won; a plan with a dollar stock stays within about 2e-16.
+- **How exact "does not move" is.** A plan in won, any save after the first: the same to the last digit. The first save
+  of an older portfolio (plan read from `plannedQty` before, from `planW` after): the same to the last digit when the old
+  sum of the held targets was a clean number, else within about 2e-16 (the old lines keep that sum as it was). A plan
+  with a dollar stock: within about 2e-16. Targets that are not whole % (3/7 of the plan): within about 1.5e-12, because
+  the band rule takes the sum of the held targets to 12 decimals. No status changes in any of these.
 
 ## Known limits: stock splits in 기록 (v19.6a)
 

@@ -52,7 +52,7 @@
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
-import { sameConfirm } from "./store.js";
+import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
 
@@ -160,37 +160,60 @@ function pausedWeights(held, ctx, absent) {
 //   its ref); the others share what is left in proportion to their planned values.
 // v19.7a (Jack, 2026-11-13): a plan weight stored next to each holding (holding.planW) comes first. 종목 바꾸기 writes it on
 //   every holding when it saves a target set (edit.withPlanW): a holding whose target was not touched keeps its number, and
-//   the ones that changed share between them what they had. So an untouched holding's gap no longer moves with the
-//   whole-share rounding of somebody else's new plannedQty (which changed the plan's total: round-1 review B3). Only the
-//   ratios matter; the first save writes the plan's own value (plannedQty x planPx in won), so the numbers below are the
-//   same ones as before for every holding it did not change. Read only when every one of these holdings has one (a number,
-//   0 or more, not all 0). Otherwise the plan is read from plannedQty exactly as before (a portfolio saved before this, or
-//   by an earlier app, has none), and a portfolio where only some of them have one says so once in the console.
-//   The Map it returns then says so (stored: true): evalBand takes the held targets' sum to 12 decimals for such a portfolio.
-const okPlanW = (x) => typeof x === "number" && Number.isFinite(x) && x >= 0;
+//   the ones that changed share between them what they had, so the stored weights always add up to the same total. That
+//   total is what the plan is measured against here (it used to be the planned values added up again, which the
+//   whole-share rounding of somebody else's new plannedQty changed: round-1 review B3, an untouched band moved).
+//   The weight the plan really buys (final review S2: the whole-share allowance stays) is still each holding's own whole
+//   planned shares at its plan price, plannedQty x planPx, now over the stored weights' total: a stock whose single share
+//   is large against the plan keeps a band wide enough for that share after its target is changed, exactly as a brand-new
+//   plan with the same targets, prices and total would read. A holding without a usable plannedQty and planPx is read at
+//   its stored weight (no allowance of its own). The first save writes the plan's own values as the weights, so for a
+//   holding nobody changed every number below is the one it was before.
+//   Used only when every one of these holdings has a usable planW (store.planWOk: a number, 0 or more, not absurdly large;
+//   0 is a real weight), they do not all add up to 0, and the total fits the plan (no plan weight above PLANW_MAX_X: a
+//   total of next to nothing under real planned values would widen every band without end). Otherwise the plan is read
+//   from plannedQty exactly as before (a portfolio saved before this, or by an earlier app, has none), and whenever a
+//   stored planW was there and could not be used, the console says which and why, once. The Map returned for the stored
+//   reading says so (stored: true): evalBand takes the held targets' sum to 12 decimals for such a portfolio.
 const planWarned = new Set();
+const planWProblem = (h, limit) => `${h.t}: ${h.planW == null ? "none" : typeof h.planW !== "number" || !Number.isFinite(h.planW) ? "not a number" : h.planW < 0 ? "negative" : h.planW > limit ? "too large" : "ok"}`;
 export function planWeights(deck, targets) {
   const targetSum = [...targets.values()].reduce((a, b) => a + b, 0);
   const hs = [];
   for (const h of (deck && deck.holdings) || []) if (h && targets.has(h.t) && !hs.some((x) => x.t === h.t)) hs.push(h);
   if (!hs.length || !(targetSum > 0)) return null;
-  const withW = hs.filter((h) => okPlanW(h.planW)).length;
-  if (withW === hs.length) {
-    const sum = hs.reduce((a, h) => a + h.planW, 0);
-    if (sum > 0) { const out = new Map(hs.map((h) => [h.t, h.planW / sum])); out.stored = true; return out; }
-  }
-  if (hs.some((h) => h.planW != null)) {
-    const key = `${deck.id}|${withW}/${hs.length}`;
-    if (!planWarned.has(key)) {
-      planWarned.add(key);
-      console.warn(`[v2] ${deck.id}: stored plan weights (planW) not used: ${withW} of ${hs.length} held stocks have a usable one`
-        + (withW === hs.length ? " and they add up to 0" : "") + "; the weight bands read the planned share counts (plannedQty) instead");
-    }
-  }
   const buys = ((deck && deck.purchases) || []).filter((p) => p && p.qty > 0 && num(p.price) > 0);
   const usd = (h) => h.cls === "us" || buys.some((p) => p.t === h.t && p.ccy === "USD");
-  const legacy = hs.some((h) => !(num(h.planPx) > 0));
   const fx = num(deck.planFx);
+  const limit = planWLimit(deck);
+  const bad = hs.filter((h) => !planWOk(h.planW, limit));
+  let why = "";
+  if (!bad.length) {
+    const sum = hs.reduce((a, h) => a + h.planW, 0);
+    const own = (h) => {
+      const q = h.plannedQty, px = num(h.planPx), rate = usd(h) ? fx : 1;
+      return Number.isInteger(q) && q >= 0 && px > 0 && rate > 0 ? q * px * rate : h.planW;
+    };
+    const vals = sum > 0 ? hs.map((h) => own(h) / sum) : null;
+    if (vals && vals.every((v) => Number.isFinite(v) && v <= PLANW_MAX_X)) {
+      const out = new Map(hs.map((h, i) => [h.t, vals[i]]));
+      out.stored = true;
+      return out;
+    }
+    why = sum > 0 ? " and their total is far too small for the plan's own values" : " and they add up to 0";
+  } else {
+    const shown = bad.slice(0, 5).map((h) => planWProblem(h, limit)).join(", ") + (bad.length > 5 ? ", …" : "");
+    why = ` (${shown})`;
+  }
+  if (hs.some((h) => h.planW != null)) {
+    const key = `${deck.id}|${hs.length - bad.length}/${hs.length}${why}`;
+    if (!planWarned.has(key)) {
+      planWarned.add(key);
+      console.warn(`[v2] ${deck.id}: stored plan weights (planW) not used: ${hs.length - bad.length} of ${hs.length} held stocks have a usable one${why}`
+        + "; the weight bands read the planned share counts (plannedQty) instead");
+    }
+  }
+  const legacy = hs.some((h) => !(num(h.planPx) > 0));
   if (hs.some(usd) && (legacy || !(fx > 0))) return null;
   const avgPaid = (t) => {
     const ps = buys.filter((p) => p.t === t);

@@ -694,6 +694,25 @@ const inEntry = (e, r) => ["purchases", "sales", "divs"].some((k) => (e[k] || []
 // A history entry by its records (the day it was taken out aside: two tabs may take the same stock out on two days).
 const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases: e.purchases || [], sales: e.sales || [], divs: e.divs || [] });
 
+// v19.7a: a holding's stored plan weight (planW) when it can be used (final review N2). It is on the scale of the plan's
+// own values (won), and it must be a number that adds up: finite, 0 or more (0 is a real weight: a stock that takes no
+// share of the total), and at most PLANW_MAX_X times the plan's total (a 1e308 would turn the sum into Infinity). The plan's
+// total: settings.amountMan, else the planned values added up (plannedQty × planPx, a US holding at the plan's rate); when
+// neither is known, a flat ceiling. Anything else counts as missing, never as a reason to set the portfolio aside: the
+// band rule and 종목 바꾸기 fall back and say so in the console (rules.planWeights, edit.planBase).
+export const PLANW_MAX_X = 1000;
+export function planWLimit(deck) {
+  const m = deck && plainObj(deck.settings) ? deck.settings.amountMan : null;
+  if (isNum(m) && m > 0) return PLANW_MAX_X * m * 10000;
+  const fx = deck && isNum(deck.planFx) && deck.planFx > 0 ? deck.planFx : 1;
+  let v = 0;
+  for (const h of (deck && Array.isArray(deck.holdings) ? deck.holdings : [])) {
+    if (plainObj(h) && Number.isInteger(h.plannedQty) && h.plannedQty > 0 && isNum(h.planPx) && h.planPx > 0) v += h.plannedQty * h.planPx * (h.cls === "us" ? fx : 1);
+  }
+  return v > 0 ? PLANW_MAX_X * v : 1e15;
+}
+export const planWOk = (x, limit) => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= limit;
+
 // A holding with the target set of another copy's same holding o: its target, plannedQty, plan weight (planW, v19.7a: Jack
 // 2026-11-13) and band rule (o's; none when o has none). Every other field stays this copy's.
 function withTargetSet(h, o) {
