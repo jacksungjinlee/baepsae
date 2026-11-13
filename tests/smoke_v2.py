@@ -9416,7 +9416,12 @@ def scene_unit_chk(R, files, width, shots=None):
     """공시 단위 확인 (Jack, 2026-11-13): unitChk 회사의 회사 페이지 — 숫자가 비는 영역마다 그 줄 한 번, 비어 있는 실적 · 가치 칸과 숫자 없는
     카드는 없어요 (배당 · 출렁임은 그대로). 다른 회사에는 없어요. 12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
     S = f"공시 단위 {width}"
-    srv, ctx, page, base = R.open(build_site(unit_files(files)), width)
+    deck = {"id": "dunit", "name": "가진 종목", "createdAt": "2026-10-30", "kind": "imported", "settings": {"points": {"value": 2}, "strict": "normal"},
+            "holdings": [{"t": UNIT_T, "nk": "삼성물산", "cls": "kr"}], "purchases": [],
+            "imported": [{"t": UNIT_T, "nk": "삼성물산", "ccy": "KRW", "qty": 10}]}
+    init = ("(() => { try { if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', "
+            + json.dumps(json.dumps({"v": 2, "decks": [deck]}, ensure_ascii=False)) + "); } catch (e) {} })();")
+    srv, ctx, page, base = R.open(build_site(unit_files(files)), width, init=init)
     page.locator('[data-ui-v2="date-line"], [data-ui-v2="load-fail"]').first.wait_for(state="visible")
 
     def lines_in(sel=None):
@@ -9496,6 +9501,22 @@ def scene_unit_chk(R, files, width, shots=None):
         assert page.locator('[data-ui-v2="co-pbr"]').count() == 1                                      # 다른 회사는 그대로
         R.collect(page)
     R.check(page, S, "다른 회사 (삼성전자 · AAPL): 그 줄 없음 · 숫자 그대로", others)
+
+    def holdings_tile():
+        """Jack 2026-11-13 (Q14): 그 회사를 가진 포트폴리오의 '재무 경고 0개 · 확인하지 못했어요' 칸 밑에 같은 줄 한 번 (12px 이상)."""
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        tile = page.locator('[data-deck-id="dunit"] [data-ui-v2="pf-rule"][data-rule="warn"]')
+        tile.wait_for(state="visible")
+        assert tile.get_attribute("data-state") == "unknown", tile.get_attribute("data-state")
+        line = tile.locator('[data-ui-v2="unit-chk-tile"]')
+        assert line.count() == 1 and line.inner_text().strip() == UNIT_LINE, tile.inner_text()
+        assert tile.locator('[data-ui-v2="stmt-cur"]').count() == 0
+        assert line.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, "공시 단위 가진 종목 칸")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, f"{UNIT_T} 을 가진 포트폴리오: '재무 경고 0개' 칸 밑에 그 줄 한 번", holdings_tile)
     ctx.close()
     srv.shutdown()
 

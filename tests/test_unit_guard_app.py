@@ -389,12 +389,28 @@ def test_the_holdings_warning_tile_never_gives_the_currency_reason_for_a_held_co
         return { id: 'd', name: 'p', kind: 'imported', settings: { points: { value: 3 }, strict: 'normal' },
           holdings: rows.map((r) => ({ t: r.t, nk: r.nk, cls: 'kr' })), purchases: [], imported: rows }; };
       const warn = (ts, corps) => { const r = P.pfState(deckOf(ts), ctxOf(corps), STOCKS).rules.find((x) => x.id === 'warn');
-        return { state: r.state, cur: r.stmtCur, curLine: /data-ui-v2="stmt-cur"/.test(renderToStaticMarkup(h(PV.RuleTile, { r }))) }; };
+        const html = renderToStaticMarkup(h(PV.RuleTile, { r }));
+        return { state: r.state, cur: r.stmtCur, curLine: /data-ui-v2="stmt-cur"/.test(html), unit: !!r.unit,
+          unitLine: count(html, LINE), order: html.indexOf('unit-chk-tile') < html.indexOf('stmt-cur') || !html.includes('stmt-cur') }; };
       const held = { t: '241560', fy: 2025, stmtCur: 'USD', unitChk: ['scale'], flRan: [] };
       const usd = { t: '008700', fy: 2025, stmtCur: 'USD' };
       out = { both: warn(['241560'], [held]), other: warn(['241560', '008700'], [held, usd]) };
       delete STOCKS[0].unitChk;
       out.plain = warn(['241560'], [{ ...held, unitChk: undefined }]);""")
-    assert got["both"] == {"state": "unknown", "cur": None, "curLine": False}, got
-    assert got["other"]["cur"] == "USD" and got["other"]["curLine"]                     # 아남전자의 통화는 그대로
-    assert got["plain"]["cur"] == "USD" and got["plain"]["curLine"]                     # 단위 확인이 없으면 예전 그대로
+    # Jack 2026-11-13 (Q14): 단위 확인에 걸린 가진 종목은 승인된 줄 (회사 페이지와 같은 co.unitChk) · 통화 줄보다 위
+    assert got["both"] == {"state": "unknown", "cur": None, "curLine": False, "unit": True, "unitLine": 1, "order": True}, got
+    assert got["other"]["cur"] == "USD" and got["other"]["curLine"] and got["other"]["unitLine"] == 1 and got["other"]["order"]   # 아남전자의 통화는 그대로
+    assert got["plain"]["cur"] == "USD" and got["plain"]["curLine"] and got["plain"]["unitLine"] == 0                       # 단위 확인이 없으면 예전 그대로
+
+
+def test_the_home_hero_says_the_unit_line_once_under_the_tiles():
+    """Jack 2026-11-13 (Q14): 새 홈의 네 규칙(남색) 밑에도 같은 줄 한 번 — 단위 확인에 걸린 가진 종목이 있을 때만."""
+    got = run("""
+      const r = (unit) => ({ id: 'warn', state: 'unknown', unit, flagged: [], unknown: ['x'] });
+      const html = (unit) => renderToStaticMarkup(h(FN.UnitChkLine, { show: r(unit).unit }));
+      const keep = C2.co.unitChk;
+      out = { on: text(html(true)).trim(), off: html(false) };
+      C2.co.unitChk = null; out.noWords = html(true); C2.co.unitChk = keep;""")
+    assert got["on"] == LINE and got["off"] == "" and got["noWords"] == ""
+    src = open(os.path.join(ROOT, "src", "v2", "home2.jsx"), encoding="utf-8").read()
+    assert '<UnitChkLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.unit)}' in src

@@ -57,6 +57,13 @@ export function UnitChkNote({ s, co, show = true, style }) {
   return text ? <Note data-ui-v2="unit-chk" style={style}>{text}</Note> : null;
 }
 
+// The unit-check line inside a rule tile (phrasing content): the reason 재무 경고 0개 could not be checked for a holding the
+// unit check holds (pf.js rule "warn" unit · Jack 2026-11-13 Q14: his approved co.unitChk line, the company page's key).
+export function UnitChkLine({ show = true, style }) {
+  const text = show && C.co.unitChk ? C.co.unitChk : null;
+  return text ? <span data-ui-v2="unit-chk-tile" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{text}</span> : null;
+}
+
 // The currency line inside a rule tile (phrasing content), for a code already read (pf.js rule "warn" stmtCur): the
 // reason 재무 경고 0개 could not be checked for a holding whose statements are not in won (Jack, 2026-11-08).
 export function StmtCurLine({ cur, style }) {

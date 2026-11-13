@@ -52,7 +52,7 @@ import { MarketGlance, Hero } from "./today.jsx";
 import { RankCard } from "./rank.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
-import { IcrOffLine, EpsOwnersNote, StmtCurLine } from "./fixnote.jsx";
+import { IcrOffLine, EpsOwnersNote, StmtCurLine, UnitChkLine } from "./fixnote.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -101,6 +101,8 @@ function RulesHero({ block, many, narrow }) {
       {/* 2026-11-08 (Jack): why 재무 경고 0개 could not be checked, when a Korean holding's 이자보상배율 check is off (pf.js icrOff);
           under the tiles, in the hero's light grey (a tile is too narrow for the sentence) */}
       <IcrOffLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.icrOff)} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
+      {/* 2026-11-13 (Jack, Q14): and when a holding's numbers are blank because of the unit check (pf.js unit), the same way */}
+      <UnitChkLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.unit)} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
       {/* and when a Korean holding files its statements in another currency (pf.js stmtCur), the same way */}
       <StmtCurLine cur={(st.rules.find((x) => x.id === "warn" && x.state === "unknown") || {}).stmtCur} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
       {line && <p data-ui-v2="home-broken" style={tx(SIZE.xs, WEIGHT.semi, COLOR.onPrimary2, { marginTop: SPACE(3) })}>{line}</p>}

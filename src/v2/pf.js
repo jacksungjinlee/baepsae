@@ -243,9 +243,10 @@ export function pfState(deck, ctx, stocks) {
   // stmtCur (2026-11-08, Jack): an unknown Korean holding whose statements are not in won (corp.json stmtCur, readable code):
   // the tile says why with the approved currency line (the first such code; fix.js stmtCurFor). Not for a holding the unit
   // check holds (unitChk): the currency is not why its numbers are blank (review #118 N7/N-b, the same precedence as the
-  // company page); another holding's currency still shows.
+  // company page); another holding's currency still shows. unit (Jack 2026-11-13 Q14): such a holding gets his approved line
+  // (fixnote.jsx UnitChkLine), above the currency line.
   const flagged = [], unknown = [];
-  let offN = 0, cur = null;
+  let offN = 0, cur = null, unitN = 0;
   for (const r of view.rows) {
     const co = r.t && ctx.coByT ? ctx.coByT.get(r.t) || null : null;
     const w = warnOf(r.s, co);
@@ -253,10 +254,11 @@ export function pfState(deck, ctx, stocks) {
     else if (w === "unknown") {
       unknown.push(r.nk);
       if (r.s && r.s.cls === "kr" && icrOffShown(co)) offN += 1;
-      if (!cur && !unitHeldFor(r.s, co)) cur = stmtCurFor(r.s, co);
+      if (unitHeldFor(r.s, co)) unitN += 1;
+      else if (!cur) cur = stmtCurFor(r.s, co);
     }
   }
-  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0, stmtCur: cur });
+  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0, stmtCur: cur, unit: unitN > 0 });
   const kept = rules.filter((x) => x.state === "ok").length;
   const checked = rules.filter((x) => x.state !== "unknown").length;
   return { ok: true, pxDate: ctx.pxDate || null, view, stats, ind, rules, kept, checked, unchecked: rules.length - checked,
