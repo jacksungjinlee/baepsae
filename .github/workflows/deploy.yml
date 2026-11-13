@@ -9,6 +9,10 @@ name: Deploy
 # 자동 배포는 Pages 의 배포 방식(Settings → Pages → Source)이 'GitHub Actions' 일 때만 해요. 아직 'Deploy from a branch' 이면
 # 지금처럼 GitHub 이 main 브랜치를 그대로 보여 주고, 이 workflow 는 알림만 남기고 끝나요 (두 배포가 서로 덮어쓰지 않게).
 # 손으로 누른 배포는 두 방식 모두에서 올려요 (바꾸기 전에 한 번 시험해 볼 수 있게).
+#
+# 배포 전 화면 검사 (Jack J6, 2026-11-12): 코드가 바뀌는 배포(머지 · 손으로)는 올리기 전에 매일 실행의 세 검사를 올릴 데이터 그대로
+# 새 코드로 돌려요 (tools/deploy_check.py). 새 코드만 실패하면 막아요 (사이트는 그대로). 지금 사이트의 코드도 같은 검사에 실패하면
+# 올리고 경보 이슈로 알려요. 데이터 실행 뒤의 배포는 그 실행이 같은 코드로 같은 파일을 이미 검사했을 때만 건너뛰어요.
 
 on:
   push:
@@ -77,14 +81,19 @@ jobs:
     needs: decide
     if: needs.decide.outputs.go == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 평소 1분 + 배포 전 화면 검사 (코드 배포 3~4분 · 새 코드가 실패해 지금 코드와 비교하면 7분쯤). 단계마다 한도가 따로 있어요.
+    timeout-minutes: 80
     permissions:
       contents: read
+      issues: write          # 배포 전 화면 검사: 지금 사이트의 코드도 실패하면 경보 이슈(data-alert) · 다시 통과하면 표시 풀기
     steps:
-      # 늘 지금의 main 을 받아요 (기다리던 배포가 오래된 커밋을 올리지 않게)
+      # 늘 지금의 main 을 받아요 (기다리던 배포가 오래된 커밋을 올리지 않게).
+      # 토큰은 작업 폴더(.git/config)에 남기지 않아요: 이 job 은 npm · pip 패키지와 브라우저를 돌리고, 토큰은 이슈를 쓸 수 있어요.
+      # 이 job 의 git 은 모두 공개 저장소를 읽기만 해요 (data · logos 브랜치, 지금 사이트의 커밋).
       - uses: actions/checkout@v7
         with:
           ref: main
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -94,10 +103,16 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          # 배포 전 화면 검사 도구(requirements-dev.txt)도 같은 보관본에서 (매일 실행 · CI 와 같은 설정)
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
+      # npm 패키지의 설치 스크립트는 돌리지 않아요 (--ignore-scripts: 매일 실행의 화면 검사 도구와 같아요 · esbuild 는 없어도 돌고,
+      # 빌드 결과는 한 글자도 같아요). 이 job 은 이슈를 쓸 수 있는 토큰을 받는 단계가 있어요.
       - name: 라이브러리 설치 (package-lock.json · requirements.txt 그대로)
         run: |
-          npm ci
+          npm ci --ignore-scripts
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -155,6 +170,63 @@ jobs:
               || { echo "!! $p 에 이 커밋의 빌드 표시가 없어요"; exit 1; }
           done
           echo "· 네 페이지 모두 빌드 표시 $(git rev-parse --short HEAD)"
+
+      # ── 배포 전 화면 검사 (Jack J6, 2026-11-12) ──
+      # 매일 실행의 '발행 전 화면 검사'와 같은 세 검사(tests/real_data_check.py · smoke_launch.py · smoke_app.py, 모두 --data)를
+      # 올릴 폴더(_site)의 네 데이터 파일 그대로, 방금 빌드한 새 코드로 돌려요. 하나라도 실패하면 지금 사이트가 보여 주는 코드(페이지의
+      # 빌드 표시)를 따로 된 저장소 · 폴더에 받아 빌드하고, 실패한 검사를 같은 데이터로 돌려 결과 표의 줄마다 비교해요:
+      #   새 코드가 실패한 줄을 지금 코드가 통과 → 막아요 (이 job 이 올리기 전에 실패 · 사이트는 그대로) · 새 코드가 실패한 줄을 지금
+      #   코드도 모두 실패 → 올리고 경보 이슈로 알려요 · 지금 코드를 알 수 없음 · 결과 줄 전에 멈춤 · 줄을 읽지 못함 → 막아요.
+      #   지금 사이트와 같은 코드(데이터 말고)끼리는 막지 않아요: 한 번 더 돌려 통과하면 올리고, 또 실패하면 올리고 알려요.
+      # 데이터 실행 뒤의 배포(workflow_run)는 그 실행이 검사한 커밋에서 지금 main 까지 데이터 네 파일만 바뀌었을 때만 건너뛰어요
+      # (그 실행이 data 브랜치에 올리기 전에 같은 코드로 같은 파일을 검사했어요). 확인하지 못하면 검사해요.
+      # 이 job 의 단계에는 조건(if)이 없어요: 건너뛰는 것도 단계 안에서 정하고 로그에 남겨요. 토큰은 GitHub API 를 부르는 세 단계
+      # (발행 관문 · 필요한지 · 결과)의 환경에만 있고, checkout 은 토큰을 작업 폴더에 남기지 않아요 (persist-credentials: false) —
+      # 세 검사와 그 준비 단계(npm · pip 패키지 · 브라우저)는 토큰을 볼 수 없어요. 브라우저는 매일 실행 · CI 와 같은 보관본에서 꺼내기만
+      # 해요 (없으면 Playwright 의 서버에서 받아요 · apt 없음). 통과(또는 '지금 코드도 실패')일 때만 영수증이 생기고, 올리기 바로 전
+      # 단계가 영수증과 올릴 폴더를 맞춰 봐요. 단계마다 시간 한도가 있어요: 넘으면 실패 → 올리지 않아요.
+      - name: 배포 전 화면 검사가 필요한지 (코드가 바뀌는 배포만)
+        id: need
+        timeout-minutes: 5
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+          RUN_STARTED: ${{ github.event.workflow_run.run_started_at }}
+          RUN_UPDATED: ${{ github.event.workflow_run.updated_at }}
+        run: python3 tools/deploy_check.py need --site _site
+
+      - name: 화면 검사 도구 설치 (requirements-dev.txt 그대로 · 검사하는 배포만)
+        timeout-minutes: 10
+        run: |
+          if python3 tools/deploy_check.py skip; then exit 0; fi
+          pip install -r requirements-dev.txt
+
+      # 열쇠는 매일 실행 · CI 와 같아요 (보관본을 새로 받을 때는 모든 곳의 v1 을 함께 올려요 — docs/RUNBOOK.md). 여기서는 꺼내기만 해요.
+      # 검사하지 않는 배포(need: no)는 꺼내지 않고 있는지만 봐요 (lookup-only). 값을 모르면 꺼내요.
+      - name: 브라우저 보관본 불러오기
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-ubuntu-24.04-${{ hashFiles('requirements-dev.txt') }}
+          lookup-only: ${{ steps.need.outputs.run == 'no' }}
+
+      - name: 브라우저 · 한글 글꼴 준비 (보관본 그대로 · 없을 때만 내려받기 · apt 없음 · 검사하는 배포만)
+        timeout-minutes: 10
+        run: |
+          if python3 tools/deploy_check.py skip; then exit 0; fi
+          python -m playwright install chromium
+          bash tests/fonts/install.sh
+
+      - name: 배포 전 화면 검사 (올릴 데이터 그대로 · 새 코드, 실패하면 지금 사이트의 코드와 비교)
+        timeout-minutes: 45
+        run: python3 tools/deploy_check.py check --site _site
+
+      - name: 배포 전 화면 검사 결과 (영수증 = 올릴 폴더 · 경보 이슈)
+        timeout-minutes: 5
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/deploy_check.py report --site _site
 
       - uses: actions/upload-pages-artifact@v5
         with:

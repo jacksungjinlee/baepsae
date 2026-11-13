@@ -276,8 +276,8 @@ function PastePanel({ load, paste, setPaste, onConfirm, drafts = [] }) {
           {lines.map((l) => <PasteLine key={l.line} l={l} onPick={(t) => setPaste({ ...paste, picks: { ...paste.picks, [l.line]: t } })} />)}
           <div style={{ marginTop: SPACE(3) }}>
             <button type="button" data-ui-v2="paste-confirm" disabled={!ok.length} onClick={() => onConfirm(ok)}
-              style={{ ...tap, width: "100%", minHeight: TOUCH, border: "none", borderRadius: RADIUS.sm, background: COLOR.ink, opacity: ok.length ? 1 : 0.45,
-                ...tx(SIZE.body, WEIGHT.bold, COLOR.surface) }}>{C.imp.confirm}</button>
+              style={{ ...tap, width: "100%", minHeight: TOUCH, border: "none", borderRadius: RADIUS.sm, background: COLOR.primary, opacity: ok.length ? 1 : 0.45,
+                ...tx(SIZE.body, WEIGHT.bold, COLOR.onPrimary) }}>{C.imp.confirm}</button>
           </div>
         </div>
       )}
@@ -442,9 +442,9 @@ function Donut({ rows, total, shades }) {
     <Card data-ui-v2="import-donut" style={{ display: "flex", alignItems: "center", gap: SPACE(4), flexWrap: wide ? "nowrap" : "wrap" }}>
       <div style={{ position: "relative", width: 128, height: 128, flexShrink: 0, margin: "0 auto" }}>
         <svg width={128} height={128} viewBox="0 0 128 128" aria-hidden="true">
-          <circle cx={64} cy={64} r={R} fill="none" stroke={COLOR.page} strokeWidth={SW} />
+          <circle cx={64} cy={64} r={R} fill="none" style={{ stroke: COLOR.page }} strokeWidth={SW} />
           {segs.map((g) => (
-            <circle key={g.key} cx={64} cy={64} r={R} fill="none" stroke={g.color} strokeWidth={SW} strokeDasharray={`${Math.max(0, g.len - 1.5)} ${L}`}
+            <circle key={g.key} cx={64} cy={64} r={R} fill="none" style={{ stroke: g.color }} strokeWidth={SW} strokeDasharray={`${Math.max(0, g.len - 1.5)} ${L}`}
               strokeDashoffset={-g.off} transform="rotate(-90 64 64)" />
           ))}
         </svg>
@@ -513,7 +513,7 @@ function ReportStep({ load, store, setStoreData, importer, go, onSaved }) {
         <button type="button" data-ui-v2="report-again" onClick={() => go(0)}
           style={{ ...tap, minHeight: TOUCH + SPACE(1), borderRadius: RADIUS.sm, border: `1px solid ${COLOR.border}`, background: COLOR.surface, ...tx(SIZE.sm, WEIGHT.bold, COLOR.ink) }}>{C.rpt.again}</button>
         <button type="button" data-ui-v2="report-start" onClick={start}
-          style={{ ...tap, minHeight: TOUCH + SPACE(1), borderRadius: RADIUS.sm, border: "none", background: COLOR.ink, ...tx(SIZE.sm, WEIGHT.bold, COLOR.surface) }}>{C.rpt.start}</button>
+          style={{ ...tap, minHeight: TOUCH + SPACE(1), borderRadius: RADIUS.sm, border: "none", background: COLOR.primary, ...tx(SIZE.sm, WEIGHT.bold, COLOR.onPrimary) }}>{C.rpt.start}</button>
       </div>
       <Footer />
     </Page>

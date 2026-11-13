@@ -67,15 +67,15 @@ function HeroTile({ r }) {
       style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: SPACE(1) + 2, padding: `${SPACE(2) + 2}px 2px ${SPACE(2)}px`,
         borderRadius: RADIUS.md, background: broken ? "rgba(255,226,168,.18)" : "rgba(255,255,255,.08)", minWidth: 0 }}>
       <Icon name={RULE_ICON[r.id]} size={24} tone="onNavy" style={{ opacity: r.state === "unknown" ? 0.6 : 1 }} />
-      <span style={tx(SIZE.xs, WEIGHT.semi, "#E3E7EE", { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{ruleLabel(r)}</span>
-      {r.state === "unknown" && <span data-ui-v2="home-rule-unknown" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF", { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{C.pfr.unknown}</span>}
-      {detail && <span data-ui-v2="home-rule-detail" style={tx(SIZE.xs, WEIGHT.bold, "#FFE2A8", { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{detail}</span>}
+      <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.onPrimary2, { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{ruleLabel(r)}</span>
+      {r.state === "unknown" && <span data-ui-v2="home-rule-unknown" style={tx(SIZE.xs, WEIGHT.regular, COLOR.onPrimary3, { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{C.pfr.unknown}</span>}
+      {detail && <span data-ui-v2="home-rule-detail" style={tx(SIZE.xs, WEIGHT.bold, COLOR.highlight, { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{detail}</span>}
       {ok && (
         <span role="img" aria-label={C.daily.ok} style={{ position: "absolute", top: -4, right: -2, width: 20, height: 20, borderRadius: 10, background: COLOR.okBg,
           display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="check" size={14} tone="ok" /></span>
       )}
       {broken && (
-        <span aria-hidden="true" style={{ position: "absolute", top: -4, right: -2, width: 20, height: 20, borderRadius: 10, background: "#FFE2A8",
+        <span aria-hidden="true" style={{ position: "absolute", top: -4, right: -2, width: 20, height: 20, borderRadius: 10, background: COLOR.highlightBg,
           display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, 900, COLOR.watch, { lineHeight: 1 }) }}>!</span>
       )}
     </div>
@@ -89,22 +89,22 @@ function RulesHero({ block, many, narrow }) {
   const line = brokenLine(st);
   return (
     <section data-ui-v2="home-rules" data-deck-id={deck.id} data-kept={st.kept} data-checked={st.checked}
-      style={{ marginTop: SPACE(4), background: COLOR.ink, color: COLOR.surface, borderRadius: RADIUS.lg + 2, padding: SPACE(4) + 2 }}>
-      {many && <p data-ui-v2="home-rules-name" style={tx(SIZE.xs, WEIGHT.bold, COLOR.surface, { marginBottom: SPACE(1) })}>{shownName(deck.name)}</p>}
+      style={{ marginTop: SPACE(4), background: COLOR.primary, color: COLOR.onPrimary, borderRadius: RADIUS.lg + 2, padding: SPACE(4) + 2 }}>
+      {many && <p data-ui-v2="home-rules-name" style={tx(SIZE.xs, WEIGHT.bold, COLOR.onPrimary, { marginBottom: SPACE(1) })}>{shownName(deck.name)}</p>}
       {/* "{date} 종가로 점검했어요" only when at least one rule was checked: with every tile 확인하지 못했어요 nothing was */}
-      {md && st.checked > 0 && <p data-ui-v2="home-checked" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF")}>{fill(C.pfr.checked, { date: md })}</p>}
-      {st.checked > 0 && <h2 data-ui-v2="home-kept" style={tx(21, WEIGHT.heavy, COLOR.surface, { marginTop: SPACE(1) + 2, lineHeight: 1.35, letterSpacing: "-0.02em", wordBreak: "keep-all" })}>
+      {md && st.checked > 0 && <p data-ui-v2="home-checked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.onPrimary3)}>{fill(C.pfr.checked, { date: md })}</p>}
+      {st.checked > 0 && <h2 data-ui-v2="home-kept" style={tx(21, WEIGHT.heavy, COLOR.onPrimary, { marginTop: SPACE(1) + 2, lineHeight: 1.35, letterSpacing: "-0.02em", wordBreak: "keep-all" })}>
         {fill(C.pfr.kept, { n: st.checked, k: st.kept })}</h2>}
       <div style={{ marginTop: SPACE(3) + 2, display: "grid", gridTemplateColumns: `repeat(${narrow ? 2 : 4}, minmax(0, 1fr))`, gap: SPACE(1) + 2 }}>
         {st.rules.map((r) => <HeroTile key={r.id} r={r} />)}
       </div>
       {/* 2026-11-08 (Jack): why 재무 경고 0개 could not be checked, when a Korean holding's 이자보상배율 check is off (pf.js icrOff);
           under the tiles, in the hero's light grey (a tile is too narrow for the sentence) */}
-      <IcrOffLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.icrOff)} style={{ color: "#CBD3DF", marginTop: SPACE(3) }} />
+      <IcrOffLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.icrOff)} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
       {/* and when a Korean holding files its statements in another currency (pf.js stmtCur), the same way */}
-      <StmtCurLine cur={(st.rules.find((x) => x.id === "warn" && x.state === "unknown") || {}).stmtCur} style={{ color: "#CBD3DF", marginTop: SPACE(3) }} />
-      {line && <p data-ui-v2="home-broken" style={tx(SIZE.xs, WEIGHT.semi, "#E3E7EE", { marginTop: SPACE(3) })}>{line}</p>}
-      {st.unchecked > 0 && <p data-ui-v2="home-not-checked" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF", { marginTop: SPACE(2) })}>{fill(C.daily.notChecked, { n: st.unchecked })}</p>}
+      <StmtCurLine cur={(st.rules.find((x) => x.id === "warn" && x.state === "unknown") || {}).stmtCur} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
+      {line && <p data-ui-v2="home-broken" style={tx(SIZE.xs, WEIGHT.semi, COLOR.onPrimary2, { marginTop: SPACE(3) })}>{line}</p>}
+      {st.unchecked > 0 && <p data-ui-v2="home-not-checked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.onPrimary3, { marginTop: SPACE(2) })}>{fill(C.daily.notChecked, { n: st.unchecked })}</p>}
     </section>
   );
 }

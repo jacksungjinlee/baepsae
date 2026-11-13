@@ -196,6 +196,8 @@ after it merges and what comes next.
   light chip background (Jack, 2026-11-05): 실적 `#B9CDEB` / `#EAF1FB` · 가치 `#BFE0CC` / `#E9F5EE` · 배당 `#EBD49A` /
   `#FBF4E1` · 출렁임·위험 `#D3C8EC` / `#F1EDF9` · 공시·수급·금리 차트 등 `#B5DDDD` / `#E6F4F4`. Tints carry no good/bad
   meaning. No apricot and no price red/blue in icons or selection states. Apricot marks data only.
+- Dark mode: 2.0 only, with the tokens in v19.6 Part D. Icon lines turn light (`#E8ECF2`) on darker topic fills. 뱁이 is
+  never recoloured and sits on a light chip in dark mode.
 - Pictures: 기준 cards and templates use the pictures in `docs/design/v19.3/assets/pictures` (Adobe Stock free and
   Microsoft Fluent 3D); one picture per 기준 everywhere. The pictures keep their own colours; the icon colour rules apply
   to Phosphor icons and chips. Small UI icons stay Phosphor duotone. Never draw, generate, recolour or replace these

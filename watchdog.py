@@ -52,6 +52,10 @@ STALE_FROM = dt.time(15, 30)              # 이 시각(KST) 전에는 낡은 가
 GRACE = dt.timedelta(minutes=45)          # main 이 바뀐 직후에는 배포가 따라올 시간을 줘요
 ISSUE_TITLE = "뱁새 데이터 경보"
 LABEL = "data-alert"
+# 배포 전 화면 검사(tools/deploy_check.py, Jack J6 2026-11-12)가 '지금 사이트의 코드도 같은 검사에 실패해요'를 알린 경보에 붙여요.
+# 감시는 그 브라우저 검사를 하지 않으니, 이 표시가 붙은 경보는 감시가 '정상화됐어요'로 닫지 않아요. 표시는 배포가 세 검사를
+# 다시 통과하면 풀려요 (그 뒤 감시가 닫아요).
+DEPLOY_CHECK_LABEL = "deploy-check"
 MENTION = "@jacksungjinlee"
 DATA_WF, DEPLOY_WF, WATCH_WF = "update-data.yml", "deploy.yml", "watchdog.yml"
 DATA_NAME, DEPLOY_NAME = "시세 데이터 갱신", "Deploy"
@@ -506,6 +510,10 @@ def raise_alert(net, rep, ctx, now, run_url, selftest="none"):
 def clear_alerts(net, ctx, now, run_url):
     closed = []
     for i in open_alerts(net):
+        if DEPLOY_CHECK_LABEL in {(x.get("name") if isinstance(x, dict) else x) for x in i.get("labels") or []}:
+            print(f"· 경보 이슈 #{i['number']} 은 닫지 않아요: 배포 전 화면 검사가 찾은 문제가 남아 있어요 ('{DEPLOY_CHECK_LABEL}' 표시). "
+                  "감시는 그 검사를 하지 않아요 — 배포가 세 검사를 다시 통과하면 표시가 풀려요", flush=True)
+            continue
         net.gh("POST", f"/repos/{REPO}/issues/{i['number']}/comments", {"body": recovery_body(ctx, now, run_url)})
         net.gh("PATCH", f"/repos/{REPO}/issues/{i['number']}", {"state": "closed", "state_reason": "completed"})
         print(f"· 경보 이슈 #{i['number']} 을 닫았어요 (정상화됐어요)", flush=True)
