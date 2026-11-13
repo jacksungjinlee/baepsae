@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 08:45 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 09:34 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -64,14 +64,14 @@ just stops blocking screen work.
     has a time limit that fails the test.
   - Split the daily run into a read-only job and a publishing job, after the currency fix, the Korean unit fix and
     the token fix.
-- **Queue now (2026-11-13 08:45 KST; every merging PR updates this):**
+- **Queue now (2026-11-13 09:34 KST; every merging PR updates this):**
   - Done: the first real publish with #106's screen check (11-13 06:40 KST run 43312517381, 11-12 data) published
     cleanly: gate PASS with 6 known warnings, the three screen checks green, Deploy and Watchdog green, live site
     checked (both apps, 11월 12일).
-  - Track A: #107 (gate row: Korean companies' "statements not in won" marks must not vanish) is live; #111 (US
-    beta gate row) merges next. #115 (the deploy check) waits for Jack's answer
-    on its same-code rule. #114 (currency fix): final branch dry run after 08:30 KST, then merge and its own publish
-    (a `dart=cache` run), before #113 (Jack, 11-12: "after tomorrow's first real publish, and before the token fix");
+  - Track A: #107 (Korean companies' "statements not in won" marks must not vanish) and #111 (US beta and
+    volatility filled for 95% of US stocks) are live. #115 (the deploy check) waits for Jack's answer on its
+    same-code rule. #114 (currency fix) is merged; its own publish (a `dart=cache` run) follows the merge and is
+    watched to the end, before #113 (Jack, 11-12: "after tomorrow's first real publish, and before the token fix");
     then #113 (token fix) with its own publish, watched to the end and reverted at once if the push fails (Jack, 11-12).
     #118 (Korean unit guard; reviews done; branch dry run next), then #116 (its repair, builds on #118; reviews done).
     #117 (fxHist and US splits; reviews done; branch dry run next; its default FX source `ecos_close` waits for Jack,

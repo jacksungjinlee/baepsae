@@ -63,7 +63,7 @@ import requests
 
 # v19.1b: 배당 순위·수익률 확인 비율의 관문 기준과 '빠진 이유' 문구는 관문 파일 한곳에 있어요. 파이프라인 로그는 그걸 그대로
 # 읽어 관문과 같은 선·같은 말로 알려요 (관문은 이 파일을 읽지 않아요 — 계산은 따로)
-from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason
+from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason, US_FCUR_KEEP_ZERO_DY
 # v19.6a: 환율 이력(fxHist)과 주식 분할(splits)의 기준도 관문 파일에 있어요 (검사 코드는 따로 · 같은 선만 읽어요)
 from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST_SOURCES, FX_HIST_ECOS, FX_HIST_GAP_MAX,
                            FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL, MUST_SPLITS)
@@ -108,7 +108,7 @@ KR_INDEX = "KS11"
 US_INDEX = "^GSPC"
 FX_TICKER = "USDKRW=X"
 # v19.6a (docs/tasks/v19.6-records-alerts-dark.md Part I.1): macro.json fxHist = 2016-01-01 부터의 원/달러 일별 환율. 출처 스위치 (Jack 의
-# 답을 기다려요 · #117 리뷰 3 의 권고로 "ecos_close"). 기록 날짜 = 사용자가 적은 미국 거래일 D. 미국 D 하루 끝(야후 다음 봉 시가)과의 차이,
+# 선택 2026-11-13: "ecos_close" · #117 리뷰 3 의 권고). 기록 날짜 = 사용자가 적은 미국 거래일 D. 미국 D 하루 끝(야후 다음 봉 시가)과의 차이,
 # 2016-01 ~ 2026-11 미국 거래일 2,727일 (중앙값 · 99% · 1% 넘는 날) · 아침 06:40 발행에서 어젯밤(D) 기록을 바로 받는 비율:
 #   "ecos_close" ECOS 서울 외환시장 15:30 종가 (731Y003 · 0000003), 줄 D = D 의 종가 · 0.25% · 1.44% · 3.5% · 다음 날 아침 94.5%
 #   "ecos_next"  ECOS 매매기준율, 줄 D = D 다음에 고시된 값 (= D 하루 서울 거래의 평균) · 0.27% · 1.46% · 5.0% · 다음 날 아침 0%
@@ -5318,7 +5318,39 @@ US_INFO_FRESH_DAYS = 3
 US_INFO_MAX_AGE_DAYS = 14
 US_INFO_KEYS = ("shortName", "longName", "quoteType", "sector", "industry", "longBusinessSummary", "trailingPE", "priceToBook",
                 "returnOnEquity", "operatingMargins", "revenueGrowth", "debtToEquity", "dividendYield",
-                "marketCap", "averageVolume")
+                "marketCap", "averageVolume", "financialCurrency", "currency", "totalRevenue",
+                "dividendRate", "trailingAnnualDividendRate", "lastDividendDate", "exDividendDate")
+# 보관본 항목의 모양 (Jack, 2026-11-12: 재무제표 통화). 2 = financialCurrency · currency 를 담기 시작한 모양 · 3 = totalRevenue (매출이 없는
+# 회사의 영업이익률 0 을 가리려고, #114 리뷰)와 배당 근거 칸(dividendRate · trailingAnnualDividendRate · lastDividendDate · exDividendDate:
+# 배당 없음 0% 를 남길지, Jack 2026-11-13)도. 이 표시("k")가 지금 값이 아닌 항목은 받은 날과 상관없이 다음 실행에서 한 번 다시 받아요 (그 실행은
+# 미국 종목 약 770곳을 모두 다시 받아요 — 보관본이 빈 날과 같은 호출 수). 다시 받지 못하면 14일 안의 예전 항목을 그대로 쓰고, 그 종목은
+# '재무제표 통화를 모르는 회사'로 크게 남아요 (비우지 않아요 · data.json usFcurUnknown · 관문 경고). 다음 실행이 또 받아요.
+# 파일 이름(us-info-v1)은 그대로예요: 이름을 바꾸면 다시 받지 못한 날 이름·업종·설명까지 모두 잃어요.
+US_INFO_SCHEMA = 3
+# 새 응답에 빠져 있으면 예전 항목의 값을 그대로 쓰는 설명 칸 (#114 리뷰: 야후가 가끔 시세만 담은 응답을 줘요 — 이름은 있는데 financialCurrency ·
+# 업종 · 설명이 없는). 재무제표 통화를 잃으면 TSMC PBR 78.88 같은 값이 다시 나가요. 숫자 칸(PER · PBR · 배당 · 시가총액 …)은 절대 옛 값을
+# 쓰지 않아요: 이 목록에 넣지 마세요.
+US_INFO_STICKY = ("financialCurrency", "currency", "shortName", "longName", "quoteType", "sector", "industry", "longBusinessSummary")
+US_INFO_STICKY_DAYS = 14  # 이보다 오래된 예전 항목은 이름이 같을 때만 설명 칸을 채워요 (#114 리뷰 2)
+US_PBR_MIN = 0.005       # 이보다 작은 PBR 은 0.00 으로 반올림돼요 — 진짜일 수 없어 빈 칸 (BRK-B 0.0011, 2026-11-12 · Jack 2026-11-13 한국 규칙과 같은 뜻)
+
+# Jack, 2026-11-12: 미국에 상장된 외국 회사 중 재무제표를 달러가 아닌 통화로 내는 곳 (야후 financialCurrency: 대만 TWD · 카자흐스탄 KZT ·
+# 스웨덴 SEK …). 야후의 priceToBook · trailingPE 는 달러 주가를 그 통화의 금액으로 나눈 값일 수 있어요 (2026-11-12 발행: Kaspi.kz PBR
+# 0.01 (실제 약 3.5) · 에릭슨 0.35 (약 3.1) · TSMC 78.88 (약 11)). 환산을 짐작하지 않고 비워요 (None — 0 이 아니에요): 달러 주가(또는
+# 달러 시가총액)를 재무제표 통화 금액으로 나누는 값 PER · PBR · 배당수익률. 배당수익률은 Jack 이 이름으로 정했어요: 야후 수익률이 달러
+# 배당으로 맞는 회사도, 0% 도 비워요. 가치 점수(vz)는 PBR 이 비면 add_percentiles 가 매기지 않고, 다른 미국 종목의 가치 순위는 이
+# 회사들 없이 매겨요. 남기는 값 (칸마다 확인, 2026-11-12 미국 773종목):
+#   · 같은 통화끼리 나눈 비율 — ROE(returnOnEquity) · 영업이익률(operatingMargins) · 매출 증가율(revenueGrowth) · 차입금 비율(debtToEquity)
+#   · 가격만으로 만든 값 — 베타 · 변동성 · 알파 · 샤프 · 낙폭 · 12개월 수익률 · 52주 범위 · d1 (그리고 그 점수 mz · lz)
+#   · 시가총액(marketCap)과 그 점수 pz · 거래대금 — 야후 marketCap 은 달러 주가 × 주식 수예요 (27곳 모두 marketCap = 주가 ×
+#     impliedSharesOutstanding, 차이 0.1% 안). averageVolume 은 주식 수라 × 달러 주가.
+# data.json fcur = 그 통화의 ISO 코드 (앱이 '주가는 달러, 재무제표는 {통화} 기준이라 이 숫자는 계산하지 않았어요.' 줄을 붙이고, 관문이
+# 그 칸들이 비었는지 봐요). 야후가 financialCurrency 를 주지 않으면 비우지 않고 그 종목과 수를 크게 남겨요 (fetch_us).
+US_FCUR_BLANK = ("per", "pbr", "dy")
+US_QUOTE_CUR = "USD"     # 미국 종목의 가격 통화 (fetch_us 의 ccy). 야후 currency 가 다르면 크게 남겨요 (비우지는 않아요)
+# 배당수익률 0% (배당 없음)를 남길지 — validate_data.US_FCUR_KEEP_ZERO_DY 하나가 정해요 (관문도 같은 값을 봐요). Jack, 2026-11-13: 자료가 지난 12개월
+# 배당이 없었다고 분명히 말할 때만 0% 를 보여 줘요 (us_no_dividend_12m) — 조금이라도 불분명하면 빈 칸. False = 0% 도 늘 비워요.
+US_DIV_LOOKBACK_DAYS = 365
 
 
 def load_us_info(path=None):
@@ -5584,22 +5616,46 @@ def cut_words(text, n):
     return (cut[:sp] if sp > n * 0.6 else t[:n]).rstrip(" ,;:-")
 
 
-def apply_us_info(rec, info, px_then, fx):
-    """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)"""
+def us_fin_currency(info):
+    """야후 financialCurrency → ISO 세 글자 대문자 (norm_currency: 'twd' → 'TWD', 읽을 수 없는 글자 → 'XXX' — 달러로 믿지 않아요).
+    없거나 글자가 아니면(NaN 포함) None = 모름. (순수 함수)"""
+    x = (info or {}).get("financialCurrency")
+    if not isinstance(x, str) or not x.strip():
+        return None
+    return norm_currency(x)
+
+
+def apply_us_info(rec, info, px_then, fx, today=None):
+    """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)
+    재무제표 통화가 달러가 아니면(us_fin_currency) rec["fcur"] 에 그 코드를 쓰고 PER · PBR · 배당수익률(US_FCUR_BLANK)을 비워요
+    (배당수익률 0% 는 US_FCUR_KEEP_ZERO_DY 이고 us_no_dividend_12m(info, today) 일 때만 남겨요 · today 없으면 비워요). 0.00 으로 반올림되는
+    PBR 과 매출이 없는 회사의 영업이익률 0 은 빈 칸이에요 (us_info_cuts, #114 리뷰). 그 PBR 은 rec["pbrZero"] = True 로 표시해요 (Jack,
+    2026-11-13: 앱이 '자료상 PBR이 0에 가깝게 나와서 …' 줄을 붙여요 · fcur 회사는 통화 줄이 이미 말해서 표시하지 않아요)."""
     nm = info.get("shortName") or info.get("longName")
     if not nm:
         return False
+    fc = us_fin_currency(info)
+    for k in ("fcur", "pbrZero", "roe", "opm", "g3", "debt") + US_FCUR_BLANK:   # 같은 rec 에 두 번 붙여도 예전 값이 남지 않게
+        rec.pop(k, None)
+    if fc and fc != US_QUOTE_CUR:
+        rec["fcur"] = fc
     rec["nk"] = rec["ne"] = str(nm)
     rec["s"] = map_sector_us(info.get("sector"), info.get("industry"))
     if info.get("industry"):
         rec["_yind"] = str(info["industry"])     # 업종 그룹용 (assign_industries 가 쓰고 지워요)
     rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
-    p0, p1 = _fin(px_then), _fin(rec.get("price"))
-    k = p1 / p0 if p0 and p1 and p0 > 0 else 1.0
+    k = us_rescale(rec.get("price"), px_then)
+    cuts = us_info_cuts(info, k)
+    if "pbr" in cuts and not rec.get("fcur"):
+        rec["pbrZero"] = True
     spec = (("per", "trailingPE", 0, 500, False), ("pbr", "priceToBook", 0, 100, False),
             ("roe", "returnOnEquity", -5, 5, True), ("opm", "operatingMargins", -5, 5, True),
             ("g3", "revenueGrowth", -5, 20, True), ("debt", "debtToEquity", 0, 2000, False))
     for key, src, lo, hi, scale in spec:
+        if key in US_FCUR_BLANK and rec.get("fcur"):
+            continue                                # 재무제표 통화가 달러가 아님: 달러 주가 ÷ 그 통화 금액일 수 있어 비워요
+        if key in cuts:
+            continue                                # 0.00 으로 반올림되는 PBR · 매출이 없는데 영업이익률 0
         v = _fin(info.get(src))
         if v is None:
             continue
@@ -5611,7 +5667,7 @@ def apply_us_info(rec, info, px_then, fx):
     # yfinance 1.x 의 dividendYield 는 이미 % 예요 (0.41 = 0.41%). 예전처럼 1 미만에 100을 곱하면
     # 애플 0.31% 가 31% 가 돼요 (2026-10 발행본에서 확인). 30% 넘는 값은 믿지 않아요.
     dyv = _fin(info.get("dividendYield"))
-    if dyv is not None and 0 <= dyv / k < 30:
+    if dyv is not None and 0 <= dyv / k < 30 and (not rec.get("fcur") or (US_FCUR_KEEP_ZERO_DY and dyv == 0 and us_no_dividend_12m(info, today))):
         rec["dy"] = round(dyv / k, 2)
     mc = _fin(info.get("marketCap"))
     cap, val = us_cap_val(mc * k if mc else None, info.get("averageVolume"), rec.get("price"), fx)
@@ -5623,6 +5679,159 @@ def apply_us_info(rec, info, px_then, fx):
     if summ:
         rec["de"] = cut_words(str(summ), 400)
     return True
+
+
+def us_rescale(price_now, px_then):
+    """받은 날 가격 대비 오늘 가격 배율 (PER · PBR · 시가총액 · 배당수익률을 오늘 가격에 맞춰요). 모르면 1. (순수 함수)"""
+    p0, p1 = _fin(px_then), _fin(price_now)
+    return p1 / p0 if p0 and p1 and p0 > 0 else 1.0
+
+
+def us_info_cuts(info, k=1.0):
+    """야후 값이 있어도 빈 칸으로 둘 칸 (#114 리뷰). (순수 함수)
+    · pbr: 오늘 가격에 맞춘 PBR 이 0 보다 크고 US_PBR_MIN 보다 작음 — 0.00 으로 반올림돼 진짜일 수 없어요 (BRK-B 0.0011 → 'PBR 0.0' · 가치 100점)
+    · opm: 영업이익률이 정확히 0 인데 매출(totalRevenue)이 없거나 0 — 계산할 매출이 없는 0 이에요 (에릭슨 · Kaspi.kz · VinFast · 임상 단계 바이오)
+    다른 비율(ROE · 매출 증가율 · 차입금 비율)은 2026-11-12 미국 773종목에 이 모양(정확히 0 · 분모 없음)이 없었어요."""
+    out = []
+    pb = _fin((info or {}).get("priceToBook"))
+    if pb is not None and 0 < pb * k < US_PBR_MIN:
+        out.append("pbr")
+    om, rev = _fin((info or {}).get("operatingMargins")), _fin((info or {}).get("totalRevenue"))
+    if om == 0 and (rev is None or rev == 0):
+        out.append("opm")
+    return out
+
+
+def us_no_dividend_12m(info, today):
+    """야후 자료가 '지난 12개월 배당 없음'을 분명히 말하는지 (Jack, 2026-11-13: 재무제표 통화가 달러가 아닌 회사의 0% 를 남길 근거). (순수 함수)
+    모두 맞아야 True: dividendYield 가 정확히 0 · trailingAnnualDividendRate 가 있고 정확히 0 · dividendRate 가 없거나 0 · lastDividendDate 와
+    exDividendDate 가 없거나 today 보다 365일 넘게 앞 (앞으로 올 배당 기준일도 '있음'이에요). 칸이 없거나 날짜를 읽을 수 없거나 today 를 모르면
+    False (빈 칸). 파이프라인은 미국 종목의 배당 기록(actions)을 받지 않아서 이 info 칸들이 쓸 수 있는 가장 강한 근거예요."""
+    i = info or {}
+    if today is None or _fin(i.get("dividendYield")) != 0:
+        return False
+    if _fin(i.get("trailingAnnualDividendRate")) != 0:          # 없음(None)도 False
+        return False
+    dr = i.get("dividendRate")
+    if dr is not None and _fin(dr) != 0:
+        return False
+    for k in ("lastDividendDate", "exDividendDate"):
+        v = i.get(k)
+        if v is None:
+            continue
+        x = _fin(v)
+        if x is None:
+            return False
+        try:
+            d = dt.datetime.fromtimestamp(x, dt.timezone.utc).date()
+        except Exception:
+            return False
+        if d > today - dt.timedelta(days=US_DIV_LOOKBACK_DAYS):
+            return False
+    return True
+
+
+def _us_name_key(x):
+    """회사 이름 비교용: 소문자 · 글자와 숫자만 (기호 · 띄어쓰기 무시). (순수 함수)"""
+    return re.sub(r"[^0-9a-z]+", " ", str(x or "").lower()).strip()
+
+
+def us_info_merge(new, prev, today=None):
+    """오늘 받은 info(new, US_INFO_KEYS 만 · None 없음)에 빠진 설명 칸(US_INFO_STICKY)을 예전 보관본 항목(prev)의 값으로 채워요. 숫자 칸은
+    채우지 않아요. 예전 항목이 같은 회사(이름이 같음, _us_name_key)이거나 US_INFO_STICKY_DAYS 일 안일 때만 채워요 — 티커를 다른 회사가 물려받은
+    오래된 항목의 통화 · 업종을 쓰지 않게 (#114 리뷰 2). (순수 함수) → (합친 info, 예전 값을 쓴 칸 목록, 예전 항목의 나이(일) 또는 None)"""
+    old = ((prev or {}).get("info") or {}) if isinstance(prev, dict) else {}
+    age = None
+    if isinstance(prev, dict) and today is not None:
+        try:
+            age = (today - dt.date.fromisoformat(prev.get("at"))).days
+        except Exception:
+            age = None
+    names_new = {_us_name_key(new.get(k)) for k in ("shortName", "longName")} - {""}
+    names_old = {_us_name_key(old.get(k)) for k in ("shortName", "longName")} - {""}
+    if not (names_new & names_old or (age is not None and 0 <= age <= US_INFO_STICKY_DAYS)):
+        return dict(new), [], age
+    out, kept = dict(new), []
+    for k in US_INFO_STICKY:
+        if out.get(k) is None and old.get(k) is not None:
+            out[k] = old[k]
+            kept.append(k)
+    return out, kept, age
+
+
+def us_info_partial(merged, kept, etf=False):
+    """일부만 온 응답인지 (#114 리뷰 2): 예전 값으로 채운 칸이 있거나, 회사 주식(ETF · 펀드가 아님)인데 재무제표 통화가 없음. 그런 항목은
+    오늘 받은 것으로 3일 동안 두지 않고 다음 실행에서 다시 물어봐요 (us_info_due · 항목의 "due"). (순수 함수)"""
+    if kept:
+        return True
+    company = not etf and (merged or {}).get("quoteType") not in ("ETF", "MUTUALFUND")
+    return company and (merged or {}).get("financialCurrency") is None
+
+
+def us_info_due(entry, today):
+    """이 보관본 항목을 오늘 다시 받아야 하는지: 없음 · 받은 지 US_INFO_FRESH_DAYS 일 이상 · 예전 모양(k 가 US_INFO_SCHEMA 가 아님 —
+    financialCurrency 를 담기 전) · 지난번 응답이 일부만 왔음("due", us_info_partial). (순수 함수)"""
+    if not entry:
+        return True
+    try:
+        a = (today - dt.date.fromisoformat(entry["at"])).days
+    except Exception:
+        return True
+    return a >= US_INFO_FRESH_DAYS or entry.get("k") != US_INFO_SCHEMA or bool(entry.get("due"))
+
+
+def us_fcur_summary(us, infos, no_info=frozenset()):
+    """미국 종목 중 재무제표 통화가 달러가 아닌 곳(fcur)과 통화를 모르는 회사. (순수 함수)
+    us: 발행할 미국 목록 (apply_us_info 를 지난 rec) · infos: 티커 → 야후 info · no_info: 상세 정보를 붙이지 못한 티커 (셀 것이 없어요).
+    hit 은 fcur 가 붙은 모든 종목 (ETF 도 — 관문이 세는 것과 같아요) · unknown 은 회사 주식(ETF · 펀드 빼고)만 (ETF 는 재무제표가 없어요).
+    반환 {"hit": [(티커, 통화)], "byCur": {통화: 곳}, "cut": {칸: 야후 값이 있던 곳}, "unknown": [티커], "quoteCur": [(티커, 가격 통화)]}.
+    cut 은 야후가 그 칸의 값을 준 곳 수예요 (비우지 않았다면 실렸을 값: 범위 밖 값도 세요). quoteCur: 야후가 가격 통화(currency)를
+    달러가 아니라고 한 종목 (가격은 달러로 다뤄요 — 비우지 않고 크게 남겨요)."""
+    src = {"per": "trailingPE", "pbr": "priceToBook", "dy": "dividendYield"}
+    hit, unknown, quote, zero, cut = [], [], [], [], {k: 0 for k in US_FCUR_BLANK}
+    for r in us:
+        if r.get("t") in no_info:
+            continue
+        info = infos.get(r["t"]) or {}
+        qc = info.get("currency")
+        if isinstance(qc, str) and qc.strip() and qc.strip().upper() != US_QUOTE_CUR:
+            quote.append((r["t"], qc.strip()))
+        if r.get("fcur"):
+            hit.append((r["t"], r["fcur"]))
+            if r.get("dy") == 0:
+                zero.append(r["t"])                       # 지난 12개월 배당 없음이 분명해 0% 를 남긴 회사 (us_no_dividend_12m)
+            for k in US_FCUR_BLANK:
+                cut[k] += _fin(info.get(src[k])) is not None and not (k == "dy" and r.get("dy") == 0)
+        elif us_fin_currency(info) is None and r.get("etf") is not True and not r.get("fund"):
+            unknown.append(r["t"])
+    by = collections.Counter(c for _, c in hit)
+    return {"hit": sorted(hit), "byCur": dict(sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))), "cut": cut, "unknown": sorted(unknown),
+            "quoteCur": sorted(quote), "zeroDy": sorted(zero)}
+
+
+def log_us_fcur(sm):
+    """us_fcur_summary 결과를 크게 남겨요 (CLAUDE.md: 비운 값은 수와 함께)."""
+    names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
+    if sm["hit"]:
+        log(f"· 미국 재무제표 통화가 달러가 아닌 회사: {len(sm['hit'])}곳 (통화별 " + " · ".join(f"{c} {n}" for c, n in sm["byCur"].items())
+            + ") — " + "·".join(names[k] for k in US_FCUR_BLANK) + " 비움 (야후 값이 있던 곳: "
+            + " · ".join(f"{names[k]} {sm['cut'][k]}" for k in US_FCUR_BLANK) + " · 가치 점수 vz 도 없음): "
+            + ", ".join(f"{t}({c})" for t, c in sm["hit"]))
+        z = sm.get("zeroDy") or []
+        log(f"· 그중 배당수익률 0% 를 남긴 회사 (야후가 지난 12개월 배당 없음을 분명히 말함 · Jack 2026-11-13): {len(z)}곳"
+            + (f" ({', '.join(z)})" if z else ""))
+    else:
+        log("· 미국 재무제표 통화가 달러가 아닌 회사: 없음")
+    u = sm["unknown"]
+    if u:
+        log(f"  !! 미국 재무제표 통화를 모르는 회사 {len(u)}곳 (야후가 financialCurrency 를 주지 않았거나 예전 보관본) — 비우지 않았어요: "
+            + ", ".join(u[:40]) + (f" 외 {len(u) - 40}곳" if len(u) > 40 else ""))
+    else:
+        log("· 미국 재무제표 통화를 모르는 회사: 없음")
+    q = sm.get("quoteCur") or []
+    if q:
+        log(f"  !! 야후가 가격 통화(currency)를 달러가 아니라고 한 미국 종목 {len(q)}곳 — 가격은 달러로 다뤄요 (비우지 않았어요 · 확인 필요): "
+            + ", ".join(f"{t}({c})" for t, c in q[:20]) + (f" 외 {len(q) - 20}곳" if len(q) > 20 else ""))
 
 
 def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
@@ -5700,11 +5909,23 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
             return False
         if not (info.get("shortName") or info.get("longName")):
             return False
-        cache[rec["t"]] = {"at": tday, "px": rec.get("price"),
-                           "info": {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}}
+        new = {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}
+        merged, kept, kage = us_info_merge(new, cache.get(rec["t"]), today)   # #114 리뷰: 시세만 담은 응답이 통화 · 업종 · 설명을 지우지 않게
+        if kept:
+            sticky[rec["t"]] = (kept, kage)
+        entry = {"at": tday, "px": rec.get("price"), "k": US_INFO_SCHEMA, "info": merged}
+        if us_info_partial(merged, kept, rec.get("etf") is True):
+            entry["due"] = True                                       # #114 리뷰 2: 일부만 온 응답 — 다음 실행에서 다시 물어봐요
+            partial.add(rec["t"])
+        cache[rec["t"]] = entry
         return True
 
-    need = [r for r in out if age(r["t"]) is None or age(r["t"]) >= US_INFO_FRESH_DAYS]
+    sticky, partial = {}, set()
+    need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
+    old_shape = sum(1 for r in out if cache.get(r["t"]) and cache[r["t"]].get("k") != US_INFO_SCHEMA)
+    if old_shape:
+        log(f"  !! 미국 상세 정보 보관본 중 예전 모양(표시 k 가 {US_INFO_SCHEMA} 이 아님 — 재무제표 통화 · 매출 칸을 담기 전) {old_shape:,}곳 → "
+            f"받은 날과 상관없이 오늘 다시 받아요 (한 번만 · 오늘 받을 곳 모두 {len(need):,}곳)")
     failed = need
     for pause, workers in ((0, 10), (20, 3), (60, 1)):   # 야후가 잠깐 막을 때가 많아서, 쉬었다가 더 천천히 다시
         if not failed:
@@ -5717,7 +5938,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     reused, fallback, missing, oldest = 0, 0, [], 0
     for rec in out:
         a = age(rec["t"])
-        if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last):
+        if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last, today=today):
             missing.append(rec["t"])
             continue
         if rec["t"] in failed_t:
@@ -5726,6 +5947,33 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
         elif a > 0:
             reused += 1
     save_us_info(cache)
+    if sticky:
+        fc_kept = sorted(t for t, (ks, _a) in sticky.items() if "financialCurrency" in ks)
+        other = sorted(t for t, (ks, _a) in sticky.items() if any(k != "financialCurrency" for k in ks))
+        ages = [a for _ks, a in sticky.values() if a is not None]
+        oldest = f" · 가장 오래된 예전 값 {max(ages)}일 전" if ages else ""
+        if fc_kept:
+            log(f"  !! 야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀: {len(fc_kept)}곳{oldest} ({', '.join(fc_kept[:30])}"
+                + (f" 외 {len(fc_kept) - 30}곳" if len(fc_kept) > 30 else "") + ")")
+        if other:
+            log(f"  !! 야후 응답에 빠진 설명 칸(이름 · 종류 · 업종 · 설명 · 가격 통화)을 예전 값으로 씀: {len(other)}곳{oldest} ({', '.join(other[:30])}"
+                + (f" 외 {len(other) - 30}곳" if len(other) > 30 else "") + ")")
+    if partial:
+        ps = sorted(partial)
+        log(f"  !! 일부만 온 야후 응답(예전 값으로 채움 · 또는 회사인데 재무제표 통화 없음) {len(ps)}곳 → 다음 실행에서 다시 물어봐요: "
+            + ", ".join(ps[:30]) + (f" 외 {len(ps) - 30}곳" if len(ps) > 30 else ""))
+    cut_t = {}
+    for rec in out:
+        e = cache.get(rec["t"])
+        if rec["t"] in missing or not e:
+            continue
+        for f in us_info_cuts(e["info"], us_rescale(rec.get("price"), e.get("px"))):
+            if not (f in US_FCUR_BLANK and rec.get("fcur")):                  # fcur 회사의 PBR 은 이미 비었어요 (아래 줄이 세요)
+                cut_t.setdefault(f, []).append(rec["t"])
+    for f, why in (("pbr", "PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 — 가치 점수도 없음"),
+                   ("opm", "영업이익률이 정확히 0 인데 매출(totalRevenue)이 없어 빈 칸")):
+        ts = sorted(cut_t.get(f, []))
+        log(f"{'  !! ' if ts else '· '}미국 {why}: {len(ts)}곳" + (f" ({', '.join(ts[:30])}" + (f" 외 {len(ts) - 30}곳" if len(ts) > 30 else "") + ")" if ts else ""))
     got = len(need) - len(failed)
     n_ok = len(out) - len(missing)
     log(f"{'  !! ' if failed else '· '}미국 상세 정보(이름·업종·설명): {n_ok:,} / {len(out):,} · 오늘 받음 {got:,} · 3일 안에 받은 것 {reused:,}"
@@ -5738,6 +5986,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     infos = {r["t"]: {**((cache.get(r["t"]) or {}).get("info") or {}), "listName": list_names.get(r["t"])} for r in out}
     out, left_out = clean_us_list(out, kr_codes, dups or {}, infos)   # ETF 표시가 끝난 뒤에 (ETF·펀드는 우선주로 보지 않아요)
     no_info = set(missing)
+    fsum = us_fcur_summary(out, infos, no_info)                        # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 회사 (빈 칸은 apply_us_info)
+    log_us_fcur(fsum)
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
@@ -5753,6 +6003,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     log_us_splits(splits, sinfo, len(out), today, what=f"미국 주식 분할 (오늘 시세 다운로드 · {start} 부터)")
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
             "usLeftOut": {**left_out, "badBar": bad_bar},   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
+            "usFcurUnknown": fsum["unknown"],               # #114 리뷰: 재무제표 통화를 모르는 회사 (관문이 경고로 이름을 남겨요)
+            "usInfoPartial": sorted(t for t in sticky if t in {r["t"] for r in out}),   # #114 리뷰 2: 오늘 응답이 일부만 와 예전 설명 칸을 쓴 종목
             # v19.6a: None = 분할을 읽다 멈춤 · splitsNoCol = 분할 칸이 없던 종목 (둘 다 main 이 지난 발행본으로 이어요)
             "splits": splits, "splitsNoCol": list(sinfo.get("noCol") or [])}
     return out, bench, fx, fx_last, us_vol_krw, meta
@@ -6430,6 +6682,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "nextPub": "다음 발행 예정일 (한국 날짜 · data/market_holidays.csv 기준 한국·미국 중 먼저 오는 다음 거래일의 다음 날)",
          "staleAfter": "이 시각(한국 시간)이 지나도 새 파일이 없으면 앱이 '갱신이 멈췄어요'를 보여요 (예정일 마지막 정해진 실행 + 2시간)",
          "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분",
+         "fcur": "미국 종목의 재무제표 통화 (ISO 코드, 달러가 아닐 때만 · 야후 financialCurrency). 이 종목은 per · pbr · vz 가 빈 칸이고, dy 는 "
+                 "지난 12개월 배당이 없다고 야후가 분명히 말할 때만 0 이에요",
+         "pbrZero": "true = 미국 종목의 PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 (vz 도 없음 · 재무제표 통화 문제가 아니에요)",
+         "usFcurUnknown": "재무제표 통화를 모르는 미국 회사 주식의 티커 (야후가 financialCurrency 를 주지 않음 · 비우지 않았어요)",
+         "usInfoPartial": "오늘 야후 응답이 일부만 와서 이름 · 업종 · 설명 · 재무제표 통화 같은 설명 칸을 예전 값으로 채운 미국 종목의 티커 (다음 실행이 다시 물어요)",
          "splits": ("2016-01-01 부터(splitsFrom)의 주식 분할 [종목 코드, 날짜, 배율] · 미국만 (야후 · 날짜는 미국 현지 날짜, 새 주식 수로 거래가 "
                     "시작된 날) · 배율 = 옛 1주가 새로 몇 주인지 (4:1 분할 4 · 1:10 병합 0.1) · 한 번 실은 분할은 빼지 않아요 (종목이 목록에서 빠져도) · "
                     "야후가 분할 칸에 적은 분사 조정(1253:1000 같은 배율)은 넣지 않고, 야후가 틀리게 적는 진짜 사건은 고정 표로 넣어요 (splitsInfo.fixed) · "
@@ -6658,6 +6915,8 @@ def main():
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
+        "usFcurUnknown": umeta["usFcurUnknown"],   # #114: 재무제표 통화를 모르는 미국 회사 (비우지 않았어요 — 관문이 경고해요)
+        "usInfoPartial": umeta["usInfoPartial"],   # #114 리뷰 2: 오늘 야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (관문이 경고해요)
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요

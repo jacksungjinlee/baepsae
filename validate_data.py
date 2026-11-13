@@ -69,6 +69,10 @@ FUNDS = ("069500", "379800", "04020000", "132030", "144600")
 COVER_KR = {"price": 99, "cap": 99, "beta": 95, "vol": 95, "pbr": 85, "roe": 80, "per": 50,
             "vz": 85, "qz": 85, "mz": 85, "pz": 85, "lz": 85}
 COVER_US = {"이름": 90, "설명": 90}
+# 2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내와 같은 95% (97% 아래 경고). 지금까지는 관문에 미국 줄이 없어,
+# 일부만 빠진 날(예: 10%, 예전 앱 내장 종목은 셋 이하)은 그대로 발행됐어요 (#106 화면 검사는 내장 종목이 셋 넘게 빠질 때만 막아요).
+# 7-29 이후 발행 70번: 베타 97.69~99.09% · 변동성 97.56~98.96%. 빈 칸은 대부분 상장 1년(250거래일) 안 된 회사예요 (MIN_DAYS) — 경고면 이름을 보세요.
+COVER_US_RISK = {"beta": 95, "vol": 95}
 BONDS_EXPECTED = 8       # 8 정상 · 7 경고 · 6 이하 실패 (Jack 결정, 2026-10-31)
 KR_MIN, US_MIN = 2300, 500
 KR_REL, US_REL = 0.10, 0.15
@@ -134,6 +138,15 @@ FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json �
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
 FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp.json 3개년 금액
+# Jack, 2026-11-12 (새 줄, 더하기만): 미국 상장 회사 중 재무제표 통화가 달러가 아닌 곳 (data.json fcur = 야후 financialCurrency 의 ISO 코드,
+# fetch_data.py US_FCUR_BLANK). 달러 주가 ÷ 그 통화 금액일 수 있는 PER · PBR · 배당수익률과 PBR 로 매긴 가치 점수가 빈 칸이어야 해요
+# (0 도 남은 칸으로 봐요). fcur 가 있는 회사끼리의 일관성만 봐요 — 야후가 financialCurrency 를 주지 않아 fcur 가 없으면 이 줄은 실패하지 않아요.
+US_FCUR_BLANK = ("per", "pbr", "dy", "vz")
+# 배당수익률 0% (배당 없음)를 fcur 회사에도 남길지 — 파이프라인(fetch_data.py)이 이 값을 가져다 써요 (하나의 스위치). Jack, 2026-11-13: 남겨요,
+# 단 야후 자료가 지난 12개월 배당 없음을 분명히 말할 때만 (fetch_data.py us_no_dividend_12m · 아니면 빈 칸). 관문은 그래서 0 만은 받아요
+# (0 이 아닌 배당수익률은 언제나 실패). False 로 바꾸면 0% 도 늘 비우고 관문도 0 을 남은 칸으로 봐요.
+US_FCUR_KEEP_ZERO_DY = True
+US_FCUR_SHOW = 10        # 관문 값 칸에 적는 티커 수 (나머지는 rep.detail 에 모두)
 # v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
 # data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
@@ -647,6 +660,25 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
+def check_us_risk_cover(rep, us, pdata):
+    """2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내 줄과 같은 규칙 (95% 아래면 실패, 97% 아래면 경고 · 직전보다 10점
+    넘게 줄면 실패). 값 칸에 빈 칸 수, 97% 아래면 빈 종목 앞 10개(US_D1_SHOW, 아침 점검 알림에도 보이게)와 로그·실행 요약에 전부를
+    적어요: 새로 상장한 회사(이력 250거래일 미만)인지 파이프라인 문제인지 바로 보이게 (docs/RUNBOOK.md). 변화 줄은 국내 줄과 맞춘 것이라 바닥 95% 보다 먼저 걸리지는 않아요."""
+    for k, lo in COVER_US_RISK.items():
+        v = coverage(us, k)
+        blank = [str(s.get("t")) for s in us if num(s.get(k)) is None]
+        named = bool(blank) and v < lo + NEAR       # 경고·실패일 때: 아침 점검은 알림(이름: 값)만 읽으니 값 칸에도 앞의 몇 개를 적어요
+        shown = ", ".join(blank[:US_D1_SHOW]) + (f" 외 {len(blank) - US_D1_SHOW:,}개" if len(blank) > US_D1_SHOW else "")
+        rep.add(f"미국 {k} 채움", v >= lo,
+                f"{floor_1(v)}% (빈 칸 {len(blank)} / {len(us):,})" + (f" · 빈 종목: {shown}" if named else ""),
+                f"≥ {lo}% ({lo + NEAR:g}% 아래 경고)", warn=v < lo + NEAR and v < 100.0)
+        if named:
+            rep.detail(f"미국 {k} 빈 종목", blank)
+        if pdata:
+            pv = coverage(us_stocks(pdata), k)
+            rep.add(f"미국 {k} 채움 변화", v >= pv - 10, f"{pv:.1f} → {v:.1f}", "10점 넘게 줄면 실패")
+
+
 def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
                special=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
@@ -800,6 +832,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         if pdata:
             pv = us_coverage(us_stocks(pdata))[k]
             rep.add(f"미국 {k} 채움 변화", uc[k] >= pv - 10, f"{pv:.1f} → {uc[k]:.1f}", "10점 넘게 줄면 실패")
+    check_us_risk_cover(rep, us, pdata)
 
     # 가격 움직임
     if pdata and ppx and px and count_between is not None:
@@ -841,6 +874,8 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
+    check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
+    check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
     check_foreign(rep, kr, comps)
     if rel:
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
@@ -1523,6 +1558,89 @@ def check_v1752(rep, data, kr, us, pdata):
         for k in DIV_COVER_KEYS:
             v, pv = coverage(kr, k), coverage(pkr, k)
             rep.add(f"국내 {k} 채움 변화", v >= pv - DIV_COVER_DROP, f"{pv:.1f} → {v:.1f}", f"{DIV_COVER_DROP:g}점 넘게 줄면 실패")
+
+
+def check_us_fcur(rep, us):
+    """Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사(fcur)는 PER · PBR · 배당수익률 · 가치 점수가 비어 있어야 해요. fcur 는 세 글자
+    대문자이고 USD 가 아니어야 해요 (XXX = 파이프라인이 읽지 못한 통화 · 그래도 비워요). 값: fcur 회사 수 (통화별) · 남은 칸."""
+    bad, by = [], collections.Counter()
+    for s in us:
+        if "fcur" not in s:
+            continue
+        t, fc = s.get("t"), s.get("fcur")
+        if not (isinstance(fc, str) and re.fullmatch(r"[A-Z]{3}", fc) and fc != "USD"):
+            bad.append(f"{t}.fcur {fc!r}")
+            continue
+        by[fc] += 1
+        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None and not (k == "dy" and US_FCUR_KEEP_ZERO_DY and s.get(k) == 0)]
+    n = sum(by.values())
+    rep.add("미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸", not bad,
+            f"{n}곳" + (f" ({' · '.join(f'{c} {k}' for c, k in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))})" if by else "")
+            + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else ""),
+            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨" + (", 배당 0% 는 됨" if US_FCUR_KEEP_ZERO_DY else "") + ") · fcur 는 USD 가 아닌 세 글자")
+
+
+def _tickers(ts):
+    return ", ".join(map(str, ts[:US_FCUR_SHOW])) + (f" 외 {len(ts) - US_FCUR_SHOW}곳" if len(ts) > US_FCUR_SHOW else "")
+
+
+def check_us_fcur_more(rep, data, us, pdata):
+    """#114 리뷰 (더하기만): ① 재무제표 통화를 모르는 회사(data.json usFcurUnknown) — 경고만, 이름을 남겨요. ② 직전 발행본에서 fcur 가 있던
+    미국 종목이 오늘도 목록에 있는데 fcur 가 없으면 (코디네이터 결정 2026-11-13 — 야후가 달러로 바뀌었다고 하면 발행을 막지 않아요):
+      · 야후가 이제 달러 재무제표라고 함 (usFcurUnknown 이 있고 그 안에 없음 · 오늘 상세 정보가 붙음 = 이름이 티커가 아님) → 경고, 숫자가
+        있든 없든 ('숫자를 확인하세요')
+      · 오늘 통화 정보가 없음 (usFcurUnknown 안 · 그 칸이 없는 발행 · 상세 정보 없음) 인데 PER · PBR · 배당수익률이 있음 → 실패. 파이프라인은
+        예전 통화를 그대로 쓰니(us_info_merge) 일어날 수 없는 일이라, 실패는 무언가 고장 났다는 뜻이에요
+      · 통화 정보가 없고 숫자도 없음 → 경고"""
+    unk = data.get("usFcurUnknown")
+    if isinstance(unk, list):
+        rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, f"{len(unk)}곳" + (f": {_tickers(unk)}" if unk else ""),
+                "없어야 함 (있으면 경고 · 비우지 않았어요)", warn=bool(unk))
+        if unk:
+            rep.detail("재무제표 통화를 모르는 미국 회사 (usFcurUnknown)", unk)
+    else:
+        rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
+    # #114 리뷰 2: 야후 응답이 일부만 와 이름 · 업종 · 설명 · 재무제표 통화를 예전 값으로 채운 종목 (data.json usInfoPartial). 예전 값이 '미국 설명
+    # 채움' 줄을 채워 주니, 나쁜 야후 날이 그 줄에 보이지 않아요 — 그래서 이 줄이 이름을 남겨요. 경고만 (다음 실행이 다시 물어요).
+    part = data.get("usInfoPartial")
+    if isinstance(part, list):
+        n_us = len(us) or 1
+        rep.add("미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)", True,
+                f"{len(part)}곳 ({100.0 * len(part) / n_us:.1f}%)" + (f": {_tickers(part)}" if part else ""),
+                "없어야 함 (있으면 경고 · 다음 실행이 다시 물어요)", warn=bool(part))
+        if part:
+            rep.detail("야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (usInfoPartial)", part)
+    else:
+        rep.add("미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
+    # Jack, 2026-11-13: PBR 이 0.00 으로 반올림돼 비운 종목(pbrZero) — PBR · 가치 점수가 비어 있어야 해요 (true 말고 다른 값도 실패)
+    pz = [s for s in us if "pbrZero" in s]
+    badz = [f"{s.get('t')}.pbrZero {s.get('pbrZero')!r}" for s in pz if s.get("pbrZero") is not True]
+    badz += [f"{s.get('t')}.{k}" for s in pz if s.get("pbrZero") is True for k in ("pbr", "vz") if s.get(k) is not None]
+    rep.add("미국 PBR 0 근처라 비운 종목: PBR·가치 점수 빈 칸", not badz,
+            f"{len(pz)}곳" + (f": {_tickers([s.get('t') for s in pz])}" if pz else "") + f" · 남은 칸 {len(badz)}" + (f" (예: {', '.join(badz[:4])})" if badz else ""),
+            "pbrZero 종목은 pbr · vz 없음")
+    if not pdata:
+        return
+    had = {s.get("t") for s in us_stocks(pdata) if s.get("fcur")}
+    lost = [s for s in us if s.get("t") in had and not s.get("fcur")]
+    unk_set = set(unk) if isinstance(unk, list) else None
+    has_num = lambda s: any(s.get(k) is not None for k in US_FCUR_BLANK[:3])          # noqa: E731
+    said_usd = lambda s: unk_set is not None and s.get("t") not in unk_set and bool(s.get("nk")) and s.get("nk") != s.get("t")   # noqa: E731
+    usd = [s["t"] for s in lost if said_usd(s)]
+    broken = [s["t"] for s in lost if not said_usd(s) and has_num(s)]
+    quiet = [s["t"] for s in lost if not said_usd(s) and not has_num(s)]
+    parts = [f"통화 정보 없이 숫자 있음 {len(broken)}곳: {_tickers(broken)}" if broken else None,
+             f"달러로 바뀜 {len(usd)}곳 (야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요): {_tickers(usd)}" if usd else None,
+             f"통화 정보 · 숫자 없음 {len(quiet)}곳: {_tickers(quiet)}" if quiet else None]
+    rep.add("어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음", not broken,
+            f"{len(lost)}곳" + "".join(f" · {x}" for x in parts if x),
+            "없어야 함 (통화 정보 없이 PER·PBR·배당이 다시 나가면 실패 · 야후가 달러라고 하거나 숫자가 없으면 경고)",
+            warn=bool(lost) and not broken)
+    for title, ts in (("어제 fcur 가 있었는데 오늘 통화 정보 없이 PER·PBR·배당이 나간 미국 종목 (고장)", broken),
+                      ("어제 fcur 가 있었는데 야후가 이제 달러 재무제표라고 하는 미국 종목 (숫자를 확인하세요)", usd),
+                      ("어제 fcur 가 있었는데 오늘 통화 정보도 숫자도 없는 미국 종목", quiet)):
+        if ts:
+            rep.detail(title, ts)
 
 
 def is_foreign(code):
