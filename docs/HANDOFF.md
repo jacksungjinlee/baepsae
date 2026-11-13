@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 16:03 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 16:59 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -111,7 +111,15 @@ just stops blocking screen work.
     "이 날짜의 환율이 아직 없어요. 보통 다음 날 아침에 들어오니, 그때 다시 저장해 주세요." (keep what was typed, if cheap).
   - Dark mode's six odd-looking spots: after Wednesday; send the design chat side-by-side dark/light screenshots of all
     six in one go.
-- **Queue now (2026-11-13 16:03 KST; every merging PR updates this):**
+  - **Visual priority (Jack, 11-13):** after #119 and #122: **missing US stocks** next, then **v19.7b**, then **v19.6f**
+    (still in review before Dec 1). Missing US stocks: no separate report; add BTI, ADC and NNN, plus the US stocks
+    Korean investors hold most (예탁결제원 SEIBro, if reachable) or else about 30 widely held NYSE dividend names, and
+    New York-listed foreign companies (Shell, BP, Unilever, Toyota, Sony …; #114 hides their PER, PBR and yield with
+    the approved line). List every added stock in the PR; one Opus reviewer and a branch dry run.
+  - Next update to Jack: a table of every visible change he has asked for since 11-07, each live / ready / not started,
+    with where to look on the phone. Found 11-13: only the 우선주 count line under 내 점수 is live; the per-stock lines
+    for 우선주 without figures, suspended and no-trade stocks were left as "later" on 11-08 and never built.
+- **Queue now (2026-11-13 16:59 KST; every merging PR updates this):**
   - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
     check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
     check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
@@ -125,8 +133,8 @@ just stops blocking screen work.
     (deadline 11-16).
   - #116 (the repair; this PR) is merged: those two companies' reports are read ÷1,000 when every statement proves it,
     and 가치 자세히 says so in Jack's line. Then #117 (fxHist and US splits), after a fresh green branch dry run.
-  - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → v19.6f (must be in review by Dec 1, merged by
-    Dec 10) → v19.7b → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
+  - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → missing US stocks → v19.7b → v19.6f (in review by
+    Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
     dark mode's six spots; PER, PBR and yield back for the 27 non-dollar filers from whole-company totals; Korean
     splits; the daily run split into a read-only job and a publishing job; the item 4 report and the
