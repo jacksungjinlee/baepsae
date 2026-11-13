@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 14:30 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 15:31 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -98,7 +98,7 @@ just stops blocking screen work.
   - Process: a revert still passes the other merge checks (CI green plus the real-data checks; its review comes
     after). The CLAUDE.md line for "Choices I made": yes (a small docs PR, not written yet). v19.4 (accounts) goes
     after v19.7b and before v19.6h. Jack, 11-11, still stands: ask before changing any test beyond what was approved.
-- **Queue now (2026-11-13 14:30 KST; every merging PR updates this):**
+- **Queue now (2026-11-13 15:31 KST; every merging PR updates this):**
   - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
     check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
     check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
@@ -107,11 +107,11 @@ just stops blocking screen work.
     back): the 27 non-dollar filers show "–" for PER and PBR with the reason line; BRK-B has its own line.
   - #113 (token fix) is merged; its own publish (a manual `dart=cache` run right after the merge, 11-13 afternoon)
     is watched to the end and #113 is reverted at once if the push fails (Jack, 11-12).
-  - #118 (Korean unit guard; this PR) is merged: 진코스텍 and 디와이에이 are blanked with Jack's line from the next
-    publish on; the gate fails when 20 or more companies are newly flagged in one publish (RUNBOOK). Watch the first
-    publishes on 2026 Q3 reports (deadline 11-16). Then, in order: #116 (its repair) → #117 (fxHist and US splits).
-    Each needs a fresh green branch dry run after its last rebase; Jack's answers of 11-13 are built in and the
-    final reviews are done.
+  - #118 (Korean unit guard) is merged: 진코스텍 and 디와이에이 are blanked with Jack's line; the gate fails when 20
+    or more companies are newly flagged in one publish (RUNBOOK). Watch the first publishes on 2026 Q3 reports
+    (deadline 11-16).
+  - #116 (the repair; this PR) is merged: those two companies' reports are read ÷1,000 when every statement proves it,
+    and 가치 자세히 says so in Jack's line. Then #117 (fxHist and US splits), after a fresh green branch dry run.
   - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → v19.6f (must be in review by Dec 1, merged by
     Dec 10) → v19.7b → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
