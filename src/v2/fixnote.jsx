@@ -11,11 +11,14 @@
 // StmtCurNote: "이 회사는 재무제표를 원화가 아닌 {currency}로 공시해서, 실적 숫자는 아직 보여 드리지 않아요." once where a
 // Korean company's blanked 실적 · 가치 numbers would be (fix.js stmtCurFor: corp.json stmtCur; never for US stocks).
 // Both are the same quiet note as the two lines above (ui.jsx Note, 13 px).
+// FcurNote (Jack, 2026-11-12): "주가는 달러, 재무제표는 {currency} 기준이라 이 숫자는 계산하지 않았어요." once where a US
+// company's blanked PER · PBR · 배당수익률 would be (src/v2/fcur.js: data.json fcur; {currency} = its Korean name, no line without one).
 import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind } from "./fix.js";
+import { fcurOf, fcurText, pbrZeroOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -72,4 +75,19 @@ export function stmtCurText(s, co) {
 export function StmtCurNote({ s, co, style }) {
   const text = stmtCurText(s, co);
   return text ? <Note data-ui-v2="stmt-cur" data-cur={stmtCurFor(s, co)} style={style}>{text}</Note> : null;
+}
+
+// The reason line for a US company whose statements are not in dollars (src/v2/fcur.js), or null (no fcur, no name, no words).
+export const fcurNoteText = (s) => fcurText(s, C.co.fcur, C.co.curName);
+
+// s: the data.json row. data-cur: the ISO code (tests). Shown on the example page too: it is about the data, not a fix.
+export function FcurNote({ s, style }) {
+  const text = fcurNoteText(s);
+  return text ? <Note data-ui-v2="fcur" data-cur={fcurOf(s)} style={style}>{text}</Note> : null;
+}
+
+// PbrZeroNote (Jack, 2026-11-13): "자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요." right under a US stock's PBR "–" when the
+// pipeline blanked a PBR that rounds to 0.00 (data.json pbrZero, src/v2/fcur.js pbrZeroOf).
+export function PbrZeroNote({ s, style }) {
+  return pbrZeroOf(s) && C.co.pbrZero ? <Note data-ui-v2="pbr-zero" style={style}>{C.co.pbrZero}</Note> : null;
 }

@@ -7,6 +7,8 @@
 // The service worker keeps a copy for offline use (sw.js PICTURES; tests/test_pictures.py keeps the lists in step).
 // No Korean here: names come from src/copy/v2.js.
 
+import { COLOR, TOPIC_DOT } from "../ui/tokens.js";
+
 // 기준 (engine.js CARDS ids) → picture + topic (src/ui/tokens.js TOPIC_CHIP key)
 export const CARD_PICS = {
   value: { src: "pictures/fluent-label.webp", topic: "value" },
@@ -43,9 +45,10 @@ export const FAN_CARDS = ["value", "div", "growth", "stable", "trend"];
 // v19.3c Part D: the dots that count a 기준's points (five per 기준: a recipe card's ingredient rows, a 기준 card) take
 // the darker shade of the 기준's topic (boards BuildStart2 · BuildCards2 · VisualKit "점수는 점과 칸으로"); an empty dot
 // is the light border grey. Like the tints, these colours only say which 기준 it is, never good or bad.
-export const TOPIC_DOT = { value: "#4E9A72", div: "#C59A2E", earn: "#6E93CF", risk: "#8C78C6", disc: "#3E9A9A" };
-export const DOT_EMPTY = "#E8E4DE";
-export const dotColor = (id) => TOPIC_DOT[(CARD_PICS[id] || {}).topic] || "#5A6B87";
+// v19.6d: the colours live in src/ui/tokens.js (TOPIC_DOT; the empty dot is COLOR.border), so they follow the screen mode.
+export { TOPIC_DOT };
+export const DOT_EMPTY = COLOR.border;
+export const dotColor = (id) => TOPIC_DOT[(CARD_PICS[id] || {}).topic] || TOPIC_DOT.none;
 
 // Chip and picture sizes (px): the picture sits in the middle of its chip. Part A: at 18–24 px some Adobe pictures go
 // muddy, so a spot whose picture was hard to read in the 1× and 2× screenshots moved up one size on the board grid

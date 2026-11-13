@@ -38,6 +38,9 @@
   돌아온 화면 (2026-11-08, 390 · 1280) 멈춘 화면이 다시 보이면 파일을 한 번 받아요: 더 새 발행이면 모든 화면이 새 날짜 · 받지 못함 ·
               못 읽음 · 섞인 발행이면 멈춤 표시 그대로 · 멈춘 데이터가 아니면 받지 않음 · 돌아올 때마다 한 번만 · 10분 안에는 다시 받지
               않음 · 첫 불러오기 실패도 한 번 받음 · 후보 고르기 · 매수 계획 · 가진 종목 넣기 위에는 새 데이터가 기다려요
+  재무제표 통화 (Jack, 2026-11-12) 재무제표가 달러가 아닌 미국 회사(fcur): PBR · PER · 배당수익률은 이름과 함께 '–', 그 바로 밑에
+              '주가는 달러, 재무제표는 {통화} 기준이라 이 숫자는 계산하지 않았어요.' 한 번씩 (요약 · 내 기준 · 시트 · 가치 · 자세히 · 배당),
+              통화 이름이 없으면 같은 '–' 에 줄만 없어요
   PC          (v19.0d, 1280 × 800) 왼쪽 메뉴 240px(로고 마크 38px · '뱁새' 24px/800 · 캐치프레이즈 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 ·
               메뉴 링크 넷) · 아래 탭 막대 · ☰ 없음 · 위 검색 칸(520px 이하) · '/' 가 검색 칸으로(그 글자는 칸에 들어가지 않아요), 다른 칸
               (input · textarea · select · contenteditable · 금액 칸)에 쓰는 중이거나 시트가 열려 있으면 그대로 · 검색 칸에 쓰면 종목 탭에
@@ -508,6 +511,135 @@ def wait_ready(page):
     disc_settled(page)
 
 
+# ── v19.5b 홈 · 종목 순위 (src/v2/rank.jsx · ranks.js): 화면을 읽는 도우미와, 파이썬으로 따로 센 기대 목록 ──
+NAME_MIN_320 = 120                                             # 320px 화면에서 종목 순위 줄의 회사 이름 칸 (px) 은 이 이상 (v19.5b 리뷰 3차)
+RANK_LIST = '[data-ui-v2="rank-window"] [role="list"]'          # 움직이는 창의 첫 벌 (화면 읽기 프로그램이 읽는 목록) · 멈춘 목록은 이것 하나
+
+
+def rank_ts(page):
+    """종목 순위 목록의 줄(첫 벌)마다 종목 코드 (업종별 등락은 업종 id)."""
+    return page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t || e.dataset.ind)")
+
+
+def rank_market(page, mk):
+    page.locator(f'[data-ui-v2="rank-market"] [data-mk="{mk}"]').click()
+    page.wait_for_function("(mk) => { const e = document.querySelector('[data-ui-v2=\"rank\"]'); return !!e && e.dataset.mk === mk; }", arg=mk)
+
+
+def rank_chip(page, chip, crit=None):
+    page.locator(f'[data-ui-v2="rank-chips"] [data-chip="{chip}"]').click()
+    page.wait_for_function("(c) => { const e = document.querySelector('[data-ui-v2=\"rank\"]'); return !!e && e.dataset.chip === c; }", arg=chip)
+    if crit:
+        page.locator(f'[data-ui-v2="rank-crit"] [data-chip="{crit}"]').click()
+        page.wait_for_function("(c) => { const e = document.querySelector('[data-ui-v2=\"rank\"]'); return !!e && e.dataset.crit === c; }", arg=crit)
+
+
+def by_t(stocks):
+    return {x["t"]: x for x in stocks}
+
+
+def _js_rx(name):
+    """src/v2/engine.js 의 미국 우선주 정규식을 그대로 (문자 하나 다르지 않게: engine 은 fetch_data.py 와 같아요)."""
+    with open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8") as fh:
+        m = re.search(r"^export const %s = /(.+)/([a-z]*);$" % name, fh.read(), flags=re.M)
+    return re.compile(m.group(1), re.I if "i" in m.group(2) else 0)
+
+
+US_PREF_RX = {k: _js_rx(k) for k in ("US_PREF_NAME", "US_DEPOSITARY", "US_ADR", "US_PREF_TICKER")}
+FIN_INDS = {"bank", "insurance", "securities", "finance", "fin"}
+with open(os.path.join(ROOT, "src", "v2", "pictures.js"), encoding="utf-8") as _f:          # 기준 그림 (CARD_PICS: 기준마다 하나)
+    CARD_TABLE_PICS = dict(re.findall(r'^  (\w+): \{ src: "pictures/([\w-]+)\.webp"', _f.read().split("export const CARD_PICS = {", 1)[1].split("};", 1)[0], flags=re.M))
+RANK_CRIT = {"value": ("pbr", -1), "profit": ("roe", 1), "stable": ("debt", -1), "lowVol": ("vol", -1), "trend": ("mom", 1), "growth": ("g3", 1)}
+
+
+def isnum(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def us_pref(s):
+    for n in (s.get("nk"), s.get("ne")):
+        if isinstance(n, str) and n and (US_PREF_RX["US_PREF_NAME"].search(n) or (US_PREF_RX["US_DEPOSITARY"].search(n) and not US_PREF_RX["US_ADR"].search(n))):
+            return True
+    return isinstance(s.get("t"), str) and bool(US_PREF_RX["US_PREF_TICKER"].search(s["t"]))
+
+
+def rank_base(stocks, cls):
+    """스펙 Part A: 그 시장의 회사 주식(ETF · 펀드 · 우선주 · 가격 없음 빼고) 중 거래대금 기준(한국 val20 · 미국 val 5억 이상)을 넘는 것."""
+    out = []
+    for s in stocks:
+        if not in_universe(s, cls) or (cls == "us" and us_pref(s)):
+            continue
+        liq = s.get("val20") if cls == "kr" else s.get("val")
+        if isnum(liq) and liq >= 5:
+            out.append(s)
+    return out
+
+
+def _same_co(a, b):
+    na, nb = (" ".join(str(x.get("nk") or "").split()).lower() for x in (a, b))
+    if a.get("cls") != "us" or not na or na != nb:
+        return False
+    sh = [x["cap"] / x["price"] if isnum(x.get("cap")) and x["cap"] > 0 and isnum(x.get("price")) and x["price"] > 0 else None for x in (a, b)]
+    return None not in sh and abs(sh[0] - sh[1]) <= 0.005 * max(sh)
+
+
+def rank_expect(stocks, cls, chip, crit=None, coby=None):
+    """시가총액 · 거래대금 · 거래 급증 · 기준별 목록을 파이썬으로 (src/v2/ranks.js 를 믿지 않고): 빈 칸은 빼고, 같은 값은 시가총액 큰 순,
+    미국의 같은 회사 두 종류 주식은 위의 하나만. Jack 2026-11-12: 가치는 PBR 0 이하 · 미국은 PBR < PER × ROE ÷ 100 ÷ 4 를 빼요,
+    한국 성장은 2년 연평균(corp rev 당기 · 전전기 0 초과)이고 전전기 매출 100억원 이상, 한국 수익성은 ROE 의 자본(roeIn.eq, 없으면 eq) 100억원 이상."""
+    rows = []
+    for s in rank_base(stocks, cls):
+        if chip in ("cap", "val"):
+            v = s.get(chip)
+        elif chip == "surge":
+            a, b, cap = s.get("val"), s.get("val20"), s.get("cap")
+            x = a / b if isnum(a) and a >= 0 and isnum(b) and b > 0 else None
+            v = x if x is not None and x >= 2 - 1e-9 and isnum(cap) and cap >= 0.3 - 1e-9 else None
+        else:
+            f, _ = RANK_CRIT[crit]
+            v = None if crit == "stable" and has_group(s) and s.get("ind") in FIN_INDS else s.get(f)
+            if crit == "value" and not (isnum(v) and v > 0):
+                v = None
+            if crit == "value" and cls == "kr" and isnum(v) and v < 0.005:              # 한국 가치: 0.00 으로 반올림되는 PBR 도 빼요 (Jack, 2026-11-13)
+                v = None
+            if crit == "value" and cls == "us" and isnum(v) and isnum(s.get("per")) and s["per"] > 0 and isnum(s.get("roe")) and s["roe"] > 0 \
+                    and v < s["per"] * s["roe"] / 100 / 4:
+                v = None
+            if cls == "kr" and crit in ("growth", "profit") and isnum(v):
+                co = (coby or {}).get(s["t"]) or {}
+                if crit == "growth":
+                    rev = (list(co.get("rev") or []) + [None, None, None])[:3]
+                    if not (isnum(rev[0]) and rev[0] > 0 and isnum(rev[2]) and rev[2] > 0 and rev[2] >= 100):
+                        v = None
+                else:
+                    eq = (co.get("roeIn") or {}).get("eq")
+                    eq = eq if isnum(eq) else co.get("eq")
+                    if not (isnum(eq) and eq >= 100):
+                        v = None
+        if isnum(v):
+            rows.append((v, s))
+    d = RANK_CRIT[crit][1] if chip == "crit" else 1
+    rows.sort(key=lambda x: (-d * x[0], -(x[1]["cap"] if isnum(x[1].get("cap")) else -math.inf), x[1]["t"]))
+    out, kept = [], []
+    for _, s in rows:
+        if any(_same_co(s, k) for k in kept):
+            continue
+        kept.append(s)
+        out.append(s["t"])
+    return out
+
+
+def ind_expect(stocks, cls):
+    """업종별 등락: 그 시장의 회사 주식 중 오늘 변화가 있는 것을 업종마다 (5곳 이상), 평균은 단순 평균 (왜 움직였나와 같은 셈)."""
+    groups = {}
+    for s in stocks:
+        if in_universe(s, cls) and not (cls == "us" and us_pref(s)) and has_group(s) and s.get("pxd") is None and isnum(s.get("d1")):
+            groups.setdefault(s["ind"], []).append(s)
+    out = [(ind, len(m), sum(x["d1"] for x in m) / len(m), sum(x["cap"] for x in m if isnum(x.get("cap")))) for ind, m in groups.items() if len(m) >= 5]
+    out.sort(key=lambda x: (-x[2], -x[3], x[0]))
+    return out
+
+
 def click_next(page):
     b = action(page)
     b.wait_for(state="visible")
@@ -526,18 +658,21 @@ def scene_normal(R, files, width):
         wait_ready(page)
         at(page, "home")                                       # 주소 없이 열면 그 자리에서 #home (기록이 늘지 않아요)
         assert page.url.endswith("/app.html?dev=1#home") and page.evaluate("history.state && history.state.v2") == 0, page.url
-        hero = page.locator('[data-ui-v2="home-hero"]')         # 첫 방문 홈: 나뭇가지를 나르는 뱁이 92px · 숫자 없는 화면
-        mascot_img(hero, "baepi-16-build.webp", 92, C["build"]["s0"]["imgAlt"])
+        # 첫 방문 홈 (v19.5b): 머리글 · 포트폴리오 만들기 · 종목 순위. 종목 순위가 숫자를 보여서 뱁이가 없어요 (예전: 뱁이 92px + 거래대금
+        # 상위 종목 이름만). 뱁이는 v19.3c 의 반기는 화면에 있어요.
+        hero = page.locator('[data-ui-v2="home-hero"]')
+        hero.wait_for(state="visible")
         assert C["about"]["ko"]["hero"]["descriptor"] in hero.inner_text() and C["about"]["ko"]["hero"]["catch"] in hero.inner_text()
         assert page.locator('[data-ui-v2="home-start"]').inner_text().strip() == C["build"]["title"]
-        assert page.locator('[data-ui-v2="market-glance"], [data-ui-v2="market-tile"]').count() == 0, "뱁이가 있는 첫 방문 홈에 시장 숫자"
-        pop = page.locator('[data-ui-v2="popular"]')            # 거래대금 상위 종목: 한국 · 미국 따로, 날짜, 이름만 (숫자 없음)
-        assert pop.locator("h3").inner_text() == C["home"]["popular"] and pop.locator('[data-ui="icon-chip"][data-icon="chart-bar"]').count() == 1
-        lists = pop.locator('[data-ui-v2="popular-list"]')
-        assert [lists.nth(i).get_attribute("data-market") for i in range(lists.count())] == ["kr", "us"]
-        assert lists.nth(0).locator('[data-ui-v2="list-date"]').inner_text() == "10월 30일 기준"
-        assert lists.nth(0).locator('[data-ui-v2="stock-row"][data-cls="kr"]').count() == 5 and lists.nth(1).locator('[data-ui-v2="stock-row"][data-cls="us"]').count() == 5
-        assert not re.search(r"\d\s*%|\d{6}", pop.inner_text()), pop.inner_text()          # 등락률 · 종목코드 없음
+        assert page.locator('[data-ui-v2="market-glance"], [data-ui-v2="market-tile"]').count() == 0, "첫 방문 홈에 시장 칸 (v19.5b 는 종목 순위만 더해요)"
+        rank = page.locator('[data-ui-v2="rank"]')               # 거래대금 상위 종목 대신 종목 순위: 처음엔 한국 · 시가총액, 날짜, 숫자와 등락
+        rank.wait_for(state="visible")
+        assert rank.locator("h3").inner_text() == C["rank"]["title"] and (rank.get_attribute("data-mk"), rank.get_attribute("data-chip")) == ("kr", "cap")
+        assert rank.locator('[data-ui-v2="rank-date"]').inner_text() == "10월 30일 종가"
+        assert rank_ts(page) == rank_expect(files["data.json"]["stocks"], "kr", "cap")[:10], rank_ts(page)
+        assert re.search(r"\d[\d,.]*[조억]원", rank.inner_text()) and re.search(r"[+−]\d+\.\d%", rank.inner_text()), rank.inner_text()
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 첫 방문 홈에 뱁이"
+        assert page.locator('[data-ui-v2="rank-chip"][data-chip="mine"]').count() == 0, "기준 점수가 있는 포트폴리오가 없는데 내 기준 칩"
         assert page.locator('svg[data-ph="fire"]').count() == 0
         bar = page.locator('nav[data-ui="bottom-tab-bar"]')
         assert [b.strip() for b in bar.locator("button").all_inner_texts()] == [TABS[k] for k in ("home", "portfolio", "stocks", "market")]
@@ -555,7 +690,7 @@ def scene_normal(R, files, width):
         assert page.locator('[data-ui-v2="ios-hint"]').count() == 0, "아이폰 사파리가 아닌데 홈 화면 안내가 보여요"
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "첫 화면: 저장한 포트폴리오가 없으면 첫 방문 홈(뱁이 · 포트폴리오 만들기 · 거래대금 상위 종목, 숫자 없음) · 탭 넷 · ☰", landing)
+    R.check(page, S, "첫 화면: 저장한 포트폴리오가 없으면 첫 방문 홈(머리글 · 포트폴리오 만들기 · 종목 순위, 뱁이 없음) · 탭 넷 · ☰", landing)
 
     def visual_start():
         bar = page.locator('[data-ui-v2="app-bar"]').first                   # 로고: 뱁이 마크 28px + '뱁새' 22px/800 (뒤로 버튼이 있으면 마크 대신)
@@ -1082,9 +1217,13 @@ def scene_us_date(R, files, width):
         page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"]').first.wait_for(state="visible")
         assert note.count() == 0
         box.fill("")
-        assert note.count() == 0 and page.locator('[data-ui-v2="popular-list"][data-market="us"] [data-ui-v2="list-date"]').inner_text() == "10월 29일 기준"
+        rank = page.locator('[data-ui-v2="rank"]')                         # v19.5b: 종목 순위의 미국 목록은 자기 날짜 (예전: 거래대금 미국 목록)
+        rank.wait_for(state="visible")
+        assert rank.locator('[data-ui-v2="rank-date"]').inner_text() == "10월 30일 종가"
+        rank_market(page, "us")
+        assert note.count() == 0 and rank.locator('[data-ui-v2="rank-date"]').inner_text() == "10월 29일 종가 (미국 시간)"
         R.collect(page)
-    R.check(page, f"미국 날짜 {width}", "종목: 미국 종목 줄이 보이면 '미국 종목은 현지 기준 10월 29일 종가예요.' (거래대금 미국 목록은 자기 날짜)", stocks_us_close)
+    R.check(page, f"미국 날짜 {width}", "종목: 미국 종목 줄이 보이면 '미국 종목은 현지 기준 10월 29일 종가예요.' (종목 순위의 미국 목록은 자기 날짜)", stocks_us_close)
     ctx.close()
     srv.shutdown()
 
@@ -2338,6 +2477,51 @@ def standalone_ua(ua):
     return re.sub(r" Safari/\S+$", "", re.sub(r" Version/\S+", "", ua))
 
 
+HOME_SETTLE_S = 15                      # 홈이 공시(disc.json)를 다 받기까지 기다리는 한도 (초): 넘으면 그 검사는 실패해요
+
+
+def home_settled(page, limit_s=HOME_SETTLE_S):
+    """홈(저장한 덱이 있는 오늘 화면)이 다 그려질 때까지: today-hero 가 보이고, 홈이 따로 받는 공시(disc.json)가 끝난 뒤(disc_settled).
+    받는 동안은 '오늘은 할 일이 없어요' 줄이 아직 없어서, 두 화면의 글을 견주기 전에 기다려요 (Jack, 2026-11-13: 시간 한도가 있고, 넘으면
+    실패). 한도 안에 끝나지 않으면 이유를 말하며 실패해요 — 견주기로 넘어가지 않아요. (앱의 disc.json 한도는 60초: load.REFETCH_TIMEOUT_MS)"""
+    ms = int(limit_s * 1000)
+    page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible", timeout=ms)
+    try:
+        disc_settled(page, timeout=ms)
+    except PWTimeout:
+        raise AssertionError(f"홈의 공시(disc.json)가 {limit_s}초 안에 끝나지 않았어요 (data-disc 'wait'): 화면 글을 견주지 않고 멈춰요") from None
+
+
+def scene_home_settled_limit(R, files):
+    """home_settled 의 시간 한도: disc.json 이 끝내 오지 않는 사이트에서 한도(15초) 안에 이유를 말하며 실패하고, 견주기로 넘어가지 않아요."""
+    S = "홈 공시 기다림 한도"
+    srv, ctx, page, base = R.open(build_site(files), 390, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+    held = []
+    page.route("**/disc.json", lambda r: held.append(r))                       # 대답하지 않는 disc.json (검사가 끝날 때까지 붙잡아 둬요)
+
+    def never():
+        page.reload(wait_until="domcontentloaded")                              # R.open 이 이미 연 첫 화면의 disc.json 은 길을 막기 전이라 다시 열어요
+        # (wait_ready 는 쓰지 않아요: 그것도 공시가 끝나기를 15초까지 기다려요. 여기서는 home_settled 의 한도만 봐요)
+        t0 = time.monotonic()
+        try:
+            home_settled(page)
+            got = None
+        except AssertionError as e:
+            got = str(e)
+        took = time.monotonic() - t0
+        assert got and "disc.json" in got and f"{HOME_SETTLE_S}초" in got, got
+        assert HOME_SETTLE_S - 1 <= took <= HOME_SETTLE_S + 5, took                # 한도에서 멈춰요 (끝없이 기다리지 않아요)
+        assert page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") == "wait"
+    R.check(page, S, f"disc.json 이 오지 않으면 home_settled 는 {HOME_SETTLE_S}초 한도에서 이유를 말하며 실패해요 (아이폰 기록 옮기기의 화면 견주기 앞)", never)
+    for r in held:                                                              # 붙잡아 둔 요청은 닫기 전에 끊어요 (닫을 때 소음이 없게)
+        try:
+            r.abort()
+        except Exception:
+            pass
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_iphone_records(R, files, device):
     """아이폰: 사파리에서 쓴 기록을 홈 화면 앱으로 옮기는 길 (Jack 2026-11-04: 아이폰 계획이 이 길에 기대요).
     iOS 에서 홈 화면에 추가한 앱은 사파리와 저장소를 같이 쓰지 않고 따로 써요. 그래서 옮기는 길은 '기록 내보내기 → 파일 → 기록 불러오기' 하나예요.
@@ -2387,9 +2571,15 @@ def _iphone_records(R, files, device, tmp):
         tab(page, C["app"]["tabs"]["portfolio"])
         see(page, C["store"]["export"])
 
+    def first_diff(a, b):
+        """두 화면 글이 처음 다른 줄 (실패 메시지에 붙여요)."""
+        la, lb = a.splitlines(), b.splitlines()
+        i = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y), min(len(la), len(lb)))
+        return f"{i + 1}번째 줄: {la[i] if i < len(la) else '(끝)'!r} → {lb[i] if i < len(lb) else '(끝)'!r}"
+
     def open_today_tab(page):
         tab(page, C["app"]["tabs"]["home"])
-        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+        home_settled(page)
 
     srv, ctx, page, _ = R.open(site, width, accept_downloads=True, device=dev)
 
@@ -2490,11 +2680,13 @@ def _iphone_records(R, files, device, tmp):
         assert main_text(page) == keep["deck"], "포트폴리오 화면이 사파리에서 본 것과 달라요"
         assert hint_kinds(page) == [], "홈 화면 앱 안에서 홈 화면 안내가 보여요"
         open_today_tab(page)
-        assert main_text(page) == keep["today"], "오늘 화면이 사파리에서 본 것과 달라요"
+        t = main_text(page)
+        assert t == keep["today"], "오늘 화면이 사파리에서 본 것과 달라요 · " + first_diff(keep["today"], t)
         page.reload(wait_until="domcontentloaded")
         wait_ready(page)
-        page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")         # 저장한 덱이 있으면 오늘부터
-        assert main_text(page) == keep["today"] and stored_records(page, keep["seen"]) == keep["file"], "새로 고침 뒤에 기록이 달라요"
+        home_settled(page)                                                    # 저장한 덱이 있으면 오늘부터
+        t = main_text(page)
+        assert t == keep["today"] and stored_records(page, keep["seen"]) == keep["file"], "새로 고침 뒤에 기록이 달라요 · " + first_diff(keep["today"], t)
         R.collect(page)
     R.check(page, S, "새 저장소(홈 화면 앱처럼 따로): 기록 불러오기 → 같은 덱 · 종목 · 산 기록 · 규칙, 내 덱 · 오늘 화면도 같음", home_screen)
 
@@ -2664,8 +2856,8 @@ def scene_market(R, files, width):
 
 
 def scene_stocks(R, files, width):
-    """종목: 찾기 · 최근 본 종목 · 거래대금 상위 종목(한국 · 미국 따로, 날짜) · 한국 · 미국 회사 → 2.0 회사 페이지(v19.1a, 예전에는
-    한국 회사는 예전 뱁새 기업분석, 미국 종목은 '기업분석은 한국 상장 기업만 볼 수 있어요.' 줄) → 뒤로 → 종목."""
+    """종목: 찾기 · 최근 본 종목 · 종목 순위(v19.5b: 거래대금 상위 종목의 칩 판 — 한국 · 미국 따로, 날짜, 멈춘 30개) · 한국 · 미국 회사 →
+    2.0 회사 페이지(v19.1a, 예전에는 한국 회사는 예전 뱁새 기업분석, 미국 종목은 '기업분석은 한국 상장 기업만 볼 수 있어요.' 줄) → 뒤로 → 종목."""
     S = f"종목 {width}"
     srv, ctx, page, base = R.open(build_site(files), width, path="/app.html?dev=1#stocks")
 
@@ -2675,24 +2867,28 @@ def scene_stocks(R, files, width):
         assert page.locator("main h2").first.inner_text() == TABS["stocks"]
         box = page.locator('[data-ui-v2="stock-search"] input')
         assert box.get_attribute("aria-label") == (C["stocks"]["search"] or TABS["stocks"])
-        pop = page.locator('[data-ui-v2="popular"]')
-        assert pop.locator("h3").inner_text() == C["home"]["popular"] and pop.locator('svg[data-ph="chart-bar"]').count() == 1
+        rank = page.locator('[data-ui-v2="rank"]')                 # v19.5b: 거래대금 상위 종목 → 종목 순위 (멈춘 30개, 홈의 전체 보기가 여는 곳)
+        rank.wait_for(state="visible")
+        assert rank.get_attribute("data-full") == "1" and rank.locator("h3").inner_text() == C["rank"]["title"]
         assert page.locator('svg[data-ph="fire"]').count() == 0 and "많이 찾는" not in page.locator("body").inner_text()
-        kr = pop.locator('[data-ui-v2="popular-list"][data-market="kr"]')
-        us = pop.locator('[data-ui-v2="popular-list"][data-market="us"]')
-        assert kr.locator("span").first.inner_text() == C["pick"]["market"]["kr"] and us.locator("span").first.inner_text() == C["pick"]["market"]["us"]
-        assert kr.locator('[data-ui-v2="list-date"]').inner_text() == "10월 30일 기준" and us.locator('[data-ui-v2="list-date"]').inner_text() == "10월 30일 기준"
-        krs = kr.locator('[data-ui-v2="stock-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
-        uss = us.locator('[data-ui-v2="stock-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
-        by = {x["t"]: x for x in files["data.json"]["stocks"]}
-        want_kr = [t for t in files["data.json"]["popular"] if t in by and by[t]["cls"] == "kr" and not by[t].get("etf")][:5]
-        want_us = [t for t in files["data.json"]["popular"] if t in by and by[t]["cls"] == "us" and not by[t].get("etf")][:5]
-        assert krs == want_kr and uss == want_us, (krs, uss)                # 거래대금 순서 그대로, 시장마다 따로
-        assert re.search(r"[+−]\d+\.\d%", kr.inner_text()), kr.inner_text()  # 종목 탭은 오늘 등락을 보여요 (뱁이 없음)
+        rank_chip(page, "val")                                            # 거래대금 칩: 예전 목록의 순서 기준 (거래대금 큰 순)
+        mk = rank.locator('[data-ui-v2="rank-market"] [role="radio"]')
+        assert [mk.nth(i).inner_text() for i in range(mk.count())] == [C["pick"]["market"]["kr"], C["pick"]["market"]["us"]]
+        stocks = files["data.json"]["stocks"]
+        for key, date, line in (("kr", "10월 30일 종가", C["rank"]["line"]["val"]), ("us", "10월 30일 종가 (미국 시간)", C["rank"]["line"]["valUs"])):
+            rank_market(page, key)
+            got = rank_ts(page)
+            assert got == rank_expect(stocks, key, "val")[:30] and len(got) == 30, (key, got)    # 거래대금 큰 순, 시장마다 따로, 펀드 · 우선주 없음
+            assert all(by_t(stocks)[t]["cls"] == key and not by_t(stocks)[t].get("etf") for t in got), got
+            assert rank.locator('[data-ui-v2="rank-date"]').inner_text() == date and rank.locator('[data-ui-v2="rank-line"]').inner_text() == line
+            assert rank.locator('[data-ui-v2="rank-window"]').get_attribute("data-still") == "full" and rank.locator('[data-ui-v2="rank-copy"]').count() == 0
+            assert re.search(r"[+−]\d+\.\d%", rank.inner_text()), rank.inner_text()      # 종목 탭은 오늘 등락을 보여요 (뱁이 없음)
+        rank_market(page, "kr")
+        assert page.locator('[data-ui-v2="rank-all"], [data-ui-v2="rank-hint"]').count() == 0     # 여기가 전체 보기예요 (멈춘 목록)
         assert page.locator(MASCOT_IN_MAIN).count() == 0
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "거래대금 상위 종목: 한국 · 미국 따로 · 순서 그대로 · 날짜 · 막대그래프 아이콘 (불 아이콘 · '많이 찾는' 없음)", lists)
+    R.check(page, S, "종목 순위(거래대금 상위 종목의 칩 판): 한국 · 미국 따로 · 거래대금 순서 · 날짜 · 멈춘 30개 (불 아이콘 · '많이 찾는' 없음)", lists)
 
     def search():
         box = page.locator('[data-ui-v2="stock-search"] input')
@@ -2704,20 +2900,22 @@ def scene_stocks(R, files, width):
         box.fill("Apple")                                                 # 한국 · 미국 종가 날짜가 같으면 미국 날짜 줄 없음
         page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-cls="us"]').first.wait_for(state="visible")
         assert page.locator('[data-ui-v2="us-close"]').count() == 0
-        assert page.locator('[data-ui-v2="popular"]').count() == 0          # 찾는 동안은 결과만
+        assert page.locator('[data-ui-v2="rank"]').count() == 0             # 찾는 동안은 결과만
         box.fill("zzzz없는회사")
         nr = page.locator('[data-ui-v2="no-result"]')
         nr.wait_for(state="attached")
         assert (nr.inner_text() == C["stocks"]["noResult"]) if C["stocks"]["noResult"] else nr.get_attribute("data-pending") == "1"
         box.fill("")
-        page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
         R.collect(page)
     R.check(page, S, "찾기: '삼성' → 이름에 삼성이 든 종목 · 없는 이름 → 결과 없음 자리", search)
 
     def us_line():
         # v19.1a: 미국 종목도 회사 페이지가 있어요 (예전: '기업분석은 한국 상장 기업만 볼 수 있어요.' 줄)
-        us = page.locator('[data-ui-v2="popular-list"][data-market="us"] [data-ui-v2="stock-row"]').first
+        rank_market(page, "us")                                            # v19.5b: 종목 순위의 미국 목록
+        us = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').first
         t = us.get_attribute("data-t")
+        assert us.get_attribute("data-cls") == "us"
         assert us.locator("a").count() == 0 and us.locator("button").get_attribute("aria-expanded") is None
         us.locator("button").click()
         at(page, f"stocks/{t}")
@@ -2732,8 +2930,10 @@ def scene_stocks(R, files, width):
     R.check(page, S, "미국 종목을 누르면 2.0 회사 페이지 (#stocks/티커) → 뒤로 → 종목", us_line)
 
     def kr_corp():
-        row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+        rank_market(page, "kr")                                            # v19.5b: 종목 순위의 한국 목록
+        row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').first
         t = row.get_attribute("data-t")
+        assert row.get_attribute("data-cls") == "kr"
         assert row.locator("a").count() == 0, "한국 회사 줄이 예전 뱁새로 가는 링크예요"
         row.locator("button").click()
         at(page, f"stocks/{t}")                                            # v19.1a: 2.0 회사 페이지 (예전 뱁새 기업분석 아님)
@@ -2965,19 +3165,22 @@ def scene_pc(R, files):
         at(page, "home")
         pc_shell(page, PC_W)
         tab_selected(page, "home")
-        hero = page.locator('[data-ui-v2="home-hero"]')                      # 첫 방문 홈: 나뭇가지를 나르는 뱁이 176px (PC 크기)
-        mascot_img(hero, "baepi-16-build.webp", 176, C["build"]["s0"]["imgAlt"])
+        # 첫 방문 홈 (v19.5b): 머리글이 위, 종목 순위가 그 아래 페이지 폭으로 (오른쪽 칸만 있는 Cols), 창에 7줄. 숫자가 있어서 뱁이 없음
+        # (예전: 뱁이 176px + 거래대금 상위 종목 한국 | 미국 이름만)
+        hero = page.locator('[data-ui-v2="home-hero"]')
+        hero.wait_for(state="visible")
         assert C["about"]["ko"]["hero"]["descriptor"] in hero.inner_text() and C["about"]["ko"]["hero"]["catch"] in hero.inner_text()
         assert hero.locator('[data-ui-v2="home-start"]').inner_text().strip() == C["build"]["title"]
-        assert page.locator('[data-ui-v2="market-glance"], [data-ui-v2="market-tile"]').count() == 0, "뱁이가 있는 첫 방문 홈에 시장 숫자"
-        kr = page.locator('[data-ui-v2="popular-list"][data-market="kr"]')   # 두 칸: 한국 | 미국 (이름만)
-        us = page.locator('[data-ui-v2="popular-list"][data-market="us"]')
-        side_by_side(kr, us)
-        assert not re.search(r"\d\s*%|\d{6}", page.locator('[data-ui-v2="popular"]').inner_text())
+        assert page.locator('[data-ui-v2="market-glance"], [data-ui-v2="market-tile"]').count() == 0, "첫 방문 홈에 시장 칸 (v19.5b 는 종목 순위만 더해요)"
+        rank = page.locator('[data-ui-v2="cols"][data-n="1"] [data-ui-v2="rank"]')
+        rank.wait_for(state="visible")
+        assert rank.locator('[data-ui-v2="rank-window"]').get_attribute("data-rows") == "7"
+        assert rank.bounding_box()["y"] > hero.bounding_box()["y"] + hero.bounding_box()["height"]
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 첫 방문 홈에 뱁이"
         x, w, cols = page_box(page)
         assert cols == "2" and w <= 1000 and x >= 240, (x, w, cols)
         R.collect(page)
-    R.check(page, S, "왼쪽 메뉴(로고 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 · 메뉴 링크 넷) · 아래 탭 · ☰ 없음 · 위 검색 칸 · 첫 방문 홈 두 칸(뱁이 176px, 숫자 없음)", landing)
+    R.check(page, S, "왼쪽 메뉴(로고 · 탭 넷 · 포트폴리오 만들기 · 날짜 칸 · 메뉴 링크 넷) · 아래 탭 · ☰ 없음 · 위 검색 칸 · 첫 방문 홈(머리글 · 종목 순위 7줄, 뱁이 없음)", landing)
 
     def slash():
         inp = page.locator(TOP_INPUT)
@@ -2999,7 +3202,7 @@ def scene_pc(R, files):
         assert cols == "1" and w <= 720, (w, cols)
         R.collect(page)
         inp.fill("")                                                       # 비우면 종목 탭의 목록으로 (탭은 그대로)
-        page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
         assert route(page) == "stocks"
         inp.fill("Apple")
         page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"][data-cls="us"]').first.wait_for(state="visible")
@@ -3295,7 +3498,9 @@ def scene_pc_edge(R, files):
         bar.wait_for(state="visible")
         assert [b.strip() for b in bar.locator("button").all_inner_texts()] == [TABS[k] for k in TAB_KEYS]
         assert page.locator('[data-ui-v2="app-bar"] h1').first.inner_text() == C["app"]["brand"]
-        mascot_img(page.locator('[data-ui-v2="home-hero"]'), "baepi-16-build.webp", 92, C["build"]["s0"]["imgAlt"])    # 휴대폰 크기
+        page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")         # 첫 방문 홈 (v19.5b: 뱁이 없음, 종목 순위)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0
+        assert page.locator('[data-ui-v2="rank-window"]').get_attribute("data-rows") == "5"   # 휴대폰 크기: 창에 5줄 (PC 는 7줄)
         assert page.locator("main").first.bounding_box()["width"] <= 520
         menu_links(page)
         tab(page, TABS["stocks"])
@@ -3326,6 +3531,909 @@ def scene_pc_edge(R, files):
         no_hscroll(page, 1023)
         R.collect(page)
     R.check(page, S, "1023 → 1024px: PC 화면(☰ 메뉴는 닫힘) → 1023px: 휴대폰 화면", resize)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── v19.5b 홈 · 종목 순위 (docs/tasks/v19.5-home-lists-and-icon.md Part A) ──
+RANK_SETTINGS = {"deck": None, "points": {"value": 3, "profit": 4, "stable": 3}, "strict": "very", "mix": "k73", "count": 6, "method": "even",
+                 "maxPct": 20, "cushion": 0, "amountMan": 1000, "name": "", "pinned": [],
+                 "exclude": {"loss": True, "debt": False, "noDiv": False, "holding": False}}
+RANK_DECK = {**_deck("drank", "순위 포트폴리오", [(*SAMSUNG, 1.0, [], 1)]), "settings": RANK_SETTINGS}
+RANK_REPORT = re.compile(r"^10월 30일 종가 · \d{4}년 사업보고서 기준$")
+RANK_NUM = {"cap": r"[\d,]+(\.\d)?(조|억)원", "val": r"[\d,]+(\.\d)?(조|억)원", "surge": re.escape(C["rank"]["surgeX"]).replace(r"\{x\}", r"\d+\.\d"),
+            "value": re.escape(C["rank"]["num"]["pbr"]).replace(r"\{x\}", r"\d+\.\d\d"), "profit": re.escape(C["rank"]["num"]["roe"]).replace(r"\{x\}", r"-?[\d,]+\.\d"),
+            "stable-kr": re.escape(C["rank"]["num"]["debt"]).replace(r"\{x\}", r"[\d,]+"), "lowVol": re.escape(C["rank"]["num"]["vol"]).replace(r"\{x\}", r"[\d,]+\.\d"),
+            "mine": re.escape(C["rank"]["mineX"]).replace(r"\{x\}", r"\d+"), "div": r"[\d,]+\.\d+%"}
+for _k, _key, _n in (("stable-us", "debtUs", r"[\d,]+\.\d"), ("trend", "trend", r"[+−]?[\d,]+\.\d%"), ("growth-kr", "g3Kr", r"[+−]?[\d,]+\.\d%"),
+                     ("growth-us", "g3Us", r"[+−]?[\d,]+\.\d%")):
+    RANK_NUM[_k] = re.escape(C["rank"]["num"][_key]).replace(r"\{x\}", _n)          # Jack, 2026-11-12 승인
+
+
+def rank_files(files):
+    """거래 급증이 있는 날: 시가총액 1조원 이상 한국 회사 하나는 평소의 3.4배, 1,000억원 회사 하나는 9배(3,000억원 미만이라 빠져요)."""
+    f = clone(files)
+    stocks = f["data.json"]["stocks"]
+    base = rank_base(stocks, "kr")
+    big = next(s for s in base if s["t"] != "005930" and isnum(s.get("cap")) and s["cap"] >= 1 and isnum(s.get("val20")) and s["val20"] >= 5)
+    small = next(s for s in base if isnum(s.get("cap")) and 0.05 <= s["cap"] < 0.3 and isnum(s.get("val20")) and s["val20"] >= 5)
+    big["val"], small["val"] = round(big["val20"] * 3.4, 1), round(small["val20"] * 9, 1)
+    return f, big["t"], small["t"]
+
+
+def rank_store(decks):
+    return f"(() => {{ try {{ localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 1, 'decks': decks}, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+
+
+def rank_wait(page, attr, value, timeout=WAIT):
+    page.wait_for_function("([a, v]) => { const w = document.querySelector('[data-ui-v2=\"rank-window\"]'); return !!w && w.getAttribute(a) === v; }",
+                           arg=[attr, value], timeout=timeout)
+
+
+def rank_ty(page):
+    return page.locator('[data-ui-v2="rank-track"]').evaluate("(e) => { const m = getComputedStyle(e).transform; return m === 'none' ? 0 : new DOMMatrix(m).m42; }")
+
+
+def rank_check_list(page, stocks, coby, mk, chip, crit=None):
+    """한 칩의 목록: 고른 표시 · 줄 · 날짜 · 순서(파이썬으로 센 목록) · 숫자 꼴."""
+    rank = page.locator('[data-ui-v2="rank"]')
+    on = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]')
+    assert [on.nth(i).get_attribute("data-chip") for i in range(on.count()) if on.nth(i).get_attribute("aria-pressed") == "true"] == [chip]
+    assert page.locator('[data-ui-v2="rank-chips"] [data-selected="1"]').get_attribute("data-chip") == chip
+    date = rank.locator('[data-ui-v2="rank-date"]').inner_text()
+    line = "\n".join(rank.locator('[data-ui-v2="rank-line"] p').all_inner_texts())
+    rows = rank_ts(page)
+    # 숫자의 이름표(예: '매출 연평균')는 숫자 위 작은 한 줄 (리뷰 3차): 글을 견줄 때는 한 줄로 이어 읽어요
+    nums = [" ".join(n.split()) for n in page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()]
+    L = C["rank"]["line"]
+    # 날짜 줄 (Jack, 2026-11-12): 사업보고서 숫자 목록은 '{year}년 사업보고서 기준' (보이는 줄이 모두 그 한 해일 때만), 가치(최근 분기 자본으로
+    # 계산한 PBR)와 기준 점수가 재무제표 카드 중 가치에만 있는 내 기준은 '각 회사의 최근 분기 재무제표 기준', 나머지는 종가 날짜만
+    pts = RANK_SETTINGS["points"]
+    report = mk == "kr" and (chip == "div" or (chip == "crit" and crit in ("profit", "stable", "growth"))
+                             or (chip == "mine" and any(pts.get(c) for c in ("profit", "stable", "growth", "div"))))
+    quarter = mk == "kr" and not report and ((chip == "crit" and crit == "value") or (chip == "mine" and bool(pts.get("value"))))
+    # 분기 줄은 보이는 줄이 모두 분기 자본으로 계산한 PBR 일 때만 (corp.json bpsIn.p 가 'fy' 가 아님, 리뷰 3차)
+    quarter = quarter and all(((coby.get(t) or {}).get("bpsIn") or {}).get("p") not in (None, "fy") for t in rows)
+    years = {by_t(stocks)[t].get("fy") if by_t(stocks)[t].get("fy") is not None else (coby.get(t) or {}).get("fy") for t in rows} if report else set()
+    if mk == "us":
+        assert date == "10월 30일 종가 (미국 시간)", date
+    elif report and rows and len(years) == 1 and None not in years:
+        assert date == f"10월 30일 종가 · {years.pop()}년 사업보고서 기준", (chip, crit, date)
+    elif quarter and rows:
+        assert date == "10월 30일 종가 · " + C["rank"]["quarter"], (chip, crit, date)
+    else:
+        assert date == "10월 30일 종가", (chip, crit, date, years)
+    if chip == "crit":                                                                 # 기준별 줄: 성장은 시장마다 한 잣대, 한국 성장 · 수익성은 최소 크기까지
+        basis = (C["rank"]["basis"]["g3Kr"] if mk == "kr" else C["rank"]["p"]["basisG3Us"] or C["rank"]["basis"]["g3Us"]) if crit == "growth" \
+            else C["build"]["cards"][crit]["basis"]
+        if mk == "kr" and crit in ("growth", "profit"):
+            basis += " · " + C["rank"]["floor"][crit]
+        assert line == fillp(L["crit"], card=C["build"]["cards"][crit]["name"], basis=basis), line
+    empty = page.locator('[data-ui-v2="rank-empty"]')
+    if empty.count():                                                                  # 빈 목록: 이유 한 줄 (데이터 없음 · 들어갈 종목 없음), 칩은 그대로
+        assert not rows and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-foot"]').count() == 0, rows
+        text = empty.inner_text()
+        assert text in (C["rank"]["emptyData"], C["rank"]["emptyNone"], C["rank"]["surgeNone"]), text
+        if chip in ("cap", "val", "surge", "crit"):
+            assert rank_expect(stocks, mk, chip, crit, coby) == [], (chip, crit)
+        return text
+    assert 0 < len(rows) <= 10, (chip, rows)
+    if chip in ("cap", "val", "surge", "crit"):
+        want = rank_expect(stocks, mk, chip, crit, coby)[:10]
+        assert rows == want, (mk, chip, crit, rows, want)
+        key = crit if chip == "crit" else chip
+        key = f"{key}-{mk}" if key in ("stable", "growth") else key
+        assert all(re.fullmatch(RANK_NUM[key], n) for n in nums), (mk, chip, crit, nums)
+        if chip != "crit":
+            assert line == (L["valUs"] if chip == "val" and mk == "us" else L[chip]), line
+    elif chip == "mine":
+        assert all(re.fullmatch(RANK_NUM["mine"], n) for n in nums), nums
+        pct = [int(re.search(r"\d+", n).group()) for n in nums]
+        assert pct == sorted(pct) and line == L["mine"], (pct, line)                  # 점수가 높은 순서 = '상위' 숫자가 작은 순서
+        assert all(by_t(stocks)[t] in rank_base(stocks, mk) for t in rows)
+        assert not any(isnum(by_t(stocks)[t].get("opm")) and by_t(stocks)[t]["opm"] < 0 for t in rows), "적자 회사 빼기가 안 됐어요"
+        if pts.get("value"):                                                       # 가치에 점수: 가치 목록의 보조 장치가 빼는 행은 내 기준에서도 빠져요 (리뷰 3차)
+            def guarded(x):
+                v, per, roe = x.get("pbr"), x.get("per"), x.get("roe")
+                return isnum(v) and (v <= 0 or (mk == "kr" and v < 0.005) or (mk == "us" and isnum(per) and per > 0 and isnum(roe) and roe > 0 and v < per * roe / 100 / 4))
+            assert not any(guarded(by_t(stocks)[t]) for t in rows), [t for t in rows if guarded(by_t(stocks)[t])]
+    elif chip == "div":
+        vs = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => Number(e.dataset.v))")
+        assert vs == sorted(vs, reverse=True) and all(re.fullmatch(RANK_NUM["div"], n) for n in nums), (vs, nums)
+        assert line == L["div"] + ("\n" + C["rpt"]["divUs"] if mk == "us" else ""), line       # 미국 줄은 같은 문구의 rpt.divUs
+        for t in rows:
+            s = by_t(stocks)[t]
+            assert s in rank_base(stocks, mk) and isnum(s.get("dyt" if mk == "kr" else "dy")), t
+            co = coby.get(t) or {}
+            fl = co.get("fl") or {}
+            warn = mk == "kr" and (isnum(fl.get("cr")) or isnum(fl.get("icr")) or bool(fl.get("l3")) or bool(fl.get("imp")))
+            row = page.locator(RANK_LIST + f' [data-ui-v2="rank-row"][data-t="{t}"]')
+            assert row.locator('[data-ui-v2="rank-warn"]').count() == (1 if warn else 0), (t, fl)
+            if warn:
+                assert row.locator('[data-ui-v2="rank-warn"]').inner_text() == C["rank"]["warn"]
+    elif chip == "ind":
+        # 홈 (Jack, 2026-11-12): 많이 오른 업종 다섯(높은 순) · 많이 내린 업종 다섯(낮은 순), 보이는 평균(소수 한 자리)이 0 위 · 아래인 업종만
+        groups = ind_expect(stocks, mk)
+        r10 = lambda a: math.floor(a * 10 + 0.5)
+        up = [x for x in groups if r10(x[2]) > 0][:5]
+        down = [x for x in reversed(groups) if r10(x[2]) < 0][:5]
+        want = up + down
+        assert rows == [x[0] for x in want], (rows, [x[0] for x in want])
+        labels = page.locator('[data-ui-v2="rank-window"] [data-ui-v2="rank-part"]:not([data-ui-v2="rank-copy"] *) [data-ui-v2="rank-part-label"]').all_inner_texts()
+        assert labels == [C["rank"]["indUp"]] * bool(up) + [C["rank"]["indDown"]] * bool(down), labels
+        ranks = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => Number(e.dataset.rank))")
+        assert ranks == list(range(1, len(up) + 1)) + list(range(1, len(down) + 1)), ranks   # 부분마다 1부터
+        for (ind, n, avg, _), r in zip(want, page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').all()):
+            # data-avg 는 평균을 소수 셋째 자리로 반올림한 값 (JS Math.round: .5 는 위로, 파이썬 round 와 다를 수 있어요): 그 반올림 폭 안
+            assert int(r.get_attribute("data-n")) == n and abs(float(r.get_attribute("data-avg")) - avg) <= 0.0005 + 1e-9, (ind, n, avg)
+            members = [s for s in stocks if in_universe(s, mk) and not (mk == "us" and us_pref(s)) and s.get("ind") == ind and isnum(s.get("d1"))]
+            up, down = sum(1 for s in members if s["d1"] > 0), sum(1 for s in members if s["d1"] < 0)
+            text = r.locator('[data-ui-v2="rank-count"]').inner_text()
+            assert text == (fillp(C["rank"]["up"], n=n, k=up) if avg >= 0 else fillp(C["rank"]["down"], n=n, k=down)), (ind, text)
+        assert line == L["ind"], line
+
+
+def scene_rank(R, files, width):
+    """v19.5b 종목 순위 (기준 점수가 있는 포트폴리오가 있는 홈): 한국 · 미국마다 모든 칩의 목록 (파이썬으로 센 순서 · 숫자 꼴 · 줄 · 날짜) ·
+    미국은 거래 급증 없음 · 기준별 그림 칩 여섯 · 업종별 등락 → 업종 안 회사 (시가총액 순) → 돌아가기 · 움직임 (32초 · 7% 멈춤 · 두 벌, 둘째는
+    aria-hidden) → 누르는 동안(손가락) · 마우스를 올린 동안 · 초점 · 화면 밖 · 탭 숨김에 멈춤 · 마지막 칩을 기억 · 전체 보기 → 종목 탭(같은 칩, 멈춘
+    30개, 제목에 초점) · 뱁이 없음 · 가로 스크롤 없음."""
+    S = f"종목 순위 {width}"
+    f, surge_big, surge_small = rank_files(files)
+    for c in f["corp.json"]["companies"]:                                         # 분기 자본 PBR (bpsIn.p 'ttm'): 가치의 분기 줄이 나와요
+        if c["t"][:1].isdigit() and not c.get("bpsIn"):
+            c["bpsIn"] = {"p": "ttm"}
+    stocks = f["data.json"]["stocks"]
+    coby = {c["t"]: c for c in f["corp.json"]["companies"]}
+    srv, ctx, page, base = R.open(build_site(f), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def lists():
+        wait_ready(page)
+        rank = page.locator('[data-ui-v2="rank"]')
+        rank.wait_for(state="visible")
+        assert rank.locator("h3").inner_text() == C["rank"]["title"] and (rank.get_attribute("data-mk"), rank.get_attribute("data-chip")) == ("kr", "cap")
+        glance = page.locator('[data-ui-v2="market-glance"]')                # 휴대폰: 시장 한눈에 바로 밑
+        assert glance.bounding_box()["y"] + glance.bounding_box()["height"] <= rank.bounding_box()["y"]
+        for mk in ("kr", "us"):
+            rank_market(page, mk)
+            chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
+            # 목록이 비어도 칩은 그대로 (Jack, 2026-11-12): 확인한 배당(dyt)이 없는 이 파일의 한국 배당수익률은 '필요한 데이터가 아직 없어 …'
+            want = [c for c in ("cap", "val", "surge", "crit", "mine", "div", "ind") if not (c == "surge" and mk == "us")]
+            assert chips == want, (mk, chips)
+            hs = page.locator('[data-ui-v2="rank-chip"], [data-ui-v2="rank-market"] button').evaluate_all("(els) => els.map((e) => e.getBoundingClientRect().height)")
+            assert hs and min(hs) >= 44 - 0.5, hs                                   # 칩과 한국/미국은 누르는 곳 44px 이상 (Jack, 2026-11-12)
+            assert page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').all_inner_texts() == [C["rank"]["chips"][c] for c in want]
+            for chip in want:
+                for crit in (list(RANK_CRIT) if chip == "crit" else [None]):
+                    rank_chip(page, chip, crit)
+                    if chip == "crit":
+                        crits = page.locator('[data-ui-v2="rank-crit"] [data-ui-v2="rank-chip"]')
+                        assert crits.evaluate_all("(els) => els.map((e) => e.dataset.chip)") == list(RANK_CRIT)
+                        assert crits.locator("img").evaluate_all("(els) => els.map((e) => e.getAttribute('src'))") == [f"pictures/{CARD_TABLE_PICS[c]}.webp" for c in RANK_CRIT]
+                        row, on = page.locator('[data-ui-v2="rank-crit"]').bounding_box(), page.locator(f'[data-ui-v2="rank-crit"] [data-chip="{crit}"]').bounding_box()
+                        assert on["x"] >= row["x"] - 0.5 and on["x"] + on["width"] <= row["x"] + row["width"] + 0.5, (crit, row, on)   # 고른 기준이 줄 안에
+                    got = rank_check_list(page, stocks, coby, mk, chip, crit)
+                    if width == 320:                                               # 회사 이름 칸이 숫자에 밀리지 않아요 (리뷰 3차: '라…' 한 글자)
+                        ws = page.locator(RANK_LIST + ' [data-ui-v2="rank-name"]').evaluate_all("(els) => els.map((e) => e.getBoundingClientRect().width)")
+                        assert not ws or min(ws) >= NAME_MIN_320, (mk, chip, crit, ws)
+                    if chip == "div" and mk == "kr":
+                        assert got == C["rank"]["emptyData"], got                       # 이 파일에는 분할 확인(divCheck)이 없어요
+                    if chip == "surge":
+                        assert surge_big in rank_ts(page) and surge_small not in rank_ts(page), rank_ts(page)
+                    R.collect(page)
+            no_hscroll(page, width)
+        rank_market(page, "kr")
+        rank_chip(page, "cap")
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, "종목 순위가 있는 홈에 뱁이"
+    R.check(page, S, "한국 · 미국 모든 칩: 순서(시장마다 · 우선주 · ETF · 5억 미만 · 빈 칸 빼고 · 같은 값은 시가총액 순) · 숫자 꼴 · 줄 · 날짜 · 미국은 거래 급증 없음", lists)
+
+    def group():
+        page.locator('[data-ui-v2="rank-back"]').click() if page.locator('[data-ui-v2="rank-back"]').count() else None
+        rank_market(page, "kr")
+        rank_chip(page, "ind")
+        first = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').first
+        ind = first.get_attribute("data-ind")
+        first.locator("button").click()
+        head = page.locator('[data-ui-v2="rank-group"]')
+        head.wait_for(state="visible")
+        members = sorted([s for s in stocks if in_universe(s, "kr") and s.get("ind") == ind and isnum(s.get("d1"))],
+                         key=lambda s: (-(s["cap"] if isnum(s.get("cap")) else -math.inf), s["t"]))
+        assert page.locator('[data-ui-v2="rank"]').get_attribute("data-group") == ind and rank_ts(page) == [s["t"] for s in members][:10], rank_ts(page)
+        nums = page.locator(RANK_LIST + ' [data-ui-v2="rank-num"]').all_inner_texts()
+        assert all(re.fullmatch(RANK_NUM["cap"], n) for n in nums[: sum(1 for s in members[:10] if isnum(s.get("cap")))]), nums
+        back = page.locator('[data-ui-v2="rank-back"]')
+        assert back.get_attribute("aria-label") is None and back.inner_text() == C["rank"]["groupBack"]       # '업종 목록으로' (Jack, 2026-11-12)
+        assert page.locator('[data-ui-v2="rank-line"]').inner_text() == C["rank"]["groupLine"]
+        assert page.evaluate("() => document.activeElement && document.activeElement.dataset.uiV2") == "rank-back"     # 연 목록의 돌아가기에 초점
+        R.collect(page)
+        back.click()
+        head.wait_for(state="detached")
+        assert rank_ts(page)[0] == ind
+    R.check(page, S, "업종별 등락: 업종을 누르면 그 업종 회사가 시가총액 순으로 같은 창에 · 돌아가기 (이름: co.back, 초점이 그 버튼에)", group)
+
+    def motion():
+        page.locator('[data-ui-v2="rank-back"]').click() if page.locator('[data-ui-v2="rank-back"]').count() else None
+        rank_market(page, "kr")
+        rank_chip(page, "cap")
+        page.mouse.move(2, 2)                                                  # 앞 장면의 마우스가 창 위에 남지 않게
+        page.evaluate("() => window.scrollTo(0, 0)")
+        win = page.locator('[data-ui-v2="rank-window"]')
+        if win.bounding_box()["y"] > page.viewport_size["height"]:
+            rank_wait(page, "data-pause", "offscreen")                         # 화면 밖: 멈춤 (IntersectionObserver)
+        win.scroll_into_view_if_needed()
+        rank_wait(page, "data-moving", "1")
+        assert win.get_attribute("aria-label") == C["rank"]["listAria"] and win.get_attribute("tabindex") == "0", (win.get_attribute("aria-label"), win.get_attribute("tabindex"))
+        assert win.get_attribute("data-rows") == "5" and abs(win.bounding_box()["height"] - 5 * 58) < 1, (win.get_attribute("data-rows"), win.bounding_box())
+        track = page.locator('[data-ui-v2="rank-track"]')
+        anim = track.evaluate("(e) => { const s = getComputedStyle(e); return [s.animationName, s.animationDuration, s.animationTimingFunction, s.animationIterationCount, s.animationPlayState]; }")
+        assert anim == ["v2-rank-roll", "32s", "linear", "infinite", "running"], anim
+        frames = page.evaluate("""() => { for (const sh of document.styleSheets) { let rules; try { rules = sh.cssRules; } catch (e) { continue; }
+            for (const r of rules) if (r.type === CSSRule.KEYFRAMES_RULE && r.name === 'v2-rank-roll') return [...r.cssRules].map((k) => [k.keyText, k.style.transform]); } return null; }""")
+        assert frames == [["0%, 7%", "translateY(0px)"], ["100%", "translateY(-50%)"]], frames
+        copy = page.locator('[data-ui-v2="rank-copy"]')                       # 두 벌: 둘째는 aria-hidden, 그 버튼은 Tab 으로 가지 않아요
+        assert copy.get_attribute("aria-hidden") == "true" and copy.locator("button").count() == 10, ("copy", copy.get_attribute("aria-hidden"), copy.locator("button").count())
+        assert copy.locator("button").evaluate_all("(els) => els.every((b) => b.tabIndex === -1)"), "copy buttons reachable by Tab"
+        lst = page.locator(RANK_LIST)
+        assert lst.count() == 1 and lst.locator('[role="listitem"]').count() == 10 and lst.locator("button").evaluate_all("(els) => els.every((b) => b.tabIndex === 0)"), ("list", lst.count())
+        assert page.locator('[data-ui-v2="rank-hint"]').inner_text() == C["rank"]["hint"] and page.locator('[data-ui-v2="rank-all"]').inner_text() == C["rank"]["all"], "hint / all"
+        y0 = rank_ty(page)
+        page.wait_for_timeout(3200)                                            # 7% (약 2.2초) 멈춘 뒤 위로
+        y1 = rank_ty(page)
+        assert y1 < y0 - 1, (y0, y1)
+        win.hover()                                                            # 마우스를 올린 동안
+        rank_wait(page, "data-pause", "hover")
+        assert track.evaluate("(e) => getComputedStyle(e).animationPlayState") == "paused", (track.evaluate("(e) => getComputedStyle(e).animationPlayState"), win.get_attribute("data-kb"))
+        # 멈춤은 다음 프레임에 걸려요 (Web Animations: 멈추는 동안 pending 이고 그 사이 현재 시각이 한 프레임 더 흘러요). 멈춤이 걸린 뒤에 위치를 봐요
+        page.wait_for_function("() => { const t = document.querySelector('[data-ui-v2=\"rank-track\"]'); const a = t && t.getAnimations()[0];"
+                               " return !!a && a.playState === 'paused' && !a.pending; }")
+        a = rank_ty(page); page.wait_for_timeout(500)
+        b = rank_ty(page)
+        assert b == a, ("moved while hovered", a, b, win.get_attribute("data-pause"))
+        page.mouse.move(2, 2)
+        rank_wait(page, "data-moving", "1")
+        win.focus()                                                            # 초점
+        rank_wait(page, "data-pause", "focus")
+        page.evaluate("() => document.activeElement.blur()")
+        rank_wait(page, "data-moving", "1")
+        for end in ("new PointerEvent('pointerup', { pointerType: 'touch' })", "new PointerEvent('pointercancel', { pointerType: 'touch' })",
+                    "new Event('touchend')", "new Event('touchcancel')"):          # 손가락이 닿은 동안 멈추고, 어떻게 끝나든 다시 움직여요
+            win.dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
+            rank_wait(page, "data-pause", "touch")
+            page.evaluate("(e) => window.dispatchEvent(eval(e))", end)
+            rank_wait(page, "data-moving", "1")
+        page.evaluate("() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); }")
+        rank_wait(page, "data-pause", "hidden")                                # 탭이 숨으면
+        page.evaluate("() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); }")
+        rank_wait(page, "data-moving", "1")
+        R.collect(page)
+    R.check(page, S, "움직임: 32초 · 0–7% 멈춤 · 두 벌(둘째 aria-hidden, Tab 안 감) · 손가락 · 마우스 · 초점 · 화면 밖 · 탭 숨김에 멈추고 다시 움직여요", motion)
+
+    def remember_and_all():
+        rank_market(page, "kr")
+        rank_chip(page, "ind")
+        page.reload()
+        wait_ready(page)
+        rank = page.locator('[data-ui-v2="rank"]')
+        rank.wait_for(state="visible")
+        assert rank.get_attribute("data-chip") == "ind", rank.get_attribute("data-chip")    # 마지막 칩을 이 기기에 기억해요
+        row, chip = page.locator('[data-ui-v2="rank-chips"]').bounding_box(), page.locator('[data-ui-v2="rank-chips"] [data-chip="ind"]').bounding_box()
+        assert chip["x"] >= row["x"] - 0.5 and chip["x"] + chip["width"] <= row["x"] + row["width"] + 0.5, (row, chip)   # 고른 칩이 줄 안에 보여요
+        rank_chip(page, "val")
+        page.locator('[data-ui-v2="rank-all"]').click()                        # 전체 보기 → 종목 탭, 같은 칩, 멈춘 30개
+        at(page, "stocks")
+        full = page.locator('[data-ui-v2="rank"][data-full="1"]')
+        full.wait_for(state="visible")
+        assert (full.get_attribute("data-mk"), full.get_attribute("data-chip")) == ("kr", "val")
+        assert rank_ts(page) == rank_expect(stocks, "kr", "val")[:30]
+        assert page.locator('[data-ui-v2="rank-window"]').get_attribute("data-still") == "full" and page.locator('[data-ui-v2="rank-copy"], [data-ui-v2="rank-all"], [data-ui-v2="rank-hint"]').count() == 0
+        page.wait_for_function("() => document.activeElement && document.activeElement.tagName === 'H3' && !!document.activeElement.closest('[data-ui-v2=\"rank\"]')")
+        top = full.bounding_box()["y"]
+        assert 0 <= top < page.viewport_size["height"] / 2, top                 # 종목 순위가 화면에 (맨 위가 아니라)
+        no_hscroll(page, width)
+        R.collect(page)
+        page.go_back()
+        at(page, "home")
+        assert page.locator('[data-ui-v2="rank"]').get_attribute("data-chip") == "val"
+    R.check(page, S, "마지막 칩을 기억 (새로 고침해도) · 고른 칩이 줄 안에 · 전체 보기 → 종목 탭(같은 칩 · 멈춘 30개 · 제목에 초점 · 화면 안) → 뒤로 → 홈", remember_and_all)
+    ctx.close()
+    srv.shutdown()
+
+    # 확인한 배당(divCheck · dyt)이 있는 파일: 한국 배당수익률 (dyt 큰 순) · 재무 경고 칩 · '{year}년 사업보고서 기준'
+    fv = v191b_files(files)
+    top = max((s for s in rank_base(fv["data.json"]["stocks"], "kr") if isnum(s.get("dyt"))), key=lambda s: s["dyt"])
+    for c in fv["corp.json"]["companies"]:
+        if c["t"] == top["t"]:
+            c["fl"] = {"cr": 57.0}
+    srv, ctx, page, base = R.open(build_site(fv), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def kr_div():
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        rank_chip(page, "div")
+        rank_check_list(page, fv["data.json"]["stocks"], {c["t"]: c for c in fv["corp.json"]["companies"]}, "kr", "div")
+        assert rank_ts(page)[0] == top["t"] and page.locator(RANK_LIST + ' [data-ui-v2="rank-warn"]').count() >= 1
+        R.collect(page)
+    R.check(page, S, "확인한 배당이 있는 파일: 한국 배당수익률(dyt 큰 순, 확인 못 한 종목 빼고) · 재무 경고 칩 · 사업보고서 연도", kr_div)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_rank_still(R, files, width):
+    """움직이지 않는 종목 순위: 움직임 줄이기(prefers-reduced-motion) · 멈춘 데이터(날짜 줄은 진짜 날짜) → 5줄 · 두 벌 없음 · 안내 없음 · 전체 보기
+    있음. 거래 급증이 없는 날의 승인 문구. 기준 점수가 없는 포트폴리오면 내 기준 칩 없음. 불러오기 실패면 그 문구, 빈 칸 아님."""
+    S = f"종목 순위 멈춤 {width}"
+    reduced = {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2, "reduced_motion": "reduce"}
+    srv, ctx, page, base = R.open(build_site(files), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home", device=reduced)
+
+    def still_reduced():
+        wait_ready(page)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.wait_for(state="visible")
+        assert win.get_attribute("data-still") == "reduced" and win.get_attribute("data-moving") == "0"
+        assert page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').count() == 5 and page.locator('[data-ui-v2="rank-row"]').count() == 5
+        assert page.locator('[data-ui-v2="rank-copy"], [data-ui-v2="rank-track"], [data-ui-v2="rank-hint"]').count() == 0
+        assert page.locator('[data-ui-v2="rank-all"]').inner_text() == C["rank"]["all"]
+        assert page.evaluate("() => document.getAnimations().filter((a) => a.animationName === 'v2-rank-roll').length") == 0
+        rank_chip(page, "surge")                                               # 시험 데이터에는 거래 급증이 없어요: 승인 문구 (빈 칸 아님)
+        empty = page.locator('[data-ui-v2="rank-empty"]')
+        assert empty.inner_text() == C["rank"]["surgeNone"] and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-all"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "움직임 줄이기: 멈춘 5줄 · 두 벌 · 안내 없음 · 전체 보기 있음 · 거래 급증이 없는 날 승인 문구", still_reduced)
+    ctx.close()
+    srv.shutdown()
+
+    f = clone(files)
+    for n in DATA_FILES:
+        f[n]["publishedAt"] = now_kst(days_ago=6)
+    srv, ctx, page, base = R.open(build_site(f), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def still_stale():
+        wait_ready(page)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="date-line"]').first.get_attribute("data-stale") == "1"
+        assert win.get_attribute("data-still") == "stale" and page.locator('[data-ui-v2="rank-row"]').count() == 5
+        assert page.locator('[data-ui-v2="rank-date"]').inner_text() == "10월 30일 종가"          # 진짜 날짜 그대로
+        assert page.locator('[data-ui-v2="rank-copy"], [data-ui-v2="rank-hint"]').count() == 0
+        R.collect(page)
+    R.check(page, S, "멈춘 데이터: 목록이 움직이지 않아요 (5줄) · 날짜 줄은 그 데이터의 날짜", still_stale)
+    ctx.close()
+    srv.shutdown()
+
+    srv, ctx, page, base = R.open(build_site(files), width, init=rank_store(DAILY_DECKS["decks"][:1]), path="/app.html?dev=1#home")
+
+    def no_points():
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rank-chips"] [data-chip="mine"]').count() == 0, "기준 점수가 없는 포트폴리오인데 내 기준 칩"
+        R.collect(page)
+    R.check(page, S, "기준 점수가 없는 포트폴리오만 있으면 내 기준 칩이 없어요", no_points)
+    ctx.close()
+    srv.shutdown()
+
+    for label, init in (("저장한 포트폴리오", rank_store([RANK_DECK])), ("첫 방문", None)):
+        srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), width, init=init, path="/app.html?dev=1#home")
+
+        def failed():
+            see(page, LOAD_FAIL)
+            assert page.locator('[data-ui-v2="rank"], [data-ui-v2="rank-window"]').count() == 0
+            R.collect(page)
+        R.check(page, S, f"불러오기 실패 ({label}): 불러오기 실패 문구, 종목 순위 칸 없음", failed)
+        ctx.close()
+        srv.shutdown()
+
+
+def scene_rank_r1(R, files, width):
+    """v19.5b 리뷰 1차: 오래 누른 뒤 떼면 회사가 열리지 않아요(짧게 누르면 열려요) · 키보드로 간 줄은 창 안에 보이고 테두리가 있어요, 나오면 창이
+    맨 위로 · 오늘 거래대금이 없는 파일은 거래 급증 칩 없음(빈 줄 문구 아님) · 목록이 하나도 없는 시장은 빈 칸 대신 불러오기 실패 문구 ·
+    '0.0%' 는 빨강 · 파랑이 아니에요 · 미국 업종 안 회사는 같은 회사 한 줄(줄의 n 은 그대로) · 업종 안에서는 전체 보기 없음."""
+    S = f"종목 순위 리뷰 {width}"
+    f = clone(files)
+    by = by_t(f["data.json"]["stocks"])
+    by["005930"]["d1"], by["000660"]["d1"] = 0.04, -0.04                       # 둘 다 '0.0%'
+    srv, ctx, page, base = R.open(build_site(f), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def hold_and_tap():
+        wait_ready(page)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        for ms in (450, 700):                                                   # 마우스는 천천히 눌러도 그 회사로 (마우스를 올리면 이미 멈춰 있어요)
+            win.scroll_into_view_if_needed()
+            rank_wait(page, "data-moving", "1")
+            box = win.bounding_box()
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2     # 창 가운데의 줄
+            page.mouse.move(x, y)
+            rank_wait(page, "data-pause", "hover")
+            t = page.evaluate("([x, y]) => { const r = document.elementFromPoint(x, y).closest('[data-ui-v2=\"rank-row\"]'); return r && r.dataset.t; }", [x, y])
+            assert t, "창 가운데에 종목 줄이 없어요"
+            page.mouse.down()
+            page.wait_for_timeout(ms)
+            page.mouse.up()
+            at(page, f"stocks/{t}")
+            page.go_back()
+            at(page, "home")
+            page.mouse.move(2, 2)
+        win.scroll_into_view_if_needed()
+        rank_wait(page, "data-moving", "1")
+        row = page.locator(RANK_LIST + ' [data-ui-v2="rank-row"]').first
+        btn = row.locator("button")                                             # 손가락: 500ms 누른 뒤 뗀 click 은 열리지 않아요
+        btn.dispatch_event("pointerdown", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
+        rank_wait(page, "data-pause", "touch")
+        page.wait_for_timeout(500)
+        btn.dispatch_event("pointerup", {"pointerType": "touch", "isPrimary": True, "bubbles": True})
+        btn.dispatch_event("click")
+        page.wait_for_timeout(300)
+        assert route(page) == "home", route(page)
+        t = row.get_attribute("data-t")
+        btn.click()                                                             # 짧게 누르면 그 회사로
+        at(page, f"stocks/{t}")
+        page.go_back()
+        at(page, "home")
+        R.collect(page)
+    R.check(page, S, "마우스는 천천히 눌러도(450 · 700ms) 그 회사가 열려요 · 손가락으로 500ms 누른 뒤 뗀 click 은 열리지 않아요 · 짧게 누르면 열려요", hold_and_tap)
+
+    def keyboard():
+        page.mouse.move(2, 2)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.scroll_into_view_if_needed()
+        win.focus()
+        for _ in range(7):                                                       # 창 → 1 … 7번째 줄 (Tab)
+            page.keyboard.press("Tab")
+        active = page.evaluate("() => { const r = document.activeElement.closest('[data-ui-v2=\"rank-row\"]'); return r ? r.dataset.rank : null; }")
+        assert active == "7", active
+        rank_wait(page, "data-kb", "1")
+        assert win.get_attribute("data-pause") == "focus" and win.get_attribute("data-moving") == "0", win.get_attribute("data-pause")   # 키보드 초점은 그대로 멈춰요
+        page.wait_for_timeout(300)
+        assert page.locator('[data-ui-v2="rank-track"]').evaluate("(e) => getComputedStyle(e).animationName") == "none"
+        w, b = win.bounding_box(), page.evaluate("() => { const r = document.activeElement.getBoundingClientRect(); return { y: r.y, h: r.height }; }")
+        assert w["y"] - 0.5 <= b["y"] and b["y"] + b["h"] <= w["y"] + w["height"] + 0.5, (w, b)      # 고른 줄이 창 안에 보여요
+        ring = page.evaluate("() => { const s = getComputedStyle(document.activeElement); return [s.outlineStyle, s.outlineWidth, s.outlineColor]; }")
+        assert ring == ["solid", "2px", NAVY_RGB], ring
+        assert win.evaluate("(e) => e.scrollTop") > 0
+        page.evaluate("() => document.activeElement.blur()")
+        page.wait_for_function("() => { const w = document.querySelector('[data-ui-v2=\"rank-window\"]'); return w && w.scrollTop === 0 && !w.dataset.kb; }")
+        rank_wait(page, "data-moving", "1")                                      # 다시 #1 부터 움직여요
+        R.collect(page)
+    R.check(page, S, "키보드: 7번째 줄로 가면 줄이 멈춰 제자리 · 그 줄이 창 안에 보이고 남색 테두리 · 나오면 창이 맨 위로, 다시 움직여요", keyboard)
+
+    def zero_and_group():
+        rank_chip(page, "cap")
+        for t in ("005930", "000660"):                                          # '0.0%' 는 회색 (빨강 · 파랑 아님)
+            ch = page.locator(RANK_LIST + f' [data-ui-v2="rank-row"][data-t="{t}"] [data-ui-v2="rank-change"]')
+            assert ch.inner_text() == "0.0%" and ch.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", (t, ch.inner_text())
+        rank_market(page, "us")
+        rank_chip(page, "ind")
+        assert page.locator(RANK_LIST + ' [data-ui-v2="rank-row"][data-ind="platform"]').count() == 0   # 평균 '0.0%' 인 업종은 홈의 두 부분 어디에도 없어요
+        page.locator(RANK_LIST + ' [data-ui-v2="rank-row"] button').first.click()
+        page.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rank-all"]').count() == 0              # 업종 안에서는 전체 보기 없음 (돌아가기가 업종 목록으로)
+        page.locator('[data-ui-v2="rank-back"]').click()
+        page.locator('[data-ui-v2="rank-all"]').click()                         # 전체 보기: 종목 탭에 모든 업종 (높은 순)
+        full = page.locator('[data-ui-v2="rank"][data-full="1"]')
+        full.wait_for(state="visible")
+        row = full.locator('[data-ui-v2="rank-row"][data-ind="platform"]')
+        n, k, avg = int(row.get_attribute("data-n")), int(row.get_attribute("data-k")), float(row.get_attribute("data-avg"))
+        assert -0.05 < avg < 0, avg                                             # 시험 데이터: 평균 -0.03 → '0.0%'
+        num = row.locator('[data-ui-v2="rank-num"]')                            # 업종 줄의 '0.0%' 도 회색
+        assert num.inner_text() == "0.0%" and num.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", num.inner_text()
+        row.locator("button").click()
+        full.locator('[data-ui-v2="rank-group"]').wait_for(state="visible")
+        head = full.locator('[data-ui-v2="rank-group-avg"]')                    # 연 업종 머리의 '0.0%' 도 회색 (빨강 · 파랑 아님)
+        assert head.inner_text() == "0.0%" and head.evaluate("(e) => getComputedStyle(e).color") == "rgb(91, 101, 118)", head.inner_text()
+        ts = full.locator('[data-ui-v2="rank-window"] [role="list"] [data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
+        assert "GOOGL" in ts and "GOOG" not in ts and n == 15, (ts, n)           # 같은 회사는 한 줄 · n 은 왜 움직였나 그대로
+        assert fillp(C["rank"]["up" if avg >= 0 else "down"], n=n, k=k) in full.locator('[data-ui-v2="rank-group"]').inner_text()
+        R.collect(page)
+        full.locator('[data-ui-v2="rank-back"]').click()
+        page.go_back()
+        at(page, "home")
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        rank_market(page, "kr")
+    R.check(page, S, "'0.0%' 는 회색(줄 · 연 업종 머리, 전체 보기의 업종) · 미국 업종 안 회사는 회사마다 한 줄(GOOGL 만, n 15 그대로) · 업종 안에서는 전체 보기 없음", zero_and_group)
+
+    def chip_after_market():
+        page.set_viewport_size({"width": 360, "height": 780})                  # 칩 줄이 옆으로 밀리는 폭
+        try:
+            rank_market(page, "kr")
+            rank_chip(page, "ind")                                              # 줄 끝으로 밀었다가
+            rank_chip(page, "surge")
+            rank_market(page, "us")                                             # 미국에는 거래 급증이 없어서 첫 칩(시가총액)으로
+            assert page.locator('[data-ui-v2="rank"]').get_attribute("data-chip") == "cap"
+            page.wait_for_function("""() => { const row = document.querySelector('[data-ui-v2="rank-chips"]');
+                const c = row && row.querySelector('[data-chip="cap"]'); if (!c) return false;
+                const r = row.getBoundingClientRect(), b = c.getBoundingClientRect(); return b.left >= r.left - 0.5 && b.right <= r.right + 0.5; }""",
+                                   timeout=3000)                                # 고른 칩(첫 칩이어도)이 칩 줄의 보이는 칸 안에
+        finally:
+            page.set_viewport_size({"width": width, "height": 780})
+        rank_market(page, "kr")
+        rank_chip(page, "cap")
+    R.check(page, S, "시장을 바꿔 고른 칩이 첫 칩(시가총액)으로 돌아가도 칩 줄 안에 보여요 (360px: 업종별 등락 → 거래 급증 → 미국)", chip_after_market)
+    ctx.close()
+    srv.shutdown()
+
+    # 진짜 손가락(터치 화면, CDP 터치): 브라우저가 누른 줄에 초점을 줘요. 오래 누른 뒤 떼면 열리지 않고, 그 초점도 남지 않아 1초 안에 다시
+    # 움직여요 · 짧게 누르면 그 회사로
+    touch = {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2, "is_mobile": True, "has_touch": True}
+    srv, ctx, page, base = R.open(build_site(f), width, device=touch, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def finger():
+        wait_ready(page)
+        cdp = ctx.new_cdp_session(page)
+        win = page.locator('[data-ui-v2="rank-window"]')
+        win.scroll_into_view_if_needed()
+        rank_wait(page, "data-moving", "1")
+        box = win.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        under = "([x, y]) => { const r = document.elementFromPoint(x, y).closest('[data-ui-v2=\"rank-row\"]'); return r && r.dataset.t; }"
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        rank_wait(page, "data-pause", "touch")
+        page.wait_for_timeout(700)                                              # 오래 눌러 읽고
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        rank_wait(page, "data-moving", "1", timeout=1000)                      # 떼면 1초 안에 다시 움직여요 (누른 줄의 초점 때문에 멈춰 있지 않아요)
+        inside = page.evaluate("() => { const w = document.querySelector('[data-ui-v2=\"rank-window\"]'); return !!w && w.contains(document.activeElement); }")
+        assert not inside, "오래 누른 줄에 초점이 남았어요"
+        page.wait_for_timeout(300)
+        assert route(page) == "home", route(page)                               # 그 줄의 회사는 열리지 않아요
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        rank_wait(page, "data-pause", "touch")
+        t = page.evaluate(under, [x, y])
+        assert t, "창 가운데에 종목 줄이 없어요"
+        page.wait_for_timeout(60)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        at(page, f"stocks/{t}")                                                 # 짧게 누르면 그 회사로
+        R.collect(page)
+    R.check(page, S, "손가락(터치 화면): 오래(700ms) 누른 뒤 떼면 회사가 열리지 않고 1초 안에 다시 움직여요(줄에 초점이 남지 않아요) · 짧게 누르면 열려요", finger)
+    ctx.close()
+    srv.shutdown()
+
+    # 오늘 거래대금(val)이 없는 파일 · 한국은 모든 종목이 오늘 +0.01% (업종 평균이 모두 '0.0%') · 미국은 모두 5억 미만이고 오늘 변화도 없음
+    f2 = clone(files)
+    for x in f2["data.json"]["stocks"]:
+        if x["cls"] == "kr":
+            x.pop("val", None)
+            if isnum(x.get("d1")):
+                x["d1"] = 0.01
+        elif x["cls"] == "us":
+            x["val"], x["d1"] = 1.0, None
+    srv, ctx, page, base = R.open(build_site(f2), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def no_figures():
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
+        assert "surge" in chips and "val" in chips, chips                        # 칩은 그대로, 목록 대신 '필요한 데이터가 아직 없어 …' (Jack, 2026-11-12)
+        for c in ("val", "surge"):
+            rank_chip(page, c)
+            assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyData"], c
+            assert page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-foot"]').count() == 0
+        assert C["rank"]["surgeNone"] not in page.locator("body").inner_text()   # 숫자가 없는 날은 '오늘은 … 없어요' 가 아니에요
+        rank_chip(page, "ind")                                                   # 업종이 모두 '0.0%': 두 부분이 다 비어 '지금은 … 없어요' (리뷰 3차)
+        assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyNone"]
+        assert page.locator('[data-ui-v2="rank-fail"], [data-ui-v2="rank-window"]').count() == 0
+        rank_chip(page, "cap")
+        rank_market(page, "us")                                                  # 종목은 있는데 모두 5억 미만: 칩은 그대로, '지금은 … 없어요' (리뷰 3차)
+        chips = page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.chip)")
+        assert chips == ["cap", "val", "crit", "mine", "div", "ind"], chips
+        assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyNone"] and page.locator('[data-ui-v2="rank-fail"]').count() == 0
+        rank_chip(page, "ind")                                                   # 미국은 오늘 변화가 없어요: 데이터 없음
+        assert page.locator('[data-ui-v2="rank-empty"]').inner_text() == C["rank"]["emptyData"]
+        R.collect(page)
+        rank_chip(page, "cap")
+        rank_market(page, "kr")
+    R.check(page, S, "오늘 거래대금이 없는 파일: 거래대금 · 거래 급증은 '필요한 데이터가 아직 없어 …' · 업종이 모두 0.0% 면 '지금은 … 없어요' · 5억 미만뿐인 시장(미국)도 칩은 그대로", no_figures)
+    ctx.close()
+    srv.shutdown()
+
+    f3 = clone(files)                     # 미국 종목이 하나도 없는 파일: 미국은 칩 없이 불러오기 실패 문구 (그 시장에 데이터가 아예 없을 때만)
+    f3["data.json"]["stocks"] = [x for x in f3["data.json"]["stocks"] if x["cls"] != "us"]
+    srv, ctx, page, base = R.open(build_site(f3), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def no_market():
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        rank_chip(page, "crit", "value")                                         # 시험 데이터에는 bpsIn 이 없어요: 분기 줄 없이 종가 날짜만 (리뷰 3차)
+        assert page.locator('[data-ui-v2="rank-date"]').inner_text() == "10월 30일 종가", page.locator('[data-ui-v2="rank-date"]').inner_text()
+        rank_chip(page, "cap")
+        rank_market(page, "us")
+        assert page.locator('[data-ui-v2="rank-chips"] [data-ui-v2="rank-chip"]').count() == 0
+        fail = page.locator('[data-ui-v2="rank"] [data-ui-v2="rank-fail"] [data-ui-v2="load-fail"]')
+        assert fail.inner_text() == LOAD_FAIL and page.locator('[data-ui-v2="rank-window"], [data-ui-v2="rank-empty"], [data-ui-v2="rank-foot"]').count() == 0
+        R.collect(page)
+        rank_market(page, "kr")
+    R.check(page, S, "미국 종목이 없는 파일: 미국은 칩 없이 불러오기 실패 문구 · 분기 자본이 확인되지 않은 한국 가치는 종가 날짜만", no_market)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_rank_pc(R, files):
+    """PC (1280): 다시 온 방문자의 홈 오른쪽 칸, 시장 한눈에 밑에 종목 순위 · 창에 7줄(58px) · 움직여요 · 가로 스크롤 없음 · 전체 보기 → 종목 탭."""
+    S = f"종목 순위 PC {PC_W}"
+    srv, ctx, page, base = R.open(build_site(files), PC_W, device=pc_device(PC_W), init=rank_store([RANK_DECK]), path="/app.html?dev=1#home")
+
+    def side():
+        wait_ready(page)
+        rank = page.locator('[data-ui-v2="col-side"] [data-ui-v2="rank"]')
+        rank.wait_for(state="visible")
+        glance = page.locator('[data-ui-v2="col-side"] [data-ui-v2="market-glance"]')
+        assert glance.bounding_box()["y"] + glance.bounding_box()["height"] <= rank.bounding_box()["y"]
+        win = rank.locator('[data-ui-v2="rank-window"]')
+        assert win.get_attribute("data-rows") == "7" and abs(win.bounding_box()["height"] - 7 * 58) < 1
+        win.scroll_into_view_if_needed()
+        rank_wait(page, "data-moving", "1")
+        assert page.locator(MASCOT_IN_MAIN).count() == 0
+        chips = rank.locator('[data-ui-v2="rank-chips"]')                   # PC: 칩 줄은 옆으로 밀지 않고 여러 줄로
+        assert chips.evaluate("(e) => [getComputedStyle(e).flexWrap, e.scrollWidth <= e.clientWidth]") == ["wrap", True]
+        ys = {round(b["y"]) for b in (c.bounding_box() for c in chips.locator('[data-ui-v2="rank-chip"]').all())}
+        assert len(ys) >= 2, ys
+        side = page.locator('[data-ui-v2="col-side"]').bounding_box()
+        for c in chips.locator('[data-ui-v2="rank-chip"]').all():
+            b = c.bounding_box()
+            assert side["x"] - 0.5 <= b["x"] and b["x"] + b["width"] <= side["x"] + side["width"] + 0.5, (b, side)
+        # Jack, 2026-11-12: '누르고 있으면 멈춰요' 는 휴대폰에서만 (PC 는 마우스를 올리면 멈춰요) · 칩과 한국/미국은 44px 이상
+        assert rank.locator('[data-ui-v2="rank-hint"]').count() == 0 and rank.locator('[data-ui-v2="rank-all"]').count() == 1
+        hs = rank.locator('[data-ui-v2="rank-chip"], [data-ui-v2="rank-market"] button').evaluate_all("(els) => els.map((e) => e.getBoundingClientRect().height)")
+        assert hs and min(hs) >= 44 - 0.5, hs
+        # 1200px 아래(1024–1199)에서는 종목 순위가 오른쪽 칸이 아니라 왼쪽(넓은) 칸 끝으로 (Jack, 2026-11-12)
+        page.set_viewport_size({"width": 1100, "height": PC_H})
+        page.locator('[data-ui-v2="col-main"] [data-ui-v2="rank"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="col-side"] [data-ui-v2="rank"]').count() == 0
+        assert page.locator('[data-ui-v2="col-side"] [data-ui-v2="market-glance"]').count() == 1
+        last = page.locator('[data-ui-v2="col-main"] > *').last
+        assert last.get_attribute("data-ui-v2") == "rank", last.get_attribute("data-ui-v2")
+        page.set_viewport_size({"width": PC_W, "height": PC_H})
+        rank.wait_for(state="visible")
+        for w in (1024, 1280, 1440):
+            page.set_viewport_size({"width": w, "height": PC_H})
+            page.wait_for_timeout(100)
+            no_hscroll(page, w)
+        page.set_viewport_size({"width": PC_W, "height": PC_H})
+        R.collect(page)
+        page.locator('[data-ui-v2="rank-all"]').click()
+        at(page, "stocks")
+        full = page.locator('[data-ui-v2="rank"][data-full="1"]')
+        full.wait_for(state="visible")
+        page.wait_for_function("() => document.activeElement && document.activeElement.tagName === 'H3'")
+        bar = page.locator('[data-ui-v2="top-bar"]').bounding_box()
+        y = full.bounding_box()["y"]
+        assert bar["y"] + bar["height"] - 1 <= y < PC_H / 2, (bar, y)            # 위 막대에 가리지 않고 화면 안
+        R.collect(page)
+    R.check(page, S, "PC: 오른쪽 칸 시장 한눈에 밑 · 창 7줄 · 움직임 · 칩은 여러 줄(칸 안) · 멈춤 안내 없음 · 칩 44px · 1100px 은 왼쪽 칸 끝 · 1024–1440px 가로 스크롤 없음 · 전체 보기 → 종목 탭(위 막대 밑)", side)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── v19.6d 어두운 화면 (docs/tasks/v19.6-records-alerts-dark.md Part D) ──
+THEME_KEY = "baepsae-theme"
+SEGMENTED = '[data-ui="segmented"]:not([data-ui-v2="theme-mode"] *)'           # 고르기 묶음, 화면 모드 스위치는 빼고
+PAGE_RGB = {"light": "rgb(245, 243, 239)", "dark": "rgb(16, 21, 30)"}           # tokens.js page (= the theme-color meta)
+META = {"light": "#F5F3EF", "dark": "#10151E"}
+INK_RGB = {"light": "rgb(28, 43, 69)", "dark": "rgb(232, 236, 242)"}
+MASCOT_CHIP_RGB = "rgb(245, 243, 239)"
+# The first paint: when <body> arrives (the head, its colour sheet and its small script are done) and at the first frame, the
+# page's colour is recorded. If the mode were applied later (by the app), the first paint would flash the light page.
+FIRST_PAINT = """(() => {
+  const look = () => [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.documentElement).backgroundColor,
+    (document.querySelector('meta[name="theme-color"]') || {}).content || null];
+  window.__v2paint = { body: null, frame: null };
+  const mo = new MutationObserver(() => { if (document.body && !window.__v2paint.body) { window.__v2paint.body = look(); mo.disconnect(); } });
+  mo.observe(document, { childList: true, subtree: true });
+  requestAnimationFrame(() => { window.__v2paint.frame = look(); });
+})();"""
+# The placeholder colour of an input as drawn, the browser's own placeholder colour (an input in a shadow root, which the page's
+# colour sheet does not reach) and the first background behind the input that is not transparent.
+PLACEHOLDER_JS = """(e) => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const probe = document.createElement('input'); probe.placeholder = 'x'; host.attachShadow({ mode: 'open' }).appendChild(probe);
+  const browser = getComputedStyle(probe, '::placeholder').color; host.remove();
+  let bg = 'rgba(0, 0, 0, 0)', n = e;
+  while (n && n.nodeType === 1) { const b = getComputedStyle(n).backgroundColor; if (b !== 'rgba(0, 0, 0, 0)' && b !== 'transparent') { bg = b; break; } n = n.parentElement; }
+  return { mine: getComputedStyle(e, '::placeholder').color, browser, bg };
+}"""
+TEXT3_DARK_RGB, SURFACE_DARK_RGB = "rgb(142, 153, 170)", "rgb(26, 34, 49)"        # tokens.js PALETTE.dark text3 #8E99AA, surface #1A2231
+
+
+def rgb_ratio(a, b):
+    def lum(c):
+        v = [int(x) / 255 for x in re.findall(r"\d+", c)[:3]]
+        v = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+    x, y = lum(a), lum(b)
+    return (max(x, y) + 0.05) / (min(x, y) + 0.05)
+
+
+# Storage that refuses everything (a private window with site data blocked): reading the choice throws too.
+NO_STORAGE = """(() => { for (const m of ['getItem', 'setItem', 'removeItem']) Storage.prototype[m] = function () { throw new Error('blocked'); }; })();"""
+
+
+def theme_now(page):
+    return page.evaluate("""() => [document.documentElement.dataset.theme, document.documentElement.dataset.themeMode,
+        document.querySelector('meta[name="theme-color"]').content, getComputedStyle(document.body).backgroundColor,
+        getComputedStyle(document.documentElement).colorScheme]""")
+
+
+def stored_mode(page):
+    return page.evaluate(f"() => {{ try {{ return localStorage.getItem('{THEME_KEY}'); }} catch (e) {{ return 'blocked'; }} }}")
+
+
+def mode_switch(page, width):
+    """The 화면 모드 switch: in the ☰ menu on the phone, in the left menu on PC. Returns its locator (opens the menu on the phone)."""
+    if width < 1024 and page.locator('[data-ui-v2="menu"]').count() == 0:
+        open_menu(page)
+    sw = page.locator('[data-ui-v2="theme-mode"]')
+    sw.wait_for(state="visible")
+    return sw
+
+
+def pick_mode(page, width, mode):
+    sw = mode_switch(page, width)
+    sw.get_by_role("radio", name=C["menu"]["mode"][mode], exact=True).click()
+    page.wait_for_function("(m) => document.documentElement.dataset.themeMode === m", arg=mode)
+
+
+def scene_dark(R, files, width):
+    """v19.6d: 화면 모드 자동 · 밝게 · 어둡게 (☰ 메뉴, PC 는 왼쪽 메뉴). 자동은 기기를 따라 바로 바뀌고, 고른 것은 이 기기에만(새로고침해도
+    그대로) · 기록은 그대로 · 내보낸 파일에 없어요. 첫 화면부터 그 색(번쩍임 없음) · 브라우저 막대 색(theme-color)도 따라가요.
+    저장소가 막히면 자동(오류 없음). 어두운 화면: 아이콘은 어두운 표 · 뱁이는 밝은 칩 위 · 불러오기 실패 문구."""
+    S = f"어두운 화면 {width}"
+    pc = width >= 1024
+    screen = (pc_device(width) if pc else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2})
+    f = daily_files(files)
+    d = f["data.json"]
+    by = {s["t"]: s for s in d["stocks"]}
+    deck = e_imported(by, d["pxDate"], [("005930", 10, 200000), ("000660", 3, None), ("AAPL", 2, 300.0)])
+    srv, ctx, page, base = R.open(build_site(f), width, device={**screen, "color_scheme": "light"}, init=e_store([deck]) + FIRST_PAINT,
+                                  accept_downloads=True, path="/app.html?dev=1#home")
+    M = C["menu"]["mode"]
+
+    def switch():
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        assert theme_now(page) == ["light", "auto", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        assert stored_mode(page) is None
+        records = page.evaluate("() => localStorage.getItem('baepsae2.v1')")
+        sw = mode_switch(page, width)
+        assert sw.locator('[role="radiogroup"]').get_attribute("aria-label") == M["title"]
+        radios = sw.get_by_role("radio")
+        assert radios.all_inner_texts() == [M["auto"], M["light"], M["dark"]], radios.all_inner_texts()
+        assert [radios.nth(i).get_attribute("aria-checked") for i in range(3)] == ["true", "false", "false"]
+        for i in range(3):                                                    # 누르는 곳 44px 이상
+            box = radios.nth(i).bounding_box()
+            assert box["height"] >= 44 - 0.5 and box["width"] >= 44 - 0.5, box
+        assert M["title"] in sw.inner_text() and M["hint"] in sw.inner_text()
+        if not pc:                                                            # 메뉴 줄 아래, 데이터 날짜 위
+            order = page.evaluate("""() => ['menu-item', 'theme-mode', 'menu-date'].map((k) => { const e = document.querySelector(`[data-ui-v2="${k}"]`);
+                return e ? e.getBoundingClientRect().top : null; })""")
+            assert order[0] < order[1] < order[2], order
+        R.collect(page)
+        pick_mode(page, width, "dark")
+        assert theme_now(page) == ["dark", "dark", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        assert stored_mode(page) == "dark"
+        assert page.evaluate("() => getComputedStyle(document.querySelector('h1, h2, h3')).color") == INK_RGB["dark"]
+        R.collect(page)                                                       # 어두운 표의 아이콘 · 뱁이 칩 · 12px · 살구색 (visualcheck)
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records, "화면 모드를 바꾸니 기록이 바뀌었어요"
+        # 새로고침: 첫 화면부터 어두운 색 (번쩍임 없음) · 고른 것 그대로
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        paint = page.evaluate("() => window.__v2paint")
+        assert paint["body"] == ["dark", PAGE_RGB["dark"], META["dark"]], paint
+        assert paint["frame"] is None or paint["frame"] == ["dark", PAGE_RGB["dark"], META["dark"]], paint
+        assert theme_now(page)[:3] == ["dark", "dark", META["dark"]]
+        assert mode_switch(page, width).get_by_role("radio", name=M["dark"], exact=True).get_attribute("aria-checked") == "true"
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records
+        # 밝게: 기기가 어두워도 밝게, 새로고침해도
+        pick_mode(page, width, "light")
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_timeout(200)
+        assert theme_now(page) == ["light", "light", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["light", PAGE_RGB["light"], META["light"]]
+        # 자동: 저장한 값이 없어지고, 기기를 따라 그 자리에서 바뀌어요 (새로고침 없이)
+        pick_mode(page, width, "auto")
+        assert stored_mode(page) is None
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'dark'")
+        assert theme_now(page) == ["dark", "auto", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        page.emulate_media(color_scheme="light")
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'light'")
+        assert theme_now(page) == ["light", "auto", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'dark'")
+        assert theme_now(page)[2] == META["dark"]
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records
+        # 내보낸 기록 파일에는 화면 모드가 없어요
+        pick_mode(page, width, "dark")
+        if not pc:
+            page.locator('[data-ui-v2="menu-close"]').click()
+        tab(page, TABS["portfolio"]) if not pc else side_tab(page, "portfolio")
+        at(page, "portfolio")
+        with page.expect_download() as dl:
+            page.get_by_role("button", name=C["store"]["export"]).click()
+        with open(dl.value.path(), encoding="utf-8") as fh:
+            text = fh.read()
+        exported = json.loads(text)
+        assert exported["decks"] and exported == json.loads(records), "내보낸 파일이 저장한 기록과 달라요 (화면 모드가 끼었나요?)"
+        assert "theme" not in text and THEME_KEY not in text, text[:200]           # 화면 모드는 파일 어디에도 없어요
+        R.collect(page)
+    R.check(page, S, "화면 모드: 자동(기본) · 밝게 · 어둡게 · 안내 줄 · 44px · 고르면 바로 · 새로고침해도 그대로 · 첫 화면부터 그 색 · "
+            "theme-color 도 · 자동은 기기를 따라 그 자리에서 · 기록 그대로 · 내보낸 파일에 없음", switch)
+    ctx.close()
+    srv.shutdown()
+
+    # 입력칸의 안내 글(placeholder): 어두운 화면에서는 text3 (브라우저의 회색은 어두운 바탕 위 3.5:1), 밝은 화면은 브라우저 그대로
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "light"}, path="/app.html?dev=1#stocks")
+
+    def placeholder():
+        wait_ready(page)
+        box = page.locator('[data-ui-v2="top-search"] input' if pc else '[data-ui-v2="stock-search"] input').first
+        box.wait_for(state="visible")
+        assert box.get_attribute("placeholder")
+        light = box.evaluate(PLACEHOLDER_JS)
+        assert light["mine"] == light["browser"], light                  # 밝은 화면: 바꾸지 않았어요
+        pick_mode(page, width, "dark")
+        if not pc:
+            page.locator('[data-ui-v2="menu-close"]').click()
+        dark = box.evaluate(PLACEHOLDER_JS)
+        assert dark["mine"] == TEXT3_DARK_RGB and dark["bg"] == SURFACE_DARK_RGB, dark
+        assert rgb_ratio(dark["mine"], dark["bg"]) >= 4.5, (dark, rgb_ratio(dark["mine"], dark["bg"]))
+        assert rgb_ratio(dark["browser"], dark["bg"]) < 4.5, dark                # 그래서 바꿨어요 (브라우저 회색은 미달)
+        pick_mode(page, width, "light")
+        assert box.evaluate(PLACEHOLDER_JS) == light
+    R.check(page, S, "입력칸 안내 글: 어두운 화면에서 text3 (4.5:1 이상) · 밝은 화면은 브라우저 그대로", placeholder)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장소가 막힌 기기: 자동(기기를 따라), 오류 없음. 고르면 이번 방문 동안만
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "dark"}, init=NO_STORAGE + FIRST_PAINT)
+
+    def blocked():
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert theme_now(page) == ["dark", "auto", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        sw = mode_switch(page, width)
+        assert sw.get_by_role("radio", name=M["auto"], exact=True).get_attribute("aria-checked") == "true"
+        pick_mode(page, width, "light")
+        assert theme_now(page)[:3] == ["light", "light", META["light"]]
+        R.collect(page)
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert theme_now(page)[:2] == ["dark", "auto"], theme_now(page)
+    R.check(page, S, "저장소가 막히면 자동(기기 따라 어둡게) · 오류 없음 · 고른 것은 이번 방문 동안만", blocked)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장한 값이 엉뚱하면 자동
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "light"},
+                                  init=f"try {{ localStorage.setItem('{THEME_KEY}', 'purple'); }} catch (e) {{}}")
+
+    def junk():
+        wait_ready(page)
+        assert theme_now(page)[:2] == ["light", "auto"], theme_now(page)
+    R.check(page, S, "저장한 값이 엉뚱하면 자동", junk)
+    ctx.close()
+    srv.shutdown()
+
+    # 불러오기 실패 (데이터 파일 없음) 를 어두운 화면에서: 문구 · 어두운 page · 뱁이는 밝은 칩 위
+    srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), width, device={**screen, "color_scheme": "light"},
+                                  init=f"try {{ localStorage.setItem('{THEME_KEY}', 'dark'); }} catch (e) {{}}" + FIRST_PAINT)
+
+    def fail():
+        see(page, LOAD_FAIL)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert theme_now(page)[:4] == ["dark", "dark", META["dark"], PAGE_RGB["dark"]]
+        msg = page.get_by_text(LOAD_FAIL).first
+        assert msg.evaluate("(e) => getComputedStyle(e).color") == INK_RGB["dark"]
+        R.collect(page)
+        tab(page, TABS["market"]) if not pc else side_tab(page, "market")
+        at(page, "market")
+        see(page, LOAD_FAIL)
+        img = page.locator('[data-ui-v2="load-fail"] img[src^="baepi-"]').first
+        img.wait_for(state="visible")
+        assert img.evaluate("(e) => getComputedStyle(e).backgroundColor") == MASCOT_CHIP_RGB
+        assert img.evaluate("(e) => getComputedStyle(e).filter") == "none"           # 뱁이는 다시 칠하지 않아요
+        R.collect(page)
+    R.check(page, S, "불러오기 실패 문구를 어두운 화면에서 (첫 화면부터 어두운 색 · 뱁이는 밝은 칩 위)", fail)
     ctx.close()
     srv.shutdown()
 
@@ -4387,7 +5495,7 @@ def own_note(loc, ts, what):
 def scene_own_dates(R, files, width):
     """미국 종목이 앞선 종가(pxd)일 때: 가격은 그대로 보이고 회사 페이지에는 그 종목의 날짜('미국 10월 28일 종가'), 그 종목이 들어간
     목록·합계에는 '{티커} 가격은 {날짜} 종가예요.' 한 줄 — 덱 짜기 상위 3종목 · 후보 고르기 · 매수 계획 · 샀어요(미국 줄 밑 '미국 {날짜} 종가') ·
-    홈 포트폴리오 카드 · 포트폴리오 합계 · 추가로 넣을 돈 · 종목(내 포트폴리오 종목 · 거래대금 상위 미국). 홈 첫 방문(이름만)에는 없어요.
+    홈 포트폴리오 카드 · 포트폴리오 합계 · 추가로 넣을 돈 · 종목(내 포트폴리오 종목 · 종목 순위 미국) · 홈 첫 방문의 종목 순위 미국 (v19.5b).
     다른 날의 변화(d1)는 보이지 않아요 (%, 큰 움직임 없음)."""
     S = f"미국 자기 날짜 {width}"
     f = own_files(files)
@@ -4396,7 +5504,15 @@ def scene_own_dates(R, files, width):
 
     def first_visit_and_build():
         wait_ready(page)
-        page.locator('[data-ui-v2="popular"]').wait_for(state="visible")       # 홈 첫 방문: 거래대금 상위 종목은 이름만, 안내 없음
+        rank = page.locator('[data-ui-v2="rank"]')                            # 홈 첫 방문 (v19.5b): 종목 순위 — 한국은 안내 없음, 미국은 그 목록 밑에
+        rank.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="own-close"]').count() == 0
+        rank_market(page, "us")
+        assert own_note(rank, rank_ts(page), "홈 첫 방문 · 종목 순위 미국")
+        for t in OWN_PXD:
+            for row in rank.locator(f'[data-ui-v2="rank-row"][data-t="{t}"]').all():
+                assert row.locator('[data-ui-v2="rank-change"]').count() == 0 and "%" not in row.inner_text(), (t, row.inner_text())
+        rank_market(page, "kr")
         assert page.locator('[data-ui-v2="own-close"]').count() == 0
         start_build(page)
         page.locator('[data-deck="quality"]').click()
@@ -4484,11 +5600,13 @@ def scene_own_dates(R, files, width):
         assert want and "NVDA" in want, (ts, want)
         got = page.locator('[data-ui-v2="own-close"]:not([data-market])').all_inner_texts()      # 날짜 줄 밑 한 줄 (거래대금 목록은 따로)
         assert got == [want], (got, want)
-        us = page.locator('[data-ui-v2="popular-list"][data-market="us"]')
-        own_note(us, us.locator('[data-ui-v2="stock-row"]').evaluate_all("(els) => els.map((e) => e.dataset.t)"), "거래대금 상위 · 미국")
+        rank = page.locator('[data-ui-v2="rank"]')                       # v19.5b: 종목 순위 · 미국 (거래대금 상위 미국 대신)
+        rank_market(page, "us")
+        own_note(rank, rank_ts(page), "종목 순위 · 미국")
         for t in OWN_PXD:
-            for row in page.locator(f'[data-ui-v2="stock-row"][data-t="{t}"]').all():
+            for row in page.locator(f'[data-ui-v2="stock-row"][data-t="{t}"], [data-ui-v2="rank-row"][data-t="{t}"]').all():
                 assert "%" not in row.inner_text(), (t, row.inner_text())
+        rank_market(page, "kr")
         box = page.locator('[data-ui-v2="stock-search"] input')
         box.fill("삼성")                                                          # 한국 종목만: 안내 없음
         page.locator('[data-ui-v2="search-results"] [data-ui-v2="stock-row"]').first.wait_for(state="visible")
@@ -8411,7 +9529,8 @@ def scene_reread_lines(R, files, width, shots=None):
                 year = fillp(C["app"]["reportYear"], year=co_fy)
                 if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신, 통화 줄만
                     assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui-v2="bars"]').count() == 0
-                    assert page.locator('[data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
+                    # v19.6d: any on the page but the 화면 모드 switch (PC's left menu has it, a segmented control too)
+                    assert page.locator(SEGMENTED).count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
                     assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
                     assert year not in page.locator('[data-ui-v2="co-earn"]').inner_text()
                     assert page.locator('[data-ui-v2="co-earn"] > *').count() == 1, "실적 탭에 통화 줄 카드 말고 다른 것이 있어요"
@@ -8430,7 +9549,7 @@ def scene_reread_lines(R, files, width, shots=None):
             R.collect(page)
         co_hash(page, "#stocks/005930/earn")                                                      # 다른 회사는 그대로 (숨김은 stmtCur 로만)
         page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
-        assert page.locator('[data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
+        assert page.locator(SEGMENTED).count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
         co_hash(page, "#stocks/005930/value")
         page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="co-value-basis"]').count() == 1 and page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() >= 1
@@ -8500,6 +9619,258 @@ def scene_reread_lines(R, files, width, shots=None):
         srv.shutdown()
 
 
+# ── Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사 (data.json fcur · src/v2/fcur.js · fixnote.jsx FcurNote) ──
+FCUR_T, FCUR_CODE = "TSM", "TWD"           # 시험 데이터의 TSMC 를 대만 달러 재무제표로 (파이프라인이 PER · PBR · 배당수익률 · 가치 점수를 비운 모양)
+FCUR_NONAME = "MYR"                        # 문구 파일에 이름이 없는 통화 (말레이시아 링깃): 줄 없이 빈 칸만, 날 코드도 없이
+PBR0_T = "BRK-B"                           # PBR 이 0.00 으로 반올림돼 비운 종목 (data.json pbrZero, Jack 2026-11-13)
+FCUR_PENDING = re.compile(r'^(\s+)([A-Z]{3}): null,(\s+// 제안 \(Jack 승인 대기\) "([^"]+)")$', re.M)
+_FCUR = {}
+
+
+def fcur_files(files, code=FCUR_CODE):
+    f = clone(files)
+    s = next(x for x in f["data.json"]["stocks"] if x["t"] == FCUR_T)
+    assert s["cls"] == "us" and s.get("pbr") and s.get("per"), s                     # 시험 데이터: PBR · PER 이 있던 회사
+    s["fcur"] = code
+    for k in ("per", "pbr", "dy", "vz"):
+        s.pop(k, None)
+    b = next(x for x in f["data.json"]["stocks"] if x["t"] == PBR0_T)        # 시험 데이터의 BRK-B: PBR 0.0 · 가치 100점 (그 버그 그대로)
+    assert b.get("pbr") == 0.0 and b.get("per"), b
+    b["pbrZero"] = True                                                      # 파이프라인이 0.00 으로 반올림되는 PBR 을 비운 모양
+    for k in ("pbr", "vz"):
+        b.pop(k, None)
+    return f
+
+
+def fcur_proposals():
+    """src/copy/v2.js co.curName 의 승인 대기 제안 {코드: 이름} (주석의 따옴표 안). 승인되어 값이 들어간 코드는 없어요."""
+    with open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8") as fh:
+        block = fh.read().split("    curName: {", 1)[1].split("\n    },", 1)[0]
+    return {m.group(2): m.group(4) for m in FCUR_PENDING.finditer(block)}
+
+
+def fcur_named_app():
+    """app.html 을 co.curName 의 승인 대기 이름을 모두 넣고(제안 그대로) 임시 폴더에 빌드해요 (커밋하지 않아요, 폴더는 바로 지워요). 이름이
+    승인되기 전에도 이유 줄이 들어갈 자리를 화면에서 시험하려고요. 이미 승인된 이름은 그대로 두어요."""
+    if "html" not in _FCUR:
+        tmp = tmpdirs.make("baepsae-fcur-")
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+            os.makedirs(os.path.join(tmp, "tools"))
+            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+            p = os.path.join(tmp, "src", "copy", "v2.js")
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+            head, rest = src.split("    curName: {", 1)
+            block, tail = rest.split("\n    },", 1)
+            block, n = FCUR_PENDING.subn(lambda m: f'{m.group(1)}{m.group(2)}: {json.dumps(m.group(4), ensure_ascii=False)},{m.group(3)}', block)
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(head + "    curName: {" + block + "\n    }," + tail)
+            out = os.path.join(tmp, "out")
+            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+            assert r.returncode == 0, r.stdout + r.stderr
+            with open(os.path.join(out, "app.html"), encoding="utf-8") as fh:
+                html = fh.read()
+            if n:
+                with open(os.path.join(ROOT, "app.html"), encoding="utf-8") as fh:
+                    assert html != fh.read(), "이름을 넣어 빌드했는데 app.html 이 같아요"
+            _FCUR["html"] = html
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _FCUR["html"]
+
+
+def scene_us_fcur(R, files, width, named):
+    """재무제표 통화가 달러가 아닌 미국 회사 (Jack, 2026-11-12: '주가는 달러, 재무제표는 {통화} 기준이라 이 숫자는 계산하지 않았어요.').
+    시험 데이터의 TSM 을 fcur "TWD" 로, PER · PBR · 배당수익률 · 가치 점수를 비운 모양(파이프라인과 같아요)으로 바꿔요.
+    #114 리뷰 뒤 (데이터로 정해요 — 이름이 있든 없든 같은 화면, 줄만 이름이 있을 때):
+      요약 — 가치 · 배당 칸은 '–' 와 'PBR –' · '배당수익률 –' (그림 · 날짜 · 문장 없음), 실적 · 출렁임 다음 줄에 와요 · 내 기준과 맞는 정도의
+      가치 · 배당 줄은 '–' · 가치 탭 — PBR · PER 칸은 '–', 날짜 줄 · 비교 · 자세히 링크 없음, 출렁임 카드는 그대로 · 가치 자세히(주소로) —
+      PBR · PER 줄은 '–', 날짜 줄 없음 · 배당 탭 — 배당수익률 '–', '자료가 없어요' · 100만원어치 · 야후 출처 줄 없음 · 실적 탭 그대로.
+    named (통화 이름이 있는 빌드: 승인 대기 제안을 넣은 임시 빌드, 이름이 승인되면 커밋한 빌드와 같아요): 줄이 그 '–' 바로 밑에 한 번씩 —
+      한눈에 칸 밑 · 내 기준 줄 밑 · 시트 · 가치 탭의 PBR · PER 밑 · 자세히의 배수 목록 안 · 배당수익률 밑 ('대만 달러').
+    not named (커밋한 빌드, 문구 파일에 이름이 없는 통화 MYR — 이름이 승인되기 전의 TWD 도 같은 길): 같은 '–' 화면, 줄도 'MYR' 글자도 없고
+      console 에 코드. AAPL · 삼성전자에는 줄도 '–' 칸도 없어요. 모두 12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"미국 재무제표 통화 {width}" + (" · 이름 있는 빌드" if named else " · 이름 없는 통화")
+    code = FCUR_CODE if named else FCUR_NONAME
+    assert FCUR_NONAME not in (CO["curName"] or {}) and FCUR_NONAME not in fcur_proposals(), "이름 없는 통화로 고른 코드에 이름이 생겼어요"
+    cur_name = (CO["curName"] or {}).get(FCUR_CODE) or fcur_proposals().get(FCUR_CODE) if named else None
+    want = fillp(CO["fcur"], currency=cur_name) if cur_name else None
+    assert not named or want, "이름 있는 빌드인데 대만 달러 이름이 없어요"
+    n_line = 1 if named else 0
+    yld = C["pick"]["receipt"]["yield"]
+    wide = width >= 1024
+    site = build_site(fcur_files(files, code), app=fcur_named_app() if named else None)
+    srv, ctx, page, base = R.open(site, width, path="/app.html?dev=1#home", device=pc_device(width) if wide else None)
+    logs = []
+    page.on("console", lambda m: logs.append(m.text))
+    wait_ready(page)
+    lines = lambda sel="": page.locator(f'{sel} [data-ui-v2="fcur"]'.strip())   # noqa: E731
+
+    def common(where):
+        assert code not in page.locator("body").inner_text(), f"{where}: 통화 코드가 그대로 보여요"
+        if named:
+            for i in range(lines().count()):
+                assert lines().nth(i).inner_text().strip() == want and lines().nth(i).get_attribute("data-cur") == code
+                assert lines().nth(i).evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def below(a, b):
+        """b 의 위쪽이 a 의 아래쪽 바로 밑 (40px 안)."""
+        ba, bb = a.bounding_box(), b.bounding_box()
+        return ba["y"] + ba["height"] - 1 <= bb["y"] <= ba["y"] + ba["height"] + 40
+
+    def summary():
+        co_hash(page, f"#stocks/{FCUR_T}")
+        page.locator('[data-ui-v2="co-summary"]').wait_for(state="visible")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        tiles.wait_for(state="visible")
+        tl = tiles.locator('[data-ui-v2="co-tile"]')
+        topics = tl.evaluate_all("(els) => els.map((e) => [e.dataset.topic, e.dataset.rule])")
+        assert topics == [["earn", "up"], ["risk", topics[1][1]], ["value", "fcur"], ["div", "fcur"]], topics   # 가치 · 배당이 아래 줄
+        for topic, num_text in (("value", "PBR –"), ("div", f"{yld} –")):
+            t_ = tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{topic}"]')
+            assert t_.locator('[data-ui-v2="tile-phrase"]').inner_text().strip() == "–", t_.inner_text()
+            assert t_.locator('[data-ui-v2="tile-number"]').inner_text().strip() == num_text, t_.inner_text()
+            assert t_.locator('[data-ui-v2="tile-basis"]').count() == 0 and t_.locator("svg[data-art], [data-ui-v2='tile-art']").count() == 0
+            assert CO["tiles"]["na"] not in t_.inner_text()
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        fit.wait_for(state="visible")
+        rows = {r.get_attribute("data-card"): r for r in fit.locator('[data-ui-v2="rank-row"]').all()}
+        assert set(rows) >= {"value", "div"}, list(rows)                         # 고른 기준이 없으면 가치 · 배당 카드 먼저
+        for c in ("value", "div"):
+            assert rows[c].get_attribute("data-side") == "blank" and rows[c].inner_text().strip().endswith("–"), rows[c].inner_text()
+        assert tiles.locator('[data-ui-v2="fcur"]').count() == n_line and fit.locator('[data-ui-v2="fcur"]').count() == n_line
+        assert lines().count() == 2 * n_line
+        if named:                                                               # 가치 · 배당 칸 바로 밑 · 내 기준 줄 밑
+            assert below(tiles.locator('[data-ui-v2="co-tile"][data-topic="value"]'), tiles.locator('[data-ui-v2="fcur"]'))
+            assert lines().nth(1).bounding_box()["y"] > rows["div"].bounding_box()["y"]
+        else:
+            assert any(f"statement currency {code}" in x and "co.curName" in x for x in logs), logs[-5:]
+        common("요약")
+        if R.shots:
+            tiles.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fcur-summary-{width}-{'named' if named else 'pending'}.png"))
+        fit.get_by_role("button", name=CO["fit"]["all"]).click()
+        sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+        sheet.wait_for(state="visible")
+        assert sheet.locator('[data-ui-v2="fcur"]').count() == n_line
+        srow = {r.get_attribute("data-card"): r.get_attribute("data-side") for r in sheet.locator('[data-ui-v2="rank-row"]').all()}
+        assert srow.get("value") == "blank" and srow.get("div") == "blank" and srow.get("growth") in ("top", "bottom"), srow
+        common("기준 카드 시트")
+        page.keyboard.press("Escape")
+        sheet.wait_for(state="detached")
+    R.check(page, S, f"{FCUR_T} 요약: 가치 · 배당 칸 '–' (PBR – · 배당수익률 –) 아래 줄 · 가치 · 배당 순위 '–'"
+            + (" · 줄은 칸 밑 · 내 기준 밑 · 시트에 한 번씩" if named else f" · {code}: 줄 없음 · console 에 코드"), summary)
+
+    def tabs():
+        co_hash(page, f"#stocks/{FCUR_T}/value")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === 'value'")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        for sel in ("co-pbr", "co-per"):
+            loc = val.locator(f'[data-ui-v2="{sel}"]')
+            assert loc.count() == 1 and loc.get_attribute("data-blank") == "fcur" and loc.inner_text().split("\n")[-1].strip() == "–", loc.inner_text()
+        for sel in ("co-compare", "co-strip", "co-value-more"):
+            assert page.locator(f'[data-ui-v2="{sel}"]').count() == 0, sel
+        assert val.locator('[data-ui-v2="date-line"]').count() == 0                # 보이지 않는 숫자의 날짜 없음 (빈 카드도 아니에요)
+        assert page.locator('[data-ui-v2="co-risk"]').count() == 1                 # 출렁임은 그대로 (가격으로 만든 값)
+        assert lines('[data-ui-v2="co-value"]').count() == n_line and lines().count() == n_line
+        if named:
+            assert below(val.locator('[data-ui-v2="co-per"]'), lines())
+        common("가치 탭")
+        co_hash(page, f"#stocks/{FCUR_T}/value-more")
+        more = page.locator('[data-ui-v2="co-value-more"]')
+        more.wait_for(state="visible")
+        ratios = more.locator('[data-ui-v2="co-ratios"]')
+        got = ratios.locator('[data-ui-v2="co-ratio"]').evaluate_all("(els) => els.map((e) => e.innerText.split('\\n').map((x) => x.trim()).filter(Boolean))")
+        assert [g[0] for g in got] == ["PBR", "PER"] and all("–" in g for g in got), got
+        assert ratios.locator('[data-ui-v2="date-line"]').count() == 0 and lines('[data-ui-v2="co-ratios"]').count() == n_line
+        common("가치 자세히")
+        co_hash(page, f"#stocks/{FCUR_T}/div")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === 'div'")
+        div = page.locator('[data-ui-v2="co-div"]')
+        div.wait_for(state="visible")
+        y = div.locator('[data-ui-v2="co-yield"]')
+        assert y.count() == 1 and y.get_attribute("data-blank") == "fcur" and y.inner_text().split("\n")[-1].strip() == "–", y.inner_text()
+        assert page.locator('[data-ui-v2="co-million"]').count() == 0 and CO["tiles"]["na"] not in div.inner_text(), div.inner_text()
+        assert lines('[data-ui-v2="co-div-stats"]').count() == n_line and lines().count() == n_line
+        if named:
+            assert below(y, lines())
+        common("배당 탭")
+        co_hash(page, f"#stocks/{FCUR_T}/earn")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === 'earn'")
+        page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
+        assert lines().count() == 0                                               # 실적(ROE · 영업이익률 · 매출)은 그대로
+        common("실적 탭")
+        for code_ in ("AAPL", "005930"):                                          # fcur 없는 회사: 줄 없음, '–' 칸 없음, PBR 그대로
+            for ctab in (None, "value", "div"):
+                co_hash(page, f"#stocks/{code_}" + (f"/{ctab}" if ctab else ""))
+                page.wait_for_function("(t) => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === t", arg=ctab or "summary")
+                page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+                assert lines().count() == 0 and page.locator('[data-blank="fcur"], [data-rule="fcur"]').count() == 0, (code_, ctab)
+            co_hash(page, f"#stocks/{code_}/value")
+            page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+            assert page.locator('[data-ui-v2="co-pbr"]').count() == 1 and "–" not in page.locator('[data-ui-v2="co-pbr"]').inner_text(), code_
+        R.collect(page)
+        if R.shots:
+            for ctab in ("value", "div"):
+                co_hash(page, f"#stocks/{FCUR_T}/{ctab}")
+                page.wait_for_timeout(200)
+                page.screenshot(path=os.path.join(R.shots, f"fcur-{ctab}-{width}-{'named' if named else 'pending'}.png"))
+    R.check(page, S, f"{FCUR_T} 가치 탭 · 가치 자세히 · 배당 탭: PBR · PER · 배당수익률 '–'" + (" 바로 밑에 줄 한 번씩" if named else ", 줄 없음")
+            + " · 날짜 줄 · 자세히 링크 · '자료가 없어요' 없음 · 실적 탭 · AAPL · 삼성전자 그대로", tabs)
+
+    def pbr_zero():
+        """Jack, 2026-11-13: PBR 이 0.00 으로 반올림된 BRK-B — 가치 칸 · 가치 탭 · 가치 자세히 · 내 기준의 가치 줄이 'PBR –' 이고 그 바로 밑에
+        '자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요.' 한 번씩. PER · 배당 · 날짜 줄은 그대로, 통화 줄은 없어요."""
+        zl = lambda sel="": page.locator(f'{sel} [data-ui-v2="pbr-zero"]'.strip())   # noqa: E731
+        co_hash(page, f"#stocks/{PBR0_T}")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        tiles.wait_for(state="visible")
+        order = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => [e.dataset.topic, e.dataset.rule])")
+        assert [o[0] for o in order] == ["earn", "div", "risk", "value"] and order[3][1] == "pbr0", order
+        vt = tiles.locator('[data-ui-v2="co-tile"][data-topic="value"]')
+        assert vt.locator('[data-ui-v2="tile-number"]').inner_text().strip() == "PBR –"
+        assert tiles.locator('[data-ui-v2="pbr-zero"]').count() == 1 and below(vt, tiles.locator('[data-ui-v2="pbr-zero"]'))
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        fit.wait_for(state="visible")
+        assert fit.locator('[data-ui-v2="rank-row"][data-card="value"]').get_attribute("data-side") == "blank"
+        assert fit.locator('[data-ui-v2="pbr-zero"]').count() == 1 and lines().count() == 0
+        for i in range(zl().count()):
+            assert zl().nth(i).inner_text().strip() == CO["pbrZero"]
+        common("PBR 0 요약")
+        co_hash(page, f"#stocks/{PBR0_T}/value")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        pb, pe = val.locator('[data-ui-v2="co-pbr"]'), val.locator('[data-ui-v2="co-per"]')
+        assert pb.get_attribute("data-blank") == "pbr0" and pb.inner_text().split("\n")[-1].strip() == "–"
+        assert pe.count() == 1 and pe.get_attribute("data-blank") is None and "–" not in pe.inner_text()   # PER 은 그대로
+        assert zl('[data-ui-v2="co-value"]').count() == 1 and zl().inner_text().strip() == CO["pbrZero"]
+        assert val.locator('[data-ui-v2="date-line"]').count() >= 1                # PER 의 날짜는 그대로
+        common("PBR 0 가치 탭")
+        co_hash(page, f"#stocks/{PBR0_T}/value-more")
+        ratios = page.locator('[data-ui-v2="co-ratios"]')
+        ratios.wait_for(state="visible")
+        got = ratios.locator('[data-ui-v2="co-ratio"]').evaluate_all("(els) => els.map((e) => e.innerText.split('\\n').map((x) => x.trim()).filter(Boolean))")
+        assert got[0][0] == "PBR" and "–" in got[0] and got[1][0] == "PER" and "–" not in got[1], got
+        assert zl('[data-ui-v2="co-ratios"]').count() == 1
+        common("PBR 0 가치 자세히")
+        if R.shots:
+            co_hash(page, f"#stocks/{PBR0_T}")
+            page.locator('[data-ui-v2="co-tiles"]').scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"pbr0-summary-{width}.png"))
+    if named:
+        R.check(page, S, f"{PBR0_T} PBR 0.00 (pbrZero): 가치 칸 · 내 기준 · 가치 탭 · 자세히에 'PBR –' 와 그 밑 줄 한 번씩 · PER · 날짜 그대로", pbr_zero)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -8536,7 +9907,10 @@ def main():
                       lambda: scene_v191b(R, files, width),           # v19.1b: divCheck 가 있는 파일 (분할 확인 배당 · 베타 범위 · 2022년 범위)
                       lambda: scene_own_dates(R, files, width),       # v19.1c: 미국 종목의 자기 가격 날짜 (pxd)
                       lambda: scene_stale_after(R, files, width),     # v19.1c: 늦음 경고 시각 (staleAfter)
-                      lambda: scene_stale_recheck(R, files, width)]   # v19.1c: 열어 둔 화면도 staleAfter 가 지나면 경고
+                      lambda: scene_stale_recheck(R, files, width),   # v19.1c: 열어 둔 화면도 staleAfter 가 지나면 경고
+                      lambda: scene_rank(R, files, width),             # v19.5b 홈 · 종목 순위: 칩마다 목록 · 움직임 · 전체 보기
+                      lambda: scene_rank_still(R, files, width),       # v19.5b: 움직임 줄이기 · 멈춘 데이터 · 내 기준 칩 · 불러오기 실패
+                      lambda: scene_rank_r1(R, files, width)]          # v19.5b 리뷰 1차: 오래 누름 · 키보드 · 빈 목록 · 0.0% · 미국 업종
             for fn in scenes:
                 try:
                     fn()
@@ -8571,7 +9945,11 @@ def main():
                    lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur
                    lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280),    # 2026-11-08 돌아온 화면은 한 번 받아요
                    lambda: scene_refetch_drafts(R, files, 390), lambda: scene_refetch_drafts(R, files, 1280),   # 만들던 것 위에는 기다려요
-                   lambda: scene_say_why_2(R, files, 1280)):                                                # say-why 2: PC 의 새 데이터 줄 · 홈 공시
+                   lambda: scene_say_why_2(R, files, 1280),                                                 # say-why 2: PC 의 새 데이터 줄 · 홈 공시
+                   lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
+                   lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
+                   lambda: scene_us_fcur(R, files, 1280, True),
+                   lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280)):                 # v19.6d 어두운 화면
             try:
                 fn()
             except Exception as e:
@@ -8587,6 +9965,11 @@ def main():
         except Exception as e:
             R.results.append(("[아이폰] 장면 실행", False, str(e).splitlines()[0][:200]))
             print(f"  FAIL  [아이폰] 장면 실행: {e}", flush=True)
+        try:                                                     # 위 장면이 쓰는 home_settled 의 시간 한도 (Jack, 2026-11-13)
+            scene_home_settled_limit(R, files)
+        except Exception as e:
+            R.results.append(("[홈 공시 기다림 한도] 장면 실행", False, str(e).splitlines()[0][:200]))
+            print(f"  FAIL  [홈 공시 기다림 한도] 장면 실행: {e}", flush=True)
         try:                                                     # v19.0c: 아이폰 홈 화면 안내 (아이폰 사파리에서만)
             scene_hint(R, files, p.devices)
         except Exception as e:

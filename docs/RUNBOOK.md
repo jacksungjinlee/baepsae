@@ -52,10 +52,37 @@ serve the `docs/` folder (two of its files must answer "not found").
       says so: `!! 확인 못 함` in the log, a warning on the run page, a paragraph in the step summary.
     - **If the `stmtCur` line appears although yesterday's data had such companies, suspect the pipeline, not the
       market:** DART's currency reading was probably lost, and then a company that files in dollars (두산밥캣,
-      아남전자) is published with its dollar amounts read as won. The gate has no failing row for that today. Check
-      those companies' numbers on the site.
+      아남전자) is published with its dollar amounts read as won. Since 2026-11-12 the gate compares the marks with
+      the previous publication (row "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음"):
+      - **It fails** when a Korean company (code not starting with 9) had the mark in the previous publication, lost it
+        today, and has amounts filled — the exact case where dollar amounts would be shown as won (Jack, 2026-11-12;
+        judged against the previous publication, not a list of names). If a company really switched to reporting in
+        won, add it to `STMT_WON_SWITCH` in `validate_data.py` (one line, with Jack's yes); it then only warns. It also fails when, of the marked companies still listed, at
+        least 3 remain and more than half lost the mark (the "DART's currency reading was lost" day), and when the
+        previous `corp.json` cannot be read or was not given. A failure is sticky: the comparison stays with the last good publication, so every later run fails
+        until the pipeline is fixed. `--bootstrap` is not the fix (it skips the comparison and makes the bad day the
+        new baseline).
+      - **It warns**, naming the companies (domestic ones with amounts first), when any marked company lost its mark,
+        or when more than half of the marked companies are gone from today's list. **The warning appears on that one
+        run only:** once it publishes, the next run compares with a file that no longer has the mark. The same holds
+        when a Korean marked company is missing from the day's list (also a warning, "오늘 목록에 없는 국내 회사"): check
+        that company again after the next publish, because a day later its amounts could come back without the mark. So act on it the
+        same morning: open the named companies on the site, and if dollar amounts show as won, revert or fix the
+        pipeline and start a run by hand.
+      - Branch dry runs with DART off fail this row too, like the other DART rows (expected).
+      - When the gate's "previous publication" moves off `main` (v17.6 3b), the new source must include `corp.json`,
+        or every run fails on this row (loudly, but it holds the publish).
     - The old app has 75 built-in stocks (`src/detail.jsx` `BASE_STOCKS`); the gate guarantees that 17 of them are in
-      the data, and guarantees a beta and volatility for none of the US ones. When a built-in stock is missing from
+      the data, and guarantees a beta and volatility for none of the US ones one by one. Since 2026-11-13 the gate
+      fails when fewer than 95% of all US stocks have a beta, or a volatility, and warns below 97% (rows "미국 beta 채움"
+      and "미국 vol 채움", the Korean rule; their change rows mirror the Korean ones and never fail before the floor
+      does). Below 97% the row's value names the first 10 blank stocks (so the 09:13 check sees them) and the
+      log and step summary list them all ("미국 beta 빈 종목"). Read the names: if they are new listings (less than 250
+      trading days of prices, so the pipeline leaves beta and volatility blank by design), tell Jack before the share
+      reaches 95%; do not lower the floor. If they are long-listed names, suspect the pipeline, with one standing
+      exception: ABVX has a beta but no volatility (its volatility is above the pipeline's 300% cap). A Yahoo outage
+      drops tickers from the list rather than blanking them, so these rows don't see it; "미국 종목 수 변화" catches
+      it only when more than 15% of US stocks go missing, and a smaller outage shows in no gate row. When a built-in stock is missing from
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
       correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
       (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
@@ -79,7 +106,7 @@ serve the `docs/` folder (two of its files must answer "not found").
   trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 395 KB; its seven insider-trade rows are made up except for company and date), `smoke_v2` and `smoke_launch` use the
   2.0 test data (`tests/fixtures/v2`), and `smoke_app` and `smoke_v2` run on a test clock that starts at 07:00 KST on a
   fixed day (`tests/testclock.py`). So a pull request's code meets today's real data in the daily run above, in the
-  deploy check below (since #NNN, every deploy that changes code runs the same three checks before publishing), or when
+  deploy check below (since #115, every deploy that changes code runs the same three checks before publishing), or when
   the three commands are run by hand: `python tests/real_data_check.py --data DIR`, `python tests/smoke_launch.py --data DIR`
   and `python tests/smoke_app.py --data DIR`. To run them by hand (to look into a blocked deploy, or whenever `CLAUDE.md`
   asks for it before a merge): put a fresh copy of
@@ -94,7 +121,7 @@ serve the `docs/` folder (two of its files must answer "not found").
   script refuses a day on which a built-in stock of the old app is missing or blank, or gold is an estimate): run
   `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
   `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.
-- **The deploy check (since #NNN, Jack 2026-11-12).** Every deploy that changes code (a merge to `main`, or Actions →
+- **The deploy check (since #115, Jack 2026-11-12).** Every deploy that changes code (a merge to `main`, or Actions →
   Deploy → Run workflow) runs the daily run's three checks before anything is uploaded: on the four data files it is
   about to publish, exactly as they are in the folder it uploads, with the code it has just built (steps "배포 전 화면
   검사 …" in Deploy, `tools/deploy_check.py`). The same `--data` rules as the daily run apply (`!! 확인 못 함` and
@@ -180,6 +207,31 @@ serve the `docs/` folder (two of its files must answer "not found").
     "필요한지", "결과") get the token; the three checks, their tools and the browser never see it. npm packages are
     installed without their install scripts, for the site build and the live rebuild alike (the built pages are the
     same byte for byte).
+- **US companies whose financial statements are not in dollars (since #114).** The daily run marks them `fcur` (Yahoo's
+  financialCurrency, 27 on 2026-11-12) and blanks their PER, PBR and dividend yield (a 0% stays only when Yahoo clearly
+  shows no dividend in the last 12 months). When Yahoo answers with only part of a company's details (no currency, sector
+  or description), the run keeps the last known values from the US info cache (only from the same company, or from an
+  entry at most 14 days old) and **the next run asks again**: such an answer is never kept as fresh for 3 days. Five
+  gate rows:
+  - "미국 재무제표 통화가 달러가 아닌 회사: … 빈 칸" and "미국 PBR 0 근처라 비운 종목: …" fail if a blanked number is back:
+    a pipeline bug, never the market. Fix the code; never loosen the row.
+  - "미국 재무제표 통화를 모르는 회사 (경고만)" names companies whose currency Yahoo did not give (FISV on 11-12). They are
+    not blanked; the next run asks Yahoo again. Look at their PBR on the site if the same name stays for days.
+  - "미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)" names the stocks whose details were filled from the cache
+    today, with their share of all US stocks. The "미국 설명 채움" row cannot see a bad Yahoo day any more (the cache fills
+    the gaps), so this row is where it shows. A few names: nothing to do, the next run asks again. Many (more than about
+    10%, or the same names day after day): Yahoo is answering badly; tell Jack before the cached details grow old.
+  - "어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음": **fails** only when such a company has no currency information
+    today and its PER, PBR or yield is back. The run keeps the last known currency when Yahoo leaves it out, so a failure
+    means something broke. What to check, in the run log: did the US info cache come back ("미국 상세 정보 보관본 N곳" near
+    the usual ~770; "보관본 없음" means the cache was lost), and the lines "야후 응답에 재무제표 통화가 없어 예전 값을 그대로 씀"
+    and "일부만 온 야후 응답 … 다음 실행에서 다시 물어봐요". If the cache was lost, Yahoo left the currency out on a day with
+    nothing to fall back on: the next scheduled run asks again, and it usually publishes. If the cache is there and the
+    row still fails, the merge is broken: fix the code in a PR. Never get around it with a bootstrap run (`--bootstrap`
+    skips the comparison with yesterday and would publish the wrong numbers) or by loosening the row.
+    It **warns** with "야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요" when Yahoo now says the company reports in dollars
+    (numbers or not; the publish goes out): open the company on the site and compare its PBR and PER with the company's
+    own report; if they look wrong, tell Jack. It also warns when a company has neither a currency nor numbers.
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.

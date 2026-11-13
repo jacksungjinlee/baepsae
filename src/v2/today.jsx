@@ -1,9 +1,9 @@
 // 홈 (v19.0c; the 오늘 screen of v18.3 Part E). Returning visitors: the date line, the hero band with the rule verdict
-// (REDESIGN 3), one strip per portfolio (value, return, today's move, my stocks) and 시장 한눈에 (the 시장 tab's four
-// tiles, each with its own date). First visit (no saved portfolio): the hero with the 뱁이 carrying twigs (baepi-16-build),
-// the descriptor and catchphrase, 포트폴리오 만들기, the iPhone home-screen hint and 거래대금 상위 종목 as names only —
-// CLAUDE.md: 뱁이 never on a screen that shows numbers, so that screen has none (no prices, changes or tiles; dates are
-// not numbers). The 가진 종목 넣기 card waits for its feature.
+// (REDESIGN 3), one strip per portfolio (value, return, today's move, my stocks), 시장 한눈에 (the 시장 tab's four
+// tiles, each with its own date) and, under it, 종목 순위 (v19.5b, rank.jsx). First visit (no saved portfolio): the hero
+// with the descriptor and catchphrase, 포트폴리오 만들기, the iPhone home-screen hint and 종목 순위 with its numbers.
+// v19.5b: that screen shows numbers now, so it has no 뱁이 (the v19.3c welcome screen carries the 뱁이; CLAUDE.md: 뱁이
+// never on a screen that shows numbers). Before v19.5b it showed the 뱁이 and 거래대금 상위 종목 as names only.
 // States, from the daily check in rules.js (evaluateAll):
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
@@ -24,19 +24,19 @@
 // v19.0b: the verdict carries a state icon (check-circle on calm days, flag on 확인할 일 days), never a 뱁이 picture
 // (CLAUDE.md: 뱁이 never beside a verdict or on a card with numbers). The stale band is not a verdict: no icon.
 // PC (v19.0d, boards PcHome · PcHomeNew): the date line and the verdict across the top, then two columns — my portfolios
-// on the left, 시장 한눈에 on the right (its tiles stacked). First visit: the hero across the top (the 뱁이 at 176 px on the
-// right, 포트폴리오 만들기 under the words), then 거래대금 상위 종목 with 한국 and 미국 side by side (still no numbers).
+// on the left, 시장 한눈에 and 종목 순위 on the right (its tiles stacked). First visit: the hero across the top (포트폴리오
+// 만들기 under the words), then 종목 순위 across the page (Cols: the one column with something in it takes the width).
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Mascot, IMG, Cols, useLayout, useCol, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { MissingNote } from "./tracking.jsx";
 import { MarketTiles } from "./market.jsx";
-import { PopularLists } from "./stocks.jsx";
+import { RankCard } from "./rank.jsx";
 import { IosHint } from "./hint.jsx";
 import { Welcome } from "./guide.jsx";
 import { evaluateAll, todayCtx } from "./rules.js";
@@ -229,10 +229,12 @@ function ImportedStrip({ deck, de, ctx, load, go }) {
   return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home />;
 }
 
-// 홈's first visit (no saved portfolio): no numbers on this screen (it shows a 뱁이).
-// The date line stays (a date is not a number here, and it carries the "N일째 갱신이 멈췄어요" warning).
-function FirstVisit({ load, go }) {
+// 홈's first visit (no saved portfolio): the descriptor, 포트폴리오 만들기 and 종목 순위 (v19.5b: with its numbers, so no 뱁이
+// here; the v19.3c welcome screen before it carries the 뱁이). The date line stays, with the stale warning when there is one.
+// A failed load shows the load-failure message where 종목 순위 would be (no picture: the screen around it is the same).
+function FirstVisit({ load, store, go }) {
   const { wide } = useLayout();
+  const rank = load.status === "ok" && <RankCard load={load} store={store} go={go} />;
   if (wide) {
     return (
       <>
@@ -244,11 +246,10 @@ function FirstVisit({ load, go }) {
             <p style={tx(SIZE.body, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(2) })}>{C.about.ko.hero.catch}</p>
             <div data-ui-v2="home-start" style={{ marginTop: SPACE(5), maxWidth: SPACE(70) }}><Button onClick={() => go("build")}>{C.build.title}</Button></div>
           </div>
-          <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={176} />
         </Card>
         <IosHint kind="first" />
         {load.status === "fail" && <LoadFail picture={false} />}
-        {load.status === "ok" && <PopularLists load={load} plain />}
+        {rank && <Cols main={null} side={rank} />}
       </>
     );
   }
@@ -256,17 +257,14 @@ function FirstVisit({ load, go }) {
     <>
       {load.status === "ok" && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
       <EpsOwnersNote load={load} />
-      <Card data-ui-v2="home-hero" style={{ display: "flex", alignItems: "center", gap: SPACE(4), marginTop: SPACE(4) }}>
-        <Mascot src={IMG.build} alt={C.build.s0.imgAlt} size={92} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{C.about.ko.hero.descriptor}</h2>
-          <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{C.about.ko.hero.catch}</p>
-        </div>
+      <Card data-ui-v2="home-hero" style={{ marginTop: SPACE(4) }}>
+        <h2 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.3 })}>{C.about.ko.hero.descriptor}</h2>
+        <p style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{C.about.ko.hero.catch}</p>
       </Card>
       <div data-ui-v2="home-start" style={{ marginTop: SPACE(3) }}><Button onClick={() => go("build")}>{C.build.title}</Button></div>
       <IosHint kind="first" />
       {load.status === "fail" && <LoadFail picture={false} />}
-      {load.status === "ok" && <PopularLists load={load} plain />}
+      {rank}
     </>
   );
 }
@@ -304,6 +302,11 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   const imported = ev.ok ? decks.filter(isImported) : [];
   const us = held.some((de) => de.holdings.some((x) => x.cls === "us")) || (ev.ok && decks.some((d) => usHeld(d, load)));   // v19.3d: 가진 종목 too
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
+  // 종목 순위: PC from 1200 px in the right column under 시장 한눈에; from 1024 to 1199 px at the end of the main column (Jack, 2026-11-12)
+  const { wide } = useLayout();
+  const roomy = useRoomy();
+  const rankInMain = wide && !roomy;
+  const rankCard = ok && <RankCard key="rank" load={load} store={store} go={go} />;
   if (welcome) {
     return (
       <Page pad={pad} cols={2}>
@@ -317,7 +320,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
     return (
       <Page pad={pad} cols={2}>
         <AppBar />
-        <FirstVisit load={load} go={go} />
+        <FirstVisit load={load} store={store} go={go} />
         <Footer />
       </Page>
     );
@@ -339,7 +342,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
         ev.ok && !held.length && !imported.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),
-      ]} side={ok && <MarketGlance load={load} go={go} />} />
+        rankInMain && rankCard,
+      ]} side={ok && [<MarketGlance key="glance" load={load} go={go} />, !rankInMain && rankCard]} />
       <Footer />
     </Page>
   );

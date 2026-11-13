@@ -1217,7 +1217,9 @@ def test_us_market_cap_coverage_counts_companies_only():
         stock(cur, t).pop("cap")
     cur["data"]["stocks"] += [{"t": f"E{i:03d}", "nk": f"ETF {i}", "ne": f"ETF {i}", "cls": "us", "price": 50.0,
                                "val": 100.0, "de": "A fund.", "fxu": True, "etf": True,
-                               "d1": 0.5} for i in range(40)]   # 2026-11-03: 33개 · 진짜 ETF 처럼 d1 이 있어요 ('미국 d1 채움')
+                               "d1": 0.5,                         # 2026-11-03: 33개 · 진짜 ETF 처럼 d1 이 있어요 ('미국 d1 채움')
+                               "beta": 1.0, "vol": 15.0}          # 2026-11-12: 진짜 ETF 처럼 베타·변동성도 ('미국 beta·vol 채움')
+                              for i in range(40)]
     for s in us_companies(cur)[10:13]:                         # 회사 주식 3개 빠짐 (2026-11-03 발행본의 우선주 3개처럼)
         s["cap"] = None
     rep = check(cur, prev, final)

@@ -12,7 +12,7 @@
 // The start screen (BuildStart2 · PcStart2): the dark 처음부터 card, 가진 종목으로 시작하기 (opens 가진 종목 넣기), the templates
 // as recipe cards, no 뱁이 (they show points and percentages). RECIPE_START on since Jack's yes (2026-11-08).
 import React, { useEffect, useMemo, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, TOPIC_CHIP, ICON_CHIP } from "../ui/tokens.js";
+import { COLOR, OVERLAY, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, TOPIC_CHIP, ICON_CHIP, TOPIC_DOT } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Segmented, Stepper, MoneyInput, StatusChip } from "../ui/components.jsx";
 import {
@@ -237,7 +237,7 @@ function Fan() {
     <span aria-hidden="true" style={{ display: "block", position: "relative", height: SPACE(18), width: SPACE(42), marginBottom: SPACE(2) + 2 }}>
       {FAN_CARDS.map((id, i) => (
         <span key={id} style={{ position: "absolute", left: i * 28, top: lift[i], transform: `rotate(${tilt[i]}deg)`, width: 50, height: 64, borderRadius: 11,
-          background: COLOR.surface, boxShadow: `0 2px 8px rgba(0, 0, 0, 0.25), inset 0 -14px 0 ${TOPIC_CHIP[CARD_PICS[id].topic]}`,
+          background: COLOR.surface, boxShadow: `0 2px 8px ${OVERLAY.lift}, inset 0 -14px 0 ${TOPIC_CHIP[CARD_PICS[id].topic]}`,
           display: "flex", alignItems: "center", justifyContent: "center" }}>
           <img src={CARD_PICS[id].src} alt="" width={34} height={34} decoding="async" style={{ display: "block", width: 34, height: 34, objectFit: "contain" }} />
         </span>
@@ -294,10 +294,10 @@ function StepStart2({ start, onImport }) {
   const ways = (
     <div data-ui-v2="start-ways" style={{ minWidth: 0 }}>
       <ScreenTitle>{s0.title}</ScreenTitle>
-      <section data-ui-v2="start-blank" style={{ marginTop: SPACE(3), background: COLOR.ink, borderRadius: RADIUS.lg + 2, padding: `${SPACE(5)}px ${SPACE(5)}px ${SPACE(4) + 2}px`, overflow: "hidden" }}>
+      <section data-ui-v2="start-blank" style={{ marginTop: SPACE(3), background: COLOR.primary, borderRadius: RADIUS.lg + 2, padding: `${SPACE(5)}px ${SPACE(5)}px ${SPACE(4) + 2}px`, overflow: "hidden" }}>
         <Fan />
-        <h3 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.surface, { letterSpacing: "-0.03em" })}>{s0.blank}</h3>
-        <p style={tx(SIZE.sm - 1, WEIGHT.regular, "#CBD3DF", { marginTop: SPACE(1) })}>{s0.blankBody}</p>
+        <h3 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.onPrimary, { letterSpacing: "-0.03em" })}>{s0.blank}</h3>
+        <p style={tx(SIZE.sm - 1, WEIGHT.regular, COLOR.onPrimary3, { marginTop: SPACE(1) })}>{s0.blankBody}</p>
         <button type="button" data-deck="blank" onClick={() => start(null)}
           style={{ ...tap, marginTop: SPACE(3) + 2, display: "inline-flex", alignItems: "center", gap: SPACE(1) + 2, minHeight: TOUCH, padding: `0 ${SPACE(4)}px`,
             border: "none", borderRadius: RADIUS.sm, background: COLOR.surface, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>
@@ -314,7 +314,7 @@ function StepStart2({ start, onImport }) {
       <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: wide ? SPACE(3) : SPACE(6) })}>{s0.recipes}</h3>
       <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "flex", alignItems: "center", gap: SPACE(1) + 2, marginTop: SPACE(1) })}>
         <span aria-hidden="true" style={{ display: "inline-flex", gap: 3, flexShrink: 0 }}>
-          {[0, 1, 2, 3, 4].map((i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: i < 3 ? "#7C889C" : DOT_EMPTY }} />)}
+          {[0, 1, 2, 3, 4].map((i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: i < 3 ? TOPIC_DOT.plain : DOT_EMPTY }} />)}
         </span>
         <span>{s0.dotsNote}</span>
       </p>
@@ -352,7 +352,7 @@ function CardArt({ id, dim = false }) {
 // 기준 carries the screen-reader name for all of them ("가치 4점"); the others and the empty ones are hidden from it.
 export function Slot({ slot }) {
   const base = { width: "100%", aspectRatio: "1 / 1", borderRadius: ICON_CHIP.radius, display: "flex", alignItems: "center", justifyContent: "center" };
-  if (!slot) return <span data-ui-v2="meter-slot" data-empty="1" aria-hidden="true" style={{ ...base, boxShadow: "inset 0 0 0 1.5px #D9D4CC" }} />;
+  if (!slot) return <span data-ui-v2="meter-slot" data-empty="1" aria-hidden="true" style={{ ...base, boxShadow: `inset 0 0 0 1.5px ${COLOR.edge}` }} />;
   const pic = CARD_PICS[slot.id];
   const name = slot.first ? fill(C.build.s1.slot, { card: C.build.cards[slot.id].name, n: slot.n }) : undefined;
   return (
@@ -431,8 +431,8 @@ function RoundBtn({ kind, filled, disabled, label, onClick }) {
       style={{ ...tap, width: TOUCH, height: TOUCH, margin: `0 -${SPACE(1) + 2}px`, border: "none", background: "none", display: "flex", alignItems: "center",
         justifyContent: "center", opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer", flexShrink: 0 }}>
       <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-        background: filled ? COLOR.ink : COLOR.surface, boxShadow: filled ? "none" : "inset 0 0 0 1.5px #C9C2B8",
-        ...tx(SIZE.h3 + 2, WEIGHT.bold, filled ? COLOR.surface : COLOR.ink, { lineHeight: 1 }) }}>{SIGN[kind]}</span>
+        background: filled ? COLOR.primary : COLOR.surface, boxShadow: filled ? "none" : `inset 0 0 0 1.5px ${COLOR.edgeStrong}`,
+        ...tx(SIZE.h3 + 2, WEIGHT.bold, filled ? COLOR.onPrimary : COLOR.ink, { lineHeight: 1 }) }}>{SIGN[kind]}</span>
     </button>
   );
 }

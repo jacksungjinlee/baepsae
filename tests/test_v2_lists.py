@@ -3,7 +3,8 @@
 
 - 주소(src/v2/routes.js): #home · #portfolio · #stocks · #market · #about · #portfolio/build · #home/why, 없는 주소는 #home
 - 예전 뱁새 바로가기(src/deeplink.js): #macro · #disc · #corp=코드 · #info=glossary|sources 만, 나머지는 아무것도 안 해요
-- 거래대금 상위 종목(stocklist.js popularLists): 한국 · 미국 따로, data.json popular 의 순서 그대로, 펀드 빼고, 목록마다 날짜
+- 거래대금 (v19.5b: 종목 순위의 거래대금 칩, ranks.js — 그 전의 거래대금 상위 종목 stocklist.popularLists 를 대신해요): 한국 · 미국 따로,
+  거래대금(val) 큰 순, 펀드 빼고 (나머지 목록 규칙은 tests/test_v2_ranks.py, 목록의 날짜는 tests/smoke_v2.py)
 - 시장 네 칸(marketTiles): 코스피 · S&P 500 은 마지막 두 종가로 변화, 국고채 3년 · 원/달러는 수준만 (변화를 지어내지 않아요),
   칸마다 자기 날짜, 값이나 날짜가 없으면 값도 없음('–')
 - 찾기(searchStocks) · 내 포트폴리오 종목(myStocks) · 예전에 저장한 기본 이름(legacy.js, 보여 줄 때만) · 포트폴리오에서 빼기
@@ -23,7 +24,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 _B = {}
 MODS = {"L": "src/v2/stocklist.js", "R": "src/v2/routes.js", "D": "src/deeplink.js", "G": "src/v2/legacy.js", "S": "src/v2/store.js",
-        "Q": "src/v2/recent.js", "V": "src/v2/tracking.jsx", "C": "src/copy/v2.js"}
+        "Q": "src/v2/recent.js", "V": "src/v2/tracking.jsx", "C": "src/copy/v2.js", "K": "src/v2/ranks.js"}
 
 
 def bundle_dir():
@@ -42,7 +43,7 @@ def bundle_dir():
 
 def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
-    code = ("import * as T from './lists.mjs';\nconst { L, R, D, G, S, Q, V } = T; const CP = T.C.C;\n"
+    code = ("import * as T from './lists.mjs';\nconst { L, R, D, G, S, Q, V, K } = T; const CP = T.C.C;\n"
             "const loadOf = (data, macro = null) => ({ status: 'ok', data, macro, byT: new Map(data.stocks.map((s) => [s.t, s])) });\n"
             + decl + "let out;\n" + body + "\nconsole.log(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=bundle_dir(), capture_output=True, text=True, timeout=60)
@@ -90,19 +91,28 @@ def test_the_old_app_reads_only_its_own_deep_links():
     assert "useState(takeDeepLink)" in shell and "navPush" in shell.split("function takeDeepLink", 1)[0]   # 바로가기는 기록을 쌓지 않아요
 
 
-# ── 거래대금 상위 종목 ──
-def test_popular_lists_are_split_by_market_in_the_pipelines_order_without_funds():
-    stocks = [st("000660", "SK하이닉스"), st("005930", "삼성전자"), st("069500", "KODEX 200", etf=True), st("000270", "기아"),
-              st("NVDA", "NVIDIA Corporation", "us"), st("SPY", "SPDR S&P 500", "us", etf=True), st("AAPL", "Apple Inc.", "us")]
+# ── 거래대금 (v19.5b: 종목 순위의 거래대금 칩. 예전 '거래대금 상위 종목' 은 data.json popular 의 순서였어요) ──
+def test_trading_value_chip_splits_by_market_ranks_by_trading_value_without_funds():
+    """예전 시험(test_popular_lists_are_split_by_market_in_the_pipelines_order_without_funds)이 본 것을 칩 판으로 그대로 봐요:
+    한국 · 미국 따로, 거래대금 큰 순(파이프라인의 popular 순서와 같은 기준: 한국 그날 거래대금, 미국 야후 평균), 펀드 빼고, 목록에 없는
+    코드는 상관없고, 불러오지 못했으면 없음. 목록마다 따로인 날짜('{date} 종가' · '{date} 종가 (미국 시간)')는 순수 함수가 아니라 화면이
+    정해서, 여기가 아니라 브라우저 시험이 봐요 (tests/smoke_v2.py scene_stocks · scene_us_date)."""
+    stocks = [st("000660", "SK하이닉스", val=43010.5, val20=30000.0), st("005930", "삼성전자", val=32901.3, val20=30000.0),
+              st("069500", "KODEX 200", etf=True, val=99999.0, val20=99999.0), st("000270", "기아", val=1500.0, val20=1400.0),
+              st("NVDA", "NVIDIA Corporation", "us", val=272813.8), st("SPY", "SPDR S&P 500", "us", etf=True, val=999999.0),
+              st("AAPL", "Apple Inc.", "us", val=204369.6)]
     data = {"pxDate": "2026-11-02", "usPxDate": "2026-10-31", "stocks": stocks,
             "popular": ["000660", "069500", "005930", "GONE", "000270", "SPY", "NVDA", "AAPL"]}
-    got = run("""out = { two: L.popularLists(loadOf(DATA), 2), all: L.popularLists(loadOf(DATA)), none: L.popularLists(loadOf({ ...DATA, popular: [] })),
-      missing: L.popularLists(loadOf({ ...DATA, popular: undefined })), fail: L.popularLists({ status: 'fail' }) };
-      for (const k of ['two', 'all']) out[k] = { kr: out[k].kr.map((s) => s.t), us: out[k].us.map((s) => s.t), krDate: out[k].krDate, usDate: out[k].usDate };""",
-              DATA=data)
-    assert got["two"] == {"kr": ["000660", "005930"], "us": ["NVDA", "AAPL"], "krDate": "2026-11-02", "usDate": "2026-10-31"}, got["two"]
-    assert got["all"]["kr"] == ["000660", "005930", "000270"] and got["all"]["us"] == ["NVDA", "AAPL"], got["all"]
-    assert got["none"] is None and got["missing"] is None and got["fail"] is None
+    got = run("""console.info = (...a) => console.error(...a);   // ranks.js 의 기준 알림(info)은 stderr 로: stdout 은 결과 JSON 만
+const ld = loadOf(DATA);
+out = { kr: K.rankRows(ld, 'kr', 'val').rows.map((r) => r.s.t), us: K.rankRows(ld, 'us', 'val').rows.map((r) => r.s.t),
+  noPopular: K.rankRows(loadOf({ ...DATA, popular: undefined }), 'kr', 'val').rows.map((r) => r.s.t), fail: K.rankRows({ status: 'fail' }, 'kr', 'val'),
+  top: [K.RANK_TOP, K.RANK_FULL] };""", DATA=data)
+    want_kr = [t for t in data["popular"] if t in {"000660", "005930", "000270"}]                 # 펀드 빼고 같은 순서
+    assert got["kr"] == want_kr == ["000660", "005930", "000270"], got["kr"]
+    assert got["us"] == ["NVDA", "AAPL"], got["us"]
+    assert got["noPopular"] == want_kr and got["fail"] is None                       # popular 가 없어도 그날 거래대금으로
+    assert got["top"] == [10, 30]                                                    # 홈은 10개, 종목 탭의 전체 보기는 30개
 
 
 # ── 시장 네 칸 ──

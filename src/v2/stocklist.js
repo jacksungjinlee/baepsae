@@ -1,4 +1,5 @@
-// ================= 2.0 stock lists (v19.0c): 거래대금 상위 종목, 종목 search, my portfolio's stocks, 시장 tiles =================
+// ================= 2.0 stock lists (v19.0c): 종목 search, my portfolio's stocks, 시장 tiles =================
+// (v19.5b: 거래대금 상위 종목 became the 거래대금 chip of 종목 순위, src/v2/ranks.js.)
 // Pure functions, no React and no Korean text. Unit tests: tests/test_v2_lists.py (run through Node).
 import { num } from "./engine.js";
 import { validRows } from "./track.js";
@@ -21,33 +22,6 @@ export const isCompany = (s) => !!s && (s.cls === "kr" || s.cls === "us") && s.e
 export { ownCloseGroups };
 export function ownCloses(load, stocks) {
   return load && load.status === "ok" ? ownCloseGroups(stocks, load.data.usPxDate) : [];
-}
-
-// ---------------- 거래대금 상위 종목 ----------------
-// data.json popular is fetch_data.py popular_list: Korean stocks by the day's trading value, then US stocks by Yahoo's
-// average trading value, each market ranked on its own. Shown as two lists (Korean, US), each up to n names in that
-// order, funds left out (종목 is about companies, and a fund has no 기업분석 page). Each list carries its own content date:
-// the Korean close date (pxDate) and the US close date (usPxDate). null when the data or the list is missing (logged).
-export function popularLists(load, n = 5) {
-  if (!load || load.status !== "ok") return null;
-  const pop = Array.isArray(load.data.popular) ? load.data.popular : null;
-  if (!pop || !pop.length) {
-    console.warn("[v2] data.json popular is missing or empty: the trading-value lists are left out");
-    return null;
-  }
-  const kr = [], us = [];
-  let gone = 0;
-  for (const t of pop) {
-    const s = load.byT.get(t);
-    if (!s) { gone++; continue; }
-    if (s.etf === true) continue;
-    if (s.cls === "kr" && kr.length < n) kr.push(s);
-    else if (s.cls === "us" && us.length < n) us.push(s);
-  }
-  if (gone) console.warn(`[v2] popular: ${gone} of ${pop.length} codes are not in data.json stocks`);
-  const krDate = DATE.test(load.data.pxDate || "") ? load.data.pxDate : null;
-  const usDate = DATE.test(load.data.usPxDate || "") ? load.data.usPxDate : null;
-  return { kr: krDate ? kr : [], us: usDate ? us : [], krDate, usDate };
 }
 
 // ---------------- 종목 search ----------------

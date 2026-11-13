@@ -44,7 +44,7 @@ export function ValueScale({ pbr, med, ends = null }) {
     <div data-ui-v2="tile-art" data-art="scale" data-x={Math.round(x * 1000) / 1000} style={{ marginTop: SPACE(2) }}>
     <div aria-hidden="true" style={{ position: "relative", height: 26 }}>
       <div style={{ position: "absolute", left: 0, right: 0, top: 9, height: 8, borderRadius: 4,
-        background: `linear-gradient(90deg, ${A.ink} 0%, ${A.light} 45%, #E3E7EE 55%, #B9C1CE 100%)` }} />
+        background: `linear-gradient(90deg, ${A.ink} 0%, ${A.light} 45%, ${CHART.scaleMid} 55%, ${CHART.scaleEnd} 100%)` }} />
       <div style={{ position: "absolute", left: "calc(50% - 1px)", top: 5, width: 2, height: 16, background: COLOR.ink }} />
       <div style={{ position: "absolute", left: `calc(${(x * 100).toFixed(1)}% - 7px)`, top: 6, width: 14, height: 14, borderRadius: 7, background: COLOR.ink,
         border: `2px solid ${COLOR.surface}`, boxSizing: "border-box" }} />
@@ -65,7 +65,7 @@ const COIN_SHAPES = ["rising", "even", "one"];
 export function Coins({ width = 92, shape = "even" }) {
   const A = TOPIC_ART.div;
   const stack = (cx, n) => Array.from({ length: n }, (_, i) => (
-    <ellipse key={cx + "-" + i} cx={cx} cy={30 - i * 5} rx={8} ry={3} fill={i % 2 ? A.light : A.ink} stroke={A.ink} strokeWidth={0.9} />
+    <ellipse key={cx + "-" + i} cx={cx} cy={30 - i * 5} rx={8} ry={3} style={{ fill: i % 2 ? A.light : A.ink, stroke: A.ink }} strokeWidth={0.9} />
   ));
   return (
     <svg data-ui-v2="tile-art" data-art="coins" data-shape={COIN_SHAPES.includes(shape) ? shape : "even"} width={width} height={Math.round((width * 34) / 66)} viewBox="0 0 66 34" aria-hidden="true" style={{ display: "block", marginTop: SPACE(2) }}>
@@ -90,8 +90,8 @@ export function Waves({ rule, mine, market }) {
   return (
     <div data-ui-v2="tile-art" data-art="waves" data-rule={rule} style={{ marginTop: SPACE(2) }}>
       <svg width="100%" height="34" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true" style={{ display: "block" }}>
-        <polyline data-line="market" points={wave(3)} fill="none" stroke={CHART.compare} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-        <polyline data-line="mine" points={wave(amp)} fill="none" stroke={CHART.mine} strokeWidth={2.4} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <polyline data-line="market" points={wave(3)} fill="none" style={{ stroke: CHART.compare }} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        <polyline data-line="mine" points={wave(amp)} fill="none" style={{ stroke: CHART.mine }} strokeWidth={2.4} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       {mine && market && (
         <div aria-hidden="true" style={{ display: "flex", flexWrap: "wrap", columnGap: SPACE(3), marginTop: SPACE(1), ...tx(SIZE.xs, WEIGHT.regular, COLOR.text2) }}>
@@ -108,7 +108,7 @@ export function Waves({ rule, mine, market }) {
 export function CoinFlow({ label, sentence }) {
   const A = TOPIC_ART.div;
   const big = Array.from({ length: 8 }, (_, i) => (
-    <ellipse key={i} cx={30} cy={66 - i * 8} rx={26} ry={8} fill={i % 2 ? A.light : A.ink} stroke={A.ink} strokeWidth={1.4} />
+    <ellipse key={i} cx={30} cy={66 - i * 8} rx={26} ry={8} style={{ fill: i % 2 ? A.light : A.ink, stroke: A.ink }} strokeWidth={1.4} />
   ));
   return (
     <div data-ui-v2="co-coinflow" style={{ marginTop: SPACE(3) }}>
@@ -119,13 +119,13 @@ export function CoinFlow({ label, sentence }) {
         </div>
         <div style={{ flex: 1, minWidth: 0, paddingBottom: SPACE(7) }}>
           <svg width="100%" height={16} viewBox="0 0 100 16" preserveAspectRatio="none" style={{ display: "block" }}>
-            <path d="M2 8 H94" stroke={A.ink} strokeWidth={3} strokeDasharray="6 5" vectorEffect="non-scaling-stroke" fill="none" />
-            <path d="M88 2 L97 8 L88 14" fill="none" stroke={A.ink} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+            <path d="M2 8 H94" style={{ stroke: A.ink }} strokeWidth={3} strokeDasharray="6 5" vectorEffect="non-scaling-stroke" fill="none" />
+            <path d="M88 2 L97 8 L88 14" fill="none" style={{ stroke: A.ink }} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           </svg>
         </div>
         <svg width={40} height={22} viewBox="0 0 40 22" style={{ display: "block", flexShrink: 0, marginBottom: SPACE(7) }}>
-          <ellipse cx={20} cy={15} rx={18} ry={6} fill={A.ink} stroke={A.ink} strokeWidth={1.2} />
-          <ellipse cx={20} cy={8} rx={18} ry={6} fill={A.light} stroke={A.ink} strokeWidth={1.2} />
+          <ellipse cx={20} cy={15} rx={18} ry={6} style={{ fill: A.ink, stroke: A.ink }} strokeWidth={1.2} />
+          <ellipse cx={20} cy={8} rx={18} ry={6} style={{ fill: A.light, stroke: A.ink }} strokeWidth={1.2} />
         </svg>
       </div>
       <p data-ui-v2="co-coinflow-text" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}>{sentence}</p>
@@ -141,8 +141,8 @@ export function PayoutRing({ pct, label }) {
   return (
     <div aria-hidden="true" style={{ position: "relative", width: 96, height: 96, flexShrink: 0 }}>
       <svg width={96} height={96} viewBox="0 0 96 96" style={{ display: "block" }}>
-        <circle cx={48} cy={48} r={R} fill="none" stroke={A.light} strokeWidth={SW} />
-        <circle cx={48} cy={48} r={R} fill="none" stroke={A.ink} strokeWidth={SW} strokeDasharray={`${(f * L).toFixed(1)} ${L.toFixed(1)}`} transform="rotate(-90 48 48)" />
+        <circle cx={48} cy={48} r={R} fill="none" style={{ stroke: A.light }} strokeWidth={SW} />
+        <circle cx={48} cy={48} r={R} fill="none" style={{ stroke: A.ink }} strokeWidth={SW} strokeDasharray={`${(f * L).toFixed(1)} ${L.toFixed(1)}`} transform="rotate(-90 48 48)" />
       </svg>
       <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.h3, WEIGHT.heavy, COLOR.ink) }}>{label}</div>
     </div>

@@ -13,6 +13,7 @@
 import os
 import re
 
+from buildapp import built
 from copytrace import ROOT, read
 from visualcheck import MASCOT_DIGITS_EXEMPT, mascot_digit_problems
 
@@ -138,11 +139,17 @@ def test_verdict_band_has_a_state_icon_and_no_picture_slot():
 
 
 def test_focus_ring_is_navy():
-    for f in ("src/v2/template.html", "styleguide/template.html"):
+    # v19.6d: 2.0's ring is the ink token: navy (#1C2B45) on the light screen as before, the light text colour on the dark
+    # screen (navy would be 1.3:1 on the dark page). The style page has no dark screen and keeps the navy value.
+    for f, want in (("src/v2/template.html", "var(--bs-ink)"), ("styleguide/template.html", "#1C2B45")):
         html = read(f)
-        rings = re.findall(r"outline:\s*2px solid (#[0-9A-Fa-f]{6})", html)
-        assert rings == ["#1C2B45"], (f, rings)
+        rings = re.findall(r"outline:\s*2px solid (#[0-9A-Fa-f]{6}|var\(--bs-[\w-]+\))", html)
+        assert rings == [want], (f, rings)
         assert not any(a.lower() in html.lower() for a in APRICOT), f
+    app = built("app.html")
+    light = app.split(":root{", 1)[1].split("}", 1)[0]
+    dark = app.split(':root[data-theme="dark"]{', 1)[1].split("}", 1)[0]
+    assert "--bs-ink:#1C2B45;" in light and "--bs-ink:#E8ECF2;" in dark
 
 
 def test_2_0_pictures_are_scaled_copies_and_exist():

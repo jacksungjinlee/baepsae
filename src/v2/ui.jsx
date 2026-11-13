@@ -71,6 +71,29 @@ export function useWide() {
   }, []);
   return wide;
 }
+// true from ROOMY_MIN (1200 px) wide: room for 종목 순위 in 홈's right column (Jack, 2026-11-12: from 1024 to 1199 px it sits at the
+// end of the main column instead). Follows the window as it is resized.
+export const ROOMY_MIN = 1200;
+export function useRoomy() {
+  const q = `(min-width: ${ROOMY_MIN}px)`;
+  const now = () => { try { return window.matchMedia ? window.matchMedia(q).matches : window.innerWidth >= ROOMY_MIN; } catch (e) { return false; } };
+  const [roomy, setRoomy] = useState(now);
+  useEffect(() => {
+    const on = () => setRoomy(now());
+    let mq = null;
+    try { mq = window.matchMedia ? window.matchMedia(q) : null; } catch (e) { mq = null; }
+    if (mq && mq.addEventListener) mq.addEventListener("change", on);
+    else if (mq && mq.addListener) mq.addListener(on);
+    else window.addEventListener("resize", on);
+    on();
+    return () => {
+      if (mq && mq.removeEventListener) mq.removeEventListener("change", on);
+      else if (mq && mq.removeListener) mq.removeListener(on);
+      else window.removeEventListener("resize", on);
+    };
+  }, []);
+  return roomy;
+}
 export const LayoutContext = createContext({ wide: false });
 export const useLayout = () => useContext(LayoutContext);
 // Which column of Cols a piece sits in on PC: "main", "side" (the narrow one) or "full" (it stands alone). null elsewhere.
@@ -375,8 +398,9 @@ export function Toggle({ on, onChange, label, sub, side, disabled, chip }) {
         </span>
       </span>
       {side != null && <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{side}</span>}
-      <span aria-hidden="true" style={{ width: SPACE(11), height: SPACE(6) + 2, borderRadius: 999, background: on ? COLOR.ink : COLOR.border, position: "relative", flexShrink: 0, opacity: disabled ? 0.5 : 1 }}>
-        <span style={{ position: "absolute", top: 3, left: on ? SPACE(5) + 3 : 3, width: SPACE(5), height: SPACE(5), borderRadius: 999, background: COLOR.surface, transition: "left .15s" }} />
+      {/* v19.6d: the track is a navy surface when on (primary) and the knob is the white on it (onPrimary): the same in light */}
+      <span aria-hidden="true" style={{ width: SPACE(11), height: SPACE(6) + 2, borderRadius: 999, background: on ? COLOR.primary : COLOR.border, position: "relative", flexShrink: 0, opacity: disabled ? 0.5 : 1 }}>
+        <span style={{ position: "absolute", top: 3, left: on ? SPACE(5) + 3 : 3, width: SPACE(5), height: SPACE(5), borderRadius: 999, background: COLOR.onPrimary, transition: "left .15s" }} />
       </span>
     </button>
   );

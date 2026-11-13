@@ -181,7 +181,7 @@ def main():
                 assert "10월 30일" in page.locator('[data-ui-v2="date-line"]').first.inner_text()
                 at("home")                                                         # 첫 방문: 첫 방문 홈
                 page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
-                page.locator('[data-ui-v2="popular"]').wait_for(state="visible")
+                page.locator('[data-ui-v2="rank"]').wait_for(state="visible")         # v19.5b: 종목 순위 (예전: 거래대금 상위 종목)
                 label_here()
                 # 미리 보기는 Jack 이 혼자 보는 페이지라 머리말에 '예전 뱁새 보기' 링크를 두지 않아요 (예시 데이터 표시 자리)
                 assert page.locator('[data-ui-v2="old-app-link"]').count() == 0
@@ -205,15 +205,18 @@ def main():
             def stocks_and_market():
                 tab(TABS["stocks"])
                 at("stocks")
-                page.locator('[data-ui-v2="popular-list"][data-market="kr"]').wait_for(state="visible")
-                assert page.locator('[data-ui-v2="popular-list"][data-market="us"]').count() == 1
+                # v19.5b: 종목 순위 (예전: 거래대금 상위 종목 한국 · 미국 두 목록) — 한국 · 미국 스위치로 한 시장씩
+                rank = page.locator('[data-ui-v2="rank"][data-full="1"]')
+                rank.locator('[data-ui-v2="rank-row"][data-cls="kr"]').first.wait_for(state="visible")
+                assert rank.locator('[data-ui-v2="rank-market"] [data-mk="us"]').count() == 1
                 # v19.1a: 한국 · 미국 회사 모두 2.0 회사 페이지(예시 데이터)로 가요. 예전 뱁새로 가는 링크는 없어요 (label_here 가 봐요)
-                kr = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+                kr = rank.locator('[data-ui-v2="rank-row"][data-cls="kr"]').first
                 assert kr.locator("a").count() == 0, "미리 보기의 한국 회사가 링크예요 (예전 뱁새로 가는 길)"
                 label_here()
                 shot(page, width, "1-stocks")
                 for market in ("kr", "us"):
-                    row = page.locator(f'[data-ui-v2="popular-list"][data-market="{market}"] [data-ui-v2="stock-row"]').first
+                    page.locator(f'[data-ui-v2="rank-market"] [data-mk="{market}"]').click()
+                    row = page.locator(f'[data-ui-v2="rank"][data-mk="{market}"] [data-ui-v2="rank-row"][data-cls="{market}"]').first
                     t = row.get_attribute("data-t")
                     row.locator("button").click()
                     at(f"stocks/{t}")
@@ -237,7 +240,8 @@ def main():
                 """PR #89 리뷰: 미리 보기(지어낸 데이터)에는 'PER과 EPS는 … 바뀔 수 있어요' · '이자보상배율은 …' 줄이 없어요 (요약 · 실적 · 가치 · 배당)."""
                 tab(TABS["stocks"])
                 at("stocks")
-                row = page.locator('[data-ui-v2="popular-list"][data-market="kr"] [data-ui-v2="stock-row"]').first
+                page.locator('[data-ui-v2="rank-market"] [data-mk="kr"]').click()          # v19.5b: 종목 순위의 한국 목록
+                row = page.locator('[data-ui-v2="rank"][data-mk="kr"] [data-ui-v2="rank-row"][data-cls="kr"]').first
                 row.wait_for(state="visible")
                 t = row.get_attribute("data-t")
                 for ctab in (None, "earn", "value", "div"):

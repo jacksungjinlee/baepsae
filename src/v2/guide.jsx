@@ -18,7 +18,7 @@
 // v19.3d: the welcome's second button 가진 종목 넣기 opens 가진 종목 넣기 (Part F).
 // No Korean here: the words come from src/copy/v2.js.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_CHIP, ICON_CHIP } from "../ui/tokens.js";
+import { COLOR, OVERLAY, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_CHIP, ICON_CHIP } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Button } from "../ui/components.jsx";
 import { C } from "./format.js";
@@ -114,8 +114,8 @@ export function Welcome({ load, first, onTry, onBrowse, onImport = null }) {
 }
 
 // ---------------- the steps (Guide2b-d) ----------------
-const SHADE = "rgba(28, 43, 69, 0.55)";                 // the board's overlay: navy at 55%
-const LIGHT = "#FFE2A8";                                // the board's light ring around what to look at (not apricot)
+const SHADE = OVERLAY.guide;                            // the board's overlay: navy at 55% (v19.6d: darker black in dark mode)
+const LIGHT = COLOR.highlight;                          // the board's light ring around what to look at (not apricot)
 const HOLE_PAD = SPACE(1) + 2;
 const RING = 4;                                         // the light ring's width around the lit part (steps 2–3)
 const STEPS_N = 3;
@@ -146,7 +146,8 @@ function useTrack(sel, on) {
   return rect;
 }
 
-const PULSE_CSS = "@keyframes v2-guide-pulse { 0%, 100% { box-shadow: 0 0 0 4px #FFE2A8, 0 0 0 9px rgba(255, 226, 168, 0.45); } 50% { box-shadow: 0 0 0 6px #FFE2A8, 0 0 0 14px rgba(255, 226, 168, 0.25); } }"
+// The halo is the ring's colour at 45% and 25% (the same in both screen modes).
+const PULSE_CSS = `@keyframes v2-guide-pulse { 0%, 100% { box-shadow: 0 0 0 4px ${LIGHT}, 0 0 0 9px rgba(255, 226, 168, 0.45); } 50% { box-shadow: 0 0 0 6px ${LIGHT}, 0 0 0 14px rgba(255, 226, 168, 0.25); } }`
   + " @media (prefers-reduced-motion: reduce) { [data-ui-v2=\"guide-ring\"] { animation: none !important; } }";
 
 // stage: 1 · 2 · 3. hole: what stays lit (a CSS selector); ring: the button to tap (stage 1); title / body: the bubble;
@@ -303,11 +304,11 @@ export function Coach({ stage, hole, ring, title, body, action, onBackdrop, onSk
           tabIndex={-1} onClick={stage === 2 ? onBackdrop : undefined}
           style={{ maxWidth: 520, margin: "0 auto", pointerEvents: "auto", background: COLOR.surface, borderRadius: RADIUS.lg,
             padding: compact ? `${SPACE(2) + 2}px ${SPACE(3) + 2}px` : `${SPACE(4)}px ${SPACE(4)}px ${SPACE(3) + 2}px`,
-            boxShadow: "0 8px 28px rgba(28, 43, 69, 0.35)", outline: "none" }}>
+            boxShadow: `0 8px 28px ${OVERLAY.pop}`, outline: "none" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2) }}>
             <span style={{ display: "flex", alignItems: "center", gap: SPACE(1) }}>
               {Array.from({ length: STEPS_N }, (_, i) => (
-                <span key={i} aria-hidden="true" style={{ width: i + 1 === stage ? 18 : 6, height: 6, borderRadius: 3, background: i + 1 === stage ? COLOR.ink : "#D9D4CC" }} />
+                <span key={i} aria-hidden="true" style={{ width: i + 1 === stage ? 18 : 6, height: 6, borderRadius: 3, background: i + 1 === stage ? COLOR.ink : COLOR.edge }} />
               ))}
               <span data-ui-v2="guide-count" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text2, { marginLeft: SPACE(1) + 2 })}>{`${stage}/${STEPS_N}`}</span>
             </span>

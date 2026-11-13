@@ -68,6 +68,10 @@ FUNDS = ("069500", "379800", "04020000", "132030", "144600")
 COVER_KR = {"price": 99, "cap": 99, "beta": 95, "vol": 95, "pbr": 85, "roe": 80, "per": 50,
             "vz": 85, "qz": 85, "mz": 85, "pz": 85, "lz": 85}
 COVER_US = {"이름": 90, "설명": 90}
+# 2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내와 같은 95% (97% 아래 경고). 지금까지는 관문에 미국 줄이 없어,
+# 일부만 빠진 날(예: 10%, 예전 앱 내장 종목은 셋 이하)은 그대로 발행됐어요 (#106 화면 검사는 내장 종목이 셋 넘게 빠질 때만 막아요).
+# 7-29 이후 발행 70번: 베타 97.69~99.09% · 변동성 97.56~98.96%. 빈 칸은 대부분 상장 1년(250거래일) 안 된 회사예요 (MIN_DAYS) — 경고면 이름을 보세요.
+COVER_US_RISK = {"beta": 95, "vol": 95}
 BONDS_EXPECTED = 8       # 8 정상 · 7 경고 · 6 이하 실패 (Jack 결정, 2026-10-31)
 KR_MIN, US_MIN = 2300, 500
 KR_REL, US_REL = 0.10, 0.15
@@ -122,10 +126,26 @@ DIV_COVER_DROP = 10.0    # 점 — 직전 발행본보다 이만큼 넘게 줄�
 US_PREF_DROP_MAX = 10    # 우선주·예탁증서로 보고 미국 목록에서 뺀 종목 수 상한 (data.json usLeftOut.preferred) — 그날 3개 (STRC·GOOGM·GOOGN).
 #                          파이프라인은 티커·이름·야후 종류로만 판단해요 (Jack, 2026-11-03). 많으면 그 규칙이 진짜 회사를 잡은 날이에요.
 # v17.5.2 (Jack 승인 2026-11-03): 해외 기업(종목코드 9…)은 DART 금액이 원화가 아닐 수 있어 비워야 해요 (2026-11-03 발행본 20곳, 코오롱티슈진 PBR 9,085)
+# 2026-11-12 (Jack): 원화가 아닌 재무제표 표시(corp.json stmtCur)를 직전 발행과 비교해요 (check_stmt_marks). 실패: 어제 표시가 있던
+# 국내 회사(9… 가 아닌)가 오늘 표시를 잃고 금액이 차 있으면 (하나뿐이어도 — 달러 금액이 원으로 나가는 경우), 또는 절반 넘게 사라지면
+# (DART 통화 칸을 못 읽은 날). 그 밖의 사라짐 · 국내 회사가 목록에서 빠진 날은 경고.
+STMT_MARK_MIN = 3        # 직전 발행에 표시된 회사(오늘도 목록에 있는)가 이만큼 있을 때만 '절반' 비교
+# 정말 원화로 바꿔 공시하는 국내 회사: {코드: "날짜 · 근거 (Jack 의 yes)"}. 여기 있는 회사는 표시를 잃어도 실패가 아니라 경고예요.
+# 비어 있는 게 정상이에요 — 한 줄 더하는 것은 Jack 의 yes 가 있어야 해요 (tests/test_stmt_marks.py 가 지켜봐요).
+STMT_WON_SWITCH = {}
 FOREIGN_BLANK = ("per", "pbr", "eps", "bps", "vz")      # data.json·corp.json 모두 빈 칸 (vz 는 PBR 로 매긴 점수)
 FOREIGN_ZERO_OK = ("dps", "dy", "dps3")                  # 빈 칸이거나 0 (0 = 배당 없음은 어느 통화로도 같은 뜻)
 FOREIGN_BLANK_CORP = ("eq", "evE", "evR", "pcf")                          # corp.json 금액·금액으로 만든 배수
 FOREIGN_BLANK_LISTS = ("rev", "op", "ni")                                 # corp.json 3개년 금액
+# Jack, 2026-11-12 (새 줄, 더하기만): 미국 상장 회사 중 재무제표 통화가 달러가 아닌 곳 (data.json fcur = 야후 financialCurrency 의 ISO 코드,
+# fetch_data.py US_FCUR_BLANK). 달러 주가 ÷ 그 통화 금액일 수 있는 PER · PBR · 배당수익률과 PBR 로 매긴 가치 점수가 빈 칸이어야 해요
+# (0 도 남은 칸으로 봐요). fcur 가 있는 회사끼리의 일관성만 봐요 — 야후가 financialCurrency 를 주지 않아 fcur 가 없으면 이 줄은 실패하지 않아요.
+US_FCUR_BLANK = ("per", "pbr", "dy", "vz")
+# 배당수익률 0% (배당 없음)를 fcur 회사에도 남길지 — 파이프라인(fetch_data.py)이 이 값을 가져다 써요 (하나의 스위치). Jack, 2026-11-13: 남겨요,
+# 단 야후 자료가 지난 12개월 배당 없음을 분명히 말할 때만 (fetch_data.py us_no_dividend_12m · 아니면 빈 칸). 관문은 그래서 0 만은 받아요
+# (0 이 아닌 배당수익률은 언제나 실패). False 로 바꾸면 0% 도 늘 비우고 관문도 0 을 남은 칸으로 봐요.
+US_FCUR_KEEP_ZERO_DY = True
+US_FCUR_SHOW = 10        # 관문 값 칸에 적는 티커 수 (나머지는 rep.detail 에 모두)
 # v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
 # data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
@@ -605,6 +625,25 @@ def us_coverage(arr):
             "설명": 100.0 * sum(1 for s in arr if s.get("de")) / len(arr)}
 
 
+def check_us_risk_cover(rep, us, pdata):
+    """2026-11-12 (Jack, 더하기만): 미국 베타·변동성 채움 — 국내 줄과 같은 규칙 (95% 아래면 실패, 97% 아래면 경고 · 직전보다 10점
+    넘게 줄면 실패). 값 칸에 빈 칸 수, 97% 아래면 빈 종목 앞 10개(US_D1_SHOW, 아침 점검 알림에도 보이게)와 로그·실행 요약에 전부를
+    적어요: 새로 상장한 회사(이력 250거래일 미만)인지 파이프라인 문제인지 바로 보이게 (docs/RUNBOOK.md). 변화 줄은 국내 줄과 맞춘 것이라 바닥 95% 보다 먼저 걸리지는 않아요."""
+    for k, lo in COVER_US_RISK.items():
+        v = coverage(us, k)
+        blank = [str(s.get("t")) for s in us if num(s.get(k)) is None]
+        named = bool(blank) and v < lo + NEAR       # 경고·실패일 때: 아침 점검은 알림(이름: 값)만 읽으니 값 칸에도 앞의 몇 개를 적어요
+        shown = ", ".join(blank[:US_D1_SHOW]) + (f" 외 {len(blank) - US_D1_SHOW:,}개" if len(blank) > US_D1_SHOW else "")
+        rep.add(f"미국 {k} 채움", v >= lo,
+                f"{floor_1(v)}% (빈 칸 {len(blank)} / {len(us):,})" + (f" · 빈 종목: {shown}" if named else ""),
+                f"≥ {lo}% ({lo + NEAR:g}% 아래 경고)", warn=v < lo + NEAR and v < 100.0)
+        if named:
+            rep.detail(f"미국 {k} 빈 종목", blank)
+        if pdata:
+            pv = coverage(us_stocks(pdata), k)
+            rep.add(f"미국 {k} 채움 변화", v >= pv - 10, f"{pv:.1f} → {v:.1f}", "10점 넘게 줄면 실패")
+
+
 def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
                special=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
@@ -758,6 +797,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         if pdata:
             pv = us_coverage(us_stocks(pdata))[k]
             rep.add(f"미국 {k} 채움 변화", uc[k] >= pv - 10, f"{pv:.1f} → {uc[k]:.1f}", "10점 넘게 줄면 실패")
+    check_us_risk_cover(rep, us, pdata)
 
     # 가격 움직임
     if pdata and ppx and px and count_between is not None:
@@ -799,7 +839,11 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo)
     check_v1752(rep, data, kr, us, pdata)
+    check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
+    check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
     check_foreign(rep, kr, comps)
+    if rel:
+        check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
     check_v191b(rep, data, kr, us, by, comps, pdata)
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
@@ -1093,6 +1137,89 @@ def check_v1752(rep, data, kr, us, pdata):
         for k in DIV_COVER_KEYS:
             v, pv = coverage(kr, k), coverage(pkr, k)
             rep.add(f"국내 {k} 채움 변화", v >= pv - DIV_COVER_DROP, f"{pv:.1f} → {v:.1f}", f"{DIV_COVER_DROP:g}점 넘게 줄면 실패")
+
+
+def check_us_fcur(rep, us):
+    """Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사(fcur)는 PER · PBR · 배당수익률 · 가치 점수가 비어 있어야 해요. fcur 는 세 글자
+    대문자이고 USD 가 아니어야 해요 (XXX = 파이프라인이 읽지 못한 통화 · 그래도 비워요). 값: fcur 회사 수 (통화별) · 남은 칸."""
+    bad, by = [], collections.Counter()
+    for s in us:
+        if "fcur" not in s:
+            continue
+        t, fc = s.get("t"), s.get("fcur")
+        if not (isinstance(fc, str) and re.fullmatch(r"[A-Z]{3}", fc) and fc != "USD"):
+            bad.append(f"{t}.fcur {fc!r}")
+            continue
+        by[fc] += 1
+        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None and not (k == "dy" and US_FCUR_KEEP_ZERO_DY and s.get(k) == 0)]
+    n = sum(by.values())
+    rep.add("미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸", not bad,
+            f"{n}곳" + (f" ({' · '.join(f'{c} {k}' for c, k in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))})" if by else "")
+            + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else ""),
+            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨" + (", 배당 0% 는 됨" if US_FCUR_KEEP_ZERO_DY else "") + ") · fcur 는 USD 가 아닌 세 글자")
+
+
+def _tickers(ts):
+    return ", ".join(map(str, ts[:US_FCUR_SHOW])) + (f" 외 {len(ts) - US_FCUR_SHOW}곳" if len(ts) > US_FCUR_SHOW else "")
+
+
+def check_us_fcur_more(rep, data, us, pdata):
+    """#114 리뷰 (더하기만): ① 재무제표 통화를 모르는 회사(data.json usFcurUnknown) — 경고만, 이름을 남겨요. ② 직전 발행본에서 fcur 가 있던
+    미국 종목이 오늘도 목록에 있는데 fcur 가 없으면 (코디네이터 결정 2026-11-13 — 야후가 달러로 바뀌었다고 하면 발행을 막지 않아요):
+      · 야후가 이제 달러 재무제표라고 함 (usFcurUnknown 이 있고 그 안에 없음 · 오늘 상세 정보가 붙음 = 이름이 티커가 아님) → 경고, 숫자가
+        있든 없든 ('숫자를 확인하세요')
+      · 오늘 통화 정보가 없음 (usFcurUnknown 안 · 그 칸이 없는 발행 · 상세 정보 없음) 인데 PER · PBR · 배당수익률이 있음 → 실패. 파이프라인은
+        예전 통화를 그대로 쓰니(us_info_merge) 일어날 수 없는 일이라, 실패는 무언가 고장 났다는 뜻이에요
+      · 통화 정보가 없고 숫자도 없음 → 경고"""
+    unk = data.get("usFcurUnknown")
+    if isinstance(unk, list):
+        rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, f"{len(unk)}곳" + (f": {_tickers(unk)}" if unk else ""),
+                "없어야 함 (있으면 경고 · 비우지 않았어요)", warn=bool(unk))
+        if unk:
+            rep.detail("재무제표 통화를 모르는 미국 회사 (usFcurUnknown)", unk)
+    else:
+        rep.add("미국 재무제표 통화를 모르는 회사 (경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
+    # #114 리뷰 2: 야후 응답이 일부만 와 이름 · 업종 · 설명 · 재무제표 통화를 예전 값으로 채운 종목 (data.json usInfoPartial). 예전 값이 '미국 설명
+    # 채움' 줄을 채워 주니, 나쁜 야후 날이 그 줄에 보이지 않아요 — 그래서 이 줄이 이름을 남겨요. 경고만 (다음 실행이 다시 물어요).
+    part = data.get("usInfoPartial")
+    if isinstance(part, list):
+        n_us = len(us) or 1
+        rep.add("미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)", True,
+                f"{len(part)}곳 ({100.0 * len(part) / n_us:.1f}%)" + (f": {_tickers(part)}" if part else ""),
+                "없어야 함 (있으면 경고 · 다음 실행이 다시 물어요)", warn=bool(part))
+        if part:
+            rep.detail("야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (usInfoPartial)", part)
+    else:
+        rep.add("미국 상세 정보가 일부만 온 종목 (예전 값으로 채움 · 경고만)", True, "기록 없음 (이 칸 전 발행본)", "없어야 함 (있으면 경고)")
+    # Jack, 2026-11-13: PBR 이 0.00 으로 반올림돼 비운 종목(pbrZero) — PBR · 가치 점수가 비어 있어야 해요 (true 말고 다른 값도 실패)
+    pz = [s for s in us if "pbrZero" in s]
+    badz = [f"{s.get('t')}.pbrZero {s.get('pbrZero')!r}" for s in pz if s.get("pbrZero") is not True]
+    badz += [f"{s.get('t')}.{k}" for s in pz if s.get("pbrZero") is True for k in ("pbr", "vz") if s.get(k) is not None]
+    rep.add("미국 PBR 0 근처라 비운 종목: PBR·가치 점수 빈 칸", not badz,
+            f"{len(pz)}곳" + (f": {_tickers([s.get('t') for s in pz])}" if pz else "") + f" · 남은 칸 {len(badz)}" + (f" (예: {', '.join(badz[:4])})" if badz else ""),
+            "pbrZero 종목은 pbr · vz 없음")
+    if not pdata:
+        return
+    had = {s.get("t") for s in us_stocks(pdata) if s.get("fcur")}
+    lost = [s for s in us if s.get("t") in had and not s.get("fcur")]
+    unk_set = set(unk) if isinstance(unk, list) else None
+    has_num = lambda s: any(s.get(k) is not None for k in US_FCUR_BLANK[:3])          # noqa: E731
+    said_usd = lambda s: unk_set is not None and s.get("t") not in unk_set and bool(s.get("nk")) and s.get("nk") != s.get("t")   # noqa: E731
+    usd = [s["t"] for s in lost if said_usd(s)]
+    broken = [s["t"] for s in lost if not said_usd(s) and has_num(s)]
+    quiet = [s["t"] for s in lost if not said_usd(s) and not has_num(s)]
+    parts = [f"통화 정보 없이 숫자 있음 {len(broken)}곳: {_tickers(broken)}" if broken else None,
+             f"달러로 바뀜 {len(usd)}곳 (야후가 이제 달러 재무제표라고 함 — 숫자를 확인하세요): {_tickers(usd)}" if usd else None,
+             f"통화 정보 · 숫자 없음 {len(quiet)}곳: {_tickers(quiet)}" if quiet else None]
+    rep.add("어제 재무제표 통화가 있던 미국 종목이 오늘 통화 없음", not broken,
+            f"{len(lost)}곳" + "".join(f" · {x}" for x in parts if x),
+            "없어야 함 (통화 정보 없이 PER·PBR·배당이 다시 나가면 실패 · 야후가 달러라고 하거나 숫자가 없으면 경고)",
+            warn=bool(lost) and not broken)
+    for title, ts in (("어제 fcur 가 있었는데 오늘 통화 정보 없이 PER·PBR·배당이 나간 미국 종목 (고장)", broken),
+                      ("어제 fcur 가 있었는데 야후가 이제 달러 재무제표라고 하는 미국 종목 (숫자를 확인하세요)", usd),
+                      ("어제 fcur 가 있었는데 오늘 통화 정보도 숫자도 없는 미국 종목", quiet)):
+        if ts:
+            rep.detail(title, ts)
 
 
 def is_foreign(code):
@@ -1507,6 +1634,70 @@ def check_v191f(rep, data, corp, kr, by, comps, pdata):
     check_v191f_review(rep, data, corp, kr, by, comps)
 
 
+def _stmt_marked(c):
+    """원화가 아닌 재무제표 표시가 있는지 — 앱과 같은 규칙 (src/repair.js stmtNotWon: stmtCur 가 null 이 아니고 KRW 가 아니면).
+    'XXX' 처럼 읽을 수 없는 통화도 표시예요."""
+    return isinstance(c, dict) and c.get("stmtCur") is not None and c.get("stmtCur") != "KRW"
+
+
+STMT_AMOUNT_FIELDS = FOREIGN_BLANK_LISTS + FOREIGN_BLANK_CORP + FOREIGN_BLANK + STMT_AMT_KEYS   # 표시가 없으면 원으로 읽히는 금액 칸
+
+
+def check_stmt_marks(rep, comps, prev):
+    """2026-11-12 (Jack, 더하기만): 직전 발행에서 원화가 아닌 재무제표 표시(stmtCur)가 있던 회사가 오늘도 목록에 있는데 표시가 사라졌는지.
+    실패: (1) 국내 회사(9… 가 아닌)가 직전 발행에는 표시가 있었는데 오늘 표시가 사라졌고 금액 칸이 차 있으면 — 달러 금액이 원으로 나가는 바로
+    그 경우예요 (Jack, 2026-11-12: 이름 목록이 아니라 직전 발행과 비교해서). 회사가 정말 원화로 바꿨다면 Jack 의 yes 로 예외를 한 줄 더해요.
+    (2) 오늘도 목록에 있는 회사가 STMT_MARK_MIN 곳 이상이고 그 절반 넘게 사라지면 (DART 통화 칸을 못 읽은 날). (3) 직전 corp.json 이 없거나
+    못 읽었으면 (비교할 수 없어요). 그 밖에 하나라도 사라지면 경고 (금액이 비어 있는 회사 · 9… 외국 기업은 금액을 코드 규칙으로 비워요).
+    경고는 그날 한 번만 떠요: 경고로 발행되면 다음 날 비교 대상(직전 발행)에서 그 회사의 표시가 이미 빠져 있어요 (docs/RUNBOOK.md)."""
+    name = "원화가 아닌 재무제표 표시가 직전 발행보다 사라지지 않음 (stmtCur)"
+    rule = ("국내 회사가 표시를 잃고 금액이 차 있으면 실패 · "
+            f"오늘도 목록에 있는 회사가 {STMT_MARK_MIN}곳 이상이고 그 절반 넘게 사라지면 실패 (DART 통화 칸을 못 읽은 날) · "
+            "하나라도 사라지면 경고 · 직전 corp.json 이 없으면 실패")
+    if prev is None:
+        rep.skip(name, "직전 발행본이 없어요 ('직전 발행본 읽기' 줄이 실패해요)")
+        return
+    if prev.get("corpError"):
+        rep.add(name, False, f"직전 corp.json 을 읽지 못했어요: {prev['corpError'][:160]}", rule)
+        return
+    pcorp = prev.get("corp")
+    if not isinstance(pcorp, dict) or not isinstance(pcorp.get("companies"), list):
+        rep.add(name, False, "직전 corp.json 이 없거나 회사 목록이 없어요 (비교할 수 없어요)", rule)
+        return
+    rows = {}                                       # 코드 → 오늘의 줄들 (같은 코드가 두 번이면 둘 다: 예전 앱은 앞의 것, 2.0 은 뒤의 것을 써요)
+    for c in comps:
+        if isinstance(c, dict) and c.get("t") is not None:
+            rows.setdefault(c.get("t"), []).append(c)
+    marked = list(dict.fromkeys(c.get("t") for c in pcorp["companies"] if _stmt_marked(c) and c.get("t") is not None))
+    still = [t for t in marked if t in rows]
+    lost = [t for t in still if not all(_stmt_marked(c) for c in rows[t])]   # 한 줄이라도 표시가 없으면 사라진 거예요
+    gone_kr = [t for t in marked if t not in rows and not is_foreign(t)]     # 국내 회사가 오늘 목록에 없음: 다음 날 다시 확인
+    gone_many = len(marked) >= STMT_MARK_MIN and 2 * len(still) < len(marked)   # 표시된 회사가 한꺼번에 목록에서 빠졌어요
+
+    def has_amt(t):
+        return any(_has_amount(c.get(k)) for c in rows[t] for k in STMT_AMOUNT_FIELDS)
+
+    def label(t):
+        nk = next((c.get("nk") for c in rows[t] if c.get("nk")), None)
+        return " ".join(x for x in (t, nk, "(금액 있음)" if has_amt(t) else None) if x)
+    # 해로운 것: 금액이 찬 국내 회사(9… 가 아닌) — 외국 기업은 코드 규칙으로 금액을 비우는 줄이 따로 있어요. 맨 앞에 적어요
+    harmful = [t for t in lost if not is_foreign(t) and has_amt(t) and t not in STMT_WON_SWITCH]
+    fail = bool(harmful) or (len(still) >= STMT_MARK_MIN and 2 * len(lost) > len(still))
+    lost.sort(key=lambda t: (is_foreign(t), not has_amt(t)))
+    if lost:
+        rep.detail("표시가 사라진 회사 (stmtCur)", [label(t) for t in lost])
+    value = f"직전 {len(marked)}곳 · 오늘도 목록에 {len(still)}곳 · 표시가 사라짐 {len(lost)}"
+    if harmful:
+        value += f" (그중 금액이 찬 국내 회사 {len(harmful)})"
+    if lost:
+        value += f": {', '.join(label(t) for t in lost[:4])}{' …' if len(lost) > 4 else ''}"
+    elif gone_many:
+        value += " (직전에 표시된 회사의 절반 넘게 오늘 목록에 없어요)"
+    if gone_kr:
+        value += f" · 오늘 목록에 없는 국내 회사: {', '.join(gone_kr[:4])}{' …' if len(gone_kr) > 4 else ''} (다음 발행에서 다시 확인)"
+    rep.add(name, not fail, value, rule, warn=(bool(lost) or gone_many or bool(gone_kr)) and not fail)
+
+
 def _has_amount(v):
     """금액 칸이 차 있는지: 목록이면 숫자가 하나라도, dict(영수증)면 있으면, 아니면 숫자면."""
     if isinstance(v, list):
@@ -1892,11 +2083,24 @@ def load_git(ref, files=FILES):
 
 
 def load_prev(prev_dir, prev_ref):
-    """직전 발행본은 비교에 쓰는 data.json 만 엄격하게 읽어요 (corp·disc·macro 는 비교에 안 써요)."""
+    """직전 발행본의 data.json 을 엄격하게 읽어요. corp.json 은 표시(stmtCur) 비교에만 따로 느슨하게 읽어요 (load_prev_corp) ·
+    disc·macro 는 비교에 안 써요."""
     if prev_dir:
         with open(os.path.join(prev_dir, "data.json"), encoding="utf-8") as fh:
             return {"data": strict_loads(fh.read(), "data.json")}
     return load_git(prev_ref, files=("data.json",))
+
+
+def load_prev_corp(prev_dir, prev_ref):
+    """직전 발행본의 corp.json — 원화가 아닌 재무제표 표시(stmtCur) 비교에만 써요 (check_stmt_marks). 비교에 필요한 칸만 보니 느슨하게
+    읽어요 (NaN 이 있어도 읽혀요): 직전 발행본의 다른 문제로 오늘 발행이 막히지 않게요 (load_prev 와 같은 생각)."""
+    if prev_dir:
+        with open(os.path.join(prev_dir, "corp.json"), encoding="utf-8") as fh:
+            return json.loads(fh.read())
+    r = subprocess.run(["git", "show", f"{prev_ref}:corp.json"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git show {prev_ref}:corp.json → {r.returncode}: {(r.stderr or '').strip()[:160]}")
+    return json.loads(r.stdout)
 
 
 def _annotate_error(text):
@@ -1951,6 +2155,13 @@ def _main(argv=None):
             print(f"· 직전 발행본: {a.prev_dir or a.prev_ref} (pxDate {prev['data'].get('pxDate')} · asOf {prev['data'].get('asOf')})")
         except Exception as e:
             print(f"!! 직전 발행본을 읽을 수 없어요 ({a.prev_dir or a.prev_ref}): {str(e)[:200]}")
+        if prev is not None:
+            try:
+                prev["corp"] = load_prev_corp(a.prev_dir, a.prev_ref)
+                print(f"· 직전 corp.json: 원화가 아닌 재무제표 표시 {sum(1 for c in prev['corp'].get('companies') or [] if _stmt_marked(c))}곳")
+            except Exception as e:
+                prev["corpError"] = f"{type(e).__name__}: {str(e)[:200]}"
+                print(f"!! 직전 corp.json 을 읽을 수 없어요 ({a.prev_dir or a.prev_ref}): {prev['corpError']}")
 
     special = None
     try:

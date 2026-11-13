@@ -29,7 +29,7 @@
 // no verdict band (it speaks for itself, as before), no card, every 가진 종목 portfolio quiet (home.quietBlock: checked,
 // nothing broken, 한 종목 · 한 업종 · 내 기준 all checked on every holding, value known) and, with a Korean stock held, today's
 // filings checked. Never when no rule could be checked, never while the filings load or after it failed.
-// 시장 한눈에 unchanged. Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
+// 시장 한눈에 unchanged; 종목 순위 under it (v19.5b, rank.jsx: phone after 시장 한눈에, PC the right column). Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
 // exists). Failed: the load-failure message, never "할 일이 없어요". No 뱁이 anywhere here (numbers). The account banner waits
 // for v19.4.
 import React, { useMemo } from "react";
@@ -37,7 +37,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADE
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
 import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useLayout, useRoomy, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
@@ -49,6 +49,7 @@ import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview
 import { usHeld, limitsOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero } from "./today.jsx";
+import { RankCard } from "./rank.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
 import { IcrOffLine, EpsOwnersNote, StmtCurLine } from "./fixnote.jsx";
@@ -66,15 +67,15 @@ function HeroTile({ r }) {
       style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: SPACE(1) + 2, padding: `${SPACE(2) + 2}px 2px ${SPACE(2)}px`,
         borderRadius: RADIUS.md, background: broken ? "rgba(255,226,168,.18)" : "rgba(255,255,255,.08)", minWidth: 0 }}>
       <Icon name={RULE_ICON[r.id]} size={24} tone="onNavy" style={{ opacity: r.state === "unknown" ? 0.6 : 1 }} />
-      <span style={tx(SIZE.xs, WEIGHT.semi, "#E3E7EE", { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{ruleLabel(r)}</span>
-      {r.state === "unknown" && <span data-ui-v2="home-rule-unknown" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF", { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{C.pfr.unknown}</span>}
-      {detail && <span data-ui-v2="home-rule-detail" style={tx(SIZE.xs, WEIGHT.bold, "#FFE2A8", { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{detail}</span>}
+      <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.onPrimary2, { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{ruleLabel(r)}</span>
+      {r.state === "unknown" && <span data-ui-v2="home-rule-unknown" style={tx(SIZE.xs, WEIGHT.regular, COLOR.onPrimary3, { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{C.pfr.unknown}</span>}
+      {detail && <span data-ui-v2="home-rule-detail" style={tx(SIZE.xs, WEIGHT.bold, COLOR.highlight, { lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" })}>{detail}</span>}
       {ok && (
         <span role="img" aria-label={C.daily.ok} style={{ position: "absolute", top: -4, right: -2, width: 20, height: 20, borderRadius: 10, background: COLOR.okBg,
           display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="check" size={14} tone="ok" /></span>
       )}
       {broken && (
-        <span aria-hidden="true" style={{ position: "absolute", top: -4, right: -2, width: 20, height: 20, borderRadius: 10, background: "#FFE2A8",
+        <span aria-hidden="true" style={{ position: "absolute", top: -4, right: -2, width: 20, height: 20, borderRadius: 10, background: COLOR.highlightBg,
           display: "flex", alignItems: "center", justifyContent: "center", ...tx(SIZE.xs, 900, COLOR.watch, { lineHeight: 1 }) }}>!</span>
       )}
     </div>
@@ -88,22 +89,22 @@ function RulesHero({ block, many, narrow }) {
   const line = brokenLine(st);
   return (
     <section data-ui-v2="home-rules" data-deck-id={deck.id} data-kept={st.kept} data-checked={st.checked}
-      style={{ marginTop: SPACE(4), background: COLOR.ink, color: COLOR.surface, borderRadius: RADIUS.lg + 2, padding: SPACE(4) + 2 }}>
-      {many && <p data-ui-v2="home-rules-name" style={tx(SIZE.xs, WEIGHT.bold, COLOR.surface, { marginBottom: SPACE(1) })}>{shownName(deck.name)}</p>}
+      style={{ marginTop: SPACE(4), background: COLOR.primary, color: COLOR.onPrimary, borderRadius: RADIUS.lg + 2, padding: SPACE(4) + 2 }}>
+      {many && <p data-ui-v2="home-rules-name" style={tx(SIZE.xs, WEIGHT.bold, COLOR.onPrimary, { marginBottom: SPACE(1) })}>{shownName(deck.name)}</p>}
       {/* "{date} 종가로 점검했어요" only when at least one rule was checked: with every tile 확인하지 못했어요 nothing was */}
-      {md && st.checked > 0 && <p data-ui-v2="home-checked" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF")}>{fill(C.pfr.checked, { date: md })}</p>}
-      {st.checked > 0 && <h2 data-ui-v2="home-kept" style={tx(21, WEIGHT.heavy, COLOR.surface, { marginTop: SPACE(1) + 2, lineHeight: 1.35, letterSpacing: "-0.02em", wordBreak: "keep-all" })}>
+      {md && st.checked > 0 && <p data-ui-v2="home-checked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.onPrimary3)}>{fill(C.pfr.checked, { date: md })}</p>}
+      {st.checked > 0 && <h2 data-ui-v2="home-kept" style={tx(21, WEIGHT.heavy, COLOR.onPrimary, { marginTop: SPACE(1) + 2, lineHeight: 1.35, letterSpacing: "-0.02em", wordBreak: "keep-all" })}>
         {fill(C.pfr.kept, { n: st.checked, k: st.kept })}</h2>}
       <div style={{ marginTop: SPACE(3) + 2, display: "grid", gridTemplateColumns: `repeat(${narrow ? 2 : 4}, minmax(0, 1fr))`, gap: SPACE(1) + 2 }}>
         {st.rules.map((r) => <HeroTile key={r.id} r={r} />)}
       </div>
       {/* 2026-11-08 (Jack): why 재무 경고 0개 could not be checked, when a Korean holding's 이자보상배율 check is off (pf.js icrOff);
           under the tiles, in the hero's light grey (a tile is too narrow for the sentence) */}
-      <IcrOffLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.icrOff)} style={{ color: "#CBD3DF", marginTop: SPACE(3) }} />
+      <IcrOffLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.icrOff)} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
       {/* and when a Korean holding files its statements in another currency (pf.js stmtCur), the same way */}
-      <StmtCurLine cur={(st.rules.find((x) => x.id === "warn" && x.state === "unknown") || {}).stmtCur} style={{ color: "#CBD3DF", marginTop: SPACE(3) }} />
-      {line && <p data-ui-v2="home-broken" style={tx(SIZE.xs, WEIGHT.semi, "#E3E7EE", { marginTop: SPACE(3) })}>{line}</p>}
-      {st.unchecked > 0 && <p data-ui-v2="home-not-checked" style={tx(SIZE.xs, WEIGHT.regular, "#CBD3DF", { marginTop: SPACE(2) })}>{fill(C.daily.notChecked, { n: st.unchecked })}</p>}
+      <StmtCurLine cur={(st.rules.find((x) => x.id === "warn" && x.state === "unknown") || {}).stmtCur} style={{ color: COLOR.onPrimary3, marginTop: SPACE(3) }} />
+      {line && <p data-ui-v2="home-broken" style={tx(SIZE.xs, WEIGHT.semi, COLOR.onPrimary2, { marginTop: SPACE(3) })}>{line}</p>}
+      {st.unchecked > 0 && <p data-ui-v2="home-not-checked" style={tx(SIZE.xs, WEIGHT.regular, COLOR.onPrimary3, { marginTop: SPACE(2) })}>{fill(C.daily.notChecked, { n: st.unchecked })}</p>}
     </section>
   );
 }
@@ -313,6 +314,11 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const decks = store.data.decks;
   const ok = load.status === "ok";
   const narrow = useNarrow();
+  // 종목 순위: PC from 1200 px in the right column under 시장 한눈에; from 1024 to 1199 px at the end of the main column (Jack, 2026-11-12)
+  const { wide } = useLayout();
+  const roomy = useRoomy();
+  const rankInMain = wide && !roomy;
+  const rankCard = ok && <RankCard key="rank" load={load} store={store} go={go} />;
   const blocks = useMemo(() => (ev.ok ? homeBlocks(decks, ev, ctx, ok ? load.data.stocks : []).map((b) => ({ ...b, byT: ctx.byT })) : []), [decks, ev, ctx, load, ok]);
   const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => x.cls === "us")) || decks.some((d) => usHeld(d, load)));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
@@ -347,7 +353,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
         <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} quiet={look.quiet} />
-        <Cols main={main} side={ok && <MarketGlance load={load} go={go} />} />
+        <Cols main={rankInMain ? [...main, rankCard] : main} side={ok && [<MarketGlance key="glance" load={load} go={go} />, !rankInMain && rankCard]} />
       </div>
       <Footer />
     </Page>
