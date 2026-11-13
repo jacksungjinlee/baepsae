@@ -196,8 +196,9 @@ def test_the_two_evening_lines_are_approved_recorded_and_shown_only_where_they_b
     assert co.count("C.daily.soldOutKept}") == 1 and "{!imported && x.qty === 0 && C.daily.soldOutKept && (" in co
     for f in ("home2.jsx", "today.jsx", "home.js", "pfview.jsx"):
         assert "soldOutKept" not in read("src/v2/" + f), f
-    # the rate line: the record forms and 매수 계획's 샀어요, only for the "notYet" refusal
-    assert 'rateNo === "notYet" ? C.rec.rateNotYet' in read("src/v2/records.jsx")
+    # the rate line: the record forms and 매수 계획's 샀어요, only for the "notYet" refusal, through one mapping (records.rateRefusal)
+    assert 'rateNo === "notYet" ? C.rec.rateNotYet' in read("src/v2/records.jsx") and "rateRefusal(check.rate)" in read("src/v2/records.jsx")
+    assert "setNoRate(rateRefusal(rate.why));" in read("src/v2/plan.jsx")
     assert '{noRate === "notYet" && <Note tone="watch" data-ui-v2="rec-no-rate" data-why="notYet">{C.rec.rateNotYet}</Note>}' in read("src/v2/plan.jsx")
 
 
@@ -221,8 +222,17 @@ def test_only_a_us_date_after_the_published_history_is_not_yet():
         sale: why(Rc.checkSale(deck, 'AAPL', { qty: '1', price: '310', date: '2026-11-12' }, US, env())),
         buy: why(Rc.checkPurchase(deck, 'AAPL', { qty: '1', price: '310', date: '2026-11-12' }, US, env())),
         div: why(Rc.checkDiv(deck, 'AAPL', { amount: '1.5', date: '2026-11-12' }, US, env())),
-        kr: why(Rc.checkPurchase(deck, '005930', { qty: '1', price: '210000', date: '2026-11-12' }, KR, env())) };""")
+        kr: why(Rc.checkPurchase(deck, '005930', { qty: '1', price: '210000', date: '2026-11-12' }, KR, env())),
+        lines: ['notYet', 'today', 'past', 'date', undefined].map((w) => Rc.rateRefusal(w)) };""")
     assert got["after"] == "notYet" and got["staleAfter"] == "notYet"
     assert got["onLast"] == "ok" and got["today"] == "ok" and got["staleToday"] == "today"
     assert got["noHist"] == got["asOf"] == got["first"] == got["unfinished"] == "past"
     assert got["sale"] == got["buy"] == got["div"] == "rate:notYet" and got["kr"] == "ok"
+    assert got["lines"] == ["notYet", "today", "past", "past", "past"]          # 그 줄을 고르는 하나의 규칙 (양식 · 매수 계획, 리뷰 S2)
+
+
+def test_the_company_page_says_no_all_kept_line_for_a_0_share_holding():
+    """Review N5: a 0-share kept holding whose band reads 할 일 없음 does not get "규칙 n개가 모두 지켜지고 있어요" on the company
+    page (its rules are not read for it); the "다 판 종목이에요. …" line stands alone. (smoke_v2 scene_v196a_sold_out: 035720.)"""
+    co = read("src/v2/company.jsx")
+    assert "const k = imported || x.qty === 0 ? 0 : keptCount(" in co

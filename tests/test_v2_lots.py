@@ -522,7 +522,7 @@ def test_a_sold_out_holding_after_a_confirmed_cut_is_never_bought_back():
     Three stocks at a third each; the third is sold out and kept after a dividend cut the user confirmed. Before: under "own"
     and "spec" it read 규칙 깨짐 (홈's band said "…이 매도 조건에 걸렸어요 / 규칙대로면 팔 때예요" for 0 shares) and 추가로 넣을 돈
     300만원 bought nothing. Now a 0-share holding's other rules are read only to see whether one is broken: this one is, so
-    it reads 할 일 없음 with nothing shown (no rule, no reason, no target, soldOutBroken), nothing is for 오늘 확인할 일, its
+    it reads 할 일 없음 with nothing shown (no rule, no reason, no target, soldOutFails), nothing is for 오늘 확인할 일, its
     준비 중 rule is not counted, and 추가로 넣을 돈 buys exactly what "off" buys (150주 + 150주). "spec" reads it the same way
     (its held stocks read 일부 팔아요 there, so nothing is bought). The same portfolio without the cut: it reads 먼저 사요 on its
     band and 300만원 buys it back (300주)."""
@@ -532,7 +532,7 @@ def test_a_sold_out_holding_after_a_confirmed_cut_is_never_bought_back():
           o[mode || 'dflt'] = { st: e.holdings.map((x) => [x.t, x.qty, x.status]), todo: e.todo, nc: e.notChecked, ncIds: e.notCheckedIds,
             todoTs: [...c.todoTs], allNone: c.allNone, add: a.buys.map((b) => [b.t, b.shares]), msg: T.addMessage(a, 3000000), zeroOwn: e.zeroOwn || [],
             zero: e.holdings.filter((x) => x.qty === 0).map((x) => ({ rules: x.rules.map((r) => r.id), reasons: x.reasons.map((r) => r.code), drops: x.divDrops,
-              noNew: x.noNewMoney, target: x.target, broken: x.soldOutBroken })) }; }
+              noNew: x.noNewMoney, target: x.target, broken: x.soldOutFails })) }; }
         return o; };
       const d = cut3();
       out = { cut: look(d), fine: look({ ...d, confirms: [] }) };""")
@@ -590,12 +590,12 @@ def test_sold_out_switch_fuzz_own_reads_only_its_band_and_never_buys_nothing_whe
     할 일 없음 only (never 규칙 깨짐, 확인 필요, 지켜봐요, 일부 팔아요, 더 안 사요), every held stock reads byte for byte as under
     "off", "아직 자동으로 확인하지 못하는 규칙" counts the same, and 추가로 넣을 돈 (30만 · 300만 · 3,000만원) never buys nothing
     where "off" buys something. Under "spec" too the sold-out holding reads only 먼저 사요 or 할 일 없음. A sold-out holding that
-    fails its own rules (read as if held: 규칙 깨짐) never reads 먼저 사요 and is never bought; when every sold-out holding of a
-    portfolio is such a one, 추가로 넣을 돈 buys exactly what "off" buys."""
+    fails any of its own rules (its other rules read as if held: 규칙 깨짐, 지켜봐요 or 확인 필요) never reads 먼저 사요 and is
+    never bought; when every sold-out holding of a portfolio is such a one, 추가로 넣을 돈 buys exactly what "off" buys."""
     got = run("""const CODES = ['000010', '000020', '000030', '000040', '000050', '000060', '000070', '000080', '000090', '000100'];
       let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
       const pick = (a) => a[Math.floor(rnd() * a.length)];
-      const st = { decks: 0, sold: 0, own: {}, spec: {}, heldDiff: 0, ncDiff: 0, nothing: 0, adds: 0, bad: [], brokenSold: 0, brokenLow: 0, brokenBought: 0, brokenNotOff: 0 };
+      const st = { decks: 0, sold: 0, own: {}, spec: {}, heldDiff: 0, ncDiff: 0, nothing: 0, adds: 0, bad: [], brokenSold: 0, brokenLow: 0, brokenBought: 0, brokenNotOff: 0, failLevels: {} };
       for (let it = 0; it < 1500; it++) {
         const n = 2 + Math.floor(rnd() * 7), A = pick([300, 500, 1000, 3000]) * 10000, planFx = 1300;
         let ws = Array.from({ length: n }, () => 0.05 + rnd()); const sw = ws.reduce((a, b) => a + b, 0); ws = ws.map((w) => Math.round(w / sw * 100) / 100);
@@ -623,11 +623,17 @@ def test_sold_out_switch_fuzz_own_reads_only_its_band_and_never_buys_nothing_whe
         st.decks++;
         if ((eo.zeroOwn || []).length) st.sold++;
         for (const [k, e] of [['own', eo], ['spec', es]]) for (const y of e.holdings) if (y.qty === 0) st[k][y.status] = (st[k][y.status] || 0) + 1;
-        // a sold-out holding that fails its own rules (read as if held: 규칙 깨짐) never reads 먼저 사요 and is never bought
-        const broken = eo.holdings.filter((y) => y.qty === 0 && R.evaluateHolding(hs.find((h) => h.t === y.t), deck, ctx, { ok: false, missing: [] }, 1).status === 'broken').map((y) => y.t);
+        // a sold-out holding that fails any of its own rules (its other rules read as if held: 규칙 깨짐, 지켜봐요 or 확인 필요,
+        // the levels that stop new money) never reads 먼저 사요 and is never bought
+        const fails = (t) => { const h = hs.find((x) => x.t === t);
+          const x = R.evaluateHolding({ ...h, rules: h.rules.filter((r) => r.id !== 'band') }, deck, ctx, { ok: false, missing: [] }, 1);
+          const lv = x.reasons.filter((r) => r.code !== 'noRules').map((r) => r.level);
+          for (const l of new Set(lv)) if (['broken', 'check', 'watch'].includes(l)) st.failLevels[l] = (st.failLevels[l] || 0) + 1;
+          return lv.some((l) => ['broken', 'check', 'watch'].includes(l)); };
+        const broken = eo.holdings.filter((y) => y.qty === 0 && fails(y.t)).map((y) => y.t);
         st.brokenSold += broken.length;
-        for (const t of broken) { const y = eo.holdings.find((z) => z.t === t); if (y.status !== 'none' || y.soldOutBroken !== true) st.brokenLow++; }
-        for (const y of eo.holdings) if (y.qty === 0 && !broken.includes(y.t) && y.soldOutBroken !== false) st.brokenLow++;
+        for (const t of broken) { const y = eo.holdings.find((z) => z.t === t); if (y.status !== 'none' || y.soldOutFails !== true) st.brokenLow++; }
+        for (const y of eo.holdings) if (y.qty === 0 && !broken.includes(y.t) && y.soldOutFails !== false) st.brokenLow++;
         for (const x of ef.holdings) { const y = eo.holdings.find((z) => z.t === x.t); if (!y || JSON.stringify(x) !== JSON.stringify(y)) st.heldDiff++; }
         if (eo.notChecked !== ef.notChecked) st.ncDiff++;
         if (!(eo.zeroOwn || []).length) continue;
@@ -645,7 +651,8 @@ def test_sold_out_switch_fuzz_own_reads_only_its_band_and_never_buys_nothing_whe
     assert set(got["spec"]) <= {"low", "none"}, got["spec"]
     assert got["heldDiff"] == 0 and got["ncDiff"] == 0 and got["nothing"] == 0 and got["bad"] == [], got
     # 자기 규칙이 깨진 다 판 종목: 먼저 사요도, 사는 일도 없어요 (그런 종목만 남았으면 "off" 와 똑같이 사요)
-    assert got["brokenSold"] >= 20 and got["brokenLow"] == 0 and got["brokenBought"] == 0 and got["brokenNotOff"] == 0, got
+    assert got["brokenSold"] >= 80 and got["brokenLow"] == 0 and got["brokenBought"] == 0 and got["brokenNotOff"] == 0, got
+    assert all(got["failLevels"].get(k, 0) >= 10 for k in ("broken", "check", "watch")), got["failLevels"]      # 세 단계 모두 나와요
 
 
 def test_own_add_money_buys_the_sold_out_stock_back_or_else_exactly_what_off_buys():
@@ -663,3 +670,53 @@ def test_own_add_money_buys_the_sold_out_stock_back_or_else_exactly_what_off_buy
     assert own["st"] == [["000010", "none"], ["000020", "none"], ["000030", "low"]]
     assert off["a30"] == own["a30"] == {"buys": [["000010", 15], ["000020", 15]], "left": 0}              # 다시 살 수 없으면 "off" 그대로
     assert own["a300"] == {"buys": [["000030", 2]], "left": 0} and off["a300"]["buys"] == [["000010", 150], ["000020", 150]]
+
+
+# ── v19.6a 리뷰 (2026-11-13) B1: 자기 규칙 중 하나라도 어긋난 다 판 종목은 다시 사라고 하지 않아요 (깨짐 · 지켜봐요 · 확인 필요) ──
+FAIL3 = """const DEBT = { id: 'debtCeiling', kind: 'keep', check: 'checked', since: 2024, limit: 200 };
+      const ROE = { id: 'roeFloor', kind: 'keep', check: 'checked', since: 2024, floor: 8 };
+      const DIV = { id: 'divCut', kind: 'sell', check: 'checked', since: 2023 };
+      // three stocks at a third each, the third sold out and kept, with one more rule of its own and today's figures for it
+      const fail3 = (rule, more, ctxMore = {}) => { const d0 = mk([1 / 3, 1 / 3, 1 / 3], '000030');
+        const d = { ...d0, holdings: d0.holdings.map((h) => (h.t === '000030' ? { ...h, rules: [rule, ...h.rules] } : h)) };
+        const stocks = d.holdings.map((h) => kr(h.t, 10000, { fy: 2025, debt: 100, roe: 10, dps3: [1000, 1000, 1000], ...(h.t === '000030' ? more : {}) }));
+        return Object.fromEntries(['off', 'own'].map((m) => { const ctx = { ...ctxOf(stocks), soldOutBands: m, ...ctxMore }; const e = R.evaluateDeck(d, ctx);
+          const z = e.holdings.find((x) => x.qty === 0);
+          return [m, { st: e.holdings.map((x) => [x.t, x.status]), fails: z ? z.soldOutFails : null, zeroRules: z ? z.rules.length : null, todo: e.todo,
+            add: T.addMoney(e, 3000000).buys.map((b) => [b.t, b.shares]) }]; })); };
+"""
+
+
+def test_a_sold_out_holding_failing_any_of_its_rules_is_never_bought_back():
+    """Review B1 (2026-11-13): the guard covers every level that stops new money for a held stock, not only 규칙 깨짐. The
+    sold-out third stock with 부채비율 300% over its 200% ceiling (지켜봐요), ROE 2% under its 8% floor (지켜봐요), no 부채비율
+    today (확인 필요) or an unanswered dividend drop with the Korean trend switch on (확인 필요): each reads 할 일 없음 with
+    nothing shown, nothing goes to 오늘 확인할 일, and 300만원 buys 150주 + 150주 of the two held, as "off". With every rule
+    passing it reads 먼저 사요 and is bought back (300주). With the trend switch off a Korean dividend drop is not read at all
+    (준비 중), for a held stock as for this one, so it does not stop the buy-back either: the same levels as for a held stock."""
+    got = run(SOLD3 + FAIL3 + """out = { debt: fail3(DEBT, { debt: 300 }), roe: fail3(ROE, { roe: 2 }), noDebt: fail3(DEBT, { debt: null }),
+        divOn: fail3(DIV, { dps3: [800, 1000, 1000] }, { krDivTrend: true }), divOff: fail3(DIV, { dps3: [800, 1000, 1000] }, { krDivTrend: false }),
+        ok: fail3(DEBT, { debt: 150 }) };""")
+    held = [["000010", 150], ["000020", 150]]
+    for k in ("debt", "roe", "noDebt", "divOn"):
+        own, off = got[k]["own"], got[k]["off"]
+        assert own["st"] == [["000010", "none"], ["000020", "none"], ["000030", "none"]] and own["fails"] is True and own["zeroRules"] == 0, (k, own)
+        assert own["todo"] == 0 and own["add"] == off["add"] == held, (k, own, off)                    # 다시 사지 않아요: "off" 와 똑같이
+    for k in ("ok", "divOff"):
+        own = got[k]["own"]
+        assert own["st"][2] == ["000030", "low"] and own["fails"] is False and own["add"] == [["000030", 300]], (k, own)   # 규칙이 다 지켜지면 다시 사요
+
+
+def test_two_sold_out_stocks_one_failing_its_rules_the_plan_goals_leave_it_out():
+    """Review N3 (track.js planSum): with two stocks sold out and kept, one failing its own rules (no target) and one fine, the
+    plan's goals are shared over the stocks that have a target only (the failing one is not in the sum): four equal stocks,
+    C fine and D over its 부채비율 ceiling; 300만원 buys C back first and tops up A and B."""
+    got = run(SOLD3 + FAIL3 + """const d0 = mk([0.25, 0.25, 0.25, 0.25], '000030'); const q = d0.purchases.find((p) => p.t === '000040').qty;
+      const d = { ...d0, holdings: d0.holdings.map((h) => (h.t === '000040' ? { ...h, rules: [DEBT, ...h.rules] } : h)), sales: [...d0.sales, sell('000040', q, 10000, '2026-10-11')] };
+      const stocks = d.holdings.map((h) => kr(h.t, 10000, { fy: 2025, debt: h.t === '000040' ? 300 : 100 }));
+      const e = R.evaluateDeck(d, { ...ctxOf(stocks), soldOutBands: 'own' });
+      out = { st: e.holdings.map((x) => [x.t, x.qty, x.status, x.target == null ? null : Math.round(x.target * 1000) / 1000]), zeroOwn: e.zeroOwn,
+        add: T.addMoney(e, 3000000).buys.map((b) => [b.t, b.shares]) };""")
+    assert got["st"] == [["000010", 250, "none", 0.5], ["000020", 250, "none", 0.5], ["000030", 0, "low", 0.25], ["000040", 0, "none", None]], got["st"]
+    assert got["zeroOwn"] == ["000030", "000040"]
+    assert got["add"] == [["000030", 242], ["000010", 17], ["000020", 17]], got["add"]      # 목표의 합에 D 는 없어요 (있으면 C 125주뿐)

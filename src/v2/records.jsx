@@ -17,7 +17,7 @@ import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
 import {
   stockState, checkSale, checkPurchase, checkDiv, withRecord, withoutRecord, recordsOf, salePreview, soldOutNow, rateEnv, typed, decksFor, recordCcy,
-  closeIsDefault,
+  closeIsDefault, rateRefusal,
 } from "./records.js";
 
 const usdText = (v) => "$" + nf(v, 2);
@@ -206,7 +206,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   // the approved "환율 정보를 불러오지 못해 … 지난 날짜의 …" line. Today (stale data: its rate is an older day's): rec.noTodayRate.
   // A past date after the published history's last day (last night's US date before the morning publish): rec.rateNotYet.
   // The form keeps what was typed (nothing is cleared on a refusal).
-  const rateNo = !check.ok && check.why === "rate" ? check.rate : null;
+  const rateNo = !check.ok && check.why === "rate" ? rateRefusal(check.rate) : null;
   const rateLine = rateNo === "past" ? C.rec.noPastRate : rateNo === "today" ? C.rec.noTodayRate : rateNo === "notYet" ? C.rec.rateNotYet : null;
   // a holding put in by amount has no share count of its own: no "지금 N주 …" head line (the by-amount line explains the form)
   const head = kind === "sell" && !byAmount ? (st.avg ? fill(C.rec.head, { qty: qtyText(st.qty), price: ownMoney(st.avg.avg, st.avg.ccy) }) : fill(C.rec.heldQty, { qty: qtyText(st.qty) })) : null;

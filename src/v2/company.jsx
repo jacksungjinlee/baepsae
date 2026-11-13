@@ -537,7 +537,8 @@ function Holdings({ held, single, action = null }) {
   return (
     <Card data-ui-v2="co-held" style={{ padding: `${SPACE(2)}px ${SPACE(4)}px` }}>
       {held.map(({ deckId, name, x, imported }) => {
-        const k = imported ? 0 : keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
+        // a 0-share kept holding (v19.6a): no "규칙 n개가 모두 지켜지고 있어요" (its rules are not read for it; review N5)
+        const k = imported || x.qty === 0 ? 0 : keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
         const chips = imported ? null : statusChips(x);
         const line = holdLine(held.find((h) => h.deckId === deckId), single);
         return (

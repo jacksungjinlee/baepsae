@@ -13,7 +13,7 @@ import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
-import { rateFor, rateEnv, DATE_FROM } from "./records.js";
+import { rateFor, rateEnv, rateRefusal, DATE_FROM } from "./records.js";
 import { dataSplits, splitSince } from "./lots.js";
 import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
@@ -354,7 +354,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     // data: records.jsx's today line). A date before 2016 is saved without a rate and marked noFx (never costed at planFx).
     const usRows = parsed.filter((r) => r.q > 0 && r.x.s.cls === "us");
     const rate = usRows.length ? rateFor(day, rateEnv(load, today)) : { ok: true, fx: null };
-    if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(rate.why === "today" || rate.why === "notYet" ? rate.why : "past"); setTried(true); return; }
+    if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(rateRefusal(rate.why)); setTried(true); return; }
     setNoRate(null);
     const fx = usRows.length && typeof rate.fx === "number" && rate.fx > 0 ? rate.fx : null;
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"

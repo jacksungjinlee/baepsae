@@ -622,9 +622,11 @@ One switch with three values decides how the weight bands read such a holding. I
   other holdings then read above their bands (three equal stocks: both others 일부 팔아요).
 - `"own"`: it is read on its own weight band only, over the whole plan (먼저 사요 or 할 일 없음; its other rules are not
   shown, so never 규칙 깨짐 or 확인 필요 for 0 shares), and 추가로 넣을 돈 buys it back first by the plan's own targets; when
-  those goals cannot buy it back, the money goes where `"off"` puts it. The app never tells the user to buy back a stock
-  that fails its own rules: when one of its other rules reads 규칙 깨짐 (a dividend cut the user confirmed), it reads 할 일
-  없음, gets no 먼저 사요, and 추가로 넣을 돈 skips it and buys what `"off"` buys. Every other holding reads exactly as under `"off"`.
+  those goals cannot buy it back, the money goes where `"off"` puts it (when `"off"` buys nothing either, the plan's result
+  stands). The app never tells the user to buy back a stock that fails any of its own rules: when one of its other rules
+  reads 규칙 깨짐, 지켜봐요 or 확인 필요 (what stops new money for a held stock: a dividend cut the user confirmed, 부채비율
+  over its ceiling, a figure missing today, a drop not answered yet), it reads 할 일 없음, gets no 먼저 사요, and 추가로 넣을
+  돈 skips it and buys what `"off"` buys. Every other holding reads exactly as under `"off"`.
   With nothing held at all, the holdings read as under `"off"`. 홈 lists only the stocks held, so it keeps "오늘은 할 일이
   없어요"; under the sold-out row on 포트폴리오 and on its company page, once: "다 판 종목이에요. 다시 살 계획이 없으면
   계획에서 빼 주세요." (Jack, 2026-11-13).

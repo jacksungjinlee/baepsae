@@ -54,6 +54,9 @@ export function rateFor(date, env) {
   if (hit && e.fxHist.final !== true && hit === rows[rows.length - 1]) return { ok: false, why: "past" };   // final only when it says so
   return hit ? { ok: true, fx: hit[1] } : { ok: false, why: "past" };
 }
+// The line a refused rate gets (records.jsx's forms and 매수 계획's 샀어요, plan.jsx): "today" (rec.noTodayRate), "notYet"
+// (rec.rateNotYet, Jack 2026-11-13), else "past" (rec.noPastRate).
+export const rateRefusal = (why) => (why === "today" || why === "notYet" ? why : "past");
 // The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).
 const ratePart = (r) => (pos(r.fx) ? { fx: r.fx } : r.before ? { noFx: true } : {});
 // The env rateFor reads, from the app's load state (data.json, macro.json) and today's date.

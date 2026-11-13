@@ -10304,9 +10304,14 @@ def scene_v196a_sold_out(R, files, width=390):
     the sold-out one reads 먼저 사요 on its own target, and 추가로 넣을 돈 300만원 buys only that one back. Under the sold-out
     row, once, Jack's line "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." (also on its company page's 내 포트폴리오
     row); never under a held stock, never for a stock planned and never bought (a second portfolio holds one of each), never
-    on 홈, which keeps "오늘은 할 일이 없어요"."""
+    on 홈, which keeps "오늘은 할 일이 없어요" and, with the sold-out stock's change missing today, still "크게 움직인 종목은 없어요"
+    (review N3: 홈 leaves 0-share holdings out). A third portfolio's sold-out stock the plan gave no share (it reads 할 일 없음
+    on its band) gets the line on its company page and no "규칙 n개가 모두 지켜지고 있어요" (review N5)."""
     S = f"v19.6a 다 판 종목 {width}"
     data = v196a_files(files, splits=False)
+    for x in data["data.json"]["stocks"]:
+        if x["t"] == "105560":
+            x["d1"] = None                                                              # 다 판 종목은 오늘 등락이 없어요
     by = {x["t"]: x for x in data["data.json"]["stocks"]}
     pxd = data["data.json"]["pxDate"]
     band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
@@ -10319,8 +10324,15 @@ def scene_v196a_sold_out(R, files, width=390):
     other = {"id": "d4", "name": "배당 생활비 포트폴리오", "createdAt": "2026-10-01",
              "holdings": [{"t": t, "nk": by[t]["nk"], "target": 0.5, "plannedQty": q, "planPx": by[t]["price"], "rules": band(0.5)} for t, q in (("000660", 2), ("035420", 20))],
              "purchases": [{"id": "p9aaaaaa", "t": "000660", "date": "2026-10-01", "qty": 2, "price": by["000660"]["price"], "ccy": "KRW"}]}
+    # a third: 012330 held; 035720 at 20% that the plan gave no share (0 planned), bought 1 anyway and sold: it reads 할 일 없음
+    third = {"id": "d5", "name": "배당 생활비 포트폴리오", "createdAt": "2026-10-01",
+             "holdings": [{"t": "012330", "nk": by["012330"]["nk"], "target": 0.8, "plannedQty": 24, "planPx": by["012330"]["price"], "rules": band(0.8)},
+                          {"t": "035720", "nk": by["035720"]["nk"], "target": 0.2, "plannedQty": 0, "planPx": by["035720"]["price"], "rules": band(0.2)}],
+             "purchases": [{"id": "p7aaaaaa", "t": "012330", "date": "2026-10-01", "qty": 24, "price": by["012330"]["price"], "ccy": "KRW"},
+                           {"id": "p8aaaaaa", "t": "035720", "date": "2026-10-01", "qty": 1, "price": by["035720"]["price"], "ccy": "KRW"}],
+             "sales": [{"id": "s8aaaaaa", "t": "035720", "qty": 1, "price": by["035720"]["price"], "date": "2026-10-20", "ccy": "KRW"}]}
     seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
-            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck, other], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck, other, third], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
     srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if width >= 1024 else None)
     KEPT = C["daily"]["soldOutKept"]
 
@@ -10335,8 +10347,12 @@ def scene_v196a_sold_out(R, files, width=390):
         # Jack 11-13: the line once, under the sold-out row only (not under the held stocks, not in the other portfolio)
         assert KEPT == "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요."
         assert so.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and so.locator('[data-ui-v2="sold-out-kept"]').inner_text() == KEPT
-        assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and page.locator("body").inner_text().count(KEPT) == 1
+        assert card.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and card.inner_text().count(KEPT) == 1
         assert page.locator('[data-deck-id="d4"] [data-holding="000660"]').count() == 1 and page.locator('[data-deck-id="d4"] [data-ui-v2="sold-out-kept"]').count() == 0
+        d5 = page.locator('[data-deck-id="d5"]')
+        assert d5.locator('[data-sold-out="035720"] [data-ui-v2="sold-out-kept"]').count() == 1 and d5.locator('[data-ui-v2="sold-out-kept"]').count() == 1
+        assert d5.locator('[data-sold-out="035720"] [data-holding]').get_attribute("data-status") == "none"     # 계획 몫이 없던 종목: 할 일 없음
+        assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 2                     # d3 · d5 의 다 판 종목에만
         add = card.locator('[data-ui-v2="add-money"]')
         for _ in range(3):
             add.get_by_role("button", name="+100만").click()
@@ -10364,8 +10380,16 @@ def scene_v196a_sold_out(R, files, width=390):
         assert C["daily"]["sellNow"] not in txt and "매도 조건에 걸렸어요" not in txt and C["today"]["calmTitle"].split("\n")[0] in txt, txt
         if page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") in ("ok", "none", "skip"):
             assert txt.startswith(C["today"]["calmEyebrow"]), txt                           # '오늘은 할 일이 없어요' 그대로
+        assert C["today"]["noBigMove"] in txt, txt                                          # 다 판 종목의 등락이 없어도 '크게 움직인 종목은 없어요' (N3)
         R.collect(page)
         # 회사 페이지: 다 판 종목의 내 포트폴리오 줄 밑에 한 번 · 가진 종목과 사지 않은 종목에는 없어요
+        kept_all = C["why"]["keptTitle"].split("{n}")[1]                                     # "개가 모두 지켜지고 있어요"
+        page.evaluate("() => { location.hash = '#stocks/035720'; }")
+        at(page, "stocks/035720")
+        row5 = page.locator('[data-ui-v2="co-held-row"][data-deck-id="d5"]')
+        row5.wait_for(state="visible")
+        assert row5.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and kept_all not in row5.inner_text(), row5.inner_text()   # N5
+        R.collect(page)
         for t, n in (("105560", 1), ("005930", 0), ("035420", 0)):
             page.evaluate(f"() => {{ location.hash = '#stocks/{t}'; }}")
             at(page, f"stocks/{t}")
@@ -10800,6 +10824,28 @@ def scene_v196a(R, files, width):
     R.check(page, S, "환율 기록이 아직 닿지 않은 지난 날짜의 미국 판매: '이 날짜의 환율이 아직 없어요. …' · 저장 안 함 · 적은 값은 그대로 · 오늘 날짜면 줄 없음", not_yet_rate)
     ctx.close()
     srv.shutdown()
+
+    # 리뷰 S2 (11-13): 매수 계획의 샀어요도 같은 줄 (휴대폰 폭에서만: to_plan 은 아래 탭 막대로 가요)
+    if not wide:
+        srv, ctx, page, base = R.open(build_site(late), width, init=seed, path="/app.html?dev=1#portfolio")
+
+        def plan_not_yet():
+            at(page, "portfolio")
+            rows = to_plan(page)
+            assert any(by.get(t, {}).get("cls") == "us" for t, _ in rows), rows
+            action(page).click()
+            see(page, C["plan"]["sheetTitle"])
+            sheet = page.locator('[data-ui-v2="record-form"]')
+            sheet.locator('input[type="date"]').fill((dt.date.fromisoformat(today) - dt.timedelta(days=2)).isoformat())
+            page.get_by_role("button", name=C["plan"]["save"]).click()
+            line = page.locator('[data-ui-v2="record-form"] [data-ui-v2="rec-no-rate"]')
+            line.wait_for(state="visible")
+            assert line.get_attribute("data-why") == "notYet" and line.inner_text() == R_["rateNotYet"], line.inner_text()
+            assert len(stored()["decks"]) == 2 and page.locator('[data-ui-v2="record-done"]').count() == 0   # 저장 안 함
+            check_page("매수 계획 · 환율 아직 없음", "plan-rate-not-yet")
+        R.check(page, S, "환율 기록이 아직 닿지 않은 지난 날짜: 매수 계획의 샀어요도 '이 날짜의 환율이 아직 없어요. …' · 저장 안 함", plan_not_yet)
+        ctx.close()
+        srv.shutdown()
 
     stale = v196a_files(files)
     for f in DATA_FILES:
