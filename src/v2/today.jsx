@@ -150,7 +150,9 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
     return <LoadFail />;                                  // failed, refused, or a publication time that cannot be read
   }
   if (!held.length) return null;                         // nothing held, nothing checked: no verdict at all
-  const all = held.flatMap((de) => de.holdings.map((x) => ({ x, deckId: de.id })));
+  // v19.6a: a holding sold out and kept (0 shares) is not on 홈 (track.todayCounts): only its 포트폴리오 row and company page
+  // show its 먼저 사요
+  const all = held.flatMap((de) => de.holdings.filter((x) => x.qty !== 0).map((x) => ({ x, deckId: de.id })));
   const todo = all.filter(({ x }) => isTodo(x)).sort((a, b) => (a.x.status === "broken" ? 0 : 1) - (b.x.status === "broken" ? 0 : 1));
   const seen = new Set();
   const bigs = all.filter(({ x }) => x.bigMove && !seen.has(x.t) && seen.add(x.t));

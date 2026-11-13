@@ -200,10 +200,12 @@ export function indexSince(deck, idx, pxDate, valueOf = null) {
 export function deckDayChange(de) {
   if (!de || !de.ok || !de.weights || !(de.weights.ok || de.weights.paused) || !de.holdings.length) return null;
   const gone = new Set(de.absent || []);           // v19.0c: missing from today's data, left out like every other total
-  if (gone.size >= de.holdings.length) return null;
+  // v19.6a (verification nit): a holding sold out and kept (0 shares, rules.SOLD_OUT_BANDS "spec" · "own") holds no money:
+  // left out, so its d1 (none, or a US stock's) never blanks the portfolio's 오늘
+  const live = de.holdings.filter((x) => !gone.has(x.t) && x.qty !== 0);
+  if (!live.length) return null;
   let now = 0, prev = 0;
-  for (const x of de.holdings) {
-    if (gone.has(x.t)) continue;
+  for (const x of live) {
     const d1 = num(x.d1);
     const v = num(x.value);                           // null >= 0 is true in JavaScript: test the value itself
     if (d1 == null || x.cls === "us" || v == null || v < 0 || d1 <= -100) return null;
@@ -232,22 +234,36 @@ export function deckDayChange(de) {
 // -> { ok, buys: [{ t, nk, shares, cost }], spent, left, eligible, skipped, unheld, cheapest }
 //   cheapest: the lowest share price among the eligible names (the screen says "금액을 늘려 보세요" only when even that
 //   one share costs more than the amount; when the edges stop every buy, more money would not help).
+// A sold-out kept holding read on its own (rules.SOLD_OUT_BANDS "own", de.zeroOwn): its target is a share of the whole plan
+// while the held stocks' targets are shares of what is held, so together they add up to more than 1. New money then first
+// follows the plan itself: every goal is the plan's own target (planTarget) over the stocks listed here, so the sold-out
+// stock is bought back first and a held stock already above its plan share gets nothing more. Who may be bought and the
+// edges stay the ones the screen shows. v19.6a (verification B1): those goals are used only when they buy a sold-out
+// holding back. When they do not (it cannot be bought: skipped, or one share is more than the money or its gap), the money
+// goes exactly where "off" puts it (the held stocks alone, at their own targets), so a sold-out holding never leaves the
+// held stocks with less than "off" gives them, and never makes it buy nothing where "off" buys something. Without such a
+// holding the goals are the targets, as before.
 export function addMoney(de, amountWon) {
   if (!de || !de.ok || !de.weights || !de.weights.ok) return { ok: false };
   const A = Math.floor(num(amountWon) || 0);
+  const zero = de.zeroOwn || [];
+  if (!zero.length) return fillMoney(de, A, false);
+  const plan = fillMoney(de, A, true);
+  if (plan.buys.some((b) => zero.includes(b.t))) return plan;
+  const off = fillMoney(de, A, false);
+  return off.buys.length ? off : plan;
+}
+
+// plan: the plan's goals with the sold-out holdings (above); else the targets over the held stocks only (0-share rows left out).
+function fillMoney(de, A, plan) {
   const skipped = [];
   const rows = [];
+  const list = plan ? de.holdings : de.holdings.filter((x) => !(de.zeroOwn || []).includes(x.t));
   let total = 0;
-  for (const x of de.holdings) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
-  // A sold-out kept holding read on its own (rules.SOLD_OUT_BANDS "own", de.zeroOwn): its target is a share of the whole plan
-  // while the held stocks' targets are shares of what is held, so together they add up to more than 1. New money then
-  // follows the plan itself: every goal is the plan's own target (planTarget) over the stocks listed here, so the sold-out
-  // stock is bought back first and a held stock already above its plan share gets nothing more. Who may be bought and the
-  // edges stay the ones the screen shows. Without such a holding the goals are the targets, as before.
-  const own = (de.zeroOwn || []).length > 0;
-  const planSum = own ? de.holdings.reduce((a, x) => a + (num(x.target) > 0 && num(x.planTarget) > 0 ? x.planTarget : 0), 0) : 0;
+  for (const x of list) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
+  const planSum = plan ? list.reduce((a, x) => a + (num(x.target) > 0 && num(x.planTarget) > 0 ? x.planTarget : 0), 0) : 0;
   const goalOf = (x, target) => (planSum > 0 && num(x.planTarget) > 0 ? x.planTarget / planSum : target);
-  for (const x of de.holdings) {
+  for (const x of list) {
     const target = num(x.target), value = num(x.value), w = num(x.w);
     // a sold-out holding read with 0 shares (rules.SOLD_OUT_BANDS "spec" · "own") is bought back at today's price
     const px = x.qty > 0 && value > 0 ? value / x.qty : x.qty === 0 && num(x.px) > 0 ? x.px : null;
@@ -313,8 +329,10 @@ export const plainEdges = (de) => ((de && de.holdings) || []).every((x) => {
 // held: the evaluated decks with holdings. Counts are of distinct stocks (a stock held in two decks is one stock).
 // -> { todoTs: Set, rest, restCalm, allNone }   restCalm: every other stock is 할 일 없음 ("나머지 n종목은 이상 없어요")
 //    allNone: every holding is 할 일 없음 (the eyebrow "오늘은 할 일이 없어요", REDESIGN 2.1 steps 1-3 all clear)
+// v19.6a (verification nit): a holding sold out and kept (0 shares) is left out. 홈 lists only the stocks held, so a
+// sold-out holding's 먼저 사요 (shown on 포트폴리오 and the company page) never takes away "오늘은 할 일이 없어요" there.
 export function todayCounts(held) {
-  const all = (held || []).flatMap((de) => de.holdings || []);
+  const all = (held || []).flatMap((de) => de.holdings || []).filter((x) => x.qty !== 0);
   const todoTs = new Set(all.filter((x) => x.status === "broken" || x.status === "check").map((x) => x.t));
   const rest = new Set(all.map((x) => x.t).filter((t) => !todoTs.has(t))).size;
   return { todoTs, rest, restCalm: rest > 0 && all.every((x) => todoTs.has(x.t) || x.status === "none"),

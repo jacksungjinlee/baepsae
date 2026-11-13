@@ -364,7 +364,10 @@ const SOLD_OUT_MODES = ["off", "spec", "own"];
 export function evaluateHolding(h, deck, ctx, weights, qty) {
   const s = ctx.byT.get(h.t) || null;
   const co = ctx.coByT.get(h.t) || null;
-  const book = Array.isArray(h.rules) ? h.rules : [];
+  // v19.6a (verification B1): a holding sold out and kept, read with 0 shares ("spec" · "own"), is read on its weight band
+  // only: it can be 먼저 사요 or 할 일 없음, never 규칙 깨짐, 지켜봐요 or 확인 필요 for shares nobody holds. Its other rules are
+  // not read (not 준비 중 either: they are not in "아직 자동으로 확인하지 못하는 규칙").
+  const book = qty === 0 ? [bandRuleOf(h)].filter(Boolean) : Array.isArray(h.rules) ? h.rules : [];
   // ctx.krDivTrend: set only by tests, to check both states of the switch; todayCtx leaves it out (the switch applies)
   const trend = typeof ctx.krDivTrend === "boolean" ? ctx.krDivTrend : KR_DIV_TREND;
   const rules = book.map((r) => evalRule(r, h, s, co, deck, weights, trend));
@@ -391,7 +394,8 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     value: (weights.ok || weights.paused) && weights.value && weights.value.has(h.t) ? weights.value.get(h.t) : null,
     px: weights.px && weights.px.has(h.t) ? weights.px.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
-    d1, pxd, bigMove: d1 != null && Math.abs(d1) >= BIG_MOVE,     // a note only: never changes the status
+    // a note only: never changes the status. Never on a 0-share holding (verification nit: not in 홈's 큰 움직임)
+    d1, pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
     noNewMoney: NO_NEW_MONEY.includes(status),
   };
 }
@@ -422,14 +426,10 @@ export function evaluateDeck(deck, ctx) {
   // 비중만 남아 있어요." for the sold-out holding instead (soldOut), so bandPlanned leaves it out.
   // "spec": a sold-out holding with a band rule and a price today is held with 0 shares for everyone's bands.
   // "own": the same holding gets its own reading over the whole plan (the "spec" weights), beside the "off" reading of the rest.
+  // Either way it is read on its band only (evaluateHolding with 0 shares): 먼저 사요 or 할 일 없음.
   const units = heldUnits(deck);
   const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
   const mode = SOLD_OUT_MODES.includes(ctx.soldOutBands) ? ctx.soldOutBands : SOLD_OUT_BANDS;
-  // only one with a price today: a 0-share holding without one must not stop the weights (or the money totals) of the rest
-  const zeros = mode === "off" ? [] : (deck.holdings || []).filter((h) => h && soldOut.includes(h.t) && bandRuleOf(h)
-    && ctx.byT.has(h.t) && priceWon(ctx.byT.get(h.t), ctx.fx) > 0).map((h) => h.t);
-  const withZeros = new Map([...held, ...zeros.map((t) => [t, 0])]);
-  const banded = mode === "spec" ? withZeros : held;
   const targetsOf = (set) => {
     const m = new Map();
     for (const h of deck.holdings || []) {
@@ -438,7 +438,6 @@ export function evaluateDeck(deck, ctx) {
     }
     return m;
   };
-  const targets = targetsOf(banded);
   const absent = [...held.keys()].filter((t) => !ctx.byT.has(t));
   // With a held stock missing from today's data, the weights wait for all held stocks (with or without a band rule).
   const weightsOf = (set, tg) => {
@@ -446,9 +445,21 @@ export function evaluateDeck(deck, ctx) {
     if (w.ok) w.planW = planWeights(deck, tg);
     return w;
   };
+  // only one with a price today: a 0-share holding without one must not stop the weights (or the money totals) of the rest
+  const cand = mode === "off" ? [] : (deck.holdings || []).filter((h) => h && soldOut.includes(h.t) && bandRuleOf(h)
+    && ctx.byT.has(h.t) && priceWon(ctx.byT.get(h.t), ctx.fx) > 0).map((h) => h.t);
+  const candSet = new Map([...held, ...cand.map((t) => [t, 0])]);
+  const candWeights = cand.length ? weightsOf(candSet, targetsOf(candSet)) : null;
+  // v19.6a (verification S-a): read with 0 shares only when those weights can be read today (something is held, every price
+  // is known, nothing is missing from the data). Otherwise — every holding sold out and kept among them — they read as
+  // under "off" (no status, the approved sold-out line), never 확인 필요 for a weight nobody can have.
+  const zeros = candWeights && candWeights.ok ? cand : [];
+  const withZeros = zeros.length ? candSet : held;
+  const banded = mode === "spec" ? withZeros : held;
+  const targets = targetsOf(banded);
   const weights = weightsOf(banded, targets);
   const zeroOwn = mode === "own" ? zeros : [];
-  const zeroWeights = zeroOwn.length ? weightsOf(withZeros, targetsOf(withZeros)) : null;
+  const zeroWeights = zeroOwn.length ? candWeights : null;
   const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h) && (mode === "spec" ? banded.has(h.t) || !soldOut.includes(h.t) : !soldOut.includes(h.t))).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();

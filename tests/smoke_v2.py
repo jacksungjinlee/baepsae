@@ -10337,7 +10337,20 @@ def scene_v196a_sold_out(R, files, width=390):
         if R.shots:
             os.makedirs(R.shots, exist_ok=True)
             page.screenshot(path=os.path.join(R.shots, f"v196a-sold-out-three-{width}.png"), full_page=True)
-    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만", three)
+        # 검증 (11-13): 홈은 가진 종목만 보여요. 다 판 종목의 먼저 사요는 포트폴리오에만 있고, 홈의 띠는 할 일 없음 그대로
+        page.evaluate("() => { location.hash = '#home'; }")
+        at(page, "home")
+        h = page.locator('[data-ui-v2="today-hero"]')
+        h.wait_for(state="visible")
+        disc_settled(page)
+        assert h.get_attribute("data-state") == "calm", h.get_attribute("data-state")
+        assert page.locator('[data-home-holding="105560"]').count() == 0 and page.locator('[data-home-holding]').count() == 2
+        txt = h.inner_text()
+        assert C["daily"]["sellNow"] not in txt and "매도 조건에 걸렸어요" not in txt and C["today"]["calmTitle"].split("\n")[0] in txt, txt
+        if page.locator('[data-ui-v2="home2"]').get_attribute("data-disc") in ("ok", "none", "skip"):
+            assert txt.startswith(C["today"]["calmEyebrow"]), txt                           # '오늘은 할 일이 없어요' 그대로
+        R.collect(page)
+    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음", three)
     ctx.close()
     srv.shutdown()
 
