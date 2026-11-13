@@ -6,7 +6,8 @@
 - each key is read by the screen code (no line is approved and then shown nowhere), and the "until it is approved" fallbacks
   are gone (닫기 for 취소, 판 금액 for 판 금액 (원), the composed 지우기 name)
 - exact amounts read "18만 8,000원" (app.manWon) and another year's date "2025년 3월 6일" (app.ymd)
-- switches: A a sold-out kept holding counts as 0 shares (spec A.1) · B all or nothing per stock · C exact amounts always
+- switches: A a sold-out kept holding is read at 0 shares on its own band ("own", until Jack answers the final review's
+  question) · B all or nothing per stock · C exact amounts always
 - 내 수익's receipt takes the headline (the sum of the rows as shown) as its {gain}, so the two agree to the 원
 (what the screens show is checked in tests/smoke_v2.py scene_v196a and scene_v196a_outs)
 """
@@ -149,7 +150,8 @@ def test_exact_amounts_and_another_years_date_read_as_approved():
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 def test_the_three_switches_are_as_jack_chose():
     got = run("""out = { a: R.SOLD_OUT_BANDS, b: L.RETURNS_PARTIAL, c: L.RETURNS_EXACT, rows: L.roundRows([843217.4, 380000.4, -52000.4]) };""")
-    assert got["a"] is True                                          # A: 다 팔고 남겨 둔 종목은 0주로 세요 (스펙 A.1)
+    # A (마지막 리뷰 S1): 세 값 중 "own" — 다 팔고 남겨 둔 종목은 0주로 제 선에서 읽고(먼저 사요), 남은 종목은 예전 그대로. Jack 의 답을 기다려요
+    assert got["a"] == "own"
     assert got["b"] is False                                         # B: 종목 통째로 (이름 줄 ret.noAvg 와 함께)
     assert got["c"] is True                                          # C: 늘 정확한 금액
     # 머리 금액 = 화면의 세 줄(원 단위)의 합. 반올림 전 합 1,171,217.4 → 줄의 합 1,171,217

@@ -8175,8 +8175,9 @@ def scene_v193d2(R, files, width):
         line.wait_for(state="visible")
         assert C["daily"]["soldOut"] in line.inner_text() and "현대차" in line.inner_text()
         assert page.locator('[data-ui-v2="rebased-note"]').count() == 0      # '계획한 n종목 중 m종목만 샀어요' 가 아니에요
-        # v19.6a 스위치 A (Jack, 2026-11-13: 스펙 A.1): 다 판 종목을 0주로 세서 비중 띠 아래(먼저 사요)로 보여요
+        # v19.6a 스위치 A ("own", 마지막 리뷰 S1): 다 판 종목을 0주로 제 선에서 읽어 먼저 사요로 보여요. 남은 종목은 그대로 (할 일 없음)
         assert C["daily"]["band"]["low"] in line.inner_text(), line.inner_text()
+        assert page.locator('[data-holding="005930"]').get_attribute("data-status") == "none"
         floor_ok(page, "다 판 종목")
         no_hscroll(page, width)
         R.collect(page)
@@ -10297,6 +10298,50 @@ def scene_v196a_outs(R, files, width=390):
     srv.shutdown()
 
 
+def scene_v196a_sold_out(R, files, width=390):
+    """v19.6a final review S1 (rules.SOLD_OUT_BANDS "own", the default): three stocks at a third each, one sold out and kept
+    (남겨 두기). The two left keep their reading (할 일 없음: nobody is told 일부 팔아요 or 더 안 사요 because of the sale), the
+    sold-out one reads 먼저 사요 on its own target, and 추가로 넣을 돈 300만원 buys only that one back."""
+    S = f"v19.6a 다 판 종목 {width}"
+    data = v196a_files(files, splits=False)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    pxd = data["data.json"]["pxDate"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    plan = [("005930", 15), ("005380", 12), ("105560", 21)]                               # 1,000만원을 셋으로: 337만 · 338만 · 327만원
+    deck = {"id": "d3", "name": "배당 생활비 포트폴리오", "createdAt": "2026-10-01",
+            "holdings": [{"t": t, "nk": by[t]["nk"], "target": 1 / 3, "plannedQty": q, "planPx": by[t]["price"], "rules": band(1 / 3)} for t, q in plan],
+            "purchases": [{"id": f"p{i}aaaaaa", "t": t, "date": "2026-10-01", "qty": q, "price": by[t]["price"], "ccy": "KRW"} for i, (t, q) in enumerate(plan)],
+            "sales": [{"id": "s1aaaaaa", "t": "105560", "qty": 21, "price": by["105560"]["price"], "date": "2026-10-20", "ccy": "KRW"}]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio")
+
+    def three():
+        at(page, "portfolio")
+        card = page.locator('[data-deck-id="d3"]')
+        card.locator('[data-holding="005930"]').wait_for(state="visible")
+        st = dict(card.locator("[data-holding]").evaluate_all("(xs) => xs.map((x) => [x.dataset.holding, x.dataset.status])"))
+        assert st == {"005930": "none", "005380": "none", "105560": "low"}, st             # 남은 둘은 그대로, 다 판 종목만 먼저 사요
+        so = card.locator('[data-sold-out="105560"]')
+        assert C["daily"]["soldOut"] in so.inner_text() and C["daily"]["band"]["low"] in so.inner_text()
+        add = card.locator('[data-ui-v2="add-money"]')
+        for _ in range(3):
+            add.get_by_role("button", name="+100만").click()
+        buys = card.locator('[data-ui-v2="add-buys"] [data-add]')
+        buys.first.wait_for(state="visible")
+        assert buys.evaluate_all("els => els.map(e => e.dataset.add)") == ["105560"]      # 300만원: 다 판 종목만 다시 사요 (19주)
+        assert fillp(C["plan"]["shares"], n="19") in buys.first.inner_text(), buys.first.inner_text()
+        floor_ok(page, "다 판 종목 (세 종목)")
+        no_hscroll(page, width)
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v196a-sold-out-three-{width}.png"), full_page=True)
+    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만", three)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v196a(R, files, width):
     """v19.6a (390 · 320 · 1280): every holding row has 기록 → '{name} 기록' sheet with 샀어요 · 팔았어요 · 배당 받았어요 above the
     stock's records · 팔았어요: 가진 수량보다 많이(거절) · 처음 산 날보다 앞선 날짜(거절) · 판 금액 · 산 가격보다 · 이동평균 note ·
@@ -10439,7 +10484,7 @@ def scene_v196a(R, files, width):
         so = page.locator('[data-sold-out="005380"]')
         so.wait_for(state="visible")
         assert C["daily"]["soldOut"] in so.inner_text() and so.locator("button", has_text=R_["button"]).count() == 1
-        assert C["daily"]["band"]["low"] in so.inner_text(), so.inner_text()           # 스위치 A (스펙 A.1): 0주로 세서 '먼저 사요'
+        assert C["daily"]["band"]["low"] in so.inner_text(), so.inner_text()           # 스위치 A ("own"): 0주로 제 선에서 읽어 '먼저 사요'
         check_page("다 판 종목", "sold-out-kept")
     R.check(page, S, "분할 뒤 수량 10주를 팔면 저장(분할도 함께) · 다 팔면 뺄까요? → 남겨 두기 → 다 판 종목에 기록", sell_split_keep)
 
@@ -10833,6 +10878,7 @@ def main():
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
                    lambda: scene_v196a_outs(R, files, 390),                                                 # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
+                   lambda: scene_v196a_sold_out(R, files, 390),                                             # v19.6a 마지막 리뷰 S1: 다 팔고 남겨 둔 종목 ("own")
                    lambda: scene_v196a_split_price(R, files, 390)):                                         # v19.6a 리뷰 3차: 분할 사이의 빈 가격
             try:
                 fn()

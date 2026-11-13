@@ -599,6 +599,28 @@ it for good.
   records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)
   the two are one split and only the stored one applies.
 
+## Known limits: the date of a US record (v19.6a)
+
+A US record takes the exchange rate of the date typed (the US date, as the line under the date field says). The rate
+history (`macro.json` `fxHist`) carries a day only once that day's Seoul close has been published as final.
+
+- **Typed with last night's US date** (for example a purchase at 02:00 KST on the 13th, US date the 12th): the record is
+  refused with "환율 정보를 불러오지 못해 지금은 지난 날짜의 미국 종목 기록을 저장할 수 없어요. 잠시 뒤에 다시 해 주세요." until the
+  morning publish carries the 12th. That is a wait of hours, not the "잠시 뒤" the line says.
+- **Typed with the Korean date** (today) the same record saves at once, at the current rate (data.json `fx`).
+- Nothing is ever saved at another day's rate, and rates already saved never change.
+
+## Known limits: a holding sold down to 0 and kept (v19.6a, `rules.SOLD_OUT_BANDS`)
+
+One switch with three values decides how the weight bands read such a holding. It ships as `"own"` until Jack answers.
+
+- `"off"` (live before v19.6a): the holding has no status; the others are read over what is held.
+- `"spec"` (spec A.1 to the letter): it counts as 0 shares for everyone's bands. In a small or concentrated portfolio the
+  other holdings then read above their bands (three equal stocks: both others 일부 팔아요).
+- `"own"`: it reads 먼저 사요 on its own band over the whole plan, and 추가로 넣을 돈 buys it back first by the plan's own
+  targets; every other holding reads exactly as under `"off"`. 홈 does not say "오늘은 할 일이 없어요" while such a holding
+  waits (먼저 사요 is not 할 일 없음).
+
 ## Known limits: 기록 and the phone clock
 
 뱁새 2.0 keeps each 가진 종목 portfolio's 내 규칙 limits (한 종목 · 한 업종) with the time they were saved, and also keeps a

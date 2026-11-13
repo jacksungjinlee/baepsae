@@ -174,8 +174,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
             {de && de.ok && (de.soldOut || []).map((t) => {
               const nk = (d.holdings.find((x) => x.t === t) || { nk: t }).nk;
               const rec = record(d.id, t, nk);
-              // rules.SOLD_OUT_BANDS on (what ships; spec A.1, Jack 2026-11-13): the band rules read it with 0 shares, so its
-              // chips and weight line show; off: no status, the approved sold-out line only
+              // rules.SOLD_OUT_BANDS "own" (what ships) · "spec": the band rules read it with 0 shares, so its chips and weight
+              // line show; "off": no status, the approved sold-out line only
               const zx = de.holdings.find((y) => y.t === t) || null;
               return (
                 <div key={t} data-sold-out={t}>

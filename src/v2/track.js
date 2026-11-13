@@ -55,7 +55,7 @@ function builtMoney(deck, de, ctx) {
   // the missing stocks are named even when the totals cannot be made (never silent)
   const noPrice = () => ({ ok: false, why: "price", ...(gone.size ? { absent: absentOf() } : {}) });
   if (!de.weights || !(de.weights.ok || de.weights.paused)) return noPrice();
-  // a sold-out holding the band rules count with 0 shares (rules.SOLD_OUT_BANDS) holds no money: not in the totals
+  // a sold-out holding the band rules read with 0 shares (rules.SOLD_OUT_BANDS "spec" · "own") holds no money: not in the totals
   const zero = new Set(de.holdings.filter((x) => x.qty === 0).map((x) => x.t));
   const held = new Set(de.holdings.filter((x) => !gone.has(x.t) && !zero.has(x.t)).map((x) => x.t));
   const per = {};
@@ -239,16 +239,24 @@ export function addMoney(de, amountWon) {
   const rows = [];
   let total = 0;
   for (const x of de.holdings) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
+  // A sold-out kept holding read on its own (rules.SOLD_OUT_BANDS "own", de.zeroOwn): its target is a share of the whole plan
+  // while the held stocks' targets are shares of what is held, so together they add up to more than 1. New money then
+  // follows the plan itself: every goal is the plan's own target (planTarget) over the stocks listed here, so the sold-out
+  // stock is bought back first and a held stock already above its plan share gets nothing more. Who may be bought and the
+  // edges stay the ones the screen shows. Without such a holding the goals are the targets, as before.
+  const own = (de.zeroOwn || []).length > 0;
+  const planSum = own ? de.holdings.reduce((a, x) => a + (num(x.target) > 0 && num(x.planTarget) > 0 ? x.planTarget : 0), 0) : 0;
+  const goalOf = (x, target) => (planSum > 0 && num(x.planTarget) > 0 ? x.planTarget / planSum : target);
   for (const x of de.holdings) {
     const target = num(x.target), value = num(x.value), w = num(x.w);
-    // a sold-out holding counted with 0 shares (rules.SOLD_OUT_BANDS) is bought back at today's price
+    // a sold-out holding read with 0 shares (rules.SOLD_OUT_BANDS "spec" · "own") is bought back at today's price
     const px = x.qty > 0 && value > 0 ? value / x.qty : x.qty === 0 && num(x.px) > 0 ? x.px : null;
     const hi = highEdge(x, target);
     if (NO_NEW_MONEY.includes(x.status)) { skipped.push({ t: x.t, why: x.status }); continue; }
     if (!(target > 0) || hi == null) { skipped.push({ t: x.t, why: "target" }); continue; }
     if (!(px > 0) || w == null) { skipped.push({ t: x.t, why: "price" }); continue; }
     if (w > hi + EPS) { skipped.push({ t: x.t, why: "high" }); continue; }
-    rows.push({ t: x.t, nk: x.nk, px, value, target, hi, shares: 0 });
+    rows.push({ t: x.t, nk: x.nk, px, value, target: goalOf(x, target), hi, shares: 0 });
   }
   const out = { ok: true, buys: [], spent: 0, left: Math.max(0, A), eligible: rows.map((r) => r.t), skipped, unheld: de.unheld || [],
     cheapest: rows.length ? Math.min(...rows.map((r) => r.px)) : null };

@@ -359,18 +359,22 @@ def test_returns_name_a_held_stock_without_a_price_and_keep_the_rest():
 
 
 def test_sold_out_band_switch_both_states():
-    """Round-1 review A (Jack, 2026-11-13: spec A.1 ships): on (what ships) the sold-out holding is held with 0 shares, shows
-    below its band (먼저 사요) and 추가로 넣을 돈 buys it back; off (v19.3d2) it is left out of the bands; the money totals hold
-    no money for it in either state."""
+    """Round-1 review A, then the final review's S1 (a three-way switch, Jack decides): "off" (v19.3d2) the sold-out holding
+    is left out of the bands; "spec" (A.1 to the letter) it is held with 0 shares for everyone's bands, shows below its band
+    (먼저 사요) and 추가로 넣을 돈 buys it back, and the stock left reads above its own; "own" (what ships) it reads 먼저 사요 on
+    its own band and is bought back, while the stock left keeps the "off" reading. The money totals hold no money for it in
+    any state."""
     got = run("""const stocks = [kr('000010', 1000), kr('000020', 1000)];
       const d = built([['000010', 'a', 0.5], ['000020', 'b', 0.5]], { purchases: [buy('000010', 10, 1000, '2026-10-01'), buy('000020', 10, 1000, '2026-10-01')],
         sales: [sell('000020', 10, 1000, '2026-10-10')] });
       const run1 = (on) => { const ctx = { ...ctxOf(stocks), soldOutBands: on }; const e = R.evaluateDeck(d, ctx); const m = T.deckMoney(d, e, ctx);
         return { hs: e.holdings.map((x) => [x.t, x.qty, x.status]), soldOut: e.soldOut, unheld: e.unheld, m: [m.ok, m.value, m.cost],
           add: T.addMoney(e, 10000).buys.map((b) => [b.t, b.shares]) }; };
-      out = { off: run1(false), on: run1(true), def: R.SOLD_OUT_BANDS };""")
-    assert got["def"] is True
-    off, on = got["off"], got["on"]
+      out = { off: run1('off'), on: run1('spec'), own: run1('own'), dflt: run1(undefined), def: R.SOLD_OUT_BANDS };""")
+    assert got["def"] == "own" and got["dflt"] == got["own"]                                  # 기본은 "own" (Jack 의 답을 기다려요)
+    off, on, own = got["off"], got["on"], got["own"]
+    assert own["hs"] == [["000010", 10, "none"], ["000020", 0, "low"]] and own["soldOut"] == ["000020"] and own["unheld"] == []
+    assert own["m"] == [True, 10000, 10000] and own["add"] == [["000020", 10]]               # 다 판 종목만 다시 사요 (남은 종목은 계획 몫을 이미 채웠어요)
     assert off["hs"] == [["000010", 10, "none"]] and off["soldOut"] == ["000020"] and off["unheld"] == []
     assert on["hs"] == [["000010", 10, "high"], ["000020", 0, "low"]] and on["soldOut"] == ["000020"] and on["unheld"] == []
     assert off["m"] == [True, 10000, 10000] and on["m"] == [True, 10000, 10000]              # 0주 종목은 돈이 없어요
@@ -432,7 +436,71 @@ def test_sold_out_band_switch_on_with_no_price_today_does_not_stop_the_rest():
     got = run("""const stocks = [kr('000010', 1000), { ...kr('000020', null), price: null }];
       const d = built([['000010', 'a', 0.5], ['000020', 'b', 0.5]], { purchases: [buy('000010', 10, 1000, '2026-10-01'), buy('000020', 10, 1000, '2026-10-01')],
         sales: [sell('000020', 10, 1000, '2026-10-10')] });
-      const ctx = { ...ctxOf(stocks), soldOutBands: true };
-      const e = R.evaluateDeck(d, ctx); const m = T.deckMoney(d, e, ctx);
-      out = { w: e.weights.ok, hs: e.holdings.map((x) => [x.t, x.qty]), m: [m.ok, m.value, m.cost] };""")
-    assert got["w"] is True and got["hs"] == [["000010", 10]] and got["m"] == [True, 10000, 10000]
+      out = ['spec', 'own'].map((mode) => { const ctx = { ...ctxOf(stocks), soldOutBands: mode };
+        const e = R.evaluateDeck(d, ctx); const m = T.deckMoney(d, e, ctx);
+        return { w: e.weights.ok, hs: e.holdings.map((x) => [x.t, x.qty, x.status]), m: [m.ok, m.value, m.cost] }; });""")
+    for x in got:                                                                             # "spec" 도 "own" 도: 가격 없는 0주 종목은 빼고 나머지는 그대로
+        assert x["w"] is True and x["hs"] == [["000010", 10, "none"]] and x["m"] == [True, 10000, 10000]
+
+
+# ── v19.6a 마지막 리뷰 S1 (2026-11-13): 다 팔고 남겨 둔 종목을 읽는 세 가지 방법 ──
+SOLD3 = """const CODES = ['000010', '000020', '000030', '000040', '000050', '000060', '000070', '000080', '000090', '000100'];
+      // a 1,000만원 plan at 10,000원 a share, bought as planned; then one stock sold out and kept (남겨 두기)
+      const mk = (ws, sold) => { const q = (w) => Math.round(w * 1e7 / 10000);
+        const d = built(ws.map((w, i) => [CODES[i], 's' + i, w]), { purchases: ws.map((w, i) => buy(CODES[i], q(w), 10000, '2026-10-01')) });
+        d.holdings = d.holdings.map((h, i) => ({ ...h, plannedQty: q(ws[i]), planPx: 10000 }));
+        return { ...d, sales: [sell(sold, q(ws[CODES.indexOf(sold)]), 10000, '2026-10-10')] }; };
+      const view = (d, mode) => { const ctx = { ...ctxOf(d.holdings.map((h) => kr(h.t, 10000))), ...(mode ? { soldOutBands: mode } : {}) };
+        const e = R.evaluateDeck(d, ctx), a = T.addMoney(e, 3000000), m = T.deckMoney(d, e, ctx);
+        const band = (x) => { const r = x.rules.find((y) => y.id === 'band'); return JSON.stringify([x.status, x.w, x.target, r.target, r.bands, r.gap]); };
+        return { st: e.holdings.map((x) => [x.t, x.qty, x.status]), allClear: T.todayCounts([e]).allNone, add: a.buys.map((b) => [b.t, b.shares]), left: a.left,
+          rebased: e.rebased, n: [e.bandPlanned, e.bandHeld], soldOut: e.soldOut, money: [m.ok, m.value, m.cost], held: Object.fromEntries(e.holdings.filter((x) => x.qty > 0).map((x) => [x.t, band(x)])),
+          zero: e.holdings.filter((x) => x.qty === 0).map((x) => [Math.round(x.target * 1000) / 10, x.w]) }; };
+      const CASES = { two: [[0.5, 0.5], '000020'], three: [[1 / 3, 1 / 3, 1 / 3], '000030'], five: [[0.3, 0.25, 0.2, 0.15, 0.1], '000010'],
+        four: [[0.25, 0.25, 0.25, 0.25], '000010'], ten: [Array(10).fill(0.1), '000010'] };
+"""
+
+
+def test_a_sold_out_kept_holding_read_three_ways_on_five_portfolios():
+    """Final review S1. One stock sold down to 0 and kept, in five portfolios (2 equal · 3 equal · 30/25/20/15/10 with the 30%
+    one sold · 4 equal · 10 equal), under each value of rules.SOLD_OUT_BANDS:
+    - "off" (live before v19.6a): the sold-out stock has no status, the others read over what is held (할 일 없음), 홈 says all clear;
+    - "spec" (A.1 to the letter): it reads 먼저 사요, but the others read above bands taken over the whole plan: 더 안 사요 with
+      2 or 4 stocks, 일부 팔아요 with 3 equal and with 30/25/20/15/10 (all four). Only with 10 equal stocks is nobody else touched;
+    - "own" (the default): it reads 먼저 사요 on its own band over the whole plan (30% → target 30%, weight 0), and every other
+      holding reads exactly what "off" reads (the same status, weight, target and edges, digit for digit), in all five.
+    홈's all-clear is off under "spec" and "own" (a 먼저 사요 holding is not 할 일 없음). 추가로 넣을 돈 300만원 in the 3-stock
+    case: "off" 150주 + 150주 of the two held; "spec" and "own" 300주 of the sold-out stock and nothing else."""
+    got = run(SOLD3 + """out = { def: R.SOLD_OUT_BANDS };
+      for (const [k, [ws, sold]] of Object.entries(CASES)) { const d = mk(ws, sold); out[k] = { off: view(d, 'off'), spec: view(d, 'spec'), own: view(d, 'own'), dflt: view(d, null) }; }""")
+    assert got["def"] == "own"
+    sold = {"two": "000020", "three": "000030", "five": "000010", "four": "000010", "ten": "000010"}
+    spec_others = {"two": "high", "three": "trim", "five": "trim", "four": "high", "ten": "none"}   # "spec" 이 남은 종목에 붙이는 말
+    zero_target = {"two": 50, "three": 33.3, "five": 30, "four": 25, "ten": 10}
+    for k, t in sold.items():
+        c = got[k]
+        off, spec, own = c["off"], c["spec"], c["own"]
+        assert c["dflt"] == own, k                                                            # 기본 = "own"
+        n = len(off["st"])
+        # "off": 다 판 종목은 줄이 없고, 남은 종목은 모두 할 일 없음 · 홈은 '오늘은 할 일이 없어요'
+        assert all(x[0] != t and x[2] == "none" and x[1] > 0 for x in off["st"]) and off["allClear"] is True, (k, off["st"])
+        assert off["soldOut"] == [t] and off["rebased"] is False and off["n"] == [n, n] and off["zero"] == []
+        # "spec": 다 판 종목 먼저 사요, 남은 종목은 계획 전체 기준의 선 위 (10종목일 때만 그대로)
+        assert [x[2] for x in spec["st"] if x[0] == t] == ["low"] and {x[2] for x in spec["st"] if x[0] != t} == {spec_others[k]}, (k, spec["st"])
+        assert spec["allClear"] is False and spec["n"] == [n + 1, n + 1] and spec["rebased"] is False
+        # "own": 다 판 종목 먼저 사요 (제 목표 그대로, 비중 0), 남은 종목은 "off" 와 한 글자도 다르지 않아요
+        assert [x[2] for x in own["st"] if x[0] == t] == ["low"] and all(x[2] == "none" for x in own["st"] if x[0] != t), (k, own["st"])
+        assert own["held"] == off["held"], k
+        assert own["zero"] == [[zero_target[k], 0]] and spec["zero"] == own["zero"], (k, own["zero"])
+        assert own["allClear"] is False and own["n"] == [n, n] and own["rebased"] is False and own["soldOut"] == [t]
+        assert off["money"] == spec["money"] == own["money"] and off["money"][0] is True     # 0주 종목은 돈이 없어요: 세 값 모두 같은 금액
+    # 추가로 넣을 돈 300만원, 세 종목
+    three = got["three"]
+    assert three["off"]["add"] == [["000010", 150], ["000020", 150]] and three["off"]["left"] == 0
+    assert three["spec"]["add"] == [["000030", 300]] and three["own"]["add"] == [["000030", 300]] and three["own"]["left"] == 0
+    # 네 종목: "spec" 은 남은 종목이 더 안 사요라 50만원이 남고, "own" 은 계획대로 (다 판 종목 263주, 나머지 13 · 12 · 12주)
+    four = got["four"]
+    assert four["spec"]["add"] == [["000010", 250]] and four["spec"]["left"] == 500000
+    assert four["own"]["add"] == [["000010", 263], ["000020", 13], ["000030", 12], ["000040", 12]] and four["own"]["left"] == 0
+    # 열 종목: 누구에게도 새 말이 붙지 않으면 "spec" 과 "own" 이 같은 것을 사요
+    assert got["ten"]["spec"]["add"] == got["ten"]["own"]["add"] == [["000010", 120]] + [[c, 20] for c in ["000020", "000030", "000040", "000050", "000060", "000070", "000080", "000090", "000100"]]
