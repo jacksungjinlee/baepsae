@@ -1033,7 +1033,7 @@ def test_gate_first_publish_with_an_unlisted_seed_stock_passes(monkeypatch):
     # 다음 날 AAON 이 목록에 들어요: 그 줄이 새로 나타나고 관문은 통과 (목록에 있는 종목의 새 줄)
     nxt, _, _ = pair(prev_splits=False)
     nxt["data"]["stocks"].append(dict(next(s for s in nxt["data"]["stocks"] if s["t"] == "MSFT"), t="AAON"))
-    prev_day = {"data": dict(cur["data"])}
+    prev_day = {"data": dict(cur["data"]), "corp": cur["corp"]}   # 어제 = 첫 발행본 (#107 의 표시 비교가 어제 corp.json 을 읽어요)
     f2 = F.splits_fields(cur["data"], us + ["AAON"], recent, [], START, TODAY, seed=seed)
     assert ["AAON", "2023-08-17", 1.5] in f2["splits"]
     nxt["data"].update(f2)
