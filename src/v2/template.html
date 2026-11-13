@@ -5,14 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 /*HEAD*/
 <meta name="theme-color" content="#F5F3EF">
+<script>/*THEME_JS*/</script>
 <title>/*TITLE*/</title>
 <link rel="stylesheet" href="fonts/pretendard/pretendard-variable.css">
 <style>
-  html, body { margin: 0; background: #F5F3EF; color: #1C2B45; -webkit-text-size-adjust: 100%; }
+  /*THEME_CSS*/
+  html, body { margin: 0; background: var(--bs-page); color: var(--bs-ink); -webkit-text-size-adjust: 100%; }
   body { font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; overflow-x: hidden; word-break: keep-all; overflow-wrap: break-word; font-variant-numeric: tabular-nums; }
   *, *::before, *::after { box-sizing: border-box; }
   button { font: inherit; }
-  button:focus-visible, [role="button"]:focus-visible, [role="switch"]:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #1C2B45; outline-offset: 2px; }
+  button:focus-visible, [role="button"]:focus-visible, [role="switch"]:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--bs-ink); outline-offset: 2px; }
   [data-initial]::before { content: attr(data-initial); }
 </style>
 </head>

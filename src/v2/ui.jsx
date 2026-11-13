@@ -398,8 +398,9 @@ export function Toggle({ on, onChange, label, sub, side, disabled, chip }) {
         </span>
       </span>
       {side != null && <span style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{side}</span>}
-      <span aria-hidden="true" style={{ width: SPACE(11), height: SPACE(6) + 2, borderRadius: 999, background: on ? COLOR.ink : COLOR.border, position: "relative", flexShrink: 0, opacity: disabled ? 0.5 : 1 }}>
-        <span style={{ position: "absolute", top: 3, left: on ? SPACE(5) + 3 : 3, width: SPACE(5), height: SPACE(5), borderRadius: 999, background: COLOR.surface, transition: "left .15s" }} />
+      {/* v19.6d: the track is a navy surface when on (primary) and the knob is the white on it (onPrimary): the same in light */}
+      <span aria-hidden="true" style={{ width: SPACE(11), height: SPACE(6) + 2, borderRadius: 999, background: on ? COLOR.primary : COLOR.border, position: "relative", flexShrink: 0, opacity: disabled ? 0.5 : 1 }}>
+        <span style={{ position: "absolute", top: 3, left: on ? SPACE(5) + 3 : 3, width: SPACE(5), height: SPACE(5), borderRadius: 999, background: COLOR.onPrimary, transition: "left .15s" }} />
       </span>
     </button>
   );

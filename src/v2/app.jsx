@@ -30,7 +30,7 @@ import { Limits } from "./limits.jsx";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
-import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn } from "./nav.jsx";
+import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn, useThemeMode } from "./nav.jsx";
 
 // A rendering error never leaves a blank page: the approved load-failure message is shown instead.
 export class ErrorBoundary extends React.Component {
@@ -73,6 +73,7 @@ export function App({ source }) {
   const [heldTick, setHeldTick] = useState(0);            // bumped when the held publish's own stale check can change
   const router = useRouter();
   const { loc } = router;
+  const theme = useThemeMode();                          // v19.6d 화면 모드: applied here, chosen in the menus
   // v19.3c Part E: the first-visit guide — null, { stage: "welcome" } on 홈, or { stage: 1 · 2 · 3 } on 포트폴리오 만들기's
   // 기준 step (guide.jsx). It starts on its own only behind GUIDE_FIRST_VISIT; the menu's 처음 안내 다시 보기 always replays it.
   const [guide, setGuide] = useState(() => (firstVisitGuide(loc, store) ? { stage: "welcome" } : null));
@@ -462,7 +463,7 @@ export function App({ source }) {
     <ModeContext.Provider value={{ preview: !!source.preview }}>
       <NavContext.Provider value={nav}>
         <LayoutContext.Provider value={layout}>
-          {wide && <SideMenu tab={tab} about={loc.about} load={load} go={go} onAbout={router.openAbout} onGuide={replayGuide} />}
+          {wide && <SideMenu tab={tab} about={loc.about} load={load} go={go} onAbout={router.openAbout} onGuide={replayGuide} theme={theme} />}
           <div data-ui-v2="main-area" style={wide ? { marginLeft: SIDE_W, minWidth: 0 } : undefined}>
             {wide && <TopBar q={stockQ} onSearch={onSearch} inputRef={searchRef} load={load} />}
             {loc.about && (
@@ -479,7 +480,7 @@ export function App({ source }) {
                   <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
                 </HeldContext.Provider>
                 {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
-                  tabH={ownBar ? 0 : TAB_H} />}
+                  tabH={ownBar ? 0 : TAB_H} theme={theme} />}
                 {!wide && !ownBar && <TabBar value={tab} onChange={go} />}
               </ErrorBoundary>
             </div>

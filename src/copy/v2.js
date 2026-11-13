@@ -59,6 +59,14 @@ export const C = {
     glossary: "용어 사전",                                          // chat (2026-11-03: v19.0 Part E 메뉴)
     sources: "데이터 출처",                                         // chat (2026-11-03: v19.0 Part E 메뉴)
     guide: "처음 안내 다시 보기",                                    // chat (2026-11-06: v19.3 Appendix 1, 예전 뱁새 보기 앞)
+    // v19.6d 화면 모드 (v19.6 Appendix 1 '어두운 화면': Jack 이 v19.6 작업을 넘기며 승인, 2026-11-06). ☰ 메뉴와 PC 왼쪽 메뉴.
+    mode: {
+      title: "화면 모드",
+      auto: "자동",
+      light: "밝게",
+      dark: "어둡게",
+      hint: "자동은 기기 설정을 따라요.",
+    },
   },
 
   // 처음 안내 (v19.3c Part E, 보드 Guide2a-Guide2d): 반기는 화면(뱁이, 숫자 없음)과 기준 카드 화면 위의 세 단계 — chat (2026-11-06:

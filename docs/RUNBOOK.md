@@ -40,10 +40,10 @@ serve the `docs/` folder (two of its files must answer "not found").
     that finds no cache downloads it from Playwright's server and saves it before the check starts. The Korean font
     the tests need is a file in the repo (`tests/fonts`). If the browser cannot start, the publish is held.
   - If the cached browser itself is broken (no scene can open a page although the install step passed): raise `v1`
-    to `v2` in the cache key, in all six places (`update-data.yml` twice, `ci.yml` four times; a small PR), so a fresh
-    copy is downloaded. The tests accept any version number as long as every place uses the same one, so no test edit
-    is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's font setup changed:
-    fix `tests/fonts/install.sh` in a PR.
+    to `v2` in the cache key, in all seven places (`update-data.yml` twice, `ci.yml` four times, `deploy.yml` once; a
+    small PR), so a fresh copy is downloaded. The tests accept any version number as long as every place uses the same
+    one, so no test edit is needed. If the step "브라우저 · 한글 글꼴 준비" fails on the font line instead, the runner's
+    font setup changed: fix `tests/fonts/install.sh` in a PR.
   - A company leaving the market must never hold the data back (Jack, 11-12), so `smoke_app` on real data
     (`--data`) follows the day's data in three places:
     - Two scenes need a kind of company and pick it by rule: any company the data marks as reporting in a currency
@@ -105,10 +105,11 @@ serve the `docs/` folder (two of its files must answer "not found").
 - **CI runs on fixed data (since #104).** A pull request's checks no longer read the day's files: `smoke_app` uses a
   trimmed copy of the 2026-11-11 publish (`tests/fixtures/snapshot`, about 395 KB; its seven insider-trade rows are made up except for company and date), `smoke_v2` and `smoke_launch` use the
   2.0 test data (`tests/fixtures/v2`), and `smoke_app` and `smoke_v2` run on a test clock that starts at 07:00 KST on a
-  fixed day (`tests/testclock.py`). So a pull request's code meets today's real data only in the daily run above, or when
+  fixed day (`tests/testclock.py`). So a pull request's code meets today's real data in the daily run above, in the
+  deploy check below (since #115, every deploy that changes code runs the same three checks before publishing), or when
   the three commands are run by hand: `python tests/real_data_check.py --data DIR`, `python tests/smoke_launch.py --data DIR`
-  and `python tests/smoke_app.py --data DIR`. `CLAUDE.md` requires that before merging any PR that changes what the
-  site serves, or the check scripts and their helpers (a stopgap until the deploy runs them itself): put a fresh copy of
+  and `python tests/smoke_app.py --data DIR`. To run them by hand (to look into a blocked deploy, or whenever `CLAUDE.md`
+  asks for it before a merge): put a fresh copy of
   the four files the site serves in a folder outside the checkout (`git fetch origin data`, then
   `git show origin/data:data.json > DIR/data.json` and so on for corp, disc and macro; never copy them over the
   checkout's own files), run the three commands and paste their result lines and the data's date (`pxDate`) into the
@@ -120,6 +121,92 @@ serve the `docs/` folder (two of its files must answer "not found").
   script refuses a day on which a built-in stock of the old app is missing or blank, or gold is an estimate): run
   `python3 tests/fixtures/snapshot/make_snapshot.py` in a checkout that has that day's four files, then run all of
   `tests/smoke_app.py` and `pytest tests/test_snapshot.py`, in a PR.
+- **The deploy check (since #115, Jack 2026-11-12).** Every deploy that changes code (a merge to `main`, or Actions →
+  Deploy → Run workflow) runs the daily run's three checks before anything is uploaded: on the four data files it is
+  about to publish, exactly as they are in the folder it uploads, with the code it has just built (steps "배포 전 화면
+  검사 …" in Deploy, `tools/deploy_check.py`). The same `--data` rules as the daily run apply (`!! 확인 못 함` and
+  `!! 알림` lines pass and are listed in the run's summary and as yellow warnings).
+  - **The deploy after a daily publish** skips the checks only when both of these hold: every commit between the commit
+    that daily run checked and the commit being deployed changed nothing but the four data files (a file renamed into
+    one of them counts as code), and the four files it uploads are exactly the ones in the `data` commit that run made
+    (by `baepsae-bot`, during that run). That run already checked those files with that code just before publishing.
+    If either can't be shown, it runs the checks like a code deploy.
+  - **All three pass:** it publishes as before. A code deploy takes about 3 to 4 minutes longer than before (the daily
+    run's same check takes about 3 minutes, almost all of it `smoke_app`).
+  - **One fails:** it finds the code the site serves now (the build mark `baepsae-build` in the live pages), fetches
+    that commit into a separate scratch repository (never into the checkout), builds it in a separate folder without
+    running any package install scripts, and the rebuilt pages must match the live ones byte for byte. Then it runs
+    the failed checks again with that code on the same files. This takes up to about 3 more minutes (less when
+    `smoke_app` passed), so about 7 minutes in all. Then it compares **line by line** (a "check" is one result line,
+    about 162 of them across the three scripts):
+
+    | New code | Live code, same files | Result |
+    |---|---|---|
+    | passes | (not run) | publish |
+    | fails a line | passes that line, or passes the whole script | **blocked** |
+    | fails some lines | fails every one of them too | **published, Jack told** |
+    | stops before its result line | runs to its result line | **blocked** |
+    | fails | can't be found, fetched, built or matched, or stops before its result line, or its lines can't be read | **blocked** (unknown) |
+
+    The lines a block is about (the ones only the new code fails) come first in the red line and the summary.
+    `smoke_launch` stopping on purpose because the data lacks a field 2.0 needs counts as one failing line on both
+    sides, not as a stop, so a fix for that data can still go live.
+    **Same code:** when every file except the four data files is the same in the live commit and the new one (a manual
+    deploy, or a data deploy that had to run the checks), a difference can only be a flaky scene or the clock. The
+    deploy then runs the blocked script once more with the new code: if it passes, it publishes; if it fails again, it
+    publishes and tells Jack, saying exactly that ("같은 코드인데 두 번 실패", with the lines; not "the live code fails
+    too"). It never blocks the same code against itself, so a flaky scene can't hold the morning data.
+    Each script has its own 20-minute limit inside the step; one that hangs is stopped and counts as stopping before its
+    result line.
+    - **Blocked deploy:** the Deploy run ends red before anything is uploaded, so users keep the site exactly as it was.
+      The run page shows a red line "배포 막음 · 배포 전 화면 검사" naming the script, both results and the lines only the
+      new code fails (for example `smoke_app: 새 코드 141 / 145 통과 · 지금 사이트 코드 145 / 145 통과`), and its
+      summary says "뱁새 배포 전 화면 검사 — 막음". Lines that the live code fails too are shown as yellow warnings
+      "배포 · 지금 사이트 코드도 실패하는 줄" in the same run. The watchdog opens (or comments on) the 뱁새 데이터 경보
+      issue about 10 minutes later, because the last deploy failed.
+      **What to do after a merge:** `main` is now ahead of the site, and the next daily run checks its new data with
+      `main`'s code, so it will probably hold that morning's publish too. If the failing line looks like a one-off (a
+      single timing scene), start Actions → Deploy → Run workflow once; if it fails again, revert the merge at once (a
+      revert PR, merged), then fix forward in a new PR.
+      **What to do when the blocked deploy came after a daily publish** (the code changed during that run, or its files
+      couldn't be matched, so the checks ran): that day's new data is on the `data` branch but not on the site, so users
+      see yesterday's numbers with yesterday's date. Revert or fix forward fast, then start Actions → Deploy → Run
+      workflow to put the data out.
+      **The revert's own deploy can be blocked too** (the old code fails a line the code being reverted passes). Start
+      Actions → Deploy → Run workflow once more; if it is blocked again, fix forward in a new PR instead of reverting
+      further.
+      Never skip or loosen a check to get a deploy out.
+    - **"Live fails too":** the new code fails only lines the code the site serves now also fails on the same files.
+      That is not the new code's doing (usually the data, the clock or the machine), so the deploy goes ahead (a fix for
+      a data problem must be able to go live) and Jack is told: before the upload, the 뱁새 데이터 경보 issue gets the
+      label `deploy-check` and a post whose first line is **[배포 화면 검사]**, saying the new code is being put up and
+      listing each failing line once (a new issue if none is open). The run shows a yellow warning "배포 · 지금 사이트
+      코드도 실패" and no red lines. If the upload then fails, the site stays as it was and the watchdog reports the
+      failed deploy; the label stays right either way, because the live code fails those lines too.
+      The watchdog does not close an issue that has the `deploy-check` label (it doesn't run these browser checks, so
+      it can't say they are fixed). The label comes off by itself when a later deploy passes all three: a code deploy,
+      or the deploy after the next daily publish (that run checked its files with the same code). The watchdog then
+      closes the issue at its next check. If the issue can't be opened (GitHub trouble), nothing is uploaded: a deploy
+      over a failing check always tells Jack. Start Actions → Deploy → Run workflow again later.
+      This is also what happens when the data is so broken that neither code can load it (both fail the same lines):
+      Jack's rule publishes and tells him. The gate (`validate_data.py --live`) still runs first and blocks data that
+      fails it.
+      **What to do:** as for any alert (paste the issue into a Claude Code session).
+    - **Live code unknown:** blocked, with the reason after "지금 사이트의 코드를 알 수 없어요" (the live site was
+      unreachable, a page had no build mark, the commit couldn't be fetched, the rebuild differed, or the live run
+      stopped early). This is not the new code's fault and needs no revert: once the live site answers again, start
+      Actions → Deploy → Run workflow. If it stays unknown, look at the reason in the run log.
+    - **The check machinery itself is down** (for example the browser can't be downloaded or started): every script
+      stops before its result line with both codes, so every code deploy is blocked, reverts included. Fix the
+      machinery first (the cache key, `tests/fonts/install.sh`, a pinned version; see the screen check above), then
+      start Actions → Deploy → Run workflow. Data deploys that can skip the checks are not affected.
+  - Always start a new run with **Actions → Deploy → Run workflow**. "Re-run" on an old run uses that run's old
+    workflow file, which may not have this check at all.
+  - Both runs use this deploy's Python tools, browser and font; only the app code and the check scripts differ.
+  - The deploy's checkout keeps no token in the working folder. Only the three steps that call the GitHub API (the gate,
+    "필요한지", "결과") get the token; the three checks, their tools and the browser never see it. npm packages are
+    installed without their install scripts, for the site build and the live rebuild alike (the built pages are the
+    same byte for byte).
 - **US companies whose financial statements are not in dollars (since #114).** The daily run marks them `fcur` (Yahoo's
   financialCurrency, 27 on 2026-11-12) and blanks their PER, PBR and dividend yield (a 0% stays only when Yahoo clearly
   shows no dividend in the last 12 months). When Yahoo answers with only part of a company's details (no currency, sector
@@ -148,6 +235,9 @@ serve the `docs/` folder (two of its files must answer "not found").
 - The issue's first line says which case it is. If it says the files **on the site** failed the checks
   ("검사를 통과하지 못했어요"), users may be seeing wrong numbers: treat that one as urgent.
 - An issue whose first line starts with **[시험]** is a test that Claude ran on purpose. The site is fine.
+- An issue (or comment) whose first line starts with **[배포 화면 검사]** comes from a deploy: new code was put up although
+  real-data check lines fail, because the code the site served before fails the same lines on the same files ("The
+  deploy check" above). Users may see what the check caught: look at it soon.
 - The same test also sends healthchecks.io one failure signal, so Jack gets a "down" email, then rechecks the real site
   and, if it is fine, sends the normal signal ("up" email, usually within a minute) and closes the [시험] issue. A "down"
   email with no "up" email after it means the recheck found a real problem.
@@ -165,10 +255,12 @@ tells you what happened in plain words.
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
   **Revert**, and merges the revert pull request. The deploy runs by itself after the merge. Ask: "뱁새 마지막 머지를
-  되돌려 줘."
+  되돌려 줘." The same applies to a merge whose deploy was blocked by the deploy check: the site is still fine, but
+  `main` is ahead of it until the revert.
 - **Bad data** (the numbers are wrong and the gate missed it): Claude reverts the last commit on the `data` branch
   (and, until v17.6 part 3b, the same data commit on `main`), then starts **Actions → Deploy → Run workflow**. Users get
-  the previous day's data back within about 10 minutes. Ask: "뱁새 어제 데이터로 되돌려 줘."
+  the previous day's data back within about 15 minutes (a deploy started by hand runs the deploy check). Ask: "뱁새 어제
+  데이터로 되돌려 줘."
 
 ## Where to look
 
@@ -187,7 +279,8 @@ tells you what happened in plain words.
   one. It never force-pushes.
   The first daily run after v17.6 creates the branch by itself.
 - **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
-  folder it is about to publish, and only then publishes. It runs after every merge to `main` and after every daily run
+  folder it is about to publish (and, when the code changes, the three real-data checks: "The deploy check" above), and
+  only then publishes. It runs after every merge to `main` and after every daily run
   that published new data. Settings → Pages → Source has been **GitHub Actions** since 2026-11-06. Never switch it back
   to "Deploy from a branch": GitHub would then serve `main` as it is, without the publication gate and with the `docs/`
   folder, whose licensed pictures must not be offered as downloads. Deploy leaves `docs/` out of the site.
@@ -195,6 +288,31 @@ tells you what happened in plain words.
   `data/`, `styleguide/` and the build and pipeline files at the top; the two lists are in `tools/assemble_site.py`) and
   refuses to publish if one gets in. A branch deploy would serve them again, including the test data under `tests/`.
 - Until v17.6 part 3b, the daily run still also commits the data to `main`, so the site works either way.
+- **The write token (since 2026-11-13, #113).** The daily run's checkouts no longer leave GitHub's write token in a file
+  every later step could read (the credentials file the checkout's git settings point to). git gets it only in the two
+  publishing steps ("커밋 & 푸시", "data 브랜치에 올리기"), through `tools/git_token_auth.sh`, after the step's receipt
+  checks (the data step's gate fingerprint is checked again inside `push_data_branch.sh`). The script runs only on a
+  GitHub Actions runner. Its log lines:
+  - "· 토큰 확인됨: GitHub 이 받아 줬어요" — normal.
+  - "!! GITHUB_TOKEN 이 이 단계의 환경에 없어요" (the workflow file lost the step's `env`) or "… 공백이 있어요" (a broken
+    token value); that step pushed nothing. Fix the workflow in a PR.
+  - "!! 토큰으로 원격 저장소(origin)를 세 번 다 읽지 못했어요" — nothing was pushed by that step. Read git's own error
+    line just above it. A token problem shows "could not read Username" / "terminal prompts disabled", "Authentication
+    failed", "error: 401" or "error: 403" (revert, below). The network or a GitHub outage shows "Could not resolve
+    host", "Failed to connect", "timed out", the 60-second limit, or "error: 5xx" (don't revert; the next scheduled run
+    or a rerun publishes). "unable to access" appears in both, so read the rest of that line. If
+    "커밋 & 푸시" passed and "data 브랜치에 올리기" failed, `main` has the day's data and the site doesn't yet; the next
+    run (or a rerun) uploads it.
+  - A scheduled run uses the workflow file of the commit it was created on but checks out the latest `main`, so the
+    first run that proves #113 is one created after its merge commit (its "커밋 & 푸시" log shows "토큰 확인됨").
+  - If a publish fails with a token problem right after #113 merged: revert #113 as a whole (never only
+    `persist-credentials`, which would leave two auth headers), but keep `tools/git_token_auth.sh` in the revert for a
+    day, so a run created before the revert (new workflow, latest `main`) still finds it. The first run created after
+    the revert publishes normally; a manual run on `main` with dart=cache is not a full-DART run as long as the DART
+    cache exists (check "DART 캐시: dart-cache-v3-…" in its log).
+  The data-collection and gate steps still receive the token for read-only GitHub API calls, so a tampered tool in the
+  same job could still reach it: this narrows the exposure, it does not close it. Splitting a read-only job from the
+  publishing job is the follow-up.
 - **`data/market_holidays.csv`** (v19.1c) lists every weekday the Korean exchange (KR) or the NYSE (US) is closed, for
   whole years (now 2026–2027). From it each publish records `nextPub` (the next morning new data is due: the earlier of
   the two markets' next trading days, plus one day) and `staleAfter` (that day's last scheduled start, 14:47 KST, plus 2

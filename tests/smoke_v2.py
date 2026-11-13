@@ -4201,6 +4201,243 @@ def scene_rank_pc(R, files):
     srv.shutdown()
 
 
+# ── v19.6d 어두운 화면 (docs/tasks/v19.6-records-alerts-dark.md Part D) ──
+THEME_KEY = "baepsae-theme"
+SEGMENTED = '[data-ui="segmented"]:not([data-ui-v2="theme-mode"] *)'           # 고르기 묶음, 화면 모드 스위치는 빼고
+PAGE_RGB = {"light": "rgb(245, 243, 239)", "dark": "rgb(16, 21, 30)"}           # tokens.js page (= the theme-color meta)
+META = {"light": "#F5F3EF", "dark": "#10151E"}
+INK_RGB = {"light": "rgb(28, 43, 69)", "dark": "rgb(232, 236, 242)"}
+MASCOT_CHIP_RGB = "rgb(245, 243, 239)"
+# The first paint: when <body> arrives (the head, its colour sheet and its small script are done) and at the first frame, the
+# page's colour is recorded. If the mode were applied later (by the app), the first paint would flash the light page.
+FIRST_PAINT = """(() => {
+  const look = () => [document.documentElement.getAttribute('data-theme'), getComputedStyle(document.documentElement).backgroundColor,
+    (document.querySelector('meta[name="theme-color"]') || {}).content || null];
+  window.__v2paint = { body: null, frame: null };
+  const mo = new MutationObserver(() => { if (document.body && !window.__v2paint.body) { window.__v2paint.body = look(); mo.disconnect(); } });
+  mo.observe(document, { childList: true, subtree: true });
+  requestAnimationFrame(() => { window.__v2paint.frame = look(); });
+})();"""
+# The placeholder colour of an input as drawn, the browser's own placeholder colour (an input in a shadow root, which the page's
+# colour sheet does not reach) and the first background behind the input that is not transparent.
+PLACEHOLDER_JS = """(e) => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const probe = document.createElement('input'); probe.placeholder = 'x'; host.attachShadow({ mode: 'open' }).appendChild(probe);
+  const browser = getComputedStyle(probe, '::placeholder').color; host.remove();
+  let bg = 'rgba(0, 0, 0, 0)', n = e;
+  while (n && n.nodeType === 1) { const b = getComputedStyle(n).backgroundColor; if (b !== 'rgba(0, 0, 0, 0)' && b !== 'transparent') { bg = b; break; } n = n.parentElement; }
+  return { mine: getComputedStyle(e, '::placeholder').color, browser, bg };
+}"""
+TEXT3_DARK_RGB, SURFACE_DARK_RGB = "rgb(142, 153, 170)", "rgb(26, 34, 49)"        # tokens.js PALETTE.dark text3 #8E99AA, surface #1A2231
+
+
+def rgb_ratio(a, b):
+    def lum(c):
+        v = [int(x) / 255 for x in re.findall(r"\d+", c)[:3]]
+        v = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+    x, y = lum(a), lum(b)
+    return (max(x, y) + 0.05) / (min(x, y) + 0.05)
+
+
+# Storage that refuses everything (a private window with site data blocked): reading the choice throws too.
+NO_STORAGE = """(() => { for (const m of ['getItem', 'setItem', 'removeItem']) Storage.prototype[m] = function () { throw new Error('blocked'); }; })();"""
+
+
+def theme_now(page):
+    return page.evaluate("""() => [document.documentElement.dataset.theme, document.documentElement.dataset.themeMode,
+        document.querySelector('meta[name="theme-color"]').content, getComputedStyle(document.body).backgroundColor,
+        getComputedStyle(document.documentElement).colorScheme]""")
+
+
+def stored_mode(page):
+    return page.evaluate(f"() => {{ try {{ return localStorage.getItem('{THEME_KEY}'); }} catch (e) {{ return 'blocked'; }} }}")
+
+
+def mode_switch(page, width):
+    """The 화면 모드 switch: in the ☰ menu on the phone, in the left menu on PC. Returns its locator (opens the menu on the phone)."""
+    if width < 1024 and page.locator('[data-ui-v2="menu"]').count() == 0:
+        open_menu(page)
+    sw = page.locator('[data-ui-v2="theme-mode"]')
+    sw.wait_for(state="visible")
+    return sw
+
+
+def pick_mode(page, width, mode):
+    sw = mode_switch(page, width)
+    sw.get_by_role("radio", name=C["menu"]["mode"][mode], exact=True).click()
+    page.wait_for_function("(m) => document.documentElement.dataset.themeMode === m", arg=mode)
+
+
+def scene_dark(R, files, width):
+    """v19.6d: 화면 모드 자동 · 밝게 · 어둡게 (☰ 메뉴, PC 는 왼쪽 메뉴). 자동은 기기를 따라 바로 바뀌고, 고른 것은 이 기기에만(새로고침해도
+    그대로) · 기록은 그대로 · 내보낸 파일에 없어요. 첫 화면부터 그 색(번쩍임 없음) · 브라우저 막대 색(theme-color)도 따라가요.
+    저장소가 막히면 자동(오류 없음). 어두운 화면: 아이콘은 어두운 표 · 뱁이는 밝은 칩 위 · 불러오기 실패 문구."""
+    S = f"어두운 화면 {width}"
+    pc = width >= 1024
+    screen = (pc_device(width) if pc else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2})
+    f = daily_files(files)
+    d = f["data.json"]
+    by = {s["t"]: s for s in d["stocks"]}
+    deck = e_imported(by, d["pxDate"], [("005930", 10, 200000), ("000660", 3, None), ("AAPL", 2, 300.0)])
+    srv, ctx, page, base = R.open(build_site(f), width, device={**screen, "color_scheme": "light"}, init=e_store([deck]) + FIRST_PAINT,
+                                  accept_downloads=True, path="/app.html?dev=1#home")
+    M = C["menu"]["mode"]
+
+    def switch():
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-rules"]').wait_for(state="visible")
+        assert theme_now(page) == ["light", "auto", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        assert stored_mode(page) is None
+        records = page.evaluate("() => localStorage.getItem('baepsae2.v1')")
+        sw = mode_switch(page, width)
+        assert sw.locator('[role="radiogroup"]').get_attribute("aria-label") == M["title"]
+        radios = sw.get_by_role("radio")
+        assert radios.all_inner_texts() == [M["auto"], M["light"], M["dark"]], radios.all_inner_texts()
+        assert [radios.nth(i).get_attribute("aria-checked") for i in range(3)] == ["true", "false", "false"]
+        for i in range(3):                                                    # 누르는 곳 44px 이상
+            box = radios.nth(i).bounding_box()
+            assert box["height"] >= 44 - 0.5 and box["width"] >= 44 - 0.5, box
+        assert M["title"] in sw.inner_text() and M["hint"] in sw.inner_text()
+        if not pc:                                                            # 메뉴 줄 아래, 데이터 날짜 위
+            order = page.evaluate("""() => ['menu-item', 'theme-mode', 'menu-date'].map((k) => { const e = document.querySelector(`[data-ui-v2="${k}"]`);
+                return e ? e.getBoundingClientRect().top : null; })""")
+            assert order[0] < order[1] < order[2], order
+        R.collect(page)
+        pick_mode(page, width, "dark")
+        assert theme_now(page) == ["dark", "dark", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        assert stored_mode(page) == "dark"
+        assert page.evaluate("() => getComputedStyle(document.querySelector('h1, h2, h3')).color") == INK_RGB["dark"]
+        R.collect(page)                                                       # 어두운 표의 아이콘 · 뱁이 칩 · 12px · 살구색 (visualcheck)
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records, "화면 모드를 바꾸니 기록이 바뀌었어요"
+        # 새로고침: 첫 화면부터 어두운 색 (번쩍임 없음) · 고른 것 그대로
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        paint = page.evaluate("() => window.__v2paint")
+        assert paint["body"] == ["dark", PAGE_RGB["dark"], META["dark"]], paint
+        assert paint["frame"] is None or paint["frame"] == ["dark", PAGE_RGB["dark"], META["dark"]], paint
+        assert theme_now(page)[:3] == ["dark", "dark", META["dark"]]
+        assert mode_switch(page, width).get_by_role("radio", name=M["dark"], exact=True).get_attribute("aria-checked") == "true"
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records
+        # 밝게: 기기가 어두워도 밝게, 새로고침해도
+        pick_mode(page, width, "light")
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_timeout(200)
+        assert theme_now(page) == ["light", "light", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["light", PAGE_RGB["light"], META["light"]]
+        # 자동: 저장한 값이 없어지고, 기기를 따라 그 자리에서 바뀌어요 (새로고침 없이)
+        pick_mode(page, width, "auto")
+        assert stored_mode(page) is None
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'dark'")
+        assert theme_now(page) == ["dark", "auto", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        page.emulate_media(color_scheme="light")
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'light'")
+        assert theme_now(page) == ["light", "auto", META["light"], PAGE_RGB["light"], "light"], theme_now(page)
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_function("() => document.documentElement.dataset.theme === 'dark'")
+        assert theme_now(page)[2] == META["dark"]
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert page.evaluate("() => localStorage.getItem('baepsae2.v1')") == records
+        # 내보낸 기록 파일에는 화면 모드가 없어요
+        pick_mode(page, width, "dark")
+        if not pc:
+            page.locator('[data-ui-v2="menu-close"]').click()
+        tab(page, TABS["portfolio"]) if not pc else side_tab(page, "portfolio")
+        at(page, "portfolio")
+        with page.expect_download() as dl:
+            page.get_by_role("button", name=C["store"]["export"]).click()
+        with open(dl.value.path(), encoding="utf-8") as fh:
+            text = fh.read()
+        exported = json.loads(text)
+        assert exported["decks"] and exported == json.loads(records), "내보낸 파일이 저장한 기록과 달라요 (화면 모드가 끼었나요?)"
+        assert "theme" not in text and THEME_KEY not in text, text[:200]           # 화면 모드는 파일 어디에도 없어요
+        R.collect(page)
+    R.check(page, S, "화면 모드: 자동(기본) · 밝게 · 어둡게 · 안내 줄 · 44px · 고르면 바로 · 새로고침해도 그대로 · 첫 화면부터 그 색 · "
+            "theme-color 도 · 자동은 기기를 따라 그 자리에서 · 기록 그대로 · 내보낸 파일에 없음", switch)
+    ctx.close()
+    srv.shutdown()
+
+    # 입력칸의 안내 글(placeholder): 어두운 화면에서는 text3 (브라우저의 회색은 어두운 바탕 위 3.5:1), 밝은 화면은 브라우저 그대로
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "light"}, path="/app.html?dev=1#stocks")
+
+    def placeholder():
+        wait_ready(page)
+        box = page.locator('[data-ui-v2="top-search"] input' if pc else '[data-ui-v2="stock-search"] input').first
+        box.wait_for(state="visible")
+        assert box.get_attribute("placeholder")
+        light = box.evaluate(PLACEHOLDER_JS)
+        assert light["mine"] == light["browser"], light                  # 밝은 화면: 바꾸지 않았어요
+        pick_mode(page, width, "dark")
+        if not pc:
+            page.locator('[data-ui-v2="menu-close"]').click()
+        dark = box.evaluate(PLACEHOLDER_JS)
+        assert dark["mine"] == TEXT3_DARK_RGB and dark["bg"] == SURFACE_DARK_RGB, dark
+        assert rgb_ratio(dark["mine"], dark["bg"]) >= 4.5, (dark, rgb_ratio(dark["mine"], dark["bg"]))
+        assert rgb_ratio(dark["browser"], dark["bg"]) < 4.5, dark                # 그래서 바꿨어요 (브라우저 회색은 미달)
+        pick_mode(page, width, "light")
+        assert box.evaluate(PLACEHOLDER_JS) == light
+    R.check(page, S, "입력칸 안내 글: 어두운 화면에서 text3 (4.5:1 이상) · 밝은 화면은 브라우저 그대로", placeholder)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장소가 막힌 기기: 자동(기기를 따라), 오류 없음. 고르면 이번 방문 동안만
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "dark"}, init=NO_STORAGE + FIRST_PAINT)
+
+    def blocked():
+        wait_ready(page)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert theme_now(page) == ["dark", "auto", META["dark"], PAGE_RGB["dark"], "dark"], theme_now(page)
+        sw = mode_switch(page, width)
+        assert sw.get_by_role("radio", name=M["auto"], exact=True).get_attribute("aria-checked") == "true"
+        pick_mode(page, width, "light")
+        assert theme_now(page)[:3] == ["light", "light", META["light"]]
+        R.collect(page)
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        assert theme_now(page)[:2] == ["dark", "auto"], theme_now(page)
+    R.check(page, S, "저장소가 막히면 자동(기기 따라 어둡게) · 오류 없음 · 고른 것은 이번 방문 동안만", blocked)
+    ctx.close()
+    srv.shutdown()
+
+    # 저장한 값이 엉뚱하면 자동
+    srv, ctx, page, base = R.open(build_site(files), width, device={**screen, "color_scheme": "light"},
+                                  init=f"try {{ localStorage.setItem('{THEME_KEY}', 'purple'); }} catch (e) {{}}")
+
+    def junk():
+        wait_ready(page)
+        assert theme_now(page)[:2] == ["light", "auto"], theme_now(page)
+    R.check(page, S, "저장한 값이 엉뚱하면 자동", junk)
+    ctx.close()
+    srv.shutdown()
+
+    # 불러오기 실패 (데이터 파일 없음) 를 어두운 화면에서: 문구 · 어두운 page · 뱁이는 밝은 칩 위
+    srv, ctx, page, base = R.open(build_site(files, drop=("data.json",)), width, device={**screen, "color_scheme": "light"},
+                                  init=f"try {{ localStorage.setItem('{THEME_KEY}', 'dark'); }} catch (e) {{}}" + FIRST_PAINT)
+
+    def fail():
+        see(page, LOAD_FAIL)
+        assert page.evaluate("() => window.__v2paint.body") == ["dark", PAGE_RGB["dark"], META["dark"]]
+        assert theme_now(page)[:4] == ["dark", "dark", META["dark"], PAGE_RGB["dark"]]
+        msg = page.get_by_text(LOAD_FAIL).first
+        assert msg.evaluate("(e) => getComputedStyle(e).color") == INK_RGB["dark"]
+        R.collect(page)
+        tab(page, TABS["market"]) if not pc else side_tab(page, "market")
+        at(page, "market")
+        see(page, LOAD_FAIL)
+        img = page.locator('[data-ui-v2="load-fail"] img[src^="baepi-"]').first
+        img.wait_for(state="visible")
+        assert img.evaluate("(e) => getComputedStyle(e).backgroundColor") == MASCOT_CHIP_RGB
+        assert img.evaluate("(e) => getComputedStyle(e).filter") == "none"           # 뱁이는 다시 칠하지 않아요
+        R.collect(page)
+    R.check(page, S, "불러오기 실패 문구를 어두운 화면에서 (첫 화면부터 어두운 색 · 뱁이는 밝은 칩 위)", fail)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_hint(R, files, devices):
     """아이폰 홈 화면 안내는 아이폰 사파리에서만 (문구는 승인 대기: 그동안은 숨은 자리 표시). 안드로이드 · 홈 화면 앱 안에서는 없어요.
     첫 방문(포트폴리오 전)은 홈과 빈 포트폴리오, 포트폴리오가 있으면 포트폴리오의 기록 칸. 모두 처음 안내를 이미 본 방문자예요
@@ -9292,7 +9529,8 @@ def scene_reread_lines(R, files, width, shots=None):
                 year = fillp(C["app"]["reportYear"], year=co_fy)
                 if ctab == "earn":                                                              # 금액 막대 · 큰 숫자 대신, 통화 줄만
                     assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator('[data-ui-v2="bars"]').count() == 0
-                    assert page.locator('[data-ui="segmented"]').count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
+                    # v19.6d: any on the page but the 화면 모드 switch (PC's left menu has it, a segmented control too)
+                    assert page.locator(SEGMENTED).count() == 0, "매출 · 영업이익 · 순이익 고르기가 있어요"
                     assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
                     assert year not in page.locator('[data-ui-v2="co-earn"]').inner_text()
                     assert page.locator('[data-ui-v2="co-earn"] > *').count() == 1, "실적 탭에 통화 줄 카드 말고 다른 것이 있어요"
@@ -9311,7 +9549,7 @@ def scene_reread_lines(R, files, width, shots=None):
             R.collect(page)
         co_hash(page, "#stocks/005930/earn")                                                      # 다른 회사는 그대로 (숨김은 stmtCur 로만)
         page.locator('[data-ui-v2="co-earn"]').wait_for(state="visible")
-        assert page.locator('[data-ui="segmented"]').count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
+        assert page.locator(SEGMENTED).count() == 1 and page.locator('[data-ui-v2="co-earn-more"]').count() == 1
         co_hash(page, "#stocks/005930/value")
         page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="co-value-basis"]').count() == 1 and page.locator('[data-ui-v2="co-value"] [data-ui-v2="date-line"]').count() >= 1
@@ -9710,7 +9948,8 @@ def main():
                    lambda: scene_say_why_2(R, files, 1280),                                                 # say-why 2: PC 의 새 데이터 줄 · 홈 공시
                    lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
                    lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
-                   lambda: scene_us_fcur(R, files, 1280, True)):
+                   lambda: scene_us_fcur(R, files, 1280, True),
+                   lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280)):                 # v19.6d 어두운 화면
             try:
                 fn()
             except Exception as e:

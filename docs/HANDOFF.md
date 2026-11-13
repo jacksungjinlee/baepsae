@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 09:34 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 14:18 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -64,33 +64,67 @@ just stops blocking screen work.
     has a time limit that fails the test.
   - Split the daily run into a read-only job and a publishing job, after the currency fix, the Korean unit fix and
     the token fix.
-- **Queue now (2026-11-13 09:34 KST; every merging PR updates this):**
-  - Done: the first real publish with #106's screen check (11-13 06:40 KST run 43312517381, 11-12 data) published
-    cleanly: gate PASS with 6 known warnings, the three screen checks green, Deploy and Watchdog green, live site
-    checked (both apps, 11월 12일).
-  - Track A: #107 (Korean companies' "statements not in won" marks must not vanish) and #111 (US beta and
-    volatility filled for 95% of US stocks) are live. #115 (the deploy check) waits for Jack's answer on its
-    same-code rule. #114 (currency fix) is merged; its own publish (a `dart=cache` run) follows the merge and is
-    watched to the end, before #113 (Jack, 11-12: "after tomorrow's first real publish, and before the token fix");
-    then #113 (token fix) with its own publish, watched to the end and reverted at once if the push fails (Jack, 11-12).
-    #118 (Korean unit guard; reviews done; branch dry run next), then #116 (its repair, builds on #118; reviews done).
-    #117 (fxHist and US splits; reviews done; branch dry run next; its default FX source `ecos_close` waits for Jack,
-    and its new FAIL rows need his yes) must be live before v19.6a merges. Then the follow-up that brings back PER, PBR
-    and yield for the 27 filers; the item 4 report, then the dates-and-time-zones audit (Jack, 11-12); the job split
-    after #114, the Korean unit fix (#118 and #116) and #113.
-  - Track B: #120 v19.5b (홈 종목 순위) is live. Next: #121 v19.6d dark (reviews done; retargeted to `main`;
-    waits for Jack's yes on its test edits) → #119 v19.6a (after #117 is live; reviews done; waits for Jack's answers)
-    → #122 v19.7a (stacked on #119; reviews done; its plan-total question waits for Jack) → v19.6f → v19.7b.
+- **Jack's answers, 2026-11-13 (fourth and fifth messages): limits for this week, and his answers to the open list.**
+  - **Model and budget (until Jack says otherwise).** Jack switched the session to Fable 5.2 (High). Until he says
+    he has pressed his Fable reset, use Fable for everything, the session and every helper, no Opus (this week's Fable
+    use is refunded; Opus use is not). Helpers that write or judge still run at Extra high, set explicitly (rule 7).
+    If Fable refuses because its limit is reached, stop and tell Jack it is time to press the reset. When he says the
+    reset is pressed: back to Opus 5.5 Extra high, and "finish what's reviewed, start nothing new" until Wednesday
+    2026-11-18 22:00 KST.
+  - Always: at most two helpers at once. No polling (look once after a run finishes). One update a day, under 15
+    lines, with all questions in it: one question message a day. At most two builds open at once. A review after
+    fixes is one reviewer, one round.
+  - Work order: finish the reviewed PRs first (the #114 publish, #113, #118, #116, #117, #115, #121, #119, #122),
+    then continue the queue on Fable: v19.6f next, then v19.7b.
+  - Data and gate: the exchange rate for a US buy dated D is the Bank of Korea 15:30 close of D (`ecos_close`).
+    Yahoo's split data unreadable for 6 days is a loud warning, never a held publish ("A minor source outage must
+    never hold back everyone's data"). Korean splits: their own PR after v19.6a. #118: its two FAIL rows yes; FAIL
+    when 20 or more Korean companies are newly hidden in one publish; `PBR_LOW_CHECKED` (SG&G, 앱토크롬) yes; the
+    old app's 미니 점검 shows "—" for a blank ROE or 부채비율. #115: when the code being deployed is exactly the live
+    code, a failing check reruns once and then the publish goes ahead (it never blocks itself); its extras later.
+    The extra 2-point warning for #111: no.
+  - Wording: v19.6a's open lines yes with the reviewers' versions, except the date hint, which is "미국 주식은 미국
+    현지 날짜로 적어 주세요."; v19.7a's five lines yes (나가기; "{name} 목표 비중 줄이기 / 늘리기"; 바꾼 기록 at the
+    bottom of 종목 바꾸기; "바꾼 내용을 저장하지 못했어요. 화면을 다시 열어 확인해 주세요."); #116's line "공시에
+    단위가 잘못 적혀 있어서 바로잡아 계산했어요." in 가치 자세히 only; #118's hiding line also on the 홈/포트폴리오
+    warning tile; v19.5b's US 성장 line becomes "전년 동기 대비 분기 매출 증가율 높은 순" (a small PR, not built yet).
+  - Screens: v19.6a amounts are always exact, and a sold-out holding counts as 0 shares (spec A.1). v19.7a stores
+    each stock's planned weight (untouched stocks' bands never move), and shows the "can't reach 100%" line only when
+    the targets really can't (holdings already above the cap count at their own %). v19.7b: imported portfolios (rows
+    with records read-only), planned-but-not-bought stocks on 포트폴리오 with their 기록 button. v19.5b's US minimum
+    sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate) need a small data PR first. Dark mode
+    ships as built; its six odd-looking spots (payout ring track, the biggest treemap block, the 처음부터 만들기
+    button on the navy card, 준비 중 cards, faint 업종 bars, navy letter tiles) are a follow-up.
+  - Process: a revert still passes the other merge checks (CI green plus the real-data checks; its review comes
+    after). The CLAUDE.md line for "Choices I made": yes (a small docs PR, not written yet). v19.4 (accounts) goes
+    after v19.7b and before v19.6h. Jack, 11-11, still stands: ask before changing any test beyond what was approved.
+- **Queue now (2026-11-13 14:18 KST; every merging PR updates this):**
+  - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
+    check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
+    check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
+    goes red for something that is not a real regression, #115 is reverted at once.
+  - #114 (currency fix) is published and live (run 43368392513, 11-13 13:53 KST, once Yahoo had the 11-12 prices
+    back): the 27 non-dollar filers show "–" for PER and PBR with the reason line; BRK-B has its own line.
+  - #113 (token fix; this PR) is merged. Its own publish (a manual `dart=cache` run right after the merge) is
+    watched to the end; if the push fails, #113 is reverted at once (Jack, 11-12). The data deploy that follows should
+    skip #115's check.
+  - Then, in order: #118 (Korean unit guard) → #116 (its repair) → #117 (fxHist and US splits). Each needs a fresh
+    green branch dry run after its last rebase. Jack's answers of 11-13 are built into all three, and their final
+    reviews are done.
+  - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → v19.6f (must be in review by Dec 1, merged by
+    Dec 10) → v19.7b → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
+  - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
+    dark mode's six spots; PER, PBR and yield back for the 27 non-dollar filers from whole-company totals; Korean
+    splits; the daily run split into a read-only job and a publishing job; the item 4 report and the
+    dates-and-time-zones audit; the 3-year USD/KRW series' one-day lag; the 11-19 special-session row's source text
+    (KRX confirmed 10:00–16:30 on 11-05).
   - Practice (Claude's, not a `CLAUDE.md` rule): a PR that finishes or starts a part of a spec also updates that
     spec's Status line in the same PR.
-- Open (asked Jack 11-13): whether the 11-07 notes below (at most two open app PRs; at most two question messages a
-  day; the evening list) still hold next to this instruction; where v19.4 goes (v19.6h waits for it); and the
-  CLAUDE.md line for "Choices I made" (his Track B point 2 differs from CLAUDE.md's ask-first rule; until he
-  answers, CLAUDE.md's rule applies).
 
 **Working cadence (Jack, 2026-11-07 evening — replaces the "work lean" note below where they differ). Since 11-13:
-its two lanes and its app order are replaced by the 11-13 block above; its open-PR limit, question limit and
-evening list are under question ("Open", above) and still apply until Jack answers; the test-exception bullet stands.**
+its two lanes and its app order are replaced by the 11-13 block above; its open-PR limit and question limit are
+replaced by Jack's tighter ones of 11-13 (one question message a day; at most two builds open at once; above); the
+test-exception bullet stands.**
 Ship faster; Jack is fine with more of his plan being used.
 - Two lanes in parallel. **Data lane:** B7, 자본금, unlisted preferred, the full re-read — DART-limited, as planned.
   **App lane:** v19.3b first, in a separate worktree (helpers' models and effort: `CLAUDE.md` rule 7); it never waits
