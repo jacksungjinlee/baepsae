@@ -8175,6 +8175,8 @@ def scene_v193d2(R, files, width):
         line.wait_for(state="visible")
         assert C["daily"]["soldOut"] in line.inner_text() and "현대차" in line.inner_text()
         assert page.locator('[data-ui-v2="rebased-note"]').count() == 0      # '계획한 n종목 중 m종목만 샀어요' 가 아니에요
+        # v19.6a 스위치 A (Jack, 2026-11-13: 스펙 A.1): 다 판 종목을 0주로 세서 비중 띠 아래(먼저 사요)로 보여요
+        assert C["daily"]["band"]["low"] in line.inner_text(), line.inner_text()
         floor_ok(page, "다 판 종목")
         no_hscroll(page, width)
         R.collect(page)
@@ -10437,6 +10439,7 @@ def scene_v196a(R, files, width):
         so = page.locator('[data-sold-out="005380"]')
         so.wait_for(state="visible")
         assert C["daily"]["soldOut"] in so.inner_text() and so.locator("button", has_text=R_["button"]).count() == 1
+        assert C["daily"]["band"]["low"] in so.inner_text(), so.inner_text()           # 스위치 A (스펙 A.1): 0주로 세서 '먼저 사요'
         check_page("다 판 종목", "sold-out-kept")
     R.check(page, S, "분할 뒤 수량 10주를 팔면 저장(분할도 함께) · 다 팔면 뺄까요? → 남겨 두기 → 다 판 종목에 기록", sell_split_keep)
 
@@ -10604,8 +10607,7 @@ def scene_v196a(R, files, width):
         # 미국 종목 수익, 어디서 왔나: 남은 묶음 1.5주(1,300) · 0.5주(1,350)
         price_part = (pa - 300) * 1.5 * 1300 + (pa - 320) * 0.5 * 1350
         rate_part = pa * 1.5 * (fx - 1300) + pa * 0.5 * (fx - 1350)
-        unit = 10000 if all(abs(v) >= 10000 for v in (price_part, rate_part)) else 1
-        r2 = [round(price_part / unit) * unit, round(rate_part / unit) * unit]
+        r2 = [round(price_part), round(rate_part)]                                    # 스위치 C (Jack, 2026-11-13): 늘 원 단위까지
         card = page.locator('[data-ui-v2="ret-fx"]')
         assert [int(card.get_attribute("data-price")), int(card.get_attribute("data-rate")), int(card.get_attribute("data-total"))] == r2 + [sum(r2)]
         assert abs(price_part + rate_part - (2 * pa * fx - cost_a / 2)) < 1e-6

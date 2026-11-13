@@ -269,7 +269,9 @@ def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holdi
     shares sold counted as −40.9%), and the KOSPI comparison over the same money with the sales (A.5 [Q4]). Before v19.6a:
     no 원금, return or KOSPI comparison (null) and a "lot maths" console line. A holding sold down to 0 is sold out, not "planned, never bought"
     (the other targets are rebased over what is held: never a wrong 비중 줄이기 for the stock left). v19.3d2 (Jack): the rebased
-    note is not about a sold-out holding (that one shows "다 팔고 목표 비중만 남아 있어요."), so rebased stays false."""
+    note is not about a sold-out holding (that one shows "다 팔고 목표 비중만 남아 있어요."), so rebased stays false.
+    v19.6a switch A (Jack, 2026-11-13: spec A.1 ships): the sold-out holding counts as held with 0 shares for the band rules
+    (below its band; the stock left reads above its own 50%). The v19.3d2 state is checked as before with the switch off."""
     got = run("""const ctx = ctxOf(STOCKS, CORPS);
       const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
       const deck = { id: 'db', name: 'b', holdings: [{ t: '000010', nk: '가나전자', target: 0.5, rules: band(0.5) }, { t: '000040', nk: '마바물산', target: 0.5, rules: band(0.5) }],
@@ -278,7 +280,8 @@ def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holdi
       const ev = (d) => R.evaluateDeck(d, ctx);
       const idx = { asOf: '2026-11-06', rows: [['2026-09-30', 100], ['2026-11-06', 110]] };
       const w0 = warns.length; T.deckMoney(sold, ev(sold), ctx); const lotWarns = warns.slice(w0);
-      out = { lotWarns, plain: T.deckMoney(deck, ev(deck), ctx), sold: T.deckMoney(sold, ev(sold), ctx), e: ev(sold), k: [T.indexSince(deck, idx, '2026-11-06').ok, T.indexSince(sold, idx, '2026-11-06'),
+      out = { lotWarns, plain: T.deckMoney(deck, ev(deck), ctx), sold: T.deckMoney(sold, ev(sold), ctx), e: R.evaluateDeck(sold, { ...ctx, soldOutBands: false }),
+        on: ev(sold), def: R.SOLD_OUT_BANDS, k: [T.indexSince(deck, idx, '2026-11-06').ok, T.indexSince(sold, idx, '2026-11-06'),
           T.indexSince(sold, idx, '2026-11-06', (t) => (t === '000010' ? 10000 : null))],
         imp: S.deckProblem({ ...deck, imported: [{ t: '000010', nk: '가나전자', ccy: 'KRW', qty: 1 }] }, '2026-11-07') };
       out.lotsN = warns.filter((w) => w.includes('lot maths')).length;""", STOCKS=STOCKS, CORPS=CORPS)
@@ -288,11 +291,18 @@ def test_a_built_portfolio_with_a_sale_shows_no_wrong_money_and_a_sold_out_holdi
     assert s["ok"] and s["value"] == 10000 and s["cost"] == 10000 and s["gain"] == 0 and s["ret"] == 0 and "lots" not in s
     assert s["per"]["000010"]["cost"] == 10000 and s["per"]["000010"]["ret"] == 0 and list(s["per"]) == ["000010"]
     assert got["lotWarns"] == [] and got["lotsN"] == 0                                       # before: one "lot maths" line
-    e = got["e"]
+    e = got["e"]                                                                             # 스위치를 끈 상태 (v19.3d2): 그대로
     assert e["unheld"] == [] and e["soldOut"] == ["000040"] and [x["t"] for x in e["holdings"]] == ["000010"]
     assert e["rebased"] is False and e["bandPlanned"] == 1 and e["bandHeld"] == 1               # v19.3d2: 다 판 종목은 '계획한 n종목 중' 이 아니에요
     band = [r for r in e["holdings"][0]["rules"] if r["id"] == "band"][0]
     assert band["result"] == "ok" and band["band"] is None and abs(band["target"] - 1) < 1e-12   # 남은 1주 = 목표 100%: 줄이라는 말 없음
+    # 기본 (Jack, 2026-11-13: 스펙 A.1): 다 판 종목은 0주로 세요 (목표 50% 아래: 먼저 사요), 남은 종목은 제 목표 50% 위. '계획한 n종목 중' 은 아니에요
+    on = got["on"]
+    assert got["def"] is True and on["unheld"] == [] and on["soldOut"] == ["000040"]
+    assert [(x["t"], x["qty"], x["status"]) for x in on["holdings"]] == [("000010", 1, "high"), ("000040", 0, "low")]
+    assert on["rebased"] is False and on["bandPlanned"] == 2 and on["bandHeld"] == 2
+    band_on = [r for r in on["holdings"][0]["rules"] if r["id"] == "band"][0]
+    assert band_on["result"] == "band" and band_on["band"] == "high" and abs(band_on["target"] - 0.5) < 1e-12
     # v19.6a [Q4] (before: {"ok": False, "why": "lots"}): 코스피는 산 날 전 종가(9/30 = 100)에 20만원어치, 판 날 전 종가(100)에
     # 판 비율만큼 팔고(10만 + 9만), 남은 100단위 × 110 = 1만 1,000 → (11,000 + 190,000) / 200,000 − 1 = 0.5%
     # 내 포트폴리오 = (지금 1만 + 판 돈 9만 + 9만) / 20만 − 1 = −5% (가진 종목 값이 없으면 null)

@@ -199,15 +199,17 @@ def test_returns_rows_add_up_and_cost_counts_every_purchase_including_sold_share
         sales: [sell('000010', 5, 1200, '2026-10-10')], divs: [div('000010', 300, '2026-10-12'), div('AAA', 1.5, '2026-10-13', { fx: 1350 })] });
       const r = L.returnsOf(d, { pxOf: (t) => (t === 'AAA' ? 110 : 1100), fx: 1400, absent: new Set() });
       const rr = L.roundRows([r.held, r.sold, r.divs]);
-      const big = L.roundRows([843217, 380000, -52000]);
+      const big = L.roundRows([843217, 380000, -52000], { exact: false }), bigDef = L.roundRows([843217, 380000, -52000]);
       const zero = L.roundRows([0, 0, 0]);
-      out = { r: { ...r, ledgers: undefined }, rr, big, zero };""")
+      out = { r: { ...r, ledgers: undefined }, rr, big, bigDef, zero };""")
     r = got["r"]
     assert r["held"] == 5 * 100 + (2 * 110 * 1400 - 2 * 100 * 1300) and r["sold"] == 5 * 200 and r["divs"] == 300 + 1.5 * 1350
     assert r["cost"] == 10000 + 2 * 100 * 1300 and r["n"] == 2 and r["noAvg"] == [] and r["noFx"] == []
     rr = got["rr"]
     assert rr["unit"] == 1 and rr["total"] == sum(rr["rows"])                                  # 1만원 아래 줄이 있으면 원 단위
-    assert got["big"] == {"unit": 10000, "rows": [840000, 380000, -50000], "total": 1170000}   # 모두 1만원 넘으면 만원 단위, 합은 반올림한 줄의 합
+    # 스위치 C (Jack, 2026-11-13: 늘 정확한 금액): 기본은 원 단위 그대로. 만원 규칙(꺼진 상태)은 모두 1만원 넘으면 만원 단위, 합은 반올림한 줄의 합
+    assert got["bigDef"] == {"unit": 1, "rows": [843217, 380000, -52000], "total": 1171217}
+    assert got["big"] == {"unit": 10000, "rows": [840000, 380000, -50000], "total": 1170000}
     assert got["zero"]["total"] == 0
 
 
@@ -324,13 +326,14 @@ def test_split_boundary_a_record_dated_on_the_split_day_is_already_at_the_new_ba
 
 
 def test_returns_percent_comes_from_the_exact_sums_not_the_rounded_rows():
-    got = run("""out = { rr: L.roundRows([15000, 15000, 15000]), pct: L.returnsPct({ held: 15000, sold: 15000, divs: 15000, cost: 100000 }),
-      exact: L.roundRows([15000, 15000, 15000], { exact: true }), none: L.returnsPct({ held: 1, sold: 0, divs: 0, cost: null }),
-      sw: [L.RETURNS_EXACT, L.RETURNS_PARTIAL] };""")
-    assert got["rr"] == {"unit": 10000, "rows": [20000, 20000, 20000], "total": 60000}         # 화면의 줄은 2만원씩 (합 6만원)
+    got = run("""out = { rr: L.roundRows([15000, 15000, 15000], { exact: false }), pct: L.returnsPct({ held: 15000, sold: 15000, divs: 15000, cost: 100000 }),
+      exact: L.roundRows([15000, 15000, 15000], { exact: true }), def: L.roundRows([15000, 15000, 15000]),
+      none: L.returnsPct({ held: 1, sold: 0, divs: 0, cost: null }), sw: [L.RETURNS_EXACT, L.RETURNS_PARTIAL] };""")
+    assert got["rr"] == {"unit": 10000, "rows": [20000, 20000, 20000], "total": 60000}         # 만원 규칙(꺼진 상태): 화면의 줄은 2만원씩 (합 6만원)
     assert abs(got["pct"] - 45.0) < 1e-12                                                      # 수익률은 45.0%, 60% 가 아니에요
     assert got["exact"] == {"unit": 1, "rows": [15000, 15000, 15000], "total": 45000}          # 스위치 C (정확한 원): 4만 5,000원
-    assert got["none"] is None and got["sw"] == [False, False]                                # 기본값: 만원 규칙 · 종목 통째로
+    assert got["def"] == got["exact"]                                                          # 기본이 그 상태예요
+    assert got["none"] is None and got["sw"] == [True, False]                                 # Jack, 2026-11-13: 늘 정확한 금액 · 종목 통째로
 
 
 def test_a_fully_sold_stock_without_an_average_price_is_left_out_and_named():
@@ -356,8 +359,9 @@ def test_returns_name_a_held_stock_without_a_price_and_keep_the_rest():
 
 
 def test_sold_out_band_switch_both_states():
-    """Round-1 review A (Jack decides): off (what ships) the sold-out holding is left out of the bands; on (spec A.1) it is
-    held with 0 shares, shows below its band (먼저 사요) and 추가로 넣을 돈 buys it back; the money totals hold no money for it."""
+    """Round-1 review A (Jack, 2026-11-13: spec A.1 ships): on (what ships) the sold-out holding is held with 0 shares, shows
+    below its band (먼저 사요) and 추가로 넣을 돈 buys it back; off (v19.3d2) it is left out of the bands; the money totals hold
+    no money for it in either state."""
     got = run("""const stocks = [kr('000010', 1000), kr('000020', 1000)];
       const d = built([['000010', 'a', 0.5], ['000020', 'b', 0.5]], { purchases: [buy('000010', 10, 1000, '2026-10-01'), buy('000020', 10, 1000, '2026-10-01')],
         sales: [sell('000020', 10, 1000, '2026-10-10')] });
@@ -365,7 +369,7 @@ def test_sold_out_band_switch_both_states():
         return { hs: e.holdings.map((x) => [x.t, x.qty, x.status]), soldOut: e.soldOut, unheld: e.unheld, m: [m.ok, m.value, m.cost],
           add: T.addMoney(e, 10000).buys.map((b) => [b.t, b.shares]) }; };
       out = { off: run1(false), on: run1(true), def: R.SOLD_OUT_BANDS };""")
-    assert got["def"] is False
+    assert got["def"] is True
     off, on = got["off"], got["on"]
     assert off["hs"] == [["000010", 10, "none"]] and off["soldOut"] == ["000020"] and off["unheld"] == []
     assert on["hs"] == [["000010", 10, "high"], ["000020", 0, "low"]] and on["soldOut"] == ["000020"] and on["unheld"] == []
@@ -419,7 +423,7 @@ def test_fx_card_leaves_out_a_stock_with_any_rateless_lot():
 
 
 def test_round_rows_rounds_halves_the_same_way_on_both_sides():
-    got = run("""out = [L.roundRows([15000, -15000, 25000]), L.roundRows([-0.5, 0.5, 2], { exact: true })];""")
+    got = run("""out = [L.roundRows([15000, -15000, 25000], { exact: false }), L.roundRows([-0.5, 0.5, 2], { exact: true })];""")
     assert got[0] == {"unit": 10000, "rows": [20000, -20000, 30000], "total": 30000}
     assert got[1]["rows"] == [-1, 1, 2]
 

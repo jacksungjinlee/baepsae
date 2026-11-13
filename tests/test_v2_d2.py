@@ -550,18 +550,26 @@ def test_two_fast_clock_times_never_beat_a_believable_save_in_one_merge():
 
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
-    never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""
+    never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does.
+    v19.6a switch A (Jack, 2026-11-13: spec A.1 ships): the sold-out holding counts as held with 0 shares for the band rules
+    (2 planned, 2 held: below its band, the stock left above its own), still never "rebased". The v19.3d2 state (left out of
+    the bands: 1 and 1, the stock left "ok") is checked as before with the switch off."""
     got = run("""const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
       const ctx = { ...ctxOf(STOCKS), state: { ok: true }, byT: new Map(STOCKS.map((s) => [s.t, s])) };
       const deck = { id: 'db', name: 'b', holdings: [{ t: '000010', nk: 'a', target: 0.4, rules: band(0.4) }, { t: '000040', nk: 'b', target: 0.4, rules: band(0.4) },
         { t: '000050', nk: 'c', target: 0.2, rules: band(0.2) }],
         purchases: [{ t: '000010', qty: 10, price: 10000, date: '2026-10-01', ccy: 'KRW' }, { t: '000040', qty: 10, price: 10000, date: '2026-10-01', ccy: 'KRW' }] };
       const sold = { ...deck, sales: [{ t: '000040', qty: 10, price: 9000, date: '2026-11-01', ccy: 'KRW' }] };
-      const e1 = R.evaluateDeck(deck, ctx), e2 = R.evaluateDeck({ ...sold, holdings: sold.holdings.slice(0, 2) }, ctx);
+      const two = { ...sold, holdings: sold.holdings.slice(0, 2) };
+      const e1 = R.evaluateDeck(deck, ctx), e2 = R.evaluateDeck(two, { ...ctx, soldOutBands: false }), on = R.evaluateDeck(two, ctx);
       out = { neverBought: [e1.rebased, e1.unheld, e1.soldOut], soldOut: [e2.rebased, e2.unheld, e2.soldOut, e2.bandPlanned, e2.bandHeld],
-        band: e2.holdings[0].rules.find((r) => r.id === 'band').result };""")
+        band: e2.holdings[0].rules.find((r) => r.id === 'band').result,
+        on: [on.rebased, on.unheld, on.soldOut, on.bandPlanned, on.bandHeld], onHs: on.holdings.map((x) => [x.t, x.qty, x.status]), def: R.SOLD_OUT_BANDS };""")
     assert got["neverBought"] == [True, ["000050"], []]
-    assert got["soldOut"] == [False, [], ["000040"], 1, 1] and got["band"] == "ok"
+    assert got["soldOut"] == [False, [], ["000040"], 1, 1] and got["band"] == "ok"           # 스위치를 끈 상태 (v19.3d2): 그대로
+    # 기본 (Jack, 2026-11-13: 스펙 A.1): 다 판 종목은 0주로 세요. '계획한 n종목 중' 안내는 여전히 나오지 않아요
+    assert got["def"] is True and got["on"] == [False, [], ["000040"], 2, 2]
+    assert got["onHs"] == [["000010", 10, "high"], ["000040", 0, "low"]]
 
 
 def test_the_limits_address():

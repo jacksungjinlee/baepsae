@@ -343,13 +343,13 @@ function reasonsOf(results, unit = false) {
   return out.sort((a, b) => LEVEL[a.level] - LEVEL[b.level]);
 }
 
-// v19.6a, waiting for Jack (round-1 review A): a holding sold down to 0 and kept (남겨 두기).
-//   false (what ships, v19.3d2 Jack 2026-11-08): it is left out of the band rules ("다 팔고 목표 비중만 남아 있어요."), the
-//     other targets are rebased over what is held.
-//   true (spec v19.6 A.1): it counts as held with 0 shares for the band rules, so it can show as below its band (먼저 사요)
-//     and 추가로 넣을 돈 can buy it back.
-// ctx.soldOutBands: set only by tests and the smoke test's other-state build, to check both states.
-export const SOLD_OUT_BANDS = false;
+// v19.6a (round-1 review A; Jack chose spec A.1 on 2026-11-13): a holding sold down to 0 and kept (남겨 두기).
+//   true (what ships, spec v19.6 A.1): it counts as held with 0 shares for the band rules, so it can show as below its band
+//     (먼저 사요) and 추가로 넣을 돈 can buy it back.
+//   false (before, v19.3d2 Jack 2026-11-08): it is left out of the band rules ("다 팔고 목표 비중만 남아 있어요."), the other
+//     targets are rebased over what is held.
+// ctx.soldOutBands: set only by tests, to check both states.
+export const SOLD_OUT_BANDS = true;
 
 // One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, px, d1, pxd, bigMove, noNewMoney }
 //   px (v19.6a): today's won price of one share (for 추가로 넣을 돈 when 0 shares are held: SOLD_OUT_BANDS)
@@ -410,11 +410,12 @@ export function evaluateDeck(deck, ctx) {
       rebased: false };
   }
   // v19.3d: a holding sold down to 0 shares (its records add up to 0, held.js) is sold out, never "planned, never bought":
-  // it is not in unheld (v19.6 A.1). SOLD_OUT_BANDS off (what ships): the other targets are rebased over what is held
+  // it is not in unheld (v19.6 A.1). SOLD_OUT_BANDS off (before 2026-11-13): the other targets are rebased over what is held
   // (kept in the target sum at weight 0 instead, every stock still held would read as over its target and get a wrong
   // 비중 줄이기 instruction), and the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") is not about it: v19.3d2 (Jack)
   // shows "다 팔고 목표 비중만 남아 있어요." for the sold-out holding instead (soldOut), so bandPlanned leaves it out.
-  // SOLD_OUT_BANDS on (spec A.1): a sold-out holding with a band rule and a price today is held with 0 shares for the bands.
+  // SOLD_OUT_BANDS on (what ships, spec A.1): a sold-out holding with a band rule and a price today is held with 0 shares
+  // for the bands.
   const units = heldUnits(deck);
   const soldOut = (deck.holdings || []).filter((h) => h && units.has(h.t) && units.get(h.t) <= 0).map((h) => h.t);
   const zeroIn = typeof ctx.soldOutBands === "boolean" ? ctx.soldOutBands : SOLD_OUT_BANDS;

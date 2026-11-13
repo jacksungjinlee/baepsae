@@ -497,15 +497,15 @@ export function recordSets(deck) {
 }
 
 // ---------------- 내 수익 (A.5) for one portfolio ----------------
-// Two owner decisions wait (round-1 review B, C); each is one switch, the default is what ships now:
-//   RETURNS_PARTIAL false (all or nothing per stock): a stock counts in all three rows and in the money put in, or not
-//     at all (one basis for the rows and 수익률, "평균 단가를 넣은 종목 기준"). true: every part that is known counts
-//     (dividends always, every computable sale gain, the unrealized part when its cost is known); 수익률 then only when no
-//     stock was counted in part (partial: true says so, the screen leaves 수익률 out).
-//   RETURNS_EXACT false (만원 rule, roundRows): rows in 만원 when every non-zero row is at least 1만원, else 원. true: always
-//     exact 원 ("18만 8,000원" once app.manWon is approved), as on the board.
+// Two owner decisions (round-1 review B, C), each one switch; Jack chose on 2026-11-13:
+//   RETURNS_PARTIAL false (all or nothing per stock, with the name line ret.noAvg): a stock counts in all three rows and in
+//     the money put in, or not at all (one basis for the rows and 수익률, "평균 단가를 넣은 종목 기준"). true (not chosen):
+//     every part that is known counts (dividends always, every computable sale gain, the unrealized part when its cost is
+//     known); 수익률 then only when no stock was counted in part (partial: true says so, the screen leaves 수익률 out).
+//   RETURNS_EXACT true (exact amounts always, "18만 8,000원": app.manWon, as on the board), so the receipt and the headline
+//     agree. false (not chosen; the 만원 rule, roundRows): rows in 만원 when every non-zero row is at least 1만원, else 원.
 export const RETURNS_PARTIAL = false;
-export const RETURNS_EXACT = false;
+export const RETURNS_EXACT = true;
 // q: { pxOf(t) -> today's price in the stock's currency | null, fx: today's rate, absent: Set of codes missing from today's
 // data }. opts: { partial } (tests: both states of RETURNS_PARTIAL). Every stock left out (in full or in part) is named,
 // never counted as 0:
@@ -565,8 +565,8 @@ export function returnsOf(deck, q, opts = {}) {
 }
 
 // ---------------- rounding rows so they add up on screen (A.5) ----------------
-// Round each row to the unit the screen shows (만원 when every non-zero row is at least 1만원, else 원; RETURNS_EXACT or
-// opts.exact: always 원), then the total is the sum of the rounded rows: the screen adds up exactly. 수익률 is never taken
+// Round each row to the unit the screen shows (RETURNS_EXACT or opts.exact, what ships: always 원; off: 만원 when every
+// non-zero row is at least 1만원, else 원), then the total is the sum of the rounded rows: the screen adds up exactly. 수익률 is never taken
 // from these rounded rows (15,000원 x 3 shows as 2만원 x 3; the return is 45,000 / cost, not 60,000 / cost).
 // -> { unit, rows: [rounded], total }
 export function roundRows(values, opts = {}) {
