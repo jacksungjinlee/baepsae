@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 15:31 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 16:03 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -98,7 +98,20 @@ just stops blocking screen work.
   - Process: a revert still passes the other merge checks (CI green plus the real-data checks; its review comes
     after). The CLAUDE.md line for "Choices I made": yes (a small docs PR, not written yet). v19.4 (accounts) goes
     after v19.7b and before v19.6h. Jack, 11-11, still stands: ask before changing any test beyond what was approved.
-- **Queue now (2026-11-13 15:31 KST; every merging PR updates this):**
+- **Jack, 2026-11-13 (sixth and seventh messages): back on Opus; his answers.**
+  - The weekly Fable limit was reached; Jack pressed the reset and switched the session to Opus 5.5 Extra high. Until
+    Wednesday 2026-11-18 22:00 KST: finish what's reviewed, start nothing new; helpers on Opus at Extra high; at most
+    two at once; one reviewer after fixes. **Then, after #119 and #122 merge:** build one screen version at a time on
+    Opus with one reviewer: v19.6f first (Dec 10 deadline), then v19.7b. Stop new work when Jack says his usage has
+    reached 70%.
+  - A sold-out stock kept in the plan (#119): "own" (it reads 먼저 사요 on its own band; every other holding reads as
+    before), with the approved line under it: "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." Once #122
+    is live, the line opens 빼기. The two edits of tests on `main` for this (test_v2_d2, test_v2_pf): Jack's yes.
+  - A US record dated a day whose exchange rate isn't published yet stays a known limit, with its own approved line:
+    "이 날짜의 환율이 아직 없어요. 보통 다음 날 아침에 들어오니, 그때 다시 저장해 주세요." (keep what was typed, if cheap).
+  - Dark mode's six odd-looking spots: after Wednesday; send the design chat side-by-side dark/light screenshots of all
+    six in one go.
+- **Queue now (2026-11-13 16:03 KST; every merging PR updates this):**
   - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
     check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
     check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
