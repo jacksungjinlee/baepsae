@@ -220,7 +220,8 @@ DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 �
 # 달고 재무제표로 만든 숫자를 비워요. 관문: unitChk 회사에 비운 칸이 남으면 실패 · unitChk 없이 PBR 이 UNIT_PBR_LOOK 미만인 국내 회사는
 # 이름과 함께 경고 (사람이 공시를 확인해요). 파이프라인과 따로 적어요 (같은 실수를 같이 하지 않게).
 # 리뷰 #118 (새 줄만): 확인 기록 unitChkCover 가 직전 발행본에 있었는데 없으면 실패 · 그 hit 가 unitChk 종목 수와 다르면 실패 (둘 다 바깥
-# 장애로는 생기지 않아요 — check_unit_ran) · 걸린 회사가 직전 발행본과 달라지면 이름과 함께 경고 (check_unit_moved).
+# 장애로는 생기지 않아요 — check_unit_ran) · 걸린 회사가 직전 발행본과 달라지면 이름과 함께 경고 (check_unit_moved) · 그중 새로 걸린 회사가
+# UNIT_NEW_FLAGS_FAIL 곳 이상이면 실패 (Jack 2026-11-13).
 UNIT_WHY = ("bs", "scale", "is", "cf", "eps", "cap")   # bs 자산 ≠ 부채 + 자본 · scale 보고서 사이 배율 · is · cf 분기 보고서의 지난해 칸 ·
 #                                                         eps 재무제표의 기본주당이익 · cap 자본금 ÷ 액면가 (fetch_data.unit_check)
 UNIT_PER_LOOK = 0.1                         # 리뷰 #116: PER 도 같은 경고 줄 (손익계산서만 단위가 틀리면 PBR 은 멀쩡해요) — 확인 목록은 아직 없어요
@@ -229,15 +230,16 @@ UNIT_BLANK_CORP = ("eq", "evE", "evR", "pcf", "nio3", "nio3Hyb", "epsIn", "bpsIn
 UNIT_BLANK_LISTS = ("rev", "op", "ni")      # corp.json 3개년 금액
 UNIT_PBR_LOOK = 0.1
 UNIT_MOVE_SHOW = 10                         # 리뷰 #118 S1: 바뀐 회사 이름은 앞에서부터 이만큼 (나머지는 수만 · 전체는 요약 목록에)
+UNIT_NEW_FLAGS_FAIL = 20                    # Jack, 2026-11-13 (Q5): 한 번에 20곳 이상 새로 걸리면 실패 — 우리 읽기가 깨졌을 가능성이 커요
 # PBR 이 UNIT_PBR_LOOK 미만이지만 사람이 공시를 보고 확인한 회사 (docs/RUNBOOK.md '확인한 낮은 PBR 회사'). 경고 줄은 매일 아침 확인(09:13)이
 # Jack 에게 알려서, 확인된 회사를 날마다 다시 부르지 않게 해요. 그 회사의 지금 주주 몫 자본(corp.json bpsIn.eq, 억원)이 확인한 값의
 # ±PBR_LOW_BAND 안이고 unitChk 가 없을 때만 조용히 넘겨요 (값 칸에 '확인된 회사 N곳 조용히 넘김'으로 수를 남겨요). 밖이거나 목록에 없는
 # 회사는 예전처럼 이름과 함께 경고. 실패 줄과는 상관없어요 (이 목록은 경고만 조용히 해요). 목록과 회사마다 Jack 의 승인이 필요해요 (회사 하나를
-# 경고에서 빼는 일이라 안전 규칙 변경 · RUNBOOK) — 아래 두 곳은 2026-11-13 승인 요청 중이에요.
+# 경고에서 빼는 일이라 안전 규칙 변경 · RUNBOOK) — 목록과 아래 두 곳: Jack's yes, 2026-11-13.
 PBR_LOW_CHECKED = {
-    "040610": {"date": "2026-11-13", "eq": 5085.1,
+    "040610": {"date": "2026-11-13", "eq": 5085.1, "yes": "Jack's yes, 2026-11-13",
                "why": "SG&G · 관계기업투자 5,007억 · 공시 rcept 20260814001690 (2026 반기, 단위 원) · 20260319000627 (2025 사업보고서) 확인"},
-    "109960": {"date": "2026-11-13", "eq": 3617.6,
+    "109960": {"date": "2026-11-13", "eq": 3617.6, "yes": "Jack's yes, 2026-11-13",
                "why": "앱토크롬 · 기타 비유동 금융자산 2,155억 · 공시 rcept 20260813001440 (2026 반기, 단위 원) · 20260320000910 (2025 사업보고서) 확인"},
 }
 PBR_LOW_BAND = 0.20
@@ -1942,7 +1944,7 @@ def check_unit(rep, data, kr, by, comps, pdata=None):
 
 
 def check_unit_ran(rep, data, hit, pdata):
-    """리뷰 #118 S3: '확인이 돌지 않음'과 '확인했는데 걸린 회사 없음'을 나눠요 (새 실패 줄 둘 · Jack 승인 대기).
+    """리뷰 #118 S3: '확인이 돌지 않음'과 '확인했는데 걸린 회사 없음'을 나눠요 (새 실패 줄 둘 · Jack's yes, 2026-11-13).
     파이프라인(fetch_data.main)은 DART 가 꺼지거나 멈춰도, 캐시가 없어도, 야후가 멈춰도 unit_guard 를 늘 불러 unitChkCover 를 써요
     (DART 없이 돌면 companies 0 · hit 0). DART 치명 오류 · 국내 시세 실패는 실행 전체를 멈춰 파일이 나오지 않아요 (관문까지 오지 않아요).
     그래서 두 줄은 바깥 장애로는 실패하지 않고, 기록을 쓰는 코드가 빠졌거나 unit_guard 뒤에 종목이 바뀐 코드 문제에서만 실패해요."""
@@ -1962,10 +1964,13 @@ def check_unit_ran(rep, data, hit, pdata):
 def check_unit_moved(rep, hit, pdata):
     """리뷰 #118 S1 (경고만): 걸린 회사(unitChk)가 직전 발행본과 다르면 이름과 함께 — 새로 걸린 회사(숫자가 새로 비어요) · 풀린 회사.
     통과(PASS) 줄은 아침 확인(09:13)에 가지 않아서, 새로 비운 회사를 사람이 알게 해요. 직전 발행본이 없으면(발행 모드가 아니거나 못 읽음)
-    비교하지 않아요."""
+    비교하지 않아요. Jack 2026-11-13 (Q5): 새로 걸린 회사가 UNIT_NEW_FLAGS_FAIL(20)곳 이상이면 따로 실패 줄 (풀린 회사는 세지 않아요 ·
+    직전 발행본이 없으면 실패하지 않아요)."""
     name = "공시 단위 확인 회사 바뀜 (unitChk · 경고만)"
+    many = f"공시 단위 확인에 새로 걸린 회사 수 ({UNIT_NEW_FLAGS_FAIL}곳 이상이면 실패)"
     if not isinstance(pdata, dict):
         rep.add(name, True, "직전 발행본 없음 (비교 안 함)", "0 (바뀌면 경고)")
+        rep.add(many, True, "직전 발행본 없음 (비교 안 함)", f"{UNIT_NEW_FLAGS_FAIL}곳 미만")
         return
     before = {x.get("t"): x for x in (pdata.get("stocks") or []) if isinstance(x, dict) and "unitChk" in x}
     now = {x.get("t"): x for x in hit}
@@ -1976,6 +1981,8 @@ def check_unit_moved(rep, hit, pdata):
         return (": " + ", ".join(xs[:UNIT_MOVE_SHOW]) + (f" 외 {len(xs) - UNIT_MOVE_SHOW}곳" if len(xs) > UNIT_MOVE_SHOW else "")) if xs else ""
     rep.add(name, True, f"새로 {len(new)}곳{few(new)} · 풀림 {len(gone)}곳{few(gone)}",
             "0 (바뀌면 경고 · 새로 걸린 회사는 숫자가 비어요 — 그 공시를 사람이 확인)", warn=bool(new or gone))
+    rep.add(many, len(new) < UNIT_NEW_FLAGS_FAIL, f"새로 {len(new)}곳",
+            f"{UNIT_NEW_FLAGS_FAIL}곳 미만 (Jack 2026-11-13 — 넘으면 우리 읽기가 깨졌을 수 있어요 · 실행 로그의 '!! 공시 단위:' 줄을 보세요)")
     if new:
         rep.detail("공시 단위 확인에 새로 걸린 회사 (숫자를 새로 비웠어요)", new)
     if gone:

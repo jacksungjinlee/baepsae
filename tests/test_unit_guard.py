@@ -672,9 +672,10 @@ def test_the_checked_list_names_its_filings():
     for t, ck in V.PBR_LOW_CHECKED.items():
         assert dt.date.fromisoformat(ck["date"]) and ck["eq"] > 0, t
         assert re.search(r"rcept \d{14}", ck["why"]), t                                  # 확인한 공시의 접수번호
+        assert re.fullmatch(r"Jack's yes, \d{4}-\d{2}-\d{2}", ck.get("yes") or ""), t      # 회사마다 Jack 의 승인 (Jack 2026-11-13)
     assert V.PBR_LOW_CHECKED["040610"]["eq"] == 5085.1 and V.PBR_LOW_CHECKED["109960"]["eq"] == 3617.6   # 2026-11-12 발행본 bpsIn.eq
     runbook = open(os.path.join(ROOT, "docs", "RUNBOOK.md"), encoding="utf-8").read()
-    assert "PBR_LOW_CHECKED" in runbook
+    assert "PBR_LOW_CHECKED" in runbook and "SG&G and 앱토크롬: Jack's yes, 2026-11-13" in runbook
 
 
 PER_ROW = "PER 0.1 미만 국내 회사 (unitChk 없음 · 경고만)"
@@ -722,7 +723,7 @@ def cover(hit=0):
 
 
 def test_gate_fails_when_the_check_stopped_writing_its_record(pair):
-    """리뷰 #118 S3(a) · 새 실패 줄 (Jack 승인 대기): 직전 발행본에 unitChkCover 가 있었는데 이번 파일에 없으면 '확인이 돌지 않음' — 실패.
+    """리뷰 #118 S3(a) · 새 실패 줄 (Jack's yes, 2026-11-13): 직전 발행본에 unitChkCover 가 있었는데 이번 파일에 없으면 '확인이 돌지 않음' — 실패.
     둘 다 없으면 그 전 형식 (경고만 · incCheck 와 같은 방식). 있으면 통과."""
     cur, prev = pair
     plain(cur)
@@ -743,7 +744,7 @@ def test_gate_fails_when_the_check_stopped_writing_its_record(pair):
 
 @pytest.mark.parametrize("hit", [1, None, "0", True, 0.0])
 def test_gate_fails_when_the_records_count_differs_from_the_flagged_stocks(pair, hit):
-    """리뷰 #118 S3(b) · 새 실패 줄 (Jack 승인 대기): unitChkCover.hit 는 data.json 의 unitChk 종목 수와 같아야 해요 (확인 뒤에 종목이 바뀌었으면
+    """리뷰 #118 S3(b) · 새 실패 줄 (Jack's yes, 2026-11-13): unitChkCover.hit 는 data.json 의 unitChk 종목 수와 같아야 해요 (확인 뒤에 종목이 바뀌었으면
     실패). 바깥 장애(DART · 캐시 · 야후)로는 다를 수 없어요 — validate_data.check_unit_ran 설명."""
     cur, prev = pair
     plain(cur)
@@ -801,6 +802,38 @@ def test_gate_warns_by_name_when_the_flagged_set_changes(pair, monkeypatch):
     assert row[1].startswith("새로 12곳: ") and " 외 2곳 · 풀림 1곳" in row[1] and row[1].count(", ") == 9, row
     assert rows_of(check(cur, None, mode="live"))[MOVE_ROW][1] == "직전 발행본 없음 (비교 안 함)"
     assert V.UNIT_MOVE_SHOW == 10
+
+
+MANY_ROW = "공시 단위 확인에 새로 걸린 회사 수 (20곳 이상이면 실패)"
+
+
+def test_gate_fails_when_20_or_more_companies_are_newly_flagged(pair):
+    """Jack 2026-11-13 (Q5): 한 번에 20곳 이상 새로 걸리면 실패 (19곳은 경고만) · 풀린 회사는 세지 않아요 · 직전 발행본이 없으면 실패하지 않아요."""
+    assert V.UNIT_NEW_FLAGS_FAIL == 20
+    cur, prev = pair
+    plain(cur)
+    codes = [x["t"] for x in cur["data"]["stocks"] if x["t"].startswith("2") and x.get("cls") == "kr"][:20]
+    assert len(codes) == 20
+    for t in codes[:19]:
+        flag(cur, t)
+    rep = check(cur, prev)
+    got = rows_of(rep)
+    assert got[MANY_ROW][3] == "PASS" and got[MANY_ROW][1] == "새로 19곳" and got[MOVE_ROW][3] == "WARN", got[MANY_ROW]
+    assert MANY_ROW not in {x[0] for x in rep.failed}
+    flag(cur, codes[19])
+    row = fails(cur, prev, MANY_ROW)
+    assert row[1] == "새로 20곳", row
+    assert rows_of(check(cur, None, mode="live"))[MANY_ROW][3] == "PASS"                   # 직전 발행본 없음 → 실패하지 않아요
+    assert rows_of(check(cur, prev, mode="bootstrap"))[MANY_ROW][3] == "PASS"
+    # 풀린 회사는 세지 않아요: 어제는 그 20곳 + 다른 20곳이 걸렸고 오늘은 그 20곳만 → 새로 0 · 풀림 20 → 통과 (경고는 남아요)
+    more = [x["t"] for x in cur["data"]["stocks"] if x["t"].startswith("2") and x.get("cls") == "kr"][20:40]
+    assert len(more) == 20
+    for x in prev["data"]["stocks"]:
+        if x["t"] in codes or x["t"] in more:
+            x["unitChk"] = ["scale"]
+    got = rows_of(check(cur, prev))
+    assert got[MANY_ROW][3] == "PASS" and got[MANY_ROW][1] == "새로 0곳", got[MANY_ROW]
+    assert got[MOVE_ROW][3] == "WARN" and "풀림 20곳" in got[MOVE_ROW][1], got[MOVE_ROW]
 
 
 def test_gate_leaves_foreign_issuers_out_of_the_low_pbr_row():
