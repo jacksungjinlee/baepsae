@@ -54,6 +54,7 @@ import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHi
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
 import { sameConfirm } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
+import { unitHeld } from "../repair.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
@@ -63,6 +64,10 @@ const EPS = 1e-9;                                                // a weight exa
 export const NO_NEW_MONEY = ["broken", "check", "watch", "trim", "high"];
 // The data field each checked rule reads (the {항목} of "{항목} 자료를 받지 못해 확인이 필요해요")
 export const RULE_INPUT = { divCut: "dps", debtCeiling: "debt", roeFloor: "roe", opDecline: "op", band: "price" };
+// 공시 단위 확인 (Jack, 2026-11-13; src/repair.js unitHeld): the rule inputs the pipeline blanks for a company whose statements were
+// read in the wrong unit. Such a rule is "missing" (확인 필요), never kept or broken; its reason says why with the approved line
+// (co.unitChk) instead of "{item} 자료를 받지 못해 확인이 필요해요", once per holding.
+export const UNIT_INPUTS = ["debt", "roe", "op"];
 
 // ---------------- can the check run today? ----------------
 // load: the state from load.js (status, fresh, data, corp, preview). -> { ok: true } | { ok: false, why, days }
@@ -310,10 +315,15 @@ export function evalRule(r, h, s, co, deck, weights, trend = KR_DIV_TREND) {
 
 // The reasons behind a holding's status, most serious first. Each one names its rule, its numbers and its report year.
 // Dividend reasons carry `confirm` (the item to answer) and the current `answer`, so the screen can change it.
-function reasonsOf(results) {
+function reasonsOf(results, unit = false) {
   const out = [];
+  let unitSaid = false;
   for (const x of results) {
-    if (x.result === "missing" || x.missing) {
+    if ((x.result === "missing" || x.missing) && unit && UNIT_INPUTS.includes(x.input)) {
+      // the unit check blanked this input: one reason for all of them (the line says why once), still 확인 필요
+      if (!unitSaid) out.push({ level: "check", code: "missing", rule: x.id, input: x.input, fy: x.fy ?? null, unit: true });
+      unitSaid = true;
+    } else if (x.result === "missing" || x.missing) {
       out.push({ level: "check", code: "missing", rule: x.id, input: x.input, fy: x.fy ?? null, ...(x.missingPrice ? { missingPrice: x.missingPrice } : {}) });
     }
     if (x.id === "divCut" && x.drops) {
@@ -343,7 +353,9 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   // ctx.krDivTrend: set only by tests, to check both states of the switch; todayCtx leaves it out (the switch applies)
   const trend = typeof ctx.krDivTrend === "boolean" ? ctx.krDivTrend : KR_DIV_TREND;
   const rules = book.map((r) => evalRule(r, h, s, co, deck, weights, trend));
-  const reasons = reasonsOf(rules);
+  // 공시 단위 확인: a Korean stock whose statement numbers the pipeline blanked (data.json or corp.json unitChk)
+  const unit = !!s && s.cls === "kr" && (unitHeld(s) || unitHeld(co));
+  const reasons = reasonsOf(rules, unit);
   // No rule that could be checked at all (an empty or malformed book, only possible in a hand-made file): nothing was
   // checked, so never 할 일 없음.
   if (!rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
@@ -354,7 +366,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
     t: h.t, nk: h.nk, cls: h.cls || (s && s.cls) || null, kind: h.kind || null, qty,
-    status, reasons, rules,
+    status, reasons, rules, unit,
     // every dividend drop after purchase with its answer (null / "cut" / "notCut"): the screen keeps both answers open
     divDrops: div ? div.drops : [],
     // w and target are both shares of the held value (target rebased); planTarget is the plan's share of the amount

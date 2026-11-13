@@ -17,7 +17,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor } from "./fix.js";
 import { fcurOf, fcurText, pbrZeroOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -46,6 +46,24 @@ export function IcrOffLine({ show, style }) {
     : null;
 }
 
+// 공시 단위 확인 (Jack, 2026-11-13): "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요." once per section where a
+// Korean company's numbers blanked by the unit check would be (fix.js unitHeldFor: data.json or corp.json unitChk; never for US
+// stocks). The same quiet note (ui.jsx Note, 13 px). Shown on the example page too: it is about the data, not a fix.
+// -> the line for this company, or null (not held by the unit check, a US stock, or the words not there).
+export const unitChkText = (s, co) => (unitHeldFor(s, co) && C.co.unitChk ? C.co.unitChk : null);
+// s: the data.json row · co: its corp.json row · show: the section really has a blanked number in it (default true).
+export function UnitChkNote({ s, co, show = true, style }) {
+  const text = show ? unitChkText(s, co) : null;
+  return text ? <Note data-ui-v2="unit-chk" style={style}>{text}</Note> : null;
+}
+
+// The unit-check line inside a rule tile (phrasing content): the reason 재무 경고 0개 could not be checked for a holding the
+// unit check holds (pf.js rule "warn" unit · Jack 2026-11-13 Q14: his approved co.unitChk line, the company page's key).
+export function UnitChkLine({ show = true, style }) {
+  const text = show && C.co.unitChk ? C.co.unitChk : null;
+  return text ? <span data-ui-v2="unit-chk-tile" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{text}</span> : null;
+}
+
 // The currency line inside a rule tile (phrasing content), for a code already read (pf.js rule "warn" stmtCur): the
 // reason 재무 경고 0개 could not be checked for a holding whose statements are not in won (Jack, 2026-11-08).
 export function StmtCurLine({ cur, style }) {
@@ -65,8 +83,10 @@ export function EpsOwnersNote({ load, now, style }) {
   return text ? <Note data-ui-v2="eps-owners" style={style}>{text}</Note> : null;
 }
 
-// The currency line for this company, or null (no stmtCur, a US stock, or the words not there).
+// The currency line for this company, or null (no stmtCur, a US stock, or the words not there). Not for a company the unit
+// check holds (unitChk): its blanks are explained by the unit line beside it, once (review #118 N7: never both lines).
 export function stmtCurText(s, co) {
+  if (unitHeldFor(s, co)) return null;
   const cur = stmtCurFor(s, co);
   return cur && C.co.stmtCur ? fill(C.co.stmtCur, { currency: cur }) : null;
 }

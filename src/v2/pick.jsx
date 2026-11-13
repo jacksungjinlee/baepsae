@@ -10,7 +10,7 @@ import { ownCloses } from "./stocklist.js";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
 import { objectParticle } from "./track.js";
 import { epsFixFor } from "./fix.js";
-import { EpsFixNote } from "./fixnote.jsx";
+import { EpsFixNote, UnitChkNote } from "./fixnote.jsx";
 
 export function Pick({ load, builder, setBuilder }) {
   const st = builder.settings;
@@ -174,6 +174,8 @@ function Receipts({ s, co, c, st }) {
       {fy != null && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{fill(C.app.reportYear, { year: fy })}</div>}
       {/* 2026-11-08 (Jack): Korean ROE is total net income ÷ equity, the same net income as PER/EPS (fixnote.jsx) */}
       <EpsFixNote s={s} show={epsFixFor(s) && roe != null && fy != null} />
+      {/* 공시 단위 확인 (Jack, 2026-11-13): PBR · ROE · 부채비율 · 매출 증가율 were blanked (unitChk); the reason once */}
+      <UnitChkNote s={s} co={co} />
     </div>
   );
 }

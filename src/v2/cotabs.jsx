@@ -24,6 +24,9 @@
 //   with no date line or 자세히 link for numbers not shown (#114 review: the old app's 기업분석 keeps PER · PBR tiles at "—" for a
 //   foreign issuer the same way). Keyed on the data (src/v2/fcur.js fcurBlank): while the currency's Korean name waits for Jack,
 //   the same "–" without the line.
+// 공시 단위 확인 (Jack, 2026-11-13): a Korean company whose statements were read in the wrong unit (data.json · corp.json unitChk)
+//   has every statement number blanked; the same places say "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요."
+//   once (fixnote.jsx UnitChkNote), and the 배당 tab once where 배당성향 would be (its profit is blanked; the dividend stays).
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -37,9 +40,9 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor, epsBasisCardGone, stmtNotWonFor } from "./fix.js";
+import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote } from "./fixnote.jsx";
+import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText } from "./fixnote.jsx";
 import { fcurBlank, fcurDyBlank, pbrZeroOf } from "./fcur.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
@@ -211,8 +214,9 @@ export function EarnTab({ load, s, onMore }) {
   }
   const r = earnKr(co);
   const rows = annualRows(co);
-  // statements not in won (corp.json stmtCur): only the currency line; no toggle, year line, 주가 분해 or 자세히 for amounts not shown
-  const cur = stmtNotWonFor(s, co);
+  // statements not in won (corp.json stmtCur): only the currency line; no toggle, year line, 주가 분해 or 자세히 for amounts not shown.
+  // The same with the unit check (unitChk): only its line.
+  const cur = stmtNotWonFor(s, co) || unitHeldFor(s, co);
   const opts = [{ value: "rev", label: C.pick.checks.rev }, { value: "op", label: C.plan.rules.opProfit }, { value: "ni", label: E.ni }].filter((o) => o.label);
   const m = opts.some((o) => o.value === metric) ? metric : "op";
   const series = rows ? rows.map((x) => ({ year: x.year, v: x[m] })) : null;
@@ -226,6 +230,7 @@ export function EarnTab({ load, s, onMore }) {
         {!cur && opts.length > 1 && <div style={{ marginTop: SPACE(3) }}><Segmented label={C.co.tabs.earn || C.plan.rules.opProfit} value={m} onChange={setMetric} options={opts} /></div>}
         {/* statements not in won (corp.json stmtCur): no amounts; the reason where they would be */}
         <StmtCurNote s={s} co={co} style={{ marginTop: 0 }} />
+        <UnitChkNote s={s} co={co} style={{ marginTop: 0 }} />
         {okSeries && (
           <>
             <div data-ui-v2="co-earn-big" data-metric={m} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
@@ -248,7 +253,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
   const E = C.co.earn;
   const co = load.coByT.get(s.t) || null;
   const rows = annualRows(co);
-  const cur = stmtNotWonFor(s, co);        // statements not in won: only the currency line (no table of – )
+  const cur = stmtNotWonFor(s, co) || unitHeldFor(s, co);        // statements not in won · the unit check: only the line (no table of – )
   const cols = [[C.pick.checks.rev, "rev"], [C.plan.rules.opProfit, "op"], [E.ni, "ni"]].filter(([l]) => l);
   const margin = (x, k) => (num(x[k]) != null && num(x.rev) > 0 ? pctText((x[k] / x.rev) * 100) : "–");
   return (
@@ -259,6 +264,7 @@ export function EarnMore({ load, s, pad, onBack, backLabel }) {
         {rows && (
           <Card>
             <StmtCurNote s={s} co={co} style={{ marginTop: 0 }} />
+            <UnitChkNote s={s} co={co} style={{ marginTop: 0 }} />
             {!cur && (<>
             <div role="table" style={{ display: "grid", gridTemplateColumns: `auto repeat(${rows.length}, minmax(0, 1fr))`, columnGap: SPACE(3), rowGap: SPACE(2) }}>
               <span role="columnheader" />
@@ -456,7 +462,8 @@ export function ValueTab({ load, s, store, onMore }) {
   const r = valueTile(s, group);
   const per = num(s.per);
   // statements not in won (corp.json stmtCur): no PER · PBR, so no basis line, date line or 자세히 for them
-  const cur = stmtNotWonFor(s, co);
+  // The same with the unit check (unitChk).
+  const cur = stmtNotWonFor(s, co) || unitHeldFor(s, co);
   // US statements not in dollars (data.json fcur): PBR · PER as "–" under their labels, the reason under them, no date or 자세히
   const fc = fcurBlank(s);
   // a PBR that rounds to 0.00 (data.json pbrZero, Jack 2026-11-13): PBR – with its line under it; PER as usual (and its date)
@@ -480,6 +487,7 @@ export function ValueTab({ load, s, store, onMore }) {
         {head && sub && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{sub}</p>}
         {/* statements not in won (corp.json stmtCur): no PBR · PER; the reason where they would be */}
         <StmtCurNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
+        <UnitChkNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
         {!compare && r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
         {!compare && !cur && !fc && (
           <Stats>
@@ -663,11 +671,15 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
         {V.title && <ScreenTitle sub={V.intro || undefined}>{fill(V.title, { name: s.nk })}</ScreenTitle>}
         {/* statements not in won (corp.json stmtCur): no ratios to list; the reason where they would be */}
         <StmtCurNote s={s} co={co} />
+        <UnitChkNote s={s} co={co} />
         {rows.length > 0 && V.ratios && (
           <Card data-ui-v2="co-ratios">
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
+            {/* 공시 단위 고침 (corp.json unitFix): the receipts above use a quarterly report read in the right unit; Jack's approved
+                line (co.unitFix, 2026-11-13), here on 가치 자세히 only */}
+            {!usOf(s) && co && Array.isArray(co.unitFix) && co.unitFix.length > 0 && C.co.unitFix && <Note data-ui-v2="unit-fix">{C.co.unitFix}</Note>}
             <EpsFixNote s={s} show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
             {p0 && <PbrZeroNote s={s} />}
             {fc ? <FcurNote s={s} /> : <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
@@ -782,6 +794,10 @@ export function DivTab({ load, s }) {
               when the payout still uses total profit after the re-read (basis "total") */}
           <EpsFixNote s={s} show={epsFixFor(s)} />
         </Card>
+      )}
+      {/* 공시 단위 확인 (unitChk): 배당성향 needs the profit, which is blanked; a payer gets the line where it would be */}
+      {!us && r.rule !== "none" && r.rule !== "na" && unitChkText(s, co) && (
+        <Card data-ui-v2="co-payout-unit"><UnitChkNote s={s} co={co} style={{ marginTop: 0 }} /></Card>
       )}
       {(r.yieldPct != null || fc || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
         <Stats>

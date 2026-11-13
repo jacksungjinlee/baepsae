@@ -2925,20 +2925,27 @@ function QuickFactsCard({ lang, t, metrics, settings, profile }) {
   );
 }
 
-function MiniCheck({ s, peers, lang, t }) {
+export function MiniCheck({ s, peers, lang, t }) {   // export: tests/test_unit_guard_app.py 가 그려 봐요
   const others = peers.filter((p) => p.x && p.x.roe != null);
   if (others.length < 3) {
     return <div style={{ marginTop: 9, background: C.bg, borderRadius: 12, padding: 10, fontSize: 11.5, color: C.faint }}>{t("chkTitle")}: {t("chkNoPeers")}</div>;
   }
   const med = (arr) => { const a = [...arr].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
-  const roeMed = med(others.map((p) => p.x.roe || 0));
-  const debtMed = med(others.map((p) => p.x.debt || 0));
+  // 리뷰 #116: 업종 중간값도 빈 칸을 0 으로 세지 않아요 (빈 부채비율이 0 으로 들어가 중간값을 끌어내렸어요). 부채비율이 있는 업종 회사가 3곳
+  // 미만이면 안정성은 '—'
+  const fin = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const roeMed = med(others.map((p) => fin(p.x.roe)).filter((v) => v != null));
+  const debtPeers = others.map((p) => fin(p.x.debt)).filter((v) => v != null);
+  const debtMed = debtPeers.length >= 3 ? med(debtPeers) : null;
   const perPeers = others.filter((p) => p.per > 0).map((p) => p.per);
   const perMed = perPeers.length >= 3 ? med(perPeers) : null;
   const isFin = s.s === "finance";
   const lvl = (good, mid) => (good ? 0 : mid ? 1 : 2);
-  const roeL = lvl((s.x?.roe || 0) >= roeMed, (s.x?.roe || 0) >= roeMed * 0.7);
-  const debtL = isFin ? -1 : lvl((s.x?.debt || 0) <= debtMed, (s.x?.debt || 0) <= debtMed * 1.5);
+  // 2026-11-13 (공시 단위 확인): 빈 ROE · 부채비율은 0 이 아니라 '—' (예전엔 0 으로 읽어 부채비율 745% 회사가 '좋은 편'으로 보일 수 있었어요)
+  const roeV = typeof s.x?.roe === "number" && Number.isFinite(s.x.roe) ? s.x.roe : null;
+  const debtV = typeof s.x?.debt === "number" && Number.isFinite(s.x.debt) ? s.x.debt : null;
+  const roeL = roeV == null ? -1 : lvl(roeV >= roeMed, roeV >= roeMed * 0.7);
+  const debtL = isFin || debtV == null || debtMed == null ? -1 : lvl(debtV <= debtMed, debtV <= debtMed * 1.5);
   const perL = s.per > 0 && perMed != null ? lvl(s.per <= perMed, s.per <= perMed * 1.3) : -1;
   const W = {
     p: lang === "ko" ? ["좋은 편", "보통", "아쉬운 편"] : ["Good", "OK", "Weak"],

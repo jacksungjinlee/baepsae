@@ -67,7 +67,7 @@ export function epsInTotal(co) {
 // After the marker: neither line's place, except through epsTotalNeeded ("t" or a foreign issuer).
 export const epsTotalSide = (co) => epsInTotal(co) || (!!co && typeof co === "object" && isForeignIssuer(co.t));
 export function epsFixNeeded(corp, co) {
-  return !stmtNotWon(co) && !(epsBasisLive(corp) && (epsInFixed(co) || epsTotalSide(co)));
+  return !stmtNotWon(co) && !unitHeld(co) && !(epsBasisLive(corp) && (epsInFixed(co) || epsTotalSide(co)));
 }
 // epsIn.b "t" from a statement with no owners' line (how "total") and with minority shareholders (nci true).
 export function epsTotalNci(co) {
@@ -75,7 +75,7 @@ export function epsTotalNci(co) {
 }
 // true = the total-profit line shows for this company (corp: corp.json on screen · co: its row).
 export function epsTotalNeeded(corp, co) {
-  return epsBasisLive(corp) && !stmtNotWon(co) && epsTotalNci(co);
+  return epsBasisLive(corp) && !stmtNotWon(co) && !unitHeld(co) && epsTotalNci(co);
 }
 
 // The net income (억원) and share count (백만주) on which this company's EPS stands, for the report year fy − i (corp.json
@@ -136,7 +136,7 @@ export const bpsPeriod = (co) => periodFrom(co, "bpsIn");
 // Not for a company whose statements are not in won (stmtNotWon): no signal is computed for it at all, and the currency line
 // says why.
 export function icrOff(co) {
-  return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off" && !stmtNotWon(co);
+  return !!co && typeof co === "object" && !!co.flWhy && typeof co.flWhy === "object" && co.flWhy.icr === "off" && !stmtNotWon(co) && !unitHeld(co);
 }
 
 // ================= After the re-read: the week's notice and statements not in won (Jack, 2026-11-08) =================
@@ -194,4 +194,22 @@ export function warnStmtCur(co, where) {
   console.warn(`[${where}] !! ${co.t}: corp.json stmtCur ${JSON.stringify(co.stmtCur)} is not a currency code the line can show (three `
     + "capital letters, not KRW, not XXX = unreadable): no currency line, so its blank statement amounts show with no reason on screen.");
   return true;
+}
+
+// ================= 5. 공시 단위 확인 (Jack, 2026-11-13) =================
+// Some filings are read in the wrong unit: the 2026 반기보고서 of 진코스텍 and 디와이에이 head their statements "(단위 : 천원)" over
+// numbers that are in 원, so DART holds every amount 1,000 times too large (PER and PBR came out 0.0). The pipeline
+// (fetch_data.py unit_guard) checks every Korean company on every run and, for one that fails, blanks every number built on its
+// statements (PER · PBR · EPS · BPS · ROE · 부채비율 · 영업이익률 · 매출 증가율 · the 3-year amounts · equity · EV multiples · receipts ·
+// 재무 경고, and the 가치 · 퀄리티 scores) and marks it with unitChk, a list of reasons ("bs" assets ≠ liabilities + equity ·
+// "scale" a quarterly report's balance sheet 100 times or more off the 사업보고서 · "is" / "cf" its previous-period income or
+// cash-flow column 100 times or more off last year's same-quarter report · "eps" profit ÷ shares 300 times or more off the report's
+// own 기본주당이익 · "cap" 자본금 ÷ 액면가 300 times or more off the share count; eps and cap only for statements in won), in
+// data.json and corp.json. Dividends stay (a separate table). Such a company shows the unit line, never the currency line too
+// (review #118 N7: a company with both stmtCur and unitChk).
+// Where those numbers would be, both apps say "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요." once per section
+// (2.0: src/copy/v2.js co.unitChk; the old app: src/fixnote.jsx FIX_UNIT). Such a company never gets the being-fixed, total-profit
+// or 이자보상배율 lines above: the numbers they would explain are not shown. row: a data.json stock or a corp.json company.
+export function unitHeld(row) {
+  return !!row && typeof row === "object" && Array.isArray(row.unitChk) && row.unitChk.length > 0;
 }

@@ -10,8 +10,8 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine, epsLineKind } from "./fixnote.jsx";
-import { epsBase, epsPeriod, stmtNotWon, stmtCurOf } from "./repair.js";
+import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, epsLineKind } from "./fixnote.jsx";
+import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1077,7 +1077,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
   // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액 · PER · PBR · EPS 가 비어요.
   // 그 이유는 투자지표의 한 줄(StmtCurLine)이 말하고, '적자이거나 데이터가 없어요' 같은 맞지 않는 이유 · 보이지 않는 숫자의 기간 ·
   // 숫자 없이 빈 칸(3개년 실적 흐름 · 주가는 무엇으로 움직였나)은 보이지 않아요. 글을 새로 쓰지 않고 숨기기만 해요.
-  const cur = stmtNotWon(c);       // 읽을 수 없는 코드("XXX")여도 숨겨요 (통화 줄은 읽을 수 있을 때만: StmtCurLine)
+  // 2026-11-13 (Jack): 공시 단위 확인에 걸린 회사(corp.json unitChk)도 재무제표로 만든 숫자가 비어요 — 같은 것을 숨기고 이유는 UnitChkLine 한 줄
+  const cur = stmtNotWon(c) || unitHeld(c);       // 읽을 수 없는 코드("XXX")여도 숨겨요 (통화 줄은 읽을 수 있을 때만: StmtCurLine)
   const volTxt = c.beta == null ? null : c.beta > 1.15 ? "시장보다 출렁임이 큰 편" : c.beta < 0.85 ? "시장보다 출렁임이 작은 편" : "시장과 비슷하게 움직이는 편";
   const payout = c.dps && c.eps && c.eps > 0 ? c.dps / c.eps * 100 : null;
 
@@ -1173,6 +1174,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (cur ? "" : epsPeriodSub(c))} onWhy={() => setExplain("box")} />
         {/* DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액이 비어요 — 그 이유를 한 번 */}
         <StmtCurLine c={c} style={{ marginTop: 6 }} />
+        <UnitChkLine c={c} style={{ marginTop: 6 }} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, padding: "9px 11px", background: C.bg, border: HAIR, borderRadius: 8, alignItems: "center" }}>
               <button onClick={() => setExplain("factor")} style={{ background: "none", border: "none", padding: 0, fontSize: 10.5, fontWeight: 800, color: C.faint, cursor: "pointer", fontFamily: FONT }}>성향(팩터) ?</button>
@@ -1494,7 +1496,10 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         <EpsFixLine many corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
         {/* 2026-11-08 (Jack): once, when a compared company files its statements in another currency (its numbers are blank):
             the first such company's currency (repair.js stmtCurOf) */}
-        {cols.some((c) => stmtCurOf(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c))} />}
+        {/* 리뷰 #118 N7: 단위 확인에 걸린 회사는 통화 줄이 아니라 아래 단위 줄로 */}
+        {cols.some((c) => stmtCurOf(c) && !unitHeld(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c) && !unitHeld(c))} />}
+        {/* 2026-11-13 (Jack): once, when a compared company's numbers were blanked by the unit check (corp.json unitChk) */}
+        {cols.some(unitHeld) && <UnitChkLine c={cols.find(unitHeld)} />}
       </Card>
     </div>
   );

@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 14:18 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 17:29 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -98,21 +98,50 @@ just stops blocking screen work.
   - Process: a revert still passes the other merge checks (CI green plus the real-data checks; its review comes
     after). The CLAUDE.md line for "Choices I made": yes (a small docs PR, not written yet). v19.4 (accounts) goes
     after v19.7b and before v19.6h. Jack, 11-11, still stands: ask before changing any test beyond what was approved.
-- **Queue now (2026-11-13 14:18 KST; every merging PR updates this):**
+- **Jack, 2026-11-13 (sixth and seventh messages): back on Opus; his answers.**
+  - The weekly Fable limit was reached; Jack pressed the reset and switched the session to Opus 5.5 Extra high. Until
+    Wednesday 2026-11-18 22:00 KST: finish what's reviewed, start nothing new; helpers on Opus at Extra high; at most
+    two at once; one reviewer after fixes. **Then, after #119 and #122 merge:** build one screen version at a time on
+    Opus with one reviewer: v19.6f first (Dec 10 deadline), then v19.7b. Stop new work when Jack says his usage has
+    reached 70%.
+  - A sold-out stock kept in the plan (#119): "own" (it reads 먼저 사요 on its own band; every other holding reads as
+    before), with the approved line under it: "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." Once #122
+    is live, the line opens 빼기. The two edits of tests on `main` for this (test_v2_d2, test_v2_pf): Jack's yes.
+  - A US record dated a day whose exchange rate isn't published yet stays a known limit, with its own approved line:
+    "이 날짜의 환율이 아직 없어요. 보통 다음 날 아침에 들어오니, 그때 다시 저장해 주세요." (keep what was typed, if cheap).
+  - Dark mode's six odd-looking spots: after Wednesday; send the design chat side-by-side dark/light screenshots of all
+    six in one go.
+  - **Visual priority (Jack, 11-13):** after #119 and #122: **missing US stocks** next, then **v19.7b**, then **v19.6f**
+    (still in review before Dec 1). Missing US stocks: no separate report; add BTI, ADC and NNN, plus the US stocks
+    Korean investors hold most (예탁결제원 SEIBro, if reachable) or else about 30 widely held NYSE dividend names, and
+    New York-listed foreign companies (Shell, BP, Unilever, Toyota, Sony …; #114 hides their PER, PBR and yield with
+    the approved line). List every added stock in the PR; one Opus reviewer and a branch dry run.
+  - Next update to Jack: a table of every visible change he has asked for since 11-07, each live / ready / not started,
+    with where to look on the phone. Found 11-13: only the 우선주 count line under 내 점수 is live; the per-stock lines
+    for 우선주 without figures, suspended and no-trade stocks were left as "later" on 11-08 and never built.
+- **Queue now (2026-11-13 17:29 KST; every merging PR updates this):**
   - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
     check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
     check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
     goes red for something that is not a real regression, #115 is reverted at once.
   - #114 (currency fix) is published and live (run 43368392513, 11-13 13:53 KST, once Yahoo had the 11-12 prices
     back): the 27 non-dollar filers show "–" for PER and PBR with the reason line; BRK-B has its own line.
-  - #113 (token fix; this PR) is merged. Its own publish (a manual `dart=cache` run right after the merge) is
-    watched to the end; if the push fails, #113 is reverted at once (Jack, 11-12). The data deploy that follows should
-    skip #115's check.
-  - Then, in order: #118 (Korean unit guard) → #116 (its repair) → #117 (fxHist and US splits). Each needs a fresh
-    green branch dry run after its last rebase. Jack's answers of 11-13 are built into all three, and their final
-    reviews are done.
-  - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → v19.6f (must be in review by Dec 1, merged by
-    Dec 10) → v19.7b → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
+  - #113 (token fix) is merged; its own publish (a manual `dart=cache` run right after the merge, 11-13 afternoon)
+    is watched to the end and #113 is reverted at once if the push fails (Jack, 11-12).
+  - #118 (Korean unit guard) is merged: 진코스텍 and 디와이에이 are blanked with Jack's line; the gate fails when 20
+    or more companies are newly flagged in one publish (RUNBOOK). Watch the first publishes on 2026 Q3 reports
+    (deadline 11-16).
+  - #116 (the repair) is merged and published (11-13 evening): those two companies' reports are read ÷1,000 when every
+    statement proves it, and 가치 자세히 says so in Jack's line.
+  - #117 (fxHist and US splits; this PR) is merged: macro.json carries the won-per-dollar rate for every day since
+    2016 (Bank of Korea 15:30 close, Jack's choice) and data.json every US split since 2016. Nothing users see changes
+    until #119. Yahoo's split column unread for 6+ days is a loud warning, never a held publish (Jack, 11-13).
+  - A branch dry run restores its own branch's newest cache first: a branch whose last run was before #114 has US
+    details without the currency field, refetches about 777 of them, and can fail #114's currency row when Yahoo
+    refuses some. Rerun once (the saved cache is then fresh). Follow-up after Wednesday: carry the currency over from
+    the previous publish in that case.
+  - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → missing US stocks → v19.7b → v19.6f (in review by
+    Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
     dark mode's six spots; PER, PBR and yield back for the 27 non-dollar filers from whole-company totals; Korean
     splits; the daily run split into a read-only job and a publishing job; the item 4 report and the

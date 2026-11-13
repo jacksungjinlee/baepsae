@@ -35,6 +35,9 @@
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
               늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
+  공시 단위   (Jack, 2026-11-13) 단위를 잘못 적은 재무제표로 숫자를 비운 한국 회사(unitChk): '공시 자료의 단위를 확인하고 있어서 이 숫자를
+              잠시 비워 두었어요.' 영역마다 한 번 (요약의 한눈에 칸 위 · 재무 경고 자리 · 내 기준 · 실적 · 가치 · 두 자세히 · 배당성향 자리),
+              실적 · 가치 칸과 숫자 없는 카드는 없음, 출렁임 · 배당은 그대로 · 다른 회사에는 없음
   돌아온 화면 (2026-11-08, 390 · 1280) 멈춘 화면이 다시 보이면 파일을 한 번 받아요: 더 새 발행이면 모든 화면이 새 날짜 · 받지 못함 ·
               못 읽음 · 섞인 발행이면 멈춤 표시 그대로 · 멈춘 데이터가 아니면 받지 않음 · 돌아올 때마다 한 번만 · 10분 안에는 다시 받지
               않음 · 첫 불러오기 실패도 한 번 받음 · 후보 고르기 · 매수 계획 · 가진 종목 넣기 위에는 새 데이터가 기다려요
@@ -9388,6 +9391,170 @@ def scene_fix_notes(R, files, width, live=False, shots=None):
     srv.shutdown()
 
 
+# ── 공시 단위 확인 (Jack, 2026-11-13 · src/repair.js 5 · src/v2/fixnote.jsx UnitChkNote) ──
+UNIT_T = "028260"                 # 시험 데이터의 삼성물산을 단위가 틀린 재무제표로 숫자를 비운 회사로 (배당은 남아요)
+UNIT_LINE = C["co"]["unitChk"]
+FIX_T = "005930"                  # 시험 데이터의 삼성전자를 공시 단위를 고쳐 읽은 회사로 (corp.json unitFix · 숫자는 그대로)
+FIX_LINE = C["co"]["unitFix"]     # Jack 2026-11-13 (Q13): 가치 자세히에만
+
+
+def unit_files(files):
+    """fetch_data.py unit_guard · build_corp 가 하는 대로 한 회사의 재무제표 숫자를 비우고 unitChk ["scale"] (배당은 그대로)."""
+    f = clone(files)
+    co = next(c for c in f["corp.json"]["companies"] if c["t"] == UNIT_T)
+    co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False, vz=None, qz=None,
+              per=None, pbr=None, eps=None, bps=None, roe=None, debt=None, opm=None, g3=None, flRan=[], unitChk=["scale"])
+    for k in ("evE", "evR", "pcf", "bq", "nio3", "nio3Hyb", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep", "fl", "flSrc", "flWhy"):
+        co.pop(k, None)
+    st = next(x for x in f["data.json"]["stocks"] if x["t"] == UNIT_T)
+    for k in ("per", "pbr", "eps", "bps", "roe", "debt", "opm", "g3", "vz", "qz"):
+        st.pop(k, None)
+    st["unitChk"] = ["scale"]
+    assert st.get("dps", 0) > 0, "배당을 주는 회사여야 배당성향 자리를 볼 수 있어요"
+    return f
+
+
+def scene_unit_chk(R, files, width, shots=None):
+    """공시 단위 확인 (Jack, 2026-11-13): unitChk 회사의 회사 페이지 — 숫자가 비는 영역마다 그 줄 한 번, 비어 있는 실적 · 가치 칸과 숫자 없는
+    카드는 없어요 (배당 · 출렁임은 그대로). 다른 회사에는 없어요. 12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"공시 단위 {width}"
+    deck = {"id": "dunit", "name": "가진 종목", "createdAt": "2026-10-30", "kind": "imported", "settings": {"points": {"value": 2}, "strict": "normal"},
+            "holdings": [{"t": UNIT_T, "nk": "삼성물산", "cls": "kr"}], "purchases": [],
+            "imported": [{"t": UNIT_T, "nk": "삼성물산", "ccy": "KRW", "qty": 10}]}
+    init = ("(() => { try { if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', "
+            + json.dumps(json.dumps({"v": 2, "decks": [deck]}, ensure_ascii=False)) + "); } catch (e) {} })();")
+    site = unit_files(files)
+    next(c for c in site["corp.json"]["companies"] if c["t"] == FIX_T)["unitFix"] = [{"rep": "2026.2Q", "bs": 1000, "is": 1000, "cf": 1000}]
+    srv, ctx, page, base = R.open(build_site(site), width, init=init)
+    page.locator('[data-ui-v2="date-line"], [data-ui-v2="load-fail"]').first.wait_for(state="visible")
+
+    def lines_in(sel=None):
+        loc = page.locator((sel + " " if sel else "") + '[data-ui-v2="unit-chk"]')
+        return [loc.nth(i).inner_text().strip() for i in range(loc.count())]
+
+    def shot(name):
+        if shots:
+            os.makedirs(shots, exist_ok=True)
+            page.screenshot(path=os.path.join(shots, name), full_page=True)
+
+    def summary():
+        co_hash(page, f"#stocks/{UNIT_T}")
+        page.locator('[data-ui-v2="co-summary"]').wait_for(state="visible")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        assert lines_in('[data-ui-v2="co-tiles"]') == [UNIT_LINE], lines_in('[data-ui-v2="co-tiles"]')       # 한눈에: 한 번, 칸들 위
+        assert page.locator('[data-ui-v2="co-tiles"] [data-ui-v2="unit-chk"]').bounding_box()["y"] < page.locator('[data-ui-v2="co-tile"]').first.bounding_box()["y"]
+        topics = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => e.dataset.topic)")
+        assert topics == ["div", "risk"], topics                                                         # 비어 있는 실적 · 가치 칸은 없어요
+        assert C["co"]["tiles"]["na"] not in tiles.inner_text(), tiles.inner_text()
+        assert lines_in('[data-ui-v2="co-warn-unit"]') == [UNIT_LINE]                                      # 재무 경고 자리: 한 번
+        assert page.locator('[data-ui-v2="co-warn"]').count() == 0                                         # '경고 신호는 없어요'라고 말하지 않아요
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        if fit.count():
+            rows = fit.locator('[data-ui-v2="rank-row"]').evaluate_all("(els) => els.map((e) => [e.dataset.card, e.dataset.side])")
+            blank = any(c in ("value", "profit", "stable", "growth") and side == "blank" for c, side in rows)
+            assert len(lines_in('[data-ui-v2="co-fit"]')) == (1 if blank else 0), (rows, lines_in('[data-ui-v2="co-fit"]'))
+        n = sum(1 for x in lines_in() if x == UNIT_LINE)
+        assert n == len(lines_in()) == 2 + len(lines_in('[data-ui-v2="co-fit"]')), lines_in()             # 영역마다 한 번씩만
+        for x in page.locator('[data-ui-v2="unit-chk"]').evaluate_all("(els) => els.map((e) => parseFloat(getComputedStyle(e).fontSize))"):
+            assert x >= 12, x
+        floor_ok(page, "공시 단위 요약")
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+        shot(f"unitchk-summary-{width}.png")
+    R.check(page, S, f"{UNIT_T} 요약: 한눈에 칸 위 · 재무 경고 자리 · 내 기준에 한 번씩, 실적 · 가치 칸 없음", summary)
+
+    def tabs():
+        for ctab, inside in (("earn", '[data-ui-v2="co-earn"]'), ("value", '[data-ui-v2="co-value"]'), ("div", '[data-ui-v2="co-div"]'),
+                             ("value-more", '[data-ui-v2="co-value-more"]'), ("earn-more", '[data-ui-v2="co-earn-more"]')):
+            co_hash(page, f"#stocks/{UNIT_T}/{ctab}")
+            page.locator(inside).first.wait_for(state="visible")
+            assert lines_in() == [UNIT_LINE], (ctab, lines_in())                                          # 한 번
+            assert len(lines_in(inside)) == 1, ctab
+            if ctab == "earn":
+                # v19.6d: any picker on the page but the 화면 모드 switch (PC's left menu has it, a segmented control too)
+                assert page.locator('[data-ui-v2="co-earn-big"]').count() == 0 and page.locator(SEGMENTED).count() == 0
+                assert page.locator('[data-ui-v2="co-decomp"]').count() == 0 and page.locator('[data-ui-v2="co-earn-more"]').count() == 0
+            elif ctab == "value":
+                for k in ("co-pbr", "co-per", "co-compare", "co-dcf", "co-value-basis", "co-value-more"):
+                    assert page.locator(f'[data-ui-v2="{k}"]').count() == 0, k
+                assert page.locator('[data-ui-v2="co-risk"]').count() == 1                                   # 출렁임은 그대로
+            elif ctab == "div":
+                assert page.locator('[data-ui-v2="co-payout"]').count() == 0                                 # 배당성향 자리에 그 줄
+                assert page.locator('[data-ui-v2="co-dps"], [data-ui-v2="co-million"], [data-ui-v2="co-div-head"]').count() >= 1   # 배당은 그대로
+            elif ctab == "value-more":
+                assert page.locator('[data-ui-v2="co-ratios"]').count() == 0 and page.locator('[data-ui-v2="co-map"]').count() == 0
+                assert page.locator('[data-ui-v2="co-calc"]').count() == 0
+            else:
+                assert page.locator('[data-ui-v2="co-earn-more"] [role="table"]').count() == 0
+            floor_ok(page, f"공시 단위 {ctab}")
+            no_hscroll(page, width)
+            no_mascot(page)
+            R.collect(page)
+            shot(f"unitchk-{ctab}-{width}.png")
+    R.check(page, S, f"{UNIT_T} 실적 · 가치 · 배당 · 두 자세히: 한 번씩, 숫자 없는 카드 없음 (출렁임 · 배당은 그대로)", tabs)
+
+    def others():
+        for code in ("005930", "AAPL"):
+            for ctab in (None, "earn", "value", "div"):
+                co_hash(page, f"#stocks/{code}" + (f"/{ctab}" if ctab else ""))
+                page.wait_for_function("(t) => document.querySelector('[data-ui-v2=\"company\"]').dataset.tab === t", arg=ctab or "summary")
+                page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+                assert lines_in() == [], (code, ctab, lines_in())
+        co_hash(page, "#stocks/005930/value")
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-pbr"]').count() == 1                                      # 다른 회사는 그대로
+        R.collect(page)
+    R.check(page, S, "다른 회사 (삼성전자 · AAPL): 그 줄 없음 · 숫자 그대로", others)
+
+    def holdings_tile():
+        """Jack 2026-11-13 (Q14): 그 회사를 가진 포트폴리오의 '재무 경고 0개 · 확인하지 못했어요' 칸 밑에 같은 줄 한 번 (12px 이상)."""
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        tile = page.locator('[data-deck-id="dunit"] [data-ui-v2="pf-rule"][data-rule="warn"]')
+        tile.wait_for(state="visible")
+        assert tile.get_attribute("data-state") == "unknown", tile.get_attribute("data-state")
+        line = tile.locator('[data-ui-v2="unit-chk-tile"]')
+        assert line.count() == 1 and line.inner_text().strip() == UNIT_LINE, tile.inner_text()
+        assert tile.locator('[data-ui-v2="stmt-cur"]').count() == 0
+        assert line.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, "공시 단위 가진 종목 칸")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, f"{UNIT_T} 을 가진 포트폴리오: '재무 경고 0개' 칸 밑에 그 줄 한 번", holdings_tile)
+
+    def fixed():
+        """Jack 2026-11-13 (Q13): 공시 단위를 고쳐 읽은 회사(corp.json unitFix)는 가치 자세히의 영수증 카드 안에만 그 줄 한 번 (12px 이상).
+        그 회사의 다른 탭 · 고쳐 읽지 않은 회사 · 미국 종목 · 숫자를 비운 회사에는 없어요."""
+        fix = '[data-ui-v2="unit-fix"]'
+        more = '[data-ui-v2="co-value-more"][data-t="{}"]'
+        assert FIX_LINE == "공시에 단위가 잘못 적혀 있어서 바로잡아 계산했어요.", FIX_LINE
+        co_hash(page, f"#stocks/{FIX_T}/value-more")
+        page.locator(more.format(FIX_T)).wait_for(state="visible")
+        line = page.locator(fix)
+        assert line.count() == 1 and line.inner_text().strip() == FIX_LINE, line.count()
+        assert page.locator('[data-ui-v2="co-ratios"] ' + fix).count() == 1
+        assert line.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, "공시 단위 고침 가치 자세히")
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+        for ctab in (None, "earn", "value", "div"):                                                      # 그 회사의 다른 탭
+            co_hash(page, f"#stocks/{FIX_T}" + (f"/{ctab}" if ctab else ""))
+            page.wait_for_function("([t, tab]) => { const e = document.querySelector('[data-ui-v2=\"company\"]');"
+                                   " return !!e && e.dataset.t === t && e.dataset.tab === tab; }", arg=[FIX_T, ctab or "summary"])
+            page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+            assert page.locator(fix).count() == 0, ctab
+        for code in ("000660", "AAPL", UNIT_T):                                                          # 다른 회사의 가치 자세히
+            co_hash(page, f"#stocks/{code}/value-more")
+            page.locator(more.format(code)).wait_for(state="visible")
+            assert page.locator(fix).count() == 0, code
+        R.collect(page)
+    R.check(page, S, f"고쳐 읽은 회사 ({FIX_T}): 가치 자세히의 영수증 카드에만 그 줄 한 번 · 다른 탭과 다른 회사에는 없음", fixed)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── 2026-11-08 (Jack): DART 다시 읽기가 끝난 뒤 (src/repair.js 3 · 4, src/v2/fixnote.jsx EpsOwnersNote · StmtCurNote) ──
 OWNERS_LINE = C["fix"]["owners"].replace("{date}", f"{int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일")
 STMT_T = "241560"              # 두산밥캣: 재무제표를 달러로 공시해요 → 다시 읽은 발행에서 금액이 비고 stmtCur "USD"
@@ -9942,6 +10109,7 @@ def main():
                    lambda: scene_store_version(R, files, 390, False), lambda: scene_store_version(R, files, 390, True),   # 기록 판 고침
                    lambda: scene_fix_notes(R, files, 390), lambda: scene_fix_notes(R, files, 1280),             # 2026-11-08 고치는 중 안내
                    lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True),
+                   lambda: scene_unit_chk(R, files, 390), lambda: scene_unit_chk(R, files, 1280),             # 2026-11-13 공시 단위 확인
                    lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur
                    lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280),    # 2026-11-08 돌아온 화면은 한 번 받아요
                    lambda: scene_refetch_drafts(R, files, 390), lambda: scene_refetch_drafts(R, files, 1280),   # 만들던 것 위에는 기다려요

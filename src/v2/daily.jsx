@@ -13,6 +13,7 @@ import { opPieces, opAmounts, divDropBody } from "./deckcalc.js";
 import { CoMark } from "./logo.jsx";
 import { epsFixFor } from "./fix.js";
 import { EpsFixNote } from "./fixnote.jsx";
+import { UNIT_INPUTS } from "./rules.js";
 
 const R = () => C.plan.rules;
 const yearText = (fy) => (fy ? fill(C.app.reportYear, { year: fy }) : null);
@@ -39,7 +40,11 @@ const bandPiece = (band, bands) => (band === "low" ? fill(C.daily.bandLow, { x: 
 // One reason -> { pieces, body, source }. Dividend drops are drawn by DividendAnswers (with their answer buttons).
 export function reasonView(r, x, names) {
   switch (r.code) {
-    case "missing": { const item = itemOf(r, x, names); return item ? { pieces: [fill(C.daily.missing, { item })] } : null; }
+    case "missing": {
+      // 공시 단위 확인 (Jack, 2026-11-13): the input was blanked because the statements were read in the wrong unit, not lost
+      if (r.unit) return C.co.unitChk ? { pieces: [C.co.unitChk] } : null;
+      const item = itemOf(r, x, names); return item ? { pieces: [fill(C.daily.missing, { item })] } : null;
+    }
     case "debtOver": return { pieces: [fill(C.daily.keepLine, { item: R().debt, x: won(r.now), limit: r.limit })], source: yearText(r.fy) };
     case "roeUnder": return { pieces: [fill(C.daily.keepLine, { item: R().roe, x: p1(r.now), limit: r.limit })], source: yearText(r.fy) };
     case "opFell2": return { pieces: opLine(r.op), source: yearText(r.fy) };
@@ -122,10 +127,15 @@ function stateOf(r) {
 }
 
 export function HoldingRules({ x, names }) {
+  // 공시 단위 확인 (Jack, 2026-11-13): the rules whose input the unit check blanked say why once (the first of them), with the
+  // approved line, never "자료를 받지 못해"
+  const unitFirst = x.unit ? x.rules.find((r) => r.result === "missing" && UNIT_INPUTS.includes(r.input)) : null;
   const line = (r) => {
     const src = yearText(r.fy);
     const st = stateOf(r);
-    const miss = r.result === "missing" ? (() => { const item = itemOf(r, x, names); return item ? fill(C.daily.missing, { item }) : null; })() : null;
+    const miss = r.result !== "missing" ? null
+      : x.unit && UNIT_INPUTS.includes(r.input) ? (r === unitFirst ? C.co.unitChk || null : null)
+      : (() => { const item = itemOf(r, x, names); return item ? fill(C.daily.missing, { item }) : null; })();
     const label = r.result === "broken" ? C.daily.broken : null;
     const pend = (name) => <RuleLine key={r.id} name={name} pending />;
     switch (r.id) {
