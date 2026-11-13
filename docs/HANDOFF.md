@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 11:17 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-13 11:52 KST — read this first)
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.
@@ -98,8 +98,11 @@ just stops blocking screen work.
   - Process: a revert still passes the other merge checks (CI green plus the real-data checks; its review comes
     after). The CLAUDE.md line for "Choices I made": yes (a small docs PR, not written yet). v19.4 (accounts) goes
     after v19.7b and before v19.6h. Jack, 11-11, still stands: ask before changing any test beyond what was approved.
-- **Queue now (2026-11-13 11:17 KST; every merging PR updates this):**
-  - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (this PR: ☰ → 화면 모드).
+- **Queue now (2026-11-13 11:52 KST; every merging PR updates this):**
+  - Live: #107, #111 (gate rows), #120 v19.5b (홈 종목 순위), #121 v19.6d dark mode (☰ → 화면 모드), #115 (the deploy
+    check: every code deploy runs the daily run's three real-data checks before it uploads; RUNBOOK "The deploy
+    check"). After #115's merge: its own deploy and the first deploy after a daily publish are watched; if a deploy
+    goes red for something that is not a real regression, #115 is reverted at once.
   - #114 (currency fix) is merged but **not published yet**: its own publish (run 43341442451, 11-13 10:00 KST) was
     stopped by the gate, correctly, because Yahoo had dropped every US stock's 11-12 price that morning (0 of 773).
     The live site keeps the 06:40 data. The afternoon scheduled starts skip (11-12 is already published), so #114
@@ -107,7 +110,7 @@ just stops blocking screen work.
     After it: live check (non-dollar filers blank with the reason line).
   - Then, in order: #113 (token fix; merge right after #114's publish is verified; its own publish watched to the
     end, reverted at once if the push fails) → #118 (Korean unit guard) → #116 (its repair) → #117 (fxHist and US
-    splits) → #115 (deploy check). #118, #116 and #117 each need a fresh green branch dry run after their last
+    splits). #118, #116 and #117 each need a fresh green branch dry run after their last
     rebase, and a dry run cannot go green while Yahoo's prices are missing.
   - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → v19.6f (must be in review by Dec 1, merged by
     Dec 10) → v19.7b → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
