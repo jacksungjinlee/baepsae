@@ -12,7 +12,7 @@
 //   7 비중을 바꿔 보면: starts at today's weights and moves only when the user moves one (never a suggestion)
 // No 뱁이 (numbers everywhere). No Korean here: src/copy/v2.js.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOPIC_CHIP, HOLDING_SHADES, holdingShades } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOPIC_CHIP, HOLDING_SHADES, holdingShades, holdingText, CHART } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Amount, Collapsible } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, p1 } from "./format.js";
@@ -175,7 +175,7 @@ function Dot({ id, kind }) {
   const c = id ? dotColor(id) : COLOR.text2;
   const bg = kind === "full" ? c : kind === "half" ? `linear-gradient(90deg, ${c} 50%, ${COLOR.surface} 50%)` : COLOR.surface;
   return <span role="img" aria-label={label} data-dot={kind} style={{ display: "inline-block", width: 16, height: 16, borderRadius: 999, background: bg,
-    boxShadow: `inset 0 0 0 1.5px ${kind === "empty" ? "#C9C2B8" : c}` }} />;
+    boxShadow: `inset 0 0 0 1.5px ${kind === "empty" ? COLOR.edgeStrong : c}` }} />;
 }
 
 function ByStock({ st }) {
@@ -241,7 +241,7 @@ function ByStock({ st }) {
         </div>
       </div>
       {fit.more && <div aria-hidden="true" data-ui-v2="bystock-more" style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: SPACE(8), pointerEvents: "none",
-        background: `linear-gradient(to right, ${COLOR.surface}00, ${COLOR.surface})` }} />}
+        background: `linear-gradient(to right, transparent, ${COLOR.surface})` }} />}
       </div>
       <div data-ui-v2="dot-legend" style={{ display: "flex", flexWrap: "wrap", gap: SPACE(3), marginTop: SPACE(3) }}>
         {["full", "half", "empty"].map((k, i) => (
@@ -256,14 +256,10 @@ function ByStock({ st }) {
 
 // ---------------- 4 ----------------
 const TM_W = 320, TM_H = 200;
-// The text colour on a treemap block: the first of white, navy ink and black that reads at 4.5:1 or more on that shade
-// (#7C889C needs black: white 3.6:1, navy 4.0:1).
-const lum = (hex) => {
-  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-};
-const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-export const textOn = (shade) => [COLOR.surface, COLOR.ink, "#000000"].find((c) => ratio(c, shade) >= 4.5) || "#000000";
+// The text colour on a treemap block: the first of surface, ink and black that reads at 4.5:1 or more on that shade
+// (light: #7C889C needs black, white 3.6:1, navy 4.0:1). v19.6d: chosen for each screen mode in tokens.js (HOLDING_TEXT),
+// so the text follows the mode with the shade.
+export const textOn = (shade) => holdingText(shade);
 function Industry({ st }) {
   const v = st.view;
   const stock = st.rules.find((r) => r.id === "stock"), ind = st.rules.find((r) => r.id === "ind");
@@ -332,9 +328,9 @@ function Y2022({ st, load }) {
   return (
     <Section id="report-2022" icon="umbrella" title={C.rpt.y2022}>
       <div style={{ marginTop: SPACE(2) }}>
-        {mine && row(mineL.trim(), mine, bar(est.small, "#5A6B87", est.est === "range" ? est.big : null), "mine")}
-        {row(kospiL.trim(), `${MINUS}${p1(Math.abs(kr))}%`, bar(Math.abs(kr), "#9AA3B2"), "kospi")}
-        {row(C.rpt.sp500Won, `${MINUS}${p1(Math.abs(us))}%`, bar(Math.abs(us), "#9AA3B2"), "sp500")}
+        {mine && row(mineL.trim(), mine, bar(est.small, CHART.mineEst, est.est === "range" ? est.big : null), "mine")}
+        {row(kospiL.trim(), `${MINUS}${p1(Math.abs(kr))}%`, bar(Math.abs(kr), CHART.compare), "kospi")}
+        {row(C.rpt.sp500Won, `${MINUS}${p1(Math.abs(us))}%`, bar(Math.abs(us), CHART.compare), "sp500")}
       </div>
       {sentence && <p data-ui-v2="y2022-line" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(3) })}>{sentence}</p>}
       {!est.ok && est.why === "half" && <Note>{C.plan.riskHalf}</Note>}

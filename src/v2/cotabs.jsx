@@ -115,10 +115,10 @@ function Decomp({ co, s }) {
   const head = d.head ? D.head[d.head] : null;
   // multipliers, as the old card: 3년 주가 = 이익 × 눈높이 (a true equation), each with its inputs (then → now)
   const box = (label, v, from, to, dark) => (
-    <div style={{ background: dark ? COLOR.ink : COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(1)}px`, textAlign: "center", minWidth: 0 }}>
-      <div style={tx(SIZE.xs, WEIGHT.semi, dark ? COLOR.surface : COLOR.text2)}>{label}</div>
-      <div style={tx(SIZE.body, WEIGHT.heavy, dark ? COLOR.surface : COLOR.ink)}>{timesText(v, v >= 100 ? 0 : 2)}</div>
-      {from && to && <div style={tx(SIZE.xxs, WEIGHT.regular, dark ? COLOR.surface : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
+    <div style={{ background: dark ? COLOR.primary : COLOR.page, borderRadius: RADIUS.sm, padding: `${SPACE(3)}px ${SPACE(1)}px`, textAlign: "center", minWidth: 0 }}>
+      <div style={tx(SIZE.xs, WEIGHT.semi, dark ? COLOR.onPrimary : COLOR.text2)}>{label}</div>
+      <div style={tx(SIZE.body, WEIGHT.heavy, dark ? COLOR.onPrimary : COLOR.ink)}>{timesText(v, v >= 100 ? 0 : 2)}</div>
+      {from && to && <div style={tx(SIZE.xxs, WEIGHT.regular, dark ? COLOR.onPrimary : COLOR.text2, { lineHeight: 1.3 })}>{from}{" \u2192 "}{to}</div>}
     </div>
   );
   const op = (ch) => <span aria-hidden="true" style={tx(SIZE.body, WEIGHT.heavy, COLOR.text3, { textAlign: "center" })}>{ch}</span>;
@@ -542,11 +542,11 @@ function Scatter({ s, group }) {
       <CardHead icon="chart-scatter" tone="value" title={M.title} />
       <svg viewBox={`0 0 ${W} ${Hh}`} width="100%" role="img" aria-label={fill(M.aria, { ind: s.indName, n: m.co, roe: p1(me.x), pbr: nf(me.y, 2) })}
         style={{ display: "block", marginTop: SPACE(3), maxWidth: 480, marginLeft: "auto", marginRight: "auto" }}>
-        <line x1={P} y1={Hh - P} x2={W - P} y2={Hh - P} stroke={COLOR.border} />
-        <line x1={P} y1={P} x2={P} y2={Hh - P} stroke={COLOR.border} />
-        <line x1={sx(lx0)} y1={sy(lineY(lx0))} x2={sx(lx1)} y2={sy(lineY(lx1))} stroke={COLOR.text2} strokeDasharray="4 4" />
-        {m.pts.filter((p) => !p.mine).map((p) => <circle key={p.t} cx={sx(p.x)} cy={sy(p.y)} r={4} fill={COLOR.text3} opacity={0.45} />)}
-        <circle cx={sx(me.x)} cy={sy(me.y)} r={7} fill={COLOR.ink} stroke={COLOR.surface} strokeWidth={2} />
+        <line x1={P} y1={Hh - P} x2={W - P} y2={Hh - P} style={{ stroke: COLOR.border }} />
+        <line x1={P} y1={P} x2={P} y2={Hh - P} style={{ stroke: COLOR.border }} />
+        <line x1={sx(lx0)} y1={sy(lineY(lx0))} x2={sx(lx1)} y2={sy(lineY(lx1))} style={{ stroke: COLOR.text2 }} strokeDasharray="4 4" />
+        {m.pts.filter((p) => !p.mine).map((p) => <circle key={p.t} cx={sx(p.x)} cy={sy(p.y)} r={4} style={{ fill: COLOR.text3 }} opacity={0.45} />)}
+        <circle cx={sx(me.x)} cy={sy(me.y)} r={7} style={{ fill: COLOR.ink, stroke: COLOR.surface }} strokeWidth={2} />
       </svg>
       <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
         <div>{M.x}</div><div>{M.y}</div><div>{M.line}</div>

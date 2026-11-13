@@ -3,7 +3,7 @@
 // 아직 기존 화면은 이 컴포넌트를 쓰지 않아요 (Part 4 게이트).
 // 간격은 4px 격자(SPACE), 누르는 곳은 44px 이상(TOUCH), 숫자는 모두 고정폭(tabular-nums).
 import React, { useState, useEffect, useRef } from "react";
-import { COLOR, STATUS, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, SELECTED_ROW } from "./tokens.js";
+import { COLOR, OVERLAY, STATUS, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, SELECTED_ROW } from "./tokens.js";
 import { Icon } from "./icons.jsx";
 
 // 모든 글자에 고정폭 숫자를 켜요 (숫자가 없는 글에는 영향 없음)
@@ -113,7 +113,7 @@ export function HeroBand({ tone = "calm", level = "watch", eyebrow, title, body,
 
 export function Button({ kind = "primary", children, onClick, disabled = false, type = "button", style }) {
   const k = {
-    primary: { background: COLOR.ink, color: COLOR.surface, border: "none" },
+    primary: { background: COLOR.primary, color: COLOR.onPrimary, border: "none" },          // v19.6d: 남색 바탕 · 그 위 글 (예전 ink · surface)
     secondary: { background: COLOR.surface, color: COLOR.ink, border: `1px solid ${COLOR.border}` },
     quiet: { background: "transparent", color: COLOR.text2, border: "none" },
   }[kind];
@@ -313,7 +313,7 @@ export function BottomSheet({ open, title, onClose, closeLabel, children, inline
       style={{ background: COLOR.surface, width: "100%", maxWidth: 520, outline: "none",
         borderRadius: `${RADIUS.lg}px ${RADIUS.lg}px ${inline ? RADIUS.lg : 0}px ${inline ? RADIUS.lg : 0}px`,
         maxHeight: inline ? "none" : "88vh", overflowY: inline ? "visible" : "auto", overscrollBehavior: "contain",
-        padding: `0 ${SPACE(5)}px calc(${SPACE(6)}px + ${inline ? "0px" : "env(safe-area-inset-bottom)"})`, boxShadow: inline ? "0 -2px 12px rgba(28,43,69,0.10)" : "none" }}>
+        padding: `0 ${SPACE(5)}px calc(${SPACE(6)}px + ${inline ? "0px" : "env(safe-area-inset-bottom)"})`, boxShadow: inline ? `0 -2px 12px ${OVERLAY.shadow}` : "none" }}>
       <div style={{ position: inline ? "static" : "sticky", top: 0, background: COLOR.surface, paddingTop: SPACE(3), zIndex: 1 }}>
         <div style={{ width: SPACE(10), height: SPACE(1), borderRadius: 2, background: COLOR.border, margin: "0 auto" }} />
         <div style={{ display: "flex", alignItems: "center", marginTop: SPACE(2) }}>
@@ -329,7 +329,7 @@ export function BottomSheet({ open, title, onClose, closeLabel, children, inline
     <div data-ui="bottom-sheet"
       onPointerDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget; }}
       onClick={(e) => { if (downOnBackdrop.current && e.target === e.currentTarget) onClose(); downOnBackdrop.current = false; }}
-      style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: shift || 0, background: "rgba(28,43,69,0.45)", zIndex: 90, display: "flex",
+      style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: shift || 0, background: OVERLAY.scrim, zIndex: 90, display: "flex",
         alignItems: "flex-end", justifyContent: "center" }}>
       {panel}
     </div>

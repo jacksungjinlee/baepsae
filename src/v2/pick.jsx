@@ -101,7 +101,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
         {!pinned && (
           <button type="button" onClick={onToggle} aria-pressed={picked} aria-label={fill(picked ? C.build.s4.removeAria : C.build.s4.addAria, { name: s.nk })}
             style={{ ...tap, minHeight: TOUCH, minWidth: TOUCH + SPACE(4), borderRadius: RADIUS.sm, flexShrink: 0, padding: `0 ${SPACE(3)}px`,
-              border: picked ? `1px solid ${COLOR.border}` : "none", background: picked ? COLOR.surface : COLOR.ink, ...tx(SIZE.xs, WEIGHT.bold, picked ? COLOR.ink : COLOR.surface) }}>
+              border: picked ? `1px solid ${COLOR.border}` : "none", background: picked ? COLOR.surface : COLOR.primary, ...tx(SIZE.xs, WEIGHT.bold, picked ? COLOR.ink : COLOR.onPrimary) }}>
             {picked ? C.build.s4.remove : C.build.s4.add}
           </button>
         )}

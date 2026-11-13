@@ -83,15 +83,17 @@ def from_mockup(s, rows, row_set):
 
 # ── Part 1 ──
 def test_contrast_pairs_pass():
-    pairs = node_value("src/ui/tokens.js", "M.CONTRAST_PAIRS.map(([f,b]) => [f, b, M.contrast(M.COLOR[f], M.COLOR[b])])")
+    # v19.6d: COLOR holds CSS variables ("var(--bs-ink, #1C2B45)"); the light values are PALETTE.light (the dark ones:
+    # tests/test_v196d_dark.py)
+    pairs = node_value("src/ui/tokens.js", "M.CONTRAST_PAIRS.map(([f,b]) => [f, b, M.contrast(M.PALETTE.light[f], M.PALETTE.light[b])])")
     assert len(pairs) >= 18
     low = [(f, b, round(r, 2)) for f, b, r in pairs if r < 4.5]
     assert not low, f"4.5:1 미달: {low}"
 
 
 def test_contrast_formula_and_spec_values():
-    v = node_value("src/ui/tokens.js", "{ up: M.contrast(M.COLOR.up, M.COLOR.page), white: M.contrast('#000000', '#FFFFFF'), "
-                                       "c: M.COLOR, avoid: M.AVOID_PAIRS }")
+    v = node_value("src/ui/tokens.js", "{ up: M.contrast(M.PALETTE.light.up, M.PALETTE.light.page), white: M.contrast('#000000', '#FFFFFF'), "
+                                       "c: M.PALETTE.light, avoid: M.AVOID_PAIRS, vars: M.COLOR }")
     assert abs(v["white"] - 21) < 0.01
     assert abs(v["up"] - 4.35) < 0.01          # 스펙에 적힌 값: 빨강은 page 바탕 위에서 미달
     c = v["c"]
@@ -102,12 +104,16 @@ def test_contrast_formula_and_spec_values():
             "neutral": "#3D4B63", "neutralBg": "#EEF0F4"}
     wrong = {k: (c.get(k), want) for k, want in spec.items() if c.get(k) != want}
     assert not wrong, f"스펙 표와 다른 색: {wrong}"
+    assert all(v["vars"][k] == f"var(--bs-{k}, {want})" for k, want in spec.items()), v["vars"]     # v19.6d: the screens use these
     assert ["up", "page"] in v["avoid"] and ["text3", "page"] in v["avoid"]
 
 
 def test_status_colours_are_not_red_or_blue():
-    c = node_value("src/ui/tokens.js", "M.STATUS")
-    for tone, pair in c.items():
+    # v19.6d: both screen modes (STATUS holds CSS variables; valueOf reads each one's light or dark value)
+    both = node_value("src/ui/tokens.js", "['light', 'dark'].map((m) => Object.fromEntries(Object.entries(M.STATUS).map(([k, p]) => "
+                                          "[k, { fg: M.valueOf(p.fg, m), bg: M.valueOf(p.bg, m) }])))")
+    assert len(both) == 2 and all(len(c) == 4 for c in both)
+    for tone, pair in [x for c in both for x in c.items()]:
         for hexv in pair.values():
             r, g, b = (int(hexv[i:i + 2], 16) for i in (1, 3, 5))
             assert not (r > 150 and g < 90 and b < 90), f"{tone} 가 빨강이에요: {hexv}"
@@ -234,11 +240,13 @@ def test_icons_are_phosphor_duotone_with_two_layers_and_table_colours():
             bad[key] = p
     assert len(v["svg"]) == len(v["names"]) * len(ICON_TONE_SPEC) and not bad, list(bad.items())[:5]
     chip = v["chip"]
-    assert v["select"] == "#F2F0EB" and "background:#F2F0EB" in chip and "border-radius:30%" in chip and "width:40px" in chip, chip
+    # v19.6d: the chip colours are CSS variables whose light value is the table's (the dark values: tests/test_v196d_dark.py)
+    assert v["select"] == "var(--bs-select, #F2F0EB)" and "background:var(--bs-select, #F2F0EB)" in chip and "border-radius:30%" in chip and "width:40px" in chip, chip
     # v19.1 Part H: 주제 칩 바탕은 표의 다섯 가지 그대로, 그 주제의 아이콘 색과 짝이에요 (기본 칩은 위처럼 따뜻한 회색)
-    assert v["topicChip"] == TOPIC_CHIP_SPEC and sorted(TOPIC_CHIP_SPEC) == sorted(k for k in ICON_TONE_SPEC if ICON_TONE_SPEC[k]["line"] == "#1C2B45" and k != "on")
+    assert v["topicChip"] == {t: f"var(--bs-chip-{t}, {c})" for t, c in TOPIC_CHIP_SPEC.items()}
+    assert sorted(TOPIC_CHIP_SPEC) == sorted(k for k in ICON_TONE_SPEC if ICON_TONE_SPEC[k]["line"] == "#1C2B45" and k != "on")
     for t, m in v["topicChips"].items():
-        assert f"background:{TOPIC_CHIP_SPEC[t]}" in m and f'fill="{ICON_TONE_SPEC[t]["fill"]}"' in m and 'fill="#1C2B45"' in m, (t, m)
+        assert f"background:var(--bs-chip-{t}, {TOPIC_CHIP_SPEC[t]})" in m and f'fill="{ICON_TONE_SPEC[t]["fill"]}"' in m and 'fill="#1C2B45"' in m, (t, m)
     src = "".join(read(f) for f in ("src/ui/icons.jsx", "src/ui/phosphor.js"))
     assert "stroke" not in src and "C97757" not in src.upper() and "A9542F" not in src.upper()
 

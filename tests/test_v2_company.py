@@ -621,12 +621,15 @@ def lum(h):
 
 def test_mark_colours_are_fixed_readable_and_stable():
     got = run("""out = { colors: K.MARK_COLORS, a: K.markColor('005930'), b: K.markColor('005930'), spread: [...new Set(Array.from({ length: 400 }, (_, i) => K.markColor(String(100000 + i))))].length,
-      letters: [K.markLetter('삼성전자', '005930'), K.markLetter('apple Inc.', 'AAPL'), K.markLetter('', 'AAPL'), K.markLetter('  NAVER', 'X')], tok: TOK.COLOR };""")
+      letters: [K.markLetter('삼성전자', '005930'), K.markLetter('apple Inc.', 'AAPL'), K.markLetter('', 'AAPL'), K.markLetter('  NAVER', 'X')],
+      tok: TOK.PALETTE.light, tokDark: TOK.PALETTE.dark };""")
     cols = got["colors"]
     assert len(cols) == 10 and len(set(cols)) == 10 and got["a"] == got["b"] and got["a"] in cols and got["spread"] == 10
     for c in cols:
         assert (1.05) / (lum(c) + 0.05) >= 4.5, c                                         # 흰 글자 4.5:1 이상
-    banned = {got["tok"][k].upper() for k in ("apricot", "apricotText", "up", "down", "upOnPage", "watch", "heroAlert")}
+    # v19.6d: COLOR holds CSS variables; the hex values are PALETTE.light / .dark (both screen modes)
+    banned = {got[m][k].upper() for m in ("tok", "tokDark") for k in ("apricot", "apricotText", "up", "down", "upOnPage", "watch", "heroAlert")}
+    assert len(banned) >= 12 and all(re.fullmatch(r"#[0-9A-F]{6}", b) for b in banned), banned
     assert not (set(c.upper() for c in cols) & banned)
     assert got["letters"] == ["삼", "A", "A", "N"]
 

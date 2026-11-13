@@ -42,12 +42,12 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 // Focus rings: a row inside the clipped window draws its ring inside its own box (the window would cut one drawn outside), and the
 // window itself (a stop for the keyboard) gets the app's navy ring (template.html draws it for buttons and links only).
 const ROLL_CSS = "@keyframes v2-rank-roll { 0%, 7% { transform: translateY(0); } 100% { transform: translateY(-50%); } }"
-  + ' [data-ui-v2="rank-row"] > button:focus-visible { outline: 2px solid #1C2B45; outline-offset: -3px; border-radius: 12px; }'
-  + ' [data-ui-v2="rank-window"]:focus-visible { outline: 2px solid #1C2B45; outline-offset: 2px; }'
+  + ` [data-ui-v2="rank-row"] > button:focus-visible { outline: 2px solid ${COLOR.ink}; outline-offset: -3px; border-radius: 12px; }`
+  + ` [data-ui-v2="rank-window"]:focus-visible { outline: 2px solid ${COLOR.ink}; outline-offset: 2px; }`
   + ` [data-ui-v2="rank-track"][data-roll="1"] { animation: v2-rank-roll ${ROLL_S}s linear infinite; will-change: transform; }`
   + " @media (prefers-reduced-motion: reduce) { [data-ui-v2=\"rank-track\"] { animation: none !important; } }";
-const CHIP_LINE = "#E3DED6";             // board: the unselected chip's edge
-const WIN_LINE = "#ECE8E1";              // board: the window's edge and the switch's background
+const CHIP_LINE = COLOR.chipEdge;        // board: the unselected chip's edge
+const WIN_LINE = COLOR.winEdge;          // board: the window's edge (v19.6d: the switch's background is its own token, COLOR.track)
 // Price red · blue from the value as shown (one decimal): a change that reads "0.0%" is neutral, never red or blue.
 const changeColor = (v) => { const r = Math.round(v * 10); return r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2; };
 
@@ -530,9 +530,9 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
               <div data-ui-v2="rank-copy" aria-hidden="true">{lists(true)}</div>
             </div>
             <span aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, top: 0, height: 22, pointerEvents: "none", zIndex: 2,
-              background: "linear-gradient(#FFFFFF, rgba(255,255,255,0))" }} />
+              background: `linear-gradient(${COLOR.surface}, transparent)` }} />
             <span aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 22, pointerEvents: "none", zIndex: 2,
-              background: "linear-gradient(rgba(255,255,255,0), #FFFFFF)" }} />
+              background: `linear-gradient(transparent, ${COLOR.surface})` }} />
           </div>
         )}
       {/* v19.1c: a US stock priced at an earlier close (pxd) among the rows: named once under the list */}
@@ -556,8 +556,8 @@ function Chip({ id, on, pic, onClick, refOf, children }) {
   return (
     <button ref={refOf} type="button" data-ui-v2="rank-chip" data-chip={id} data-selected={on ? "1" : undefined} aria-pressed={on ? "true" : "false"} onClick={onClick}
       style={{ ...tap, flex: "none", display: "inline-flex", alignItems: "center", gap: 5, height: TOUCH, padding: "0 13px", borderRadius: TOUCH / 2, border: "none",
-        background: on ? COLOR.ink : COLOR.surface, boxShadow: on ? "none" : `inset 0 0 0 1px ${CHIP_LINE}`,
-        ...tx(13.5, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.surface : COLOR.neutral, { whiteSpace: "nowrap" }) }}>
+        background: on ? COLOR.primary : COLOR.surface, boxShadow: on ? "none" : `inset 0 0 0 1px ${CHIP_LINE}`,
+        ...tx(13.5, on ? WEIGHT.heavy : WEIGHT.semi, on ? COLOR.onPrimary : COLOR.neutral, { whiteSpace: "nowrap" }) }}>
       {pic && <img src={pic.src} alt="" width={20} height={20} decoding="async" style={{ display: "block", flex: "none", width: 20, height: 20, objectFit: "contain" }} />}
       {children}
     </button>
@@ -576,7 +576,7 @@ function MarketSwitch({ mk, label, onChange }) {
   };
   return (
     <div data-ui-v2="rank-market" role="radiogroup" aria-labelledby={label} onKeyDown={keys}
-      style={{ marginTop: SPACE(2) + 2, display: "inline-flex", padding: 3, borderRadius: 12, background: WIN_LINE }}>
+      style={{ marginTop: SPACE(2) + 2, display: "inline-flex", padding: 3, borderRadius: 12, background: COLOR.track }}>
       {["kr", "us"].map((m) => {
         const on = m === mk;
         return (
